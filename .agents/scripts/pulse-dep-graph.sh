@@ -70,7 +70,7 @@ _dep_graph_process_issue_json() {
 	local issue_json="$1"
 	local acc_json="$2"
 
-	local num title body
+	local num="" title="" body=""
 	num=$(printf '%s' "$issue_json" | jq -r '.number // empty' 2>/dev/null)
 	title=$(printf '%s' "$issue_json" | jq -r '.title // ""' 2>/dev/null)
 	body=$(printf '%s' "$issue_json" | jq -r '.body // ""' 2>/dev/null)
@@ -90,12 +90,12 @@ _dep_graph_process_issue_json() {
 	# the bare TODO.md format (`blocked-by:tNNN,tMMM`). BSD/GNU portable
 	# via POSIX `[^[:cntrl:]]` (see t1983 / t2015 for history).
 	# Subtask decimal suffixes (t325.1) are preserved (GH#19165).
-	local blocker_lines blocker_tids blocker_nums
+	local blocker_lines="" blocker_tids="" blocker_nums=""
 	blocker_lines=$(printf '%s' "$body" | grep -ioE '[Bb]locked[- ][Bb]y[^[:cntrl:]]*' || true)
 	blocker_tids=$(printf '%s' "$blocker_lines" | grep -oE 't[0-9]+(\.[0-9a-z]+)*' | sed 's/^t//' || true)
 	blocker_nums=$(printf '%s' "$blocker_lines" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' || true)
 
-	local tid_arr num_arr
+	local tid_arr="" num_arr=""
 	tid_arr=$(printf '%s' "$blocker_tids" | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null) || tid_arr='[]'
 	num_arr=$(printf '%s' "$blocker_nums" | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null) || num_arr='[]'
 	local has_blockers="false"
@@ -148,8 +148,11 @@ _dep_graph_process_issue_json() {
 _dep_graph_build_repo_data() {
 	local slug="$1"
 	local issues_json
-	issues_json=$(gh_issue_list --repo "$slug" --state open --limit 200 \
-		--json number,title,body,labels 2>/dev/null) || issues_json='[]'
+	if ! issues_json=$(gh_issue_list --repo "$slug" --state open --limit 200 \
+		--json number,title,body,labels 2>/dev/null); then
+		echo "[pulse-wrapper] dep-graph-cache: failed to list open issues for ${slug}; preserving previous repo cache when available" >>"$LOGFILE"
+		return 1
+	fi
 
 	# Single jq pass: extract all fields, apply regex, build accumulator.
 	# Equivalent to calling _dep_graph_process_issue_json once per issue
@@ -198,7 +201,8 @@ _dep_graph_build_repo_data() {
 			"blocked_by": .blocked_by_map,
 			"defer_flags": .defer_flags_map
 		}
-	' 2>/dev/null || printf '{"open_issues":[],"task_to_issue":{},"blocked_by":{},"defer_flags":{}}\n'
+	' 2>/dev/null || return 1
+	return 0
 }
 
 #######################################
@@ -258,8 +262,11 @@ build_dependency_graph_cache() {
 	fi
 
 	# Build the graph JSON incrementally
-	local graph_json
+	local graph_json="" old_graph_json=""
 	graph_json=$(printf '{"built_at":"%s","repos":{}}' "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
+	if [[ -f "$cache_file" ]]; then
+		old_graph_json=$(<"$cache_file") || old_graph_json=""
+	fi
 
 	while IFS= read -r repo_entry; do
 		[[ -n "$repo_entry" ]] || continue
@@ -271,8 +278,14 @@ build_dependency_graph_cache() {
 		# (t2031 refactor — keeps build_dependency_graph_cache under the
 		# 100-line complexity gate).
 		local repo_data
-		repo_data=$(_dep_graph_build_repo_data "$slug")
-		[[ -n "$repo_data" ]] || continue
+		if ! repo_data=$(_dep_graph_build_repo_data "$slug") || [[ -z "$repo_data" ]]; then
+			repo_data=$(printf '%s' "$old_graph_json" | jq -c --arg s "$slug" '.repos[$s] // empty' 2>/dev/null) || repo_data=""
+			if [[ -z "$repo_data" ]]; then
+				echo "[pulse-wrapper] dep-graph-cache: no previous repo cache for ${slug}; omitting failed repo from this cache build" >>"$LOGFILE"
+				continue
+			fi
+			echo "[pulse-wrapper] dep-graph-cache: preserved previous repo cache for ${slug} after fetch/build failure" >>"$LOGFILE"
+		fi
 
 		# Merge repo data into graph
 		graph_json=$(printf '%s' "$graph_json" |
@@ -290,7 +303,7 @@ build_dependency_graph_cache() {
 		rm -f "$tmp_file"
 	fi
 
-	local build_end build_dur
+	local build_end="" build_dur=""
 	build_end=$(date +%s)
 	build_dur=$((build_end - build_start))
 	echo "[pulse-wrapper] dep-graph-cache: built in ${build_dur}s → ${cache_file}" >>"$LOGFILE"
@@ -393,7 +406,7 @@ _refresh_all_blockers_resolved() {
 	local open_issues_json="$3"
 
 	# Task ID blockers
-	local blocker_tids tid blocker_issue_num is_open
+	local blocker_tids="" tid="" blocker_issue_num="" is_open=""
 	blocker_tids=$(printf '%s' "$entry_json" | jq -r '.task_ids[]' 2>/dev/null) || blocker_tids=""
 	while IFS= read -r tid; do
 		[[ -n "$tid" ]] || continue
@@ -404,7 +417,7 @@ _refresh_all_blockers_resolved() {
 	done <<<"$blocker_tids"
 
 	# Issue number blockers
-	local blocker_nums bnum
+	local blocker_nums="" bnum=""
 	blocker_nums=$(printf '%s' "$entry_json" | jq -r '.issue_nums[]' 2>/dev/null) || blocker_nums=""
 	while IFS= read -r bnum; do
 		[[ "$bnum" =~ ^[0-9]+$ ]] || continue
@@ -445,7 +458,7 @@ _refresh_try_unblock_issue() {
 
 	# Cached defer flag — either inside the blocked_by entry or in the
 	# repo-level defer_flags map. Either "true" triggers defer.
-	local entry_defer top_defer has_defer_flag
+	local entry_defer="" top_defer="" has_defer_flag=""
 	entry_defer=$(printf '%s' "$entry_json" | jq -r '.has_defer_marker // false' 2>/dev/null) || entry_defer="false"
 	top_defer=$(printf '%s' "$defer_flags_json" | jq -r --arg n "$issue_num" '.[$n] // false' 2>/dev/null) || top_defer="false"
 	has_defer_flag="false"
@@ -502,7 +515,7 @@ refresh_blocked_status_from_graph() {
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
 
-		local repo_data open_issues_json task_to_issue_json blocked_by_json defer_flags_json
+		local repo_data="" open_issues_json="" task_to_issue_json="" blocked_by_json="" defer_flags_json=""
 		repo_data=$(printf '%s' "$graph_json" | jq -c --arg s "$slug" '.repos[$s]' 2>/dev/null) || continue
 		open_issues_json=$(printf '%s' "$repo_data" | jq -c '.open_issues // []' 2>/dev/null) || open_issues_json='[]'
 		task_to_issue_json=$(printf '%s' "$repo_data" | jq -c '.task_to_issue // {}' 2>/dev/null) || task_to_issue_json='{}'
@@ -513,7 +526,7 @@ refresh_blocked_status_from_graph() {
 		blocked_issue_nums=$(printf '%s' "$blocked_by_json" | jq -r 'keys[]' 2>/dev/null) || blocked_issue_nums=""
 		[[ -n "$blocked_issue_nums" ]] || continue
 
-		local issue_num entry_json
+		local issue_num="" entry_json=""
 		while IFS= read -r issue_num; do
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 			entry_json=$(printf '%s' "$blocked_by_json" | jq -c --arg n "$issue_num" '.[$n]' 2>/dev/null) || continue
@@ -571,13 +584,95 @@ refresh_blocked_status_from_graph() {
 # No NUL, no parser traps, trivially portable across bash versions.
 _blocked_by_extract_tids() {
 	local body="$1"
-	# Capture full subtask ID including decimal suffix (e.g. t325.1 → 325.1)
-	printf '%s' "$body" | grep -ioE '[Bb]locked[- ]by[: ]*t[0-9]+(\.[0-9a-z]+)*' | grep -oE 't[0-9]+(\.[0-9a-z]+)*' | sed 's/^t//' || true
+	local blocker_lines
+	# Match the dep-graph whole-line parser so compact blocker lists such as
+	# `blocked-by:t001,t002,t003` are enforced consistently at dispatch time.
+	# Capture full subtask ID including decimal suffix (e.g. t325.1 → 325.1).
+	blocker_lines=$(printf '%s' "$body" | grep -ioE '[Bb]locked[- ][Bb]y[^[:cntrl:]]*' || true)
+	printf '%s' "$blocker_lines" | grep -oE 't[0-9]+(\.[0-9a-z]+)*' | sed 's/^t//' || true
+	return 0
 }
 
 _blocked_by_extract_nums() {
 	local body="$1"
-	printf '%s' "$body" | grep -ioE '[Bb]locked[- ]by[: ]*#([0-9]+)' | grep -oE '[0-9]+' || true
+	local blocker_lines
+	blocker_lines=$(printf '%s' "$body" | grep -ioE '[Bb]locked[- ][Bb]y[^[:cntrl:]]*' || true)
+	printf '%s' "$blocker_lines" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' || true
+	return 0
+}
+
+#######################################
+# Check GitHub's native blocked-by relationship field for unresolved blockers.
+#
+# GitHub's issue relationship graph is the canonical source once blockers have
+# been synced by issue-sync-relationships.sh. Body/TODO `blocked-by:*` tokens are
+# retained as fallback intent and repair signals, but dispatch must consult the
+# native relationship first so UI-created/backfilled dependencies are enforced
+# even when the issue body does not repeat them.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - issue number
+# Exit codes:
+#   0 - native relationship is open/unknown (caller should block dispatch)
+#   1 - no native relationships were found (caller should check text fallback)
+#   2 - native relationships exist and are positively clear
+#######################################
+_blocked_by_check_native_relationships() {
+	local repo_slug="$1"
+	local issue_number="$2"
+
+	[[ -n "$repo_slug" && -n "$issue_number" ]] || return 1
+	[[ "$repo_slug" == */* ]] || return 1
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
+
+	local owner="" repo_name=""
+	owner="${repo_slug%%/*}"
+	repo_name="${repo_slug#*/}"
+	[[ -n "$owner" && -n "$repo_name" ]] || return 1
+
+	local rel_states=""
+	# shellcheck disable=SC2016  # GraphQL variables are expanded by GitHub, not shell.
+	if ! rel_states=$(gh api graphql \
+		-f query='
+query($owner:String!,$name:String!,$number:Int!) {
+  repository(owner:$owner, name:$name) {
+    issue(number:$number) {
+      blockedBy(first: 50) {
+        nodes { number state }
+      }
+    }
+  }
+}' \
+		-F owner="$owner" -F name="$repo_name" -F number="$issue_number" \
+		--jq '.data.repository.issue.blockedBy.nodes[]? | "\(.number):\(.state)"' \
+		2>/dev/null); then
+		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} native blockedBy lookup failed — skipping dispatch (GH#23932)" >>"$LOGFILE"
+		return 0
+	fi
+
+	local rel_state="" rel_num="" state="" state_normalized="" saw_relationship="false"
+	while IFS= read -r rel_state; do
+		[[ -n "$rel_state" ]] || continue
+		saw_relationship="true"
+		rel_num="${rel_state%%:*}"
+		state="${rel_state#*:}"
+		state_normalized=$(printf '%s' "$state" | tr '[:lower:]' '[:upper:]')
+		if [[ "$state_normalized" == OPEN ]]; then
+			echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by native relationship #${rel_num} (open) — skipping dispatch (GH#23932)" >>"$LOGFILE"
+			return 0
+		fi
+		if [[ "$state_normalized" != CLOSED ]]; then
+			echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} native blockedBy #${rel_num} has unknown state '${state}' — skipping dispatch (GH#23932)" >>"$LOGFILE"
+			return 0
+		fi
+	done <<<"$rel_states"
+
+	if [[ "$saw_relationship" == "true" ]]; then
+		return 2
+	fi
+
+	return 1
 }
 
 #######################################
@@ -585,11 +680,11 @@ _blocked_by_extract_nums() {
 #
 # Reads DEP_GRAPH_CACHE_FILE (if present and within 2× TTL) and extracts
 # the per-repo open_issues and task_to_issue maps. Emits a single compact
-# JSON object on stdout with the three fields the resolver needs:
+# JSON object on stdout with the fields the resolver needs:
 #   {"use_cache": bool, "open_issues": [...], "task_to_issue": {...}}
 #
-# Fails open — on any error emits use_cache:false so the caller falls
-# through to live API resolution.
+# Cache errors emit use_cache:false so the caller falls through to live API
+# resolution; unresolved live lookups fail closed at the blocker check.
 #
 # Arguments: $1 - repo slug
 # Output:    one JSON object on stdout
@@ -612,22 +707,24 @@ _blocked_by_load_cache() {
 	fi
 
 	local graph_json
-	graph_json=$(cat "$cache_file" 2>/dev/null) || graph_json=""
+	graph_json=$(<"$cache_file") || graph_json=""
 	if [[ -z "$graph_json" ]]; then
 		printf '{"use_cache":false,"open_issues":[],"task_to_issue":{}}'
 		return 0
 	fi
 
-	printf '%s' "$graph_json" | jq -c --arg s "$repo_slug" '{
-		use_cache: true,
-		open_issues: (.repos[$s].open_issues // []),
-		task_to_issue: (.repos[$s].task_to_issue // {})
-	}' 2>/dev/null || printf '{"use_cache":false,"open_issues":[],"task_to_issue":{}}'
+	printf '%s' "$graph_json" | jq -c --arg s "$repo_slug" '
+		if .repos[$s] == null then
+			{"use_cache":false,"open_issues":[],"task_to_issue":{}}
+		else
+			{"use_cache":true,"open_issues":(.repos[$s].open_issues // []),"task_to_issue":(.repos[$s].task_to_issue // {})}
+		end
+	' 2>/dev/null || printf '{"use_cache":false,"open_issues":[],"task_to_issue":{}}'
 	return 0
 }
 
 #######################################
-# Resolve a single task-ID blocker to open/closed (GH#18693 refactor helper).
+# Resolve a single task-ID blocker to blocked/clear/unknown (GH#18693 refactor helper).
 #
 # Uses the cached dep graph first; falls back to a live `gh issue list`
 # search when the task is not found in the cache.
@@ -639,8 +736,8 @@ _blocked_by_load_cache() {
 #   $4 - cache_state JSON (from _blocked_by_load_cache)
 #
 # Exit codes:
-#   0 - blocker is open (caller should return "blocked")
-#   1 - blocker is resolved or not found (caller should continue)
+#   0 - blocker is open or unknown (caller should return "blocked")
+#   1 - blocker is positively resolved (caller should continue)
 #######################################
 _blocked_by_check_task_id() {
 	local task_id="$1"
@@ -665,18 +762,63 @@ _blocked_by_check_task_id() {
 			fi
 			return 1
 		fi
-		# Task not in map → fall through to live API (may be a new issue)
+		# Task not in map → fall through to live API (may be a new issue).
 	fi
 
-	# Live API fallback: search for an open issue with this task ID in the title
-	local blocker_state
-	blocker_state=$(gh_issue_list --repo "$repo_slug" --state open \
-		--search "t${task_id} in:title" --json number,state --jq '.[0].state // ""' 2>/dev/null) || blocker_state=""
-	if [[ "$blocker_state" == "OPEN" ]]; then
+	# Live API fallback: search all issues with this task ID in the title.
+	# Empty/error is not proof of resolution because GitHub search can lag
+	# immediately after rapid task creation. Treat that as unknown and block.
+	local blocker_state="" blocker_state_normalized=""
+	if ! blocker_state=$(gh_issue_list --repo "$repo_slug" --state all \
+		--search "t${task_id} in:title" --json number,state --jq '.[0].state // ""' 2>/dev/null); then
+		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference t${task_id} (live lookup failed) — skipping dispatch" >>"$LOGFILE"
+		return 0
+	fi
+	blocker_state_normalized=$(printf '%s' "$blocker_state" | tr '[:lower:]' '[:upper:]')
+	if [[ "$blocker_state_normalized" == "OPEN" ]]; then
 		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by t${task_id} (live: open) — skipping dispatch (t1927)" >>"$LOGFILE"
 		return 0
 	fi
-	return 1
+	if [[ "$blocker_state_normalized" == "CLOSED" ]]; then
+		return 1
+	fi
+	echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference t${task_id} (cache miss / live lookup inconclusive) — skipping dispatch" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Resolve a single GitHub issue-number blocker through live API.
+#
+# Arguments:
+#   $1 - blocker_num
+#   $2 - repo slug
+#   $3 - issue_number (for logging)
+#
+# Exit codes:
+#   0 - blocker is open or unknown
+#   1 - blocker is positively resolved
+#######################################
+_blocked_by_check_issue_num_live() {
+	local blocker_num="$1"
+	local repo_slug="$2"
+	local issue_number="$3"
+
+	local blocker_state="" blocker_state_normalized=""
+	if ! blocker_state=$(gh issue view "$blocker_num" --repo "$repo_slug" \
+		--json state --jq '.state // ""' 2>/dev/null); then
+		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference #${blocker_num} (live lookup failed) — skipping dispatch" >>"$LOGFILE"
+		return 0
+	fi
+	blocker_state_normalized=$(printf '%s' "$blocker_state" | tr '[:lower:]' '[:upper:]')
+	if [[ "$blocker_state_normalized" == "OPEN" ]]; then
+		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by #${blocker_num} (live: open) — skipping dispatch (t1927)" >>"$LOGFILE"
+		return 0
+	fi
+	if [[ "$blocker_state_normalized" == "CLOSED" ]]; then
+		return 1
+	fi
+	echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference #${blocker_num} (live lookup inconclusive) — skipping dispatch" >>"$LOGFILE"
+	return 0
 }
 
 #######################################
@@ -689,8 +831,8 @@ _blocked_by_check_task_id() {
 #   $4 - cache_state JSON (from _blocked_by_load_cache)
 #
 # Exit codes:
-#   0 - blocker is open
-#   1 - blocker is resolved or not found
+#   0 - blocker is open or unknown
+#   1 - blocker is positively resolved
 #######################################
 _blocked_by_check_issue_num() {
 	local blocker_num="$1"
@@ -709,26 +851,21 @@ _blocked_by_check_issue_num() {
 			echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by #${blocker_num} (cache: open) — skipping dispatch (t1935)" >>"$LOGFILE"
 			return 0
 		fi
-		return 1
+		# Cache absence is not positive proof for direct issue-number blockers:
+		# the issue may have been created after the cache snapshot. Verify live.
 	fi
 
-	# Live API fallback
-	local blocker_state
-	blocker_state=$(gh issue view "$blocker_num" --repo "$repo_slug" \
-		--json state --jq '.state // ""' 2>/dev/null) || blocker_state=""
-	if [[ "$blocker_state" == "OPEN" ]]; then
-		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by #${blocker_num} (live: open) — skipping dispatch (t1927)" >>"$LOGFILE"
-		return 0
-	fi
-	return 1
+	_blocked_by_check_issue_num_live "$blocker_num" "$repo_slug" "$issue_number"
+	return $?
 }
 
 #######################################
 # Blocked-by enforcement (t1927, enhanced t1935, decomposed GH#18693)
 #
-# Parses the issue body for blocked-by dependencies and checks whether the
-# blocking task/issue is still open. Uses the cached dependency graph (built
-# once per cycle) for zero-API-call resolution. Falls back to live API calls
+# Checks GitHub's native blockedBy relationship field first, then parses the
+# issue body for blocked-by dependencies and checks whether the blocking
+# task/issue is still open. Uses the cached dependency graph (built once per
+# cycle) for zero-API-call body-token resolution. Falls back to live API calls
 # only when the cache is absent or the blocker is not found in it.
 #
 # Decomposed into _blocked_by_extract_tids, _blocked_by_extract_nums,
@@ -750,13 +887,28 @@ is_blocked_by_unresolved() {
 	local repo_slug="$2"
 	local issue_number="$3"
 
-	[[ -n "$issue_body" ]] || return 1
 	[[ -n "$repo_slug" ]] || return 1
+	[[ -n "$issue_number" ]] || return 1
+
+	# Native GitHub dependencies are the primary source of truth once present.
+	# Body/TODO markers remain as fallback repair intent only when no native
+	# relationships exist yet. GH#23952: closed native blockers must not be
+	# re-blocked by stale duplicate text markers.
+	local native_rc=0
+	_blocked_by_check_native_relationships "$repo_slug" "$issue_number" || native_rc=$?
+	if [[ "$native_rc" -eq 0 ]]; then
+		return 0
+	fi
+	if [[ "$native_rc" -eq 2 ]]; then
+		return 1
+	fi
+
+	[[ -n "$issue_body" ]] || return 1
 
 	# Extract blocked-by references (tNNN and #NNN) via two single-return
 	# helpers. GH#18830: the previous NUL-delimited two-value return was
 	# fatally broken on bash 3.2 — see `_blocked_by_extract_refs` header.
-	local blocker_task_ids blocker_issue_nums
+	local blocker_task_ids="" blocker_issue_nums=""
 	blocker_task_ids=$(_blocked_by_extract_tids "$issue_body")
 	blocker_issue_nums=$(_blocked_by_extract_nums "$issue_body")
 

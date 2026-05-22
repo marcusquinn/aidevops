@@ -28,6 +28,15 @@ For prompt-economy reasons these rules live here rather than in always-on AGENTS
 
 Format: `- [ ] t001 Description @owner #tag ~4h started:ISO blocked-by:t002`
 
+Dependency rule: when a TODO/issue declares ordered work with `blocked-by:*`
+or `blocks:*`, preserve the text marker for human/reconciliation context and
+sync it into GitHub's native issue relationship field. The native `blockedBy`
+relationship is the primary dispatch gate; body/TODO markers are fallback intent
+and repair signals. If the relationship cannot be created or verified, keep the
+dependent task non-dispatchable (`status:blocked`, no `#auto-dispatch`) until the
+blocker is positively linked or resolved. `issue-sync-relationships.sh` performs
+the normal TODO-to-GitHub relationship backfill.
+
 Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
 ## Briefs, Tiers, and Dispatchability

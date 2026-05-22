@@ -27,6 +27,7 @@ _SHARED_WORKTREE_REGISTRY_LOADED=1
 WORKTREE_REGISTRY_DIR="${WORKTREE_REGISTRY_DIR:-${HOME}/.aidevops/.agent-workspace}"
 WORKTREE_REGISTRY_DB="${WORKTREE_REGISTRY_DB:-${WORKTREE_REGISTRY_DIR}/worktree-registry.db}"
 WORKTREE_OWNER_DEAD_COOLDOWN_MINUTES="${WORKTREE_OWNER_DEAD_COOLDOWN_MINUTES:-60}"
+WORKTREE_OWNER_STALE_LIVE_MAX_HOURS="${WORKTREE_OWNER_STALE_LIVE_MAX_HOURS:-168}"
 
 # Get the command name (basename) for a given PID.
 # Returns empty string if the PID does not exist or info is unavailable.
@@ -254,6 +255,7 @@ _init_registry_db() {
             owner_session TEXT DEFAULT '',
             owner_batch   TEXT DEFAULT '',
             task_id       TEXT DEFAULT '',
+            owner_comm    TEXT DEFAULT '',
             owner_dead_seen_at TEXT DEFAULT '',
             created_at    TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
         );
@@ -268,6 +270,18 @@ _init_registry_db() {
 		sqlite3 "$WORKTREE_REGISTRY_DB" "
             ALTER TABLE worktree_owners
             ADD COLUMN owner_dead_seen_at TEXT DEFAULT '';
+        " 2>/dev/null || true
+	fi
+
+	local has_owner_comm_column
+	has_owner_comm_column=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
+        SELECT 1 FROM pragma_table_info('worktree_owners')
+        WHERE name = 'owner_comm';
+    " 2>/dev/null || echo "")
+	if [[ -z "$has_owner_comm_column" ]]; then
+		sqlite3 "$WORKTREE_REGISTRY_DB" "
+            ALTER TABLE worktree_owners
+            ADD COLUMN owner_comm TEXT DEFAULT '';
         " 2>/dev/null || true
 	fi
 	return 0
@@ -312,6 +326,8 @@ register_worktree() {
 
 	local owner_pid
 	owner_pid=$(_resolve_worktree_owner_pid "$owner_pid_override")
+	local owner_comm
+	owner_comm=$(_get_proc_comm "$owner_pid")
 
 	_init_registry_db
 	wt_path=$(_wt_registry_lookup_path "$wt_path")
@@ -320,7 +336,7 @@ register_worktree() {
 		_wt_sqlite_set_owner_pid_param "$owner_pid"
 		printf '%s\n' "
         INSERT OR REPLACE INTO worktree_owners
-            (worktree_path, branch, owner_pid, owner_session, owner_batch, task_id, owner_dead_seen_at)
+            (worktree_path, branch, owner_pid, owner_session, owner_batch, task_id, owner_comm, owner_dead_seen_at)
         VALUES
 		 ('$(_wt_sql_escape "$wt_path")',
 		  '$(_wt_sql_escape "$branch")',
@@ -328,6 +344,7 @@ register_worktree() {
 		  '$(_wt_sql_escape "$session_id")',
 		  '$(_wt_sql_escape "$batch_id")',
 		  '$(_wt_sql_escape "$task_id")',
+		  '$(_wt_sql_escape "$owner_comm")',
 		  '');
     "
 	} | sqlite3 "$WORKTREE_REGISTRY_DB" 2>/dev/null || true
@@ -376,6 +393,8 @@ claim_worktree_ownership() {
 
 	local owner_pid
 	owner_pid=$(_resolve_worktree_owner_pid "$owner_pid_override")
+	local owner_comm
+	owner_comm=$(_get_proc_comm "$owner_pid")
 
 	_init_registry_db
 	wt_path=$(_wt_registry_lookup_path "$wt_path")
@@ -396,7 +415,7 @@ claim_worktree_ownership() {
 		_wt_sqlite_set_owner_pid_param "$owner_pid"
 		printf '%s\n' "
         INSERT OR IGNORE INTO worktree_owners
-            (worktree_path, branch, owner_pid, owner_session, owner_batch, task_id, owner_dead_seen_at)
+            (worktree_path, branch, owner_pid, owner_session, owner_batch, task_id, owner_comm, owner_dead_seen_at)
         VALUES
             ('$(_wt_sql_escape "$wt_path")',
              '$(_wt_sql_escape "$branch")',
@@ -404,6 +423,7 @@ claim_worktree_ownership() {
              '$(_wt_sql_escape "$session_id")',
              '$(_wt_sql_escape "$batch_id")',
              '$(_wt_sql_escape "$task_id")',
+             '$(_wt_sql_escape "$owner_comm")',
              '');
     "
 	} | sqlite3 "$WORKTREE_REGISTRY_DB" 2>/dev/null || true
@@ -421,6 +441,7 @@ claim_worktree_ownership() {
                 owner_session = '$(_wt_sql_escape "$session_id")',
                 owner_batch = '$(_wt_sql_escape "$batch_id")',
                 task_id = '$(_wt_sql_escape "$task_id")',
+                owner_comm = '$(_wt_sql_escape "$owner_comm")',
                 owner_dead_seen_at = ''
             WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
         " 2>/dev/null || true
@@ -455,6 +476,7 @@ check_worktree_owner() {
 	local wt_path="$1"
 
 	[[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 1
+	_init_registry_db
 	wt_path=$(_wt_registry_lookup_path "$wt_path")
 
 	local owner_info
@@ -479,6 +501,7 @@ worktree_owner_dead_seen_at() {
 	local wt_path="$1"
 
 	[[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 0
+	_init_registry_db
 	wt_path=$(_wt_registry_lookup_path "$wt_path")
 
 	local dead_seen_at
@@ -532,6 +555,63 @@ _wt_owner_dead_cooldown_expired() {
 	return 1
 }
 
+_wt_owner_stale_live_max_hours() {
+	local max_hours="${WORKTREE_OWNER_STALE_LIVE_MAX_HOURS:-168}"
+	if [[ ! "$max_hours" =~ ^[0-9]+$ ]] || [[ "$max_hours" -lt 1 ]]; then
+		max_hours=168
+	fi
+	printf '%s' "$max_hours"
+	return 0
+}
+
+_wt_owner_created_at_expired() {
+	local wt_path="$1"
+	local max_hours
+	max_hours=$(_wt_owner_stale_live_max_hours)
+
+	local expired
+	expired=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
+        SELECT CASE
+            WHEN COALESCE(created_at, '') != ''
+             AND datetime(replace(replace(created_at, 'T', ' '), 'Z', ''), '+${max_hours} hours') <= datetime('now')
+            THEN 1 ELSE 0 END
+        FROM worktree_owners
+        WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
+    " 2>/dev/null || echo "0")
+	[[ "$expired" == "1" ]] && return 0
+	return 1
+}
+
+_wt_owner_comm_for_path() {
+	local wt_path="$1"
+	local owner_comm
+	owner_comm=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
+        SELECT COALESCE(owner_comm, '')
+        FROM worktree_owners
+        WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
+    " 2>/dev/null || echo "")
+	printf '%s' "$owner_comm"
+	return 0
+}
+
+_wt_owner_live_pid_reused_or_untrusted() {
+	local wt_path="$1"
+	local owner_pid="$2"
+	local registered_comm
+	local current_comm
+
+	_wt_owner_created_at_expired "$wt_path" || return 1
+	current_comm=$(_get_proc_comm "$owner_pid")
+	registered_comm=$(_wt_owner_comm_for_path "$wt_path")
+	if [[ -n "$registered_comm" && -n "$current_comm" && "$registered_comm" != "$current_comm" ]]; then
+		return 0
+	fi
+	if [[ -z "$registered_comm" ]] && ! _is_ai_runtime_comm "$current_comm" && ! _is_shell_comm "$current_comm"; then
+		return 0
+	fi
+	return 1
+}
+
 # Check if a worktree is owned by a DIFFERENT process or quarantined stale owner.
 # Arguments:
 #   $1 - worktree path
@@ -541,6 +621,7 @@ is_worktree_owned_by_others() {
 	local wt_path="$1"
 
 	[[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 1
+	_init_registry_db
 	wt_path=$(_wt_registry_lookup_path "$wt_path")
 
 	local owner_pid
@@ -574,6 +655,11 @@ is_worktree_owned_by_others() {
 
 	# Owner recovered or PID was reused while still registered; clear any stale
 	# marker so a later dead observation gets a fresh cooldown window.
+	if _wt_owner_live_pid_reused_or_untrusted "$wt_path" "$owner_pid"; then
+		unregister_worktree "$wt_path"
+		return 1
+	fi
+
 	sqlite3 "$WORKTREE_REGISTRY_DB" "
         UPDATE worktree_owners
         SET owner_dead_seen_at = ''
@@ -652,6 +738,7 @@ _wt_registry_entry_count() {
 #   - Test artifacts in /tmp or /var/folders
 prune_worktree_registry() {
 	[[ ! -f "$WORKTREE_REGISTRY_DB" ]] && return 0
+	_init_registry_db
 
 	local pruned_count=0
 

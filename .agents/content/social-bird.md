@@ -28,6 +28,7 @@ tools:
 - **Auth**: Browser cookies (Safari, Chrome, Firefox) — no API keys needed
 - **Output**: `--json` for machine-readable, `--plain` for stable (no emoji/color)
 - **Media**: `--media <path>` (up to 4 images/GIFs or 1 video) + `--alt <text>`. Formats: jpg, png, webp, gif, mp4, mov.
+- **Prefer first**: `content/social-xurl.md` for official X API access; use Bird when xurl/OAuth is unavailable and browser-cookie access is acceptable.
 
 <!-- AI-CONTEXT-END -->
 

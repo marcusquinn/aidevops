@@ -16,7 +16,7 @@ Read subagents on-demand when trigger words clearly match. Full index: `subagent
 | OCR | OCR, receipt scan, invoice scan, image text, PaddleOCR | `tools/ocr/overview.md`, `tools/ocr/paddleocr.md`, `tools/ocr/glm-ocr.md` |
 | Product (shared) | product, onboarding, monetisation, growth, analytics, UX | `product/validation.md`, `product/onboarding.md`, `product/monetisation.md`, `product/growth.md`, `product/ui-design.md`, `product/analytics.md` |
 | Browser/Mobile | browser, Playwright, screenshot, mobile, app, extension, Swift, SwiftUI, Xcode, iOS, macOS | `tools/browser/browser-automation.md`, `tools/browser/browser-qa.md`, `tools/browser/browser-use.md`, `tools/browser/chromium-debug-use.md`, `tools/browser/skyvern.md`, `tools/mobile/app-dev.md`, `tools/mobile/app-dev-swift.md`, `tools/mobile/swift-xcode-agent-workflow.md`, `tools/mobile/app-store-connect.md`, `tools/browser/extension-dev.md` |
-| Content/Video/Voice | blog, article, video, script, social, newsletter, voice | `content.md`, `tools/video/video-prompt-design.md`, `tools/voice/speech-to-speech.md`, `tools/voice/transcription.md` |
+| Content/Video/Voice | blog, article, video, script, social, X/Twitter, xurl, newsletter, voice | `content.md`, `content/social-xurl.md`, `tools/video/video-prompt-design.md`, `tools/voice/speech-to-speech.md`, `tools/voice/transcription.md` |
 | Design | UI, UX, brand, visual, inspiration, design system | `tools/design/ui-ux-inspiration.md`, `tools/design/ui-ux-catalogue.toon`, `tools/design/brand-identity.md` |
 | SEO | SEO, ranking, keyword, schema, GSC, sitemap, backlinks | `seo/dataforseo.md`, `seo/google-search-console.md` |
 | Paid Ads/CRO | ads, Meta Ads, CRO, landing page, copy, funnel | `marketing-sales/meta-ads.md`, `marketing-sales/ad-creative.md`, `marketing-sales/direct-response-copy.md`, `marketing-sales/cro.md` |
@@ -32,7 +32,9 @@ Read subagents on-demand when trigger words clearly match. Full index: `subagent
 | Vector Search | vector, embeddings, RAG, semantic search, zvec | `tools/database/vector-search.md`, `tools/database/vector-search/zvec.md` |
 | Local Development | localhost, local dev, Traefik, mkcert, preview proxy | `services/hosting/local-hosting.md` |
 | Hosting/Deployment | deploy, hosting, Fly, Coolify, Vercel, Daytona, cloud | `tools/deployment/hosting-comparison.md`, `tools/deployment/fly-io.md`, `tools/deployment/coolify.md`, `tools/deployment/vercel.md`, `tools/deployment/uncloud.md`, `tools/deployment/daytona.md` |
+| Networking/VPN | VPN, mesh, NetBird, Tailscale, Nostr VPN, FIPS, remote compute network | `services/networking/netbird.md`, `services/networking/tailscale.md`, `services/networking/nostr-vpn.md` |
 | Infrastructure | GPU, containers, OrbStack, remote dispatch, servers | `tools/infrastructure/cloud-gpu.md`, `tools/containers/orbstack.md`, `tools/containers/remote-dispatch.md` |
+| Networking/VPN | VPN, mesh, WireGuard, Tailscale, NetBird, Obscura, MPR, multi-party relay, Mullvad, QUIC obfuscation | `services/networking/tailscale.md`, `services/networking/netbird.md`, `services/networking/obscuravpn.md` |
 | Accessibility | accessibility, WCAG, a11y, contrast, screen reader | `tools/accessibility/accessibility-audit.md` |
 | OpenAPI exploration | OpenAPI, API spec, endpoint search, schema discovery | `tools/context/openapi-search.md` |
 | Local models | local model, llama.cpp, GGUF, Hugging Face, offline | `tools/local-models/local-models.md`, `tools/local-models/huggingface.md`, `scripts/local-model-helper.sh` |

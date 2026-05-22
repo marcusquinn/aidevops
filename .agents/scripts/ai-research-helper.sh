@@ -1,26 +1,23 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# ai-research-helper.sh — Lightweight Anthropic API wrapper for AI judgments
-# Provides cheap haiku-tier AI calls (~$0.001 each) for threshold decisions,
-# classification, and short-form reasoning tasks.
+# ai-research-helper.sh — Lightweight multi-provider API wrapper for AI judgments
+# Provides cheap haiku-tier AI calls for threshold decisions, classification,
+# and short-form reasoning tasks.
 #
-# Part of the Intelligence Over Determinism principle: use AI judgment
-# where fixed thresholds would fail on outliers.
+# Part of the Intelligence Over Determinism principle: use AI judgment where
+# fixed thresholds would fail on outliers.
 #
 # Usage:
-#   ai-research-helper.sh --prompt "Is this conversation idle?" [--model haiku|sonnet] [--max-tokens 100]
-#   echo "prompt text" | ai-research-helper.sh --stdin [--model haiku]
+#   ai-research-helper.sh --prompt "Is this conversation idle?" [--provider auto|anthropic|opencode] [--model haiku|sonnet] [--max-tokens 100]
+#   echo "prompt text" | ai-research-helper.sh --stdin [--provider opencode] [--model haiku]
 #
 # Environment:
-#   ANTHROPIC_API_KEY — set directly, or resolved from gopass/credentials.sh
-#   OAuth pool — falls back to ~/.aidevops/oauth-pool.json when the three
-#                static sources above miss. Uses the first active/idle
-#                Anthropic account's access token as x-api-key (Anthropic
-#                accepts the OAuth access token in both `x-api-key` and
-#                `Authorization: Bearer` schemes on /v1/messages).
+#   AIDEVOPS_AI_RESEARCH_PROVIDER — auto (default), anthropic, or opencode
+#   AIDEVOPS_AI_RESEARCH_OPENCODE_MODEL — OpenCode model for default runtime path
+#   ANTHROPIC_API_KEY — env, gopass, credentials.sh, or OAuth pool
 #
-# Exit codes: 0=success (response on stdout), 1=error, 2=no API key
+# Exit codes: 0=success (response on stdout), 1=error, 2=no usable provider credentials
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # shellcheck source=shared-constants.sh
@@ -30,55 +27,70 @@ set -euo pipefail
 
 LOG_PREFIX="AI-RESEARCH"
 
-#######################################
-# Resolve model short name to full model ID
-# Arguments: $1 — short name (haiku, sonnet, opus)
-# Output: full model ID on stdout
-#######################################
 resolve_model_id() {
 	local name="${1:-haiku}"
 	case "$name" in
 	haiku) echo "claude-haiku-4-5-20251001" ;;
 	sonnet) echo "claude-sonnet-4-6" ;;
 	opus) echo "claude-opus-4-6" ;;
-	*) echo "claude-haiku-4-5-20251001" ;; # default to haiku
+	anthropic/*) echo "${name#anthropic/}" ;;
+	*) echo "claude-haiku-4-5-20251001" ;;
 	esac
 	return 0
 }
 
-#######################################
-# Resolve a fresh, non-expired access token from the OAuth pool.
-# Reads ~/.aidevops/oauth-pool.json directly (no shelling to oauth-pool-helper)
-# so this stays callable from detached pulse contexts where the helper might
-# be missing or not on PATH.
-#
-# Honoured fields per pool account:
-#   .access          — access token string (used as x-api-key)
-#   .status          — must be "active" or "idle"
-#   .expires         — millisecond epoch; entries already past expiry are
-#                      skipped (Anthropic returns 401 anyway and refresh
-#                      requires the dedicated helper).
-#   .cooldownUntil   — millisecond epoch; entries still cooling down are skipped.
-#
-# Output: access token on stdout when a usable entry exists.
-# Returns: 0 if a token was emitted, 1 otherwise.
-#######################################
+resolve_opencode_model_id() {
+	local name="${1:-haiku}"
+	case "$name" in
+	haiku | flash | local | health) echo "openai/gpt-5.4-mini" ;;
+	sonnet | pro | opus | coding | eval) echo "openai/gpt-5.5" ;;
+	openai/* | anthropic/* | google/*) echo "$name" ;;
+	*) echo "$name" ;;
+	esac
+	return 0
+}
+
+provider_key_var() {
+	local provider="$1"
+	case "$provider" in
+	anthropic) printf 'ANTHROPIC_API_KEY\n' ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+provider_gopass_secret() {
+	local provider="$1"
+	case "$provider" in
+	anthropic) printf 'aidevops/anthropic-api-key\n' ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
+now_ms() {
+	local value
+	value=$(date +%s%3N 2>/dev/null) || value="0"
+	[[ "$value" =~ ^[0-9]+$ ]] || value="0"
+	if [[ "${#value}" -lt 10 ]]; then
+		value=$(($(date +%s) * 1000))
+	fi
+	printf '%s\n' "$value"
+	return 0
+}
+
 resolve_oauth_pool_token() {
+	local provider="${1:-anthropic}"
 	local pool_file="${HOME}/.aidevops/oauth-pool.json"
 	[[ -f "$pool_file" ]] || return 1
 	command -v jq &>/dev/null || return 1
 
-	local now_ms
-	now_ms=$(date +%s%3N 2>/dev/null) || now_ms="0"
-	# date +%s%3N is GNU-only; fall back to seconds-only when unavailable.
-	[[ "$now_ms" =~ ^[0-9]+$ ]] || now_ms=0
-	if [[ "${#now_ms}" -lt 10 ]]; then
-		now_ms=$(($(date +%s) * 1000))
-	fi
+	local current_ms
+	current_ms=$(now_ms)
 
 	local token
-	token=$(jq -r --argjson now "$now_ms" '
-		(.anthropic // [])
+	token=$(jq -r --arg provider "$provider" --argjson now "$current_ms" '
+		(.[$provider] // [])
 		| map(select(
 			(.access // "") != ""
 			and ((.status // "") == "active" or (.status // "") == "idle")
@@ -88,53 +100,45 @@ resolve_oauth_pool_token() {
 		| .[0].access // ""
 	' "$pool_file" 2>/dev/null) || return 1
 
-	if [[ -z "$token" ]]; then
-		return 1
-	fi
+	[[ -n "$token" ]] || return 1
 	printf '%s\n' "$token"
 	return 0
 }
 
-#######################################
-# Resolve Anthropic API key from available sources
-# Priority: env var > gopass > credentials.sh > OAuth pool
-# Output: API key on stdout
-# Returns: 0 if found, 1 if not
-#######################################
-resolve_api_key() {
-	# 1. Environment variable
-	if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-		echo "$ANTHROPIC_API_KEY"
+resolve_provider_credential() {
+	local provider="${1:-anthropic}"
+	local key_var
+	key_var=$(provider_key_var "$provider") || return 1
+
+	if [[ -n "${!key_var:-}" ]]; then
+		printf '%s\n' "${!key_var}"
 		return 0
 	fi
 
-	# 2. gopass
 	if command -v gopass &>/dev/null; then
-		local key
-		key=$(gopass show -o "aidevops/anthropic-api-key" 2>/dev/null) || true
-		if [[ -n "$key" ]]; then
-			echo "$key"
-			return 0
+		local secret_path key
+		secret_path=$(provider_gopass_secret "$provider") || secret_path=""
+		if [[ -n "$secret_path" ]]; then
+			key=$(gopass show -o "$secret_path" 2>/dev/null) || true
+			if [[ -n "$key" ]]; then
+				printf '%s\n' "$key"
+				return 0
+			fi
 		fi
 	fi
 
-	# 3. credentials.sh
 	local creds_file="${HOME}/.config/aidevops/credentials.sh"
 	if [[ -f "$creds_file" ]]; then
 		local key
-		key=$(grep -E '^ANTHROPIC_API_KEY=' "$creds_file" 2>/dev/null | cut -d= -f2- | tr -d '"'"'" || true)
+		key=$(grep -E "^${key_var}=" "$creds_file" 2>/dev/null | cut -d= -f2- | tr -d "'\"" || true)
 		if [[ -n "$key" ]]; then
-			echo "$key"
+			printf '%s\n' "$key"
 			return 0
 		fi
 	fi
 
-	# 4. OAuth pool (managed aidevops Anthropic accounts).
-	# GH#23594: detached pulse contexts often have no static key but a
-	# healthy OAuth pool — fall back to it so fix-the-fixer-detector and
-	# other AI-judgement callers keep working.
 	local oauth_token
-	if oauth_token=$(resolve_oauth_pool_token); then
+	if oauth_token=$(resolve_oauth_pool_token "$provider"); then
 		printf '%s\n' "$oauth_token"
 		return 0
 	fi
@@ -142,104 +146,236 @@ resolve_api_key() {
 	return 1
 }
 
-#######################################
-# Call Anthropic Messages API
-# Arguments:
-#   $1 — prompt text
-#   $2 — model short name (default: haiku)
-#   $3 — max tokens (default: 150)
-# Output: response text on stdout
-# Returns: 0 on success, 1 on failure
-#######################################
+# Backwards-compatible Anthropic resolver used by existing sourced tests/callers.
+resolve_api_key() {
+	local provider="${1:-anthropic}"
+	resolve_provider_credential "$provider"
+	return $?
+}
+
+json_payload() {
+	local provider="$1"
+	if [[ "$provider" != "anthropic" ]]; then
+		return 1
+	fi
+	local prompt="$2"
+	local model_id="$3"
+	local max_tokens="$4"
+	PROVIDER="$provider" PROMPT_TEXT="$prompt" MODEL_ID="$model_id" MAX_TOKENS="$max_tokens" python3 - <<'PY'
+import json, os
+provider = os.environ["PROVIDER"]
+prompt = os.environ["PROMPT_TEXT"]
+model = os.environ["MODEL_ID"]
+max_tokens = int(os.environ["MAX_TOKENS"])
+print(json.dumps({
+    "model": model,
+    "max_tokens": max_tokens,
+    "messages": [{"role": "user", "content": prompt}],
+}))
+PY
+	return $?
+}
+
+extract_anthropic_text() {
+	local response="$1"
+	if command -v jq &>/dev/null; then
+		printf '%s' "$response" | jq -r '.content[0].text // empty' 2>/dev/null
+		return $?
+	fi
+	printf '%s' "$response" | python3 -c 'import sys,json; data=json.load(sys.stdin); print(data["content"][0]["text"])' 2>/dev/null
+	return $?
+}
+
+extract_error_message() {
+	local response="$1"
+	if command -v jq &>/dev/null; then
+		printf '%s' "$response" | jq -r '.error.message // empty' 2>/dev/null || true
+	else
+		printf ''
+	fi
+	return 0
+}
+
+strip_ansi() {
+	python3 -c 'import re,sys; print(re.sub(r"\x1b\[[0-9;?]*[ -/]*[@-~]", "", sys.stdin.read()), end="")'
+	return $?
+}
+
+extract_opencode_text() {
+	local raw_output="$1"
+	printf '%s' "$raw_output" | strip_ansi | python3 -c '
+import json, sys
+lines = [line.strip() for line in sys.stdin.read().splitlines()]
+json_texts = []
+filtered = []
+text_key = "text"
+for line in lines:
+    if not line:
+        continue
+    try:
+        event = json.loads(line)
+        part = event.get("part") or {}
+        if part.get("type") == text_key and part.get(text_key):
+            json_texts.append(str(part[text_key]).strip())
+        continue
+    except Exception:
+        pass
+    if line.startswith("> "):
+        continue
+    if line.startswith("!") and "agent" in line and "Falling back" in line:
+        continue
+    filtered.append(line)
+if json_texts:
+    print(json_texts[-1])
+elif filtered:
+    print(filtered[-1])
+'
+	return $?
+}
+
 call_anthropic() {
 	local prompt="$1"
 	local model_name="${2:-haiku}"
 	local max_tokens="${3:-150}"
 
 	local api_key
-	api_key=$(resolve_api_key) || {
+	api_key=$(resolve_provider_credential anthropic) || {
 		log_error "No Anthropic API key found (env, gopass, credentials.sh, or OAuth pool)"
 		return 2
 	}
 
-	local model_id
+	local model_id payload response text
 	model_id=$(resolve_model_id "$model_name")
-
-	# Escape prompt for JSON — use python3 if available, else basic escaping
-	local escaped_prompt
-	if command -v python3 &>/dev/null; then
-		escaped_prompt=$(printf '%s' "$prompt" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))' 2>/dev/null)
-	else
-		# Basic JSON escaping
-		escaped_prompt="\"$(printf '%s' "$prompt" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\n/\\n/g; s/\t/\\t/g')\""
-	fi
-
-	local response
+	payload=$(json_payload anthropic "$prompt" "$model_id" "$max_tokens") || return 1
 	response=$(curl -sS --max-time 30 \
 		-H "x-api-key: ${api_key}" \
 		-H "anthropic-version: 2023-06-01" \
 		-H "${CONTENT_TYPE_JSON}" \
-		-d "{
-			\"model\": \"${model_id}\",
-			\"max_tokens\": ${max_tokens},
-			\"messages\": [{
-				\"role\": \"user\",
-				\"content\": ${escaped_prompt}
-			}]
-		}" \
+		-d "$payload" \
 		"https://api.anthropic.com/v1/messages" 2>/dev/null) || {
-		log_error "API call failed"
+		log_error "Anthropic API call failed"
 		return 1
 	}
 
-	# Extract text from response
-	local text
-	if command -v jq &>/dev/null; then
-		text=$(echo "$response" | jq -r '.content[0].text // empty' 2>/dev/null)
-	elif command -v python3 &>/dev/null; then
-		text=$(echo "$response" | python3 -c 'import sys,json; data=json.load(sys.stdin); print(data["content"][0]["text"])' 2>/dev/null)
-	else
-		log_error "Neither jq nor python3 available for JSON parsing"
-		return 1
-	fi
-
+	text=$(extract_anthropic_text "$response") || text=""
 	if [[ -z "$text" ]]; then
-		# Check for error in response
 		local error_msg
-		error_msg=$(echo "$response" | jq -r '.error.message // empty' 2>/dev/null || echo "")
-		if [[ -n "$error_msg" ]]; then
-			log_error "API error: $error_msg"
-		else
-			log_error "Empty response from API"
-		fi
+		error_msg=$(extract_error_message "$response")
+		[[ -n "$error_msg" ]] && log_error "Anthropic API error: $error_msg" || log_error "Empty response from Anthropic API"
 		return 1
 	fi
 
-	echo "$text"
+	printf '%s\n' "$text"
 	return 0
 }
 
-#######################################
-# Main entry point
-#######################################
+call_opencode() {
+	local prompt="$1"
+	local model_name="${2:-haiku}"
+	local max_tokens="${3:-150}"
+	: "$max_tokens"
+
+	if ! command -v opencode &>/dev/null; then
+		log_error "OpenCode CLI not found for AI research runtime provider"
+		return 2
+	fi
+
+	local model_id raw text timeout_cmd wrapped_prompt
+	local run_dir="${AIDEVOPS_AI_RESEARCH_OPENCODE_DIR:-/tmp/opencode}"
+	model_id="${AIDEVOPS_AI_RESEARCH_OPENCODE_MODEL:-}"
+	if [[ -z "$model_id" ]]; then
+		model_id=$(resolve_opencode_model_id "$model_name")
+	fi
+	timeout_cmd=""
+	if command -v timeout &>/dev/null; then
+		timeout_cmd="timeout 90"
+	elif command -v gtimeout &>/dev/null; then
+		timeout_cmd="gtimeout 90"
+	fi
+	mkdir -p "$run_dir" 2>/dev/null || run_dir="/tmp"
+	wrapped_prompt="You are a non-interactive AI research helper. Do not use tools. Do not ask follow-up questions. Do not greet. Return only the requested answer text, with no preamble or markdown. Task:\n${prompt}"
+
+	if [[ -n "$timeout_cmd" ]]; then
+		raw=$(cd "$run_dir" && $timeout_cmd opencode run --pure --format json -m "$model_id" "$wrapped_prompt" 2>&1) || {
+			log_error "OpenCode AI research call failed"
+			return 1
+		}
+	else
+		raw=$(cd "$run_dir" && opencode run --pure --format json -m "$model_id" "$wrapped_prompt" 2>&1) || {
+			log_error "OpenCode AI research call failed"
+			return 1
+		}
+	fi
+
+	text=$(extract_opencode_text "$raw") || text=""
+	if [[ -z "$text" ]]; then
+		log_error "Empty response from OpenCode AI research provider"
+		return 1
+	fi
+
+	printf '%s\n' "$text"
+	return 0
+}
+
+call_ai() {
+	local provider="$1"
+	local prompt="$2"
+	local model="$3"
+	local max_tokens="$4"
+
+	case "$provider" in
+	anthropic)
+		call_anthropic "$prompt" "$model" "$max_tokens"
+		return $?
+		;;
+	opencode | openai)
+		call_opencode "$prompt" "$model" "$max_tokens"
+		return $?
+		;;
+	auto)
+		if command -v opencode &>/dev/null; then
+			call_opencode "$prompt" "$model" "$max_tokens"
+			return $?
+		fi
+		if resolve_provider_credential anthropic >/dev/null 2>&1; then
+			call_anthropic "$prompt" "$model" "$max_tokens"
+			return $?
+		fi
+		log_error "No AI research provider available (Anthropic credentials or OpenCode runtime)"
+		return 2
+		;;
+	*)
+		log_error "Unsupported provider: $provider"
+		return 1
+		;;
+	esac
+}
+
 main() {
 	local prompt=""
 	local model="haiku"
 	local max_tokens="150"
+	local provider="${AIDEVOPS_AI_RESEARCH_PROVIDER:-auto}"
 	local use_stdin=false
 
 	while [[ $# -gt 0 ]]; do
-		case "$1" in
+		local arg="$1"
+		local value="${2:-}"
+		case "$arg" in
 		--prompt)
-			prompt="$2"
+			prompt="$value"
 			shift 2
 			;;
 		--model)
-			model="$2"
+			model="$value"
 			shift 2
 			;;
 		--max-tokens)
-			max_tokens="$2"
+			max_tokens="$value"
+			shift 2
+			;;
+		--provider)
+			provider="$value"
 			shift 2
 			;;
 		--stdin)
@@ -247,11 +383,11 @@ main() {
 			shift
 			;;
 		--help | -h)
-			echo "Usage: ai-research-helper.sh --prompt \"text\" [--model haiku|sonnet|opus] [--max-tokens 150]"
-			echo "       echo \"text\" | ai-research-helper.sh --stdin [--model haiku]"
+			echo "Usage: ai-research-helper.sh --prompt \"PROMPT\" [--provider auto|anthropic|opencode] [--model haiku|sonnet|opus] [--max-tokens 150]"
+			echo "       printf '%s' \"PROMPT\" | ai-research-helper.sh --stdin [--provider opencode] [--model haiku]"
 			echo ""
-			echo "Lightweight Anthropic API wrapper for AI threshold judgments."
-			echo "Default model: haiku (~\$0.001/call). Use for classification and short reasoning."
+			echo "Lightweight multi-provider API wrapper for AI threshold judgments."
+			echo "Default provider: auto (OpenCode runtime first, then Anthropic direct API)."
 			return 0
 			;;
 		*)
@@ -265,18 +401,14 @@ main() {
 	fi
 
 	if [[ -z "$prompt" ]]; then
-		log_error "No prompt provided. Use --prompt \"text\" or --stdin"
+		log_error "No prompt provided. Use --prompt \"PROMPT\" or --stdin"
 		return 1
 	fi
 
-	call_anthropic "$prompt" "$model" "$max_tokens"
+	call_ai "$provider" "$prompt" "$model" "$max_tokens"
 	return $?
 }
 
-# Run main only when invoked as a script — allows tests and other helpers
-# to source this file and call resolve_api_key / resolve_oauth_pool_token
-# directly. Matches the pattern used by pulse-fix-the-fixer-detector.sh and
-# other helpers in this repo.
 if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
 	main "$@"
 fi

@@ -131,6 +131,25 @@ test_subagent_index_includes_capability_registry() {
 	return 0
 }
 
+test_sync_resolves_relative_agents_dir() {
+	local output=""
+	local status=0
+	output=$(cd "$TEST_HOME" && AIDEVOPS_AGENTS_DIR=".aidevops/agents" HOME="$TEST_HOME" "$TEST_HOME/.aidevops/agents/scripts/agent-sources-helper.sh" sync 2>&1)
+	status=$?
+	if [[ "$status" -ne 0 ]]; then
+		print_result "sync resolves relative agents dir" 1 "$output"
+		return 0
+	fi
+
+	local registry="$TEST_HOME/.aidevops/agents/agent-source-capabilities.toon"
+	if grep -q '^<!--TOON:agent_source_capabilities\[1\]' "$registry"; then
+		print_result "sync resolves relative agents dir" 0
+	else
+		print_result "sync resolves relative agents dir" 1 "capability registry missing from $registry"
+	fi
+	return 0
+}
+
 test_check_validates_capability_cardinality() {
 	local output=""
 	local status=0
@@ -150,7 +169,7 @@ test_sync_without_node_fails_open() {
 
 	local cmd=""
 	local cmd_path=""
-	for cmd in bash cat dirname find grep ln mkdir readlink rm rsync sed; do
+	for cmd in bash cat cp dirname find grep jq ln mkdir readlink rm rsync sed; do
 		cmd_path=$(command -v "$cmd")
 		if [[ -n "$cmd_path" ]]; then
 			ln -s "$cmd_path" "$path_without_node/$cmd"
@@ -176,6 +195,7 @@ main() {
 	setup
 	test_sync_generates_capability_registry
 	test_subagent_index_includes_capability_registry
+	test_sync_resolves_relative_agents_dir
 	test_check_validates_capability_cardinality
 	test_sync_without_node_fails_open
 

@@ -302,7 +302,10 @@ _dlw_comment_bloat_requires_clean_room() {
 	local repo_slug="$2"
 	local precomputed_metrics="${3:-}"
 
-	local comments ops zero chars
+	local comments=""
+	local ops=""
+	local zero=""
+	local chars=""
 	if [[ -z "$precomputed_metrics" ]]; then
 		precomputed_metrics=$(_dlw_comment_bloat_metrics "$issue_number" "$repo_slug")
 	fi
@@ -421,7 +424,10 @@ _dlw_prepare_prompt_for_launch() {
 	local original_prompt="$4"
 	local precomputed_comment_metrics="${5:-}"
 	local comment_metrics=""
-	local comments ops metrics_zero_count chars
+	local comments=""
+	local ops=""
+	local metrics_zero_count=""
+	local chars=""
 	local precomputed_zero_count=""
 
 	comment_metrics="$precomputed_comment_metrics"
@@ -459,7 +465,10 @@ _dlw_hold_repeated_zero_output() {
 	local repo_slug="$2"
 	local precomputed_comment_metrics="${3:-}"
 	local comment_metrics=""
-	local comments ops metrics_zero_count chars
+	local comments=""
+	local ops=""
+	local metrics_zero_count=""
+	local chars=""
 	local precomputed_zero_count=""
 
 	comment_metrics="$precomputed_comment_metrics"
@@ -1244,16 +1253,17 @@ _dlw_spawn_lifecycle_observer() {
 #
 # Arguments:
 #   $1  - issue_number
-#   $2  - dispatch_title
-#   $3  - issue_title
-#   $4  - session_key
-#   $5  - worker_log (path from _dlw_setup_worker_log)
-#   $6  - prompt
-#   $7  - repo_path
-#   $8  - dispatch_model_tier (haiku|sonnet|opus)
-#   $9  - selected_model (may be empty for auto-select)
-#   $10 - worker_worktree_path (may be empty)
-#   $11 - worker_worktree_branch (may be empty)
+#   $2  - repo_slug (owner/repo)
+#   $3  - dispatch_title
+#   $4  - issue_title
+#   $5  - session_key
+#   $6  - worker_log (path from _dlw_setup_worker_log)
+#   $7  - prompt
+#   $8  - repo_path
+#   $9  - dispatch_model_tier (haiku|sonnet|opus)
+#   $10 - selected_model (may be empty for auto-select)
+#   $11 - worker_worktree_path (may be empty)
+#   $12 - worker_worktree_branch (may be empty)
 # Stdout: worker PID
 #######################################
 _dlw_build_worker_title() {
@@ -1291,16 +1301,17 @@ _dlw_build_worker_title() {
 #######################################
 _dlw_nohup_launch() {
 	local issue_number="$1"
-	local dispatch_title="$2"
-	local issue_title="$3"
-	local session_key="$4"
-	local worker_log="$5"
-	local prompt="$6"
-	local repo_path="$7"
-	local dispatch_model_tier="$8"
-	local selected_model="$9"
-	local worker_worktree_path="${10}"
-	local worker_worktree_branch="${11}"
+	local repo_slug="$2"
+	local dispatch_title="$3"
+	local issue_title="$4"
+	local session_key="$5"
+	local worker_log="$6"
+	local prompt="$7"
+	local repo_path="$8"
+	local dispatch_model_tier="$9"
+	local selected_model="${10}"
+	local worker_worktree_path="${11}"
+	local worker_worktree_branch="${12}"
 
 	# Use issue title as session title for searchable history, but keep the
 	# issue marker at the beginning so Tabby tabs and OpenCode session search
@@ -1323,6 +1334,8 @@ _dlw_nohup_launch() {
 		AIDEVOPS_SESSION_ORIGIN=worker
 		AIDEVOPS_HEADLESS=true
 		WORKER_ISSUE_NUMBER="$issue_number"
+		WORKER_REPO_SLUG="$repo_slug"
+		WORKER_GITHUB_LOGIN="$self_login"
 		AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1
 	)
 	if _dlw_min_worker_floor_active; then
@@ -1622,6 +1635,25 @@ _dlw_canary_preflight() {
 	return 1
 }
 
+_dlw_blocked_by_hard_stop() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_meta_json="$3"
+
+	if [[ "$(type -t is_blocked_by_unresolved 2>/dev/null)" != "function" ]]; then
+		return 1
+	fi
+
+	local issue_body=""
+	issue_body=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null) || issue_body=""
+	if is_blocked_by_unresolved "$issue_body" "$repo_slug" "$issue_number"; then
+		echo "[dispatch_with_dedup] Hard-stop before worker bootstrap for #${issue_number} in ${repo_slug}: unresolved blocked-by dependency (GH#23932)" >>"$LOGFILE"
+		return 0
+	fi
+
+	return 1
+}
+
 #######################################
 # Thin orchestrator for worker launch. Delegates each distinct concern
 # (assignment + labels, log files, model resolution, issue lock, repo pull,
@@ -1665,6 +1697,10 @@ _dispatch_launch_worker() {
 	local dispatch_tier="$_DLW_DISPATCH_TIER"
 	local dispatch_model_tier="$_DLW_DISPATCH_MODEL_TIER"
 	local selected_model="$_DLW_SELECTED_MODEL"
+
+	if _dlw_blocked_by_hard_stop "$issue_number" "$repo_slug" "$issue_meta_json"; then
+		return 2
+	fi
 
 	_ds_t0=$(_ds_now_ns)
 	if ! _dlw_canary_preflight "$issue_number" "$repo_slug" "$worker_log" \
@@ -1723,7 +1759,7 @@ _dispatch_launch_worker() {
 	local worker_pid
 	local launch_prompt=""
 	launch_prompt=$(_dlw_prepare_prompt_for_launch "$issue_number" "$repo_slug" "$issue_title" "$prompt" "$zero_output_comment_metrics")
-	worker_pid=$(_dlw_nohup_launch "$issue_number" "$dispatch_title" "$issue_title" \
+	worker_pid=$(_dlw_nohup_launch "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" \
 		"$session_key" "$worker_log" "$launch_prompt" "$repo_path" \
 		"$dispatch_model_tier" "$selected_model" \
 		"$worker_worktree_path" "$worker_worktree_branch")

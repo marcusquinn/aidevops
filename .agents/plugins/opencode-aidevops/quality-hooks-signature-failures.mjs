@@ -17,6 +17,7 @@
 export const FAIL_REASON = {
   FILE_NOT_FOUND: "body-file not found (may be created later in this same bash call)",
   FILE_UNREADABLE: "body-file exists but cannot be read",
+  BODY_FILE_OUTSIDE_ALLOWED_ROOT: "body-file resolves outside allowed roots",
   HELPER_MISSING: "gh-signature-helper.sh not found",
   HELPER_FAILED: "gh-signature-helper.sh invocation failed",
   UNPARSEABLE_BODY: "body uses heredoc, process substitution, or command substitution",

@@ -51,7 +51,7 @@ services/hosting/cloudflare-platform-skill/sandbox-patterns/,services/hosting/cl
 services/hosting/cloudflare-platform-skill/,services/hosting/cloudflare-platform-skill subagents,sandbox-patterns|smart-placement-gotchas|smart-placement|smart-placement-patterns|snippets-gotchas|snippets|snippets-patterns|spectrum-gotchas|spectrum|spectrum-patterns|static-assets-gotchas|static-assets|static-assets-patterns|stream-gotchas|stream|stream-patterns|tail-workers|terraform-gotchas|terraform|terraform-patterns|tunnel-gotchas|tunnel|tunnel-patterns|turn|turnstile-gotchas|turnstile|turnstile-patterns|vectorize-gotchas|vectorize|vectorize-patterns|waf-gotchas|waf|waf-patterns|web-analytics-gotchas|web-analytics|web-analytics-patterns|workerd-gotchas|workerd|workerd-patterns|workers-ai|workers-for-platforms-gotchas|workers-for-platforms|workers-for-platforms-patterns|workers-gotchas|workers|workers-patterns|workers-playground-gotchas|workers-playground|workers-playground-patterns|workers-vpc|workflows-gotchas|workflows|workflows-patterns|wrangler-gotchas|wrangler|wrangler-patterns|zaraz
 services/hosting/,services/hosting subagents,cloudron|dns-providers|domain-purchasing|hetzner|hostinger|local-hosting|localhost|spaceship|webhosting
 services/monitoring/,services/monitoring subagents,langwatch|sentry|socket
-services/networking/,services/networking subagents,netbird|tailscale
+services/networking/,services/networking subagents,netbird|obscuravpn|tailscale
 services/outreach/,services/outreach subagents,cold-outreach|infraforge|instantly|leadsforge|manyreach|smartlead|warmforge
 services/payments/,services/payments subagents,procurement|revenuecat|stripe|superwall
 tools/accessibility/,tools/accessibility subagents,accessibility-audit|accessibility

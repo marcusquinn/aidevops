@@ -64,6 +64,10 @@ if [[ "$cmd" == "is-assigned" ]]; then
 		printf '%s\n' 'STALE_RECOVERED: issue #2905 in awardsapp/awardsapp - unassigned runner (dispatch claim 900s old, last activity 900s old (threshold=600s, interactive=false))'
 		exit 1
 		;;
+	blocked_by)
+		printf '%s\n' 'STALE_BLOCKED_BY_DEPENDENCY: issue #2905 in awardsapp/awardsapp - unassigned runner but kept status:blocked due to unresolved blocked-by (no_work)'
+		exit 1
+		;;
 	*)
 		printf '%s\n' 'ASSIGNED: issue #2905 in awardsapp/awardsapp is assigned to runner'
 		exit 0
@@ -193,9 +197,32 @@ test_stale_recovery_with_dispatch_claim_records_fast_fail() {
 	return 0
 }
 
+test_stale_recovery_blocked_by_dependency_blocks_redispatch() {
+	export TEST_STALE_MODE="blocked_by"
+	reset_observations
+	local rc=0
+	_dedup_layer6_assignee_and_stale "2905" "awardsapp/awardsapp" "runner" || rc=$?
+
+	if [[ "$rc" -ne 0 ]]; then
+		fail "blocked-by stale recovery blocks redispatch" "expected rc=0, got rc=${rc}"
+		return 0
+	fi
+	if [[ "$FAST_FAIL_CALLS" -ne 0 ]]; then
+		fail "blocked-by stale recovery skips fast-fail" "fast_fail_record called ${FAST_FAIL_CALLS} time(s): ${LAST_FAST_FAIL}"
+		return 0
+	fi
+	if ! grep -q 'unresolved blocked-by dependency' "$LOGFILE" 2>/dev/null; then
+		fail "blocked-by stale recovery logs redispatch block" "log: $(tr '\n' ' ' <"$LOGFILE")"
+		return 0
+	fi
+	pass "blocked-by stale recovery blocks redispatch"
+	return 0
+}
+
 test_stale_recovery_without_claim_skips_fast_fail
 test_prelaunch_canary_stale_recovery_skips_fast_fail
 test_stale_recovery_with_dispatch_claim_records_fast_fail
+test_stale_recovery_blocked_by_dependency_blocks_redispatch
 
 printf '\nTests run: %s failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]] || exit 1

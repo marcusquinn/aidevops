@@ -88,6 +88,10 @@ if [[ "$(_dlw_zero_output_evidence_count 123 owner/repo "" 7)" != "7" ]]; then
 	fail "precomputed zero-output evidence count was not returned directly"
 fi
 
+if ! grep -Fq "WORKER_GITHUB_LOGIN=\"\$self_login\"" "${SCRIPTS_DIR}/pulse-dispatch-worker-launch.sh"; then
+	fail "pulse worker launch does not forward dispatching GitHub login"
+fi
+
 mkdir -p "${TEST_TMP}/bin" || fail "failed to create systemctl stub dir"
 cat >"${TEST_TMP}/bin/systemctl" <<'EOF'
 #!/usr/bin/env bash
@@ -104,9 +108,23 @@ if [[ "$resolved_pid" != "4242" ]]; then
 	fail "systemd PID resolver skipped final unterminated property"
 fi
 
+is_blocked_by_unresolved() {
+	local issue_body="$1"
+	local repo_slug="$2"
+	local issue_number="$3"
+	[[ "$issue_body" == "blocked-body" && "$repo_slug" == "owner/repo" && "$issue_number" == "123" ]] || return 1
+	return 0
+}
+
+if ! LOGFILE="${TEST_TMP}/pulse.log" _dlw_blocked_by_hard_stop "123" "owner/repo" '{"body":"blocked-body"}'; then
+	fail "worker launch hard-stop did not block unresolved blocked-by dependency"
+fi
+
 printf 'PASS: stale non-empty node_modules restore lock is reclaimed\n'
 printf 'PASS: root node_modules payload is skipped by default\n'
 printf 'PASS: root node_modules .bin tooling is linked by default\n'
 printf 'PASS: precomputed zero-output evidence count skips redundant lookups\n'
+printf 'PASS: pulse worker launch forwards dispatching GitHub login\n'
 printf 'PASS: systemd PID resolver handles final unterminated property\n'
+printf 'PASS: worker launch hard-stops unresolved blocked-by dependencies\n'
 exit 0

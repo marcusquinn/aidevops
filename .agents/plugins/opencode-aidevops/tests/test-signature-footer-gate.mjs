@@ -15,8 +15,8 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, readFileSync, chmodSync } from "fs";
-import { tmpdir } from "os";
+import { mkdtempSync, writeFileSync, readFileSync, chmodSync, symlinkSync, rmSync } from "fs";
+import { tmpdir, homedir } from "os";
 import { join } from "path";
 
 import {
@@ -313,6 +313,61 @@ describe("tryRepairSignature", () => {
     assert.equal(before, after, "signed file should not be modified");
   });
 
+  test("no-ops on signed command-substitution --body without reparsing", () => {
+    const { log } = makeLogger();
+    const cmd = 'gh issue comment 1 --body "$(make-body && gh-signature-helper.sh footer)"';
+    const out = tryRepairSignature(cmd, "/nonexistent/aidevops-helper-path", log);
+    assert.deepEqual(out, { status: "ok", cmd });
+  });
+
+  test("no-ops on signed process-substitution --body-file without reparsing", () => {
+    const { log } = makeLogger();
+    const cmd = 'gh issue comment 1 --body-file <(make-body && gh-signature-helper.sh footer)';
+    const out = tryRepairSignature(cmd, "/nonexistent/aidevops-helper-path", log);
+    assert.deepEqual(out, { status: "ok", cmd });
+  });
+
+  test("no-ops on machine-protocol commands without requiring helper", () => {
+    const { log } = makeLogger();
+    const cmd = 'gh issue comment 1 --body "<!-- MERGE_SUMMARY -->\\nsummary"';
+    const out = tryRepairSignature(cmd, "/nonexistent/aidevops-helper-path", log);
+    assert.deepEqual(out, { status: "ok", cmd });
+  });
+
+  test("no-ops on machine-protocol --body-file content", () => {
+    const dir = mkdtempSync(join(tmpdir(), "t2685-machine-file-"));
+    const bodyFile = join(dir, "machine-protocol.md");
+    writeFileSync(bodyFile, "<!-- MERGE_SUMMARY -->\nsummary\n");
+    const before = readFileSync(bodyFile, "utf-8");
+    const { log } = makeLogger();
+    const cmd = `gh issue comment 1 --repo o/r --body-file ${bodyFile}`;
+    const out = tryRepairSignature(cmd, dir, log);
+    const after = readFileSync(bodyFile, "utf-8");
+    assert.deepEqual(out, { status: "ok", cmd });
+    assert.equal(after, before, "machine-protocol file should not be signed");
+  });
+
+  test("refuses to repair --body-file symlinks outside allowed directories", () => {
+    const dir = setupStubHelper();
+    const outsideDir = mkdtempSync(join(homedir(), ".t2685-outside-"));
+    const outsideBodyFile = join(outsideDir, "body.md");
+    const bodyFile = join(dir, "linked-body.md");
+    try {
+      writeFileSync(outsideBodyFile, "unsigned external content\n");
+      symlinkSync(outsideBodyFile, bodyFile);
+      const { log } = makeLogger();
+      const cmd = `gh issue comment 1 --repo o/r --body-file ${bodyFile}`;
+      const out = tryRepairSignature(cmd, dir, log);
+      const after = readFileSync(outsideBodyFile, "utf-8");
+      assert.equal(out.status, "fail");
+      assert.equal(out.reason, FAIL_REASON.BODY_FILE_OUTSIDE_ALLOWED_ROOT);
+      assert.match(out.detail, /body\.md/);
+      assert.equal(after, "unsigned external content\n", "outside target must not be modified");
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+
   test("refuses to repair heredoc-sourced body (UNPARSEABLE_BODY)", () => {
     const dir = setupStubHelper();
     const { log } = makeLogger();
@@ -426,10 +481,11 @@ describe("checkSignatureFooterGate", () => {
 // ---------------------------------------------------------------------------
 
 describe("FAIL_REASON enum (t2893)", () => {
-  test("exposes the seven canonical failure reasons", () => {
+  test("exposes the canonical failure reasons", () => {
     const expected = [
       "FILE_NOT_FOUND",
       "FILE_UNREADABLE",
+      "BODY_FILE_OUTSIDE_ALLOWED_ROOT",
       "HELPER_MISSING",
       "HELPER_FAILED",
       "UNPARSEABLE_BODY",

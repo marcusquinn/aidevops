@@ -642,17 +642,17 @@ _rf_issue_in_supersession_scope() {
 
 	labels_lc=$(printf '%s' "$labels" | tr '[:upper:]' '[:lower:]')
 	case ",${labels_lc}," in
-	*",source:review-feedback,"* | *",quality-debt,"*)
+	*",source:review-feedback,"* | *",quality-debt,"* | *",review-followup,"* | *",source:review-scanner,"*)
 		return 0
 		;;
 	esac
 
-	if printf '%s' "$issue_body" | grep -qF '<!-- source:review-feedback -->'; then
+	if printf '%s' "$issue_body" | grep -Eq '<!-- (source:review-feedback|source:review-scanner|review-followup:PR)'; then
 		return 0
 	fi
 
 	title_lc=$(printf '%s' "$title" | tr '[:upper:]' '[:lower:]')
-	if printf '%s' "$title_lc" | grep -Eq '(^|[^[:alnum:]-])(quality-debt|review-feedback|review feedback)([^[:alnum:]-]|$)'; then
+	if printf '%s' "$title_lc" | grep -Eq '(^|[^[:alnum:]-])(quality-debt|review-feedback|review feedback|review-followup|review followup)([^[:alnum:]-]|$)'; then
 		return 0
 	fi
 
@@ -661,21 +661,49 @@ _rf_issue_in_supersession_scope() {
 
 _rf_search_merged_pr_numbers() {
 	local slug="$1"
-	local created_at="$2"
-	local created_date="${created_at%%T*}"
+	local search_after="$2"
+	local search_date="${search_after%%T*}"
 	local limit="${AIDEVOPS_REVIEW_FEEDBACK_SUPERSESSION_LIMIT:-25}"
 
-	if [[ -z "$created_date" || "$created_date" == "$created_at" ]]; then
+	if [[ -z "$search_date" || "$search_date" == "$search_after" ]]; then
 		return 1
 	fi
 
 	gh api -X GET search/issues \
-		-f q="repo:${slug} is:pr is:merged merged:>=${created_date}" \
+		-f q="repo:${slug} is:pr is:merged merged:>=${search_date}" \
 		-f sort=updated \
 		-f order=desc \
 		-f per_page="$limit" \
 		--jq '.items[]?.number' 2>/dev/null || true
 	return 0
+}
+
+_rf_extract_source_pr_number() {
+	local issue_body="$1"
+	local issue_title="$2"
+	local source_pr=""
+
+	source_pr=$(printf '%s\n%s\n' "$issue_body" "$issue_title" | sed -En '/\*\*Source PR\*\*:/ { s/.*\*\*Source PR\*\*:[[:space:]]*#?([0-9]+).*/\1/; p; q; }; /Review followup:[[:space:]]*PR/ { s/.*Review followup:[[:space:]]*PR[[:space:]]*#?([0-9]+).*/\1/; p; q; }')
+	if [[ "$source_pr" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$source_pr"
+		return 0
+	fi
+
+	return 1
+}
+
+_rf_get_source_pr_merged_at() {
+	local slug="$1"
+	local source_pr="$2"
+	local merged_at=""
+
+	merged_at=$(gh api "repos/${slug}/pulls/${source_pr}" --jq '.merged_at // ""' 2>/dev/null) || return 1
+	if [[ -n "$merged_at" && "$merged_at" == *T* ]]; then
+		printf '%s\n' "$merged_at"
+		return 0
+	fi
+
+	return 1
 }
 
 _rf_get_pr_files() {
@@ -797,6 +825,7 @@ _rf_post_ambiguous_comment() {
 	local issue_paths="$3"
 	local keywords="$4"
 	local ambiguous_evidence="$5"
+	local search_context="$6"
 	local marker='<!-- review-feedback-supersession-ambiguous -->'
 
 	if _rf_comment_marker_exists "$issue_number" "$slug" "$marker"; then
@@ -815,7 +844,7 @@ _rf_post_ambiguous_comment() {
 ${marker}
 ## Possible review-feedback supersession
 
-Pre-dispatch found merged PRs after this issue was created that touched cited file paths, but the diff/title/body keyword evidence was not strong enough to skip worker dispatch.
+Pre-dispatch found merged PRs in the ${search_context} that touched cited file paths, but the diff/title/body keyword evidence was not strong enough to skip worker dispatch.
 
 - **Cited files:** ${compact_paths}
 - **Finding keywords:** ${compact_keywords}
@@ -838,6 +867,8 @@ _rf_close_with_supersession() {
 	local merged_at="$4"
 	local overlaps="$5"
 	local matched_keywords="$6"
+	local search_context="$7"
+	local source_pr="$8"
 	local marker='<!-- review-feedback-superseded-by-merged-pr -->'
 	local sig_footer=""
 
@@ -846,14 +877,19 @@ _rf_close_with_supersession() {
 	fi
 
 	local compact_overlaps=""
+	local source_pr_line=""
 	local comment_body=""
 	compact_overlaps=$(_rf_join_lines "$overlaps")
 	[[ -n "$matched_keywords" ]] || matched_keywords="issue reference"
+	if [[ -n "$source_pr" ]]; then
+		source_pr_line="- **Source PR:** #${source_pr}"
+	fi
 
 	comment_body=$(cat <<EOF
 ${marker}
-> Superseded. Pre-dispatch review-feedback validator found merged PR #${pr_number} after this issue was created. The PR touches the cited file path(s) and matches the finding signal, so worker dispatch is skipped.
+> Superseded. Pre-dispatch review-feedback validator found merged PR #${pr_number} in the ${search_context}. The PR touches the cited file path(s) and matches the finding signal, so worker dispatch is skipped.
 
+${source_pr_line}
 - **Merged PR:** #${pr_number}
 - **Merged at:** ${merged_at}
 - **Overlapping files:** ${compact_overlaps}
@@ -915,10 +951,24 @@ _detect_review_feedback_supersession() {
 	local keywords=""
 	keywords=$(_rf_extract_keywords "$issue_body")
 
+	local source_pr=""
+	local source_merged_at=""
+	local search_after="$created_at"
+	local search_context="issue-created window after ${created_at}"
+	if source_pr=$(_rf_extract_source_pr_number "$issue_body" "$issue_title"); then
+		if source_merged_at=$(_rf_get_source_pr_merged_at "$slug" "$source_pr"); then
+			search_after="$source_merged_at"
+			search_context="source PR #${source_pr} merge window after ${source_merged_at}"
+		else
+			_log "WARN" "#${issue_number}: failed to fetch source PR #${source_pr} merged_at — using issue-created supersession window"
+			source_pr=""
+		fi
+	fi
+
 	local candidate_numbers=""
-	candidate_numbers=$(_rf_search_merged_pr_numbers "$slug" "$created_at") || candidate_numbers=""
+	candidate_numbers=$(_rf_search_merged_pr_numbers "$slug" "$search_after") || candidate_numbers=""
 	if [[ -z "$candidate_numbers" ]]; then
-		_log "INFO" "#${issue_number}: no merged PR candidates after ${created_at} — dispatch proceeds"
+		_log "INFO" "#${issue_number}: no merged PR candidates in ${search_context} — dispatch proceeds"
 		return 0
 	fi
 
@@ -937,7 +987,7 @@ _detect_review_feedback_supersession() {
 		}
 		IFS=$'\t' read -r merged_at pr_title pr_body <<<"$pr_meta"
 
-		if [[ -z "$merged_at" || "$merged_at" < "$created_at" || "$merged_at" == "$created_at" ]]; then
+		if [[ -z "$merged_at" || "$merged_at" < "$search_after" || "$merged_at" == "$search_after" ]]; then
 			continue
 		fi
 
@@ -958,7 +1008,7 @@ _detect_review_feedback_supersession() {
 		_rf_score_keywords "$keywords" "$evidence"
 
 		if _rf_pr_references_issue "$issue_number" "$evidence" || [[ "$_RF_KEYWORD_SCORE" -ge 2 ]]; then
-			_rf_close_with_supersession "$issue_number" "$slug" "$pr_number" "$merged_at" "$overlaps" "$_RF_MATCHED_KEYWORDS"
+			_rf_close_with_supersession "$issue_number" "$slug" "$pr_number" "$merged_at" "$overlaps" "$_RF_MATCHED_KEYWORDS" "$search_context" "$source_pr"
 			return 10
 		fi
 
@@ -966,7 +1016,7 @@ _detect_review_feedback_supersession() {
 	done <<<"$candidate_numbers"
 
 	if [[ -n "$ambiguous_evidence" ]]; then
-		_rf_post_ambiguous_comment "$issue_number" "$slug" "$issue_paths" "$keywords" "$ambiguous_evidence"
+		_rf_post_ambiguous_comment "$issue_number" "$slug" "$issue_paths" "$keywords" "$ambiguous_evidence" "$search_context"
 	fi
 
 	return 0

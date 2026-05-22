@@ -1,0 +1,195 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+#
+# Regression coverage for GH#23883 cleanup PR proof states.
+
+set -uo pipefail
+
+TEST_SCRIPTS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+CLEAN_LIB_PATH="${TEST_SCRIPTS_DIR}/worktree-clean-lib.sh"
+TEST_ROOT=$(mktemp -d)
+trap 'rm -rf "$TEST_ROOT"' EXIT
+
+TEST_GREEN=$'\033[0;32m'
+TEST_RED=$'\033[0;31m'
+TEST_RESET=$'\033[0m'
+TESTS_RUN=0
+TESTS_FAILED=0
+
+print_result() {
+	local name="$1" rc="$2" extra="${3:-}"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$rc" -eq 0 ]]; then
+		printf '%sPASS%s %s\n' "$TEST_GREEN" "$TEST_RESET" "$name"
+	else
+		printf '%sFAIL%s %s %s\n' "$TEST_RED" "$TEST_RESET" "$name" "$extra"
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+	fi
+	return 0
+}
+
+run_fixture() {
+	local mode="$1"
+	local fixture_code="$2"
+	shift
+	shift
+	(
+		set +e
+		: "${RED:=}" "${GREEN:=}" "${YELLOW:=}" "${BLUE:=}" "${BOLD:=}" "${NC:=}"
+		_WTAR_REMOVED="removed"
+		_WTAR_SKIPPED="skipped"
+		_WTAR_WH_CALLER="test"
+		export RED GREEN YELLOW BLUE BOLD NC _WTAR_REMOVED _WTAR_SKIPPED _WTAR_WH_CALLER
+
+		git() {
+			if [[ "${1:-}" == "remote" && "${2:-}" == "get-url" && "${3:-}" == "origin" ]]; then
+				printf '%s\n' 'git@github.com:marcusquinn/aidevops.git'
+				return 0
+			fi
+			if [[ "${1:-}" == "branch" && "${2:-}" == "--merged" ]]; then
+				return 0
+			fi
+			if [[ "${1:-}" == "rev-parse" ]]; then
+				printf '%s\n' '0123456789abcdef0123456789abcdef01234567'
+				return 0
+			fi
+			if [[ "${1:-}" == "merge-base" && "${2:-}" == "--is-ancestor" ]]; then
+				return 1
+			fi
+			command git "$@"
+		}
+
+		gh_pr_list() {
+			local repo="" state="" head="" jq=""
+			while [[ $# -gt 0 ]]; do
+				case "${1:-}" in
+				--repo) repo="${2:-}"; shift 2 ;;
+				--state) state="${2:-}"; shift 2 ;;
+				--head) head="${2:-}"; shift 2 ;;
+				--jq) jq="${2:-}"; shift 2 ;;
+				*) shift ;;
+				esac
+			done
+			if [[ -z "$repo" ]]; then
+				printf '%s\n' '_rest_pr_list: --repo is required' >&2
+				return 2
+			fi
+			if [[ "$mode" == "fail-pr-list" ]]; then
+				return 1
+			fi
+			if [[ "$head" == "fix/exact-merged" && "$state" == "merged" && "$jq" == "length" ]]; then
+				printf '%s\n' '1'
+				return 0
+			fi
+			case "$state" in
+			merged) printf '%s\n' 'fix/list-merged' ;;
+			open) printf '%s\n' 'fix/open-pr' ;;
+			closed) printf '%s\n' 'fix/closed-pr' ;;
+			esac
+			return 0
+		}
+
+		command() {
+			if [[ "${1:-}" == "-v" && "${2:-}" == "gh" ]]; then
+				return 0
+			fi
+			if [[ "${1:-}" == "-v" && "${2:-}" == "gh_pr_list" ]]; then
+				return 0
+			fi
+			builtin command "$@"
+		}
+
+		# shellcheck source=/dev/null
+		source "$CLEAN_LIB_PATH" >/dev/null 2>&1 || exit 9
+
+		_branch_has_active_interactive_claim() { return 1; }
+		is_worktree_owned_by_others() { return 1; }
+		check_worktree_owner() { printf '\n'; return 0; }
+		worktree_is_in_grace_period() { return 1; }
+		branch_has_zero_commits_ahead() { return 1; }
+		worktree_has_changes() { return 1; }
+		branch_was_pushed() { return 0; }
+		_branch_exists_on_any_remote() { return 1; }
+		trash_path() { return 0; }
+		localdev_auto_branch_rm() { return 0; }
+		unregister_worktree() { return 0; }
+		worktree_removal_guard() { return 0; }
+		remove_worktree_path_permanently() { return 1; }
+		log_worktree_removal_event() { printf '%s|%s|%s\n' "${4:-}" "${5:-}" "${6:-}" >>"$TEST_ROOT/audit.log"; return 0; }
+
+		eval "$fixture_code"
+	)
+	return 0
+}
+
+test_builders_pass_repo() {
+	local output
+	# shellcheck disable=SC2016 # evaluated inside run_fixture after sourcing the cleanup lib
+	output=$(run_fixture ok '_WT_CLEAN_PR_PROOF_UNKNOWN_REASONS=""; printf "m=%s\n" "$(_clean_build_merged_pr_branches)"; printf "o=%s\n" "$(_clean_build_open_pr_branches)"; printf "c=%s\n" "$(_clean_build_closed_pr_branches)"; printf "u=%s\n" "$_WT_CLEAN_PR_PROOF_UNKNOWN_REASONS"')
+	if [[ "$output" == *"m=fix/list-merged"* && "$output" == *"o=fix/open-pr"* && "$output" == *"c=fix/closed-pr"* && "$output" == *"u="* ]]; then
+		print_result "PR list builders pass explicit repo" 0
+	else
+		print_result "PR list builders pass explicit repo" 1 "($output)"
+	fi
+	return 0
+}
+
+test_exact_merged_pr_fallback() {
+	local output
+	# shellcheck disable=SC2016 # evaluated inside run_fixture after sourcing the cleanup lib
+	output=$(run_fixture ok '_WT_CLEAN_PR_PROOF_UNKNOWN_REASONS=""; _clean_classify_worktree "/tmp/wt-exact" "fix/exact-merged" "main" "false" "" "" "true" "" >/dev/null; printf "%s\n" "$_WT_CLEAN_LAST_MERGE_TYPE"')
+	if [[ "$output" == "squash-merged PR" ]]; then
+		print_result "exact-head merged PR classifies under REST fallback" 0
+	else
+		print_result "exact-head merged PR classifies under REST fallback" 1 "($output)"
+	fi
+	return 0
+}
+
+test_open_pr_protects_worktree() {
+	local output
+	# shellcheck disable=SC2016 # evaluated inside run_fixture after sourcing the cleanup lib
+	output=$(run_fixture ok '_clean_classify_worktree "/tmp/wt-open" "fix/open-pr" "main" "false" "" "fix/open-pr" "true" "" >/dev/null; printf "%s\n" "$_WT_CLEAN_LAST_MERGE_TYPE"')
+	if [[ -z "$output" ]]; then
+		print_result "open PR proof protects worktree" 0
+	else
+		print_result "open PR proof protects worktree" 1 "($output)"
+	fi
+	return 0
+}
+
+test_closed_pr_positive_proof() {
+	local output
+	# shellcheck disable=SC2016 # evaluated inside run_fixture after sourcing the cleanup lib
+	output=$(run_fixture ok '_clean_classify_worktree "/tmp/wt-closed" "fix/closed-pr" "main" "false" "" "" "true" "fix/closed-pr" >/dev/null; printf "%s\n" "$_WT_CLEAN_LAST_MERGE_TYPE"')
+	if [[ "$output" == "closed PR" ]]; then
+		print_result "closed-unmerged PR requires positive proof" 0
+	else
+		print_result "closed-unmerged PR requires positive proof" 1 "($output)"
+	fi
+	return 0
+}
+
+test_unknown_pr_proof_skips_remote_deleted() {
+	local output
+	: >"$TEST_ROOT/audit.log"
+	# shellcheck disable=SC2016 # evaluated inside run_fixture after sourcing the cleanup lib
+	output=$(run_fixture fail-pr-list '_WT_CLEAN_PR_PROOF_UNKNOWN_REASONS=""; _clean_build_merged_pr_branches >/dev/null || _clean_pr_proof_unknown_add "unknown:merged-pr-list-unavailable"; _clean_classify_worktree "/tmp/wt-unknown" "fix/unknown" "main" "false" "" "" "true" "" >/dev/null; printf "%s\n" "$_WT_CLEAN_LAST_MERGE_TYPE"')
+	if [[ -z "$output" ]] && grep -q 'unknown:pr-proof-unavailable|skipped' "$TEST_ROOT/audit.log"; then
+		print_result "unknown PR proof fails closed" 0
+	else
+		print_result "unknown PR proof fails closed" 1 "(type=$output audit=$(cat "$TEST_ROOT/audit.log" 2>/dev/null))"
+	fi
+	return 0
+}
+
+test_builders_pass_repo
+test_exact_merged_pr_fallback
+test_open_pr_protects_worktree
+test_closed_pr_positive_proof
+test_unknown_pr_proof_skips_remote_deleted
+
+printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
+[[ "$TESTS_FAILED" -eq 0 ]] || exit 1
+exit 0

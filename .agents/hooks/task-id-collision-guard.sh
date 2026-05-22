@@ -266,8 +266,10 @@ _branch_has_claim() {
 	if ! [[ "$num" =~ ^[0-9]+$ ]]; then
 		return 1
 	fi
+	local branch_subjects
+	branch_subjects=$(_branch_subjects "$base")
 	# Look for an exact single-ID claim first.
-	if _branch_subjects "$base" | grep -qE "^chore: claim t0*${num}( |\$|\\[)"; then
+	if grep -qE "^chore: claim t0*${num}( |\$|\\[)" <<<"$branch_subjects"; then
 		return 0
 	fi
 	# Look for a range claim that covers num: chore: claim tA..tB
@@ -281,7 +283,7 @@ _branch_has_claim() {
 				return 0
 			fi
 		fi
-	done < <(_branch_subjects "$base")
+	done <<<"$branch_subjects"
 	return 1
 }
 
@@ -301,8 +303,10 @@ _repo_has_claim() {
 	if ! [[ "$num" =~ ^[0-9]+$ ]]; then
 		return 1
 	fi
+	local repo_subjects
+	repo_subjects=$(_repo_subjects)
 	# Look for an exact single-ID claim first.
-	if _repo_subjects | grep -qE "^chore: claim t0*${num}( |\$|\\[)"; then
+	if grep -qE "^chore: claim t0*${num}( |\$|\\[)" <<<"$repo_subjects"; then
 		return 0
 	fi
 	# Look for a range claim that covers num: chore: claim tA..tB
@@ -316,7 +320,7 @@ _repo_has_claim() {
 				return 0
 			fi
 		fi
-	done < <(_repo_subjects)
+	done <<<"$repo_subjects"
 	return 1
 }
 
@@ -577,6 +581,16 @@ _run_hook() {
 #
 # Returns 1 on violation, 0 otherwise (including fail-open paths).
 # ---------------------------------------------------------------------------
+
+_pr_commit_oids() {
+	local pr_number="$1"
+	if ! command -v gh >/dev/null 2>&1; then
+		return 1
+	fi
+	gh pr view "$pr_number" --json commits --jq '.commits[].oid' 2>/dev/null
+	return $?
+}
+
 _check_pr_title() {
 	local pr_number="$1"
 	if ! command -v gh >/dev/null 2>&1; then
@@ -609,37 +623,26 @@ _run_check_pr() {
 		return 1
 	fi
 
-	# Resolve the upstream default-branch ref (origin/main, then origin/master,
-	# then local main/master). Use it as the left-hand side of `git log A..HEAD`
-	# to bound the scan to commits unique to the PR — excluding upstream
-	# commits brought in via a merge from main. This is the t2895 fix: a
-	# merge-from-main on a long-lived branch can pull in hundreds of upstream
-	# commits whose t-IDs were claimed via prior merged PRs; scanning all of
-	# them once was timing out CI at 21+ min (canonical: PR #20913).
-	#
-	# When neither origin/main nor a local main/master exists (rare — fork
-	# without remote, fresh clone with no upstream tracking), fall back to the
-	# merge-base of HEAD against the root commit. This preserves the prior
-	# behavior for that edge case.
-	local default_ref base
-	if default_ref=$(_find_default_branch_ref); then
-		base="$default_ref"
-		_debug "Using default-branch ref for PR scan range: $base"
+	# Prefer GitHub's PR commit list: it is already bounded to the pull request
+	# and avoids shallow/default-branch graph edge cases in Actions checkouts.
+	# Fall back to local graph walking when gh is unavailable.
+	local commits
+	if commits=$(_pr_commit_oids "$pr_number") && [[ -n "$commits" ]]; then
+		_debug "Using GitHub PR commit list for PR #${pr_number}"
 	else
+		local default_ref base
 		base=$(_find_merge_base)
-		_debug "No default-branch ref found; falling back to merge-base: $base"
-		if [[ -z "$base" ]]; then
+		if [[ -n "$base" ]]; then
+			_debug "Using merge-base for PR scan range: $base"
+		elif default_ref=$(_find_default_branch_ref); then
+			base="$default_ref"
+			_debug "No merge-base found; falling back to default-branch ref: $base"
+		else
 			_warn "Could not determine PR scan base — fail-open"
 			return 0
 		fi
+		commits=$(git log --no-merges "${base}..HEAD" --format='%H' 2>/dev/null)
 	fi
-
-	# Get commits unique to the branch, excluding merge commits via --no-merges.
-	# `git log A..B` already excludes commits reachable from A; combined with
-	# `--no-merges` we skip both upstream commits and the merge commit that
-	# brought them in. fixup!/squash! commits are handled by _check_message.
-	local commits
-	commits=$(git log --no-merges "${base}..HEAD" --format='%H' 2>/dev/null)
 	if [[ -z "$commits" ]]; then
 		_info "No commits in PR range — nothing to check"
 		return 0
@@ -666,9 +669,10 @@ _run_check_pr() {
 
 		_debug "Checking commit $commit_hash: $subject"
 
-		# Skip fixup/squash commits (merges already excluded by --no-merges)
-		if printf '%s' "$subject" | grep -qE '^(fixup!|squash!)'; then
-			_debug "Skipping fixup/squash: $commit_hash"
+		# Skip merge/fixup/squash commits. GitHub PR commit lists can include
+		# merge-from-main commits; local fallback excludes merges with --no-merges.
+		if printf '%s' "$subject" | grep -qE '^(Merge|fixup!|squash!)'; then
+			_debug "Skipping merge/fixup/squash: $commit_hash"
 			continue
 		fi
 

@@ -16,6 +16,7 @@ over token savings.
    - `rtk-helper.sh gh issue list --repo owner/repo --limit N`
    - In interactive discovery, use these RTK forms instead of raw `gh pr list`
      or `gh issue list` unless the command needs structured/exact output.
+   - RTK v0.40.0 also adds upstream Gradle wrapper support, `rtk init --agent hermes`, `rtk init --dry-run`, and `transparent_prefixes` for wrapper command passthrough; prefer those upstream features over custom aidevops shims when integrating supported runtimes or build tools.
 2. **Assess sufficiency**: proceed only if the filtered output contains every
    fact needed for the next decision.
 3. **Broaden immediately** when output is incomplete, ambiguous, expanded rather

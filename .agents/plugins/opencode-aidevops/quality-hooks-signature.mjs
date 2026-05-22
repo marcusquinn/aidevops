@@ -43,9 +43,10 @@
 // .agents/scripts/gh runs at exec-time (after bash creates the file) and
 // is the correct enforcement layer for the same-bash-call shape.
 
-import { existsSync, readFileSync, appendFileSync } from "fs";
+import { existsSync, readFileSync, appendFileSync, realpathSync } from "fs";
 import { execSync } from "child_process";
-import { join } from "path";
+import { join, sep } from "path";
+import { tmpdir } from "os";
 
 import { FAIL_REASON, formatGateThrowMessage } from "./quality-hooks-signature-failures.mjs";
 
@@ -241,6 +242,39 @@ function _generateSignature(helperPath, bodyValue, log) {
 }
 
 /**
+ * Check whether one resolved filesystem path is inside another resolved path.
+ * @param {string} childPath
+ * @param {string} parentPath
+ * @returns {boolean}
+ */
+function _isPathWithin(childPath, parentPath) {
+  const parentPrefix = parentPath.endsWith(sep) ? parentPath : `${parentPath}${sep}`;
+  return childPath === parentPath || childPath.startsWith(parentPrefix);
+}
+
+/**
+ * Resolve a body-file path through realpath and keep transparent repair inside
+ * known-safe writable areas. This prevents a `--body-file` symlink or traversal
+ * path from making the hook append signatures outside the worktree/tmp space.
+ * @param {string} filePath
+ * @returns {{ status: "ok", filePath: string } | { status: "fail", reason: string, detail: string }}
+ */
+function _resolveAllowedBodyFilePath(filePath) {
+  const realFilePath = realpathSync(filePath);
+  const allowedRoots = [process.cwd(), tmpdir()]
+    .filter((root) => existsSync(root))
+    .map((root) => realpathSync(root));
+  if (allowedRoots.some((root) => _isPathWithin(realFilePath, root))) {
+    return { status: "ok", filePath: realFilePath };
+  }
+  return {
+    status: "fail",
+    reason: FAIL_REASON.BODY_FILE_OUTSIDE_ALLOWED_ROOT,
+    detail: `${filePath} -> ${realFilePath}`,
+  };
+}
+
+/**
  * Repair a `--body-file PATH` form by appending the signature footer to the
  * referenced file if missing.
  *
@@ -257,12 +291,28 @@ function _generateSignature(helperPath, bodyValue, log) {
  */
 function _repairBodyFile(cmd, filePath, helperPath, log) {
   try {
-    const current = readFileSync(filePath, "utf-8");
+    const resolved = _resolveAllowedBodyFilePath(filePath);
+    if (resolved.status === "fail") {
+      log("WARN", `Refusing --body-file outside allowed roots: ${resolved.detail}`);
+      return resolved;
+    }
+    const current = readFileSync(resolved.filePath, "utf-8");
     if (current.includes(SIG_MARKER)) return { status: "ok", cmd };
+    if (isMachineProtocolCommand(current)) {
+      log(
+        "INFO",
+        `Body-file ${resolved.filePath} contains machine-protocol content; no repair needed`,
+      );
+      return { status: "ok", cmd };
+    }
+    if (!existsSync(helperPath)) {
+      log("WARN", `gh-signature-helper.sh not found at ${helperPath}; cannot repair`);
+      return { status: "fail", reason: FAIL_REASON.HELPER_MISSING, detail: helperPath };
+    }
     const sigResult = _generateSignature(helperPath, current, log);
     if (sigResult.status === "fail") return sigResult;
-    appendFileSync(filePath, sigResult.sig);
-    log("INFO", `Auto-appended signature footer to body-file ${filePath} (t2685)`);
+    appendFileSync(resolved.filePath, sigResult.sig);
+    log("INFO", `Auto-appended signature footer to body-file ${resolved.filePath} (t2685)`);
     return { status: "ok", cmd };
   } catch (e) {
     const reason =
@@ -350,11 +400,12 @@ function _repairBodyArg(cmd, parsed, helperPath, log) {
  * @returns {{ status: "ok", cmd: string } | { status: "fail", reason: string, detail?: string }}
  */
 export function tryRepairSignature(cmd, scriptsDir, log) {
-  const helperPath = join(scriptsDir, "gh-signature-helper.sh");
-  if (!existsSync(helperPath)) {
-    log("WARN", `gh-signature-helper.sh not found at ${helperPath}; cannot repair`);
-    return { status: "fail", reason: FAIL_REASON.HELPER_MISSING, detail: helperPath };
+  if (hasTrustedSignatureSignal(cmd) || isMachineProtocolCommand(cmd)) {
+    log("INFO", "Command is exempt or already includes trusted signature signal; no repair needed");
+    return { status: "ok", cmd };
   }
+
+  const helperPath = join(scriptsDir, "gh-signature-helper.sh");
   if (_hasUnparseableBody(cmd)) {
     log("WARN", "Command has unparseable body (heredoc/command-sub); refusing auto-repair (t2685)");
     return { status: "fail", reason: FAIL_REASON.UNPARSEABLE_BODY };
@@ -367,6 +418,11 @@ export function tryRepairSignature(cmd, scriptsDir, log) {
   if (bodyFileMatch) {
     const filePath = bodyFileMatch[2] || bodyFileMatch[4];
     return _repairBodyFile(cmd, filePath, helperPath, log);
+  }
+
+  if (!existsSync(helperPath)) {
+    log("WARN", `gh-signature-helper.sh not found at ${helperPath}; cannot repair`);
+    return { status: "fail", reason: FAIL_REASON.HELPER_MISSING, detail: helperPath };
   }
 
   // --body VALUE form: command-side repair.

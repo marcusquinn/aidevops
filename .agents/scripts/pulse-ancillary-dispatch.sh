@@ -65,19 +65,18 @@ _expand_foss_repo_path() {
 _foss_issue_list_for_label() {
 	local repo_slug="$1"
 	local label="$2"
-	local search_label
+	local selector_args=()
 
 	if [[ "$label" == *,* ]]; then
-		search_label="${label//\\/\\\\}"
+		local search_label="${label//\\/\\\\}"
 		search_label="${search_label//\"/\\\"}"
-		gh_issue_list --repo "$repo_slug" --state open \
-			--search "label:\"${search_label}\"" --limit 1 \
-			--json number,title --jq '.[] | "\(.number // "")|\(.title // "")"'
-		return $?
+		selector_args=(--search "label:\"${search_label}\"")
+	else
+		selector_args=(--label "$label")
 	fi
 
 	gh_issue_list --repo "$repo_slug" --state open \
-		--label "$label" --limit 1 \
+		"${selector_args[@]}" --limit 1 \
 		--json number,title --jq '.[] | "\(.number // "")|\(.title // "")"'
 	return $?
 }
@@ -332,6 +331,51 @@ for pat, rep in patterns:
 sys.stdout.write(text)
 ' 2>/dev/null || printf '%s' "[REDACTION_FAILED]"
 	return 0
+}
+
+#######################################
+# Classify headless-runtime failures that happen before a triage model can
+# produce a review. These are infrastructure/contract failures, not review
+# content failures, so they must not consume the triage retry/cache budget.
+#
+# Arguments:
+#   $1 - raw runtime output sample
+#
+# Outputs the infrastructure failure reason, or nothing when not recognised.
+# Returns 0 always.
+#######################################
+_triage_runtime_infra_failure_reason() {
+	local sample="$1"
+
+	if printf '%s' "$sample" | grep -qE 'Canary test FAILED|Canary failed.*aborting dispatch' 2>/dev/null; then
+		printf '%s\n' 'canary-unavailable'
+		return 0
+	fi
+
+	if printf '%s' "$sample" | grep -qE 'WORKER_ISSUE_NUMBER unset|WORKER_WORKTREE_PATH unset|worker env contract missing|worker --dir does not match WORKER_WORKTREE_PATH|worker worktree repo mismatch|WORKER_WORKTREE_PATH does not exist|OpenCode version drift|Failed to restore OpenCode|opencode version mismatch|launch cwd is deleted' 2>/dev/null; then
+		printf '%s\n' 'prelaunch-contract-failure'
+		return 0
+	fi
+
+	return 0
+}
+
+#######################################
+# Return whether a triage failure reason is infrastructure-only. Keep this
+# centralised so label/cache/retry policy cannot drift across call sites.
+#
+# Arguments:
+#   $1 - failure reason tag
+#
+# Returns 0 when infrastructure-only, 1 otherwise.
+#######################################
+_triage_failure_is_infrastructure() {
+	local failure_reason="$1"
+
+	case "$failure_reason" in
+	canary-unavailable | prelaunch-contract-failure) return 0 ;;
+	*) return 1 ;;
+	esac
 }
 
 #######################################
@@ -890,13 +934,13 @@ _finalize_triage_state() {
 	# can identify issues needing manual triage; remove on success.
 	# t2016: Ensure the label exists first (gh label create --force is
 	# idempotent) and only log "Added" when the add command succeeds.
-	# t2089: canary-unavailable is an infrastructure failure, not a triage
-	# failure — do NOT apply triage-failed; leave the issue in its current
-	# state so the next cycle retries transparently.
+	# t2089/GH#23854: infrastructure failures are not triage content failures —
+	# do NOT apply triage-failed; leave the issue in its current state so the
+	# next cycle retries transparently.
 	if [[ "$triage_posted" == "true" ]]; then
 		gh issue edit "$issue_num" --repo "$repo_slug" \
 			--remove-label "triage-failed" >/dev/null 2>&1 || true
-	elif [[ "$failure_reason" != "canary-unavailable" ]]; then
+	elif ! _triage_failure_is_infrastructure "$failure_reason"; then
 		_ensure_triage_failed_label "$repo_slug"
 		if gh issue edit "$issue_num" --repo "$repo_slug" \
 			--add-label "triage-failed" >/dev/null 2>&1; then
@@ -916,14 +960,14 @@ _finalize_triage_state() {
 	# t2016: When the retry cap is hit, post a structured escalation comment
 	# BEFORE writing the cache, so the maintainer has a visible signal
 	# instead of a silently-cached issue that disappears from triage forever.
-	# t2089: canary-unavailable skips BOTH the retry counter AND the cache
-	# write — the issue content hasn't changed; the infrastructure was just
-	# unavailable. Incrementing the counter would cause the next canary
-	# failure to hit the cap and permanently lock the issue out of triage.
+	# t2089/GH#23854: infrastructure failures skip BOTH the retry counter AND the
+	# cache write — the issue content hasn't changed; the runtime/contract was
+	# unavailable. Incrementing the counter would cause the next infra failure
+	# to hit the cap and permanently lock the issue out of triage.
 	if [[ "$triage_posted" == "true" ]]; then
 		_triage_update_cache "$issue_num" "$repo_slug" "$content_hash"
-	elif [[ "$failure_reason" == "canary-unavailable" ]]; then
-		echo "[pulse-wrapper] Triage skipped for #${issue_num} — canary unavailable, will retry next cycle without consuming retry budget (t2089)" >>"$LOGFILE"
+	elif _triage_failure_is_infrastructure "$failure_reason"; then
+		echo "[pulse-wrapper] Triage skipped for #${issue_num} — ${failure_reason}, will retry next cycle without consuming retry budget (GH#23854)" >>"$LOGFILE"
 	elif _triage_increment_failure "$issue_num" "$repo_slug" "$content_hash"; then
 		echo "[pulse-wrapper] Triage retry cap reached for #${issue_num} in ${repo_slug} — caching hash to stop lock/unlock loop (GH#17827)" >>"$LOGFILE"
 		local cap_attempts="${TRIAGE_MAX_RETRIES:-1}"
@@ -934,6 +978,46 @@ _finalize_triage_state() {
 	else
 		echo "[pulse-wrapper] Skipping triage cache for #${issue_num} — review not posted, will retry on next cycle" >>"$LOGFILE"
 	fi
+	return 0
+}
+
+#######################################
+# Run the headless triage-review worker with the standard worker context.
+#
+# Arguments:
+#   $1 - issue_num
+#   $2 - repo_slug
+#   $3 - repo_path
+#   $4 - resolved model flag (empty or "--model ...")
+#   $5 - prompt file
+#   $6 - output file
+#
+# Exit code: always 0; runtime failures are captured in the output file.
+#######################################
+_run_triage_review_worker() {
+	local triage_issue_num="$1"
+	local triage_repo_slug="$2"
+	local triage_repo_path="$3"
+	local model_flag="$4"
+	local prefetch_file="$5"
+	local review_output_file="$6"
+
+	if [[ -z "$review_output_file" ]]; then
+		printf '%s\n' '[fatal] triage worker output file missing; aborting before model launch' >&2
+		return 0
+	fi
+
+	# shellcheck disable=SC2086
+	env HEADLESS=1 WORKER_ISSUE_NUMBER="$triage_issue_num" WORKER_REPO_SLUG="$triage_repo_slug" WORKER_WORKTREE_PATH="$triage_repo_path" \
+		"$HEADLESS_RUNTIME_HELPER" run \
+		--role triage \
+		--session-key "triage-review-${triage_issue_num}" \
+		--dir "$triage_repo_path" \
+		$model_flag \
+		--agent triage-review \
+		--title "Sandboxed triage review: Issue #${triage_issue_num}" \
+		--prompt-file "$prefetch_file" </dev/null >"$review_output_file" 2>&1 || true
+
 	return 0
 }
 
@@ -966,10 +1050,6 @@ _dispatch_triage_review_worker() {
 	local model_flag=""
 	[[ -n "$resolved_model" ]] && model_flag="--model $resolved_model"
 
-	# t2089: Named pattern for canary-failure detection (see usage below).
-	# Centralised here so future canary exit messages only need one update.
-	local canary_failure_pattern='Canary test FAILED|Canary failed.*aborting dispatch'
-
 	# ── Launch sandboxed agent (no Bash, no gh, no network) ──
 	# t2019: We now pass `--agent triage-review` explicitly. Before this
 	# fix the flag was omitted, so:
@@ -989,16 +1069,12 @@ _dispatch_triage_review_worker() {
 	# t1894/t1934: Lock issue and linked PRs during triage
 	lock_issue_for_worker "$issue_num" "$repo_slug"
 
-	# Run agent with triage-review prompt — agent file restricts to Read/Glob/Grep
-	# shellcheck disable=SC2086
-	"$HEADLESS_RUNTIME_HELPER" run \
-		--role worker \
-		--session-key "triage-review-${issue_num}" \
-		--dir "$repo_path" \
-		$model_flag \
-		--agent triage-review \
-		--title "Sandboxed triage review: Issue #${issue_num}" \
-		--prompt-file "$prefetch_file" </dev/null >"$review_output_file" 2>&1
+	# Run agent with triage-review prompt — agent file restricts to Read/Glob/Grep.
+	# Use a distinct role so the implementation-worker issue/worktree contract
+	# does not reject triage sessions before model launch (GH#23854).
+	_run_triage_review_worker \
+		"$issue_num" "$repo_slug" "$repo_path" \
+		"$model_flag" "$prefetch_file" "$review_output_file"
 
 	rm -f "$prefetch_file"
 
@@ -1022,19 +1098,13 @@ _dispatch_triage_review_worker() {
 		raw_sample=$(head -c 1000 "$review_output_file" 2>/dev/null || true)
 	fi
 
-	# t2089: Detect canary failure BEFORE calling the safety filter.
-	# When the headless runtime aborts due to a failed canary test (exit=142
-	# timeout, credit exhaustion, port conflict, etc.), the output is infra
-	# log lines with no review header. The safety filter correctly classifies
-	# this as raw-sandbox-output, but that causes _finalize_triage_state to
-	# increment the retry counter and — after TRIAGE_MAX_RETRIES — cache the
-	# content hash, permanently locking the issue out of the triage queue.
-	# Infrastructure unavailability is NOT a triage failure: the issue itself
-	# is fine. Detect it early and route to a separate non-counting path.
-	local canary_failed="false"
-	if printf '%s' "$raw_sample" | grep -qE "$canary_failure_pattern" 2>/dev/null; then
-		canary_failed="true"
-		echo "[pulse-wrapper] Triage canary failed for #${issue_num} in ${repo_slug} — infrastructure unavailability, not a review failure (t2089)" >>"$LOGFILE"
+	# t2089/GH#23854: Detect runtime/prelaunch failures BEFORE finalising triage
+	# state. The safety filter must still suppress any output, but infra
+	# failures must not consume retry budget or cache the content hash.
+	local infra_failure_reason=""
+	infra_failure_reason=$(_triage_runtime_infra_failure_reason "$raw_sample")
+	if [[ -n "$infra_failure_reason" ]]; then
+		echo "[pulse-wrapper] Triage runtime failure for #${issue_num} in ${repo_slug}: ${infra_failure_reason} — infrastructure/contract failure, not a review failure (GH#23854)" >>"$LOGFILE"
 	fi
 
 	# Validate output safety and post or suppress the review comment.
@@ -1049,10 +1119,10 @@ _dispatch_triage_review_worker() {
 	local failure_reason=""
 	if [[ "$post_result" == "POSTED" ]]; then
 		triage_posted="true"
-	elif [[ "$canary_failed" == "true" ]]; then
-		# Canary unavailability overrides the safety-filter result.
+	elif [[ -n "$infra_failure_reason" ]]; then
+		# Infrastructure/contract failures override the safety-filter result.
 		# Route to the infra-failure path — skip retry counter and cache.
-		failure_reason="canary-unavailable"
+		failure_reason="$infra_failure_reason"
 	else
 		failure_reason="${post_result#FAILED:}"
 	fi

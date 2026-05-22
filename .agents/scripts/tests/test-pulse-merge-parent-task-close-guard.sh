@@ -32,6 +32,7 @@ readonly TEST_RESET=$'\033[0m'
 TESTS_RUN=0
 TESTS_FAILED=0
 TEST_ROOT=""
+readonly _PM_PARENT_TASK_LABEL_NEEDLE=",parent-task,"
 
 print_result() {
 	local test_name="$1"
@@ -78,6 +79,11 @@ if [[ "$1" == "api" && "$*" == *"/issues/"* && "$*" == *"labels"* && "$*" != *"/
 	exit 0
 fi
 
+# gh api repos/OWNER/REPO/pulls/NNN  (superseded-PR lookup)
+if [[ "$1" == "api" && "$*" == *"/pulls/"* ]]; then
+	exit 1
+fi
+
 # gh api repos/OWNER/REPO/issues/NNN/comments  (dedup check)
 if [[ "$1" == "api" && "$*" == *"/comments"* ]]; then
 	printf '[]\n'
@@ -97,7 +103,9 @@ EOF
 	unlock_issue_after_worker() { return 0; }
 	fast_fail_reset() { return 0; }
 	_release_interactive_claim_on_merge() { return 0; }
-	export -f unlock_issue_after_worker fast_fail_reset _release_interactive_claim_on_merge 2>/dev/null || true
+	set_solved_label() { return 0; }
+	auto_file_next_phase() { return 0; }
+	export -f unlock_issue_after_worker fast_fail_reset _release_interactive_claim_on_merge set_solved_label auto_file_next_phase 2>/dev/null || true
 
 	# Shim shared-gh-wrappers.sh wrappers → gh binary stub. The function was
 	# refactored post-GH#21595 to use gh_pr_comment / gh_issue_comment instead
@@ -137,7 +145,10 @@ define_function_under_test() {
 	local fn_src
 	fn_src=$(awk '
 		/^_pm_issue_api\(\) \{/,/^}$/ { print }
+		/^_pm_build_closing_comment\(\) \{/,/^}$/ { print }
+		/^_pm_resolve_superseded_original_issue\(\) \{/,/^}$/ { print }
 		/^_handle_post_merge_actions\(\) \{/,/^}$/ { print }
+		/^_unblock_circuit_breaker_meta_pr\(\) \{/,/^}$/ { print }
 	' "$MERGE_SCRIPT")
 	if [[ -z "$fn_src" ]]; then
 		printf 'ERROR: could not extract _handle_post_merge_actions from %s\n' "$MERGE_SCRIPT" >&2

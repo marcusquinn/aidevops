@@ -290,20 +290,29 @@ _ensure_valid_launch_cwd() {
 	return 1
 }
 
-# _run_looks_like_issue_worker: detect issue-scoped worker dispatches from
-# independent caller-owned signals. The env contract is only mandatory for
-# issue workers; pulse/non-issue runs keep the historical path.
-_run_looks_like_issue_worker() {
+# _run_requires_issue_env_contract: detect issue-scoped worker and triage
+# dispatches from independent caller-owned signals. The env contract is only
+# mandatory for issue-scoped runs; pulse/non-issue runs keep the historical path.
+_run_requires_issue_env_contract() {
 	local role_value="$1"
 	local session_key_value="$2"
 	local title_value="$3"
 	local prompt_value="$4"
 
-	[[ "$role_value" == "worker" ]] || return 1
+	case "$role_value" in
+		worker | triage) ;;
+		*) return 1 ;;
+	esac
 	if [[ "$session_key_value" =~ ^issue-[0-9]+$ ]]; then
 		return 0
 	fi
+	if [[ "$session_key_value" =~ ^triage-review-[0-9]+$ ]]; then
+		return 0
+	fi
 	if [[ "$title_value" =~ ^Issue[[:space:]]+#[0-9]+ ]]; then
+		return 0
+	fi
+	if [[ "$title_value" =~ Issue[[:space:]]+#[0-9]+ ]]; then
 		return 0
 	fi
 	if [[ "$prompt_value" =~ [Ii]ssue[[:space:]]*#?[0-9]+ ]]; then
@@ -322,12 +331,16 @@ _validate_issue_worker_env_contract() {
 	local title_value="$4"
 	local prompt_value="$5"
 
-	if ! _run_looks_like_issue_worker "$role_value" "$session_key_value" "$title_value" "$prompt_value"; then
+	if ! _run_requires_issue_env_contract "$role_value" "$session_key_value" "$title_value" "$prompt_value"; then
 		return 0
 	fi
 
 	if [[ -z "${WORKER_ISSUE_NUMBER:-}" ]]; then
 		print_error "[fatal] WORKER_ISSUE_NUMBER unset — issue worker env contract missing; aborting before model launch"
+		return 1
+	fi
+	if [[ -z "${WORKER_REPO_SLUG:-}" ]]; then
+		print_error "[fatal] WORKER_REPO_SLUG unset — issue worker env contract missing; aborting before model launch"
 		return 1
 	fi
 	if [[ -z "${WORKER_WORKTREE_PATH:-}" ]]; then
@@ -348,15 +361,13 @@ _validate_issue_worker_env_contract() {
 		return 1
 	fi
 
-	if [[ -n "${WORKER_REPO_SLUG:-}" ]]; then
-		local remote_url=""
-		local actual_slug=""
-		remote_url=$(git -C "$WORKER_WORKTREE_PATH" remote get-url origin 2>/dev/null) || remote_url=""
-		actual_slug=$(printf '%s' "$remote_url" | sed 's|.*github\.com[:/]||;s|\.git$||') || actual_slug=""
-		if [[ -z "$actual_slug" || "$actual_slug" != "$WORKER_REPO_SLUG" ]]; then
-			print_error "[fatal] worker worktree repo mismatch: expected ${WORKER_REPO_SLUG}, got ${actual_slug:-<unknown>}"
-			return 1
-		fi
+	local remote_url=""
+	local actual_slug=""
+	remote_url=$(git -C "$WORKER_WORKTREE_PATH" remote get-url origin 2>/dev/null) || remote_url=""
+	actual_slug=$(printf '%s' "$remote_url" | sed 's|.*github\.com[:/]||;s|\.git$||') || actual_slug=""
+	if [[ -z "$actual_slug" || "$actual_slug" != "$WORKER_REPO_SLUG" ]]; then
+		print_error "[fatal] worker worktree repo mismatch: expected ${WORKER_REPO_SLUG}, got ${actual_slug:-<unknown>}"
+		return 1
 	fi
 
 	return 0
@@ -1920,12 +1931,12 @@ show_help() {
 headless-runtime-helper.sh - Model-aware headless runtime (OpenCode default, Claude CLI opt-in)
 
 Usage:
-  headless-runtime-helper.sh select [--role pulse|worker] [--model provider/model]
-  headless-runtime-helper.sh canary [--role pulse|worker] [--model provider/model] [--tier haiku|sonnet|opus|...]
-  headless-runtime-helper.sh run --role pulse|worker --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model | --initial-model provider/model] [--tier haiku|sonnet|opus|...] [--variant NAME] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG] [--detach]
+  headless-runtime-helper.sh select [--role pulse|worker|triage] [--model provider/model]
+  headless-runtime-helper.sh canary [--role pulse|worker|triage] [--model provider/model] [--tier haiku|sonnet|opus|...]
+  headless-runtime-helper.sh run --role pulse|worker|triage --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model | --initial-model provider/model] [--tier haiku|sonnet|opus|...] [--variant NAME] [--agent NAME] [--runtime opencode|claude] [--opencode-arg ARG] [--detach]
   headless-runtime-helper.sh backoff [status|set MODEL-OR-PROVIDER REASON [SECONDS]|clear MODEL-OR-PROVIDER]
   headless-runtime-helper.sh session [status|clear PROVIDER SESSION_KEY]
-  headless-runtime-helper.sh metrics [--role pulse|worker] [--hours N] [--model SUBSTRING] [--fast-threshold N]
+  headless-runtime-helper.sh metrics [--role pulse|worker|triage] [--hours N] [--model SUBSTRING] [--fast-threshold N]
   headless-runtime-helper.sh help
 
 Runtime selection:

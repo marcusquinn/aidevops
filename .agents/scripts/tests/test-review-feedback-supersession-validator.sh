@@ -75,10 +75,27 @@ done
 if [[ "${1:-}" == "api" && "$endpoint" == repos/owner/repo/issues/* && "$endpoint" != */comments ]]; then
 	case "$arg_string" in
 	*'.body // ""'*)
-		printf '## Files to modify\n- `.agents/scripts/review-hook.sh`\n\n## Finding\nAdd the event payload guard before worker launch.\n'
+		case "$scenario" in
+		source-clear | source-ambiguous | source-fetch-failure)
+			printf '**Source PR**: #50\n\n## Files to modify\n- `.agents/scripts/review-hook.sh`\n\n## Finding\nAdd the event payload guard before worker launch.\n'
+			;;
+		no-file)
+			printf '**Source PR**: #50\n\n## Finding\nAdd the event payload guard before worker launch.\n'
+			;;
+		*)
+			printf '## Files to modify\n- `.agents/scripts/review-hook.sh`\n\n## Finding\nAdd the event payload guard before worker launch.\n'
+			;;
+		esac
 		;;
 	*'@tsv'*)
-		printf '2026-05-01T10:00:00Z\treview-feedback: event payload guard\tquality-debt,source:review-feedback,tier:thinking\n'
+		case "$scenario" in
+		source-clear | source-ambiguous | source-fetch-failure | no-file)
+			printf '2026-05-02T10:00:00Z\treview-feedback: event payload guard\tquality-debt,source:review-feedback,tier:thinking\n'
+			;;
+		*)
+			printf '2026-05-01T10:00:00Z\treview-feedback: event payload guard\tquality-debt,source:review-feedback,tier:thinking\n'
+			;;
+		esac
 		;;
 	*'join(",")'*)
 		printf 'quality-debt,source:review-feedback,tier:thinking\n'
@@ -99,6 +116,10 @@ if [[ "${1:-}" == "api" && "$endpoint" == "search/issues" ]]; then
 	case "$scenario" in
 	clear) printf '200\n' ;;
 	ambiguous) printf '201\n' ;;
+	source-clear) printf '200\n' ;;
+	source-ambiguous) printf '201\n' ;;
+	source-fetch-failure) printf '200\n' ;;
+	no-file) printf '200\n' ;;
 	none) printf '' ;;
 	before) printf '203\n' ;;
 	*) printf '' ;;
@@ -108,6 +129,13 @@ fi
 
 if [[ "${1:-}" == "api" && "$endpoint" == repos/owner/repo/pulls/* && "$endpoint" != */files ]]; then
 	pr_number="${endpoint##*/}"
+	if [[ "$pr_number" == "50" ]]; then
+		if [[ "$scenario" == "source-fetch-failure" ]]; then
+			exit 1
+		fi
+		printf '2026-05-01T09:30:00Z\n'
+		exit 0
+	fi
 	case "$pr_number" in
 	200)
 		printf '2026-05-01T11:00:00Z\tfix event payload guard\tAdds a guard for event payload handling.\n'
@@ -214,6 +242,31 @@ test_ambiguous_same_file_unrelated_change() {
 	return 0
 }
 
+test_source_pr_window_catches_pre_issue_fix() {
+	run_validator_case "source-clear" 10 "source PR window catches pre-issue supersession"
+	assert_log_contains "source PR window closes pre-issue supersession" "issue close 100 --repo owner/repo --reason not planned"
+	return 0
+}
+
+test_source_pr_window_ambiguous_fails_open() {
+	run_validator_case "source-ambiguous" 0 "source PR window ambiguous same-file change"
+	assert_log_not_contains "source PR ambiguous change does not close" "issue close 100 --repo owner/repo --reason not planned"
+	assert_log_contains "source PR ambiguous change posts decision comment" "issue comment 100 --repo owner/repo --body"
+	return 0
+}
+
+test_source_pr_fetch_failure_falls_back() {
+	run_validator_case "source-fetch-failure" 0 "source PR fetch failure falls back"
+	assert_log_not_contains "source PR fetch failure does not use pre-issue candidate" "issue close 100 --repo owner/repo --reason not planned"
+	return 0
+}
+
+test_no_file_finding_skips_supersession() {
+	run_validator_case "no-file" 0 "no cited file paths skips supersession"
+	assert_log_not_contains "no-file finding does not close" "issue close 100 --repo owner/repo --reason not planned"
+	return 0
+}
+
 test_no_matching_pr() {
 	run_validator_case "none" 0 "no matching merged PR"
 	assert_log_not_contains "no matching PR does not close" "issue close 100 --repo owner/repo --reason not planned"
@@ -239,6 +292,10 @@ main() {
 	write_gh_stub
 	test_clear_same_file_fix
 	test_ambiguous_same_file_unrelated_change
+	test_source_pr_window_catches_pre_issue_fix
+	test_source_pr_window_ambiguous_fails_open
+	test_source_pr_fetch_failure_falls_back
+	test_no_file_finding_skips_supersession
 	test_no_matching_pr
 	test_merged_pr_before_issue_creation
 	teardown_test_env
