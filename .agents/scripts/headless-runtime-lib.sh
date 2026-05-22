@@ -1620,14 +1620,16 @@ _run_canary_test() {
 	# $OPENCODE_BIN_DEFAULT directly. Identical to the default in the
 	# happy path; differs only when alternative-path fallback fired.
 	#
-	# GH#23598: AIDEVOPS_HEADLESS=1 prevents greeting/TTSR prompt injection,
-	# while the benign arithmetic probe avoids prompt-injection-shaped canary
-	# tokens. Omit --agent; isolated config already avoids stale defaults.
+	# GH#23598/GH#23950: AIDEVOPS_HEADLESS=1 prevents plugin greeting/TTSR
+	# injection, while the benign arithmetic probe avoids prompt-injection-shaped
+	# canary tokens. Pin OpenCode's vanilla build agent so hosts with a global
+	# default_agent such as Build+ cannot load interactive greeting mandates into
+	# this runtime/model health check.
 	XDG_CONFIG_HOME="$_canary_config_dir" XDG_DATA_HOME="$_canary_data_dir" \
 		AIDEVOPS_HEADLESS=1 \
 		run_without_opencode_session_env "${_canary_timeout_cmd[@]}" \
 		"$_effective_opencode_bin" run "What is two plus two? Answer with the single word: Four" \
-		-m "$canary_model" --dir "${HOME}" \
+		-m "$canary_model" --dir "${HOME}" --agent build \
 		${canary_attach_args[@]+"${canary_attach_args[@]}"} \
 		>"$canary_output" 2>&1 || canary_exit=$?
 
