@@ -478,8 +478,11 @@ _pm_handle_partial_parent_closeout() {
 	if [[ -z "$issue_json" ]]; then
 		return 0
 	fi
-	issue_body=$(printf '%s' "$issue_json" | jq -r '.body // empty' 2>/dev/null) || issue_body=""
-	issue_labels=$(printf '%s' "$issue_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels=""
+	local _RS=$'\x1e'
+	IFS="$_RS" read -r -d '' issue_body issue_labels < <(
+		printf '%s' "$issue_json" | jq -j --arg rs "$_RS" \
+			'(.body // ""), $rs, ([.labels[]?.name] | join(",")), "\u0000"'
+	) || true
 
 	if ! _pm_issue_needs_partial_closeout "$issue_body" "$issue_labels"; then
 		return 0
