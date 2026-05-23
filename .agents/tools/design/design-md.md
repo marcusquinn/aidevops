@@ -42,7 +42,9 @@ Upstream `@google/design.md` v0.1.0 was reviewed as the initial open-source rele
 | Agent | Role | Relationship |
 |-------|------|--------------|
 | `tools/design/brand-identity.md` | Strategic brand profile (8 dimensions) | **Upstream** — feeds DESIGN.md generation |
-| `tools/design/ui-ux-inspiration.md` | URL study + interview workflow | **Producer** — extracts tokens |
+| `tools/design/ui-ux-inspiration.md` | URL study + interview workflow | **Discovery** — finds and studies references |
+| `tools/design/design-md-from-links.md` | Website/brand links to DESIGN.md | **Producer** — extracts, validates, previews, and hands off tokens |
+| `tools/design/report-presentation.md` | Report presentation tokens/components | **Specialisation** — Markdown, HTML, and PDF-ready reports |
 | `tools/design/design-inspiration.md` | 60+ curated gallery resources | **Discovery** |
 | `tools/design/colour-palette.md` | Palette generation and spinning | **Tool** |
 | `tools/design/library/` | Example DESIGN.md files | **Reference** |
@@ -54,7 +56,7 @@ Upstream `@google/design.md` v0.1.0 was reviewed as the initial open-source rele
 **Workflow** (apply in order):
 
 1. **Check** — does `DESIGN.md` exist in project root? If yes, use it. If no, create one.
-2. **Create** — from scratch (interview), URL (extraction), or library example.
+2. **Create** — from scratch (interview), links (`tools/design/design-md-from-links.md`), report presentation (`tools/design/report-presentation.md`), or library example.
 3. **Validate** — run `npx @google/design.md lint DESIGN.md`. Zero errors, warnings reviewed.
 4. **Preview** — generate `preview.html` to visually verify the design system.
 5. **Iterate** — spin palettes, adjust tokens, regenerate preview until satisfied.
@@ -202,13 +204,16 @@ Choose method based on what exists:
 | Situation | Method | Starting point |
 |-----------|--------|---------------|
 | New project, no design | Interview | Brand identity → palette → library match → template |
-| Match an existing site | URL extraction | `tools/design/ui-ux-inspiration.md` URL Study Workflow |
+| Match existing website or brand links | Link extraction | `tools/design/design-md-from-links.md` |
+| Styled report, HTML export, or PDF-ready output | Report presentation | `tools/design/report-presentation.md` |
 | Known brand/style | Library copy | `tools/design/library/brands/` or `library/styles/` |
 | `brand-identity.toon` exists | Brand identity | Map dimensions to sections (see below) |
 
 **Method 1 (Interview):** Brand identity interview (`tools/design/brand-identity.md`) → select UI style from `ui-ux-catalogue.toon` → generate palette (`colour-palette.md`) → copy closest library example → synthesise into template → lint + preview + iterate.
 
-**Method 2 (URL):** URL study workflow extracts computed styles (colours, typography, spacing, components, shadows, CSS custom properties from `:root`). Populate YAML token layer from extracted values, write prose rationale for each section, fill gaps (do's/don'ts, responsive rules) by inference. Validate with linter, generate preview, validate against source. Full browser automation process: `tools/design/ui-ux-inspiration.md`.
+**Method 2 (Links):** Dedicated link-to-DESIGN.md workflow extracts computed styles and brand patterns from user-provided website/branding links while treating external pages as untrusted content. Populate YAML token layer from extracted values, write prose rationale, check WCAG contrast/body text/focus/table/print readability, run `npx @google/design.md lint DESIGN.md`, generate preview, then hand off to build agents. Full workflow: `tools/design/design-md-from-links.md`.
+
+**Method 2b (Reports):** For client reports, audits, dashboards, HTML exports, or PDF-ready output, map report components to DESIGN.md component tokens using `tools/design/report-presentation.md`. Cover/meta, TOC, chapter heroes, evidence badges, tactic cards, tables, source cards, callouts, checklists, and print CSS all need explicit token/component coverage.
 
 **Method 3 (Library):** Copy closest `library/brands/` or `library/styles/` DESIGN.md into project root. Swap token values in YAML front matter, rewrite prose to match, update do's/don'ts. Lint + preview + iterate.
 
@@ -273,7 +278,9 @@ The spec format is `alpha` — expect changes. aidevops mitigations:
 ## Related
 
 - `tools/design/brand-identity.md` -- Strategic brand profile (upstream input)
-- `tools/design/ui-ux-inspiration.md` -- URL study extraction workflow
+- `tools/design/ui-ux-inspiration.md` -- URL study discovery and inspiration workflow
+- `tools/design/design-md-from-links.md` -- Dedicated website/brand links to DESIGN.md workflow
+- `tools/design/report-presentation.md` -- Report components, HTML/PDF styling, and print-ready guidance
 - `tools/design/design-inspiration.md` -- 60+ curated gallery resources
 - `tools/design/colour-palette.md` -- Palette generation and spinning
 - `tools/design/library/README.md` -- Library index and usage

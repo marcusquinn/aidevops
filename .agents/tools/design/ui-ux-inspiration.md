@@ -28,6 +28,8 @@ model: sonnet
 - **Data**: `tools/design/ui-ux-catalogue.toon` (styles, palettes, pattern library)
 - **Resources**: `tools/design/design-inspiration.md` (60+ curated galleries), `tools/design/library/` (54 brand + 12 style examples)
 - **DESIGN.md format**: `tools/design/design-md.md` (format spec, generation workflows, library index)
+- **DESIGN.md from links**: `tools/design/design-md-from-links.md` (dedicated extraction, validation, preview, and handoff workflow)
+- **Report presentation**: `tools/design/report-presentation.md` (Markdown/HTML/PDF report tokens and component taxonomy)
 - **Palette tools**: `tools/design/colour-palette.md` (generation, spinning, narrowing)
 - **Browser**: Playwright full-render extraction (see `tools/browser/browser-automation.md`)
 
@@ -37,8 +39,9 @@ model: sonnet
 2. **Check DESIGN.md** -- does `DESIGN.md` exist in project root? If yes, coding agents can use it directly. If no, generate one after brand identity is established.
 3. **Consult catalogue** -- check `ui-ux-catalogue.toon` for matching style presets and palettes. Browse `tools/design/library/` for brand examples and style archetypes.
 4. **Check inspiration** -- user has reference URLs? Run URL study. No URLs? Present curated examples from `design-inspiration.md`.
-5. **Generate palette** -- use `tools/design/colour-palette.md` to spin palette variants and narrow to final choice.
-6. **Apply quality gates** -- validate against accessibility (WCAG 2.1 AA), performance, and platform conventions.
+5. **Generate DESIGN.md from links** -- when links should become a production design system, hand off to `tools/design/design-md-from-links.md` instead of duplicating the workflow here.
+6. **Generate palette** -- use `tools/design/colour-palette.md` to spin palette variants and narrow to final choice.
+7. **Apply quality gates** -- validate against accessibility (WCAG 2.1 AA), performance, and platform conventions.
 
 <!-- AI-CONTEXT-END -->
 
@@ -214,18 +217,13 @@ Validate before finalising any brand identity or design recommendation:
 
 The URL study workflow can output directly as a DESIGN.md file instead of (or in addition to) the standard URL study format. This is the preferred path when the user says "build me a DESIGN.md from this URL" or similar.
 
-1. Run full URL study extraction (above)
-2. Map extracted values to the 9-section DESIGN.md format (`tools/design/design-md.md`)
-3. Fill gaps: infer do's/don'ts from patterns, add responsive rules from viewport testing
-4. Validate contrast ratios (WCAG 2.1 AA)
-5. Write to `DESIGN.md` in project root
-6. Generate preview.html for visual verification
-
-For detailed section mapping, see `tools/design/design-md.md` > "Browser Automation: DESIGN.md from URL".
+Use `tools/design/design-md-from-links.md` for the production workflow. It covers untrusted source handling, computed style extraction, brand synthesis, token mapping, `npx @google/design.md lint`, WCAG contrast, body text size, focus visibility, table semantics, print readability, preview generation, and handoff. Keep this file focused on inspiration discovery and URL study inputs.
 
 ## Related
 
 - `tools/design/design-md.md` -- DESIGN.md format spec, generation workflows, library index
+- `tools/design/design-md-from-links.md` -- production link-to-DESIGN.md workflow
+- `tools/design/report-presentation.md` -- report presentation tokens, components, HTML/PDF styling
 - `tools/design/design-inspiration.md` -- 60+ curated UI/UX resource galleries
 - `tools/design/colour-palette.md` -- palette generation, spinning, narrowing
 - `tools/design/library/` -- 54 brand examples + 12 style archetypes
