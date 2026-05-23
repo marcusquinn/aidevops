@@ -10,6 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.17.29] - 2026-05-23
+
+### Added
+
+- register reports output plane (#24005)
+
+### Changed
+
+- Documentation: add design report guidance (#24006)
+- Documentation: add AI search reporting guidance (#24007)
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- consolidate partial closeout issue parsing (#24002)
+- tighten worker terminal completion checks (#23994)
+- narrow RTK git status regression guidance (#23993)
+- cache pulse PR list provider reads (#23714)
+- treat terminal worker state as complete
+
 ## [3.17.28] - 2026-05-22
 
 ### Changed
