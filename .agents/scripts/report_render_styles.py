@@ -61,6 +61,12 @@ def _brand_root() -> Path:
     return Path(__file__).resolve().parents[1] / "tools" / "design" / "library" / "brands"
 
 
+def _base_report_css() -> str:
+    return (Path(__file__).resolve().parents[1] / "templates" / "reports" / "llm-visibility-report.css").read_text(
+        encoding="utf-8"
+    )
+
+
 def _front_matter(path: Path) -> list[str]:
     lines = path.read_text(encoding="utf-8").splitlines()
     start = -1
@@ -118,6 +124,52 @@ def _tokens_for(name: str) -> dict[str, str]:
     return tokens
 
 
+def _optional_dark_tokens(tokens: dict[str, str]) -> str:
+    if "background-dark" not in tokens:
+        return ""
+    return f"""
+@media (prefers-color-scheme: dark) {{
+  :root {{
+    --report-paper: {tokens['background-dark']};
+    --report-paper-raised: {tokens.get('surface-dark', tokens['background-dark'])};
+    --report-surface: {tokens.get('surface-dark', tokens['background-dark'])};
+    --report-ink: {tokens.get('on-surface-dark', '#ffffff')};
+    --report-ink-muted: {tokens.get('muted-dark', '#cbd5e1')};
+    --report-ink-soft: {tokens.get('muted-dark', '#cbd5e1')};
+    --report-rule: {tokens.get('outline-dark', '#334155')};
+    --report-rule-strong: {tokens.get('outline-dark', '#334155')};
+    --report-blue: {tokens.get('primary-dark', tokens['primary'])};
+  }}
+}}
+""".strip()
+
+
+def _theme_css(name: str, tokens: dict[str, str]) -> str:
+    dark_css = _optional_dark_tokens(tokens)
+    return f"""
+/* DESIGN.md brand token overrides: {name} */
+:root {{
+  --report-font-heading: {tokens['headline-display.fontFamily']};
+  --report-font-body: {tokens['body-md.fontFamily']};
+  --report-font-code: {tokens['code-md.fontFamily']};
+  --report-paper: {tokens['background']};
+  --report-paper-raised: {tokens['primary-container']};
+  --report-surface: {tokens['surface']};
+  --report-ink: {tokens['on-surface']};
+  --report-ink-muted: {tokens['muted']};
+  --report-ink-soft: {tokens['muted']};
+  --report-rule: {tokens['outline']};
+  --report-rule-strong: {tokens['primary']};
+  --report-blue: {tokens['primary']};
+  --report-radius-lg: {tokens['rounded.lg']};
+  --report-radius-xl: calc({tokens['rounded.lg']} + 0.5rem);
+}}
+.source-card, .tactic-card, .priority-group {{ border-color: var(--report-rule); }}
+.sticky-toc a:hover, .sticky-toc a:focus-visible, .sticky-toc a[aria-current="true"] {{ border-left-color: var(--report-blue); }}
+{dark_css}
+""".strip()
+
+
 def style_names() -> tuple[str, ...]:
     """Return supported DESIGN.md-backed report style identifiers."""
 
@@ -128,22 +180,4 @@ def style_css(name: str) -> str:
     """Return renderer CSS compiled from a brand DESIGN.md file."""
 
     tokens = _tokens_for(name)
-    return f"""
-:root {{ color-scheme: light dark; --report-paper: {tokens['background']}; --report-surface: {tokens['surface']}; --report-ink: {tokens['on-surface']}; --report-muted: {tokens['muted']}; --report-line: {tokens['outline']}; --report-panel: {tokens['surface']}; --report-blue: {tokens['primary']}; --report-accent-soft: {tokens['primary-container']}; --report-radius: {tokens['rounded.lg']}; --report-heading: {tokens['headline-display.fontFamily']}; --report-body: {tokens['body-md.fontFamily']}; --report-mono: {tokens['code-md.fontFamily']}; }}
-body.report-body {{ margin: 0; background: var(--report-paper); color: var(--report-ink); font: 16px/1.62 var(--report-body); }}
-.report-shell {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(14rem, 19rem); gap: 2rem; max-width: 1180px; margin: 0 auto; padding: 2rem; }}
-.report-content, .report-main {{ min-width: 0; }}
-h1,h2,h3 {{ color: var(--report-ink); font-family: var(--report-heading); line-height: 1.12; letter-spacing: -0.02em; break-after: avoid; }}
-h1 {{ font-size: clamp(2.6rem, 7vw, 4.8rem); }}
-.sticky-toc {{ position: sticky; top: 1rem; align-self: start; max-height: calc(100vh - 2rem); overflow: auto; border: 1px solid var(--report-line); border-radius: var(--report-radius); padding: 1rem; background: var(--report-panel); box-shadow: 0 10px 32px rgba(15, 23, 42, .08); }}
-.sticky-toc a {{ display: block; color: var(--report-muted); text-decoration: none; margin: .35rem 0; border-left: 3px solid transparent; padding-left: .5rem; }}
-.sticky-toc a:hover, .sticky-toc a:focus-visible {{ border-left-color: var(--report-blue); color: var(--report-ink); }}
-.badge {{ display: inline-block; border-radius: 999px; padding: .15rem .55rem; font-size: .78rem; font-weight: 800; border: 1px solid var(--report-line); background: var(--report-accent-soft); color: var(--report-ink); }}
-.badge-verified {{ background: #dcfce7; color: #166534; }} .badge-partial {{ background: #fef9c3; color: #854d0e; }} .badge-inferred {{ background: #dbeafe; color: #1e40af; }} .badge-missing {{ background: #fee2e2; color: #991b1b; }}
-.source-card {{ border: 1px solid var(--report-line); border-left: 5px solid var(--report-blue); border-radius: var(--report-radius); padding: .9rem 1rem; margin: .8rem 0; background: var(--report-surface); }}
-table {{ table-layout: fixed; border-collapse: collapse; width: 100%; margin: 1rem 0; overflow-wrap: anywhere; background: var(--report-surface); }}
-th, td {{ border: 1px solid var(--report-line); padding: .55rem; text-align: left; vertical-align: top; }}
-code, pre {{ font-family: var(--report-mono); }}
-@media (max-width: 860px) {{ .report-shell {{ display: block; padding: 1rem; }} .sticky-toc {{ position: static; margin-bottom: 1rem; }} }}
-@media (prefers-color-scheme: dark) {{ :root {{ --report-paper: #0b1020; --report-surface: #111827; --report-ink: #f9fafb; --report-muted: #cbd5e1; --report-line: #334155; --report-panel: #111827; }} .sticky-toc {{ box-shadow: none; }} }}
-""".strip()
+    return f"{_base_report_css()}\n{_theme_css(name, tokens)}"

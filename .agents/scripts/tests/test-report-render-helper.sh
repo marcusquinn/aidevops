@@ -67,6 +67,10 @@ test_render_markdown_fixture() {
 	assert_contains "$_out" "Evidence: Inferred" "Markdown render includes inferred badge"
 	assert_contains "$_out" "Evidence: Missing" "Markdown render includes missing badge"
 	assert_contains "$_out" "source-card" "Markdown render includes source cards"
+	assert_contains "$_out" "report-cover" "Markdown render includes cover component"
+	assert_contains "$_out" "stats-strip" "Markdown render includes stats component"
+	assert_contains "$_out" "example-card" "Markdown render includes example component"
+	assert_contains "$_out" "<pre><code>Question:" "Markdown render includes fenced code blocks"
 	return 0
 }
 
@@ -171,7 +175,7 @@ test_render_template_and_profiles() {
 	assert_contains "$_out" "report-template-axel" "Render supports named style template"
 	assert_contains "$_out" "Newsreader" "Render includes style-specific fonts"
 	assert_contains "$_out" "size: A4 portrait" "Render defaults to A4 portrait profile"
-	assert_contains "$_slides" "16in 9in landscape" "print-css supports 16:9 landscape profile"
+	assert_contains "$_slides" "size: 16in 9in" "print-css supports 16:9 landscape profile"
 	assert_contains "$_slides" "column-count: 2" "print-css supports two-column presentation profile"
 	return 0
 }

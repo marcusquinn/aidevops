@@ -32,17 +32,19 @@ BASIC_CSS = """
 :root { color-scheme: light; --report-paper: #f8f6f1; --report-surface: #fffdf8; --report-ink: #111827; --report-muted: #4b5563; --report-line: #d8d2c4; --report-panel: #fffdf8; --report-blue: #2563eb; --report-green: #147a4a; --report-amber: #b7791f; --report-red: #b42318; }
 body.report-body { margin: 0; background: var(--report-paper); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--report-ink); }
 .report-shell { display: grid; grid-template-columns: minmax(0, 1fr) minmax(14rem, 18rem); gap: 2rem; max-width: 1180px; margin: 0 auto; padding: 2rem; }
+.report-main { grid-column: 1; grid-row: 1; }
 .sticky-toc { position: sticky; top: 1rem; align-self: start; max-height: calc(100vh - 2rem); overflow: auto; border: 1px solid var(--report-line); border-radius: 12px; padding: 1rem; background: var(--report-panel); }
+.sticky-toc { grid-column: 2; grid-row: 1; }
 .sticky-toc a { display: block; color: inherit; text-decoration: none; margin: .35rem 0; border-left: 3px solid transparent; padding-left: .5rem; }
 .sticky-toc a:hover, .sticky-toc a:focus-visible { border-left-color: var(--report-blue); }
 .report-content, .report-main { min-width: 0; }
-.badge { display: inline-block; border-radius: 999px; padding: .15rem .55rem; font-size: .78rem; font-weight: 700; border: 1px solid var(--report-line); }
+.badge { display: inline-flex; width: fit-content; min-width: max-content; max-width: 100%; white-space: nowrap; border-radius: 999px; padding: .15rem .55rem; font-size: .78rem; font-weight: 700; border: 1px solid var(--report-line); }
 .badge-verified { background: #dcfce7; color: #166534; }
 .badge-partial { background: #fef9c3; color: #854d0e; }
 .badge-inferred { background: #dbeafe; color: #1e40af; }
 .badge-missing { background: #fee2e2; color: #991b1b; }
 .source-card { border: 1px solid var(--report-line); border-left: 4px solid var(--report-ink); border-radius: 10px; padding: .85rem 1rem; margin: .75rem 0; background: var(--report-surface); }
-table { table-layout: fixed; border-collapse: collapse; width: 100%; margin: 1rem 0; overflow-wrap: anywhere; }
+table { table-layout: auto; border-collapse: collapse; width: 100%; margin: 1rem 0; overflow-wrap: normal; }
 th, td { border: 1px solid var(--report-line); padding: .5rem; text-align: left; vertical-align: top; }
 h1, h2, h3 { line-height: 1.15; break-after: avoid; }
 @media (max-width: 860px) { .report-shell { display: block; padding: 1rem; } .sticky-toc { position: static; margin-bottom: 1rem; } }
@@ -51,9 +53,9 @@ h1, h2, h3 { line-height: 1.15; break-after: avoid; }
 PROFILE_CSS = {
     "a4": "@media print { @page { size: A4 portrait; margin: 12mm 11mm 14mm; } body.report-body { background: #fff; font-size: 10.5pt; } .report-shell { display: block; max-width: none; padding: 0; } .sticky-toc { position: static; break-after: page; box-shadow: none; } table { table-layout: fixed; font-size: 8.8pt; } th,td { padding: 4pt 5pt; } a[href]::after { content: \" (\" attr(href) \")\"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after { content: \"\"; } }",
     "letter": "@media print { @page { size: Letter portrait; margin: 0.45in 0.42in 0.52in; } body.report-body { background: #fff; font-size: 10.5pt; } .report-shell { display: block; max-width: none; padding: 0; } .sticky-toc { position: static; break-after: page; box-shadow: none; } table { table-layout: fixed; font-size: 8.6pt; } th,td { padding: 4pt 5pt; } }",
-    "slides-16-9-1": "@media print { @page { size: 16in 9in landscape; margin: .35in; } .report-shell { display: block; padding: 0; } }",
-    "slides-16-9-2": "@media print { @page { size: 16in 9in landscape; margin: .35in; } .report-main { column-count: 2; column-gap: .35in; } .report-main > * { break-inside: avoid; } .report-shell { display: block; padding: 0; } }",
-    "slides-16-9-3": "@media print { @page { size: 16in 9in landscape; margin: .3in; } .report-main { column-count: 3; column-gap: .3in; } .report-main > * { break-inside: avoid; } .report-shell { display: block; padding: 0; } }",
+    "slides-16-9-1": "@media print { @page { size: 16in 9in; margin: .35in; } html, body.report-body { width: 16in; min-height: 9in; } .report-shell { display: block; padding: 0; } }",
+    "slides-16-9-2": "@media print { @page { size: 16in 9in; margin: .35in; } html, body.report-body { width: 16in; min-height: 9in; } .report-main { column-count: 2; column-gap: .35in; } .report-main > * { break-inside: avoid; } .report-shell { display: block; padding: 0; } }",
+    "slides-16-9-3": "@media print { @page { size: 16in 9in; margin: .3in; } html, body.report-body { width: 16in; min-height: 9in; } .report-main { column-count: 3; column-gap: .3in; } .report-main > * { break-inside: avoid; } .report-shell { display: block; padding: 0; } }",
 }
 
 BUILTIN_TEMPLATES = ("basic", "editorial-evidence") + style_names()
@@ -87,6 +89,27 @@ def wrap_document(headings: list[tuple[int, str, str]], body: str) -> str:
     for level, title, anchor in headings:
         indent = f' style="margin-left:{max(level - 1, 0)}rem"'
         toc_items.append(f'<li><a href="#{anchor}"{indent}>{html.escape(title)}</a></li>')
+    active_toc_script = """
+<script>
+(() => {
+  const links = Array.from(document.querySelectorAll('.sticky-toc a[href^="#"]'));
+  const headings = links.map((link) => document.getElementById(link.getAttribute('href').slice(1))).filter(Boolean);
+  const setActive = (id) => {
+    links.forEach((link) => link.setAttribute('aria-current', link.getAttribute('href') === `#${id}` ? 'true' : 'false'));
+  };
+  if (!('IntersectionObserver' in window) || headings.length === 0) {
+    if (headings[0]) setActive(headings[0].id);
+    return;
+  }
+  const observer = new IntersectionObserver((entries) => {
+    const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+    if (visible) setActive(visible.target.id);
+  }, { rootMargin: '-20% 0px -65% 0px', threshold: [0, 1] });
+  headings.forEach((heading) => observer.observe(heading));
+  setActive(headings[0].id);
+})();
+</script>
+""".strip()
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -107,6 +130,7 @@ def wrap_document(headings: list[tuple[int, str, str]], body: str) -> str:
 {body}
 </main>
 </div>
+{active_toc_script}
 </body>
 </html>
 """

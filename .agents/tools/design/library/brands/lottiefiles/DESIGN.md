@@ -21,18 +21,18 @@ colors:
   primary-dark: "#00DDB3"
 typography:
   headline-display:
-    fontFamily: 'Inter, "DM Sans", system-ui, sans-serif'
+    fontFamily: '"DM Sans", Inter, system-ui, sans-serif'
     fontSize: 64px
     fontWeight: 650
     lineHeight: 1.05
     letterSpacing: -0.03em
   headline-md:
-    fontFamily: 'Inter, "DM Sans", system-ui, sans-serif'
+    fontFamily: '"DM Sans", Inter, system-ui, sans-serif'
     fontSize: 32px
     fontWeight: 650
     lineHeight: 1.15
   body-md:
-    fontFamily: 'Inter, "DM Sans", system-ui, sans-serif'
+    fontFamily: '"DM Sans", Inter, system-ui, sans-serif'
     fontSize: 16px
     fontWeight: 400
     lineHeight: 1.62
@@ -84,8 +84,8 @@ motion design freshness. This DESIGN.md is a report-presentation brand preset fo
 - **Accent**: `#019D91` with supporting container `#DDFBF5`; dark accent observed as `#00DDB3`
 - **Background/surface**: `#FFFFFF` / `#FFFFFF`; dark inverse observed as `#080A0C` / `#161A1C`
 - **Text**: `#18181B` primary, `#4C5863` secondary; dark text observed as `#FFFFFF` / `#BFC8D1`
-- **Heading font**: Inter, DM Sans, system UI
-- **Body font**: Inter, DM Sans, system UI
+- **Heading font**: DM Sans, Inter, system UI
+- **Body font**: DM Sans, Inter, system UI
 - **Code font**: UI monospace stack
 - **Radius**: 20px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.

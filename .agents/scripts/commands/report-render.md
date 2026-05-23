@@ -71,3 +71,8 @@ Instructional sample:
 - Evidence badges are limited to `verified`, `partial`, `inferred`, and `missing`.
 - JSON reports use `evidence_badge` fields for the same badge values.
 - `print-css --template <name> --pdf-profile <name>` exposes the matching stylesheet for custom handoff workflows.
+- Rich Markdown blocks use container fences such as `::: report-cover`, `::: stats-strip`,
+  `::: tactic-card`, `::: good-bad`, `::: facts-table-wrap`, `::: example-card`,
+  `::: source-card`, `::: myth-callout`, and `::: priority-group priority=high`,
+  closed by `:::`. Use these to exercise Toolbox-style report components while
+  keeping `report.md` canonical.

@@ -5,12 +5,11 @@
 
 from __future__ import annotations
 
+import html
 import re
 
 from report_render_badges import badge_html
 from report_render_markup import inline_markup, slug
-
-BlockState = dict[str, bool | list[str]]
 
 
 def validate_markdown_badges(text: str) -> None:
@@ -18,27 +17,112 @@ def validate_markdown_badges(text: str) -> None:
         badge_html(match.group(1))
 
 
-def close_blocks(body: list[str], states: BlockState) -> None:
-    flush_paragraph(body, states)
+COMPONENT_BLOCKS = {
+    "action-line",
+    "badge-row",
+    "chapter-hero",
+    "checklist-card",
+    "details-note",
+    "example-card",
+    "facts-table-wrap",
+    "good-bad",
+    "good-row",
+    "bad-row",
+    "industry-card",
+    "myth-callout",
+    "priority-group",
+    "report-cover",
+    "source-card",
+    "stat-card",
+    "stats-strip",
+    "tactic-card",
+}
+
+
+def close_code(body: list[str], states: dict[str, object]) -> None:
+    if not states.get("code"):
+        return
+    lines = states.get("code_lines", [])
+    code_text = "\n".join(lines) if isinstance(lines, list) else ""
+    body.append(f"<pre><code>{html.escape(code_text)}</code></pre>")
+    states["code"] = False
+    states["code_lines"] = []
+
+
+def close_blocks(body: list[str], states: dict[str, object]) -> None:
+    if states.get("code"):
+        return
     for key, tag in (("list", "</ul>"), ("table", "</tbody></table>")):
         if states[key]:
             body.append(tag)
             states[key] = False
 
 
-def flush_paragraph(body: list[str], states: BlockState) -> None:
-    paragraph_lines = states["paragraph"]
-    if not isinstance(paragraph_lines, list) or not paragraph_lines:
-        return
-    body.append(f"<p>{inline_markup(' '.join(paragraph_lines))}</p>")
-    states["paragraph"] = []
+def close_component(body: list[str], states: dict[str, object]) -> bool:
+    stack = states["components"]
+    if not isinstance(stack, list) or not stack:
+        return False
+    body.append("</section>")
+    stack.pop()
+    return True
+
+
+def close_all(body: list[str], states: dict[str, object]) -> None:
+    close_code(body, states)
+    close_blocks(body, states)
+    while close_component(body, states):
+        pass
+
+
+def component_attrs(raw_attrs: str) -> str:
+    attrs = []
+    for key, value in re.findall(r"([a-zA-Z0-9_-]+)=([a-zA-Z0-9_-]+)", raw_attrs):
+        if key == "priority":
+            attrs.append(f' data-priority="{html.escape(value)}"')
+    return "".join(attrs)
+
+
+def handle_component(line: str, body: list[str], states: dict[str, object]) -> bool:
+    if line.strip() == ":::":
+        close_blocks(body, states)
+        close_component(body, states)
+        return True
+    match = re.match(r"^:::\s+([a-zA-Z0-9_-]+)(.*)$", line)
+    if not match:
+        return False
+    name = match.group(1)
+    if name not in COMPONENT_BLOCKS:
+        return False
+    close_blocks(body, states)
+    body.append(f'<section class="{name}"{component_attrs(match.group(2))}>')
+    stack = states["components"]
+    if isinstance(stack, list):
+        stack.append(name)
+    return True
+
+
+def handle_code_fence(line: str, body: list[str], states: dict[str, object]) -> bool:
+    if states.get("code"):
+        if line.startswith("```"):
+            close_code(body, states)
+            return True
+        lines = states.get("code_lines", [])
+        if isinstance(lines, list):
+            lines.append(line)
+        return True
+    if not line.startswith("```"):
+        return False
+    close_blocks(body, states)
+    states["code"] = True
+    states["code_lines"] = []
+    return True
 
 
 def handle_heading(
     line: str,
     headings: list[tuple[int, str, str]],
     body: list[str],
-    states: BlockState,
+    states: dict[str, object],
 ) -> bool:
     heading = re.match(r"^(#{1,3})\s+(.+)$", line)
     if not heading:
@@ -52,25 +136,22 @@ def handle_heading(
     return True
 
 
-def handle_table(line: str, body: list[str], states: BlockState) -> bool:
+def handle_table(line: str, body: list[str], states: dict[str, object]) -> bool:
     if not line.startswith("|") or not line.endswith("|"):
         return False
-    raw_cells = [cell.strip() for cell in line.strip("|").split("|")]
+    cells = [inline_markup(cell.strip()) for cell in line.strip("|").split("|")]
+    raw_cells = [html.unescape(cell) for cell in cells]
     if all(re.match(r"^:?-{3,}:?$", cell) for cell in raw_cells):
         return True
-    cells = [inline_markup(cell) for cell in raw_cells]
     if not states["table"]:
         close_blocks(body, states)
-        body.append("<table><thead>")
-        body.append("<tr>{}</tr>".format("".join(f"<th>{cell}</th>" for cell in cells)))
-        body.append("</thead><tbody>")
+        body.append("<table><tbody>")
         states["table"] = True
-        return True
     body.append("<tr>{}</tr>".format("".join(f"<td>{cell}</td>" for cell in cells)))
     return True
 
 
-def handle_list(line: str, body: list[str], states: BlockState) -> bool:
+def handle_list(line: str, body: list[str], states: dict[str, object]) -> bool:
     if not line.startswith(("- ", "* ")):
         return False
     if not states["list"]:
@@ -81,24 +162,24 @@ def handle_list(line: str, body: list[str], states: BlockState) -> bool:
     return True
 
 
-def handle_paragraph(line: str, body: list[str], states: BlockState) -> None:
-    if states["list"] or states["table"]:
-        close_blocks(body, states)
+def handle_paragraph(line: str, body: list[str], states: dict[str, object]) -> None:
+    close_blocks(body, states)
     if line.lower().startswith(("source:", "source card:")):
-        flush_paragraph(body, states)
         body.append(f'<aside class="source-card">{inline_markup(line)}</aside>')
         return
-    paragraph_lines = states["paragraph"]
-    if isinstance(paragraph_lines, list):
-        paragraph_lines.append(line)
+    body.append(f"<p>{inline_markup(line)}</p>")
 
 
 def handle_markdown_line(
     line: str,
     headings: list[tuple[int, str, str]],
     body: list[str],
-    states: BlockState,
+    states: dict[str, object],
 ) -> None:
+    if handle_code_fence(line, body, states):
+        return
+    if handle_component(line, body, states):
+        return
     if handle_heading(line, headings, body, states):
         return
     if handle_table(line, body, states):
@@ -112,9 +193,9 @@ def render_markdown(text: str) -> tuple[list[tuple[int, str, str]], str]:
     validate_markdown_badges(text)
     headings: list[tuple[int, str, str]] = []
     body: list[str] = []
-    states = {"list": False, "table": False, "paragraph": []}
+    states: dict[str, object] = {"list": False, "table": False, "components": [], "code": False, "code_lines": []}
     for raw_line in text.splitlines():
         line = raw_line.rstrip()
-        handle_markdown_line(line, headings, body, states) if line else close_blocks(body, states)
-    close_blocks(body, states)
+        handle_markdown_line(line, headings, body, states) if line or states.get("code") else close_blocks(body, states)
+    close_all(body, states)
     return headings, "\n".join(body)

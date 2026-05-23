@@ -36,14 +36,6 @@
   --report-space-6: 3rem;
   --report-space-7: 4rem;
   --report-page-max: 78rem;
-  --report-grid-gutter: 28px;
-  --report-badge-strong-bg: #eaf2ff;
-  --report-badge-strong-ink: #1d4ed8;
-  --report-badge-vendor-bg: #f4ecff;
-  --report-badge-practitioner-bg: #fff5db;
-  --report-badge-practitioner-ink: #92400e;
-  --report-badge-hygiene-bg: #f3f4f6;
-  --report-badge-hygiene-ink: #374151;
 }
 
 *,
@@ -57,6 +49,7 @@ html {
   color: var(--report-ink);
   font-family: var(--report-font-body);
   line-height: 1.65;
+  scroll-behavior: smooth;
 }
 
 body.report-body {
@@ -69,15 +62,16 @@ body.report-body {
 
 .report-shell {
   display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: var(--report-grid-gutter);
+  grid-template-columns: minmax(0, 1fr) minmax(16rem, 20rem);
+  gap: var(--report-space-5);
   max-width: var(--report-page-max);
   margin: 0 auto;
   padding: var(--report-space-6) var(--report-space-5);
 }
 
 .report-main {
-  grid-column: span 8;
+  grid-column: 1;
+  grid-row: 1;
   min-width: 0;
 }
 
@@ -171,7 +165,8 @@ body.report-body {
 }
 
 .sticky-toc {
-  grid-column: span 3;
+  grid-column: 2;
+  grid-row: 1;
   position: sticky;
   top: var(--report-space-4);
   align-self: start;
@@ -257,9 +252,18 @@ body.report-body {
   gap: var(--report-space-1);
   align-items: center;
   width: fit-content;
+  min-width: max-content;
+  max-width: 100%;
   padding: 0.25rem 0.625rem;
   border-radius: 9999px;
   border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+td .badge,
+th .badge {
+  display: inline-flex;
+  min-width: max-content;
   white-space: nowrap;
 }
 
@@ -270,26 +274,26 @@ body.report-body {
 }
 
 .badge--strong {
-  background: var(--report-badge-strong-bg);
-  color: var(--report-badge-strong-ink);
+  background: #eaf2ff;
+  color: #1d4ed8;
   border-color: rgba(37, 99, 235, 0.2);
 }
 
 .badge--vendor {
-  background: var(--report-badge-vendor-bg);
+  background: #f4ecff;
   color: var(--report-violet);
   border-color: rgba(109, 40, 217, 0.2);
 }
 
 .badge--practitioner {
-  background: var(--report-badge-practitioner-bg);
-  color: var(--report-badge-practitioner-ink);
+  background: #fff5db;
+  color: #92400e;
   border-color: rgba(183, 121, 31, 0.24);
 }
 
 .badge--hygiene {
-  background: var(--report-badge-hygiene-bg);
-  color: var(--report-badge-hygiene-ink);
+  background: #f3f4f6;
+  color: #374151;
   border-color: rgba(55, 65, 81, 0.18);
 }
 
@@ -422,6 +426,19 @@ body.report-body {
   line-height: 1;
 }
 
+.stat-card > p:first-child {
+  margin-block: 0 var(--report-space-1);
+}
+
+.stat-card > p:first-child strong {
+  display: block;
+  color: var(--report-ink);
+  font-family: var(--report-font-heading);
+  font-size: 2.25rem;
+  font-weight: 650;
+  line-height: 1;
+}
+
 .stat-label,
 .stat-period,
 .source-meta {
@@ -437,23 +454,32 @@ body.report-body {
   background: var(--report-surface);
 }
 
-.facts-table {
+.facts-table,
+.facts-table-wrap table,
+.report-main > table {
   width: 100%;
   min-width: 42rem;
-  table-layout: fixed;
+  table-layout: auto;
   border-collapse: collapse;
   font-size: 0.875rem;
+  background: var(--report-surface);
 }
 
 .facts-table th,
-.facts-table td {
+.facts-table td,
+.facts-table-wrap th,
+.facts-table-wrap td,
+.report-main > table th,
+.report-main > table td {
   padding: 0.75rem 0.875rem;
-  border-bottom: 1px solid var(--report-rule);
+  border: 1px solid var(--report-rule);
   text-align: left;
   vertical-align: top;
 }
 
-.facts-table th {
+.facts-table th,
+.facts-table-wrap th,
+.report-main > table th {
   background: var(--report-paper-raised);
   color: var(--report-ink);
   font-weight: 700;
@@ -539,15 +565,16 @@ a {
     padding: var(--report-space-4) var(--report-space-3);
   }
 
-  .report-main,
-  .sticky-toc {
-    grid-column: auto;
-  }
-
   .sticky-toc {
     position: static;
     max-height: none;
     order: -1;
+  }
+
+  .report-main,
+  .sticky-toc {
+    grid-column: auto;
+    grid-row: auto;
   }
 
   .report-meta-grid,
@@ -654,6 +681,13 @@ a {
     font-size: 8.2pt;
   }
 
+  .report-main > table,
+  .facts-table-wrap table {
+    min-width: 0;
+    table-layout: fixed;
+    font-size: 8.2pt;
+  }
+
   .facts-table th,
   .facts-table td {
     padding: 4pt 5pt;
@@ -673,7 +707,7 @@ a {
     color: var(--report-ink);
   }
 
-  a[href^="http"]::after {
+  a[href]::after {
     content: " (" attr(href) ")";
     color: var(--report-ink-soft);
     font-size: 0.85em;
