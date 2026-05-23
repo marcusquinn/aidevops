@@ -86,7 +86,7 @@ body.report-body {
   grid-column: 1;
   grid-row: 1;
   min-width: 0;
-  counter-reset: report-chapter report-section report-para;
+  counter-reset: report-chapter report-section;
 }
 
 .report-cover,
@@ -238,7 +238,7 @@ body.report-body {
 
 .report-main h2 {
   counter-increment: report-chapter;
-  counter-reset: report-section report-para;
+  counter-reset: report-section;
 }
 
 .report-main h3 {
@@ -260,29 +260,6 @@ body.report-body {
   font-family: var(--report-font-body);
   font-size: 0.82em;
   font-weight: 800;
-}
-
-.report-main p {
-  counter-increment: report-para;
-}
-
-.report-main p::before {
-  content: counter(report-chapter) "." counter(report-para) " ";
-  color: var(--report-ink-soft);
-  font-size: 0.75em;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-}
-
-.report-cover p::before,
-.badge-row p::before,
-.stat-card p::before,
-.action-line p::before,
-.example-card p::before,
-.appendix-links p::before,
-.anchor-links p::before,
-.source-title p::before {
-  content: "";
 }
 
 .chapter-hero {
@@ -378,19 +355,27 @@ body.report-body {
   white-space: nowrap;
 }
 
-.badge-prefix {
+.evidence-badge {
   display: inline-flex;
-  margin: -0.1rem 0.15rem -0.1rem -0.35rem;
-  padding: 0.1rem 0.32rem;
-  border-radius: 999px;
-  background: var(--report-surface);
+  gap: 0.3rem;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.evidence-label {
   color: var(--report-ink-soft);
-  font-size: 0.62rem;
-  letter-spacing: 0.06em;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 td .badge,
-th .badge {
+th .badge,
+td .evidence-badge,
+th .evidence-badge {
   display: inline-flex;
   min-width: max-content;
   white-space: nowrap;
@@ -1173,34 +1158,34 @@ body.report-theme-dark .sticky-toc { box-shadow: none; }
 <h2>Contents</h2>
 <ol>
 <li><a href="#llm-visibility-toolbox" style="margin-left:0rem">LLM Visibility Toolbox</a></li>
-<li><a href="#executive-summary-badge-rct" style="margin-left:1rem">Executive summary {{badge:rct}}</a></li>
-<li><a href="#source-ledger-pattern" style="margin-left:1rem">Source ledger pattern</a></li>
-<li><a href="#prompt-captures" style="margin-left:2rem">Prompt captures</a></li>
-<li><a href="#crawl-evidence" style="margin-left:2rem">Crawl evidence</a></li>
-<li><a href="#third-party-profiles" style="margin-left:2rem">Third-party profiles</a></li>
-<li><a href="#source-card-rule" style="margin-left:2rem">Source-card rule</a></li>
-<li><a href="#highest-impact-tactics" style="margin-left:1rem">Highest-impact tactics</a></li>
-<li><a href="#weight-before-recommending" style="margin-left:2rem">Weight before recommending</a></li>
-<li><a href="#critical" style="margin-left:2rem">Critical</a></li>
-<li><a href="#high" style="margin-left:2rem">High</a></li>
-<li><a href="#medium" style="margin-left:2rem">Medium</a></li>
-<li><a href="#low" style="margin-left:2rem">Low</a></li>
-<li><a href="#page-type-matrix" style="margin-left:1rem">Page-type matrix</a></li>
-<li><a href="#industry-fit-reminder" style="margin-left:2rem">Industry-fit reminder</a></li>
-<li><a href="#tactic-card-examples" style="margin-left:1rem">Tactic card examples</a></li>
-<li><a href="#direct-answer-opening" style="margin-left:2rem">Direct-answer opening</a></li>
-<li><a href="#impact" style="margin-left:2rem">Impact</a></li>
-<li><a href="#evidence" style="margin-left:2rem">Evidence</a></li>
-<li><a href="#bot-friendly-first-fetch" style="margin-left:2rem">Bot-friendly first fetch</a></li>
-<li><a href="#strong-pattern" style="margin-left:2rem">Strong pattern</a></li>
-<li><a href="#weak-pattern" style="margin-left:2rem">Weak pattern</a></li>
-<li><a href="#myths-and-caveats" style="margin-left:1rem">Myths and caveats</a></li>
-<li><a href="#myth" style="margin-left:2rem">Myth</a></li>
-<li><a href="#reality" style="margin-left:2rem">Reality</a></li>
-<li><a href="#roadmap-template" style="margin-left:1rem">Roadmap template</a></li>
-<li><a href="#priority-rule" style="margin-left:2rem">Priority rule</a></li>
-<li><a href="#verification-checklist" style="margin-left:1rem">Verification checklist</a></li>
-<li><a href="#appendices" style="margin-left:1rem">Appendices</a></li>
+<li><a href="#executive-summary-badge-rct" style="margin-left:1rem">01 / Executive summary <span class="badge badge--rct">Rct</span></a></li>
+<li><a href="#source-ledger-pattern" style="margin-left:1rem">02 / Source ledger pattern</a></li>
+<li><a href="#prompt-captures" style="margin-left:2rem">2.1 Prompt captures</a></li>
+<li><a href="#crawl-evidence" style="margin-left:2rem">2.2 Crawl evidence</a></li>
+<li><a href="#third-party-profiles" style="margin-left:2rem">2.3 Third-party profiles</a></li>
+<li><a href="#source-card-rule" style="margin-left:2rem">2.4 Source-card rule</a></li>
+<li><a href="#highest-impact-tactics" style="margin-left:1rem">03 / Highest-impact tactics</a></li>
+<li><a href="#weight-before-recommending" style="margin-left:2rem">3.1 Weight before recommending</a></li>
+<li><a href="#critical" style="margin-left:2rem">3.2 Critical</a></li>
+<li><a href="#high" style="margin-left:2rem">3.3 High</a></li>
+<li><a href="#medium" style="margin-left:2rem">3.4 Medium</a></li>
+<li><a href="#low" style="margin-left:2rem">3.5 Low</a></li>
+<li><a href="#page-type-matrix" style="margin-left:1rem">04 / Page-type matrix</a></li>
+<li><a href="#industry-fit-reminder" style="margin-left:2rem">4.1 Industry-fit reminder</a></li>
+<li><a href="#tactic-card-examples" style="margin-left:1rem">05 / Tactic card examples</a></li>
+<li><a href="#direct-answer-opening" style="margin-left:2rem">5.1 Direct-answer opening</a></li>
+<li><a href="#impact" style="margin-left:2rem">5.2 Impact</a></li>
+<li><a href="#evidence" style="margin-left:2rem">5.3 Evidence</a></li>
+<li><a href="#bot-friendly-first-fetch" style="margin-left:2rem">5.4 Bot-friendly first fetch</a></li>
+<li><a href="#strong-pattern" style="margin-left:2rem">5.5 Strong pattern</a></li>
+<li><a href="#weak-pattern" style="margin-left:2rem">5.6 Weak pattern</a></li>
+<li><a href="#myths-and-caveats" style="margin-left:1rem">06 / Myths and caveats</a></li>
+<li><a href="#myth" style="margin-left:2rem">6.1 Myth</a></li>
+<li><a href="#reality" style="margin-left:2rem">6.2 Reality</a></li>
+<li><a href="#roadmap-template" style="margin-left:1rem">07 / Roadmap template</a></li>
+<li><a href="#priority-rule" style="margin-left:2rem">7.1 Priority rule</a></li>
+<li><a href="#verification-checklist" style="margin-left:1rem">08 / Verification checklist</a></li>
+<li><a href="#appendices" style="margin-left:1rem">09 / Appendices</a></li>
 </ol>
 </nav>
 <main class="report-content report-main">
@@ -1210,10 +1195,10 @@ body.report-theme-dark .sticky-toc { box-shadow: none; }
 <p>Audience: SEO, content, engineering, and leadership teams. Export rule: one HTML preview; PDF profiles for A4, Letter, and 16:9 decks.</p>
 </section>
 <h2 id="executive-summary-badge-rct">Executive summary <span class="badge badge--rct">Rct</span></h2>
-<p>LLM visibility is an evidence system, not a single checklist. The best programmes make priority pages retrieval-ready, criteria-complete, citation-worthy, technically fetchable, and corroborated by third-party sources. <span class="badge badge-verified"><span class="badge-prefix">Evidence:</span><span>Verified</span></span></p>
-<p>Recommendations must be weighted by page type. A homepage, SaaS feature page, comparison page, pricing page, article, product page, local/YMYL page, and research asset need different tactics, owners, and verification paths. <span class="badge badge-verified"><span class="badge-prefix">Evidence:</span><span>Verified</span></span></p>
+<p>LLM visibility is an evidence system, not a single checklist. The best programmes make priority pages retrieval-ready, criteria-complete, citation-worthy, technically fetchable, and corroborated by third-party sources. <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></p>
+<p>Recommendations must be weighted by page type. A homepage, SaaS feature page, comparison page, pricing page, article, product page, local/YMYL page, and research asset need different tactics, owners, and verification paths. <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></p>
 <section class="badge-row">
-<p><span class="badge badge-verified"><span class="badge-prefix">Evidence:</span><span>Verified</span></span> <span class="badge badge-partial"><span class="badge-prefix">Evidence:</span><span>Partial</span></span> <span class="badge badge-inferred"><span class="badge-prefix">Evidence:</span><span>Inferred</span></span> <span class="badge badge-missing"><span class="badge-prefix">Evidence:</span><span>Missing</span></span></p>
+<p><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span> <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span> <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span> <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span></p>
 </section>
 <section class="stats-strip">
 <section class="stat-card">
@@ -1312,12 +1297,12 @@ body.report-theme-dark .sticky-toc { box-shadow: none; }
 <section class="facts-table-wrap">
 <table><thead>
 <tr><th>Tactic</th><th>Evidence</th><th>Best page types</th><th>Why it matters</th><th>Verification</th></tr></thead><tbody>
-<tr><td>Direct-answer opening</td><td><span class="badge badge-verified"><span class="badge-prefix">Evidence:</span><span>Verified</span></span></td><td>Article, glossary, comparison, feature, local</td><td>Concise first-paragraph claims are easier to retrieve and cite.</td><td>Rendered first 300 words include answer, source, and updated date</td></tr>
-<tr><td>Source cards near claims</td><td><span class="badge badge-verified"><span class="badge-prefix">Evidence:</span><span>Verified</span></span></td><td>Research, comparison, YMYL, feature</td><td>Engines need nearby proof to trust and quote claims.</td><td>Source ID appears beside factual claim and in ledger</td></tr>
-<tr><td>Third-party corroboration</td><td><span class="badge badge-verified"><span class="badge-prefix">Evidence:</span><span>Verified</span></span></td><td>SaaS, ecommerce, local, YMYL</td><td>Answer engines cross-check owned claims against outside sources.</td><td>Profile parity and source breadth review</td></tr>
-<tr><td>Bot-friendly first fetch</td><td><span class="badge badge-verified"><span class="badge-prefix">Evidence:</span><span>Verified</span></span></td><td>All priority pages</td><td>Hidden or blocked content cannot be cited.</td><td>Raw/rendered crawl, robots, sitemap, and logs</td></tr>
-<tr><td>Entity consistency</td><td><span class="badge badge-partial"><span class="badge-prefix">Evidence:</span><span>Partial</span></span></td><td>Homepage, about, local, profiles</td><td>Contradictory facts reduce answer confidence.</td><td>Canonical entity table and third-party parity</td></tr>
-<tr><td>FAQPage schema</td><td><span class="badge badge-inferred"><span class="badge-prefix">Evidence:</span><span>Inferred</span></span></td><td>Hygiene only</td><td>Structured data helps clarity but does not replace visible evidence.</td><td>Schema validation plus visible-content check</td></tr>
+<tr><td>Direct-answer opening</td><td><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>Article, glossary, comparison, feature, local</td><td>Concise first-paragraph claims are easier to retrieve and cite.</td><td>Rendered first 300 words include answer, source, and updated date</td></tr>
+<tr><td>Source cards near claims</td><td><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>Research, comparison, YMYL, feature</td><td>Engines need nearby proof to trust and quote claims.</td><td>Source ID appears beside factual claim and in ledger</td></tr>
+<tr><td>Third-party corroboration</td><td><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>SaaS, ecommerce, local, YMYL</td><td>Answer engines cross-check owned claims against outside sources.</td><td>Profile parity and source breadth review</td></tr>
+<tr><td>Bot-friendly first fetch</td><td><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>All priority pages</td><td>Hidden or blocked content cannot be cited.</td><td>Raw/rendered crawl, robots, sitemap, and logs</td></tr>
+<tr><td>Entity consistency</td><td><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></td><td>Homepage, about, local, profiles</td><td>Contradictory facts reduce answer confidence.</td><td>Canonical entity table and third-party parity</td></tr>
+<tr><td>FAQPage schema</td><td><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span></td><td>Hygiene only</td><td>Structured data helps clarity but does not replace visible evidence.</td><td>Schema validation plus visible-content check</td></tr>
 </tbody></table>
 </section>
 <h2 id="page-type-matrix">Page-type matrix</h2>

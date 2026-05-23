@@ -16,6 +16,7 @@ from report_render_badges import BADGE_MISSING
 from report_render_badges import BADGE_PARTIAL
 from report_render_badges import BADGE_VERIFIED
 from report_render_json import DETAIL_KEY, SUMMARY_KEY, TITLE_KEY, render_json, validate_json_badges
+from report_render_markup import inline_markup
 from report_render_markdown import render_markdown, validate_markdown_badges
 from report_render_styles import dark_style_names, style_css, style_names
 
@@ -91,9 +92,19 @@ def read_input(path: str) -> str:
 def wrap_document(headings: list[tuple[int, str, str]], body: str) -> str:
     css = load_css(TEMPLATE, PDF_PROFILE)
     toc_items = []
+    chapter = 0
+    section = 0
     for level, title, anchor in headings:
+        label = title
+        if level == 2:
+            chapter += 1
+            section = 0
+            label = f"{chapter:02d} / {title}"
+        elif level == 3:
+            section += 1
+            label = f"{chapter}.{section} {title}" if chapter else title
         indent = f' style="margin-left:{max(level - 1, 0)}rem"'
-        toc_items.append(f'<li><a href="#{anchor}"{indent}>{html.escape(title)}</a></li>')
+        toc_items.append(f'<li><a href="#{anchor}"{indent}>{inline_markup(label)}</a></li>')
     active_toc_script = """
 <script>
 (() => {

@@ -86,7 +86,7 @@ body.report-body {
   grid-column: 1;
   grid-row: 1;
   min-width: 0;
-  counter-reset: report-chapter report-section report-para;
+  counter-reset: report-chapter report-section;
 }
 
 .report-cover,
@@ -238,7 +238,7 @@ body.report-body {
 
 .report-main h2 {
   counter-increment: report-chapter;
-  counter-reset: report-section report-para;
+  counter-reset: report-section;
 }
 
 .report-main h3 {
@@ -260,29 +260,6 @@ body.report-body {
   font-family: var(--report-font-body);
   font-size: 0.82em;
   font-weight: 800;
-}
-
-.report-main p {
-  counter-increment: report-para;
-}
-
-.report-main p::before {
-  content: counter(report-chapter) "." counter(report-para) " ";
-  color: var(--report-ink-soft);
-  font-size: 0.75em;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-}
-
-.report-cover p::before,
-.badge-row p::before,
-.stat-card p::before,
-.action-line p::before,
-.example-card p::before,
-.appendix-links p::before,
-.anchor-links p::before,
-.source-title p::before {
-  content: "";
 }
 
 .chapter-hero {
@@ -378,19 +355,27 @@ body.report-body {
   white-space: nowrap;
 }
 
-.badge-prefix {
+.evidence-badge {
   display: inline-flex;
-  margin: -0.1rem 0.15rem -0.1rem -0.35rem;
-  padding: 0.1rem 0.32rem;
-  border-radius: 999px;
-  background: var(--report-surface);
+  gap: 0.3rem;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.evidence-label {
   color: var(--report-ink-soft);
-  font-size: 0.62rem;
-  letter-spacing: 0.06em;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 td .badge,
-th .badge {
+th .badge,
+td .evidence-badge,
+th .evidence-badge {
   display: inline-flex;
   min-width: max-content;
   white-space: nowrap;
@@ -1104,17 +1089,17 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <h2>Contents</h2>
 <ol>
 <li><a href="#client-ai-search-audit" style="margin-left:0rem">Client AI Search Audit</a></li>
-<li><a href="#executive-summary" style="margin-left:1rem">Executive summary</a></li>
-<li><a href="#engine-findings" style="margin-left:1rem">Engine findings</a></li>
-<li><a href="#source-ledger" style="margin-left:1rem">Source ledger</a></li>
-<li><a href="#privacy-rule" style="margin-left:2rem">Privacy rule</a></li>
-<li><a href="#page-type-weighted-findings" style="margin-left:1rem">Page-type weighted findings</a></li>
-<li><a href="#p0-comparison-page-retrieval-gap" style="margin-left:2rem">P0: Comparison page retrieval gap</a></li>
-<li><a href="#p1-pricing-facts-lack-nearby-evidence" style="margin-left:2rem">P1: Pricing facts lack nearby evidence</a></li>
-<li><a href="#preserve" style="margin-left:2rem">Preserve</a></li>
-<li><a href="#fix" style="margin-left:2rem">Fix</a></li>
-<li><a href="#implementation-brief" style="margin-left:1rem">Implementation brief</a></li>
-<li><a href="#verification-checklist" style="margin-left:1rem">Verification checklist</a></li>
+<li><a href="#executive-summary" style="margin-left:1rem">01 / Executive summary</a></li>
+<li><a href="#engine-findings" style="margin-left:1rem">02 / Engine findings</a></li>
+<li><a href="#source-ledger" style="margin-left:1rem">03 / Source ledger</a></li>
+<li><a href="#privacy-rule" style="margin-left:2rem">3.1 Privacy rule</a></li>
+<li><a href="#page-type-weighted-findings" style="margin-left:1rem">04 / Page-type weighted findings</a></li>
+<li><a href="#p0-comparison-page-retrieval-gap" style="margin-left:2rem">4.1 P0: Comparison page retrieval gap</a></li>
+<li><a href="#p1-pricing-facts-lack-nearby-evidence" style="margin-left:2rem">4.2 P1: Pricing facts lack nearby evidence</a></li>
+<li><a href="#preserve" style="margin-left:2rem">4.3 Preserve</a></li>
+<li><a href="#fix" style="margin-left:2rem">4.4 Fix</a></li>
+<li><a href="#implementation-brief" style="margin-left:1rem">05 / Implementation brief</a></li>
+<li><a href="#verification-checklist" style="margin-left:1rem">06 / Verification checklist</a></li>
 </ol>
 </nav>
 <main class="report-content report-main">
@@ -1124,7 +1109,7 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <p>Prepared for: Example client. Scope: example.com priority pages. Replace placeholders only after live evidence collection.</p>
 </section>
 <h2 id="executive-summary">Executive summary</h2>
-<p>Example client appears in some answer-engine responses for category and comparison prompts, but source coverage is uneven. Priority gaps are retrieval eligibility, source-card proximity, and third-party corroboration parity. <span class="badge badge-partial"><span class="badge-prefix">Evidence:</span><span>Partial</span></span></p>
+<p>Example client appears in some answer-engine responses for category and comparison prompts, but source coverage is uneven. Priority gaps are retrieval eligibility, source-card proximity, and third-party corroboration parity. <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></p>
 <section class="stats-strip">
 <section class="stat-card">
 <p><strong>3/5</strong></p>
@@ -1150,11 +1135,11 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <section class="facts-table-wrap">
 <table><thead>
 <tr><th>Engine</th><th>Finding</th><th>Evidence</th><th>Next action</th></tr></thead><tbody>
-<tr><td>AIO</td><td>Brand cited for two comparison prompts.</td><td><span class="badge badge-verified"><span class="badge-prefix">Evidence:</span><span>Verified</span></span></td><td>Add source cards to pages with citations but weak snippets.</td></tr>
-<tr><td>Gemini</td><td>Mentions brand but misses pricing constraints.</td><td><span class="badge badge-partial"><span class="badge-prefix">Evidence:</span><span>Partial</span></span></td><td>Add visible plan constraints and updated date.</td></tr>
-<tr><td>ChatGPT</td><td>Recommendation inferred from third-party profiles.</td><td><span class="badge badge-inferred"><span class="badge-prefix">Evidence:</span><span>Inferred</span></span></td><td>Improve profile parity and owned corroboration.</td></tr>
-<tr><td>AI Mode</td><td>Partial feature coverage, no comparison citation.</td><td><span class="badge badge-partial"><span class="badge-prefix">Evidence:</span><span>Partial</span></span></td><td>Strengthen direct-answer opening on comparison page.</td></tr>
-<tr><td>Perplexity</td><td>No citation found in priority prompt set.</td><td><span class="badge badge-missing"><span class="badge-prefix">Evidence:</span><span>Missing</span></span></td><td>Build third-party corroboration and rerun prompt set.</td></tr>
+<tr><td>AIO</td><td>Brand cited for two comparison prompts.</td><td><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>Add source cards to pages with citations but weak snippets.</td></tr>
+<tr><td>Gemini</td><td>Mentions brand but misses pricing constraints.</td><td><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></td><td>Add visible plan constraints and updated date.</td></tr>
+<tr><td>ChatGPT</td><td>Recommendation inferred from third-party profiles.</td><td><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span></td><td>Improve profile parity and owned corroboration.</td></tr>
+<tr><td>AI Mode</td><td>Partial feature coverage, no comparison citation.</td><td><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></td><td>Strengthen direct-answer opening on comparison page.</td></tr>
+<tr><td>Perplexity</td><td>No citation found in priority prompt set.</td><td><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span></td><td>Build third-party corroboration and rerun prompt set.</td></tr>
 </tbody></table>
 </section>
 <h2 id="source-ledger">Source ledger</h2>
@@ -1174,11 +1159,11 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <h2 id="page-type-weighted-findings">Page-type weighted findings</h2>
 <section class="priority-group" data-priority="critical">
 <h3 id="p0-comparison-page-retrieval-gap">P0: Comparison page retrieval gap</h3>
-<p>Comparison content answers the right intent but key criteria are below client-rendered sections. Move the answer, feature table, pricing caveats, and source IDs into crawlable first-fetch HTML. <span class="badge badge-verified"><span class="badge-prefix">Evidence:</span><span>Verified</span></span></p>
+<p>Comparison content answers the right intent but key criteria are below client-rendered sections. Move the answer, feature table, pricing caveats, and source IDs into crawlable first-fetch HTML. <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></p>
 </section>
 <section class="priority-group" data-priority="high">
 <h3 id="p1-pricing-facts-lack-nearby-evidence">P1: Pricing facts lack nearby evidence</h3>
-<p>The pricing page states plan limits but lacks updated date, source card, and consistent third-party parity. Add canonical values and cite source IDs near the claims. <span class="badge badge-partial"><span class="badge-prefix">Evidence:</span><span>Partial</span></span></p>
+<p>The pricing page states plan limits but lacks updated date, source card, and consistent third-party parity. Add canonical values and cite source IDs near the claims. <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></p>
 </section>
 <section class="good-bad">
 <section class="good-row">

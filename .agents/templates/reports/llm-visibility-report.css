@@ -80,7 +80,7 @@ body.report-body {
   grid-column: 1;
   grid-row: 1;
   min-width: 0;
-  counter-reset: report-chapter report-section report-para;
+  counter-reset: report-chapter report-section;
 }
 
 .report-cover,
@@ -232,7 +232,7 @@ body.report-body {
 
 .report-main h2 {
   counter-increment: report-chapter;
-  counter-reset: report-section report-para;
+  counter-reset: report-section;
 }
 
 .report-main h3 {
@@ -254,29 +254,6 @@ body.report-body {
   font-family: var(--report-font-body);
   font-size: 0.82em;
   font-weight: 800;
-}
-
-.report-main p {
-  counter-increment: report-para;
-}
-
-.report-main p::before {
-  content: counter(report-chapter) "." counter(report-para) " ";
-  color: var(--report-ink-soft);
-  font-size: 0.75em;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-}
-
-.report-cover p::before,
-.badge-row p::before,
-.stat-card p::before,
-.action-line p::before,
-.example-card p::before,
-.appendix-links p::before,
-.anchor-links p::before,
-.source-title p::before {
-  content: "";
 }
 
 .chapter-hero {
@@ -372,19 +349,27 @@ body.report-body {
   white-space: nowrap;
 }
 
-.badge-prefix {
+.evidence-badge {
   display: inline-flex;
-  margin: -0.1rem 0.15rem -0.1rem -0.35rem;
-  padding: 0.1rem 0.32rem;
-  border-radius: 999px;
-  background: var(--report-surface);
+  gap: 0.3rem;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.evidence-label {
   color: var(--report-ink-soft);
-  font-size: 0.62rem;
-  letter-spacing: 0.06em;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 td .badge,
-th .badge {
+th .badge,
+td .evidence-badge,
+th .evidence-badge {
   display: inline-flex;
   min-width: max-content;
   white-space: nowrap;

@@ -26,4 +26,9 @@ def badge_html(value: Any) -> str:
     key = str(value).strip().lower()
     if key not in ALLOWED_BADGES:
         raise ValueError(f"unknown evidence badge value: {value}")
-    return f'<span class="badge badge-{key}"><span class="badge-prefix">Evidence:</span><span>{BADGE_LABELS[key]}</span></span>'
+    return (
+        '<span class="evidence-badge">'
+        '<span class="evidence-label">Evidence:</span>'
+        f'<span class="badge badge-{key}">{BADGE_LABELS[key]}</span>'
+        '</span>'
+    )

@@ -32,23 +32,23 @@ h1, h2, h3 { line-height: 1.15; break-after: avoid; }
 <h2>Contents</h2>
 <ol>
 <li><a href="#report-style-showcase" style="margin-left:0rem">Report Style Showcase</a></li>
-<li><a href="#component-overview-badge-strong" style="margin-left:1rem">Component overview {{badge:strong}}</a></li>
-<li><a href="#table-and-source-cards" style="margin-left:1rem">Table and source cards</a></li>
-<li><a href="#source-a" style="margin-left:2rem">Source A</a></li>
-<li><a href="#source-b" style="margin-left:2rem">Source B</a></li>
-<li><a href="#source-c" style="margin-left:2rem">Source C</a></li>
-<li><a href="#source-sample" style="margin-left:2rem">Source sample</a></li>
-<li><a href="#cards-and-callouts" style="margin-left:1rem">Cards and callouts</a></li>
-<li><a href="#info-panel" style="margin-left:2rem">Info panel</a></li>
-<li><a href="#impact-panel" style="margin-left:2rem">Impact panel</a></li>
-<li><a href="#evidence-panel" style="margin-left:2rem">Evidence panel</a></li>
-<li><a href="#tactic-card" style="margin-left:2rem">Tactic card</a></li>
-<li><a href="#good-row" style="margin-left:2rem">Good row</a></li>
-<li><a href="#bad-row" style="margin-left:2rem">Bad row</a></li>
-<li><a href="#myth" style="margin-left:2rem">Myth</a></li>
-<li><a href="#fact" style="margin-left:2rem">Fact</a></li>
-<li><a href="#priority-and-checklist" style="margin-left:1rem">Priority and checklist</a></li>
-<li><a href="#high-priority-visual-checks" style="margin-left:2rem">High-priority visual checks</a></li>
+<li><a href="#component-overview-badge-strong" style="margin-left:1rem">01 / Component overview <span class="badge badge--strong">Strong</span></a></li>
+<li><a href="#table-and-source-cards" style="margin-left:1rem">02 / Table and source cards</a></li>
+<li><a href="#source-a" style="margin-left:2rem">2.1 Source A</a></li>
+<li><a href="#source-b" style="margin-left:2rem">2.2 Source B</a></li>
+<li><a href="#source-c" style="margin-left:2rem">2.3 Source C</a></li>
+<li><a href="#source-sample" style="margin-left:2rem">2.4 Source sample</a></li>
+<li><a href="#cards-and-callouts" style="margin-left:1rem">03 / Cards and callouts</a></li>
+<li><a href="#info-panel" style="margin-left:2rem">3.1 Info panel</a></li>
+<li><a href="#impact-panel" style="margin-left:2rem">3.2 Impact panel</a></li>
+<li><a href="#evidence-panel" style="margin-left:2rem">3.3 Evidence panel</a></li>
+<li><a href="#tactic-card" style="margin-left:2rem">3.4 Tactic card</a></li>
+<li><a href="#good-row" style="margin-left:2rem">3.5 Good row</a></li>
+<li><a href="#bad-row" style="margin-left:2rem">3.6 Bad row</a></li>
+<li><a href="#myth" style="margin-left:2rem">3.7 Myth</a></li>
+<li><a href="#fact" style="margin-left:2rem">3.8 Fact</a></li>
+<li><a href="#priority-and-checklist" style="margin-left:1rem">04 / Priority and checklist</a></li>
+<li><a href="#high-priority-visual-checks" style="margin-left:2rem">4.1 High-priority visual checks</a></li>
 </ol>
 </nav>
 <main class="report-content report-main">
@@ -59,7 +59,7 @@ h1, h2, h3 { line-height: 1.15; break-after: avoid; }
 <h2 id="component-overview-badge-strong">Component overview <span class="badge badge--strong">Strong</span></h2>
 <p>Use <a href="#priority-and-checklist" data-filetype="link">anchor links</a>, <a href="../llm-visibility-toolbox/report.html" data-filetype="html">appendix links</a>, numbered steps, accordions, coloured panels, and source cards in the same canonical Markdown.</p>
 <section class="badge-row">
-<p><span class="badge badge-verified"><span class="badge-prefix">Evidence:</span><span>Verified</span></span> <span class="badge badge-partial"><span class="badge-prefix">Evidence:</span><span>Partial</span></span> <span class="badge badge-inferred"><span class="badge-prefix">Evidence:</span><span>Inferred</span></span> <span class="badge badge-missing"><span class="badge-prefix">Evidence:</span><span>Missing</span></span></p>
+<p><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span> <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span> <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span> <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span></p>
 </section>
 <section class="stats-strip">
 <section class="stat-card">
@@ -114,7 +114,7 @@ h1, h2, h3 { line-height: 1.15; break-after: avoid; }
 <section class="facts-table-wrap">
 <table><thead>
 <tr><th>Component</th><th>Stress condition</th><th>Expected result</th></tr></thead><tbody>
-<tr><td>Evidence badge</td><td>Long table cell with badge <span class="badge badge-verified"><span class="badge-prefix">Evidence:</span><span>Verified</span></span></td><td>Badge stays readable and does not split words.</td></tr>
+<tr><td>Evidence badge</td><td>Long table cell with badge <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>Badge stays readable and does not split words.</td></tr>
 <tr><td>Facts table</td><td>Multiple columns with prose</td><td>Table remains usable in HTML and constrained in print.</td></tr>
 <tr><td>Source card</td><td>Evidence note near claim</td><td>Card is visually distinct from normal paragraphs.</td></tr>
 <tr><td>Sidebar</td><td>Many headings</td><td>Sticky TOC remains secondary to content and active link updates.</td></tr>

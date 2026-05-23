@@ -86,7 +86,7 @@ body.report-body {
   grid-column: 1;
   grid-row: 1;
   min-width: 0;
-  counter-reset: report-chapter report-section report-para;
+  counter-reset: report-chapter report-section;
 }
 
 .report-cover,
@@ -238,7 +238,7 @@ body.report-body {
 
 .report-main h2 {
   counter-increment: report-chapter;
-  counter-reset: report-section report-para;
+  counter-reset: report-section;
 }
 
 .report-main h3 {
@@ -260,29 +260,6 @@ body.report-body {
   font-family: var(--report-font-body);
   font-size: 0.82em;
   font-weight: 800;
-}
-
-.report-main p {
-  counter-increment: report-para;
-}
-
-.report-main p::before {
-  content: counter(report-chapter) "." counter(report-para) " ";
-  color: var(--report-ink-soft);
-  font-size: 0.75em;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-}
-
-.report-cover p::before,
-.badge-row p::before,
-.stat-card p::before,
-.action-line p::before,
-.example-card p::before,
-.appendix-links p::before,
-.anchor-links p::before,
-.source-title p::before {
-  content: "";
 }
 
 .chapter-hero {
@@ -378,19 +355,27 @@ body.report-body {
   white-space: nowrap;
 }
 
-.badge-prefix {
+.evidence-badge {
   display: inline-flex;
-  margin: -0.1rem 0.15rem -0.1rem -0.35rem;
-  padding: 0.1rem 0.32rem;
-  border-radius: 999px;
-  background: var(--report-surface);
+  gap: 0.3rem;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  white-space: nowrap;
+}
+
+.evidence-label {
   color: var(--report-ink-soft);
-  font-size: 0.62rem;
-  letter-spacing: 0.06em;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 td .badge,
-th .badge {
+th .badge,
+td .evidence-badge,
+th .evidence-badge {
   display: inline-flex;
   min-width: max-content;
   white-space: nowrap;
@@ -1173,32 +1158,32 @@ body.report-theme-dark .sticky-toc { box-shadow: none; }
 <h2>Contents</h2>
 <ol>
 <li><a href="#llm-visibility-toolbox-full-sample" style="margin-left:0rem">LLM Visibility Toolbox Full Sample</a></li>
-<li><a href="#executive-summary-badge-strong" style="margin-left:1rem">Executive summary {{badge:strong}}</a></li>
-<li><a href="#how-to-read-this-report" style="margin-left:1rem">How to read this report</a></li>
-<li><a href="#critical" style="margin-left:2rem">Critical</a></li>
-<li><a href="#high" style="margin-left:2rem">High</a></li>
-<li><a href="#medium" style="margin-left:2rem">Medium</a></li>
-<li><a href="#low" style="margin-left:2rem">Low</a></li>
-<li><a href="#source-ledger" style="margin-left:1rem">Source ledger</a></li>
-<li><a href="#prompt-captures" style="margin-left:2rem">Prompt captures</a></li>
-<li><a href="#crawl-and-logs" style="margin-left:2rem">Crawl and logs</a></li>
-<li><a href="#third-party-corroboration" style="margin-left:2rem">Third-party corroboration</a></li>
-<li><a href="#source-card-standard" style="margin-left:2rem">Source-card standard</a></li>
-<li><a href="#chapter-1-on-page-content-tactics" style="margin-left:1rem">Chapter 1: On-page content tactics</a></li>
-<li><a href="#goal" style="margin-left:2rem">Goal</a></li>
-<li><a href="#direct-answer-in-the-first-paragraph" style="margin-left:2rem">Direct answer in the first paragraph</a></li>
-<li><a href="#impact" style="margin-left:2rem">Impact</a></li>
-<li><a href="#evidence" style="margin-left:2rem">Evidence</a></li>
-<li><a href="#good" style="margin-left:2rem">Good</a></li>
-<li><a href="#bad" style="margin-left:2rem">Bad</a></li>
-<li><a href="#chapter-2-technical-tactics" style="margin-left:1rem">Chapter 2: Technical tactics</a></li>
-<li><a href="#bot-friendly-first-fetch" style="margin-left:2rem">Bot-friendly first fetch</a></li>
-<li><a href="#chapter-3-off-page-authority" style="margin-left:1rem">Chapter 3: Off-page authority</a></li>
-<li><a href="#action" style="margin-left:2rem">Action</a></li>
-<li><a href="#myth" style="margin-left:2rem">Myth</a></li>
-<li><a href="#reality" style="margin-left:2rem">Reality</a></li>
-<li><a href="#roadmap" style="margin-left:1rem">Roadmap</a></li>
-<li><a href="#appendices" style="margin-left:1rem">Appendices</a></li>
+<li><a href="#executive-summary-badge-strong" style="margin-left:1rem">01 / Executive summary <span class="badge badge--strong">Strong</span></a></li>
+<li><a href="#how-to-read-this-report" style="margin-left:1rem">02 / How to read this report</a></li>
+<li><a href="#critical" style="margin-left:2rem">2.1 Critical</a></li>
+<li><a href="#high" style="margin-left:2rem">2.2 High</a></li>
+<li><a href="#medium" style="margin-left:2rem">2.3 Medium</a></li>
+<li><a href="#low" style="margin-left:2rem">2.4 Low</a></li>
+<li><a href="#source-ledger" style="margin-left:1rem">03 / Source ledger</a></li>
+<li><a href="#prompt-captures" style="margin-left:2rem">3.1 Prompt captures</a></li>
+<li><a href="#crawl-and-logs" style="margin-left:2rem">3.2 Crawl and logs</a></li>
+<li><a href="#third-party-corroboration" style="margin-left:2rem">3.3 Third-party corroboration</a></li>
+<li><a href="#source-card-standard" style="margin-left:2rem">3.4 Source-card standard</a></li>
+<li><a href="#chapter-1-on-page-content-tactics" style="margin-left:1rem">04 / Chapter 1: On-page content tactics</a></li>
+<li><a href="#goal" style="margin-left:2rem">4.1 Goal</a></li>
+<li><a href="#direct-answer-in-the-first-paragraph" style="margin-left:2rem">4.2 Direct answer in the first paragraph</a></li>
+<li><a href="#impact" style="margin-left:2rem">4.3 Impact</a></li>
+<li><a href="#evidence" style="margin-left:2rem">4.4 Evidence</a></li>
+<li><a href="#good" style="margin-left:2rem">4.5 Good</a></li>
+<li><a href="#bad" style="margin-left:2rem">4.6 Bad</a></li>
+<li><a href="#chapter-2-technical-tactics" style="margin-left:1rem">05 / Chapter 2: Technical tactics</a></li>
+<li><a href="#bot-friendly-first-fetch" style="margin-left:2rem">5.1 Bot-friendly first fetch</a></li>
+<li><a href="#chapter-3-off-page-authority" style="margin-left:1rem">06 / Chapter 3: Off-page authority</a></li>
+<li><a href="#action" style="margin-left:2rem">6.1 Action</a></li>
+<li><a href="#myth" style="margin-left:2rem">6.2 Myth</a></li>
+<li><a href="#reality" style="margin-left:2rem">6.3 Reality</a></li>
+<li><a href="#roadmap" style="margin-left:1rem">07 / Roadmap</a></li>
+<li><a href="#appendices" style="margin-left:1rem">08 / Appendices</a></li>
 </ol>
 </nav>
 <main class="report-content report-main">
@@ -1211,7 +1196,7 @@ body.report-theme-dark .sticky-toc { box-shadow: none; }
 <p><a href="#executive-summary" data-filetype="link">Executive summary</a> <a href="#chapter-1-on-page-content-tactics" data-filetype="link">Tactics</a> <a href="#chapter-2-technical-tactics" data-filetype="link">Technical</a> <a href="#chapter-3-off-page-authority" data-filetype="link">Authority</a> <a href="#appendices" data-filetype="link">Appendices</a></p>
 </section>
 <h2 id="executive-summary-badge-strong">Executive summary <span class="badge badge--strong">Strong</span></h2>
-<p>AI-search visibility improves when important pages are easy to retrieve, easy to trust, and easy to cite. Treat AIO, Gemini, ChatGPT, AI Mode, and Perplexity as separate evidence lines before summarising overall visibility. <span class="badge badge-verified"><span class="badge-prefix">Evidence:</span><span>Verified</span></span></p>
+<p>AI-search visibility improves when important pages are easy to retrieve, easy to trust, and easy to cite. Treat AIO, Gemini, ChatGPT, AI Mode, and Perplexity as separate evidence lines before summarising overall visibility. <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></p>
 <section class="summary-stats">
 <section class="stat-card">
 <p><strong>5</strong></p>
