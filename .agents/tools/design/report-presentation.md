@@ -28,6 +28,9 @@ model: sonnet
   for Markdown, styled HTML, and PDF-ready reports.
 - **Use with**: `tools/design/design-md.md` for token format and
   `tools/design/design-md-from-links.md` when deriving a report brand from URLs.
+  Also reference `brand-identity.md`, `colour-palette.md`,
+  `ui-ux-inspiration.md`, and `ui-ux-catalogue.toon` before creating reusable
+  report brand folders or templates.
 - **Validation**: `npx @google/design.md lint DESIGN.md`, contrast checks,
   semantic HTML review, print preview, and PDF readability pass.
 - **Outputs**: DESIGN.md report tokens, HTML/CSS component guidance, and print
@@ -48,6 +51,9 @@ print-safe typography over decorative novelty.
 - Reserve strong colour for status, priority, and action; keep long-form reading
   high-contrast and calm.
 - Design every component for narrow screens and paged media from the start.
+- Treat light/dark mode as part of the report contract: use observed source
+  values where present, otherwise derive an inverse palette with
+  `colour-palette.md` and label it as calculated until validated.
 
 ## DESIGN.md Token Foundation
 
@@ -64,6 +70,20 @@ Add or verify these token groups in `DESIGN.md`:
 | `spacing.*` | Page rhythm, card padding, table density, print margins |
 | `rounded.*` | Cards, badges, code blocks, evidence pills |
 | `components.*` | Taxonomy components below |
+
+For theme switching, include both observed and derived roles where possible:
+
+| Role | Light token | Dark/inverse token |
+|------|-------------|--------------------|
+| Canvas | `colors.background` | `colors.background-dark` |
+| Card | `colors.surface` | `colors.surface-dark` |
+| Text | `colors.on-surface` | `colors.on-surface-dark` |
+| Secondary text | `colors.muted` | `colors.muted-dark` |
+| Borders | `colors.outline` | `colors.outline-dark` |
+| Accent | `colors.primary` | `colors.primary-dark` |
+
+If the source has no dark mode, mark `*-dark` tokens as calculated and validate
+contrast in preview before using them in production exports.
 
 ## Component Taxonomy Mapping
 
