@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- add report renderer helper, fixtures, command docs, and end-to-end AI search report workflow (#24003)
+
 ## [3.17.29] - 2026-05-23
 
 ### Added

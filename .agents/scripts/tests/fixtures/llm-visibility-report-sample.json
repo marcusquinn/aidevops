@@ -1,0 +1,42 @@
+{
+  "title": "LLM Visibility Report",
+  "sections": [
+    {
+      "title": "Executive Summary",
+      "summary": "The site appears in AI Overviews and answer-engine citations for priority service prompts.",
+      "items": [
+        {
+          "title": "AIO",
+          "detail": "Cited with a source card from the readiness run.",
+          "evidence_badge": "verified"
+        },
+        {
+          "title": "Gemini",
+          "detail": "Partial citation coverage across the sampled prompts.",
+          "evidence_badge": "partial"
+        },
+        {
+          "title": "ChatGPT",
+          "detail": "Opportunity inferred from comparable prompts and source IDs.",
+          "evidence_badge": "inferred"
+        },
+        {
+          "title": "Perplexity",
+          "detail": "No citation surfaced for the target prompt group.",
+          "evidence_badge": "missing"
+        }
+      ]
+    },
+    {
+      "title": "Roadmap",
+      "summary": "Add source cards, rerun readiness, then export the rendered HTML to PDF.",
+      "items": [
+        {
+          "title": "Source cards",
+          "detail": "Attach prompt, engine, URL, and capture references to each material claim.",
+          "evidence_badge": "verified"
+        }
+      ]
+    }
+  ]
+}

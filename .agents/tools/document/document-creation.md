@@ -27,6 +27,7 @@ tools:
 - **Commands**: `convert`, `create`, `template`, `install`, `formats`, `status`
 - **OCR**: Auto-detects scanned PDFs; supports Tesseract, EasyOCR, GLM-OCR, Vision LLM
 - **Formats**: ODT, DOCX, PDF, MD, HTML, EPUB, PPTX, ODP, XLSX, ODS, RTF, CSV, TSV
+- **Report rendering**: `scripts/report-render-helper.sh render report.md --output report.html` keeps Markdown canonical and creates browser/PDF-ready HTML with sticky TOC, print CSS, source cards, and evidence badges
 
 ```bash
 document-creation-helper.sh status                                    # check tools
@@ -38,6 +39,7 @@ document-creation-helper.sh create template.odt --data fields.json --output lett
 document-creation-helper.sh formats                                   # list supported conversions
 document-creation-helper.sh template list
 document-creation-helper.sh template draft --type letter --format odt
+report-render-helper.sh render report.md --output report.html         # report-ready HTML/PDF handoff
 ```
 
 <!-- AI-CONTEXT-END -->
@@ -62,6 +64,9 @@ document-creation-helper.sh template draft --type letter --format odt
     +-- Generate draft template
         +-- Collect: format, fields, header/footer, logo
         +-- Generate with odfpy/python-docx → user refines in editor
+    |
+    +-- Render report-ready Markdown/JSON for PDF handoff
+        +-- Validate evidence badges → render HTML → browser print/export PDF
 ```
 
 ## Architecture

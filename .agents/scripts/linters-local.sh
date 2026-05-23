@@ -19,6 +19,8 @@
 #   - Secretlint for exposed secrets
 #   - Pattern validation (return statements, positional parameters)
 #   - Markdown formatting
+#   - Report renderer fixtures and command docs are covered by
+#     tests/test-report-render-helper.sh
 #   - Skill frontmatter validation (name field matches skill-sources.json)
 #   - Ratchet quality checks (anti-pattern regression prevention)
 #   - Function complexity, nesting depth, file size
