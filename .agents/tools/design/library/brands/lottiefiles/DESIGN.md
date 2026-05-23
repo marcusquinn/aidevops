@@ -88,9 +88,9 @@ motion design freshness. This DESIGN.md is a report-presentation brand preset fo
 
 - **Review date**: 2026-05-23
 - **Source**: https://lottiefiles.com
-- **Fetched title/evidence**: Just a moment...
-- **Fetch status**: Browser-rendered DOM captured with headless Chrome; page returned anti-bot/challenge content, so source facts are limited
-- **Browser automation**: headless Chrome `--dump-dom`, 31799 bytes captured
+- **Fetched title/evidence**: `LottieFiles: Download Free lightweight animations for website & apps.` observed in the user's open Brave tab; unauthenticated headless fetch returned `Just a moment...`
+- **Fetch status**: User's Brave tab was visible via AppleScript title/URL query, but JavaScript execution/CDP access was unavailable. Separate headless Chrome DOM capture returned anti-bot/challenge content, so computed source facts remain limited.
+- **Browser automation**: Brave AppleScript tab query plus headless Chrome `--dump-dom`, 31799 challenge-page bytes captured
 - **Observed fonts**: Arial, Helvetica, Roboto, inter, lottie
 - **Observed colours**: #003681, #0051c3, #086fff, #0a0a0a, #1d1d1d, #228b49, #262626, #2db35e, #313131, #450a0a, #4693ff, #4a4a4a
 - **Light/dark mode**: browser-rendered DOM includes theme/dark-mode markers

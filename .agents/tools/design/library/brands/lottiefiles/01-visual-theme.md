@@ -6,8 +6,8 @@
 ## Source reviewed
 
 - Source: https://lottiefiles.com
-- Title/evidence: Just a moment...
-- Browser status: Browser-rendered DOM captured with headless Chrome; page returned anti-bot/challenge content, so source facts are limited
+- Title/evidence: `LottieFiles: Download Free lightweight animations for website & apps.` observed in the user's open Brave tab; unauthenticated headless fetch returned `Just a moment...`
+- Browser status: Brave AppleScript could read the live tab title/URL, but JavaScript execution and Chrome DevTools Protocol access were unavailable. Headless Chrome returned anti-bot/challenge content, so computed style facts are still limited.
 
 ## Visual interpretation
 
