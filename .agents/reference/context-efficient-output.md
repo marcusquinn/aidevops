@@ -60,9 +60,10 @@ Use comparison results to classify a command:
   exact evidence/security/JSON/diff semantics are required.
 - `git status` expansion is a regression signal: RTK v0.41.0 dropped the
   compact-status `-uall` flag, so tracked-file paths remain visible while
-  untracked directories stay summarized at the same directory level raw
-  `git status --short` would show; rerun raw status and verify RTK version when
-  comparison shows expansion.
+  untracked directories stay summarized as they appear in raw
+  `git status --short` output. Rerun raw status and verify RTK version when
+  comparison shows expansion, because older RTK versions still use the noisier
+  compact-status path.
 
 ## Always bypass RTK
 
