@@ -3,13 +3,17 @@
 
 # lottiefiles: Typography
 
-## Observed source font evidence
+## Browser-observed font evidence
 
-- No reliable font-family values were available from fetched markup/CSS.
+- `Arial`
+- `Helvetica`
+- `Roboto`
+- `inter`
+- `lottie`
 
 ## Substitute policy
 
-Use exact source fonts only when they are system/open-source and appropriate for redistribution. Where the source uses commercial or hosted proprietary fonts, map the style to open-source/system alternatives in DESIGN.md tokens. Document the source font in this chapter and the substitute in `DESIGN.md`.
+Use exact source fonts only when they are system/open-source and appropriate for redistribution. Where the source uses commercial, hosted proprietary, or challenge-page fonts, map the style to open-source/system alternatives in DESIGN.md tokens. Document the source font in this chapter and the substitute in `DESIGN.md`.
 
 ## Report typography requirements
 

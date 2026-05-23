@@ -88,9 +88,10 @@ motion design freshness. This DESIGN.md is a report-presentation brand preset fo
 
 - **Review date**: 2026-05-23
 - **Source**: https://lottiefiles.com
-- **Fetched title/evidence**: (title unavailable)
-- **Fetch status**: Fetch incomplete for https://lottiefiles.com: HTTPError: HTTP Error 403: Forbidden
-- **Observed fonts**: not available from fetched markup/CSS
-- **Observed colours**: not available from fetched markup/CSS
-- **Light/dark mode**: not observed in fetched HTML/CSS; inverse mode should be derived and contrast-checked
+- **Fetched title/evidence**: Just a moment...
+- **Fetch status**: Browser-rendered DOM captured with headless Chrome; page returned anti-bot/challenge content, so source facts are limited
+- **Browser automation**: headless Chrome `--dump-dom`, 31799 bytes captured
+- **Observed fonts**: Arial, Helvetica, Roboto, inter, lottie
+- **Observed colours**: #003681, #0051c3, #086fff, #0a0a0a, #1d1d1d, #228b49, #262626, #2db35e, #313131, #450a0a, #4693ff, #4a4a4a
+- **Light/dark mode**: browser-rendered DOM includes theme/dark-mode markers
 - **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

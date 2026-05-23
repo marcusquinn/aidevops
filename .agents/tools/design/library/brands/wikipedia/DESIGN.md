@@ -87,10 +87,11 @@ reference article hierarchy, neutral panels, blue links. This DESIGN.md is a rep
 ## Source Review
 
 - **Review date**: 2026-05-23
-- **Source**: https://www.wikipedia.org/
-- **Fetched title/evidence**: (title unavailable)
-- **Fetch status**: Fetch incomplete for https://wikipedia.org: TypeError: 'NoneType' object is not subscriptable
-- **Observed fonts**: not available from fetched markup/CSS
-- **Observed colours**: not available from fetched markup/CSS
-- **Light/dark mode**: not observed in fetched HTML/CSS; inverse mode should be derived and contrast-checked
+- **Source**: https://wikipedia.org
+- **Fetched title/evidence**: Wikipedia
+- **Fetch status**: Browser-rendered DOM captured with headless Chrome
+- **Browser automation**: headless Chrome `--dump-dom`, 118861 bytes captured
+- **Observed fonts**: Arial, Helvetica, Inter, Linux Libertine, Roboto, inter
+- **Observed colours**: #006400, #049dff, #062a50, #099979, #0a4b8f, #0e65c0, #101418, #121212, #132821, #177860, #1b223d, #202122
+- **Light/dark mode**: browser-rendered DOM includes theme/dark-mode markers
 - **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

@@ -3,9 +3,28 @@
 
 # wikipedia: Colour Palette
 
-## Observed source colours
+## Browser-observed colours
 
-- No reliable colour values were available from fetched markup/CSS.
+- `#006400`
+- `#049dff`
+- `#062a50`
+- `#099979`
+- `#0a4b8f`
+- `#0e65c0`
+- `#101418`
+- `#121212`
+- `#132821`
+- `#177860`
+- `#1b223d`
+- `#202122`
+- `#233566`
+- `#27292d`
+- `#2cb491`
+- `#2d2212`
+- `#3056a9`
+- `#353262`
+- `#3c1a13`
+- `#404244`
 
 ## Application rules
 

@@ -3,9 +3,28 @@
 
 # lottiefiles: Colour Palette
 
-## Observed source colours
+## Browser-observed colours
 
-- No reliable colour values were available from fetched markup/CSS.
+- `#003681`
+- `#0051c3`
+- `#086fff`
+- `#0a0a0a`
+- `#1d1d1d`
+- `#228b49`
+- `#262626`
+- `#2db35e`
+- `#313131`
+- `#450a0a`
+- `#4693ff`
+- `#4a4a4a`
+- `#595959`
+- `#780a02`
+- `#82b6ff`
+- `#991b1b`
+- `#9d94ec`
+- `#b20f03`
+- `#b6b6b6`
+- `#b91c1c`
 
 ## Application rules
 
