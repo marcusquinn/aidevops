@@ -5,6 +5,7 @@
 
 `_reports/` is the repo-local report workspace. Generated drafts, published
 bundles, indexes, and local configuration are gitignored. Reviewed examples live
-in `_reports/templates/` and are safe to version.
+in `_reports/examples/` and full sample reports live in `_reports/sample/`; both
+are safe to version after privacy review.
 
 See `.agents/reports/outputs.md` for the full output contract.

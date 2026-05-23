@@ -15,21 +15,21 @@ colors:
   primary-container: "#E8F3E8"
 typography:
   headline-display:
-    fontFamily: 'Charter, "Source Serif 4", Georgia, serif'
+    fontFamily: '"Source Serif 4", Charter, Georgia, serif'
     fontSize: 64px
     fontWeight: 650
     lineHeight: 1.05
     letterSpacing: -0.03em
   headline-md:
-    fontFamily: 'Charter, "Source Serif 4", Georgia, serif'
+    fontFamily: '"Source Serif 4", Charter, Georgia, serif'
     fontSize: 32px
     fontWeight: 650
     lineHeight: 1.15
   body-md:
-    fontFamily: 'Inter, system-ui, sans-serif'
-    fontSize: 16px
+    fontFamily: '"Source Serif 4", Charter, Georgia, serif'
+    fontSize: 18px
     fontWeight: 400
-    lineHeight: 1.62
+    lineHeight: 1.75
   code-md:
     fontFamily: '"IBM Plex Mono", Consolas, monospace'
     fontSize: 13px
@@ -78,8 +78,8 @@ reading-optimised essay layout with generous measure. This DESIGN.md is a report
 - **Accent**: `#1A8917` with supporting container `#E8F3E8`
 - **Background/surface**: `#FFFFFF` / `#FFFFFF`
 - **Text**: `#242424` primary, `#6B6B6B` secondary
-- **Heading font**: Charter, "Source Serif 4", Georgia, serif
-- **Body font**: Inter, system-ui, sans-serif
+- **Heading font**: Source Serif 4, Charter, Georgia, serif
+- **Body font**: Source Serif 4, Charter, Georgia, serif
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 10px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.

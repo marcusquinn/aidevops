@@ -138,6 +138,11 @@ border/shape differences so grayscale output remains meaningful.
 - Expose source links as real anchors with visible URL or citation labels in PDF.
 - Use CSS custom properties generated from DESIGN.md tokens; avoid hard-coded
   one-off report colours.
+- For brand-derived report examples, verify `DESIGN.md` includes observed or
+  substituted heading/body/code font families, sizes, weights, line heights,
+  light palette, and dark/inverse palette where the source exposes one. The
+  renderer consumes these token roles directly; missing typography falls back to
+  generic defaults and will make style previews look too similar.
 - Keep sticky TOC and interactive details progressive: the report remains readable
   when printed, saved to PDF, or viewed without JavaScript.
 - Charts need text alternatives: title, summary, data table fallback, and clear

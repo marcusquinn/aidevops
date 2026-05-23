@@ -31,7 +31,9 @@ each tactic matters, how to implement it, and how to verify impact.
 9. **Myths and caveats** -- de-emphasise flat FAQ/schema recommendations and
    unsupported AI share-of-voice claims.
 10. **Implementation roadmap** -- P0/P1/P2 tasks with owner, effort, source IDs,
-    and verification.
+     and verification.
+11. **Appendices and source data** -- link supplementary prompt exports, crawl
+    tables, screenshots, source ledgers, and companion reports when available.
 
 ## Tactic Card Contract
 
@@ -49,6 +51,14 @@ Every material tactic should include:
 | Verification | Crawl, log, schema, prompt, SERP, analytics, or per-engine retest. |
 | Source IDs | Cite evidence ledger IDs inline. |
 
+## Toolbox Component Requirements
+
+For long playbooks, include examples of: links, numbered steps, accordions,
+summary-stat rows, impact/evidence/action panels, severity/priority colour keys,
+code blocks, chapter separators, quotes, good/bad examples, checkbox lists,
+source links, anchor links, and appendix links. Use the report renderer component
+vocabulary from `reports/general.md` so the Markdown remains canonical.
+
 ## Evidence and Weighting Rules
 
 - Use `ai-search-scoring.md` for weighted priority: business value, page-type
@@ -60,6 +70,8 @@ Every material tactic should include:
   justify the tactic.
 - Label unsupported claims as assumptions or backlog; do not present them as
   findings.
+- Use `llm-visibility-source-accrual.md` before writing source-backed playbooks or
+  client reports; collect source IDs first, then interpret.
 
 ## Renderer Handoff
 
@@ -80,6 +92,7 @@ preview; page size variants belong to PDF output only.
 ## Related
 
 - `geo-strategy.md` -- GEO criteria and weighted implementation plan.
+- `llm-visibility-source-accrual.md` -- source-site and evidence-ledger accrual.
 - `ai-search-report-template.md` -- concise audit/report template.
 - `ai-search-scoring.md` -- scoring and per-engine evidence contract.
 - `seo-audit-skill/aeo-geo-patterns/04-page-type-tactic-matrix.md` -- page-type

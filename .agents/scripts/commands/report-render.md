@@ -73,6 +73,7 @@ Instructional sample:
 - `print-css --template <name> --pdf-profile <name>` exposes the matching stylesheet for custom handoff workflows.
 - Rich Markdown blocks use container fences such as `::: report-cover`, `::: stats-strip`,
   `::: tactic-card`, `::: good-bad`, `::: facts-table-wrap`, `::: example-card`,
-  `::: source-card`, `::: myth-callout`, and `::: priority-group priority=high`,
-  closed by `:::`. Use these to exercise Toolbox-style report components while
-  keeping `report.md` canonical.
+  `::: source-card`, `::: myth-callout`, `::: accordion title="Details"`,
+  `::: info-panel severity=high`, `::: action-panel`, `::: appendix-links`, and
+  `::: priority-group priority=high`, closed by `:::`. Use these to exercise
+  Toolbox-style report components while keeping `report.md` canonical.

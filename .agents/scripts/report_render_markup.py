@@ -16,6 +16,13 @@ def slug(text: str) -> str:
     return value or "section"
 
 
+def safe_href(value: str) -> str:
+    href = html.unescape(value).strip()
+    if re.match(r"(?i)^(javascript|data):", href):
+        return ""
+    return href
+
+
 def inline_markup(text: str) -> str:
     escaped = html.escape(text)
     escaped = re.sub(
@@ -25,4 +32,11 @@ def inline_markup(text: str) -> str:
         flags=re.I,
     )
     escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
+    escaped = re.sub(
+        r"\[([^\]]+)\]\(([^)]+)\)",
+        lambda match: f'<a href="{html.escape(safe_href(match.group(2)))}">{match.group(1)}</a>'
+        if safe_href(match.group(2))
+        else match.group(1),
+        escaped,
+    )
     return re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", escaped)

@@ -51,7 +51,13 @@ DEFAULT_TOKENS = {
     "primary": "#2563eb",
     "primary-container": "#dbeafe",
     "headline-display.fontFamily": 'Inter, system-ui, -apple-system, "Segoe UI", sans-serif',
+    "headline-display.fontSize": "64px",
+    "headline-display.fontWeight": "650",
+    "headline-display.lineHeight": "1.05",
+    "headline-display.letterSpacing": "-0.03em",
     "body-md.fontFamily": 'Inter, system-ui, -apple-system, "Segoe UI", sans-serif',
+    "body-md.fontSize": "16px",
+    "body-md.lineHeight": "1.62",
     "code-md.fontFamily": '"IBM Plex Mono", "SFMono-Regular", Consolas, monospace',
     "rounded.lg": "12px",
 }
@@ -132,6 +138,7 @@ def _optional_dark_tokens(tokens: dict[str, str]) -> str:
   :root {{
     --report-paper: {tokens['background-dark']};
     --report-paper-raised: {tokens.get('surface-dark', tokens['background-dark'])};
+    --report-panel: {tokens.get('surface-dark', tokens['background-dark'])};
     --report-surface: {tokens.get('surface-dark', tokens['background-dark'])};
     --report-ink: {tokens.get('on-surface-dark', '#ffffff')};
     --report-ink-muted: {tokens.get('muted-dark', '#cbd5e1')};
@@ -139,9 +146,49 @@ def _optional_dark_tokens(tokens: dict[str, str]) -> str:
     --report-rule: {tokens.get('outline-dark', '#334155')};
     --report-rule-strong: {tokens.get('outline-dark', '#334155')};
     --report-blue: {tokens.get('primary-dark', tokens['primary'])};
+    --report-action-bg: {tokens.get('primary-dark', tokens['primary'])};
+    --report-action-ink: {tokens.get('background-dark', '#0b1020')};
+    --report-info-bg: {tokens.get('surface-dark', tokens['background-dark'])};
+    --report-impact-bg: {tokens.get('surface-dark', tokens['background-dark'])};
+    --report-evidence-bg: {tokens.get('surface-dark', tokens['background-dark'])};
+    --report-myth-bg: {tokens.get('surface-dark', tokens['background-dark'])};
   }}
+  .badge-verified, .badge-partial, .badge-inferred, .badge-missing {{ border-color: var(--report-rule); }}
+  .sticky-toc {{ box-shadow: none; }}
 }}
 """.strip()
+
+
+def _template_specific_css(name: str) -> str:
+    if name == "medium":
+        return """
+.report-template-medium .report-main { max-width: 740px; }
+.report-template-medium .report-shell { max-width: 1120px; }
+.report-template-medium .report-cover,
+.report-template-medium .tactic-card,
+.report-template-medium .source-card,
+.report-template-medium .priority-group,
+.report-template-medium .stat-card { box-shadow: none; border-radius: 4px; }
+.report-template-medium p,
+.report-template-medium li,
+.report-template-medium td { font-family: var(--report-font-body); font-size: 1.08rem; line-height: 1.75; }
+.report-template-medium h1,
+.report-template-medium h2,
+.report-template-medium h3 { font-family: var(--report-font-heading); font-weight: 500; letter-spacing: -0.02em; }
+""".strip()
+    if name == "lottiefiles":
+        return """
+.report-template-lottiefiles h1,
+.report-template-lottiefiles h2,
+.report-template-lottiefiles h3,
+.report-template-lottiefiles .stat-card strong { font-family: "DM Sans", Inter, system-ui, sans-serif; }
+.report-template-lottiefiles .report-cover,
+.report-template-lottiefiles .stat-card,
+.report-template-lottiefiles .tactic-card,
+.report-template-lottiefiles .source-card { border-radius: 20px; }
+.report-template-lottiefiles .action-line { box-shadow: 0 20px 48px rgba(1, 157, 145, 0.18); }
+""".strip()
+    return ""
 
 
 def _theme_css(name: str, tokens: dict[str, str]) -> str:
@@ -152,8 +199,15 @@ def _theme_css(name: str, tokens: dict[str, str]) -> str:
   --report-font-heading: {tokens['headline-display.fontFamily']};
   --report-font-body: {tokens['body-md.fontFamily']};
   --report-font-code: {tokens['code-md.fontFamily']};
+  --report-heading-size: {tokens.get('headline-display.fontSize', DEFAULT_TOKENS['headline-display.fontSize'])};
+  --report-heading-weight: {tokens.get('headline-display.fontWeight', DEFAULT_TOKENS['headline-display.fontWeight'])};
+  --report-heading-line: {tokens.get('headline-display.lineHeight', DEFAULT_TOKENS['headline-display.lineHeight'])};
+  --report-heading-tracking: {tokens.get('headline-display.letterSpacing', DEFAULT_TOKENS['headline-display.letterSpacing'])};
+  --report-body-size: {tokens.get('body-md.fontSize', DEFAULT_TOKENS['body-md.fontSize'])};
+  --report-body-line: {tokens.get('body-md.lineHeight', DEFAULT_TOKENS['body-md.lineHeight'])};
   --report-paper: {tokens['background']};
   --report-paper-raised: {tokens['primary-container']};
+  --report-panel: {tokens['surface']};
   --report-surface: {tokens['surface']};
   --report-ink: {tokens['on-surface']};
   --report-ink-muted: {tokens['muted']};
@@ -164,9 +218,13 @@ def _theme_css(name: str, tokens: dict[str, str]) -> str:
   --report-radius-lg: {tokens['rounded.lg']};
   --report-radius-xl: calc({tokens['rounded.lg']} + 0.5rem);
 }}
+body.report-body {{ font-family: var(--report-font-body); font-size: var(--report-body-size); line-height: var(--report-body-line); }}
+h1, h2, h3 {{ font-family: var(--report-font-heading); font-weight: var(--report-heading-weight); letter-spacing: var(--report-heading-tracking); }}
+h1 {{ font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var(--report-heading-line); }}
 .source-card, .tactic-card, .priority-group {{ border-color: var(--report-rule); }}
 .sticky-toc a:hover, .sticky-toc a:focus-visible, .sticky-toc a[aria-current="true"] {{ border-left-color: var(--report-blue); }}
 {dark_css}
+{_template_specific_css(name)}
 """.strip()
 
 

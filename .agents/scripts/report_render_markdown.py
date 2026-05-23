@@ -19,21 +19,33 @@ def validate_markdown_badges(text: str) -> None:
 
 COMPONENT_BLOCKS = {
     "action-line",
+    "action-panel",
+    "accordion",
+    "anchor-links",
+    "appendix-links",
+    "callout",
     "badge-row",
     "chapter-hero",
     "checklist-card",
     "details-note",
+    "evidence-panel",
     "example-card",
     "facts-table-wrap",
     "good-bad",
     "good-row",
     "bad-row",
+    "impact-panel",
     "industry-card",
+    "info-panel",
     "myth-callout",
     "priority-group",
+    "quote-card",
     "report-cover",
+    "separator",
+    "severity-key",
     "source-card",
     "stat-card",
+    "summary-stats",
     "stats-strip",
     "tactic-card",
 }
@@ -52,18 +64,22 @@ def close_code(body: list[str], states: dict[str, object]) -> None:
 def close_blocks(body: list[str], states: dict[str, object]) -> None:
     if states.get("code"):
         return
-    for key, tag in (("list", "</ul>"), ("table", "</tbody></table>")):
-        if states[key]:
-            body.append(tag)
-            states[key] = False
+    if states.get("list"):
+        tag = states.get("list_tag", "ul")
+        body.append(f"</{tag}>")
+        states["list"] = False
+        states["list_tag"] = ""
+    if states.get("table"):
+        body.append("</tbody></table>")
+        states["table"] = False
 
 
 def close_component(body: list[str], states: dict[str, object]) -> bool:
     stack = states["components"]
     if not isinstance(stack, list) or not stack:
         return False
-    body.append("</section>")
-    stack.pop()
+    close_tag = stack.pop()
+    body.append(str(close_tag))
     return True
 
 
@@ -76,10 +92,18 @@ def close_all(body: list[str], states: dict[str, object]) -> None:
 
 def component_attrs(raw_attrs: str) -> str:
     attrs = []
-    for key, value in re.findall(r"([a-zA-Z0-9_-]+)=([a-zA-Z0-9_-]+)", raw_attrs):
-        if key == "priority":
-            attrs.append(f' data-priority="{html.escape(value)}"')
+    for key, raw_value in re.findall(r"([a-zA-Z0-9_-]+)=(\"[^\"]*\"|'[^']*'|[a-zA-Z0-9_#./:-]+)", raw_attrs):
+        value = raw_value.strip().strip('"').strip("'")
+        if key in {"accent", "priority", "severity", "status"}:
+            attrs.append(f' data-{html.escape(key)}="{html.escape(value)}"')
     return "".join(attrs)
+
+
+def component_title(raw_attrs: str, default: str) -> str:
+    match = re.search(r"title=(\"[^\"]*\"|'[^']*'|[^\s]+)", raw_attrs)
+    if not match:
+        return default
+    return match.group(1).strip().strip('"').strip("'") or default
 
 
 def handle_component(line: str, body: list[str], states: dict[str, object]) -> bool:
@@ -94,10 +118,20 @@ def handle_component(line: str, body: list[str], states: dict[str, object]) -> b
     if name not in COMPONENT_BLOCKS:
         return False
     close_blocks(body, states)
-    body.append(f'<section class="{name}"{component_attrs(match.group(2))}>')
+    raw_attrs = match.group(2)
+    if name == "separator":
+        body.append('<hr class="section-separator">')
+        return True
+    if name == "accordion":
+        title = component_title(raw_attrs, "Details")
+        body.append(f'<details class="accordion"><summary>{inline_markup(title)}</summary>')
+        close_tag = "</details>"
+    else:
+        body.append(f'<section class="{name}"{component_attrs(raw_attrs)}>')
+        close_tag = "</section>"
     stack = states["components"]
     if isinstance(stack, list):
-        stack.append(name)
+        stack.append(close_tag)
     return True
 
 
@@ -136,6 +170,27 @@ def handle_heading(
     return True
 
 
+def handle_comment(line: str, states: dict[str, object]) -> bool:
+    stripped = line.strip()
+    if states.get("comment"):
+        if "-->" in stripped:
+            states["comment"] = False
+        return True
+    if not stripped.startswith("<!--"):
+        return False
+    if "-->" not in stripped:
+        states["comment"] = True
+    return True
+
+
+def handle_rule(line: str, body: list[str], states: dict[str, object]) -> bool:
+    if not re.match(r"^(-{3,}|_{3,}|\*{3,})$", line.strip()):
+        return False
+    close_blocks(body, states)
+    body.append('<hr class="section-separator">')
+    return True
+
+
 def handle_table(line: str, body: list[str], states: dict[str, object]) -> bool:
     if not line.startswith("|") or not line.endswith("|"):
         return False
@@ -145,20 +200,50 @@ def handle_table(line: str, body: list[str], states: dict[str, object]) -> bool:
         return True
     if not states["table"]:
         close_blocks(body, states)
-        body.append("<table><tbody>")
+        body.append("<table><thead>")
         states["table"] = True
+        body.append("<tr>{}</tr></thead><tbody>".format("".join(f"<th>{cell}</th>" for cell in cells)))
+        return True
     body.append("<tr>{}</tr>".format("".join(f"<td>{cell}</td>" for cell in cells)))
     return True
 
 
+def open_list(body: list[str], states: dict[str, object], tag: str, css_class: str = "") -> None:
+    if states.get("list") and states.get("list_tag") == tag:
+        return
+    close_blocks(body, states)
+    class_attr = f' class="{css_class}"' if css_class else ""
+    body.append(f"<{tag}{class_attr}>")
+    states["list"] = True
+    states["list_tag"] = tag
+
+
 def handle_list(line: str, body: list[str], states: dict[str, object]) -> bool:
-    if not line.startswith(("- ", "* ")):
+    checklist = re.match(r"^- \[([ xX])\]\s+(.+)$", line)
+    if checklist:
+        open_list(body, states, "ul", "checklist")
+        status = "done" if checklist.group(1).lower() == "x" else "todo"
+        body.append(
+            f'<li><span class="status-dot" data-status="{status}"></span><span>{inline_markup(checklist.group(2).strip())}</span></li>'
+        )
+        return True
+    ordered = re.match(r"^\d+\.\s+(.+)$", line)
+    if ordered:
+        open_list(body, states, "ol")
+        body.append(f"<li>{inline_markup(ordered.group(1).strip())}</li>")
+        return True
+    if line.startswith(("- ", "* ")):
+        open_list(body, states, "ul")
+        body.append(f"<li>{inline_markup(line[2:].strip())}</li>")
+        return True
+    return False
+
+
+def handle_blockquote(line: str, body: list[str], states: dict[str, object]) -> bool:
+    if not line.startswith("> "):
         return False
-    if not states["list"]:
-        close_blocks(body, states)
-        body.append("<ul>")
-        states["list"] = True
-    body.append(f"<li>{inline_markup(line[2:].strip())}</li>")
+    close_blocks(body, states)
+    body.append(f'<blockquote>{inline_markup(line[2:].strip())}</blockquote>')
     return True
 
 
@@ -176,15 +261,21 @@ def handle_markdown_line(
     body: list[str],
     states: dict[str, object],
 ) -> None:
+    if handle_comment(line, states):
+        return
     if handle_code_fence(line, body, states):
         return
     if handle_component(line, body, states):
+        return
+    if handle_rule(line, body, states):
         return
     if handle_heading(line, headings, body, states):
         return
     if handle_table(line, body, states):
         return
     if handle_list(line, body, states):
+        return
+    if handle_blockquote(line, body, states):
         return
     handle_paragraph(line, body, states)
 
@@ -193,7 +284,15 @@ def render_markdown(text: str) -> tuple[list[tuple[int, str, str]], str]:
     validate_markdown_badges(text)
     headings: list[tuple[int, str, str]] = []
     body: list[str] = []
-    states: dict[str, object] = {"list": False, "table": False, "components": [], "code": False, "code_lines": []}
+    states: dict[str, object] = {
+        "comment": False,
+        "list": False,
+        "list_tag": "",
+        "table": False,
+        "components": [],
+        "code": False,
+        "code_lines": [],
+    }
     for raw_line in text.splitlines():
         line = raw_line.rstrip()
         handle_markdown_line(line, headings, body, states) if line or states.get("code") else close_blocks(body, states)

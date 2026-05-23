@@ -31,7 +31,7 @@ _reports/published/<report-slug>/report.pdf
 - Edit `report.md`, not derived HTML or PDF files.
 - Keep `citations.json` optional, but preserve inline citations in every export.
 - Keep generated drafts, indexes, and published bundles out of git unless a
-  maintainer explicitly promotes a small fixture or template.
+  maintainer explicitly promotes a small fixture or reviewed example.
 - Check dependency availability before export; report missing tools and the
   manual install command, but do not run installs automatically.
 - Prefer deterministic commands in `run:` routines for collection and export.

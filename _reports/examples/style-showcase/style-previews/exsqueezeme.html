@@ -1,4 +1,10 @@
-/* SPDX-License-Identifier: MIT */
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Report</title>
+<style>/* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2025-2026 Marcus Quinn */
 
 :root {
@@ -852,3 +858,192 @@ a {
     content: "";
   }
 }
+
+/* DESIGN.md brand token overrides: exsqueezeme */
+:root {
+  --report-font-heading: Inter, system-ui, sans-serif;
+  --report-font-body: Inter, system-ui, sans-serif;
+  --report-font-code: "IBM Plex Mono", Consolas, monospace;
+  --report-heading-size: 64px;
+  --report-heading-weight: 650;
+  --report-heading-line: 1.05;
+  --report-heading-tracking: -0.03em;
+  --report-body-size: 16px;
+  --report-body-line: 1.62;
+  --report-paper: #FFF7ED;
+  --report-paper-raised: #FFEDD5;
+  --report-panel: #FFFFFF;
+  --report-surface: #FFFFFF;
+  --report-ink: #231A10;
+  --report-ink-muted: #6B5A45;
+  --report-ink-soft: #6B5A45;
+  --report-rule: #F3D8B7;
+  --report-rule-strong: #C2410C;
+  --report-blue: #C2410C;
+  --report-radius-lg: 26px;
+  --report-radius-xl: calc(26px + 0.5rem);
+}
+body.report-body { font-family: var(--report-font-body); font-size: var(--report-body-size); line-height: var(--report-body-line); }
+h1, h2, h3 { font-family: var(--report-font-heading); font-weight: var(--report-heading-weight); letter-spacing: var(--report-heading-tracking); }
+h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var(--report-heading-line); }
+.source-card, .tactic-card, .priority-group { border-color: var(--report-rule); }
+.sticky-toc a:hover, .sticky-toc a:focus-visible, .sticky-toc a[aria-current="true"] { border-left-color: var(--report-blue); }
+@media print { @page { size: A4 portrait; margin: 12mm 11mm 14mm; } body.report-body { background: #fff; font-size: 10.5pt; } .report-shell { display: block; max-width: none; padding: 0; } .sticky-toc { position: static; break-after: page; box-shadow: none; } table { table-layout: fixed; font-size: 8.8pt; } th,td { padding: 4pt 5pt; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after { content: ""; } }</style>
+</head>
+<body class="report-body report-pdf-profile-a4 report-template-exsqueezeme">
+<div class="report-shell">
+<nav class="sticky-toc" aria-label="Report table of contents">
+<h2>Contents</h2>
+<ol>
+<li><a href="#report-style-showcase" style="margin-left:0rem">Report Style Showcase</a></li>
+<li><a href="#component-overview" style="margin-left:1rem">Component overview</a></li>
+<li><a href="#table-and-source-cards" style="margin-left:1rem">Table and source cards</a></li>
+<li><a href="#source-sample" style="margin-left:2rem">Source sample</a></li>
+<li><a href="#cards-and-callouts" style="margin-left:1rem">Cards and callouts</a></li>
+<li><a href="#info-panel" style="margin-left:2rem">Info panel</a></li>
+<li><a href="#impact-panel" style="margin-left:2rem">Impact panel</a></li>
+<li><a href="#evidence-panel" style="margin-left:2rem">Evidence panel</a></li>
+<li><a href="#tactic-card" style="margin-left:2rem">Tactic card</a></li>
+<li><a href="#good-row" style="margin-left:2rem">Good row</a></li>
+<li><a href="#bad-row" style="margin-left:2rem">Bad row</a></li>
+<li><a href="#myth" style="margin-left:2rem">Myth</a></li>
+<li><a href="#fact" style="margin-left:2rem">Fact</a></li>
+<li><a href="#priority-and-checklist" style="margin-left:1rem">Priority and checklist</a></li>
+<li><a href="#high-priority-visual-checks" style="margin-left:2rem">High-priority visual checks</a></li>
+</ol>
+</nav>
+<main class="report-content report-main">
+<h1 id="report-style-showcase">Report Style Showcase</h1>
+<section class="report-cover">
+<p><strong>Component stress-test for DESIGN.md-backed report styles.</strong> Render this same Markdown through different templates to compare typography, palette, spacing, borders, cards, tables, badges, code blocks, and print profiles.</p>
+</section>
+<h2 id="component-overview">Component overview</h2>
+<p>Use <a href="#priority-and-checklist">anchor links</a>, <a href="../llm-visibility-toolbox/report.html">appendix links</a>, numbered steps, accordions, coloured panels, and source cards in the same canonical Markdown.</p>
+<section class="badge-row">
+<p><span class="badge badge-verified">Evidence: Verified</span> <span class="badge badge-partial">Evidence: Partial</span> <span class="badge badge-inferred">Evidence: Inferred</span> <span class="badge badge-missing">Evidence: Missing</span></p>
+</section>
+<section class="stats-strip">
+<section class="stat-card">
+<p><strong>34</strong></p>
+<p>Renderer templates.</p>
+</section>
+<section class="stat-card">
+<p><strong>16:9</strong></p>
+<p>Slide PDF profile.</p>
+</section>
+<section class="stat-card">
+<p><strong>A4</strong></p>
+<p>Document PDF profile.</p>
+</section>
+<section class="stat-card">
+<p><strong>MD</strong></p>
+<p>Canonical source.</p>
+</section>
+</section>
+<section class="action-line">
+<p><strong>Review pass:</strong> compare sidebar behaviour, badge wrapping, table fit, and LottieFiles DM Sans rendering.</p>
+</section>
+<section class="anchor-links">
+<p><a href="#table-and-source-cards">Table stress</a> <a href="#cards-and-callouts">Cards</a> <a href="#priority-and-checklist">Priority</a></p>
+</section>
+<hr class="section-separator">
+<h2 id="table-and-source-cards">Table and source cards</h2>
+<section class="facts-table-wrap">
+<table><thead>
+<tr><th>Component</th><th>Stress condition</th><th>Expected result</th></tr></thead><tbody>
+<tr><td>Evidence badge</td><td>Long table cell with badge <span class="badge badge-verified">Evidence: Verified</span></td><td>Badge stays readable and does not split words.</td></tr>
+<tr><td>Facts table</td><td>Multiple columns with prose</td><td>Table remains usable in HTML and constrained in print.</td></tr>
+<tr><td>Source card</td><td>Evidence note near claim</td><td>Card is visually distinct from normal paragraphs.</td></tr>
+<tr><td>Sidebar</td><td>Many headings</td><td>Sticky TOC remains secondary to content and active link updates.</td></tr>
+</tbody></table>
+</section>
+<section class="source-card">
+<h3 id="source-sample">Source sample</h3>
+<p>This card shows how evidence-led reports separate cited facts from interpretation.</p>
+</section>
+<h2 id="cards-and-callouts">Cards and callouts</h2>
+<section class="info-panel" data-severity="medium">
+<h3 id="info-panel">Info panel</h3>
+<p>Use info panels for caveats, assumptions, and reading guidance that should not become recommendations.</p>
+</section>
+<section class="impact-panel" data-severity="high">
+<h3 id="impact-panel">Impact panel</h3>
+<p>Use impact panels to show why a finding changes sequencing, budget, or ownership.</p>
+</section>
+<section class="evidence-panel" data-severity="low">
+<h3 id="evidence-panel">Evidence panel</h3>
+<p>Use evidence panels for source IDs, collection method, confidence, and recheck commands.</p>
+</section>
+<section class="tactic-card">
+<h3 id="tactic-card">Tactic card</h3>
+<ul>
+<li>What: compact recommendation summary.</li>
+<li>Why: links action to evidence.</li>
+<li>How: gives implementation shape.</li>
+<li>Verify: names the acceptance check.</li>
+</ul>
+</section>
+<section class="good-bad">
+<section class="good-row">
+<h3 id="good-row">Good row</h3>
+<p>Crawlable claims, source IDs, direct answers, and page-type weighting.</p>
+</section>
+<section class="bad-row">
+<h3 id="bad-row">Bad row</h3>
+<p>Unsupported claims, hidden content, generic tactics, and missing verification.</p>
+</section>
+</section>
+<section class="myth-callout">
+<h3 id="myth">Myth</h3>
+<p>Every page needs the same GEO checklist.</p>
+<h3 id="fact">Fact</h3>
+<p>Page type determines which tactics are useful, conditional, or noise.</p>
+</section>
+<details class="accordion"><summary>Accordion details</summary>
+<p>Accordions are useful for methodology, caveats, and supplementary notes that should be available without dominating the main narrative.</p>
+</details>
+<blockquote>Quotes highlight expert evidence, user language, or a decision constraint without turning it into a recommendation.</blockquote>
+<section class="example-card">
+<pre><code>Render command:
+.agents/scripts/report-render-helper.sh render report.md --template lottiefiles --pdf-profile slides-16-9-2 --output report.html</code></pre>
+</section>
+<h2 id="priority-and-checklist">Priority and checklist</h2>
+<section class="priority-group" data-priority="high">
+<h3 id="high-priority-visual-checks">High-priority visual checks</h3>
+<p>Review spacing, table width, no-wrap badges, active TOC highlighting, print CSS, and component contrast.</p>
+</section>
+<section class="checklist-card">
+<ul class="checklist">
+<li><span class="status-dot" data-status="done"></span><span>Same Markdown renders across all templates.</span></li>
+<li><span class="status-dot" data-status="todo"></span><span>LottieFiles preview visibly prioritises DM Sans when the font is installed.</span></li>
+<li><span class="status-dot" data-status="done"></span><span>16:9 PDF export is landscape.</span></li>
+<li><span class="status-dot" data-status="done"></span><span>HTML preview keeps one sidebar and one main report flow.</span></li>
+</ul>
+</section>
+<section class="appendix-links">
+<p><a href="../llm-visibility-toolbox/report.md">Source ledger appendix</a> <a href="../client-ai-search-audit/report.html">Client audit example</a> <a href="style-previews/index.html">Style preview index</a></p>
+</section>
+</main>
+</div>
+<footer class="report-footer">© 2025-2026 Marcus Quinn. Licensed under MIT.</footer>
+<script>
+(() => {
+  const links = Array.from(document.querySelectorAll('.sticky-toc a[href^="#"]'));
+  const headings = links.map((link) => document.getElementById(link.getAttribute('href').slice(1))).filter(Boolean);
+  const setActive = (id) => {
+    links.forEach((link) => link.setAttribute('aria-current', link.getAttribute('href') === `#${id}` ? 'true' : 'false'));
+  };
+  if (!('IntersectionObserver' in window) || headings.length === 0) {
+    if (headings[0]) setActive(headings[0].id);
+    return;
+  }
+  const observer = new IntersectionObserver((entries) => {
+    const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+    if (visible) setActive(visible.target.id);
+  }, { rootMargin: '-20% 0px -65% 0px', threshold: [0, 1] });
+  headings.forEach((heading) => observer.observe(heading));
+  setActive(headings[0].id);
+})();
+</script>
+</body>
+</html>

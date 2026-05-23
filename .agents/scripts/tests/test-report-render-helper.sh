@@ -71,6 +71,15 @@ test_render_markdown_fixture() {
 	assert_contains "$_out" "stats-strip" "Markdown render includes stats component"
 	assert_contains "$_out" "example-card" "Markdown render includes example component"
 	assert_contains "$_out" "<pre><code>Question:" "Markdown render includes fenced code blocks"
+	assert_contains "$_out" "<a href=\"#evidence-ledger\">source ledger</a>" "Markdown render includes safe links"
+	assert_contains "$_out" "class=\"accordion\"" "Markdown render includes accordions"
+	assert_contains "$_out" "class=\"status-dot\" data-status=\"done\"" "Markdown render includes checklist status"
+	assert_contains "$_out" "<footer class=\"report-footer\">" "Markdown render includes copyright footer"
+	if grep -q "&lt;!-- SPDX-License-Identifier" "$_out"; then
+		print_result "Markdown render suppresses source comments" 1 "SPDX comment leaked into rendered HTML"
+	else
+		print_result "Markdown render suppresses source comments" 0
+	fi
 	return 0
 }
 

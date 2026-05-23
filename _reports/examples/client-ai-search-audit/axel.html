@@ -1,4 +1,10 @@
-/* SPDX-License-Identifier: MIT */
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Report</title>
+<style>/* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2025-2026 Marcus Quinn */
 
 :root {
@@ -852,3 +858,168 @@ a {
     content: "";
   }
 }
+
+/* DESIGN.md brand token overrides: axel */
+:root {
+  --report-font-heading: Newsreader, "Source Serif 4", Georgia, serif;
+  --report-font-body: "IBM Plex Sans", Inter, system-ui, sans-serif;
+  --report-font-code: "IBM Plex Mono", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  --report-heading-size: 64px;
+  --report-heading-weight: 650;
+  --report-heading-line: 1.05;
+  --report-heading-tracking: -0.03em;
+  --report-body-size: 16px;
+  --report-body-line: 1.62;
+  --report-paper: #FAFAF7;
+  --report-paper-raised: #DBE1F2;
+  --report-panel: #FFFFFF;
+  --report-surface: #FFFFFF;
+  --report-ink: #0C0F15;
+  --report-ink-muted: #4B5563;
+  --report-ink-soft: #4B5563;
+  --report-rule: #CDCFC9;
+  --report-rule-strong: #2D4BB5;
+  --report-blue: #2D4BB5;
+  --report-radius-lg: 18px;
+  --report-radius-xl: calc(18px + 0.5rem);
+}
+body.report-body { font-family: var(--report-font-body); font-size: var(--report-body-size); line-height: var(--report-body-line); }
+h1, h2, h3 { font-family: var(--report-font-heading); font-weight: var(--report-heading-weight); letter-spacing: var(--report-heading-tracking); }
+h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var(--report-heading-line); }
+.source-card, .tactic-card, .priority-group { border-color: var(--report-rule); }
+.sticky-toc a:hover, .sticky-toc a:focus-visible, .sticky-toc a[aria-current="true"] { border-left-color: var(--report-blue); }
+@media print { @page { size: A4 portrait; margin: 12mm 11mm 14mm; } body.report-body { background: #fff; font-size: 10.5pt; } .report-shell { display: block; max-width: none; padding: 0; } .sticky-toc { position: static; break-after: page; box-shadow: none; } table { table-layout: fixed; font-size: 8.8pt; } th,td { padding: 4pt 5pt; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after { content: ""; } }</style>
+</head>
+<body class="report-body report-pdf-profile-a4 report-template-axel">
+<div class="report-shell">
+<nav class="sticky-toc" aria-label="Report table of contents">
+<h2>Contents</h2>
+<ol>
+<li><a href="#client-ai-search-audit" style="margin-left:0rem">Client AI Search Audit</a></li>
+<li><a href="#executive-summary" style="margin-left:1rem">Executive summary</a></li>
+<li><a href="#engine-findings" style="margin-left:1rem">Engine findings</a></li>
+<li><a href="#source-ledger" style="margin-left:1rem">Source ledger</a></li>
+<li><a href="#privacy-rule" style="margin-left:2rem">Privacy rule</a></li>
+<li><a href="#page-type-weighted-findings" style="margin-left:1rem">Page-type weighted findings</a></li>
+<li><a href="#p0-comparison-page-retrieval-gap" style="margin-left:2rem">P0: Comparison page retrieval gap</a></li>
+<li><a href="#p1-pricing-facts-lack-nearby-evidence" style="margin-left:2rem">P1: Pricing facts lack nearby evidence</a></li>
+<li><a href="#preserve" style="margin-left:2rem">Preserve</a></li>
+<li><a href="#fix" style="margin-left:2rem">Fix</a></li>
+<li><a href="#implementation-brief" style="margin-left:1rem">Implementation brief</a></li>
+<li><a href="#verification-checklist" style="margin-left:1rem">Verification checklist</a></li>
+</ol>
+</nav>
+<main class="report-content report-main">
+<h1 id="client-ai-search-audit">Client AI Search Audit</h1>
+<section class="report-cover">
+<p><strong>Placeholder-safe client report template</strong> for AI Overviews, Gemini, ChatGPT, AI Mode, and Perplexity visibility.</p>
+<p>Prepared for: Example client. Scope: example.com priority pages. Replace placeholders only after live evidence collection.</p>
+</section>
+<h2 id="executive-summary">Executive summary</h2>
+<p>Example client appears in some answer-engine responses for category and comparison prompts, but source coverage is uneven. Priority gaps are retrieval eligibility, source-card proximity, and third-party corroboration parity. <span class="badge badge-partial">Evidence: Partial</span></p>
+<section class="stats-strip">
+<section class="stat-card">
+<p><strong>3/5</strong></p>
+<p>Engines with at least partial visibility.</p>
+</section>
+<section class="stat-card">
+<p><strong>12</strong></p>
+<p>Priority URLs reviewed.</p>
+</section>
+<section class="stat-card">
+<p><strong>27</strong></p>
+<p>Source IDs captured.</p>
+</section>
+<section class="stat-card">
+<p><strong>6</strong></p>
+<p>P0/P1 roadmap items.</p>
+</section>
+</section>
+<section class="action-line">
+<p><strong>Decision:</strong> prioritise comparison and pricing pages before lower-impact article refreshes.</p>
+</section>
+<h2 id="engine-findings">Engine findings</h2>
+<section class="facts-table-wrap">
+<table><thead>
+<tr><th>Engine</th><th>Finding</th><th>Evidence</th><th>Next action</th></tr></thead><tbody>
+<tr><td>AIO</td><td>Brand cited for two comparison prompts.</td><td><span class="badge badge-verified">Evidence: Verified</span></td><td>Add source cards to pages with citations but weak snippets.</td></tr>
+<tr><td>Gemini</td><td>Mentions brand but misses pricing constraints.</td><td><span class="badge badge-partial">Evidence: Partial</span></td><td>Add visible plan constraints and updated date.</td></tr>
+<tr><td>ChatGPT</td><td>Recommendation inferred from third-party profiles.</td><td><span class="badge badge-inferred">Evidence: Inferred</span></td><td>Improve profile parity and owned corroboration.</td></tr>
+<tr><td>AI Mode</td><td>Partial feature coverage, no comparison citation.</td><td><span class="badge badge-partial">Evidence: Partial</span></td><td>Strengthen direct-answer opening on comparison page.</td></tr>
+<tr><td>Perplexity</td><td>No citation found in priority prompt set.</td><td><span class="badge badge-missing">Evidence: Missing</span></td><td>Build third-party corroboration and rerun prompt set.</td></tr>
+</tbody></table>
+</section>
+<h2 id="source-ledger">Source ledger</h2>
+<section class="facts-table-wrap">
+<table><thead>
+<tr><th>Source ID</th><th>Source</th><th>Confidence</th><th>Notes</th></tr></thead><tbody>
+<tr><td>C001</td><td>Prompt capture batch</td><td>High</td><td>Use raw transcript plus screenshot in private evidence folder.</td></tr>
+<tr><td>C002</td><td>Rendered crawl</td><td>High</td><td>Confirms client-rendered sections missing from first fetch.</td></tr>
+<tr><td>C003</td><td>Analytics export</td><td>Medium</td><td>Prioritises pages with commercial intent.</td></tr>
+<tr><td>C004</td><td>Third-party profile parity review</td><td>Medium</td><td>Category and pricing facts mismatch owned page.</td></tr>
+</tbody></table>
+</section>
+<section class="source-card">
+<h3 id="privacy-rule">Privacy rule</h3>
+<p>Public issues, PRs, and examples must not include non-public names, restricted URLs, local paths, screenshots, or raw exports. Use placeholders and keep evidence in the approved secure storage location.</p>
+</section>
+<h2 id="page-type-weighted-findings">Page-type weighted findings</h2>
+<section class="priority-group" data-priority="critical">
+<h3 id="p0-comparison-page-retrieval-gap">P0: Comparison page retrieval gap</h3>
+<p>Comparison content answers the right intent but key criteria are below client-rendered sections. Move the answer, feature table, pricing caveats, and source IDs into crawlable first-fetch HTML. <span class="badge badge-verified">Evidence: Verified</span></p>
+</section>
+<section class="priority-group" data-priority="high">
+<h3 id="p1-pricing-facts-lack-nearby-evidence">P1: Pricing facts lack nearby evidence</h3>
+<p>The pricing page states plan limits but lacks updated date, source card, and consistent third-party parity. Add canonical values and cite source IDs near the claims. <span class="badge badge-partial">Evidence: Partial</span></p>
+</section>
+<section class="good-bad">
+<section class="good-row">
+<h3 id="preserve">Preserve</h3>
+<p>Clear category positioning, strong customer proof, and relevant comparison intent coverage.</p>
+</section>
+<section class="bad-row">
+<h3 id="fix">Fix</h3>
+<p>Hidden content, unsupported superlatives, stale profile facts, and Perplexity source gaps.</p>
+</section>
+</section>
+<h2 id="implementation-brief">Implementation brief</h2>
+<section class="example-card">
+<pre><code>Task: Improve /compare/example-vs-competitor for AI search citation readiness.
+Files: comparison page template, pricing facts component, source-card component.
+Acceptance: raw HTML contains direct answer, source IDs C001-C004, updated date, and criteria table.
+Verification: rerun AIO, Gemini, ChatGPT, AI Mode, and Perplexity prompt set separately.</code></pre>
+</section>
+<h2 id="verification-checklist">Verification checklist</h2>
+<section class="checklist-card">
+<ul>
+<li>Confirm live evidence collection date and source IDs.</li>
+<li>Re-run crawl after implementation and compare raw vs rendered HTML.</li>
+<li>Re-run per-engine prompt set and record each answer separately.</li>
+<li>Update third-party profile parity table.</li>
+<li>Convert recurring monitoring into a monthly report routine.</li>
+</ul>
+</section>
+</main>
+</div>
+<footer class="report-footer">© 2025-2026 Marcus Quinn. Licensed under MIT.</footer>
+<script>
+(() => {
+  const links = Array.from(document.querySelectorAll('.sticky-toc a[href^="#"]'));
+  const headings = links.map((link) => document.getElementById(link.getAttribute('href').slice(1))).filter(Boolean);
+  const setActive = (id) => {
+    links.forEach((link) => link.setAttribute('aria-current', link.getAttribute('href') === `#${id}` ? 'true' : 'false'));
+  };
+  if (!('IntersectionObserver' in window) || headings.length === 0) {
+    if (headings[0]) setActive(headings[0].id);
+    return;
+  }
+  const observer = new IntersectionObserver((entries) => {
+    const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+    if (visible) setActive(visible.target.id);
+  }, { rootMargin: '-20% 0px -65% 0px', threshold: [0, 1] });
+  headings.forEach((heading) => observer.observe(heading));
+  setActive(headings[0].id);
+})();
+</script>
+</body>
+</html>

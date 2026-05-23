@@ -37,6 +37,25 @@ Use this default shape unless the domain doc provides a better template:
 7. Appendix: raw tables, screenshots, exports, unresolved questions.
 8. Handoff: worker-ready tasks, routine schedule, or custom-agent prompt.
 
+## Component Vocabulary
+
+Use Toolbox-style Markdown containers when they improve scanning or export
+quality. Supported renderer blocks include:
+
+| Need | Markdown block |
+|------|----------------|
+| Cover, chaptering, separators | `::: report-cover`, `::: chapter-hero`, `---` |
+| Summary stats rows | `::: stats-strip` with nested `::: stat-card` |
+| Evidence and source cards | `::: source-card`, `::: evidence-panel`, evidence badges |
+| Priority/severity panels | `::: priority-group priority=high`, `::: info-panel severity=critical` |
+| Impact/evidence/action panels | `::: impact-panel`, `::: evidence-panel`, `::: action-panel` |
+| Good/bad comparisons | `::: good-bad` with `::: good-row` and `::: bad-row` |
+| Accordions and appendices | `::: accordion title="..."`, `::: appendix-links` |
+| Tables, code, quotes, links | `::: facts-table-wrap`, fenced code, `> quote`, Markdown links |
+
+Add appendix links when a report has supplementary data, screenshots, source
+exports, or companion reports. Keep private appendices out of public examples.
+
 ## Generic vs Client-Custom Reports
 
 Use the same Markdown-first report contract for both reusable guidance reports and

@@ -13,6 +13,8 @@ Report date: 2026-05-23. Scope: sample renderer fixture.
 
 The site appears in AI Overviews and answer-engine citations for priority service prompts. {{evidence:verified}}
 
+Read the [source ledger](#evidence-ledger) before assigning roadmap items.
+
 ::: badge-row
 {{evidence:verified}} {{evidence:partial}} {{evidence:inferred}} {{evidence:missing}}
 :::
@@ -44,6 +46,12 @@ Priority page types weighted.
 **Next action:** strengthen evidence cards on comparison and research pages before rerunning prompt tests.
 :::
 
+::: accordion title="Method detail"
+1. Collect source IDs.
+2. Map findings to page type.
+3. Re-run engine prompts separately.
+:::
+
 ## Method
 
 - Run SEO AI readiness across AIO, Gemini, ChatGPT, AI Mode, and Perplexity.
@@ -53,6 +61,12 @@ Priority page types weighted.
 ### Method note
 
 FAQPage schema is treated as hygiene. Visibility recommendations are weighted by page type and verified per engine.
+:::
+
+::: info-panel severity=high
+### Priority note
+
+Fix retrieval blockers before optional schema work.
 :::
 
 ## Weighted Scorecard
@@ -127,11 +141,13 @@ Refresh weak comparison pages with source cards and visible evidence summaries.
 ::: checklist-card
 ### Verification checklist
 
-- AIO prompt rerun captured.
-- Gemini source export saved.
-- ChatGPT transcript linked to source IDs.
-- Perplexity gap recorded when no citation appears.
+- [x] AIO prompt rerun captured.
+- [x] Gemini source export saved.
+- [ ] ChatGPT transcript linked to source IDs.
+- [ ] Perplexity gap recorded when no citation appears.
 :::
+
+> Keep observed evidence separate from interpretation.
 
 ## Evidence Ledger
 

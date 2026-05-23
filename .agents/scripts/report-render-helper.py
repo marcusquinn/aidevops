@@ -47,6 +47,7 @@ body.report-body { margin: 0; background: var(--report-paper); font: 16px/1.6 -a
 table { table-layout: auto; border-collapse: collapse; width: 100%; margin: 1rem 0; overflow-wrap: normal; }
 th, td { border: 1px solid var(--report-line); padding: .5rem; text-align: left; vertical-align: top; }
 h1, h2, h3 { line-height: 1.15; break-after: avoid; }
+.report-footer { max-width: 1180px; margin: 0 auto; padding: 1rem 2rem 2rem; color: var(--report-muted); font-size: .875rem; }
 @media (max-width: 860px) { .report-shell { display: block; padding: 1rem; } .sticky-toc { position: static; margin-bottom: 1rem; } }
 """.strip()
 
@@ -130,6 +131,7 @@ def wrap_document(headings: list[tuple[int, str, str]], body: str) -> str:
 {body}
 </main>
 </div>
+<footer class="report-footer">© 2025-2026 Marcus Quinn. Licensed under MIT.</footer>
 {active_toc_script}
 </body>
 </html>
