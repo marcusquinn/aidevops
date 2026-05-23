@@ -181,6 +181,8 @@ tmp.*.json
 # Analysis reports and results
 *.sarif
 reports/
+!.agents/reports/
+!.agents/reports/*.md
 .scannerwork/
 .playwright-cli/
 
