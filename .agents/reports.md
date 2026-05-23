@@ -11,6 +11,7 @@ subagents:
   - citations
   - exporters
   - routine-handoff
+  - outputs
 ---
 
 <!-- SPDX-License-Identifier: MIT -->
