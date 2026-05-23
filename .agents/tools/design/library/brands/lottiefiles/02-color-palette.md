@@ -3,35 +3,30 @@
 
 # lottiefiles: Colour Palette
 
-## Browser-observed colours
+## Saved-page observed colours and tokens
 
-- `#003681`
-- `#0051c3`
-- `#086fff`
-- `#0a0a0a`
-- `#1d1d1d`
-- `#228b49`
-- `#262626`
-- `#2db35e`
-- `#313131`
-- `#450a0a`
-- `#4693ff`
-- `#4a4a4a`
-- `#595959`
-- `#780a02`
-- `#82b6ff`
-- `#991b1b`
-- `#9d94ec`
-- `#b20f03`
-- `#b6b6b6`
-- `#b91c1c`
+- `--action-primary: #019d91`
+- `--action-primary-hover: #00c1a2`
+- `--action-focus: #00ddb3`
+- `--accent-primary: #019d91`
+- `--accent-secondary: #00c1a2`
+- `--accent-tertiary: #00ddb3`
+- `--background: oklch(100% 0 0)` for light mode
+- `--foreground: oklch(14.1% .005 285.823)` for light mode
+- `--background: oklch(14.1% .005 285.823)` for dark mode
+- `--foreground: oklch(98.5% 0 0)` for dark mode
+- `#18181B` primary dark text on light surfaces
+- `#4C5863` secondary text / track colour
+- `#E4EAED`, `#F0F4F7` borders and pale dividers
+- `#080A0C`, `#161A1C`, `#1E2428`, `#222A30` dark-mode surfaces and borders
+- `#BFC8D1`, `#AEBBC5` dark-mode secondary text
 
 ## Application rules
 
-- Use observed colours as source evidence, then map them into semantic DESIGN.md roles: background, surface, on-surface, muted, outline, primary, and primary-container.
-- Long-form report text must use high-contrast `on-surface`, not decorative accent colours.
+- Map the teal action system into `primary`, `primary-container`, focus, and interactive states.
+- Long-form report text must use high-contrast `on-surface` (`#18181B` light, `#FFFFFF` dark), not teal accent colours.
 - Badge/status colours must preserve text labels and borders so grayscale PDF output remains meaningful.
-- For missing theme modes, calculate inverse roles with `colour-palette.md`; mark them as derived until previewed and contrast-checked.
+- Use observed dark tokens before deriving inverse roles. Derive only missing semantic aliases with `colour-palette.md`; mark them as calculated until previewed and contrast-checked.
 
 ## Required contrast checks
 

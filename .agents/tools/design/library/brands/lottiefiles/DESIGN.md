@@ -6,32 +6,38 @@ version: alpha
 name: "LottieFiles motion"
 description: "Report presentation design system inspired by lottiefiles.com."
 colors:
-  background: "#F7FFFD"
+  background: "#FFFFFF"
   surface: "#FFFFFF"
-  on-surface: "#0F172A"
-  muted: "#475569"
-  outline: "#CFE8E2"
-  primary: "#00A58E"
+  on-surface: "#18181B"
+  muted: "#4C5863"
+  outline: "#E4EAED"
+  primary: "#019D91"
   primary-container: "#DDFBF5"
+  background-dark: "#080A0C"
+  surface-dark: "#161A1C"
+  on-surface-dark: "#FFFFFF"
+  muted-dark: "#BFC8D1"
+  outline-dark: "#222A30"
+  primary-dark: "#00DDB3"
 typography:
   headline-display:
-    fontFamily: 'Inter, system-ui, sans-serif'
+    fontFamily: 'Inter, "DM Sans", system-ui, sans-serif'
     fontSize: 64px
     fontWeight: 650
     lineHeight: 1.05
     letterSpacing: -0.03em
   headline-md:
-    fontFamily: 'Inter, system-ui, sans-serif'
+    fontFamily: 'Inter, "DM Sans", system-ui, sans-serif'
     fontSize: 32px
     fontWeight: 650
     lineHeight: 1.15
   body-md:
-    fontFamily: 'Inter, system-ui, sans-serif'
+    fontFamily: 'Inter, "DM Sans", system-ui, sans-serif'
     fontSize: 16px
     fontWeight: 400
     lineHeight: 1.62
   code-md:
-    fontFamily: '"IBM Plex Mono", Consolas, monospace'
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
     fontSize: 13px
     fontWeight: 400
     lineHeight: 1.5
@@ -75,12 +81,12 @@ motion design freshness. This DESIGN.md is a report-presentation brand preset fo
 ## Quick Reference
 
 - **Source inspiration**: lottiefiles.com
-- **Accent**: `#00A58E` with supporting container `#DDFBF5`
-- **Background/surface**: `#F7FFFD` / `#FFFFFF`
-- **Text**: `#0F172A` primary, `#475569` secondary
-- **Heading font**: Inter, system-ui, sans-serif
-- **Body font**: Inter, system-ui, sans-serif
-- **Code font**: "IBM Plex Mono", Consolas, monospace
+- **Accent**: `#019D91` with supporting container `#DDFBF5`; dark accent observed as `#00DDB3`
+- **Background/surface**: `#FFFFFF` / `#FFFFFF`; dark inverse observed as `#080A0C` / `#161A1C`
+- **Text**: `#18181B` primary, `#4C5863` secondary; dark text observed as `#FFFFFF` / `#BFC8D1`
+- **Heading font**: Inter, DM Sans, system UI
+- **Body font**: Inter, DM Sans, system UI
+- **Code font**: UI monospace stack
 - **Radius**: 20px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
 
@@ -88,10 +94,10 @@ motion design freshness. This DESIGN.md is a report-presentation brand preset fo
 
 - **Review date**: 2026-05-23
 - **Source**: https://lottiefiles.com
-- **Fetched title/evidence**: `LottieFiles: Download Free lightweight animations for website & apps.` observed in the user's open Brave tab; unauthenticated headless fetch returned `Just a moment...`
-- **Fetch status**: User's Brave tab was visible via AppleScript title/URL query, but JavaScript execution/CDP access was unavailable. Separate headless Chrome DOM capture returned anti-bot/challenge content, so computed source facts remain limited.
-- **Browser automation**: Brave AppleScript tab query plus headless Chrome `--dump-dom`, 31799 challenge-page bytes captured
-- **Observed fonts**: Arial, Helvetica, Roboto, inter, lottie
-- **Observed colours**: #003681, #0051c3, #086fff, #0a0a0a, #1d1d1d, #228b49, #262626, #2db35e, #313131, #450a0a, #4693ff, #4a4a4a
-- **Light/dark mode**: browser-rendered DOM includes theme/dark-mode markers
+- **Fetched title/evidence**: saved Brave page title `LottieFiles: Download Free lightweight animations for website & apps.`; hero text includes `Great designs come alive with motion!`
+- **Fetch status**: user-saved complete page and assets inspected from Downloads after unauthenticated headless fetch returned anti-bot/challenge content.
+- **Browser automation**: saved-page asset extraction from `app-CcHwpV-Z.css`, `app-Bm8_5TZU.css`, and `757b0c28c29ef841.css`; previous Brave tab title/URL query confirmed live page.
+- **Observed fonts**: Inter, DM Sans, Noto Sans JP, Noto Sans KR, Pretendard, arboria, karla, UI monospace stack
+- **Observed colours**: `--action-primary:#019d91`, `--action-primary-hover:#00c1a2`, `--action-focus:#00ddb3`, `--background:oklch(100% 0 0)`, dark `--background:oklch(14.1% .005 285.823)`, `#18181B`, `#4c5863`, `#e4eaed`, `#080a0c`, `#161a1c`, `#bfc8d1`
+- **Light/dark mode**: saved CSS contains paired light/dark token values and theme variables; use observed inverse roles before deriving fallbacks.
 - **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

@@ -3,17 +3,21 @@
 
 # lottiefiles: Typography
 
-## Browser-observed font evidence
+## Saved-page observed font evidence
 
-- `Arial`
-- `Helvetica`
-- `Roboto`
-- `inter`
-- `lottie`
+- `Inter`
+- `DM Sans`
+- `Noto Sans JP`
+- `Noto Sans KR`
+- `Pretendard`
+- `arboria`
+- `karla`
+- `ui-monospace`, `SFMono-Regular`, `Menlo`, `Monaco`, `Consolas`, `Liberation Mono`, `Courier New`
+- Cookie/widget fallback stack: `Inter`, `DM Sans`, `Roboto`, `Helvetica Neue`, `Segoe UI`, regional Noto/system fonts
 
 ## Substitute policy
 
-Use exact source fonts only when they are system/open-source and appropriate for redistribution. Where the source uses commercial, hosted proprietary, or challenge-page fonts, map the style to open-source/system alternatives in DESIGN.md tokens. Document the source font in this chapter and the substitute in `DESIGN.md`.
+Use exact source fonts only when they are system/open-source and appropriate for redistribution. `Inter` and `DM Sans` are suitable report substitutes for the visible product UI. `arboria` and any hosted/proprietary faces should remain source evidence unless licensing is confirmed. Regional fallbacks (`Noto Sans JP`, `Noto Sans KR`, `Pretendard`) should remain in the stack for international report exports where useful.
 
 ## Report typography requirements
 

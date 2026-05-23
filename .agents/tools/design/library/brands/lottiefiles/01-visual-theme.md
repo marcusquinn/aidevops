@@ -6,13 +6,13 @@
 ## Source reviewed
 
 - Source: https://lottiefiles.com
-- Title/evidence: `LottieFiles: Download Free lightweight animations for website & apps.` observed in the user's open Brave tab; unauthenticated headless fetch returned `Just a moment...`
-- Browser status: Brave AppleScript could read the live tab title/URL, but JavaScript execution and Chrome DevTools Protocol access were unavailable. Headless Chrome returned anti-bot/challenge content, so computed style facts are still limited.
+- Title/evidence: saved Brave page title `LottieFiles: Download Free lightweight animations for website & apps.`; hero copy `Great designs come alive with motion!`.
+- Browser status: user-saved complete page and assets inspected from Downloads. This supersedes the earlier unauthenticated headless capture that returned anti-bot/challenge content.
 
 ## Visual interpretation
 
-This guide translates the browser-observed source into an AI-readable report/style system. Treat directly observed values as evidence and generated values as implementation-safe approximations. Preserve the source's broad mood, density, typography direction, spacing rhythm, and component language without copying proprietary brand assets.
+This guide translates the saved LottieFiles home page into an AI-readable report/style system. The source is motion-first, generous, rounded, and product-led: large benefit headlines, airy white sections, teal/mint action colour, animation cards, soft panels, pill controls, and enterprise workflow sections. Preserve motion-design freshness, spacious hierarchy, and friendly SaaS clarity without copying proprietary brand assets.
 
 ## Mode behaviour
 
-Browser-rendered dom includes theme/dark-mode markers. If a dark or light inverse palette is not explicitly present in the source, derive it using `tools/design/colour-palette.md`, label it as calculated, and validate text, badge, link, and border contrast before use.
+Saved CSS includes paired light/dark tokens. Prefer observed dark values such as near-black background `#080A0C`/`oklch(14.1% .005 285.823)`, dark surfaces around `#161A1C`, light text `#FFFFFF`, muted text `#BFC8D1`, and mint focus/action `#00DDB3`. Only derive additional inverse values when no observed token exists, and validate text, badge, link, and border contrast before use.
