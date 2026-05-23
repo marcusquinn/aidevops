@@ -3,6 +3,10 @@
 
 # LLM Visibility Toolbox Full Sample
 
+Evidence-based tactics for getting cited in answer engines, with source-led examples and report components.
+
+By [Marcus Quinn](https://github.com/marcusquinn).
+
 ::: report-cover
 Internal toolkit · May 2026 · v4
 
@@ -292,10 +296,6 @@ Schema clarifies visible facts; it does not create trust when evidence is missin
 Close with the smallest useful synthesis: what changed, what evidence proves it, what to do next, and how to verify it. Use panels only where emphasis helps the reader act.
 :::
 
-::: version-summary
-V4 · compiled May 2026 from source-led evidence · internal toolkit
-:::
-
 ## Appendices
 
 ::: appendix-links
@@ -308,4 +308,11 @@ V4 · compiled May 2026 from source-led evidence · internal toolkit
 - [x] Appendix links included.
 - [x] Per-engine reporting kept separate.
 - [ ] Replace placeholders with client evidence before publishing.
+:::
+
+
+## Citations
+
+::: version-summary
+V4 · compiled May 2026 from source-led evidence · internal toolkit
 :::

@@ -265,6 +265,11 @@ body.report-body {
   margin-block-start: var(--report-space-6);
 }
 
+.heading-number {
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
 .chapter-hero {
   margin-block: var(--report-space-6) var(--report-space-4);
   padding: var(--report-space-5);
@@ -489,8 +494,8 @@ th .evidence-badge {
 
 .source-title {
   margin-block: var(--report-space-2);
-  padding-block-end: var(--report-space-2);
-  border-bottom: 1px solid var(--report-rule);
+  padding-block: var(--report-space-2);
+  border-block: 1px solid var(--report-rule);
   color: var(--report-ink);
   font-weight: 800;
 }
@@ -509,12 +514,20 @@ th .evidence-badge {
 }
 
 .source-list .source-title {
-  margin-block-start: var(--report-space-4);
+  margin-block: var(--report-space-5) 0;
   color: var(--report-ink-soft);
   font-size: 0.82rem;
   font-weight: 800;
   letter-spacing: 0.16em;
   text-transform: uppercase;
+}
+
+.source-list .source-title + .source-item {
+  border-top: 0;
+}
+
+.source-list .source-item:last-child {
+  border-bottom: 1px solid var(--report-rule);
 }
 
 .source-item {
@@ -1233,12 +1246,12 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <li><a href="#executive-summary" style="margin-left:1rem">Executive summary</a></li>
 <li><a href="#engine-findings" style="margin-left:1rem">1. Engine findings</a></li>
 <li><a href="#source-ledger" style="margin-left:1rem">2. Source ledger</a></li>
-<li><a href="#privacy-rule" style="margin-left:2rem">Privacy rule</a></li>
+<li><a href="#privacy-rule" style="margin-left:2rem">2.1 Privacy rule</a></li>
 <li><a href="#page-type-weighted-findings" style="margin-left:1rem">3. Page-type weighted findings</a></li>
-<li><a href="#p0-comparison-page-retrieval-gap" style="margin-left:2rem">P0: Comparison page retrieval gap</a></li>
-<li><a href="#p1-pricing-facts-lack-nearby-evidence" style="margin-left:2rem">P1: Pricing facts lack nearby evidence</a></li>
-<li><a href="#preserve" style="margin-left:2rem">Preserve</a></li>
-<li><a href="#fix" style="margin-left:2rem">Fix</a></li>
+<li><a href="#p0-comparison-page-retrieval-gap" style="margin-left:2rem">3.1 P0: Comparison page retrieval gap</a></li>
+<li><a href="#p1-pricing-facts-lack-nearby-evidence" style="margin-left:2rem">3.2 P1: Pricing facts lack nearby evidence</a></li>
+<li><a href="#preserve" style="margin-left:2rem">3.3 Preserve</a></li>
+<li><a href="#fix" style="margin-left:2rem">3.4 Fix</a></li>
 <li><a href="#implementation-brief" style="margin-left:1rem">4. Implementation brief</a></li>
 <li><a href="#verification-checklist" style="margin-left:1rem">5. Verification checklist</a></li>
 </ol>
@@ -1272,7 +1285,7 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <section class="action-line">
 <p><strong>Decision:</strong> prioritise comparison and pricing pages before lower-impact article refreshes.</p>
 </section>
-<h2 class="chapter-heading" id="engine-findings">Engine findings</h2>
+<h2 class="chapter-heading" id="engine-findings"><span class="heading-number">1.</span> Engine findings</h2>
 <section class="facts-table-wrap">
 <table><thead>
 <tr><th>Engine</th><th>Finding</th><th>Evidence</th><th>Next action</th></tr></thead><tbody>
@@ -1283,7 +1296,7 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <tr><td>Perplexity</td><td>No citation found in priority prompt set.</td><td><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span></td><td>Build third-party corroboration and rerun prompt set.</td></tr>
 </tbody></table>
 </section>
-<h2 class="chapter-heading" id="source-ledger">Source ledger</h2>
+<h2 class="chapter-heading" id="source-ledger"><span class="heading-number">2.</span> Source ledger</h2>
 <section class="facts-table-wrap">
 <table><thead>
 <tr><th>Source ID</th><th>Source</th><th>Confidence</th><th>Notes</th></tr></thead><tbody>
@@ -1294,36 +1307,36 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 </tbody></table>
 </section>
 <section class="source-card">
-<h3 id="privacy-rule">Privacy rule</h3>
+<h3 class="section-heading" id="privacy-rule"><span class="heading-number">2.1</span> Privacy rule</h3>
 <p>Public issues, PRs, and examples must not include non-public names, restricted URLs, local paths, screenshots, or raw exports. Use placeholders and keep evidence in the approved secure storage location.</p>
 </section>
-<h2 class="chapter-heading" id="page-type-weighted-findings">Page-type weighted findings</h2>
+<h2 class="chapter-heading" id="page-type-weighted-findings"><span class="heading-number">3.</span> Page-type weighted findings</h2>
 <section class="priority-group" data-priority="critical">
-<h3 id="p0-comparison-page-retrieval-gap">P0: Comparison page retrieval gap</h3>
+<h3 class="section-heading" id="p0-comparison-page-retrieval-gap"><span class="heading-number">3.1</span> P0: Comparison page retrieval gap</h3>
 <p>Comparison content answers the right intent but key criteria are below client-rendered sections. Move the answer, feature table, pricing caveats, and source IDs into crawlable first-fetch HTML. <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></p>
 </section>
 <section class="priority-group" data-priority="high">
-<h3 id="p1-pricing-facts-lack-nearby-evidence">P1: Pricing facts lack nearby evidence</h3>
+<h3 class="section-heading" id="p1-pricing-facts-lack-nearby-evidence"><span class="heading-number">3.2</span> P1: Pricing facts lack nearby evidence</h3>
 <p>The pricing page states plan limits but lacks updated date, source card, and consistent third-party parity. Add canonical values and cite source IDs near the claims. <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></p>
 </section>
 <section class="good-bad">
 <section class="good-row">
-<h3 id="preserve">Preserve</h3>
+<h3 class="section-heading" id="preserve"><span class="heading-number">3.3</span> Preserve</h3>
 <p>Clear category positioning, strong customer proof, and relevant comparison intent coverage.</p>
 </section>
 <section class="bad-row">
-<h3 id="fix">Fix</h3>
+<h3 class="section-heading" id="fix"><span class="heading-number">3.4</span> Fix</h3>
 <p>Hidden content, unsupported superlatives, stale profile facts, and Perplexity source gaps.</p>
 </section>
 </section>
-<h2 class="chapter-heading" id="implementation-brief">Implementation brief</h2>
+<h2 class="chapter-heading" id="implementation-brief"><span class="heading-number">4.</span> Implementation brief</h2>
 <section class="example-card">
 <pre><code>Task: Improve /compare/example-vs-competitor for AI search citation readiness.
 Files: comparison page template, pricing facts component, source-card component.
 Acceptance: raw HTML contains direct answer, source IDs C001-C004, updated date, and criteria table.
 Verification: rerun AIO, Gemini, ChatGPT, AI Mode, and Perplexity prompt set separately.</code></pre>
 </section>
-<h2 class="chapter-heading" id="verification-checklist">Verification checklist</h2>
+<h2 class="chapter-heading" id="verification-checklist"><span class="heading-number">5.</span> Verification checklist</h2>
 <section class="checklist-card">
 <ul>
 <li>Confirm live evidence collection date and source IDs.</li>

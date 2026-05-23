@@ -159,6 +159,9 @@ border/shape differences so grayscale output remains meaningful.
   the resulting SVG/HTML rather than depending on a network CDN. When local
   renderers are unavailable, output the labelled source/fallback blocks so the
   report remains readable in HTML, PDF, and print.
+- Self-contained Mermaid/LaTeX rendering is feasible only when the renderer
+  vendors the needed Mermaid and KaTeX/MathJax assets into the HTML or embeds
+  pre-rendered SVG/HTML. Do not reference CDN assets in committed examples.
 
 ## PDF and Print Styling
 

@@ -107,12 +107,17 @@ def wrap_document(headings: list[tuple[int, str, str]], body: str) -> str:
     css = load_css(TEMPLATE, PDF_PROFILE)
     toc_items = []
     chapter = 0
+    section = 0
     for level, title, anchor in headings:
         clean_title = toc_title(title)
         label = clean_title
         if level == 2 and not is_executive_summary(title):
             chapter += 1
+            section = 0
             label = f"{chapter}. {clean_title}"
+        elif level == 3 and chapter:
+            section += 1
+            label = f"{chapter}.{section} {clean_title}"
         indent = f' style="margin-left:{max(level - 1, 0)}rem"'
         toc_items.append(f'<li><a href="#{anchor}"{indent}>{inline_markup(label)}</a></li>')
     active_toc_script = """

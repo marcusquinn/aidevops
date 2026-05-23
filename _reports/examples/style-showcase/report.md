@@ -3,6 +3,10 @@
 
 # Report Style Showcase
 
+Evidence-based report components for AI-search, SEO/GEO, and operational audit exports.
+
+By [Marcus Quinn](https://github.com/marcusquinn).
+
 ::: report-cover
 Internal toolkit · May 2026 · v4
 
@@ -56,7 +60,7 @@ Schema was downgraded after controlled evidence; engine divergence is now struct
 **Action:** review the numbered chapters below and compare the generated HTML against the source Toolbox patterns.
 :::
 
-## Component overview {{badge:strong}}
+## Why this matters now
 
 Use [anchor links](#priority-and-checklist), [appendix links](../llm-visibility-toolbox/report.html), numbered steps, accordions, coloured panels, and source cards in the same canonical Markdown.
 
@@ -74,7 +78,6 @@ Evidence values should read as plain **Evidence:** text followed by a colour-cod
 
 Use plain narrative and bullets when that is clearer than a panel. Panels are reserved for warnings, action blocks, source cards, or high-emphasis evidence.
 
-::: tactic-card
 ### Earned media on third-party platforms {{badge:strong}}
 
 Six converging studies point to third-party mentions as a stronger AI visibility signal than isolated owned-page edits.
@@ -86,7 +89,6 @@ Six converging studies point to third-party mentions as a stronger AI visibility
 ::: action-line
 **Action:** coordinate one trade article, one community thread, one video transcript, and one partner citation within the same quarter.
 :::
-:::
 
 A plain bullet section should remain plain:
 
@@ -96,61 +98,7 @@ A plain bullet section should remain plain:
 - Prompt list from Search Console, support tickets, and customer interviews.
 - Baseline share of voice, citation rate, and sentiment per engine.
 
-## Table and source cards
-
-::: sources-layout
-::: sources-group
-::: source-title
-Primary evidence
-:::
-::: source-card
-### Source A
-Prompt capture, crawl export, and source ledger row.
-:::
-::: source-card
-### Source B
-Third-party corroboration and profile parity note.
-:::
-:::
-::: sources-group
-::: source-title
-Supplementary evidence
-:::
-::: source-card
-### Source C
-Appendix file, screenshot reference, or companion report.
-:::
-:::
-:::
-
-::: source-list
-::: source-title
-Peer-reviewed papers and academic studies
-:::
-::: source-item
-### GEO: Generative Engine Optimization
-The first peer-reviewed baseline. Tactics tested on 10k queries.
-:::
-::: source-item
-### News source citing patterns in AI search systems
-Top source concentration and citation dynamics.
-:::
-::: source-title
-Q2 2026 field evidence
-:::
-::: source-item
-### Ahrefs: schema markup has no impact on AI visibility
-1,885 vs 4,000 controls, difference-in-differences. Source used to downgrade schema from growth lever to hygiene.
-:::
-::: source-item
-### Growth memo: the consensus gap
-Only a small share of cited URLs overlap across engines; engine-specific reporting is required.
-:::
-::: source-item
-### G2: the answer economy research
-B2B buyers increasingly start with answer engines, so reports separate discovery, shortlist, and conversion evidence.
-:::
-:::
+## On-page content tactics
 
 ::: facts-table-wrap
 
@@ -162,7 +110,7 @@ B2B buyers increasingly start with answer engines, so reports separate discovery
 | Sidebar | Many headings | Sticky TOC remains secondary to content and active link updates. |
 :::
 
-## Cards and callouts
+## Technical tactics
 
 ::: info-panel severity=medium
 ### Info panel
@@ -258,27 +206,11 @@ Third-party corroboration — 58%
 Retrieval eligibility — 81%
 :::
 
-## Case studies
+## Off-page and authority
 
-Real before/after examples belong in simple cards because each card is a compact story, not a warning panel.
+Authority work belongs outside the site as much as on it: profile parity, trusted third-party mentions, practitioner credentials, and community proof all support retrieval and citation decisions.
 
-::: case-study-card
-### Industrial manufacturer
-
-**Result:** monthly AI referral traffic grew from near-zero to a measurable assisted-conversion channel.
-
-**Tactics applied:** direct-answer page restructure, original technical benchmarks, schema hygiene, and trade-publication mentions.
-:::
-
-::: case-study-card
-### Healthcare comparison site
-
-**Result:** citations appeared across Google AIO, ChatGPT, and Gemini after entity facts and expert review were made visible.
-
-**Tactics applied:** YMYL author bylines, source-backed comparison tables, third-party profile parity, and prompt reruns.
-:::
-
-## What does not work
+## Format and experimental tactics
 
 ::: callout
 ### SEO myths called out
@@ -290,7 +222,7 @@ Claims that circulate widely but cannot be traced to a primary source, or are co
 **“Longer content always gets cited more.”** Engine-dependent; content depth helps only when it improves answer density and source usefulness.
 :::
 
-## Priority and checklist
+## Measurement and reporting
 
 ::: priority-group priority=high
 ### High-priority visual checks
@@ -313,7 +245,7 @@ Review spacing, table width, no-wrap badges, active TOC highlighting, print CSS,
 [Source ledger appendix](../llm-visibility-toolbox/report.md) [Client audit example](../client-ai-search-audit/report.html) [Style preview index](style-previews/index.html)
 :::
 
-## Closing callouts
+## What does not work
 
 ::: callout
 ### Combined finding
@@ -321,9 +253,85 @@ Review spacing, table width, no-wrap badges, active TOC highlighting, print CSS,
 AI is now a discovery layer, but engines disagree on sources. Tracking only mentions or only citations misses the retrieval gap. Keep the final synthesis short, source-backed, and tied to the next action.
 :::
 
-::: accordion title="Changelog summary"
-V4 adds engine-specific evidence, source grouping, schema-downgrade rationale, comprehensive component examples, and presentation-safe fallbacks for diagrams and equations.
+## Productizing for clients
+
+Use the same Markdown-first report structure for one-off audits, monthly retainers, lead magnets, and routine handoffs. Keep deterministic evidence collection separate from interpretation.
+
+## Case studies
+
+::: case-study-card
+### Industrial manufacturer
+
+**Result:** monthly AI referral traffic grew from near-zero to a measurable assisted-conversion channel.
+
+**Tactics applied:** direct-answer page restructure, original technical benchmarks, schema hygiene, and trade-publication mentions.
 :::
+
+::: case-study-card
+### Healthcare comparison site
+
+**Result:** citations appeared across Google AIO, ChatGPT, and Gemini after entity facts and expert review were made visible.
+
+**Tactics applied:** YMYL author bylines, source-backed comparison tables, third-party profile parity, and prompt reruns.
+:::
+
+## Sources
+
+::: sources-layout
+::: sources-group
+::: source-title
+Primary evidence
+:::
+::: source-card
+### Source A
+Prompt capture, crawl export, and source ledger row.
+:::
+::: source-card
+### Source B
+Third-party corroboration and profile parity note.
+:::
+:::
+::: sources-group
+::: source-title
+Supplementary evidence
+:::
+::: source-card
+### Source C
+Appendix file, screenshot reference, or companion report.
+:::
+:::
+:::
+
+::: source-list
+::: source-title
+Peer-reviewed papers and academic studies
+:::
+::: source-item
+### GEO: Generative Engine Optimization
+The first peer-reviewed baseline. Tactics tested on 10k queries.
+:::
+::: source-item
+### News source citing patterns in AI search systems
+Top source concentration and citation dynamics.
+:::
+::: source-title
+Q2 2026 field evidence
+:::
+::: source-item
+### Ahrefs: schema markup has no impact on AI visibility
+1,885 vs 4,000 controls, difference-in-differences. Source used to downgrade schema from growth lever to hygiene.
+:::
+::: source-item
+### Growth memo: the consensus gap
+Only a small share of cited URLs overlap across engines; engine-specific reporting is required.
+:::
+::: source-item
+### G2: the answer economy research
+B2B buyers increasingly start with answer engines, so reports separate discovery, shortlist, and conversion evidence.
+:::
+:::
+
+## Citations
 
 ::: version-summary
 V4 · compiled May 2026 from 70+ primary sources · internal toolkit

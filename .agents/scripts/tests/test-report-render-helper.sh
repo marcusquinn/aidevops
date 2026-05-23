@@ -87,6 +87,7 @@ test_render_markdown_fixture() {
 	assert_contains "$_out" "class=\"block-template\"" "Markdown render includes block templates"
 	assert_contains "$_out" "class=\"version-summary\"" "Markdown render includes version summary"
 	assert_contains "$_out" "Mermaid source fallback" "Markdown render labels Mermaid fallback"
+	assert_contains "$_out" "heading-number\">1.</span> Method" "Markdown render numbers body H2 headings"
 	if grep -qF "Chapter 1 /" "$_out"; then
 		print_result "Markdown TOC omits Chapter prefix" 1 "Found Chapter prefix in rendered TOC labels"
 	else
@@ -98,12 +99,12 @@ import re
 text = Path(__import__('sys').argv[1]).read_text()
 nav = re.search(r'<nav class="sticky-toc".*?</nav>', text, re.S)
 nav_text = nav.group(0) if nav else ''
-raise SystemExit(1 if '1. Executive Summary' in nav_text or re.search(r'>\s*\d+\.\d+\s', nav_text) else 0)
+raise SystemExit(0 if '1. Executive Summary' not in nav_text and re.search(r'>\s*1\.1\s', nav_text) else 1)
 PYHTML
 	then
-		print_result "Markdown TOC keeps executive and H3 entries unnumbered" 0
+		print_result "Markdown TOC keeps executive unnumbered and H3 decimal" 0
 	else
-		print_result "Markdown TOC keeps executive and H3 entries unnumbered" 1 "Found numbered executive summary or H3 entry"
+		print_result "Markdown TOC keeps executive unnumbered and H3 decimal" 1 "Expected unnumbered executive summary and decimal H3 entries"
 	fi
 	if python3 - "$_out" <<'PYHTML'
 from pathlib import Path

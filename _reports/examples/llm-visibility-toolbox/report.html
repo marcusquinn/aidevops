@@ -265,6 +265,11 @@ body.report-body {
   margin-block-start: var(--report-space-6);
 }
 
+.heading-number {
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
 .chapter-hero {
   margin-block: var(--report-space-6) var(--report-space-4);
   padding: var(--report-space-5);
@@ -489,8 +494,8 @@ th .evidence-badge {
 
 .source-title {
   margin-block: var(--report-space-2);
-  padding-block-end: var(--report-space-2);
-  border-bottom: 1px solid var(--report-rule);
+  padding-block: var(--report-space-2);
+  border-block: 1px solid var(--report-rule);
   color: var(--report-ink);
   font-weight: 800;
 }
@@ -509,12 +514,20 @@ th .evidence-badge {
 }
 
 .source-list .source-title {
-  margin-block-start: var(--report-space-4);
+  margin-block: var(--report-space-5) 0;
   color: var(--report-ink-soft);
   font-size: 0.82rem;
   font-weight: 800;
   letter-spacing: 0.16em;
   text-transform: uppercase;
+}
+
+.source-list .source-title + .source-item {
+  border-top: 0;
+}
+
+.source-list .source-item:last-child {
+  border-bottom: 1px solid var(--report-rule);
 }
 
 .source-item {
@@ -1231,45 +1244,48 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <ol>
 <li><a href="#llm-visibility-toolbox" style="margin-left:0rem">LLM Visibility Toolbox</a></li>
 <li><a href="#executive-summary-badge-rct" style="margin-left:1rem">Executive summary</a></li>
-<li><a href="#sources" style="margin-left:1rem">1. Sources</a></li>
-<li><a href="#prompt-captures" style="margin-left:2rem">Prompt captures</a></li>
-<li><a href="#crawl-evidence" style="margin-left:2rem">Crawl evidence</a></li>
-<li><a href="#third-party-profiles" style="margin-left:2rem">Third-party profiles</a></li>
-<li><a href="#source-card-rule" style="margin-left:2rem">Source-card rule</a></li>
-<li><a href="#ahrefs-controlled-schema-study" style="margin-left:2rem">Ahrefs controlled schema study</a></li>
-<li><a href="#engine-overlap-research" style="margin-left:2rem">Engine-overlap research</a></li>
-<li><a href="#buyer-research-evidence" style="margin-left:2rem">Buyer-research evidence</a></li>
-<li><a href="#highest-impact-tactics" style="margin-left:1rem">2. Highest-impact tactics</a></li>
-<li><a href="#weight-before-recommending" style="margin-left:2rem">Weight before recommending</a></li>
-<li><a href="#critical" style="margin-left:2rem">Critical</a></li>
-<li><a href="#high" style="margin-left:2rem">High</a></li>
-<li><a href="#medium" style="margin-left:2rem">Medium</a></li>
-<li><a href="#low" style="margin-left:2rem">Low</a></li>
-<li><a href="#page-type-matrix" style="margin-left:1rem">3. Page-type matrix</a></li>
-<li><a href="#industry-fit-reminder" style="margin-left:2rem">Industry-fit reminder</a></li>
-<li><a href="#tactic-card-examples" style="margin-left:1rem">4. Tactic card examples</a></li>
-<li><a href="#direct-answer-opening" style="margin-left:2rem">Direct-answer opening</a></li>
-<li><a href="#impact" style="margin-left:2rem">Impact</a></li>
-<li><a href="#evidence" style="margin-left:2rem">Evidence</a></li>
-<li><a href="#bot-friendly-first-fetch" style="margin-left:2rem">Bot-friendly first fetch</a></li>
-<li><a href="#strong-pattern" style="margin-left:2rem">Strong pattern</a></li>
-<li><a href="#weak-pattern" style="margin-left:2rem">Weak pattern</a></li>
-<li><a href="#myths-and-caveats" style="margin-left:1rem">5. Myths and caveats</a></li>
-<li><a href="#myth" style="margin-left:2rem">Myth</a></li>
-<li><a href="#reality" style="margin-left:2rem">Reality</a></li>
-<li><a href="#case-studies" style="margin-left:1rem">6. Case studies</a></li>
-<li><a href="#industrial-manufacturer" style="margin-left:2rem">Industrial manufacturer</a></li>
-<li><a href="#healthcare-comparison-site" style="margin-left:2rem">Healthcare comparison site</a></li>
-<li><a href="#roadmap-template" style="margin-left:1rem">7. Roadmap template</a></li>
-<li><a href="#priority-rule" style="margin-left:2rem">Priority rule</a></li>
-<li><a href="#verification-checklist" style="margin-left:1rem">8. Verification checklist</a></li>
-<li><a href="#closing-callouts" style="margin-left:1rem">9. Closing callouts</a></li>
-<li><a href="#combined-finding" style="margin-left:2rem">Combined finding</a></li>
+<li><a href="#highest-impact-tactics" style="margin-left:1rem">1. Highest-impact tactics</a></li>
+<li><a href="#weight-before-recommending" style="margin-left:2rem">1.1 Weight before recommending</a></li>
+<li><a href="#critical" style="margin-left:2rem">1.2 Critical</a></li>
+<li><a href="#high" style="margin-left:2rem">1.3 High</a></li>
+<li><a href="#medium" style="margin-left:2rem">1.4 Medium</a></li>
+<li><a href="#low" style="margin-left:2rem">1.5 Low</a></li>
+<li><a href="#page-type-matrix" style="margin-left:1rem">2. Page-type matrix</a></li>
+<li><a href="#industry-fit-reminder" style="margin-left:2rem">2.1 Industry-fit reminder</a></li>
+<li><a href="#tactic-card-examples" style="margin-left:1rem">3. Tactic card examples</a></li>
+<li><a href="#direct-answer-opening" style="margin-left:2rem">3.1 Direct-answer opening</a></li>
+<li><a href="#impact" style="margin-left:2rem">3.2 Impact</a></li>
+<li><a href="#evidence" style="margin-left:2rem">3.3 Evidence</a></li>
+<li><a href="#bot-friendly-first-fetch" style="margin-left:2rem">3.4 Bot-friendly first fetch</a></li>
+<li><a href="#strong-pattern" style="margin-left:2rem">3.5 Strong pattern</a></li>
+<li><a href="#weak-pattern" style="margin-left:2rem">3.6 Weak pattern</a></li>
+<li><a href="#myths-and-caveats" style="margin-left:1rem">4. Myths and caveats</a></li>
+<li><a href="#myth" style="margin-left:2rem">4.1 Myth</a></li>
+<li><a href="#reality" style="margin-left:2rem">4.2 Reality</a></li>
+<li><a href="#case-studies" style="margin-left:1rem">5. Case studies</a></li>
+<li><a href="#industrial-manufacturer" style="margin-left:2rem">5.1 Industrial manufacturer</a></li>
+<li><a href="#healthcare-comparison-site" style="margin-left:2rem">5.2 Healthcare comparison site</a></li>
+<li><a href="#roadmap-template" style="margin-left:1rem">6. Roadmap template</a></li>
+<li><a href="#priority-rule" style="margin-left:2rem">6.1 Priority rule</a></li>
+<li><a href="#verification-checklist" style="margin-left:1rem">7. Verification checklist</a></li>
+<li><a href="#closing-callouts" style="margin-left:1rem">8. Closing callouts</a></li>
+<li><a href="#combined-finding" style="margin-left:2rem">8.1 Combined finding</a></li>
+<li><a href="#sources" style="margin-left:1rem">9. Sources</a></li>
+<li><a href="#prompt-captures" style="margin-left:2rem">9.1 Prompt captures</a></li>
+<li><a href="#crawl-evidence" style="margin-left:2rem">9.2 Crawl evidence</a></li>
+<li><a href="#third-party-profiles" style="margin-left:2rem">9.3 Third-party profiles</a></li>
+<li><a href="#source-card-rule" style="margin-left:2rem">9.4 Source-card rule</a></li>
+<li><a href="#ahrefs-controlled-schema-study" style="margin-left:2rem">9.5 Ahrefs controlled schema study</a></li>
+<li><a href="#engine-overlap-research" style="margin-left:2rem">9.6 Engine-overlap research</a></li>
+<li><a href="#buyer-research-evidence" style="margin-left:2rem">9.7 Buyer-research evidence</a></li>
 <li><a href="#appendices" style="margin-left:1rem">10. Appendices</a></li>
+<li><a href="#citations" style="margin-left:1rem">11. Citations</a></li>
 </ol>
 </nav>
 <main class="report-content report-main">
 <h1 id="llm-visibility-toolbox">LLM Visibility Toolbox</h1>
+<p>Evidence-based tactics for getting cited in ChatGPT, Perplexity, Gemini, Claude, AI Overviews, and AI Mode.</p>
+<p>By <a href="https://github.com/marcusquinn" data-filetype="link">Marcus Quinn</a>.</p>
 <section class="report-cover">
 <p>Internal toolkit · May 2026 · v4</p>
 <p><strong>A Markdown-canonical playbook for AI search visibility.</strong> Use it to turn source evidence, page-type weighting, and answer-engine behaviour into roadmap-ready recommendations.</p>
@@ -1315,87 +1331,26 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <section class="anchor-links">
 <p><a href="#sources" data-filetype="link">Sources</a> <a href="#highest-impact-tactics" data-filetype="link">Tactics</a> <a href="#page-type-matrix" data-filetype="link">Matrix</a> <a href="#roadmap-template" data-filetype="link">Roadmap</a> <a href="#appendices" data-filetype="link">Appendices</a></p>
 </section>
-<h2 class="chapter-heading" id="sources">Sources</h2>
-<section class="sources-layout">
-<section class="sources-group">
-<section class="source-title">
-<p>Primary sources</p>
-</section>
-<section class="source-card">
-<h3 id="prompt-captures">Prompt captures</h3>
-<p>AIO, Gemini, ChatGPT, AI Mode, and Perplexity prompt evidence stored separately.</p>
-</section>
-<section class="source-card">
-<h3 id="crawl-evidence">Crawl evidence</h3>
-<p>Raw/rendered crawl export with retrieval eligibility notes.</p>
-</section>
-</section>
-<section class="sources-group">
-<section class="source-title">
-<p>Corroboration sources</p>
-</section>
-<section class="source-card">
-<h3 id="third-party-profiles">Third-party profiles</h3>
-<p>Review, directory, community, partner, and media source parity checks.</p>
-</section>
-</section>
-</section>
-<section class="facts-table-wrap">
-<table><thead>
-<tr><th>Source ID</th><th>Evidence type</th><th>Use in report</th><th>Verification</th></tr></thead><tbody>
-<tr><td>S001</td><td>Prompt capture</td><td>Per-engine citation presence</td><td>AIO, Gemini, ChatGPT, AI Mode, and Perplexity recorded separately</td></tr>
-<tr><td>S002</td><td>Raw/rendered crawl</td><td>Retrieval eligibility</td><td>Important claims visible on first fetch</td></tr>
-<tr><td>S003</td><td>Page inventory</td><td>Page-type weighting</td><td>URL mapped to homepage, feature, comparison, article, local, PDP, or report</td></tr>
-<tr><td>S004</td><td>Third-party profile</td><td>Corroboration strength</td><td>Facts match owned canonical entity table</td></tr>
-<tr><td>S005</td><td>Analytics/search data</td><td>Business value and priority</td><td>Priority URL cluster tied to demand or revenue</td></tr>
-</tbody></table>
-</section>
-<section class="source-card">
-<h3 id="source-card-rule">Source-card rule</h3>
-<p>Every roadmap item should cite source IDs, observed date, confidence, owner, and the command or routine that verifies completion.</p>
-</section>
-<section class="source-list">
-<section class="source-item">
-<h3 id="ahrefs-controlled-schema-study">Ahrefs controlled schema study</h3>
-<p>Schema is treated as technical hygiene rather than a primary AI-visibility growth lever.</p>
-</section>
-<section class="source-item">
-<h3 id="engine-overlap-research">Engine-overlap research</h3>
-<p>Low overlap between AIO, Gemini, ChatGPT, AI Mode, and Perplexity requires per-engine reporting.</p>
-</section>
-<section class="source-item">
-<h3 id="buyer-research-evidence">Buyer-research evidence</h3>
-<p>Answer engines increasingly influence discovery and shortlisting, so reports separate visibility from conversion value.</p>
-</section>
-</section>
-<details class="accordion"><summary>How source IDs become recommendations</summary>
-<ol>
-<li>Capture source evidence before writing findings.</li>
-<li>Map each source to supported claims and page types.</li>
-<li>Score recommendations by impact, confidence, effort, and verification path.</li>
-<li>Include unresolved gaps in the appendix rather than presenting them as facts.</li>
-</ol>
-</details>
-<h2 class="chapter-heading" id="highest-impact-tactics">Highest-impact tactics</h2>
+<h2 class="chapter-heading" id="highest-impact-tactics"><span class="heading-number">1.</span> Highest-impact tactics</h2>
 <section class="details-note">
-<h3 id="weight-before-recommending">Weight before recommending</h3>
+<h3 class="section-heading" id="weight-before-recommending"><span class="heading-number">1.1</span> Weight before recommending</h3>
 <p>Do not apply all tactics to all pages. Score page-type fit, retrieval eligibility, source proximity, corroboration, freshness, confidence, impact, and effort before roadmap sequencing.</p>
 </section>
 <section class="severity-key">
 <section class="info-panel" data-severity="critical">
-<h3 id="critical">Critical</h3>
+<h3 class="section-heading" id="critical"><span class="heading-number">1.2</span> Critical</h3>
 <p>Revenue page cannot be fetched or cited.</p>
 </section>
 <section class="info-panel" data-severity="high">
-<h3 id="high">High</h3>
+<h3 class="section-heading" id="high"><span class="heading-number">1.3</span> High</h3>
 <p>Claim lacks nearby evidence or source-card support.</p>
 </section>
 <section class="info-panel" data-severity="medium">
-<h3 id="medium">Medium</h3>
+<h3 class="section-heading" id="medium"><span class="heading-number">1.4</span> Medium</h3>
 <p>Helpful page-type tactic with partial evidence.</p>
 </section>
 <section class="info-panel" data-severity="low">
-<h3 id="low">Low</h3>
+<h3 class="section-heading" id="low"><span class="heading-number">1.5</span> Low</h3>
 <p>Hygiene, formatting, or monitoring improvement.</p>
 </section>
 </section>
@@ -1410,7 +1365,7 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <tr><td>FAQPage schema</td><td><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span></td><td>Hygiene only</td><td>Structured data helps clarity but does not replace visible evidence.</td><td>Schema validation plus visible-content check</td></tr>
 </tbody></table>
 </section>
-<h2 class="chapter-heading" id="page-type-matrix">Page-type matrix</h2>
+<h2 class="chapter-heading" id="page-type-matrix"><span class="heading-number">2.</span> Page-type matrix</h2>
 <section class="facts-table-wrap">
 <table><thead>
 <tr><th>Page type</th><th>Required tactics</th><th>Conditional tactics</th><th>Devalue or avoid</th></tr></thead><tbody>
@@ -1425,13 +1380,13 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 </tbody></table>
 </section>
 <section class="industry-card">
-<h3 id="industry-fit-reminder">Industry-fit reminder</h3>
+<h3 class="section-heading" id="industry-fit-reminder"><span class="heading-number">2.1</span> Industry-fit reminder</h3>
 <p>SaaS, ecommerce, local, and YMYL pages require different proof sources. Map the page type before assigning a tactic.</p>
 </section>
 <hr class="section-separator">
-<h2 class="chapter-heading" id="tactic-card-examples">Tactic card examples</h2>
+<h2 class="chapter-heading" id="tactic-card-examples"><span class="heading-number">3.</span> Tactic card examples</h2>
 <section class="tactic-card">
-<h3 id="direct-answer-opening">Direct-answer opening</h3>
+<h3 class="section-heading" id="direct-answer-opening"><span class="heading-number">3.1</span> Direct-answer opening</h3>
 <ul>
 <li>What: answer the query plainly in the first paragraph.</li>
 <li>Why: extractive systems need self-contained claims with nearby proof.</li>
@@ -1440,15 +1395,15 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 </ul>
 </section>
 <section class="impact-panel" data-severity="high">
-<h3 id="impact">Impact</h3>
+<h3 class="section-heading" id="impact"><span class="heading-number">3.2</span> Impact</h3>
 <p>Direct-answer openings influence extraction quality, snippet usefulness, and the chance that a page is selected as a cited source.</p>
 </section>
 <section class="evidence-panel" data-severity="medium">
-<h3 id="evidence">Evidence</h3>
+<h3 class="section-heading" id="evidence"><span class="heading-number">3.3</span> Evidence</h3>
 <p>Verify with raw/rendered HTML, source-ID proximity, and per-engine prompt reruns.</p>
 </section>
 <section class="tactic-card">
-<h3 id="bot-friendly-first-fetch">Bot-friendly first fetch</h3>
+<h3 class="section-heading" id="bot-friendly-first-fetch"><span class="heading-number">3.4</span> Bot-friendly first fetch</h3>
 <ul>
 <li>What: SSR or pre-render important content, allow relevant crawlers, and keep key text visible.</li>
 <li>Why: invisible or blocked content cannot be cited.</li>
@@ -1458,19 +1413,19 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 </section>
 <section class="good-bad">
 <section class="good-row">
-<h3 id="strong-pattern">Strong pattern</h3>
+<h3 class="section-heading" id="strong-pattern"><span class="heading-number">3.5</span> Strong pattern</h3>
 <p>Direct answer, evidence badge, source ID, visible methodology, updated date, and crawlable comparison table.</p>
 </section>
 <section class="bad-row">
-<h3 id="weak-pattern">Weak pattern</h3>
+<h3 class="section-heading" id="weak-pattern"><span class="heading-number">3.6</span> Weak pattern</h3>
 <p>Image-only proof, unsupported superlatives, client-rendered claims, and schema added without visible evidence.</p>
 </section>
 </section>
-<h2 class="chapter-heading" id="myths-and-caveats">Myths and caveats</h2>
+<h2 class="chapter-heading" id="myths-and-caveats"><span class="heading-number">4.</span> Myths and caveats</h2>
 <section class="myth-callout">
-<h3 id="myth">Myth</h3>
+<h3 class="section-heading" id="myth"><span class="heading-number">4.1</span> Myth</h3>
 <p>Adding FAQPage schema is enough to become GEO-ready.</p>
-<h3 id="reality">Reality</h3>
+<h3 class="section-heading" id="reality"><span class="heading-number">4.2</span> Reality</h3>
 <p>FAQPage is hygiene unless visible FAQ content genuinely fits page type and query fan-out.</p>
 </section>
 <section class="example-card">
@@ -1498,20 +1453,20 @@ Use this block for named experts, source credentials, and profile links.</code><
 <p>Authority corroboration — 58%</p>
 </section>
 <blockquote>Strong reports separate observed facts from interpretation, then turn only verified or clearly labelled partial evidence into roadmap items.</blockquote>
-<h2 class="chapter-heading" id="case-studies">Case studies</h2>
+<h2 class="chapter-heading" id="case-studies"><span class="heading-number">5.</span> Case studies</h2>
 <section class="case-study-card">
-<h3 id="industrial-manufacturer">Industrial manufacturer</h3>
+<h3 class="section-heading" id="industrial-manufacturer"><span class="heading-number">5.1</span> Industrial manufacturer</h3>
 <p><strong>Result:</strong> measurable AI referral growth after direct-answer restructuring and third-party corroboration.</p>
 <p><strong>Tactics applied:</strong> original benchmarks, source-card evidence, bot-friendly rendering, and trade-publication mentions.</p>
 </section>
 <section class="case-study-card">
-<h3 id="healthcare-comparison-site">Healthcare comparison site</h3>
+<h3 class="section-heading" id="healthcare-comparison-site"><span class="heading-number">5.2</span> Healthcare comparison site</h3>
 <p><strong>Result:</strong> cited answers appeared across multiple answer engines after visible expertise and profile parity fixes.</p>
 <p><strong>Tactics applied:</strong> practitioner bylines, review methodology, source-backed tables, and monthly prompt reruns.</p>
 </section>
-<h2 class="chapter-heading" id="roadmap-template">Roadmap template</h2>
+<h2 class="chapter-heading" id="roadmap-template"><span class="heading-number">6.</span> Roadmap template</h2>
 <section class="priority-group" data-priority="high">
-<h3 id="priority-rule">Priority rule</h3>
+<h3 class="section-heading" id="priority-rule"><span class="heading-number">6.1</span> Priority rule</h3>
 <p>Start with revenue pages that fail retrieval eligibility or evidence proximity before optional schema enhancements.</p>
 </section>
 <section class="facts-table-wrap">
@@ -1523,7 +1478,7 @@ Use this block for named experts, source credentials, and profile links.</code><
 <tr><td>P2</td><td>Improve schema and metadata.</td><td>All page types</td><td>SEO + engineering</td><td>Schema validation plus visible-content check</td><td>S002</td></tr>
 </tbody></table>
 </section>
-<h2 class="chapter-heading" id="verification-checklist">Verification checklist</h2>
+<h2 class="chapter-heading" id="verification-checklist"><span class="heading-number">7.</span> Verification checklist</h2>
 <section class="checklist-card">
 <ul>
 <li>Validate evidence badges and source IDs before export.</li>
@@ -1534,17 +1489,79 @@ Use this block for named experts, source credentials, and profile links.</code><
 <li>For recurring reports, create a custom routine with deterministic collection and report-agent interpretation.</li>
 </ul>
 </section>
-<h2 class="chapter-heading" id="closing-callouts">Closing callouts</h2>
+<h2 class="chapter-heading" id="closing-callouts"><span class="heading-number">8.</span> Closing callouts</h2>
 <section class="callout">
-<h3 id="combined-finding">Combined finding</h3>
+<h3 class="section-heading" id="combined-finding"><span class="heading-number">8.1</span> Combined finding</h3>
 <p>AI visibility reporting should end with the fewest useful recommendations: retrieval blockers, evidence proximity, third-party corroboration, and monitoring. Keep panels for important emphasis; use plain bullets and tables for normal content.</p>
 </section>
-<section class="version-summary">
-<p>V4 · compiled May 2026 from source-led evidence · internal toolkit</p>
+<h2 class="chapter-heading" id="sources"><span class="heading-number">9.</span> Sources</h2>
+<section class="sources-layout">
+<section class="sources-group">
+<section class="source-title">
+<p>Primary sources</p>
 </section>
-<h2 class="chapter-heading" id="appendices">Appendices</h2>
+<section class="source-card">
+<h3 class="section-heading" id="prompt-captures"><span class="heading-number">9.1</span> Prompt captures</h3>
+<p>AIO, Gemini, ChatGPT, AI Mode, and Perplexity prompt evidence stored separately.</p>
+</section>
+<section class="source-card">
+<h3 class="section-heading" id="crawl-evidence"><span class="heading-number">9.2</span> Crawl evidence</h3>
+<p>Raw/rendered crawl export with retrieval eligibility notes.</p>
+</section>
+</section>
+<section class="sources-group">
+<section class="source-title">
+<p>Corroboration sources</p>
+</section>
+<section class="source-card">
+<h3 class="section-heading" id="third-party-profiles"><span class="heading-number">9.3</span> Third-party profiles</h3>
+<p>Review, directory, community, partner, and media source parity checks.</p>
+</section>
+</section>
+</section>
+<section class="facts-table-wrap">
+<table><thead>
+<tr><th>Source ID</th><th>Evidence type</th><th>Use in report</th><th>Verification</th></tr></thead><tbody>
+<tr><td>S001</td><td>Prompt capture</td><td>Per-engine citation presence</td><td>AIO, Gemini, ChatGPT, AI Mode, and Perplexity recorded separately</td></tr>
+<tr><td>S002</td><td>Raw/rendered crawl</td><td>Retrieval eligibility</td><td>Important claims visible on first fetch</td></tr>
+<tr><td>S003</td><td>Page inventory</td><td>Page-type weighting</td><td>URL mapped to homepage, feature, comparison, article, local, PDP, or report</td></tr>
+<tr><td>S004</td><td>Third-party profile</td><td>Corroboration strength</td><td>Facts match owned canonical entity table</td></tr>
+<tr><td>S005</td><td>Analytics/search data</td><td>Business value and priority</td><td>Priority URL cluster tied to demand or revenue</td></tr>
+</tbody></table>
+</section>
+<section class="source-card">
+<h3 class="section-heading" id="source-card-rule"><span class="heading-number">9.4</span> Source-card rule</h3>
+<p>Every roadmap item should cite source IDs, observed date, confidence, owner, and the command or routine that verifies completion.</p>
+</section>
+<section class="source-list">
+<section class="source-item">
+<h3 class="section-heading" id="ahrefs-controlled-schema-study"><span class="heading-number">9.5</span> Ahrefs controlled schema study</h3>
+<p>Schema is treated as technical hygiene rather than a primary AI-visibility growth lever.</p>
+</section>
+<section class="source-item">
+<h3 class="section-heading" id="engine-overlap-research"><span class="heading-number">9.6</span> Engine-overlap research</h3>
+<p>Low overlap between AIO, Gemini, ChatGPT, AI Mode, and Perplexity requires per-engine reporting.</p>
+</section>
+<section class="source-item">
+<h3 class="section-heading" id="buyer-research-evidence"><span class="heading-number">9.7</span> Buyer-research evidence</h3>
+<p>Answer engines increasingly influence discovery and shortlisting, so reports separate visibility from conversion value.</p>
+</section>
+</section>
+<details class="accordion"><summary>How source IDs become recommendations</summary>
+<ol>
+<li>Capture source evidence before writing findings.</li>
+<li>Map each source to supported claims and page types.</li>
+<li>Score recommendations by impact, confidence, effort, and verification path.</li>
+<li>Include unresolved gaps in the appendix rather than presenting them as facts.</li>
+</ol>
+</details>
+<h2 class="chapter-heading" id="appendices"><span class="heading-number">10.</span> Appendices</h2>
 <section class="appendix-links">
 <p><a href="report.md#sources" data-filetype="md">Source ledger</a> <a href="../client-ai-search-audit/report.html" data-filetype="html">Client audit example</a> <a href="../style-showcase/report.html" data-filetype="html">Style showcase</a></p>
+</section>
+<h2 class="chapter-heading" id="citations"><span class="heading-number">11.</span> Citations</h2>
+<section class="version-summary">
+<p>V4 · compiled May 2026 from source-led evidence · internal toolkit</p>
 </section>
 </main>
 </div>

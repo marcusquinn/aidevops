@@ -3,6 +3,10 @@
 
 # LLM Visibility Toolbox
 
+Evidence-based tactics for getting cited in ChatGPT, Perplexity, Gemini, Claude, AI Overviews, and AI Mode.
+
+By [Marcus Quinn](https://github.com/marcusquinn).
+
 ::: report-cover
 Internal toolkit · May 2026 · v4
 
@@ -66,72 +70,6 @@ V4 adds schema-downgrade rationale, engine-specific reporting, source grouping, 
 
 ::: anchor-links
 [Sources](#sources) [Tactics](#highest-impact-tactics) [Matrix](#page-type-matrix) [Roadmap](#roadmap-template) [Appendices](#appendices)
-:::
-
-## Sources
-
-::: sources-layout
-::: sources-group
-::: source-title
-Primary sources
-:::
-::: source-card
-### Prompt captures
-AIO, Gemini, ChatGPT, AI Mode, and Perplexity prompt evidence stored separately.
-:::
-::: source-card
-### Crawl evidence
-Raw/rendered crawl export with retrieval eligibility notes.
-:::
-:::
-::: sources-group
-::: source-title
-Corroboration sources
-:::
-::: source-card
-### Third-party profiles
-Review, directory, community, partner, and media source parity checks.
-:::
-:::
-:::
-
-::: facts-table-wrap
-
-| Source ID | Evidence type | Use in report | Verification |
-|---|---|---|---|
-| S001 | Prompt capture | Per-engine citation presence | AIO, Gemini, ChatGPT, AI Mode, and Perplexity recorded separately |
-| S002 | Raw/rendered crawl | Retrieval eligibility | Important claims visible on first fetch |
-| S003 | Page inventory | Page-type weighting | URL mapped to homepage, feature, comparison, article, local, PDP, or report |
-| S004 | Third-party profile | Corroboration strength | Facts match owned canonical entity table |
-| S005 | Analytics/search data | Business value and priority | Priority URL cluster tied to demand or revenue |
-:::
-
-::: source-card
-### Source-card rule
-
-Every roadmap item should cite source IDs, observed date, confidence, owner, and the command or routine that verifies completion.
-:::
-
-::: source-list
-::: source-item
-### Ahrefs controlled schema study
-Schema is treated as technical hygiene rather than a primary AI-visibility growth lever.
-:::
-::: source-item
-### Engine-overlap research
-Low overlap between AIO, Gemini, ChatGPT, AI Mode, and Perplexity requires per-engine reporting.
-:::
-::: source-item
-### Buyer-research evidence
-Answer engines increasingly influence discovery and shortlisting, so reports separate visibility from conversion value.
-:::
-:::
-
-::: accordion title="How source IDs become recommendations"
-1. Capture source evidence before writing findings.
-2. Map each source to supported claims and page types.
-3. Score recommendations by impact, confidence, effort, and verification path.
-4. Include unresolved gaps in the appendix rather than presenting them as facts.
 :::
 
 ## Highest-impact tactics
@@ -346,12 +284,81 @@ Start with revenue pages that fail retrieval eligibility or evidence proximity b
 AI visibility reporting should end with the fewest useful recommendations: retrieval blockers, evidence proximity, third-party corroboration, and monitoring. Keep panels for important emphasis; use plain bullets and tables for normal content.
 :::
 
-::: version-summary
-V4 · compiled May 2026 from source-led evidence · internal toolkit
+## Sources
+
+::: sources-layout
+::: sources-group
+::: source-title
+Primary sources
 :::
+::: source-card
+### Prompt captures
+AIO, Gemini, ChatGPT, AI Mode, and Perplexity prompt evidence stored separately.
+:::
+::: source-card
+### Crawl evidence
+Raw/rendered crawl export with retrieval eligibility notes.
+:::
+:::
+::: sources-group
+::: source-title
+Corroboration sources
+:::
+::: source-card
+### Third-party profiles
+Review, directory, community, partner, and media source parity checks.
+:::
+:::
+:::
+
+::: facts-table-wrap
+
+| Source ID | Evidence type | Use in report | Verification |
+|---|---|---|---|
+| S001 | Prompt capture | Per-engine citation presence | AIO, Gemini, ChatGPT, AI Mode, and Perplexity recorded separately |
+| S002 | Raw/rendered crawl | Retrieval eligibility | Important claims visible on first fetch |
+| S003 | Page inventory | Page-type weighting | URL mapped to homepage, feature, comparison, article, local, PDP, or report |
+| S004 | Third-party profile | Corroboration strength | Facts match owned canonical entity table |
+| S005 | Analytics/search data | Business value and priority | Priority URL cluster tied to demand or revenue |
+:::
+
+::: source-card
+### Source-card rule
+
+Every roadmap item should cite source IDs, observed date, confidence, owner, and the command or routine that verifies completion.
+:::
+
+::: source-list
+::: source-item
+### Ahrefs controlled schema study
+Schema is treated as technical hygiene rather than a primary AI-visibility growth lever.
+:::
+::: source-item
+### Engine-overlap research
+Low overlap between AIO, Gemini, ChatGPT, AI Mode, and Perplexity requires per-engine reporting.
+:::
+::: source-item
+### Buyer-research evidence
+Answer engines increasingly influence discovery and shortlisting, so reports separate visibility from conversion value.
+:::
+:::
+
+::: accordion title="How source IDs become recommendations"
+1. Capture source evidence before writing findings.
+2. Map each source to supported claims and page types.
+3. Score recommendations by impact, confidence, effort, and verification path.
+4. Include unresolved gaps in the appendix rather than presenting them as facts.
+:::
+
 
 ## Appendices
 
 ::: appendix-links
 [Source ledger](report.md#sources) [Client audit example](../client-ai-search-audit/report.html) [Style showcase](../style-showcase/report.html)
+:::
+
+## Citations
+
+::: version-summary
+V4 · compiled May 2026 from source-led evidence · internal toolkit
 :::

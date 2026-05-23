@@ -259,6 +259,11 @@ body.report-body {
   margin-block-start: var(--report-space-6);
 }
 
+.heading-number {
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
 .chapter-hero {
   margin-block: var(--report-space-6) var(--report-space-4);
   padding: var(--report-space-5);
@@ -483,8 +488,8 @@ th .evidence-badge {
 
 .source-title {
   margin-block: var(--report-space-2);
-  padding-block-end: var(--report-space-2);
-  border-bottom: 1px solid var(--report-rule);
+  padding-block: var(--report-space-2);
+  border-block: 1px solid var(--report-rule);
   color: var(--report-ink);
   font-weight: 800;
 }
@@ -503,12 +508,20 @@ th .evidence-badge {
 }
 
 .source-list .source-title {
-  margin-block-start: var(--report-space-4);
+  margin-block: var(--report-space-5) 0;
   color: var(--report-ink-soft);
   font-size: 0.82rem;
   font-weight: 800;
   letter-spacing: 0.16em;
   text-transform: uppercase;
+}
+
+.source-list .source-title + .source-item {
+  border-top: 0;
+}
+
+.source-list .source-item:last-child {
+  border-bottom: 1px solid var(--report-rule);
 }
 
 .source-item {
