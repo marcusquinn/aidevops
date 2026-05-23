@@ -39,13 +39,16 @@ def append_json_section(
     body: list[str],
     section: dict[str, Any],
 ) -> None:
+    if not isinstance(section, dict):
+        return
     section_title = section.get(TITLE_KEY, "Section")
     headings.append((2, section_title, slug(section_title)))
     body.append(f'<h2 id="{slug(section_title)}">{inline_markup(section_title)}</h2>')
     if section.get(SUMMARY_KEY):
         body.append(f"<p>{inline_markup(str(section[SUMMARY_KEY]))}</p>")
     for item in section.get("items", []):
-        append_json_item(body, item)
+        if isinstance(item, dict):
+            append_json_item(body, item)
 
 
 def render_json(text: str) -> tuple[list[tuple[int, str, str]], str]:
@@ -56,6 +59,7 @@ def render_json(text: str) -> tuple[list[tuple[int, str, str]], str]:
     title = data.get(TITLE_KEY, "Report") if isinstance(data, dict) else "Report"
     headings.append((1, title, slug(title)))
     body.append(f'<h1 id="{slug(title)}">{inline_markup(title)}</h1>')
-    for section in data.get("sections", []):
+    sections = data.get("sections", []) if isinstance(data, dict) else []
+    for section in sections:
         append_json_section(headings, body, section)
     return headings, "\n".join(body)
