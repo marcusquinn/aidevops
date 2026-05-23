@@ -2442,9 +2442,9 @@
       "pr": 18690
     },
     ".agents/scripts/pulse-merge.sh": {
-      "at": "2026-05-22T10:12:09Z",
-      "hash": "031e0d2d0f02ca4c62069f80984785294a308ad9",
-      "passes": 42,
+      "at": "2026-05-23T10:35:01Z",
+      "hash": "52d49f49e555ae529b1f0888d238279b14bd55d9",
+      "passes": 43,
       "pr": 18829
     },
     ".agents/scripts/pulse-prefetch.sh": {
