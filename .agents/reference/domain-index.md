@@ -12,7 +12,7 @@ Read subagents on-demand when trigger words clearly match. Full index: `subagent
 | Legal | legal, compliance, privacy policy, terms, contract, GDPR | `legal.md`, `tools/legal/legal-research.md` |
 | Code quality | lint, review, smells, standards, simplify, audit | `tools/code-review/code-standards.md` |
 | Git/PRs/Releases | git, PR, branch, merge, release, changelog, version | `workflows/git-workflow.md`, `tools/git/github-cli.md`, `workflows/release.md` |
-| Documents/PDF | PDF, document, report, pandoc, forms, extraction | `tools/document/document-creation.md`, `tools/pdf/overview.md`, `tools/conversion/pandoc.md` |
+| Documents/PDF | PDF, document, report, reporting, styled report, report components, evidence badges, pandoc, forms, extraction | `reference/report-component-taxonomy.md`, `tools/document/document-creation.md`, `tools/pdf/overview.md`, `tools/conversion/pandoc.md` |
 | OCR | OCR, receipt scan, invoice scan, image text, PaddleOCR | `tools/ocr/overview.md`, `tools/ocr/paddleocr.md`, `tools/ocr/glm-ocr.md` |
 | Product (shared) | product, onboarding, monetisation, growth, analytics, UX | `product/validation.md`, `product/onboarding.md`, `product/monetisation.md`, `product/growth.md`, `product/ui-design.md`, `product/analytics.md` |
 | Browser/Mobile | browser, Playwright, screenshot, mobile, app, extension, Swift, SwiftUI, Xcode, iOS, macOS | `tools/browser/browser-automation.md`, `tools/browser/browser-qa.md`, `tools/browser/browser-use.md`, `tools/browser/chromium-debug-use.md`, `tools/browser/skyvern.md`, `tools/mobile/app-dev.md`, `tools/mobile/app-dev-swift.md`, `tools/mobile/swift-xcode-agent-workflow.md`, `tools/mobile/app-store-connect.md`, `tools/browser/extension-dev.md` |

@@ -1,0 +1,385 @@
+{
+  "_comment": "Canonical report component taxonomy and evidence badge model. See .agents/reference/report-component-taxonomy.md.",
+  "version": 1,
+  "evidence_badges": [
+    {
+      "id": "observed",
+      "label": "Observed",
+      "description": "First-party crawl, audit, screenshot, log, analytics, search console, or manual review evidence",
+      "required_fields": [
+        "source_id",
+        "source_title",
+        "source_type",
+        "observed_date",
+        "claim_supported",
+        "confidence",
+        "sensitivity"
+      ]
+    },
+    {
+      "id": "sourced",
+      "label": "Sourced",
+      "description": "Third-party source, vendor documentation, public research, standards, or cited article",
+      "required_fields": [
+        "source_id",
+        "source_title",
+        "source_type",
+        "observed_date",
+        "claim_supported",
+        "confidence",
+        "sensitivity"
+      ]
+    },
+    {
+      "id": "benchmark",
+      "label": "Benchmark",
+      "description": "Competitive comparison, industry baseline, mention comparison, or before/after metric",
+      "required_fields": [
+        "source_id",
+        "source_title",
+        "source_type",
+        "observed_date",
+        "claim_supported",
+        "confidence",
+        "sensitivity"
+      ]
+    },
+    {
+      "id": "inferred",
+      "label": "Inferred",
+      "description": "Modelled conclusion from multiple signals where no single source proves the whole claim",
+      "required_fields": [
+        "source_id",
+        "source_title",
+        "source_type",
+        "observed_date",
+        "claim_supported",
+        "confidence",
+        "sensitivity"
+      ]
+    },
+    {
+      "id": "estimate",
+      "label": "Estimate",
+      "description": "Forecast, projection, sizing, effort, cost, lift, or priority score",
+      "required_fields": [
+        "source_id",
+        "source_title",
+        "source_type",
+        "observed_date",
+        "claim_supported",
+        "confidence",
+        "sensitivity"
+      ]
+    }
+  ],
+  "enums": {
+    "evidence_badge": [
+      "observed",
+      "sourced",
+      "benchmark",
+      "inferred",
+      "estimate"
+    ],
+    "source_type": [
+      "first_party",
+      "third_party",
+      "benchmark",
+      "model",
+      "manual_review",
+      "generated_artifact"
+    ],
+    "confidence": [
+      "high",
+      "medium",
+      "low"
+    ],
+    "sensitivity": [
+      "public",
+      "internal",
+      "confidential",
+      "redacted"
+    ],
+    "priority": [
+      "critical",
+      "high",
+      "medium",
+      "low"
+    ],
+    "checklist_status": [
+      "todo",
+      "doing",
+      "done",
+      "blocked",
+      "not_applicable"
+    ]
+  },
+  "shared_fields": [
+    "id",
+    "component",
+    "title",
+    "body",
+    "evidence",
+    "rendering_notes"
+  ],
+  "components": [
+    {
+      "id": "cover_meta",
+      "label": "Cover/meta",
+      "required_fields": [
+        "id",
+        "component",
+        "title",
+        "subtitle",
+        "prepared_for",
+        "prepared_by",
+        "prepared_date",
+        "version",
+        "confidentiality",
+        "summary"
+      ],
+      "rendering_notes": "First page or report header with safe metadata and summary."
+    },
+    {
+      "id": "sticky_toc",
+      "label": "Sticky TOC",
+      "required_fields": [
+        "id",
+        "component",
+        "title",
+        "items"
+      ],
+      "item_required_fields": [
+        "label",
+        "anchor",
+        "level",
+        "status"
+      ],
+      "rendering_notes": "Pinned navigation in HTML; normal table of contents in Markdown/PDF."
+    },
+    {
+      "id": "chapter_hero_heading",
+      "label": "Chapter hero heading",
+      "required_fields": [
+        "id",
+        "component",
+        "title",
+        "anchor",
+        "kicker",
+        "summary",
+        "priority",
+        "evidence"
+      ],
+      "rendering_notes": "Major section opener with outcome-focused summary."
+    },
+    {
+      "id": "action_line",
+      "label": "Action line",
+      "required_fields": [
+        "id",
+        "component",
+        "action",
+        "owner",
+        "priority",
+        "effort",
+        "impact",
+        "due",
+        "evidence"
+      ],
+      "rendering_notes": "High-contrast single-sentence action strip."
+    },
+    {
+      "id": "evidence_badge",
+      "label": "Evidence badge",
+      "required_fields": [
+        "id",
+        "component",
+        "badge",
+        "label",
+        "evidence"
+      ],
+      "rendering_notes": "Compact badge mapped to the evidence_badge enum."
+    },
+    {
+      "id": "tactic_card",
+      "label": "What/Why/How tactic card",
+      "required_fields": [
+        "id",
+        "component",
+        "title",
+        "what",
+        "why",
+        "how",
+        "priority",
+        "impact",
+        "effort",
+        "evidence"
+      ],
+      "rendering_notes": "Recommendation card with rationale and execution steps."
+    },
+    {
+      "id": "code_example_card",
+      "label": "Code/example card",
+      "required_fields": [
+        "id",
+        "component",
+        "title",
+        "language",
+        "code_or_example",
+        "context",
+        "copy_safe",
+        "evidence"
+      ],
+      "rendering_notes": "Preserve fenced-code readability and production-readiness labels."
+    },
+    {
+      "id": "good_bad_rows",
+      "label": "Good/bad rows",
+      "required_fields": [
+        "id",
+        "component",
+        "title",
+        "rows"
+      ],
+      "item_required_fields": [
+        "good",
+        "bad",
+        "reason",
+        "evidence"
+      ],
+      "rendering_notes": "Contrastive guidance focused on observable differences."
+    },
+    {
+      "id": "stats_strip",
+      "label": "Stats strip",
+      "required_fields": [
+        "id",
+        "component",
+        "metrics"
+      ],
+      "item_required_fields": [
+        "label",
+        "value",
+        "unit",
+        "delta",
+        "period",
+        "evidence"
+      ],
+      "rendering_notes": "Compact KPI cards with period and unit."
+    },
+    {
+      "id": "facts_table",
+      "label": "Facts table",
+      "required_fields": [
+        "id",
+        "component",
+        "columns",
+        "rows",
+        "evidence"
+      ],
+      "rendering_notes": "Dense factual data with stable export columns."
+    },
+    {
+      "id": "details_note",
+      "label": "Details note",
+      "required_fields": [
+        "id",
+        "component",
+        "title",
+        "body",
+        "tone",
+        "evidence"
+      ],
+      "rendering_notes": "Aside/details block for caveats, assumptions, and implementation notes."
+    },
+    {
+      "id": "industry_card",
+      "label": "Industry card",
+      "required_fields": [
+        "id",
+        "component",
+        "industry",
+        "title",
+        "context",
+        "pattern",
+        "implication",
+        "evidence"
+      ],
+      "rendering_notes": "Vertical-specific guidance with applicability boundary."
+    },
+    {
+      "id": "priority_group",
+      "label": "Priority group",
+      "required_fields": [
+        "id",
+        "component",
+        "title",
+        "priority",
+        "items",
+        "rationale",
+        "evidence"
+      ],
+      "rendering_notes": "Grouped actions sorted from critical to low priority."
+    },
+    {
+      "id": "checklist",
+      "label": "Checklist",
+      "required_fields": [
+        "id",
+        "component",
+        "title",
+        "items"
+      ],
+      "item_required_fields": [
+        "label",
+        "status",
+        "owner",
+        "evidence"
+      ],
+      "rendering_notes": "Action checklist using the checklist_status enum."
+    },
+    {
+      "id": "source_card",
+      "label": "Source card",
+      "required_fields": [
+        "id",
+        "component",
+        "source_id",
+        "source_title",
+        "source_type",
+        "observed_date",
+        "summary",
+        "sensitivity"
+      ],
+      "rendering_notes": "Appendix/source-section card backing citations and badges."
+    },
+    {
+      "id": "myth_callout",
+      "label": "Myth callout",
+      "required_fields": [
+        "id",
+        "component",
+        "myth",
+        "reality",
+        "why_it_matters",
+        "evidence"
+      ],
+      "rendering_notes": "Evidence-backed misconception correction."
+    },
+    {
+      "id": "print_rules",
+      "label": "Print rules",
+      "required_fields": [
+        "id",
+        "component",
+        "page_size",
+        "margins",
+        "break_rules",
+        "hide_selectors",
+        "show_urls",
+        "footer"
+      ],
+      "rendering_notes": "Renderer-only PDF/print control; must not carry claims."
+    }
+  ]
+}
