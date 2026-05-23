@@ -150,10 +150,28 @@ test_render_json_array_is_resilient() {
 test_sample_and_css_commands() {
 	local _sample="${TEST_ROOT}/sample.md"
 	local _css="${TEST_ROOT}/print.css"
+	local _instructional="${TEST_ROOT}/instructional.md"
 	"$HELPER_SH" sample markdown >"$_sample"
+	"$HELPER_SH" sample instructional-seo-geo >"$_instructional"
 	"$HELPER_SH" print-css >"$_css"
 	assert_contains "$_sample" "{{evidence:verified}}" "Sample command emits Markdown report"
+	assert_contains "$_instructional" "LLM Visibility Instructional Toolbox" "Sample command emits instructional SEO/GEO report"
 	assert_contains "$_css" "@media print" "print-css emits print stylesheet"
+	return 0
+}
+
+test_render_template_and_profiles() {
+	local _out="${TEST_ROOT}/editorial.html"
+	local _slides="${TEST_ROOT}/slides.css"
+	"$HELPER_SH" render "${FIXTURE_DIR}/llm-visibility-report-sample.md" \
+		--template editorial-evidence \
+		--profile a4 \
+		--output "$_out"
+	"$HELPER_SH" print-css --template editorial-evidence --profile slides-16-9-2 >"$_slides"
+	assert_contains "$_out" "report-template-editorial-evidence" "Render supports editorial template"
+	assert_contains "$_out" "size: A4 portrait" "Render defaults to A4 portrait profile"
+	assert_contains "$_slides" "16in 9in landscape" "print-css supports 16:9 landscape profile"
+	assert_contains "$_slides" "column-count: 2" "print-css supports two-column presentation profile"
 	return 0
 }
 
@@ -168,6 +186,7 @@ main() {
 	test_multiline_markdown_paragraph
 	test_render_json_array_is_resilient
 	test_sample_and_css_commands
+	test_render_template_and_profiles
 	printf '\nReport render helper tests: %s run, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then
 		return 1

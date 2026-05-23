@@ -21,6 +21,8 @@ evidence, export, and handoff.
 - Use `seo/geo-strategy.md` for criteria coverage and retrieval-first analysis.
 - Use `seo/ai-search-readiness.md` for end-to-end AI-search readiness.
 - Use `seo/ai-search-report-template.md` for GEO and AI-search report sections.
+- Use `seo/llm-visibility-instructional-report.md` when the request is an
+  educational toolbox/playbook rather than a short audit.
 - Use `seo/ai-search-kpi-template.md` for recurring scorecards.
 - Use `seo/data-export.md`, `seo/google-search-console.md`,
   `seo/dataforseo.md`, or `seo/serper.md` for data collection details.

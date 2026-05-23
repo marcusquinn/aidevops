@@ -440,6 +440,7 @@ body.report-body {
 .facts-table {
   width: 100%;
   min-width: 42rem;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 0.875rem;
 }
@@ -597,8 +598,8 @@ a {
   }
 
   @page {
-    size: A4;
-    margin: 16mm 14mm 18mm;
+    size: A4 portrait;
+    margin: 12mm 11mm 14mm;
   }
 
   html,
@@ -623,14 +624,8 @@ a {
   }
 
   .report-cover {
-    min-height: 82vh;
     border: 0;
     border-radius: 0;
-    break-after: page;
-  }
-
-  .chapter-hero {
-    break-before: page;
   }
 
   .report-cover,
@@ -655,7 +650,15 @@ a {
 
   .facts-table {
     min-width: 0;
-    font-size: 8.5pt;
+    table-layout: fixed;
+    font-size: 8.2pt;
+  }
+
+  .facts-table th,
+  .facts-table td {
+    padding: 4pt 5pt;
+    overflow-wrap: anywhere;
+    word-break: normal;
   }
 
   .example-card {

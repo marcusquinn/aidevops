@@ -26,9 +26,39 @@ Input: $ARGUMENTS
 /report-render report.json
 ```
 
+Direct helper options:
+
+```bash
+~/.aidevops/agents/scripts/report-render-helper.sh render report.md \
+  --template editorial-evidence \
+  --profile a4 \
+  --output report.html
+```
+
+## Templates and profiles
+
+Templates:
+
+- `basic` — lightweight default renderer style.
+- `editorial-evidence` — richer report style based on the editorial evidence DESIGN.md profile.
+
+Export profiles:
+
+- `a4` — default A4 portrait print/PDF CSS.
+- `letter` — US Letter portrait print/PDF CSS.
+- `slides-16-9-1` — 16:9 landscape presentation, one content column.
+- `slides-16-9-2` — 16:9 landscape presentation, two content columns.
+- `slides-16-9-3` — 16:9 landscape presentation, three content columns.
+
+Instructional sample:
+
+```bash
+~/.aidevops/agents/scripts/report-render-helper.sh sample instructional-seo-geo > report.md
+```
+
 ## Notes
 
 - Markdown remains canonical; HTML is generated output.
 - Evidence badges are limited to `verified`, `partial`, `inferred`, and `missing`.
 - JSON reports use `evidence_badge` fields for the same badge values.
-- `print-css` exposes the embedded print stylesheet for custom handoff workflows.
+- `print-css --template <name> --profile <name>` exposes the matching stylesheet for custom handoff workflows.

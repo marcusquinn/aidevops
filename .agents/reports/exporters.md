@@ -36,6 +36,12 @@ _reports/published/<report-slug>/report.pdf
   manual install command, but do not run installs automatically.
 - Prefer deterministic commands in `run:` routines for collection and export.
 - Run privacy checks before publishing or attaching a bundle.
+- Default browser-print/PDF output is A4 portrait. Use Letter portrait only when
+  required by the recipient, and use 16:9 landscape profiles for on-screen
+  presentation exports.
+- Prefer the report renderer profiles before raw Pandoc PDF output when visual
+  fidelity matters:
+  `report-render-helper.sh render report.md --template editorial-evidence --profile a4 --output report.html`.
 
 ## Tool Routing
 
@@ -47,6 +53,16 @@ _reports/published/<report-slug>/report.pdf
 | Complex PDF to Markdown or JSON | `tools/conversion/mineru.md` |
 | OCR or scanned PDF handling | `tools/ocr/overview.md` |
 | Report visual system, print CSS, and components | `tools/design/report-presentation.md` |
+
+## Built-in Renderer Profiles
+
+| Profile | Purpose |
+|---------|---------|
+| `a4` | Default A4 portrait report/PDF CSS. |
+| `letter` | US Letter portrait report/PDF CSS. |
+| `slides-16-9-1` | 16:9 landscape screen deck with one content column. |
+| `slides-16-9-2` | 16:9 landscape screen deck with two content columns. |
+| `slides-16-9-3` | 16:9 landscape screen deck with three content columns. |
 
 ## Suggested Export Flow
 
