@@ -1,6 +1,45 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
+---
+version: alpha
+name: "IBM Carbon"
+description: "IBM Carbon-inspired report presentation design system."
+colors:
+  background: "#F4F4F4"
+  surface: "#FFFFFF"
+  on-surface: "#161616"
+  muted: "#525252"
+  outline: "#C6C6C6"
+  primary: "#0F62FE"
+  primary-container: "#D0E2FF"
+typography:
+  headline-display:
+    fontFamily: '"IBM Plex Sans", Inter, system-ui, sans-serif'
+    fontSize: 64px
+    fontWeight: 300
+    lineHeight: 1.05
+    letterSpacing: -0.03em
+  headline-md:
+    fontFamily: '"IBM Plex Sans", Inter, system-ui, sans-serif'
+    fontSize: 32px
+    fontWeight: 400
+    lineHeight: 1.15
+  body-md:
+    fontFamily: '"IBM Plex Sans", Inter, system-ui, sans-serif'
+    fontSize: 16px
+    fontWeight: 400
+    lineHeight: 1.62
+  code-md:
+    fontFamily: '"IBM Plex Mono", monospace'
+    fontSize: 13px
+    fontWeight: 400
+    lineHeight: 1.5
+rounded:
+  md: 0px
+  lg: 0px
+---
+
 # Design System: IBM
 
 IBM Carbon Design System — enterprise authority, monochromatic + blue, 8px grid, flat depth via background-color layering.

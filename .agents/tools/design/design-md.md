@@ -30,7 +30,7 @@ model: sonnet
 - **Location**: `DESIGN.md` in project root (alongside `AGENTS.md`)
 - **Validator**: `npx @google/design.md lint DESIGN.md` (lint, diff, export to tailwind/dtcg, spec; use the `designmd` bin alias in Windows package scripts)
 - **Template**: `templates/DESIGN.md.template`
-- **Library**: `tools/design/library/` (55 brand examples + 12 style templates)
+- **Library**: `tools/design/library/` (55 brand examples, style templates, and report presentation presets)
 - **Preview**: `tools/design/library/_template/preview.html.template`
 - **Palette tools**: `tools/design/colour-palette.md`, `scripts/colormind-helper.sh`
 - **Preview capture**: `scripts/design-preview-helper.sh`

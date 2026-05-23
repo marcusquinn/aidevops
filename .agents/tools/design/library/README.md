@@ -14,7 +14,7 @@ library/
 ├── _template/                 -- Base templates for generating new DESIGN.md + previews
 │   ├── DESIGN.md.template     -- Skeleton with section placeholders
 │   └── preview.html.template  -- Parameterised HTML/CSS for visual catalogue (light+dark)
-├── brands/                    -- Real brand examples (55 sites, educational use)
+├── brands/                    -- Real brand and source-inspired examples
 │   └── {brand}/DESIGN.md
 └── styles/                    -- Archetype style templates (original, not brand-tied)
     └── {style}/DESIGN.md
@@ -22,7 +22,10 @@ library/
 
 ## Brands
 
-Extracted from publicly visible CSS values of real websites. Source: [VoltAgent/awesome-design-md](https://github.com/VoltAgent/awesome-design-md) (MIT License).
+Extracted from publicly visible CSS values of real websites or source-inspired
+from a user-supplied report/design brief. Source attribution is documented in
+each folder's `DESIGN.md`. Third-party examples are educational references, not
+claims of brand ownership.
 
 ### By Category
 
@@ -75,6 +78,14 @@ cp .agents/tools/design/library/styles/startup-minimal/DESIGN.md ./DESIGN.md
 # Spin the colour palette to make it yours
 # See: tools/design/colour-palette.md
 ```
+
+## Report Presentation Brands
+
+The original report brief requested website/source-specific `DESIGN.md` folders
+for report styling. Those live under `brands/` using the same chapter pattern as
+IBM and Apple. `report-render-helper.sh --template <slug>` reads those
+`DESIGN.md` tokens directly, so report rendering stays DESIGN.md-backed rather
+than hardcoded in the renderer.
 
 ## Disclaimer
 

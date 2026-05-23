@@ -68,13 +68,14 @@ Recommended export for the instructional playbook:
 ```bash
 .agents/scripts/report-render-helper.sh sample instructional-seo-geo > _reports/drafts/llm-visibility-toolbox/report.md
 .agents/scripts/report-render-helper.sh render _reports/drafts/llm-visibility-toolbox/report.md \
-  --template editorial-evidence \
-  --profile a4 \
+  --template axel \
+  --pdf-profile a4 \
   --output _reports/drafts/llm-visibility-toolbox/report.html
 ```
 
-Use `--profile letter` for US Letter, or `--profile slides-16-9-1|2|3` for
-screen presentation formats.
+Use `--pdf-profile letter` for US Letter, or
+`--pdf-profile slides-16-9-1|2|3` for PDF presentation formats. Keep one HTML
+preview; page size variants belong to PDF output only.
 
 ## Related
 

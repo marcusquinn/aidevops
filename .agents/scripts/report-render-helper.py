@@ -17,6 +17,7 @@ from report_render_badges import BADGE_PARTIAL
 from report_render_badges import BADGE_VERIFIED
 from report_render_json import DETAIL_KEY, SUMMARY_KEY, TITLE_KEY, render_json, validate_json_badges
 from report_render_markdown import render_markdown, validate_markdown_badges
+from report_render_styles import style_css, style_names
 
 if len(sys.argv) < 2:
     sys.stderr.write(f"Usage: {sys.argv[0]} <mode> [input]\n")
@@ -25,7 +26,7 @@ if len(sys.argv) < 2:
 MODE = sys.argv[1]
 INPUT = sys.argv[2] if len(sys.argv) > 2 else ""
 TEMPLATE = sys.argv[3] if len(sys.argv) > 3 else "basic"
-PROFILE = sys.argv[4] if len(sys.argv) > 4 else "a4"
+PDF_PROFILE = sys.argv[4] if len(sys.argv) > 4 else "a4"
 
 BASIC_CSS = """
 :root { color-scheme: light; --report-paper: #f8f6f1; --report-surface: #fffdf8; --report-ink: #111827; --report-muted: #4b5563; --report-line: #d8d2c4; --report-panel: #fffdf8; --report-blue: #2563eb; --report-green: #147a4a; --report-amber: #b7791f; --report-red: #b42318; }
@@ -50,22 +51,27 @@ h1, h2, h3 { line-height: 1.15; break-after: avoid; }
 PROFILE_CSS = {
     "a4": "@media print { @page { size: A4 portrait; margin: 12mm 11mm 14mm; } body.report-body { background: #fff; font-size: 10.5pt; } .report-shell { display: block; max-width: none; padding: 0; } .sticky-toc { position: static; break-after: page; box-shadow: none; } table { table-layout: fixed; font-size: 8.8pt; } th,td { padding: 4pt 5pt; } a[href]::after { content: \" (\" attr(href) \")\"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after { content: \"\"; } }",
     "letter": "@media print { @page { size: Letter portrait; margin: 0.45in 0.42in 0.52in; } body.report-body { background: #fff; font-size: 10.5pt; } .report-shell { display: block; max-width: none; padding: 0; } .sticky-toc { position: static; break-after: page; box-shadow: none; } table { table-layout: fixed; font-size: 8.6pt; } th,td { padding: 4pt 5pt; } }",
-    "slides-16-9-1": "@media screen { body.report-body { min-width: 1280px; } .report-shell { aspect-ratio: 16 / 9; max-width: 1600px; grid-template-columns: minmax(0, 1fr) 17rem; } } @media print { @page { size: 16in 9in landscape; margin: .35in; } .report-shell { display: block; padding: 0; } }",
-    "slides-16-9-2": "@media screen { body.report-body { min-width: 1280px; } .report-shell { aspect-ratio: 16 / 9; max-width: 1600px; grid-template-columns: minmax(0, 1fr) 17rem; } .report-main { column-count: 2; column-gap: 2rem; } .report-main > * { break-inside: avoid; } } @media print { @page { size: 16in 9in landscape; margin: .35in; } .report-main { column-count: 2; column-gap: .35in; } .report-shell { display: block; padding: 0; } }",
-    "slides-16-9-3": "@media screen { body.report-body { min-width: 1280px; } .report-shell { aspect-ratio: 16 / 9; max-width: 1600px; grid-template-columns: minmax(0, 1fr) 17rem; } .report-main { column-count: 3; column-gap: 1.5rem; } .report-main > * { break-inside: avoid; } } @media print { @page { size: 16in 9in landscape; margin: .3in; } .report-main { column-count: 3; column-gap: .3in; } .report-shell { display: block; padding: 0; } }",
+    "slides-16-9-1": "@media print { @page { size: 16in 9in landscape; margin: .35in; } .report-shell { display: block; padding: 0; } }",
+    "slides-16-9-2": "@media print { @page { size: 16in 9in landscape; margin: .35in; } .report-main { column-count: 2; column-gap: .35in; } .report-main > * { break-inside: avoid; } .report-shell { display: block; padding: 0; } }",
+    "slides-16-9-3": "@media print { @page { size: 16in 9in landscape; margin: .3in; } .report-main { column-count: 3; column-gap: .3in; } .report-main > * { break-inside: avoid; } .report-shell { display: block; padding: 0; } }",
 }
 
+BUILTIN_TEMPLATES = ("basic", "editorial-evidence") + style_names()
 
-def load_css(template: str, profile: str) -> str:
+
+def load_css(template: str, pdf_profile: str) -> str:
     css = BASIC_CSS
     if template == "editorial-evidence":
         path = Path(__file__).resolve().parents[1] / "templates" / "reports" / "llm-visibility-report.css"
         css = path.read_text(encoding="utf-8")
-    if template not in ("basic", "editorial-evidence"):
-        raise ValueError(f"unknown report template: {template}")
-    if profile not in PROFILE_CSS:
-        raise ValueError(f"unknown report export profile: {profile}")
-    return f"{css}\n{PROFILE_CSS[profile]}"
+    elif template in style_names():
+        css = style_css(template)
+    elif template != "basic":
+        names = ", ".join(BUILTIN_TEMPLATES)
+        raise ValueError(f"unknown report template: {template}. Available: {names}")
+    if pdf_profile not in PROFILE_CSS:
+        raise ValueError(f"unknown PDF export profile: {pdf_profile}")
+    return f"{css}\n{PROFILE_CSS[pdf_profile]}"
 
 
 def read_input(path: str) -> str:
@@ -76,7 +82,7 @@ def read_input(path: str) -> str:
 
 
 def wrap_document(headings: list[tuple[int, str, str]], body: str) -> str:
-    css = load_css(TEMPLATE, PROFILE)
+    css = load_css(TEMPLATE, PDF_PROFILE)
     toc_items = []
     for level, title, anchor in headings:
         indent = f' style="margin-left:{max(level - 1, 0)}rem"'
@@ -89,7 +95,7 @@ def wrap_document(headings: list[tuple[int, str, str]], body: str) -> str:
 <title>Report</title>
 <style>{css}</style>
 </head>
-<body class="report-body report-profile-{html.escape(PROFILE)} report-template-{html.escape(TEMPLATE)}">
+<body class="report-body report-pdf-profile-{html.escape(PDF_PROFILE)} report-template-{html.escape(TEMPLATE)}">
 <div class="report-shell">
 <nav class="sticky-toc" aria-label="Report table of contents">
 <h2>Contents</h2>
@@ -129,7 +135,10 @@ def sample_json() -> str:
 
 def main() -> int:
     if MODE == "print-css":
-        print(load_css(TEMPLATE, PROFILE))
+        print(load_css(TEMPLATE, PDF_PROFILE))
+        return 0
+    if MODE == "list-templates":
+        print("\n".join(BUILTIN_TEMPLATES))
         return 0
     if MODE == "sample-json":
         print(sample_json())

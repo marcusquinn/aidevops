@@ -164,14 +164,24 @@ test_render_template_and_profiles() {
 	local _out="${TEST_ROOT}/editorial.html"
 	local _slides="${TEST_ROOT}/slides.css"
 	"$HELPER_SH" render "${FIXTURE_DIR}/llm-visibility-report-sample.md" \
-		--template editorial-evidence \
-		--profile a4 \
+		--template axel \
+		--pdf-profile a4 \
 		--output "$_out"
-	"$HELPER_SH" print-css --template editorial-evidence --profile slides-16-9-2 >"$_slides"
-	assert_contains "$_out" "report-template-editorial-evidence" "Render supports editorial template"
+	"$HELPER_SH" print-css --template axel --pdf-profile slides-16-9-2 >"$_slides"
+	assert_contains "$_out" "report-template-axel" "Render supports named style template"
+	assert_contains "$_out" "Newsreader" "Render includes style-specific fonts"
 	assert_contains "$_out" "size: A4 portrait" "Render defaults to A4 portrait profile"
 	assert_contains "$_slides" "16in 9in landscape" "print-css supports 16:9 landscape profile"
 	assert_contains "$_slides" "column-count: 2" "print-css supports two-column presentation profile"
+	return 0
+}
+
+test_list_templates() {
+	local _templates="${TEST_ROOT}/templates.txt"
+	"$HELPER_SH" list-templates >"$_templates"
+	assert_contains "$_templates" "arxiv" "Template list includes original arXiv brief style"
+	assert_contains "$_templates" "wikipedia" "Template list includes original Wikipedia brief style"
+	assert_contains "$_templates" "terminalshop" "Template list includes original Terminal Shop brief style"
 	return 0
 }
 
@@ -187,6 +197,7 @@ main() {
 	test_render_json_array_is_resilient
 	test_sample_and_css_commands
 	test_render_template_and_profiles
+	test_list_templates
 	printf '\nReport render helper tests: %s run, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then
 		return 1

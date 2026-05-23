@@ -30,8 +30,8 @@ Direct helper options:
 
 ```bash
 ~/.aidevops/agents/scripts/report-render-helper.sh render report.md \
-  --template editorial-evidence \
-  --profile a4 \
+  --template axel \
+  --pdf-profile a4 \
   --output report.html
 ```
 
@@ -41,14 +41,23 @@ Templates:
 
 - `basic` — lightweight default renderer style.
 - `editorial-evidence` — richer report style based on the editorial evidence DESIGN.md profile.
+- Original-brief named styles: run `report-render-helper.sh list-templates` for
+  `axel`, `arxiv`, `wikipedia`, `medium`, `ghost`, `ulysses`, `ia`, `docuseal`,
+  `times`, `consumer`, `tavily`, `supermemory`, `savvy`, `exsqueezeme`,
+  `terminalshop`, `scalefusion`, `zeroheight`, `superx`, `wpcodebox`, `outrank`,
+  `lottiefiles`, `knob`, `postedapp`, `serper`, `indexsy`, `lifee`, `bento`,
+  `ibm`, `apple`, `cabinet`, `heron`, and `usgraphics`.
 
-Export profiles:
+PDF profiles:
 
 - `a4` — default A4 portrait print/PDF CSS.
 - `letter` — US Letter portrait print/PDF CSS.
-- `slides-16-9-1` — 16:9 landscape presentation, one content column.
-- `slides-16-9-2` — 16:9 landscape presentation, two content columns.
-- `slides-16-9-3` — 16:9 landscape presentation, three content columns.
+- `slides-16-9-1` — 16:9 landscape PDF presentation, one content column.
+- `slides-16-9-2` — 16:9 landscape PDF presentation, two content columns.
+- `slides-16-9-3` — 16:9 landscape PDF presentation, three content columns.
+
+Keep one `report.html` preview per report. Do not create separate A4/Letter HTML
+variants; use the selected PDF profile only when printing/exporting the PDF.
 
 Instructional sample:
 
@@ -61,4 +70,4 @@ Instructional sample:
 - Markdown remains canonical; HTML is generated output.
 - Evidence badges are limited to `verified`, `partial`, `inferred`, and `missing`.
 - JSON reports use `evidence_badge` fields for the same badge values.
-- `print-css --template <name> --profile <name>` exposes the matching stylesheet for custom handoff workflows.
+- `print-css --template <name> --pdf-profile <name>` exposes the matching stylesheet for custom handoff workflows.

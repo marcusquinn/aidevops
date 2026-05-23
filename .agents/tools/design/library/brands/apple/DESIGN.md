@@ -1,6 +1,45 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
+---
+version: alpha
+name: "Apple HIG"
+description: "Apple Human Interface Guidelines-inspired report presentation design system."
+colors:
+  background: "#F5F5F7"
+  surface: "#FFFFFF"
+  on-surface: "#1D1D1F"
+  muted: "#6E6E73"
+  outline: "#D2D2D7"
+  primary: "#0066CC"
+  primary-container: "#E8F2FF"
+typography:
+  headline-display:
+    fontFamily: 'SF Pro Display, Inter, system-ui, sans-serif'
+    fontSize: 64px
+    fontWeight: 650
+    lineHeight: 1.05
+    letterSpacing: -0.03em
+  headline-md:
+    fontFamily: 'SF Pro Display, Inter, system-ui, sans-serif'
+    fontSize: 32px
+    fontWeight: 650
+    lineHeight: 1.15
+  body-md:
+    fontFamily: 'SF Pro Text, Inter, system-ui, sans-serif'
+    fontSize: 16px
+    fontWeight: 400
+    lineHeight: 1.62
+  code-md:
+    fontFamily: 'SF Mono, "IBM Plex Mono", monospace'
+    fontSize: 13px
+    fontWeight: 400
+    lineHeight: 1.5
+rounded:
+  md: 18px
+  lg: 18px
+---
+
 # Design System: Apple
 
 Reference corpus for Apple's web design system. Split into chapter files for progressive loading.
