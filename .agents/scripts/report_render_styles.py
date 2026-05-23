@@ -130,12 +130,9 @@ def _tokens_for(name: str) -> dict[str, str]:
     return tokens
 
 
-def _optional_dark_tokens(tokens: dict[str, str]) -> str:
-    if "background-dark" not in tokens:
-        return ""
+def _dark_variable_css(tokens: dict[str, str], selector: str) -> str:
     return f"""
-@media (prefers-color-scheme: dark) {{
-  :root {{
+  {selector} {{
     --report-paper: {tokens['background-dark']};
     --report-paper-raised: {tokens.get('surface-dark', tokens['background-dark'])};
     --report-panel: {tokens.get('surface-dark', tokens['background-dark'])};
@@ -152,11 +149,49 @@ def _optional_dark_tokens(tokens: dict[str, str]) -> str:
     --report-impact-bg: {tokens.get('surface-dark', tokens['background-dark'])};
     --report-evidence-bg: {tokens.get('surface-dark', tokens['background-dark'])};
     --report-myth-bg: {tokens.get('surface-dark', tokens['background-dark'])};
+    --report-good-bg: {tokens.get('surface-dark', tokens['background-dark'])};
+    --report-bad-bg: {tokens.get('surface-dark', tokens['background-dark'])};
+    --report-code-bg: {tokens.get('background-dark', '#0b1020')};
+    --report-code-bg-2: {tokens.get('surface-dark', tokens['background-dark'])};
+    --report-code-ink: {tokens.get('on-surface-dark', '#ffffff')};
+    --report-code-accent: {tokens.get('primary-dark', tokens['primary'])};
   }}
-  .badge-verified, .badge-partial, .badge-inferred, .badge-missing {{ border-color: var(--report-rule); }}
-  .sticky-toc {{ box-shadow: none; }}
+""".strip()
+
+
+def _optional_dark_tokens(tokens: dict[str, str]) -> str:
+    if "background-dark" not in tokens:
+        return ""
+    dark_vars = _dark_variable_css(tokens, "body.report-theme-dark")
+    auto_dark_vars = _dark_variable_css(tokens, "body.report-theme-auto")
+    return f"""
+{dark_vars}
+body.report-theme-dark .badge-verified,
+body.report-theme-dark .badge-partial,
+body.report-theme-dark .badge-inferred,
+body.report-theme-dark .badge-missing {{ border-color: var(--report-rule); }}
+body.report-theme-dark .sticky-toc {{ box-shadow: none; }}
+@media (prefers-color-scheme: dark) {{
+  {auto_dark_vars}
+  body.report-theme-auto .badge-verified,
+  body.report-theme-auto .badge-partial,
+  body.report-theme-auto .badge-inferred,
+  body.report-theme-auto .badge-missing {{ border-color: var(--report-rule); }}
+  body.report-theme-auto .sticky-toc {{ box-shadow: none; }}
 }}
 """.strip()
+
+
+def style_has_dark(name: str) -> bool:
+    """Return whether a report style has explicit dark/inverse tokens."""
+
+    return "background-dark" in _tokens_for(name)
+
+
+def dark_style_names() -> tuple[str, ...]:
+    """Return supported style identifiers with explicit dark/inverse tokens."""
+
+    return tuple(name for name in style_names() if style_has_dark(name))
 
 
 def _template_specific_css(name: str) -> str:

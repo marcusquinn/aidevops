@@ -49,7 +49,7 @@ assert_contains() {
 	local _file="$1"
 	local _needle="$2"
 	local _label="$3"
-	if grep -qF "$_needle" "$_file"; then
+	if grep -qF -- "$_needle" "$_file"; then
 		print_result "$_label" 0
 		return 0
 	fi
@@ -175,15 +175,24 @@ test_sample_and_css_commands() {
 
 test_render_template_and_profiles() {
 	local _out="${TEST_ROOT}/editorial.html"
+	local _dark="${TEST_ROOT}/lottiefiles-dark.html"
 	local _slides="${TEST_ROOT}/slides.css"
 	"$HELPER_SH" render "${FIXTURE_DIR}/llm-visibility-report-sample.md" \
 		--template axel \
 		--pdf-profile a4 \
 		--output "$_out"
+	"$HELPER_SH" render "${FIXTURE_DIR}/llm-visibility-report-sample.md" \
+		--template lottiefiles \
+		--theme dark \
+		--pdf-profile a4 \
+		--output "$_dark"
 	"$HELPER_SH" print-css --template axel --pdf-profile slides-16-9-2 >"$_slides"
 	assert_contains "$_out" "report-template-axel" "Render supports named style template"
 	assert_contains "$_out" "Newsreader" "Render includes style-specific fonts"
 	assert_contains "$_out" "size: A4 portrait" "Render defaults to A4 portrait profile"
+	assert_contains "$_dark" "report-theme-dark" "Render supports forced dark theme"
+	assert_contains "$_dark" "--report-info-bg: #161A1C" "Dark theme inverts info panels"
+	assert_contains "$_dark" "--report-good-bg: #161A1C" "Dark theme inverts good panels"
 	assert_contains "$_slides" "size: 16in 9in" "print-css supports 16:9 landscape profile"
 	assert_contains "$_slides" "column-count: 2" "print-css supports two-column presentation profile"
 	return 0
@@ -195,6 +204,8 @@ test_list_templates() {
 	assert_contains "$_templates" "arxiv" "Template list includes original arXiv brief style"
 	assert_contains "$_templates" "wikipedia" "Template list includes original Wikipedia brief style"
 	assert_contains "$_templates" "terminalshop" "Template list includes original Terminal Shop brief style"
+	"$HELPER_SH" list-dark-templates >"$_templates"
+	assert_contains "$_templates" "lottiefiles" "Dark template list includes LottieFiles"
 	return 0
 }
 

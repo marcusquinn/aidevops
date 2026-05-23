@@ -26,18 +26,20 @@ _run_python() {
 	local _input="${2:-}"
 	local _template="${3:-basic}"
 	local _pdf_profile="${4:-a4}"
-	python3 "$PY_HELPER" "$_mode" "$_input" "$_template" "$_pdf_profile"
+	local _theme="${5:-auto}"
+	python3 "$PY_HELPER" "$_mode" "$_input" "$_template" "$_pdf_profile" "$_theme"
 	return 0
 }
 
 _print_usage() {
 	cat <<'USAGE'
 Usage:
-  report-render-helper.sh render <input.md|input.json|-> [--output report.html] [--template <name>] [--pdf-profile a4|letter|slides-16-9-1|slides-16-9-2|slides-16-9-3]
+  report-render-helper.sh render <input.md|input.json|-> [--output report.html] [--template <name>] [--theme auto|light|dark] [--pdf-profile a4|letter|slides-16-9-1|slides-16-9-2|slides-16-9-3]
   report-render-helper.sh validate <input.md|input.json|->
   report-render-helper.sh sample [markdown|json|instructional-seo-geo]
-  report-render-helper.sh print-css [--template <name>] [--pdf-profile a4|letter|slides-16-9-1|slides-16-9-2|slides-16-9-3]
+  report-render-helper.sh print-css [--template <name>] [--theme auto|light|dark] [--pdf-profile a4|letter|slides-16-9-1|slides-16-9-2|slides-16-9-3]
   report-render-helper.sh list-templates
+  report-render-helper.sh list-dark-templates
 
 Evidence badges: {{evidence:verified}}, {{evidence:partial}}, {{evidence:inferred}}, {{evidence:missing}}
 USAGE
@@ -50,20 +52,27 @@ _parse_render_option() {
 	local _output_ref="$3"
 	local _template_ref="$4"
 	local _pdf_profile_ref="$5"
+	local _theme_ref="$6"
+	local _value="${7:-}"
 	case "$_arg" in
 	--output)
-		printf -v "$_output_ref" '%s' "${6:-}"
-		[[ -z "${6:-}" ]] && _die "--output requires a path"
+		printf -v "$_output_ref" '%s' "$_value"
+		[[ -z "$_value" ]] && _die "--output requires a path"
 		return 2
 		;;
 	--template)
-		printf -v "$_template_ref" '%s' "${6:-}"
-		[[ -z "${6:-}" ]] && _die "--template requires a value"
+		printf -v "$_template_ref" '%s' "$_value"
+		[[ -z "$_value" ]] && _die "--template requires a value"
+		return 2
+		;;
+	--theme)
+		printf -v "$_theme_ref" '%s' "$_value"
+		[[ -z "$_value" ]] && _die "--theme requires a value"
 		return 2
 		;;
 	--pdf-profile | --profile)
-		printf -v "$_pdf_profile_ref" '%s' "${6:-}"
-		[[ -z "${6:-}" ]] && _die "${_arg} requires a value"
+		printf -v "$_pdf_profile_ref" '%s' "$_value"
+		[[ -z "$_value" ]] && _die "${_arg} requires a value"
 		return 2
 		;;
 	-)
@@ -88,11 +97,12 @@ cmd_render() {
 	local _output=""
 	local _template="basic"
 	local _pdf_profile="a4"
+	local _theme="auto"
 	while [[ $# -gt 0 ]]; do
 		local _arg="${1:-}"
 		shift
 		local _advance=1
-		_parse_render_option "$_arg" _input _output _template _pdf_profile "${1:-}" || _advance=$?
+		_parse_render_option "$_arg" _input _output _template _pdf_profile _theme "${1:-}" || _advance=$?
 		if [[ "$_advance" -eq 2 ]]; then
 			shift
 		fi
@@ -102,9 +112,9 @@ cmd_render() {
 		_die "input file not found: ${_input}"
 	fi
 	if [[ -n "$_output" ]]; then
-		_run_python render "$_input" "$_template" "$_pdf_profile" >"$_output"
+		_run_python render "$_input" "$_template" "$_pdf_profile" "$_theme" >"$_output"
 	else
-		_run_python render "$_input" "$_template" "$_pdf_profile"
+		_run_python render "$_input" "$_template" "$_pdf_profile" "$_theme"
 	fi
 	return 0
 }
@@ -315,6 +325,7 @@ SAMPLE_INSTRUCTIONAL
 cmd_print_css() {
 	local _template="basic"
 	local _pdf_profile="a4"
+	local _theme="auto"
 	while [[ $# -gt 0 ]]; do
 		local _arg="${1:-}"
 		shift
@@ -329,17 +340,27 @@ cmd_print_css() {
 			[[ -z "$_pdf_profile" ]] && _die "${_arg} requires a value"
 			shift
 			;;
+		--theme)
+			_theme="${1:-}"
+			[[ -z "$_theme" ]] && _die "--theme requires a value"
+			shift
+			;;
 		*)
 			_die "unknown option: ${_arg}"
 			;;
 		esac
 	done
-	_run_python print-css "-" "$_template" "$_pdf_profile"
+	_run_python print-css "-" "$_template" "$_pdf_profile" "$_theme"
 	return 0
 }
 
 cmd_list_templates() {
 	_run_python list-templates "-"
+	return 0
+}
+
+cmd_list_dark_templates() {
+	_run_python list-dark-templates "-"
 	return 0
 }
 
@@ -361,6 +382,9 @@ main() {
 		;;
 	list-templates)
 		cmd_list_templates
+		;;
+	list-dark-templates)
+		cmd_list_dark_templates
 		;;
 	help | --help | -h)
 		_print_usage

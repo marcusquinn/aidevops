@@ -195,7 +195,9 @@ Generate a report preview with representative content before handoff:
 
 1. Cover/meta, summary, TOC, at least two chapter heroes.
 2. One of each taxonomy component from the mapping table.
-3. Light/dark mode if the design supports both.
+3. Light and dark previews if the design supports both (`--theme light` and
+   `--theme dark`), with every panel/card/callout checked for inverted surface,
+   border, and text tokens.
 4. Desktop, mobile, and print/PDF preview screenshots.
 5. Contrast and table semantics evidence in the handoff notes.
 

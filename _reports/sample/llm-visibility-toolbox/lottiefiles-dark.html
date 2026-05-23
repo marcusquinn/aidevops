@@ -1,4 +1,10 @@
-/* SPDX-License-Identifier: MIT */
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Report</title>
+<style>/* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2025-2026 Marcus Quinn */
 
 :root {
@@ -870,3 +876,325 @@ a {
     content: "";
   }
 }
+
+/* DESIGN.md brand token overrides: lottiefiles */
+:root {
+  --report-font-heading: "DM Sans", Inter, system-ui, sans-serif;
+  --report-font-body: "DM Sans", Inter, system-ui, sans-serif;
+  --report-font-code: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --report-heading-size: 64px;
+  --report-heading-weight: 650;
+  --report-heading-line: 1.05;
+  --report-heading-tracking: -0.03em;
+  --report-body-size: 16px;
+  --report-body-line: 1.62;
+  --report-paper: #FFFFFF;
+  --report-paper-raised: #DDFBF5;
+  --report-panel: #FFFFFF;
+  --report-surface: #FFFFFF;
+  --report-ink: #18181B;
+  --report-ink-muted: #4C5863;
+  --report-ink-soft: #4C5863;
+  --report-rule: #E4EAED;
+  --report-rule-strong: #019D91;
+  --report-blue: #019D91;
+  --report-radius-lg: 20px;
+  --report-radius-xl: calc(20px + 0.5rem);
+}
+body.report-body { font-family: var(--report-font-body); font-size: var(--report-body-size); line-height: var(--report-body-line); }
+h1, h2, h3 { font-family: var(--report-font-heading); font-weight: var(--report-heading-weight); letter-spacing: var(--report-heading-tracking); }
+h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var(--report-heading-line); }
+.source-card, .tactic-card, .priority-group { border-color: var(--report-rule); }
+.sticky-toc a:hover, .sticky-toc a:focus-visible, .sticky-toc a[aria-current="true"] { border-left-color: var(--report-blue); }
+body.report-theme-dark {
+    --report-paper: #080A0C;
+    --report-paper-raised: #161A1C;
+    --report-panel: #161A1C;
+    --report-surface: #161A1C;
+    --report-ink: #FFFFFF;
+    --report-ink-muted: #BFC8D1;
+    --report-ink-soft: #BFC8D1;
+    --report-rule: #222A30;
+    --report-rule-strong: #222A30;
+    --report-blue: #00DDB3;
+    --report-action-bg: #00DDB3;
+    --report-action-ink: #080A0C;
+    --report-info-bg: #161A1C;
+    --report-impact-bg: #161A1C;
+    --report-evidence-bg: #161A1C;
+    --report-myth-bg: #161A1C;
+    --report-good-bg: #161A1C;
+    --report-bad-bg: #161A1C;
+    --report-code-bg: #080A0C;
+    --report-code-bg-2: #161A1C;
+    --report-code-ink: #FFFFFF;
+    --report-code-accent: #00DDB3;
+  }
+body.report-theme-dark .badge-verified,
+body.report-theme-dark .badge-partial,
+body.report-theme-dark .badge-inferred,
+body.report-theme-dark .badge-missing { border-color: var(--report-rule); }
+body.report-theme-dark .sticky-toc { box-shadow: none; }
+@media (prefers-color-scheme: dark) {
+  body.report-theme-auto {
+    --report-paper: #080A0C;
+    --report-paper-raised: #161A1C;
+    --report-panel: #161A1C;
+    --report-surface: #161A1C;
+    --report-ink: #FFFFFF;
+    --report-ink-muted: #BFC8D1;
+    --report-ink-soft: #BFC8D1;
+    --report-rule: #222A30;
+    --report-rule-strong: #222A30;
+    --report-blue: #00DDB3;
+    --report-action-bg: #00DDB3;
+    --report-action-ink: #080A0C;
+    --report-info-bg: #161A1C;
+    --report-impact-bg: #161A1C;
+    --report-evidence-bg: #161A1C;
+    --report-myth-bg: #161A1C;
+    --report-good-bg: #161A1C;
+    --report-bad-bg: #161A1C;
+    --report-code-bg: #080A0C;
+    --report-code-bg-2: #161A1C;
+    --report-code-ink: #FFFFFF;
+    --report-code-accent: #00DDB3;
+  }
+  body.report-theme-auto .badge-verified,
+  body.report-theme-auto .badge-partial,
+  body.report-theme-auto .badge-inferred,
+  body.report-theme-auto .badge-missing { border-color: var(--report-rule); }
+  body.report-theme-auto .sticky-toc { box-shadow: none; }
+}
+.report-template-lottiefiles h1,
+.report-template-lottiefiles h2,
+.report-template-lottiefiles h3,
+.report-template-lottiefiles .stat-card strong { font-family: "DM Sans", Inter, system-ui, sans-serif; }
+.report-template-lottiefiles .report-cover,
+.report-template-lottiefiles .stat-card,
+.report-template-lottiefiles .tactic-card,
+.report-template-lottiefiles .source-card { border-radius: 20px; }
+.report-template-lottiefiles .action-line { box-shadow: 0 20px 48px rgba(1, 157, 145, 0.18); }
+@media print { @page { size: A4 portrait; margin: 12mm 11mm 14mm; } body.report-body { background: #fff; font-size: 10.5pt; } .report-shell { display: block; max-width: none; padding: 0; } .sticky-toc { position: static; break-after: page; box-shadow: none; } table { table-layout: fixed; font-size: 8.8pt; } th,td { padding: 4pt 5pt; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after { content: ""; } }</style>
+</head>
+<body class="report-body report-theme-dark report-pdf-profile-a4 report-template-lottiefiles">
+<div class="report-shell">
+<nav class="sticky-toc" aria-label="Report table of contents">
+<h2>Contents</h2>
+<ol>
+<li><a href="#llm-visibility-toolbox-full-sample" style="margin-left:0rem">LLM Visibility Toolbox Full Sample</a></li>
+<li><a href="#executive-summary" style="margin-left:1rem">Executive summary</a></li>
+<li><a href="#how-to-read-this-report" style="margin-left:1rem">How to read this report</a></li>
+<li><a href="#critical" style="margin-left:2rem">Critical</a></li>
+<li><a href="#high" style="margin-left:2rem">High</a></li>
+<li><a href="#medium" style="margin-left:2rem">Medium</a></li>
+<li><a href="#low" style="margin-left:2rem">Low</a></li>
+<li><a href="#source-ledger" style="margin-left:1rem">Source ledger</a></li>
+<li><a href="#source-card-standard" style="margin-left:2rem">Source-card standard</a></li>
+<li><a href="#chapter-1-on-page-content-tactics" style="margin-left:1rem">Chapter 1: On-page content tactics</a></li>
+<li><a href="#goal" style="margin-left:2rem">Goal</a></li>
+<li><a href="#direct-answer-in-the-first-paragraph" style="margin-left:2rem">Direct answer in the first paragraph</a></li>
+<li><a href="#impact" style="margin-left:2rem">Impact</a></li>
+<li><a href="#evidence" style="margin-left:2rem">Evidence</a></li>
+<li><a href="#good" style="margin-left:2rem">Good</a></li>
+<li><a href="#bad" style="margin-left:2rem">Bad</a></li>
+<li><a href="#chapter-2-technical-tactics" style="margin-left:1rem">Chapter 2: Technical tactics</a></li>
+<li><a href="#bot-friendly-first-fetch" style="margin-left:2rem">Bot-friendly first fetch</a></li>
+<li><a href="#chapter-3-off-page-authority" style="margin-left:1rem">Chapter 3: Off-page authority</a></li>
+<li><a href="#action" style="margin-left:2rem">Action</a></li>
+<li><a href="#myth" style="margin-left:2rem">Myth</a></li>
+<li><a href="#reality" style="margin-left:2rem">Reality</a></li>
+<li><a href="#roadmap" style="margin-left:1rem">Roadmap</a></li>
+<li><a href="#appendices" style="margin-left:1rem">Appendices</a></li>
+</ol>
+</nav>
+<main class="report-content report-main">
+<h1 id="llm-visibility-toolbox-full-sample">LLM Visibility Toolbox Full Sample</h1>
+<section class="report-cover">
+<p><strong>Full sample report for LLM visibility strategy, evidence collection, and report rendering.</strong> This sample mirrors the richer Toolbox pattern: chapters, stats rows, tactical cards, source ledgers, callouts, accordions, appendices, links, quotes, checklists, and severity-coded panels.</p>
+<p>Author: Marcus Quinn / aidevops. Licence: MIT. Export: one HTML preview plus PDF profiles.</p>
+</section>
+<section class="anchor-links">
+<p><a href="#executive-summary">Executive summary</a> <a href="#chapter-1-on-page-content-tactics">Tactics</a> <a href="#chapter-2-technical-tactics">Technical</a> <a href="#chapter-3-off-page-authority">Authority</a> <a href="#appendices">Appendices</a></p>
+</section>
+<h2 id="executive-summary">Executive summary</h2>
+<p>AI-search visibility improves when important pages are easy to retrieve, easy to trust, and easy to cite. Treat AIO, Gemini, ChatGPT, AI Mode, and Perplexity as separate evidence lines before summarising overall visibility. <span class="badge badge-verified">Evidence: Verified</span></p>
+<section class="summary-stats">
+<section class="stat-card">
+<p><strong>5</strong></p>
+<p>Answer engines tracked separately.</p>
+</section>
+<section class="stat-card">
+<p><strong>7</strong></p>
+<p>Evidence source families.</p>
+</section>
+<section class="stat-card">
+<p><strong>4</strong></p>
+<p>Severity levels for roadmap triage.</p>
+</section>
+<section class="stat-card">
+<p><strong>3</strong></p>
+<p>Appendix types linked from the report.</p>
+</section>
+</section>
+<section class="action-line">
+<p><strong>Recommended sequence:</strong> fix retrieval blockers, add source-backed answer blocks, then improve corroboration and monitoring.</p>
+</section>
+<h2 id="how-to-read-this-report">How to read this report</h2>
+<ol>
+<li>Start with severity-coded panels and the source ledger.</li>
+<li>Confirm the page type before applying a tactic.</li>
+<li>Use accordions for methodology detail that should not interrupt the narrative.</li>
+<li>Use appendices for source exports, prompt sets, and companion reports.</li>
+</ol>
+<section class="severity-key">
+<section class="info-panel" data-severity="critical">
+<h3 id="critical">Critical</h3>
+<p>Citation or crawl failure on a revenue page.</p>
+</section>
+<section class="info-panel" data-severity="high">
+<h3 id="high">High</h3>
+<p>Evidence gap affecting important prompts.</p>
+</section>
+<section class="info-panel" data-severity="medium">
+<h3 id="medium">Medium</h3>
+<p>Useful tactic with partial or page-type-specific fit.</p>
+</section>
+<section class="info-panel" data-severity="low">
+<h3 id="low">Low</h3>
+<p>Hygiene, monitoring, or presentation polish.</p>
+</section>
+</section>
+<details class="accordion"><summary>Methodology summary</summary>
+<p>Sources are captured first, assigned IDs, mapped to claims, and scored by page-type fit, confidence, impact, and effort. Unsupported claims remain in the appendix or backlog until verified.</p>
+</details>
+<h2 id="source-ledger">Source ledger</h2>
+<section class="facts-table-wrap">
+<table><thead>
+<tr><th>Source ID</th><th>Family</th><th>Evidence</th><th>Supported claim</th><th>Recheck</th></tr></thead><tbody>
+<tr><td>S001</td><td>Prompt capture</td><td>AIO/Gemini/ChatGPT/AI Mode/Perplexity run</td><td>Per-engine reporting must stay separate</td><td>Monthly prompt routine</td></tr>
+<tr><td>S002</td><td>Crawl</td><td>Raw and rendered HTML comparison</td><td>JS-hidden claims are retrieval risk</td><td>Crawl after deployment</td></tr>
+<tr><td>S003</td><td>Source article</td><td>Public SEO/GEO research</td><td>Third-party corroboration matters</td><td>Quarterly source review</td></tr>
+<tr><td>S004</td><td>Logs</td><td>AI/search bot log sample</td><td>Bot access differs by page type</td><td>Monthly log review</td></tr>
+<tr><td>S005</td><td>Profile parity</td><td>Third-party profile table</td><td>Entity facts must match owned source of truth</td><td>Quarterly parity check</td></tr>
+</tbody></table>
+</section>
+<section class="source-card">
+<h3 id="source-card-standard">Source-card standard</h3>
+<p>Include source ID, capture date, evidence type, supported claims, privacy state, and recheck path.</p>
+</section>
+<hr class="section-separator">
+<h2 id="chapter-1-on-page-content-tactics">Chapter 1: On-page content tactics</h2>
+<section class="chapter-hero">
+<h3 id="goal">Goal</h3>
+<p>Make priority pages extractable and citation-ready with clear answers, source proximity, tables, and visible expertise.</p>
+</section>
+<section class="tactic-card">
+<h3 id="direct-answer-in-the-first-paragraph">Direct answer in the first paragraph</h3>
+<ul>
+<li>What: answer the core query directly in two to four sentences.</li>
+<li>Why: answer engines need self-contained claims.</li>
+<li>How: pair answer, source ID, author/update date, and a supporting table.</li>
+<li>Verify: inspect rendered first 300 words and rerun per-engine prompts.</li>
+</ul>
+</section>
+<section class="impact-panel" data-severity="high">
+<h3 id="impact">Impact</h3>
+<p>Direct answers can improve snippet quality, citation eligibility, and human comprehension.</p>
+</section>
+<section class="evidence-panel" data-severity="medium">
+<h3 id="evidence">Evidence</h3>
+<p>Evidence is strongest when prompt captures show cited URLs before and after implementation.</p>
+</section>
+<section class="good-bad">
+<section class="good-row">
+<h3 id="good">Good</h3>
+<p>“ExampleCo is best for X when Y matters” followed by criteria, source IDs, and a dated comparison table.</p>
+</section>
+<section class="bad-row">
+<h3 id="bad">Bad</h3>
+<p>“Best platform for everyone” with no methodology, hidden content, or third-party corroboration.</p>
+</section>
+</section>
+<h2 id="chapter-2-technical-tactics">Chapter 2: Technical tactics</h2>
+<section class="tactic-card">
+<h3 id="bot-friendly-first-fetch">Bot-friendly first fetch</h3>
+<ul>
+<li>What: put important claims in raw or pre-rendered HTML.</li>
+<li>Why: invisible content cannot be cited.</li>
+<li>How: compare raw HTML, rendered DOM, robots, sitemap, and logs.</li>
+<li>Verify: crawl after deployment and sample bot logs.</li>
+</ul>
+</section>
+<section class="facts-table-wrap">
+<table><thead>
+<tr><th>Check</th><th>Risk if missing</th><th>Verification</th></tr></thead><tbody>
+<tr><td>Robots and AI crawler access</td><td>Pages cannot be fetched</td><td>robots.txt and server logs</td></tr>
+<tr><td>SSR/pre-render</td><td>Key claims invisible</td><td>raw/rendered diff</td></tr>
+<tr><td>Segmented sitemap</td><td>Slow discovery</td><td>sitemap audit</td></tr>
+<tr><td>Stable entity graph</td><td>Conflicting facts</td><td>schema and visible facts check</td></tr>
+</tbody></table>
+</section>
+<section class="example-card">
+<pre><code>Acceptance check:
+curl -L https://example.com/compare/example | grep &quot;source-id&quot;
+Run browser crawl and compare rendered source-card visibility.</code></pre>
+</section>
+<h2 id="chapter-3-off-page-authority">Chapter 3: Off-page authority</h2>
+<blockquote>Answer engines often corroborate owned claims against review sites, partner pages, communities, editorial mentions, transcripts, and public profiles.</blockquote>
+<section class="action-panel" data-severity="high">
+<h3 id="action">Action</h3>
+<p>Create a profile parity table for product names, pricing, categories, service areas, credentials, and policy facts.</p>
+</section>
+<section class="myth-callout">
+<h3 id="myth">Myth</h3>
+<p>More schema can compensate for weak or unsupported content.</p>
+<h3 id="reality">Reality</h3>
+<p>Schema clarifies visible facts; it does not create trust when evidence is missing.</p>
+</section>
+<h2 id="roadmap">Roadmap</h2>
+<section class="facts-table-wrap">
+<table><thead>
+<tr><th>Priority</th><th>Recommendation</th><th>Owner</th><th>Verification</th></tr></thead><tbody>
+<tr><td>P0</td><td>Fix retrieval blockers on revenue pages.</td><td>SEO + engineering</td><td>Raw/rendered crawl and logs</td></tr>
+<tr><td>P1</td><td>Add source-backed answer blocks.</td><td>Content + subject expert</td><td>Source ledger and prompt reruns</td></tr>
+<tr><td>P1</td><td>Improve profile parity.</td><td>Marketing/PR</td><td>Third-party facts match canonical table</td></tr>
+<tr><td>P2</td><td>Add schema hygiene.</td><td>SEO + engineering</td><td>Schema validation plus visible-content check</td></tr>
+</tbody></table>
+</section>
+<h2 id="appendices">Appendices</h2>
+<section class="appendix-links">
+<p><a href="appendices/source-ledger.md">Source ledger appendix</a> <a href="appendices/prompt-set.md">Prompt set appendix</a> <a href="../../examples/client-ai-search-audit/report.html">Example companion report</a></p>
+</section>
+<section class="checklist-card">
+<ul class="checklist">
+<li><span class="status-dot" data-status="done"></span><span>Evidence badges validated.</span></li>
+<li><span class="status-dot" data-status="done"></span><span>Appendix links included.</span></li>
+<li><span class="status-dot" data-status="done"></span><span>Per-engine reporting kept separate.</span></li>
+<li><span class="status-dot" data-status="todo"></span><span>Replace placeholders with client evidence before publishing.</span></li>
+</ul>
+</section>
+</main>
+</div>
+<footer class="report-footer">© 2025-2026 Marcus Quinn. Licensed under MIT.</footer>
+<script>
+(() => {
+  const links = Array.from(document.querySelectorAll('.sticky-toc a[href^="#"]'));
+  const headings = links.map((link) => document.getElementById(link.getAttribute('href').slice(1))).filter(Boolean);
+  const setActive = (id) => {
+    links.forEach((link) => link.setAttribute('aria-current', link.getAttribute('href') === `#${id}` ? 'true' : 'false'));
+  };
+  if (!('IntersectionObserver' in window) || headings.length === 0) {
+    if (headings[0]) setActive(headings[0].id);
+    return;
+  }
+  const observer = new IntersectionObserver((entries) => {
+    const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+    if (visible) setActive(visible.target.id);
+  }, { rootMargin: '-20% 0px -65% 0px', threshold: [0, 1] });
+  headings.forEach((heading) => observer.observe(heading));
+  setActive(headings[0].id);
+})();
+</script>
+</body>
+</html>

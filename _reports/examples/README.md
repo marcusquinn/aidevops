@@ -34,3 +34,13 @@ Markdown-first report contract from `.agents/reports/outputs.md`:
 
 For style comparisons, render the same `style-showcase/report.md` with any name
 from `.agents/scripts/report-render-helper.sh list-templates`.
+
+Dark-capable styles also include explicit light and dark preview files. List
+those styles with:
+
+```bash
+.agents/scripts/report-render-helper.sh list-dark-templates
+```
+
+Then render both variants with `--theme light` and `--theme dark` to check panel,
+card, table, badge, and callout inversions.

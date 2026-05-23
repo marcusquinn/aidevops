@@ -31,6 +31,7 @@ Direct helper options:
 ```bash
 ~/.aidevops/agents/scripts/report-render-helper.sh render report.md \
   --template axel \
+  --theme auto \
   --pdf-profile a4 \
   --output report.html
 ```
@@ -71,6 +72,10 @@ Instructional sample:
 - Evidence badges are limited to `verified`, `partial`, `inferred`, and `missing`.
 - JSON reports use `evidence_badge` fields for the same badge values.
 - `print-css --template <name> --pdf-profile <name>` exposes the matching stylesheet for custom handoff workflows.
+- Use `--theme auto|light|dark` for previews. `auto` follows the viewer's colour
+  scheme when the selected DESIGN.md has dark/inverse tokens; `light` and `dark`
+  force one preview. `report-render-helper.sh list-dark-templates` lists styles
+  with explicit dark tokens.
 - Rich Markdown blocks use container fences such as `::: report-cover`, `::: stats-strip`,
   `::: tactic-card`, `::: good-bad`, `::: facts-table-wrap`, `::: example-card`,
   `::: source-card`, `::: myth-callout`, `::: accordion title="Details"`,

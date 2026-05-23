@@ -17,7 +17,7 @@ from report_render_badges import BADGE_PARTIAL
 from report_render_badges import BADGE_VERIFIED
 from report_render_json import DETAIL_KEY, SUMMARY_KEY, TITLE_KEY, render_json, validate_json_badges
 from report_render_markdown import render_markdown, validate_markdown_badges
-from report_render_styles import style_css, style_names
+from report_render_styles import dark_style_names, style_css, style_names
 
 if len(sys.argv) < 2:
     sys.stderr.write(f"Usage: {sys.argv[0]} <mode> [input]\n")
@@ -27,6 +27,7 @@ MODE = sys.argv[1]
 INPUT = sys.argv[2] if len(sys.argv) > 2 else ""
 TEMPLATE = sys.argv[3] if len(sys.argv) > 3 else "basic"
 PDF_PROFILE = sys.argv[4] if len(sys.argv) > 4 else "a4"
+THEME = sys.argv[5] if len(sys.argv) > 5 else "auto"
 
 BASIC_CSS = """
 :root { color-scheme: light; --report-paper: #f8f6f1; --report-surface: #fffdf8; --report-ink: #111827; --report-muted: #4b5563; --report-line: #d8d2c4; --report-panel: #fffdf8; --report-blue: #2563eb; --report-green: #147a4a; --report-amber: #b7791f; --report-red: #b42318; }
@@ -60,6 +61,7 @@ PROFILE_CSS = {
 }
 
 BUILTIN_TEMPLATES = ("basic", "editorial-evidence") + style_names()
+THEMES = ("auto", "light", "dark")
 
 
 def load_css(template: str, pdf_profile: str) -> str:
@@ -74,6 +76,8 @@ def load_css(template: str, pdf_profile: str) -> str:
         raise ValueError(f"unknown report template: {template}. Available: {names}")
     if pdf_profile not in PROFILE_CSS:
         raise ValueError(f"unknown PDF export profile: {pdf_profile}")
+    if THEME not in THEMES:
+        raise ValueError(f"unknown report theme: {THEME}. Available: {', '.join(THEMES)}")
     return f"{css}\n{PROFILE_CSS[pdf_profile]}"
 
 
@@ -119,7 +123,7 @@ def wrap_document(headings: list[tuple[int, str, str]], body: str) -> str:
 <title>Report</title>
 <style>{css}</style>
 </head>
-<body class="report-body report-pdf-profile-{html.escape(PDF_PROFILE)} report-template-{html.escape(TEMPLATE)}">
+<body class="report-body report-theme-{html.escape(THEME)} report-pdf-profile-{html.escape(PDF_PROFILE)} report-template-{html.escape(TEMPLATE)}">
 <div class="report-shell">
 <nav class="sticky-toc" aria-label="Report table of contents">
 <h2>Contents</h2>
@@ -165,6 +169,9 @@ def main() -> int:
         return 0
     if MODE == "list-templates":
         print("\n".join(BUILTIN_TEMPLATES))
+        return 0
+    if MODE == "list-dark-templates":
+        print("\n".join(dark_style_names()))
         return 0
     if MODE == "sample-json":
         print(sample_json())
