@@ -47,6 +47,8 @@ body.report-body { margin: 0; background: var(--report-paper); font: 16px/1.6 -a
 .badge-inferred { background: #dbeafe; color: #1e40af; }
 .badge-missing { background: #fee2e2; color: #991b1b; }
 .source-card { border: 1px solid var(--report-line); border-left: 4px solid var(--report-ink); border-radius: 10px; padding: .85rem 1rem; margin: .75rem 0; background: var(--report-surface); }
+.mermaid::before { content: "Mermaid source fallback"; display: block; font-weight: 700; margin-bottom: .5rem; }
+.latex-block::before { content: "LaTeX source fallback"; display: block; font-weight: 700; margin-bottom: .5rem; }
 table { table-layout: auto; border-collapse: collapse; width: 100%; margin: 1rem 0; overflow-wrap: normal; }
 th, td { border: 1px solid var(--report-line); padding: .5rem; text-align: left; vertical-align: top; }
 h1, h2, h3 { line-height: 1.15; break-after: avoid; }
@@ -97,21 +99,20 @@ def toc_title(title: str) -> str:
     return " ".join(cleaned.split())
 
 
+def is_executive_summary(title: str) -> bool:
+    return toc_title(title).lower() == "executive summary"
+
+
 def wrap_document(headings: list[tuple[int, str, str]], body: str) -> str:
     css = load_css(TEMPLATE, PDF_PROFILE)
     toc_items = []
     chapter = 0
-    section = 0
     for level, title, anchor in headings:
         clean_title = toc_title(title)
         label = clean_title
-        if level == 2:
+        if level == 2 and not is_executive_summary(title):
             chapter += 1
-            section = 0
             label = f"{chapter}. {clean_title}"
-        elif level == 3 and chapter:
-            section += 1
-            label = f"{chapter}.{section} {clean_title}"
         indent = f' style="margin-left:{max(level - 1, 0)}rem"'
         toc_items.append(f'<li><a href="#{anchor}"{indent}>{inline_markup(label)}</a></li>')
     active_toc_script = """

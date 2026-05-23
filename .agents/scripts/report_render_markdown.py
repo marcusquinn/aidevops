@@ -25,8 +25,10 @@ COMPONENT_BLOCKS = {
     "appendix-links",
     "callout",
     "case-study-card",
+    "badge-key",
     "badge-row",
     "bar-chart",
+    "block-template",
     "chapter-hero",
     "checklist-card",
     "details-note",
@@ -55,7 +57,17 @@ COMPONENT_BLOCKS = {
     "summary-stats",
     "stats-strip",
     "tactic-card",
+    "version-summary",
 }
+
+
+def plain_heading_title(title: str) -> str:
+    cleaned = re.sub(r"\{\{\s*(?:badge|evidence)\s*:[^}]+?\s*\}\}", "", title, flags=re.I)
+    return " ".join(cleaned.split())
+
+
+def is_executive_summary(title: str) -> bool:
+    return plain_heading_title(title).lower() == "executive summary"
 
 
 def close_code(body: list[str], states: dict[str, object]) -> None:
@@ -140,6 +152,12 @@ def handle_component(line: str, body: list[str], states: dict[str, object]) -> b
         title = component_title(raw_attrs, "Details")
         body.append(f'<details class="accordion"><summary>{inline_markup(title)}</summary>')
         close_tag = "</details>"
+    elif name in {"example-card", "block-template"}:
+        title = component_title(raw_attrs, "")
+        body.append(f'<section class="{name}"{component_attrs(raw_attrs)}>')
+        if title:
+            body.append(f'<header>{inline_markup(title)}</header>')
+        close_tag = "</section>"
     else:
         body.append(f'<section class="{name}"{component_attrs(raw_attrs)}>')
         close_tag = "</section>"
@@ -181,8 +199,12 @@ def handle_heading(
     level = len(heading.group(1))
     title = heading.group(2).strip()
     anchor = slug(title)
+    classes = []
+    if level == 2:
+        classes.append("no-chapter" if is_executive_summary(title) else "chapter-heading")
+    class_attr = f' class="{" ".join(classes)}"' if classes else ""
     headings.append((level, title, anchor))
-    body.append(f'<h{level} id="{anchor}">{inline_markup(title)}</h{level}>')
+    body.append(f'<h{level}{class_attr} id="{anchor}">{inline_markup(title)}</h{level}>')
     return True
 
 

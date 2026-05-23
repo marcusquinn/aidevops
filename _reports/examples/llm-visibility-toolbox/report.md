@@ -4,6 +4,8 @@
 # LLM Visibility Toolbox
 
 ::: report-cover
+Internal toolkit · May 2026 · v4
+
 **A Markdown-canonical playbook for AI search visibility.** Use it to turn source evidence, page-type weighting, and answer-engine behaviour into roadmap-ready recommendations.
 
 Audience: SEO, content, engineering, and leadership teams. Export rule: one HTML preview; PDF profiles for A4, Letter, and 16:9 decks.
@@ -40,6 +42,22 @@ Evidence strengths used in source ledgers.
 
 Canonical Markdown source.
 :::
+:::
+
+::: badge-key
+{{badge:rct}} Peer-reviewed or controlled comparison.
+
+{{badge:strong}} Large independent primary-data study.
+
+{{badge:vendor}} Vendor study with methodology and commercial incentives.
+
+{{badge:practitioner}} Practitioner evidence or field report.
+
+{{badge:hygiene}} Baseline technical implementation.
+:::
+
+::: accordion title="Changelog summary"
+V4 adds schema-downgrade rationale, engine-specific reporting, source grouping, and diagram/equation fallbacks.
 :::
 
 ::: action-line
@@ -255,6 +273,15 @@ flowchart TD
 
 Signal equation fallback: {{latex:AI\ visibility = retrieval + evidence + corroboration}}.
 
+::: block-template title="Author block template"
+```text
+Written by Dr. Jane Doe, PhD
+Principal Data Scientist, ExampleCo
+
+Use this block for named experts, source credentials, and profile links.
+```
+:::
+
 ::: bar-chart
 On-page evidence — 72%
 Technical retrieval — 64%
@@ -317,6 +344,10 @@ Start with revenue pages that fail retrieval eligibility or evidence proximity b
 ### Combined finding
 
 AI visibility reporting should end with the fewest useful recommendations: retrieval blockers, evidence proximity, third-party corroboration, and monitoring. Keep panels for important emphasis; use plain bullets and tables for normal content.
+:::
+
+::: version-summary
+V4 · compiled May 2026 from source-led evidence · internal toolkit
 :::
 
 ## Appendices

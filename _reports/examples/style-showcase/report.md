@@ -4,18 +4,9 @@
 # Report Style Showcase
 
 ::: report-cover
+Internal toolkit · May 2026 · v4
+
 **Component stress-test for DESIGN.md-backed report styles.** Render this same Markdown through different templates to compare typography, palette, spacing, borders, cards, tables, badges, code blocks, and print profiles.
-:::
-
-## Component overview {{badge:strong}}
-
-Use [anchor links](#priority-and-checklist), [appendix links](../llm-visibility-toolbox/report.html), numbered steps, accordions, coloured panels, and source cards in the same canonical Markdown.
-
-::: badge-row
-{{evidence:verified}} {{evidence:partial}} {{evidence:inferred}} {{evidence:missing}}
-:::
-
-Evidence values should read as plain **Evidence:** text followed by a colour-coded mini badge for the value only.
 
 ::: stats-strip
 ::: stat-card
@@ -39,16 +30,45 @@ Document PDF profile.
 Canonical source.
 :::
 :::
+:::
+
+## Executive summary
+
+This showcase demonstrates the report components expected in the LLM Visibility Toolbox examples: a non-numbered executive summary, numbered H2 chapters, plain H3 subheadings, sources grouped by type, badge keys, checklists, code/block templates, callouts, accordions, and a version summary.
+
+::: badge-key
+{{badge:rct}} Peer-reviewed paper or controlled comparison with documented methodology.
+
+{{badge:strong}} Large primary-data analysis from an independent source.
+
+{{badge:vendor}} Vendor-published study with methodology, but commercial conflict of interest.
+
+{{badge:practitioner}} Practitioner report or anecdote, often without a control group.
+
+{{badge:hygiene}} Technical baseline that is not experimentally measured but follows from how the bots work.
+:::
+
+::: accordion title="What changed in v4"
+Schema was downgraded after controlled evidence; engine divergence is now structural; source sections are grouped by evidence type; reports keep Mermaid and LaTeX as readable fallbacks unless local renderers pre-render them.
+:::
 
 ::: action-line
-**Review pass:** compare sidebar behaviour, badge wrapping, table fit, and LottieFiles DM Sans rendering.
+**Action:** review the numbered chapters below and compare the generated HTML against the source Toolbox patterns.
 :::
+
+## Component overview {{badge:strong}}
+
+Use [anchor links](#priority-and-checklist), [appendix links](../llm-visibility-toolbox/report.html), numbered steps, accordions, coloured panels, and source cards in the same canonical Markdown.
+
+::: badge-row
+{{evidence:verified}} {{evidence:partial}} {{evidence:inferred}} {{evidence:missing}}
+:::
+
+Evidence values should read as plain **Evidence:** text followed by a colour-coded mini badge for the value only.
 
 ::: anchor-links
 [Table stress](#table-and-source-cards) [Cards](#cards-and-callouts) [Priority](#priority-and-checklist)
 :::
-
----
 
 ## Highest impact, most validated
 
@@ -75,8 +95,6 @@ A plain bullet section should remain plain:
 - Schema audit on priority pages.
 - Prompt list from Search Console, support tickets, and customer interviews.
 - Baseline share of voice, citation rate, and sentiment per engine.
-
----
 
 ## Table and source cards
 
@@ -105,23 +123,21 @@ Appendix file, screenshot reference, or companion report.
 :::
 :::
 
-::: facts-table-wrap
-
-| Component | Stress condition | Expected result |
-|---|---|---|
-| Evidence badge | Long table cell with badge {{evidence:verified}} | Badge stays readable and does not split words. |
-| Facts table | Multiple columns with prose | Table remains usable in HTML and constrained in print. |
-| Source card | Evidence note near claim | Card is visually distinct from normal paragraphs. |
-| Sidebar | Many headings | Sticky TOC remains secondary to content and active link updates. |
-:::
-
-::: source-card
-### Source sample
-
-This card shows how evidence-led reports separate cited facts from interpretation.
-:::
-
 ::: source-list
+::: source-title
+Peer-reviewed papers and academic studies
+:::
+::: source-item
+### GEO: Generative Engine Optimization
+The first peer-reviewed baseline. Tactics tested on 10k queries.
+:::
+::: source-item
+### News source citing patterns in AI search systems
+Top source concentration and citation dynamics.
+:::
+::: source-title
+Q2 2026 field evidence
+:::
 ::: source-item
 ### Ahrefs: schema markup has no impact on AI visibility
 1,885 vs 4,000 controls, difference-in-differences. Source used to downgrade schema from growth lever to hygiene.
@@ -136,6 +152,16 @@ B2B buyers increasingly start with answer engines, so reports separate discovery
 :::
 :::
 
+::: facts-table-wrap
+
+| Component | Stress condition | Expected result |
+|---|---|---|
+| Evidence badge | Long table cell with badge {{evidence:verified}} | Badge stays readable and does not split words. |
+| Facts table | Multiple columns with prose | Table remains usable in HTML and constrained in print. |
+| Source card | Evidence note near claim | Card is visually distinct from normal paragraphs. |
+| Sidebar | Many headings | Sticky TOC remains secondary to content and active link updates. |
+:::
+
 ## Cards and callouts
 
 ::: info-panel severity=medium
@@ -147,13 +173,13 @@ Use info panels for caveats, assumptions, and reading guidance that should not b
 ::: impact-panel severity=high
 ### Impact panel
 
-Use impact panels to show why a finding changes sequencing, budget, or ownership.
+**Why this changes the plan:** a high-impact finding changes sequencing, budget, owner, or acceptance criteria.
 :::
 
-::: evidence-panel severity=low
-### Evidence panel
+::: action-panel severity=high
+### Action panel
 
-Use evidence panels for source IDs, collection method, confidence, and recheck commands.
+**Next action:** turn the finding into a concrete implementation step with owner, proof path, and rerun command.
 :::
 
 ::: tactic-card
@@ -198,14 +224,24 @@ A visible uplift in one engine is not proof of universal AI visibility. Keep AIO
 
 > Quotes highlight expert evidence, user language, or a decision constraint without turning it into a recommendation.
 
-::: example-card
+::: block-template title="Author block template"
 ```text
-Render command:
+Written by Dr. Jane Doe, PhD
+Principal Data Scientist, ExampleCo
+
+Jane led the data platform team from 2019 to 2024 and now researches LLM retrieval.
+
+LinkedIn | Google Scholar | Personal site
+```
+:::
+
+::: example-card title="Render command"
+```text
 .agents/scripts/report-render-helper.sh render report.md --template lottiefiles --pdf-profile slides-16-9-2 --output report.html
 ```
 :::
 
-::: example-card
+::: example-card title="Mermaid fallback"
 ```mermaid
 flowchart LR
   SourceLedger --> Finding
@@ -242,8 +278,6 @@ Real before/after examples belong in simple cards because each card is a compact
 **Tactics applied:** YMYL author bylines, source-backed comparison tables, third-party profile parity, and prompt reruns.
 :::
 
----
-
 ## What does not work
 
 ::: callout
@@ -265,19 +299,19 @@ Review spacing, table width, no-wrap badges, active TOC highlighting, print CSS,
 :::
 
 ::: checklist-card
+### Refresh checklist per page
 
-- [x] Same Markdown renders across all templates.
-- [ ] LottieFiles preview visibly prioritises DM Sans when the font is installed.
-- [x] 16:9 PDF export is landscape.
-- [x] HTML preview keeps one sidebar and one main report flow.
+- [ ] Replace at least one statistic with newer data.
+- [ ] Add or revise one example.
+- [ ] Remove outdated tool or vendor references.
+- [ ] Update screenshots if UI has changed.
+- [ ] Update `dateModified` in schema.
+- [ ] Add visible “Last updated” line.
 :::
 
 ::: appendix-links
 [Source ledger appendix](../llm-visibility-toolbox/report.md) [Client audit example](../client-ai-search-audit/report.html) [Style preview index](style-previews/index.html)
 :::
-
-
----
 
 ## Closing callouts
 
@@ -285,4 +319,12 @@ Review spacing, table width, no-wrap badges, active TOC highlighting, print CSS,
 ### Combined finding
 
 AI is now a discovery layer, but engines disagree on sources. Tracking only mentions or only citations misses the retrieval gap. Keep the final synthesis short, source-backed, and tied to the next action.
+:::
+
+::: accordion title="Changelog summary"
+V4 adds engine-specific evidence, source grouping, schema-downgrade rationale, comprehensive component examples, and presentation-safe fallbacks for diagrams and equations.
+:::
+
+::: version-summary
+V4 · compiled May 2026 from 70+ primary sources · internal toolkit
 :::

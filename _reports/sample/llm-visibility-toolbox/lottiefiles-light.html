@@ -91,6 +91,8 @@ body.report-body {
 
 .report-cover,
 .chapter-hero,
+.badge-key,
+.block-template,
 .case-study-card,
 .tactic-card,
 .example-card,
@@ -115,7 +117,8 @@ body.report-body {
 .severity-key,
 .accordion,
 .quote-card,
-.callout {
+.callout,
+.version-summary {
   break-inside: avoid;
   page-break-inside: avoid;
 }
@@ -239,11 +242,14 @@ body.report-body {
   outline: none;
 }
 
-.report-main h2 {
+.report-main h2.chapter-heading {
   counter-increment: report-chapter;
+  margin-block-start: var(--report-space-7);
+  padding-block-start: var(--report-space-5);
+  border-top: 1px solid var(--report-rule);
 }
 
-.report-main h2::before {
+.report-main h2.chapter-heading::before {
   content: "Chapter " counter(report-chapter);
   display: block;
   margin-block-end: var(--report-space-2);
@@ -253,6 +259,10 @@ body.report-body {
   font-weight: 800;
   letter-spacing: 0.14em;
   text-transform: uppercase;
+}
+
+.report-main h2.no-chapter {
+  margin-block-start: var(--report-space-6);
 }
 
 .chapter-hero {
@@ -275,13 +285,24 @@ body.report-body {
   align-items: baseline;
   margin-block: var(--report-space-4);
   padding: var(--report-space-3) var(--report-space-4);
-  background: var(--report-action-bg);
-  color: var(--report-action-ink);
+  background: var(--report-surface);
+  color: var(--report-ink);
+  border: 1px solid var(--report-rule);
+  border-left: 4px solid var(--report-blue);
   border-radius: var(--report-radius-md);
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.06);
 }
 
 .action-line strong {
-  font-weight: 750;
+  display: inline-flex;
+  padding: 0.12rem 0.45rem;
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--report-blue);
+  border-radius: var(--report-radius-sm);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .badge-row {
@@ -445,7 +466,8 @@ th .evidence-badge {
 .severity-key,
 .accordion,
 .quote-card,
-.callout {
+.callout,
+.version-summary {
   margin-block: var(--report-space-4);
   padding: var(--report-space-4);
   background: var(--report-surface);
@@ -484,6 +506,15 @@ th .evidence-badge {
   border: 0;
   border-radius: 0;
   box-shadow: none;
+}
+
+.source-list .source-title {
+  margin-block-start: var(--report-space-4);
+  color: var(--report-ink-soft);
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
 }
 
 .source-item {
@@ -543,7 +574,8 @@ th .evidence-badge {
   border-left: 1px solid var(--report-rule);
 }
 
-.example-card {
+.example-card,
+.block-template {
   margin-block: var(--report-space-4);
   overflow: hidden;
   background: var(--report-code-bg);
@@ -551,7 +583,8 @@ th .evidence-badge {
   border-radius: var(--report-radius-md);
 }
 
-.example-card header {
+.example-card header,
+.block-template header {
   display: flex;
   justify-content: space-between;
   gap: var(--report-space-3);
@@ -563,7 +596,8 @@ th .evidence-badge {
   font-size: 0.8125rem;
 }
 
-.example-card pre {
+.example-card pre,
+.block-template pre {
   margin: 0;
   padding: var(--report-space-3);
   overflow-x: auto;
@@ -703,19 +737,19 @@ th .evidence-badge {
 }
 
 .impact-panel {
-  background: var(--report-impact-bg);
+  background: var(--report-surface);
   border-left: 4px solid var(--report-amber);
 }
 
 .evidence-panel {
-  background: var(--report-evidence-bg);
+  background: var(--report-surface);
   border-left: 4px solid var(--report-green);
 }
 
 .action-panel {
-  background: var(--report-action-bg);
-  color: var(--report-action-ink);
-  border-color: transparent;
+  background: var(--report-surface);
+  color: var(--report-ink);
+  border-left: 4px solid var(--report-blue);
 }
 
 .myth-callout {
@@ -747,13 +781,13 @@ th .evidence-badge {
 .accordion summary::before {
   content: "▾";
   display: inline-flex;
-  width: 1.1rem;
-  flex: 0 0 1.1rem;
+  width: 1.45rem;
+  flex: 0 0 1.45rem;
   align-items: center;
   justify-content: center;
   color: var(--report-ink-soft);
-  font-size: 0.9rem;
-  font-weight: 800;
+  font-size: 1.35rem;
+  font-weight: 900;
   line-height: 1;
 }
 
@@ -801,11 +835,11 @@ blockquote {
 }
 
 .mermaid::before {
-  content: "Mermaid chart source";
+  content: "Mermaid source fallback";
 }
 
 .latex-block::before {
-  content: "LaTeX source";
+  content: "LaTeX source fallback";
 }
 
 .latex-inline {
@@ -898,18 +932,41 @@ ol li::marker {
 }
 
 .status-dot {
-  width: 0.75rem;
-  height: 0.75rem;
-  border-radius: 9999px;
-  background: var(--report-ink-soft);
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid var(--report-ink-soft);
+  border-radius: 0.22rem;
+  background: transparent;
 }
 
 .status-dot[data-status="done"] {
   background: var(--report-green);
+  border-color: var(--report-green);
 }
 
 .status-dot[data-status="blocked"] {
   background: var(--report-red);
+}
+
+.badge-key {
+  display: grid;
+  gap: var(--report-space-2);
+}
+
+.badge-key p {
+  display: grid;
+  grid-template-columns: minmax(10rem, auto) 1fr;
+  gap: var(--report-space-3);
+  align-items: center;
+  margin: 0;
+}
+
+.version-summary {
+  text-align: center;
+  color: var(--report-ink-soft);
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
 }
 
 .source-card {
@@ -1242,52 +1299,53 @@ body.report-theme-dark .sticky-toc { box-shadow: none; }
 <h2>Contents</h2>
 <ol>
 <li><a href="#llm-visibility-toolbox-full-sample" style="margin-left:0rem">LLM Visibility Toolbox Full Sample</a></li>
-<li><a href="#executive-summary-badge-strong" style="margin-left:1rem">1. Executive summary</a></li>
-<li><a href="#how-to-read-this-report" style="margin-left:1rem">2. How to read this report</a></li>
-<li><a href="#critical" style="margin-left:2rem">2.1 Critical</a></li>
-<li><a href="#high" style="margin-left:2rem">2.2 High</a></li>
-<li><a href="#medium" style="margin-left:2rem">2.3 Medium</a></li>
-<li><a href="#low" style="margin-left:2rem">2.4 Low</a></li>
-<li><a href="#sources" style="margin-left:1rem">3. Sources</a></li>
-<li><a href="#prompt-captures" style="margin-left:2rem">3.1 Prompt captures</a></li>
-<li><a href="#crawl-and-logs" style="margin-left:2rem">3.2 Crawl and logs</a></li>
-<li><a href="#third-party-corroboration" style="margin-left:2rem">3.3 Third-party corroboration</a></li>
-<li><a href="#source-card-standard" style="margin-left:2rem">3.4 Source-card standard</a></li>
-<li><a href="#controlled-schema-study" style="margin-left:2rem">3.5 Controlled schema study</a></li>
-<li><a href="#engine-overlap-evidence" style="margin-left:2rem">3.6 Engine-overlap evidence</a></li>
-<li><a href="#buyer-research-evidence" style="margin-left:2rem">3.7 Buyer-research evidence</a></li>
-<li><a href="#on-page-content-tactics" style="margin-left:1rem">4. On-page content tactics</a></li>
-<li><a href="#goal" style="margin-left:2rem">4.1 Goal</a></li>
-<li><a href="#direct-answer-in-the-first-paragraph" style="margin-left:2rem">4.2 Direct answer in the first paragraph</a></li>
-<li><a href="#impact" style="margin-left:2rem">4.3 Impact</a></li>
-<li><a href="#evidence" style="margin-left:2rem">4.4 Evidence</a></li>
-<li><a href="#good" style="margin-left:2rem">4.5 Good</a></li>
-<li><a href="#bad" style="margin-left:2rem">4.6 Bad</a></li>
-<li><a href="#technical-tactics" style="margin-left:1rem">5. Technical tactics</a></li>
-<li><a href="#bot-friendly-first-fetch" style="margin-left:2rem">5.1 Bot-friendly first fetch</a></li>
-<li><a href="#off-page-authority" style="margin-left:1rem">6. Off-page authority</a></li>
-<li><a href="#action" style="margin-left:2rem">6.1 Action</a></li>
-<li><a href="#myth" style="margin-left:2rem">6.2 Myth</a></li>
-<li><a href="#reality" style="margin-left:2rem">6.3 Reality</a></li>
-<li><a href="#case-studies" style="margin-left:1rem">7. Case studies</a></li>
-<li><a href="#industrial-manufacturer" style="margin-left:2rem">7.1 Industrial manufacturer</a></li>
-<li><a href="#healthcare-comparison-site" style="margin-left:2rem">7.2 Healthcare comparison site</a></li>
-<li><a href="#roadmap" style="margin-left:1rem">8. Roadmap</a></li>
-<li><a href="#closing-callouts" style="margin-left:1rem">9. Closing callouts</a></li>
-<li><a href="#combined-finding" style="margin-left:2rem">9.1 Combined finding</a></li>
-<li><a href="#appendices" style="margin-left:1rem">10. Appendices</a></li>
+<li><a href="#executive-summary-badge-strong" style="margin-left:1rem">Executive summary</a></li>
+<li><a href="#how-to-read-this-report" style="margin-left:1rem">1. How to read this report</a></li>
+<li><a href="#critical" style="margin-left:2rem">Critical</a></li>
+<li><a href="#high" style="margin-left:2rem">High</a></li>
+<li><a href="#medium" style="margin-left:2rem">Medium</a></li>
+<li><a href="#low" style="margin-left:2rem">Low</a></li>
+<li><a href="#sources" style="margin-left:1rem">2. Sources</a></li>
+<li><a href="#prompt-captures" style="margin-left:2rem">Prompt captures</a></li>
+<li><a href="#crawl-and-logs" style="margin-left:2rem">Crawl and logs</a></li>
+<li><a href="#third-party-corroboration" style="margin-left:2rem">Third-party corroboration</a></li>
+<li><a href="#source-card-standard" style="margin-left:2rem">Source-card standard</a></li>
+<li><a href="#controlled-schema-study" style="margin-left:2rem">Controlled schema study</a></li>
+<li><a href="#engine-overlap-evidence" style="margin-left:2rem">Engine-overlap evidence</a></li>
+<li><a href="#buyer-research-evidence" style="margin-left:2rem">Buyer-research evidence</a></li>
+<li><a href="#on-page-content-tactics" style="margin-left:1rem">3. On-page content tactics</a></li>
+<li><a href="#goal" style="margin-left:2rem">Goal</a></li>
+<li><a href="#direct-answer-in-the-first-paragraph" style="margin-left:2rem">Direct answer in the first paragraph</a></li>
+<li><a href="#impact" style="margin-left:2rem">Impact</a></li>
+<li><a href="#evidence" style="margin-left:2rem">Evidence</a></li>
+<li><a href="#good" style="margin-left:2rem">Good</a></li>
+<li><a href="#bad" style="margin-left:2rem">Bad</a></li>
+<li><a href="#technical-tactics" style="margin-left:1rem">4. Technical tactics</a></li>
+<li><a href="#bot-friendly-first-fetch" style="margin-left:2rem">Bot-friendly first fetch</a></li>
+<li><a href="#off-page-authority" style="margin-left:1rem">5. Off-page authority</a></li>
+<li><a href="#action" style="margin-left:2rem">Action</a></li>
+<li><a href="#myth" style="margin-left:2rem">Myth</a></li>
+<li><a href="#reality" style="margin-left:2rem">Reality</a></li>
+<li><a href="#case-studies" style="margin-left:1rem">6. Case studies</a></li>
+<li><a href="#industrial-manufacturer" style="margin-left:2rem">Industrial manufacturer</a></li>
+<li><a href="#healthcare-comparison-site" style="margin-left:2rem">Healthcare comparison site</a></li>
+<li><a href="#roadmap" style="margin-left:1rem">7. Roadmap</a></li>
+<li><a href="#closing-callouts" style="margin-left:1rem">8. Closing callouts</a></li>
+<li><a href="#combined-finding" style="margin-left:2rem">Combined finding</a></li>
+<li><a href="#appendices" style="margin-left:1rem">9. Appendices</a></li>
 </ol>
 </nav>
 <main class="report-content report-main">
 <h1 id="llm-visibility-toolbox-full-sample">LLM Visibility Toolbox Full Sample</h1>
 <section class="report-cover">
+<p>Internal toolkit · May 2026 · v4</p>
 <p><strong>Full sample report for LLM visibility strategy, evidence collection, and report rendering.</strong> This sample mirrors the richer Toolbox pattern: chapters, stats rows, tactical cards, source ledgers, callouts, accordions, appendices, links, quotes, checklists, and severity-coded panels.</p>
 <p>Author: Marcus Quinn / aidevops. Licence: MIT. Export: one HTML preview plus PDF profiles.</p>
 </section>
 <section class="anchor-links">
 <p><a href="#executive-summary" data-filetype="link">Executive summary</a> <a href="#on-page-content-tactics" data-filetype="link">Tactics</a> <a href="#technical-tactics" data-filetype="link">Technical</a> <a href="#off-page-authority" data-filetype="link">Authority</a> <a href="#appendices" data-filetype="link">Appendices</a></p>
 </section>
-<h2 id="executive-summary-badge-strong">Executive summary <span class="badge badge--strong">Strong</span></h2>
+<h2 class="no-chapter" id="executive-summary-badge-strong">Executive summary <span class="badge badge--strong">Strong</span></h2>
 <p>AI-search visibility improves when important pages are easy to retrieve, easy to trust, and easy to cite. Treat AIO, Gemini, ChatGPT, AI Mode, and Perplexity as separate evidence lines before summarising overall visibility. <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></p>
 <section class="summary-stats">
 <section class="stat-card">
@@ -1307,10 +1365,20 @@ body.report-theme-dark .sticky-toc { box-shadow: none; }
 <p>Appendix types linked from the report.</p>
 </section>
 </section>
+<section class="badge-key">
+<p><span class="badge badge--rct">Rct</span> Peer-reviewed or controlled comparison.</p>
+<p><span class="badge badge--strong">Strong</span> Large independent primary-data study.</p>
+<p><span class="badge badge--vendor">Vendor</span> Vendor study with methodology and commercial incentives.</p>
+<p><span class="badge badge--practitioner">Practitioner</span> Practitioner evidence or field report.</p>
+<p><span class="badge badge--hygiene">Hygiene</span> Baseline technical implementation.</p>
+</section>
+<details class="accordion"><summary>Changelog summary</summary>
+<p>V4 adds schema-downgrade rationale, engine-specific reporting, source grouping, and diagram/equation fallbacks.</p>
+</details>
 <section class="action-line">
 <p><strong>Recommended sequence:</strong> fix retrieval blockers, add source-backed answer blocks, then improve corroboration and monitoring.</p>
 </section>
-<h2 id="how-to-read-this-report">How to read this report</h2>
+<h2 class="chapter-heading" id="how-to-read-this-report">How to read this report</h2>
 <ol>
 <li>Start with severity-coded panels and the source ledger.</li>
 <li>Confirm the page type before applying a tactic.</li>
@@ -1338,7 +1406,7 @@ body.report-theme-dark .sticky-toc { box-shadow: none; }
 <details class="accordion"><summary>Methodology summary</summary>
 <p>Sources are captured first, assigned IDs, mapped to claims, and scored by page-type fit, confidence, impact, and effort. Unsupported claims remain in the appendix or backlog until verified.</p>
 </details>
-<h2 id="sources">Sources</h2>
+<h2 class="chapter-heading" id="sources">Sources</h2>
 <section class="sources-layout">
 <section class="sources-group">
 <section class="source-title">
@@ -1392,7 +1460,7 @@ body.report-theme-dark .sticky-toc { box-shadow: none; }
 </section>
 </section>
 <hr class="section-separator">
-<h2 id="on-page-content-tactics">On-page content tactics</h2>
+<h2 class="chapter-heading" id="on-page-content-tactics">On-page content tactics</h2>
 <section class="chapter-hero">
 <h3 id="goal">Goal</h3>
 <p>Make priority pages extractable and citation-ready with clear answers, source proximity, tables, and visible expertise.</p>
@@ -1424,7 +1492,7 @@ body.report-theme-dark .sticky-toc { box-shadow: none; }
 <p>“Best platform for everyone” with no methodology, hidden content, or third-party corroboration.</p>
 </section>
 </section>
-<h2 id="technical-tactics">Technical tactics</h2>
+<h2 class="chapter-heading" id="technical-tactics">Technical tactics</h2>
 <section class="tactic-card">
 <h3 id="bot-friendly-first-fetch">Bot-friendly first fetch</h3>
 <ul>
@@ -1464,7 +1532,7 @@ Run browser crawl and compare rendered source-card visibility.</code></pre>
 <p>Third-party corroboration — 58%</p>
 <p>Monitoring coverage — 44%</p>
 </section>
-<h2 id="off-page-authority">Off-page authority</h2>
+<h2 class="chapter-heading" id="off-page-authority">Off-page authority</h2>
 <blockquote>Answer engines often corroborate owned claims against review sites, partner pages, communities, editorial mentions, transcripts, and public profiles.</blockquote>
 <section class="action-panel" data-severity="high">
 <h3 id="action">Action</h3>
@@ -1476,7 +1544,7 @@ Run browser crawl and compare rendered source-card visibility.</code></pre>
 <h3 id="reality">Reality</h3>
 <p>Schema clarifies visible facts; it does not create trust when evidence is missing.</p>
 </section>
-<h2 id="case-studies">Case studies</h2>
+<h2 class="chapter-heading" id="case-studies">Case studies</h2>
 <section class="case-study-card">
 <h3 id="industrial-manufacturer">Industrial manufacturer</h3>
 <p><strong>Result:</strong> AI referral traffic grew after the site added crawlable direct answers, technical benchmarks, and trade-publication corroboration.</p>
@@ -1487,7 +1555,7 @@ Run browser crawl and compare rendered source-card visibility.</code></pre>
 <p><strong>Result:</strong> citations appeared after visible expert review, comparison methodology, and third-party profile parity were added.</p>
 <p><strong>Tactics applied:</strong> YMYL author bylines, source-backed tables, profile parity, and prompt reruns.</p>
 </section>
-<h2 id="roadmap">Roadmap</h2>
+<h2 class="chapter-heading" id="roadmap">Roadmap</h2>
 <section class="facts-table-wrap">
 <table><thead>
 <tr><th>Priority</th><th>Recommendation</th><th>Owner</th><th>Verification</th></tr></thead><tbody>
@@ -1497,12 +1565,15 @@ Run browser crawl and compare rendered source-card visibility.</code></pre>
 <tr><td>P2</td><td>Add schema hygiene.</td><td>SEO + engineering</td><td>Schema validation plus visible-content check</td></tr>
 </tbody></table>
 </section>
-<h2 id="closing-callouts">Closing callouts</h2>
+<h2 class="chapter-heading" id="closing-callouts">Closing callouts</h2>
 <section class="callout">
 <h3 id="combined-finding">Combined finding</h3>
 <p>Close with the smallest useful synthesis: what changed, what evidence proves it, what to do next, and how to verify it. Use panels only where emphasis helps the reader act.</p>
 </section>
-<h2 id="appendices">Appendices</h2>
+<section class="version-summary">
+<p>V4 · compiled May 2026 from source-led evidence · internal toolkit</p>
+</section>
+<h2 class="chapter-heading" id="appendices">Appendices</h2>
 <section class="appendix-links">
 <p><a href="appendices/source-ledger.md" data-filetype="md">Source ledger appendix</a> <a href="appendices/prompt-set.md" data-filetype="md">Prompt set appendix</a> <a href="../../examples/client-ai-search-audit/report.html" data-filetype="html">Example companion report</a></p>
 </section>

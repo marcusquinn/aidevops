@@ -4,6 +4,8 @@
 # LLM Visibility Toolbox Full Sample
 
 ::: report-cover
+Internal toolkit · May 2026 · v4
+
 **Full sample report for LLM visibility strategy, evidence collection, and report rendering.** This sample mirrors the richer Toolbox pattern: chapters, stats rows, tactical cards, source ledgers, callouts, accordions, appendices, links, quotes, checklists, and severity-coded panels.
 
 Author: Marcus Quinn / aidevops. Licence: MIT. Export: one HTML preview plus PDF profiles.
@@ -38,6 +40,22 @@ Severity levels for roadmap triage.
 
 Appendix types linked from the report.
 :::
+:::
+
+::: badge-key
+{{badge:rct}} Peer-reviewed or controlled comparison.
+
+{{badge:strong}} Large independent primary-data study.
+
+{{badge:vendor}} Vendor study with methodology and commercial incentives.
+
+{{badge:practitioner}} Practitioner evidence or field report.
+
+{{badge:hygiene}} Baseline technical implementation.
+:::
+
+::: accordion title="Changelog summary"
+V4 adds schema-downgrade rationale, engine-specific reporting, source grouping, and diagram/equation fallbacks.
 :::
 
 ::: action-line
@@ -272,6 +290,10 @@ Schema clarifies visible facts; it does not create trust when evidence is missin
 ### Combined finding
 
 Close with the smallest useful synthesis: what changed, what evidence proves it, what to do next, and how to verify it. Use panels only where emphasis helps the reader act.
+:::
+
+::: version-summary
+V4 · compiled May 2026 from source-led evidence · internal toolkit
 :::
 
 ## Appendices

@@ -21,6 +21,14 @@ Inline math example: {{latex:citation\_lift = verified\_mentions / prompts}}.
 {{evidence:verified}} {{evidence:partial}} {{evidence:inferred}} {{evidence:missing}}
 :::
 
+::: badge-key
+{{badge:rct}} Controlled study.
+
+{{badge:strong}} Strong primary data.
+
+{{badge:hygiene}} Technical hygiene.
+:::
+
 ::: stats-strip
 ::: stat-card
 **82**
@@ -128,11 +136,18 @@ Answer: Cite source ID S-004, report date, owner, and page URL.
 ```
 :::
 
-::: example-card
+::: example-card title="Mermaid fallback"
 ```mermaid
 flowchart LR
   Evidence --> Recommendation
   Recommendation --> Verification
+```
+:::
+
+::: block-template title="Author block template"
+```text
+Written by Dr. Jane Doe, PhD
+Principal Data Scientist, ExampleCo
 ```
 :::
 
@@ -218,6 +233,10 @@ Manual prompt capture, crawl export, screenshot, and remediation note.
 
 - Render this Markdown fixture to HTML.
 - Print or export the HTML to PDF from the browser print dialog.
+
+::: version-summary
+V4 · compiled May 2026 · internal toolkit
+:::
 
 ::: appendix-links
 [Source ledger](appendices/source-ledger.md) [Rendered report](report.html) [Export bundle](report.pdf)
