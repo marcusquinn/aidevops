@@ -16,7 +16,7 @@ over token savings.
    - `rtk-helper.sh gh issue list --repo owner/repo --limit N`
    - In interactive discovery, use these RTK forms instead of raw `gh pr list`
      or `gh issue list` unless the command needs structured/exact output.
-   - RTK v0.41.0 also adds upstream Gradle wrapper support, `rtk init --agent hermes`, `rtk init --dry-run`, `transparent_prefixes` for wrapper command passthrough, tee tail hints, Docker Compose log tail forwarding, compact Kubernetes pod/service summaries, safer install archive extraction, and git push/status filtering fixes; prefer those upstream features over custom aidevops shims when integrating supported runtimes, build tools, or noisy terminal summaries.
+   - RTK v0.41.0 also adds upstream Gradle wrapper support, `rtk init --agent hermes`, `rtk init --dry-run`, `transparent_prefixes` for wrapper command passthrough, tee tail hints, Docker Compose log tail forwarding, compact Kubernetes pod/service summaries, and git push/status filtering fixes; prefer those upstream features over custom aidevops shims when integrating supported runtimes, build tools, or noisy terminal summaries.
 2. **Assess sufficiency**: proceed only if the filtered output contains every
    fact needed for the next decision.
 3. **Broaden immediately** when output is incomplete, ambiguous, expanded rather
@@ -59,9 +59,10 @@ Use comparison results to classify a command:
 - **Unsafe for RTK**: exit codes differ, omitted lines could alter diagnosis, or
   exact evidence/security/JSON/diff semantics are required.
 - `git status` expansion is a regression signal: RTK v0.41.0 dropped the
-  compact-status `-uall` flag and preserves full paths/untracked files so
-  untracked directories collapse like raw git without hiding filenames; rerun
-  raw status and verify RTK version when comparison shows expansion.
+  compact-status `-uall` flag, so tracked-file paths remain visible while
+  untracked directories stay summarized at the same directory level raw
+  `git status --short` would show; rerun raw status and verify RTK version when
+  comparison shows expansion.
 
 ## Always bypass RTK
 
