@@ -745,20 +745,20 @@ th .evidence-badge {
 }
 
 .accordion summary::before {
-  content: "+";
-  display: inline-grid;
-  width: 1.5rem;
-  height: 1.5rem;
-  place-items: center;
-  flex: 0 0 1.5rem;
-  border: 1px solid var(--report-ink-soft);
-  border-radius: 999px;
+  content: "▾";
+  display: inline-flex;
+  width: 1.1rem;
+  flex: 0 0 1.1rem;
+  align-items: center;
+  justify-content: center;
   color: var(--report-ink-soft);
+  font-size: 0.9rem;
   font-weight: 800;
+  line-height: 1;
 }
 
 .accordion[open] summary::before {
-  content: "−";
+  content: "▴";
 }
 
 .quote-card,
@@ -1173,42 +1173,42 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <h2>Contents</h2>
 <ol>
 <li><a href="#llm-visibility-toolbox" style="margin-left:0rem">LLM Visibility Toolbox</a></li>
-<li><a href="#executive-summary-badge-rct" style="margin-left:1rem">Chapter 1 / Executive summary <span class="badge badge--rct">Rct</span></a></li>
-<li><a href="#sources" style="margin-left:1rem">Chapter 2 / Sources</a></li>
-<li><a href="#prompt-captures" style="margin-left:2rem">Prompt captures</a></li>
-<li><a href="#crawl-evidence" style="margin-left:2rem">Crawl evidence</a></li>
-<li><a href="#third-party-profiles" style="margin-left:2rem">Third-party profiles</a></li>
-<li><a href="#source-card-rule" style="margin-left:2rem">Source-card rule</a></li>
-<li><a href="#ahrefs-controlled-schema-study" style="margin-left:2rem">Ahrefs controlled schema study</a></li>
-<li><a href="#engine-overlap-research" style="margin-left:2rem">Engine-overlap research</a></li>
-<li><a href="#buyer-research-evidence" style="margin-left:2rem">Buyer-research evidence</a></li>
-<li><a href="#highest-impact-tactics" style="margin-left:1rem">Chapter 3 / Highest-impact tactics</a></li>
-<li><a href="#weight-before-recommending" style="margin-left:2rem">Weight before recommending</a></li>
-<li><a href="#critical" style="margin-left:2rem">Critical</a></li>
-<li><a href="#high" style="margin-left:2rem">High</a></li>
-<li><a href="#medium" style="margin-left:2rem">Medium</a></li>
-<li><a href="#low" style="margin-left:2rem">Low</a></li>
-<li><a href="#page-type-matrix" style="margin-left:1rem">Chapter 4 / Page-type matrix</a></li>
-<li><a href="#industry-fit-reminder" style="margin-left:2rem">Industry-fit reminder</a></li>
-<li><a href="#tactic-card-examples" style="margin-left:1rem">Chapter 5 / Tactic card examples</a></li>
-<li><a href="#direct-answer-opening" style="margin-left:2rem">Direct-answer opening</a></li>
-<li><a href="#impact" style="margin-left:2rem">Impact</a></li>
-<li><a href="#evidence" style="margin-left:2rem">Evidence</a></li>
-<li><a href="#bot-friendly-first-fetch" style="margin-left:2rem">Bot-friendly first fetch</a></li>
-<li><a href="#strong-pattern" style="margin-left:2rem">Strong pattern</a></li>
-<li><a href="#weak-pattern" style="margin-left:2rem">Weak pattern</a></li>
-<li><a href="#myths-and-caveats" style="margin-left:1rem">Chapter 6 / Myths and caveats</a></li>
-<li><a href="#myth" style="margin-left:2rem">Myth</a></li>
-<li><a href="#reality" style="margin-left:2rem">Reality</a></li>
-<li><a href="#case-studies" style="margin-left:1rem">Chapter 7 / Case studies</a></li>
-<li><a href="#industrial-manufacturer" style="margin-left:2rem">Industrial manufacturer</a></li>
-<li><a href="#healthcare-comparison-site" style="margin-left:2rem">Healthcare comparison site</a></li>
-<li><a href="#roadmap-template" style="margin-left:1rem">Chapter 8 / Roadmap template</a></li>
-<li><a href="#priority-rule" style="margin-left:2rem">Priority rule</a></li>
-<li><a href="#verification-checklist" style="margin-left:1rem">Chapter 9 / Verification checklist</a></li>
-<li><a href="#closing-callouts" style="margin-left:1rem">Chapter 10 / Closing callouts</a></li>
-<li><a href="#combined-finding" style="margin-left:2rem">Combined finding</a></li>
-<li><a href="#appendices" style="margin-left:1rem">Chapter 11 / Appendices</a></li>
+<li><a href="#executive-summary-badge-rct" style="margin-left:1rem">1. Executive summary</a></li>
+<li><a href="#sources" style="margin-left:1rem">2. Sources</a></li>
+<li><a href="#prompt-captures" style="margin-left:2rem">2.1 Prompt captures</a></li>
+<li><a href="#crawl-evidence" style="margin-left:2rem">2.2 Crawl evidence</a></li>
+<li><a href="#third-party-profiles" style="margin-left:2rem">2.3 Third-party profiles</a></li>
+<li><a href="#source-card-rule" style="margin-left:2rem">2.4 Source-card rule</a></li>
+<li><a href="#ahrefs-controlled-schema-study" style="margin-left:2rem">2.5 Ahrefs controlled schema study</a></li>
+<li><a href="#engine-overlap-research" style="margin-left:2rem">2.6 Engine-overlap research</a></li>
+<li><a href="#buyer-research-evidence" style="margin-left:2rem">2.7 Buyer-research evidence</a></li>
+<li><a href="#highest-impact-tactics" style="margin-left:1rem">3. Highest-impact tactics</a></li>
+<li><a href="#weight-before-recommending" style="margin-left:2rem">3.1 Weight before recommending</a></li>
+<li><a href="#critical" style="margin-left:2rem">3.2 Critical</a></li>
+<li><a href="#high" style="margin-left:2rem">3.3 High</a></li>
+<li><a href="#medium" style="margin-left:2rem">3.4 Medium</a></li>
+<li><a href="#low" style="margin-left:2rem">3.5 Low</a></li>
+<li><a href="#page-type-matrix" style="margin-left:1rem">4. Page-type matrix</a></li>
+<li><a href="#industry-fit-reminder" style="margin-left:2rem">4.1 Industry-fit reminder</a></li>
+<li><a href="#tactic-card-examples" style="margin-left:1rem">5. Tactic card examples</a></li>
+<li><a href="#direct-answer-opening" style="margin-left:2rem">5.1 Direct-answer opening</a></li>
+<li><a href="#impact" style="margin-left:2rem">5.2 Impact</a></li>
+<li><a href="#evidence" style="margin-left:2rem">5.3 Evidence</a></li>
+<li><a href="#bot-friendly-first-fetch" style="margin-left:2rem">5.4 Bot-friendly first fetch</a></li>
+<li><a href="#strong-pattern" style="margin-left:2rem">5.5 Strong pattern</a></li>
+<li><a href="#weak-pattern" style="margin-left:2rem">5.6 Weak pattern</a></li>
+<li><a href="#myths-and-caveats" style="margin-left:1rem">6. Myths and caveats</a></li>
+<li><a href="#myth" style="margin-left:2rem">6.1 Myth</a></li>
+<li><a href="#reality" style="margin-left:2rem">6.2 Reality</a></li>
+<li><a href="#case-studies" style="margin-left:1rem">7. Case studies</a></li>
+<li><a href="#industrial-manufacturer" style="margin-left:2rem">7.1 Industrial manufacturer</a></li>
+<li><a href="#healthcare-comparison-site" style="margin-left:2rem">7.2 Healthcare comparison site</a></li>
+<li><a href="#roadmap-template" style="margin-left:1rem">8. Roadmap template</a></li>
+<li><a href="#priority-rule" style="margin-left:2rem">8.1 Priority rule</a></li>
+<li><a href="#verification-checklist" style="margin-left:1rem">9. Verification checklist</a></li>
+<li><a href="#closing-callouts" style="margin-left:1rem">10. Closing callouts</a></li>
+<li><a href="#combined-finding" style="margin-left:2rem">10.1 Combined finding</a></li>
+<li><a href="#appendices" style="margin-left:1rem">11. Appendices</a></li>
 </ol>
 </nav>
 <main class="report-content report-main">

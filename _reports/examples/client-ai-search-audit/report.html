@@ -745,20 +745,20 @@ th .evidence-badge {
 }
 
 .accordion summary::before {
-  content: "+";
-  display: inline-grid;
-  width: 1.5rem;
-  height: 1.5rem;
-  place-items: center;
-  flex: 0 0 1.5rem;
-  border: 1px solid var(--report-ink-soft);
-  border-radius: 999px;
+  content: "▾";
+  display: inline-flex;
+  width: 1.1rem;
+  flex: 0 0 1.1rem;
+  align-items: center;
+  justify-content: center;
   color: var(--report-ink-soft);
+  font-size: 0.9rem;
   font-weight: 800;
+  line-height: 1;
 }
 
 .accordion[open] summary::before {
-  content: "−";
+  content: "▴";
 }
 
 .quote-card,
@@ -1173,17 +1173,17 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <h2>Contents</h2>
 <ol>
 <li><a href="#client-ai-search-audit" style="margin-left:0rem">Client AI Search Audit</a></li>
-<li><a href="#executive-summary" style="margin-left:1rem">Chapter 1 / Executive summary</a></li>
-<li><a href="#engine-findings" style="margin-left:1rem">Chapter 2 / Engine findings</a></li>
-<li><a href="#source-ledger" style="margin-left:1rem">Chapter 3 / Source ledger</a></li>
-<li><a href="#privacy-rule" style="margin-left:2rem">Privacy rule</a></li>
-<li><a href="#page-type-weighted-findings" style="margin-left:1rem">Chapter 4 / Page-type weighted findings</a></li>
-<li><a href="#p0-comparison-page-retrieval-gap" style="margin-left:2rem">P0: Comparison page retrieval gap</a></li>
-<li><a href="#p1-pricing-facts-lack-nearby-evidence" style="margin-left:2rem">P1: Pricing facts lack nearby evidence</a></li>
-<li><a href="#preserve" style="margin-left:2rem">Preserve</a></li>
-<li><a href="#fix" style="margin-left:2rem">Fix</a></li>
-<li><a href="#implementation-brief" style="margin-left:1rem">Chapter 5 / Implementation brief</a></li>
-<li><a href="#verification-checklist" style="margin-left:1rem">Chapter 6 / Verification checklist</a></li>
+<li><a href="#executive-summary" style="margin-left:1rem">1. Executive summary</a></li>
+<li><a href="#engine-findings" style="margin-left:1rem">2. Engine findings</a></li>
+<li><a href="#source-ledger" style="margin-left:1rem">3. Source ledger</a></li>
+<li><a href="#privacy-rule" style="margin-left:2rem">3.1 Privacy rule</a></li>
+<li><a href="#page-type-weighted-findings" style="margin-left:1rem">4. Page-type weighted findings</a></li>
+<li><a href="#p0-comparison-page-retrieval-gap" style="margin-left:2rem">4.1 P0: Comparison page retrieval gap</a></li>
+<li><a href="#p1-pricing-facts-lack-nearby-evidence" style="margin-left:2rem">4.2 P1: Pricing facts lack nearby evidence</a></li>
+<li><a href="#preserve" style="margin-left:2rem">4.3 Preserve</a></li>
+<li><a href="#fix" style="margin-left:2rem">4.4 Fix</a></li>
+<li><a href="#implementation-brief" style="margin-left:1rem">5. Implementation brief</a></li>
+<li><a href="#verification-checklist" style="margin-left:1rem">6. Verification checklist</a></li>
 </ol>
 </nav>
 <main class="report-content report-main">

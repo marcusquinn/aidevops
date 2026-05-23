@@ -83,6 +83,23 @@ test_render_markdown_fixture() {
 	assert_contains "$_out" "class=\"sources-layout\"" "Markdown render includes sources layout"
 	assert_contains "$_out" "class=\"source-list\"" "Markdown render includes source lists"
 	assert_contains "$_out" "class=\"case-study-card\"" "Markdown render includes case study cards"
+	if grep -qF "Chapter 1 /" "$_out"; then
+		print_result "Markdown TOC omits Chapter prefix" 1 "Found Chapter prefix in rendered TOC labels"
+	else
+		print_result "Markdown TOC omits Chapter prefix" 0
+	fi
+	if python3 - "$_out" <<'PYHTML'
+from pathlib import Path
+import re
+text = Path(__import__('sys').argv[1]).read_text()
+nav = re.search(r'<nav class="sticky-toc".*?</nav>', text, re.S)
+raise SystemExit(0 if nav and 'class="badge' not in nav.group(0) else 1)
+PYHTML
+	then
+		print_result "Markdown TOC omits badges" 0
+	else
+		print_result "Markdown TOC omits badges" 1 "Found badge markup in rendered TOC"
+	fi
 	assert_contains "$_out" "<footer class=\"report-footer\">" "Markdown render includes copyright footer"
 	if grep -q "&lt;!-- SPDX-License-Identifier" "$_out"; then
 		print_result "Markdown render suppresses source comments" 1 "SPDX comment leaked into rendered HTML"

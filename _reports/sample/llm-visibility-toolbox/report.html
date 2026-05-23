@@ -745,20 +745,20 @@ th .evidence-badge {
 }
 
 .accordion summary::before {
-  content: "+";
-  display: inline-grid;
-  width: 1.5rem;
-  height: 1.5rem;
-  place-items: center;
-  flex: 0 0 1.5rem;
-  border: 1px solid var(--report-ink-soft);
-  border-radius: 999px;
+  content: "▾";
+  display: inline-flex;
+  width: 1.1rem;
+  flex: 0 0 1.1rem;
+  align-items: center;
+  justify-content: center;
   color: var(--report-ink-soft);
+  font-size: 0.9rem;
   font-weight: 800;
+  line-height: 1;
 }
 
 .accordion[open] summary::before {
-  content: "−";
+  content: "▴";
 }
 
 .quote-card,
@@ -1242,40 +1242,40 @@ body.report-theme-dark .sticky-toc { box-shadow: none; }
 <h2>Contents</h2>
 <ol>
 <li><a href="#llm-visibility-toolbox-full-sample" style="margin-left:0rem">LLM Visibility Toolbox Full Sample</a></li>
-<li><a href="#executive-summary-badge-strong" style="margin-left:1rem">Chapter 1 / Executive summary <span class="badge badge--strong">Strong</span></a></li>
-<li><a href="#how-to-read-this-report" style="margin-left:1rem">Chapter 2 / How to read this report</a></li>
-<li><a href="#critical" style="margin-left:2rem">Critical</a></li>
-<li><a href="#high" style="margin-left:2rem">High</a></li>
-<li><a href="#medium" style="margin-left:2rem">Medium</a></li>
-<li><a href="#low" style="margin-left:2rem">Low</a></li>
-<li><a href="#sources" style="margin-left:1rem">Chapter 3 / Sources</a></li>
-<li><a href="#prompt-captures" style="margin-left:2rem">Prompt captures</a></li>
-<li><a href="#crawl-and-logs" style="margin-left:2rem">Crawl and logs</a></li>
-<li><a href="#third-party-corroboration" style="margin-left:2rem">Third-party corroboration</a></li>
-<li><a href="#source-card-standard" style="margin-left:2rem">Source-card standard</a></li>
-<li><a href="#controlled-schema-study" style="margin-left:2rem">Controlled schema study</a></li>
-<li><a href="#engine-overlap-evidence" style="margin-left:2rem">Engine-overlap evidence</a></li>
-<li><a href="#buyer-research-evidence" style="margin-left:2rem">Buyer-research evidence</a></li>
-<li><a href="#on-page-content-tactics" style="margin-left:1rem">Chapter 4 / On-page content tactics</a></li>
-<li><a href="#goal" style="margin-left:2rem">Goal</a></li>
-<li><a href="#direct-answer-in-the-first-paragraph" style="margin-left:2rem">Direct answer in the first paragraph</a></li>
-<li><a href="#impact" style="margin-left:2rem">Impact</a></li>
-<li><a href="#evidence" style="margin-left:2rem">Evidence</a></li>
-<li><a href="#good" style="margin-left:2rem">Good</a></li>
-<li><a href="#bad" style="margin-left:2rem">Bad</a></li>
-<li><a href="#technical-tactics" style="margin-left:1rem">Chapter 5 / Technical tactics</a></li>
-<li><a href="#bot-friendly-first-fetch" style="margin-left:2rem">Bot-friendly first fetch</a></li>
-<li><a href="#off-page-authority" style="margin-left:1rem">Chapter 6 / Off-page authority</a></li>
-<li><a href="#action" style="margin-left:2rem">Action</a></li>
-<li><a href="#myth" style="margin-left:2rem">Myth</a></li>
-<li><a href="#reality" style="margin-left:2rem">Reality</a></li>
-<li><a href="#case-studies" style="margin-left:1rem">Chapter 7 / Case studies</a></li>
-<li><a href="#industrial-manufacturer" style="margin-left:2rem">Industrial manufacturer</a></li>
-<li><a href="#healthcare-comparison-site" style="margin-left:2rem">Healthcare comparison site</a></li>
-<li><a href="#roadmap" style="margin-left:1rem">Chapter 8 / Roadmap</a></li>
-<li><a href="#closing-callouts" style="margin-left:1rem">Chapter 9 / Closing callouts</a></li>
-<li><a href="#combined-finding" style="margin-left:2rem">Combined finding</a></li>
-<li><a href="#appendices" style="margin-left:1rem">Chapter 10 / Appendices</a></li>
+<li><a href="#executive-summary-badge-strong" style="margin-left:1rem">1. Executive summary</a></li>
+<li><a href="#how-to-read-this-report" style="margin-left:1rem">2. How to read this report</a></li>
+<li><a href="#critical" style="margin-left:2rem">2.1 Critical</a></li>
+<li><a href="#high" style="margin-left:2rem">2.2 High</a></li>
+<li><a href="#medium" style="margin-left:2rem">2.3 Medium</a></li>
+<li><a href="#low" style="margin-left:2rem">2.4 Low</a></li>
+<li><a href="#sources" style="margin-left:1rem">3. Sources</a></li>
+<li><a href="#prompt-captures" style="margin-left:2rem">3.1 Prompt captures</a></li>
+<li><a href="#crawl-and-logs" style="margin-left:2rem">3.2 Crawl and logs</a></li>
+<li><a href="#third-party-corroboration" style="margin-left:2rem">3.3 Third-party corroboration</a></li>
+<li><a href="#source-card-standard" style="margin-left:2rem">3.4 Source-card standard</a></li>
+<li><a href="#controlled-schema-study" style="margin-left:2rem">3.5 Controlled schema study</a></li>
+<li><a href="#engine-overlap-evidence" style="margin-left:2rem">3.6 Engine-overlap evidence</a></li>
+<li><a href="#buyer-research-evidence" style="margin-left:2rem">3.7 Buyer-research evidence</a></li>
+<li><a href="#on-page-content-tactics" style="margin-left:1rem">4. On-page content tactics</a></li>
+<li><a href="#goal" style="margin-left:2rem">4.1 Goal</a></li>
+<li><a href="#direct-answer-in-the-first-paragraph" style="margin-left:2rem">4.2 Direct answer in the first paragraph</a></li>
+<li><a href="#impact" style="margin-left:2rem">4.3 Impact</a></li>
+<li><a href="#evidence" style="margin-left:2rem">4.4 Evidence</a></li>
+<li><a href="#good" style="margin-left:2rem">4.5 Good</a></li>
+<li><a href="#bad" style="margin-left:2rem">4.6 Bad</a></li>
+<li><a href="#technical-tactics" style="margin-left:1rem">5. Technical tactics</a></li>
+<li><a href="#bot-friendly-first-fetch" style="margin-left:2rem">5.1 Bot-friendly first fetch</a></li>
+<li><a href="#off-page-authority" style="margin-left:1rem">6. Off-page authority</a></li>
+<li><a href="#action" style="margin-left:2rem">6.1 Action</a></li>
+<li><a href="#myth" style="margin-left:2rem">6.2 Myth</a></li>
+<li><a href="#reality" style="margin-left:2rem">6.3 Reality</a></li>
+<li><a href="#case-studies" style="margin-left:1rem">7. Case studies</a></li>
+<li><a href="#industrial-manufacturer" style="margin-left:2rem">7.1 Industrial manufacturer</a></li>
+<li><a href="#healthcare-comparison-site" style="margin-left:2rem">7.2 Healthcare comparison site</a></li>
+<li><a href="#roadmap" style="margin-left:1rem">8. Roadmap</a></li>
+<li><a href="#closing-callouts" style="margin-left:1rem">9. Closing callouts</a></li>
+<li><a href="#combined-finding" style="margin-left:2rem">9.1 Combined finding</a></li>
+<li><a href="#appendices" style="margin-left:1rem">10. Appendices</a></li>
 </ol>
 </nav>
 <main class="report-content report-main">

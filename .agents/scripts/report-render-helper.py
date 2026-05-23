@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -89,15 +90,28 @@ def read_input(path: str) -> str:
         return handle.read()
 
 
+def toc_title(title: str) -> str:
+    """Return a TOC-safe title without visual badges or inline-only tokens."""
+
+    cleaned = re.sub(r"\{\{\s*(?:badge|evidence)\s*:[^}]+?\s*\}\}", "", title, flags=re.I)
+    return " ".join(cleaned.split())
+
+
 def wrap_document(headings: list[tuple[int, str, str]], body: str) -> str:
     css = load_css(TEMPLATE, PDF_PROFILE)
     toc_items = []
     chapter = 0
+    section = 0
     for level, title, anchor in headings:
-        label = title
+        clean_title = toc_title(title)
+        label = clean_title
         if level == 2:
             chapter += 1
-            label = f"Chapter {chapter} / {title}"
+            section = 0
+            label = f"{chapter}. {clean_title}"
+        elif level == 3 and chapter:
+            section += 1
+            label = f"{chapter}.{section} {clean_title}"
         indent = f' style="margin-left:{max(level - 1, 0)}rem"'
         toc_items.append(f'<li><a href="#{anchor}"{indent}>{inline_markup(label)}</a></li>')
     active_toc_script = """

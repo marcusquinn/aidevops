@@ -745,20 +745,20 @@ th .evidence-badge {
 }
 
 .accordion summary::before {
-  content: "+";
-  display: inline-grid;
-  width: 1.5rem;
-  height: 1.5rem;
-  place-items: center;
-  flex: 0 0 1.5rem;
-  border: 1px solid var(--report-ink-soft);
-  border-radius: 999px;
+  content: "▾";
+  display: inline-flex;
+  width: 1.1rem;
+  flex: 0 0 1.1rem;
+  align-items: center;
+  justify-content: center;
   color: var(--report-ink-soft);
+  font-size: 0.9rem;
   font-weight: 800;
+  line-height: 1;
 }
 
 .accordion[open] summary::before {
-  content: "−";
+  content: "▴";
 }
 
 .quote-card,
@@ -1242,35 +1242,35 @@ body.report-theme-dark .sticky-toc { box-shadow: none; }
 <h2>Contents</h2>
 <ol>
 <li><a href="#report-style-showcase" style="margin-left:0rem">Report Style Showcase</a></li>
-<li><a href="#component-overview-badge-strong" style="margin-left:1rem">Chapter 1 / Component overview <span class="badge badge--strong">Strong</span></a></li>
-<li><a href="#highest-impact-most-validated" style="margin-left:1rem">Chapter 2 / Highest impact, most validated</a></li>
-<li><a href="#earned-media-on-third-party-platforms-badge-strong" style="margin-left:2rem">Earned media on third-party platforms <span class="badge badge--strong">Strong</span></a></li>
-<li><a href="#table-and-source-cards" style="margin-left:1rem">Chapter 3 / Table and source cards</a></li>
-<li><a href="#source-a" style="margin-left:2rem">Source A</a></li>
-<li><a href="#source-b" style="margin-left:2rem">Source B</a></li>
-<li><a href="#source-c" style="margin-left:2rem">Source C</a></li>
-<li><a href="#source-sample" style="margin-left:2rem">Source sample</a></li>
-<li><a href="#ahrefs-schema-markup-has-no-impact-on-ai-visibility" style="margin-left:2rem">Ahrefs: schema markup has no impact on AI visibility</a></li>
-<li><a href="#growth-memo-the-consensus-gap" style="margin-left:2rem">Growth memo: the consensus gap</a></li>
-<li><a href="#g2-the-answer-economy-research" style="margin-left:2rem">G2: the answer economy research</a></li>
-<li><a href="#cards-and-callouts" style="margin-left:1rem">Chapter 4 / Cards and callouts</a></li>
-<li><a href="#info-panel" style="margin-left:2rem">Info panel</a></li>
-<li><a href="#impact-panel" style="margin-left:2rem">Impact panel</a></li>
-<li><a href="#evidence-panel" style="margin-left:2rem">Evidence panel</a></li>
-<li><a href="#tactic-card" style="margin-left:2rem">Tactic card</a></li>
-<li><a href="#good-row" style="margin-left:2rem">Good row</a></li>
-<li><a href="#bad-row" style="margin-left:2rem">Bad row</a></li>
-<li><a href="#myth" style="margin-left:2rem">Myth</a></li>
-<li><a href="#fact" style="margin-left:2rem">Fact</a></li>
-<li><a href="#case-studies" style="margin-left:1rem">Chapter 5 / Case studies</a></li>
-<li><a href="#industrial-manufacturer" style="margin-left:2rem">Industrial manufacturer</a></li>
-<li><a href="#healthcare-comparison-site" style="margin-left:2rem">Healthcare comparison site</a></li>
-<li><a href="#what-does-not-work" style="margin-left:1rem">Chapter 6 / What does not work</a></li>
-<li><a href="#seo-myths-called-out" style="margin-left:2rem">SEO myths called out</a></li>
-<li><a href="#priority-and-checklist" style="margin-left:1rem">Chapter 7 / Priority and checklist</a></li>
-<li><a href="#high-priority-visual-checks" style="margin-left:2rem">High-priority visual checks</a></li>
-<li><a href="#closing-callouts" style="margin-left:1rem">Chapter 8 / Closing callouts</a></li>
-<li><a href="#combined-finding" style="margin-left:2rem">Combined finding</a></li>
+<li><a href="#component-overview-badge-strong" style="margin-left:1rem">1. Component overview</a></li>
+<li><a href="#highest-impact-most-validated" style="margin-left:1rem">2. Highest impact, most validated</a></li>
+<li><a href="#earned-media-on-third-party-platforms-badge-strong" style="margin-left:2rem">2.1 Earned media on third-party platforms</a></li>
+<li><a href="#table-and-source-cards" style="margin-left:1rem">3. Table and source cards</a></li>
+<li><a href="#source-a" style="margin-left:2rem">3.1 Source A</a></li>
+<li><a href="#source-b" style="margin-left:2rem">3.2 Source B</a></li>
+<li><a href="#source-c" style="margin-left:2rem">3.3 Source C</a></li>
+<li><a href="#source-sample" style="margin-left:2rem">3.4 Source sample</a></li>
+<li><a href="#ahrefs-schema-markup-has-no-impact-on-ai-visibility" style="margin-left:2rem">3.5 Ahrefs: schema markup has no impact on AI visibility</a></li>
+<li><a href="#growth-memo-the-consensus-gap" style="margin-left:2rem">3.6 Growth memo: the consensus gap</a></li>
+<li><a href="#g2-the-answer-economy-research" style="margin-left:2rem">3.7 G2: the answer economy research</a></li>
+<li><a href="#cards-and-callouts" style="margin-left:1rem">4. Cards and callouts</a></li>
+<li><a href="#info-panel" style="margin-left:2rem">4.1 Info panel</a></li>
+<li><a href="#impact-panel" style="margin-left:2rem">4.2 Impact panel</a></li>
+<li><a href="#evidence-panel" style="margin-left:2rem">4.3 Evidence panel</a></li>
+<li><a href="#tactic-card" style="margin-left:2rem">4.4 Tactic card</a></li>
+<li><a href="#good-row" style="margin-left:2rem">4.5 Good row</a></li>
+<li><a href="#bad-row" style="margin-left:2rem">4.6 Bad row</a></li>
+<li><a href="#myth" style="margin-left:2rem">4.7 Myth</a></li>
+<li><a href="#fact" style="margin-left:2rem">4.8 Fact</a></li>
+<li><a href="#case-studies" style="margin-left:1rem">5. Case studies</a></li>
+<li><a href="#industrial-manufacturer" style="margin-left:2rem">5.1 Industrial manufacturer</a></li>
+<li><a href="#healthcare-comparison-site" style="margin-left:2rem">5.2 Healthcare comparison site</a></li>
+<li><a href="#what-does-not-work" style="margin-left:1rem">6. What does not work</a></li>
+<li><a href="#seo-myths-called-out" style="margin-left:2rem">6.1 SEO myths called out</a></li>
+<li><a href="#priority-and-checklist" style="margin-left:1rem">7. Priority and checklist</a></li>
+<li><a href="#high-priority-visual-checks" style="margin-left:2rem">7.1 High-priority visual checks</a></li>
+<li><a href="#closing-callouts" style="margin-left:1rem">8. Closing callouts</a></li>
+<li><a href="#combined-finding" style="margin-left:2rem">8.1 Combined finding</a></li>
 </ol>
 </nav>
 <main class="report-content report-main">

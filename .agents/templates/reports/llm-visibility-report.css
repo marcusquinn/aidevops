@@ -739,20 +739,20 @@ th .evidence-badge {
 }
 
 .accordion summary::before {
-  content: "+";
-  display: inline-grid;
-  width: 1.5rem;
-  height: 1.5rem;
-  place-items: center;
-  flex: 0 0 1.5rem;
-  border: 1px solid var(--report-ink-soft);
-  border-radius: 999px;
+  content: "▾";
+  display: inline-flex;
+  width: 1.1rem;
+  flex: 0 0 1.1rem;
+  align-items: center;
+  justify-content: center;
   color: var(--report-ink-soft);
+  font-size: 0.9rem;
   font-weight: 800;
+  line-height: 1;
 }
 
 .accordion[open] summary::before {
-  content: "−";
+  content: "▴";
 }
 
 .quote-card,

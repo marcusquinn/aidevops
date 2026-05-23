@@ -153,7 +153,12 @@ border/shape differences so grayscale output remains meaningful.
   shadcn registry with attractive chart components, but it requires project
   installation and dependencies; use it for app-integrated dashboards, not as a
   default for portable standalone report exports unless the generated bundle
-  vendors all assets locally. Mermaid/LaTeX should have readable source fallbacks.
+  vendors all assets locally.
+- Mermaid and LaTeX can be rendered, but keep source fallbacks. For portable
+  published reports, pre-render diagrams/equations with local tooling and embed
+  the resulting SVG/HTML rather than depending on a network CDN. When local
+  renderers are unavailable, output the labelled source/fallback blocks so the
+  report remains readable in HTML, PDF, and print.
 
 ## PDF and Print Styling
 
