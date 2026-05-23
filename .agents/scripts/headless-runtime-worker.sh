@@ -704,7 +704,7 @@ _worker_external_terminal_complete() {
 	local work_dir="$2"
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
 	local issue_number=""
-	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
+	issue_number=$(printf '%s' "$session_key" | sed -nE 's/^[^0-9]*([0-9]+).*/\1/p' | tail -1 || true)
 
 	[[ "$session_key" == issue-* ]] || return 1
 	[[ -n "$repo_slug" && -n "$issue_number" ]] || return 1
@@ -729,12 +729,6 @@ _worker_external_terminal_complete() {
 			print_info "[lifecycle] worker_external_terminal pr_merged session=${session_key} branch=${branch_name}"
 			return 0
 		fi
-	fi
-
-	merged_count=$(gh pr list --repo "$repo_slug" --search "$issue_number" --state merged --json number --jq 'length' 2>/dev/null || true)
-	if [[ "$merged_count" =~ ^[0-9]+$ && "$merged_count" -gt 0 ]]; then
-		print_info "[lifecycle] worker_external_terminal issue_pr_merged session=${session_key} issue=${issue_number}"
-		return 0
 	fi
 
 	return 1
