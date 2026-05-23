@@ -62,6 +62,10 @@ if [[ "${1:-}" == "samplecmd" ]]; then
   printf 'short\n'
   exit 0
 fi
+if [[ "${1:-}" == "git" && "${2:-}" == "status" && "${3:-}" == "--unchanged" ]]; then
+  printf 'payload: git status --unchanged\n'
+  exit 0
+fi
 printf 'payload: %s\n' "$*"
 STUB
 chmod +x "${TMPDIR_TEST}/rtk"
@@ -75,6 +79,10 @@ chmod +x "${TMPDIR_TEST}/samplecmd"
 cat >"${TMPDIR_TEST}/git" <<'STUB'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "status" ]]; then
+  if [[ "${2:-}" == "--unchanged" ]]; then
+    printf 'payload: git status --unchanged\n'
+    exit 0
+  fi
   printf 'raw git status\n'
   exit 0
 fi
@@ -129,6 +137,12 @@ assert_not_contains "compare strips advisory" "No hook installed" "$compare_outp
 
 PATH="${TMPDIR_TEST}:$PATH" git_status_compare_output=$("$HELPER" --compare git status)
 assert_contains "git status compare flags upstream compact fix" "drops \`-uall\`" "$git_status_compare_output"
+
+PATH="${TMPDIR_TEST}:$PATH" git_status_flag_compare_output=$("$HELPER" --compare git status -s)
+assert_contains "git status compare handles flags" "drops \`-uall\`" "$git_status_flag_compare_output"
+
+PATH="${TMPDIR_TEST}:$PATH" git_status_unchanged_compare_output=$("$HELPER" --compare git status --unchanged)
+assert_not_contains "git status compare omits unchanged compact fix noise" "drops \`-uall\`" "$git_status_unchanged_compare_output"
 
 export OPENCODE_DB_PATH="$session_db"
 adoption_output=$("$HELPER" --adoption-report "2026-05-08 00:00:00")
