@@ -321,7 +321,7 @@ setup_rtk() {
 
 	# Pin to a tagged release for stability and auditability (Gemini review feedback).
 	# Update the tag when upstream-watch detects a new release.
-	local rtk_supported_version="0.39.0"
+	local rtk_supported_version="0.41.0"
 	local rtk_installer_url="https://raw.githubusercontent.com/rtk-ai/rtk/v${rtk_supported_version}/install.sh"
 
 	if command -v rtk >/dev/null 2>&1; then

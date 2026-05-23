@@ -16,7 +16,7 @@ over token savings.
    - `rtk-helper.sh gh issue list --repo owner/repo --limit N`
    - In interactive discovery, use these RTK forms instead of raw `gh pr list`
      or `gh issue list` unless the command needs structured/exact output.
-   - RTK v0.40.0 also adds upstream Gradle wrapper support, `rtk init --agent hermes`, `rtk init --dry-run`, and `transparent_prefixes` for wrapper command passthrough; prefer those upstream features over custom aidevops shims when integrating supported runtimes or build tools.
+   - RTK v0.41.0 also adds upstream Gradle wrapper support, `rtk init --agent hermes`, `rtk init --dry-run`, `transparent_prefixes` for wrapper command passthrough, tee tail hints, Docker Compose log tail forwarding, compact Kubernetes pod/service summaries, safer install archive extraction, and git push/status filtering fixes; prefer those upstream features over custom aidevops shims when integrating supported runtimes, build tools, or noisy terminal summaries.
 2. **Assess sufficiency**: proceed only if the filtered output contains every
    fact needed for the next decision.
 3. **Broaden immediately** when output is incomplete, ambiguous, expanded rather
@@ -58,9 +58,10 @@ Use comparison results to classify a command:
   structured fields can answer the question more precisely.
 - **Unsafe for RTK**: exit codes differ, omitted lines could alter diagnosis, or
   exact evidence/security/JSON/diff semantics are required.
-- `git status` expansion is a regression signal: RTK upstream dropped the
-  compact-status `-uall` flag so untracked directories collapse like raw git;
-  rerun raw status and verify RTK version when comparison shows expansion.
+- `git status` expansion is a regression signal: RTK v0.41.0 dropped the
+  compact-status `-uall` flag and preserves full paths/untracked files so
+  untracked directories collapse like raw git without hiding filenames; rerun
+  raw status and verify RTK version when comparison shows expansion.
 
 ## Always bypass RTK
 
@@ -76,10 +77,11 @@ Use comparison results to classify a command:
 
 Initial validation for GH#23212 found RTK useful for list-style GitHub context
 (`gh issue list`, `gh pr list`) and only situational for tiny `git status`,
-already compact `git log --oneline`, or full issue bodies. After the upstream
-compact-status fix, `git status` should no longer expand fully-untracked
-directories beyond raw output. Prefer RTK for discovery and triage summaries;
-prefer raw output or structured fields for exact task briefs.
+already compact `git log --oneline`, or full issue bodies. The v0.41.0 release
+fixes the compact-status expansion regression, preserves full status paths, and
+streams git push output to avoid spurious timeout symptoms. Prefer RTK for
+discovery and triage summaries; prefer raw output or structured fields for exact
+task briefs.
 
 For future regressions, capture:
 
