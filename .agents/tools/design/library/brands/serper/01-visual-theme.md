@@ -1,6 +1,18 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Serper SERP data: Visual Theme & Atmosphere
+# serper: Visual Theme & Source Evidence
 
-Inspired by serper.dev, this preset translates the source into a report-safe presentation system. The mood is SERP/API data product. Use it for client reports, internal briefs, and evidence-led strategy documents rather than product UI cloning.
+## Source reviewed
+
+- Source: https://serper.dev
+- Title/evidence: Serper - The World's Fastest and Cheapest Google Search API
+- Fetch status: Fetched https://serper.dev with status 200
+
+## Visual interpretation
+
+This guide translates the source into an AI-readable report/style system. Treat directly observed values as evidence and generated values as implementation-safe approximations. Preserve the source's broad mood, density, typography direction, spacing rhythm, and component language without copying proprietary brand assets.
+
+## Mode behaviour
+
+Observed theme/dark-mode markers in fetched html/css. If a dark or light inverse palette is not explicitly present in the source, derive it using `tools/design/colour-palette.md`, label it as calculated, and validate text, badge, link, and border contrast before use.

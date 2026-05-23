@@ -1,6 +1,18 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# LottieFiles motion: Visual Theme & Atmosphere
+# lottiefiles: Visual Theme & Source Evidence
 
-Inspired by lottiefiles.com, this preset translates the source into a report-safe presentation system. The mood is motion design freshness. Use it for client reports, internal briefs, and evidence-led strategy documents rather than product UI cloning.
+## Source reviewed
+
+- Source: https://lottiefiles.com
+- Title/evidence: (title unavailable)
+- Fetch status: Fetch incomplete for https://lottiefiles.com: HTTPError: HTTP Error 403: Forbidden
+
+## Visual interpretation
+
+This guide translates the source into an AI-readable report/style system. Treat directly observed values as evidence and generated values as implementation-safe approximations. Preserve the source's broad mood, density, typography direction, spacing rhythm, and component language without copying proprietary brand assets.
+
+## Mode behaviour
+
+Not observed in fetched html/css; inverse mode should be derived and contrast-checked. If a dark or light inverse palette is not explicitly present in the source, derive it using `tools/design/colour-palette.md`, label it as calculated, and validate text, badge, link, and border contrast before use.

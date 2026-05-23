@@ -1,6 +1,20 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Axel editorial evidence: Responsive Behaviour
+# axel: Responsive and Mode Behaviour
 
-HTML previews collapse the side TOC above narrow widths. PDF profiles control page format independently from the HTML preview.
+## Responsive HTML
+
+- Keep one canonical `report.html` preview.
+- Collapse side navigation/table of contents above narrow widths.
+- Ensure tables wrap or scroll in HTML and use PDF-safe fixed layout for print.
+
+## PDF profiles
+
+- A4 portrait is the default PDF profile.
+- Letter portrait is optional for recipients that require it.
+- 16:9 landscape is for PDF presentation export only; do not create separate slides HTML variants.
+
+## Light/dark handling
+
+Not observed in source; inverse mode must be derived and contrast-checked. Any calculated inverse palette must be documented as derived and validated against WCAG AA before becoming normative.

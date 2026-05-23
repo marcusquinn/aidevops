@@ -83,3 +83,14 @@ product documentation clarity. This DESIGN.md is a report-presentation brand pre
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 12px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://www.docuseal.com/
+- **Fetched title/evidence**: DocuSeal | Open Source Document Signing
+- **Fetch status**: Fetched https://www.docuseal.com/ with status 200
+- **Observed fonts**: inherit, ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,Liberation Mono,Courier New,monospace, ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica Neue,Arial,Noto Sans,sans-serif,Apple Color Emoji,Segoe UI Emoji,Segoe UI Symbol,Noto Color Emoji
+- **Observed colours**: #000000, #0069FF, #0090F1, #00d8ff, #0A3161, #0c0b0e, #0f0b25, #101828, #111827, #144077, #171717, #1f2937
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

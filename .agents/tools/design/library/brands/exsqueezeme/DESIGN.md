@@ -83,3 +83,14 @@ playful rounded app energy. This DESIGN.md is a report-presentation brand preset
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 26px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://exsqueezeme.app
+- **Fetched title/evidence**: ExSqueezeMe - macOS video reframing and compression made simple
+- **Fetch status**: Fetched https://exsqueezeme.app with status 200
+- **Observed fonts**: Space Grotesk, Space Mono, var(--default-font-family,ui-sans-serif,system-ui,sans-serif,, var(--default-mono-font-family,ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,, var(--font-body), var(--font-heading), var(--font-mono), var(--font-sans)
+- **Observed colours**: #000000, #00ff6a, #0a0a0a, #141414, #1f1f1f, #2a2a2a, #e0e0e0, #e55f00, #e6a756, #ff3366, #ff6b00, #ff9500
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

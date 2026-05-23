@@ -1,6 +1,18 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Medium essay: Visual Theme & Atmosphere
+# medium: Visual Theme & Source Evidence
 
-Inspired by medium.com, this preset translates the source into a report-safe presentation system. The mood is reading-optimised essay layout with generous measure. Use it for client reports, internal briefs, and evidence-led strategy documents rather than product UI cloning.
+## Source reviewed
+
+- Source: https://medium.com
+- Title/evidence: Medium: Read and write stories.
+- Fetch status: Fetched https://medium.com with status 200
+
+## Visual interpretation
+
+This guide translates the source into an AI-readable report/style system. Treat directly observed values as evidence and generated values as implementation-safe approximations. Preserve the source's broad mood, density, typography direction, spacing rhythm, and component language without copying proprietary brand assets.
+
+## Mode behaviour
+
+Observed theme/dark-mode markers in fetched html/css. If a dark or light inverse palette is not explicitly present in the source, derive it using `tools/design/colour-palette.md`, label it as calculated, and validate text, badge, link, and border contrast before use.

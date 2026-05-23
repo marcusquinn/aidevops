@@ -83,3 +83,14 @@ personal AI gradient softness. This DESIGN.md is a report-presentation brand pre
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 22px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://supermemory.ai
+- **Fetched title/evidence**: SupermemorySupermemory Context Stack
+- **Fetch status**: Fetched https://supermemory.ai with status 200
+- **Observed fonts**: DM Mono, DM Mono,monospace, DM Sans, Space Grotesk, Space Grotesk,sans-serif, var(--default-font-family,ui-sans-serif, system-ui, sans-serif, , var(--default-mono-font-family,ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, , var(--font-body)
+- **Observed colours**: #000000, #007bff, #0452db, #051950, #0562ef, #0763ee, #0a0e13, #0b1015, #0d1117, #0f1117, #0f172a, #0f2660
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

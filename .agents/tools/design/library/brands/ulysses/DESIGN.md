@@ -83,3 +83,14 @@ warm help-centre editorial tone. This DESIGN.md is a report-presentation brand p
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 12px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://help.ulysses.app
+- **Fetched title/evidence**: Ulysses Help
+- **Fetch status**: Fetched https://help.ulysses.app with status 200
+- **Observed fonts**: Font Awesome 5 Brands, Font Awesome 5 Pro
+- **Observed colours**: #007700, #3344bb, #336699, #880088, #990073, #997700, #fff0ff
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

@@ -83,3 +83,14 @@ technical energy blueprint. This DESIGN.md is a report-presentation brand preset
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 10px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://heronpower.com/blueprint-for-800-vdc
+- **Fetched title/evidence**: A Blueprint for 800 VDC | Heron Power
+- **Fetch status**: Fetched https://heronpower.com/blueprint-for-800-vdc with status 200
+- **Observed fonts**: Archivo Variablefont Wdth Wght, Archivo Variablefont Wdth Wght, Arial, sans-serif, Arial, sans-serif, Helvetica Neue, Helvetica, Ubuntu, Segoe UI, Verdana, sans-serif, Intertight Variablefont Wght, Intertight Variablefont Wght, Arial, sans-serif, monospace, sans-serif
+- **Observed colours**: #000000, #0082f3, #2895f7, #2b2c2b, #338370, #3898ec, #5d6c7b, #758696, #9f743a, #aaadb0, #bdbdbd, #c8c8c8
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

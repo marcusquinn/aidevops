@@ -83,3 +83,14 @@ publishing-oriented editorial UI. This DESIGN.md is a report-presentation brand 
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 14px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://postedapp.com
+- **Fetched title/evidence**: Posted App | Viral Content Marketing Platform
+- **Fetch status**: Fetched https://postedapp.com with status 200
+- **Observed fonts**: Arial, Inter, Poppins, inter, poppins
+- **Observed colours**: #00002e, #0000fe, #01081b, #02015a, #033bac, #111621, #2d354c, #38b3ff, #4e5774, #573cff, #68708c, #6b6b6b
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

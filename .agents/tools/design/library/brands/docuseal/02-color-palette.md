@@ -1,16 +1,32 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# DocuSeal product docs: Colour Palette
+# docuseal: Colour Palette
 
-| Token | Value | Use |
-|---|---|---|
-| background | `#F8FAFC` | Page canvas |
-| surface | `#FFFFFF` | Cards and panels |
-| on-surface | `#111827` | Primary text |
-| muted | `#4B5563` | Secondary text |
-| outline | `#D1D5DB` | Borders and rules |
-| primary | `#2563EB` | Links, accents, active states |
-| primary-container | `#DBEAFE` | Badge and callout backgrounds |
+## Observed source colours
 
-Use primary text for reading. Accent colours are decorative unless contrast is verified.
+- `#000000`
+- `#0069FF`
+- `#0090F1`
+- `#00d8ff`
+- `#0A3161`
+- `#0c0b0e`
+- `#0f0b25`
+- `#101828`
+- `#111827`
+- `#144077`
+- `#171717`
+- `#1f2937`
+
+## Application rules
+
+- Use observed colours as source evidence, then map them into semantic DESIGN.md roles: background, surface, on-surface, muted, outline, primary, and primary-container.
+- Long-form report text must use high-contrast `on-surface`, not decorative accent colours.
+- Badge/status colours must preserve text labels and borders so grayscale PDF output remains meaningful.
+- For missing theme modes, calculate inverse roles with `colour-palette.md`; mark them as derived until previewed and contrast-checked.
+
+## Required contrast checks
+
+- Body text on background and surface: WCAG AA 4.5:1 minimum.
+- Large headings and non-text UI indicators: 3:1 minimum.
+- Focus rings, table borders, and evidence badge borders: visible against adjacent surfaces.

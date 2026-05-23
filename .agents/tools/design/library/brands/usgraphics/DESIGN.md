@@ -83,3 +83,14 @@ catalogue and print commerce. This DESIGN.md is a report-presentation brand pres
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 8px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://usgraphics.com/catalog
+- **Fetched title/evidence**: U.S. Graphics Company - General Catalog
+- **Fetch status**: Fetched https://usgraphics.com/catalog with status 200
+- **Observed fonts**: Berkeley Arrow, SF Mono, TX-02-Data, TX-02-Data,, Univers LT Pro, inherit, sans-serif
+- **Observed colours**: #001b44, #002dce, #003f9b, #00449e, #005eec, #00794c, #008181, #008374, #0092ff, #00a96c, #00c986, #00e4e4
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

@@ -83,3 +83,14 @@ SERP/API data product. This DESIGN.md is a report-presentation brand preset for 
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 12px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://serper.dev
+- **Fetched title/evidence**: Serper - The World's Fastest and Cheapest Google Search API
+- **Fetch status**: Fetched https://serper.dev with status 200
+- **Observed fonts**: -apple-system,BlinkMacSystemFont,Segoe UI,Noto Sans,Helvetica,Arial,sans-serif,Apple Color Emoji,Segoe UI Emoji, -apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Oxygen,Ubuntu,Cantarell,Fira Sans,Droid Sans,Helvetica Neue,sans-serif, Apple Color Emoji,Segoe UI Emoji,Segoe UI Symbol, inherit, monospace, ui-monospace,SFMono-Regular,SF Mono,Menlo,Consolas,Liberation Mono,monospace
+- **Observed colours**: #033a16, #0d1117, #1158c7, #161b22, #1f6feb, #21262d, #30363d, #484f58, #58a6ff, #5a1e02, #67060c, #6e7681
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

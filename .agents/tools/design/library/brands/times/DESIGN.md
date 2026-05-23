@@ -83,3 +83,14 @@ newspaper-style editorial hierarchy. This DESIGN.md is a report-presentation bra
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 4px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://www.polymarketimes.com/
+- **Fetched title/evidence**: Will Abelardo de la Espriella win the 2026 Colomb... - The Polymarket Times
+- **Fetch status**: Fetched https://www.polymarketimes.com/ with status 200
+- **Observed fonts**: EB Garamond, EB Garamond Fallback, EB Garamond,EB Garamond Fallback, Playfair Display, Playfair Display Fallback, Playfair Display,Playfair Display Fallback, UnifrakturMaguntia, UnifrakturMaguntia Fallback
+- **Observed colours**: #000000, #008138, #00a544, #00c758, #016630, #05df72, #0d542b, #101828, #16a34a, #193cb8, #1a1a1a, #1c398e
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

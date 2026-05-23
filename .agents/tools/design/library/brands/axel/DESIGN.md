@@ -83,3 +83,14 @@ near-white paper, evidence badges, sticky TOC, chaptered editorial report. This 
 - **Code font**: "IBM Plex Mono", "JetBrains Mono", "SFMono-Regular", Consolas, monospace
 - **Radius**: 18px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: local attachment
+- **Fetched title/evidence**: LLM Visibility Toolbox
+- **Fetch status**: Local attachment: LLM Visibility Toolbox HTML/PDF supplied by user; source scan reported clean earlier in session.
+- **Observed fonts**: Newsreader, IBM Plex Sans, IBM Plex Mono
+- **Observed colours**: #FAFAF7, #FFFFFF, #0C0F15, #2D4BB5, #DBE1F2
+- **Light/dark mode**: not observed in source; inverse mode must be derived and contrast-checked
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

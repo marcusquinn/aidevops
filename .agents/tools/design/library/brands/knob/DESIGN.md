@@ -83,3 +83,14 @@ tactile product design. This DESIGN.md is a report-presentation brand preset for
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 24px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://knob.design
+- **Fetched title/evidence**: KNOB / k.no.b.1 / Low Profile Mechanical Keyboard
+- **Fetch status**: Fetched https://knob.design with status 200
+- **Observed fonts**: Arial, Helvetica, Inter, Roboto, inter
+- **Observed colours**: #14100b, #1947ea, #45423f, #bdbdbb, #cdea19, #f0ece0, #ff4d00
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

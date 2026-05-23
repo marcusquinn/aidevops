@@ -83,3 +83,14 @@ developer docs clarity. This DESIGN.md is a report-presentation brand preset for
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 14px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://docs.runcabinet.com
+- **Fetched title/evidence**: Welcome to Cabinet — Cabinet
+- **Fetch status**: Fetched https://docs.runcabinet.com with status 200
+- **Observed fonts**: Instrument Serif, Inter, JetBrains Mono, Source Serif 4, inherit!important, var(--default-font-family,ui-sans-serif, system-ui, sans-serif, , var(--default-mono-font-family,ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, , var(--font-heading)
+- **Observed colours**: #000000, #002c22, #00406a, #005211, #005986, #005f46, #00791d, #007956, #0083e3, #0084cc, #0092b5, #009767
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

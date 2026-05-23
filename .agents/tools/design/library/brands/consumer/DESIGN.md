@@ -83,3 +83,14 @@ consumer guide cards and trust-forward blue. This DESIGN.md is a report-presenta
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 16px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://www.consumeraffairs.com/
+- **Fetched title/evidence**: ConsumerAffairs®: Research. Review. Resolve.
+- **Fetch status**: Fetched https://www.consumeraffairs.com/ with status 200
+- **Observed fonts**: Helvetica, Inter, inter
+- **Observed colours**: #060d17, #086045, #0e7455, #128260, #143b68, #1758A6, #1758a6, #1F6DA2, #2669ba, #2976D1, #2976d1, #30a16b
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

@@ -1,12 +1,26 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# SavvyCal friendly: Typography
+# savvy: Typography
 
-| Role | Stack |
-|---|---|
-| Headings | `Inter, system-ui, sans-serif` |
-| Body | `Inter, system-ui, sans-serif` |
-| Code/data | `"IBM Plex Mono", Consolas, monospace` |
+## Observed source font evidence
 
-Commercial or platform-specific source fonts are replaced with open-source/system substitutes. Keep body text at 16px+ for HTML and 10.5pt+ for PDF.
+- `GT-Alpina-Condensed`
+- `GT-Alpina-Fine-Condensed`
+- `GT-America-Condensed`
+- `GT-America-Extended`
+- `GT-America-Standard`
+- `IBM Plex Serif,ui-serif,Georgia,Cambria,Times New Roman,Times,serif`
+- `Inter`
+- `Inter var`
+
+## Substitute policy
+
+Use exact source fonts only when they are system/open-source and appropriate for redistribution. Where the source uses commercial or hosted proprietary fonts, map the style to open-source/system alternatives in DESIGN.md tokens. Document the source font in this chapter and the substitute in `DESIGN.md`.
+
+## Report typography requirements
+
+- Screen body text: 16px or larger with 1.45-1.7 line height.
+- PDF body text: 10.5-12pt equivalent.
+- Headings: preserve the source's broad serif/sans/mono character and weight contrast.
+- Code/data: use a readable monospace stack and wrap long lines in PDF.

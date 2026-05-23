@@ -83,3 +83,14 @@ reference article hierarchy, neutral panels, blue links. This DESIGN.md is a rep
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 2px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://www.wikipedia.org/
+- **Fetched title/evidence**: (title unavailable)
+- **Fetch status**: Fetch incomplete for https://wikipedia.org: TypeError: 'NoneType' object is not subscriptable
+- **Observed fonts**: not available from fetched markup/CSS
+- **Observed colours**: not available from fetched markup/CSS
+- **Light/dark mode**: not observed in fetched HTML/CSS; inverse mode should be derived and contrast-checked
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

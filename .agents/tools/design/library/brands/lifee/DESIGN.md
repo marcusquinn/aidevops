@@ -83,3 +83,14 @@ calm planner surfaces. This DESIGN.md is a report-presentation brand preset for 
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 22px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://lifeecalendar.com
+- **Fetched title/evidence**: Lifee Calendar App | Visualize Your Life in Weeks, Months & Years
+- **Fetch status**: Fetched https://lifeecalendar.com with status 200
+- **Observed fonts**: Mono, inter, mono
+- **Observed colours**: #000000, #0008ff, #008138, #030712, #1447e6, #31363f, #454545, #5f5f5f, #8200da, #959595, #a7a7a7, #b7b7b7
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

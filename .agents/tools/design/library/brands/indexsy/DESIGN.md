@@ -83,3 +83,14 @@ agency SEO confidence. This DESIGN.md is a report-presentation brand preset for 
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 18px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://indexsy.com
+- **Fetched title/evidence**: Indexsy - We Build, Acquire & Scale Digital Assets
+- **Fetch status**: Fetched https://indexsy.com with status 200
+- **Observed fonts**: -apple-system,system-ui,BlinkMacSystemFont,, Instrument Serif, Inter, Poppins, inherit, sans-serif, var(--gp-font--body), var(--gp-font--headings)
+- **Observed colours**: #000000, #0000cc, #030712, #111827, #1f2937, #21759b, #3451ea, #374151, #3f4047, #4b5563, #5270ff, #55555e
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

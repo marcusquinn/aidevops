@@ -1,16 +1,32 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Heron power blueprint: Colour Palette
+# heron: Colour Palette
 
-| Token | Value | Use |
-|---|---|---|
-| background | `#F3F7FB` | Page canvas |
-| surface | `#FFFFFF` | Cards and panels |
-| on-surface | `#0B1F33` | Primary text |
-| muted | `#40576D` | Secondary text |
-| outline | `#C7D6E4` | Borders and rules |
-| primary | `#0369A1` | Links, accents, active states |
-| primary-container | `#E0F2FE` | Badge and callout backgrounds |
+## Observed source colours
 
-Use primary text for reading. Accent colours are decorative unless contrast is verified.
+- `#000000`
+- `#0082f3`
+- `#2895f7`
+- `#2b2c2b`
+- `#338370`
+- `#3898ec`
+- `#5d6c7b`
+- `#758696`
+- `#9f743a`
+- `#aaadb0`
+- `#bdbdbd`
+- `#c8c8c8`
+
+## Application rules
+
+- Use observed colours as source evidence, then map them into semantic DESIGN.md roles: background, surface, on-surface, muted, outline, primary, and primary-container.
+- Long-form report text must use high-contrast `on-surface`, not decorative accent colours.
+- Badge/status colours must preserve text labels and borders so grayscale PDF output remains meaningful.
+- For missing theme modes, calculate inverse roles with `colour-palette.md`; mark them as derived until previewed and contrast-checked.
+
+## Required contrast checks
+
+- Body text on background and surface: WCAG AA 4.5:1 minimum.
+- Large headings and non-text UI indicators: 3:1 minimum.
+- Focus rings, table borders, and evidence badge borders: visible against adjacent surfaces.

@@ -83,3 +83,14 @@ enterprise SaaS clarity. This DESIGN.md is a report-presentation brand preset fo
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 14px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://scalefusion.com
+- **Fetched title/evidence**: Scalefusion UEM | Endpoint, Access & Security Management
+- **Fetch status**: Fetched https://scalefusion.com with status 200
+- **Observed fonts**: Geist, Public Sans, var(--body-font), var(--header-font)
+- **Observed colours**: #000000, #0037E6, #0043F3, #0043f3, #040404, #070708, #090909, #09AD57, #0F9A53, #0c0c0c, #0e0e10, #0f0f0f
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

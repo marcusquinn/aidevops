@@ -83,3 +83,14 @@ analytics SaaS polish. This DESIGN.md is a report-presentation brand preset for 
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 20px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://superx.so
+- **Fetched title/evidence**: SuperX | X Growth Tool: Scheduling, Analytics, AI Content
+- **Fetch status**: Fetched https://superx.so with status 200
+- **Observed fonts**: Instrument Serif, Instrument Serif Fallback, Inter, Inter Fallback, Inter,Inter Fallback, Inter,sans-serif, inherit, ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,Liberation Mono,Courier New,monospace
+- **Observed colours**: #0F0F0F, #0d0d0d, #0e0e0e, #111111, #181818, #191919, #1F1F1F, #1a1a1a, #1c1c1c, #1d1d1d, #1e1e1e, #1f1f1f
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

@@ -83,3 +83,14 @@ AI search product freshness. This DESIGN.md is a report-presentation brand prese
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 18px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://www.tavily.com/
+- **Fetched title/evidence**: Tavily
+- **Fetch status**: Fetched https://www.tavily.com/ with status 200
+- **Observed fonts**: Suisse Int\, Suisse Intl,sans-serif, inherit, var(--font-mono), var(--font-mono),monospace, var(--font-suisse)
+- **Observed colours**: #000000, #0b0907, #191715, #19213d, #1a1a1a, #1f1e1e, #202020, #2677ff, #272524, #3c3a39, #424140, #4285f4
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

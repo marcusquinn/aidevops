@@ -83,3 +83,14 @@ design documentation system. This DESIGN.md is a report-presentation brand prese
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 16px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://zeroheight.com
+- **Fetched title/evidence**: zeroheight - The Design System Platform Built for the AI Era
+- **Fetch status**: Fetched https://zeroheight.com with status 200
+- **Observed fonts**: inherit, var(--default-font-family,ui-sans-serif,system-ui,sans-serif,, var(--default-mono-font-family,ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,, var(--font-body), var(--font-heading), var(--font-inter), var(--font-mono), var(--font-sans)
+- **Observed colours**: #000000, #000001, #00CA4E, #00CBA0, #00ca4e, #00cba0, #050505, #0A0A0A, #0a0a0a, #151316, #1A1A1A, #1C1C1C
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

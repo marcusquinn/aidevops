@@ -83,3 +83,14 @@ clean documentation surfaces and green product accent. This DESIGN.md is a repor
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 14px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://docs.ghost.org
+- **Fetched title/evidence**: Getting Started With Ghost - Ghost Developer Docs
+- **Fetch status**: Fetched https://docs.ghost.org with status 200
+- **Observed fonts**: CMU Typewriter Text, CMU Typewriter Text!important, Inter, Inter Fallback, Inter,Inter Fallback,-apple-system,BlinkMacSystemFont,Segoe UI,system-ui,sans-serif, JetBrains Mono, JetBrains Mono Fallback, JetBrains Mono,JetBrains Mono Fallback,SF Mono,SFMono-Regular,Menlo,Monaco,Cascadia Mono,Segoe UI Mono,Roboto Mono,Oxygen Mono,Ubuntu Monospace,Source Code Pro,Fira Mono,Droid Sans Mono,Consolas,Courier New,monospace
+- **Observed colours**: #000000, #00A63E, #00c951, #00d3f2, #03153A, #072213, #07296A, #084608, #09090B, #0B0C0E, #0F1117, #0F4C2C
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

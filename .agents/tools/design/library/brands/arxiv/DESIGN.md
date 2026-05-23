@@ -83,3 +83,14 @@ academic paper density, restrained rules, citation-forward typography. This DESI
 - **Code font**: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace
 - **Radius**: 2px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://arxiv.org
+- **Fetched title/evidence**: arXiv.org e-Print archivecontact arXivsubscribe to arXiv mailings
+- **Fetch status**: Fetched https://arxiv.org with status 200
+- **Observed fonts**: EB Garamond, Lucida Grande, courier, inherit, monospace, verdana, arial, helvetica, sans-serif
+- **Observed colours**: #000000, #0012ef, #005909, #005aa7, #005e9d, #005ea2, #0068AC, #009917, #046BAF, #046baf, #054169, #1772a0
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

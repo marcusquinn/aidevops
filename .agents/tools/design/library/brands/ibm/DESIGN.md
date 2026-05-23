@@ -69,3 +69,14 @@ IBM Carbon Design System — enterprise authority, monochromatic + blue, 8px gri
 - **Inputs**: bottom-border only (`2px solid #0f62fe` on focus)
 - **Tokens**: `--cds-*` prefix for all semantic values
 - **Grid**: 16-column, 8px base unit, 1584px max width
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://www.ibm.com/design/language/
+- **Fetched title/evidence**: (title unavailable)
+- **Fetch status**: Fetched https://www.ibm.com/design/language/ with status 200
+- **Observed fonts**: Arial, Helvetica, IBM Plex, Mono, inter, mono
+- **Observed colours**: #002d9c, #003a6d, #004144, #0043ce, #0353e9, #044317, #0f62fe, #161616, #198038, #262626, #2c2c2c, #343a3f
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

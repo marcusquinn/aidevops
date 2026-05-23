@@ -83,3 +83,14 @@ terminal-first API aesthetic. This DESIGN.md is a report-presentation brand pres
 - **Code font**: "IBM Plex Mono", "JetBrains Mono", monospace
 - **Radius**: 8px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://www.terminal.shop/api
+- **Fetched title/evidence**: wip: terminal (initial commit)
+- **Fetch status**: Fetched https://www.terminal.shop/api with status 200
+- **Observed fonts**: Inter, inter, mono
+- **Observed colours**: not available from fetched markup/CSS
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

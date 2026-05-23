@@ -83,3 +83,14 @@ friendly scheduling warmth. This DESIGN.md is a report-presentation brand preset
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 18px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://savvycal.com
+- **Fetched title/evidence**: Scheduling Software Everyone Will Love · SavvyCal
+- **Fetch status**: Fetched https://savvycal.com with status 200
+- **Observed fonts**: GT-Alpina-Condensed, GT-Alpina-Fine-Condensed, GT-America-Condensed, GT-America-Extended, GT-America-Standard, IBM Plex Serif,ui-serif,Georgia,Cambria,Times New Roman,Times,serif, Inter, Inter var
+- **Observed colours**: #000000, #004e3b, #00776e, #007956, #008138, #0084cc, #009767, #00a5ef, #00baa7, #00bb7f, #00c758, #00d2ef
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

@@ -83,3 +83,14 @@ reading-optimised essay layout with generous measure. This DESIGN.md is a report
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 10px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://medium.com
+- **Fetched title/evidence**: Medium: Read and write stories.
+- **Fetch status**: Fetched https://medium.com with status 200
+- **Observed fonts**: charter, fell, gt-super, noe, opendyslexic, sohne, source-code-pro, source-serif-pro
+- **Observed colours**: #000000, #007400, #0E0EFF, #156D12, #171717, #1A8917, #1c00cf, #242424, #3F6E74, #5c2699, #643820, #6B6B6B
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

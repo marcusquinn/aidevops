@@ -83,3 +83,14 @@ marketing email platform warmth. This DESIGN.md is a report-presentation brand p
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 20px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://bentonow.com
+- **Fetched title/evidence**: Bento: Marketing Automation & Email Marketing for Small Businesses
+- **Fetch status**: Fetched https://bentonow.com with status 200
+- **Observed fonts**: Fira Mono,Menlo,Monaco,Consolas,monospace, Johto Mono, Johto Mono,monospace!important, var(--font-sans)
+- **Observed colours**: #000000, #0070f3, #008b8b, #009cff, #030303, #070707, #08090a, #0b1215, #14120b, #161b22, #22b8cf, #28282c
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

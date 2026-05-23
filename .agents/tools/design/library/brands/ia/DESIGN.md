@@ -83,3 +83,14 @@ minimal writing-first typography. This DESIGN.md is a report-presentation brand 
 - **Code font**: "IBM Plex Mono", Consolas, monospace
 - **Radius**: 0px
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://ia.net
+- **Fetched title/evidence**: Home - iA
+- **Fetch status**: Fetched https://ia.net with status 200
+- **Observed fonts**: iASansDay, iASansNight, iASerifDay, iASerifDayBlock, iASerifDayHeadline, iASerifDaySC, iASerifNight, iASerifNightBlock
+- **Observed colours**: #18293a, #1e2246, #b32a33
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.
