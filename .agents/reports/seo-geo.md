@@ -47,6 +47,21 @@ evidence, export, and handoff.
 - Treat schema validation as hygiene unless it blocks eligibility or clarity.
 - Record capture dates because AI-search and SERP output changes quickly.
 
+## Generic and Client-Custom SEO/GEO Reports
+
+- **Generic guidance reports** may combine `seo/llm-visibility-instructional-report.md`,
+  the SEO/GEO pattern docs, and curated source material into a chaptered toolbox.
+  Label source material and assumptions clearly.
+- **Client-custom reports** must collect live/client evidence first: target pages,
+  page types, intent clusters, crawl/indexability, visible content, schema/logs,
+  analytics/Search Console exports if available, review/profile parity, backlinks
+  or citations, and per-engine AIO/Gemini/ChatGPT/AI Mode/Perplexity lines.
+- Use the weighted scorecard from `seo/ai-search-scoring.md` before writing the
+  roadmap. Recommendations must cite source IDs and be weighted by page type;
+  never apply a flat tactic list to every URL.
+- If recurring monitoring is useful, hand off to `reports/routine-handoff.md` with
+  deterministic collection steps before any `agent:Reports` interpretation step.
+
 ## Export Notes
 
 - Use `reports/citations.md` for inline source IDs and evidence ledger format.

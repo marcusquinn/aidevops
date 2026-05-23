@@ -23,6 +23,12 @@ interprets evidence and writes the report.
 | Client has stable domain-specific rules | Custom report agent |
 | Findings become implementation work | Worker-ready issue or `/full-loop` task |
 
+For client-custom research reports, keep collection and interpretation separate:
+first collect live evidence with deterministic helpers or service exports, then
+ask the relevant domain agent plus `agent:Reports` to reason over the evidence.
+This lets the same report format produce one-off client deliverables and later
+become a monitoring routine without re-inventing the research workflow.
+
 ## Routine Pattern
 
 Use `run:` for deterministic collection and export. Use `agent:Reports` only
@@ -84,6 +90,8 @@ Deliverables:
 ## Handoff Checklist
 
 - The finished report has source IDs, evidence ledger, and export notes.
+- Client-custom reports list the live data sources used and the unavailable tools
+  or credentials that limited analysis.
 - Collection commands are deterministic and safe to run unattended.
 - Secrets and client-specific credentials are referenced by secret name only.
 - The routine writes to `_reports/drafts/` before any published bundle.

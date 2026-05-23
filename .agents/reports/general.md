@@ -37,6 +37,22 @@ Use this default shape unless the domain doc provides a better template:
 7. Appendix: raw tables, screenshots, exports, unresolved questions.
 8. Handoff: worker-ready tasks, routine schedule, or custom-agent prompt.
 
+## Generic vs Client-Custom Reports
+
+Use the same Markdown-first report contract for both reusable guidance reports and
+client-specific analysis reports, but change evidence collection depth:
+
+| Report mode | Purpose | Evidence depth | Typical tools |
+|-------------|---------|----------------|---------------|
+| Generic guidance | Teach a domain, playbook, or operating model in a reusable template style. | Framework docs, curated source material, public references, and explicit assumptions. | Domain agents, local knowledge, `webfetch`, browser extraction for source examples. |
+| Client-custom | Produce actionable findings for a specific website, product, app, service, business, campaign, citations, or backlinks. | Live data, crawl outputs, analytics/search exports, page screenshots, third-party profiles, engine runs, and source IDs. | Domain agents plus aidevops service helpers, browser automation, SEO/data providers, citation/backlink tools where configured. |
+
+For client-custom reports, gather data before interpretation. Use deterministic
+`run:` or helper commands for collection, then route the evidence bundle to the
+domain agent and `agent:Reports` for reasoning, prioritisation, and narrative.
+If the report pattern will repeat, finish with `reports/routine-handoff.md` so a
+custom agent/routine can collect, monitor, and act on the recommendations.
+
 ## Routing Matrix
 
 | Report focus | Load next | Keep here |
