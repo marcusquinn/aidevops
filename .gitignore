@@ -266,6 +266,10 @@ _knowledge/index/
 _campaigns/intel/
 _campaigns/active/
 _campaigns/index/
+_reports/drafts/
+_reports/published/
+_reports/index/
+_reports/_config/
 _inbox/*
 !_inbox/README.md
 !_inbox/.gitignore
