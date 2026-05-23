@@ -47,10 +47,10 @@ Canonical Markdown source.
 :::
 
 ::: anchor-links
-[Sources](#source-ledger-pattern) [Tactics](#highest-impact-tactics) [Matrix](#page-type-matrix) [Roadmap](#roadmap-template) [Appendices](#appendices)
+[Sources](#sources) [Tactics](#highest-impact-tactics) [Matrix](#page-type-matrix) [Roadmap](#roadmap-template) [Appendices](#appendices)
 :::
 
-## Source ledger pattern
+## Sources
 
 ::: sources-layout
 ::: sources-group
@@ -92,6 +92,21 @@ Review, directory, community, partner, and media source parity checks.
 ### Source-card rule
 
 Every roadmap item should cite source IDs, observed date, confidence, owner, and the command or routine that verifies completion.
+:::
+
+::: source-list
+::: source-item
+### Ahrefs controlled schema study
+Schema is treated as technical hygiene rather than a primary AI-visibility growth lever.
+:::
+::: source-item
+### Engine-overlap research
+Low overlap between AIO, Gemini, ChatGPT, AI Mode, and Perplexity requires per-engine reporting.
+:::
+::: source-item
+### Buyer-research evidence
+Answer engines increasingly influence discovery and shortlisting, so reports separate visibility from conversion value.
+:::
 :::
 
 ::: accordion title="How source IDs become recommendations"
@@ -248,6 +263,24 @@ Authority corroboration — 58%
 
 > Strong reports separate observed facts from interpretation, then turn only verified or clearly labelled partial evidence into roadmap items.
 
+## Case studies
+
+::: case-study-card
+### Industrial manufacturer
+
+**Result:** measurable AI referral growth after direct-answer restructuring and third-party corroboration.
+
+**Tactics applied:** original benchmarks, source-card evidence, bot-friendly rendering, and trade-publication mentions.
+:::
+
+::: case-study-card
+### Healthcare comparison site
+
+**Result:** cited answers appeared across multiple answer engines after visible expertise and profile parity fixes.
+
+**Tactics applied:** practitioner bylines, review methodology, source-backed tables, and monthly prompt reruns.
+:::
+
 ## Roadmap template
 
 ::: priority-group priority=high
@@ -278,8 +311,16 @@ Start with revenue pages that fail retrieval eligibility or evidence proximity b
 - For recurring reports, create a custom routine with deterministic collection and report-agent interpretation.
 :::
 
+## Closing callouts
+
+::: callout
+### Combined finding
+
+AI visibility reporting should end with the fewest useful recommendations: retrieval blockers, evidence proximity, third-party corroboration, and monitoring. Keep panels for important emphasis; use plain bullets and tables for normal content.
+:::
+
 ## Appendices
 
 ::: appendix-links
-[Source ledger](report.md#source-ledger-pattern) [Client audit example](../client-ai-search-audit/report.html) [Style showcase](../style-showcase/report.html)
+[Source ledger](report.md#sources) [Client audit example](../client-ai-search-audit/report.html) [Style showcase](../style-showcase/report.html)
 :::

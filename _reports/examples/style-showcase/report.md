@@ -15,6 +15,8 @@ Use [anchor links](#priority-and-checklist), [appendix links](../llm-visibility-
 {{evidence:verified}} {{evidence:partial}} {{evidence:inferred}} {{evidence:missing}}
 :::
 
+Evidence values should read as plain **Evidence:** text followed by a colour-coded mini badge for the value only.
+
 ::: stats-strip
 ::: stat-card
 **34**
@@ -45,6 +47,34 @@ Canonical source.
 ::: anchor-links
 [Table stress](#table-and-source-cards) [Cards](#cards-and-callouts) [Priority](#priority-and-checklist)
 :::
+
+---
+
+## Highest impact, most validated
+
+Use plain narrative and bullets when that is clearer than a panel. Panels are reserved for warnings, action blocks, source cards, or high-emphasis evidence.
+
+::: tactic-card
+### Earned media on third-party platforms {{badge:strong}}
+
+Six converging studies point to third-party mentions as a stronger AI visibility signal than isolated owned-page edits.
+
+- Build a quarterly cadence across trade press, community, video, and partner surfaces.
+- Pair each campaign with source IDs and prompt reruns.
+- Verify movement separately in AIO, Gemini, ChatGPT, AI Mode, and Perplexity.
+
+::: action-line
+**Action:** coordinate one trade article, one community thread, one video transcript, and one partner citation within the same quarter.
+:::
+:::
+
+A plain bullet section should remain plain:
+
+- Robots.txt and crawlability check for key AI bots.
+- Render test with a representative answer-engine user agent.
+- Schema audit on priority pages.
+- Prompt list from Search Console, support tickets, and customer interviews.
+- Baseline share of voice, citation rate, and sentiment per engine.
 
 ---
 
@@ -89,6 +119,21 @@ Appendix file, screenshot reference, or companion report.
 ### Source sample
 
 This card shows how evidence-led reports separate cited facts from interpretation.
+:::
+
+::: source-list
+::: source-item
+### Ahrefs: schema markup has no impact on AI visibility
+1,885 vs 4,000 controls, difference-in-differences. Source used to downgrade schema from growth lever to hygiene.
+:::
+::: source-item
+### Growth memo: the consensus gap
+Only a small share of cited URLs overlap across engines; engine-specific reporting is required.
+:::
+::: source-item
+### G2: the answer economy research
+B2B buyers increasingly start with answer engines, so reports separate discovery, shortlist, and conversion evidence.
+:::
 :::
 
 ## Cards and callouts
@@ -143,8 +188,12 @@ Every page needs the same GEO checklist.
 Page type determines which tactics are useful, conditional, or noise.
 :::
 
-::: accordion title="Accordion details"
-Accordions are useful for methodology, caveats, and supplementary notes that should be available without dominating the main narrative.
+::: accordion title="How to read this document (evidence badges)"
+Every tactic carries a badge. Use RCT/academic for controlled research, strong primary data for large independent data, vendor study where methodology exists but incentives are commercial, practitioner for field evidence, and hygiene for baseline technical work.
+:::
+
+::: accordion title="Key methodology caveat"
+A visible uplift in one engine is not proof of universal AI visibility. Keep AIO, Gemini, ChatGPT, AI Mode, and Perplexity separate until the closing synthesis.
 :::
 
 > Quotes highlight expert evidence, user language, or a decision constraint without turning it into a recommendation.
@@ -173,6 +222,40 @@ Third-party corroboration — 58%
 Retrieval eligibility — 81%
 :::
 
+## Case studies
+
+Real before/after examples belong in simple cards because each card is a compact story, not a warning panel.
+
+::: case-study-card
+### Industrial manufacturer
+
+**Result:** monthly AI referral traffic grew from near-zero to a measurable assisted-conversion channel.
+
+**Tactics applied:** direct-answer page restructure, original technical benchmarks, schema hygiene, and trade-publication mentions.
+:::
+
+::: case-study-card
+### Healthcare comparison site
+
+**Result:** citations appeared across Google AIO, ChatGPT, and Gemini after entity facts and expert review were made visible.
+
+**Tactics applied:** YMYL author bylines, source-backed comparison tables, third-party profile parity, and prompt reruns.
+:::
+
+---
+
+## What does not work
+
+::: callout
+### SEO myths called out
+
+Claims that circulate widely but cannot be traced to a primary source, or are contradicted by controlled evidence, should be called out explicitly.
+
+**“Schema markup alone creates citation uplift.”** Contradicted by controlled or near-controlled studies; ship schema as hygiene.
+
+**“Longer content always gets cited more.”** Engine-dependent; content depth helps only when it improves answer density and source usefulness.
+:::
+
 ## Priority and checklist
 
 ::: priority-group priority=high
@@ -191,4 +274,15 @@ Review spacing, table width, no-wrap badges, active TOC highlighting, print CSS,
 
 ::: appendix-links
 [Source ledger appendix](../llm-visibility-toolbox/report.md) [Client audit example](../client-ai-search-audit/report.html) [Style preview index](style-previews/index.html)
+:::
+
+
+---
+
+## Closing callouts
+
+::: callout
+### Combined finding
+
+AI is now a discovery layer, but engines disagree on sources. Tracking only mentions or only citations misses the retrieval gap. Keep the final synthesis short, source-backed, and tied to the next action.
 :::

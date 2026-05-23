@@ -148,6 +148,14 @@ Corroboration — 51%
 Prioritise third-party corroboration, clear feature tables, and source-backed claims.
 :::
 
+::: case-study-card
+### Sample case study
+
+**Result:** comparison-page citations increased after source-backed tables, expert review, and profile parity fixes.
+
+**Tactics applied:** visible methodology, direct answer, third-party corroboration, and monthly prompt reruns.
+:::
+
 ::: priority-group priority=high
 ### High priority remediation
 
@@ -181,6 +189,17 @@ Gap evidence
 :::
 Source: ChatGPT prompt transcript with source IDs.
 Source card: Perplexity query set showing missing citation coverage.
+:::
+:::
+
+::: source-list
+::: source-item
+### Source S-001
+Prompt capture with per-engine source IDs and recheck date.
+:::
+::: source-item
+### Source S-002
+Crawl export showing visible answer blocks and source proximity.
 :::
 :::
 

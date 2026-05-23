@@ -86,11 +86,12 @@ body.report-body {
   grid-column: 1;
   grid-row: 1;
   min-width: 0;
-  counter-reset: report-chapter report-section;
+  counter-reset: report-chapter;
 }
 
 .report-cover,
 .chapter-hero,
+.case-study-card,
 .tactic-card,
 .example-card,
 .good-bad,
@@ -101,6 +102,8 @@ body.report-body {
 .priority-group,
 .checklist-card,
 .source-card,
+.source-item,
+.source-list,
 .sources-layout,
 .sources-group,
 .myth-callout,
@@ -238,28 +241,18 @@ body.report-body {
 
 .report-main h2 {
   counter-increment: report-chapter;
-  counter-reset: report-section;
-}
-
-.report-main h3 {
-  counter-increment: report-section;
 }
 
 .report-main h2::before {
-  content: counter(report-chapter, decimal-leading-zero) " / ";
+  content: "Chapter " counter(report-chapter);
+  display: block;
+  margin-block-end: var(--report-space-2);
   color: var(--report-blue);
   font-family: var(--report-font-body);
-  font-size: 0.7em;
+  font-size: 0.75rem;
   font-weight: 800;
-  letter-spacing: 0.08em;
-}
-
-.report-main h3::before {
-  content: counter(report-chapter) "." counter(report-section) " ";
-  color: var(--report-blue);
-  font-family: var(--report-font-body);
-  font-size: 0.82em;
-  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
 }
 
 .chapter-hero {
@@ -411,11 +404,37 @@ th .evidence-badge {
   border-color: rgba(55, 65, 81, 0.18);
 }
 
+.badge-verified {
+  background: #dcfce7;
+  color: #166534;
+  border-color: rgba(22, 101, 52, 0.24);
+}
+
+.badge-partial {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: rgba(146, 64, 14, 0.24);
+}
+
+.badge-inferred {
+  background: #dbeafe;
+  color: #1d4ed8;
+  border-color: rgba(29, 78, 216, 0.24);
+}
+
+.badge-missing {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: rgba(153, 27, 27, 0.24);
+}
+
 .tactic-card,
+.case-study-card,
 .industry-card,
 .priority-group,
 .checklist-card,
 .source-card,
+.source-list,
 .sources-group,
 .details-note,
 .myth-callout,
@@ -459,17 +478,57 @@ th .evidence-badge {
   margin-block: var(--report-space-2);
 }
 
+.source-list {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.source-item {
+  position: relative;
+  display: grid;
+  gap: var(--report-space-1);
+  margin: 0;
+  padding: var(--report-space-3) 2rem var(--report-space-3) 0;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--report-rule);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.source-item::after {
+  content: "↗";
+  position: absolute;
+  top: var(--report-space-3);
+  right: 0;
+  color: var(--report-ink-soft);
+  font-weight: 800;
+}
+
+.source-item h3 {
+  color: var(--report-blue);
+}
+
 .tactic-card h3,
+.case-study-card h3,
 .industry-card h3,
 .priority-group h3,
 .checklist-card h3,
 .source-card h3,
+.source-item h3,
 .details-note h3,
 .myth-callout h3 {
   margin-block: 0 var(--report-space-2);
   color: var(--report-ink);
   font-size: 1.25rem;
   line-height: 1.3;
+}
+
+.source-item h3 {
+  color: var(--report-blue);
 }
 
 .tactic-grid {
@@ -672,9 +731,34 @@ th .evidence-badge {
 }
 
 .accordion summary {
+  display: flex;
+  gap: var(--report-space-2);
+  align-items: center;
   cursor: pointer;
   color: var(--report-ink);
   font-weight: 750;
+  list-style: none;
+}
+
+.accordion summary::-webkit-details-marker {
+  display: none;
+}
+
+.accordion summary::before {
+  content: "+";
+  display: inline-grid;
+  width: 1.5rem;
+  height: 1.5rem;
+  place-items: center;
+  flex: 0 0 1.5rem;
+  border: 1px solid var(--report-ink-soft);
+  border-radius: 999px;
+  color: var(--report-ink-soft);
+  font-weight: 800;
+}
+
+.accordion[open] summary::before {
+  content: "−";
 }
 
 .quote-card,
@@ -1089,34 +1173,42 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <h2>Contents</h2>
 <ol>
 <li><a href="#llm-visibility-toolbox" style="margin-left:0rem">LLM Visibility Toolbox</a></li>
-<li><a href="#executive-summary-badge-rct" style="margin-left:1rem">01 / Executive summary <span class="badge badge--rct">Rct</span></a></li>
-<li><a href="#source-ledger-pattern" style="margin-left:1rem">02 / Source ledger pattern</a></li>
-<li><a href="#prompt-captures" style="margin-left:2rem">2.1 Prompt captures</a></li>
-<li><a href="#crawl-evidence" style="margin-left:2rem">2.2 Crawl evidence</a></li>
-<li><a href="#third-party-profiles" style="margin-left:2rem">2.3 Third-party profiles</a></li>
-<li><a href="#source-card-rule" style="margin-left:2rem">2.4 Source-card rule</a></li>
-<li><a href="#highest-impact-tactics" style="margin-left:1rem">03 / Highest-impact tactics</a></li>
-<li><a href="#weight-before-recommending" style="margin-left:2rem">3.1 Weight before recommending</a></li>
-<li><a href="#critical" style="margin-left:2rem">3.2 Critical</a></li>
-<li><a href="#high" style="margin-left:2rem">3.3 High</a></li>
-<li><a href="#medium" style="margin-left:2rem">3.4 Medium</a></li>
-<li><a href="#low" style="margin-left:2rem">3.5 Low</a></li>
-<li><a href="#page-type-matrix" style="margin-left:1rem">04 / Page-type matrix</a></li>
-<li><a href="#industry-fit-reminder" style="margin-left:2rem">4.1 Industry-fit reminder</a></li>
-<li><a href="#tactic-card-examples" style="margin-left:1rem">05 / Tactic card examples</a></li>
-<li><a href="#direct-answer-opening" style="margin-left:2rem">5.1 Direct-answer opening</a></li>
-<li><a href="#impact" style="margin-left:2rem">5.2 Impact</a></li>
-<li><a href="#evidence" style="margin-left:2rem">5.3 Evidence</a></li>
-<li><a href="#bot-friendly-first-fetch" style="margin-left:2rem">5.4 Bot-friendly first fetch</a></li>
-<li><a href="#strong-pattern" style="margin-left:2rem">5.5 Strong pattern</a></li>
-<li><a href="#weak-pattern" style="margin-left:2rem">5.6 Weak pattern</a></li>
-<li><a href="#myths-and-caveats" style="margin-left:1rem">06 / Myths and caveats</a></li>
-<li><a href="#myth" style="margin-left:2rem">6.1 Myth</a></li>
-<li><a href="#reality" style="margin-left:2rem">6.2 Reality</a></li>
-<li><a href="#roadmap-template" style="margin-left:1rem">07 / Roadmap template</a></li>
-<li><a href="#priority-rule" style="margin-left:2rem">7.1 Priority rule</a></li>
-<li><a href="#verification-checklist" style="margin-left:1rem">08 / Verification checklist</a></li>
-<li><a href="#appendices" style="margin-left:1rem">09 / Appendices</a></li>
+<li><a href="#executive-summary-badge-rct" style="margin-left:1rem">Chapter 1 / Executive summary <span class="badge badge--rct">Rct</span></a></li>
+<li><a href="#sources" style="margin-left:1rem">Chapter 2 / Sources</a></li>
+<li><a href="#prompt-captures" style="margin-left:2rem">Prompt captures</a></li>
+<li><a href="#crawl-evidence" style="margin-left:2rem">Crawl evidence</a></li>
+<li><a href="#third-party-profiles" style="margin-left:2rem">Third-party profiles</a></li>
+<li><a href="#source-card-rule" style="margin-left:2rem">Source-card rule</a></li>
+<li><a href="#ahrefs-controlled-schema-study" style="margin-left:2rem">Ahrefs controlled schema study</a></li>
+<li><a href="#engine-overlap-research" style="margin-left:2rem">Engine-overlap research</a></li>
+<li><a href="#buyer-research-evidence" style="margin-left:2rem">Buyer-research evidence</a></li>
+<li><a href="#highest-impact-tactics" style="margin-left:1rem">Chapter 3 / Highest-impact tactics</a></li>
+<li><a href="#weight-before-recommending" style="margin-left:2rem">Weight before recommending</a></li>
+<li><a href="#critical" style="margin-left:2rem">Critical</a></li>
+<li><a href="#high" style="margin-left:2rem">High</a></li>
+<li><a href="#medium" style="margin-left:2rem">Medium</a></li>
+<li><a href="#low" style="margin-left:2rem">Low</a></li>
+<li><a href="#page-type-matrix" style="margin-left:1rem">Chapter 4 / Page-type matrix</a></li>
+<li><a href="#industry-fit-reminder" style="margin-left:2rem">Industry-fit reminder</a></li>
+<li><a href="#tactic-card-examples" style="margin-left:1rem">Chapter 5 / Tactic card examples</a></li>
+<li><a href="#direct-answer-opening" style="margin-left:2rem">Direct-answer opening</a></li>
+<li><a href="#impact" style="margin-left:2rem">Impact</a></li>
+<li><a href="#evidence" style="margin-left:2rem">Evidence</a></li>
+<li><a href="#bot-friendly-first-fetch" style="margin-left:2rem">Bot-friendly first fetch</a></li>
+<li><a href="#strong-pattern" style="margin-left:2rem">Strong pattern</a></li>
+<li><a href="#weak-pattern" style="margin-left:2rem">Weak pattern</a></li>
+<li><a href="#myths-and-caveats" style="margin-left:1rem">Chapter 6 / Myths and caveats</a></li>
+<li><a href="#myth" style="margin-left:2rem">Myth</a></li>
+<li><a href="#reality" style="margin-left:2rem">Reality</a></li>
+<li><a href="#case-studies" style="margin-left:1rem">Chapter 7 / Case studies</a></li>
+<li><a href="#industrial-manufacturer" style="margin-left:2rem">Industrial manufacturer</a></li>
+<li><a href="#healthcare-comparison-site" style="margin-left:2rem">Healthcare comparison site</a></li>
+<li><a href="#roadmap-template" style="margin-left:1rem">Chapter 8 / Roadmap template</a></li>
+<li><a href="#priority-rule" style="margin-left:2rem">Priority rule</a></li>
+<li><a href="#verification-checklist" style="margin-left:1rem">Chapter 9 / Verification checklist</a></li>
+<li><a href="#closing-callouts" style="margin-left:1rem">Chapter 10 / Closing callouts</a></li>
+<li><a href="#combined-finding" style="margin-left:2rem">Combined finding</a></li>
+<li><a href="#appendices" style="margin-left:1rem">Chapter 11 / Appendices</a></li>
 </ol>
 </nav>
 <main class="report-content report-main">
@@ -1153,9 +1245,9 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <p><strong>Operator action:</strong> collect source IDs first, then interpret findings into recommendations with owners, acceptance criteria, and rerun steps.</p>
 </section>
 <section class="anchor-links">
-<p><a href="#source-ledger-pattern" data-filetype="link">Sources</a> <a href="#highest-impact-tactics" data-filetype="link">Tactics</a> <a href="#page-type-matrix" data-filetype="link">Matrix</a> <a href="#roadmap-template" data-filetype="link">Roadmap</a> <a href="#appendices" data-filetype="link">Appendices</a></p>
+<p><a href="#sources" data-filetype="link">Sources</a> <a href="#highest-impact-tactics" data-filetype="link">Tactics</a> <a href="#page-type-matrix" data-filetype="link">Matrix</a> <a href="#roadmap-template" data-filetype="link">Roadmap</a> <a href="#appendices" data-filetype="link">Appendices</a></p>
 </section>
-<h2 id="source-ledger-pattern">Source ledger pattern</h2>
+<h2 id="sources">Sources</h2>
 <section class="sources-layout">
 <section class="sources-group">
 <section class="source-title">
@@ -1193,6 +1285,20 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <section class="source-card">
 <h3 id="source-card-rule">Source-card rule</h3>
 <p>Every roadmap item should cite source IDs, observed date, confidence, owner, and the command or routine that verifies completion.</p>
+</section>
+<section class="source-list">
+<section class="source-item">
+<h3 id="ahrefs-controlled-schema-study">Ahrefs controlled schema study</h3>
+<p>Schema is treated as technical hygiene rather than a primary AI-visibility growth lever.</p>
+</section>
+<section class="source-item">
+<h3 id="engine-overlap-research">Engine-overlap research</h3>
+<p>Low overlap between AIO, Gemini, ChatGPT, AI Mode, and Perplexity requires per-engine reporting.</p>
+</section>
+<section class="source-item">
+<h3 id="buyer-research-evidence">Buyer-research evidence</h3>
+<p>Answer engines increasingly influence discovery and shortlisting, so reports separate visibility from conversion value.</p>
+</section>
 </section>
 <details class="accordion"><summary>How source IDs become recommendations</summary>
 <ol>
@@ -1317,6 +1423,17 @@ Acceptance: AIO, Gemini, ChatGPT, AI Mode, and Perplexity results are recorded s
 <p>Authority corroboration — 58%</p>
 </section>
 <blockquote>Strong reports separate observed facts from interpretation, then turn only verified or clearly labelled partial evidence into roadmap items.</blockquote>
+<h2 id="case-studies">Case studies</h2>
+<section class="case-study-card">
+<h3 id="industrial-manufacturer">Industrial manufacturer</h3>
+<p><strong>Result:</strong> measurable AI referral growth after direct-answer restructuring and third-party corroboration.</p>
+<p><strong>Tactics applied:</strong> original benchmarks, source-card evidence, bot-friendly rendering, and trade-publication mentions.</p>
+</section>
+<section class="case-study-card">
+<h3 id="healthcare-comparison-site">Healthcare comparison site</h3>
+<p><strong>Result:</strong> cited answers appeared across multiple answer engines after visible expertise and profile parity fixes.</p>
+<p><strong>Tactics applied:</strong> practitioner bylines, review methodology, source-backed tables, and monthly prompt reruns.</p>
+</section>
 <h2 id="roadmap-template">Roadmap template</h2>
 <section class="priority-group" data-priority="high">
 <h3 id="priority-rule">Priority rule</h3>
@@ -1342,9 +1459,14 @@ Acceptance: AIO, Gemini, ChatGPT, AI Mode, and Perplexity results are recorded s
 <li>For recurring reports, create a custom routine with deterministic collection and report-agent interpretation.</li>
 </ul>
 </section>
+<h2 id="closing-callouts">Closing callouts</h2>
+<section class="callout">
+<h3 id="combined-finding">Combined finding</h3>
+<p>AI visibility reporting should end with the fewest useful recommendations: retrieval blockers, evidence proximity, third-party corroboration, and monitoring. Keep panels for important emphasis; use plain bullets and tables for normal content.</p>
+</section>
 <h2 id="appendices">Appendices</h2>
 <section class="appendix-links">
-<p><a href="report.md#source-ledger-pattern" data-filetype="md">Source ledger</a> <a href="../client-ai-search-audit/report.html" data-filetype="html">Client audit example</a> <a href="../style-showcase/report.html" data-filetype="html">Style showcase</a></p>
+<p><a href="report.md#sources" data-filetype="md">Source ledger</a> <a href="../client-ai-search-audit/report.html" data-filetype="html">Client audit example</a> <a href="../style-showcase/report.html" data-filetype="html">Style showcase</a></p>
 </section>
 </main>
 </div>

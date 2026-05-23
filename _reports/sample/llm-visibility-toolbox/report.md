@@ -10,7 +10,7 @@ Author: Marcus Quinn / aidevops. Licence: MIT. Export: one HTML preview plus PDF
 :::
 
 ::: anchor-links
-[Executive summary](#executive-summary) [Tactics](#chapter-1-on-page-content-tactics) [Technical](#chapter-2-technical-tactics) [Authority](#chapter-3-off-page-authority) [Appendices](#appendices)
+[Executive summary](#executive-summary) [Tactics](#on-page-content-tactics) [Technical](#technical-tactics) [Authority](#off-page-authority) [Appendices](#appendices)
 :::
 
 ## Executive summary {{badge:strong}}
@@ -74,7 +74,7 @@ Hygiene, monitoring, or presentation polish.
 Sources are captured first, assigned IDs, mapped to claims, and scored by page-type fit, confidence, impact, and effort. Unsupported claims remain in the appendix or backlog until verified.
 :::
 
-## Source ledger
+## Sources
 
 ::: sources-layout
 ::: sources-group
@@ -117,9 +117,24 @@ Review, community, media, partner, and profile sources verify claims outside own
 Include source ID, capture date, evidence type, supported claims, privacy state, and recheck path.
 :::
 
+::: source-list
+::: source-item
+### Controlled schema study
+Use as a downgrade source when schema is presented as a standalone growth lever.
+:::
+::: source-item
+### Engine-overlap evidence
+Use to explain why answer engines are reported separately.
+:::
+::: source-item
+### Buyer-research evidence
+Use to connect visibility findings to discovery and shortlist behaviour.
+:::
+:::
+
 ---
 
-## Chapter 1: On-page content tactics
+## On-page content tactics
 
 ::: chapter-hero
 ### Goal
@@ -155,7 +170,7 @@ Evidence is strongest when prompt captures show cited URLs before and after impl
 :::
 :::
 
-## Chapter 2: Technical tactics
+## Technical tactics
 
 ::: tactic-card
 ### Bot-friendly first fetch
@@ -204,7 +219,7 @@ Third-party corroboration — 58%
 Monitoring coverage — 44%
 :::
 
-## Chapter 3: Off-page authority
+## Off-page authority
 
 > Answer engines often corroborate owned claims against review sites, partner pages, communities, editorial mentions, transcripts, and public profiles.
 
@@ -221,6 +236,24 @@ More schema can compensate for weak or unsupported content.
 Schema clarifies visible facts; it does not create trust when evidence is missing.
 :::
 
+## Case studies
+
+::: case-study-card
+### Industrial manufacturer
+
+**Result:** AI referral traffic grew after the site added crawlable direct answers, technical benchmarks, and trade-publication corroboration.
+
+**Tactics applied:** direct-answer opening, source cards, source-list review, and bot-friendly first fetch.
+:::
+
+::: case-study-card
+### Healthcare comparison site
+
+**Result:** citations appeared after visible expert review, comparison methodology, and third-party profile parity were added.
+
+**Tactics applied:** YMYL author bylines, source-backed tables, profile parity, and prompt reruns.
+:::
+
 ## Roadmap
 
 ::: facts-table-wrap
@@ -231,6 +264,14 @@ Schema clarifies visible facts; it does not create trust when evidence is missin
 | P1 | Add source-backed answer blocks. | Content + subject expert | Source ledger and prompt reruns |
 | P1 | Improve profile parity. | Marketing/PR | Third-party facts match canonical table |
 | P2 | Add schema hygiene. | SEO + engineering | Schema validation plus visible-content check |
+:::
+
+## Closing callouts
+
+::: callout
+### Combined finding
+
+Close with the smallest useful synthesis: what changed, what evidence proves it, what to do next, and how to verify it. Use panels only where emphasis helps the reader act.
 :::
 
 ## Appendices

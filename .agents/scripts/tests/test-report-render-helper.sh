@@ -64,10 +64,10 @@ test_render_markdown_fixture() {
 	assert_contains "$_out" "@media print" "Markdown render includes print CSS"
 	assert_contains "$_out" "evidence-label" "Markdown render includes plain evidence label"
 	assert_contains "$_out" "evidence-badge" "Markdown render groups evidence label and badge"
-	assert_contains "$_out" ">Verified</span>" "Markdown render includes verified badge"
-	assert_contains "$_out" ">Partial</span>" "Markdown render includes partial badge"
-	assert_contains "$_out" ">Inferred</span>" "Markdown render includes inferred badge"
-	assert_contains "$_out" ">Missing</span>" "Markdown render includes missing badge"
+	assert_contains "$_out" "badge-verified\">Verified</span>" "Markdown render includes verified badge"
+	assert_contains "$_out" "badge-partial\">Partial</span>" "Markdown render includes partial badge"
+	assert_contains "$_out" "badge-inferred\">Inferred</span>" "Markdown render includes inferred badge"
+	assert_contains "$_out" "badge-missing\">Missing</span>" "Markdown render includes missing badge"
 	assert_contains "$_out" "source-card" "Markdown render includes source cards"
 	assert_contains "$_out" "report-cover" "Markdown render includes cover component"
 	assert_contains "$_out" "stats-strip" "Markdown render includes stats component"
@@ -81,6 +81,8 @@ test_render_markdown_fixture() {
 	assert_contains "$_out" "class=\"appendix-links\"" "Markdown render includes appendix links"
 	assert_contains "$_out" "data-filetype=\"pdf\"" "Markdown render includes appendix file types"
 	assert_contains "$_out" "class=\"sources-layout\"" "Markdown render includes sources layout"
+	assert_contains "$_out" "class=\"source-list\"" "Markdown render includes source lists"
+	assert_contains "$_out" "class=\"case-study-card\"" "Markdown render includes case study cards"
 	assert_contains "$_out" "<footer class=\"report-footer\">" "Markdown render includes copyright footer"
 	if grep -q "&lt;!-- SPDX-License-Identifier" "$_out"; then
 		print_result "Markdown render suppresses source comments" 1 "SPDX comment leaked into rendered HTML"
@@ -97,11 +99,16 @@ test_render_json_fixture() {
 	assert_contains "$_out" "@media print" "JSON render includes print CSS"
 	assert_contains "$_out" "evidence-label" "JSON render includes plain evidence label"
 	assert_contains "$_out" "evidence-badge" "JSON render groups evidence label and badge"
-	assert_contains "$_out" ">Verified</span>" "JSON render includes verified badge"
-	assert_contains "$_out" ">Partial</span>" "JSON render includes partial badge"
-	assert_contains "$_out" ">Inferred</span>" "JSON render includes inferred badge"
-	assert_contains "$_out" ">Missing</span>" "JSON render includes missing badge"
+	assert_contains "$_out" "badge-verified\">Verified</span>" "JSON render includes verified badge"
+	assert_contains "$_out" "badge-partial\">Partial</span>" "JSON render includes partial badge"
+	assert_contains "$_out" "badge-inferred\">Inferred</span>" "JSON render includes inferred badge"
+	assert_contains "$_out" "badge-missing\">Missing</span>" "JSON render includes missing badge"
 	assert_contains "$_out" "source-card" "JSON render includes source cards"
+	if grep -qF "report-section" "$_out" || grep -qF ".report-main h3::before" "$_out"; then
+		print_result "Render numbers H2 chapters only" 1 "Found section counter or H3 numbering CSS"
+	else
+		print_result "Render numbers H2 chapters only" 0
+	fi
 	return 0
 }
 
