@@ -82,3 +82,7 @@ Instructional sample:
   `::: info-panel severity=high`, `::: action-panel`, `::: appendix-links`, and
   `::: priority-group priority=high`, closed by `:::`. Use these to exercise
   Toolbox-style report components while keeping `report.md` canonical.
+- Mermaid and LaTeX are portable fallbacks: fenced `mermaid`/`latex` blocks render
+  as labelled source blocks, and `{{latex:...}}` renders inline equation text.
+  Use `::: bar-chart` for dependency-free report charts. Do not depend on
+  external chart libraries in committed HTML unless assets are bundled locally.

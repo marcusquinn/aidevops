@@ -51,10 +51,15 @@ quality. Supported renderer blocks include:
 | Impact/evidence/action panels | `::: impact-panel`, `::: evidence-panel`, `::: action-panel` |
 | Good/bad comparisons | `::: good-bad` with `::: good-row` and `::: bad-row` |
 | Accordions and appendices | `::: accordion title="..."`, `::: appendix-links` |
+| Sources | `::: sources-layout`, `::: sources-group`, `::: source-title`, `::: source-card` |
 | Tables, code, quotes, links | `::: facts-table-wrap`, fenced code, `> quote`, Markdown links |
+| Charts/math | `::: bar-chart`, fenced `mermaid`, fenced `latex`, `{{latex:...}}` |
 
 Add appendix links when a report has supplementary data, screenshots, source
 exports, or companion reports. Keep private appendices out of public examples.
+Appendix links render file-type labels/icons from the link extension. Mermaid and
+LaTeX render as portable source/fallback blocks; do not add external runtime
+dependencies unless the export bundle vendors them locally.
 
 ## Generic vs Client-Custom Reports
 

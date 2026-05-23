@@ -13,7 +13,7 @@ Author: Marcus Quinn / aidevops. Licence: MIT. Export: one HTML preview plus PDF
 [Executive summary](#executive-summary) [Tactics](#chapter-1-on-page-content-tactics) [Technical](#chapter-2-technical-tactics) [Authority](#chapter-3-off-page-authority) [Appendices](#appendices)
 :::
 
-## Executive summary
+## Executive summary {{badge:strong}}
 
 AI-search visibility improves when important pages are easy to retrieve, easy to trust, and easy to cite. Treat AIO, Gemini, ChatGPT, AI Mode, and Perplexity as separate evidence lines before summarising overall visibility. {{evidence:verified}}
 
@@ -75,6 +75,31 @@ Sources are captured first, assigned IDs, mapped to claims, and scored by page-t
 :::
 
 ## Source ledger
+
+::: sources-layout
+::: sources-group
+::: source-title
+Prompt and crawl evidence
+:::
+::: source-card
+### Prompt captures
+Per-engine prompt exports show where the brand is cited, mentioned, inferred, or missing.
+:::
+::: source-card
+### Crawl and logs
+Raw/rendered crawl, robots, sitemap, and bot logs show retrieval eligibility.
+:::
+:::
+::: sources-group
+::: source-title
+Authority evidence
+:::
+::: source-card
+### Third-party corroboration
+Review, community, media, partner, and profile sources verify claims outside owned pages.
+:::
+:::
+:::
 
 ::: facts-table-wrap
 
@@ -156,6 +181,27 @@ Acceptance check:
 curl -L https://example.com/compare/example | grep "source-id"
 Run browser crawl and compare rendered source-card visibility.
 ```
+:::
+
+::: example-card
+```mermaid
+flowchart LR
+  Crawl --> Retrieval
+  SourceCards --> Evidence
+  Profiles --> Corroboration
+  Retrieval --> Roadmap
+  Evidence --> Roadmap
+  Corroboration --> Roadmap
+```
+:::
+
+The report can include LaTeX-style formula fallbacks such as {{latex:score = impact * confidence / effort}} when the raw equation matters.
+
+::: bar-chart
+Retrieval readiness — 81%
+Evidence proximity — 72%
+Third-party corroboration — 58%
+Monitoring coverage — 44%
 :::
 
 ## Chapter 3: Off-page authority

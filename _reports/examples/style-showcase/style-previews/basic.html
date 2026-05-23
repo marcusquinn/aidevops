@@ -26,14 +26,17 @@ h1, h2, h3 { line-height: 1.15; break-after: avoid; }
 @media (max-width: 860px) { .report-shell { display: block; padding: 1rem; } .sticky-toc { position: static; margin-bottom: 1rem; } }
 @media print { @page { size: A4 portrait; margin: 12mm 11mm 14mm; } body.report-body { background: #fff; font-size: 10.5pt; } .report-shell { display: block; max-width: none; padding: 0; } .sticky-toc { position: static; break-after: page; box-shadow: none; } table { table-layout: fixed; font-size: 8.8pt; } th,td { padding: 4pt 5pt; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after { content: ""; } }</style>
 </head>
-<body class="report-body report-pdf-profile-a4 report-template-basic">
+<body class="report-body report-theme-auto report-pdf-profile-a4 report-template-basic">
 <div class="report-shell">
 <nav class="sticky-toc" aria-label="Report table of contents">
 <h2>Contents</h2>
 <ol>
 <li><a href="#report-style-showcase" style="margin-left:0rem">Report Style Showcase</a></li>
-<li><a href="#component-overview" style="margin-left:1rem">Component overview</a></li>
+<li><a href="#component-overview-badge-strong" style="margin-left:1rem">Component overview {{badge:strong}}</a></li>
 <li><a href="#table-and-source-cards" style="margin-left:1rem">Table and source cards</a></li>
+<li><a href="#source-a" style="margin-left:2rem">Source A</a></li>
+<li><a href="#source-b" style="margin-left:2rem">Source B</a></li>
+<li><a href="#source-c" style="margin-left:2rem">Source C</a></li>
 <li><a href="#source-sample" style="margin-left:2rem">Source sample</a></li>
 <li><a href="#cards-and-callouts" style="margin-left:1rem">Cards and callouts</a></li>
 <li><a href="#info-panel" style="margin-left:2rem">Info panel</a></li>
@@ -53,10 +56,10 @@ h1, h2, h3 { line-height: 1.15; break-after: avoid; }
 <section class="report-cover">
 <p><strong>Component stress-test for DESIGN.md-backed report styles.</strong> Render this same Markdown through different templates to compare typography, palette, spacing, borders, cards, tables, badges, code blocks, and print profiles.</p>
 </section>
-<h2 id="component-overview">Component overview</h2>
-<p>Use <a href="#priority-and-checklist">anchor links</a>, <a href="../llm-visibility-toolbox/report.html">appendix links</a>, numbered steps, accordions, coloured panels, and source cards in the same canonical Markdown.</p>
+<h2 id="component-overview-badge-strong">Component overview <span class="badge badge--strong">Strong</span></h2>
+<p>Use <a href="#priority-and-checklist" data-filetype="link">anchor links</a>, <a href="../llm-visibility-toolbox/report.html" data-filetype="html">appendix links</a>, numbered steps, accordions, coloured panels, and source cards in the same canonical Markdown.</p>
 <section class="badge-row">
-<p><span class="badge badge-verified">Evidence: Verified</span> <span class="badge badge-partial">Evidence: Partial</span> <span class="badge badge-inferred">Evidence: Inferred</span> <span class="badge badge-missing">Evidence: Missing</span></p>
+<p><span class="badge badge-verified"><span class="badge-prefix">Evidence:</span><span>Verified</span></span> <span class="badge badge-partial"><span class="badge-prefix">Evidence:</span><span>Partial</span></span> <span class="badge badge-inferred"><span class="badge-prefix">Evidence:</span><span>Inferred</span></span> <span class="badge badge-missing"><span class="badge-prefix">Evidence:</span><span>Missing</span></span></p>
 </section>
 <section class="stats-strip">
 <section class="stat-card">
@@ -80,14 +83,38 @@ h1, h2, h3 { line-height: 1.15; break-after: avoid; }
 <p><strong>Review pass:</strong> compare sidebar behaviour, badge wrapping, table fit, and LottieFiles DM Sans rendering.</p>
 </section>
 <section class="anchor-links">
-<p><a href="#table-and-source-cards">Table stress</a> <a href="#cards-and-callouts">Cards</a> <a href="#priority-and-checklist">Priority</a></p>
+<p><a href="#table-and-source-cards" data-filetype="link">Table stress</a> <a href="#cards-and-callouts" data-filetype="link">Cards</a> <a href="#priority-and-checklist" data-filetype="link">Priority</a></p>
 </section>
 <hr class="section-separator">
 <h2 id="table-and-source-cards">Table and source cards</h2>
+<section class="sources-layout">
+<section class="sources-group">
+<section class="source-title">
+<p>Primary evidence</p>
+</section>
+<section class="source-card">
+<h3 id="source-a">Source A</h3>
+<p>Prompt capture, crawl export, and source ledger row.</p>
+</section>
+<section class="source-card">
+<h3 id="source-b">Source B</h3>
+<p>Third-party corroboration and profile parity note.</p>
+</section>
+</section>
+<section class="sources-group">
+<section class="source-title">
+<p>Supplementary evidence</p>
+</section>
+<section class="source-card">
+<h3 id="source-c">Source C</h3>
+<p>Appendix file, screenshot reference, or companion report.</p>
+</section>
+</section>
+</section>
 <section class="facts-table-wrap">
 <table><thead>
 <tr><th>Component</th><th>Stress condition</th><th>Expected result</th></tr></thead><tbody>
-<tr><td>Evidence badge</td><td>Long table cell with badge <span class="badge badge-verified">Evidence: Verified</span></td><td>Badge stays readable and does not split words.</td></tr>
+<tr><td>Evidence badge</td><td>Long table cell with badge <span class="badge badge-verified"><span class="badge-prefix">Evidence:</span><span>Verified</span></span></td><td>Badge stays readable and does not split words.</td></tr>
 <tr><td>Facts table</td><td>Multiple columns with prose</td><td>Table remains usable in HTML and constrained in print.</td></tr>
 <tr><td>Source card</td><td>Evidence note near claim</td><td>Card is visually distinct from normal paragraphs.</td></tr>
 <tr><td>Sidebar</td><td>Many headings</td><td>Sticky TOC remains secondary to content and active link updates.</td></tr>
@@ -143,6 +170,18 @@ h1, h2, h3 { line-height: 1.15; break-after: avoid; }
 <pre><code>Render command:
 .agents/scripts/report-render-helper.sh render report.md --template lottiefiles --pdf-profile slides-16-9-2 --output report.html</code></pre>
 </section>
+<section class="example-card">
+<pre class="mermaid"><code>flowchart LR
+  SourceLedger --&gt; Finding
+  Finding --&gt; Recommendation
+  Recommendation --&gt; Verification</code></pre>
+</section>
+<p>Inline LaTeX fallback: <span class="latex-inline">visibility = citations + mentions + retrieval</span>.</p>
+<section class="bar-chart">
+<p>Citation readiness — 72%</p>
+<p>Third-party corroboration — 58%</p>
+<p>Retrieval eligibility — 81%</p>
+</section>
 <h2 id="priority-and-checklist">Priority and checklist</h2>
 <section class="priority-group" data-priority="high">
 <h3 id="high-priority-visual-checks">High-priority visual checks</h3>
@@ -157,7 +196,7 @@ h1, h2, h3 { line-height: 1.15; break-after: avoid; }
 </ul>
 </section>
 <section class="appendix-links">
-<p><a href="../llm-visibility-toolbox/report.md">Source ledger appendix</a> <a href="../client-ai-search-audit/report.html">Client audit example</a> <a href="style-previews/index.html">Style preview index</a></p>
+<p><a href="../llm-visibility-toolbox/report.md" data-filetype="md">Source ledger appendix</a> <a href="../client-ai-search-audit/report.html" data-filetype="html">Client audit example</a> <a href="style-previews/index.html" data-filetype="html">Style preview index</a></p>
 </section>
 </main>
 </div>

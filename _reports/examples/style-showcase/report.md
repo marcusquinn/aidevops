@@ -7,7 +7,7 @@
 **Component stress-test for DESIGN.md-backed report styles.** Render this same Markdown through different templates to compare typography, palette, spacing, borders, cards, tables, badges, code blocks, and print profiles.
 :::
 
-## Component overview
+## Component overview {{badge:strong}}
 
 Use [anchor links](#priority-and-checklist), [appendix links](../llm-visibility-toolbox/report.html), numbered steps, accordions, coloured panels, and source cards in the same canonical Markdown.
 
@@ -49,6 +49,31 @@ Canonical source.
 ---
 
 ## Table and source cards
+
+::: sources-layout
+::: sources-group
+::: source-title
+Primary evidence
+:::
+::: source-card
+### Source A
+Prompt capture, crawl export, and source ledger row.
+:::
+::: source-card
+### Source B
+Third-party corroboration and profile parity note.
+:::
+:::
+::: sources-group
+::: source-title
+Supplementary evidence
+:::
+::: source-card
+### Source C
+Appendix file, screenshot reference, or companion report.
+:::
+:::
+:::
 
 ::: facts-table-wrap
 
@@ -129,6 +154,23 @@ Accordions are useful for methodology, caveats, and supplementary notes that sho
 Render command:
 .agents/scripts/report-render-helper.sh render report.md --template lottiefiles --pdf-profile slides-16-9-2 --output report.html
 ```
+:::
+
+::: example-card
+```mermaid
+flowchart LR
+  SourceLedger --> Finding
+  Finding --> Recommendation
+  Recommendation --> Verification
+```
+:::
+
+Inline LaTeX fallback: {{latex:visibility = citations + mentions + retrieval}}.
+
+::: bar-chart
+Citation readiness — 72%
+Third-party corroboration — 58%
+Retrieval eligibility — 81%
 :::
 
 ## Priority and checklist

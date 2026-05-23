@@ -86,6 +86,7 @@ body.report-body {
   grid-column: 1;
   grid-row: 1;
   min-width: 0;
+  counter-reset: report-chapter report-section report-para;
 }
 
 .report-cover,
@@ -100,6 +101,8 @@ body.report-body {
 .priority-group,
 .checklist-card,
 .source-card,
+.sources-layout,
+.sources-group,
 .myth-callout,
 .summary-stats,
 .info-panel,
@@ -233,6 +236,55 @@ body.report-body {
   outline: none;
 }
 
+.report-main h2 {
+  counter-increment: report-chapter;
+  counter-reset: report-section report-para;
+}
+
+.report-main h3 {
+  counter-increment: report-section;
+}
+
+.report-main h2::before {
+  content: counter(report-chapter, decimal-leading-zero) " / ";
+  color: var(--report-blue);
+  font-family: var(--report-font-body);
+  font-size: 0.7em;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.report-main h3::before {
+  content: counter(report-chapter) "." counter(report-section) " ";
+  color: var(--report-blue);
+  font-family: var(--report-font-body);
+  font-size: 0.82em;
+  font-weight: 800;
+}
+
+.report-main p {
+  counter-increment: report-para;
+}
+
+.report-main p::before {
+  content: counter(report-chapter) "." counter(report-para) " ";
+  color: var(--report-ink-soft);
+  font-size: 0.75em;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.report-cover p::before,
+.badge-row p::before,
+.stat-card p::before,
+.action-line p::before,
+.example-card p::before,
+.appendix-links p::before,
+.anchor-links p::before,
+.source-title p::before {
+  content: "";
+}
+
 .chapter-hero {
   margin-block: var(--report-space-6) var(--report-space-4);
   padding: var(--report-space-5);
@@ -287,6 +339,32 @@ body.report-body {
   text-decoration: none;
 }
 
+.appendix-links a {
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.appendix-links a::before {
+  content: "";
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 1rem;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 2h8l4 4v16H6z' fill='none' stroke='black' stroke-width='2'/%3E%3Cpath d='M14 2v5h5' fill='none' stroke='black' stroke-width='2'/%3E%3C/svg%3E") center/contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 2h8l4 4v16H6z' fill='none' stroke='black' stroke-width='2'/%3E%3Cpath d='M14 2v5h5' fill='none' stroke='black' stroke-width='2'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+
+.appendix-links a::after {
+  content: attr(data-filetype);
+  padding: 0.05rem 0.32rem;
+  border-radius: 999px;
+  background: var(--report-paper-raised);
+  color: var(--report-ink-soft);
+  font-size: 0.64rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 .badge {
   display: inline-flex;
   gap: var(--report-space-1);
@@ -298,6 +376,17 @@ body.report-body {
   border-radius: 9999px;
   border: 1px solid transparent;
   white-space: nowrap;
+}
+
+.badge-prefix {
+  display: inline-flex;
+  margin: -0.1rem 0.15rem -0.1rem -0.35rem;
+  padding: 0.1rem 0.32rem;
+  border-radius: 999px;
+  background: var(--report-surface);
+  color: var(--report-ink-soft);
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
 }
 
 td .badge,
@@ -342,6 +431,7 @@ th .badge {
 .priority-group,
 .checklist-card,
 .source-card,
+.sources-group,
 .details-note,
 .myth-callout,
 .info-panel,
@@ -358,6 +448,30 @@ th .badge {
   border: 1px solid var(--report-rule);
   border-radius: var(--report-radius-lg);
   box-shadow: 0 1px 2px rgba(17, 24, 39, 0.06);
+}
+
+.sources-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--report-space-3);
+  margin-block: var(--report-space-4);
+}
+
+.sources-group {
+  background: var(--report-surface);
+}
+
+.source-title {
+  margin-block: var(--report-space-2);
+  padding-block-end: var(--report-space-2);
+  border-bottom: 1px solid var(--report-rule);
+  color: var(--report-ink);
+  font-weight: 800;
+}
+
+.sources-group .source-card {
+  box-shadow: none;
+  margin-block: var(--report-space-2);
 }
 
 .tactic-card h3,
@@ -586,7 +700,77 @@ blockquote {
   background: var(--report-paper-raised);
   color: var(--report-ink-muted);
   font-family: var(--report-font-heading);
+  font-style: italic;
   font-size: 1.1rem;
+}
+
+.quote-card p {
+  font-style: italic;
+}
+
+.mermaid,
+.latex-block {
+  margin-block: var(--report-space-4);
+  padding: var(--report-space-3);
+  overflow-x: auto;
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-md);
+  background: var(--report-code-bg);
+  color: var(--report-code-ink);
+}
+
+.mermaid::before,
+.latex-block::before {
+  display: block;
+  margin-bottom: var(--report-space-2);
+  color: var(--report-code-accent);
+  font-family: var(--report-font-body);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mermaid::before {
+  content: "Mermaid chart source";
+}
+
+.latex-block::before {
+  content: "LaTeX source";
+}
+
+.latex-inline {
+  padding: 0 0.25rem;
+  border-radius: var(--report-radius-sm);
+  background: var(--report-paper-raised);
+  color: var(--report-ink);
+  font-family: var(--report-font-code);
+}
+
+.bar-chart {
+  display: grid;
+  gap: var(--report-space-2);
+  margin-block: var(--report-space-4);
+}
+
+.bar-chart p {
+  --bar-value: 72%;
+  position: relative;
+  margin: 0;
+  padding: 0.65rem 0.8rem;
+  overflow: hidden;
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-md);
+  background: var(--report-surface);
+}
+
+.bar-chart p::after {
+  content: "";
+  position: absolute;
+  inset: auto auto 0 0;
+  width: var(--bar-value);
+  height: 0.25rem;
+  background: var(--report-blue);
 }
 
 .severity-key {
@@ -707,8 +891,10 @@ a {
 
   .report-meta-grid,
   .tactic-grid,
-    .stats-strip,
-    .summary-stats {
+  .stats-strip,
+  .summary-stats,
+  .sources-layout,
+  .severity-key {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -731,6 +917,8 @@ a {
   .tactic-grid,
     .stats-strip,
     .summary-stats,
+  .sources-layout,
+  .severity-key,
   .good-bad,
   .myth-callout {
     grid-template-columns: 1fr;
@@ -752,6 +940,24 @@ a {
     --report-ink-soft: #555555;
     --report-rule: #bdb7ab;
     --report-rule-strong: #8f8778;
+  }
+
+  body.report-body {
+    --report-paper: #ffffff;
+    --report-paper-raised: #ffffff;
+    --report-panel: #ffffff;
+    --report-surface: #ffffff;
+    --report-ink: #111111;
+    --report-ink-muted: #333333;
+    --report-ink-soft: #555555;
+    --report-rule: #bdb7ab;
+    --report-rule-strong: #8f8778;
+    --report-info-bg: #ffffff;
+    --report-impact-bg: #ffffff;
+    --report-evidence-bg: #ffffff;
+    --report-myth-bg: #ffffff;
+    --report-good-bg: #ffffff;
+    --report-bad-bg: #ffffff;
   }
 
   @page {
@@ -798,6 +1004,8 @@ a {
   .priority-group,
   .checklist-card,
   .source-card,
+  .sources-layout,
+  .sources-group,
   .myth-callout,
   .info-panel,
   .impact-panel,
@@ -888,8 +1096,7 @@ h1, h2, h3 { font-family: var(--report-font-heading); font-weight: var(--report-
 h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var(--report-heading-line); }
 .source-card, .tactic-card, .priority-group { border-color: var(--report-rule); }
 .sticky-toc a:hover, .sticky-toc a:focus-visible, .sticky-toc a[aria-current="true"] { border-left-color: var(--report-blue); }
-@media (prefers-color-scheme: dark) {
-  :root {
+body.report-theme-dark {
     --report-paper: #080A0C;
     --report-paper-raised: #161A1C;
     --report-panel: #161A1C;
@@ -906,9 +1113,48 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
     --report-impact-bg: #161A1C;
     --report-evidence-bg: #161A1C;
     --report-myth-bg: #161A1C;
+    --report-good-bg: #161A1C;
+    --report-bad-bg: #161A1C;
+    --report-code-bg: #080A0C;
+    --report-code-bg-2: #161A1C;
+    --report-code-ink: #FFFFFF;
+    --report-code-accent: #00DDB3;
   }
-  .badge-verified, .badge-partial, .badge-inferred, .badge-missing { border-color: var(--report-rule); }
-  .sticky-toc { box-shadow: none; }
+body.report-theme-dark .badge-verified,
+body.report-theme-dark .badge-partial,
+body.report-theme-dark .badge-inferred,
+body.report-theme-dark .badge-missing { border-color: var(--report-rule); }
+body.report-theme-dark .sticky-toc { box-shadow: none; }
+@media (prefers-color-scheme: dark) {
+  body.report-theme-auto {
+    --report-paper: #080A0C;
+    --report-paper-raised: #161A1C;
+    --report-panel: #161A1C;
+    --report-surface: #161A1C;
+    --report-ink: #FFFFFF;
+    --report-ink-muted: #BFC8D1;
+    --report-ink-soft: #BFC8D1;
+    --report-rule: #222A30;
+    --report-rule-strong: #222A30;
+    --report-blue: #00DDB3;
+    --report-action-bg: #00DDB3;
+    --report-action-ink: #080A0C;
+    --report-info-bg: #161A1C;
+    --report-impact-bg: #161A1C;
+    --report-evidence-bg: #161A1C;
+    --report-myth-bg: #161A1C;
+    --report-good-bg: #161A1C;
+    --report-bad-bg: #161A1C;
+    --report-code-bg: #080A0C;
+    --report-code-bg-2: #161A1C;
+    --report-code-ink: #FFFFFF;
+    --report-code-accent: #00DDB3;
+  }
+  body.report-theme-auto .badge-verified,
+  body.report-theme-auto .badge-partial,
+  body.report-theme-auto .badge-inferred,
+  body.report-theme-auto .badge-missing { border-color: var(--report-rule); }
+  body.report-theme-auto .sticky-toc { box-shadow: none; }
 }
 .report-template-lottiefiles h1,
 .report-template-lottiefiles h2,
@@ -921,19 +1167,22 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 .report-template-lottiefiles .action-line { box-shadow: 0 20px 48px rgba(1, 157, 145, 0.18); }
 @media print { @page { size: A4 portrait; margin: 12mm 11mm 14mm; } body.report-body { background: #fff; font-size: 10.5pt; } .report-shell { display: block; max-width: none; padding: 0; } .sticky-toc { position: static; break-after: page; box-shadow: none; } table { table-layout: fixed; font-size: 8.8pt; } th,td { padding: 4pt 5pt; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after { content: ""; } }</style>
 </head>
-<body class="report-body report-pdf-profile-a4 report-template-lottiefiles">
+<body class="report-body report-theme-auto report-pdf-profile-a4 report-template-lottiefiles">
 <div class="report-shell">
 <nav class="sticky-toc" aria-label="Report table of contents">
 <h2>Contents</h2>
 <ol>
 <li><a href="#llm-visibility-toolbox-full-sample" style="margin-left:0rem">LLM Visibility Toolbox Full Sample</a></li>
-<li><a href="#executive-summary" style="margin-left:1rem">Executive summary</a></li>
+<li><a href="#executive-summary-badge-strong" style="margin-left:1rem">Executive summary {{badge:strong}}</a></li>
 <li><a href="#how-to-read-this-report" style="margin-left:1rem">How to read this report</a></li>
 <li><a href="#critical" style="margin-left:2rem">Critical</a></li>
 <li><a href="#high" style="margin-left:2rem">High</a></li>
 <li><a href="#medium" style="margin-left:2rem">Medium</a></li>
 <li><a href="#low" style="margin-left:2rem">Low</a></li>
 <li><a href="#source-ledger" style="margin-left:1rem">Source ledger</a></li>
+<li><a href="#prompt-captures" style="margin-left:2rem">Prompt captures</a></li>
+<li><a href="#crawl-and-logs" style="margin-left:2rem">Crawl and logs</a></li>
+<li><a href="#third-party-corroboration" style="margin-left:2rem">Third-party corroboration</a></li>
 <li><a href="#source-card-standard" style="margin-left:2rem">Source-card standard</a></li>
 <li><a href="#chapter-1-on-page-content-tactics" style="margin-left:1rem">Chapter 1: On-page content tactics</a></li>
 <li><a href="#goal" style="margin-left:2rem">Goal</a></li>
@@ -959,10 +1208,10 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <p>Author: Marcus Quinn / aidevops. Licence: MIT. Export: one HTML preview plus PDF profiles.</p>
 </section>
 <section class="anchor-links">
-<p><a href="#executive-summary">Executive summary</a> <a href="#chapter-1-on-page-content-tactics">Tactics</a> <a href="#chapter-2-technical-tactics">Technical</a> <a href="#chapter-3-off-page-authority">Authority</a> <a href="#appendices">Appendices</a></p>
+<p><a href="#executive-summary" data-filetype="link">Executive summary</a> <a href="#chapter-1-on-page-content-tactics" data-filetype="link">Tactics</a> <a href="#chapter-2-technical-tactics" data-filetype="link">Technical</a> <a href="#chapter-3-off-page-authority" data-filetype="link">Authority</a> <a href="#appendices" data-filetype="link">Appendices</a></p>
 </section>
-<h2 id="executive-summary">Executive summary</h2>
-<p>AI-search visibility improves when important pages are easy to retrieve, easy to trust, and easy to cite. Treat AIO, Gemini, ChatGPT, AI Mode, and Perplexity as separate evidence lines before summarising overall visibility. <span class="badge badge-verified">Evidence: Verified</span></p>
+<h2 id="executive-summary-badge-strong">Executive summary <span class="badge badge--strong">Strong</span></h2>
+<p>AI-search visibility improves when important pages are easy to retrieve, easy to trust, and easy to cite. Treat AIO, Gemini, ChatGPT, AI Mode, and Perplexity as separate evidence lines before summarising overall visibility. <span class="badge badge-verified"><span class="badge-prefix">Evidence:</span><span>Verified</span></span></p>
 <section class="summary-stats">
 <section class="stat-card">
 <p><strong>5</strong></p>
@@ -1013,6 +1262,30 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <p>Sources are captured first, assigned IDs, mapped to claims, and scored by page-type fit, confidence, impact, and effort. Unsupported claims remain in the appendix or backlog until verified.</p>
 </details>
 <h2 id="source-ledger">Source ledger</h2>
+<section class="sources-layout">
+<section class="sources-group">
+<section class="source-title">
+<p>Prompt and crawl evidence</p>
+</section>
+<section class="source-card">
+<h3 id="prompt-captures">Prompt captures</h3>
+<p>Per-engine prompt exports show where the brand is cited, mentioned, inferred, or missing.</p>
+</section>
+<section class="source-card">
+<h3 id="crawl-and-logs">Crawl and logs</h3>
+<p>Raw/rendered crawl, robots, sitemap, and bot logs show retrieval eligibility.</p>
+</section>
+</section>
+<section class="sources-group">
+<section class="source-title">
+<p>Authority evidence</p>
+</section>
+<section class="source-card">
+<h3 id="third-party-corroboration">Third-party corroboration</h3>
+<p>Review, community, media, partner, and profile sources verify claims outside owned pages.</p>
+</section>
+</section>
+</section>
 <section class="facts-table-wrap">
 <table><thead>
 <tr><th>Source ID</th><th>Family</th><th>Evidence</th><th>Supported claim</th><th>Recheck</th></tr></thead><tbody>
@@ -1084,6 +1357,22 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 curl -L https://example.com/compare/example | grep &quot;source-id&quot;
 Run browser crawl and compare rendered source-card visibility.</code></pre>
 </section>
+<section class="example-card">
+<pre class="mermaid"><code>flowchart LR
+  Crawl --&gt; Retrieval
+  SourceCards --&gt; Evidence
+  Profiles --&gt; Corroboration
+  Retrieval --&gt; Roadmap
+  Evidence --&gt; Roadmap
+  Corroboration --&gt; Roadmap</code></pre>
+</section>
+<p>The report can include LaTeX-style formula fallbacks such as <span class="latex-inline">score = impact * confidence / effort</span> when the raw equation matters.</p>
+<section class="bar-chart">
+<p>Retrieval readiness — 81%</p>
+<p>Evidence proximity — 72%</p>
+<p>Third-party corroboration — 58%</p>
+<p>Monitoring coverage — 44%</p>
+</section>
 <h2 id="chapter-3-off-page-authority">Chapter 3: Off-page authority</h2>
 <blockquote>Answer engines often corroborate owned claims against review sites, partner pages, communities, editorial mentions, transcripts, and public profiles.</blockquote>
 <section class="action-panel" data-severity="high">
@@ -1108,7 +1397,7 @@ Run browser crawl and compare rendered source-card visibility.</code></pre>
 </section>
 <h2 id="appendices">Appendices</h2>
 <section class="appendix-links">
-<p><a href="appendices/source-ledger.md">Source ledger appendix</a> <a href="appendices/prompt-set.md">Prompt set appendix</a> <a href="../../examples/client-ai-search-audit/report.html">Example companion report</a></p>
+<p><a href="appendices/source-ledger.md" data-filetype="md">Source ledger appendix</a> <a href="appendices/prompt-set.md" data-filetype="md">Prompt set appendix</a> <a href="../../examples/client-ai-search-audit/report.html" data-filetype="html">Example companion report</a></p>
 </section>
 <section class="checklist-card">
 <ul class="checklist">

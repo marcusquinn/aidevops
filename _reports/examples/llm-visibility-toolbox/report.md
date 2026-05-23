@@ -9,7 +9,7 @@
 Audience: SEO, content, engineering, and leadership teams. Export rule: one HTML preview; PDF profiles for A4, Letter, and 16:9 decks.
 :::
 
-## Executive summary
+## Executive summary {{badge:rct}}
 
 LLM visibility is an evidence system, not a single checklist. The best programmes make priority pages retrieval-ready, criteria-complete, citation-worthy, technically fetchable, and corroborated by third-party sources. {{evidence:verified}}
 
@@ -51,6 +51,31 @@ Canonical Markdown source.
 :::
 
 ## Source ledger pattern
+
+::: sources-layout
+::: sources-group
+::: source-title
+Primary sources
+:::
+::: source-card
+### Prompt captures
+AIO, Gemini, ChatGPT, AI Mode, and Perplexity prompt evidence stored separately.
+:::
+::: source-card
+### Crawl evidence
+Raw/rendered crawl export with retrieval eligibility notes.
+:::
+:::
+::: sources-group
+::: source-title
+Corroboration sources
+:::
+::: source-card
+### Third-party profiles
+Review, directory, community, partner, and media source parity checks.
+:::
+:::
+:::
 
 ::: facts-table-wrap
 
@@ -202,6 +227,23 @@ Worker brief: update /compare/example with source IDs S001-S004,
 visible comparison evidence, third-party corroboration, and retest steps.
 Acceptance: AIO, Gemini, ChatGPT, AI Mode, and Perplexity results are recorded separately.
 ```
+:::
+
+::: example-card
+```mermaid
+flowchart TD
+  Sources[Source IDs] --> Findings
+  Findings --> Roadmap
+  Roadmap --> Rerun[Per-engine rerun]
+```
+:::
+
+Signal equation fallback: {{latex:AI\ visibility = retrieval + evidence + corroboration}}.
+
+::: bar-chart
+On-page evidence — 72%
+Technical retrieval — 64%
+Authority corroboration — 58%
 :::
 
 > Strong reports separate observed facts from interpretation, then turn only verified or clearly labelled partial evidence into roadmap items.

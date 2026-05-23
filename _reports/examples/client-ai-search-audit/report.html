@@ -86,6 +86,7 @@ body.report-body {
   grid-column: 1;
   grid-row: 1;
   min-width: 0;
+  counter-reset: report-chapter report-section report-para;
 }
 
 .report-cover,
@@ -100,6 +101,8 @@ body.report-body {
 .priority-group,
 .checklist-card,
 .source-card,
+.sources-layout,
+.sources-group,
 .myth-callout,
 .summary-stats,
 .info-panel,
@@ -233,6 +236,55 @@ body.report-body {
   outline: none;
 }
 
+.report-main h2 {
+  counter-increment: report-chapter;
+  counter-reset: report-section report-para;
+}
+
+.report-main h3 {
+  counter-increment: report-section;
+}
+
+.report-main h2::before {
+  content: counter(report-chapter, decimal-leading-zero) " / ";
+  color: var(--report-blue);
+  font-family: var(--report-font-body);
+  font-size: 0.7em;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.report-main h3::before {
+  content: counter(report-chapter) "." counter(report-section) " ";
+  color: var(--report-blue);
+  font-family: var(--report-font-body);
+  font-size: 0.82em;
+  font-weight: 800;
+}
+
+.report-main p {
+  counter-increment: report-para;
+}
+
+.report-main p::before {
+  content: counter(report-chapter) "." counter(report-para) " ";
+  color: var(--report-ink-soft);
+  font-size: 0.75em;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.report-cover p::before,
+.badge-row p::before,
+.stat-card p::before,
+.action-line p::before,
+.example-card p::before,
+.appendix-links p::before,
+.anchor-links p::before,
+.source-title p::before {
+  content: "";
+}
+
 .chapter-hero {
   margin-block: var(--report-space-6) var(--report-space-4);
   padding: var(--report-space-5);
@@ -287,6 +339,32 @@ body.report-body {
   text-decoration: none;
 }
 
+.appendix-links a {
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.appendix-links a::before {
+  content: "";
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 1rem;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 2h8l4 4v16H6z' fill='none' stroke='black' stroke-width='2'/%3E%3Cpath d='M14 2v5h5' fill='none' stroke='black' stroke-width='2'/%3E%3C/svg%3E") center/contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 2h8l4 4v16H6z' fill='none' stroke='black' stroke-width='2'/%3E%3Cpath d='M14 2v5h5' fill='none' stroke='black' stroke-width='2'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+
+.appendix-links a::after {
+  content: attr(data-filetype);
+  padding: 0.05rem 0.32rem;
+  border-radius: 999px;
+  background: var(--report-paper-raised);
+  color: var(--report-ink-soft);
+  font-size: 0.64rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
 .badge {
   display: inline-flex;
   gap: var(--report-space-1);
@@ -298,6 +376,17 @@ body.report-body {
   border-radius: 9999px;
   border: 1px solid transparent;
   white-space: nowrap;
+}
+
+.badge-prefix {
+  display: inline-flex;
+  margin: -0.1rem 0.15rem -0.1rem -0.35rem;
+  padding: 0.1rem 0.32rem;
+  border-radius: 999px;
+  background: var(--report-surface);
+  color: var(--report-ink-soft);
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
 }
 
 td .badge,
@@ -342,6 +431,7 @@ th .badge {
 .priority-group,
 .checklist-card,
 .source-card,
+.sources-group,
 .details-note,
 .myth-callout,
 .info-panel,
@@ -358,6 +448,30 @@ th .badge {
   border: 1px solid var(--report-rule);
   border-radius: var(--report-radius-lg);
   box-shadow: 0 1px 2px rgba(17, 24, 39, 0.06);
+}
+
+.sources-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--report-space-3);
+  margin-block: var(--report-space-4);
+}
+
+.sources-group {
+  background: var(--report-surface);
+}
+
+.source-title {
+  margin-block: var(--report-space-2);
+  padding-block-end: var(--report-space-2);
+  border-bottom: 1px solid var(--report-rule);
+  color: var(--report-ink);
+  font-weight: 800;
+}
+
+.sources-group .source-card {
+  box-shadow: none;
+  margin-block: var(--report-space-2);
 }
 
 .tactic-card h3,
@@ -586,7 +700,77 @@ blockquote {
   background: var(--report-paper-raised);
   color: var(--report-ink-muted);
   font-family: var(--report-font-heading);
+  font-style: italic;
   font-size: 1.1rem;
+}
+
+.quote-card p {
+  font-style: italic;
+}
+
+.mermaid,
+.latex-block {
+  margin-block: var(--report-space-4);
+  padding: var(--report-space-3);
+  overflow-x: auto;
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-md);
+  background: var(--report-code-bg);
+  color: var(--report-code-ink);
+}
+
+.mermaid::before,
+.latex-block::before {
+  display: block;
+  margin-bottom: var(--report-space-2);
+  color: var(--report-code-accent);
+  font-family: var(--report-font-body);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mermaid::before {
+  content: "Mermaid chart source";
+}
+
+.latex-block::before {
+  content: "LaTeX source";
+}
+
+.latex-inline {
+  padding: 0 0.25rem;
+  border-radius: var(--report-radius-sm);
+  background: var(--report-paper-raised);
+  color: var(--report-ink);
+  font-family: var(--report-font-code);
+}
+
+.bar-chart {
+  display: grid;
+  gap: var(--report-space-2);
+  margin-block: var(--report-space-4);
+}
+
+.bar-chart p {
+  --bar-value: 72%;
+  position: relative;
+  margin: 0;
+  padding: 0.65rem 0.8rem;
+  overflow: hidden;
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-md);
+  background: var(--report-surface);
+}
+
+.bar-chart p::after {
+  content: "";
+  position: absolute;
+  inset: auto auto 0 0;
+  width: var(--bar-value);
+  height: 0.25rem;
+  background: var(--report-blue);
 }
 
 .severity-key {
@@ -707,8 +891,10 @@ a {
 
   .report-meta-grid,
   .tactic-grid,
-    .stats-strip,
-    .summary-stats {
+  .stats-strip,
+  .summary-stats,
+  .sources-layout,
+  .severity-key {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -731,6 +917,8 @@ a {
   .tactic-grid,
     .stats-strip,
     .summary-stats,
+  .sources-layout,
+  .severity-key,
   .good-bad,
   .myth-callout {
     grid-template-columns: 1fr;
@@ -752,6 +940,24 @@ a {
     --report-ink-soft: #555555;
     --report-rule: #bdb7ab;
     --report-rule-strong: #8f8778;
+  }
+
+  body.report-body {
+    --report-paper: #ffffff;
+    --report-paper-raised: #ffffff;
+    --report-panel: #ffffff;
+    --report-surface: #ffffff;
+    --report-ink: #111111;
+    --report-ink-muted: #333333;
+    --report-ink-soft: #555555;
+    --report-rule: #bdb7ab;
+    --report-rule-strong: #8f8778;
+    --report-info-bg: #ffffff;
+    --report-impact-bg: #ffffff;
+    --report-evidence-bg: #ffffff;
+    --report-myth-bg: #ffffff;
+    --report-good-bg: #ffffff;
+    --report-bad-bg: #ffffff;
   }
 
   @page {
@@ -798,6 +1004,8 @@ a {
   .priority-group,
   .checklist-card,
   .source-card,
+  .sources-layout,
+  .sources-group,
   .myth-callout,
   .info-panel,
   .impact-panel,
@@ -890,7 +1098,7 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 .sticky-toc a:hover, .sticky-toc a:focus-visible, .sticky-toc a[aria-current="true"] { border-left-color: var(--report-blue); }
 @media print { @page { size: A4 portrait; margin: 12mm 11mm 14mm; } body.report-body { background: #fff; font-size: 10.5pt; } .report-shell { display: block; max-width: none; padding: 0; } .sticky-toc { position: static; break-after: page; box-shadow: none; } table { table-layout: fixed; font-size: 8.8pt; } th,td { padding: 4pt 5pt; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after { content: ""; } }</style>
 </head>
-<body class="report-body report-pdf-profile-a4 report-template-ibm">
+<body class="report-body report-theme-auto report-pdf-profile-a4 report-template-ibm">
 <div class="report-shell">
 <nav class="sticky-toc" aria-label="Report table of contents">
 <h2>Contents</h2>
@@ -916,7 +1124,7 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <p>Prepared for: Example client. Scope: example.com priority pages. Replace placeholders only after live evidence collection.</p>
 </section>
 <h2 id="executive-summary">Executive summary</h2>
-<p>Example client appears in some answer-engine responses for category and comparison prompts, but source coverage is uneven. Priority gaps are retrieval eligibility, source-card proximity, and third-party corroboration parity. <span class="badge badge-partial">Evidence: Partial</span></p>
+<p>Example client appears in some answer-engine responses for category and comparison prompts, but source coverage is uneven. Priority gaps are retrieval eligibility, source-card proximity, and third-party corroboration parity. <span class="badge badge-partial"><span class="badge-prefix">Evidence:</span><span>Partial</span></span></p>
 <section class="stats-strip">
 <section class="stat-card">
 <p><strong>3/5</strong></p>
@@ -942,11 +1150,11 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <section class="facts-table-wrap">
 <table><thead>
 <tr><th>Engine</th><th>Finding</th><th>Evidence</th><th>Next action</th></tr></thead><tbody>
-<tr><td>AIO</td><td>Brand cited for two comparison prompts.</td><td><span class="badge badge-verified">Evidence: Verified</span></td><td>Add source cards to pages with citations but weak snippets.</td></tr>
-<tr><td>Gemini</td><td>Mentions brand but misses pricing constraints.</td><td><span class="badge badge-partial">Evidence: Partial</span></td><td>Add visible plan constraints and updated date.</td></tr>
-<tr><td>ChatGPT</td><td>Recommendation inferred from third-party profiles.</td><td><span class="badge badge-inferred">Evidence: Inferred</span></td><td>Improve profile parity and owned corroboration.</td></tr>
-<tr><td>AI Mode</td><td>Partial feature coverage, no comparison citation.</td><td><span class="badge badge-partial">Evidence: Partial</span></td><td>Strengthen direct-answer opening on comparison page.</td></tr>
-<tr><td>Perplexity</td><td>No citation found in priority prompt set.</td><td><span class="badge badge-missing">Evidence: Missing</span></td><td>Build third-party corroboration and rerun prompt set.</td></tr>
+<tr><td>AIO</td><td>Brand cited for two comparison prompts.</td><td><span class="badge badge-verified"><span class="badge-prefix">Evidence:</span><span>Verified</span></span></td><td>Add source cards to pages with citations but weak snippets.</td></tr>
+<tr><td>Gemini</td><td>Mentions brand but misses pricing constraints.</td><td><span class="badge badge-partial"><span class="badge-prefix">Evidence:</span><span>Partial</span></span></td><td>Add visible plan constraints and updated date.</td></tr>
+<tr><td>ChatGPT</td><td>Recommendation inferred from third-party profiles.</td><td><span class="badge badge-inferred"><span class="badge-prefix">Evidence:</span><span>Inferred</span></span></td><td>Improve profile parity and owned corroboration.</td></tr>
+<tr><td>AI Mode</td><td>Partial feature coverage, no comparison citation.</td><td><span class="badge badge-partial"><span class="badge-prefix">Evidence:</span><span>Partial</span></span></td><td>Strengthen direct-answer opening on comparison page.</td></tr>
+<tr><td>Perplexity</td><td>No citation found in priority prompt set.</td><td><span class="badge badge-missing"><span class="badge-prefix">Evidence:</span><span>Missing</span></span></td><td>Build third-party corroboration and rerun prompt set.</td></tr>
 </tbody></table>
 </section>
 <h2 id="source-ledger">Source ledger</h2>
@@ -966,11 +1174,11 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <h2 id="page-type-weighted-findings">Page-type weighted findings</h2>
 <section class="priority-group" data-priority="critical">
 <h3 id="p0-comparison-page-retrieval-gap">P0: Comparison page retrieval gap</h3>
-<p>Comparison content answers the right intent but key criteria are below client-rendered sections. Move the answer, feature table, pricing caveats, and source IDs into crawlable first-fetch HTML. <span class="badge badge-verified">Evidence: Verified</span></p>
+<p>Comparison content answers the right intent but key criteria are below client-rendered sections. Move the answer, feature table, pricing caveats, and source IDs into crawlable first-fetch HTML. <span class="badge badge-verified"><span class="badge-prefix">Evidence:</span><span>Verified</span></span></p>
 </section>
 <section class="priority-group" data-priority="high">
 <h3 id="p1-pricing-facts-lack-nearby-evidence">P1: Pricing facts lack nearby evidence</h3>
-<p>The pricing page states plan limits but lacks updated date, source card, and consistent third-party parity. Add canonical values and cite source IDs near the claims. <span class="badge badge-partial">Evidence: Partial</span></p>
+<p>The pricing page states plan limits but lacks updated date, source card, and consistent third-party parity. Add canonical values and cite source IDs near the claims. <span class="badge badge-partial"><span class="badge-prefix">Evidence:</span><span>Partial</span></span></p>
 </section>
 <section class="good-bad">
 <section class="good-row">

@@ -25,6 +25,7 @@ COMPONENT_BLOCKS = {
     "appendix-links",
     "callout",
     "badge-row",
+    "bar-chart",
     "chapter-hero",
     "checklist-card",
     "details-note",
@@ -44,6 +45,9 @@ COMPONENT_BLOCKS = {
     "separator",
     "severity-key",
     "source-card",
+    "source-title",
+    "sources-group",
+    "sources-layout",
     "stat-card",
     "summary-stats",
     "stats-strip",
@@ -56,9 +60,16 @@ def close_code(body: list[str], states: dict[str, object]) -> None:
         return
     lines = states.get("code_lines", [])
     code_text = "\n".join(lines) if isinstance(lines, list) else ""
-    body.append(f"<pre><code>{html.escape(code_text)}</code></pre>")
+    lang = str(states.get("code_lang", "")).strip().lower()
+    if lang == "mermaid":
+        body.append(f'<pre class="mermaid"><code>{html.escape(code_text)}</code></pre>')
+    elif lang in {"latex", "tex"}:
+        body.append(f'<pre class="latex-block"><code>{html.escape(code_text)}</code></pre>')
+    else:
+        body.append(f"<pre><code>{html.escape(code_text)}</code></pre>")
     states["code"] = False
     states["code_lines"] = []
+    states["code_lang"] = ""
 
 
 def close_blocks(body: list[str], states: dict[str, object]) -> None:
@@ -147,7 +158,9 @@ def handle_code_fence(line: str, body: list[str], states: dict[str, object]) -> 
     if not line.startswith("```"):
         return False
     close_blocks(body, states)
+    fence = re.match(r"^```\s*([A-Za-z0-9_-]+)?", line)
     states["code"] = True
+    states["code_lang"] = fence.group(1) if fence and fence.group(1) else ""
     states["code_lines"] = []
     return True
 
@@ -291,6 +304,7 @@ def render_markdown(text: str) -> tuple[list[tuple[int, str, str]], str]:
         "table": False,
         "components": [],
         "code": False,
+        "code_lang": "",
         "code_lines": [],
     }
     for raw_line in text.splitlines():

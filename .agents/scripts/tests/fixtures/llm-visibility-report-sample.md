@@ -9,11 +9,13 @@
 Report date: 2026-05-23. Scope: sample renderer fixture.
 :::
 
-## Executive Summary
+## Executive Summary {{badge:strong}}
 
 The site appears in AI Overviews and answer-engine citations for priority service prompts. {{evidence:verified}}
 
 Read the [source ledger](#evidence-ledger) before assigning roadmap items.
+
+Inline math example: {{latex:citation\_lift = verified\_mentions / prompts}}.
 
 ::: badge-row
 {{evidence:verified}} {{evidence:partial}} {{evidence:inferred}} {{evidence:missing}}
@@ -126,6 +128,20 @@ Answer: Cite source ID S-004, report date, owner, and page URL.
 ```
 :::
 
+::: example-card
+```mermaid
+flowchart LR
+  Evidence --> Recommendation
+  Recommendation --> Verification
+```
+:::
+
+::: bar-chart
+Evidence coverage — 72%
+Retrieval readiness — 64%
+Corroboration — 51%
+:::
+
 ::: industry-card
 ### SaaS comparison pages
 
@@ -151,10 +167,22 @@ Refresh weak comparison pages with source cards and visible evidence summaries.
 
 ## Evidence Ledger
 
+::: sources-layout
+::: sources-group
+::: source-title
+Prompt evidence
+:::
 Source: AIO capture and crawl export for priority prompts.
 Source card: Gemini citation export and manual verification worksheet.
+:::
+::: sources-group
+::: source-title
+Gap evidence
+:::
 Source: ChatGPT prompt transcript with source IDs.
 Source card: Perplexity query set showing missing citation coverage.
+:::
+:::
 
 ::: source-card
 ### Source S-004
@@ -171,3 +199,7 @@ Manual prompt capture, crawl export, screenshot, and remediation note.
 
 - Render this Markdown fixture to HTML.
 - Print or export the HTML to PDF from the browser print dialog.
+
+::: appendix-links
+[Source ledger](appendices/source-ledger.md) [Rendered report](report.html) [Export bundle](report.pdf)
+:::

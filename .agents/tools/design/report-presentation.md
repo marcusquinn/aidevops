@@ -149,6 +149,11 @@ border/shape differences so grayscale output remains meaningful.
   colour/shape encoding.
 - Code blocks should wrap or scroll in HTML, but print with readable line breaks
   and captions.
+- Prefer dependency-free chart patterns for committed report HTML. Bklit UI is a
+  shadcn registry with attractive chart components, but it requires project
+  installation and dependencies; use it for app-integrated dashboards, not as a
+  default for portable standalone report exports unless the generated bundle
+  vendors all assets locally. Mermaid/LaTeX should have readable source fallbacks.
 
 ## PDF and Print Styling
 
