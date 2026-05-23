@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+TOOL_INSTALL="$REPO_ROOT/.agents/scripts/setup/modules/tool-install.sh"
+
+SANDBOX="$(mktemp -d -t tool-install-rtk-XXXXXX)"
+trap 'rm -rf "$SANDBOX"' EXIT
+
+mkdir -p "$SANDBOX/bin" "$SANDBOX/home"
+export HOME="$SANDBOX/home"
+export PATH="$SANDBOX/bin:$PATH"
+
+PASS=0
+FAIL=0
+
+assert_eq() {
+	local desc="$1" expected="$2" actual="$3"
+	if [[ "$expected" == "$actual" ]]; then
+		echo "  PASS: $desc"
+		PASS=$((PASS + 1))
+		return 0
+	fi
+	echo "  FAIL: $desc -- expected '$expected', got '$actual'" >&2
+	FAIL=$((FAIL + 1))
+	return 1
+}
+
+extract_functions() {
+	awk '
+		/^_setup_rtk_installed_version\(\)/, /^}$/ { print; next }
+		/^_setup_rtk_install_supported_version\(\)/, /^}$/ { print; next }
+		/^_setup_rtk_print_manual_install\(\)/, /^}$/ { print; next }
+		/^_setup_rtk_offer_supported_upgrade\(\)/, /^}$/ { print; next }
+		/^setup_rtk\(\)/, /^}$/ { print; next }
+	' "$TOOL_INSTALL" >"$SANDBOX/extract.sh"
+	if ! grep -q '^_setup_rtk_offer_supported_upgrade()' "$SANDBOX/extract.sh"; then
+		echo "FAIL: extraction did not capture rtk upgrade helpers" >&2
+		exit 1
+	fi
+	return 0
+}
+
+source_extracted() {
+	# shellcheck disable=SC2317
+	print_info() { echo "INFO: $*"; return 0; }
+	# shellcheck disable=SC2317
+	print_success() { echo "OK: $*"; return 0; }
+	# shellcheck disable=SC2317
+	print_warning() { echo "WARN: $*"; return 0; }
+	# shellcheck disable=SC2317
+	setup_prompt() {
+		local var_name="$1"
+		local prompt_text="$2"
+		local default_value="$3"
+		: "$prompt_text"
+		printf -v "$var_name" '%s' "$default_value"
+		return 0
+	}
+	# shellcheck disable=SC2317
+	run_with_spinner() { shift; "$@"; return $?; }
+	# shellcheck disable=SC2317
+	verified_install() {
+		local tool_name="$1"
+		local installer_url="$2"
+		: "$tool_name" "$installer_url"
+		cat >"$SANDBOX/bin/rtk" <<'INNER_EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "--version" ]] && echo "rtk 0.41.0"
+INNER_EOF
+		chmod +x "$SANDBOX/bin/rtk"
+		return 0
+	}
+	# shellcheck disable=SC1090
+	source "$SANDBOX/extract.sh"
+	return 0
+}
+
+extract_functions
+
+cat >"$SANDBOX/bin/rtk" <<'EOF'
+#!/usr/bin/env bash
+[[ "${1:-}" == "--version" ]] && echo "rtk 0.40.0"
+EOF
+chmod +x "$SANDBOX/bin/rtk"
+
+(
+	source_extracted
+	setup_rtk
+) >"$SANDBOX/out" 2>&1
+
+assert_eq "existing mismatched rtk is upgraded" "rtk 0.41.0" "$(rtk --version)"
+assert_eq "setup reports matching version" "1" "$(grep -c 'rtk now matches the aidevops-tested version' "$SANDBOX/out")"
+
+if [[ "$FAIL" -gt 0 ]]; then
+	echo "FAIL: $FAIL rtk setup checks failed" >&2
+	exit 1
+fi
+
+echo "PASS: $PASS rtk setup checks passed"
+exit 0
