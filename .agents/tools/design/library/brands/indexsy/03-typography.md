@@ -8,7 +8,6 @@
 - `-apple-system,system-ui,BlinkMacSystemFont,`
 - `Instrument Serif`
 - `Inter`
-- `Poppins`
 - `inherit`
 - `sans-serif`
 - `var(--gp-font--body)`
@@ -16,11 +15,11 @@
 
 ## Substitute policy
 
-Use exact source fonts only when they are system/open-source and appropriate for redistribution. Where the source uses commercial or hosted proprietary fonts, map the style to open-source/system alternatives in DESIGN.md tokens. Document the source font in this chapter and the substitute in `DESIGN.md`.
+Use Inter/system sans for report headings and body so the rendered examples match the site screenshots more closely. Instrument Serif appears as a decorative source accent; use it only for bespoke italic words or logo-like moments outside the generic Markdown renderer.
 
 ## Report typography requirements
 
-- Screen body text: 16px or larger with 1.45-1.7 line height.
+- Screen body text: 16px or larger with 1.6-1.75 line height and generous paragraph spacing.
 - PDF body text: 10.5-12pt equivalent.
-- Headings: preserve the source's broad serif/sans/mono character and weight contrast.
+- Headings: oversized, white, low-to-medium weight, tight tracking, and short line lengths.
 - Code/data: use a readable monospace stack and wrap long lines in PDF.

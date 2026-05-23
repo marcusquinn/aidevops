@@ -58,7 +58,7 @@ assert_contains() {
 }
 
 test_render_markdown_fixture() {
-	local _out="${TEST_ROOT}/sample-md.html"
+	local _out="${TEST_ROOT}/report.html"
 	"$HELPER_SH" render "${FIXTURE_DIR}/llm-visibility-report-sample.md" --output "$_out"
 	assert_contains "$_out" "sticky-toc" "Markdown render includes sticky TOC"
 	assert_contains "$_out" "@media print" "Markdown render includes print CSS"
@@ -72,7 +72,7 @@ test_render_markdown_fixture() {
 	assert_contains "$_out" "report-cover" "Markdown render includes cover component"
 	assert_contains "$_out" "stats-strip" "Markdown render includes stats component"
 	assert_contains "$_out" "example-card" "Markdown render includes example component"
-	assert_contains "$_out" "<pre><code>Question:" "Markdown render includes fenced code blocks"
+	assert_contains "$_out" "<code>Question:" "Markdown render includes fenced code blocks"
 	assert_contains "$_out" "<a href=\"#evidence-ledger\"" "Markdown render includes safe links"
 	assert_contains "$_out" "class=\"accordion\"" "Markdown render includes accordions"
 	assert_contains "$_out" "class=\"status-dot\" data-status=\"done\"" "Markdown render includes checklist status"
@@ -90,6 +90,9 @@ test_render_markdown_fixture() {
 	assert_contains "$_out" "class=\"mermaid-rendered\"" "Markdown render includes self-contained Mermaid SVG"
 	assert_contains "$_out" "class=\"latex-rendered-block\"" "Markdown render includes self-contained LaTeX block"
 	assert_contains "$_out" "class=\"code-copy\"" "Markdown render includes copy buttons for code"
+	assert_contains "$_out" "class=\"accordion action-prompt\"" "Markdown render includes action prompt accordions"
+	assert_contains "$_out" "class=\"toc-pdf-link\"" "Markdown render includes TOC PDF link"
+	assert_contains "${TEST_ROOT}/llm-visibility-report-sample-action-prompts.md" "Guide me through the tools" "Render writes companion action prompts file"
 	assert_contains "$_out" "heading-number\">1.</span> Method" "Markdown render numbers body H2 headings"
 	if grep -qF "Chapter 1 /" "$_out"; then
 		print_result "Markdown TOC omits Chapter prefix" 1 "Found Chapter prefix in rendered TOC labels"

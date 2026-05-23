@@ -11,8 +11,8 @@
 
 ## Visual interpretation
 
-This guide translates the source into an AI-readable report/style system. Treat directly observed values as evidence and generated values as implementation-safe approximations. Preserve the source's broad mood, density, typography direction, spacing rhythm, and component language without copying proprietary brand assets.
+This guide translates the current source and reviewed screenshot into an AI-readable report/style system. Treat directly observed values as evidence and generated values as implementation-safe approximations. Preserve the source's dark acquisition-agency mood, oversized white typography, rounded glass surfaces, violet CTA buttons, yellow numbered markers, monochrome illustration feel, wide spacing rhythm, and high-confidence component language without copying proprietary brand assets.
 
 ## Mode behaviour
 
-Observed theme/dark-mode markers in fetched html/css. If a dark or light inverse palette is not explicitly present in the source, derive it using `tools/design/colour-palette.md`, label it as calculated, and validate text, badge, link, and border contrast before use.
+The primary report preset is dark-first because the reviewed source section is dark-first. If a light inverse export is needed, derive it with `tools/design/colour-palette.md`, label it as calculated, and validate text, badge, link, and border contrast before use.

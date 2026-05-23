@@ -35,6 +35,7 @@ _print_usage() {
 	cat <<'USAGE'
 Usage:
   report-render-helper.sh render <input.md|input.json|-> [--output report.html] [--template <name>] [--theme auto|light|dark] [--pdf-profile a4|letter|slides-16-9-1|slides-16-9-2|slides-16-9-3]
+  report-render-helper.sh action-prompts <input.md|->
   report-render-helper.sh validate <input.md|input.json|->
   report-render-helper.sh sample [markdown|json|instructional-seo-geo]
   report-render-helper.sh print-css [--template <name>] [--theme auto|light|dark] [--pdf-profile a4|letter|slides-16-9-1|slides-16-9-2|slides-16-9-3]
@@ -43,6 +44,38 @@ Usage:
 
 Evidence badges: {{evidence:verified}}, {{evidence:partial}}, {{evidence:inferred}}, {{evidence:missing}}
 USAGE
+	return 0
+}
+
+_action_prompts_path() {
+	local _input_path="$1"
+	local _directory="${_input_path%/*}"
+	local _filename="${_input_path##*/}"
+	local _stem="${_filename%.*}"
+	if [[ "$_directory" == "$_input_path" ]]; then
+		printf '%s-action-prompts.md\n' "$_stem"
+		return 0
+	fi
+	printf '%s/%s-action-prompts.md\n' "$_directory" "$_stem"
+	return 0
+}
+
+_maybe_write_action_prompts() {
+	local _input_path="$1"
+	local _output_path="$2"
+	[[ "$_input_path" == "-" ]] && return 0
+	[[ "$_input_path" != *.md ]] && return 0
+	local _output_filename="${_output_path##*/}"
+	local _output_stem="${_output_filename%.*}"
+	[[ "$_output_stem" != "report" ]] && return 0
+	local _output_directory="${_output_path%/*}"
+	if [[ "$_output_directory" == "$_output_path" ]]; then
+		_output_directory="."
+	fi
+	local _input_filename="${_input_path##*/}"
+	local _input_stem="${_input_filename%.*}"
+	local _prompts_path="${_output_directory}/${_input_stem}-action-prompts.md"
+	_run_python action-prompts "$_input_path" >"$_prompts_path"
 	return 0
 }
 
@@ -112,10 +145,21 @@ cmd_render() {
 		_die "input file not found: ${_input}"
 	fi
 	if [[ -n "$_output" ]]; then
-		_run_python render "$_input" "$_template" "$_pdf_profile" "$_theme" >"$_output"
+		local _pdf_href="${_output##*/}"
+		_pdf_href="${_pdf_href%.*}.pdf"
+		REPORT_PDF_HREF="$_pdf_href" _run_python render "$_input" "$_template" "$_pdf_profile" "$_theme" >"$_output"
+		_maybe_write_action_prompts "$_input" "$_output"
 	else
 		_run_python render "$_input" "$_template" "$_pdf_profile" "$_theme"
 	fi
+	return 0
+}
+
+cmd_action_prompts() {
+	local _input="${1:-}"
+	[[ -z "$_input" ]] && _die "action-prompts requires an input path"
+	[[ "$_input" != "-" && ! -f "$_input" ]] && _die "input file not found: ${_input}"
+	_run_python action-prompts "$_input"
 	return 0
 }
 
@@ -373,6 +417,9 @@ main() {
 		;;
 	validate)
 		cmd_validate "$@"
+		;;
+	action-prompts)
+		cmd_action_prompts "$@"
 		;;
 	sample)
 		cmd_sample "$@"

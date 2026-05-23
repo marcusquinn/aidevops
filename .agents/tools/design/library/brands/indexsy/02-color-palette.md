@@ -5,23 +5,32 @@
 
 ## Observed source colours
 
-- `#000000`
-- `#0000cc`
 - `#030712`
-- `#111827`
-- `#1f2937`
-- `#21759b`
+- `#1A1F2E`
 - `#3451ea`
-- `#374151`
-- `#3f4047`
-- `#4b5563`
+- `#4721FB`
 - `#5270ff`
-- `#55555e`
+- `#D7DBE3`
+- `#F9FAFB`
+- `#FFFFFF`
+- Yellow numbered step markers are visible in the reviewed screenshot; use `#FFEB2D` as the report approximation.
+
+## Semantic token mapping
+
+| Role | Value | Use |
+|------|-------|-----|
+| Background | `#030712` | report page and hero field |
+| Surface | `#0B1020` | cards, TOC, code boxes, diagram panels |
+| Text | `#F9FAFB` | long-form text and headings |
+| Muted text | `#D7DBE3` | secondary copy and captions |
+| Primary | `#5270FF` | links, focus, active TOC, CTA affordances |
+| CTA/depth | `#4721FB` | rounded button/pill fills |
+| Step accent | `#FFEB2D` | numbered markers and selected counters |
 
 ## Application rules
 
-- Use observed colours as source evidence, then map them into semantic DESIGN.md roles: background, surface, on-surface, muted, outline, primary, and primary-container.
-- Long-form report text must use high-contrast `on-surface`, not decorative accent colours.
+- Use the dark palette by default. Do not keep the previous orange/light agency approximation for Indexsy reports.
+- Long-form report text must use high-contrast `on-surface`; reserve violet/blue for links, buttons, active states, and borders.
 - Badge/status colours must preserve text labels and borders so grayscale PDF output remains meaningful.
 - For missing theme modes, calculate inverse roles with `colour-palette.md`; mark them as derived until previewed and contrast-checked.
 

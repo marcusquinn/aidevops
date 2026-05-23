@@ -10,3 +10,5 @@ Render with:
 ```
 
 For slides, keep `report.html` as the preview and export PDF with `--pdf-profile slides-16-9-1`, `slides-16-9-2`, or `slides-16-9-3`.
+
+When reviewing the output, compare against the dark Indexsy site section: black background, oversized white type, violet rounded buttons, yellow numbered markers, and high-contrast cards/code blocks. The renderer also writes `report-action-prompts.md` for Markdown reports that include action components.

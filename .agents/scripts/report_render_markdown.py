@@ -60,6 +60,111 @@ COMPONENT_BLOCKS = {
     "version-summary",
 }
 
+ACTION_COMPONENT_CLASSES = ("action-line", "action-panel")
+
+
+def strip_html(value: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", value)
+    return " ".join(html.unescape(text).split())
+
+
+def action_prompt_from_text(action_text: str) -> str:
+    cleaned = re.sub(r"^(?:action|next action):\s*", "", action_text.strip(), flags=re.I)
+    if not cleaned:
+        cleaned = action_text.strip()
+    return (
+        f"Reference this report action: {cleaned}\n\n"
+        "Guide me through the tools, resources, accounts, permissions, source material, and access needed to take "
+        "this action. Break the work into numbered steps, call out any missing inputs before execution, include "
+        "safe handling for credentials or confidential data, and finish with verification evidence I can capture."
+    )
+
+
+def action_summary_from_text(section_text: str) -> str:
+    text = " ".join(section_text.split())
+    match = re.search(
+        r"\b(Action|Next action):\s*(.*?)(?=\s+(?:Why|What|How|Verify|Owner|Proof):|$)",
+        text,
+        flags=re.I,
+    )
+    if not match:
+        return text
+    label = "Next action" if match.group(1).lower().startswith("next") else "Action"
+    return f"{label}: {match.group(2).strip()}"
+
+
+def code_block_html(code_text: str, lang: str = "text", title: str = "Code") -> str:
+    safe_lang = html.escape(lang or "text")
+    safe_title = html.escape(title)
+    pre_class = f"language-{safe_lang}"
+    if lang == "mermaid":
+        pre_class = "mermaid"
+    elif lang == "latex-block":
+        pre_class = "latex-block"
+    return (
+        '<div class="code-block-wrap">'
+        f'<div class="code-block-head"><span>{safe_title}</span>'
+        '<button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div>'
+        f'<pre class="{pre_class}"><code>{html.escape(code_text)}</code></pre></div>'
+    )
+
+
+def action_prompt_details(prompt_text: str) -> str:
+    return (
+        '<details class="accordion action-prompt"><summary>Action Prompt</summary>'
+        f'{code_block_html(prompt_text, "text", "Copyable action prompt")}'
+        '</details>'
+    )
+
+
+def _action_section_pattern() -> re.Pattern[str]:
+    classes = "|".join(re.escape(name) for name in ACTION_COMPONENT_CLASSES)
+    return re.compile(rf'(<section class="({classes})"[^>]*>)(.*?)(</section>)', re.S)
+
+
+def extract_action_prompts(text: str) -> list[tuple[str, str]]:
+    _, body = render_markdown(text, inject_prompts=False)
+    prompts: list[tuple[str, str]] = []
+    for match in _action_section_pattern().finditer(body):
+        action_text = action_summary_from_text(strip_html(match.group(3)))
+        if not action_text:
+            continue
+        prompts.append((action_text, action_prompt_from_text(action_text)))
+    return prompts
+
+
+def render_action_prompt_markdown(text: str) -> str:
+    prompts = extract_action_prompts(text)
+    if not prompts:
+        return "# Action Prompts\n\nNo action prompts found.\n"
+    lines = ["# Action Prompts", ""]
+    for index, (action_text, prompt_text) in enumerate(prompts, start=1):
+        lines.extend(
+            [
+                f"## {index}. {action_text}",
+                "",
+                "```text",
+                prompt_text,
+                "```",
+                "",
+            ]
+        )
+    return "\n".join(lines)
+
+
+def inject_action_prompts(body_html: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        section_body = match.group(3)
+        if 'class="accordion action-prompt"' in section_body:
+            return match.group(0)
+        action_text = action_summary_from_text(strip_html(section_body))
+        if not action_text:
+            return match.group(0)
+        prompt = action_prompt_details(action_prompt_from_text(action_text))
+        return f"{match.group(1)}{section_body}{prompt}{match.group(4)}"
+
+    return _action_section_pattern().sub(replace, body_html)
+
 
 def plain_heading_title(title: str) -> str:
     cleaned = re.sub(r"\{\{\s*(?:badge|evidence)\s*:[^}]+?\s*\}\}", "", title, flags=re.I)
@@ -116,9 +221,23 @@ def render_latex_block(code_text: str) -> str:
     formula = " ".join(code_text.split())
     if not formula:
         return ""
+    display_formula = formula
+    replacements = {
+        r"\alpha": "α",
+        r"\beta": "β",
+        r"\gamma": "γ",
+        r"\delta": "δ",
+        r"\times": "×",
+        r"\cdot": "·",
+    }
+    for source, replacement in replacements.items():
+        display_formula = display_formula.replace(source, replacement)
+    display_formula = re.sub(r"\\text\{([^}]+)\}", r"\1", display_formula)
+    display_formula = re.sub(r"\s*([=+\-])\s*", r" \1 ", display_formula)
+    display_formula = " ".join(display_formula.split())
     return (
         '<figure class="latex-rendered-block" aria-label="Rendered LaTeX formula">'
-        f'<div role="math" aria-label="{html.escape(formula)}">{html.escape(formula)}</div>'
+        f'<div role="math" aria-label="{html.escape(formula)}">{html.escape(display_formula)}</div>'
         '<figcaption>Rendered LaTeX example, embedded as self-contained HTML.</figcaption>'
         '</figure>'
     )
@@ -131,29 +250,17 @@ def close_code(body: list[str], states: dict[str, object]) -> None:
     code_text = "\n".join(lines) if isinstance(lines, list) else ""
     lang = str(states.get("code_lang", "")).strip().lower()
     if lang == "mermaid":
-        body.append(
-            '<div class="code-block-wrap">'
-            '<button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button>'
-            f'<pre class="mermaid"><code>{html.escape(code_text)}</code></pre></div>'
-        )
+        body.append(code_block_html(code_text, "mermaid", "Mermaid source fallback"))
         rendered = render_mermaid_svg(code_text)
         if rendered:
             body.append(rendered)
     elif lang in {"latex", "tex"}:
-        body.append(
-            '<div class="code-block-wrap">'
-            '<button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button>'
-            f'<pre class="latex-block"><code>{html.escape(code_text)}</code></pre></div>'
-        )
+        body.append(code_block_html(code_text, "latex-block", "LaTeX source fallback"))
         rendered = render_latex_block(code_text)
         if rendered:
             body.append(rendered)
     else:
-        body.append(
-            '<div class="code-block-wrap">'
-            '<button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button>'
-            f"<pre><code>{html.escape(code_text)}</code></pre></div>"
-        )
+        body.append(code_block_html(code_text, lang or "text", f"{(lang or 'text').title()} code"))
     states["code"] = False
     states["code_lines"] = []
     states["code_lang"] = ""
@@ -407,7 +514,7 @@ def handle_markdown_line(
     handle_paragraph(line, body, states)
 
 
-def render_markdown(text: str) -> tuple[list[tuple[int, str, str]], str]:
+def render_markdown(text: str, inject_prompts: bool = True) -> tuple[list[tuple[int, str, str]], str]:
     validate_markdown_badges(text)
     headings: list[tuple[int, str, str]] = []
     body: list[str] = []
@@ -427,4 +534,7 @@ def render_markdown(text: str) -> tuple[list[tuple[int, str, str]], str]:
         line = raw_line.rstrip()
         handle_markdown_line(line, headings, body, states) if line or states.get("code") else close_blocks(body, states)
     close_all(body, states)
-    return headings, "\n".join(body)
+    body_html = "\n".join(body)
+    if inject_prompts:
+        body_html = inject_action_prompts(body_html)
+    return headings, body_html

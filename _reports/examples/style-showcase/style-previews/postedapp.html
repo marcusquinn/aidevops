@@ -28,9 +28,9 @@
   --report-violet: #6d28d9;
   --report-good-bg: #eaf7ef;
   --report-bad-bg: #fdecec;
-  --report-code-bg: #111827;
-  --report-code-ink: #e5e7eb;
-  --report-code-accent: #93c5fd;
+  --report-code-bg: #fffdf8;
+  --report-code-ink: #111827;
+  --report-code-accent: #2563eb;
   --report-action-bg: var(--report-ink);
   --report-action-ink: #ffffff;
   --report-info-bg: #eaf2ff;
@@ -218,6 +218,40 @@ body.report-body {
   text-transform: uppercase;
 }
 
+.sticky-toc-header {
+  display: flex;
+  gap: var(--report-space-2);
+  align-items: center;
+  justify-content: space-between;
+  margin-block-end: var(--report-space-2);
+}
+
+.sticky-toc-header h2 {
+  margin: 0;
+}
+
+.toc-pdf-link {
+  display: inline-flex;
+  min-width: 2.25rem;
+  min-height: 2.25rem;
+  align-items: center;
+  justify-content: center;
+  padding: 0.2rem 0.5rem;
+  border: 1px solid var(--report-rule);
+  border-radius: 999px;
+  color: var(--report-ink);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+  text-decoration: none;
+}
+
+.toc-pdf-link:hover,
+.toc-pdf-link:focus-visible {
+  border-color: var(--report-blue);
+  color: var(--report-blue);
+}
+
 .sticky-toc ol {
   display: grid;
   gap: var(--report-space-1);
@@ -322,8 +356,9 @@ body.report-body {
 .appendix-links {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--report-space-2);
+  gap: 0.9rem var(--report-space-2);
   margin-block: var(--report-space-3);
+  line-height: 1.9;
 }
 
 .anchor-links a,
@@ -339,6 +374,7 @@ body.report-body {
 .appendix-links a {
   align-items: center;
   gap: 0.45rem;
+  margin-block: 0.08rem;
 }
 
 .appendix-links a::before {
@@ -373,6 +409,7 @@ body.report-body {
   border-radius: 9999px;
   border: 1px solid transparent;
   white-space: nowrap;
+  margin-block: 0.08rem;
 }
 
 .evidence-badge {
@@ -612,21 +649,38 @@ th .evidence-badge {
 }
 
 .code-block-wrap {
-  position: relative;
+  overflow: hidden;
+  background: var(--report-code-bg);
+  color: var(--report-code-ink);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-md);
+}
+
+.code-block-head {
+  display: flex;
+  gap: var(--report-space-3);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--report-space-2) var(--report-space-3);
+  background: color-mix(in srgb, var(--report-code-bg) 88%, var(--report-code-ink));
+  border-bottom: 1px solid var(--report-rule);
+  color: var(--report-code-accent);
+  font-family: var(--report-font-code);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .code-copy {
-  position: absolute;
-  top: 0.65rem;
-  right: 0.65rem;
-  z-index: 1;
   display: inline-grid;
-  width: 2rem;
-  height: 2rem;
+  width: 1.85rem;
+  height: 1.85rem;
   place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  flex: 0 0 auto;
+  border: 1px solid var(--report-rule);
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: transparent;
   color: var(--report-code-ink);
   cursor: pointer;
   font: 700 0.85rem/1 var(--report-font-body);
@@ -636,7 +690,7 @@ th .evidence-badge {
 .block-template pre,
 .report-main > .code-block-wrap pre {
   margin: 0;
-  padding: var(--report-space-3) 3.25rem var(--report-space-3) var(--report-space-3);
+  padding: var(--report-space-3);
   overflow-x: auto;
   font-family: var(--report-font-code);
   font-size: 0.8125rem;
@@ -874,7 +928,8 @@ blockquote {
   padding: var(--report-space-3);
   border: 1px solid var(--report-rule);
   border-radius: var(--report-radius-md);
-  background: var(--report-surface);
+  background: var(--report-code-bg);
+  color: var(--report-code-ink);
 }
 
 .mermaid-rendered svg {
@@ -884,13 +939,13 @@ blockquote {
 }
 
 .diagram-node {
-  fill: var(--report-paper-raised);
+  fill: color-mix(in srgb, var(--report-code-bg) 92%, var(--report-code-accent));
   stroke: var(--report-blue);
   stroke-width: 2;
 }
 
 .diagram-label {
-  fill: var(--report-ink);
+  fill: var(--report-code-ink);
   font: 700 14px system-ui, sans-serif;
 }
 
@@ -908,6 +963,12 @@ blockquote {
 .latex-inline {
   font-family: var(--report-font-code);
   letter-spacing: 0.01em;
+  color: var(--report-code-ink);
+}
+
+.latex-rendered-block div {
+  font-size: clamp(1.15rem, 2.8vw, 1.75rem);
+  font-weight: 700;
 }
 
 .mermaid-rendered figcaption,
@@ -919,7 +980,7 @@ blockquote {
 
 .mermaid::before,
 .latex-block::before {
-  display: block;
+  display: none;
   margin-bottom: var(--report-space-2);
   color: var(--report-code-accent);
   font-family: var(--report-font-body);
@@ -1318,6 +1379,9 @@ a {
   --report-blue: #0F766E;
   --report-radius-lg: 14px;
   --report-radius-xl: calc(14px + 0.5rem);
+  --report-code-bg: #FFFFFF;
+  --report-code-ink: #111111;
+  --report-code-accent: #0F766E;
 }
 body.report-body { font-family: var(--report-font-body); font-size: var(--report-body-size); line-height: var(--report-body-line); }
 h1, h2, h3 { font-family: var(--report-font-heading); font-weight: var(--report-heading-weight); letter-spacing: var(--report-heading-tracking); }
@@ -1329,7 +1393,7 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <body class="report-body report-theme-auto report-pdf-profile-a4 report-template-postedapp">
 <div class="report-shell">
 <nav class="sticky-toc" aria-label="Report table of contents">
-<h2>Contents</h2>
+<div class="sticky-toc-header"><h2>Contents</h2><a class="toc-pdf-link" href="postedapp.pdf" aria-label="Open PDF version" title="Open PDF version">PDF</a></div>
 <ol>
 <li><a href="#report-style-showcase" style="margin-left:0rem">Report Style Showcase</a></li>
 <li><a href="#executive-summary" style="margin-left:1rem">Executive summary</a></li>
@@ -1410,7 +1474,9 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 </details>
 <section class="action-line">
 <p><strong>Action:</strong> review the numbered chapters below and compare the generated HTML against the source Toolbox patterns.</p>
-</section>
+<details class="accordion action-prompt"><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: review the numbered chapters below and compare the generated HTML against the source Toolbox patterns.
+
+Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details></section>
 <h2 class="chapter-heading" id="why-this-matters-now"><span class="heading-number">1.</span> Why this matters now</h2>
 <p>Use <a href="#priority-and-checklist" data-filetype="link">anchor links</a>, <a href="../llm-visibility-toolbox/report.html" data-filetype="html">appendix links</a>, numbered steps, accordions, coloured panels, and source cards in the same canonical Markdown.</p>
 <section class="badge-row">
@@ -1431,7 +1497,9 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 </ul>
 <section class="action-line">
 <p><strong>Action:</strong> coordinate one trade article, one community thread, one video transcript, and one partner citation within the same quarter.</p>
-</section>
+<details class="accordion action-prompt"><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: coordinate one trade article, one community thread, one video transcript, and one partner citation within the same quarter.
+
+Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details></section>
 <p>A plain bullet section should remain plain:</p>
 <ul>
 <li>Robots.txt and crawlability check for key AI bots.</li>
@@ -1462,7 +1530,9 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <section class="action-panel" data-severity="high">
 <h3 class="section-heading" id="action-panel"><span class="heading-number">4.3</span> Action panel</h3>
 <p><strong>Next action:</strong> turn the finding into a concrete implementation step with owner, proof path, and rerun command.</p>
-</section>
+<details class="accordion action-prompt"><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: turn the finding into a concrete implementation step with owner, proof path, and rerun command.
+
+Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details></section>
 <section class="tactic-card">
 <h3 class="section-heading" id="tactic-card"><span class="heading-number">4.4</span> Tactic card</h3>
 <ul>
@@ -1497,7 +1567,7 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 <blockquote>Quotes highlight expert evidence, user language, or a decision constraint without turning it into a recommendation.</blockquote>
 <section class="block-template">
 <header>Author block template</header>
-<div class="code-block-wrap"><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button><pre><code>Written by Dr. Jane Doe, PhD
+<div class="code-block-wrap"><div class="code-block-head"><span>Text code</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Written by Dr. Jane Doe, PhD
 Principal Data Scientist, ExampleCo
 
 Jane led the data platform team from 2019 to 2024 and now researches LLM retrieval.
@@ -1506,11 +1576,11 @@ LinkedIn | Google Scholar | Personal site</code></pre></div>
 </section>
 <section class="example-card">
 <header>Render command</header>
-<div class="code-block-wrap"><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button><pre><code>.agents/scripts/report-render-helper.sh render report.md --template lottiefiles --pdf-profile slides-16-9-2 --output report.html</code></pre></div>
+<div class="code-block-wrap"><div class="code-block-head"><span>Text code</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>.agents/scripts/report-render-helper.sh render report.md --template lottiefiles --pdf-profile slides-16-9-2 --output report.html</code></pre></div>
 </section>
 <section class="example-card">
 <header>Mermaid fallback</header>
-<div class="code-block-wrap"><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button><pre class="mermaid"><code>flowchart LR
+<div class="code-block-wrap"><div class="code-block-head"><span>Mermaid source fallback</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="mermaid"><code>flowchart LR
   SourceLedger --&gt; Finding
   Finding --&gt; Recommendation
   Recommendation --&gt; Verification</code></pre></div>
@@ -1518,10 +1588,10 @@ LinkedIn | Google Scholar | Personal site</code></pre></div>
 </section>
 <section class="example-card">
 <header>LaTeX fallback</header>
-<div class="code-block-wrap"><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button><pre class="latex-block"><code>visibility = citations + mentions + retrieval</code></pre></div>
-<figure class="latex-rendered-block" aria-label="Rendered LaTeX formula"><div role="math" aria-label="visibility = citations + mentions + retrieval">visibility = citations + mentions + retrieval</div><figcaption>Rendered LaTeX example, embedded as self-contained HTML.</figcaption></figure>
+<div class="code-block-wrap"><div class="code-block-head"><span>LaTeX source fallback</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="latex-block"><code>\text{LLM visibility} = \alpha citations + \beta mentions + \gamma retrieval - \delta decay</code></pre></div>
+<figure class="latex-rendered-block" aria-label="Rendered LaTeX formula"><div role="math" aria-label="\text{LLM visibility} = \alpha citations + \beta mentions + \gamma retrieval - \delta decay">LLM visibility = α citations + β mentions + γ retrieval - δ decay</div><figcaption>Rendered LaTeX example, embedded as self-contained HTML.</figcaption></figure>
 </section>
-<p>Inline LaTeX fallback: <span class="latex-inline" role="math" aria-label="visibility = citations + mentions + retrieval">visibility = citations + mentions + retrieval</span>.</p>
+<p>Inline LaTeX fallback: {{latex:\text{visibility} = \alpha citations + \beta mentions + \gamma retrieval}}.</p>
 <section class="bar-chart">
 <p>Citation readiness — 72%</p>
 <p>Third-party corroboration — 58%</p>
@@ -1656,7 +1726,7 @@ LinkedIn | Google Scholar | Personal site</code></pre></div>
 (() => {
   document.querySelectorAll('.code-copy').forEach((button) => {
     button.addEventListener('click', async () => {
-      const code = button.parentElement?.querySelector('code')?.innerText || '';
+      const code = button.closest('.code-block-wrap')?.querySelector('code')?.innerText || '';
       try {
         await navigator.clipboard.writeText(code);
         button.textContent = '✓';

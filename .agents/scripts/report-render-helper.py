@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -18,7 +19,7 @@ from report_render_badges import BADGE_PARTIAL
 from report_render_badges import BADGE_VERIFIED
 from report_render_json import DETAIL_KEY, SUMMARY_KEY, TITLE_KEY, render_json, validate_json_badges
 from report_render_markup import inline_markup
-from report_render_markdown import render_markdown, validate_markdown_badges
+from report_render_markdown import render_action_prompt_markdown, render_markdown, validate_markdown_badges
 from report_render_styles import dark_style_names, style_css, style_names
 
 if len(sys.argv) < 2:
@@ -32,25 +33,36 @@ PDF_PROFILE = sys.argv[4] if len(sys.argv) > 4 else "a4"
 THEME = sys.argv[5] if len(sys.argv) > 5 else "auto"
 
 BASIC_CSS = """
-:root { color-scheme: light; --report-paper: #f8f6f1; --report-surface: #fffdf8; --report-ink: #111827; --report-muted: #4b5563; --report-line: #d8d2c4; --report-panel: #fffdf8; --report-blue: #2563eb; --report-green: #147a4a; --report-amber: #b7791f; --report-red: #b42318; }
+:root { color-scheme: light; --report-paper: #ffffff; --report-paper-raised: #f8fafc; --report-surface: #ffffff; --report-ink: #111827; --report-ink-soft: #4b5563; --report-muted: #4b5563; --report-line: #d1d5db; --report-rule: #d1d5db; --report-panel: #ffffff; --report-blue: #2563eb; --report-green: #147a4a; --report-amber: #b7791f; --report-red: #b42318; --report-code-bg: #f8fafc; --report-code-ink: #111827; --report-code-accent: #1d4ed8; --report-radius-md: 8px; }
 body.report-body { margin: 0; background: var(--report-paper); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--report-ink); }
-.report-shell { display: grid; grid-template-columns: minmax(0, 1fr) minmax(14rem, 18rem); gap: 2rem; max-width: 1180px; margin: 0 auto; padding: 2rem; }
-.report-main { grid-column: 1; grid-row: 1; }
-.sticky-toc { position: sticky; top: 1rem; align-self: start; max-height: calc(100vh - 2rem); overflow: auto; border: 1px solid var(--report-line); border-radius: 12px; padding: 1rem; background: var(--report-panel); }
-.sticky-toc { grid-column: 2; grid-row: 1; }
-.sticky-toc a { display: block; color: inherit; text-decoration: none; margin: .35rem 0; border-left: 3px solid transparent; padding-left: .5rem; }
-.sticky-toc a:hover, .sticky-toc a:focus-visible { border-left-color: var(--report-blue); }
+body.report-theme-dark { color-scheme: dark; --report-paper: #0f172a; --report-paper-raised: #111827; --report-surface: #111827; --report-panel: #111827; --report-ink: #f8fafc; --report-ink-soft: #cbd5e1; --report-muted: #cbd5e1; --report-line: #334155; --report-rule: #334155; --report-code-bg: #020617; --report-code-ink: #e5e7eb; --report-code-accent: #93c5fd; }
+.report-shell { max-width: 1120px; margin: 0 auto; padding: 2rem; }
+.report-main { min-width: 0; }
+.sticky-toc { margin: 0 0 2rem; border: 1px solid var(--report-line); border-radius: 10px; padding: 1rem; background: var(--report-panel); }
+.sticky-toc-header { display: flex; gap: 1rem; align-items: center; justify-content: space-between; }
+.toc-pdf-link { display: inline-flex; align-items: center; justify-content: center; width: 2rem; height: 2rem; border: 1px solid var(--report-line); border-radius: 999px; color: inherit; text-decoration: none; }
+.sticky-toc a { color: inherit; text-decoration: none; }
+.sticky-toc a:hover, .sticky-toc a:focus-visible { text-decoration: underline; }
 .report-content, .report-main { min-width: 0; }
+.badge-row, .appendix-links, .anchor-links { display: flex; flex-wrap: wrap; gap: .7rem; line-height: 1.9; }
 .badge { display: inline-flex; width: fit-content; min-width: max-content; max-width: 100%; white-space: nowrap; border-radius: 999px; padding: .15rem .55rem; font-size: .78rem; font-weight: 700; border: 1px solid var(--report-line); }
 .badge-verified { background: #dcfce7; color: #166534; }
 .badge-partial { background: #fef9c3; color: #854d0e; }
 .badge-inferred { background: #dbeafe; color: #1e40af; }
 .badge-missing { background: #fee2e2; color: #991b1b; }
 .source-card { border: 1px solid var(--report-line); border-left: 4px solid var(--report-ink); border-radius: 10px; padding: .85rem 1rem; margin: .75rem 0; background: var(--report-surface); }
-.code-block-wrap { position: relative; }
-.code-copy { position: absolute; top: .6rem; right: .6rem; z-index: 1; border: 1px solid var(--report-line); border-radius: 999px; background: var(--report-panel); color: var(--report-ink); cursor: pointer; }
-.mermaid::before { content: "Mermaid source fallback"; display: block; font-weight: 700; margin-bottom: .5rem; }
-.latex-block::before { content: "LaTeX source fallback"; display: block; font-weight: 700; margin-bottom: .5rem; }
+.code-block-wrap, .mermaid-rendered, .latex-rendered-block { margin: 1rem 0; border: 1px solid var(--report-line); border-radius: 10px; overflow: hidden; background: var(--report-code-bg); color: var(--report-code-ink); }
+.code-block-head { display: flex; gap: 1rem; align-items: center; justify-content: space-between; padding: .45rem .75rem; border-bottom: 1px solid var(--report-line); color: var(--report-code-accent); font: 700 .78rem/1.3 ui-monospace, SFMono-Regular, Consolas, monospace; }
+.code-copy { display: inline-grid; width: 1.75rem; height: 1.75rem; place-items: center; border: 1px solid var(--report-line); border-radius: 999px; background: transparent; color: inherit; cursor: pointer; }
+.code-block-wrap pre { margin: 0; padding: .8rem; overflow-x: auto; }
+.mermaid-rendered, .latex-rendered-block { padding: 1rem; }
+.mermaid-rendered svg { width: 100%; height: auto; }
+.diagram-node { fill: var(--report-paper-raised); stroke: var(--report-blue); stroke-width: 2; }
+.diagram-label { fill: var(--report-ink); font: 700 14px system-ui, sans-serif; }
+.diagram-arrow { stroke: var(--report-blue); stroke-width: 2.5; marker-end: url(#arrowhead); }
+.diagram-arrow-head { fill: var(--report-blue); }
+.latex-rendered-block div, .latex-inline { color: var(--report-code-ink); }
+.mermaid-rendered figcaption, .latex-rendered-block figcaption { color: var(--report-ink-soft); }
 table { table-layout: auto; border-collapse: collapse; width: 100%; margin: 1rem 0; overflow-wrap: normal; }
 th, td { border: 1px solid var(--report-line); padding: .5rem; text-align: left; vertical-align: top; }
 h1, h2, h3 { line-height: 1.15; break-after: avoid; }
@@ -107,6 +119,13 @@ def is_executive_summary(title: str) -> bool:
 
 def wrap_document(headings: list[tuple[int, str, str]], body: str) -> str:
     css = load_css(TEMPLATE, PDF_PROFILE)
+    pdf_href = os.environ.get("REPORT_PDF_HREF", "").strip()
+    pdf_link = ""
+    if pdf_href:
+        pdf_link = (
+            f'<a class="toc-pdf-link" href="{html.escape(pdf_href)}" '
+            'aria-label="Open PDF version" title="Open PDF version">PDF</a>'
+        )
     toc_items = []
     chapter = 0
     section = 0
@@ -146,7 +165,7 @@ def wrap_document(headings: list[tuple[int, str, str]], body: str) -> str:
 (() => {
   document.querySelectorAll('.code-copy').forEach((button) => {
     button.addEventListener('click', async () => {
-      const code = button.parentElement?.querySelector('code')?.innerText || '';
+      const code = button.closest('.code-block-wrap')?.querySelector('code')?.innerText || '';
       try {
         await navigator.clipboard.writeText(code);
         button.textContent = '✓';
@@ -170,7 +189,7 @@ def wrap_document(headings: list[tuple[int, str, str]], body: str) -> str:
 <body class="report-body report-theme-{html.escape(THEME)} report-pdf-profile-{html.escape(PDF_PROFILE)} report-template-{html.escape(TEMPLATE)}">
 <div class="report-shell">
 <nav class="sticky-toc" aria-label="Report table of contents">
-<h2>Contents</h2>
+<div class="sticky-toc-header"><h2>Contents</h2>{pdf_link}</div>
 <ol>
 {chr(10).join(toc_items)}
 </ol>
@@ -221,6 +240,9 @@ def main() -> int:
         print(sample_json())
         return 0
     text = read_input(INPUT)
+    if MODE == "action-prompts":
+        sys.stdout.write(render_action_prompt_markdown(text))
+        return 0
     if MODE == "validate":
         stripped = text.lstrip()
         if stripped.startswith(("{", "[")):

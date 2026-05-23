@@ -223,6 +223,28 @@ def _template_specific_css(name: str) -> str:
 .report-template-lottiefiles .source-card { border-radius: 20px; }
 .report-template-lottiefiles .action-line { box-shadow: 0 20px 48px rgba(1, 157, 145, 0.18); }
 """.strip()
+    if name == "indexsy":
+        return """
+.report-template-indexsy .report-shell { max-width: 1320px; }
+.report-template-indexsy .report-cover,
+.report-template-indexsy .chapter-hero { text-align: center; background: transparent; border-color: transparent; box-shadow: none; }
+.report-template-indexsy .report-cover h1,
+.report-template-indexsy h1 { font-size: clamp(3.2rem, 8vw, 5.4rem); font-weight: 500; letter-spacing: -0.055em; }
+.report-template-indexsy h2 { font-size: clamp(2.1rem, 4vw, 3.4rem); font-weight: 500; letter-spacing: -0.04em; }
+.report-template-indexsy .heading-number,
+.report-template-indexsy ol li::marker { color: #ffeb2d; }
+.report-template-indexsy .toc-pdf-link,
+.report-template-indexsy .action-line strong { border-color: #5270ff; color: #ffffff; background: #4721fb; }
+.report-template-indexsy .sticky-toc,
+.report-template-indexsy .tactic-card,
+.report-template-indexsy .source-card,
+.report-template-indexsy .priority-group,
+.report-template-indexsy .stat-card { box-shadow: 0 24px 48px rgba(0, 0, 0, 0.28); }
+.report-template-indexsy .badge-verified,
+.report-template-indexsy .badge-partial,
+.report-template-indexsy .badge-inferred,
+.report-template-indexsy .badge-missing { border-color: rgba(255, 255, 255, 0.18); }
+""".strip()
     return ""
 
 
@@ -252,6 +274,9 @@ def _theme_css(name: str, tokens: dict[str, str]) -> str:
   --report-blue: {tokens['primary']};
   --report-radius-lg: {tokens['rounded.lg']};
   --report-radius-xl: calc({tokens['rounded.lg']} + 0.5rem);
+  --report-code-bg: {tokens.get('code-background', tokens['surface'])};
+  --report-code-ink: {tokens.get('code-on-background', tokens['on-surface'])};
+  --report-code-accent: {tokens.get('code-accent', tokens['primary'])};
 }}
 body.report-body {{ font-family: var(--report-font-body); font-size: var(--report-body-size); line-height: var(--report-body-line); }}
 h1, h2, h3 {{ font-family: var(--report-font-heading); font-weight: var(--report-heading-weight); letter-spacing: var(--report-heading-tracking); }}

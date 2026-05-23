@@ -153,7 +153,7 @@ Principal Data Scientist, ExampleCo
 
 ::: example-card title="LaTeX fallback"
 ```latex
-citation_lift = verified_mentions / prompts
+\text{citation lift} = \alpha verified\_mentions + \beta source\_breadth - \delta stale\_claims
 ```
 :::
 

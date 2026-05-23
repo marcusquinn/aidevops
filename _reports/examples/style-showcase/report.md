@@ -200,11 +200,11 @@ flowchart LR
 
 ::: example-card title="LaTeX fallback"
 ```latex
-visibility = citations + mentions + retrieval
+\text{LLM visibility} = \alpha citations + \beta mentions + \gamma retrieval - \delta decay
 ```
 :::
 
-Inline LaTeX fallback: {{latex:visibility = citations + mentions + retrieval}}.
+Inline LaTeX fallback: {{latex:\text{visibility} = \alpha citations + \beta mentions + \gamma retrieval}}.
 
 ::: bar-chart
 Citation readiness — 72%
