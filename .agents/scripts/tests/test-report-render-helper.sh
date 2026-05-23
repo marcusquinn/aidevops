@@ -96,6 +96,57 @@ test_validate_rejects_unknown_badge() {
 	return 0
 }
 
+test_python_helper_requires_mode() {
+	local _result=0
+	python3 "${SCRIPT_DIR}/../report-render-helper.py" >/dev/null 2>&1 || _result=$?
+	if [[ "$_result" -ne 1 ]]; then
+		print_result "Python helper requires mode argument" 1 "Expected exit 1, got ${_result}"
+		return 0
+	fi
+	print_result "Python helper requires mode argument" 0
+	return 0
+}
+
+test_markdown_table_uses_header_cells() {
+	local _input="${TEST_ROOT}/table.md"
+	local _out="${TEST_ROOT}/table.html"
+	cat >"$_input" <<'MARKDOWN'
+# Table
+
+| Component | Evidence |
+|---|---|
+| AIO | {{evidence:verified}} |
+MARKDOWN
+	"$HELPER_SH" render "$_input" --output "$_out"
+	assert_contains "$_out" "<thead>" "Markdown table renders thead"
+	assert_contains "$_out" "<th>Component</th>" "Markdown table renders header cells"
+	assert_contains "$_out" "<td>AIO</td>" "Markdown table renders body cells"
+	return 0
+}
+
+test_multiline_markdown_paragraph() {
+	local _input="${TEST_ROOT}/paragraph.md"
+	local _out="${TEST_ROOT}/paragraph.html"
+	cat >"$_input" <<'MARKDOWN'
+# Paragraph
+
+First line continues
+onto the next line.
+MARKDOWN
+	"$HELPER_SH" render "$_input" --output "$_out"
+	assert_contains "$_out" "<p>First line continues onto the next line.</p>" "Markdown joins paragraph lines"
+	return 0
+}
+
+test_render_json_array_is_resilient() {
+	local _input="${TEST_ROOT}/array.json"
+	local _out="${TEST_ROOT}/array.html"
+	printf '[{"title":"List item","badge":"verified"}]\n' >"$_input"
+	"$HELPER_SH" render "$_input" --output "$_out"
+	assert_contains "$_out" "<h1 id=\"report\">Report</h1>" "JSON array render falls back to report title"
+	return 0
+}
+
 test_sample_and_css_commands() {
 	local _sample="${TEST_ROOT}/sample.md"
 	local _css="${TEST_ROOT}/print.css"
@@ -112,6 +163,10 @@ main() {
 	test_render_markdown_fixture
 	test_render_json_fixture
 	test_validate_rejects_unknown_badge
+	test_python_helper_requires_mode
+	test_markdown_table_uses_header_cells
+	test_multiline_markdown_paragraph
+	test_render_json_array_is_resilient
 	test_sample_and_css_commands
 	printf '\nReport render helper tests: %s run, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then

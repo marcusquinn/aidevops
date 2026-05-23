@@ -17,6 +17,10 @@ from report_render_badges import BADGE_VERIFIED
 from report_render_json import DETAIL_KEY, SUMMARY_KEY, TITLE_KEY, render_json, validate_json_badges
 from report_render_markdown import render_markdown, validate_markdown_badges
 
+if len(sys.argv) < 2:
+    sys.stderr.write(f"Usage: {sys.argv[0]} <mode> [input]\n")
+    sys.exit(1)
+
 MODE = sys.argv[1]
 INPUT = sys.argv[2] if len(sys.argv) > 2 else ""
 CSS = """
@@ -110,7 +114,7 @@ def main() -> int:
             validate_markdown_badges(text)
         return 0
     stripped = text.lstrip()
-    headings, body = render_json(text) if stripped.startswith("{") else render_markdown(text)
+    headings, body = render_json(text) if stripped.startswith(("{", "[")) else render_markdown(text)
     sys.stdout.write(wrap_document(headings, body))
     return 0
 

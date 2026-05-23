@@ -5,11 +5,12 @@
 
 from __future__ import annotations
 
-import html
 import re
 
 from report_render_badges import badge_html
 from report_render_markup import inline_markup, slug
+
+BlockState = dict[str, bool | list[str]]
 
 
 def validate_markdown_badges(text: str) -> None:
@@ -17,18 +18,27 @@ def validate_markdown_badges(text: str) -> None:
         badge_html(match.group(1))
 
 
-def close_blocks(body: list[str], states: dict[str, bool]) -> None:
+def close_blocks(body: list[str], states: BlockState) -> None:
+    flush_paragraph(body, states)
     for key, tag in (("list", "</ul>"), ("table", "</tbody></table>")):
         if states[key]:
             body.append(tag)
             states[key] = False
 
 
+def flush_paragraph(body: list[str], states: BlockState) -> None:
+    paragraph_lines = states["paragraph"]
+    if not isinstance(paragraph_lines, list) or not paragraph_lines:
+        return
+    body.append(f"<p>{inline_markup(' '.join(paragraph_lines))}</p>")
+    states["paragraph"] = []
+
+
 def handle_heading(
     line: str,
     headings: list[tuple[int, str, str]],
     body: list[str],
-    states: dict[str, bool],
+    states: BlockState,
 ) -> bool:
     heading = re.match(r"^(#{1,3})\s+(.+)$", line)
     if not heading:
@@ -42,22 +52,25 @@ def handle_heading(
     return True
 
 
-def handle_table(line: str, body: list[str], states: dict[str, bool]) -> bool:
+def handle_table(line: str, body: list[str], states: BlockState) -> bool:
     if not line.startswith("|") or not line.endswith("|"):
         return False
-    cells = [inline_markup(cell.strip()) for cell in line.strip("|").split("|")]
-    raw_cells = [html.unescape(cell) for cell in cells]
+    raw_cells = [cell.strip() for cell in line.strip("|").split("|")]
     if all(re.match(r"^:?-{3,}:?$", cell) for cell in raw_cells):
         return True
+    cells = [inline_markup(cell) for cell in raw_cells]
     if not states["table"]:
         close_blocks(body, states)
-        body.append("<table><tbody>")
+        body.append("<table><thead>")
+        body.append("<tr>{}</tr>".format("".join(f"<th>{cell}</th>" for cell in cells)))
+        body.append("</thead><tbody>")
         states["table"] = True
+        return True
     body.append("<tr>{}</tr>".format("".join(f"<td>{cell}</td>" for cell in cells)))
     return True
 
 
-def handle_list(line: str, body: list[str], states: dict[str, bool]) -> bool:
+def handle_list(line: str, body: list[str], states: BlockState) -> bool:
     if not line.startswith(("- ", "* ")):
         return False
     if not states["list"]:
@@ -68,19 +81,23 @@ def handle_list(line: str, body: list[str], states: dict[str, bool]) -> bool:
     return True
 
 
-def handle_paragraph(line: str, body: list[str], states: dict[str, bool]) -> None:
-    close_blocks(body, states)
+def handle_paragraph(line: str, body: list[str], states: BlockState) -> None:
+    if states["list"] or states["table"]:
+        close_blocks(body, states)
     if line.lower().startswith(("source:", "source card:")):
+        flush_paragraph(body, states)
         body.append(f'<aside class="source-card">{inline_markup(line)}</aside>')
         return
-    body.append(f"<p>{inline_markup(line)}</p>")
+    paragraph_lines = states["paragraph"]
+    if isinstance(paragraph_lines, list):
+        paragraph_lines.append(line)
 
 
 def handle_markdown_line(
     line: str,
     headings: list[tuple[int, str, str]],
     body: list[str],
-    states: dict[str, bool],
+    states: BlockState,
 ) -> None:
     if handle_heading(line, headings, body, states):
         return
@@ -95,7 +112,7 @@ def render_markdown(text: str) -> tuple[list[tuple[int, str, str]], str]:
     validate_markdown_badges(text)
     headings: list[tuple[int, str, str]] = []
     body: list[str] = []
-    states = {"list": False, "table": False}
+    states = {"list": False, "table": False, "paragraph": []}
     for raw_line in text.splitlines():
         line = raw_line.rstrip()
         handle_markdown_line(line, headings, body, states) if line else close_blocks(body, states)
