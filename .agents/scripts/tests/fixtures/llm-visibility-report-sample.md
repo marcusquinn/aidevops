@@ -151,6 +151,12 @@ Principal Data Scientist, ExampleCo
 ```
 :::
 
+::: example-card title="LaTeX fallback"
+```latex
+citation_lift = verified_mentions / prompts
+```
+:::
+
 ::: bar-chart
 Evidence coverage — 72%
 Retrieval readiness — 64%

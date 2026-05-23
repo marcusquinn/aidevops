@@ -311,8 +311,6 @@ Close with the smallest useful synthesis: what changed, what evidence proves it,
 :::
 
 
-## Citations
-
 ::: version-summary
 V4 · compiled May 2026 from source-led evidence · internal toolkit
 :::

@@ -313,8 +313,9 @@ body.report-body {
 .badge-row {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--report-space-2);
+  gap: 0.8rem var(--report-space-2);
   align-items: center;
+  line-height: 1.9;
 }
 
 .anchor-links,
@@ -380,6 +381,7 @@ body.report-body {
   align-items: center;
   width: fit-content;
   max-width: 100%;
+  line-height: 1.7;
   white-space: nowrap;
 }
 
@@ -609,10 +611,32 @@ th .evidence-badge {
   font-size: 0.8125rem;
 }
 
+.code-block-wrap {
+  position: relative;
+}
+
+.code-copy {
+  position: absolute;
+  top: 0.65rem;
+  right: 0.65rem;
+  z-index: 1;
+  display: inline-grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--report-code-ink);
+  cursor: pointer;
+  font: 700 0.85rem/1 var(--report-font-body);
+}
+
 .example-card pre,
-.block-template pre {
+.block-template pre,
+.report-main > .code-block-wrap pre {
   margin: 0;
-  padding: var(--report-space-3);
+  padding: var(--report-space-3) 3.25rem var(--report-space-3) var(--report-space-3);
   overflow-x: auto;
   font-family: var(--report-font-code);
   font-size: 0.8125rem;
@@ -773,6 +797,15 @@ th .evidence-badge {
   border-color: rgba(109, 40, 217, 0.22);
 }
 
+.myth-callout > * {
+  margin: 0;
+}
+
+.myth-callout > :nth-child(n + 3) {
+  padding-block-start: var(--report-space-3);
+  border-top: 1px solid rgba(109, 40, 217, 0.2);
+}
+
 .accordion {
   display: block;
 }
@@ -833,6 +866,55 @@ blockquote {
   border-radius: var(--report-radius-md);
   background: var(--report-code-bg);
   color: var(--report-code-ink);
+}
+
+.mermaid-rendered,
+.latex-rendered-block {
+  margin-block: var(--report-space-4);
+  padding: var(--report-space-3);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-md);
+  background: var(--report-surface);
+}
+
+.mermaid-rendered svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.diagram-node {
+  fill: var(--report-paper-raised);
+  stroke: var(--report-blue);
+  stroke-width: 2;
+}
+
+.diagram-label {
+  fill: var(--report-ink);
+  font: 700 14px system-ui, sans-serif;
+}
+
+.diagram-arrow {
+  stroke: var(--report-blue);
+  stroke-width: 2.5;
+  marker-end: url(#arrowhead);
+}
+
+.diagram-arrow-head {
+  fill: var(--report-blue);
+}
+
+.latex-rendered-block div,
+.latex-inline {
+  font-family: var(--report-font-code);
+  letter-spacing: 0.01em;
+}
+
+.mermaid-rendered figcaption,
+.latex-rendered-block figcaption {
+  margin-block-start: var(--report-space-2);
+  color: var(--report-ink-soft);
+  font-size: 0.78rem;
 }
 
 .mermaid::before,
@@ -980,6 +1062,13 @@ ol li::marker {
   font-weight: 800;
   letter-spacing: 0.16em;
   text-transform: uppercase;
+  margin-block: var(--report-space-6) 0;
+  padding: var(--report-space-4) 0 0;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--report-rule);
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .source-card {
@@ -1331,10 +1420,10 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 </section>
 <h2 class="chapter-heading" id="implementation-brief"><span class="heading-number">4.</span> Implementation brief</h2>
 <section class="example-card">
-<pre><code>Task: Improve /compare/example-vs-competitor for AI search citation readiness.
+<div class="code-block-wrap"><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button><pre><code>Task: Improve /compare/example-vs-competitor for AI search citation readiness.
 Files: comparison page template, pricing facts component, source-card component.
 Acceptance: raw HTML contains direct answer, source IDs C001-C004, updated date, and criteria table.
-Verification: rerun AIO, Gemini, ChatGPT, AI Mode, and Perplexity prompt set separately.</code></pre>
+Verification: rerun AIO, Gemini, ChatGPT, AI Mode, and Perplexity prompt set separately.</code></pre></div>
 </section>
 <h2 class="chapter-heading" id="verification-checklist"><span class="heading-number">5.</span> Verification checklist</h2>
 <section class="checklist-card">
@@ -1366,6 +1455,22 @@ Verification: rerun AIO, Gemini, ChatGPT, AI Mode, and Perplexity prompt set sep
   }, { rootMargin: '-20% 0px -65% 0px', threshold: [0, 1] });
   headings.forEach((heading) => observer.observe(heading));
   setActive(headings[0].id);
+})();
+</script>
+<script>
+(() => {
+  document.querySelectorAll('.code-copy').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const code = button.parentElement?.querySelector('code')?.innerText || '';
+      try {
+        await navigator.clipboard.writeText(code);
+        button.textContent = '✓';
+        setTimeout(() => { button.textContent = '⧉'; }, 1200);
+      } catch (_) {
+        button.textContent = 'Copy';
+      }
+    });
+  });
 })();
 </script>
 </body>

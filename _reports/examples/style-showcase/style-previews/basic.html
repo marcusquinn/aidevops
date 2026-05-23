@@ -19,6 +19,8 @@ body.report-body { margin: 0; background: var(--report-paper); font: 16px/1.6 -a
 .badge-inferred { background: #dbeafe; color: #1e40af; }
 .badge-missing { background: #fee2e2; color: #991b1b; }
 .source-card { border: 1px solid var(--report-line); border-left: 4px solid var(--report-ink); border-radius: 10px; padding: .85rem 1rem; margin: .75rem 0; background: var(--report-surface); }
+.code-block-wrap { position: relative; }
+.code-copy { position: absolute; top: .6rem; right: .6rem; z-index: 1; border: 1px solid var(--report-line); border-radius: 999px; background: var(--report-panel); color: var(--report-ink); cursor: pointer; }
 .mermaid::before { content: "Mermaid source fallback"; display: block; font-weight: 700; margin-bottom: .5rem; }
 .latex-block::before { content: "LaTeX source fallback"; display: block; font-weight: 700; margin-bottom: .5rem; }
 table { table-layout: auto; border-collapse: collapse; width: 100%; margin: 1rem 0; overflow-wrap: normal; }
@@ -69,7 +71,7 @@ h1, h2, h3 { line-height: 1.15; break-after: avoid; }
 <li><a href="#ahrefs-schema-markup-has-no-impact-on-ai-visibility" style="margin-left:2rem">11.6 Ahrefs: schema markup has no impact on AI visibility</a></li>
 <li><a href="#growth-memo-the-consensus-gap" style="margin-left:2rem">11.7 Growth memo: the consensus gap</a></li>
 <li><a href="#g2-the-answer-economy-research" style="margin-left:2rem">11.8 G2: the answer economy research</a></li>
-<li><a href="#citations" style="margin-left:1rem">12. Citations</a></li>
+<li><a href="#appendices" style="margin-left:1rem">12. Appendices</a></li>
 </ol>
 </nav>
 <main class="report-content report-main">
@@ -199,25 +201,31 @@ h1, h2, h3 { line-height: 1.15; break-after: avoid; }
 <blockquote>Quotes highlight expert evidence, user language, or a decision constraint without turning it into a recommendation.</blockquote>
 <section class="block-template">
 <header>Author block template</header>
-<pre><code>Written by Dr. Jane Doe, PhD
+<div class="code-block-wrap"><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button><pre><code>Written by Dr. Jane Doe, PhD
 Principal Data Scientist, ExampleCo
 
 Jane led the data platform team from 2019 to 2024 and now researches LLM retrieval.
 
-LinkedIn | Google Scholar | Personal site</code></pre>
+LinkedIn | Google Scholar | Personal site</code></pre></div>
 </section>
 <section class="example-card">
 <header>Render command</header>
-<pre><code>.agents/scripts/report-render-helper.sh render report.md --template lottiefiles --pdf-profile slides-16-9-2 --output report.html</code></pre>
+<div class="code-block-wrap"><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button><pre><code>.agents/scripts/report-render-helper.sh render report.md --template lottiefiles --pdf-profile slides-16-9-2 --output report.html</code></pre></div>
 </section>
 <section class="example-card">
 <header>Mermaid fallback</header>
-<pre class="mermaid"><code>flowchart LR
+<div class="code-block-wrap"><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button><pre class="mermaid"><code>flowchart LR
   SourceLedger --&gt; Finding
   Finding --&gt; Recommendation
-  Recommendation --&gt; Verification</code></pre>
+  Recommendation --&gt; Verification</code></pre></div>
+<figure class="mermaid-rendered" aria-label="Rendered Mermaid diagram"><svg viewBox="0 0 760 130" role="img" xmlns="http://www.w3.org/2000/svg"><defs><marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" class="diagram-arrow-head" /></marker></defs><line x1="174" y1="63" x2="206" y2="63" class="diagram-arrow" /><line x1="364" y1="63" x2="396" y2="63" class="diagram-arrow" /><line x1="554" y1="63" x2="586" y2="63" class="diagram-arrow" /><rect x="24" y="35" width="145" height="56" rx="14" class="diagram-node" /><text x="96" y="69" text-anchor="middle" class="diagram-label">SourceLedger</text><rect x="214" y="35" width="145" height="56" rx="14" class="diagram-node" /><text x="286" y="69" text-anchor="middle" class="diagram-label">Finding</text><rect x="404" y="35" width="145" height="56" rx="14" class="diagram-node" /><text x="476" y="69" text-anchor="middle" class="diagram-label">Recommendation</text><rect x="594" y="35" width="145" height="56" rx="14" class="diagram-node" /><text x="666" y="69" text-anchor="middle" class="diagram-label">Verification</text></svg><figcaption>Rendered Mermaid example, embedded as self-contained SVG.</figcaption></figure>
 </section>
-<p>Inline LaTeX fallback: <span class="latex-inline">visibility = citations + mentions + retrieval</span>.</p>
+<section class="example-card">
+<header>LaTeX fallback</header>
+<div class="code-block-wrap"><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button><pre class="latex-block"><code>visibility = citations + mentions + retrieval</code></pre></div>
+<figure class="latex-rendered-block" aria-label="Rendered LaTeX formula"><div role="math" aria-label="visibility = citations + mentions + retrieval">visibility = citations + mentions + retrieval</div><figcaption>Rendered LaTeX example, embedded as self-contained HTML.</figcaption></figure>
+</section>
+<p>Inline LaTeX fallback: <span class="latex-inline" role="math" aria-label="visibility = citations + mentions + retrieval">visibility = citations + mentions + retrieval</span>.</p>
 <section class="bar-chart">
 <p>Citation readiness — 72%</p>
 <p>Third-party corroboration — 58%</p>
@@ -247,9 +255,6 @@ LinkedIn | Google Scholar | Personal site</code></pre>
 <li><span class="status-dot" data-status="todo"></span><span>Update <code>dateModified</code> in schema.</span></li>
 <li><span class="status-dot" data-status="todo"></span><span>Add visible “Last updated” line.</span></li>
 </ul>
-</section>
-<section class="appendix-links">
-<p><a href="../llm-visibility-toolbox/report.md" data-filetype="md">Source ledger appendix</a> <a href="../client-ai-search-audit/report.html" data-filetype="html">Client audit example</a> <a href="style-previews/index.html" data-filetype="html">Style preview index</a></p>
 </section>
 <h2 class="chapter-heading" id="what-does-not-work"><span class="heading-number">8.</span> What does not work</h2>
 <section class="callout">
@@ -322,7 +327,10 @@ LinkedIn | Google Scholar | Personal site</code></pre>
 <p>B2B buyers increasingly start with answer engines, so reports separate discovery, shortlist, and conversion evidence.</p>
 </section>
 </section>
-<h2 class="chapter-heading" id="citations"><span class="heading-number">12.</span> Citations</h2>
+<h2 class="chapter-heading" id="appendices"><span class="heading-number">12.</span> Appendices</h2>
+<section class="appendix-links">
+<p><a href="../llm-visibility-toolbox/report.md" data-filetype="md">Source ledger appendix</a> <a href="../client-ai-search-audit/report.html" data-filetype="html">Client audit example</a> <a href="style-previews/index.html" data-filetype="html">Style preview index</a></p>
+</section>
 <section class="version-summary">
 <p>V4 · compiled May 2026 from 70+ primary sources · internal toolkit</p>
 </section>
@@ -346,6 +354,22 @@ LinkedIn | Google Scholar | Personal site</code></pre>
   }, { rootMargin: '-20% 0px -65% 0px', threshold: [0, 1] });
   headings.forEach((heading) => observer.observe(heading));
   setActive(headings[0].id);
+})();
+</script>
+<script>
+(() => {
+  document.querySelectorAll('.code-copy').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const code = button.parentElement?.querySelector('code')?.innerText || '';
+      try {
+        await navigator.clipboard.writeText(code);
+        button.textContent = '✓';
+        setTimeout(() => { button.textContent = '⧉'; }, 1200);
+      } catch (_) {
+        button.textContent = 'Copy';
+      }
+    });
+  });
 })();
 </script>
 </body>

@@ -357,8 +357,6 @@ Answer engines increasingly influence discovery and shortlisting, so reports sep
 [Source ledger](report.md#sources) [Client audit example](../client-ai-search-audit/report.html) [Style showcase](../style-showcase/report.html)
 :::
 
-## Citations
-
 ::: version-summary
 V4 · compiled May 2026 from source-led evidence · internal toolkit
 :::

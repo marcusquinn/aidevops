@@ -87,6 +87,9 @@ test_render_markdown_fixture() {
 	assert_contains "$_out" "class=\"block-template\"" "Markdown render includes block templates"
 	assert_contains "$_out" "class=\"version-summary\"" "Markdown render includes version summary"
 	assert_contains "$_out" "Mermaid source fallback" "Markdown render labels Mermaid fallback"
+	assert_contains "$_out" "class=\"mermaid-rendered\"" "Markdown render includes self-contained Mermaid SVG"
+	assert_contains "$_out" "class=\"latex-rendered-block\"" "Markdown render includes self-contained LaTeX block"
+	assert_contains "$_out" "class=\"code-copy\"" "Markdown render includes copy buttons for code"
 	assert_contains "$_out" "heading-number\">1.</span> Method" "Markdown render numbers body H2 headings"
 	if grep -qF "Chapter 1 /" "$_out"; then
 		print_result "Markdown TOC omits Chapter prefix" 1 "Found Chapter prefix in rendered TOC labels"

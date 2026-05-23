@@ -198,6 +198,12 @@ flowchart LR
 ```
 :::
 
+::: example-card title="LaTeX fallback"
+```latex
+visibility = citations + mentions + retrieval
+```
+:::
+
 Inline LaTeX fallback: {{latex:visibility = citations + mentions + retrieval}}.
 
 ::: bar-chart
@@ -239,10 +245,6 @@ Review spacing, table width, no-wrap badges, active TOC highlighting, print CSS,
 - [ ] Update screenshots if UI has changed.
 - [ ] Update `dateModified` in schema.
 - [ ] Add visible “Last updated” line.
-:::
-
-::: appendix-links
-[Source ledger appendix](../llm-visibility-toolbox/report.md) [Client audit example](../client-ai-search-audit/report.html) [Style preview index](style-previews/index.html)
 :::
 
 ## What does not work
@@ -331,7 +333,11 @@ B2B buyers increasingly start with answer engines, so reports separate discovery
 :::
 :::
 
-## Citations
+## Appendices
+
+::: appendix-links
+[Source ledger appendix](../llm-visibility-toolbox/report.md) [Client audit example](../client-ai-search-audit/report.html) [Style preview index](style-previews/index.html)
+:::
 
 ::: version-summary
 V4 · compiled May 2026 from 70+ primary sources · internal toolkit

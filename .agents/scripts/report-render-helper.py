@@ -47,6 +47,8 @@ body.report-body { margin: 0; background: var(--report-paper); font: 16px/1.6 -a
 .badge-inferred { background: #dbeafe; color: #1e40af; }
 .badge-missing { background: #fee2e2; color: #991b1b; }
 .source-card { border: 1px solid var(--report-line); border-left: 4px solid var(--report-ink); border-radius: 10px; padding: .85rem 1rem; margin: .75rem 0; background: var(--report-surface); }
+.code-block-wrap { position: relative; }
+.code-copy { position: absolute; top: .6rem; right: .6rem; z-index: 1; border: 1px solid var(--report-line); border-radius: 999px; background: var(--report-panel); color: var(--report-ink); cursor: pointer; }
 .mermaid::before { content: "Mermaid source fallback"; display: block; font-weight: 700; margin-bottom: .5rem; }
 .latex-block::before { content: "LaTeX source fallback"; display: block; font-weight: 700; margin-bottom: .5rem; }
 table { table-layout: auto; border-collapse: collapse; width: 100%; margin: 1rem 0; overflow-wrap: normal; }
@@ -138,6 +140,22 @@ def wrap_document(headings: list[tuple[int, str, str]], body: str) -> str:
   }, { rootMargin: '-20% 0px -65% 0px', threshold: [0, 1] });
   headings.forEach((heading) => observer.observe(heading));
   setActive(headings[0].id);
+})();
+</script>
+<script>
+(() => {
+  document.querySelectorAll('.code-copy').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const code = button.parentElement?.querySelector('code')?.innerText || '';
+      try {
+        await navigator.clipboard.writeText(code);
+        button.textContent = '✓';
+        setTimeout(() => { button.textContent = '⧉'; }, 1200);
+      } catch (_) {
+        button.textContent = 'Copy';
+      }
+    });
+  });
 })();
 </script>
 """.strip()

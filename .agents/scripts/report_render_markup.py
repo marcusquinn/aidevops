@@ -74,7 +74,11 @@ def inline_markup(text: str) -> str:
     )
     escaped = re.sub(
         r"\{\{\s*latex\s*:\s*([^}]+?)\s*\}\}",
-        lambda match: f'<span class="latex-inline">{html.escape(html.unescape(match.group(1)))}</span>',
+        lambda match: (
+            '<span class="latex-inline" role="math" '
+            f'aria-label="{html.escape(html.unescape(match.group(1)))}">'
+            f'{html.escape(html.unescape(match.group(1)))}</span>'
+        ),
         escaped,
         flags=re.I,
     )

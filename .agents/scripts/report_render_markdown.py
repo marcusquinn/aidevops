@@ -70,6 +70,60 @@ def is_executive_summary(title: str) -> bool:
     return plain_heading_title(title).lower() == "executive summary"
 
 
+def render_mermaid_svg(code_text: str) -> str:
+    """Render a small self-contained SVG for simple Mermaid flowchart examples."""
+
+    nodes: list[str] = []
+    for line in code_text.splitlines():
+        if "-->" not in line:
+            continue
+        left, right = [part.strip() for part in line.split("-->", 1)]
+        for node in (left, right):
+            label = re.sub(r"^[A-Za-z0-9_]+\[([^\]]+)\]$", r"\1", node).strip()
+            if label and label not in nodes:
+                nodes.append(label)
+    if len(nodes) < 2:
+        return ""
+    width = max(720, len(nodes) * 190)
+    height = 130
+    gap = width // max(len(nodes), 1)
+    boxes = []
+    arrows = []
+    for index, label in enumerate(nodes):
+        x = 24 + index * gap
+        y = 35
+        safe_label = html.escape(label)
+        boxes.append(
+            f'<rect x="{x}" y="{y}" width="145" height="56" rx="14" class="diagram-node" />'
+            f'<text x="{x + 72}" y="{y + 34}" text-anchor="middle" class="diagram-label">{safe_label}</text>'
+        )
+        if index < len(nodes) - 1:
+            arrows.append(
+                f'<line x1="{x + 150}" y1="{y + 28}" x2="{x + gap - 8}" y2="{y + 28}" class="diagram-arrow" />'
+            )
+    return (
+        '<figure class="mermaid-rendered" aria-label="Rendered Mermaid diagram">'
+        f'<svg viewBox="0 0 {width} {height}" role="img" xmlns="http://www.w3.org/2000/svg">'
+        '<defs><marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">'
+        '<polygon points="0 0, 10 3.5, 0 7" class="diagram-arrow-head" /></marker></defs>'
+        f'{"".join(arrows)}{"".join(boxes)}</svg>'
+        '<figcaption>Rendered Mermaid example, embedded as self-contained SVG.</figcaption>'
+        '</figure>'
+    )
+
+
+def render_latex_block(code_text: str) -> str:
+    formula = " ".join(code_text.split())
+    if not formula:
+        return ""
+    return (
+        '<figure class="latex-rendered-block" aria-label="Rendered LaTeX formula">'
+        f'<div role="math" aria-label="{html.escape(formula)}">{html.escape(formula)}</div>'
+        '<figcaption>Rendered LaTeX example, embedded as self-contained HTML.</figcaption>'
+        '</figure>'
+    )
+
+
 def close_code(body: list[str], states: dict[str, object]) -> None:
     if not states.get("code"):
         return
@@ -77,11 +131,29 @@ def close_code(body: list[str], states: dict[str, object]) -> None:
     code_text = "\n".join(lines) if isinstance(lines, list) else ""
     lang = str(states.get("code_lang", "")).strip().lower()
     if lang == "mermaid":
-        body.append(f'<pre class="mermaid"><code>{html.escape(code_text)}</code></pre>')
+        body.append(
+            '<div class="code-block-wrap">'
+            '<button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button>'
+            f'<pre class="mermaid"><code>{html.escape(code_text)}</code></pre></div>'
+        )
+        rendered = render_mermaid_svg(code_text)
+        if rendered:
+            body.append(rendered)
     elif lang in {"latex", "tex"}:
-        body.append(f'<pre class="latex-block"><code>{html.escape(code_text)}</code></pre>')
+        body.append(
+            '<div class="code-block-wrap">'
+            '<button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button>'
+            f'<pre class="latex-block"><code>{html.escape(code_text)}</code></pre></div>'
+        )
+        rendered = render_latex_block(code_text)
+        if rendered:
+            body.append(rendered)
     else:
-        body.append(f"<pre><code>{html.escape(code_text)}</code></pre>")
+        body.append(
+            '<div class="code-block-wrap">'
+            '<button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button>'
+            f"<pre><code>{html.escape(code_text)}</code></pre></div>"
+        )
     states["code"] = False
     states["code_lines"] = []
     states["code_lang"] = ""
