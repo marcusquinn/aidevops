@@ -110,6 +110,7 @@ The result: an AI operations platform that manages projects across every busines
 - `/design-artifact` - Route artifact-first UI, deck, email, poster, and mobile mockup work
 - `/open-design` - Manage the optional Open Design companion studio
 - `/auto-browse` - Learn, optimize, and graduate repeatable browser operations and web data-mining workflows
+- `/report-render` - Render report-ready Markdown or JSON to HTML with sticky TOC, print CSS, evidence badges, and source cards for PDF export
 
 ### Agent Structure
 
@@ -131,6 +132,17 @@ The result: an AI operations platform that manages projects across every busines
 ## **Enterprise-Grade Quality & Security**
 
 **Comprehensive DevOps framework with tried & tested services integrations, popular and trusted MCP servers, and enterprise-grade infrastructure quality assurance code monitoring and recommendations.**
+
+### Report-ready AI search workflow
+
+Use aidevops to turn AI search readiness work into a client-ready report without making HTML the source of truth:
+
+1. Run `/seo-ai-readiness example.com` for the domain or priority URLs.
+2. Request report-ready output with executive summary, method, scorecard, page-type findings, evidence ledger, roadmap, verification, and source IDs.
+3. Save the Markdown or JSON report, then render it with `/report-render report.md` or `report-render-helper.sh render report.md --output report.html`.
+4. Review the generated HTML for sticky table of contents, source cards, print CSS, and `verified`, `partial`, `inferred`, or `missing` evidence badges.
+5. Export or print the HTML to PDF from the browser print dialog.
+6. After remediation, rerun `/seo-ai-readiness` and render the updated report for before/after comparison.
 
 ## **Security Notice**
 
