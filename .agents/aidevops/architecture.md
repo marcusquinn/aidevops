@@ -145,7 +145,7 @@ The repository root is a public contract, not a scratch space. New top-level fil
 - **Framework internals:** implementation and source-of-truth framework assets such as `.agents/`, `configs/`, `templates/`, `tests/`, `setup-modules/`, and temporary root shell modules pending cleanup.
 - **Runtime and plugin surfaces:** runtime integration packages such as `.claude-plugin/`, `.opencode/`, and editor/runtime config files.
 - **Packaging surfaces:** distribution and package-manager assets such as `bin/`, `scripts/`, `homebrew/`, `package.json`, and lock/dependency files.
-- **Repo-local data planes:** underscore-prefixed local working areas such as `_knowledge/`, `_cases/`, `_campaigns/`, `_inbox/`, `_feedback/`, `_projects/`, and `_performance/`.
+- **Repo-local data planes:** underscore-prefixed local working areas such as `_knowledge/`, `_cases/`, `_campaigns/`, `_inbox/`, `_feedback/`, `_projects/`, `_performance/`, and `_reports/`.
 - **Docs and planning:** documentation and task surfaces such as `.wiki/`, `docs/`, `todo/`, `TODO.md`, and model/reference docs.
 - **Generated or ignored tooling surfaces:** intentionally tracked tool config and generated-input files such as `.github/`, `.qlty/`, lint configs, Repomix configs, and scanner config.
 
