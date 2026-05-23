@@ -123,7 +123,7 @@ if raw_rc != rtk_rc:
     print("- Broaden immediately: exit codes differ, so use the raw command for diagnosis.")
 elif delta <= 0:
     print("- Prefer raw or a narrower structured command: RTK did not reduce this output.")
-    if command == "git status":
+    if delta < 0 and command.startswith("git status"):
         print("- For `git status`, verify RTK includes the upstream compact-status fix that drops `-uall` before treating expanded output as expected.")
 else:
     print("- RTK is useful for first-pass discovery if all decision facts are present.")
