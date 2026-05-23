@@ -139,7 +139,7 @@ components:
     textColor: "{colors.ink}"
     typography: "{typography.body-sm}"
     border: "1px solid {colors.rule}"
-    padding: 0
+    padding: 0px
 ---
 
 <!--
