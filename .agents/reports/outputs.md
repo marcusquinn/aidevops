@@ -1,3 +1,9 @@
+---
+description: Repo-local _reports artifact layout and privacy contract
+agent: Reports
+mode: subagent
+---
+
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
