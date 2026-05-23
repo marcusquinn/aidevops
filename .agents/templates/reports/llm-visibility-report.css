@@ -36,6 +36,14 @@
   --report-space-6: 3rem;
   --report-space-7: 4rem;
   --report-page-max: 78rem;
+  --report-grid-gutter: 28px;
+  --report-badge-strong-bg: #eaf2ff;
+  --report-badge-strong-ink: #1d4ed8;
+  --report-badge-vendor-bg: #f4ecff;
+  --report-badge-practitioner-bg: #fff5db;
+  --report-badge-practitioner-ink: #92400e;
+  --report-badge-hygiene-bg: #f3f4f6;
+  --report-badge-hygiene-ink: #374151;
 }
 
 *,
@@ -61,14 +69,15 @@ body.report-body {
 
 .report-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(16rem, 20rem);
-  gap: var(--report-space-5);
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: var(--report-grid-gutter);
   max-width: var(--report-page-max);
   margin: 0 auto;
   padding: var(--report-space-6) var(--report-space-5);
 }
 
 .report-main {
+  grid-column: span 8;
   min-width: 0;
 }
 
@@ -162,6 +171,7 @@ body.report-body {
 }
 
 .sticky-toc {
+  grid-column: span 3;
   position: sticky;
   top: var(--report-space-4);
   align-self: start;
@@ -260,26 +270,26 @@ body.report-body {
 }
 
 .badge--strong {
-  background: #eaf2ff;
-  color: #1d4ed8;
+  background: var(--report-badge-strong-bg);
+  color: var(--report-badge-strong-ink);
   border-color: rgba(37, 99, 235, 0.2);
 }
 
 .badge--vendor {
-  background: #f4ecff;
+  background: var(--report-badge-vendor-bg);
   color: var(--report-violet);
   border-color: rgba(109, 40, 217, 0.2);
 }
 
 .badge--practitioner {
-  background: #fff5db;
-  color: #92400e;
+  background: var(--report-badge-practitioner-bg);
+  color: var(--report-badge-practitioner-ink);
   border-color: rgba(183, 121, 31, 0.24);
 }
 
 .badge--hygiene {
-  background: #f3f4f6;
-  color: #374151;
+  background: var(--report-badge-hygiene-bg);
+  color: var(--report-badge-hygiene-ink);
   border-color: rgba(55, 65, 81, 0.18);
 }
 
@@ -528,6 +538,11 @@ a {
     padding: var(--report-space-4) var(--report-space-3);
   }
 
+  .report-main,
+  .sticky-toc {
+    grid-column: auto;
+  }
+
   .sticky-toc {
     position: static;
     max-height: none;
@@ -655,7 +670,7 @@ a {
     color: var(--report-ink);
   }
 
-  a[href]::after {
+  a[href^="http"]::after {
     content: " (" attr(href) ")";
     color: var(--report-ink-soft);
     font-size: 0.85em;
