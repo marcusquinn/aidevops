@@ -8,3 +8,4 @@ exclude_paths:
   - "node_modules/**"
   - "dist/**"
   - "build/**"
+  - "_reports/**"
