@@ -7,12 +7,12 @@
 
 - Source: https://www.docuseal.com/
 - Title/evidence: DocuSeal | Open Source Document Signing
-- Fetch status: Fetched https://www.docuseal.com/ with status 200
+- Fetch status: Fetched and prompt-guard scanned clean
 
 ## Visual interpretation
 
-This guide translates the source into an AI-readable report/style system. Treat directly observed values as evidence and generated values as implementation-safe approximations. Preserve the source's broad mood, density, typography direction, spacing rhythm, and component language without copying proprietary brand assets.
+warm open-source SaaS: off-white page, bold black typography, orange signature accent, pill CTAs, pale peach upload panels, restrained grey customer-logo tone, and simple rounded cards. Preserve the source's visual rhythm and component language without copying proprietary assets. Renderer tokens may be normalised for report readability, contrast, and print output.
 
 ## Mode behaviour
 
-Observed theme/dark-mode markers in fetched html/css. If a dark or light inverse palette is not explicitly present in the source, derive it using `tools/design/colour-palette.md`, label it as calculated, and validate text, badge, link, and border contrast before use.
+Use light-first report tokens by default; derive any dark mode as an accessible inverse rather than a separate HTML preview.

@@ -312,6 +312,63 @@ def _template_specific_css(name: str) -> str:
 .report-template-indexsy .badge-inferred,
 .report-template-indexsy .badge-missing { border-color: rgba(255, 255, 255, 0.18); }
 """.strip()
+    if name == "docuseal":
+        return """
+.report-template-docuseal .report-cover { text-align: center; }
+.report-template-docuseal .action-line strong,
+.report-template-docuseal .toc-pdf-link { background: #181818; color: #ffffff; border-color: #181818; }
+.report-template-docuseal .stat-card,
+.report-template-docuseal .chapter-hero { background: #FFE2C2; }
+""".strip()
+    if name == "superx":
+        return """
+.report-template-superx .report-cover,
+.report-template-superx .chapter-hero { background: radial-gradient(circle at 70% 10%, rgba(252, 138, 101, 0.28), transparent 38%), var(--report-panel); }
+.report-template-superx .action-line,
+.report-template-superx .toc-pdf-link { box-shadow: 0 0 26px rgba(252, 138, 101, 0.18); }
+.report-template-superx .stat-card strong { color: #ffffff; }
+""".strip()
+    if name == "terminalshop":
+        return """
+.report-template-terminalshop .report-cover,
+.report-template-terminalshop .chapter-hero,
+.report-template-terminalshop .tactic-card,
+.report-template-terminalshop .source-card,
+.report-template-terminalshop .info-panel,
+.report-template-terminalshop .impact-panel,
+.report-template-terminalshop .evidence-panel,
+.report-template-terminalshop .action-panel,
+.report-template-terminalshop .good-row,
+.report-template-terminalshop .bad-row,
+.report-template-terminalshop .myth-callout { background: #111315; color: #ffffff; }
+.report-template-terminalshop .toc-pdf-link,
+.report-template-terminalshop .action-line strong { border-radius: 0; }
+.report-template-terminalshop a { color: #59C2FF; }
+""".strip()
+    if name == "ulysses":
+        return """
+.report-template-ulysses .report-cover { background: #ffffff; box-shadow: none; }
+.report-template-ulysses .chapter-hero { background: #333333; color: #ffffff; }
+.report-template-ulysses .chapter-hero * { color: inherit; }
+.report-template-ulysses .heading-number,
+.report-template-ulysses ol li::marker { color: #F7C600; }
+""".strip()
+    if name == "usgraphics":
+        return """
+.report-template-usgraphics .report-cover,
+.report-template-usgraphics .chapter-hero,
+.report-template-usgraphics .tactic-card,
+.report-template-usgraphics .source-card,
+.report-template-usgraphics .facts-table-wrap { box-shadow: none; border-radius: 0; }
+.report-template-usgraphics .toc-pdf-link,
+.report-template-usgraphics .badge,
+.report-template-usgraphics .appendix-links a,
+.report-template-usgraphics .anchor-links a { border-radius: 0; }
+.report-template-usgraphics h1,
+.report-template-usgraphics h2,
+.report-template-usgraphics h3 { text-transform: none; }
+.report-template-usgraphics a { text-decoration: underline; text-underline-offset: 0.12em; }
+""".strip()
     return ""
 
 
@@ -345,6 +402,12 @@ def _theme_css(name: str, tokens: dict[str, str]) -> str:
   --report-code-bg: {tokens.get('code-background', tokens['surface'])};
   --report-code-ink: {tokens.get('code-on-background', tokens['on-surface'])};
   --report-code-accent: {tokens.get('code-accent', tokens['primary'])};
+  --report-info-bg: {tokens.get('info-background', tokens['surface'])};
+  --report-impact-bg: {tokens.get('impact-background', tokens['surface'])};
+  --report-evidence-bg: {tokens.get('evidence-background', tokens['surface'])};
+  --report-myth-bg: {tokens.get('myth-background', tokens['surface'])};
+  --report-good-bg: {tokens.get('good-background', tokens['surface'])};
+  --report-bad-bg: {tokens.get('bad-background', tokens['surface'])};
 }}
 body.report-body {{ font-family: var(--report-font-body); font-size: clamp(1rem, 0.94rem + 0.18vw, 1.0625rem); line-height: 1.62; }}
 h1, h2, h3 {{ font-family: var(--report-font-heading); font-weight: var(--report-heading-weight); letter-spacing: var(--report-heading-tracking); }}

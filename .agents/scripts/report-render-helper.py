@@ -38,9 +38,10 @@ body.report-body { margin: 0; background: var(--report-paper); font: 16px/1.6 -a
 body.report-theme-dark { color-scheme: dark; --report-paper: #0f172a; --report-paper-raised: #111827; --report-surface: #111827; --report-panel: #111827; --report-ink: #f8fafc; --report-ink-soft: #cbd5e1; --report-muted: #cbd5e1; --report-line: #334155; --report-rule: #334155; --report-code-bg: #020617; --report-code-ink: #e5e7eb; --report-code-accent: #93c5fd; }
 .report-shell { max-width: 1120px; margin: 0 auto; padding: 2rem; }
 .report-main { min-width: 0; }
-.sticky-toc { margin: 0 0 2rem; border: 1px solid var(--report-line); border-radius: 10px; padding: 1rem; background: var(--report-panel); }
+.sticky-toc { margin: 0 0 2rem; overflow: hidden; border: 1px solid var(--report-line); border-radius: 10px; padding: 1rem; background: var(--report-panel); }
 .sticky-toc-header { display: flex; gap: 1rem; align-items: flex-start; justify-content: space-between; margin-bottom: 1rem; }
-.toc-pdf-link { display: inline-flex; align-items: center; justify-content: center; height: 1.9rem; padding: 0 .72rem; border: 1px solid var(--report-line); border-radius: var(--report-badge-radius); color: inherit; font-size: .72rem; font-weight: 900; letter-spacing: .08em; line-height: 1; text-decoration: none; }
+.toc-pdf-link { display: inline-flex; align-items: center; align-self: flex-start; box-sizing: border-box; justify-content: center; height: 1.9rem; padding: 0 .72rem; border: 1px solid var(--report-line); border-radius: var(--report-badge-radius); color: inherit; font-size: .72rem; font-weight: 900; letter-spacing: .08em; line-height: 1; text-decoration: none; white-space: nowrap; }
+.sticky-toc ol { max-height: calc(100vh - 9rem); overflow: auto; padding-right: .25rem; }
 .sticky-toc a { color: inherit; text-decoration: none; }
 .sticky-toc a:hover, .sticky-toc a:focus-visible { text-decoration: underline; }
 .report-content, .report-main { min-width: 0; }
@@ -57,7 +58,7 @@ body.report-theme-dark { color-scheme: dark; --report-paper: #0f172a; --report-p
 .code-block-wrap, .mermaid-rendered, .latex-rendered-block { max-width: 100%; min-width: 0; margin: 1rem 0; border: 1px solid var(--report-line); border-radius: 10px; overflow: hidden; background: var(--report-code-bg); color: var(--report-code-ink); }
 .code-block-head { display: flex; gap: 1rem; align-items: center; justify-content: space-between; padding: .45rem .75rem; border-bottom: 1px solid var(--report-line); color: var(--report-code-accent); font: 700 .78rem/1.3 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .code-copy { display: inline-grid; width: 1.75rem; height: 1.75rem; place-items: center; border: 1px solid var(--report-line); border-radius: 999px; background: transparent; color: inherit; cursor: pointer; }
-.code-block-wrap pre { max-width: 100%; margin: 0; padding: .8rem; overflow-x: auto; }
+.code-block-wrap pre { max-width: 100%; margin: 0; padding: .8rem .8rem .8rem 1rem; overflow-x: auto; }
 .action-prompt { width: 100%; max-width: 100%; min-width: 0; overflow: hidden; }
 .action-prompt pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 .mermaid-rendered, .latex-rendered-block { padding: 1rem; }

@@ -3,22 +3,34 @@
 
 # ulysses: Colour Palette
 
-## Observed source colours
+## Observed/source-informed colours
 
-- `#007700`
-- `#3344bb`
-- `#336699`
-- `#880088`
-- `#990073`
-- `#997700`
-- `#fff0ff`
+- `#FFFFFF`
+- `#27272B`
+- `#F7C600`
+- `#333333`
+- `#F2F2F2`
+- `#5F5F63`
+
+## Semantic report mapping
+
+- `#FFFFFF` — background
+- `#FFFFFF` — surface
+- `#27272B` — on-surface
+- `#5F5F63` — muted
+- `#E5E5E5` — outline
+- `#F7C600` — primary
+- `#FFF4BF` — primary-container
+- `#2F2F2F` — code-background
+- `#F7F7F7` — code-on-background
+- `#F7C600` — code-accent
 
 ## Application rules
 
-- Use observed colours as source evidence, then map them into semantic DESIGN.md roles: background, surface, on-surface, muted, outline, primary, and primary-container.
-- Long-form report text must use high-contrast `on-surface`, not decorative accent colours.
-- Badge/status colours must preserve text labels and borders so grayscale PDF output remains meaningful.
-- For missing theme modes, calculate inverse roles with `colour-palette.md`; mark them as derived until previewed and contrast-checked.
+- Use source colours as evidence, then map into semantic DESIGN.md roles.
+- Adjust brightness when required for readable long-form reports and WCAG contrast.
+- Long-form text must use high-contrast `on-surface`, not decorative accent colours.
+- Badge/status colours must preserve labels and borders so grayscale PDF output remains meaningful.
 
 ## Required contrast checks
 

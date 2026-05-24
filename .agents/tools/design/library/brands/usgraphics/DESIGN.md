@@ -4,40 +4,43 @@
 ---
 version: alpha
 name: "US Graphics catalogue"
-description: "Report presentation design system inspired by usgraphics.com catalog."
+description: "Report presentation design system inspired by https://usgraphics.com/catalog."
 colors:
-  background: "#F7F7F2"
+  background: "#F3F3F0"
   surface: "#FFFFFF"
-  on-surface: "#1F2937"
-  muted: "#4B5563"
-  outline: "#D9D9CF"
-  primary: "#B91C1C"
-  primary-container: "#FEE2E2"
+  on-surface: "#111111"
+  muted: "#555555"
+  outline: "#9A9A9A"
+  primary: "#002DCE"
+  primary-container: "#E7ECFF"
+  code-background: "#F7F7F7"
+  code-on-background: "#111111"
+  code-accent: "#002DCE"
 typography:
   headline-display:
-    fontFamily: 'Inter, system-ui, sans-serif'
+    fontFamily: '"Univers LT Pro Condensed", "Arial Narrow", "Roboto Condensed", Arial, sans-serif'
     fontSize: 64px
-    fontWeight: 650
-    lineHeight: 1.05
-    letterSpacing: -0.03em
+    fontWeight: 700
+    lineHeight: 1.08
+    letterSpacing: -0.035em
   headline-md:
-    fontFamily: 'Inter, system-ui, sans-serif'
+    fontFamily: '"Univers LT Pro Condensed", "Arial Narrow", "Roboto Condensed", Arial, sans-serif'
     fontSize: 32px
-    fontWeight: 650
+    fontWeight: 700
     lineHeight: 1.15
   body-md:
-    fontFamily: 'Inter, system-ui, sans-serif'
+    fontFamily: '"IoskeleyMono", Menlo, Monaco, Consolas, monospace'
     fontSize: 16px
     fontWeight: 400
     lineHeight: 1.62
   code-md:
-    fontFamily: '"IBM Plex Mono", Consolas, monospace'
+    fontFamily: '"IoskeleyMono", Menlo, Monaco, Consolas, monospace'
     fontSize: 13px
     fontWeight: 400
-    lineHeight: 1.5
+    lineHeight: 1.55
 rounded:
-  md: 8px
-  lg: 8px
+  md: 0px
+  lg: 0px
 spacing:
   md: 16px
   lg: 24px
@@ -51,12 +54,12 @@ components:
   evidence-badge:
     backgroundColor: "{colors.primary-container}"
     textColor: "{colors.on-surface}"
-    rounded: 999px
+    rounded: "{rounded.lg}"
 ---
 
 # Design System: US Graphics catalogue
 
-catalogue and print commerce. This DESIGN.md is a report-presentation brand preset for Markdown-first HTML previews and PDF deliverables.
+dense utilitarian catalogue: white/grey canvas, blue underlined masthead, Univers LT Pro Condensed-like headings, mono/data body rhythm, thin black rules, flat boxes, colour-chip palette strips, and almost-square corners. This DESIGN.md is a report-presentation brand preset for Markdown-first HTML previews and PDF deliverables.
 
 ## Chapters
 
@@ -74,23 +77,24 @@ catalogue and print commerce. This DESIGN.md is a report-presentation brand pres
 
 ## Quick Reference
 
-- **Source inspiration**: usgraphics.com catalog
-- **Accent**: `#B91C1C` with supporting container `#FEE2E2`
-- **Background/surface**: `#F7F7F2` / `#FFFFFF`
-- **Text**: `#1F2937` primary, `#4B5563` secondary
-- **Heading font**: Inter, system-ui, sans-serif
-- **Body font**: Inter, system-ui, sans-serif
-- **Code font**: "IBM Plex Mono", Consolas, monospace
-- **Radius**: 8px
+- **Source inspiration**: https://usgraphics.com/catalog
+- **Accent**: Blue `#002DCE` link masthead, white/grey industrial surfaces, black rules, and flat colour-chip accents.
+- **Background/surface**: `#F3F3F0` / `#FFFFFF`
+- **Text**: `#111111` primary, `#555555` secondary
+- **Heading font**: "Univers LT Pro Condensed", "Arial Narrow", "Roboto Condensed", Arial, sans-serif
+- **Body font**: "IoskeleyMono", Menlo, Monaco, Consolas, monospace
+- **Code font**: "IoskeleyMono", Menlo, Monaco, Consolas, monospace
+- **Radius**: 0px
+- **Mode**: light-first with accessible contrast adjustment
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
 
 ## Source Review
 
-- **Review date**: 2026-05-23
+- **Review date**: 2026-05-24
 - **Source**: https://usgraphics.com/catalog
 - **Fetched title/evidence**: U.S. Graphics Company - General Catalog
-- **Fetch status**: Fetched https://usgraphics.com/catalog with status 200
-- **Observed fonts**: Berkeley Arrow, SF Mono, TX-02-Data, TX-02-Data,, Univers LT Pro, inherit, sans-serif
-- **Observed colours**: #001b44, #002dce, #003f9b, #00449e, #005eec, #00794c, #008181, #008374, #0092ff, #00a96c, #00c986, #00e4e4
-- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
-- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.
+- **Fetch status**: Fetched and prompt-guard scanned clean.
+- **Observed fonts**: Univers LT Pro Condensed Regular/Bold, TX 02 Data Regular, SF Mono, IoskeleyMono suggestion for report-compatible body/code
+- **Observed colours**: #002DCE, #000000, #FFFFFF, #9A9A9A, #E6E6E6, #FFCC00, #00A96C, #E335D2
+- **Screenshot review**: user-provided screenshots were used for layout, contrast, and typography direction.
+- **Rule**: source facts inform the DESIGN.md; renderer tokens are adjusted for report readability and WCAG contrast.

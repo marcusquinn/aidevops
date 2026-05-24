@@ -3,41 +3,44 @@
 
 ---
 version: alpha
-name: "Ulysses help"
-description: "Report presentation design system inspired by help.ulysses.app."
+name: "Ulysses app editorial"
+description: "Report presentation design system inspired by https://ulysses.app/."
 colors:
-  background: "#FBFAF7"
+  background: "#FFFFFF"
   surface: "#FFFFFF"
-  on-surface: "#202124"
-  muted: "#5F6368"
-  outline: "#DED8CC"
-  primary: "#A15C2F"
-  primary-container: "#F4E8DF"
+  on-surface: "#27272B"
+  muted: "#5F5F63"
+  outline: "#E5E5E5"
+  primary: "#F7C600"
+  primary-container: "#FFF4BF"
+  code-background: "#2F2F2F"
+  code-on-background: "#F7F7F7"
+  code-accent: "#F7C600"
 typography:
   headline-display:
-    fontFamily: '"Source Serif 4", "Libre Baskerville", Georgia, serif'
+    fontFamily: 'Interstate, "Avenir Next", "Helvetica Neue", Arial, sans-serif'
     fontSize: 64px
-    fontWeight: 650
-    lineHeight: 1.05
-    letterSpacing: -0.03em
+    fontWeight: 700
+    lineHeight: 1.08
+    letterSpacing: -0.035em
   headline-md:
-    fontFamily: '"Source Serif 4", "Libre Baskerville", Georgia, serif'
+    fontFamily: 'Interstate, "Avenir Next", "Helvetica Neue", Arial, sans-serif'
     fontSize: 32px
-    fontWeight: 650
+    fontWeight: 700
     lineHeight: 1.15
   body-md:
-    fontFamily: 'Inter, system-ui, sans-serif'
+    fontFamily: 'Interstate, "Avenir Next", "Helvetica Neue", Arial, sans-serif'
     fontSize: 16px
     fontWeight: 400
     lineHeight: 1.62
   code-md:
-    fontFamily: '"IBM Plex Mono", Consolas, monospace'
+    fontFamily: 'Menlo, Monaco, Consolas, monospace'
     fontSize: 13px
     fontWeight: 400
-    lineHeight: 1.5
+    lineHeight: 1.55
 rounded:
-  md: 12px
-  lg: 12px
+  md: 8px
+  lg: 8px
 spacing:
   md: 16px
   lg: 24px
@@ -51,12 +54,12 @@ components:
   evidence-badge:
     backgroundColor: "{colors.primary-container}"
     textColor: "{colors.on-surface}"
-    rounded: 999px
+    rounded: "{rounded.lg}"
 ---
 
-# Design System: Ulysses help
+# Design System: Ulysses app editorial
 
-warm help-centre editorial tone. This DESIGN.md is a report-presentation brand preset for Markdown-first HTML previews and PDF deliverables.
+Apple-like writing app marketing: bright white hero, clean black typography, yellow butterfly/accent, grey editorial sections, subtle UI chrome, and an Interstate-like grotesk tone. This DESIGN.md is a report-presentation brand preset for Markdown-first HTML previews and PDF deliverables.
 
 ## Chapters
 
@@ -74,23 +77,24 @@ warm help-centre editorial tone. This DESIGN.md is a report-presentation brand p
 
 ## Quick Reference
 
-- **Source inspiration**: help.ulysses.app
-- **Accent**: `#A15C2F` with supporting container `#F4E8DF`
-- **Background/surface**: `#FBFAF7` / `#FFFFFF`
-- **Text**: `#202124` primary, `#5F6368` secondary
-- **Heading font**: "Source Serif 4", "Libre Baskerville", Georgia, serif
-- **Body font**: Inter, system-ui, sans-serif
-- **Code font**: "IBM Plex Mono", Consolas, monospace
-- **Radius**: 12px
+- **Source inspiration**: https://ulysses.app/
+- **Accent**: White UI surfaces, black text, yellow `#F7C600` accent, and dark grey feature sections.
+- **Background/surface**: `#FFFFFF` / `#FFFFFF`
+- **Text**: `#27272B` primary, `#5F5F63` secondary
+- **Heading font**: Interstate, "Avenir Next", "Helvetica Neue", Arial, sans-serif
+- **Body font**: Interstate, "Avenir Next", "Helvetica Neue", Arial, sans-serif
+- **Code font**: Menlo, Monaco, Consolas, monospace
+- **Radius**: 8px
+- **Mode**: light-first with accessible contrast adjustment
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
 
 ## Source Review
 
-- **Review date**: 2026-05-23
-- **Source**: https://help.ulysses.app
-- **Fetched title/evidence**: Ulysses Help
-- **Fetch status**: Fetched https://help.ulysses.app with status 200
-- **Observed fonts**: Font Awesome 5 Brands, Font Awesome 5 Pro
-- **Observed colours**: #007700, #3344bb, #336699, #880088, #990073, #997700, #fff0ff
-- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
-- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.
+- **Review date**: 2026-05-24
+- **Source**: https://ulysses.app/
+- **Fetched title/evidence**: Ulysses
+- **Fetch status**: Fetched and prompt-guard scanned clean.
+- **Observed fonts**: Interstate-style UI lettering from screenshot, system sans fallbacks, Menlo/Monaco for code
+- **Observed colours**: #FFFFFF, #27272B, #F7C600, #333333, #F2F2F2, #5F5F63
+- **Screenshot review**: user-provided screenshots were used for layout, contrast, and typography direction.
+- **Rule**: source facts inform the DESIGN.md; renderer tokens are adjusted for report readability and WCAG contrast.

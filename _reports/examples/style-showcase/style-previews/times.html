@@ -229,7 +229,7 @@ body.report-body {
   top: var(--report-space-4);
   align-self: start;
   max-height: calc(100vh - var(--report-space-5));
-  overflow: auto;
+  overflow: hidden;
   padding: var(--report-space-3);
   background: var(--report-panel);
   border: 1px solid var(--report-rule);
@@ -263,6 +263,8 @@ body.report-body {
   min-height: 0;
   height: 1.9rem;
   align-items: center;
+  align-self: flex-start;
+  box-sizing: border-box;
   justify-content: center;
   padding: 0 0.72rem;
   border: 1px solid var(--report-rule);
@@ -273,6 +275,7 @@ body.report-body {
   letter-spacing: 0.08em;
   line-height: 1;
   text-decoration: none;
+  white-space: nowrap;
 }
 
 .toc-pdf-link:hover,
@@ -284,8 +287,11 @@ body.report-body {
 .sticky-toc ol {
   display: grid;
   gap: var(--report-space-1);
+  max-height: calc(100vh - 9rem);
   margin: 0;
+  overflow: auto;
   padding: 0;
+  padding-inline-end: var(--report-space-1);
   list-style: none;
 }
 
@@ -573,8 +579,8 @@ th .evidence-badge {
 
 .source-title {
   margin-block: var(--report-space-2);
-  padding-block: var(--report-space-2);
-  border-block: 1px solid var(--report-rule);
+  padding-block: 0;
+  border: 0;
   color: var(--report-ink);
   font-weight: 800;
 }
@@ -594,6 +600,8 @@ th .evidence-badge {
 
 .source-list .source-title {
   margin-block: var(--report-space-5) 0;
+  padding-block: 0;
+  border: 0;
   color: var(--report-ink-soft);
   font-size: 0.82rem;
   font-weight: 800;
@@ -614,7 +622,7 @@ th .evidence-badge {
   display: grid;
   gap: var(--report-space-1);
   margin: 0;
-  padding: var(--report-space-3) 2rem var(--report-space-3) 0;
+  padding: var(--report-space-3) 2.25rem var(--report-space-3) 0;
   background: transparent;
   border: 0;
   border-top: 1px solid var(--report-rule);
@@ -622,13 +630,8 @@ th .evidence-badge {
   box-shadow: none;
 }
 
-.source-item::after {
-  content: "↗";
-  position: absolute;
-  top: var(--report-space-3);
-  right: 0;
-  color: var(--report-ink-soft);
-  font-weight: 800;
+.source-item:hover {
+  background: color-mix(in srgb, var(--report-blue) 5%, transparent);
 }
 
 .source-item h3 {
@@ -698,6 +701,16 @@ th .evidence-badge {
   border-radius: var(--report-radius-md);
 }
 
+.code-block-wrap pre {
+  max-width: 100%;
+  margin: 0;
+  padding: var(--report-space-3) var(--report-space-3) var(--report-space-3) calc(var(--report-space-3) + 0.25rem);
+  overflow-x: auto;
+  font-family: var(--report-font-code);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
 .code-block-head {
   display: flex;
   gap: var(--report-space-3);
@@ -733,7 +746,7 @@ th .evidence-badge {
 .report-main > .code-block-wrap pre {
   max-width: 100%;
   margin: 0;
-  padding: var(--report-space-3);
+  padding: var(--report-space-3) var(--report-space-3) var(--report-space-3) calc(var(--report-space-3) + 0.25rem);
   overflow-x: auto;
   font-family: var(--report-font-code);
   font-size: 0.8125rem;
@@ -824,6 +837,7 @@ th .evidence-badge {
 .facts-table-wrap {
   margin-block: var(--report-space-4);
   overflow-x: auto;
+  overflow-y: hidden;
   border: 1px solid var(--report-rule);
   border-radius: var(--report-radius-md);
   background: var(--report-surface);
@@ -835,7 +849,8 @@ th .evidence-badge {
   width: 100%;
   min-width: 42rem;
   table-layout: auto;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 0.875rem;
   background: var(--report-surface);
 }
@@ -847,9 +862,26 @@ th .evidence-badge {
 .report-main > table th,
 .report-main > table td {
   padding: 0.75rem 0.875rem;
-  border: 1px solid var(--report-rule);
+  border: 0;
+  border-inline-end: 1px solid var(--report-rule);
+  border-block-end: 1px solid var(--report-rule);
   text-align: left;
   vertical-align: top;
+}
+
+.facts-table th:last-child,
+.facts-table td:last-child,
+.facts-table-wrap th:last-child,
+.facts-table-wrap td:last-child,
+.report-main > table th:last-child,
+.report-main > table td:last-child {
+  border-inline-end: 0;
+}
+
+.facts-table tbody tr:last-child td,
+.facts-table-wrap tbody tr:last-child td,
+.report-main > table tbody tr:last-child td {
+  border-block-end: 0;
 }
 
 .facts-table th,
@@ -1222,6 +1254,15 @@ ol li::marker {
 .source-card-link:focus-visible {
   background: var(--report-surface);
   border-color: var(--report-blue);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--report-blue) 16%, transparent);
+  transform: translateY(-1px);
+}
+
+.source-item .source-card-link {
+  position: absolute;
+  top: var(--report-space-3);
+  right: 0;
+  margin: 0;
 }
 
 .section-separator {
@@ -1471,6 +1512,12 @@ a {
   --report-code-bg: #FFFDF8;
   --report-code-ink: #111111;
   --report-code-accent: #8A2C2C;
+  --report-info-bg: #FFFDF8;
+  --report-impact-bg: #FFFDF8;
+  --report-evidence-bg: #FFFDF8;
+  --report-myth-bg: #FFFDF8;
+  --report-good-bg: #FFFDF8;
+  --report-bad-bg: #FFFDF8;
 }
 body.report-body { font-family: var(--report-font-body); font-size: clamp(1rem, 0.94rem + 0.18vw, 1.0625rem); line-height: 1.62; }
 h1, h2, h3 { font-family: var(--report-font-heading); font-weight: var(--report-heading-weight); letter-spacing: var(--report-heading-tracking); }
@@ -1763,26 +1810,26 @@ LinkedIn | Google Scholar | Personal site</code></pre></div>
 <section class="source-item">
 <h3 class="section-heading" id="geo-generative-engine-optimization"><span class="heading-number">11.4</span> GEO: Generative Engine Optimization</h3>
 <p>The first peer-reviewed baseline. Tactics tested on 10k queries.</p>
-</section>
+<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
 <section class="source-item">
 <h3 class="section-heading" id="news-source-citing-patterns-in-ai-search-systems"><span class="heading-number">11.5</span> News source citing patterns in AI search systems</h3>
 <p>Top source concentration and citation dynamics.</p>
-</section>
+<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
 <section class="source-title">
 <p>Q2 2026 field evidence</p>
 </section>
 <section class="source-item">
 <h3 class="section-heading" id="ahrefs-schema-markup-has-no-impact-on-ai-visibility"><span class="heading-number">11.6</span> Ahrefs: schema markup has no impact on AI visibility</h3>
 <p>1,885 vs 4,000 controls, difference-in-differences. Source used to downgrade schema from growth lever to hygiene.</p>
-</section>
+<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
 <section class="source-item">
 <h3 class="section-heading" id="growth-memo-the-consensus-gap"><span class="heading-number">11.7</span> Growth memo: the consensus gap</h3>
 <p>Only a small share of cited URLs overlap across engines; engine-specific reporting is required.</p>
-</section>
+<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
 <section class="source-item">
 <h3 class="section-heading" id="g2-the-answer-economy-research"><span class="heading-number">11.8</span> G2: the answer economy research</h3>
 <p>B2B buyers increasingly start with answer engines, so reports separate discovery, shortlist, and conversion evidence.</p>
-</section>
+<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
 </section>
 <h2 class="chapter-heading" id="appendices"><span class="heading-number">12.</span> Appendices</h2>
 <section class="appendix-links">

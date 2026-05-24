@@ -1,16 +1,18 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Ulysses help: Dos and Don'ts
+# Ulysses app editorial: Dos and Don'ts
 
 ## Do
 
 - Preserve citations, source IDs, and evidence badges.
-- Use `#202124` for long-form text.
-- Test tables in PDF.
+- Use `#27272B` for long-form text on `#FFFFFF` surfaces.
+- Keep brand colour brightness adjusted for accessible report contrast.
+- Test source lists, tables, code blocks, and PDF output.
 
 ## Don't
 
 - Create separate A4/Letter HTML files.
 - Use accent colours for body text without contrast checks.
+- Let brand display typography override report readability.
 - Treat this educational preset as ownership of the referenced brand.

@@ -4,40 +4,43 @@
 ---
 version: alpha
 name: "DocuSeal product docs"
-description: "Report presentation design system inspired by docuseal.com."
+description: "Report presentation design system inspired by https://www.docuseal.com/."
 colors:
-  background: "#F8FAFC"
+  background: "#F8F4F1"
   surface: "#FFFFFF"
-  on-surface: "#111827"
-  muted: "#4B5563"
-  outline: "#D1D5DB"
-  primary: "#2563EB"
-  primary-container: "#DBEAFE"
+  on-surface: "#181818"
+  muted: "#3F3F3F"
+  outline: "#E3D8CE"
+  primary: "#F59F5A"
+  primary-container: "#FFE2C2"
+  code-background: "#181818"
+  code-on-background: "#F9FAFB"
+  code-accent: "#F59F5A"
 typography:
   headline-display:
-    fontFamily: 'Inter, system-ui, sans-serif'
+    fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif'
     fontSize: 64px
-    fontWeight: 650
-    lineHeight: 1.05
-    letterSpacing: -0.03em
+    fontWeight: 700
+    lineHeight: 1.08
+    letterSpacing: -0.035em
   headline-md:
-    fontFamily: 'Inter, system-ui, sans-serif'
+    fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif'
     fontSize: 32px
-    fontWeight: 650
+    fontWeight: 700
     lineHeight: 1.15
   body-md:
-    fontFamily: 'Inter, system-ui, sans-serif'
+    fontFamily: 'Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif'
     fontSize: 16px
     fontWeight: 400
     lineHeight: 1.62
   code-md:
-    fontFamily: '"IBM Plex Mono", Consolas, monospace'
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
     fontSize: 13px
     fontWeight: 400
-    lineHeight: 1.5
+    lineHeight: 1.55
 rounded:
-  md: 12px
-  lg: 12px
+  md: 20px
+  lg: 20px
 spacing:
   md: 16px
   lg: 24px
@@ -51,12 +54,12 @@ components:
   evidence-badge:
     backgroundColor: "{colors.primary-container}"
     textColor: "{colors.on-surface}"
-    rounded: 999px
+    rounded: "{rounded.lg}"
 ---
 
 # Design System: DocuSeal product docs
 
-product documentation clarity. This DESIGN.md is a report-presentation brand preset for Markdown-first HTML previews and PDF deliverables.
+warm open-source SaaS: off-white page, bold black typography, orange signature accent, pill CTAs, pale peach upload panels, restrained grey customer-logo tone, and simple rounded cards. This DESIGN.md is a report-presentation brand preset for Markdown-first HTML previews and PDF deliverables.
 
 ## Chapters
 
@@ -74,23 +77,24 @@ product documentation clarity. This DESIGN.md is a report-presentation brand pre
 
 ## Quick Reference
 
-- **Source inspiration**: docuseal.com
-- **Accent**: `#2563EB` with supporting container `#DBEAFE`
-- **Background/surface**: `#F8FAFC` / `#FFFFFF`
-- **Text**: `#111827` primary, `#4B5563` secondary
-- **Heading font**: Inter, system-ui, sans-serif
-- **Body font**: Inter, system-ui, sans-serif
-- **Code font**: "IBM Plex Mono", Consolas, monospace
-- **Radius**: 12px
+- **Source inspiration**: https://www.docuseal.com/
+- **Accent**: Orange `#F59F5A` with pale peach `#FFE2C2`; black text on warm off-white surfaces.
+- **Background/surface**: `#F8F4F1` / `#FFFFFF`
+- **Text**: `#181818` primary, `#3F3F3F` secondary
+- **Heading font**: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif
+- **Body font**: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif
+- **Code font**: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace
+- **Radius**: 20px
+- **Mode**: light-first with accessible contrast adjustment
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
 
 ## Source Review
 
-- **Review date**: 2026-05-23
+- **Review date**: 2026-05-24
 - **Source**: https://www.docuseal.com/
 - **Fetched title/evidence**: DocuSeal | Open Source Document Signing
-- **Fetch status**: Fetched https://www.docuseal.com/ with status 200
-- **Observed fonts**: inherit, ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,Liberation Mono,Courier New,monospace, ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,Helvetica Neue,Arial,Noto Sans,sans-serif,Apple Color Emoji,Segoe UI Emoji,Segoe UI Symbol,Noto Color Emoji
-- **Observed colours**: #000000, #0069FF, #0090F1, #00d8ff, #0A3161, #0c0b0e, #0f0b25, #101828, #111827, #144077, #171717, #1f2937
-- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
-- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.
+- **Fetch status**: Fetched and prompt-guard scanned clean.
+- **Observed fonts**: Inter, ui-sans-serif/system stacks, ui-monospace/SFMono-Regular/Menlo/Consolas
+- **Observed colours**: #181818, #F59F5A, #FFE2C2, #FFFFFF, #F8F4F1, #E3D8CE, #3F3F3F, #111827
+- **Screenshot review**: user-provided screenshots were used for layout, contrast, and typography direction.
+- **Rule**: source facts inform the DESIGN.md; renderer tokens are adjusted for report readability and WCAG contrast.

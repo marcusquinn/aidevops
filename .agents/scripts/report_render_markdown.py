@@ -166,15 +166,15 @@ def inject_action_prompts(body_html: str) -> str:
     return _action_section_pattern().sub(replace, body_html)
 
 
-def inject_source_card_links(body_html: str) -> str:
+def inject_source_links(body_html: str) -> str:
     def replace(match: re.Match[str]) -> str:
-        card_body = match.group(2)
-        if 'class="source-card-link"' in card_body:
+        source_body = match.group(2)
+        if 'class="source-card-link"' in source_body:
             return match.group(0)
         link = '<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a>'
-        return f"{match.group(1)}{card_body}{link}{match.group(3)}"
+        return f"{match.group(1)}{source_body}{link}{match.group(3)}"
 
-    return re.sub(r'(<section class="source-card"[^>]*>)(.*?)(</section>)', replace, body_html, flags=re.S)
+    return re.sub(r'(<section class="(?:source-card|source-item)"[^>]*>)(.*?)(</section>)', replace, body_html, flags=re.S)
 
 
 def plain_heading_title(title: str) -> str:
@@ -549,7 +549,7 @@ def render_markdown(text: str, inject_prompts: bool = True) -> tuple[list[tuple[
         handle_markdown_line(line, headings, body, states) if line or states.get("code") else close_blocks(body, states)
     close_all(body, states)
     body_html = "\n".join(body)
-    body_html = inject_source_card_links(body_html)
+    body_html = inject_source_links(body_html)
     if inject_prompts:
         body_html = inject_action_prompts(body_html)
     return headings, body_html

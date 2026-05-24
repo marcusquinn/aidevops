@@ -5,14 +5,14 @@
 
 ## Source reviewed
 
-- Source: https://superx.so
+- Source: https://superx.so/
 - Title/evidence: SuperX | X Growth Tool: Scheduling, Analytics, AI Content
-- Fetch status: Fetched https://superx.so with status 200
+- Fetch status: Fetched and prompt-guard scanned clean
 
 ## Visual interpretation
 
-This guide translates the source into an AI-readable report/style system. Treat directly observed values as evidence and generated values as implementation-safe approximations. Preserve the source's broad mood, density, typography direction, spacing rhythm, and component language without copying proprietary brand assets.
+dark social-growth SaaS: near-black canvas, smoky glass panels, warm orange flame gradient, muted grey nav, rounded CTA buttons, glowing product screenshot cards, and high-contrast white metrics. Preserve the source's visual rhythm and component language without copying proprietary assets. Renderer tokens may be normalised for report readability, contrast, and print output.
 
 ## Mode behaviour
 
-Observed theme/dark-mode markers in fetched html/css. If a dark or light inverse palette is not explicitly present in the source, derive it using `tools/design/colour-palette.md`, label it as calculated, and validate text, badge, link, and border contrast before use.
+Use dark-first report tokens by default; preserve light/dark contrast by setting explicit dark tokens.

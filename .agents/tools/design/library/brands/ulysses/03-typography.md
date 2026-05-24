@@ -5,16 +5,21 @@
 
 ## Observed source font evidence
 
-- `Font Awesome 5 Brands`
-- `Font Awesome 5 Pro`
+- `Interstate-style UI lettering from screenshot`
+- `system sans fallbacks`
+- `Menlo/Monaco for code`
 
-## Substitute policy
+## Report substitutions
 
-Use exact source fonts only when they are system/open-source and appropriate for redistribution. Where the source uses commercial or hosted proprietary fonts, map the style to open-source/system alternatives in DESIGN.md tokens. Document the source font in this chapter and the substitute in `DESIGN.md`.
+- Heading: `Interstate, "Avenir Next", "Helvetica Neue", Arial, sans-serif`
+- Body: `Interstate, "Avenir Next", "Helvetica Neue", Arial, sans-serif`
+- Code/data: `Menlo, Monaco, Consolas, monospace`
+
+Use exact source fonts only when available and redistributable. Otherwise, use the documented system/open-source fallbacks while preserving the source's typographic feel.
 
 ## Report typography requirements
 
-- Screen body text: 16px or larger with 1.45-1.7 line height.
+- Screen body text: 16px or larger with 1.58-1.75 line height.
 - PDF body text: 10.5-12pt equivalent.
-- Headings: preserve the source's broad serif/sans/mono character and weight contrast.
-- Code/data: use a readable monospace stack and wrap long lines in PDF.
+- Headings should echo the brand but stay within report-readable size limits.
+- Code/data must wrap long lines in HTML and PDF.

@@ -5,14 +5,14 @@
 
 ## Source reviewed
 
-- Source: https://help.ulysses.app
-- Title/evidence: Ulysses Help
-- Fetch status: Fetched https://help.ulysses.app with status 200
+- Source: https://ulysses.app/
+- Title/evidence: Ulysses
+- Fetch status: Fetched and prompt-guard scanned clean
 
 ## Visual interpretation
 
-This guide translates the source into an AI-readable report/style system. Treat directly observed values as evidence and generated values as implementation-safe approximations. Preserve the source's broad mood, density, typography direction, spacing rhythm, and component language without copying proprietary brand assets.
+Apple-like writing app marketing: bright white hero, clean black typography, yellow butterfly/accent, grey editorial sections, subtle UI chrome, and an Interstate-like grotesk tone. Preserve the source's visual rhythm and component language without copying proprietary assets. Renderer tokens may be normalised for report readability, contrast, and print output.
 
 ## Mode behaviour
 
-Observed theme/dark-mode markers in fetched html/css. If a dark or light inverse palette is not explicitly present in the source, derive it using `tools/design/colour-palette.md`, label it as calculated, and validate text, badge, link, and border contrast before use.
+Use light-first report tokens by default; derive any dark mode as an accessible inverse rather than a separate HTML preview.

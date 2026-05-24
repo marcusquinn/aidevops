@@ -4,40 +4,49 @@
 ---
 version: alpha
 name: "Terminal Shop CLI"
-description: "Report presentation design system inspired by www.terminal.shop/api."
+description: "Report presentation design system inspired by https://www.terminal.shop/api."
 colors:
-  background: "#0B0F0C"
-  surface: "#101810"
-  on-surface: "#E6F6E6"
-  muted: "#A7C7A7"
-  outline: "#284A28"
-  primary: "#4ADE80"
-  primary-container: "#16321F"
+  background: "#000000"
+  surface: "#17191B"
+  on-surface: "#FFFFFF"
+  muted: "#BFBDB6"
+  outline: "#3A3E41"
+  primary: "#59C2FF"
+  primary-container: "#1E2930"
+  background-dark: "#000000"
+  surface-dark: "#17191B"
+  on-surface-dark: "#FFFFFF"
+  muted-dark: "#BFBDB6"
+  outline-dark: "#3A3E41"
+  primary-dark: "#59C2FF"
+  code-background: "#17191B"
+  code-on-background: "#BFBDB6"
+  code-accent: "#25D0AB"
 typography:
   headline-display:
-    fontFamily: '"IBM Plex Mono", "JetBrains Mono", monospace'
+    fontFamily: '"IBM Plex Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace'
     fontSize: 64px
-    fontWeight: 650
-    lineHeight: 1.05
-    letterSpacing: -0.03em
+    fontWeight: 700
+    lineHeight: 1.08
+    letterSpacing: -0.035em
   headline-md:
-    fontFamily: '"IBM Plex Mono", "JetBrains Mono", monospace'
+    fontFamily: '"IBM Plex Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace'
     fontSize: 32px
-    fontWeight: 650
+    fontWeight: 700
     lineHeight: 1.15
   body-md:
-    fontFamily: '"IBM Plex Mono", "JetBrains Mono", monospace'
+    fontFamily: '"IBM Plex Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace'
     fontSize: 16px
     fontWeight: 400
     lineHeight: 1.62
   code-md:
-    fontFamily: '"IBM Plex Mono", "JetBrains Mono", monospace'
+    fontFamily: '"IBM Plex Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace'
     fontSize: 13px
     fontWeight: 400
-    lineHeight: 1.5
+    lineHeight: 1.55
 rounded:
-  md: 8px
-  lg: 8px
+  md: 2px
+  lg: 2px
 spacing:
   md: 16px
   lg: 24px
@@ -51,12 +60,12 @@ components:
   evidence-badge:
     backgroundColor: "{colors.primary-container}"
     textColor: "{colors.on-surface}"
-    rounded: 999px
+    rounded: "{rounded.lg}"
 ---
 
 # Design System: Terminal Shop CLI
 
-terminal-first API aesthetic. This DESIGN.md is a report-presentation brand preset for Markdown-first HTML previews and PDF deliverables.
+terminal API documentation: black page, dim grey navigation rails, monospaced lowercase prose, command palette colours for HTTP verbs, blue/yellow/green/red method accents, and flat rectangular code panels. This DESIGN.md is a report-presentation brand preset for Markdown-first HTML previews and PDF deliverables.
 
 ## Chapters
 
@@ -74,23 +83,24 @@ terminal-first API aesthetic. This DESIGN.md is a report-presentation brand pres
 
 ## Quick Reference
 
-- **Source inspiration**: www.terminal.shop/api
-- **Accent**: `#4ADE80` with supporting container `#16321F`
-- **Background/surface**: `#0B0F0C` / `#101810`
-- **Text**: `#E6F6E6` primary, `#A7C7A7` secondary
-- **Heading font**: "IBM Plex Mono", "JetBrains Mono", monospace
-- **Body font**: "IBM Plex Mono", "JetBrains Mono", monospace
-- **Code font**: "IBM Plex Mono", "JetBrains Mono", monospace
-- **Radius**: 8px
+- **Source inspiration**: https://www.terminal.shop/api
+- **Accent**: Black terminal canvas with grey text and colourful method accents: blue GET, green POST, yellow PUT, red DELETE.
+- **Background/surface**: `#000000` / `#17191B`
+- **Text**: `#FFFFFF` primary, `#BFBDB6` secondary
+- **Heading font**: "IBM Plex Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace
+- **Body font**: "IBM Plex Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace
+- **Code font**: "IBM Plex Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace
+- **Radius**: 2px
+- **Mode**: dark-first with explicit dark tokens
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
 
 ## Source Review
 
-- **Review date**: 2026-05-23
+- **Review date**: 2026-05-24
 - **Source**: https://www.terminal.shop/api
 - **Fetched title/evidence**: wip: terminal (initial commit)
-- **Fetch status**: Fetched https://www.terminal.shop/api with status 200
-- **Observed fonts**: Inter, inter, mono
-- **Observed colours**: not available from fetched markup/CSS
-- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
-- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.
+- **Fetch status**: Fetched and prompt-guard scanned clean.
+- **Observed fonts**: Inter, mono
+- **Observed colours**: #000000, #17191B, #3A3E41, #BFBDB6, #59C2FF, #25D0AB, #FFB800, #FF5E00, #E335D2
+- **Screenshot review**: user-provided screenshots were used for layout, contrast, and typography direction.
+- **Rule**: source facts inform the DESIGN.md; renderer tokens are adjusted for report readability and WCAG contrast.

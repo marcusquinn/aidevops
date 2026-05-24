@@ -3,27 +3,36 @@
 
 # usgraphics: Colour Palette
 
-## Observed source colours
+## Observed/source-informed colours
 
-- `#001b44`
-- `#002dce`
-- `#003f9b`
-- `#00449e`
-- `#005eec`
-- `#00794c`
-- `#008181`
-- `#008374`
-- `#0092ff`
-- `#00a96c`
-- `#00c986`
-- `#00e4e4`
+- `#002DCE`
+- `#000000`
+- `#FFFFFF`
+- `#9A9A9A`
+- `#E6E6E6`
+- `#FFCC00`
+- `#00A96C`
+- `#E335D2`
+
+## Semantic report mapping
+
+- `#F3F3F0` — background
+- `#FFFFFF` — surface
+- `#111111` — on-surface
+- `#555555` — muted
+- `#9A9A9A` — outline
+- `#002DCE` — primary
+- `#E7ECFF` — primary-container
+- `#F7F7F7` — code-background
+- `#111111` — code-on-background
+- `#002DCE` — code-accent
 
 ## Application rules
 
-- Use observed colours as source evidence, then map them into semantic DESIGN.md roles: background, surface, on-surface, muted, outline, primary, and primary-container.
-- Long-form report text must use high-contrast `on-surface`, not decorative accent colours.
-- Badge/status colours must preserve text labels and borders so grayscale PDF output remains meaningful.
-- For missing theme modes, calculate inverse roles with `colour-palette.md`; mark them as derived until previewed and contrast-checked.
+- Use source colours as evidence, then map into semantic DESIGN.md roles.
+- Adjust brightness when required for readable long-form reports and WCAG contrast.
+- Long-form text must use high-contrast `on-surface`, not decorative accent colours.
+- Badge/status colours must preserve labels and borders so grayscale PDF output remains meaningful.
 
 ## Required contrast checks
 

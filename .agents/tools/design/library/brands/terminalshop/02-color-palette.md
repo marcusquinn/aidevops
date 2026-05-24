@@ -3,16 +3,37 @@
 
 # terminalshop: Colour Palette
 
-## Observed source colours
+## Observed/source-informed colours
 
-- No reliable colour values were available from fetched markup/CSS.
+- `#000000`
+- `#17191B`
+- `#3A3E41`
+- `#BFBDB6`
+- `#59C2FF`
+- `#25D0AB`
+- `#FFB800`
+- `#FF5E00`
+- `#E335D2`
+
+## Semantic report mapping
+
+- `#000000` — background
+- `#17191B` — surface
+- `#FFFFFF` — on-surface
+- `#BFBDB6` — muted
+- `#3A3E41` — outline
+- `#59C2FF` — primary
+- `#1E2930` — primary-container
+- `#17191B` — code-background
+- `#BFBDB6` — code-on-background
+- `#25D0AB` — code-accent
 
 ## Application rules
 
-- Use observed colours as source evidence, then map them into semantic DESIGN.md roles: background, surface, on-surface, muted, outline, primary, and primary-container.
-- Long-form report text must use high-contrast `on-surface`, not decorative accent colours.
-- Badge/status colours must preserve text labels and borders so grayscale PDF output remains meaningful.
-- For missing theme modes, calculate inverse roles with `colour-palette.md`; mark them as derived until previewed and contrast-checked.
+- Use source colours as evidence, then map into semantic DESIGN.md roles.
+- Adjust brightness when required for readable long-form reports and WCAG contrast.
+- Long-form text must use high-contrast `on-surface`, not decorative accent colours.
+- Badge/status colours must preserve labels and borders so grayscale PDF output remains meaningful.
 
 ## Required contrast checks
 
