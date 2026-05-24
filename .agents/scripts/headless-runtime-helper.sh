@@ -1131,6 +1131,7 @@ _derive_worker_failure_evidence() {
 #   $5 - failure reason
 #   $6 - output excerpt path
 #   $7 - session id
+#   $8 - metric kill reason
 # Returns: 0 always (observability must fail open)
 #######################################
 _append_service_interruption_exhausted_metric() {
@@ -1141,11 +1142,12 @@ _append_service_interruption_exhausted_metric() {
 	local failure_reason="$5"
 	local output_file="$6"
 	local session_id="$7"
+	local metric_kill_reason="$8"
 	local result_label="service_interruption_exhausted"
 	local provider
 	provider=$(extract_provider "$selected_model")
 	local evidence_fields launch_failure_cause next_action
-	evidence_fields=$(_derive_worker_failure_evidence "$result_label" "81" "1" "" "$failure_reason")
+	evidence_fields=$(_derive_worker_failure_evidence "$result_label" "81" "1" "$metric_kill_reason" "$failure_reason")
 	launch_failure_cause="${evidence_fields%%$'\t'*}"
 	next_action="${evidence_fields#*$'\t'}"
 	append_runtime_metric "$role" "$session_key" "$selected_model" \
@@ -1153,7 +1155,7 @@ _append_service_interruption_exhausted_metric() {
 		"$result_label" "81" "${failure_reason:-provider_error}" "1" "0" \
 		"${WORKER_ISSUE_NUMBER:-}" "${DISPATCH_REPO_SLUG:-}" "$work_dir" "$output_file" "$session_id" \
 		"${_run_provider_error_type:-}" "${_run_provider_status:-}" "${_run_runtime_error_type:-}" "${_run_classification_source:-}" "${_run_classification_pattern:-}" \
-		"$launch_failure_cause" "${_run_metric_kill_reason:-}" "$next_action"
+		"$launch_failure_cause" "$metric_kill_reason" "$next_action"
 	return 0
 }
 
@@ -1269,7 +1271,7 @@ _execute_run_attempt() {
 	local output_file exit_code_file exit_code
 	local start_ms end_ms duration_ms
 	local resource_stop_file resource_result_file resource_sampler_pid
-	local _run_metric_kill_reason=""
+	local _metric_kill_reason=""
 	start_ms=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || printf '%s' "0")
 	output_file=$(mktemp)
 	exit_code_file=$(mktemp)
@@ -1368,7 +1370,7 @@ _execute_run_attempt() {
 	# file is authoritative — if it exists, this was a watchdog kill.
 	local _normalized_exit_info=""
 	_normalized_exit_info=$(_normalize_worker_exit_code_and_kill_reason "$exit_code_file" "$exit_code")
-	IFS=$'\t' read -r exit_code _run_metric_kill_reason <<<"$_normalized_exit_info"
+	IFS=$'\t' read -r exit_code _metric_kill_reason <<<"$_normalized_exit_info"
 	# t2956 / Issue #21231: Hard-kill sentinel — set when the watchdog
 	# escalated from passive (78 / continue) to proactive (79 / killed)
 	# because the worker had been stalling for ≥ WORKER_STALL_HARD_KILL_SECONDS
@@ -1411,7 +1413,7 @@ _execute_run_attempt() {
 			_invoke_opencode "$output_file" "$exit_code_file" "${cmd[@]}"
 			exit_code=$(cat "$exit_code_file" 2>/dev/null) || exit_code=1
 			_normalized_exit_info=$(_normalize_worker_exit_code_and_kill_reason "$exit_code_file" "$exit_code")
-			IFS=$'\t' read -r exit_code _run_metric_kill_reason <<<"$_normalized_exit_info"
+			IFS=$'\t' read -r exit_code _metric_kill_reason <<<"$_normalized_exit_info"
 			# t2956: Hard-kill sentinel must also be re-checked on the retry path.
 			local _retry_stall_killed_marker="${exit_code_file}.watchdog_stall_killed"
 			if [[ -f "$_retry_stall_killed_marker" ]]; then
@@ -1459,7 +1461,7 @@ _execute_run_attempt() {
 		append_runtime_metric "$role" "$session_key" "$selected_model" "$provider" "$_run_result_label" "0" "$_run_failure_reason" "0" "$_rl_duration_ms" \
 			"${WORKER_ISSUE_NUMBER:-}" "${DISPATCH_REPO_SLUG:-}" "$work_dir" "$_rl_metric_output_file" "$_rl_metric_session_id" \
 			"${_run_provider_error_type:-}" "${_run_provider_status:-}" "${_run_runtime_error_type:-}" "${_run_classification_source:-}" "${_run_classification_pattern:-}" \
-			"provider_rate_limited" "${_run_metric_kill_reason}" "rotate_provider_or_wait_for_reset"
+			"provider_rate_limited" "${_metric_kill_reason}" "rotate_provider_or_wait_for_reset"
 		return 80
 	fi
 
@@ -1483,7 +1485,7 @@ _execute_run_attempt() {
 		printf '\n[WORKER_EXIT_DIAGNOSTICS] exit_code=%s model=%s role=%s session_key=%s\n' \
 			"$exit_code" "$selected_model" "$role" "$session_key"
 		printf '[WORKER_EXIT_DIAGNOSTICS] structured exit_code=%s kill_reason=%s session_key=%s\n' \
-			"$exit_code" "${_run_metric_kill_reason:-unknown}" "$session_key"
+			"$exit_code" "${_metric_kill_reason:-unknown}" "$session_key"
 		if [[ "$exit_code" -eq 124 ]]; then
 			printf '[WORKER_EXIT_DIAGNOSTICS] cause=watchdog_kill (no LLM activity within timeout)\n'
 		elif [[ "$exit_code" -eq 137 ]]; then
@@ -1523,18 +1525,19 @@ _execute_run_attempt() {
 	if [[ "${_run_result_label:-failed}" == "success" ]]; then
 		_metric_output_file=""
 	fi
+	_run_metric_kill_reason="$_metric_kill_reason"
 	local _launch_failure_cause="" _next_action=""
 	local _evidence_fields
 	_evidence_fields=$(_derive_worker_failure_evidence \
 		"${_run_result_label:-failed}" "$exit_code" "${_run_activity_detected:-0}" \
-		"${_run_metric_kill_reason:-}" "${_run_failure_reason:-}")
+		"${_metric_kill_reason:-}" "${_run_failure_reason:-}")
 	_launch_failure_cause="${_evidence_fields%%$'\t'*}"
 	_next_action="${_evidence_fields#*$'\t'}"
-	print_info "[lifecycle] worker_failure_evidence session=$session_key result=${_run_result_label:-failed} exit_code=$exit_code kill_reason=${_run_metric_kill_reason:-unknown} launch_failure_cause=${_launch_failure_cause:-none} next_action=${_next_action:-none}"
+	print_info "[lifecycle] worker_failure_evidence session=$session_key result=${_run_result_label:-failed} exit_code=$exit_code kill_reason=${_metric_kill_reason:-unknown} launch_failure_cause=${_launch_failure_cause:-none} next_action=${_next_action:-none}"
 	append_runtime_metric "$role" "$session_key" "$selected_model" "$provider" "${_run_result_label:-failed}" "$handle_exit" "${_run_failure_reason:-}" "${_run_activity_detected:-0}" "$duration_ms" \
 		"${WORKER_ISSUE_NUMBER:-}" "${DISPATCH_REPO_SLUG:-}" "$work_dir" "$_metric_output_file" "$_metric_session_id" \
 		"${_run_provider_error_type:-}" "${_run_provider_status:-}" "${_run_runtime_error_type:-}" "${_run_classification_source:-}" "${_run_classification_pattern:-}" \
-		"$_launch_failure_cause" "${_run_metric_kill_reason:-}" "$_next_action"
+		"$_launch_failure_cause" "${_metric_kill_reason:-}" "$_next_action"
 	return "$handle_exit"
 }
 
@@ -1732,11 +1735,13 @@ cmd_run() {
 	local _run_activity_detected="0"
 	local _run_metric_output_file=""
 	local _run_metric_session_id=""
+	local _run_metric_kill_reason=""
 	while [[ "$attempt" -le "$max_attempts" ]]; do
 		_run_failure_reason=""
 		_run_should_retry=0
 		_run_result_label="failed"
 		_run_activity_detected="0"
+		_run_metric_kill_reason=""
 		local attempt_exit=0
 		if _execute_run_attempt \
 			"$role" "$session_key" "$work_dir" "$title" "$prompt" \
@@ -1788,7 +1793,8 @@ cmd_run() {
 			_append_service_interruption_exhausted_metric \
 				"$role" "$session_key" "$selected_model" "$work_dir" \
 				"${_run_failure_reason:-provider_error}" \
-				"${_run_metric_output_file:-}" "${_run_metric_session_id:-}"
+				"${_run_metric_output_file:-}" "${_run_metric_session_id:-}" \
+				"${_run_metric_kill_reason:-}"
 			print_warning "Exhausted ${max_service_interruption_continue_retries} service-interruption continuations — falling through to normal failure handling"
 		fi
 
