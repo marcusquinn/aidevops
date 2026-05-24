@@ -10,9 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [3.17.30] - 2026-05-24
 
-- add report renderer helper, fixtures, command docs, and end-to-end AI search report workflow (#24003)
+### Changed
+
+- fix: improve rtk manual install hints (#24055)
+- fix: harden dispatch label cleanup (#24051)
+- Maintenance: update simplification state registry
+- Documentation: clarify RTK status fallback guidance (#24036)
+
+### Fixed
+
+- preserve service interruption exhaustion metrics (#24059)
+- address LLM visibility report CSS review followup (#24058)
+- clear stale auto-dispatch labels on close
+- align LLM visibility report CSS tokens (#24035)
+- harden report renderer parsing (#24034)
 
 ## [3.17.29] - 2026-05-23
 
