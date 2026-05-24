@@ -534,9 +534,9 @@ th .evidence-badge {
 }
 
 .badge--rct {
-  background: var(--report-good-bg);
-  color: var(--report-green);
-  border-color: rgba(20, 122, 74, 0.2);
+  background: #dcfce7;
+  color: #166534;
+  border-color: rgba(22, 101, 52, 0.24);
 }
 
 .badge--strong {
@@ -743,6 +743,7 @@ th .evidence-badge {
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
+  background-clip: padding-box;
   background: var(--report-code-bg);
   color: var(--report-code-ink);
   border: 1px solid var(--report-rule);
@@ -757,6 +758,11 @@ th .evidence-badge {
   font-family: var(--report-font-code);
   font-size: 0.8125rem;
   line-height: 1.55;
+}
+
+.code-block-wrap pre:last-child {
+  border-bottom-right-radius: inherit;
+  border-bottom-left-radius: inherit;
 }
 
 .code-block-wrap .mermaid,
@@ -1319,13 +1325,10 @@ ol li::marker {
   top: var(--report-space-3);
   right: var(--report-space-3);
   display: inline-flex;
-  width: 1.6rem;
-  height: 1.6rem;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--report-rule);
-  border-radius: var(--report-badge-radius);
-  background: var(--report-surface);
+  border: 0;
+  background: transparent;
   font-weight: 900;
   line-height: 1;
 }
@@ -1460,7 +1463,7 @@ a {
 
   @page {
     size: A4 portrait;
-    margin: 12mm;
+    margin: 0;
   }
 
   html,
@@ -1474,7 +1477,7 @@ a {
 
   body.report-body {
     min-height: 100vh;
-    padding: 0;
+    padding: 12mm;
   }
 
   body.report-theme-dark {
@@ -1485,6 +1488,37 @@ a {
     display: block;
     max-width: none;
     padding: 0;
+  }
+
+  .report-cover,
+  .stats-strip,
+  .summary-stats {
+    background: transparent !important;
+  }
+
+  .stat-card {
+    background: var(--report-surface) !important;
+    background-clip: padding-box;
+  }
+
+  .report-footer {
+    min-height: 22mm;
+    background: #ffffff;
+    border: 1px solid #d1d5db;
+    color: #374151;
+  }
+
+  .report-pdf-profile-slides-16-9-1,
+  .report-pdf-profile-slides-16-9-2,
+  .report-pdf-profile-slides-16-9-3 {
+    font-size: 14pt;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main,
+  .report-pdf-profile-slides-16-9-2 .report-main,
+  .report-pdf-profile-slides-16-9-3 .report-main {
+    column-count: auto !important;
+    column-gap: normal !important;
   }
 
   .report-main h1,

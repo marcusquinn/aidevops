@@ -86,6 +86,7 @@ test_render_markdown_fixture() {
 	assert_contains "$_out" "class=\"source-list\"" "Markdown render includes source lists"
 	assert_contains "$_out" "class=\"case-study-card\"" "Markdown render includes case study cards"
 	assert_contains "$_out" "class=\"badge-key\"" "Markdown render includes badge key"
+	assert_contains "$_out" "Peer-Review" "Markdown render labels peer-review badge clearly"
 	assert_contains "$_out" "class=\"block-template\"" "Markdown render includes block templates"
 	assert_contains "$_out" "class=\"version-summary\"" "Markdown render includes version summary"
 	assert_contains "$_out" "Mermaid source fallback" "Markdown render labels Mermaid fallback"
@@ -271,7 +272,8 @@ test_render_template_and_profiles() {
 	assert_contains "$_dark" "--report-info-bg: #161A1C" "Dark theme inverts info panels"
 	assert_contains "$_dark" "--report-good-bg: #161A1C" "Dark theme inverts good panels"
 	assert_contains "$_slides" "size: 16in 9in" "print-css supports 16:9 landscape profile"
-	assert_contains "$_slides" "column-count: 2" "print-css supports two-column presentation profile"
+	assert_contains "$_slides" "column-count: auto" "print-css uses single-column presentation profile"
+	assert_contains "$_slides" "font-size: 14pt" "print-css enlarges presentation profile"
 	return 0
 }
 
