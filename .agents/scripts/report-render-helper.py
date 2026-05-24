@@ -27,7 +27,7 @@ if len(sys.argv) < 2:
     sys.exit(1)
 
 MODE = sys.argv[1]
-INPUT = sys.argv[2] if len(sys.argv) > 2 else ""
+INPUT = sys.argv[2] if len(sys.argv) > 2 else "-"
 TEMPLATE = sys.argv[3] if len(sys.argv) > 3 else "basic"
 PDF_PROFILE = sys.argv[4] if len(sys.argv) > 4 else "a4"
 THEME = sys.argv[5] if len(sys.argv) > 5 else "auto"

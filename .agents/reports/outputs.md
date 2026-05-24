@@ -1,6 +1,6 @@
 ---
 description: Repo-local _reports artifact layout and privacy contract
-agent: Reports
+agent: reports
 mode: subagent
 ---
 

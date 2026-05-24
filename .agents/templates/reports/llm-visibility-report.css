@@ -44,6 +44,15 @@
   --report-space-6: 3rem;
   --report-space-7: 4rem;
   --report-page-max: 78rem;
+  --report-grid-gutter: 28px;
+  --report-badge-strong-bg: #eaf2ff;
+  --report-badge-strong-ink: #1d4ed8;
+  --report-badge-vendor-bg: #f4ecff;
+  --report-badge-vendor-ink: var(--report-violet);
+  --report-badge-practitioner-bg: #fff5db;
+  --report-badge-practitioner-ink: #92400e;
+  --report-badge-hygiene-bg: #f3f4f6;
+  --report-badge-hygiene-ink: #374151;
 }
 
 *,
@@ -525,8 +534,8 @@ th .evidence-badge {
 }
 
 .badge--vendor {
-  background: #f4ecff;
-  color: var(--report-violet);
+  background: var(--report-badge-vendor-bg);
+  color: var(--report-badge-vendor-ink);
   border-color: rgba(109, 40, 217, 0.2);
 }
 
