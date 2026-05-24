@@ -256,6 +256,50 @@ MARKDOWN
 	return 0
 }
 
+test_markdown_table_preserves_escaped_pipes() {
+	local _input="${TEST_ROOT}/table-escaped-pipe.md"
+	local _out="${TEST_ROOT}/table-escaped-pipe.html"
+	cat >"$_input" <<'MARKDOWN'
+# Escaped Pipe Table
+
+| Component | Evidence |
+|---|---|
+| AIO \| CLI | Keeps one cell |
+| Literal \\| Separator | Next cell |
+MARKDOWN
+	"$HELPER_SH" render "$_input" --output "$_out"
+	assert_contains "$_out" "<td>AIO | CLI</td>" "Markdown table preserves escaped pipes inside cells"
+	assert_contains "$_out" "<td>Separator</td>" "Markdown table keeps even-backslash pipe as separator"
+	if grep -qF "<td>CLI</td>" "$_out"; then
+		print_result "Markdown table does not split escaped pipe cells" 1 "Escaped pipe created an extra cell"
+	else
+		print_result "Markdown table does not split escaped pipe cells" 0
+	fi
+	return 0
+}
+
+test_mermaid_renderer_uses_node_ids() {
+	if python3 - "${SCRIPT_DIR}/.." <<'PYHTML'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
+from report_render_markdown import render_mermaid_svg
+
+html = render_mermaid_svg("node-1 [Repeat] --> node-2[Repeat]\nnode-2[Repeat] --> node-3[Done]")
+if html.count('class="diagram-label">Repeat</text>') != 2:
+    raise SystemExit(1)
+if "H 104" in html:
+    raise SystemExit(1)
+PYHTML
+	then
+		print_result "Mermaid renderer preserves distinct IDs with duplicate labels" 0
+	else
+		print_result "Mermaid renderer preserves distinct IDs with duplicate labels" 1 "Expected duplicate labels to render as separate nodes"
+	fi
+	return 0
+}
+
 test_multiline_markdown_paragraph() {
 	local _input="${TEST_ROOT}/paragraph.md"
 	local _out="${TEST_ROOT}/paragraph.html"
@@ -340,6 +384,8 @@ main() {
 	test_python_helper_reads_stdin_by_default
 	test_style_token_parser_handles_long_headers_and_tabs
 	test_markdown_table_uses_header_cells
+	test_markdown_table_preserves_escaped_pipes
+	test_mermaid_renderer_uses_node_ids
 	test_multiline_markdown_paragraph
 	test_render_json_array_is_resilient
 	test_sample_and_css_commands
