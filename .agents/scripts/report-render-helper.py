@@ -22,7 +22,7 @@ if len(sys.argv) < 2:
     sys.exit(1)
 
 MODE = sys.argv[1]
-INPUT = sys.argv[2] if len(sys.argv) > 2 else ""
+INPUT = sys.argv[2] if len(sys.argv) > 2 else "-"
 CSS = """
 :root { color-scheme: light; --ink: #1f2937; --muted: #6b7280; --line: #d1d5db; --panel: #f9fafb; }
 body { margin: 0; font: 16px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ink); }
