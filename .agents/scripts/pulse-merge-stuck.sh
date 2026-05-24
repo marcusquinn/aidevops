@@ -1057,8 +1057,7 @@ _pms_pr_counts_for_zero_progress() {
 	fi
 
 	if [[ ",${labels_str}," == *",origin:interactive,"* ]]; then
-		if ! declare -F _interactive_pr_auto_merge_allowed >/dev/null 2>&1 \
-			|| ! _interactive_pr_auto_merge_allowed "$pr_number" "$repo_slug" "$labels_str" >/dev/null 2>&1; then
+		if ! _interactive_pr_auto_merge_allowed "$pr_number" "$repo_slug" "$labels_str" >/dev/null 2>&1; then
 			echo "[pulse-merge-stuck] _pms_count_eligible_unmerged_for_repo: excluding PR #${pr_number} in ${repo_slug} — origin:interactive PR requires manual merge" >>"$LOGFILE"
 			return 1
 		fi
