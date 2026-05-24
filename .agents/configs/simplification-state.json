@@ -2400,9 +2400,9 @@
       "pr": 18657
     },
     ".agents/scripts/pulse-cleanup.sh": {
-      "at": "2026-05-21T21:25:44Z",
-      "hash": "f3da23e028a8d45f21cbaffac55587cef84d899e",
-      "passes": 30,
+      "at": "2026-05-24T04:37:16Z",
+      "hash": "c305052bf93a9baea091371f074e4da1a2210111",
+      "passes": 31,
       "pr": 18704
     },
     ".agents/scripts/pulse-dep-graph.sh": {
@@ -2442,15 +2442,15 @@
       "pr": 18690
     },
     ".agents/scripts/pulse-merge.sh": {
-      "at": "2026-05-23T10:35:01Z",
-      "hash": "52d49f49e555ae529b1f0888d238279b14bd55d9",
-      "passes": 43,
+      "at": "2026-05-24T04:37:26Z",
+      "hash": "2af91a8aab8b344418e89521cb50031d692eadf3",
+      "passes": 44,
       "pr": 18829
     },
     ".agents/scripts/pulse-prefetch.sh": {
-      "at": "2026-05-03T12:51:55Z",
-      "hash": "54bd9c68869a215a6a46b11d878c569f20212126",
-      "passes": 13,
+      "at": "2026-05-24T04:37:28Z",
+      "hash": "925aba80ec2e7c9abd5affac27bdae5c7ab4c940",
+      "passes": 14,
       "pr": 18995
     },
     ".agents/scripts/pulse-quality-debt.sh": {
@@ -7756,10 +7756,10 @@
       "passes": 4
     },
     ".agents/scripts/shared-gh-wrappers-rest-fallback.sh": {
-      "hash": "b00ac5cc94aa1b5e7b70d8cef0196f2b632f0ee2",
-      "at": "2026-05-20T08:36:37Z",
+      "hash": "433901053e0beefb9d7367a0844d2c639c536f6a",
+      "at": "2026-05-24T04:37:39Z",
       "pr": 20552,
-      "passes": 14
+      "passes": 15
     },
     ".agents/scripts/pulse-dirty-pr-sweep.sh": {
       "hash": "f568032b08445dcc0e69c8e55fa18401d1a063eb",
