@@ -39,6 +39,7 @@ _STATS_HEALTH_DASHBOARD_LOADED=1
 # create a duplicate while the dedup lookups are silently unable to
 # see existing ones.
 readonly _HEALTH_QUERY_FAILED_SENTINEL="__QUERY_FAILED__"
+readonly _HEALTH_CROSS_REPO_MAX_REPOS=30
 
 # Defensive SCRIPT_DIR fallback
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -113,25 +114,19 @@ _check_health_issue_activity_guard() {
 
 	guard_pr_count=$(gh_pr_list --repo "$repo_slug" --state open \
 		--json number --jq 'length' 2>/dev/null || echo "0")
-	if ! [[ "$guard_pr_count" =~ ^[0-9]+$ ]]; then
-		guard_pr_count="0"
-	fi
+	[[ "$guard_pr_count" =~ ^[0-9]+$ ]] || guard_pr_count="0"
 	[[ "${guard_pr_count:-0}" -gt 0 ]] && return 0
 
 	guard_assigned_count=$(gh_issue_list --repo "$repo_slug" \
 		--assignee "$runner_user" --state open \
 		--json number --jq 'length' 2>/dev/null || echo "0")
-	if ! [[ "$guard_assigned_count" =~ ^[0-9]+$ ]]; then
-		guard_assigned_count="0"
-	fi
+	[[ "$guard_assigned_count" =~ ^[0-9]+$ ]] || guard_assigned_count="0"
 	[[ "${guard_assigned_count:-0}" -gt 0 ]] && return 0
 
 	guard_auto_dispatch_count=$(gh_issue_list --repo "$repo_slug" \
 		--label "auto-dispatch" --state open \
 		--json number --jq 'length' 2>/dev/null || echo "0")
-	if ! [[ "$guard_auto_dispatch_count" =~ ^[0-9]+$ ]]; then
-		guard_auto_dispatch_count="0"
-	fi
+	[[ "$guard_auto_dispatch_count" =~ ^[0-9]+$ ]] || guard_auto_dispatch_count="0"
 	[[ "${guard_auto_dispatch_count:-0}" -gt 0 ]] && return 0
 
 	echo "[stats] Health issue: skipping creation for ${repo_slug} — no active PRs, assigned issues, auto-dispatch work, or workers" \
@@ -226,7 +221,7 @@ _update_health_issue_for_repo() {
 	# Cache only the trailing issue number. The resolver may emit warnings before
 	# the value, and a multi-line cache makes later dashboard updates stale.
 	local cache_issue_number
-	cache_issue_number=$(printf '%s\n' "$health_issue_number" | awk 'match($0, /[0-9]+$/) { value=substr($0, RSTART, RLENGTH) } END { if (value != "") print value }')
+	cache_issue_number=$(printf '%s\n' "$health_issue_number" | awk '/^[0-9]+$/ { value=$0 } match($0, /\/[0-9]+$/) { value=substr($0, RSTART + 1, RLENGTH - 1) } END { if (value != "") print value }')
 	echo "$cache_issue_number" >"$health_issue_file"
 
 	local now_iso
@@ -308,8 +303,9 @@ update_health_issues() {
 	# This avoids N×N git log walks (one cross-repo scan per repo dashboard)
 	# and redundant DB queries for session time.
 	# Person stats read from cache (refreshed hourly by _refresh_person_stats_cache).
-	# Skip the optional cross-repo summaries above 30 repos; the contributor
-	# activity helper can time out at that scale and stall the dashboard refresh.
+	# Skip the optional cross-repo summaries above _HEALTH_CROSS_REPO_MAX_REPOS;
+	# the contributor activity helper can time out at that scale and stall the
+	# dashboard refresh.
 	local cross_repo_md=""
 	local cross_repo_session_time_md=""
 	local cross_repo_person_stats_md=""
@@ -322,9 +318,14 @@ update_health_issues() {
 			while IFS= read -r rp; do
 				[[ -n "$rp" ]] && cross_args+=("$rp")
 			done <<<"$all_repo_paths"
-			if [[ ${#cross_args[@]} -gt 1 && ${#cross_args[@]} -le 30 ]]; then
+			if [[ ${#cross_args[@]} -gt 1 && ${#cross_args[@]} -le $_HEALTH_CROSS_REPO_MAX_REPOS ]]; then
 				cross_repo_md=$(timeout 120 bash "$activity_helper" cross-repo-summary "${cross_args[@]}" --period month --format markdown || echo "_Cross-repo data unavailable._")
 				cross_repo_session_time_md=$(timeout 120 bash "$activity_helper" cross-repo-session-time "${cross_args[@]}" --period all --format markdown || echo "_Cross-repo session data unavailable._")
+			elif [[ ${#cross_args[@]} -gt $_HEALTH_CROSS_REPO_MAX_REPOS ]]; then
+				local cross_repo_skip_message="Cross-repo summary skipped: ${#cross_args[@]} repositories exceeds limit ${_HEALTH_CROSS_REPO_MAX_REPOS}."
+				echo "[stats] ${cross_repo_skip_message}" >>"${LOGFILE:-/dev/null}"
+				cross_repo_md="_${cross_repo_skip_message}_"
+				cross_repo_session_time_md="_${cross_repo_skip_message}_"
 			fi
 		fi
 	fi
