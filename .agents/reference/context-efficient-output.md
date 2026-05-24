@@ -62,8 +62,8 @@ Use comparison results to classify a command:
   compact-status `-uall` flag, so tracked-file paths remain visible while
   untracked directories stay summarized as they appear in raw
   `git status --short` output. Rerun raw status and verify RTK version when
-  comparison shows expansion, because older RTK versions still use the noisier
-  compact-status path.
+  comparison shows expansion; older RTK versions still use the noisier
+  compact-status behavior.
 
 ## Always bypass RTK
 
