@@ -56,6 +56,10 @@ install_gh_stub() {
 			printf '101\n102\n'
 			return 0
 		fi
+		if [[ "$1" == "issue" && "$2" == "view" ]]; then
+			printf 'auto-dispatch\nstatus:queued\n'
+			return 0
+		fi
 		return 0
 	}
 	return 0
@@ -69,13 +73,14 @@ test_clear_terminal_labels_removes_dispatch_labels() {
 	clear_terminal_issue_dispatch_labels 42 owner/repo test-context
 	local log_line
 	log_line=$(tr '\n' ' ' <"${TEST_ROOT}/gh.log")
-	if [[ "$log_line" == *"issue edit 42 --repo owner/repo"* \
+	if [[ "$log_line" == *"issue view 42 --repo owner/repo"* \
+		&& "$log_line" == *"issue edit 42 --repo owner/repo"* \
 		&& "$log_line" == *"--remove-label auto-dispatch"* \
-		&& "$log_line" == *"--remove-label status:available"* \
-		&& "$log_line" == *"--remove-label status:in-review"* ]]; then
-		print_result "terminal label cleanup strips auto-dispatch and active statuses" 0
+		&& "$log_line" == *"--remove-label status:queued"* \
+		&& "$log_line" != *"--remove-label status:in-review"* ]]; then
+		print_result "terminal label cleanup strips only labels currently present" 0
 	else
-		print_result "terminal label cleanup strips auto-dispatch and active statuses" 1
+		print_result "terminal label cleanup strips only labels currently present" 1
 	fi
 	teardown_env
 	return 0
