@@ -1498,7 +1498,7 @@ a {
     display: block;
     width: 100%;
     max-width: none;
-    overflow: hidden;
+    overflow: visible;
     padding: 0;
   }
 
@@ -1506,7 +1506,7 @@ a {
   .report-content {
     width: 100%;
     max-width: 100%;
-    overflow: hidden;
+    overflow: visible;
   }
 
   .report-cover,
@@ -1521,10 +1521,16 @@ a {
   }
 
   .report-footer {
+    display: flex;
     min-height: 22mm;
+    margin-block-start: 8mm;
+    padding: 0 6mm;
+    align-items: center;
+    justify-content: center;
     background: #ffffff;
     border: 1px solid #d1d5db;
     color: #374151;
+    text-align: center;
   }
 
   .report-pdf-profile-slides-16-9-1,
@@ -1632,20 +1638,22 @@ a {
   .accordion,
   .quote-card,
   .callout {
-    width: auto;
+    box-sizing: border-box;
+    width: 100%;
     max-width: 100%;
     margin-inline: 0;
-    overflow: hidden;
+    overflow: visible;
     border-radius: 0 !important;
     box-shadow: none !important;
   }
 
   .action-line,
   .action-prompt {
-    width: auto;
+    box-sizing: border-box;
+    width: 100%;
     max-width: 100%;
     margin: 0 0 8mm;
-    overflow: hidden;
+    overflow: visible;
     border-radius: 0 !important;
     box-shadow: none !important;
   }
@@ -1672,8 +1680,36 @@ a {
   .quote-card,
   .callout {
     margin-block: 0 8mm;
+    break-inside: avoid;
     break-inside: avoid-page;
     break-after: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .report-main h2.chapter-heading + .chapter-hero,
+  .report-main h2.chapter-heading + .tactic-card,
+  .report-main h2.chapter-heading + .example-card,
+  .report-main h2.chapter-heading + .good-bad,
+  .report-main h2.chapter-heading + .facts-table-wrap,
+  .report-main h2.chapter-heading + .details-note,
+  .report-main h2.chapter-heading + .industry-card,
+  .report-main h2.chapter-heading + .priority-group,
+  .report-main h2.chapter-heading + .checklist-card,
+  .report-main h2.chapter-heading + .source-card,
+  .report-main h2.chapter-heading + .sources-layout,
+  .report-main h2.chapter-heading + .sources-group,
+  .report-main h2.chapter-heading + .myth-callout,
+  .report-main h2.chapter-heading + .info-panel,
+  .report-main h2.chapter-heading + .impact-panel,
+  .report-main h2.chapter-heading + .evidence-panel,
+  .report-main h2.chapter-heading + .action-panel,
+  .report-main h2.chapter-heading + .severity-key,
+  .report-main h2.chapter-heading + .accordion,
+  .report-main h2.chapter-heading + .quote-card,
+  .report-main h2.chapter-heading + .callout {
+    break-before: avoid;
+    break-before: avoid-page;
+    page-break-before: avoid;
   }
 
   .accordion {
