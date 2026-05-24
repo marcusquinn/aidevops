@@ -161,7 +161,7 @@ _prefetch_repo_issues() {
 		# Full fetch: either requested directly or delta fell back
 		if [[ "$sweep_mode" == "full" ]]; then
 		issue_json=$(gh_issue_list --repo "$slug" --state open \
-			--json number,title,labels,updatedAt,assignees,body \
+			--json number,title,state,labels,updatedAt,assignees,body \
 			--limit "$PULSE_PREFETCH_ISSUE_LIMIT" 2>"$issue_err") || issue_json=""
 
 			if [[ -z "$issue_json" || "$issue_json" == "null" ]]; then
@@ -177,6 +177,7 @@ _prefetch_repo_issues() {
 		fi
 	fi
 	rm -f "$issue_err"
+	issue_json=$(echo "$issue_json" | _prefetch_open_issues_only)
 
 	# Export updated issue list for cache update by caller (Bash 3.2: no namerefs)
 	PREFETCH_UPDATED_ISSUES="$issue_json"

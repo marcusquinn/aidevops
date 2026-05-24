@@ -71,6 +71,10 @@ if [[ -n "$_PULSE_CLEANUP_SCRIPT_DIR" && -f "$_PULSE_CLEANUP_SCRIPT_DIR/gh-signa
 	# shellcheck source=gh-signature-helper-detect.sh
 	source "$_PULSE_CLEANUP_SCRIPT_DIR/gh-signature-helper-detect.sh"
 fi
+if [[ -n "$_PULSE_CLEANUP_SCRIPT_DIR" && -f "$_PULSE_CLEANUP_SCRIPT_DIR/shared-dispatch-label-cleanup.sh" ]]; then
+	# shellcheck source=shared-dispatch-label-cleanup.sh
+	source "$_PULSE_CLEANUP_SCRIPT_DIR/shared-dispatch-label-cleanup.sh"
+fi
 # GH#23677 / t3700: Do NOT `unset _PULSE_CLEANUP_SCRIPT_DIR`. The previous
 # version unset this immediately after sourcing the four sibling helpers,
 # but _cleanup_merged_prs_for_all_repos() (line ~251) reads it later to
