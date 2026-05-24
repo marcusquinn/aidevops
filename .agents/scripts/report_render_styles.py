@@ -178,6 +178,22 @@ def _parse_typography_line(line: str, nested: str, indent: int) -> tuple[str, st
     return nested, "", None
 
 
+def _parse_section_header(stripped: str, indent: int) -> tuple[str, str] | None:
+    if indent == 0 and stripped.endswith(":"):
+        return stripped[:-1], ""
+    return None
+
+
+def _parse_section_token(section: str, nested: str, stripped: str, indent: int) -> tuple[str, tuple[str, str] | None]:
+    prefix_by_section = {"colors": "", "rounded": "rounded."}
+    if section in prefix_by_section and indent == 2:
+        return nested, _parse_mapping(stripped, prefix_by_section[section])
+    if section == "typography":
+        next_nested, key, value = _parse_typography_line(stripped, nested, indent)
+        return next_nested, (key, value) if value is not None else None
+    return nested, None
+
+
 def _parse_tokens(lines: list[str]) -> dict[str, str]:
     tokens: dict[str, str] = {}
     section = ""
@@ -187,24 +203,13 @@ def _parse_tokens(lines: list[str]) -> dict[str, str]:
             continue
         indent = len(line) - len(line.lstrip(" "))
         stripped = line.strip()
-        if indent == 0 and stripped.endswith(":"):
-            section = stripped[:-1]
-            nested = ""
+        header = _parse_section_header(stripped, indent)
+        if header is not None:
+            section, nested = header
             continue
-        if section == "colors" and indent == 2:
-            parsed = _parse_mapping(stripped)
-            if parsed is not None:
-                tokens[parsed[0]] = parsed[1]
-            continue
-        if section == "rounded" and indent == 2:
-            parsed = _parse_mapping(stripped, "rounded.")
-            if parsed is not None:
-                tokens[parsed[0]] = parsed[1]
-            continue
-        if section == "typography":
-            nested, key, value = _parse_typography_line(stripped, nested, indent)
-            if value is not None:
-                tokens[key] = value
+        nested, parsed = _parse_section_token(section, nested, stripped, indent)
+        if parsed is not None:
+            tokens[parsed[0]] = parsed[1]
     return tokens
 
 

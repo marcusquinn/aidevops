@@ -272,33 +272,42 @@ def sample_json() -> str:
     )
 
 
-def main() -> int:
+def handle_static_mode() -> bool:
     if MODE == "print-css":
         print(load_css(TEMPLATE, PDF_PROFILE))
-        return 0
+        return True
     if MODE == "list-templates":
         print("\n".join(BUILTIN_TEMPLATES))
-        return 0
+        return True
     if MODE == "list-dark-templates":
         print("\n".join(dark_style_names()))
-        return 0
+        return True
     if MODE == "sample-json":
         print(sample_json())
-        return 0
-    text = read_input(INPUT)
+        return True
+    return False
+
+
+def handle_text_mode(text: str) -> None:
     if MODE == "action-prompts":
         sys.stdout.write(render_action_prompt_markdown(text))
-        return 0
+        return
     if MODE == "validate":
         stripped = text.lstrip()
         if stripped.startswith(("{", "[")):
             validate_json_badges(json.loads(text))
         else:
             validate_markdown_badges(text)
-        return 0
+        return
     stripped = text.lstrip()
     headings, body = render_json(text) if stripped.startswith(("{", "[")) else render_markdown(text)
     sys.stdout.write(wrap_document(headings, body))
+
+
+def main() -> int:
+    if handle_static_mode():
+        return 0
+    handle_text_mode(read_input(INPUT))
     return 0
 
 
