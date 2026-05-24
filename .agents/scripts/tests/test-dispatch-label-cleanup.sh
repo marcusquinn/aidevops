@@ -60,6 +60,9 @@ install_gh_stub() {
 			printf 'auto-dispatch\nstatus:queued\n'
 			return 0
 		fi
+		if [[ "${GH_STUB_FAIL_EDIT:-0}" == "1" && "$1" == "issue" && "$2" == "edit" ]]; then
+			return 7
+		fi
 		return 0
 	}
 	return 0
@@ -86,6 +89,24 @@ test_clear_terminal_labels_removes_dispatch_labels() {
 	return 0
 }
 
+test_clear_terminal_labels_propagates_edit_failure() {
+	setup_env
+	install_gh_stub
+	export GH_STUB_FAIL_EDIT=1
+	# shellcheck source=../shared-dispatch-label-cleanup.sh
+	source "$HELPER"
+	local exit_code=0
+	clear_terminal_issue_dispatch_labels 42 owner/repo test-context || exit_code=$?
+	unset GH_STUB_FAIL_EDIT
+	if [[ "$exit_code" == "7" ]]; then
+		print_result "terminal label cleanup propagates edit failure" 0
+	else
+		print_result "terminal label cleanup propagates edit failure" 1
+	fi
+	teardown_env
+	return 0
+}
+
 test_sweep_closed_auto_dispatch_issues_scopes_to_pulse_repos() {
 	setup_env
 	install_gh_stub
@@ -105,6 +126,7 @@ test_sweep_closed_auto_dispatch_issues_scopes_to_pulse_repos() {
 }
 
 test_clear_terminal_labels_removes_dispatch_labels
+test_clear_terminal_labels_propagates_edit_failure
 test_sweep_closed_auto_dispatch_issues_scopes_to_pulse_repos
 
 printf 'Tests run: %s\n' "$TESTS_RUN"
