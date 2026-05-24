@@ -95,6 +95,18 @@ chmod +x "$SANDBOX/bin/rtk"
 assert_eq "existing mismatched rtk is upgraded" "rtk 0.41.0" "$(rtk --version)"
 assert_eq "setup reports matching version" "1" "$(grep -c 'rtk now matches the aidevops-tested version' "$SANDBOX/out")"
 
+manual_upgrade_hint=$(
+	source_extracted
+	_setup_rtk_print_manual_install "https://example.invalid/install.sh" "upgrade"
+)
+manual_install_hint=$(
+	source_extracted
+	_setup_rtk_print_manual_install "https://example.invalid/install.sh" "install"
+)
+
+assert_eq "manual upgrade hint uses brew upgrade" "  Manual install: brew upgrade rtk  OR  curl -fsSL https://example.invalid/install.sh | sh" "$manual_upgrade_hint"
+assert_eq "manual install hint uses brew install" "  Manual install: brew install rtk  OR  curl -fsSL https://example.invalid/install.sh | sh" "$manual_install_hint"
+
 if [[ "$FAIL" -gt 0 ]]; then
 	echo "FAIL: $FAIL rtk setup checks failed" >&2
 	exit 1
