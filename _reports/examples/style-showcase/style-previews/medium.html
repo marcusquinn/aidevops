@@ -50,6 +50,15 @@
   --report-space-6: 3rem;
   --report-space-7: 4rem;
   --report-page-max: 78rem;
+  --report-grid-gutter: 28px;
+  --report-badge-strong-bg: #eaf2ff;
+  --report-badge-strong-ink: #1d4ed8;
+  --report-badge-vendor-bg: #f4ecff;
+  --report-badge-vendor-ink: var(--report-violet);
+  --report-badge-practitioner-bg: #fff5db;
+  --report-badge-practitioner-ink: #92400e;
+  --report-badge-hygiene-bg: #f3f4f6;
+  --report-badge-hygiene-ink: #374151;
 }
 
 *,
@@ -98,6 +107,13 @@ body.report-body {
 
 .report-main h3 {
   font-size: clamp(1.15rem, 1.5vw, 1.35rem);
+}
+
+.report-main p,
+.report-main li,
+.report-main blockquote {
+  orphans: 3;
+  widows: 3;
 }
 
 .report-shell {
@@ -257,6 +273,11 @@ body.report-body {
 
 .sticky-toc-header h2 {
   margin: 0;
+}
+
+.report-body .sticky-toc-header h2 {
+  font-size: clamp(1.1rem, 2vw, 1.55rem);
+  line-height: 1;
 }
 
 .toc-pdf-actions {
@@ -531,8 +552,8 @@ th .evidence-badge {
 }
 
 .badge--vendor {
-  background: #f4ecff;
-  color: var(--report-violet);
+  background: var(--report-badge-vendor-bg);
+  color: var(--report-badge-vendor-ink);
   border-color: rgba(109, 40, 217, 0.2);
 }
 
@@ -647,7 +668,7 @@ th .evidence-badge {
 }
 
 .source-list .source-item:last-child {
-  border-bottom: 1px solid var(--report-rule);
+  border-bottom: 0;
 }
 
 .source-item {
@@ -706,8 +727,8 @@ th .evidence-badge {
 .block-template {
   margin-block: var(--report-space-4);
   overflow: hidden;
-  background: var(--report-code-bg);
-  color: var(--report-code-ink);
+  background: transparent;
+  color: inherit;
   border-radius: var(--report-radius-md);
 }
 
@@ -716,9 +737,9 @@ th .evidence-badge {
   display: flex;
   justify-content: space-between;
   gap: var(--report-space-3);
-  padding: var(--report-space-2) var(--report-space-3);
-  background: rgba(255, 255, 255, 0.06);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 0 0 var(--report-space-2);
+  background: transparent;
+  border-bottom: 0;
   color: var(--report-code-accent);
   font-family: var(--report-font-code);
   font-size: 0.8125rem;
@@ -742,6 +763,13 @@ th .evidence-badge {
   font-family: var(--report-font-code);
   font-size: 0.8125rem;
   line-height: 1.55;
+}
+
+.code-block-wrap .mermaid,
+.code-block-wrap .latex-block {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
 }
 
 .code-block-head {
@@ -1056,7 +1084,8 @@ blockquote {
 
 .mermaid-rendered,
 .latex-rendered-block {
-  margin-block: var(--report-space-4);
+  width: 100%;
+  margin: var(--report-space-4) 0;
   padding: var(--report-space-3);
   border: 1px solid var(--report-rule);
   border-radius: var(--report-radius-md);
@@ -1140,6 +1169,7 @@ blockquote {
 
 .bar-chart {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
   gap: var(--report-space-2);
   margin-block: var(--report-space-4);
 }
@@ -1250,7 +1280,7 @@ ol li::marker {
 }
 
 .version-summary {
-  text-align: center;
+  text-align: left;
   color: var(--report-ink-soft);
   font-size: clamp(0.72rem, 0.58rem + 0.42vw, 0.92rem);
   font-weight: 800;
@@ -1269,7 +1299,6 @@ ol li::marker {
 .version-summary p {
   max-width: none;
   margin: 0;
-  text-wrap: balance;
 }
 
 .source-card {
@@ -1437,7 +1466,7 @@ a {
 
   @page {
     size: A4 portrait;
-    margin: 0;
+    margin: 12mm;
   }
 
   html,
@@ -1451,7 +1480,7 @@ a {
 
   body.report-body {
     min-height: 100vh;
-    padding: 12mm;
+    padding: 0;
   }
 
   body.report-theme-dark {
@@ -1462,6 +1491,24 @@ a {
     display: block;
     max-width: none;
     padding: 0;
+  }
+
+  .report-main h1,
+  .report-main h2,
+  .report-main h3,
+  .code-block-head,
+  .source-title {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .action-line,
+  .code-block-wrap,
+  .mermaid-rendered,
+  .latex-rendered-block,
+  .bar-chart p {
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 
   .sticky-toc {
@@ -1525,7 +1572,8 @@ a {
   }
 
   .facts-table-wrap {
-    overflow: visible;
+    overflow: hidden;
+    border-radius: var(--report-radius-md);
   }
 
   .facts-table {
@@ -1548,6 +1596,36 @@ a {
     word-break: normal;
   }
 
+  .facts-table th,
+  .facts-table-wrap th,
+  .report-main > table th {
+    background: color-mix(in srgb, var(--report-blue) 12%, var(--report-surface));
+  }
+
+  .facts-table thead th:first-child,
+  .facts-table-wrap thead th:first-child,
+  .report-main > table thead th:first-child {
+    border-top-left-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .facts-table thead th:last-child,
+  .facts-table-wrap thead th:last-child,
+  .report-main > table thead th:last-child {
+    border-top-right-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .code-block-wrap pre,
+  .example-card pre,
+  .block-template pre,
+  .report-main > .code-block-wrap pre,
+  .mermaid,
+  .latex-block {
+    overflow-x: visible;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
   .source-card,
   .source-item {
     padding-inline-end: calc(var(--report-space-4) + 2rem);
@@ -1558,15 +1636,9 @@ a {
     content: "";
   }
 
-  .example-card {
-    background: #ffffff;
-    color: var(--report-ink);
-    border: 1px solid var(--report-rule-strong);
-  }
-
-  .example-card header,
-  .example-card pre {
-    background: #ffffff;
+  .example-card,
+  .block-template {
+    background: transparent;
     color: var(--report-ink);
   }
 
@@ -1643,7 +1715,7 @@ h3 { font-size: clamp(1.15rem, 1.5vw, 1.35rem); line-height: 1.24; }
 .report-template-medium h1,
 .report-template-medium h2,
 .report-template-medium h3 { font-family: var(--report-font-heading); font-weight: 500; letter-spacing: -0.02em; }
-@media print { @page { size: A4 portrait; margin: 0; } html, body.report-body { background: var(--report-paper) !important; font-size: 10.5pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; } body.report-body { min-height: 100vh; padding: 12mm; } body.report-theme-dark { background: var(--report-paper) !important; } .report-shell { display: block; max-width: none; padding: 0; } .sticky-toc { position: static; max-height: none; overflow: visible; break-after: page; break-inside: auto; border: 0; border-radius: 0; box-shadow: none; } .sticky-toc ol { display: block; max-height: none; overflow: visible; padding-right: 0; } .toc-pdf-actions, .toc-pdf-link { display: none !important; } table { table-layout: fixed; font-size: 8.8pt; } th,td { padding: 4pt 5pt; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after, .source-card-link[href]::after, .anchor-links a[href]::after { content: ""; } .appendix-links a[href]::after { content: attr(data-filetype); } }</style>
+@media print { @page { size: A4 portrait; margin: 12mm; } html, body.report-body { background: var(--report-paper) !important; font-size: 10.5pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; } body.report-body { min-height: 100vh; padding: 0; } body.report-theme-dark { background: var(--report-paper) !important; } .report-shell { display: block; max-width: none; padding: 0; } h1,h2,h3,.code-block-head,.source-title { break-after: avoid; page-break-after: avoid; } .code-block-wrap,.mermaid-rendered,.latex-rendered-block,.bar-chart p { break-inside: avoid; page-break-inside: avoid; } .sticky-toc { position: static; max-height: none; overflow: visible; break-after: page; break-inside: auto; border: 0; border-radius: 0; box-shadow: none; } .sticky-toc ol { display: block; max-height: none; overflow: visible; padding-right: 0; } .toc-pdf-actions, .toc-pdf-link { display: none !important; } table { table-layout: fixed; font-size: 8.8pt; border-collapse: separate; border-spacing: 0; } th { background: color-mix(in srgb, var(--report-blue) 12%, var(--report-surface)); } th,td { padding: 4pt 5pt; overflow-wrap: anywhere; } pre,.mermaid,.latex-block { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after, .source-card-link[href]::after, .anchor-links a[href]::after { content: ""; } .appendix-links a[href]::after { content: attr(data-filetype); } }</style>
 </head>
 <body class="report-body report-theme-auto report-pdf-profile-a4 report-template-medium">
 <div class="report-shell">
@@ -1735,7 +1807,7 @@ Guide me through the tools, resources, accounts, permissions, source material, a
 <h2 class="chapter-heading" id="why-this-matters-now"><span class="heading-number">1.</span> Why this matters now</h2>
 <p>Use <a href="#priority-and-checklist" data-filetype="link">anchor links</a>, <a href="../llm-visibility-toolbox/report.html" data-filetype="html">appendix links</a>, numbered steps, accordions, coloured panels, and source cards in the same canonical Markdown.</p>
 <section class="badge-row">
-<p><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span> <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span> <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span> <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span></p>
+<p><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span> <span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span> <span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span> <span class="evidence-badge" aria-label="Evidence: Missing"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span></p>
 </section>
 <p>Evidence values should read as plain <strong>Evidence:</strong> text followed by a colour-coded mini badge for the value only.</p>
 <section class="anchor-links">
@@ -1767,7 +1839,7 @@ Guide me through the tools, resources, accounts, permissions, source material, a
 <section class="facts-table-wrap">
 <table><thead>
 <tr><th>Component</th><th>Stress condition</th><th>Expected result</th></tr></thead><tbody>
-<tr><td>Evidence badge</td><td>Long table cell with badge <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>Badge stays readable and does not split words.</td></tr>
+<tr><td>Evidence badge</td><td>Long table cell with badge <span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>Badge stays readable and does not split words.</td></tr>
 <tr><td>Facts table</td><td>Multiple columns with prose</td><td>Table remains usable in HTML and constrained in print.</td></tr>
 <tr><td>Source card</td><td>Evidence note near claim</td><td>Card is visually distinct from normal paragraphs.</td></tr>
 <tr><td>Sidebar</td><td>Many headings</td><td>Sticky TOC remains secondary to content and active link updates.</td></tr>
@@ -1844,11 +1916,13 @@ LinkedIn | Google Scholar | Personal site</code></pre></div>
 <section class="example-card">
 <header>LaTeX fallback</header>
 <div class="code-block-wrap"><div class="code-block-head"><span>LaTeX source fallback</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="latex-block"><code>\text{LLM visibility} = \alpha citations + \beta mentions + \gamma retrieval - \delta decay</code></pre></div>
-<figure class="latex-rendered-block" aria-label="Rendered LaTeX formula"><div role="math" aria-label="\text{LLM visibility} = \alpha citations + \beta mentions + \gamma retrieval - \delta decay">LLM visibility = α citations + β mentions + γ retrieval - δ decay</div><figcaption>Rendered LaTeX example, embedded as self-contained HTML.</figcaption></figure>
+<figure class="latex-rendered-block" aria-label="Rendered LaTeX formula"><div role="math" aria-label="\text{LLM visibility} = \alpha citations + \beta mentions + \gamma retrieval - \delta decay">\text{LLM visibility} = α citations + β mentions + γ retrieval - δ decay</div><figcaption>Rendered LaTeX example, embedded as self-contained HTML.</figcaption></figure>
 </section>
 <p>Inline LaTeX fallback: {{latex:\text{visibility} = \alpha citations + \beta mentions + \gamma retrieval}}.</p>
 <section class="bar-chart">
-<p>Citation readiness — 72% Third-party corroboration — 58% Retrieval eligibility — 81%</p>
+<p style="--bar-value: 72%">Citation readiness — 72%</p>
+<p style="--bar-value: 58%">Third-party corroboration — 58%</p>
+<p style="--bar-value: 81%">Retrieval eligibility — 81%</p>
 </section>
 <h2 class="chapter-heading" id="off-page-and-authority"><span class="heading-number">5.</span> Off-page and authority</h2>
 <p>Authority work belongs outside the site as much as on it: profile parity, trusted third-party mentions, practitioner credentials, and community proof all support retrieval and citation decisions.</p>
