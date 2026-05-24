@@ -53,7 +53,7 @@ install_gh_stub() {
 	gh() {
 		printf '%s\n' "$*" >>"${TEST_ROOT}/gh.log"
 		if [[ "$1" == "issue" && "$2" == "list" ]]; then
-			printf '101\tauto-dispatch:status:queued\n102\tauto-dispatch\n'
+			printf '101\n102\n'
 			return 0
 		fi
 		if [[ "$1" == "issue" && "$2" == "view" ]]; then
@@ -95,11 +95,10 @@ test_sweep_closed_auto_dispatch_issues_scopes_to_pulse_repos() {
 	# shellcheck source=../shared-dispatch-label-cleanup.sh
 	source "$HELPER"
 	sweep_closed_auto_dispatch_issues
-	local edit_count list_count view_count
+	local edit_count list_count
 	edit_count=$(grep -c 'issue edit' "${TEST_ROOT}/gh.log" || true)
 	list_count=$(grep -c 'issue list' "${TEST_ROOT}/gh.log" || true)
-	view_count=$(grep -c 'issue view' "${TEST_ROOT}/gh.log" || true)
-	if [[ "$edit_count" == "2" && "$list_count" == "1" && "$view_count" == "0" ]]; then
+	if [[ "$edit_count" == "2" && "$list_count" == "1" ]]; then
 		print_result "closed auto-dispatch sweep strips bounded pulse repo issues" 0
 	else
 		print_result "closed auto-dispatch sweep strips bounded pulse repo issues" 1
