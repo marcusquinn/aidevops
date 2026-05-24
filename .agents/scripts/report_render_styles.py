@@ -160,6 +160,24 @@ def _accessible_tokens(tokens: dict[str, str]) -> dict[str, str]:
     return adjusted
 
 
+def _parse_mapping(line: str, prefix: str = "") -> tuple[str, str] | None:
+    if ":" not in line:
+        return None
+    key, value = line.split(":", 1)
+    return f"{prefix}{key.strip()}", _clean(value)
+
+
+def _parse_typography_line(line: str, nested: str, indent: int) -> tuple[str, str, str | None]:
+    if indent == 2 and line.endswith(":"):
+        return line[:-1], "", None
+    if nested and indent == 4:
+        parsed = _parse_mapping(line, f"{nested}.")
+        if parsed is not None:
+            key, value = parsed
+            return nested, key, value
+    return nested, "", None
+
+
 def _parse_tokens(lines: list[str]) -> dict[str, str]:
     tokens: dict[str, str] = {}
     section = ""
@@ -173,20 +191,20 @@ def _parse_tokens(lines: list[str]) -> dict[str, str]:
             section = stripped[:-1]
             nested = ""
             continue
-        if section == "colors" and indent == 2 and ":" in stripped:
-            key, value = stripped.split(":", 1)
-            tokens[key.strip()] = _clean(value)
+        if section == "colors" and indent == 2:
+            parsed = _parse_mapping(stripped)
+            if parsed is not None:
+                tokens[parsed[0]] = parsed[1]
             continue
-        if section == "rounded" and indent == 2 and ":" in stripped:
-            key, value = stripped.split(":", 1)
-            tokens[f"rounded.{key.strip()}"] = _clean(value)
+        if section == "rounded" and indent == 2:
+            parsed = _parse_mapping(stripped, "rounded.")
+            if parsed is not None:
+                tokens[parsed[0]] = parsed[1]
             continue
-        if section == "typography" and indent == 2 and stripped.endswith(":"):
-            nested = stripped[:-1]
-            continue
-        if section == "typography" and nested and indent == 4 and ":" in stripped:
-            key, value = stripped.split(":", 1)
-            tokens[f"{nested}.{key.strip()}"] = _clean(value)
+        if section == "typography":
+            nested, key, value = _parse_typography_line(stripped, nested, indent)
+            if value is not None:
+                tokens[key] = value
     return tokens
 
 
@@ -293,9 +311,8 @@ def dark_style_names() -> tuple[str, ...]:
     return tuple(name for name in style_names() if style_has_dark(name))
 
 
-def _template_specific_css(name: str) -> str:
-    if name == "medium":
-        return """
+TEMPLATE_SPECIFIC_CSS = {
+    "medium": """
 .report-template-medium .report-main { max-width: none; }
 .report-template-medium .report-shell { max-width: var(--report-page-max); }
 .report-template-medium .report-cover,
@@ -309,9 +326,8 @@ def _template_specific_css(name: str) -> str:
 .report-template-medium h1,
 .report-template-medium h2,
 .report-template-medium h3 { font-family: var(--report-font-heading); font-weight: 500; letter-spacing: -0.02em; }
-""".strip()
-    if name == "lottiefiles":
-        return """
+""".strip(),
+    "lottiefiles": """
 .report-template-lottiefiles h1,
 .report-template-lottiefiles h2,
 .report-template-lottiefiles h3,
@@ -321,9 +337,8 @@ def _template_specific_css(name: str) -> str:
 .report-template-lottiefiles .tactic-card,
 .report-template-lottiefiles .source-card { border-radius: 20px; }
 .report-template-lottiefiles .action-line { box-shadow: 0 20px 48px rgba(1, 157, 145, 0.18); }
-""".strip()
-    if name == "times":
-        return """
+""".strip(),
+    "times": """
 .report-template-times { background-image: linear-gradient(rgba(0, 0, 0, 0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 0, 0, 0.025) 1px, transparent 1px); background-size: 18rem 18rem; }
 .report-template-times .report-cover { text-align: center; border-width: 2px 0; border-color: #000000; box-shadow: none; background: rgba(255, 253, 248, 0.7); }
 .report-template-times .report-cover h1 { font-size: clamp(3rem, 7vw, 5.5rem); line-height: 0.98; }
@@ -355,9 +370,8 @@ def _template_specific_css(name: str) -> str:
 .report-template-times .facts-table th,
 .report-template-times .facts-table td { border-bottom-style: dotted; }
 .report-template-times .code-block-wrap { border-color: #000000; border-radius: 0; }
-""".strip()
-    if name == "indexsy":
-        return """
+""".strip(),
+    "indexsy": """
 .report-template-indexsy .report-shell { max-width: 1320px; }
 .report-template-indexsy .report-cover,
 .report-template-indexsy .chapter-hero { text-align: center; background: transparent; border-color: transparent; box-shadow: none; }
@@ -388,17 +402,15 @@ body.report-theme-light.report-template-indexsy .badge-verified,
 body.report-theme-light.report-template-indexsy .badge-partial,
 body.report-theme-light.report-template-indexsy .badge-inferred,
 body.report-theme-light.report-template-indexsy .badge-missing { border-color: var(--report-rule); }
-""".strip()
-    if name == "docuseal":
-        return """
+""".strip(),
+    "docuseal": """
 .report-template-docuseal .report-cover { text-align: center; }
 .report-template-docuseal .action-line strong,
 .report-template-docuseal .toc-pdf-link { background: #181818; color: #ffffff; border-color: #181818; }
 .report-template-docuseal .stat-card,
 .report-template-docuseal .chapter-hero { background: #FFE2C2; }
-""".strip()
-    if name == "exsqueezeme":
-        return """
+""".strip(),
+    "exsqueezeme": """
 .report-template-exsqueezeme .report-cover,
 .report-template-exsqueezeme .chapter-hero { background: radial-gradient(circle at 20% 10%, rgba(255, 95, 31, 0.18), transparent 28%), var(--report-panel); text-align: center; }
 .report-template-exsqueezeme h1,
@@ -416,24 +428,21 @@ body.report-theme-light.report-template-exsqueezeme .report-cover,
 body.report-theme-light.report-template-exsqueezeme .tactic-card,
 body.report-theme-light.report-template-exsqueezeme .source-card,
 body.report-theme-light.report-template-exsqueezeme .facts-table-wrap { box-shadow: 6px 6px 0 rgba(10, 10, 10, 0.12); }
-""".strip()
-    if name == "mellowyellow":
-        return """
+""".strip(),
+    "mellowyellow": """
 .report-template-mellowyellow .report-cover,
 .report-template-mellowyellow .chapter-hero,
 .report-template-mellowyellow .stat-card { background: var(--report-paper-raised); }
-""".strip()
-    if name == "superx":
-        return """
+""".strip(),
+    "superx": """
 .report-template-superx .report-cover,
 .report-template-superx .chapter-hero { background: radial-gradient(circle at 70% 10%, rgba(252, 138, 101, 0.28), transparent 38%), var(--report-panel); }
 .report-template-superx .action-line,
 .report-template-superx .toc-pdf-link { box-shadow: 0 0 26px rgba(252, 138, 101, 0.18); }
 .report-template-superx .stat-card strong { color: #ffffff; }
 body.report-theme-light.report-template-superx .stat-card strong { color: var(--report-ink); }
-""".strip()
-    if name == "terminalshop":
-        return """
+""".strip(),
+    "terminalshop": """
 .report-template-terminalshop .report-cover,
 .report-template-terminalshop .chapter-hero,
 .report-template-terminalshop .tactic-card,
@@ -460,17 +469,15 @@ body.report-theme-light.report-template-terminalshop .good-row,
 body.report-theme-light.report-template-terminalshop .bad-row,
 body.report-theme-light.report-template-terminalshop .myth-callout { background: var(--report-surface); color: var(--report-ink); }
 body.report-theme-light.report-template-terminalshop a { color: var(--report-blue); }
-""".strip()
-    if name == "ulysses":
-        return """
+""".strip(),
+    "ulysses": """
 .report-template-ulysses .report-cover { background: #ffffff; box-shadow: none; }
 .report-template-ulysses .chapter-hero { background: #333333; color: #ffffff; }
 .report-template-ulysses .chapter-hero * { color: inherit; }
 .report-template-ulysses .heading-number,
 .report-template-ulysses ol li::marker { color: #F7C600; }
-""".strip()
-    if name == "usgraphics":
-        return """
+""".strip(),
+    "usgraphics": """
 .report-template-usgraphics .report-cover,
 .report-template-usgraphics .chapter-hero,
 .report-template-usgraphics .tactic-card,
@@ -484,8 +491,12 @@ body.report-theme-light.report-template-terminalshop a { color: var(--report-blu
 .report-template-usgraphics h2,
 .report-template-usgraphics h3 { text-transform: none; }
 .report-template-usgraphics a { text-decoration: underline; text-underline-offset: 0.12em; }
-""".strip()
-    return ""
+""".strip(),
+}
+
+
+def _template_specific_css(name: str) -> str:
+    return TEMPLATE_SPECIFIC_CSS.get(name, "")
 
 
 def _theme_css(name: str, tokens: dict[str, str]) -> str:
