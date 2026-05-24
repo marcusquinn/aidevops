@@ -775,18 +775,17 @@ test_service_interruption_exhausted_metric_preserves_context() {
 	local _run_runtime_error_type=""
 	local _run_classification_source="default_local"
 	local _run_classification_pattern="default_local"
-	local _metric_kill_reason="unknown"
 
 	_append_service_interruption_exhausted_metric \
 		"worker" "issue-24099" "openai/gpt-5.5" \
 		"${TEST_ROOT}/worktree" "local_error" \
-		"${TEST_ROOT}/excerpt.log" "ses_context"
+		"${TEST_ROOT}/excerpt.log" "ses_context" "signal_terminated"
 
 	local captured
 	captured=$(<"$captured_file")
 	if [[ "$captured" == *$'service_interruption_exhausted\n81\nlocal_error\n1\n0\n24099\nowner/repo\n'* ]] && \
 		[[ "$captured" == *$'excerpt.log\nses_context\n'* ]] && \
-		[[ "$captured" == *$'mid_session_interruption\nunknown\nresume_existing_session'* ]]; then
+		[[ "$captured" == *$'mid_session_interruption\nsignal_terminated\nresume_existing_session'* ]]; then
 		print_result "service interruption exhausted metric preserves diagnostics context" 0
 	else
 		print_result "service interruption exhausted metric preserves diagnostics context" 1 "$captured"
