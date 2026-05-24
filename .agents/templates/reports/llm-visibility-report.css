@@ -1463,7 +1463,7 @@ a {
 
   @page {
     size: A4 portrait;
-    margin: 0;
+    margin: 12mm;
   }
 
   html,
@@ -1477,7 +1477,9 @@ a {
 
   body.report-body {
     min-height: 100vh;
-    padding: 12mm;
+    padding: 0;
+    orphans: 3;
+    widows: 3;
   }
 
   *,
@@ -1544,7 +1546,13 @@ a {
   .code-block-head,
   .source-title {
     break-after: avoid;
+    break-after: avoid-page;
     page-break-after: avoid;
+  }
+
+  .report-main h2.chapter-heading {
+    margin-block-start: 6mm;
+    padding-block-start: 0;
   }
 
   .action-line,
@@ -1553,6 +1561,8 @@ a {
   .latex-rendered-block,
   .bar-chart p {
     break-inside: avoid;
+    break-inside: avoid-page;
+    break-after: avoid-page;
     page-break-inside: avoid;
   }
 
@@ -1625,10 +1635,36 @@ a {
   .action-prompt {
     width: auto;
     max-width: 100%;
-    margin-inline: 0;
+    margin: 0 0 8mm;
     overflow: hidden;
     border-radius: 0 !important;
     box-shadow: none !important;
+  }
+
+  .chapter-hero,
+  .tactic-card,
+  .example-card,
+  .good-bad,
+  .facts-table-wrap,
+  .details-note,
+  .industry-card,
+  .priority-group,
+  .checklist-card,
+  .source-card,
+  .sources-layout,
+  .sources-group,
+  .myth-callout,
+  .info-panel,
+  .impact-panel,
+  .evidence-panel,
+  .action-panel,
+  .severity-key,
+  .accordion,
+  .quote-card,
+  .callout {
+    margin-block: 0 8mm;
+    break-inside: avoid-page;
+    break-after: avoid-page;
   }
 
   .facts-table-wrap {
