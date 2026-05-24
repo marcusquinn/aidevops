@@ -222,9 +222,11 @@ test_markdown_table_preserves_escaped_pipes() {
 | Component | Evidence |
 |---|---|
 | AIO \| CLI | Keeps one cell |
+| Literal \\| Separator | Next cell |
 MARKDOWN
 	"$HELPER_SH" render "$_input" --output "$_out"
 	assert_contains "$_out" "<td>AIO | CLI</td>" "Markdown table preserves escaped pipes inside cells"
+	assert_contains "$_out" "<td>Separator</td>" "Markdown table keeps even-backslash pipe as separator"
 	if grep -qF "<td>CLI</td>" "$_out"; then
 		print_result "Markdown table does not split escaped pipe cells" 1 "Escaped pipe created an extra cell"
 	else
@@ -241,7 +243,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
 from report_render_markdown import render_mermaid_svg
 
-html = render_mermaid_svg("A[Repeat] --> B[Repeat]\nB[Repeat] --> C[Done]")
+html = render_mermaid_svg("node-1 [Repeat] --> node-2[Repeat]\nnode-2[Repeat] --> node-3[Done]")
 if html.count('class="diagram-label">Repeat</text>') != 2:
     raise SystemExit(1)
 if "H 104" in html:

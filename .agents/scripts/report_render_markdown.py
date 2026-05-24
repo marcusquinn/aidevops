@@ -193,7 +193,7 @@ def render_mermaid_svg(code_text: str) -> str:
     edges: list[tuple[str, str]] = []
 
     def node_parts(raw_node: str) -> tuple[str, str]:
-        match = re.match(r"^([A-Za-z0-9_]+)(?:\[([^\]]+)\])?$", raw_node.strip())
+        match = re.match(r"^([A-Za-z0-9_-]+)\s*(?:\[([^\]]+)\])?$", raw_node.strip())
         if not match:
             fallback = raw_node.strip()
             return fallback, fallback
@@ -263,10 +263,11 @@ def render_mermaid_svg(code_text: str) -> str:
             )
 
     if not arrows:
-        for index, node_id in enumerate(nodes):
-            if index >= len(nodes) - 1:
+        node_ids = list(nodes.keys())
+        for index, node_id in enumerate(node_ids):
+            if index >= len(node_ids) - 1:
                 break
-            next_id = list(nodes.keys())[index + 1]
+            next_id = node_ids[index + 1]
             x, y, column, row = positions[node_id]
             next_x, next_y, _, _ = positions[next_id]
             if (index + 1) % columns == 0:
@@ -529,11 +530,10 @@ def split_markdown_table_row(line: str) -> list[str]:
     index = 0
     while index < len(row):
         char = row[index]
-        if char == "\\" and index + 1 < len(row) and row[index + 1] == "|":
+        if char == "|" and _has_odd_trailing_backslashes(current):
+            current.pop()
             current.append("|")
-            index += 2
-            continue
-        if char == "|":
+        elif char == "|":
             cells.append("".join(current))
             current = []
         else:
@@ -541,6 +541,15 @@ def split_markdown_table_row(line: str) -> list[str]:
         index += 1
     cells.append("".join(current))
     return cells
+
+
+def _has_odd_trailing_backslashes(chars: list[str]) -> bool:
+    count = 0
+    for char in reversed(chars):
+        if char != "\\":
+            break
+        count += 1
+    return count % 2 == 1
 
 
 def open_list(body: list[str], states: dict[str, object], tag: str, css_class: str = "") -> None:
