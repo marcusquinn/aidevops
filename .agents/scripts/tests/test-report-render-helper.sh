@@ -107,6 +107,14 @@ test_python_helper_requires_mode() {
 	return 0
 }
 
+test_python_helper_reads_stdin_by_default() {
+	local _out="${TEST_ROOT}/stdin.html"
+	printf '# Stdin\n\n{{evidence:verified}}\n' | python3 "${SCRIPT_DIR}/../report-render-helper.py" render >"$_out"
+	assert_contains "$_out" "<h1 id=\"stdin\">Stdin</h1>" "Python helper reads stdin when input omitted"
+	assert_contains "$_out" "Evidence: Verified" "Python helper renders stdin badges"
+	return 0
+}
+
 test_markdown_table_uses_header_cells() {
 	local _input="${TEST_ROOT}/table.md"
 	local _out="${TEST_ROOT}/table.html"
@@ -164,6 +172,7 @@ main() {
 	test_render_json_fixture
 	test_validate_rejects_unknown_badge
 	test_python_helper_requires_mode
+	test_python_helper_reads_stdin_by_default
 	test_markdown_table_uses_header_cells
 	test_multiline_markdown_paragraph
 	test_render_json_array_is_resilient
