@@ -26,9 +26,10 @@ def badge_html(value: Any) -> str:
     key = str(value).strip().lower()
     if key not in ALLOWED_BADGES:
         raise ValueError(f"unknown evidence badge value: {value}")
+    label = BADGE_LABELS[key]
     return (
-        '<span class="evidence-badge">'
+        f'<span class="evidence-badge" aria-label="Evidence: {label}">'
         '<span class="evidence-label">Evidence:</span>'
-        f'<span class="badge badge-{key}">{BADGE_LABELS[key]}</span>'
+        f'<span class="badge badge-{key}">{label}</span>'
         '</span>'
     )
