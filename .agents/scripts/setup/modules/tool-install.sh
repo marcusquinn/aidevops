@@ -339,12 +339,14 @@ _setup_rtk_install_supported_version() {
 	fi
 
 	print_warning "rtk upgrade failed (non-critical, optional tool)"
+	_setup_rtk_print_manual_install "$rtk_installer_url" "upgrade"
 	return 1
 }
 
 _setup_rtk_print_manual_install() {
 	local rtk_installer_url="$1"
-	echo "  Manual install: brew upgrade rtk  OR  curl -fsSL $rtk_installer_url | sh"
+	local brew_cmd="${2:-upgrade}"
+	echo "  Manual install: brew $brew_cmd rtk  OR  curl -fsSL $rtk_installer_url | sh"
 	return 0
 }
 
@@ -426,7 +428,7 @@ setup_rtk() {
 			fi
 		else
 			print_info "Skipped rtk installation"
-			_setup_rtk_print_manual_install "$rtk_installer_url"
+			_setup_rtk_print_manual_install "$rtk_installer_url" "install"
 		fi
 	fi
 
