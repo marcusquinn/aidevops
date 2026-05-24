@@ -2562,9 +2562,9 @@
       "pr": 18810
     },
     ".agents/scripts/tabby-helper.sh": {
-      "at": "2026-05-10T05:50:05Z",
-      "hash": "5a3d1fe7bf70931d3fc6ccd79fd5c52444d08815",
-      "passes": 5,
+      "at": "2026-05-24T19:36:44Z",
+      "hash": "ee8e61ddd4033b59e414dff57d2c8ada02548f15",
+      "passes": 6,
       "pr": 17549
     },
     ".agents/scripts/tests/test-consolidation-dispatch.sh": {
