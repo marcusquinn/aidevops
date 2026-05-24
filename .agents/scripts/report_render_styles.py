@@ -318,9 +318,9 @@ def _template_specific_css(name: str) -> str:
 .report-template-times .chapter-hero { border-width: 2px 0; text-align: center; background: #FFFDF8; }
 .report-template-times .toc-pdf-link,
 .report-template-times .action-line strong { background: #000000; color: #ffffff; border-color: #000000; }
-.report-template-times .sticky-toc a:hover,
-.report-template-times .sticky-toc a:focus-visible,
-.report-template-times .sticky-toc a[aria-current="true"] { color: #008138; border-left-color: #008138; }
+.report-template-times .sticky-toc ol a:hover,
+.report-template-times .sticky-toc ol a:focus-visible,
+.report-template-times .sticky-toc ol a[aria-current="true"] { color: #008138; border-left-color: #008138; }
 .report-template-times .facts-table th,
 .report-template-times .facts-table td { border-bottom-style: dotted; }
 .report-template-times .code-block-wrap { border-color: #000000; border-radius: 0; }
@@ -470,7 +470,7 @@ h1 {{ font-size: clamp(2.25rem, 5vw, 3.5rem); line-height: 1.12; }}
 h2 {{ font-size: clamp(1.6rem, 3vw, 2.25rem); line-height: 1.16; }}
 h3 {{ font-size: clamp(1.15rem, 1.5vw, 1.35rem); line-height: 1.24; }}
 .source-card, .tactic-card, .priority-group {{ border-color: var(--report-rule); }}
-.sticky-toc a:hover, .sticky-toc a:focus-visible, .sticky-toc a[aria-current="true"] {{ border-left-color: var(--report-blue); }}
+.sticky-toc ol a:hover, .sticky-toc ol a:focus-visible, .sticky-toc ol a[aria-current="true"] {{ border-left-color: var(--report-blue); }}
 {dark_css}
 {_template_specific_css(name)}
 """.strip()

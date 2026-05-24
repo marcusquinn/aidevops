@@ -260,14 +260,16 @@ body.report-body {
 }
 
 .toc-pdf-link {
-  display: inline-grid;
+  display: inline-flex;
   min-width: 0;
   min-height: 0;
   min-inline-size: 3.2rem;
   height: 2rem;
   align-self: center;
+  flex: 0 0 auto;
+  align-items: center;
   box-sizing: border-box;
-  place-items: center;
+  justify-content: center;
   padding: 0 0.7rem;
   border: 1.5px solid var(--report-rule);
   border-radius: var(--report-badge-radius);
@@ -299,7 +301,7 @@ body.report-body {
   list-style: none;
 }
 
-.sticky-toc a {
+.sticky-toc ol a {
   display: block;
   padding: var(--report-space-1) var(--report-space-2);
   border-left: 3px solid transparent;
@@ -308,9 +310,9 @@ body.report-body {
   text-decoration: none;
 }
 
-.sticky-toc a[aria-current="true"],
-.sticky-toc a:hover,
-.sticky-toc a:focus-visible {
+.sticky-toc ol a[aria-current="true"],
+.sticky-toc ol a:hover,
+.sticky-toc ol a:focus-visible {
   border-left-color: var(--report-blue);
   color: var(--report-ink);
   outline: none;
@@ -1224,8 +1226,10 @@ ol li::marker {
 .version-summary {
   text-align: center;
   color: var(--report-ink-soft);
+  font-size: clamp(0.72rem, 0.58rem + 0.42vw, 0.92rem);
   font-weight: 800;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.11em;
+  line-height: 1.42;
   text-transform: uppercase;
   margin-block: var(--report-space-6) 0;
   padding: var(--report-space-4) 0 0;
@@ -1234,6 +1238,12 @@ ol li::marker {
   border-top: 1px solid var(--report-rule);
   border-radius: 0;
   box-shadow: none;
+}
+
+.version-summary p {
+  max-width: none;
+  margin: 0;
+  text-wrap: balance;
 }
 
 .source-card {
@@ -1536,7 +1546,7 @@ h1 { font-size: clamp(2.25rem, 5vw, 3.5rem); line-height: 1.12; }
 h2 { font-size: clamp(1.6rem, 3vw, 2.25rem); line-height: 1.16; }
 h3 { font-size: clamp(1.15rem, 1.5vw, 1.35rem); line-height: 1.24; }
 .source-card, .tactic-card, .priority-group { border-color: var(--report-rule); }
-.sticky-toc a:hover, .sticky-toc a:focus-visible, .sticky-toc a[aria-current="true"] { border-left-color: var(--report-blue); }
+.sticky-toc ol a:hover, .sticky-toc ol a:focus-visible, .sticky-toc ol a[aria-current="true"] { border-left-color: var(--report-blue); }
 @media print { @page { size: A4 portrait; margin: 12mm 11mm 14mm; } body.report-body { background: #fff; font-size: 10.5pt; } .report-shell { display: block; max-width: none; padding: 0; } .sticky-toc { position: static; break-after: page; box-shadow: none; } table { table-layout: fixed; font-size: 8.8pt; } th,td { padding: 4pt 5pt; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after { content: ""; } }</style>
 </head>
 <body class="report-body report-theme-auto report-pdf-profile-a4 report-template-supermemory">

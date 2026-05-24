@@ -82,7 +82,7 @@ body.report-body {
 .report-main h1,
 .report-main h2,
 .report-main h3 {
-  max-width: 32ch;
+  max-width: 46ch;
   color: var(--report-ink);
   font-family: var(--report-font-heading);
   line-height: 1.14;
@@ -234,6 +234,7 @@ body.report-body {
   background: var(--report-panel);
   border: 1px solid var(--report-rule);
   border-radius: var(--report-radius-lg);
+  font-size: 0.875rem;
   box-shadow: 0 12px 32px rgba(17, 24, 39, 0.1);
 }
 
@@ -248,9 +249,10 @@ body.report-body {
 .sticky-toc-header {
   display: flex;
   gap: var(--report-space-2);
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   margin-block-end: var(--report-space-3);
+  padding-inline-end: 0.35rem;
 }
 
 .sticky-toc-header h2 {
@@ -261,20 +263,24 @@ body.report-body {
   display: inline-flex;
   min-width: 0;
   min-height: 0;
-  height: 1.9rem;
+  min-inline-size: 3.2rem;
+  height: 2rem;
+  align-self: center;
+  flex: 0 0 auto;
   align-items: center;
-  align-self: flex-start;
   box-sizing: border-box;
   justify-content: center;
-  padding: 0 0.72rem;
-  border: 1px solid var(--report-rule);
+  padding: 0 0.7rem;
+  border: 1.5px solid var(--report-rule);
   border-radius: var(--report-badge-radius);
+  background: var(--report-panel);
   color: var(--report-ink);
   font-size: 0.72rem;
   font-weight: 900;
   letter-spacing: 0.08em;
-  line-height: 1;
-  text-decoration: none;
+  line-height: 1 !important;
+  text-align: center;
+  text-decoration: none !important;
   white-space: nowrap;
 }
 
@@ -295,17 +301,18 @@ body.report-body {
   list-style: none;
 }
 
-.sticky-toc a {
+.sticky-toc ol a {
   display: block;
   padding: var(--report-space-1) var(--report-space-2);
   border-left: 3px solid transparent;
   color: var(--report-ink-muted);
+  line-height: 1.45;
   text-decoration: none;
 }
 
-.sticky-toc a[aria-current="true"],
-.sticky-toc a:hover,
-.sticky-toc a:focus-visible {
+.sticky-toc ol a[aria-current="true"],
+.sticky-toc ol a:hover,
+.sticky-toc ol a:focus-visible {
   border-left-color: var(--report-blue);
   color: var(--report-ink);
   outline: none;
@@ -739,6 +746,12 @@ th .evidence-badge {
   color: var(--report-code-ink);
   cursor: pointer;
   font: 700 0.85rem/1 var(--report-font-body);
+}
+
+.code-copy.is-copied {
+  background: var(--report-green);
+  border-color: var(--report-green);
+  color: #ffffff;
 }
 
 .example-card pre,
@@ -1213,8 +1226,10 @@ ol li::marker {
 .version-summary {
   text-align: center;
   color: var(--report-ink-soft);
+  font-size: clamp(0.72rem, 0.58rem + 0.42vw, 0.92rem);
   font-weight: 800;
-  letter-spacing: 0.16em;
+  letter-spacing: 0.11em;
+  line-height: 1.42;
   text-transform: uppercase;
   margin-block: var(--report-space-6) 0;
   padding: var(--report-space-4) 0 0;
@@ -1223,6 +1238,12 @@ ol li::marker {
   border-top: 1px solid var(--report-rule);
   border-radius: 0;
   box-shadow: none;
+}
+
+.version-summary p {
+  max-width: none;
+  margin: 0;
+  text-wrap: balance;
 }
 
 .source-card {
@@ -1525,10 +1546,10 @@ h1 { font-size: clamp(2.25rem, 5vw, 3.5rem); line-height: 1.12; }
 h2 { font-size: clamp(1.6rem, 3vw, 2.25rem); line-height: 1.16; }
 h3 { font-size: clamp(1.15rem, 1.5vw, 1.35rem); line-height: 1.24; }
 .source-card, .tactic-card, .priority-group { border-color: var(--report-rule); }
-.sticky-toc a:hover, .sticky-toc a:focus-visible, .sticky-toc a[aria-current="true"] { border-left-color: var(--report-blue); }
+.sticky-toc ol a:hover, .sticky-toc ol a:focus-visible, .sticky-toc ol a[aria-current="true"] { border-left-color: var(--report-blue); }
 
-.report-template-medium .report-main { max-width: 740px; }
-.report-template-medium .report-shell { max-width: 1120px; }
+.report-template-medium .report-main { max-width: none; }
+.report-template-medium .report-shell { max-width: var(--report-page-max); }
 .report-template-medium .report-cover,
 .report-template-medium .tactic-card,
 .report-template-medium .source-card,
@@ -1868,10 +1889,33 @@ Guide me through the tools, resources, accounts, permissions, source material, a
   document.querySelectorAll('.code-copy').forEach((button) => {
     button.addEventListener('click', async () => {
       const code = button.closest('.code-block-wrap')?.querySelector('code')?.innerText || '';
-      try {
-        await navigator.clipboard.writeText(code);
+      const original = button.dataset.originalLabel || button.textContent || '⧉';
+      button.dataset.originalLabel = original;
+      const showCopied = () => {
         button.textContent = '✓';
-        setTimeout(() => { button.textContent = '⧉'; }, 1200);
+        button.classList.add('is-copied');
+        button.setAttribute('aria-label', 'Copied');
+        setTimeout(() => {
+          button.textContent = original;
+          button.classList.remove('is-copied');
+          button.setAttribute('aria-label', 'Copy code');
+        }, 1200);
+      };
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(code);
+        } else {
+          const textArea = document.createElement('textarea');
+          textArea.value = code;
+          textArea.setAttribute('readonly', '');
+          textArea.style.position = 'fixed';
+          textArea.style.left = '-9999px';
+          document.body.appendChild(textArea);
+          textArea.select();
+          document.execCommand('copy');
+          textArea.remove();
+        }
+        showCopied();
       } catch (_) {
         button.textContent = 'Copy';
       }

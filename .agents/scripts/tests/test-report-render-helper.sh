@@ -61,6 +61,7 @@ test_render_markdown_fixture() {
 	local _out="${TEST_ROOT}/report.html"
 	"$HELPER_SH" render "${FIXTURE_DIR}/llm-visibility-report-sample.md" --output "$_out"
 	assert_contains "$_out" "sticky-toc" "Markdown render includes sticky TOC"
+	assert_contains "$_out" "list-style: none" "Markdown render removes browser TOC list numbering"
 	assert_contains "$_out" "@media print" "Markdown render includes print CSS"
 	assert_contains "$_out" "evidence-label" "Markdown render includes plain evidence label"
 	assert_contains "$_out" "evidence-badge" "Markdown render groups evidence label and badge"
@@ -96,6 +97,7 @@ test_render_markdown_fixture() {
 	assert_contains "$_out" "</section><details class=\"accordion action-prompt\"" "Markdown render places action prompts after action panels"
 	assert_contains "$_out" "class=\"toc-pdf-link\"" "Markdown render includes TOC PDF link"
 	assert_contains "$_out" "href=\"report.pdf\"" "Markdown render links TOC PDF button to matching PDF"
+	assert_contains "$_out" "display: inline-flex" "Markdown render vertically centers TOC PDF button"
 	assert_contains "${TEST_ROOT}/llm-visibility-report-sample-action-prompts.md" "Guide me through the tools" "Render writes companion action prompts file"
 	assert_contains "$_out" "heading-number\">1.</span> Method" "Markdown render numbers body H2 headings"
 	if grep -qF "Chapter 1 /" "$_out"; then
