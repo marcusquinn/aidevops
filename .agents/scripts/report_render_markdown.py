@@ -300,6 +300,7 @@ def close_code(body: list[str], states: dict[str, object]) -> None:
 def close_blocks(body: list[str], states: dict[str, object]) -> None:
     if states.get("code"):
         return
+    flush_paragraph(body, states)
     if states.get("list"):
         tag = states.get("list_tag", "ul")
         body.append(f"</{tag}>")
@@ -308,6 +309,14 @@ def close_blocks(body: list[str], states: dict[str, object]) -> None:
     if states.get("table"):
         body.append("</tbody></table>")
         states["table"] = False
+
+
+def flush_paragraph(body: list[str], states: dict[str, object]) -> None:
+    paragraph_lines = states.get("paragraph")
+    if not isinstance(paragraph_lines, list) or not paragraph_lines:
+        return
+    body.append(f"<p>{inline_markup(' '.join(str(line).strip() for line in paragraph_lines))}</p>")
+    states["paragraph"] = []
 
 
 def close_component(body: list[str], states: dict[str, object]) -> bool:
@@ -513,14 +522,18 @@ def handle_blockquote(line: str, body: list[str], states: dict[str, object]) -> 
 
 
 def handle_paragraph(line: str, body: list[str], states: dict[str, object]) -> None:
-    close_blocks(body, states)
+    if states.get("list") or states.get("table"):
+        close_blocks(body, states)
     if line.lower().startswith(("source:", "source card:")):
+        flush_paragraph(body, states)
         body.append(
             f'<aside class="source-card">{inline_markup(line)}'
             '<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></aside>'
         )
         return
-    body.append(f"<p>{inline_markup(line)}</p>")
+    paragraph_lines = states.get("paragraph")
+    if isinstance(paragraph_lines, list):
+        paragraph_lines.append(line)
 
 
 def handle_markdown_line(
@@ -563,6 +576,7 @@ def render_markdown(text: str, inject_prompts: bool = True) -> tuple[list[tuple[
         "code_lines": [],
         "chapter_count": 0,
         "section_count": 0,
+        "paragraph": [],
     }
     for raw_line in text.splitlines():
         line = raw_line.rstrip()
