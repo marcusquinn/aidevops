@@ -200,23 +200,43 @@ def render_mermaid_svg(code_text: str) -> str:
                 nodes.append(label)
     if len(nodes) < 2:
         return ""
-    width = max(720, len(nodes) * 190)
-    height = 130
-    gap = width // max(len(nodes), 1)
+    if len(nodes) > 4:
+        columns = min(3, len(nodes))
+        rows = (len(nodes) + columns - 1) // columns
+        cell_width = 220
+        cell_height = 115
+        width = max(720, columns * cell_width + 48)
+        height = rows * cell_height + 50
+    else:
+        columns = len(nodes)
+        rows = 1
+        cell_width = max(185, 720 // max(columns, 1))
+        cell_height = 95
+        width = max(720, len(nodes) * 190)
+        height = 130
     boxes = []
     arrows = []
     for index, label in enumerate(nodes):
-        x = 24 + index * gap
-        y = 35
+        column = index % columns
+        row = index // columns
+        x = 24 + column * cell_width
+        y = 35 + row * cell_height
         safe_label = html.escape(label)
         boxes.append(
-            f'<rect x="{x}" y="{y}" width="145" height="56" rx="14" class="diagram-node" />'
-            f'<text x="{x + 72}" y="{y + 34}" text-anchor="middle" class="diagram-label">{safe_label}</text>'
+            f'<rect x="{x}" y="{y}" width="160" height="58" rx="14" class="diagram-node" />'
+            f'<text x="{x + 80}" y="{y + 35}" text-anchor="middle" class="diagram-label">{safe_label}</text>'
         )
         if index < len(nodes) - 1:
-            arrows.append(
-                f'<line x1="{x + 150}" y1="{y + 28}" x2="{x + gap - 8}" y2="{y + 28}" class="diagram-arrow" />'
-            )
+            if (index + 1) % columns == 0:
+                next_row = row + 1
+                next_y = 35 + next_row * cell_height
+                arrows.append(
+                    f'<path d="M {x + 80} {y + 63} V {next_y - 16} H 104 V {next_y + 28}" class="diagram-arrow" fill="none" />'
+                )
+            else:
+                arrows.append(
+                    f'<line x1="{x + 165}" y1="{y + 29}" x2="{x + cell_width - 16}" y2="{y + 29}" class="diagram-arrow" />'
+                )
     return (
         '<figure class="mermaid-rendered" aria-label="Rendered Mermaid diagram">'
         f'<svg viewBox="0 0 {width} {height}" role="img" xmlns="http://www.w3.org/2000/svg">'

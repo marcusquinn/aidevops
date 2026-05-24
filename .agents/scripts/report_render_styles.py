@@ -232,8 +232,39 @@ def _optional_dark_tokens(tokens: dict[str, str]) -> str:
         return ""
     dark_vars = _dark_variable_css(tokens, "body.report-theme-dark")
     auto_dark_vars = _dark_variable_css(tokens, "body.report-theme-auto")
+    light_companion = ""
+    background_rgb = _hex_to_rgb(tokens.get("background", "#ffffff"))
+    if background_rgb is not None and _relative_luminance(background_rgb) < 0.2:
+        light_primary = _ensure_contrast(tokens["primary"], "#FFFFFF", 4.5)
+        light_companion = f"""
+body.report-theme-light {{
+  --report-paper: #F8FAFC;
+  --report-paper-raised: #FFFFFF;
+  --report-panel: #FFFFFF;
+  --report-surface: #FFFFFF;
+  --report-ink: #111827;
+  --report-ink-muted: #4B5563;
+  --report-ink-soft: #4B5563;
+  --report-rule: #D1D5DB;
+  --report-rule-strong: {light_primary};
+  --report-blue: {light_primary};
+  --report-action-bg: {light_primary};
+  --report-action-ink: #FFFFFF;
+  --report-info-bg: #FFFFFF;
+  --report-impact-bg: #FFFFFF;
+  --report-evidence-bg: #FFFFFF;
+  --report-myth-bg: #FFFFFF;
+  --report-good-bg: #FFFFFF;
+  --report-bad-bg: #FFFFFF;
+  --report-code-bg: #F8FAFC;
+  --report-code-bg-2: #FFFFFF;
+  --report-code-ink: #111827;
+  --report-code-accent: {light_primary};
+}}
+""".strip()
     return f"""
 {dark_vars}
+{light_companion}
 body.report-theme-dark .badge-verified,
 body.report-theme-dark .badge-partial,
 body.report-theme-dark .badge-inferred,
@@ -346,6 +377,17 @@ def _template_specific_css(name: str) -> str:
 .report-template-indexsy .badge-partial,
 .report-template-indexsy .badge-inferred,
 .report-template-indexsy .badge-missing { border-color: rgba(255, 255, 255, 0.18); }
+body.report-theme-light.report-template-indexsy .heading-number,
+body.report-theme-light.report-template-indexsy ol li::marker { color: #4721fb; }
+body.report-theme-light.report-template-indexsy .sticky-toc,
+body.report-theme-light.report-template-indexsy .tactic-card,
+body.report-theme-light.report-template-indexsy .source-card,
+body.report-theme-light.report-template-indexsy .priority-group,
+body.report-theme-light.report-template-indexsy .stat-card { box-shadow: 0 18px 42px rgba(17, 24, 39, 0.12); }
+body.report-theme-light.report-template-indexsy .badge-verified,
+body.report-theme-light.report-template-indexsy .badge-partial,
+body.report-theme-light.report-template-indexsy .badge-inferred,
+body.report-theme-light.report-template-indexsy .badge-missing { border-color: var(--report-rule); }
 """.strip()
     if name == "docuseal":
         return """
@@ -368,6 +410,12 @@ def _template_specific_css(name: str) -> str:
 .report-template-exsqueezeme .tactic-card,
 .report-template-exsqueezeme .source-card,
 .report-template-exsqueezeme .facts-table-wrap { box-shadow: 6px 6px 0 #ffffff; }
+body.report-theme-light.report-template-exsqueezeme .toc-pdf-link,
+body.report-theme-light.report-template-exsqueezeme .action-line strong { border-color: #0A0A0A; box-shadow: 5px 5px 0 rgba(10, 10, 10, 0.16); }
+body.report-theme-light.report-template-exsqueezeme .report-cover,
+body.report-theme-light.report-template-exsqueezeme .tactic-card,
+body.report-theme-light.report-template-exsqueezeme .source-card,
+body.report-theme-light.report-template-exsqueezeme .facts-table-wrap { box-shadow: 6px 6px 0 rgba(10, 10, 10, 0.12); }
 """.strip()
     if name == "mellowyellow":
         return """
@@ -382,6 +430,7 @@ def _template_specific_css(name: str) -> str:
 .report-template-superx .action-line,
 .report-template-superx .toc-pdf-link { box-shadow: 0 0 26px rgba(252, 138, 101, 0.18); }
 .report-template-superx .stat-card strong { color: #ffffff; }
+body.report-theme-light.report-template-superx .stat-card strong { color: var(--report-ink); }
 """.strip()
     if name == "terminalshop":
         return """
@@ -399,6 +448,18 @@ def _template_specific_css(name: str) -> str:
 .report-template-terminalshop .toc-pdf-link,
 .report-template-terminalshop .action-line strong { border-radius: 0; }
 .report-template-terminalshop a { color: #59C2FF; }
+body.report-theme-light.report-template-terminalshop .report-cover,
+body.report-theme-light.report-template-terminalshop .chapter-hero,
+body.report-theme-light.report-template-terminalshop .tactic-card,
+body.report-theme-light.report-template-terminalshop .source-card,
+body.report-theme-light.report-template-terminalshop .info-panel,
+body.report-theme-light.report-template-terminalshop .impact-panel,
+body.report-theme-light.report-template-terminalshop .evidence-panel,
+body.report-theme-light.report-template-terminalshop .action-panel,
+body.report-theme-light.report-template-terminalshop .good-row,
+body.report-theme-light.report-template-terminalshop .bad-row,
+body.report-theme-light.report-template-terminalshop .myth-callout { background: var(--report-surface); color: var(--report-ink); }
+body.report-theme-light.report-template-terminalshop a { color: var(--report-blue); }
 """.strip()
     if name == "ulysses":
         return """

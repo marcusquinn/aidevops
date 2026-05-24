@@ -11,21 +11,26 @@ body.report-theme-dark { color-scheme: dark; --report-paper: #0f172a; --report-p
 .report-main { min-width: 0; }
 .sticky-toc { margin: 0 0 2rem; overflow: hidden; border: 1px solid var(--report-line); border-radius: 10px; padding: 1rem; background: var(--report-panel); }
 .sticky-toc-header { display: flex; gap: 1rem; align-items: center; justify-content: space-between; margin-bottom: 1rem; padding-right: .35rem; }
+.toc-pdf-actions { display: inline-flex; flex: 0 0 auto; gap: .5rem; align-items: center; }
 .toc-pdf-link { display: inline-flex; min-inline-size: 3.2rem; height: 2rem; align-items: center; justify-content: center; align-self: center; flex: 0 0 auto; box-sizing: border-box; padding: 0 .7rem; border: 1.5px solid var(--report-line); border-radius: var(--report-badge-radius); background: var(--report-panel); color: inherit; font-size: .72rem; font-weight: 900; letter-spacing: .08em; line-height: 1 !important; text-align: center; text-decoration: none !important; white-space: nowrap; }
 .sticky-toc ol { max-height: calc(100vh - 9rem); overflow: auto; margin: 0; padding: 0; padding-right: .25rem; list-style: none; }
 .sticky-toc ol a { display: block; color: inherit; font-size: .875rem; line-height: 1.45; text-decoration: none; }
 .sticky-toc ol a:hover, .sticky-toc ol a:focus-visible { text-decoration: underline; }
 .report-content, .report-main { min-width: 0; }
-.badge-row, .appendix-links, .anchor-links { display: flex; flex-wrap: wrap; gap: .7rem; line-height: 1.9; }
+.badge-row, .appendix-links, .anchor-links { display: flex; flex-wrap: wrap; gap: 1rem; line-height: 1.35; }
+.appendix-links, .anchor-links { justify-content: center; }
+.appendix-links p, .anchor-links p { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; justify-content: center; margin: 0; }
 .anchor-links a, .appendix-links a { border-radius: var(--report-badge-radius); box-shadow: inset 0 -.16em 0 color-mix(in srgb, var(--report-blue) 18%, transparent); }
 .badge { display: inline-flex; width: fit-content; min-width: max-content; max-width: 100%; white-space: nowrap; border-radius: var(--report-badge-radius); padding: .15rem .55rem; font-size: .78rem; font-weight: 700; border: 1px solid var(--report-line); }
 .badge-verified { background: #dcfce7; color: #166534; }
 .badge-partial { background: #fef9c3; color: #854d0e; }
 .badge-inferred { background: #dbeafe; color: #1e40af; }
 .badge-missing { background: #fee2e2; color: #991b1b; }
-.source-card { border: 1px solid var(--report-line); border-left: 4px solid var(--report-ink); border-radius: 10px; padding: .85rem 1rem; margin: .75rem 0; background: var(--report-surface); }
-.source-card-link { display: inline-flex; width: 1.6rem; height: 1.6rem; align-items: center; justify-content: center; margin-left: .5rem; border: 1px solid var(--report-line); border-radius: var(--report-badge-radius); color: var(--report-blue); text-decoration: none; vertical-align: middle; }
-.source-card-link::before { content: "↗"; font-weight: 900; }
+.source-card, .source-item { position: relative; padding-right: 3.75rem; }
+.source-card { border: 1px solid var(--report-line); border-left: 4px solid var(--report-ink); border-radius: 10px; padding: .85rem 3.75rem .85rem 1rem; margin: .75rem 0; background: var(--report-surface); }
+.source-card-link { position: absolute; inset: 0; z-index: 2; display: block; border-radius: inherit; color: var(--report-blue); text-decoration: none; }
+.source-card-link::before { content: "↗"; position: absolute; top: 1rem; right: 1rem; display: inline-flex; width: 1.6rem; height: 1.6rem; align-items: center; justify-content: center; border: 1px solid var(--report-line); border-radius: var(--report-badge-radius); background: var(--report-surface); font-weight: 900; line-height: 1; }
+.source-card-link[href]::after { content: "" !important; }
 .code-block-wrap, .mermaid-rendered, .latex-rendered-block { max-width: 100%; min-width: 0; margin: 1rem 0; border: 1px solid var(--report-line); border-radius: 10px; overflow: hidden; background: var(--report-code-bg); color: var(--report-code-ink); }
 .code-block-head { display: flex; gap: 1rem; align-items: center; justify-content: space-between; padding: .45rem .75rem; border-bottom: 1px solid var(--report-line); color: var(--report-code-accent); font: 700 .78rem/1.3 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .code-copy { display: inline-grid; width: 1.75rem; height: 1.75rem; place-items: center; border: 1px solid var(--report-line); border-radius: 999px; background: transparent; color: inherit; cursor: pointer; }
@@ -46,14 +51,14 @@ body.report-theme-dark { color-scheme: dark; --report-paper: #0f172a; --report-p
 table { table-layout: auto; border-collapse: collapse; width: 100%; margin: 1rem 0; overflow-wrap: normal; }
 th, td { border: 1px solid var(--report-line); padding: .5rem; text-align: left; vertical-align: top; }
 h1, h2, h3 { line-height: 1.15; break-after: avoid; }
-.report-footer { max-width: 1180px; margin: 0 auto; padding: 1rem 2rem 2rem; color: var(--report-muted); font-size: .875rem; }
+.report-footer { max-width: 1180px; margin: 0 auto; padding: 1rem 2rem 2rem; color: var(--report-muted); font-size: .875rem; text-align: center; }
 @media (max-width: 860px) { .report-shell { display: block; padding: 1rem; } .sticky-toc { position: static; margin-bottom: 1rem; } }
-@media print { @page { size: A4 portrait; margin: 12mm 11mm 14mm; } body.report-body { background: #fff; font-size: 10.5pt; } .report-shell { display: block; max-width: none; padding: 0; } .sticky-toc { position: static; break-after: page; box-shadow: none; } table { table-layout: fixed; font-size: 8.8pt; } th,td { padding: 4pt 5pt; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after { content: ""; } }</style>
+@media print { @page { size: A4 portrait; margin: 0; } html, body.report-body { background: var(--report-paper) !important; font-size: 10.5pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; } body.report-body { min-height: 100vh; padding: 12mm; } body.report-theme-dark { background: var(--report-paper) !important; } .report-shell { display: block; max-width: none; padding: 0; } .sticky-toc { position: static; max-height: none; overflow: visible; break-after: page; break-inside: auto; border: 0; border-radius: 0; box-shadow: none; } .sticky-toc ol { display: block; max-height: none; overflow: visible; padding-right: 0; } .toc-pdf-actions, .toc-pdf-link { display: none !important; } table { table-layout: fixed; font-size: 8.8pt; } th,td { padding: 4pt 5pt; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after, .source-card-link[href]::after, .anchor-links a[href]::after { content: ""; } .appendix-links a[href]::after { content: attr(data-filetype); } }</style>
 </head>
 <body class="report-body report-theme-auto report-pdf-profile-a4 report-template-basic">
 <div class="report-shell">
 <nav class="sticky-toc" aria-label="Report table of contents">
-<div class="sticky-toc-header"><h2>Contents</h2><a class="toc-pdf-link" href="basic.pdf" aria-label="Open PDF version" title="Open PDF version">PDF</a></div>
+<div class="sticky-toc-header"><h2>Contents</h2><span class="toc-pdf-actions"><a class="toc-pdf-link" href="basic.pdf" aria-label="Open A4 PDF version" title="Open A4 PDF version">A4</a><a class="toc-pdf-link" href="basic-16-9.pdf" aria-label="Open landscape PDF version" title="Open landscape PDF version">16:9</a></span></div>
 <ol>
 <li><a href="#report-style-showcase" style="margin-left:0rem">Report Style Showcase</a></li>
 <li><a href="#executive-summary" style="margin-left:1rem">Executive summary</a></li>
@@ -244,7 +249,7 @@ LinkedIn | Google Scholar | Personal site</code></pre></div>
   SourceLedger --&gt; Finding
   Finding --&gt; Recommendation
   Recommendation --&gt; Verification</code></pre></div>
-<figure class="mermaid-rendered" aria-label="Rendered Mermaid diagram"><svg viewBox="0 0 760 130" role="img" xmlns="http://www.w3.org/2000/svg"><defs><marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" class="diagram-arrow-head" /></marker></defs><line x1="174" y1="63" x2="206" y2="63" class="diagram-arrow" /><line x1="364" y1="63" x2="396" y2="63" class="diagram-arrow" /><line x1="554" y1="63" x2="586" y2="63" class="diagram-arrow" /><rect x="24" y="35" width="145" height="56" rx="14" class="diagram-node" /><text x="96" y="69" text-anchor="middle" class="diagram-label">SourceLedger</text><rect x="214" y="35" width="145" height="56" rx="14" class="diagram-node" /><text x="286" y="69" text-anchor="middle" class="diagram-label">Finding</text><rect x="404" y="35" width="145" height="56" rx="14" class="diagram-node" /><text x="476" y="69" text-anchor="middle" class="diagram-label">Recommendation</text><rect x="594" y="35" width="145" height="56" rx="14" class="diagram-node" /><text x="666" y="69" text-anchor="middle" class="diagram-label">Verification</text></svg><figcaption>Rendered Mermaid example, embedded as self-contained SVG.</figcaption></figure>
+<figure class="mermaid-rendered" aria-label="Rendered Mermaid diagram"><svg viewBox="0 0 760 130" role="img" xmlns="http://www.w3.org/2000/svg"><defs><marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" class="diagram-arrow-head" /></marker></defs><line x1="189" y1="64" x2="193" y2="64" class="diagram-arrow" /><line x1="374" y1="64" x2="378" y2="64" class="diagram-arrow" /><line x1="559" y1="64" x2="563" y2="64" class="diagram-arrow" /><rect x="24" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="104" y="70" text-anchor="middle" class="diagram-label">SourceLedger</text><rect x="209" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="289" y="70" text-anchor="middle" class="diagram-label">Finding</text><rect x="394" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="474" y="70" text-anchor="middle" class="diagram-label">Recommendation</text><rect x="579" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="659" y="70" text-anchor="middle" class="diagram-label">Verification</text></svg><figcaption>Rendered Mermaid example, embedded as self-contained SVG.</figcaption></figure>
 </section>
 <section class="example-card">
 <header>LaTeX fallback</header>
