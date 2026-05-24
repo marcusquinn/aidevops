@@ -343,7 +343,7 @@ _PREFETCH_ISSUE_SWEEP_FULL=full
 
 #######################################
 # Attempt delta issue fetch and merge into cached list (GH#15286).
-# Sets PREFETCH_ISSUE_SWEEP_MODE=full on failure (caller falls through).
+# Sets PREFETCH_ISSUE_SWEEP_MODE=$_PREFETCH_ISSUE_SWEEP_FULL on failure (caller falls through).
 # Sets PREFETCH_ISSUE_RESULT on success.
 # Arguments: $1=slug, $2=cache_entry, $3=issue_err_file
 #######################################
@@ -358,7 +358,7 @@ _prefetch_issues_try_delta() {
 	# No usable timestamp — fall back to full
 	if [[ -z "$last_prefetch" ]]; then
 		echo "[pulse-wrapper] _prefetch_repo_issues: delta fetch failed for ${slug} (falling back to full): no timestamp or fetch error" >>"$LOGFILE"
-		PREFETCH_ISSUE_SWEEP_MODE=full
+		PREFETCH_ISSUE_SWEEP_MODE="$_PREFETCH_ISSUE_SWEEP_FULL"
 		return 0
 	fi
 
@@ -372,7 +372,7 @@ _prefetch_issues_try_delta() {
 		local _delta_issue_err
 		_delta_issue_err=$(cat "$issue_err" 2>/dev/null || echo "no timestamp or fetch error")
 		echo "[pulse-wrapper] _prefetch_repo_issues: delta fetch failed for ${slug} (falling back to full): ${_delta_issue_err}" >>"$LOGFILE"
-		PREFETCH_ISSUE_SWEEP_MODE=full
+		PREFETCH_ISSUE_SWEEP_MODE="$_PREFETCH_ISSUE_SWEEP_FULL"
 		return 0
 	fi
 
@@ -381,7 +381,7 @@ _prefetch_issues_try_delta() {
 	cached_issues=$(echo "$cache_entry" | jq '.issues // []' 2>/dev/null) || cached_issues="[]"
 	if echo "$cached_issues" | _prefetch_issue_cache_lacks_state; then
 		echo "[pulse-wrapper] _prefetch_repo_issues: cached issue schema lacks state for ${slug} (falling back to full)" >>"$LOGFILE"
-		PREFETCH_ISSUE_SWEEP_MODE=full
+		PREFETCH_ISSUE_SWEEP_MODE="$_PREFETCH_ISSUE_SWEEP_FULL"
 		return 0
 	fi
 	local merged
@@ -549,7 +549,7 @@ _prefetch_single_repo() {
 	cache_entry=$(_prefetch_cache_get "$slug")
 	local sweep_mode="delta"
 	if _prefetch_needs_full_sweep "$cache_entry"; then
-		sweep_mode=full
+		sweep_mode="$_PREFETCH_ISSUE_SWEEP_FULL"
 		echo "[pulse-wrapper] _prefetch_single_repo: full sweep for ${slug}" >>"$LOGFILE"
 	else
 		echo "[pulse-wrapper] _prefetch_single_repo: delta prefetch for ${slug}" >>"$LOGFILE"
@@ -573,7 +573,7 @@ _prefetch_single_repo() {
 	fi
 	if [[ "$cache_hit" == "true" ]] && echo "$cache_entry" | _prefetch_cache_entry_issues_lack_state; then
 		cache_hit="false"
-		sweep_mode=full
+		sweep_mode="$_PREFETCH_ISSUE_SWEEP_FULL"
 		echo "[pulse-wrapper] _prefetch_single_repo: ignoring issue cache hit for ${slug} because cached issue schema lacks state" >>"$LOGFILE"
 	fi
 
