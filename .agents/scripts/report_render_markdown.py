@@ -189,15 +189,30 @@ def is_executive_summary(title: str) -> bool:
 def render_mermaid_svg(code_text: str) -> str:
     """Render a small self-contained SVG for simple Mermaid flowchart examples."""
 
-    nodes: list[str] = []
+    nodes: dict[str, str] = {}
+    edges: list[tuple[str, str]] = []
+
+    def node_parts(raw_node: str) -> tuple[str, str]:
+        match = re.match(r"^([A-Za-z0-9_]+)(?:\[([^\]]+)\])?$", raw_node.strip())
+        if not match:
+            fallback = raw_node.strip()
+            return fallback, fallback
+        node_id = match.group(1)
+        label = (match.group(2) or node_id).strip()
+        return node_id, label
+
     for line in code_text.splitlines():
         if "-->" not in line:
             continue
         left, right = [part.strip() for part in line.split("-->", 1)]
-        for node in (left, right):
-            label = re.sub(r"^[A-Za-z0-9_]+\[([^\]]+)\]$", r"\1", node).strip()
-            if label and label not in nodes:
-                nodes.append(label)
+        left_id, left_label = node_parts(left)
+        right_id, right_label = node_parts(right)
+        if left_id and left_id not in nodes:
+            nodes[left_id] = left_label
+        if right_id and right_id not in nodes:
+            nodes[right_id] = right_label
+        if left_id and right_id:
+            edges.append((left_id, right_id))
     if len(nodes) < 2:
         return ""
     if len(nodes) > 4:
@@ -215,27 +230,52 @@ def render_mermaid_svg(code_text: str) -> str:
         width = max(720, len(nodes) * 190)
         height = 130
     boxes = []
+    positions: dict[str, tuple[int, int, int, int]] = {}
     arrows = []
-    for index, label in enumerate(nodes):
+    for index, (node_id, label) in enumerate(nodes.items()):
         column = index % columns
         row = index // columns
         x = 24 + column * cell_width
         y = 35 + row * cell_height
+        positions[node_id] = (x, y, column, row)
         safe_label = html.escape(label)
         boxes.append(
             f'<rect x="{x}" y="{y}" width="160" height="58" rx="14" class="diagram-node" />'
             f'<text x="{x + 80}" y="{y + 35}" text-anchor="middle" class="diagram-label">{safe_label}</text>'
         )
-        if index < len(nodes) - 1:
+    for left_id, right_id in edges:
+        if left_id not in positions or right_id not in positions:
+            continue
+        left_x, left_y, left_column, left_row = positions[left_id]
+        right_x, right_y, right_column, right_row = positions[right_id]
+        if left_row == right_row and left_column < right_column:
+            arrows.append(
+                f'<line x1="{left_x + 165}" y1="{left_y + 29}" x2="{right_x - 10}" y2="{right_y + 29}" class="diagram-arrow" />'
+            )
+        elif left_column == right_column and left_row < right_row:
+            arrows.append(
+                f'<line x1="{left_x + 80}" y1="{left_y + 63}" x2="{right_x + 80}" y2="{right_y - 10}" class="diagram-arrow" />'
+            )
+        else:
+            mid_y = left_y + 78
+            arrows.append(
+                f'<path d="M {left_x + 80} {left_y + 63} V {mid_y} H {right_x + 80} V {right_y - 10}" class="diagram-arrow" fill="none" />'
+            )
+
+    if not arrows:
+        for index, node_id in enumerate(nodes):
+            if index >= len(nodes) - 1:
+                break
+            next_id = list(nodes.keys())[index + 1]
+            x, y, column, row = positions[node_id]
+            next_x, next_y, _, _ = positions[next_id]
             if (index + 1) % columns == 0:
-                next_row = row + 1
-                next_y = 35 + next_row * cell_height
                 arrows.append(
-                    f'<path d="M {x + 80} {y + 63} V {next_y - 16} H 104 V {next_y + 28}" class="diagram-arrow" fill="none" />'
+                    f'<path d="M {x + 80} {y + 63} V {next_y - 16} H {next_x + 80} V {next_y - 10}" class="diagram-arrow" fill="none" />'
                 )
             else:
                 arrows.append(
-                    f'<line x1="{x + 165}" y1="{y + 29}" x2="{x + cell_width - 16}" y2="{y + 29}" class="diagram-arrow" />'
+                    f'<line x1="{x + 165}" y1="{y + 29}" x2="{next_x - 10}" y2="{next_y + 29}" class="diagram-arrow" />'
                 )
     return (
         '<figure class="mermaid-rendered" aria-label="Rendered Mermaid diagram">'
@@ -468,7 +508,7 @@ def handle_rule(line: str, body: list[str], states: dict[str, object]) -> bool:
 def handle_table(line: str, body: list[str], states: dict[str, object]) -> bool:
     if not line.startswith("|") or not line.endswith("|"):
         return False
-    cells = [inline_markup(cell.strip()) for cell in line.strip("|").split("|")]
+    cells = [inline_markup(cell.strip()) for cell in split_markdown_table_row(line)]
     raw_cells = [html.unescape(cell) for cell in cells]
     if all(re.match(r"^:?-{3,}:?$", cell) for cell in raw_cells):
         return True
@@ -480,6 +520,27 @@ def handle_table(line: str, body: list[str], states: dict[str, object]) -> bool:
         return True
     body.append("<tr>{}</tr>".format("".join(f"<td>{cell}</td>" for cell in cells)))
     return True
+
+
+def split_markdown_table_row(line: str) -> list[str]:
+    row = line.strip()[1:-1]
+    cells: list[str] = []
+    current: list[str] = []
+    index = 0
+    while index < len(row):
+        char = row[index]
+        if char == "\\" and index + 1 < len(row) and row[index + 1] == "|":
+            current.append("|")
+            index += 2
+            continue
+        if char == "|":
+            cells.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+        index += 1
+    cells.append("".join(current))
+    return cells
 
 
 def open_list(body: list[str], states: dict[str, object], tag: str, css_class: str = "") -> None:
