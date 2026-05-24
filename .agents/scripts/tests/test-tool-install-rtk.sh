@@ -86,6 +86,11 @@ cat >"$SANDBOX/bin/rtk" <<'EOF'
 [[ "${1:-}" == "--version" ]] && echo "rtk 0.40.0"
 EOF
 chmod +x "$SANDBOX/bin/rtk"
+cat >"$SANDBOX/bin/brew" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "$SANDBOX/bin/brew"
 
 (
 	source_extracted
