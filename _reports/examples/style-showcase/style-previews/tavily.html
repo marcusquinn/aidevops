@@ -41,6 +41,7 @@
   --report-radius-md: 0.5rem;
   --report-radius-lg: 0.875rem;
   --report-radius-xl: 1.375rem;
+  --report-badge-radius: calc(var(--report-radius-lg) * 0.45);
   --report-space-1: 0.25rem;
   --report-space-2: 0.5rem;
   --report-space-3: 1rem;
@@ -71,6 +72,32 @@ body.report-body {
   color: var(--report-ink);
   font-family: var(--report-font-body);
   font-size: 1rem;
+}
+
+.report-main {
+  font-size: clamp(1rem, 0.94rem + 0.18vw, 1.0625rem);
+  line-height: 1.68;
+}
+
+.report-main h1,
+.report-main h2,
+.report-main h3 {
+  max-width: 32ch;
+  color: var(--report-ink);
+  font-family: var(--report-font-heading);
+  line-height: 1.14;
+}
+
+.report-main h1 {
+  font-size: clamp(2.25rem, 5vw, 3.5rem);
+}
+
+.report-main h2 {
+  font-size: clamp(1.6rem, 3vw, 2.25rem);
+}
+
+.report-main h3 {
+  font-size: clamp(1.15rem, 1.5vw, 1.35rem);
 }
 
 .report-shell {
@@ -221,9 +248,9 @@ body.report-body {
 .sticky-toc-header {
   display: flex;
   gap: var(--report-space-2);
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  margin-block-end: var(--report-space-2);
+  margin-block-end: var(--report-space-3);
 }
 
 .sticky-toc-header h2 {
@@ -232,17 +259,19 @@ body.report-body {
 
 .toc-pdf-link {
   display: inline-flex;
-  min-width: 2.25rem;
-  min-height: 2.25rem;
+  min-width: 0;
+  min-height: 0;
+  height: 1.9rem;
   align-items: center;
   justify-content: center;
-  padding: 0.2rem 0.5rem;
+  padding: 0 0.72rem;
   border: 1px solid var(--report-rule);
-  border-radius: 999px;
+  border-radius: var(--report-badge-radius);
   color: var(--report-ink);
-  font-size: 0.7rem;
+  font-size: 0.72rem;
   font-weight: 900;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
+  line-height: 1;
   text-decoration: none;
 }
 
@@ -366,9 +395,20 @@ body.report-body {
   display: inline-flex;
   padding: 0.35rem 0.7rem;
   border: 1px solid var(--report-rule);
-  border-radius: 999px;
+  border-radius: var(--report-badge-radius);
   background: var(--report-surface);
+  color: var(--report-blue);
+  box-shadow: inset 0 -0.16em 0 color-mix(in srgb, var(--report-blue) 18%, transparent);
   text-decoration: none;
+}
+
+.anchor-links a:hover,
+.anchor-links a:focus-visible,
+.appendix-links a:hover,
+.appendix-links a:focus-visible {
+  background: var(--report-paper-raised);
+  border-color: var(--report-blue);
+  box-shadow: inset 0 -0.22em 0 color-mix(in srgb, var(--report-blue) 28%, transparent);
 }
 
 .appendix-links a {
@@ -390,7 +430,7 @@ body.report-body {
 .appendix-links a::after {
   content: attr(data-filetype);
   padding: 0.05rem 0.32rem;
-  border-radius: 999px;
+  border-radius: var(--report-badge-radius);
   background: var(--report-paper-raised);
   color: var(--report-ink-soft);
   font-size: 0.64rem;
@@ -406,7 +446,7 @@ body.report-body {
   min-width: max-content;
   max-width: 100%;
   padding: 0.25rem 0.625rem;
-  border-radius: 9999px;
+  border-radius: var(--report-badge-radius);
   border: 1px solid transparent;
   white-space: nowrap;
   margin-block: 0.08rem;
@@ -649,6 +689,8 @@ th .evidence-badge {
 }
 
 .code-block-wrap {
+  max-width: 100%;
+  min-width: 0;
   overflow: hidden;
   background: var(--report-code-bg);
   color: var(--report-code-ink);
@@ -689,6 +731,7 @@ th .evidence-badge {
 .example-card pre,
 .block-template pre,
 .report-main > .code-block-wrap pre {
+  max-width: 100%;
   margin: 0;
   padding: var(--report-space-3);
   overflow-x: auto;
@@ -893,6 +936,24 @@ th .evidence-badge {
 
 .accordion[open] summary::before {
   content: "▴";
+}
+
+.action-prompt {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin-block: calc(-1 * var(--report-space-2)) var(--report-space-4);
+  overflow: hidden;
+}
+
+.action-prompt .code-block-wrap {
+  width: 100%;
+  max-width: 100%;
+}
+
+.action-prompt pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .quote-card,
@@ -1133,7 +1194,34 @@ ol li::marker {
 }
 
 .source-card {
+  position: relative;
   background: var(--report-paper-raised);
+}
+
+.source-card-link {
+  display: inline-flex;
+  width: 1.6rem;
+  height: 1.6rem;
+  align-items: center;
+  justify-content: center;
+  margin-inline-start: var(--report-space-2);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-badge-radius);
+  color: var(--report-blue);
+  text-decoration: none;
+  vertical-align: middle;
+}
+
+.source-card-link::before {
+  content: "↗";
+  font-weight: 900;
+  line-height: 1;
+}
+
+.source-card-link:hover,
+.source-card-link:focus-visible {
+  background: var(--report-surface);
+  border-color: var(--report-blue);
 }
 
 .section-separator {
@@ -1374,18 +1462,21 @@ a {
   --report-ink: #06251E;
   --report-ink-muted: #31524A;
   --report-ink-soft: #31524A;
-  --report-rule: #B9D8D0;
-  --report-rule-strong: #008A6A;
-  --report-blue: #008A6A;
+  --report-rule: #9DB8B1;
+  --report-rule-strong: #008365;
+  --report-blue: #008365;
   --report-radius-lg: 18px;
   --report-radius-xl: calc(18px + 0.5rem);
+  --report-badge-radius: calc(18px * 0.45);
   --report-code-bg: #FFFFFF;
   --report-code-ink: #06251E;
-  --report-code-accent: #008A6A;
+  --report-code-accent: #008365;
 }
-body.report-body { font-family: var(--report-font-body); font-size: var(--report-body-size); line-height: var(--report-body-line); }
+body.report-body { font-family: var(--report-font-body); font-size: clamp(1rem, 0.94rem + 0.18vw, 1.0625rem); line-height: 1.62; }
 h1, h2, h3 { font-family: var(--report-font-heading); font-weight: var(--report-heading-weight); letter-spacing: var(--report-heading-tracking); }
-h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var(--report-heading-line); }
+h1 { font-size: clamp(2.25rem, 5vw, 3.5rem); line-height: 1.12; }
+h2 { font-size: clamp(1.6rem, 3vw, 2.25rem); line-height: 1.16; }
+h3 { font-size: clamp(1.15rem, 1.5vw, 1.35rem); line-height: 1.24; }
 .source-card, .tactic-card, .priority-group { border-color: var(--report-rule); }
 .sticky-toc a:hover, .sticky-toc a:focus-visible, .sticky-toc a[aria-current="true"] { border-left-color: var(--report-blue); }
 @media print { @page { size: A4 portrait; margin: 12mm 11mm 14mm; } body.report-body { background: #fff; font-size: 10.5pt; } .report-shell { display: block; max-width: none; padding: 0; } .sticky-toc { position: static; break-after: page; box-shadow: none; } table { table-layout: fixed; font-size: 8.8pt; } th,td { padding: 4pt 5pt; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after { content: ""; } }</style>
@@ -1474,9 +1565,9 @@ h1 { font-size: clamp(2.8rem, 8vw, var(--report-heading-size)); line-height: var
 </details>
 <section class="action-line">
 <p><strong>Action:</strong> review the numbered chapters below and compare the generated HTML against the source Toolbox patterns.</p>
-<details class="accordion action-prompt"><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: review the numbered chapters below and compare the generated HTML against the source Toolbox patterns.
+</section><details class="accordion action-prompt"><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: review the numbered chapters below and compare the generated HTML against the source Toolbox patterns.
 
-Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details></section>
+Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details>
 <h2 class="chapter-heading" id="why-this-matters-now"><span class="heading-number">1.</span> Why this matters now</h2>
 <p>Use <a href="#priority-and-checklist" data-filetype="link">anchor links</a>, <a href="../llm-visibility-toolbox/report.html" data-filetype="html">appendix links</a>, numbered steps, accordions, coloured panels, and source cards in the same canonical Markdown.</p>
 <section class="badge-row">
@@ -1497,9 +1588,9 @@ Guide me through the tools, resources, accounts, permissions, source material, a
 </ul>
 <section class="action-line">
 <p><strong>Action:</strong> coordinate one trade article, one community thread, one video transcript, and one partner citation within the same quarter.</p>
-<details class="accordion action-prompt"><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: coordinate one trade article, one community thread, one video transcript, and one partner citation within the same quarter.
+</section><details class="accordion action-prompt"><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: coordinate one trade article, one community thread, one video transcript, and one partner citation within the same quarter.
 
-Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details></section>
+Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details>
 <p>A plain bullet section should remain plain:</p>
 <ul>
 <li>Robots.txt and crawlability check for key AI bots.</li>
@@ -1530,9 +1621,9 @@ Guide me through the tools, resources, accounts, permissions, source material, a
 <section class="action-panel" data-severity="high">
 <h3 class="section-heading" id="action-panel"><span class="heading-number">4.3</span> Action panel</h3>
 <p><strong>Next action:</strong> turn the finding into a concrete implementation step with owner, proof path, and rerun command.</p>
-<details class="accordion action-prompt"><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: turn the finding into a concrete implementation step with owner, proof path, and rerun command.
+</section><details class="accordion action-prompt"><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: turn the finding into a concrete implementation step with owner, proof path, and rerun command.
 
-Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details></section>
+Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details>
 <section class="tactic-card">
 <h3 class="section-heading" id="tactic-card"><span class="heading-number">4.4</span> Tactic card</h3>
 <ul>
@@ -1649,11 +1740,11 @@ LinkedIn | Google Scholar | Personal site</code></pre></div>
 <section class="source-card">
 <h3 class="section-heading" id="source-a"><span class="heading-number">11.1</span> Source A</h3>
 <p>Prompt capture, crawl export, and source ledger row.</p>
-</section>
+<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
 <section class="source-card">
 <h3 class="section-heading" id="source-b"><span class="heading-number">11.2</span> Source B</h3>
 <p>Third-party corroboration and profile parity note.</p>
-</section>
+<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
 </section>
 <section class="sources-group">
 <section class="source-title">
@@ -1662,7 +1753,7 @@ LinkedIn | Google Scholar | Personal site</code></pre></div>
 <section class="source-card">
 <h3 class="section-heading" id="source-c"><span class="heading-number">11.3</span> Source C</h3>
 <p>Appendix file, screenshot reference, or companion report.</p>
-</section>
+<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
 </section>
 </section>
 <section class="source-list">

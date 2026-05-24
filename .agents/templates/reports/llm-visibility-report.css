@@ -35,6 +35,7 @@
   --report-radius-md: 0.5rem;
   --report-radius-lg: 0.875rem;
   --report-radius-xl: 1.375rem;
+  --report-badge-radius: calc(var(--report-radius-lg) * 0.45);
   --report-space-1: 0.25rem;
   --report-space-2: 0.5rem;
   --report-space-3: 1rem;
@@ -65,6 +66,32 @@ body.report-body {
   color: var(--report-ink);
   font-family: var(--report-font-body);
   font-size: 1rem;
+}
+
+.report-main {
+  font-size: clamp(1rem, 0.94rem + 0.18vw, 1.0625rem);
+  line-height: 1.68;
+}
+
+.report-main h1,
+.report-main h2,
+.report-main h3 {
+  max-width: 32ch;
+  color: var(--report-ink);
+  font-family: var(--report-font-heading);
+  line-height: 1.14;
+}
+
+.report-main h1 {
+  font-size: clamp(2.25rem, 5vw, 3.5rem);
+}
+
+.report-main h2 {
+  font-size: clamp(1.6rem, 3vw, 2.25rem);
+}
+
+.report-main h3 {
+  font-size: clamp(1.15rem, 1.5vw, 1.35rem);
 }
 
 .report-shell {
@@ -215,9 +242,9 @@ body.report-body {
 .sticky-toc-header {
   display: flex;
   gap: var(--report-space-2);
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  margin-block-end: var(--report-space-2);
+  margin-block-end: var(--report-space-3);
 }
 
 .sticky-toc-header h2 {
@@ -226,17 +253,19 @@ body.report-body {
 
 .toc-pdf-link {
   display: inline-flex;
-  min-width: 2.25rem;
-  min-height: 2.25rem;
+  min-width: 0;
+  min-height: 0;
+  height: 1.9rem;
   align-items: center;
   justify-content: center;
-  padding: 0.2rem 0.5rem;
+  padding: 0 0.72rem;
   border: 1px solid var(--report-rule);
-  border-radius: 999px;
+  border-radius: var(--report-badge-radius);
   color: var(--report-ink);
-  font-size: 0.7rem;
+  font-size: 0.72rem;
   font-weight: 900;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
+  line-height: 1;
   text-decoration: none;
 }
 
@@ -360,9 +389,20 @@ body.report-body {
   display: inline-flex;
   padding: 0.35rem 0.7rem;
   border: 1px solid var(--report-rule);
-  border-radius: 999px;
+  border-radius: var(--report-badge-radius);
   background: var(--report-surface);
+  color: var(--report-blue);
+  box-shadow: inset 0 -0.16em 0 color-mix(in srgb, var(--report-blue) 18%, transparent);
   text-decoration: none;
+}
+
+.anchor-links a:hover,
+.anchor-links a:focus-visible,
+.appendix-links a:hover,
+.appendix-links a:focus-visible {
+  background: var(--report-paper-raised);
+  border-color: var(--report-blue);
+  box-shadow: inset 0 -0.22em 0 color-mix(in srgb, var(--report-blue) 28%, transparent);
 }
 
 .appendix-links a {
@@ -384,7 +424,7 @@ body.report-body {
 .appendix-links a::after {
   content: attr(data-filetype);
   padding: 0.05rem 0.32rem;
-  border-radius: 999px;
+  border-radius: var(--report-badge-radius);
   background: var(--report-paper-raised);
   color: var(--report-ink-soft);
   font-size: 0.64rem;
@@ -400,7 +440,7 @@ body.report-body {
   min-width: max-content;
   max-width: 100%;
   padding: 0.25rem 0.625rem;
-  border-radius: 9999px;
+  border-radius: var(--report-badge-radius);
   border: 1px solid transparent;
   white-space: nowrap;
   margin-block: 0.08rem;
@@ -643,6 +683,8 @@ th .evidence-badge {
 }
 
 .code-block-wrap {
+  max-width: 100%;
+  min-width: 0;
   overflow: hidden;
   background: var(--report-code-bg);
   color: var(--report-code-ink);
@@ -683,6 +725,7 @@ th .evidence-badge {
 .example-card pre,
 .block-template pre,
 .report-main > .code-block-wrap pre {
+  max-width: 100%;
   margin: 0;
   padding: var(--report-space-3);
   overflow-x: auto;
@@ -887,6 +930,24 @@ th .evidence-badge {
 
 .accordion[open] summary::before {
   content: "▴";
+}
+
+.action-prompt {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin-block: calc(-1 * var(--report-space-2)) var(--report-space-4);
+  overflow: hidden;
+}
+
+.action-prompt .code-block-wrap {
+  width: 100%;
+  max-width: 100%;
+}
+
+.action-prompt pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .quote-card,
@@ -1127,7 +1188,34 @@ ol li::marker {
 }
 
 .source-card {
+  position: relative;
   background: var(--report-paper-raised);
+}
+
+.source-card-link {
+  display: inline-flex;
+  width: 1.6rem;
+  height: 1.6rem;
+  align-items: center;
+  justify-content: center;
+  margin-inline-start: var(--report-space-2);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-badge-radius);
+  color: var(--report-blue);
+  text-decoration: none;
+  vertical-align: middle;
+}
+
+.source-card-link::before {
+  content: "↗";
+  font-weight: 900;
+  line-height: 1;
+}
+
+.source-card-link:hover,
+.source-card-link:focus-visible {
+  background: var(--report-surface);
+  border-color: var(--report-blue);
 }
 
 .section-separator {
