@@ -196,6 +196,49 @@ test_python_helper_reads_stdin_by_default() {
 	return 0
 }
 
+test_style_token_parser_handles_long_headers_and_tabs() {
+	local _result=0
+	python3 - "$SCRIPT_DIR" "$TEST_ROOT" <<'PY' || _result=$?
+from pathlib import Path
+import importlib.util
+import sys
+
+script_dir = Path(sys.argv[1])
+test_root = Path(sys.argv[2])
+module_path = script_dir.parent / "report_render_styles.py"
+spec = importlib.util.spec_from_file_location("report_render_styles", module_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+design = test_root / "DESIGN.md"
+design.write_text(
+    "# header\n" * 10
+    + "---\n"
+    + "colors:\n"
+    + "\tbackground: '#123456'\n"
+    + "rounded:\n"
+    + "\tlg: 20px\n"
+    + "typography:\n"
+    + "\theadline-display:\n"
+    + "\t\tfontSize: 72px\n"
+    + "---\n",
+    encoding="utf-8",
+)
+front_matter = module._front_matter(design)
+tokens = module._parse_tokens(front_matter)
+assert tokens["background"] == "#123456"
+assert tokens["rounded.lg"] == "20px"
+assert tokens["headline-display.fontSize"] == "72px"
+PY
+	if [[ "$_result" -ne 0 ]]; then
+		print_result "Style token parser handles long headers and tabs" 1 "Expected long preamble and tab-indented tokens to parse"
+		return 0
+	fi
+	print_result "Style token parser handles long headers and tabs" 0
+	return 0
+}
+
 test_markdown_table_uses_header_cells() {
 	local _input="${TEST_ROOT}/table.md"
 	local _out="${TEST_ROOT}/table.html"
@@ -295,6 +338,7 @@ main() {
 	test_validate_rejects_unknown_badge
 	test_python_helper_requires_mode
 	test_python_helper_reads_stdin_by_default
+	test_style_token_parser_handles_long_headers_and_tabs
 	test_markdown_table_uses_header_cells
 	test_multiline_markdown_paragraph
 	test_render_json_array_is_resilient
