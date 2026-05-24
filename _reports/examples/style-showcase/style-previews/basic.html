@@ -31,7 +31,7 @@ body.report-theme-dark { color-scheme: dark; --report-paper: #0f172a; --report-p
 .source-card-link { position: absolute; inset: 0; z-index: 2; display: block; border-radius: inherit; color: var(--report-blue); text-decoration: none; }
 .source-card-link::before { content: "↗"; position: absolute; top: 1rem; right: 1rem; display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; font-weight: 900; line-height: 1; }
 .source-card-link[href]::after { content: "" !important; }
-.code-block-wrap, .mermaid-rendered, .latex-rendered-block { max-width: 100%; min-width: 0; margin: 1rem 0; border: 1px solid var(--report-line); border-radius: 10px; overflow: hidden; background-clip: padding-box; background: var(--report-code-bg); color: var(--report-code-ink); }
+.code-block-wrap, .mermaid-rendered, .latex-rendered-block { max-width: 100%; min-width: 0; margin: 1rem 0; border: 1px solid var(--report-line); border-radius: 10px; overflow: hidden; background: var(--report-code-bg); background-clip: padding-box; color: var(--report-code-ink); }
 .code-block-head { display: flex; gap: 1rem; align-items: center; justify-content: space-between; padding: .45rem .75rem; border-bottom: 1px solid var(--report-line); color: var(--report-code-accent); font: 700 .78rem/1.3 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .code-copy { display: inline-grid; width: 1.75rem; height: 1.75rem; place-items: center; border: 1px solid var(--report-line); border-radius: 999px; background: transparent; color: inherit; cursor: pointer; }
 .code-copy.is-copied { background: var(--report-green); border-color: var(--report-green); color: #ffffff; }

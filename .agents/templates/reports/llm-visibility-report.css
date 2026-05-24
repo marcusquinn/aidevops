@@ -743,8 +743,8 @@ th .evidence-badge {
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
-  background-clip: padding-box;
   background: var(--report-code-bg);
+  background-clip: padding-box;
   color: var(--report-code-ink);
   border: 1px solid var(--report-rule);
   border-radius: var(--report-radius-md);

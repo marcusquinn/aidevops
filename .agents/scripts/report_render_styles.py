@@ -344,7 +344,7 @@ TEMPLATE_SPECIFIC_CSS = {
 .report-template-lottiefiles .action-line { box-shadow: 0 20px 48px rgba(1, 157, 145, 0.18); }
 """.strip(),
     "times": """
-.report-template-times { background-image: linear-gradient(rgba(0, 0, 0, 0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 0, 0, 0.025) 1px, transparent 1px); background-size: 18rem 18rem; }
+.report-template-times { --report-code-bg: #FFFDF8; --report-code-bg-2: #F4F1EA; --report-code-ink: #1A1A1A; --report-code-accent: #008138; background-image: linear-gradient(rgba(0, 0, 0, 0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 0, 0, 0.025) 1px, transparent 1px); background-size: 18rem 18rem; }
 .report-template-times .report-cover { text-align: center; border-width: 2px 0; border-color: #000000; box-shadow: none; background: rgba(255, 253, 248, 0.7); }
 .report-template-times .report-cover h1 { font-size: clamp(3rem, 7vw, 5.5rem); line-height: 0.98; }
 .report-template-times .report-main h1,
@@ -375,7 +375,6 @@ TEMPLATE_SPECIFIC_CSS = {
 .report-template-times .facts-table th,
 .report-template-times .facts-table td { border-bottom-style: dotted; }
 .report-template-times .code-block-wrap { border-color: #000000; border-radius: 0; }
-.report-template-times { --report-code-bg: #FFFDF8; --report-code-bg-2: #F4F1EA; --report-code-ink: #1A1A1A; --report-code-accent: #008138; }
 """.strip(),
     "indexsy": """
 .report-template-indexsy .report-shell { max-width: 1320px; }
