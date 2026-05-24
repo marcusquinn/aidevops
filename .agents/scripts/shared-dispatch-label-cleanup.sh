@@ -29,28 +29,22 @@ clear_terminal_issue_dispatch_labels() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local context="${3:-terminal}"
+	local current_labels="${4:-}"
 
 	if [[ ! "$issue_number" =~ ^[0-9]+$ || -z "$repo_slug" ]]; then
 		return 1
 	fi
 
-	local current_labels
-	if ! current_labels=$(gh issue view "$issue_number" --repo "$repo_slug" --json labels --jq '.labels[].name'); then
+	if [[ -z "$current_labels" ]] && ! current_labels=$(gh issue view "$issue_number" --repo "$repo_slug" --json labels --jq '.labels[].name'); then
 		echo "[pulse-wrapper] dispatch-label-cleanup: failed to fetch labels for ${repo_slug}#${issue_number} (${context})" >>"$LOGFILE"
 		return 1
 	fi
+	current_labels="${current_labels//$'\n'/:}"
 
 	local -a edit_args=("issue" "edit" "$issue_number" "--repo" "$repo_slug")
-	local label current_label label_found found=0
+	local label found=0
 	for label in "${_TERMINAL_DISPATCH_LABELS[@]}"; do
-		label_found=0
-		while IFS= read -r current_label; do
-			if [[ "$current_label" == "$label" ]]; then
-				label_found=1
-				break
-			fi
-		done <<<"$current_labels"
-		if [[ "$label_found" -eq 1 ]]; then
+		if [[ ":${current_labels}:" == *":${label}:"* ]]; then
 			edit_args+=("--remove-label" "$label")
 			found=1
 		fi
@@ -60,15 +54,15 @@ clear_terminal_issue_dispatch_labels() {
 		return 0
 	fi
 
-	gh "${edit_args[@]}" >/dev/null 2>&1
-	local exit_code=$?
+	local exit_code=0
+	gh "${edit_args[@]}" >/dev/null 2>&1 || exit_code=$?
 	if [[ "$exit_code" -eq 0 ]]; then
 		echo "[pulse-wrapper] dispatch-label-cleanup: stripped terminal dispatch labels from ${repo_slug}#${issue_number} (${context})" >>"$LOGFILE"
 		return 0
 	fi
 
 	echo "[pulse-wrapper] dispatch-label-cleanup: failed to strip terminal dispatch labels from ${repo_slug}#${issue_number} (${context})" >>"$LOGFILE"
-	return 1
+	return "$exit_code"
 }
 
 _dispatch_label_sweep_due() {
@@ -123,21 +117,21 @@ sweep_closed_auto_dispatch_issues() {
 	[[ "$limit" =~ ^[0-9]+$ ]] || limit=50
 	[[ "$limit" -gt 0 ]] || limit=50
 
-	local total=0 repo_slug issue_number issue_numbers
+	local total=0 repo_slug issue_number current_labels issue_rows exit_code
 	while IFS= read -r repo_slug; do
 		[[ -n "$repo_slug" ]] || continue
-		issue_numbers=$(gh issue list --repo "$repo_slug" --state closed \
+		issue_rows=$(gh issue list --repo "$repo_slug" --state closed \
 			--label "auto-dispatch" --limit "$limit" \
-			--json number --jq '.[].number' 2>/dev/null) || issue_numbers=""
-		[[ -n "$issue_numbers" ]] || continue
-		while IFS= read -r issue_number; do
+			--json number,labels --jq '.[] | [.number, ([.labels[].name] | join(":"))] | @tsv' 2>/dev/null) || issue_rows=""
+		[[ -n "$issue_rows" ]] || continue
+		while IFS=$'\t' read -r issue_number current_labels; do
 			[[ "$issue_number" =~ ^[0-9]+$ ]] || continue
-			clear_terminal_issue_dispatch_labels "$issue_number" "$repo_slug" "closed-issue-sweep"
-			local exit_code=$?
+			exit_code=0
+			clear_terminal_issue_dispatch_labels "$issue_number" "$repo_slug" "closed-issue-sweep" "$current_labels" || exit_code=$?
 			if [[ "$exit_code" -eq 0 ]]; then
 				total=$((total + 1))
 			fi
-		done <<<"$issue_numbers"
+		done <<<"$issue_rows"
 	done < <(_dispatch_label_sweep_repos "$repos_json" || true)
 
 	_dispatch_label_sweep_mark_run
