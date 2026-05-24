@@ -775,7 +775,7 @@ test_service_interruption_exhausted_metric_preserves_context() {
 	local _run_runtime_error_type=""
 	local _run_classification_source="default_local"
 	local _run_classification_pattern="default_local"
-	local _metric_kill_reason="unknown"
+	local _run_metric_kill_reason="unknown"
 
 	_append_service_interruption_exhausted_metric \
 		"worker" "issue-24099" "openai/gpt-5.5" \
