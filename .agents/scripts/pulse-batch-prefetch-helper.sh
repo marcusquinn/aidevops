@@ -96,6 +96,7 @@ _KIND_PRS="prs"
 _JSON_NULL="null"
 _JSON_EMPTY_OBJ="{}"
 _JSON_EMPTY_ARR="[]"
+_STATE_OPEN="open"
 
 # --- Feature flag gate ---
 _check_enabled() {
@@ -149,11 +150,12 @@ _prefetch_rest_issues_for_slug() {
 	cache_file=$(_cache_file_path "$_KIND_ISSUES" "$slug")
 	local ts
 	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	echo "$rest_json" | jq --arg ts "$ts" '{
+	echo "$rest_json" | jq --arg ts "$ts" --arg state_open "$_STATE_OPEN" '{
 		timestamp: $ts,
 		items: [.[] | {
 			number: .number,
 			title: .title,
+			state: (.state // $state_open),
 			labels: (.labels // []),
 			updatedAt: .updated_at,
 			assignees: (.assignees // [])
@@ -283,13 +285,14 @@ _normalize_search_to_prefetch_schema() {
 	local kind="$1"
 
 	if [[ "$kind" == "$_KIND_ISSUES" ]]; then
-		jq '
+		jq --arg state_open "$_STATE_OPEN" '
 			group_by(.repository.nameWithOwner) |
 			map({
 				key: (.[0].repository.nameWithOwner),
 				value: [.[] | {
 					number: .number,
 					title: .title,
+					state: (.state // $state_open),
 					labels: .labels,
 					updatedAt: .updatedAt,
 					assignees: .assignees
@@ -474,7 +477,7 @@ _refresh_owner_issues() {
 	local issue_json=""
 	issue_json=$(gh search issues --owner "$owner" --state open \
 		--limit "$BATCH_SEARCH_LIMIT" \
-		--json number,title,labels,updatedAt,assignees,repository 2>"$issue_err") || issue_json=""
+		--json number,title,state,labels,updatedAt,assignees,repository 2>"$issue_err") || issue_json=""
 	_OWNER_SEARCH_CALLS=$((_OWNER_SEARCH_CALLS + 1))
 
 	if [[ -z "$issue_json" || "$issue_json" == "$_JSON_NULL" ]]; then
@@ -779,6 +782,13 @@ _cmd_read_cache() {
 
 	local cache_file
 	cache_file=$(_cmd_cache_path --kind "$kind" --slug "$slug") || return 1
+
+	if [[ "$kind" == "$_KIND_ISSUES" ]]; then
+		jq -c --arg state_open "$_STATE_OPEN" '[.items[]? | select(has("state") and ((.state | ascii_downcase) == $state_open))]' "$cache_file" 2>/dev/null || {
+			return 1
+		}
+		return 0
+	fi
 
 	jq -c '.items // []' "$cache_file" 2>/dev/null || {
 		return 1

@@ -47,6 +47,7 @@ def _normalize_items(kind: str, body: str) -> list[dict[str, Any]]:
                 {
                     "number": item.get("number"),
                     "title": item.get("title"),
+                    "state": item.get("state") or "open",
                     "labels": item.get("labels") or [],
                     "updatedAt": item.get("updated_at") or item.get("updatedAt"),
                     "assignees": item.get("assignees") or [],
@@ -83,6 +84,15 @@ def main(argv: list[str]) -> int:
             return 1
         with open(cache_file, encoding="utf-8") as handle:
             payload = json.load(handle)
+        if kind == "issues":
+            items = payload.get("items") or []
+            if any("state" not in item for item in items):
+                return 1
+            payload["items"] = [
+                item
+                for item in items
+                if str(item.get("state") or "open").lower() == "open"
+            ]
         payload.update(
             {
                 "timestamp": now,
