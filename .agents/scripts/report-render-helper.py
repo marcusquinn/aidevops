@@ -92,6 +92,24 @@ PROFILE_CSS = {
     "slides-16-9-3": "@media print { @page { size: 16in 9in; margin: 0; } html, body.report-body { width: auto; min-height: auto; box-sizing: border-box; background: var(--report-paper) !important; padding: .45in; font-size: 14pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; } body.report-theme-dark { background: var(--report-paper) !important; } h1,h2,h3,.code-block-head,.source-title { break-after: avoid; page-break-after: avoid; } .code-block-wrap,.mermaid-rendered,.latex-rendered-block,.bar-chart p { break-inside: avoid; page-break-inside: avoid; } pre,.mermaid,.latex-block { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; } .sticky-toc { max-height: none; overflow: visible; break-inside: auto; border: 0; border-radius: 0; } .sticky-toc ol { max-height: none; overflow: visible; } .toc-pdf-actions, .toc-pdf-link { display: none !important; } .report-main { column-count: auto !important; column-gap: normal !important; } .report-main > * { break-inside: avoid; } .report-main h1 { font-size: 4.4rem; } .report-main h2 { font-size: 2.8rem; } .report-shell { display: block; padding: 0; } }",
 }
 
+PDF_PAGINATION_CSS = """
+@media print {
+body.report-body { orphans: 3; widows: 3; }
+.report-main h2.chapter-heading { margin-block-start: 10mm; padding-block-start: 5mm; break-inside: avoid; break-inside: avoid-page; page-break-inside: avoid; }
+.report-main h2.chapter-heading::before { break-after: avoid; break-after: avoid-page; page-break-after: avoid; }
+.accordion { margin-block-start: 5mm; }
+}
+""".strip()
+
+SLIDES_PAGE_MARGIN_CSS = """
+@media print {
+@page { size: 16in 9in; margin: .45in; }
+html, body.report-body { padding: 0; }
+.report-main h2.chapter-heading { margin-block-start: .45in; padding-block-start: .18in; }
+.accordion { margin-block-start: .22in; }
+}
+""".strip()
+
 BUILTIN_TEMPLATES = ("basic", "editorial-evidence") + style_names()
 THEMES = ("auto", "light", "dark")
 
@@ -110,7 +128,11 @@ def load_css(template: str, pdf_profile: str) -> str:
         raise ValueError(f"unknown PDF export profile: {pdf_profile}")
     if THEME not in THEMES:
         raise ValueError(f"unknown report theme: {THEME}. Available: {', '.join(THEMES)}")
-    return f"{css}\n{PROFILE_CSS[pdf_profile]}"
+    profile_css = PROFILE_CSS[pdf_profile]
+    pagination_css = PDF_PAGINATION_CSS
+    if pdf_profile.startswith("slides-16-9"):
+        pagination_css = f"{pagination_css}\n{SLIDES_PAGE_MARGIN_CSS}"
+    return f"{css}\n{profile_css}\n{pagination_css}"
 
 
 def read_input(path: str) -> str:

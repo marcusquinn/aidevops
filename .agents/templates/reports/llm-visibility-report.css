@@ -1551,8 +1551,17 @@ a {
   }
 
   .report-main h2.chapter-heading {
-    margin-block-start: 6mm;
-    padding-block-start: 0;
+    margin-block-start: 10mm;
+    padding-block-start: 5mm;
+    break-inside: avoid;
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .report-main h2.chapter-heading::before {
+    break-after: avoid;
+    break-after: avoid-page;
+    page-break-after: avoid;
   }
 
   .action-line,
@@ -1665,6 +1674,10 @@ a {
     margin-block: 0 8mm;
     break-inside: avoid-page;
     break-after: avoid-page;
+  }
+
+  .accordion {
+    margin-block-start: 5mm;
   }
 
   .facts-table-wrap {
