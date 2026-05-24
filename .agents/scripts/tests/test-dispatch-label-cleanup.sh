@@ -53,12 +53,15 @@ install_gh_stub() {
 	gh() {
 		printf '%s\n' "$*" >>"${TEST_ROOT}/gh.log"
 		if [[ "$1" == "issue" && "$2" == "list" ]]; then
-			printf '101\n102\n'
+			printf '101\tauto-dispatch:status:queued\n102\tauto-dispatch\n'
 			return 0
 		fi
 		if [[ "$1" == "issue" && "$2" == "view" ]]; then
 			printf 'auto-dispatch\nstatus:queued\n'
 			return 0
+		fi
+		if [[ "$1" == "issue" && "$2" == "edit" && "${GH_STUB_FAIL_EDIT:-0}" == "1" ]]; then
+			return 7
 		fi
 		return 0
 	}
@@ -92,10 +95,11 @@ test_sweep_closed_auto_dispatch_issues_scopes_to_pulse_repos() {
 	# shellcheck source=../shared-dispatch-label-cleanup.sh
 	source "$HELPER"
 	sweep_closed_auto_dispatch_issues
-	local edit_count list_count
+	local edit_count list_count view_count
 	edit_count=$(grep -c 'issue edit' "${TEST_ROOT}/gh.log" || true)
 	list_count=$(grep -c 'issue list' "${TEST_ROOT}/gh.log" || true)
-	if [[ "$edit_count" == "2" && "$list_count" == "1" ]]; then
+	view_count=$(grep -c 'issue view' "${TEST_ROOT}/gh.log" || true)
+	if [[ "$edit_count" == "2" && "$list_count" == "1" && "$view_count" == "0" ]]; then
 		print_result "closed auto-dispatch sweep strips bounded pulse repo issues" 0
 	else
 		print_result "closed auto-dispatch sweep strips bounded pulse repo issues" 1
@@ -104,8 +108,27 @@ test_sweep_closed_auto_dispatch_issues_scopes_to_pulse_repos() {
 	return 0
 }
 
+test_clear_terminal_labels_propagates_edit_failures() {
+	setup_env
+	install_gh_stub
+	export GH_STUB_FAIL_EDIT=1
+	# shellcheck source=../shared-dispatch-label-cleanup.sh
+	source "$HELPER"
+	local exit_code=0
+	clear_terminal_issue_dispatch_labels 42 owner/repo test-context || exit_code=$?
+	unset GH_STUB_FAIL_EDIT
+	if [[ "$exit_code" == "7" ]]; then
+		print_result "terminal label cleanup propagates edit failures" 0
+	else
+		print_result "terminal label cleanup propagates edit failures" 1
+	fi
+	teardown_env
+	return 0
+}
+
 test_clear_terminal_labels_removes_dispatch_labels
 test_sweep_closed_auto_dispatch_issues_scopes_to_pulse_repos
+test_clear_terminal_labels_propagates_edit_failures
 
 printf 'Tests run: %s\n' "$TESTS_RUN"
 printf 'Tests failed: %s\n' "$TESTS_FAILED"
