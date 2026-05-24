@@ -1480,14 +1480,31 @@ a {
     padding: 12mm;
   }
 
+  *,
+  *::before,
+  *::after {
+    box-shadow: none !important;
+    filter: none !important;
+    text-shadow: none !important;
+  }
+
   body.report-theme-dark {
     background: var(--report-paper) !important;
   }
 
   .report-shell {
     display: block;
+    width: 100%;
     max-width: none;
+    overflow: hidden;
     padding: 0;
+  }
+
+  .report-main,
+  .report-content {
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
   }
 
   .report-cover,
@@ -1596,6 +1613,21 @@ a {
   .accordion,
   .quote-card,
   .callout {
+    width: auto;
+    max-width: 100%;
+    margin-inline: 0;
+    overflow: hidden;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .action-line,
+  .action-prompt {
+    width: auto;
+    max-width: 100%;
+    margin-inline: 0;
+    overflow: hidden;
+    border-radius: 0 !important;
     box-shadow: none !important;
   }
 

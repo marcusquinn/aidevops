@@ -1486,14 +1486,31 @@ a {
     padding: 12mm;
   }
 
+  *,
+  *::before,
+  *::after {
+    box-shadow: none !important;
+    filter: none !important;
+    text-shadow: none !important;
+  }
+
   body.report-theme-dark {
     background: var(--report-paper) !important;
   }
 
   .report-shell {
     display: block;
+    width: 100%;
     max-width: none;
+    overflow: hidden;
     padding: 0;
+  }
+
+  .report-main,
+  .report-content {
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
   }
 
   .report-cover,
@@ -1602,6 +1619,21 @@ a {
   .accordion,
   .quote-card,
   .callout {
+    width: auto;
+    max-width: 100%;
+    margin-inline: 0;
+    overflow: hidden;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .action-line,
+  .action-prompt {
+    width: auto;
+    max-width: 100%;
+    margin-inline: 0;
+    overflow: hidden;
+    border-radius: 0 !important;
     box-shadow: none !important;
   }
 
@@ -1749,7 +1781,7 @@ h3 { font-size: clamp(1.15rem, 1.5vw, 1.35rem); line-height: 1.24; }
 .report-template-usgraphics h2,
 .report-template-usgraphics h3 { text-transform: none; }
 .report-template-usgraphics a { text-decoration: underline; text-underline-offset: 0.12em; }
-@media print { @page { size: A4 portrait; margin: 0; } html, body.report-body { background: var(--report-paper) !important; font-size: 10.5pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; } body.report-body { min-height: 100vh; padding: 12mm; } body.report-theme-dark { background: var(--report-paper) !important; } .report-shell { display: block; max-width: none; padding: 0; } h1,h2,h3,.code-block-head,.source-title { break-after: avoid; page-break-after: avoid; } .code-block-wrap,.mermaid-rendered,.latex-rendered-block,.bar-chart p { break-inside: avoid; page-break-inside: avoid; } .stat-card { background: var(--report-surface) !important; background-clip: padding-box; } .report-footer { min-height: 22mm; background: #ffffff; border: 1px solid #d1d5db; color: #374151; } .sticky-toc { position: static; max-height: none; overflow: visible; break-after: page; break-inside: auto; border: 0; border-radius: 0; box-shadow: none; } .sticky-toc ol { display: block; max-height: none; overflow: visible; padding-right: 0; } .toc-pdf-actions, .toc-pdf-link { display: none !important; } table { table-layout: fixed; font-size: 8.8pt; border-collapse: separate; border-spacing: 0; } th { background: color-mix(in srgb, var(--report-blue) 12%, var(--report-surface)); } th,td { padding: 4pt 5pt; overflow-wrap: anywhere; } pre,.mermaid,.latex-block { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after, .source-card-link[href]::after, .anchor-links a[href]::after { content: ""; } .appendix-links a[href]::after { content: attr(data-filetype); } }</style>
+@media print { @page { size: A4 portrait; margin: 0; } html, body.report-body { background: var(--report-paper) !important; font-size: 10.5pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; } body.report-body { min-height: 100vh; padding: 12mm; } *,*::before,*::after { box-shadow: none !important; filter: none !important; text-shadow: none !important; } body.report-theme-dark { background: var(--report-paper) !important; } .report-shell { display: block; width: 100%; max-width: none; overflow: hidden; padding: 0; } .report-main,.report-content { width: 100%; max-width: 100%; overflow: hidden; } h1,h2,h3,.code-block-head,.source-title { break-after: avoid; page-break-after: avoid; } .code-block-wrap,.mermaid-rendered,.latex-rendered-block,.bar-chart p { break-inside: avoid; page-break-inside: avoid; } .action-line,.action-prompt,.accordion,.source-card,.details-note,.info-panel,.impact-panel,.evidence-panel,.action-panel,.callout { width: auto; max-width: 100%; margin-inline: 0; overflow: hidden; border-radius: 0 !important; box-shadow: none !important; } .stat-card { background: var(--report-surface) !important; background-clip: padding-box; } .report-footer { min-height: 22mm; background: #ffffff; border: 1px solid #d1d5db; color: #374151; } .sticky-toc { position: static; max-height: none; overflow: visible; break-after: page; break-inside: auto; border: 0; border-radius: 0; box-shadow: none; } .sticky-toc ol { display: block; max-height: none; overflow: visible; padding-right: 0; } .toc-pdf-actions, .toc-pdf-link { display: none !important; } table { table-layout: fixed; font-size: 8.8pt; border-collapse: separate; border-spacing: 0; } th { background: color-mix(in srgb, var(--report-blue) 12%, var(--report-surface)); } th,td { padding: 4pt 5pt; overflow-wrap: anywhere; } pre,.mermaid,.latex-block { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after, .source-card-link[href]::after, .anchor-links a[href]::after { content: ""; } .appendix-links a[href]::after { content: attr(data-filetype); } }</style>
 </head>
 <body class="report-body report-theme-auto report-pdf-profile-a4 report-template-usgraphics">
 <div class="report-shell">
