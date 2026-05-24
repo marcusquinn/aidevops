@@ -86,9 +86,28 @@ def handle_rule(line: str, body: list[str], states: dict[str, object]) -> bool:
     return True
 
 
+def current_component(states: dict[str, object]) -> str:
+    names = states.get("component_names")
+    if isinstance(names, list) and names:
+        return str(names[-1])
+    return ""
+
+
+def handle_bar_chart_line(line: str, body: list[str], states: dict[str, object]) -> bool:
+    if current_component(states) != "bar-chart":
+        return False
+    flush_paragraph(body, states)
+    match = re.search(r"(\d{1,3})\s*%", line)
+    value = max(0, min(100, int(match.group(1)))) if match else 72
+    body.append(f'<p style="--bar-value: {value}%">{inline_markup(line)}</p>')
+    return True
+
+
 def handle_paragraph(line: str, body: list[str], states: dict[str, object]) -> None:
     if states.get("list") or states.get("table"):
         close_blocks(body, states)
+    if handle_bar_chart_line(line, body, states):
+        return
     if line.lower().startswith(("source:", "source card:")):
         flush_paragraph(body, states)
         body.append(
@@ -136,6 +155,7 @@ def render_markdown(text: str, inject_prompts: bool = True) -> tuple[list[tuple[
         "list_tag": "",
         "table": False,
         "components": [],
+        "component_names": [],
         "code": False,
         "code_lang": "",
         "code_lines": [],

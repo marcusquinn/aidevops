@@ -103,6 +103,13 @@ body.report-body {
   font-size: clamp(1.15rem, 1.5vw, 1.35rem);
 }
 
+.report-main p,
+.report-main li,
+.report-main blockquote {
+  orphans: 3;
+  widows: 3;
+}
+
 .report-shell {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(16rem, 20rem);
@@ -260,6 +267,11 @@ body.report-body {
 
 .sticky-toc-header h2 {
   margin: 0;
+}
+
+.report-body .sticky-toc-header h2 {
+  font-size: clamp(1.1rem, 2vw, 1.55rem);
+  line-height: 1;
 }
 
 .toc-pdf-actions {
@@ -650,7 +662,7 @@ th .evidence-badge {
 }
 
 .source-list .source-item:last-child {
-  border-bottom: 1px solid var(--report-rule);
+  border-bottom: 0;
 }
 
 .source-item {
@@ -709,8 +721,8 @@ th .evidence-badge {
 .block-template {
   margin-block: var(--report-space-4);
   overflow: hidden;
-  background: var(--report-code-bg);
-  color: var(--report-code-ink);
+  background: transparent;
+  color: inherit;
   border-radius: var(--report-radius-md);
 }
 
@@ -719,9 +731,9 @@ th .evidence-badge {
   display: flex;
   justify-content: space-between;
   gap: var(--report-space-3);
-  padding: var(--report-space-2) var(--report-space-3);
-  background: rgba(255, 255, 255, 0.06);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 0 0 var(--report-space-2);
+  background: transparent;
+  border-bottom: 0;
   color: var(--report-code-accent);
   font-family: var(--report-font-code);
   font-size: 0.8125rem;
@@ -745,6 +757,13 @@ th .evidence-badge {
   font-family: var(--report-font-code);
   font-size: 0.8125rem;
   line-height: 1.55;
+}
+
+.code-block-wrap .mermaid,
+.code-block-wrap .latex-block {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
 }
 
 .code-block-head {
@@ -1059,7 +1078,8 @@ blockquote {
 
 .mermaid-rendered,
 .latex-rendered-block {
-  margin-block: var(--report-space-4);
+  width: 100%;
+  margin: var(--report-space-4) 0;
   padding: var(--report-space-3);
   border: 1px solid var(--report-rule);
   border-radius: var(--report-radius-md);
@@ -1143,6 +1163,7 @@ blockquote {
 
 .bar-chart {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
   gap: var(--report-space-2);
   margin-block: var(--report-space-4);
 }
@@ -1253,7 +1274,7 @@ ol li::marker {
 }
 
 .version-summary {
-  text-align: center;
+  text-align: left;
   color: var(--report-ink-soft);
   font-size: clamp(0.72rem, 0.58rem + 0.42vw, 0.92rem);
   font-weight: 800;
@@ -1272,7 +1293,6 @@ ol li::marker {
 .version-summary p {
   max-width: none;
   margin: 0;
-  text-wrap: balance;
 }
 
 .source-card {
@@ -1440,7 +1460,7 @@ a {
 
   @page {
     size: A4 portrait;
-    margin: 0;
+    margin: 12mm;
   }
 
   html,
@@ -1454,7 +1474,7 @@ a {
 
   body.report-body {
     min-height: 100vh;
-    padding: 12mm;
+    padding: 0;
   }
 
   body.report-theme-dark {
@@ -1465,6 +1485,24 @@ a {
     display: block;
     max-width: none;
     padding: 0;
+  }
+
+  .report-main h1,
+  .report-main h2,
+  .report-main h3,
+  .code-block-head,
+  .source-title {
+    break-after: avoid;
+    page-break-after: avoid;
+  }
+
+  .action-line,
+  .code-block-wrap,
+  .mermaid-rendered,
+  .latex-rendered-block,
+  .bar-chart p {
+    break-inside: avoid;
+    page-break-inside: avoid;
   }
 
   .sticky-toc {
@@ -1528,7 +1566,8 @@ a {
   }
 
   .facts-table-wrap {
-    overflow: visible;
+    overflow: hidden;
+    border-radius: var(--report-radius-md);
   }
 
   .facts-table {
@@ -1551,6 +1590,36 @@ a {
     word-break: normal;
   }
 
+  .facts-table th,
+  .facts-table-wrap th,
+  .report-main > table th {
+    background: color-mix(in srgb, var(--report-blue) 12%, var(--report-surface));
+  }
+
+  .facts-table thead th:first-child,
+  .facts-table-wrap thead th:first-child,
+  .report-main > table thead th:first-child {
+    border-top-left-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .facts-table thead th:last-child,
+  .facts-table-wrap thead th:last-child,
+  .report-main > table thead th:last-child {
+    border-top-right-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .code-block-wrap pre,
+  .example-card pre,
+  .block-template pre,
+  .report-main > .code-block-wrap pre,
+  .mermaid,
+  .latex-block {
+    overflow-x: visible;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
   .source-card,
   .source-item {
     padding-inline-end: calc(var(--report-space-4) + 2rem);
@@ -1561,15 +1630,9 @@ a {
     content: "";
   }
 
-  .example-card {
-    background: #ffffff;
-    color: var(--report-ink);
-    border: 1px solid var(--report-rule-strong);
-  }
-
-  .example-card header,
-  .example-card pre {
-    background: #ffffff;
+  .example-card,
+  .block-template {
+    background: transparent;
     color: var(--report-ink);
   }
 

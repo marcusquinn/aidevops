@@ -27,6 +27,9 @@ def close_component(body: list[str], states: dict[str, object]) -> bool:
     stack = states["components"]
     if not isinstance(stack, list) or not stack:
         return False
+    names = states.get("component_names")
+    if isinstance(names, list) and names:
+        names.pop()
     close_tag = stack.pop()
     body.append(str(close_tag))
     return True
@@ -71,6 +74,9 @@ def handle_component(
     stack = states["components"]
     if isinstance(stack, list):
         stack.append(close_tag)
+    names = states.get("component_names")
+    if isinstance(names, list):
+        names.append(name)
     return True
 
 

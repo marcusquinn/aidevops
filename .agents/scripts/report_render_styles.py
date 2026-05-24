@@ -375,6 +375,7 @@ TEMPLATE_SPECIFIC_CSS = {
 .report-template-times .facts-table th,
 .report-template-times .facts-table td { border-bottom-style: dotted; }
 .report-template-times .code-block-wrap { border-color: #000000; border-radius: 0; }
+.report-template-times { --report-code-bg: #FFFDF8; --report-code-bg-2: #F4F1EA; --report-code-ink: #1A1A1A; --report-code-accent: #008138; }
 """.strip(),
     "indexsy": """
 .report-template-indexsy .report-shell { max-width: 1320px; }
@@ -414,6 +415,7 @@ body.report-theme-light.report-template-indexsy .badge-missing { border-color: v
 .report-template-docuseal .toc-pdf-link { background: #181818; color: #ffffff; border-color: #181818; }
 .report-template-docuseal .stat-card,
 .report-template-docuseal .chapter-hero { background: #FFE2C2; }
+.report-template-docuseal { --report-code-bg: #FFFFFF; --report-code-bg-2: #F8F4F1; --report-code-ink: #181818; --report-code-accent: #C76718; }
 """.strip(),
     "exsqueezeme": """
 .report-template-exsqueezeme .report-cover,
@@ -481,6 +483,7 @@ body.report-theme-light.report-template-terminalshop a { color: var(--report-blu
 .report-template-ulysses .chapter-hero * { color: inherit; }
 .report-template-ulysses .heading-number,
 .report-template-ulysses ol li::marker { color: #F7C600; }
+.report-template-ulysses { --report-code-bg: #FFFFFF; --report-code-bg-2: #F7F7F7; --report-code-ink: #27272B; --report-code-accent: #8A6A00; }
 """.strip(),
     "usgraphics": """
 .report-template-usgraphics .report-cover,
