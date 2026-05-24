@@ -5265,15 +5265,15 @@
       "pr": 11615
     },
     ".agents/tools/design/brand-identity.md": {
-      "at": "2026-04-03T22:25:45Z",
-      "hash": "fd3c844341eee1331678b371b5a8103797924c7e",
-      "passes": 2,
+      "at": "2026-05-24T16:53:49Z",
+      "hash": "df1ee5517a0928a3b6d4512d53fd07a99564b0fc",
+      "passes": 3,
       "pr": 13093
     },
     ".agents/tools/design/colour-palette.md": {
-      "at": "2026-04-04T03:31:29Z",
-      "hash": "dc89ad0ba62b65a9e4c2456f496e30182777754a",
-      "passes": 1,
+      "at": "2026-05-24T16:53:49Z",
+      "hash": "87975d5b0cb8214ae985aefb5ca37fdca52728f4",
+      "passes": 2,
       "pr": 17012
     },
     ".agents/tools/design/design-inspiration.md": {
@@ -5283,10 +5283,10 @@
       "pr": 12754
     },
     ".agents/tools/design/design-md.md": {
-      "at": "2026-05-23T14:39:33Z",
-      "hash": "6504a66a3138eed9818d1309beb210f852d543be",
+      "at": "2026-05-24T16:53:50Z",
+      "hash": "103ceab91b35685a09031311952852c32f1b5890",
       "issue": 16952,
-      "passes": 5,
+      "passes": 6,
       "pr": 16966
     },
     ".agents/tools/design/library/brands/airbnb/DESIGN.md": {
@@ -5308,9 +5308,9 @@
       "pr": "17061"
     },
     ".agents/tools/design/library/brands/apple/DESIGN.md": {
-      "at": "2026-04-04T03:31:32Z",
-      "hash": "3a05d16ee4ac4f6e7ce5563014e60d0a58942c36",
-      "passes": 1,
+      "at": "2026-05-24T16:53:50Z",
+      "hash": "e90e53e4ee965867b0d7c36aee9ae1d06aaddc48",
+      "passes": 2,
       "pr": 16935
     },
     ".agents/tools/design/library/brands/bmw/DESIGN.md": {
@@ -5946,9 +5946,9 @@
       "status": "converged"
     },
     ".agents/tools/design/ui-ux-inspiration.md": {
-      "at": "2026-05-23T14:40:30Z",
-      "hash": "4b888d154d71c21993b3b9ac2a55ca6218f31fde",
-      "passes": 3,
+      "at": "2026-05-24T16:54:39Z",
+      "hash": "59a983f5b8c34aeb9f3b3b5ca373527519247651",
+      "passes": 4,
       "pr": 11590
     },
     ".agents/tools/diagrams/mermaid-diagrams-skill.md": {
