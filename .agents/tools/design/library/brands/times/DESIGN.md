@@ -3,41 +3,50 @@
 
 ---
 version: alpha
-name: "Times newspaper"
-description: "Report presentation design system inspired by polymarketimes.com."
+name: "Polymarket Times"
+description: "Report presentation design system inspired by https://www.polymarketimes.com/."
 colors:
-  background: "#F7F2E8"
+  background: "#F4F1EA"
   surface: "#FFFDF8"
-  on-surface: "#111111"
-  muted: "#525252"
-  outline: "#C8BFAE"
-  primary: "#8A2C2C"
-  primary-container: "#F0E1D8"
+  on-surface: "#1A1A1A"
+  muted: "#374151"
+  outline: "#000000"
+  primary: "#008138"
+  primary-container: "#E9E3D7"
+  code-background: "#0A0A0A"
+  code-on-background: "#FFFFFF"
+  code-accent: "#05DF72"
+  info-background: "#FFFDF8"
+  impact-background: "#F4F1EA"
+  evidence-background: "#FFFDF8"
+  myth-background: "#F4F1EA"
+  good-background: "#EEF8F0"
+  bad-background: "#FFF0EE"
 typography:
   headline-display:
-    fontFamily: '"Source Serif 4", Georgia, serif'
-    fontSize: 64px
-    fontWeight: 650
-    lineHeight: 1.05
-    letterSpacing: -0.03em
+    fontFamily: '"Playfair Display", Georgia, "Times New Roman", serif'
+    fontSize: 72px
+    fontWeight: 700
+    lineHeight: 0.98
+    letterSpacing: -0.035em
   headline-md:
-    fontFamily: '"Source Serif 4", Georgia, serif'
-    fontSize: 32px
-    fontWeight: 650
-    lineHeight: 1.15
+    fontFamily: '"Playfair Display", Georgia, "Times New Roman", serif'
+    fontSize: 36px
+    fontWeight: 700
+    lineHeight: 1.05
   body-md:
-    fontFamily: '"Source Serif 4", Georgia, serif'
-    fontSize: 16px
+    fontFamily: 'Georgia, "Times New Roman", serif'
+    fontSize: 17px
     fontWeight: 400
-    lineHeight: 1.62
+    lineHeight: 1.68
   code-md:
-    fontFamily: '"IBM Plex Mono", Consolas, monospace'
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace'
     fontSize: 13px
-    fontWeight: 400
-    lineHeight: 1.5
+    fontWeight: 700
+    lineHeight: 1.45
 rounded:
-  md: 4px
-  lg: 4px
+  md: 0px
+  lg: 0px
 spacing:
   md: 16px
   lg: 24px
@@ -51,12 +60,12 @@ components:
   evidence-badge:
     backgroundColor: "{colors.primary-container}"
     textColor: "{colors.on-surface}"
-    rounded: 999px
+    rounded: "{rounded.lg}"
 ---
 
-# Design System: Times newspaper
+# Design System: Polymarket Times
 
-newspaper-style editorial hierarchy. This DESIGN.md is a report-presentation brand preset for Markdown-first HTML previews and PDF deliverables.
+Newspaper-style prediction-market editorial system inspired by The Polymarket Times. This DESIGN.md is a report-presentation brand preset for Markdown-first HTML previews and PDF deliverables.
 
 ## Chapters
 
@@ -64,7 +73,7 @@ newspaper-style editorial hierarchy. This DESIGN.md is a report-presentation bra
 |------|----------|
 | [01-visual-theme.md](01-visual-theme.md) | Visual identity, report mood, source inspiration |
 | [02-color-palette.md](02-color-palette.md) | Accessible colour tokens and contrast guidance |
-| [03-typography.md](03-typography.md) | Open-source/system font substitutes and type scale |
+| [03-typography.md](03-typography.md) | Playfair Display, Georgia, and Menlo font mapping |
 | [04-components.md](04-components.md) | Report cards, tables, evidence badges, callouts |
 | [05-layout.md](05-layout.md) | Markdown-first HTML preview and PDF print layouts |
 | [06-depth-elevation.md](06-depth-elevation.md) | Borders, surface layering, shadow discipline |
@@ -74,23 +83,24 @@ newspaper-style editorial hierarchy. This DESIGN.md is a report-presentation bra
 
 ## Quick Reference
 
-- **Source inspiration**: polymarketimes.com
-- **Accent**: `#8A2C2C` with supporting container `#F0E1D8`
-- **Background/surface**: `#F7F2E8` / `#FFFDF8`
-- **Text**: `#111111` primary, `#525252` secondary
-- **Heading font**: "Source Serif 4", Georgia, serif
-- **Body font**: "Source Serif 4", Georgia, serif
-- **Code font**: "IBM Plex Mono", Consolas, monospace
-- **Radius**: 4px
+- **Source inspiration**: https://www.polymarketimes.com/
+- **Mood**: broadsheet newspaper, prediction-market ticker, cream newsprint, black rules, sharp editorial grid
+- **Accent**: market green `#008138` / `#05DF72`; use red only for negative/down-market states
+- **Background/surface**: `#F4F1EA` / `#FFFDF8`
+- **Text**: `#1A1A1A` primary, `#374151` secondary
+- **Heading font**: "Playfair Display", Georgia, "Times New Roman", serif
+- **Body font**: Georgia, "Times New Roman", serif
+- **Code/data/ticker font**: Menlo, Monaco, "Courier New", monospace
+- **Radius**: 0px / square broadsheet panels
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
 
 ## Source Review
 
-- **Review date**: 2026-05-23
+- **Review date**: 2026-05-24
 - **Source**: https://www.polymarketimes.com/
-- **Fetched title/evidence**: Will Abelardo de la Espriella win the 2026 Colomb... - The Polymarket Times
-- **Fetch status**: Fetched https://www.polymarketimes.com/ with status 200
-- **Observed fonts**: EB Garamond, EB Garamond Fallback, EB Garamond,EB Garamond Fallback, Playfair Display, Playfair Display Fallback, Playfair Display,Playfair Display Fallback, UnifrakturMaguntia, UnifrakturMaguntia Fallback
-- **Observed colours**: #000000, #008138, #00a544, #00c758, #016630, #05df72, #0d542b, #101828, #16a34a, #193cb8, #1a1a1a, #1c398e
-- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
-- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.
+- **Fetched title/evidence**: Will Russia capture Lyman by December 31, 2026?... - The Polymarket Times
+- **Fetch status**: Fetched https://www.polymarketimes.com/ with status 200; prompt-guard scan returned CLEAN.
+- **Observed source colours**: `#F4F1EA`, `#1A1A1A`, `#000`, `#FFF` from fetched HTML/CSS.
+- **Screenshot evidence**: user-provided screenshot shows cream newsprint background, black ticker/nav bars, green up-market indicators, red down-market indicators, Playfair Display masthead/headlines, Georgia article copy, and Menlo market/ticker UI.
+- **Observed content cues**: masthead "The Polymarket Times", late city edition timestamp, all-caps section navigation, market ticker, category lozenges, thick horizontal rules, monochrome imagery, dotted table/list separators.
+- **Rule**: source facts and user-provided screenshot inform the DESIGN.md; renderer tokens are adjusted for report readability, local font fallbacks, and WCAG contrast.

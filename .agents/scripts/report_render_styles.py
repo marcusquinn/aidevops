@@ -22,6 +22,7 @@ STYLE_SLUGS = (
     "supermemory",
     "savvy",
     "exsqueezeme",
+    "mellowyellow",
     "terminalshop",
     "scalefusion",
     "zeroheight",
@@ -264,8 +265,8 @@ def dark_style_names() -> tuple[str, ...]:
 def _template_specific_css(name: str) -> str:
     if name == "medium":
         return """
-.report-template-medium .report-main { max-width: 740px; }
-.report-template-medium .report-shell { max-width: 1120px; }
+.report-template-medium .report-main { max-width: none; }
+.report-template-medium .report-shell { max-width: var(--report-page-max); }
 .report-template-medium .report-cover,
 .report-template-medium .tactic-card,
 .report-template-medium .source-card,
@@ -289,6 +290,40 @@ def _template_specific_css(name: str) -> str:
 .report-template-lottiefiles .tactic-card,
 .report-template-lottiefiles .source-card { border-radius: 20px; }
 .report-template-lottiefiles .action-line { box-shadow: 0 20px 48px rgba(1, 157, 145, 0.18); }
+""".strip()
+    if name == "times":
+        return """
+.report-template-times { background-image: linear-gradient(rgba(0, 0, 0, 0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 0, 0, 0.025) 1px, transparent 1px); background-size: 18rem 18rem; }
+.report-template-times .report-cover { text-align: center; border-width: 2px 0; border-color: #000000; box-shadow: none; background: rgba(255, 253, 248, 0.7); }
+.report-template-times .report-cover h1 { font-size: clamp(3rem, 7vw, 5.5rem); line-height: 0.98; }
+.report-template-times .report-main h1,
+.report-template-times .report-main h2,
+.report-template-times .report-main h3 { text-transform: uppercase; }
+.report-template-times .report-main p { font-family: Georgia, "Times New Roman", serif; }
+.report-template-times .report-meta,
+.report-template-times .sticky-toc,
+.report-template-times .badge,
+.report-template-times .toc-pdf-link,
+.report-template-times code,
+.report-template-times pre,
+.report-template-times .facts-table td:last-child,
+.report-template-times .facts-table th { font-family: Menlo, Monaco, "Courier New", monospace; }
+.report-template-times .report-cover,
+.report-template-times .chapter-hero,
+.report-template-times .tactic-card,
+.report-template-times .source-card,
+.report-template-times .priority-group,
+.report-template-times .stat-card,
+.report-template-times .facts-table-wrap { border-color: #000000; border-radius: 0; box-shadow: none; }
+.report-template-times .chapter-hero { border-width: 2px 0; text-align: center; background: #FFFDF8; }
+.report-template-times .toc-pdf-link,
+.report-template-times .action-line strong { background: #000000; color: #ffffff; border-color: #000000; }
+.report-template-times .sticky-toc a:hover,
+.report-template-times .sticky-toc a:focus-visible,
+.report-template-times .sticky-toc a[aria-current="true"] { color: #008138; border-left-color: #008138; }
+.report-template-times .facts-table th,
+.report-template-times .facts-table td { border-bottom-style: dotted; }
+.report-template-times .code-block-wrap { border-color: #000000; border-radius: 0; }
 """.strip()
     if name == "indexsy":
         return """
@@ -319,6 +354,26 @@ def _template_specific_css(name: str) -> str:
 .report-template-docuseal .toc-pdf-link { background: #181818; color: #ffffff; border-color: #181818; }
 .report-template-docuseal .stat-card,
 .report-template-docuseal .chapter-hero { background: #FFE2C2; }
+""".strip()
+    if name == "exsqueezeme":
+        return """
+.report-template-exsqueezeme .report-cover,
+.report-template-exsqueezeme .chapter-hero { background: radial-gradient(circle at 20% 10%, rgba(255, 95, 31, 0.18), transparent 28%), var(--report-panel); text-align: center; }
+.report-template-exsqueezeme h1,
+.report-template-exsqueezeme h2,
+.report-template-exsqueezeme h3 { text-transform: uppercase; }
+.report-template-exsqueezeme .toc-pdf-link,
+.report-template-exsqueezeme .action-line strong { background: #FF5F1F; color: #0A0A0A; border-color: #ffffff; box-shadow: 5px 5px 0 #ffffff; }
+.report-template-exsqueezeme .report-cover,
+.report-template-exsqueezeme .tactic-card,
+.report-template-exsqueezeme .source-card,
+.report-template-exsqueezeme .facts-table-wrap { box-shadow: 6px 6px 0 #ffffff; }
+""".strip()
+    if name == "mellowyellow":
+        return """
+.report-template-mellowyellow .report-cover,
+.report-template-mellowyellow .chapter-hero,
+.report-template-mellowyellow .stat-card { background: var(--report-paper-raised); }
 """.strip()
     if name == "superx":
         return """

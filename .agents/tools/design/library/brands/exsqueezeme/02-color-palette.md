@@ -3,30 +3,28 @@
 
 # exsqueezeme: Colour Palette
 
-## Observed source colours
+## Source-informed colours
 
-- `#000000`
-- `#00ff6a`
-- `#0a0a0a`
-- `#141414`
-- `#1f1f1f`
-- `#2a2a2a`
-- `#e0e0e0`
-- `#e55f00`
-- `#e6a756`
-- `#ff3366`
-- `#ff6b00`
-- `#ff9500`
+- `#0A0A0A` — dark app-marketing page background
+- `#111111` — dark report panel surface
+- `#1F1F1F` — secondary dark container
+- `#FFFFFF` — primary text, borders, and offset shadow
+- `#E0E0E0` — secondary text
+- `#FF5F1F` — orange CTA/slab accent
+
+## Semantic mapping
+
+- `background`: `#0A0A0A`
+- `surface`: `#111111`
+- `on-surface`: `#FFFFFF`
+- `muted`: `#E0E0E0`
+- `outline`: `#FFFFFF`
+- `primary`: `#FF5F1F`
+- `primary-container`: `#1F1F1F`
 
 ## Application rules
 
-- Use observed colours as source evidence, then map them into semantic DESIGN.md roles: background, surface, on-surface, muted, outline, primary, and primary-container.
-- Long-form report text must use high-contrast `on-surface`, not decorative accent colours.
-- Badge/status colours must preserve text labels and borders so grayscale PDF output remains meaningful.
-- For missing theme modes, calculate inverse roles with `colour-palette.md`; mark them as derived until previewed and contrast-checked.
-
-## Required contrast checks
-
-- Body text on background and surface: WCAG AA 4.5:1 minimum.
-- Large headings and non-text UI indicators: 3:1 minimum.
-- Focus rings, table borders, and evidence badge borders: visible against adjacent surfaces.
+- Use orange for CTA slabs, action labels, and focus accents; avoid long orange paragraphs.
+- Use white outlines and offset shadows to echo the square poster-like source style.
+- Keep body text white or near-white on dark panels.
+- Preserve labels on status badges so grayscale PDF output remains meaningful.

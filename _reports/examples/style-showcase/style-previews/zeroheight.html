@@ -82,7 +82,7 @@ body.report-body {
 .report-main h1,
 .report-main h2,
 .report-main h3 {
-  max-width: 32ch;
+  max-width: 46ch;
   color: var(--report-ink);
   font-family: var(--report-font-heading);
   line-height: 1.14;
@@ -234,6 +234,7 @@ body.report-body {
   background: var(--report-panel);
   border: 1px solid var(--report-rule);
   border-radius: var(--report-radius-lg);
+  font-size: 0.875rem;
   box-shadow: 0 12px 32px rgba(17, 24, 39, 0.1);
 }
 
@@ -248,9 +249,10 @@ body.report-body {
 .sticky-toc-header {
   display: flex;
   gap: var(--report-space-2);
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   margin-block-end: var(--report-space-3);
+  padding-inline-end: 0.35rem;
 }
 
 .sticky-toc-header h2 {
@@ -258,23 +260,25 @@ body.report-body {
 }
 
 .toc-pdf-link {
-  display: inline-flex;
+  display: inline-grid;
   min-width: 0;
   min-height: 0;
-  height: 1.9rem;
-  align-items: center;
-  align-self: flex-start;
+  min-inline-size: 3.2rem;
+  height: 2rem;
+  align-self: center;
   box-sizing: border-box;
-  justify-content: center;
-  padding: 0 0.72rem;
-  border: 1px solid var(--report-rule);
+  place-items: center;
+  padding: 0 0.7rem;
+  border: 1.5px solid var(--report-rule);
   border-radius: var(--report-badge-radius);
+  background: var(--report-panel);
   color: var(--report-ink);
   font-size: 0.72rem;
   font-weight: 900;
   letter-spacing: 0.08em;
-  line-height: 1;
-  text-decoration: none;
+  line-height: 1 !important;
+  text-align: center;
+  text-decoration: none !important;
   white-space: nowrap;
 }
 
@@ -300,6 +304,7 @@ body.report-body {
   padding: var(--report-space-1) var(--report-space-2);
   border-left: 3px solid transparent;
   color: var(--report-ink-muted);
+  line-height: 1.45;
   text-decoration: none;
 }
 
@@ -739,6 +744,12 @@ th .evidence-badge {
   color: var(--report-code-ink);
   cursor: pointer;
   font: 700 0.85rem/1 var(--report-font-body);
+}
+
+.code-copy.is-copied {
+  background: var(--report-green);
+  border-color: var(--report-green);
+  color: #ffffff;
 }
 
 .example-card pre,
@@ -1865,10 +1876,33 @@ LinkedIn | Google Scholar | Personal site</code></pre></div>
   document.querySelectorAll('.code-copy').forEach((button) => {
     button.addEventListener('click', async () => {
       const code = button.closest('.code-block-wrap')?.querySelector('code')?.innerText || '';
-      try {
-        await navigator.clipboard.writeText(code);
+      const original = button.dataset.originalLabel || button.textContent || '⧉';
+      button.dataset.originalLabel = original;
+      const showCopied = () => {
         button.textContent = '✓';
-        setTimeout(() => { button.textContent = '⧉'; }, 1200);
+        button.classList.add('is-copied');
+        button.setAttribute('aria-label', 'Copied');
+        setTimeout(() => {
+          button.textContent = original;
+          button.classList.remove('is-copied');
+          button.setAttribute('aria-label', 'Copy code');
+        }, 1200);
+      };
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(code);
+        } else {
+          const textArea = document.createElement('textarea');
+          textArea.value = code;
+          textArea.setAttribute('readonly', '');
+          textArea.style.position = 'fixed';
+          textArea.style.left = '-9999px';
+          document.body.appendChild(textArea);
+          textArea.select();
+          document.execCommand('copy');
+          textArea.remove();
+        }
+        showCopied();
       } catch (_) {
         button.textContent = 'Copy';
       }

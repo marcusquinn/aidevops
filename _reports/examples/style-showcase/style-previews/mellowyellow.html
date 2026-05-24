@@ -1496,10 +1496,10 @@ a {
   }
 }
 
-/* DESIGN.md brand token overrides: wikipedia */
+/* DESIGN.md brand token overrides: mellowyellow */
 :root {
-  --report-font-heading: Linux Libertine, "Source Serif 4", Georgia, serif;
-  --report-font-body: Linux Biolinum, Inter, system-ui, sans-serif;
+  --report-font-heading: Inter, system-ui, sans-serif;
+  --report-font-body: Inter, system-ui, sans-serif;
   --report-font-code: "IBM Plex Mono", Consolas, monospace;
   --report-heading-size: 64px;
   --report-heading-weight: 650;
@@ -1507,28 +1507,28 @@ a {
   --report-heading-tracking: -0.03em;
   --report-body-size: 16px;
   --report-body-line: 1.62;
-  --report-paper: #FFFFFF;
-  --report-paper-raised: #EAECF0;
-  --report-panel: #F8F9FA;
-  --report-surface: #F8F9FA;
-  --report-ink: #202122;
-  --report-ink-muted: #54595D;
-  --report-ink-soft: #54595D;
-  --report-rule: #A2A9B1;
-  --report-rule-strong: #0645AD;
-  --report-blue: #0645AD;
-  --report-radius-lg: 2px;
-  --report-radius-xl: calc(2px + 0.5rem);
-  --report-badge-radius: calc(2px * 0.45);
-  --report-code-bg: #F8F9FA;
-  --report-code-ink: #202122;
-  --report-code-accent: #0645AD;
-  --report-info-bg: #F8F9FA;
-  --report-impact-bg: #F8F9FA;
-  --report-evidence-bg: #F8F9FA;
-  --report-myth-bg: #F8F9FA;
-  --report-good-bg: #F8F9FA;
-  --report-bad-bg: #F8F9FA;
+  --report-paper: #FFF7ED;
+  --report-paper-raised: #FFEDD5;
+  --report-panel: #FFFFFF;
+  --report-surface: #FFFFFF;
+  --report-ink: #231A10;
+  --report-ink-muted: #6B5A45;
+  --report-ink-soft: #6B5A45;
+  --report-rule: #C2AD92;
+  --report-rule-strong: #C2410C;
+  --report-blue: #C2410C;
+  --report-radius-lg: 26px;
+  --report-radius-xl: calc(26px + 0.5rem);
+  --report-badge-radius: calc(26px * 0.45);
+  --report-code-bg: #FFF7ED;
+  --report-code-ink: #231A10;
+  --report-code-accent: #C2410C;
+  --report-info-bg: #FFFFFF;
+  --report-impact-bg: #FFFFFF;
+  --report-evidence-bg: #FFFFFF;
+  --report-myth-bg: #FFFFFF;
+  --report-good-bg: #FFFFFF;
+  --report-bad-bg: #FFFFFF;
 }
 body.report-body { font-family: var(--report-font-body); font-size: clamp(1rem, 0.94rem + 0.18vw, 1.0625rem); line-height: 1.62; }
 h1, h2, h3 { font-family: var(--report-font-heading); font-weight: var(--report-heading-weight); letter-spacing: var(--report-heading-tracking); }
@@ -1537,12 +1537,16 @@ h2 { font-size: clamp(1.6rem, 3vw, 2.25rem); line-height: 1.16; }
 h3 { font-size: clamp(1.15rem, 1.5vw, 1.35rem); line-height: 1.24; }
 .source-card, .tactic-card, .priority-group { border-color: var(--report-rule); }
 .sticky-toc a:hover, .sticky-toc a:focus-visible, .sticky-toc a[aria-current="true"] { border-left-color: var(--report-blue); }
+
+.report-template-mellowyellow .report-cover,
+.report-template-mellowyellow .chapter-hero,
+.report-template-mellowyellow .stat-card { background: var(--report-paper-raised); }
 @media print { @page { size: A4 portrait; margin: 12mm 11mm 14mm; } body.report-body { background: #fff; font-size: 10.5pt; } .report-shell { display: block; max-width: none; padding: 0; } .sticky-toc { position: static; break-after: page; box-shadow: none; } table { table-layout: fixed; font-size: 8.8pt; } th,td { padding: 4pt 5pt; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after { content: ""; } }</style>
 </head>
-<body class="report-body report-theme-auto report-pdf-profile-a4 report-template-wikipedia">
+<body class="report-body report-theme-auto report-pdf-profile-a4 report-template-mellowyellow">
 <div class="report-shell">
 <nav class="sticky-toc" aria-label="Report table of contents">
-<div class="sticky-toc-header"><h2>Contents</h2><a class="toc-pdf-link" href="wikipedia.pdf" aria-label="Open PDF version" title="Open PDF version">PDF</a></div>
+<div class="sticky-toc-header"><h2>Contents</h2><a class="toc-pdf-link" href="mellowyellow.pdf" aria-label="Open PDF version" title="Open PDF version">PDF</a></div>
 <ol>
 <li><a href="#report-style-showcase" style="margin-left:0rem">Report Style Showcase</a></li>
 <li><a href="#executive-summary" style="margin-left:1rem">Executive summary</a></li>

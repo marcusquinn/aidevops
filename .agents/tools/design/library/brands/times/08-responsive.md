@@ -1,12 +1,13 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# times: Responsive and Mode Behaviour
+# Polymarket Times: Responsive and Mode Behaviour
 
 ## Responsive HTML
 
 - Keep one canonical `report.html` preview.
 - Collapse side navigation/table of contents above narrow widths.
+- Preserve masthead hierarchy on mobile by reducing headline size, not changing fonts.
 - Ensure tables wrap or scroll in HTML and use PDF-safe fixed layout for print.
 
 ## PDF profiles
@@ -17,4 +18,4 @@
 
 ## Light/dark handling
 
-Observed theme/dark-mode markers in fetched html/css. Any calculated inverse palette must be documented as derived and validated against WCAG AA before becoming normative.
+Light/newsprint is canonical for this preset. Any inverse palette must be documented as derived and validated against WCAG AA before becoming normative.

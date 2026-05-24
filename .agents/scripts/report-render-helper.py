@@ -39,10 +39,10 @@ body.report-theme-dark { color-scheme: dark; --report-paper: #0f172a; --report-p
 .report-shell { max-width: 1120px; margin: 0 auto; padding: 2rem; }
 .report-main { min-width: 0; }
 .sticky-toc { margin: 0 0 2rem; overflow: hidden; border: 1px solid var(--report-line); border-radius: 10px; padding: 1rem; background: var(--report-panel); }
-.sticky-toc-header { display: flex; gap: 1rem; align-items: flex-start; justify-content: space-between; margin-bottom: 1rem; }
-.toc-pdf-link { display: inline-flex; align-items: center; align-self: flex-start; box-sizing: border-box; justify-content: center; height: 1.9rem; padding: 0 .72rem; border: 1px solid var(--report-line); border-radius: var(--report-badge-radius); color: inherit; font-size: .72rem; font-weight: 900; letter-spacing: .08em; line-height: 1; text-decoration: none; white-space: nowrap; }
+.sticky-toc-header { display: flex; gap: 1rem; align-items: center; justify-content: space-between; margin-bottom: 1rem; padding-right: .35rem; }
+.toc-pdf-link { display: inline-grid; min-inline-size: 3.2rem; height: 2rem; place-items: center; align-self: center; box-sizing: border-box; padding: 0 .7rem; border: 1.5px solid var(--report-line); border-radius: var(--report-badge-radius); background: var(--report-panel); color: inherit; font-size: .72rem; font-weight: 900; letter-spacing: .08em; line-height: 1 !important; text-align: center; text-decoration: none !important; white-space: nowrap; }
 .sticky-toc ol { max-height: calc(100vh - 9rem); overflow: auto; padding-right: .25rem; }
-.sticky-toc a { color: inherit; text-decoration: none; }
+.sticky-toc a { color: inherit; font-size: .875rem; line-height: 1.45; text-decoration: none; }
 .sticky-toc a:hover, .sticky-toc a:focus-visible { text-decoration: underline; }
 .report-content, .report-main { min-width: 0; }
 .badge-row, .appendix-links, .anchor-links { display: flex; flex-wrap: wrap; gap: .7rem; line-height: 1.9; }
@@ -58,6 +58,7 @@ body.report-theme-dark { color-scheme: dark; --report-paper: #0f172a; --report-p
 .code-block-wrap, .mermaid-rendered, .latex-rendered-block { max-width: 100%; min-width: 0; margin: 1rem 0; border: 1px solid var(--report-line); border-radius: 10px; overflow: hidden; background: var(--report-code-bg); color: var(--report-code-ink); }
 .code-block-head { display: flex; gap: 1rem; align-items: center; justify-content: space-between; padding: .45rem .75rem; border-bottom: 1px solid var(--report-line); color: var(--report-code-accent); font: 700 .78rem/1.3 ui-monospace, SFMono-Regular, Consolas, monospace; }
 .code-copy { display: inline-grid; width: 1.75rem; height: 1.75rem; place-items: center; border: 1px solid var(--report-line); border-radius: 999px; background: transparent; color: inherit; cursor: pointer; }
+.code-copy.is-copied { background: var(--report-green); border-color: var(--report-green); color: #ffffff; }
 .code-block-wrap pre { max-width: 100%; margin: 0; padding: .8rem .8rem .8rem 1rem; overflow-x: auto; }
 .action-prompt { width: 100%; max-width: 100%; min-width: 0; overflow: hidden; }
 .action-prompt pre { white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -172,10 +173,33 @@ def wrap_document(headings: list[tuple[int, str, str]], body: str) -> str:
   document.querySelectorAll('.code-copy').forEach((button) => {
     button.addEventListener('click', async () => {
       const code = button.closest('.code-block-wrap')?.querySelector('code')?.innerText || '';
-      try {
-        await navigator.clipboard.writeText(code);
+      const original = button.dataset.originalLabel || button.textContent || '⧉';
+      button.dataset.originalLabel = original;
+      const showCopied = () => {
         button.textContent = '✓';
-        setTimeout(() => { button.textContent = '⧉'; }, 1200);
+        button.classList.add('is-copied');
+        button.setAttribute('aria-label', 'Copied');
+        setTimeout(() => {
+          button.textContent = original;
+          button.classList.remove('is-copied');
+          button.setAttribute('aria-label', 'Copy code');
+        }, 1200);
+      };
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(code);
+        } else {
+          const textArea = document.createElement('textarea');
+          textArea.value = code;
+          textArea.setAttribute('readonly', '');
+          textArea.style.position = 'fixed';
+          textArea.style.left = '-9999px';
+          document.body.appendChild(textArea);
+          textArea.select();
+          document.execCommand('copy');
+          textArea.remove();
+        }
+        showCopied();
       } catch (_) {
         button.textContent = 'Copy';
       }

@@ -5,14 +5,14 @@
 
 ## Source reviewed
 
-- Source: https://exsqueezeme.app
+- Source: https://exsqueezeme.app/
 - Title/evidence: ExSqueezeMe - macOS video reframing and compression made simple
-- Fetch status: Fetched https://exsqueezeme.app with status 200
+- Fetch status: Fetched and prompt-guard scanned clean
 
 ## Visual interpretation
 
-This guide translates the source into an AI-readable report/style system. Treat directly observed values as evidence and generated values as implementation-safe approximations. Preserve the source's broad mood, density, typography direction, spacing rhythm, and component language without copying proprietary brand assets.
+Use a black, square, high-contrast video-tool launch aesthetic: dotted dark background, huge uppercase white headings, orange slab emphasis, white outlined buttons, offset white shadows, and monospace support text. Preserve the source's sharp app-marketing rhythm without copying proprietary assets.
 
 ## Mode behaviour
 
-Observed theme/dark-mode markers in fetched html/css. If a dark or light inverse palette is not explicitly present in the source, derive it using `tools/design/colour-palette.md`, label it as calculated, and validate text, badge, link, and border contrast before use.
+Dark-first. Light mode should be treated as an accessible inverse only when explicitly requested; the default report preview should remain black/orange.

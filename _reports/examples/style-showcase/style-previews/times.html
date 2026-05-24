@@ -82,7 +82,7 @@ body.report-body {
 .report-main h1,
 .report-main h2,
 .report-main h3 {
-  max-width: 32ch;
+  max-width: 46ch;
   color: var(--report-ink);
   font-family: var(--report-font-heading);
   line-height: 1.14;
@@ -234,6 +234,7 @@ body.report-body {
   background: var(--report-panel);
   border: 1px solid var(--report-rule);
   border-radius: var(--report-radius-lg);
+  font-size: 0.875rem;
   box-shadow: 0 12px 32px rgba(17, 24, 39, 0.1);
 }
 
@@ -248,9 +249,10 @@ body.report-body {
 .sticky-toc-header {
   display: flex;
   gap: var(--report-space-2);
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   margin-block-end: var(--report-space-3);
+  padding-inline-end: 0.35rem;
 }
 
 .sticky-toc-header h2 {
@@ -258,23 +260,25 @@ body.report-body {
 }
 
 .toc-pdf-link {
-  display: inline-flex;
+  display: inline-grid;
   min-width: 0;
   min-height: 0;
-  height: 1.9rem;
-  align-items: center;
-  align-self: flex-start;
+  min-inline-size: 3.2rem;
+  height: 2rem;
+  align-self: center;
   box-sizing: border-box;
-  justify-content: center;
-  padding: 0 0.72rem;
-  border: 1px solid var(--report-rule);
+  place-items: center;
+  padding: 0 0.7rem;
+  border: 1.5px solid var(--report-rule);
   border-radius: var(--report-badge-radius);
+  background: var(--report-panel);
   color: var(--report-ink);
   font-size: 0.72rem;
   font-weight: 900;
   letter-spacing: 0.08em;
-  line-height: 1;
-  text-decoration: none;
+  line-height: 1 !important;
+  text-align: center;
+  text-decoration: none !important;
   white-space: nowrap;
 }
 
@@ -300,6 +304,7 @@ body.report-body {
   padding: var(--report-space-1) var(--report-space-2);
   border-left: 3px solid transparent;
   color: var(--report-ink-muted);
+  line-height: 1.45;
   text-decoration: none;
 }
 
@@ -739,6 +744,12 @@ th .evidence-badge {
   color: var(--report-code-ink);
   cursor: pointer;
   font: 700 0.85rem/1 var(--report-font-body);
+}
+
+.code-copy.is-copied {
+  background: var(--report-green);
+  border-color: var(--report-green);
+  color: #ffffff;
 }
 
 .example-card pre,
@@ -1487,37 +1498,37 @@ a {
 
 /* DESIGN.md brand token overrides: times */
 :root {
-  --report-font-heading: "Source Serif 4", Georgia, serif;
-  --report-font-body: "Source Serif 4", Georgia, serif;
-  --report-font-code: "IBM Plex Mono", Consolas, monospace;
-  --report-heading-size: 64px;
-  --report-heading-weight: 650;
-  --report-heading-line: 1.05;
-  --report-heading-tracking: -0.03em;
-  --report-body-size: 16px;
-  --report-body-line: 1.62;
-  --report-paper: #F7F2E8;
-  --report-paper-raised: #F0E1D8;
+  --report-font-heading: "Playfair Display", Georgia, "Times New Roman", serif;
+  --report-font-body: Georgia, "Times New Roman", serif;
+  --report-font-code: Menlo, Monaco, "Courier New", monospace;
+  --report-heading-size: 72px;
+  --report-heading-weight: 700;
+  --report-heading-line: 0.98;
+  --report-heading-tracking: -0.035em;
+  --report-body-size: 17px;
+  --report-body-line: 1.68;
+  --report-paper: #F4F1EA;
+  --report-paper-raised: #E9E3D7;
   --report-panel: #FFFDF8;
   --report-surface: #FFFDF8;
-  --report-ink: #111111;
-  --report-ink-muted: #525252;
-  --report-ink-soft: #525252;
-  --report-rule: #B4AC9D;
-  --report-rule-strong: #8A2C2C;
-  --report-blue: #8A2C2C;
-  --report-radius-lg: 4px;
-  --report-radius-xl: calc(4px + 0.5rem);
-  --report-badge-radius: calc(4px * 0.45);
-  --report-code-bg: #FFFDF8;
-  --report-code-ink: #111111;
-  --report-code-accent: #8A2C2C;
+  --report-ink: #1A1A1A;
+  --report-ink-muted: #374151;
+  --report-ink-soft: #374151;
+  --report-rule: #000000;
+  --report-rule-strong: #008138;
+  --report-blue: #008138;
+  --report-radius-lg: 0px;
+  --report-radius-xl: calc(0px + 0.5rem);
+  --report-badge-radius: calc(0px * 0.45);
+  --report-code-bg: #0A0A0A;
+  --report-code-ink: #FFFFFF;
+  --report-code-accent: #05DF72;
   --report-info-bg: #FFFDF8;
-  --report-impact-bg: #FFFDF8;
+  --report-impact-bg: #F4F1EA;
   --report-evidence-bg: #FFFDF8;
-  --report-myth-bg: #FFFDF8;
-  --report-good-bg: #FFFDF8;
-  --report-bad-bg: #FFFDF8;
+  --report-myth-bg: #F4F1EA;
+  --report-good-bg: #EEF8F0;
+  --report-bad-bg: #FFF0EE;
 }
 body.report-body { font-family: var(--report-font-body); font-size: clamp(1rem, 0.94rem + 0.18vw, 1.0625rem); line-height: 1.62; }
 h1, h2, h3 { font-family: var(--report-font-heading); font-weight: var(--report-heading-weight); letter-spacing: var(--report-heading-tracking); }
@@ -1526,6 +1537,38 @@ h2 { font-size: clamp(1.6rem, 3vw, 2.25rem); line-height: 1.16; }
 h3 { font-size: clamp(1.15rem, 1.5vw, 1.35rem); line-height: 1.24; }
 .source-card, .tactic-card, .priority-group { border-color: var(--report-rule); }
 .sticky-toc a:hover, .sticky-toc a:focus-visible, .sticky-toc a[aria-current="true"] { border-left-color: var(--report-blue); }
+
+.report-template-times { background-image: linear-gradient(rgba(0, 0, 0, 0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 0, 0, 0.025) 1px, transparent 1px); background-size: 18rem 18rem; }
+.report-template-times .report-cover { text-align: center; border-width: 2px 0; border-color: #000000; box-shadow: none; background: rgba(255, 253, 248, 0.7); }
+.report-template-times .report-cover h1 { font-size: clamp(3rem, 7vw, 5.5rem); line-height: 0.98; }
+.report-template-times .report-main h1,
+.report-template-times .report-main h2,
+.report-template-times .report-main h3 { text-transform: uppercase; }
+.report-template-times .report-main p { font-family: Georgia, "Times New Roman", serif; }
+.report-template-times .report-meta,
+.report-template-times .sticky-toc,
+.report-template-times .badge,
+.report-template-times .toc-pdf-link,
+.report-template-times code,
+.report-template-times pre,
+.report-template-times .facts-table td:last-child,
+.report-template-times .facts-table th { font-family: Menlo, Monaco, "Courier New", monospace; }
+.report-template-times .report-cover,
+.report-template-times .chapter-hero,
+.report-template-times .tactic-card,
+.report-template-times .source-card,
+.report-template-times .priority-group,
+.report-template-times .stat-card,
+.report-template-times .facts-table-wrap { border-color: #000000; border-radius: 0; box-shadow: none; }
+.report-template-times .chapter-hero { border-width: 2px 0; text-align: center; background: #FFFDF8; }
+.report-template-times .toc-pdf-link,
+.report-template-times .action-line strong { background: #000000; color: #ffffff; border-color: #000000; }
+.report-template-times .sticky-toc a:hover,
+.report-template-times .sticky-toc a:focus-visible,
+.report-template-times .sticky-toc a[aria-current="true"] { color: #008138; border-left-color: #008138; }
+.report-template-times .facts-table th,
+.report-template-times .facts-table td { border-bottom-style: dotted; }
+.report-template-times .code-block-wrap { border-color: #000000; border-radius: 0; }
 @media print { @page { size: A4 portrait; margin: 12mm 11mm 14mm; } body.report-body { background: #fff; font-size: 10.5pt; } .report-shell { display: block; max-width: none; padding: 0; } .sticky-toc { position: static; break-after: page; box-shadow: none; } table { table-layout: fixed; font-size: 8.8pt; } th,td { padding: 4pt 5pt; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after { content: ""; } }</style>
 </head>
 <body class="report-body report-theme-auto report-pdf-profile-a4 report-template-times">
@@ -1865,10 +1908,33 @@ LinkedIn | Google Scholar | Personal site</code></pre></div>
   document.querySelectorAll('.code-copy').forEach((button) => {
     button.addEventListener('click', async () => {
       const code = button.closest('.code-block-wrap')?.querySelector('code')?.innerText || '';
-      try {
-        await navigator.clipboard.writeText(code);
+      const original = button.dataset.originalLabel || button.textContent || '⧉';
+      button.dataset.originalLabel = original;
+      const showCopied = () => {
         button.textContent = '✓';
-        setTimeout(() => { button.textContent = '⧉'; }, 1200);
+        button.classList.add('is-copied');
+        button.setAttribute('aria-label', 'Copied');
+        setTimeout(() => {
+          button.textContent = original;
+          button.classList.remove('is-copied');
+          button.setAttribute('aria-label', 'Copy code');
+        }, 1200);
+      };
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(code);
+        } else {
+          const textArea = document.createElement('textarea');
+          textArea.value = code;
+          textArea.setAttribute('readonly', '');
+          textArea.style.position = 'fixed';
+          textArea.style.left = '-9999px';
+          document.body.appendChild(textArea);
+          textArea.select();
+          document.execCommand('copy');
+          textArea.remove();
+        }
+        showCopied();
       } catch (_) {
         button.textContent = 'Copy';
       }

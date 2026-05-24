@@ -91,9 +91,11 @@ test_render_markdown_fixture() {
 	assert_contains "$_out" "class=\"mermaid-rendered\"" "Markdown render includes self-contained Mermaid SVG"
 	assert_contains "$_out" "class=\"latex-rendered-block\"" "Markdown render includes self-contained LaTeX block"
 	assert_contains "$_out" "class=\"code-copy\"" "Markdown render includes copy buttons for code"
+	assert_contains "$_out" "code-copy.is-copied" "Markdown render includes copy feedback state"
 	assert_contains "$_out" "class=\"accordion action-prompt\"" "Markdown render includes action prompt accordions"
 	assert_contains "$_out" "</section><details class=\"accordion action-prompt\"" "Markdown render places action prompts after action panels"
 	assert_contains "$_out" "class=\"toc-pdf-link\"" "Markdown render includes TOC PDF link"
+	assert_contains "$_out" "href=\"report.pdf\"" "Markdown render links TOC PDF button to matching PDF"
 	assert_contains "${TEST_ROOT}/llm-visibility-report-sample-action-prompts.md" "Guide me through the tools" "Render writes companion action prompts file"
 	assert_contains "$_out" "heading-number\">1.</span> Method" "Markdown render numbers body H2 headings"
 	if grep -qF "Chapter 1 /" "$_out"; then
@@ -263,6 +265,8 @@ test_list_templates() {
 	assert_contains "$_templates" "arxiv" "Template list includes original arXiv brief style"
 	assert_contains "$_templates" "wikipedia" "Template list includes original Wikipedia brief style"
 	assert_contains "$_templates" "terminalshop" "Template list includes original Terminal Shop brief style"
+	assert_contains "$_templates" "mellowyellow" "Template list includes preserved Mellow Yellow style"
+	assert_contains "$_templates" "times" "Template list includes Polymarket Times style"
 	"$HELPER_SH" list-dark-templates >"$_templates"
 	assert_contains "$_templates" "lottiefiles" "Dark template list includes LottieFiles"
 	return 0

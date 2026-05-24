@@ -82,7 +82,7 @@ body.report-body {
 .report-main h1,
 .report-main h2,
 .report-main h3 {
-  max-width: 32ch;
+  max-width: 46ch;
   color: var(--report-ink);
   font-family: var(--report-font-heading);
   line-height: 1.14;
@@ -234,6 +234,7 @@ body.report-body {
   background: var(--report-panel);
   border: 1px solid var(--report-rule);
   border-radius: var(--report-radius-lg);
+  font-size: 0.875rem;
   box-shadow: 0 12px 32px rgba(17, 24, 39, 0.1);
 }
 
@@ -248,9 +249,10 @@ body.report-body {
 .sticky-toc-header {
   display: flex;
   gap: var(--report-space-2);
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   margin-block-end: var(--report-space-3);
+  padding-inline-end: 0.35rem;
 }
 
 .sticky-toc-header h2 {
@@ -258,23 +260,25 @@ body.report-body {
 }
 
 .toc-pdf-link {
-  display: inline-flex;
+  display: inline-grid;
   min-width: 0;
   min-height: 0;
-  height: 1.9rem;
-  align-items: center;
-  align-self: flex-start;
+  min-inline-size: 3.2rem;
+  height: 2rem;
+  align-self: center;
   box-sizing: border-box;
-  justify-content: center;
-  padding: 0 0.72rem;
-  border: 1px solid var(--report-rule);
+  place-items: center;
+  padding: 0 0.7rem;
+  border: 1.5px solid var(--report-rule);
   border-radius: var(--report-badge-radius);
+  background: var(--report-panel);
   color: var(--report-ink);
   font-size: 0.72rem;
   font-weight: 900;
   letter-spacing: 0.08em;
-  line-height: 1;
-  text-decoration: none;
+  line-height: 1 !important;
+  text-align: center;
+  text-decoration: none !important;
   white-space: nowrap;
 }
 
@@ -300,6 +304,7 @@ body.report-body {
   padding: var(--report-space-1) var(--report-space-2);
   border-left: 3px solid transparent;
   color: var(--report-ink-muted);
+  line-height: 1.45;
   text-decoration: none;
 }
 
@@ -739,6 +744,12 @@ th .evidence-badge {
   color: var(--report-code-ink);
   cursor: pointer;
   font: 700 0.85rem/1 var(--report-font-body);
+}
+
+.code-copy.is-copied {
+  background: var(--report-green);
+  border-color: var(--report-green);
+  color: #ffffff;
 }
 
 .example-card pre,
@@ -1487,37 +1498,37 @@ a {
 
 /* DESIGN.md brand token overrides: exsqueezeme */
 :root {
-  --report-font-heading: Inter, system-ui, sans-serif;
-  --report-font-body: Inter, system-ui, sans-serif;
-  --report-font-code: "IBM Plex Mono", Consolas, monospace;
+  --report-font-heading: Space Grotesk, Inter, ui-sans-serif, system-ui, sans-serif;
+  --report-font-body: Space Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --report-font-code: Space Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --report-heading-size: 64px;
-  --report-heading-weight: 650;
-  --report-heading-line: 1.05;
-  --report-heading-tracking: -0.03em;
+  --report-heading-weight: 800;
+  --report-heading-line: 1.02;
+  --report-heading-tracking: -0.045em;
   --report-body-size: 16px;
   --report-body-line: 1.62;
-  --report-paper: #FFF7ED;
-  --report-paper-raised: #FFEDD5;
-  --report-panel: #FFFFFF;
-  --report-surface: #FFFFFF;
-  --report-ink: #231A10;
-  --report-ink-muted: #6B5A45;
-  --report-ink-soft: #6B5A45;
-  --report-rule: #C2AD92;
-  --report-rule-strong: #C2410C;
-  --report-blue: #C2410C;
-  --report-radius-lg: 26px;
-  --report-radius-xl: calc(26px + 0.5rem);
-  --report-badge-radius: calc(26px * 0.45);
-  --report-code-bg: #FFFFFF;
-  --report-code-ink: #231A10;
-  --report-code-accent: #C2410C;
-  --report-info-bg: #FFFFFF;
-  --report-impact-bg: #FFFFFF;
-  --report-evidence-bg: #FFFFFF;
-  --report-myth-bg: #FFFFFF;
-  --report-good-bg: #FFFFFF;
-  --report-bad-bg: #FFFFFF;
+  --report-paper: #0A0A0A;
+  --report-paper-raised: #1F1F1F;
+  --report-panel: #111111;
+  --report-surface: #111111;
+  --report-ink: #FFFFFF;
+  --report-ink-muted: #E0E0E0;
+  --report-ink-soft: #E0E0E0;
+  --report-rule: #FFFFFF;
+  --report-rule-strong: #FF5F1F;
+  --report-blue: #FF5F1F;
+  --report-radius-lg: 0px;
+  --report-radius-xl: calc(0px + 0.5rem);
+  --report-badge-radius: calc(0px * 0.45);
+  --report-code-bg: #111111;
+  --report-code-ink: #FFFFFF;
+  --report-code-accent: #FF5F1F;
+  --report-info-bg: #111111;
+  --report-impact-bg: #111111;
+  --report-evidence-bg: #111111;
+  --report-myth-bg: #111111;
+  --report-good-bg: #111111;
+  --report-bad-bg: #111111;
 }
 body.report-body { font-family: var(--report-font-body); font-size: clamp(1rem, 0.94rem + 0.18vw, 1.0625rem); line-height: 1.62; }
 h1, h2, h3 { font-family: var(--report-font-heading); font-weight: var(--report-heading-weight); letter-spacing: var(--report-heading-tracking); }
@@ -1526,6 +1537,77 @@ h2 { font-size: clamp(1.6rem, 3vw, 2.25rem); line-height: 1.16; }
 h3 { font-size: clamp(1.15rem, 1.5vw, 1.35rem); line-height: 1.24; }
 .source-card, .tactic-card, .priority-group { border-color: var(--report-rule); }
 .sticky-toc a:hover, .sticky-toc a:focus-visible, .sticky-toc a[aria-current="true"] { border-left-color: var(--report-blue); }
+body.report-theme-dark {
+    --report-paper: #0A0A0A;
+    --report-paper-raised: #111111;
+    --report-panel: #111111;
+    --report-surface: #111111;
+    --report-ink: #FFFFFF;
+    --report-ink-muted: #E0E0E0;
+    --report-ink-soft: #E0E0E0;
+    --report-rule: #FFFFFF;
+    --report-rule-strong: #FFFFFF;
+    --report-blue: #FF5F1F;
+    --report-action-bg: #FF5F1F;
+    --report-action-ink: #0A0A0A;
+    --report-info-bg: #111111;
+    --report-impact-bg: #111111;
+    --report-evidence-bg: #111111;
+    --report-myth-bg: #111111;
+    --report-good-bg: #111111;
+    --report-bad-bg: #111111;
+    --report-code-bg: #0A0A0A;
+    --report-code-bg-2: #111111;
+    --report-code-ink: #FFFFFF;
+    --report-code-accent: #FF5F1F;
+  }
+body.report-theme-dark .badge-verified,
+body.report-theme-dark .badge-partial,
+body.report-theme-dark .badge-inferred,
+body.report-theme-dark .badge-missing { border-color: var(--report-rule); }
+body.report-theme-dark .sticky-toc { box-shadow: none; }
+@media (prefers-color-scheme: dark) {
+  body.report-theme-auto {
+    --report-paper: #0A0A0A;
+    --report-paper-raised: #111111;
+    --report-panel: #111111;
+    --report-surface: #111111;
+    --report-ink: #FFFFFF;
+    --report-ink-muted: #E0E0E0;
+    --report-ink-soft: #E0E0E0;
+    --report-rule: #FFFFFF;
+    --report-rule-strong: #FFFFFF;
+    --report-blue: #FF5F1F;
+    --report-action-bg: #FF5F1F;
+    --report-action-ink: #0A0A0A;
+    --report-info-bg: #111111;
+    --report-impact-bg: #111111;
+    --report-evidence-bg: #111111;
+    --report-myth-bg: #111111;
+    --report-good-bg: #111111;
+    --report-bad-bg: #111111;
+    --report-code-bg: #0A0A0A;
+    --report-code-bg-2: #111111;
+    --report-code-ink: #FFFFFF;
+    --report-code-accent: #FF5F1F;
+  }
+  body.report-theme-auto .badge-verified,
+  body.report-theme-auto .badge-partial,
+  body.report-theme-auto .badge-inferred,
+  body.report-theme-auto .badge-missing { border-color: var(--report-rule); }
+  body.report-theme-auto .sticky-toc { box-shadow: none; }
+}
+.report-template-exsqueezeme .report-cover,
+.report-template-exsqueezeme .chapter-hero { background: radial-gradient(circle at 20% 10%, rgba(255, 95, 31, 0.18), transparent 28%), var(--report-panel); text-align: center; }
+.report-template-exsqueezeme h1,
+.report-template-exsqueezeme h2,
+.report-template-exsqueezeme h3 { text-transform: uppercase; }
+.report-template-exsqueezeme .toc-pdf-link,
+.report-template-exsqueezeme .action-line strong { background: #FF5F1F; color: #0A0A0A; border-color: #ffffff; box-shadow: 5px 5px 0 #ffffff; }
+.report-template-exsqueezeme .report-cover,
+.report-template-exsqueezeme .tactic-card,
+.report-template-exsqueezeme .source-card,
+.report-template-exsqueezeme .facts-table-wrap { box-shadow: 6px 6px 0 #ffffff; }
 @media print { @page { size: A4 portrait; margin: 12mm 11mm 14mm; } body.report-body { background: #fff; font-size: 10.5pt; } .report-shell { display: block; max-width: none; padding: 0; } .sticky-toc { position: static; break-after: page; box-shadow: none; } table { table-layout: fixed; font-size: 8.8pt; } th,td { padding: 4pt 5pt; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after { content: ""; } }</style>
 </head>
 <body class="report-body report-theme-auto report-pdf-profile-a4 report-template-exsqueezeme">
@@ -1865,10 +1947,33 @@ LinkedIn | Google Scholar | Personal site</code></pre></div>
   document.querySelectorAll('.code-copy').forEach((button) => {
     button.addEventListener('click', async () => {
       const code = button.closest('.code-block-wrap')?.querySelector('code')?.innerText || '';
-      try {
-        await navigator.clipboard.writeText(code);
+      const original = button.dataset.originalLabel || button.textContent || '⧉';
+      button.dataset.originalLabel = original;
+      const showCopied = () => {
         button.textContent = '✓';
-        setTimeout(() => { button.textContent = '⧉'; }, 1200);
+        button.classList.add('is-copied');
+        button.setAttribute('aria-label', 'Copied');
+        setTimeout(() => {
+          button.textContent = original;
+          button.classList.remove('is-copied');
+          button.setAttribute('aria-label', 'Copy code');
+        }, 1200);
+      };
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(code);
+        } else {
+          const textArea = document.createElement('textarea');
+          textArea.value = code;
+          textArea.setAttribute('readonly', '');
+          textArea.style.position = 'fixed';
+          textArea.style.left = '-9999px';
+          document.body.appendChild(textArea);
+          textArea.select();
+          document.execCommand('copy');
+          textArea.remove();
+        }
+        showCopied();
       } catch (_) {
         button.textContent = 'Copy';
       }

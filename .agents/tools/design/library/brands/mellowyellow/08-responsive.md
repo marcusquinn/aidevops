@@ -1,13 +1,12 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# exsqueezeme: Responsive and Mode Behaviour
+# Mellow Yellow playful: Responsive and Mode Behaviour
 
 ## Responsive HTML
 
 - Keep one canonical `report.html` preview.
 - Collapse side navigation/table of contents above narrow widths.
-- Preserve square button borders and readable heading wrapping on small screens.
 - Ensure tables wrap or scroll in HTML and use PDF-safe fixed layout for print.
 
 ## PDF profiles
@@ -18,4 +17,4 @@
 
 ## Light/dark handling
 
-Dark is canonical for this preset. If light output is generated for review, label it as a derived review variant and validate WCAG contrast before publication.
+Light/warm cream is canonical for this preserved preset.

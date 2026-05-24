@@ -1,32 +1,40 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# times: Colour Palette
+# Polymarket Times: Colour Palette
 
 ## Observed source colours
 
-- `#000000`
-- `#008138`
-- `#00a544`
-- `#00c758`
-- `#016630`
-- `#05df72`
-- `#0d542b`
-- `#101828`
-- `#16a34a`
-- `#193cb8`
-- `#1a1a1a`
-- `#1c398e`
+- `#F4F1EA` — cream newsprint background from fetched HTML/CSS
+- `#1A1A1A` — primary ink from fetched HTML/CSS
+- `#000000` — ticker/nav bars and heavy rules from fetched HTML/CSS and screenshot
+- `#FFFFFF` — reverse text and panel contrast from fetched HTML/CSS
+- `#008138` — market green observed in prior source evidence and screenshot direction
+- `#05DF72` — bright ticker green observed in prior source evidence and screenshot direction
+- red/down-market accent — screenshot shows red price/down indicators; use only for negative market states
+
+## Semantic mapping
+
+- `background`: `#F4F1EA`
+- `surface`: `#FFFDF8`
+- `on-surface`: `#1A1A1A`
+- `muted`: `#374151`
+- `outline`: `#000000`
+- `primary`: `#008138`
+- `primary-container`: `#E9E3D7`
+- `code-background`: `#0A0A0A`
+- `code-accent`: `#05DF72`
 
 ## Application rules
 
-- Use observed colours as source evidence, then map them into semantic DESIGN.md roles: background, surface, on-surface, muted, outline, primary, and primary-container.
-- Long-form report text must use high-contrast `on-surface`, not decorative accent colours.
-- Badge/status colours must preserve text labels and borders so grayscale PDF output remains meaningful.
-- For missing theme modes, calculate inverse roles with `colour-palette.md`; mark them as derived until previewed and contrast-checked.
+- Use black for structure: masthead rules, table borders, section dividers, and PDF-safe separators.
+- Use green for positive market movement, links, and selected accents; never for long-form paragraphs.
+- Use red only for negative/down-market status values and pair it with text labels.
+- Keep body text high contrast on cream/surface backgrounds.
+- Preserve badge labels and table borders so grayscale PDF output remains meaningful.
 
 ## Required contrast checks
 
 - Body text on background and surface: WCAG AA 4.5:1 minimum.
-- Large headings and non-text UI indicators: 3:1 minimum.
-- Focus rings, table borders, and evidence badge borders: visible against adjacent surfaces.
+- Large headings, market indicators, and non-text UI: 3:1 minimum.
+- Focus rings, table borders, source links, and evidence badge borders: visible against adjacent surfaces.

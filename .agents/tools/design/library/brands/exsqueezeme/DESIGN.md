@@ -3,41 +3,50 @@
 
 ---
 version: alpha
-name: "ExsqueezeMe playful"
-description: "Report presentation design system inspired by exsqueezeme.app."
+name: "ExSqueezeMe macOS video"
+description: "Report presentation design system inspired by https://exsqueezeme.app/."
 colors:
-  background: "#FFF7ED"
-  surface: "#FFFFFF"
-  on-surface: "#231A10"
-  muted: "#6B5A45"
-  outline: "#F3D8B7"
-  primary: "#C2410C"
-  primary-container: "#FFEDD5"
+  background: "#0A0A0A"
+  surface: "#111111"
+  on-surface: "#FFFFFF"
+  muted: "#E0E0E0"
+  outline: "#FFFFFF"
+  primary: "#FF5F1F"
+  primary-container: "#1F1F1F"
+  background-dark: "#0A0A0A"
+  surface-dark: "#111111"
+  on-surface-dark: "#FFFFFF"
+  muted-dark: "#E0E0E0"
+  outline-dark: "#FFFFFF"
+  primary-dark: "#FF5F1F"
+  code-background: "#111111"
+  code-on-background: "#FFFFFF"
+  code-accent: "#FF5F1F"
 typography:
   headline-display:
-    fontFamily: 'Inter, system-ui, sans-serif'
+    fontFamily: 'Space Grotesk, Inter, ui-sans-serif, system-ui, sans-serif'
     fontSize: 64px
-    fontWeight: 650
-    lineHeight: 1.05
-    letterSpacing: -0.03em
+    fontWeight: 800
+    lineHeight: 1.02
+    letterSpacing: -0.045em
   headline-md:
-    fontFamily: 'Inter, system-ui, sans-serif'
+    fontFamily: 'Space Grotesk, Inter, ui-sans-serif, system-ui, sans-serif'
     fontSize: 32px
-    fontWeight: 650
-    lineHeight: 1.15
+    fontWeight: 800
+    lineHeight: 1.08
   body-md:
-    fontFamily: 'Inter, system-ui, sans-serif'
+    fontFamily: 'Space Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
     fontSize: 16px
     fontWeight: 400
     lineHeight: 1.62
   code-md:
-    fontFamily: '"IBM Plex Mono", Consolas, monospace'
+    fontFamily: 'Space Mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace'
     fontSize: 13px
     fontWeight: 400
-    lineHeight: 1.5
+    lineHeight: 1.55
 rounded:
-  md: 26px
-  lg: 26px
+  md: 0px
+  lg: 0px
 spacing:
   md: 16px
   lg: 24px
@@ -47,16 +56,16 @@ components:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.on-surface}"
     rounded: "{rounded.lg}"
-    borderWidth: 1
+    borderWidth: 2
   evidence-badge:
     backgroundColor: "{colors.primary-container}"
     textColor: "{colors.on-surface}"
-    rounded: 999px
+    rounded: "{rounded.lg}"
 ---
 
-# Design System: ExsqueezeMe playful
+# Design System: ExSqueezeMe macOS video
 
-playful rounded app energy. This DESIGN.md is a report-presentation brand preset for Markdown-first HTML previews and PDF deliverables.
+Hard-edged black/orange macOS utility marketing: black dotted canvas, giant uppercase white display type, orange slab highlight bars, Space Grotesk/Space Mono feel, white outlined buttons, offset white shadows, and square card geometry. This DESIGN.md is a report-presentation brand preset for Markdown-first HTML previews and PDF deliverables.
 
 ## Chapters
 
@@ -74,23 +83,23 @@ playful rounded app energy. This DESIGN.md is a report-presentation brand preset
 
 ## Quick Reference
 
-- **Source inspiration**: exsqueezeme.app
-- **Accent**: `#C2410C` with supporting container `#FFEDD5`
-- **Background/surface**: `#FFF7ED` / `#FFFFFF`
-- **Text**: `#231A10` primary, `#6B5A45` secondary
-- **Heading font**: Inter, system-ui, sans-serif
-- **Body font**: Inter, system-ui, sans-serif
-- **Code font**: "IBM Plex Mono", Consolas, monospace
-- **Radius**: 26px
+- **Source inspiration**: https://exsqueezeme.app/
+- **Accent**: orange `#FF5F1F` slab CTAs on black `#0A0A0A`
+- **Background/surface**: `#0A0A0A` / `#111111`
+- **Text**: `#FFFFFF` primary, `#E0E0E0` secondary
+- **Heading font**: Space Grotesk, Inter, system sans-serif
+- **Body/code font**: Space Mono, system monospace
+- **Radius**: 0px / square
+- **Mode**: dark-first with explicit dark tokens
 - **Export rule**: one `report.html`; A4, Letter, and 16:9 slides are PDF profiles only.
 
 ## Source Review
 
-- **Review date**: 2026-05-23
-- **Source**: https://exsqueezeme.app
+- **Review date**: 2026-05-24
+- **Source**: https://exsqueezeme.app/
 - **Fetched title/evidence**: ExSqueezeMe - macOS video reframing and compression made simple
-- **Fetch status**: Fetched https://exsqueezeme.app with status 200
-- **Observed fonts**: Space Grotesk, Space Mono, var(--default-font-family,ui-sans-serif,system-ui,sans-serif,, var(--default-mono-font-family,ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,, var(--font-body), var(--font-heading), var(--font-mono), var(--font-sans)
-- **Observed colours**: #000000, #00ff6a, #0a0a0a, #141414, #1f1f1f, #2a2a2a, #e0e0e0, #e55f00, #e6a756, #ff3366, #ff6b00, #ff9500
-- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
-- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.
+- **Fetch status**: Fetched and prompt-guard scanned clean.
+- **Observed fonts**: screenshot shows Space Grotesk-like display and Space Mono-like support copy; prior fetch evidence included Space Grotesk and Space Mono references.
+- **Observed colours**: screenshot shows `#0A0A0A` black, white, orange `#FF5F1F`, dark panels, dotted grid.
+- **Screenshot review**: user-provided screenshot used for layout, contrast, square borders, orange slabs, and offset shadow direction.
+- **Rule**: source facts inform the DESIGN.md; renderer tokens are adjusted for report readability and WCAG contrast.

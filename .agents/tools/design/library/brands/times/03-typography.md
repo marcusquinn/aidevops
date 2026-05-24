@@ -1,26 +1,25 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# times: Typography
+# Polymarket Times: Typography
 
-## Observed source font evidence
+## Source/user font evidence
 
-- `EB Garamond`
-- `EB Garamond Fallback`
-- `EB Garamond,EB Garamond Fallback`
-- `Playfair Display`
-- `Playfair Display Fallback`
-- `Playfair Display,Playfair Display Fallback`
-- `UnifrakturMaguntia`
-- `UnifrakturMaguntia Fallback`
+- `Playfair Display` — masthead and display/headline style from user screenshot
+- `Georgia` — editorial article body style requested by user
+- `Menlo` — ticker/market UI style from user screenshot inspection/request
+- Prior fetch evidence also included `Playfair Display`, `EB Garamond`, and decorative newspaper fonts.
 
-## Substitute policy
+## Report font mapping
 
-Use exact source fonts only when they are system/open-source and appropriate for redistribution. Where the source uses commercial or hosted proprietary fonts, map the style to open-source/system alternatives in DESIGN.md tokens. Document the source font in this chapter and the substitute in `DESIGN.md`.
+- Masthead/headings: `"Playfair Display", Georgia, "Times New Roman", serif`
+- Body/article copy: `Georgia, "Times New Roman", serif`
+- Ticker/data/code/UI labels: `Menlo, Monaco, "Courier New", monospace`
 
 ## Report typography requirements
 
-- Screen body text: 16px or larger with 1.45-1.7 line height.
-- PDF body text: 10.5-12pt equivalent.
-- Headings: preserve the source's broad serif/sans/mono character and weight contrast.
-- Code/data: use a readable monospace stack and wrap long lines in PDF.
+- Use Playfair Display for masthead-style report covers and H1/H2/H3 headings.
+- Use Georgia for paragraphs, table prose, notes, and source summaries.
+- Use Menlo for market prices, timestamps, code blocks, evidence slugs, PDF button text, and compact UI labels.
+- Keep large headlines dramatic but report-normalized; avoid excessive wrapping in generated previews.
+- Use all-caps small labels sparingly for categories, TOC labels, and status pills.

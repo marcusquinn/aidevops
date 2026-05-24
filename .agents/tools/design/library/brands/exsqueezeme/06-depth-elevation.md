@@ -1,6 +1,12 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# ExsqueezeMe playful: Depth & Elevation
+# ExSqueezeMe macOS video: Depth & Elevation
 
-Prefer bordered surfaces and restrained shadows. PDF output should remove decorative shadows and preserve border contrast.
+Use hard-edged depth:
+
+- square panels with white borders
+- offset white shadows on selected cards/buttons
+- no soft rounded-card language
+- no glassmorphism
+- PDF output may flatten decorative shadows but must keep border contrast

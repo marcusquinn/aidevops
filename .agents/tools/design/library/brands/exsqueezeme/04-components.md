@@ -1,15 +1,14 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# ExsqueezeMe playful: Components
+# ExSqueezeMe macOS video: Components
 
-- Report cover and meta grid
-- Sticky table of contents
-- Evidence badges
-- Source cards
-- Tactic cards
-- Fact tables with fixed layout
-- Good/bad examples
-- Priority groups and owner/recommendation tables
+- Square dark report cover with orange radial/slab emphasis
+- White-bordered cards with optional offset white shadow
+- Orange action labels and TOC PDF button treatment
+- Dark code blocks with Space Mono feel and visible copy feedback tick
+- Source cards with explicit link affordances
+- Fact tables with strong borders and wrapped cells
+- Evidence badges with plain `Evidence:` label and colour-coded value only
 
-Tables must use wrapping to avoid owner/recommendation overlap in PDF.
+Tables must wrap to avoid owner/recommendation overlap in PDF.
