@@ -21,7 +21,8 @@ out of the repository root while giving automation a stable path contract.
 | `_reports/published/` | Final report bundles ready for sharing or archival. | Gitignored |
 | `_reports/index/` | Generated search, catalogue, and lookup indexes. | Gitignored |
 | `_reports/_config/` | Repo-local report configuration and private options. | Gitignored |
-| `_reports/templates/` | Reviewed reusable report templates and examples. | Versioned |
+| `_reports/examples/` | Reviewed reusable report examples generated from canonical Markdown and DESIGN.md styles. | Versioned |
+| `_reports/sample/` | Full sample reports that demonstrate end-to-end report anatomy and supplementary appendix links. | Versioned |
 
 ## Artifact Contract
 
@@ -30,6 +31,9 @@ out of the repository root while giving automation a stable path contract.
 - Regenerate derived artifacts from `report.md` rather than editing them by hand.
 - Keep generated drafts, published bundles, and indexes out of git unless a
   maintainer explicitly promotes a small fixture or template for review.
+- Do not call versioned report examples “templates”; templates are produced from
+  the DESIGN.md standard and related design agents, while `_reports/examples/`
+  shows generated examples using those templates.
 
 ## Privacy Rules
 

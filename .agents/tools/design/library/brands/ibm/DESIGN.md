@@ -1,6 +1,45 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
+---
+version: alpha
+name: "IBM Carbon"
+description: "IBM Carbon-inspired report presentation design system."
+colors:
+  background: "#F4F4F4"
+  surface: "#FFFFFF"
+  on-surface: "#161616"
+  muted: "#525252"
+  outline: "#C6C6C6"
+  primary: "#0F62FE"
+  primary-container: "#D0E2FF"
+typography:
+  headline-display:
+    fontFamily: '"IBM Plex Sans", Inter, system-ui, sans-serif'
+    fontSize: 64px
+    fontWeight: 300
+    lineHeight: 1.05
+    letterSpacing: -0.03em
+  headline-md:
+    fontFamily: '"IBM Plex Sans", Inter, system-ui, sans-serif'
+    fontSize: 32px
+    fontWeight: 400
+    lineHeight: 1.15
+  body-md:
+    fontFamily: '"IBM Plex Sans", Inter, system-ui, sans-serif'
+    fontSize: 16px
+    fontWeight: 400
+    lineHeight: 1.62
+  code-md:
+    fontFamily: '"IBM Plex Mono", monospace'
+    fontSize: 13px
+    fontWeight: 400
+    lineHeight: 1.5
+rounded:
+  md: 0px
+  lg: 0px
+---
+
 # Design System: IBM
 
 IBM Carbon Design System — enterprise authority, monochromatic + blue, 8px grid, flat depth via background-color layering.
@@ -30,3 +69,14 @@ IBM Carbon Design System — enterprise authority, monochromatic + blue, 8px gri
 - **Inputs**: bottom-border only (`2px solid #0f62fe` on focus)
 - **Tokens**: `--cds-*` prefix for all semantic values
 - **Grid**: 16-column, 8px base unit, 1584px max width
+
+## Source Review
+
+- **Review date**: 2026-05-23
+- **Source**: https://www.ibm.com/design/language/
+- **Fetched title/evidence**: (title unavailable)
+- **Fetch status**: Fetched https://www.ibm.com/design/language/ with status 200
+- **Observed fonts**: Arial, Helvetica, IBM Plex, Mono, inter, mono
+- **Observed colours**: #002d9c, #003a6d, #004144, #0043ce, #0353e9, #044317, #0f62fe, #161616, #198038, #262626, #2c2c2c, #343a3f
+- **Light/dark mode**: observed theme/dark-mode markers in fetched HTML/CSS
+- **Rule**: source facts inform the DESIGN.md; renderer tokens use accessible open-source/system substitutes where source fonts are commercial or unavailable.

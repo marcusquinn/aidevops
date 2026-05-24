@@ -1,39 +1,20 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# IBM Design: Responsive Behavior
+# ibm: Responsive and Mode Behaviour
 
-## Breakpoints
+## Responsive HTML
 
-| Name | Width | Key Changes |
-|------|-------|-------------|
-| Small (sm) | 320px | Single column, hamburger nav, 16px margins |
-| Medium (md) | 672px | 2-column grids begin, expanded content |
-| Large (lg) | 1056px | Full navigation visible, 3-4 column grids |
-| X-Large (xlg) | 1312px | Maximum content density, wide layouts |
-| Max | 1584px | Maximum content width, centered with margins |
+- Keep one canonical `report.html` preview.
+- Collapse side navigation/table of contents above narrow widths.
+- Ensure tables wrap or scroll in HTML and use PDF-safe fixed layout for print.
 
-## Touch Targets
+## PDF profiles
 
-- Button height: 48px default, minimum 40px (compact)
-- Navigation links: 48px row height for touch
-- Input height: 40px default, 48px large
-- Icon buttons: 48px square touch target
-- Mobile menu items: full-width 48px rows
+- A4 portrait is the default PDF profile.
+- Letter portrait is optional for recipients that require it.
+- 16:9 landscape is for PDF presentation export only; do not create separate slides HTML variants.
 
-## Collapsing Strategy
+## Light/dark handling
 
-- Hero: 60px display → 42px → 32px heading as viewport narrows
-- Navigation: full horizontal masthead → hamburger with slide-out panel
-- Grid: 4-column → 2-column → single column
-- Tiles/cards: horizontal grid → vertical stack
-- Images: maintain aspect ratio, max-width 100%
-- Footer: multi-column link groups → stacked single column
-- Section padding: 48px → 32px → 16px
-
-## Image Behavior
-
-- Responsive images with `max-width: 100%`
-- Product illustrations scale proportionally
-- Hero images may shift from side-by-side to stacked below
-- Data visualizations maintain aspect ratio with horizontal scroll on mobile
+Observed theme/dark-mode markers in fetched html/css. Any calculated inverse palette must be documented as derived and validated against WCAG AA before becoming normative.

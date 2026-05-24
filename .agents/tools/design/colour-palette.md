@@ -183,6 +183,33 @@ Spin 6: Complementary (hsl 59) -- radical change
 
 **Temperature shift**: Warm the palette (shift towards orange/red) or cool it (shift towards blue/cyan).
 
+## Light/Dark Mode Inversion
+
+When creating brand style guides, capture observed light and dark values first.
+If one mode is missing, calculate a conservative inverse and label it as derived
+until previewed and contrast-checked.
+
+| Light role | Dark role derivation | Notes |
+|------------|----------------------|-------|
+| `background` | near-black or deep-tinted hue with same brand temperature | Avoid pure black unless the source is terminal/OLED-first. |
+| `surface` | 4-8% lighter than dark background | Keep card boundaries visible without relying only on shadows. |
+| `on-surface` | near-white with slight tint | Must pass 4.5:1 on background and surface. |
+| `muted` | lower-contrast but still readable secondary text | Target 4.5:1 for body-size metadata where possible. |
+| `outline` | visible divider at 3:1 against adjacent surfaces | Use borders when shadows disappear in PDF. |
+| `primary` | same hue, adjusted lightness/saturation for contrast | Do not reuse a light-mode accent if it fails on dark surfaces. |
+| `primary-container` | low-saturation dark tint of primary | Badge backgrounds need readable text and borders. |
+
+Practical derivation rules:
+
+1. Convert key colours to HSL.
+2. Preserve hue where brand recognition depends on it.
+3. For dark mode, invert lightness around perceptual midpoints, then reduce
+   saturation 10-25% for large surfaces.
+4. Recompute text colours against both `background` and `surface`.
+5. Validate `primary` as text, border, and filled button background separately.
+6. Record whether each token is `observed`, `calculated`, or `adjusted for
+   contrast` in the DESIGN.md colour rationale.
+
 ### Spin Presentation
 
 Present each spin as a compact table:

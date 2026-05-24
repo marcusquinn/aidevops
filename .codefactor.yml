@@ -8,3 +8,13 @@ exclude_paths:
   - "node_modules/**"
   - "dist/**"
   - "build/**"
+  - "_reports/**"
+
+exclude_patterns:
+  - ".agents/scripts/_archive/**"
+  - "tests/**"
+  - "backups/**"
+  - "node_modules/**"
+  - "dist/**"
+  - "build/**"
+  - "_reports/**"

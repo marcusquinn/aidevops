@@ -30,7 +30,7 @@ model: sonnet
 - **Location**: `DESIGN.md` in project root (alongside `AGENTS.md`)
 - **Validator**: `npx @google/design.md lint DESIGN.md` (lint, diff, export to tailwind/dtcg, spec; use the `designmd` bin alias in Windows package scripts)
 - **Template**: `templates/DESIGN.md.template`
-- **Library**: `tools/design/library/` (55 brand examples + 12 style templates)
+- **Library**: `tools/design/library/` (55 brand examples, style templates, and report presentation presets)
 - **Preview**: `tools/design/library/_template/preview.html.template`
 - **Palette tools**: `tools/design/colour-palette.md`, `scripts/colormind-helper.sh`
 - **Preview capture**: `scripts/design-preview-helper.sh`
@@ -56,11 +56,12 @@ Upstream `@google/design.md` v0.1.0 was reviewed as the initial open-source rele
 **Workflow** (apply in order):
 
 1. **Check** — does `DESIGN.md` exist in project root? If yes, use it. If no, create one.
-2. **Create** — from scratch (interview), links (`tools/design/design-md-from-links.md`), report presentation (`tools/design/report-presentation.md`), or library example.
-3. **Validate** — run `npx @google/design.md lint DESIGN.md`. Zero errors, warnings reviewed.
-4. **Preview** — generate `preview.html` to visually verify the design system.
-5. **Iterate** — spin palettes, adjust tokens, regenerate preview until satisfied.
-6. **Build** — hand DESIGN.md to coding agents for consistent, on-brand UI output.
+2. **Load context** — for new brand/style guides, read the focused design references before drafting: `brand-identity.md`, `colour-palette.md`, `design-md-from-links.md`, `ui-ux-inspiration.md`, `ui-ux-catalogue.toon`, and `report-presentation.md` when HTML/PDF reports are in scope. Use `design-inspiration.md`, `open-design.md`, and `open-design-ingestion.md` for discovery/artifact workflows only when relevant.
+3. **Create** — from scratch (interview), links (`tools/design/design-md-from-links.md`), report presentation (`tools/design/report-presentation.md`), or library example.
+4. **Validate** — run `npx @google/design.md lint DESIGN.md`. Zero errors, warnings reviewed.
+5. **Preview** — generate `preview.html` to visually verify the design system.
+6. **Iterate** — spin palettes, adjust tokens, regenerate preview until satisfied.
+7. **Build** — hand DESIGN.md to coding agents for consistent, on-brand UI output.
 
 <!-- AI-CONTEXT-END -->
 

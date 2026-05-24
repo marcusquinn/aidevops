@@ -15,10 +15,10 @@ BADGE_KEY = "evidence_badge"
 
 ALLOWED_BADGES = (BADGE_VERIFIED, BADGE_PARTIAL, BADGE_INFERRED, BADGE_MISSING)
 BADGE_LABELS = {
-    BADGE_VERIFIED: "Evidence: Verified",
-    BADGE_PARTIAL: "Evidence: Partial",
-    BADGE_INFERRED: "Evidence: Inferred",
-    BADGE_MISSING: "Evidence: Missing",
+    BADGE_VERIFIED: "Verified",
+    BADGE_PARTIAL: "Partial",
+    BADGE_INFERRED: "Inferred",
+    BADGE_MISSING: "Missing",
 }
 
 
@@ -26,4 +26,10 @@ def badge_html(value: Any) -> str:
     key = str(value).strip().lower()
     if key not in ALLOWED_BADGES:
         raise ValueError(f"unknown evidence badge value: {value}")
-    return f'<span class="badge badge-{key}">{BADGE_LABELS[key]}</span>'
+    label = BADGE_LABELS[key]
+    return (
+        f'<span class="evidence-badge" aria-label="Evidence: {label}">'
+        '<span class="evidence-label">Evidence:</span>'
+        f'<span class="badge badge-{key}">{label}</span>'
+        '</span>'
+    )
