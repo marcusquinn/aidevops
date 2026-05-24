@@ -17,10 +17,11 @@
 #        merged=0 + eligible=0 → gauge reset to 0 (streak broken)
 #        merged=0 + eligible>0 → gauge incremented by 1
 #   7. _pms_count_eligible_unmerged_for_repo excludes PRs blocked by
-#      read-only merge gates (required checks, worker PR with no linked issue,
-#      non-collaborator author without maintainer crypto-approval, and unknown
-#      authors that must not bypass the collaborator check) and keeps processing
-#      when GitHub returns a null PR author for deleted users.
+#      read-only merge gates (required checks, interactive PRs held for manual
+#      merge, worker PR with no linked issue, non-collaborator author without
+#      maintainer crypto-approval, and unknown authors that must not bypass the
+#      collaborator check) and keeps processing when GitHub returns a null PR
+#      author for deleted users.
 #   8. _detect_pattern_outage de-duplicates repeated PR observations.
 #   9. pulse-merge-stuck.sh and pulse-stats-helper.sh pass shellcheck.
 #
@@ -320,7 +321,9 @@ gh() {
 {"number":107,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"external"}},
 {"number":108,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"trusted"}},
 {"number":109,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":null},
-{"number":110,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":null,"author":{"login":"external"}}
+{"number":110,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":null,"author":{"login":"external"}},
+{"number":111,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:interactive"}],"author":{"login":"trusted"}},
+{"number":112,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:interactive"},{"name":"allow-auto-merge"}],"author":{"login":"trusted"}}
 ]'
 		return 0
 	fi
@@ -364,8 +367,19 @@ _has_maintainer_crypto_approval() {
 	return 1
 }
 
+_interactive_pr_auto_merge_allowed() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local labels_str="$3"
+	[[ -n "$pr_number" && -n "$repo_slug" ]] || return 1
+	if [[ ",${labels_str}," == *",allow-auto-merge,"* ]]; then
+		return 0
+	fi
+	return 1
+}
+
 got=$(_pms_count_eligible_unmerged_for_repo "example/repo")
-assert_eq "6a: zero-progress count excludes read-only merge-gate blockers" "2" "$got"
+assert_eq "6a: zero-progress count excludes read-only merge-gate blockers" "3" "$got"
 
 PMS_TEST_COUNT_AUTHORS_FILE="$TEST_TMPDIR/count-authors.log"
 : >"$PMS_TEST_COUNT_AUTHORS_FILE"
