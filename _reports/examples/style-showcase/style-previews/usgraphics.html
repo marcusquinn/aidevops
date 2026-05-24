@@ -1557,7 +1557,6 @@ a {
   .report-main h3,
   .code-block-head,
   .source-title {
-    break-after: avoid;
     break-after: avoid-page;
     page-break-after: avoid;
   }
@@ -1565,13 +1564,11 @@ a {
   .report-main h2.chapter-heading {
     margin-block-start: 10mm;
     padding-block-start: 5mm;
-    break-inside: avoid;
     break-inside: avoid-page;
     page-break-inside: avoid;
   }
 
   .report-main h2.chapter-heading::before {
-    break-after: avoid;
     break-after: avoid-page;
     page-break-after: avoid;
   }
@@ -1581,7 +1578,6 @@ a {
   .mermaid-rendered,
   .latex-rendered-block,
   .bar-chart p {
-    break-inside: avoid;
     break-inside: avoid-page;
     break-after: avoid-page;
     page-break-inside: avoid;
@@ -1686,7 +1682,6 @@ a {
   .quote-card,
   .callout {
     margin-block: 0 8mm;
-    break-inside: avoid;
     break-inside: avoid-page;
     break-after: avoid-page;
     page-break-inside: avoid;
@@ -1713,7 +1708,6 @@ a {
   .report-main h2.chapter-heading + .accordion,
   .report-main h2.chapter-heading + .quote-card,
   .report-main h2.chapter-heading + .callout {
-    break-before: avoid;
     break-before: avoid-page;
     page-break-before: avoid;
   }
@@ -1870,12 +1864,12 @@ h3 { font-size: clamp(1.15rem, 1.5vw, 1.35rem); line-height: 1.24; }
 @media print {
 body.report-body { orphans: 3; widows: 3; }
 .report-shell, .report-main, .report-content { overflow: visible; }
-.report-main h2.chapter-heading { margin-block-start: 10mm; padding-block-start: 5mm; break-inside: avoid; break-inside: avoid-page; page-break-inside: avoid; }
-.report-main h2.chapter-heading::before { break-after: avoid; break-after: avoid-page; page-break-after: avoid; }
+.report-main h2.chapter-heading { margin-block-start: 10mm; padding-block-start: 5mm; break-inside: avoid-page; page-break-inside: avoid; }
+.report-main h2.chapter-heading::before { break-after: avoid-page; page-break-after: avoid; }
 .accordion { margin-block-start: 5mm; }
 .report-footer { display: flex; min-height: 22mm; margin-block-start: 8mm; padding: 0 6mm; align-items: center; justify-content: center; text-align: center; box-sizing: border-box; }
-.chapter-hero, .tactic-card, .example-card, .good-bad, .facts-table-wrap, .details-note, .industry-card, .priority-group, .checklist-card, .source-card, .sources-layout, .sources-group, .myth-callout, .info-panel, .impact-panel, .evidence-panel, .action-panel, .severity-key, .accordion, .quote-card, .callout, .action-line, .action-prompt { box-sizing: border-box; width: 100%; max-width: 100%; margin-inline: 0; overflow: visible; break-inside: avoid; break-inside: avoid-page; page-break-inside: avoid; }
-.report-main h2.chapter-heading + .chapter-hero, .report-main h2.chapter-heading + .tactic-card, .report-main h2.chapter-heading + .example-card, .report-main h2.chapter-heading + .good-bad, .report-main h2.chapter-heading + .facts-table-wrap, .report-main h2.chapter-heading + .details-note, .report-main h2.chapter-heading + .industry-card, .report-main h2.chapter-heading + .priority-group, .report-main h2.chapter-heading + .checklist-card, .report-main h2.chapter-heading + .source-card, .report-main h2.chapter-heading + .sources-layout, .report-main h2.chapter-heading + .sources-group, .report-main h2.chapter-heading + .myth-callout, .report-main h2.chapter-heading + .info-panel, .report-main h2.chapter-heading + .impact-panel, .report-main h2.chapter-heading + .evidence-panel, .report-main h2.chapter-heading + .action-panel, .report-main h2.chapter-heading + .severity-key, .report-main h2.chapter-heading + .accordion, .report-main h2.chapter-heading + .quote-card, .report-main h2.chapter-heading + .callout { break-before: avoid; break-before: avoid-page; page-break-before: avoid; }
+.chapter-hero, .tactic-card, .example-card, .good-bad, .facts-table-wrap, .details-note, .industry-card, .priority-group, .checklist-card, .source-card, .sources-layout, .sources-group, .myth-callout, .info-panel, .impact-panel, .evidence-panel, .action-panel, .severity-key, .accordion, .quote-card, .callout, .action-line, .action-prompt { box-sizing: border-box; width: 100%; max-width: 100%; margin-inline: 0; overflow: visible; break-inside: avoid-page; page-break-inside: avoid; }
+.report-main h2.chapter-heading + .chapter-hero, .report-main h2.chapter-heading + .tactic-card, .report-main h2.chapter-heading + .example-card, .report-main h2.chapter-heading + .good-bad, .report-main h2.chapter-heading + .facts-table-wrap, .report-main h2.chapter-heading + .details-note, .report-main h2.chapter-heading + .industry-card, .report-main h2.chapter-heading + .priority-group, .report-main h2.chapter-heading + .checklist-card, .report-main h2.chapter-heading + .source-card, .report-main h2.chapter-heading + .sources-layout, .report-main h2.chapter-heading + .sources-group, .report-main h2.chapter-heading + .myth-callout, .report-main h2.chapter-heading + .info-panel, .report-main h2.chapter-heading + .impact-panel, .report-main h2.chapter-heading + .evidence-panel, .report-main h2.chapter-heading + .action-panel, .report-main h2.chapter-heading + .severity-key, .report-main h2.chapter-heading + .accordion, .report-main h2.chapter-heading + .quote-card, .report-main h2.chapter-heading + .callout { break-before: avoid-page; page-break-before: avoid; }
 }</style>
 </head>
 <body class="report-body report-theme-auto report-pdf-profile-a4 report-template-usgraphics">
