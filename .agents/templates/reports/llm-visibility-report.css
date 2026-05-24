@@ -40,6 +40,7 @@
   --report-badge-strong-bg: #eaf2ff;
   --report-badge-strong-ink: #1d4ed8;
   --report-badge-vendor-bg: #f4ecff;
+  --report-badge-vendor-ink: var(--report-violet);
   --report-badge-practitioner-bg: #fff5db;
   --report-badge-practitioner-ink: #92400e;
   --report-badge-hygiene-bg: #f3f4f6;
@@ -77,7 +78,7 @@ body.report-body {
 }
 
 .report-main {
-  grid-column: span 8;
+  grid-column: span 9;
   min-width: 0;
 }
 
@@ -277,7 +278,7 @@ body.report-body {
 
 .badge--vendor {
   background: var(--report-badge-vendor-bg);
-  color: var(--report-violet);
+  color: var(--report-badge-vendor-ink);
   border-color: rgba(109, 40, 217, 0.2);
 }
 
