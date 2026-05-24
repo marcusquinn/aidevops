@@ -79,6 +79,7 @@ define_function_under_test() {
 		printf 'ERROR: could not extract _handle_post_merge_actions from %s\n' "$MERGE_FILE" >&2
 		return 1
 	fi
+	_PM_PARENT_TASK_LABEL_NEEDLE=",parent-task,"
 	eval "$fn_src"
 	return 0
 }
@@ -127,11 +128,19 @@ install_helper_stubs() {
 		printf '%s %s %s\n' "$issue" "$repo" "$actor" >>"$SOLVED_LABEL_LOG"
 		return 0
 	}
+	clear_terminal_issue_dispatch_labels() {
+		local issue="$1"
+		local repo="$2"
+		local context="$3"
+		printf 'cleanup %s %s %s\n' "$issue" "$repo" "$context" >>"$GH_CALL_LOG"
+		return 0
+	}
 	unlock_issue_after_worker() { return 0; }
 	fast_fail_reset() { return 0; }
 	_release_interactive_claim_on_merge() { return 0; }
 	auto_file_next_phase() { return 0; }
 	_unblock_circuit_breaker_meta_pr() { return 0; }
+	_pm_handle_partial_parent_closeout() { return 0; }
 	return 0
 }
 
@@ -170,6 +179,8 @@ test_provided_empty_pr_labels_skip_refetch() {
 		"provided empty pr_labels skips fallback fetch"
 	assert_log_contains "$SOLVED_LABEL_LOG" "22219 marcusquinn/aidevops interactive" \
 		"provided empty pr_labels keeps interactive solved attribution"
+	assert_log_contains "$GH_CALL_LOG" "cleanup 22219 marcusquinn/aidevops post-merge-pr-22585" \
+		"post-merge close strips terminal dispatch labels"
 	return 0
 }
 
@@ -200,6 +211,8 @@ test_superseded_pr_closes_original_issue() {
 		"superseded chain closes original issue"
 	assert_log_contains "$SOLVED_LABEL_LOG" "22219 marcusquinn/aidevops worker" \
 		"superseded chain marks original issue solved by worker"
+	assert_log_contains "$GH_CALL_LOG" "cleanup 22219 marcusquinn/aidevops post-merge-superseded-pr-44444" \
+		"superseded close strips terminal dispatch labels"
 	return 0
 }
 
