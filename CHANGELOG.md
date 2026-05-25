@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.18.0] - 2026-05-25
+
+### Added
+
+- Add modular report markdown renderer and report example outputs (#24060)
+
+### Changed
+
+- Restore bulk dispatch label sweep (#24104)
+- Harden Nostr VPN package expansion (#24103)
+- Address report style review follow-up (#24102)
+- Update simplification state registry
+
+### Fixed
+
+- Handle escaped backslashes in Markdown tables (#24105)
+- Harden version-manager headless worker guard (#24101)
+
 ## [3.17.32] - 2026-05-25
 
 ### Changed
