@@ -31,6 +31,87 @@ else
 	REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 fi
 VERSION_FILE="$REPO_ROOT/VERSION"
+_VERSION_MANAGER_ACTION_RELEASE="release"
+
+_version_manager_marker_is_truthy() {
+	local marker=""
+	local marker_lower=""
+
+	for marker in "$@"; do
+		marker_lower=$(printf '%s' "$marker" | tr '[:upper:]' '[:lower:]')
+		case "$marker_lower" in
+		"1" | "true" | "yes" | "on")
+			return 0
+			;;
+		esac
+	done
+	return 1
+}
+
+_version_manager_is_headless_task_worker() {
+	local worker_marker="${WORKER_TASK_NUMBER:-}${WORKER_ISSUE_NUMBER:-}${WORKER_SESSION_KEY:-}${AIDEVOPS_SESSION_KEY:-}"
+	local worker_marker_lower=""
+
+	_version_manager_marker_is_truthy "${AIDEVOPS_HEADLESS:-}" "${FULL_LOOP_HEADLESS:-}" "${OPENCODE_HEADLESS:-}" "${HEADLESS:-}" || return 1
+	[[ -n "${WORKER_TASK_NUMBER:-}" ]] && return 0
+	[[ -n "${WORKER_ISSUE_NUMBER:-}" ]] && return 0
+	worker_marker_lower=$(printf '%s' "$worker_marker" | tr '[:upper:]' '[:lower:]')
+	[[ "$worker_marker_lower" == *task-* || "$worker_marker_lower" == *issue-* ]] && return 0
+	return 1
+}
+
+_version_manager_has_approved_release_context() {
+	local branch_name=""
+	branch_name=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+	local session_key="${WORKER_SESSION_KEY:-${AIDEVOPS_SESSION_KEY:-}}"
+	local session_key_lower=""
+	local session_title="${AIDEVOPS_SESSION_TITLE:-${WORKER_SESSION_TITLE:-}}"
+	local session_title_lower=""
+	session_key_lower=$(printf '%s' "$session_key" | tr '[:upper:]' '[:lower:]')
+	session_title_lower=$(printf '%s' "$session_title" | tr '[:upper:]' '[:lower:]')
+
+	[[ "${AIDEVOPS_RELEASE_CONTEXT_APPROVED:-}" == "1" ]] && return 0
+	[[ "${VERSION_MANAGER_RELEASE_CONTEXT_APPROVED:-}" == "1" ]] && return 0
+	[[ "${AIDEVOPS_TASK_SCOPE:-}" == "$_VERSION_MANAGER_ACTION_RELEASE" ]] && return 0
+	[[ "$branch_name" == release/* || "$branch_name" == hotfix/* ]] && return 0
+	[[ "$session_key_lower" == release-* || "$session_key_lower" == hotfix-* ]] && return 0
+	[[ "$session_title_lower" == release* || "$session_title_lower" == *" release" || "$session_title_lower" == *" release "* ]] && return 0
+	return 1
+}
+
+_version_manager_action_is_read_only() {
+	local action="$1"
+	shift || true
+	case "$action" in
+	"" | "help" | "usage" | "get" | "validate" | "preflight" | "changelog-check" | "changelog-preview" | "list-task-ids")
+		return 0
+		;;
+	"$_VERSION_MANAGER_ACTION_RELEASE")
+		local arg=""
+		for arg in "$@"; do
+			[[ "$arg" == "--dry-run" ]] && return 0
+		done
+		;;
+	esac
+	return 1
+}
+
+_version_manager_guard_headless_release_scope() {
+	local action="$1"
+	shift || true
+	local branch_name=""
+	branch_name=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>&1 || printf 'unknown')
+
+	_version_manager_is_headless_task_worker || return 0
+	_version_manager_action_is_read_only "$action" "$@" && return 0
+	_version_manager_has_approved_release_context && return 0
+
+	print_warning "Skipping version-manager ${action:-help}: release/write operations are blocked in ordinary headless task-worker context."
+	print_info "Task worker: ${WORKER_TASK_NUMBER:-unknown}; issue: ${WORKER_ISSUE_NUMBER:-unknown}; repo: ${REPO_ROOT}; session: ${WORKER_SESSION_KEY:-${AIDEVOPS_SESSION_KEY:-unknown}}; branch: ${branch_name}"
+	print_info "Approved release contexts: AIDEVOPS_RELEASE_CONTEXT_APPROVED=1, VERSION_MANAGER_RELEASE_CONTEXT_APPROVED=1, AIDEVOPS_TASK_SCOPE=release, or a release/*/hotfix/* branch/session."
+	print_info "This guard is non-fatal so the original issue workflow can continue without treating release cleanup as required."
+	return 1
+}
 
 # Source sub-libraries
 # shellcheck source=./version-manager-changelog.sh
@@ -479,6 +560,10 @@ main() {
 	local action="${1:-}"
 	local bump_type="${2:-}"
 
+	if ! _version_manager_guard_headless_release_scope "$action" "${@:2}"; then
+		return 0
+	fi
+
 	case "$action" in
 	"get")
 		get_current_version
@@ -491,7 +576,7 @@ main() {
 		version=$(get_current_version)
 		create_git_tag "$version"
 		;;
-	"release")
+	"$_VERSION_MANAGER_ACTION_RELEASE")
 		_main_release "$bump_type" "${@:3}"
 		;;
 	"github-release")

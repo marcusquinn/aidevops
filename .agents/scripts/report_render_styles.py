@@ -83,7 +83,7 @@ def _base_report_css() -> str:
 def _front_matter(path: Path) -> list[str]:
     lines = path.read_text(encoding="utf-8").splitlines()
     start = -1
-    for index, line in enumerate(lines):
+    for index, line in enumerate(lines[:100]):
         if line.strip() == "---":
             start = index
             break
@@ -180,7 +180,7 @@ def _indent_width(line: str) -> int:
             width += 1
             continue
         if char == "\t":
-            width += 2
+            width += 4
             continue
         break
     return width
