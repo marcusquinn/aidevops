@@ -11,3 +11,7 @@ new report workflow.
 For reports using a DESIGN.md with dark/inverse tokens, include both
 `<style>-light.html` and `<style>-dark.html` previews so panel colour inversion
 can be reviewed independently of the viewer's OS colour scheme.
+
+Keep PDF exports explicit: use `*-a4.pdf` for portrait output and `*-16-9.pdf`
+for landscape output. Do not keep duplicate unsuffixed PDF exports once the
+explicit companions exist.

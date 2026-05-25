@@ -134,13 +134,16 @@ def is_executive_summary(title: str) -> bool:
 def wrap_document(headings: list[tuple[int, str, str]], body: str) -> str:
     css = load_css(TEMPLATE, PDF_PROFILE)
     pdf_href = os.environ.get("REPORT_PDF_HREF", "").strip()
+    pdf_label = os.environ.get("REPORT_PDF_LABEL", "A4").strip() or "A4"
     pdf_landscape_href = os.environ.get("REPORT_PDF_LANDSCAPE_HREF", "").strip()
     pdf_link = ""
     pdf_links = []
     if pdf_href:
+        safe_pdf_label = html.escape(pdf_label)
         pdf_links.append(
             f'<a class="toc-pdf-link" href="{html.escape(pdf_href)}" '
-            'aria-label="Open A4 PDF version" title="Open A4 PDF version">A4</a>'
+            f'aria-label="Open {safe_pdf_label} PDF version" title="Open {safe_pdf_label} PDF version">'
+            f'{safe_pdf_label}</a>'
         )
     if pdf_landscape_href:
         pdf_links.append(

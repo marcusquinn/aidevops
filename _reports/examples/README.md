@@ -8,7 +8,8 @@ Markdown-first report contract from `.agents/reports/outputs.md`:
 
 - `report.md` is canonical.
 - `report.html` and `style-previews/*.html` are derived examples.
-- PDFs are generated on demand with `--pdf-profile`; do not hand-edit exports.
+- `*-a4.pdf` and `*-16-9.pdf` are reviewed portrait and landscape exports;
+  do not keep duplicate unsuffixed PDF exports beside them.
 
 ## Examples
 

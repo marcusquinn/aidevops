@@ -97,7 +97,7 @@ test_render_markdown_fixture() {
 	assert_contains "$_out" "</section><details class=\"accordion action-prompt\"" "Markdown render places action prompts after action panels"
 	assert_contains "$_out" "class=\"toc-pdf-link\"" "Markdown render includes TOC PDF link"
 	assert_contains "$_out" ">A4</a>" "Markdown render labels portrait PDF as A4"
-	assert_contains "$_out" "href=\"report.pdf\"" "Markdown render links TOC PDF button to matching PDF"
+	assert_contains "$_out" "href=\"report-a4.pdf\"" "Markdown render links TOC PDF button to matching A4 PDF"
 	assert_contains "$_out" "href=\"report-16-9.pdf\"" "Markdown render links TOC landscape PDF button"
 	assert_contains "$_out" "display: inline-flex" "Markdown render vertically centers TOC PDF button"
 	assert_contains "$_out" ".toc-pdf-actions, .toc-pdf-link { display: none !important; }" "Markdown print hides TOC PDF buttons"
@@ -339,6 +339,7 @@ test_sample_and_css_commands() {
 test_render_template_and_profiles() {
 	local _out="${TEST_ROOT}/editorial.html"
 	local _dark="${TEST_ROOT}/lottiefiles-dark.html"
+	local _letter="${TEST_ROOT}/letter.html"
 	local _slides="${TEST_ROOT}/slides.css"
 	"$HELPER_SH" render "${FIXTURE_DIR}/llm-visibility-report-sample.md" \
 		--template axel \
@@ -349,6 +350,10 @@ test_render_template_and_profiles() {
 		--theme dark \
 		--pdf-profile a4 \
 		--output "$_dark"
+	"$HELPER_SH" render "${FIXTURE_DIR}/llm-visibility-report-sample.md" \
+		--template axel \
+		--pdf-profile letter \
+		--output "$_letter"
 	"$HELPER_SH" print-css --template axel --pdf-profile slides-16-9-2 >"$_slides"
 	assert_contains "$_out" "report-template-axel" "Render supports named style template"
 	assert_contains "$_out" "Newsreader" "Render includes style-specific fonts"
@@ -356,6 +361,8 @@ test_render_template_and_profiles() {
 	assert_contains "$_dark" "report-theme-dark" "Render supports forced dark theme"
 	assert_contains "$_dark" "--report-info-bg: #161A1C" "Dark theme inverts info panels"
 	assert_contains "$_dark" "--report-good-bg: #161A1C" "Dark theme inverts good panels"
+	assert_contains "$_letter" "href=\"letter-letter.pdf\"" "Render derives portrait PDF link from Letter profile"
+	assert_contains "$_letter" ">US Letter</a>" "Render labels Letter profile PDF link"
 	assert_contains "$_slides" "size: 16in 9in" "print-css supports 16:9 landscape profile"
 	assert_contains "$_slides" "column-count: 2" "print-css supports two-column presentation profile"
 	return 0
