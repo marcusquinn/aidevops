@@ -119,7 +119,9 @@ test_clear_terminal_labels_propagates_edit_failures() {
 	local exit_code=0
 	clear_terminal_issue_dispatch_labels 42 owner/repo test-context || exit_code=$?
 	unset GH_STUB_FAIL_EDIT
-	if [[ "$exit_code" == "7" ]]; then
+	local log_line=""
+	log_line=$(tr '\n' ' ' <"$LOGFILE")
+	if [[ "$exit_code" == "7" && "$log_line" == *"[exit: 7]"* ]]; then
 		print_result "terminal label cleanup propagates edit failures" 0
 	else
 		print_result "terminal label cleanup propagates edit failures" 1

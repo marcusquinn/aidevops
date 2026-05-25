@@ -61,7 +61,7 @@ clear_terminal_issue_dispatch_labels() {
 		return 0
 	fi
 
-	echo "[pulse-wrapper] dispatch-label-cleanup: failed to strip terminal dispatch labels from ${repo_slug}#${issue_number} (${context})" >>"$LOGFILE"
+	echo "[pulse-wrapper] dispatch-label-cleanup: failed to strip terminal dispatch labels from ${repo_slug}#${issue_number} (${context}) [exit: ${exit_code}]" >>"$LOGFILE"
 	return "$exit_code"
 }
 
