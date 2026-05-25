@@ -47,7 +47,7 @@ Templates:
   `times`, `consumer`, `tavily`, `supermemory`, `savvy`, `exsqueezeme`,
   `terminalshop`, `scalefusion`, `zeroheight`, `superx`, `wpcodebox`, `outrank`,
   `lottiefiles`, `knob`, `postedapp`, `serper`, `indexsy`, `lifee`, `bento`,
-  `ibm`, `apple`, `cabinet`, `heron`, and `usgraphics`.
+  `ibm`, `apple`, `cabinet`, `heron`, `usgraphics`, and `signal-agency`.
 
 PDF profiles:
 
