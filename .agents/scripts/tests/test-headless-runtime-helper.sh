@@ -7,6 +7,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 HELPER_SCRIPT="${SCRIPT_DIR}/../headless-runtime-helper.sh"
+VERSION_MANAGER_SCRIPT="${SCRIPT_DIR}/../version-manager.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -618,6 +619,57 @@ This worker run is unattended.'
 	fi
 
 	print_result "does not double-append existing contract" 1 "Existing contract was modified"
+	return 0
+}
+
+test_version_manager_denies_issue_worker_release_writes() {
+	local worktree_dir="${TEST_ROOT}/version-manager-deny"
+	mkdir -p "$worktree_dir"
+	init_git_worktree "$worktree_dir"
+	printf '%s\n' "1.2.3" >"${worktree_dir}/VERSION"
+
+	local output="" status=0 version_after=""
+	output=$(
+		cd "$worktree_dir" || exit 1
+		# shellcheck source=/dev/null
+		source "$VERSION_MANAGER_SCRIPT" >/dev/null 2>&1 || exit 1
+		export AIDEVOPS_HEADLESS=1 WORKER_ISSUE_NUMBER=24085 WORKER_SESSION_KEY="issue-24085"
+		_version_manager_guard_headless_release_scope release patch
+	) 2>&1 || status=$?
+	version_after=$(<"${worktree_dir}/VERSION")
+
+	if [[ "$status" -ne 0 && "$version_after" == "1.2.3" ]]; then
+		print_result "version-manager denies ordinary issue-worker release writes" 0
+		return 0
+	fi
+
+	print_result "version-manager denies ordinary issue-worker release writes" 1 \
+		"status=$status version=${version_after:-<empty>} output=${output:-<empty>}"
+	return 0
+}
+
+test_version_manager_allows_approved_release_context() {
+	local worktree_dir="${TEST_ROOT}/version-manager-allow"
+	mkdir -p "$worktree_dir"
+	init_git_worktree "$worktree_dir"
+	printf '%s\n' "1.2.3" >"${worktree_dir}/VERSION"
+
+	local output="" status=0
+	output=$(
+		cd "$worktree_dir" || exit 1
+		# shellcheck source=/dev/null
+		source "$VERSION_MANAGER_SCRIPT" >/dev/null 2>&1 || exit 1
+		export AIDEVOPS_HEADLESS=1 WORKER_ISSUE_NUMBER=24085 WORKER_SESSION_KEY="issue-24085" AIDEVOPS_RELEASE_CONTEXT_APPROVED=1
+		_version_manager_guard_headless_release_scope release patch
+	) 2>&1 || status=$?
+
+	if [[ "$status" -eq 0 && -z "$output" ]]; then
+		print_result "version-manager allows explicit approved release context" 0
+		return 0
+	fi
+
+	print_result "version-manager allows explicit approved release context" 1 \
+		"status=$status output=${output:-<empty>}"
 	return 0
 }
 
@@ -1607,6 +1659,8 @@ main() {
 	test_cmd_run_preserves_worker_origin_overrides_before_canary
 	test_deleted_launch_cwd_recovers_to_work_dir
 	test_does_not_double_append
+	test_version_manager_denies_issue_worker_release_writes
+	test_version_manager_allows_approved_release_context
 	test_extract_session_id_from_output_returns_latest_session_id
 	test_blocked_completion_records_blocked_label
 	test_missing_context_blocked_requests_brief_recovery
