@@ -5283,10 +5283,10 @@
       "pr": 12754
     },
     ".agents/tools/design/design-md.md": {
-      "at": "2026-05-24T16:53:50Z",
-      "hash": "103ceab91b35685a09031311952852c32f1b5890",
+      "at": "2026-05-25T22:05:12Z",
+      "hash": "0d4f97604412340be40dd46862e4e2089b78f7f9",
       "issue": 16952,
-      "passes": 6,
+      "passes": 7,
       "pr": 16966
     },
     ".agents/tools/design/library/brands/airbnb/DESIGN.md": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-05-25T15:42:20Z",
-      "hash": "967d544f35e11bf8d0b6caee07351dc8d9c2a6f2",
-      "passes": 196,
+      "at": "2026-05-25T22:06:57Z",
+      "hash": "26576635f23368d215c0d23efc0627360e9be537",
+      "passes": 197,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-05-25T15:42:20Z",
-      "hash": "c7ccd0b6e60dd11d7f72ac1cec75eed628876fa2",
-      "passes": 191,
+      "at": "2026-05-25T22:06:58Z",
+      "hash": "c073ee0e9e2d23f0fc39f7473a95835a7bcc8e5e",
+      "passes": 192,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
