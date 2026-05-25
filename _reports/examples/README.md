@@ -39,6 +39,20 @@ their A4, US Letter, and slides PDF exports from one preview UI.
 For style comparisons, render the same `style-previews/report.md` with any name
 from `.agents/scripts/report-render-helper.sh list-templates`.
 
+When exporting committed PDFs with Chrome/Chromium headless, suppress browser
+date/title/URL/page-number chrome:
+
+```bash
+"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+  --headless=new \
+  --no-pdf-header-footer \
+  --print-to-pdf=_reports/examples/style-previews/<name>-a4.pdf \
+  file://$PWD/_reports/examples/style-previews/<name>.html
+```
+
+Do not commit exports with browser-generated headers or footers; report chrome
+must come from the renderer HTML/CSS only.
+
 Dark-capable styles also include explicit light and dark preview files. List
 those styles with:
 
