@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Report examples</title>
+  <style>
+    :root {
+      --bg-primary: #0a0a0a;
+      --bg-secondary: #111111;
+      --bg-tertiary: #1a1a1a;
+      --text-primary: #ffffff;
+      --text-secondary: rgba(255, 255, 255, 0.7);
+      --text-muted: rgba(255, 255, 255, 0.48);
+      --accent: #b2e969;
+      --border: rgba(255, 255, 255, 0.12);
+      --border-hover: rgba(255, 255, 255, 0.24);
+      --shadow: rgba(0, 0, 0, 0.5);
+      color-scheme: dark;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html {
+      min-height: 100%;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      line-height: 1.5;
+    }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      background: radial-gradient(circle at top left, rgba(178, 233, 105, 0.11), transparent 34rem), var(--bg-primary);
+      color: var(--text-primary);
+      overflow: hidden;
+    }
+
+    .nav {
+      position: fixed;
+      inset: 0 0 auto;
+      z-index: 100;
+      background: rgba(10, 10, 10, 0.94);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(20px);
+    }
+
+    .nav-container {
+      display: grid;
+      grid-template-columns: minmax(12rem, 1fr) minmax(14rem, 22rem) minmax(14rem, 22rem) auto;
+      gap: 1rem;
+      align-items: center;
+      width: min(100%, 1480px);
+      margin: 0 auto;
+      padding: 0.85rem 1.5rem;
+    }
+
+    .nav-logo, .nav-button, .nav-link {
+      display: inline-flex;
+      align-items: center;
+      color: var(--text-secondary);
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .nav-logo {
+      gap: 0.55rem;
+      min-width: 0;
+      color: var(--text-primary);
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .nav-logo-icon { flex: 0 0 auto; color: var(--accent); }
+    .nav-subtitle { overflow: hidden; color: var(--text-muted); font-size: 0.8rem; font-weight: 500; text-overflow: ellipsis; }
+
+    .picker {
+      display: grid;
+      grid-template-columns: auto minmax(8rem, 1fr);
+      gap: 0.6rem;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .picker label { color: var(--text-muted); font-size: 0.74rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+    .select {
+      width: 100%;
+      min-height: 2.45rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.45rem 0.75rem;
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      font: inherit;
+      font-size: 0.9rem;
+    }
+    .select:focus-visible { border-color: var(--accent); outline: 2px solid rgba(178, 233, 105, 0.24); outline-offset: 2px; }
+
+    .nav-actions { display: flex; gap: 0.6rem; align-items: center; justify-content: flex-end; min-width: 0; }
+    .nav-button, .nav-link {
+      min-height: 2.45rem;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.45rem 0.75rem;
+      background: var(--bg-secondary);
+      font: inherit;
+      font-size: 0.82rem;
+      transition: border-color 0.2s, color 0.2s, background-color 0.2s;
+    }
+    .nav-button:hover, .nav-link:hover, .nav-button:focus-visible, .nav-link:focus-visible { border-color: var(--border-hover); background: var(--bg-tertiary); color: var(--text-primary); outline: 0; }
+    .nav-button[data-primary="true"] { border-color: color-mix(in srgb, var(--accent) 48%, transparent); color: var(--accent); }
+
+    .preview-shell { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100vh; padding-block-start: 4.35rem; }
+    .preview-meta { display: flex; gap: 0.75rem; align-items: center; justify-content: space-between; width: min(100%, 1480px); margin: 0 auto; padding: 0.8rem 1.5rem; color: var(--text-muted); font-size: 0.82rem; }
+    .preview-title { margin: 0; color: var(--text-secondary); font-size: 0.9rem; font-weight: 700; }
+    .preview-links { display: flex; flex-wrap: wrap; gap: 0.45rem; justify-content: flex-end; }
+    .preview-frame-wrap { min-height: 0; padding: 0 1.5rem 1.5rem; }
+    .preview-frame { display: block; width: min(100%, 1480px); height: 100%; margin: 0 auto; border: 1px solid var(--border); border-radius: 14px; background: #ffffff; box-shadow: 0 25px 50px -12px var(--shadow); }
+
+    @media (max-width: 1120px) {
+      body { overflow: auto; }
+      .nav-container { grid-template-columns: 1fr; gap: 0.75rem; }
+      .nav-actions, .preview-links { justify-content: stretch; }
+      .nav-button, .nav-link { flex: 1 1 auto; }
+      .preview-shell { min-height: 100vh; padding-block-start: 15rem; }
+      .preview-meta { display: grid; }
+    }
+  </style>
+</head>
+<body>
+  <nav class="nav" aria-label="Report example navigation">
+    <div class="nav-container">
+      <a href="README.md" class="nav-logo" aria-label="Open report examples README">
+        <svg class="nav-logo-icon" viewBox="0 0 576 512" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M9.4 86.6C-3.1 74.1-3.1 53.9 9.4 41.4s32.8-12.5 45.3 0l192 192c12.5 12.5 12.5 32.8 0 45.3l-192 192c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L178.7 256 9.4 86.6zM256 416H544c17.7 0 32 14.3 32 32s-14.3 32-32 32H256c-17.7 0-32-14.3-32-32s14.3-32 32-32z"/></svg>
+        <span>aidevops</span>
+        <span class="nav-subtitle">report examples</span>
+      </a>
+
+      <div class="picker">
+        <label for="setSelect">Set</label>
+        <select id="setSelect" class="select" aria-describedby="previewCounter"></select>
+      </div>
+
+      <div class="picker">
+        <label for="themeSelect">Preview</label>
+        <select id="themeSelect" class="select" aria-describedby="previewCounter"></select>
+      </div>
+
+      <div class="nav-actions">
+        <a id="prevTheme" class="nav-button" href="style-previews/basic.html">← Previous</a>
+        <a id="nextTheme" class="nav-button" href="style-previews/editorial-evidence.html" data-primary="true">Next →</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="preview-shell">
+    <header class="preview-meta">
+      <div>
+        <h1 id="previewTitle" class="preview-title">Report examples</h1>
+        <div id="previewCounter">Browse generated example reports and style previews.</div>
+      </div>
+      <div class="preview-links" aria-label="Current preview links">
+        <a id="openHtml" class="nav-link" href="style-previews/basic.html">HTML</a>
+        <a id="openPdf" class="nav-link" href="style-previews/basic-a4.pdf">A4 PDF</a>
+        <a id="openUsLetter" class="nav-link" href="style-previews/basic-usletter.pdf">US Letter PDF</a>
+        <a id="openSlides" class="nav-link" href="style-previews/basic-slides.pdf">Slides PDF</a>
+      </div>
+    </header>
+
+    <div class="preview-frame-wrap">
+      <iframe id="previewFrame" class="preview-frame" src="style-previews/basic.html" title="Report example preview: basic"></iframe>
+    </div>
+  </main>
+
+  <script>
+    const previewSets = [
+      {
+        label: "Report style previews",
+        items: [
+          { label: "basic", file: "style-previews/basic.html" },
+          { label: "editorial-evidence", file: "style-previews/editorial-evidence.html" },
+          { label: "apple", file: "style-previews/apple.html" },
+          { label: "arxiv", file: "style-previews/arxiv.html" },
+          { label: "axel", file: "style-previews/axel.html" },
+          { label: "bento", file: "style-previews/bento.html" },
+          { label: "cabinet", file: "style-previews/cabinet.html" },
+          { label: "consumer", file: "style-previews/consumer.html" },
+          { label: "docuseal", file: "style-previews/docuseal.html" },
+          { label: "ghost", file: "style-previews/ghost.html" },
+          { label: "heron", file: "style-previews/heron.html" },
+          { label: "ia", file: "style-previews/ia.html" },
+          { label: "ibm", file: "style-previews/ibm.html" },
+          { label: "knob", file: "style-previews/knob.html" },
+          { label: "lifee", file: "style-previews/lifee.html" },
+          { label: "medium", file: "style-previews/medium.html" },
+          { label: "mellowyellow", file: "style-previews/mellowyellow.html" },
+          { label: "outrank", file: "style-previews/outrank.html" },
+          { label: "postedapp", file: "style-previews/postedapp.html" },
+          { label: "savvy", file: "style-previews/savvy.html" },
+          { label: "scalefusion", file: "style-previews/scalefusion.html" },
+          { label: "serper", file: "style-previews/serper.html" },
+          { label: "supermemory", file: "style-previews/supermemory.html" },
+          { label: "tavily", file: "style-previews/tavily.html" },
+          { label: "times", file: "style-previews/times.html" },
+          { label: "ulysses", file: "style-previews/ulysses.html" },
+          { label: "usgraphics", file: "style-previews/usgraphics.html" },
+          { label: "wikipedia", file: "style-previews/wikipedia.html" },
+          { label: "wpcodebox", file: "style-previews/wpcodebox.html" },
+          { label: "zeroheight", file: "style-previews/zeroheight.html" },
+          { label: "exsqueezeme light", file: "style-previews/exsqueezeme-light.html" },
+          { label: "exsqueezeme dark", file: "style-previews/exsqueezeme-dark.html" },
+          { label: "indexsy light", file: "style-previews/indexsy-light.html" },
+          { label: "indexsy dark", file: "style-previews/indexsy-dark.html" },
+          { label: "lottiefiles light", file: "style-previews/lottiefiles-light.html" },
+          { label: "lottiefiles dark", file: "style-previews/lottiefiles-dark.html" },
+          { label: "superx light", file: "style-previews/superx-light.html" },
+          { label: "superx dark", file: "style-previews/superx-dark.html" },
+          { label: "terminalshop light", file: "style-previews/terminalshop-light.html" },
+          { label: "terminalshop dark", file: "style-previews/terminalshop-dark.html" }
+        ]
+      },
+      {
+        label: "LLM visibility toolbox",
+        items: [
+          { label: "report", file: "llm-visibility-toolbox/report.html" },
+          { label: "lottiefiles light", file: "llm-visibility-toolbox/lottiefiles-light.html" },
+          { label: "lottiefiles dark", file: "llm-visibility-toolbox/lottiefiles-dark.html" }
+        ]
+      },
+      {
+        label: "Client AI search audit",
+        items: [
+          { label: "report", file: "client-ai-search-audit/report.html" },
+          { label: "axel", file: "client-ai-search-audit/axel.html" }
+        ]
+      }
+    ];
+
+    previewSets[0].items.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+    const basicIndex = previewSets[0].items.findIndex((theme) => theme.label === "basic");
+    if (basicIndex !== -1) previewSets[0].items.push(previewSets[0].items.splice(basicIndex, 1)[0]);
+
+    const setSelect = document.getElementById("setSelect");
+    const select = document.getElementById("themeSelect");
+    const frame = document.getElementById("previewFrame");
+    const title = document.getElementById("previewTitle");
+    const counter = document.getElementById("previewCounter");
+    const prevLink = document.getElementById("prevTheme");
+    const nextLink = document.getElementById("nextTheme");
+    const openHtml = document.getElementById("openHtml");
+    const openPdf = document.getElementById("openPdf");
+    const openUsLetter = document.getElementById("openUsLetter");
+    const openSlides = document.getElementById("openSlides");
+
+    previewSets.forEach((set, index) => {
+      const option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = set.label;
+      setSelect.appendChild(option);
+    });
+
+    function pdfPath(file) { return file.replace(/\.html$/, "-a4.pdf"); }
+    function usLetterPath(file) { return file.replace(/\.html$/, "-usletter.pdf"); }
+    function slidesPath(file) { return file.replace(/\.html$/, "-slides.pdf"); }
+    function hashFor(setIndex, itemIndex) { return `#${setIndex}:${itemIndex}`; }
+
+    function renderOptions(setIndex) {
+      select.replaceChildren();
+      previewSets[setIndex].items.forEach((item, index) => {
+        const option = document.createElement("option");
+        option.value = String(index);
+        option.textContent = item.label;
+        select.appendChild(option);
+      });
+    }
+
+    function selectPreview(setIndex, itemIndex, updateHash = true) {
+      const normalisedSet = (setIndex + previewSets.length) % previewSets.length;
+      const set = previewSets[normalisedSet];
+      const normalisedItem = (itemIndex + set.items.length) % set.items.length;
+      const item = set.items[normalisedItem];
+      const previous = set.items[(normalisedItem - 1 + set.items.length) % set.items.length];
+      const next = set.items[(normalisedItem + 1) % set.items.length];
+
+      setSelect.value = String(normalisedSet);
+      renderOptions(normalisedSet);
+      select.value = String(normalisedItem);
+      frame.src = item.file;
+      frame.title = `Report example preview: ${set.label} / ${item.label}`;
+      title.textContent = `${set.label}: ${item.label}`;
+      counter.textContent = `${normalisedItem + 1} of ${set.items.length} · ${set.label}.`;
+      prevLink.href = previous.file;
+      prevLink.setAttribute("aria-label", `Previous preview: ${previous.label}`);
+      nextLink.href = next.file;
+      nextLink.setAttribute("aria-label", `Next preview: ${next.label}`);
+      openHtml.href = item.file;
+      openPdf.href = pdfPath(item.file);
+      openUsLetter.href = usLetterPath(item.file);
+      openSlides.href = slidesPath(item.file);
+      if (updateHash) history.replaceState(null, "", hashFor(normalisedSet, normalisedItem));
+    }
+
+    function selectionFromHash() {
+      const key = decodeURIComponent(location.hash.replace(/^#/, ""));
+      const match = key.match(/^(\d+):(\d+)$/);
+      if (match) return [Number(match[1]), Number(match[2])];
+      for (let setIndex = 0; setIndex < previewSets.length; setIndex += 1) {
+        const itemIndex = previewSets[setIndex].items.findIndex((item) => item.file.replace(/\.html$/, "") === key);
+        if (itemIndex !== -1) return [setIndex, itemIndex];
+      }
+      return [0, 0];
+    }
+
+    setSelect.addEventListener("change", () => selectPreview(Number(setSelect.value), 0));
+    select.addEventListener("change", () => selectPreview(Number(setSelect.value), Number(select.value)));
+    prevLink.addEventListener("click", (event) => { event.preventDefault(); selectPreview(Number(setSelect.value), Number(select.value) - 1); });
+    nextLink.addEventListener("click", (event) => { event.preventDefault(); selectPreview(Number(setSelect.value), Number(select.value) + 1); });
+    window.addEventListener("hashchange", () => selectPreview(...selectionFromHash(), false));
+    selectPreview(...selectionFromHash(), false);
+  </script>
+</body>
+</html>

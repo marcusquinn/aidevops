@@ -223,6 +223,22 @@ def _flatten_token_mapping(value: object, prefix: str = "") -> dict[str, str]:
     return flattened
 
 
+def _parse_section_header(stripped: str, indent: int) -> tuple[str, str] | None:
+    if indent == 0 and stripped.endswith(":"):
+        return stripped[:-1], ""
+    return None
+
+
+def _parse_section_token(section: str, nested: str, stripped: str, indent: int) -> tuple[str, tuple[str, str] | None]:
+    prefix_by_section = {"colors": "", "rounded": "rounded."}
+    if section in prefix_by_section and indent == 2:
+        return nested, _parse_mapping(stripped, prefix_by_section[section])
+    if section == "typography":
+        next_nested, key, value = _parse_typography_line(stripped, nested, indent)
+        return next_nested, (key, value) if value is not None else None
+    return nested, None
+
+
 def _parse_tokens(lines: list[str]) -> dict[str, str]:
     tokens: dict[str, str] = {}
     document = _parse_nested_mapping(lines)
@@ -362,7 +378,7 @@ TEMPLATE_SPECIFIC_CSS = {
 .report-template-lottiefiles .action-line { box-shadow: 0 20px 48px rgba(1, 157, 145, 0.18); }
 """.strip(),
     "times": """
-.report-template-times { background-image: linear-gradient(rgba(0, 0, 0, 0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 0, 0, 0.025) 1px, transparent 1px); background-size: 18rem 18rem; }
+.report-template-times { --report-code-bg: #FFFDF8; --report-code-bg-2: #F4F1EA; --report-code-ink: #1A1A1A; --report-code-accent: #008138; background-image: linear-gradient(rgba(0, 0, 0, 0.025) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 0, 0, 0.025) 1px, transparent 1px); background-size: 18rem 18rem; }
 .report-template-times .report-cover { text-align: center; border-width: 2px 0; border-color: #000000; box-shadow: none; background: rgba(255, 253, 248, 0.7); }
 .report-template-times .report-cover h1 { font-size: clamp(3rem, 7vw, 5.5rem); line-height: 0.98; }
 .report-template-times .report-main h1,
@@ -432,6 +448,7 @@ body.report-theme-light.report-template-indexsy .badge-missing { border-color: v
 .report-template-docuseal .toc-pdf-link { background: #181818; color: #ffffff; border-color: #181818; }
 .report-template-docuseal .stat-card,
 .report-template-docuseal .chapter-hero { background: #FFE2C2; }
+.report-template-docuseal { --report-code-bg: #FFFFFF; --report-code-bg-2: #F8F4F1; --report-code-ink: #181818; --report-code-accent: #C76718; }
 """.strip(),
     "exsqueezeme": """
 .report-template-exsqueezeme .report-cover,
@@ -499,6 +516,7 @@ body.report-theme-light.report-template-terminalshop a { color: var(--report-blu
 .report-template-ulysses .chapter-hero * { color: inherit; }
 .report-template-ulysses .heading-number,
 .report-template-ulysses ol li::marker { color: #F7C600; }
+.report-template-ulysses { --report-code-bg: #FFFFFF; --report-code-bg-2: #F7F7F7; --report-code-ink: #27272B; --report-code-accent: #8A6A00; }
 """.strip(),
     "usgraphics": """
 .report-template-usgraphics .report-cover,

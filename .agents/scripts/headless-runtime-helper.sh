@@ -1131,7 +1131,6 @@ _derive_worker_failure_evidence() {
 #   $5 - failure reason
 #   $6 - output excerpt path
 #   $7 - session id
-#   $8 - metric kill reason
 # Returns: 0 always (observability must fail open)
 #######################################
 _append_service_interruption_exhausted_metric() {
@@ -1142,12 +1141,11 @@ _append_service_interruption_exhausted_metric() {
 	local failure_reason="$5"
 	local output_file="$6"
 	local session_id="$7"
-	local metric_kill_reason="$8"
 	local result_label="service_interruption_exhausted"
 	local provider
 	provider=$(extract_provider "$selected_model")
 	local evidence_fields launch_failure_cause next_action
-	evidence_fields=$(_derive_worker_failure_evidence "$result_label" "81" "1" "$metric_kill_reason" "$failure_reason")
+	evidence_fields=$(_derive_worker_failure_evidence "$result_label" "81" "1" "" "$failure_reason")
 	launch_failure_cause="${evidence_fields%%$'\t'*}"
 	next_action="${evidence_fields#*$'\t'}"
 	append_runtime_metric "$role" "$session_key" "$selected_model" \
@@ -1155,7 +1153,7 @@ _append_service_interruption_exhausted_metric() {
 		"$result_label" "81" "${failure_reason:-provider_error}" "1" "0" \
 		"${WORKER_ISSUE_NUMBER:-}" "${DISPATCH_REPO_SLUG:-}" "$work_dir" "$output_file" "$session_id" \
 		"${_run_provider_error_type:-}" "${_run_provider_status:-}" "${_run_runtime_error_type:-}" "${_run_classification_source:-}" "${_run_classification_pattern:-}" \
-		"$launch_failure_cause" "$metric_kill_reason" "$next_action"
+		"$launch_failure_cause" "${_metric_kill_reason:-}" "$next_action"
 	return 0
 }
 
@@ -1525,7 +1523,6 @@ _execute_run_attempt() {
 	if [[ "${_run_result_label:-failed}" == "success" ]]; then
 		_metric_output_file=""
 	fi
-	_run_metric_kill_reason="$_metric_kill_reason"
 	local _launch_failure_cause="" _next_action=""
 	local _evidence_fields
 	_evidence_fields=$(_derive_worker_failure_evidence \
@@ -1735,13 +1732,11 @@ cmd_run() {
 	local _run_activity_detected="0"
 	local _run_metric_output_file=""
 	local _run_metric_session_id=""
-	local _run_metric_kill_reason=""
 	while [[ "$attempt" -le "$max_attempts" ]]; do
 		_run_failure_reason=""
 		_run_should_retry=0
 		_run_result_label="failed"
 		_run_activity_detected="0"
-		_run_metric_kill_reason=""
 		local attempt_exit=0
 		if _execute_run_attempt \
 			"$role" "$session_key" "$work_dir" "$title" "$prompt" \
@@ -1793,8 +1788,7 @@ cmd_run() {
 			_append_service_interruption_exhausted_metric \
 				"$role" "$session_key" "$selected_model" "$work_dir" \
 				"${_run_failure_reason:-provider_error}" \
-				"${_run_metric_output_file:-}" "${_run_metric_session_id:-}" \
-				"${_run_metric_kill_reason:-}"
+				"${_run_metric_output_file:-}" "${_run_metric_session_id:-}"
 			print_warning "Exhausted ${max_service_interruption_continue_retries} service-interruption continuations — falling through to normal failure handling"
 		fi
 

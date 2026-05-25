@@ -14,7 +14,6 @@
 #   tabby-helper.sh status        # Show current profile status
 #   tabby-helper.sh zshrc         # Deprecated no-op (TABBY_AUTORUN is unused)
 #   tabby-helper.sh fix-shell     # Ensure default local profile uses /bin/zsh (macOS)
-#   tabby-helper.sh fix-appearance # Apply aidevops Tabby UI defaults when unchanged
 #   tabby-helper.sh help          # Show usage
 #
 # Requires: python3 (ships with macOS), repos.json
@@ -30,12 +29,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPOS_JSON="${HOME}/.config/aidevops/repos.json"
 
 # Tabby config path (platform-aware)
-if [[ -z "${TABBY_CONFIG:-}" ]]; then
-	if [[ "$(uname -s)" == "Darwin" ]]; then
-		TABBY_CONFIG="${HOME}/Library/Application Support/tabby/config.yaml"
-	else
-		TABBY_CONFIG="${HOME}/.config/tabby-terminal/config.yaml"
-	fi
+if [[ "$(uname -s)" == "Darwin" ]]; then
+	TABBY_CONFIG="${HOME}/Library/Application Support/tabby/config.yaml"
+else
+	TABBY_CONFIG="${HOME}/.config/tabby-terminal/config.yaml"
 fi
 
 _info() { echo -e "${BLUE}[INFO]${NC} $1"; }
@@ -327,154 +324,6 @@ cmd_fix_shell() {
 	return 0
 }
 
-_fix_appearance_check_prereqs() {
-	if [[ ! -f "$TABBY_CONFIG" ]]; then
-		return 1
-	fi
-
-	if ! command -v python3 >/dev/null 2>&1; then
-		_warn "python3 is required to update Tabby appearance defaults"
-		return 1
-	fi
-
-	return 0
-}
-
-_fix_appearance_patch_config() {
-	# Adds the aidevops left-tab width CSS only when Tabby's appearance.css is
-	# absent or still the upstream placeholder. Existing user CSS is preserved.
-	local config_path="$1"
-
-	python3 - "$config_path" <<'PY'
-from __future__ import annotations
-
-import pathlib
-import sys
-
-path = pathlib.Path(sys.argv[1])
-text = path.read_text()
-lines = text.splitlines(keepends=True)
-newline = "\n" if text.endswith("\n") else ""
-
-desired_block = [
-    "  css: |\n",
-    "    /* Widen left-side tab sidebar by 50% (default is 200px). */\n",
-    "    .content.tabs-on-left {\n",
-    "      --side-tab-width: calc(300px * var(--spaciness));\n",
-    "    }\n",
-]
-desired_marker = "--side-tab-width: calc(300px * var(--spaciness))"
-placeholder = "/* * { color: blue !important; } */"
-
-
-def top_level(line: str) -> bool:
-    return bool(line.strip()) and not line.startswith((" ", "\t")) and ":" in line
-
-
-appearance_start = None
-for index, line in enumerate(lines):
-    if line.startswith("appearance:"):
-        appearance_start = index
-        break
-
-if appearance_start is None:
-    print("WARN")
-    sys.exit(0)
-
-appearance_end = len(lines)
-for index in range(appearance_start + 1, len(lines)):
-    if top_level(lines[index]):
-        appearance_end = index
-        break
-
-css_start = None
-for index in range(appearance_start + 1, appearance_end):
-    stripped = lines[index].lstrip(" ")
-    indent = len(lines[index]) - len(stripped)
-    if indent == 2 and stripped.startswith("css:"):
-        css_start = index
-        break
-
-if css_start is None:
-    insert_at = appearance_end
-    for index in range(appearance_start + 1, appearance_end):
-        stripped = lines[index].lstrip(" ")
-        indent = len(lines[index]) - len(stripped)
-        if indent == 2 and stripped.startswith("tabsLocation:"):
-            insert_at = index
-            break
-    new_lines = lines[:insert_at] + desired_block + lines[insert_at:]
-    path.write_text("".join(new_lines) + ("" if new_lines and new_lines[-1].endswith("\n") else newline))
-    print("FIXED")
-    sys.exit(0)
-
-css_end = css_start + 1
-for index in range(css_start + 1, appearance_end):
-    stripped = lines[index].lstrip(" ")
-    indent = len(lines[index]) - len(stripped)
-    if stripped.strip() and indent <= 2:
-        break
-    css_end = index + 1
-
-css_text = "".join(lines[css_start:css_end])
-css_value = lines[css_start].split(":", 1)[1].strip()
-inline_value = css_value.strip('"\'')
-
-if desired_marker in css_text:
-    print("OK")
-elif inline_value in ("", "|", "|-", ">", ">-"):
-    body = "".join(lines[css_start + 1:css_end])
-    if body.strip() == placeholder:
-        path.write_text("".join(lines[:css_start] + desired_block + lines[css_end:]))
-        print("FIXED")
-    else:
-        print("SKIP:custom-css")
-elif inline_value == placeholder:
-    path.write_text("".join(lines[:css_start] + desired_block + lines[css_end:]))
-    print("FIXED")
-else:
-    print("SKIP:custom-css")
-PY
-
-	return 0
-}
-
-_fix_appearance_report_result() {
-	local result="$1"
-
-	case "$result" in
-	OK)
-		_success "Tabby left tab width default already applied"
-		;;
-	FIXED)
-		_success "Applied Tabby left tab width default (restart Tabby to apply)"
-		;;
-	SKIP:custom-css)
-		_info "Tabby custom CSS exists — not overriding"
-		;;
-	WARN)
-		_warn "Could not find appearance section in Tabby config"
-		;;
-	*)
-		_warn "Unexpected result from fix-appearance: $result"
-		;;
-	esac
-
-	return 0
-}
-
-cmd_fix_appearance() {
-	if ! _fix_appearance_check_prereqs; then
-		return 0
-	fi
-
-	local result
-	result=$(_fix_appearance_patch_config "$TABBY_CONFIG")
-	_fix_appearance_report_result "$result"
-
-	return 0
-}
-
 cmd_help() {
 	echo "tabby-helper.sh — Generate Tabby profiles from repos.json"
 	echo ""
@@ -483,7 +332,6 @@ cmd_help() {
 	echo "  tabby-helper.sh status     Show profile status (which repos have profiles)"
 	echo "  tabby-helper.sh zshrc      Deprecated no-op (TABBY_AUTORUN is unused)"
 	echo "  tabby-helper.sh fix-shell  Ensure default local profile uses /bin/zsh (macOS)"
-	echo "  tabby-helper.sh fix-appearance  Apply aidevops Tabby UI defaults when unchanged"
 	echo "  tabby-helper.sh help       Show this help"
 	echo ""
 	echo "Profiles are created with:"
@@ -505,7 +353,6 @@ main() {
 	status) cmd_status ;;
 	zshrc) cmd_zshrc ;;
 	fix-shell) cmd_fix_shell ;;
-	fix-appearance) cmd_fix_appearance ;;
 	help | --help | -h) cmd_help ;;
 	*)
 		_error "Unknown command: $cmd"

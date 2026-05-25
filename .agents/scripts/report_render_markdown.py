@@ -5,11 +5,16 @@
 
 from __future__ import annotations
 
-import html
 import re
 
 from report_render_badges import badge_html
-from report_render_markup import inline_markup, slug
+from report_render_blocks import close_blocks, flush_paragraph, handle_blockquote, handle_list, handle_table
+from report_render_code import close_code, code_block_html, handle_code_fence
+from report_render_components import close_component, handle_component
+from report_render_diagrams import render_mermaid_svg
+from report_render_enhance import action_prompt_from_text, action_section_pattern, action_summary_from_text, inject_action_prompts, inject_source_links, strip_html
+from report_render_headings import handle_heading
+from report_render_markup import inline_markup
 
 
 def validate_markdown_badges(text: str) -> None:
@@ -17,109 +22,18 @@ def validate_markdown_badges(text: str) -> None:
         badge_html(match.group(1))
 
 
-COMPONENT_BLOCKS = {
-    "action-line",
-    "action-panel",
-    "accordion",
-    "anchor-links",
-    "appendix-links",
-    "callout",
-    "case-study-card",
-    "badge-key",
-    "badge-row",
-    "bar-chart",
-    "block-template",
-    "chapter-hero",
-    "checklist-card",
-    "details-note",
-    "evidence-panel",
-    "example-card",
-    "facts-table-wrap",
-    "good-bad",
-    "good-row",
-    "bad-row",
-    "impact-panel",
-    "industry-card",
-    "info-panel",
-    "myth-callout",
-    "priority-group",
-    "quote-card",
-    "report-cover",
-    "separator",
-    "severity-key",
-    "source-card",
-    "source-item",
-    "source-list",
-    "source-title",
-    "sources-group",
-    "sources-layout",
-    "stat-card",
-    "summary-stats",
-    "stats-strip",
-    "tactic-card",
-    "version-summary",
-}
-
 ACTION_COMPONENT_CLASSES = ("action-line", "action-panel")
-
-
-def strip_html(value: str) -> str:
-    text = re.sub(r"<[^>]+>", " ", value)
-    return " ".join(html.unescape(text).split())
-
-
-def action_prompt_from_text(action_text: str) -> str:
-    cleaned = re.sub(r"^(?:action|next action):\s*", "", action_text.strip(), flags=re.I)
-    if not cleaned:
-        cleaned = action_text.strip()
-    return (
-        f"Reference this report action: {cleaned}\n\n"
-        "Guide me through the tools, resources, accounts, permissions, source material, and access needed to take "
-        "this action. Break the work into numbered steps, call out any missing inputs before execution, include "
-        "safe handling for credentials or confidential data, and finish with verification evidence I can capture."
-    )
-
-
-def action_summary_from_text(section_text: str) -> str:
-    text = " ".join(section_text.split())
-    match = re.search(
-        r"\b(Action|Next action):\s*(.*?)(?=\s+(?:Why|What|How|Verify|Owner|Proof):|$)",
-        text,
-        flags=re.I,
-    )
-    if not match:
-        return text
-    label = "Next action" if match.group(1).lower().startswith("next") else "Action"
-    return f"{label}: {match.group(2).strip()}"
-
-
-def code_block_html(code_text: str, lang: str = "text", title: str = "Code") -> str:
-    safe_lang = html.escape(lang or "text")
-    safe_title = html.escape(title)
-    pre_class = f"language-{safe_lang}"
-    if lang == "mermaid":
-        pre_class = "mermaid"
-    elif lang == "latex-block":
-        pre_class = "latex-block"
-    return (
-        '<div class="code-block-wrap">'
-        f'<div class="code-block-head"><span>{safe_title}</span>'
-        '<button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div>'
-        f'<pre class="{pre_class}"><code>{html.escape(code_text)}</code></pre></div>'
-    )
-
-
-def action_prompt_details(prompt_text: str) -> str:
-    return (
-        '<details class="accordion action-prompt"><summary>Action Prompt</summary>'
-        f'{code_block_html(prompt_text, "text", "Copyable action prompt")}'
-        '</details>'
-    )
+KEEP_WITH_HEADING_CLASSES = {
+    "action-line", "action-panel", "accordion", "block-template", "callout", "checklist-card",
+    "details-note", "evidence-panel", "example-card", "facts-table-wrap", "good-bad", "impact-panel",
+    "info-panel", "latex-rendered-block", "mermaid-rendered", "myth-callout", "priority-group",
+    "quote-card", "source-card", "source-item", "source-list", "sources-group", "sources-layout",
+    "tactic-card", "code-block-wrap",
+}
 
 
 def _action_section_pattern() -> re.Pattern[str]:
-    classes = "|".join(re.escape(name) for name in ACTION_COMPONENT_CLASSES)
-    return re.compile(rf'(<section class="({classes})"[^>]*>)(.*?)(</section>)', re.S)
+    return action_section_pattern(ACTION_COMPONENT_CLASSES)
 
 
 def extract_action_prompts(text: str) -> list[tuple[str, str]]:
@@ -151,338 +65,11 @@ def render_action_prompt_markdown(text: str) -> str:
         )
     return "\n".join(lines)
 
-
-def inject_action_prompts(body_html: str) -> str:
-    def replace(match: re.Match[str]) -> str:
-        section_body = match.group(3)
-        if 'class="accordion action-prompt"' in section_body:
-            return match.group(0)
-        action_text = action_summary_from_text(strip_html(section_body))
-        if not action_text:
-            return match.group(0)
-        prompt = action_prompt_details(action_prompt_from_text(action_text))
-        return f"{match.group(1)}{section_body}{match.group(4)}{prompt}"
-
-    return _action_section_pattern().sub(replace, body_html)
-
-
-def inject_source_links(body_html: str) -> str:
-    def replace(match: re.Match[str]) -> str:
-        source_body = match.group(2)
-        if 'class="source-card-link"' in source_body:
-            return match.group(0)
-        link = '<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a>'
-        return f"{match.group(1)}{source_body}{link}{match.group(3)}"
-
-    return re.sub(r'(<section class="(?:source-card|source-item)"[^>]*>)(.*?)(</section>)', replace, body_html, flags=re.S)
-
-
-def plain_heading_title(title: str) -> str:
-    cleaned = re.sub(r"\{\{\s*(?:badge|evidence)\s*:[^}]+?\s*\}\}", "", title, flags=re.I)
-    return " ".join(cleaned.split())
-
-
-def is_executive_summary(title: str) -> bool:
-    return plain_heading_title(title).lower() == "executive summary"
-
-
-def render_mermaid_svg(code_text: str) -> str:
-    """Render a small self-contained SVG for simple Mermaid flowchart examples."""
-
-    nodes: dict[str, str] = {}
-    edges: list[tuple[str, str]] = []
-
-    def node_parts(raw_node: str) -> tuple[str, str]:
-        match = re.match(r"^([A-Za-z0-9_-]+)\s*(?:\[([^\]]+)\])?$", raw_node.strip())
-        if not match:
-            fallback = raw_node.strip()
-            return fallback, fallback
-        node_id = match.group(1)
-        label = (match.group(2) or node_id).strip()
-        return node_id, label
-
-    for line in code_text.splitlines():
-        if "-->" not in line:
-            continue
-        left, right = [part.strip() for part in line.split("-->", 1)]
-        left_id, left_label = node_parts(left)
-        right_id, right_label = node_parts(right)
-        if left_id and left_id not in nodes:
-            nodes[left_id] = left_label
-        if right_id and right_id not in nodes:
-            nodes[right_id] = right_label
-        if left_id and right_id:
-            edges.append((left_id, right_id))
-    if len(nodes) < 2:
-        return ""
-    if len(nodes) > 4:
-        columns = min(3, len(nodes))
-        rows = (len(nodes) + columns - 1) // columns
-        cell_width = 220
-        cell_height = 115
-        width = max(720, columns * cell_width + 48)
-        height = rows * cell_height + 50
-    else:
-        columns = len(nodes)
-        rows = 1
-        cell_width = max(185, 720 // max(columns, 1))
-        cell_height = 95
-        width = max(720, len(nodes) * 190)
-        height = 130
-    boxes = []
-    positions: dict[str, tuple[int, int, int, int]] = {}
-    arrows = []
-    for index, (node_id, label) in enumerate(nodes.items()):
-        column = index % columns
-        row = index // columns
-        x = 24 + column * cell_width
-        y = 35 + row * cell_height
-        positions[node_id] = (x, y, column, row)
-        safe_label = html.escape(label)
-        boxes.append(
-            f'<rect x="{x}" y="{y}" width="160" height="58" rx="14" class="diagram-node" />'
-            f'<text x="{x + 80}" y="{y + 35}" text-anchor="middle" class="diagram-label">{safe_label}</text>'
-        )
-    for left_id, right_id in edges:
-        if left_id not in positions or right_id not in positions:
-            continue
-        left_x, left_y, left_column, left_row = positions[left_id]
-        right_x, right_y, right_column, right_row = positions[right_id]
-        if left_row == right_row and left_column < right_column:
-            arrows.append(
-                f'<line x1="{left_x + 165}" y1="{left_y + 29}" x2="{right_x - 10}" y2="{right_y + 29}" class="diagram-arrow" />'
-            )
-        elif left_column == right_column and left_row < right_row:
-            arrows.append(
-                f'<line x1="{left_x + 80}" y1="{left_y + 63}" x2="{right_x + 80}" y2="{right_y - 10}" class="diagram-arrow" />'
-            )
-        else:
-            mid_y = left_y + 78
-            arrows.append(
-                f'<path d="M {left_x + 80} {left_y + 63} V {mid_y} H {right_x + 80} V {right_y - 10}" class="diagram-arrow" fill="none" />'
-            )
-
-    if not arrows:
-        node_ids = list(nodes.keys())
-        for index, node_id in enumerate(node_ids):
-            if index >= len(node_ids) - 1:
-                break
-            next_id = node_ids[index + 1]
-            x, y, column, row = positions[node_id]
-            next_x, next_y, _, _ = positions[next_id]
-            if (index + 1) % columns == 0:
-                arrows.append(
-                    f'<path d="M {x + 80} {y + 63} V {next_y - 16} H {next_x + 80} V {next_y - 10}" class="diagram-arrow" fill="none" />'
-                )
-            else:
-                arrows.append(
-                    f'<line x1="{x + 165}" y1="{y + 29}" x2="{next_x - 10}" y2="{next_y + 29}" class="diagram-arrow" />'
-                )
-    return (
-        '<figure class="mermaid-rendered" aria-label="Rendered Mermaid diagram">'
-        f'<svg viewBox="0 0 {width} {height}" role="img" xmlns="http://www.w3.org/2000/svg">'
-        '<defs><marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">'
-        '<polygon points="0 0, 10 3.5, 0 7" class="diagram-arrow-head" /></marker></defs>'
-        f'{"".join(arrows)}{"".join(boxes)}</svg>'
-        '<figcaption>Rendered Mermaid example, embedded as self-contained SVG.</figcaption>'
-        '</figure>'
-    )
-
-
-def render_latex_block(code_text: str) -> str:
-    formula = " ".join(code_text.split())
-    if not formula:
-        return ""
-    display_formula = formula
-    replacements = {
-        r"\alpha": "α",
-        r"\beta": "β",
-        r"\gamma": "γ",
-        r"\delta": "δ",
-        r"\times": "×",
-        r"\cdot": "·",
-    }
-    for source, replacement in replacements.items():
-        display_formula = display_formula.replace(source, replacement)
-    display_formula = re.sub(r"\\text\{([^}]+)\}", r"\1", display_formula)
-    display_formula = re.sub(r"\s*([=+\-])\s*", r" \1 ", display_formula)
-    display_formula = " ".join(display_formula.split())
-    return (
-        '<figure class="latex-rendered-block" aria-label="Rendered LaTeX formula">'
-        f'<div role="math" aria-label="{html.escape(formula)}">{html.escape(display_formula)}</div>'
-        '<figcaption>Rendered LaTeX example, embedded as self-contained HTML.</figcaption>'
-        '</figure>'
-    )
-
-
-def close_code(body: list[str], states: dict[str, object]) -> None:
-    if not states.get("code"):
-        return
-    lines = states.get("code_lines", [])
-    code_text = "\n".join(lines) if isinstance(lines, list) else ""
-    lang = str(states.get("code_lang", "")).strip().lower()
-    if lang == "mermaid":
-        body.append(code_block_html(code_text, "mermaid", "Mermaid source fallback"))
-        rendered = render_mermaid_svg(code_text)
-        if rendered:
-            body.append(rendered)
-    elif lang in {"latex", "tex"}:
-        body.append(code_block_html(code_text, "latex-block", "LaTeX source fallback"))
-        rendered = render_latex_block(code_text)
-        if rendered:
-            body.append(rendered)
-    else:
-        body.append(code_block_html(code_text, lang or "text", f"{(lang or 'text').title()} code"))
-    states["code"] = False
-    states["code_lines"] = []
-    states["code_lang"] = ""
-
-
-def close_blocks(body: list[str], states: dict[str, object]) -> None:
-    if states.get("code"):
-        return
-    flush_paragraph(body, states)
-    if states.get("list"):
-        tag = states.get("list_tag", "ul")
-        body.append(f"</{tag}>")
-        states["list"] = False
-        states["list_tag"] = ""
-    if states.get("table"):
-        body.append("</tbody></table>")
-        states["table"] = False
-
-
-def flush_paragraph(body: list[str], states: dict[str, object]) -> None:
-    paragraph_lines = states.get("paragraph")
-    if not isinstance(paragraph_lines, list) or not paragraph_lines:
-        return
-    body.append(f"<p>{inline_markup(' '.join(str(line).strip() for line in paragraph_lines))}</p>")
-    states["paragraph"] = []
-
-
-def close_component(body: list[str], states: dict[str, object]) -> bool:
-    stack = states["components"]
-    if not isinstance(stack, list) or not stack:
-        return False
-    close_tag = stack.pop()
-    body.append(str(close_tag))
-    return True
-
-
 def close_all(body: list[str], states: dict[str, object]) -> None:
     close_code(body, states)
     close_blocks(body, states)
     while close_component(body, states):
         pass
-
-
-def component_attrs(raw_attrs: str) -> str:
-    attrs = []
-    for key, raw_value in re.findall(r"([a-zA-Z0-9_-]+)=(\"[^\"]*\"|'[^']*'|[a-zA-Z0-9_#./:-]+)", raw_attrs):
-        value = raw_value.strip().strip('"').strip("'")
-        if key in {"accent", "priority", "severity", "status"}:
-            attrs.append(f' data-{html.escape(key)}="{html.escape(value)}"')
-    return "".join(attrs)
-
-
-def component_title(raw_attrs: str, default: str) -> str:
-    match = re.search(r"title=(\"[^\"]*\"|'[^']*'|[^\s]+)", raw_attrs)
-    if not match:
-        return default
-    return match.group(1).strip().strip('"').strip("'") or default
-
-
-def handle_component(line: str, body: list[str], states: dict[str, object]) -> bool:
-    if line.strip() == ":::":
-        close_blocks(body, states)
-        close_component(body, states)
-        return True
-    match = re.match(r"^:::\s+([a-zA-Z0-9_-]+)(.*)$", line)
-    if not match:
-        return False
-    name = match.group(1)
-    if name not in COMPONENT_BLOCKS:
-        return False
-    close_blocks(body, states)
-    raw_attrs = match.group(2)
-    if name == "separator":
-        body.append('<hr class="section-separator">')
-        return True
-    if name == "accordion":
-        title = component_title(raw_attrs, "Details")
-        body.append(f'<details class="accordion"><summary>{inline_markup(title)}</summary>')
-        close_tag = "</details>"
-    elif name in {"example-card", "block-template"}:
-        title = component_title(raw_attrs, "")
-        body.append(f'<section class="{name}"{component_attrs(raw_attrs)}>')
-        if title:
-            body.append(f'<header>{inline_markup(title)}</header>')
-        close_tag = "</section>"
-    else:
-        body.append(f'<section class="{name}"{component_attrs(raw_attrs)}>')
-        close_tag = "</section>"
-    stack = states["components"]
-    if isinstance(stack, list):
-        stack.append(close_tag)
-    return True
-
-
-def handle_code_fence(line: str, body: list[str], states: dict[str, object]) -> bool:
-    if states.get("code"):
-        if line.startswith("```"):
-            close_code(body, states)
-            return True
-        lines = states.get("code_lines", [])
-        if isinstance(lines, list):
-            lines.append(line)
-        return True
-    if not line.startswith("```"):
-        return False
-    close_blocks(body, states)
-    fence = re.match(r"^```\s*([A-Za-z0-9_-]+)?", line)
-    states["code"] = True
-    states["code_lang"] = fence.group(1) if fence and fence.group(1) else ""
-    states["code_lines"] = []
-    return True
-
-
-def handle_heading(
-    line: str,
-    headings: list[tuple[int, str, str]],
-    body: list[str],
-    states: dict[str, object],
-) -> bool:
-    heading = re.match(r"^(#{1,3})\s+(.+)$", line)
-    if not heading:
-        return False
-    close_blocks(body, states)
-    level = len(heading.group(1))
-    title = heading.group(2).strip()
-    anchor = slug(title)
-    classes = []
-    display_title = inline_markup(title)
-    if level == 2:
-        if is_executive_summary(title):
-            classes.append("no-chapter")
-            states["chapter_count"] = int(states.get("chapter_count", 0))
-            states["section_count"] = 0
-        else:
-            classes.append("chapter-heading")
-            chapter_count = int(states.get("chapter_count", 0)) + 1
-            states["chapter_count"] = chapter_count
-            states["section_count"] = 0
-            display_title = f'<span class="heading-number">{chapter_count}.</span> {inline_markup(title)}'
-    elif level == 3 and int(states.get("chapter_count", 0)) > 0:
-        classes.append("section-heading")
-        section_count = int(states.get("section_count", 0)) + 1
-        states["section_count"] = section_count
-        display_title = (
-            f'<span class="heading-number">{states["chapter_count"]}.{section_count}</span> {inline_markup(title)}'
-        )
-    class_attr = f' class="{" ".join(classes)}"' if classes else ""
-    headings.append((level, title, anchor))
-    body.append(f'<h{level}{class_attr} id="{anchor}">{display_title}</h{level}>')
-    return True
 
 
 def handle_comment(line: str, states: dict[str, object]) -> bool:
@@ -506,90 +93,87 @@ def handle_rule(line: str, body: list[str], states: dict[str, object]) -> bool:
     return True
 
 
-def handle_table(line: str, body: list[str], states: dict[str, object]) -> bool:
-    if not line.startswith("|") or not line.endswith("|"):
-        return False
-    cells = [inline_markup(cell.strip()) for cell in split_markdown_table_row(line)]
-    raw_cells = [html.unescape(cell) for cell in cells]
-    if all(re.match(r"^:?-{3,}:?$", cell) for cell in raw_cells):
-        return True
-    if not states["table"]:
-        close_blocks(body, states)
-        body.append("<table><thead>")
-        states["table"] = True
-        body.append("<tr>{}</tr></thead><tbody>".format("".join(f"<th>{cell}</th>" for cell in cells)))
-        return True
-    body.append("<tr>{}</tr>".format("".join(f"<td>{cell}</td>" for cell in cells)))
-    return True
+def current_component(states: dict[str, object]) -> str:
+    names = states.get("component_names")
+    if isinstance(names, list) and names:
+        return str(names[-1])
+    return ""
 
 
-def split_markdown_table_row(line: str) -> list[str]:
-    row = line.strip()[1:-1]
-    cells: list[str] = []
-    current: list[str] = []
-    backslash_run = 0
-    for char in row:
-        if char == "\\":
-            backslash_run += 1
+def _is_heading_html(line: str, level: int | None = None) -> bool:
+    if level is not None:
+        return bool(re.match(rf"^<h{level}\b", line))
+    return bool(re.match(r"^<h[23]\b", line))
+
+
+def _element_classes(line: str) -> set[str]:
+    match = re.match(r'^<[a-z0-9]+\b[^>]*\bclass="([^"]+)"', line.strip(), re.I)
+    if not match:
+        return set()
+    return set(match.group(1).split())
+
+
+def _is_keep_with_heading_target(line: str) -> bool:
+    return bool(_element_classes(line) & KEEP_WITH_HEADING_CLASSES)
+
+
+def _find_block_end(body: list[str], start_index: int) -> int:
+    start = body[start_index].strip()
+    match = re.match(r"^<(details|section)\b", start)
+    if not match:
+        return start_index
+    tag = match.group(1)
+    depth = 0
+    for index in range(start_index, len(body)):
+        line = body[index]
+        depth += len(re.findall(rf"<{tag}\b", line))
+        depth -= len(re.findall(rf"</{tag}>", line))
+        if depth <= 0:
+            return index
+    return start_index
+
+
+def wrap_keep_with_heading_blocks(body: list[str]) -> list[str]:
+    wrapped: list[str] = []
+    index = 0
+    while index < len(body):
+        if not _is_heading_html(body[index]):
+            wrapped.append(body[index])
+            index += 1
             continue
-        if char == "|":
-            current.append("\\" * (backslash_run // 2))
-            if backslash_run % 2 == 1:
-                current.append("|")
-            else:
-                cells.append("".join(current))
-                current = []
-        else:
-            current.append("\\" * backslash_run)
-            current.append(char)
-        backslash_run = 0
-    current.append("\\" * backslash_run)
-    cells.append("".join(current))
-    return cells
+        target_index = index + 1
+        if _is_heading_html(body[index], 2) and target_index < len(body) and _is_heading_html(body[target_index], 3):
+            target_index += 1
+        if target_index >= len(body) or not _is_keep_with_heading_target(body[target_index]):
+            wrapped.append(body[index])
+            index += 1
+            continue
+        end_index = _find_block_end(body, target_index)
+        wrapper_classes = ["report-keep-with-heading"]
+        if "chapter-heading" in _element_classes(body[index]):
+            wrapper_classes.append("report-chapter-page")
+        wrapped.append(f'<section class="{" ".join(wrapper_classes)}">')
+        wrapped.extend(body[index : end_index + 1])
+        wrapped.append("</section>")
+        index = end_index + 1
+    return wrapped
 
 
-def open_list(body: list[str], states: dict[str, object], tag: str, css_class: str = "") -> None:
-    if states.get("list") and states.get("list_tag") == tag:
-        return
-    close_blocks(body, states)
-    class_attr = f' class="{css_class}"' if css_class else ""
-    body.append(f"<{tag}{class_attr}>")
-    states["list"] = True
-    states["list_tag"] = tag
-
-
-def handle_list(line: str, body: list[str], states: dict[str, object]) -> bool:
-    checklist = re.match(r"^- \[([ xX])\]\s+(.+)$", line)
-    if checklist:
-        open_list(body, states, "ul", "checklist")
-        status = "done" if checklist.group(1).lower() == "x" else "todo"
-        body.append(
-            f'<li><span class="status-dot" data-status="{status}"></span><span>{inline_markup(checklist.group(2).strip())}</span></li>'
-        )
-        return True
-    ordered = re.match(r"^\d+\.\s+(.+)$", line)
-    if ordered:
-        open_list(body, states, "ol")
-        body.append(f"<li>{inline_markup(ordered.group(1).strip())}</li>")
-        return True
-    if line.startswith(("- ", "* ")):
-        open_list(body, states, "ul")
-        body.append(f"<li>{inline_markup(line[2:].strip())}</li>")
-        return True
-    return False
-
-
-def handle_blockquote(line: str, body: list[str], states: dict[str, object]) -> bool:
-    if not line.startswith("> "):
+def handle_bar_chart_line(line: str, body: list[str], states: dict[str, object]) -> bool:
+    if current_component(states) != "bar-chart":
         return False
-    close_blocks(body, states)
-    body.append(f'<blockquote>{inline_markup(line[2:].strip())}</blockquote>')
+    flush_paragraph(body, states)
+    match = re.search(r"(\d{1,3})\s*%", line)
+    value = max(0, min(100, int(match.group(1)))) if match else 72
+    body.append(f'<p style="--bar-value: {value}%">{inline_markup(line)}</p>')
     return True
 
 
 def handle_paragraph(line: str, body: list[str], states: dict[str, object]) -> None:
     if states.get("list") or states.get("table"):
         close_blocks(body, states)
+    if handle_bar_chart_line(line, body, states):
+        return
     if line.lower().startswith(("source:", "source card:")):
         flush_paragraph(body, states)
         body.append(
@@ -608,23 +192,23 @@ def handle_markdown_line(
     body: list[str],
     states: dict[str, object],
 ) -> None:
-    if handle_comment(line, states):
-        return
-    if handle_code_fence(line, body, states):
-        return
-    if handle_component(line, body, states):
-        return
-    if handle_rule(line, body, states):
-        return
-    if handle_heading(line, headings, body, states):
-        return
-    if handle_table(line, body, states):
-        return
-    if handle_list(line, body, states):
-        return
-    if handle_blockquote(line, body, states):
-        return
-    handle_paragraph(line, body, states)
+    handlers = (
+        lambda: handle_comment(line, states),
+        lambda: handle_code_fence(line, body, states, close_blocks),
+        lambda: handle_component(line, body, states, close_blocks),
+        lambda: handle_rule(line, body, states),
+        lambda: handle_heading(line, headings, body, states, close_blocks),
+        lambda: handle_table(line, body, states),
+        lambda: handle_list(line, body, states),
+        lambda: handle_blockquote(line, body, states),
+    )
+    handled = False
+    for handler in handlers:
+        if handler():
+            handled = True
+            break
+    if not handled:
+        handle_paragraph(line, body, states)
 
 
 def render_markdown(text: str, inject_prompts: bool = True) -> tuple[list[tuple[int, str, str]], str]:
@@ -637,6 +221,7 @@ def render_markdown(text: str, inject_prompts: bool = True) -> tuple[list[tuple[
         "list_tag": "",
         "table": False,
         "components": [],
+        "component_names": [],
         "code": False,
         "code_lang": "",
         "code_lines": [],
@@ -648,8 +233,9 @@ def render_markdown(text: str, inject_prompts: bool = True) -> tuple[list[tuple[
         line = raw_line.rstrip()
         handle_markdown_line(line, headings, body, states) if line or states.get("code") else close_blocks(body, states)
     close_all(body, states)
+    body = wrap_keep_with_heading_blocks(body)
     body_html = "\n".join(body)
     body_html = inject_source_links(body_html)
     if inject_prompts:
-        body_html = inject_action_prompts(body_html)
+        body_html = inject_action_prompts(body_html, ACTION_COMPONENT_CLASSES, code_block_html)
     return headings, body_html

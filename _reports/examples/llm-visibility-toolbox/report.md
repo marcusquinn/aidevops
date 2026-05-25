@@ -75,6 +75,7 @@ V4 adds schema-downgrade rationale, engine-specific reporting, source grouping, 
 ## Highest-impact tactics
 
 ::: details-note
+
 ### Weight before recommending
 
 Do not apply all tactics to all pages. Score page-type fit, retrieval eligibility, source proximity, corroboration, freshness, confidence, impact, and effort before roadmap sequencing.
@@ -82,19 +83,27 @@ Do not apply all tactics to all pages. Score page-type fit, retrieval eligibilit
 
 ::: severity-key
 ::: info-panel severity=critical
+
 ### Critical
+
 Revenue page cannot be fetched or cited.
 :::
 ::: info-panel severity=high
+
 ### High
+
 Claim lacks nearby evidence or source-card support.
 :::
 ::: info-panel severity=medium
+
 ### Medium
+
 Helpful page-type tactic with partial evidence.
 :::
 ::: info-panel severity=low
+
 ### Low
+
 Hygiene, formatting, or monitoring improvement.
 :::
 :::
@@ -109,6 +118,7 @@ Hygiene, formatting, or monitoring improvement.
 | Bot-friendly first fetch | {{evidence:verified}} | All priority pages | Hidden or blocked content cannot be cited. | Raw/rendered crawl, robots, sitemap, and logs |
 | Entity consistency | {{evidence:partial}} | Homepage, about, local, profiles | Contradictory facts reduce answer confidence. | Canonical entity table and third-party parity |
 | FAQPage schema | {{evidence:inferred}} | Hygiene only | Structured data helps clarity but does not replace visible evidence. | Schema validation plus visible-content check |
+
 :::
 
 ## Page-type matrix
@@ -125,9 +135,11 @@ Hygiene, formatting, or monitoring improvement.
 | Product/PDP | Specs, reviews, availability, canonical descriptions | Video transcript, product schema | Flat B2B SaaS checklist |
 | Local/YMYL | Credentials, service area, policies, disclaimers | Practitioner bios, local citations | Unsupported advice |
 | Research/report | Methodology, dataset, source cards, findings | Embeddable charts | PDF-only content without HTML summary |
+
 :::
 
 ::: industry-card
+
 ### Industry-fit reminder
 
 SaaS, ecommerce, local, and YMYL pages require different proof sources. Map the page type before assigning a tactic.
@@ -138,6 +150,7 @@ SaaS, ecommerce, local, and YMYL pages require different proof sources. Map the 
 ## Tactic card examples
 
 ::: tactic-card
+
 ### Direct-answer opening
 
 - What: answer the query plainly in the first paragraph.
@@ -147,18 +160,21 @@ SaaS, ecommerce, local, and YMYL pages require different proof sources. Map the 
 :::
 
 ::: impact-panel severity=high
+
 ### Impact
 
 Direct-answer openings influence extraction quality, snippet usefulness, and the chance that a page is selected as a cited source.
 :::
 
 ::: evidence-panel severity=medium
+
 ### Evidence
 
 Verify with raw/rendered HTML, source-ID proximity, and per-engine prompt reruns.
 :::
 
 ::: tactic-card
+
 ### Bot-friendly first fetch
 
 - What: SSR or pre-render important content, allow relevant crawlers, and keep key text visible.
@@ -169,11 +185,13 @@ Verify with raw/rendered HTML, source-ID proximity, and per-engine prompt reruns
 
 ::: good-bad
 ::: good-row
+
 ### Strong pattern
 
 Direct answer, evidence badge, source ID, visible methodology, updated date, and crawlable comparison table.
 :::
 ::: bad-row
+
 ### Weak pattern
 
 Image-only proof, unsupported superlatives, client-rendered claims, and schema added without visible evidence.
@@ -183,6 +201,7 @@ Image-only proof, unsupported superlatives, client-rendered claims, and schema a
 ## Myths and caveats
 
 ::: myth-callout
+
 ### Myth
 
 Adding FAQPage schema is enough to become GEO-ready.
@@ -193,31 +212,37 @@ FAQPage is hygiene unless visible FAQ content genuinely fits page type and query
 :::
 
 ::: example-card
+
 ```text
 Worker brief: update /compare/example with source IDs S001-S004,
 visible comparison evidence, third-party corroboration, and retest steps.
 Acceptance: AIO, Gemini, ChatGPT, AI Mode, and Perplexity results are recorded separately.
 ```
+
 :::
 
 ::: example-card
+
 ```mermaid
 flowchart TD
   Sources[Source IDs] --> Findings
   Findings --> Roadmap
   Roadmap --> Rerun[Per-engine rerun]
 ```
+
 :::
 
 Signal equation fallback: {{latex:AI\ visibility = retrieval + evidence + corroboration}}.
 
 ::: block-template title="Author block template"
+
 ```text
 Written by Dr. Jane Doe, PhD
 Principal Data Scientist, ExampleCo
 
 Use this block for named experts, source credentials, and profile links.
 ```
+
 :::
 
 ::: bar-chart
@@ -231,6 +256,7 @@ Authority corroboration — 58%
 ## Case studies
 
 ::: case-study-card
+
 ### Industrial manufacturer
 
 **Result:** measurable AI referral growth after direct-answer restructuring and third-party corroboration.
@@ -239,6 +265,7 @@ Authority corroboration — 58%
 :::
 
 ::: case-study-card
+
 ### Healthcare comparison site
 
 **Result:** cited answers appeared across multiple answer engines after visible expertise and profile parity fixes.
@@ -249,6 +276,7 @@ Authority corroboration — 58%
 ## Roadmap template
 
 ::: priority-group priority=high
+
 ### Priority rule
 
 Start with revenue pages that fail retrieval eligibility or evidence proximity before optional schema enhancements.
@@ -262,6 +290,7 @@ Start with revenue pages that fail retrieval eligibility or evidence proximity b
 | P1 | Add source cards and original evidence. | Comparison, article, research/report | Content + subject expert | Source ledger and citation checks | S001, S003 |
 | P1 | Build third-party corroboration. | SaaS, local, ecommerce | Marketing/PR | Profile parity and source breadth | S004 |
 | P2 | Improve schema and metadata. | All page types | SEO + engineering | Schema validation plus visible-content check | S002 |
+
 :::
 
 ## Verification checklist
@@ -279,6 +308,7 @@ Start with revenue pages that fail retrieval eligibility or evidence proximity b
 ## Closing callouts
 
 ::: callout
+
 ### Combined finding
 
 AI visibility reporting should end with the fewest useful recommendations: retrieval blockers, evidence proximity, third-party corroboration, and monitoring. Keep panels for important emphasis; use plain bullets and tables for normal content.
@@ -292,11 +322,15 @@ AI visibility reporting should end with the fewest useful recommendations: retri
 Primary sources
 :::
 ::: source-card
+
 ### Prompt captures
+
 AIO, Gemini, ChatGPT, AI Mode, and Perplexity prompt evidence stored separately.
 :::
 ::: source-card
+
 ### Crawl evidence
+
 Raw/rendered crawl export with retrieval eligibility notes.
 :::
 :::
@@ -305,7 +339,9 @@ Raw/rendered crawl export with retrieval eligibility notes.
 Corroboration sources
 :::
 ::: source-card
+
 ### Third-party profiles
+
 Review, directory, community, partner, and media source parity checks.
 :::
 :::
@@ -320,9 +356,11 @@ Review, directory, community, partner, and media source parity checks.
 | S003 | Page inventory | Page-type weighting | URL mapped to homepage, feature, comparison, article, local, PDP, or report |
 | S004 | Third-party profile | Corroboration strength | Facts match owned canonical entity table |
 | S005 | Analytics/search data | Business value and priority | Priority URL cluster tied to demand or revenue |
+
 :::
 
 ::: source-card
+
 ### Source-card rule
 
 Every roadmap item should cite source IDs, observed date, confidence, owner, and the command or routine that verifies completion.
@@ -330,15 +368,21 @@ Every roadmap item should cite source IDs, observed date, confidence, owner, and
 
 ::: source-list
 ::: source-item
+
 ### Ahrefs controlled schema study
+
 Schema is treated as technical hygiene rather than a primary AI-visibility growth lever.
 :::
 ::: source-item
+
 ### Engine-overlap research
+
 Low overlap between AIO, Gemini, ChatGPT, AI Mode, and Perplexity requires per-engine reporting.
 :::
 ::: source-item
+
 ### Buyer-research evidence
+
 Answer engines increasingly influence discovery and shortlisting, so reports separate visibility from conversion value.
 :::
 :::
@@ -350,11 +394,10 @@ Answer engines increasingly influence discovery and shortlisting, so reports sep
 4. Include unresolved gaps in the appendix rather than presenting them as facts.
 :::
 
-
 ## Appendices
 
 ::: appendix-links
-[Source ledger](report.md#sources) [Client audit example](../client-ai-search-audit/report.html) [Style showcase](../style-showcase/report.html)
+[Source ledger appendix](appendices/source-ledger.md) [Prompt set appendix](appendices/prompt-set.md) [Client audit example](../client-ai-search-audit/report.html) [Style previews](../style-previews/index.html)
 :::
 
 ::: version-summary

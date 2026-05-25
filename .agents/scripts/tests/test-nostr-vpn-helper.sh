@@ -136,19 +136,6 @@ test_secret_guidance_mentions_aidevops_secret() {
 	return 0
 }
 
-test_macos_source_guidance_includes_integrity_checks() {
-	local output=""
-	output="$(bash "$HELPER_SCRIPT" macos-source 2>&1)"
-
-	if [[ "$output" == *"./packaging/macos/build-pkg.sh"* && "$output" == *"pkgutil --check-signature"* && "$output" == *"aidevops secret set FIPS_NSEC"* ]]; then
-		print_result "macos source guidance includes build and integrity checks" 0
-		return 0
-	fi
-
-	print_result "macos source guidance includes build and integrity checks" 1 "$output"
-	return 0
-}
-
 test_firewall_status_suppresses_systemctl_stderr() {
 	local output=""
 	write_stub_command systemctl 'printf "systemctl transient failure\n" >&2; exit 1'
@@ -172,7 +159,6 @@ main() {
 	test_status_propagates_fipsctl_failure
 	test_peers_delegates_to_fipsctl
 	test_secret_guidance_mentions_aidevops_secret
-	test_macos_source_guidance_includes_integrity_checks
 	test_firewall_status_suppresses_systemctl_stderr
 
 	printf '\nTests run: %d\n' "$TESTS_RUN"

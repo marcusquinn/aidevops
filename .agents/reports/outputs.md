@@ -21,8 +21,7 @@ out of the repository root while giving automation a stable path contract.
 | `_reports/published/` | Final report bundles ready for sharing or archival. | Gitignored |
 | `_reports/index/` | Generated search, catalogue, and lookup indexes. | Gitignored |
 | `_reports/_config/` | Repo-local report configuration and private options. | Gitignored |
-| `_reports/examples/` | Reviewed reusable report examples generated from canonical Markdown and DESIGN.md styles. | Versioned |
-| `_reports/sample/` | Full sample reports that demonstrate end-to-end report anatomy and supplementary appendix links. | Versioned |
+| `_reports/examples/` | Reviewed reusable report examples generated from canonical Markdown and DESIGN.md styles, including appendix fixtures for long-report behaviour. | Versioned |
 
 ## Artifact Contract
 

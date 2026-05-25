@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Report style previews</title>
+  <style>
+    :root {
+      --bg-primary: #0a0a0a;
+      --bg-secondary: #111111;
+      --bg-tertiary: #1a1a1a;
+      --text-primary: #ffffff;
+      --text-secondary: rgba(255, 255, 255, 0.7);
+      --text-muted: rgba(255, 255, 255, 0.48);
+      --accent: #b2e969;
+      --accent-hover: #c5f080;
+      --border: rgba(255, 255, 255, 0.12);
+      --border-hover: rgba(255, 255, 255, 0.24);
+      --shadow: rgba(0, 0, 0, 0.5);
+      color-scheme: dark;
+    }
+
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+    }
+
+    html {
+      min-height: 100%;
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      font-family: Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      line-height: 1.5;
+    }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      background:
+        radial-gradient(circle at top left, rgba(178, 233, 105, 0.11), transparent 34rem),
+        var(--bg-primary);
+      color: var(--text-primary);
+      overflow: hidden;
+    }
+
+    .nav {
+      position: fixed;
+      inset: 0 0 auto;
+      z-index: 100;
+      background: rgba(10, 10, 10, 0.94);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(20px);
+    }
+
+    .nav-container {
+      display: grid;
+      grid-template-columns: minmax(12rem, 1fr) minmax(16rem, 34rem) auto;
+      gap: 1rem;
+      align-items: center;
+      width: min(100%, 1480px);
+      margin: 0 auto;
+      padding: 0.85rem 1.5rem;
+    }
+
+    .nav-logo {
+      display: inline-flex;
+      gap: 0.55rem;
+      align-items: center;
+      min-width: 0;
+      color: var(--text-primary);
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+
+    .nav-logo-icon {
+      flex: 0 0 auto;
+      color: var(--accent);
+    }
+
+    .nav-subtitle {
+      overflow: hidden;
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      font-weight: 500;
+      letter-spacing: 0;
+      text-overflow: ellipsis;
+    }
+
+    .theme-picker {
+      display: grid;
+      grid-template-columns: auto minmax(10rem, 1fr);
+      gap: 0.6rem;
+      align-items: center;
+      min-width: 0;
+    }
+
+    .theme-picker label {
+      color: var(--text-muted);
+      font-size: 0.74rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .theme-select {
+      width: 100%;
+      min-height: 2.45rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.45rem 0.75rem;
+      background: var(--bg-secondary);
+      color: var(--text-primary);
+      font: inherit;
+      font-size: 0.9rem;
+    }
+
+    .theme-select:focus-visible {
+      border-color: var(--accent);
+      outline: 2px solid rgba(178, 233, 105, 0.24);
+      outline-offset: 2px;
+    }
+
+    .nav-actions {
+      display: flex;
+      gap: 0.6rem;
+      align-items: center;
+      justify-content: flex-end;
+      min-width: 0;
+    }
+
+    .nav-button,
+    .nav-link {
+      display: inline-flex;
+      min-height: 2.45rem;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.45rem 0.75rem;
+      background: var(--bg-secondary);
+      color: var(--text-secondary);
+      font: inherit;
+      font-size: 0.82rem;
+      text-decoration: none;
+      transition: border-color 0.2s, color 0.2s, background-color 0.2s;
+      white-space: nowrap;
+    }
+
+    .nav-button:hover,
+    .nav-link:hover,
+    .nav-button:focus-visible,
+    .nav-link:focus-visible {
+      border-color: var(--border-hover);
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      outline: 0;
+    }
+
+    .nav-button[data-primary="true"] {
+      border-color: color-mix(in srgb, var(--accent) 48%, transparent);
+      color: var(--accent);
+    }
+
+    .preview-shell {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      height: 100vh;
+      padding-block-start: 4.35rem;
+    }
+
+    .preview-meta {
+      display: flex;
+      gap: 0.75rem;
+      align-items: center;
+      justify-content: space-between;
+      width: min(100%, 1480px);
+      margin: 0 auto;
+      padding: 0.8rem 1.5rem;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+    }
+
+    .preview-title {
+      margin: 0;
+      color: var(--text-secondary);
+      font-size: 0.9rem;
+      font-weight: 700;
+    }
+
+    .preview-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.45rem;
+      justify-content: flex-end;
+    }
+
+    .preview-frame-wrap {
+      min-height: 0;
+      padding: 0 1.5rem 1.5rem;
+    }
+
+    .preview-frame {
+      display: block;
+      width: min(100%, 1480px);
+      height: 100%;
+      margin: 0 auto;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      background: #ffffff;
+      box-shadow: 0 25px 50px -12px var(--shadow);
+    }
+
+    @media (max-width: 980px) {
+      body {
+        overflow: auto;
+      }
+
+      .nav-container {
+        grid-template-columns: 1fr;
+        gap: 0.75rem;
+      }
+
+      .nav-actions {
+        justify-content: stretch;
+      }
+
+      .nav-button,
+      .nav-link {
+        flex: 1 1 auto;
+      }
+
+      .preview-shell {
+        min-height: 100vh;
+        padding-block-start: 11rem;
+      }
+
+      .preview-meta {
+        display: grid;
+      }
+
+      .preview-links {
+        justify-content: stretch;
+      }
+    }
+  </style>
+</head>
+<body>
+  <nav class="nav" aria-label="Report style preview navigation">
+    <div class="nav-container">
+      <a href="../report.html" class="nav-logo" aria-label="Open style showcase report">
+        <svg class="nav-logo-icon" viewBox="0 0 576 512" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M9.4 86.6C-3.1 74.1-3.1 53.9 9.4 41.4s32.8-12.5 45.3 0l192 192c12.5 12.5 12.5 32.8 0 45.3l-192 192c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L178.7 256 9.4 86.6zM256 416H544c17.7 0 32 14.3 32 32s-14.3 32-32 32H256c-17.7 0-32-14.3-32-32s14.3-32 32-32z"/></svg>
+        <span>aidevops</span>
+        <span class="nav-subtitle">report style previews</span>
+      </a>
+
+      <div class="theme-picker">
+        <label for="themeSelect">Theme</label>
+        <select id="themeSelect" class="theme-select" aria-describedby="previewCounter"></select>
+      </div>
+
+      <div class="nav-actions">
+        <a id="prevTheme" class="nav-button" href="basic.html">← Previous</a>
+        <a id="nextTheme" class="nav-button" href="editorial-evidence.html" data-primary="true">Next →</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="preview-shell">
+    <header class="preview-meta">
+      <div>
+        <h1 id="previewTitle" class="preview-title">Report style previews</h1>
+        <div id="previewCounter">Same canonical Markdown rendered through every report template.</div>
+      </div>
+      <div class="preview-links" aria-label="Current preview links">
+        <a id="openHtml" class="nav-link" href="basic.html">HTML</a>
+        <a id="openPdf" class="nav-link" href="basic-a4.pdf">A4 PDF</a>
+        <a id="openUsLetter" class="nav-link" href="basic-usletter.pdf">US Letter PDF</a>
+        <a id="openSlides" class="nav-link" href="basic-slides.pdf">Slides PDF</a>
+      </div>
+    </header>
+
+    <div class="preview-frame-wrap">
+      <iframe id="previewFrame" class="preview-frame" src="basic.html" title="Report style preview: basic"></iframe>
+    </div>
+  </main>
+
+  <script>
+    const themes = [
+      { label: "basic", file: "basic.html" },
+      { label: "editorial-evidence", file: "editorial-evidence.html" },
+      { label: "apple", file: "apple.html" },
+      { label: "arxiv", file: "arxiv.html" },
+      { label: "axel", file: "axel.html" },
+      { label: "bento", file: "bento.html" },
+      { label: "cabinet", file: "cabinet.html" },
+      { label: "consumer", file: "consumer.html" },
+      { label: "docuseal", file: "docuseal.html" },
+      { label: "ghost", file: "ghost.html" },
+      { label: "heron", file: "heron.html" },
+      { label: "ia", file: "ia.html" },
+      { label: "ibm", file: "ibm.html" },
+      { label: "knob", file: "knob.html" },
+      { label: "lifee", file: "lifee.html" },
+      { label: "medium", file: "medium.html" },
+      { label: "mellowyellow", file: "mellowyellow.html" },
+      { label: "outrank", file: "outrank.html" },
+      { label: "postedapp", file: "postedapp.html" },
+      { label: "savvy", file: "savvy.html" },
+      { label: "scalefusion", file: "scalefusion.html" },
+      { label: "serper", file: "serper.html" },
+      { label: "supermemory", file: "supermemory.html" },
+      { label: "tavily", file: "tavily.html" },
+      { label: "times", file: "times.html" },
+      { label: "ulysses", file: "ulysses.html" },
+      { label: "usgraphics", file: "usgraphics.html" },
+      { label: "wikipedia", file: "wikipedia.html" },
+      { label: "wpcodebox", file: "wpcodebox.html" },
+      { label: "zeroheight", file: "zeroheight.html" },
+      { label: "exsqueezeme light", file: "exsqueezeme-light.html" },
+      { label: "exsqueezeme dark", file: "exsqueezeme-dark.html" },
+      { label: "indexsy light", file: "indexsy-light.html" },
+      { label: "indexsy dark", file: "indexsy-dark.html" },
+      { label: "lottiefiles light", file: "lottiefiles-light.html" },
+      { label: "lottiefiles dark", file: "lottiefiles-dark.html" },
+      { label: "superx light", file: "superx-light.html" },
+      { label: "superx dark", file: "superx-dark.html" },
+      { label: "terminalshop light", file: "terminalshop-light.html" },
+      { label: "terminalshop dark", file: "terminalshop-dark.html" }
+    ];
+
+    themes.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }));
+    const basicIndex = themes.findIndex((theme) => theme.label === "basic");
+    if (basicIndex !== -1) {
+      themes.push(themes.splice(basicIndex, 1)[0]);
+    }
+
+    const select = document.getElementById("themeSelect");
+    const frame = document.getElementById("previewFrame");
+    const title = document.getElementById("previewTitle");
+    const counter = document.getElementById("previewCounter");
+    const prevLink = document.getElementById("prevTheme");
+    const nextLink = document.getElementById("nextTheme");
+    const openHtml = document.getElementById("openHtml");
+    const openPdf = document.getElementById("openPdf");
+    const openUsLetter = document.getElementById("openUsLetter");
+    const openSlides = document.getElementById("openSlides");
+
+    themes.forEach((theme, index) => {
+      const option = document.createElement("option");
+      option.value = String(index);
+      option.textContent = theme.label;
+      select.appendChild(option);
+    });
+
+    function pdfPath(file) {
+      return file.replace(/\.html$/, "-a4.pdf");
+    }
+
+    function usLetterPath(file) {
+      return file.replace(/\.html$/, "-usletter.pdf");
+    }
+
+    function slidesPath(file) {
+      return file.replace(/\.html$/, "-slides.pdf");
+    }
+
+    function selectTheme(index, updateHash = true) {
+      const normalisedIndex = (index + themes.length) % themes.length;
+      const theme = themes[normalisedIndex];
+      const previous = themes[(normalisedIndex - 1 + themes.length) % themes.length];
+      const next = themes[(normalisedIndex + 1) % themes.length];
+
+      select.value = String(normalisedIndex);
+      frame.src = theme.file;
+      frame.title = `Report style preview: ${theme.label}`;
+      title.textContent = theme.label;
+      counter.textContent = `${normalisedIndex + 1} of ${themes.length} · Same canonical Markdown rendered through every report template.`;
+
+      prevLink.href = previous.file;
+      prevLink.textContent = "← Previous";
+      prevLink.setAttribute("aria-label", `Previous theme: ${previous.label}`);
+      nextLink.href = next.file;
+      nextLink.textContent = "Next →";
+      nextLink.setAttribute("aria-label", `Next theme: ${next.label}`);
+
+      openHtml.href = theme.file;
+      openPdf.href = pdfPath(theme.file);
+      openUsLetter.href = usLetterPath(theme.file);
+      openSlides.href = slidesPath(theme.file);
+
+      if (updateHash) {
+        history.replaceState(null, "", `#${theme.file.replace(/\.html$/, "")}`);
+      }
+    }
+
+    function indexFromHash() {
+      const key = decodeURIComponent(location.hash.replace(/^#/, ""));
+      if (!key) return 0;
+      const file = key.endsWith(".html") ? key : `${key}.html`;
+      const index = themes.findIndex((theme) => theme.file === file);
+      return index === -1 ? 0 : index;
+    }
+
+    select.addEventListener("change", () => {
+      selectTheme(Number(select.value));
+    });
+
+    prevLink.addEventListener("click", (event) => {
+      event.preventDefault();
+      selectTheme(Number(select.value) - 1);
+    });
+
+    nextLink.addEventListener("click", (event) => {
+      event.preventDefault();
+      selectTheme(Number(select.value) + 1);
+    });
+
+    window.addEventListener("hashchange", () => {
+      selectTheme(indexFromHash(), false);
+    });
+
+    selectTheme(indexFromHash(), false);
+  </script>
+</body>
+</html>

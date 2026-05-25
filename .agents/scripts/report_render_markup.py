@@ -22,6 +22,10 @@ BADGE_CLASS_MAP = {
     "low": "badge-verified",
 }
 
+BADGE_LABEL_MAP = {
+    "rct": "Peer-Review",
+}
+
 
 def slug(text: str) -> str:
     value = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
@@ -54,7 +58,7 @@ def generic_badge(value: str) -> str:
     raw = html.unescape(value).strip()
     key = re.sub(r"[^a-z0-9]+", "-", raw.lower()).strip("-") or "note"
     css_class = BADGE_CLASS_MAP.get(key, "badge--hygiene")
-    label = html.escape(raw.replace("-", " ").title())
+    label = html.escape(BADGE_LABEL_MAP.get(key, raw.replace("-", " ").title()))
     return f'<span class="badge {css_class}">{label}</span>'
 
 

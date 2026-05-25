@@ -50,6 +50,15 @@
   --report-space-6: 3rem;
   --report-space-7: 4rem;
   --report-page-max: 78rem;
+  --report-grid-gutter: 28px;
+  --report-badge-strong-bg: #eaf2ff;
+  --report-badge-strong-ink: #1d4ed8;
+  --report-badge-vendor-bg: #f4ecff;
+  --report-badge-vendor-ink: var(--report-violet);
+  --report-badge-practitioner-bg: #fff5db;
+  --report-badge-practitioner-ink: #92400e;
+  --report-badge-hygiene-bg: #f3f4f6;
+  --report-badge-hygiene-ink: #374151;
 }
 
 *,
@@ -100,6 +109,13 @@ body.report-body {
   font-size: clamp(1.15rem, 1.5vw, 1.35rem);
 }
 
+.report-main p,
+.report-main li,
+.report-main blockquote {
+  orphans: 3;
+  widows: 3;
+}
+
 .report-shell {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(16rem, 20rem);
@@ -111,9 +127,18 @@ body.report-body {
 
 .report-main {
   grid-column: 1;
-  grid-row: 1;
   min-width: 0;
   counter-reset: report-chapter;
+}
+
+.report-main-flow {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+}
+
+.report-rest {
+  grid-row: 2;
 }
 
 .report-cover,
@@ -145,6 +170,7 @@ body.report-body {
 .accordion,
 .quote-card,
 .callout,
+.report-keep-with-heading,
 .version-summary {
   break-inside: avoid;
   page-break-inside: avoid;
@@ -224,10 +250,11 @@ body.report-body {
 
 .sticky-toc {
   grid-column: 2;
-  grid-row: 1;
+  grid-row: 1 / span 2;
   position: sticky;
-  top: var(--report-space-4);
+  top: calc(var(--report-space-4) + 5rem);
   align-self: start;
+  margin-block-start: calc(2rem + var(--report-space-3));
   max-height: calc(100vh - var(--report-space-5));
   overflow: hidden;
   padding: var(--report-space-3);
@@ -247,10 +274,7 @@ body.report-body {
 }
 
 .sticky-toc-header {
-  display: flex;
-  gap: var(--report-space-2);
-  align-items: center;
-  justify-content: space-between;
+  display: block;
   margin-block-end: var(--report-space-3);
   padding-inline-end: 0.35rem;
 }
@@ -259,11 +283,21 @@ body.report-body {
   margin: 0;
 }
 
+.report-body .sticky-toc-header h2 {
+  font-size: clamp(1.1rem, 2vw, 1.55rem);
+  line-height: 1;
+}
+
 .toc-pdf-actions {
-  display: inline-flex;
-  flex: 0 0 auto;
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--report-space-2);
   align-items: center;
+  align-self: start;
+  z-index: 2;
+  margin-block-end: var(--report-space-2);
 }
 
 .toc-pdf-link {
@@ -318,6 +352,12 @@ body.report-body {
   list-style: none;
 }
 
+.sticky-toc li.toc-chapter {
+  margin-block-start: var(--report-space-2);
+  padding-block-start: var(--report-space-2);
+  border-top: 1px solid var(--report-rule);
+}
+
 .sticky-toc ol a {
   display: block;
   padding: var(--report-space-1) var(--report-space-2);
@@ -325,6 +365,10 @@ body.report-body {
   color: var(--report-ink-muted);
   line-height: 1.45;
   text-decoration: none;
+}
+
+.sticky-toc li.toc-subsection a {
+  padding-inline-start: calc(var(--report-space-2) + 1rem);
 }
 
 .sticky-toc ol a[aria-current="true"],
@@ -519,9 +563,9 @@ th .evidence-badge {
 }
 
 .badge--rct {
-  background: var(--report-good-bg);
-  color: var(--report-green);
-  border-color: rgba(20, 122, 74, 0.2);
+  background: #dcfce7;
+  color: #166534;
+  border-color: rgba(22, 101, 52, 0.24);
 }
 
 .badge--strong {
@@ -531,8 +575,8 @@ th .evidence-badge {
 }
 
 .badge--vendor {
-  background: #f4ecff;
-  color: var(--report-violet);
+  background: var(--report-badge-vendor-bg);
+  color: var(--report-badge-vendor-ink);
   border-color: rgba(109, 40, 217, 0.2);
 }
 
@@ -646,8 +690,25 @@ th .evidence-badge {
   border-top: 0;
 }
 
+@media print {
+  .source-list {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  .source-list .source-title {
+    break-after: avoid-page;
+    page-break-after: avoid;
+  }
+
+  .source-list .source-title:not(:first-child) {
+    break-before: page;
+    page-break-before: always;
+  }
+}
+
 .source-list .source-item:last-child {
-  border-bottom: 1px solid var(--report-rule);
+  border-bottom: 0;
 }
 
 .source-item {
@@ -706,8 +767,8 @@ th .evidence-badge {
 .block-template {
   margin-block: var(--report-space-4);
   overflow: hidden;
-  background: var(--report-code-bg);
-  color: var(--report-code-ink);
+  background: transparent;
+  color: inherit;
   border-radius: var(--report-radius-md);
 }
 
@@ -716,9 +777,9 @@ th .evidence-badge {
   display: flex;
   justify-content: space-between;
   gap: var(--report-space-3);
-  padding: var(--report-space-2) var(--report-space-3);
-  background: rgba(255, 255, 255, 0.06);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 0 0 var(--report-space-2);
+  background: transparent;
+  border-bottom: 0;
   color: var(--report-code-accent);
   font-family: var(--report-font-code);
   font-size: 0.8125rem;
@@ -728,10 +789,17 @@ th .evidence-badge {
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
+  isolation: isolate;
   background: var(--report-code-bg);
+  background-clip: padding-box;
   color: var(--report-code-ink);
   border: 1px solid var(--report-rule);
   border-radius: var(--report-radius-md);
+}
+
+.code-block-wrap > :first-child {
+  border-top-left-radius: calc(var(--report-radius-md) - 1px);
+  border-top-right-radius: calc(var(--report-radius-md) - 1px);
 }
 
 .code-block-wrap pre {
@@ -742,6 +810,18 @@ th .evidence-badge {
   font-family: var(--report-font-code);
   font-size: 0.8125rem;
   line-height: 1.55;
+}
+
+.code-block-wrap pre:last-child {
+  border-bottom-right-radius: inherit;
+  border-bottom-left-radius: inherit;
+}
+
+.code-block-wrap .mermaid,
+.code-block-wrap .latex-block {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
 }
 
 .code-block-head {
@@ -758,6 +838,33 @@ th .evidence-badge {
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.example-card > header,
+.block-template > header,
+.report-keep-with-heading > h2,
+.report-keep-with-heading > h3 {
+  break-after: avoid;
+  page-break-after: avoid;
+}
+
+.example-card > .code-block-wrap,
+.block-template > .code-block-wrap,
+.report-keep-with-heading > .code-block-wrap,
+.report-keep-with-heading > .source-card,
+.report-keep-with-heading > .source-list,
+.report-keep-with-heading > .sources-layout,
+.report-keep-with-heading > .sources-group,
+.report-keep-with-heading > .callout,
+.report-keep-with-heading > .info-panel,
+.report-keep-with-heading > .impact-panel,
+.report-keep-with-heading > .evidence-panel,
+.report-keep-with-heading > .action-panel,
+.report-keep-with-heading > .details-note,
+.report-keep-with-heading > .myth-callout,
+.report-keep-with-heading > .accordion {
+  break-before: avoid;
+  page-break-before: avoid;
 }
 
 .code-copy {
@@ -880,6 +987,10 @@ th .evidence-badge {
   border: 1px solid var(--report-rule);
   border-radius: var(--report-radius-md);
   background: var(--report-surface);
+  background-clip: padding-box;
+  clip-path: inset(0 round var(--report-radius-md));
+  contain: paint;
+  isolation: isolate;
 }
 
 .facts-table,
@@ -892,6 +1003,7 @@ th .evidence-badge {
   border-spacing: 0;
   font-size: 0.875rem;
   background: var(--report-surface);
+  border-radius: inherit;
 }
 
 .facts-table th,
@@ -927,8 +1039,33 @@ th .evidence-badge {
 .facts-table-wrap th,
 .report-main > table th {
   background: var(--report-paper-raised);
+  background-clip: padding-box;
   color: var(--report-ink);
   font-weight: 700;
+}
+
+.facts-table thead tr:first-child th:first-child,
+.facts-table-wrap thead tr:first-child th:first-child,
+.report-main > table thead tr:first-child th:first-child {
+  border-top-left-radius: calc(var(--report-radius-md) - 1px);
+}
+
+.facts-table thead tr:first-child th:last-child,
+.facts-table-wrap thead tr:first-child th:last-child,
+.report-main > table thead tr:first-child th:last-child {
+  border-top-right-radius: calc(var(--report-radius-md) - 1px);
+}
+
+.facts-table tbody tr:last-child td:first-child,
+.facts-table-wrap tbody tr:last-child td:first-child,
+.report-main > table tbody tr:last-child td:first-child {
+  border-bottom-left-radius: calc(var(--report-radius-md) - 1px);
+}
+
+.facts-table tbody tr:last-child td:last-child,
+.facts-table-wrap tbody tr:last-child td:last-child,
+.report-main > table tbody tr:last-child td:last-child {
+  border-bottom-right-radius: calc(var(--report-radius-md) - 1px);
 }
 
 .details-note {
@@ -1056,7 +1193,8 @@ blockquote {
 
 .mermaid-rendered,
 .latex-rendered-block {
-  margin-block: var(--report-space-4);
+  width: 100%;
+  margin: var(--report-space-4) 0;
   padding: var(--report-space-3);
   border: 1px solid var(--report-rule);
   border-radius: var(--report-radius-md);
@@ -1140,6 +1278,7 @@ blockquote {
 
 .bar-chart {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
   gap: var(--report-space-2);
   margin-block: var(--report-space-4);
 }
@@ -1250,7 +1389,7 @@ ol li::marker {
 }
 
 .version-summary {
-  text-align: center;
+  text-align: left;
   color: var(--report-ink-soft);
   font-size: clamp(0.72rem, 0.58rem + 0.42vw, 0.92rem);
   font-weight: 800;
@@ -1269,7 +1408,6 @@ ol li::marker {
 .version-summary p {
   max-width: none;
   margin: 0;
-  text-wrap: balance;
 }
 
 .source-card {
@@ -1296,13 +1434,10 @@ ol li::marker {
   top: var(--report-space-3);
   right: var(--report-space-3);
   display: inline-flex;
-  width: 1.6rem;
-  height: 1.6rem;
   align-items: center;
   justify-content: center;
-  border: 1px solid var(--report-rule);
-  border-radius: var(--report-badge-radius);
-  background: var(--report-surface);
+  border: 0;
+  background: transparent;
   font-weight: 900;
   line-height: 1;
 }
@@ -1359,7 +1494,9 @@ a {
   }
 
   .report-main,
-  .sticky-toc {
+  .report-main-flow,
+  .sticky-toc,
+  .toc-pdf-actions {
     grid-column: auto;
     grid-row: auto;
   }
@@ -1437,7 +1574,18 @@ a {
 
   @page {
     size: A4 portrait;
-    margin: 0;
+    margin: 12mm 0;
+    background: #ffffff;
+  }
+
+  @page report-letter {
+    size: Letter portrait;
+    margin: 0.45in 0;
+    background: #ffffff;
+  }
+
+  html {
+    background: #ffffff !important;
   }
 
   html,
@@ -1450,18 +1598,471 @@ a {
   }
 
   body.report-body {
+    box-sizing: border-box;
     min-height: 100vh;
-    padding: 12mm;
+    padding: 0 12mm;
+    orphans: 3;
+    widows: 3;
   }
 
-  body.report-theme-dark {
+  body.report-pdf-profile-letter {
+    page: report-letter;
+    padding: 0 0.45in;
+  }
+
+  body.report-body:not(.report-theme-dark) {
+    --report-paper: #ffffff;
+    --report-paper-raised: #ffffff;
+    --report-panel: #ffffff;
+    --report-surface: #ffffff;
+    background: #ffffff !important;
+  }
+
+  body.report-body:not(.report-theme-dark) .report-shell,
+  body.report-body:not(.report-theme-dark) .report-main,
+  body.report-body:not(.report-theme-dark) .report-content {
+    background: #ffffff !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    box-shadow: none !important;
+    filter: none !important;
+    text-shadow: none !important;
+  }
+
+  body.report-body {
+    position: relative;
     background: var(--report-paper) !important;
+  }
+
+  body.report-theme-dark .report-shell,
+  body.report-theme-dark .report-main,
+  body.report-theme-dark .report-content {
+    background: var(--report-paper) !important;
+  }
+
+  body.report-body::before {
+    content: none;
+    display: none;
   }
 
   .report-shell {
     display: block;
+    width: 100%;
     max-width: none;
+    overflow: visible;
     padding: 0;
+    border: 0 !important;
+    outline: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .report-main,
+  .report-content {
+    width: 100%;
+    max-width: 100%;
+    overflow: visible;
+    border: 0 !important;
+    outline: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .report-keep-with-heading,
+  .report-keep-with-heading.report-chapter-page {
+    border: 0 !important;
+    outline: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .report-cover,
+  .stats-strip,
+  .summary-stats {
+    background: transparent !important;
+  }
+
+  .stat-card {
+    background: var(--report-surface) !important;
+    background-clip: padding-box;
+  }
+
+  .report-footer {
+    display: flex;
+    min-height: 22mm;
+    margin-block-start: 8mm;
+    padding: 0 6mm;
+    align-items: center;
+    justify-content: center;
+    background: #ffffff;
+    border: 1px solid #d1d5db;
+    color: #374151;
+    text-align: center;
+  }
+
+  .report-pdf-profile-slides-16-9-1,
+  .report-pdf-profile-slides-16-9-2,
+  .report-pdf-profile-slides-16-9-3 {
+    font-size: 32pt;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main :where(p, li, blockquote, td, th, summary),
+  .report-pdf-profile-slides-16-9-2 .report-main :where(p, li, blockquote, td, th, summary),
+  .report-pdf-profile-slides-16-9-3 .report-main :where(p, li, blockquote, td, th, summary),
+  .report-pdf-profile-slides-16-9-1 .report-main :where(.report-subtitle, .report-kicker, .eyebrow, .meta-label, .priority-label, .source-card-type, .source-meta, .stat-label, .stat-period, .version-summary),
+  .report-pdf-profile-slides-16-9-2 .report-main :where(.report-subtitle, .report-kicker, .eyebrow, .meta-label, .priority-label, .source-card-type, .source-meta, .stat-label, .stat-period, .version-summary),
+  .report-pdf-profile-slides-16-9-3 .report-main :where(.report-subtitle, .report-kicker, .eyebrow, .meta-label, .priority-label, .source-card-type, .source-meta, .stat-label, .stat-period, .version-summary) {
+    font-size: 32pt !important;
+    line-height: 1.22;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main .badge,
+  .report-pdf-profile-slides-16-9-2 .report-main .badge,
+  .report-pdf-profile-slides-16-9-3 .report-main .badge {
+    font-size: 32pt !important;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main .code-block-wrap pre,
+  .report-pdf-profile-slides-16-9-2 .report-main .code-block-wrap pre,
+  .report-pdf-profile-slides-16-9-3 .report-main .code-block-wrap pre,
+  .report-pdf-profile-slides-16-9-1 .report-main .mermaid,
+  .report-pdf-profile-slides-16-9-2 .report-main .mermaid,
+  .report-pdf-profile-slides-16-9-3 .report-main .mermaid,
+  .report-pdf-profile-slides-16-9-1 .report-main .latex-block,
+  .report-pdf-profile-slides-16-9-2 .report-main .latex-block,
+  .report-pdf-profile-slides-16-9-3 .report-main .latex-block {
+    font-size: 32pt !important;
+    line-height: 1.2;
+  }
+
+  body.report-body,
+  .report-main,
+  .report-main p,
+  .report-main li,
+  .report-main blockquote,
+  .report-main td,
+  .report-main th,
+  .report-main summary {
+    text-wrap: pretty;
+  }
+
+  .report-main h1,
+  .report-main h2,
+  .report-main h3,
+  .report-main h4,
+  .report-main h5,
+  .report-main h6,
+  .source-title,
+  .version-summary {
+    text-wrap: balance;
+  }
+
+  .version-summary,
+  .version-summary p {
+    text-align: center;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main,
+  .report-pdf-profile-slides-16-9-2 .report-main,
+  .report-pdf-profile-slides-16-9-3 .report-main {
+    column-count: auto !important;
+    column-gap: normal !important;
+  }
+
+  .report-main h1,
+  .report-main h2,
+  .report-main h3,
+  .code-block-head,
+  .source-title,
+  .example-card > header,
+  .block-template > header,
+  .report-keep-with-heading > h2,
+  .report-keep-with-heading > h3 {
+    break-after: avoid-page;
+    page-break-after: avoid;
+  }
+
+  .report-main h2.chapter-heading {
+    margin-block-start: 10mm;
+    padding-block-start: 5mm;
+    border-top: 0 !important;
+    break-before: page;
+    break-inside: avoid-page;
+    page-break-before: always;
+    page-break-inside: avoid;
+  }
+
+  .report-title-page {
+    display: flex;
+    min-height: calc(297mm - 24mm);
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    break-after: page;
+    page-break-after: always;
+  }
+
+  .report-title-page h1,
+  .report-title-page p {
+    max-width: 34rem;
+    margin-inline: auto;
+  }
+
+  .report-title-page h1 {
+    font-size: 32pt;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-title-page,
+  .report-pdf-profile-slides-16-9-2 .report-title-page,
+  .report-pdf-profile-slides-16-9-3 .report-title-page {
+    display: block;
+    min-height: 0;
+    padding-block: 1.3in 0.45in;
+    break-after: page;
+    break-inside: avoid-page;
+    page-break-after: always;
+    page-break-inside: avoid;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-title-page h1,
+  .report-pdf-profile-slides-16-9-2 .report-title-page h1,
+  .report-pdf-profile-slides-16-9-3 .report-title-page h1 {
+    font-size: clamp(60pt, 9vw, 88pt) !important;
+    line-height: 0.95;
+    margin-block: 0 0.7in;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-title-page p,
+  .report-pdf-profile-slides-16-9-2 .report-title-page p,
+  .report-pdf-profile-slides-16-9-3 .report-title-page p {
+    font-size: 32pt !important;
+    line-height: 1.2;
+    margin-block: 0.2in 0;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block, .quote-card, blockquote, .info-panel, .impact-panel, .evidence-panel, .action-panel, .callout, .accordion, .facts-table-wrap, table, .source-card, .source-item, .details-note, .myth-callout, .severity-key, .example-card, .block-template),
+  .report-pdf-profile-slides-16-9-2 .report-main :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block, .quote-card, blockquote, .info-panel, .impact-panel, .evidence-panel, .action-panel, .callout, .accordion, .facts-table-wrap, table, .source-card, .source-item, .details-note, .myth-callout, .severity-key, .example-card, .block-template),
+  .report-pdf-profile-slides-16-9-3 .report-main :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block, .quote-card, blockquote, .info-panel, .impact-panel, .evidence-panel, .action-panel, .callout, .accordion, .facts-table-wrap, table, .source-card, .source-item, .details-note, .myth-callout, .severity-key, .example-card, .block-template) {
+    break-before: page;
+    break-inside: avoid-page;
+    page-break-before: always;
+    page-break-inside: avoid;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main :where(.report-cover, .stats-strip, .summary-stats, .badge-key),
+  .report-pdf-profile-slides-16-9-2 .report-main :where(.report-cover, .stats-strip, .summary-stats, .badge-key),
+  .report-pdf-profile-slides-16-9-3 .report-main :where(.report-cover, .stats-strip, .summary-stats, .badge-key) {
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .quote-card,
+  .report-pdf-profile-slides-16-9-2 .quote-card,
+  .report-pdf-profile-slides-16-9-3 .quote-card,
+  .report-pdf-profile-slides-16-9-1 blockquote,
+  .report-pdf-profile-slides-16-9-2 blockquote,
+  .report-pdf-profile-slides-16-9-3 blockquote {
+    display: flex;
+    min-height: 5.8in;
+    align-items: center;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .badge-key p,
+  .report-pdf-profile-slides-16-9-2 .badge-key p,
+  .report-pdf-profile-slides-16-9-3 .badge-key p {
+    grid-template-columns: max-content minmax(0, 1fr) !important;
+    column-gap: 0.45in;
+    align-items: center;
+    text-align: left;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .facts-table,
+  .report-pdf-profile-slides-16-9-2 .facts-table,
+  .report-pdf-profile-slides-16-9-3 .facts-table,
+  .report-pdf-profile-slides-16-9-1 .facts-table-wrap table,
+  .report-pdf-profile-slides-16-9-2 .facts-table-wrap table,
+  .report-pdf-profile-slides-16-9-3 .facts-table-wrap table,
+  .report-pdf-profile-slides-16-9-1 .report-main > table,
+  .report-pdf-profile-slides-16-9-2 .report-main > table,
+  .report-pdf-profile-slides-16-9-3 .report-main > table {
+    width: 100%;
+    min-width: 0;
+    table-layout: fixed;
+    font-size: 26pt !important;
+  }
+
+  .report-pdf-profile-slides-16-9-1 :where(.facts-table, .facts-table-wrap, .report-main > table) :where(th, td),
+  .report-pdf-profile-slides-16-9-2 :where(.facts-table, .facts-table-wrap, .report-main > table) :where(th, td),
+  .report-pdf-profile-slides-16-9-3 :where(.facts-table, .facts-table-wrap, .report-main > table) :where(th, td) {
+    padding: 0.22in 0.28in;
+    font-size: 26pt !important;
+    overflow-wrap: anywhere;
+    line-height: 1.2;
+    vertical-align: top;
+  }
+
+  .report-pdf-profile-slides-16-9-1 :where(.stats-strip, .summary-stats, .tactic-grid, .sources-layout, .good-bad, .severity-key, .badge-key) :where(p, li, span, a),
+  .report-pdf-profile-slides-16-9-2 :where(.stats-strip, .summary-stats, .tactic-grid, .sources-layout, .good-bad, .severity-key, .badge-key) :where(p, li, span, a),
+  .report-pdf-profile-slides-16-9-3 :where(.stats-strip, .summary-stats, .tactic-grid, .sources-layout, .good-bad, .severity-key, .badge-key) :where(p, li, span, a) {
+    font-size: 26pt !important;
+    line-height: 1.2;
+  }
+
+  .report-pdf-profile-slides-16-9-1 :where(td, th) .evidence-badge,
+  .report-pdf-profile-slides-16-9-2 :where(td, th) .evidence-badge,
+  .report-pdf-profile-slides-16-9-3 :where(td, th) .evidence-badge {
+    display: flex;
+    flex-direction: column;
+    gap: 0.12in;
+    align-items: flex-start;
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .report-pdf-profile-slides-16-9-1 :where(td, th) :where(.badge, .evidence-label),
+  .report-pdf-profile-slides-16-9-2 :where(td, th) :where(.badge, .evidence-label),
+  .report-pdf-profile-slides-16-9-3 :where(td, th) :where(.badge, .evidence-label) {
+    max-width: 100%;
+    font-size: 26pt !important;
+    white-space: normal;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-keep-with-heading > :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block),
+  .report-pdf-profile-slides-16-9-2 .report-keep-with-heading > :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block),
+  .report-pdf-profile-slides-16-9-3 .report-keep-with-heading > :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block),
+  .report-pdf-profile-slides-16-9-1 :where(.example-card, .block-template) > .code-block-wrap,
+  .report-pdf-profile-slides-16-9-2 :where(.example-card, .block-template) > .code-block-wrap,
+  .report-pdf-profile-slides-16-9-3 :where(.example-card, .block-template) > .code-block-wrap {
+    break-before: avoid-page !important;
+    page-break-before: avoid !important;
+  }
+
+  .report-front .report-cover {
+    break-before: auto;
+    page-break-before: auto;
+  }
+
+  .report-front {
+    font-size: 8.6pt;
+    line-height: 1.34;
+  }
+
+  .report-front .report-cover,
+  .report-front .stats-strip,
+  .report-front .summary-stats,
+  .report-front .badge-key,
+  .report-front .accordion,
+  .report-front .action-line,
+  .report-front .action-prompt,
+  .report-front .code-block-wrap {
+    margin-block: 2.5mm;
+    padding: 2.5mm 3mm;
+  }
+
+  .report-front .report-cover {
+    padding-block-start: 0;
+  }
+
+  .report-front .stats-strip,
+  .report-front .summary-stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 2mm;
+  }
+
+  .report-front h2.no-chapter {
+    margin-block: 4mm 2mm;
+  }
+
+  .report-front .badge-key {
+    gap: 1mm;
+  }
+
+  .report-front .badge-key p {
+    grid-template-columns: minmax(8rem, auto) 1fr;
+    gap: 2mm;
+  }
+
+  .report-front .badge-key {
+    padding-block-start: 6mm;
+    border-top: 1px solid var(--report-rule-strong);
+  }
+
+  .report-front .action-prompt pre {
+    font-size: 7pt;
+    line-height: 1.24;
+  }
+
+  .report-keep-with-heading.report-chapter-page {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  .report-front {
+    display: block;
+    min-height: calc(297mm - 24mm);
+    break-after: auto;
+    page-break-after: auto;
+  }
+
+  body.report-pdf-profile-letter .report-front {
+    min-height: 10.1in;
+  }
+
+  .report-main h2.chapter-heading::before {
+    break-after: avoid-page;
+    page-break-after: avoid;
+  }
+
+  .action-line,
+  .code-block-wrap,
+  .mermaid-rendered,
+  .latex-rendered-block,
+  .example-card > .code-block-wrap,
+  .block-template > .code-block-wrap,
+  .bar-chart p {
+    -webkit-box-decoration-break: clone;
+    box-sizing: border-box;
+    box-decoration-break: clone;
+    width: calc(100% - 12pt);
+    max-width: calc(100% - 12pt);
+    margin: 6mm 6pt 8mm;
+    break-inside: avoid-page;
+    break-after: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .code-block-wrap,
+  .mermaid-rendered,
+  .latex-rendered-block,
+  .example-card > .code-block-wrap,
+  .block-template > .code-block-wrap,
+  .report-keep-with-heading > .code-block-wrap {
+    overflow: hidden;
+    border-radius: var(--report-radius-md) !important;
+    background-clip: padding-box;
+  }
+
+  .code-block-wrap > :first-child {
+    border-top-left-radius: calc(var(--report-radius-md) - 1px);
+    border-top-right-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .report-keep-with-heading {
+    display: block;
+    margin-block: 6mm 8mm;
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .report-keep-with-heading > :first-child {
+    margin-block-start: 0;
+  }
+
+  .report-keep-with-heading > :last-child {
+    margin-block-end: 0;
   }
 
   .sticky-toc {
@@ -1471,8 +2072,11 @@ a {
     border: 0;
     border-radius: 0;
     box-shadow: none;
+    break-before: auto;
     break-after: page;
     break-inside: auto;
+    page-break-before: auto;
+    page-break-after: always;
     page-break-inside: auto;
   }
 
@@ -1487,6 +2091,11 @@ a {
     margin-block: 0.2rem;
   }
 
+  .sticky-toc-header {
+    break-before: auto;
+    page-break-before: auto;
+  }
+
   .toc-pdf-actions,
   .toc-pdf-link {
     display: none !important;
@@ -1499,17 +2108,23 @@ a {
 
   .report-cover,
   .chapter-hero,
+  .case-study-card,
   .tactic-card,
   .example-card,
+  .block-template,
   .good-bad,
   .stats-strip,
   .summary-stats,
+  .facts-table,
   .facts-table-wrap,
+  .report-main > table,
   .details-note,
   .industry-card,
   .priority-group,
   .checklist-card,
   .source-card,
+  .source-item,
+  .source-list,
   .sources-layout,
   .sources-group,
   .myth-callout,
@@ -1521,11 +2136,149 @@ a {
   .accordion,
   .quote-card,
   .callout {
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    box-sizing: border-box;
+    width: calc(100% - 12pt);
+    max-width: calc(100% - 12pt);
+    margin-inline: 6pt;
+    overflow: visible;
+    border-radius: 0 !important;
     box-shadow: none !important;
   }
 
-  .facts-table-wrap {
+  .action-line,
+  .action-prompt {
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    box-sizing: border-box;
+    width: calc(100% - 12pt);
+    max-width: calc(100% - 12pt);
+    margin: 6mm 6pt 8mm;
     overflow: visible;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .good-bad {
+    display: block;
+  }
+
+  .good-row,
+  .bad-row {
+    margin-block: 0 8mm;
+  }
+
+  .chapter-hero,
+  .case-study-card,
+  .tactic-card,
+  .example-card,
+  .block-template,
+  .good-bad,
+  .facts-table-wrap,
+  .details-note,
+  .industry-card,
+  .priority-group,
+  .checklist-card,
+  .source-card,
+  .source-item,
+  .source-list,
+  .sources-layout,
+  .sources-group,
+  .myth-callout,
+  .info-panel,
+  .impact-panel,
+  .evidence-panel,
+  .action-panel,
+  .severity-key,
+  .accordion,
+  .quote-card,
+  .callout {
+    margin-block: 6mm 8mm;
+    break-inside: avoid-page;
+    break-after: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .example-card > .code-block-wrap,
+  .block-template > .code-block-wrap,
+  .report-keep-with-heading > .code-block-wrap,
+  .report-keep-with-heading > .source-card,
+  .report-keep-with-heading > .source-item,
+  .report-keep-with-heading > .source-list,
+  .report-keep-with-heading > .sources-layout,
+  .report-keep-with-heading > .sources-group,
+  .report-keep-with-heading > .callout,
+  .report-keep-with-heading > .info-panel,
+  .report-keep-with-heading > .impact-panel,
+  .report-keep-with-heading > .evidence-panel,
+  .report-keep-with-heading > .action-panel,
+  .report-keep-with-heading > .details-note,
+  .report-keep-with-heading > .myth-callout,
+  .report-keep-with-heading > .accordion {
+    break-before: avoid-page;
+    page-break-before: avoid;
+  }
+
+  .report-main h2.chapter-heading + .chapter-hero,
+  .report-main h2.chapter-heading + .tactic-card,
+  .report-main h2.chapter-heading + .example-card,
+  .report-main h2.chapter-heading + .good-bad,
+  .report-main h2.chapter-heading + .facts-table-wrap,
+  .report-main h2.chapter-heading + .details-note,
+  .report-main h2.chapter-heading + .industry-card,
+  .report-main h2.chapter-heading + .priority-group,
+  .report-main h2.chapter-heading + .checklist-card,
+  .report-main h2.chapter-heading + .source-card,
+  .report-main h2.chapter-heading + .sources-layout,
+  .report-main h2.chapter-heading + .sources-group,
+  .report-main h2.chapter-heading + .myth-callout,
+  .report-main h2.chapter-heading + .info-panel,
+  .report-main h2.chapter-heading + .impact-panel,
+  .report-main h2.chapter-heading + .evidence-panel,
+  .report-main h2.chapter-heading + .action-panel,
+  .report-main h2.chapter-heading + .severity-key,
+  .report-main h2.chapter-heading + .accordion,
+  .report-main h2.chapter-heading + .quote-card,
+  .report-main h2.chapter-heading + .callout {
+    break-before: avoid-page;
+    page-break-before: avoid;
+  }
+
+  .accordion {
+    margin-block-start: 5mm;
+  }
+
+  .facts-table-wrap {
+    overflow: hidden;
+    border-radius: var(--report-radius-md) !important;
+    background-clip: padding-box;
+    clip-path: inset(0 round var(--report-radius-md));
+    contain: paint;
+  }
+
+  .facts-table thead tr:first-child th:first-child,
+  .facts-table-wrap thead tr:first-child th:first-child,
+  .report-main > table thead tr:first-child th:first-child {
+    border-top-left-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .facts-table thead tr:first-child th:last-child,
+  .facts-table-wrap thead tr:first-child th:last-child,
+  .report-main > table thead tr:first-child th:last-child {
+    border-top-right-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .facts-table tbody tr:last-child td:first-child,
+  .facts-table-wrap tbody tr:last-child td:first-child,
+  .report-main > table tbody tr:last-child td:first-child {
+    border-bottom-left-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .facts-table tbody tr:last-child td:last-child,
+  .facts-table-wrap tbody tr:last-child td:last-child,
+  .report-main > table tbody tr:last-child td:last-child {
+    border-bottom-right-radius: calc(var(--report-radius-md) - 1px);
   }
 
   .facts-table {
@@ -1548,6 +2301,36 @@ a {
     word-break: normal;
   }
 
+  .facts-table th,
+  .facts-table-wrap th,
+  .report-main > table th {
+    background: color-mix(in srgb, var(--report-blue) 12%, var(--report-surface));
+  }
+
+  .facts-table thead th:first-child,
+  .facts-table-wrap thead th:first-child,
+  .report-main > table thead th:first-child {
+    border-top-left-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .facts-table thead th:last-child,
+  .facts-table-wrap thead th:last-child,
+  .report-main > table thead th:last-child {
+    border-top-right-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .code-block-wrap pre,
+  .example-card pre,
+  .block-template pre,
+  .report-main > .code-block-wrap pre,
+  .mermaid,
+  .latex-block {
+    overflow-x: visible;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
   .source-card,
   .source-item {
     padding-inline-end: calc(var(--report-space-4) + 2rem);
@@ -1558,15 +2341,9 @@ a {
     content: "";
   }
 
-  .example-card {
-    background: #ffffff;
-    color: var(--report-ink);
-    border: 1px solid var(--report-rule-strong);
-  }
-
-  .example-card header,
-  .example-card pre {
-    background: #ffffff;
+  .example-card,
+  .block-template {
+    background: transparent;
     color: var(--report-ink);
   }
 
@@ -1699,66 +2476,68 @@ body.report-theme-dark .sticky-toc { box-shadow: none; }
 .report-template-lottiefiles .tactic-card,
 .report-template-lottiefiles .source-card { border-radius: 20px; }
 .report-template-lottiefiles .action-line { box-shadow: 0 20px 48px rgba(1, 157, 145, 0.18); }
-@media print { @page { size: A4 portrait; margin: 0; } html, body.report-body { background: var(--report-paper) !important; font-size: 10.5pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; } body.report-body { min-height: 100vh; padding: 12mm; } body.report-theme-dark { background: var(--report-paper) !important; } .report-shell { display: block; max-width: none; padding: 0; } .sticky-toc { position: static; max-height: none; overflow: visible; break-after: page; break-inside: auto; border: 0; border-radius: 0; box-shadow: none; } .sticky-toc ol { display: block; max-height: none; overflow: visible; padding-right: 0; } .toc-pdf-actions, .toc-pdf-link { display: none !important; } table { table-layout: fixed; font-size: 8.8pt; } th,td { padding: 4pt 5pt; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after, .source-card-link[href]::after, .anchor-links a[href]::after { content: ""; } .appendix-links a[href]::after { content: attr(data-filetype); } }</style>
+@media print { @page { size: A4 portrait; margin: 12mm; } html, body.report-body { background: var(--report-paper) !important; font-size: 10.5pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; } body.report-body { min-height: 100vh; padding: 0; orphans: 3; widows: 3; } *,*::before,*::after { box-shadow: none !important; filter: none !important; text-shadow: none !important; } body.report-theme-dark { background: var(--report-paper) !important; } .report-shell { display: block; width: 100%; max-width: none; overflow: hidden; padding: 0; } .report-main,.report-content { width: 100%; max-width: 100%; overflow: hidden; } h1,h2,h3,.code-block-head,.source-title { break-after: avoid; break-after: avoid-page; page-break-after: avoid; } .report-main h2.chapter-heading { margin-block-start: 6mm; padding-block-start: 0; } .code-block-wrap,.mermaid-rendered,.latex-rendered-block,.bar-chart p { break-inside: avoid; break-inside: avoid-page; break-after: avoid-page; page-break-inside: avoid; } .action-line,.action-prompt,.accordion,.source-card,.details-note,.info-panel,.impact-panel,.evidence-panel,.action-panel,.callout { width: auto; max-width: 100%; margin: 0 0 8mm; overflow: hidden; border-radius: 0 !important; box-shadow: none !important; break-inside: avoid-page; break-after: avoid-page; } .stat-card { background: var(--report-surface) !important; background-clip: padding-box; } .report-footer { min-height: 22mm; background: #ffffff; border: 1px solid #d1d5db; color: #374151; } .sticky-toc { position: static; max-height: none; overflow: visible; break-after: page; break-inside: auto; border: 0; border-radius: 0; box-shadow: none; } .sticky-toc ol { display: block; max-height: none; overflow: visible; padding-right: 0; } .toc-pdf-actions, .toc-pdf-link { display: none !important; } table { table-layout: fixed; font-size: 8.8pt; border-collapse: separate; border-spacing: 0; } th { background: color-mix(in srgb, var(--report-blue) 12%, var(--report-surface)); } th,td { padding: 4pt 5pt; overflow-wrap: anywhere; } pre,.mermaid,.latex-block { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after, .source-card-link[href]::after, .anchor-links a[href]::after { content: ""; } .appendix-links a[href]::after { content: attr(data-filetype); } }
+@media print {
+@page { margin: 12mm 0; background: #080A0C; }
+@page report-letter { size: Letter portrait; margin: .45in 0; background: #080A0C; }
+html { background: #080A0C !important; }
+body.report-body { box-sizing: border-box; padding: 0 12mm; orphans: 3; widows: 3; }
+body.report-pdf-profile-letter { page: report-letter; padding: 0 .45in; }
+body.report-body:not(.report-theme-dark) { --report-paper: #ffffff; --report-paper-raised: #ffffff; --report-panel: #ffffff; --report-surface: #ffffff; background: #ffffff !important; }
+body.report-body:not(.report-theme-dark) .report-shell, body.report-body:not(.report-theme-dark) .report-main, body.report-body:not(.report-theme-dark) .report-content { background: #ffffff !important; }
+body.report-body { position: relative; background: var(--report-paper) !important; }
+body.report-theme-dark .report-shell, body.report-theme-dark .report-main, body.report-theme-dark .report-content { background: var(--report-paper) !important; }
+body.report-body::before { content: none; display: none; }
+.report-shell, .report-main, .report-content { overflow: visible; border: 0 !important; outline: 0 !important; box-shadow: none !important; }
+.report-keep-with-heading, .report-keep-with-heading.report-chapter-page { border: 0 !important; outline: 0 !important; box-shadow: none !important; }
+.report-front { display: block; min-height: calc(297mm - 24mm); break-after: auto; page-break-after: auto; }
+body.report-pdf-profile-letter .report-front { min-height: 10.1in; }
+.sticky-toc { break-before: auto; page-break-before: auto; }
+.sticky-toc-header { break-before: auto; page-break-before: auto; }
+.report-main h2.chapter-heading { margin-block-start: 10mm; padding-block-start: 5mm; border-top: 0 !important; break-before: page; break-inside: avoid-page; page-break-before: always; page-break-inside: avoid; }
+.report-keep-with-heading.report-chapter-page { break-before: page; page-break-before: always; }
+.report-main h2.chapter-heading::before { break-after: avoid-page; page-break-after: avoid; }
+.accordion { margin-block-start: 5mm; }
+.report-footer { display: flex; min-height: 22mm; margin-block-start: 8mm; padding: 0 6mm; align-items: center; justify-content: center; text-align: center; box-sizing: border-box; }
+.report-keep-with-heading { display: block; margin-block: 6mm 8mm; break-inside: avoid-page; page-break-inside: avoid; }
+.report-keep-with-heading > :first-child { margin-block-start: 0; }
+.report-keep-with-heading > :last-child { margin-block-end: 0; }
+.example-card > header, .block-template > header, .report-keep-with-heading > h2, .report-keep-with-heading > h3 { break-after: avoid-page; page-break-after: avoid; }
+.example-card > .code-block-wrap, .block-template > .code-block-wrap, .report-keep-with-heading > .code-block-wrap, .report-keep-with-heading > .source-card, .report-keep-with-heading > .source-item, .report-keep-with-heading > .source-list, .report-keep-with-heading > .sources-layout, .report-keep-with-heading > .sources-group, .report-keep-with-heading > .callout, .report-keep-with-heading > .info-panel, .report-keep-with-heading > .impact-panel, .report-keep-with-heading > .evidence-panel, .report-keep-with-heading > .action-panel, .report-keep-with-heading > .details-note, .report-keep-with-heading > .myth-callout, .report-keep-with-heading > .accordion { break-before: avoid-page; page-break-before: avoid; }
+.action-line, .code-block-wrap, .mermaid-rendered, .latex-rendered-block, .example-card > .code-block-wrap, .block-template > .code-block-wrap, .bar-chart p, .chapter-hero, .case-study-card, .tactic-card, .example-card, .block-template, .good-bad, .facts-table, .facts-table-wrap, .report-main > table, .details-note, .industry-card, .priority-group, .checklist-card, .source-card, .source-item, .source-list, .sources-layout, .sources-group, .myth-callout, .info-panel, .impact-panel, .evidence-panel, .action-panel, .severity-key, .accordion, .quote-card, .callout, .action-prompt { -webkit-box-decoration-break: clone; box-decoration-break: clone; box-sizing: border-box; width: calc(100% - 12pt); max-width: calc(100% - 12pt); margin: 6mm 6pt 8mm; overflow: visible; break-inside: avoid-page; page-break-inside: avoid; }
+.code-block-wrap, .mermaid-rendered, .latex-rendered-block, .example-card > .code-block-wrap, .block-template > .code-block-wrap, .report-keep-with-heading > .code-block-wrap { overflow: hidden; border-radius: var(--report-radius-md) !important; background-clip: padding-box; }
+.code-block-wrap > :first-child { border-top-left-radius: calc(var(--report-radius-md) - 1px); border-top-right-radius: calc(var(--report-radius-md) - 1px); }
+.facts-table-wrap { overflow: hidden; border-radius: var(--report-radius-md) !important; background-clip: padding-box; clip-path: inset(0 round var(--report-radius-md)); contain: paint; }
+.facts-table thead tr:first-child th:first-child, .facts-table-wrap thead tr:first-child th:first-child, .report-main > table thead tr:first-child th:first-child { border-top-left-radius: calc(var(--report-radius-md) - 1px); }
+.facts-table thead tr:first-child th:last-child, .facts-table-wrap thead tr:first-child th:last-child, .report-main > table thead tr:first-child th:last-child { border-top-right-radius: calc(var(--report-radius-md) - 1px); }
+.facts-table tbody tr:last-child td:first-child, .facts-table-wrap tbody tr:last-child td:first-child, .report-main > table tbody tr:last-child td:first-child { border-bottom-left-radius: calc(var(--report-radius-md) - 1px); }
+.facts-table tbody tr:last-child td:last-child, .facts-table-wrap tbody tr:last-child td:last-child, .report-main > table tbody tr:last-child td:last-child { border-bottom-right-radius: calc(var(--report-radius-md) - 1px); }
+.good-bad { display: block; }
+.good-row, .bad-row { margin-block: 0 8mm; }
+.report-main h2.chapter-heading + .chapter-hero, .report-main h2.chapter-heading + .tactic-card, .report-main h2.chapter-heading + .example-card, .report-main h2.chapter-heading + .good-bad, .report-main h2.chapter-heading + .facts-table-wrap, .report-main h2.chapter-heading + .details-note, .report-main h2.chapter-heading + .industry-card, .report-main h2.chapter-heading + .priority-group, .report-main h2.chapter-heading + .checklist-card, .report-main h2.chapter-heading + .source-card, .report-main h2.chapter-heading + .sources-layout, .report-main h2.chapter-heading + .sources-group, .report-main h2.chapter-heading + .myth-callout, .report-main h2.chapter-heading + .info-panel, .report-main h2.chapter-heading + .impact-panel, .report-main h2.chapter-heading + .evidence-panel, .report-main h2.chapter-heading + .action-panel, .report-main h2.chapter-heading + .severity-key, .report-main h2.chapter-heading + .accordion, .report-main h2.chapter-heading + .quote-card, .report-main h2.chapter-heading + .callout { break-before: avoid-page; page-break-before: avoid; }
+}</style>
 </head>
 <body class="report-body report-theme-dark report-pdf-profile-a4 report-template-lottiefiles">
 <div class="report-shell">
-<nav class="sticky-toc" aria-label="Report table of contents">
-<div class="sticky-toc-header"><h2>Contents</h2><span class="toc-pdf-actions"><a class="toc-pdf-link" href="lottiefiles-dark-a4.pdf" aria-label="Open A4 PDF version" title="Open A4 PDF version">A4</a><a class="toc-pdf-link" href="lottiefiles-dark-16-9.pdf" aria-label="Open landscape PDF version" title="Open landscape PDF version">16:9</a></span></div>
-<ol>
-<li><a href="#llm-visibility-toolbox" style="margin-left:0rem">LLM Visibility Toolbox</a></li>
-<li><a href="#executive-summary-badge-rct" style="margin-left:1rem">Executive summary</a></li>
-<li><a href="#highest-impact-tactics" style="margin-left:1rem">1. Highest-impact tactics</a></li>
-<li><a href="#weight-before-recommending" style="margin-left:2rem">1.1 Weight before recommending</a></li>
-<li><a href="#critical" style="margin-left:2rem">1.2 Critical</a></li>
-<li><a href="#high" style="margin-left:2rem">1.3 High</a></li>
-<li><a href="#medium" style="margin-left:2rem">1.4 Medium</a></li>
-<li><a href="#low" style="margin-left:2rem">1.5 Low</a></li>
-<li><a href="#page-type-matrix" style="margin-left:1rem">2. Page-type matrix</a></li>
-<li><a href="#industry-fit-reminder" style="margin-left:2rem">2.1 Industry-fit reminder</a></li>
-<li><a href="#tactic-card-examples" style="margin-left:1rem">3. Tactic card examples</a></li>
-<li><a href="#direct-answer-opening" style="margin-left:2rem">3.1 Direct-answer opening</a></li>
-<li><a href="#impact" style="margin-left:2rem">3.2 Impact</a></li>
-<li><a href="#evidence" style="margin-left:2rem">3.3 Evidence</a></li>
-<li><a href="#bot-friendly-first-fetch" style="margin-left:2rem">3.4 Bot-friendly first fetch</a></li>
-<li><a href="#strong-pattern" style="margin-left:2rem">3.5 Strong pattern</a></li>
-<li><a href="#weak-pattern" style="margin-left:2rem">3.6 Weak pattern</a></li>
-<li><a href="#myths-and-caveats" style="margin-left:1rem">4. Myths and caveats</a></li>
-<li><a href="#myth" style="margin-left:2rem">4.1 Myth</a></li>
-<li><a href="#reality" style="margin-left:2rem">4.2 Reality</a></li>
-<li><a href="#case-studies" style="margin-left:1rem">5. Case studies</a></li>
-<li><a href="#industrial-manufacturer" style="margin-left:2rem">5.1 Industrial manufacturer</a></li>
-<li><a href="#healthcare-comparison-site" style="margin-left:2rem">5.2 Healthcare comparison site</a></li>
-<li><a href="#roadmap-template" style="margin-left:1rem">6. Roadmap template</a></li>
-<li><a href="#priority-rule" style="margin-left:2rem">6.1 Priority rule</a></li>
-<li><a href="#verification-checklist" style="margin-left:1rem">7. Verification checklist</a></li>
-<li><a href="#closing-callouts" style="margin-left:1rem">8. Closing callouts</a></li>
-<li><a href="#combined-finding" style="margin-left:2rem">8.1 Combined finding</a></li>
-<li><a href="#sources" style="margin-left:1rem">9. Sources</a></li>
-<li><a href="#prompt-captures" style="margin-left:2rem">9.1 Prompt captures</a></li>
-<li><a href="#crawl-evidence" style="margin-left:2rem">9.2 Crawl evidence</a></li>
-<li><a href="#third-party-profiles" style="margin-left:2rem">9.3 Third-party profiles</a></li>
-<li><a href="#source-card-rule" style="margin-left:2rem">9.4 Source-card rule</a></li>
-<li><a href="#ahrefs-controlled-schema-study" style="margin-left:2rem">9.5 Ahrefs controlled schema study</a></li>
-<li><a href="#engine-overlap-research" style="margin-left:2rem">9.6 Engine-overlap research</a></li>
-<li><a href="#buyer-research-evidence" style="margin-left:2rem">9.7 Buyer-research evidence</a></li>
-<li><a href="#appendices" style="margin-left:1rem">10. Appendices</a></li>
-</ol>
-</nav>
-<main class="report-content report-main">
-<h1 id="llm-visibility-toolbox">LLM Visibility Toolbox</h1>
+<div class="report-main-flow">
+
+<main class="report-content report-main report-title-front">
+<section class="report-title-page"><h1 id="llm-visibility-toolbox">LLM Visibility Toolbox</h1>
 <p>Evidence-based tactics for getting cited in ChatGPT, Perplexity, Gemini, Claude, AI Overviews, and AI Mode.</p>
 <p>By <a href="https://github.com/marcusquinn" data-filetype="link">Marcus Quinn</a>.</p>
+</section>
+</main>
+<main class="report-content report-main report-front">
 <section class="report-cover">
 <p>Internal toolkit · May 2026 · v4</p>
 <p><strong>A Markdown-canonical playbook for AI search visibility.</strong> Use it to turn source evidence, page-type weighting, and answer-engine behaviour into roadmap-ready recommendations.</p>
 <p>Audience: SEO, content, engineering, and leadership teams. Export rule: one HTML preview; PDF profiles for A4, Letter, and 16:9 decks.</p>
 </section>
-<h2 class="no-chapter" id="executive-summary-badge-rct">Executive summary <span class="badge badge--rct">Rct</span></h2>
-<p>LLM visibility is an evidence system, not a single checklist. The best programmes make priority pages retrieval-ready, criteria-complete, citation-worthy, technically fetchable, and corroborated by third-party sources. <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></p>
-<p>Recommendations must be weighted by page type. A homepage, SaaS feature page, comparison page, pricing page, article, product page, local/YMYL page, and research asset need different tactics, owners, and verification paths. <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></p>
+<h2 class="no-chapter" id="executive-summary-badge-rct">Executive summary <span class="badge badge--rct">Peer-Review</span></h2>
+<p>LLM visibility is an evidence system, not a single checklist. The best programmes make priority pages retrieval-ready, criteria-complete, citation-worthy, technically fetchable, and corroborated by third-party sources. <span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></p>
+<p>Recommendations must be weighted by page type. A homepage, SaaS feature page, comparison page, pricing page, article, product page, local/YMYL page, and research asset need different tactics, owners, and verification paths. <span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></p>
 <section class="badge-row">
-<p><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span> <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span> <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span> <span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span></p>
+<p><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span> <span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span> <span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span> <span class="evidence-badge" aria-label="Evidence: Missing"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span></p>
 </section>
 <section class="stats-strip">
 <section class="stat-card">
@@ -1779,27 +2558,76 @@ body.report-theme-dark .sticky-toc { box-shadow: none; }
 </section>
 </section>
 <section class="badge-key">
-<p><span class="badge badge--rct">Rct</span> Peer-reviewed or controlled comparison.</p>
+<p><span class="badge badge--rct">Peer-Review</span> Peer-reviewed or controlled comparison.</p>
 <p><span class="badge badge--strong">Strong</span> Large independent primary-data study.</p>
 <p><span class="badge badge--vendor">Vendor</span> Vendor study with methodology and commercial incentives.</p>
 <p><span class="badge badge--practitioner">Practitioner</span> Practitioner evidence or field report.</p>
 <p><span class="badge badge--hygiene">Hygiene</span> Baseline technical implementation.</p>
 </section>
-<details class="accordion"><summary>Changelog summary</summary>
+<details class="accordion" open><summary>Changelog summary</summary>
 <p>V4 adds schema-downgrade rationale, engine-specific reporting, source grouping, and diagram/equation fallbacks.</p>
 </details>
 <section class="action-line">
 <p><strong>Operator action:</strong> collect source IDs first, then interpret findings into recommendations with owners, acceptance criteria, and rerun steps.</p>
-</section><details class="accordion action-prompt"><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: collect source IDs first, then interpret findings into recommendations with owners, acceptance criteria, and rerun steps.
+</section><details class="accordion action-prompt" open><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: collect source IDs first, then interpret findings into recommendations with owners, acceptance criteria, and rerun steps.
 
 Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details>
 <section class="anchor-links">
 <p><a href="#sources" data-filetype="link">Sources</a> <a href="#highest-impact-tactics" data-filetype="link">Tactics</a> <a href="#page-type-matrix" data-filetype="link">Matrix</a> <a href="#roadmap-template" data-filetype="link">Roadmap</a> <a href="#appendices" data-filetype="link">Appendices</a></p>
 </section>
+<section class="report-keep-with-heading report-chapter-page">
+</main>
+</div>
+<div class="toc-pdf-actions" aria-label="PDF downloads"><a class="toc-pdf-link" href="lottiefiles-dark-a4.pdf" aria-label="Open A4 PDF version" title="Open A4 PDF version">A4</a><a class="toc-pdf-link" href="lottiefiles-dark-usletter.pdf" aria-label="Open US Letter PDF version" title="Open US Letter PDF version">US Letter</a><a class="toc-pdf-link" href="lottiefiles-dark-slides.pdf" aria-label="Open slides PDF version" title="Open slides PDF version">Slides</a></div>
+<nav class="sticky-toc" aria-label="Report table of contents">
+<div class="sticky-toc-header"><h2>Contents</h2></div>
+<ol>
+<li class="toc-entry"><a href="#llm-visibility-toolbox">LLM Visibility Toolbox</a></li>
+<li class="toc-entry"><a href="#executive-summary-badge-rct">Executive summary</a></li>
+<li class="toc-entry toc-chapter"><a href="#highest-impact-tactics">1. Highest-impact tactics</a></li>
+<li class="toc-entry toc-subsection"><a href="#weight-before-recommending">1.1 Weight before recommending</a></li>
+<li class="toc-entry toc-subsection"><a href="#critical">1.2 Critical</a></li>
+<li class="toc-entry toc-subsection"><a href="#high">1.3 High</a></li>
+<li class="toc-entry toc-subsection"><a href="#medium">1.4 Medium</a></li>
+<li class="toc-entry toc-subsection"><a href="#low">1.5 Low</a></li>
+<li class="toc-entry toc-chapter"><a href="#page-type-matrix">2. Page-type matrix</a></li>
+<li class="toc-entry toc-subsection"><a href="#industry-fit-reminder">2.1 Industry-fit reminder</a></li>
+<li class="toc-entry toc-chapter"><a href="#tactic-card-examples">3. Tactic card examples</a></li>
+<li class="toc-entry toc-subsection"><a href="#direct-answer-opening">3.1 Direct-answer opening</a></li>
+<li class="toc-entry toc-subsection"><a href="#impact">3.2 Impact</a></li>
+<li class="toc-entry toc-subsection"><a href="#evidence">3.3 Evidence</a></li>
+<li class="toc-entry toc-subsection"><a href="#bot-friendly-first-fetch">3.4 Bot-friendly first fetch</a></li>
+<li class="toc-entry toc-subsection"><a href="#strong-pattern">3.5 Strong pattern</a></li>
+<li class="toc-entry toc-subsection"><a href="#weak-pattern">3.6 Weak pattern</a></li>
+<li class="toc-entry toc-chapter"><a href="#myths-and-caveats">4. Myths and caveats</a></li>
+<li class="toc-entry toc-subsection"><a href="#myth">4.1 Myth</a></li>
+<li class="toc-entry toc-subsection"><a href="#reality">4.2 Reality</a></li>
+<li class="toc-entry toc-chapter"><a href="#case-studies">5. Case studies</a></li>
+<li class="toc-entry toc-subsection"><a href="#industrial-manufacturer">5.1 Industrial manufacturer</a></li>
+<li class="toc-entry toc-subsection"><a href="#healthcare-comparison-site">5.2 Healthcare comparison site</a></li>
+<li class="toc-entry toc-chapter"><a href="#roadmap-template">6. Roadmap template</a></li>
+<li class="toc-entry toc-subsection"><a href="#priority-rule">6.1 Priority rule</a></li>
+<li class="toc-entry toc-chapter"><a href="#verification-checklist">7. Verification checklist</a></li>
+<li class="toc-entry toc-chapter"><a href="#closing-callouts">8. Closing callouts</a></li>
+<li class="toc-entry toc-subsection"><a href="#combined-finding">8.1 Combined finding</a></li>
+<li class="toc-entry toc-chapter"><a href="#sources">9. Sources</a></li>
+<li class="toc-entry toc-subsection"><a href="#prompt-captures">9.1 Prompt captures</a></li>
+<li class="toc-entry toc-subsection"><a href="#crawl-evidence">9.2 Crawl evidence</a></li>
+<li class="toc-entry toc-subsection"><a href="#third-party-profiles">9.3 Third-party profiles</a></li>
+<li class="toc-entry toc-subsection"><a href="#source-card-rule">9.4 Source-card rule</a></li>
+<li class="toc-entry toc-subsection"><a href="#ahrefs-controlled-schema-study">9.5 Ahrefs controlled schema study</a></li>
+<li class="toc-entry toc-subsection"><a href="#engine-overlap-research">9.6 Engine-overlap research</a></li>
+<li class="toc-entry toc-subsection"><a href="#buyer-research-evidence">9.7 Buyer-research evidence</a></li>
+<li class="toc-entry toc-chapter"><a href="#appendices">10. Appendices</a></li>
+</ol>
+</nav>
+
+<main class="report-content report-main report-rest">
 <h2 class="chapter-heading" id="highest-impact-tactics"><span class="heading-number">1.</span> Highest-impact tactics</h2>
 <section class="details-note">
 <h3 class="section-heading" id="weight-before-recommending"><span class="heading-number">1.1</span> Weight before recommending</h3>
 <p>Do not apply all tactics to all pages. Score page-type fit, retrieval eligibility, source proximity, corroboration, freshness, confidence, impact, and effort before roadmap sequencing.</p>
+</section>
 </section>
 <section class="severity-key">
 <section class="info-panel" data-severity="critical">
@@ -1822,14 +2650,15 @@ Guide me through the tools, resources, accounts, permissions, source material, a
 <section class="facts-table-wrap">
 <table><thead>
 <tr><th>Tactic</th><th>Evidence</th><th>Best page types</th><th>Why it matters</th><th>Verification</th></tr></thead><tbody>
-<tr><td>Direct-answer opening</td><td><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>Article, glossary, comparison, feature, local</td><td>Concise first-paragraph claims are easier to retrieve and cite.</td><td>Rendered first 300 words include answer, source, and updated date</td></tr>
-<tr><td>Source cards near claims</td><td><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>Research, comparison, YMYL, feature</td><td>Engines need nearby proof to trust and quote claims.</td><td>Source ID appears beside factual claim and in ledger</td></tr>
-<tr><td>Third-party corroboration</td><td><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>SaaS, ecommerce, local, YMYL</td><td>Answer engines cross-check owned claims against outside sources.</td><td>Profile parity and source breadth review</td></tr>
-<tr><td>Bot-friendly first fetch</td><td><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>All priority pages</td><td>Hidden or blocked content cannot be cited.</td><td>Raw/rendered crawl, robots, sitemap, and logs</td></tr>
-<tr><td>Entity consistency</td><td><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></td><td>Homepage, about, local, profiles</td><td>Contradictory facts reduce answer confidence.</td><td>Canonical entity table and third-party parity</td></tr>
-<tr><td>FAQPage schema</td><td><span class="evidence-badge"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span></td><td>Hygiene only</td><td>Structured data helps clarity but does not replace visible evidence.</td><td>Schema validation plus visible-content check</td></tr>
+<tr><td>Direct-answer opening</td><td><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>Article, glossary, comparison, feature, local</td><td>Concise first-paragraph claims are easier to retrieve and cite.</td><td>Rendered first 300 words include answer, source, and updated date</td></tr>
+<tr><td>Source cards near claims</td><td><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>Research, comparison, YMYL, feature</td><td>Engines need nearby proof to trust and quote claims.</td><td>Source ID appears beside factual claim and in ledger</td></tr>
+<tr><td>Third-party corroboration</td><td><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>SaaS, ecommerce, local, YMYL</td><td>Answer engines cross-check owned claims against outside sources.</td><td>Profile parity and source breadth review</td></tr>
+<tr><td>Bot-friendly first fetch</td><td><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>All priority pages</td><td>Hidden or blocked content cannot be cited.</td><td>Raw/rendered crawl, robots, sitemap, and logs</td></tr>
+<tr><td>Entity consistency</td><td><span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></td><td>Homepage, about, local, profiles</td><td>Contradictory facts reduce answer confidence.</td><td>Canonical entity table and third-party parity</td></tr>
+<tr><td>FAQPage schema</td><td><span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span></td><td>Hygiene only</td><td>Structured data helps clarity but does not replace visible evidence.</td><td>Schema validation plus visible-content check</td></tr>
 </tbody></table>
 </section>
+<section class="report-keep-with-heading report-chapter-page">
 <h2 class="chapter-heading" id="page-type-matrix"><span class="heading-number">2.</span> Page-type matrix</h2>
 <section class="facts-table-wrap">
 <table><thead>
@@ -1844,11 +2673,13 @@ Guide me through the tools, resources, accounts, permissions, source material, a
 <tr><td>Research/report</td><td>Methodology, dataset, source cards, findings</td><td>Embeddable charts</td><td>PDF-only content without HTML summary</td></tr>
 </tbody></table>
 </section>
+</section>
 <section class="industry-card">
 <h3 class="section-heading" id="industry-fit-reminder"><span class="heading-number">2.1</span> Industry-fit reminder</h3>
 <p>SaaS, ecommerce, local, and YMYL pages require different proof sources. Map the page type before assigning a tactic.</p>
 </section>
 <hr class="section-separator">
+<section class="report-keep-with-heading report-chapter-page">
 <h2 class="chapter-heading" id="tactic-card-examples"><span class="heading-number">3.</span> Tactic card examples</h2>
 <section class="tactic-card">
 <h3 class="section-heading" id="direct-answer-opening"><span class="heading-number">3.1</span> Direct-answer opening</h3>
@@ -1858,6 +2689,7 @@ Guide me through the tools, resources, accounts, permissions, source material, a
 <li>How: pair answer, source ID, author/update date, and supporting table.</li>
 <li>Verify: rerun per-engine prompts and compare cited URL movement.</li>
 </ul>
+</section>
 </section>
 <section class="impact-panel" data-severity="high">
 <h3 class="section-heading" id="impact"><span class="heading-number">3.2</span> Impact</h3>
@@ -1886,12 +2718,14 @@ Guide me through the tools, resources, accounts, permissions, source material, a
 <p>Image-only proof, unsupported superlatives, client-rendered claims, and schema added without visible evidence.</p>
 </section>
 </section>
+<section class="report-keep-with-heading report-chapter-page">
 <h2 class="chapter-heading" id="myths-and-caveats"><span class="heading-number">4.</span> Myths and caveats</h2>
 <section class="myth-callout">
 <h3 class="section-heading" id="myth"><span class="heading-number">4.1</span> Myth</h3>
 <p>Adding FAQPage schema is enough to become GEO-ready.</p>
 <h3 class="section-heading" id="reality"><span class="heading-number">4.2</span> Reality</h3>
 <p>FAQPage is hygiene unless visible FAQ content genuinely fits page type and query fan-out.</p>
+</section>
 </section>
 <section class="example-card">
 <div class="code-block-wrap"><div class="code-block-head"><span>Text code</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Worker brief: update /compare/example with source IDs S001-S004,
@@ -1903,7 +2737,7 @@ Acceptance: AIO, Gemini, ChatGPT, AI Mode, and Perplexity results are recorded s
   Sources[Source IDs] --&gt; Findings
   Findings --&gt; Roadmap
   Roadmap --&gt; Rerun[Per-engine rerun]</code></pre></div>
-<figure class="mermaid-rendered" aria-label="Rendered Mermaid diagram"><svg viewBox="0 0 760 130" role="img" xmlns="http://www.w3.org/2000/svg"><defs><marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" class="diagram-arrow-head" /></marker></defs><line x1="189" y1="64" x2="193" y2="64" class="diagram-arrow" /><line x1="374" y1="64" x2="378" y2="64" class="diagram-arrow" /><line x1="559" y1="64" x2="563" y2="64" class="diagram-arrow" /><rect x="24" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="104" y="70" text-anchor="middle" class="diagram-label">Source IDs</text><rect x="209" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="289" y="70" text-anchor="middle" class="diagram-label">Findings</text><rect x="394" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="474" y="70" text-anchor="middle" class="diagram-label">Roadmap</text><rect x="579" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="659" y="70" text-anchor="middle" class="diagram-label">Per-engine rerun</text></svg><figcaption>Rendered Mermaid example, embedded as self-contained SVG.</figcaption></figure>
+<figure class="mermaid-rendered" aria-label="Rendered Mermaid diagram"><svg viewBox="0 0 760 130" role="img" xmlns="http://www.w3.org/2000/svg"><defs><marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" class="diagram-arrow-head" /></marker></defs><line x1="189" y1="64" x2="199" y2="64" class="diagram-arrow" /><line x1="374" y1="64" x2="384" y2="64" class="diagram-arrow" /><line x1="559" y1="64" x2="569" y2="64" class="diagram-arrow" /><rect x="24" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="104" y="70" text-anchor="middle" class="diagram-label">Source IDs</text><rect x="209" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="289" y="70" text-anchor="middle" class="diagram-label">Findings</text><rect x="394" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="474" y="70" text-anchor="middle" class="diagram-label">Roadmap</text><rect x="579" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="659" y="70" text-anchor="middle" class="diagram-label">Per-engine rerun</text></svg><figcaption>Rendered Mermaid example, embedded as self-contained SVG.</figcaption></figure>
 </section>
 <p>Signal equation fallback: <span class="latex-inline" role="math" aria-label="AI\ visibility = retrieval + evidence + corroboration">AI\ visibility = retrieval + evidence + corroboration</span>.</p>
 <section class="block-template">
@@ -1914,7 +2748,9 @@ Principal Data Scientist, ExampleCo
 Use this block for named experts, source credentials, and profile links.</code></pre></div>
 </section>
 <section class="bar-chart">
-<p>On-page evidence — 72% Technical retrieval — 64% Authority corroboration — 58%</p>
+<p style="--bar-value: 72%">On-page evidence — 72%</p>
+<p style="--bar-value: 64%">Technical retrieval — 64%</p>
+<p style="--bar-value: 58%">Authority corroboration — 58%</p>
 </section>
 <blockquote>Strong reports separate observed facts from interpretation, then turn only verified or clearly labelled partial evidence into roadmap items.</blockquote>
 <h2 class="chapter-heading" id="case-studies"><span class="heading-number">5.</span> Case studies</h2>
@@ -1928,10 +2764,12 @@ Use this block for named experts, source credentials, and profile links.</code><
 <p><strong>Result:</strong> cited answers appeared across multiple answer engines after visible expertise and profile parity fixes.</p>
 <p><strong>Tactics applied:</strong> practitioner bylines, review methodology, source-backed tables, and monthly prompt reruns.</p>
 </section>
+<section class="report-keep-with-heading report-chapter-page">
 <h2 class="chapter-heading" id="roadmap-template"><span class="heading-number">6.</span> Roadmap template</h2>
 <section class="priority-group" data-priority="high">
 <h3 class="section-heading" id="priority-rule"><span class="heading-number">6.1</span> Priority rule</h3>
 <p>Start with revenue pages that fail retrieval eligibility or evidence proximity before optional schema enhancements.</p>
+</section>
 </section>
 <section class="facts-table-wrap">
 <table><thead>
@@ -1942,6 +2780,7 @@ Use this block for named experts, source credentials, and profile links.</code><
 <tr><td>P2</td><td>Improve schema and metadata.</td><td>All page types</td><td>SEO + engineering</td><td>Schema validation plus visible-content check</td><td>S002</td></tr>
 </tbody></table>
 </section>
+<section class="report-keep-with-heading report-chapter-page">
 <h2 class="chapter-heading" id="verification-checklist"><span class="heading-number">7.</span> Verification checklist</h2>
 <section class="checklist-card">
 <ul>
@@ -1953,11 +2792,15 @@ Use this block for named experts, source credentials, and profile links.</code><
 <li>For recurring reports, create a custom routine with deterministic collection and report-agent interpretation.</li>
 </ul>
 </section>
+</section>
+<section class="report-keep-with-heading report-chapter-page">
 <h2 class="chapter-heading" id="closing-callouts"><span class="heading-number">8.</span> Closing callouts</h2>
 <section class="callout">
 <h3 class="section-heading" id="combined-finding"><span class="heading-number">8.1</span> Combined finding</h3>
 <p>AI visibility reporting should end with the fewest useful recommendations: retrieval blockers, evidence proximity, third-party corroboration, and monitoring. Keep panels for important emphasis; use plain bullets and tables for normal content.</p>
 </section>
+</section>
+<section class="report-keep-with-heading report-chapter-page">
 <h2 class="chapter-heading" id="sources"><span class="heading-number">9.</span> Sources</h2>
 <section class="sources-layout">
 <section class="sources-group">
@@ -1981,6 +2824,7 @@ Use this block for named experts, source credentials, and profile links.</code><
 <h3 class="section-heading" id="third-party-profiles"><span class="heading-number">9.3</span> Third-party profiles</h3>
 <p>Review, directory, community, partner, and media source parity checks.</p>
 <a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
+</section>
 </section>
 </section>
 <section class="facts-table-wrap">
@@ -2011,7 +2855,7 @@ Use this block for named experts, source credentials, and profile links.</code><
 <p>Answer engines increasingly influence discovery and shortlisting, so reports separate visibility from conversion value.</p>
 <a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
 </section>
-<details class="accordion"><summary>How source IDs become recommendations</summary>
+<details class="accordion" open><summary>How source IDs become recommendations</summary>
 <ol>
 <li>Capture source evidence before writing findings.</li>
 <li>Map each source to supported claims and page types.</li>
@@ -2021,7 +2865,7 @@ Use this block for named experts, source credentials, and profile links.</code><
 </details>
 <h2 class="chapter-heading" id="appendices"><span class="heading-number">10.</span> Appendices</h2>
 <section class="appendix-links">
-<p><a href="report.md#sources" data-filetype="md">Source ledger</a> <a href="../client-ai-search-audit/report.html" data-filetype="html">Client audit example</a> <a href="../style-showcase/report.html" data-filetype="html">Style showcase</a></p>
+<p><a href="appendices/source-ledger.md" data-filetype="md">Source ledger appendix</a> <a href="appendices/prompt-set.md" data-filetype="md">Prompt set appendix</a> <a href="../client-ai-search-audit/report.html" data-filetype="html">Client audit example</a> <a href="../style-previews/index.html" data-filetype="html">Style previews</a></p>
 </section>
 <section class="version-summary">
 <p>V4 · compiled May 2026 from source-led evidence · internal toolkit</p>

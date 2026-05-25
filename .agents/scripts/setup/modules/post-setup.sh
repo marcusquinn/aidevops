@@ -223,7 +223,6 @@ setup_tabby() {
 	# Ensure default local profile uses /bin/zsh (macOS).
 	# After macOS updates, Tabby can fall back to bash when this is unset.
 	bash "$tabby_helper" fix-shell || true
-	bash "$tabby_helper" fix-appearance || true
 
 	if [[ "$NON_INTERACTIVE" == "true" ]]; then
 		# Non-interactive: sync silently, warn on failure
