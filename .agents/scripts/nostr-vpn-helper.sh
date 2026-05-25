@@ -64,6 +64,7 @@ check_tools() {
 		fi
 	done
 
+	# shell-portability: ignore next - this is a read-only optional tool-name list, not invocation.
 	for tool in fipstop fips-gateway jq systemctl launchctl git cargo pkgbuild xcode-select; do
 		if has_command "$tool"; then
 			printf 'OPTIONAL: %s found at %s\n' "$tool" "$(command -v "$tool")"
@@ -111,7 +112,8 @@ show_firewall_status() {
 		systemctl status fips-firewall --no-pager 2>/dev/null || true
 	fi
 
-	if has_command launchctl; then
+	if [[ "$(uname -s)" == "Darwin" ]] && has_command launchctl; then
+		# shell-portability: ignore next - launchctl is only used inside the Darwin branch.
 		launchctl print system 2>/dev/null | grep -F 'fips' || true
 	fi
 
