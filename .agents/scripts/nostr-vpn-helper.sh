@@ -22,6 +22,7 @@ Commands:
   firewall-status  Show fips0 firewall/service status hints
   diagnostics      Run non-destructive local diagnostics
   secrets-help     Show aidevops secret setup guidance
+  macos-source     Show macOS build-from-source guidance
   opencode-guide   Show secure OpenCode remote compute guidance
   help             Show this help
 USAGE
@@ -63,7 +64,8 @@ check_tools() {
 		fi
 	done
 
-	for tool in fipstop fips-gateway jq systemctl launchctl; do
+	# shell-portability: ignore next - this is a read-only optional tool-name list, not invocation.
+	for tool in fipstop fips-gateway jq systemctl launchctl git cargo pkgbuild xcode-select; do
 		if has_command "$tool"; then
 			printf 'OPTIONAL: %s found at %s\n' "$tool" "$(command -v "$tool")"
 		fi
@@ -110,7 +112,8 @@ show_firewall_status() {
 		systemctl status fips-firewall --no-pager 2>/dev/null || true
 	fi
 
-	if has_command launchctl; then
+	if [[ "$(uname -s)" == "Darwin" ]] && has_command launchctl; then
+		# shell-portability: ignore next - launchctl is only used inside the Darwin branch.
 		launchctl print system 2>/dev/null | grep -F 'fips' || true
 	fi
 
@@ -147,6 +150,31 @@ Guidance:
   - Pass secrets via environment or aidevops secret execution context, not CLI arguments.
   - Keep key files owner-only (0600) and outside repositories.
 SECRETS
+	return 0
+}
+
+show_macos_source_guide() {
+	cat <<'GUIDE'
+macOS source-build fallback while upstream packages are unavailable:
+  1. Install prerequisites outside AI chat:
+       - Rust toolchain from https://rustup.rs
+       - Xcode command line tools: xcode-select --install
+  2. Clone upstream source in a temporary working directory:
+       git clone https://github.com/jmcorgan/fips.git
+       cd fips
+       git checkout v0.3.0
+  3. Build the macOS package for the local architecture:
+       ./packaging/macos/build-pkg.sh
+  4. Verify the generated package before installing:
+       pkgutil --check-signature deploy/fips-0.3.0-macos-$(uname -m).pkg
+       pkgutil --payload-files deploy/fips-0.3.0-macos-$(uname -m).pkg
+       pkgutil --expand deploy/fips-0.3.0-macos-$(uname -m).pkg /tmp/fips-pkg-expanded
+  5. Install only after package integrity checks pass:
+       sudo installer -pkg deploy/fips-0.3.0-macos-$(uname -m).pkg -target /
+
+Do not paste nsec/private keys into chat. Store recovery material with:
+  aidevops secret set FIPS_NSEC
+GUIDE
 	return 0
 }
 
@@ -194,6 +222,10 @@ main() {
 		;;
 	secrets-help)
 		show_secrets_help "$@"
+		return $?
+		;;
+	macos-source)
+		show_macos_source_guide "$@"
 		return $?
 		;;
 	opencode-guide)

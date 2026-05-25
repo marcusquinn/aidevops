@@ -25,7 +25,7 @@ tools:
 - **Use when**: Connect laptop, workstation, homelab, VPS, and remote compute devices without SaaS coordination.
 - **CLI**: `fips`, `fipsctl`, `fipstop`, `fips-gateway`; aidevops wrapper: `.agents/scripts/nostr-vpn-helper.sh`.
 - **Docs/source**: https://nostrvpn.org/ · https://github.com/jmcorgan/fips · https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/nostr-vpn
-- **Status**: Experimental; upstream says protocol/API are not stable and security audit is pending.
+- **Status**: Experimental; upstream says protocol/API are not stable and security audit is pending. macOS `v0.3.0` package was removed upstream; build from source until `v0.3.1` packages ship.
 - **Secrets**: Use `aidevops secret set FIPS_NSEC` only for import/recovery; never paste Nostr private keys into chat or commit key files.
 
 **Key concepts**: Nostr keypair identity · npub node address · FIPS mesh · IPv6 `fd00::/8` TUN · `.fips` DNS · Nostr-mediated discovery · peer ACL · optional `fips0` firewall · LAN gateway · WireGuard exit sidecar.
@@ -49,12 +49,31 @@ Do not present FIPS as the default aidevops networking layer until upstream prot
 ## Setup Pattern
 
 1. Install FIPS from an upstream release or package; verify checksums first.
-2. On macOS, also verify package integrity with `pkgutil --check-signature`, `pkgutil --payload-files`, or `pkgutil --expand`; do not install packages that fail these checks even when the release checksum matches.
-3. Generate a persistent identity on each device, or import one from `aidevops secret set FIPS_NSEC` during recovery only.
-4. Record device **npubs**, labels, and intended roles in local config; never store private keys in git.
-5. Configure peer ACLs before joining wider meshes.
-6. Enable the optional `fips0` firewall baseline before exposing services.
-7. Test `.fips` resolution, IPv6 reachability, SSH, and OpenCode server access.
+2. On macOS before `v0.3.1`, use the source-build fallback because upstream removed the corrupt `v0.3.0` package.
+3. For every macOS package, including source-built packages, verify integrity with `pkgutil --check-signature`, `pkgutil --payload-files`, or `pkgutil --expand`; do not install packages that fail these checks.
+4. Generate a persistent identity on each device, or import one from `aidevops secret set FIPS_NSEC` during recovery only.
+5. Record device **npubs**, labels, and intended roles in local config; never store private keys in git.
+6. Configure peer ACLs before joining wider meshes.
+7. Enable the optional `fips0` firewall baseline before exposing services.
+8. Test `.fips` resolution, IPv6 reachability, SSH, and OpenCode server access.
+
+## macOS Source Build Fallback
+
+Use this only while upstream macOS packages are unavailable or fail integrity checks:
+
+```bash
+git clone https://github.com/jmcorgan/fips.git
+cd fips
+git checkout v0.3.0
+./packaging/macos/build-pkg.sh
+
+pkgutil --check-signature deploy/fips-0.3.0-macos-$(uname -m).pkg
+pkgutil --payload-files deploy/fips-0.3.0-macos-$(uname -m).pkg
+pkgutil --expand deploy/fips-0.3.0-macos-$(uname -m).pkg /tmp/fips-pkg-expanded
+sudo installer -pkg deploy/fips-0.3.0-macos-$(uname -m).pkg -target /
+```
+
+Prerequisites: Rust toolchain from https://rustup.rs and Xcode command line tools (`xcode-select --install`). Do not install if package integrity checks fail.
 
 ## Secret Handling
 
@@ -87,6 +106,7 @@ Prefer fresh per-device identities over shared private keys. If a key is importe
 .agents/scripts/nostr-vpn-helper.sh firewall-status
 .agents/scripts/nostr-vpn-helper.sh diagnostics
 .agents/scripts/nostr-vpn-helper.sh secrets-help
+.agents/scripts/nostr-vpn-helper.sh macos-source
 .agents/scripts/nostr-vpn-helper.sh opencode-guide
 ```
 
@@ -108,6 +128,7 @@ Run:
 
 ```bash
 .agents/scripts/nostr-vpn-helper.sh diagnostics
+.agents/scripts/nostr-vpn-helper.sh macos-source
 fipsctl show status
 fipsctl show peers
 ssh <user>@<peer-alias>.fips
