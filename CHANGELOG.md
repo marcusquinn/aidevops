@@ -12,6 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.18.0] - 2026-05-25
 
+### Changed
+
+- Maintenance: prepare 3.18.0 changelog
+- Maintenance: update simplification state registry
+- harden version-manager headless worker guard (#24101)
+
+### Fixed
+
+- handle escaped backslashes in markdown tables (#24105)
+
+## [3.18.0] - 2026-05-25
+
 ### Added
 
 - Add modular report markdown renderer and report example outputs (#24060)
