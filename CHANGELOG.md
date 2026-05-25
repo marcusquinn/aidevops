@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.17.31] - 2026-05-25
+
+### Changed
+
+- fix: harden report markdown rendering (#24074)
+- fix: preserve service interruption kill reason (#24078)
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- preserve service interruption kill reason (#24079)
+- preserve dispatch label cleanup exit codes (#24073)
+- exclude manual interactive PRs from zero-progress signal (#23940)
+
 ## [3.17.30] - 2026-05-24
 
 ### Changed
