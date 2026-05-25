@@ -51,16 +51,18 @@ teardown_env() {
 
 install_gh_stub() {
 	gh() {
+		local command_name="$1"
+		local subcommand_name="$2"
 		printf '%s\n' "$*" >>"${TEST_ROOT}/gh.log"
-		if [[ "$1" == "issue" && "$2" == "list" ]]; then
-			printf '101\n102\n'
+		if [[ "$command_name" == "issue" && "$subcommand_name" == "list" ]]; then
+			printf '101\tauto-dispatch|status:queued\n102\tauto-dispatch\n'
 			return 0
 		fi
-		if [[ "$1" == "issue" && "$2" == "view" ]]; then
+		if [[ "$command_name" == "issue" && "$subcommand_name" == "view" ]]; then
 			printf 'auto-dispatch\nstatus:queued\n'
 			return 0
 		fi
-		if [[ "$1" == "issue" && "$2" == "edit" && "${GH_STUB_FAIL_EDIT:-0}" == "1" ]]; then
+		if [[ "$command_name" == "issue" && "$subcommand_name" == "edit" && "${GH_STUB_FAIL_EDIT:-0}" == "1" ]]; then
 			return 7
 		fi
 		return 0
@@ -95,10 +97,11 @@ test_sweep_closed_auto_dispatch_issues_scopes_to_pulse_repos() {
 	# shellcheck source=../shared-dispatch-label-cleanup.sh
 	source "$HELPER"
 	sweep_closed_auto_dispatch_issues
-	local edit_count list_count
+	local edit_count list_count view_count
 	edit_count=$(grep -c 'issue edit' "${TEST_ROOT}/gh.log" || true)
 	list_count=$(grep -c 'issue list' "${TEST_ROOT}/gh.log" || true)
-	if [[ "$edit_count" == "2" && "$list_count" == "1" ]]; then
+	view_count=$(grep -c 'issue view' "${TEST_ROOT}/gh.log" || true)
+	if [[ "$edit_count" == "2" && "$list_count" == "1" && "$view_count" == "0" ]]; then
 		print_result "closed auto-dispatch sweep strips bounded pulse repo issues" 0
 	else
 		print_result "closed auto-dispatch sweep strips bounded pulse repo issues" 1
