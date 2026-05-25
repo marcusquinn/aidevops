@@ -153,10 +153,10 @@ else
 	fail "preserves cached issue number when resolver emits sentinel" "cache contains '${cache_value}'"
 fi
 
-if grep -qx "resolve" "$CALLS_FILE"; then
+if [[ "$(<"$CALLS_FILE")" == "resolve" ]]; then
 	pass "abstains immediately after resolver sentinel"
 else
-	fail "abstains immediately after resolver sentinel" "calls: $(tr '\n' ' ' <"$CALLS_FILE")"
+	fail "abstains immediately after resolver sentinel" "expected only 'resolve', but got: $(tr '\n' ' ' <"$CALLS_FILE")"
 fi
 
 if ((TESTS_FAILED > 0)); then
