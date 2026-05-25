@@ -39,12 +39,12 @@ clear_terminal_issue_dispatch_labels() {
 		echo "[pulse-wrapper] dispatch-label-cleanup: failed to fetch labels for ${repo_slug}#${issue_number} (${context})" >>"$LOGFILE"
 		return 1
 	fi
-	current_labels="${current_labels//$'\n'/:}"
 
 	local -a edit_args=("issue" "edit" "$issue_number" "--repo" "$repo_slug")
-	local label found=0
+	local label labels_blob found=0
+	labels_blob=$'\n'"$current_labels"$'\n'
 	for label in "${_TERMINAL_DISPATCH_LABELS[@]}"; do
-		if [[ ":${current_labels}:" == *":${label}:"* ]]; then
+		if [[ "$labels_blob" == *$'\n'"$label"$'\n'* ]]; then
 			edit_args+=("--remove-label" "$label")
 			found=1
 		fi
@@ -117,21 +117,21 @@ sweep_closed_auto_dispatch_issues() {
 	[[ "$limit" =~ ^[0-9]+$ ]] || limit=50
 	[[ "$limit" -gt 0 ]] || limit=50
 
-	local total=0 repo_slug issue_number current_labels issue_rows exit_code
+	local total=0 repo_slug issue_number issue_numbers
 	while IFS= read -r repo_slug; do
 		[[ -n "$repo_slug" ]] || continue
-		issue_rows=$(gh issue list --repo "$repo_slug" --state closed \
+		issue_numbers=$(gh issue list --repo "$repo_slug" --state closed \
 			--label "auto-dispatch" --limit "$limit" \
-			--json number,labels --jq '.[] | [.number, ([.labels[].name] | join(":"))] | @tsv' 2>/dev/null) || issue_rows=""
-		[[ -n "$issue_rows" ]] || continue
-		while IFS=$'\t' read -r issue_number current_labels; do
+			--json number --jq '.[].number' 2>/dev/null) || issue_numbers=""
+		[[ -n "$issue_numbers" ]] || continue
+		while IFS= read -r issue_number; do
 			[[ "$issue_number" =~ ^[0-9]+$ ]] || continue
-			exit_code=0
-			clear_terminal_issue_dispatch_labels "$issue_number" "$repo_slug" "closed-issue-sweep" "$current_labels" || exit_code=$?
+			local exit_code=0
+			clear_terminal_issue_dispatch_labels "$issue_number" "$repo_slug" "closed-issue-sweep" || exit_code=$?
 			if [[ "$exit_code" -eq 0 ]]; then
 				total=$((total + 1))
 			fi
-		done <<<"$issue_rows"
+		done <<<"$issue_numbers"
 	done < <(_dispatch_label_sweep_repos "$repos_json" || true)
 
 	_dispatch_label_sweep_mark_run
