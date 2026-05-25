@@ -42,7 +42,7 @@ def action_summary_from_text(section_text: str) -> str:
 
 def action_prompt_details(prompt_text: str, code_renderer: Callable[[str, str, str], str]) -> str:
     return (
-        '<details class="accordion action-prompt"><summary>Action Prompt</summary>'
+        '<details class="accordion action-prompt" open><summary>Action Prompt</summary>'
         f'{code_renderer(prompt_text, "text", "Copyable action prompt")}'
         '</details>'
     )

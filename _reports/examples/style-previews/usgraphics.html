@@ -1,0 +1,2858 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Report</title>
+<style>/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2025-2026 Marcus Quinn */
+
+:root {
+  color-scheme: light;
+  --report-font-heading: "Newsreader", Georgia, "Times New Roman", "Noto Serif", serif;
+  --report-font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --report-font-code: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --report-paper: #f8f6f1;
+  --report-paper-raised: #fffdf8;
+  --report-panel: #fffdf8;
+  --report-surface: #ffffff;
+  --report-ink: #111827;
+  --report-ink-muted: #4b5563;
+  --report-ink-soft: #6b7280;
+  --report-rule: #d8d2c4;
+  --report-rule-strong: #b8ae9c;
+  --report-blue: #2563eb;
+  --report-amber: #b7791f;
+  --report-green: #147a4a;
+  --report-red: #b42318;
+  --report-violet: #6d28d9;
+  --report-good-bg: #eaf7ef;
+  --report-bad-bg: #fdecec;
+  --report-code-bg: #fffdf8;
+  --report-code-ink: #111827;
+  --report-code-accent: #2563eb;
+  --report-action-bg: var(--report-ink);
+  --report-action-ink: #ffffff;
+  --report-info-bg: #eaf2ff;
+  --report-impact-bg: #fff5db;
+  --report-evidence-bg: #eaf7ef;
+  --report-myth-bg: #f7f2ff;
+  --report-radius-sm: 0.25rem;
+  --report-radius-md: 0.5rem;
+  --report-radius-lg: 0.875rem;
+  --report-radius-xl: 1.375rem;
+  --report-badge-radius: calc(var(--report-radius-lg) * 0.45);
+  --report-space-1: 0.25rem;
+  --report-space-2: 0.5rem;
+  --report-space-3: 1rem;
+  --report-space-4: 1.5rem;
+  --report-space-5: 2rem;
+  --report-space-6: 3rem;
+  --report-space-7: 4rem;
+  --report-page-max: 78rem;
+  --report-grid-gutter: 28px;
+  --report-badge-strong-bg: #eaf2ff;
+  --report-badge-strong-ink: #1d4ed8;
+  --report-badge-vendor-bg: #f4ecff;
+  --report-badge-vendor-ink: var(--report-violet);
+  --report-badge-practitioner-bg: #fff5db;
+  --report-badge-practitioner-ink: #92400e;
+  --report-badge-hygiene-bg: #f3f4f6;
+  --report-badge-hygiene-ink: #374151;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--report-paper);
+  color: var(--report-ink);
+  font-family: var(--report-font-body);
+  line-height: 1.65;
+  scroll-behavior: smooth;
+}
+
+body.report-body {
+  margin: 0;
+  background: var(--report-paper);
+  color: var(--report-ink);
+  font-family: var(--report-font-body);
+  font-size: 1rem;
+}
+
+.report-main {
+  font-size: clamp(1rem, 0.94rem + 0.18vw, 1.0625rem);
+  line-height: 1.68;
+}
+
+.report-main h1,
+.report-main h2,
+.report-main h3 {
+  max-width: 46ch;
+  color: var(--report-ink);
+  font-family: var(--report-font-heading);
+  line-height: 1.14;
+}
+
+.report-main h1 {
+  font-size: clamp(2.25rem, 5vw, 3.5rem);
+}
+
+.report-main h2 {
+  font-size: clamp(1.6rem, 3vw, 2.25rem);
+}
+
+.report-main h3 {
+  font-size: clamp(1.15rem, 1.5vw, 1.35rem);
+}
+
+.report-main p,
+.report-main li,
+.report-main blockquote {
+  orphans: 3;
+  widows: 3;
+}
+
+.report-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(16rem, 20rem);
+  gap: var(--report-space-5);
+  max-width: var(--report-page-max);
+  margin: 0 auto;
+  padding: var(--report-space-6) var(--report-space-5);
+}
+
+.report-main {
+  grid-column: 1;
+  grid-row: auto;
+  min-width: 0;
+  counter-reset: report-chapter;
+}
+
+.report-front {
+  grid-row: 2;
+}
+
+.report-title-front {
+  grid-row: 1;
+}
+
+.report-rest {
+  grid-row: 3;
+}
+
+.report-cover,
+.chapter-hero,
+.badge-key,
+.block-template,
+.case-study-card,
+.tactic-card,
+.example-card,
+.good-bad,
+.stats-strip,
+.facts-table-wrap,
+.details-note,
+.industry-card,
+.priority-group,
+.checklist-card,
+.source-card,
+.source-item,
+.source-list,
+.sources-layout,
+.sources-group,
+.myth-callout,
+.summary-stats,
+.info-panel,
+.impact-panel,
+.evidence-panel,
+.action-panel,
+.severity-key,
+.accordion,
+.quote-card,
+.callout,
+.report-keep-with-heading,
+.version-summary {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.report-cover {
+  margin-block-end: var(--report-space-7);
+  padding: clamp(2rem, 7vw, 4rem);
+  background: var(--report-paper-raised);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-xl);
+}
+
+.report-kicker,
+.eyebrow,
+.meta-label,
+.badge,
+.priority-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+.report-kicker,
+.eyebrow {
+  color: var(--report-blue);
+  margin: 0 0 var(--report-space-2);
+}
+
+.report-title,
+.chapter-title {
+  margin: 0;
+  color: var(--report-ink);
+  font-family: var(--report-font-heading);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.report-title {
+  max-width: 12ch;
+  font-size: clamp(3rem, 8vw, 4rem);
+  line-height: 1.05;
+}
+
+.report-subtitle,
+.chapter-summary {
+  max-width: 62ch;
+  color: var(--report-ink-muted);
+  font-size: clamp(1.05rem, 2vw, 1.25rem);
+}
+
+.report-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--report-space-3);
+  margin-block-start: var(--report-space-5);
+  padding-block-start: var(--report-space-4);
+  border-block-start: 1px solid var(--report-rule);
+}
+
+.meta-item {
+  min-width: 0;
+}
+
+.meta-label {
+  display: block;
+  color: var(--report-ink-soft);
+}
+
+.meta-value {
+  display: block;
+  color: var(--report-ink);
+  font-weight: 650;
+}
+
+.sticky-toc {
+  grid-column: 2;
+  grid-row: 1 / span 3;
+  position: sticky;
+  top: calc(var(--report-space-4) + 5rem);
+  align-self: start;
+  margin-block-start: calc(2rem + var(--report-space-3));
+  max-height: calc(100vh - var(--report-space-5));
+  overflow: hidden;
+  padding: var(--report-space-3);
+  background: var(--report-panel);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-lg);
+  font-size: 0.875rem;
+  box-shadow: 0 12px 32px rgba(17, 24, 39, 0.1);
+}
+
+.sticky-toc h2 {
+  margin: 0 0 var(--report-space-2);
+  color: var(--report-ink);
+  font-size: 0.875rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sticky-toc-header {
+  display: block;
+  margin-block-end: var(--report-space-3);
+  padding-inline-end: 0.35rem;
+}
+
+.sticky-toc-header h2 {
+  margin: 0;
+}
+
+.report-body .sticky-toc-header h2 {
+  font-size: clamp(1.1rem, 2vw, 1.55rem);
+  line-height: 1;
+}
+
+.toc-pdf-actions {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--report-space-2);
+  align-items: center;
+  align-self: start;
+  z-index: 2;
+  margin-block-end: var(--report-space-2);
+}
+
+.toc-pdf-link {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 0;
+  min-inline-size: 3.2rem;
+  height: 2rem;
+  align-self: center;
+  flex: 0 0 auto;
+  align-items: center;
+  box-sizing: border-box;
+  justify-content: center;
+  padding: 0 0.7rem;
+  border: 1.5px solid var(--report-rule);
+  border-radius: var(--report-badge-radius);
+  background: var(--report-panel);
+  color: var(--report-ink);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  line-height: 1 !important;
+  text-align: center;
+  text-decoration: none !important;
+  white-space: nowrap;
+}
+
+.appendix-links,
+.anchor-links {
+  justify-content: center;
+}
+
+.appendix-links p,
+.anchor-links p {
+  justify-content: center;
+}
+
+.toc-pdf-link:hover,
+.toc-pdf-link:focus-visible {
+  border-color: var(--report-blue);
+  color: var(--report-blue);
+}
+
+.sticky-toc ol {
+  display: grid;
+  gap: var(--report-space-1);
+  max-height: calc(100vh - 9rem);
+  margin: 0;
+  overflow: auto;
+  padding: 0;
+  padding-inline-end: var(--report-space-1);
+  list-style: none;
+}
+
+.sticky-toc li.toc-chapter {
+  margin-block-start: var(--report-space-2);
+  padding-block-start: var(--report-space-2);
+  border-top: 1px solid var(--report-rule);
+}
+
+.sticky-toc ol a {
+  display: block;
+  padding: var(--report-space-1) var(--report-space-2);
+  border-left: 3px solid transparent;
+  color: var(--report-ink-muted);
+  line-height: 1.45;
+  text-decoration: none;
+}
+
+.sticky-toc li.toc-subsection a {
+  padding-inline-start: calc(var(--report-space-2) + 1rem);
+}
+
+.sticky-toc ol a[aria-current="true"],
+.sticky-toc ol a:hover,
+.sticky-toc ol a:focus-visible {
+  border-left-color: var(--report-blue);
+  color: var(--report-ink);
+  outline: none;
+}
+
+.report-main h2.chapter-heading {
+  counter-increment: report-chapter;
+  margin-block-start: var(--report-space-7);
+  padding-block-start: var(--report-space-5);
+  border-top: 1px solid var(--report-rule);
+}
+
+.report-main h2.chapter-heading::before {
+  content: "Chapter " counter(report-chapter);
+  display: block;
+  margin-block-end: var(--report-space-2);
+  color: var(--report-blue);
+  font-family: var(--report-font-body);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.report-main h2.no-chapter {
+  margin-block-start: var(--report-space-6);
+}
+
+.heading-number {
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.chapter-hero {
+  margin-block: var(--report-space-6) var(--report-space-4);
+  padding: var(--report-space-5);
+  background: var(--report-paper-raised);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-xl);
+}
+
+.chapter-title {
+  font-size: clamp(2rem, 5vw, 2.75rem);
+  line-height: 1.12;
+}
+
+.action-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--report-space-2) var(--report-space-3);
+  align-items: baseline;
+  margin-block: var(--report-space-4);
+  padding: var(--report-space-3) var(--report-space-4);
+  background: var(--report-surface);
+  color: var(--report-ink);
+  border: 1px solid var(--report-rule);
+  border-left: 4px solid var(--report-blue);
+  border-radius: var(--report-radius-md);
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.06);
+}
+
+.action-line strong {
+  display: inline-flex;
+  padding: 0.12rem 0.45rem;
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--report-blue);
+  border-radius: var(--report-radius-sm);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem var(--report-space-2);
+  align-items: center;
+  line-height: 1.9;
+}
+
+.anchor-links,
+.appendix-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--report-space-3);
+  margin-block: var(--report-space-3);
+  line-height: 1.35;
+}
+
+.anchor-links p,
+.appendix-links p {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--report-space-3);
+  align-items: center;
+  margin: 0;
+}
+
+.anchor-links a,
+.appendix-links a {
+  display: inline-flex;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-badge-radius);
+  background: var(--report-surface);
+  color: var(--report-blue);
+  box-shadow: inset 0 -0.16em 0 color-mix(in srgb, var(--report-blue) 18%, transparent);
+  text-decoration: none;
+}
+
+.anchor-links a:hover,
+.anchor-links a:focus-visible,
+.appendix-links a:hover,
+.appendix-links a:focus-visible {
+  background: var(--report-paper-raised);
+  border-color: var(--report-blue);
+  box-shadow: inset 0 -0.22em 0 color-mix(in srgb, var(--report-blue) 28%, transparent);
+}
+
+.appendix-links a {
+  align-items: center;
+  gap: 0.45rem;
+  margin-block: 0;
+}
+
+.appendix-links a::before {
+  content: "";
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 1rem;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 2h8l4 4v16H6z' fill='none' stroke='black' stroke-width='2'/%3E%3Cpath d='M14 2v5h5' fill='none' stroke='black' stroke-width='2'/%3E%3C/svg%3E") center/contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 2h8l4 4v16H6z' fill='none' stroke='black' stroke-width='2'/%3E%3Cpath d='M14 2v5h5' fill='none' stroke='black' stroke-width='2'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+
+.appendix-links a::after {
+  content: attr(data-filetype);
+  padding: 0.05rem 0.32rem;
+  border-radius: var(--report-badge-radius);
+  background: var(--report-paper-raised);
+  color: var(--report-ink-soft);
+  font-size: 0.64rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.badge {
+  display: inline-flex;
+  gap: var(--report-space-1);
+  align-items: center;
+  width: fit-content;
+  min-width: max-content;
+  max-width: 100%;
+  padding: 0.25rem 0.625rem;
+  border-radius: var(--report-badge-radius);
+  border: 1px solid transparent;
+  white-space: nowrap;
+  margin-block: 0.08rem;
+}
+
+.evidence-badge {
+  display: inline-flex;
+  gap: 0.3rem;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  line-height: 1.7;
+  white-space: nowrap;
+}
+
+.evidence-label {
+  color: var(--report-ink-soft);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+td .badge,
+th .badge,
+td .evidence-badge,
+th .evidence-badge {
+  display: inline-flex;
+  min-width: max-content;
+  white-space: nowrap;
+}
+
+.badge--rct {
+  background: #dcfce7;
+  color: #166534;
+  border-color: rgba(22, 101, 52, 0.24);
+}
+
+.badge--strong {
+  background: #eaf2ff;
+  color: #1d4ed8;
+  border-color: rgba(37, 99, 235, 0.2);
+}
+
+.badge--vendor {
+  background: var(--report-badge-vendor-bg);
+  color: var(--report-badge-vendor-ink);
+  border-color: rgba(109, 40, 217, 0.2);
+}
+
+.badge--practitioner {
+  background: #fff5db;
+  color: #92400e;
+  border-color: rgba(183, 121, 31, 0.24);
+}
+
+.badge--hygiene {
+  background: #f3f4f6;
+  color: #374151;
+  border-color: rgba(55, 65, 81, 0.18);
+}
+
+.badge-verified {
+  background: #dcfce7;
+  color: #166534;
+  border-color: rgba(22, 101, 52, 0.24);
+}
+
+.badge-partial {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: rgba(146, 64, 14, 0.24);
+}
+
+.badge-inferred {
+  background: #dbeafe;
+  color: #1d4ed8;
+  border-color: rgba(29, 78, 216, 0.24);
+}
+
+.badge-missing {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: rgba(153, 27, 27, 0.24);
+}
+
+.tactic-card,
+.case-study-card,
+.industry-card,
+.priority-group,
+.checklist-card,
+.source-card,
+.source-list,
+.sources-group,
+.details-note,
+.myth-callout,
+.info-panel,
+.impact-panel,
+.evidence-panel,
+.action-panel,
+.severity-key,
+.accordion,
+.quote-card,
+.callout,
+.version-summary {
+  margin-block: var(--report-space-4);
+  padding: var(--report-space-4);
+  background: var(--report-surface);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-lg);
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.06);
+}
+
+.sources-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--report-space-3);
+  margin-block: var(--report-space-4);
+}
+
+.sources-group {
+  background: var(--report-surface);
+}
+
+.source-title {
+  margin-block: var(--report-space-2);
+  padding-block: 0;
+  border: 0;
+  color: var(--report-ink);
+  font-weight: 800;
+}
+
+.sources-group .source-card {
+  box-shadow: none;
+  margin-block: var(--report-space-2);
+}
+
+.source-list {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.source-list .source-title {
+  margin-block: var(--report-space-5) 0;
+  padding-block: 0;
+  border: 0;
+  color: var(--report-ink-soft);
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.source-list .source-title + .source-item {
+  border-top: 0;
+}
+
+@media print {
+  .source-list {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  .source-list .source-title {
+    break-after: avoid-page;
+    page-break-after: avoid;
+  }
+
+  .source-list .source-title:not(:first-child) {
+    break-before: page;
+    page-break-before: always;
+  }
+}
+
+.source-list .source-item:last-child {
+  border-bottom: 0;
+}
+
+.source-item {
+  position: relative;
+  display: grid;
+  gap: var(--report-space-1);
+  margin: 0;
+  padding: var(--report-space-3) 3.75rem var(--report-space-3) var(--report-space-3);
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--report-rule);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.source-item:hover {
+  background: color-mix(in srgb, var(--report-blue) 5%, transparent);
+}
+
+.source-item h3 {
+  color: var(--report-blue);
+}
+
+.tactic-card h3,
+.case-study-card h3,
+.industry-card h3,
+.priority-group h3,
+.checklist-card h3,
+.source-card h3,
+.source-item h3,
+.details-note h3,
+.myth-callout h3 {
+  margin-block: 0 var(--report-space-2);
+  color: var(--report-ink);
+  font-size: 1.25rem;
+  line-height: 1.3;
+}
+
+.source-item h3 {
+  color: var(--report-blue);
+}
+
+.tactic-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--report-space-3);
+  margin-block-start: var(--report-space-3);
+}
+
+.tactic-grid > section {
+  padding-inline-start: var(--report-space-3);
+  border-left: 1px solid var(--report-rule);
+}
+
+.example-card,
+.block-template {
+  margin-block: var(--report-space-4);
+  overflow: hidden;
+  background: transparent;
+  color: inherit;
+  border-radius: var(--report-radius-md);
+}
+
+.example-card header,
+.block-template header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--report-space-3);
+  padding: 0 0 var(--report-space-2);
+  background: transparent;
+  border-bottom: 0;
+  color: var(--report-code-accent);
+  font-family: var(--report-font-code);
+  font-size: 0.8125rem;
+}
+
+.code-block-wrap {
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  isolation: isolate;
+  background: var(--report-code-bg);
+  background-clip: padding-box;
+  color: var(--report-code-ink);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-md);
+}
+
+.code-block-wrap > :first-child {
+  border-top-left-radius: calc(var(--report-radius-md) - 1px);
+  border-top-right-radius: calc(var(--report-radius-md) - 1px);
+}
+
+.code-block-wrap pre {
+  max-width: 100%;
+  margin: 0;
+  padding: var(--report-space-3) var(--report-space-3) var(--report-space-3) calc(var(--report-space-3) + 0.25rem);
+  overflow-x: auto;
+  font-family: var(--report-font-code);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+.code-block-wrap pre:last-child {
+  border-bottom-right-radius: inherit;
+  border-bottom-left-radius: inherit;
+}
+
+.code-block-wrap .mermaid,
+.code-block-wrap .latex-block {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.code-block-head {
+  display: flex;
+  gap: var(--report-space-3);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--report-space-2) var(--report-space-3);
+  background: color-mix(in srgb, var(--report-code-bg) 88%, var(--report-code-ink));
+  border-bottom: 1px solid var(--report-rule);
+  color: var(--report-code-accent);
+  font-family: var(--report-font-code);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.example-card > header,
+.block-template > header,
+.report-keep-with-heading > h2,
+.report-keep-with-heading > h3 {
+  break-after: avoid;
+  page-break-after: avoid;
+}
+
+.example-card > .code-block-wrap,
+.block-template > .code-block-wrap,
+.report-keep-with-heading > .code-block-wrap,
+.report-keep-with-heading > .source-card,
+.report-keep-with-heading > .source-list,
+.report-keep-with-heading > .sources-layout,
+.report-keep-with-heading > .sources-group,
+.report-keep-with-heading > .callout,
+.report-keep-with-heading > .info-panel,
+.report-keep-with-heading > .impact-panel,
+.report-keep-with-heading > .evidence-panel,
+.report-keep-with-heading > .action-panel,
+.report-keep-with-heading > .details-note,
+.report-keep-with-heading > .myth-callout,
+.report-keep-with-heading > .accordion {
+  break-before: avoid;
+  page-break-before: avoid;
+}
+
+.code-copy {
+  display: inline-grid;
+  width: 1.85rem;
+  height: 1.85rem;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid var(--report-rule);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--report-code-ink);
+  cursor: pointer;
+  font: 700 0.85rem/1 var(--report-font-body);
+}
+
+.code-copy.is-copied {
+  background: var(--report-green);
+  border-color: var(--report-green);
+  color: #ffffff;
+}
+
+.example-card pre,
+.block-template pre,
+.report-main > .code-block-wrap pre {
+  max-width: 100%;
+  margin: 0;
+  padding: var(--report-space-3) var(--report-space-3) var(--report-space-3) calc(var(--report-space-3) + 0.25rem);
+  overflow-x: auto;
+  font-family: var(--report-font-code);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+.good-bad {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--report-space-3);
+  margin-block: var(--report-space-4);
+}
+
+.good-row,
+.bad-row {
+  padding: var(--report-space-3);
+  border-radius: var(--report-radius-md);
+  border: 1px solid transparent;
+}
+
+.good-row {
+  background: var(--report-good-bg);
+  border-color: rgba(20, 122, 74, 0.2);
+}
+
+.bad-row {
+  background: var(--report-bad-bg);
+  border-color: rgba(180, 35, 24, 0.2);
+}
+
+.good-row h4,
+.bad-row h4 {
+  margin: 0 0 var(--report-space-1);
+}
+
+.good-row h4 {
+  color: var(--report-green);
+}
+
+.bad-row h4 {
+  color: var(--report-red);
+}
+
+.stats-strip,
+.summary-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--report-space-3);
+  margin-block: var(--report-space-4);
+}
+
+.stat-card {
+  padding: var(--report-space-3);
+  background: var(--report-paper-raised);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-lg);
+}
+
+.stat-value {
+  display: block;
+  color: var(--report-ink);
+  font-family: var(--report-font-heading);
+  font-size: 2.25rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.stat-card > p:first-child {
+  margin-block: 0 var(--report-space-1);
+}
+
+.stat-card > p:first-child strong {
+  display: block;
+  color: var(--report-ink);
+  font-family: var(--report-font-heading);
+  font-size: 2.25rem;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.stat-label,
+.stat-period,
+.source-meta {
+  color: var(--report-ink-soft);
+  font-size: 0.875rem;
+}
+
+.facts-table-wrap {
+  margin-block: var(--report-space-4);
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-md);
+  background: var(--report-surface);
+  background-clip: padding-box;
+  clip-path: inset(0 round var(--report-radius-md));
+  contain: paint;
+  isolation: isolate;
+}
+
+.facts-table,
+.facts-table-wrap table,
+.report-main > table {
+  width: 100%;
+  min-width: 42rem;
+  table-layout: auto;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.875rem;
+  background: var(--report-surface);
+  border-radius: inherit;
+}
+
+.facts-table th,
+.facts-table td,
+.facts-table-wrap th,
+.facts-table-wrap td,
+.report-main > table th,
+.report-main > table td {
+  padding: 0.75rem 0.875rem;
+  border: 0;
+  border-inline-end: 1px solid var(--report-rule);
+  border-block-end: 1px solid var(--report-rule);
+  text-align: left;
+  vertical-align: top;
+}
+
+.facts-table th:last-child,
+.facts-table td:last-child,
+.facts-table-wrap th:last-child,
+.facts-table-wrap td:last-child,
+.report-main > table th:last-child,
+.report-main > table td:last-child {
+  border-inline-end: 0;
+}
+
+.facts-table tbody tr:last-child td,
+.facts-table-wrap tbody tr:last-child td,
+.report-main > table tbody tr:last-child td {
+  border-block-end: 0;
+}
+
+.facts-table th,
+.facts-table-wrap th,
+.report-main > table th {
+  background: var(--report-paper-raised);
+  background-clip: padding-box;
+  color: var(--report-ink);
+  font-weight: 700;
+}
+
+.facts-table thead tr:first-child th:first-child,
+.facts-table-wrap thead tr:first-child th:first-child,
+.report-main > table thead tr:first-child th:first-child {
+  border-top-left-radius: calc(var(--report-radius-md) - 1px);
+}
+
+.facts-table thead tr:first-child th:last-child,
+.facts-table-wrap thead tr:first-child th:last-child,
+.report-main > table thead tr:first-child th:last-child {
+  border-top-right-radius: calc(var(--report-radius-md) - 1px);
+}
+
+.facts-table tbody tr:last-child td:first-child,
+.facts-table-wrap tbody tr:last-child td:first-child,
+.report-main > table tbody tr:last-child td:first-child {
+  border-bottom-left-radius: calc(var(--report-radius-md) - 1px);
+}
+
+.facts-table tbody tr:last-child td:last-child,
+.facts-table-wrap tbody tr:last-child td:last-child,
+.report-main > table tbody tr:last-child td:last-child {
+  border-bottom-right-radius: calc(var(--report-radius-md) - 1px);
+}
+
+.details-note {
+  background: var(--report-impact-bg);
+  border-left: 4px solid var(--report-amber);
+}
+
+.info-panel {
+  background: var(--report-info-bg);
+  border-left: 4px solid var(--report-blue);
+}
+
+.impact-panel {
+  background: var(--report-surface);
+  border-left: 4px solid var(--report-amber);
+}
+
+.evidence-panel {
+  background: var(--report-surface);
+  border-left: 4px solid var(--report-green);
+}
+
+.action-panel {
+  background: var(--report-surface);
+  color: var(--report-ink);
+  border-left: 4px solid var(--report-blue);
+}
+
+.myth-callout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--report-space-3);
+  background: var(--report-myth-bg);
+  border-color: rgba(109, 40, 217, 0.22);
+}
+
+.myth-callout > * {
+  margin: 0;
+}
+
+.myth-callout > :nth-child(n + 3) {
+  padding-block-start: var(--report-space-3);
+  border-top: 1px solid rgba(109, 40, 217, 0.2);
+}
+
+.accordion {
+  display: block;
+}
+
+.accordion summary {
+  display: flex;
+  gap: var(--report-space-2);
+  align-items: center;
+  cursor: pointer;
+  color: var(--report-ink);
+  font-weight: 750;
+  list-style: none;
+}
+
+.accordion summary::-webkit-details-marker {
+  display: none;
+}
+
+.accordion summary::before {
+  content: "▾";
+  display: inline-flex;
+  width: 1.45rem;
+  flex: 0 0 1.45rem;
+  align-items: center;
+  justify-content: center;
+  color: var(--report-ink-soft);
+  font-size: 1.35rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.accordion[open] summary::before {
+  content: "▴";
+}
+
+.action-prompt {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin-block: calc(-1 * var(--report-space-2)) var(--report-space-4);
+  overflow: hidden;
+}
+
+.action-prompt .code-block-wrap {
+  width: 100%;
+  max-width: 100%;
+}
+
+.action-prompt pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.quote-card,
+blockquote {
+  margin-block: var(--report-space-4);
+  padding: var(--report-space-3) var(--report-space-4);
+  border-left: 4px solid var(--report-blue);
+  background: var(--report-paper-raised);
+  color: var(--report-ink-muted);
+  font-family: var(--report-font-heading);
+  font-style: italic;
+  font-size: 1.1rem;
+}
+
+.quote-card p {
+  font-style: italic;
+}
+
+.mermaid,
+.latex-block {
+  margin-block: var(--report-space-4);
+  padding: var(--report-space-3);
+  overflow-x: auto;
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-md);
+  background: var(--report-code-bg);
+  color: var(--report-code-ink);
+}
+
+.mermaid-rendered,
+.latex-rendered-block {
+  width: 100%;
+  margin: var(--report-space-4) 0;
+  padding: var(--report-space-3);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-md);
+  background: var(--report-code-bg);
+  color: var(--report-code-ink);
+}
+
+.mermaid-rendered svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.diagram-node {
+  fill: color-mix(in srgb, var(--report-code-bg) 92%, var(--report-code-accent));
+  stroke: var(--report-blue);
+  stroke-width: 2;
+}
+
+.diagram-label {
+  fill: var(--report-code-ink);
+  font: 700 14px system-ui, sans-serif;
+}
+
+.diagram-arrow {
+  stroke: var(--report-blue);
+  stroke-width: 2.5;
+  marker-end: url(#arrowhead);
+}
+
+.diagram-arrow-head {
+  fill: var(--report-blue);
+}
+
+.latex-rendered-block div,
+.latex-inline {
+  font-family: var(--report-font-code);
+  letter-spacing: 0.01em;
+  color: var(--report-code-ink);
+}
+
+.latex-rendered-block div {
+  font-size: clamp(1.15rem, 2.8vw, 1.75rem);
+  font-weight: 700;
+}
+
+.mermaid-rendered figcaption,
+.latex-rendered-block figcaption {
+  margin-block-start: var(--report-space-2);
+  color: var(--report-ink-soft);
+  font-size: 0.78rem;
+}
+
+.mermaid::before,
+.latex-block::before {
+  display: none;
+  margin-bottom: var(--report-space-2);
+  color: var(--report-code-accent);
+  font-family: var(--report-font-body);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mermaid::before {
+  content: "Mermaid source fallback";
+}
+
+.latex-block::before {
+  content: "LaTeX source fallback";
+}
+
+.latex-inline {
+  padding: 0 0.25rem;
+  border-radius: var(--report-radius-sm);
+  background: var(--report-paper-raised);
+  color: var(--report-ink);
+  font-family: var(--report-font-code);
+}
+
+.bar-chart {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--report-space-2);
+  margin-block: var(--report-space-4);
+}
+
+.bar-chart p {
+  --bar-value: 72%;
+  position: relative;
+  margin: 0;
+  padding: 0.65rem 0.8rem;
+  overflow: hidden;
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-md);
+  background: var(--report-surface);
+}
+
+.bar-chart p::after {
+  content: "";
+  position: absolute;
+  inset: auto auto 0 0;
+  width: var(--bar-value);
+  height: 0.25rem;
+  background: var(--report-blue);
+}
+
+.severity-key {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--report-space-2);
+}
+
+.priority-group[data-priority="critical"],
+.info-panel[data-severity="critical"],
+.impact-panel[data-severity="critical"],
+.evidence-panel[data-severity="critical"],
+.action-panel[data-severity="critical"] {
+  border-top: 4px solid var(--report-red);
+}
+
+.priority-group[data-priority="critical"] {
+  border-top: 4px solid var(--report-red);
+}
+
+.priority-group[data-priority="high"] {
+  border-top: 4px solid var(--report-amber);
+}
+
+.priority-group[data-priority="medium"] {
+  border-top: 4px solid var(--report-blue);
+}
+
+.priority-group[data-priority="low"] {
+  border-top: 4px solid var(--report-green);
+}
+
+.checklist {
+  display: grid;
+  gap: var(--report-space-2);
+  padding: 0;
+  list-style: none;
+}
+
+ol {
+  padding-inline-start: 1.4rem;
+}
+
+ol li::marker {
+  color: var(--report-blue);
+  font-weight: 800;
+}
+
+.checklist li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: var(--report-space-2);
+  align-items: baseline;
+  padding-block: var(--report-space-2);
+  border-bottom: 1px solid var(--report-rule);
+}
+
+.status-dot {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid var(--report-ink-soft);
+  border-radius: 0.22rem;
+  background: transparent;
+}
+
+.status-dot[data-status="done"] {
+  background: var(--report-green);
+  border-color: var(--report-green);
+}
+
+.status-dot[data-status="blocked"] {
+  background: var(--report-red);
+}
+
+.badge-key {
+  display: grid;
+  gap: var(--report-space-2);
+}
+
+.badge-key p {
+  display: grid;
+  grid-template-columns: minmax(10rem, auto) 1fr;
+  gap: var(--report-space-3);
+  align-items: center;
+  margin: 0;
+}
+
+.version-summary {
+  text-align: left;
+  color: var(--report-ink-soft);
+  font-size: clamp(0.72rem, 0.58rem + 0.42vw, 0.92rem);
+  font-weight: 800;
+  letter-spacing: 0.11em;
+  line-height: 1.42;
+  text-transform: uppercase;
+  margin-block: var(--report-space-6) 0;
+  padding: var(--report-space-4) 0 0;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--report-rule);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.version-summary p {
+  max-width: none;
+  margin: 0;
+}
+
+.source-card {
+  position: relative;
+  padding-inline-end: calc(var(--report-space-4) + 2rem);
+  background: var(--report-paper-raised);
+}
+
+.source-card-link {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: block;
+  margin: 0;
+  border: 0;
+  border-radius: inherit;
+  color: var(--report-blue);
+  text-decoration: none;
+}
+
+.source-card-link::before {
+  content: "↗";
+  position: absolute;
+  top: var(--report-space-3);
+  right: var(--report-space-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.source-card-link:hover,
+.source-card-link:focus-visible {
+  background: color-mix(in srgb, var(--report-blue) 5%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--report-blue) 16%, transparent);
+}
+
+.source-item .source-card-link {
+  border-radius: 0;
+}
+
+.source-item .source-card-link::before {
+  right: var(--report-space-3);
+}
+
+.section-separator {
+  margin-block: var(--report-space-6);
+  border: 0;
+  border-top: 1px solid var(--report-rule);
+}
+
+.report-footer {
+  max-width: var(--report-page-max);
+  margin: 0 auto;
+  padding: var(--report-space-4) var(--report-space-5) var(--report-space-6);
+  color: var(--report-ink-soft);
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+a {
+  color: var(--report-blue);
+  text-underline-offset: 0.18em;
+}
+
+:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.35);
+  outline-offset: 3px;
+}
+
+@media (max-width: 980px) {
+  .report-shell {
+    grid-template-columns: 1fr;
+    padding: var(--report-space-4) var(--report-space-3);
+  }
+
+  .sticky-toc {
+    position: static;
+    max-height: none;
+    order: -1;
+  }
+
+  .report-main,
+  .sticky-toc,
+  .toc-pdf-actions {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .report-meta-grid,
+  .tactic-grid,
+  .stats-strip,
+  .summary-stats,
+  .sources-layout,
+  .severity-key {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .report-cover,
+  .chapter-hero,
+  .tactic-card,
+  .industry-card,
+  .priority-group,
+  .checklist-card,
+  .source-card,
+  .details-note,
+  .myth-callout {
+    padding: var(--report-space-3);
+    border-radius: var(--report-radius-md);
+  }
+
+  .report-meta-grid,
+  .tactic-grid,
+    .stats-strip,
+    .summary-stats,
+  .sources-layout,
+  .severity-key,
+  .good-bad,
+  .myth-callout {
+    grid-template-columns: 1fr;
+  }
+
+  .action-line {
+    display: grid;
+  }
+}
+
+@media print {
+  :root {
+    color-scheme: light;
+    --report-paper: #ffffff;
+    --report-paper-raised: #ffffff;
+    --report-surface: #ffffff;
+    --report-ink: #111111;
+    --report-ink-muted: #333333;
+    --report-ink-soft: #555555;
+    --report-rule: #bdb7ab;
+    --report-rule-strong: #8f8778;
+  }
+
+  body.report-body {
+    --report-paper: #ffffff;
+    --report-paper-raised: #ffffff;
+    --report-panel: #ffffff;
+    --report-surface: #ffffff;
+    --report-ink: #111111;
+    --report-ink-muted: #333333;
+    --report-ink-soft: #555555;
+    --report-rule: #bdb7ab;
+    --report-rule-strong: #8f8778;
+    --report-info-bg: #ffffff;
+    --report-impact-bg: #ffffff;
+    --report-evidence-bg: #ffffff;
+    --report-myth-bg: #ffffff;
+    --report-good-bg: #ffffff;
+    --report-bad-bg: #ffffff;
+  }
+
+  @page {
+    size: A4 portrait;
+    margin: 12mm 0;
+    background: #ffffff;
+  }
+
+  @page report-letter {
+    size: Letter portrait;
+    margin: 0.45in 0;
+    background: #ffffff;
+  }
+
+  html {
+    background: #ffffff !important;
+  }
+
+  html,
+  body.report-body {
+    background: var(--report-paper) !important;
+    color: var(--report-ink) !important;
+    font-size: 10.5pt;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body.report-body {
+    box-sizing: border-box;
+    min-height: 100vh;
+    padding: 0 12mm;
+    orphans: 3;
+    widows: 3;
+  }
+
+  body.report-pdf-profile-letter {
+    page: report-letter;
+    padding: 0 0.45in;
+  }
+
+  body.report-body:not(.report-theme-dark) {
+    --report-paper: #ffffff;
+    --report-paper-raised: #ffffff;
+    --report-panel: #ffffff;
+    --report-surface: #ffffff;
+    background: #ffffff !important;
+  }
+
+  body.report-body:not(.report-theme-dark) .report-shell,
+  body.report-body:not(.report-theme-dark) .report-main,
+  body.report-body:not(.report-theme-dark) .report-content {
+    background: #ffffff !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    box-shadow: none !important;
+    filter: none !important;
+    text-shadow: none !important;
+  }
+
+  body.report-body {
+    position: relative;
+    background: var(--report-paper) !important;
+  }
+
+  body.report-theme-dark .report-shell,
+  body.report-theme-dark .report-main,
+  body.report-theme-dark .report-content {
+    background: var(--report-paper) !important;
+  }
+
+  body.report-body::before {
+    content: none;
+    display: none;
+  }
+
+  .report-shell {
+    display: block;
+    width: 100%;
+    max-width: none;
+    overflow: visible;
+    padding: 0;
+    border: 0 !important;
+    outline: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .report-main,
+  .report-content {
+    width: 100%;
+    max-width: 100%;
+    overflow: visible;
+    border: 0 !important;
+    outline: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .report-keep-with-heading,
+  .report-keep-with-heading.report-chapter-page {
+    border: 0 !important;
+    outline: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .report-cover,
+  .stats-strip,
+  .summary-stats {
+    background: transparent !important;
+  }
+
+  .stat-card {
+    background: var(--report-surface) !important;
+    background-clip: padding-box;
+  }
+
+  .report-footer {
+    display: flex;
+    min-height: 22mm;
+    margin-block-start: 8mm;
+    padding: 0 6mm;
+    align-items: center;
+    justify-content: center;
+    background: #ffffff;
+    border: 1px solid #d1d5db;
+    color: #374151;
+    text-align: center;
+  }
+
+  .report-pdf-profile-slides-16-9-1,
+  .report-pdf-profile-slides-16-9-2,
+  .report-pdf-profile-slides-16-9-3 {
+    font-size: 32pt;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main :where(p, li, blockquote, td, th, summary),
+  .report-pdf-profile-slides-16-9-2 .report-main :where(p, li, blockquote, td, th, summary),
+  .report-pdf-profile-slides-16-9-3 .report-main :where(p, li, blockquote, td, th, summary),
+  .report-pdf-profile-slides-16-9-1 .report-main :where(.report-subtitle, .report-kicker, .eyebrow, .meta-label, .priority-label, .source-card-type, .source-meta, .stat-label, .stat-period, .version-summary),
+  .report-pdf-profile-slides-16-9-2 .report-main :where(.report-subtitle, .report-kicker, .eyebrow, .meta-label, .priority-label, .source-card-type, .source-meta, .stat-label, .stat-period, .version-summary),
+  .report-pdf-profile-slides-16-9-3 .report-main :where(.report-subtitle, .report-kicker, .eyebrow, .meta-label, .priority-label, .source-card-type, .source-meta, .stat-label, .stat-period, .version-summary) {
+    font-size: 32pt !important;
+    line-height: 1.22;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main .badge,
+  .report-pdf-profile-slides-16-9-2 .report-main .badge,
+  .report-pdf-profile-slides-16-9-3 .report-main .badge {
+    font-size: 32pt !important;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main .code-block-wrap pre,
+  .report-pdf-profile-slides-16-9-2 .report-main .code-block-wrap pre,
+  .report-pdf-profile-slides-16-9-3 .report-main .code-block-wrap pre,
+  .report-pdf-profile-slides-16-9-1 .report-main .mermaid,
+  .report-pdf-profile-slides-16-9-2 .report-main .mermaid,
+  .report-pdf-profile-slides-16-9-3 .report-main .mermaid,
+  .report-pdf-profile-slides-16-9-1 .report-main .latex-block,
+  .report-pdf-profile-slides-16-9-2 .report-main .latex-block,
+  .report-pdf-profile-slides-16-9-3 .report-main .latex-block {
+    font-size: 32pt !important;
+    line-height: 1.2;
+  }
+
+  body.report-body,
+  .report-main,
+  .report-main p,
+  .report-main li,
+  .report-main blockquote,
+  .report-main td,
+  .report-main th,
+  .report-main summary {
+    text-wrap: pretty;
+  }
+
+  .report-main h1,
+  .report-main h2,
+  .report-main h3,
+  .report-main h4,
+  .report-main h5,
+  .report-main h6,
+  .source-title,
+  .version-summary {
+    text-wrap: balance;
+  }
+
+  .version-summary,
+  .version-summary p {
+    text-align: center;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main,
+  .report-pdf-profile-slides-16-9-2 .report-main,
+  .report-pdf-profile-slides-16-9-3 .report-main {
+    column-count: auto !important;
+    column-gap: normal !important;
+  }
+
+  .report-main h1,
+  .report-main h2,
+  .report-main h3,
+  .code-block-head,
+  .source-title,
+  .example-card > header,
+  .block-template > header,
+  .report-keep-with-heading > h2,
+  .report-keep-with-heading > h3 {
+    break-after: avoid-page;
+    page-break-after: avoid;
+  }
+
+  .report-main h2.chapter-heading {
+    margin-block-start: 10mm;
+    padding-block-start: 5mm;
+    border-top: 0 !important;
+    break-before: page;
+    break-inside: avoid-page;
+    page-break-before: always;
+    page-break-inside: avoid;
+  }
+
+  .report-title-page {
+    display: flex;
+    min-height: calc(297mm - 24mm);
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    break-after: page;
+    page-break-after: always;
+  }
+
+  .report-title-page h1,
+  .report-title-page p {
+    max-width: 34rem;
+    margin-inline: auto;
+  }
+
+  .report-title-page h1 {
+    font-size: 32pt;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-title-page,
+  .report-pdf-profile-slides-16-9-2 .report-title-page,
+  .report-pdf-profile-slides-16-9-3 .report-title-page {
+    display: block;
+    min-height: 0;
+    padding-block: 1.3in 0.45in;
+    break-after: page;
+    break-inside: avoid-page;
+    page-break-after: always;
+    page-break-inside: avoid;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-title-page h1,
+  .report-pdf-profile-slides-16-9-2 .report-title-page h1,
+  .report-pdf-profile-slides-16-9-3 .report-title-page h1 {
+    font-size: clamp(60pt, 9vw, 88pt) !important;
+    line-height: 0.95;
+    margin-block: 0 0.7in;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-title-page p,
+  .report-pdf-profile-slides-16-9-2 .report-title-page p,
+  .report-pdf-profile-slides-16-9-3 .report-title-page p {
+    font-size: 32pt !important;
+    line-height: 1.2;
+    margin-block: 0.2in 0;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block, .quote-card, blockquote, .info-panel, .impact-panel, .evidence-panel, .action-panel, .callout, .accordion, .facts-table-wrap, table, .source-card, .source-item, .details-note, .myth-callout, .severity-key, .example-card, .block-template),
+  .report-pdf-profile-slides-16-9-2 .report-main :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block, .quote-card, blockquote, .info-panel, .impact-panel, .evidence-panel, .action-panel, .callout, .accordion, .facts-table-wrap, table, .source-card, .source-item, .details-note, .myth-callout, .severity-key, .example-card, .block-template),
+  .report-pdf-profile-slides-16-9-3 .report-main :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block, .quote-card, blockquote, .info-panel, .impact-panel, .evidence-panel, .action-panel, .callout, .accordion, .facts-table-wrap, table, .source-card, .source-item, .details-note, .myth-callout, .severity-key, .example-card, .block-template) {
+    break-before: page;
+    break-inside: avoid-page;
+    page-break-before: always;
+    page-break-inside: avoid;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main :where(.report-cover, .stats-strip, .summary-stats, .badge-key),
+  .report-pdf-profile-slides-16-9-2 .report-main :where(.report-cover, .stats-strip, .summary-stats, .badge-key),
+  .report-pdf-profile-slides-16-9-3 .report-main :where(.report-cover, .stats-strip, .summary-stats, .badge-key) {
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .quote-card,
+  .report-pdf-profile-slides-16-9-2 .quote-card,
+  .report-pdf-profile-slides-16-9-3 .quote-card,
+  .report-pdf-profile-slides-16-9-1 blockquote,
+  .report-pdf-profile-slides-16-9-2 blockquote,
+  .report-pdf-profile-slides-16-9-3 blockquote {
+    display: flex;
+    min-height: 5.8in;
+    align-items: center;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .badge-key p,
+  .report-pdf-profile-slides-16-9-2 .badge-key p,
+  .report-pdf-profile-slides-16-9-3 .badge-key p {
+    grid-template-columns: max-content minmax(0, 1fr) !important;
+    column-gap: 0.45in;
+    align-items: center;
+    text-align: left;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .facts-table,
+  .report-pdf-profile-slides-16-9-2 .facts-table,
+  .report-pdf-profile-slides-16-9-3 .facts-table,
+  .report-pdf-profile-slides-16-9-1 .facts-table-wrap table,
+  .report-pdf-profile-slides-16-9-2 .facts-table-wrap table,
+  .report-pdf-profile-slides-16-9-3 .facts-table-wrap table,
+  .report-pdf-profile-slides-16-9-1 .report-main > table,
+  .report-pdf-profile-slides-16-9-2 .report-main > table,
+  .report-pdf-profile-slides-16-9-3 .report-main > table {
+    width: 100%;
+    min-width: 0;
+    table-layout: fixed;
+    font-size: 26pt !important;
+  }
+
+  .report-pdf-profile-slides-16-9-1 :where(.facts-table, .facts-table-wrap, .report-main > table) :where(th, td),
+  .report-pdf-profile-slides-16-9-2 :where(.facts-table, .facts-table-wrap, .report-main > table) :where(th, td),
+  .report-pdf-profile-slides-16-9-3 :where(.facts-table, .facts-table-wrap, .report-main > table) :where(th, td) {
+    padding: 0.22in 0.28in;
+    font-size: 26pt !important;
+    overflow-wrap: anywhere;
+    line-height: 1.2;
+    vertical-align: top;
+  }
+
+  .report-pdf-profile-slides-16-9-1 :where(.stats-strip, .summary-stats, .tactic-grid, .sources-layout, .good-bad, .severity-key, .badge-key) :where(p, li, span, a),
+  .report-pdf-profile-slides-16-9-2 :where(.stats-strip, .summary-stats, .tactic-grid, .sources-layout, .good-bad, .severity-key, .badge-key) :where(p, li, span, a),
+  .report-pdf-profile-slides-16-9-3 :where(.stats-strip, .summary-stats, .tactic-grid, .sources-layout, .good-bad, .severity-key, .badge-key) :where(p, li, span, a) {
+    font-size: 26pt !important;
+    line-height: 1.2;
+  }
+
+  .report-pdf-profile-slides-16-9-1 :where(td, th) .evidence-badge,
+  .report-pdf-profile-slides-16-9-2 :where(td, th) .evidence-badge,
+  .report-pdf-profile-slides-16-9-3 :where(td, th) .evidence-badge {
+    display: flex;
+    flex-direction: column;
+    gap: 0.12in;
+    align-items: flex-start;
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .report-pdf-profile-slides-16-9-1 :where(td, th) :where(.badge, .evidence-label),
+  .report-pdf-profile-slides-16-9-2 :where(td, th) :where(.badge, .evidence-label),
+  .report-pdf-profile-slides-16-9-3 :where(td, th) :where(.badge, .evidence-label) {
+    max-width: 100%;
+    font-size: 26pt !important;
+    white-space: normal;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-keep-with-heading > :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block),
+  .report-pdf-profile-slides-16-9-2 .report-keep-with-heading > :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block),
+  .report-pdf-profile-slides-16-9-3 .report-keep-with-heading > :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block),
+  .report-pdf-profile-slides-16-9-1 :where(.example-card, .block-template) > .code-block-wrap,
+  .report-pdf-profile-slides-16-9-2 :where(.example-card, .block-template) > .code-block-wrap,
+  .report-pdf-profile-slides-16-9-3 :where(.example-card, .block-template) > .code-block-wrap {
+    break-before: avoid-page !important;
+    page-break-before: avoid !important;
+  }
+
+  .report-front .report-cover {
+    break-before: auto;
+    page-break-before: auto;
+  }
+
+  .report-front {
+    font-size: 8.6pt;
+    line-height: 1.34;
+  }
+
+  .report-front .report-cover,
+  .report-front .stats-strip,
+  .report-front .summary-stats,
+  .report-front .badge-key,
+  .report-front .accordion,
+  .report-front .action-line,
+  .report-front .action-prompt,
+  .report-front .code-block-wrap {
+    margin-block: 2.5mm;
+    padding: 2.5mm 3mm;
+  }
+
+  .report-front .report-cover {
+    padding-block-start: 0;
+  }
+
+  .report-front .stats-strip,
+  .report-front .summary-stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 2mm;
+  }
+
+  .report-front h2.no-chapter {
+    margin-block: 4mm 2mm;
+  }
+
+  .report-front .badge-key {
+    gap: 1mm;
+  }
+
+  .report-front .badge-key p {
+    grid-template-columns: minmax(8rem, auto) 1fr;
+    gap: 2mm;
+  }
+
+  .report-front .badge-key {
+    padding-block-start: 6mm;
+    border-top: 1px solid var(--report-rule-strong);
+  }
+
+  .report-front .action-prompt pre {
+    font-size: 7pt;
+    line-height: 1.24;
+  }
+
+  .report-keep-with-heading.report-chapter-page {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  .report-front {
+    display: block;
+    min-height: calc(297mm - 24mm);
+    break-after: auto;
+    page-break-after: auto;
+  }
+
+  body.report-pdf-profile-letter .report-front {
+    min-height: 10.1in;
+  }
+
+  .report-main h2.chapter-heading::before {
+    break-after: avoid-page;
+    page-break-after: avoid;
+  }
+
+  .action-line,
+  .code-block-wrap,
+  .mermaid-rendered,
+  .latex-rendered-block,
+  .example-card > .code-block-wrap,
+  .block-template > .code-block-wrap,
+  .bar-chart p {
+    -webkit-box-decoration-break: clone;
+    box-sizing: border-box;
+    box-decoration-break: clone;
+    width: calc(100% - 12pt);
+    max-width: calc(100% - 12pt);
+    margin: 6mm 6pt 8mm;
+    break-inside: avoid-page;
+    break-after: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .code-block-wrap,
+  .mermaid-rendered,
+  .latex-rendered-block,
+  .example-card > .code-block-wrap,
+  .block-template > .code-block-wrap,
+  .report-keep-with-heading > .code-block-wrap {
+    overflow: hidden;
+    border-radius: var(--report-radius-md) !important;
+    background-clip: padding-box;
+  }
+
+  .code-block-wrap > :first-child {
+    border-top-left-radius: calc(var(--report-radius-md) - 1px);
+    border-top-right-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .report-keep-with-heading {
+    display: block;
+    margin-block: 6mm 8mm;
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .report-keep-with-heading > :first-child {
+    margin-block-start: 0;
+  }
+
+  .report-keep-with-heading > :last-child {
+    margin-block-end: 0;
+  }
+
+  .sticky-toc {
+    position: static;
+    max-height: none;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    break-before: auto;
+    break-after: page;
+    break-inside: auto;
+    page-break-before: auto;
+    page-break-after: always;
+    page-break-inside: auto;
+  }
+
+  .sticky-toc ol {
+    display: block;
+    max-height: none;
+    overflow: visible;
+    padding-inline-end: 0;
+  }
+
+  .sticky-toc li {
+    margin-block: 0.2rem;
+  }
+
+  .sticky-toc-header {
+    break-before: auto;
+    page-break-before: auto;
+  }
+
+  .toc-pdf-actions,
+  .toc-pdf-link {
+    display: none !important;
+  }
+
+  .report-cover {
+    border: 0;
+    border-radius: 0;
+  }
+
+  .report-cover,
+  .chapter-hero,
+  .case-study-card,
+  .tactic-card,
+  .example-card,
+  .block-template,
+  .good-bad,
+  .stats-strip,
+  .summary-stats,
+  .facts-table,
+  .facts-table-wrap,
+  .report-main > table,
+  .details-note,
+  .industry-card,
+  .priority-group,
+  .checklist-card,
+  .source-card,
+  .source-item,
+  .source-list,
+  .sources-layout,
+  .sources-group,
+  .myth-callout,
+  .info-panel,
+  .impact-panel,
+  .evidence-panel,
+  .action-panel,
+  .severity-key,
+  .accordion,
+  .quote-card,
+  .callout {
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    box-sizing: border-box;
+    width: calc(100% - 12pt);
+    max-width: calc(100% - 12pt);
+    margin-inline: 6pt;
+    overflow: visible;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .action-line,
+  .action-prompt {
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    box-sizing: border-box;
+    width: calc(100% - 12pt);
+    max-width: calc(100% - 12pt);
+    margin: 6mm 6pt 8mm;
+    overflow: visible;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .good-bad {
+    display: block;
+  }
+
+  .good-row,
+  .bad-row {
+    margin-block: 0 8mm;
+  }
+
+  .chapter-hero,
+  .case-study-card,
+  .tactic-card,
+  .example-card,
+  .block-template,
+  .good-bad,
+  .facts-table-wrap,
+  .details-note,
+  .industry-card,
+  .priority-group,
+  .checklist-card,
+  .source-card,
+  .source-item,
+  .source-list,
+  .sources-layout,
+  .sources-group,
+  .myth-callout,
+  .info-panel,
+  .impact-panel,
+  .evidence-panel,
+  .action-panel,
+  .severity-key,
+  .accordion,
+  .quote-card,
+  .callout {
+    margin-block: 6mm 8mm;
+    break-inside: avoid-page;
+    break-after: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .example-card > .code-block-wrap,
+  .block-template > .code-block-wrap,
+  .report-keep-with-heading > .code-block-wrap,
+  .report-keep-with-heading > .source-card,
+  .report-keep-with-heading > .source-item,
+  .report-keep-with-heading > .source-list,
+  .report-keep-with-heading > .sources-layout,
+  .report-keep-with-heading > .sources-group,
+  .report-keep-with-heading > .callout,
+  .report-keep-with-heading > .info-panel,
+  .report-keep-with-heading > .impact-panel,
+  .report-keep-with-heading > .evidence-panel,
+  .report-keep-with-heading > .action-panel,
+  .report-keep-with-heading > .details-note,
+  .report-keep-with-heading > .myth-callout,
+  .report-keep-with-heading > .accordion {
+    break-before: avoid-page;
+    page-break-before: avoid;
+  }
+
+  .report-main h2.chapter-heading + .chapter-hero,
+  .report-main h2.chapter-heading + .tactic-card,
+  .report-main h2.chapter-heading + .example-card,
+  .report-main h2.chapter-heading + .good-bad,
+  .report-main h2.chapter-heading + .facts-table-wrap,
+  .report-main h2.chapter-heading + .details-note,
+  .report-main h2.chapter-heading + .industry-card,
+  .report-main h2.chapter-heading + .priority-group,
+  .report-main h2.chapter-heading + .checklist-card,
+  .report-main h2.chapter-heading + .source-card,
+  .report-main h2.chapter-heading + .sources-layout,
+  .report-main h2.chapter-heading + .sources-group,
+  .report-main h2.chapter-heading + .myth-callout,
+  .report-main h2.chapter-heading + .info-panel,
+  .report-main h2.chapter-heading + .impact-panel,
+  .report-main h2.chapter-heading + .evidence-panel,
+  .report-main h2.chapter-heading + .action-panel,
+  .report-main h2.chapter-heading + .severity-key,
+  .report-main h2.chapter-heading + .accordion,
+  .report-main h2.chapter-heading + .quote-card,
+  .report-main h2.chapter-heading + .callout {
+    break-before: avoid-page;
+    page-break-before: avoid;
+  }
+
+  .accordion {
+    margin-block-start: 5mm;
+  }
+
+  .facts-table-wrap {
+    overflow: hidden;
+    border-radius: var(--report-radius-md) !important;
+    background-clip: padding-box;
+    clip-path: inset(0 round var(--report-radius-md));
+    contain: paint;
+  }
+
+  .facts-table thead tr:first-child th:first-child,
+  .facts-table-wrap thead tr:first-child th:first-child,
+  .report-main > table thead tr:first-child th:first-child {
+    border-top-left-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .facts-table thead tr:first-child th:last-child,
+  .facts-table-wrap thead tr:first-child th:last-child,
+  .report-main > table thead tr:first-child th:last-child {
+    border-top-right-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .facts-table tbody tr:last-child td:first-child,
+  .facts-table-wrap tbody tr:last-child td:first-child,
+  .report-main > table tbody tr:last-child td:first-child {
+    border-bottom-left-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .facts-table tbody tr:last-child td:last-child,
+  .facts-table-wrap tbody tr:last-child td:last-child,
+  .report-main > table tbody tr:last-child td:last-child {
+    border-bottom-right-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .facts-table {
+    min-width: 0;
+    table-layout: fixed;
+    font-size: 8.2pt;
+  }
+
+  .report-main > table,
+  .facts-table-wrap table {
+    min-width: 0;
+    table-layout: fixed;
+    font-size: 8.2pt;
+  }
+
+  .facts-table th,
+  .facts-table td {
+    padding: 4pt 5pt;
+    overflow-wrap: anywhere;
+    word-break: normal;
+  }
+
+  .facts-table th,
+  .facts-table-wrap th,
+  .report-main > table th {
+    background: color-mix(in srgb, var(--report-blue) 12%, var(--report-surface));
+  }
+
+  .facts-table thead th:first-child,
+  .facts-table-wrap thead th:first-child,
+  .report-main > table thead th:first-child {
+    border-top-left-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .facts-table thead th:last-child,
+  .facts-table-wrap thead th:last-child,
+  .report-main > table thead th:last-child {
+    border-top-right-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .code-block-wrap pre,
+  .example-card pre,
+  .block-template pre,
+  .report-main > .code-block-wrap pre,
+  .mermaid,
+  .latex-block {
+    overflow-x: visible;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .source-card,
+  .source-item {
+    padding-inline-end: calc(var(--report-space-4) + 2rem);
+  }
+
+  .source-card-link[href]::after,
+  .source-item .source-card-link[href]::after {
+    content: "";
+  }
+
+  .example-card,
+  .block-template {
+    background: transparent;
+    color: var(--report-ink);
+  }
+
+  a[href]::after {
+    content: " (" attr(href) ")";
+    color: var(--report-ink-soft);
+    font-size: 0.85em;
+    overflow-wrap: anywhere;
+  }
+
+  .badge a[href]::after,
+  .sticky-toc a[href]::after,
+  .anchor-links a[href]::after {
+    content: "";
+  }
+
+  .appendix-links a[href]::after {
+    content: attr(data-filetype);
+  }
+}
+
+/* DESIGN.md brand token overrides: usgraphics */
+:root {
+  --report-font-heading: "Univers LT Pro Condensed", "Arial Narrow", "Roboto Condensed", Arial, sans-serif;
+  --report-font-body: "IoskeleyMono", Menlo, Monaco, Consolas, monospace;
+  --report-font-code: "IoskeleyMono", Menlo, Monaco, Consolas, monospace;
+  --report-heading-size: 64px;
+  --report-heading-weight: 700;
+  --report-heading-line: 1.08;
+  --report-heading-tracking: -0.035em;
+  --report-body-size: 16px;
+  --report-body-line: 1.62;
+  --report-paper: #F3F3F0;
+  --report-paper-raised: #E7ECFF;
+  --report-panel: #FFFFFF;
+  --report-surface: #FFFFFF;
+  --report-ink: #111111;
+  --report-ink-muted: #555555;
+  --report-ink-soft: #555555;
+  --report-rule: #9A9A9A;
+  --report-rule-strong: #002DCE;
+  --report-blue: #002DCE;
+  --report-radius-lg: 0px;
+  --report-radius-xl: calc(0px + 0.5rem);
+  --report-badge-radius: calc(0px * 0.45);
+  --report-code-bg: #F7F7F7;
+  --report-code-ink: #111111;
+  --report-code-accent: #002DCE;
+  --report-info-bg: #FFFFFF;
+  --report-impact-bg: #FFFFFF;
+  --report-evidence-bg: #FFFFFF;
+  --report-myth-bg: #FFFFFF;
+  --report-good-bg: #FFFFFF;
+  --report-bad-bg: #FFFFFF;
+}
+body.report-body { font-family: var(--report-font-body); font-size: clamp(1rem, 0.94rem + 0.18vw, 1.0625rem); line-height: 1.62; }
+h1, h2, h3 { font-family: var(--report-font-heading); font-weight: var(--report-heading-weight); letter-spacing: var(--report-heading-tracking); }
+h1 { font-size: clamp(2.25rem, 5vw, 3.5rem); line-height: 1.12; }
+h2 { font-size: clamp(1.6rem, 3vw, 2.25rem); line-height: 1.16; }
+h3 { font-size: clamp(1.15rem, 1.5vw, 1.35rem); line-height: 1.24; }
+.source-card, .tactic-card, .priority-group { border-color: var(--report-rule); }
+.sticky-toc ol a:hover, .sticky-toc ol a:focus-visible, .sticky-toc ol a[aria-current="true"] { border-left-color: var(--report-blue); }
+
+.report-template-usgraphics .report-cover,
+.report-template-usgraphics .chapter-hero,
+.report-template-usgraphics .tactic-card,
+.report-template-usgraphics .source-card,
+.report-template-usgraphics .facts-table-wrap { box-shadow: none; border-radius: 0; }
+.report-template-usgraphics .toc-pdf-link,
+.report-template-usgraphics .badge,
+.report-template-usgraphics .appendix-links a,
+.report-template-usgraphics .anchor-links a { border-radius: 0; }
+.report-template-usgraphics h1,
+.report-template-usgraphics h2,
+.report-template-usgraphics h3 { text-transform: none; }
+.report-template-usgraphics a { text-decoration: underline; text-underline-offset: 0.12em; }
+@media print { @page { size: A4 portrait; margin: 12mm; } html, body.report-body { background: var(--report-paper) !important; font-size: 10.5pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; } body.report-body { min-height: 100vh; padding: 0; orphans: 3; widows: 3; } *,*::before,*::after { box-shadow: none !important; filter: none !important; text-shadow: none !important; } body.report-theme-dark { background: var(--report-paper) !important; } .report-shell { display: block; width: 100%; max-width: none; overflow: hidden; padding: 0; } .report-main,.report-content { width: 100%; max-width: 100%; overflow: hidden; } h1,h2,h3,.code-block-head,.source-title { break-after: avoid; break-after: avoid-page; page-break-after: avoid; } .report-main h2.chapter-heading { margin-block-start: 6mm; padding-block-start: 0; } .code-block-wrap,.mermaid-rendered,.latex-rendered-block,.bar-chart p { break-inside: avoid; break-inside: avoid-page; break-after: avoid-page; page-break-inside: avoid; } .action-line,.action-prompt,.accordion,.source-card,.details-note,.info-panel,.impact-panel,.evidence-panel,.action-panel,.callout { width: auto; max-width: 100%; margin: 0 0 8mm; overflow: hidden; border-radius: 0 !important; box-shadow: none !important; break-inside: avoid-page; break-after: avoid-page; } .stat-card { background: var(--report-surface) !important; background-clip: padding-box; } .report-footer { min-height: 22mm; background: #ffffff; border: 1px solid #d1d5db; color: #374151; } .sticky-toc { position: static; max-height: none; overflow: visible; break-after: page; break-inside: auto; border: 0; border-radius: 0; box-shadow: none; } .sticky-toc ol { display: block; max-height: none; overflow: visible; padding-right: 0; } .toc-pdf-actions, .toc-pdf-link { display: none !important; } table { table-layout: fixed; font-size: 8.8pt; border-collapse: separate; border-spacing: 0; } th { background: color-mix(in srgb, var(--report-blue) 12%, var(--report-surface)); } th,td { padding: 4pt 5pt; overflow-wrap: anywhere; } pre,.mermaid,.latex-block { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after, .source-card-link[href]::after, .anchor-links a[href]::after { content: ""; } .appendix-links a[href]::after { content: attr(data-filetype); } }
+@media print {
+@page { margin: 12mm 0; background: #ffffff; }
+@page report-letter { size: Letter portrait; margin: .45in 0; background: #ffffff; }
+html { background: #ffffff !important; }
+body.report-body { box-sizing: border-box; padding: 0 12mm; orphans: 3; widows: 3; }
+body.report-pdf-profile-letter { page: report-letter; padding: 0 .45in; }
+body.report-body:not(.report-theme-dark) { --report-paper: #ffffff; --report-paper-raised: #ffffff; --report-panel: #ffffff; --report-surface: #ffffff; background: #ffffff !important; }
+body.report-body:not(.report-theme-dark) .report-shell, body.report-body:not(.report-theme-dark) .report-main, body.report-body:not(.report-theme-dark) .report-content { background: #ffffff !important; }
+body.report-body { position: relative; background: var(--report-paper) !important; }
+body.report-theme-dark .report-shell, body.report-theme-dark .report-main, body.report-theme-dark .report-content { background: var(--report-paper) !important; }
+body.report-body::before { content: none; display: none; }
+.report-shell, .report-main, .report-content { overflow: visible; border: 0 !important; outline: 0 !important; box-shadow: none !important; }
+.report-keep-with-heading, .report-keep-with-heading.report-chapter-page { border: 0 !important; outline: 0 !important; box-shadow: none !important; }
+.report-front { display: block; min-height: calc(297mm - 24mm); break-after: auto; page-break-after: auto; }
+body.report-pdf-profile-letter .report-front { min-height: 10.1in; }
+.sticky-toc { break-before: auto; page-break-before: auto; }
+.sticky-toc-header { break-before: auto; page-break-before: auto; }
+.report-main h2.chapter-heading { margin-block-start: 10mm; padding-block-start: 5mm; border-top: 0 !important; break-before: page; break-inside: avoid-page; page-break-before: always; page-break-inside: avoid; }
+.report-keep-with-heading.report-chapter-page { break-before: page; page-break-before: always; }
+.report-main h2.chapter-heading::before { break-after: avoid-page; page-break-after: avoid; }
+.accordion { margin-block-start: 5mm; }
+.report-footer { display: flex; min-height: 22mm; margin-block-start: 8mm; padding: 0 6mm; align-items: center; justify-content: center; text-align: center; box-sizing: border-box; }
+.report-keep-with-heading { display: block; margin-block: 6mm 8mm; break-inside: avoid-page; page-break-inside: avoid; }
+.report-keep-with-heading > :first-child { margin-block-start: 0; }
+.report-keep-with-heading > :last-child { margin-block-end: 0; }
+.example-card > header, .block-template > header, .report-keep-with-heading > h2, .report-keep-with-heading > h3 { break-after: avoid-page; page-break-after: avoid; }
+.example-card > .code-block-wrap, .block-template > .code-block-wrap, .report-keep-with-heading > .code-block-wrap, .report-keep-with-heading > .source-card, .report-keep-with-heading > .source-item, .report-keep-with-heading > .source-list, .report-keep-with-heading > .sources-layout, .report-keep-with-heading > .sources-group, .report-keep-with-heading > .callout, .report-keep-with-heading > .info-panel, .report-keep-with-heading > .impact-panel, .report-keep-with-heading > .evidence-panel, .report-keep-with-heading > .action-panel, .report-keep-with-heading > .details-note, .report-keep-with-heading > .myth-callout, .report-keep-with-heading > .accordion { break-before: avoid-page; page-break-before: avoid; }
+.action-line, .code-block-wrap, .mermaid-rendered, .latex-rendered-block, .example-card > .code-block-wrap, .block-template > .code-block-wrap, .bar-chart p, .chapter-hero, .case-study-card, .tactic-card, .example-card, .block-template, .good-bad, .facts-table, .facts-table-wrap, .report-main > table, .details-note, .industry-card, .priority-group, .checklist-card, .source-card, .source-item, .source-list, .sources-layout, .sources-group, .myth-callout, .info-panel, .impact-panel, .evidence-panel, .action-panel, .severity-key, .accordion, .quote-card, .callout, .action-prompt { -webkit-box-decoration-break: clone; box-decoration-break: clone; box-sizing: border-box; width: calc(100% - 12pt); max-width: calc(100% - 12pt); margin: 6mm 6pt 8mm; overflow: visible; break-inside: avoid-page; page-break-inside: avoid; }
+.code-block-wrap, .mermaid-rendered, .latex-rendered-block, .example-card > .code-block-wrap, .block-template > .code-block-wrap, .report-keep-with-heading > .code-block-wrap { overflow: hidden; border-radius: var(--report-radius-md) !important; background-clip: padding-box; }
+.code-block-wrap > :first-child { border-top-left-radius: calc(var(--report-radius-md) - 1px); border-top-right-radius: calc(var(--report-radius-md) - 1px); }
+.facts-table-wrap { overflow: hidden; border-radius: var(--report-radius-md) !important; background-clip: padding-box; clip-path: inset(0 round var(--report-radius-md)); contain: paint; }
+.facts-table thead tr:first-child th:first-child, .facts-table-wrap thead tr:first-child th:first-child, .report-main > table thead tr:first-child th:first-child { border-top-left-radius: calc(var(--report-radius-md) - 1px); }
+.facts-table thead tr:first-child th:last-child, .facts-table-wrap thead tr:first-child th:last-child, .report-main > table thead tr:first-child th:last-child { border-top-right-radius: calc(var(--report-radius-md) - 1px); }
+.facts-table tbody tr:last-child td:first-child, .facts-table-wrap tbody tr:last-child td:first-child, .report-main > table tbody tr:last-child td:first-child { border-bottom-left-radius: calc(var(--report-radius-md) - 1px); }
+.facts-table tbody tr:last-child td:last-child, .facts-table-wrap tbody tr:last-child td:last-child, .report-main > table tbody tr:last-child td:last-child { border-bottom-right-radius: calc(var(--report-radius-md) - 1px); }
+.good-bad { display: block; }
+.good-row, .bad-row { margin-block: 0 8mm; }
+.report-main h2.chapter-heading + .chapter-hero, .report-main h2.chapter-heading + .tactic-card, .report-main h2.chapter-heading + .example-card, .report-main h2.chapter-heading + .good-bad, .report-main h2.chapter-heading + .facts-table-wrap, .report-main h2.chapter-heading + .details-note, .report-main h2.chapter-heading + .industry-card, .report-main h2.chapter-heading + .priority-group, .report-main h2.chapter-heading + .checklist-card, .report-main h2.chapter-heading + .source-card, .report-main h2.chapter-heading + .sources-layout, .report-main h2.chapter-heading + .sources-group, .report-main h2.chapter-heading + .myth-callout, .report-main h2.chapter-heading + .info-panel, .report-main h2.chapter-heading + .impact-panel, .report-main h2.chapter-heading + .evidence-panel, .report-main h2.chapter-heading + .action-panel, .report-main h2.chapter-heading + .severity-key, .report-main h2.chapter-heading + .accordion, .report-main h2.chapter-heading + .quote-card, .report-main h2.chapter-heading + .callout { break-before: avoid-page; page-break-before: avoid; }
+}</style>
+</head>
+<body class="report-body report-theme-auto report-pdf-profile-a4 report-template-usgraphics">
+<div class="report-shell">
+
+<main class="report-content report-main report-title-front">
+<section class="report-title-page"><h1 id="report-style-showcase">Report Style Showcase</h1>
+<p>Evidence-based report components for AI-search, SEO/GEO, and operational audit exports.</p>
+<p>By <a href="https://github.com/marcusquinn" data-filetype="link">Marcus Quinn</a>.</p>
+</section>
+</main>
+<main class="report-content report-main report-front">
+<section class="report-cover">
+<p>Internal toolkit · May 2026 · v4</p>
+<p><strong>Component stress-test for DESIGN.md-backed report styles.</strong> Render this same Markdown through different templates to compare typography, palette, spacing, borders, cards, tables, badges, code blocks, and print profiles.</p>
+<section class="stats-strip">
+<section class="stat-card">
+<p><strong>34</strong></p>
+<p>Renderer templates.</p>
+</section>
+<section class="stat-card">
+<p><strong>16:9</strong></p>
+<p>Slide PDF profile.</p>
+</section>
+<section class="stat-card">
+<p><strong>A4</strong></p>
+<p>Document PDF profile.</p>
+</section>
+<section class="stat-card">
+<p><strong>MD</strong></p>
+<p>Canonical source.</p>
+</section>
+</section>
+</section>
+<h2 class="no-chapter" id="executive-summary">Executive summary</h2>
+<p>This showcase demonstrates the report components expected in the LLM Visibility Toolbox examples: a non-numbered executive summary, numbered H2 chapters, plain H3 subheadings, sources grouped by type, badge keys, checklists, code/block templates, callouts, accordions, and a version summary.</p>
+<section class="badge-key">
+<p><span class="badge badge--rct">Peer-Review</span> Peer-reviewed paper or controlled comparison with documented methodology.</p>
+<p><span class="badge badge--strong">Strong</span> Large primary-data analysis from an independent source.</p>
+<p><span class="badge badge--vendor">Vendor</span> Vendor-published study with methodology, but commercial conflict of interest.</p>
+<p><span class="badge badge--practitioner">Practitioner</span> Practitioner report or anecdote, often without a control group.</p>
+<p><span class="badge badge--hygiene">Hygiene</span> Technical baseline that is not experimentally measured but follows from how the bots work.</p>
+</section>
+<details class="accordion" open><summary>What changed in v4</summary>
+<p>Schema was downgraded after controlled evidence; engine divergence is now structural; source sections are grouped by evidence type; reports keep Mermaid and LaTeX as readable fallbacks unless local renderers pre-render them.</p>
+</details>
+<section class="action-line">
+<p><strong>Action:</strong> review the numbered chapters below and compare the generated HTML against the source Toolbox patterns.</p>
+</section><details class="accordion action-prompt" open><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: review the numbered chapters below and compare the generated HTML against the source Toolbox patterns.
+
+Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details>
+</main>
+<div class="toc-pdf-actions" aria-label="PDF downloads"><a class="toc-pdf-link" href="usgraphics-a4.pdf" aria-label="Open A4 PDF version" title="Open A4 PDF version">A4</a><a class="toc-pdf-link" href="usgraphics-usletter.pdf" aria-label="Open US Letter PDF version" title="Open US Letter PDF version">US Letter</a><a class="toc-pdf-link" href="usgraphics-slides.pdf" aria-label="Open slides PDF version" title="Open slides PDF version">Slides</a></div>
+<nav class="sticky-toc" aria-label="Report table of contents">
+<div class="sticky-toc-header"><h2>Contents</h2></div>
+<ol>
+<li class="toc-entry"><a href="#report-style-showcase">Report Style Showcase</a></li>
+<li class="toc-entry"><a href="#executive-summary">Executive summary</a></li>
+<li class="toc-entry toc-chapter"><a href="#why-this-matters-now">1. Why this matters now</a></li>
+<li class="toc-entry toc-chapter"><a href="#highest-impact-most-validated">2. Highest impact, most validated</a></li>
+<li class="toc-entry toc-subsection"><a href="#earned-media-on-third-party-platforms-badge-strong">2.1 Earned media on third-party platforms</a></li>
+<li class="toc-entry toc-chapter"><a href="#on-page-content-tactics">3. On-page content tactics</a></li>
+<li class="toc-entry toc-chapter"><a href="#technical-tactics">4. Technical tactics</a></li>
+<li class="toc-entry toc-subsection"><a href="#info-panel">4.1 Info panel</a></li>
+<li class="toc-entry toc-subsection"><a href="#impact-panel">4.2 Impact panel</a></li>
+<li class="toc-entry toc-subsection"><a href="#action-panel">4.3 Action panel</a></li>
+<li class="toc-entry toc-subsection"><a href="#tactic-card">4.4 Tactic card</a></li>
+<li class="toc-entry toc-subsection"><a href="#good-row">4.5 Good row</a></li>
+<li class="toc-entry toc-subsection"><a href="#bad-row">4.6 Bad row</a></li>
+<li class="toc-entry toc-subsection"><a href="#myth">4.7 Myth</a></li>
+<li class="toc-entry toc-subsection"><a href="#fact">4.8 Fact</a></li>
+<li class="toc-entry toc-chapter"><a href="#off-page-and-authority">5. Off-page and authority</a></li>
+<li class="toc-entry toc-chapter"><a href="#format-and-experimental-tactics">6. Format and experimental tactics</a></li>
+<li class="toc-entry toc-subsection"><a href="#seo-myths-called-out">6.1 SEO myths called out</a></li>
+<li class="toc-entry toc-chapter"><a href="#measurement-and-reporting">7. Measurement and reporting</a></li>
+<li class="toc-entry toc-subsection"><a href="#high-priority-visual-checks">7.1 High-priority visual checks</a></li>
+<li class="toc-entry toc-subsection"><a href="#refresh-checklist-per-page">7.2 Refresh checklist per page</a></li>
+<li class="toc-entry toc-chapter"><a href="#what-does-not-work">8. What does not work</a></li>
+<li class="toc-entry toc-subsection"><a href="#combined-finding">8.1 Combined finding</a></li>
+<li class="toc-entry toc-chapter"><a href="#productizing-for-clients">9. Productizing for clients</a></li>
+<li class="toc-entry toc-chapter"><a href="#case-studies">10. Case studies</a></li>
+<li class="toc-entry toc-subsection"><a href="#industrial-manufacturer">10.1 Industrial manufacturer</a></li>
+<li class="toc-entry toc-subsection"><a href="#healthcare-comparison-site">10.2 Healthcare comparison site</a></li>
+<li class="toc-entry toc-chapter"><a href="#sources">11. Sources</a></li>
+<li class="toc-entry toc-subsection"><a href="#source-a">11.1 Source A</a></li>
+<li class="toc-entry toc-subsection"><a href="#source-b">11.2 Source B</a></li>
+<li class="toc-entry toc-subsection"><a href="#source-c">11.3 Source C</a></li>
+<li class="toc-entry toc-subsection"><a href="#geo-generative-engine-optimization">11.4 GEO: Generative Engine Optimization</a></li>
+<li class="toc-entry toc-subsection"><a href="#news-source-citing-patterns-in-ai-search-systems">11.5 News source citing patterns in AI search systems</a></li>
+<li class="toc-entry toc-subsection"><a href="#ahrefs-schema-markup-has-no-impact-on-ai-visibility">11.6 Ahrefs: schema markup has no impact on AI visibility</a></li>
+<li class="toc-entry toc-subsection"><a href="#growth-memo-the-consensus-gap">11.7 Growth memo: the consensus gap</a></li>
+<li class="toc-entry toc-subsection"><a href="#g2-the-answer-economy-research">11.8 G2: the answer economy research</a></li>
+<li class="toc-entry toc-chapter"><a href="#appendices">12. Appendices</a></li>
+</ol>
+</nav>
+
+<main class="report-content report-main report-rest">
+<h2 class="chapter-heading" id="why-this-matters-now"><span class="heading-number">1.</span> Why this matters now</h2>
+<p>Use <a href="#priority-and-checklist" data-filetype="link">anchor links</a>, <a href="../llm-visibility-toolbox/report.html" data-filetype="html">appendix links</a>, numbered steps, accordions, coloured panels, and source cards in the same canonical Markdown.</p>
+<section class="badge-row">
+<p><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span> <span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span> <span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span> <span class="evidence-badge" aria-label="Evidence: Missing"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span></p>
+</section>
+<p>Evidence values should read as plain <strong>Evidence:</strong> text followed by a colour-coded mini badge for the value only.</p>
+<section class="anchor-links">
+<p><a href="#table-and-source-cards" data-filetype="link">Table stress</a> <a href="#cards-and-callouts" data-filetype="link">Cards</a> <a href="#priority-and-checklist" data-filetype="link">Priority</a></p>
+</section>
+<h2 class="chapter-heading" id="highest-impact-most-validated"><span class="heading-number">2.</span> Highest impact, most validated</h2>
+<p>Use plain narrative and bullets when that is clearer than a panel. Panels are reserved for warnings, action blocks, source cards, or high-emphasis evidence.</p>
+<h3 class="section-heading" id="earned-media-on-third-party-platforms-badge-strong"><span class="heading-number">2.1</span> Earned media on third-party platforms <span class="badge badge--strong">Strong</span></h3>
+<p>Six converging studies point to third-party mentions as a stronger AI visibility signal than isolated owned-page edits.</p>
+<ul>
+<li>Build a quarterly cadence across trade press, community, video, and partner surfaces.</li>
+<li>Pair each campaign with source IDs and prompt reruns.</li>
+<li>Verify movement separately in AIO, Gemini, ChatGPT, AI Mode, and Perplexity.</li>
+</ul>
+<section class="action-line">
+<p><strong>Action:</strong> coordinate one trade article, one community thread, one video transcript, and one partner citation within the same quarter.</p>
+</section><details class="accordion action-prompt" open><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: coordinate one trade article, one community thread, one video transcript, and one partner citation within the same quarter.
+
+Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details>
+<p>A plain bullet section should remain plain:</p>
+<ul>
+<li>Robots.txt and crawlability check for key AI bots.</li>
+<li>Render test with a representative answer-engine user agent.</li>
+<li>Schema audit on priority pages.</li>
+<li>Prompt list from Search Console, support tickets, and customer interviews.</li>
+<li>Baseline share of voice, citation rate, and sentiment per engine.</li>
+</ul>
+<section class="report-keep-with-heading report-chapter-page">
+<h2 class="chapter-heading" id="on-page-content-tactics"><span class="heading-number">3.</span> On-page content tactics</h2>
+<section class="facts-table-wrap">
+<table><thead>
+<tr><th>Component</th><th>Stress condition</th><th>Expected result</th></tr></thead><tbody>
+<tr><td>Evidence badge</td><td>Long table cell with badge <span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>Badge stays readable and does not split words.</td></tr>
+<tr><td>Facts table</td><td>Multiple columns with prose</td><td>Table remains usable in HTML and constrained in print.</td></tr>
+<tr><td>Source card</td><td>Evidence note near claim</td><td>Card is visually distinct from normal paragraphs.</td></tr>
+<tr><td>Sidebar</td><td>Many headings</td><td>Sticky TOC remains secondary to content and active link updates.</td></tr>
+</tbody></table>
+</section>
+</section>
+<section class="report-keep-with-heading report-chapter-page">
+<h2 class="chapter-heading" id="technical-tactics"><span class="heading-number">4.</span> Technical tactics</h2>
+<section class="info-panel" data-severity="medium">
+<h3 class="section-heading" id="info-panel"><span class="heading-number">4.1</span> Info panel</h3>
+<p>Use info panels for caveats, assumptions, and reading guidance that should not become recommendations.</p>
+</section>
+</section>
+<section class="impact-panel" data-severity="high">
+<h3 class="section-heading" id="impact-panel"><span class="heading-number">4.2</span> Impact panel</h3>
+<p><strong>Why this changes the plan:</strong> a high-impact finding changes sequencing, budget, owner, or acceptance criteria.</p>
+</section>
+<section class="action-panel" data-severity="high">
+<h3 class="section-heading" id="action-panel"><span class="heading-number">4.3</span> Action panel</h3>
+<p><strong>Next action:</strong> turn the finding into a concrete implementation step with owner, proof path, and rerun command.</p>
+</section><details class="accordion action-prompt" open><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: turn the finding into a concrete implementation step with owner, proof path, and rerun command.
+
+Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details>
+<section class="tactic-card">
+<h3 class="section-heading" id="tactic-card"><span class="heading-number">4.4</span> Tactic card</h3>
+<ul>
+<li>What: compact recommendation summary.</li>
+<li>Why: links action to evidence.</li>
+<li>How: gives implementation shape.</li>
+<li>Verify: names the acceptance check.</li>
+</ul>
+</section>
+<section class="good-bad">
+<section class="good-row">
+<h3 class="section-heading" id="good-row"><span class="heading-number">4.5</span> Good row</h3>
+<p>Crawlable claims, source IDs, direct answers, and page-type weighting.</p>
+</section>
+<section class="bad-row">
+<h3 class="section-heading" id="bad-row"><span class="heading-number">4.6</span> Bad row</h3>
+<p>Unsupported claims, hidden content, generic tactics, and missing verification.</p>
+</section>
+</section>
+<section class="myth-callout">
+<h3 class="section-heading" id="myth"><span class="heading-number">4.7</span> Myth</h3>
+<p>Every page needs the same GEO checklist.</p>
+<h3 class="section-heading" id="fact"><span class="heading-number">4.8</span> Fact</h3>
+<p>Page type determines which tactics are useful, conditional, or noise.</p>
+</section>
+<details class="accordion" open><summary>How to read this document (evidence badges)</summary>
+<p>Every tactic carries a badge. Use RCT/academic for controlled research, strong primary data for large independent data, vendor study where methodology exists but incentives are commercial, practitioner for field evidence, and hygiene for baseline technical work.</p>
+</details>
+<details class="accordion" open><summary>Key methodology caveat</summary>
+<p>A visible uplift in one engine is not proof of universal AI visibility. Keep AIO, Gemini, ChatGPT, AI Mode, and Perplexity separate until the closing synthesis.</p>
+</details>
+<blockquote>Quotes highlight expert evidence, user language, or a decision constraint without turning it into a recommendation.</blockquote>
+<section class="block-template">
+<header>Author block template</header>
+<div class="code-block-wrap"><div class="code-block-head"><span>Text code</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Written by Dr. Jane Doe, PhD
+Principal Data Scientist, ExampleCo
+
+Jane led the data platform team from 2019 to 2024 and now researches LLM retrieval.
+
+LinkedIn | Google Scholar | Personal site</code></pre></div>
+</section>
+<section class="example-card">
+<header>Render command</header>
+<div class="code-block-wrap"><div class="code-block-head"><span>Text code</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>.agents/scripts/report-render-helper.sh render report.md --template lottiefiles --pdf-profile slides-16-9-2 --output report.html</code></pre></div>
+</section>
+<section class="example-card">
+<header>Mermaid fallback</header>
+<div class="code-block-wrap"><div class="code-block-head"><span>Mermaid source fallback</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="mermaid"><code>flowchart LR
+  SourceLedger --&gt; Finding
+  Finding --&gt; Recommendation
+  Recommendation --&gt; Verification</code></pre></div>
+<figure class="mermaid-rendered" aria-label="Rendered Mermaid diagram"><svg viewBox="0 0 760 130" role="img" xmlns="http://www.w3.org/2000/svg"><defs><marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" class="diagram-arrow-head" /></marker></defs><line x1="189" y1="64" x2="193" y2="64" class="diagram-arrow" /><line x1="374" y1="64" x2="378" y2="64" class="diagram-arrow" /><line x1="559" y1="64" x2="563" y2="64" class="diagram-arrow" /><rect x="24" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="104" y="70" text-anchor="middle" class="diagram-label">SourceLedger</text><rect x="209" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="289" y="70" text-anchor="middle" class="diagram-label">Finding</text><rect x="394" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="474" y="70" text-anchor="middle" class="diagram-label">Recommendation</text><rect x="579" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="659" y="70" text-anchor="middle" class="diagram-label">Verification</text></svg><figcaption>Rendered Mermaid example, embedded as self-contained SVG.</figcaption></figure>
+</section>
+<section class="example-card">
+<header>LaTeX fallback</header>
+<div class="code-block-wrap"><div class="code-block-head"><span>LaTeX source fallback</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="latex-block"><code>\text{LLM visibility} = \alpha citations + \beta mentions + \gamma retrieval - \delta decay</code></pre></div>
+<figure class="latex-rendered-block" aria-label="Rendered LaTeX formula"><div role="math" aria-label="\text{LLM visibility} = \alpha citations + \beta mentions + \gamma retrieval - \delta decay">\text{LLM visibility} = α citations + β mentions + γ retrieval - δ decay</div><figcaption>Rendered LaTeX example, embedded as self-contained HTML.</figcaption></figure>
+</section>
+<p>Inline LaTeX fallback: {{latex:\text{visibility} = \alpha citations + \beta mentions + \gamma retrieval}}.</p>
+<section class="bar-chart">
+<p style="--bar-value: 72%">Citation readiness — 72%</p>
+<p style="--bar-value: 58%">Third-party corroboration — 58%</p>
+<p style="--bar-value: 81%">Retrieval eligibility — 81%</p>
+</section>
+<h2 class="chapter-heading" id="off-page-and-authority"><span class="heading-number">5.</span> Off-page and authority</h2>
+<p>Authority work belongs outside the site as much as on it: profile parity, trusted third-party mentions, practitioner credentials, and community proof all support retrieval and citation decisions.</p>
+<section class="report-keep-with-heading report-chapter-page">
+<h2 class="chapter-heading" id="format-and-experimental-tactics"><span class="heading-number">6.</span> Format and experimental tactics</h2>
+<section class="callout">
+<h3 class="section-heading" id="seo-myths-called-out"><span class="heading-number">6.1</span> SEO myths called out</h3>
+<p>Claims that circulate widely but cannot be traced to a primary source, or are contradicted by controlled evidence, should be called out explicitly.</p>
+<p><strong>“Schema markup alone creates citation uplift.”</strong> Contradicted by controlled or near-controlled studies; ship schema as hygiene.</p>
+<p><strong>“Longer content always gets cited more.”</strong> Engine-dependent; content depth helps only when it improves answer density and source usefulness.</p>
+</section>
+</section>
+<section class="report-keep-with-heading report-chapter-page">
+<h2 class="chapter-heading" id="measurement-and-reporting"><span class="heading-number">7.</span> Measurement and reporting</h2>
+<section class="priority-group" data-priority="high">
+<h3 class="section-heading" id="high-priority-visual-checks"><span class="heading-number">7.1</span> High-priority visual checks</h3>
+<p>Review spacing, table width, no-wrap badges, active TOC highlighting, print CSS, and component contrast.</p>
+</section>
+</section>
+<section class="checklist-card">
+<h3 class="section-heading" id="refresh-checklist-per-page"><span class="heading-number">7.2</span> Refresh checklist per page</h3>
+<ul class="checklist">
+<li><span class="status-dot" data-status="todo"></span><span>Replace at least one statistic with newer data.</span></li>
+<li><span class="status-dot" data-status="todo"></span><span>Add or revise one example.</span></li>
+<li><span class="status-dot" data-status="todo"></span><span>Remove outdated tool or vendor references.</span></li>
+<li><span class="status-dot" data-status="todo"></span><span>Update screenshots if UI has changed.</span></li>
+<li><span class="status-dot" data-status="todo"></span><span>Update <code>dateModified</code> in schema.</span></li>
+<li><span class="status-dot" data-status="todo"></span><span>Add visible “Last updated” line.</span></li>
+</ul>
+</section>
+<section class="report-keep-with-heading report-chapter-page">
+<h2 class="chapter-heading" id="what-does-not-work"><span class="heading-number">8.</span> What does not work</h2>
+<section class="callout">
+<h3 class="section-heading" id="combined-finding"><span class="heading-number">8.1</span> Combined finding</h3>
+<p>AI is now a discovery layer, but engines disagree on sources. Tracking only mentions or only citations misses the retrieval gap. Keep the final synthesis short, source-backed, and tied to the next action.</p>
+</section>
+</section>
+<h2 class="chapter-heading" id="productizing-for-clients"><span class="heading-number">9.</span> Productizing for clients</h2>
+<p>Use the same Markdown-first report structure for one-off audits, monthly retainers, lead magnets, and routine handoffs. Keep deterministic evidence collection separate from interpretation.</p>
+<h2 class="chapter-heading" id="case-studies"><span class="heading-number">10.</span> Case studies</h2>
+<section class="case-study-card">
+<h3 class="section-heading" id="industrial-manufacturer"><span class="heading-number">10.1</span> Industrial manufacturer</h3>
+<p><strong>Result:</strong> monthly AI referral traffic grew from near-zero to a measurable assisted-conversion channel.</p>
+<p><strong>Tactics applied:</strong> direct-answer page restructure, original technical benchmarks, schema hygiene, and trade-publication mentions.</p>
+</section>
+<section class="case-study-card">
+<h3 class="section-heading" id="healthcare-comparison-site"><span class="heading-number">10.2</span> Healthcare comparison site</h3>
+<p><strong>Result:</strong> citations appeared across Google AIO, ChatGPT, and Gemini after entity facts and expert review were made visible.</p>
+<p><strong>Tactics applied:</strong> YMYL author bylines, source-backed comparison tables, third-party profile parity, and prompt reruns.</p>
+</section>
+<section class="report-keep-with-heading report-chapter-page">
+<h2 class="chapter-heading" id="sources"><span class="heading-number">11.</span> Sources</h2>
+<section class="sources-layout">
+<section class="sources-group">
+<section class="source-title">
+<p>Primary evidence</p>
+</section>
+<section class="source-card">
+<h3 class="section-heading" id="source-a"><span class="heading-number">11.1</span> Source A</h3>
+<p>Prompt capture, crawl export, and source ledger row.</p>
+<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
+<section class="source-card">
+<h3 class="section-heading" id="source-b"><span class="heading-number">11.2</span> Source B</h3>
+<p>Third-party corroboration and profile parity note.</p>
+<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
+</section>
+<section class="sources-group">
+<section class="source-title">
+<p>Supplementary evidence</p>
+</section>
+<section class="source-card">
+<h3 class="section-heading" id="source-c"><span class="heading-number">11.3</span> Source C</h3>
+<p>Appendix file, screenshot reference, or companion report.</p>
+<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
+</section>
+</section>
+</section>
+<section class="source-list">
+<section class="source-title">
+<p>Peer-reviewed papers and academic studies</p>
+</section>
+<section class="source-item">
+<h3 class="section-heading" id="geo-generative-engine-optimization"><span class="heading-number">11.4</span> GEO: Generative Engine Optimization</h3>
+<p>The first peer-reviewed baseline. Tactics tested on 10k queries.</p>
+<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
+<section class="source-item">
+<h3 class="section-heading" id="news-source-citing-patterns-in-ai-search-systems"><span class="heading-number">11.5</span> News source citing patterns in AI search systems</h3>
+<p>Top source concentration and citation dynamics.</p>
+<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
+<section class="source-title">
+<p>Q2 2026 field evidence</p>
+</section>
+<section class="source-item">
+<h3 class="section-heading" id="ahrefs-schema-markup-has-no-impact-on-ai-visibility"><span class="heading-number">11.6</span> Ahrefs: schema markup has no impact on AI visibility</h3>
+<p>1,885 vs 4,000 controls, difference-in-differences. Source used to downgrade schema from growth lever to hygiene.</p>
+<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
+<section class="source-item">
+<h3 class="section-heading" id="growth-memo-the-consensus-gap"><span class="heading-number">11.7</span> Growth memo: the consensus gap</h3>
+<p>Only a small share of cited URLs overlap across engines; engine-specific reporting is required.</p>
+<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
+<section class="source-item">
+<h3 class="section-heading" id="g2-the-answer-economy-research"><span class="heading-number">11.8</span> G2: the answer economy research</h3>
+<p>B2B buyers increasingly start with answer engines, so reports separate discovery, shortlist, and conversion evidence.</p>
+<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
+</section>
+<h2 class="chapter-heading" id="appendices"><span class="heading-number">12.</span> Appendices</h2>
+<section class="appendix-links">
+<p><a href="../llm-visibility-toolbox/report.md" data-filetype="md">Source ledger appendix</a> <a href="../client-ai-search-audit/report.html" data-filetype="html">Client audit example</a> <a href="../index.html" data-filetype="html">Example browser</a></p>
+</section>
+<section class="version-summary">
+<p>V4 · compiled May 2026 from 70+ primary sources · internal toolkit</p>
+</section>
+</main>
+</div>
+<footer class="report-footer">© 2025-2026 Marcus Quinn. Licensed under MIT.</footer>
+<script>
+(() => {
+  const links = Array.from(document.querySelectorAll('.sticky-toc a[href^="#"]'));
+  const headings = links.map((link) => document.getElementById(link.getAttribute('href').slice(1))).filter(Boolean);
+  const setActive = (id) => {
+    links.forEach((link) => link.setAttribute('aria-current', link.getAttribute('href') === `#${id}` ? 'true' : 'false'));
+  };
+  if (!('IntersectionObserver' in window) || headings.length === 0) {
+    if (headings[0]) setActive(headings[0].id);
+    return;
+  }
+  const observer = new IntersectionObserver((entries) => {
+    const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+    if (visible) setActive(visible.target.id);
+  }, { rootMargin: '-20% 0px -65% 0px', threshold: [0, 1] });
+  headings.forEach((heading) => observer.observe(heading));
+  setActive(headings[0].id);
+})();
+</script>
+<script>
+(() => {
+  document.querySelectorAll('.code-copy').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const code = button.closest('.code-block-wrap')?.querySelector('code')?.innerText || '';
+      const original = button.dataset.originalLabel || button.textContent || '⧉';
+      button.dataset.originalLabel = original;
+      const showCopied = () => {
+        button.textContent = '✓';
+        button.classList.add('is-copied');
+        button.setAttribute('aria-label', 'Copied');
+        setTimeout(() => {
+          button.textContent = original;
+          button.classList.remove('is-copied');
+          button.setAttribute('aria-label', 'Copy code');
+        }, 1200);
+      };
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(code);
+        } else {
+          const textArea = document.createElement('textarea');
+          textArea.value = code;
+          textArea.setAttribute('readonly', '');
+          textArea.style.position = 'fixed';
+          textArea.style.left = '-9999px';
+          document.body.appendChild(textArea);
+          textArea.select();
+          document.execCommand('copy');
+          textArea.remove();
+        }
+        showCopied();
+      } catch (_) {
+        button.textContent = 'Copy';
+      }
+    });
+  });
+})();
+</script>
+</body>
+</html>

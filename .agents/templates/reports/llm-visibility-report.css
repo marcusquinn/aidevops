@@ -121,9 +121,21 @@ body.report-body {
 
 .report-main {
   grid-column: 1;
-  grid-row: 1;
+  grid-row: auto;
   min-width: 0;
   counter-reset: report-chapter;
+}
+
+.report-front {
+  grid-row: 2;
+}
+
+.report-title-front {
+  grid-row: 1;
+}
+
+.report-rest {
+  grid-row: 3;
 }
 
 .report-cover,
@@ -155,6 +167,7 @@ body.report-body {
 .accordion,
 .quote-card,
 .callout,
+.report-keep-with-heading,
 .version-summary {
   break-inside: avoid;
   page-break-inside: avoid;
@@ -234,10 +247,11 @@ body.report-body {
 
 .sticky-toc {
   grid-column: 2;
-  grid-row: 1;
+  grid-row: 1 / span 3;
   position: sticky;
-  top: var(--report-space-4);
+  top: calc(var(--report-space-4) + 5rem);
   align-self: start;
+  margin-block-start: calc(2rem + var(--report-space-3));
   max-height: calc(100vh - var(--report-space-5));
   overflow: hidden;
   padding: var(--report-space-3);
@@ -257,10 +271,7 @@ body.report-body {
 }
 
 .sticky-toc-header {
-  display: flex;
-  gap: var(--report-space-2);
-  align-items: center;
-  justify-content: space-between;
+  display: block;
   margin-block-end: var(--report-space-3);
   padding-inline-end: 0.35rem;
 }
@@ -275,10 +286,15 @@ body.report-body {
 }
 
 .toc-pdf-actions {
-  display: inline-flex;
-  flex: 0 0 auto;
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  flex-wrap: wrap;
   gap: var(--report-space-2);
   align-items: center;
+  align-self: start;
+  z-index: 2;
+  margin-block-end: var(--report-space-2);
 }
 
 .toc-pdf-link {
@@ -333,6 +349,12 @@ body.report-body {
   list-style: none;
 }
 
+.sticky-toc li.toc-chapter {
+  margin-block-start: var(--report-space-2);
+  padding-block-start: var(--report-space-2);
+  border-top: 1px solid var(--report-rule);
+}
+
 .sticky-toc ol a {
   display: block;
   padding: var(--report-space-1) var(--report-space-2);
@@ -340,6 +362,10 @@ body.report-body {
   color: var(--report-ink-muted);
   line-height: 1.45;
   text-decoration: none;
+}
+
+.sticky-toc li.toc-subsection a {
+  padding-inline-start: calc(var(--report-space-2) + 1rem);
 }
 
 .sticky-toc ol a[aria-current="true"],
@@ -661,6 +687,23 @@ th .evidence-badge {
   border-top: 0;
 }
 
+@media print {
+  .source-list {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  .source-list .source-title {
+    break-after: avoid-page;
+    page-break-after: avoid;
+  }
+
+  .source-list .source-title:not(:first-child) {
+    break-before: page;
+    page-break-before: always;
+  }
+}
+
 .source-list .source-item:last-child {
   border-bottom: 0;
 }
@@ -743,11 +786,17 @@ th .evidence-badge {
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
+  isolation: isolate;
   background: var(--report-code-bg);
   background-clip: padding-box;
   color: var(--report-code-ink);
   border: 1px solid var(--report-rule);
   border-radius: var(--report-radius-md);
+}
+
+.code-block-wrap > :first-child {
+  border-top-left-radius: calc(var(--report-radius-md) - 1px);
+  border-top-right-radius: calc(var(--report-radius-md) - 1px);
 }
 
 .code-block-wrap pre {
@@ -786,6 +835,33 @@ th .evidence-badge {
   font-weight: 800;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.example-card > header,
+.block-template > header,
+.report-keep-with-heading > h2,
+.report-keep-with-heading > h3 {
+  break-after: avoid;
+  page-break-after: avoid;
+}
+
+.example-card > .code-block-wrap,
+.block-template > .code-block-wrap,
+.report-keep-with-heading > .code-block-wrap,
+.report-keep-with-heading > .source-card,
+.report-keep-with-heading > .source-list,
+.report-keep-with-heading > .sources-layout,
+.report-keep-with-heading > .sources-group,
+.report-keep-with-heading > .callout,
+.report-keep-with-heading > .info-panel,
+.report-keep-with-heading > .impact-panel,
+.report-keep-with-heading > .evidence-panel,
+.report-keep-with-heading > .action-panel,
+.report-keep-with-heading > .details-note,
+.report-keep-with-heading > .myth-callout,
+.report-keep-with-heading > .accordion {
+  break-before: avoid;
+  page-break-before: avoid;
 }
 
 .code-copy {
@@ -908,6 +984,10 @@ th .evidence-badge {
   border: 1px solid var(--report-rule);
   border-radius: var(--report-radius-md);
   background: var(--report-surface);
+  background-clip: padding-box;
+  clip-path: inset(0 round var(--report-radius-md));
+  contain: paint;
+  isolation: isolate;
 }
 
 .facts-table,
@@ -920,6 +1000,7 @@ th .evidence-badge {
   border-spacing: 0;
   font-size: 0.875rem;
   background: var(--report-surface);
+  border-radius: inherit;
 }
 
 .facts-table th,
@@ -955,8 +1036,33 @@ th .evidence-badge {
 .facts-table-wrap th,
 .report-main > table th {
   background: var(--report-paper-raised);
+  background-clip: padding-box;
   color: var(--report-ink);
   font-weight: 700;
+}
+
+.facts-table thead tr:first-child th:first-child,
+.facts-table-wrap thead tr:first-child th:first-child,
+.report-main > table thead tr:first-child th:first-child {
+  border-top-left-radius: calc(var(--report-radius-md) - 1px);
+}
+
+.facts-table thead tr:first-child th:last-child,
+.facts-table-wrap thead tr:first-child th:last-child,
+.report-main > table thead tr:first-child th:last-child {
+  border-top-right-radius: calc(var(--report-radius-md) - 1px);
+}
+
+.facts-table tbody tr:last-child td:first-child,
+.facts-table-wrap tbody tr:last-child td:first-child,
+.report-main > table tbody tr:last-child td:first-child {
+  border-bottom-left-radius: calc(var(--report-radius-md) - 1px);
+}
+
+.facts-table tbody tr:last-child td:last-child,
+.facts-table-wrap tbody tr:last-child td:last-child,
+.report-main > table tbody tr:last-child td:last-child {
+  border-bottom-right-radius: calc(var(--report-radius-md) - 1px);
 }
 
 .details-note {
@@ -1385,7 +1491,8 @@ a {
   }
 
   .report-main,
-  .sticky-toc {
+  .sticky-toc,
+  .toc-pdf-actions {
     grid-column: auto;
     grid-row: auto;
   }
@@ -1463,7 +1570,18 @@ a {
 
   @page {
     size: A4 portrait;
-    margin: 12mm;
+    margin: 12mm 0;
+    background: #ffffff;
+  }
+
+  @page report-letter {
+    size: Letter portrait;
+    margin: 0.45in 0;
+    background: #ffffff;
+  }
+
+  html {
+    background: #ffffff !important;
   }
 
   html,
@@ -1476,10 +1594,30 @@ a {
   }
 
   body.report-body {
+    box-sizing: border-box;
     min-height: 100vh;
-    padding: 0;
+    padding: 0 12mm;
     orphans: 3;
     widows: 3;
+  }
+
+  body.report-pdf-profile-letter {
+    page: report-letter;
+    padding: 0 0.45in;
+  }
+
+  body.report-body:not(.report-theme-dark) {
+    --report-paper: #ffffff;
+    --report-paper-raised: #ffffff;
+    --report-panel: #ffffff;
+    --report-surface: #ffffff;
+    background: #ffffff !important;
+  }
+
+  body.report-body:not(.report-theme-dark) .report-shell,
+  body.report-body:not(.report-theme-dark) .report-main,
+  body.report-body:not(.report-theme-dark) .report-content {
+    background: #ffffff !important;
   }
 
   *,
@@ -1490,8 +1628,20 @@ a {
     text-shadow: none !important;
   }
 
-  body.report-theme-dark {
+  body.report-body {
+    position: relative;
     background: var(--report-paper) !important;
+  }
+
+  body.report-theme-dark .report-shell,
+  body.report-theme-dark .report-main,
+  body.report-theme-dark .report-content {
+    background: var(--report-paper) !important;
+  }
+
+  body.report-body::before {
+    content: none;
+    display: none;
   }
 
   .report-shell {
@@ -1500,6 +1650,9 @@ a {
     max-width: none;
     overflow: visible;
     padding: 0;
+    border: 0 !important;
+    outline: 0 !important;
+    box-shadow: none !important;
   }
 
   .report-main,
@@ -1507,6 +1660,16 @@ a {
     width: 100%;
     max-width: 100%;
     overflow: visible;
+    border: 0 !important;
+    outline: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .report-keep-with-heading,
+  .report-keep-with-heading.report-chapter-page {
+    border: 0 !important;
+    outline: 0 !important;
+    box-shadow: none !important;
   }
 
   .report-cover,
@@ -1536,7 +1699,65 @@ a {
   .report-pdf-profile-slides-16-9-1,
   .report-pdf-profile-slides-16-9-2,
   .report-pdf-profile-slides-16-9-3 {
-    font-size: 14pt;
+    font-size: 32pt;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main :where(p, li, blockquote, td, th, summary),
+  .report-pdf-profile-slides-16-9-2 .report-main :where(p, li, blockquote, td, th, summary),
+  .report-pdf-profile-slides-16-9-3 .report-main :where(p, li, blockquote, td, th, summary),
+  .report-pdf-profile-slides-16-9-1 .report-main :where(.report-subtitle, .report-kicker, .eyebrow, .meta-label, .priority-label, .source-card-type, .source-meta, .stat-label, .stat-period, .version-summary),
+  .report-pdf-profile-slides-16-9-2 .report-main :where(.report-subtitle, .report-kicker, .eyebrow, .meta-label, .priority-label, .source-card-type, .source-meta, .stat-label, .stat-period, .version-summary),
+  .report-pdf-profile-slides-16-9-3 .report-main :where(.report-subtitle, .report-kicker, .eyebrow, .meta-label, .priority-label, .source-card-type, .source-meta, .stat-label, .stat-period, .version-summary) {
+    font-size: 32pt !important;
+    line-height: 1.22;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main .badge,
+  .report-pdf-profile-slides-16-9-2 .report-main .badge,
+  .report-pdf-profile-slides-16-9-3 .report-main .badge {
+    font-size: 32pt !important;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main .code-block-wrap pre,
+  .report-pdf-profile-slides-16-9-2 .report-main .code-block-wrap pre,
+  .report-pdf-profile-slides-16-9-3 .report-main .code-block-wrap pre,
+  .report-pdf-profile-slides-16-9-1 .report-main .mermaid,
+  .report-pdf-profile-slides-16-9-2 .report-main .mermaid,
+  .report-pdf-profile-slides-16-9-3 .report-main .mermaid,
+  .report-pdf-profile-slides-16-9-1 .report-main .latex-block,
+  .report-pdf-profile-slides-16-9-2 .report-main .latex-block,
+  .report-pdf-profile-slides-16-9-3 .report-main .latex-block {
+    font-size: 32pt !important;
+    line-height: 1.2;
+  }
+
+  body.report-body,
+  .report-main,
+  .report-main p,
+  .report-main li,
+  .report-main blockquote,
+  .report-main td,
+  .report-main th,
+  .report-main summary {
+    text-wrap: pretty;
+  }
+
+  .report-main h1,
+  .report-main h2,
+  .report-main h3,
+  .report-main h4,
+  .report-main h5,
+  .report-main h6,
+  .source-title,
+  .version-summary {
+    text-wrap: balance;
+  }
+
+  .version-summary,
+  .version-summary p {
+    text-align: center;
   }
 
   .report-pdf-profile-slides-16-9-1 .report-main,
@@ -1550,7 +1771,11 @@ a {
   .report-main h2,
   .report-main h3,
   .code-block-head,
-  .source-title {
+  .source-title,
+  .example-card > header,
+  .block-template > header,
+  .report-keep-with-heading > h2,
+  .report-keep-with-heading > h3 {
     break-after: avoid-page;
     page-break-after: avoid;
   }
@@ -1558,8 +1783,228 @@ a {
   .report-main h2.chapter-heading {
     margin-block-start: 10mm;
     padding-block-start: 5mm;
+    border-top: 0 !important;
+    break-before: page;
+    break-inside: avoid-page;
+    page-break-before: always;
+    page-break-inside: avoid;
+  }
+
+  .report-title-page {
+    display: flex;
+    min-height: calc(297mm - 24mm);
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    break-after: page;
+    page-break-after: always;
+  }
+
+  .report-title-page h1,
+  .report-title-page p {
+    max-width: 34rem;
+    margin-inline: auto;
+  }
+
+  .report-title-page h1 {
+    font-size: 32pt;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-title-page,
+  .report-pdf-profile-slides-16-9-2 .report-title-page,
+  .report-pdf-profile-slides-16-9-3 .report-title-page {
+    display: block;
+    min-height: 0;
+    padding-block: 1.3in 0.45in;
+    break-after: page;
+    break-inside: avoid-page;
+    page-break-after: always;
+    page-break-inside: avoid;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-title-page h1,
+  .report-pdf-profile-slides-16-9-2 .report-title-page h1,
+  .report-pdf-profile-slides-16-9-3 .report-title-page h1 {
+    font-size: clamp(60pt, 9vw, 88pt) !important;
+    line-height: 0.95;
+    margin-block: 0 0.7in;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-title-page p,
+  .report-pdf-profile-slides-16-9-2 .report-title-page p,
+  .report-pdf-profile-slides-16-9-3 .report-title-page p {
+    font-size: 32pt !important;
+    line-height: 1.2;
+    margin-block: 0.2in 0;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block, .quote-card, blockquote, .info-panel, .impact-panel, .evidence-panel, .action-panel, .callout, .accordion, .facts-table-wrap, table, .source-card, .source-item, .details-note, .myth-callout, .severity-key, .example-card, .block-template),
+  .report-pdf-profile-slides-16-9-2 .report-main :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block, .quote-card, blockquote, .info-panel, .impact-panel, .evidence-panel, .action-panel, .callout, .accordion, .facts-table-wrap, table, .source-card, .source-item, .details-note, .myth-callout, .severity-key, .example-card, .block-template),
+  .report-pdf-profile-slides-16-9-3 .report-main :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block, .quote-card, blockquote, .info-panel, .impact-panel, .evidence-panel, .action-panel, .callout, .accordion, .facts-table-wrap, table, .source-card, .source-item, .details-note, .myth-callout, .severity-key, .example-card, .block-template) {
+    break-before: page;
+    break-inside: avoid-page;
+    page-break-before: always;
+    page-break-inside: avoid;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main :where(.report-cover, .stats-strip, .summary-stats, .badge-key),
+  .report-pdf-profile-slides-16-9-2 .report-main :where(.report-cover, .stats-strip, .summary-stats, .badge-key),
+  .report-pdf-profile-slides-16-9-3 .report-main :where(.report-cover, .stats-strip, .summary-stats, .badge-key) {
     break-inside: avoid-page;
     page-break-inside: avoid;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .quote-card,
+  .report-pdf-profile-slides-16-9-2 .quote-card,
+  .report-pdf-profile-slides-16-9-3 .quote-card,
+  .report-pdf-profile-slides-16-9-1 blockquote,
+  .report-pdf-profile-slides-16-9-2 blockquote,
+  .report-pdf-profile-slides-16-9-3 blockquote {
+    display: flex;
+    min-height: 5.8in;
+    align-items: center;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .badge-key p,
+  .report-pdf-profile-slides-16-9-2 .badge-key p,
+  .report-pdf-profile-slides-16-9-3 .badge-key p {
+    grid-template-columns: max-content minmax(0, 1fr) !important;
+    column-gap: 0.45in;
+    align-items: center;
+    text-align: left;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .facts-table,
+  .report-pdf-profile-slides-16-9-2 .facts-table,
+  .report-pdf-profile-slides-16-9-3 .facts-table,
+  .report-pdf-profile-slides-16-9-1 .facts-table-wrap table,
+  .report-pdf-profile-slides-16-9-2 .facts-table-wrap table,
+  .report-pdf-profile-slides-16-9-3 .facts-table-wrap table,
+  .report-pdf-profile-slides-16-9-1 .report-main > table,
+  .report-pdf-profile-slides-16-9-2 .report-main > table,
+  .report-pdf-profile-slides-16-9-3 .report-main > table {
+    width: 100%;
+    min-width: 0;
+    table-layout: fixed;
+    font-size: 26pt !important;
+  }
+
+  .report-pdf-profile-slides-16-9-1 :where(.facts-table, .facts-table-wrap, .report-main > table) :where(th, td),
+  .report-pdf-profile-slides-16-9-2 :where(.facts-table, .facts-table-wrap, .report-main > table) :where(th, td),
+  .report-pdf-profile-slides-16-9-3 :where(.facts-table, .facts-table-wrap, .report-main > table) :where(th, td) {
+    padding: 0.22in 0.28in;
+    font-size: 26pt !important;
+    overflow-wrap: anywhere;
+    line-height: 1.2;
+    vertical-align: top;
+  }
+
+  .report-pdf-profile-slides-16-9-1 :where(.stats-strip, .summary-stats, .tactic-grid, .sources-layout, .good-bad, .severity-key, .badge-key) :where(p, li, span, a),
+  .report-pdf-profile-slides-16-9-2 :where(.stats-strip, .summary-stats, .tactic-grid, .sources-layout, .good-bad, .severity-key, .badge-key) :where(p, li, span, a),
+  .report-pdf-profile-slides-16-9-3 :where(.stats-strip, .summary-stats, .tactic-grid, .sources-layout, .good-bad, .severity-key, .badge-key) :where(p, li, span, a) {
+    font-size: 26pt !important;
+    line-height: 1.2;
+  }
+
+  .report-pdf-profile-slides-16-9-1 :where(td, th) .evidence-badge,
+  .report-pdf-profile-slides-16-9-2 :where(td, th) .evidence-badge,
+  .report-pdf-profile-slides-16-9-3 :where(td, th) .evidence-badge {
+    display: flex;
+    flex-direction: column;
+    gap: 0.12in;
+    align-items: flex-start;
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .report-pdf-profile-slides-16-9-1 :where(td, th) :where(.badge, .evidence-label),
+  .report-pdf-profile-slides-16-9-2 :where(td, th) :where(.badge, .evidence-label),
+  .report-pdf-profile-slides-16-9-3 :where(td, th) :where(.badge, .evidence-label) {
+    max-width: 100%;
+    font-size: 26pt !important;
+    white-space: normal;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-keep-with-heading > :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block),
+  .report-pdf-profile-slides-16-9-2 .report-keep-with-heading > :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block),
+  .report-pdf-profile-slides-16-9-3 .report-keep-with-heading > :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block),
+  .report-pdf-profile-slides-16-9-1 :where(.example-card, .block-template) > .code-block-wrap,
+  .report-pdf-profile-slides-16-9-2 :where(.example-card, .block-template) > .code-block-wrap,
+  .report-pdf-profile-slides-16-9-3 :where(.example-card, .block-template) > .code-block-wrap {
+    break-before: avoid-page !important;
+    page-break-before: avoid !important;
+  }
+
+  .report-front .report-cover {
+    break-before: auto;
+    page-break-before: auto;
+  }
+
+  .report-front {
+    font-size: 8.6pt;
+    line-height: 1.34;
+  }
+
+  .report-front .report-cover,
+  .report-front .stats-strip,
+  .report-front .summary-stats,
+  .report-front .badge-key,
+  .report-front .accordion,
+  .report-front .action-line,
+  .report-front .action-prompt,
+  .report-front .code-block-wrap {
+    margin-block: 2.5mm;
+    padding: 2.5mm 3mm;
+  }
+
+  .report-front .report-cover {
+    padding-block-start: 0;
+  }
+
+  .report-front .stats-strip,
+  .report-front .summary-stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 2mm;
+  }
+
+  .report-front h2.no-chapter {
+    margin-block: 4mm 2mm;
+  }
+
+  .report-front .badge-key {
+    gap: 1mm;
+  }
+
+  .report-front .badge-key p {
+    grid-template-columns: minmax(8rem, auto) 1fr;
+    gap: 2mm;
+  }
+
+  .report-front .badge-key {
+    padding-block-start: 6mm;
+    border-top: 1px solid var(--report-rule-strong);
+  }
+
+  .report-front .action-prompt pre {
+    font-size: 7pt;
+    line-height: 1.24;
+  }
+
+  .report-keep-with-heading.report-chapter-page {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  .report-front {
+    display: block;
+    min-height: calc(297mm - 24mm);
+    break-after: auto;
+    page-break-after: auto;
+  }
+
+  body.report-pdf-profile-letter .report-front {
+    min-height: 10.1in;
   }
 
   .report-main h2.chapter-heading::before {
@@ -1571,10 +2016,49 @@ a {
   .code-block-wrap,
   .mermaid-rendered,
   .latex-rendered-block,
+  .example-card > .code-block-wrap,
+  .block-template > .code-block-wrap,
   .bar-chart p {
+    -webkit-box-decoration-break: clone;
+    box-sizing: border-box;
+    box-decoration-break: clone;
+    width: calc(100% - 12pt);
+    max-width: calc(100% - 12pt);
+    margin: 6mm 6pt 8mm;
     break-inside: avoid-page;
     break-after: avoid-page;
     page-break-inside: avoid;
+  }
+
+  .code-block-wrap,
+  .mermaid-rendered,
+  .latex-rendered-block,
+  .example-card > .code-block-wrap,
+  .block-template > .code-block-wrap,
+  .report-keep-with-heading > .code-block-wrap {
+    overflow: hidden;
+    border-radius: var(--report-radius-md) !important;
+    background-clip: padding-box;
+  }
+
+  .code-block-wrap > :first-child {
+    border-top-left-radius: calc(var(--report-radius-md) - 1px);
+    border-top-right-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .report-keep-with-heading {
+    display: block;
+    margin-block: 6mm 8mm;
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .report-keep-with-heading > :first-child {
+    margin-block-start: 0;
+  }
+
+  .report-keep-with-heading > :last-child {
+    margin-block-end: 0;
   }
 
   .sticky-toc {
@@ -1584,8 +2068,11 @@ a {
     border: 0;
     border-radius: 0;
     box-shadow: none;
+    break-before: auto;
     break-after: page;
     break-inside: auto;
+    page-break-before: auto;
+    page-break-after: always;
     page-break-inside: auto;
   }
 
@@ -1600,6 +2087,11 @@ a {
     margin-block: 0.2rem;
   }
 
+  .sticky-toc-header {
+    break-before: auto;
+    page-break-before: auto;
+  }
+
   .toc-pdf-actions,
   .toc-pdf-link {
     display: none !important;
@@ -1612,17 +2104,23 @@ a {
 
   .report-cover,
   .chapter-hero,
+  .case-study-card,
   .tactic-card,
   .example-card,
+  .block-template,
   .good-bad,
   .stats-strip,
   .summary-stats,
+  .facts-table,
   .facts-table-wrap,
+  .report-main > table,
   .details-note,
   .industry-card,
   .priority-group,
   .checklist-card,
   .source-card,
+  .source-item,
+  .source-list,
   .sources-layout,
   .sources-group,
   .myth-callout,
@@ -1634,10 +2132,12 @@ a {
   .accordion,
   .quote-card,
   .callout {
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
     box-sizing: border-box;
-    width: 100%;
-    max-width: 100%;
-    margin-inline: 0;
+    width: calc(100% - 12pt);
+    max-width: calc(100% - 12pt);
+    margin-inline: 6pt;
     overflow: visible;
     border-radius: 0 !important;
     box-shadow: none !important;
@@ -1645,18 +2145,31 @@ a {
 
   .action-line,
   .action-prompt {
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
     box-sizing: border-box;
-    width: 100%;
-    max-width: 100%;
-    margin: 0 0 8mm;
+    width: calc(100% - 12pt);
+    max-width: calc(100% - 12pt);
+    margin: 6mm 6pt 8mm;
     overflow: visible;
     border-radius: 0 !important;
     box-shadow: none !important;
   }
 
+  .good-bad {
+    display: block;
+  }
+
+  .good-row,
+  .bad-row {
+    margin-block: 0 8mm;
+  }
+
   .chapter-hero,
+  .case-study-card,
   .tactic-card,
   .example-card,
+  .block-template,
   .good-bad,
   .facts-table-wrap,
   .details-note,
@@ -1664,6 +2177,8 @@ a {
   .priority-group,
   .checklist-card,
   .source-card,
+  .source-item,
+  .source-list,
   .sources-layout,
   .sources-group,
   .myth-callout,
@@ -1675,10 +2190,30 @@ a {
   .accordion,
   .quote-card,
   .callout {
-    margin-block: 0 8mm;
+    margin-block: 6mm 8mm;
     break-inside: avoid-page;
     break-after: avoid-page;
     page-break-inside: avoid;
+  }
+
+  .example-card > .code-block-wrap,
+  .block-template > .code-block-wrap,
+  .report-keep-with-heading > .code-block-wrap,
+  .report-keep-with-heading > .source-card,
+  .report-keep-with-heading > .source-item,
+  .report-keep-with-heading > .source-list,
+  .report-keep-with-heading > .sources-layout,
+  .report-keep-with-heading > .sources-group,
+  .report-keep-with-heading > .callout,
+  .report-keep-with-heading > .info-panel,
+  .report-keep-with-heading > .impact-panel,
+  .report-keep-with-heading > .evidence-panel,
+  .report-keep-with-heading > .action-panel,
+  .report-keep-with-heading > .details-note,
+  .report-keep-with-heading > .myth-callout,
+  .report-keep-with-heading > .accordion {
+    break-before: avoid-page;
+    page-break-before: avoid;
   }
 
   .report-main h2.chapter-heading + .chapter-hero,
@@ -1712,7 +2247,34 @@ a {
 
   .facts-table-wrap {
     overflow: hidden;
-    border-radius: var(--report-radius-md);
+    border-radius: var(--report-radius-md) !important;
+    background-clip: padding-box;
+    clip-path: inset(0 round var(--report-radius-md));
+    contain: paint;
+  }
+
+  .facts-table thead tr:first-child th:first-child,
+  .facts-table-wrap thead tr:first-child th:first-child,
+  .report-main > table thead tr:first-child th:first-child {
+    border-top-left-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .facts-table thead tr:first-child th:last-child,
+  .facts-table-wrap thead tr:first-child th:last-child,
+  .report-main > table thead tr:first-child th:last-child {
+    border-top-right-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .facts-table tbody tr:last-child td:first-child,
+  .facts-table-wrap tbody tr:last-child td:first-child,
+  .report-main > table tbody tr:last-child td:first-child {
+    border-bottom-left-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .facts-table tbody tr:last-child td:last-child,
+  .facts-table-wrap tbody tr:last-child td:last-child,
+  .report-main > table tbody tr:last-child td:last-child {
+    border-bottom-right-radius: calc(var(--report-radius-md) - 1px);
   }
 
   .facts-table {

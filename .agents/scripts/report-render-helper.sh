@@ -159,10 +159,12 @@ cmd_render() {
 	fi
 	if [[ -n "$_output" ]]; then
 		local _pdf_href="${_output##*/}"
-		_pdf_href="${_pdf_href%.*}.pdf"
+		_pdf_href="${_pdf_href%.*}-a4.pdf"
+		local _pdf_usletter_href="${_output##*/}"
+		_pdf_usletter_href="${_pdf_usletter_href%.*}-usletter.pdf"
 		local _pdf_landscape_href="${_output##*/}"
-		_pdf_landscape_href="${_pdf_landscape_href%.*}-16-9.pdf"
-		REPORT_PDF_HREF="$_pdf_href" REPORT_PDF_LANDSCAPE_HREF="$_pdf_landscape_href" _run_python render "$_input" "$_template" "$_pdf_profile" "$_theme" >"$_output"
+		_pdf_landscape_href="${_pdf_landscape_href%.*}-slides.pdf"
+		REPORT_PDF_HREF="$_pdf_href" REPORT_PDF_USLETTER_HREF="$_pdf_usletter_href" REPORT_PDF_LANDSCAPE_HREF="$_pdf_landscape_href" _run_python render "$_input" "$_template" "$_pdf_profile" "$_theme" >"$_output"
 		_maybe_write_action_prompts "$_input" "$_output"
 	else
 		_run_python render "$_input" "$_template" "$_pdf_profile" "$_theme"

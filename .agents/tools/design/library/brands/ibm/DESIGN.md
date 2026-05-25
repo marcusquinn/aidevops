@@ -1,6 +1,7 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
+<!-- markdownlint-disable MD003 MD022 -->
 ---
 version: alpha
 name: "IBM Carbon"
@@ -17,7 +18,7 @@ typography:
   headline-display:
     fontFamily: '"IBM Plex Sans", Inter, system-ui, sans-serif'
     fontSize: 64px
-    fontWeight: 300
+    fontWeight: 400
     lineHeight: 1.05
     letterSpacing: -0.03em
   headline-md:
@@ -39,6 +40,7 @@ rounded:
   md: 0px
   lg: 0px
 ---
+<!-- markdownlint-enable MD003 MD022 -->
 
 # Design System: IBM
 
@@ -63,7 +65,7 @@ IBM Carbon Design System — enterprise authority, monochromatic + blue, 8px gri
 - **Accent**: IBM Blue 60 (`#0f62fe`) — the only chromatic hue
 - **Background**: White (`#ffffff`) / Gray 10 (`#f4f4f4`) for cards
 - **Text**: Gray 100 (`#161616`) primary, Gray 70 (`#525252`) secondary
-- **Font**: IBM Plex Sans (300/400/600), IBM Plex Mono for code
+- **Font**: IBM Plex Sans (400/600), IBM Plex Mono for code
 - **Border-radius**: 0px everywhere except tags (24px pill)
 - **Depth**: background-color layering, not shadows
 - **Inputs**: bottom-border only (`2px solid #0f62fe` on focus)

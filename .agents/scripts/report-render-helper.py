@@ -32,85 +32,97 @@ TEMPLATE = sys.argv[3] if len(sys.argv) > 3 else "basic"
 PDF_PROFILE = sys.argv[4] if len(sys.argv) > 4 else "a4"
 THEME = sys.argv[5] if len(sys.argv) > 5 else "auto"
 
-BASIC_CSS = """
-:root { color-scheme: light; --report-paper: #ffffff; --report-paper-raised: #f8fafc; --report-surface: #ffffff; --report-ink: #111827; --report-ink-soft: #4b5563; --report-muted: #4b5563; --report-line: #d1d5db; --report-rule: #d1d5db; --report-panel: #ffffff; --report-blue: #2563eb; --report-green: #147a4a; --report-amber: #b7791f; --report-red: #b42318; --report-code-bg: #f8fafc; --report-code-ink: #111827; --report-code-accent: #1d4ed8; --report-radius-md: 8px; --report-badge-radius: 4px; }
-body.report-body { margin: 0; background: var(--report-paper); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--report-ink); }
-body.report-theme-dark { color-scheme: dark; --report-paper: #0f172a; --report-paper-raised: #111827; --report-surface: #111827; --report-panel: #111827; --report-ink: #f8fafc; --report-ink-soft: #cbd5e1; --report-muted: #cbd5e1; --report-line: #334155; --report-rule: #334155; --report-code-bg: #020617; --report-code-ink: #e5e7eb; --report-code-accent: #93c5fd; }
-.report-shell { max-width: 1120px; margin: 0 auto; padding: 2rem; }
-.report-main { min-width: 0; }
-.sticky-toc { margin: 0 0 2rem; overflow: hidden; border: 1px solid var(--report-line); border-radius: 10px; padding: 1rem; background: var(--report-panel); }
-.sticky-toc-header { display: flex; gap: 1rem; align-items: center; justify-content: space-between; margin-bottom: 1rem; padding-right: .35rem; }
-.toc-pdf-actions { display: inline-flex; flex: 0 0 auto; gap: .5rem; align-items: center; }
-.toc-pdf-link { display: inline-flex; min-inline-size: 3.2rem; height: 2rem; align-items: center; justify-content: center; align-self: center; flex: 0 0 auto; box-sizing: border-box; padding: 0 .7rem; border: 1.5px solid var(--report-line); border-radius: var(--report-badge-radius); background: var(--report-panel); color: inherit; font-size: .72rem; font-weight: 900; letter-spacing: .08em; line-height: 1 !important; text-align: center; text-decoration: none !important; white-space: nowrap; }
-.sticky-toc ol { max-height: calc(100vh - 9rem); overflow: auto; margin: 0; padding: 0; padding-right: .25rem; list-style: none; }
-.sticky-toc ol a { display: block; color: inherit; font-size: .875rem; line-height: 1.45; text-decoration: none; }
-.sticky-toc ol a:hover, .sticky-toc ol a:focus-visible { text-decoration: underline; }
-.report-content, .report-main { min-width: 0; }
-.badge-row, .appendix-links, .anchor-links { display: flex; flex-wrap: wrap; gap: 1rem; line-height: 1.35; }
-.appendix-links, .anchor-links { justify-content: center; }
-.appendix-links p, .anchor-links p { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; justify-content: center; margin: 0; }
-.anchor-links a, .appendix-links a { border-radius: var(--report-badge-radius); box-shadow: inset 0 -.16em 0 color-mix(in srgb, var(--report-blue) 18%, transparent); }
-.badge { display: inline-flex; width: fit-content; min-width: max-content; max-width: 100%; white-space: nowrap; border-radius: var(--report-badge-radius); padding: .15rem .55rem; font-size: .78rem; font-weight: 700; border: 1px solid var(--report-line); }
-.badge-verified { background: #dcfce7; color: #166534; }
-.badge-partial { background: #fef9c3; color: #854d0e; }
-.badge-inferred { background: #dbeafe; color: #1e40af; }
-.badge-missing { background: #fee2e2; color: #991b1b; }
-.source-card, .source-item { position: relative; padding-right: 3.75rem; }
-.source-card { border: 1px solid var(--report-line); border-left: 4px solid var(--report-ink); border-radius: 10px; padding: .85rem 3.75rem .85rem 1rem; margin: .75rem 0; background: var(--report-surface); }
-.source-card-link { position: absolute; inset: 0; z-index: 2; display: block; border-radius: inherit; color: var(--report-blue); text-decoration: none; }
-.source-card-link::before { content: "↗"; position: absolute; top: 1rem; right: 1rem; display: inline-flex; align-items: center; justify-content: center; border: 0; background: transparent; font-weight: 900; line-height: 1; }
-.source-card-link[href]::after { content: "" !important; }
-.code-block-wrap, .mermaid-rendered, .latex-rendered-block { max-width: 100%; min-width: 0; margin: 1rem 0; border: 1px solid var(--report-line); border-radius: 10px; overflow: hidden; background: var(--report-code-bg); background-clip: padding-box; color: var(--report-code-ink); }
-.code-block-head { display: flex; gap: 1rem; align-items: center; justify-content: space-between; padding: .45rem .75rem; border-bottom: 1px solid var(--report-line); color: var(--report-code-accent); font: 700 .78rem/1.3 ui-monospace, SFMono-Regular, Consolas, monospace; }
-.code-copy { display: inline-grid; width: 1.75rem; height: 1.75rem; place-items: center; border: 1px solid var(--report-line); border-radius: 999px; background: transparent; color: inherit; cursor: pointer; }
-.code-copy.is-copied { background: var(--report-green); border-color: var(--report-green); color: #ffffff; }
-.version-summary { color: var(--report-muted); font-size: clamp(.72rem, .58rem + .42vw, .92rem); font-weight: 800; letter-spacing: .11em; line-height: 1.42; text-align: left; text-transform: uppercase; }
-.version-summary p { max-width: none; margin: 0; }
-.code-block-wrap pre { max-width: 100%; margin: 0; padding: .8rem .8rem .8rem 1rem; overflow-x: auto; }
-.action-prompt { width: 100%; max-width: 100%; min-width: 0; overflow: hidden; }
-.action-prompt pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-.mermaid-rendered, .latex-rendered-block { padding: 1rem; }
-.mermaid-rendered svg { width: 100%; height: auto; }
-.diagram-node { fill: var(--report-paper-raised); stroke: var(--report-blue); stroke-width: 2; }
-.diagram-label { fill: var(--report-ink); font: 700 14px system-ui, sans-serif; }
-.diagram-arrow { stroke: var(--report-blue); stroke-width: 2.5; marker-end: url(#arrowhead); }
-.diagram-arrow-head { fill: var(--report-blue); }
-.latex-rendered-block div, .latex-inline { color: var(--report-code-ink); }
-.mermaid-rendered figcaption, .latex-rendered-block figcaption { color: var(--report-ink-soft); }
-table { table-layout: auto; border-collapse: collapse; width: 100%; margin: 1rem 0; overflow-wrap: normal; }
-th, td { border: 1px solid var(--report-line); padding: .5rem; text-align: left; vertical-align: top; }
-h1, h2, h3 { line-height: 1.15; break-after: avoid; }
-.report-footer { max-width: 1180px; margin: 0 auto; padding: 1rem 2rem 2rem; color: var(--report-muted); font-size: .875rem; text-align: center; }
-@media (max-width: 860px) { .report-shell { display: block; padding: 1rem; } .sticky-toc { position: static; margin-bottom: 1rem; } }
-""".strip()
+BASIC_CSS = ""
 
 PROFILE_CSS = {
     "a4": "@media print { @page { size: A4 portrait; margin: 12mm; } html, body.report-body { background: var(--report-paper) !important; font-size: 10.5pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; } body.report-body { min-height: 100vh; padding: 0; orphans: 3; widows: 3; } *,*::before,*::after { box-shadow: none !important; filter: none !important; text-shadow: none !important; } body.report-theme-dark { background: var(--report-paper) !important; } .report-shell { display: block; width: 100%; max-width: none; overflow: hidden; padding: 0; } .report-main,.report-content { width: 100%; max-width: 100%; overflow: hidden; } h1,h2,h3,.code-block-head,.source-title { break-after: avoid; break-after: avoid-page; page-break-after: avoid; } .report-main h2.chapter-heading { margin-block-start: 6mm; padding-block-start: 0; } .code-block-wrap,.mermaid-rendered,.latex-rendered-block,.bar-chart p { break-inside: avoid; break-inside: avoid-page; break-after: avoid-page; page-break-inside: avoid; } .action-line,.action-prompt,.accordion,.source-card,.details-note,.info-panel,.impact-panel,.evidence-panel,.action-panel,.callout { width: auto; max-width: 100%; margin: 0 0 8mm; overflow: hidden; border-radius: 0 !important; box-shadow: none !important; break-inside: avoid-page; break-after: avoid-page; } .stat-card { background: var(--report-surface) !important; background-clip: padding-box; } .report-footer { min-height: 22mm; background: #ffffff; border: 1px solid #d1d5db; color: #374151; } .sticky-toc { position: static; max-height: none; overflow: visible; break-after: page; break-inside: auto; border: 0; border-radius: 0; box-shadow: none; } .sticky-toc ol { display: block; max-height: none; overflow: visible; padding-right: 0; } .toc-pdf-actions, .toc-pdf-link { display: none !important; } table { table-layout: fixed; font-size: 8.8pt; border-collapse: separate; border-spacing: 0; } th { background: color-mix(in srgb, var(--report-blue) 12%, var(--report-surface)); } th,td { padding: 4pt 5pt; overflow-wrap: anywhere; } pre,.mermaid,.latex-block { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; } a[href]::after { content: \" (\" attr(href) \")\"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after, .source-card-link[href]::after, .anchor-links a[href]::after { content: \"\"; } .appendix-links a[href]::after { content: attr(data-filetype); } }",
     "letter": "@media print { @page { size: Letter portrait; margin: .45in; } html, body.report-body { background: var(--report-paper) !important; font-size: 10.5pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; } body.report-body { min-height: 100vh; padding: 0; orphans: 3; widows: 3; } *,*::before,*::after { box-shadow: none !important; filter: none !important; text-shadow: none !important; } body.report-theme-dark { background: var(--report-paper) !important; } .report-shell { display: block; width: 100%; max-width: none; overflow: hidden; padding: 0; } .report-main,.report-content { width: 100%; max-width: 100%; overflow: hidden; } h1,h2,h3,.code-block-head,.source-title { break-after: avoid; page-break-after: avoid; } .code-block-wrap,.mermaid-rendered,.latex-rendered-block,.bar-chart p { break-inside: avoid; page-break-inside: avoid; } .action-line,.action-prompt,.accordion,.source-card,.details-note,.info-panel,.impact-panel,.evidence-panel,.action-panel,.callout { width: auto; max-width: 100%; margin-inline: 0; overflow: hidden; border-radius: 0 !important; box-shadow: none !important; } .stat-card { background: var(--report-surface) !important; background-clip: padding-box; } .report-footer { min-height: 22mm; background: #ffffff; border: 1px solid #d1d5db; color: #374151; } .sticky-toc { position: static; max-height: none; overflow: visible; break-after: page; break-inside: auto; border: 0; border-radius: 0; box-shadow: none; } .sticky-toc ol { display: block; max-height: none; overflow: visible; padding-right: 0; } .toc-pdf-actions, .toc-pdf-link { display: none !important; } table { table-layout: fixed; font-size: 8.6pt; border-collapse: separate; border-spacing: 0; } th { background: color-mix(in srgb, var(--report-blue) 12%, var(--report-surface)); } th,td { padding: 4pt 5pt; overflow-wrap: anywhere; } pre,.mermaid,.latex-block { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; } }",
-    "slides-16-9-1": "@media print { @page { size: 16in 9in; margin: 0; } html, body.report-body { width: auto; min-height: auto; box-sizing: border-box; background: var(--report-paper) !important; padding: .45in; font-size: 14pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; } body.report-theme-dark { background: var(--report-paper) !important; } h1,h2,h3,.code-block-head,.source-title { break-after: avoid; page-break-after: avoid; } .code-block-wrap,.mermaid-rendered,.latex-rendered-block,.bar-chart p { break-inside: avoid; page-break-inside: avoid; } pre,.mermaid,.latex-block { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; } .sticky-toc { max-height: none; overflow: visible; break-inside: auto; border: 0; border-radius: 0; } .sticky-toc ol { max-height: none; overflow: visible; } .toc-pdf-actions, .toc-pdf-link { display: none !important; } .report-main { column-count: auto !important; column-gap: normal !important; } .report-main h1 { font-size: 4.4rem; } .report-main h2 { font-size: 2.8rem; } .report-shell { display: block; padding: 0; } }",
-    "slides-16-9-2": "@media print { @page { size: 16in 9in; margin: 0; } html, body.report-body { width: auto; min-height: auto; box-sizing: border-box; background: var(--report-paper) !important; padding: .45in; font-size: 14pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; } body.report-theme-dark { background: var(--report-paper) !important; } h1,h2,h3,.code-block-head,.source-title { break-after: avoid; page-break-after: avoid; } .code-block-wrap,.mermaid-rendered,.latex-rendered-block,.bar-chart p { break-inside: avoid; page-break-inside: avoid; } pre,.mermaid,.latex-block { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; } .sticky-toc { max-height: none; overflow: visible; break-inside: auto; border: 0; border-radius: 0; } .sticky-toc ol { max-height: none; overflow: visible; } .toc-pdf-actions, .toc-pdf-link { display: none !important; } .report-main { column-count: auto !important; column-gap: normal !important; } .report-main > * { break-inside: avoid; } .report-main h1 { font-size: 4.4rem; } .report-main h2 { font-size: 2.8rem; } .report-shell { display: block; padding: 0; } }",
-    "slides-16-9-3": "@media print { @page { size: 16in 9in; margin: 0; } html, body.report-body { width: auto; min-height: auto; box-sizing: border-box; background: var(--report-paper) !important; padding: .45in; font-size: 14pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; } body.report-theme-dark { background: var(--report-paper) !important; } h1,h2,h3,.code-block-head,.source-title { break-after: avoid; page-break-after: avoid; } .code-block-wrap,.mermaid-rendered,.latex-rendered-block,.bar-chart p { break-inside: avoid; page-break-inside: avoid; } pre,.mermaid,.latex-block { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; } .sticky-toc { max-height: none; overflow: visible; break-inside: auto; border: 0; border-radius: 0; } .sticky-toc ol { max-height: none; overflow: visible; } .toc-pdf-actions, .toc-pdf-link { display: none !important; } .report-main { column-count: auto !important; column-gap: normal !important; } .report-main > * { break-inside: avoid; } .report-main h1 { font-size: 4.4rem; } .report-main h2 { font-size: 2.8rem; } .report-shell { display: block; padding: 0; } }",
+    "slides-16-9-1": "@media print { @page { size: 16in 9in; margin: 0; } html, body.report-body { width: auto; min-height: auto; box-sizing: border-box; background: var(--report-paper) !important; padding: .45in; font-size: 32pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; } body.report-theme-dark { background: var(--report-paper) !important; } h1,h2,h3,.code-block-head,.source-title { break-after: avoid; page-break-after: avoid; } .code-block-wrap,.mermaid-rendered,.latex-rendered-block,.bar-chart p { break-inside: avoid; page-break-inside: avoid; } pre,.mermaid,.latex-block { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; } .sticky-toc { max-height: none; overflow: visible; break-inside: auto; border: 0; border-radius: 0; } .sticky-toc ol { max-height: none; overflow: visible; } .toc-pdf-actions, .toc-pdf-link { display: none !important; } .report-main { column-count: auto !important; column-gap: normal !important; } .report-main h1 { font-size: 4.4rem; } .report-main h2 { font-size: 2.8rem; } .report-shell { display: block; padding: 0; } }",
+    "slides-16-9-2": "@media print { @page { size: 16in 9in; margin: 0; } html, body.report-body { width: auto; min-height: auto; box-sizing: border-box; background: var(--report-paper) !important; padding: .45in; font-size: 32pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; } body.report-theme-dark { background: var(--report-paper) !important; } h1,h2,h3,.code-block-head,.source-title { break-after: avoid; page-break-after: avoid; } .code-block-wrap,.mermaid-rendered,.latex-rendered-block,.bar-chart p { break-inside: avoid; page-break-inside: avoid; } pre,.mermaid,.latex-block { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; } .sticky-toc { max-height: none; overflow: visible; break-inside: auto; border: 0; border-radius: 0; } .sticky-toc ol { max-height: none; overflow: visible; } .toc-pdf-actions, .toc-pdf-link { display: none !important; } .report-main { column-count: auto !important; column-gap: normal !important; } .report-main > * { break-inside: avoid; } .report-main h1 { font-size: 4.4rem; } .report-main h2 { font-size: 2.8rem; } .report-shell { display: block; padding: 0; } }",
+    "slides-16-9-3": "@media print { @page { size: 16in 9in; margin: 0; } html, body.report-body { width: auto; min-height: auto; box-sizing: border-box; background: var(--report-paper) !important; padding: .45in; font-size: 32pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; } body.report-theme-dark { background: var(--report-paper) !important; } h1,h2,h3,.code-block-head,.source-title { break-after: avoid; page-break-after: avoid; } .code-block-wrap,.mermaid-rendered,.latex-rendered-block,.bar-chart p { break-inside: avoid; page-break-inside: avoid; } pre,.mermaid,.latex-block { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; } .sticky-toc { max-height: none; overflow: visible; break-inside: auto; border: 0; border-radius: 0; } .sticky-toc ol { max-height: none; overflow: visible; } .toc-pdf-actions, .toc-pdf-link { display: none !important; } .report-main { column-count: auto !important; column-gap: normal !important; } .report-main > * { break-inside: avoid; } .report-main h1 { font-size: 4.4rem; } .report-main h2 { font-size: 2.8rem; } .report-shell { display: block; padding: 0; } }",
 }
 
 PDF_PAGINATION_CSS = """
 @media print {
-body.report-body { orphans: 3; widows: 3; }
-.report-shell, .report-main, .report-content { overflow: visible; }
-.report-main h2.chapter-heading { margin-block-start: 10mm; padding-block-start: 5mm; break-inside: avoid-page; page-break-inside: avoid; }
+@page { margin: 12mm 0; background: __REPORT_PAGE_BACKGROUND__; }
+@page report-letter { size: Letter portrait; margin: .45in 0; background: __REPORT_PAGE_BACKGROUND__; }
+html { background: __REPORT_PAGE_BACKGROUND__ !important; }
+body.report-body { box-sizing: border-box; padding: 0 12mm; orphans: 3; widows: 3; }
+body.report-pdf-profile-letter { page: report-letter; padding: 0 .45in; }
+body.report-body:not(.report-theme-dark) { --report-paper: #ffffff; --report-paper-raised: #ffffff; --report-panel: #ffffff; --report-surface: #ffffff; background: #ffffff !important; }
+body.report-body:not(.report-theme-dark) .report-shell, body.report-body:not(.report-theme-dark) .report-main, body.report-body:not(.report-theme-dark) .report-content { background: #ffffff !important; }
+body.report-body { position: relative; background: var(--report-paper) !important; }
+body.report-theme-dark .report-shell, body.report-theme-dark .report-main, body.report-theme-dark .report-content { background: var(--report-paper) !important; }
+body.report-body::before { content: none; display: none; }
+.report-shell, .report-main, .report-content { overflow: visible; border: 0 !important; outline: 0 !important; box-shadow: none !important; }
+.report-keep-with-heading, .report-keep-with-heading.report-chapter-page { border: 0 !important; outline: 0 !important; box-shadow: none !important; }
+.report-front { display: block; min-height: calc(297mm - 24mm); break-after: auto; page-break-after: auto; }
+body.report-pdf-profile-letter .report-front { min-height: 10.1in; }
+.sticky-toc { break-before: auto; page-break-before: auto; }
+.sticky-toc-header { break-before: auto; page-break-before: auto; }
+.report-main h2.chapter-heading { margin-block-start: 10mm; padding-block-start: 5mm; border-top: 0 !important; break-before: page; break-inside: avoid-page; page-break-before: always; page-break-inside: avoid; }
+.report-keep-with-heading.report-chapter-page { break-before: page; page-break-before: always; }
 .report-main h2.chapter-heading::before { break-after: avoid-page; page-break-after: avoid; }
 .accordion { margin-block-start: 5mm; }
 .report-footer { display: flex; min-height: 22mm; margin-block-start: 8mm; padding: 0 6mm; align-items: center; justify-content: center; text-align: center; box-sizing: border-box; }
-.chapter-hero, .tactic-card, .example-card, .good-bad, .facts-table-wrap, .details-note, .industry-card, .priority-group, .checklist-card, .source-card, .sources-layout, .sources-group, .myth-callout, .info-panel, .impact-panel, .evidence-panel, .action-panel, .severity-key, .accordion, .quote-card, .callout, .action-line, .action-prompt { box-sizing: border-box; width: 100%; max-width: 100%; margin-inline: 0; overflow: visible; break-inside: avoid-page; page-break-inside: avoid; }
+.report-keep-with-heading { display: block; margin-block: 6mm 8mm; break-inside: avoid-page; page-break-inside: avoid; }
+.report-keep-with-heading > :first-child { margin-block-start: 0; }
+.report-keep-with-heading > :last-child { margin-block-end: 0; }
+.example-card > header, .block-template > header, .report-keep-with-heading > h2, .report-keep-with-heading > h3 { break-after: avoid-page; page-break-after: avoid; }
+.example-card > .code-block-wrap, .block-template > .code-block-wrap, .report-keep-with-heading > .code-block-wrap, .report-keep-with-heading > .source-card, .report-keep-with-heading > .source-item, .report-keep-with-heading > .source-list, .report-keep-with-heading > .sources-layout, .report-keep-with-heading > .sources-group, .report-keep-with-heading > .callout, .report-keep-with-heading > .info-panel, .report-keep-with-heading > .impact-panel, .report-keep-with-heading > .evidence-panel, .report-keep-with-heading > .action-panel, .report-keep-with-heading > .details-note, .report-keep-with-heading > .myth-callout, .report-keep-with-heading > .accordion { break-before: avoid-page; page-break-before: avoid; }
+.action-line, .code-block-wrap, .mermaid-rendered, .latex-rendered-block, .example-card > .code-block-wrap, .block-template > .code-block-wrap, .bar-chart p, .chapter-hero, .case-study-card, .tactic-card, .example-card, .block-template, .good-bad, .facts-table, .facts-table-wrap, .report-main > table, .details-note, .industry-card, .priority-group, .checklist-card, .source-card, .source-item, .source-list, .sources-layout, .sources-group, .myth-callout, .info-panel, .impact-panel, .evidence-panel, .action-panel, .severity-key, .accordion, .quote-card, .callout, .action-prompt { -webkit-box-decoration-break: clone; box-decoration-break: clone; box-sizing: border-box; width: calc(100% - 12pt); max-width: calc(100% - 12pt); margin: 6mm 6pt 8mm; overflow: visible; break-inside: avoid-page; page-break-inside: avoid; }
+.code-block-wrap, .mermaid-rendered, .latex-rendered-block, .example-card > .code-block-wrap, .block-template > .code-block-wrap, .report-keep-with-heading > .code-block-wrap { overflow: hidden; border-radius: var(--report-radius-md) !important; background-clip: padding-box; }
+.code-block-wrap > :first-child { border-top-left-radius: calc(var(--report-radius-md) - 1px); border-top-right-radius: calc(var(--report-radius-md) - 1px); }
+.facts-table-wrap { overflow: hidden; border-radius: var(--report-radius-md) !important; background-clip: padding-box; clip-path: inset(0 round var(--report-radius-md)); contain: paint; }
+.facts-table thead tr:first-child th:first-child, .facts-table-wrap thead tr:first-child th:first-child, .report-main > table thead tr:first-child th:first-child { border-top-left-radius: calc(var(--report-radius-md) - 1px); }
+.facts-table thead tr:first-child th:last-child, .facts-table-wrap thead tr:first-child th:last-child, .report-main > table thead tr:first-child th:last-child { border-top-right-radius: calc(var(--report-radius-md) - 1px); }
+.facts-table tbody tr:last-child td:first-child, .facts-table-wrap tbody tr:last-child td:first-child, .report-main > table tbody tr:last-child td:first-child { border-bottom-left-radius: calc(var(--report-radius-md) - 1px); }
+.facts-table tbody tr:last-child td:last-child, .facts-table-wrap tbody tr:last-child td:last-child, .report-main > table tbody tr:last-child td:last-child { border-bottom-right-radius: calc(var(--report-radius-md) - 1px); }
+.good-bad { display: block; }
+.good-row, .bad-row { margin-block: 0 8mm; }
 .report-main h2.chapter-heading + .chapter-hero, .report-main h2.chapter-heading + .tactic-card, .report-main h2.chapter-heading + .example-card, .report-main h2.chapter-heading + .good-bad, .report-main h2.chapter-heading + .facts-table-wrap, .report-main h2.chapter-heading + .details-note, .report-main h2.chapter-heading + .industry-card, .report-main h2.chapter-heading + .priority-group, .report-main h2.chapter-heading + .checklist-card, .report-main h2.chapter-heading + .source-card, .report-main h2.chapter-heading + .sources-layout, .report-main h2.chapter-heading + .sources-group, .report-main h2.chapter-heading + .myth-callout, .report-main h2.chapter-heading + .info-panel, .report-main h2.chapter-heading + .impact-panel, .report-main h2.chapter-heading + .evidence-panel, .report-main h2.chapter-heading + .action-panel, .report-main h2.chapter-heading + .severity-key, .report-main h2.chapter-heading + .accordion, .report-main h2.chapter-heading + .quote-card, .report-main h2.chapter-heading + .callout { break-before: avoid-page; page-break-before: avoid; }
 }
 """.strip()
 
 SLIDES_PAGE_MARGIN_CSS = """
 @media print {
-@page { size: 16in 9in; margin: .45in; }
-html, body.report-body { padding: 0; }
-.report-main h2.chapter-heading { margin-block-start: .45in; padding-block-start: .18in; }
+@page { size: 16in 9in; margin: 0; background: __REPORT_PAGE_BACKGROUND__; }
+html, body.report-body { box-sizing: border-box; padding: 0; }
+.report-shell { -webkit-box-decoration-break: clone; box-decoration-break: clone; box-sizing: border-box; padding: .45in; }
+.sticky-toc, .report-main, .report-content { -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+.sticky-toc { display: none !important; }
+.report-title-page { display: block; min-height: 0; padding-block: 1.3in .45in; break-inside: avoid-page; page-break-inside: avoid; }
+.report-title-page h1 { font-size: clamp(60pt, 9vw, 88pt) !important; line-height: .95; margin-block: 0 .7in; }
+.report-title-page p { font-size: 32pt !important; line-height: 1.2; margin-block: .2in 0; }
+.report-main h2.chapter-heading { max-width: none; margin-block-start: .45in; padding-block-start: .18in; text-align: center; }
+.report-main h2.chapter-heading::before { content: none !important; display: none !important; }
+.report-main p, .report-main li, .report-main summary, .report-main td, .report-main th, .badge-key p { font-size: 32pt !important; line-height: 1.22; }
+.report-main .report-kicker, .report-main .eyebrow, .report-main .meta-label, .report-main .priority-label, .report-main .source-card-type, .report-main .source-meta, .report-main .stat-label, .report-main .stat-period { font-size: 32pt !important; line-height: 1.18; }
+.report-main h1 { font-size: clamp(72pt, 10vw, 116pt) !important; line-height: .98; }
+.report-main h2 { font-size: clamp(54pt, 7vw, 88pt) !important; line-height: 1; }
+.report-main h3 { font-size: clamp(36pt, 4vw, 54pt) !important; line-height: 1.08; }
+.report-main .badge { font-size: 32pt !important; line-height: 1; white-space: nowrap; }
+.badge-key p { grid-template-columns: max-content minmax(0, 1fr) !important; align-items: center; column-gap: .45in; text-align: left; }
+.badge-key p > :not(.badge) { text-align: left; }
+.report-main .code-block-wrap, .report-main .mermaid-rendered, .report-main .latex-rendered-block, .report-main .quote-card, .report-main blockquote, .report-main .info-panel, .report-main .impact-panel, .report-main .evidence-panel, .report-main .action-panel, .report-main .callout, .report-main .accordion, .report-main .facts-table-wrap, .report-main > table, .report-main .source-card, .report-main .source-item, .report-main .details-note, .report-main .myth-callout, .report-main .severity-key, .report-main .example-card, .report-main .block-template { break-before: page; break-inside: avoid-page; page-break-before: always; page-break-inside: avoid; }
+.report-main .report-cover, .report-main .stats-strip, .report-main .summary-stats, .report-main .badge-key { break-inside: avoid-page; page-break-inside: avoid; }
+.report-main .source-item { break-before: page; page-break-before: always; }
+.report-main .quote-card, .report-main blockquote { min-height: 5.8in; display: flex; align-items: center; }
+.report-main .code-block-wrap pre, .report-main .mermaid, .report-main .latex-block { font-size: 32pt !important; line-height: 1.2; white-space: pre-wrap; overflow-wrap: anywhere; }
+.report-main .facts-table, .report-main .facts-table-wrap table, .report-main > table { table-layout: fixed; width: 100%; min-width: 0; font-size: 26pt !important; }
+.report-main .facts-table th, .report-main .facts-table td, .report-main .facts-table-wrap th, .report-main .facts-table-wrap td, .report-main > table th, .report-main > table td { padding: .22in .28in; font-size: 26pt !important; line-height: 1.2; overflow-wrap: anywhere; vertical-align: top; }
+.report-main :where(.stats-strip, .summary-stats, .tactic-grid, .sources-layout, .good-bad, .severity-key, .badge-key) :where(p, li, span, a) { font-size: 26pt !important; line-height: 1.2; }
+.report-main td .evidence-badge, .report-main th .evidence-badge { display: flex; flex-direction: column; gap: .12in; align-items: flex-start; max-width: 100%; white-space: normal; }
+.report-main td .badge, .report-main th .badge, .report-main td .evidence-label, .report-main th .evidence-label { max-width: 100%; font-size: 26pt !important; white-space: normal; }
+.report-main .report-keep-with-heading > :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block), .report-main :where(.example-card, .block-template) > .code-block-wrap { break-before: avoid-page !important; page-break-before: avoid !important; }
 .accordion { margin-block-start: .22in; }
+}
+""".strip()
+
+LETTER_PAGE_FIX_CSS = """
+@media print {
+.report-title-page { min-height: 8.6in; }
+.report-shell, .report-main, .report-content { border: 0 !important; outline: 0 !important; box-shadow: none !important; }
 }
 """.strip()
 
@@ -119,23 +131,32 @@ THEMES = ("auto", "light", "dark")
 
 
 def load_css(template: str, pdf_profile: str) -> str:
-    css = BASIC_CSS
+    if template == "basic":
+        return BASIC_CSS
+    css = ""
     if template == "editorial-evidence":
         path = Path(__file__).resolve().parents[1] / "templates" / "reports" / "llm-visibility-report.css"
         css = path.read_text(encoding="utf-8")
     elif template in style_names():
         css = style_css(template)
-    elif template != "basic":
+    else:
         names = ", ".join(BUILTIN_TEMPLATES)
         raise ValueError(f"unknown report template: {template}. Available: {names}")
     if pdf_profile not in PROFILE_CSS:
         raise ValueError(f"unknown PDF export profile: {pdf_profile}")
     if THEME not in THEMES:
         raise ValueError(f"unknown report theme: {THEME}. Available: {', '.join(THEMES)}")
+    page_background = "#ffffff"
+    if THEME == "dark":
+        matches = re.findall(r"body\.report-theme-dark\s*\{[^}]*--report-paper:\s*([^;]+);", css, flags=re.S)
+        if matches:
+            page_background = matches[-1].strip()
     profile_css = PROFILE_CSS[pdf_profile]
-    pagination_css = PDF_PAGINATION_CSS
+    pagination_css = PDF_PAGINATION_CSS.replace("__REPORT_PAGE_BACKGROUND__", page_background)
     if pdf_profile.startswith("slides-16-9"):
-        pagination_css = f"{pagination_css}\n{SLIDES_PAGE_MARGIN_CSS}"
+        pagination_css = f"{pagination_css}\n{SLIDES_PAGE_MARGIN_CSS.replace('__REPORT_PAGE_BACKGROUND__', page_background)}"
+    elif pdf_profile == "letter":
+        pagination_css = f"{pagination_css}\n{LETTER_PAGE_FIX_CSS}"
     return f"{css}\n{profile_css}\n{pagination_css}"
 
 
@@ -157,9 +178,35 @@ def is_executive_summary(title: str) -> bool:
     return toc_title(title).lower() == "executive summary"
 
 
+def wrap_title_page(body: str) -> str:
+    """Wrap the opening title/subtitle/author lines for PDF cover-page styling."""
+
+    cover_match = re.search(r'<section class="report-cover"', body)
+    if cover_match:
+        prefix = body[: cover_match.start()]
+        if "<h1" in prefix and "<h2" not in prefix:
+            return f'<section class="report-title-page">{prefix}</section>\n{body[cover_match.start():]}'
+    match = re.match(r"^(\s*<h1\b.*?</h1>\s*)(.*)$", body, flags=re.S)
+    if not match:
+        return body
+    return f'<section class="report-title-page">{match.group(1)}</section>\n{match.group(2)}'
+
+
+def split_intro_body(body: str) -> tuple[str, str]:
+    """Split print intro pages from the main chapter body at the first numbered chapter."""
+
+    wrapped = wrap_title_page(body)
+    match = re.search(r'<h2\b[^>]*\bclass="[^"]*chapter-heading[^"]*"', wrapped)
+    if not match:
+        return wrapped, ""
+    return wrapped[: match.start()].rstrip(), wrapped[match.start() :].lstrip()
+
+
 def wrap_document(headings: list[tuple[int, str, str]], body: str) -> str:
     css = load_css(TEMPLATE, PDF_PROFILE)
+    style_tag = f"<style>{css}</style>" if css.strip() else ""
     pdf_href = os.environ.get("REPORT_PDF_HREF", "").strip()
+    pdf_usletter_href = os.environ.get("REPORT_PDF_USLETTER_HREF", "").strip()
     pdf_landscape_href = os.environ.get("REPORT_PDF_LANDSCAPE_HREF", "").strip()
     pdf_link = ""
     pdf_links = []
@@ -168,28 +215,35 @@ def wrap_document(headings: list[tuple[int, str, str]], body: str) -> str:
             f'<a class="toc-pdf-link" href="{html.escape(pdf_href)}" '
             'aria-label="Open A4 PDF version" title="Open A4 PDF version">A4</a>'
         )
+    if pdf_usletter_href:
+        pdf_links.append(
+            f'<a class="toc-pdf-link" href="{html.escape(pdf_usletter_href)}" '
+            'aria-label="Open US Letter PDF version" title="Open US Letter PDF version">US Letter</a>'
+        )
     if pdf_landscape_href:
         pdf_links.append(
             f'<a class="toc-pdf-link" href="{html.escape(pdf_landscape_href)}" '
-            'aria-label="Open landscape PDF version" title="Open landscape PDF version">16:9</a>'
+            'aria-label="Open slides PDF version" title="Open slides PDF version">Slides</a>'
         )
     if pdf_links:
-        pdf_link = f'<span class="toc-pdf-actions">{"".join(pdf_links)}</span>'
+        pdf_link = f'<div class="toc-pdf-actions" aria-label="PDF downloads">{"".join(pdf_links)}</div>'
     toc_items = []
     chapter = 0
     section = 0
     for level, title, anchor in headings:
         clean_title = toc_title(title)
         label = clean_title
+        item_class = "toc-entry"
         if level == 2 and not is_executive_summary(title):
             chapter += 1
             section = 0
             label = f"{chapter}. {clean_title}"
+            item_class = "toc-entry toc-chapter"
         elif level == 3 and chapter:
             section += 1
             label = f"{chapter}.{section} {clean_title}"
-        indent = f' style="margin-left:{max(level - 1, 0)}rem"'
-        toc_items.append(f'<li><a href="#{anchor}"{indent}>{inline_markup(label)}</a></li>')
+            item_class = "toc-entry toc-subsection"
+        toc_items.append(f'<li class="{item_class}"><a href="#{anchor}">{inline_markup(label)}</a></li>')
     active_toc_script = """
 <script>
 (() => {
@@ -250,25 +304,42 @@ def wrap_document(headings: list[tuple[int, str, str]], body: str) -> str:
 })();
 </script>
 """.strip()
+    intro_body, rest_body = split_intro_body(body)
+    title_body = ""
+    title_match = re.match(r'^\s*(<section class="report-title-page">.*?</section>)\s*(.*)$', intro_body, flags=re.S)
+    if title_match:
+        title_body = title_match.group(1)
+        intro_body = title_match.group(2)
+    title_main = f"""
+<main class="report-content report-main report-title-front">
+{title_body}
+</main>""" if title_body.strip() else ""
+    rest_main = f"""
+<main class="report-content report-main report-rest">
+{rest_body}
+</main>""" if rest_body.strip() else ""
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Report</title>
-<style>{css}</style>
+{style_tag}
 </head>
 <body class="report-body report-theme-{html.escape(THEME)} report-pdf-profile-{html.escape(PDF_PROFILE)} report-template-{html.escape(TEMPLATE)}">
 <div class="report-shell">
+{title_main}
+<main class="report-content report-main report-front">
+{intro_body}
+</main>
+{pdf_link}
 <nav class="sticky-toc" aria-label="Report table of contents">
-<div class="sticky-toc-header"><h2>Contents</h2>{pdf_link}</div>
+<div class="sticky-toc-header"><h2>Contents</h2></div>
 <ol>
 {chr(10).join(toc_items)}
 </ol>
 </nav>
-<main class="report-content report-main">
-{body}
-</main>
+{rest_main}
 </div>
 <footer class="report-footer">© 2025-2026 Marcus Quinn. Licensed under MIT.</footer>
 {active_toc_script}

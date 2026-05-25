@@ -5,7 +5,7 @@
 
 ## Do
 
-- Use IBM Plex Sans at weight 300 for display sizes (42px+) — the lightness is intentional
+- Use IBM Plex Sans at weight 400 for display sizes (42px+) so report headings remain readable in PDF previews
 - Apply 0.16px letter-spacing on 14px body text and 0.32px on 12px captions
 - Use 0px border-radius on buttons, inputs, cards, and tiles — rectangles are the system
 - Reference `--cds-*` token names when implementing (e.g., `--cds-button-primary`, `--cds-text-primary`)

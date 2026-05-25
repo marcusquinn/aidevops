@@ -35,7 +35,13 @@ Full index: `subagent-index.toon`.
 | Research | research, compare, market, competitor, technical analysis | Tech research, competitive analysis, market research |
 | Health | health, wellness, nutrition, fitness, medical lifestyle | Health and wellness content |
 
-For narrower domains such as WordPress, Shopify, Cloudflare, Proxmox, Remotion, CalDAV, or browser/mobile work, read `reference/domain-index.md` and the relevant skill/subagent entry before defaulting to Build+. For repeatable browser operations or web data mining, route through `/auto-browse` and `.agents/workflows/auto-browse.md` so profile state, safety gates, and private/shareable artifact boundaries are handled consistently.
+For narrower domains such as Reports, WordPress, Shopify, Cloudflare, Proxmox, Remotion, CalDAV, or browser/mobile work, read `reference/domain-index.md` and the relevant skill/subagent entry before defaulting to Build+. For repeatable browser operations or web data mining, route through `/auto-browse` and `.agents/workflows/auto-browse.md` so profile state, safety gates, and private/shareable artifact boundaries are handled consistently.
+
+## Report routing
+
+Use `agent:Reports` and `reports/general.md` when the task asks for a report, client audit, evidence-led PDF, scorecard, board pack, report preview, source ledger, or recurring report agent. Keep domain collection with the relevant primary/domain agent, then hand the evidence bundle to Reports for structure, citations, recommendations, and export contracts.
+
+For new report agents, read `reports/routine-handoff.md` and `tools/build-agent/build-agent.md`: deterministic collection goes in `run:` steps; `agent:Reports` handles interpretation and narrative; `/report-render` or `scripts/commands/report-render.md` creates derived HTML/PDF previews from canonical `report.md` or `report.json`.
 
 ## Dispatch example
 

@@ -83,7 +83,7 @@ def handle_component(
 def open_component(name: str, raw_attrs: str, body: list[str]) -> str:
     if name == "accordion":
         title = component_title(raw_attrs, "Details")
-        body.append(f'<details class="accordion"><summary>{inline_markup(title)}</summary>')
+        body.append(f'<details class="accordion" open><summary>{inline_markup(title)}</summary>')
         return "</details>"
     title = component_title(raw_attrs, "")
     body.append(f'<section class="{name}"{component_attrs(raw_attrs)}>')

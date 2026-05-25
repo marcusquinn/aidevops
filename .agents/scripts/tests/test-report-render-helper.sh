@@ -57,9 +57,21 @@ assert_contains() {
 	return 0
 }
 
+assert_not_contains() {
+	local _file="$1"
+	local _needle="$2"
+	local _label="$3"
+	if grep -qF -- "$_needle" "$_file"; then
+		print_result "$_label" 1 "Found '${_needle}' in ${_file}"
+		return 0
+	fi
+	print_result "$_label" 0
+	return 0
+}
+
 test_render_markdown_fixture() {
 	local _out="${TEST_ROOT}/report.html"
-	"$HELPER_SH" render "${FIXTURE_DIR}/llm-visibility-report-sample.md" --output "$_out"
+	"$HELPER_SH" render "${FIXTURE_DIR}/llm-visibility-report-sample.md" --template editorial-evidence --output "$_out"
 	assert_contains "$_out" "sticky-toc" "Markdown render includes sticky TOC"
 	assert_contains "$_out" "list-style: none" "Markdown render removes browser TOC list numbering"
 	assert_contains "$_out" "@media print" "Markdown render includes print CSS"
@@ -95,15 +107,20 @@ test_render_markdown_fixture() {
 	assert_contains "$_out" "class=\"code-copy\"" "Markdown render includes copy buttons for code"
 	assert_contains "$_out" "code-copy.is-copied" "Markdown render includes copy feedback state"
 	assert_contains "$_out" "class=\"accordion action-prompt\"" "Markdown render includes action prompt accordions"
-	assert_contains "$_out" "</section><details class=\"accordion action-prompt\"" "Markdown render places action prompts after action panels"
+	assert_contains "$_out" "</section><details class=\"accordion action-prompt\" open" "Markdown render places open action prompts after action panels"
+	assert_contains "$_out" "<details class=\"accordion\" open" "Markdown render opens accordions for PDF output"
 	assert_contains "$_out" "class=\"toc-pdf-link\"" "Markdown render includes TOC PDF link"
 	assert_contains "$_out" ">A4</a>" "Markdown render labels portrait PDF as A4"
-	assert_contains "$_out" "href=\"report.pdf\"" "Markdown render links TOC PDF button to matching PDF"
-	assert_contains "$_out" "href=\"report-16-9.pdf\"" "Markdown render links TOC landscape PDF button"
+	assert_contains "$_out" "href=\"report-a4.pdf\"" "Markdown render links TOC A4 PDF button"
+	assert_contains "$_out" "href=\"report-usletter.pdf\"" "Markdown render links TOC US Letter PDF button"
+	assert_contains "$_out" "href=\"report-slides.pdf\"" "Markdown render links TOC slides PDF button"
+	assert_contains "$_out" ">US Letter</a>" "Markdown render labels US Letter PDF"
+	assert_contains "$_out" ">Slides</a>" "Markdown render labels slides PDF"
 	assert_contains "$_out" "display: inline-flex" "Markdown render vertically centers TOC PDF button"
 	assert_contains "$_out" ".toc-pdf-actions, .toc-pdf-link { display: none !important; }" "Markdown print hides TOC PDF buttons"
 	assert_contains "$_out" ".source-card-link[href]::after" "Markdown print suppresses source link URLs"
 	assert_contains "$_out" "text-align: left" "Markdown render left-aligns version summary"
+	assert_contains "$_out" "text-wrap: pretty" "Markdown render includes smart text wrapping"
 	assert_contains "$_out" "style=\"--bar-value: 64%\"" "Markdown render splits bar chart rows"
 	assert_contains "${TEST_ROOT}/llm-visibility-report-sample-action-prompts.md" "Guide me through the tools" "Render writes companion action prompts file"
 	assert_contains "$_out" "heading-number\">1.</span> Method" "Markdown render numbers body H2 headings"
@@ -146,9 +163,28 @@ PYHTML
 	return 0
 }
 
+test_render_markdown_layout_fixture() {
+	local _out="${TEST_ROOT}/report-layout.html"
+	"$HELPER_SH" render "${FIXTURE_DIR}/llm-visibility-report-sample.md" --template editorial-evidence --output "$_out"
+	assert_contains "$_out" "margin-block-start: calc(2rem + var(--report-space-3))" "Markdown render offsets TOC below PDF buttons"
+	assert_contains "$_out" "z-index: 2" "Markdown render keeps PDF buttons above TOC panel"
+	assert_not_contains "$_out" "style=\"margin-left:" "Markdown TOC uses flat left alignment"
+	assert_contains "$_out" "class=\"toc-entry toc-chapter\"" "Markdown TOC marks chapters for separators"
+	assert_contains "$_out" "class=\"toc-entry toc-subsection\"" "Markdown TOC marks decimal entries for indent"
+	assert_contains "$_out" "class=\"report-title-page\"" "Markdown render wraps PDF title page"
+	assert_contains "$_out" "class=\"report-content report-main report-title-front\"" "Markdown render separates title page from front matter"
+	assert_contains "$_out" "class=\"report-content report-main report-rest\"" "Markdown render splits report body after intro"
+	assert_contains "$_out" ".report-front {" "Markdown render includes report front grid placement"
+	assert_contains "$_out" "grid-row: 2" "Markdown render keeps title visible before front matter in HTML"
+	assert_contains "$_out" ".report-rest {" "Markdown render includes report rest grid placement"
+	assert_contains "$_out" "grid-row: 3" "Markdown render stacks body content after title and front matter in HTML"
+	assert_contains "$_out" "grid-row: 1 / span 3" "Markdown render keeps sticky TOC from stretching title row"
+	return 0
+}
+
 test_render_json_fixture() {
 	local _out="${TEST_ROOT}/sample-json.html"
-	"$HELPER_SH" render "${FIXTURE_DIR}/llm-visibility-report-sample.json" --output "$_out"
+	"$HELPER_SH" render "${FIXTURE_DIR}/llm-visibility-report-sample.json" --template editorial-evidence --output "$_out"
 	assert_contains "$_out" "sticky-toc" "JSON render includes sticky TOC"
 	assert_contains "$_out" "@media print" "JSON render includes print CSS"
 	assert_contains "$_out" "evidence-label" "JSON render includes plain evidence label"
@@ -208,7 +244,7 @@ test_markdown_table_uses_header_cells() {
 |---|---|
 | AIO | {{evidence:verified}} |
 MARKDOWN
-	"$HELPER_SH" render "$_input" --output "$_out"
+	"$HELPER_SH" render "$_input" --template editorial-evidence --output "$_out"
 	assert_contains "$_out" "<thead>" "Markdown table renders thead"
 	assert_contains "$_out" "<th>Component</th>" "Markdown table renders header cells"
 	assert_contains "$_out" "<td>AIO</td>" "Markdown table renders body cells"
@@ -224,8 +260,63 @@ test_multiline_markdown_paragraph() {
 First line continues
 onto the next line.
 MARKDOWN
-	"$HELPER_SH" render "$_input" --output "$_out"
+	"$HELPER_SH" render "$_input" --template editorial-evidence --output "$_out"
 	assert_contains "$_out" "<p>First line continues onto the next line.</p>" "Markdown joins paragraph lines"
+	return 0
+}
+
+test_print_keep_with_heading_groups() {
+	local _input="${TEST_ROOT}/keep-with-heading.md"
+	local _out="${TEST_ROOT}/keep-with-heading.html"
+	cat >"$_input" <<'MARKDOWN'
+# Keep Together
+
+## Sources
+
+::: sources-layout
+::: source-list
+### Source A
+
+Evidence summary.
+:::
+:::
+
+### Render command
+
+```text
+render report.md --pdf-profile a4
+```
+MARKDOWN
+	"$HELPER_SH" render "$_input" --template editorial-evidence --output "$_out"
+	assert_contains "$_out" "class=\"report-keep-with-heading\"" "Markdown wraps headings with keep-together panels"
+	assert_contains "$_out" "report-chapter-page" "Markdown marks wrapped chapters for page breaks"
+	assert_contains "$_out" ".report-keep-with-heading > .code-block-wrap" "Print CSS keeps code titles with code panels"
+	assert_contains "$_out" "page-break-before: always" "Print CSS starts chapters on new pages"
+	assert_contains "$_out" "width: calc(100% - 12pt)" "Print CSS insets bordered panels to avoid clipping"
+	assert_contains "$_out" "margin: 6mm 6pt 8mm" "Print CSS gives bordered panels right-edge clearance"
+	assert_contains "$_out" "@page { margin: 12mm 0; background: #ffffff; }" "Print CSS restores top and bottom page margins"
+	assert_contains "$_out" "@page report-letter { size: Letter portrait; margin: .45in 0;" "Print CSS restores US Letter top and bottom page margins"
+	assert_contains "$_out" "html { background: #ffffff !important; }" "Print CSS keeps final-page background neutral"
+	assert_contains "$_out" "body.report-body { box-sizing: border-box; padding: 0 12mm;" "Print CSS keeps A4 horizontal inset without left page hairline"
+	assert_contains "$_out" "body.report-pdf-profile-letter { page: report-letter; padding: 0 .45in; }" "Print CSS keeps US Letter horizontal inset without left page hairline"
+	assert_contains "$_out" ".report-title-page" "Print CSS controls the title page"
+	assert_contains "$_out" "page-break-after: auto" "Print CSS avoids duplicate title-page blank pages"
+	assert_contains "$_out" "body.report-body::before" "Print CSS controls full-page background pseudo-element"
+	assert_contains "$_out" "body.report-body::before { content: none; display: none; }" "Print CSS avoids fixed pseudo-element margin seams"
+	assert_contains "$_out" "border: 0 !important" "Print CSS removes outer content borders"
+	assert_contains "$_out" ".report-front { display: block; min-height: calc(297mm - 24mm); break-after: auto; page-break-after: auto; }" "Print CSS starts Contents on a new A4 page through normal flow"
+	assert_contains "$_out" "body.report-pdf-profile-letter .report-front { min-height: 10.1in; }" "Print CSS starts Contents on a new US Letter page through normal flow"
+	assert_contains "$_out" ".sticky-toc-header { break-before: auto; page-break-before: auto; }" "Print CSS lets TOC flow without blank spacer pages"
+	assert_contains "$_out" ".sticky-toc { break-before: auto; page-break-before: auto; }" "Print CSS avoids empty TOC spacer pages"
+	assert_contains "$_out" "border-top: 0 !important" "Print CSS removes chapter heading rules"
+	assert_contains "$_out" "body.report-body:not(.report-theme-dark)" "Print CSS limits colour-matched paper to dark themes"
+	assert_contains "$_out" "box-decoration-break: clone" "Print CSS clones box decoration across page fragments"
+	assert_contains "$_out" "margin-block: 6mm 8mm" "Print CSS gives split blocks top clearance"
+	assert_contains "$_out" "border-radius: var(--report-radius-md) !important" "Print CSS preserves rounded code and table boxes"
+	assert_contains "$_out" "border-top-left-radius: calc(var(--report-radius-md) - 1px)" "Print CSS clips rounded top corners"
+	assert_contains "$_out" "clip-path: inset(0 round var(--report-radius-md))" "Print CSS clips rounded table wrappers"
+	assert_contains "$_out" ".source-list .source-title:not(:first-child)" "Print CSS starts later source groups on new pages"
+	assert_contains "$_out" "break-before: page" "Print CSS gives the TOC and title sections page breaks"
 	return 0
 }
 
@@ -244,7 +335,7 @@ test_sample_and_css_commands() {
 	local _instructional="${TEST_ROOT}/instructional.md"
 	"$HELPER_SH" sample markdown >"$_sample"
 	"$HELPER_SH" sample instructional-seo-geo >"$_instructional"
-	"$HELPER_SH" print-css >"$_css"
+	"$HELPER_SH" print-css --template editorial-evidence >"$_css"
 	assert_contains "$_sample" "{{evidence:verified}}" "Sample command emits Markdown report"
 	assert_contains "$_instructional" "LLM Visibility Instructional Toolbox" "Sample command emits instructional SEO/GEO report"
 	assert_contains "$_css" "@media print" "print-css emits print stylesheet"
@@ -254,6 +345,7 @@ test_sample_and_css_commands() {
 test_render_template_and_profiles() {
 	local _out="${TEST_ROOT}/editorial.html"
 	local _dark="${TEST_ROOT}/lottiefiles-dark.html"
+	local _basic="${TEST_ROOT}/basic.html"
 	local _slides="${TEST_ROOT}/slides.css"
 	"$HELPER_SH" render "${FIXTURE_DIR}/llm-visibility-report-sample.md" \
 		--template axel \
@@ -264,6 +356,10 @@ test_render_template_and_profiles() {
 		--theme dark \
 		--pdf-profile a4 \
 		--output "$_dark"
+	"$HELPER_SH" render "${FIXTURE_DIR}/llm-visibility-report-sample.md" \
+		--template basic \
+		--pdf-profile a4 \
+		--output "$_basic"
 	"$HELPER_SH" print-css --template axel --pdf-profile slides-16-9-2 >"$_slides"
 	assert_contains "$_out" "report-template-axel" "Render supports named style template"
 	assert_contains "$_out" "Newsreader" "Render includes style-specific fonts"
@@ -271,9 +367,16 @@ test_render_template_and_profiles() {
 	assert_contains "$_dark" "report-theme-dark" "Render supports forced dark theme"
 	assert_contains "$_dark" "--report-info-bg: #161A1C" "Dark theme inverts info panels"
 	assert_contains "$_dark" "--report-good-bg: #161A1C" "Dark theme inverts good panels"
+	assert_not_contains "$_basic" "<style>" "Basic template emits no CSS style tag"
 	assert_contains "$_slides" "size: 16in 9in" "print-css supports 16:9 landscape profile"
+	assert_contains "$_slides" "@page { size: 16in 9in; margin: 0;" "print-css removes 16:9 page margin frame"
+	assert_contains "$_slides" "html, body.report-body { box-sizing: border-box; padding: 0; }" "print-css avoids one-time-only body padding for 16:9"
+	assert_contains "$_slides" ".report-shell { -webkit-box-decoration-break: clone; box-decoration-break: clone; box-sizing: border-box; padding: .45in; }" "print-css repeats shell safe area on 16:9 fragments"
 	assert_contains "$_slides" "column-count: auto" "print-css uses single-column presentation profile"
-	assert_contains "$_slides" "font-size: 14pt" "print-css enlarges presentation profile"
+	assert_contains "$_slides" "font-size: 32pt" "print-css enlarges presentation profile text"
+	assert_contains "$_slides" "font-size: 26pt" "print-css uses smaller slide table and multi-column text"
+	assert_contains "$_slides" "td .evidence-badge" "print-css stacks slide table evidence badges"
+	assert_contains "$_slides" "break-before: avoid-page !important" "print-css keeps code panels with their headings"
 	return 0
 }
 
@@ -294,12 +397,14 @@ main() {
 	setup_test_env
 	trap teardown_test_env EXIT
 	test_render_markdown_fixture
+	test_render_markdown_layout_fixture
 	test_render_json_fixture
 	test_validate_rejects_unknown_badge
 	test_python_helper_requires_mode
 	test_python_helper_reads_stdin_by_default
 	test_markdown_table_uses_header_cells
 	test_multiline_markdown_paragraph
+	test_print_keep_with_heading_groups
 	test_render_json_array_is_resilient
 	test_sample_and_css_commands
 	test_render_template_and_profiles

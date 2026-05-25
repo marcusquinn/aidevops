@@ -1,6 +1,6 @@
 ---
-description: Render report-ready Markdown or JSON to HTML for browser PDF export
-agent: Document
+description: Render report-ready Markdown or JSON to HTML and PDF-ready previews
+agent: Reports
 mode: subagent
 ---
 
@@ -16,8 +16,8 @@ Input: $ARGUMENTS
 1. Confirm the input is a Markdown or JSON report file.
 2. Run `~/.aidevops/agents/scripts/report-render-helper.sh validate <input.md|input.json>`.
 3. Render HTML with `~/.aidevops/agents/scripts/report-render-helper.sh render <input.md|input.json> --output report.html`.
-4. Open the HTML in a browser, review the sticky table of contents, source cards, and evidence badges.
-5. Use the browser print dialog to export or print the PDF-ready output.
+4. Open the HTML in a browser, review the sticky table of contents, source cards, evidence badges, and PDF links.
+5. Export A4, US Letter, or slides PDFs from the generated HTML. Keep Markdown/JSON canonical and regenerate exports rather than editing HTML/PDF by hand.
 
 ## Usage
 
@@ -59,6 +59,10 @@ PDF profiles:
 
 Keep one `report.html` preview per report. Do not create separate A4/Letter HTML
 variants; use the selected PDF profile only when printing/exporting the PDF.
+
+Versioned examples live under `_reports/examples/`. Open `_reports/examples/index.html`
+locally to preview rendered report sets, style previews, and A4/US Letter/slides
+PDF exports.
 
 Instructional sample:
 

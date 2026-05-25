@@ -10,13 +10,16 @@ Markdown-first report contract from `.agents/reports/outputs.md`:
 - `report.html` and `style-previews/*.html` are derived examples.
 - PDFs are generated on demand with `--pdf-profile`; do not hand-edit exports.
 
+Open `index.html` in this directory to browse example sets, rendered themes, and
+their A4, US Letter, and slides PDF exports from one preview UI.
+
 ## Examples
 
 | Directory | Purpose |
 |-----------|---------|
 | `llm-visibility-toolbox/` | Generic LLM visibility playbook with Toolbox-style cards and evidence patterns. |
 | `client-ai-search-audit/` | Placeholder-safe client-custom report structure with per-engine findings and source ledger. |
-| `style-showcase/` | Compact component stress-test for comparing DESIGN.md-backed visual styles. |
+| `style-previews/` | Compact component stress-test for comparing DESIGN.md-backed visual styles. |
 
 ## Regenerate
 
@@ -32,7 +35,7 @@ Markdown-first report contract from `.agents/reports/outputs.md`:
   --output _reports/examples/client-ai-search-audit/report.html
 ```
 
-For style comparisons, render the same `style-showcase/report.md` with any name
+For style comparisons, render the same `style-previews/report.md` with any name
 from `.agents/scripts/report-render-helper.sh list-templates`.
 
 Dark-capable styles also include explicit light and dark preview files. List
