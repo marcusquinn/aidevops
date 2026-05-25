@@ -36,7 +36,7 @@ def flush_paragraph(body: list[str], states: dict[str, object]) -> None:
 def handle_table(line: str, body: list[str], states: dict[str, object]) -> bool:
     if not line.startswith("|") or not line.endswith("|"):
         return False
-    cells = [inline_markup(cell.strip()) for cell in line.strip("|").split("|")]
+    cells = [inline_markup(cell.strip()) for cell in split_markdown_table_row(line)]
     raw_cells = [html.unescape(cell) for cell in cells]
     if all(re.match(r"^:?-{3,}:?$", cell) for cell in raw_cells):
         return True
@@ -48,6 +48,35 @@ def handle_table(line: str, body: list[str], states: dict[str, object]) -> bool:
         return True
     body.append("<tr>{}</tr>".format("".join(f"<td>{cell}</td>" for cell in cells)))
     return True
+
+
+def split_markdown_table_row(line: str) -> list[str]:
+    row = line.strip()[1:-1]
+    cells: list[str] = []
+    current: list[str] = []
+    index = 0
+    while index < len(row):
+        char = row[index]
+        if char == "|" and _has_odd_trailing_backslashes(current):
+            current.pop()
+            current.append("|")
+        elif char == "|":
+            cells.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+        index += 1
+    cells.append("".join(current))
+    return cells
+
+
+def _has_odd_trailing_backslashes(chars: list[str]) -> bool:
+    count = 0
+    for char in reversed(chars):
+        if char != "\\":
+            break
+        count += 1
+    return count % 2 == 1
 
 
 def open_list(body: list[str], states: dict[str, object], tag: str, css_class: str = "") -> None:

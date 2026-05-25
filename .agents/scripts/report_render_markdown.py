@@ -11,6 +11,7 @@ from report_render_badges import badge_html
 from report_render_blocks import close_blocks, flush_paragraph, handle_blockquote, handle_list, handle_table
 from report_render_code import close_code, code_block_html, handle_code_fence
 from report_render_components import close_component, handle_component
+from report_render_diagrams import render_mermaid_svg
 from report_render_enhance import action_prompt_from_text, action_section_pattern, action_summary_from_text, inject_action_prompts, inject_source_links, strip_html
 from report_render_headings import handle_heading
 from report_render_markup import inline_markup
@@ -63,7 +64,6 @@ def render_action_prompt_markdown(text: str) -> str:
             ]
         )
     return "\n".join(lines)
-
 
 def close_all(body: list[str], states: dict[str, object]) -> None:
     close_code(body, states)

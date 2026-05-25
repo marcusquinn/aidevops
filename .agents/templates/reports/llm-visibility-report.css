@@ -121,21 +121,18 @@ body.report-body {
 
 .report-main {
   grid-column: 1;
-  grid-row: auto;
   min-width: 0;
   counter-reset: report-chapter;
 }
 
-.report-front {
-  grid-row: 2;
-}
-
-.report-title-front {
+.report-main-flow {
+  grid-column: 1;
   grid-row: 1;
+  min-width: 0;
 }
 
 .report-rest {
-  grid-row: 3;
+  grid-row: 2;
 }
 
 .report-cover,
@@ -247,7 +244,7 @@ body.report-body {
 
 .sticky-toc {
   grid-column: 2;
-  grid-row: 1 / span 3;
+  grid-row: 1 / span 2;
   position: sticky;
   top: calc(var(--report-space-4) + 5rem);
   align-self: start;
@@ -1491,6 +1488,7 @@ a {
   }
 
   .report-main,
+  .report-main-flow,
   .sticky-toc,
   .toc-pdf-actions {
     grid-column: auto;

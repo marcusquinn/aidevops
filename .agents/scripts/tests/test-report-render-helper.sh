@@ -172,13 +172,14 @@ test_render_markdown_layout_fixture() {
 	assert_contains "$_out" "class=\"toc-entry toc-chapter\"" "Markdown TOC marks chapters for separators"
 	assert_contains "$_out" "class=\"toc-entry toc-subsection\"" "Markdown TOC marks decimal entries for indent"
 	assert_contains "$_out" "class=\"report-title-page\"" "Markdown render wraps PDF title page"
+	assert_contains "$_out" "class=\"report-main-flow\"" "Markdown render groups title and front matter for HTML flow"
 	assert_contains "$_out" "class=\"report-content report-main report-title-front\"" "Markdown render separates title page from front matter"
 	assert_contains "$_out" "class=\"report-content report-main report-rest\"" "Markdown render splits report body after intro"
-	assert_contains "$_out" ".report-front {" "Markdown render includes report front grid placement"
-	assert_contains "$_out" "grid-row: 2" "Markdown render keeps title visible before front matter in HTML"
+	assert_contains "$_out" ".report-main-flow {" "Markdown render includes compact title/front HTML flow"
+	assert_contains "$_out" "grid-row: 1" "Markdown render keeps title and front matter in a compact HTML row"
 	assert_contains "$_out" ".report-rest {" "Markdown render includes report rest grid placement"
-	assert_contains "$_out" "grid-row: 3" "Markdown render stacks body content after title and front matter in HTML"
-	assert_contains "$_out" "grid-row: 1 / span 3" "Markdown render keeps sticky TOC from stretching title row"
+	assert_contains "$_out" "grid-row: 2" "Markdown render stacks body content after title and front matter in HTML"
+	assert_contains "$_out" "grid-row: 1 / span 2" "Markdown render keeps sticky TOC beside the grouped report flow"
 	return 0
 }
 
@@ -234,6 +235,49 @@ test_python_helper_reads_stdin_by_default() {
 	return 0
 }
 
+test_style_token_parser_handles_long_headers_and_tabs() {
+	local _result=0
+	python3 - "$SCRIPT_DIR" "$TEST_ROOT" <<'PY' || _result=$?
+from pathlib import Path
+import importlib.util
+import sys
+
+script_dir = Path(sys.argv[1])
+test_root = Path(sys.argv[2])
+module_path = script_dir.parent / "report_render_styles.py"
+spec = importlib.util.spec_from_file_location("report_render_styles", module_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+design = test_root / "DESIGN.md"
+design.write_text(
+    "# header\n" * 10
+    + "---\n"
+    + "colors:\n"
+    + "\tbackground: '#123456'\n"
+    + "rounded:\n"
+    + "\tlg: 20px\n"
+    + "typography:\n"
+    + "\theadline-display:\n"
+    + "\t\tfontSize: 72px\n"
+    + "---\n",
+    encoding="utf-8",
+)
+front_matter = module._front_matter(design)
+tokens = module._parse_tokens(front_matter)
+assert tokens["background"] == "#123456"
+assert tokens["rounded.lg"] == "20px"
+assert tokens["headline-display.fontSize"] == "72px"
+PY
+	if [[ "$_result" -ne 0 ]]; then
+		print_result "Style token parser handles long headers and tabs" 1 "Expected long preamble and tab-indented tokens to parse"
+		return 0
+	fi
+	print_result "Style token parser handles long headers and tabs" 0
+	return 0
+}
+
 test_markdown_table_uses_header_cells() {
 	local _input="${TEST_ROOT}/table.md"
 	local _out="${TEST_ROOT}/table.html"
@@ -248,6 +292,50 @@ MARKDOWN
 	assert_contains "$_out" "<thead>" "Markdown table renders thead"
 	assert_contains "$_out" "<th>Component</th>" "Markdown table renders header cells"
 	assert_contains "$_out" "<td>AIO</td>" "Markdown table renders body cells"
+	return 0
+}
+
+test_markdown_table_preserves_escaped_pipes() {
+	local _input="${TEST_ROOT}/table-escaped-pipe.md"
+	local _out="${TEST_ROOT}/table-escaped-pipe.html"
+	cat >"$_input" <<'MARKDOWN'
+# Escaped Pipe Table
+
+| Component | Evidence |
+|---|---|
+| AIO \| CLI | Keeps one cell |
+| Literal \\| Separator | Next cell |
+MARKDOWN
+	"$HELPER_SH" render "$_input" --output "$_out"
+	assert_contains "$_out" "<td>AIO | CLI</td>" "Markdown table preserves escaped pipes inside cells"
+	assert_contains "$_out" "<td>Separator</td>" "Markdown table keeps even-backslash pipe as separator"
+	if grep -qF "<td>CLI</td>" "$_out"; then
+		print_result "Markdown table does not split escaped pipe cells" 1 "Escaped pipe created an extra cell"
+	else
+		print_result "Markdown table does not split escaped pipe cells" 0
+	fi
+	return 0
+}
+
+test_mermaid_renderer_uses_node_ids() {
+	if python3 - "${SCRIPT_DIR}/.." <<'PYHTML'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
+from report_render_markdown import render_mermaid_svg
+
+html = render_mermaid_svg("node-1 [Repeat] --> node-2[Repeat]\nnode-2[Repeat] --> node-3[Done]")
+if html.count('class="diagram-label">Repeat</text>') != 2:
+    raise SystemExit(1)
+if "H 104" in html:
+    raise SystemExit(1)
+PYHTML
+	then
+		print_result "Mermaid renderer preserves distinct IDs with duplicate labels" 0
+	else
+		print_result "Mermaid renderer preserves distinct IDs with duplicate labels" 1 "Expected duplicate labels to render as separate nodes"
+	fi
 	return 0
 }
 
@@ -402,7 +490,10 @@ main() {
 	test_validate_rejects_unknown_badge
 	test_python_helper_requires_mode
 	test_python_helper_reads_stdin_by_default
+	test_style_token_parser_handles_long_headers_and_tabs
 	test_markdown_table_uses_header_cells
+	test_markdown_table_preserves_escaped_pipes
+	test_mermaid_renderer_uses_node_ids
 	test_multiline_markdown_paragraph
 	test_print_keep_with_heading_groups
 	test_render_json_array_is_resilient

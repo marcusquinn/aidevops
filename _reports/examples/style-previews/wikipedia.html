@@ -127,21 +127,18 @@ body.report-body {
 
 .report-main {
   grid-column: 1;
-  grid-row: auto;
   min-width: 0;
   counter-reset: report-chapter;
 }
 
-.report-front {
-  grid-row: 2;
-}
-
-.report-title-front {
+.report-main-flow {
+  grid-column: 1;
   grid-row: 1;
+  min-width: 0;
 }
 
 .report-rest {
-  grid-row: 3;
+  grid-row: 2;
 }
 
 .report-cover,
@@ -253,7 +250,7 @@ body.report-body {
 
 .sticky-toc {
   grid-column: 2;
-  grid-row: 1 / span 3;
+  grid-row: 1 / span 2;
   position: sticky;
   top: calc(var(--report-space-4) + 5rem);
   align-self: start;
@@ -1497,6 +1494,7 @@ a {
   }
 
   .report-main,
+  .report-main-flow,
   .sticky-toc,
   .toc-pdf-actions {
     grid-column: auto;
@@ -2451,6 +2449,7 @@ body.report-pdf-profile-letter .report-front { min-height: 10.1in; }
 </head>
 <body class="report-body report-theme-auto report-pdf-profile-a4 report-template-wikipedia">
 <div class="report-shell">
+<div class="report-main-flow">
 
 <main class="report-content report-main report-title-front">
 <section class="report-title-page"><h1 id="report-style-showcase">Report Style Showcase</h1>
@@ -2499,6 +2498,7 @@ body.report-pdf-profile-letter .report-front { min-height: 10.1in; }
 
 Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details>
 </main>
+</div>
 <div class="toc-pdf-actions" aria-label="PDF downloads"><a class="toc-pdf-link" href="wikipedia-a4.pdf" aria-label="Open A4 PDF version" title="Open A4 PDF version">A4</a><a class="toc-pdf-link" href="wikipedia-usletter.pdf" aria-label="Open US Letter PDF version" title="Open US Letter PDF version">US Letter</a><a class="toc-pdf-link" href="wikipedia-slides.pdf" aria-label="Open slides PDF version" title="Open slides PDF version">Slides</a></div>
 <nav class="sticky-toc" aria-label="Report table of contents">
 <div class="sticky-toc-header"><h2>Contents</h2></div>
@@ -2655,7 +2655,7 @@ LinkedIn | Google Scholar | Personal site</code></pre></div>
   SourceLedger --&gt; Finding
   Finding --&gt; Recommendation
   Recommendation --&gt; Verification</code></pre></div>
-<figure class="mermaid-rendered" aria-label="Rendered Mermaid diagram"><svg viewBox="0 0 760 130" role="img" xmlns="http://www.w3.org/2000/svg"><defs><marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" class="diagram-arrow-head" /></marker></defs><line x1="189" y1="64" x2="193" y2="64" class="diagram-arrow" /><line x1="374" y1="64" x2="378" y2="64" class="diagram-arrow" /><line x1="559" y1="64" x2="563" y2="64" class="diagram-arrow" /><rect x="24" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="104" y="70" text-anchor="middle" class="diagram-label">SourceLedger</text><rect x="209" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="289" y="70" text-anchor="middle" class="diagram-label">Finding</text><rect x="394" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="474" y="70" text-anchor="middle" class="diagram-label">Recommendation</text><rect x="579" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="659" y="70" text-anchor="middle" class="diagram-label">Verification</text></svg><figcaption>Rendered Mermaid example, embedded as self-contained SVG.</figcaption></figure>
+<figure class="mermaid-rendered" aria-label="Rendered Mermaid diagram"><svg viewBox="0 0 760 130" role="img" xmlns="http://www.w3.org/2000/svg"><defs><marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" class="diagram-arrow-head" /></marker></defs><line x1="189" y1="64" x2="199" y2="64" class="diagram-arrow" /><line x1="374" y1="64" x2="384" y2="64" class="diagram-arrow" /><line x1="559" y1="64" x2="569" y2="64" class="diagram-arrow" /><rect x="24" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="104" y="70" text-anchor="middle" class="diagram-label">SourceLedger</text><rect x="209" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="289" y="70" text-anchor="middle" class="diagram-label">Finding</text><rect x="394" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="474" y="70" text-anchor="middle" class="diagram-label">Recommendation</text><rect x="579" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="659" y="70" text-anchor="middle" class="diagram-label">Verification</text></svg><figcaption>Rendered Mermaid example, embedded as self-contained SVG.</figcaption></figure>
 </section>
 <section class="example-card">
 <header>LaTeX fallback</header>

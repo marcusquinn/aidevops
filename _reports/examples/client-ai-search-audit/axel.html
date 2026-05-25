@@ -127,21 +127,18 @@ body.report-body {
 
 .report-main {
   grid-column: 1;
-  grid-row: auto;
   min-width: 0;
   counter-reset: report-chapter;
 }
 
-.report-front {
-  grid-row: 2;
-}
-
-.report-title-front {
+.report-main-flow {
+  grid-column: 1;
   grid-row: 1;
+  min-width: 0;
 }
 
 .report-rest {
-  grid-row: 3;
+  grid-row: 2;
 }
 
 .report-cover,
@@ -253,7 +250,7 @@ body.report-body {
 
 .sticky-toc {
   grid-column: 2;
-  grid-row: 1 / span 3;
+  grid-row: 1 / span 2;
   position: sticky;
   top: calc(var(--report-space-4) + 5rem);
   align-self: start;
@@ -1497,6 +1494,7 @@ a {
   }
 
   .report-main,
+  .report-main-flow,
   .sticky-toc,
   .toc-pdf-actions {
     grid-column: auto;
@@ -2451,6 +2449,7 @@ body.report-pdf-profile-letter .report-front { min-height: 10.1in; }
 </head>
 <body class="report-body report-theme-auto report-pdf-profile-a4 report-template-axel">
 <div class="report-shell">
+<div class="report-main-flow">
 
 <main class="report-content report-main report-title-front">
 <section class="report-title-page"><h1 id="client-ai-search-audit">Client AI Search Audit</h1>
@@ -2488,6 +2487,7 @@ body.report-pdf-profile-letter .report-front { min-height: 10.1in; }
 Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details>
 <section class="report-keep-with-heading report-chapter-page">
 </main>
+</div>
 <div class="toc-pdf-actions" aria-label="PDF downloads"><a class="toc-pdf-link" href="axel-a4.pdf" aria-label="Open A4 PDF version" title="Open A4 PDF version">A4</a><a class="toc-pdf-link" href="axel-usletter.pdf" aria-label="Open US Letter PDF version" title="Open US Letter PDF version">US Letter</a><a class="toc-pdf-link" href="axel-slides.pdf" aria-label="Open slides PDF version" title="Open slides PDF version">Slides</a></div>
 <nav class="sticky-toc" aria-label="Report table of contents">
 <div class="sticky-toc-header"><h2>Contents</h2></div>

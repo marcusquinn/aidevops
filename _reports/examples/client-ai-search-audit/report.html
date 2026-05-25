@@ -127,21 +127,18 @@ body.report-body {
 
 .report-main {
   grid-column: 1;
-  grid-row: auto;
   min-width: 0;
   counter-reset: report-chapter;
 }
 
-.report-front {
-  grid-row: 2;
-}
-
-.report-title-front {
+.report-main-flow {
+  grid-column: 1;
   grid-row: 1;
+  min-width: 0;
 }
 
 .report-rest {
-  grid-row: 3;
+  grid-row: 2;
 }
 
 .report-cover,
@@ -253,7 +250,7 @@ body.report-body {
 
 .sticky-toc {
   grid-column: 2;
-  grid-row: 1 / span 3;
+  grid-row: 1 / span 2;
   position: sticky;
   top: calc(var(--report-space-4) + 5rem);
   align-self: start;
@@ -1497,6 +1494,7 @@ a {
   }
 
   .report-main,
+  .report-main-flow,
   .sticky-toc,
   .toc-pdf-actions {
     grid-column: auto;
@@ -2367,6 +2365,47 @@ a {
   }
 }
 
+/* DESIGN.md brand token overrides: ibm */
+:root {
+  --report-font-heading: "IBM Plex Sans", Inter, system-ui, sans-serif;
+  --report-font-body: "IBM Plex Sans", Inter, system-ui, sans-serif;
+  --report-font-code: "IBM Plex Mono", monospace;
+  --report-heading-size: 64px;
+  --report-heading-weight: 400;
+  --report-heading-line: 1.05;
+  --report-heading-tracking: -0.03em;
+  --report-body-size: 16px;
+  --report-body-line: 1.62;
+  --report-paper: #F4F4F4;
+  --report-paper-raised: #D0E2FF;
+  --report-panel: #FFFFFF;
+  --report-surface: #FFFFFF;
+  --report-ink: #161616;
+  --report-ink-muted: #525252;
+  --report-ink-soft: #525252;
+  --report-rule: #B2B2B2;
+  --report-rule-strong: #0F62FE;
+  --report-blue: #0F62FE;
+  --report-radius-lg: 0px;
+  --report-radius-xl: calc(0px + 0.5rem);
+  --report-badge-radius: calc(0px * 0.45);
+  --report-code-bg: #FFFFFF;
+  --report-code-ink: #161616;
+  --report-code-accent: #0F62FE;
+  --report-info-bg: #FFFFFF;
+  --report-impact-bg: #FFFFFF;
+  --report-evidence-bg: #FFFFFF;
+  --report-myth-bg: #FFFFFF;
+  --report-good-bg: #FFFFFF;
+  --report-bad-bg: #FFFFFF;
+}
+body.report-body { font-family: var(--report-font-body); font-size: clamp(1rem, 0.94rem + 0.18vw, 1.0625rem); line-height: 1.62; }
+h1, h2, h3 { font-family: var(--report-font-heading); font-weight: var(--report-heading-weight); letter-spacing: var(--report-heading-tracking); }
+h1 { font-size: clamp(2.25rem, 5vw, 3.5rem); line-height: 1.12; }
+h2 { font-size: clamp(1.6rem, 3vw, 2.25rem); line-height: 1.16; }
+h3 { font-size: clamp(1.15rem, 1.5vw, 1.35rem); line-height: 1.24; }
+.source-card, .tactic-card, .priority-group { border-color: var(--report-rule); }
+.sticky-toc ol a:hover, .sticky-toc ol a:focus-visible, .sticky-toc ol a[aria-current="true"] { border-left-color: var(--report-blue); }
 @media print { @page { size: A4 portrait; margin: 12mm; } html, body.report-body { background: var(--report-paper) !important; font-size: 10.5pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; } body.report-body { min-height: 100vh; padding: 0; orphans: 3; widows: 3; } *,*::before,*::after { box-shadow: none !important; filter: none !important; text-shadow: none !important; } body.report-theme-dark { background: var(--report-paper) !important; } .report-shell { display: block; width: 100%; max-width: none; overflow: hidden; padding: 0; } .report-main,.report-content { width: 100%; max-width: 100%; overflow: hidden; } h1,h2,h3,.code-block-head,.source-title { break-after: avoid; break-after: avoid-page; page-break-after: avoid; } .report-main h2.chapter-heading { margin-block-start: 6mm; padding-block-start: 0; } .code-block-wrap,.mermaid-rendered,.latex-rendered-block,.bar-chart p { break-inside: avoid; break-inside: avoid-page; break-after: avoid-page; page-break-inside: avoid; } .action-line,.action-prompt,.accordion,.source-card,.details-note,.info-panel,.impact-panel,.evidence-panel,.action-panel,.callout { width: auto; max-width: 100%; margin: 0 0 8mm; overflow: hidden; border-radius: 0 !important; box-shadow: none !important; break-inside: avoid-page; break-after: avoid-page; } .stat-card { background: var(--report-surface) !important; background-clip: padding-box; } .report-footer { min-height: 22mm; background: #ffffff; border: 1px solid #d1d5db; color: #374151; } .sticky-toc { position: static; max-height: none; overflow: visible; break-after: page; break-inside: auto; border: 0; border-radius: 0; box-shadow: none; } .sticky-toc ol { display: block; max-height: none; overflow: visible; padding-right: 0; } .toc-pdf-actions, .toc-pdf-link { display: none !important; } table { table-layout: fixed; font-size: 8.8pt; border-collapse: separate; border-spacing: 0; } th { background: color-mix(in srgb, var(--report-blue) 12%, var(--report-surface)); } th,td { padding: 4pt 5pt; overflow-wrap: anywhere; } pre,.mermaid,.latex-block { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after, .source-card-link[href]::after, .anchor-links a[href]::after { content: ""; } .appendix-links a[href]::after { content: attr(data-filetype); } }
 @media print {
 @page { margin: 12mm 0; background: #ffffff; }
@@ -2408,8 +2447,9 @@ body.report-pdf-profile-letter .report-front { min-height: 10.1in; }
 .report-main h2.chapter-heading + .chapter-hero, .report-main h2.chapter-heading + .tactic-card, .report-main h2.chapter-heading + .example-card, .report-main h2.chapter-heading + .good-bad, .report-main h2.chapter-heading + .facts-table-wrap, .report-main h2.chapter-heading + .details-note, .report-main h2.chapter-heading + .industry-card, .report-main h2.chapter-heading + .priority-group, .report-main h2.chapter-heading + .checklist-card, .report-main h2.chapter-heading + .source-card, .report-main h2.chapter-heading + .sources-layout, .report-main h2.chapter-heading + .sources-group, .report-main h2.chapter-heading + .myth-callout, .report-main h2.chapter-heading + .info-panel, .report-main h2.chapter-heading + .impact-panel, .report-main h2.chapter-heading + .evidence-panel, .report-main h2.chapter-heading + .action-panel, .report-main h2.chapter-heading + .severity-key, .report-main h2.chapter-heading + .accordion, .report-main h2.chapter-heading + .quote-card, .report-main h2.chapter-heading + .callout { break-before: avoid-page; page-break-before: avoid; }
 }</style>
 </head>
-<body class="report-body report-theme-auto report-pdf-profile-a4 report-template-editorial-evidence">
+<body class="report-body report-theme-auto report-pdf-profile-a4 report-template-ibm">
 <div class="report-shell">
+<div class="report-main-flow">
 
 <main class="report-content report-main report-title-front">
 <section class="report-title-page"><h1 id="client-ai-search-audit">Client AI Search Audit</h1>
@@ -2447,6 +2487,7 @@ body.report-pdf-profile-letter .report-front { min-height: 10.1in; }
 Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details>
 <section class="report-keep-with-heading report-chapter-page">
 </main>
+</div>
 <div class="toc-pdf-actions" aria-label="PDF downloads"><a class="toc-pdf-link" href="report-a4.pdf" aria-label="Open A4 PDF version" title="Open A4 PDF version">A4</a><a class="toc-pdf-link" href="report-usletter.pdf" aria-label="Open US Letter PDF version" title="Open US Letter PDF version">US Letter</a><a class="toc-pdf-link" href="report-slides.pdf" aria-label="Open slides PDF version" title="Open slides PDF version">Slides</a></div>
 <nav class="sticky-toc" aria-label="Report table of contents">
 <div class="sticky-toc-header"><h2>Contents</h2></div>

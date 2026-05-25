@@ -43,6 +43,12 @@ STYLE_SLUGS = (
     "usgraphics",
 )
 
+TOKEN_SECTION_PREFIXES = {
+    "colors": "",
+    "rounded": "rounded.",
+    "typography": "",
+}
+
 DEFAULT_TOKENS = {
     "background": "#f8f6f1",
     "surface": "#ffffff",
@@ -77,7 +83,7 @@ def _base_report_css() -> str:
 def _front_matter(path: Path) -> list[str]:
     lines = path.read_text(encoding="utf-8").splitlines()
     start = -1
-    for index, line in enumerate(lines[:8]):
+    for index, line in enumerate(lines):
         if line.strip() == "---":
             start = index
             break
@@ -167,15 +173,54 @@ def _parse_mapping(line: str, prefix: str = "") -> tuple[str, str] | None:
     return f"{prefix}{key.strip()}", _clean(value)
 
 
-def _parse_typography_line(line: str, nested: str, indent: int) -> tuple[str, str, str | None]:
-    if indent == 2 and line.endswith(":"):
-        return line[:-1], "", None
-    if nested and indent == 4:
-        parsed = _parse_mapping(line, f"{nested}.")
-        if parsed is not None:
-            key, value = parsed
-            return nested, key, value
-    return nested, "", None
+def _indent_width(line: str) -> int:
+    width = 0
+    for char in line:
+        if char == " ":
+            width += 1
+            continue
+        if char == "\t":
+            width += 2
+            continue
+        break
+    return width
+
+
+def _parse_nested_mapping(lines: list[str]) -> dict[str, object]:
+    root: dict[str, object] = {}
+    stack: list[tuple[int, dict[str, object]]] = []
+    for line in lines:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        stripped = line.strip()
+        parsed = _parse_mapping(stripped)
+        if parsed is None:
+            continue
+        key, value = parsed
+        indent = _indent_width(line)
+        while stack and indent <= stack[-1][0]:
+            stack.pop()
+        parent = stack[-1][1] if stack else root
+        if stripped.endswith(":") and value == "":
+            child: dict[str, object] = {}
+            parent[key] = child
+            stack.append((indent, child))
+            continue
+        parent[key] = value
+    return root
+
+
+def _flatten_token_mapping(value: object, prefix: str = "") -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    flattened: dict[str, str] = {}
+    for key, item in value.items():
+        token_key = f"{prefix}{key}"
+        if isinstance(item, dict):
+            flattened.update(_flatten_token_mapping(item, f"{token_key}."))
+            continue
+        flattened[token_key] = str(item)
+    return flattened
 
 
 def _parse_section_header(stripped: str, indent: int) -> tuple[str, str] | None:
@@ -196,20 +241,9 @@ def _parse_section_token(section: str, nested: str, stripped: str, indent: int) 
 
 def _parse_tokens(lines: list[str]) -> dict[str, str]:
     tokens: dict[str, str] = {}
-    section = ""
-    nested = ""
-    for line in lines:
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        indent = len(line) - len(line.lstrip(" "))
-        stripped = line.strip()
-        header = _parse_section_header(stripped, indent)
-        if header is not None:
-            section, nested = header
-            continue
-        nested, parsed = _parse_section_token(section, nested, stripped, indent)
-        if parsed is not None:
-            tokens[parsed[0]] = parsed[1]
+    document = _parse_nested_mapping(lines)
+    for section, prefix in TOKEN_SECTION_PREFIXES.items():
+        tokens.update(_flatten_token_mapping(document.get(section), prefix))
     return tokens
 
 

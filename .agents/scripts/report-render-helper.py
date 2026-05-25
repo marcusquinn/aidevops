@@ -328,10 +328,12 @@ def wrap_document(headings: list[tuple[int, str, str]], body: str) -> str:
 </head>
 <body class="report-body report-theme-{html.escape(THEME)} report-pdf-profile-{html.escape(PDF_PROFILE)} report-template-{html.escape(TEMPLATE)}">
 <div class="report-shell">
+<div class="report-main-flow">
 {title_main}
 <main class="report-content report-main report-front">
 {intro_body}
 </main>
+</div>
 {pdf_link}
 <nav class="sticky-toc" aria-label="Report table of contents">
 <div class="sticky-toc-header"><h2>Contents</h2></div>
