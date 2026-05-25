@@ -204,6 +204,7 @@ _update_health_issue_for_repo() {
 		"$role_display" "$health_issue_file" \
 		"$canonical_identity" "$identity_aliases")
 	[[ -z "$health_issue_number" ]] && return 0
+	[[ "$health_issue_number" == "$_HEALTH_QUERY_FAILED_SENTINEL" ]] && return 0
 
 	# t2687: periodic dedup scan (at most once per HEALTH_DEDUP_INTERVAL
 	# seconds per repo+runner+role, default 1h). Closes duplicates that
