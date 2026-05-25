@@ -17,7 +17,7 @@ Input: $ARGUMENTS
 2. Run `~/.aidevops/agents/scripts/report-render-helper.sh validate <input.md|input.json>`.
 3. Render HTML with `~/.aidevops/agents/scripts/report-render-helper.sh render <input.md|input.json> --output report.html`.
 4. Open the HTML in a browser, review the sticky table of contents, source cards, evidence badges, and PDF links.
-5. Export A4, US Letter, or slides PDFs from the generated HTML. Keep Markdown/JSON canonical and regenerate exports rather than editing HTML/PDF by hand.
+5. Export A4, US Letter, or slides PDFs from the generated HTML. If using Chrome/Chromium headless, pass `--no-pdf-header-footer` so browser date/title/URL/page-number chrome is not printed. Keep Markdown/JSON canonical and regenerate exports rather than editing HTML/PDF by hand.
 
 ## Usage
 
@@ -47,7 +47,7 @@ Templates:
   `times`, `consumer`, `tavily`, `supermemory`, `savvy`, `exsqueezeme`,
   `terminalshop`, `scalefusion`, `zeroheight`, `superx`, `wpcodebox`, `outrank`,
   `lottiefiles`, `knob`, `postedapp`, `serper`, `indexsy`, `lifee`, `bento`,
-  `ibm`, `apple`, `cabinet`, `heron`, and `usgraphics`.
+  `ibm`, `apple`, `cabinet`, `heron`, `usgraphics`, and `signal-agency`.
 
 PDF profiles:
 
