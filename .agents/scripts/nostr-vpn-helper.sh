@@ -168,7 +168,7 @@ macOS source-build fallback while upstream packages are unavailable:
   4. Verify the generated package before installing:
        pkgutil --check-signature deploy/fips-0.3.0-macos-$(uname -m).pkg
        pkgutil --payload-files deploy/fips-0.3.0-macos-$(uname -m).pkg
-       pkgutil --expand deploy/fips-0.3.0-macos-$(uname -m).pkg /tmp/fips-pkg-expanded
+       rm -rf /tmp/fips-pkg-expanded && pkgutil --expand deploy/fips-0.3.0-macos-$(uname -m).pkg /tmp/fips-pkg-expanded
   5. Install only after package integrity checks pass:
        sudo installer -pkg deploy/fips-0.3.0-macos-$(uname -m).pkg -target /
 

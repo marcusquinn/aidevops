@@ -69,11 +69,11 @@ git checkout v0.3.0
 
 pkgutil --check-signature deploy/fips-0.3.0-macos-$(uname -m).pkg
 pkgutil --payload-files deploy/fips-0.3.0-macos-$(uname -m).pkg
-pkgutil --expand deploy/fips-0.3.0-macos-$(uname -m).pkg /tmp/fips-pkg-expanded
+rm -rf /tmp/fips-pkg-expanded && pkgutil --expand deploy/fips-0.3.0-macos-$(uname -m).pkg /tmp/fips-pkg-expanded
 sudo installer -pkg deploy/fips-0.3.0-macos-$(uname -m).pkg -target /
 ```
 
-Prerequisites: Rust toolchain from https://rustup.rs and Xcode command line tools (`xcode-select --install`). Do not install if package integrity checks fail.
+Prerequisites: Rust toolchain from https://rustup.rs and Xcode command line tools (`xcode-select --install`). Remove any previous `/tmp/fips-pkg-expanded` directory before expanding because `pkgutil --expand` fails when the destination already exists. Do not install if package integrity checks fail.
 
 ## Secret Handling
 

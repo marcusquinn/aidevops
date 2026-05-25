@@ -19,7 +19,7 @@
       "./packaging/macos/build-pkg.sh",
       "pkgutil --check-signature deploy/fips-0.3.0-macos-$(uname -m).pkg",
       "pkgutil --payload-files deploy/fips-0.3.0-macos-$(uname -m).pkg",
-      "pkgutil --expand deploy/fips-0.3.0-macos-$(uname -m).pkg /tmp/fips-pkg-expanded",
+      "rm -rf /tmp/fips-pkg-expanded && pkgutil --expand deploy/fips-0.3.0-macos-$(uname -m).pkg /tmp/fips-pkg-expanded",
       "sudo installer -pkg deploy/fips-0.3.0-macos-$(uname -m).pkg -target /"
     ],
     "notes": "Do not install if pkgutil integrity checks fail. Never store private Nostr keys in the cloned source tree."
