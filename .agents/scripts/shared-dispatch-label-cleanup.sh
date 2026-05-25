@@ -117,21 +117,21 @@ sweep_closed_auto_dispatch_issues() {
 	[[ "$limit" =~ ^[0-9]+$ ]] || limit=50
 	[[ "$limit" -gt 0 ]] || limit=50
 
-	local total=0 repo_slug issue_number issue_numbers
+	local total=0 repo_slug issue_number issue_rows labels_csv
 	while IFS= read -r repo_slug; do
 		[[ -n "$repo_slug" ]] || continue
-		issue_numbers=$(gh issue list --repo "$repo_slug" --state closed \
+		issue_rows=$(gh issue list --repo "$repo_slug" --state closed \
 			--label "auto-dispatch" --limit "$limit" \
-			--json number --jq '.[].number' 2>/dev/null) || issue_numbers=""
-		[[ -n "$issue_numbers" ]] || continue
-		while IFS= read -r issue_number; do
+			--json number,labels --jq '.[] | [.number, ([.labels[].name] | join("|"))] | @tsv' 2>/dev/null) || issue_rows=""
+		[[ -n "$issue_rows" ]] || continue
+		while IFS=$'\t' read -r issue_number labels_csv; do
 			[[ "$issue_number" =~ ^[0-9]+$ ]] || continue
 			local exit_code=0
-			clear_terminal_issue_dispatch_labels "$issue_number" "$repo_slug" "closed-issue-sweep" || exit_code=$?
+			clear_terminal_issue_dispatch_labels "$issue_number" "$repo_slug" "closed-issue-sweep" "${labels_csv//|/$'\n'}" || exit_code=$?
 			if [[ "$exit_code" -eq 0 ]]; then
 				total=$((total + 1))
 			fi
-		done <<<"$issue_numbers"
+		done <<<"$issue_rows"
 	done < <(_dispatch_label_sweep_repos "$repos_json" || true)
 
 	_dispatch_label_sweep_mark_run
