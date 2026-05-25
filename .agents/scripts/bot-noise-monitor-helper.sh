@@ -28,7 +28,7 @@ else
 	# Fallback if deployed config not available
 	KNOWN_BOTS=(
 		"coderabbitai[bot]" "sonarqubecloud[bot]" "codacy-production[bot]"
-		"github-actions[bot]" "gemini-code-assist[bot]" "codefactor-io[bot]"
+		"github-actions[bot]" "gemini-code-assist[bot]" "augmentcode[bot]" "codefactor-io[bot]"
 		"socket-security[bot]" "qltybot[bot]" "dependabot[bot]" "renovate[bot]"
 		"mergify[bot]" "allcontributors[bot]" "codecov[bot]" "stale[bot]"
 	)
