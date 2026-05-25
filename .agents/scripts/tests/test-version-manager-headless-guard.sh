@@ -99,6 +99,16 @@ else
 fi
 
 reset_guard_env
+export AIDEVOPS_SESSION_KEY='RELEASE-20260525'
+rc=0
+_version_manager_has_approved_release_context >/dev/null 2>&1 || rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	print_result 'release context accepts case-insensitive session key match' 0
+else
+	print_result 'release context accepts case-insensitive session key match' 1 "rc=$rc"
+fi
+
+reset_guard_env
 export WORKER_SESSION_TITLE='Final release'
 rc=0
 _version_manager_has_approved_release_context >/dev/null 2>&1 || rc=$?

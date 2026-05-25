@@ -64,15 +64,17 @@ _version_manager_has_approved_release_context() {
 	local branch_name=""
 	branch_name=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 	local session_key="${WORKER_SESSION_KEY:-${AIDEVOPS_SESSION_KEY:-}}"
+	local session_key_lower=""
 	local session_title="${AIDEVOPS_SESSION_TITLE:-${WORKER_SESSION_TITLE:-}}"
 	local session_title_lower=""
+	session_key_lower=$(printf '%s' "$session_key" | tr '[:upper:]' '[:lower:]')
 	session_title_lower=$(printf '%s' "$session_title" | tr '[:upper:]' '[:lower:]')
 
 	[[ "${AIDEVOPS_RELEASE_CONTEXT_APPROVED:-}" == "1" ]] && return 0
 	[[ "${VERSION_MANAGER_RELEASE_CONTEXT_APPROVED:-}" == "1" ]] && return 0
 	[[ "${AIDEVOPS_TASK_SCOPE:-}" == "$_VERSION_MANAGER_ACTION_RELEASE" ]] && return 0
 	[[ "$branch_name" == release/* || "$branch_name" == hotfix/* ]] && return 0
-	[[ "$session_key" == release-* || "$session_key" == hotfix-* ]] && return 0
+	[[ "$session_key_lower" == release-* || "$session_key_lower" == hotfix-* ]] && return 0
 	[[ "$session_title_lower" == release* || "$session_title_lower" == *" release" || "$session_title_lower" == *" release "* ]] && return 0
 	return 1
 }
