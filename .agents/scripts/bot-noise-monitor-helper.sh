@@ -146,12 +146,12 @@ for login in sorted(stats, key=lambda k: stats[k]['total_chars'], reverse=True):
 
 	if [[ "$unknown_found" -gt 0 ]]; then
 		echo "WARNING: ${unknown_found} unknown bot(s) detected. Review their comment content"
-		echo "and consider adding skip rules to AGENTS.md rule #8c if they produce non-actionable noise."
+		echo "and consider adding skip rules to reference/gh-command-discipline.md rule #8c if they produce non-actionable noise."
 		echo ""
 		echo "To inspect an unknown bot's comments:"
 		echo "  gh api 'repos/${repo}/issues/comments?since=${since}&per_page=5' --jq '[.[] | select(.user.login == \"BOT_NAME\")] | .[0].body[:500]'"
 	else
-		echo "All detected bots have skip rules in AGENTS.md #8c."
+		echo "All detected bots have skip rules in reference/gh-command-discipline.md #8c."
 	fi
 
 	# Estimate total token waste
@@ -221,10 +221,10 @@ Usage:
   bot-noise-monitor-helper.sh help
     Show this help message.
 
-Known bots (skip rules in AGENTS.md #8c):
+Known bots (skip rules in reference/gh-command-discipline.md #8c):
   coderabbitai[bot], sonarqubecloud[bot], codacy-production[bot],
-  github-actions[bot], gemini-code-assist[bot], codefactor-io[bot],
-  socket-security[bot], qltybot[bot]
+  github-actions[bot], gemini-code-assist[bot], augmentcode[bot],
+  codefactor-io[bot], socket-security[bot], qltybot[bot]
 
 Unknown bots are flagged so you can inspect their comments and decide
 whether to add skip rules.
