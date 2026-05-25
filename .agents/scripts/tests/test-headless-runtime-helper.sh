@@ -638,13 +638,38 @@ test_version_manager_denies_issue_worker_release_writes() {
 	) 2>&1 || status=$?
 	version_after=$(<"${worktree_dir}/VERSION")
 
-	if [[ "$status" -ne 0 && "$version_after" == "1.2.3" ]]; then
+	if [[ "$status" -ne 0 && "$version_after" == "1.2.3" && "$output" != *"$worktree_dir"* ]]; then
 		print_result "version-manager denies ordinary issue-worker release writes" 0
 		return 0
 	fi
 
 	print_result "version-manager denies ordinary issue-worker release writes" 1 \
 		"status=$status version=${version_after:-<empty>} output=${output:-<empty>}"
+	return 0
+}
+
+test_version_manager_detects_mixed_case_truthy_headless_marker() {
+	local worktree_dir="${TEST_ROOT}/version-manager-truthy-headless"
+	mkdir -p "$worktree_dir"
+	init_git_worktree "$worktree_dir"
+	printf '%s\n' "1.2.3" >"${worktree_dir}/VERSION"
+
+	local output="" status=0
+	output=$(
+		cd "$worktree_dir" || exit 1
+		# shellcheck source=/dev/null
+		source "$VERSION_MANAGER_SCRIPT" >/dev/null 2>&1 || exit 1
+		export AIDEVOPS_HEADLESS=false FULL_LOOP_HEADLESS=0 OPENCODE_HEADLESS=True WORKER_ISSUE_NUMBER=24085 WORKER_SESSION_KEY="issue-24085"
+		_version_manager_guard_headless_release_scope release patch
+	) 2>&1 || status=$?
+
+	if [[ "$status" -ne 0 ]]; then
+		print_result "version-manager recognises mixed-case truthy headless markers" 0
+		return 0
+	fi
+
+	print_result "version-manager recognises mixed-case truthy headless markers" 1 \
+		"status=$status output=${output:-<empty>}"
 	return 0
 }
 
@@ -1736,6 +1761,7 @@ main() {
 	test_deleted_launch_cwd_recovers_to_work_dir
 	test_does_not_double_append
 	test_version_manager_denies_issue_worker_release_writes
+	test_version_manager_detects_mixed_case_truthy_headless_marker
 	test_version_manager_allows_falsey_headless_markers
 	test_version_manager_denies_broad_release_title_match
 	test_version_manager_allows_help_usage_for_issue_workers

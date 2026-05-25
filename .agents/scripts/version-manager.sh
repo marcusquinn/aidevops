@@ -37,7 +37,7 @@ _version_manager_marker_is_truthy() {
 	local value="$1"
 
 	case "$value" in
-	"1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON")
+	"1" | "true" | "True" | "TRUE" | "yes" | "Yes" | "YES" | "on" | "On" | "ON")
 		return 0
 		;;
 	esac
@@ -105,7 +105,7 @@ _version_manager_guard_headless_release_scope() {
 	local branch_name=""
 	branch_name=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')
 	print_warning "Skipping version-manager ${action:-help}: release/write operations are blocked in ordinary headless issue-worker context."
-	print_info "Issue worker: ${WORKER_ISSUE_NUMBER:-unknown}; repo: ${REPO_ROOT}; session: ${WORKER_SESSION_KEY:-${AIDEVOPS_SESSION_KEY:-unknown}}; branch: ${branch_name}"
+	print_info "Issue worker: ${WORKER_ISSUE_NUMBER:-unknown}; session: ${WORKER_SESSION_KEY:-${AIDEVOPS_SESSION_KEY:-unknown}}; branch: ${branch_name}"
 	print_info "Approved release contexts: AIDEVOPS_RELEASE_CONTEXT_APPROVED=1, VERSION_MANAGER_RELEASE_CONTEXT_APPROVED=1, AIDEVOPS_TASK_SCOPE=release, or a release/*/hotfix/* branch/session."
 	print_info "This guard is non-fatal so the original issue workflow can continue without treating release cleanup as required."
 	return 1
