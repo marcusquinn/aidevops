@@ -24,9 +24,9 @@ colors:
   info: "#3068A3"
   info-container: "#E5EEF8"
   neutral: "#5A605C"
-  code-background: "#0B0D0A"
-  code-on-background: "#F5F6F4"
-  code-accent: "#E15A30"
+  code-background: "#F5F6F4"
+  code-on-background: "#0B0D0A"
+  code-accent: "#B93A19"
   info-background: "#E5EEF8"
   impact-background: "#F3DED5"
   evidence-background: "#F5F6F4"
@@ -137,8 +137,9 @@ Signal Agency is an editorial evidence-report system for agency AI-search audits
 - **Accent**: terracotta signal `#B93A19`; use for decisions, P0/critical, the cover emphasis, and small glyphs only.
 - **Background/surface**: warm paper `#ECEEEB`, alternate paper `#E2E5E1`, raised paper `#F5F6F4`, white cards only when contrast needs it.
 - **Text/rules**: near-black ink `#0B0D0A`; rules carry layout hierarchy.
-- **Typography**: Bricolage Grotesque display, Instrument Sans body, JetBrains Mono metadata/data.
-- **Shape/depth**: square corners, 0-2px radii, no soft shadows; depth comes from rules, surface changes, and occasional hard offset shadows.
+- **Typography**: Bricolage Grotesque display, Instrument Sans body, JetBrains Mono metadata/data. These are available through Google Fonts; use linked web fonts or self-hosted WOFF2 files with bundled font licence files when production embedding requires offline/privacy-safe rendering.
+- **Shape/depth**: square corners, 0px radii for report containers, tables, code blocks, cards, buttons, and copy controls; depth comes from rules, surface changes, and occasional hard offset shadows.
+- **Code blocks**: light paper code panels (`#F5F6F4` background, `#0B0D0A` ink, `#B93A19` labels/accent) with square corners. Avoid dark terminal blocks unless the surrounding artifact is explicitly dark-mode.
 - **Grid**: 12 columns, max width 1280px, responsive gutter `20-56px`, body copy under 56ch.
 - **Evidence grammar**: verified/partial/inferred/missing badges, source IDs, priority squares, confidence bars, trend glyphs.
 
@@ -147,7 +148,7 @@ Signal Agency is an editorial evidence-report system for agency AI-search audits
 - **Review date**: 2026-05-25
 - **Source**: user-provided local HTML style-guide specimen titled “Signal — Design System for AI Search Audit Reports”.
 - **Prompt-guard**: `prompt-guard-helper.sh scan-file` returned CLEAN.
-- **Observed fonts**: Bricolage Grotesque, Instrument Sans, JetBrains Mono.
+- **Observed fonts**: Bricolage Grotesque, Instrument Sans, JetBrains Mono via Google Fonts stylesheet in the source specimen. Fontsource package metadata reports all three as `OFL-1.1`; retain each upstream `OFL.txt` if bundling/self-hosting font binaries.
 - **Observed token facts**: CSS custom properties for paper, ink, soft rules, terracotta signal, semantic state hues, type scale, 4px spacing base, 1280px max page, responsive gutters.
 - **Observed component taxonomy**: masthead, cover, swatches, type rows, pills, evidence tags, priority markers, stats, tables, source ledger, callouts, preserve/fix split, action line, implementation brief, dossier cards, KPI cards, LEDs, stamps, tabs, checklist, bar visualisation, footer.
 - **Rule**: source facts inform this DESIGN.md; renderer tokens use accessible sRGB approximations for OKLCH source colours and web-safe fallbacks when remote fonts are unavailable.

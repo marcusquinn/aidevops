@@ -41,9 +41,13 @@ Two-rule sandwich. Columns: mono decision tag, large Bricolage action text, mono
 
 Inverted ink panel set in mono. Rows begin with fixed-width field labels: Task, Files, Acceptance, Verify. Include only worker-actionable information.
 
+## Code and source blocks
+
+Use light paper code panels by default: `#F5F6F4` background, `#0B0D0A` code ink, `#B93A19` uppercase label/accent, and `#0B0D0A` 1px border. Code blocks, Mermaid fallbacks, LaTeX fallbacks, copy buttons, and code headers all have square `0px` corners. Reserve dark terminal blocks only for explicitly dark-mode artifacts or screenshots of a dark terminal.
+
 ## Dossier card
 
-Square card with 1px ink border, optional hard 4px ink offset shadow, ink/state header strip, LED, class label, title row, serial code/stamp, body, and provenance footer.
+Square card with 1px ink border, optional hard 4px ink offset shadow, ink/state header strip, LED, class label, title row, serial code/stamp, body, and provenance footer. No rounded corners.
 
 ## Dossier chrome
 

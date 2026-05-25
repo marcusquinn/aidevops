@@ -20,7 +20,8 @@ Signal is mostly flat. Depth comes from editorial layering: paper changes, hard 
 ## Shape
 
 - Default radius: `0px`.
-- Tags and tiny badges may use `1-2px` radius to prevent optical harshness.
+- Report containers, tables, cards, code blocks, copy buttons, buttons, source cards, and callouts must use `0px` radius.
+- Tiny inline evidence/state badges may use at most `1px` radius to prevent optical harshness, but square is preferred.
 - Do not use pill-shaped CTAs except tiny state pills inherited from the specimen.
 
 ## Motion and interaction

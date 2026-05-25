@@ -4,7 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Report</title>
-<style>/* SPDX-License-Identifier: MIT */
+<style>@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* SPDX-License-Identifier: MIT */
 /* SPDX-FileCopyrightText: 2025-2026 Marcus Quinn */
 
 :root {
@@ -2389,9 +2390,9 @@ a {
   --report-radius-lg: 0px;
   --report-radius-xl: calc(0px + 0.5rem);
   --report-badge-radius: calc(0px * 0.45);
-  --report-code-bg: #0B0D0A;
-  --report-code-ink: #F5F6F4;
-  --report-code-accent: #E15A30;
+  --report-code-bg: #F5F6F4;
+  --report-code-ink: #0B0D0A;
+  --report-code-accent: #B93A19;
   --report-info-bg: #E5EEF8;
   --report-impact-bg: #F3DED5;
   --report-evidence-bg: #F5F6F4;
@@ -2407,7 +2408,7 @@ h3 { font-size: clamp(1.15rem, 1.5vw, 1.35rem); line-height: 1.24; }
 .source-card, .tactic-card, .priority-group { border-color: var(--report-rule); }
 .sticky-toc ol a:hover, .sticky-toc ol a:focus-visible, .sticky-toc ol a[aria-current="true"] { border-left-color: var(--report-blue); }
 
-.report-template-signal-agency { background-image: radial-gradient(#C9CDC9 1px, transparent 1.2px); background-size: 24px 24px; }
+.report-template-signal-agency { --report-code-bg: #F5F6F4; --report-code-bg-2: #E2E5E1; --report-code-ink: #0B0D0A; --report-code-accent: #B93A19; background-image: radial-gradient(#C9CDC9 1px, transparent 1.2px); background-size: 24px 24px; }
 .report-template-signal-agency .report-shell { max-width: 1280px; }
 .report-template-signal-agency .report-cover { border-width: 4px 1px 1px; border-color: #0B0D0A; border-radius: 0; box-shadow: none; background: #ECEEEB; }
 .report-template-signal-agency .report-cover h1 { font-size: clamp(4rem, 10vw, 8.75rem); line-height: 0.92; letter-spacing: -0.045em; }
@@ -2424,7 +2425,14 @@ h3 { font-size: clamp(1.15rem, 1.5vw, 1.35rem); line-height: 1.24; }
 .report-template-signal-agency .source-card,
 .report-template-signal-agency .priority-group,
 .report-template-signal-agency .stat-card,
+.report-template-signal-agency .code-block-wrap,
+.report-template-signal-agency .example-card,
+.report-template-signal-agency .block-template,
+.report-template-signal-agency .code-copy,
 .report-template-signal-agency .facts-table-wrap,
+.report-template-signal-agency .facts-table,
+.report-template-signal-agency .facts-table-wrap table,
+.report-template-signal-agency .report-main > table,
 .report-template-signal-agency .info-panel,
 .report-template-signal-agency .impact-panel,
 .report-template-signal-agency .evidence-panel,
@@ -2433,9 +2441,25 @@ h3 { font-size: clamp(1.15rem, 1.5vw, 1.35rem); line-height: 1.24; }
 .report-template-signal-agency .good-row,
 .report-template-signal-agency .bad-row { border-color: #0B0D0A; border-radius: 0; box-shadow: none; }
 .report-template-signal-agency .stat-card strong { font-size: clamp(3.5rem, 6.4vw, 5.5rem); line-height: 0.92; letter-spacing: -0.045em; }
+.report-template-signal-agency .code-block-head { background: #E2E5E1; color: #B93A19; border-bottom-color: #0B0D0A; }
+.report-template-signal-agency .code-block-wrap > :first-child,
+.report-template-signal-agency .code-block-wrap pre:last-child,
+.report-template-signal-agency .facts-table thead tr:first-child th:first-child,
+.report-template-signal-agency .facts-table-wrap thead tr:first-child th:first-child,
+.report-template-signal-agency .report-main > table thead tr:first-child th:first-child,
+.report-template-signal-agency .facts-table thead tr:first-child th:last-child,
+.report-template-signal-agency .facts-table-wrap thead tr:first-child th:last-child,
+.report-template-signal-agency .report-main > table thead tr:first-child th:last-child,
+.report-template-signal-agency .facts-table tbody tr:last-child td:first-child,
+.report-template-signal-agency .facts-table-wrap tbody tr:last-child td:first-child,
+.report-template-signal-agency .report-main > table tbody tr:last-child td:first-child,
+.report-template-signal-agency .facts-table tbody tr:last-child td:last-child,
+.report-template-signal-agency .facts-table-wrap tbody tr:last-child td:last-child,
+.report-template-signal-agency .report-main > table tbody tr:last-child td:last-child { border-radius: 0; }
+.report-template-signal-agency .facts-table-wrap { clip-path: none; }
 .report-template-signal-agency .badge,
 .report-template-signal-agency .appendix-links a,
-.report-template-signal-agency .anchor-links a { border-radius: 1px; }
+.report-template-signal-agency .anchor-links a { border-radius: 0; }
 .report-template-signal-agency .toc-pdf-link,
 .report-template-signal-agency .action-line strong { background: #0B0D0A; color: #F5F6F4; border-color: #0B0D0A; border-radius: 0; }
 .report-template-signal-agency .action-line { border-top: 2px solid #0B0D0A; border-bottom: 2px solid #0B0D0A; }

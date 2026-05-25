@@ -70,6 +70,9 @@ DEFAULT_TOKENS = {
     "rounded.lg": "12px",
 }
 
+SIGNAL_AGENCY_FONT_IMPORT = """@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
+"""
+
 
 def _brand_root() -> Path:
     return Path(__file__).resolve().parents[1] / "tools" / "design" / "library" / "brands"
@@ -535,7 +538,7 @@ body.report-theme-light.report-template-terminalshop a { color: var(--report-blu
 .report-template-usgraphics a { text-decoration: underline; text-underline-offset: 0.12em; }
 """.strip(),
     "signal-agency": """
-.report-template-signal-agency { background-image: radial-gradient(#C9CDC9 1px, transparent 1.2px); background-size: 24px 24px; }
+.report-template-signal-agency { --report-code-bg: #F5F6F4; --report-code-bg-2: #E2E5E1; --report-code-ink: #0B0D0A; --report-code-accent: #B93A19; background-image: radial-gradient(#C9CDC9 1px, transparent 1.2px); background-size: 24px 24px; }
 .report-template-signal-agency .report-shell { max-width: 1280px; }
 .report-template-signal-agency .report-cover { border-width: 4px 1px 1px; border-color: #0B0D0A; border-radius: 0; box-shadow: none; background: #ECEEEB; }
 .report-template-signal-agency .report-cover h1 { font-size: clamp(4rem, 10vw, 8.75rem); line-height: 0.92; letter-spacing: -0.045em; }
@@ -552,7 +555,14 @@ body.report-theme-light.report-template-terminalshop a { color: var(--report-blu
 .report-template-signal-agency .source-card,
 .report-template-signal-agency .priority-group,
 .report-template-signal-agency .stat-card,
+.report-template-signal-agency .code-block-wrap,
+.report-template-signal-agency .example-card,
+.report-template-signal-agency .block-template,
+.report-template-signal-agency .code-copy,
 .report-template-signal-agency .facts-table-wrap,
+.report-template-signal-agency .facts-table,
+.report-template-signal-agency .facts-table-wrap table,
+.report-template-signal-agency .report-main > table,
 .report-template-signal-agency .info-panel,
 .report-template-signal-agency .impact-panel,
 .report-template-signal-agency .evidence-panel,
@@ -561,9 +571,25 @@ body.report-theme-light.report-template-terminalshop a { color: var(--report-blu
 .report-template-signal-agency .good-row,
 .report-template-signal-agency .bad-row { border-color: #0B0D0A; border-radius: 0; box-shadow: none; }
 .report-template-signal-agency .stat-card strong { font-size: clamp(3.5rem, 6.4vw, 5.5rem); line-height: 0.92; letter-spacing: -0.045em; }
+.report-template-signal-agency .code-block-head { background: #E2E5E1; color: #B93A19; border-bottom-color: #0B0D0A; }
+.report-template-signal-agency .code-block-wrap > :first-child,
+.report-template-signal-agency .code-block-wrap pre:last-child,
+.report-template-signal-agency .facts-table thead tr:first-child th:first-child,
+.report-template-signal-agency .facts-table-wrap thead tr:first-child th:first-child,
+.report-template-signal-agency .report-main > table thead tr:first-child th:first-child,
+.report-template-signal-agency .facts-table thead tr:first-child th:last-child,
+.report-template-signal-agency .facts-table-wrap thead tr:first-child th:last-child,
+.report-template-signal-agency .report-main > table thead tr:first-child th:last-child,
+.report-template-signal-agency .facts-table tbody tr:last-child td:first-child,
+.report-template-signal-agency .facts-table-wrap tbody tr:last-child td:first-child,
+.report-template-signal-agency .report-main > table tbody tr:last-child td:first-child,
+.report-template-signal-agency .facts-table tbody tr:last-child td:last-child,
+.report-template-signal-agency .facts-table-wrap tbody tr:last-child td:last-child,
+.report-template-signal-agency .report-main > table tbody tr:last-child td:last-child { border-radius: 0; }
+.report-template-signal-agency .facts-table-wrap { clip-path: none; }
 .report-template-signal-agency .badge,
 .report-template-signal-agency .appendix-links a,
-.report-template-signal-agency .anchor-links a { border-radius: 1px; }
+.report-template-signal-agency .anchor-links a { border-radius: 0; }
 .report-template-signal-agency .toc-pdf-link,
 .report-template-signal-agency .action-line strong { background: #0B0D0A; color: #F5F6F4; border-color: #0B0D0A; border-radius: 0; }
 .report-template-signal-agency .action-line { border-top: 2px solid #0B0D0A; border-bottom: 2px solid #0B0D0A; }
@@ -639,4 +665,7 @@ def style_css(name: str) -> str:
     """Return renderer CSS compiled from a brand DESIGN.md file."""
 
     tokens = _tokens_for(name)
-    return f"{_base_report_css()}\n{_theme_css(name, tokens)}"
+    font_import = ""
+    if name == "signal-agency":
+        font_import = SIGNAL_AGENCY_FONT_IMPORT
+    return f"{font_import}{_base_report_css()}\n{_theme_css(name, tokens)}"

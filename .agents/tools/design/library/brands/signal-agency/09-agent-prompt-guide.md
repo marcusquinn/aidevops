@@ -5,7 +5,7 @@
 
 ## Quick prompt
 
-> Build an AI-search audit report following Signal Agency DESIGN.md. Use warm paper `#ECEEEB`, ink `#0B0D0A`, terracotta signal `#B93A19`, Bricolage Grotesque display headings, Instrument Sans body, and JetBrains Mono metadata. Use square components, hairline rules, evidence badges, source IDs, priority callouts, stat/KPI cards, and a source ledger. Avoid rounded SaaS cards, gradients, and decorative colour.
+> Build an AI-search audit report following Signal Agency DESIGN.md. Use warm paper `#ECEEEB`, ink `#0B0D0A`, terracotta signal `#B93A19`, Bricolage Grotesque display headings, Instrument Sans body, and JetBrains Mono metadata. Use square components, light paper code blocks, hairline rules, evidence badges, source IDs, priority callouts, stat/KPI cards, and a source ledger. Avoid rounded SaaS cards, dark terminal blocks in light-mode reports, gradients, and decorative colour.
 
 ## Report preview prompt
 
@@ -22,4 +22,5 @@
 - Normal text contrast passes WCAG AA on paper, white, and state washes.
 - Evidence badges and priority markers have text labels, not colour-only meaning.
 - Tables retain headers and source IDs in print/PDF.
+- Code blocks render as light paper panels with square corners in light-mode reports.
 - Preview includes the same component taxonomy as the style-guide specimen.

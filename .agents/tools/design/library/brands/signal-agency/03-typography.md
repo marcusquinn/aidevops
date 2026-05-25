@@ -13,6 +13,10 @@
 
 Fallbacks: `ui-sans-serif, system-ui, sans-serif` for display/body and `ui-monospace, "SF Mono", Menlo, monospace` for mono.
 
+## Font sourcing and embedding
+
+The source specimen loads all three families from Google Fonts. Use the Google Fonts stylesheet for quick web/PDF previews, or self-host the WOFF2 files for production reports that must render offline or avoid third-party font requests. Fontsource package metadata reports Bricolage Grotesque, Instrument Sans, and JetBrains Mono as `OFL-1.1`; when self-hosting, include each upstream `OFL.txt` licence file with the bundled binaries.
+
 ## Type scale
 
 | Token | Size | Weight | Line | Tracking | Notes |
