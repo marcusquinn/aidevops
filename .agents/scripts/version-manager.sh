@@ -33,11 +33,30 @@ fi
 VERSION_FILE="$REPO_ROOT/VERSION"
 _VERSION_MANAGER_ACTION_RELEASE="release"
 
+_version_manager_marker_is_truthy() {
+	local value="$1"
+
+	case "$value" in
+	"1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON")
+		return 0
+		;;
+	esac
+	return 1
+}
+
+_version_manager_has_headless_marker() {
+	local marker=""
+
+	for marker in "${AIDEVOPS_HEADLESS:-}" "${FULL_LOOP_HEADLESS:-}" "${OPENCODE_HEADLESS:-}" "${HEADLESS:-}"; do
+		_version_manager_marker_is_truthy "$marker" && return 0
+	done
+	return 1
+}
+
 _version_manager_is_headless_issue_worker() {
-	local headless_marker="${AIDEVOPS_HEADLESS:-}${FULL_LOOP_HEADLESS:-}${OPENCODE_HEADLESS:-}${HEADLESS:-}"
 	local issue_marker="${WORKER_ISSUE_NUMBER:-}${WORKER_SESSION_KEY:-}${AIDEVOPS_SESSION_KEY:-}"
 
-	[[ -n "$headless_marker" ]] || return 1
+	_version_manager_has_headless_marker || return 1
 	[[ -n "${WORKER_ISSUE_NUMBER:-}" ]] && return 0
 	[[ "$issue_marker" == *issue-* ]] && return 0
 	return 1
@@ -54,7 +73,7 @@ _version_manager_has_approved_release_context() {
 	[[ "${AIDEVOPS_TASK_SCOPE:-}" == "$_VERSION_MANAGER_ACTION_RELEASE" ]] && return 0
 	[[ "$branch_name" == release/* || "$branch_name" == hotfix/* ]] && return 0
 	[[ "$session_key" == release-* || "$session_key" == hotfix-* ]] && return 0
-	[[ "$session_title" == Release\ * || "$session_title" == *" release "* ]] && return 0
+	[[ "$session_title" == Release\ * || "$session_title" == release\ * ]] && return 0
 	return 1
 }
 
@@ -62,7 +81,7 @@ _version_manager_action_is_read_only() {
 	local action="$1"
 	shift || true
 	case "$action" in
-	"" | "get" | "validate" | "preflight" | "changelog-check" | "changelog-preview" | "list-task-ids")
+	"" | "help" | "usage" | "get" | "validate" | "preflight" | "changelog-check" | "changelog-preview" | "list-task-ids")
 		return 0
 		;;
 	"$_VERSION_MANAGER_ACTION_RELEASE")
@@ -83,8 +102,10 @@ _version_manager_guard_headless_release_scope() {
 	_version_manager_action_is_read_only "$action" "$@" && return 0
 	_version_manager_has_approved_release_context && return 0
 
+	local branch_name=""
+	branch_name=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')
 	print_warning "Skipping version-manager ${action:-help}: release/write operations are blocked in ordinary headless issue-worker context."
-	print_info "Issue worker: ${WORKER_ISSUE_NUMBER:-unknown}; branch: $(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')"
+	print_info "Issue worker: ${WORKER_ISSUE_NUMBER:-unknown}; repo: ${REPO_ROOT}; session: ${WORKER_SESSION_KEY:-${AIDEVOPS_SESSION_KEY:-unknown}}; branch: ${branch_name}"
 	print_info "Approved release contexts: AIDEVOPS_RELEASE_CONTEXT_APPROVED=1, VERSION_MANAGER_RELEASE_CONTEXT_APPROVED=1, AIDEVOPS_TASK_SCOPE=release, or a release/*/hotfix/* branch/session."
 	print_info "This guard is non-fatal so the original issue workflow can continue without treating release cleanup as required."
 	return 1

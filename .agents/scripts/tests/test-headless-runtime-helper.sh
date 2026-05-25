@@ -648,6 +648,82 @@ test_version_manager_denies_issue_worker_release_writes() {
 	return 0
 }
 
+test_version_manager_allows_falsey_headless_markers() {
+	local worktree_dir="${TEST_ROOT}/version-manager-falsey-headless"
+	mkdir -p "$worktree_dir"
+	init_git_worktree "$worktree_dir"
+	printf '%s\n' "1.2.3" >"${worktree_dir}/VERSION"
+
+	local output="" status=0
+	output=$(
+		cd "$worktree_dir" || exit 1
+		# shellcheck source=/dev/null
+		source "$VERSION_MANAGER_SCRIPT" >/dev/null 2>&1 || exit 1
+		export AIDEVOPS_HEADLESS=false FULL_LOOP_HEADLESS=0 WORKER_ISSUE_NUMBER=24085 WORKER_SESSION_KEY="issue-24085"
+		_version_manager_guard_headless_release_scope release patch
+	) 2>&1 || status=$?
+
+	if [[ "$status" -eq 0 && -z "$output" ]]; then
+		print_result "version-manager ignores falsey headless markers" 0
+		return 0
+	fi
+
+	print_result "version-manager ignores falsey headless markers" 1 \
+		"status=$status output=${output:-<empty>}"
+	return 0
+}
+
+test_version_manager_denies_broad_release_title_match() {
+	local worktree_dir="${TEST_ROOT}/version-manager-broad-title"
+	mkdir -p "$worktree_dir"
+	init_git_worktree "$worktree_dir"
+	printf '%s\n' "1.2.3" >"${worktree_dir}/VERSION"
+
+	local output="" status=0
+	output=$(
+		cd "$worktree_dir" || exit 1
+		# shellcheck source=/dev/null
+		source "$VERSION_MANAGER_SCRIPT" >/dev/null 2>&1 || exit 1
+		export AIDEVOPS_HEADLESS=1 WORKER_ISSUE_NUMBER=24085 WORKER_SESSION_KEY="issue-24085" AIDEVOPS_SESSION_TITLE="ordinary issue mentioning release cleanup"
+		_version_manager_guard_headless_release_scope release patch
+	) 2>&1 || status=$?
+
+	if [[ "$status" -ne 0 ]]; then
+		print_result "version-manager denies broad release title match" 0
+		return 0
+	fi
+
+	print_result "version-manager denies broad release title match" 1 \
+		"status=$status output=${output:-<empty>}"
+	return 0
+}
+
+test_version_manager_allows_help_usage_for_issue_workers() {
+	local worktree_dir="${TEST_ROOT}/version-manager-help-usage"
+	mkdir -p "$worktree_dir"
+	init_git_worktree "$worktree_dir"
+	printf '%s\n' "1.2.3" >"${worktree_dir}/VERSION"
+
+	local output="" status=0
+	output=$(
+		cd "$worktree_dir" || exit 1
+		# shellcheck source=/dev/null
+		source "$VERSION_MANAGER_SCRIPT" >/dev/null 2>&1 || exit 1
+		export AIDEVOPS_HEADLESS=1 WORKER_ISSUE_NUMBER=24085 WORKER_SESSION_KEY="issue-24085"
+		_version_manager_guard_headless_release_scope help
+		_version_manager_guard_headless_release_scope usage
+	) 2>&1 || status=$?
+
+	if [[ "$status" -eq 0 && -z "$output" ]]; then
+		print_result "version-manager allows help and usage for issue workers" 0
+		return 0
+	fi
+
+	print_result "version-manager allows help and usage for issue workers" 1 \
+		"status=$status output=${output:-<empty>}"
+	return 0
+}
+
 test_version_manager_allows_approved_release_context() {
 	local worktree_dir="${TEST_ROOT}/version-manager-allow"
 	mkdir -p "$worktree_dir"
@@ -1660,6 +1736,9 @@ main() {
 	test_deleted_launch_cwd_recovers_to_work_dir
 	test_does_not_double_append
 	test_version_manager_denies_issue_worker_release_writes
+	test_version_manager_allows_falsey_headless_markers
+	test_version_manager_denies_broad_release_title_match
+	test_version_manager_allows_help_usage_for_issue_workers
 	test_version_manager_allows_approved_release_context
 	test_extract_session_id_from_output_returns_latest_session_id
 	test_blocked_completion_records_blocked_label
