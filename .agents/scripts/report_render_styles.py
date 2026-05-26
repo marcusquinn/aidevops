@@ -625,7 +625,7 @@ def _theme_css(name: str, tokens: dict[str, str]) -> str:
   --report-body-size: {tokens.get('body-md.fontSize', DEFAULT_TOKENS['body-md.fontSize'])};
   --report-body-line: {tokens.get('body-md.lineHeight', DEFAULT_TOKENS['body-md.lineHeight'])};
   --report-paper: {tokens['background']};
-  --report-paper-raised: {tokens['primary-container']};
+  --report-paper-raised: {tokens.get('paper-raised', tokens['primary-container'])};
   --report-panel: {tokens['surface']};
   --report-surface: {tokens['surface']};
   --report-ink: {tokens['on-surface']};
