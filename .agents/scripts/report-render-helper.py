@@ -131,15 +131,13 @@ THEMES = ("auto", "light", "dark")
 
 
 def load_css(template: str, pdf_profile: str) -> str:
-    if template == "basic":
-        return BASIC_CSS
-    css = ""
+    css = BASIC_CSS if template == "basic" else ""
     if template == "editorial-evidence":
         path = Path(__file__).resolve().parents[1] / "templates" / "reports" / "llm-visibility-report.css"
         css = path.read_text(encoding="utf-8")
     elif template in style_names():
         css = style_css(template)
-    else:
+    elif template != "basic":
         names = ", ".join(BUILTIN_TEMPLATES)
         raise ValueError(f"unknown report template: {template}. Available: {names}")
     if pdf_profile not in PROFILE_CSS:
