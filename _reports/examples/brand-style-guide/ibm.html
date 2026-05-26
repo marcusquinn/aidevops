@@ -1580,7 +1580,8 @@ blockquote {
 .notification-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--report-space-4);
+  gap: var(--report-space-5);
+  row-gap: var(--report-space-5);
   background: transparent;
   border: 0;
   border-radius: 0;
@@ -2506,9 +2507,16 @@ a {
   .example-card > .code-block-wrap,
   .block-template > .code-block-wrap,
   .report-main > .code-block-wrap {
-    width: 100%;
-    max-width: 100%;
-    margin-inline: 0;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-inline: 0 !important;
+  }
+
+  .example-card,
+  .block-template {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-inline: 0 !important;
   }
 
   .code-block-wrap,
