@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.19.5] - 2026-05-26
+
+### Fixed
+
+- confirm terminal worker completion state (#24151)
+
 ## [3.19.4] - 2026-05-26
 
 ### Fixed
