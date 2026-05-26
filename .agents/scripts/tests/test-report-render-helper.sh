@@ -359,6 +359,32 @@ MARKDOWN
 	return 0
 }
 
+test_markdown_headings_deduplicate_anchor_ids() {
+	local _input="${TEST_ROOT}/duplicate-headings.md"
+	local _out="${TEST_ROOT}/duplicate-headings.html"
+	cat >"$_input" <<'MARKDOWN'
+# Overview
+
+## Repeat
+
+First section.
+
+## Repeat
+
+Second section.
+
+### Repeat
+
+Nested section.
+MARKDOWN
+	"$HELPER_SH" render "$_input" --output "$_out"
+	assert_contains "$_out" "<h2 class=\"chapter-heading\" id=\"repeat\">" "Markdown keeps first duplicate heading anchor unsuffixed"
+	assert_contains "$_out" "<h2 class=\"chapter-heading\" id=\"repeat-2\">" "Markdown suffixes second duplicate heading anchor"
+	assert_contains "$_out" "<h3 class=\"section-heading\" id=\"repeat-3\">" "Markdown suffixes duplicate heading anchors across levels"
+	assert_contains "$_out" "<a href=\"#repeat-2\"" "Markdown TOC targets suffixed duplicate heading anchor"
+	return 0
+}
+
 test_mermaid_renderer_uses_node_ids() {
 	if python3 - "${SCRIPT_DIR}/.." <<'PYHTML'
 import sys
@@ -558,6 +584,7 @@ main() {
 	test_style_css_uses_paper_raised_token
 	test_markdown_table_uses_header_cells
 	test_markdown_table_preserves_escaped_pipes
+	test_markdown_headings_deduplicate_anchor_ids
 	test_mermaid_renderer_uses_node_ids
 	test_mermaid_renderer_supports_chained_arrows
 	test_multiline_markdown_paragraph
