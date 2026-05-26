@@ -46,11 +46,18 @@ def unique_heading_anchor(base_anchor: str, states: dict[str, object]) -> str:
     if not isinstance(anchor_counts, dict):
         anchor_counts = {}
         states["anchor_counts"] = anchor_counts
+    used_anchors = states.setdefault("used_anchors", set())
+    if not isinstance(used_anchors, set):
+        used_anchors = set()
+        states["used_anchors"] = used_anchors
     count = int(anchor_counts.get(base_anchor, 0))
+    anchor = base_anchor if count == 0 else f"{base_anchor}-{count + 1}"
+    while anchor in used_anchors:
+        count += 1
+        anchor = f"{base_anchor}-{count + 1}"
     anchor_counts[base_anchor] = count + 1
-    if count == 0:
-        return base_anchor
-    return f"{base_anchor}-{count + 1}"
+    used_anchors.add(anchor)
+    return anchor
 
 
 def heading_display(level: int, title: str, states: dict[str, object]) -> tuple[str, list[str]]:
