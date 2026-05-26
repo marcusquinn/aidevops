@@ -1456,13 +1456,12 @@ blockquote {
 
 .toc-list p,
 .ledger-list p {
-  display: grid;
-  grid-template-columns: minmax(4rem, 0.18fr) minmax(0, 1fr) auto;
-  gap: var(--report-space-3);
-  align-items: baseline;
+  display: block;
   margin: 0;
   padding: var(--report-space-2) 0;
   border-bottom: 1px dotted var(--report-rule);
+  overflow-wrap: normal;
+  text-wrap: pretty;
 }
 
 .toc-list p:last-child,
@@ -2687,22 +2686,23 @@ body.report-pdf-profile-letter .report-front { min-height: 10.1in; }
 <div class="report-main-flow">
 
 <main class="report-content report-main report-title-front">
-<section class="report-title-page"><h1 id="brand-style-guide-report">Brand Style Guide Report</h1>
+<section class="report-title-page"><h1 id="apple-brand-style-guide">Apple Brand Style Guide</h1>
 </section>
 </main>
 <main class="report-content report-main report-front">
 <section class="report-cover">
-<p><strong>A report format for presenting DESIGN.md brand systems.</strong> This example turns brand tokens, component rules, and usage constraints into a client-readable style-guide dossier.</p>
-<p>Use this when a brand library needs to be reviewed by humans and reused by report agents. The report should be generated from <code>DESIGN.md</code> plus chapter files, not from memory.</p>
+<p><strong>Apple-inspired report presentation guide.</strong> Use this specimen to see how Apple-styled reports handle evidence, metrics, recommendations, notifications, and handoff blocks with restraint.</p>
+<p>Apple styling is quiet, spacious, precise, and product-like. The report should feel polished and intentional: soft hierarchy, few borders, generous whitespace, concise copy, and calm state colour.</p>
 </section>
 <section class="manifest-card">
-<h3 id="style-guide-manifest">Style-guide manifest</h3>
+<h3 id="apple-style-manifest">Apple style manifest</h3>
 <ul>
-<li>Source library: <code>.agents/tools/design/library/brands</code></li>
-<li>Example brands: Signal Agency, Apple, IBM, Bento, Times</li>
-<li>Purpose: show token coverage, component grammar, constraints, and report usage</li>
-<li>Export profiles: HTML, A4, US Letter, Slides</li>
-<li>Rule: public examples use brand names only; client evidence remains redacted</li>
+<li>Brand: Apple</li>
+<li>Report mode: polished executive/product evidence report</li>
+<li>Shape language: refined surfaces, subtle rounding, minimal visible chrome</li>
+<li>Primary accent: Apple blue</li>
+<li>Evidence grammar: clear status labels, calm colour, no visual noise</li>
+<li>Best use: executive summaries, product narratives, client recommendations</li>
 </ul>
 </section>
 </main>
@@ -2711,144 +2711,223 @@ body.report-pdf-profile-letter .report-front { min-height: 10.1in; }
 <nav class="sticky-toc" aria-label="Report table of contents">
 <div class="sticky-toc-header"><h2>Contents</h2></div>
 <ol>
-<li class="toc-entry"><a href="#brand-style-guide-report">Brand Style Guide Report</a></li>
-<li class="toc-entry"><a href="#style-guide-manifest">Style-guide manifest</a></li>
-<li class="toc-entry toc-chapter"><a href="#how-to-read-this-guide">1. How to read this guide</a></li>
-<li class="toc-entry toc-chapter"><a href="#token-inventory">2. Token inventory</a></li>
-<li class="toc-entry toc-subsection"><a href="#signal-agency-paper-and-ink">2.1 Signal Agency — paper and ink</a></li>
-<li class="toc-entry toc-subsection"><a href="#signal-agency-terracotta-signal">2.2 Signal Agency — terracotta signal</a></li>
-<li class="toc-entry toc-subsection"><a href="#apple-quiet-surfaces">2.3 Apple — quiet surfaces</a></li>
-<li class="toc-entry toc-subsection"><a href="#ibm-structured-enterprise">2.4 IBM — structured enterprise</a></li>
-<li class="toc-entry toc-subsection"><a href="#display-type">2.5 Display type</a></li>
-<li class="toc-entry toc-subsection"><a href="#body-type">2.6 Body type</a></li>
-<li class="toc-entry toc-subsection"><a href="#mono-metadata">2.7 Mono metadata</a></li>
-<li class="toc-entry toc-subsection"><a href="#code-and-examples">2.8 Code and examples</a></li>
-<li class="toc-entry toc-chapter"><a href="#component-grammar">3. Component grammar</a></li>
-<li class="toc-entry toc-subsection"><a href="#cover-and-manifest">3.1 Cover and manifest</a></li>
-<li class="toc-entry toc-subsection"><a href="#kpi-cards-and-stats-strips">3.2 KPI cards and stats strips</a></li>
-<li class="toc-entry toc-subsection"><a href="#tables-and-source-ledgers">3.3 Tables and source ledgers</a></li>
-<li class="toc-entry toc-subsection"><a href="#priority-cards-and-briefs">3.4 Priority cards and briefs</a></li>
-<li class="toc-entry toc-chapter"><a href="#brand-examples">4. Brand examples</a></li>
-<li class="toc-entry toc-subsection"><a href="#signal-agency">4.1 Signal Agency</a></li>
-<li class="toc-entry toc-subsection"><a href="#apple">4.2 Apple</a></li>
-<li class="toc-entry toc-subsection"><a href="#ibm">4.3 IBM</a></li>
-<li class="toc-entry toc-subsection"><a href="#bento">4.4 Bento</a></li>
-<li class="toc-entry toc-subsection"><a href="#times">4.5 Times</a></li>
-<li class="toc-entry toc-chapter"><a href="#agent-handoff">5. Agent handoff</a></li>
-<li class="toc-entry toc-subsection"><a href="#brand-extraction-brief">5.1 Brand extraction brief</a></li>
+<li class="toc-entry"><a href="#apple-brand-style-guide">Apple Brand Style Guide</a></li>
+<li class="toc-entry"><a href="#apple-style-manifest">Apple style manifest</a></li>
+<li class="toc-entry toc-chapter"><a href="#1-foundation-tokens">1. 1. Foundation tokens</a></li>
+<li class="toc-entry toc-subsection"><a href="#white-and-near-white-surfaces">1.1 White and near-white surfaces</a></li>
+<li class="toc-entry toc-subsection"><a href="#graphite-text">1.2 Graphite text</a></li>
+<li class="toc-entry toc-subsection"><a href="#apple-blue-action">1.3 Apple blue action</a></li>
+<li class="toc-entry toc-subsection"><a href="#state-colour-family">1.4 State colour family</a></li>
+<li class="toc-entry toc-subsection"><a href="#large-title">1.5 Large title</a></li>
+<li class="toc-entry toc-subsection"><a href="#reading-copy">1.6 Reading copy</a></li>
+<li class="toc-entry toc-subsection"><a href="#metadata">1.7 Metadata</a></li>
+<li class="toc-entry toc-subsection"><a href="#code-examples">1.8 Code examples</a></li>
+<li class="toc-entry toc-chapter"><a href="#2-report-element-index">2. 2. Report element index</a></li>
+<li class="toc-entry toc-chapter"><a href="#3-notification-variations">3. 3. Notification variations</a></li>
+<li class="toc-entry toc-subsection"><a href="#critical">3.1 Critical</a></li>
+<li class="toc-entry toc-subsection"><a href="#warning">3.2 Warning</a></li>
+<li class="toc-entry toc-subsection"><a href="#information">3.3 Information</a></li>
+<li class="toc-entry toc-subsection"><a href="#success">3.4 Success</a></li>
+<li class="toc-entry toc-chapter"><a href="#4-data-and-evidence-examples">4. 4. Data and evidence examples</a></li>
+<li class="toc-entry toc-chapter"><a href="#5-recommendation-examples">5. 5. Recommendation examples</a></li>
+<li class="toc-entry toc-subsection"><a href="#critical-component-issue">5.1 Critical component issue</a></li>
+<li class="toc-entry toc-subsection"><a href="#high-priority-refinement">5.2 High-priority refinement</a></li>
+<li class="toc-entry toc-subsection"><a href="#medium-enhancement">5.3 Medium enhancement</a></li>
+<li class="toc-entry toc-subsection"><a href="#completed-pattern">5.4 Completed pattern</a></li>
+<li class="toc-entry toc-subsection"><a href="#preserve">5.5 Preserve</a></li>
+<li class="toc-entry toc-subsection"><a href="#avoid">5.6 Avoid</a></li>
+<li class="toc-entry toc-subsection"><a href="#implementation-brief">5.7 Implementation brief</a></li>
+<li class="toc-entry toc-chapter"><a href="#6-export-and-source-examples">6. 6. Export and source examples</a></li>
+<li class="toc-entry toc-subsection"><a href="#source-card-purpose">6.1 Source-card purpose</a></li>
 </ol>
 </nav>
 
 <main class="report-content report-main report-rest">
-<h2 class="chapter-heading" id="how-to-read-this-guide"><span class="heading-number">1.</span> How to read this guide</h2>
-<p>Brand style guides need more than colours and fonts. A report-ready brand package should include visual theme, colour roles, typography, component grammar, layout, elevation, do/don&#x27;t rules, responsive behaviour, and an agent prompt guide.</p>
-<section class="toc-list">
-<p>§ 01 | Token inventory | Colour, type, spacing, radii</p>
-<p>§ 02 | Component grammar | Cards, tables, badges, source ledgers, briefs</p>
-<p>§ 03 | Brand examples | Signal, Apple, IBM, Bento, Times</p>
-<p>§ 04 | Agent handoff | Reproduction rules and validation</p>
-</section>
-<h2 class="chapter-heading" id="token-inventory"><span class="heading-number">2.</span> Token inventory</h2>
+<h2 class="chapter-heading" id="1-foundation-tokens"><span class="heading-number">1.</span> 1. Foundation tokens</h2>
 <section class="brand-swatch-grid">
 <section class="specimen-card">
-<h3 class="section-heading" id="signal-agency-paper-and-ink"><span class="heading-number">2.1</span> Signal Agency — paper and ink</h3>
-<p><code>background #ECEEEB</code> · warm paper for report pages.</p>
-<p><code>on-surface #0B0D0A</code> · near-black ink for text, rules, and dossier headers.</p>
-<p>Usage: use rule weight and surface changes before adding decoration.</p>
+<h3 class="section-heading" id="white-and-near-white-surfaces"><span class="heading-number">1.1</span> White and near-white surfaces</h3>
+<p>Use white as the primary canvas and light neutrals for grouped content. Purpose: create focus and make the report feel effortless.</p>
 </section>
 <section class="specimen-card">
-<h3 class="section-heading" id="signal-agency-terracotta-signal"><span class="heading-number">2.2</span> Signal Agency — terracotta signal</h3>
-<p><code>primary #B93A19</code> · use for critical decisions, P0 emphasis, cover italic, and small glyphs.</p>
-<p>Constraint: never flood large areas with the accent; it is a signal, not a background.</p>
+<h3 class="section-heading" id="graphite-text"><span class="heading-number">1.2</span> Graphite text</h3>
+<p>Use high-contrast graphite for body text and softer grey for metadata. Purpose: clarity without visual heaviness.</p>
 </section>
 <section class="specimen-card">
-<h3 class="section-heading" id="apple-quiet-surfaces"><span class="heading-number">2.3</span> Apple — quiet surfaces</h3>
-<p>Use restrained neutrals, large whitespace, and product-like hierarchy. Components should feel polished and calm rather than editorial or dossier-like.</p>
+<h3 class="section-heading" id="apple-blue-action"><span class="heading-number">1.3</span> Apple blue action</h3>
+<p>Use blue for links, active states, selected navigation, and primary action. Purpose: direct attention without competing with content.</p>
 </section>
 <section class="specimen-card">
-<h3 class="section-heading" id="ibm-structured-enterprise"><span class="heading-number">2.4</span> IBM — structured enterprise</h3>
-<p>Use crisp grids, clear data tables, modular panels, and neutral surfaces. Components should privilege legibility, classification, and enterprise evidence.</p>
+<h3 class="section-heading" id="state-colour-family"><span class="heading-number">1.4</span> State colour family</h3>
+<p>Use soft red, amber, blue, and green notification hues with rounded shapes. Purpose: status should feel system-native, not alarming.</p>
 </section>
 </section>
 <section class="brand-type-scale">
 <section class="specimen-card">
-<h3 class="section-heading" id="display-type"><span class="heading-number">2.5</span> Display type</h3>
-<p>Large report titles should preserve brand personality. Signal uses condensed Bricolage Grotesque with tight tracking; Times uses newspaper-like editorial serif; IBM uses more systematic enterprise typography.</p>
+<h3 class="section-heading" id="large-title"><span class="heading-number">1.5</span> Large title</h3>
+<p>Use confident, clean sans-serif display type with tight but readable tracking. Purpose: premium hierarchy.</p>
 </section>
 <section class="specimen-card">
-<h3 class="section-heading" id="body-type"><span class="heading-number">2.6</span> Body type</h3>
-<p>Body copy should stay readable in HTML and PDF. Keep 56-64ch lines, avoid overusing uppercase, and verify print output after font substitution.</p>
+<h3 class="section-heading" id="reading-copy"><span class="heading-number">1.6</span> Reading copy</h3>
+<p>Use generous leading and paragraph spacing. Purpose: make executive reading feel light and fast.</p>
 </section>
 <section class="specimen-card">
-<h3 class="section-heading" id="mono-metadata"><span class="heading-number">2.7</span> Mono metadata</h3>
-<p>Use mono labels for source IDs, dates, engine names, priorities, and run IDs. This makes evidence provenance scannable without becoming decorative.</p>
+<h3 class="section-heading" id="metadata"><span class="heading-number">1.7</span> Metadata</h3>
+<p>Use small sans-serif labels, not a heavy terminal-style mono. Purpose: keep provenance present but quiet.</p>
 </section>
 <section class="specimen-card">
-<h3 class="section-heading" id="code-and-examples"><span class="heading-number">2.8</span> Code and examples</h3>
-<p>Code blocks inherit each brand&#x27;s code surface. Signal stays light; developer-dark styles may invert; all production examples need accessible contrast.</p>
+<h3 class="section-heading" id="code-examples"><span class="heading-number">1.8</span> Code examples</h3>
+<p>Use light code panels with subtle borders and rounded controls. Purpose: technical details should feel integrated with the product system.</p>
 </section>
 </section>
-<h2 class="chapter-heading" id="component-grammar"><span class="heading-number">3.</span> Component grammar</h2>
-<section class="brand-component-grid">
-<section class="specimen-card">
-<h3 class="section-heading" id="cover-and-manifest"><span class="heading-number">3.1</span> Cover and manifest</h3>
-<p>The cover sets mood; the manifest proves scope. Include prepared-for, period, source count, version, confidentiality, and next review date.</p>
+<h2 class="chapter-heading" id="2-report-element-index"><span class="heading-number">2.</span> 2. Report element index</h2>
+<section class="toc-list">
+<p>01 — Foundations — surfaces, type, colour, radii</p>
+<p>02 — Notifications — success, warning, information, critical</p>
+<p>03 — Data — KPI cards, tables, bars, source ledger</p>
+<p>04 — Recommendations — priorities, good/bad, brief, checklist</p>
+<p>05 — Export — code, source card, privacy note</p>
 </section>
-<section class="specimen-card">
-<h3 class="section-heading" id="kpi-cards-and-stats-strips"><span class="heading-number">3.2</span> KPI cards and stats strips</h3>
-<p>Use large numerals only for metrics with a period/window and source ID. Avoid unsupported “AI share of voice” claims unless per-engine lines prove them.</p>
+<section class="action-line">
+<p><strong>Design rule:</strong> make the next action obvious, then remove everything that does not help the reader decide.</p>
+<details class="accordion action-prompt" open><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: Design rule: make the next action obvious, then remove everything that does not help the reader decide.
+
+Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details></section>
+<h2 class="chapter-heading" id="3-notification-variations"><span class="heading-number">3.</span> 3. Notification variations</h2>
+<section class="badge-row">
+<p><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span> <span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span> <span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span> <span class="evidence-badge" aria-label="Evidence: Missing"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span> <span class="badge badge-missing">Critical</span> <span class="badge badge-partial">High</span> <span class="badge badge-inferred">Medium</span> <span class="badge badge-verified">Low</span></p>
 </section>
-<section class="specimen-card">
-<h3 class="section-heading" id="tables-and-source-ledgers"><span class="heading-number">3.3</span> Tables and source ledgers</h3>
-<p>Tables carry findings; source ledgers carry trust. Use stable columns, evidence badges, confidence labels, and redacted storage notes.</p>
+<section class="severity-key">
+<section class="info-panel" data-severity="critical">
+<h3 class="section-heading" id="critical"><span class="heading-number">3.1</span> Critical</h3>
+<p>Use for blockers. Apple styling should keep the shape composed: rounded panel, concise title, direct recovery action.</p>
 </section>
-<section class="specimen-card">
-<h3 class="section-heading" id="priority-cards-and-briefs"><span class="heading-number">3.4</span> Priority cards and briefs</h3>
-<p>Priority cards are executive-readable; implementation briefs are worker-readable. Each needs owner, due date, source IDs, and verification.</p>
+<section class="info-panel" data-severity="high">
+<h3 class="section-heading" id="warning"><span class="heading-number">3.2</span> Warning</h3>
+<p>Use for risk and partial evidence. Keep copy neutral and specific; avoid dramatic language.</p>
+</section>
+<section class="info-panel" data-severity="medium">
+<h3 class="section-heading" id="information"><span class="heading-number">3.3</span> Information</h3>
+<p>Use for method, assumptions, or supporting context. Keep it quiet and readable.</p>
+</section>
+<section class="info-panel" data-severity="low">
+<h3 class="section-heading" id="success"><span class="heading-number">3.4</span> Success</h3>
+<p>Use for verified wins and shipped work. Focus on what is now safe to preserve.</p>
 </section>
 </section>
-<h2 class="chapter-heading" id="brand-examples"><span class="heading-number">4.</span> Brand examples</h2>
-<section class="dossier-card">
-<h3 class="section-heading" id="signal-agency"><span class="heading-number">4.1</span> Signal Agency</h3>
-<p>Research-dossier style: warm paper, black rules, terracotta signal, square cards, mono evidence labels, source-led report grammar, and light code blocks. Best for AI-search audit reports, client evidence packs, and editorial strategy documents.</p>
+<section class="quote-card">
+<p>Apple-styled reports should make complexity feel resolved: every component has a purpose, every state has a label, and every recommendation has a clear next step.</p>
 </section>
-<section class="dossier-card">
-<h3 class="section-heading" id="apple"><span class="heading-number">4.2</span> Apple</h3>
-<p>Premium product style: reduced chrome, generous spacing, calm hierarchy, elegant typography, and minimal visible borders. Best for executive summaries, product narratives, and polished client-facing recommendations.</p>
+<h2 class="chapter-heading" id="4-data-and-evidence-examples"><span class="heading-number">4.</span> 4. Data and evidence examples</h2>
+<section class="stats-strip">
+<section class="kpi-card">
+<p><strong>92%</strong></p>
+<p>Evidence coverage for priority claims. Source: style audit.</p>
 </section>
-<section class="dossier-card">
-<h3 class="section-heading" id="ibm"><span class="heading-number">4.3</span> IBM</h3>
-<p>Enterprise systems style: structured grids, explicit categories, accessible contrast, and utilitarian components. Best for technical audits, governance, architecture, and compliance reports.</p>
+<section class="kpi-card">
+<p><strong>4</strong></p>
+<p>Notification states validated for report use.</p>
 </section>
-<section class="dossier-card">
-<h3 class="section-heading" id="bento"><span class="heading-number">4.4</span> Bento</h3>
-<p>Modular showcase style: card-based blocks, friendly surface contrast, and concise grouped information. Best for capability overviews and feature-led reports.</p>
+<section class="kpi-card">
+<p><strong>12</strong></p>
+<p>Core report components shown in this specimen.</p>
 </section>
-<section class="dossier-card">
-<h3 class="section-heading" id="times"><span class="heading-number">4.5</span> Times</h3>
-<p>Editorial newspaper style: rule-based hierarchy, serif tone, print-first feel, and restrained emphasis. Best for research digests, competitive narratives, and long-form findings.</p>
+<section class="kpi-card">
+<p><strong>0</strong></p>
+<p>Private artifacts included in public export.</p>
 </section>
-<section class="report-keep-with-heading report-chapter-page">
-<h2 class="chapter-heading" id="agent-handoff"><span class="heading-number">5.</span> Agent handoff</h2>
-<section class="checklist-card">
-<ul class="checklist">
-<li><span class="status-dot" data-status="done"></span><span>Start from <code>DESIGN.md</code> front matter and chapter files.</span></li>
-<li><span class="status-dot" data-status="done"></span><span>Verify colour, typography, component, layout, elevation, responsive, and prompt-guide coverage.</span></li>
-<li><span class="status-dot" data-status="todo"></span><span>Generate a brand-style-guide report before using a new brand in client reports.</span></li>
-<li><span class="status-dot" data-status="todo"></span><span>Render HTML and print profiles; inspect tables, badges, code blocks, and TOC.</span></li>
-<li><span class="status-dot" data-status="todo"></span><span>Keep public examples free of private client names, URLs, local paths, screenshots, and raw evidence.</span></li>
+</section>
+<section class="facts-table-wrap">
+<table><thead>
+<tr><th>Element</th><th>Purpose</th><th>Apple treatment</th><th>Verification</th></tr></thead><tbody>
+<tr><td>Cover</td><td>First impression</td><td>Large type, calm whitespace</td><td>Title fits A4 and slides</td></tr>
+<tr><td>KPI</td><td>Executive metric</td><td>Rounded quiet card, large value</td><td>Period and source included</td></tr>
+<tr><td>Notification</td><td>State communication</td><td>Soft colour and explicit label</td><td>Meaning survives grayscale</td></tr>
+<tr><td>Brief</td><td>Action handoff</td><td>Clean field structure</td><td>Owner and acceptance present</td></tr>
+</tbody></table>
+</section>
+<section class="visibility-bars">
+<p style="--bar-value: 92%">Evidence coverage — 92%</p>
+<p style="--bar-value: 88%">Component coverage — 88%</p>
+<p style="--bar-value: 84%">Notification clarity — 84%</p>
+<p style="--bar-value: 96%">Print readiness — 96%</p>
+</section>
+<section class="ledger-list">
+<p>A001 — Token audit — High confidence; verifies surface, text, accent, and state roles.</p>
+<p>A002 — Component review — High confidence; checks cover, cards, tables, badges, and briefs.</p>
+<p>A003 — Export review — Medium confidence; confirms A4, US Letter, and slides outputs.</p>
+</section>
+<h2 class="chapter-heading" id="5-recommendation-examples"><span class="heading-number">5.</span> 5. Recommendation examples</h2>
+<section class="priority-card" data-priority="critical">
+<h3 class="section-heading" id="critical-component-issue"><span class="heading-number">5.1</span> Critical component issue</h3>
+<p>Use for a blocker that prevents the report from being trusted or read. <span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></p>
+<p>Owner: Design. Due: Current iteration. Source: A002.</p>
+</section>
+<section class="priority-card" data-priority="high">
+<h3 class="section-heading" id="high-priority-refinement"><span class="heading-number">5.2</span> High-priority refinement</h3>
+<p>Use for issues that reduce clarity but do not block interpretation. <span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></p>
+<p>Owner: Content. Due: Next pass. Source: A001.</p>
+</section>
+<section class="priority-card" data-priority="medium">
+<h3 class="section-heading" id="medium-enhancement"><span class="heading-number">5.3</span> Medium enhancement</h3>
+<p>Use for optional improvements that polish the reader experience. <span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span></p>
+<p>Owner: Design systems. Due: Backlog. Source: A003.</p>
+</section>
+<section class="priority-card" data-status="done">
+<h3 class="section-heading" id="completed-pattern"><span class="heading-number">5.4</span> Completed pattern</h3>
+<p>Use to show a verified style pattern that should not regress. <span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></p>
+<p>Owner: Design. Verified: A001.</p>
+</section>
+<section class="good-bad">
+<section class="good-row">
+<h3 class="section-heading" id="preserve"><span class="heading-number">5.5</span> Preserve</h3>
+<ul>
+<li>Spacious section rhythm.</li>
+<li>Short, direct labels.</li>
+<li>Minimal chrome around evidence.</li>
+</ul>
+</section>
+<section class="bad-row">
+<h3 class="section-heading" id="avoid"><span class="heading-number">5.6</span> Avoid</h3>
+<ul>
+<li>Dense tables without breathing room.</li>
+<li>Over-coloured panels.</li>
+<li>Decorative elements that do not clarify meaning.</li>
 </ul>
 </section>
 </section>
 <section class="brief-card">
-<h3 class="section-heading" id="brand-extraction-brief"><span class="heading-number">5.1</span> Brand extraction brief</h3>
-<p><strong>Task:</strong> Convert a source style guide into a complete DESIGN.md brand library and report preview.</p>
-<p><strong>Files:</strong> <code>DESIGN.md</code>, chapter files, report renderer style, brand-style-guide example.</p>
-<p><strong>Acceptance:</strong> tokens cover colour/type/spacing/radii; components cover cover, cards, tables, badges, ledgers, briefs, checklists; print export has no browser chrome.</p>
-<p><strong>Verification:</strong> DESIGN.md lint, renderer validate, HTML preview, A4/Letter/slides export, and visual review against source specimen.</p>
+<h3 class="section-heading" id="implementation-brief"><span class="heading-number">5.7</span> Implementation brief</h3>
+<p><strong>Task:</strong> Apply Apple-styled report components to an executive audit.</p>
+<p><strong>Files:</strong> report Markdown, brand renderer CSS, PDF exports.</p>
+<p><strong>Acceptance:</strong> every block has one purpose, clear label, accessible contrast, and print-safe layout.</p>
+<p><strong>Verification:</strong> render HTML, A4, US Letter, and slides; inspect notification and table readability.</p>
+</section>
+<section class="checklist-card">
+<ul class="checklist">
+<li><span class="status-dot" data-status="done"></span><span>Cover and manifest are brand-specific.</span></li>
+<li><span class="status-dot" data-status="done"></span><span>Every state uses text plus colour.</span></li>
+<li><span class="status-dot" data-status="todo"></span><span>Every KPI includes source and period.</span></li>
+<li><span class="status-dot" data-status="todo"></span><span>Tables and notification panels remain readable in PDF.</span></li>
+</ul>
+</section>
+<section class="report-keep-with-heading report-chapter-page">
+<h2 class="chapter-heading" id="6-export-and-source-examples"><span class="heading-number">6.</span> 6. Export and source examples</h2>
+<section class="example-card">
+<header>Apple-styled report rule</header>
+<div class="code-block-wrap"><div class="code-block-head"><span>Text code</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Use fewer, clearer blocks. If a component does not help the reader decide, remove it.</code></pre></div>
+</section>
+</section>
+<section class="source-card">
+<h3 class="section-heading" id="source-card-purpose"><span class="heading-number">6.1</span> Source-card purpose</h3>
+<p>Use source cards for traceability, but keep them quiet: source ID, summary, confidence, and access rule are enough for the main report.</p>
+<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
+<section class="privacy-note">
+<p><strong>Public artifact rule</strong></p>
+<p>Apple-styled public examples must not include private client names, URLs, local paths, screenshots, or raw exports.</p>
 </section>
 <section class="version-summary">
-<p>Brand style-guide report example · generated from aidevops DESIGN.md library patterns · public-safe placeholder content</p>
+<p>Apple brand style guide specimen · comprehensive report component coverage · public-safe placeholder content</p>
 </section>
 </main>
 </div>

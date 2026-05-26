@@ -36,7 +36,7 @@ their A4, US Letter, and slides PDF exports from one preview UI.
   --pdf-profile a4 \
   --output _reports/examples/client-ai-search-audit/report.html
 
-.agents/scripts/report-render-helper.sh render _reports/examples/brand-style-guide/report.md \
+.agents/scripts/report-render-helper.sh render _reports/examples/brand-style-guide/signal-agency.md \
   --template signal-agency \
   --pdf-profile a4 \
   --output _reports/examples/brand-style-guide/signal-agency.html

@@ -1450,13 +1450,12 @@ blockquote {
 
 .toc-list p,
 .ledger-list p {
-  display: grid;
-  grid-template-columns: minmax(4rem, 0.18fr) minmax(0, 1fr) auto;
-  gap: var(--report-space-3);
-  align-items: baseline;
+  display: block;
   margin: 0;
   padding: var(--report-space-2) 0;
   border-bottom: 1px dotted var(--report-rule);
+  overflow-wrap: normal;
+  text-wrap: pretty;
 }
 
 .toc-list p:last-child,
