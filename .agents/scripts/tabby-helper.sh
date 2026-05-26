@@ -28,11 +28,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
 REPOS_JSON="${HOME}/.config/aidevops/repos.json"
 
-# Tabby config path (platform-aware)
-if [[ "$(uname -s)" == "Darwin" ]]; then
-	TABBY_CONFIG="${HOME}/Library/Application Support/tabby/config.yaml"
-else
-	TABBY_CONFIG="${HOME}/.config/tabby-terminal/config.yaml"
+# Tabby config path (platform-aware, unless caller provided an override)
+if [[ -z "${TABBY_CONFIG:-}" ]]; then
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		TABBY_CONFIG="${HOME}/Library/Application Support/tabby/config.yaml"
+	else
+		TABBY_CONFIG="${HOME}/.config/tabby-terminal/config.yaml"
+	fi
 fi
 
 _info() { echo -e "${BLUE}[INFO]${NC} $1"; }
