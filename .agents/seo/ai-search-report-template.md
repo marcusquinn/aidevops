@@ -16,6 +16,7 @@ material recommendation so findings can be verified or handed to a worker.
 - Intent clusters:
 - Engines tested: AIO, Gemini, ChatGPT, AI Mode, Perplexity
 - Evidence ledger location:
+- Public-export mode: internal, confidential, or redacted public example
 
 ## 1. Executive Summary
 
@@ -28,6 +29,10 @@ material recommendation so findings can be verified or handed to a worker.
 
 Summarise outcomes in business language. Do not claim AI Share of Voice unless
 the per-engine lines in section 3 support the summary.
+
+Presentation pattern: lead with a cover manifest, 3-4 large KPI cards, one
+decision/action line, and an inline table of contents. Each KPI needs a source
+ID, period/window, and trend or status label.
 
 ## 2. Method
 
@@ -57,6 +62,10 @@ the per-engine lines in section 3 support the summary.
 | AI Mode | | | | | | | |
 | Perplexity | | | | | | | |
 
+Render per-engine coverage as a table plus a horizontal visibility-bars block
+when a percentage or score is defensible. Keep every engine separate; aggregate
+bars are secondary.
+
 ## 4. Page-Type Findings
 
 | Page | Page type | Required tactic gaps | Conditional opportunities | Hygiene items | Avoided tactics | Source IDs |
@@ -76,6 +85,10 @@ error blocks rich-result eligibility or entity clarity.
 Allowed source types: crawl record, page section, analytics snapshot, SERP
 capture, AIO run, Gemini run, ChatGPT run, AI Mode run, Perplexity run,
 third-party profile, review, policy, certificate, research data, log sample.
+
+For client-safe exports, include a short source-ledger block with source IDs,
+titles, summaries, confidence bars, and storage location; keep raw transcripts,
+screenshots, private URLs, and local paths out of the public artifact.
 
 ## 6. Finding-to-Taxonomy Map
 
@@ -101,6 +114,11 @@ third-party profile, review, policy, certificate, research data, log sample.
 Write recommendations as worker-ready tasks: target files or pages, reference
 pattern, expected change, and verification command or measurement.
 
+For executive-ready reports, use one priority card per material finding. Include
+priority, status/evidence badge, owner, due date, source IDs, and a single
+finding paragraph. Use preserve/fix split blocks after the roadmap to prevent
+working patterns from being lost during remediation.
+
 ## 8. Verification Plan
 
 - Re-run crawl/index checks for changed pages.
@@ -109,6 +127,7 @@ pattern, expected change, and verification command or measurement.
 - Compare weighted scorecard deltas against baseline.
 - Validate schema only as hygiene; verify visible content and evidence first.
 - Re-check third-party profile parity for facts changed on owned pages.
+- Assign one checklist owner per row; do not combine prompt reruns across engines.
 
 ## 9. Custom-Agent and Routine Handoff
 

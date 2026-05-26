@@ -160,11 +160,20 @@ def wrap_keep_with_heading_blocks(body: list[str]) -> list[str]:
 
 
 def handle_bar_chart_line(line: str, body: list[str], states: dict[str, object]) -> bool:
-    if current_component(states) != "bar-chart":
+    if current_component(states) not in {"bar-chart", "visibility-bars"}:
         return False
     flush_paragraph(body, states)
     match = re.search(r"(\d{1,3})\s*%", line)
     value = max(0, min(100, int(match.group(1)))) if match else 72
+    if current_component(states) == "visibility-bars":
+        label = line
+        if match:
+            label = line[: match.start()].rstrip(" —–-").strip() or line
+        body.append(
+            f'<p style="--bar-value: {value}%"><span class="visibility-label">{inline_markup(label)}</span>'
+            f'<span class="visibility-value">{value}%</span></p>'
+        )
+        return True
     body.append(f'<p style="--bar-value: {value}%">{inline_markup(line)}</p>')
     return True
 

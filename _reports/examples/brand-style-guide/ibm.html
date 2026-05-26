@@ -463,9 +463,43 @@ body.report-body {
 .badge-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.8rem var(--report-space-2);
+  gap: var(--report-space-2);
   align-items: center;
-  line-height: 1.9;
+  margin-block: var(--report-space-3);
+  padding: var(--report-space-3);
+  background: color-mix(in srgb, var(--report-paper-raised) 72%, transparent);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-md);
+  line-height: 1.65;
+}
+
+.badge-row p {
+  display: flex;
+  flex: 0 0 100%;
+  flex-wrap: wrap;
+  gap: var(--report-space-2);
+  align-items: center;
+  margin: 0;
+}
+
+.badge-row p + p {
+  padding-top: var(--report-space-2);
+  border-top: 1px solid color-mix(in srgb, var(--report-rule) 65%, transparent);
+}
+
+.badge-row p > strong {
+  min-width: 5.5rem;
+  color: var(--report-ink);
+  font-family: var(--report-font-code);
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.badge-row .evidence-label,
+.facts-table-wrap .evidence-label {
+  display: none;
 }
 
 .anchor-links,
@@ -541,11 +575,12 @@ body.report-body {
   width: fit-content;
   min-width: max-content;
   max-width: 100%;
-  padding: 0.25rem 0.625rem;
+  padding: 0.32rem 0.72rem;
   border-radius: var(--report-badge-radius);
   border: 1px solid transparent;
   white-space: nowrap;
   margin-block: 0.08rem;
+  font-weight: 800;
 }
 
 .evidence-badge {
@@ -754,6 +789,11 @@ th .evidence-badge {
   color: var(--report-blue);
 }
 
+.priority-card h3 .evidence-badge {
+  margin-inline-start: var(--report-space-3);
+  vertical-align: middle;
+}
+
 .tactic-card h3,
 .case-study-card h3,
 .dossier-card h3,
@@ -815,6 +855,8 @@ th .evidence-badge {
 }
 
 .code-block-wrap {
+  width: 100%;
+  box-sizing: border-box;
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
@@ -879,6 +921,7 @@ th .evidence-badge {
 
 .example-card > .code-block-wrap,
 .block-template > .code-block-wrap,
+.report-main > .code-block-wrap,
 .report-keep-with-heading > .code-block-wrap,
 .report-keep-with-heading > .source-card,
 .report-keep-with-heading > .source-list,
@@ -939,17 +982,17 @@ th .evidence-badge {
 .bad-row {
   padding: var(--report-space-3);
   border-radius: var(--report-radius-md);
-  border: 1px solid transparent;
+  border: 2px solid transparent;
 }
 
 .good-row {
   background: var(--report-good-bg);
-  border-color: rgba(20, 122, 74, 0.2);
+  border-color: color-mix(in srgb, var(--report-green) 46%, var(--report-rule));
 }
 
 .bad-row {
   background: var(--report-bad-bg);
-  border-color: rgba(180, 35, 24, 0.2);
+  border-color: color-mix(in srgb, var(--report-red) 42%, var(--report-rule));
 }
 
 .good-row h4,
@@ -1011,6 +1054,8 @@ th .evidence-badge {
 
 .facts-table-wrap {
   margin-block: var(--report-space-4);
+  width: 100%;
+  box-sizing: border-box;
   overflow-x: auto;
   overflow-y: hidden;
   border: 1px solid var(--report-rule);
@@ -1026,7 +1071,7 @@ th .evidence-badge {
 .facts-table-wrap table,
 .report-main > table {
   width: 100%;
-  min-width: 42rem;
+  min-width: min(42rem, 100%);
   table-layout: auto;
   border-collapse: separate;
   border-spacing: 0;
@@ -1322,10 +1367,11 @@ blockquote {
   --bar-value: 72%;
   position: relative;
   display: grid;
-  grid-template-columns: minmax(7rem, 0.35fr) minmax(8rem, 1fr);
-  gap: var(--report-space-3);
+  grid-template-columns: minmax(11rem, 0.32fr) minmax(0, 1fr) minmax(3.5rem, auto);
+  gap: var(--report-space-2);
   align-items: center;
   margin: 0;
+  padding: 0.55rem 0;
   color: var(--report-ink);
   font-family: var(--report-font-code);
   font-size: 0.82rem;
@@ -1333,13 +1379,28 @@ blockquote {
   letter-spacing: 0.04em;
 }
 
+.visibility-bars .visibility-label {
+  grid-column: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.visibility-bars .visibility-value {
+  grid-column: 3;
+  justify-self: end;
+  padding-inline-start: var(--report-space-2);
+  color: var(--report-ink-soft);
+  font-weight: 800;
+}
+
 .visibility-bars p::before {
   content: "";
   display: block;
   grid-column: 2;
   grid-row: 1;
-  height: 0.8rem;
+  height: 0.9rem;
   background: color-mix(in srgb, var(--report-rule) 56%, transparent);
+  border-radius: var(--report-radius-sm);
 }
 
 .visibility-bars p::after {
@@ -1348,8 +1409,9 @@ blockquote {
   grid-column: 2;
   grid-row: 1;
   width: var(--bar-value);
-  height: 0.8rem;
+  height: 0.9rem;
   background: var(--report-blue);
+  border-radius: var(--report-radius-sm);
 }
 
 .manifest-card,
@@ -1358,6 +1420,9 @@ blockquote {
 .priority-card,
 .brief-card,
 .privacy-note,
+.brand-asset-card,
+.swatch-card,
+.type-specimen,
 .specimen-card {
   overflow: hidden;
 }
@@ -1366,6 +1431,9 @@ blockquote {
 .dossier-card::before,
 .kpi-card::before,
 .priority-card::before,
+.brand-asset-card::before,
+.swatch-card::before,
+.type-specimen::before,
 .specimen-card::before {
   content: attr(data-status);
   display: block;
@@ -1395,7 +1463,12 @@ blockquote {
 .dossier-card li {
   margin: 0;
   color: var(--report-ink);
-  font-weight: 700;
+  font-weight: 400;
+}
+
+.manifest-card li strong,
+.dossier-card li strong {
+  font-weight: 800;
 }
 
 .manifest-card dt,
@@ -1414,8 +1487,7 @@ blockquote {
   font-weight: 700;
 }
 
-.kpi-card strong,
-.priority-card strong {
+.kpi-card > p:first-child strong {
   display: block;
   color: var(--report-ink);
   font-family: var(--report-font-heading);
@@ -1424,11 +1496,29 @@ blockquote {
   letter-spacing: -0.04em;
 }
 
+.kpi-card strong,
+.priority-card strong {
+  color: var(--report-ink);
+  font-weight: 800;
+}
+
 .priority-card[data-priority="critical"]::before { background: var(--report-red); }
 .priority-card[data-priority="high"]::before { background: var(--report-amber); }
 .priority-card[data-priority="medium"]::before { background: var(--report-blue); }
 .priority-card[data-priority="low"]::before { background: var(--report-ink-soft); }
 .priority-card[data-status="done"]::before { background: var(--report-green); }
+
+.priority-card[data-status="done"]::before {
+  content: "DONE";
+  min-height: auto;
+  padding: 0.45rem var(--report-space-4);
+  color: #ffffff;
+  font-family: var(--report-font-code);
+  font-size: 0.76rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
 
 .privacy-note {
   display: grid;
@@ -1456,13 +1546,12 @@ blockquote {
 
 .toc-list p,
 .ledger-list p {
-  display: grid;
-  grid-template-columns: minmax(4rem, 0.18fr) minmax(0, 1fr) auto;
-  gap: var(--report-space-3);
-  align-items: baseline;
+  display: block;
   margin: 0;
   padding: var(--report-space-2) 0;
   border-bottom: 1px dotted var(--report-rule);
+  overflow-wrap: normal;
+  text-wrap: pretty;
 }
 
 .toc-list p:last-child,
@@ -1471,21 +1560,28 @@ blockquote {
 }
 
 .brief-card {
-  background: var(--report-ink);
-  color: var(--report-paper);
-  font-family: var(--report-font-code);
+  background: color-mix(in srgb, var(--report-paper-raised) 72%, var(--report-surface));
+  border-left: 0.42rem solid var(--report-blue);
+  color: var(--report-ink);
 }
 
 .brief-card :where(h3, p, li, code, strong) {
-  color: inherit;
+  color: var(--report-ink);
+}
+
+.brief-card strong {
+  color: var(--report-blue);
 }
 
 .brand-swatch-grid,
 .brand-type-scale,
-.brand-component-grid {
+.brand-component-grid,
+.brand-asset-grid,
+.notification-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--report-space-3);
+  gap: var(--report-space-5);
+  row-gap: var(--report-space-5);
   background: transparent;
   border: 0;
   border-radius: 0;
@@ -1495,8 +1591,100 @@ blockquote {
 
 .brand-swatch-grid .specimen-card,
 .brand-type-scale .specimen-card,
-.brand-component-grid .specimen-card {
+.brand-component-grid .specimen-card,
+.brand-asset-grid .brand-asset-card,
+.notification-grid .info-panel,
+.notification-grid .evidence-panel,
+.notification-grid .action-panel,
+.brand-swatch-grid .swatch-card,
+.brand-type-scale .type-specimen {
   margin-block: 0;
+}
+
+.brand-asset-card,
+.swatch-card,
+.type-specimen {
+  margin-block: var(--report-space-4);
+  padding: var(--report-space-4);
+  background: var(--report-surface);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-lg);
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.06);
+}
+
+.brand-asset-card {
+  display: grid;
+  min-height: 10.5rem;
+  align-content: start;
+  gap: var(--report-space-2);
+}
+
+.brand-asset-card::before {
+  min-height: 4.35rem;
+  margin-bottom: var(--report-space-2);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--report-blue) 20%, transparent), transparent 54%),
+    var(--report-paper-raised);
+  border: 0;
+  border-bottom: 1px solid var(--report-rule);
+  border-radius: calc(var(--report-radius-lg) - 1px) calc(var(--report-radius-lg) - 1px) 0 0;
+}
+
+.brand-asset-card[data-accent="dark"]::before {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--report-blue) 32%, transparent), transparent 54%),
+    var(--report-ink);
+}
+
+.brand-asset-card h3,
+.swatch-card h3,
+.type-specimen h3 {
+  margin-block: 0 var(--report-space-2);
+}
+
+.brand-asset-card p,
+.swatch-card p,
+.type-specimen p {
+  margin-block: 0;
+}
+
+.swatch-card::before {
+  min-height: 4.35rem;
+  margin-bottom: var(--report-space-2);
+  border-bottom: 1px solid var(--report-rule);
+  border-radius: calc(var(--report-radius-lg) - 1px) calc(var(--report-radius-lg) - 1px) 0 0;
+}
+
+.swatch-card[data-accent="primary"]::before,
+.swatch-card[data-accent="blue"]::before { background: var(--report-blue); }
+.swatch-card[data-accent="green"]::before { background: var(--report-green); }
+.swatch-card[data-accent="amber"]::before { background: var(--report-amber); }
+.swatch-card[data-accent="red"]::before { background: var(--report-red); }
+.swatch-card[data-accent="ink"]::before { background: var(--report-ink); }
+.swatch-card[data-accent="soft"]::before { background: var(--report-ink-soft); }
+.swatch-card[data-accent="paper"]::before { background: var(--report-paper); }
+.swatch-card[data-accent="surface"]::before { background: var(--report-surface); }
+.swatch-card[data-accent="raised"]::before { background: var(--report-paper-raised); }
+
+.type-specimen::before {
+  min-height: 0;
+  margin-bottom: var(--report-space-3);
+  background: transparent;
+  border-top: 0.42rem solid var(--report-blue);
+}
+
+.type-specimen strong {
+  display: block;
+  margin-block-end: var(--report-space-1);
+  color: var(--report-ink);
+  font-family: var(--report-font-heading);
+  font-size: clamp(1.35rem, 2.4vw, 1.9rem);
+  line-height: 1.12;
+  letter-spacing: -0.03em;
+}
+
+.type-specimen em {
+  color: var(--report-ink-soft);
 }
 
 .specimen-card code {
@@ -1528,6 +1716,53 @@ blockquote {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--report-space-2);
+}
+
+.notification-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.notification-grid :where(.info-panel, .evidence-panel, .action-panel) {
+  display: grid;
+  gap: var(--report-space-2);
+  min-height: 12rem;
+  align-content: start;
+  border-width: 2px;
+  border-top-width: 0.38rem;
+  border-left-width: 0.38rem;
+}
+
+.notification-grid :where(.info-panel, .evidence-panel, .action-panel)::before {
+  content: attr(data-severity);
+  width: fit-content;
+  padding: 0.24rem 0.58rem;
+  border: 1px solid currentColor;
+  border-radius: var(--report-badge-radius);
+  font-family: var(--report-font-code);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.notification-grid [data-severity="critical"] {
+  background: color-mix(in srgb, var(--report-red) 13%, var(--report-surface));
+  border-color: color-mix(in srgb, var(--report-red) 78%, var(--report-rule));
+}
+
+.notification-grid [data-severity="high"] {
+  background: color-mix(in srgb, var(--report-amber) 18%, var(--report-surface));
+  border-color: color-mix(in srgb, var(--report-amber) 82%, var(--report-rule));
+}
+
+.notification-grid [data-severity="medium"] {
+  background: color-mix(in srgb, var(--report-blue) 11%, var(--report-surface));
+  border-color: color-mix(in srgb, var(--report-blue) 78%, var(--report-rule));
+}
+
+.notification-grid [data-severity="low"] {
+  background: color-mix(in srgb, var(--report-green) 14%, var(--report-surface));
+  border-color: color-mix(in srgb, var(--report-green) 78%, var(--report-rule));
 }
 
 .priority-group[data-priority="critical"],
@@ -2261,12 +2496,27 @@ a {
     -webkit-box-decoration-break: clone;
     box-sizing: border-box;
     box-decoration-break: clone;
-    width: calc(100% - 12pt);
-    max-width: calc(100% - 12pt);
-    margin: 6mm 6pt 8mm;
+    width: 100%;
+    max-width: 100%;
+    margin: 6mm 0 8mm;
     break-inside: avoid-page;
     break-after: avoid-page;
     page-break-inside: avoid;
+  }
+
+  .example-card > .code-block-wrap,
+  .block-template > .code-block-wrap,
+  .report-main > .code-block-wrap {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-inline: 0 !important;
+  }
+
+  .example-card,
+  .block-template {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-inline: 0 !important;
   }
 
   .code-block-wrap,
@@ -2374,9 +2624,9 @@ a {
     -webkit-box-decoration-break: clone;
     box-decoration-break: clone;
     box-sizing: border-box;
-    width: calc(100% - 12pt);
-    max-width: calc(100% - 12pt);
-    margin-inline: 6pt;
+    width: 100%;
+    max-width: 100%;
+    margin-inline: 0;
     overflow: visible;
     border-radius: 0 !important;
     box-shadow: none !important;
@@ -2387,9 +2637,9 @@ a {
     -webkit-box-decoration-break: clone;
     box-decoration-break: clone;
     box-sizing: border-box;
-    width: calc(100% - 12pt);
-    max-width: calc(100% - 12pt);
-    margin: 6mm 6pt 8mm;
+    width: 100%;
+    max-width: 100%;
+    margin: 6mm 0 8mm;
     overflow: visible;
     border-radius: 0 !important;
     box-shadow: none !important;
@@ -2600,33 +2850,33 @@ a {
   }
 }
 
-/* DESIGN.md brand token overrides: axel */
+/* DESIGN.md brand token overrides: ibm */
 :root {
-  --report-font-heading: Newsreader, "Source Serif 4", Georgia, serif;
+  --report-font-heading: "IBM Plex Sans", Inter, system-ui, sans-serif;
   --report-font-body: "IBM Plex Sans", Inter, system-ui, sans-serif;
-  --report-font-code: "IBM Plex Mono", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  --report-font-code: "IBM Plex Mono", monospace;
   --report-heading-size: 64px;
-  --report-heading-weight: 650;
+  --report-heading-weight: 400;
   --report-heading-line: 1.05;
   --report-heading-tracking: -0.03em;
   --report-body-size: 16px;
   --report-body-line: 1.62;
-  --report-paper: #FAFAF7;
-  --report-paper-raised: #DBE1F2;
+  --report-paper: #F4F4F4;
+  --report-paper-raised: #D0E2FF;
   --report-panel: #FFFFFF;
   --report-surface: #FFFFFF;
-  --report-ink: #0C0F15;
-  --report-ink-muted: #4B5563;
-  --report-ink-soft: #4B5563;
-  --report-rule: #AEB0AB;
-  --report-rule-strong: #2D4BB5;
-  --report-blue: #2D4BB5;
-  --report-radius-lg: 18px;
-  --report-radius-xl: calc(18px + 0.5rem);
-  --report-badge-radius: calc(18px * 0.45);
+  --report-ink: #161616;
+  --report-ink-muted: #525252;
+  --report-ink-soft: #525252;
+  --report-rule: #B2B2B2;
+  --report-rule-strong: #0F62FE;
+  --report-blue: #0F62FE;
+  --report-radius-lg: 0px;
+  --report-radius-xl: calc(0px + 0.5rem);
+  --report-badge-radius: calc(0px * 0.45);
   --report-code-bg: #FFFFFF;
-  --report-code-ink: #0C0F15;
-  --report-code-accent: #2D4BB5;
+  --report-code-ink: #161616;
+  --report-code-accent: #0F62FE;
   --report-info-bg: #FFFFFF;
   --report-impact-bg: #FFFFFF;
   --report-evidence-bg: #FFFFFF;
@@ -2682,380 +2932,287 @@ body.report-pdf-profile-letter .report-front { min-height: 10.1in; }
 .report-main h2.chapter-heading + .chapter-hero, .report-main h2.chapter-heading + .tactic-card, .report-main h2.chapter-heading + .example-card, .report-main h2.chapter-heading + .good-bad, .report-main h2.chapter-heading + .facts-table-wrap, .report-main h2.chapter-heading + .details-note, .report-main h2.chapter-heading + .industry-card, .report-main h2.chapter-heading + .priority-group, .report-main h2.chapter-heading + .checklist-card, .report-main h2.chapter-heading + .source-card, .report-main h2.chapter-heading + .sources-layout, .report-main h2.chapter-heading + .sources-group, .report-main h2.chapter-heading + .myth-callout, .report-main h2.chapter-heading + .info-panel, .report-main h2.chapter-heading + .impact-panel, .report-main h2.chapter-heading + .evidence-panel, .report-main h2.chapter-heading + .action-panel, .report-main h2.chapter-heading + .severity-key, .report-main h2.chapter-heading + .accordion, .report-main h2.chapter-heading + .quote-card, .report-main h2.chapter-heading + .callout { break-before: avoid-page; page-break-before: avoid; }
 }</style>
 </head>
-<body class="report-body report-theme-auto report-pdf-profile-a4 report-template-axel">
+<body class="report-body report-theme-auto report-pdf-profile-a4 report-template-ibm">
 <div class="report-shell">
 <div class="report-main-flow">
 
 <main class="report-content report-main report-title-front">
-<section class="report-title-page"><h1 id="llm-visibility-toolbox">LLM Visibility Toolbox</h1>
-<p>Evidence-based tactics for getting cited in ChatGPT, Perplexity, Gemini, Claude, AI Overviews, and AI Mode.</p>
-<p>By <a href="https://github.com/marcusquinn" data-filetype="link">Marcus Quinn</a>.</p>
+<section class="report-title-page"><h1 id="ibm-brand-style-guide">IBM Brand Style Guide</h1>
 </section>
 </main>
 <main class="report-content report-main report-front">
 <section class="report-cover">
-<p>Internal toolkit · May 2026 · v4</p>
-<p><strong>A Markdown-canonical playbook for AI search visibility.</strong> Use it to turn source evidence, page-type weighting, and answer-engine behaviour into roadmap-ready recommendations.</p>
-<p>Audience: SEO, content, engineering, and leadership teams. Export rule: one HTML preview; PDF profiles for A4, Letter, and 16:9 decks.</p>
+<p><strong>IBM-inspired brand guide for usable report and content production.</strong> This specimen is a practical show-and-tell library: brand assets, colour roles, typography, badges, message states, data components, recommendations, briefs, and export rules.</p>
+<p>IBM-styled content should feel <strong>systematic, engineered, accessible, and explicit</strong>. Use the grid to make complex information understandable; use blue to mark interaction and verified structure; use red, amber, and green only when the status itself matters.</p>
 </section>
-<h2 class="no-chapter" id="executive-summary-badge-rct">Executive summary <span class="badge badge--rct">Peer-Review</span></h2>
-<p>LLM visibility is an evidence system, not a single checklist. The best programmes make priority pages retrieval-ready, criteria-complete, citation-worthy, technically fetchable, and corroborated by third-party sources. <span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></p>
-<p>Recommendations must be weighted by page type. A homepage, SaaS feature page, comparison page, pricing page, article, product page, local/YMYL page, and research asset need different tactics, owners, and verification paths. <span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></p>
-<section class="badge-row">
-<p><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span> <span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span> <span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span> <span class="evidence-badge" aria-label="Evidence: Missing"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span></p>
+<section class="manifest-card">
+<h3 id="ibm-production-manifest">IBM production manifest</h3>
+<ul>
+<li><strong>Brand:</strong> IBM</li>
+<li><strong>Content system:</strong> technical reports, governance memos, product explainers, audit handoffs</li>
+<li><strong>Shape language:</strong> modular grid, square panels, strong alignment, visible rules</li>
+<li><strong>Colour rule:</strong> blue is the system accent; severity colours are functional, not decorative</li>
+<li><strong>Writing rule:</strong> classify evidence, name the decision, then show the verification path</li>
+<li><strong>Export rule:</strong> every public artefact uses placeholder evidence and hides browser PDF chrome</li>
+</ul>
 </section>
-<section class="stats-strip">
-<section class="kpi-card">
-<p><strong>5</strong></p>
-<p>Answer engines reported separately.</p>
-</section>
-<section class="kpi-card">
-<p><strong>8</strong></p>
-<p>Page types weighted before recommendations.</p>
-</section>
-<section class="kpi-card">
-<p><strong>4</strong></p>
-<p>Evidence strengths used in source ledgers.</p>
-</section>
-<section class="kpi-card">
-<p><strong>1</strong></p>
-<p>Canonical Markdown source.</p>
-</section>
-</section>
-<section class="badge-key">
-<p><span class="badge badge--rct">Peer-Review</span> Peer-reviewed or controlled comparison.</p>
-<p><span class="badge badge--strong">Strong</span> Large independent primary-data study.</p>
-<p><span class="badge badge--vendor">Vendor</span> Vendor study with methodology and commercial incentives.</p>
-<p><span class="badge badge--practitioner">Practitioner</span> Practitioner evidence or field report.</p>
-<p><span class="badge badge--hygiene">Hygiene</span> Baseline technical implementation.</p>
-</section>
-<details class="accordion" open><summary>Changelog summary</summary>
-<p>V4 adds schema-downgrade rationale, engine-specific reporting, source grouping, and diagram/equation fallbacks.</p>
-</details>
-<section class="action-line">
-<p><strong>Operator action:</strong> collect source IDs first, then interpret findings into recommendations with owners, acceptance criteria, and rerun steps.</p>
-</section><details class="accordion action-prompt" open><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: collect source IDs first, then interpret findings into recommendations with owners, acceptance criteria, and rerun steps.
-
-Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details>
-<section class="toc-list">
-<p>Sources | Source ledger and evidence rules | appendices/source-ledger.md</p>
-<p>Tactics | Highest-impact tactics and examples | weighted by page type</p>
-<p>Matrix | Page-type matrix | required, conditional, avoid</p>
-<p>Roadmap | Priority-card handoff | owner · effort · verification</p>
-</section>
-<section class="anchor-links">
-<p><a href="#sources" data-filetype="link">Sources</a> <a href="#highest-impact-tactics" data-filetype="link">Tactics</a> <a href="#page-type-matrix" data-filetype="link">Matrix</a> <a href="#roadmap-template" data-filetype="link">Roadmap</a> <a href="#appendices" data-filetype="link">Appendices</a></p>
-</section>
-<section class="report-keep-with-heading report-chapter-page">
 </main>
 </div>
-<div class="toc-pdf-actions" aria-label="PDF downloads"><a class="toc-pdf-link" href="report-a4.pdf" aria-label="Open A4 PDF version" title="Open A4 PDF version">A4</a><a class="toc-pdf-link" href="report-usletter.pdf" aria-label="Open US Letter PDF version" title="Open US Letter PDF version">US Letter</a><a class="toc-pdf-link" href="report-slides.pdf" aria-label="Open slides PDF version" title="Open slides PDF version">Slides</a></div>
+<div class="toc-pdf-actions" aria-label="PDF downloads"><a class="toc-pdf-link" href="ibm-a4.pdf" aria-label="Open A4 PDF version" title="Open A4 PDF version">A4</a><a class="toc-pdf-link" href="ibm-usletter.pdf" aria-label="Open US Letter PDF version" title="Open US Letter PDF version">US Letter</a><a class="toc-pdf-link" href="ibm-slides.pdf" aria-label="Open slides PDF version" title="Open slides PDF version">Slides</a></div>
 <nav class="sticky-toc" aria-label="Report table of contents">
 <div class="sticky-toc-header"><h2>Contents</h2></div>
 <ol>
-<li class="toc-entry"><a href="#llm-visibility-toolbox">LLM Visibility Toolbox</a></li>
-<li class="toc-entry"><a href="#executive-summary-badge-rct">Executive summary</a></li>
-<li class="toc-entry toc-chapter"><a href="#highest-impact-tactics">1. Highest-impact tactics</a></li>
-<li class="toc-entry toc-subsection"><a href="#weight-before-recommending">1.1 Weight before recommending</a></li>
-<li class="toc-entry toc-subsection"><a href="#critical">1.2 Critical</a></li>
-<li class="toc-entry toc-subsection"><a href="#high">1.3 High</a></li>
-<li class="toc-entry toc-subsection"><a href="#medium">1.4 Medium</a></li>
-<li class="toc-entry toc-subsection"><a href="#low">1.5 Low</a></li>
-<li class="toc-entry toc-chapter"><a href="#page-type-matrix">2. Page-type matrix</a></li>
-<li class="toc-entry toc-subsection"><a href="#industry-fit-reminder">2.1 Industry-fit reminder</a></li>
-<li class="toc-entry toc-chapter"><a href="#tactic-card-examples">3. Tactic card examples</a></li>
-<li class="toc-entry toc-subsection"><a href="#direct-answer-opening">3.1 Direct-answer opening</a></li>
-<li class="toc-entry toc-subsection"><a href="#impact">3.2 Impact</a></li>
-<li class="toc-entry toc-subsection"><a href="#evidence">3.3 Evidence</a></li>
-<li class="toc-entry toc-subsection"><a href="#bot-friendly-first-fetch">3.4 Bot-friendly first fetch</a></li>
-<li class="toc-entry toc-subsection"><a href="#strong-pattern">3.5 Strong pattern</a></li>
-<li class="toc-entry toc-subsection"><a href="#weak-pattern">3.6 Weak pattern</a></li>
-<li class="toc-entry toc-chapter"><a href="#myths-and-caveats">4. Myths and caveats</a></li>
-<li class="toc-entry toc-subsection"><a href="#myth">4.1 Myth</a></li>
-<li class="toc-entry toc-subsection"><a href="#reality">4.2 Reality</a></li>
-<li class="toc-entry toc-chapter"><a href="#case-studies">5. Case studies</a></li>
-<li class="toc-entry toc-subsection"><a href="#industrial-manufacturer">5.1 Industrial manufacturer</a></li>
-<li class="toc-entry toc-subsection"><a href="#healthcare-comparison-site">5.2 Healthcare comparison site</a></li>
-<li class="toc-entry toc-chapter"><a href="#roadmap-template">6. Roadmap template</a></li>
-<li class="toc-entry toc-subsection"><a href="#priority-rule">6.1 Priority rule</a></li>
-<li class="toc-entry toc-subsection"><a href="#revenue-page-retrieval-blocker">6.2 Revenue page retrieval blocker</a></li>
-<li class="toc-entry toc-chapter"><a href="#verification-checklist">7. Verification checklist</a></li>
-<li class="toc-entry toc-chapter"><a href="#closing-callouts">8. Closing callouts</a></li>
-<li class="toc-entry toc-subsection"><a href="#combined-finding">8.1 Combined finding</a></li>
-<li class="toc-entry toc-chapter"><a href="#sources">9. Sources</a></li>
-<li class="toc-entry toc-subsection"><a href="#prompt-captures">9.1 Prompt captures</a></li>
-<li class="toc-entry toc-subsection"><a href="#crawl-evidence">9.2 Crawl evidence</a></li>
-<li class="toc-entry toc-subsection"><a href="#third-party-profiles">9.3 Third-party profiles</a></li>
-<li class="toc-entry toc-subsection"><a href="#source-card-rule">9.4 Source-card rule</a></li>
-<li class="toc-entry toc-subsection"><a href="#ahrefs-controlled-schema-study">9.5 Ahrefs controlled schema study</a></li>
-<li class="toc-entry toc-subsection"><a href="#engine-overlap-research">9.6 Engine-overlap research</a></li>
-<li class="toc-entry toc-subsection"><a href="#buyer-research-evidence">9.7 Buyer-research evidence</a></li>
-<li class="toc-entry toc-chapter"><a href="#appendices">10. Appendices</a></li>
+<li class="toc-entry"><a href="#ibm-brand-style-guide">IBM Brand Style Guide</a></li>
+<li class="toc-entry"><a href="#ibm-production-manifest">IBM production manifest</a></li>
+<li class="toc-entry toc-chapter"><a href="#brand-assets-and-surface-rules">1. Brand assets and surface rules</a></li>
+<li class="toc-entry toc-subsection"><a href="#logo-on-light-surface">1.1 Logo on light surface</a></li>
+<li class="toc-entry toc-subsection"><a href="#logo-on-dark-surface">1.2 Logo on dark surface</a></li>
+<li class="toc-entry toc-subsection"><a href="#icon-or-monogram">1.3 Icon or monogram</a></li>
+<li class="toc-entry toc-subsection"><a href="#partner-lockup">1.4 Partner lockup</a></li>
+<li class="toc-entry toc-subsection"><a href="#primary-blue">1.5 Primary blue</a></li>
+<li class="toc-entry toc-subsection"><a href="#strong-text">1.6 Strong text</a></li>
+<li class="toc-entry toc-subsection"><a href="#raised-surface">1.7 Raised surface</a></li>
+<li class="toc-entry toc-subsection"><a href="#critical-state">1.8 Critical state</a></li>
+<li class="toc-entry toc-subsection"><a href="#warning-state">1.9 Warning state</a></li>
+<li class="toc-entry toc-subsection"><a href="#verified-state">1.10 Verified state</a></li>
+<li class="toc-entry toc-chapter"><a href="#typography-and-formatting">2. Typography and formatting</a></li>
+<li class="toc-entry toc-subsection"><a href="#h1-cover-title">2.1 H1 / cover title</a></li>
+<li class="toc-entry toc-subsection"><a href="#h2-section-title">2.2 H2 / section title</a></li>
+<li class="toc-entry toc-subsection"><a href="#h3-component-title">2.3 H3 / component title</a></li>
+<li class="toc-entry toc-subsection"><a href="#body-emphasis-and-citation">2.4 Body, emphasis, and citation</a></li>
+<li class="toc-entry toc-chapter"><a href="#information-tagging-badges">3. Information tagging badges</a></li>
+<li class="toc-entry toc-chapter"><a href="#message-states-and-notifications">4. Message states and notifications</a></li>
+<li class="toc-entry toc-subsection"><a href="#critical-blocker">4.1 Critical blocker</a></li>
+<li class="toc-entry toc-subsection"><a href="#warning-dependency">4.2 Warning dependency</a></li>
+<li class="toc-entry toc-subsection"><a href="#information-note">4.3 Information note</a></li>
+<li class="toc-entry toc-subsection"><a href="#verified-outcome">4.4 Verified outcome</a></li>
+<li class="toc-entry toc-chapter"><a href="#report-component-show-and-tell">5. Report component show-and-tell</a></li>
+<li class="toc-entry toc-chapter"><a href="#recommendation-patterns">6. Recommendation patterns</a></li>
+<li class="toc-entry toc-subsection"><a href="#critical-control-gap-evidence-verified">6.1 Critical control gap</a></li>
+<li class="toc-entry toc-subsection"><a href="#high-priority-dependency-evidence-partial">6.2 High-priority dependency</a></li>
+<li class="toc-entry toc-subsection"><a href="#medium-optimisation-evidence-inferred">6.3 Medium optimisation</a></li>
+<li class="toc-entry toc-subsection"><a href="#completed-control-evidence-verified">6.4 Completed control</a></li>
+<li class="toc-entry toc-subsection"><a href="#preserve">6.5 Preserve</a></li>
+<li class="toc-entry toc-subsection"><a href="#avoid">6.6 Avoid</a></li>
+<li class="toc-entry toc-chapter"><a href="#handoff-code-and-export">7. Handoff, code, and export</a></li>
+<li class="toc-entry toc-subsection"><a href="#implementation-brief">7.1 Implementation brief</a></li>
+<li class="toc-entry toc-subsection"><a href="#source-card-purpose">7.2 Source-card purpose</a></li>
 </ol>
 </nav>
 
 <main class="report-content report-main report-rest">
-<h2 class="chapter-heading" id="highest-impact-tactics"><span class="heading-number">1.</span> Highest-impact tactics</h2>
-<section class="details-note">
-<h3 class="section-heading" id="weight-before-recommending"><span class="heading-number">1.1</span> Weight before recommending</h3>
-<p>Do not apply all tactics to all pages. Score page-type fit, retrieval eligibility, source proximity, corroboration, freshness, confidence, impact, and effort before roadmap sequencing.</p>
+<h2 class="chapter-heading" id="brand-assets-and-surface-rules"><span class="heading-number">1.</span> Brand assets and surface rules</h2>
+<section class="brand-asset-grid">
+<section class="brand-asset-card" data-accent="light">
+<h3 class="section-heading" id="logo-on-light-surface"><span class="heading-number">1.1</span> Logo on light surface</h3>
+<p>Show primary artwork on white or cool-grey backgrounds with generous clearspace. <strong>Use for:</strong> report covers, section openers, and client handoff PDFs.</p>
+</section>
+<section class="brand-asset-card" data-accent="dark">
+<h3 class="section-heading" id="logo-on-dark-surface"><span class="heading-number">1.2</span> Logo on dark surface</h3>
+<p>Use reverse artwork only when the whole page or module is dark. *Do not mix light and dark logo treatments in the same component row.*</p>
+</section>
+<section class="brand-asset-card" data-accent="light">
+<h3 class="section-heading" id="icon-or-monogram"><span class="heading-number">1.3</span> Icon or monogram</h3>
+<p>Use a compact mark for small metadata blocks, export thumbnails, or dashboard tiles. Keep the mark visually centred and never use it as a bullet.</p>
+</section>
+<section class="brand-asset-card" data-accent="dark">
+<h3 class="section-heading" id="partner-lockup"><span class="heading-number">1.4</span> Partner lockup</h3>
+<p>Use a lockup area when the brand appears beside a product, client, or programme name. Keep equal optical weight and align baselines.</p>
 </section>
 </section>
-<section class="severity-key">
+<section class="brand-swatch-grid">
+<section class="swatch-card" data-accent="blue">
+<h3 class="section-heading" id="primary-blue"><span class="heading-number">1.5</span> Primary blue</h3>
+<p>Use for links, active states, chart bars, focus indicators, and primary system emphasis. Pair with white or very light grey.</p>
+</section>
+<section class="swatch-card" data-accent="ink">
+<h3 class="section-heading" id="strong-text"><span class="heading-number">1.6</span> Strong text</h3>
+<p>Use for headings, dense tables, labels, and decision statements. It carries authority without needing extra decoration.</p>
+</section>
+<section class="swatch-card" data-accent="raised">
+<h3 class="section-heading" id="raised-surface"><span class="heading-number">1.7</span> Raised surface</h3>
+<p>Use for cards, tables, briefs, and source ledgers. It should separate information without creating unrelated widths.</p>
+</section>
+<section class="swatch-card" data-accent="red">
+<h3 class="section-heading" id="critical-state"><span class="heading-number">1.8</span> Critical state</h3>
+<p>Use only for blockers, risk, failed validation, or policy exceptions. Always pair it with a text label and recovery instruction.</p>
+</section>
+<section class="swatch-card" data-accent="amber">
+<h3 class="section-heading" id="warning-state"><span class="heading-number">1.9</span> Warning state</h3>
+<p>Use for dependencies, partial evidence, or pending verification. It should be visible in print, not a faint tint.</p>
+</section>
+<section class="swatch-card" data-accent="green">
+<h3 class="section-heading" id="verified-state"><span class="heading-number">1.10</span> Verified state</h3>
+<p>Use for shipped controls, passed checks, and preserved patterns. Keep the label legible on the state colour.</p>
+</section>
+</section>
+<h2 class="chapter-heading" id="typography-and-formatting"><span class="heading-number">2.</span> Typography and formatting</h2>
+<section class="brand-type-scale">
+<section class="type-specimen">
+<h3 class="section-heading" id="h1-cover-title"><span class="heading-number">2.1</span> H1 / cover title</h3>
+<p><strong>Technical audit readiness report</strong></p>
+<p>Use for the single page purpose. Keep it direct; avoid marketing flourish.</p>
+</section>
+<section class="type-specimen">
+<h3 class="section-heading" id="h2-section-title"><span class="heading-number">2.2</span> H2 / section title</h3>
+<p><strong>Evidence and decision path</strong></p>
+<p>Use H2s for major production tasks: assets, colours, data, decisions, export.</p>
+</section>
+<section class="type-specimen">
+<h3 class="section-heading" id="h3-component-title"><span class="heading-number">2.3</span> H3 / component title</h3>
+<p><strong>Source ledger card</strong></p>
+<p>Use H3s inside reusable blocks. They should name the component, not repeat the section.</p>
+</section>
+<section class="type-specimen">
+<h3 class="section-heading" id="body-emphasis-and-citation"><span class="heading-number">2.4</span> Body, emphasis, and citation</h3>
+<p>Normal body copy states the fact. <strong>Bold</strong> marks the decision or required field. *Italic* marks caveat, interpretation, or non-blocking nuance.</p>
+</section>
+</section>
+<section class="quote-card">
+<p>Use quotation styling for source excerpts and reviewer notes. A quote is not a notification; it is a cited voice that supports or challenges the report claim.</p>
+</section>
+<h2 class="chapter-heading" id="information-tagging-badges"><span class="heading-number">3.</span> Information tagging badges</h2>
+<p>Badges are <strong>metadata tags</strong>, not notifications. Use them inline beside claims, table cells, or source IDs to classify evidence without taking over the page.</p>
+<section class="badge-row">
+<p><strong>Evidence:</strong> <span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span> <span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span> <span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span> <span class="evidence-badge" aria-label="Evidence: Missing"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span></p>
+<p><strong>Priority:</strong> <span class="badge badge-missing">Critical</span> <span class="badge badge-partial">High</span> <span class="badge badge-inferred">Medium</span> <span class="badge badge-verified">Low</span></p>
+</section>
+<section class="facts-table-wrap">
+<table><thead>
+<tr><th>Badge</th><th>Purpose</th><th>Use example</th><th>Avoid</th></tr></thead><tbody>
+<tr><td><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>Confirmed evidence</td><td>“Pricing table present in first-fetch HTML”</td><td>Using it for assumptions</td></tr>
+<tr><td><span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></td><td>Some support, not enough</td><td>“Two engines cite the page; one cites stale copy”</td><td>Hiding uncertainty</td></tr>
+<tr><td><span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span></td><td>Modelled judgement</td><td>“Likely entity mismatch from source drift”</td><td>Presenting as fact</td></tr>
+<tr><td><span class="evidence-badge" aria-label="Evidence: Missing"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span></td><td>No evidence found</td><td>“No source card for the claim”</td><td>Using as blame language</td></tr>
+</tbody></table>
+</section>
+<h2 class="chapter-heading" id="message-states-and-notifications"><span class="heading-number">4.</span> Message states and notifications</h2>
+<p>Notifications are interruption patterns. They need colour, shape, label, purpose, and action. They are not badge rows.</p>
+<section class="notification-grid">
 <section class="info-panel" data-severity="critical">
-<h3 class="section-heading" id="critical"><span class="heading-number">1.2</span> Critical</h3>
-<p>Revenue page cannot be fetched or cited.</p>
+<h3 class="section-heading" id="critical-blocker"><span class="heading-number">4.1</span> Critical blocker</h3>
+<p><strong>Purpose:</strong> stop delivery until fixed. Use when evidence is inaccessible, a required source is missing, or a public artefact risks disclosure.</p>
+<p><strong>Example:</strong> “Source B004 is absent from the export ledger. Add it before approval.”</p>
 </section>
 <section class="info-panel" data-severity="high">
-<h3 class="section-heading" id="high"><span class="heading-number">1.3</span> High</h3>
-<p>Claim lacks nearby evidence or source-card support.</p>
+<h3 class="section-heading" id="warning-dependency"><span class="heading-number">4.2</span> Warning dependency</h3>
+<p><strong>Purpose:</strong> expose risk without blocking every reader. Use for partial evidence, ownership gaps, or pending validation.</p>
+<p><strong>Example:</strong> “Table fit passes A4 but needs slide review before client deck export.”</p>
 </section>
 <section class="info-panel" data-severity="medium">
-<h3 class="section-heading" id="medium"><span class="heading-number">1.4</span> Medium</h3>
-<p>Helpful page-type tactic with partial evidence.</p>
+<h3 class="section-heading" id="information-note"><span class="heading-number">4.3</span> Information note</h3>
+<p><strong>Purpose:</strong> explain method or scope. Use for assumptions, sampling windows, and environment details.</p>
+<p><strong>Example:</strong> “Crawler evidence was captured from a logged-out first fetch.”</p>
 </section>
 <section class="info-panel" data-severity="low">
-<h3 class="section-heading" id="low"><span class="heading-number">1.5</span> Low</h3>
-<p>Hygiene, formatting, or monitoring improvement.</p>
+<h3 class="section-heading" id="verified-outcome"><span class="heading-number">4.4</span> Verified outcome</h3>
+<p><strong>Purpose:</strong> mark a stable pattern to preserve. Use when a check passed and should not regress.</p>
+<p><strong>Example:</strong> “All priority cards now include owner, source, and verification fields.”</p>
 </section>
+</section>
+<h2 class="chapter-heading" id="report-component-show-and-tell"><span class="heading-number">5.</span> Report component show-and-tell</h2>
+<section class="stats-strip">
+<section class="kpi-card">
+<p><strong>12</strong></p>
+<p>Component families covered. <strong>Source:</strong> B001.</p>
+</section>
+<section class="kpi-card">
+<p><strong>4</strong></p>
+<p>State colours with visible contrast. <strong>Source:</strong> B002.</p>
+</section>
+<section class="kpi-card">
+<p><strong>100%</strong></p>
+<p>Recommendation cards include owner and verification. <strong>Source:</strong> B003.</p>
+</section>
+<section class="kpi-card">
+<p><strong>0</strong></p>
+<p>Private artefacts in public output. <strong>Source:</strong> B004.</p>
+</section>
+</section>
+<section class="visibility-bars">
+<p style="--bar-value: 100%"><span class="visibility-label">Component coverage</span><span class="visibility-value">100%</span></p>
+<p style="--bar-value: 92%"><span class="visibility-label">Evidence traceability</span><span class="visibility-value">92%</span></p>
+<p style="--bar-value: 88%"><span class="visibility-label">Notification clarity</span><span class="visibility-value">88%</span></p>
+<p style="--bar-value: 94%"><span class="visibility-label">Print readiness</span><span class="visibility-value">94%</span></p>
 </section>
 <section class="facts-table-wrap">
 <table><thead>
-<tr><th>Tactic</th><th>Evidence</th><th>Best page types</th><th>Why it matters</th><th>Verification</th></tr></thead><tbody>
-<tr><td>Direct-answer opening</td><td><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>Article, glossary, comparison, feature, local</td><td>Concise first-paragraph claims are easier to retrieve and cite.</td><td>Rendered first 300 words include answer, source, and updated date</td></tr>
-<tr><td>Source cards near claims</td><td><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>Research, comparison, YMYL, feature</td><td>Engines need nearby proof to trust and quote claims.</td><td>Source ID appears beside factual claim and in ledger</td></tr>
-<tr><td>Third-party corroboration</td><td><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>SaaS, ecommerce, local, YMYL</td><td>Answer engines cross-check owned claims against outside sources.</td><td>Profile parity and source breadth review</td></tr>
-<tr><td>Bot-friendly first fetch</td><td><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>All priority pages</td><td>Hidden or blocked content cannot be cited.</td><td>Raw/rendered crawl, robots, sitemap, and logs</td></tr>
-<tr><td>Entity consistency</td><td><span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></td><td>Homepage, about, local, profiles</td><td>Contradictory facts reduce answer confidence.</td><td>Canonical entity table and third-party parity</td></tr>
-<tr><td>FAQPage schema</td><td><span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span></td><td>Hygiene only</td><td>Structured data helps clarity but does not replace visible evidence.</td><td>Schema validation plus visible-content check</td></tr>
+<tr><th>Component</th><th>Purpose</th><th>IBM treatment</th><th>Example content</th></tr></thead><tbody>
+<tr><td>Manifest</td><td>Scope and production rules</td><td>Field grid with firm labels</td><td>“Export rule: placeholder evidence only”</td></tr>
+<tr><td>KPI card</td><td>Executive metric</td><td>Large value, short source line</td><td>“12 component families covered”</td></tr>
+<tr><td>Facts table</td><td>Dense comparison</td><td>Aligned headers, stable columns</td><td>Component / purpose / treatment / example</td></tr>
+<tr><td>Source ledger</td><td>Claim provenance</td><td>One width, row dividers, source IDs</td><td>B001 — Component inventory</td></tr>
+<tr><td>Brief card</td><td>Delivery handoff</td><td>Light command panel, blue left rule</td><td>Task / files / acceptance / verification</td></tr>
 </tbody></table>
 </section>
-<section class="report-keep-with-heading report-chapter-page">
-<h2 class="chapter-heading" id="page-type-matrix"><span class="heading-number">2.</span> Page-type matrix</h2>
-<section class="facts-table-wrap">
-<table><thead>
-<tr><th>Page type</th><th>Required tactics</th><th>Conditional tactics</th><th>Devalue or avoid</th></tr></thead><tbody>
-<tr><td>Homepage</td><td>Entity facts, category clarity, proof, crawlable nav</td><td>Original stats, comparison links</td><td>Long FAQ as primary GEO tactic</td></tr>
-<tr><td>SaaS feature</td><td>Criteria block, use cases, integrations, proof</td><td>Demo video transcript, benchmark table</td><td>Generic benefit copy without source IDs</td></tr>
-<tr><td>Pricing</td><td>Plan facts, constraints, comparison table</td><td>Purchase-relevant visible FAQ</td><td>Hidden pricing screenshots only</td></tr>
-<tr><td>Comparison</td><td>Direct answer, feature/pricing table, alternatives, source cards</td><td>Third-party review quotes</td><td>Unsupported “best” claims</td></tr>
-<tr><td>Article/guide</td><td>Direct answer, question headings, stats, expert quotes</td><td>Glossary sidebar, summary box</td><td>Thin filler or stale facts</td></tr>
-<tr><td>Product/PDP</td><td>Specs, reviews, availability, canonical descriptions</td><td>Video transcript, product schema</td><td>Flat B2B SaaS checklist</td></tr>
-<tr><td>Local/YMYL</td><td>Credentials, service area, policies, disclaimers</td><td>Practitioner bios, local citations</td><td>Unsupported advice</td></tr>
-<tr><td>Research/report</td><td>Methodology, dataset, source cards, findings</td><td>Embeddable charts</td><td>PDF-only content without HTML summary</td></tr>
-</tbody></table>
+<section class="ledger-list">
+<p>B001 — Component inventory — <strong>High confidence</strong>; checks rendered block families.</p>
+<p>B002 — Severity review — <strong>High confidence</strong>; validates visible critical, warning, information, and verified states.</p>
+<p>B003 — Recommendation audit — <strong>Medium confidence</strong>; verifies owner, due date, source, and acceptance fields.</p>
+<p>B004 — Redaction audit — <strong>High confidence</strong>; confirms public-safe export.</p>
 </section>
+<h2 class="chapter-heading" id="recommendation-patterns"><span class="heading-number">6.</span> Recommendation patterns</h2>
+<section class="priority-card" data-priority="critical">
+<h3 class="section-heading" id="critical-control-gap-evidence-verified"><span class="heading-number">6.1</span> Critical control gap <span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></h3>
+<p>Use when a missing component, evidence field, or verification step blocks approval.</p>
+<p><strong>Owner:</strong> Governance. <strong>Due:</strong> current release. <strong>Verify:</strong> source ledger contains B001 and B004.</p>
 </section>
-<section class="industry-card">
-<h3 class="section-heading" id="industry-fit-reminder"><span class="heading-number">2.1</span> Industry-fit reminder</h3>
-<p>SaaS, ecommerce, local, and YMYL pages require different proof sources. Map the page type before assigning a tactic.</p>
+<section class="priority-card" data-priority="high">
+<h3 class="section-heading" id="high-priority-dependency-evidence-partial"><span class="heading-number">6.2</span> High-priority dependency <span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></h3>
+<p>Use when a recommendation depends on another system, owner, or evidence source.</p>
+<p><strong>Owner:</strong> Delivery. <strong>Due:</strong> next sprint. <strong>Verify:</strong> dependency has an assigned owner.</p>
 </section>
-<hr class="section-separator">
-<section class="report-keep-with-heading report-chapter-page">
-<h2 class="chapter-heading" id="tactic-card-examples"><span class="heading-number">3.</span> Tactic card examples</h2>
-<section class="tactic-card">
-<h3 class="section-heading" id="direct-answer-opening"><span class="heading-number">3.1</span> Direct-answer opening</h3>
-<ul>
-<li>What: answer the query plainly in the first paragraph.</li>
-<li>Why: extractive systems need self-contained claims with nearby proof.</li>
-<li>How: pair answer, source ID, author/update date, and supporting table.</li>
-<li>Verify: rerun per-engine prompts and compare cited URL movement.</li>
-</ul>
+<section class="priority-card" data-priority="medium">
+<h3 class="section-heading" id="medium-optimisation-evidence-inferred"><span class="heading-number">6.3</span> Medium optimisation <span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span></h3>
+<p>Use when the report is correct but can improve scanability, table density, or export fidelity.</p>
+<p><strong>Owner:</strong> Design systems. <strong>Due:</strong> backlog. <strong>Verify:</strong> A4 and slide output remain aligned.</p>
 </section>
-</section>
-<section class="impact-panel" data-severity="high">
-<h3 class="section-heading" id="impact"><span class="heading-number">3.2</span> Impact</h3>
-<p>Direct-answer openings influence extraction quality, snippet usefulness, and the chance that a page is selected as a cited source.</p>
-</section>
-<section class="evidence-panel" data-severity="medium">
-<h3 class="section-heading" id="evidence"><span class="heading-number">3.3</span> Evidence</h3>
-<p>Verify with raw/rendered HTML, source-ID proximity, and per-engine prompt reruns.</p>
-</section>
-<section class="tactic-card">
-<h3 class="section-heading" id="bot-friendly-first-fetch"><span class="heading-number">3.4</span> Bot-friendly first fetch</h3>
-<ul>
-<li>What: SSR or pre-render important content, allow relevant crawlers, and keep key text visible.</li>
-<li>Why: invisible or blocked content cannot be cited.</li>
-<li>How: compare raw HTML, rendered DOM, robots, sitemap, and logs.</li>
-<li>Verify: monthly crawl plus AI/search bot log review.</li>
-</ul>
+<section class="priority-card" data-status="done">
+<h3 class="section-heading" id="completed-control-evidence-verified"><span class="heading-number">6.4</span> Completed control <span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></h3>
+<p>Use for implemented safeguards and stable patterns.</p>
+<p><strong>Owner:</strong> QA. <strong>Verified:</strong> B004. <strong>Preserve:</strong> state label remains high contrast.</p>
 </section>
 <section class="good-bad">
 <section class="good-row">
-<h3 class="section-heading" id="strong-pattern"><span class="heading-number">3.5</span> Strong pattern</h3>
-<p>Direct answer, evidence badge, source ID, visible methodology, updated date, and crawlable comparison table.</p>
+<h3 class="section-heading" id="preserve"><span class="heading-number">6.5</span> Preserve</h3>
+<ul>
+<li><strong>Explicit source IDs</strong> beside claims.</li>
+<li>Stable table columns and aligned panel widths.</li>
+<li>Clear owner, due date, and verification fields.</li>
+</ul>
 </section>
 <section class="bad-row">
-<h3 class="section-heading" id="weak-pattern"><span class="heading-number">3.6</span> Weak pattern</h3>
-<p>Image-only proof, unsupported superlatives, client-rendered claims, and schema added without visible evidence.</p>
-</section>
-</section>
-<section class="report-keep-with-heading report-chapter-page">
-<h2 class="chapter-heading" id="myths-and-caveats"><span class="heading-number">4.</span> Myths and caveats</h2>
-<section class="myth-callout">
-<h3 class="section-heading" id="myth"><span class="heading-number">4.1</span> Myth</h3>
-<p>Adding FAQPage schema is enough to become GEO-ready.</p>
-<h3 class="section-heading" id="reality"><span class="heading-number">4.2</span> Reality</h3>
-<p>FAQPage is hygiene unless visible FAQ content genuinely fits page type and query fan-out.</p>
-</section>
-</section>
-<section class="example-card">
-<div class="code-block-wrap"><div class="code-block-head"><span>Text code</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Worker brief: update /compare/example with source IDs S001-S004,
-visible comparison evidence, third-party corroboration, and retest steps.
-Acceptance: AIO, Gemini, ChatGPT, AI Mode, and Perplexity results are recorded separately.</code></pre></div>
-</section>
-<section class="example-card">
-<div class="code-block-wrap"><div class="code-block-head"><span>Mermaid source fallback</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="mermaid"><code>flowchart TD
-  Sources[Source IDs] --&gt; Findings
-  Findings --&gt; Roadmap
-  Roadmap --&gt; Rerun[Per-engine rerun]</code></pre></div>
-<figure class="mermaid-rendered" aria-label="Rendered Mermaid diagram"><svg viewBox="0 0 760 130" role="img" xmlns="http://www.w3.org/2000/svg"><defs><marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" class="diagram-arrow-head" /></marker></defs><line x1="189" y1="64" x2="199" y2="64" class="diagram-arrow" /><line x1="374" y1="64" x2="384" y2="64" class="diagram-arrow" /><line x1="559" y1="64" x2="569" y2="64" class="diagram-arrow" /><rect x="24" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="104" y="70" text-anchor="middle" class="diagram-label">Source IDs</text><rect x="209" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="289" y="70" text-anchor="middle" class="diagram-label">Findings</text><rect x="394" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="474" y="70" text-anchor="middle" class="diagram-label">Roadmap</text><rect x="579" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="659" y="70" text-anchor="middle" class="diagram-label">Per-engine rerun</text></svg><figcaption>Rendered Mermaid example, embedded as self-contained SVG.</figcaption></figure>
-</section>
-<p>Signal equation fallback: <span class="latex-inline" role="math" aria-label="AI\ visibility = retrieval + evidence + corroboration">AI\ visibility = retrieval + evidence + corroboration</span>.</p>
-<section class="block-template">
-<header>Author block template</header>
-<div class="code-block-wrap"><div class="code-block-head"><span>Text code</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Written by Dr. Jane Doe, PhD
-Principal Data Scientist, ExampleCo
-
-Use this block for named experts, source credentials, and profile links.</code></pre></div>
-</section>
-<section class="bar-chart">
-<p style="--bar-value: 72%">On-page evidence — 72%</p>
-<p style="--bar-value: 64%">Technical retrieval — 64%</p>
-<p style="--bar-value: 58%">Authority corroboration — 58%</p>
-</section>
-<section class="visibility-bars">
-<p style="--bar-value: 78%">AI Overviews — 78%</p>
-<p style="--bar-value: 54%">Gemini — 54%</p>
-<p style="--bar-value: 41%">ChatGPT — 41%</p>
-<p style="--bar-value: 38%">AI Mode — 38%</p>
-<p style="--bar-value: 9%">Perplexity — 9%</p>
-</section>
-<blockquote>Strong reports separate observed facts from interpretation, then turn only verified or clearly labelled partial evidence into roadmap items.</blockquote>
-<h2 class="chapter-heading" id="case-studies"><span class="heading-number">5.</span> Case studies</h2>
-<section class="case-study-card">
-<h3 class="section-heading" id="industrial-manufacturer"><span class="heading-number">5.1</span> Industrial manufacturer</h3>
-<p><strong>Result:</strong> measurable AI referral growth after direct-answer restructuring and third-party corroboration.</p>
-<p><strong>Tactics applied:</strong> original benchmarks, source-card evidence, bot-friendly rendering, and trade-publication mentions.</p>
-</section>
-<section class="case-study-card">
-<h3 class="section-heading" id="healthcare-comparison-site"><span class="heading-number">5.2</span> Healthcare comparison site</h3>
-<p><strong>Result:</strong> cited answers appeared across multiple answer engines after visible expertise and profile parity fixes.</p>
-<p><strong>Tactics applied:</strong> practitioner bylines, review methodology, source-backed tables, and monthly prompt reruns.</p>
-</section>
-<section class="report-keep-with-heading report-chapter-page">
-<h2 class="chapter-heading" id="roadmap-template"><span class="heading-number">6.</span> Roadmap template</h2>
-<section class="priority-group" data-priority="high">
-<h3 class="section-heading" id="priority-rule"><span class="heading-number">6.1</span> Priority rule</h3>
-<p>Start with revenue pages that fail retrieval eligibility or evidence proximity before optional schema enhancements.</p>
-</section>
-</section>
-<section class="priority-card" data-priority="critical">
-<h3 class="section-heading" id="revenue-page-retrieval-blocker"><span class="heading-number">6.2</span> Revenue page retrieval blocker</h3>
-<p>Use a priority card when a recommendation must carry priority, owner, due date, source IDs, and verification in one executive-scannable block. Pair with the source ledger and a worker-ready implementation brief.</p>
-</section>
-<section class="facts-table-wrap">
-<table><thead>
-<tr><th>Priority</th><th>Recommendation</th><th>Applies to</th><th>Owner</th><th>Verification</th><th>Source IDs</th></tr></thead><tbody>
-<tr><td>P0</td><td>Fix retrieval blockers on revenue pages.</td><td>Homepage, pricing, feature, PDP, local</td><td>SEO + engineering</td><td>Raw/rendered crawl, robots, sitemap, logs</td><td>S002, S005</td></tr>
-<tr><td>P1</td><td>Add source cards and original evidence.</td><td>Comparison, article, research/report</td><td>Content + subject expert</td><td>Source ledger and citation checks</td><td>S001, S003</td></tr>
-<tr><td>P1</td><td>Build third-party corroboration.</td><td>SaaS, local, ecommerce</td><td>Marketing/PR</td><td>Profile parity and source breadth</td><td>S004</td></tr>
-<tr><td>P2</td><td>Improve schema and metadata.</td><td>All page types</td><td>SEO + engineering</td><td>Schema validation plus visible-content check</td><td>S002</td></tr>
-</tbody></table>
-</section>
-<section class="report-keep-with-heading report-chapter-page">
-<h2 class="chapter-heading" id="verification-checklist"><span class="heading-number">7.</span> Verification checklist</h2>
-<section class="checklist-card">
+<h3 class="section-heading" id="avoid"><span class="heading-number">6.6</span> Avoid</h3>
 <ul>
-<li>Validate evidence badges and source IDs before export.</li>
-<li>Render HTML with the chosen DESIGN.md-backed template.</li>
-<li>Review table wrapping, badge visibility, source-card readability, and sticky TOC behaviour.</li>
-<li>Export A4/Letter PDF for documents and 16:9 PDF for decks.</li>
-<li>For client-custom reports, rerun live evidence collection before interpretation.</li>
-<li>For recurring reports, create a custom routine with deterministic collection and report-agent interpretation.</li>
+<li>Ambiguous status labels.</li>
+<li>Decorative charts without data labels.</li>
+<li>Recommendations without acceptance criteria.</li>
 </ul>
 </section>
 </section>
-<section class="report-keep-with-heading report-chapter-page">
-<h2 class="chapter-heading" id="closing-callouts"><span class="heading-number">8.</span> Closing callouts</h2>
-<section class="callout">
-<h3 class="section-heading" id="combined-finding"><span class="heading-number">8.1</span> Combined finding</h3>
-<p>AI visibility reporting should end with the fewest useful recommendations: retrieval blockers, evidence proximity, third-party corroboration, and monitoring. Keep panels for important emphasis; use plain bullets and tables for normal content.</p>
+<h2 class="chapter-heading" id="handoff-code-and-export"><span class="heading-number">7.</span> Handoff, code, and export</h2>
+<section class="brief-card">
+<h3 class="section-heading" id="implementation-brief"><span class="heading-number">7.1</span> Implementation brief</h3>
+<p><strong>Task:</strong> Apply IBM-styled report components to a technical audit.</p>
+<p><strong>Files:</strong> report Markdown, renderer CSS, evidence ledger, PDF exports.</p>
+<p><strong>Acceptance:</strong> every finding maps to source IDs, confidence, owner, and verification.</p>
+<p><strong>Verification:</strong> render HTML, A4, US Letter, and slides; inspect badges, notifications, charts, tables, and code panels.</p>
 </section>
-</section>
-<section class="report-keep-with-heading report-chapter-page">
-<h2 class="chapter-heading" id="sources"><span class="heading-number">9.</span> Sources</h2>
-<section class="sources-layout">
-<section class="sources-group">
-<section class="source-title">
-<p>Primary sources</p>
-</section>
-<section class="source-card">
-<h3 class="section-heading" id="prompt-captures"><span class="heading-number">9.1</span> Prompt captures</h3>
-<p>AIO, Gemini, ChatGPT, AI Mode, and Perplexity prompt evidence stored separately.</p>
-<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
-<section class="source-card">
-<h3 class="section-heading" id="crawl-evidence"><span class="heading-number">9.2</span> Crawl evidence</h3>
-<p>Raw/rendered crawl export with retrieval eligibility notes.</p>
-<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
-</section>
-<section class="sources-group">
-<section class="source-title">
-<p>Corroboration sources</p>
+<section class="example-card">
+<header>IBM light code panel</header>
+<div class="code-block-wrap"><div class="code-block-head"><span>Text code</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Do: classify evidence, assign owner, include verification.
+Do not: use a notification when a small metadata badge is enough.</code></pre></div>
 </section>
 <section class="source-card">
-<h3 class="section-heading" id="third-party-profiles"><span class="heading-number">9.3</span> Third-party profiles</h3>
-<p>Review, directory, community, partner, and media source parity checks.</p>
-<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
-</section>
-</section>
-</section>
-<section class="facts-table-wrap">
-<table><thead>
-<tr><th>Source ID</th><th>Evidence type</th><th>Use in report</th><th>Verification</th></tr></thead><tbody>
-<tr><td>S001</td><td>Prompt capture</td><td>Per-engine citation presence</td><td>AIO, Gemini, ChatGPT, AI Mode, and Perplexity recorded separately</td></tr>
-<tr><td>S002</td><td>Raw/rendered crawl</td><td>Retrieval eligibility</td><td>Important claims visible on first fetch</td></tr>
-<tr><td>S003</td><td>Page inventory</td><td>Page-type weighting</td><td>URL mapped to homepage, feature, comparison, article, local, PDP, or report</td></tr>
-<tr><td>S004</td><td>Third-party profile</td><td>Corroboration strength</td><td>Facts match owned canonical entity table</td></tr>
-<tr><td>S005</td><td>Analytics/search data</td><td>Business value and priority</td><td>Priority URL cluster tied to demand or revenue</td></tr>
-</tbody></table>
-</section>
-<section class="source-card">
-<h3 class="section-heading" id="source-card-rule"><span class="heading-number">9.4</span> Source-card rule</h3>
-<p>Every roadmap item should cite source IDs, observed date, confidence, owner, and the command or routine that verifies completion.</p>
+<h3 class="section-heading" id="source-card-purpose"><span class="heading-number">7.2</span> Source-card purpose</h3>
+<p>Use source cards as governance records: source ID, type, observed date, claim supported, confidence, sensitivity, and storage location.</p>
 <a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
 <section class="privacy-note">
 <p><strong>Public artifact rule</strong></p>
-<p>Do not export private URLs, raw transcripts, screenshots, local paths, or client names. Publish source IDs and redacted summaries; keep raw evidence in approved secure storage.</p>
-</section>
-<section class="source-list">
-<section class="source-item">
-<h3 class="section-heading" id="ahrefs-controlled-schema-study"><span class="heading-number">9.5</span> Ahrefs controlled schema study</h3>
-<p>Schema is treated as technical hygiene rather than a primary AI-visibility growth lever.</p>
-<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
-<section class="source-item">
-<h3 class="section-heading" id="engine-overlap-research"><span class="heading-number">9.6</span> Engine-overlap research</h3>
-<p>Low overlap between AIO, Gemini, ChatGPT, AI Mode, and Perplexity requires per-engine reporting.</p>
-<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
-<section class="source-item">
-<h3 class="section-heading" id="buyer-research-evidence"><span class="heading-number">9.7</span> Buyer-research evidence</h3>
-<p>Answer engines increasingly influence discovery and shortlisting, so reports separate visibility from conversion value.</p>
-<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
-</section>
-<details class="accordion" open><summary>How source IDs become recommendations</summary>
-<ol>
-<li>Capture source evidence before writing findings.</li>
-<li>Map each source to supported claims and page types.</li>
-<li>Score recommendations by impact, confidence, effort, and verification path.</li>
-<li>Include unresolved gaps in the appendix rather than presenting them as facts.</li>
-</ol>
-</details>
-<h2 class="chapter-heading" id="appendices"><span class="heading-number">10.</span> Appendices</h2>
-<section class="appendix-links">
-<p><a href="appendices/source-ledger.md" data-filetype="md">Source ledger appendix</a> <a href="appendices/prompt-set.md" data-filetype="md">Prompt set appendix</a> <a href="../client-ai-search-audit/report.html" data-filetype="html">Client audit example</a> <a href="../style-previews/index.html" data-filetype="html">Style previews</a></p>
+<p>IBM-styled public examples must not include private client names, URLs, local paths, screenshots, raw exports, or uncontrolled evidence excerpts.</p>
 </section>
 <section class="version-summary">
-<p>V4 · compiled May 2026 from source-led evidence · internal toolkit</p>
+<p>IBM brand style guide specimen · usable production guide · public-safe placeholder content</p>
 </section>
 </main>
 </div>

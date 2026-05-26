@@ -145,7 +145,12 @@ body.report-body {
 .chapter-hero,
 .badge-key,
 .block-template,
+.brand-component-grid,
+.brand-swatch-grid,
+.brand-type-scale,
+.brief-card,
 .case-study-card,
+.dossier-card,
 .tactic-card,
 .example-card,
 .good-bad,
@@ -153,13 +158,19 @@ body.report-body {
 .facts-table-wrap,
 .details-note,
 .industry-card,
+.kpi-card,
+.ledger-list,
+.manifest-card,
 .priority-group,
+.priority-card,
 .checklist-card,
+.privacy-note,
 .source-card,
 .source-item,
 .source-list,
 .sources-layout,
 .sources-group,
+.specimen-card,
 .myth-callout,
 .summary-stats,
 .info-panel,
@@ -170,6 +181,8 @@ body.report-body {
 .accordion,
 .quote-card,
 .callout,
+.toc-list,
+.visibility-bars,
 .report-keep-with-heading,
 .version-summary {
   break-inside: avoid;
@@ -618,6 +631,13 @@ th .evidence-badge {
 
 .tactic-card,
 .case-study-card,
+.dossier-card,
+.manifest-card,
+.kpi-card,
+.priority-card,
+.brief-card,
+.privacy-note,
+.specimen-card,
 .industry-card,
 .priority-group,
 .checklist-card,
@@ -631,6 +651,8 @@ th .evidence-badge {
 .evidence-panel,
 .action-panel,
 .severity-key,
+.ledger-list,
+.toc-list,
 .accordion,
 .quote-card,
 .callout,
@@ -734,6 +756,13 @@ th .evidence-badge {
 
 .tactic-card h3,
 .case-study-card h3,
+.dossier-card h3,
+.manifest-card h3,
+.kpi-card h3,
+.priority-card h3,
+.brief-card h3,
+.privacy-note h3,
+.specimen-card h3,
 .industry-card h3,
 .priority-group h3,
 .checklist-card h3,
@@ -1283,6 +1312,198 @@ blockquote {
   margin-block: var(--report-space-4);
 }
 
+.visibility-bars {
+  display: grid;
+  gap: var(--report-space-2);
+  margin-block: var(--report-space-4);
+}
+
+.visibility-bars p {
+  --bar-value: 72%;
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(7rem, 0.35fr) minmax(8rem, 1fr);
+  gap: var(--report-space-3);
+  align-items: center;
+  margin: 0;
+  color: var(--report-ink);
+  font-family: var(--report-font-code);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.visibility-bars p::before {
+  content: "";
+  display: block;
+  grid-column: 2;
+  grid-row: 1;
+  height: 0.8rem;
+  background: color-mix(in srgb, var(--report-rule) 56%, transparent);
+}
+
+.visibility-bars p::after {
+  content: "";
+  display: block;
+  grid-column: 2;
+  grid-row: 1;
+  width: var(--bar-value);
+  height: 0.8rem;
+  background: var(--report-blue);
+}
+
+.manifest-card,
+.dossier-card,
+.kpi-card,
+.priority-card,
+.brief-card,
+.privacy-note,
+.specimen-card {
+  overflow: hidden;
+}
+
+.manifest-card::before,
+.dossier-card::before,
+.kpi-card::before,
+.priority-card::before,
+.specimen-card::before {
+  content: attr(data-status);
+  display: block;
+  min-height: 0.65rem;
+  margin: calc(-1 * var(--report-space-4)) calc(-1 * var(--report-space-4)) var(--report-space-3);
+  background: var(--report-ink);
+}
+
+.manifest-card dl,
+.dossier-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--report-space-2) var(--report-space-3);
+  margin: 0;
+}
+
+.manifest-card ul,
+.dossier-card ul {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--report-space-2) var(--report-space-3);
+  padding: 0;
+  list-style: none;
+}
+
+.manifest-card li,
+.dossier-card li {
+  margin: 0;
+  color: var(--report-ink);
+  font-weight: 700;
+}
+
+.manifest-card dt,
+.dossier-card dt {
+  color: var(--report-ink-soft);
+  font-family: var(--report-font-code);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.manifest-card dd,
+.dossier-card dd {
+  margin: 0;
+  color: var(--report-ink);
+  font-weight: 700;
+}
+
+.kpi-card strong,
+.priority-card strong {
+  display: block;
+  color: var(--report-ink);
+  font-family: var(--report-font-heading);
+  font-size: clamp(2.6rem, 6vw, 4.8rem);
+  line-height: 0.92;
+  letter-spacing: -0.04em;
+}
+
+.priority-card[data-priority="critical"]::before { background: var(--report-red); }
+.priority-card[data-priority="high"]::before { background: var(--report-amber); }
+.priority-card[data-priority="medium"]::before { background: var(--report-blue); }
+.priority-card[data-priority="low"]::before { background: var(--report-ink-soft); }
+.priority-card[data-status="done"]::before { background: var(--report-green); }
+
+.privacy-note {
+  display: grid;
+  grid-template-columns: minmax(9rem, 0.28fr) minmax(0, 1fr);
+  gap: var(--report-space-4);
+  background: var(--report-paper-raised);
+}
+
+.privacy-note > :first-child {
+  color: var(--report-ink-soft);
+  font-family: var(--report-font-code);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.toc-list {
+  padding: 0;
+  background: transparent;
+  border-width: 1px 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.toc-list p,
+.ledger-list p {
+  display: grid;
+  grid-template-columns: minmax(4rem, 0.18fr) minmax(0, 1fr) auto;
+  gap: var(--report-space-3);
+  align-items: baseline;
+  margin: 0;
+  padding: var(--report-space-2) 0;
+  border-bottom: 1px dotted var(--report-rule);
+}
+
+.toc-list p:last-child,
+.ledger-list p:last-child {
+  border-bottom: 0;
+}
+
+.brief-card {
+  background: var(--report-ink);
+  color: var(--report-paper);
+  font-family: var(--report-font-code);
+}
+
+.brief-card :where(h3, p, li, code, strong) {
+  color: inherit;
+}
+
+.brand-swatch-grid,
+.brand-type-scale,
+.brand-component-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--report-space-3);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
+.brand-swatch-grid .specimen-card,
+.brand-type-scale .specimen-card,
+.brand-component-grid .specimen-card {
+  margin-block: 0;
+}
+
+.specimen-card code {
+  background: var(--report-paper-raised);
+  color: var(--report-ink);
+}
+
 .bar-chart p {
   --bar-value: 72%;
   position: relative;
@@ -1531,8 +1752,22 @@ a {
     .summary-stats,
   .sources-layout,
   .severity-key,
+  .brand-swatch-grid,
+  .brand-type-scale,
+  .brand-component-grid,
   .good-bad,
   .myth-callout {
+    grid-template-columns: 1fr;
+  }
+
+  .privacy-note,
+  .toc-list p,
+  .ledger-list p,
+  .visibility-bars p,
+  .manifest-card dl,
+  .dossier-card dl,
+  .manifest-card ul,
+  .dossier-card ul {
     grid-template-columns: 1fr;
   }
 
@@ -2540,19 +2775,19 @@ body.report-pdf-profile-letter .report-front { min-height: 10.1in; }
 <p><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span> <span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span> <span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span> <span class="evidence-badge" aria-label="Evidence: Missing"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span></p>
 </section>
 <section class="stats-strip">
-<section class="stat-card">
+<section class="kpi-card">
 <p><strong>5</strong></p>
 <p>Answer engines reported separately.</p>
 </section>
-<section class="stat-card">
+<section class="kpi-card">
 <p><strong>8</strong></p>
 <p>Page types weighted before recommendations.</p>
 </section>
-<section class="stat-card">
+<section class="kpi-card">
 <p><strong>4</strong></p>
 <p>Evidence strengths used in source ledgers.</p>
 </section>
-<section class="stat-card">
+<section class="kpi-card">
 <p><strong>1</strong></p>
 <p>Canonical Markdown source.</p>
 </section>
@@ -2572,6 +2807,12 @@ body.report-pdf-profile-letter .report-front { min-height: 10.1in; }
 </section><details class="accordion action-prompt" open><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: collect source IDs first, then interpret findings into recommendations with owners, acceptance criteria, and rerun steps.
 
 Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details>
+<section class="toc-list">
+<p>Sources | Source ledger and evidence rules | appendices/source-ledger.md</p>
+<p>Tactics | Highest-impact tactics and examples | weighted by page type</p>
+<p>Matrix | Page-type matrix | required, conditional, avoid</p>
+<p>Roadmap | Priority-card handoff | owner · effort · verification</p>
+</section>
 <section class="anchor-links">
 <p><a href="#sources" data-filetype="link">Sources</a> <a href="#highest-impact-tactics" data-filetype="link">Tactics</a> <a href="#page-type-matrix" data-filetype="link">Matrix</a> <a href="#roadmap-template" data-filetype="link">Roadmap</a> <a href="#appendices" data-filetype="link">Appendices</a></p>
 </section>
@@ -2606,6 +2847,7 @@ Guide me through the tools, resources, accounts, permissions, source material, a
 <li class="toc-entry toc-subsection"><a href="#healthcare-comparison-site">5.2 Healthcare comparison site</a></li>
 <li class="toc-entry toc-chapter"><a href="#roadmap-template">6. Roadmap template</a></li>
 <li class="toc-entry toc-subsection"><a href="#priority-rule">6.1 Priority rule</a></li>
+<li class="toc-entry toc-subsection"><a href="#revenue-page-retrieval-blocker">6.2 Revenue page retrieval blocker</a></li>
 <li class="toc-entry toc-chapter"><a href="#verification-checklist">7. Verification checklist</a></li>
 <li class="toc-entry toc-chapter"><a href="#closing-callouts">8. Closing callouts</a></li>
 <li class="toc-entry toc-subsection"><a href="#combined-finding">8.1 Combined finding</a></li>
@@ -2750,6 +2992,13 @@ Use this block for named experts, source credentials, and profile links.</code><
 <p style="--bar-value: 64%">Technical retrieval — 64%</p>
 <p style="--bar-value: 58%">Authority corroboration — 58%</p>
 </section>
+<section class="visibility-bars">
+<p style="--bar-value: 78%">AI Overviews — 78%</p>
+<p style="--bar-value: 54%">Gemini — 54%</p>
+<p style="--bar-value: 41%">ChatGPT — 41%</p>
+<p style="--bar-value: 38%">AI Mode — 38%</p>
+<p style="--bar-value: 9%">Perplexity — 9%</p>
+</section>
 <blockquote>Strong reports separate observed facts from interpretation, then turn only verified or clearly labelled partial evidence into roadmap items.</blockquote>
 <h2 class="chapter-heading" id="case-studies"><span class="heading-number">5.</span> Case studies</h2>
 <section class="case-study-card">
@@ -2768,6 +3017,10 @@ Use this block for named experts, source credentials, and profile links.</code><
 <h3 class="section-heading" id="priority-rule"><span class="heading-number">6.1</span> Priority rule</h3>
 <p>Start with revenue pages that fail retrieval eligibility or evidence proximity before optional schema enhancements.</p>
 </section>
+</section>
+<section class="priority-card" data-priority="critical">
+<h3 class="section-heading" id="revenue-page-retrieval-blocker"><span class="heading-number">6.2</span> Revenue page retrieval blocker</h3>
+<p>Use a priority card when a recommendation must carry priority, owner, due date, source IDs, and verification in one executive-scannable block. Pair with the source ledger and a worker-ready implementation brief.</p>
 </section>
 <section class="facts-table-wrap">
 <table><thead>
@@ -2839,6 +3092,10 @@ Use this block for named experts, source credentials, and profile links.</code><
 <h3 class="section-heading" id="source-card-rule"><span class="heading-number">9.4</span> Source-card rule</h3>
 <p>Every roadmap item should cite source IDs, observed date, confidence, owner, and the command or routine that verifies completion.</p>
 <a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
+<section class="privacy-note">
+<p><strong>Public artifact rule</strong></p>
+<p>Do not export private URLs, raw transcripts, screenshots, local paths, or client names. Publish source IDs and redacted summaries; keep raw evidence in approved secure storage.</p>
+</section>
 <section class="source-list">
 <section class="source-item">
 <h3 class="section-heading" id="ahrefs-controlled-schema-study"><span class="heading-number">9.5</span> Ahrefs controlled schema study</h3>

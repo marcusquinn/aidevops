@@ -145,7 +145,12 @@ body.report-body {
 .chapter-hero,
 .badge-key,
 .block-template,
+.brand-component-grid,
+.brand-swatch-grid,
+.brand-type-scale,
+.brief-card,
 .case-study-card,
+.dossier-card,
 .tactic-card,
 .example-card,
 .good-bad,
@@ -153,13 +158,19 @@ body.report-body {
 .facts-table-wrap,
 .details-note,
 .industry-card,
+.kpi-card,
+.ledger-list,
+.manifest-card,
 .priority-group,
+.priority-card,
 .checklist-card,
+.privacy-note,
 .source-card,
 .source-item,
 .source-list,
 .sources-layout,
 .sources-group,
+.specimen-card,
 .myth-callout,
 .summary-stats,
 .info-panel,
@@ -170,6 +181,8 @@ body.report-body {
 .accordion,
 .quote-card,
 .callout,
+.toc-list,
+.visibility-bars,
 .report-keep-with-heading,
 .version-summary {
   break-inside: avoid;
@@ -618,6 +631,13 @@ th .evidence-badge {
 
 .tactic-card,
 .case-study-card,
+.dossier-card,
+.manifest-card,
+.kpi-card,
+.priority-card,
+.brief-card,
+.privacy-note,
+.specimen-card,
 .industry-card,
 .priority-group,
 .checklist-card,
@@ -631,6 +651,8 @@ th .evidence-badge {
 .evidence-panel,
 .action-panel,
 .severity-key,
+.ledger-list,
+.toc-list,
 .accordion,
 .quote-card,
 .callout,
@@ -734,6 +756,13 @@ th .evidence-badge {
 
 .tactic-card h3,
 .case-study-card h3,
+.dossier-card h3,
+.manifest-card h3,
+.kpi-card h3,
+.priority-card h3,
+.brief-card h3,
+.privacy-note h3,
+.specimen-card h3,
 .industry-card h3,
 .priority-group h3,
 .checklist-card h3,
@@ -1283,6 +1312,198 @@ blockquote {
   margin-block: var(--report-space-4);
 }
 
+.visibility-bars {
+  display: grid;
+  gap: var(--report-space-2);
+  margin-block: var(--report-space-4);
+}
+
+.visibility-bars p {
+  --bar-value: 72%;
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(7rem, 0.35fr) minmax(8rem, 1fr);
+  gap: var(--report-space-3);
+  align-items: center;
+  margin: 0;
+  color: var(--report-ink);
+  font-family: var(--report-font-code);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.visibility-bars p::before {
+  content: "";
+  display: block;
+  grid-column: 2;
+  grid-row: 1;
+  height: 0.8rem;
+  background: color-mix(in srgb, var(--report-rule) 56%, transparent);
+}
+
+.visibility-bars p::after {
+  content: "";
+  display: block;
+  grid-column: 2;
+  grid-row: 1;
+  width: var(--bar-value);
+  height: 0.8rem;
+  background: var(--report-blue);
+}
+
+.manifest-card,
+.dossier-card,
+.kpi-card,
+.priority-card,
+.brief-card,
+.privacy-note,
+.specimen-card {
+  overflow: hidden;
+}
+
+.manifest-card::before,
+.dossier-card::before,
+.kpi-card::before,
+.priority-card::before,
+.specimen-card::before {
+  content: attr(data-status);
+  display: block;
+  min-height: 0.65rem;
+  margin: calc(-1 * var(--report-space-4)) calc(-1 * var(--report-space-4)) var(--report-space-3);
+  background: var(--report-ink);
+}
+
+.manifest-card dl,
+.dossier-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--report-space-2) var(--report-space-3);
+  margin: 0;
+}
+
+.manifest-card ul,
+.dossier-card ul {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--report-space-2) var(--report-space-3);
+  padding: 0;
+  list-style: none;
+}
+
+.manifest-card li,
+.dossier-card li {
+  margin: 0;
+  color: var(--report-ink);
+  font-weight: 700;
+}
+
+.manifest-card dt,
+.dossier-card dt {
+  color: var(--report-ink-soft);
+  font-family: var(--report-font-code);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.manifest-card dd,
+.dossier-card dd {
+  margin: 0;
+  color: var(--report-ink);
+  font-weight: 700;
+}
+
+.kpi-card strong,
+.priority-card strong {
+  display: block;
+  color: var(--report-ink);
+  font-family: var(--report-font-heading);
+  font-size: clamp(2.6rem, 6vw, 4.8rem);
+  line-height: 0.92;
+  letter-spacing: -0.04em;
+}
+
+.priority-card[data-priority="critical"]::before { background: var(--report-red); }
+.priority-card[data-priority="high"]::before { background: var(--report-amber); }
+.priority-card[data-priority="medium"]::before { background: var(--report-blue); }
+.priority-card[data-priority="low"]::before { background: var(--report-ink-soft); }
+.priority-card[data-status="done"]::before { background: var(--report-green); }
+
+.privacy-note {
+  display: grid;
+  grid-template-columns: minmax(9rem, 0.28fr) minmax(0, 1fr);
+  gap: var(--report-space-4);
+  background: var(--report-paper-raised);
+}
+
+.privacy-note > :first-child {
+  color: var(--report-ink-soft);
+  font-family: var(--report-font-code);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.toc-list {
+  padding: 0;
+  background: transparent;
+  border-width: 1px 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.toc-list p,
+.ledger-list p {
+  display: grid;
+  grid-template-columns: minmax(4rem, 0.18fr) minmax(0, 1fr) auto;
+  gap: var(--report-space-3);
+  align-items: baseline;
+  margin: 0;
+  padding: var(--report-space-2) 0;
+  border-bottom: 1px dotted var(--report-rule);
+}
+
+.toc-list p:last-child,
+.ledger-list p:last-child {
+  border-bottom: 0;
+}
+
+.brief-card {
+  background: var(--report-ink);
+  color: var(--report-paper);
+  font-family: var(--report-font-code);
+}
+
+.brief-card :where(h3, p, li, code, strong) {
+  color: inherit;
+}
+
+.brand-swatch-grid,
+.brand-type-scale,
+.brand-component-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--report-space-3);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
+.brand-swatch-grid .specimen-card,
+.brand-type-scale .specimen-card,
+.brand-component-grid .specimen-card {
+  margin-block: 0;
+}
+
+.specimen-card code {
+  background: var(--report-paper-raised);
+  color: var(--report-ink);
+}
+
 .bar-chart p {
   --bar-value: 72%;
   position: relative;
@@ -1531,8 +1752,22 @@ a {
     .summary-stats,
   .sources-layout,
   .severity-key,
+  .brand-swatch-grid,
+  .brand-type-scale,
+  .brand-component-grid,
   .good-bad,
   .myth-callout {
+    grid-template-columns: 1fr;
+  }
+
+  .privacy-note,
+  .toc-list p,
+  .ledger-list p,
+  .visibility-bars p,
+  .manifest-card dl,
+  .dossier-card dl,
+  .manifest-card ul,
+  .dossier-card ul {
     grid-template-columns: 1fr;
   }
 
@@ -2458,34 +2693,52 @@ body.report-pdf-profile-letter .report-front { min-height: 10.1in; }
 <main class="report-content report-main report-front">
 <section class="report-cover">
 <p><strong>Placeholder-safe client report template</strong> for AI Overviews, Gemini, ChatGPT, AI Mode, and Perplexity visibility.</p>
-<p>Prepared for: Example client. Scope: example.com priority pages. Replace placeholders only after live evidence collection.</p>
+<p>Prepared for: Example client. Scope: example.com priority pages. Evidence collected 2026-05-22; replace placeholders only where source IDs corroborate the claim.</p>
+</section>
+<section class="manifest-card">
+<h3 id="audit-manifest">Audit manifest</h3>
+<ul>
+<li>Prepared for: Example client</li>
+<li>Scope: example.com</li>
+<li>Period: 2026-04-01 → 2026-05-22</li>
+<li>Audited by: Marcus Quinn</li>
+<li>Sources: 27 captured</li>
+<li>Next audit: 2026-W30</li>
+</ul>
 </section>
 <h2 class="no-chapter" id="executive-summary">Executive summary</h2>
 <p>Example client appears in some answer-engine responses for category and comparison prompts, but source coverage is uneven. Priority gaps are retrieval eligibility, source-card proximity, and third-party corroboration parity. <span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></p>
 <section class="stats-strip">
-<section class="stat-card">
+<section class="kpi-card">
 <p><strong>3/5</strong></p>
-<p>Engines with at least partial visibility.</p>
+<p>Engines with at least partial visibility. Source: C001. Trend: +1.</p>
 </section>
-<section class="stat-card">
+<section class="kpi-card">
 <p><strong>12</strong></p>
-<p>Priority URLs reviewed.</p>
+<p>Priority URLs reviewed against retrieval, source-card, and parity checks. Source: C002, C003.</p>
 </section>
-<section class="stat-card">
+<section class="kpi-card">
 <p><strong>27</strong></p>
-<p>Source IDs captured.</p>
+<p>Distinct evidence references captured this window. Source: ledger. Trend: +9.</p>
 </section>
-<section class="stat-card">
+<section class="kpi-card">
 <p><strong>6</strong></p>
-<p>P0/P1 roadmap items.</p>
+<p>P0/P1/P2 roadmap items sized for the next monthly cycle. Source: §04.</p>
 </section>
 </section>
 <section class="action-line">
-<p><strong>Decision:</strong> prioritise comparison and pricing pages before lower-impact article refreshes.</p>
-</section><details class="accordion action-prompt" open><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: Decision: prioritise comparison and pricing pages before lower-impact article refreshes.
+<p><strong>Decision:</strong> prioritise comparison and pricing pages before lower-impact article refreshes. Owner: Editorial · 2026-W23.</p>
+</section><details class="accordion action-prompt" open><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: Decision: prioritise comparison and pricing pages before lower-impact article refreshes. Owner: Editorial · 2026-W23.
 
 Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details>
-<section class="report-keep-with-heading report-chapter-page">
+<section class="toc-list">
+<p>§ 02 | Engine findings | 5 engines · 5 rows</p>
+<p>§ 03 | Source ledger | 27 captured · 4 shown</p>
+<p>§ 04 | Priorities &amp; weighted findings | 2 P0 · 1 P1 · 2 P2 · 1 done</p>
+<p>§ 05 | Preserve &amp; fix | 3 keep · 4 fix</p>
+<p>§ 06 | Implementation brief | Engineering handoff</p>
+<p>§ 07 | Verification checklist | 5 items · 2 done</p>
+</section>
 </main>
 </div>
 <div class="toc-pdf-actions" aria-label="PDF downloads"><a class="toc-pdf-link" href="report-a4.pdf" aria-label="Open A4 PDF version" title="Open A4 PDF version">A4</a><a class="toc-pdf-link" href="report-usletter.pdf" aria-label="Open US Letter PDF version" title="Open US Letter PDF version">US Letter</a><a class="toc-pdf-link" href="report-slides.pdf" aria-label="Open slides PDF version" title="Open slides PDF version">Slides</a></div>
@@ -2493,91 +2746,150 @@ Guide me through the tools, resources, accounts, permissions, source material, a
 <div class="sticky-toc-header"><h2>Contents</h2></div>
 <ol>
 <li class="toc-entry"><a href="#client-ai-search-audit">Client AI Search Audit</a></li>
+<li class="toc-entry"><a href="#audit-manifest">Audit manifest</a></li>
 <li class="toc-entry"><a href="#executive-summary">Executive summary</a></li>
 <li class="toc-entry toc-chapter"><a href="#engine-findings">1. Engine findings</a></li>
 <li class="toc-entry toc-chapter"><a href="#source-ledger">2. Source ledger</a></li>
-<li class="toc-entry toc-subsection"><a href="#privacy-rule">2.1 Privacy rule</a></li>
-<li class="toc-entry toc-chapter"><a href="#page-type-weighted-findings">3. Page-type weighted findings</a></li>
+<li class="toc-entry toc-chapter"><a href="#priorities-weighted-findings">3. Priorities &amp; weighted findings</a></li>
 <li class="toc-entry toc-subsection"><a href="#p0-comparison-page-retrieval-gap">3.1 P0: Comparison page retrieval gap</a></li>
-<li class="toc-entry toc-subsection"><a href="#p1-pricing-facts-lack-nearby-evidence">3.2 P1: Pricing facts lack nearby evidence</a></li>
-<li class="toc-entry toc-subsection"><a href="#preserve">3.3 Preserve</a></li>
-<li class="toc-entry toc-subsection"><a href="#fix">3.4 Fix</a></li>
-<li class="toc-entry toc-chapter"><a href="#implementation-brief">4. Implementation brief</a></li>
-<li class="toc-entry toc-chapter"><a href="#verification-checklist">5. Verification checklist</a></li>
+<li class="toc-entry toc-subsection"><a href="#p0-perplexity-citation-gap-on-priority-prompts">3.2 P0: Perplexity citation gap on priority prompts</a></li>
+<li class="toc-entry toc-subsection"><a href="#p1-pricing-facts-lack-nearby-evidence">3.3 P1: Pricing facts lack nearby evidence</a></li>
+<li class="toc-entry toc-subsection"><a href="#p2-chatgpt-routes-recommendation-via-third-party-profiles">3.4 P2: ChatGPT routes recommendation via third-party profiles</a></li>
+<li class="toc-entry toc-subsection"><a href="#p2-ai-mode-direct-answer-opening-is-too-soft">3.5 P2: AI Mode direct-answer opening is too soft</a></li>
+<li class="toc-entry toc-subsection"><a href="#p3-long-tail-category-articles-need-a-refresh">3.6 P3: Long-tail category articles need a refresh</a></li>
+<li class="toc-entry toc-subsection"><a href="#done-source-card-component-shipped-to-comparison-template">3.7 Done: Source-card component shipped to comparison template</a></li>
+<li class="toc-entry toc-chapter"><a href="#preserve-fix">4. Preserve &amp; fix</a></li>
+<li class="toc-entry toc-subsection"><a href="#preserve">4.1 Preserve</a></li>
+<li class="toc-entry toc-subsection"><a href="#fix">4.2 Fix</a></li>
+<li class="toc-entry toc-chapter"><a href="#implementation-brief">5. Implementation brief</a></li>
+<li class="toc-entry toc-subsection"><a href="#engineering-handoff">5.1 Engineering handoff</a></li>
+<li class="toc-entry toc-subsection"><a href="#editorial-note">5.2 Editorial note</a></li>
+<li class="toc-entry toc-chapter"><a href="#verification-checklist">6. Verification checklist</a></li>
 </ol>
 </nav>
 
 <main class="report-content report-main report-rest">
 <h2 class="chapter-heading" id="engine-findings"><span class="heading-number">1.</span> Engine findings</h2>
+<p>Five surfaces, one priority prompt set. Coverage is bimodal: strong on Google-family surfaces, weak elsewhere. Perplexity is the only engine with zero citation in this window.</p>
 <section class="facts-table-wrap">
 <table><thead>
 <tr><th>Engine</th><th>Finding</th><th>Evidence</th><th>Next action</th></tr></thead><tbody>
-<tr><td>AIO</td><td>Brand cited for two comparison prompts.</td><td><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>Add source cards to pages with citations but weak snippets.</td></tr>
-<tr><td>Gemini</td><td>Mentions brand but misses pricing constraints.</td><td><span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></td><td>Add visible plan constraints and updated date.</td></tr>
-<tr><td>ChatGPT</td><td>Recommendation inferred from third-party profiles.</td><td><span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span></td><td>Improve profile parity and owned corroboration.</td></tr>
-<tr><td>AI Mode</td><td>Partial feature coverage, no comparison citation.</td><td><span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></td><td>Strengthen direct-answer opening on comparison page.</td></tr>
-<tr><td>Perplexity</td><td>No citation found in priority prompt set.</td><td><span class="evidence-badge" aria-label="Evidence: Missing"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span></td><td>Build third-party corroboration and rerun prompt set.</td></tr>
+<tr><td>AI Overviews — Google</td><td>Brand cited for two comparison prompts.</td><td><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>Add source cards to pages with citations but weak snippets.</td></tr>
+<tr><td>Gemini — Google</td><td>Mentions brand but misses pricing constraints.</td><td><span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></td><td>Add visible plan constraints and updated date.</td></tr>
+<tr><td>ChatGPT — OpenAI</td><td>Recommendation inferred from third-party profiles.</td><td><span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span></td><td>Improve profile parity and owned corroboration.</td></tr>
+<tr><td>AI Mode — Google</td><td>Partial feature coverage, no comparison citation.</td><td><span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></td><td>Strengthen direct-answer opening on comparison page.</td></tr>
+<tr><td>Perplexity — Perplexity</td><td>No citation found in priority prompt set.</td><td><span class="evidence-badge" aria-label="Evidence: Missing"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span></td><td>Build third-party corroboration and rerun prompt set.</td></tr>
 </tbody></table>
 </section>
+<section class="visibility-bars">
+<p style="--bar-value: 78%">AIO — 78%</p>
+<p style="--bar-value: 54%">Gemini — 54%</p>
+<p style="--bar-value: 41%">ChatGPT — 41%</p>
+<p style="--bar-value: 38%">AI Mode — 38%</p>
+<p style="--bar-value: 9%">Perplexity — 9%</p>
 </section>
-<section class="report-keep-with-heading report-chapter-page">
+<p>Coverage is bimodal. Google-family surfaces are above 50% on most prompts; the rest sit below 45%. Perplexity is the outlier and should be re-tested after corroboration work ships.</p>
 <h2 class="chapter-heading" id="source-ledger"><span class="heading-number">2.</span> Source ledger</h2>
-<section class="facts-table-wrap">
-<table><thead>
-<tr><th>Source ID</th><th>Source</th><th>Confidence</th><th>Notes</th></tr></thead><tbody>
-<tr><td>C001</td><td>Prompt capture batch</td><td>High</td><td>Use raw transcript plus screenshot in private evidence folder.</td></tr>
-<tr><td>C002</td><td>Rendered crawl</td><td>High</td><td>Confirms client-rendered sections missing from first fetch.</td></tr>
-<tr><td>C003</td><td>Analytics export</td><td>Medium</td><td>Prioritises pages with commercial intent.</td></tr>
-<tr><td>C004</td><td>Third-party profile parity review</td><td>Medium</td><td>Category and pricing facts mismatch owned page.</td></tr>
-</tbody></table>
+<p>Every material claim links back to a source ID. The full ledger of 27 entries lives in the secure evidence folder; only redacted IDs are reproduced here.</p>
+<section class="ledger-list">
+<p>C001 | Prompt capture batch | High confidence · raw transcripts plus screenshots in secure evidence folder.</p>
+<p>C002 | Rendered crawl | High confidence · confirms client-rendered sections missing from first fetch.</p>
+<p>C003 | Analytics export | Medium confidence · prioritises pages with commercial intent.</p>
+<p>C004 | Third-party parity review | Medium confidence · category and pricing facts mismatch owned page.</p>
 </section>
-</section>
-<section class="source-card">
-<h3 class="section-heading" id="privacy-rule"><span class="heading-number">2.1</span> Privacy rule</h3>
+<section class="privacy-note">
+<p><strong>Private evidence rule</strong></p>
 <p>Public issues, PRs, and examples must not include non-public names, restricted URLs, local paths, screenshots, or raw exports. Use placeholders and keep evidence in the approved secure storage location.</p>
-<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
-<section class="report-keep-with-heading report-chapter-page">
-<h2 class="chapter-heading" id="page-type-weighted-findings"><span class="heading-number">3.</span> Page-type weighted findings</h2>
-<section class="priority-group" data-priority="critical">
+</section>
+<h2 class="chapter-heading" id="priorities-weighted-findings"><span class="heading-number">3.</span> Priorities &amp; weighted findings</h2>
+<p>Each item is tied to state colour and source IDs: critical regressions in red, watch items in amber, informational items in blue, completed work in green.</p>
+<section class="priority-card" data-priority="critical">
 <h3 class="section-heading" id="p0-comparison-page-retrieval-gap"><span class="heading-number">3.1</span> P0: Comparison page retrieval gap</h3>
 <p>Comparison content answers the right intent but key criteria are below client-rendered sections. Move the answer, feature table, pricing caveats, and source IDs into crawlable first-fetch HTML. <span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></p>
+<p>Owner: Editorial. Due: 2026-W23. Sources: C001, C002.</p>
 </section>
+<section class="priority-card" data-priority="critical">
+<h3 class="section-heading" id="p0-perplexity-citation-gap-on-priority-prompts"><span class="heading-number">3.2</span> P0: Perplexity citation gap on priority prompts</h3>
+<p>No Perplexity citations in the priority prompt set. Build a corroboration pass across the three highest-authority third-party profiles, then rerun the prompt set under fresh conditions. <span class="evidence-badge" aria-label="Evidence: Missing"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span></p>
+<p>Owner: PR. Due: 2026-W24. Sources: C001, C004.</p>
 </section>
-<section class="priority-group" data-priority="high">
-<h3 class="section-heading" id="p1-pricing-facts-lack-nearby-evidence"><span class="heading-number">3.2</span> P1: Pricing facts lack nearby evidence</h3>
+<section class="priority-card" data-priority="high">
+<h3 class="section-heading" id="p1-pricing-facts-lack-nearby-evidence"><span class="heading-number">3.3</span> P1: Pricing facts lack nearby evidence</h3>
 <p>The pricing page states plan limits but lacks updated date, source card, and consistent third-party parity. Add canonical values and cite source IDs near the claims. <span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></p>
+<p>Owner: Pricing PM. Due: 2026-W25. Sources: C003, C004.</p>
 </section>
+<section class="priority-card" data-priority="medium">
+<h3 class="section-heading" id="p2-chatgpt-routes-recommendation-via-third-party-profiles"><span class="heading-number">3.4</span> P2: ChatGPT routes recommendation via third-party profiles</h3>
+<p>Owned pages are rarely the source for ChatGPT recommendations in this category. Improve profile parity across the three highest-traffic review sites and add owned corroboration anchors. <span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span></p>
+<p>Owner: PR. Due: 2026-W28. Sources: C004, C019.</p>
+</section>
+<section class="priority-card" data-priority="medium">
+<h3 class="section-heading" id="p2-ai-mode-direct-answer-opening-is-too-soft"><span class="heading-number">3.5</span> P2: AI Mode direct-answer opening is too soft</h3>
+<p>The comparison page opens with hedge copy that AI Mode does not lift as a direct answer. Rewrite the opening sentence as a single-claim, source-anchored statement. <span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></p>
+<p>Owner: Editorial. Due: 2026-W29. Sources: C001, C012.</p>
+</section>
+<section class="priority-card" data-priority="low">
+<h3 class="section-heading" id="p3-long-tail-category-articles-need-a-refresh"><span class="heading-number">3.6</span> P3: Long-tail category articles need a refresh</h3>
+<p>Older category articles still rank but draw little attention from answer engines. Schedule a refresh after the comparison and pricing work has shipped and been verified.</p>
+<p>Owner: Editorial. Due: 2026-Q4. Source: C011.</p>
+</section>
+<section class="priority-card" data-status="done">
+<h3 class="section-heading" id="done-source-card-component-shipped-to-comparison-template"><span class="heading-number">3.7</span> Done: Source-card component shipped to comparison template</h3>
+<p>The reusable source-card component is now embedded in the comparison page template. First-fetch HTML now carries citation anchors and updated dates next to every claim.</p>
+<p>Owner: Engineering. Verified: C001. Next: re-run prompt set.</p>
+</section>
+<section class="report-keep-with-heading report-chapter-page">
+<h2 class="chapter-heading" id="preserve-fix"><span class="heading-number">4.</span> Preserve &amp; fix</h2>
 <section class="good-bad">
 <section class="good-row">
-<h3 class="section-heading" id="preserve"><span class="heading-number">3.3</span> Preserve</h3>
-<p>Clear category positioning, strong customer proof, and relevant comparison intent coverage.</p>
+<h3 class="section-heading" id="preserve"><span class="heading-number">4.1</span> Preserve</h3>
+<ul>
+<li>Clear category positioning across owned and earned surfaces.</li>
+<li>Strong customer-proof signals on the comparison page.</li>
+<li>Comparison-intent coverage is relevant and consistent.</li>
+</ul>
 </section>
 <section class="bad-row">
-<h3 class="section-heading" id="fix"><span class="heading-number">3.4</span> Fix</h3>
-<p>Hidden content, unsupported superlatives, stale profile facts, and Perplexity source gaps.</p>
-</section>
-</section>
-<section class="report-keep-with-heading report-chapter-page">
-<h2 class="chapter-heading" id="implementation-brief"><span class="heading-number">4.</span> Implementation brief</h2>
-<section class="example-card">
-<div class="code-block-wrap"><div class="code-block-head"><span>Text code</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Task: Improve /compare/example-vs-competitor for AI search citation readiness.
-Files: comparison page template, pricing facts component, source-card component.
-Acceptance: raw HTML contains direct answer, source IDs C001-C004, updated date, and criteria table.
-Verification: rerun AIO, Gemini, ChatGPT, AI Mode, and Perplexity prompt set separately.</code></pre></div>
-</section>
-</section>
-<section class="report-keep-with-heading report-chapter-page">
-<h2 class="chapter-heading" id="verification-checklist"><span class="heading-number">5.</span> Verification checklist</h2>
-<section class="checklist-card">
+<h3 class="section-heading" id="fix"><span class="heading-number">4.2</span> Fix</h3>
 <ul>
-<li>Confirm live evidence collection date and source IDs.</li>
-<li>Re-run crawl after implementation and compare raw vs rendered HTML.</li>
-<li>Re-run per-engine prompt set and record each answer separately.</li>
-<li>Update third-party profile parity table.</li>
-<li>Convert recurring monitoring into a monthly report routine.</li>
+<li>Critical content hidden below client-rendered sections.</li>
+<li>Unsupported superlatives in feature copy.</li>
+<li>Stale third-party profile facts across three profiles.</li>
+<li>Perplexity source-coverage gap.</li>
 </ul>
 </section>
 </section>
+</section>
+<h2 class="chapter-heading" id="implementation-brief"><span class="heading-number">5.</span> Implementation brief</h2>
+<section class="brief-card">
+<h3 class="section-heading" id="engineering-handoff"><span class="heading-number">5.1</span> Engineering handoff</h3>
+<p><strong>Task:</strong> Improve <code>/compare/example-vs-competitor</code> for AI search citation readiness.</p>
+<p><strong>Files:</strong> comparison page template, pricing facts component, source-card component.</p>
+<p><strong>Acceptance:</strong> raw HTML contains direct answer, source IDs C001-C004, updated date, and criteria table.</p>
+<p><strong>Verification:</strong> rerun AIO, Gemini, ChatGPT, AI Mode, and Perplexity prompt set separately.</p>
+<p><strong>Owner:</strong> Editorial + Engineering pair. <strong>Due:</strong> 2026-W23. <strong>Rollback:</strong> feature flag <code>cmp-v2</code> reverts to current template.</p>
+</section>
+<section class="details-note">
+<h3 class="section-heading" id="editorial-note"><span class="heading-number">5.2</span> Editorial note</h3>
+<p>Keep the criteria table inside the first viewport on desktop and inside the first scroll on mobile. The current placement is the single largest contributor to retrieval failure on this surface.</p>
+</section>
+<section class="report-keep-with-heading report-chapter-page">
+<h2 class="chapter-heading" id="verification-checklist"><span class="heading-number">6.</span> Verification checklist</h2>
+<section class="checklist-card">
+<ul class="checklist">
+<li><span class="status-dot" data-status="done"></span><span>Confirm live evidence collection date and source IDs.</span></li>
+<li><span class="status-dot" data-status="done"></span><span>Re-run crawl after implementation and compare raw vs rendered HTML.</span></li>
+<li><span class="status-dot" data-status="todo"></span><span>Re-run per-engine prompt set and record each answer separately.</span></li>
+<li><span class="status-dot" data-status="todo"></span><span>Update third-party profile parity table.</span></li>
+<li><span class="status-dot" data-status="todo"></span><span>Convert recurring monitoring into a monthly report routine.</span></li>
+</ul>
+</section>
+</section>
+<section class="action-line">
+<p><strong>Next:</strong> re-audit fires 2026-W30. Calendar invite attached to the secure handoff folder. Owner: Ops · weekly cadence.</p>
+</section><details class="accordion action-prompt" open><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: Next: re-audit fires 2026-W30. Calendar invite attached to the secure handoff folder. Owner: Ops · weekly cadence.
+
+Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details>
 </main>
 </div>
 <footer class="report-footer">© 2025-2026 Marcus Quinn. Licensed under MIT.</footer>
