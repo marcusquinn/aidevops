@@ -100,7 +100,7 @@ _version_manager_guard_headless_release_scope() {
 	local action="$1"
 	shift || true
 	local branch_name=""
-	branch_name=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>&1 || printf 'unknown')
+	branch_name=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown')
 
 	_version_manager_is_headless_task_worker || return 0
 	_version_manager_action_is_read_only "$action" "$@" && return 0
