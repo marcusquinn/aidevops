@@ -463,9 +463,14 @@ body.report-body {
 .badge-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.8rem var(--report-space-2);
+  gap: var(--report-space-2);
   align-items: center;
-  line-height: 1.9;
+  margin-block: var(--report-space-3);
+  padding: var(--report-space-3);
+  background: color-mix(in srgb, var(--report-paper-raised) 72%, transparent);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-md);
+  line-height: 1.65;
 }
 
 .anchor-links,
@@ -541,11 +546,12 @@ body.report-body {
   width: fit-content;
   min-width: max-content;
   max-width: 100%;
-  padding: 0.25rem 0.625rem;
+  padding: 0.32rem 0.72rem;
   border-radius: var(--report-badge-radius);
   border: 1px solid transparent;
   white-space: nowrap;
   margin-block: 0.08rem;
+  font-weight: 800;
 }
 
 .evidence-badge {
@@ -1322,10 +1328,11 @@ blockquote {
   --bar-value: 72%;
   position: relative;
   display: grid;
-  grid-template-columns: minmax(7rem, 0.35fr) minmax(8rem, 1fr);
-  gap: var(--report-space-3);
+  grid-template-columns: minmax(11rem, 0.32fr) minmax(0, 1fr) minmax(3.5rem, auto);
+  gap: var(--report-space-2);
   align-items: center;
   margin: 0;
+  padding: 0.55rem 0;
   color: var(--report-ink);
   font-family: var(--report-font-code);
   font-size: 0.82rem;
@@ -1333,13 +1340,28 @@ blockquote {
   letter-spacing: 0.04em;
 }
 
+.visibility-bars .visibility-label {
+  grid-column: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.visibility-bars .visibility-value {
+  grid-column: 3;
+  justify-self: end;
+  padding-inline-start: var(--report-space-2);
+  color: var(--report-ink-soft);
+  font-weight: 800;
+}
+
 .visibility-bars p::before {
   content: "";
   display: block;
   grid-column: 2;
   grid-row: 1;
-  height: 0.8rem;
+  height: 0.9rem;
   background: color-mix(in srgb, var(--report-rule) 56%, transparent);
+  border-radius: var(--report-radius-sm);
 }
 
 .visibility-bars p::after {
@@ -1348,8 +1370,9 @@ blockquote {
   grid-column: 2;
   grid-row: 1;
   width: var(--bar-value);
-  height: 0.8rem;
+  height: 0.9rem;
   background: var(--report-blue);
+  border-radius: var(--report-radius-sm);
 }
 
 .manifest-card,
@@ -1358,6 +1381,9 @@ blockquote {
 .priority-card,
 .brief-card,
 .privacy-note,
+.brand-asset-card,
+.swatch-card,
+.type-specimen,
 .specimen-card {
   overflow: hidden;
 }
@@ -1366,6 +1392,9 @@ blockquote {
 .dossier-card::before,
 .kpi-card::before,
 .priority-card::before,
+.brand-asset-card::before,
+.swatch-card::before,
+.type-specimen::before,
 .specimen-card::before {
   content: attr(data-status);
   display: block;
@@ -1430,6 +1459,18 @@ blockquote {
 .priority-card[data-priority="low"]::before { background: var(--report-ink-soft); }
 .priority-card[data-status="done"]::before { background: var(--report-green); }
 
+.priority-card[data-status="done"]::before {
+  content: "DONE";
+  min-height: auto;
+  padding: 0.45rem var(--report-space-4);
+  color: #ffffff;
+  font-family: var(--report-font-code);
+  font-size: 0.76rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
 .privacy-note {
   display: grid;
   grid-template-columns: minmax(9rem, 0.28fr) minmax(0, 1fr);
@@ -1470,18 +1511,24 @@ blockquote {
 }
 
 .brief-card {
-  background: var(--report-ink);
-  color: var(--report-paper);
-  font-family: var(--report-font-code);
+  background: color-mix(in srgb, var(--report-paper-raised) 72%, var(--report-surface));
+  border-left: 0.42rem solid var(--report-blue);
+  color: var(--report-ink);
 }
 
 .brief-card :where(h3, p, li, code, strong) {
-  color: inherit;
+  color: var(--report-ink);
+}
+
+.brief-card strong {
+  color: var(--report-blue);
 }
 
 .brand-swatch-grid,
 .brand-type-scale,
-.brand-component-grid {
+.brand-component-grid,
+.brand-asset-grid,
+.notification-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--report-space-3);
@@ -1494,8 +1541,89 @@ blockquote {
 
 .brand-swatch-grid .specimen-card,
 .brand-type-scale .specimen-card,
-.brand-component-grid .specimen-card {
+.brand-component-grid .specimen-card,
+.brand-asset-grid .brand-asset-card,
+.notification-grid .info-panel,
+.notification-grid .evidence-panel,
+.notification-grid .action-panel,
+.brand-swatch-grid .swatch-card,
+.brand-type-scale .type-specimen {
   margin-block: 0;
+}
+
+.brand-asset-card,
+.swatch-card,
+.type-specimen {
+  margin-block: var(--report-space-4);
+  padding: var(--report-space-4);
+  background: var(--report-surface);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-lg);
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.06);
+}
+
+.brand-asset-card {
+  display: grid;
+  min-height: 12rem;
+  align-content: space-between;
+  gap: var(--report-space-4);
+}
+
+.brand-asset-card::before {
+  min-height: 5.75rem;
+  margin-bottom: var(--report-space-4);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--report-blue) 20%, transparent), transparent 54%),
+    var(--report-paper-raised);
+  border: 1px solid var(--report-rule);
+}
+
+.brand-asset-card[data-accent="dark"]::before {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--report-blue) 32%, transparent), transparent 54%),
+    var(--report-ink);
+}
+
+.brand-asset-card h3,
+.swatch-card h3,
+.type-specimen h3 {
+  margin-block-start: 0;
+}
+
+.swatch-card::before {
+  min-height: 5.25rem;
+  border-bottom: 1px solid var(--report-rule);
+}
+
+.swatch-card[data-accent="primary"]::before,
+.swatch-card[data-accent="blue"]::before { background: var(--report-blue); }
+.swatch-card[data-accent="green"]::before { background: var(--report-green); }
+.swatch-card[data-accent="amber"]::before { background: var(--report-amber); }
+.swatch-card[data-accent="red"]::before { background: var(--report-red); }
+.swatch-card[data-accent="ink"]::before { background: var(--report-ink); }
+.swatch-card[data-accent="soft"]::before { background: var(--report-ink-soft); }
+.swatch-card[data-accent="paper"]::before { background: var(--report-paper); }
+.swatch-card[data-accent="surface"]::before { background: var(--report-surface); }
+.swatch-card[data-accent="raised"]::before { background: var(--report-paper-raised); }
+
+.type-specimen::before {
+  min-height: 0;
+  margin-bottom: var(--report-space-4);
+  background: transparent;
+  border-top: 0.42rem solid var(--report-blue);
+}
+
+.type-specimen strong {
+  display: block;
+  margin-block-end: var(--report-space-2);
+  color: var(--report-ink);
+  font-family: var(--report-font-heading);
+  font-size: clamp(1.5rem, 3vw, 2.4rem);
+  letter-spacing: -0.03em;
+}
+
+.type-specimen em {
+  color: var(--report-ink-soft);
 }
 
 .specimen-card code {
@@ -1527,6 +1655,51 @@ blockquote {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--report-space-2);
+}
+
+.notification-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.notification-grid :where(.info-panel, .evidence-panel, .action-panel) {
+  display: grid;
+  gap: var(--report-space-2);
+  min-height: 12rem;
+  align-content: start;
+  border-width: 2px;
+}
+
+.notification-grid :where(.info-panel, .evidence-panel, .action-panel)::before {
+  content: attr(data-severity);
+  width: fit-content;
+  padding: 0.24rem 0.58rem;
+  border: 1px solid currentColor;
+  border-radius: var(--report-badge-radius);
+  font-family: var(--report-font-code);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.notification-grid [data-severity="critical"] {
+  background: color-mix(in srgb, var(--report-red) 13%, var(--report-surface));
+  border-color: color-mix(in srgb, var(--report-red) 62%, var(--report-rule));
+}
+
+.notification-grid [data-severity="high"] {
+  background: color-mix(in srgb, var(--report-amber) 18%, var(--report-surface));
+  border-color: color-mix(in srgb, var(--report-amber) 66%, var(--report-rule));
+}
+
+.notification-grid [data-severity="medium"] {
+  background: color-mix(in srgb, var(--report-blue) 11%, var(--report-surface));
+  border-color: color-mix(in srgb, var(--report-blue) 62%, var(--report-rule));
+}
+
+.notification-grid [data-severity="low"] {
+  background: color-mix(in srgb, var(--report-green) 14%, var(--report-surface));
+  border-color: color-mix(in srgb, var(--report-green) 62%, var(--report-rule));
 }
 
 .priority-group[data-priority="critical"],
@@ -2691,18 +2864,18 @@ body.report-pdf-profile-letter .report-front { min-height: 10.1in; }
 </main>
 <main class="report-content report-main report-front">
 <section class="report-cover">
-<p><strong>Apple-inspired report presentation guide.</strong> Use this specimen to see how Apple-styled reports handle evidence, metrics, recommendations, notifications, and handoff blocks with restraint.</p>
-<p>Apple styling is quiet, spacious, precise, and product-like. The report should feel polished and intentional: soft hierarchy, few borders, generous whitespace, concise copy, and calm state colour.</p>
+<p><strong>Apple-inspired brand guide for usable report and content production.</strong> This specimen shows how Apple-styled content handles assets, surfaces, type, tagging badges, notifications, data, recommendations, handoffs, and export checks.</p>
+<p>Apple-styled content should feel <strong>calm, precise, generous, and product-like</strong>. Use whitespace and restraint first; use blue for action; use colour states sparingly and with enough contrast to survive PDF and print.</p>
 </section>
 <section class="manifest-card">
-<h3 id="apple-style-manifest">Apple style manifest</h3>
+<h3 id="apple-production-manifest">Apple production manifest</h3>
 <ul>
 <li>Brand: Apple</li>
-<li>Report mode: polished executive/product evidence report</li>
-<li>Shape language: refined surfaces, subtle rounding, minimal visible chrome</li>
-<li>Primary accent: Apple blue</li>
-<li>Evidence grammar: clear status labels, calm colour, no visual noise</li>
-<li>Best use: executive summaries, product narratives, client recommendations</li>
+<li>Content system: executive summaries, product narratives, launch notes, client recommendations</li>
+<li>Shape language: refined surfaces, soft rounding, subtle depth, minimal visible chrome</li>
+<li>Colour rule: blue is action; graphite is authority; state colours remain calm but visible</li>
+<li>Writing rule: make the next action obvious, then remove everything that does not help the reader decide</li>
+<li>Export rule: light themes use light code blocks and public-safe placeholder evidence</li>
 </ul>
 </section>
 </main>
@@ -2712,222 +2885,239 @@ body.report-pdf-profile-letter .report-front { min-height: 10.1in; }
 <div class="sticky-toc-header"><h2>Contents</h2></div>
 <ol>
 <li class="toc-entry"><a href="#apple-brand-style-guide">Apple Brand Style Guide</a></li>
-<li class="toc-entry"><a href="#apple-style-manifest">Apple style manifest</a></li>
-<li class="toc-entry toc-chapter"><a href="#1-foundation-tokens">1. 1. Foundation tokens</a></li>
-<li class="toc-entry toc-subsection"><a href="#white-and-near-white-surfaces">1.1 White and near-white surfaces</a></li>
-<li class="toc-entry toc-subsection"><a href="#graphite-text">1.2 Graphite text</a></li>
-<li class="toc-entry toc-subsection"><a href="#apple-blue-action">1.3 Apple blue action</a></li>
-<li class="toc-entry toc-subsection"><a href="#state-colour-family">1.4 State colour family</a></li>
-<li class="toc-entry toc-subsection"><a href="#large-title">1.5 Large title</a></li>
-<li class="toc-entry toc-subsection"><a href="#reading-copy">1.6 Reading copy</a></li>
-<li class="toc-entry toc-subsection"><a href="#metadata">1.7 Metadata</a></li>
-<li class="toc-entry toc-subsection"><a href="#code-examples">1.8 Code examples</a></li>
-<li class="toc-entry toc-chapter"><a href="#2-report-element-index">2. 2. Report element index</a></li>
-<li class="toc-entry toc-chapter"><a href="#3-notification-variations">3. 3. Notification variations</a></li>
-<li class="toc-entry toc-subsection"><a href="#critical">3.1 Critical</a></li>
-<li class="toc-entry toc-subsection"><a href="#warning">3.2 Warning</a></li>
-<li class="toc-entry toc-subsection"><a href="#information">3.3 Information</a></li>
-<li class="toc-entry toc-subsection"><a href="#success">3.4 Success</a></li>
-<li class="toc-entry toc-chapter"><a href="#4-data-and-evidence-examples">4. 4. Data and evidence examples</a></li>
-<li class="toc-entry toc-chapter"><a href="#5-recommendation-examples">5. 5. Recommendation examples</a></li>
-<li class="toc-entry toc-subsection"><a href="#critical-component-issue">5.1 Critical component issue</a></li>
-<li class="toc-entry toc-subsection"><a href="#high-priority-refinement">5.2 High-priority refinement</a></li>
-<li class="toc-entry toc-subsection"><a href="#medium-enhancement">5.3 Medium enhancement</a></li>
-<li class="toc-entry toc-subsection"><a href="#completed-pattern">5.4 Completed pattern</a></li>
-<li class="toc-entry toc-subsection"><a href="#preserve">5.5 Preserve</a></li>
-<li class="toc-entry toc-subsection"><a href="#avoid">5.6 Avoid</a></li>
-<li class="toc-entry toc-subsection"><a href="#implementation-brief">5.7 Implementation brief</a></li>
-<li class="toc-entry toc-chapter"><a href="#6-export-and-source-examples">6. 6. Export and source examples</a></li>
-<li class="toc-entry toc-subsection"><a href="#source-card-purpose">6.1 Source-card purpose</a></li>
+<li class="toc-entry"><a href="#apple-production-manifest">Apple production manifest</a></li>
+<li class="toc-entry toc-chapter"><a href="#1-brand-assets-and-colour-roles">1. 1. Brand assets and colour roles</a></li>
+<li class="toc-entry toc-subsection"><a href="#primary-mark-on-light">1.1 Primary mark on light</a></li>
+<li class="toc-entry toc-subsection"><a href="#reverse-mark-on-dark">1.2 Reverse mark on dark</a></li>
+<li class="toc-entry toc-subsection"><a href="#app-or-product-icon">1.3 App or product icon</a></li>
+<li class="toc-entry toc-subsection"><a href="#partner-lockup">1.4 Partner lockup</a></li>
+<li class="toc-entry toc-subsection"><a href="#white-surface">1.5 White surface</a></li>
+<li class="toc-entry toc-subsection"><a href="#grouped-surface">1.6 Grouped surface</a></li>
+<li class="toc-entry toc-subsection"><a href="#action-blue">1.7 Action blue</a></li>
+<li class="toc-entry toc-subsection"><a href="#graphite-text">1.8 Graphite text</a></li>
+<li class="toc-entry toc-subsection"><a href="#caution-state">1.9 Caution state</a></li>
+<li class="toc-entry toc-subsection"><a href="#success-state">1.10 Success state</a></li>
+<li class="toc-entry toc-chapter"><a href="#2-typography-and-formatting">2. 2. Typography and formatting</a></li>
+<li class="toc-entry toc-subsection"><a href="#h1-cover-title">2.1 H1 / cover title</a></li>
+<li class="toc-entry toc-subsection"><a href="#h2-section-title">2.2 H2 / section title</a></li>
+<li class="toc-entry toc-subsection"><a href="#body-emphasis">2.3 Body emphasis</a></li>
+<li class="toc-entry toc-subsection"><a href="#metadata">2.4 Metadata</a></li>
+<li class="toc-entry toc-chapter"><a href="#3-information-tagging-badges">3. 3. Information tagging badges</a></li>
+<li class="toc-entry toc-chapter"><a href="#4-message-states-and-notifications">4. 4. Message states and notifications</a></li>
+<li class="toc-entry toc-subsection"><a href="#critical-alert">4.1 Critical alert</a></li>
+<li class="toc-entry toc-subsection"><a href="#warning-alert">4.2 Warning alert</a></li>
+<li class="toc-entry toc-subsection"><a href="#information-note">4.3 Information note</a></li>
+<li class="toc-entry toc-subsection"><a href="#success-note">4.4 Success note</a></li>
+<li class="toc-entry toc-chapter"><a href="#5-report-component-show-and-tell">5. 5. Report component show-and-tell</a></li>
+<li class="toc-entry toc-chapter"><a href="#6-recommendations-and-handoff">6. 6. Recommendations and handoff</a></li>
+<li class="toc-entry toc-subsection"><a href="#critical-component-issue">6.1 Critical component issue</a></li>
+<li class="toc-entry toc-subsection"><a href="#high-priority-refinement">6.2 High-priority refinement</a></li>
+<li class="toc-entry toc-subsection"><a href="#completed-pattern">6.3 Completed pattern</a></li>
+<li class="toc-entry toc-subsection"><a href="#preserve">6.4 Preserve</a></li>
+<li class="toc-entry toc-subsection"><a href="#avoid">6.5 Avoid</a></li>
+<li class="toc-entry toc-subsection"><a href="#implementation-brief">6.6 Implementation brief</a></li>
 </ol>
 </nav>
 
 <main class="report-content report-main report-rest">
-<h2 class="chapter-heading" id="1-foundation-tokens"><span class="heading-number">1.</span> 1. Foundation tokens</h2>
+<h2 class="chapter-heading" id="1-brand-assets-and-colour-roles"><span class="heading-number">1.</span> 1. Brand assets and colour roles</h2>
+<section class="brand-asset-grid">
+<section class="brand-asset-card" data-accent="light">
+<h3 class="section-heading" id="primary-mark-on-light"><span class="heading-number">1.1</span> Primary mark on light</h3>
+<p>Use for covers, title pages, and calm executive documents. Keep clearspace generous and avoid nearby badges or dense controls.</p>
+</section>
+<section class="brand-asset-card" data-accent="dark">
+<h3 class="section-heading" id="reverse-mark-on-dark"><span class="heading-number">1.2</span> Reverse mark on dark</h3>
+<p>Use only when the entire module is dark. The mark should feel intentional, not like a contrast workaround.</p>
+</section>
+<section class="brand-asset-card" data-accent="light">
+<h3 class="section-heading" id="app-or-product-icon"><span class="heading-number">1.3</span> App or product icon</h3>
+<p>Use for small cards and preview tiles. Centre it optically and pair with one short label.</p>
+</section>
+<section class="brand-asset-card" data-accent="dark">
+<h3 class="section-heading" id="partner-lockup"><span class="heading-number">1.4</span> Partner lockup</h3>
+<p>Use for co-branded pages. Keep both names aligned and let whitespace carry the relationship.</p>
+</section>
+</section>
 <section class="brand-swatch-grid">
-<section class="specimen-card">
-<h3 class="section-heading" id="white-and-near-white-surfaces"><span class="heading-number">1.1</span> White and near-white surfaces</h3>
-<p>Use white as the primary canvas and light neutrals for grouped content. Purpose: create focus and make the report feel effortless.</p>
+<section class="swatch-card" data-accent="paper">
+<h3 class="section-heading" id="white-surface"><span class="heading-number">1.5</span> White surface</h3>
+<p>Primary canvas for reading. Use it for report pages, cards, and tables that need a premium quiet feel.</p>
 </section>
-<section class="specimen-card">
-<h3 class="section-heading" id="graphite-text"><span class="heading-number">1.2</span> Graphite text</h3>
-<p>Use high-contrast graphite for body text and softer grey for metadata. Purpose: clarity without visual heaviness.</p>
+<section class="swatch-card" data-accent="raised">
+<h3 class="section-heading" id="grouped-surface"><span class="heading-number">1.6</span> Grouped surface</h3>
+<p>Use for subtle card grouping. The difference must be visible enough to explain structure.</p>
 </section>
-<section class="specimen-card">
-<h3 class="section-heading" id="apple-blue-action"><span class="heading-number">1.3</span> Apple blue action</h3>
-<p>Use blue for links, active states, selected navigation, and primary action. Purpose: direct attention without competing with content.</p>
+<section class="swatch-card" data-accent="blue">
+<h3 class="section-heading" id="action-blue"><span class="heading-number">1.7</span> Action blue</h3>
+<p>Use for links, selection, chart focus, and the one action you want the reader to notice.</p>
 </section>
-<section class="specimen-card">
-<h3 class="section-heading" id="state-colour-family"><span class="heading-number">1.4</span> State colour family</h3>
-<p>Use soft red, amber, blue, and green notification hues with rounded shapes. Purpose: status should feel system-native, not alarming.</p>
+<section class="swatch-card" data-accent="ink">
+<h3 class="section-heading" id="graphite-text"><span class="heading-number">1.8</span> Graphite text</h3>
+<p>Use for headings and important facts. Softer greys are for metadata, not critical claims.</p>
+</section>
+<section class="swatch-card" data-accent="amber">
+<h3 class="section-heading" id="caution-state"><span class="heading-number">1.9</span> Caution state</h3>
+<p>Use for pending verification or risk. Keep the hue warm and readable, not faint.</p>
+</section>
+<section class="swatch-card" data-accent="green">
+<h3 class="section-heading" id="success-state"><span class="heading-number">1.10</span> Success state</h3>
+<p>Use for verified wins. Pair with a label so the meaning survives grayscale.</p>
 </section>
 </section>
+<h2 class="chapter-heading" id="2-typography-and-formatting"><span class="heading-number">2.</span> 2. Typography and formatting</h2>
 <section class="brand-type-scale">
-<section class="specimen-card">
-<h3 class="section-heading" id="large-title"><span class="heading-number">1.5</span> Large title</h3>
-<p>Use confident, clean sans-serif display type with tight but readable tracking. Purpose: premium hierarchy.</p>
+<section class="type-specimen">
+<h3 class="section-heading" id="h1-cover-title"><span class="heading-number">2.1</span> H1 / cover title</h3>
+<p><strong>AI visibility readiness</strong></p>
+<p>Large, confident, and simple. One idea per title.</p>
 </section>
-<section class="specimen-card">
-<h3 class="section-heading" id="reading-copy"><span class="heading-number">1.6</span> Reading copy</h3>
-<p>Use generous leading and paragraph spacing. Purpose: make executive reading feel light and fast.</p>
+<section class="type-specimen">
+<h3 class="section-heading" id="h2-section-title"><span class="heading-number">2.2</span> H2 / section title</h3>
+<p><strong>What changed this week</strong></p>
+<p>Use section headings to answer what the reader is about to decide.</p>
 </section>
-<section class="specimen-card">
-<h3 class="section-heading" id="metadata"><span class="heading-number">1.7</span> Metadata</h3>
-<p>Use small sans-serif labels, not a heavy terminal-style mono. Purpose: keep provenance present but quiet.</p>
+<section class="type-specimen">
+<h3 class="section-heading" id="body-emphasis"><span class="heading-number">2.3</span> Body emphasis</h3>
+<p>Use normal copy for explanation. <strong>Bold</strong> the decision. *Italicise nuance* or a non-blocking caveat.</p>
 </section>
-<section class="specimen-card">
-<h3 class="section-heading" id="code-examples"><span class="heading-number">1.8</span> Code examples</h3>
-<p>Use light code panels with subtle borders and rounded controls. Purpose: technical details should feel integrated with the product system.</p>
-</section>
-</section>
-<h2 class="chapter-heading" id="2-report-element-index"><span class="heading-number">2.</span> 2. Report element index</h2>
-<section class="toc-list">
-<p>01 — Foundations — surfaces, type, colour, radii</p>
-<p>02 — Notifications — success, warning, information, critical</p>
-<p>03 — Data — KPI cards, tables, bars, source ledger</p>
-<p>04 — Recommendations — priorities, good/bad, brief, checklist</p>
-<p>05 — Export — code, source card, privacy note</p>
-</section>
-<section class="action-line">
-<p><strong>Design rule:</strong> make the next action obvious, then remove everything that does not help the reader decide.</p>
-<details class="accordion action-prompt" open><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: Design rule: make the next action obvious, then remove everything that does not help the reader decide.
-
-Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details></section>
-<h2 class="chapter-heading" id="3-notification-variations"><span class="heading-number">3.</span> 3. Notification variations</h2>
-<section class="badge-row">
-<p><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span> <span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span> <span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span> <span class="evidence-badge" aria-label="Evidence: Missing"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span> <span class="badge badge-missing">Critical</span> <span class="badge badge-partial">High</span> <span class="badge badge-inferred">Medium</span> <span class="badge badge-verified">Low</span></p>
-</section>
-<section class="severity-key">
-<section class="info-panel" data-severity="critical">
-<h3 class="section-heading" id="critical"><span class="heading-number">3.1</span> Critical</h3>
-<p>Use for blockers. Apple styling should keep the shape composed: rounded panel, concise title, direct recovery action.</p>
-</section>
-<section class="info-panel" data-severity="high">
-<h3 class="section-heading" id="warning"><span class="heading-number">3.2</span> Warning</h3>
-<p>Use for risk and partial evidence. Keep copy neutral and specific; avoid dramatic language.</p>
-</section>
-<section class="info-panel" data-severity="medium">
-<h3 class="section-heading" id="information"><span class="heading-number">3.3</span> Information</h3>
-<p>Use for method, assumptions, or supporting context. Keep it quiet and readable.</p>
-</section>
-<section class="info-panel" data-severity="low">
-<h3 class="section-heading" id="success"><span class="heading-number">3.4</span> Success</h3>
-<p>Use for verified wins and shipped work. Focus on what is now safe to preserve.</p>
+<section class="type-specimen">
+<h3 class="section-heading" id="metadata"><span class="heading-number">2.4</span> Metadata</h3>
+<p>Keep metadata small and quiet: source, date, owner, version. Do not let it compete with the main action.</p>
 </section>
 </section>
 <section class="quote-card">
-<p>Apple-styled reports should make complexity feel resolved: every component has a purpose, every state has a label, and every recommendation has a clear next step.</p>
+<p>Use quotes for direct feedback, reviewer notes, and cited source language. Keep them short and surrounded by whitespace.</p>
 </section>
-<h2 class="chapter-heading" id="4-data-and-evidence-examples"><span class="heading-number">4.</span> 4. Data and evidence examples</h2>
-<section class="stats-strip">
-<section class="kpi-card">
-<p><strong>92%</strong></p>
-<p>Evidence coverage for priority claims. Source: style audit.</p>
-</section>
-<section class="kpi-card">
-<p><strong>4</strong></p>
-<p>Notification states validated for report use.</p>
-</section>
-<section class="kpi-card">
-<p><strong>12</strong></p>
-<p>Core report components shown in this specimen.</p>
-</section>
-<section class="kpi-card">
-<p><strong>0</strong></p>
-<p>Private artifacts included in public export.</p>
-</section>
+<h2 class="chapter-heading" id="3-information-tagging-badges"><span class="heading-number">3.</span> 3. Information tagging badges</h2>
+<p>Badges are inline metadata. They classify evidence beside a claim; they do not replace a notification or explain an action.</p>
+<section class="badge-row">
+<p><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span> <span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span> <span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span> <span class="evidence-badge" aria-label="Evidence: Missing"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span> <span class="badge badge-missing">Critical</span> <span class="badge badge-partial">High</span> <span class="badge badge-inferred">Medium</span> <span class="badge badge-verified">Low</span></p>
 </section>
 <section class="facts-table-wrap">
 <table><thead>
-<tr><th>Element</th><th>Purpose</th><th>Apple treatment</th><th>Verification</th></tr></thead><tbody>
-<tr><td>Cover</td><td>First impression</td><td>Large type, calm whitespace</td><td>Title fits A4 and slides</td></tr>
-<tr><td>KPI</td><td>Executive metric</td><td>Rounded quiet card, large value</td><td>Period and source included</td></tr>
-<tr><td>Notification</td><td>State communication</td><td>Soft colour and explicit label</td><td>Meaning survives grayscale</td></tr>
-<tr><td>Brief</td><td>Action handoff</td><td>Clean field structure</td><td>Owner and acceptance present</td></tr>
+<tr><th>Badge</th><th>Purpose</th><th>Use example</th><th>Apple treatment</th></tr></thead><tbody>
+<tr><td>Verified</td><td>Confirmed evidence</td><td>“Hero copy appears in first-fetch HTML”</td><td>Soft green chip with text label</td></tr>
+<tr><td>Partial</td><td>Incomplete support</td><td>“Two sources agree; one is stale”</td><td>Warm chip; never hides uncertainty</td></tr>
+<tr><td>Inferred</td><td>Judgement from pattern</td><td>“Likely entity drift”</td><td>Blue chip; keep caveat nearby</td></tr>
+<tr><td>Missing</td><td>Evidence absent</td><td>“No cited source found”</td><td>Red chip; do not use as decoration</td></tr>
 </tbody></table>
 </section>
+<h2 class="chapter-heading" id="4-message-states-and-notifications"><span class="heading-number">4.</span> 4. Message states and notifications</h2>
+<section class="notification-grid">
+<section class="info-panel" data-severity="critical">
+<h3 class="section-heading" id="critical-alert"><span class="heading-number">4.1</span> Critical alert</h3>
+<p><strong>Purpose:</strong> block release until fixed. Use for privacy risk, missing required evidence, or broken export.</p>
+<p>*Example:* “The public PDF includes a private source name. Remove it before sharing.”</p>
+</section>
+<section class="info-panel" data-severity="high">
+<h3 class="section-heading" id="warning-alert"><span class="heading-number">4.2</span> Warning alert</h3>
+<p><strong>Purpose:</strong> show risk that needs attention soon. Use for partial evidence or unresolved owner decisions.</p>
+<p>*Example:* “Recommendation is ready, but the owner field is still empty.”</p>
+</section>
+<section class="info-panel" data-severity="medium">
+<h3 class="section-heading" id="information-note"><span class="heading-number">4.3</span> Information note</h3>
+<p><strong>Purpose:</strong> explain scope or method. Use when context helps the reader trust the result.</p>
+<p>*Example:* “This review covers A4, US Letter, and slide exports.”</p>
+</section>
+<section class="info-panel" data-severity="low">
+<h3 class="section-heading" id="success-note"><span class="heading-number">4.4</span> Success note</h3>
+<p><strong>Purpose:</strong> record a stable, verified pattern to preserve.</p>
+<p>*Example:* “Light code blocks now match the page theme and remain readable.”</p>
+</section>
+</section>
+<h2 class="chapter-heading" id="5-report-component-show-and-tell"><span class="heading-number">5.</span> 5. Report component show-and-tell</h2>
+<section class="stats-strip">
+<section class="kpi-card">
+<p><strong>92%</strong></p>
+<p>Priority claims have evidence. <strong>Source:</strong> A001.</p>
+</section>
+<section class="kpi-card">
+<p><strong>4</strong></p>
+<p>Message states tested. <strong>Source:</strong> A002.</p>
+</section>
+<section class="kpi-card">
+<p><strong>12</strong></p>
+<p>Reusable report blocks covered. <strong>Source:</strong> A003.</p>
+</section>
+<section class="kpi-card">
+<p><strong>0</strong></p>
+<p>Private artefacts in public export. <strong>Source:</strong> A004.</p>
+</section>
+</section>
 <section class="visibility-bars">
-<p style="--bar-value: 92%">Evidence coverage — 92%</p>
-<p style="--bar-value: 88%">Component coverage — 88%</p>
-<p style="--bar-value: 84%">Notification clarity — 84%</p>
-<p style="--bar-value: 96%">Print readiness — 96%</p>
+<p style="--bar-value: 92%"><span class="visibility-label">Evidence coverage</span><span class="visibility-value">92%</span></p>
+<p style="--bar-value: 88%"><span class="visibility-label">Component coverage</span><span class="visibility-value">88%</span></p>
+<p style="--bar-value: 84%"><span class="visibility-label">Notification clarity</span><span class="visibility-value">84%</span></p>
+<p style="--bar-value: 96%"><span class="visibility-label">Print readiness</span><span class="visibility-value">96%</span></p>
+</section>
+<section class="facts-table-wrap">
+<table><thead>
+<tr><th>Component</th><th>Purpose</th><th>Apple treatment</th><th>Example content</th></tr></thead><tbody>
+<tr><td>Cover</td><td>First impression</td><td>Large title, calm whitespace</td><td>“AI visibility readiness”</td></tr>
+<tr><td>KPI</td><td>Executive metric</td><td>Rounded quiet card, one number</td><td>“92% priority evidence coverage”</td></tr>
+<tr><td>Notification</td><td>Interruptive state</td><td>Soft colour, clear recovery action</td><td>“Remove private source name”</td></tr>
+<tr><td>Brief</td><td>Delivery handoff</td><td>Light panel with concise fields</td><td>Task / files / acceptance / verify</td></tr>
+</tbody></table>
 </section>
 <section class="ledger-list">
-<p>A001 — Token audit — High confidence; verifies surface, text, accent, and state roles.</p>
-<p>A002 — Component review — High confidence; checks cover, cards, tables, badges, and briefs.</p>
-<p>A003 — Export review — Medium confidence; confirms A4, US Letter, and slides outputs.</p>
+<p>A001 — Token audit — <strong>High confidence</strong>; verifies surface, text, accent, and state roles.</p>
+<p>A002 — Component review — <strong>High confidence</strong>; checks covers, cards, tables, badges, and alerts.</p>
+<p>A003 — Export review — <strong>Medium confidence</strong>; confirms A4, US Letter, and slides outputs.</p>
+<p>A004 — Redaction review — <strong>High confidence</strong>; confirms public-safe placeholders.</p>
 </section>
-<h2 class="chapter-heading" id="5-recommendation-examples"><span class="heading-number">5.</span> 5. Recommendation examples</h2>
+<h2 class="chapter-heading" id="6-recommendations-and-handoff"><span class="heading-number">6.</span> 6. Recommendations and handoff</h2>
 <section class="priority-card" data-priority="critical">
-<h3 class="section-heading" id="critical-component-issue"><span class="heading-number">5.1</span> Critical component issue</h3>
+<h3 class="section-heading" id="critical-component-issue"><span class="heading-number">6.1</span> Critical component issue</h3>
 <p>Use for a blocker that prevents the report from being trusted or read. <span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></p>
-<p>Owner: Design. Due: Current iteration. Source: A002.</p>
+<p><strong>Owner:</strong> Design. <strong>Due:</strong> current iteration. <strong>Verify:</strong> the PDF no longer exposes private material.</p>
 </section>
 <section class="priority-card" data-priority="high">
-<h3 class="section-heading" id="high-priority-refinement"><span class="heading-number">5.2</span> High-priority refinement</h3>
+<h3 class="section-heading" id="high-priority-refinement"><span class="heading-number">6.2</span> High-priority refinement</h3>
 <p>Use for issues that reduce clarity but do not block interpretation. <span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></p>
-<p>Owner: Content. Due: Next pass. Source: A001.</p>
-</section>
-<section class="priority-card" data-priority="medium">
-<h3 class="section-heading" id="medium-enhancement"><span class="heading-number">5.3</span> Medium enhancement</h3>
-<p>Use for optional improvements that polish the reader experience. <span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span></p>
-<p>Owner: Design systems. Due: Backlog. Source: A003.</p>
+<p><strong>Owner:</strong> Content. <strong>Due:</strong> next pass. <strong>Verify:</strong> owner and acceptance fields are present.</p>
 </section>
 <section class="priority-card" data-status="done">
-<h3 class="section-heading" id="completed-pattern"><span class="heading-number">5.4</span> Completed pattern</h3>
-<p>Use to show a verified style pattern that should not regress. <span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></p>
-<p>Owner: Design. Verified: A001.</p>
+<h3 class="section-heading" id="completed-pattern"><span class="heading-number">6.3</span> Completed pattern</h3>
+<p>Use for a verified style pattern that should not regress. <span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></p>
+<p><strong>Owner:</strong> Design. <strong>Verified:</strong> A004. <strong>Preserve:</strong> light code panels and readable state colours.</p>
 </section>
 <section class="good-bad">
 <section class="good-row">
-<h3 class="section-heading" id="preserve"><span class="heading-number">5.5</span> Preserve</h3>
+<h3 class="section-heading" id="preserve"><span class="heading-number">6.4</span> Preserve</h3>
 <ul>
-<li>Spacious section rhythm.</li>
-<li>Short, direct labels.</li>
-<li>Minimal chrome around evidence.</li>
+<li><strong>Spacious rhythm</strong> and short labels.</li>
+<li>Light code blocks on light pages.</li>
+<li>Clear state labels plus colour.</li>
 </ul>
 </section>
 <section class="bad-row">
-<h3 class="section-heading" id="avoid"><span class="heading-number">5.6</span> Avoid</h3>
+<h3 class="section-heading" id="avoid"><span class="heading-number">6.5</span> Avoid</h3>
 <ul>
 <li>Dense tables without breathing room.</li>
-<li>Over-coloured panels.</li>
-<li>Decorative elements that do not clarify meaning.</li>
+<li>Faint state colours that look identical.</li>
+<li>Random panel widths that imply unrelated meaning.</li>
 </ul>
 </section>
 </section>
 <section class="brief-card">
-<h3 class="section-heading" id="implementation-brief"><span class="heading-number">5.7</span> Implementation brief</h3>
+<h3 class="section-heading" id="implementation-brief"><span class="heading-number">6.6</span> Implementation brief</h3>
 <p><strong>Task:</strong> Apply Apple-styled report components to an executive audit.</p>
 <p><strong>Files:</strong> report Markdown, brand renderer CSS, PDF exports.</p>
 <p><strong>Acceptance:</strong> every block has one purpose, clear label, accessible contrast, and print-safe layout.</p>
-<p><strong>Verification:</strong> render HTML, A4, US Letter, and slides; inspect notification and table readability.</p>
+<p><strong>Verification:</strong> render HTML, A4, US Letter, and slides; inspect badge, notification, table, and code readability.</p>
 </section>
-<section class="checklist-card">
-<ul class="checklist">
-<li><span class="status-dot" data-status="done"></span><span>Cover and manifest are brand-specific.</span></li>
-<li><span class="status-dot" data-status="done"></span><span>Every state uses text plus colour.</span></li>
-<li><span class="status-dot" data-status="todo"></span><span>Every KPI includes source and period.</span></li>
-<li><span class="status-dot" data-status="todo"></span><span>Tables and notification panels remain readable in PDF.</span></li>
-</ul>
-</section>
-<section class="report-keep-with-heading report-chapter-page">
-<h2 class="chapter-heading" id="6-export-and-source-examples"><span class="heading-number">6.</span> 6. Export and source examples</h2>
 <section class="example-card">
-<header>Apple-styled report rule</header>
-<div class="code-block-wrap"><div class="code-block-head"><span>Text code</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Use fewer, clearer blocks. If a component does not help the reader decide, remove it.</code></pre></div>
+<header>Apple light code panel</header>
+<div class="code-block-wrap"><div class="code-block-head"><span>Text code</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Do: use fewer, clearer blocks.
+Do not: use colour when hierarchy, wording, or spacing can solve the problem.</code></pre></div>
 </section>
-</section>
-<section class="source-card">
-<h3 class="section-heading" id="source-card-purpose"><span class="heading-number">6.1</span> Source-card purpose</h3>
-<p>Use source cards for traceability, but keep them quiet: source ID, summary, confidence, and access rule are enough for the main report.</p>
-<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
 <section class="privacy-note">
 <p><strong>Public artifact rule</strong></p>
 <p>Apple-styled public examples must not include private client names, URLs, local paths, screenshots, or raw exports.</p>
 </section>
 <section class="version-summary">
-<p>Apple brand style guide specimen · comprehensive report component coverage · public-safe placeholder content</p>
+<p>Apple brand style guide specimen · usable production guide · public-safe placeholder content</p>
 </section>
 </main>
 </div>

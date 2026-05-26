@@ -4,183 +4,218 @@
 # Signal Agency Brand Style Guide
 
 ::: report-cover
-**Signal Agency report presentation guide.** Use this specimen to see how Signal Agency styles every report element: evidence, data, action, risk, source provenance, and implementation handoff.
+**Signal Agency brand guide for usable report and content production.** This specimen is a show-and-tell system for assets, colour, typography, badges, notifications, evidence, recommendations, worker handoff, and export QA.
 
-Signal Agency is warm-paper editorial dossier design: square components, strong black rules, mono metadata, huge Bricolage numerals, light code blocks, and one terracotta signal accent.
+Signal Agency content should feel **editorial, evidence-led, squared, and decisive**. Use warm paper, black rules, mono provenance, and one terracotta signal accent. Never round the core report components.
 :::
 
 ::: manifest-card
 
-### Signal Agency style manifest
+### Signal Agency production manifest
 
 - Brand: Signal Agency
-- Report mode: AI-search audit dossier
-- Shape language: square, ruled, no soft cards
-- Primary accent: terracotta signal
-- Evidence grammar: verified, partial, inferred, missing
-- Best use: client evidence packs, audit findings, roadmap handoffs
+- Content system: AI-search audits, client dossiers, evidence packs, roadmap handoffs
+- Shape language: square cards, strong rules, no soft containers
+- Colour rule: terracotta is the signal; black carries structure; semantic colours remain muted but visible
+- Writing rule: lead with the decision, then show the evidence that supports it
+- Export rule: public examples use placeholders only and suppress browser PDF chrome
 :::
 
-## 1. Foundation tokens
+## 1. Brand assets and colour roles
+
+::: brand-asset-grid
+::: brand-asset-card accent=light
+
+### Primary wordmark on paper
+
+Use on covers, title pages, and formal client handoffs. Keep the mark on warm paper with strong clearspace and one terracotta rule.
+:::
+
+::: brand-asset-card accent=dark
+
+### Reverse mark on ink
+
+Use only for intentional chapter openers or high-contrast presentation frames. Do not mix with soft gradients.
+:::
+
+::: brand-asset-card accent=light
+
+### Editorial seal
+
+Use for proof points, source-led pages, and dossier dividers. It should feel like a stamp, not an app icon.
+:::
+
+::: brand-asset-card accent=dark
+
+### Client lockup zone
+
+Use when pairing Signal Agency with a client or project name. Align on a rule; keep both marks squared and balanced.
+:::
+:::
 
 ::: brand-swatch-grid
-::: specimen-card
+::: swatch-card accent=paper
 
-### Paper surfaces
+### Warm paper
 
-Use warm paper for the page, alternate paper for secondary panels, and white only for cards that need extra contrast. Purpose: make the report feel reviewed, printed, and evidence-led.
+Default page colour. It makes reports feel reviewed, printed, and evidence-led.
 :::
 
-::: specimen-card
+::: swatch-card accent=ink
 
-### Ink and rules
+### Ink black
 
-Near-black ink defines text, borders, separators, and headers. Purpose: hierarchy comes from rules and spacing rather than decoration.
+Primary text, rules, card headers, and table dividers. It creates hierarchy without decoration.
 :::
 
-::: specimen-card
+::: swatch-card accent=primary
 
 ### Terracotta signal
 
-Terracotta marks decisive moments: cover emphasis, decision tags, critical findings, and small glyphs. Purpose: one accent keeps attention focused.
+Use for decisive moments: cover accent, critical decision, or “read this first” marker.
 :::
 
-::: specimen-card
+::: swatch-card accent=green
 
-### Semantic states
+### Verified state
 
-Positive, warning, information, and missing states use muted report-safe hues. Purpose: notifications stay legible in PDF and never rely on colour alone.
+Use for passed checks and protected patterns. Keep it subdued but legible.
+:::
+
+::: swatch-card accent=amber
+
+### Warning state
+
+Use for partial evidence, stale facts, and dependencies. It must be visibly different from green and red.
+:::
+
+::: swatch-card accent=red
+
+### Critical state
+
+Use for blockers, missing citations, or privacy risk. Pair with a required action.
 :::
 :::
+
+## 2. Typography and editorial formatting
 
 ::: brand-type-scale
-::: specimen-card
+::: type-specimen
 
 ### Display title
 
-Bricolage Grotesque, tight tracking, large scale. Purpose: create editorial authority on covers and chapter openings.
+**Client AI-search dossier**
+
+Large Bricolage-style title. Use for covers and chapter openings.
 :::
 
-::: specimen-card
+::: type-specimen
 
-### Body copy
+### Section heading
 
-Instrument Sans, readable line length, calm rhythm. Purpose: keep findings legible across HTML, A4, US Letter, and slide exports.
+**What answer engines can verify**
+
+Use for the question the section answers. Keep it concrete.
 :::
 
-::: specimen-card
+::: type-specimen
 
-### Mono metadata
+### Body hierarchy
 
-JetBrains Mono for source IDs, dates, engine names, priorities, and run labels. Purpose: evidence provenance is always scannable.
+Use normal body text for evidence. **Bold** the conclusion. *Italic* marks caveats, assumptions, or interpretation.
 :::
 
-::: specimen-card
+::: type-specimen
 
-### Code examples
+### Mono provenance
 
-Light paper code panels with terracotta labels. Purpose: keep examples inside the editorial system rather than switching to a dark terminal style.
+Use mono for source IDs, owners, dates, engine names, and verification commands. Provenance must be easy to scan.
 :::
 :::
 
-## 2. Navigation and metadata
-
-::: toc-list
-§ 01 — Foundation tokens — colour, type, spacing, radii
-
-§ 02 — Navigation and metadata — cover, manifest, contents
-
-§ 03 — Evidence and notifications — badges, states, callouts
-
-§ 04 — Data blocks — KPIs, tables, bars, ledgers
-
-§ 05 — Recommendation blocks — priorities, preserve/fix, brief, checklist
-
-§ 06 — Export rules — PDF and public-safety checks
+::: quote-card
+Use quotes for client voice, source excerpts, or reviewer observations. The quote should support a finding, not replace the finding.
 :::
 
-::: action-line
-**Design rule:** lead with the decision, then show the evidence that supports it. Owner: Strategy · Review every export.
-:::
+## 3. Information tagging badges
 
-## 3. Evidence and notification variations
+Badges are small provenance tags. They sit beside claims, sources, and table cells. They are **not** notifications and should not occupy a whole page alone.
 
 ::: badge-row
 {{evidence:verified}} {{evidence:partial}} {{evidence:inferred}} {{evidence:missing}} {{badge:critical}} {{badge:high}} {{badge:medium}} {{badge:low}}
 :::
 
-::: severity-key
+::: facts-table-wrap
+
+| Badge | Purpose | Use example | Signal Agency rule |
+|---|---|---|---|
+| Verified | Directly observed evidence | “AI Overview cites the comparison page” | Attach source ID |
+| Partial | Mixed or incomplete support | “Gemini sees pricing but misses warranty” | Explain the gap |
+| Inferred | Judgement from pattern | “Likely schema/entity mismatch” | Keep caveat visible |
+| Missing | No evidence captured | “No source card for claim” | Convert to an action |
+
+:::
+
+## 4. Message states and notifications
+
+::: notification-grid
 ::: info-panel severity=critical
 
-### Critical notification
+### Critical dossier alert
 
-Use for retrieval blockers, missing citations, security/privacy risk, or anything that changes the next action. Shape: square panel, strong rule, explicit label.
+**Purpose:** stop the reader and require action. Use for privacy exposure, missing source IDs, or evidence that invalidates the recommendation.
+
+*Example:* “Raw prompt transcript appears in the public export. Replace with a redacted source summary.”
 :::
 ::: info-panel severity=high
 
-### Warning notification
+### Warning dossier note
 
-Use for partial evidence, parity drift, stale facts, or execution risk. Shape: square panel with warm state colour and concise body copy.
+**Purpose:** highlight risk that affects confidence. Use for stale citations, partial retrieval, or owner ambiguity.
+
+*Example:* “Two engines cite the old service name; update corroborating profiles before the next crawl.”
 :::
 ::: info-panel severity=medium
 
-### Information notification
+### Method note
 
-Use for context, method notes, or assumptions. Shape: calm blue-state panel; always include what the reader should do with it.
+**Purpose:** explain how evidence was collected or scoped.
+
+*Example:* “Prompts were run from a clean browser profile and compared against first-fetch HTML.”
 :::
 ::: info-panel severity=low
 
-### Positive notification
+### Preserved pattern
 
-Use for verified wins and protected patterns. Shape: subdued green-state panel; avoid celebratory language.
+**Purpose:** mark a verified pattern to keep.
+
+*Example:* “Source IDs now appear beside every factual recommendation.”
 :::
 :::
 
-::: callout
-
-### Editorial callout
-
-Callouts are reserved for important interpretation, not normal paragraphs. The title states the finding; the body explains why it matters.
-:::
-
-::: quote-card
-Strong Signal Agency reports separate observed evidence from interpretation, then turn only verified or clearly labelled partial evidence into roadmap items.
-:::
-
-## 4. Data block examples
+## 5. Report component show-and-tell
 
 ::: stats-strip
 ::: kpi-card
 **3/5**
 
-Engines with at least partial visibility. Source: C001. Trend: +1.
+Engines with at least partial visibility. **Source:** C001.
 :::
 ::: kpi-card
 **27**
 
-Evidence references captured this window. Source: ledger.
+Evidence references captured. **Source:** ledger.
 :::
 ::: kpi-card
 **6**
 
-Roadmap items sized for this cycle. Source: priorities.
+Roadmap items sized. **Source:** priorities.
 :::
 ::: kpi-card
 **0**
 
-Private URLs exposed in public export. Source: privacy check.
+Private URLs in public export. **Source:** privacy check.
 :::
-:::
-
-::: facts-table-wrap
-
-| Element | Purpose | Signal Agency treatment | Verification |
-|---|---|---|---|
-| Findings table | Dense evidence comparison | Bottom rules, mono headers, evidence badges | Header and cells wrap in PDF |
-| KPI card | Executive metric | Ink header, huge numeral, source footer | Source ID and period present |
-| Source ledger | Claim traceability | Source ID, summary, confidence | Raw evidence stored separately |
-| Brief card | Worker handoff | Inverted ink panel, fixed fields | Acceptance and verification included |
-
 :::
 
 ::: visibility-bars
@@ -195,52 +230,54 @@ AI Mode — 38%
 Perplexity — 9%
 :::
 
-::: ledger-list
-C001 — Prompt capture batch — High confidence; raw transcripts stored securely.
+::: facts-table-wrap
 
-C002 — Rendered crawl — High confidence; confirms first-fetch visibility.
+| Component | Purpose | Signal Agency treatment | Example content |
+|---|---|---|---|
+| Manifest | Scope and evidence rules | Square field block with ink rule | “Raw transcripts stored securely” |
+| KPI card | Executive metric | Huge numeral, short source line | “3/5 engines visible” |
+| Source ledger | Claim traceability | One width, dotted row rules | C001 — prompt capture batch |
+| Brief card | Worker handoff | Light ruled panel, mono fields | Task / files / acceptance / verify |
 
-C003 — Analytics export — Medium confidence; prioritises commercial pages.
-
-C004 — Parity review — Medium confidence; checks third-party fact drift.
 :::
 
-## 5. Recommendation and handoff blocks
+::: ledger-list
+C001 — Prompt capture batch — **High confidence**; raw transcripts stored securely.
+
+C002 — Rendered crawl — **High confidence**; confirms first-fetch visibility.
+
+C003 — Analytics export — **Medium confidence**; prioritises commercial pages.
+
+C004 — Parity review — **Medium confidence**; checks third-party fact drift.
+:::
+
+## 6. Recommendation and handoff patterns
 
 ::: priority-card priority=critical
 
 ### P0 retrieval blocker
 
-Use a priority card when one finding needs executive visibility, owner, due date, source IDs, and verification. {{evidence:verified}}
+Use when one finding needs executive visibility, owner, due date, source IDs, and verification. {{evidence:verified}}
 
-Owner: Editorial. Due: 2026-W23. Sources: C001, C002.
+**Owner:** Editorial. **Due:** 2026-W23. **Verify:** C001 and C002 show first-fetch retrieval.
 :::
 
 ::: priority-card priority=high
 
 ### P1 evidence proximity
 
-Use for important fixes where facts exist but are too far from the claim, table, or source card. {{evidence:partial}}
+Use when facts exist but are too far from the claim, table, or source card. {{evidence:partial}}
 
-Owner: Content. Due: 2026-W25. Sources: C003, C004.
-:::
-
-::: priority-card priority=medium
-
-### P2 corroboration gap
-
-Use for third-party profile, review, and entity consistency work that supports answer-engine trust. {{evidence:inferred}}
-
-Owner: PR. Due: 2026-W28. Sources: C004.
+**Owner:** Content. **Due:** 2026-W25. **Verify:** source IDs appear beside each claim.
 :::
 
 ::: priority-card status=done
 
-### Done pattern
+### Resolved pattern
 
-Use the resolved state for shipped work that should be protected in the next iteration. {{evidence:verified}}
+Use for shipped work that should be protected in the next iteration. {{evidence:verified}}
 
-Owner: Engineering. Verified: C001.
+**Owner:** Engineering. **Verified:** C001. **Preserve:** no private URL appears in public PDFs.
 :::
 
 ::: good-bad
@@ -248,7 +285,7 @@ Owner: Engineering. Verified: C001.
 
 ### Preserve
 
-- Source IDs beside factual claims.
+- **Source IDs** beside factual claims.
 - Direct-answer opening in first-fetch HTML.
 - Clear comparison criteria.
 :::
@@ -258,7 +295,7 @@ Owner: Engineering. Verified: C001.
 
 - Client-rendered critical facts.
 - Unsupported superlatives.
-- Raw evidence in public artifacts.
+- Raw evidence in public artefacts.
 :::
 :::
 
@@ -275,30 +312,13 @@ Owner: Engineering. Verified: C001.
 **Verification:** rerun per-engine prompt set separately and compare citations.
 :::
 
-::: checklist-card
-
-- [x] Evidence badges have source IDs.
-- [x] PDF exports contain no browser header/footer chrome.
-- [ ] Each priority card has owner, due date, and verification.
-- [ ] Public artifact contains no private URLs, paths, screenshots, or names.
-:::
-
-## 6. Code, source, and export blocks
-
-::: example-card title="Signal Agency code panel"
+::: example-card title="Signal Agency light code panel"
 
 ```text
-Report rule: Every recommendation must include source IDs, owner, due date, and verification.
-Export rule: Suppress browser PDF header/footer; report chrome belongs in HTML/CSS.
+Do: put source IDs beside factual claims.
+Do not: publish raw transcripts, local paths, or private URLs in public reports.
 ```
 
-:::
-
-::: source-card
-
-### Source-card purpose
-
-Use source cards to explain where evidence lives, what claim it supports, confidence, and whether the raw material is public, internal, confidential, or redacted.
 :::
 
 ::: privacy-note
@@ -308,5 +328,5 @@ Signal Agency public examples must use placeholders only. Raw transcripts, scree
 :::
 
 ::: version-summary
-Signal Agency brand style guide specimen · comprehensive report component coverage · public-safe placeholder content
+Signal Agency brand style guide specimen · usable production guide · public-safe placeholder content
 :::

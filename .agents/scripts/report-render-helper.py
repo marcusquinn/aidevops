@@ -140,6 +140,8 @@ def load_css(template: str, pdf_profile: str) -> str:
     elif template != "basic":
         names = ", ".join(BUILTIN_TEMPLATES)
         raise ValueError(f"unknown report template: {template}. Available: {names}")
+    if template == "basic":
+        return css
     if pdf_profile not in PROFILE_CSS:
         raise ValueError(f"unknown PDF export profile: {pdf_profile}")
     if THEME not in THEMES:

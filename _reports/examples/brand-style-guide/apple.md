@@ -4,174 +4,218 @@
 # Apple Brand Style Guide
 
 ::: report-cover
-**Apple-inspired report presentation guide.** Use this specimen to see how Apple-styled reports handle evidence, metrics, recommendations, notifications, and handoff blocks with restraint.
+**Apple-inspired brand guide for usable report and content production.** This specimen shows how Apple-styled content handles assets, surfaces, type, tagging badges, notifications, data, recommendations, handoffs, and export checks.
 
-Apple styling is quiet, spacious, precise, and product-like. The report should feel polished and intentional: soft hierarchy, few borders, generous whitespace, concise copy, and calm state colour.
+Apple-styled content should feel **calm, precise, generous, and product-like**. Use whitespace and restraint first; use blue for action; use colour states sparingly and with enough contrast to survive PDF and print.
 :::
 
 ::: manifest-card
 
-### Apple style manifest
+### Apple production manifest
 
 - Brand: Apple
-- Report mode: polished executive/product evidence report
-- Shape language: refined surfaces, subtle rounding, minimal visible chrome
-- Primary accent: Apple blue
-- Evidence grammar: clear status labels, calm colour, no visual noise
-- Best use: executive summaries, product narratives, client recommendations
+- Content system: executive summaries, product narratives, launch notes, client recommendations
+- Shape language: refined surfaces, soft rounding, subtle depth, minimal visible chrome
+- Colour rule: blue is action; graphite is authority; state colours remain calm but visible
+- Writing rule: make the next action obvious, then remove everything that does not help the reader decide
+- Export rule: light themes use light code blocks and public-safe placeholder evidence
 :::
 
-## 1. Foundation tokens
+## 1. Brand assets and colour roles
+
+::: brand-asset-grid
+::: brand-asset-card accent=light
+
+### Primary mark on light
+
+Use for covers, title pages, and calm executive documents. Keep clearspace generous and avoid nearby badges or dense controls.
+:::
+
+::: brand-asset-card accent=dark
+
+### Reverse mark on dark
+
+Use only when the entire module is dark. The mark should feel intentional, not like a contrast workaround.
+:::
+
+::: brand-asset-card accent=light
+
+### App or product icon
+
+Use for small cards and preview tiles. Centre it optically and pair with one short label.
+:::
+
+::: brand-asset-card accent=dark
+
+### Partner lockup
+
+Use for co-branded pages. Keep both names aligned and let whitespace carry the relationship.
+:::
+:::
 
 ::: brand-swatch-grid
-::: specimen-card
+::: swatch-card accent=paper
 
-### White and near-white surfaces
+### White surface
 
-Use white as the primary canvas and light neutrals for grouped content. Purpose: create focus and make the report feel effortless.
+Primary canvas for reading. Use it for report pages, cards, and tables that need a premium quiet feel.
 :::
 
-::: specimen-card
+::: swatch-card accent=raised
+
+### Grouped surface
+
+Use for subtle card grouping. The difference must be visible enough to explain structure.
+:::
+
+::: swatch-card accent=blue
+
+### Action blue
+
+Use for links, selection, chart focus, and the one action you want the reader to notice.
+:::
+
+::: swatch-card accent=ink
 
 ### Graphite text
 
-Use high-contrast graphite for body text and softer grey for metadata. Purpose: clarity without visual heaviness.
+Use for headings and important facts. Softer greys are for metadata, not critical claims.
 :::
 
-::: specimen-card
+::: swatch-card accent=amber
 
-### Apple blue action
+### Caution state
 
-Use blue for links, active states, selected navigation, and primary action. Purpose: direct attention without competing with content.
+Use for pending verification or risk. Keep the hue warm and readable, not faint.
 :::
 
-::: specimen-card
+::: swatch-card accent=green
 
-### State colour family
+### Success state
 
-Use soft red, amber, blue, and green notification hues with rounded shapes. Purpose: status should feel system-native, not alarming.
+Use for verified wins. Pair with a label so the meaning survives grayscale.
 :::
 :::
+
+## 2. Typography and formatting
 
 ::: brand-type-scale
-::: specimen-card
+::: type-specimen
 
-### Large title
+### H1 / cover title
 
-Use confident, clean sans-serif display type with tight but readable tracking. Purpose: premium hierarchy.
+**AI visibility readiness**
+
+Large, confident, and simple. One idea per title.
 :::
 
-::: specimen-card
+::: type-specimen
 
-### Reading copy
+### H2 / section title
 
-Use generous leading and paragraph spacing. Purpose: make executive reading feel light and fast.
+**What changed this week**
+
+Use section headings to answer what the reader is about to decide.
 :::
 
-::: specimen-card
+::: type-specimen
+
+### Body emphasis
+
+Use normal copy for explanation. **Bold** the decision. *Italicise nuance* or a non-blocking caveat.
+:::
+
+::: type-specimen
 
 ### Metadata
 
-Use small sans-serif labels, not a heavy terminal-style mono. Purpose: keep provenance present but quiet.
-:::
-
-::: specimen-card
-
-### Code examples
-
-Use light code panels with subtle borders and rounded controls. Purpose: technical details should feel integrated with the product system.
+Keep metadata small and quiet: source, date, owner, version. Do not let it compete with the main action.
 :::
 :::
 
-## 2. Report element index
-
-::: toc-list
-01 — Foundations — surfaces, type, colour, radii
-
-02 — Notifications — success, warning, information, critical
-
-03 — Data — KPI cards, tables, bars, source ledger
-
-04 — Recommendations — priorities, good/bad, brief, checklist
-
-05 — Export — code, source card, privacy note
+::: quote-card
+Use quotes for direct feedback, reviewer notes, and cited source language. Keep them short and surrounded by whitespace.
 :::
 
-::: action-line
-**Design rule:** make the next action obvious, then remove everything that does not help the reader decide.
-:::
+## 3. Information tagging badges
 
-## 3. Notification variations
+Badges are inline metadata. They classify evidence beside a claim; they do not replace a notification or explain an action.
 
 ::: badge-row
 {{evidence:verified}} {{evidence:partial}} {{evidence:inferred}} {{evidence:missing}} {{badge:critical}} {{badge:high}} {{badge:medium}} {{badge:low}}
 :::
 
-::: severity-key
+::: facts-table-wrap
+
+| Badge | Purpose | Use example | Apple treatment |
+|---|---|---|---|
+| Verified | Confirmed evidence | “Hero copy appears in first-fetch HTML” | Soft green chip with text label |
+| Partial | Incomplete support | “Two sources agree; one is stale” | Warm chip; never hides uncertainty |
+| Inferred | Judgement from pattern | “Likely entity drift” | Blue chip; keep caveat nearby |
+| Missing | Evidence absent | “No cited source found” | Red chip; do not use as decoration |
+
+:::
+
+## 4. Message states and notifications
+
+::: notification-grid
 ::: info-panel severity=critical
 
-### Critical
+### Critical alert
 
-Use for blockers. Apple styling should keep the shape composed: rounded panel, concise title, direct recovery action.
+**Purpose:** block release until fixed. Use for privacy risk, missing required evidence, or broken export.
+
+*Example:* “The public PDF includes a private source name. Remove it before sharing.”
 :::
 ::: info-panel severity=high
 
-### Warning
+### Warning alert
 
-Use for risk and partial evidence. Keep copy neutral and specific; avoid dramatic language.
+**Purpose:** show risk that needs attention soon. Use for partial evidence or unresolved owner decisions.
+
+*Example:* “Recommendation is ready, but the owner field is still empty.”
 :::
 ::: info-panel severity=medium
 
-### Information
+### Information note
 
-Use for method, assumptions, or supporting context. Keep it quiet and readable.
+**Purpose:** explain scope or method. Use when context helps the reader trust the result.
+
+*Example:* “This review covers A4, US Letter, and slide exports.”
 :::
 ::: info-panel severity=low
 
-### Success
+### Success note
 
-Use for verified wins and shipped work. Focus on what is now safe to preserve.
+**Purpose:** record a stable, verified pattern to preserve.
+
+*Example:* “Light code blocks now match the page theme and remain readable.”
 :::
 :::
 
-::: quote-card
-Apple-styled reports should make complexity feel resolved: every component has a purpose, every state has a label, and every recommendation has a clear next step.
-:::
-
-## 4. Data and evidence examples
+## 5. Report component show-and-tell
 
 ::: stats-strip
 ::: kpi-card
 **92%**
 
-Evidence coverage for priority claims. Source: style audit.
+Priority claims have evidence. **Source:** A001.
 :::
 ::: kpi-card
 **4**
 
-Notification states validated for report use.
+Message states tested. **Source:** A002.
 :::
 ::: kpi-card
 **12**
 
-Core report components shown in this specimen.
+Reusable report blocks covered. **Source:** A003.
 :::
 ::: kpi-card
 **0**
 
-Private artifacts included in public export.
+Private artefacts in public export. **Source:** A004.
 :::
-:::
-
-::: facts-table-wrap
-
-| Element | Purpose | Apple treatment | Verification |
-|---|---|---|---|
-| Cover | First impression | Large type, calm whitespace | Title fits A4 and slides |
-| KPI | Executive metric | Rounded quiet card, large value | Period and source included |
-| Notification | State communication | Soft colour and explicit label | Meaning survives grayscale |
-| Brief | Action handoff | Clean field structure | Owner and acceptance present |
-
 :::
 
 ::: visibility-bars
@@ -184,15 +228,28 @@ Notification clarity — 84%
 Print readiness — 96%
 :::
 
-::: ledger-list
-A001 — Token audit — High confidence; verifies surface, text, accent, and state roles.
+::: facts-table-wrap
 
-A002 — Component review — High confidence; checks cover, cards, tables, badges, and briefs.
+| Component | Purpose | Apple treatment | Example content |
+|---|---|---|---|
+| Cover | First impression | Large title, calm whitespace | “AI visibility readiness” |
+| KPI | Executive metric | Rounded quiet card, one number | “92% priority evidence coverage” |
+| Notification | Interruptive state | Soft colour, clear recovery action | “Remove private source name” |
+| Brief | Delivery handoff | Light panel with concise fields | Task / files / acceptance / verify |
 
-A003 — Export review — Medium confidence; confirms A4, US Letter, and slides outputs.
 :::
 
-## 5. Recommendation examples
+::: ledger-list
+A001 — Token audit — **High confidence**; verifies surface, text, accent, and state roles.
+
+A002 — Component review — **High confidence**; checks covers, cards, tables, badges, and alerts.
+
+A003 — Export review — **Medium confidence**; confirms A4, US Letter, and slides outputs.
+
+A004 — Redaction review — **High confidence**; confirms public-safe placeholders.
+:::
+
+## 6. Recommendations and handoff
 
 ::: priority-card priority=critical
 
@@ -200,7 +257,7 @@ A003 — Export review — Medium confidence; confirms A4, US Letter, and slides
 
 Use for a blocker that prevents the report from being trusted or read. {{evidence:verified}}
 
-Owner: Design. Due: Current iteration. Source: A002.
+**Owner:** Design. **Due:** current iteration. **Verify:** the PDF no longer exposes private material.
 :::
 
 ::: priority-card priority=high
@@ -209,25 +266,16 @@ Owner: Design. Due: Current iteration. Source: A002.
 
 Use for issues that reduce clarity but do not block interpretation. {{evidence:partial}}
 
-Owner: Content. Due: Next pass. Source: A001.
-:::
-
-::: priority-card priority=medium
-
-### Medium enhancement
-
-Use for optional improvements that polish the reader experience. {{evidence:inferred}}
-
-Owner: Design systems. Due: Backlog. Source: A003.
+**Owner:** Content. **Due:** next pass. **Verify:** owner and acceptance fields are present.
 :::
 
 ::: priority-card status=done
 
 ### Completed pattern
 
-Use to show a verified style pattern that should not regress. {{evidence:verified}}
+Use for a verified style pattern that should not regress. {{evidence:verified}}
 
-Owner: Design. Verified: A001.
+**Owner:** Design. **Verified:** A004. **Preserve:** light code panels and readable state colours.
 :::
 
 ::: good-bad
@@ -235,17 +283,17 @@ Owner: Design. Verified: A001.
 
 ### Preserve
 
-- Spacious section rhythm.
-- Short, direct labels.
-- Minimal chrome around evidence.
+- **Spacious rhythm** and short labels.
+- Light code blocks on light pages.
+- Clear state labels plus colour.
 :::
 ::: bad-row
 
 ### Avoid
 
 - Dense tables without breathing room.
-- Over-coloured panels.
-- Decorative elements that do not clarify meaning.
+- Faint state colours that look identical.
+- Random panel widths that imply unrelated meaning.
 :::
 :::
 
@@ -259,32 +307,16 @@ Owner: Design. Verified: A001.
 
 **Acceptance:** every block has one purpose, clear label, accessible contrast, and print-safe layout.
 
-**Verification:** render HTML, A4, US Letter, and slides; inspect notification and table readability.
+**Verification:** render HTML, A4, US Letter, and slides; inspect badge, notification, table, and code readability.
 :::
 
-::: checklist-card
-
-- [x] Cover and manifest are brand-specific.
-- [x] Every state uses text plus colour.
-- [ ] Every KPI includes source and period.
-- [ ] Tables and notification panels remain readable in PDF.
-:::
-
-## 6. Export and source examples
-
-::: example-card title="Apple-styled report rule"
+::: example-card title="Apple light code panel"
 
 ```text
-Use fewer, clearer blocks. If a component does not help the reader decide, remove it.
+Do: use fewer, clearer blocks.
+Do not: use colour when hierarchy, wording, or spacing can solve the problem.
 ```
 
-:::
-
-::: source-card
-
-### Source-card purpose
-
-Use source cards for traceability, but keep them quiet: source ID, summary, confidence, and access rule are enough for the main report.
 :::
 
 ::: privacy-note
@@ -294,5 +326,5 @@ Apple-styled public examples must not include private client names, URLs, local 
 :::
 
 ::: version-summary
-Apple brand style guide specimen · comprehensive report component coverage · public-safe placeholder content
+Apple brand style guide specimen · usable production guide · public-safe placeholder content
 :::
