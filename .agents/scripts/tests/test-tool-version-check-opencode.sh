@@ -36,7 +36,7 @@ assert_eq() {
 
 	printf '  FAIL: %s -- expected %s, got %s\n' "$desc" "$expected" "$actual" >&2
 	FAIL=$((FAIL + 1))
-	return 1
+	return 0
 }
 
 extract_function() {
@@ -69,9 +69,11 @@ write_executable() {
 extract_function
 
 printf 'Test 1: Homebrew OpenCode chooses brew instead of npm\n'
-mkdir -p "$SANDBOX/opt/homebrew/bin" "$SANDBOX/opt/homebrew/opt/opencode" "$SANDBOX/homebrew-case"
-write_executable "$SANDBOX/opt/homebrew/bin/opencode" '#!/usr/bin/env bash
+mkdir -p "$SANDBOX/opt/homebrew/bin" "$SANDBOX/opt/homebrew/Cellar/opencode/1.15.10/bin" "$SANDBOX/opt/homebrew/opt" "$SANDBOX/homebrew-case"
+write_executable "$SANDBOX/opt/homebrew/Cellar/opencode/1.15.10/bin/opencode" '#!/usr/bin/env bash
 printf "1.15.10\n"'
+ln -s "../Cellar/opencode/1.15.10" "$SANDBOX/opt/homebrew/opt/opencode"
+ln -s "../Cellar/opencode/1.15.10/bin/opencode" "$SANDBOX/opt/homebrew/bin/opencode"
 # shellcheck disable=SC2016 # Literal stub body; quoted SANDBOX segments are expanded by the outer script.
 write_executable "$SANDBOX/opt/homebrew/bin/brew" '#!/usr/bin/env bash
 case "${1:-}" in
@@ -100,6 +102,20 @@ printf "npm %s\n" "$*" >>"'"$SANDBOX"'/homebrew-case/calls"'
 	PATH="$SANDBOX/opt/homebrew/bin:$SANDBOX/homebrew-case:$SYSTEM_PATH" bash -c "$cmd"
 )
 assert_eq "Homebrew OpenCode upgrade command" "upgrade opencode" "$(tr '\n' ';' <"$SANDBOX/homebrew-case/calls" | sed 's/;$//')"
+
+printf 'Test 1b: npm OpenCode inside brew prefix still chooses npm\n'
+mkdir -p "$SANDBOX/opt/homebrew/npm-global/bin" "$SANDBOX/brew-prefix-npm-case"
+write_executable "$SANDBOX/opt/homebrew/npm-global/bin/opencode" '#!/usr/bin/env bash
+printf "1.15.10\n"'
+# shellcheck disable=SC2016 # Literal stub body; quoted SANDBOX segments are expanded by the outer script.
+write_executable "$SANDBOX/brew-prefix-npm-case/npm" '#!/usr/bin/env bash
+printf "npm %s\n" "$*" >>"'"$SANDBOX"'/brew-prefix-npm-case/calls"'
+(
+	source_extracted
+	cmd="$(_opencode_upgrade_cmd 1.15.10)"
+	PATH="$SANDBOX/opt/homebrew/npm-global/bin:$SANDBOX/opt/homebrew/bin:$SANDBOX/brew-prefix-npm-case:$SYSTEM_PATH" bash -c "$cmd"
+)
+assert_eq "npm OpenCode under brew prefix command" "npm install -g opencode-ai@1.15.10" "$(tr '\n' ';' <"$SANDBOX/brew-prefix-npm-case/calls" | sed 's/;$//')"
 
 printf 'Test 2: bun OpenCode still chooses bun\n'
 mkdir -p "$SANDBOX/home/.bun/bin" "$SANDBOX/bun-case"

@@ -85,10 +85,14 @@ _opencode_upgrade_cmd() {
 		'if command -v brew >/dev/null 2>&1; then ' \
 		'brew_root=$(brew --prefix 2>/dev/null || printf ""); ' \
 		'r_dir=$(cd "$(dirname "$r")" 2>/dev/null && pwd -P || printf ""); ' \
-		'brew_root_real=""; brew_formula_real=""; ' \
+		'r_link=$(readlink "$r" 2>/dev/null || printf ""); r_real="$r"; ' \
+		'if [[ -n "$r_link" ]]; then case "$r_link" in /*) r_real="$r_link" ;; *) r_real="$r_dir/$r_link" ;; esac; fi; ' \
+		'r_real_dir=$(cd "$(dirname "$r_real")" 2>/dev/null && pwd -P || printf ""); ' \
+		'brew_root_real=""; brew_formula_real=""; brew_formula=""; ' \
 		'[[ -n "$brew_root" ]] && brew_root_real=$(cd "$brew_root" 2>/dev/null && pwd -P || printf ""); ' \
-		'[[ -n "$brew_root_real" ]] && brew_formula_real="$brew_root_real/opt/opencode"; ' \
-		'if brew list --versions opencode >/dev/null 2>&1 && { [[ -n "$brew_root_real" && "$r_dir" == "$brew_root_real"/* ]] || [[ -n "$brew_formula_real" && "$r_dir" == "$brew_formula_real"/* ]]; }; then ' \
+		'[[ -n "$brew_root_real" ]] && brew_formula="$brew_root_real/opt/opencode"; ' \
+		'[[ -n "$brew_formula" ]] && brew_formula_real=$(cd "$brew_formula" 2>/dev/null && pwd -P || printf ""); ' \
+		'if brew list --versions opencode >/dev/null 2>&1 && [[ -n "$brew_formula_real" ]] && { [[ "$r_dir" == "$brew_formula_real"/* ]] || [[ "$r_real_dir" == "$brew_formula_real"/* ]]; }; then ' \
 		'brew upgrade opencode || brew reinstall opencode; exit $?; ' \
 		'fi; fi; ' \
 		'if [[ "$r" == *bun* ]]; then bun install -g opencode-ai@'"${pkg_version}"'; else npm install -g opencode-ai@'"${pkg_version}"'; fi; ' \
