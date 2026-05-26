@@ -13,15 +13,15 @@ IBM-styled content should feel **systematic, engineered, accessible, and explici
 
 ### IBM production manifest
 
-- Brand: IBM
-- Content system: technical reports, governance memos, product explainers, audit handoffs
-- Shape language: modular grid, square panels, strong alignment, visible rules
-- Colour rule: blue is the system accent; severity colours are functional, not decorative
-- Writing rule: classify evidence, name the decision, then show the verification path
-- Export rule: every public artefact uses placeholder evidence and hides browser PDF chrome
+- **Brand:** IBM
+- **Content system:** technical reports, governance memos, product explainers, audit handoffs
+- **Shape language:** modular grid, square panels, strong alignment, visible rules
+- **Colour rule:** blue is the system accent; severity colours are functional, not decorative
+- **Writing rule:** classify evidence, name the decision, then show the verification path
+- **Export rule:** every public artefact uses placeholder evidence and hides browser PDF chrome
 :::
 
-## 1. Brand assets and surface rules
+## Brand assets and surface rules
 
 ::: brand-asset-grid
 ::: brand-asset-card accent=light
@@ -97,7 +97,7 @@ Use for shipped controls, passed checks, and preserved patterns. Keep the label 
 :::
 :::
 
-## 2. Typography and formatting
+## Typography and formatting
 
 ::: brand-type-scale
 ::: type-specimen
@@ -139,26 +139,28 @@ Normal body copy states the fact. **Bold** marks the decision or required field.
 Use quotation styling for source excerpts and reviewer notes. A quote is not a notification; it is a cited voice that supports or challenges the report claim.
 :::
 
-## 3. Information tagging badges
+## Information tagging badges
 
 Badges are **metadata tags**, not notifications. Use them inline beside claims, table cells, or source IDs to classify evidence without taking over the page.
 
 ::: badge-row
-{{evidence:verified}} {{evidence:partial}} {{evidence:inferred}} {{evidence:missing}} {{badge:critical}} {{badge:high}} {{badge:medium}} {{badge:low}}
+**Evidence:** {{evidence:verified}} {{evidence:partial}} {{evidence:inferred}} {{evidence:missing}}
+
+**Priority:** {{badge:critical}} {{badge:high}} {{badge:medium}} {{badge:low}}
 :::
 
 ::: facts-table-wrap
 
 | Badge | Purpose | Use example | Avoid |
 |---|---|---|---|
-| Verified | Confirmed evidence | “Pricing table present in first-fetch HTML” | Using it for assumptions |
-| Partial | Some support, not enough | “Two engines cite the page; one cites stale copy” | Hiding uncertainty |
-| Inferred | Modelled judgement | “Likely entity mismatch from source drift” | Presenting as fact |
-| Missing | No evidence found | “No source card for the claim” | Using as blame language |
+| {{evidence:verified}} | Confirmed evidence | “Pricing table present in first-fetch HTML” | Using it for assumptions |
+| {{evidence:partial}} | Some support, not enough | “Two engines cite the page; one cites stale copy” | Hiding uncertainty |
+| {{evidence:inferred}} | Modelled judgement | “Likely entity mismatch from source drift” | Presenting as fact |
+| {{evidence:missing}} | No evidence found | “No source card for the claim” | Using as blame language |
 
 :::
 
-## 4. Message states and notifications
+## Message states and notifications
 
 Notifications are interruption patterns. They need colour, shape, label, purpose, and action. They are not badge rows.
 
@@ -169,7 +171,7 @@ Notifications are interruption patterns. They need colour, shape, label, purpose
 
 **Purpose:** stop delivery until fixed. Use when evidence is inaccessible, a required source is missing, or a public artefact risks disclosure.
 
-*Example:* “Source B004 is absent from the export ledger. Add it before approval.”
+**Example:** “Source B004 is absent from the export ledger. Add it before approval.”
 :::
 ::: info-panel severity=high
 
@@ -177,7 +179,7 @@ Notifications are interruption patterns. They need colour, shape, label, purpose
 
 **Purpose:** expose risk without blocking every reader. Use for partial evidence, ownership gaps, or pending validation.
 
-*Example:* “Table fit passes A4 but needs slide review before client deck export.”
+**Example:** “Table fit passes A4 but needs slide review before client deck export.”
 :::
 ::: info-panel severity=medium
 
@@ -185,7 +187,7 @@ Notifications are interruption patterns. They need colour, shape, label, purpose
 
 **Purpose:** explain method or scope. Use for assumptions, sampling windows, and environment details.
 
-*Example:* “Crawler evidence was captured from a logged-out first fetch.”
+**Example:** “Crawler evidence was captured from a logged-out first fetch.”
 :::
 ::: info-panel severity=low
 
@@ -193,11 +195,11 @@ Notifications are interruption patterns. They need colour, shape, label, purpose
 
 **Purpose:** mark a stable pattern to preserve. Use when a check passed and should not regress.
 
-*Example:* “All priority cards now include owner, source, and verification fields.”
+**Example:** “All priority cards now include owner, source, and verification fields.”
 :::
 :::
 
-## 5. Report component show-and-tell
+## Report component show-and-tell
 
 ::: stats-strip
 ::: kpi-card
@@ -254,40 +256,40 @@ B003 — Recommendation audit — **Medium confidence**; verifies owner, due dat
 B004 — Redaction audit — **High confidence**; confirms public-safe export.
 :::
 
-## 6. Recommendation patterns
+## Recommendation patterns
 
 ::: priority-card priority=critical
 
-### Critical control gap
+### Critical control gap {{evidence:verified}}
 
-Use when a missing component, evidence field, or verification step blocks approval. {{evidence:verified}}
+Use when a missing component, evidence field, or verification step blocks approval.
 
 **Owner:** Governance. **Due:** current release. **Verify:** source ledger contains B001 and B004.
 :::
 
 ::: priority-card priority=high
 
-### High-priority dependency
+### High-priority dependency {{evidence:partial}}
 
-Use when a recommendation depends on another system, owner, or evidence source. {{evidence:partial}}
+Use when a recommendation depends on another system, owner, or evidence source.
 
 **Owner:** Delivery. **Due:** next sprint. **Verify:** dependency has an assigned owner.
 :::
 
 ::: priority-card priority=medium
 
-### Medium optimisation
+### Medium optimisation {{evidence:inferred}}
 
-Use when the report is correct but can improve scanability, table density, or export fidelity. {{evidence:inferred}}
+Use when the report is correct but can improve scanability, table density, or export fidelity.
 
 **Owner:** Design systems. **Due:** backlog. **Verify:** A4 and slide output remain aligned.
 :::
 
 ::: priority-card status=done
 
-### Completed control
+### Completed control {{evidence:verified}}
 
-Use for implemented safeguards and stable patterns. {{evidence:verified}}
+Use for implemented safeguards and stable patterns.
 
 **Owner:** QA. **Verified:** B004. **Preserve:** state label remains high contrast.
 :::
@@ -311,7 +313,7 @@ Use for implemented safeguards and stable patterns. {{evidence:verified}}
 :::
 :::
 
-## 7. Handoff, code, and export
+## Handoff, code, and export
 
 ::: brief-card
 

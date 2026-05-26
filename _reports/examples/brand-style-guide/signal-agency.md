@@ -13,15 +13,15 @@ Signal Agency content should feel **editorial, evidence-led, squared, and decisi
 
 ### Signal Agency production manifest
 
-- Brand: Signal Agency
-- Content system: AI-search audits, client dossiers, evidence packs, roadmap handoffs
-- Shape language: square cards, strong rules, no soft containers
-- Colour rule: terracotta is the signal; black carries structure; semantic colours remain muted but visible
-- Writing rule: lead with the decision, then show the evidence that supports it
-- Export rule: public examples use placeholders only and suppress browser PDF chrome
+- **Brand:** Signal Agency
+- **Content system:** AI-search audits, client dossiers, evidence packs, roadmap handoffs
+- **Shape language:** square cards, strong rules, no soft containers
+- **Colour rule:** terracotta is the signal; black carries structure; semantic colours remain muted but visible
+- **Writing rule:** lead with the decision, then show the evidence that supports it
+- **Export rule:** public examples use placeholders only and suppress browser PDF chrome
 :::
 
-## 1. Brand assets and colour roles
+## Brand assets and colour roles
 
 ::: brand-asset-grid
 ::: brand-asset-card accent=light
@@ -97,7 +97,7 @@ Use for blockers, missing citations, or privacy risk. Pair with a required actio
 :::
 :::
 
-## 2. Typography and editorial formatting
+## Typography and editorial formatting
 
 ::: brand-type-scale
 ::: type-specimen
@@ -137,26 +137,28 @@ Use mono for source IDs, owners, dates, engine names, and verification commands.
 Use quotes for client voice, source excerpts, or reviewer observations. The quote should support a finding, not replace the finding.
 :::
 
-## 3. Information tagging badges
+## Information tagging badges
 
 Badges are small provenance tags. They sit beside claims, sources, and table cells. They are **not** notifications and should not occupy a whole page alone.
 
 ::: badge-row
-{{evidence:verified}} {{evidence:partial}} {{evidence:inferred}} {{evidence:missing}} {{badge:critical}} {{badge:high}} {{badge:medium}} {{badge:low}}
+**Evidence:** {{evidence:verified}} {{evidence:partial}} {{evidence:inferred}} {{evidence:missing}}
+
+**Priority:** {{badge:critical}} {{badge:high}} {{badge:medium}} {{badge:low}}
 :::
 
 ::: facts-table-wrap
 
 | Badge | Purpose | Use example | Signal Agency rule |
 |---|---|---|---|
-| Verified | Directly observed evidence | “AI Overview cites the comparison page” | Attach source ID |
-| Partial | Mixed or incomplete support | “Gemini sees pricing but misses warranty” | Explain the gap |
-| Inferred | Judgement from pattern | “Likely schema/entity mismatch” | Keep caveat visible |
-| Missing | No evidence captured | “No source card for claim” | Convert to an action |
+| {{evidence:verified}} | Directly observed evidence | “AI Overview cites the comparison page” | Attach source ID |
+| {{evidence:partial}} | Mixed or incomplete support | “Gemini sees pricing but misses warranty” | Explain the gap |
+| {{evidence:inferred}} | Judgement from pattern | “Likely schema/entity mismatch” | Keep caveat visible |
+| {{evidence:missing}} | No evidence captured | “No source card for claim” | Convert to an action |
 
 :::
 
-## 4. Message states and notifications
+## Message states and notifications
 
 ::: notification-grid
 ::: info-panel severity=critical
@@ -165,7 +167,7 @@ Badges are small provenance tags. They sit beside claims, sources, and table cel
 
 **Purpose:** stop the reader and require action. Use for privacy exposure, missing source IDs, or evidence that invalidates the recommendation.
 
-*Example:* “Raw prompt transcript appears in the public export. Replace with a redacted source summary.”
+**Example:** “Raw prompt transcript appears in the public export. Replace with a redacted source summary.”
 :::
 ::: info-panel severity=high
 
@@ -173,7 +175,7 @@ Badges are small provenance tags. They sit beside claims, sources, and table cel
 
 **Purpose:** highlight risk that affects confidence. Use for stale citations, partial retrieval, or owner ambiguity.
 
-*Example:* “Two engines cite the old service name; update corroborating profiles before the next crawl.”
+**Example:** “Two engines cite the old service name; update corroborating profiles before the next crawl.”
 :::
 ::: info-panel severity=medium
 
@@ -181,7 +183,7 @@ Badges are small provenance tags. They sit beside claims, sources, and table cel
 
 **Purpose:** explain how evidence was collected or scoped.
 
-*Example:* “Prompts were run from a clean browser profile and compared against first-fetch HTML.”
+**Example:** “Prompts were run from a clean browser profile and compared against first-fetch HTML.”
 :::
 ::: info-panel severity=low
 
@@ -189,11 +191,11 @@ Badges are small provenance tags. They sit beside claims, sources, and table cel
 
 **Purpose:** mark a verified pattern to keep.
 
-*Example:* “Source IDs now appear beside every factual recommendation.”
+**Example:** “Source IDs now appear beside every factual recommendation.”
 :::
 :::
 
-## 5. Report component show-and-tell
+## Report component show-and-tell
 
 ::: stats-strip
 ::: kpi-card
@@ -251,31 +253,31 @@ C003 — Analytics export — **Medium confidence**; prioritises commercial page
 C004 — Parity review — **Medium confidence**; checks third-party fact drift.
 :::
 
-## 6. Recommendation and handoff patterns
+## Recommendation and handoff patterns
 
 ::: priority-card priority=critical
 
-### P0 retrieval blocker
+### P0 retrieval blocker {{evidence:verified}}
 
-Use when one finding needs executive visibility, owner, due date, source IDs, and verification. {{evidence:verified}}
+Use when one finding needs executive visibility, owner, due date, source IDs, and verification.
 
 **Owner:** Editorial. **Due:** 2026-W23. **Verify:** C001 and C002 show first-fetch retrieval.
 :::
 
 ::: priority-card priority=high
 
-### P1 evidence proximity
+### P1 evidence proximity {{evidence:partial}}
 
-Use when facts exist but are too far from the claim, table, or source card. {{evidence:partial}}
+Use when facts exist but are too far from the claim, table, or source card.
 
 **Owner:** Content. **Due:** 2026-W25. **Verify:** source IDs appear beside each claim.
 :::
 
 ::: priority-card status=done
 
-### Resolved pattern
+### Resolved pattern {{evidence:verified}}
 
-Use for shipped work that should be protected in the next iteration. {{evidence:verified}}
+Use for shipped work that should be protected in the next iteration.
 
 **Owner:** Engineering. **Verified:** C001. **Preserve:** no private URL appears in public PDFs.
 :::

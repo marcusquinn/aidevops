@@ -13,15 +13,15 @@ Apple-styled content should feel **calm, precise, generous, and product-like**. 
 
 ### Apple production manifest
 
-- Brand: Apple
-- Content system: executive summaries, product narratives, launch notes, client recommendations
-- Shape language: refined surfaces, soft rounding, subtle depth, minimal visible chrome
-- Colour rule: blue is action; graphite is authority; state colours remain calm but visible
-- Writing rule: make the next action obvious, then remove everything that does not help the reader decide
-- Export rule: light themes use light code blocks and public-safe placeholder evidence
+- **Brand:** Apple
+- **Content system:** executive summaries, product narratives, launch notes, client recommendations
+- **Shape language:** refined surfaces, soft rounding, subtle depth, minimal visible chrome
+- **Colour rule:** blue is action; graphite is authority; state colours remain calm but visible
+- **Writing rule:** make the next action obvious, then remove everything that does not help the reader decide
+- **Export rule:** light themes use light code blocks and public-safe placeholder evidence
 :::
 
-## 1. Brand assets and colour roles
+## Brand assets and colour roles
 
 ::: brand-asset-grid
 ::: brand-asset-card accent=light
@@ -97,7 +97,7 @@ Use for verified wins. Pair with a label so the meaning survives grayscale.
 :::
 :::
 
-## 2. Typography and formatting
+## Typography and formatting
 
 ::: brand-type-scale
 ::: type-specimen
@@ -137,26 +137,28 @@ Keep metadata small and quiet: source, date, owner, version. Do not let it compe
 Use quotes for direct feedback, reviewer notes, and cited source language. Keep them short and surrounded by whitespace.
 :::
 
-## 3. Information tagging badges
+## Information tagging badges
 
 Badges are inline metadata. They classify evidence beside a claim; they do not replace a notification or explain an action.
 
 ::: badge-row
-{{evidence:verified}} {{evidence:partial}} {{evidence:inferred}} {{evidence:missing}} {{badge:critical}} {{badge:high}} {{badge:medium}} {{badge:low}}
+**Evidence:** {{evidence:verified}} {{evidence:partial}} {{evidence:inferred}} {{evidence:missing}}
+
+**Priority:** {{badge:critical}} {{badge:high}} {{badge:medium}} {{badge:low}}
 :::
 
 ::: facts-table-wrap
 
 | Badge | Purpose | Use example | Apple treatment |
 |---|---|---|---|
-| Verified | Confirmed evidence | “Hero copy appears in first-fetch HTML” | Soft green chip with text label |
-| Partial | Incomplete support | “Two sources agree; one is stale” | Warm chip; never hides uncertainty |
-| Inferred | Judgement from pattern | “Likely entity drift” | Blue chip; keep caveat nearby |
-| Missing | Evidence absent | “No cited source found” | Red chip; do not use as decoration |
+| {{evidence:verified}} | Confirmed evidence | “Hero copy appears in first-fetch HTML” | Soft green chip with text label |
+| {{evidence:partial}} | Incomplete support | “Two sources agree; one is stale” | Warm chip; never hides uncertainty |
+| {{evidence:inferred}} | Judgement from pattern | “Likely entity drift” | Blue chip; keep caveat nearby |
+| {{evidence:missing}} | Evidence absent | “No cited source found” | Red chip; do not use as decoration |
 
 :::
 
-## 4. Message states and notifications
+## Message states and notifications
 
 ::: notification-grid
 ::: info-panel severity=critical
@@ -165,7 +167,7 @@ Badges are inline metadata. They classify evidence beside a claim; they do not r
 
 **Purpose:** block release until fixed. Use for privacy risk, missing required evidence, or broken export.
 
-*Example:* “The public PDF includes a private source name. Remove it before sharing.”
+**Example:** “The public PDF includes a private source name. Remove it before sharing.”
 :::
 ::: info-panel severity=high
 
@@ -173,7 +175,7 @@ Badges are inline metadata. They classify evidence beside a claim; they do not r
 
 **Purpose:** show risk that needs attention soon. Use for partial evidence or unresolved owner decisions.
 
-*Example:* “Recommendation is ready, but the owner field is still empty.”
+**Example:** “Recommendation is ready, but the owner field is still empty.”
 :::
 ::: info-panel severity=medium
 
@@ -181,7 +183,7 @@ Badges are inline metadata. They classify evidence beside a claim; they do not r
 
 **Purpose:** explain scope or method. Use when context helps the reader trust the result.
 
-*Example:* “This review covers A4, US Letter, and slide exports.”
+**Example:** “This review covers A4, US Letter, and slide exports.”
 :::
 ::: info-panel severity=low
 
@@ -189,11 +191,11 @@ Badges are inline metadata. They classify evidence beside a claim; they do not r
 
 **Purpose:** record a stable, verified pattern to preserve.
 
-*Example:* “Light code blocks now match the page theme and remain readable.”
+**Example:** “Light code blocks now match the page theme and remain readable.”
 :::
 :::
 
-## 5. Report component show-and-tell
+## Report component show-and-tell
 
 ::: stats-strip
 ::: kpi-card
@@ -249,31 +251,31 @@ A003 — Export review — **Medium confidence**; confirms A4, US Letter, and sl
 A004 — Redaction review — **High confidence**; confirms public-safe placeholders.
 :::
 
-## 6. Recommendations and handoff
+## Recommendations and handoff
 
 ::: priority-card priority=critical
 
-### Critical component issue
+### Critical component issue {{evidence:verified}}
 
-Use for a blocker that prevents the report from being trusted or read. {{evidence:verified}}
+Use for a blocker that prevents the report from being trusted or read.
 
 **Owner:** Design. **Due:** current iteration. **Verify:** the PDF no longer exposes private material.
 :::
 
 ::: priority-card priority=high
 
-### High-priority refinement
+### High-priority refinement {{evidence:partial}}
 
-Use for issues that reduce clarity but do not block interpretation. {{evidence:partial}}
+Use for issues that reduce clarity but do not block interpretation.
 
 **Owner:** Content. **Due:** next pass. **Verify:** owner and acceptance fields are present.
 :::
 
 ::: priority-card status=done
 
-### Completed pattern
+### Completed pattern {{evidence:verified}}
 
-Use for a verified style pattern that should not regress. {{evidence:verified}}
+Use for a verified style pattern that should not regress.
 
 **Owner:** Design. **Verified:** A004. **Preserve:** light code panels and readable state colours.
 :::
