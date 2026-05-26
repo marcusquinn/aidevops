@@ -114,6 +114,12 @@ source "${_PULSE_MERGE_DIR}/shared-claim-lifecycle.sh"
 # when a phase child PR merges for a parent-task issue.
 source "${_PULSE_MERGE_DIR}/shared-phase-filing.sh"
 
+# Source terminal dispatch-label cleanup (GH#24012). Close paths strip
+# auto-dispatch and active status labels before closing resolved issues so
+# stale closed issues cannot poison dispatch caches/candidate scans.
+# shellcheck source=shared-dispatch-label-cleanup.sh
+source "${_PULSE_MERGE_DIR}/shared-dispatch-label-cleanup.sh"
+
 readonly _PM_PARENT_TASK_LABEL_NEEDLE=",parent-task,"
 
 # Source author permission check helpers (GH#21426 — extracted to bring
@@ -587,6 +593,7 @@ _handle_post_merge_actions() {
 			*,origin:worker,* | *,origin:worker-takeover,*) _solved_actor="worker" ;;
 			esac
 			set_solved_label "$linked_issue" "$repo_slug" "$_solved_actor" || true
+			clear_terminal_issue_dispatch_labels "$linked_issue" "$repo_slug" "post-merge-pr-${pr_number}" || true
 			gh issue close "$linked_issue" --repo "$repo_slug" 2>/dev/null || true
 			# Reset fast-fail counter now that the issue is resolved (GH#2076)
 			fast_fail_reset "$linked_issue" "$repo_slug" || true
@@ -626,6 +633,7 @@ _handle_post_merge_actions() {
 				*,origin:worker,* | *,origin:worker-takeover,*) _sup_solved_actor="worker" ;;
 				esac
 				set_solved_label "$_superseded_original_issue" "$repo_slug" "$_sup_solved_actor" || true
+				clear_terminal_issue_dispatch_labels "$_superseded_original_issue" "$repo_slug" "post-merge-superseded-pr-${pr_number}" || true
 				gh issue close "$_superseded_original_issue" --repo "$repo_slug" 2>/dev/null || true
 				fast_fail_reset "$_superseded_original_issue" "$repo_slug" || true
 				unlock_issue_after_worker "$_superseded_original_issue" "$repo_slug"

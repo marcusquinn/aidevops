@@ -24,6 +24,13 @@ model: sonnet
 
 **Relationship to DESIGN.md**: Brand identity is the **strategic upstream** -- it captures _who you are_ (voice, positioning, brand archetype). DESIGN.md is the **tactical downstream** -- it captures _how to build it_ (exact hex values, font sizes, component specs). After completing a brand identity, generate a DESIGN.md to give coding agents implementation-ready tokens. See `tools/design/design-md.md` for the format and generation workflow.
 
+**Brand/style guide creation rule:** before creating a reusable brand folder or
+DESIGN.md template, consult the design stack in `tools/design/design-md.md`:
+`brand-identity.md`, `colour-palette.md`, `design-md-from-links.md`,
+`ui-ux-inspiration.md`, `ui-ux-catalogue.toon`, and `report-presentation.md` for
+report/deck/PDF surfaces. Capture observed light/dark behaviour; if only one
+mode exists, document any calculated inverse palette as derived.
+
 <!-- AI-CONTEXT-END -->
 
 ## Template (8 Dimensions)
@@ -125,9 +132,11 @@ Every agent producing design or content output MUST check `context/brand-identit
 **After creating brand identity** → generate DESIGN.md:
 1. Map brand identity dimensions to DESIGN.md 9 sections (see `tools/design/design-md.md` Method 4)
 2. Generate or spin colour palette via `tools/design/colour-palette.md`
-3. Populate typography, components, layout from `visual_style` and `buttons_and_forms`
-4. Write `DESIGN.md` to project root
-5. Generate preview.html for visual verification
+3. Derive or capture light/dark mode tokens, including inverse surfaces, text,
+   outlines, and accent variants when available or calculable
+4. Populate typography, components, layout from `visual_style` and `buttons_and_forms`
+5. Write `DESIGN.md` to project root or the matching `tools/design/library/brands/<slug>/` folder
+6. Generate preview.html for visual verification
 
 ## Example: Launchpad (developer deploy tool)
 

@@ -12,7 +12,7 @@ Read subagents on-demand when trigger words clearly match. Full index: `subagent
 | Legal | legal, compliance, privacy policy, terms, contract, GDPR | `legal.md`, `tools/legal/legal-research.md` |
 | Code quality | lint, review, smells, standards, simplify, audit | `tools/code-review/code-standards.md` |
 | Git/PRs/Releases | git, PR, branch, merge, release, changelog, version | `workflows/git-workflow.md`, `tools/git/github-cli.md`, `workflows/release.md` |
-| Documents/PDF | PDF, document, report, reporting, styled report, report components, evidence badges, pandoc, forms, extraction | `reference/report-component-taxonomy.md`, `tools/document/document-creation.md`, `tools/pdf/overview.md`, `tools/conversion/pandoc.md` |
+| Reports/Documents/PDF | PDF, document, report, reporting, report agent, client audit, scorecard, board pack, styled report, report components, evidence badges, source ledger, report preview, A4, US Letter, slides, pandoc, forms, extraction | `reports.md`, `reports/general.md`, `reports/exporters.md`, `reports/routine-handoff.md`, `reports/outputs.md`, `scripts/commands/report-render.md`, `tools/document/document-creation.md`, `tools/pdf/overview.md`, `tools/conversion/pandoc.md` |
 | OCR | OCR, receipt scan, invoice scan, image text, PaddleOCR | `tools/ocr/overview.md`, `tools/ocr/paddleocr.md`, `tools/ocr/glm-ocr.md` |
 | Product (shared) | product, onboarding, monetisation, growth, analytics, UX | `product/validation.md`, `product/onboarding.md`, `product/monetisation.md`, `product/growth.md`, `product/ui-design.md`, `product/analytics.md` |
 | Browser/Mobile | browser, Playwright, screenshot, mobile, app, extension, Swift, SwiftUI, Xcode, iOS, macOS | `tools/browser/browser-automation.md`, `tools/browser/browser-qa.md`, `tools/browser/browser-use.md`, `tools/browser/chromium-debug-use.md`, `tools/browser/skyvern.md`, `tools/mobile/app-dev.md`, `tools/mobile/app-dev-swift.md`, `tools/mobile/swift-xcode-agent-workflow.md`, `tools/mobile/app-store-connect.md`, `tools/browser/extension-dev.md` |
@@ -47,5 +47,9 @@ Read subagents on-demand when trigger words clearly match. Full index: `subagent
 | Agent/MCP dev | build agent, create agent, MCP server, mcporter, plugin | `tools/build-agent/build-agent.md`, `tools/build-mcp/build-mcp.md`, `tools/mcp-toolkit/mcporter.md` |
 | Self-Improvement | self-improve, learning, autoagent, framework issue, pattern | `reference/self-improvement.md`, `tools/autoagent/autoagent.md`, `scripts/commands/autoagent.md` |
 | Framework | aidevops, setup, architecture, skills, framework docs | `aidevops/architecture.md`, `scripts/commands/skills.md` |
+
+**Creating reports**: When a user asks to create a report, client audit, evidence-led PDF, board pack, scorecard, or report preview, read `reports/general.md` first, then the matching domain report doc and `reports/exporters.md`. Keep `report.md` or `report.json` canonical; use `/report-render` only for derived HTML/PDF output.
+
+**Creating report agents**: When a report will repeat, read `reports/routine-handoff.md` and `tools/build-agent/build-agent.md`. Deterministic collection belongs in `run:` steps; `agent:Reports` owns evidence interpretation, narrative, recommendations, and handoff tasks.
 
 **Creating agents**: When a user asks to create, build, or design an agent — regardless of which primary agent is active — always read `tools/build-agent/build-agent.md` first. It contains the tier prompt (draft/custom/shared), design checklist, and lifecycle rules.

@@ -28,7 +28,8 @@ function readIfExists(filepath) {
  * @returns {string}
  */
 function getSessionId(input) {
-  return input?.session?.id || input?.sessionID || input?.session_id || input?.id || "";
+  const candidates = [input?.session?.id, input?.sessionID, input?.session_id, input?.id];
+  return candidates.find((value) => value) || "";
 }
 
 /**

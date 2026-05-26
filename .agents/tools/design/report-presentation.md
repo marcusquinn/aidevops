@@ -28,6 +28,9 @@ model: sonnet
   for Markdown, styled HTML, and PDF-ready reports.
 - **Use with**: `tools/design/design-md.md` for token format and
   `tools/design/design-md-from-links.md` when deriving a report brand from URLs.
+  Also reference `brand-identity.md`, `colour-palette.md`,
+  `ui-ux-inspiration.md`, and `ui-ux-catalogue.toon` before creating reusable
+  report brand folders or templates.
 - **Validation**: `npx @google/design.md lint DESIGN.md`, contrast checks,
   semantic HTML review, print preview, and PDF readability pass.
 - **Outputs**: DESIGN.md report tokens, HTML/CSS component guidance, and print
@@ -48,6 +51,9 @@ print-safe typography over decorative novelty.
 - Reserve strong colour for status, priority, and action; keep long-form reading
   high-contrast and calm.
 - Design every component for narrow screens and paged media from the start.
+- Treat light/dark mode as part of the report contract: use observed source
+  values where present, otherwise derive an inverse palette with
+  `colour-palette.md` and label it as calculated until validated.
 
 ## DESIGN.md Token Foundation
 
@@ -64,6 +70,20 @@ Add or verify these token groups in `DESIGN.md`:
 | `spacing.*` | Page rhythm, card padding, table density, print margins |
 | `rounded.*` | Cards, badges, code blocks, evidence pills |
 | `components.*` | Taxonomy components below |
+
+For theme switching, include both observed and derived roles where possible:
+
+| Role | Light token | Dark/inverse token |
+|------|-------------|--------------------|
+| Canvas | `colors.background` | `colors.background-dark` |
+| Card | `colors.surface` | `colors.surface-dark` |
+| Text | `colors.on-surface` | `colors.on-surface-dark` |
+| Secondary text | `colors.muted` | `colors.muted-dark` |
+| Borders | `colors.outline` | `colors.outline-dark` |
+| Accent | `colors.primary` | `colors.primary-dark` |
+
+If the source has no dark mode, mark `*-dark` tokens as calculated and validate
+contrast in preview before using them in production exports.
 
 ## Component Taxonomy Mapping
 
@@ -118,12 +138,30 @@ border/shape differences so grayscale output remains meaningful.
 - Expose source links as real anchors with visible URL or citation labels in PDF.
 - Use CSS custom properties generated from DESIGN.md tokens; avoid hard-coded
   one-off report colours.
+- For brand-derived report examples, verify `DESIGN.md` includes observed or
+  substituted heading/body/code font families, sizes, weights, line heights,
+  light palette, and dark/inverse palette where the source exposes one. The
+  renderer consumes these token roles directly; missing typography falls back to
+  generic defaults and will make style previews look too similar.
 - Keep sticky TOC and interactive details progressive: the report remains readable
   when printed, saved to PDF, or viewed without JavaScript.
 - Charts need text alternatives: title, summary, data table fallback, and clear
   colour/shape encoding.
 - Code blocks should wrap or scroll in HTML, but print with readable line breaks
   and captions.
+- Prefer dependency-free chart patterns for committed report HTML. Bklit UI is a
+  shadcn registry with attractive chart components, but it requires project
+  installation and dependencies; use it for app-integrated dashboards, not as a
+  default for portable standalone report exports unless the generated bundle
+  vendors all assets locally.
+- Mermaid and LaTeX can be rendered, but keep source fallbacks. For portable
+  published reports, pre-render diagrams/equations with local tooling and embed
+  the resulting SVG/HTML rather than depending on a network CDN. When local
+  renderers are unavailable, output the labelled source/fallback blocks so the
+  report remains readable in HTML, PDF, and print.
+- Self-contained Mermaid/LaTeX rendering is feasible only when the renderer
+  vendors the needed Mermaid and KaTeX/MathJax assets into the HTML or embeds
+  pre-rendered SVG/HTML. Do not reference CDN assets in committed examples.
 
 ## PDF and Print Styling
 
@@ -170,7 +208,9 @@ Generate a report preview with representative content before handoff:
 
 1. Cover/meta, summary, TOC, at least two chapter heroes.
 2. One of each taxonomy component from the mapping table.
-3. Light/dark mode if the design supports both.
+3. Light and dark previews if the design supports both (`--theme light` and
+   `--theme dark`), with every panel/card/callout checked for inverted surface,
+   border, and text tokens.
 4. Desktop, mobile, and print/PDF preview screenshots.
 5. Contrast and table semantics evidence in the handoff notes.
 

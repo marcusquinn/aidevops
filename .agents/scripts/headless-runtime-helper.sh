@@ -1083,7 +1083,7 @@ _derive_worker_failure_evidence() {
 		launch_failure_cause="model_stopped_before_completion"
 		next_action="resume_session_with_completion_contract"
 		;;
-	watchdog_stall_continue | service_interruption_continue | signal_killed_continue)
+	watchdog_stall_continue | service_interruption_continue | service_interruption_exhausted | signal_killed_continue)
 		launch_failure_cause="mid_session_interruption"
 		next_action="resume_existing_session"
 		;;
@@ -1128,6 +1128,43 @@ _derive_worker_failure_evidence() {
 	fi
 
 	printf '%s\t%s' "$launch_failure_cause" "$next_action"
+	return 0
+}
+
+#######################################
+# Append a context-rich metric when service-interruption continuation budget is exhausted.
+#
+# Args:
+#   $1 - role
+#   $2 - session key
+#   $3 - selected model
+#   $4 - work dir
+#   $5 - failure reason
+#   $6 - output excerpt path
+#   $7 - session id
+# Returns: 0 always (observability must fail open)
+#######################################
+_append_service_interruption_exhausted_metric() {
+	local role="$1"
+	local session_key="$2"
+	local selected_model="$3"
+	local work_dir="$4"
+	local failure_reason="$5"
+	local output_file="$6"
+	local session_id="$7"
+	local result_label="service_interruption_exhausted"
+	local provider
+	provider=$(extract_provider "$selected_model")
+	local evidence_fields launch_failure_cause next_action
+	evidence_fields=$(_derive_worker_failure_evidence "$result_label" "81" "1" "" "$failure_reason")
+	launch_failure_cause="${evidence_fields%%$'\t'*}"
+	next_action="${evidence_fields#*$'\t'}"
+	append_runtime_metric "$role" "$session_key" "$selected_model" \
+		"$provider" \
+		"$result_label" "81" "${failure_reason:-provider_error}" "1" "0" \
+		"${WORKER_ISSUE_NUMBER:-}" "${DISPATCH_REPO_SLUG:-}" "$work_dir" "$output_file" "$session_id" \
+		"${_run_provider_error_type:-}" "${_run_provider_status:-}" "${_run_runtime_error_type:-}" "${_run_classification_source:-}" "${_run_classification_pattern:-}" \
+		"$launch_failure_cause" "${_metric_kill_reason:-}" "$next_action"
 	return 0
 }
 
@@ -1483,6 +1520,8 @@ _execute_run_attempt() {
 	else
 		handle_exit=$?
 	fi
+	_run_metric_output_file="$_metric_output_file"
+	_run_metric_session_id="$_metric_session_id"
 	print_info "[lifecycle] handle_run_result_returned session=$session_key handle_exit=$handle_exit result_label=${_run_result_label:-unknown}"
 	end_ms=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || printf '%s' "0")
 	if [[ "$end_ms" =~ ^[0-9]+$ && "$start_ms" =~ ^[0-9]+$ && "$end_ms" -ge "$start_ms" ]]; then
@@ -1706,6 +1745,8 @@ cmd_run() {
 	local _run_should_retry=0
 	local _run_result_label="failed"
 	local _run_activity_detected="0"
+	local _run_metric_output_file=""
+	local _run_metric_session_id=""
 	while [[ "$attempt" -le "$max_attempts" ]]; do
 		_run_failure_reason=""
 		_run_should_retry=0
@@ -1759,9 +1800,10 @@ cmd_run() {
 
 			local _sic_exhausted_label="service_interruption_exhausted"
 			_run_result_label="$_sic_exhausted_label"
-			append_runtime_metric "$role" "$session_key" "$selected_model" \
-				"$(extract_provider "$selected_model")" \
-				"$_run_result_label" "81" "${_run_failure_reason:-provider_error}" "1" "0"
+			_append_service_interruption_exhausted_metric \
+				"$role" "$session_key" "$selected_model" "$work_dir" \
+				"${_run_failure_reason:-provider_error}" \
+				"${_run_metric_output_file:-}" "${_run_metric_session_id:-}"
 			print_warning "Exhausted ${max_service_interruption_continue_retries} service-interruption continuations — falling through to normal failure handling"
 		fi
 

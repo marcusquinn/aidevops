@@ -49,6 +49,9 @@ _preflight_cleanup_and_ledger() {
 	run_stage_with_timeout "cleanup_orphans" "$PRE_RUN_STAGE_TIMEOUT" cleanup_orphans || true
 	run_stage_with_timeout "cleanup_stale_opencode" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stale_opencode || true
 	run_stage_with_timeout "cleanup_stalled_workers" "$PRE_RUN_STAGE_TIMEOUT" cleanup_stalled_workers || true
+	if declare -F sweep_closed_auto_dispatch_issues >/dev/null 2>&1; then
+		run_stage_with_timeout "sweep_closed_auto_dispatch_issues" "$PRE_RUN_STAGE_TIMEOUT" sweep_closed_auto_dispatch_issues || true
+	fi
 	# GH#20554: Worktree cleanup is moved to an async background job so a slow
 	# cleanup (20+ worktrees × 2-5s gh API calls each) never hits a hard timeout
 	# and blocks the pulse cycle. The helper enforces a single-runner lock and

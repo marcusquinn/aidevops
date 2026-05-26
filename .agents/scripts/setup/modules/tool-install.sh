@@ -313,6 +313,61 @@ setup_file_discovery_tools() {
 	return 0
 }
 
+_setup_rtk_installed_version() {
+	local rtk_version="unknown"
+	rtk_version=$(rtk --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || printf 'unknown')
+	printf '%s\n' "$rtk_version"
+	return 0
+}
+
+_setup_rtk_install_supported_version() {
+	local rtk_installer_url="$1"
+	local rtk_supported_version="$2"
+	VERIFIED_INSTALL_SHELL="sh"
+
+	if command -v brew >/dev/null 2>&1; then
+		if run_with_spinner "Upgrading rtk via Homebrew" brew upgrade rtk; then
+			print_success "rtk upgraded via Homebrew"
+			return 0
+		fi
+		print_warning "Homebrew upgrade failed, trying pinned installer..."
+	fi
+
+	if verified_install "rtk" "$rtk_installer_url"; then
+		print_success "rtk installed to ~/.local/bin/rtk (v${rtk_supported_version})"
+		return 0
+	fi
+
+	print_warning "rtk upgrade failed (non-critical, optional tool)"
+	_setup_rtk_print_manual_install "$rtk_installer_url" "upgrade"
+	return 1
+}
+
+_setup_rtk_print_manual_install() {
+	local rtk_installer_url="$1"
+	local brew_cmd="${2:-upgrade}"
+	echo "  Manual install: brew $brew_cmd rtk  OR  curl -fsSL $rtk_installer_url | sh"
+	return 0
+}
+
+_setup_rtk_offer_supported_upgrade() {
+	local rtk_version="$1"
+	local rtk_supported_version="$2"
+	local rtk_installer_url="$3"
+
+	print_warning "rtk version mismatch: found v${rtk_version}, aidevops supports v${rtk_supported_version}"
+	setup_prompt upgrade_rtk "Upgrade rtk to the aidevops-tested v${rtk_supported_version}? [Y/n]: " "Y"
+	# shellcheck disable=SC2154  # set indirectly by setup_prompt via read
+	if [[ "$upgrade_rtk" =~ ^[Yy]?$ ]]; then
+		_setup_rtk_install_supported_version "$rtk_installer_url" "$rtk_supported_version"
+		return $?
+	fi
+
+	print_info "Skipped rtk upgrade"
+	_setup_rtk_print_manual_install "$rtk_installer_url"
+	return 1
+}
+
 setup_rtk() {
 	# rtk — CLI proxy that reduces LLM token consumption by 60-90% (t1430)
 	# Opinionated default optimization: compresses git/gh/test outputs before they reach LLM context
@@ -321,16 +376,23 @@ setup_rtk() {
 
 	# Pin to a tagged release for stability and auditability (Gemini review feedback).
 	# Update the tag when upstream-watch detects a new release.
-	local rtk_supported_version="0.39.0"
+	local rtk_supported_version="0.41.0"
 	local rtk_installer_url="https://raw.githubusercontent.com/rtk-ai/rtk/v${rtk_supported_version}/install.sh"
 
 	if command -v rtk >/dev/null 2>&1; then
 		local rtk_version
-		rtk_version=$(rtk --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
+		rtk_version=$(_setup_rtk_installed_version)
 		print_success "rtk found: v$rtk_version (token optimization proxy)"
-		if [[ "$rtk_version" != "unknown" && "$rtk_version" != "$rtk_supported_version" ]]; then
-			print_info "rtk supported by this aidevops release: v$rtk_supported_version"
-			print_info "Run 'brew upgrade rtk' or re-run setup if you want the pinned aidevops-tested version."
+		if [[ "$rtk_version" != "$rtk_supported_version" ]]; then
+			if _setup_rtk_offer_supported_upgrade "$rtk_version" "$rtk_supported_version" "$rtk_installer_url"; then
+				rtk_version=$(_setup_rtk_installed_version)
+				if [[ "$rtk_version" == "$rtk_supported_version" ]]; then
+					print_success "rtk now matches the aidevops-tested version"
+				else
+					print_warning "rtk still reports v${rtk_version}; aidevops supports v${rtk_supported_version}"
+					_setup_rtk_print_manual_install "$rtk_installer_url"
+				fi
+			fi
 		fi
 		# Fall through to ensure config is applied (telemetry, tee)
 	else
@@ -366,7 +428,7 @@ setup_rtk() {
 			fi
 		else
 			print_info "Skipped rtk installation"
-			echo "  Manual install: brew install rtk  OR  curl -fsSL $rtk_installer_url | sh"
+			_setup_rtk_print_manual_install "$rtk_installer_url" "install"
 		fi
 	fi
 

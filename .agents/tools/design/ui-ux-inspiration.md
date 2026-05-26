@@ -37,9 +37,9 @@ model: sonnet
 
 1. **Check brand identity** -- does `brand-identity.md` exist? If yes, use it. If no, run brand identity interview.
 2. **Check DESIGN.md** -- does `DESIGN.md` exist in project root? If yes, coding agents can use it directly. If no, generate one after brand identity is established.
-3. **Consult catalogue** -- check `ui-ux-catalogue.toon` for matching style presets and palettes. Browse `tools/design/library/` for brand examples and style archetypes.
+3. **Consult design stack** -- check `ui-ux-catalogue.toon` for matching style presets and palettes, `colour-palette.md` for accessible palette/inverse derivation, and `report-presentation.md` when reports, PDFs, or decks are in scope. Browse `tools/design/library/` for brand examples and style archetypes.
 4. **Check inspiration** -- user has reference URLs? Run URL study. No URLs? Present curated examples from `design-inspiration.md`.
-5. **Generate DESIGN.md from links** -- when links should become a production design system, hand off to `tools/design/design-md-from-links.md` instead of duplicating the workflow here.
+5. **Generate DESIGN.md from links** -- when links should become a production design system or reusable library brand folder, hand off to `tools/design/design-md-from-links.md` instead of duplicating the workflow here.
 6. **Generate palette** -- use `tools/design/colour-palette.md` to spin palette variants and narrow to final choice.
 7. **Apply quality gates** -- validate against accessibility (WCAG 2.1 AA), performance, and platform conventions.
 
@@ -81,6 +81,7 @@ Show 16 URLs across 4 style categories. User picks what resonates.
 For each selected URL, run URL study (below) then synthesise:
 
 - **Colour**: warm/cool, saturated/muted, light/dark
+- **Mode**: observed light mode, observed dark mode, theme toggle behaviour, and any calculated inverse palette needed for missing modes
 - **Typography**: serif/sans/mono, tight/loose tracking, heading weight
 - **Layout**: dense/spacious, grid/freeform, content-width
 - **Interaction**: minimal/animated, subtle/bold transitions

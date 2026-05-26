@@ -10,9 +10,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.19.1] - 2026-05-26
+
+### Changed
+
+- Add augmentcode bot skip rules (#24112)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- honor report raised paper token (#24137)
+- repair lottiefiles report HTML nesting (#24134)
+- keep report action prompts inside sections (#24131)
+- include dispatch cleanup exit code (#24113)
+
+## [3.19.0] - 2026-05-25
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+## [3.18.1] - 2026-05-25
+
+### Fixed
+
+- deduplicate 3.18.0 changelog
+
+## [3.18.0] - 2026-05-25
+
 ### Added
 
-- add report renderer helper, fixtures, command docs, and end-to-end AI search report workflow (#24003)
+- Add modular report markdown renderer and report example outputs (#24060)
+
+### Changed
+
+- Maintenance: prepare 3.18.0 changelog
+- Restore bulk dispatch label sweep (#24104)
+- Harden Nostr VPN package expansion (#24103)
+- Address report style review follow-up (#24102)
+- Update simplification state registry
+
+### Fixed
+
+- Handle escaped backslashes in Markdown tables (#24105)
+- Harden version-manager headless worker guard (#24101)
+
+## [3.17.32] - 2026-05-25
+
+### Changed
+
+- version report PDF exports (#24088)
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 53→52 (-1) [skip ci]
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- tighten health sentinel abstain assertion (#24099)
+- guard issue-worker release operations (#24086)
+- simplify dispatch cleanup label matching (#24081)
+
+## [3.17.31] - 2026-05-25
+
+### Changed
+
+- fix: harden report markdown rendering (#24074)
+- fix: preserve service interruption kill reason (#24078)
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- preserve service interruption kill reason (#24079)
+- preserve dispatch label cleanup exit codes (#24073)
+- exclude manual interactive PRs from zero-progress signal (#23940)
+
+## [3.17.30] - 2026-05-24
+
+### Changed
+
+- fix: improve rtk manual install hints (#24055)
+- fix: harden dispatch label cleanup (#24051)
+- Maintenance: update simplification state registry
+- Documentation: clarify RTK status fallback guidance (#24036)
+
+### Fixed
+
+- preserve service interruption exhaustion metrics (#24059)
+- address LLM visibility report CSS review followup (#24058)
+- clear stale auto-dispatch labels on close
+- align LLM visibility report CSS tokens (#24035)
+- harden report renderer parsing (#24034)
 
 ## [3.17.29] - 2026-05-23
 

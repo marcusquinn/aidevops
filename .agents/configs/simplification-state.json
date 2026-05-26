@@ -408,9 +408,9 @@
       "pr": 18172
     },
     ".agents/configs/complexity-thresholds-history.md": {
-      "at": "2026-05-03T12:51:01Z",
-      "hash": "2e568b520f609b1548ee831f82543984f233c100",
-      "passes": 43,
+      "at": "2026-05-25T15:38:05Z",
+      "hash": "c601a4c55bf4fecb007eaf254ec0ce6cc049e815",
+      "passes": 45,
       "pr": 17979
     },
     ".agents/content.md": {
@@ -1616,15 +1616,15 @@
       "pr": 12910
     },
     ".agents/prompts/worker-efficiency-protocol.md": {
-      "at": "2026-05-14T20:16:06Z",
-      "hash": "e85e5da523b883d4dc143ddd6d9139acb133e14c",
-      "passes": 7,
+      "at": "2026-05-26T02:05:20Z",
+      "hash": "b3068cbc8116ce329365b6aa09f829436dabb2a9",
+      "passes": 8,
       "pr": 14943
     },
     ".agents/reference/agent-routing.md": {
-      "at": "2026-05-10T01:44:26Z",
-      "hash": "a109536934d1944bc3fa6c58f32236ce479b774a",
-      "passes": 4,
+      "at": "2026-05-25T15:39:05Z",
+      "hash": "3252f82e0a5a59e0e5d3e1f2e1220d2cfe297783",
+      "passes": 5,
       "pr": 14650
     },
     ".agents/reference/attribution-monitoring.md": {
@@ -2298,9 +2298,9 @@
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "at": "2026-05-21T10:24:20Z",
-      "hash": "e2938b8d4b9ee792f117ab09fff8321ff75d055f",
-      "passes": 49,
+      "at": "2026-05-25T15:39:34Z",
+      "hash": "12a272ce6e7a18b9d6d656199eb29c6a07885bb9",
+      "passes": 52,
       "pr": 15086
     },
     ".agents/scripts/headless-runtime-lib.sh": {
@@ -2400,9 +2400,9 @@
       "pr": 18657
     },
     ".agents/scripts/pulse-cleanup.sh": {
-      "at": "2026-05-21T21:25:44Z",
-      "hash": "f3da23e028a8d45f21cbaffac55587cef84d899e",
-      "passes": 30,
+      "at": "2026-05-24T04:37:16Z",
+      "hash": "c305052bf93a9baea091371f074e4da1a2210111",
+      "passes": 31,
       "pr": 18704
     },
     ".agents/scripts/pulse-dep-graph.sh": {
@@ -2442,15 +2442,15 @@
       "pr": 18690
     },
     ".agents/scripts/pulse-merge.sh": {
-      "at": "2026-05-23T10:35:01Z",
-      "hash": "52d49f49e555ae529b1f0888d238279b14bd55d9",
-      "passes": 43,
+      "at": "2026-05-24T04:37:26Z",
+      "hash": "2af91a8aab8b344418e89521cb50031d692eadf3",
+      "passes": 44,
       "pr": 18829
     },
     ".agents/scripts/pulse-prefetch.sh": {
-      "at": "2026-05-03T12:51:55Z",
-      "hash": "54bd9c68869a215a6a46b11d878c569f20212126",
-      "passes": 13,
+      "at": "2026-05-24T04:37:28Z",
+      "hash": "925aba80ec2e7c9abd5affac27bdae5c7ab4c940",
+      "passes": 14,
       "pr": 18995
     },
     ".agents/scripts/pulse-quality-debt.sh": {
@@ -2562,9 +2562,9 @@
       "pr": 18810
     },
     ".agents/scripts/tabby-helper.sh": {
-      "at": "2026-05-10T05:50:05Z",
-      "hash": "5a3d1fe7bf70931d3fc6ccd79fd5c52444d08815",
-      "passes": 5,
+      "at": "2026-05-26T02:05:55Z",
+      "hash": "071d48661720386c5f331e2ded59132c5e472fe7",
+      "passes": 8,
       "pr": 17549
     },
     ".agents/scripts/tests/test-consolidation-dispatch.sh": {
@@ -5265,15 +5265,15 @@
       "pr": 11615
     },
     ".agents/tools/design/brand-identity.md": {
-      "at": "2026-04-03T22:25:45Z",
-      "hash": "fd3c844341eee1331678b371b5a8103797924c7e",
-      "passes": 2,
+      "at": "2026-05-24T16:53:49Z",
+      "hash": "df1ee5517a0928a3b6d4512d53fd07a99564b0fc",
+      "passes": 3,
       "pr": 13093
     },
     ".agents/tools/design/colour-palette.md": {
-      "at": "2026-04-04T03:31:29Z",
-      "hash": "dc89ad0ba62b65a9e4c2456f496e30182777754a",
-      "passes": 1,
+      "at": "2026-05-24T16:53:49Z",
+      "hash": "87975d5b0cb8214ae985aefb5ca37fdca52728f4",
+      "passes": 2,
       "pr": 17012
     },
     ".agents/tools/design/design-inspiration.md": {
@@ -5283,10 +5283,10 @@
       "pr": 12754
     },
     ".agents/tools/design/design-md.md": {
-      "at": "2026-05-23T14:39:33Z",
-      "hash": "6504a66a3138eed9818d1309beb210f852d543be",
+      "at": "2026-05-25T22:05:12Z",
+      "hash": "0d4f97604412340be40dd46862e4e2089b78f7f9",
       "issue": 16952,
-      "passes": 5,
+      "passes": 7,
       "pr": 16966
     },
     ".agents/tools/design/library/brands/airbnb/DESIGN.md": {
@@ -5308,9 +5308,9 @@
       "pr": "17061"
     },
     ".agents/tools/design/library/brands/apple/DESIGN.md": {
-      "at": "2026-04-04T03:31:32Z",
-      "hash": "3a05d16ee4ac4f6e7ce5563014e60d0a58942c36",
-      "passes": 1,
+      "at": "2026-05-24T16:53:50Z",
+      "hash": "e90e53e4ee965867b0d7c36aee9ae1d06aaddc48",
+      "passes": 2,
       "pr": 16935
     },
     ".agents/tools/design/library/brands/bmw/DESIGN.md": {
@@ -5946,9 +5946,9 @@
       "status": "converged"
     },
     ".agents/tools/design/ui-ux-inspiration.md": {
-      "at": "2026-05-23T14:40:30Z",
-      "hash": "4b888d154d71c21993b3b9ac2a55ca6218f31fde",
-      "passes": 3,
+      "at": "2026-05-24T16:54:39Z",
+      "hash": "59a983f5b8c34aeb9f3b3b5ca373527519247651",
+      "passes": 4,
       "pr": 11590
     },
     ".agents/tools/diagrams/mermaid-diagrams-skill.md": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-05-23T14:42:37Z",
-      "hash": "52a88aa7881febdcb642a76b14859854e9d2e7b2",
-      "passes": 192,
+      "at": "2026-05-26T02:08:21Z",
+      "hash": "22da249f5de6bed83b4b7b4b0c7a81ad006dd249",
+      "passes": 198,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-05-23T14:42:38Z",
-      "hash": "9152a69a37acf9f794f56f3939c9be8cda339343",
-      "passes": 187,
+      "at": "2026-05-26T02:08:21Z",
+      "hash": "72df3c49b761440e7144ecb4e2519c74717d7d3f",
+      "passes": 193,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7756,10 +7756,10 @@
       "passes": 4
     },
     ".agents/scripts/shared-gh-wrappers-rest-fallback.sh": {
-      "hash": "b00ac5cc94aa1b5e7b70d8cef0196f2b632f0ee2",
-      "at": "2026-05-20T08:36:37Z",
+      "hash": "433901053e0beefb9d7367a0844d2c639c536f6a",
+      "at": "2026-05-24T04:37:39Z",
       "pr": 20552,
-      "passes": 14
+      "passes": 15
     },
     ".agents/scripts/pulse-dirty-pr-sweep.sh": {
       "hash": "f568032b08445dcc0e69c8e55fa18401d1a063eb",

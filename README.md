@@ -133,16 +133,32 @@ The result: an AI operations platform that manages projects across every busines
 
 **Comprehensive DevOps framework with tried & tested services integrations, popular and trusted MCP servers, and enterprise-grade infrastructure quality assurance code monitoring and recommendations.**
 
-### Report-ready AI search workflow
+### Report creation, previews, and PDF exports
 
-Use aidevops to turn AI search readiness work into a client-ready report without making HTML the source of truth:
+Use aidevops to turn evidence bundles into decision-ready reports while keeping Markdown or JSON as the canonical source. Report agents can produce AI-search audits, SEO/GEO scorecards, delivery reviews, campaign reports, board packs, incident summaries, recurring client handoffs, and before/after remediation evidence.
 
-1. Run `/seo-ai-readiness example.com` for the domain or priority URLs.
-2. Request report-ready output with executive summary, method, scorecard, page-type findings, evidence ledger, roadmap, verification, and source IDs.
-3. Save the Markdown or JSON report, then render it with `/report-render report.md` or `report-render-helper.sh render report.md --output report.html`.
-4. Review the generated HTML for sticky table of contents, source cards, print CSS, and `verified`, `partial`, `inferred`, or `missing` evidence badges.
-5. Export or print the HTML to PDF from the browser print dialog.
-6. After remediation, rerun `/seo-ai-readiness` and render the updated report for before/after comparison.
+New report capabilities include:
+
+- Markdown-first report anatomy with cover pages, executive summaries, evidence ledgers, source cards, action prompts, appendix links, charts, Mermaid/LaTeX fallbacks, and `verified`, `partial`, `inferred`, or `missing` evidence badges.
+- DESIGN.md-backed visual templates plus `basic` no-CSS output for lightweight handoff.
+- Browser preview HTML with sticky contents, source-card links, copy buttons, and light/dark theme variants where a style supports them.
+- PDF-ready profiles for A4, US Letter, and 16:9 slides. Generated PDF links use `*-a4.pdf`, `*-usletter.pdf`, and `*-slides.pdf` names.
+- Versioned examples under `_reports/examples/`; open `_reports/examples/index.html` locally to browse the example reports, rendered styles, and PDF exports.
+
+Create a report:
+
+1. Load `reports/general.md` for structure, then the matching domain report doc such as `reports/seo-geo.md`, `reports/development.md`, `reports/marketing.md`, or `reports/business.md`.
+2. Gather source evidence first. Use deterministic `run:` steps or service helpers for collection, then ask the domain agent plus `agent:Reports` to interpret and prioritise.
+3. Save canonical source as `report.md` or `report.json` in `_reports/drafts/<report-name>/` while working, or in `_reports/examples/<example-name>/` only after privacy review.
+4. Render with `/report-render report.md` or `.agents/scripts/report-render-helper.sh render report.md --template <style> --theme auto --pdf-profile a4 --output report.html`.
+5. Export PDFs from Chrome/Chromium using the generated HTML and the A4, US Letter, or slides profiles. Regenerate derived HTML/PDF files instead of hand-editing them.
+
+Create a repeatable report agent:
+
+1. Read `reports/routine-handoff.md` and `tools/build-agent/build-agent.md`.
+2. Define the report cadence, evidence collection commands, source IDs, privacy rules, target template/style, and verification gates.
+3. Put deterministic collection in `run:` steps and reserve `agent:Reports` for narrative, evidence interpretation, recommendations, and handoff tasks.
+4. Store reusable agent instructions in the appropriate agent tier (`custom/` for local/client-specific agents; shared `.agents/` only for broadly reusable framework agents).
 
 ## **Security Notice**
 
