@@ -1616,9 +1616,9 @@
       "pr": 12910
     },
     ".agents/prompts/worker-efficiency-protocol.md": {
-      "at": "2026-05-14T20:16:06Z",
-      "hash": "e85e5da523b883d4dc143ddd6d9139acb133e14c",
-      "passes": 7,
+      "at": "2026-05-26T02:05:20Z",
+      "hash": "b3068cbc8116ce329365b6aa09f829436dabb2a9",
+      "passes": 8,
       "pr": 14943
     },
     ".agents/reference/agent-routing.md": {
@@ -2562,9 +2562,9 @@
       "pr": 18810
     },
     ".agents/scripts/tabby-helper.sh": {
-      "at": "2026-05-25T15:39:47Z",
-      "hash": "5a3d1fe7bf70931d3fc6ccd79fd5c52444d08815",
-      "passes": 7,
+      "at": "2026-05-26T02:05:55Z",
+      "hash": "071d48661720386c5f331e2ded59132c5e472fe7",
+      "passes": 8,
       "pr": 17549
     },
     ".agents/scripts/tests/test-consolidation-dispatch.sh": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-05-25T22:06:57Z",
-      "hash": "26576635f23368d215c0d23efc0627360e9be537",
-      "passes": 197,
+      "at": "2026-05-26T02:08:21Z",
+      "hash": "22da249f5de6bed83b4b7b4b0c7a81ad006dd249",
+      "passes": 198,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-05-25T22:06:58Z",
-      "hash": "c073ee0e9e2d23f0fc39f7473a95835a7bcc8e5e",
-      "passes": 192,
+      "at": "2026-05-26T02:08:21Z",
+      "hash": "72df3c49b761440e7144ecb4e2519c74717d7d3f",
+      "passes": 193,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
