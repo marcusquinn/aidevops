@@ -790,6 +790,11 @@ th .evidence-badge {
   color: var(--report-blue);
 }
 
+.priority-card h3 .evidence-badge {
+  margin-inline-start: var(--report-space-3);
+  vertical-align: middle;
+}
+
 .tactic-card h3,
 .case-study-card h3,
 .dossier-card h3,
@@ -851,6 +856,8 @@ th .evidence-badge {
 }
 
 .code-block-wrap {
+  width: 100%;
+  box-sizing: border-box;
   max-width: 100%;
   min-width: 0;
   overflow: hidden;
@@ -915,6 +922,7 @@ th .evidence-badge {
 
 .example-card > .code-block-wrap,
 .block-template > .code-block-wrap,
+.report-main > .code-block-wrap,
 .report-keep-with-heading > .code-block-wrap,
 .report-keep-with-heading > .source-card,
 .report-keep-with-heading > .source-list,
@@ -975,17 +983,17 @@ th .evidence-badge {
 .bad-row {
   padding: var(--report-space-3);
   border-radius: var(--report-radius-md);
-  border: 1px solid transparent;
+  border: 2px solid transparent;
 }
 
 .good-row {
   background: var(--report-good-bg);
-  border-color: rgba(20, 122, 74, 0.2);
+  border-color: color-mix(in srgb, var(--report-green) 46%, var(--report-rule));
 }
 
 .bad-row {
   background: var(--report-bad-bg);
-  border-color: rgba(180, 35, 24, 0.2);
+  border-color: color-mix(in srgb, var(--report-red) 42%, var(--report-rule));
 }
 
 .good-row h4,
@@ -1047,6 +1055,8 @@ th .evidence-badge {
 
 .facts-table-wrap {
   margin-block: var(--report-space-4);
+  width: 100%;
+  box-sizing: border-box;
   overflow-x: auto;
   overflow-y: hidden;
   border: 1px solid var(--report-rule);
@@ -1062,7 +1072,7 @@ th .evidence-badge {
 .facts-table-wrap table,
 .report-main > table {
   width: 100%;
-  min-width: 42rem;
+  min-width: min(42rem, 100%);
   table-layout: auto;
   border-collapse: separate;
   border-spacing: 0;
@@ -1658,7 +1668,7 @@ blockquote {
 
 .type-specimen::before {
   min-height: 0;
-  margin-bottom: var(--report-space-2);
+  margin-bottom: var(--report-space-3);
   background: transparent;
   border-top: 0.42rem solid var(--report-blue);
 }
@@ -1717,7 +1727,7 @@ blockquote {
   gap: var(--report-space-2);
   min-height: 12rem;
   align-content: start;
-  border-width: 1px;
+  border-width: 2px;
   border-top-width: 0.38rem;
   border-left-width: 0.38rem;
 }
@@ -1737,22 +1747,22 @@ blockquote {
 
 .notification-grid [data-severity="critical"] {
   background: color-mix(in srgb, var(--report-red) 13%, var(--report-surface));
-  border-color: color-mix(in srgb, var(--report-red) 62%, var(--report-rule));
+  border-color: color-mix(in srgb, var(--report-red) 78%, var(--report-rule));
 }
 
 .notification-grid [data-severity="high"] {
   background: color-mix(in srgb, var(--report-amber) 18%, var(--report-surface));
-  border-color: color-mix(in srgb, var(--report-amber) 66%, var(--report-rule));
+  border-color: color-mix(in srgb, var(--report-amber) 82%, var(--report-rule));
 }
 
 .notification-grid [data-severity="medium"] {
   background: color-mix(in srgb, var(--report-blue) 11%, var(--report-surface));
-  border-color: color-mix(in srgb, var(--report-blue) 62%, var(--report-rule));
+  border-color: color-mix(in srgb, var(--report-blue) 78%, var(--report-rule));
 }
 
 .notification-grid [data-severity="low"] {
   background: color-mix(in srgb, var(--report-green) 14%, var(--report-surface));
-  border-color: color-mix(in srgb, var(--report-green) 62%, var(--report-rule));
+  border-color: color-mix(in srgb, var(--report-green) 78%, var(--report-rule));
 }
 
 .priority-group[data-priority="critical"],
@@ -2492,6 +2502,14 @@ a {
     break-inside: avoid-page;
     break-after: avoid-page;
     page-break-inside: avoid;
+  }
+
+  .example-card > .code-block-wrap,
+  .block-template > .code-block-wrap,
+  .report-main > .code-block-wrap {
+    width: 100%;
+    max-width: 100%;
+    margin-inline: 0;
   }
 
   .code-block-wrap,
