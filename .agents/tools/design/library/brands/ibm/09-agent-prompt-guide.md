@@ -30,7 +30,7 @@
 
 1. Always use 0px border-radius on buttons, inputs, and cards — this is non-negotiable in Carbon
 2. Letter-spacing only at small sizes: 0.16px at 14px, 0.32px at 12px — never on display text
-3. Three weights: 300 (display), 400 (body), 600 (emphasis) — no bold
+3. Two weights: 400 (display/body), 600 (emphasis) — no bold
 4. Blue 60 is the only accent color — do not introduce secondary accent hues
 5. Depth comes from background-color layering (white → #f4f4f4 → #e0e0e0), not shadows
 6. Inputs have bottom-border only, never fully boxed
