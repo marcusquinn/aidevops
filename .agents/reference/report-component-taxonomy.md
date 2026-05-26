@@ -36,7 +36,9 @@ All components share these fields unless explicitly unnecessary: `id`, `componen
 | Component | Required fields | Rendering notes |
 |-----------|-----------------|-----------------|
 | Cover/meta | `id`, `component`, `title`, `subtitle`, `prepared_for`, `prepared_by`, `prepared_date`, `version`, `confidentiality`, `summary` | First page or report header. Keep sensitive client identifiers controlled by `confidentiality` and `sensitivity`. |
+| Manifest card | `id`, `component`, `title`, `fields[]` with `label`, `value`, `sensitivity` | Compact audit metadata block for prepared-for, scope, period, source count, run ID, and next audit date. Use placeholders in public examples. |
 | Sticky TOC | `id`, `component`, `title`, `items[]` with `label`, `anchor`, `level`, `status` | HTML renderers may pin it; Markdown/PDF renderers should degrade to a normal table of contents. |
+| Inline TOC list | `id`, `component`, `items[]` with `section_no`, `title`, `meta`, `anchor` | Dossier-style in-body navigation; useful when the report itself should show contents as a designed block. |
 | Chapter hero heading | `id`, `component`, `title`, `anchor`, `kicker`, `summary`, `priority`, `evidence` | Start major sections with a short outcome-focused summary and optional priority badge. |
 | Action line | `id`, `component`, `action`, `owner`, `priority`, `effort`, `impact`, `due`, `evidence` | Use one sentence beginning with a verb. Render as a high-contrast strip or callout. |
 | Evidence badge | `id`, `component`, `badge`, `label`, `evidence` | Badge must map to the evidence badge enum. Prefer compact labels with a details link. |
@@ -44,12 +46,19 @@ All components share these fields unless explicitly unnecessary: `id`, `componen
 | Code/example card | `id`, `component`, `title`, `language`, `code_or_example`, `context`, `copy_safe`, `evidence` | Mark whether content is illustrative or production-ready. Preserve fenced-code readability in Markdown. |
 | Good/bad rows | `id`, `component`, `title`, `rows[]` with `good`, `bad`, `reason`, `evidence` | Use for contrastive guidance. Avoid shaming language; focus on observable differences. |
 | Stats strip | `id`, `component`, `metrics[]` with `label`, `value`, `unit`, `delta`, `period`, `evidence` | Render as compact KPI cards. Always include period and unit. |
+| KPI card | `id`, `component`, `label`, `value`, `unit`, `note`, `delta`, `period`, `source_id`, `status` | Larger per-metric dossier card with header, figure, note, and provenance footer. Use for executive summary metrics. |
 | Facts table | `id`, `component`, `columns[]`, `rows[]`, `evidence` | Use for dense factual data. Keep columns stable across exports. |
+| Visibility bars | `id`, `component`, `series[]` with `label`, `value`, `unit`, `status`, `evidence` | Horizontal bar rows for answer-engine citation/mention share, score distribution, or token visibility. Always label threshold/window. |
+| Source ledger | `id`, `component`, `sources[]` with `source_id`, `source_title`, `summary`, `confidence`, `sensitivity` | Row-based ledger for most referenced sources, usually backed by private evidence storage. |
 | Details note | `id`, `component`, `title`, `body`, `tone`, `evidence` | Render as aside/details block. Use for caveats, assumptions, or implementation notes. |
+| Privacy note | `id`, `component`, `rule`, `body`, `owner`, `effective_date` | High-visibility reminder for redaction/public-artifact rules. Use before source excerpts or screenshots. |
 | Industry card | `id`, `component`, `industry`, `title`, `context`, `pattern`, `implication`, `evidence` | Use when advice differs by vertical. Include the applicability boundary. |
 | Priority group | `id`, `component`, `title`, `priority`, `items[]`, `rationale`, `evidence` | Group actions by `critical`, `high`, `medium`, or `low`; sort critical first. |
+| Priority card | `id`, `component`, `priority`, `title`, `finding`, `owner`, `due`, `source_ids`, `status`, `evidence` | One remediation per card with state header and provenance footer. Use when a roadmap needs executive scanability. |
 | Checklist | `id`, `component`, `title`, `items[]` with `label`, `status`, `owner`, `evidence` | Status values: `todo`, `doing`, `done`, `blocked`, `not_applicable`. |
+| Implementation brief | `id`, `component`, `task`, `files`, `acceptance`, `verification`, `owner`, `due`, `rollback` | Worker-ready handoff block; every field should map to an implementation step or acceptance check. |
 | Source card | `id`, `component`, `source_id`, `source_title`, `source_type`, `observed_date`, `summary`, `sensitivity` | Source cards back citations and should be collected in an appendix or source section. |
+| Brand specimen card | `id`, `component`, `brand`, `token_type`, `sample`, `value`, `usage`, `constraint` | Style-guide/report-design component for presenting colour swatches, type samples, component usage, and do/don't rules. |
 | Myth callout | `id`, `component`, `myth`, `reality`, `why_it_matters`, `evidence` | Use sparingly to correct common misconceptions with evidence. |
 | Print rules | `id`, `component`, `page_size`, `margins`, `break_rules`, `hide_selectors`, `show_urls`, `footer` | Renderer-only component. Must not carry claims; use to preserve PDF-ready output. |
 

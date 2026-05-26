@@ -26,22 +26,22 @@ Recommendations must be weighted by page type. A homepage, SaaS feature page, co
 :::
 
 ::: stats-strip
-::: stat-card
+::: kpi-card
 **5**
 
 Answer engines reported separately.
 :::
-::: stat-card
+::: kpi-card
 **8**
 
 Page types weighted before recommendations.
 :::
-::: stat-card
+::: kpi-card
 **4**
 
 Evidence strengths used in source ledgers.
 :::
-::: stat-card
+::: kpi-card
 **1**
 
 Canonical Markdown source.
@@ -66,6 +66,16 @@ V4 adds schema-downgrade rationale, engine-specific reporting, source grouping, 
 
 ::: action-line
 **Operator action:** collect source IDs first, then interpret findings into recommendations with owners, acceptance criteria, and rerun steps.
+:::
+
+::: toc-list
+Sources | Source ledger and evidence rules | appendices/source-ledger.md
+
+Tactics | Highest-impact tactics and examples | weighted by page type
+
+Matrix | Page-type matrix | required, conditional, avoid
+
+Roadmap | Priority-card handoff | owner · effort · verification
 :::
 
 ::: anchor-links
@@ -251,6 +261,18 @@ Technical retrieval — 64%
 Authority corroboration — 58%
 :::
 
+::: visibility-bars
+AI Overviews — 78%
+
+Gemini — 54%
+
+ChatGPT — 41%
+
+AI Mode — 38%
+
+Perplexity — 9%
+:::
+
 > Strong reports separate observed facts from interpretation, then turn only verified or clearly labelled partial evidence into roadmap items.
 
 ## Case studies
@@ -280,6 +302,13 @@ Authority corroboration — 58%
 ### Priority rule
 
 Start with revenue pages that fail retrieval eligibility or evidence proximity before optional schema enhancements.
+:::
+
+::: priority-card priority=critical
+
+### Revenue page retrieval blocker
+
+Use a priority card when a recommendation must carry priority, owner, due date, source IDs, and verification in one executive-scannable block. Pair with the source ledger and a worker-ready implementation brief.
 :::
 
 ::: facts-table-wrap
@@ -364,6 +393,12 @@ Review, directory, community, partner, and media source parity checks.
 ### Source-card rule
 
 Every roadmap item should cite source IDs, observed date, confidence, owner, and the command or routine that verifies completion.
+:::
+
+::: privacy-note
+**Public artifact rule**
+
+Do not export private URLs, raw transcripts, screenshots, local paths, or client names. Publish source IDs and redacted summaries; keep raw evidence in approved secure storage.
 :::
 
 ::: source-list

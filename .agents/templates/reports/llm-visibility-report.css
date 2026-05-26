@@ -139,7 +139,12 @@ body.report-body {
 .chapter-hero,
 .badge-key,
 .block-template,
+.brand-component-grid,
+.brand-swatch-grid,
+.brand-type-scale,
+.brief-card,
 .case-study-card,
+.dossier-card,
 .tactic-card,
 .example-card,
 .good-bad,
@@ -147,13 +152,19 @@ body.report-body {
 .facts-table-wrap,
 .details-note,
 .industry-card,
+.kpi-card,
+.ledger-list,
+.manifest-card,
 .priority-group,
+.priority-card,
 .checklist-card,
+.privacy-note,
 .source-card,
 .source-item,
 .source-list,
 .sources-layout,
 .sources-group,
+.specimen-card,
 .myth-callout,
 .summary-stats,
 .info-panel,
@@ -164,6 +175,8 @@ body.report-body {
 .accordion,
 .quote-card,
 .callout,
+.toc-list,
+.visibility-bars,
 .report-keep-with-heading,
 .version-summary {
   break-inside: avoid;
@@ -612,6 +625,13 @@ th .evidence-badge {
 
 .tactic-card,
 .case-study-card,
+.dossier-card,
+.manifest-card,
+.kpi-card,
+.priority-card,
+.brief-card,
+.privacy-note,
+.specimen-card,
 .industry-card,
 .priority-group,
 .checklist-card,
@@ -625,6 +645,8 @@ th .evidence-badge {
 .evidence-panel,
 .action-panel,
 .severity-key,
+.ledger-list,
+.toc-list,
 .accordion,
 .quote-card,
 .callout,
@@ -728,6 +750,13 @@ th .evidence-badge {
 
 .tactic-card h3,
 .case-study-card h3,
+.dossier-card h3,
+.manifest-card h3,
+.kpi-card h3,
+.priority-card h3,
+.brief-card h3,
+.privacy-note h3,
+.specimen-card h3,
 .industry-card h3,
 .priority-group h3,
 .checklist-card h3,
@@ -1277,6 +1306,198 @@ blockquote {
   margin-block: var(--report-space-4);
 }
 
+.visibility-bars {
+  display: grid;
+  gap: var(--report-space-2);
+  margin-block: var(--report-space-4);
+}
+
+.visibility-bars p {
+  --bar-value: 72%;
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(7rem, 0.35fr) minmax(8rem, 1fr);
+  gap: var(--report-space-3);
+  align-items: center;
+  margin: 0;
+  color: var(--report-ink);
+  font-family: var(--report-font-code);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.visibility-bars p::before {
+  content: "";
+  display: block;
+  grid-column: 2;
+  grid-row: 1;
+  height: 0.8rem;
+  background: color-mix(in srgb, var(--report-rule) 56%, transparent);
+}
+
+.visibility-bars p::after {
+  content: "";
+  display: block;
+  grid-column: 2;
+  grid-row: 1;
+  width: var(--bar-value);
+  height: 0.8rem;
+  background: var(--report-blue);
+}
+
+.manifest-card,
+.dossier-card,
+.kpi-card,
+.priority-card,
+.brief-card,
+.privacy-note,
+.specimen-card {
+  overflow: hidden;
+}
+
+.manifest-card::before,
+.dossier-card::before,
+.kpi-card::before,
+.priority-card::before,
+.specimen-card::before {
+  content: attr(data-status);
+  display: block;
+  min-height: 0.65rem;
+  margin: calc(-1 * var(--report-space-4)) calc(-1 * var(--report-space-4)) var(--report-space-3);
+  background: var(--report-ink);
+}
+
+.manifest-card dl,
+.dossier-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--report-space-2) var(--report-space-3);
+  margin: 0;
+}
+
+.manifest-card ul,
+.dossier-card ul {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--report-space-2) var(--report-space-3);
+  padding: 0;
+  list-style: none;
+}
+
+.manifest-card li,
+.dossier-card li {
+  margin: 0;
+  color: var(--report-ink);
+  font-weight: 700;
+}
+
+.manifest-card dt,
+.dossier-card dt {
+  color: var(--report-ink-soft);
+  font-family: var(--report-font-code);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.manifest-card dd,
+.dossier-card dd {
+  margin: 0;
+  color: var(--report-ink);
+  font-weight: 700;
+}
+
+.kpi-card strong,
+.priority-card strong {
+  display: block;
+  color: var(--report-ink);
+  font-family: var(--report-font-heading);
+  font-size: clamp(2.6rem, 6vw, 4.8rem);
+  line-height: 0.92;
+  letter-spacing: -0.04em;
+}
+
+.priority-card[data-priority="critical"]::before { background: var(--report-red); }
+.priority-card[data-priority="high"]::before { background: var(--report-amber); }
+.priority-card[data-priority="medium"]::before { background: var(--report-blue); }
+.priority-card[data-priority="low"]::before { background: var(--report-ink-soft); }
+.priority-card[data-status="done"]::before { background: var(--report-green); }
+
+.privacy-note {
+  display: grid;
+  grid-template-columns: minmax(9rem, 0.28fr) minmax(0, 1fr);
+  gap: var(--report-space-4);
+  background: var(--report-paper-raised);
+}
+
+.privacy-note > :first-child {
+  color: var(--report-ink-soft);
+  font-family: var(--report-font-code);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.toc-list {
+  padding: 0;
+  background: transparent;
+  border-width: 1px 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.toc-list p,
+.ledger-list p {
+  display: grid;
+  grid-template-columns: minmax(4rem, 0.18fr) minmax(0, 1fr) auto;
+  gap: var(--report-space-3);
+  align-items: baseline;
+  margin: 0;
+  padding: var(--report-space-2) 0;
+  border-bottom: 1px dotted var(--report-rule);
+}
+
+.toc-list p:last-child,
+.ledger-list p:last-child {
+  border-bottom: 0;
+}
+
+.brief-card {
+  background: var(--report-ink);
+  color: var(--report-paper);
+  font-family: var(--report-font-code);
+}
+
+.brief-card :where(h3, p, li, code, strong) {
+  color: inherit;
+}
+
+.brand-swatch-grid,
+.brand-type-scale,
+.brand-component-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--report-space-3);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
+.brand-swatch-grid .specimen-card,
+.brand-type-scale .specimen-card,
+.brand-component-grid .specimen-card {
+  margin-block: 0;
+}
+
+.specimen-card code {
+  background: var(--report-paper-raised);
+  color: var(--report-ink);
+}
+
 .bar-chart p {
   --bar-value: 72%;
   position: relative;
@@ -1525,8 +1746,22 @@ a {
     .summary-stats,
   .sources-layout,
   .severity-key,
+  .brand-swatch-grid,
+  .brand-type-scale,
+  .brand-component-grid,
   .good-bad,
   .myth-callout {
+    grid-template-columns: 1fr;
+  }
+
+  .privacy-note,
+  .toc-list p,
+  .ledger-list p,
+  .visibility-bars p,
+  .manifest-card dl,
+  .dossier-card dl,
+  .manifest-card ul,
+  .dossier-card ul {
     grid-template-columns: 1fr;
   }
 

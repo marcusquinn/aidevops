@@ -20,6 +20,7 @@ their A4, US Letter, and slides PDF exports from one preview UI.
 |-----------|---------|
 | `llm-visibility-toolbox/` | Generic LLM visibility playbook with Toolbox-style cards and evidence patterns. |
 | `client-ai-search-audit/` | Placeholder-safe client-custom report structure with per-engine findings and source ledger. |
+| `brand-style-guide/` | Brand-library presentation report for DESIGN.md tokens, components, constraints, and agent handoff. |
 | `style-previews/` | Compact component stress-test for comparing DESIGN.md-backed visual styles. |
 
 ## Regenerate
@@ -34,6 +35,11 @@ their A4, US Letter, and slides PDF exports from one preview UI.
   --template ibm \
   --pdf-profile a4 \
   --output _reports/examples/client-ai-search-audit/report.html
+
+.agents/scripts/report-render-helper.sh render _reports/examples/brand-style-guide/report.md \
+  --template signal-agency \
+  --pdf-profile a4 \
+  --output _reports/examples/brand-style-guide/signal-agency.html
 ```
 
 For style comparisons, render the same `style-previews/report.md` with any name

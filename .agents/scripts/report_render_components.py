@@ -14,12 +14,14 @@ from report_render_markup import inline_markup
 
 COMPONENT_BLOCKS = {
     "action-line", "action-panel", "accordion", "anchor-links", "appendix-links", "callout",
-    "case-study-card", "badge-key", "badge-row", "bar-chart", "block-template", "chapter-hero",
-    "checklist-card", "details-note", "evidence-panel", "example-card", "facts-table-wrap", "good-bad",
-    "good-row", "bad-row", "impact-panel", "industry-card", "info-panel", "myth-callout", "priority-group",
-    "quote-card", "report-cover", "separator", "severity-key", "source-card", "source-item", "source-list",
-    "source-title", "sources-group", "sources-layout", "stat-card", "summary-stats", "stats-strip",
-    "tactic-card", "version-summary",
+    "case-study-card", "badge-key", "badge-row", "bar-chart", "block-template", "brand-component-grid",
+    "brand-swatch-grid", "brand-type-scale", "brief-card", "chapter-hero", "checklist-card",
+    "details-note", "dossier-card", "evidence-panel", "example-card", "facts-table-wrap", "good-bad",
+    "good-row", "bad-row", "impact-panel", "industry-card", "info-panel", "kpi-card", "ledger-list",
+    "manifest-card", "myth-callout", "privacy-note", "priority-card", "priority-group", "quote-card",
+    "report-cover", "separator", "severity-key", "source-card", "source-item", "source-list",
+    "source-title", "sources-group", "sources-layout", "specimen-card", "stat-card", "summary-stats",
+    "stats-strip", "tactic-card", "toc-list", "version-summary", "visibility-bars",
 }
 
 

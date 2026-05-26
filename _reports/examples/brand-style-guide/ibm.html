@@ -2600,33 +2600,33 @@ a {
   }
 }
 
-/* DESIGN.md brand token overrides: axel */
+/* DESIGN.md brand token overrides: ibm */
 :root {
-  --report-font-heading: Newsreader, "Source Serif 4", Georgia, serif;
+  --report-font-heading: "IBM Plex Sans", Inter, system-ui, sans-serif;
   --report-font-body: "IBM Plex Sans", Inter, system-ui, sans-serif;
-  --report-font-code: "IBM Plex Mono", "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  --report-font-code: "IBM Plex Mono", monospace;
   --report-heading-size: 64px;
-  --report-heading-weight: 650;
+  --report-heading-weight: 400;
   --report-heading-line: 1.05;
   --report-heading-tracking: -0.03em;
   --report-body-size: 16px;
   --report-body-line: 1.62;
-  --report-paper: #FAFAF7;
-  --report-paper-raised: #DBE1F2;
+  --report-paper: #F4F4F4;
+  --report-paper-raised: #D0E2FF;
   --report-panel: #FFFFFF;
   --report-surface: #FFFFFF;
-  --report-ink: #0C0F15;
-  --report-ink-muted: #4B5563;
-  --report-ink-soft: #4B5563;
-  --report-rule: #AEB0AB;
-  --report-rule-strong: #2D4BB5;
-  --report-blue: #2D4BB5;
-  --report-radius-lg: 18px;
-  --report-radius-xl: calc(18px + 0.5rem);
-  --report-badge-radius: calc(18px * 0.45);
+  --report-ink: #161616;
+  --report-ink-muted: #525252;
+  --report-ink-soft: #525252;
+  --report-rule: #B2B2B2;
+  --report-rule-strong: #0F62FE;
+  --report-blue: #0F62FE;
+  --report-radius-lg: 0px;
+  --report-radius-xl: calc(0px + 0.5rem);
+  --report-badge-radius: calc(0px * 0.45);
   --report-code-bg: #FFFFFF;
-  --report-code-ink: #0C0F15;
-  --report-code-accent: #2D4BB5;
+  --report-code-ink: #161616;
+  --report-code-accent: #0F62FE;
   --report-info-bg: #FFFFFF;
   --report-impact-bg: #FFFFFF;
   --report-evidence-bg: #FFFFFF;
@@ -2682,380 +2682,173 @@ body.report-pdf-profile-letter .report-front { min-height: 10.1in; }
 .report-main h2.chapter-heading + .chapter-hero, .report-main h2.chapter-heading + .tactic-card, .report-main h2.chapter-heading + .example-card, .report-main h2.chapter-heading + .good-bad, .report-main h2.chapter-heading + .facts-table-wrap, .report-main h2.chapter-heading + .details-note, .report-main h2.chapter-heading + .industry-card, .report-main h2.chapter-heading + .priority-group, .report-main h2.chapter-heading + .checklist-card, .report-main h2.chapter-heading + .source-card, .report-main h2.chapter-heading + .sources-layout, .report-main h2.chapter-heading + .sources-group, .report-main h2.chapter-heading + .myth-callout, .report-main h2.chapter-heading + .info-panel, .report-main h2.chapter-heading + .impact-panel, .report-main h2.chapter-heading + .evidence-panel, .report-main h2.chapter-heading + .action-panel, .report-main h2.chapter-heading + .severity-key, .report-main h2.chapter-heading + .accordion, .report-main h2.chapter-heading + .quote-card, .report-main h2.chapter-heading + .callout { break-before: avoid-page; page-break-before: avoid; }
 }</style>
 </head>
-<body class="report-body report-theme-auto report-pdf-profile-a4 report-template-axel">
+<body class="report-body report-theme-auto report-pdf-profile-a4 report-template-ibm">
 <div class="report-shell">
 <div class="report-main-flow">
 
 <main class="report-content report-main report-title-front">
-<section class="report-title-page"><h1 id="llm-visibility-toolbox">LLM Visibility Toolbox</h1>
-<p>Evidence-based tactics for getting cited in ChatGPT, Perplexity, Gemini, Claude, AI Overviews, and AI Mode.</p>
-<p>By <a href="https://github.com/marcusquinn" data-filetype="link">Marcus Quinn</a>.</p>
+<section class="report-title-page"><h1 id="brand-style-guide-report">Brand Style Guide Report</h1>
 </section>
 </main>
 <main class="report-content report-main report-front">
 <section class="report-cover">
-<p>Internal toolkit · May 2026 · v4</p>
-<p><strong>A Markdown-canonical playbook for AI search visibility.</strong> Use it to turn source evidence, page-type weighting, and answer-engine behaviour into roadmap-ready recommendations.</p>
-<p>Audience: SEO, content, engineering, and leadership teams. Export rule: one HTML preview; PDF profiles for A4, Letter, and 16:9 decks.</p>
+<p><strong>A report format for presenting DESIGN.md brand systems.</strong> This example turns brand tokens, component rules, and usage constraints into a client-readable style-guide dossier.</p>
+<p>Use this when a brand library needs to be reviewed by humans and reused by report agents. The report should be generated from <code>DESIGN.md</code> plus chapter files, not from memory.</p>
 </section>
-<h2 class="no-chapter" id="executive-summary-badge-rct">Executive summary <span class="badge badge--rct">Peer-Review</span></h2>
-<p>LLM visibility is an evidence system, not a single checklist. The best programmes make priority pages retrieval-ready, criteria-complete, citation-worthy, technically fetchable, and corroborated by third-party sources. <span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></p>
-<p>Recommendations must be weighted by page type. A homepage, SaaS feature page, comparison page, pricing page, article, product page, local/YMYL page, and research asset need different tactics, owners, and verification paths. <span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></p>
-<section class="badge-row">
-<p><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span> <span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span> <span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span> <span class="evidence-badge" aria-label="Evidence: Missing"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span></p>
+<section class="manifest-card">
+<h3 id="style-guide-manifest">Style-guide manifest</h3>
+<ul>
+<li>Source library: <code>.agents/tools/design/library/brands</code></li>
+<li>Example brands: Signal Agency, Apple, IBM, Bento, Times</li>
+<li>Purpose: show token coverage, component grammar, constraints, and report usage</li>
+<li>Export profiles: HTML, A4, US Letter, Slides</li>
+<li>Rule: public examples use brand names only; client evidence remains redacted</li>
+</ul>
 </section>
-<section class="stats-strip">
-<section class="kpi-card">
-<p><strong>5</strong></p>
-<p>Answer engines reported separately.</p>
-</section>
-<section class="kpi-card">
-<p><strong>8</strong></p>
-<p>Page types weighted before recommendations.</p>
-</section>
-<section class="kpi-card">
-<p><strong>4</strong></p>
-<p>Evidence strengths used in source ledgers.</p>
-</section>
-<section class="kpi-card">
-<p><strong>1</strong></p>
-<p>Canonical Markdown source.</p>
-</section>
-</section>
-<section class="badge-key">
-<p><span class="badge badge--rct">Peer-Review</span> Peer-reviewed or controlled comparison.</p>
-<p><span class="badge badge--strong">Strong</span> Large independent primary-data study.</p>
-<p><span class="badge badge--vendor">Vendor</span> Vendor study with methodology and commercial incentives.</p>
-<p><span class="badge badge--practitioner">Practitioner</span> Practitioner evidence or field report.</p>
-<p><span class="badge badge--hygiene">Hygiene</span> Baseline technical implementation.</p>
-</section>
-<details class="accordion" open><summary>Changelog summary</summary>
-<p>V4 adds schema-downgrade rationale, engine-specific reporting, source grouping, and diagram/equation fallbacks.</p>
-</details>
-<section class="action-line">
-<p><strong>Operator action:</strong> collect source IDs first, then interpret findings into recommendations with owners, acceptance criteria, and rerun steps.</p>
-</section><details class="accordion action-prompt" open><summary>Action Prompt</summary><div class="code-block-wrap"><div class="code-block-head"><span>Copyable action prompt</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Reference this report action: collect source IDs first, then interpret findings into recommendations with owners, acceptance criteria, and rerun steps.
-
-Guide me through the tools, resources, accounts, permissions, source material, and access needed to take this action. Break the work into numbered steps, call out any missing inputs before execution, include safe handling for credentials or confidential data, and finish with verification evidence I can capture.</code></pre></div></details>
-<section class="toc-list">
-<p>Sources | Source ledger and evidence rules | appendices/source-ledger.md</p>
-<p>Tactics | Highest-impact tactics and examples | weighted by page type</p>
-<p>Matrix | Page-type matrix | required, conditional, avoid</p>
-<p>Roadmap | Priority-card handoff | owner · effort · verification</p>
-</section>
-<section class="anchor-links">
-<p><a href="#sources" data-filetype="link">Sources</a> <a href="#highest-impact-tactics" data-filetype="link">Tactics</a> <a href="#page-type-matrix" data-filetype="link">Matrix</a> <a href="#roadmap-template" data-filetype="link">Roadmap</a> <a href="#appendices" data-filetype="link">Appendices</a></p>
-</section>
-<section class="report-keep-with-heading report-chapter-page">
 </main>
 </div>
-<div class="toc-pdf-actions" aria-label="PDF downloads"><a class="toc-pdf-link" href="report-a4.pdf" aria-label="Open A4 PDF version" title="Open A4 PDF version">A4</a><a class="toc-pdf-link" href="report-usletter.pdf" aria-label="Open US Letter PDF version" title="Open US Letter PDF version">US Letter</a><a class="toc-pdf-link" href="report-slides.pdf" aria-label="Open slides PDF version" title="Open slides PDF version">Slides</a></div>
+<div class="toc-pdf-actions" aria-label="PDF downloads"><a class="toc-pdf-link" href="ibm-a4.pdf" aria-label="Open A4 PDF version" title="Open A4 PDF version">A4</a><a class="toc-pdf-link" href="ibm-usletter.pdf" aria-label="Open US Letter PDF version" title="Open US Letter PDF version">US Letter</a><a class="toc-pdf-link" href="ibm-slides.pdf" aria-label="Open slides PDF version" title="Open slides PDF version">Slides</a></div>
 <nav class="sticky-toc" aria-label="Report table of contents">
 <div class="sticky-toc-header"><h2>Contents</h2></div>
 <ol>
-<li class="toc-entry"><a href="#llm-visibility-toolbox">LLM Visibility Toolbox</a></li>
-<li class="toc-entry"><a href="#executive-summary-badge-rct">Executive summary</a></li>
-<li class="toc-entry toc-chapter"><a href="#highest-impact-tactics">1. Highest-impact tactics</a></li>
-<li class="toc-entry toc-subsection"><a href="#weight-before-recommending">1.1 Weight before recommending</a></li>
-<li class="toc-entry toc-subsection"><a href="#critical">1.2 Critical</a></li>
-<li class="toc-entry toc-subsection"><a href="#high">1.3 High</a></li>
-<li class="toc-entry toc-subsection"><a href="#medium">1.4 Medium</a></li>
-<li class="toc-entry toc-subsection"><a href="#low">1.5 Low</a></li>
-<li class="toc-entry toc-chapter"><a href="#page-type-matrix">2. Page-type matrix</a></li>
-<li class="toc-entry toc-subsection"><a href="#industry-fit-reminder">2.1 Industry-fit reminder</a></li>
-<li class="toc-entry toc-chapter"><a href="#tactic-card-examples">3. Tactic card examples</a></li>
-<li class="toc-entry toc-subsection"><a href="#direct-answer-opening">3.1 Direct-answer opening</a></li>
-<li class="toc-entry toc-subsection"><a href="#impact">3.2 Impact</a></li>
-<li class="toc-entry toc-subsection"><a href="#evidence">3.3 Evidence</a></li>
-<li class="toc-entry toc-subsection"><a href="#bot-friendly-first-fetch">3.4 Bot-friendly first fetch</a></li>
-<li class="toc-entry toc-subsection"><a href="#strong-pattern">3.5 Strong pattern</a></li>
-<li class="toc-entry toc-subsection"><a href="#weak-pattern">3.6 Weak pattern</a></li>
-<li class="toc-entry toc-chapter"><a href="#myths-and-caveats">4. Myths and caveats</a></li>
-<li class="toc-entry toc-subsection"><a href="#myth">4.1 Myth</a></li>
-<li class="toc-entry toc-subsection"><a href="#reality">4.2 Reality</a></li>
-<li class="toc-entry toc-chapter"><a href="#case-studies">5. Case studies</a></li>
-<li class="toc-entry toc-subsection"><a href="#industrial-manufacturer">5.1 Industrial manufacturer</a></li>
-<li class="toc-entry toc-subsection"><a href="#healthcare-comparison-site">5.2 Healthcare comparison site</a></li>
-<li class="toc-entry toc-chapter"><a href="#roadmap-template">6. Roadmap template</a></li>
-<li class="toc-entry toc-subsection"><a href="#priority-rule">6.1 Priority rule</a></li>
-<li class="toc-entry toc-subsection"><a href="#revenue-page-retrieval-blocker">6.2 Revenue page retrieval blocker</a></li>
-<li class="toc-entry toc-chapter"><a href="#verification-checklist">7. Verification checklist</a></li>
-<li class="toc-entry toc-chapter"><a href="#closing-callouts">8. Closing callouts</a></li>
-<li class="toc-entry toc-subsection"><a href="#combined-finding">8.1 Combined finding</a></li>
-<li class="toc-entry toc-chapter"><a href="#sources">9. Sources</a></li>
-<li class="toc-entry toc-subsection"><a href="#prompt-captures">9.1 Prompt captures</a></li>
-<li class="toc-entry toc-subsection"><a href="#crawl-evidence">9.2 Crawl evidence</a></li>
-<li class="toc-entry toc-subsection"><a href="#third-party-profiles">9.3 Third-party profiles</a></li>
-<li class="toc-entry toc-subsection"><a href="#source-card-rule">9.4 Source-card rule</a></li>
-<li class="toc-entry toc-subsection"><a href="#ahrefs-controlled-schema-study">9.5 Ahrefs controlled schema study</a></li>
-<li class="toc-entry toc-subsection"><a href="#engine-overlap-research">9.6 Engine-overlap research</a></li>
-<li class="toc-entry toc-subsection"><a href="#buyer-research-evidence">9.7 Buyer-research evidence</a></li>
-<li class="toc-entry toc-chapter"><a href="#appendices">10. Appendices</a></li>
+<li class="toc-entry"><a href="#brand-style-guide-report">Brand Style Guide Report</a></li>
+<li class="toc-entry"><a href="#style-guide-manifest">Style-guide manifest</a></li>
+<li class="toc-entry toc-chapter"><a href="#how-to-read-this-guide">1. How to read this guide</a></li>
+<li class="toc-entry toc-chapter"><a href="#token-inventory">2. Token inventory</a></li>
+<li class="toc-entry toc-subsection"><a href="#signal-agency-paper-and-ink">2.1 Signal Agency — paper and ink</a></li>
+<li class="toc-entry toc-subsection"><a href="#signal-agency-terracotta-signal">2.2 Signal Agency — terracotta signal</a></li>
+<li class="toc-entry toc-subsection"><a href="#apple-quiet-surfaces">2.3 Apple — quiet surfaces</a></li>
+<li class="toc-entry toc-subsection"><a href="#ibm-structured-enterprise">2.4 IBM — structured enterprise</a></li>
+<li class="toc-entry toc-subsection"><a href="#display-type">2.5 Display type</a></li>
+<li class="toc-entry toc-subsection"><a href="#body-type">2.6 Body type</a></li>
+<li class="toc-entry toc-subsection"><a href="#mono-metadata">2.7 Mono metadata</a></li>
+<li class="toc-entry toc-subsection"><a href="#code-and-examples">2.8 Code and examples</a></li>
+<li class="toc-entry toc-chapter"><a href="#component-grammar">3. Component grammar</a></li>
+<li class="toc-entry toc-subsection"><a href="#cover-and-manifest">3.1 Cover and manifest</a></li>
+<li class="toc-entry toc-subsection"><a href="#kpi-cards-and-stats-strips">3.2 KPI cards and stats strips</a></li>
+<li class="toc-entry toc-subsection"><a href="#tables-and-source-ledgers">3.3 Tables and source ledgers</a></li>
+<li class="toc-entry toc-subsection"><a href="#priority-cards-and-briefs">3.4 Priority cards and briefs</a></li>
+<li class="toc-entry toc-chapter"><a href="#brand-examples">4. Brand examples</a></li>
+<li class="toc-entry toc-subsection"><a href="#signal-agency">4.1 Signal Agency</a></li>
+<li class="toc-entry toc-subsection"><a href="#apple">4.2 Apple</a></li>
+<li class="toc-entry toc-subsection"><a href="#ibm">4.3 IBM</a></li>
+<li class="toc-entry toc-subsection"><a href="#bento">4.4 Bento</a></li>
+<li class="toc-entry toc-subsection"><a href="#times">4.5 Times</a></li>
+<li class="toc-entry toc-chapter"><a href="#agent-handoff">5. Agent handoff</a></li>
+<li class="toc-entry toc-subsection"><a href="#brand-extraction-brief">5.1 Brand extraction brief</a></li>
 </ol>
 </nav>
 
 <main class="report-content report-main report-rest">
-<h2 class="chapter-heading" id="highest-impact-tactics"><span class="heading-number">1.</span> Highest-impact tactics</h2>
-<section class="details-note">
-<h3 class="section-heading" id="weight-before-recommending"><span class="heading-number">1.1</span> Weight before recommending</h3>
-<p>Do not apply all tactics to all pages. Score page-type fit, retrieval eligibility, source proximity, corroboration, freshness, confidence, impact, and effort before roadmap sequencing.</p>
+<h2 class="chapter-heading" id="how-to-read-this-guide"><span class="heading-number">1.</span> How to read this guide</h2>
+<p>Brand style guides need more than colours and fonts. A report-ready brand package should include visual theme, colour roles, typography, component grammar, layout, elevation, do/don&#x27;t rules, responsive behaviour, and an agent prompt guide.</p>
+<section class="toc-list">
+<p>§ 01 | Token inventory | Colour, type, spacing, radii</p>
+<p>§ 02 | Component grammar | Cards, tables, badges, source ledgers, briefs</p>
+<p>§ 03 | Brand examples | Signal, Apple, IBM, Bento, Times</p>
+<p>§ 04 | Agent handoff | Reproduction rules and validation</p>
+</section>
+<h2 class="chapter-heading" id="token-inventory"><span class="heading-number">2.</span> Token inventory</h2>
+<section class="brand-swatch-grid">
+<section class="specimen-card">
+<h3 class="section-heading" id="signal-agency-paper-and-ink"><span class="heading-number">2.1</span> Signal Agency — paper and ink</h3>
+<p><code>background #ECEEEB</code> · warm paper for report pages.</p>
+<p><code>on-surface #0B0D0A</code> · near-black ink for text, rules, and dossier headers.</p>
+<p>Usage: use rule weight and surface changes before adding decoration.</p>
+</section>
+<section class="specimen-card">
+<h3 class="section-heading" id="signal-agency-terracotta-signal"><span class="heading-number">2.2</span> Signal Agency — terracotta signal</h3>
+<p><code>primary #B93A19</code> · use for critical decisions, P0 emphasis, cover italic, and small glyphs.</p>
+<p>Constraint: never flood large areas with the accent; it is a signal, not a background.</p>
+</section>
+<section class="specimen-card">
+<h3 class="section-heading" id="apple-quiet-surfaces"><span class="heading-number">2.3</span> Apple — quiet surfaces</h3>
+<p>Use restrained neutrals, large whitespace, and product-like hierarchy. Components should feel polished and calm rather than editorial or dossier-like.</p>
+</section>
+<section class="specimen-card">
+<h3 class="section-heading" id="ibm-structured-enterprise"><span class="heading-number">2.4</span> IBM — structured enterprise</h3>
+<p>Use crisp grids, clear data tables, modular panels, and neutral surfaces. Components should privilege legibility, classification, and enterprise evidence.</p>
 </section>
 </section>
-<section class="severity-key">
-<section class="info-panel" data-severity="critical">
-<h3 class="section-heading" id="critical"><span class="heading-number">1.2</span> Critical</h3>
-<p>Revenue page cannot be fetched or cited.</p>
+<section class="brand-type-scale">
+<section class="specimen-card">
+<h3 class="section-heading" id="display-type"><span class="heading-number">2.5</span> Display type</h3>
+<p>Large report titles should preserve brand personality. Signal uses condensed Bricolage Grotesque with tight tracking; Times uses newspaper-like editorial serif; IBM uses more systematic enterprise typography.</p>
 </section>
-<section class="info-panel" data-severity="high">
-<h3 class="section-heading" id="high"><span class="heading-number">1.3</span> High</h3>
-<p>Claim lacks nearby evidence or source-card support.</p>
+<section class="specimen-card">
+<h3 class="section-heading" id="body-type"><span class="heading-number">2.6</span> Body type</h3>
+<p>Body copy should stay readable in HTML and PDF. Keep 56-64ch lines, avoid overusing uppercase, and verify print output after font substitution.</p>
 </section>
-<section class="info-panel" data-severity="medium">
-<h3 class="section-heading" id="medium"><span class="heading-number">1.4</span> Medium</h3>
-<p>Helpful page-type tactic with partial evidence.</p>
+<section class="specimen-card">
+<h3 class="section-heading" id="mono-metadata"><span class="heading-number">2.7</span> Mono metadata</h3>
+<p>Use mono labels for source IDs, dates, engine names, priorities, and run IDs. This makes evidence provenance scannable without becoming decorative.</p>
 </section>
-<section class="info-panel" data-severity="low">
-<h3 class="section-heading" id="low"><span class="heading-number">1.5</span> Low</h3>
-<p>Hygiene, formatting, or monitoring improvement.</p>
-</section>
-</section>
-<section class="facts-table-wrap">
-<table><thead>
-<tr><th>Tactic</th><th>Evidence</th><th>Best page types</th><th>Why it matters</th><th>Verification</th></tr></thead><tbody>
-<tr><td>Direct-answer opening</td><td><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>Article, glossary, comparison, feature, local</td><td>Concise first-paragraph claims are easier to retrieve and cite.</td><td>Rendered first 300 words include answer, source, and updated date</td></tr>
-<tr><td>Source cards near claims</td><td><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>Research, comparison, YMYL, feature</td><td>Engines need nearby proof to trust and quote claims.</td><td>Source ID appears beside factual claim and in ledger</td></tr>
-<tr><td>Third-party corroboration</td><td><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>SaaS, ecommerce, local, YMYL</td><td>Answer engines cross-check owned claims against outside sources.</td><td>Profile parity and source breadth review</td></tr>
-<tr><td>Bot-friendly first fetch</td><td><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>All priority pages</td><td>Hidden or blocked content cannot be cited.</td><td>Raw/rendered crawl, robots, sitemap, and logs</td></tr>
-<tr><td>Entity consistency</td><td><span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></td><td>Homepage, about, local, profiles</td><td>Contradictory facts reduce answer confidence.</td><td>Canonical entity table and third-party parity</td></tr>
-<tr><td>FAQPage schema</td><td><span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span></td><td>Hygiene only</td><td>Structured data helps clarity but does not replace visible evidence.</td><td>Schema validation plus visible-content check</td></tr>
-</tbody></table>
-</section>
-<section class="report-keep-with-heading report-chapter-page">
-<h2 class="chapter-heading" id="page-type-matrix"><span class="heading-number">2.</span> Page-type matrix</h2>
-<section class="facts-table-wrap">
-<table><thead>
-<tr><th>Page type</th><th>Required tactics</th><th>Conditional tactics</th><th>Devalue or avoid</th></tr></thead><tbody>
-<tr><td>Homepage</td><td>Entity facts, category clarity, proof, crawlable nav</td><td>Original stats, comparison links</td><td>Long FAQ as primary GEO tactic</td></tr>
-<tr><td>SaaS feature</td><td>Criteria block, use cases, integrations, proof</td><td>Demo video transcript, benchmark table</td><td>Generic benefit copy without source IDs</td></tr>
-<tr><td>Pricing</td><td>Plan facts, constraints, comparison table</td><td>Purchase-relevant visible FAQ</td><td>Hidden pricing screenshots only</td></tr>
-<tr><td>Comparison</td><td>Direct answer, feature/pricing table, alternatives, source cards</td><td>Third-party review quotes</td><td>Unsupported “best” claims</td></tr>
-<tr><td>Article/guide</td><td>Direct answer, question headings, stats, expert quotes</td><td>Glossary sidebar, summary box</td><td>Thin filler or stale facts</td></tr>
-<tr><td>Product/PDP</td><td>Specs, reviews, availability, canonical descriptions</td><td>Video transcript, product schema</td><td>Flat B2B SaaS checklist</td></tr>
-<tr><td>Local/YMYL</td><td>Credentials, service area, policies, disclaimers</td><td>Practitioner bios, local citations</td><td>Unsupported advice</td></tr>
-<tr><td>Research/report</td><td>Methodology, dataset, source cards, findings</td><td>Embeddable charts</td><td>PDF-only content without HTML summary</td></tr>
-</tbody></table>
+<section class="specimen-card">
+<h3 class="section-heading" id="code-and-examples"><span class="heading-number">2.8</span> Code and examples</h3>
+<p>Code blocks inherit each brand&#x27;s code surface. Signal stays light; developer-dark styles may invert; all production examples need accessible contrast.</p>
 </section>
 </section>
-<section class="industry-card">
-<h3 class="section-heading" id="industry-fit-reminder"><span class="heading-number">2.1</span> Industry-fit reminder</h3>
-<p>SaaS, ecommerce, local, and YMYL pages require different proof sources. Map the page type before assigning a tactic.</p>
+<h2 class="chapter-heading" id="component-grammar"><span class="heading-number">3.</span> Component grammar</h2>
+<section class="brand-component-grid">
+<section class="specimen-card">
+<h3 class="section-heading" id="cover-and-manifest"><span class="heading-number">3.1</span> Cover and manifest</h3>
+<p>The cover sets mood; the manifest proves scope. Include prepared-for, period, source count, version, confidentiality, and next review date.</p>
 </section>
-<hr class="section-separator">
-<section class="report-keep-with-heading report-chapter-page">
-<h2 class="chapter-heading" id="tactic-card-examples"><span class="heading-number">3.</span> Tactic card examples</h2>
-<section class="tactic-card">
-<h3 class="section-heading" id="direct-answer-opening"><span class="heading-number">3.1</span> Direct-answer opening</h3>
-<ul>
-<li>What: answer the query plainly in the first paragraph.</li>
-<li>Why: extractive systems need self-contained claims with nearby proof.</li>
-<li>How: pair answer, source ID, author/update date, and supporting table.</li>
-<li>Verify: rerun per-engine prompts and compare cited URL movement.</li>
-</ul>
+<section class="specimen-card">
+<h3 class="section-heading" id="kpi-cards-and-stats-strips"><span class="heading-number">3.2</span> KPI cards and stats strips</h3>
+<p>Use large numerals only for metrics with a period/window and source ID. Avoid unsupported “AI share of voice” claims unless per-engine lines prove them.</p>
+</section>
+<section class="specimen-card">
+<h3 class="section-heading" id="tables-and-source-ledgers"><span class="heading-number">3.3</span> Tables and source ledgers</h3>
+<p>Tables carry findings; source ledgers carry trust. Use stable columns, evidence badges, confidence labels, and redacted storage notes.</p>
+</section>
+<section class="specimen-card">
+<h3 class="section-heading" id="priority-cards-and-briefs"><span class="heading-number">3.4</span> Priority cards and briefs</h3>
+<p>Priority cards are executive-readable; implementation briefs are worker-readable. Each needs owner, due date, source IDs, and verification.</p>
 </section>
 </section>
-<section class="impact-panel" data-severity="high">
-<h3 class="section-heading" id="impact"><span class="heading-number">3.2</span> Impact</h3>
-<p>Direct-answer openings influence extraction quality, snippet usefulness, and the chance that a page is selected as a cited source.</p>
+<h2 class="chapter-heading" id="brand-examples"><span class="heading-number">4.</span> Brand examples</h2>
+<section class="dossier-card">
+<h3 class="section-heading" id="signal-agency"><span class="heading-number">4.1</span> Signal Agency</h3>
+<p>Research-dossier style: warm paper, black rules, terracotta signal, square cards, mono evidence labels, source-led report grammar, and light code blocks. Best for AI-search audit reports, client evidence packs, and editorial strategy documents.</p>
 </section>
-<section class="evidence-panel" data-severity="medium">
-<h3 class="section-heading" id="evidence"><span class="heading-number">3.3</span> Evidence</h3>
-<p>Verify with raw/rendered HTML, source-ID proximity, and per-engine prompt reruns.</p>
+<section class="dossier-card">
+<h3 class="section-heading" id="apple"><span class="heading-number">4.2</span> Apple</h3>
+<p>Premium product style: reduced chrome, generous spacing, calm hierarchy, elegant typography, and minimal visible borders. Best for executive summaries, product narratives, and polished client-facing recommendations.</p>
 </section>
-<section class="tactic-card">
-<h3 class="section-heading" id="bot-friendly-first-fetch"><span class="heading-number">3.4</span> Bot-friendly first fetch</h3>
-<ul>
-<li>What: SSR or pre-render important content, allow relevant crawlers, and keep key text visible.</li>
-<li>Why: invisible or blocked content cannot be cited.</li>
-<li>How: compare raw HTML, rendered DOM, robots, sitemap, and logs.</li>
-<li>Verify: monthly crawl plus AI/search bot log review.</li>
-</ul>
+<section class="dossier-card">
+<h3 class="section-heading" id="ibm"><span class="heading-number">4.3</span> IBM</h3>
+<p>Enterprise systems style: structured grids, explicit categories, accessible contrast, and utilitarian components. Best for technical audits, governance, architecture, and compliance reports.</p>
 </section>
-<section class="good-bad">
-<section class="good-row">
-<h3 class="section-heading" id="strong-pattern"><span class="heading-number">3.5</span> Strong pattern</h3>
-<p>Direct answer, evidence badge, source ID, visible methodology, updated date, and crawlable comparison table.</p>
+<section class="dossier-card">
+<h3 class="section-heading" id="bento"><span class="heading-number">4.4</span> Bento</h3>
+<p>Modular showcase style: card-based blocks, friendly surface contrast, and concise grouped information. Best for capability overviews and feature-led reports.</p>
 </section>
-<section class="bad-row">
-<h3 class="section-heading" id="weak-pattern"><span class="heading-number">3.6</span> Weak pattern</h3>
-<p>Image-only proof, unsupported superlatives, client-rendered claims, and schema added without visible evidence.</p>
-</section>
+<section class="dossier-card">
+<h3 class="section-heading" id="times"><span class="heading-number">4.5</span> Times</h3>
+<p>Editorial newspaper style: rule-based hierarchy, serif tone, print-first feel, and restrained emphasis. Best for research digests, competitive narratives, and long-form findings.</p>
 </section>
 <section class="report-keep-with-heading report-chapter-page">
-<h2 class="chapter-heading" id="myths-and-caveats"><span class="heading-number">4.</span> Myths and caveats</h2>
-<section class="myth-callout">
-<h3 class="section-heading" id="myth"><span class="heading-number">4.1</span> Myth</h3>
-<p>Adding FAQPage schema is enough to become GEO-ready.</p>
-<h3 class="section-heading" id="reality"><span class="heading-number">4.2</span> Reality</h3>
-<p>FAQPage is hygiene unless visible FAQ content genuinely fits page type and query fan-out.</p>
-</section>
-</section>
-<section class="example-card">
-<div class="code-block-wrap"><div class="code-block-head"><span>Text code</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Worker brief: update /compare/example with source IDs S001-S004,
-visible comparison evidence, third-party corroboration, and retest steps.
-Acceptance: AIO, Gemini, ChatGPT, AI Mode, and Perplexity results are recorded separately.</code></pre></div>
-</section>
-<section class="example-card">
-<div class="code-block-wrap"><div class="code-block-head"><span>Mermaid source fallback</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="mermaid"><code>flowchart TD
-  Sources[Source IDs] --&gt; Findings
-  Findings --&gt; Roadmap
-  Roadmap --&gt; Rerun[Per-engine rerun]</code></pre></div>
-<figure class="mermaid-rendered" aria-label="Rendered Mermaid diagram"><svg viewBox="0 0 760 130" role="img" xmlns="http://www.w3.org/2000/svg"><defs><marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" class="diagram-arrow-head" /></marker></defs><line x1="189" y1="64" x2="199" y2="64" class="diagram-arrow" /><line x1="374" y1="64" x2="384" y2="64" class="diagram-arrow" /><line x1="559" y1="64" x2="569" y2="64" class="diagram-arrow" /><rect x="24" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="104" y="70" text-anchor="middle" class="diagram-label">Source IDs</text><rect x="209" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="289" y="70" text-anchor="middle" class="diagram-label">Findings</text><rect x="394" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="474" y="70" text-anchor="middle" class="diagram-label">Roadmap</text><rect x="579" y="35" width="160" height="58" rx="14" class="diagram-node" /><text x="659" y="70" text-anchor="middle" class="diagram-label">Per-engine rerun</text></svg><figcaption>Rendered Mermaid example, embedded as self-contained SVG.</figcaption></figure>
-</section>
-<p>Signal equation fallback: <span class="latex-inline" role="math" aria-label="AI\ visibility = retrieval + evidence + corroboration">AI\ visibility = retrieval + evidence + corroboration</span>.</p>
-<section class="block-template">
-<header>Author block template</header>
-<div class="code-block-wrap"><div class="code-block-head"><span>Text code</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Written by Dr. Jane Doe, PhD
-Principal Data Scientist, ExampleCo
-
-Use this block for named experts, source credentials, and profile links.</code></pre></div>
-</section>
-<section class="bar-chart">
-<p style="--bar-value: 72%">On-page evidence — 72%</p>
-<p style="--bar-value: 64%">Technical retrieval — 64%</p>
-<p style="--bar-value: 58%">Authority corroboration — 58%</p>
-</section>
-<section class="visibility-bars">
-<p style="--bar-value: 78%">AI Overviews — 78%</p>
-<p style="--bar-value: 54%">Gemini — 54%</p>
-<p style="--bar-value: 41%">ChatGPT — 41%</p>
-<p style="--bar-value: 38%">AI Mode — 38%</p>
-<p style="--bar-value: 9%">Perplexity — 9%</p>
-</section>
-<blockquote>Strong reports separate observed facts from interpretation, then turn only verified or clearly labelled partial evidence into roadmap items.</blockquote>
-<h2 class="chapter-heading" id="case-studies"><span class="heading-number">5.</span> Case studies</h2>
-<section class="case-study-card">
-<h3 class="section-heading" id="industrial-manufacturer"><span class="heading-number">5.1</span> Industrial manufacturer</h3>
-<p><strong>Result:</strong> measurable AI referral growth after direct-answer restructuring and third-party corroboration.</p>
-<p><strong>Tactics applied:</strong> original benchmarks, source-card evidence, bot-friendly rendering, and trade-publication mentions.</p>
-</section>
-<section class="case-study-card">
-<h3 class="section-heading" id="healthcare-comparison-site"><span class="heading-number">5.2</span> Healthcare comparison site</h3>
-<p><strong>Result:</strong> cited answers appeared across multiple answer engines after visible expertise and profile parity fixes.</p>
-<p><strong>Tactics applied:</strong> practitioner bylines, review methodology, source-backed tables, and monthly prompt reruns.</p>
-</section>
-<section class="report-keep-with-heading report-chapter-page">
-<h2 class="chapter-heading" id="roadmap-template"><span class="heading-number">6.</span> Roadmap template</h2>
-<section class="priority-group" data-priority="high">
-<h3 class="section-heading" id="priority-rule"><span class="heading-number">6.1</span> Priority rule</h3>
-<p>Start with revenue pages that fail retrieval eligibility or evidence proximity before optional schema enhancements.</p>
-</section>
-</section>
-<section class="priority-card" data-priority="critical">
-<h3 class="section-heading" id="revenue-page-retrieval-blocker"><span class="heading-number">6.2</span> Revenue page retrieval blocker</h3>
-<p>Use a priority card when a recommendation must carry priority, owner, due date, source IDs, and verification in one executive-scannable block. Pair with the source ledger and a worker-ready implementation brief.</p>
-</section>
-<section class="facts-table-wrap">
-<table><thead>
-<tr><th>Priority</th><th>Recommendation</th><th>Applies to</th><th>Owner</th><th>Verification</th><th>Source IDs</th></tr></thead><tbody>
-<tr><td>P0</td><td>Fix retrieval blockers on revenue pages.</td><td>Homepage, pricing, feature, PDP, local</td><td>SEO + engineering</td><td>Raw/rendered crawl, robots, sitemap, logs</td><td>S002, S005</td></tr>
-<tr><td>P1</td><td>Add source cards and original evidence.</td><td>Comparison, article, research/report</td><td>Content + subject expert</td><td>Source ledger and citation checks</td><td>S001, S003</td></tr>
-<tr><td>P1</td><td>Build third-party corroboration.</td><td>SaaS, local, ecommerce</td><td>Marketing/PR</td><td>Profile parity and source breadth</td><td>S004</td></tr>
-<tr><td>P2</td><td>Improve schema and metadata.</td><td>All page types</td><td>SEO + engineering</td><td>Schema validation plus visible-content check</td><td>S002</td></tr>
-</tbody></table>
-</section>
-<section class="report-keep-with-heading report-chapter-page">
-<h2 class="chapter-heading" id="verification-checklist"><span class="heading-number">7.</span> Verification checklist</h2>
+<h2 class="chapter-heading" id="agent-handoff"><span class="heading-number">5.</span> Agent handoff</h2>
 <section class="checklist-card">
-<ul>
-<li>Validate evidence badges and source IDs before export.</li>
-<li>Render HTML with the chosen DESIGN.md-backed template.</li>
-<li>Review table wrapping, badge visibility, source-card readability, and sticky TOC behaviour.</li>
-<li>Export A4/Letter PDF for documents and 16:9 PDF for decks.</li>
-<li>For client-custom reports, rerun live evidence collection before interpretation.</li>
-<li>For recurring reports, create a custom routine with deterministic collection and report-agent interpretation.</li>
+<ul class="checklist">
+<li><span class="status-dot" data-status="done"></span><span>Start from <code>DESIGN.md</code> front matter and chapter files.</span></li>
+<li><span class="status-dot" data-status="done"></span><span>Verify colour, typography, component, layout, elevation, responsive, and prompt-guide coverage.</span></li>
+<li><span class="status-dot" data-status="todo"></span><span>Generate a brand-style-guide report before using a new brand in client reports.</span></li>
+<li><span class="status-dot" data-status="todo"></span><span>Render HTML and print profiles; inspect tables, badges, code blocks, and TOC.</span></li>
+<li><span class="status-dot" data-status="todo"></span><span>Keep public examples free of private client names, URLs, local paths, screenshots, and raw evidence.</span></li>
 </ul>
 </section>
 </section>
-<section class="report-keep-with-heading report-chapter-page">
-<h2 class="chapter-heading" id="closing-callouts"><span class="heading-number">8.</span> Closing callouts</h2>
-<section class="callout">
-<h3 class="section-heading" id="combined-finding"><span class="heading-number">8.1</span> Combined finding</h3>
-<p>AI visibility reporting should end with the fewest useful recommendations: retrieval blockers, evidence proximity, third-party corroboration, and monitoring. Keep panels for important emphasis; use plain bullets and tables for normal content.</p>
-</section>
-</section>
-<section class="report-keep-with-heading report-chapter-page">
-<h2 class="chapter-heading" id="sources"><span class="heading-number">9.</span> Sources</h2>
-<section class="sources-layout">
-<section class="sources-group">
-<section class="source-title">
-<p>Primary sources</p>
-</section>
-<section class="source-card">
-<h3 class="section-heading" id="prompt-captures"><span class="heading-number">9.1</span> Prompt captures</h3>
-<p>AIO, Gemini, ChatGPT, AI Mode, and Perplexity prompt evidence stored separately.</p>
-<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
-<section class="source-card">
-<h3 class="section-heading" id="crawl-evidence"><span class="heading-number">9.2</span> Crawl evidence</h3>
-<p>Raw/rendered crawl export with retrieval eligibility notes.</p>
-<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
-</section>
-<section class="sources-group">
-<section class="source-title">
-<p>Corroboration sources</p>
-</section>
-<section class="source-card">
-<h3 class="section-heading" id="third-party-profiles"><span class="heading-number">9.3</span> Third-party profiles</h3>
-<p>Review, directory, community, partner, and media source parity checks.</p>
-<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
-</section>
-</section>
-</section>
-<section class="facts-table-wrap">
-<table><thead>
-<tr><th>Source ID</th><th>Evidence type</th><th>Use in report</th><th>Verification</th></tr></thead><tbody>
-<tr><td>S001</td><td>Prompt capture</td><td>Per-engine citation presence</td><td>AIO, Gemini, ChatGPT, AI Mode, and Perplexity recorded separately</td></tr>
-<tr><td>S002</td><td>Raw/rendered crawl</td><td>Retrieval eligibility</td><td>Important claims visible on first fetch</td></tr>
-<tr><td>S003</td><td>Page inventory</td><td>Page-type weighting</td><td>URL mapped to homepage, feature, comparison, article, local, PDP, or report</td></tr>
-<tr><td>S004</td><td>Third-party profile</td><td>Corroboration strength</td><td>Facts match owned canonical entity table</td></tr>
-<tr><td>S005</td><td>Analytics/search data</td><td>Business value and priority</td><td>Priority URL cluster tied to demand or revenue</td></tr>
-</tbody></table>
-</section>
-<section class="source-card">
-<h3 class="section-heading" id="source-card-rule"><span class="heading-number">9.4</span> Source-card rule</h3>
-<p>Every roadmap item should cite source IDs, observed date, confidence, owner, and the command or routine that verifies completion.</p>
-<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
-<section class="privacy-note">
-<p><strong>Public artifact rule</strong></p>
-<p>Do not export private URLs, raw transcripts, screenshots, local paths, or client names. Publish source IDs and redacted summaries; keep raw evidence in approved secure storage.</p>
-</section>
-<section class="source-list">
-<section class="source-item">
-<h3 class="section-heading" id="ahrefs-controlled-schema-study"><span class="heading-number">9.5</span> Ahrefs controlled schema study</h3>
-<p>Schema is treated as technical hygiene rather than a primary AI-visibility growth lever.</p>
-<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
-<section class="source-item">
-<h3 class="section-heading" id="engine-overlap-research"><span class="heading-number">9.6</span> Engine-overlap research</h3>
-<p>Low overlap between AIO, Gemini, ChatGPT, AI Mode, and Perplexity requires per-engine reporting.</p>
-<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
-<section class="source-item">
-<h3 class="section-heading" id="buyer-research-evidence"><span class="heading-number">9.7</span> Buyer-research evidence</h3>
-<p>Answer engines increasingly influence discovery and shortlisting, so reports separate visibility from conversion value.</p>
-<a class="source-card-link" href="#sources" aria-label="Jump to sources"></a></section>
-</section>
-<details class="accordion" open><summary>How source IDs become recommendations</summary>
-<ol>
-<li>Capture source evidence before writing findings.</li>
-<li>Map each source to supported claims and page types.</li>
-<li>Score recommendations by impact, confidence, effort, and verification path.</li>
-<li>Include unresolved gaps in the appendix rather than presenting them as facts.</li>
-</ol>
-</details>
-<h2 class="chapter-heading" id="appendices"><span class="heading-number">10.</span> Appendices</h2>
-<section class="appendix-links">
-<p><a href="appendices/source-ledger.md" data-filetype="md">Source ledger appendix</a> <a href="appendices/prompt-set.md" data-filetype="md">Prompt set appendix</a> <a href="../client-ai-search-audit/report.html" data-filetype="html">Client audit example</a> <a href="../style-previews/index.html" data-filetype="html">Style previews</a></p>
+<section class="brief-card">
+<h3 class="section-heading" id="brand-extraction-brief"><span class="heading-number">5.1</span> Brand extraction brief</h3>
+<p><strong>Task:</strong> Convert a source style guide into a complete DESIGN.md brand library and report preview.</p>
+<p><strong>Files:</strong> <code>DESIGN.md</code>, chapter files, report renderer style, brand-style-guide example.</p>
+<p><strong>Acceptance:</strong> tokens cover colour/type/spacing/radii; components cover cover, cards, tables, badges, ledgers, briefs, checklists; print export has no browser chrome.</p>
+<p><strong>Verification:</strong> DESIGN.md lint, renderer validate, HTML preview, A4/Letter/slides export, and visual review against source specimen.</p>
 </section>
 <section class="version-summary">
-<p>V4 · compiled May 2026 from source-led evidence · internal toolkit</p>
+<p>Brand style-guide report example · generated from aidevops DESIGN.md library patterns · public-safe placeholder content</p>
 </section>
 </main>
 </div>

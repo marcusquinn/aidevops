@@ -54,10 +54,11 @@ Every material tactic should include:
 ## Toolbox Component Requirements
 
 For long playbooks, include examples of: links, numbered steps, accordions,
-summary-stat rows, impact/evidence/action panels, severity/priority colour keys,
-code blocks, chapter separators, quotes, good/bad examples, checkbox lists,
-source links, anchor links, and appendix links. Use the report renderer component
-vocabulary from `reports/general.md` so the Markdown remains canonical.
+summary-stat rows, KPI cards, impact/evidence/action panels,
+severity/priority colour keys, code blocks, chapter separators, quotes,
+good/bad examples, checkbox lists, source links, source ledgers, visibility bar
+charts, privacy notes, anchor links, and appendix links. Use the report renderer
+component vocabulary from `reports/general.md` so the Markdown remains canonical.
 
 ## Evidence and Weighting Rules
 
@@ -72,6 +73,9 @@ vocabulary from `reports/general.md` so the Markdown remains canonical.
   findings.
 - Use `llm-visibility-source-accrual.md` before writing source-backed playbooks or
   client reports; collect source IDs first, then interpret.
+- Keep client-facing artifacts dossier-like: manifest → KPI cards → decision line
+  → per-engine table and bars → source ledger → priority cards → preserve/fix →
+  implementation brief → owner checklist.
 
 ## Renderer Handoff
 
