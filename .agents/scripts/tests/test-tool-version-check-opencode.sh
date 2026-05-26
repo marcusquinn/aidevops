@@ -16,7 +16,7 @@ if [[ ! -f "$TOOL_VERSION_CHECK" ]]; then
 	exit 1
 fi
 
-SANDBOX="$(mktemp -d -t t24107-XXXXXX)"
+SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/t24107-XXXXXX")"
 trap 'rm -rf "$SANDBOX"' EXIT
 SYSTEM_PATH="$PATH"
 
