@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.19.1] - 2026-05-26
+
+### Changed
+
+- Add augmentcode bot skip rules (#24112)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- honor report raised paper token (#24137)
+- repair lottiefiles report HTML nesting (#24134)
+- keep report action prompts inside sections (#24131)
+- include dispatch cleanup exit code (#24113)
+
 ## [3.19.0] - 2026-05-25
 
 ### Changed
