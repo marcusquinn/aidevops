@@ -73,6 +73,10 @@ DEFAULT_TOKENS = {
 SIGNAL_AGENCY_FONT_IMPORT = """@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Instrument+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap');
 """
 
+FONT_IMPORTS = {
+    "signal-agency": SIGNAL_AGENCY_FONT_IMPORT,
+}
+
 
 def _brand_root() -> Path:
     return Path(__file__).resolve().parents[1] / "tools" / "design" / "library" / "brands"
@@ -665,7 +669,5 @@ def style_css(name: str) -> str:
     """Return renderer CSS compiled from a brand DESIGN.md file."""
 
     tokens = _tokens_for(name)
-    font_import = ""
-    if name == "signal-agency":
-        font_import = SIGNAL_AGENCY_FONT_IMPORT
+    font_import = FONT_IMPORTS.get(name, "")
     return f"{font_import}{_base_report_css()}\n{_theme_css(name, tokens)}"
