@@ -55,29 +55,28 @@ def split_markdown_table_row(line: str) -> list[str]:
     row = line.strip()[1:-1]
     cells: list[str] = []
     current: list[str] = []
-    index = 0
-    while index < len(row):
-        char = row[index]
-        if char == "|" and _has_odd_trailing_backslashes(current):
-            current.pop()
-            current.append("|")
-        elif char == "|":
-            cells.append("".join(current))
-            current = []
+    backslash_run = 0
+    for char in row:
+        if char == "\\":
+            backslash_run += 1
+            continue
+
+        current.append("\\" * (backslash_run // 2))
+        if char == "|":
+            if backslash_run % 2 == 1:
+                current.append("|")
+            else:
+                cells.append("".join(current))
+                current = []
         else:
+            if backslash_run % 2 == 1:
+                current.append("\\")
             current.append(char)
-        index += 1
+        backslash_run = 0
+
+    current.append("\\" * ((backslash_run + 1) // 2))
     cells.append("".join(current))
     return cells
-
-
-def _has_odd_trailing_backslashes(chars: list[str]) -> bool:
-    count = 0
-    for char in reversed(chars):
-        if char != "\\":
-            break
-        count += 1
-    return count % 2 == 1
 
 
 def open_list(body: list[str], states: dict[str, object], tag: str, css_class: str = "") -> None:
