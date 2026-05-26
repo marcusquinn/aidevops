@@ -976,6 +976,46 @@ EOF
 	return 0
 }
 
+test_seed_worker_db_session_context_copies_only_selected_session() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/isolated-opencode-data"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+
+	sqlite3 "$shared_db" <<'SQL'
+CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
+CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);
+INSERT INTO project VALUES ('project-keep', 'Keep Project');
+INSERT INTO project VALUES ('project-other', 'Other Project');
+INSERT INTO session VALUES ('session-keep', 'project-keep', 'Keep');
+INSERT INTO session VALUES ('session-other', 'project-other', 'Other');
+INSERT INTO message VALUES ('message-keep-1', 'session-keep', 'one');
+INSERT INTO message VALUES ('message-keep-2', 'session-keep', 'two');
+INSERT INTO message VALUES ('message-other', 'session-other', 'other');
+SQL
+	sqlite3 "$shared_db" .schema | sqlite3 "$worker_db"
+
+	_seed_worker_db_session_context "$isolated_dir" "session-keep"
+
+	local sessions messages other_sessions other_messages projects
+	sessions=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM session WHERE id = 'session-keep';")
+	messages=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM message WHERE session_id = 'session-keep';")
+	other_sessions=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM session WHERE id = 'session-other';")
+	other_messages=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM message WHERE session_id = 'session-other';")
+	projects=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM project WHERE id = 'project-keep';")
+
+	if [[ "$sessions" == "1" && "$messages" == "2" && "$other_sessions" == "0" && "$other_messages" == "0" && "$projects" == "1" ]]; then
+		print_result "seed worker DB copies only selected continuation session" 0
+		return 0
+	fi
+
+	print_result "seed worker DB copies only selected continuation session" 1 \
+		"sessions=$sessions messages=$messages other_sessions=$other_sessions other_messages=$other_messages projects=$projects"
+	return 0
+}
+
 test_large_opencode_prompt_uses_file_attachment() {
 	local prompt="large-seed-prompt-with-worker-contract"
 	local old_threshold="${HEADLESS_PROMPT_FILE_THRESHOLD_BYTES:-}"
@@ -1621,6 +1661,7 @@ main() {
 	test_worker_opencode_exec_paths_strip_session_env
 	test_sandbox_passthrough_scopes_provider_env
 	test_copy_scoped_opencode_auth_keeps_selected_provider_only
+	test_seed_worker_db_session_context_copies_only_selected_session
 	test_large_opencode_prompt_uses_file_attachment
 	test_large_claude_prompt_uses_stdin_file
 	test_registered_prompt_temp_cleanup_removes_dir

@@ -476,6 +476,10 @@ _invoke_opencode() {
 		# fires while _invoke_opencode is still waiting for the worker.
 		_WORKER_ISOLATED_DB_PATH="${isolated_data_dir}/opencode/opencode.db"
 		print_info "[lifecycle] db_isolated dir=$isolated_data_dir pid=$$"
+		if [[ -n "${_invoke_persisted_session:-}" ]]; then
+			_seed_worker_db_session_context "$isolated_data_dir" "$_invoke_persisted_session"
+			print_info "[lifecycle] db_seeded session=$_invoke_persisted_session pid=$$"
+		fi
 
 		# t2249: Pre-dispatch OAuth pool check. If the account copied into the
 		# isolated auth.json is in cooldown per shared pool metadata (recorded
@@ -1289,6 +1293,9 @@ _execute_run_attempt() {
 	# dispatch rotation against their own pool entries. Same rationale as
 	# _invoke_session_key above: keep _invoke_opencode's arg list stable.
 	_invoke_provider="$provider"
+	# GH#23958: expose the persisted OpenCode session to _invoke_opencode so
+	# isolated worker DBs can be seeded before --session <id> --continue runs.
+	_invoke_persisted_session="$persisted_session"
 
 	# t3077: expose session_key to the verbose lifecycle emitter via the
 	# convention WORKER_SESSION_KEY (read by _emit_verbose_checkpoint).
