@@ -1525,14 +1525,14 @@ test_cmd_run_finish_fail_recovers_branch_orphan_output() {
 	return 0
 }
 
-test_cmd_run_finish_fail_closed_issue_releases_complete() {
+test_cmd_run_finish_fail_closed_issue_without_merged_pr_fails() {
 	local work_dir="${TEST_ROOT}/repo-fail-issue-closed"
 	local released_reason="" fast_fail_called=0
 	_setup_test_git_repo "$work_dir" 0
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
 	gh() {
 		if [[ "${*}" == *"issue view"* ]]; then printf 'CLOSED'
-		else printf '0'
+		elif [[ "${*}" == *"pr list"* ]]; then printf ''
 		fi
 		return 0
 	}
@@ -1546,16 +1546,16 @@ test_cmd_run_finish_fail_closed_issue_releases_complete() {
 
 	unset DISPATCH_REPO_SLUG 2>/dev/null || true
 	unset -f gh 2>/dev/null || true
-	if [[ "$released_reason" == "worker_complete" && "$fast_fail_called" -eq 0 ]]; then
-		print_result "_cmd_run_finish fail treats closed linked issue as complete" 0
+	if [[ "$released_reason" == "worker_failed" && "$fast_fail_called" -eq 1 ]]; then
+		print_result "_cmd_run_finish fail requires merged PR beyond closed issue" 0
 	else
-		print_result "_cmd_run_finish fail treats closed linked issue as complete" 1 \
-			"Expected worker_complete and no fast-fail, got reason='${released_reason}' fast_fail=${fast_fail_called}"
+		print_result "_cmd_run_finish fail requires merged PR beyond closed issue" 1 \
+			"Expected worker_failed and fast-fail, got reason='${released_reason}' fast_fail=${fast_fail_called}"
 	fi
 	return 0
 }
 
-test_cmd_run_finish_fail_merged_pr_releases_complete() {
+test_cmd_run_finish_fail_existing_pr_recovery_remains_complete() {
 	local work_dir="${TEST_ROOT}/repo-fail-pr-merged"
 	local released_reason="" fast_fail_called=0
 	_setup_test_git_repo "$work_dir" 1
@@ -1578,9 +1578,40 @@ test_cmd_run_finish_fail_merged_pr_releases_complete() {
 	unset DISPATCH_REPO_SLUG 2>/dev/null || true
 	unset -f gh 2>/dev/null || true
 	if [[ "$released_reason" == "worker_complete" && "$fast_fail_called" -eq 0 ]]; then
-		print_result "_cmd_run_finish fail treats merged PR as complete" 0
+		print_result "_cmd_run_finish fail still recovers existing PR for open issue" 0
 	else
-		print_result "_cmd_run_finish fail treats merged PR as complete" 1 \
+		print_result "_cmd_run_finish fail still recovers existing PR for open issue" 1 \
+			"Expected worker_complete and no fast-fail, got reason='${released_reason}' fast_fail=${fast_fail_called}"
+	fi
+	return 0
+}
+
+test_cmd_run_finish_fail_confirmed_terminal_state_releases_complete() {
+	local work_dir="${TEST_ROOT}/repo-fail-terminal-complete"
+	local released_reason="" fast_fail_called=0
+	_setup_test_git_repo "$work_dir" 1
+	DISPATCH_REPO_SLUG="test-owner/test-repo"
+	gh() {
+		if [[ "${*}" == *"issue view"* ]]; then printf 'CLOSED'
+		elif [[ "${*}" == *"pr list"* && "${*}" == *"--head"* && "${*}" == *"--state merged"* ]]; then printf '123'
+		elif [[ "${*}" == *"pr list"* && "${*}" == *"--search"* && "${*}" == *"--state merged"* ]]; then printf '123'
+		fi
+		return 0
+	}
+	_release_dispatch_claim() { released_reason="$2"; return 0; }
+	_report_failure_to_fast_fail() { fast_fail_called=1; return 0; }
+	_update_dispatch_ledger() { return 0; }
+	_release_session_lock() { return 0; }
+	_increment_orphan_count_stat() { return 0; }
+
+	_cmd_run_finish "issue-99999" "fail" "$work_dir"
+
+	unset DISPATCH_REPO_SLUG 2>/dev/null || true
+	unset -f gh 2>/dev/null || true
+	if [[ "$released_reason" == "worker_complete" && "$fast_fail_called" -eq 0 ]]; then
+		print_result "_cmd_run_finish fail treats confirmed terminal GitHub state as complete" 0
+	else
+		print_result "_cmd_run_finish fail treats confirmed terminal GitHub state as complete" 1 \
 			"Expected worker_complete and no fast-fail, got reason='${released_reason}' fast_fail=${fast_fail_called}"
 	fi
 	return 0
@@ -1639,8 +1670,9 @@ main() {
 	test_handle_worker_branch_orphan_empty_branch_existing_pr_releases_complete
 	test_cmd_run_finish_orphan_recovery_failure_emits_branch_orphan
 	test_cmd_run_finish_fail_recovers_branch_orphan_output
-	test_cmd_run_finish_fail_closed_issue_releases_complete
-	test_cmd_run_finish_fail_merged_pr_releases_complete
+	test_cmd_run_finish_fail_closed_issue_without_merged_pr_fails
+	test_cmd_run_finish_fail_existing_pr_recovery_remains_complete
+	test_cmd_run_finish_fail_confirmed_terminal_state_releases_complete
 	teardown_test_env
 	printf '\nTests run: %d\n' "$TESTS_RUN"
 	printf 'Failures: %d\n' "$TESTS_FAILED"
