@@ -107,7 +107,20 @@ test_render_markdown_fixture() {
 	assert_contains "$_out" "class=\"code-copy\"" "Markdown render includes copy buttons for code"
 	assert_contains "$_out" "code-copy.is-copied" "Markdown render includes copy feedback state"
 	assert_contains "$_out" "class=\"accordion action-prompt\"" "Markdown render includes action prompt accordions"
-	assert_contains "$_out" "</section><details class=\"accordion action-prompt\" open" "Markdown render places open action prompts after action panels"
+	if python3 - "$_out" <<'PYHTML'
+from pathlib import Path
+import re
+import sys
+
+text = Path(sys.argv[1]).read_text()
+match = re.search(r'<section class="(?:action-line|action-panel)"[^>]*>(.*?)</section>', text, re.S)
+raise SystemExit(0 if match and 'class="accordion action-prompt"' in match.group(1) else 1)
+PYHTML
+	then
+		print_result "Markdown render places action prompts inside action sections" 0
+	else
+		print_result "Markdown render places action prompts inside action sections" 1 "Expected action prompt markup before closing action section"
+	fi
 	assert_contains "$_out" "<details class=\"accordion\" open" "Markdown render opens accordions for PDF output"
 	assert_contains "$_out" "class=\"toc-pdf-link\"" "Markdown render includes TOC PDF link"
 	assert_contains "$_out" ">A4</a>" "Markdown render labels portrait PDF as A4"

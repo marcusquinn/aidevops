@@ -62,7 +62,7 @@ def inject_action_prompts(body_html: str, classes: tuple[str, ...], code_rendere
         if not action_text:
             return match.group(0)
         prompt = action_prompt_details(action_prompt_from_text(action_text), code_renderer)
-        return f"{match.group(1)}{section_body}{match.group(4)}{prompt}"
+        return f"{match.group(1)}{section_body}{prompt}{match.group(4)}"
 
     return action_section_pattern(classes).sub(replace, body_html)
 
