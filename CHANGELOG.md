@@ -48,20 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - version report PDF exports (#24088)
 - Maintenance: ratchet QLTY_SMELL_THRESHOLD 53→52 (-1) [skip ci]
 - Maintenance: update simplification state registry
-- fix: harden report markdown rendering (#24074)
-- fix: preserve service interruption kill reason (#24078)
-- Maintenance: update simplification state registry
-- Maintenance: update simplification state registry
-- Maintenance: update simplification state registry
 
 ### Fixed
 
 - tighten health sentinel abstain assertion (#24099)
 - guard issue-worker release operations (#24086)
 - simplify dispatch cleanup label matching (#24081)
-- preserve service interruption kill reason (#24079)
-- preserve dispatch label cleanup exit codes (#24073)
-- exclude manual interactive PRs from zero-progress signal (#23940)
 
 ## [3.17.31] - 2026-05-25
 
