@@ -311,9 +311,13 @@ tokens["paper-raised"] = "#F5F6F4"
 css = module._theme_css("signal-agency", tokens)
 assert "--report-paper-raised: #F5F6F4;" in css
 assert "--report-paper-raised: #F3DED5;" not in css
+
+tokens["paper-raised"] = ""
+css = module._theme_css("signal-agency", tokens)
+assert "--report-paper-raised: #F3DED5;" in css
 PY
 	if [[ "$_result" -ne 0 ]]; then
-		print_result "Style CSS uses paper-raised token" 1 "Expected paper-raised to override primary-container for raised surfaces"
+		print_result "Style CSS uses paper-raised token" 1 "Expected paper-raised to override primary-container for raised surfaces and fall back when empty"
 		return 0
 	fi
 	print_result "Style CSS uses paper-raised token" 0
