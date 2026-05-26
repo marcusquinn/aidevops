@@ -33,12 +33,24 @@ def handle_heading(
     close_blocks(body, states)
     level = len(heading.group(1))
     title = heading.group(2).strip()
-    anchor = slug(title)
+    anchor = unique_heading_anchor(slug(title), states)
     display_title, classes = heading_display(level, title, states)
     class_attr = f' class="{" ".join(classes)}"' if classes else ""
     headings.append((level, title, anchor))
     body.append(f'<h{level}{class_attr} id="{anchor}">{display_title}</h{level}>')
     return True
+
+
+def unique_heading_anchor(base_anchor: str, states: dict[str, object]) -> str:
+    anchor_counts = states.setdefault("anchor_counts", {})
+    if not isinstance(anchor_counts, dict):
+        anchor_counts = {}
+        states["anchor_counts"] = anchor_counts
+    count = int(anchor_counts.get(base_anchor, 0))
+    anchor_counts[base_anchor] = count + 1
+    if count == 0:
+        return base_anchor
+    return f"{base_anchor}-{count + 1}"
 
 
 def heading_display(level: int, title: str, states: dict[str, object]) -> tuple[str, list[str]]:
