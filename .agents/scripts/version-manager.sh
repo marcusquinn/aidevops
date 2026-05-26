@@ -105,7 +105,9 @@ _version_manager_guard_headless_release_scope() {
 	_version_manager_has_approved_release_context && return 0
 
 	local branch_name=""
-	branch_name=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null)
+	if ! branch_name=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null); then
+		branch_name="unknown"
+	fi
 	if [[ -z "$branch_name" ]]; then
 		branch_name="unknown"
 	fi
