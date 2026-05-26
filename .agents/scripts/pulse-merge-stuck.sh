@@ -1026,9 +1026,9 @@ Closing this stale zero-progress meta-issue so auto-dispatch does not spend work
 # age gate — zero-progress detection wants the wider population (any cycle
 # with eligible-unmerged > 0 + zero merges is a candidate, regardless of age).
 # It must still exclude PRs that the merge pass already proved are not mergeable
-# in this cycle (for example failing required checks or origin:worker PRs with
-# no linked issue), otherwise a legitimate skip becomes a false zero-progress
-# structural-block signal.
+# in this cycle (for example failing required checks, origin:interactive PRs
+# held for manual merge, or origin:worker PRs with no linked issue), otherwise a
+# legitimate skip becomes a false zero-progress structural-block signal.
 #
 # Args: $1 = repo_slug
 # Stdout: integer count
@@ -1052,6 +1052,14 @@ _pms_pr_counts_for_zero_progress() {
 	if declare -F _check_required_checks_passing >/dev/null 2>&1; then
 		if ! _check_required_checks_passing "$repo_slug" "$pr_number" >/dev/null 2>&1; then
 			echo "[pulse-merge-stuck] _pms_count_eligible_unmerged_for_repo: excluding PR #${pr_number} in ${repo_slug} — required checks are not provably passing" >>"$LOGFILE"
+			return 1
+		fi
+	fi
+
+	if [[ ",${labels_str}," == *",origin:interactive,"* ]]; then
+		if ! declare -F _interactive_pr_auto_merge_allowed >/dev/null 2>&1 \
+			|| ! _interactive_pr_auto_merge_allowed "$pr_number" "$repo_slug" "$labels_str" >/dev/null 2>&1; then
+			echo "[pulse-merge-stuck] _pms_count_eligible_unmerged_for_repo: excluding PR #${pr_number} in ${repo_slug} — origin:interactive PR requires manual merge" >>"$LOGFILE"
 			return 1
 		fi
 	fi
