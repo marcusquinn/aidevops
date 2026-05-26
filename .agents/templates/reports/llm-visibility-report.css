@@ -1977,8 +1977,8 @@ a {
 
   .report-meta-grid,
   .tactic-grid,
-    .stats-strip,
-    .summary-stats,
+  .stats-strip,
+  .summary-stats,
   .sources-layout,
   .severity-key,
   .brand-swatch-grid,
@@ -1992,7 +1992,6 @@ a {
   .privacy-note,
   .toc-list p,
   .ledger-list p,
-  .visibility-bars p,
   .manifest-card dl,
   .dossier-card dl,
   .manifest-card ul,
