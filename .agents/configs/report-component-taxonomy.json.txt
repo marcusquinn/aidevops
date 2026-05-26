@@ -307,8 +307,12 @@
         "component",
         "label",
         "value",
+        "unit",
         "note",
-        "source_id"
+        "delta",
+        "period",
+        "source_id",
+        "status"
       ],
       "rendering_notes": "Large per-metric card with figure, note, delta/period, and provenance footer."
     },
@@ -330,15 +334,14 @@
       "required_fields": [
         "id",
         "component",
-        "series",
-        "threshold",
-        "evidence"
+        "series"
       ],
       "item_required_fields": [
         "label",
         "value",
         "unit",
-        "status"
+        "status",
+        "evidence"
       ],
       "rendering_notes": "Horizontal bar rows for answer-engine citation/mention share or score distribution."
     },
@@ -380,7 +383,8 @@
         "component",
         "rule",
         "body",
-        "owner"
+        "owner",
+        "effective_date"
       ],
       "rendering_notes": "Redaction/public-artifact rule displayed before sensitive evidence references."
     },
@@ -425,6 +429,7 @@
         "owner",
         "due",
         "source_ids",
+        "status",
         "evidence"
       ],
       "rendering_notes": "One remediation per card with state header and provenance footer."
@@ -457,7 +462,8 @@
         "acceptance",
         "verification",
         "owner",
-        "due"
+        "due",
+        "rollback"
       ],
       "rendering_notes": "Worker-ready handoff block where each field maps to an implementation step or acceptance check."
     },
@@ -486,7 +492,8 @@
         "token_type",
         "sample",
         "value",
-        "usage"
+        "usage",
+        "constraint"
       ],
       "rendering_notes": "Style-guide/report-design card for colour swatches, type samples, component usage, and constraints."
     },
