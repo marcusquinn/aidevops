@@ -703,8 +703,8 @@ _worker_external_terminal_complete() {
 	local session_key="$1"
 	local work_dir="$2"
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
-	local issue_number=""
-	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
+	local temp="${session_key#issue-}"
+	local issue_number="${temp%%[!0-9]*}"
 
 	[[ "$session_key" == issue-* ]] || return 1
 	[[ -n "$repo_slug" && -n "$issue_number" ]] || return 1
@@ -729,9 +729,10 @@ _worker_external_terminal_complete() {
 	[[ -n "$issue_pr_numbers" ]] || return 1
 
 	local branch_pr_number=""
+	local padded_issue_prs=$'\n'"$issue_pr_numbers"$'\n'
 	while IFS= read -r branch_pr_number; do
 		[[ -n "$branch_pr_number" ]] || continue
-		if printf '%s\n' "$issue_pr_numbers" | grep -qx "$branch_pr_number"; then
+		if [[ "$padded_issue_prs" == *$'\n'"$branch_pr_number"$'\n'* ]]; then
 			print_info "[lifecycle] worker_external_terminal complete session=${session_key} issue=${issue_number} branch=${branch_name} pr=${branch_pr_number}"
 			return 0
 		fi
