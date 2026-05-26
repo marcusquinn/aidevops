@@ -34,11 +34,12 @@ def flush_paragraph(body: list[str], states: dict[str, object]) -> None:
 
 
 def handle_table(line: str, body: list[str], states: dict[str, object]) -> bool:
-    if not line.startswith("|") or not line.endswith("|"):
+    stripped = line.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
         return False
-    cells = [inline_markup(cell.strip()) for cell in split_markdown_table_row(line)]
+    cells = [inline_markup(cell.strip()) for cell in split_markdown_table_row(stripped)]
     raw_cells = [html.unescape(cell) for cell in cells]
-    if all(re.match(r"^:?-{3,}:?$", cell) for cell in raw_cells):
+    if all(re.match(r"^:?-+:?$", cell) for cell in raw_cells):
         return True
     if not states["table"]:
         close_blocks(body, states)
