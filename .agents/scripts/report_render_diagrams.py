@@ -25,15 +25,16 @@ def mermaid_graph(code_text: str) -> tuple[dict[str, str], list[tuple[str, str]]
     for line in code_text.splitlines():
         if "-->" not in line:
             continue
-        left, right = [part.strip() for part in line.split("-->", 1)]
-        left_id, left_label = mermaid_node_parts(left)
-        right_id, right_label = mermaid_node_parts(right)
-        if left_id and left_id not in nodes:
-            nodes[left_id] = left_label
-        if right_id and right_id not in nodes:
-            nodes[right_id] = right_label
-        if left_id and right_id:
-            edges.append((left_id, right_id))
+        parts = [part.strip() for part in line.split("-->")]
+        for index in range(len(parts) - 1):
+            left_id, left_label = mermaid_node_parts(parts[index])
+            right_id, right_label = mermaid_node_parts(parts[index + 1])
+            if left_id and left_id not in nodes:
+                nodes[left_id] = left_label
+            if right_id and right_id not in nodes:
+                nodes[right_id] = right_label
+            if left_id and right_id:
+                edges.append((left_id, right_id))
     return nodes, edges
 
 

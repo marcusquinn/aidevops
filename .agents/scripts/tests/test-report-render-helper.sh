@@ -381,6 +381,28 @@ PYHTML
 	return 0
 }
 
+test_mermaid_renderer_supports_chained_arrows() {
+	if python3 - "${SCRIPT_DIR}/.." <<'PYHTML'
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(sys.argv[1]).resolve()))
+from report_render_diagrams import mermaid_graph
+
+nodes, edges = mermaid_graph("A[Start] --> B[Middle] --> C[Done]")
+if list(nodes.items()) != [("A", "Start"), ("B", "Middle"), ("C", "Done")]:
+    raise SystemExit(1)
+if edges != [("A", "B"), ("B", "C")]:
+    raise SystemExit(1)
+PYHTML
+	then
+		print_result "Mermaid renderer supports chained arrows" 0
+	else
+		print_result "Mermaid renderer supports chained arrows" 1 "Expected A --> B --> C to create both edges"
+	fi
+	return 0
+}
+
 test_multiline_markdown_paragraph() {
 	local _input="${TEST_ROOT}/paragraph.md"
 	local _out="${TEST_ROOT}/paragraph.html"
@@ -537,6 +559,7 @@ main() {
 	test_markdown_table_uses_header_cells
 	test_markdown_table_preserves_escaped_pipes
 	test_mermaid_renderer_uses_node_ids
+	test_mermaid_renderer_supports_chained_arrows
 	test_multiline_markdown_paragraph
 	test_print_keep_with_heading_groups
 	test_render_json_array_is_resilient
