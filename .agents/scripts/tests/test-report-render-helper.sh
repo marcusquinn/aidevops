@@ -337,6 +337,23 @@ MARKDOWN
 	return 0
 }
 
+test_markdown_table_accepts_indented_single_dash_separator() {
+	local _input="${TEST_ROOT}/table-indented-single-dash.md"
+	local _out="${TEST_ROOT}/table-indented-single-dash.html"
+	cat >"$_input" <<'MARKDOWN'
+# Table
+
+  | Component | Evidence |
+  | - | :-: |
+  | AIO | {{evidence:verified}} |
+MARKDOWN
+	"$HELPER_SH" render "$_input" --template editorial-evidence --output "$_out"
+	assert_contains "$_out" "<th>Component</th>" "Markdown table accepts indented table headers"
+	assert_contains "$_out" "<td>AIO</td>" "Markdown table accepts indented table body"
+	assert_not_contains "$_out" "<td>-</td>" "Markdown table treats single-dash separator as separator"
+	return 0
+}
+
 test_markdown_table_preserves_escaped_pipes() {
 	local _input="${TEST_ROOT}/table-escaped-pipe.md"
 	local _out="${TEST_ROOT}/table-escaped-pipe.html"
@@ -583,6 +600,7 @@ main() {
 	test_style_token_parser_handles_long_headers_and_tabs
 	test_style_css_uses_paper_raised_token
 	test_markdown_table_uses_header_cells
+	test_markdown_table_accepts_indented_single_dash_separator
 	test_markdown_table_preserves_escaped_pipes
 	test_markdown_headings_deduplicate_anchor_ids
 	test_mermaid_renderer_uses_node_ids
