@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.19.4] - 2026-05-26
+
+### Fixed
+
+- seed isolated opencode continuation sessions (#24150)
+
 ## [3.19.2] - 2026-05-26
 
 ### Changed
