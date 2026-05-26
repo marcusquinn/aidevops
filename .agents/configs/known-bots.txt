@@ -1,12 +1,13 @@
-# Known bot accounts with token-efficiency skip rules (AGENTS.md "Bot comment noise skip when reading")
+# Known bot accounts with token-efficiency skip rules (reference/gh-command-discipline.md "Bot comment noise skip when reading")
 # One login per line. Lines starting with # are comments.
 # Shared by: unknown-bot-alert.yml, bot-noise-monitor-helper.sh
-# When adding a bot here, also add skip guidance to AGENTS.md "Bot comment noise skip when reading".
+# When adding a bot here, also add skip guidance to reference/gh-command-discipline.md "Bot comment noise skip when reading".
 coderabbitai[bot]
 sonarqubecloud[bot]
 codacy-production[bot]
 github-actions[bot]
 gemini-code-assist[bot]
+augmentcode[bot]
 codefactor-io[bot]
 socket-security[bot]
 qltybot[bot]
