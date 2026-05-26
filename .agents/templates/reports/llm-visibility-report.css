@@ -1574,7 +1574,7 @@ blockquote {
 .notification-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--report-space-3);
+  gap: var(--report-space-4);
   background: transparent;
   border: 0;
   border-radius: 0;
@@ -2489,9 +2489,9 @@ a {
     -webkit-box-decoration-break: clone;
     box-sizing: border-box;
     box-decoration-break: clone;
-    width: calc(100% - 12pt);
-    max-width: calc(100% - 12pt);
-    margin: 6mm 6pt 8mm;
+    width: 100%;
+    max-width: 100%;
+    margin: 6mm 0 8mm;
     break-inside: avoid-page;
     break-after: avoid-page;
     page-break-inside: avoid;
@@ -2610,9 +2610,9 @@ a {
     -webkit-box-decoration-break: clone;
     box-decoration-break: clone;
     box-sizing: border-box;
-    width: calc(100% - 12pt);
-    max-width: calc(100% - 12pt);
-    margin-inline: 6pt;
+    width: 100%;
+    max-width: 100%;
+    margin-inline: 0;
     overflow: visible;
     border-radius: 0 !important;
     box-shadow: none !important;
@@ -2623,9 +2623,9 @@ a {
     -webkit-box-decoration-break: clone;
     box-decoration-break: clone;
     box-sizing: border-box;
-    width: calc(100% - 12pt);
-    max-width: calc(100% - 12pt);
-    margin: 6mm 6pt 8mm;
+    width: 100%;
+    max-width: 100%;
+    margin: 6mm 0 8mm;
     overflow: visible;
     border-radius: 0 !important;
     box-shadow: none !important;
