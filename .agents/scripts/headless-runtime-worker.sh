@@ -704,7 +704,9 @@ _worker_external_terminal_complete() {
 	local work_dir="$2"
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
 	local issue_number=""
-	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
+	if [[ "$session_key" =~ ([0-9]+)$ ]]; then
+		issue_number="${BASH_REMATCH[1]}"
+	fi
 
 	[[ "$session_key" == issue-* ]] || return 1
 	[[ -n "$repo_slug" && -n "$issue_number" ]] || return 1
