@@ -45,6 +45,7 @@ STYLE_SLUGS = (
 )
 
 STYLE_SLUG_SET = frozenset(STYLE_SLUGS)
+SORTED_STYLE_SLUGS = tuple(sorted(STYLE_SLUG_SET))
 
 TOKEN_SECTION_PREFIXES = {
     "colors": "",
@@ -680,7 +681,7 @@ h3 {{ font-size: clamp(1.15rem, 1.5vw, 1.35rem); line-height: 1.24; }}
 def style_names() -> tuple[str, ...]:
     """Return supported DESIGN.md-backed report style identifiers."""
 
-    return tuple(sorted(STYLE_SLUG_SET))
+    return SORTED_STYLE_SLUGS
 
 
 def style_css(name: str) -> str:
