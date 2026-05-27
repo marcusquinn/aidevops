@@ -324,6 +324,35 @@ PY
 	return 0
 }
 
+test_style_css_rejects_unknown_slug() {
+	local _result=0
+	python3 - "$SCRIPT_DIR" <<'PY' || _result=$?
+from pathlib import Path
+import importlib.util
+import sys
+
+script_dir = Path(sys.argv[1])
+module_path = script_dir.parent / "report_render_styles.py"
+spec = importlib.util.spec_from_file_location("report_render_styles", module_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+
+try:
+    module.style_css("../outside")
+except ValueError as exc:
+    assert "Invalid style name" in str(exc)
+else:
+    raise AssertionError("invalid style slug was accepted")
+PY
+	if [[ "$_result" -ne 0 ]]; then
+		print_result "Style CSS rejects unknown slug" 1 "Expected invalid style names to raise before resolving DESIGN.md paths"
+		return 0
+	fi
+	print_result "Style CSS rejects unknown slug" 0
+	return 0
+}
+
 test_markdown_table_uses_header_cells() {
 	local _input="${TEST_ROOT}/table.md"
 	local _out="${TEST_ROOT}/table.html"
@@ -603,6 +632,7 @@ main() {
 	test_python_helper_reads_stdin_by_default
 	test_style_token_parser_handles_long_headers_and_tabs
 	test_style_css_uses_paper_raised_token
+	test_style_css_rejects_unknown_slug
 	test_markdown_table_uses_header_cells
 	test_markdown_table_accepts_indented_single_dash_separator
 	test_markdown_table_preserves_escaped_pipes
