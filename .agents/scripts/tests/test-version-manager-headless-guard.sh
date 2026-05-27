@@ -110,6 +110,18 @@ else
 fi
 
 reset_guard_env
+original_repo_root="$REPO_ROOT"
+REPO_ROOT="${TMPDIR:-/tmp}/aidevops-version-manager-missing-repo-root-arg-$$"
+rc=0
+_version_manager_has_approved_release_context 'release/precomputed' >/dev/null 2>&1 || rc=$?
+REPO_ROOT="$original_repo_root"
+if [[ "$rc" -eq 0 ]]; then
+	print_result 'release context accepts precomputed branch name' 0
+else
+	print_result 'release context accepts precomputed branch name' 1 "rc=$rc"
+fi
+
+reset_guard_env
 export AIDEVOPS_SESSION_KEY='RELEASE-20260525'
 rc=0
 _version_manager_has_approved_release_context >/dev/null 2>&1 || rc=$?
