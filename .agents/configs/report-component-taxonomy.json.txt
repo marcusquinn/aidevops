@@ -305,10 +305,8 @@
       "required_fields": [
         "id",
         "component",
-        "label",
         "value",
-        "note",
-        "source_id"
+        "note"
       ],
       "rendering_notes": "Large per-metric card with figure, note, delta/period, and provenance footer."
     },
@@ -334,9 +332,7 @@
       ],
       "item_required_fields": [
         "label",
-        "value",
-        "unit",
-        "status"
+        "value"
       ],
       "rendering_notes": "Horizontal bar rows for answer-engine citation/mention share or score distribution."
     },
@@ -377,8 +373,7 @@
         "id",
         "component",
         "rule",
-        "body",
-        "owner"
+        "body"
       ],
       "rendering_notes": "Redaction/public-artifact rule displayed before sensitive evidence references."
     },

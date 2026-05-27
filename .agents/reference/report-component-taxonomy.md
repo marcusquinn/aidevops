@@ -46,12 +46,12 @@ All components share these fields unless explicitly unnecessary: `id`, `componen
 | Code/example card | `id`, `component`, `title`, `language`, `code_or_example`, `context`, `copy_safe`, `evidence` | Mark whether content is illustrative or production-ready. Preserve fenced-code readability in Markdown. |
 | Good/bad rows | `id`, `component`, `title`, `rows[]` with `good`, `bad`, `reason`, `evidence` | Use for contrastive guidance. Avoid shaming language; focus on observable differences. |
 | Stats strip | `id`, `component`, `metrics[]` with `label`, `value`, `unit`, `delta`, `period`, `evidence` | Render as compact KPI cards. Always include period and unit. |
-| KPI card | `id`, `component`, `label`, `value`, `unit`, `note`, `delta`, `period`, `source_id`, `status` | Larger per-metric dossier card with header, figure, note, and provenance footer. Use for executive summary metrics. |
+| KPI card | `id`, `component`, `value`, `note` | Larger per-metric dossier card with header, figure, note, and provenance footer. Use for executive summary metrics. |
 | Facts table | `id`, `component`, `columns[]`, `rows[]`, `evidence` | Use for dense factual data. Keep columns stable across exports. |
-| Visibility bars | `id`, `component`, `series[]` with `label`, `value`, `unit`, `status`, `evidence` | Horizontal bar rows for answer-engine citation/mention share, score distribution, or token visibility. Always label threshold/window. |
+| Visibility bars | `id`, `component`, `series[]` with `label`, `value` | Horizontal bar rows for answer-engine citation/mention share, score distribution, or token visibility. Always label threshold/window. |
 | Source ledger | `id`, `component`, `sources[]` with `source_id`, `source_title`, `summary`, `confidence`, `sensitivity` | Row-based ledger for most referenced sources, usually backed by private evidence storage. |
 | Details note | `id`, `component`, `title`, `body`, `tone`, `evidence` | Render as aside/details block. Use for caveats, assumptions, or implementation notes. |
-| Privacy note | `id`, `component`, `rule`, `body`, `owner`, `effective_date` | High-visibility reminder for redaction/public-artifact rules. Use before source excerpts or screenshots. |
+| Privacy note | `id`, `component`, `rule`, `body` | High-visibility reminder for redaction/public-artifact rules. Use before source excerpts or screenshots. |
 | Industry card | `id`, `component`, `industry`, `title`, `context`, `pattern`, `implication`, `evidence` | Use when advice differs by vertical. Include the applicability boundary. |
 | Priority group | `id`, `component`, `title`, `priority`, `items[]`, `rationale`, `evidence` | Group actions by `critical`, `high`, `medium`, or `low`; sort critical first. |
 | Priority card | `id`, `component`, `priority`, `title`, `finding`, `owner`, `due`, `source_ids`, `status`, `evidence` | One remediation per card with state header and provenance footer. Use when a roadmap needs executive scanability. |
