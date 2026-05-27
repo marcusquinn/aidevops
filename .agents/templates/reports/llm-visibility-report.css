@@ -2003,12 +2003,6 @@ a {
     grid-template-columns: minmax(8rem, 0.32fr) minmax(0, 1fr) minmax(3.5rem, auto);
   }
 
-  .visibility-bars p::before,
-  .visibility-bars p::after {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
   .action-line {
     display: grid;
   }
