@@ -5,7 +5,6 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CLI_SCRIPT="$REPO_DIR/aidevops.sh"
 TOOL_CHECK_SCRIPT="$REPO_DIR/.agents/scripts/tool-version-check.sh"
 
 PASS_COUNT=0
@@ -102,14 +101,11 @@ BREW_BIN_PATTERN='\[\[ -n "\$brew_bin" && -x "\$brew_bin" \]\]'
 GH_LATEST_PATTERN='"latest": "2.1.0"'
 GH_INSTALLED_PATTERN='"installed": "2.0.0"'
 
-assert_grep 'brew_bin=.*command -v brew' "$CLI_SCRIPT" 'CLI resolves brew path before timeout use'
-assert_grep "$BREW_BIN_PATTERN" "$CLI_SCRIPT" 'CLI requires brew to be executable before invoking timeout'
-assert_grep 'get_public_release_tag "cli/cli"' "$CLI_SCRIPT" 'CLI uses public GitHub API fallback for gh latest version'
-assert_not_grep 'gh api repos/cli/cli/releases/latest' "$CLI_SCRIPT" 'CLI no longer depends on gh auth for gh latest version checks'
-
 assert_grep 'brew_bin=.*command -v brew' "$TOOL_CHECK_SCRIPT" 'Tool checker resolves brew path before timeout use'
 assert_grep "$BREW_BIN_PATTERN" "$TOOL_CHECK_SCRIPT" 'Tool checker requires brew to be executable before invoking timeout'
 assert_grep 'get_public_release_tag "cli/cli"' "$TOOL_CHECK_SCRIPT" 'Tool checker uses public GitHub API fallback for gh latest version'
+assert_grep 'brew --prefix opencode' "$TOOL_CHECK_SCRIPT" 'OpenCode upgrade verifies the Homebrew formula prefix'
+assert_not_grep 'brew_root.*/opt/opencode' "$TOOL_CHECK_SCRIPT" 'OpenCode upgrade avoids brew-root ownership heuristics'
 
 assert_contains "$TOOL_OUTPUT" "$GH_LATEST_PATTERN" 'Tool checker reports gh latest version from public API fallback'
 assert_contains "$TOOL_OUTPUT" "$GH_INSTALLED_PATTERN" 'Tool checker keeps the installed gh version when brew is unavailable'

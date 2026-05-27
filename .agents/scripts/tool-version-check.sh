@@ -71,8 +71,8 @@ done
 
 # Detect how OpenCode was installed — build the right upgrade command.
 # update_cmd is executed via `bash -c` so it must be a self-contained string.
-# Homebrew ownership must be checked before the npm fallback: Homebrew-managed
-# binaries live under the brew prefix and npm can fail with EEXIST against them.
+# Homebrew ownership must be checked before the npm fallback against the exact
+# opencode formula prefix; npm-managed binaries can also live under brew's root.
 # Bun-installed binaries still use the direct path heuristic because they live
 # under ~/.bun/bin/ and macOS lacks GNU `readlink -f` by default.
 # $1 = OpenCode package version to install with bun/npm when not Homebrew-owned.
@@ -83,14 +83,11 @@ _opencode_upgrade_cmd() {
 	printf '%s' \
 		'if r=$(command -v opencode 2>/dev/null); then ' \
 		'if command -v brew >/dev/null 2>&1; then ' \
-		'brew_root=$(brew --prefix 2>/dev/null || printf ""); ' \
 		'r_dir=$(cd "$(dirname "$r")" 2>/dev/null && pwd -P || printf ""); ' \
 		'r_link=$(readlink "$r" 2>/dev/null || printf ""); r_real="$r"; ' \
 		'if [[ -n "$r_link" ]]; then case "$r_link" in /*) r_real="$r_link" ;; *) r_real="$r_dir/$r_link" ;; esac; fi; ' \
 		'r_real_dir=$(cd "$(dirname "$r_real")" 2>/dev/null && pwd -P || printf ""); ' \
-		'brew_root_real=""; brew_formula_real=""; brew_formula=""; ' \
-		'[[ -n "$brew_root" ]] && brew_root_real=$(cd "$brew_root" 2>/dev/null && pwd -P || printf ""); ' \
-		'[[ -n "$brew_root_real" ]] && brew_formula="$brew_root_real/opt/opencode"; ' \
+		'brew_formula_real=""; brew_formula=$(brew --prefix opencode 2>/dev/null || printf ""); ' \
 		'[[ -n "$brew_formula" ]] && brew_formula_real=$(cd "$brew_formula" 2>/dev/null && pwd -P || printf ""); ' \
 		'if brew list --versions opencode >/dev/null 2>&1 && [[ -n "$brew_formula_real" ]] && { [[ "$r_dir" == "$brew_formula_real"/* ]] || [[ "$r_real_dir" == "$brew_formula_real"/* ]]; }; then ' \
 		'brew upgrade opencode || brew reinstall opencode; exit $?; ' \
