@@ -1059,7 +1059,7 @@ _seed_worker_db_session_context() {
 	# from the shared DB so the targeted row copy has compatible tables without
 	# importing unrelated session/message data.
 	if [[ ! -f "$worker_db" ]]; then
-		sqlite3 "$shared_db" .schema 2>/dev/null | sqlite3 "$worker_db" >/dev/null 2>&1 || return 0
+		sqlite3 -cmd ".timeout 5000" "$shared_db" .schema 2>/dev/null | sqlite3 "$worker_db" >/dev/null 2>&1 || return 0
 	fi
 
 	local shared_db_sql session_id_sql
