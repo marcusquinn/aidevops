@@ -61,12 +61,14 @@ _version_manager_is_headless_task_worker() {
 }
 
 _version_manager_has_approved_release_context() {
-	local branch_name=""
-	branch_name=$(_version_manager_current_branch_name)
+	local branch_name="${1:-}"
 	local session_key="${WORKER_SESSION_KEY:-${AIDEVOPS_SESSION_KEY:-}}"
 	local session_key_lower=""
 	local session_title="${AIDEVOPS_SESSION_TITLE:-${WORKER_SESSION_TITLE:-}}"
 	local session_title_lower=""
+	if [[ -z "$branch_name" ]]; then
+		branch_name=$(_version_manager_current_branch_name)
+	fi
 	session_key_lower=$(printf '%s' "$session_key" | tr '[:upper:]' '[:lower:]')
 	session_title_lower=$(printf '%s' "$session_title" | tr '[:upper:]' '[:lower:]')
 
@@ -113,10 +115,10 @@ _version_manager_guard_headless_release_scope() {
 
 	_version_manager_is_headless_task_worker || return 0
 	_version_manager_action_is_read_only "$action" "$@" && return 0
-	_version_manager_has_approved_release_context && return 0
 
 	local branch_name=""
 	branch_name=$(_version_manager_current_branch_name)
+	_version_manager_has_approved_release_context "$branch_name" && return 0
 
 	print_warning "Skipping version-manager ${action:-help}: release/write operations are blocked in ordinary headless task-worker context."
 	print_info "Task worker: ${WORKER_TASK_NUMBER:-unknown}; issue: ${WORKER_ISSUE_NUMBER:-unknown}; repo: ${REPO_ROOT}; session: ${WORKER_SESSION_KEY:-${AIDEVOPS_SESSION_KEY:-unknown}}; branch: ${branch_name}"
