@@ -62,7 +62,7 @@ _version_manager_is_headless_task_worker() {
 
 _version_manager_has_approved_release_context() {
 	local branch_name=""
-	branch_name=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+	branch_name=$(_version_manager_current_branch_name)
 	local session_key="${WORKER_SESSION_KEY:-${AIDEVOPS_SESSION_KEY:-}}"
 	local session_key_lower=""
 	local session_title="${AIDEVOPS_SESSION_TITLE:-${WORKER_SESSION_TITLE:-}}"
@@ -77,6 +77,17 @@ _version_manager_has_approved_release_context() {
 	[[ "$session_key_lower" == release-* || "$session_key_lower" == hotfix-* ]] && return 0
 	[[ "$session_title_lower" == release* || "$session_title_lower" == *" release" || "$session_title_lower" == *" release "* ]] && return 0
 	return 1
+}
+
+_version_manager_current_branch_name() {
+	local branch_name=""
+
+	branch_name=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+	if [[ -z "$branch_name" ]]; then
+		branch_name="unknown"
+	fi
+	printf '%s\n' "$branch_name"
+	return 0
 }
 
 _version_manager_action_is_read_only() {
@@ -105,12 +116,7 @@ _version_manager_guard_headless_release_scope() {
 	_version_manager_has_approved_release_context && return 0
 
 	local branch_name=""
-	if ! branch_name=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null); then
-		branch_name="unknown"
-	fi
-	if [[ -z "$branch_name" ]]; then
-		branch_name="unknown"
-	fi
+	branch_name=$(_version_manager_current_branch_name)
 
 	print_warning "Skipping version-manager ${action:-help}: release/write operations are blocked in ordinary headless task-worker context."
 	print_info "Task worker: ${WORKER_TASK_NUMBER:-unknown}; issue: ${WORKER_ISSUE_NUMBER:-unknown}; repo: ${REPO_ROOT}; session: ${WORKER_SESSION_KEY:-${AIDEVOPS_SESSION_KEY:-unknown}}; branch: ${branch_name}"
