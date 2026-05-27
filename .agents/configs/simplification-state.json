@@ -1616,9 +1616,9 @@
       "pr": 12910
     },
     ".agents/prompts/worker-efficiency-protocol.md": {
-      "at": "2026-05-26T02:05:20Z",
-      "hash": "b3068cbc8116ce329365b6aa09f829436dabb2a9",
-      "passes": 8,
+      "at": "2026-05-27T04:16:37Z",
+      "hash": "88a6061eb0bd3cba039f132810a473986120df16",
+      "passes": 9,
       "pr": 14943
     },
     ".agents/reference/agent-routing.md": {
@@ -2304,9 +2304,9 @@
       "pr": 15086
     },
     ".agents/scripts/headless-runtime-lib.sh": {
-      "at": "2026-05-26T05:27:02Z",
-      "hash": "607f5bab862ddd709d632dc3eec14b55daaed666",
-      "passes": 31,
+      "at": "2026-05-27T04:19:32Z",
+      "hash": "cb4321b2cda230f0f4f953e6e836b9fe8d66564a",
+      "passes": 32,
       "pr": 18707
     },
     ".agents/scripts/interactive-session-helper.sh": {
@@ -5283,10 +5283,10 @@
       "pr": 12754
     },
     ".agents/tools/design/design-md.md": {
-      "at": "2026-05-25T22:05:12Z",
-      "hash": "0d4f97604412340be40dd46862e4e2089b78f7f9",
+      "at": "2026-05-27T04:22:13Z",
+      "hash": "928cdf2dd0b881e925716d5a92b4956a74db7d6c",
       "issue": 16952,
-      "passes": 7,
+      "passes": 9,
       "pr": 16966
     },
     ".agents/tools/design/library/brands/airbnb/DESIGN.md": {

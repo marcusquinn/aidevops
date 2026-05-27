@@ -703,8 +703,8 @@ _worker_external_terminal_complete() {
 	local session_key="$1"
 	local work_dir="$2"
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
-	local temp="${session_key#issue-}"
-	local issue_number="${temp%%[!0-9]*}"
+	local issue_number=""
+	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
 
 	[[ "$session_key" == issue-* ]] || return 1
 	[[ -n "$repo_slug" && -n "$issue_number" ]] || return 1

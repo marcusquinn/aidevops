@@ -25,10 +25,10 @@ model: sonnet
 ## Quick Reference
 
 - **What**: Plain-text markdown capturing a complete visual design system for AI agents
-- **Normative spec**: [google-labs-code/design.md](https://github.com/google-labs-code/design.md) (Apache 2.0, format version `alpha`; aidevops tracks upstream changes beyond the original v0.1.0 adoption). Full spec: [`docs/spec.md`](https://github.com/google-labs-code/design.md/blob/main/docs/spec.md)
+- **Normative spec**: [google-labs-code/design.md](https://github.com/google-labs-code/design.md) (Apache 2.0, format version `alpha`; aidevops tracks upstream changes beyond the v0.2.0 review). Full spec: [`docs/spec.md`](https://github.com/google-labs-code/design.md/blob/main/docs/spec.md)
 - **Format**: YAML front matter (machine-readable tokens) + Markdown body (human-readable rationale)
 - **Location**: `DESIGN.md` in project root (alongside `AGENTS.md`)
-- **Validator**: `npx @google/design.md lint DESIGN.md` (lint, diff, export to tailwind/dtcg, spec; use the `designmd` bin alias in Windows package scripts)
+- **Validator**: `npx @google/design.md lint DESIGN.md` (lint, diff, export to `json-tailwind`/`css-tailwind`/`dtcg`, spec; use the `designmd` bin alias in Windows package scripts)
 - **Template**: `templates/DESIGN.md.template`
 - **Library**: `tools/design/library/` (86 brand examples, style templates, and report presentation presets)
 - **Preview**: `tools/design/library/_template/preview.html.template`
@@ -37,7 +37,7 @@ model: sonnet
 
 **Agent relationships:**
 
-Upstream `@google/design.md` v0.1.0 was reviewed as the initial open-source release of the CLI/linter. The current aidevops schema guidance already covers the release's agent-safe JSON output, `designmd` Windows alias, lint/diff/export/spec commands, and alpha-format token model; continue watching for v1 or schema-breaking releases before changing templates.
+Upstream `@google/design.md` v0.2.0 was reviewed after the initial open-source release. The current aidevops schema guidance covers the release's CSS color parsing, transparent hex support, Tailwind export format names, component-aware diff output, `designmd` Windows alias, lint/diff/export/spec commands, and alpha-format token model; continue watching for v1 or schema-breaking releases before changing templates.
 
 | Agent | Role | Relationship |
 |-------|------|--------------|
@@ -99,16 +99,18 @@ components:
 
 | Type | Format | Example |
 |------|--------|---------|
-| Color | `#` + hex, sRGB | `"#1A1C1E"` |
-| Dimension | number + unit (`px`, `em`, `rem`) | `48px`, `-0.02em` |
+| Color | CSS color parsed to sRGB | `"#1A1C1E"`, `oklch(62% 0.18 24)` |
+| Dimension | number + CSS length or percentage unit (`px`, `em`, `rem`, `%`) | `48px`, `-0.02em`, `100%` |
 | Token Reference | `{path.to.token}` | `{colors.primary}` |
 | Typography | object (see below) | *inline object* |
+
+**Colors:** v0.2.0 accepts short/long hex including alpha (`#RGB`, `#RGBA`, `#RRGGBB`, `#RRGGBBAA`), CSS named colors including `transparent`, and standard/CSS Color Module functional forms such as `rgb()`, `hsl()`, `hwb()`, `lab()`, `lch()`, `oklab()`, and `oklch()`. The model resolves them to sRGB for luminance/contrast checks and export.
 
 **Typography object:** `fontFamily`, `fontSize`, `fontWeight`, `lineHeight`, `letterSpacing`, `fontFeature`, `fontVariation`. `lineHeight` accepts a Dimension or a unitless multiplier. `fontWeight` accepts a bare number or quoted string.
 
 **Token references** wrap a dotted path in curly braces: `{colors.primary-60}`, `{typography.body-md}`, `{rounded.sm}`. Components may reference composite tokens like `{typography.label-md}`; other groups must reference primitive values.
 
-Component properties may also use bare numeric values where CSS/design systems commonly expect numbers, such as `fontWeight: 600` or `borderWidth: 1`. The upstream model handler stores these numbers as-is.
+Component properties may also use bare numeric values or Dimensions where CSS/design systems commonly expect them, such as `height: 44px`, `width: 100%`, `size: 16px`, or `padding: 12px`. The upstream model handler stores numeric values as-is.
 
 ### Canonical Section Order
 
@@ -153,7 +155,7 @@ components:
     backgroundColor: "{colors.tertiary-container}"
 ```
 
-Valid component properties: `backgroundColor`, `textColor`, `typography`, `rounded`, `padding`, `size`, `height`, `width`, `fontWeight`, `borderWidth`. Variants (hover, active, pressed, disabled) are expressed as **separate component entries with a related key name** — NOT nested under the base component.
+Valid component properties in v0.2.0: `backgroundColor`, `textColor`, `typography`, `rounded`, `padding`, `size`, `height`, `width`. Unknown component properties are accepted with a warning, so keep template/library tokens on the known property set unless a project intentionally needs an extension. Variants (hover, active, pressed, disabled) are expressed as **separate component entries with a related key name** — NOT nested under the base component.
 
 ### Unknown Content Behaviour
 
@@ -175,15 +177,18 @@ npx @google/design.md lint DESIGN.md
 # Diff: detect token regressions between versions, including components
 npx @google/design.md diff DESIGN.md DESIGN-v2.md
 
-# Export: tokens to Tailwind theme config or DTCG tokens.json
-npx @google/design.md export --format tailwind DESIGN.md > tailwind.theme.json
+# Export: tokens to Tailwind theme config/CSS or DTCG tokens.json
+npx @google/design.md export --format json-tailwind DESIGN.md > tailwind.theme.json
+npx @google/design.md export --format css-tailwind DESIGN.md > theme.css
 npx @google/design.md export --format dtcg DESIGN.md > tokens.json
 
 # Spec: output the format spec (useful for injecting into agent prompts)
 npx @google/design.md spec --rules
 ```
 
-**Linter rules (eight, verified against `@google/design.md` v0.1.1):**
+`tailwind` remains a backwards-compatible alias for `json-tailwind`; prefer explicit `json-tailwind` or `css-tailwind` in new docs and scripts.
+
+**Linter rules (eight, verified against `@google/design.md` v0.2.0):**
 
 | Rule | Severity | What it checks |
 |------|----------|---------------|
@@ -231,7 +236,7 @@ Choose method based on what exists:
 
 **For coding agents:** Drop `DESIGN.md` in project root. Tell the agent: `"Build a landing page following DESIGN.md"`. The agent reads YAML tokens for exact values and prose for rationale — specific, reproducible output.
 
-**For Tailwind projects:** Export tokens with `npx @google/design.md export --format tailwind DESIGN.md > tailwind.theme.json` and import into `tailwind.config.js`. Design updates in DESIGN.md propagate automatically on next build.
+**For Tailwind projects:** Export tokens with `npx @google/design.md export --format json-tailwind DESIGN.md > tailwind.theme.json` for Tailwind v3 `theme.extend` JSON, or `npx @google/design.md export --format css-tailwind DESIGN.md > theme.css` for a Tailwind v4 `@theme { ... }` block. Design updates in DESIGN.md propagate automatically on next build.
 
 **For design review:** Generate `preview.html` from `tools/design/library/_template/preview.html.template`. Shows colour swatches, typography scale, button variants, card/input examples, spacing scale, light/dark modes.
 

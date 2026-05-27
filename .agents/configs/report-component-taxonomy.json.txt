@@ -330,9 +330,7 @@
       "required_fields": [
         "id",
         "component",
-        "series",
-        "threshold",
-        "evidence"
+        "series"
       ],
       "item_required_fields": [
         "label",
@@ -425,6 +423,7 @@
         "owner",
         "due",
         "source_ids",
+        "status",
         "evidence"
       ],
       "rendering_notes": "One remediation per card with state header and provenance footer."

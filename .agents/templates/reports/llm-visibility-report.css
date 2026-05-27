@@ -1977,8 +1977,8 @@ a {
 
   .report-meta-grid,
   .tactic-grid,
-    .stats-strip,
-    .summary-stats,
+  .stats-strip,
+  .summary-stats,
   .sources-layout,
   .severity-key,
   .brand-swatch-grid,
@@ -1992,12 +1992,21 @@ a {
   .privacy-note,
   .toc-list p,
   .ledger-list p,
-  .visibility-bars p,
   .manifest-card dl,
   .dossier-card dl,
   .manifest-card ul,
   .dossier-card ul {
     grid-template-columns: 1fr;
+  }
+
+  .visibility-bars p {
+    grid-template-columns: minmax(8rem, 0.32fr) minmax(0, 1fr) minmax(3.5rem, auto);
+  }
+
+  .visibility-bars p::before,
+  .visibility-bars p::after {
+    grid-column: 2;
+    grid-row: 1;
   }
 
   .action-line {
