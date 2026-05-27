@@ -23,6 +23,7 @@ def close_blocks(body: list[str], states: dict[str, object]) -> None:
     if states.get("table"):
         body.append("</tbody></table>")
         states["table"] = False
+        states["table_body_started"] = False
 
 
 def flush_paragraph(body: list[str], states: dict[str, object]) -> None:
@@ -37,17 +38,20 @@ def handle_table(line: str, body: list[str], states: dict[str, object]) -> bool:
     stripped = line.strip()
     if not stripped.startswith("|") or not stripped.endswith("|"):
         return False
-    cells = [inline_markup(cell.strip()) for cell in split_markdown_table_row(stripped)]
-    raw_cells = [html.unescape(cell) for cell in cells]
-    if all(re.match(r"^:?-+:?$", cell) for cell in raw_cells):
+    raw_cells = [cell.strip() for cell in split_markdown_table_row(stripped)]
+    is_separator_row = all(re.match(r"^:?-{3,}:?$", html.unescape(cell)) for cell in raw_cells)
+    if is_separator_row and states.get("table") and not states.get("table_body_started"):
         return True
+    cells = [inline_markup(cell) for cell in raw_cells]
     if not states["table"]:
         close_blocks(body, states)
         body.append("<table><thead>")
         states["table"] = True
+        states["table_body_started"] = False
         body.append("<tr>{}</tr></thead><tbody>".format("".join(f"<th>{cell}</th>" for cell in cells)))
         return True
     body.append("<tr>{}</tr>".format("".join(f"<td>{cell}</td>" for cell in cells)))
+    states["table_body_started"] = True
     return True
 
 
