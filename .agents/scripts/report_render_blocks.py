@@ -41,6 +41,7 @@ def handle_table(line: str, body: list[str], states: dict[str, object]) -> bool:
     raw_cells = [cell.strip() for cell in split_markdown_table_row(stripped)]
     is_separator_row = all(re.match(r"^:?-{3,}:?$", html.unescape(cell)) for cell in raw_cells)
     if is_separator_row and states.get("table") and not states.get("table_body_started"):
+        states["table_body_started"] = True
         return True
     cells = [inline_markup(cell) for cell in raw_cells]
     if not states["table"]:

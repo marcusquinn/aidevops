@@ -44,6 +44,7 @@ def test_handle_table_skips_only_header_separator_row() -> None:
 
     assert handle_table("| Name | Value |", body, states)
     assert handle_table("| --- | --- |", body, states)
+    assert handle_table("| --- | --- |", body, states)
     assert handle_table("| - | - |", body, states)
     assert handle_table("| --- | --- |", body, states)
 
@@ -52,6 +53,7 @@ def test_handle_table_skips_only_header_separator_row() -> None:
         [
             "<table><thead>",
             "<tr><th>Name</th><th>Value</th></tr></thead><tbody>",
+            "<tr><td>---</td><td>---</td></tr>",
             "<tr><td>-</td><td>-</td></tr>",
             "<tr><td>---</td><td>---</td></tr>",
         ],
