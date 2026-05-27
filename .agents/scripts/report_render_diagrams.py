@@ -65,9 +65,13 @@ def mermaid_edge_arrow(left_position: tuple[int, int, int, int], right_position:
     return f'<path d="M {left_x + 80} {left_y + 63} V {mid_y} H {right_x + 80} V {right_y - 10}" class="diagram-arrow" fill="none" />'
 
 
-def mermaid_sequential_arrow(index: int, node_ids: list[str], positions: dict[str, tuple[int, int, int, int]], layout: dict[str, int]) -> str:
-    node_id = node_ids[index]
-    next_id = node_ids[index + 1]
+def mermaid_sequential_arrow(
+    index: int,
+    node_id: str,
+    next_id: str,
+    positions: dict[str, tuple[int, int, int, int]],
+    layout: dict[str, int],
+) -> str:
     x, y, _, _ = positions[node_id]
     next_x, next_y, _, _ = positions[next_id]
     if (index + 1) % layout["columns"] == 0:
@@ -101,8 +105,8 @@ def render_mermaid_svg(code_text: str) -> str:
             arrows.append(mermaid_edge_arrow(positions[left_id], positions[right_id]))
     if not arrows:
         node_ids = list(nodes.keys())
-        for index in range(len(node_ids) - 1):
-            arrows.append(mermaid_sequential_arrow(index, node_ids, positions, layout))
+        for index, (node_id, next_id) in enumerate(zip(node_ids, node_ids[1:])):
+            arrows.append(mermaid_sequential_arrow(index, node_id, next_id, positions, layout))
     return (
         '<figure class="mermaid-rendered" aria-label="Rendered Mermaid diagram">'
         f'<svg viewBox="0 0 {layout["width"]} {layout["height"]}" role="img" xmlns="http://www.w3.org/2000/svg">'
