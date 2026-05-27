@@ -56,6 +56,10 @@ authorized_keys
 
 # Exception for worker token helper (manages tokens, doesn't contain them)
 !.agents/scripts/worker-token-helper.sh
+!.agents/scripts/report-token-use-helper.sh
+!.agents/scripts/report-token-use-helper.py
+!.agents/scripts/commands/report-token-use.md
+!.agents/scripts/tests/test-report-token-use-helper.sh
 !.agents/secretlint.md
 
 # Exception for credential/secret management scripts (not actual credentials)
