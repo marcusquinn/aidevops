@@ -44,6 +44,8 @@ STYLE_SLUGS = (
     "signal-agency",
 )
 
+STYLE_SLUG_SET = frozenset(STYLE_SLUGS)
+
 TOKEN_SECTION_PREFIXES = {
     "colors": "",
     "rounded": "rounded.",
@@ -256,6 +258,9 @@ def _parse_tokens(lines: list[str]) -> dict[str, str]:
 
 
 def _tokens_for(name: str) -> dict[str, str]:
+    if name not in STYLE_SLUG_SET:
+        raise ValueError(f"Invalid style name: {name}")
+
     path = _brand_root() / name / "DESIGN.md"
     tokens = dict(DEFAULT_TOKENS)
     if path.exists():
@@ -675,7 +680,7 @@ h3 {{ font-size: clamp(1.15rem, 1.5vw, 1.35rem); line-height: 1.24; }}
 def style_names() -> tuple[str, ...]:
     """Return supported DESIGN.md-backed report style identifiers."""
 
-    return tuple(sorted(STYLE_SLUGS))
+    return tuple(sorted(STYLE_SLUG_SET))
 
 
 def style_css(name: str) -> str:
