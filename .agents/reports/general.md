@@ -85,6 +85,7 @@ custom agent/routine can collect, monitor, and act on the recommendations.
 | Engineering, code quality, delivery | `reports/development.md` | Structure, citations, export |
 | Campaigns, content, CRO, sales | `reports/marketing.md` | Structure, citations, export |
 | Finance, operations, company runners | `reports/business.md` | Structure, citations, export |
+| AI token, model, session, and MCP usage | `reports/token-use.md` | Local evidence bundle and session metrics |
 | Export format or PDF styling | `reports/exporters.md` | Canonical Markdown contract |
 | Recurring collection or custom client agent | `reports/routine-handoff.md` | Handoff completeness |
 

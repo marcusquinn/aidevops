@@ -111,6 +111,7 @@ The result: an AI operations platform that manages projects across every busines
 - `/open-design` - Manage the optional Open Design companion studio
 - `/auto-browse` - Learn, optimize, and graduate repeatable browser operations and web data-mining workflows
 - `/report-render` - Render report-ready Markdown or JSON to HTML with sticky TOC, print CSS, evidence badges, and source cards for PDF export
+- `/report-token-use` - Generate a local per-session token, model, compaction, and MCP-use report
 
 ### Agent Structure
 
@@ -2136,6 +2137,7 @@ Configure time tracking per-repo via `.aidevops.json`.
 | `/tech-stack` | Detect technology stacks of URLs or find sites using specific technologies |
 | `/mission` | Scope a high-level goal into milestones and features for autonomous execution |
 | `/budget-analysis` | Analyze AI model spend, burn rate, and cost optimization opportunities |
+| `/report-token-use` | Generate a local per-session token, model, compaction, and MCP-use report |
 
 **Content Workflow**:
 
