@@ -93,8 +93,10 @@ agents can produce consistent Markdown, HTML, and PDF output.
 | Taxonomy component | DESIGN.md component token | Required design decisions |
 |--------------------|---------------------------|---------------------------|
 | Cover/meta | `report-cover`, `report-meta` | Title hierarchy, client/project metadata, date/version, confidentiality marker |
+| Manifest card | `report-manifest-card` | Prepared-for, scope, period, run ID, source count, next audit, redaction level |
 | Executive summary | `report-summary` | Key finding density, status colour, 3-5 bullet rhythm |
 | Sticky/table of contents | `report-toc`, `report-toc-active` | Active state, anchor offsets, mobile collapse, print fallback |
+| Inline TOC list | `report-inline-toc` | In-body section rows with section number, title, anchor, and compact metadata |
 | Chapter hero | `report-chapter-hero` | Section label, title, lead paragraph, page-break handling |
 | Action line | `report-action-line` | Verb-first action, owner, due date, priority indicator |
 | Evidence badge | `report-evidence-badge-*` | Confidence/status colours, label typography, icon/text fallback |
@@ -102,12 +104,19 @@ agents can produce consistent Markdown, HTML, and PDF output.
 | Code/example card | `report-code-card`, `report-example-card` | Mono type, copy affordance, line wrapping, caption/source |
 | Good/bad row | `report-comparison-row-good`, `report-comparison-row-bad` | Paired contrast, accessible icons, avoid colour-only meaning |
 | Stats strip | `report-stats-strip`, `report-stat` | Large numerals, labels, trend deltas, mobile wrapping |
+| KPI card | `report-kpi-card` | Header/status, large numeric value, short note, source ID, period, delta |
 | Facts table | `report-facts-table` | Caption, headers, zebra/row hover, numeric alignment, source column |
+| Visibility bars | `report-visibility-bars` | Horizontal bar rows for engine coverage with labels, values, status, threshold/window |
+| Source ledger | `report-source-ledger` | Source ID, source title, summary, confidence, sensitivity/storage note |
 | Details note | `report-details-note` | Collapsible HTML behaviour, Markdown fallback, print-expanded default |
+| Privacy note | `report-privacy-note` | Public-export rule, owner, effective date, and redaction constraints |
 | Industry card | `report-industry-card` | Segment label, benchmark, opportunity, caveat |
 | Priority group | `report-priority-group-*` | Critical/high/medium/low palette, sorting, section intro |
+| Priority card | `report-priority-card-*` | One finding per card: priority, owner, due, source IDs, status/evidence, verification |
 | Checklist | `report-checklist`, `report-checklist-item` | Done/open/blocked states, tap target size, print checkboxes |
+| Implementation brief | `report-implementation-brief` | Task/files/acceptance/verify/owner/due/rollback fields for worker handoff |
 | Source card | `report-source-card` | URL/title, author/publisher, access date, evidence quote |
+| Brand specimen card | `report-brand-specimen` | Token sample, value, usage, constraints, and do/don't notes for brand style guides |
 | Myth callout | `report-myth-callout` | Myth/fact contrast, warning tone without alarmism |
 | Recommendation | `report-recommendation` | Decision, rationale, expected outcome, next owner |
 | Risk/assumption note | `report-risk-note`, `report-assumption-note` | Severity, uncertainty, validation path |

@@ -108,6 +108,21 @@ components:
   table-report:
     backgroundColor: "{colors.background}"
     textColor: "{colors.on-surface}"
+  manifest-card:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.on-surface}"
+    rounded: "{rounded.none}"
+  priority-card:
+    backgroundColor: "{colors.surface}"
+    textColor: "{colors.on-surface}"
+    rounded: "{rounded.none}"
+  visibility-bars:
+    backgroundColor: "{colors.outline-hair}"
+    textColor: "{colors.on-surface}"
+    typography: "{typography.label-md}"
+  privacy-note:
+    backgroundColor: "{colors.paper-alt}"
+    textColor: "{colors.on-surface}"
 ---
 
 <!-- SPDX-License-Identifier: MIT -->
@@ -142,6 +157,7 @@ Signal Agency is an editorial evidence-report system for agency AI-search audits
 - **Code blocks**: light paper code panels (`#F5F6F4` background, `#0B0D0A` ink, `#B93A19` labels/accent) with square corners. Avoid dark terminal blocks unless the surrounding artifact is explicitly dark-mode.
 - **Grid**: 12 columns, max width 1280px, responsive gutter `20-56px`, body copy under 56ch.
 - **Evidence grammar**: verified/partial/inferred/missing badges, source IDs, priority squares, confidence bars, trend glyphs.
+- **Report dossier grammar**: manifest card, KPI cards, inline TOC, engine findings table, visibility bars, source ledger, privacy note, priority cards, preserve/fix split, implementation brief, owner checklist.
 
 ## Source Review
 
@@ -150,5 +166,5 @@ Signal Agency is an editorial evidence-report system for agency AI-search audits
 - **Prompt-guard**: `prompt-guard-helper.sh scan-file` returned CLEAN.
 - **Observed fonts**: Bricolage Grotesque, Instrument Sans, JetBrains Mono via Google Fonts stylesheet in the source specimen. Fontsource package metadata reports all three as `OFL-1.1`; retain each upstream `OFL.txt` if bundling/self-hosting font binaries.
 - **Observed token facts**: CSS custom properties for paper, ink, soft rules, terracotta signal, semantic state hues, type scale, 4px spacing base, 1280px max page, responsive gutters.
-- **Observed component taxonomy**: masthead, cover, swatches, type rows, pills, evidence tags, priority markers, stats, tables, source ledger, callouts, preserve/fix split, action line, implementation brief, dossier cards, KPI cards, LEDs, stamps, tabs, checklist, bar visualisation, footer.
+- **Observed component taxonomy**: masthead, cover, manifest metadata card, inline TOC, swatches, type rows, pills, evidence tags, priority markers, stats, tables, source ledger, privacy note, callouts, preserve/fix split, action line, implementation brief, dossier cards, KPI cards, LEDs, stamps, tabs, owner checklist, horizontal visibility bars, footer.
 - **Rule**: source facts inform this DESIGN.md; renderer tokens use accessible sRGB approximations for OKLCH source colours and web-safe fallbacks when remote fonts are unavailable.

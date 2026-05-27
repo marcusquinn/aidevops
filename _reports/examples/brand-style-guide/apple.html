@@ -1,0 +1,3263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Report</title>
+<style>/* SPDX-License-Identifier: MIT */
+/* SPDX-FileCopyrightText: 2025-2026 Marcus Quinn */
+
+:root {
+  color-scheme: light;
+  --report-font-heading: "Newsreader", Georgia, "Times New Roman", "Noto Serif", serif;
+  --report-font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --report-font-code: "IBM Plex Mono", "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --report-paper: #f8f6f1;
+  --report-paper-raised: #fffdf8;
+  --report-panel: #fffdf8;
+  --report-surface: #ffffff;
+  --report-ink: #111827;
+  --report-ink-muted: #4b5563;
+  --report-ink-soft: #6b7280;
+  --report-rule: #d8d2c4;
+  --report-rule-strong: #b8ae9c;
+  --report-blue: #2563eb;
+  --report-amber: #b7791f;
+  --report-green: #147a4a;
+  --report-red: #b42318;
+  --report-violet: #6d28d9;
+  --report-good-bg: #eaf7ef;
+  --report-bad-bg: #fdecec;
+  --report-code-bg: #fffdf8;
+  --report-code-ink: #111827;
+  --report-code-accent: #2563eb;
+  --report-action-bg: var(--report-ink);
+  --report-action-ink: #ffffff;
+  --report-info-bg: #eaf2ff;
+  --report-impact-bg: #fff5db;
+  --report-evidence-bg: #eaf7ef;
+  --report-myth-bg: #f7f2ff;
+  --report-radius-sm: 0.25rem;
+  --report-radius-md: 0.5rem;
+  --report-radius-lg: 0.875rem;
+  --report-radius-xl: 1.375rem;
+  --report-badge-radius: calc(var(--report-radius-lg) * 0.45);
+  --report-space-1: 0.25rem;
+  --report-space-2: 0.5rem;
+  --report-space-3: 1rem;
+  --report-space-4: 1.5rem;
+  --report-space-5: 2rem;
+  --report-space-6: 3rem;
+  --report-space-7: 4rem;
+  --report-page-max: 78rem;
+  --report-grid-gutter: 28px;
+  --report-badge-strong-bg: #eaf2ff;
+  --report-badge-strong-ink: #1d4ed8;
+  --report-badge-vendor-bg: #f4ecff;
+  --report-badge-vendor-ink: var(--report-violet);
+  --report-badge-practitioner-bg: #fff5db;
+  --report-badge-practitioner-ink: #92400e;
+  --report-badge-hygiene-bg: #f3f4f6;
+  --report-badge-hygiene-ink: #374151;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--report-paper);
+  color: var(--report-ink);
+  font-family: var(--report-font-body);
+  line-height: 1.65;
+  scroll-behavior: smooth;
+}
+
+body.report-body {
+  margin: 0;
+  background: var(--report-paper);
+  color: var(--report-ink);
+  font-family: var(--report-font-body);
+  font-size: 1rem;
+}
+
+.report-main {
+  font-size: clamp(1rem, 0.94rem + 0.18vw, 1.0625rem);
+  line-height: 1.68;
+}
+
+.report-main h1,
+.report-main h2,
+.report-main h3 {
+  max-width: 46ch;
+  color: var(--report-ink);
+  font-family: var(--report-font-heading);
+  line-height: 1.14;
+}
+
+.report-main h1 {
+  font-size: clamp(2.25rem, 5vw, 3.5rem);
+}
+
+.report-main h2 {
+  font-size: clamp(1.6rem, 3vw, 2.25rem);
+}
+
+.report-main h3 {
+  font-size: clamp(1.15rem, 1.5vw, 1.35rem);
+}
+
+.report-main p,
+.report-main li,
+.report-main blockquote {
+  orphans: 3;
+  widows: 3;
+}
+
+.report-shell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(16rem, 20rem);
+  gap: var(--report-space-5);
+  max-width: var(--report-page-max);
+  margin: 0 auto;
+  padding: var(--report-space-6) var(--report-space-5);
+}
+
+.report-main {
+  grid-column: 1;
+  min-width: 0;
+  counter-reset: report-chapter;
+}
+
+.report-main-flow {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+}
+
+.report-rest {
+  grid-row: 2;
+}
+
+.report-cover,
+.chapter-hero,
+.badge-key,
+.block-template,
+.brand-component-grid,
+.brand-swatch-grid,
+.brand-type-scale,
+.brief-card,
+.case-study-card,
+.dossier-card,
+.tactic-card,
+.example-card,
+.good-bad,
+.stats-strip,
+.facts-table-wrap,
+.details-note,
+.industry-card,
+.kpi-card,
+.ledger-list,
+.manifest-card,
+.priority-group,
+.priority-card,
+.checklist-card,
+.privacy-note,
+.source-card,
+.source-item,
+.source-list,
+.sources-layout,
+.sources-group,
+.specimen-card,
+.myth-callout,
+.summary-stats,
+.info-panel,
+.impact-panel,
+.evidence-panel,
+.action-panel,
+.severity-key,
+.accordion,
+.quote-card,
+.callout,
+.toc-list,
+.visibility-bars,
+.report-keep-with-heading,
+.version-summary {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+.report-cover {
+  margin-block-end: var(--report-space-7);
+  padding: clamp(2rem, 7vw, 4rem);
+  background: var(--report-paper-raised);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-xl);
+}
+
+.report-kicker,
+.eyebrow,
+.meta-label,
+.badge,
+.priority-label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  line-height: 1.35;
+  text-transform: uppercase;
+}
+
+.report-kicker,
+.eyebrow {
+  color: var(--report-blue);
+  margin: 0 0 var(--report-space-2);
+}
+
+.report-title,
+.chapter-title {
+  margin: 0;
+  color: var(--report-ink);
+  font-family: var(--report-font-heading);
+  font-weight: 600;
+  letter-spacing: -0.03em;
+}
+
+.report-title {
+  max-width: 12ch;
+  font-size: clamp(3rem, 8vw, 4rem);
+  line-height: 1.05;
+}
+
+.report-subtitle,
+.chapter-summary {
+  max-width: 62ch;
+  color: var(--report-ink-muted);
+  font-size: clamp(1.05rem, 2vw, 1.25rem);
+}
+
+.report-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--report-space-3);
+  margin-block-start: var(--report-space-5);
+  padding-block-start: var(--report-space-4);
+  border-block-start: 1px solid var(--report-rule);
+}
+
+.meta-item {
+  min-width: 0;
+}
+
+.meta-label {
+  display: block;
+  color: var(--report-ink-soft);
+}
+
+.meta-value {
+  display: block;
+  color: var(--report-ink);
+  font-weight: 650;
+}
+
+.sticky-toc {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  position: sticky;
+  top: calc(var(--report-space-4) + 5rem);
+  align-self: start;
+  margin-block-start: calc(2rem + var(--report-space-3));
+  max-height: calc(100vh - var(--report-space-5));
+  overflow: hidden;
+  padding: var(--report-space-3);
+  background: var(--report-panel);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-lg);
+  font-size: 0.875rem;
+  box-shadow: 0 12px 32px rgba(17, 24, 39, 0.1);
+}
+
+.sticky-toc h2 {
+  margin: 0 0 var(--report-space-2);
+  color: var(--report-ink);
+  font-size: 0.875rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sticky-toc-header {
+  display: block;
+  margin-block-end: var(--report-space-3);
+  padding-inline-end: 0.35rem;
+}
+
+.sticky-toc-header h2 {
+  margin: 0;
+}
+
+.report-body .sticky-toc-header h2 {
+  font-size: clamp(1.1rem, 2vw, 1.55rem);
+  line-height: 1;
+}
+
+.toc-pdf-actions {
+  grid-column: 2;
+  grid-row: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--report-space-2);
+  align-items: center;
+  align-self: start;
+  z-index: 2;
+  margin-block-end: var(--report-space-2);
+}
+
+.toc-pdf-link {
+  display: inline-flex;
+  min-width: 0;
+  min-height: 0;
+  min-inline-size: 3.2rem;
+  height: 2rem;
+  align-self: center;
+  flex: 0 0 auto;
+  align-items: center;
+  box-sizing: border-box;
+  justify-content: center;
+  padding: 0 0.7rem;
+  border: 1.5px solid var(--report-rule);
+  border-radius: var(--report-badge-radius);
+  background: var(--report-panel);
+  color: var(--report-ink);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  line-height: 1 !important;
+  text-align: center;
+  text-decoration: none !important;
+  white-space: nowrap;
+}
+
+.appendix-links,
+.anchor-links {
+  justify-content: center;
+}
+
+.appendix-links p,
+.anchor-links p {
+  justify-content: center;
+}
+
+.toc-pdf-link:hover,
+.toc-pdf-link:focus-visible {
+  border-color: var(--report-blue);
+  color: var(--report-blue);
+}
+
+.sticky-toc ol {
+  display: grid;
+  gap: var(--report-space-1);
+  max-height: calc(100vh - 9rem);
+  margin: 0;
+  overflow: auto;
+  padding: 0;
+  padding-inline-end: var(--report-space-1);
+  list-style: none;
+}
+
+.sticky-toc li.toc-chapter {
+  margin-block-start: var(--report-space-2);
+  padding-block-start: var(--report-space-2);
+  border-top: 1px solid var(--report-rule);
+}
+
+.sticky-toc ol a {
+  display: block;
+  padding: var(--report-space-1) var(--report-space-2);
+  border-left: 3px solid transparent;
+  color: var(--report-ink-muted);
+  line-height: 1.45;
+  text-decoration: none;
+}
+
+.sticky-toc li.toc-subsection a {
+  padding-inline-start: calc(var(--report-space-2) + 1rem);
+}
+
+.sticky-toc ol a[aria-current="true"],
+.sticky-toc ol a:hover,
+.sticky-toc ol a:focus-visible {
+  border-left-color: var(--report-blue);
+  color: var(--report-ink);
+  outline: none;
+}
+
+.report-main h2.chapter-heading {
+  counter-increment: report-chapter;
+  margin-block-start: var(--report-space-7);
+  padding-block-start: var(--report-space-5);
+  border-top: 1px solid var(--report-rule);
+}
+
+.report-main h2.chapter-heading::before {
+  content: "Chapter " counter(report-chapter);
+  display: block;
+  margin-block-end: var(--report-space-2);
+  color: var(--report-blue);
+  font-family: var(--report-font-body);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.report-main h2.no-chapter {
+  margin-block-start: var(--report-space-6);
+}
+
+.heading-number {
+  color: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.chapter-hero {
+  margin-block: var(--report-space-6) var(--report-space-4);
+  padding: var(--report-space-5);
+  background: var(--report-paper-raised);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-xl);
+}
+
+.chapter-title {
+  font-size: clamp(2rem, 5vw, 2.75rem);
+  line-height: 1.12;
+}
+
+.action-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--report-space-2) var(--report-space-3);
+  align-items: baseline;
+  margin-block: var(--report-space-4);
+  padding: var(--report-space-3) var(--report-space-4);
+  background: var(--report-surface);
+  color: var(--report-ink);
+  border: 1px solid var(--report-rule);
+  border-left: 4px solid var(--report-blue);
+  border-radius: var(--report-radius-md);
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.06);
+}
+
+.action-line strong {
+  display: inline-flex;
+  padding: 0.12rem 0.45rem;
+  background: rgba(37, 99, 235, 0.08);
+  color: var(--report-blue);
+  border-radius: var(--report-radius-sm);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--report-space-2);
+  align-items: center;
+  margin-block: var(--report-space-3);
+  padding: var(--report-space-3);
+  background: color-mix(in srgb, var(--report-paper-raised) 72%, transparent);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-md);
+  line-height: 1.65;
+}
+
+.badge-row p {
+  display: flex;
+  flex: 0 0 100%;
+  flex-wrap: wrap;
+  gap: var(--report-space-2);
+  align-items: center;
+  margin: 0;
+}
+
+.badge-row p + p {
+  padding-top: var(--report-space-2);
+  border-top: 1px solid color-mix(in srgb, var(--report-rule) 65%, transparent);
+}
+
+.badge-row p > strong {
+  min-width: 5.5rem;
+  color: var(--report-ink);
+  font-family: var(--report-font-code);
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.badge-row .evidence-label,
+.facts-table-wrap .evidence-label {
+  display: none;
+}
+
+.anchor-links,
+.appendix-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--report-space-3);
+  margin-block: var(--report-space-3);
+  line-height: 1.35;
+}
+
+.anchor-links p,
+.appendix-links p {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--report-space-3);
+  align-items: center;
+  margin: 0;
+}
+
+.anchor-links a,
+.appendix-links a {
+  display: inline-flex;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-badge-radius);
+  background: var(--report-surface);
+  color: var(--report-blue);
+  box-shadow: inset 0 -0.16em 0 color-mix(in srgb, var(--report-blue) 18%, transparent);
+  text-decoration: none;
+}
+
+.anchor-links a:hover,
+.anchor-links a:focus-visible,
+.appendix-links a:hover,
+.appendix-links a:focus-visible {
+  background: var(--report-paper-raised);
+  border-color: var(--report-blue);
+  box-shadow: inset 0 -0.22em 0 color-mix(in srgb, var(--report-blue) 28%, transparent);
+}
+
+.appendix-links a {
+  align-items: center;
+  gap: 0.45rem;
+  margin-block: 0;
+}
+
+.appendix-links a::before {
+  content: "";
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 1rem;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 2h8l4 4v16H6z' fill='none' stroke='black' stroke-width='2'/%3E%3Cpath d='M14 2v5h5' fill='none' stroke='black' stroke-width='2'/%3E%3C/svg%3E") center/contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M6 2h8l4 4v16H6z' fill='none' stroke='black' stroke-width='2'/%3E%3Cpath d='M14 2v5h5' fill='none' stroke='black' stroke-width='2'/%3E%3C/svg%3E") center/contain no-repeat;
+}
+
+.appendix-links a::after {
+  content: attr(data-filetype);
+  padding: 0.05rem 0.32rem;
+  border-radius: var(--report-badge-radius);
+  background: var(--report-paper-raised);
+  color: var(--report-ink-soft);
+  font-size: 0.64rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.badge {
+  display: inline-flex;
+  gap: var(--report-space-1);
+  align-items: center;
+  width: fit-content;
+  min-width: max-content;
+  max-width: 100%;
+  padding: 0.32rem 0.72rem;
+  border-radius: var(--report-badge-radius);
+  border: 1px solid transparent;
+  white-space: nowrap;
+  margin-block: 0.08rem;
+  font-weight: 800;
+}
+
+.evidence-badge {
+  display: inline-flex;
+  gap: 0.3rem;
+  align-items: center;
+  width: fit-content;
+  max-width: 100%;
+  line-height: 1.7;
+  white-space: nowrap;
+}
+
+.evidence-label {
+  color: var(--report-ink-soft);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+td .badge,
+th .badge,
+td .evidence-badge,
+th .evidence-badge {
+  display: inline-flex;
+  min-width: max-content;
+  white-space: nowrap;
+}
+
+.badge--rct {
+  background: #dcfce7;
+  color: #166534;
+  border-color: rgba(22, 101, 52, 0.24);
+}
+
+.badge--strong {
+  background: #eaf2ff;
+  color: #1d4ed8;
+  border-color: rgba(37, 99, 235, 0.2);
+}
+
+.badge--vendor {
+  background: var(--report-badge-vendor-bg);
+  color: var(--report-badge-vendor-ink);
+  border-color: rgba(109, 40, 217, 0.2);
+}
+
+.badge--practitioner {
+  background: #fff5db;
+  color: #92400e;
+  border-color: rgba(183, 121, 31, 0.24);
+}
+
+.badge--hygiene {
+  background: #f3f4f6;
+  color: #374151;
+  border-color: rgba(55, 65, 81, 0.18);
+}
+
+.badge-verified {
+  background: #dcfce7;
+  color: #166534;
+  border-color: rgba(22, 101, 52, 0.24);
+}
+
+.badge-partial {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: rgba(146, 64, 14, 0.24);
+}
+
+.badge-inferred {
+  background: #dbeafe;
+  color: #1d4ed8;
+  border-color: rgba(29, 78, 216, 0.24);
+}
+
+.badge-missing {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: rgba(153, 27, 27, 0.24);
+}
+
+.tactic-card,
+.case-study-card,
+.dossier-card,
+.manifest-card,
+.kpi-card,
+.priority-card,
+.brief-card,
+.privacy-note,
+.specimen-card,
+.industry-card,
+.priority-group,
+.checklist-card,
+.source-card,
+.source-list,
+.sources-group,
+.details-note,
+.myth-callout,
+.info-panel,
+.impact-panel,
+.evidence-panel,
+.action-panel,
+.severity-key,
+.ledger-list,
+.toc-list,
+.accordion,
+.quote-card,
+.callout,
+.version-summary {
+  margin-block: var(--report-space-4);
+  padding: var(--report-space-4);
+  background: var(--report-surface);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-lg);
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.06);
+}
+
+.sources-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--report-space-3);
+  margin-block: var(--report-space-4);
+}
+
+.sources-group {
+  background: var(--report-surface);
+}
+
+.source-title {
+  margin-block: var(--report-space-2);
+  padding-block: 0;
+  border: 0;
+  color: var(--report-ink);
+  font-weight: 800;
+}
+
+.sources-group .source-card {
+  box-shadow: none;
+  margin-block: var(--report-space-2);
+}
+
+.source-list {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.source-list .source-title {
+  margin-block: var(--report-space-5) 0;
+  padding-block: 0;
+  border: 0;
+  color: var(--report-ink-soft);
+  font-size: 0.82rem;
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.source-list .source-title + .source-item {
+  border-top: 0;
+}
+
+@media print {
+  .source-list {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  .source-list .source-title {
+    break-after: avoid-page;
+    page-break-after: avoid;
+  }
+
+  .source-list .source-title:not(:first-child) {
+    break-before: page;
+    page-break-before: always;
+  }
+}
+
+.source-list .source-item:last-child {
+  border-bottom: 0;
+}
+
+.source-item {
+  position: relative;
+  display: grid;
+  gap: var(--report-space-1);
+  margin: 0;
+  padding: var(--report-space-3) 3.75rem var(--report-space-3) var(--report-space-3);
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--report-rule);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.source-item:hover {
+  background: color-mix(in srgb, var(--report-blue) 5%, transparent);
+}
+
+.source-item h3 {
+  color: var(--report-blue);
+}
+
+.priority-card h3 .evidence-badge {
+  margin-inline-start: var(--report-space-3);
+  vertical-align: middle;
+}
+
+.tactic-card h3,
+.case-study-card h3,
+.dossier-card h3,
+.manifest-card h3,
+.kpi-card h3,
+.priority-card h3,
+.brief-card h3,
+.privacy-note h3,
+.specimen-card h3,
+.industry-card h3,
+.priority-group h3,
+.checklist-card h3,
+.source-card h3,
+.source-item h3,
+.details-note h3,
+.myth-callout h3 {
+  margin-block: 0 var(--report-space-2);
+  color: var(--report-ink);
+  font-size: 1.25rem;
+  line-height: 1.3;
+}
+
+.source-item h3 {
+  color: var(--report-blue);
+}
+
+.tactic-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--report-space-3);
+  margin-block-start: var(--report-space-3);
+}
+
+.tactic-grid > section {
+  padding-inline-start: var(--report-space-3);
+  border-left: 1px solid var(--report-rule);
+}
+
+.example-card,
+.block-template {
+  margin-block: var(--report-space-4);
+  overflow: hidden;
+  background: transparent;
+  color: inherit;
+  border-radius: var(--report-radius-md);
+}
+
+.example-card header,
+.block-template header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--report-space-3);
+  padding: 0 0 var(--report-space-2);
+  background: transparent;
+  border-bottom: 0;
+  color: var(--report-code-accent);
+  font-family: var(--report-font-code);
+  font-size: 0.8125rem;
+}
+
+.code-block-wrap {
+  width: 100%;
+  box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  isolation: isolate;
+  background: var(--report-code-bg);
+  background-clip: padding-box;
+  color: var(--report-code-ink);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-md);
+}
+
+.code-block-wrap > :first-child {
+  border-top-left-radius: calc(var(--report-radius-md) - 1px);
+  border-top-right-radius: calc(var(--report-radius-md) - 1px);
+}
+
+.code-block-wrap pre {
+  max-width: 100%;
+  margin: 0;
+  padding: var(--report-space-3) var(--report-space-3) var(--report-space-3) calc(var(--report-space-3) + 0.25rem);
+  overflow-x: auto;
+  font-family: var(--report-font-code);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+.code-block-wrap pre:last-child {
+  border-bottom-right-radius: inherit;
+  border-bottom-left-radius: inherit;
+}
+
+.code-block-wrap .mermaid,
+.code-block-wrap .latex-block {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+}
+
+.code-block-head {
+  display: flex;
+  gap: var(--report-space-3);
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--report-space-2) var(--report-space-3);
+  background: color-mix(in srgb, var(--report-code-bg) 88%, var(--report-code-ink));
+  border-bottom: 1px solid var(--report-rule);
+  color: var(--report-code-accent);
+  font-family: var(--report-font-code);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.example-card > header,
+.block-template > header,
+.report-keep-with-heading > h2,
+.report-keep-with-heading > h3 {
+  break-after: avoid;
+  page-break-after: avoid;
+}
+
+.example-card > .code-block-wrap,
+.block-template > .code-block-wrap,
+.report-main > .code-block-wrap,
+.report-keep-with-heading > .code-block-wrap,
+.report-keep-with-heading > .source-card,
+.report-keep-with-heading > .source-list,
+.report-keep-with-heading > .sources-layout,
+.report-keep-with-heading > .sources-group,
+.report-keep-with-heading > .callout,
+.report-keep-with-heading > .info-panel,
+.report-keep-with-heading > .impact-panel,
+.report-keep-with-heading > .evidence-panel,
+.report-keep-with-heading > .action-panel,
+.report-keep-with-heading > .details-note,
+.report-keep-with-heading > .myth-callout,
+.report-keep-with-heading > .accordion {
+  break-before: avoid;
+  page-break-before: avoid;
+}
+
+.code-copy {
+  display: inline-grid;
+  width: 1.85rem;
+  height: 1.85rem;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid var(--report-rule);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--report-code-ink);
+  cursor: pointer;
+  font: 700 0.85rem/1 var(--report-font-body);
+}
+
+.code-copy.is-copied {
+  background: var(--report-green);
+  border-color: var(--report-green);
+  color: #ffffff;
+}
+
+.example-card pre,
+.block-template pre,
+.report-main > .code-block-wrap pre {
+  max-width: 100%;
+  margin: 0;
+  padding: var(--report-space-3) var(--report-space-3) var(--report-space-3) calc(var(--report-space-3) + 0.25rem);
+  overflow-x: auto;
+  font-family: var(--report-font-code);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+
+.good-bad {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--report-space-3);
+  margin-block: var(--report-space-4);
+}
+
+.good-row,
+.bad-row {
+  padding: var(--report-space-3);
+  border-radius: var(--report-radius-md);
+  border: 2px solid transparent;
+}
+
+.good-row {
+  background: var(--report-good-bg);
+  border-color: color-mix(in srgb, var(--report-green) 46%, var(--report-rule));
+}
+
+.bad-row {
+  background: var(--report-bad-bg);
+  border-color: color-mix(in srgb, var(--report-red) 42%, var(--report-rule));
+}
+
+.good-row h4,
+.bad-row h4 {
+  margin: 0 0 var(--report-space-1);
+}
+
+.good-row h4 {
+  color: var(--report-green);
+}
+
+.bad-row h4 {
+  color: var(--report-red);
+}
+
+.stats-strip,
+.summary-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--report-space-3);
+  margin-block: var(--report-space-4);
+}
+
+.stat-card {
+  padding: var(--report-space-3);
+  background: var(--report-paper-raised);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-lg);
+}
+
+.stat-value {
+  display: block;
+  color: var(--report-ink);
+  font-family: var(--report-font-heading);
+  font-size: 2.25rem;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.stat-card > p:first-child {
+  margin-block: 0 var(--report-space-1);
+}
+
+.stat-card > p:first-child strong {
+  display: block;
+  color: var(--report-ink);
+  font-family: var(--report-font-heading);
+  font-size: 2.25rem;
+  font-weight: 650;
+  line-height: 1;
+}
+
+.stat-label,
+.stat-period,
+.source-meta {
+  color: var(--report-ink-soft);
+  font-size: 0.875rem;
+}
+
+.facts-table-wrap {
+  margin-block: var(--report-space-4);
+  width: 100%;
+  box-sizing: border-box;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-md);
+  background: var(--report-surface);
+  background-clip: padding-box;
+  clip-path: inset(0 round var(--report-radius-md));
+  contain: paint;
+  isolation: isolate;
+}
+
+.facts-table,
+.facts-table-wrap table,
+.report-main > table {
+  width: 100%;
+  min-width: min(42rem, 100%);
+  table-layout: auto;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.875rem;
+  background: var(--report-surface);
+  border-radius: inherit;
+}
+
+.facts-table th,
+.facts-table td,
+.facts-table-wrap th,
+.facts-table-wrap td,
+.report-main > table th,
+.report-main > table td {
+  padding: 0.75rem 0.875rem;
+  border: 0;
+  border-inline-end: 1px solid var(--report-rule);
+  border-block-end: 1px solid var(--report-rule);
+  text-align: left;
+  vertical-align: top;
+}
+
+.facts-table th:last-child,
+.facts-table td:last-child,
+.facts-table-wrap th:last-child,
+.facts-table-wrap td:last-child,
+.report-main > table th:last-child,
+.report-main > table td:last-child {
+  border-inline-end: 0;
+}
+
+.facts-table tbody tr:last-child td,
+.facts-table-wrap tbody tr:last-child td,
+.report-main > table tbody tr:last-child td {
+  border-block-end: 0;
+}
+
+.facts-table th,
+.facts-table-wrap th,
+.report-main > table th {
+  background: var(--report-paper-raised);
+  background-clip: padding-box;
+  color: var(--report-ink);
+  font-weight: 700;
+}
+
+.facts-table thead tr:first-child th:first-child,
+.facts-table-wrap thead tr:first-child th:first-child,
+.report-main > table thead tr:first-child th:first-child {
+  border-top-left-radius: calc(var(--report-radius-md) - 1px);
+}
+
+.facts-table thead tr:first-child th:last-child,
+.facts-table-wrap thead tr:first-child th:last-child,
+.report-main > table thead tr:first-child th:last-child {
+  border-top-right-radius: calc(var(--report-radius-md) - 1px);
+}
+
+.facts-table tbody tr:last-child td:first-child,
+.facts-table-wrap tbody tr:last-child td:first-child,
+.report-main > table tbody tr:last-child td:first-child {
+  border-bottom-left-radius: calc(var(--report-radius-md) - 1px);
+}
+
+.facts-table tbody tr:last-child td:last-child,
+.facts-table-wrap tbody tr:last-child td:last-child,
+.report-main > table tbody tr:last-child td:last-child {
+  border-bottom-right-radius: calc(var(--report-radius-md) - 1px);
+}
+
+.details-note {
+  background: var(--report-impact-bg);
+  border-left: 4px solid var(--report-amber);
+}
+
+.info-panel {
+  background: var(--report-info-bg);
+  border-left: 4px solid var(--report-blue);
+}
+
+.impact-panel {
+  background: var(--report-surface);
+  border-left: 4px solid var(--report-amber);
+}
+
+.evidence-panel {
+  background: var(--report-surface);
+  border-left: 4px solid var(--report-green);
+}
+
+.action-panel {
+  background: var(--report-surface);
+  color: var(--report-ink);
+  border-left: 4px solid var(--report-blue);
+}
+
+.myth-callout {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--report-space-3);
+  background: var(--report-myth-bg);
+  border-color: rgba(109, 40, 217, 0.22);
+}
+
+.myth-callout > * {
+  margin: 0;
+}
+
+.myth-callout > :nth-child(n + 3) {
+  padding-block-start: var(--report-space-3);
+  border-top: 1px solid rgba(109, 40, 217, 0.2);
+}
+
+.accordion {
+  display: block;
+}
+
+.accordion summary {
+  display: flex;
+  gap: var(--report-space-2);
+  align-items: center;
+  cursor: pointer;
+  color: var(--report-ink);
+  font-weight: 750;
+  list-style: none;
+}
+
+.accordion summary::-webkit-details-marker {
+  display: none;
+}
+
+.accordion summary::before {
+  content: "▾";
+  display: inline-flex;
+  width: 1.45rem;
+  flex: 0 0 1.45rem;
+  align-items: center;
+  justify-content: center;
+  color: var(--report-ink-soft);
+  font-size: 1.35rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.accordion[open] summary::before {
+  content: "▴";
+}
+
+.action-prompt {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin-block: calc(-1 * var(--report-space-2)) var(--report-space-4);
+  overflow: hidden;
+}
+
+.action-prompt .code-block-wrap {
+  width: 100%;
+  max-width: 100%;
+}
+
+.action-prompt pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.quote-card,
+blockquote {
+  margin-block: var(--report-space-4);
+  padding: var(--report-space-3) var(--report-space-4);
+  border-left: 4px solid var(--report-blue);
+  background: var(--report-paper-raised);
+  color: var(--report-ink-muted);
+  font-family: var(--report-font-heading);
+  font-style: italic;
+  font-size: 1.1rem;
+}
+
+.quote-card p {
+  font-style: italic;
+}
+
+.mermaid,
+.latex-block {
+  margin-block: var(--report-space-4);
+  padding: var(--report-space-3);
+  overflow-x: auto;
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-md);
+  background: var(--report-code-bg);
+  color: var(--report-code-ink);
+}
+
+.mermaid-rendered,
+.latex-rendered-block {
+  width: 100%;
+  margin: var(--report-space-4) 0;
+  padding: var(--report-space-3);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-md);
+  background: var(--report-code-bg);
+  color: var(--report-code-ink);
+}
+
+.mermaid-rendered svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.diagram-node {
+  fill: color-mix(in srgb, var(--report-code-bg) 92%, var(--report-code-accent));
+  stroke: var(--report-blue);
+  stroke-width: 2;
+}
+
+.diagram-label {
+  fill: var(--report-code-ink);
+  font: 700 14px system-ui, sans-serif;
+}
+
+.diagram-arrow {
+  stroke: var(--report-blue);
+  stroke-width: 2.5;
+  marker-end: url(#arrowhead);
+}
+
+.diagram-arrow-head {
+  fill: var(--report-blue);
+}
+
+.latex-rendered-block div,
+.latex-inline {
+  font-family: var(--report-font-code);
+  letter-spacing: 0.01em;
+  color: var(--report-code-ink);
+}
+
+.latex-rendered-block div {
+  font-size: clamp(1.15rem, 2.8vw, 1.75rem);
+  font-weight: 700;
+}
+
+.mermaid-rendered figcaption,
+.latex-rendered-block figcaption {
+  margin-block-start: var(--report-space-2);
+  color: var(--report-ink-soft);
+  font-size: 0.78rem;
+}
+
+.mermaid::before,
+.latex-block::before {
+  display: none;
+  margin-bottom: var(--report-space-2);
+  color: var(--report-code-accent);
+  font-family: var(--report-font-body);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.mermaid::before {
+  content: "Mermaid source fallback";
+}
+
+.latex-block::before {
+  content: "LaTeX source fallback";
+}
+
+.latex-inline {
+  padding: 0 0.25rem;
+  border-radius: var(--report-radius-sm);
+  background: var(--report-paper-raised);
+  color: var(--report-ink);
+  font-family: var(--report-font-code);
+}
+
+.bar-chart {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: var(--report-space-2);
+  margin-block: var(--report-space-4);
+}
+
+.visibility-bars {
+  display: grid;
+  gap: var(--report-space-2);
+  margin-block: var(--report-space-4);
+}
+
+.visibility-bars p {
+  --bar-value: 72%;
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(11rem, 0.32fr) minmax(0, 1fr) minmax(3.5rem, auto);
+  gap: var(--report-space-2);
+  align-items: center;
+  margin: 0;
+  padding: 0.55rem 0;
+  color: var(--report-ink);
+  font-family: var(--report-font-code);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.visibility-bars .visibility-label {
+  grid-column: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.visibility-bars .visibility-value {
+  grid-column: 3;
+  justify-self: end;
+  padding-inline-start: var(--report-space-2);
+  color: var(--report-ink-soft);
+  font-weight: 800;
+}
+
+.visibility-bars p::before {
+  content: "";
+  display: block;
+  grid-column: 2;
+  grid-row: 1;
+  height: 0.9rem;
+  background: color-mix(in srgb, var(--report-rule) 56%, transparent);
+  border-radius: var(--report-radius-sm);
+}
+
+.visibility-bars p::after {
+  content: "";
+  display: block;
+  grid-column: 2;
+  grid-row: 1;
+  width: var(--bar-value);
+  height: 0.9rem;
+  background: var(--report-blue);
+  border-radius: var(--report-radius-sm);
+}
+
+.manifest-card,
+.dossier-card,
+.kpi-card,
+.priority-card,
+.brief-card,
+.privacy-note,
+.brand-asset-card,
+.swatch-card,
+.type-specimen,
+.specimen-card {
+  overflow: hidden;
+}
+
+.manifest-card::before,
+.dossier-card::before,
+.kpi-card::before,
+.priority-card::before,
+.brand-asset-card::before,
+.swatch-card::before,
+.type-specimen::before,
+.specimen-card::before {
+  content: attr(data-status);
+  display: block;
+  min-height: 0.65rem;
+  margin: calc(-1 * var(--report-space-4)) calc(-1 * var(--report-space-4)) var(--report-space-3);
+  background: var(--report-ink);
+}
+
+.manifest-card dl,
+.dossier-card dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--report-space-2) var(--report-space-3);
+  margin: 0;
+}
+
+.manifest-card ul,
+.dossier-card ul {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--report-space-2) var(--report-space-3);
+  padding: 0;
+  list-style: none;
+}
+
+.manifest-card li,
+.dossier-card li {
+  margin: 0;
+  color: var(--report-ink);
+  font-weight: 400;
+}
+
+.manifest-card li strong,
+.dossier-card li strong {
+  font-weight: 800;
+}
+
+.manifest-card dt,
+.dossier-card dt {
+  color: var(--report-ink-soft);
+  font-family: var(--report-font-code);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.manifest-card dd,
+.dossier-card dd {
+  margin: 0;
+  color: var(--report-ink);
+  font-weight: 700;
+}
+
+.kpi-card > p:first-child strong {
+  display: block;
+  color: var(--report-ink);
+  font-family: var(--report-font-heading);
+  font-size: clamp(2.6rem, 6vw, 4.8rem);
+  line-height: 0.92;
+  letter-spacing: -0.04em;
+}
+
+.kpi-card strong,
+.priority-card strong {
+  color: var(--report-ink);
+  font-weight: 800;
+}
+
+.priority-card[data-priority="critical"]::before { background: var(--report-red); }
+.priority-card[data-priority="high"]::before { background: var(--report-amber); }
+.priority-card[data-priority="medium"]::before { background: var(--report-blue); }
+.priority-card[data-priority="low"]::before { background: var(--report-ink-soft); }
+.priority-card[data-status="done"]::before { background: var(--report-green); }
+
+.priority-card[data-status="done"]::before {
+  content: "DONE";
+  min-height: auto;
+  padding: 0.45rem var(--report-space-4);
+  color: #ffffff;
+  font-family: var(--report-font-code);
+  font-size: 0.76rem;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.privacy-note {
+  display: grid;
+  grid-template-columns: minmax(9rem, 0.28fr) minmax(0, 1fr);
+  gap: var(--report-space-4);
+  background: var(--report-paper-raised);
+}
+
+.privacy-note > :first-child {
+  color: var(--report-ink-soft);
+  font-family: var(--report-font-code);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.toc-list {
+  padding: 0;
+  background: transparent;
+  border-width: 1px 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.toc-list p,
+.ledger-list p {
+  display: block;
+  margin: 0;
+  padding: var(--report-space-2) 0;
+  border-bottom: 1px dotted var(--report-rule);
+  overflow-wrap: normal;
+  text-wrap: pretty;
+}
+
+.toc-list p:last-child,
+.ledger-list p:last-child {
+  border-bottom: 0;
+}
+
+.brief-card {
+  background: color-mix(in srgb, var(--report-paper-raised) 72%, var(--report-surface));
+  border-left: 0.42rem solid var(--report-blue);
+  color: var(--report-ink);
+}
+
+.brief-card :where(h3, p, li, code, strong) {
+  color: var(--report-ink);
+}
+
+.brief-card strong {
+  color: var(--report-blue);
+}
+
+.brand-swatch-grid,
+.brand-type-scale,
+.brand-component-grid,
+.brand-asset-grid,
+.notification-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--report-space-5);
+  row-gap: var(--report-space-5);
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+}
+
+.brand-swatch-grid .specimen-card,
+.brand-type-scale .specimen-card,
+.brand-component-grid .specimen-card,
+.brand-asset-grid .brand-asset-card,
+.notification-grid .info-panel,
+.notification-grid .evidence-panel,
+.notification-grid .action-panel,
+.brand-swatch-grid .swatch-card,
+.brand-type-scale .type-specimen {
+  margin-block: 0;
+}
+
+.brand-asset-card,
+.swatch-card,
+.type-specimen {
+  margin-block: var(--report-space-4);
+  padding: var(--report-space-4);
+  background: var(--report-surface);
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-lg);
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.06);
+}
+
+.brand-asset-card {
+  display: grid;
+  min-height: 10.5rem;
+  align-content: start;
+  gap: var(--report-space-2);
+}
+
+.brand-asset-card::before {
+  min-height: 4.35rem;
+  margin-bottom: var(--report-space-2);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--report-blue) 20%, transparent), transparent 54%),
+    var(--report-paper-raised);
+  border: 0;
+  border-bottom: 1px solid var(--report-rule);
+  border-radius: calc(var(--report-radius-lg) - 1px) calc(var(--report-radius-lg) - 1px) 0 0;
+}
+
+.brand-asset-card[data-accent="dark"]::before {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--report-blue) 32%, transparent), transparent 54%),
+    var(--report-ink);
+}
+
+.brand-asset-card h3,
+.swatch-card h3,
+.type-specimen h3 {
+  margin-block: 0 var(--report-space-2);
+}
+
+.brand-asset-card p,
+.swatch-card p,
+.type-specimen p {
+  margin-block: 0;
+}
+
+.swatch-card::before {
+  min-height: 4.35rem;
+  margin-bottom: var(--report-space-2);
+  border-bottom: 1px solid var(--report-rule);
+  border-radius: calc(var(--report-radius-lg) - 1px) calc(var(--report-radius-lg) - 1px) 0 0;
+}
+
+.swatch-card[data-accent="primary"]::before,
+.swatch-card[data-accent="blue"]::before { background: var(--report-blue); }
+.swatch-card[data-accent="green"]::before { background: var(--report-green); }
+.swatch-card[data-accent="amber"]::before { background: var(--report-amber); }
+.swatch-card[data-accent="red"]::before { background: var(--report-red); }
+.swatch-card[data-accent="ink"]::before { background: var(--report-ink); }
+.swatch-card[data-accent="soft"]::before { background: var(--report-ink-soft); }
+.swatch-card[data-accent="paper"]::before { background: var(--report-paper); }
+.swatch-card[data-accent="surface"]::before { background: var(--report-surface); }
+.swatch-card[data-accent="raised"]::before { background: var(--report-paper-raised); }
+
+.type-specimen::before {
+  min-height: 0;
+  margin-bottom: var(--report-space-3);
+  background: transparent;
+  border-top: 0.42rem solid var(--report-blue);
+}
+
+.type-specimen strong {
+  display: block;
+  margin-block-end: var(--report-space-1);
+  color: var(--report-ink);
+  font-family: var(--report-font-heading);
+  font-size: clamp(1.35rem, 2.4vw, 1.9rem);
+  line-height: 1.12;
+  letter-spacing: -0.03em;
+}
+
+.type-specimen em {
+  color: var(--report-ink-soft);
+}
+
+.specimen-card code {
+  background: var(--report-paper-raised);
+  color: var(--report-ink);
+}
+
+.bar-chart p {
+  --bar-value: 72%;
+  position: relative;
+  margin: 0;
+  padding: 0.65rem 0.8rem;
+  overflow: hidden;
+  border: 1px solid var(--report-rule);
+  border-radius: var(--report-radius-md);
+  background: var(--report-surface);
+}
+
+.bar-chart p::after {
+  content: "";
+  position: absolute;
+  inset: auto auto 0 0;
+  width: var(--bar-value);
+  height: 0.25rem;
+  background: var(--report-blue);
+}
+
+.severity-key {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--report-space-2);
+}
+
+.notification-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.notification-grid :where(.info-panel, .evidence-panel, .action-panel) {
+  display: grid;
+  gap: var(--report-space-2);
+  min-height: 12rem;
+  align-content: start;
+  border-width: 2px;
+  border-top-width: 0.38rem;
+  border-left-width: 0.38rem;
+}
+
+.notification-grid :where(.info-panel, .evidence-panel, .action-panel)::before {
+  content: attr(data-severity);
+  width: fit-content;
+  padding: 0.24rem 0.58rem;
+  border: 1px solid currentColor;
+  border-radius: var(--report-badge-radius);
+  font-family: var(--report-font-code);
+  font-size: 0.7rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.notification-grid [data-severity="critical"] {
+  background: color-mix(in srgb, var(--report-red) 13%, var(--report-surface));
+  border-color: color-mix(in srgb, var(--report-red) 78%, var(--report-rule));
+}
+
+.notification-grid [data-severity="high"] {
+  background: color-mix(in srgb, var(--report-amber) 18%, var(--report-surface));
+  border-color: color-mix(in srgb, var(--report-amber) 82%, var(--report-rule));
+}
+
+.notification-grid [data-severity="medium"] {
+  background: color-mix(in srgb, var(--report-blue) 11%, var(--report-surface));
+  border-color: color-mix(in srgb, var(--report-blue) 78%, var(--report-rule));
+}
+
+.notification-grid [data-severity="low"] {
+  background: color-mix(in srgb, var(--report-green) 14%, var(--report-surface));
+  border-color: color-mix(in srgb, var(--report-green) 78%, var(--report-rule));
+}
+
+.priority-group[data-priority="critical"],
+.info-panel[data-severity="critical"],
+.impact-panel[data-severity="critical"],
+.evidence-panel[data-severity="critical"],
+.action-panel[data-severity="critical"] {
+  border-top: 4px solid var(--report-red);
+}
+
+.priority-group[data-priority="critical"] {
+  border-top: 4px solid var(--report-red);
+}
+
+.priority-group[data-priority="high"] {
+  border-top: 4px solid var(--report-amber);
+}
+
+.priority-group[data-priority="medium"] {
+  border-top: 4px solid var(--report-blue);
+}
+
+.priority-group[data-priority="low"] {
+  border-top: 4px solid var(--report-green);
+}
+
+.checklist {
+  display: grid;
+  gap: var(--report-space-2);
+  padding: 0;
+  list-style: none;
+}
+
+ol {
+  padding-inline-start: 1.4rem;
+}
+
+ol li::marker {
+  color: var(--report-blue);
+  font-weight: 800;
+}
+
+.checklist li {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: var(--report-space-2);
+  align-items: baseline;
+  padding-block: var(--report-space-2);
+  border-bottom: 1px solid var(--report-rule);
+}
+
+.status-dot {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid var(--report-ink-soft);
+  border-radius: 0.22rem;
+  background: transparent;
+}
+
+.status-dot[data-status="done"] {
+  background: var(--report-green);
+  border-color: var(--report-green);
+}
+
+.status-dot[data-status="blocked"] {
+  background: var(--report-red);
+}
+
+.badge-key {
+  display: grid;
+  gap: var(--report-space-2);
+}
+
+.badge-key p {
+  display: grid;
+  grid-template-columns: minmax(10rem, auto) 1fr;
+  gap: var(--report-space-3);
+  align-items: center;
+  margin: 0;
+}
+
+.version-summary {
+  text-align: left;
+  color: var(--report-ink-soft);
+  font-size: clamp(0.72rem, 0.58rem + 0.42vw, 0.92rem);
+  font-weight: 800;
+  letter-spacing: 0.11em;
+  line-height: 1.42;
+  text-transform: uppercase;
+  margin-block: var(--report-space-6) 0;
+  padding: var(--report-space-4) 0 0;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--report-rule);
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.version-summary p {
+  max-width: none;
+  margin: 0;
+}
+
+.source-card {
+  position: relative;
+  padding-inline-end: calc(var(--report-space-4) + 2rem);
+  background: var(--report-paper-raised);
+}
+
+.source-card-link {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: block;
+  margin: 0;
+  border: 0;
+  border-radius: inherit;
+  color: var(--report-blue);
+  text-decoration: none;
+}
+
+.source-card-link::before {
+  content: "↗";
+  position: absolute;
+  top: var(--report-space-3);
+  right: var(--report-space-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.source-card-link:hover,
+.source-card-link:focus-visible {
+  background: color-mix(in srgb, var(--report-blue) 5%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--report-blue) 16%, transparent);
+}
+
+.source-item .source-card-link {
+  border-radius: 0;
+}
+
+.source-item .source-card-link::before {
+  right: var(--report-space-3);
+}
+
+.section-separator {
+  margin-block: var(--report-space-6);
+  border: 0;
+  border-top: 1px solid var(--report-rule);
+}
+
+.report-footer {
+  max-width: var(--report-page-max);
+  margin: 0 auto;
+  padding: var(--report-space-4) var(--report-space-5) var(--report-space-6);
+  color: var(--report-ink-soft);
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+a {
+  color: var(--report-blue);
+  text-underline-offset: 0.18em;
+}
+
+:focus-visible {
+  outline: 3px solid rgba(37, 99, 235, 0.35);
+  outline-offset: 3px;
+}
+
+@media (max-width: 980px) {
+  .report-shell {
+    grid-template-columns: 1fr;
+    padding: var(--report-space-4) var(--report-space-3);
+  }
+
+  .sticky-toc {
+    position: static;
+    max-height: none;
+    order: -1;
+  }
+
+  .report-main,
+  .report-main-flow,
+  .sticky-toc,
+  .toc-pdf-actions {
+    grid-column: auto;
+    grid-row: auto;
+  }
+
+  .report-meta-grid,
+  .tactic-grid,
+  .stats-strip,
+  .summary-stats,
+  .sources-layout,
+  .severity-key {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .report-cover,
+  .chapter-hero,
+  .tactic-card,
+  .industry-card,
+  .priority-group,
+  .checklist-card,
+  .source-card,
+  .details-note,
+  .myth-callout {
+    padding: var(--report-space-3);
+    border-radius: var(--report-radius-md);
+  }
+
+  .report-meta-grid,
+  .tactic-grid,
+    .stats-strip,
+    .summary-stats,
+  .sources-layout,
+  .severity-key,
+  .brand-swatch-grid,
+  .brand-type-scale,
+  .brand-component-grid,
+  .good-bad,
+  .myth-callout {
+    grid-template-columns: 1fr;
+  }
+
+  .privacy-note,
+  .toc-list p,
+  .ledger-list p,
+  .visibility-bars p,
+  .manifest-card dl,
+  .dossier-card dl,
+  .manifest-card ul,
+  .dossier-card ul {
+    grid-template-columns: 1fr;
+  }
+
+  .action-line {
+    display: grid;
+  }
+}
+
+@media print {
+  :root {
+    color-scheme: light;
+    --report-paper: #ffffff;
+    --report-paper-raised: #ffffff;
+    --report-surface: #ffffff;
+    --report-ink: #111111;
+    --report-ink-muted: #333333;
+    --report-ink-soft: #555555;
+    --report-rule: #bdb7ab;
+    --report-rule-strong: #8f8778;
+  }
+
+  body.report-body {
+    --report-paper: #ffffff;
+    --report-paper-raised: #ffffff;
+    --report-panel: #ffffff;
+    --report-surface: #ffffff;
+    --report-ink: #111111;
+    --report-ink-muted: #333333;
+    --report-ink-soft: #555555;
+    --report-rule: #bdb7ab;
+    --report-rule-strong: #8f8778;
+    --report-info-bg: #ffffff;
+    --report-impact-bg: #ffffff;
+    --report-evidence-bg: #ffffff;
+    --report-myth-bg: #ffffff;
+    --report-good-bg: #ffffff;
+    --report-bad-bg: #ffffff;
+  }
+
+  @page {
+    size: A4 portrait;
+    margin: 12mm 0;
+    background: #ffffff;
+  }
+
+  @page report-letter {
+    size: Letter portrait;
+    margin: 0.45in 0;
+    background: #ffffff;
+  }
+
+  html {
+    background: #ffffff !important;
+  }
+
+  html,
+  body.report-body {
+    background: var(--report-paper) !important;
+    color: var(--report-ink) !important;
+    font-size: 10.5pt;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body.report-body {
+    box-sizing: border-box;
+    min-height: 100vh;
+    padding: 0 12mm;
+    orphans: 3;
+    widows: 3;
+  }
+
+  body.report-pdf-profile-letter {
+    page: report-letter;
+    padding: 0 0.45in;
+  }
+
+  body.report-body:not(.report-theme-dark) {
+    --report-paper: #ffffff;
+    --report-paper-raised: #ffffff;
+    --report-panel: #ffffff;
+    --report-surface: #ffffff;
+    background: #ffffff !important;
+  }
+
+  body.report-body:not(.report-theme-dark) .report-shell,
+  body.report-body:not(.report-theme-dark) .report-main,
+  body.report-body:not(.report-theme-dark) .report-content {
+    background: #ffffff !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    box-shadow: none !important;
+    filter: none !important;
+    text-shadow: none !important;
+  }
+
+  body.report-body {
+    position: relative;
+    background: var(--report-paper) !important;
+  }
+
+  body.report-theme-dark .report-shell,
+  body.report-theme-dark .report-main,
+  body.report-theme-dark .report-content {
+    background: var(--report-paper) !important;
+  }
+
+  body.report-body::before {
+    content: none;
+    display: none;
+  }
+
+  .report-shell {
+    display: block;
+    width: 100%;
+    max-width: none;
+    overflow: visible;
+    padding: 0;
+    border: 0 !important;
+    outline: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .report-main,
+  .report-content {
+    width: 100%;
+    max-width: 100%;
+    overflow: visible;
+    border: 0 !important;
+    outline: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .report-keep-with-heading,
+  .report-keep-with-heading.report-chapter-page {
+    border: 0 !important;
+    outline: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .report-cover,
+  .stats-strip,
+  .summary-stats {
+    background: transparent !important;
+  }
+
+  .stat-card {
+    background: var(--report-surface) !important;
+    background-clip: padding-box;
+  }
+
+  .report-footer {
+    display: flex;
+    min-height: 22mm;
+    margin-block-start: 8mm;
+    padding: 0 6mm;
+    align-items: center;
+    justify-content: center;
+    background: #ffffff;
+    border: 1px solid #d1d5db;
+    color: #374151;
+    text-align: center;
+  }
+
+  .report-pdf-profile-slides-16-9-1,
+  .report-pdf-profile-slides-16-9-2,
+  .report-pdf-profile-slides-16-9-3 {
+    font-size: 32pt;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main :where(p, li, blockquote, td, th, summary),
+  .report-pdf-profile-slides-16-9-2 .report-main :where(p, li, blockquote, td, th, summary),
+  .report-pdf-profile-slides-16-9-3 .report-main :where(p, li, blockquote, td, th, summary),
+  .report-pdf-profile-slides-16-9-1 .report-main :where(.report-subtitle, .report-kicker, .eyebrow, .meta-label, .priority-label, .source-card-type, .source-meta, .stat-label, .stat-period, .version-summary),
+  .report-pdf-profile-slides-16-9-2 .report-main :where(.report-subtitle, .report-kicker, .eyebrow, .meta-label, .priority-label, .source-card-type, .source-meta, .stat-label, .stat-period, .version-summary),
+  .report-pdf-profile-slides-16-9-3 .report-main :where(.report-subtitle, .report-kicker, .eyebrow, .meta-label, .priority-label, .source-card-type, .source-meta, .stat-label, .stat-period, .version-summary) {
+    font-size: 32pt !important;
+    line-height: 1.22;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main .badge,
+  .report-pdf-profile-slides-16-9-2 .report-main .badge,
+  .report-pdf-profile-slides-16-9-3 .report-main .badge {
+    font-size: 32pt !important;
+    line-height: 1;
+    white-space: nowrap;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main .code-block-wrap pre,
+  .report-pdf-profile-slides-16-9-2 .report-main .code-block-wrap pre,
+  .report-pdf-profile-slides-16-9-3 .report-main .code-block-wrap pre,
+  .report-pdf-profile-slides-16-9-1 .report-main .mermaid,
+  .report-pdf-profile-slides-16-9-2 .report-main .mermaid,
+  .report-pdf-profile-slides-16-9-3 .report-main .mermaid,
+  .report-pdf-profile-slides-16-9-1 .report-main .latex-block,
+  .report-pdf-profile-slides-16-9-2 .report-main .latex-block,
+  .report-pdf-profile-slides-16-9-3 .report-main .latex-block {
+    font-size: 32pt !important;
+    line-height: 1.2;
+  }
+
+  body.report-body,
+  .report-main,
+  .report-main p,
+  .report-main li,
+  .report-main blockquote,
+  .report-main td,
+  .report-main th,
+  .report-main summary {
+    text-wrap: pretty;
+  }
+
+  .report-main h1,
+  .report-main h2,
+  .report-main h3,
+  .report-main h4,
+  .report-main h5,
+  .report-main h6,
+  .source-title,
+  .version-summary {
+    text-wrap: balance;
+  }
+
+  .version-summary,
+  .version-summary p {
+    text-align: center;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main,
+  .report-pdf-profile-slides-16-9-2 .report-main,
+  .report-pdf-profile-slides-16-9-3 .report-main {
+    column-count: auto !important;
+    column-gap: normal !important;
+  }
+
+  .report-main h1,
+  .report-main h2,
+  .report-main h3,
+  .code-block-head,
+  .source-title,
+  .example-card > header,
+  .block-template > header,
+  .report-keep-with-heading > h2,
+  .report-keep-with-heading > h3 {
+    break-after: avoid-page;
+    page-break-after: avoid;
+  }
+
+  .report-main h2.chapter-heading {
+    margin-block-start: 10mm;
+    padding-block-start: 5mm;
+    border-top: 0 !important;
+    break-before: page;
+    break-inside: avoid-page;
+    page-break-before: always;
+    page-break-inside: avoid;
+  }
+
+  .report-title-page {
+    display: flex;
+    min-height: calc(297mm - 24mm);
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    break-after: page;
+    page-break-after: always;
+  }
+
+  .report-title-page h1,
+  .report-title-page p {
+    max-width: 34rem;
+    margin-inline: auto;
+  }
+
+  .report-title-page h1 {
+    font-size: 32pt;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-title-page,
+  .report-pdf-profile-slides-16-9-2 .report-title-page,
+  .report-pdf-profile-slides-16-9-3 .report-title-page {
+    display: block;
+    min-height: 0;
+    padding-block: 1.3in 0.45in;
+    break-after: page;
+    break-inside: avoid-page;
+    page-break-after: always;
+    page-break-inside: avoid;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-title-page h1,
+  .report-pdf-profile-slides-16-9-2 .report-title-page h1,
+  .report-pdf-profile-slides-16-9-3 .report-title-page h1 {
+    font-size: clamp(60pt, 9vw, 88pt) !important;
+    line-height: 0.95;
+    margin-block: 0 0.7in;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-title-page p,
+  .report-pdf-profile-slides-16-9-2 .report-title-page p,
+  .report-pdf-profile-slides-16-9-3 .report-title-page p {
+    font-size: 32pt !important;
+    line-height: 1.2;
+    margin-block: 0.2in 0;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block, .quote-card, blockquote, .info-panel, .impact-panel, .evidence-panel, .action-panel, .callout, .accordion, .facts-table-wrap, table, .source-card, .source-item, .details-note, .myth-callout, .severity-key, .example-card, .block-template),
+  .report-pdf-profile-slides-16-9-2 .report-main :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block, .quote-card, blockquote, .info-panel, .impact-panel, .evidence-panel, .action-panel, .callout, .accordion, .facts-table-wrap, table, .source-card, .source-item, .details-note, .myth-callout, .severity-key, .example-card, .block-template),
+  .report-pdf-profile-slides-16-9-3 .report-main :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block, .quote-card, blockquote, .info-panel, .impact-panel, .evidence-panel, .action-panel, .callout, .accordion, .facts-table-wrap, table, .source-card, .source-item, .details-note, .myth-callout, .severity-key, .example-card, .block-template) {
+    break-before: page;
+    break-inside: avoid-page;
+    page-break-before: always;
+    page-break-inside: avoid;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-main :where(.report-cover, .stats-strip, .summary-stats, .badge-key),
+  .report-pdf-profile-slides-16-9-2 .report-main :where(.report-cover, .stats-strip, .summary-stats, .badge-key),
+  .report-pdf-profile-slides-16-9-3 .report-main :where(.report-cover, .stats-strip, .summary-stats, .badge-key) {
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .quote-card,
+  .report-pdf-profile-slides-16-9-2 .quote-card,
+  .report-pdf-profile-slides-16-9-3 .quote-card,
+  .report-pdf-profile-slides-16-9-1 blockquote,
+  .report-pdf-profile-slides-16-9-2 blockquote,
+  .report-pdf-profile-slides-16-9-3 blockquote {
+    display: flex;
+    min-height: 5.8in;
+    align-items: center;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .badge-key p,
+  .report-pdf-profile-slides-16-9-2 .badge-key p,
+  .report-pdf-profile-slides-16-9-3 .badge-key p {
+    grid-template-columns: max-content minmax(0, 1fr) !important;
+    column-gap: 0.45in;
+    align-items: center;
+    text-align: left;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .facts-table,
+  .report-pdf-profile-slides-16-9-2 .facts-table,
+  .report-pdf-profile-slides-16-9-3 .facts-table,
+  .report-pdf-profile-slides-16-9-1 .facts-table-wrap table,
+  .report-pdf-profile-slides-16-9-2 .facts-table-wrap table,
+  .report-pdf-profile-slides-16-9-3 .facts-table-wrap table,
+  .report-pdf-profile-slides-16-9-1 .report-main > table,
+  .report-pdf-profile-slides-16-9-2 .report-main > table,
+  .report-pdf-profile-slides-16-9-3 .report-main > table {
+    width: 100%;
+    min-width: 0;
+    table-layout: fixed;
+    font-size: 26pt !important;
+  }
+
+  .report-pdf-profile-slides-16-9-1 :where(.facts-table, .facts-table-wrap, .report-main > table) :where(th, td),
+  .report-pdf-profile-slides-16-9-2 :where(.facts-table, .facts-table-wrap, .report-main > table) :where(th, td),
+  .report-pdf-profile-slides-16-9-3 :where(.facts-table, .facts-table-wrap, .report-main > table) :where(th, td) {
+    padding: 0.22in 0.28in;
+    font-size: 26pt !important;
+    overflow-wrap: anywhere;
+    line-height: 1.2;
+    vertical-align: top;
+  }
+
+  .report-pdf-profile-slides-16-9-1 :where(.stats-strip, .summary-stats, .tactic-grid, .sources-layout, .good-bad, .severity-key, .badge-key) :where(p, li, span, a),
+  .report-pdf-profile-slides-16-9-2 :where(.stats-strip, .summary-stats, .tactic-grid, .sources-layout, .good-bad, .severity-key, .badge-key) :where(p, li, span, a),
+  .report-pdf-profile-slides-16-9-3 :where(.stats-strip, .summary-stats, .tactic-grid, .sources-layout, .good-bad, .severity-key, .badge-key) :where(p, li, span, a) {
+    font-size: 26pt !important;
+    line-height: 1.2;
+  }
+
+  .report-pdf-profile-slides-16-9-1 :where(td, th) .evidence-badge,
+  .report-pdf-profile-slides-16-9-2 :where(td, th) .evidence-badge,
+  .report-pdf-profile-slides-16-9-3 :where(td, th) .evidence-badge {
+    display: flex;
+    flex-direction: column;
+    gap: 0.12in;
+    align-items: flex-start;
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  .report-pdf-profile-slides-16-9-1 :where(td, th) :where(.badge, .evidence-label),
+  .report-pdf-profile-slides-16-9-2 :where(td, th) :where(.badge, .evidence-label),
+  .report-pdf-profile-slides-16-9-3 :where(td, th) :where(.badge, .evidence-label) {
+    max-width: 100%;
+    font-size: 26pt !important;
+    white-space: normal;
+  }
+
+  .report-pdf-profile-slides-16-9-1 .report-keep-with-heading > :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block),
+  .report-pdf-profile-slides-16-9-2 .report-keep-with-heading > :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block),
+  .report-pdf-profile-slides-16-9-3 .report-keep-with-heading > :where(.code-block-wrap, .mermaid-rendered, .latex-rendered-block),
+  .report-pdf-profile-slides-16-9-1 :where(.example-card, .block-template) > .code-block-wrap,
+  .report-pdf-profile-slides-16-9-2 :where(.example-card, .block-template) > .code-block-wrap,
+  .report-pdf-profile-slides-16-9-3 :where(.example-card, .block-template) > .code-block-wrap {
+    break-before: avoid-page !important;
+    page-break-before: avoid !important;
+  }
+
+  .report-front .report-cover {
+    break-before: auto;
+    page-break-before: auto;
+  }
+
+  .report-front {
+    font-size: 8.6pt;
+    line-height: 1.34;
+  }
+
+  .report-front .report-cover,
+  .report-front .stats-strip,
+  .report-front .summary-stats,
+  .report-front .badge-key,
+  .report-front .accordion,
+  .report-front .action-line,
+  .report-front .action-prompt,
+  .report-front .code-block-wrap {
+    margin-block: 2.5mm;
+    padding: 2.5mm 3mm;
+  }
+
+  .report-front .report-cover {
+    padding-block-start: 0;
+  }
+
+  .report-front .stats-strip,
+  .report-front .summary-stats {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 2mm;
+  }
+
+  .report-front h2.no-chapter {
+    margin-block: 4mm 2mm;
+  }
+
+  .report-front .badge-key {
+    gap: 1mm;
+  }
+
+  .report-front .badge-key p {
+    grid-template-columns: minmax(8rem, auto) 1fr;
+    gap: 2mm;
+  }
+
+  .report-front .badge-key {
+    padding-block-start: 6mm;
+    border-top: 1px solid var(--report-rule-strong);
+  }
+
+  .report-front .action-prompt pre {
+    font-size: 7pt;
+    line-height: 1.24;
+  }
+
+  .report-keep-with-heading.report-chapter-page {
+    break-before: page;
+    page-break-before: always;
+  }
+
+  .report-front {
+    display: block;
+    min-height: calc(297mm - 24mm);
+    break-after: auto;
+    page-break-after: auto;
+  }
+
+  body.report-pdf-profile-letter .report-front {
+    min-height: 10.1in;
+  }
+
+  .report-main h2.chapter-heading::before {
+    break-after: avoid-page;
+    page-break-after: avoid;
+  }
+
+  .action-line,
+  .code-block-wrap,
+  .mermaid-rendered,
+  .latex-rendered-block,
+  .example-card > .code-block-wrap,
+  .block-template > .code-block-wrap,
+  .bar-chart p {
+    -webkit-box-decoration-break: clone;
+    box-sizing: border-box;
+    box-decoration-break: clone;
+    width: 100%;
+    max-width: 100%;
+    margin: 6mm 0 8mm;
+    break-inside: avoid-page;
+    break-after: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .example-card > .code-block-wrap,
+  .block-template > .code-block-wrap,
+  .report-main > .code-block-wrap {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-inline: 0 !important;
+  }
+
+  .example-card,
+  .block-template {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin-inline: 0 !important;
+  }
+
+  .code-block-wrap,
+  .mermaid-rendered,
+  .latex-rendered-block,
+  .example-card > .code-block-wrap,
+  .block-template > .code-block-wrap,
+  .report-keep-with-heading > .code-block-wrap {
+    overflow: hidden;
+    border-radius: var(--report-radius-md) !important;
+    background-clip: padding-box;
+  }
+
+  .code-block-wrap > :first-child {
+    border-top-left-radius: calc(var(--report-radius-md) - 1px);
+    border-top-right-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .report-keep-with-heading {
+    display: block;
+    margin-block: 6mm 8mm;
+    break-inside: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .report-keep-with-heading > :first-child {
+    margin-block-start: 0;
+  }
+
+  .report-keep-with-heading > :last-child {
+    margin-block-end: 0;
+  }
+
+  .sticky-toc {
+    position: static;
+    max-height: none;
+    overflow: visible;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+    break-before: auto;
+    break-after: page;
+    break-inside: auto;
+    page-break-before: auto;
+    page-break-after: always;
+    page-break-inside: auto;
+  }
+
+  .sticky-toc ol {
+    display: block;
+    max-height: none;
+    overflow: visible;
+    padding-inline-end: 0;
+  }
+
+  .sticky-toc li {
+    margin-block: 0.2rem;
+  }
+
+  .sticky-toc-header {
+    break-before: auto;
+    page-break-before: auto;
+  }
+
+  .toc-pdf-actions,
+  .toc-pdf-link {
+    display: none !important;
+  }
+
+  .report-cover {
+    border: 0;
+    border-radius: 0;
+  }
+
+  .report-cover,
+  .chapter-hero,
+  .case-study-card,
+  .tactic-card,
+  .example-card,
+  .block-template,
+  .good-bad,
+  .stats-strip,
+  .summary-stats,
+  .facts-table,
+  .facts-table-wrap,
+  .report-main > table,
+  .details-note,
+  .industry-card,
+  .priority-group,
+  .checklist-card,
+  .source-card,
+  .source-item,
+  .source-list,
+  .sources-layout,
+  .sources-group,
+  .myth-callout,
+  .info-panel,
+  .impact-panel,
+  .evidence-panel,
+  .action-panel,
+  .severity-key,
+  .accordion,
+  .quote-card,
+  .callout {
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    margin-inline: 0;
+    overflow: visible;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .action-line,
+  .action-prompt {
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    margin: 6mm 0 8mm;
+    overflow: visible;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .good-bad {
+    display: block;
+  }
+
+  .good-row,
+  .bad-row {
+    margin-block: 0 8mm;
+  }
+
+  .chapter-hero,
+  .case-study-card,
+  .tactic-card,
+  .example-card,
+  .block-template,
+  .good-bad,
+  .facts-table-wrap,
+  .details-note,
+  .industry-card,
+  .priority-group,
+  .checklist-card,
+  .source-card,
+  .source-item,
+  .source-list,
+  .sources-layout,
+  .sources-group,
+  .myth-callout,
+  .info-panel,
+  .impact-panel,
+  .evidence-panel,
+  .action-panel,
+  .severity-key,
+  .accordion,
+  .quote-card,
+  .callout {
+    margin-block: 6mm 8mm;
+    break-inside: avoid-page;
+    break-after: avoid-page;
+    page-break-inside: avoid;
+  }
+
+  .example-card > .code-block-wrap,
+  .block-template > .code-block-wrap,
+  .report-keep-with-heading > .code-block-wrap,
+  .report-keep-with-heading > .source-card,
+  .report-keep-with-heading > .source-item,
+  .report-keep-with-heading > .source-list,
+  .report-keep-with-heading > .sources-layout,
+  .report-keep-with-heading > .sources-group,
+  .report-keep-with-heading > .callout,
+  .report-keep-with-heading > .info-panel,
+  .report-keep-with-heading > .impact-panel,
+  .report-keep-with-heading > .evidence-panel,
+  .report-keep-with-heading > .action-panel,
+  .report-keep-with-heading > .details-note,
+  .report-keep-with-heading > .myth-callout,
+  .report-keep-with-heading > .accordion {
+    break-before: avoid-page;
+    page-break-before: avoid;
+  }
+
+  .report-main h2.chapter-heading + .chapter-hero,
+  .report-main h2.chapter-heading + .tactic-card,
+  .report-main h2.chapter-heading + .example-card,
+  .report-main h2.chapter-heading + .good-bad,
+  .report-main h2.chapter-heading + .facts-table-wrap,
+  .report-main h2.chapter-heading + .details-note,
+  .report-main h2.chapter-heading + .industry-card,
+  .report-main h2.chapter-heading + .priority-group,
+  .report-main h2.chapter-heading + .checklist-card,
+  .report-main h2.chapter-heading + .source-card,
+  .report-main h2.chapter-heading + .sources-layout,
+  .report-main h2.chapter-heading + .sources-group,
+  .report-main h2.chapter-heading + .myth-callout,
+  .report-main h2.chapter-heading + .info-panel,
+  .report-main h2.chapter-heading + .impact-panel,
+  .report-main h2.chapter-heading + .evidence-panel,
+  .report-main h2.chapter-heading + .action-panel,
+  .report-main h2.chapter-heading + .severity-key,
+  .report-main h2.chapter-heading + .accordion,
+  .report-main h2.chapter-heading + .quote-card,
+  .report-main h2.chapter-heading + .callout {
+    break-before: avoid-page;
+    page-break-before: avoid;
+  }
+
+  .accordion {
+    margin-block-start: 5mm;
+  }
+
+  .facts-table-wrap {
+    overflow: hidden;
+    border-radius: var(--report-radius-md) !important;
+    background-clip: padding-box;
+    clip-path: inset(0 round var(--report-radius-md));
+    contain: paint;
+  }
+
+  .facts-table thead tr:first-child th:first-child,
+  .facts-table-wrap thead tr:first-child th:first-child,
+  .report-main > table thead tr:first-child th:first-child {
+    border-top-left-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .facts-table thead tr:first-child th:last-child,
+  .facts-table-wrap thead tr:first-child th:last-child,
+  .report-main > table thead tr:first-child th:last-child {
+    border-top-right-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .facts-table tbody tr:last-child td:first-child,
+  .facts-table-wrap tbody tr:last-child td:first-child,
+  .report-main > table tbody tr:last-child td:first-child {
+    border-bottom-left-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .facts-table tbody tr:last-child td:last-child,
+  .facts-table-wrap tbody tr:last-child td:last-child,
+  .report-main > table tbody tr:last-child td:last-child {
+    border-bottom-right-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .facts-table {
+    min-width: 0;
+    table-layout: fixed;
+    font-size: 8.2pt;
+  }
+
+  .report-main > table,
+  .facts-table-wrap table {
+    min-width: 0;
+    table-layout: fixed;
+    font-size: 8.2pt;
+  }
+
+  .facts-table th,
+  .facts-table td {
+    padding: 4pt 5pt;
+    overflow-wrap: anywhere;
+    word-break: normal;
+  }
+
+  .facts-table th,
+  .facts-table-wrap th,
+  .report-main > table th {
+    background: color-mix(in srgb, var(--report-blue) 12%, var(--report-surface));
+  }
+
+  .facts-table thead th:first-child,
+  .facts-table-wrap thead th:first-child,
+  .report-main > table thead th:first-child {
+    border-top-left-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .facts-table thead th:last-child,
+  .facts-table-wrap thead th:last-child,
+  .report-main > table thead th:last-child {
+    border-top-right-radius: calc(var(--report-radius-md) - 1px);
+  }
+
+  .code-block-wrap pre,
+  .example-card pre,
+  .block-template pre,
+  .report-main > .code-block-wrap pre,
+  .mermaid,
+  .latex-block {
+    overflow-x: visible;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+  }
+
+  .source-card,
+  .source-item {
+    padding-inline-end: calc(var(--report-space-4) + 2rem);
+  }
+
+  .source-card-link[href]::after,
+  .source-item .source-card-link[href]::after {
+    content: "";
+  }
+
+  .example-card,
+  .block-template {
+    background: transparent;
+    color: var(--report-ink);
+  }
+
+  a[href]::after {
+    content: " (" attr(href) ")";
+    color: var(--report-ink-soft);
+    font-size: 0.85em;
+    overflow-wrap: anywhere;
+  }
+
+  .badge a[href]::after,
+  .sticky-toc a[href]::after,
+  .anchor-links a[href]::after {
+    content: "";
+  }
+
+  .appendix-links a[href]::after {
+    content: attr(data-filetype);
+  }
+}
+
+/* DESIGN.md brand token overrides: apple */
+:root {
+  --report-font-heading: SF Pro Display, Inter, system-ui, sans-serif;
+  --report-font-body: SF Pro Text, Inter, system-ui, sans-serif;
+  --report-font-code: SF Mono, "IBM Plex Mono", monospace;
+  --report-heading-size: 64px;
+  --report-heading-weight: 650;
+  --report-heading-line: 1.05;
+  --report-heading-tracking: -0.03em;
+  --report-body-size: 16px;
+  --report-body-line: 1.62;
+  --report-paper: #F5F5F7;
+  --report-paper-raised: #E8F2FF;
+  --report-panel: #FFFFFF;
+  --report-surface: #FFFFFF;
+  --report-ink: #1D1D1F;
+  --report-ink-muted: #6E6E73;
+  --report-ink-soft: #6E6E73;
+  --report-rule: #B2B2B7;
+  --report-rule-strong: #0066CC;
+  --report-blue: #0066CC;
+  --report-radius-lg: 18px;
+  --report-radius-xl: calc(18px + 0.5rem);
+  --report-badge-radius: calc(18px * 0.45);
+  --report-code-bg: #FFFFFF;
+  --report-code-ink: #1D1D1F;
+  --report-code-accent: #0066CC;
+  --report-info-bg: #FFFFFF;
+  --report-impact-bg: #FFFFFF;
+  --report-evidence-bg: #FFFFFF;
+  --report-myth-bg: #FFFFFF;
+  --report-good-bg: #FFFFFF;
+  --report-bad-bg: #FFFFFF;
+}
+body.report-body { font-family: var(--report-font-body); font-size: clamp(1rem, 0.94rem + 0.18vw, 1.0625rem); line-height: 1.62; }
+h1, h2, h3 { font-family: var(--report-font-heading); font-weight: var(--report-heading-weight); letter-spacing: var(--report-heading-tracking); }
+h1 { font-size: clamp(2.25rem, 5vw, 3.5rem); line-height: 1.12; }
+h2 { font-size: clamp(1.6rem, 3vw, 2.25rem); line-height: 1.16; }
+h3 { font-size: clamp(1.15rem, 1.5vw, 1.35rem); line-height: 1.24; }
+.source-card, .tactic-card, .priority-group { border-color: var(--report-rule); }
+.sticky-toc ol a:hover, .sticky-toc ol a:focus-visible, .sticky-toc ol a[aria-current="true"] { border-left-color: var(--report-blue); }
+@media print { @page { size: A4 portrait; margin: 12mm; } html, body.report-body { background: var(--report-paper) !important; font-size: 10.5pt; -webkit-print-color-adjust: exact; print-color-adjust: exact; } body.report-body { min-height: 100vh; padding: 0; orphans: 3; widows: 3; } *,*::before,*::after { box-shadow: none !important; filter: none !important; text-shadow: none !important; } body.report-theme-dark { background: var(--report-paper) !important; } .report-shell { display: block; width: 100%; max-width: none; overflow: hidden; padding: 0; } .report-main,.report-content { width: 100%; max-width: 100%; overflow: hidden; } h1,h2,h3,.code-block-head,.source-title { break-after: avoid; break-after: avoid-page; page-break-after: avoid; } .report-main h2.chapter-heading { margin-block-start: 6mm; padding-block-start: 0; } .code-block-wrap,.mermaid-rendered,.latex-rendered-block,.bar-chart p { break-inside: avoid; break-inside: avoid-page; break-after: avoid-page; page-break-inside: avoid; } .action-line,.action-prompt,.accordion,.source-card,.details-note,.info-panel,.impact-panel,.evidence-panel,.action-panel,.callout { width: auto; max-width: 100%; margin: 0 0 8mm; overflow: hidden; border-radius: 0 !important; box-shadow: none !important; break-inside: avoid-page; break-after: avoid-page; } .stat-card { background: var(--report-surface) !important; background-clip: padding-box; } .report-footer { min-height: 22mm; background: #ffffff; border: 1px solid #d1d5db; color: #374151; } .sticky-toc { position: static; max-height: none; overflow: visible; break-after: page; break-inside: auto; border: 0; border-radius: 0; box-shadow: none; } .sticky-toc ol { display: block; max-height: none; overflow: visible; padding-right: 0; } .toc-pdf-actions, .toc-pdf-link { display: none !important; } table { table-layout: fixed; font-size: 8.8pt; border-collapse: separate; border-spacing: 0; } th { background: color-mix(in srgb, var(--report-blue) 12%, var(--report-surface)); } th,td { padding: 4pt 5pt; overflow-wrap: anywhere; } pre,.mermaid,.latex-block { overflow-x: visible; white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; } a[href]::after { content: " (" attr(href) ")"; font-size: .85em; overflow-wrap: anywhere; } .sticky-toc a[href]::after, .badge a[href]::after, .source-card-link[href]::after, .anchor-links a[href]::after { content: ""; } .appendix-links a[href]::after { content: attr(data-filetype); } }
+@media print {
+@page { margin: 12mm 0; background: #ffffff; }
+@page report-letter { size: Letter portrait; margin: .45in 0; background: #ffffff; }
+html { background: #ffffff !important; }
+body.report-body { box-sizing: border-box; padding: 0 12mm; orphans: 3; widows: 3; }
+body.report-pdf-profile-letter { page: report-letter; padding: 0 .45in; }
+body.report-body:not(.report-theme-dark) { --report-paper: #ffffff; --report-paper-raised: #ffffff; --report-panel: #ffffff; --report-surface: #ffffff; background: #ffffff !important; }
+body.report-body:not(.report-theme-dark) .report-shell, body.report-body:not(.report-theme-dark) .report-main, body.report-body:not(.report-theme-dark) .report-content { background: #ffffff !important; }
+body.report-body { position: relative; background: var(--report-paper) !important; }
+body.report-theme-dark .report-shell, body.report-theme-dark .report-main, body.report-theme-dark .report-content { background: var(--report-paper) !important; }
+body.report-body::before { content: none; display: none; }
+.report-shell, .report-main, .report-content { overflow: visible; border: 0 !important; outline: 0 !important; box-shadow: none !important; }
+.report-keep-with-heading, .report-keep-with-heading.report-chapter-page { border: 0 !important; outline: 0 !important; box-shadow: none !important; }
+.report-front { display: block; min-height: calc(297mm - 24mm); break-after: auto; page-break-after: auto; }
+body.report-pdf-profile-letter .report-front { min-height: 10.1in; }
+.sticky-toc { break-before: auto; page-break-before: auto; }
+.sticky-toc-header { break-before: auto; page-break-before: auto; }
+.report-main h2.chapter-heading { margin-block-start: 10mm; padding-block-start: 5mm; border-top: 0 !important; break-before: page; break-inside: avoid-page; page-break-before: always; page-break-inside: avoid; }
+.report-keep-with-heading.report-chapter-page { break-before: page; page-break-before: always; }
+.report-main h2.chapter-heading::before { break-after: avoid-page; page-break-after: avoid; }
+.accordion { margin-block-start: 5mm; }
+.report-footer { display: flex; min-height: 22mm; margin-block-start: 8mm; padding: 0 6mm; align-items: center; justify-content: center; text-align: center; box-sizing: border-box; }
+.report-keep-with-heading { display: block; margin-block: 6mm 8mm; break-inside: avoid-page; page-break-inside: avoid; }
+.report-keep-with-heading > :first-child { margin-block-start: 0; }
+.report-keep-with-heading > :last-child { margin-block-end: 0; }
+.example-card > header, .block-template > header, .report-keep-with-heading > h2, .report-keep-with-heading > h3 { break-after: avoid-page; page-break-after: avoid; }
+.example-card > .code-block-wrap, .block-template > .code-block-wrap, .report-keep-with-heading > .code-block-wrap, .report-keep-with-heading > .source-card, .report-keep-with-heading > .source-item, .report-keep-with-heading > .source-list, .report-keep-with-heading > .sources-layout, .report-keep-with-heading > .sources-group, .report-keep-with-heading > .callout, .report-keep-with-heading > .info-panel, .report-keep-with-heading > .impact-panel, .report-keep-with-heading > .evidence-panel, .report-keep-with-heading > .action-panel, .report-keep-with-heading > .details-note, .report-keep-with-heading > .myth-callout, .report-keep-with-heading > .accordion { break-before: avoid-page; page-break-before: avoid; }
+.action-line, .code-block-wrap, .mermaid-rendered, .latex-rendered-block, .example-card > .code-block-wrap, .block-template > .code-block-wrap, .bar-chart p, .chapter-hero, .case-study-card, .tactic-card, .example-card, .block-template, .good-bad, .facts-table, .facts-table-wrap, .report-main > table, .details-note, .industry-card, .priority-group, .checklist-card, .source-card, .source-item, .source-list, .sources-layout, .sources-group, .myth-callout, .info-panel, .impact-panel, .evidence-panel, .action-panel, .severity-key, .accordion, .quote-card, .callout, .action-prompt { -webkit-box-decoration-break: clone; box-decoration-break: clone; box-sizing: border-box; width: calc(100% - 12pt); max-width: calc(100% - 12pt); margin: 6mm 6pt 8mm; overflow: visible; break-inside: avoid-page; page-break-inside: avoid; }
+.code-block-wrap, .mermaid-rendered, .latex-rendered-block, .example-card > .code-block-wrap, .block-template > .code-block-wrap, .report-keep-with-heading > .code-block-wrap { overflow: hidden; border-radius: var(--report-radius-md) !important; background-clip: padding-box; }
+.code-block-wrap > :first-child { border-top-left-radius: calc(var(--report-radius-md) - 1px); border-top-right-radius: calc(var(--report-radius-md) - 1px); }
+.facts-table-wrap { overflow: hidden; border-radius: var(--report-radius-md) !important; background-clip: padding-box; clip-path: inset(0 round var(--report-radius-md)); contain: paint; }
+.facts-table thead tr:first-child th:first-child, .facts-table-wrap thead tr:first-child th:first-child, .report-main > table thead tr:first-child th:first-child { border-top-left-radius: calc(var(--report-radius-md) - 1px); }
+.facts-table thead tr:first-child th:last-child, .facts-table-wrap thead tr:first-child th:last-child, .report-main > table thead tr:first-child th:last-child { border-top-right-radius: calc(var(--report-radius-md) - 1px); }
+.facts-table tbody tr:last-child td:first-child, .facts-table-wrap tbody tr:last-child td:first-child, .report-main > table tbody tr:last-child td:first-child { border-bottom-left-radius: calc(var(--report-radius-md) - 1px); }
+.facts-table tbody tr:last-child td:last-child, .facts-table-wrap tbody tr:last-child td:last-child, .report-main > table tbody tr:last-child td:last-child { border-bottom-right-radius: calc(var(--report-radius-md) - 1px); }
+.good-bad { display: block; }
+.good-row, .bad-row { margin-block: 0 8mm; }
+.report-main h2.chapter-heading + .chapter-hero, .report-main h2.chapter-heading + .tactic-card, .report-main h2.chapter-heading + .example-card, .report-main h2.chapter-heading + .good-bad, .report-main h2.chapter-heading + .facts-table-wrap, .report-main h2.chapter-heading + .details-note, .report-main h2.chapter-heading + .industry-card, .report-main h2.chapter-heading + .priority-group, .report-main h2.chapter-heading + .checklist-card, .report-main h2.chapter-heading + .source-card, .report-main h2.chapter-heading + .sources-layout, .report-main h2.chapter-heading + .sources-group, .report-main h2.chapter-heading + .myth-callout, .report-main h2.chapter-heading + .info-panel, .report-main h2.chapter-heading + .impact-panel, .report-main h2.chapter-heading + .evidence-panel, .report-main h2.chapter-heading + .action-panel, .report-main h2.chapter-heading + .severity-key, .report-main h2.chapter-heading + .accordion, .report-main h2.chapter-heading + .quote-card, .report-main h2.chapter-heading + .callout { break-before: avoid-page; page-break-before: avoid; }
+}</style>
+</head>
+<body class="report-body report-theme-auto report-pdf-profile-a4 report-template-apple">
+<div class="report-shell">
+<div class="report-main-flow">
+
+<main class="report-content report-main report-title-front">
+<section class="report-title-page"><h1 id="apple-brand-style-guide">Apple Brand Style Guide</h1>
+</section>
+</main>
+<main class="report-content report-main report-front">
+<section class="report-cover">
+<p><strong>Apple-inspired brand guide for usable report and content production.</strong> This specimen shows how Apple-styled content handles assets, surfaces, type, tagging badges, notifications, data, recommendations, handoffs, and export checks.</p>
+<p>Apple-styled content should feel <strong>calm, precise, generous, and product-like</strong>. Use whitespace and restraint first; use blue for action; use colour states sparingly and with enough contrast to survive PDF and print.</p>
+</section>
+<section class="manifest-card">
+<h3 id="apple-production-manifest">Apple production manifest</h3>
+<ul>
+<li><strong>Brand:</strong> Apple</li>
+<li><strong>Content system:</strong> executive summaries, product narratives, launch notes, client recommendations</li>
+<li><strong>Shape language:</strong> refined surfaces, soft rounding, subtle depth, minimal visible chrome</li>
+<li><strong>Colour rule:</strong> blue is action; graphite is authority; state colours remain calm but visible</li>
+<li><strong>Writing rule:</strong> make the next action obvious, then remove everything that does not help the reader decide</li>
+<li><strong>Export rule:</strong> light themes use light code blocks and public-safe placeholder evidence</li>
+</ul>
+</section>
+</main>
+</div>
+<div class="toc-pdf-actions" aria-label="PDF downloads"><a class="toc-pdf-link" href="apple-a4.pdf" aria-label="Open A4 PDF version" title="Open A4 PDF version">A4</a><a class="toc-pdf-link" href="apple-usletter.pdf" aria-label="Open US Letter PDF version" title="Open US Letter PDF version">US Letter</a><a class="toc-pdf-link" href="apple-slides.pdf" aria-label="Open slides PDF version" title="Open slides PDF version">Slides</a></div>
+<nav class="sticky-toc" aria-label="Report table of contents">
+<div class="sticky-toc-header"><h2>Contents</h2></div>
+<ol>
+<li class="toc-entry"><a href="#apple-brand-style-guide">Apple Brand Style Guide</a></li>
+<li class="toc-entry"><a href="#apple-production-manifest">Apple production manifest</a></li>
+<li class="toc-entry toc-chapter"><a href="#brand-assets-and-colour-roles">1. Brand assets and colour roles</a></li>
+<li class="toc-entry toc-subsection"><a href="#primary-mark-on-light">1.1 Primary mark on light</a></li>
+<li class="toc-entry toc-subsection"><a href="#reverse-mark-on-dark">1.2 Reverse mark on dark</a></li>
+<li class="toc-entry toc-subsection"><a href="#app-or-product-icon">1.3 App or product icon</a></li>
+<li class="toc-entry toc-subsection"><a href="#partner-lockup">1.4 Partner lockup</a></li>
+<li class="toc-entry toc-subsection"><a href="#white-surface">1.5 White surface</a></li>
+<li class="toc-entry toc-subsection"><a href="#grouped-surface">1.6 Grouped surface</a></li>
+<li class="toc-entry toc-subsection"><a href="#action-blue">1.7 Action blue</a></li>
+<li class="toc-entry toc-subsection"><a href="#graphite-text">1.8 Graphite text</a></li>
+<li class="toc-entry toc-subsection"><a href="#caution-state">1.9 Caution state</a></li>
+<li class="toc-entry toc-subsection"><a href="#success-state">1.10 Success state</a></li>
+<li class="toc-entry toc-chapter"><a href="#typography-and-formatting">2. Typography and formatting</a></li>
+<li class="toc-entry toc-subsection"><a href="#h1-cover-title">2.1 H1 / cover title</a></li>
+<li class="toc-entry toc-subsection"><a href="#h2-section-title">2.2 H2 / section title</a></li>
+<li class="toc-entry toc-subsection"><a href="#body-emphasis">2.3 Body emphasis</a></li>
+<li class="toc-entry toc-subsection"><a href="#metadata">2.4 Metadata</a></li>
+<li class="toc-entry toc-chapter"><a href="#information-tagging-badges">3. Information tagging badges</a></li>
+<li class="toc-entry toc-chapter"><a href="#message-states-and-notifications">4. Message states and notifications</a></li>
+<li class="toc-entry toc-subsection"><a href="#critical-alert">4.1 Critical alert</a></li>
+<li class="toc-entry toc-subsection"><a href="#warning-alert">4.2 Warning alert</a></li>
+<li class="toc-entry toc-subsection"><a href="#information-note">4.3 Information note</a></li>
+<li class="toc-entry toc-subsection"><a href="#success-note">4.4 Success note</a></li>
+<li class="toc-entry toc-chapter"><a href="#report-component-show-and-tell">5. Report component show-and-tell</a></li>
+<li class="toc-entry toc-chapter"><a href="#recommendations-and-handoff">6. Recommendations and handoff</a></li>
+<li class="toc-entry toc-subsection"><a href="#critical-component-issue-evidence-verified">6.1 Critical component issue</a></li>
+<li class="toc-entry toc-subsection"><a href="#high-priority-refinement-evidence-partial">6.2 High-priority refinement</a></li>
+<li class="toc-entry toc-subsection"><a href="#completed-pattern-evidence-verified">6.3 Completed pattern</a></li>
+<li class="toc-entry toc-subsection"><a href="#preserve">6.4 Preserve</a></li>
+<li class="toc-entry toc-subsection"><a href="#avoid">6.5 Avoid</a></li>
+<li class="toc-entry toc-subsection"><a href="#implementation-brief">6.6 Implementation brief</a></li>
+</ol>
+</nav>
+
+<main class="report-content report-main report-rest">
+<h2 class="chapter-heading" id="brand-assets-and-colour-roles"><span class="heading-number">1.</span> Brand assets and colour roles</h2>
+<section class="brand-asset-grid">
+<section class="brand-asset-card" data-accent="light">
+<h3 class="section-heading" id="primary-mark-on-light"><span class="heading-number">1.1</span> Primary mark on light</h3>
+<p>Use for covers, title pages, and calm executive documents. Keep clearspace generous and avoid nearby badges or dense controls.</p>
+</section>
+<section class="brand-asset-card" data-accent="dark">
+<h3 class="section-heading" id="reverse-mark-on-dark"><span class="heading-number">1.2</span> Reverse mark on dark</h3>
+<p>Use only when the entire module is dark. The mark should feel intentional, not like a contrast workaround.</p>
+</section>
+<section class="brand-asset-card" data-accent="light">
+<h3 class="section-heading" id="app-or-product-icon"><span class="heading-number">1.3</span> App or product icon</h3>
+<p>Use for small cards and preview tiles. Centre it optically and pair with one short label.</p>
+</section>
+<section class="brand-asset-card" data-accent="dark">
+<h3 class="section-heading" id="partner-lockup"><span class="heading-number">1.4</span> Partner lockup</h3>
+<p>Use for co-branded pages. Keep both names aligned and let whitespace carry the relationship.</p>
+</section>
+</section>
+<section class="brand-swatch-grid">
+<section class="swatch-card" data-accent="paper">
+<h3 class="section-heading" id="white-surface"><span class="heading-number">1.5</span> White surface</h3>
+<p>Primary canvas for reading. Use it for report pages, cards, and tables that need a premium quiet feel.</p>
+</section>
+<section class="swatch-card" data-accent="raised">
+<h3 class="section-heading" id="grouped-surface"><span class="heading-number">1.6</span> Grouped surface</h3>
+<p>Use for subtle card grouping. The difference must be visible enough to explain structure.</p>
+</section>
+<section class="swatch-card" data-accent="blue">
+<h3 class="section-heading" id="action-blue"><span class="heading-number">1.7</span> Action blue</h3>
+<p>Use for links, selection, chart focus, and the one action you want the reader to notice.</p>
+</section>
+<section class="swatch-card" data-accent="ink">
+<h3 class="section-heading" id="graphite-text"><span class="heading-number">1.8</span> Graphite text</h3>
+<p>Use for headings and important facts. Softer greys are for metadata, not critical claims.</p>
+</section>
+<section class="swatch-card" data-accent="amber">
+<h3 class="section-heading" id="caution-state"><span class="heading-number">1.9</span> Caution state</h3>
+<p>Use for pending verification or risk. Keep the hue warm and readable, not faint.</p>
+</section>
+<section class="swatch-card" data-accent="green">
+<h3 class="section-heading" id="success-state"><span class="heading-number">1.10</span> Success state</h3>
+<p>Use for verified wins. Pair with a label so the meaning survives grayscale.</p>
+</section>
+</section>
+<h2 class="chapter-heading" id="typography-and-formatting"><span class="heading-number">2.</span> Typography and formatting</h2>
+<section class="brand-type-scale">
+<section class="type-specimen">
+<h3 class="section-heading" id="h1-cover-title"><span class="heading-number">2.1</span> H1 / cover title</h3>
+<p><strong>AI visibility readiness</strong></p>
+<p>Large, confident, and simple. One idea per title.</p>
+</section>
+<section class="type-specimen">
+<h3 class="section-heading" id="h2-section-title"><span class="heading-number">2.2</span> H2 / section title</h3>
+<p><strong>What changed this week</strong></p>
+<p>Use section headings to answer what the reader is about to decide.</p>
+</section>
+<section class="type-specimen">
+<h3 class="section-heading" id="body-emphasis"><span class="heading-number">2.3</span> Body emphasis</h3>
+<p>Use normal copy for explanation. <strong>Bold</strong> the decision. *Italicise nuance* or a non-blocking caveat.</p>
+</section>
+<section class="type-specimen">
+<h3 class="section-heading" id="metadata"><span class="heading-number">2.4</span> Metadata</h3>
+<p>Keep metadata small and quiet: source, date, owner, version. Do not let it compete with the main action.</p>
+</section>
+</section>
+<section class="quote-card">
+<p>Use quotes for direct feedback, reviewer notes, and cited source language. Keep them short and surrounded by whitespace.</p>
+</section>
+<h2 class="chapter-heading" id="information-tagging-badges"><span class="heading-number">3.</span> Information tagging badges</h2>
+<p>Badges are inline metadata. They classify evidence beside a claim; they do not replace a notification or explain an action.</p>
+<section class="badge-row">
+<p><strong>Evidence:</strong> <span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span> <span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span> <span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span> <span class="evidence-badge" aria-label="Evidence: Missing"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span></p>
+<p><strong>Priority:</strong> <span class="badge badge-missing">Critical</span> <span class="badge badge-partial">High</span> <span class="badge badge-inferred">Medium</span> <span class="badge badge-verified">Low</span></p>
+</section>
+<section class="facts-table-wrap">
+<table><thead>
+<tr><th>Badge</th><th>Purpose</th><th>Use example</th><th>Apple treatment</th></tr></thead><tbody>
+<tr><td><span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></td><td>Confirmed evidence</td><td>“Hero copy appears in first-fetch HTML”</td><td>Soft green chip with text label</td></tr>
+<tr><td><span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></td><td>Incomplete support</td><td>“Two sources agree; one is stale”</td><td>Warm chip; never hides uncertainty</td></tr>
+<tr><td><span class="evidence-badge" aria-label="Evidence: Inferred"><span class="evidence-label">Evidence:</span><span class="badge badge-inferred">Inferred</span></span></td><td>Judgement from pattern</td><td>“Likely entity drift”</td><td>Blue chip; keep caveat nearby</td></tr>
+<tr><td><span class="evidence-badge" aria-label="Evidence: Missing"><span class="evidence-label">Evidence:</span><span class="badge badge-missing">Missing</span></span></td><td>Evidence absent</td><td>“No cited source found”</td><td>Red chip; do not use as decoration</td></tr>
+</tbody></table>
+</section>
+<h2 class="chapter-heading" id="message-states-and-notifications"><span class="heading-number">4.</span> Message states and notifications</h2>
+<section class="notification-grid">
+<section class="info-panel" data-severity="critical">
+<h3 class="section-heading" id="critical-alert"><span class="heading-number">4.1</span> Critical alert</h3>
+<p><strong>Purpose:</strong> block release until fixed. Use for privacy risk, missing required evidence, or broken export.</p>
+<p><strong>Example:</strong> “The public PDF includes a private source name. Remove it before sharing.”</p>
+</section>
+<section class="info-panel" data-severity="high">
+<h3 class="section-heading" id="warning-alert"><span class="heading-number">4.2</span> Warning alert</h3>
+<p><strong>Purpose:</strong> show risk that needs attention soon. Use for partial evidence or unresolved owner decisions.</p>
+<p><strong>Example:</strong> “Recommendation is ready, but the owner field is still empty.”</p>
+</section>
+<section class="info-panel" data-severity="medium">
+<h3 class="section-heading" id="information-note"><span class="heading-number">4.3</span> Information note</h3>
+<p><strong>Purpose:</strong> explain scope or method. Use when context helps the reader trust the result.</p>
+<p><strong>Example:</strong> “This review covers A4, US Letter, and slide exports.”</p>
+</section>
+<section class="info-panel" data-severity="low">
+<h3 class="section-heading" id="success-note"><span class="heading-number">4.4</span> Success note</h3>
+<p><strong>Purpose:</strong> record a stable, verified pattern to preserve.</p>
+<p><strong>Example:</strong> “Light code blocks now match the page theme and remain readable.”</p>
+</section>
+</section>
+<h2 class="chapter-heading" id="report-component-show-and-tell"><span class="heading-number">5.</span> Report component show-and-tell</h2>
+<section class="stats-strip">
+<section class="kpi-card">
+<p><strong>92%</strong></p>
+<p>Priority claims have evidence. <strong>Source:</strong> A001.</p>
+</section>
+<section class="kpi-card">
+<p><strong>4</strong></p>
+<p>Message states tested. <strong>Source:</strong> A002.</p>
+</section>
+<section class="kpi-card">
+<p><strong>12</strong></p>
+<p>Reusable report blocks covered. <strong>Source:</strong> A003.</p>
+</section>
+<section class="kpi-card">
+<p><strong>0</strong></p>
+<p>Private artefacts in public export. <strong>Source:</strong> A004.</p>
+</section>
+</section>
+<section class="visibility-bars">
+<p style="--bar-value: 92%"><span class="visibility-label">Evidence coverage</span><span class="visibility-value">92%</span></p>
+<p style="--bar-value: 88%"><span class="visibility-label">Component coverage</span><span class="visibility-value">88%</span></p>
+<p style="--bar-value: 84%"><span class="visibility-label">Notification clarity</span><span class="visibility-value">84%</span></p>
+<p style="--bar-value: 96%"><span class="visibility-label">Print readiness</span><span class="visibility-value">96%</span></p>
+</section>
+<section class="facts-table-wrap">
+<table><thead>
+<tr><th>Component</th><th>Purpose</th><th>Apple treatment</th><th>Example content</th></tr></thead><tbody>
+<tr><td>Cover</td><td>First impression</td><td>Large title, calm whitespace</td><td>“AI visibility readiness”</td></tr>
+<tr><td>KPI</td><td>Executive metric</td><td>Rounded quiet card, one number</td><td>“92% priority evidence coverage”</td></tr>
+<tr><td>Notification</td><td>Interruptive state</td><td>Soft colour, clear recovery action</td><td>“Remove private source name”</td></tr>
+<tr><td>Brief</td><td>Delivery handoff</td><td>Light panel with concise fields</td><td>Task / files / acceptance / verify</td></tr>
+</tbody></table>
+</section>
+<section class="ledger-list">
+<p>A001 — Token audit — <strong>High confidence</strong>; verifies surface, text, accent, and state roles.</p>
+<p>A002 — Component review — <strong>High confidence</strong>; checks covers, cards, tables, badges, and alerts.</p>
+<p>A003 — Export review — <strong>Medium confidence</strong>; confirms A4, US Letter, and slides outputs.</p>
+<p>A004 — Redaction review — <strong>High confidence</strong>; confirms public-safe placeholders.</p>
+</section>
+<h2 class="chapter-heading" id="recommendations-and-handoff"><span class="heading-number">6.</span> Recommendations and handoff</h2>
+<section class="priority-card" data-priority="critical">
+<h3 class="section-heading" id="critical-component-issue-evidence-verified"><span class="heading-number">6.1</span> Critical component issue <span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></h3>
+<p>Use for a blocker that prevents the report from being trusted or read.</p>
+<p><strong>Owner:</strong> Design. <strong>Due:</strong> current iteration. <strong>Verify:</strong> the PDF no longer exposes private material.</p>
+</section>
+<section class="priority-card" data-priority="high">
+<h3 class="section-heading" id="high-priority-refinement-evidence-partial"><span class="heading-number">6.2</span> High-priority refinement <span class="evidence-badge" aria-label="Evidence: Partial"><span class="evidence-label">Evidence:</span><span class="badge badge-partial">Partial</span></span></h3>
+<p>Use for issues that reduce clarity but do not block interpretation.</p>
+<p><strong>Owner:</strong> Content. <strong>Due:</strong> next pass. <strong>Verify:</strong> owner and acceptance fields are present.</p>
+</section>
+<section class="priority-card" data-status="done">
+<h3 class="section-heading" id="completed-pattern-evidence-verified"><span class="heading-number">6.3</span> Completed pattern <span class="evidence-badge" aria-label="Evidence: Verified"><span class="evidence-label">Evidence:</span><span class="badge badge-verified">Verified</span></span></h3>
+<p>Use for a verified style pattern that should not regress.</p>
+<p><strong>Owner:</strong> Design. <strong>Verified:</strong> A004. <strong>Preserve:</strong> light code panels and readable state colours.</p>
+</section>
+<section class="good-bad">
+<section class="good-row">
+<h3 class="section-heading" id="preserve"><span class="heading-number">6.4</span> Preserve</h3>
+<ul>
+<li><strong>Spacious rhythm</strong> and short labels.</li>
+<li>Light code blocks on light pages.</li>
+<li>Clear state labels plus colour.</li>
+</ul>
+</section>
+<section class="bad-row">
+<h3 class="section-heading" id="avoid"><span class="heading-number">6.5</span> Avoid</h3>
+<ul>
+<li>Dense tables without breathing room.</li>
+<li>Faint state colours that look identical.</li>
+<li>Random panel widths that imply unrelated meaning.</li>
+</ul>
+</section>
+</section>
+<section class="brief-card">
+<h3 class="section-heading" id="implementation-brief"><span class="heading-number">6.6</span> Implementation brief</h3>
+<p><strong>Task:</strong> Apply Apple-styled report components to an executive audit.</p>
+<p><strong>Files:</strong> report Markdown, brand renderer CSS, PDF exports.</p>
+<p><strong>Acceptance:</strong> every block has one purpose, clear label, accessible contrast, and print-safe layout.</p>
+<p><strong>Verification:</strong> render HTML, A4, US Letter, and slides; inspect badge, notification, table, and code readability.</p>
+</section>
+<section class="example-card">
+<header>Apple light code panel</header>
+<div class="code-block-wrap"><div class="code-block-head"><span>Text code</span><button class="code-copy" type="button" aria-label="Copy code" title="Copy code">⧉</button></div><pre class="language-text"><code>Do: use fewer, clearer blocks.
+Do not: use colour when hierarchy, wording, or spacing can solve the problem.</code></pre></div>
+</section>
+<section class="privacy-note">
+<p><strong>Public artifact rule</strong></p>
+<p>Apple-styled public examples must not include private client names, URLs, local paths, screenshots, or raw exports.</p>
+</section>
+<section class="version-summary">
+<p>Apple brand style guide specimen · usable production guide · public-safe placeholder content</p>
+</section>
+</main>
+</div>
+<footer class="report-footer">© 2025-2026 Marcus Quinn. Licensed under MIT.</footer>
+<script>
+(() => {
+  const links = Array.from(document.querySelectorAll('.sticky-toc a[href^="#"]'));
+  const headings = links.map((link) => document.getElementById(link.getAttribute('href').slice(1))).filter(Boolean);
+  const setActive = (id) => {
+    links.forEach((link) => link.setAttribute('aria-current', link.getAttribute('href') === `#${id}` ? 'true' : 'false'));
+  };
+  if (!('IntersectionObserver' in window) || headings.length === 0) {
+    if (headings[0]) setActive(headings[0].id);
+    return;
+  }
+  const observer = new IntersectionObserver((entries) => {
+    const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+    if (visible) setActive(visible.target.id);
+  }, { rootMargin: '-20% 0px -65% 0px', threshold: [0, 1] });
+  headings.forEach((heading) => observer.observe(heading));
+  setActive(headings[0].id);
+})();
+</script>
+<script>
+(() => {
+  document.querySelectorAll('.code-copy').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const code = button.closest('.code-block-wrap')?.querySelector('code')?.innerText || '';
+      const original = button.dataset.originalLabel || button.textContent || '⧉';
+      button.dataset.originalLabel = original;
+      const showCopied = () => {
+        button.textContent = '✓';
+        button.classList.add('is-copied');
+        button.setAttribute('aria-label', 'Copied');
+        setTimeout(() => {
+          button.textContent = original;
+          button.classList.remove('is-copied');
+          button.setAttribute('aria-label', 'Copy code');
+        }, 1200);
+      };
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(code);
+        } else {
+          const textArea = document.createElement('textarea');
+          textArea.value = code;
+          textArea.setAttribute('readonly', '');
+          textArea.style.position = 'fixed';
+          textArea.style.left = '-9999px';
+          document.body.appendChild(textArea);
+          textArea.select();
+          document.execCommand('copy');
+          textArea.remove();
+        }
+        showCopied();
+      } catch (_) {
+        button.textContent = 'Copy';
+      }
+    });
+  });
+})();
+</script>
+</body>
+</html>

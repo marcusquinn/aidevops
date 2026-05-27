@@ -44,6 +44,9 @@ STYLE_SLUGS = (
     "signal-agency",
 )
 
+STYLE_SLUG_SET = frozenset(STYLE_SLUGS)
+SORTED_STYLE_SLUGS = tuple(sorted(STYLE_SLUG_SET))
+
 TOKEN_SECTION_PREFIXES = {
     "colors": "",
     "rounded": "rounded.",
@@ -256,6 +259,9 @@ def _parse_tokens(lines: list[str]) -> dict[str, str]:
 
 
 def _tokens_for(name: str) -> dict[str, str]:
+    if name not in STYLE_SLUG_SET:
+        raise ValueError(f"Invalid style name: {name}")
+
     path = _brand_root() / name / "DESIGN.md"
     tokens = dict(DEFAULT_TOKENS)
     if path.exists():
@@ -558,6 +564,19 @@ body.report-theme-light.report-template-terminalshop a { color: var(--report-blu
 .report-template-signal-agency .tactic-card,
 .report-template-signal-agency .source-card,
 .report-template-signal-agency .priority-group,
+.report-template-signal-agency .priority-card,
+.report-template-signal-agency .manifest-card,
+.report-template-signal-agency .dossier-card,
+.report-template-signal-agency .kpi-card,
+.report-template-signal-agency .brief-card,
+.report-template-signal-agency .privacy-note,
+.report-template-signal-agency .ledger-list,
+.report-template-signal-agency .toc-list,
+.report-template-signal-agency .visibility-bars,
+.report-template-signal-agency .specimen-card,
+.report-template-signal-agency .brand-swatch-grid,
+.report-template-signal-agency .brand-type-scale,
+.report-template-signal-agency .brand-component-grid,
 .report-template-signal-agency .stat-card,
 .report-template-signal-agency .code-block-wrap,
 .report-template-signal-agency .example-card,
@@ -625,7 +644,7 @@ def _theme_css(name: str, tokens: dict[str, str]) -> str:
   --report-body-size: {tokens.get('body-md.fontSize', DEFAULT_TOKENS['body-md.fontSize'])};
   --report-body-line: {tokens.get('body-md.lineHeight', DEFAULT_TOKENS['body-md.lineHeight'])};
   --report-paper: {tokens['background']};
-  --report-paper-raised: {tokens.get('paper-raised', tokens['primary-container'])};
+  --report-paper-raised: {tokens.get('paper-raised') or tokens['primary-container']};
   --report-panel: {tokens['surface']};
   --report-surface: {tokens['surface']};
   --report-ink: {tokens['on-surface']};
@@ -662,7 +681,7 @@ h3 {{ font-size: clamp(1.15rem, 1.5vw, 1.35rem); line-height: 1.24; }}
 def style_names() -> tuple[str, ...]:
     """Return supported DESIGN.md-backed report style identifiers."""
 
-    return tuple(sorted(STYLE_SLUGS))
+    return SORTED_STYLE_SLUGS
 
 
 def style_css(name: str) -> str:

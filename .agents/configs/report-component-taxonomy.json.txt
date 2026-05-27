@@ -141,6 +141,22 @@
       "rendering_notes": "First page or report header with safe metadata and summary."
     },
     {
+      "id": "manifest_card",
+      "label": "Manifest card",
+      "required_fields": [
+        "id",
+        "component",
+        "title",
+        "fields"
+      ],
+      "item_required_fields": [
+        "label",
+        "value",
+        "sensitivity"
+      ],
+      "rendering_notes": "Compact audit metadata block for scope, period, source count, run ID, and next audit date."
+    },
+    {
       "id": "sticky_toc",
       "label": "Sticky TOC",
       "required_fields": [
@@ -156,6 +172,22 @@
         "status"
       ],
       "rendering_notes": "Pinned navigation in HTML; normal table of contents in Markdown/PDF."
+    },
+    {
+      "id": "inline_toc_list",
+      "label": "Inline TOC list",
+      "required_fields": [
+        "id",
+        "component",
+        "items"
+      ],
+      "item_required_fields": [
+        "section_no",
+        "title",
+        "meta",
+        "anchor"
+      ],
+      "rendering_notes": "Dossier-style in-body table of contents with section numbers and metadata."
     },
     {
       "id": "chapter_hero_heading",
@@ -268,6 +300,17 @@
       "rendering_notes": "Compact KPI cards with period and unit."
     },
     {
+      "id": "kpi_card",
+      "label": "KPI card",
+      "required_fields": [
+        "id",
+        "component",
+        "value",
+        "note"
+      ],
+      "rendering_notes": "Large per-metric card with figure, note, delta/period, and provenance footer."
+    },
+    {
       "id": "facts_table",
       "label": "Facts table",
       "required_fields": [
@@ -278,6 +321,37 @@
         "evidence"
       ],
       "rendering_notes": "Dense factual data with stable export columns."
+    },
+    {
+      "id": "visibility_bars",
+      "label": "Visibility bars",
+      "required_fields": [
+        "id",
+        "component",
+        "series"
+      ],
+      "item_required_fields": [
+        "label",
+        "value"
+      ],
+      "rendering_notes": "Horizontal bar rows for answer-engine citation/mention share or score distribution."
+    },
+    {
+      "id": "source_ledger",
+      "label": "Source ledger",
+      "required_fields": [
+        "id",
+        "component",
+        "sources"
+      ],
+      "item_required_fields": [
+        "source_id",
+        "source_title",
+        "summary",
+        "confidence",
+        "sensitivity"
+      ],
+      "rendering_notes": "Row-based ledger for referenced sources backed by private evidence storage."
     },
     {
       "id": "details_note",
@@ -291,6 +365,17 @@
         "evidence"
       ],
       "rendering_notes": "Aside/details block for caveats, assumptions, and implementation notes."
+    },
+    {
+      "id": "privacy_note",
+      "label": "Privacy note",
+      "required_fields": [
+        "id",
+        "component",
+        "rule",
+        "body"
+      ],
+      "rendering_notes": "Redaction/public-artifact rule displayed before sensitive evidence references."
     },
     {
       "id": "industry_card",
@@ -322,6 +407,23 @@
       "rendering_notes": "Grouped actions sorted from critical to low priority."
     },
     {
+      "id": "priority_card",
+      "label": "Priority card",
+      "required_fields": [
+        "id",
+        "component",
+        "priority",
+        "title",
+        "finding",
+        "owner",
+        "due",
+        "source_ids",
+        "status",
+        "evidence"
+      ],
+      "rendering_notes": "One remediation per card with state header and provenance footer."
+    },
+    {
       "id": "checklist",
       "label": "Checklist",
       "required_fields": [
@@ -339,6 +441,21 @@
       "rendering_notes": "Action checklist using the checklist_status enum."
     },
     {
+      "id": "implementation_brief",
+      "label": "Implementation brief",
+      "required_fields": [
+        "id",
+        "component",
+        "task",
+        "files",
+        "acceptance",
+        "verification",
+        "owner",
+        "due"
+      ],
+      "rendering_notes": "Worker-ready handoff block where each field maps to an implementation step or acceptance check."
+    },
+    {
       "id": "source_card",
       "label": "Source card",
       "required_fields": [
@@ -352,6 +469,20 @@
         "sensitivity"
       ],
       "rendering_notes": "Appendix/source-section card backing citations and badges."
+    },
+    {
+      "id": "brand_specimen_card",
+      "label": "Brand specimen card",
+      "required_fields": [
+        "id",
+        "component",
+        "brand",
+        "token_type",
+        "sample",
+        "value",
+        "usage"
+      ],
+      "rendering_notes": "Style-guide/report-design card for colour swatches, type samples, component usage, and constraints."
     },
     {
       "id": "myth_callout",

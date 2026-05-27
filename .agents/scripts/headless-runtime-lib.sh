@@ -1037,6 +1037,46 @@ _merge_worker_db() {
 	return 0
 }
 
+#######################################
+# Seed a continuation session into a worker's isolated OpenCode DB.
+# Called before `opencode run --session <id> --continue` so retries launched
+# with a fresh XDG_DATA_HOME can resolve the persisted conversation locally.
+# Copies only the selected session and its messages (plus its project row for
+# schema/FK compatibility). Non-fatal: failures fall back to normal runtime
+# stale-session handling.
+#######################################
+_seed_worker_db_session_context() {
+	local isolated_dir="$1"
+	local session_id="$2"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	local shared_db="${HOME}/.local/share/opencode/opencode.db"
+
+	[[ -n "$isolated_dir" && -n "$session_id" ]] || return 0
+	[[ -f "$shared_db" ]] || return 0
+	mkdir -p "${isolated_dir}/opencode" 2>/dev/null || return 0
+
+	# Fresh isolated auth dirs may not have a migrated DB yet. Copy schema only
+	# from the shared DB so the targeted row copy has compatible tables without
+	# importing unrelated session/message data.
+	if [[ ! -f "$worker_db" ]]; then
+		sqlite3 -cmd ".timeout 5000" "$shared_db" .schema 2>/dev/null | sqlite3 "$worker_db" >/dev/null 2>&1 || return 0
+	fi
+
+	local shared_db_sql session_id_sql
+	shared_db_sql=$(sql_escape "$shared_db")
+	session_id_sql=$(sql_escape "$session_id")
+	sqlite3 "$worker_db" <<-SQL >/dev/null 2>&1 || true
+		.timeout 5000
+		ATTACH DATABASE '${shared_db_sql}' AS shared;
+		INSERT OR IGNORE INTO project SELECT * FROM shared.project
+			WHERE id IN (SELECT project_id FROM shared.session WHERE id = '${session_id_sql}');
+		INSERT OR IGNORE INTO session SELECT * FROM shared.session WHERE id = '${session_id_sql}';
+		INSERT OR IGNORE INTO message SELECT * FROM shared.message WHERE session_id = '${session_id_sql}';
+		DETACH DATABASE shared;
+	SQL
+	return 0
+}
+
 # --- Section 10: Dispatch Ledger / Session Locks ---
 
 # _register_dispatch_ledger: register this dispatch in the in-flight ledger (GH#6696).

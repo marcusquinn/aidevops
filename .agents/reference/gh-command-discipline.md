@@ -53,7 +53,7 @@ When reading GitHub issue/PR threads, prefer `gh-thread-clean-helper.sh view iss
 
 ### Bot comment noise skip when reading (8c, token waste prevention)
 
-`gh-thread-clean-helper.sh` strips common bot internal-state/status noise. From bot comments, use only actionable file:line findings; use `gh pr checks` for pass/fail status. Read full bot comments only for CI/review-bot configuration tasks.
+`gh-thread-clean-helper.sh` strips common bot internal-state/status noise. From bot comments, use only actionable file:line findings; use `gh pr checks` for pass/fail status. Treat Augment PR summary blocks (`<!-- augment-pr-summary -->`, `<details>` summaries) as duplicate PR-summary noise unless the task is about bot-output classification. Read full bot comments only for CI/review-bot configuration tasks.
 
 ### Operational comment skip when reading (8d, token waste prevention)
 

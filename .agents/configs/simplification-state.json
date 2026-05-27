@@ -1616,9 +1616,9 @@
       "pr": 12910
     },
     ".agents/prompts/worker-efficiency-protocol.md": {
-      "at": "2026-05-14T20:16:06Z",
-      "hash": "e85e5da523b883d4dc143ddd6d9139acb133e14c",
-      "passes": 7,
+      "at": "2026-05-27T04:16:37Z",
+      "hash": "88a6061eb0bd3cba039f132810a473986120df16",
+      "passes": 9,
       "pr": 14943
     },
     ".agents/reference/agent-routing.md": {
@@ -2298,15 +2298,15 @@
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "at": "2026-05-25T15:39:34Z",
-      "hash": "12a272ce6e7a18b9d6d656199eb29c6a07885bb9",
-      "passes": 52,
+      "at": "2026-05-26T05:27:01Z",
+      "hash": "1179bc3b8b7147f3b2187e3a279f807606432407",
+      "passes": 53,
       "pr": 15086
     },
     ".agents/scripts/headless-runtime-lib.sh": {
-      "at": "2026-05-22T06:03:21Z",
-      "hash": "8916020270290d92eed5f1791dd3b7bb5a4222ea",
-      "passes": 30,
+      "at": "2026-05-27T04:19:32Z",
+      "hash": "cb4321b2cda230f0f4f953e6e836b9fe8d66564a",
+      "passes": 32,
       "pr": 18707
     },
     ".agents/scripts/interactive-session-helper.sh": {
@@ -2562,9 +2562,9 @@
       "pr": 18810
     },
     ".agents/scripts/tabby-helper.sh": {
-      "at": "2026-05-25T15:39:47Z",
-      "hash": "5a3d1fe7bf70931d3fc6ccd79fd5c52444d08815",
-      "passes": 7,
+      "at": "2026-05-26T02:05:55Z",
+      "hash": "071d48661720386c5f331e2ded59132c5e472fe7",
+      "passes": 8,
       "pr": 17549
     },
     ".agents/scripts/tests/test-consolidation-dispatch.sh": {
@@ -5283,10 +5283,10 @@
       "pr": 12754
     },
     ".agents/tools/design/design-md.md": {
-      "at": "2026-05-25T22:05:12Z",
-      "hash": "0d4f97604412340be40dd46862e4e2089b78f7f9",
+      "at": "2026-05-27T04:22:13Z",
+      "hash": "928cdf2dd0b881e925716d5a92b4956a74db7d6c",
       "issue": 16952,
-      "passes": 7,
+      "passes": 9,
       "pr": 16966
     },
     ".agents/tools/design/library/brands/airbnb/DESIGN.md": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-05-25T22:06:57Z",
-      "hash": "26576635f23368d215c0d23efc0627360e9be537",
-      "passes": 197,
+      "at": "2026-05-26T05:34:25Z",
+      "hash": "3e41b244a4cdc1d72fbf92359e4c042458ccb3e5",
+      "passes": 200,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-05-25T22:06:58Z",
-      "hash": "c073ee0e9e2d23f0fc39f7473a95835a7bcc8e5e",
-      "passes": 192,
+      "at": "2026-05-26T05:34:26Z",
+      "hash": "bae89257c1610d3bc84239ae61bc27739e48a796",
+      "passes": 195,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {

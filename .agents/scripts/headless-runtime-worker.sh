@@ -692,7 +692,7 @@ _recover_worker_output_on_failure() {
 #######################################
 # Return success when GitHub already shows the worker target as terminal.
 #
-# A worker can be interrupted after it merged a PR or closed the linked issue.
+# A worker can be interrupted after it merged a PR and the linked issue closed.
 # In that case the local process lacks a completion signal, but redispatching is
 # noise. Only confirmed terminal GitHub state returns 0; unknown/API failures
 # return 1 so normal failure handling remains conservative.
@@ -704,7 +704,9 @@ _worker_external_terminal_complete() {
 	local work_dir="$2"
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
 	local issue_number=""
-	issue_number=$(printf '%s' "$session_key" | sed -nE 's/^[^0-9]*([0-9]+).*/\1/p' | tail -1 || true)
+	if [[ "$session_key" =~ ([0-9]+)$ ]]; then
+		issue_number="${BASH_REMATCH[1]}"
+	fi
 
 	[[ "$session_key" == issue-* ]] || return 1
 	[[ -n "$repo_slug" && -n "$issue_number" ]] || return 1
@@ -712,24 +714,31 @@ _worker_external_terminal_complete() {
 
 	local issue_state=""
 	issue_state=$(gh issue view "$issue_number" --repo "$repo_slug" --json state --jq '.state // empty' 2>/dev/null || true)
-	if [[ "$issue_state" == "CLOSED" ]]; then
-		print_info "[lifecycle] worker_external_terminal issue_closed session=${session_key} issue=${issue_number}"
-		return 0
-	fi
+	[[ "$issue_state" == "CLOSED" ]] || return 1
 
 	local branch_name=""
 	if [[ -n "$work_dir" && -d "$work_dir" ]]; then
 		branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 	fi
+	[[ -n "$branch_name" && "$branch_name" != "HEAD" ]] || return 1
 
-	local merged_count=""
-	if [[ -n "$branch_name" && "$branch_name" != "HEAD" ]]; then
-		merged_count=$(gh pr list --repo "$repo_slug" --head "$branch_name" --state merged --json number --jq 'length' 2>/dev/null || true)
-		if [[ "$merged_count" =~ ^[0-9]+$ && "$merged_count" -gt 0 ]]; then
-			print_info "[lifecycle] worker_external_terminal pr_merged session=${session_key} branch=${branch_name}"
+	local branch_pr_numbers=""
+	branch_pr_numbers=$(gh pr list --repo "$repo_slug" --head "$branch_name" --state merged --json number --jq '.[].number' 2>/dev/null || true)
+	[[ -n "$branch_pr_numbers" ]] || return 1
+
+	local issue_pr_numbers=""
+	issue_pr_numbers=$(gh pr list --repo "$repo_slug" --state merged --search "$issue_number" --json number --jq '.[].number' 2>/dev/null || true)
+	[[ -n "$issue_pr_numbers" ]] || return 1
+
+	local branch_pr_number=""
+	local padded_issue_prs=$'\n'"$issue_pr_numbers"$'\n'
+	while IFS= read -r branch_pr_number; do
+		[[ -n "$branch_pr_number" ]] || continue
+		if [[ "$padded_issue_prs" == *$'\n'"$branch_pr_number"$'\n'* ]]; then
+			print_info "[lifecycle] worker_external_terminal complete session=${session_key} issue=${issue_number} branch=${branch_name} pr=${branch_pr_number}"
 			return 0
 		fi
-	fi
+	done <<<"$branch_pr_numbers"
 
 	return 1
 }

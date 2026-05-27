@@ -91,12 +91,28 @@ mkdir -p "$GH_STUB_DIR"
 cat >"${GH_STUB_DIR}/gh" <<'STUB'
 #!/usr/bin/env bash
 # Minimal stub: `gh pr list ... --jq 'length'` returns ${STUB_PR_COUNT:-0}.
+# `_worker_external_terminal_complete` uses `gh issue view ... --jq state` and
+# `gh pr list ... --jq '.[].number'`; those are controlled by STUB_* env vars.
 # Other invocations exit 0 silently so source-time `gh api user` calls
 # from sourced helpers don't crash the test.
+if [[ -n "${STUB_GH_LOG:-}" ]]; then
+	printf '%s\n' "$*" >>"$STUB_GH_LOG"
+fi
 case "${1:-}" in
+	issue)
+		case "${2:-}" in
+			view) printf '%s\n' "${STUB_ISSUE_STATE:-OPEN}" ;;
+			*) ;;
+		esac
+		;;
 	pr)
 		case "${2:-}" in
-			list) printf '%s\n' "${STUB_PR_COUNT:-0}" ;;
+			list)
+				case " $* " in
+					*".[].number"*) printf '%s\n' "${STUB_PR_NUMBERS:-}" ;;
+					*) printf '%s\n' "${STUB_PR_COUNT:-0}" ;;
+				esac
+				;;
 			*) ;;
 		esac
 		;;
@@ -348,6 +364,37 @@ test_feature_branch_without_default_ref_returns_branch_orphan() {
 	return 0
 }
 
+test_external_terminal_complete_uses_trailing_issue_digits() {
+	make_repo_pair "case7" || {
+		print_result "case 7: external terminal complete uses trailing issue digits" 1 "fixture setup failed"
+		return 0
+	}
+	(
+		cd "$WORK_DIR" || exit 1
+		git checkout -q -b feature/t24153-suffix
+	) || {
+		print_result "case 7: external terminal complete uses trailing issue digits" 1 "branch setup failed"
+		return 0
+	}
+	export STUB_ISSUE_STATE="CLOSED"
+	export STUB_PR_NUMBERS="77"
+	export STUB_GH_LOG="${TEST_ROOT}/case7-gh.log"
+	: >"$STUB_GH_LOG"
+	local got="not_complete"
+	if _worker_external_terminal_complete "issue-24153-123" "$WORK_DIR" >/dev/null 2>&1; then
+		got="complete"
+	fi
+	local issue_view_call=""
+	issue_view_call=$(grep -E '^issue view ' "$STUB_GH_LOG" || true)
+	unset STUB_ISSUE_STATE STUB_PR_NUMBERS STUB_GH_LOG
+	if [[ "$got" == "complete" && "$issue_view_call" == *"issue view 123 "* ]]; then
+		print_result "case 7: external terminal complete uses trailing issue digits" 0
+	else
+		print_result "case 7: external terminal complete uses trailing issue digits" 1 "got: $got; issue call: ${issue_view_call:-<none>}"
+	fi
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Run
 # -----------------------------------------------------------------------------
@@ -358,6 +405,7 @@ test_feature_branch_pushed_no_pr_returns_branch_orphan
 test_feature_branch_with_pr_returns_pr_exists
 test_failure_recovery_ignores_default_branch_pr_match
 test_feature_branch_without_default_ref_returns_branch_orphan
+test_external_terminal_complete_uses_trailing_issue_digits
 
 printf '\nRan %d test(s), %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 
