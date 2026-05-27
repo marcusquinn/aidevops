@@ -10,9 +10,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.0] - 2026-05-28
+
 ### Added
 
-- Add `/report-token-use` local session token report command.
+- add token use session report (#24220)
+
+### Changed
+
+- Maintenance: sync ref:GH#24221 to TODO.md [skip ci]
+- Refactor: iterate mermaid adjacent pairs with zip (#24219)
+- Maintenance: update simplification state registry
+- fix: preserve table separator data rows (#24200)
+- fix: validate report style slugs (#24192)
+- Maintenance: update simplification state registry
+- Refactor: clarify report css template flow (#24166)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- gate opencode brew prefix lookup (#24214)
+- keep optional label lookup non-fatal (#24196)
+- keep branch fallback non-fatal (#24167)
+- align report component followups (#24170)
+- defer version-manager branch lookup (#24163)
+- fall back for empty raised paper token (#24165)
+- optimize worker terminal completion checks (#24164)
 
 ## [3.19.5] - 2026-05-26
 
