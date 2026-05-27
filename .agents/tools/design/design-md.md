@@ -100,7 +100,7 @@ components:
 | Type | Format | Example |
 |------|--------|---------|
 | Color | CSS color parsed to sRGB | `"#1A1C1E"`, `oklch(62% 0.18 24)` |
-| Dimension | number + unit (`px`, `em`, `rem`) | `48px`, `-0.02em` |
+| Dimension | number + CSS length or percentage unit (`px`, `em`, `rem`, `%`) | `48px`, `-0.02em`, `100%` |
 | Token Reference | `{path.to.token}` | `{colors.primary}` |
 | Typography | object (see below) | *inline object* |
 
