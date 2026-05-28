@@ -6,10 +6,11 @@
 #
 # When N consecutive "zero-attempt" worker dispatches happen on this runner,
 # the breaker pauses dispatch on this machine and synchronously runs
-# `aidevops update`. If the update changed VERSION the t2579 restart hook
-# refreshes code on the next cycle. If the update reports no change, the
-# runner has a real local problem (broken install, gh auth, MCP failures,
-# network) — stay paused and post a single advisory.
+# `aidevops update`. If the update leaves the deployed agents aligned with
+# the local repo, the next pause check auto-resumes the breaker before pulse
+# skips dispatch. If the update fails, the runner has a real local problem
+# (broken install, gh auth, MCP failures, network) — stay paused and post a
+# single advisory.
 #
 # A "zero-attempt" outcome means a dispatched worker never produced real
 # work — the four signals are listed in the brief and recorded by callers.
@@ -23,7 +24,7 @@
 #
 # Subcommands:
 #   record-outcome <signal> <issue>    — record a worker outcome (zero or non-zero attempt).
-#   is-paused                          — exit 0 if breaker tripped, exit 1 if closed.
+#   is-paused                          — exit 0 if breaker tripped, exit 1 if closed/recovered.
 #   pause [--reason "<text>"]          — manually trip the breaker.
 #   resume [--reason "<text>"]         — manually clear the breaker.
 #   status [--json]                    — print human or JSON state summary.
@@ -72,6 +73,8 @@ RUNNER_HEALTH_ADVISORY_DIR="${RUNNER_HEALTH_ADVISORY_DIR:-${HOME}/.aidevops/advi
 RUNNER_HEALTH_ADVISORY_FILE="${RUNNER_HEALTH_ADVISORY_DIR}/runner-health-degraded.advisory"
 RUNNER_HEALTH_ADVISORY_STAMP="${RUNNER_HEALTH_CACHE_DIR}/runner-health-advisory.stamp"
 RUNNER_HEALTH_PULSE_LOG="${RUNNER_HEALTH_PULSE_LOG:-${HOME}/.aidevops/logs/pulse-wrapper.log}"
+RUNNER_HEALTH_DEPLOYED_VERSION_FILE="${RUNNER_HEALTH_DEPLOYED_VERSION_FILE:-${HOME}/.aidevops/agents/VERSION}"
+RUNNER_HEALTH_DEPLOYED_SHA_FILE="${RUNNER_HEALTH_DEPLOYED_SHA_FILE:-${HOME}/.aidevops/.deployed-sha}"
 
 # Cap on the rolling outcome ledger (per brief).
 RUNNER_HEALTH_LEDGER_CAP=20
@@ -175,6 +178,86 @@ _rh_get_field() {
 	[[ -f "$RUNNER_HEALTH_STATE_FILE" ]] || return 0
 	command -v jq >/dev/null 2>&1 || return 0
 	jq -r "${jq_path} // empty" <"$RUNNER_HEALTH_STATE_FILE" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Read a small single-line file with whitespace removed. Missing files
+# return an empty string so callers can choose fail-open/fail-closed.
+# Args: $1 = file path
+#######################################
+_rh_read_token_file() {
+	local token_file="$1"
+	[[ -r "$token_file" ]] || {
+		printf '\n'
+		return 0
+	}
+	tr -d '[:space:]' <"$token_file" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Return the agents directory that contains this helper.
+#######################################
+_rh_agents_dir() {
+	local agents_dir
+	agents_dir=$(cd "${RUNNER_HEALTH_HELPER_DIR}/.." 2>/dev/null && pwd) || agents_dir=""
+	printf '%s\n' "$agents_dir"
+	return 0
+}
+
+#######################################
+# Determine whether a successful update left the deployed runner healthy.
+# The deterministic recovery gate is deliberately conservative:
+# - last_update_outcome must be `ran`;
+# - deployed VERSION must match the helper's agents/VERSION;
+# - when a deployment SHA stamp and git checkout are available, the stamp
+#   must also match repo HEAD (the t2706 drift detector's source of truth).
+# Args: $1 = last_update_outcome
+#######################################
+_rh_update_recovery_healthy() {
+	local update_outcome="$1"
+	[[ "$RUNNER_HEALTH_BREAKER_RESUME_AFTER_UPDATE" == "true" ]] || return 1
+	[[ "$update_outcome" == "ran" ]] || return 1
+
+	local agents_dir repo_root repo_version deployed_version
+	agents_dir=$(_rh_agents_dir)
+	[[ -n "$agents_dir" ]] || return 1
+	repo_root="${agents_dir%/.agents}"
+	repo_version=$(_rh_read_token_file "${agents_dir}/VERSION")
+	if [[ -z "$repo_version" ]]; then
+		repo_version=$(_rh_read_token_file "${repo_root}/VERSION")
+	fi
+	deployed_version=$(_rh_read_token_file "$RUNNER_HEALTH_DEPLOYED_VERSION_FILE")
+	[[ -n "$repo_version" && -n "$deployed_version" ]] || return 1
+	[[ "$repo_version" == "$deployed_version" ]] || return 1
+
+	if [[ -r "$RUNNER_HEALTH_DEPLOYED_SHA_FILE" && -d "${repo_root}/.git" ]]; then
+		local deployed_sha head_sha
+		deployed_sha=$(_rh_read_token_file "$RUNNER_HEALTH_DEPLOYED_SHA_FILE")
+		head_sha=$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || true)
+		[[ -n "$deployed_sha" && -n "$head_sha" ]] || return 1
+		[[ "$deployed_sha" == "$head_sha" ]] || return 1
+	fi
+	return 0
+}
+
+#######################################
+# Clear a tripped breaker after a verified successful update/deploy.
+# Args: $1 = reason string
+#######################################
+_rh_auto_resume() {
+	local reason="$1"
+	_rh_init_state || return 1
+	local now
+	now=$(_rh_now)
+	_rh_state_apply \
+		".circuit_breaker.state = \"closed\" \
+		| .circuit_breaker.tripped_at = null \
+		| .circuit_breaker.reason = \"${reason}\" \
+		| .consecutive_zero_attempts = 0 \
+		| .window_started_at = \"${now}\"" || return 1
+	rm -f "$RUNNER_HEALTH_ADVISORY_FILE" "$RUNNER_HEALTH_ADVISORY_STAMP" 2>/dev/null || true
 	return 0
 }
 
@@ -405,14 +488,22 @@ EOF
 
 #######################################
 # cmd_is_paused — exit 0 if breaker is tripped, exit 1 otherwise.
-# Pulse calls this before the dispatch evaluation step.
+# Pulse calls this before the dispatch evaluation step; this is the safe
+# auto-recovery point after a successful update/deploy.
 #######################################
 cmd_is_paused() {
 	[[ "$RUNNER_HEALTH_DISABLED" == "1" ]] && return 1
 	[[ -f "$RUNNER_HEALTH_STATE_FILE" ]] || return 1
-	local state
+	local state update_outcome
 	state=$(_rh_get_field '.circuit_breaker.state')
-	[[ "$state" == "tripped" ]] && return 0
+	if [[ "$state" == "tripped" ]]; then
+		update_outcome=$(_rh_get_field '.circuit_breaker.last_update_outcome')
+		if _rh_update_recovery_healthy "$update_outcome"; then
+			_rh_auto_resume "auto resume after successful update/deploy" || return 0
+			return 1
+		fi
+		return 0
+	fi
 	return 1
 }
 
@@ -572,7 +663,8 @@ _rh_count_log_no_worker_events() {
 #   $3 = breaker state ("closed" | "tripped" | "")
 #   $4 = tripped age in hours (integer or empty)
 #   $5 = last_update_outcome ("ran" | "failed" | "helper_missing" | "")
-# Stdout: one of HEALTHY | BUILDING | WIRING_GAP | TRIGGER_MISSED | STUCK_TRIPPED
+#   $6 = update/deploy health ("healthy" | "")
+# Stdout: one of HEALTHY | BUILDING | WIRING_GAP | TRIGGER_MISSED | RECOVERABLE_TRIPPED | STUCK_TRIPPED
 #######################################
 _rh_classify_diagnose() {
 	local recorded="${1:-0}"
@@ -580,6 +672,7 @@ _rh_classify_diagnose() {
 	local state="${3:-closed}"
 	local tripped_age_h="${4:-}"
 	local update_outcome="${5:-}"
+	local update_health="${6:-}"
 	local threshold="${RUNNER_HEALTH_FAILURE_THRESHOLD:-10}"
 
 	# Guard: numeric coercion. Empty/non-numeric inputs treated as zero.
@@ -587,6 +680,13 @@ _rh_classify_diagnose() {
 	[[ "$expected" =~ ^[0-9]+$ ]] || expected=0
 
 	if [[ "$state" == "tripped" ]]; then
+		# Successful update/deploy with matching local artifacts is recoverable:
+		# the next `is-paused` call will clear the breaker instead of blocking
+		# dispatch indefinitely.
+		if [[ "$update_outcome" == "ran" && "$update_health" == "healthy" ]]; then
+			printf 'RECOVERABLE_TRIPPED\n'
+			return 0
+		fi
 		# STUCK_TRIPPED: tripped >24h AND update never succeeded. The breaker
 		# fired but the synchronous `aidevops update` failed, so resume hook
 		# can't fire. Operator must manually resume after fixing the install.
@@ -595,9 +695,8 @@ _rh_classify_diagnose() {
 			printf 'STUCK_TRIPPED\n'
 			return 0
 		fi
-		# Tripped but recovering (recently fired or update ran cleanly): the
-		# breaker is doing its job. Map to BUILDING for "transient state, no
-		# action required" rather than introducing a 6th category.
+		# Tripped but recent or not yet verified healthy: the breaker is doing
+		# its job. Map to BUILDING for transient state rather than manual action.
 		printf 'BUILDING\n'
 		return 0
 	fi
@@ -631,6 +730,7 @@ _rh_diagnose_advice() {
 	case "${1:-HEALTHY}" in
 	HEALTHY) printf 'no action — runner is healthy\n' ;;
 	BUILDING) printf 'monitor — counter is collecting evidence within the rolling window\n' ;;
+	RECOVERABLE_TRIPPED) printf 'auto-resume ready — next pulse pause check will clear the breaker after verified successful update/deploy\n' ;;
 	WIRING_GAP)
 		printf 'check that pulse-cleanup.sh::_record_runner_health_zero_attempt is being called from recover_failed_launch_state — the log shows events the counter never saw\n'
 		;;
@@ -728,8 +828,13 @@ cmd_diagnose() {
 	expected=$(_rh_count_log_no_worker_events)
 
 	# Classify and produce advice.
+	local update_health=""
+	if _rh_update_recovery_healthy "$update_outcome"; then
+		update_health="healthy"
+	fi
+
 	local finding="" advice=""
-	finding=$(_rh_classify_diagnose "$recorded" "$expected" "$state" "$tripped_age_h" "$update_outcome")
+	finding=$(_rh_classify_diagnose "$recorded" "$expected" "$state" "$tripped_age_h" "$update_outcome" "$update_health")
 	advice=$(_rh_diagnose_advice "$finding")
 
 	if [[ "$emit_json" -eq 1 ]]; then
@@ -837,7 +942,10 @@ USAGE:
 DIAGNOSE FINDINGS (categories surfaced for operator action):
   HEALTHY          — counter at zero, no recent zero-attempt events.
   BUILDING         — counter > 0 and matches log evidence (or breaker
-                     recently tripped and recovering); no action needed.
+                     recently tripped and not yet verified); no action needed.
+  RECOVERABLE_TRIPPED
+                   — breaker is tripped, update ran, and deployed artifacts
+                     match the local repo; the next pause check auto-resumes.
   WIRING_GAP       — log shows zero-attempt events the counter never saw
                      (recorder being skipped — likely caller-side bug).
   TRIGGER_MISSED   — counter reached threshold but breaker stayed closed
@@ -860,7 +968,7 @@ ENVIRONMENT:
 
 EXIT CODES:
   is-paused:  0 = breaker tripped (do NOT dispatch)
-              1 = breaker closed (safe to dispatch)
+              1 = breaker closed/recovered (safe to dispatch)
 EOF
 	return 0
 }
