@@ -25,6 +25,7 @@ only after the helper has written the local evidence bundle.
 ```bash
 ~/.aidevops/agents/scripts/report-token-use-helper.sh report --limit 25
 ~/.aidevops/agents/scripts/report-token-use-helper.sh report --session ses_abc123 --open
+~/.aidevops/agents/scripts/report-token-use-helper.sh report --daily-days 90
 ~/.aidevops/agents/scripts/report-token-use-helper.sh data --json --since 7d
 ```
 
@@ -35,6 +36,8 @@ only after the helper has written the local evidence bundle.
   is the browser review copy.
 - The command prints the `file://` link for `report.html` and opens it only when
   `--open` is supplied.
+- Daily usage covers the last 90 days by default; use `--daily-days N` to change
+  the window or `--daily-days 0` to disable it.
 
 ## Data Sources
 
@@ -48,12 +51,15 @@ only after the helper has written the local evidence bundle.
 
 - Session name and root session ID.
 - Runtime and model(s) used.
-- Tokens in, tokens out, reasoning, cached-read, cached-write, and net total.
+- Tokens in, tokens out, reasoning, cached-read, cached-write, net total, raw total, and cost.
 - Compaction count and child session count.
-- Active/configured MCP servers and observed MCP tools.
+- Configured MCP servers and observed MCP tools.
 - Date-time started and date-time finished.
 
-Net token total is input + output + reasoning + cache-read + cache-write tokens.
+Net token total is input + output + reasoning + cache-write tokens. Cache reads
+are excluded from net totals and retained in raw totals for context-volume review.
+Provider-specific cached-read discounts are best represented by the cost field
+when available from the runtime database.
 
 ## Privacy
 
