@@ -24,6 +24,7 @@ def as_dict(report: Any) -> dict[str, Any]:
         "session_id": report.session_id,
         "session_name": report.session_name,
         "runtime": report.runtime,
+        "session_kind": report.session_kind,
         "models_used": report.models_used,
         "tokens_input": report.tokens_input,
         "tokens_output": report.tokens_output,
@@ -50,6 +51,39 @@ def _format_int(value: int) -> str:
     return f"{value:,}"
 
 
+def _session_kind_label(value: str) -> str:
+    labels = {"interactive": "Interactive", "headless_worker": "Headless worker"}
+    return labels.get(value, value.replace("_", " ").title() or "Unknown")
+
+
+def session_kind_summary(reports: list[Any]) -> list[dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for row in reports:
+        kind = row.session_kind
+        data = grouped.setdefault(
+            kind,
+            {
+                "session_kind": kind,
+                "label": _session_kind_label(kind),
+                "session_count": 0,
+                "raw_tokens_total": 0,
+                "net_tokens_total": 0,
+                "cost_usd": 0.0,
+            },
+        )
+        data["session_count"] += 1
+        data["raw_tokens_total"] += row.raw_tokens_total
+        data["net_tokens_total"] += row.net_tokens_total
+        data["cost_usd"] += row.cost_usd
+    rows = sorted(
+        grouped.values(),
+        key=lambda item: (item["session_kind"] != "interactive", item["session_kind"]),
+    )
+    for row in rows:
+        row["cost_usd"] = round(row["cost_usd"], 6)
+    return rows
+
+
 def write_markdown(reports: list[Any], daily_usage: list[Any], output_dir: Path, generated_at: str) -> Path:
     report_path = output_dir / "report.md"
     net_total = sum(row.net_tokens_total for row in reports)
@@ -62,6 +96,7 @@ def write_markdown(reports: list[Any], daily_usage: list[Any], output_dir: Path,
         f"Net tokens (excludes cache reads): {_format_int(net_total)}",
         f"Raw tokens (includes cache reads): {_format_int(raw_total)}",
     ]
+    lines.extend(_session_kind_markdown(session_kind_summary(reports)))
     if daily_usage:
         lines.extend(_daily_markdown(daily_usage))
     lines.extend(
@@ -69,8 +104,8 @@ def write_markdown(reports: list[Any], daily_usage: list[Any], output_dir: Path,
             "",
             "## Sessions",
             "",
-            "| Session name | Runtime | Models | Tokens in | Tokens out | Cached-read | Raw tokens | Net tokens | Cost | Compactions | MCPs configured | MCPs observed | Started | Finished |",
-            "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|---|",
+            "| Session name | Runtime | Type | Models | Tokens in | Tokens out | Cached-read | Raw tokens | Net tokens | Cost | Compactions | MCPs configured | MCPs observed | Started | Finished |",
+            "|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|---|",
         ]
     )
     for row in reports:
@@ -82,12 +117,28 @@ def write_markdown(reports: list[Any], daily_usage: list[Any], output_dir: Path,
             "",
             "- Net tokens are input + output + reasoning + cache-write tokens, excluding cache reads so the main total tracks paid/metered work more closely.",
             "- Raw tokens include cache reads for context volume analysis. Provider-specific cached-read billing discounts are best represented by the Cost column when available.",
+            "- Session type is inferred from runtime metadata. OpenCode sessions under the runtime temporary work directory are reported as headless worker sessions; other local sessions are reported as interactive.",
             "- OpenCode rows recursively include child sessions via `session.parent_id` so compacted sessions are counted with their root session.",
             "- MCPs configured lists configured OpenCode MCP server names at report time. MCPs observed are inferred from session tool-call names when available and are the better proxy for actual use.",
         ]
     )
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return report_path
+
+
+def _session_kind_markdown(summary: list[dict[str, Any]]) -> list[str]:
+    lines = [
+        "",
+        "## Session type summary",
+        "",
+        "| Type | Sessions | Raw tokens | Net tokens | Cost |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for row in summary:
+        lines.append(
+            f"| {row['label']} | {row['session_count']} | {_format_int(row['raw_tokens_total'])} | {_format_int(row['net_tokens_total'])} | ${row['cost_usd']:.6f} |"
+        )
+    return lines
 
 
 def _daily_markdown(daily_usage: list[Any]) -> list[str]:
@@ -109,6 +160,7 @@ def _markdown_row(row: Any) -> str:
     cells = [
         row.session_name.replace("|", "\\|"),
         row.runtime,
+        _session_kind_label(row.session_kind),
         ", ".join(row.models_used).replace("|", "\\|"),
         _format_int(row.tokens_input),
         _format_int(row.tokens_output),
@@ -129,6 +181,7 @@ def write_html(reports: list[Any], daily_usage: list[Any], output_dir: Path, gen
     report_path = output_dir / "report.html"
     body = "\n".join(_html_row(row) for row in reports)
     daily_body = "\n".join(_daily_html_row(row) for row in daily_usage)
+    kind_body = "\n".join(_session_kind_html_row(row) for row in session_kind_summary(reports))
     net_total = _format_int(sum(row.net_tokens_total for row in reports))
     raw_total = _format_int(sum(row.raw_tokens_total for row in reports))
     html_doc = f"""<!doctype html>
@@ -140,7 +193,7 @@ def write_html(reports: list[Any], daily_usage: list[Any], output_dir: Path, gen
   <style>
     body {{ color: #172033; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; }}
     table {{ border-collapse: collapse; margin-bottom: 2rem; table-layout: fixed; width: 100%; }}
-    table.daily {{ max-width: 64rem; }}
+    table.daily, table.summary {{ max-width: 64rem; }}
     th, td {{ border-bottom: 1px solid #d8dee9; padding: .55rem; text-align: left; vertical-align: top; }}
     th.num, td.num {{ text-align: right; }}
     th {{ background: #f5f7fb; position: sticky; top: 0; }}
@@ -150,6 +203,14 @@ def write_html(reports: list[Any], daily_usage: list[Any], output_dir: Path, gen
 <body>
   <h1>Token Use Report</h1>
   <p class=\"meta\">Generated: {html.escape(generated_at)} · Sessions: {len(reports)} · Net tokens: {net_total} · Raw tokens: {raw_total}</p>
+  <h2>Session type summary</h2>
+  <table class="summary">
+    <colgroup><col style="width: 12rem"><col style="width: 7rem"><col style="width: 12rem"><col style="width: 12rem"><col style="width: 9rem"></colgroup>
+    <thead><tr><th>Type</th><th class="num">Sessions</th><th class="num">Raw tokens</th><th class="num">Net tokens</th><th class="num">Cost</th></tr></thead>
+    <tbody>
+{kind_body}
+    </tbody>
+  </table>
   <h2>Daily usage</h2>
   <table class="daily">
     <colgroup><col style="width: 9rem"><col style="width: 7rem"><col style="width: 12rem"><col style="width: 12rem"><col style="width: 9rem"></colgroup>
@@ -160,7 +221,7 @@ def write_html(reports: list[Any], daily_usage: list[Any], output_dir: Path, gen
   </table>
   <h2>Sessions</h2>
   <table>
-    <thead><tr><th>Session name</th><th>Runtime</th><th>Models</th><th class="num">Tokens in</th><th class="num">Tokens out</th><th class="num">Cached-read</th><th class="num">Raw tokens</th><th class="num">Net tokens</th><th class="num">Cost</th><th class="num">Compactions</th><th>MCPs configured</th><th>MCPs observed</th><th>Started</th><th>Finished</th></tr></thead>
+    <thead><tr><th>Session name</th><th>Runtime</th><th>Type</th><th>Models</th><th class="num">Tokens in</th><th class="num">Tokens out</th><th class="num">Cached-read</th><th class="num">Raw tokens</th><th class="num">Net tokens</th><th class="num">Cost</th><th class="num">Compactions</th><th>MCPs configured</th><th>MCPs observed</th><th>Started</th><th>Finished</th></tr></thead>
     <tbody>
 {body}
     </tbody>
@@ -177,6 +238,7 @@ def _html_row(row: Any) -> str:
         "<tr>"
         f"<td>{html.escape(row.session_name)}</td>"
         f"<td>{html.escape(row.runtime)}</td>"
+        f"<td>{html.escape(_session_kind_label(row.session_kind))}</td>"
         f"<td>{html.escape(', '.join(row.models_used))}</td>"
         f"<td class=\"num\">{_format_int(row.tokens_input)}</td>"
         f"<td class=\"num\">{_format_int(row.tokens_output)}</td>"
@@ -189,6 +251,18 @@ def _html_row(row: Any) -> str:
         f"<td>{html.escape(', '.join(row.mcps_observed) or 'none observed')}</td>"
         f"<td>{html.escape(row.started_at)}</td>"
         f"<td>{html.escape(row.finished_at)}</td>"
+        "</tr>"
+    )
+
+
+def _session_kind_html_row(row: dict[str, Any]) -> str:
+    return (
+        "<tr>"
+        f"<td>{html.escape(row['label'])}</td>"
+        f"<td class=\"num\">{row['session_count']}</td>"
+        f"<td class=\"num\">{_format_int(row['raw_tokens_total'])}</td>"
+        f"<td class=\"num\">{_format_int(row['net_tokens_total'])}</td>"
+        f"<td class=\"num\">${row['cost_usd']:.6f}</td>"
         "</tr>"
     )
 
@@ -212,6 +286,7 @@ def write_json(reports: list[Any], daily_usage: list[Any], output_dir: Path, gen
         "session_count": len(reports),
         "raw_tokens_total": sum(row.raw_tokens_total for row in reports),
         "net_tokens_total": sum(row.net_tokens_total for row in reports),
+        "usage_by_session_kind": session_kind_summary(reports),
         "daily_usage": [as_dict(row) for row in daily_usage],
         "sessions": [as_dict(row) for row in reports],
     }

@@ -47,6 +47,7 @@ teardown_test_env() {
 create_fixture_dbs() {
 	local _opencode_db="${TEST_ROOT}/opencode.db"
 	local _obs_db="${TEST_ROOT}/llm-requests.db"
+	rm -f "$_opencode_db" "$_obs_db"
 	sqlite3 "$_opencode_db" <<'SQL'
 CREATE TABLE session (
   id text PRIMARY KEY,
@@ -144,10 +145,28 @@ PY
 	assert_json_field "$_json_path" "sessions[0].tokens_cache_read" "35" "Report sums cached-read tokens"
 	assert_json_field "$_json_path" "sessions[0].raw_tokens_total" "227" "Report computes raw total"
 	assert_json_field "$_json_path" "sessions[0].net_tokens_total" "192" "Report computes net total excluding cache reads"
+	assert_json_field "$_json_path" "sessions[0].session_kind" "interactive" "Report classifies repo session as interactive"
+	assert_json_field "$_json_path" "usage_by_session_kind[0].session_kind" "interactive" "Report summarizes interactive usage"
 	assert_json_field "$_json_path" "sessions[0].compaction_count" "1" "Report counts child compaction"
 	assert_json_field "$_json_path" "sessions[0].mcps_observed[0]" "context7" "Report infers observed MCP"
 	assert_json_field "$_json_path" "daily_usage[0].date" "2023-11-14" "Report includes daily usage date"
 	assert_json_field "$_json_path" "daily_usage[0].net_tokens_total" "192" "Report sums daily net tokens"
+	return 0
+}
+
+test_report_summarizes_headless_workers() {
+	create_fixture_dbs
+	sqlite3 "${TEST_ROOT}/opencode.db" <<'SQL'
+INSERT INTO session VALUES ('ses_worker', NULL, 'Worker Session', '{"id":"gpt-5.5","providerID":"openai"}', 10, 2, 1, 4, 1, 0.05, 1699999900000, 1699999950000, NULL, '/private/tmp/opencode', 'private/tmp/opencode', 'Build+');
+SQL
+	local _json_path="${TEST_ROOT}/data.json"
+	AIDEVOPS_REPORT_TOKEN_USE_OPENCODE_DB="${TEST_ROOT}/opencode.db" \
+		AIDEVOPS_REPORT_TOKEN_USE_OBS_DB="${TEST_ROOT}/llm-requests.db" \
+		AIDEVOPS_REPORT_TOKEN_USE_OPENCODE_CONFIG="${TEST_ROOT}/opencode.json" \
+		"$HELPER_SH" data --limit 5 --daily-days 0 --json >"$_json_path"
+	assert_json_field "$_json_path" "usage_by_session_kind[1].session_kind" "headless_worker" "Report summarizes headless worker usage"
+	assert_json_field "$_json_path" "usage_by_session_kind[1].net_tokens_total" "14" "Report sums headless worker net tokens"
+	assert_json_field "$_json_path" "sessions[1].session_kind" "headless_worker" "Report classifies temp workdir session as headless worker"
 	return 0
 }
 
@@ -170,6 +189,7 @@ report = module._make_session_report(
     session_id="session-default",
     session_name="Default Source IDs",
     runtime="opencode",
+    session_kind="interactive",
     models_used=["gpt-5.5"],
     tokens_input=1,
     tokens_output=2,
@@ -204,6 +224,7 @@ main() {
 	setup_test_env
 	trap teardown_test_env EXIT
 	test_report_aggregates_compacted_sessions
+	test_report_summarizes_headless_workers
 	test_session_report_defaults_source_ids
 	printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

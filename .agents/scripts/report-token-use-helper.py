@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from pathlib import Path
 from typing import Any
 
-from report_token_use_render import as_dict, write_html, write_json, write_markdown
+from report_token_use_render import as_dict, session_kind_summary, write_html, write_json, write_markdown
 
 
 DEFAULT_OPENCODE_DB = Path.home() / ".local/share/opencode/opencode.db"
@@ -53,6 +53,7 @@ class SessionReport:
     session_id: str
     session_name: str
     runtime: str
+    session_kind: str
     models_used: list[str]
     tokens_input: int
     tokens_output: int
@@ -348,6 +349,14 @@ def _tokens_for_group(group: list[SessionRow]) -> dict[str, int]:
     return tokens
 
 
+def _session_kind_for_group(group: list[SessionRow]) -> str:
+    for row in group:
+        location = f"{row.directory} {row.path}"
+        if "/private/tmp/opencode" in location or "/tmp/opencode" in location:
+            return "headless_worker"
+    return "interactive"
+
+
 def _models_for_group(
     conn: sqlite3.Connection,
     group: list[SessionRow],
@@ -375,6 +384,7 @@ def _opencode_report_from_group(
         session_id=root_id,
         session_name=_safe_title(root.title),
         runtime="opencode",
+        session_kind=_session_kind_for_group(group),
         models_used=_models_for_group(conn, group, session_ids, obs),
         tokens_input=tokens["input"],
         tokens_output=tokens["output"],
@@ -490,6 +500,7 @@ def _claude_report_from_group(session_id: str, data: dict[str, Any]) -> SessionR
         session_id=session_id,
         session_name=session_id,
         runtime="claude",
+        session_kind="interactive",
         models_used=sorted(data["models"]) or ["unknown"],
         tokens_input=data["input"],
         tokens_output=data["output"],
@@ -572,7 +583,11 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
 
 def cmd_data(args: argparse.Namespace) -> int:
     reports = _collect_reports(args)
-    payload = {"daily_usage": [as_dict(row) for row in _collect_daily_usage(args)], "sessions": [as_dict(row) for row in reports]}
+    payload = {
+        "daily_usage": [as_dict(row) for row in _collect_daily_usage(args)],
+        "usage_by_session_kind": session_kind_summary(reports),
+        "sessions": [as_dict(row) for row in reports],
+    }
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 
