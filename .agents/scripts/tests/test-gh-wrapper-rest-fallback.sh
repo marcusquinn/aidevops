@@ -53,14 +53,15 @@
 #  26. gh_pr_list routes directly to REST when GraphQL remaining is low
 #  27. gh_pr_list keeps --search on the GraphQL path when budget is low
 #  28. gh_pr_view routes directly to REST when GraphQL remaining is low
-#  29. AIDEVOPS_GH_FORCE_REST_READS routes supported reads through REST without
+#  29. gh_pr_view maps merged REST PR fields to gh GraphQL-compatible JSON
+#  30. AIDEVOPS_GH_FORCE_REST_READS routes supported reads through REST without
 #      a rate-limit probe
-#  30. gh_pr_list does NOT fall back for --search because REST pulls cannot
+#  31. gh_pr_list does NOT fall back for --search because REST pulls cannot
 #      preserve search semantics
-#  31. AIDEVOPS_GH_REST_FIRST_READS routes REST-equivalent reads without a
+#  32. AIDEVOPS_GH_REST_FIRST_READS routes REST-equivalent reads without a
 #      rate-limit probe while leaving GraphQL-only PR list fields on GraphQL
-#  32. AIDEVOPS_GH_PR_VIEW_CACHE coalesces duplicate REST PR view reads
-#  33. AIDEVOPS_GH_PR_VIEW_CACHE coalesces duplicate GraphQL-only PR view reads
+#  33. AIDEVOPS_GH_PR_VIEW_CACHE coalesces duplicate REST PR view reads
+#  34. AIDEVOPS_GH_PR_VIEW_CACHE coalesces duplicate GraphQL-only PR view reads
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
 # precedence over PATH binaries, so the stub captures all `gh` invocations
@@ -76,6 +77,8 @@ unset AIDEVOPS_GH_FORCE_REST_READS
 unset AIDEVOPS_GH_PR_VIEW_CACHE
 unset AIDEVOPS_GH_PR_VIEW_CACHE_DIR
 unset AIDEVOPS_GH_PR_VIEW_CACHE_TTL
+unset AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE
+unset AIDEVOPS_GH_PR_LIST_CACHE_DISABLE
 
 SCRIPT_DIR_TEST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 SCRIPTS_DIR="$(cd "${SCRIPT_DIR_TEST}/.." && pwd)" || exit 1
@@ -928,6 +931,31 @@ else
 	fail "gh_pr_view proactively routes to REST when GraphQL budget is low" \
 		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
 fi
+
+# =============================================================================
+# Test 25a: gh_pr_view maps merged REST fields to gh-compatible JSON
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+export STUB_PR_VIEW_FIXTURE='{"number":5777,"state":"closed","merged":true,"merged_at":"2026-05-28T01:26:52Z","closed_at":"2026-05-28T01:26:52Z","merge_commit_sha":"7b5aff4a61e0df594cdee103fa651e0d1d52c3fd","merged_by":{"login":"maintainer"}}'
+
+pr_view_merged=$(gh_pr_view 5777 --repo "owner/repo" \
+	--json state,closedAt,mergedAt,mergeCommit,merged,mergedBy --jq '.' 2>/dev/null || true)
+pr_view_state=$(printf '%s\n' "$pr_view_merged" | jq -r '.state // empty' 2>/dev/null || true)
+pr_view_closed_at=$(printf '%s\n' "$pr_view_merged" | jq -r '.closedAt // empty' 2>/dev/null || true)
+pr_view_merged_at=$(printf '%s\n' "$pr_view_merged" | jq -r '.mergedAt // empty' 2>/dev/null || true)
+pr_view_merge_oid=$(printf '%s\n' "$pr_view_merged" | jq -r '.mergeCommit.oid // empty' 2>/dev/null || true)
+pr_view_merged_bool=$(printf '%s\n' "$pr_view_merged" | jq -r '.merged // empty' 2>/dev/null || true)
+pr_view_merged_by=$(printf '%s\n' "$pr_view_merged" | jq -r '.mergedBy.login // empty' 2>/dev/null || true)
+
+if [[ "$pr_view_state" == "MERGED" && "$pr_view_closed_at" == "2026-05-28T01:26:52Z" && "$pr_view_merged_at" == "2026-05-28T01:26:52Z" && "$pr_view_merge_oid" == "7b5aff4a61e0df594cdee103fa651e0d1d52c3fd" && "$pr_view_merged_bool" == "true" && "$pr_view_merged_by" == "maintainer" ]]; then
+	pass "gh_pr_view REST fallback maps merged fields to gh-compatible JSON"
+else
+	fail "gh_pr_view REST fallback maps merged fields to gh-compatible JSON" \
+		"output=${pr_view_merged} GH_CALLS=$(cat "$GH_CALLS")"
+fi
+unset STUB_PR_VIEW_FIXTURE
 
 # =============================================================================
 # Test 25b: REST PR view normalizes REST boolean mergeable to gh GraphQL enum

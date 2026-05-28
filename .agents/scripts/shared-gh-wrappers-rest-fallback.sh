@@ -1107,7 +1107,12 @@ _rest_pr_object_json_jq() {
 		[[ -z "$field" ]] && continue
 		case "$field" in
 		number) projection="${projection}${projection:+,}number: .number" ;;
-		state) projection="${projection}${projection:+,}state: .state" ;;
+		state) projection="${projection}${projection:+,}state: (if ((.merged_at // null) != null or (.merged // false) == true) then \"MERGED\" else ((.state // \"\") | ascii_upcase) end)" ;;
+		merged) projection="${projection}${projection:+,}merged: ((.merged // false) == true or (.merged_at // null) != null)" ;;
+		mergedAt) projection="${projection}${projection:+,}mergedAt: .merged_at" ;;
+		closedAt) projection="${projection}${projection:+,}closedAt: .closed_at" ;;
+		mergeCommit) projection="${projection}${projection:+,}mergeCommit: (if (.merge_commit_sha // \"\") != \"\" then {oid: .merge_commit_sha} else null end)" ;;
+		mergedBy) projection="${projection}${projection:+,}mergedBy: (.merged_by // null)" ;;
 		mergeable) projection="${projection}${projection:+,}mergeable: (.mergeable | if . == true then \"MERGEABLE\" elif . == false then \"CONFLICTING\" else (. // \"UNKNOWN\") end)" ;;
 		reviewDecision) projection="${projection}${projection:+,}reviewDecision: (.reviewDecision // \"\")" ;;
 		isDraft) projection="${projection}${projection:+,}isDraft: (.draft // false)" ;;
