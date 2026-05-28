@@ -1055,9 +1055,12 @@ _seed_worker_db_session_context() {
 	[[ -f "$shared_db" ]] || return 0
 	mkdir -p "${isolated_dir}/opencode" 2>/dev/null || return 0
 
-	# Fresh isolated auth dirs may not have a migrated DB yet. Copy schema only
-	# from the shared DB so the targeted row copy has compatible tables without
-	# importing unrelated session/message data.
+	# Fresh isolated auth dirs may not have a migrated DB yet. Copy the schema from
+	# the shared DB so the targeted row copy has compatible tables without importing
+	# unrelated session/message data. Immediately copy OpenCode migration metadata
+	# too: a schema-only DB has tables but an empty migration ledger, which makes
+	# OpenCode/Drizzle replay CREATE TABLE migrations and fail before continuation
+	# can start.
 	if [[ ! -f "$worker_db" ]]; then
 		sqlite3 -cmd ".timeout 5000" "$shared_db" .schema 2>/dev/null | sqlite3 "$worker_db" >/dev/null 2>&1 || return 0
 	fi
@@ -1065,6 +1068,13 @@ _seed_worker_db_session_context() {
 	local shared_db_sql session_id_sql
 	shared_db_sql=$(sql_escape "$shared_db")
 	session_id_sql=$(sql_escape "$session_id")
+	sqlite3 "$worker_db" <<-SQL >/dev/null 2>&1 || true
+		.timeout 5000
+		ATTACH DATABASE '${shared_db_sql}' AS shared;
+		INSERT OR IGNORE INTO __drizzle_migrations SELECT * FROM shared.__drizzle_migrations;
+		INSERT OR IGNORE INTO data_migration SELECT * FROM shared.data_migration;
+		DETACH DATABASE shared;
+	SQL
 	sqlite3 "$worker_db" <<-SQL >/dev/null 2>&1 || true
 		.timeout 5000
 		ATTACH DATABASE '${shared_db_sql}' AS shared;

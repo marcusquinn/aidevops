@@ -982,6 +982,7 @@ test_seed_worker_db_session_context_copies_only_selected_session() {
 	local shared_db="${shared_dir}/opencode.db"
 	local worker_db="${isolated_dir}/opencode/opencode.db"
 	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+	rm -f "$shared_db" "$worker_db"
 
 	sqlite3 "$shared_db" <<'SQL'
 CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
@@ -1013,6 +1014,45 @@ SQL
 
 	print_result "seed worker DB copies only selected continuation session" 1 \
 		"sessions=$sessions messages=$messages other_sessions=$other_sessions other_messages=$other_messages projects=$projects"
+	return 0
+}
+
+test_seed_worker_db_session_context_copies_migration_metadata() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/isolated-opencode-metadata"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+	rm -f "$shared_db" "$worker_db"
+
+	sqlite3 "$shared_db" <<'SQL'
+CREATE TABLE __drizzle_migrations (id INTEGER PRIMARY KEY, hash TEXT NOT NULL, created_at INTEGER);
+CREATE TABLE data_migration (id TEXT PRIMARY KEY, updated_at INTEGER NOT NULL);
+CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
+CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);
+INSERT INTO __drizzle_migrations VALUES (1, 'schema-ready', 12345);
+INSERT INTO data_migration VALUES ('data-ready', 67890);
+INSERT INTO project VALUES ('project-keep', 'Keep Project');
+INSERT INTO session VALUES ('session-keep', 'project-keep', 'Keep');
+INSERT INTO message VALUES ('message-keep', 'session-keep', 'one');
+SQL
+
+	_seed_worker_db_session_context "$isolated_dir" "session-keep"
+
+	local schema_migrations data_migrations sessions messages
+	schema_migrations=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM __drizzle_migrations WHERE hash = 'schema-ready';")
+	data_migrations=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM data_migration WHERE id = 'data-ready';")
+	sessions=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM session WHERE id = 'session-keep';")
+	messages=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM message WHERE session_id = 'session-keep';")
+
+	if [[ "$schema_migrations" == "1" && "$data_migrations" == "1" && "$sessions" == "1" && "$messages" == "1" ]]; then
+		print_result "seed worker DB copies migration metadata for continuation" 0
+		return 0
+	fi
+
+	print_result "seed worker DB copies migration metadata for continuation" 1 \
+		"schema_migrations=$schema_migrations data_migrations=$data_migrations sessions=$sessions messages=$messages"
 	return 0
 }
 
@@ -1693,6 +1733,7 @@ main() {
 	test_sandbox_passthrough_scopes_provider_env
 	test_copy_scoped_opencode_auth_keeps_selected_provider_only
 	test_seed_worker_db_session_context_copies_only_selected_session
+	test_seed_worker_db_session_context_copies_migration_metadata
 	test_large_opencode_prompt_uses_file_attachment
 	test_large_claude_prompt_uses_stdin_file
 	test_registered_prompt_temp_cleanup_removes_dir
