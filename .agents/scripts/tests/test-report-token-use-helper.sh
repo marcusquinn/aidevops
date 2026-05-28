@@ -176,6 +176,7 @@ report = module._make_session_report(
     tokens_reasoning=0,
     tokens_cache_read=0,
     tokens_cache_write=0,
+    raw_tokens_total=3,
     net_tokens_total=3,
     child_session_count=0,
     compaction_count=0,

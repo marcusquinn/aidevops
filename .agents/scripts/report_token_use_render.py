@@ -69,7 +69,7 @@ def write_markdown(reports: list[Any], daily_usage: list[Any], output_dir: Path,
             "",
             "## Sessions",
             "",
-            "| Session name | Runtime | Models | Tokens in | Tokens out | Cached-read | Net tokens | Raw tokens | Cost | Compactions | MCPs configured | MCPs observed | Started | Finished |",
+            "| Session name | Runtime | Models | Tokens in | Tokens out | Cached-read | Raw tokens | Net tokens | Cost | Compactions | MCPs configured | MCPs observed | Started | Finished |",
             "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|---|",
         ]
     )
@@ -95,12 +95,12 @@ def _daily_markdown(daily_usage: list[Any]) -> list[str]:
         "",
         "## Daily usage",
         "",
-        "| Date | Sessions | Net tokens | Raw tokens | Cost |",
+        "| Date | Sessions | Raw tokens | Net tokens | Cost |",
         "|---|---:|---:|---:|---:|",
     ]
     for row in daily_usage:
         lines.append(
-            f"| {row.date} | {row.session_count} | {_format_int(row.net_tokens_total)} | {_format_int(row.raw_tokens_total)} | ${row.cost_usd:.6f} |"
+            f"| {row.date} | {row.session_count} | {_format_int(row.raw_tokens_total)} | {_format_int(row.net_tokens_total)} | ${row.cost_usd:.6f} |"
         )
     return lines
 
@@ -113,8 +113,8 @@ def _markdown_row(row: Any) -> str:
         _format_int(row.tokens_input),
         _format_int(row.tokens_output),
         _format_int(row.tokens_cache_read),
-        _format_int(row.net_tokens_total),
         _format_int(row.raw_tokens_total),
+        _format_int(row.net_tokens_total),
         f"${row.cost_usd:.6f}",
         str(row.compaction_count),
         ", ".join(row.mcps_active) or "none configured",
@@ -139,9 +139,10 @@ def write_html(reports: list[Any], daily_usage: list[Any], output_dir: Path, gen
   <title>Token Use Report</title>
   <style>
     body {{ color: #172033; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; }}
-    table {{ border-collapse: collapse; margin-bottom: 2rem; width: 100%; }}
+    table {{ border-collapse: collapse; margin-bottom: 2rem; table-layout: fixed; width: 100%; }}
+    table.daily {{ max-width: 64rem; }}
     th, td {{ border-bottom: 1px solid #d8dee9; padding: .55rem; text-align: left; vertical-align: top; }}
-    td.num {{ text-align: right; }}
+    th.num, td.num {{ text-align: right; }}
     th {{ background: #f5f7fb; position: sticky; top: 0; }}
     .meta {{ color: #5f6b7a; }}
   </style>
@@ -150,15 +151,16 @@ def write_html(reports: list[Any], daily_usage: list[Any], output_dir: Path, gen
   <h1>Token Use Report</h1>
   <p class=\"meta\">Generated: {html.escape(generated_at)} · Sessions: {len(reports)} · Net tokens: {net_total} · Raw tokens: {raw_total}</p>
   <h2>Daily usage</h2>
-  <table>
-    <thead><tr><th>Date</th><th>Sessions</th><th>Net tokens</th><th>Raw tokens</th><th>Cost</th></tr></thead>
+  <table class="daily">
+    <colgroup><col style="width: 9rem"><col style="width: 7rem"><col style="width: 12rem"><col style="width: 12rem"><col style="width: 9rem"></colgroup>
+    <thead><tr><th>Date</th><th class="num">Sessions</th><th class="num">Raw tokens</th><th class="num">Net tokens</th><th class="num">Cost</th></tr></thead>
     <tbody>
 {daily_body}
     </tbody>
   </table>
   <h2>Sessions</h2>
   <table>
-    <thead><tr><th>Session name</th><th>Runtime</th><th>Models</th><th>Tokens in</th><th>Tokens out</th><th>Cached-read</th><th>Net tokens</th><th>Raw tokens</th><th>Cost</th><th>Compactions</th><th>MCPs configured</th><th>MCPs observed</th><th>Started</th><th>Finished</th></tr></thead>
+    <thead><tr><th>Session name</th><th>Runtime</th><th>Models</th><th class="num">Tokens in</th><th class="num">Tokens out</th><th class="num">Cached-read</th><th class="num">Raw tokens</th><th class="num">Net tokens</th><th class="num">Cost</th><th class="num">Compactions</th><th>MCPs configured</th><th>MCPs observed</th><th>Started</th><th>Finished</th></tr></thead>
     <tbody>
 {body}
     </tbody>
@@ -179,8 +181,8 @@ def _html_row(row: Any) -> str:
         f"<td class=\"num\">{_format_int(row.tokens_input)}</td>"
         f"<td class=\"num\">{_format_int(row.tokens_output)}</td>"
         f"<td class=\"num\">{_format_int(row.tokens_cache_read)}</td>"
-        f"<td class=\"num\">{_format_int(row.net_tokens_total)}</td>"
         f"<td class=\"num\">{_format_int(row.raw_tokens_total)}</td>"
+        f"<td class=\"num\">{_format_int(row.net_tokens_total)}</td>"
         f"<td class=\"num\">${row.cost_usd:.6f}</td>"
         f"<td class=\"num\">{row.compaction_count}</td>"
         f"<td>{html.escape(', '.join(row.mcps_active) or 'none configured')}</td>"
@@ -196,8 +198,8 @@ def _daily_html_row(row: Any) -> str:
         "<tr>"
         f"<td>{html.escape(row.date)}</td>"
         f"<td class=\"num\">{row.session_count}</td>"
-        f"<td class=\"num\">{_format_int(row.net_tokens_total)}</td>"
         f"<td class=\"num\">{_format_int(row.raw_tokens_total)}</td>"
+        f"<td class=\"num\">{_format_int(row.net_tokens_total)}</td>"
         f"<td class=\"num\">${row.cost_usd:.6f}</td>"
         "</tr>"
     )
