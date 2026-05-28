@@ -94,6 +94,20 @@ run_monitor_for_scenario() {
 	return 0
 }
 
+assert_rc() {
+	local test_name="$1"
+	local expected_rc="$2"
+	local actual_rc="$3"
+
+	if [[ "$actual_rc" -eq "$expected_rc" ]]; then
+		print_result "$test_name" 0
+		return 0
+	fi
+
+	print_result "$test_name" 1 "rc=$actual_rc, expected $expected_rc"
+	return 1
+}
+
 assert_log_contains() {
 	local test_name="$1"
 	local needle="$2"
@@ -105,42 +119,32 @@ assert_log_contains() {
 	fi
 
 	print_result "$test_name" 1 "Missing log text: $needle"
-	return 0
+	return 1
 }
 
 test_ok_service_exit_zero() {
 	local rc
 	rc=$(run_monitor_for_scenario ok)
-	if [[ "$rc" -eq 0 ]]; then
-		print_result "ok findings exit 0" 0
-		return 0
-	fi
-	print_result "ok findings exit 0" 1 "rc=$rc"
-	return 0
+	assert_rc "ok findings exit 0" 0 "$rc"
+	return $?
 }
 
 test_warning_service_exit_zero_and_logs() {
 	local rc
+	local result=0
 	rc=$(run_monitor_for_scenario warning)
-	if [[ "$rc" -eq 0 ]]; then
-		print_result "warning-only findings exit 0 for service mode" 0
-	else
-		print_result "warning-only findings exit 0 for service mode" 1 "rc=$rc"
-	fi
-	assert_log_contains "warning-only finding is logged" "[WARNING] opencode using 1024 MB RSS"
-	return 0
+	assert_rc "warning-only findings exit 0 for service mode" 0 "$rc" || result=1
+	assert_log_contains "warning-only finding is logged" "[WARNING] opencode using 1024 MB RSS" || result=1
+	return "$result"
 }
 
 test_critical_service_exit_nonzero_and_logs() {
 	local rc
+	local result=0
 	rc=$(run_monitor_for_scenario critical)
-	if [[ "$rc" -eq 2 ]]; then
-		print_result "critical findings remain non-zero" 0
-	else
-		print_result "critical findings remain non-zero" 1 "rc=$rc"
-	fi
-	assert_log_contains "critical finding is logged" "[CRITICAL] opencode using 2048 MB RSS"
-	return 0
+	assert_rc "critical findings remain non-zero" 2 "$rc" || result=1
+	assert_log_contains "critical finding is logged" "[CRITICAL] opencode using 2048 MB RSS" || result=1
+	return "$result"
 }
 
 main() {
@@ -150,9 +154,15 @@ main() {
 	fi
 
 	setup_fake_ps
-	test_ok_service_exit_zero
-	test_warning_service_exit_zero_and_logs
-	test_critical_service_exit_nonzero_and_logs
+	if ! test_ok_service_exit_zero; then
+		:
+	fi
+	if ! test_warning_service_exit_zero_and_logs; then
+		:
+	fi
+	if ! test_critical_service_exit_nonzero_and_logs; then
+		:
+	fi
 
 	printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -eq 0 ]]; then
