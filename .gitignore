@@ -58,6 +58,7 @@ authorized_keys
 !.agents/scripts/worker-token-helper.sh
 !.agents/scripts/report-token-use-helper.sh
 !.agents/scripts/report-token-use-helper.py
+!.agents/scripts/report_token_use_render.py
 !.agents/scripts/commands/report-token-use.md
 !.agents/scripts/tests/test-report-token-use-helper.sh
 !.agents/secretlint.md
