@@ -395,17 +395,19 @@ _approval_verify_conversation_locked() {
 	local target_type="$1"
 	local target_number="$2"
 	local slug="$3"
-	local issue_json=""
+	local issue_json="${4:-}"
 	local label="issue"
 
 	if [[ "$target_type" == "pr" ]]; then
 		label="PR conversation"
 	fi
 
-	issue_json=$(_approval_fetch_issue_json "$target_number" "$slug") || {
-		_print_error "Approval state verification failed: could not read ${label} #$target_number via REST"
-		return 1
-	}
+	if [[ -z "$issue_json" ]]; then
+		issue_json=$(_approval_fetch_issue_json "$target_number" "$slug") || {
+			_print_error "Approval state verification failed: could not read ${label} #$target_number via REST"
+			return 1
+		}
+	fi
 
 	if ! printf '%s' "$issue_json" | jq -e '.locked == true' >/dev/null 2>&1; then
 		_print_error "Approval state verification failed: ${label} #$target_number is not locked"

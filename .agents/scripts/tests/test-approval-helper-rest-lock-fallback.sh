@@ -182,6 +182,17 @@ run_case "PR approval locks conversation with gh pr lock" '
 assert_contains "PR approval reports real conversation lock" "$LAST_OUTPUT" "PR #456 approval recorded and conversation locked"
 
 # shellcheck disable=SC2016  # literal script is evaluated in the child bash.
+run_case "conversation lock verification reuses provided issue JSON" '
+	set -uo pipefail
+	# shellcheck disable=SC1090
+	source "$APPROVAL_HELPER_UNDER_TEST" >/dev/null 2>&1
+	gh() {
+		return 1
+	}
+	_approval_verify_conversation_locked pr 456 marcusquinn/aidevops "{\"locked\":true}"
+' 0
+
+# shellcheck disable=SC2016  # literal script is evaluated in the child bash.
 run_case "PR approval REST fallback locks conversation" '
 	set -uo pipefail
 	# shellcheck disable=SC1090
