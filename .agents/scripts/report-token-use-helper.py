@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import argparse
-import html
 import json
 import os
 import re
@@ -17,6 +16,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+from report_token_use_render import as_dict, write_html, write_json, write_markdown
 
 
 DEFAULT_OPENCODE_DB = Path.home() / ".local/share/opencode/opencode.db"
@@ -46,7 +47,7 @@ class SessionRow:
     agent: str
 
 
-@dataclass
+@dataclass(init=False)
 class SessionReport:
     session_id: str
     session_name: str
@@ -68,6 +69,13 @@ class SessionReport:
     request_count: int
     tool_call_count: int
     source_session_ids: list[str] = field(default_factory=list)
+
+
+def _make_session_report(**values: Any) -> SessionReport:
+    report = SessionReport()
+    for key, value in values.items():
+        setattr(report, key, value)
+    return report
 
 
 def _die(message: str) -> None:
@@ -311,6 +319,73 @@ def _observability_for(obs_db: Path, session_ids: list[str], configured_mcps: li
     return result
 
 
+def _session_in_scope(group: list[SessionRow], session_id: str | None, since_ms: int | None) -> bool:
+    if session_id and session_id not in [row.session_id for row in group]:
+        return False
+    if since_ms and max(row.time_updated for row in group) < since_ms:
+        return False
+    return True
+
+
+def _tokens_for_group(group: list[SessionRow]) -> dict[str, int]:
+    tokens = {
+        "input": sum(row.tokens_input for row in group),
+        "output": sum(row.tokens_output for row in group),
+        "reasoning": sum(row.tokens_reasoning for row in group),
+        "cache_read": sum(row.tokens_cache_read for row in group),
+        "cache_write": sum(row.tokens_cache_write for row in group),
+    }
+    tokens["total"] = sum(tokens.values())
+    return tokens
+
+
+def _models_for_group(
+    conn: sqlite3.Connection,
+    group: list[SessionRow],
+    session_ids: list[str],
+    obs: dict[str, Any],
+) -> list[str]:
+    models = {model for model in (_parse_model(row.model) for row in group) if model}
+    models.update(_model_switches(conn, session_ids))
+    models.update(obs["models"])
+    return sorted(models) or ["unknown"]
+
+
+def _opencode_report_from_group(
+    conn: sqlite3.Connection,
+    obs_db: Path,
+    configured_mcps: list[str],
+    root_id: str,
+    root: SessionRow,
+    group: list[SessionRow],
+) -> SessionReport:
+    session_ids = [row.session_id for row in group]
+    obs = _observability_for(obs_db, session_ids, configured_mcps)
+    tokens = _tokens_for_group(group)
+    return _make_session_report(
+        session_id=root_id,
+        session_name=_safe_title(root.title),
+        runtime="opencode",
+        models_used=_models_for_group(conn, group, session_ids, obs),
+        tokens_input=tokens["input"],
+        tokens_output=tokens["output"],
+        tokens_reasoning=tokens["reasoning"],
+        tokens_cache_read=tokens["cache_read"],
+        tokens_cache_write=tokens["cache_write"],
+        net_tokens_total=tokens["total"],
+        child_session_count=max(len(group) - 1, 0),
+        compaction_count=sum(1 for row in group if row.parent_id or row.time_compacting),
+        mcps_active=configured_mcps,
+        mcps_observed=sorted(obs["observed_mcps"]),
+        started_at=_ms_to_iso(min(row.time_created for row in group)),
+        finished_at=_ms_to_iso(max(row.time_updated for row in group)),
+        cost_usd=round(sum(row.cost for row in group), 6),
+        request_count=int(obs["requests"]),
+        tool_call_count=int(obs["tool_calls"]),
+        source_session_ids=sorted(session_ids),
+    )
+
+
 def _opencode_reports(args: argparse.Namespace) -> list[SessionReport]:
     db_path = Path(os.environ.get("AIDEVOPS_REPORT_TOKEN_USE_OPENCODE_DB", DEFAULT_OPENCODE_DB))
     obs_db = Path(os.environ.get("AIDEVOPS_REPORT_TOKEN_USE_OBS_DB", DEFAULT_OBS_DB))
@@ -326,45 +401,10 @@ def _opencode_reports(args: argparse.Namespace) -> list[SessionReport]:
         configured_mcps = _configured_mcps()
         reports: list[SessionReport] = []
         for root_id, group in grouped.items():
-            if args.session and args.session not in [row.session_id for row in group]:
-                continue
-            if since_ms and max(row.time_updated for row in group) < since_ms:
+            if not _session_in_scope(group, args.session, since_ms):
                 continue
             root = by_id.get(root_id, group[0])
-            session_ids = [row.session_id for row in group]
-            obs = _observability_for(obs_db, session_ids, configured_mcps)
-            models = {model for model in (_parse_model(row.model) for row in group) if model}
-            models.update(_model_switches(conn, session_ids))
-            models.update(obs["models"])
-            tokens_input = sum(row.tokens_input for row in group)
-            tokens_output = sum(row.tokens_output for row in group)
-            tokens_reasoning = sum(row.tokens_reasoning for row in group)
-            tokens_cache_read = sum(row.tokens_cache_read for row in group)
-            tokens_cache_write = sum(row.tokens_cache_write for row in group)
-            reports.append(
-                SessionReport(
-                    session_id=root_id,
-                    session_name=_safe_title(root.title),
-                    runtime="opencode",
-                    models_used=sorted(models) or ["unknown"],
-                    tokens_input=tokens_input,
-                    tokens_output=tokens_output,
-                    tokens_reasoning=tokens_reasoning,
-                    tokens_cache_read=tokens_cache_read,
-                    tokens_cache_write=tokens_cache_write,
-                    net_tokens_total=tokens_input + tokens_output + tokens_reasoning + tokens_cache_read + tokens_cache_write,
-                    child_session_count=max(len(group) - 1, 0),
-                    compaction_count=sum(1 for row in group if row.parent_id or row.time_compacting),
-                    mcps_active=configured_mcps,
-                    mcps_observed=sorted(obs["observed_mcps"]),
-                    started_at=_ms_to_iso(min(row.time_created for row in group)),
-                    finished_at=_ms_to_iso(max(row.time_updated for row in group)),
-                    cost_usd=round(sum(row.cost for row in group), 6),
-                    request_count=int(obs["requests"]),
-                    tool_call_count=int(obs["tool_calls"]),
-                    source_session_ids=sorted(session_ids),
-                )
-            )
+            reports.append(_opencode_report_from_group(conn, obs_db, configured_mcps, root_id, root, group))
         reports.sort(key=lambda row: row.finished_at, reverse=True)
         return reports[: args.limit]
     finally:
@@ -384,58 +424,79 @@ def _claude_reports(args: argparse.Namespace) -> list[SessionReport]:
             except json.JSONDecodeError:
                 continue
             session_id = row.get("session_id") or "unknown"
-            if args.session and args.session != session_id:
+            if _skip_claude_row(args, session_id, row.get("recorded_at") or "", since_dt):
                 continue
-            recorded_at = row.get("recorded_at") or ""
-            if since_dt and recorded_at:
-                try:
-                    ts = datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
-                except ValueError:
-                    ts = None
-                if ts and ts < since_dt:
-                    continue
-            data = grouped.setdefault(
-                session_id,
-                {"models": set(), "input": 0, "output": 0, "cache_read": 0, "cache_write": 0, "cost": 0.0, "first": recorded_at, "last": recorded_at, "requests": 0},
-            )
-            if row.get("model"):
-                data["models"].add(str(row["model"]))
-            data["input"] += int(row.get("input_tokens") or 0)
-            data["output"] += int(row.get("output_tokens") or 0)
-            data["cache_read"] += int(row.get("cache_read_tokens") or 0)
-            data["cache_write"] += int(row.get("cache_write_tokens") or 0)
-            data["cost"] += float(row.get("cost_total") or 0)
-            data["requests"] += 1
-            data["first"] = min(filter(None, [data["first"], recorded_at]), default="")
-            data["last"] = max(filter(None, [data["last"], recorded_at]), default="")
-    reports: list[SessionReport] = []
-    for session_id, data in grouped.items():
-        reports.append(
-            SessionReport(
-                session_id=session_id,
-                session_name=session_id,
-                runtime="claude",
-                models_used=sorted(data["models"]) or ["unknown"],
-                tokens_input=data["input"],
-                tokens_output=data["output"],
-                tokens_reasoning=0,
-                tokens_cache_read=data["cache_read"],
-                tokens_cache_write=data["cache_write"],
-                net_tokens_total=data["input"] + data["output"] + data["cache_read"] + data["cache_write"],
-                child_session_count=0,
-                compaction_count=0,
-                mcps_active=[],
-                mcps_observed=[],
-                started_at=data["first"],
-                finished_at=data["last"],
-                cost_usd=round(data["cost"], 6),
-                request_count=data["requests"],
-                tool_call_count=0,
-                source_session_ids=[session_id],
-            )
-        )
+            _add_claude_row(grouped, session_id, row)
+    reports = [_claude_report_from_group(session_id, data) for session_id, data in grouped.items()]
     reports.sort(key=lambda row: row.finished_at, reverse=True)
     return reports[: args.limit]
+
+
+def _skip_claude_row(args: argparse.Namespace, session_id: str, recorded_at: str, since_dt: datetime | None) -> bool:
+    if args.session and args.session != session_id:
+        return True
+    if not since_dt or not recorded_at:
+        return False
+    try:
+        ts = datetime.fromisoformat(recorded_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return ts < since_dt
+
+
+def _new_claude_group(recorded_at: str) -> dict[str, Any]:
+    return {
+        "models": set(),
+        "input": 0,
+        "output": 0,
+        "cache_read": 0,
+        "cache_write": 0,
+        "cost": 0.0,
+        "first": recorded_at,
+        "last": recorded_at,
+        "requests": 0,
+    }
+
+
+def _add_claude_row(grouped: dict[str, dict[str, Any]], session_id: str, row: dict[str, Any]) -> None:
+    recorded_at = row.get("recorded_at") or ""
+    data = grouped.setdefault(session_id, _new_claude_group(recorded_at))
+    if row.get("model"):
+        data["models"].add(str(row["model"]))
+    data["input"] += int(row.get("input_tokens") or 0)
+    data["output"] += int(row.get("output_tokens") or 0)
+    data["cache_read"] += int(row.get("cache_read_tokens") or 0)
+    data["cache_write"] += int(row.get("cache_write_tokens") or 0)
+    data["cost"] += float(row.get("cost_total") or 0)
+    data["requests"] += 1
+    data["first"] = min(filter(None, [data["first"], recorded_at]), default="")
+    data["last"] = max(filter(None, [data["last"], recorded_at]), default="")
+
+
+def _claude_report_from_group(session_id: str, data: dict[str, Any]) -> SessionReport:
+    net_tokens_total = data["input"] + data["output"] + data["cache_read"] + data["cache_write"]
+    return _make_session_report(
+        session_id=session_id,
+        session_name=session_id,
+        runtime="claude",
+        models_used=sorted(data["models"]) or ["unknown"],
+        tokens_input=data["input"],
+        tokens_output=data["output"],
+        tokens_reasoning=0,
+        tokens_cache_read=data["cache_read"],
+        tokens_cache_write=data["cache_write"],
+        net_tokens_total=net_tokens_total,
+        child_session_count=0,
+        compaction_count=0,
+        mcps_active=[],
+        mcps_observed=[],
+        started_at=data["first"],
+        finished_at=data["last"],
+        cost_usd=round(data["cost"], 6),
+        request_count=data["requests"],
+        tool_call_count=0,
+        source_session_ids=[session_id],
+    )
 
 
 def _collect_reports(args: argparse.Namespace) -> list[SessionReport]:
@@ -445,148 +506,6 @@ def _collect_reports(args: argparse.Namespace) -> list[SessionReport]:
         return _claude_reports(args)
     reports = _opencode_reports(args)
     return reports if reports else _claude_reports(args)
-
-
-def _as_dict(report: SessionReport) -> dict[str, Any]:
-    return {
-        "session_id": report.session_id,
-        "session_name": report.session_name,
-        "runtime": report.runtime,
-        "models_used": report.models_used,
-        "tokens_input": report.tokens_input,
-        "tokens_output": report.tokens_output,
-        "tokens_reasoning": report.tokens_reasoning,
-        "tokens_cache_read": report.tokens_cache_read,
-        "tokens_cache_write": report.tokens_cache_write,
-        "net_tokens_total": report.net_tokens_total,
-        "child_session_count": report.child_session_count,
-        "compaction_count": report.compaction_count,
-        "mcps_active": report.mcps_active,
-        "mcps_observed": report.mcps_observed,
-        "started_at": report.started_at,
-        "finished_at": report.finished_at,
-        "cost_usd": report.cost_usd,
-        "request_count": report.request_count,
-        "tool_call_count": report.tool_call_count,
-        "source_session_ids": report.source_session_ids,
-    }
-
-
-def _format_int(value: int) -> str:
-    return f"{value:,}"
-
-
-def _write_markdown(reports: list[SessionReport], output_dir: Path, generated_at: str) -> Path:
-    report_path = output_dir / "report.md"
-    total = sum(row.net_tokens_total for row in reports)
-    lines = [
-        "# Token Use Report",
-        "",
-        f"Generated: {generated_at}",
-        f"Sessions: {len(reports)}",
-        f"Net tokens: {_format_int(total)}",
-        "",
-        "| Session name | Runtime | Models | Tokens in | Tokens out | Cached-read | Net total | Compactions | MCPs active | MCPs observed | Started | Finished |",
-        "|---|---|---|---:|---:|---:|---:|---:|---|---|---|---|",
-    ]
-    for row in reports:
-        lines.append(
-            "| "
-            + " | ".join(
-                [
-                    row.session_name.replace("|", "\\|"),
-                    row.runtime,
-                    ", ".join(row.models_used).replace("|", "\\|"),
-                    _format_int(row.tokens_input),
-                    _format_int(row.tokens_output),
-                    _format_int(row.tokens_cache_read),
-                    _format_int(row.net_tokens_total),
-                    str(row.compaction_count),
-                    ", ".join(row.mcps_active) or "none configured",
-                    ", ".join(row.mcps_observed) or "none observed",
-                    row.started_at,
-                    row.finished_at,
-                ]
-            )
-            + " |"
-        )
-    lines.extend(
-        [
-            "",
-            "## Notes",
-            "",
-            "- Net total is input + output + reasoning + cache-read + cache-write tokens.",
-            "- OpenCode rows recursively include child sessions via `session.parent_id` so compacted sessions are counted with their root session.",
-            "- MCPs active are configured OpenCode MCP server names at report time; MCPs observed are inferred from session tool-call names when available.",
-        ]
-    )
-    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    return report_path
-
-
-def _write_html(reports: list[SessionReport], output_dir: Path, generated_at: str) -> Path:
-    report_path = output_dir / "report.html"
-    rows = []
-    for row in reports:
-        rows.append(
-            "<tr>"
-            f"<td>{html.escape(row.session_name)}</td>"
-            f"<td>{html.escape(row.runtime)}</td>"
-            f"<td>{html.escape(', '.join(row.models_used))}</td>"
-            f"<td>{_format_int(row.tokens_input)}</td>"
-            f"<td>{_format_int(row.tokens_output)}</td>"
-            f"<td>{_format_int(row.tokens_cache_read)}</td>"
-            f"<td>{_format_int(row.net_tokens_total)}</td>"
-            f"<td>{row.compaction_count}</td>"
-            f"<td>{html.escape(', '.join(row.mcps_active) or 'none configured')}</td>"
-            f"<td>{html.escape(', '.join(row.mcps_observed) or 'none observed')}</td>"
-            f"<td>{html.escape(row.started_at)}</td>"
-            f"<td>{html.escape(row.finished_at)}</td>"
-            "</tr>"
-        )
-    body = "\n".join(rows)
-    total = _format_int(sum(row.net_tokens_total for row in reports))
-    html_doc = f"""<!doctype html>
-<html lang=\"en\">
-<head>
-  <meta charset=\"utf-8\">
-  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
-  <title>Token Use Report</title>
-  <style>
-    body {{ color: #172033; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; }}
-    table {{ border-collapse: collapse; width: 100%; }}
-    th, td {{ border-bottom: 1px solid #d8dee9; padding: .55rem; text-align: left; vertical-align: top; }}
-    td:nth-child(4), td:nth-child(5), td:nth-child(6), td:nth-child(7), td:nth-child(8) {{ text-align: right; }}
-    th {{ background: #f5f7fb; position: sticky; top: 0; }}
-    .meta {{ color: #5f6b7a; }}
-  </style>
-</head>
-<body>
-  <h1>Token Use Report</h1>
-  <p class=\"meta\">Generated: {html.escape(generated_at)} · Sessions: {len(reports)} · Net tokens: {total}</p>
-  <table>
-    <thead><tr><th>Session name</th><th>Runtime</th><th>Models</th><th>Tokens in</th><th>Tokens out</th><th>Cached-read</th><th>Net total</th><th>Compactions</th><th>MCPs active</th><th>MCPs observed</th><th>Started</th><th>Finished</th></tr></thead>
-    <tbody>
-{body}
-    </tbody>
-  </table>
-</body>
-</html>
-"""
-    report_path.write_text(html_doc, encoding="utf-8")
-    return report_path
-
-
-def _write_json(reports: list[SessionReport], output_dir: Path, generated_at: str) -> Path:
-    report_path = output_dir / "report.json"
-    payload = {
-        "generated_at": generated_at,
-        "session_count": len(reports),
-        "net_tokens_total": sum(row.net_tokens_total for row in reports),
-        "sessions": [_as_dict(row) for row in reports],
-    }
-    report_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    return report_path
 
 
 def _open_path(path: Path) -> None:
@@ -607,7 +526,7 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
 
 def cmd_data(args: argparse.Namespace) -> int:
     reports = _collect_reports(args)
-    payload = {"sessions": [_as_dict(row) for row in reports]}
+    payload = {"sessions": [as_dict(row) for row in reports]}
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 
@@ -618,9 +537,9 @@ def cmd_report(args: argparse.Namespace) -> int:
     output_root = Path(os.environ.get("AIDEVOPS_REPORT_TOKEN_USE_ROOT", DEFAULT_REPORT_ROOT))
     output_dir = output_root / _iso_now_id()
     output_dir.mkdir(parents=True, exist_ok=True)
-    md_path = _write_markdown(reports, output_dir, generated_at)
-    json_path = _write_json(reports, output_dir, generated_at)
-    html_path = _write_html(reports, output_dir, generated_at)
+    md_path = write_markdown(reports, output_dir, generated_at)
+    json_path = write_json(reports, output_dir, generated_at)
+    html_path = write_html(reports, output_dir, generated_at)
     if args.open:
         _open_path(html_path)
     if args.json:
