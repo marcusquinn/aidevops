@@ -130,7 +130,7 @@ test_report_aggregates_compacted_sessions() {
 		AIDEVOPS_REPORT_TOKEN_USE_OBS_DB="${TEST_ROOT}/llm-requests.db" \
 		AIDEVOPS_REPORT_TOKEN_USE_ROOT="${TEST_ROOT}/reports" \
 		AIDEVOPS_REPORT_TOKEN_USE_OPENCODE_CONFIG="${TEST_ROOT}/opencode.json" \
-		"$HELPER_SH" report --limit 5 --json)
+		"$HELPER_SH" report --limit 5 --daily-days 2000 --json)
 	local _json_path
 	_json_path=$(python3 - <<PY
 import json
@@ -142,9 +142,12 @@ PY
 	assert_json_field "$_json_path" "sessions[0].tokens_input" "150" "Report sums input tokens"
 	assert_json_field "$_json_path" "sessions[0].tokens_output" "30" "Report sums output tokens"
 	assert_json_field "$_json_path" "sessions[0].tokens_cache_read" "35" "Report sums cached-read tokens"
-	assert_json_field "$_json_path" "sessions[0].net_tokens_total" "227" "Report computes net total"
+	assert_json_field "$_json_path" "sessions[0].raw_tokens_total" "227" "Report computes raw total"
+	assert_json_field "$_json_path" "sessions[0].net_tokens_total" "192" "Report computes net total excluding cache reads"
 	assert_json_field "$_json_path" "sessions[0].compaction_count" "1" "Report counts child compaction"
 	assert_json_field "$_json_path" "sessions[0].mcps_observed[0]" "context7" "Report infers observed MCP"
+	assert_json_field "$_json_path" "daily_usage[0].date" "2023-11-14" "Report includes daily usage date"
+	assert_json_field "$_json_path" "daily_usage[0].net_tokens_total" "192" "Report sums daily net tokens"
 	return 0
 }
 

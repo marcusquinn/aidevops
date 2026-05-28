@@ -25,6 +25,7 @@ Arguments: `$ARGUMENTS`
 /report-token-use --session ses_abc123
 /report-token-use --since 7d
 /report-token-use --runtime opencode
+/report-token-use --daily-days 90
 /report-token-use --json
 /report-token-use --open
 ```
@@ -36,13 +37,15 @@ Reports are written under `~/.aidevops/_reports/token-use/<UTC-run-id>/`:
 - `report.md` — canonical Markdown review copy.
 - `report.json` — machine-readable session rows.
 - `report.html` — local browser review file.
+- Each report includes a daily usage summary for the last 90 days by default.
 
 ## Data contract
 
 Each session row includes session name, runtime, model(s), tokens in, tokens out,
-cached-read tokens, net token total, compaction count, active/configured MCPs,
+cached-read tokens, raw token total, net token total, compaction count, configured MCPs,
 observed MCPs, started time, and finished time.
 
-Net token total is input + output + reasoning + cache-read + cache-write tokens.
+Net token total is input + output + reasoning + cache-write tokens. Cache reads
+are excluded from net totals and retained in raw totals for context-volume review.
 OpenCode reports recursively include child sessions via `session.parent_id` so
 compacted sessions are counted with their root session.

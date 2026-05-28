@@ -12,6 +12,14 @@ from typing import Any
 
 
 def as_dict(report: Any) -> dict[str, Any]:
+    if hasattr(report, "date"):
+        return {
+            "date": report.date,
+            "session_count": report.session_count,
+            "raw_tokens_total": report.raw_tokens_total,
+            "net_tokens_total": report.net_tokens_total,
+            "cost_usd": report.cost_usd,
+        }
     return {
         "session_id": report.session_id,
         "session_name": report.session_name,
@@ -22,10 +30,12 @@ def as_dict(report: Any) -> dict[str, Any]:
         "tokens_reasoning": report.tokens_reasoning,
         "tokens_cache_read": report.tokens_cache_read,
         "tokens_cache_write": report.tokens_cache_write,
+        "raw_tokens_total": report.raw_tokens_total,
         "net_tokens_total": report.net_tokens_total,
         "child_session_count": report.child_session_count,
         "compaction_count": report.compaction_count,
         "mcps_active": report.mcps_active,
+        "mcps_configured": report.mcps_active,
         "mcps_observed": report.mcps_observed,
         "started_at": report.started_at,
         "finished_at": report.finished_at,
@@ -40,19 +50,29 @@ def _format_int(value: int) -> str:
     return f"{value:,}"
 
 
-def write_markdown(reports: list[Any], output_dir: Path, generated_at: str) -> Path:
+def write_markdown(reports: list[Any], daily_usage: list[Any], output_dir: Path, generated_at: str) -> Path:
     report_path = output_dir / "report.md"
-    total = sum(row.net_tokens_total for row in reports)
+    net_total = sum(row.net_tokens_total for row in reports)
+    raw_total = sum(row.raw_tokens_total for row in reports)
     lines = [
         "# Token Use Report",
         "",
         f"Generated: {generated_at}",
         f"Sessions: {len(reports)}",
-        f"Net tokens: {_format_int(total)}",
-        "",
-        "| Session name | Runtime | Models | Tokens in | Tokens out | Cached-read | Net total | Compactions | MCPs active | MCPs observed | Started | Finished |",
-        "|---|---|---|---:|---:|---:|---:|---:|---|---|---|---|",
+        f"Net tokens (excludes cache reads): {_format_int(net_total)}",
+        f"Raw tokens (includes cache reads): {_format_int(raw_total)}",
     ]
+    if daily_usage:
+        lines.extend(_daily_markdown(daily_usage))
+    lines.extend(
+        [
+            "",
+            "## Sessions",
+            "",
+            "| Session name | Runtime | Models | Tokens in | Tokens out | Cached-read | Net tokens | Raw tokens | Cost | Compactions | MCPs configured | MCPs observed | Started | Finished |",
+            "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|---|---|---|",
+        ]
+    )
     for row in reports:
         lines.append(_markdown_row(row))
     lines.extend(
@@ -60,13 +80,29 @@ def write_markdown(reports: list[Any], output_dir: Path, generated_at: str) -> P
             "",
             "## Notes",
             "",
-            "- Net total is input + output + reasoning + cache-read + cache-write tokens.",
+            "- Net tokens are input + output + reasoning + cache-write tokens, excluding cache reads so the main total tracks paid/metered work more closely.",
+            "- Raw tokens include cache reads for context volume analysis. Provider-specific cached-read billing discounts are best represented by the Cost column when available.",
             "- OpenCode rows recursively include child sessions via `session.parent_id` so compacted sessions are counted with their root session.",
-            "- MCPs active are configured OpenCode MCP server names at report time; MCPs observed are inferred from session tool-call names when available.",
+            "- MCPs configured lists configured OpenCode MCP server names at report time. MCPs observed are inferred from session tool-call names when available and are the better proxy for actual use.",
         ]
     )
     report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return report_path
+
+
+def _daily_markdown(daily_usage: list[Any]) -> list[str]:
+    lines = [
+        "",
+        "## Daily usage",
+        "",
+        "| Date | Sessions | Net tokens | Raw tokens | Cost |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for row in daily_usage:
+        lines.append(
+            f"| {row.date} | {row.session_count} | {_format_int(row.net_tokens_total)} | {_format_int(row.raw_tokens_total)} | ${row.cost_usd:.6f} |"
+        )
+    return lines
 
 
 def _markdown_row(row: Any) -> str:
@@ -78,6 +114,8 @@ def _markdown_row(row: Any) -> str:
         _format_int(row.tokens_output),
         _format_int(row.tokens_cache_read),
         _format_int(row.net_tokens_total),
+        _format_int(row.raw_tokens_total),
+        f"${row.cost_usd:.6f}",
         str(row.compaction_count),
         ", ".join(row.mcps_active) or "none configured",
         ", ".join(row.mcps_observed) or "none observed",
@@ -87,10 +125,12 @@ def _markdown_row(row: Any) -> str:
     return "| " + " | ".join(cells) + " |"
 
 
-def write_html(reports: list[Any], output_dir: Path, generated_at: str) -> Path:
+def write_html(reports: list[Any], daily_usage: list[Any], output_dir: Path, generated_at: str) -> Path:
     report_path = output_dir / "report.html"
     body = "\n".join(_html_row(row) for row in reports)
-    total = _format_int(sum(row.net_tokens_total for row in reports))
+    daily_body = "\n".join(_daily_html_row(row) for row in daily_usage)
+    net_total = _format_int(sum(row.net_tokens_total for row in reports))
+    raw_total = _format_int(sum(row.raw_tokens_total for row in reports))
     html_doc = f"""<!doctype html>
 <html lang=\"en\">
 <head>
@@ -99,18 +139,26 @@ def write_html(reports: list[Any], output_dir: Path, generated_at: str) -> Path:
   <title>Token Use Report</title>
   <style>
     body {{ color: #172033; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; }}
-    table {{ border-collapse: collapse; width: 100%; }}
+    table {{ border-collapse: collapse; margin-bottom: 2rem; width: 100%; }}
     th, td {{ border-bottom: 1px solid #d8dee9; padding: .55rem; text-align: left; vertical-align: top; }}
-    td:nth-child(4), td:nth-child(5), td:nth-child(6), td:nth-child(7), td:nth-child(8) {{ text-align: right; }}
+    td.num {{ text-align: right; }}
     th {{ background: #f5f7fb; position: sticky; top: 0; }}
     .meta {{ color: #5f6b7a; }}
   </style>
 </head>
 <body>
   <h1>Token Use Report</h1>
-  <p class=\"meta\">Generated: {html.escape(generated_at)} · Sessions: {len(reports)} · Net tokens: {total}</p>
+  <p class=\"meta\">Generated: {html.escape(generated_at)} · Sessions: {len(reports)} · Net tokens: {net_total} · Raw tokens: {raw_total}</p>
+  <h2>Daily usage</h2>
   <table>
-    <thead><tr><th>Session name</th><th>Runtime</th><th>Models</th><th>Tokens in</th><th>Tokens out</th><th>Cached-read</th><th>Net total</th><th>Compactions</th><th>MCPs active</th><th>MCPs observed</th><th>Started</th><th>Finished</th></tr></thead>
+    <thead><tr><th>Date</th><th>Sessions</th><th>Net tokens</th><th>Raw tokens</th><th>Cost</th></tr></thead>
+    <tbody>
+{daily_body}
+    </tbody>
+  </table>
+  <h2>Sessions</h2>
+  <table>
+    <thead><tr><th>Session name</th><th>Runtime</th><th>Models</th><th>Tokens in</th><th>Tokens out</th><th>Cached-read</th><th>Net tokens</th><th>Raw tokens</th><th>Cost</th><th>Compactions</th><th>MCPs configured</th><th>MCPs observed</th><th>Started</th><th>Finished</th></tr></thead>
     <tbody>
 {body}
     </tbody>
@@ -128,11 +176,13 @@ def _html_row(row: Any) -> str:
         f"<td>{html.escape(row.session_name)}</td>"
         f"<td>{html.escape(row.runtime)}</td>"
         f"<td>{html.escape(', '.join(row.models_used))}</td>"
-        f"<td>{_format_int(row.tokens_input)}</td>"
-        f"<td>{_format_int(row.tokens_output)}</td>"
-        f"<td>{_format_int(row.tokens_cache_read)}</td>"
-        f"<td>{_format_int(row.net_tokens_total)}</td>"
-        f"<td>{row.compaction_count}</td>"
+        f"<td class=\"num\">{_format_int(row.tokens_input)}</td>"
+        f"<td class=\"num\">{_format_int(row.tokens_output)}</td>"
+        f"<td class=\"num\">{_format_int(row.tokens_cache_read)}</td>"
+        f"<td class=\"num\">{_format_int(row.net_tokens_total)}</td>"
+        f"<td class=\"num\">{_format_int(row.raw_tokens_total)}</td>"
+        f"<td class=\"num\">${row.cost_usd:.6f}</td>"
+        f"<td class=\"num\">{row.compaction_count}</td>"
         f"<td>{html.escape(', '.join(row.mcps_active) or 'none configured')}</td>"
         f"<td>{html.escape(', '.join(row.mcps_observed) or 'none observed')}</td>"
         f"<td>{html.escape(row.started_at)}</td>"
@@ -141,12 +191,26 @@ def _html_row(row: Any) -> str:
     )
 
 
-def write_json(reports: list[Any], output_dir: Path, generated_at: str) -> Path:
+def _daily_html_row(row: Any) -> str:
+    return (
+        "<tr>"
+        f"<td>{html.escape(row.date)}</td>"
+        f"<td class=\"num\">{row.session_count}</td>"
+        f"<td class=\"num\">{_format_int(row.net_tokens_total)}</td>"
+        f"<td class=\"num\">{_format_int(row.raw_tokens_total)}</td>"
+        f"<td class=\"num\">${row.cost_usd:.6f}</td>"
+        "</tr>"
+    )
+
+
+def write_json(reports: list[Any], daily_usage: list[Any], output_dir: Path, generated_at: str) -> Path:
     report_path = output_dir / "report.json"
     payload = {
         "generated_at": generated_at,
         "session_count": len(reports),
+        "raw_tokens_total": sum(row.raw_tokens_total for row in reports),
         "net_tokens_total": sum(row.net_tokens_total for row in reports),
+        "daily_usage": [as_dict(row) for row in daily_usage],
         "sessions": [as_dict(row) for row in reports],
     }
     report_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")

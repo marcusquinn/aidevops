@@ -14,6 +14,7 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +59,7 @@ class SessionReport:
     tokens_reasoning: int
     tokens_cache_read: int
     tokens_cache_write: int
+    raw_tokens_total: int
     net_tokens_total: int
     child_session_count: int
     compaction_count: int
@@ -69,6 +71,15 @@ class SessionReport:
     request_count: int
     tool_call_count: int
     source_session_ids: list[str] = field(default_factory=list)
+
+
+@dataclass
+class DailyUsage:
+    date: str
+    session_count: int
+    raw_tokens_total: int
+    net_tokens_total: int
+    cost_usd: float
 
 
 def _make_session_report(**values: Any) -> SessionReport:
@@ -335,7 +346,8 @@ def _tokens_for_group(group: list[SessionRow]) -> dict[str, int]:
         "cache_read": sum(row.tokens_cache_read for row in group),
         "cache_write": sum(row.tokens_cache_write for row in group),
     }
-    tokens["total"] = sum(tokens.values())
+    tokens["raw_total"] = sum(tokens.values())
+    tokens["net_total"] = tokens["input"] + tokens["output"] + tokens["reasoning"] + tokens["cache_write"]
     return tokens
 
 
@@ -372,7 +384,8 @@ def _opencode_report_from_group(
         tokens_reasoning=tokens["reasoning"],
         tokens_cache_read=tokens["cache_read"],
         tokens_cache_write=tokens["cache_write"],
-        net_tokens_total=tokens["total"],
+        raw_tokens_total=tokens["raw_total"],
+        net_tokens_total=tokens["net_total"],
         child_session_count=max(len(group) - 1, 0),
         compaction_count=sum(1 for row in group if row.parent_id or row.time_compacting),
         mcps_active=configured_mcps,
@@ -474,7 +487,8 @@ def _add_claude_row(grouped: dict[str, dict[str, Any]], session_id: str, row: di
 
 
 def _claude_report_from_group(session_id: str, data: dict[str, Any]) -> SessionReport:
-    net_tokens_total = data["input"] + data["output"] + data["cache_read"] + data["cache_write"]
+    raw_tokens_total = data["input"] + data["output"] + data["cache_read"] + data["cache_write"]
+    net_tokens_total = data["input"] + data["output"] + data["cache_write"]
     return _make_session_report(
         session_id=session_id,
         session_name=session_id,
@@ -485,6 +499,7 @@ def _claude_report_from_group(session_id: str, data: dict[str, Any]) -> SessionR
         tokens_reasoning=0,
         tokens_cache_read=data["cache_read"],
         tokens_cache_write=data["cache_write"],
+        raw_tokens_total=raw_tokens_total,
         net_tokens_total=net_tokens_total,
         child_session_count=0,
         compaction_count=0,
@@ -508,6 +523,39 @@ def _collect_reports(args: argparse.Namespace) -> list[SessionReport]:
     return reports if reports else _claude_reports(args)
 
 
+def _daily_usage(reports: list[SessionReport]) -> list[DailyUsage]:
+    grouped: dict[str, dict[str, Any]] = {}
+    for report in reports:
+        date = (report.finished_at or report.started_at or "unknown")[:10]
+        data = grouped.setdefault(date, {"sessions": 0, "raw": 0, "net": 0, "cost": 0.0})
+        data["sessions"] += 1
+        data["raw"] += report.raw_tokens_total
+        data["net"] += report.net_tokens_total
+        data["cost"] += report.cost_usd
+    return [
+        DailyUsage(
+            date=date,
+            session_count=data["sessions"],
+            raw_tokens_total=data["raw"],
+            net_tokens_total=data["net"],
+            cost_usd=round(data["cost"], 6),
+        )
+        for date, data in sorted(grouped.items(), reverse=True)
+    ]
+
+
+def _collect_daily_usage(args: argparse.Namespace) -> list[DailyUsage]:
+    if args.daily_days < 1:
+        return []
+    daily_args = SimpleNamespace(
+        limit=100000,
+        session=args.session,
+        since=f"{args.daily_days}d",
+        runtime=args.runtime,
+    )
+    return _daily_usage(_collect_reports(daily_args))
+
+
 def _open_path(path: Path) -> None:
     if sys.platform == "darwin":
         subprocess.run(["open", str(path)], check=False)
@@ -522,24 +570,26 @@ def _add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--session", help="include one session/root session")
     parser.add_argument("--since", help="restrict to sessions updated within duration, e.g. 24h, 7d, 2w")
     parser.add_argument("--runtime", choices=["auto", "opencode", "claude"], default="auto")
+    parser.add_argument("--daily-days", type=int, default=90, help="days to include in the daily usage summary; 0 disables")
 
 
 def cmd_data(args: argparse.Namespace) -> int:
     reports = _collect_reports(args)
-    payload = {"sessions": [as_dict(row) for row in reports]}
+    payload = {"daily_usage": [as_dict(row) for row in _collect_daily_usage(args)], "sessions": [as_dict(row) for row in reports]}
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 
 
 def cmd_report(args: argparse.Namespace) -> int:
     reports = _collect_reports(args)
+    daily_usage = _collect_daily_usage(args)
     generated_at = datetime.now(UTC).astimezone().isoformat(timespec="seconds")
     output_root = Path(os.environ.get("AIDEVOPS_REPORT_TOKEN_USE_ROOT", DEFAULT_REPORT_ROOT))
     output_dir = output_root / _iso_now_id()
     output_dir.mkdir(parents=True, exist_ok=True)
-    md_path = write_markdown(reports, output_dir, generated_at)
-    json_path = write_json(reports, output_dir, generated_at)
-    html_path = write_html(reports, output_dir, generated_at)
+    md_path = write_markdown(reports, daily_usage, output_dir, generated_at)
+    json_path = write_json(reports, daily_usage, output_dir, generated_at)
+    html_path = write_html(reports, daily_usage, output_dir, generated_at)
     if args.open:
         _open_path(html_path)
     if args.json:
