@@ -81,6 +81,14 @@ class DailyUsage:
     raw_tokens_total: int
     net_tokens_total: int
     cost_usd: float
+    interactive_session_count: int = 0
+    interactive_raw_tokens_total: int = 0
+    interactive_net_tokens_total: int = 0
+    interactive_cost_usd: float = 0.0
+    headless_worker_session_count: int = 0
+    headless_worker_raw_tokens_total: int = 0
+    headless_worker_net_tokens_total: int = 0
+    headless_worker_cost_usd: float = 0.0
 
 
 def _make_session_report(**values: Any) -> SessionReport:
@@ -535,11 +543,35 @@ def _daily_usage(reports: list[SessionReport]) -> list[DailyUsage]:
     grouped: dict[str, dict[str, Any]] = {}
     for report in reports:
         date = (report.finished_at or report.started_at or "unknown")[:10]
-        data = grouped.setdefault(date, {"sessions": 0, "raw": 0, "net": 0, "cost": 0.0})
+        data = grouped.setdefault(
+            date,
+            {
+                "sessions": 0,
+                "raw": 0,
+                "net": 0,
+                "cost": 0.0,
+                "interactive_sessions": 0,
+                "interactive_raw": 0,
+                "interactive_net": 0,
+                "interactive_cost": 0.0,
+                "headless_worker_sessions": 0,
+                "headless_worker_raw": 0,
+                "headless_worker_net": 0,
+                "headless_worker_cost": 0.0,
+            },
+        )
         data["sessions"] += 1
         data["raw"] += report.raw_tokens_total
         data["net"] += report.net_tokens_total
         data["cost"] += report.cost_usd
+        if report.session_kind == "headless_worker":
+            prefix = "headless_worker"
+        else:
+            prefix = "interactive"
+        data[f"{prefix}_sessions"] += 1
+        data[f"{prefix}_raw"] += report.raw_tokens_total
+        data[f"{prefix}_net"] += report.net_tokens_total
+        data[f"{prefix}_cost"] += report.cost_usd
     return [
         DailyUsage(
             date=date,
@@ -547,6 +579,14 @@ def _daily_usage(reports: list[SessionReport]) -> list[DailyUsage]:
             raw_tokens_total=data["raw"],
             net_tokens_total=data["net"],
             cost_usd=round(data["cost"], 6),
+            interactive_session_count=data["interactive_sessions"],
+            interactive_raw_tokens_total=data["interactive_raw"],
+            interactive_net_tokens_total=data["interactive_net"],
+            interactive_cost_usd=round(data["interactive_cost"], 6),
+            headless_worker_session_count=data["headless_worker_sessions"],
+            headless_worker_raw_tokens_total=data["headless_worker_raw"],
+            headless_worker_net_tokens_total=data["headless_worker_net"],
+            headless_worker_cost_usd=round(data["headless_worker_cost"], 6),
         )
         for date, data in sorted(grouped.items(), reverse=True)
     ]

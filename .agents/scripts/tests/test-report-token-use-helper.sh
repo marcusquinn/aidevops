@@ -151,6 +151,8 @@ PY
 	assert_json_field "$_json_path" "sessions[0].mcps_observed[0]" "context7" "Report infers observed MCP"
 	assert_json_field "$_json_path" "daily_usage[0].date" "2023-11-14" "Report includes daily usage date"
 	assert_json_field "$_json_path" "daily_usage[0].net_tokens_total" "192" "Report sums daily net tokens"
+	assert_json_field "$_json_path" "daily_usage[0].interactive_net_tokens_total" "192" "Report sums daily interactive net tokens"
+	assert_json_field "$_json_path" "daily_usage[0].headless_worker_net_tokens_total" "0" "Report defaults daily headless net tokens"
 	return 0
 }
 
@@ -163,9 +165,11 @@ SQL
 	AIDEVOPS_REPORT_TOKEN_USE_OPENCODE_DB="${TEST_ROOT}/opencode.db" \
 		AIDEVOPS_REPORT_TOKEN_USE_OBS_DB="${TEST_ROOT}/llm-requests.db" \
 		AIDEVOPS_REPORT_TOKEN_USE_OPENCODE_CONFIG="${TEST_ROOT}/opencode.json" \
-		"$HELPER_SH" data --limit 5 --daily-days 0 --json >"$_json_path"
+		"$HELPER_SH" data --limit 5 --daily-days 2000 --json >"$_json_path"
 	assert_json_field "$_json_path" "usage_by_session_kind[1].session_kind" "headless_worker" "Report summarizes headless worker usage"
 	assert_json_field "$_json_path" "usage_by_session_kind[1].net_tokens_total" "14" "Report sums headless worker net tokens"
+	assert_json_field "$_json_path" "daily_usage[0].headless_worker_net_tokens_total" "14" "Report sums daily headless worker net tokens"
+	assert_json_field "$_json_path" "daily_usage[0].net_tokens_total" "206" "Report sums daily total net tokens"
 	assert_json_field "$_json_path" "sessions[1].session_kind" "headless_worker" "Report classifies temp workdir session as headless worker"
 	return 0
 }

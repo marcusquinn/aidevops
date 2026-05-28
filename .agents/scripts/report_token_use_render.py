@@ -19,6 +19,14 @@ def as_dict(report: Any) -> dict[str, Any]:
             "raw_tokens_total": report.raw_tokens_total,
             "net_tokens_total": report.net_tokens_total,
             "cost_usd": report.cost_usd,
+            "interactive_session_count": report.interactive_session_count,
+            "interactive_raw_tokens_total": report.interactive_raw_tokens_total,
+            "interactive_net_tokens_total": report.interactive_net_tokens_total,
+            "interactive_cost_usd": report.interactive_cost_usd,
+            "headless_worker_session_count": report.headless_worker_session_count,
+            "headless_worker_raw_tokens_total": report.headless_worker_raw_tokens_total,
+            "headless_worker_net_tokens_total": report.headless_worker_net_tokens_total,
+            "headless_worker_cost_usd": report.headless_worker_cost_usd,
         }
     return {
         "session_id": report.session_id,
@@ -146,12 +154,12 @@ def _daily_markdown(daily_usage: list[Any]) -> list[str]:
         "",
         "## Daily usage",
         "",
-        "| Date | Sessions | Raw tokens | Net tokens | Cost |",
-        "|---|---:|---:|---:|---:|",
+        "| Date | Interactive sessions | Interactive net | Headless sessions | Headless net | Total sessions | Total net | Total raw | Cost |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for row in daily_usage:
         lines.append(
-            f"| {row.date} | {row.session_count} | {_format_int(row.raw_tokens_total)} | {_format_int(row.net_tokens_total)} | ${row.cost_usd:.6f} |"
+            f"| {row.date} | {row.interactive_session_count} | {_format_int(row.interactive_net_tokens_total)} | {row.headless_worker_session_count} | {_format_int(row.headless_worker_net_tokens_total)} | {row.session_count} | {_format_int(row.net_tokens_total)} | {_format_int(row.raw_tokens_total)} | ${row.cost_usd:.6f} |"
         )
     return lines
 
@@ -193,7 +201,8 @@ def write_html(reports: list[Any], daily_usage: list[Any], output_dir: Path, gen
   <style>
     body {{ color: #172033; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 2rem; }}
     table {{ border-collapse: collapse; margin-bottom: 2rem; table-layout: fixed; width: 100%; }}
-    table.daily, table.summary {{ max-width: 64rem; }}
+    table.summary {{ max-width: 64rem; }}
+    table.daily {{ min-width: 82rem; }}
     th, td {{ border-bottom: 1px solid #d8dee9; padding: .55rem; text-align: left; vertical-align: top; }}
     th.num, td.num {{ text-align: right; }}
     th {{ background: #f5f7fb; position: sticky; top: 0; }}
@@ -213,8 +222,8 @@ def write_html(reports: list[Any], daily_usage: list[Any], output_dir: Path, gen
   </table>
   <h2>Daily usage</h2>
   <table class="daily">
-    <colgroup><col style="width: 9rem"><col style="width: 7rem"><col style="width: 12rem"><col style="width: 12rem"><col style="width: 9rem"></colgroup>
-    <thead><tr><th>Date</th><th class="num">Sessions</th><th class="num">Raw tokens</th><th class="num">Net tokens</th><th class="num">Cost</th></tr></thead>
+    <colgroup><col style="width: 9rem"><col style="width: 8rem"><col style="width: 11rem"><col style="width: 8rem"><col style="width: 11rem"><col style="width: 8rem"><col style="width: 11rem"><col style="width: 11rem"><col style="width: 9rem"></colgroup>
+    <thead><tr><th>Date</th><th class="num">Interactive sessions</th><th class="num">Interactive net</th><th class="num">Headless sessions</th><th class="num">Headless net</th><th class="num">Total sessions</th><th class="num">Total net</th><th class="num">Total raw</th><th class="num">Cost</th></tr></thead>
     <tbody>
 {daily_body}
     </tbody>
@@ -271,9 +280,13 @@ def _daily_html_row(row: Any) -> str:
     return (
         "<tr>"
         f"<td>{html.escape(row.date)}</td>"
+        f"<td class=\"num\">{row.interactive_session_count}</td>"
+        f"<td class=\"num\">{_format_int(row.interactive_net_tokens_total)}</td>"
+        f"<td class=\"num\">{row.headless_worker_session_count}</td>"
+        f"<td class=\"num\">{_format_int(row.headless_worker_net_tokens_total)}</td>"
         f"<td class=\"num\">{row.session_count}</td>"
-        f"<td class=\"num\">{_format_int(row.raw_tokens_total)}</td>"
         f"<td class=\"num\">{_format_int(row.net_tokens_total)}</td>"
+        f"<td class=\"num\">{_format_int(row.raw_tokens_total)}</td>"
         f"<td class=\"num\">${row.cost_usd:.6f}</td>"
         "</tr>"
     )
