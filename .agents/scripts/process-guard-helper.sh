@@ -25,6 +25,7 @@
 #   CHILD_RUNTIME_LIMIT    - Max runtime in seconds (default: 600 = 10min)
 #   SHELLCHECK_RSS_LIMIT_KB - ShellCheck-specific RSS limit (default: 1048576 = 1GB)
 #   SHELLCHECK_RUNTIME_LIMIT - ShellCheck-specific runtime (default: 300 = 5min)
+#   STALE_PLAYWRIGHT_LIST_AGE_LIMIT - Max aidevops Playwright --list age (default: 900 = 15min)
 #   SESSION_COUNT_WARN     - Warn when >N interactive sessions (default: 5)
 #
 # =============================================================================
@@ -64,6 +65,7 @@ CHILD_RSS_LIMIT_KB="${CHILD_RSS_LIMIT_KB:-2097152}"
 CHILD_RUNTIME_LIMIT="${CHILD_RUNTIME_LIMIT:-600}"
 SHELLCHECK_RSS_LIMIT_KB="${SHELLCHECK_RSS_LIMIT_KB:-1048576}"
 SHELLCHECK_RUNTIME_LIMIT="${SHELLCHECK_RUNTIME_LIMIT:-300}"
+STALE_PLAYWRIGHT_LIST_AGE_LIMIT="${STALE_PLAYWRIGHT_LIST_AGE_LIMIT:-900}"
 SESSION_COUNT_WARN="${SESSION_COUNT_WARN:-5}"
 
 # Validate all numeric config to prevent command injection via arithmetic expansion
@@ -71,6 +73,7 @@ CHILD_RSS_LIMIT_KB=$(_validate_int CHILD_RSS_LIMIT_KB "$CHILD_RSS_LIMIT_KB" 2097
 CHILD_RUNTIME_LIMIT=$(_validate_int CHILD_RUNTIME_LIMIT "$CHILD_RUNTIME_LIMIT" 600 1)
 SHELLCHECK_RSS_LIMIT_KB=$(_validate_int SHELLCHECK_RSS_LIMIT_KB "$SHELLCHECK_RSS_LIMIT_KB" 1048576 1)
 SHELLCHECK_RUNTIME_LIMIT=$(_validate_int SHELLCHECK_RUNTIME_LIMIT "$SHELLCHECK_RUNTIME_LIMIT" 300 1)
+STALE_PLAYWRIGHT_LIST_AGE_LIMIT=$(_validate_int STALE_PLAYWRIGHT_LIST_AGE_LIMIT "$STALE_PLAYWRIGHT_LIST_AGE_LIMIT" 900 60)
 SESSION_COUNT_WARN=$(_validate_int SESSION_COUNT_WARN "$SESSION_COUNT_WARN" 5 1)
 
 LOGFILE="${HOME}/.aidevops/logs/process-guard.log"
@@ -85,11 +88,101 @@ _list_ai_processes() {
 	# pgrep -f matches against the full command line; -d, separates PIDs with commas.
 	# We use pgrep to find PIDs, then pass them directly to ps — no grep needed.
 	local pids
-	pids=$(pgrep -f 'opencode|shellcheck|node.*opencode' 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+	pids=$(pgrep -f 'opencode|shellcheck|node.*opencode|playwright[[:space:]]+test[[:space:]]+--list|pnpm .*playwright[[:space:]]+test[[:space:]]+--list' 2>/dev/null | tr '\n' ',' | sed 's/,$//')
 	if [[ -z "$pids" ]]; then
 		return 0
 	fi
 	ps -p "$pids" -o pid=,ppid=,tty=,rss=,etime=,command= 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Return the process cwd when available (Linux /proc only).
+# Arguments:
+#   $1 - PID
+# Output: cwd path or empty when unavailable
+#######################################
+_get_process_cwd() {
+	local pid="$1"
+	local cwd_path=""
+	if [[ -e "/proc/${pid}/cwd" ]]; then
+		cwd_path=$(readlink "/proc/${pid}/cwd" 2>/dev/null || true)
+	fi
+	printf '%s' "$cwd_path"
+	return 0
+}
+
+#######################################
+# Determine whether a Playwright list command is aidevops-owned evidence.
+# Arguments:
+#   $1 - command line
+#   $2 - cwd path (may be empty)
+#######################################
+_has_aidevops_playwright_evidence() {
+	local cmd_full="$1"
+	local cwd_path="$2"
+
+	case "$cwd_path" in
+	*/.aidevops/* | */Git/aidevops | */Git/aidevops-* | */Git/*/aidevops | */Git/*/aidevops-*)
+		return 0
+		;;
+	esac
+
+	case "$cmd_full" in
+	*/.aidevops/* | */Git/aidevops/* | */Git/aidevops-* | *aidevops-feature-auto-* | *aidevops-issue-* | *WORKER_WORKTREE_PATH=*)
+		return 0
+		;;
+	esac
+
+	return 1
+}
+
+#######################################
+# Classify stale aidevops Playwright `test --list` commands.
+# Arguments:
+#   $1 - age in seconds
+#   $2 - tty
+#   $3 - cwd path (may be empty)
+#   $4 - command line
+# Output: reason string
+#######################################
+_classify_stale_playwright_list() {
+	local age_seconds="$1"
+	local tty="$2"
+	local cwd_path="$3"
+	local cmd_full="$4"
+
+	if [[ "$tty" != "?" && "$tty" != "??" ]]; then
+		printf '%s' "SAFE interactive tty=${tty}"
+		return 1
+	fi
+
+	if [[ ! "$age_seconds" =~ ^[0-9]+$ ]]; then
+		printf '%s' "SAFE invalid age=${age_seconds}"
+		return 1
+	fi
+
+	if [[ "$cmd_full" != *"playwright test --list"* ]]; then
+		printf '%s' "SAFE not playwright test --list"
+		return 1
+	fi
+
+	if [[ "$cmd_full" != *" --grep "* ]]; then
+		printf '%s' "SAFE missing grep selector"
+		return 1
+	fi
+
+	if ! _has_aidevops_playwright_evidence "$cmd_full" "$cwd_path"; then
+		printf '%s' "SAFE no aidevops cwd/cmd evidence"
+		return 1
+	fi
+
+	if [[ "$age_seconds" -le "$STALE_PLAYWRIGHT_LIST_AGE_LIMIT" ]]; then
+		printf '%s' "SAFE age ${age_seconds}s <= ${STALE_PLAYWRIGHT_LIST_AGE_LIMIT}s"
+		return 1
+	fi
+
+	printf '%s' "stale aidevops Playwright list process (age=${age_seconds}s, cwd=${cwd_path:-unknown})"
 	return 0
 }
 
@@ -177,6 +270,8 @@ cmd_scan() {
 
 		local age_seconds
 		age_seconds=$(_get_process_age "$pid")
+		local cwd_path
+		cwd_path=$(_get_process_cwd "$pid")
 
 		local rss_limit="$CHILD_RSS_LIMIT_KB"
 		local runtime_limit="$CHILD_RUNTIME_LIMIT"
@@ -204,6 +299,13 @@ cmd_scan() {
 			if [[ "$ppid" -eq 1 ]] && [[ "$age_seconds" -gt 120 ]]; then
 				status="ORPHAN"
 				detail="ppid=1, age=${age_seconds}s (no consumer)"
+				violations=$((violations + 1))
+			fi
+		else
+			local playwright_detail
+			if playwright_detail=$(_classify_stale_playwright_list "$age_seconds" "$tty" "$cwd_path" "$cmd_full"); then
+				status="STALE"
+				detail="$playwright_detail"
 				violations=$((violations + 1))
 			fi
 		fi
@@ -258,6 +360,8 @@ cmd_kill_runaways() {
 
 		local age_seconds
 		age_seconds=$(_get_process_age "$pid")
+		local cwd_path
+		cwd_path=$(_get_process_cwd "$pid")
 
 		local rss_limit="$CHILD_RSS_LIMIT_KB"
 		local runtime_limit="$CHILD_RUNTIME_LIMIT"
@@ -282,6 +386,10 @@ cmd_kill_runaways() {
 			if [[ "$ppid" -eq 1 ]] && [[ "$age_seconds" -gt 120 ]]; then
 				violation="orphan (ppid=1, age=${age_seconds}s)"
 			fi
+		fi
+
+		if [[ -z "$violation" ]] && _classify_stale_playwright_list "$age_seconds" "$tty" "$cwd_path" "$cmd_full" >/dev/null; then
+			violation=$(_classify_stale_playwright_list "$age_seconds" "$tty" "$cwd_path" "$cmd_full")
 		fi
 
 		if [[ -n "$violation" ]]; then
@@ -355,6 +463,8 @@ cmd_status() {
 		cmd_base="${cmd_base##*/}"
 		local age_seconds
 		age_seconds=$(_get_process_age "$pid")
+		local cwd_path
+		cwd_path=$(_get_process_cwd "$pid")
 		local rss_limit="$CHILD_RSS_LIMIT_KB"
 		local runtime_limit="$CHILD_RUNTIME_LIMIT"
 		if [[ "$cmd_base" == "shellcheck" ]]; then
@@ -368,6 +478,8 @@ cmd_status() {
 			if [[ "$ppid" -eq 1 ]] && [[ "$age_seconds" -gt 120 ]]; then
 				violations=$((violations + 1))
 			fi
+		elif _classify_stale_playwright_list "$age_seconds" "$tty" "$cwd_path" "$cmd_full" >/dev/null; then
+			violations=$((violations + 1))
 		fi
 	done < <(_list_ai_processes)
 
@@ -405,6 +517,31 @@ cmd_status() {
 }
 
 #######################################
+# Dry-run matcher for stale Playwright list command lines.
+#######################################
+cmd_match_playwright_list() {
+	local age_seconds="${1:-}"
+	local tty="${2:-?}"
+	local cwd_path="${3:-}"
+	shift 3 2>/dev/null || true
+	local cmd_full="$*"
+
+	if [[ -z "$age_seconds" || -z "$cmd_full" ]]; then
+		echo "Usage: process-guard-helper.sh match-playwright-list <age-seconds> <tty> <cwd> <command...>" >&2
+		return 1
+	fi
+
+	local reason
+	if reason=$(_classify_stale_playwright_list "$age_seconds" "$tty" "$cwd_path" "$cmd_full"); then
+		printf 'MATCH %s\n' "$reason"
+		return 0
+	fi
+
+	printf 'NO_MATCH %s\n' "$reason"
+	return 1
+}
+
+#######################################
 # Help
 #######################################
 cmd_help() {
@@ -413,6 +550,7 @@ cmd_help() {
 	echo "Usage:"
 	echo "  process-guard-helper.sh scan              One-shot scan and report"
 	echo "  process-guard-helper.sh kill-runaways     Kill processes exceeding limits"
+	echo "  process-guard-helper.sh match-playwright-list <age> <tty> <cwd> <command...>"
 	echo "  process-guard-helper.sh sessions          Report interactive session count"
 	echo "  process-guard-helper.sh status            Full status report (JSON)"
 	echo "  process-guard-helper.sh help              Show this help"
@@ -422,6 +560,7 @@ cmd_help() {
 	echo "  CHILD_RUNTIME_LIMIT=${CHILD_RUNTIME_LIMIT}s"
 	echo "  SHELLCHECK_RSS_LIMIT_KB=${SHELLCHECK_RSS_LIMIT_KB} ($((SHELLCHECK_RSS_LIMIT_KB / 1024))MB)"
 	echo "  SHELLCHECK_RUNTIME_LIMIT=${SHELLCHECK_RUNTIME_LIMIT}s"
+	echo "  STALE_PLAYWRIGHT_LIST_AGE_LIMIT=${STALE_PLAYWRIGHT_LIST_AGE_LIMIT}s"
 	echo "  SESSION_COUNT_WARN=${SESSION_COUNT_WARN}"
 	return 0
 }
@@ -435,6 +574,7 @@ main() {
 	case "$command" in
 	scan) cmd_scan ;;
 	kill-runaways) cmd_kill_runaways ;;
+	match-playwright-list) shift; cmd_match_playwright_list "$@" ;;
 	sessions) cmd_sessions ;;
 	status) cmd_status ;;
 	help | --help | -h) cmd_help ;;
