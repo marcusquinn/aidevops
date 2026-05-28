@@ -220,7 +220,7 @@ _rh_update_recovery_healthy() {
 	[[ "$RUNNER_HEALTH_BREAKER_RESUME_AFTER_UPDATE" == "true" ]] || return 1
 	[[ "$update_outcome" == "ran" ]] || return 1
 
-	local agents_dir repo_root repo_version deployed_version
+	local agents_dir="" repo_root="" repo_version="" deployed_version=""
 	agents_dir=$(_rh_agents_dir)
 	[[ -n "$agents_dir" ]] || return 1
 	repo_root="${agents_dir%/.agents}"
@@ -233,7 +233,7 @@ _rh_update_recovery_healthy() {
 	[[ "$repo_version" == "$deployed_version" ]] || return 1
 
 	if [[ -r "$RUNNER_HEALTH_DEPLOYED_SHA_FILE" && -d "${repo_root}/.git" ]]; then
-		local deployed_sha head_sha
+		local deployed_sha="" head_sha=""
 		deployed_sha=$(_rh_read_token_file "$RUNNER_HEALTH_DEPLOYED_SHA_FILE")
 		head_sha=$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || true)
 		[[ -n "$deployed_sha" && -n "$head_sha" ]] || return 1
@@ -494,7 +494,7 @@ EOF
 cmd_is_paused() {
 	[[ "$RUNNER_HEALTH_DISABLED" == "1" ]] && return 1
 	[[ -f "$RUNNER_HEALTH_STATE_FILE" ]] || return 1
-	local state update_outcome
+	local state="" update_outcome=""
 	state=$(_rh_get_field '.circuit_breaker.state')
 	if [[ "$state" == "tripped" ]]; then
 		update_outcome=$(_rh_get_field '.circuit_breaker.last_update_outcome')
