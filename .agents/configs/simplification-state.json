@@ -408,9 +408,9 @@
       "pr": 18172
     },
     ".agents/configs/complexity-thresholds-history.md": {
-      "at": "2026-05-25T15:38:05Z",
-      "hash": "c601a4c55bf4fecb007eaf254ec0ce6cc049e815",
-      "passes": 45,
+      "at": "2026-05-28T02:13:32Z",
+      "hash": "a8210e8df02c54749f56f341fea88c2c38282480",
+      "passes": 46,
       "pr": 17979
     },
     ".agents/content.md": {
@@ -1820,9 +1820,9 @@
       "pr": 16548
     },
     ".agents/scripts/approval-helper.sh": {
-      "at": "2026-05-04T14:40:38Z",
-      "hash": "75e535dca5135f0e96dec076b40c009786e58cb1",
-      "passes": 11,
+      "at": "2026-05-28T02:14:22Z",
+      "hash": "05211ad47df4d47642db42e844d3d7ff0b289ca3",
+      "passes": 12,
       "pr": 17454
     },
     ".agents/scripts/attribution-detection-helper.sh": {
@@ -2340,9 +2340,9 @@
       "pr": 15431
     },
     ".agents/scripts/memory-pressure-monitor.sh": {
-      "at": "2026-05-01T21:34:05Z",
-      "hash": "e9db99cd129011fee806e63b0d9009486c2a3734",
-      "passes": 5,
+      "at": "2026-05-28T02:15:46Z",
+      "hash": "7dc5b06a1c9cee670a44e2edb00b1f5df0ec2117",
+      "passes": 6,
       "pr": 17843
     },
     ".agents/scripts/mission-email-helper.sh": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-05-28T00:10:14Z",
-      "hash": "092ea4b6f3a7e17e4ea50142c81b358afd16c400",
-      "passes": 201,
+      "at": "2026-05-28T02:34:26Z",
+      "hash": "707356b85d5b015dfc9c84c917a231991193f0fd",
+      "passes": 202,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-05-28T00:10:16Z",
-      "hash": "37f0be4ab8ba62f38e3478642f8dcdff0cfcf4e2",
-      "passes": 196,
+      "at": "2026-05-28T02:34:27Z",
+      "hash": "4fdae84b381ad88c908e14ef3a766fa669c3b4b9",
+      "passes": 197,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
