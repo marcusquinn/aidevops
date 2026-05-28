@@ -162,12 +162,12 @@ _classify_stale_playwright_list() {
 		return 1
 	fi
 
-	if [[ "$cmd_full" != *"playwright test --list"* ]]; then
+	if [[ ! "$cmd_full" =~ playwright[[:space:]]+test[[:space:]]+--list ]]; then
 		printf '%s' "SAFE not playwright test --list"
 		return 1
 	fi
 
-	if [[ "$cmd_full" != *" --grep "* ]]; then
+	if [[ ! "$cmd_full" =~ --grep([[:space:]]+|=) ]]; then
 		printf '%s' "SAFE missing grep selector"
 		return 1
 	fi
