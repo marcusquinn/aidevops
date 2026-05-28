@@ -419,6 +419,10 @@ test_markdown_headings_deduplicate_anchor_ids() {
 
 First section.
 
+## Repeat 2
+
+Explicit suffix section.
+
 ## Repeat
 
 Second section.
@@ -429,9 +433,10 @@ Nested section.
 MARKDOWN
 	"$HELPER_SH" render "$_input" --output "$_out"
 	assert_contains "$_out" "<h2 class=\"chapter-heading\" id=\"repeat\">" "Markdown keeps first duplicate heading anchor unsuffixed"
-	assert_contains "$_out" "<h2 class=\"chapter-heading\" id=\"repeat-2\">" "Markdown suffixes second duplicate heading anchor"
-	assert_contains "$_out" "<h3 class=\"section-heading\" id=\"repeat-3\">" "Markdown suffixes duplicate heading anchors across levels"
-	assert_contains "$_out" "<a href=\"#repeat-2\"" "Markdown TOC targets suffixed duplicate heading anchor"
+	assert_contains "$_out" "<h2 class=\"chapter-heading\" id=\"repeat-2\">" "Markdown preserves explicit suffix heading anchor"
+	assert_contains "$_out" "<h2 class=\"chapter-heading\" id=\"repeat-3\">" "Markdown skips occupied duplicate heading anchor suffixes"
+	assert_contains "$_out" "<h3 class=\"section-heading\" id=\"repeat-4\">" "Markdown suffixes duplicate heading anchors across levels"
+	assert_contains "$_out" "<a href=\"#repeat-3\"" "Markdown TOC targets suffixed duplicate heading anchor"
 	return 0
 }
 
