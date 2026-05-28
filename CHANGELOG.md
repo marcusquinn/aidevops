@@ -12,6 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.20.1] - 2026-05-28
 
+### Changed
+
+- Maintenance: prepare 3.20.1 changelog
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- lock approval conversations via REST fallback (#24222)
+
+## [3.20.1] - 2026-05-28
+
 ### Fixed
 
 - lock approval conversations via REST fallback (#24222)
