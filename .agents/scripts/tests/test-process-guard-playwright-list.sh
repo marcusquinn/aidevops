@@ -51,6 +51,20 @@ test_matches_stale_aidevops_playwright_list() {
 	return 0
 }
 
+test_matches_stale_aidevops_playwright_list_with_flexible_spacing() {
+	local output
+	if output=$(run_matcher 1200 '?' "$HOME/Git/aidevops-feature-auto-123" pnpm --filter web exec 'playwright   test   --list' --grep=@flaky --reporter=list 2>&1); then
+		if [[ "$output" == MATCH* ]]; then
+			print_result "matches stale aidevops Playwright list with flexible spacing" 0
+		else
+			print_result "matches stale aidevops Playwright list with flexible spacing" 1 "Unexpected output: $output"
+		fi
+	else
+		print_result "matches stale aidevops Playwright list with flexible spacing" 1 "Matcher rejected: $output"
+	fi
+	return 0
+}
+
 test_rejects_unrelated_playwright_list() {
 	local output
 	if output=$(run_matcher 1200 '?' "$HOME/projects/app" pnpm --filter web exec playwright test --list --grep @flaky --reporter=list 2>&1); then
@@ -95,6 +109,7 @@ test_rejects_fresh_aidevops_playwright_list() {
 
 main() {
 	test_matches_stale_aidevops_playwright_list
+	test_matches_stale_aidevops_playwright_list_with_flexible_spacing
 	test_rejects_unrelated_playwright_list
 	test_rejects_interactive_playwright_list
 	test_rejects_fresh_aidevops_playwright_list
