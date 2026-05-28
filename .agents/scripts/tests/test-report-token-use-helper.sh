@@ -160,6 +160,7 @@ test_report_summarizes_headless_workers() {
 	create_fixture_dbs
 	sqlite3 "${TEST_ROOT}/opencode.db" <<'SQL'
 INSERT INTO session VALUES ('ses_worker', NULL, 'Worker Session', '{"id":"gpt-5.5","providerID":"openai"}', 10, 2, 1, 4, 1, 0.05, 1699999900000, 1699999950000, NULL, '/private/tmp/opencode', 'private/tmp/opencode', 'Build+');
+INSERT INTO session VALUES ('ses_windows_worker', NULL, 'Windows Worker Session', '{"id":"gpt-5.5","providerID":"openai"}', 6, 2, 0, 3, 1, 0.03, 1699999800000, 1699999850000, NULL, 'C:\Users\Example\AppData\Local\Temp\OpenCode', 'C:\Users\Example\AppData\Local\Temp\OpenCode\session.json', 'Build+');
 SQL
 	local _json_path="${TEST_ROOT}/data.json"
 	AIDEVOPS_REPORT_TOKEN_USE_OPENCODE_DB="${TEST_ROOT}/opencode.db" \
@@ -167,10 +168,11 @@ SQL
 		AIDEVOPS_REPORT_TOKEN_USE_OPENCODE_CONFIG="${TEST_ROOT}/opencode.json" \
 		"$HELPER_SH" data --limit 5 --daily-days 2000 --json >"$_json_path"
 	assert_json_field "$_json_path" "usage_by_session_kind[1].session_kind" "headless_worker" "Report summarizes headless worker usage"
-	assert_json_field "$_json_path" "usage_by_session_kind[1].net_tokens_total" "14" "Report sums headless worker net tokens"
-	assert_json_field "$_json_path" "daily_usage[0].headless_worker_net_tokens_total" "14" "Report sums daily headless worker net tokens"
-	assert_json_field "$_json_path" "daily_usage[0].net_tokens_total" "206" "Report sums daily total net tokens"
+	assert_json_field "$_json_path" "usage_by_session_kind[1].net_tokens_total" "23" "Report sums headless worker net tokens"
+	assert_json_field "$_json_path" "daily_usage[0].headless_worker_net_tokens_total" "23" "Report sums daily headless worker net tokens"
+	assert_json_field "$_json_path" "daily_usage[0].net_tokens_total" "215" "Report sums daily total net tokens"
 	assert_json_field "$_json_path" "sessions[1].session_kind" "headless_worker" "Report classifies temp workdir session as headless worker"
+	assert_json_field "$_json_path" "sessions[2].session_kind" "headless_worker" "Report classifies Windows temp workdir session as headless worker"
 	return 0
 }
 
