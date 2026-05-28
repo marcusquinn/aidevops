@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.4] - 2026-05-28
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- align token use report tables (#24243)
+
 ## [3.20.3] - 2026-05-28
 
 ### Changed
