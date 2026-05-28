@@ -107,12 +107,27 @@ test_rejects_fresh_aidevops_playwright_list() {
 	return 0
 }
 
+test_rejects_substring_grep_option() {
+	local output
+	if output=$(run_matcher 1200 '?' "$HOME/Git/aidevops-feature-auto-123" playwright test --list --no-grep @flaky 2>&1); then
+		print_result "rejects substring grep option" 1 "Unexpected match: $output"
+	else
+		if [[ "$output" == NO_MATCH*"missing grep selector"* ]]; then
+			print_result "rejects substring grep option" 0
+		else
+			print_result "rejects substring grep option" 1 "Unexpected output: $output"
+		fi
+	fi
+	return 0
+}
+
 main() {
 	test_matches_stale_aidevops_playwright_list
 	test_matches_stale_aidevops_playwright_list_with_flexible_spacing
 	test_rejects_unrelated_playwright_list
 	test_rejects_interactive_playwright_list
 	test_rejects_fresh_aidevops_playwright_list
+	test_rejects_substring_grep_option
 
 	printf '\n%s/%s tests passed.\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
