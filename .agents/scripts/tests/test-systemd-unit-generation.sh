@@ -118,6 +118,29 @@ WantedBy=multi-user.target
 	return 0
 }
 
+generate_supervisor_pulse_unit() {
+	local log_file="$1"
+	local service_file="$2"
+	printf '%s' "[Unit]
+Description=aidevops aidevops-supervisor-pulse
+After=network.target
+
+[Service]
+Type=oneshot
+KillMode=control-group
+ExecStart=/bin/bash -lc 'echo pulse'
+TimeoutStartSec=3600
+TimeoutStopSec=30
+SendSIGKILL=yes
+StandardOutput=append:${log_file}
+StandardError=append:${log_file}
+
+[Install]
+WantedBy=multi-user.target
+" >"$service_file"
+	return 0
+}
+
 # --- Tests ---
 
 test_quoted_stdout_fails_verify() {
@@ -244,6 +267,38 @@ test_reposync_unit_passes_verify() {
 	return 0
 }
 
+test_supervisor_pulse_unit_uses_control_group_kill() {
+	local tmpdir
+	tmpdir=$(mktemp -d)
+	local service_file="${tmpdir}/aidevops-supervisor-pulse.service"
+	local log_file="/tmp/aidevops-supervisor-pulse.log"
+
+	generate_supervisor_pulse_unit "$log_file" "$service_file"
+
+	local output
+	output=$(systemd-analyze verify "$service_file" 2>&1 || true)
+
+	local kill_mode
+	kill_mode=$(grep -E '^KillMode=' "$service_file" || true)
+	local timeout_stop
+	timeout_stop=$(grep -E '^TimeoutStopSec=30$' "$service_file" || true)
+	local sigkill
+	sigkill=$(grep -E '^SendSIGKILL=yes$' "$service_file" || true)
+
+	rm -rf "$tmpdir"
+
+	if echo "$output" | grep -q "Failed to parse"; then
+		print_result "supervisor pulse unit verifies with control-group kill" 1 \
+			"Parse failure in generated unit: $output"
+	elif [[ "$kill_mode" != "KillMode=control-group" || -z "$timeout_stop" || -z "$sigkill" ]]; then
+		print_result "supervisor pulse unit verifies with control-group kill" 1 \
+			"Expected KillMode=control-group, TimeoutStopSec=30, SendSIGKILL=yes"
+	else
+		print_result "supervisor pulse unit verifies with control-group kill" 0
+	fi
+	return 0
+}
+
 test_no_literal_quotes_in_scheduler_unit() {
 	local tmpdir
 	tmpdir=$(mktemp -d)
@@ -328,6 +383,7 @@ main() {
 	test_scheduler_unit_passes_verify
 	test_autoupdate_unit_passes_verify
 	test_reposync_unit_passes_verify
+	test_supervisor_pulse_unit_uses_control_group_kill
 
 	# Test no literal quotes appear in generated output
 	test_no_literal_quotes_in_scheduler_unit
