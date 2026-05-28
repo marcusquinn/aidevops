@@ -103,7 +103,7 @@ test_detect_session_origin_returns_worker_when_headless() {
 # testing must not have AIDEVOPS_HEADLESS set on their behalf.
 test_export_is_inside_main_not_top_level() {
 	local count line_num
-	count=$(safe_grep_count -E '^[[:space:]]*export AIDEVOPS_HEADLESS=true[[:space:]]*$' "$WRAPPER_SCRIPT")
+	count=$(grep -cE '^[[:space:]]*export AIDEVOPS_HEADLESS=true[[:space:]]*$' "$WRAPPER_SCRIPT" || true)
 	if [[ "$count" -ne 1 ]]; then
 		print_result "export is inside main(), not top-level" 1 \
 			"Expected exactly 1 export line, found $count"
@@ -148,11 +148,37 @@ test_export_before_self_check() {
 	return 0
 }
 
+# Test 5: dashboard refresh failures must not be swallowed by the wrapper.
+# The EXIT trap only emits HEALTH-DASHBOARD-FAIL when main() returns non-zero;
+# keeping `update_health_issues || true` here would recreate the silent-stale
+# dashboard failure mode from GH#24264.
+test_dashboard_update_failure_not_swallowed() {
+	local production_snippet
+	production_snippet=$(awk '
+		/^[[:space:]]*run_daily_quality_sweep \|\| \{/ { in_production=1 }
+		in_production { print }
+		in_production && /^[[:space:]]*echo "\[stats-wrapper\] Finished/ { exit }
+	' "$WRAPPER_SCRIPT")
+	if printf '%s' "$production_snippet" | grep -qE '^[[:space:]]*update_health_issues[[:space:]]*\|\|[[:space:]]*true'; then
+		print_result "dashboard update failures propagate to stats-wrapper trap" 1 \
+			"stats-wrapper.sh still swallows update_health_issues failures with '|| true'"
+		return 0
+	fi
+	if printf '%s' "$production_snippet" | grep -qE '^[[:space:]]*update_health_issues[[:space:]]*$'; then
+		print_result "dashboard update failures propagate to stats-wrapper trap" 0
+		return 0
+	fi
+	print_result "dashboard update failures propagate to stats-wrapper trap" 1 \
+		"Expected a direct update_health_issues call in stats-wrapper.sh"
+	return 0
+}
+
 main_test() {
 	test_export_line_present_at_top_of_main
 	test_detect_session_origin_returns_worker_when_headless
 	test_export_is_inside_main_not_top_level
 	test_export_before_self_check
+	test_dashboard_update_failure_not_swallowed
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

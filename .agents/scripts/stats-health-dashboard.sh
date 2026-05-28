@@ -335,14 +335,23 @@ update_health_issues() {
 	fi
 
 	local updated=0
+	local failed=0
 	while IFS='|' read -r slug path; do
 		[[ -z "$slug" ]] && continue
-		_update_health_issue_for_repo "$slug" "$path" "$cross_repo_md" "$cross_repo_session_time_md" "$cross_repo_person_stats_md" || true
+		if ! _update_health_issue_for_repo "$slug" "$path" "$cross_repo_md" "$cross_repo_session_time_md" "$cross_repo_person_stats_md"; then
+			echo "[stats] Health issue update failed for ${slug}" >>"$LOGFILE"
+			failed=$((failed + 1))
+			continue
+		fi
 		updated=$((updated + 1))
 	done <<<"$repo_entries"
 
 	if [[ "$updated" -gt 0 ]]; then
 		echo "[stats] Health issues: updated $updated repo(s)" >>"$LOGFILE"
+	fi
+	if [[ "$failed" -gt 0 ]]; then
+		echo "[stats] Health issues: failed $failed repo(s)" >>"$LOGFILE"
+		return 1
 	fi
 	return 0
 }
