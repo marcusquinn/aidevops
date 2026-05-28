@@ -6,11 +6,13 @@
 #
 # The diagnose subcommand is read-only — it cross-checks the recorded
 # breaker state against the observed evidence in pulse-wrapper.log and
-# emits one of five findings:
+# emits an actionable finding:
 #
 #   HEALTHY          — counter at zero, no recent zero-attempt events
 #   BUILDING         — counter > 0 and matches log evidence (or breaker
-#                      recently tripped and recovering)
+#                      recently tripped and not yet verified)
+#   RECOVERABLE_TRIPPED
+#                    — tripped, update ran, deployed artifacts match repo
 #   WIRING_GAP       — log shows zero-attempt events the counter never saw
 #   TRIGGER_MISSED   — counter reached threshold but breaker stayed closed
 #   STUCK_TRIPPED    — breaker tripped >24h, last update failed
@@ -65,6 +67,8 @@ _setup_sandbox() {
 	export RUNNER_HEALTH_ADVISORY_DIR="$SANDBOX/advisories"
 	export RUNNER_HEALTH_STATE_FILE="$RUNNER_HEALTH_CACHE_DIR/runner-health.json"
 	export RUNNER_HEALTH_PULSE_LOG="$SANDBOX/logs/pulse-wrapper.log"
+	export RUNNER_HEALTH_DEPLOYED_VERSION_FILE="$SANDBOX/deployed/VERSION"
+	export RUNNER_HEALTH_DEPLOYED_SHA_FILE="$SANDBOX/deployed/.deployed-sha"
 	export RUNNER_HEALTH_FAILURE_THRESHOLD=10
 	export RUNNER_HEALTH_WINDOW_HOURS=6
 	# Pin "now" so STUCK_TRIPPED age math is deterministic.
@@ -72,7 +76,7 @@ _setup_sandbox() {
 	export HOME_BACKUP="${HOME:-/tmp}"
 	export HOME="$SANDBOX/home"
 	mkdir -p "$HOME" "$RUNNER_HEALTH_CACHE_DIR" "$RUNNER_HEALTH_ADVISORY_DIR" \
-		"$SANDBOX/logs"
+		"$SANDBOX/logs" "$SANDBOX/deployed"
 	return 0
 }
 
@@ -128,6 +132,15 @@ _write_log_events() {
 			"$((i + 1))" >>"$RUNNER_HEALTH_PULSE_LOG"
 		i=$((i + 1))
 	done
+	return 0
+}
+
+# Mark the sandbox deployment as aligned with the checked-out repo.
+_mark_deploy_healthy() {
+	local repo_root
+	repo_root=$(cd "${AGENT_SCRIPT_DIR}/../.." && pwd) || return 1
+	tr -d '[:space:]' <"${repo_root}/VERSION" >"$RUNNER_HEALTH_DEPLOYED_VERSION_FILE"
+	git -C "$repo_root" rev-parse HEAD >"$RUNNER_HEALTH_DEPLOYED_SHA_FILE"
 	return 0
 }
 
@@ -219,15 +232,58 @@ else
 fi
 _teardown_sandbox
 
-# --- Test 7: BUILDING when tripped >24h but update=ran (recovery in flight) ---
+# --- Test 7: RECOVERABLE_TRIPPED when update ran and deployment is healthy ---
 _setup_sandbox
 _write_state 10 tripped '2026-04-29T06:00:00Z' ran 'consecutive_zero_attempts=10'
+_mark_deploy_healthy
 _write_log_events 10
 got=$(_finding)
-if [[ "$got" == "BUILDING" ]]; then
-	print_result "tripped 30h ago + update=ran → BUILDING (not stuck)" "PASS"
+if [[ "$got" == "RECOVERABLE_TRIPPED" ]]; then
+	print_result "tripped 30h ago + update=ran + healthy deploy → RECOVERABLE_TRIPPED" "PASS"
 else
-	print_result "tripped 30h ago + update=ran → BUILDING (not stuck)" "FAIL" "got: $got"
+	print_result "tripped 30h ago + update=ran + healthy deploy → RECOVERABLE_TRIPPED" "FAIL" "got: $got"
+fi
+_teardown_sandbox
+
+# --- Test 7b: stale tripped + successful healthy update auto-resumes is-paused ---
+_setup_sandbox
+_write_state 10 tripped '2026-04-29T06:00:00Z' ran 'consecutive_zero_attempts=10'
+_mark_deploy_healthy
+rc=0
+bash "$HELPER" is-paused >/dev/null 2>&1 || rc=$?
+state=$(jq -r '.circuit_breaker.state' <"$RUNNER_HEALTH_STATE_FILE")
+counter=$(jq -r '.consecutive_zero_attempts' <"$RUNNER_HEALTH_STATE_FILE")
+if [[ "$rc" -eq 1 && "$state" == "closed" && "$counter" == "0" ]]; then
+	print_result "is-paused auto-resumes stale tripped breaker after healthy update" "PASS"
+else
+	print_result "is-paused auto-resumes stale tripped breaker after healthy update" "FAIL" \
+		"rc=$rc state=$state counter=$counter"
+fi
+_teardown_sandbox
+
+# --- Test 7c: stale tripped + failed update remains paused/protected ---
+_setup_sandbox
+_write_state 10 tripped '2026-04-29T06:00:00Z' failed 'consecutive_zero_attempts=10'
+rc=0
+bash "$HELPER" is-paused >/dev/null 2>&1 || rc=$?
+state=$(jq -r '.circuit_breaker.state' <"$RUNNER_HEALTH_STATE_FILE")
+if [[ "$rc" -eq 0 && "$state" == "tripped" ]]; then
+	print_result "is-paused keeps failed-update tripped breaker protected" "PASS"
+else
+	print_result "is-paused keeps failed-update tripped breaker protected" "FAIL" \
+		"rc=$rc state=$state"
+fi
+_teardown_sandbox
+
+# --- Test 7d: normal closed state is not paused ---
+_setup_sandbox
+_write_state 0 closed
+rc=0
+bash "$HELPER" is-paused >/dev/null 2>&1 || rc=$?
+if [[ "$rc" -eq 1 ]]; then
+	print_result "is-paused returns safe-to-dispatch for normal closed state" "PASS"
+else
+	print_result "is-paused returns safe-to-dispatch for normal closed state" "FAIL" "rc=$rc"
 fi
 _teardown_sandbox
 
