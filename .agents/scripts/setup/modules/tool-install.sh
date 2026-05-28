@@ -1299,7 +1299,7 @@ setup_claudebar() {
 
 	print_info "ClaudeBar monitors AI coding assistant usage quotas in your menu bar"
 	echo "  Supports: Claude, Codex, Gemini, Copilot, Antigravity, Kimi, Kiro, Amp"
-	echo "  Features: real-time quota tracking, status notifications, multiple themes"
+	echo "  Features: real-time quota tracking, provider process detection, status notifications, multiple themes"
 	echo "  Requires: macOS 15+, CLI tools for providers you want to monitor"
 	echo ""
 
