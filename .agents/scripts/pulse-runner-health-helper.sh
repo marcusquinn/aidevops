@@ -188,11 +188,8 @@ _rh_get_field() {
 #######################################
 _rh_read_token_file() {
 	local token_file="$1"
-	[[ -r "$token_file" ]] || {
-		printf '\n'
-		return 0
-	}
-	tr -d '[:space:]' <"$token_file" 2>/dev/null || true
+	[[ -r "$token_file" ]] || return 0
+	tr -d '[:space:]' <"$token_file" || true
 	return 0
 }
 
@@ -251,12 +248,15 @@ _rh_auto_resume() {
 	_rh_init_state || return 1
 	local now
 	now=$(_rh_now)
+	# shellcheck disable=SC2016 # $reason and $now are jq variables supplied by --arg.
 	_rh_state_apply \
-		".circuit_breaker.state = \"closed\" \
-		| .circuit_breaker.tripped_at = null \
-		| .circuit_breaker.reason = \"${reason}\" \
-		| .consecutive_zero_attempts = 0 \
-		| .window_started_at = \"${now}\"" || return 1
+		'.circuit_breaker.state = "closed"
+		| .circuit_breaker.tripped_at = null
+		| .circuit_breaker.reason = $reason
+		| .consecutive_zero_attempts = 0
+		| .window_started_at = $now' \
+		--arg reason "$reason" \
+		--arg now "$now" || return 1
 	rm -f "$RUNNER_HEALTH_ADVISORY_FILE" "$RUNNER_HEALTH_ADVISORY_STAMP" 2>/dev/null || true
 	return 0
 }
@@ -264,13 +264,15 @@ _rh_auto_resume() {
 #######################################
 # Atomic write: render JSON via jq pipeline, write to tmp, mv into place.
 # Args: $1 = jq filter (operates on existing state)
+#       remaining args = optional jq arguments (for example --arg name value)
 #######################################
 _rh_state_apply() {
 	local jq_filter="$1"
+	shift
 	_rh_init_state || return 1
 	local tmp
 	tmp="${RUNNER_HEALTH_STATE_FILE}.tmp.$$"
-	if jq "$jq_filter" <"$RUNNER_HEALTH_STATE_FILE" >"$tmp" 2>/dev/null; then
+	if jq "$@" "$jq_filter" <"$RUNNER_HEALTH_STATE_FILE" >"$tmp" 2>/dev/null; then
 		mv "$tmp" "$RUNNER_HEALTH_STATE_FILE"
 		return 0
 	fi
