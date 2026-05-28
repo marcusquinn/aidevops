@@ -359,8 +359,12 @@ def _tokens_for_group(group: list[SessionRow]) -> dict[str, int]:
 
 def _session_kind_for_group(group: list[SessionRow]) -> str:
     for row in group:
-        location = f"{row.directory} {row.path}"
-        if "/private/tmp/opencode" in location or "/tmp/opencode" in location:
+        location = f"{row.directory}/{row.path}".replace("\\", "/").lower()
+        if (
+            "/private/tmp/opencode" in location
+            or "/tmp/opencode" in location
+            or "/temp/opencode" in location
+        ):
             return "headless_worker"
     return "interactive"
 
