@@ -134,6 +134,79 @@ assert_not_contains "successful fallback does not print false lock error" "$LAST
 assert_not_contains "successful fallback does not print advisory lock failure" "$LAST_OUTPUT" "Approval advisory lock failure"
 
 # shellcheck disable=SC2016  # literal script is evaluated in the child bash.
+run_case "PR-backed issue lock falls back to REST without GraphQL fallback" '
+	set -uo pipefail
+	# shellcheck disable=SC1090
+	source "$APPROVAL_HELPER_UNDER_TEST" >/dev/null 2>&1
+	_rest_should_fallback() { return 1; }
+	gh_issue_edit_safe() { return 0; }
+	gh_issue_view() { printf "bug,auto-dispatch"; return 0; }
+	gh() {
+		local arg1="${1:-}"
+		local arg2="${2:-}"
+		local arg3="${3:-}"
+		local arg4="${4:-}"
+		if [[ "$arg1" == "api" && "$arg2" == "user" ]]; then printf "marcusquinn"; return 0; fi
+		if [[ "$arg1" == "issue" && "$arg2" == "lock" ]]; then return 1; fi
+		if [[ "$arg1" == "api" && "$arg2" == "-X" && "$arg3" == "PUT" && "$arg4" == "/repos/marcusquinn/aidevops/issues/2417/lock" ]]; then return 0; fi
+		if [[ "$arg1" == "api" && "$arg2" == "/repos/marcusquinn/aidevops/issues/2417" ]]; then
+			printf "%s" "{\"labels\":[{\"name\":\"auto-dispatch\"}],\"assignees\":[{\"login\":\"marcusquinn\"}],\"locked\":true}"
+			return 0
+		fi
+		return 1
+	}
+	_approval_apply_issue_lifecycle_updates 2417 marcusquinn/aidevops
+' 0
+assert_contains "PR-backed issue fallback reports locked state" "$LAST_OUTPUT" "Issue #2417 locked"
+assert_not_contains "PR-backed issue fallback avoids advisory failure" "$LAST_OUTPUT" "Approval advisory lock failure"
+
+# shellcheck disable=SC2016  # literal script is evaluated in the child bash.
+run_case "PR approval locks conversation with gh pr lock" '
+	set -uo pipefail
+	# shellcheck disable=SC1090
+	source "$APPROVAL_HELPER_UNDER_TEST" >/dev/null 2>&1
+	_rest_should_fallback() { return 1; }
+	gh_pr_comment() { return 0; }
+	gh() {
+		local arg1="${1:-}"
+		local arg2="${2:-}"
+		if [[ "$arg1" == "pr" && "$arg2" == "lock" ]]; then return 0; fi
+		if [[ "$arg1" == "api" && "$arg2" == "/repos/marcusquinn/aidevops/issues/456" ]]; then
+			printf "%s" "{\"locked\":true}"
+			return 0
+		fi
+		return 1
+	}
+	_post_issue_approval_updates pr 456 marcusquinn/aidevops
+' 0
+assert_contains "PR approval reports real conversation lock" "$LAST_OUTPUT" "PR #456 approval recorded and conversation locked"
+
+# shellcheck disable=SC2016  # literal script is evaluated in the child bash.
+run_case "PR approval REST fallback locks conversation" '
+	set -uo pipefail
+	# shellcheck disable=SC1090
+	source "$APPROVAL_HELPER_UNDER_TEST" >/dev/null 2>&1
+	_rest_should_fallback() { return 1; }
+	gh_pr_comment() { return 0; }
+	gh() {
+		local arg1="${1:-}"
+		local arg2="${2:-}"
+		local arg3="${3:-}"
+		local arg4="${4:-}"
+		if [[ "$arg1" == "pr" && "$arg2" == "lock" ]]; then return 1; fi
+		if [[ "$arg1" == "api" && "$arg2" == "-X" && "$arg3" == "PUT" && "$arg4" == "/repos/marcusquinn/aidevops/issues/456/lock" ]]; then return 0; fi
+		if [[ "$arg1" == "api" && "$arg2" == "/repos/marcusquinn/aidevops/issues/456" ]]; then
+			printf "%s" "{\"locked\":true}"
+			return 0
+		fi
+		return 1
+	}
+	_post_issue_approval_updates pr 456 marcusquinn/aidevops
+' 0
+assert_contains "PR approval fallback reports real lock" "$LAST_OUTPUT" "PR #456 approval recorded and conversation locked"
+assert_not_contains "PR approval fallback avoids advisory failure" "$LAST_OUTPUT" "Approval advisory lock failure"
+
+# shellcheck disable=SC2016  # literal script is evaluated in the child bash.
 run_case "genuine lock failure is distinguished" '
 	set -uo pipefail
 	# shellcheck disable=SC1090

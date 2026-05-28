@@ -349,14 +349,70 @@ _approval_lock_issue() {
 	local target_number="$1"
 	local slug="$2"
 	local rc=0
+	local rest_rc=0
 
 	gh issue lock "$target_number" --repo "$slug" --reason "resolved" >/dev/null 2>&1 || rc=$?
-	if [[ $rc -ne 0 ]] && command -v _rest_should_fallback >/dev/null 2>&1 && _rest_should_fallback; then
-		_print_info "gh-wrapper: GraphQL exhausted, falling back to REST for issue lock" >&2
-		rc=0
-		gh api -X PUT "/repos/${slug}/issues/${target_number}/lock" -f lock_reason=resolved >/dev/null 2>&1 || rc=$?
+	if [[ $rc -eq 0 ]]; then
+		return 0
 	fi
-	return "$rc"
+
+	# `gh issue lock` rejects PR-backed issue numbers with "use gh pr lock",
+	# while GitHub's REST issue lock endpoint works for both issues and PR
+	# conversations. Always try REST after the CLI path fails so signed
+	# approvals do not leave an unlocked prompt-injection window.
+	if command -v _rest_should_fallback >/dev/null 2>&1 && _rest_should_fallback; then
+		_print_info "gh-wrapper: GraphQL exhausted, falling back to REST for issue lock" >&2
+	else
+		_print_info "gh-wrapper: gh issue lock failed, falling back to REST for issue lock" >&2
+	fi
+	gh api -X PUT "/repos/${slug}/issues/${target_number}/lock" -f lock_reason=resolved >/dev/null 2>&1 || rest_rc=$?
+	return "$rest_rc"
+}
+
+_approval_lock_pr() {
+	local target_number="$1"
+	local slug="$2"
+	local rc=0
+	local rest_rc=0
+
+	gh pr lock "$target_number" --repo "$slug" --reason "resolved" >/dev/null 2>&1 || rc=$?
+	if [[ $rc -eq 0 ]]; then
+		return 0
+	fi
+
+	# Fall back to the REST issue lock endpoint because PR conversations are
+	# issue-backed in GitHub's API and the endpoint is stable across gh versions.
+	if command -v _rest_should_fallback >/dev/null 2>&1 && _rest_should_fallback; then
+		_print_info "gh-wrapper: GraphQL exhausted, falling back to REST for PR lock" >&2
+	else
+		_print_info "gh-wrapper: gh pr lock failed, falling back to REST for PR lock" >&2
+	fi
+	gh api -X PUT "/repos/${slug}/issues/${target_number}/lock" -f lock_reason=resolved >/dev/null 2>&1 || rest_rc=$?
+	return "$rest_rc"
+}
+
+_approval_verify_conversation_locked() {
+	local target_type="$1"
+	local target_number="$2"
+	local slug="$3"
+	local issue_json=""
+	local label="issue"
+
+	if [[ "$target_type" == "pr" ]]; then
+		label="PR conversation"
+	fi
+
+	issue_json=$(_approval_fetch_issue_json "$target_number" "$slug") || {
+		_print_error "Approval state verification failed: could not read ${label} #$target_number via REST"
+		return 1
+	}
+
+	if ! printf '%s' "$issue_json" | jq -e '.locked == true' >/dev/null 2>&1; then
+		_print_error "Approval state verification failed: ${label} #$target_number is not locked"
+		return 1
+	fi
+
+	return 0
 }
 
 _approval_fetch_issue_json() {
@@ -473,9 +529,14 @@ _post_issue_approval_updates() {
 		gh_pr_comment "$target_number" --repo "$slug" \
 			--body "This PR has been approved by a maintainer and is now locked for review." \
 			>/dev/null 2>&1 || true
-		# Note: GitHub does not support locking PRs via gh CLI directly (only issues).
-		# The lock_notice in the approval comment serves as the authoritative signal.
-		_print_info "PR #$target_number approval recorded (conversation locked via approval comment)"
+		local lock_err=""
+		lock_err=$(_approval_lock_pr "$target_number" "$slug" 2>&1 >/dev/null) || {
+			_print_error "Approval advisory lock failure: PR #$target_number conversation could not be locked after approval state updates"
+			[[ -n "$lock_err" ]] && _print_error "$lock_err"
+			return 1
+		}
+		_approval_verify_conversation_locked "$target_type" "$target_number" "$slug" || return 1
+		_print_info "PR #$target_number approval recorded and conversation locked"
 	fi
 
 	return 0
