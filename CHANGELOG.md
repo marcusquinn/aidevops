@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.3] - 2026-05-28
+
+### Changed
+
+- fix: auto-resume runner health breaker (#24228)
+
+### Fixed
+
+- clarify token use report totals (#24230)
+
 ## [3.20.2] - 2026-05-28
 
 ### Fixed
