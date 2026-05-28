@@ -48,7 +48,7 @@ class SessionRow:
     agent: str
 
 
-@dataclass(init=False)
+@dataclass
 class SessionReport:
     session_id: str
     session_name: str
@@ -83,10 +83,7 @@ class DailyUsage:
 
 
 def _make_session_report(**values: Any) -> SessionReport:
-    report = SessionReport()
-    for key, value in values.items():
-        setattr(report, key, value)
-    return report
+    return SessionReport(**values)
 
 
 def _die(message: str) -> None:

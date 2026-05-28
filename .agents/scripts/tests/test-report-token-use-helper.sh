@@ -151,10 +151,59 @@ PY
 	return 0
 }
 
+test_session_report_defaults_source_ids() {
+	local _helper_py="${SCRIPT_DIR}/../report-token-use-helper.py"
+	if python3 - "$_helper_py" <<'PY'
+import importlib.util
+import sys
+from pathlib import Path
+
+helper_path = sys.argv[1]
+sys.path.insert(0, str(Path(helper_path).parent))
+spec = importlib.util.spec_from_file_location("report_token_use_helper", helper_path)
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+
+report = module._make_session_report(
+    session_id="session-default",
+    session_name="Default Source IDs",
+    runtime="opencode",
+    models_used=["gpt-5.5"],
+    tokens_input=1,
+    tokens_output=2,
+    tokens_reasoning=0,
+    tokens_cache_read=0,
+    tokens_cache_write=0,
+    net_tokens_total=3,
+    child_session_count=0,
+    compaction_count=0,
+    mcps_active=[],
+    mcps_observed=[],
+    started_at="2026-01-01T00:00:00Z",
+    finished_at="2026-01-01T00:01:00Z",
+    cost_usd=0.01,
+    request_count=1,
+    tool_call_count=0,
+)
+
+if report.source_session_ids != []:
+    raise SystemExit(f"expected default list, got {report.source_session_ids!r}")
+PY
+	then
+		print_result "SessionReport initializes default source_session_ids" 0
+		return 0
+	fi
+	print_result "SessionReport initializes default source_session_ids" 1
+	return 0
+}
+
 main() {
 	setup_test_env
 	trap teardown_test_env EXIT
 	test_report_aggregates_compacted_sessions
+	test_session_report_defaults_source_ids
 	printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
 		return 1
