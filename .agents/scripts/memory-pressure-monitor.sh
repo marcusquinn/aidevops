@@ -30,7 +30,7 @@
 # alarms. The primary signals are process-level.
 #
 # Usage:
-#   memory-pressure-monitor.sh              # Single check (for launchd)
+#   memory-pressure-monitor.sh              # Single check (for launchd/systemd; warnings exit 0)
 #   memory-pressure-monitor.sh --status     # Print current process + memory state
 #   memory-pressure-monitor.sh --daemon     # Continuous monitoring (120s interval)
 #   memory-pressure-monitor.sh --stop       # Stop a running daemon
@@ -897,13 +897,19 @@ do_check() {
 
 # --- Commands -----------------------------------------------------------------
 
-# Run a single check pass — collect processes, evaluate thresholds, notify/kill
-# Returns: 0=ok, 1=warnings found, 2=critical findings
+# Run a single service check pass — collect processes, evaluate thresholds, notify/kill.
+# Warning findings are operational signals, not service failures, so one-shot
+# schedulers stay green unless a critical finding is present.
+# Returns: 0=ok or warnings found, 2=critical findings
 cmd_check() {
 	# do_check returns non-zero for warnings/critical — that's informational,
-	# not a script failure. Capture the exit code for callers that want it.
+	# not a script failure. Keep critical distinct, but normalize warnings to
+	# success for launchd/systemd one-shot service semantics.
 	local exit_code=0
 	do_check || exit_code=$?
+	if [[ "$exit_code" -eq 1 ]]; then
+		return 0
+	fi
 	return "$exit_code"
 }
 
