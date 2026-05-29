@@ -77,6 +77,14 @@ if [[ -f "${_PULSE_MERGE_STUCK_DIR}/pulse-rate-limit-circuit-breaker.sh" ]]; the
 	source "${_PULSE_MERGE_STUCK_DIR}/pulse-rate-limit-circuit-breaker.sh"
 fi
 
+# Source REST check helpers (GH#21799) so stuck-merge classification does not
+# burn GraphQL on statusCheckRollup polling.
+if [[ -f "${_PULSE_MERGE_STUCK_DIR}/shared-gh-wrappers-checks.sh" ]]; then
+	# shellcheck source=./shared-gh-wrappers-checks.sh
+	# shellcheck disable=SC1091
+	source "${_PULSE_MERGE_STUCK_DIR}/shared-gh-wrappers-checks.sh"
+fi
+
 # Load thresholds from the canonical config file (env vars take precedence).
 # The conf file lives at .agents/configs/pulse-merge-stuck.conf; we resolve
 # from _PULSE_MERGE_STUCK_DIR (../configs/pulse-merge-stuck.conf).
@@ -109,12 +117,10 @@ readonly _PMS_COUNTER_QUEUE_SATURATION_EVENTS="pulse_actions_queue_saturation_ev
 readonly _PMS_GAUGE_ZERO_PROGRESS_CYCLES='pulse_merge_zero_progress_cycles'
 readonly _PMS_JQ_NULL_GUARD="null"
 readonly _PMS_RUNNER_SATURATION_MARKER_TEXT="merge-stuck:runner-queue-saturation"
-# jq filter snippet that selects array elements with a FAILURE rollup
-# conclusion or state. Extracted so the underlying upcase predicate is
-# defined exactly once (via a jq `def`) and reused for both the new-style
-# `.conclusion` and the legacy `.state` field — which is sometimes
-# lower-case for older commit-status checks.
-readonly _PMS_JQ_FAILURE_SELECTOR='def _ueq(f;v): (f // "" | ascii_upcase) == v; select(_ueq(.conclusion; "FAILURE") or _ueq(.state; "FAILURE"))'
+# jq filter snippet that selects normalized REST check entries with a failing
+# conclusion/status. Extracted so the upcase predicate is defined exactly once
+# and reused across classification, fingerprinting, and escalation guidance.
+readonly _PMS_JQ_REST_FAILURE_SELECTOR='def _ueq(f;v): (f // "" | ascii_upcase) == v; select(_ueq(.conclusion; "FAILURE") or _ueq(.conclusion; "TIMED_OUT") or _ueq(.conclusion; "CANCELLED") or _ueq(.status; "FAILURE"))'
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -171,6 +177,68 @@ _pms_is_eligible_stuck() {
 	return 0
 }
 
+#######################################
+# Fetch normalized REST check-runs for a PR head SHA.
+# Args: $1 = repo_slug, $2 = head SHA
+# Stdout: JSON array, [] on missing helper/API failure
+#######################################
+_pms_check_runs_for_head() {
+	local repo_slug="$1"
+	local head_sha="$2"
+	local runs=""
+	if [[ -n "$repo_slug" && -n "$head_sha" ]] && declare -F gh_pr_check_runs_rest >/dev/null 2>&1; then
+		runs=$(gh_pr_check_runs_rest "$repo_slug" "$head_sha" 2>/dev/null) || runs=""
+	fi
+	[[ -n "$runs" && "$runs" != "null" ]] || runs="[]"
+	printf '%s' "$runs"
+	return 0
+}
+
+#######################################
+# Count queued checks in normalized REST check-runs JSON.
+# Args: $1 = check-runs JSON array
+# Stdout: integer count
+#######################################
+_pms_queued_check_count() {
+	local runs_json="$1"
+	local count=""
+	count=$(printf '%s' "$runs_json" | jq -r \
+		'[.[]? | select((.status // "" | ascii_upcase) == "QUEUED")] | length' \
+		2>/dev/null) || count="0"
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	printf '%s' "$count"
+	return 0
+}
+
+#######################################
+# Count failing checks in normalized REST check-runs JSON.
+# Args: $1 = check-runs JSON array
+# Stdout: integer count
+#######################################
+_pms_failing_check_count() {
+	local runs_json="$1"
+	local count=""
+	count=$(printf '%s' "$runs_json" | jq -r \
+		"[.[]? | ${_PMS_JQ_REST_FAILURE_SELECTOR}] | length" \
+		2>/dev/null) || count="0"
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	printf '%s' "$count"
+	return 0
+}
+
+#######################################
+# Format failing check names from normalized REST check-runs JSON.
+# Args: $1 = check-runs JSON array
+# Stdout: Markdown bullet list, empty if none
+#######################################
+_pms_failing_check_bullets() {
+	local runs_json="$1"
+	printf '%s' "$runs_json" | jq -r \
+		"[.[]? | ${_PMS_JQ_REST_FAILURE_SELECTOR} | \"- \" + (.name // .context // \"unknown\")] | unique | join(\"\\n\")" \
+		2>/dev/null
+	return 0
+}
+
 # ── Classifier ───────────────────────────────────────────────────────────────
 
 #######################################
@@ -197,14 +265,17 @@ _classify_stuck_pr() {
 	local repo_slug="$2"
 	local is_saturated="${3:-0}"
 
-	# Cheap fast paths first. Fetch labels + mergeable + checks rollup once.
+	# Cheap fast paths first. Fetch labels + mergeable + head SHA once. Check
+	# state comes from REST check-runs below, not GraphQL statusCheckRollup.
 	local pr_meta
-	pr_meta=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json labels,mergeable,statusCheckRollup 2>/dev/null) || pr_meta=""
+	pr_meta=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+		--json labels,mergeable,headRefOid 2>/dev/null) || pr_meta=""
 
-	local mergeable="" labels=""
+	local mergeable="" labels="" head_sha="" check_runs=""
 	mergeable=$(printf '%s' "$pr_meta" | jq -r '.mergeable // "UNKNOWN"' 2>/dev/null)
 	labels=$(printf '%s' "$pr_meta" | jq -r '[.labels[].name] | join(",")' 2>/dev/null)
+	head_sha=$(printf '%s' "$pr_meta" | jq -r '.headRefOid // ""' 2>/dev/null)
+	check_runs=$(_pms_check_runs_for_head "$repo_slug" "$head_sha")
 
 	# Runner queue saturation takes priority when the repo is saturated
 	# AND this PR has a QUEUED check in its rollup. This must come BEFORE
@@ -214,10 +285,7 @@ _classify_stuck_pr() {
 	# during a runner outage. (t3211)
 	if [[ "$is_saturated" == "1" ]]; then
 		local has_queued
-		has_queued=$(printf '%s' "$pr_meta" | jq -r \
-			'[.statusCheckRollup[]? | select((.status // "" | ascii_upcase) == "QUEUED")] | length' \
-			2>/dev/null)
-		[[ "$has_queued" =~ ^[0-9]+$ ]] || has_queued=0
+		has_queued=$(_pms_queued_check_count "$check_runs")
 		if [[ "$has_queued" -gt 0 ]]; then
 			printf 'STUCK_RUNNER_QUEUE_SATURATION'
 			return 0
@@ -261,10 +329,7 @@ _classify_stuck_pr() {
 	# Rollup contains a FAILURE / FAILED conclusion? Use the shared
 	# selector to keep the jq expression DRY across call sites.
 	local has_failure
-	has_failure=$(printf '%s' "$pr_meta" | jq -r \
-		"[.statusCheckRollup[]? | ${_PMS_JQ_FAILURE_SELECTOR}] | length" \
-		2>/dev/null)
-	[[ "$has_failure" =~ ^[0-9]+$ ]] || has_failure=0
+	has_failure=$(_pms_failing_check_count "$check_runs")
 	if [[ "$has_failure" -gt 0 ]]; then
 		printf 'STUCK_CHECKS_FAILING'
 		return 0
@@ -281,14 +346,15 @@ _classify_stuck_pr() {
 _pms_failure_fingerprint() {
 	local pr_number="$1"
 	local repo_slug="$2"
-	local rollup
-	rollup=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json statusCheckRollup --jq '.statusCheckRollup // []' 2>/dev/null) || rollup="[]"
+	local head_sha="" runs_json=""
+	head_sha=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+		--json headRefOid --jq '.headRefOid // ""' 2>/dev/null) || head_sha=""
+	runs_json=$(_pms_check_runs_for_head "$repo_slug" "$head_sha")
 
-	# Extract names of checks in FAILURE conclusion or state, normalize, sort, join.
-	# Uses the shared _PMS_JQ_FAILURE_SELECTOR to keep the predicate DRY.
-	printf '%s' "$rollup" | jq -r \
-		"[ .[] | ${_PMS_JQ_FAILURE_SELECTOR} | (.name // .context // \"unknown\") ] | sort | unique | join(\",\")" \
+	# Extract names of failing checks, normalize, sort, join. Uses the shared
+	# REST failure selector to keep the predicate DRY.
+	printf '%s' "$runs_json" | jq -r \
+		"[ .[] | ${_PMS_JQ_REST_FAILURE_SELECTOR} | (.name // .context // \"unknown\") ] | sort | unique | join(\",\")" \
 		2>/dev/null
 }
 
@@ -350,13 +416,13 @@ _escalate_individual_stuck_pr() {
 		return 0
 	fi
 
-	# Fetch failing check names for the worker-ready guidance using the
-	# shared FAILURE selector.
-	local failing_checks
-	failing_checks=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json statusCheckRollup --jq \
-		"[.statusCheckRollup[]? | ${_PMS_JQ_FAILURE_SELECTOR} | \"- \" + (.name // .context // \"unknown\")] | join(\"\\n\")" \
-		2>/dev/null)
+	# Fetch failing check names for the worker-ready guidance via REST check-runs
+	# to avoid GraphQL statusCheckRollup polling in every pulse cycle.
+	local failing_checks head_sha runs_json
+	head_sha=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+		--json headRefOid --jq '.headRefOid // ""' 2>/dev/null) || head_sha=""
+	runs_json=$(_pms_check_runs_for_head "$repo_slug" "$head_sha")
+	failing_checks=$(_pms_failing_check_bullets "$runs_json")
 	[[ -n "$failing_checks" ]] || failing_checks="- (no FAILURE entries in rollup; check rollup manually)"
 
 	local marker="<!-- merge-stuck:individual -->"
@@ -381,7 +447,6 @@ ${failing_checks}
 
 1. Read PR #${pr_number} body + the latest check run logs:
    \`\`\`bash
-   gh pr view ${pr_number} --repo ${repo_slug} --json statusCheckRollup
    gh pr checks ${pr_number} --repo ${repo_slug}
    \`\`\`
 2. If the failing checks are environment/Setup-step (Format, Lint, Typecheck all FAIL at the same step), the canonical default branch likely has a broken lockfile or a CI infra change — fix at the base, not on this PR. Look for a sibling outage meta-issue in this repo (filed by the same detector) before forking off here.

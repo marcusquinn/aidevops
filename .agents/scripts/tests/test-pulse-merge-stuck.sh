@@ -413,9 +413,68 @@ assert_eq "6c: null author falls back to unknown" "109:unknown" "$count_authors"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Section 7: pattern outage deduplication.
+# Section 7: REST check-run classification helpers.
 # ---------------------------------------------------------------------------
-echo "--- Section 7: pattern outage deduplication ---"
+echo "--- Section 7: REST check-run classification helpers ---"
+
+gh_pr_view() {
+	local pr_number="$1"
+	local repo_flag="$2"
+	local repo_slug="$3"
+	: "$repo_flag"
+	[[ -n "$repo_slug" ]] || return 1
+	case "$pr_number" in
+	201) printf '{"labels":[],"mergeable":"MERGEABLE","headRefOid":"sha-queued"}' ;;
+	202) printf '{"labels":[],"mergeable":"MERGEABLE","headRefOid":"sha-failing"}' ;;
+	203) printf 'sha-failing' ;;
+	*) printf '{"labels":[],"mergeable":"MERGEABLE","headRefOid":"sha-clean"}' ;;
+	esac
+	return 0
+}
+
+gh_pr_check_runs_rest() {
+	local repo_slug="$1"
+	local head_sha="$2"
+	[[ -n "$repo_slug" ]] || return 1
+	case "$head_sha" in
+	sha-queued) printf '[{"name":"Build","conclusion":null,"status":"queued"}]' ;;
+	sha-failing) printf '[{"name":"Format","conclusion":"failure","status":"completed"},{"name":"Lint","conclusion":"timed_out","status":"completed"}]' ;;
+	*) printf '[]' ;;
+	esac
+	return 0
+}
+
+gh() {
+	local command_name="${1:-}"
+	local path_arg="${2:-}"
+	if [[ "$command_name" == "api" && "$path_arg" == "repos/example/repo" ]]; then
+		printf 'main'
+		return 0
+	fi
+	if [[ "$command_name" == "api" && "$path_arg" == "repos/example/repo/branches/main/protection/required_status_checks" ]]; then
+		printf '{}'
+		return 0
+	fi
+	return 1
+}
+
+got=$(_classify_stuck_pr "201" "example/repo" "1")
+assert_eq "7a: saturated queued check classifies as runner saturation" \
+	"STUCK_RUNNER_QUEUE_SATURATION" "$got"
+
+got=$(_classify_stuck_pr "202" "example/repo" "0")
+assert_eq "7b: REST check-run failure classifies as checks failing" \
+	"STUCK_CHECKS_FAILING" "$got"
+
+got=$(_pms_failure_fingerprint "203" "example/repo")
+assert_eq "7c: failure fingerprint comes from REST check-runs" \
+	"Format,Lint" "$got"
+echo ""
+
+# ---------------------------------------------------------------------------
+# Section 8: pattern outage deduplication.
+# ---------------------------------------------------------------------------
+echo "--- Section 8: pattern outage deduplication ---"
 
 _pms_failure_fingerprint() {
 	local pr_number="$1"
@@ -446,9 +505,9 @@ assert_eq "7a: duplicate PR observations counted once" \
 echo ""
 
 # ---------------------------------------------------------------------------
-# Section 8: default branch guidance.
+# Section 9: default branch guidance.
 # ---------------------------------------------------------------------------
-echo "--- Section 8: default branch guidance ---"
+echo "--- Section 9: default branch guidance ---"
 
 gh() {
 	local command_name="${1:-}"
@@ -465,9 +524,9 @@ assert_eq "8a: default branch resolves from repo API" "develop" "$got"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Section 9: shellcheck cleanliness.
+# Section 10: shellcheck cleanliness.
 # ---------------------------------------------------------------------------
-echo "--- Section 9: shellcheck ---"
+echo "--- Section 10: shellcheck ---"
 
 run_shellcheck() {
 	local label="$1" file="$2"
