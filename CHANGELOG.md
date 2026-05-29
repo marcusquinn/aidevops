@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Reviewed ClaudeBar v0.4.64; relevant Antigravity provider metadata was already adopted in #24262 (#24317).
+
 ## [3.20.5] - 2026-05-29
 
 ### Changed
