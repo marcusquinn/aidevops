@@ -272,7 +272,7 @@ _rh_state_apply() {
 	_rh_init_state || return 1
 	local tmp
 	tmp="${RUNNER_HEALTH_STATE_FILE}.tmp.$$"
-	if jq "$@" "$jq_filter" <"$RUNNER_HEALTH_STATE_FILE" >"$tmp" 2>/dev/null; then
+	if jq ${@+"$@"} "$jq_filter" <"$RUNNER_HEALTH_STATE_FILE" >"$tmp" 2>/dev/null; then
 		mv "$tmp" "$RUNNER_HEALTH_STATE_FILE"
 		return 0
 	fi
@@ -343,7 +343,7 @@ cmd_record_outcome() {
 	# zero out the counter and re-anchor the window. Done BEFORE applying
 	# the new outcome so a stale window doesn't carry an old counter.
 	if _rh_window_expired; then
-		_rh_state_apply ".consecutive_zero_attempts = 0 | .window_started_at = \"${now}\"" || true
+		_rh_state_apply ".consecutive_zero_attempts = 0 | .window_started_at = \$now" --arg now "$now" || true
 	fi
 
 	# Append outcome to ledger and update counter.
@@ -353,7 +353,7 @@ cmd_record_outcome() {
 		# was idle through expiry above (already done) — otherwise keep it.
 		_rh_state_apply ".consecutive_zero_attempts += 1" || true
 	else
-		_rh_state_apply ".consecutive_zero_attempts = 0 | .window_started_at = \"${now}\"" || true
+		_rh_state_apply ".consecutive_zero_attempts = 0 | .window_started_at = \$now" --arg now "$now" || true
 	fi
 
 	# Append outcome with rolling cap. jq idiom: keep last N entries.
@@ -364,7 +364,9 @@ cmd_record_outcome() {
 		--arg ts "$now" \
 		--argjson zero "$is_zero" \
 		'{issue:$issue, signal:$signal, ts:$ts, zero_attempt:($zero==1)}')
-	_rh_state_apply ".last_outcomes += [${outcome_entry}] | .last_outcomes = (.last_outcomes | .[-${RUNNER_HEALTH_LEDGER_CAP}:])" || true
+	_rh_state_apply ".last_outcomes += [\$outcome_entry] | .last_outcomes = (.last_outcomes | .[-\$ledger_cap:])" \
+		--argjson outcome_entry "$outcome_entry" \
+		--argjson ledger_cap "$RUNNER_HEALTH_LEDGER_CAP" || true
 
 	# Trip evaluation. Only zero-attempt outcomes can trip the breaker
 	# (real-attempt outcomes already reset the counter above).
@@ -399,9 +401,11 @@ _rh_trip_breaker() {
 
 	# Mark tripped first so concurrent paths see the breaker open.
 	_rh_state_apply \
-		".circuit_breaker.state = \"tripped\" \
-		| .circuit_breaker.tripped_at = \"${now}\" \
-		| .circuit_breaker.reason = \"${reason}\"" || true
+		".circuit_breaker.state = \"tripped\"
+		| .circuit_breaker.tripped_at = \$now
+		| .circuit_breaker.reason = \$reason" \
+		--arg now "$now" \
+		--arg reason "$reason" || true
 
 	# Write/refresh the advisory (deduped) so the operator sees this on
 	# the next session greeting.
@@ -428,8 +432,10 @@ _rh_trip_breaker() {
 	fi
 
 	_rh_state_apply \
-		".circuit_breaker.last_update_attempt_at = \"$(_rh_now)\" \
-		| .circuit_breaker.last_update_outcome = \"${update_outcome}\"" || true
+		".circuit_breaker.last_update_attempt_at = \$now
+		| .circuit_breaker.last_update_outcome = \$update_outcome" \
+		--arg now "$(_rh_now)" \
+		--arg update_outcome "$update_outcome" || true
 	return 0
 }
 
@@ -530,9 +536,11 @@ cmd_pause() {
 	local now
 	now=$(_rh_now)
 	_rh_state_apply \
-		".circuit_breaker.state = \"tripped\" \
-		| .circuit_breaker.tripped_at = \"${now}\" \
-		| .circuit_breaker.reason = \"${reason}\"" || return 1
+		".circuit_breaker.state = \"tripped\"
+		| .circuit_breaker.tripped_at = \$now
+		| .circuit_breaker.reason = \$reason" \
+		--arg now "$now" \
+		--arg reason "$reason" || return 1
 	_rh_post_advisory "tripped" "$reason" "manual"
 	printf '%bPaused%b: runner-health breaker tripped (%s)\n' \
 		"$YELLOW" "$NC" "$reason" >&2
@@ -559,11 +567,13 @@ cmd_resume() {
 	local now
 	now=$(_rh_now)
 	_rh_state_apply \
-		".circuit_breaker.state = \"closed\" \
-		| .circuit_breaker.tripped_at = null \
-		| .circuit_breaker.reason = \"${reason}\" \
-		| .consecutive_zero_attempts = 0 \
-		| .window_started_at = \"${now}\"" || return 1
+		".circuit_breaker.state = \"closed\"
+		| .circuit_breaker.tripped_at = null
+		| .circuit_breaker.reason = \$reason
+		| .consecutive_zero_attempts = 0
+		| .window_started_at = \$now" \
+		--arg reason "$reason" \
+		--arg now "$now" || return 1
 	# Clear the advisory file and stamp so the next trip can post fresh.
 	rm -f "$RUNNER_HEALTH_ADVISORY_FILE" "$RUNNER_HEALTH_ADVISORY_STAMP" 2>/dev/null || true
 	printf '%bResumed%b: runner-health breaker cleared (%s)\n' \
