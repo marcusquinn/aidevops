@@ -65,6 +65,8 @@ def handle_table(line: str, body: list[str], states: dict[str, object]) -> bool:
 
 def is_markdown_table_separator_row(cells: list[str]) -> bool:
     """Return True only for a real Markdown table header separator row."""
+    if not cells:
+        return False
     separator_cells = [html.unescape(cell) for cell in cells]
     return all(re.fullmatch(r":?-{3,}:?", cell) for cell in separator_cells)
 
