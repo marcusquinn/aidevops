@@ -427,6 +427,8 @@ gh_pr_view() {
 	201) printf '{"labels":[],"mergeable":"MERGEABLE","headRefOid":"sha-queued"}' ;;
 	202) printf '{"labels":[],"mergeable":"MERGEABLE","headRefOid":"sha-failing"}' ;;
 	203) printf 'sha-failing' ;;
+	204) printf '{"labels":[],"mergeable":"MERGEABLE","headRefOid":"sha-legacy-failing"}' ;;
+	205) printf 'sha-legacy-failing' ;;
 	*) printf '{"labels":[],"mergeable":"MERGEABLE","headRefOid":"sha-clean"}' ;;
 	esac
 	return 0
@@ -439,6 +441,7 @@ gh_pr_check_runs_rest() {
 	case "$head_sha" in
 	sha-queued) printf '[{"name":"Build","conclusion":null,"status":"queued"}]' ;;
 	sha-failing) printf '[{"name":"Format","conclusion":"failure","status":"completed"},{"name":"Lint","conclusion":"timed_out","status":"completed"}]' ;;
+	sha-legacy-failing) printf '[{"context":"legacy-ci","state":"failure"}]' ;;
 	*) printf '[]' ;;
 	esac
 	return 0
@@ -469,6 +472,14 @@ assert_eq "7b: REST check-run failure classifies as checks failing" \
 got=$(_pms_failure_fingerprint "203" "example/repo")
 assert_eq "7c: failure fingerprint comes from REST check-runs" \
 	"Format,Lint" "$got"
+
+got=$(_classify_stuck_pr "204" "example/repo" "0")
+assert_eq "7d: legacy status context state=failure classifies as checks failing" \
+	"STUCK_CHECKS_FAILING" "$got"
+
+got=$(_pms_failure_fingerprint "205" "example/repo")
+assert_eq "7e: legacy status context fingerprint uses context name" \
+	"legacy-ci" "$got"
 echo ""
 
 # ---------------------------------------------------------------------------

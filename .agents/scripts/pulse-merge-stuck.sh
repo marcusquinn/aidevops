@@ -118,9 +118,9 @@ readonly _PMS_GAUGE_ZERO_PROGRESS_CYCLES='pulse_merge_zero_progress_cycles'
 readonly _PMS_JQ_NULL_GUARD="null"
 readonly _PMS_RUNNER_SATURATION_MARKER_TEXT="merge-stuck:runner-queue-saturation"
 # jq filter snippet that selects normalized REST check entries with a failing
-# conclusion/status. Extracted so the upcase predicate is defined exactly once
+# conclusion/state. Extracted so the upcase predicate is defined exactly once
 # and reused across classification, fingerprinting, and escalation guidance.
-readonly _PMS_JQ_REST_FAILURE_SELECTOR='def _ueq(f;v): (f // "" | ascii_upcase) == v; select(_ueq(.conclusion; "FAILURE") or _ueq(.conclusion; "TIMED_OUT") or _ueq(.conclusion; "CANCELLED") or _ueq(.status; "FAILURE"))'
+readonly _PMS_JQ_REST_FAILURE_SELECTOR='def _ueq(f;v): (f // "" | ascii_upcase) == v; select(_ueq(.conclusion; "FAILURE") or _ueq(.conclusion; "TIMED_OUT") or _ueq(.conclusion; "CANCELLED") or _ueq(.state; "FAILURE") or _ueq(.status; "FAILURE"))'
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -418,7 +418,7 @@ _escalate_individual_stuck_pr() {
 
 	# Fetch failing check names for the worker-ready guidance via REST check-runs
 	# to avoid GraphQL statusCheckRollup polling in every pulse cycle.
-	local failing_checks head_sha runs_json
+	local failing_checks="" head_sha="" runs_json=""
 	head_sha=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
 		--json headRefOid --jq '.headRefOid // ""' 2>/dev/null) || head_sha=""
 	runs_json=$(_pms_check_runs_for_head "$repo_slug" "$head_sha")
