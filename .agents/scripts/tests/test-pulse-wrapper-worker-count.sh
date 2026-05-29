@@ -276,7 +276,8 @@ test_list_dispatchable_candidates_default_open_except_needs_labels() {
 	  {"number":6,"title":"needs review","updatedAt":"2026-03-31T00:05:00Z","assignees":[],"labels":[{"name":"needs-maintainer-review"}]},
 	  {"number":7,"title":"needs docs","updatedAt":"2026-03-31T00:06:00Z","assignees":[],"labels":[{"name":"needs-docs"}]},
 	  {"number":8,"title":"supervisor telemetry","updatedAt":"2026-03-31T00:07:00Z","assignees":[],"labels":[{"name":"supervisor"}]},
-	  {"number":9,"title":"in progress but runnable","updatedAt":"2026-03-31T00:08:00Z","assignees":[{"login":"owner"}],"labels":[{"name":"status:in-progress"}]}
+	  {"number":9,"title":"in progress but runnable","updatedAt":"2026-03-31T00:08:00Z","assignees":[{"login":"owner"}],"labels":[{"name":"status:in-progress"}]},
+	  {"number":10,"title":"Infrastructure outage: 2 checks affected","updatedAt":"2026-03-31T00:09:00Z","assignees":[],"labels":[{"name":"infrastructure"},{"name":"source:ci-failure-miner"},{"name":"status:available"}]}
 	]'
 	GH_PR_LIST_JSON='[]'
 
@@ -286,7 +287,7 @@ test_list_dispatchable_candidates_default_open_except_needs_labels() {
 	# t2924: status:in-progress is filtered at candidate-build time to avoid
 	# re-evaluating always-blocked candidates every pulse cycle.  Issue #9
 	# carries status:in-progress and must NOT appear in the output.
-	if [[ "$output" == *$'1|unassigned'* && "$output" == *$'2|owner assigned'* && "$output" == *$'3|maintainer assigned'* && "$output" == *$'4|runner assigned'* && "$output" == *$'5|owner queued'* && "$output" != *$'6|needs review'* && "$output" != *$'7|needs docs'* && "$output" != *$'8|supervisor telemetry'* && "$output" != *$'9|in progress but runnable'* ]]; then
+	if [[ "$output" == *$'1|unassigned'* && "$output" == *$'2|owner assigned'* && "$output" == *$'3|maintainer assigned'* && "$output" == *$'4|runner assigned'* && "$output" == *$'5|owner queued'* && "$output" != *$'6|needs review'* && "$output" != *$'7|needs docs'* && "$output" != *$'8|supervisor telemetry'* && "$output" != *$'9|in progress but runnable'* && "$output" != *$'10|Infrastructure outage: 2 checks affected'* ]]; then
 		print_result "list_dispatchable_issue_candidates is default-open except needs-* and active-status labels" 0
 		return 0
 	fi
