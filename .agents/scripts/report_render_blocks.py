@@ -40,11 +40,7 @@ def handle_table(line: str, body: list[str], states: dict[str, object]) -> bool:
     if not stripped.startswith("|") or not stripped.endswith("|"):
         return False
     raw_cells = [cell.strip() for cell in split_markdown_table_row(stripped)]
-    separator_cells = [html.unescape(cell) for cell in raw_cells]
-    is_separator_row = all(re.match(r"^:?-+:?$", cell) for cell in separator_cells) and (
-        all(len(cell.strip(":")) >= 3 for cell in separator_cells)
-        or any(cell.startswith(":") or cell.endswith(":") for cell in separator_cells)
-    )
+    is_separator_row = is_markdown_table_separator_row(raw_cells)
     if (
         is_separator_row
         and states.get("table")
@@ -65,6 +61,12 @@ def handle_table(line: str, body: list[str], states: dict[str, object]) -> bool:
     body.append("<tr>{}</tr>".format("".join(f"<td>{cell}</td>" for cell in cells)))
     states["table_body_started"] = True
     return True
+
+
+def is_markdown_table_separator_row(cells: list[str]) -> bool:
+    """Return True only for a real Markdown table header separator row."""
+    separator_cells = [html.unescape(cell) for cell in cells]
+    return all(re.fullmatch(r":?-{3,}:?", cell) for cell in separator_cells)
 
 
 def split_markdown_table_row(line: str) -> list[str]:

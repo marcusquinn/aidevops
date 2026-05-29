@@ -12,7 +12,7 @@ _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _SCRIPTS_DIR = os.path.join(_REPO_ROOT, ".agents", "scripts")
 sys.path.insert(0, _SCRIPTS_DIR)
 
-from report_render_blocks import handle_table, split_markdown_table_row  # noqa: E402
+from report_render_blocks import handle_table, is_markdown_table_separator_row, split_markdown_table_row  # noqa: E402
 
 
 def assert_equal(actual: object, expected: object, description: str) -> None:
@@ -100,12 +100,26 @@ def test_handle_table_keeps_single_dash_first_body_row() -> None:
     )
 
 
+def test_table_separator_requires_three_dashes_per_cell() -> None:
+    assert_equal(
+        is_markdown_table_separator_row([":---", "---:", ":---:"]),
+        True,
+        "standard alignment separator cells are recognised",
+    )
+    assert_equal(
+        is_markdown_table_separator_row([":-", "-:"]),
+        False,
+        "short dash cells with alignment markers are data, not separators",
+    )
+
+
 def main() -> int:
     test_split_markdown_table_row_unescapes_backslash_pairs()
     test_split_markdown_table_row_keeps_escaped_pipes_in_cell()
     test_handle_table_skips_only_header_separator_row()
     test_handle_table_keeps_separator_shaped_first_body_row()
     test_handle_table_keeps_single_dash_first_body_row()
+    test_table_separator_requires_three_dashes_per_cell()
     print("report_render_blocks tests passed")
     return 0
 
