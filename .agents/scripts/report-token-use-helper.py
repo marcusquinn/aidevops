@@ -357,9 +357,13 @@ def _tokens_for_group(group: list[SessionRow]) -> dict[str, int]:
     return tokens
 
 
+def _normalized_session_location(row: SessionRow) -> str:
+    return f"/{row.directory}/{row.path}".replace("\\", "/").lower()
+
+
 def _session_kind_for_group(group: list[SessionRow]) -> str:
     for row in group:
-        location = f"{row.directory}/{row.path}".replace("\\", "/").lower()
+        location = _normalized_session_location(row)
         if (
             "/private/tmp/opencode" in location
             or "/tmp/opencode" in location
