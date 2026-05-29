@@ -169,11 +169,11 @@ SQL
 	AIDEVOPS_REPORT_TOKEN_USE_OPENCODE_DB="${TEST_ROOT}/opencode.db" \
 		AIDEVOPS_REPORT_TOKEN_USE_OBS_DB="${TEST_ROOT}/llm-requests.db" \
 		AIDEVOPS_REPORT_TOKEN_USE_OPENCODE_CONFIG="${TEST_ROOT}/opencode.json" \
-		"$HELPER_SH" data --limit 5 --daily-days 2000 --json >"$_json_path"
+		"$HELPER_SH" data --limit 10 --daily-days 2000 --json >"$_json_path"
 	assert_json_field "$_json_path" "usage_by_session_kind[1].session_kind" "headless_worker" "Report summarizes headless worker usage"
-	assert_json_field "$_json_path" "usage_by_session_kind[1].net_tokens_total" "40" "Report sums headless worker net tokens"
-	assert_json_field "$_json_path" "daily_usage[0].headless_worker_net_tokens_total" "40" "Report sums daily headless worker net tokens"
-	assert_json_field "$_json_path" "daily_usage[0].net_tokens_total" "232" "Report sums daily total net tokens"
+	assert_json_field "$_json_path" "usage_by_session_kind[1].net_tokens_total" "41" "Report sums headless worker net tokens"
+	assert_json_field "$_json_path" "daily_usage[0].headless_worker_net_tokens_total" "41" "Report sums daily headless worker net tokens"
+	assert_json_field "$_json_path" "daily_usage[0].net_tokens_total" "233" "Report sums daily total net tokens"
 	assert_json_field "$_json_path" "sessions[1].session_kind" "headless_worker" "Report classifies temp workdir session as headless worker"
 	assert_json_field "$_json_path" "sessions[2].session_kind" "headless_worker" "Report classifies Windows temp workdir session as headless worker"
 	assert_json_field "$_json_path" "sessions[3].session_kind" "headless_worker" "Report classifies split Windows temp workdir session as headless worker"
