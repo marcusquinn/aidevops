@@ -395,6 +395,27 @@ test_external_terminal_complete_uses_trailing_issue_digits() {
 	return 0
 }
 
+test_external_terminal_complete_guards_before_github_calls() {
+	export STUB_GH_LOG="${TEST_ROOT}/case8-gh.log"
+	: >"$STUB_GH_LOG"
+
+	if _worker_external_terminal_complete "session-24153-123" "" >/dev/null 2>&1; then
+		print_result "case 8: external terminal complete guards before GitHub calls" 1 "non-issue session returned complete"
+		unset STUB_GH_LOG
+		return 0
+	fi
+
+	local gh_calls=""
+	gh_calls=$(grep -E '^(issue|pr) ' "$STUB_GH_LOG" || true)
+	unset STUB_GH_LOG
+	if [[ -z "$gh_calls" ]]; then
+		print_result "case 8: external terminal complete guards before GitHub calls" 0
+	else
+		print_result "case 8: external terminal complete guards before GitHub calls" 1 "unexpected gh calls: $gh_calls"
+	fi
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Run
 # -----------------------------------------------------------------------------
@@ -406,6 +427,7 @@ test_feature_branch_with_pr_returns_pr_exists
 test_failure_recovery_ignores_default_branch_pr_match
 test_feature_branch_without_default_ref_returns_branch_orphan
 test_external_terminal_complete_uses_trailing_issue_digits
+test_external_terminal_complete_guards_before_github_calls
 
 printf '\nRan %d test(s), %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 

@@ -704,12 +704,14 @@ _worker_external_terminal_complete() {
 	local work_dir="$2"
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
 	local issue_number=""
+
+	[[ "$session_key" == issue-* ]] || return 1
+	[[ -n "$repo_slug" ]] || return 1
+
 	if [[ "$session_key" =~ ([0-9]+)$ ]]; then
 		issue_number="${BASH_REMATCH[1]}"
 	fi
-
-	[[ "$session_key" == issue-* ]] || return 1
-	[[ -n "$repo_slug" && -n "$issue_number" ]] || return 1
+	[[ -n "$issue_number" ]] || return 1
 	command -v gh >/dev/null 2>&1 || return 1
 
 	local issue_state=""
