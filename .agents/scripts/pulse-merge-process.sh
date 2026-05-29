@@ -1015,6 +1015,40 @@ _ruleset_ref_matches_default_branch() {
 }
 
 #######################################
+# Fallback required-check verification for repositories where the classic branch
+# protection endpoint and repository-rulesets endpoint expose no contexts, but
+# GitHub still reports PR-level required checks (for example org-level rulesets).
+#
+# Args: $1=repo_slug, $2=pr_number
+# Returns: 0=all reported required checks passing or none reported,
+#          1=at least one reported required check is not passing,
+#          2=API/parse error
+#######################################
+_check_required_pr_checks_passing_fallback() {
+	local repo_slug="$1"
+	local pr_number="$2"
+
+	local checks_json=""
+	checks_json=$(gh pr checks "$pr_number" --repo "$repo_slug" --required --json name,state,bucket 2>/dev/null) || return 2
+	if [[ -z "$checks_json" || "$checks_json" == "null" || "$checks_json" == "[]" ]]; then
+		return 0
+	fi
+
+	local nonpassing_count="" _pc_exit=0
+	nonpassing_count=$(printf '%s' "$checks_json" \
+		| jq '[.[]? | select((.bucket // "") != "pass")] | length' 2>/dev/null)
+	_pc_exit=$?
+	if [[ $_pc_exit -ne 0 || -z "$nonpassing_count" ]]; then
+		return 2
+	fi
+
+	if [[ "$nonpassing_count" -gt 0 ]]; then
+		return 1
+	fi
+	return 0
+}
+
+#######################################
 # Resolve newline-delimited required status check contexts from active
 # repository rulesets matching the default branch. This supplements classic
 # branch protection because rulesets can enforce required checks even when
@@ -1194,8 +1228,19 @@ _check_required_checks_passing() {
 
 	# No required contexts → nothing required, treat as passing.
 	if [[ -z "$required_contexts" ]]; then
-		echo "[pulse-merge] _check_required_checks_passing: no required contexts for ${repo_slug} — allowing (t2922)" >>"$LOGFILE"
-		return 0
+		local fallback_rc=0
+		_check_required_pr_checks_passing_fallback "$repo_slug" "$pr_number"
+		fallback_rc=$?
+		if [[ $fallback_rc -eq 0 ]]; then
+			echo "[pulse-merge] _check_required_checks_passing: no branch/ruleset contexts and PR required checks are passing or absent for PR #${pr_number} in ${repo_slug} — allowing (t2922)" >>"$LOGFILE"
+			return 0
+		fi
+		if [[ $fallback_rc -eq 1 ]]; then
+			echo "[pulse-merge] _check_required_checks_passing: PR-level required checks are not passing for PR #${pr_number} in ${repo_slug} despite no branch/ruleset contexts — failing closed (t2922)" >>"$LOGFILE"
+			return 1
+		fi
+		echo "[pulse-merge] _check_required_checks_passing: PR-level required checks fallback failed for PR #${pr_number} in ${repo_slug} — failing closed (t2922)" >>"$LOGFILE"
+		return 1
 	fi
 
 	# GH#21799: replace GraphQL statusCheckRollup with REST check-runs (single
