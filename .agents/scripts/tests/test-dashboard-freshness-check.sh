@@ -225,7 +225,7 @@ run_scan_with_stubs() {
 						return 0
 						;;
 					api)
-						if [[ "$gh_args" == *"repos/test/repo/issues?state=open&labels=source%3Ahealth-dashboard&per_page=100"* ]]; then
+						if [[ "$gh_args" == *"repos/test/repo/issues?state=open&labels=source%3Ahealth-dashboard,supervisor&per_page=100"* ]]; then
 							printf "%s\n" 424242
 							return 0
 						fi
@@ -249,8 +249,10 @@ run_scan_with_stubs() {
 						# $2 = repos/test/repo/issues/424242
 						jq -n \
 							--arg state "${DASHBOARD_STATE:-OPEN}" \
+							--arg title "${DASHBOARD_TITLE:-[Supervisor:testrunner] ok}" \
+							--arg role "${DASHBOARD_ROLE_LABEL:-supervisor}" \
 							--rawfile body "$BODY_FIXTURE" \
-							"{state: \$state, body: \$body}"
+							"{state: \$state, title: \$title, labels: [{name: \$role}], body: \$body}"
 						return 0
 						;;
 					issue)
@@ -481,13 +483,32 @@ created_count=$(grep -c '^issue create ' "$calls_file" 2>/dev/null || true)
 [[ "$created_count" =~ ^[0-9]+$ ]] || created_count=0
 
 if (( created_count == 1 )) \
-	&& grep -q '^api --paginate repos/test/repo/issues?state=open&labels=source%3Ahealth-dashboard&per_page=100 ' "$calls_file"; then
+	&& grep -q '^api --paginate repos/test/repo/issues?state=open&labels=source%3Ahealth-dashboard,supervisor&per_page=100 ' "$calls_file"; then
 	pass "missing cache → source:health-dashboard fallback scans dashboard"
 else
 	fail "source health-dashboard fallback" \
 		"created=$created_count; calls:\n$(cat "$calls_file")"
 fi
 printf '%s\n' 424242 >"$HEALTH_CACHE"
+
+# ---------------------------------------------------------------------------
+# Test 12b: contributor health dashboards are ignored
+# ---------------------------------------------------------------------------
+echo "Testing: contributor dashboard is ignored"
+run_scan_with_stubs "$STALE_BODY" 0 "export DASHBOARD_TITLE='[Contributor:testrunner] stale'; export DASHBOARD_ROLE_LABEL=contributor" >/dev/null
+calls_file="${TMP}/gh-calls.log"
+created_count=$(grep -c '^issue create ' "$calls_file" 2>/dev/null || true)
+[[ "$created_count" =~ ^[0-9]+$ ]] || created_count=0
+
+if (( created_count == 0 )) \
+	&& grep -q 'Dashboard test/repo#424242 is not a supervisor dashboard — skipping stale scan' \
+		"${HOME_ISO}/.aidevops/logs/dashboard-freshness.log" \
+	&& grep -q 'startswith("\[Supervisor:")' "$SCANNER"; then
+	pass "contributor dashboard → no stale alert filed"
+else
+	fail "contributor dashboard skip" \
+		"created=$created_count; calls:\n$(cat "$calls_file"); log:\n$(cat "${HOME_ISO}/.aidevops/logs/dashboard-freshness.log")"
+fi
 
 # ---------------------------------------------------------------------------
 # Test 13: source shape for shared recovered-alert helper and cached issue list
