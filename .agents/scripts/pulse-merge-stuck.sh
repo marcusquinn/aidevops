@@ -120,7 +120,7 @@ readonly _PMS_RUNNER_SATURATION_MARKER_TEXT="merge-stuck:runner-queue-saturation
 # jq filter snippet that selects normalized REST check entries with a failing
 # conclusion/state. Extracted so the upcase predicate is defined exactly once
 # and reused across classification, fingerprinting, and escalation guidance.
-readonly _PMS_JQ_REST_FAILURE_SELECTOR='def _ueq(f;v): (f // "" | ascii_upcase) == v; select(_ueq(.conclusion; "FAILURE") or _ueq(.conclusion; "TIMED_OUT") or _ueq(.conclusion; "CANCELLED") or _ueq(.state; "FAILURE") or _ueq(.status; "FAILURE"))'
+readonly _PMS_JQ_REST_FAILURE_SELECTOR='def _ueq(f;v): (f // "" | ascii_upcase) == v; select(_ueq(.conclusion; "FAILURE") or _ueq(.conclusion; "TIMED_OUT") or _ueq(.conclusion; "CANCELLED") or _ueq(.state; "FAILURE") or _ueq(.state; "ERROR") or _ueq(.status; "FAILURE"))'
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
