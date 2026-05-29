@@ -262,8 +262,11 @@ main() {
 		return 1
 	}
 
-	run_daily_quality_sweep || true
-	update_health_issues || true
+	run_daily_quality_sweep || {
+		local sweep_ec=$?
+		echo "[stats-wrapper] QUALITY-SWEEP-FAIL exit=${sweep_ec} at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STATS_LOGFILE"
+	}
+	update_health_issues
 
 	echo "[stats-wrapper] Finished at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STATS_LOGFILE"
 	return 0

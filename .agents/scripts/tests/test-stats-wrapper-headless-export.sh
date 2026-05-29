@@ -27,6 +27,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 WRAPPER_SCRIPT="${SCRIPT_DIR}/../stats-wrapper.sh"
 SHARED_CONSTANTS="${SCRIPT_DIR}/../shared-constants.sh"
+HEALTH_DASHBOARD_SCRIPT="${SCRIPT_DIR}/../stats-health-dashboard.sh"
+
+# shellcheck source=../shared-constants.sh
+source "$SHARED_CONSTANTS"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -148,11 +152,57 @@ test_export_before_self_check() {
 	return 0
 }
 
+# Test 5: dashboard refresh failures must not be swallowed by the wrapper.
+# The EXIT trap only emits HEALTH-DASHBOARD-FAIL when main() returns non-zero;
+# keeping `update_health_issues || true` here would recreate the silent-stale
+# dashboard failure mode from GH#24264.
+test_dashboard_update_failure_not_swallowed() {
+	local production_snippet
+	production_snippet=$(awk '
+		/^[[:space:]]*run_daily_quality_sweep \|\| \{/ { in_production=1 }
+		in_production { print }
+		in_production && /^[[:space:]]*echo "\[stats-wrapper\] Finished/ { exit }
+	' "$WRAPPER_SCRIPT")
+	if printf '%s' "$production_snippet" | grep -qE '^[[:space:]]*update_health_issues[[:space:]]*\|\|[[:space:]]*true'; then
+		print_result "dashboard update failures propagate to stats-wrapper trap" 1 \
+			"stats-wrapper.sh still swallows update_health_issues failures with '|| true'"
+		return 0
+	fi
+	if printf '%s' "$production_snippet" | grep -qE '^[[:space:]]*update_health_issues[[:space:]]*$'; then
+		print_result "dashboard update failures propagate to stats-wrapper trap" 0
+		return 0
+	fi
+	print_result "dashboard update failures propagate to stats-wrapper trap" 1 \
+		"Expected a direct update_health_issues call in stats-wrapper.sh"
+	return 0
+}
+
+# Test 6: the dashboard updater itself must return non-zero when the body edit
+# fails, otherwise the wrapper's direct update_health_issues call still exits 0
+# and the HEALTH-DASHBOARD-FAIL trap never fires.
+test_dashboard_body_edit_failure_returns_nonzero() {
+	local failure_snippet
+	failure_snippet=$(awk '
+		/failed to update body for/ { in_failure=1 }
+		in_failure { print }
+		in_failure && /^[[:space:]]*}/ { exit }
+	' "$HEALTH_DASHBOARD_SCRIPT")
+	if printf '%s' "$failure_snippet" | grep -qE '^[[:space:]]*return 1[[:space:]]*$'; then
+		print_result "dashboard body edit failures return non-zero" 0
+		return 0
+	fi
+	print_result "dashboard body edit failures return non-zero" 1 \
+		"Expected _update_health_issue_for_repo body-edit failure block to return 1"
+	return 0
+}
+
 main_test() {
 	test_export_line_present_at_top_of_main
 	test_detect_session_origin_returns_worker_when_headless
 	test_export_is_inside_main_not_top_level
 	test_export_before_self_check
+	test_dashboard_update_failure_not_swallowed
+	test_dashboard_body_edit_failure_returns_nonzero
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

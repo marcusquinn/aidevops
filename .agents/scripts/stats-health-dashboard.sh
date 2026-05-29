@@ -157,7 +157,7 @@ _check_health_issue_activity_guard() {
 #   $3 - cross-repo activity markdown (pre-computed by update_health_issues)
 #   $4 - cross-repo session time markdown (pre-computed by update_health_issues)
 #   $5 - cross-repo person stats markdown (pre-computed by update_health_issues)
-# Returns: 0 always (best-effort, never breaks the pulse)
+# Returns: 0 when refreshed/skipped, 1 when an existing dashboard update fails
 #######################################
 _update_health_issue_for_repo() {
 	local repo_slug="$1"
@@ -244,7 +244,7 @@ _update_health_issue_for_repo() {
 		--body "$body" 2>&1 >/dev/null) || {
 		echo "[stats] Health issue: failed to update body for #${health_issue_number}: ${body_edit_stderr}" \
 			>>"$LOGFILE"
-		return 0
+		return 1
 	}
 
 	# Re-extract headline counts from the rendered body to build the title.
@@ -335,14 +335,23 @@ update_health_issues() {
 	fi
 
 	local updated=0
+	local failed=0
 	while IFS='|' read -r slug path; do
 		[[ -z "$slug" ]] && continue
-		_update_health_issue_for_repo "$slug" "$path" "$cross_repo_md" "$cross_repo_session_time_md" "$cross_repo_person_stats_md" || true
+		if ! _update_health_issue_for_repo "$slug" "$path" "$cross_repo_md" "$cross_repo_session_time_md" "$cross_repo_person_stats_md"; then
+			echo "[stats] Health issue update failed for ${slug}" >>"$LOGFILE"
+			failed=$((failed + 1))
+			continue
+		fi
 		updated=$((updated + 1))
 	done <<<"$repo_entries"
 
 	if [[ "$updated" -gt 0 ]]; then
 		echo "[stats] Health issues: updated $updated repo(s)" >>"$LOGFILE"
+	fi
+	if [[ "$failed" -gt 0 ]]; then
+		echo "[stats] Health issues: failed $failed repo(s)" >>"$LOGFILE"
+		return 1
 	fi
 	return 0
 }
