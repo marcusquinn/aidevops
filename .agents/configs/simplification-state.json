@@ -1754,9 +1754,9 @@
       "pr": 12780
     },
     ".agents/reference/platform-support.md": {
-      "at": "2026-04-03T00:48:09Z",
-      "hash": "d7636c30409fac6e94715ebc30d9704bc01e773d",
-      "passes": 1,
+      "at": "2026-05-29T04:32:57Z",
+      "hash": "ab384e30c395d7c894de6362f22c8148d29eba0d",
+      "passes": 2,
       "pr": "GH#16007"
     },
     ".agents/reference/repo-sync.md": {
@@ -2238,9 +2238,9 @@
       "pr": 16879
     },
     ".agents/scripts/dispatch-dedup-helper.sh": {
-      "at": "2026-05-18T01:00:37Z",
-      "hash": "0446cde6af62391f737f7cc0e368c371ca437ca0",
-      "passes": 34,
+      "at": "2026-05-29T04:56:48Z",
+      "hash": "520573d1ad14dc43bed9dc36a4469217da24672c",
+      "passes": 35,
       "pr": 18917
     },
     ".agents/scripts/email-agent-helper.sh": {
@@ -2304,9 +2304,9 @@
       "pr": 15086
     },
     ".agents/scripts/headless-runtime-lib.sh": {
-      "at": "2026-05-27T04:19:32Z",
-      "hash": "cb4321b2cda230f0f4f953e6e836b9fe8d66564a",
-      "passes": 32,
+      "at": "2026-05-29T04:58:51Z",
+      "hash": "88e0a8e519527c8419f6c45318a0e2a97a335516",
+      "passes": 33,
       "pr": 18707
     },
     ".agents/scripts/interactive-session-helper.sh": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-05-28T12:03:33Z",
-      "hash": "caa4efa15217e72040be5032af0f8d09f70a53a6",
-      "passes": 203,
+      "at": "2026-05-29T05:21:32Z",
+      "hash": "78292d7e0aae0d6d6a8a483ea73d89d3efd3ce9a",
+      "passes": 204,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-05-28T12:03:37Z",
-      "hash": "2f5790df9b04c053d33a05dc14fc8c871cdddbf0",
-      "passes": 198,
+      "at": "2026-05-29T05:21:36Z",
+      "hash": "a77323a3fa81b84033795ea55bb32c065d449a27",
+      "passes": 199,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
