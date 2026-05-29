@@ -27,7 +27,9 @@
 #      closes the recovered missing-marker alert and files a stale alert.
 #  11. open issue list failures are logged instead of silently treated as an
 #      empty dedup result.
-#  12. source regression: recovered stale and missing-marker alert paths share
+#  12. scan without a local health-issue cache falls back to open
+#      source:health-dashboard issues for configured repos.
+#  13. source regression: recovered stale and missing-marker alert paths share
 #      the parameterized close helper and accept a pre-fetched open issue list.
 #
 # The scanner is expected to use `command -v gh` + `gh auth status` guards
@@ -223,6 +225,10 @@ run_scan_with_stubs() {
 						return 0
 						;;
 					api)
+						if [[ "$gh_args" == *"repos/test/repo/issues?state=open&labels=source%3Ahealth-dashboard&per_page=100"* ]]; then
+							printf "%s\n" 424242
+							return 0
+						fi
 						if [[ "$gh_args" == *"repos/test/repo/issues?state=open&per_page=100"* ]]; then
 							if [[ "${GH_ISSUE_LIST_FAIL:-0}" == "1" ]]; then
 								printf "simulated gh api issue list failure\n" >&2
@@ -465,7 +471,26 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test 12: source shape for shared recovered-alert helper and cached issue list
+# Test 12: missing local cache falls back to source:health-dashboard issues
+# ---------------------------------------------------------------------------
+echo "Testing: source health-dashboard fallback without local cache"
+rm -f "$HEALTH_CACHE"
+run_scan_with_stubs "$STALE_BODY" 0 "" >/dev/null
+calls_file="${TMP}/gh-calls.log"
+created_count=$(grep -c '^issue create ' "$calls_file" 2>/dev/null || true)
+[[ "$created_count" =~ ^[0-9]+$ ]] || created_count=0
+
+if (( created_count == 1 )) \
+	&& grep -q '^api --paginate repos/test/repo/issues?state=open&labels=source%3Ahealth-dashboard&per_page=100 ' "$calls_file"; then
+	pass "missing cache → source:health-dashboard fallback scans dashboard"
+else
+	fail "source health-dashboard fallback" \
+		"created=$created_count; calls:\n$(cat "$calls_file")"
+fi
+printf '%s\n' 424242 >"$HEALTH_CACHE"
+
+# ---------------------------------------------------------------------------
+# Test 13: source shape for shared recovered-alert helper and cached issue list
 # ---------------------------------------------------------------------------
 echo "Testing: recovered-alert source shape"
 if grep -q '^_close_recovered_alerts_for_kind()' "$SCANNER" \
@@ -480,7 +505,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test 13: missing-marker body → alerts with MISSING title
+# Test 14: missing-marker body → alerts with MISSING title
 # ---------------------------------------------------------------------------
 echo "Testing: missing-marker body files alert"
 run_scan_with_stubs "$MISSING_BODY" 0 "" >/dev/null

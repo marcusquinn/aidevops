@@ -231,13 +231,16 @@ _cadence_gate_ok() {
 # Dashboard enumeration
 # =============================================================================
 
-# Emit "slug issue_number" lines for every known dashboard via the
-# ~/.aidevops/logs/health-issue-* cache files written by
-# stats-health-dashboard.sh. Historical cache names included the role segment
-# (`health-issue-<runner>-supervisor-<slug-dashed>`); current canonical
-# identity caches omit it (`health-issue-<canonical>-<slug-dashed>`). Resolve
-# both by matching the longest repos.json slug suffix instead of parsing a fixed
-# segment position.
+# Emit "slug issue_number" lines for every known dashboard. Prefer local
+# ~/.aidevops/logs/health-issue-* cache files written by stats-health-dashboard.sh,
+# then fall back to open `source:health-dashboard` issues in configured repos.
+# The fallback covers orphaned historical dashboards after cache migration,
+# identity changes, or fresh hosts where the stale dashboard's cache is absent.
+# Historical cache names included the role segment
+# (`health-issue-<runner>-supervisor-<slug-dashed>`); current canonical identity
+# caches omit it (`health-issue-<canonical>-<slug-dashed>`). Resolve both by
+# matching the longest repos.json slug suffix instead of parsing a fixed segment
+# position.
 _enumerate_dashboards() {
 	local cache issue slug_raw slug key seen="|" slug_candidates
 	slug_candidates="$(_repo_slug_candidates)"
@@ -256,6 +259,43 @@ _enumerate_dashboards() {
 		printf '%s %s\n' "$slug" "$issue"
 	done
 	shopt -u nullglob
+	if command -v gh >/dev/null 2>&1 && gh auth status &>/dev/null 2>&1; then
+		while IFS= read -r slug; do
+			[[ -n "$slug" ]] || continue
+			while IFS= read -r issue; do
+				[[ "$issue" =~ ^[0-9]+$ ]] || continue
+				key="${slug} ${issue}"
+				case "$seen" in
+					*"|${key}|"*) continue ;;
+				esac
+				seen="${seen}${key}|"
+				printf '%s %s\n' "$slug" "$issue"
+			done < <(_github_health_dashboard_issue_numbers "$slug")
+		done < <(_repo_slugs_for_dashboard_scan)
+	fi
+	return 0
+}
+
+# Emit configured remote pulse repo slugs that may host health dashboards.
+_repo_slugs_for_dashboard_scan() {
+	[[ -f "$REPOS_JSON" ]] || return 0
+	if ! command -v jq >/dev/null 2>&1; then
+		return 0
+	fi
+	jq -r '
+		.initialized_repos[]
+		| select(.pulse == true and (.local_only // false) == false and .slug != null and .slug != "")
+		| .slug
+	' "$REPOS_JSON" 2>/dev/null
+	return 0
+}
+
+# Emit open health-dashboard issue numbers for a repo via REST-backed gh api.
+_github_health_dashboard_issue_numbers() {
+	local slug="$1"
+	[[ -n "$slug" ]] || return 0
+	gh api --paginate "repos/${slug}/issues?state=open&labels=source%3Ahealth-dashboard&per_page=100" \
+		--jq '.[] | select(.pull_request == null) | .number' 2>>"$LOGFILE" || true
 	return 0
 }
 
