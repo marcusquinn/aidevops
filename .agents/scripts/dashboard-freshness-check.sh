@@ -233,9 +233,10 @@ _cadence_gate_ok() {
 
 # Emit "slug issue_number" lines for every known dashboard. Prefer local
 # ~/.aidevops/logs/health-issue-* cache files written by stats-health-dashboard.sh,
-# then fall back to open `source:health-dashboard` issues in configured repos.
-# The fallback covers orphaned historical dashboards after cache migration,
-# identity changes, or fresh hosts where the stale dashboard's cache is absent.
+# and include open `source:health-dashboard` issues in configured repos. The
+# GitHub enumeration is intentional even when some caches exist: it covers
+# orphaned historical dashboards after cache migration, identity changes, or
+# fresh hosts where only the stale dashboard's cache is absent.
 # Historical cache names included the role segment
 # (`health-issue-<runner>-supervisor-<slug-dashed>`); current canonical identity
 # caches omit it (`health-issue-<canonical>-<slug-dashed>`). Resolve both by
@@ -283,10 +284,10 @@ _repo_slugs_for_dashboard_scan() {
 		return 0
 	fi
 	jq -r '
-		.initialized_repos[]
+		.initialized_repos[]?
 		| select(.pulse == true and (.local_only // false) == false and .slug != null and .slug != "")
 		| .slug
-	' "$REPOS_JSON" 2>/dev/null
+	' "$REPOS_JSON" || true
 	return 0
 }
 
