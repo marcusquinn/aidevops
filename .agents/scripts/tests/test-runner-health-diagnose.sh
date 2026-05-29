@@ -140,7 +140,7 @@ _mark_deploy_healthy() {
 	local repo_root
 	repo_root=$(cd "${AGENT_SCRIPT_DIR}/../.." && pwd) || return 1
 	tr -d '[:space:]' <"${repo_root}/VERSION" >"$RUNNER_HEALTH_DEPLOYED_VERSION_FILE"
-	if [[ -d "${repo_root}/.git" ]]; then
+	if [[ -e "${repo_root}/.git" ]]; then
 		git -C "$repo_root" rev-parse HEAD >"$RUNNER_HEALTH_DEPLOYED_SHA_FILE" 2>/dev/null || true
 	fi
 	return 0
