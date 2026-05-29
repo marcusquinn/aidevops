@@ -291,13 +291,28 @@ _repo_slugs_for_dashboard_scan() {
 	return 0
 }
 
-# Emit open health-dashboard issue numbers for a repo via REST-backed gh api.
+# Emit open supervisor health-dashboard issue numbers for a repo via
+# REST-backed gh api. Contributor dashboards are intentionally excluded: they
+# can be stale when that contributor is offline and are not the operator's
+# primary single-glance health surface.
 _github_health_dashboard_issue_numbers() {
 	local slug="$1"
 	[[ -n "$slug" ]] || return 0
-	gh api --paginate "repos/${slug}/issues?state=open&labels=source%3Ahealth-dashboard&per_page=100" \
+	gh api --paginate "repos/${slug}/issues?state=open&labels=source%3Ahealth-dashboard,supervisor&per_page=100" \
 		--jq '.[] | select(.pull_request == null) | .number' 2>>"$LOGFILE" || true
 	return 0
+}
+
+# Return success when a dashboard issue belongs to a supervisor runner. This is
+# a defense-in-depth guard for local cache entries, which do not encode the
+# role in the current canonical filename format.
+_dashboard_issue_is_supervisor() {
+	local issue_json="$1"
+	printf '%s\n' "$issue_json" | jq -e '
+		((.title // "") | startswith("[Supervisor:"))
+		or (((.labels // []) | map(.name // .) | index("supervisor")) != null)
+	' >/dev/null 2>&1
+	return $?
 }
 
 # Emit known repos as "dashed<TAB>slug" lines sorted by longest dashed slug
@@ -758,9 +773,13 @@ scan_one_dashboard() {
 		return 0
 	fi
 
-	issue_json=$(gh api "repos/${slug}/issues/${dash_issue}" --jq '{state,body}' 2>>"$LOGFILE" || echo "")
+	issue_json=$(gh api "repos/${slug}/issues/${dash_issue}" --jq '{state,body,title,labels}' 2>>"$LOGFILE" || echo "")
 	if [[ -z "$issue_json" ]]; then
 		_log_warn "Empty issue payload from gh at ${slug}#${dash_issue}"
+		return 0
+	fi
+	if ! _dashboard_issue_is_supervisor "$issue_json"; then
+		_log_info "Dashboard ${slug}#${dash_issue} is not a supervisor dashboard — skipping stale scan"
 		return 0
 	fi
 	issue_state=$(printf '%s\n' "$issue_json" | jq -r '.state // ""' 2>/dev/null || true)
