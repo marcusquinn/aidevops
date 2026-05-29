@@ -601,6 +601,7 @@ _has_active_claim() {
 # Outputs: one of the following signals on stdout when blocking:
 #   PARENT_TASK_BLOCKED (label=<name>)      — unconditional parent-task / meta block
 #   NO_AUTO_DISPATCH_BLOCKED (label=...)    — unconditional no-auto-dispatch block (t2832)
+#   INFRASTRUCTURE_BLOCKED (label=...)      — infrastructure / billing / runner advisory block
 #   COST_BUDGET_EXCEEDED (...)              — token spend circuit breaker
 #   GUARD_UNCERTAIN (reason=...)            — internal error, cannot determine safety
 #   <assignee info>                         — active claim by another runner
@@ -741,6 +742,30 @@ _is_assigned_check_no_auto_dispatch() {
 	local repo_slug="${3:-unknown}"
 	_is_assigned_check_label_block "$meta_json" "$issue_number" "$repo_slug" \
 		"no-auto-dispatch" "NO_AUTO_DISPATCH_BLOCKED" "no-auto-dispatch-check"
+}
+
+#######################################
+# is_assigned helper: check the infrastructure unconditional block.
+#
+# Infrastructure issues often describe billing, runner, hosting, or platform
+# advisories that must remain visible for human operations rather than consume
+# worker dispatch capacity. Candidate enumeration filters this label, but the
+# dispatch path also checks it to close the race where a label is added after
+# candidate build and before worker launch.
+#
+# Args:
+#   $1 = issue metadata JSON (from `gh issue view --json ...,labels`)
+#   $2 = (optional) issue number — included in GUARD_UNCERTAIN output
+#   $3 = (optional) repo slug — included in GUARD_UNCERTAIN output
+# Returns: exit 0 if infrastructure label found or jq fails (prints signal),
+#          exit 1 if label absent and jq succeeds
+#######################################
+_is_assigned_check_infrastructure() {
+	local meta_json="$1"
+	local issue_number="${2:-unknown}"
+	local repo_slug="${3:-unknown}"
+	_is_assigned_check_label_block "$meta_json" "$issue_number" "$repo_slug" \
+		"infrastructure" "INFRASTRUCTURE_BLOCKED" "infrastructure-check"
 }
 
 #######################################
@@ -1174,6 +1199,12 @@ is_assigned() {
 		return 0
 	fi
 
+	# Infrastructure/billing/runner advisories are dispatch-time hard blocks too;
+	# candidate filtering alone is insufficient when labels change mid-cycle.
+	if _is_assigned_check_infrastructure "$issue_meta_json" "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+
 	# Maintainer-requested review hold. This is intentionally separate from
 	# needs-maintainer-review, whose trust-boundary semantics are reserved for
 	# non-maintainer content and circuit-breaker review.
@@ -1346,7 +1377,7 @@ is_assigned() {
 #
 # Unlike is_assigned() which short-circuits on the first match, this function
 # runs every unconditional structural check (parent-task, no-auto-dispatch,
-# hold-for-review)
+# infrastructure, hold-for-review)
 # and emits ALL matching signals as newline-separated tokens on stdout.
 #
 # Intentionally excludes cost-budget, hydration window, and assignee checks —
@@ -1413,14 +1444,21 @@ enumerate_blockers() {
 		_found=true
 	fi
 
-	# Check 3: hold-for-review unconditional maintainer hold.
+	# Check 3: infrastructure advisory/operator block.
+	_blocker_out=$(_is_assigned_check_infrastructure "$issue_meta_json" "$issue_number" "$repo_slug" 2>/dev/null) || true
+	if [[ -n "$_blocker_out" ]]; then
+		printf '%s\n' "$_blocker_out"
+		_found=true
+	fi
+
+	# Check 4: hold-for-review unconditional maintainer hold.
 	_blocker_out=$(_is_assigned_check_hold_for_review "$issue_meta_json" "$issue_number" "$repo_slug" 2>/dev/null) || true
 	if [[ -n "$_blocker_out" ]]; then
 		printf '%s\n' "$_blocker_out"
 		_found=true
 	fi
 
-	# Check 4: t3197 dispatch cooldown after no_worker_process launch failure.
+	# Check 5: t3197 dispatch cooldown after no_worker_process launch failure.
 	_blocker_out=$(_is_assigned_check_dispatch_cooldown "$issue_number" "$repo_slug" 2>/dev/null) || true
 	if [[ -n "$_blocker_out" ]]; then
 		printf '%s\n' "$_blocker_out"
@@ -1826,7 +1864,7 @@ classify_dispatch_blocker_reason() {
 			printf 'local_capacity_gate\n'
 			return 0
 			;;
-		*no-auto-dispatch* | *external*author*gate* | *nmr*gate* | *approval*required*)
+		*no-auto-dispatch* | *infrastructure* | *external*author*gate* | *nmr*gate* | *approval*required*)
 			printf 'policy_gate\n'
 			return 0
 			;;
