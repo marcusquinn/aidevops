@@ -358,7 +358,8 @@ def _tokens_for_group(group: list[SessionRow]) -> dict[str, int]:
 
 
 def _normalized_session_location(row: SessionRow) -> str:
-    return f"/{row.directory}/{row.path}".replace("\\", "/").lower()
+    location = f"/{row.directory}/{row.path}".replace("\\", "/").lower()
+    return re.sub(r"/+", "/", location)
 
 
 def _session_kind_for_group(group: list[SessionRow]) -> str:

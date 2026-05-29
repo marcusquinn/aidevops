@@ -164,6 +164,7 @@ INSERT INTO session VALUES ('ses_windows_worker', NULL, 'Windows Worker Session'
 INSERT INTO session VALUES ('ses_split_windows_worker', NULL, 'Split Windows Worker Session', '{"id":"gpt-5.5","providerID":"openai"}', 3, 1, 0, 1, 1, 0.01, 1699999700000, 1699999750000, NULL, 'C:\Users\Example\AppData\Local\Temp', 'OpenCode\session.json', 'Build+');
 INSERT INTO session VALUES ('ses_relative_worker', NULL, 'Relative Worker Session', '{"id":"gpt-5.5","providerID":"openai"}', 4, 1, 0, 1, 1, 0.02, 1699999600000, 1699999650000, NULL, '', 'tmp/opencode/session.json', 'Build+');
 INSERT INTO session VALUES ('ses_split_unix_worker', NULL, 'Split Unix Worker Session', '{"id":"gpt-5.5","providerID":"openai"}', 5, 1, 0, 1, 1, 0.02, 1699999500000, 1699999550000, NULL, '/tmp', 'opencode/session.json', 'Build+');
+INSERT INTO session VALUES ('ses_double_slash_worker', NULL, 'Double Slash Unix Worker Session', '{"id":"gpt-5.5","providerID":"openai"}', 2, 1, 0, 1, 1, 0.01, 1699999400000, 1699999450000, NULL, '/tmp/', '/opencode/session.json', 'Build+');
 SQL
 	local _json_path="${TEST_ROOT}/data.json"
 	AIDEVOPS_REPORT_TOKEN_USE_OPENCODE_DB="${TEST_ROOT}/opencode.db" \
@@ -171,14 +172,15 @@ SQL
 		AIDEVOPS_REPORT_TOKEN_USE_OPENCODE_CONFIG="${TEST_ROOT}/opencode.json" \
 		"$HELPER_SH" data --limit 10 --daily-days 2000 --json >"$_json_path"
 	assert_json_field "$_json_path" "usage_by_session_kind[1].session_kind" "headless_worker" "Report summarizes headless worker usage"
-	assert_json_field "$_json_path" "usage_by_session_kind[1].net_tokens_total" "41" "Report sums headless worker net tokens"
-	assert_json_field "$_json_path" "daily_usage[0].headless_worker_net_tokens_total" "41" "Report sums daily headless worker net tokens"
-	assert_json_field "$_json_path" "daily_usage[0].net_tokens_total" "233" "Report sums daily total net tokens"
+	assert_json_field "$_json_path" "usage_by_session_kind[1].net_tokens_total" "45" "Report sums headless worker net tokens"
+	assert_json_field "$_json_path" "daily_usage[0].headless_worker_net_tokens_total" "45" "Report sums daily headless worker net tokens"
+	assert_json_field "$_json_path" "daily_usage[0].net_tokens_total" "237" "Report sums daily total net tokens"
 	assert_json_field "$_json_path" "sessions[1].session_kind" "headless_worker" "Report classifies temp workdir session as headless worker"
 	assert_json_field "$_json_path" "sessions[2].session_kind" "headless_worker" "Report classifies Windows temp workdir session as headless worker"
 	assert_json_field "$_json_path" "sessions[3].session_kind" "headless_worker" "Report classifies split Windows temp workdir session as headless worker"
 	assert_json_field "$_json_path" "sessions[4].session_kind" "headless_worker" "Report classifies relative temp path session as headless worker"
 	assert_json_field "$_json_path" "sessions[5].session_kind" "headless_worker" "Report classifies split Unix temp path session as headless worker"
+	assert_json_field "$_json_path" "sessions[6].session_kind" "headless_worker" "Report classifies double-slash Unix temp path session as headless worker"
 	return 0
 }
 
