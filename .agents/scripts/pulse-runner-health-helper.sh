@@ -343,6 +343,7 @@ cmd_record_outcome() {
 	# zero out the counter and re-anchor the window. Done BEFORE applying
 	# the new outcome so a stale window doesn't carry an old counter.
 	if _rh_window_expired; then
+		# shellcheck disable=SC2016 # $now is a jq variable supplied by --arg.
 		_rh_state_apply '.consecutive_zero_attempts = 0 | .window_started_at = $now' --arg now "$now" || true
 	fi
 
@@ -353,6 +354,7 @@ cmd_record_outcome() {
 		# was idle through expiry above (already done) — otherwise keep it.
 		_rh_state_apply ".consecutive_zero_attempts += 1" || true
 	else
+		# shellcheck disable=SC2016 # $now is a jq variable supplied by --arg.
 		_rh_state_apply '.consecutive_zero_attempts = 0 | .window_started_at = $now' --arg now "$now" || true
 	fi
 
@@ -364,6 +366,7 @@ cmd_record_outcome() {
 		--arg ts "$now" \
 		--argjson zero "$is_zero" \
 		'{issue:$issue, signal:$signal, ts:$ts, zero_attempt:($zero==1)}')
+	# shellcheck disable=SC2016 # $outcome_entry and $ledger_cap are jq variables supplied by --argjson.
 	_rh_state_apply '.last_outcomes += [$outcome_entry] | .last_outcomes = (.last_outcomes | .[-$ledger_cap:])' \
 		--argjson outcome_entry "$outcome_entry" \
 		--argjson ledger_cap "$RUNNER_HEALTH_LEDGER_CAP" || true
@@ -400,6 +403,7 @@ _rh_trip_breaker() {
 	now=$(_rh_now)
 
 	# Mark tripped first so concurrent paths see the breaker open.
+	# shellcheck disable=SC2016 # $now and $reason are jq variables supplied by --arg.
 	_rh_state_apply \
 		'.circuit_breaker.state = "tripped"
 		| .circuit_breaker.tripped_at = $now
@@ -431,6 +435,7 @@ _rh_trip_breaker() {
 		update_outcome="helper_missing"
 	fi
 
+	# shellcheck disable=SC2016 # $now and $update_outcome are jq variables supplied by --arg.
 	_rh_state_apply \
 		'.circuit_breaker.last_update_attempt_at = $now
 		| .circuit_breaker.last_update_outcome = $update_outcome' \
@@ -535,6 +540,7 @@ cmd_pause() {
 	_rh_init_state || return 1
 	local now
 	now=$(_rh_now)
+	# shellcheck disable=SC2016 # $now and $reason are jq variables supplied by --arg.
 	_rh_state_apply \
 		'.circuit_breaker.state = "tripped"
 		| .circuit_breaker.tripped_at = $now
@@ -566,6 +572,7 @@ cmd_resume() {
 	_rh_init_state || return 1
 	local now
 	now=$(_rh_now)
+	# shellcheck disable=SC2016 # $reason and $now are jq variables supplied by --arg.
 	_rh_state_apply \
 		'.circuit_breaker.state = "closed"
 		| .circuit_breaker.tripped_at = null
