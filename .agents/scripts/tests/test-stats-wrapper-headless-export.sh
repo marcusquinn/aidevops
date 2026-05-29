@@ -29,6 +29,9 @@ WRAPPER_SCRIPT="${SCRIPT_DIR}/../stats-wrapper.sh"
 SHARED_CONSTANTS="${SCRIPT_DIR}/../shared-constants.sh"
 HEALTH_DASHBOARD_SCRIPT="${SCRIPT_DIR}/../stats-health-dashboard.sh"
 
+# shellcheck source=../shared-constants.sh
+source "$SHARED_CONSTANTS"
+
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
 readonly TEST_RESET='\033[0m'
@@ -104,7 +107,7 @@ test_detect_session_origin_returns_worker_when_headless() {
 # testing must not have AIDEVOPS_HEADLESS set on their behalf.
 test_export_is_inside_main_not_top_level() {
 	local count line_num
-	count=$(grep -cE '^[[:space:]]*export AIDEVOPS_HEADLESS=true[[:space:]]*$' "$WRAPPER_SCRIPT" || true)
+	count=$(safe_grep_count -E '^[[:space:]]*export AIDEVOPS_HEADLESS=true[[:space:]]*$' "$WRAPPER_SCRIPT")
 	if [[ "$count" -ne 1 ]]; then
 		print_result "export is inside main(), not top-level" 1 \
 			"Expected exactly 1 export line, found $count"
