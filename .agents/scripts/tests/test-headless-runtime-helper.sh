@@ -912,6 +912,18 @@ test_worker_opencode_exec_paths_strip_session_env() {
 	return 0
 }
 
+test_worker_opencode_invocation_seeds_continuation_session() {
+	if grep -Fq "_seed_worker_db_session_context \"\$isolated_data_dir\" \"\$_invoke_persisted_session\"" "$HELPER_SCRIPT" &&
+		grep -Fq "[lifecycle] db_seeded session=\$_invoke_persisted_session" "$HELPER_SCRIPT"; then
+		print_result "worker OpenCode invocation seeds persisted continuation session" 0
+		return 0
+	fi
+
+	print_result "worker OpenCode invocation seeds persisted continuation session" 1 \
+		"Expected persisted session seeding before opencode continuation launch"
+	return 0
+}
+
 test_sandbox_passthrough_scopes_provider_env() {
 	local csv
 	csv=$(
@@ -1730,6 +1742,7 @@ main() {
 	test_canary_pins_vanilla_agent_with_isolated_plugin_config
 	test_opencode_session_env_wrapper_strips_session_vars_only
 	test_worker_opencode_exec_paths_strip_session_env
+	test_worker_opencode_invocation_seeds_continuation_session
 	test_sandbox_passthrough_scopes_provider_env
 	test_copy_scoped_opencode_auth_keeps_selected_provider_only
 	test_seed_worker_db_session_context_copies_only_selected_session
