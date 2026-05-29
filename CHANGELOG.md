@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.5] - 2026-05-29
+
+### Changed
+
+- fix: preserve report heading anchor state (#24270)
+- fix: add infrastructure dispatch blocker (#24269)
+- avoid generated anchor suffix collisions
+- Documentation: adopt ClaudeBar Antigravity support (#24262)
+- Maintenance: update simplification state registry
+- normalize token worker path detection (#24257)
+- fix: map merged PR fields in REST projection (#24245)
+
+### Fixed
+
+- block infrastructure advisory dispatch (#24263)
+- harden playwright grep matching (#24258)
+
 ## [3.20.4] - 2026-05-28
 
 ### Changed
