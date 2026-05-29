@@ -154,15 +154,9 @@ main() {
 	fi
 
 	setup_fake_ps
-	if ! test_ok_service_exit_zero; then
-		:
-	fi
-	if ! test_warning_service_exit_zero_and_logs; then
-		:
-	fi
-	if ! test_critical_service_exit_nonzero_and_logs; then
-		:
-	fi
+	test_ok_service_exit_zero || true
+	test_warning_service_exit_zero_and_logs || true
+	test_critical_service_exit_nonzero_and_logs || true
 
 	printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -eq 0 ]]; then
