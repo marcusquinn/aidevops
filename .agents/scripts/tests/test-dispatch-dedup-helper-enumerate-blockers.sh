@@ -114,6 +114,11 @@ if [[ "\${1:-}" == "issue" && "\${2:-}" == "view" ]]; then
 	exit 0
 fi
 
+if [[ "\${1:-}" == "api" && "\${2:-}" == "rate_limit" ]]; then
+	printf '%s\n' '5000'
+	exit 0
+fi
+
 if [[ "\${1:-}" == "api" ]] && printf '%s' "\${2:-}" | grep -q '/comments'; then
 	printf '%s\n' '[{"created_at":"${recent_ts}","author":"runner1","body_start":"Dispatching worker (PID 12345)"}]'
 	exit 0
