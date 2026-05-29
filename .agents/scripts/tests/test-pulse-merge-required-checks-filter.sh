@@ -273,9 +273,9 @@ define_function_under_test() {
 	local pr_checks_fallback_src
 	pr_checks_fallback_src=$(awk '
 		/^_check_required_pr_checks_passing_fallback\(\) \{/,/^}$/ { print }
-	' "$MERGE_SCRIPT")
+	' "$REQUIRED_CHECKS_SCRIPT")
 	if [[ -z "$pr_checks_fallback_src" ]]; then
-		printf 'ERROR: could not extract _check_required_pr_checks_passing_fallback from %s\n' "$MERGE_SCRIPT" >&2
+		printf 'ERROR: could not extract _check_required_pr_checks_passing_fallback from %s\n' "$REQUIRED_CHECKS_SCRIPT" >&2
 		return 1
 	fi
 	# shellcheck disable=SC1090  # dynamic source from extracted helper
