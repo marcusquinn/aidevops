@@ -1015,40 +1015,6 @@ _ruleset_ref_matches_default_branch() {
 }
 
 #######################################
-# Fallback required-check verification for repositories where the classic branch
-# protection endpoint and repository-rulesets endpoint expose no contexts, but
-# GitHub still reports PR-level required checks (for example org-level rulesets).
-#
-# Args: $1=repo_slug, $2=pr_number
-# Returns: 0=all reported required checks passing or none reported,
-#          1=at least one reported required check is not passing,
-#          2=API/parse error
-#######################################
-_check_required_pr_checks_passing_fallback() {
-	local repo_slug="$1"
-	local pr_number="$2"
-
-	local checks_json=""
-	checks_json=$(gh pr checks "$pr_number" --repo "$repo_slug" --required --json name,state,bucket 2>/dev/null) || return 2
-	if [[ -z "$checks_json" || "$checks_json" == "null" || "$checks_json" == "[]" ]]; then
-		return 0
-	fi
-
-	local nonpassing_count="" _pc_exit=0
-	nonpassing_count=$(printf '%s' "$checks_json" \
-		| jq '[.[]? | select((.bucket // "") != "pass")] | length' 2>/dev/null)
-	_pc_exit=$?
-	if [[ $_pc_exit -ne 0 || -z "$nonpassing_count" ]]; then
-		return 2
-	fi
-
-	if [[ "$nonpassing_count" -gt 0 ]]; then
-		return 1
-	fi
-	return 0
-}
-
-#######################################
 # Resolve newline-delimited required status check contexts from active
 # repository rulesets matching the default branch. This supplements classic
 # branch protection because rulesets can enforce required checks even when
