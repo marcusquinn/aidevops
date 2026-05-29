@@ -84,8 +84,10 @@ def test_handle_table_keeps_single_dash_first_body_row() -> None:
     body: list[str] = []
     states: dict[str, object] = {"table": False, "paragraph": [], "list": False, "list_tag": ""}
 
-    assert handle_table("| Left | Right |", body, states)
-    assert handle_table("| - | - |", body, states)
+    if not handle_table("| Left | Right |", body, states):
+        raise AssertionError("table header row should be handled")
+    if not handle_table("| - | - |", body, states):
+        raise AssertionError("single-dash placeholder row should be handled")
 
     assert_equal(
         body,
