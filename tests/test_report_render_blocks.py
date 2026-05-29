@@ -80,11 +80,32 @@ def test_handle_table_keeps_separator_shaped_first_body_row() -> None:
     )
 
 
+def test_handle_table_keeps_single_dash_first_body_row() -> None:
+    body: list[str] = []
+    states: dict[str, object] = {"table": False, "paragraph": [], "list": False, "list_tag": ""}
+
+    if not handle_table("| Left | Right |", body, states):
+        raise AssertionError("table header row should be handled")
+    if not handle_table("| - | - |", body, states):
+        raise AssertionError("single-dash placeholder row should be handled")
+
+    assert_equal(
+        body,
+        [
+            "<table><thead>",
+            "<tr><th>Left</th><th>Right</th></tr></thead><tbody>",
+            "<tr><td>-</td><td>-</td></tr>",
+        ],
+        "single-dash placeholder cells are emitted as data rows",
+    )
+
+
 def main() -> int:
     test_split_markdown_table_row_unescapes_backslash_pairs()
     test_split_markdown_table_row_keeps_escaped_pipes_in_cell()
     test_handle_table_skips_only_header_separator_row()
     test_handle_table_keeps_separator_shaped_first_body_row()
+    test_handle_table_keeps_single_dash_first_body_row()
     print("report_render_blocks tests passed")
     return 0
 

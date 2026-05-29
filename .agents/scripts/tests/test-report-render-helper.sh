@@ -440,6 +440,39 @@ MARKDOWN
 	return 0
 }
 
+test_heading_anchor_preserves_iterable_state() {
+	local _result=0
+	python3 - "$SCRIPT_DIR" <<'PY' || _result=$?
+from pathlib import Path
+import sys
+
+sys.path.insert(0, str(Path(sys.argv[1]).parent.resolve()))
+from report_render_headings import unique_heading_anchor
+
+list_state = {"used_anchors": ["repeat"]}
+assert unique_heading_anchor("repeat", list_state) == "repeat-2"
+assert list_state["used_anchors"] == {"repeat", "repeat-2"}
+
+tuple_state = {"used_anchors": ("repeat", "repeat-2")}
+assert unique_heading_anchor("repeat", tuple_state) == "repeat-3"
+assert tuple_state["used_anchors"] == {"repeat", "repeat-2", "repeat-3"}
+
+dict_state = {"used_anchors": {"repeat": True, "repeat-2": True}}
+assert unique_heading_anchor("repeat", dict_state) == "repeat-3"
+assert dict_state["used_anchors"] == {"repeat", "repeat-2", "repeat-3"}
+
+invalid_state = {"used_anchors": 42}
+assert unique_heading_anchor("repeat", invalid_state) == "repeat"
+assert invalid_state["used_anchors"] == {"repeat"}
+PY
+	if [[ "$_result" -ne 0 ]]; then
+		print_result "Heading anchors preserve iterable used_anchors state" 1 "Expected list, tuple, and dict state to be preserved while invalid state resets safely"
+		return 0
+	fi
+	print_result "Heading anchors preserve iterable used_anchors state" 0
+	return 0
+}
+
 test_mermaid_renderer_uses_node_ids() {
 	if python3 - "${SCRIPT_DIR}/.." <<'PYHTML'
 import sys
@@ -642,6 +675,7 @@ main() {
 	test_markdown_table_accepts_indented_single_dash_separator
 	test_markdown_table_preserves_escaped_pipes
 	test_markdown_headings_deduplicate_anchor_ids
+	test_heading_anchor_preserves_iterable_state
 	test_mermaid_renderer_uses_node_ids
 	test_mermaid_renderer_supports_chained_arrows
 	test_multiline_markdown_paragraph

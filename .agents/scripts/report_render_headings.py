@@ -48,7 +48,12 @@ def unique_heading_anchor(base_anchor: str, states: dict[str, object]) -> str:
         states["anchor_counts"] = anchor_counts
     used_anchors = states.setdefault("used_anchors", set())
     if not isinstance(used_anchors, set):
-        used_anchors = set()
+        try:
+            if isinstance(used_anchors, (str, bytes)):
+                raise TypeError
+            used_anchors = set(used_anchors)
+        except TypeError:
+            used_anchors = set()
         states["used_anchors"] = used_anchors
     count = int(anchor_counts.get(base_anchor, 0))
     anchor = base_anchor if count == 0 else f"{base_anchor}-{count + 1}"
