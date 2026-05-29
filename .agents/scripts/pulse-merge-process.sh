@@ -1194,8 +1194,19 @@ _check_required_checks_passing() {
 
 	# No required contexts → nothing required, treat as passing.
 	if [[ -z "$required_contexts" ]]; then
-		echo "[pulse-merge] _check_required_checks_passing: no required contexts for ${repo_slug} — allowing (t2922)" >>"$LOGFILE"
-		return 0
+		local fallback_rc=0
+		_check_required_pr_checks_passing_fallback "$repo_slug" "$pr_number"
+		fallback_rc=$?
+		if [[ $fallback_rc -eq 0 ]]; then
+			echo "[pulse-merge] _check_required_checks_passing: no branch/ruleset contexts and PR required checks are passing or absent for PR #${pr_number} in ${repo_slug} — allowing (t2922)" >>"$LOGFILE"
+			return 0
+		fi
+		if [[ $fallback_rc -eq 1 ]]; then
+			echo "[pulse-merge] _check_required_checks_passing: PR-level required checks are not passing for PR #${pr_number} in ${repo_slug} despite no branch/ruleset contexts — failing closed (t2922)" >>"$LOGFILE"
+			return 1
+		fi
+		echo "[pulse-merge] _check_required_checks_passing: PR-level required checks fallback failed for PR #${pr_number} in ${repo_slug} — failing closed (t2922)" >>"$LOGFILE"
+		return 1
 	fi
 
 	# GH#21799: replace GraphQL statusCheckRollup with REST check-runs (single

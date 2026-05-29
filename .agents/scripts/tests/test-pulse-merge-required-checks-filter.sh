@@ -71,6 +71,8 @@ print_result() {
 #   queued_only     — required check-run is queued with no conclusion yet
 #   expected_only   — required status context is expected/not reported yet
 #   skipping_only   — required check-run concludes skipped
+#   empty_required_pending_fallback — branch/ruleset APIs expose no contexts,
+#      but `gh pr checks --required` reports a pending required check
 #   error           — branch-protection API exits non-zero
 setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
@@ -127,7 +129,7 @@ fi
 
 if [[ "$1" == "api" && "$*" == *"protection/required_status_checks"* ]]; then
 	case "${MOCK_GH_MODE:-all_pass}" in
-	empty_required)
+	empty_required | empty_required_pending_fallback)
 		apply_jq '{"contexts":[]}' "$@"
 		exit 0
 		;;
@@ -145,6 +147,22 @@ fi
 if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"headRefOid"* ]]; then
 	apply_jq '{"headRefOid":"abc123def456789000000000000000000000abcd"}' "$@"
 	exit 0
+fi
+
+if [[ "$1" == "pr" && "$2" == "checks" && "$*" == *"--required"* ]]; then
+	case "${MOCK_GH_MODE:-all_pass}" in
+	empty_required_pending_fallback)
+		apply_jq '[
+			{"name":"ShellCheck (macos-latest)","state":"PENDING","bucket":"pending"},
+			{"name":"maintainer-gate","state":"SUCCESS","bucket":"pass"}
+		]' "$@"
+		exit 0
+		;;
+	*)
+		apply_jq '[]' "$@"
+		exit 0
+		;;
+	esac
 fi
 
 if [[ "$1" == "api" && "$*" == *"/check-runs"* ]]; then
@@ -252,6 +270,17 @@ define_function_under_test() {
 	# shellcheck disable=SC1090  # dynamic source from extracted helper
 	eval "$ref_match_src"
 
+	local pr_checks_fallback_src
+	pr_checks_fallback_src=$(awk '
+		/^_check_required_pr_checks_passing_fallback\(\) \{/,/^}$/ { print }
+	' "$REQUIRED_CHECKS_SCRIPT")
+	if [[ -z "$pr_checks_fallback_src" ]]; then
+		printf 'ERROR: could not extract _check_required_pr_checks_passing_fallback from %s\n' "$REQUIRED_CHECKS_SCRIPT" >&2
+		return 1
+	fi
+	# shellcheck disable=SC1090  # dynamic source from extracted helper
+	eval "$pr_checks_fallback_src"
+
 	local rulesets_src
 	rulesets_src=$(awk '
 		/^_required_contexts_from_rulesets_for_default_branch\(\) \{/,/^}$/ { print }
@@ -314,6 +343,19 @@ assert_function_returns() {
 	local label="$2"
 	local actual_rc=0
 	_pr_required_checks_pass "19023" "marcusquinn/aidevops" || actual_rc=$?
+	if [[ "$actual_rc" -eq "$expected_rc" ]]; then
+		print_result "$label" 0
+	else
+		print_result "$label" 1 "Expected rc=$expected_rc, got rc=$actual_rc"
+	fi
+	return 0
+}
+
+assert_passing_check_returns() {
+	local expected_rc="$1"
+	local label="$2"
+	local actual_rc=0
+	_check_required_checks_passing "marcusquinn/aidevops" "19023" || actual_rc=$?
 	if [[ "$actual_rc" -eq "$expected_rc" ]]; then
 		print_result "$label" 0
 	else
@@ -423,6 +465,19 @@ test_empty_required_set_allows_merge() {
 	return 0
 }
 
+test_empty_required_pending_fallback_blocks_ready_merge() {
+	# GH#24311: branch/ruleset APIs can expose no contexts while GitHub's
+	# PR-level required-check view still has pending required checks. The strict
+	# passing gate must not count such a PR as merge-ready / zero-progress-eligible.
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="empty_required_pending_fallback"
+	assert_passing_check_returns 1 "empty branch contexts + pending PR required check → strict passing gate blocks"
+	assert_log_contains "PR-level required checks are not passing" \
+		"empty_required_pending_fallback: fallback skip reason logged"
+	return 0
+}
+
 test_pending_required_blocks_merge() {
 	# t3567 semantics: pending required checks are not terminal failures, so the
 	# CI repair/close/requeue gate must not fire while GitHub is still running CI.
@@ -495,6 +550,7 @@ main() {
 	test_required_cancel_blocks_merge
 	test_required_action_required_is_non_terminal
 	test_empty_required_set_allows_merge
+	test_empty_required_pending_fallback_blocks_ready_merge
 	test_pending_required_blocks_merge
 	test_queued_required_is_non_terminal
 	test_expected_required_is_non_terminal
