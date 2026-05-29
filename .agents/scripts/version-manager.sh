@@ -77,7 +77,7 @@ _version_manager_has_approved_release_context() {
 	[[ "${AIDEVOPS_TASK_SCOPE:-}" == "$_VERSION_MANAGER_ACTION_RELEASE" ]] && return 0
 	[[ "$branch_name" == release/* || "$branch_name" == hotfix/* ]] && return 0
 	[[ "$session_key_lower" == release-* || "$session_key_lower" == hotfix-* ]] && return 0
-	[[ "$session_title_lower" == release* || "$session_title_lower" == *" release" || "$session_title_lower" == *" release "* ]] && return 0
+	[[ "$session_title_lower" == release || "$session_title_lower" == release\ * ]] && return 0
 	return 1
 }
 
