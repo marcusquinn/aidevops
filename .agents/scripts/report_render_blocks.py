@@ -40,7 +40,7 @@ def handle_table(line: str, body: list[str], states: dict[str, object]) -> bool:
     if not stripped.startswith("|") or not stripped.endswith("|"):
         return False
     raw_cells = [cell.strip() for cell in split_markdown_table_row(stripped)]
-    is_separator_row = all(re.match(r"^:?-{3,}:?$", html.unescape(cell)) for cell in raw_cells)
+    is_separator_row = all(re.match(r"^:?-+:?$", html.unescape(cell)) for cell in raw_cells)
     if (
         is_separator_row
         and states.get("table")
