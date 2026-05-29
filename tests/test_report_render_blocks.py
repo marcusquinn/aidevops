@@ -111,6 +111,11 @@ def test_table_separator_requires_three_dashes_per_cell() -> None:
         False,
         "short dash cells with alignment markers are data, not separators",
     )
+    assert_equal(
+        is_markdown_table_separator_row([]),
+        False,
+        "an empty list of cells is not a separator row",
+    )
 
 
 def main() -> int:
