@@ -152,6 +152,46 @@ else
 fi
 
 reset_guard_env
+export WORKER_SESSION_TITLE='release-3.20.6'
+rc=0
+_version_manager_has_approved_release_context >/dev/null 2>&1 || rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	print_result 'release context accepts hyphenated title prefix match' 0
+else
+	print_result 'release context accepts hyphenated title prefix match' 1 "rc=$rc"
+fi
+
+reset_guard_env
+export WORKER_SESSION_TITLE='release/3.20.6'
+rc=0
+_version_manager_has_approved_release_context >/dev/null 2>&1 || rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	print_result 'release context accepts slash title prefix match' 0
+else
+	print_result 'release context accepts slash title prefix match' 1 "rc=$rc"
+fi
+
+reset_guard_env
+export WORKER_SESSION_TITLE='release: 3.20.6'
+rc=0
+_version_manager_has_approved_release_context >/dev/null 2>&1 || rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	print_result 'release context accepts colon title prefix match' 0
+else
+	print_result 'release context accepts colon title prefix match' 1 "rc=$rc"
+fi
+
+reset_guard_env
+export WORKER_SESSION_TITLE='releasecandidate cleanup'
+rc=0
+_version_manager_has_approved_release_context >/dev/null 2>&1 || rc=$?
+if [[ "$rc" -ne 0 ]]; then
+	print_result 'release context denies alphanumeric title prefix match' 0
+else
+	print_result 'release context denies alphanumeric title prefix match' 1 "rc=$rc"
+fi
+
+reset_guard_env
 export AIDEVOPS_HEADLESS=1 WORKER_ISSUE_NUMBER=24089 WORKER_SESSION_KEY='issue-24089' AIDEVOPS_SESSION_TITLE='ordinary issue mentioning release cleanup'
 rc=0
 _version_manager_guard_headless_release_scope bump >/dev/null 2>&1 || rc=$?
