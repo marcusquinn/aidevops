@@ -29,7 +29,7 @@ tools:
 - **Context resolution**: explicit `--app-id` > `.asc/project.json` > prompt user to `asc init` (CI must use `--app-id` or pre-run `asc init`)
 - **GitHub**: https://github.com/tddworks/asc-cli (MIT, Swift, 130+ commands; v0.18.0 adds `versions update` release metadata flags)
 - **Website**: https://asccli.app | **Web apps**: [Command Center](https://asccli.app/command-center), [Console](https://asccli.app/console), [Screenshot Studio](https://asccli.app/editor)
-- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (27 command-group skills, checked at `6465c10feb89`) | [Community](https://github.com/rudrankriyam/app-store-connect-cli-skills) (22 workflow skills, checked at `8e67f1969e1b`)
+- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (27 command-group skills, checked at `6465c10feb89`) | [Community](https://github.com/rorkai/app-store-connect-cli-skills) (22 workflow skills, checked at `f5eae1857d20`)
 - **Requirements**: macOS 13+, App Store Connect API key, `jq` (workflow scripts use `jq -r`)
 
 **Dependency check**: Before any `asc` command:
@@ -54,18 +54,18 @@ command -v jq >/dev/null || { brew install jq || exit 1; }
 | **testflight** | `groups list`, `testers add/remove/import/export` | Beta distribution |
 | **version-localizations** | `list`, `create`, `update` | What's New, description, keywords per locale |
 | **app-infos** / **app-info-localizations** | `list`, `update`, `create`, `delete` | App name, subtitle, categories, per-locale metadata |
-| **screenshot-sets** / **screenshots** / **app-preview-sets** / **app-previews** | `list`, `create`, `upload` | Screenshots and video previews |
+| **screenshot-sets** / **screenshots** / **app-preview-sets** / **app-previews** | `list`, `create`, `upload`, `plan`, `apply` | Screenshots and video previews |
 | **app-shots** | `config`, `generate`, `translate` | AI screenshot generation (Gemini) |
 | **iap** | `list`, `create`, `submit`, `price-points`, `prices` | In-app purchases |
 | **subscriptions** / **subscription-groups** / **subscription-offers** | `list`, `create`, `submit` | Auto-renewable subscriptions, groups, offers |
-| **bundle-ids** / **certificates** / **profiles** / **devices** | `list`, `create`, `delete`, `register`, `revoke` | Code signing and provisioning |
+| **bundle-ids** / **certificates** / **profiles** / **devices** | `list`, `create`, `delete`, `register`, `revoke`, `inspect`, `local` | Code signing and provisioning |
 | **reviews** / **review-responses** | `list`, `get`, `create`, `delete` | Customer reviews and responses |
 | **reports** | `sales-reports`, `finance-reports`, `analytics-reports` | Sales, financial, analytics |
 | **users** / **user-invitations** | `list`, `update`, `remove`, `invite`, `cancel` | Team management |
 | **xcode-cloud** | `products`, `workflows`, `builds` | Xcode Cloud CI/CD |
-| **Other** | `apps list`, `game-center`, `perf-metrics`, `diagnostics`, `iris`, `plugins`, `tui` | Apps, Game Center, performance, private API, plugins, TUI |
+| **Other** | `apps list`, `app-tags`, `game-center`, `perf-metrics`, `diagnostics`, `iris`, `plugins`, `search`, `schema`, `capabilities`, `tui`, `web` | Apps, discoverability tags, Game Center, performance, private API, plugins, discovery, TUI, web-session gaps |
 
-**Discover**: `asc --help`, `asc <cmd> --help` | **Output**: `--output json` (default), `--output table`, `--output markdown`, `--pretty`
+**Discover**: `asc --help`, `asc <cmd> --help`, `asc search "upload build"`, `asc schema --pretty "GET /v1/apps"`, `asc capabilities --area release --output table` | **Output**: `--output json` (default), `--output table`, `--output markdown`, `--pretty`
 
 ## Key Workflows
 
@@ -89,8 +89,13 @@ asc versions set-build --version-id "$VERSION_ID" --build-id "$BUILD_ID"
 asc versions update --version-id "$VERSION_ID" --copyright "© 2026 Example" --release-type AFTER_APPROVAL
 LOC_ID=$(asc version-localizations list --version-id "$VERSION_ID" | jq -r '.data[0].id')
 asc version-localizations update --localization-id "$LOC_ID" --whats-new "Bug fixes and improvements"
+# Optional ASO signal: inspect Apple-generated app tags as context only
+asc app-tags list --app APP_ID --output json
 asc versions check-readiness --version-id "$VERSION_ID"
 asc versions submit --version-id "$VERSION_ID"
+
+# Web-only gap: attach non-renewing IAPs to next app version review when the public API rejects review items
+asc web review iaps attach --app APP_ID --iap-id IAP_ID --confirm
 ```
 
 ### Other Workflows
@@ -102,12 +107,18 @@ asc testflight testers import --beta-group-id GROUP_ID --file testers.csv
 asc builds update-beta-notes --build-id BUILD_ID --locale en-US --notes "What's new in beta"
 # Code signing — bundle ID, certificate, provisioning profile
 asc bundle-ids create --name "My App" --identifier com.example.app --platform ios
-asc certificates create --type IOS_DISTRIBUTION --csr-content "$(cat MyApp.certSigningRequest)"
+asc certificates create --certificate-type IOS_DISTRIBUTION --csr ./MyApp.certSigningRequest
+asc certificates create --certificate-type IOS_DISTRIBUTION --generate-csr --key-out ./signing/dist.key --csr-out ./signing/dist.csr
 asc profiles create --name "App Store Profile" --type IOS_APP_STORE --bundle-id-id BID --certificate-ids CERT_ID
+asc profiles inspect --path ./profiles/AppStore.mobileprovision --entitlements --output markdown
+asc profiles local install --path ./profiles/AppStore.mobileprovision
 # Metadata and AI screenshots
 asc app-info-localizations update --localization-id LOC_ID --name "My App" --subtitle "Do things faster"
 asc app-shots config --gemini-api-key KEY && asc app-shots generate
 asc app-shots translate --to zh --to ja
+# Reviewed screenshot batches — include existing remote counts before upload
+asc screenshots plan --app APP_ID --version 1.2.3 --review-output-dir ./screenshots/review --output json
+asc screenshots apply --app APP_ID --version 1.2.3 --review-output-dir ./screenshots/review --confirm --output json
 ```
 
 ## Web Apps and Local API Bridge
@@ -116,7 +127,7 @@ Run `asc web-server` to start the local API bridge (ports 8420 HTTP, 8421 HTTPS)
 
 ## Agent Skills
 
-Install on-demand (not pre-loaded): **Official** `asc skills install --all` (per-command reference) | **Community** `npx skills add rudrankriyam/app-store-connect-cli-skills` (workflow orchestration: releases, ASO, localization, RevenueCat, crash triage). These upstream skill packs are tracked for review but intentionally remain on-demand until aidevops has a multi-skill import strategy for repositories containing dozens of `SKILL.md` files. Latest reviewed official skill change adds build export-compliance handling; latest community refresh updates stale workflow skills.
+Install on-demand (not pre-loaded): **Official** `asc skills install --all` (per-command reference) | **Community** `asc install-skills` or `npx skills add rorkai/app-store-connect-cli-skills` (workflow orchestration: releases, ASO, localization, RevenueCat, crash triage). These upstream skill packs are tracked for review but intentionally remain on-demand until aidevops has a multi-skill import strategy for repositories containing dozens of `SKILL.md` files. Latest reviewed official skill change adds build export-compliance handling; latest community refresh (`f5eae1857d20`) adds command discovery/schema/capability guidance, app tag ASO context, screenshot plan/apply guardrails, generated CSR/local profile workflows, and the experimental web-session IAP review attachment escape hatch.
 
 ## Blitz MCP Server (Optional)
 
