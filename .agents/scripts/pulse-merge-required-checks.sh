@@ -21,7 +21,12 @@ _check_required_pr_checks_passing_fallback() {
 	local pr_number="$2"
 
 	local checks_json=""
-	checks_json=$(gh pr checks "$pr_number" --repo "$repo_slug" --required --json name,state,bucket 2>/dev/null) || return 2
+	local checks_exit=0
+	checks_json=$(gh pr checks "$pr_number" --repo "$repo_slug" --required --json name,state,bucket 2>/dev/null)
+	checks_exit=$?
+	if [[ $checks_exit -ne 0 && -z "$checks_json" ]]; then
+		return 2
+	fi
 	if [[ -z "$checks_json" || "$checks_json" == "null" || "$checks_json" == "[]" ]]; then
 		return 0
 	fi

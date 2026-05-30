@@ -156,7 +156,7 @@ if [[ "$1" == "pr" && "$2" == "checks" && "$*" == *"--required"* ]]; then
 			{"name":"ShellCheck (macos-latest)","state":"PENDING","bucket":"pending"},
 			{"name":"maintainer-gate","state":"SUCCESS","bucket":"pass"}
 		]' "$@"
-		exit 0
+		exit 2
 		;;
 	*)
 		apply_jq '[]' "$@"
