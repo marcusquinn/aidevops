@@ -90,12 +90,12 @@ asc versions update --version-id "$VERSION_ID" --copyright "© 2026 Example" --r
 LOC_ID=$(asc version-localizations list --version-id "$VERSION_ID" | jq -r '.data[0].id')
 asc version-localizations update --localization-id "$LOC_ID" --whats-new "Bug fixes and improvements"
 # Optional ASO signal: inspect Apple-generated app tags as context only
-asc app-tags list --app APP_ID --output json
+asc app-tags list --app-id APP_ID --output json
 asc versions check-readiness --version-id "$VERSION_ID"
 asc versions submit --version-id "$VERSION_ID"
 
 # Web-only gap: attach non-renewing IAPs to next app version review when the public API rejects review items
-asc web review iaps attach --app APP_ID --iap-id IAP_ID --confirm
+asc web review iaps attach --app-id APP_ID --iap-id IAP_ID --confirm
 ```
 
 ### Other Workflows
@@ -117,8 +117,8 @@ asc app-info-localizations update --localization-id LOC_ID --name "My App" --sub
 asc app-shots config --gemini-api-key KEY && asc app-shots generate
 asc app-shots translate --to zh --to ja
 # Reviewed screenshot batches — include existing remote counts before upload
-asc screenshots plan --app APP_ID --version 1.2.3 --review-output-dir ./screenshots/review --output json
-asc screenshots apply --app APP_ID --version 1.2.3 --review-output-dir ./screenshots/review --confirm --output json
+asc screenshots plan --app-id APP_ID --version 1.2.3 --review-output-dir ./screenshots/review --output json
+asc screenshots apply --app-id APP_ID --version 1.2.3 --review-output-dir ./screenshots/review --confirm --output json
 ```
 
 ## Web Apps and Local API Bridge
