@@ -310,7 +310,7 @@ _dashboard_issue_is_supervisor() {
 	local issue_json="$1"
 	printf '%s\n' "$issue_json" | jq -e '
 		((.title // "") | startswith("[Supervisor:"))
-		or any((.labels // [])[]; (.name // .) == "supervisor")
+		or any(.labels[]?; (.name // .) == "supervisor")
 	' >/dev/null 2>&1
 	return $?
 }
