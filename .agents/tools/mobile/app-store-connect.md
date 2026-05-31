@@ -27,7 +27,7 @@ tools:
 - **Project pin**: `asc init --app-id <id>` (saves `.asc/project.json`, auto-used by all commands)
 - **Verify**: `asc auth check` | **Multi-account**: `asc auth use <name>`
 - **Context resolution**: explicit `--app-id` > `.asc/project.json` > prompt user to `asc init` (CI must use `--app-id` or pre-run `asc init`)
-- **GitHub**: https://github.com/tddworks/asc-cli (MIT, Swift, 130+ commands; v0.18.0 adds `versions update` release metadata flags)
+- **GitHub**: https://github.com/tddworks/asc-cli (MIT, Swift, 130+ commands; v0.18.1 adds review-submission item drill-down, sales-report rollups/schema selection, and an app-availability territory-limit fix)
 - **Website**: https://asccli.app | **Web apps**: [Command Center](https://asccli.app/command-center), [Console](https://asccli.app/console), [Screenshot Studio](https://asccli.app/editor)
 - **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (27 command-group skills, checked at `6465c10feb89`) | [Community](https://github.com/rorkai/app-store-connect-cli-skills) (22 workflow skills, checked at `f5eae1857d20`)
 - **Requirements**: macOS 13+, App Store Connect API key, `jq` (workflow scripts use `jq -r`)
@@ -49,7 +49,7 @@ command -v jq >/dev/null || { brew install jq || exit 1; }
 
 | Group | Commands | Purpose |
 |-------|----------|---------|
-| **versions** | `list`, `create`, `set-build`, `check-readiness`, `submit` | Versions and submission |
+| **versions** / **review-submissions** | `list`, `create`, `set-build`, `check-readiness`, `submit`; `review-submissions get`, `review-submissions items list` | Versions, submissions, and per-item review-state inspection |
 | **builds** | `list`, `archive`, `upload`, `add-beta-group`, `update-beta-notes` | Build management |
 | **testflight** | `groups list`, `testers add/remove/import/export` | Beta distribution |
 | **version-localizations** | `list`, `create`, `update` | What's New, description, keywords per locale |
@@ -60,7 +60,7 @@ command -v jq >/dev/null || { brew install jq || exit 1; }
 | **subscriptions** / **subscription-groups** / **subscription-offers** | `list`, `create`, `submit` | Auto-renewable subscriptions, groups, offers |
 | **bundle-ids** / **certificates** / **profiles** / **devices** | `list`, `create`, `delete`, `register`, `revoke`, `inspect`, `local` | Code signing and provisioning |
 | **reviews** / **review-responses** | `list`, `get`, `create`, `delete` | Customer reviews and responses |
-| **reports** | `sales-reports`, `finance-reports`, `analytics-reports` | Sales, financial, analytics |
+| **reports** | `sales-reports download`, `sales-reports summary`, `finance-reports`, `analytics-reports` | Sales, financial, analytics; use `--version <schema>` on sales downloads when Apple requires a non-default report schema |
 | **users** / **user-invitations** | `list`, `update`, `remove`, `invite`, `cancel` | Team management |
 | **xcode-cloud** | `products`, `workflows`, `builds` | Xcode Cloud CI/CD |
 | **Other** | `apps list`, `app-tags`, `game-center`, `perf-metrics`, `diagnostics`, `iris`, `plugins`, `search`, `schema`, `capabilities`, `tui`, `web` | Apps, discoverability tags, Game Center, performance, private API, plugins, discovery, TUI, web-session gaps |
@@ -94,6 +94,11 @@ asc app-tags list --app-id APP_ID --output json
 asc versions check-readiness --version-id "$VERSION_ID"
 asc versions submit --version-id "$VERSION_ID"
 
+# If Apple returns unresolved issues, inspect the rejected submission item and linked resource
+SUBMISSION_ID=$(asc review-submissions list --app-id APP_ID | jq -r '.data[0].id')
+asc review-submissions get --submission-id "$SUBMISSION_ID" --output json
+asc review-submissions items list --submission-id "$SUBMISSION_ID" --state REJECTED --output json
+
 # Web-only gap: attach non-renewing IAPs to next app version review when the public API rejects review items
 asc web review iaps attach --app-id APP_ID --iap-id IAP_ID --confirm
 ```
@@ -119,6 +124,11 @@ asc app-shots translate --to zh --to ja
 # Reviewed screenshot batches — include existing remote counts before upload
 asc screenshots plan --app-id APP_ID --version 1.2.3 --review-output-dir ./screenshots/review --output json
 asc screenshots apply --app-id APP_ID --version 1.2.3 --review-output-dir ./screenshots/review --confirm --output json
+# Reports — choose the Apple schema version when needed and aggregate daily sales reports
+asc sales-reports download --vendor-number VENDOR --frequency DAILY --report-type SALES --report-sub-type SUMMARY --date 2026-05-01 --version 1_1
+asc sales-reports summary --from 2026-05-01 --to 2026-05-31 --output json
+# App availability now fetches the full territory list without hitting Apple's 50-item include cap
+asc app-availability get --app-id APP_ID --output json
 ```
 
 ## Web Apps and Local API Bridge
