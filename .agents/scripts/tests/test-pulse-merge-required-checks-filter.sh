@@ -73,6 +73,7 @@ print_result() {
 #   skipping_only   — required check-run concludes skipped
 #   empty_required_pending_fallback — branch/ruleset APIs expose no contexts,
 #      but `gh pr checks --required` reports a pending required check
+#   pr_checks_empty_failure — PR-level required checks exits non-zero with no JSON
 #   error           — branch-protection API exits non-zero
 setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
@@ -157,6 +158,9 @@ if [[ "$1" == "pr" && "$2" == "checks" && "$*" == *"--required"* ]]; then
 			{"name":"maintainer-gate","state":"SUCCESS","bucket":"pass"}
 		]' "$@"
 		exit 2
+		;;
+	pr_checks_empty_failure)
+		exit 1
 		;;
 	*)
 		apply_jq '[]' "$@"
@@ -364,6 +368,21 @@ assert_passing_check_returns() {
 	return 0
 }
 
+assert_pr_checks_fallback_returns() {
+	local expected_rc="$1"
+	local expected_output="$2"
+	local label="$3"
+	local actual_rc=0
+	local actual_output=""
+	actual_output=$(_check_required_pr_checks_passing_fallback "marcusquinn/aidevops" "19023") || actual_rc=$?
+	if [[ "$actual_rc" -eq "$expected_rc" && "$actual_output" == "$expected_output" ]]; then
+		print_result "$label" 0
+	else
+		print_result "$label" 1 "Expected rc=$expected_rc output='$expected_output', got rc=$actual_rc output='$actual_output'"
+	fi
+	return 0
+}
+
 assert_log_contains() {
 	local pattern="$1"
 	local label="$2"
@@ -478,6 +497,22 @@ test_empty_required_pending_fallback_blocks_ready_merge() {
 	return 0
 }
 
+test_pr_checks_empty_success_outputs_json_array() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="all_pass"
+	assert_pr_checks_fallback_returns 0 "[]" "empty PR required-checks success → fallback emits JSON array"
+	return 0
+}
+
+test_pr_checks_empty_failure_fails_closed() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="pr_checks_empty_failure"
+	assert_pr_checks_fallback_returns 2 "" "empty PR required-checks failure → fallback fails closed"
+	return 0
+}
+
 test_pending_required_blocks_merge() {
 	# t3567 semantics: pending required checks are not terminal failures, so the
 	# CI repair/close/requeue gate must not fire while GitHub is still running CI.
@@ -551,6 +586,8 @@ main() {
 	test_required_action_required_is_non_terminal
 	test_empty_required_set_allows_merge
 	test_empty_required_pending_fallback_blocks_ready_merge
+	test_pr_checks_empty_success_outputs_json_array
+	test_pr_checks_empty_failure_fails_closed
 	test_pending_required_blocks_merge
 	test_queued_required_is_non_terminal
 	test_expected_required_is_non_terminal
