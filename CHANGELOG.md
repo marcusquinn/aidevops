@@ -10,9 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.6] - 2026-05-31
+
 ### Changed
 
-- Reviewed ClaudeBar v0.4.64; relevant Antigravity provider metadata was already adopted in #24262 (#24317).
+- Maintenance: update simplification state registry
+- exclude pending required checks from zero-progress (#24312)
+- detect legacy status error states (#24316)
+- fix merge-stuck legacy status detection (#24314)
+- scan orphaned health dashboards (#24307)
+- Tests: guard opencode continuation seeding (#24304)
+- surface stale dashboard refresh failures (#24265)
+- fix: quote runner health jq filters (#24297)
+- Maintenance: update simplification state registry
+- fix: normalize token worker path detection (#24280)
+
+### Fixed
+
+- harden PR required checks fallback (#24346)
+- handle pending PR required checks fallback (#24329)
+- ignore stale contributor dashboards (#24310)
+- exclude manual interactive PRs from zero-progress signal (#24177)
 
 ## [3.20.5] - 2026-05-29
 
