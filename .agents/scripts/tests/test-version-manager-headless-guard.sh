@@ -134,7 +134,7 @@ fi
 reset_guard_env
 export AIDEVOPS_SESSION_KEY='RELEASE-20260525'
 rc=0
-_version_manager_has_approved_release_context >/dev/null 2>&1 || rc=$?
+_version_manager_has_approved_release_context 'main' >/dev/null 2>&1 || rc=$?
 if [[ "$rc" -eq 0 ]]; then
 	print_result 'release context accepts case-insensitive session key match' 0
 else
@@ -144,7 +144,7 @@ fi
 reset_guard_env
 export WORKER_SESSION_TITLE='Release cleanup'
 rc=0
-_version_manager_has_approved_release_context >/dev/null 2>&1 || rc=$?
+_version_manager_has_approved_release_context 'main' >/dev/null 2>&1 || rc=$?
 if [[ "$rc" -eq 0 ]]; then
 	print_result 'release context accepts case-insensitive title prefix match' 0
 else
@@ -154,7 +154,7 @@ fi
 reset_guard_env
 export WORKER_SESSION_TITLE='release-3.20.6'
 rc=0
-_version_manager_has_approved_release_context >/dev/null 2>&1 || rc=$?
+_version_manager_has_approved_release_context 'main' >/dev/null 2>&1 || rc=$?
 if [[ "$rc" -eq 0 ]]; then
 	print_result 'release context accepts hyphenated title prefix match' 0
 else
@@ -164,7 +164,7 @@ fi
 reset_guard_env
 export WORKER_SESSION_TITLE='release/3.20.6'
 rc=0
-_version_manager_has_approved_release_context >/dev/null 2>&1 || rc=$?
+_version_manager_has_approved_release_context 'main' >/dev/null 2>&1 || rc=$?
 if [[ "$rc" -eq 0 ]]; then
 	print_result 'release context accepts slash title prefix match' 0
 else
@@ -174,7 +174,7 @@ fi
 reset_guard_env
 export WORKER_SESSION_TITLE='release: 3.20.6'
 rc=0
-_version_manager_has_approved_release_context >/dev/null 2>&1 || rc=$?
+_version_manager_has_approved_release_context 'main' >/dev/null 2>&1 || rc=$?
 if [[ "$rc" -eq 0 ]]; then
 	print_result 'release context accepts colon title prefix match' 0
 else
@@ -184,7 +184,7 @@ fi
 reset_guard_env
 export WORKER_SESSION_TITLE='releasecandidate cleanup'
 rc=0
-_version_manager_has_approved_release_context >/dev/null 2>&1 || rc=$?
+_version_manager_has_approved_release_context 'main' >/dev/null 2>&1 || rc=$?
 if [[ "$rc" -ne 0 ]]; then
 	print_result 'release context denies alphanumeric title prefix match' 0
 else
