@@ -28,6 +28,10 @@ _check_required_pr_checks_passing_fallback() {
 		return 2
 	fi
 	if [[ -z "$checks_json" || "$checks_json" == "null" || "$checks_json" == "[]" ]]; then
+		if [[ $checks_exit -ne 0 ]]; then
+			return 2
+		fi
+		printf '[]\n'
 		return 0
 	fi
 
