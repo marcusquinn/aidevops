@@ -109,12 +109,27 @@ test_render_markdown_fixture() {
 	assert_contains "$_out" "class=\"accordion action-prompt\"" "Markdown render includes action prompt accordions"
 	if python3 - "$_out" <<'PYHTML'
 from pathlib import Path
-import re
 import sys
 
-text = Path(sys.argv[1]).read_text()
-match = re.search(r'<section class="(?:action-line|action-panel)"[^>]*>(.*?)</section>', text, re.S)
-raise SystemExit(0 if match and 'class="accordion action-prompt"' in match.group(1) else 1)
+text = Path(sys.argv[1]).read_text(encoding="utf-8")
+sections = []
+start = 0
+while True:
+    start_idx = text.find("<section", start)
+    if start_idx == -1:
+        break
+    end_tag_idx = text.find(">", start_idx)
+    if end_tag_idx == -1:
+        break
+    end_idx = text.find("</section>", end_tag_idx)
+    if end_idx == -1:
+        break
+    tag_header = text[start_idx:end_tag_idx]
+    if 'class="action-line"' in tag_header or 'class="action-panel"' in tag_header:
+        sections.append(text[end_tag_idx + 1:end_idx])
+    start = end_idx + len("</section>")
+
+raise SystemExit(0 if any('class="accordion action-prompt"' in section for section in sections) else 1)
 PYHTML
 	then
 		print_result "Markdown render places action prompts inside action sections" 0
