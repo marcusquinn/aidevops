@@ -955,6 +955,13 @@ _process_single_ready_pr() {
 		fi
 		_handle_post_merge_actions "$pr_number" "$repo_slug" "$linked_issue" "$merge_summary" "$_ipr_labels"
 		return 0
+	elif [[ "$merge_output" == *"Merge already in progress"* ]]; then
+		echo "[pulse-wrapper] Deterministic merge: PR #${pr_number} in ${repo_slug} already has a merge in progress; counting as merge progress (GH#24383): ${merge_output}" >>"$LOGFILE"
+		local _ipr_labels
+		_ipr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _ipr_labels=""
+		_handle_post_merge_actions "$pr_number" "$repo_slug" "$linked_issue" "$merge_summary" "$_ipr_labels"
+		return $?
 	else
 		echo "[pulse-wrapper] Deterministic merge: FAILED PR #${pr_number} in ${repo_slug}: ${merge_output}" >>"$LOGFILE"
 		return 3
