@@ -300,6 +300,40 @@ describe("tryRepairSignature", () => {
     assert.ok(fileContent.includes("unsigned content"), "original preserved");
   });
 
+  test("uses cheap no-session helper path when repairing body-file", () => {
+    const dir = mkdtempSync(join(tmpdir(), "t24374-fast-helper-"));
+    const helper = join(dir, "gh-signature-helper.sh");
+    const argvLog = join(dir, "helper-argv.log");
+    const bodyFile = join(dir, "body.md");
+    writeFileSync(bodyFile, "unsigned content\n");
+    writeFileSync(
+      helper,
+      `#!/usr/bin/env bash
+printf '%s\n' "$*" >"${argvLog}"
+printf '\n\n${SIG_MARKER}\n---\n[aidevops.sh](https://aidevops.sh) v9.9.9 stub\n'
+`,
+    );
+    chmodSync(helper, 0o755);
+    const { log } = makeLogger();
+    const cmd = `gh issue comment 1 --repo o/r --body-file ${bodyFile}`;
+    const out = tryRepairSignature(cmd, dir, log);
+    assert.equal(out.status, "ok");
+    assert.match(readFileSync(argvLog, "utf-8"), /footer --no-session --body/);
+  });
+
+  test("allows same-command body-file creation for exec-time shim repair", () => {
+    const dir = setupStubHelper();
+    const bodyFile = join(dir, "created-later.md");
+    const { log, entries } = makeLogger();
+    const cmd = `printf 'body\\n' > ${bodyFile} && gh issue comment 1 --repo o/r --body-file ${bodyFile}`;
+    const out = tryRepairSignature(cmd, dir, log);
+    assert.deepEqual(out, { status: "ok", cmd });
+    assert.ok(
+      entries.some((entry) => /deferring signature injection to PATH shim/.test(entry.msg)),
+      "same-command creation should be explicitly delegated to shim",
+    );
+  });
+
   test("is idempotent on already-signed --body-file", () => {
     const dir = setupStubHelper();
     const bodyFile = join(dir, "signed.md");
