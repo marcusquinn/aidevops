@@ -28,8 +28,10 @@ _test() {
 	return 0
 }
 
-SCRIPT_DIR="${BASH_SOURCE[0]%/*}/.."
-[[ "$SCRIPT_DIR" == "${BASH_SOURCE[0]}" ]] && SCRIPT_DIR="."
+SCRIPT_PATH="${BASH_SOURCE[0]}"
+SCRIPT_DIR="${SCRIPT_PATH%/*}"
+[[ "$SCRIPT_DIR" == "$SCRIPT_PATH" ]] && SCRIPT_DIR="."
+SCRIPT_DIR="${SCRIPT_DIR}/.."
 SCRIPT_DIR="$(cd "$SCRIPT_DIR" && pwd)"
 
 TMPDIR_TEST="$(mktemp -d)"
@@ -41,6 +43,7 @@ printf '=== cleanup stack reversal tests ===\n'
 
 order_file="$TMPDIR_TEST/order.txt"
 stderr_file="$TMPDIR_TEST/stderr.txt"
+: >"$order_file"
 
 _CLEANUP_CMDS=""
 push_cleanup "printf '%s\\n' first >> '$order_file'"
