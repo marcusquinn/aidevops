@@ -186,7 +186,8 @@ _dsi_guard_no_maintainer_review_required() {
 	local labels_csv="$1"
 	local issue_number="$2"
 	local repo_slug="$3"
-	local labels_with_commas=",${labels_csv},"
+	local labels_with_commas=""
+	labels_with_commas=$(printf ',%s,' "$labels_csv")
 
 	#aidevops:trust-boundary -- manual dispatch must not bypass signed/maintainer issue approval.
 	if [[ "$labels_with_commas" == *",needs-maintainer-review,"* ]]; then
