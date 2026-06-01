@@ -12,7 +12,7 @@ import { getCursorProxyPort, registerCursorProvider } from "./cursor-proxy.mjs";
 import { getGoogleProxyPort, registerGoogleProvider } from "./google-proxy.mjs";
 import { getClaudeProxyPort, registerClaudeProvider } from "./claude-proxy.mjs";
 import { checkOpenCodeVersionDrift } from "./version-tracking.mjs";
-import { CLAUDE_MODEL_LIMITS, OPENAI_MODEL_LIMITS } from "./model-limits.mjs";
+import { CLAUDE_MODEL_LIMITS } from "./model-limits.mjs";
 
 /**
  * Shared model definition template for Claude models managed by aidevops.
@@ -27,25 +27,6 @@ function claudeModelDef(overrides) {
     reasoning: true,
     modalities: { input: ["text", "image"], output: ["text"] },
     cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
-    ...overrides,
-  };
-}
-
-/**
- * Shared model definition template for OpenAI models whose limits aidevops
- * must override from OpenCode/provider defaults.
- * @param {object} overrides
- * @returns {object}
- */
-function openaiModelDef(overrides) {
-  return {
-    attachment: true,
-    tool_call: true,
-    temperature: true,
-    reasoning: true,
-    modalities: { input: ["text", "image"], output: ["text"] },
-    cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
-    family: "openai",
     ...overrides,
   };
 }
@@ -90,13 +71,6 @@ const CLAUDECLI_MODELS = buildClaudeModelMap({
   "claude-opus-4-7":   "Claude Opus 4.7 (via CLI)",
 });
 
-const OPENAI_MODELS = Object.fromEntries(
-  Object.entries(OPENAI_MODEL_LIMITS).map(([id, limit]) => [
-    id,
-    openaiModelDef({ name: `OpenAI ${id}`, limit }),
-  ]),
-);
-
 /**
  * Upsert aidevops-managed models into the anthropic and claudecli providers.
  * Preserves any user options already set on the providers.
@@ -139,27 +113,6 @@ function registerAnthropicModels(config) {
     if (!existing) count++;
   }
 
-  return count;
-}
-
-/**
- * Upsert aidevops-managed OpenAI model limits into the built-in openai provider.
- * This preserves user provider options while correcting context metadata that
- * drives OpenCode's 80% auto-compaction threshold.
- * @param {object} config - OpenCode Config object (mutable)
- * @returns {number} number of model entries upserted
- */
-function registerOpenAIModels(config) {
-  if (!config.provider) config.provider = {};
-  if (!config.provider.openai) config.provider.openai = {};
-  if (!config.provider.openai.models) config.provider.openai.models = {};
-
-  let count = 0;
-  for (const [id, def] of Object.entries(OPENAI_MODELS)) {
-    const existing = config.provider.openai.models[id];
-    config.provider.openai.models[id] = { ...existing, ...def };
-    if (!existing) count++;
-  }
   return count;
 }
 
@@ -306,7 +259,6 @@ function logConfigSummary(counts, versionDrift) {
     [counts.agentTools, "agent tool perms"],
     [counts.poolCleaned, `cleaned ${counts.poolCleaned} stale pool provider${counts.poolCleaned === 1 ? "" : "s"}`],
     [counts.anthropic, "anthropic models"],
-    [counts.openai, "OpenAI models"],
     [counts.cursor, "Cursor models"],
     [counts.google, "Google models"],
     [counts.claude, "Claude CLI models"],
@@ -346,8 +298,6 @@ export function createConfigHook(deps) {
     const agentTools = applyAgentMcpTools(config);
     const poolCleaned = registerPoolProvider(config);
     const anthropic = registerAnthropicModels(config);
-    const openai = registerOpenAIModels(config);
-
     // Discover and register proxy provider models only when a proxy listener is
     // already active. The normal startup path intentionally leaves these ports
     // null until first use, so unconditional imports/discovery here made config
@@ -382,7 +332,7 @@ export function createConfigHook(deps) {
     const claude = registerClaudeCliModels(config);
 
     logConfigSummary(
-      { agents, mcps, agentTools, poolCleaned, anthropic, openai, cursor, google, claude },
+      { agents, mcps, agentTools, poolCleaned, anthropic, cursor, google, claude },
       checkOpenCodeVersionDrift(pluginDir),
     );
   };
