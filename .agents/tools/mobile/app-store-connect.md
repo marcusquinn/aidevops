@@ -29,7 +29,7 @@ tools:
 - **Context resolution**: explicit `--app-id` > `.asc/project.json` > prompt user to `asc init` (CI must use `--app-id` or pre-run `asc init`)
 - **GitHub**: https://github.com/tddworks/asc-cli (MIT, Swift, 130+ commands; v0.18.1 adds review-submission item drill-down, sales-report rollups/schema selection, and an app-availability territory-limit fix)
 - **Website**: https://asccli.app | **Web apps**: [Command Center](https://asccli.app/command-center), [Console](https://asccli.app/console), [Screenshot Studio](https://asccli.app/editor)
-- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (27 command-group skills, checked at `6465c10feb89`) | [Community](https://github.com/rorkai/app-store-connect-cli-skills) (22 workflow skills, checked at `f5eae1857d20`)
+- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (27 command-group skills, checked at `6465c10feb89`) | [Community](https://github.com/rudrankriyam/app-store-connect-cli-skills) (23 workflow skills, checked at `29532c9`)
 - **Requirements**: macOS 13+, App Store Connect API key, `jq` (workflow scripts use `jq -r`)
 
 **Dependency check**: Before any `asc` command:
@@ -63,6 +63,7 @@ command -v jq >/dev/null || { brew install jq || exit 1; }
 | **reports** | `sales-reports download`, `sales-reports summary`, `finance-reports`, `analytics-reports` | Sales, financial, analytics; use `--version <schema>` on sales downloads when Apple requires a non-default report schema |
 | **users** / **user-invitations** | `list`, `update`, `remove`, `invite`, `cancel` | Team management |
 | **xcode-cloud** | `products`, `workflows`, `builds` | Xcode Cloud CI/CD |
+| **Apple Ads** | `ads auth`, `ads acls`, `ads campaigns`, `ads ad-groups`, `ads reports`, `ads api request` | Apple Ads auth, org lookup, campaign/ad-group management, reports, and raw v5 API calls |
 | **Other** | `apps list`, `app-tags`, `game-center`, `perf-metrics`, `diagnostics`, `iris`, `plugins`, `search`, `schema`, `capabilities`, `tui`, `web` | Apps, discoverability tags, Game Center, performance, private API, plugins, discovery, TUI, web-session gaps |
 
 **Discover**: `asc --help`, `asc <cmd> --help`, `asc search "upload build"`, `asc schema --pretty "GET /v1/apps"`, `asc capabilities --area release --output table` | **Output**: `--output json` (default), `--output table`, `--output markdown`, `--pretty`
@@ -131,13 +132,37 @@ asc sales-reports summary --from 2026-05-01 --to 2026-05-31 --output json
 asc app-availability get --app-id APP_ID --output json
 ```
 
+### Apple Ads Workflows
+
+Apple Ads auth is separate from App Store Connect API-key auth. Resolve the org first, use JSON output for automation, and keep live-account mutations read-first and approval-gated.
+
+```bash
+# Auth/status: stored Apple Ads profile or ASC_ADS_* environment variables
+asc ads auth status --validate --output json
+asc ads auth doctor --output json
+asc ads me view --output json
+
+# Org resolution and read-only discovery
+asc ads acls --output json
+asc ads campaigns --org ORG_ID --limit 100 --output json
+asc ads campaigns --org ORG_ID --paginate --output json
+asc ads ad-groups list --org ORG_ID --campaign CAMPAIGN_ID --output json
+
+# Reports and mutations take Apple Ads JSON request files; destructive commands require --confirm
+asc ads reports campaigns --org ORG_ID --file reporting-request.json --output json
+asc ads campaigns create --org ORG_ID --file campaign.json --output json
+asc ads campaigns delete --org ORG_ID --campaign CAMPAIGN_ID --confirm
+```
+
+When using `asc ads api request`, pass only Apple Ads v5 paths or `https://api.searchads.apple.com/api/v5/...` URLs. For live tests, create paused or future-dated resources with a unique test name, save IDs from JSON output, and clean up only the parent campaign or ad group created during the test.
+
 ## Web Apps and Local API Bridge
 
 Run `asc web-server` to start the local API bridge (ports 8420 HTTP, 8421 HTTPS). Web apps at asccli.app connect to it for CLI execution. `--port N` binds **two** ports (N and N+1) — leave a gap of 2+.
 
 ## Agent Skills
 
-Install on-demand (not pre-loaded): **Official** `asc skills install --all` (per-command reference) | **Community** `asc install-skills` or `npx skills add rorkai/app-store-connect-cli-skills` (workflow orchestration: releases, ASO, localization, RevenueCat, crash triage). These upstream skill packs are tracked for review but intentionally remain on-demand until aidevops has a multi-skill import strategy for repositories containing dozens of `SKILL.md` files. Latest reviewed official skill change adds build export-compliance handling; latest community refresh (`f5eae1857d20`) adds command discovery/schema/capability guidance, app tag ASO context, screenshot plan/apply guardrails, generated CSR/local profile workflows, and the experimental web-session IAP review attachment escape hatch.
+Install on-demand (not pre-loaded): **Official** `asc skills install --all` (per-command reference) | **Community** `asc install-skills` or `npx skills add rudrankriyam/app-store-connect-cli-skills` (workflow orchestration: releases, ASO, localization, RevenueCat, crash triage, Apple Ads). These upstream skill packs are tracked for review but intentionally remain on-demand until aidevops has a multi-skill import strategy for repositories containing dozens of `SKILL.md` files. Latest reviewed official skill change adds build export-compliance handling; latest community refresh (`29532c9`) adds Apple Ads auth/org/campaign/reporting/raw-API guidance, safe live-testing guardrails, and Apple Ads notes in the general asc command-usage skill.
 
 ## Blitz MCP Server (Optional)
 
