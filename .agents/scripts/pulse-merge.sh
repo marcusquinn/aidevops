@@ -957,7 +957,7 @@ _process_single_ready_pr() {
 		return 0
 	elif [[ "$merge_output" == *"Merge already in progress"* ]]; then
 		echo "[pulse-wrapper] Deterministic merge: PR #${pr_number} in ${repo_slug} already has a merge in progress; counting as merge progress (GH#24383): ${merge_output}" >>"$LOGFILE"
-		return 4
+		return 0
 	else
 		echo "[pulse-wrapper] Deterministic merge: FAILED PR #${pr_number} in ${repo_slug}: ${merge_output}" >>"$LOGFILE"
 		return 3
@@ -984,7 +984,6 @@ _process_single_ready_pr() {
 #   1 = skipped (gate failure, non-mergeable, or PR not found)
 #   2 = closed conflicting
 #   3 = merge failed
-#   4 = merge already in progress on GitHub
 #######################################
 process_pr() {
 	local repo_slug="$1"

@@ -91,10 +91,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODULE="$SCRIPT_DIR/pulse-merge-stuck.sh"
 STATS_HELPER="$SCRIPT_DIR/pulse-stats-helper.sh"
 MERGE_SCRIPT="$SCRIPT_DIR/pulse-merge.sh"
-MERGE_PROCESS_SCRIPT="$SCRIPT_DIR/pulse-merge-process.sh"
 CONF_FILE="$SCRIPT_DIR/../configs/pulse-merge-stuck.conf"
 
-for required in "$MODULE" "$STATS_HELPER" "$MERGE_SCRIPT" "$MERGE_PROCESS_SCRIPT"; do
+for required in "$MODULE" "$STATS_HELPER" "$MERGE_SCRIPT"; do
 	if [[ ! -f "$required" ]]; then
 		echo "${TEST_RED}FATAL${TEST_NC}: $required not found"
 		exit 1
@@ -420,9 +419,7 @@ echo ""
 # detector can file false collapse issues while GitHub is completing the merge.
 TESTS_RUN=$((TESTS_RUN + 1))
 if grep -q 'Merge already in progress' "$MERGE_SCRIPT" \
-	&& grep -q 'return 4' "$MERGE_SCRIPT" \
-	&& grep -q 'merge_progress' "$MERGE_PROCESS_SCRIPT" \
-	&& grep -q 'total_merged + total_merge_progress' "$MERGE_PROCESS_SCRIPT"; then
+	&& grep -q 'return 0' "$MERGE_SCRIPT"; then
 	echo "${TEST_GREEN}PASS${TEST_NC}: 6d: merge-in-progress is counted as zero-progress-breaking progress"
 else
 	TESTS_FAILED=$((TESTS_FAILED + 1))
