@@ -106,6 +106,25 @@ test_non_full_loop_prompt_unchanged() {
 	return 0
 }
 
+test_headless_contract_uses_deployed_framework_paths() {
+	local prompt='/full-loop Implement issue #24354'
+	local output
+	output=$(append_worker_headless_contract "$prompt")
+
+	if [[ "$output" == *'Normal project repos: full-loop workflow is deployed at ~/.aidevops/agents/scripts/commands/full-loop.md'* ]] &&
+		[[ "$output" == *'Normal project repos: aidevops framework scripts live under ~/.aidevops/agents/scripts/ (not project-local .agents/scripts/)'* ]] &&
+		[[ "$output" == *'Aidevops source repo only: the same files are edited at .agents/scripts/commands/full-loop.md and .agents/scripts/'* ]] &&
+		[[ "$output" != *'- Full-loop workflow: .agents/scripts/commands/full-loop.md'* ]] &&
+		[[ "$output" != *'- All agent scripts live under .agents/scripts/ (not scripts/ at root)'* ]]; then
+		print_result "headless contract uses deployed framework paths for project repos" 0
+		return 0
+	fi
+
+	print_result "headless contract uses deployed framework paths for project repos" 1 \
+		"Output still contains ambiguous source-repo framework path guidance"
+	return 0
+}
+
 test_parse_initial_model_does_not_set_explicit_override() {
 	local role="worker" session_key="issue-22862" work_dir="$TEST_ROOT" title="Issue #22862" prompt="/full-loop test" prompt_file=""
 	local model_override="" initial_model="" tier_override="" variant_override="" agent_name="" headless_runtime="" detach=0
@@ -1713,6 +1732,7 @@ main() {
 	setup_test_env
 	test_appends_escalation_contract
 	test_non_full_loop_prompt_unchanged
+	test_headless_contract_uses_deployed_framework_paths
 	test_parse_initial_model_does_not_set_explicit_override
 	test_startup_no_activity_timeout_returns_watchdog_continue
 	test_sigkill_with_activity_attempts_continuation
