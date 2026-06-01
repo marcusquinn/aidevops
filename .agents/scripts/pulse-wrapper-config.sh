@@ -70,18 +70,74 @@ MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-$(config_get "orchestration.max_workers_cap"
 DAILY_PR_CAP="${DAILY_PR_CAP:-1000}"                                                                    # Max PRs created per repo per day (GH#3821)
 PRODUCT_RESERVATION_PCT="${PRODUCT_RESERVATION_PCT:-60}"                                                # % of worker slots reserved for product repos (t1423)
 QUALITY_DEBT_CAP_PCT="${QUALITY_DEBT_CAP_PCT:-$(config_get "orchestration.quality_debt_cap_pct" "30")}" # % cap for quality-debt dispatch share
+_pulse_legacy_model_config_files() {
+	local primary_file="${HOME}/.config/aidevops/credentials.sh"
+	local tenant_dir="${HOME}/.config/aidevops/tenants"
+	local tenant_file=""
+
+	if [[ -f "$primary_file" ]]; then
+		printf '%s\n' "$primary_file"
+	fi
+
+	if [[ -d "$tenant_dir" ]]; then
+		while IFS= read -r -d '' tenant_file; do
+			printf '%s\n' "$tenant_file"
+		done < <(find "$tenant_dir" -name "credentials.sh" -print0 2>/dev/null)
+	fi
+
+	return 0
+}
+
+_pulse_file_has_active_legacy_model_var() {
+	local file="$1"
+	local var_name="$2"
+
+	case "$var_name" in
+		PULSE_MODEL | AIDEVOPS_HEADLESS_MODELS) ;;
+		*) return 1 ;;
+	esac
+
+	[[ -f "$file" ]] || return 1
+	grep -qE "^[[:space:]]*(export[[:space:]]+)?${var_name}=" "$file" 2>/dev/null
+	return $?
+}
+
+_pulse_warn_if_legacy_model_var_from_credentials() {
+	local var_name="$1"
+	local var_value="$2"
+	local files=""
+	local config_file=""
+	local matches=""
+
+	[[ -n "$var_value" ]] || return 0
+
+	files="$(_pulse_legacy_model_config_files)"
+	while IFS= read -r config_file; do
+		[[ -n "$config_file" ]] || continue
+		if _pulse_file_has_active_legacy_model_var "$config_file" "$var_name"; then
+			if [[ -n "$matches" ]]; then
+				matches="${matches}, ${config_file}"
+			else
+				matches="$config_file"
+			fi
+		fi
+	done <<<"$files"
+
+	[[ -n "$matches" ]] || return 0
+	printf '[pulse-wrapper] WARN: %s env var is deprecated (v3.7+). Model routing is now automatic via routing table + availability checks. Remove or comment this export in: %s\n' \
+		"$var_name" "$matches" >&2
+	return 0
+}
+
 # GH#17769: PULSE_MODEL and AIDEVOPS_HEADLESS_MODELS are deprecated.
 # Model routing is now derived from the routing table at runtime and resolved
 # through model-availability-helper.sh so pulse follows the same provider
-# fallback logic as workers.
-# Backward compat: if legacy env vars are still set, log deprecation warnings.
+# fallback logic as workers. Warn only when a currently sourced user credentials
+# file still contains the active legacy setting; inherited stale process env
+# alone is not actionable and caused noisy merge-routine logs (GH#24373).
 MODEL_AVAILABILITY_HELPER="${MODEL_AVAILABILITY_HELPER:-${SCRIPT_DIR}/model-availability-helper.sh}"
-if [[ -n "${PULSE_MODEL:-}" ]]; then
-	echo "[pulse-wrapper] WARN: PULSE_MODEL env var is deprecated (v3.7+). Model routing is now automatic via routing table + availability checks. Remove this export from credentials.sh." >&2
-fi
-if [[ -n "${AIDEVOPS_HEADLESS_MODELS:-}" ]]; then
-	echo "[pulse-wrapper] WARN: AIDEVOPS_HEADLESS_MODELS env var is deprecated (v3.7+). Model routing is now automatic via routing table + availability checks. Remove this export from credentials.sh." >&2
-fi
+_pulse_warn_if_legacy_model_var_from_credentials "PULSE_MODEL" "${PULSE_MODEL:-}"
+_pulse_warn_if_legacy_model_var_from_credentials "AIDEVOPS_HEADLESS_MODELS" "${AIDEVOPS_HEADLESS_MODELS:-}"
 if [[ -z "${PULSE_MODEL:-}" ]] && [[ -x "$MODEL_AVAILABILITY_HELPER" ]]; then
 	PULSE_MODEL=$("$MODEL_AVAILABILITY_HELPER" resolve sonnet --quiet 2>/dev/null || true)
 fi

@@ -523,9 +523,10 @@ _comment_out_deprecated_model_vars() {
 	local deprecated_vars="AIDEVOPS_HEADLESS_MODELS|PULSE_MODEL"
 	local deprecation_note="# DEPRECATED by aidevops v3.7+ — model routing is now automatic (GH#17769)"
 	[[ -f "$file" ]] || return 0
-	# Only process lines that are active exports (not already commented)
-	if grep -qE "^[[:space:]]*export[[:space:]]+(${deprecated_vars})=" "$file" 2>/dev/null; then
-		sed -i.bak -E "s/^([[:space:]]*)(export[[:space:]]+(${deprecated_vars})=.*)$/\1${deprecation_note}\n\1# \2/" "$file"
+	# Only process active assignments/exports (not already commented). Some old
+	# credentials used VAR=... followed by export VAR, so clean both shapes.
+	if grep -qE "^[[:space:]]*(export[[:space:]]+)?(${deprecated_vars})=" "$file" 2>/dev/null; then
+		sed -i.bak -E "s/^([[:space:]]*)((export[[:space:]]+)?(${deprecated_vars})=.*)$/\1${deprecation_note}\n\1# \2/" "$file"
 		rm -f "${file}.bak"
 		print_info "Commented out deprecated model env vars in $(basename "$file")"
 	fi
