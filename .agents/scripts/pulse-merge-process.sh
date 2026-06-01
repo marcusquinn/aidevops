@@ -292,6 +292,7 @@ merge_ready_prs_all_repos() {
 	local total_merged=0
 	local total_closed=0
 	local total_failed=0
+	local total_merge_progress=0
 
 	# t3193: track eligible-but-unmerged across all repos for the zero-progress
 	# circuit breaker. Eligible = APPROVED + MERGEABLE + !draft + !hold-for-review.
@@ -303,12 +304,14 @@ merge_ready_prs_all_repos() {
 		local repo_merged=0
 		local repo_closed=0
 		local repo_failed=0
+		local repo_merge_progress=0
 
-		_merge_ready_prs_for_repo "$repo_slug" repo_merged repo_closed repo_failed
+		_merge_ready_prs_for_repo "$repo_slug" repo_merged repo_closed repo_failed repo_merge_progress
 
 		total_merged=$((total_merged + repo_merged))
 		total_closed=$((total_closed + repo_closed))
 		total_failed=$((total_failed + repo_failed))
+		total_merge_progress=$((total_merge_progress + repo_merge_progress))
 
 		# t3193: run the stuck-merge detector pass for this repo. Resolves
 		# at runtime via bash lazy lookup — defined in pulse-merge-stuck.sh
@@ -336,10 +339,10 @@ merge_ready_prs_all_repos() {
 	# t3193: record the zero-progress signal AFTER all repos have been processed.
 	# Resolves at runtime via bash lazy lookup (pulse-merge-stuck.sh).
 	if declare -F pulse_merge_zero_progress_record >/dev/null 2>&1; then
-		pulse_merge_zero_progress_record "$total_eligible_unmerged" "$total_merged" || true
+		pulse_merge_zero_progress_record "$total_eligible_unmerged" "$((total_merged + total_merge_progress))" || true
 	fi
 
-	echo "[pulse-wrapper] Deterministic merge pass complete: merged=${total_merged}, closed_conflicting=${total_closed}, failed=${total_failed}, eligible_unmerged=${total_eligible_unmerged}" >>"$_mr_logfile"
+	echo "[pulse-wrapper] Deterministic merge pass complete: merged=${total_merged}, merge_progress=${total_merge_progress}, closed_conflicting=${total_closed}, failed=${total_failed}, eligible_unmerged=${total_eligible_unmerged}" >>"$_mr_logfile"
 	# Write health counter deltas to a temp file (GH#18571, GH#15107).
 	# run_stage_with_timeout backgrounds this function in a subshell, so
 	# direct updates to _PULSE_HEALTH_* variables are lost on return.
@@ -374,10 +377,12 @@ _merge_ready_prs_for_repo() {
 	local _merged_var="$2"
 	local _closed_var="$3"
 	local _failed_var="$4"
+	local _progress_var="${5:-}"
 
 	local merged=0
 	local closed=0
 	local failed=0
+	local progress=0
 
 	# Fetch open PRs without GraphQL statusCheckRollup. Backlog scheduling is
 	# enriched below from REST check-suites so merge polling preserves GraphQL
@@ -401,6 +406,7 @@ _merge_ready_prs_for_repo() {
 
 	if [[ "$pr_count" -eq 0 ]]; then
 		eval "${_merged_var}=0; ${_closed_var}=0; ${_failed_var}=0"
+		[[ -n "$_progress_var" ]] && eval "${_progress_var}=0"
 		return 0
 	fi
 
@@ -427,10 +433,12 @@ _merge_ready_prs_for_repo() {
 		0) merged=$((merged + 1)) ;;
 		2) closed=$((closed + 1)) ;;
 		3) failed=$((failed + 1)) ;;
+		4) progress=$((progress + 1)) ;;
 		esac
 	done
 
 	eval "${_merged_var}=${merged}; ${_closed_var}=${closed}; ${_failed_var}=${failed}"
+	[[ -n "$_progress_var" ]] && eval "${_progress_var}=${progress}"
 	return 0
 }
 
