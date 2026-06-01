@@ -20,7 +20,6 @@ import {
   OPUS_47_CONTEXT_DEFAULT,
   OPUS_47_CONTEXT_MAX,
   CLAUDE_MODEL_LIMITS,
-  OPENAI_MODEL_LIMITS,
 } from "../model-limits.mjs";
 
 // ---------------------------------------------------------------------------
@@ -204,35 +203,5 @@ describe("CLAUDE_MODEL_LIMITS table", () => {
     // hard-coded limits regardless.
     assert.equal(CLAUDE_MODEL_LIMITS["claude-opus-4-6"].context, 1000000);
     assert.equal(CLAUDE_MODEL_LIMITS["claude-haiku-4-5"].context, 1000000);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// OPENAI_MODEL_LIMITS — GPT-5.5 compaction-boundary regression guard
-// ---------------------------------------------------------------------------
-
-describe("OPENAI_MODEL_LIMITS table", () => {
-  test("registers GPT-5.4 mini for low-cost OpenAI tasks", () => {
-    const limit = OPENAI_MODEL_LIMITS["gpt-5.4-mini"];
-    assert.ok(limit, "missing OpenAI limit entry for gpt-5.4-mini");
-    assert.equal(limit.context, 200000);
-    assert.equal(limit.input, 180000);
-    assert.equal(limit.input - 20000, 160000);
-    assert.equal(limit.output, 64000);
-  });
-
-  test("sets GPT-5.5 family limits to preserve a 400K OpenCode compaction boundary", () => {
-    const expected = ["gpt-5.5", "gpt-5.5-fast", "gpt-5.5-pro"];
-    for (const id of expected) {
-      assert.ok(OPENAI_MODEL_LIMITS[id], `missing OpenAI limit entry for ${id}`);
-      // OpenCode >= upstream/dev preserves config limit.input, so the modern
-      // boundary is input - reserved. OpenCode 1.14.33 dropped config
-      // limit.input, so keep context - 32K output cap at the same boundary.
-      assert.equal(OPENAI_MODEL_LIMITS[id].context, 432000);
-      assert.equal(OPENAI_MODEL_LIMITS[id].input, 420000);
-      assert.equal(OPENAI_MODEL_LIMITS[id].input - 20000, 400000);
-      assert.equal(OPENAI_MODEL_LIMITS[id].context - 32000, 400000);
-      assert.ok(OPENAI_MODEL_LIMITS[id].output > 0);
-    }
   });
 });

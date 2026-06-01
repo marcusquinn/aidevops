@@ -96,34 +96,6 @@ export const CLAUDE_MODEL_LIMITS = {
   "claude-opus-4-7":   { context: resolveOpus47Context(), output: 64000 },
 };
 
-/**
- * OpenAI GPT-5.x models can report model metadata that is either stale or
- * absent from OpenCode's built-in provider list. Registering the models here
- * keeps aidevops routing-table entries selectable in OpenCode and gives
- * OpenCode a stable compaction boundary. GPT-5.5 models report a 1M API
- * context window, but Codex/OpenCode sessions are effectively bounded at 400K.
- * Current OpenCode auto-compacts at `limit.input - reserved` when `limit.input`
- * exists, and models.dev supplies a stale 272K input limit. Registering
- * input=420K preserves a 400K usable window with OpenCode's default 20K
- * reserved buffer instead of compacting near 252K.
- *
- * Compatibility note (OpenCode 1.14.33): config model parsing dropped
- * limit.input, falling back to `limit.context - maxOutputTokens(model)`. Keep
- * context at 432K so old OpenCode's 32K output cap still yields a 400K
- * compaction boundary. When deployed OpenCode versions reliably preserve
- * config `limit.input`, this patch can be commented out or removed for GPT-5.5;
- * keep the pattern for future model IDs whose provider metadata is stale.
- * GPT-5.4 mini is registered so OpenAI-backed low-cost tasks (including
- * session-title repair prompts) can select the same model aidevops already
- * routes for haiku/local tiers.
- */
-export const OPENAI_MODEL_LIMITS = {
-  "gpt-5.4-mini": { context: 200000, input: 180000, output: 64000 },
-  "gpt-5.5":      { context: 432000, input: 420000, output: 128000 },
-  "gpt-5.5-fast": { context: 432000, input: 420000, output: 128000 },
-  "gpt-5.5-pro":  { context: 432000, input: 420000, output: 128000 },
-};
-
 // One-shot warn at module load when the env override changed something.
 // Module load runs once per process (Node caches), so this won't spam.
 const _override = describeOpus47Override();
