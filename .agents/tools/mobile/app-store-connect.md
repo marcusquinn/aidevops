@@ -95,7 +95,7 @@ asc versions check-readiness --version-id "$VERSION_ID"
 asc versions submit --version-id "$VERSION_ID"
 
 # If Apple returns unresolved issues, inspect the rejected submission item and linked resource
-SUBMISSION_ID=$(asc review-submissions list --app-id APP_ID | jq -r '.data[0].id')
+SUBMISSION_ID=$(asc review-submissions list --app-id APP_ID | jq -r '.data[0].id // ""')
 asc review-submissions get --submission-id "$SUBMISSION_ID" --output json
 asc review-submissions items list --submission-id "$SUBMISSION_ID" --state REJECTED --output json
 
