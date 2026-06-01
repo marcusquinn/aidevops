@@ -32,6 +32,9 @@ helper deliberately does not.
      `slug` from `~/.config/aidevops/repos.json`.
 2. Pre-flight (always, even with `--dry-run`):
    - Issue must exist + be `OPEN`.
+   - Reject `needs-maintainer-review` issues; use
+     `sudo aidevops approve issue <issue_number> <owner/repo>` or record an
+     equivalent maintainer decision before any manual worker dispatch.
    - Reject `parent-task` issues with a clear "use a phase child" message.
 3. Dedup pre-check via `dispatch-dedup-helper.sh is-assigned`.
    - Exit 0 (active claim) → real dispatch blocks, exit 0 with explanation.

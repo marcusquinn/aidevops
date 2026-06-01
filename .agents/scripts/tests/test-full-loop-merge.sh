@@ -81,6 +81,7 @@ teardown_test_env() {
 #   $3 = "other-error" — merge fails with non-branch-protection error
 #   $4 = "graphql-rate-limit" — gh pr merge fails with GraphQL quota, REST succeeds
 #   $5 = "graphql-rate-limit-rest-fail" — gh pr merge fails with GraphQL quota, REST fails
+#   $6 = "fallback-nmr" — branch protection fails, but linked issue still needs maintainer review
 create_gh_stub() {
 	local mode="$1"
 
@@ -100,7 +101,7 @@ if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "merge" ]]; then
 		fi
 	done
 
-	if [[ "$mode" == "fallback" ]]; then
+	if [[ "$mode" == "fallback" || "$mode" == "fallback-nmr" ]]; then
 		if [[ "\$_gh_has_admin" -eq 1 ]]; then
 			echo "Merged PR"
 			exit 0
@@ -121,11 +122,28 @@ if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "merge" ]]; then
 fi
 
 if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "view" ]]; then
+	if [[ "\$*" == *"--json closingIssuesReferences"* ]]; then
+		if [[ "$mode" == "fallback-nmr" ]]; then
+			echo '24354'
+		else
+			echo ''
+		fi
+		exit 0
+	fi
 	if [[ "\$*" == *"--json body"* ]]; then
 		echo 'Resolves #22621'
 		exit 0
 	fi
 	echo '{}'
+	exit 0
+fi
+
+if [[ "\$_gh_cmd" == "issue" && "\$_gh_sub" == "view" ]]; then
+	if [[ "$mode" == "fallback-nmr" ]]; then
+		echo 'needs-maintainer-review'
+	else
+		echo ''
+	fi
 	exit 0
 fi
 
@@ -266,6 +284,34 @@ test_admin_fallback_signals() {
 		fi
 	fi
 	print_result "admin fallback: admin-merge label applied" "$((1 - label_applied))"
+
+	return 0
+}
+
+# Test 2b: Admin fallback refuses to bypass a linked issue still needing maintainer review.
+test_admin_fallback_blocks_needs_maintainer_review_issue() {
+	rm -f "${TEST_ROOT}/logs/"*.txt
+
+	create_gh_stub "fallback-nmr"
+
+	local exit_code=0
+	local out=""
+	out=$(run_merge_execute "42" "testorg/testrepo" "--squash" "0" "0" 2>&1) || exit_code=$?
+	print_result "admin fallback: needs-maintainer-review blocks merge" "$((exit_code == 0 ? 1 : 0))" "output=$out"
+
+	local admin_called=0
+	if [[ -f "${TEST_ROOT}/logs/gh-calls.txt" ]] && grep -q -- '--admin' "${TEST_ROOT}/logs/gh-calls.txt"; then
+		admin_called=1
+	fi
+	print_result "admin fallback: blocked before --admin retry" "$admin_called"
+
+	local signaled=0
+	if [[ -f "${TEST_ROOT}/logs/pr-comments.txt" ]] ||
+		[[ -f "${TEST_ROOT}/logs/audit-log-calls.txt" ]] ||
+		[[ -f "${TEST_ROOT}/logs/pr-edits.txt" ]]; then
+		signaled=1
+	fi
+	print_result "admin fallback: no success signaling when maintainer gate blocks" "$signaled"
 
 	return 0
 }
@@ -424,6 +470,7 @@ main() {
 	echo ""
 
 	test_admin_fallback_signals
+	test_admin_fallback_blocks_needs_maintainer_review_issue
 	test_explicit_admin_no_signaling
 	test_other_error_no_fallback
 	test_graphql_rate_limit_rest_fallback
