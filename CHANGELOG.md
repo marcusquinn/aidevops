@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.8] - 2026-06-01
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- defer OpenAI model limits to OpenCode (#24371)
+- clarify headless source repo paths (#24367)
+- reuse merge PR metadata (#24366)
+
 ## [3.20.7] - 2026-06-01
 
 ### Changed
