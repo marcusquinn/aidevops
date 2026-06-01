@@ -122,6 +122,14 @@ if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "merge" ]]; then
 fi
 
 if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "view" ]]; then
+	if [[ "\$*" == *"--json closingIssuesReferences,body"* ]]; then
+		if [[ "$mode" == "fallback-nmr" ]]; then
+			echo '{"closingIssuesReferences":[{"number":24354}],"body":"Resolves #22621"}'
+		else
+			echo '{"closingIssuesReferences":[],"body":"Resolves #22621"}'
+		fi
+		exit 0
+	fi
 	if [[ "\$*" == *"--json closingIssuesReferences"* ]]; then
 		if [[ "$mode" == "fallback-nmr" ]]; then
 			echo '24354'

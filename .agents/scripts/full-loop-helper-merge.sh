@@ -136,14 +136,18 @@ _merge_output_is_graphql_rate_limit() {
 _merge_linked_issue_numbers() {
 	local pr_number="$1"
 	local repo="$2"
+	local pr_json="${3:-}"
 	local issue_numbers=""
 
-	issue_numbers=$(gh pr view "$pr_number" --repo "$repo" \
-		--json closingIssuesReferences --jq '.closingIssuesReferences[]?.number' 2>/dev/null) || return 1
+	if [[ -z "$pr_json" ]]; then
+		pr_json=$(gh pr view "$pr_number" --repo "$repo" \
+			--json closingIssuesReferences,body 2>/dev/null) || return 1
+	fi
+
+	issue_numbers=$(printf '%s' "$pr_json" | jq -r '.closingIssuesReferences[]?.number // empty') || return 1
 
 	if [[ -z "$issue_numbers" ]]; then
-		issue_numbers=$(gh pr view "$pr_number" --repo "$repo" --json body \
-			--jq '.body // ""' 2>/dev/null |
+		issue_numbers=$(printf '%s' "$pr_json" | jq -r '.body // ""' |
 			grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+#[0-9]+' |
 			grep -oE '[0-9]+' || true)
 	fi
