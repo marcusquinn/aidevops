@@ -133,6 +133,73 @@ _merge_output_is_graphql_rate_limit() {
 	return $?
 }
 
+_merge_linked_issue_numbers() {
+	local pr_number="$1"
+	local repo="$2"
+	local issue_numbers=""
+
+	issue_numbers=$(gh pr view "$pr_number" --repo "$repo" \
+		--json closingIssuesReferences --jq '.closingIssuesReferences[]?.number' 2>/dev/null) || return 1
+
+	if [[ -z "$issue_numbers" ]]; then
+		issue_numbers=$(gh pr view "$pr_number" --repo "$repo" --json body \
+			--jq '.body // ""' 2>/dev/null |
+			grep -oiE '(close[sd]?|fix(e[sd])?|resolve[sd]?)\s+#[0-9]+' |
+			grep -oE '[0-9]+' || true)
+	fi
+
+	printf '%s\n' "$issue_numbers" | grep -E '^[0-9]+$' | sort -u || true
+	return 0
+}
+
+_merge_issue_requires_maintainer_review() {
+	local issue_number="$1"
+	local repo="$2"
+	local labels_csv=""
+
+	labels_csv=$(gh issue view "$issue_number" --repo "$repo" \
+		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 2
+	if [[ ",${labels_csv}," == *",needs-maintainer-review,"* ]]; then
+		return 0
+	fi
+	return 1
+}
+
+_merge_guard_admin_merge_maintainer_review() {
+	local pr_number="$1"
+	local repo="$2"
+	local issue_numbers=""
+	local issue_number=""
+	local blocked_issues=""
+	local verify_rc=0
+
+	issue_numbers=$(_merge_linked_issue_numbers "$pr_number" "$repo") || {
+		print_error "Admin merge blocked: unable to verify linked issues for PR #${pr_number}; refusing to override branch protection"
+		return 1
+	}
+
+	while IFS= read -r issue_number; do
+		[[ -n "$issue_number" ]] || continue
+		verify_rc=0
+		_merge_issue_requires_maintainer_review "$issue_number" "$repo" || verify_rc=$?
+		if [[ "$verify_rc" -eq 0 ]]; then
+			blocked_issues+=" #${issue_number}"
+		elif [[ "$verify_rc" -ne 1 ]]; then
+			print_error "Admin merge blocked: unable to verify maintainer-review labels on issue #${issue_number}"
+			return 1
+		fi
+	done <<<"$issue_numbers"
+
+	#aidevops:trust-boundary -- admin merge must not bypass signed/maintainer issue approval.
+	if [[ -n "$blocked_issues" ]]; then
+		print_error "Admin merge blocked: linked issue(s)${blocked_issues} still require maintainer review"
+		print_info "Required action: run 'sudo aidevops approve issue <issue_number> ${repo}' or record an equivalent maintainer decision before merging."
+		return 1
+	fi
+
+	return 0
+}
+
 _merge_fetch_head_sha_rest() {
 	local pr_number="$1"
 	local repo="$2"
@@ -220,6 +287,9 @@ _merge_execute() {
 	local merge_flags=()
 	[[ "$has_admin" -eq 1 ]] && merge_flags+=("--admin")
 	[[ "$has_auto" -eq 1 ]] && merge_flags+=("--auto")
+	if [[ "$has_admin" -eq 1 ]]; then
+		_merge_guard_admin_merge_maintainer_review "$pr_number" "$repo" || return 1
+	fi
 
 	local merge_desc="$merge_method"
 	[[ ${#merge_flags[@]} -gt 0 ]] && merge_desc+=" ${merge_flags[*]}"
@@ -254,6 +324,7 @@ _merge_execute() {
 		# Only fall back to --admin when caller passed neither --admin nor --auto.
 		elif [[ $has_admin -eq 0 && $has_auto -eq 0 ]] &&
 			printf '%s' "$_merge_out" | grep -qE 'base branch policy prohibits|Required status checks? (is|are) expected|At least [0-9]+ approving review'; then
+			_merge_guard_admin_merge_maintainer_review "$pr_number" "$repo" || return 1
 			print_info "Branch protection blocked plain merge; retrying with --admin (workers share the maintainer's gh auth per GH#18538)..."
 			if gh pr merge "$pr_number" --repo "$repo" "$merge_method" --admin 2>&1; then
 				print_success "PR #${pr_number} merged with --admin fallback"

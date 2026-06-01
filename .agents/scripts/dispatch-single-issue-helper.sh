@@ -178,6 +178,28 @@ _dsi_guard_no_interactive_hold() {
 }
 
 #######################################
+# Block manual worker dispatch until maintainer-review trust gates are cleared.
+# Args: $1 - labels CSV, $2 - issue number, $3 - owner/repo slug
+# Returns: 0 when safe, 1 when maintainer review is still required
+#######################################
+_dsi_guard_no_maintainer_review_required() {
+	local labels_csv="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+	local labels_with_commas=""
+	labels_with_commas=$(printf ',%s,' "$labels_csv")
+
+	#aidevops:trust-boundary -- manual dispatch must not bypass signed/maintainer issue approval.
+	if [[ "$labels_with_commas" == *",needs-maintainer-review,"* ]]; then
+		_dsi_err "Issue #${issue_number} in ${repo_slug} still requires maintainer review; refusing manual worker dispatch"
+		_dsi_info "  Required action: run 'sudo aidevops approve issue ${issue_number} ${repo_slug}' or record an equivalent maintainer decision before dispatch."
+		return 1
+	fi
+
+	return 0
+}
+
+#######################################
 # Check parent-task gate. parent-task is always a hard block (never single-dispatch).
 # Args: $1 - labels CSV (from _dsi_load_issue_meta)
 # Returns: 0 not parent-task, 1 IS parent-task (block)
@@ -982,6 +1004,7 @@ cmd_dispatch() {
 		return 1
 	fi
 	_dsi_guard_no_interactive_hold "$_DSI_ISSUE_LABELS" || return 1
+	_dsi_guard_no_maintainer_review_required "$_DSI_ISSUE_LABELS" "$issue_number" "$repo_slug" || return 1
 	_dsi_check_parent_task "$_DSI_ISSUE_LABELS" || return 1
 
 	# Step 3: dedup check (informational under --dry-run, blocking otherwise).

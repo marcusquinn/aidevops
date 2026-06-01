@@ -33,6 +33,7 @@ SET_ORIGIN_LABEL_LOG=""
 REGISTER_WORKTREE_LOG=""
 MOCK_WORKTREE_HELPER_LOG=""
 MOCK_GH_ISSUE_STATE="OPEN"
+MOCK_GH_LABELS_JSON="[]"
 MOCK_GH_FAIL="0"
 MOCK_GH_TARGET_IS_PR="0"
 MOCK_PS_LINES=""
@@ -161,8 +162,8 @@ gh() {
 	fi
 
 	if [[ "$gh_subcommand" == "issue" && "$gh_resource" == "view" ]]; then
-		printf '{"number":%s,"title":"Mock issue","state":"%s","labels":[],"assignees":[],"url":"https://example.invalid/issues/%s"}\n' \
-			"$3" "$MOCK_GH_ISSUE_STATE" "$3"
+		printf '{"number":%s,"title":"Mock issue","state":"%s","labels":%s,"assignees":[],"url":"https://example.invalid/issues/%s"}\n' \
+			"$3" "$MOCK_GH_ISSUE_STATE" "$MOCK_GH_LABELS_JSON" "$3"
 		return 0
 	fi
 
@@ -570,6 +571,37 @@ test_interactive_hold_guard_allows_auto_dispatch_handoff() {
 	return 0
 }
 
+test_maintainer_review_guard_blocks_manual_dispatch() {
+	local rc=0
+	local out=""
+	out=$(_dsi_guard_no_maintainer_review_required "bug,needs-maintainer-review" 24354 owner/repo 2>&1) || rc=$?
+
+	local check=1
+	[[ "$rc" -eq 1 && "$out" == *"requires maintainer review"* && "$out" == *"sudo aidevops approve issue 24354 owner/repo"* ]] && check=0
+	print_result "maintainer-review guard blocks manual dispatch" "$check" "rc=$rc output=$out"
+	return 0
+}
+
+test_cmd_dispatch_blocks_needs_maintainer_review_before_dedup() {
+	MOCK_GH_FAIL="0"
+	MOCK_GH_TARGET_IS_PR="0"
+	MOCK_GH_ISSUE_STATE="OPEN"
+	MOCK_GH_LABELS_JSON='[{"name":"needs-maintainer-review"}]'
+
+	local original_dedup_helper="$_DSI_DEDUP_HELPER"
+	_DSI_DEDUP_HELPER="/path/that/must/not/be/called"
+	local out="" rc=0
+	out=$(cmd_dispatch 123 owner/repo --dry-run 2>&1) || rc=$?
+
+	local check=1
+	[[ "$rc" -eq 1 && "$out" == *"requires maintainer review"* && "$out" != *"must/not/be/called"* ]] && check=0
+	print_result "dispatch command blocks needs-maintainer-review before dedup" "$check" "rc=$rc output=$out"
+
+	_DSI_DEDUP_HELPER="$original_dedup_helper"
+	MOCK_GH_LABELS_JSON="[]"
+	return 0
+}
+
 test_launch_worker_forwards_agent() {
 	local failed=1
 	if grep -Fq "cmd+=(--agent \"\$agent_name\")" "$HELPER_PATH"; then
@@ -825,6 +857,8 @@ _run_tests() {
 	test_interactive_hold_guard_blocks_review_label
 	test_interactive_hold_guard_blocks_origin_interactive_without_handoff
 	test_interactive_hold_guard_allows_auto_dispatch_handoff
+	test_maintainer_review_guard_blocks_manual_dispatch
+	test_cmd_dispatch_blocks_needs_maintainer_review_before_dedup
 	test_agent_flag_parses_with_default
 	test_launch_worker_forwards_agent
 	test_launch_worker_forwards_repo_contract
