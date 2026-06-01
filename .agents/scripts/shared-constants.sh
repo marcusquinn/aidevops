@@ -1048,13 +1048,20 @@ push_cleanup() {
 # This is the RETURN trap handler — do not call directly.
 _run_cleanups() {
 	if [[ -n "$_CLEANUP_CMDS" ]]; then
-		# Reverse the command list (LIFO) and execute each
+		# Reverse the command list (LIFO) without an external pipeline. Using
+		# echo | tail -r/tac can emit Broken pipe noise under pipefail when the
+		# consumer exits early.
 		local reversed
-		# tail -r is macOS, tac is GNU — try both
-		reversed=$(echo "$_CLEANUP_CMDS" | tail -r 2>/dev/null) ||
-			reversed=$(echo "$_CLEANUP_CMDS" | tac 2>/dev/null) ||
-			reversed="$_CLEANUP_CMDS"
+		reversed=""
 		local line
+		while IFS= read -r line; do
+			[[ -z "$line" ]] && continue
+			if [[ -n "$reversed" ]]; then
+				reversed="${line}"$'\n'"${reversed}"
+			else
+				reversed="$line"
+			fi
+		done <<<"$_CLEANUP_CMDS"
 		while IFS= read -r line; do
 			[[ -z "$line" ]] && continue
 			bash -c "$line" 2>/dev/null || true
