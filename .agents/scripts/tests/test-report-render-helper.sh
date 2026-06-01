@@ -113,21 +113,15 @@ import sys
 
 text = Path(sys.argv[1]).read_text(encoding="utf-8")
 sections = []
-start = 0
-while True:
-    start_idx = text.find("<section", start)
-    if start_idx == -1:
-        break
-    end_tag_idx = text.find(">", start_idx)
-    if end_tag_idx == -1:
-        break
-    end_idx = text.find("</section>", end_tag_idx)
-    if end_idx == -1:
-        break
-    tag_header = text[start_idx:end_tag_idx]
+for part in text.split("</section>")[:-1]:
+    if "<section" not in part:
+        continue
+    section_tail = part.rsplit("<section", 1)[1]
+    if ">" not in section_tail:
+        continue
+    tag_header, section = section_tail.split(">", 1)
     if 'class="action-line"' in tag_header or 'class="action-panel"' in tag_header:
-        sections.append(text[end_tag_idx + 1:end_idx])
-    start = end_idx + len("</section>")
+        sections.append(section)
 
 raise SystemExit(0 if any('class="accordion action-prompt"' in section for section in sections) else 1)
 PYHTML
