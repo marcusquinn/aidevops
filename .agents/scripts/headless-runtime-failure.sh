@@ -243,6 +243,28 @@ _hrff_handle_rate_limit_release_circuit() {
 }
 
 #######################################
+# Return success when a GitHub issue unlock failure is benign.
+#
+# GitHub treats unlocking an already-unlocked issue as a failed mutation in some
+# gh/API paths. Release cleanup calls unlock defensively after active-state
+# cleanup, so that already-clean state should not produce pulse warnings.
+#
+# Args:
+#   $1 = gh failure output
+#######################################
+_hrff_unlock_failure_is_benign() {
+	local unlock_output="$1"
+
+	if [[ "$unlock_output" =~ [Aa]lready[[:space:]-]+unlocked ]] || \
+		[[ "$unlock_output" =~ [Nn]ot[[:space:]-]+locked ]] || \
+		[[ "$unlock_output" =~ [Cc]onversation[[:space:]]+is[[:space:]]+not[[:space:]]+locked ]] || \
+		[[ "$unlock_output" =~ [Ii]ssue[[:space:]]+is[[:space:]]+not[[:space:]]+locked ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
 # Unlock the issue once a worker releases its dispatch claim.
 #
 # Worker dispatch locks the issue before launch. Release paths already clear
@@ -257,10 +279,20 @@ _hrff_handle_rate_limit_release_circuit() {
 _unlock_issue_after_dispatch_release() {
 	local issue_number="$1"
 	local repo_slug="$2"
+	local unlock_output=""
 
 	[[ -n "$issue_number" && -n "$repo_slug" ]] || return 0
-	gh issue unlock "$issue_number" --repo "$repo_slug" >/dev/null 2>&1 || {
-		print_warning "Failed to unlock released issue #${issue_number} (non-fatal)"
+	if [[ "$issue_number" =~ ^0[0-9]+$ ]]; then
+		print_info "Skipping release unlock for local task ID ${issue_number} in ${repo_slug}: not a GitHub issue number"
+		return 0
+	fi
+
+	unlock_output=$(gh issue unlock "$issue_number" --repo "$repo_slug" 2>&1) || {
+		if _hrff_unlock_failure_is_benign "$unlock_output"; then
+			print_info "Release unlock skipped for GitHub issue #${issue_number} in ${repo_slug}: already unlocked"
+			return 0
+		fi
+		print_warning "Failed to unlock released GitHub issue #${issue_number} in ${repo_slug} (non-fatal): ${unlock_output:-unknown error}"
 	}
 	return 0
 }
