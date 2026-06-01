@@ -31,7 +31,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tests: guard opencode continuation seeding (#24304)
 - surface stale dashboard refresh failures (#24265)
 - fix: quote runner health jq filters (#24297)
-- Maintenance: update simplification state registry
 - fix: normalize token worker path detection (#24280)
 
 ### Fixed
