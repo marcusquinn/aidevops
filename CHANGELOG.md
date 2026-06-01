@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.7] - 2026-06-01
+
+### Changed
+
+- fix: block maintainer gate bypasses (#24357)
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
 ## [3.20.6] - 2026-05-31
 
 ### Changed
