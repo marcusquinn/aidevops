@@ -107,13 +107,16 @@ test_non_full_loop_prompt_unchanged() {
 }
 
 test_headless_contract_uses_deployed_framework_paths() {
-	local prompt='/full-loop Implement issue #24354'
+	local AIDEVOPS_HEADLESS_APPEND_CONTRACT
+	AIDEVOPS_HEADLESS_APPEND_CONTRACT=1
+	local prompt
+	prompt='/full-loop Implement issue #24354'
 	local output
 	output=$(append_worker_headless_contract "$prompt")
 
 	if [[ "$output" == *'Normal project repos: full-loop workflow is deployed at ~/.aidevops/agents/scripts/commands/full-loop.md'* ]] &&
 		[[ "$output" == *'Normal project repos: aidevops framework scripts live under ~/.aidevops/agents/scripts/ (not project-local .agents/scripts/)'* ]] &&
-		[[ "$output" == *'Aidevops source repo only: the same files are edited at .agents/scripts/commands/full-loop.md and .agents/scripts/'* ]] &&
+		[[ "$output" == *'Aidevops source repo only: the same files are edited at .agents/scripts/commands/full-loop.md and under .agents/scripts/'* ]] &&
 		[[ "$output" != *'- Full-loop workflow: .agents/scripts/commands/full-loop.md'* ]] &&
 		[[ "$output" != *'- All agent scripts live under .agents/scripts/ (not scripts/ at root)'* ]]; then
 		print_result "headless contract uses deployed framework paths for project repos" 0

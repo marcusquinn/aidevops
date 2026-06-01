@@ -657,7 +657,7 @@ Setup shortcuts -- the dispatcher has already done these for you:
 Key framework file paths (use these directly, do NOT search for them):
 - Normal project repos: full-loop workflow is deployed at ~/.aidevops/agents/scripts/commands/full-loop.md
 - Normal project repos: aidevops framework scripts live under ~/.aidevops/agents/scripts/ (not project-local .agents/scripts/)
-- Aidevops source repo only: the same files are edited at .agents/scripts/commands/full-loop.md and .agents/scripts/
+- Aidevops source repo only: the same files are edited at .agents/scripts/commands/full-loop.md and under .agents/scripts/
 
 Implementation approach:
 1. Read the issue body FIRST (gh issue view $WORKER_ISSUE_NUMBER). Look for a "Worker Guidance" or "How" section -- it contains the files to modify, reference patterns, and verification commands. Follow these directly when present.
