@@ -105,15 +105,12 @@ _pulse_file_has_active_legacy_model_var() {
 _pulse_warn_if_legacy_model_var_from_credentials() {
 	local var_name="$1"
 	local var_value="$2"
-	local files=""
 	local config_file=""
 	local matches=""
 
 	[[ -n "$var_value" ]] || return 0
 
-	files="$(_pulse_legacy_model_config_files)"
 	while IFS= read -r config_file; do
-		[[ -n "$config_file" ]] || continue
 		if _pulse_file_has_active_legacy_model_var "$config_file" "$var_name"; then
 			if [[ -n "$matches" ]]; then
 				matches="${matches}, ${config_file}"
@@ -121,7 +118,7 @@ _pulse_warn_if_legacy_model_var_from_credentials() {
 				matches="$config_file"
 			fi
 		fi
-	done <<<"$files"
+	done < <(_pulse_legacy_model_config_files)
 
 	[[ -n "$matches" ]] || return 0
 	printf '[pulse-wrapper] WARN: %s env var is deprecated (v3.7+). Model routing is now automatic via routing table + availability checks. Remove or comment this export in: %s\n' \
