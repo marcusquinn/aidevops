@@ -58,7 +58,7 @@ components:
     textColor: "{colors.surface}"
     typography: "{typography.label-md}"
     rounded: "{rounded.md}"
-    padding: 12px 24px
+    padding: 12px
   button-primary-hover:
     backgroundColor: "{colors.secondary}"
   button-secondary:
@@ -66,13 +66,13 @@ components:
     textColor: "{colors.primary}"
     typography: "{typography.label-md}"
     rounded: "{rounded.md}"
-    padding: 12px 24px
+    padding: 12px
   input-default:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.on-surface}"
     typography: "{typography.body-md}"
     rounded: "{rounded.sm}"
-    padding: 12px 16px
+    padding: 12px
   card:
     backgroundColor: "{colors.surface}"
     textColor: "{colors.on-surface}"
@@ -82,11 +82,13 @@ components:
 
 <!--
 DESIGN.md — AI-readable design system document
-Format: google-labs-code/design.md alpha (aidevops tracks upstream beyond v0.2.0)
+Format: google-labs-code/design.md alpha (aidevops tracks upstream through commit 18508f2)
 Spec: https://github.com/google-labs-code/design.md/blob/main/docs/spec.md
 Validate: npx @google/design.md lint DESIGN.md
 Windows package scripts: use the dot-free `designmd` bin alias
 Tailwind export: use `json-tailwind` for Tailwind v3 JSON or `css-tailwind` for Tailwind v4 CSS
+Top-level YAML extension keys are allowed; typos of known schema keys warn.
+Component scalar values may be strings, token references, numbers, or booleans.
 Template source: aidevops `templates/DESIGN.md.template`
 
 Sections 1-8 are the normative spec order.
