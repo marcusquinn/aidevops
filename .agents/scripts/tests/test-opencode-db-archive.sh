@@ -190,13 +190,14 @@ CREATE TABLE session_share (session_id text PRIMARY KEY, id text NOT NULL, secre
 INSERT INTO project VALUES ('proj1', '/tmp/worktree', 'git', 'project', NULL, NULL, 1, 1, NULL, '{}', NULL, NULL);
 SQL
 
-	local session_id created_ms
-	while IFS=',' read -r session_id created_ms; do
+	local session_id created_ms updated_ms
+	while IFS=',' read -r session_id created_ms updated_ms; do
 		[[ -n "$session_id" ]] || continue
+		updated_ms="${updated_ms:-$created_ms}"
 		sqlite3 "$ACTIVE_DB" \
-			"INSERT INTO session VALUES ('${session_id}', 'proj1', NULL, '${session_id}', '/tmp/dir', '${session_id}', '1.0.0', NULL, NULL, NULL, NULL, NULL, NULL, NULL, ${created_ms}, ${created_ms}, NULL, NULL, 'workspace1', '/tmp/${session_id}');"
+			"INSERT INTO session VALUES ('${session_id}', 'proj1', NULL, '${session_id}', '/tmp/dir', '${session_id}', '1.0.0', NULL, NULL, NULL, NULL, NULL, NULL, NULL, ${created_ms}, ${updated_ms}, NULL, NULL, 'workspace1', '/tmp/${session_id}');"
 		sqlite3 "$ACTIVE_DB" \
-			"INSERT INTO message VALUES ('msg-${session_id}', '${session_id}', ${created_ms}, ${created_ms}, '{}');"
+			"INSERT INTO message VALUES ('msg-${session_id}', '${session_id}', ${created_ms}, ${updated_ms}, '{}');"
 	done <<<"$sessions_csv"
 	return 0
 }
@@ -238,7 +239,7 @@ else
 fi
 
 _reset_dbs
-_make_active_db_with_sessions $'s1,1000\ns2,2000\ns3,3000\ns4,4000\ns5,5000'
+_make_active_db_with_sessions $'s1,1000,5000\ns2,2000,1000\ns3,3000,4000\ns4,4000,2000\ns5,5000,3000'
 
 set +e
 out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" "$HELPER" archive --keep-sessions 2 --max-duration-seconds 30 2>&1)
@@ -251,30 +252,59 @@ else
 	_fail "count-based archive failed with rc=$rc — output: $out"
 fi
 
-active_kept=$(sqlite3 "$ACTIVE_DB" "SELECT GROUP_CONCAT(id, ',') FROM (SELECT id FROM session ORDER BY time_created);")
-if [[ "$active_kept" == "s4,s5" ]]; then
-	_pass "count-based retention preserves newest sessions"
+active_kept=$(sqlite3 "$ACTIVE_DB" "SELECT GROUP_CONCAT(id, ',') FROM (SELECT id FROM session ORDER BY id);")
+if [[ "$active_kept" == "s1,s3" ]]; then
+	_pass "count-based retention preserves most recently updated sessions"
 else
 	_fail "count-based retention kept unexpected active sessions: ${active_kept}"
 fi
 
-archived_count_sessions=$(sqlite3 "$ARCHIVE_DB" "SELECT GROUP_CONCAT(id, ',') FROM (SELECT id FROM session ORDER BY time_created);")
-if [[ "$archived_count_sessions" == "s1,s2,s3" ]]; then
-	_pass "count-based retention archives sessions outside keep target"
+archived_count_sessions=$(sqlite3 "$ARCHIVE_DB" "SELECT GROUP_CONCAT(id, ',') FROM (SELECT id FROM session ORDER BY time_updated, id);")
+if [[ "$archived_count_sessions" == "s2,s4,s5" ]]; then
+	_pass "count-based retention archives sessions outside update-time keep target"
 else
 	_fail "count-based retention archived unexpected sessions: ${archived_count_sessions}"
 fi
 
 _reset_dbs
 now_seconds=$(date +%s)
+old_created_ms=$(((now_seconds - 30 * 86400) * 1000))
+recent_updated_ms=$(((now_seconds - 1 * 86400) * 1000))
+stale_updated_ms=$old_created_ms
+_make_active_db_with_sessions "resumed,${old_created_ms},${recent_updated_ms}
+stale,${old_created_ms},${stale_updated_ms}"
+
+set +e
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" "$HELPER" archive --retention-days 14 --max-duration-seconds 30 2>&1)
+rc=$?
+set -e
+
+if [[ "$rc" -eq 0 ]]; then
+	_pass "archive succeeds with old-created recently updated regression"
+else
+	_fail "old-created recently updated archive failed with rc=$rc — output: $out"
+fi
+
+recent_active=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session WHERE id='resumed';")
+stale_archived=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM session WHERE id='stale';")
+if [[ "$recent_active" == "1" && "$stale_archived" == "1" ]]; then
+	_pass "age retention preserves recently updated sessions despite old creation time"
+else
+	_fail "age retention regression mismatch: resumed_active=${recent_active}, stale_archived=${stale_archived}"
+fi
+
+_reset_dbs
+now_seconds=$(date +%s)
 old1_ms=$(((now_seconds - 10 * 86400) * 1000))
-old2_ms=$(((now_seconds - 9 * 86400) * 1000))
+old2_created_ms=$(((now_seconds - 9 * 86400) * 1000))
+old2_updated_ms=$(((now_seconds - 8 * 86400) * 1000))
 mid_ms=$(((now_seconds - 3 * 86400) * 1000))
-new_ms=$(((now_seconds - 1 * 86400) * 1000))
+new_created_ms=$(((now_seconds - 20 * 86400) * 1000))
+new_updated_ms=$(((now_seconds - 1 * 86400) * 1000))
 _make_active_db_with_sessions "old1,${old1_ms}
-old2,${old2_ms}
+old2,${old2_created_ms},${old2_updated_ms}
 mid,${mid_ms}
-new,${new_ms}"
+new,${new_created_ms},${new_updated_ms}"
 
 set +e
 out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" "$HELPER" archive --retention-days 7 --keep-sessions 3 --max-duration-seconds 30 2>&1)
@@ -287,9 +317,9 @@ else
 	_fail "combined archive failed with rc=$rc — output: $out"
 fi
 
-combined_active=$(sqlite3 "$ACTIVE_DB" "SELECT GROUP_CONCAT(id, ',') FROM (SELECT id FROM session ORDER BY time_created);")
+combined_active=$(sqlite3 "$ACTIVE_DB" "SELECT GROUP_CONCAT(id, ',') FROM (SELECT id FROM session ORDER BY time_updated);")
 if [[ "$combined_active" == "old2,mid,new" ]]; then
-	_pass "combined retention uses conservative intersection"
+	_pass "combined retention uses conservative update-time intersection"
 else
 	_fail "combined retention kept unexpected active sessions: ${combined_active}"
 fi

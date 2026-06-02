@@ -396,10 +396,10 @@ _archive_candidate_filter() {
 	local filter="1=1"
 
 	if ((retention_enabled)); then
-		filter="${filter} AND time_created < ${cutoff_ms}"
+		filter="${filter} AND time_updated < ${cutoff_ms}"
 	fi
 	if ((keep_enabled)); then
-		filter="${filter} AND id NOT IN (SELECT id FROM session ORDER BY time_created DESC, id DESC LIMIT ${keep_sessions})"
+		filter="${filter} AND id NOT IN (SELECT id FROM session ORDER BY time_updated DESC, time_created DESC, id DESC LIMIT ${keep_sessions})"
 	fi
 	if [[ -n "$exclude_clause" ]]; then
 		filter="${filter} ${exclude_clause}"
@@ -464,13 +464,13 @@ cmd_archive() {
 	cutoff_ms=$(($(date +%s) * 1000 - retention_days * 86400 * 1000))
 
 	if ((retention_enabled)); then
-		print_info "Retention: ${retention_days} days (cutoff: $(_format_cutoff_time "$cutoff_ms"))"
+		print_info "Retention: ${retention_days} days since last update (cutoff: $(_format_cutoff_time "$cutoff_ms"))"
 	fi
 	if ((keep_enabled)); then
-		print_info "Retention: keep newest ${keep_sessions} active sessions"
+		print_info "Retention: keep newest ${keep_sessions} active sessions by last update"
 	fi
 	if ((retention_enabled && keep_enabled)); then
-		print_info "Combined retention: archiving only sessions that are older than both targets"
+		print_info "Combined retention: archiving only sessions inactive beyond both targets"
 	fi
 	print_info "Active DB: $ACTIVE_DB"
 	print_info "Archive DB: $ARCHIVE_DB"
@@ -573,7 +573,7 @@ cmd_archive() {
 
 		# Collect batch session IDs
 		local session_ids
-		session_ids=$(sqlite3 "$ACTIVE_DB" "SELECT id FROM session WHERE $candidate_filter ORDER BY time_created ASC LIMIT $batch_limit;")
+		session_ids=$(sqlite3 "$ACTIVE_DB" "SELECT id FROM session WHERE $candidate_filter ORDER BY time_updated ASC, time_created ASC, id ASC LIMIT $batch_limit;")
 
 		if [[ -z "$session_ids" ]]; then
 			break
@@ -716,14 +716,14 @@ cmd_stats() {
 	echo "  Todos:          $todo_count"
 	echo "  Session shares: $share_count"
 
-	# Age distribution
+	# Last-update distribution
 	local last_7d last_14d older
-	last_7d=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session WHERE time_created >= $seven_days_ms;")
-	last_14d=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session WHERE time_created >= $fourteen_days_ms AND time_created < $seven_days_ms;")
-	older=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session WHERE time_created < $fourteen_days_ms;")
+	last_7d=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session WHERE time_updated >= $seven_days_ms;")
+	last_14d=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session WHERE time_updated >= $fourteen_days_ms AND time_updated < $seven_days_ms;")
+	older=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session WHERE time_updated < $fourteen_days_ms;")
 
 	echo ""
-	echo "  Age distribution:"
+	echo "  Last-update distribution:"
 	echo "    Last 7 days:   $last_7d"
 	echo "    7–14 days:     $last_14d"
 	echo "    Older than 14: $older"
@@ -746,14 +746,14 @@ cmd_stats() {
 		echo "  Todos:          $arch_todo"
 		echo "  Session shares: $arch_share"
 
-		# Age distribution in archive
+		# Last-update distribution in archive
 		local arch_7d arch_14d arch_older
-		arch_7d=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM session WHERE time_created >= $seven_days_ms;" 2>/dev/null || echo "0")
-		arch_14d=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM session WHERE time_created >= $fourteen_days_ms AND time_created < $seven_days_ms;" 2>/dev/null || echo "0")
-		arch_older=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM session WHERE time_created < $fourteen_days_ms;" 2>/dev/null || echo "0")
+		arch_7d=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM session WHERE time_updated >= $seven_days_ms;" 2>/dev/null || echo "0")
+		arch_14d=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM session WHERE time_updated >= $fourteen_days_ms AND time_updated < $seven_days_ms;" 2>/dev/null || echo "0")
+		arch_older=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM session WHERE time_updated < $fourteen_days_ms;" 2>/dev/null || echo "0")
 
 		echo ""
-		echo "  Age distribution:"
+		echo "  Last-update distribution:"
 		echo "    Last 7 days:   $arch_7d"
 		echo "    7–14 days:     $arch_14d"
 		echo "    Older than 14: $arch_older"
@@ -778,8 +778,8 @@ COMMANDS:
   help      Show this help message
 
 ARCHIVE OPTIONS:
-  --retention-days N        Sessions older than N days are archived (default: 14)
-  --keep-sessions N         Keep newest N active sessions; archive older sessions beyond the budget
+  --retention-days N        Sessions inactive for N days are archived (default: 14)
+  --keep-sessions N         Keep newest N active sessions by last update; archive older sessions beyond the budget
   --dry-run                 Show what would be archived without doing it
   --max-duration-seconds N  Stop after N seconds even when not done (default: 60)
 
@@ -794,7 +794,7 @@ EXAMPLES:
   # Preview what would be archived (30-day retention)
   opencode-db-archive.sh archive --retention-days 30 --dry-run
 
-  # Keep the newest 500 active sessions, archive older sessions
+  # Keep the 500 most recently updated active sessions, archive older sessions
   opencode-db-archive.sh archive --keep-sessions 500
 
   # Archive with defaults (14 days, 60s time budget)
