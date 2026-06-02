@@ -549,6 +549,27 @@ _dps_consider_close() {
 # -----------------------------------------------------------------------------
 # Classification
 # -----------------------------------------------------------------------------
+
+_dps_closed_by_other_merged_pr_reason() {
+	local pr_json="$1"
+	local repo_slug="$2"
+	local pr_number="$3"
+	local labels="$4"
+
+	_dps_labels_has "$labels" "origin:worker" || _dps_labels_has "$labels" "origin:worker-takeover" || return 1
+	_dps_labels_has "$labels" "do-not-close" && return 1
+	_dps_labels_has "$labels" "hold-for-review" && return 1
+
+	local linked_issue="" superseding_pr=""
+	linked_issue=$(_psh_extract_closing_issue_from_pr_json "$pr_json" 2>/dev/null) || linked_issue=""
+	[[ "$linked_issue" =~ ^[0-9]+$ ]] || return 1
+	superseding_pr=$(_psh_find_merged_closer_for_closed_issue "$repo_slug" "$linked_issue" "$pr_number" 2>/dev/null) || superseding_pr=""
+	[[ "$superseding_pr" =~ ^[0-9]+$ ]] || return 1
+
+	printf 'linked-issue-%s-closed-by-pr-%s' "$linked_issue" "$superseding_pr"
+	return 0
+}
+
 #
 # Given a PR JSON object (from `gh pr list`), classify the action:
 #   rebase | close | notify | skip
@@ -604,6 +625,12 @@ _dirty_pr_classify() {
 	_dps_labels_has "$labels" "origin:worker" && has_worker_origin=1
 	_dps_labels_has "$labels" "origin:worker-takeover" && has_worker_origin=1
 
+	local closed_issue_reason
+	if closed_issue_reason=$(_dps_closed_by_other_merged_pr_reason "$pr_json" "$_repo_slug" "$pr_number" "$labels"); then
+		printf '%s|%s' "$_DIRTY_ACTION_CLOSE" "$closed_issue_reason"
+		return 0
+	fi
+
 	local rebase_author_ok=0
 	if [[ -n "$self_login" && "$author" == "$self_login" ]]; then
 		rebase_author_ok=1
@@ -635,24 +662,17 @@ _dirty_pr_classify() {
 		printf '%s|hold-for-review-label' "$_DIRTY_ACTION_NOTIFY"
 		return 0
 	fi
-	# origin:interactive PRs: notify only if the body has no recognised
-	# issue reference (true orphan). PRs with "For #NNN", "Ref #NNN", or any
-	# closing keyword reference a tracked issue and should flow through the
-	# normal age/idle close heuristic like any other PR (t2708).
 	if [[ "$has_interactive" -eq 1 ]]; then
 		if ! _dps_pr_body_has_issue_reference "$body"; then
 			printf '%s|origin-interactive-orphan' "$_DIRTY_ACTION_NOTIFY"
 			return 0
 		fi
-		# Has a reference — use extended close window for interactive PRs (t2711 Q2).
 		if [[ "$age" -le "$DIRTY_PR_CLOSE_MIN_AGE_INTERACTIVE" ]]; then
 			printf '%s|origin-interactive-referenced-within-extended-window' "$_DIRTY_ACTION_NOTIFY"
 			return 0
 		fi
-		# Beyond extended window — fall through to normal age-based close.
 	fi
 
-	# Age-based close.
 	local close_decision
 	close_decision=$(_dps_consider_close "$age" "$now" "$updated_epoch" "$created_epoch")
 	if [[ -n "$close_decision" ]]; then
@@ -858,6 +878,7 @@ _dirty_pr_action_rebase() {
 _dirty_pr_action_close() {
 	local pr_number="$1"
 	local repo_slug="$2"
+	local reason="${3:-stale-and-idle}"
 
 	local key="${repo_slug}#${pr_number}"
 
@@ -887,6 +908,9 @@ _dirty_pr_action_close() {
 	local linked_hint=""
 	if [[ -n "$linked" ]]; then
 		linked_hint=$(printf 'The linked issue #%s remains open and available to worker re-dispatch.' "$linked")
+	fi
+	if [[ "$reason" =~ ^linked-issue-([0-9]+)-closed-by-pr-([0-9]+)$ ]]; then
+		linked_hint=$(printf 'The linked issue #%s is already closed by merged PR #%s, so this worker PR is superseded and must not merge later.' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}")
 	fi
 
 	local comment_body
@@ -1039,7 +1063,7 @@ _dirty_pr_sweep_for_repo() {
 				_dirty_pr_action_rebase "$pr_number" "$repo_slug" "$repo_path" "$head_ref" || true
 				;;
 			"$_DIRTY_ACTION_CLOSE")
-				_dirty_pr_action_close "$pr_number" "$repo_slug" || true
+				_dirty_pr_action_close "$pr_number" "$repo_slug" "$reason" || true
 				;;
 		"$_DIRTY_ACTION_NOTIFY")
 			_dirty_pr_action_notify "$pr_number" "$repo_slug" "$reason" || true

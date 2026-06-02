@@ -8,6 +8,8 @@ set -euo pipefail
 
 SCRIPT_DIR_TEST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 MERGE_CONFLICT_FILE="${SCRIPT_DIR_TEST}/../pulse-merge-conflict.sh"
+MERGE_FILE="${SCRIPT_DIR_TEST}/../pulse-merge.sh"
+SUPERSESSION_FILE="${SCRIPT_DIR_TEST}/../pr-supersession-helper.sh"
 
 TESTS_RUN=0
 TESTS_FAILED=0
@@ -80,6 +82,14 @@ define_functions_under_test() {
 		/^_close_conflicting_pr_comment_not_landed\(\) \{/,/^}$/ { print }
 		/^_close_conflicting_pr\(\) \{/,/^}$/ { print }
 	' "$MERGE_CONFLICT_FILE")
+	fn_src="${fn_src}
+$(awk '
+		/^_psh_find_merged_closer_for_closed_issue\(\) \{/,/^}$/ { print }
+	' "$SUPERSESSION_FILE")
+$(awk '
+		/^_pm_pr_labels_mark_intentional_followup\(\) \{/,/^}$/ { print }
+		/^_pm_close_superseded_duplicate_pr_if_issue_solved\(\) \{/,/^}$/ { print }
+	' "$MERGE_FILE")"
 	if [[ -z "$fn_src" ]]; then
 		printf 'ERROR: could not extract conflict functions from %s\n' "$MERGE_CONFLICT_FILE" >&2
 		return 1
@@ -95,8 +105,20 @@ install_stubs() {
 			printf '{"labels":[{"name":"origin:worker"}],"author":{"login":"aidevops-worker[bot]"},"authorAssociation":"MEMBER"}\n'
 			return 0
 		fi
+		if [[ "$1" == "pr" && "$2" == "view" && "$3" == "6130" && "$*" == *"state"* ]]; then
+			printf 'MERGED\n'
+			return 0
+		fi
+		if [[ "$1" == "pr" && "$2" == "view" && "$3" == "6130" && "$*" == *"mergedAt"* ]]; then
+			printf '2026-06-02T14:53:00Z\n'
+			return 0
+		fi
 		if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"--jq"* ]]; then
 			printf 'origin:worker\n'
+			return 0
+		fi
+		if [[ "$1" == "issue" && "$2" == "view" && "$3" == "6125" ]]; then
+			printf '{"state":"CLOSED","closedByPullRequestsReferences":[{"number":6130}]}\n'
 			return 0
 		fi
 		if [[ "$1" == "api" && "$2" == *"/commits" ]]; then
@@ -257,6 +279,26 @@ test_protected_precheck_skips_draft_interactive_without_metadata_fetch() {
 	return 0
 }
 
+test_merge_ready_duplicate_pr_closed_before_merge() {
+	reset_case
+	_pm_close_superseded_duplicate_pr_if_issue_solved "6131" "awardsapp/awardsapp" "6125" "origin:worker"
+	assert_log_contains "$GH_CALL_LOG" "pr close 6131" "merge-ready duplicate closes current PR"
+	assert_log_contains "$GH_CALL_LOG" "issue view 6125" "merge-ready duplicate checks linked issue closer"
+	assert_log_contains "$GH_CALL_LOG" "merged PR #6130" "merge-ready duplicate comment cites merged PR"
+	return 0
+}
+
+test_followup_label_preserves_duplicate_guard() {
+	reset_case
+	if _pm_close_superseded_duplicate_pr_if_issue_solved "6132" "awardsapp/awardsapp" "6125" "origin:worker,follow-up"; then
+		fail "follow-up label is not auto-closed" "Expected guard to skip explicit follow-up"
+	else
+		pass "follow-up label is not auto-closed"
+	fi
+	assert_log_not_contains "$GH_CALL_LOG" "pr close 6132" "follow-up label avoids close write"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -270,6 +312,8 @@ main() {
 	test_parent_research_comment_avoids_closing_keywords
 	test_label_lookup_failure_skips_issue_closure
 	test_protected_precheck_skips_draft_interactive_without_metadata_fetch
+	test_merge_ready_duplicate_pr_closed_before_merge
+	test_followup_label_preserves_duplicate_guard
 
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -eq 0 ]]; then
