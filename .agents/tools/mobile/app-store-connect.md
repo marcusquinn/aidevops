@@ -63,7 +63,7 @@ command -v jq >/dev/null || { brew install jq || exit 1; }
 | **reports** | `sales-reports download`, `sales-reports summary`, `finance-reports`, `analytics-reports` | Sales, financial, analytics; use `--version <schema>` on sales downloads when Apple requires a non-default report schema |
 | **users** / **user-invitations** | `list`, `update`, `remove`, `invite`, `cancel` | Team management |
 | **xcode-cloud** | `products`, `workflows`, `builds` | Xcode Cloud CI/CD |
-| **Apple Ads** | `ads auth`, `ads acls`, `ads campaigns`, `ads ad-groups`, `ads reports`, `ads api request` | Apple Ads auth, org lookup, campaign/ad-group management, reports, and raw v5 API calls |
+| **Apple Ads** | `ads auth`, `ads me`, `ads acls`, `ads campaigns`, `ads ad-groups`, `ads reports`, `ads api request` | Apple Ads auth, user profile, org lookup, campaign/ad-group management, reports, and raw v5 API calls |
 | **Other** | `apps list`, `app-tags`, `game-center`, `perf-metrics`, `diagnostics`, `iris`, `plugins`, `search`, `schema`, `capabilities`, `tui`, `web` | Apps, discoverability tags, Game Center, performance, private API, plugins, discovery, TUI, web-session gaps |
 
 **Discover**: `asc --help`, `asc <cmd> --help`, `asc search "upload build"`, `asc schema --pretty "GET /v1/apps"`, `asc capabilities --area release --output table` | **Output**: `--output json` (default), `--output table`, `--output markdown`, `--pretty`
@@ -146,7 +146,7 @@ asc ads me view --output json
 asc ads acls --output json
 asc ads campaigns --org ORG_ID --limit 100 --output json
 asc ads campaigns --org ORG_ID --paginate --output json
-asc ads ad-groups list --org ORG_ID --campaign CAMPAIGN_ID --output json
+asc ads ad-groups --org ORG_ID --campaign CAMPAIGN_ID --output json
 
 # Reports and mutations take Apple Ads JSON request files; destructive commands require --confirm
 asc ads reports campaigns --org ORG_ID --file reporting-request.json --output json
