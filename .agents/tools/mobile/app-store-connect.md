@@ -29,7 +29,7 @@ tools:
 - **Context resolution**: explicit `--app-id` > `.asc/project.json` > prompt user to `asc init` (CI must use `--app-id` or pre-run `asc init`)
 - **GitHub**: https://github.com/tddworks/asc-cli (MIT, Swift, 130+ commands; v0.18.1 adds review-submission item drill-down, sales-report rollups/schema selection, and an app-availability territory-limit fix)
 - **Website**: https://asccli.app | **Web apps**: [Command Center](https://asccli.app/command-center), [Console](https://asccli.app/console), [Screenshot Studio](https://asccli.app/editor)
-- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (27 command-group skills, checked at `6465c10feb89`) | [Community](https://github.com/rudrankriyam/app-store-connect-cli-skills) (23 workflow skills, checked at `29532c9`)
+- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (27 command-group skills, checked at `6465c10feb89`) | [Community](https://github.com/rudrankriyam/app-store-connect-cli-skills) (23 workflow skills, checked at `ed0049a`)
 - **Requirements**: macOS 13+, App Store Connect API key, `jq` (workflow scripts use `jq -r`)
 
 **Dependency check**: Before any `asc` command:
@@ -116,6 +116,7 @@ asc bundle-ids create --name "My App" --identifier com.example.app --platform io
 asc certificates create --certificate-type IOS_DISTRIBUTION --csr ./MyApp.certSigningRequest
 asc certificates create --certificate-type IOS_DISTRIBUTION --generate-csr --key-out ./signing/dist.key --csr-out ./signing/dist.csr
 asc profiles create --name "App Store Profile" --type IOS_APP_STORE --bundle-id-id BID --certificate-ids CERT_ID
+asc profiles list --profile-state ACTIVE,INVALID --paginate --output json
 asc profiles inspect --path ./profiles/AppStore.mobileprovision --entitlements --output markdown
 asc profiles local install --path ./profiles/AppStore.mobileprovision
 # Metadata and AI screenshots
@@ -162,7 +163,7 @@ Run `asc web-server` to start the local API bridge (ports 8420 HTTP, 8421 HTTPS)
 
 ## Agent Skills
 
-Install on-demand (not pre-loaded): **Official** `asc skills install --all` (per-command reference) | **Community** `asc install-skills` or `npx skills add rudrankriyam/app-store-connect-cli-skills` (workflow orchestration: releases, ASO, localization, RevenueCat, crash triage, Apple Ads). These upstream skill packs are tracked for review but intentionally remain on-demand until aidevops has a multi-skill import strategy for repositories containing dozens of `SKILL.md` files. Latest reviewed official skill change adds build export-compliance handling; latest community refresh (`29532c9`) adds Apple Ads auth/org/campaign/reporting/raw-API guidance, safe live-testing guardrails, and Apple Ads notes in the general asc command-usage skill.
+Install on-demand (not pre-loaded): **Official** `asc skills install --all` (per-command reference) | **Community** `asc install-skills` or `npx skills add rudrankriyam/app-store-connect-cli-skills` (workflow orchestration: releases, ASO, localization, RevenueCat, crash triage, Apple Ads). These upstream skill packs are tracked for review but intentionally remain on-demand until aidevops has a multi-skill import strategy for repositories containing dozens of `SKILL.md` files. Latest reviewed official skill change adds build export-compliance handling; latest community refresh (`ed0049a`) adds Apple Ads auth/org/campaign/reporting/raw-API guidance, safe live-testing guardrails, Apple Ads notes in the general asc command-usage skill, and a signing caveat: Apple `profileState` is not a complete expiration signal, so expired-profile audits must compare `expirationDate` against the current date instead of relying only on `INVALID`.
 
 ## Blitz MCP Server (Optional)
 
