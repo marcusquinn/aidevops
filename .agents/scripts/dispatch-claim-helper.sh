@@ -109,7 +109,7 @@ DISPATCH_TIEBREAKER_WINDOW="${DISPATCH_TIEBREAKER_WINDOW:-5}"
 # DISPATCH_CLAIM on top of another runner's active lifecycle assignment. Unit
 # tests that exercise the low-level claim protocol can opt out explicitly; the
 # dispatch-dedup-helper.sh wrapper always runs the guard before routing here.
-DISPATCH_CLAIM_ASSIGNMENT_GUARD="${DISPATCH_CLAIM_ASSIGNMENT_GUARD:-true}"
+DISPATCH_CLAIM_ASSIGNMENT_GUARD="${DISPATCH_CLAIM_ASSIGNMENT_GUARD:-enabled}"
 
 # t2422: Source the structured override resolver so _override_resolve is
 # available to _apply_structured_filter below. The resolver is sourceable —
@@ -991,7 +991,7 @@ _guard_no_active_assignment_before_claim() {
 	local repo_slug="$2"
 	local runner="$3"
 
-	if [[ "$DISPATCH_CLAIM_ASSIGNMENT_GUARD" != "true" ]]; then
+	if [[ "$DISPATCH_CLAIM_ASSIGNMENT_GUARD" != "enabled" ]]; then
 		return 0
 	fi
 	if [[ "${AIDEVOPS_TEST_MODE:-}" == "1" && -z "${AIDEVOPS_FORCE_CLAIM_ASSIGNMENT_GUARD:-}" ]]; then
