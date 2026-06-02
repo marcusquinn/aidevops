@@ -79,19 +79,31 @@ gh_issue_list() {
 			return 1
 			;;
 		closed)
-			printf 'CLOSED\n'
+			printf '[{"number":1000,"title":"t1000: blocker","state":"CLOSED"}]\n'
 			return 0
 			;;
 		closed-lower)
-			printf 'closed\n'
+			printf '[{"number":1000,"title":"t1000: blocker","state":"closed"}]\n'
 			return 0
 			;;
 		open)
-			printf 'OPEN\n'
+			printf '[{"number":1000,"title":"t1000: blocker","state":"OPEN"}]\n'
 			return 0
 			;;
 		open-lower)
-			printf 'open\n'
+			printf '[{"number":1000,"title":"t1000: blocker","state":"open"}]\n'
+			return 0
+			;;
+		self-open-only)
+			printf '[{"number":2000,"title":"Review follow-up with copied t1000 context","state":"OPEN"}]\n'
+			return 0
+			;;
+		self-open-then-canonical-closed)
+			printf '[{"number":2000,"title":"Review follow-up with copied t1000 context","state":"OPEN"},{"number":1000,"title":"t1000: canonical blocker","state":"CLOSED"}]\n'
+			return 0
+			;;
+		incidental-open-then-canonical-closed)
+			printf '[{"number":3000,"title":"Review follow-up with copied t1000 context","state":"OPEN"},{"number":1000,"title":"t1000: canonical blocker","state":"CLOSED"}]\n'
 			return 0
 			;;
 		repo-json)
@@ -99,7 +111,7 @@ gh_issue_list() {
 			return 0
 			;;
 		*)
-			printf '\n'
+			printf '[]\n'
 			return 0
 			;;
 	esac
@@ -307,6 +319,42 @@ test_lowercase_open_task_blocker_blocks() {
 	return 0
 }
 
+test_task_lookup_excludes_current_issue_self_match() {
+	printf '\n=== live task lookup excludes current issue self-match ===\n'
+	_setup_blocked_by_resolution_test
+	TEST_GH_ISSUE_LIST_MODE="self-open-then-canonical-closed"
+
+	local rc=0
+	is_blocked_by_unresolved 'blocked-by:t1000' 'owner/repo' '2000' || rc=$?
+	_assert_rc "current issue self-match is ignored when canonical blocker is closed" 1 "$rc"
+	_cleanup_blocked_by_resolution_test
+	return 0
+}
+
+test_task_lookup_self_only_fails_closed() {
+	printf '\n=== live task lookup self-only result fails closed ===\n'
+	_setup_blocked_by_resolution_test
+	TEST_GH_ISSUE_LIST_MODE="self-open-only"
+
+	local rc=0
+	is_blocked_by_unresolved 'blocked-by:t1000' 'owner/repo' '2000' || rc=$?
+	_assert_rc "self-only task lookup remains unknown and blocked" 0 "$rc"
+	_cleanup_blocked_by_resolution_test
+	return 0
+}
+
+test_task_lookup_prefers_canonical_title() {
+	printf '\n=== live task lookup prefers canonical title ===\n'
+	_setup_blocked_by_resolution_test
+	TEST_GH_ISSUE_LIST_MODE="incidental-open-then-canonical-closed"
+
+	local rc=0
+	is_blocked_by_unresolved 'blocked-by:t1000' 'owner/repo' '2000' || rc=$?
+	_assert_rc "canonical task title wins over incidental open title match" 1 "$rc"
+	_cleanup_blocked_by_resolution_test
+	return 0
+}
+
 test_issue_number_live_failure_fails_closed() {
 	printf '\n=== fail-closed issue-number blocker resolution ===\n'
 	_setup_blocked_by_resolution_test
@@ -381,6 +429,9 @@ main() {
 	test_closed_task_blocker_is_clear
 	test_lowercase_closed_task_blocker_is_clear
 	test_lowercase_open_task_blocker_blocks
+	test_task_lookup_excludes_current_issue_self_match
+	test_task_lookup_self_only_fails_closed
+	test_task_lookup_prefers_canonical_title
 	test_issue_number_live_failure_fails_closed
 	test_cached_issue_number_absence_requires_live_proof
 	test_lowercase_closed_issue_number_blocker_is_clear
