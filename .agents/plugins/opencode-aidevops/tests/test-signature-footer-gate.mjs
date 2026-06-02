@@ -334,6 +334,32 @@ printf '\n\n${SIG_MARKER}\n---\n[aidevops.sh](https://aidevops.sh) v9.9.9 stub\n
     );
   });
 
+  test("allows same-command body-file creation with echo for exec-time shim repair", () => {
+    const dir = setupStubHelper();
+    const bodyFile = join(dir, "created-later-echo.md");
+    const { log, entries } = makeLogger();
+    const cmd = `echo 'body' > ${bodyFile} && gh issue comment 1 --repo o/r --body-file ${bodyFile}`;
+    const out = tryRepairSignature(cmd, dir, log);
+    assert.deepEqual(out, { status: "ok", cmd });
+    assert.ok(
+      entries.some((entry) => /deferring signature injection to PATH shim/.test(entry.msg)),
+      "same-command creation with echo should be explicitly delegated to shim",
+    );
+  });
+
+  test("allows same-command body-file creation after earlier gh command text", () => {
+    const dir = setupStubHelper();
+    const bodyFile = join(dir, "created-after-gh.md");
+    const { log, entries } = makeLogger();
+    const cmd = `gh auth status >/dev/null && echo 'body' > ${bodyFile} && gh issue comment 1 --repo o/r --body-file ${bodyFile}`;
+    const out = tryRepairSignature(cmd, dir, log);
+    assert.deepEqual(out, { status: "ok", cmd });
+    assert.ok(
+      entries.some((entry) => /deferring signature injection to PATH shim/.test(entry.msg)),
+      "same-command creation after earlier gh command text should be delegated to shim",
+    );
+  });
+
   test("is idempotent on already-signed --body-file", () => {
     const dir = setupStubHelper();
     const bodyFile = join(dir, "signed.md");
