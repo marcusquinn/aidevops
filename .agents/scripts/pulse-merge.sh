@@ -120,6 +120,12 @@ source "${_PULSE_MERGE_DIR}/shared-phase-filing.sh"
 # shellcheck source=shared-dispatch-label-cleanup.sh
 source "${_PULSE_MERGE_DIR}/shared-dispatch-label-cleanup.sh"
 
+# Source shared supersession helpers (GH#24399). Merge-ready PRs that use a
+# closing keyword against an issue already closed by a different merged PR are
+# duplicate worker outputs and must be closed before any merge attempt.
+# shellcheck source=pr-supersession-helper.sh
+source "${_PULSE_MERGE_DIR}/pr-supersession-helper.sh"
+
 readonly _PM_PARENT_TASK_LABEL_NEEDLE=",parent-task,"
 
 # Source author permission check helpers (GH#21426 — extracted to bring
@@ -691,6 +697,49 @@ _unblock_circuit_breaker_meta_pr() {
 	return 0
 }
 
+_pm_pr_labels_mark_intentional_followup() {
+	local pr_labels_csv="$1"
+	local labels_padded=",${pr_labels_csv},"
+
+	case "$labels_padded" in
+	*,intentional-follow-up,* | *,follow-up,* | *,do-not-close,* | *,hold-for-review,* | *,no-auto-dispatch,* | *,needs-maintainer-review,*)
+		return 0
+		;;
+	esac
+	return 1
+}
+
+_pm_close_superseded_duplicate_pr_if_issue_solved() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local linked_issue="$3"
+	local pr_labels_csv="$4"
+
+	[[ "$linked_issue" =~ ^[0-9]+$ ]] || return 1
+	case ",${pr_labels_csv}," in
+	*,origin:worker,* | *,origin:worker-takeover,*) ;;
+	*) return 1 ;;
+	esac
+	if _pm_pr_labels_mark_intentional_followup "$pr_labels_csv"; then
+		echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} links closed issue #${linked_issue} but has intentional-follow-up/protection label; not closing as duplicate (GH#24399)" >>"$LOGFILE"
+		return 1
+	fi
+
+	local superseding_pr
+	superseding_pr=$(_psh_find_merged_closer_for_closed_issue "$repo_slug" "$linked_issue" "$pr_number" 2>/dev/null) || superseding_pr=""
+	[[ "$superseding_pr" =~ ^[0-9]+$ ]] || return 1
+
+	gh pr close "$pr_number" --repo "$repo_slug" \
+		--comment "Closing as superseded: linked issue #${linked_issue} is already closed by merged PR #${superseding_pr}. This worker PR uses a closing keyword for the same issue, so merging it would duplicate an already-terminal fix.
+
+Intentional follow-ups should use For #${linked_issue} / Ref #${linked_issue} or an explicit follow-up/protection label instead of a closing keyword.
+
+_Closed by deterministic merge pass (GH#24399)._" 2>/dev/null || true
+	unlock_issue_after_worker "$pr_number" "$repo_slug"
+	echo "[pulse-wrapper] Merge pass: closed superseded duplicate PR #${pr_number} in ${repo_slug} — issue #${linked_issue} already closed by merged PR #${superseding_pr} (GH#24399)" >>"$LOGFILE"
+	return 0
+}
+
 #######################################
 # Process a single PR end-to-end: gate checks, merge attempt,
 # conflict detection, and closing comment posting.
@@ -825,6 +874,11 @@ _process_single_ready_pr() {
 	# merge and CI-repair paths. This preserves the security boundary for PRs
 	# that are red but would not be trusted if green.
 	if ! _check_pr_merge_gates "$pr_number" "$repo_slug" "$pr_author" "$pr_review" "$linked_issue"; then
+		return 1
+	fi
+
+	if declare -F _pm_close_superseded_duplicate_pr_if_issue_solved >/dev/null 2>&1 \
+		&& _pm_close_superseded_duplicate_pr_if_issue_solved "$pr_number" "$repo_slug" "$linked_issue" "$pr_labels"; then
 		return 1
 	fi
 

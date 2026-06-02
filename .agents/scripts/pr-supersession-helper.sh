@@ -194,6 +194,56 @@ EOF
 	return 0
 }
 
+_psh_extract_closing_issue_from_pr_json() {
+	local pr_json="$1"
+	local body title body_issue title_issue
+
+	body=$(printf '%s' "$pr_json" | jq -r '.body // empty' 2>/dev/null) || body=""
+	title=$(printf '%s' "$pr_json" | jq -r '.title // empty' 2>/dev/null) || title=""
+	body_issue=$(printf '%s' "$body" | grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)\s+#[0-9]+' | head -1 | grep -oE '[0-9]+') || body_issue=""
+	title_issue=$(printf '%s' "$title" | grep -oE 'GH#[0-9]+' | head -1 | grep -oE '[0-9]+') || title_issue=""
+
+	[[ -n "$body_issue" ]] || return 0
+	if [[ -n "$title_issue" ]]; then
+		printf '%s' "$title_issue"
+		return 0
+	fi
+	printf '%s' "$body_issue"
+	return 0
+}
+
+_psh_find_merged_closer_for_closed_issue() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	local current_pr="$3"
+
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
+	[[ "$current_pr" =~ ^[0-9]+$ ]] || return 1
+
+	local issue_json issue_state closer_numbers closer_number pr_state merged_at
+	issue_json=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json state,closedByPullRequestsReferences 2>/dev/null) || return 1
+	issue_state=$(printf '%s' "$issue_json" | jq -r '.state // empty' 2>/dev/null) || issue_state=""
+	[[ "$issue_state" == "CLOSED" ]] || return 1
+
+	closer_numbers=$(printf '%s' "$issue_json" | jq -r '.closedByPullRequestsReferences[]?.number // empty' 2>/dev/null) || closer_numbers=""
+	while IFS= read -r closer_number; do
+		[[ "$closer_number" =~ ^[0-9]+$ ]] || continue
+		[[ "$closer_number" != "$current_pr" ]] || continue
+		pr_state=$(gh pr view "$closer_number" --repo "$repo_slug" \
+			--json state,mergedAt --jq '.state // empty' 2>/dev/null) || pr_state=""
+		merged_at=$(gh pr view "$closer_number" --repo "$repo_slug" \
+			--json mergedAt --jq '.mergedAt // empty' 2>/dev/null) || merged_at=""
+		if [[ "$pr_state" == "MERGED" || -n "$merged_at" ]]; then
+			printf '%s' "$closer_number"
+			return 0
+		fi
+	done <<EOF
+$closer_numbers
+EOF
+	return 1
+}
+
 _psh_classify_json() {
 	local pr_json="$1"
 	local repo_path="$2"
