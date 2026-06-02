@@ -2238,9 +2238,9 @@
       "pr": 16879
     },
     ".agents/scripts/dispatch-dedup-helper.sh": {
-      "at": "2026-05-29T04:56:48Z",
-      "hash": "520573d1ad14dc43bed9dc36a4469217da24672c",
-      "passes": 35,
+      "at": "2026-06-02T22:58:10Z",
+      "hash": "61af6e1d4a2c08036cececd93969ba7a1ad717ed",
+      "passes": 36,
       "pr": 18917
     },
     ".agents/scripts/email-agent-helper.sh": {
@@ -2364,9 +2364,9 @@
       "pr": 18705
     },
     ".agents/scripts/opencode-db-archive.sh": {
-      "at": "2026-05-01T21:34:08Z",
-      "hash": "83687e62885314c49c4b15655e598e86556872a0",
-      "passes": 5,
+      "at": "2026-06-02T22:58:27Z",
+      "hash": "f8d479eb21a0c554e12fec564b325d85729192d8",
+      "passes": 6,
       "pr": 17584
     },
     ".agents/scripts/opencode-github-setup-helper.sh": {
@@ -2406,9 +2406,9 @@
       "pr": 18704
     },
     ".agents/scripts/pulse-dep-graph.sh": {
-      "at": "2026-05-22T10:12:06Z",
-      "hash": "0433c42f38e20158e976dc276ba2da74e4c422e6",
-      "passes": 12,
+      "at": "2026-06-02T22:58:33Z",
+      "hash": "61e46dac744e2deaf900e1aa71f37bb8d6f948ee",
+      "passes": 13,
       "pr": 18796
     },
     ".agents/scripts/pulse-dispatch-core.sh": {
@@ -2442,9 +2442,9 @@
       "pr": 18690
     },
     ".agents/scripts/pulse-merge.sh": {
-      "at": "2026-06-02T06:22:50Z",
-      "hash": "5f36b992bced6c24413d20319eae6b28b7e5532d",
-      "passes": 45,
+      "at": "2026-06-02T22:58:36Z",
+      "hash": "e98a9bbcf376b64a71cc350f554b807d615abb55",
+      "passes": 46,
       "pr": 18829
     },
     ".agents/scripts/pulse-prefetch.sh": {
@@ -5283,10 +5283,10 @@
       "pr": 12754
     },
     ".agents/tools/design/design-md.md": {
-      "at": "2026-05-27T04:22:13Z",
-      "hash": "928cdf2dd0b881e925716d5a92b4956a74db7d6c",
+      "at": "2026-06-02T23:07:00Z",
+      "hash": "c618a54c9a681cea8377919f5c5d275a4ca860c0",
       "issue": 16952,
-      "passes": 9,
+      "passes": 10,
       "pr": 16966
     },
     ".agents/tools/design/library/brands/airbnb/DESIGN.md": {
@@ -6306,9 +6306,9 @@
       "pr": 12752
     },
     ".agents/tools/mobile/app-store-connect.md": {
-      "at": "2026-06-02T12:21:46Z",
-      "hash": "b40c98d041e642355d55494bd3f87e14a103a137",
-      "passes": 10,
+      "at": "2026-06-02T23:08:12Z",
+      "hash": "e2674a962cd7ba57d198ae88e698054ffcef6fe8",
+      "passes": 11,
       "pr": 12625
     },
     ".agents/tools/mobile/axe-cli.md": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-06-01T22:33:55Z",
-      "hash": "d8a41907cf36a83010d87bd9715fc2e32d11d07b",
-      "passes": 207,
+      "at": "2026-06-02T23:10:30Z",
+      "hash": "56e9bbc67df76b243102a6d6fcb0b16617118e00",
+      "passes": 208,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-06-02T12:28:33Z",
-      "hash": "9edec3561bb4f761f12baaffaea422497cdb000c",
-      "passes": 203,
+      "at": "2026-06-02T23:10:32Z",
+      "hash": "f185f2de5f117009ea0585c4f19b9011cceaad3a",
+      "passes": 204,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7624,10 +7624,10 @@
       "passes": 2
     },
     ".agents/reference/opencode-maintenance.md": {
-      "hash": "d54d86ee0aaf5f7cd97f1b8815382e55fa9f92d1",
-      "at": "2026-05-01T21:32:53Z",
+      "hash": "90c22e50d1e20fcd69b05b97d3e05de0e0b50b40",
+      "at": "2026-06-02T22:44:43Z",
       "pr": 20109,
-      "passes": 3
+      "passes": 4
     },
     ".agents/reference/observability.md": {
       "hash": "7f9d94cc1e07cd0168ed743a5d256eec4dcbd3ac",
@@ -7762,10 +7762,10 @@
       "passes": 16
     },
     ".agents/scripts/pulse-dirty-pr-sweep.sh": {
-      "hash": "f568032b08445dcc0e69c8e55fa18401d1a063eb",
-      "at": "2026-05-03T12:51:51Z",
+      "hash": "e87d6ba02dc53bcf41eb27aaa8da96762da2f504",
+      "at": "2026-06-02T22:58:33Z",
       "pr": 20618,
-      "passes": 5
+      "passes": 6
     },
     ".agents/scripts/pulse-dispatch-worker-launch.sh": {
       "hash": "edeb72ed3f2c9f7e9db8552e48b1699d3ad1a2c2",
