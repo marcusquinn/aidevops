@@ -647,6 +647,69 @@ test_dedup_claim_routing() {
 	else
 		print_result "dedup claim with no args returns exit 1" 1 "got exit $LAST_EXIT"
 	fi
+
+	local tmp_dir="" mock_bin_dir="" output="" exit_code=0
+	tmp_dir="$(mktemp -d)"
+	mock_bin_dir="${tmp_dir}/bin"
+	mkdir -p "$mock_bin_dir"
+	cat >"${mock_bin_dir}/gh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
+	printf '%s\n' '{"state":"OPEN","assignees":[{"login":"other-runner"}],"labels":[{"name":"status:queued"},{"name":"auto-dispatch"}],"createdAt":"2026-06-02T00:00:00Z"}'
+	exit 0
+fi
+
+if [[ "${1:-}" == "api" && ("${2:-}" == /repos/*/issues/* || "${2:-}" == repos/*/issues/*) ]]; then
+	endpoint="${2:-}"
+	shift 2
+	if [[ "$endpoint" == */comments* ]]; then
+		recent_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+		printf '[{"created_at":"%s","author":"other-runner","body_start":"Dispatching worker (PID 12345)","body":"Dispatching worker (PID 12345)"}]\n' "$recent_ts"
+		exit 0
+	fi
+	printf '%s\n' '{"state":"OPEN","assignees":[{"login":"other-runner"}],"labels":[{"name":"status:queued"},{"name":"auto-dispatch"}],"created_at":"2026-06-02T00:00:00Z"}'
+	exit 0
+fi
+
+if [[ "${1:-}" == "api" && "${2:-}" == "user" ]]; then
+	printf 'self-runner\n'
+	exit 0
+fi
+
+if [[ "${1:-}" == "api" && "${2:-}" == repos/*/issues/*/comments* ]]; then
+	if [[ "$*" == *"--method POST"* ]]; then
+		printf 'unexpected claim post\n' >"${MOCK_POST_FILE:?}"
+		printf '999\n'
+		exit 0
+	fi
+	printf '%s\n' '[]'
+	exit 0
+fi
+
+printf 'unsupported gh invocation in claim guard stub: %s\n' "$*" >&2
+exit 1
+EOF
+	chmod +x "${mock_bin_dir}/gh"
+
+	set +e
+	output=$(PATH="${mock_bin_dir}:$PATH" MOCK_POST_FILE="${tmp_dir}/post_body.txt" \
+		DISPATCH_CLAIM_WINDOW=0 "$DEDUP_HELPER" claim 42 owner/repo self-runner 2>&1)
+	exit_code=$?
+	set -e
+
+	if [[ "$exit_code" -eq 1 && "$output" == *"CLAIM_BLOCKED: active_assignment"* ]]; then
+		print_result "queued non-self assignee blocks dedup claim before post" 0
+	else
+		print_result "queued non-self assignee blocks dedup claim before post" 1 "exit=${exit_code} output=${output}"
+	fi
+	if [[ ! -f "${tmp_dir}/post_body.txt" ]]; then
+		print_result "blocked dedup claim does not post DISPATCH_CLAIM" 0
+	else
+		print_result "blocked dedup claim does not post DISPATCH_CLAIM" 1 "post file exists"
+	fi
+	rm -rf "$tmp_dir"
 	return 0
 }
 

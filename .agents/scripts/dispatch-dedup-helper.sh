@@ -2041,7 +2041,23 @@ main() {
 			echo "Error: dispatch-claim-helper.sh not found at ${CLAIM_HELPER}" >&2
 			return 2
 		fi
-		"$CLAIM_HELPER" claim "$1" "$2" "${3:-}"
+		local _claim_issue="$1" _claim_repo="$2" _claim_runner="${3:-}"
+		local _claim_guard_output="" _claim_guard_rc=0
+		_claim_guard_output=$(is_assigned "$_claim_issue" "$_claim_repo" "$_claim_runner" 2>&1) || _claim_guard_rc=$?
+		case "$_claim_guard_rc" in
+		0)
+			printf 'CLAIM_BLOCKED: active_assignment issue=#%s repo=%s runner=%s signal=%s\n' \
+				"$_claim_issue" "$_claim_repo" "$_claim_runner" "$_claim_guard_output"
+			return 1
+			;;
+		1) ;;
+		*)
+			printf 'CLAIM_BLOCKED: assignment_guard_error issue=#%s repo=%s runner=%s rc=%s signal=%s\n' \
+				"$_claim_issue" "$_claim_repo" "$_claim_runner" "$_claim_guard_rc" "$_claim_guard_output"
+			return 1
+			;;
+		esac
+		DISPATCH_CLAIM_ASSIGNMENT_GUARD=false "$CLAIM_HELPER" claim "$_claim_issue" "$_claim_repo" "$_claim_runner"
 		;;
 	check-claim)
 		# GH#17590: Pre-check for active claims (read-only, no comment posted).
