@@ -259,16 +259,14 @@ function _generateSignature(helperPath, bodyValue, log) {
  */
 function _hasPriorSameCommandBodyFileCreation(cmd, filePath) {
   if (!filePath) return false;
-  const ghWrite = cmd.search(
-    /(^|[;&|(`!]|\$\()\s*(?:(?:sudo|time|env(?:\s+\w+=\S+)*)\s+)*gh\s+(pr\s+(create|comment)|issue\s+(create|comment))\b/,
-  );
-  if (ghWrite <= 0) return false;
-  const beforeGh = cmd.slice(0, ghWrite);
+  const bodyFileIdx = cmd.lastIndexOf("--body-file");
+  if (bodyFileIdx <= 0) return false;
+  const beforeGh = cmd.slice(0, bodyFileIdx);
   if (!beforeGh.includes(filePath)) return false;
   const escaped = filePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const quotedPath = `["']?${escaped}["']?`;
   const creationPatterns = [
-    new RegExp(`(?:^|[;&|]|&&|\\|\\|)\\s*(?:printf|cat|tee)\\b[\\s\\S]*(?:>|>>)\\s*${quotedPath}`),
+    new RegExp(`(?:^|[;&|]|&&|\\|\\|)\\s*(?:echo|printf|cat|tee)\\b[\\s\\S]*(?:>|>>)\\s*${quotedPath}`),
     new RegExp(`(?:^|[;&|]|&&|\\|\\|)\\s*(?:cp|mv)\\b[\\s\\S]+\\s+${quotedPath}`),
     new RegExp(`(?:^|[;&|]|&&|\\|\\|)\\s*touch\\s+${quotedPath}`),
   ];
