@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.9] - 2026-06-02
+
+### Changed
+
+- fix: harden dispatch claim assignment guard (#24400)
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- fix: count merge-in-progress as pulse progress (#24384)
+- Maintenance: update simplification state registry
+- fix: avoid cleanup reversal broken pipes (#24379)
+
+### Fixed
+
+- preserve recently updated OpenCode sessions during archive (#24404)
+- classify benign release unlock failures (#24380)
+- stop stale headless model pulse warning (#24378)
+
 ## [3.20.8] - 2026-06-01
 
 ### Changed
