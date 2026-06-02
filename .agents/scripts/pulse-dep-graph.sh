@@ -773,11 +773,23 @@ _blocked_by_check_task_id() {
 	# Empty/error is not proof of resolution because GitHub search can lag
 	# immediately after rapid task creation. Treat that as unknown and block.
 	local blocker_state=""
-	if ! blocker_state=$(gh_issue_list --repo "$repo_slug" --state all \
-		--search "t${task_id} in:title" --json number,state --jq '.[0].state // ""' 2>/dev/null); then
+	local live_matches=""
+	if ! live_matches=$(gh_issue_list --repo "$repo_slug" --state all \
+		--search "t${task_id} in:title" --json number,title,state 2>/dev/null); then
 		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference t${task_id} (live lookup failed) — skipping dispatch" >>"$LOGFILE"
 		return 0
 	fi
+	blocker_state=$(printf '%s' "$live_matches" | jq -r \
+		--arg current_issue "$issue_number" \
+		--arg task_id "$task_id" '
+		def canonical_title:
+			(.title // "" | ascii_downcase) as $title
+			| ("t" + ($task_id | ascii_downcase)) as $needle
+			| (($title | startswith($needle + ":")) or ($title | startswith($needle + " ")));
+		[.[] | select((.number | tostring) != $current_issue)] as $matches
+		| (($matches | map(select(canonical_title)) | .[0]) // $matches[0] // {})
+		| .state // ""
+		' 2>/dev/null) || blocker_state=""
 	case "$blocker_state" in
 		[Oo][Pp][Ee][Nn])
 			echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by t${task_id} (live: open) — skipping dispatch (t1927)" >>"$LOGFILE"
