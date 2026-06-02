@@ -839,7 +839,7 @@ _help_commands() {
 	echo "  cleanup <cmd>      Cleanup helpers (remote branch audit/delete)"
 	echo "  model-accounts-pool OAuth account pool (list/check/diagnose/add/rotate/reset-cooldowns)"
 	echo "  client-format      Client request format alignment (extract/check/canary/monitor)"
-	echo "  opencode-db <cmd>  OpenCode SQLite maintenance (check/report/maintain/window/status/install)"
+	echo "  opencode-db <cmd>  OpenCode SQLite maintenance/session lookup (check/report/sessions/maintain/window/status/install)"
 	echo "  opencode-sandbox   Test OpenCode versions in isolation (install/run/check/clean)"
 	echo "  approve <cmd>      Cryptographic issue/PR approval (setup/issue/pr/verify/status)"
 	echo "  circuit-breaker    Supervisor circuit breaker (status/reset/check/trip) (alias: cb)"
