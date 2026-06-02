@@ -25,7 +25,7 @@ model: sonnet
 ## Quick Reference
 
 - **What**: Plain-text markdown capturing a complete visual design system for AI agents
-- **Normative spec**: [google-labs-code/design.md](https://github.com/google-labs-code/design.md) (Apache 2.0, format version `alpha`; aidevops tracks upstream changes beyond the v0.2.0 review). Full spec: [`docs/spec.md`](https://github.com/google-labs-code/design.md/blob/main/docs/spec.md)
+- **Normative spec**: [google-labs-code/design.md](https://github.com/google-labs-code/design.md) (Apache 2.0, format version `alpha`; aidevops tracks upstream through upstream commit `18508f2` after the v0.2.0 review). Full spec: [`docs/spec.md`](https://github.com/google-labs-code/design.md/blob/main/docs/spec.md)
 - **Format**: YAML front matter (machine-readable tokens) + Markdown body (human-readable rationale)
 - **Location**: `DESIGN.md` in project root (alongside `AGENTS.md`)
 - **Validator**: `npx @google/design.md lint DESIGN.md` (lint, diff, export to `json-tailwind`/`css-tailwind`/`dtcg`, spec; use the `designmd` bin alias in Windows package scripts)
@@ -37,7 +37,7 @@ model: sonnet
 
 **Agent relationships:**
 
-Upstream `@google/design.md` v0.2.0 was reviewed after the initial open-source release. The current aidevops schema guidance covers the release's CSS color parsing, transparent hex support, Tailwind export format names, component-aware diff output, `designmd` Windows alias, lint/diff/export/spec commands, and alpha-format token model; continue watching for v1 or schema-breaking releases before changing templates.
+Upstream `@google/design.md` v0.2.0 and follow-up commit `18508f2` were reviewed after the initial open-source release. The current aidevops schema guidance covers CSS color parsing, transparent hex support, Tailwind export format names, component-aware diff output, top-level typo warnings, boolean/numeric component scalar handling, Markdown lint reports, the `designmd` Windows alias, lint/diff/export/spec commands, and the alpha-format token model; continue watching for v1 or schema-breaking releases before changing templates.
 
 | Agent | Role | Relationship |
 |-------|------|--------------|
@@ -91,7 +91,7 @@ spacing:
   <scale-level>: <Dimension | number>
 components:
   <component-name>:
-    <token-name>: <string | number | token reference>
+    <token-name>: <string | number | boolean | token reference>
 ---
 ```
 
@@ -100,7 +100,7 @@ components:
 | Type | Format | Example |
 |------|--------|---------|
 | Color | CSS color parsed to sRGB | `"#1A1C1E"`, `oklch(62% 0.18 24)` |
-| Dimension | number + CSS length or percentage unit (`px`, `em`, `rem`, `%`) | `48px`, `-0.02em`, `100%` |
+| Dimension | number + CSS length unit (`px`, `em`, `rem`) | `48px`, `-0.02em` |
 | Token Reference | `{path.to.token}` | `{colors.primary}` |
 | Typography | object (see below) | *inline object* |
 
@@ -110,7 +110,7 @@ components:
 
 **Token references** wrap a dotted path in curly braces: `{colors.primary-60}`, `{typography.body-md}`, `{rounded.sm}`. Components may reference composite tokens like `{typography.label-md}`; other groups must reference primitive values.
 
-Component properties may also use bare numeric values or Dimensions where CSS/design systems commonly expect them, such as `height: 44px`, `width: 100%`, `size: 16px`, or `padding: 12px`. The upstream model handler stores numeric values as-is.
+Component properties may also use bare numeric, boolean, or Dimension values where CSS/design systems commonly expect them, such as `height: 44px`, `size: 16px`, `padding: 12px`, `opacity: 0.9`, or `visible: true`. The upstream model handler stores numeric and boolean values as-is.
 
 ### Canonical Section Order
 
@@ -162,6 +162,7 @@ Valid component properties in v0.2.0: `backgroundColor`, `textColor`, `typograph
 | Scenario | Spec behaviour |
 |----------|---------------|
 | Unknown section heading (e.g. our §9, §10) | Preserve; do not error |
+| Unknown top-level YAML key | Warn only when it looks like a typo of a known schema key, such as `colours:` → `colors:`; unrelated extension keys stay silent |
 | Unknown color/typography token name | Accept if value is valid |
 | Unknown component property | Accept with warning |
 | Duplicate section heading | **Error; reject the file** |
@@ -171,7 +172,7 @@ Valid component properties in v0.2.0: `backgroundColor`, `textColor`, `typograph
 The `@google/design.md` npm package ships four commands. Run the linter at least once before handing a DESIGN.md to a coding agent:
 
 ```bash
-# Lint: eight rules, JSON output, exit 1 on errors
+# Lint: nine rules, JSON output, exit 1 on errors
 npx @google/design.md lint DESIGN.md
 
 # Diff: detect token regressions between versions, including components
@@ -188,7 +189,7 @@ npx @google/design.md spec --rules
 
 `tailwind` remains a backwards-compatible alias for `json-tailwind`; prefer explicit `json-tailwind` or `css-tailwind` in new docs and scripts.
 
-**Linter rules (eight, verified against `@google/design.md` v0.2.0):**
+**Linter rules (nine, verified against `@google/design.md` through upstream commit `18508f2`):**
 
 | Rule | Severity | What it checks |
 |------|----------|---------------|
@@ -198,6 +199,7 @@ npx @google/design.md spec --rules
 | `orphaned-tokens` | warning | Custom tokens defined but never referenced by any component; MD3 baseline families and siblings of referenced MD3 color tokens are exempt |
 | `missing-typography` | warning | Colors defined but no typography tokens exist |
 | `section-order` | warning | Sections out of canonical order |
+| `unknown-key` | warning | Top-level YAML keys that look like typos of known schema keys; unrelated extension keys stay silent |
 | `missing-sections` | info | Optional sections (spacing, rounded) absent when others exist |
 | `token-summary` | info | Count summary per token group |
 
