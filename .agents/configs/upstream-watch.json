@@ -32,7 +32,7 @@
     {
       "slug": "tddworks/ClaudeBar",
       "description": "macOS menu bar app monitoring AI coding assistant usage quotas (Claude, Codex, Gemini, Copilot, Antigravity, Kimi, Kiro, Amp)",
-      "relevance": "Visual quota monitoring complementing our headless model-accounts-pool rotation. New provider support, provider process detection (including Antigravity language_server), and multi-account features (GH#86) directly relevant. Installed via brew cask in setup.sh.",
+      "relevance": "Visual quota monitoring complementing our headless model-accounts-pool rotation. New provider support, provider process detection (including Antigravity language_server), multi-account features (GH#86), and live menu-bar background refresh are directly relevant. Installed via brew cask in setup.sh.",
       "default_branch": "main",
       "added_at": "2026-03-21"
     },
