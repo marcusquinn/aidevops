@@ -1754,9 +1754,9 @@
       "pr": 12780
     },
     ".agents/reference/platform-support.md": {
-      "at": "2026-05-29T04:32:57Z",
-      "hash": "ab384e30c395d7c894de6362f22c8148d29eba0d",
-      "passes": 2,
+      "at": "2026-06-03T21:04:35Z",
+      "hash": "c339941ee29373cd8dad71bc0ea4069885394b38",
+      "passes": 3,
       "pr": "GH#16007"
     },
     ".agents/reference/repo-sync.md": {
