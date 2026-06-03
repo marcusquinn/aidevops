@@ -458,7 +458,7 @@ _pulse_should_defer_budget_priority_stage() {
 	local _stage="$1"
 	[[ "${AIDEVOPS_PULSE_GRAPHQL_BUDGET_CLASS:-normal}" == "reserve" ]] || return 1
 	case "$_stage" in
-		cache_prime|fix_the_fixer_detector|coderabbit_review|post_merge_scanner|auto_decomposer_scanner|dedup_cleanup|fast_fail_prune_expired|evaluate_routines|canonical_maintenance|dashboard_freshness_check|llm_supervisor)
+		cache_prime|fix_the_fixer_detector|coderabbit_review|post_merge_scanner|pr_review_thread_response|auto_decomposer_scanner|dedup_cleanup|fast_fail_prune_expired|evaluate_routines|canonical_maintenance|dashboard_freshness_check|llm_supervisor)
 			return 0
 			;;
 		*)

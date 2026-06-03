@@ -49,6 +49,7 @@ _record_stage() {
 
 run_daily_codebase_review() { _record_stage "coderabbit"; return 0; }
 _run_post_merge_review_scanner() { _record_stage "post_merge"; return 0; }
+_run_pr_review_thread_response_scanner() { _record_stage "pr_review_thread_response"; return 0; }
 _run_auto_decomposer_scanner() { _record_stage "auto_decomposer"; return 0; }
 run_simplification_dedup_cleanup() { _record_stage "dedup_cleanup"; return 0; }
 fast_fail_prune_expired() { _record_stage "fast_fail_prune"; return 0; }
@@ -75,6 +76,7 @@ run_stage_with_timeout() {
 install_stage_stubs() {
 	run_daily_codebase_review() { _record_stage "coderabbit"; return 0; }
 	_run_post_merge_review_scanner() { _record_stage "post_merge"; return 0; }
+	_run_pr_review_thread_response_scanner() { _record_stage "pr_review_thread_response"; return 0; }
 	_run_auto_decomposer_scanner() { _record_stage "auto_decomposer"; return 0; }
 	run_simplification_dedup_cleanup() { _record_stage "dedup_cleanup"; return 0; }
 	fast_fail_prune_expired() { _record_stage "fast_fail_prune"; return 0; }
@@ -155,7 +157,7 @@ test_sync_housekeeping_runs_all_stages() {
 
 	local failures=0 failmsg=""
 	local expected
-	for expected in coderabbit post_merge auto_decomposer dedup_cleanup fast_fail_prune ownership_reconcile; do
+	for expected in coderabbit post_merge pr_review_thread_response auto_decomposer dedup_cleanup fast_fail_prune ownership_reconcile; do
 		if ! grep -q "^${expected}$" "$STAGE_LOG" 2>/dev/null; then
 			failures=$((failures + 1))
 			failmsg="${failmsg} | missing ${expected}"

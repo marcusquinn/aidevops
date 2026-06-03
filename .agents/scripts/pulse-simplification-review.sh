@@ -4,8 +4,8 @@
 # =============================================================================
 # Pulse Simplification — Review Scanners
 # =============================================================================
-# Daily codebase review (CodeRabbit), post-merge review scanner, and
-# auto-decomposer scanner. Extracted from pulse-simplification.sh as part
+# Daily codebase review (CodeRabbit), post-merge review scanner, active-PR
+# review-thread response scanner, and auto-decomposer scanner. Extracted from pulse-simplification.sh as part
 # of the file-size-debt split (GH#21306, parent #21146).
 #
 # Usage: source "${SCRIPT_DIR}/pulse-simplification-review.sh"
@@ -186,6 +186,56 @@ _run_post_merge_review_scanner() {
 
 	printf '%s\n' "$now_epoch" >"$POST_MERGE_SCANNER_LAST_RUN"
 	echo "[pulse-wrapper] Post-merge scanner: completed ${total_repos} repo(s), next run in ~$((POST_MERGE_SCANNER_INTERVAL / 3600))h" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Active-PR review-thread response scanner (GH#24414).
+#
+# Scans pulse-enabled maintainer repos for open non-draft PRs with unresolved
+# bot review threads and dispatches bounded response workers. The helper never
+# resolves threads directly; workers must verify findings and respond via the
+# PR-loop/review-bot-gate discipline.
+# Reference pattern: _run_post_merge_review_scanner.
+#######################################
+_run_pr_review_thread_response_scanner() {
+	if [[ "${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_ENABLED:-1}" != "1" ]]; then
+		echo "[pulse-wrapper] PR review-thread response: disabled by AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_ENABLED" >>"$LOGFILE"
+		return 0
+	fi
+
+	local scanner="${SCRIPT_DIR}/pr-review-thread-response-scanner.sh"
+	if [[ ! -x "$scanner" ]]; then
+		echo "[pulse-wrapper] PR review-thread response: helper not found or not executable: $scanner" >>"$LOGFILE"
+		return 0
+	fi
+
+	local repos_json="$REPOS_JSON"
+	if [[ ! -f "$repos_json" ]]; then
+		return 0
+	fi
+
+	local total_repos=0
+	local skipped_contributor=0
+	local slug="" repo_path="" repo_role=""
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+		repo_role=$(get_repo_role_by_slug "$slug")
+		if [[ "$repo_role" != "maintainer" ]]; then
+			skipped_contributor=$((skipped_contributor + 1))
+			continue
+		fi
+		repo_path=$(jq -r --arg s "$slug" 'first(.initialized_repos[]? | select(.slug == $s)) | .path // ""' "$repos_json" 2>/dev/null) || repo_path=""
+		repo_path="${repo_path/#\~/$HOME}"
+		total_repos=$((total_repos + 1))
+		echo "[pulse-wrapper] PR review-thread response: scanning $slug" >>"$LOGFILE"
+		"$scanner" dispatch "$slug" "$repo_path" >>"$LOGFILE" 2>&1 || true
+	done < <(_pulse_enabled_repo_slugs "$repos_json")
+	if [[ "$skipped_contributor" -gt 0 ]]; then
+		echo "[pulse-wrapper] PR review-thread response: skipped ${skipped_contributor} contributor-role repo(s) (t2145)" >>"$LOGFILE"
+	fi
+
+	echo "[pulse-wrapper] PR review-thread response: completed ${total_repos} repo(s)" >>"$LOGFILE"
 	return 0
 }
 
