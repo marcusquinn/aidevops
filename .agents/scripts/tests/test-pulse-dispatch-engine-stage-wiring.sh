@@ -105,6 +105,15 @@ assert_grep \
 	"$ENGINE"
 
 assert_grep \
+	"3c: pr_review_thread_response stage call present" \
+	'_pulse_run_optional_stage_with_timeout "pr_review_thread_response"' \
+	"$ENGINE"
+assert_grep \
+	"3d: pr_review_thread_response function name present" \
+	'_run_pr_review_thread_response_scanner' \
+	"$ENGINE"
+
+assert_grep \
 	"4a: auto_decomposer_scanner stage call present" \
 	'_pulse_run_optional_stage_with_timeout "auto_decomposer_scanner"' \
 	"$ENGINE"

@@ -54,6 +54,7 @@ _pulse_set_graphql_budget_priority
 [[ "${AIDEVOPS_PULSE_GRAPHQL_BUDGET_CLASS}" == "reserve" ]]
 _pulse_should_defer_budget_priority_stage "dashboard_freshness_check"
 _pulse_should_defer_budget_priority_stage "evaluate_routines"
+_pulse_should_defer_budget_priority_stage "pr_review_thread_response"
 if _pulse_should_defer_budget_priority_stage "deterministic_merge_pass"; then
 	printf 'FAIL: merge-critical stage was deferred\n' >&2
 	exit 1
