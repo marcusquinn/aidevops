@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-06-02T23:10:30Z",
-      "hash": "56e9bbc67df76b243102a6d6fcb0b16617118e00",
-      "passes": 208,
+      "at": "2026-06-03T05:40:08Z",
+      "hash": "d1602f90897ceeca7ee1de496220b971c8a43080",
+      "passes": 209,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-06-02T23:10:32Z",
-      "hash": "f185f2de5f117009ea0585c4f19b9011cceaad3a",
-      "passes": 204,
+      "at": "2026-06-03T05:40:09Z",
+      "hash": "d24badb2432d1366bc2927e7056b16836b137183",
+      "passes": 205,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7624,10 +7624,10 @@
       "passes": 2
     },
     ".agents/reference/opencode-maintenance.md": {
-      "hash": "90c22e50d1e20fcd69b05b97d3e05de0e0b50b40",
-      "at": "2026-06-02T22:44:43Z",
+      "hash": "130689d2b2632cb543ba962f48066182217b216b",
+      "at": "2026-06-03T05:29:26Z",
       "pr": 20109,
-      "passes": 4
+      "passes": 5
     },
     ".agents/reference/observability.md": {
       "hash": "7f9d94cc1e07cd0168ed743a5d256eec4dcbd3ac",
