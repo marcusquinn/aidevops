@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.11] - 2026-06-03
+
+### Added
+
+- OpenCode hidden session lookup for active child sessions, archived sessions, and project-id drift diagnostics (#24412)
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- close superseded duplicate PRs after issue solved (#24403)
+
 ## [3.20.10] - 2026-06-02
 
 ### Changed
