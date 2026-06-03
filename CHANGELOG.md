@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.12] - 2026-06-04
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- add pulse PR review-thread response stage (#24426)
+
 ## [3.20.11] - 2026-06-03
 
 ### Added
