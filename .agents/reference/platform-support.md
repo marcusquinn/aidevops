@@ -118,7 +118,7 @@ Used when systemd is unavailable (containers, older distros, WSL2 without system
 | Contacts.app | Full | khard (via carddav) | Different backend |
 | OrbStack VMs | macOS only | N/A | Use native Docker on Linux |
 | MiniSim | macOS only | N/A | iOS/Android emulator launcher |
-| ClaudeBar | macOS only | N/A | Menu bar quota monitor for Claude, Codex, Gemini, Copilot, Antigravity, Kimi, Kiro, and Amp |
+| ClaudeBar | macOS only | N/A | Menu bar quota monitor with live background refresh for Claude, Codex, Gemini, Copilot, Antigravity, Kimi, Kiro, and Amp |
 
 ## Installing Clipboard Tools on Linux
 
