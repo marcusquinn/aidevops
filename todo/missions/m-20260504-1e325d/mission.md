@@ -101,7 +101,7 @@ Milestones are sequential; features within each milestone are parallelisable. Ea
 |---|---------|---------|--------|----------|--------|----|
 | 1.1 | Build bounded worker outcome taxonomy from metrics, failure excerpts, issue labels, and recent PR outcomes `[parallel-group:a]` | pending | implemented-local | ~2h | interactive | |
 | 1.2 | Correlate repeated attempts per issue with pulse dispatch decisions and retry/backoff state `[parallel-group:a]` | pending | pending | ~2h | | |
-| 1.3 | Sample failed worker sessions for missing context, wrong model/account routing, premature exits, and tool-use mistakes `[parallel-group:a]` | pending | pending | ~3h | | |
+| 1.3 | Sample failed worker sessions for missing context, wrong model/account routing, premature exits, and tool-use mistakes `[parallel-group:a]` | pending | done | ~3h | headless | #23368 |
 | 1.4 | Produce mission baseline dashboard/checkpoint with metrics to compare every release cycle `[depends:1.1,1.2,1.3]` | pending | pending | ~1h | | |
 
 ### Milestone 2: Fix context-loading and brief quality gaps
@@ -211,6 +211,7 @@ Milestones are sequential; features within each milestone are parallelisable. Ea
 | 2026-05-04T03:52Z | Broader lint attempted | `.agents/scripts/linters-local.sh` passed Sonar, secretlint, Markdown, TOON, skill frontmatter, secret policy, pulse canary, layout; timed out after reporting pre-existing Bash 3.2 compatibility violations in unrelated scripts |
 | 2026-05-04T04:15Z | Classifier provenance and provider pressure throttle implemented locally | Metrics now carry `classification_pattern`; worker activity groups expose it; dispatch backoff now blocks provider/model-wide rate-limit storms. Targeted tests passed: `test-headless-runtime-helper.sh`, `test-brief-inline-classifier.sh`, `test-worker-activity-helper.sh`, `test-dispatch-backoff-helper.sh`, and `shellcheck` on changed shell files |
 | 2026-05-04T04:25Z | Worktree rebased | Rebasing onto `origin/main` hit one conflict in `test-headless-runtime-helper.sh` (`V8` vs `V9` contract expectation); resolved to V9 while preserving upstream BLOCKED-signal test. Post-rebase targeted tests and shellcheck passed. |
+| 2026-05-10T21:05Z | Feature 1.3 completed | Failed worker session sampling artifact merged in PR #23368, with review follow-ups #23381/#23393 closed. Artifact: `todo/missions/m-20260504-1e325d/feature-1.3-worker-session-sampling.md`. |
 
 ## Next actions
 
