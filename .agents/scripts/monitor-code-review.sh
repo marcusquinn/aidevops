@@ -42,12 +42,22 @@ check_sonarcloud() {
 	local response
 
 	if response=$(curl -s "$api_url"); then
+		if ! printf '%s' "$response" | jq -e . >/dev/null 2>&1; then
+			print_warning "SonarCloud returned non-JSON response; skipping status"
+			echo "$(date): SonarCloud - non-JSON response skipped" >>"$MONITOR_LOG"
+			return 0
+		fi
+
 		local bugs
-		bugs=$(echo "$response" | jq -r '.component.measures[] | select(.metric=="bugs") | .value')
+		bugs=$(printf '%s' "$response" | jq -r '.component.measures[]? | select(.metric=="bugs") | .value // "0"')
 		local vulnerabilities
-		vulnerabilities=$(echo "$response" | jq -r '.component.measures[] | select(.metric=="vulnerabilities") | .value')
+		vulnerabilities=$(printf '%s' "$response" | jq -r '.component.measures[]? | select(.metric=="vulnerabilities") | .value // "0"')
 		local code_smells
-		code_smells=$(echo "$response" | jq -r '.component.measures[] | select(.metric=="code_smells") | .value')
+		code_smells=$(printf '%s' "$response" | jq -r '.component.measures[]? | select(.metric=="code_smells") | .value // "0"')
+
+		bugs="${bugs:-0}"
+		vulnerabilities="${vulnerabilities:-0}"
+		code_smells="${code_smells:-0}"
 
 		print_success "SonarCloud Status: Bugs: $bugs, Vulnerabilities: $vulnerabilities, Code Smells: $code_smells"
 
