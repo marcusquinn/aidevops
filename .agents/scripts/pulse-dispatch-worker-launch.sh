@@ -1678,6 +1678,21 @@ _dlw_issue_still_open_before_claim() {
 	return 0
 }
 
+_dlw_preclaim_state_refresh_or_skip() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local _ds_t0
+
+	_ds_t0=$(_ds_now_ns)
+	if ! _dlw_issue_still_open_before_claim "$issue_number" "$repo_slug"; then
+		_ds_record "$issue_number" "$repo_slug" "preclaim_state_refresh" "$_ds_t0"
+		return 1
+	fi
+	_ds_record "$issue_number" "$repo_slug" "preclaim_state_refresh" "$_ds_t0"
+
+	return 0
+}
+
 #######################################
 # Thin orchestrator for worker launch. Delegates each distinct concern
 # (assignment + labels, log files, model resolution, issue lock, repo pull,
@@ -1718,9 +1733,7 @@ _dispatch_launch_worker() {
 	_ds_t0=$(_ds_now_ns)
 	_dlw_resolve_tier_and_model "$issue_meta_json" "$model_override"
 	_ds_record "$issue_number" "$repo_slug" "resolve_tier_model" "$_ds_t0"
-	local dispatch_tier="$_DLW_DISPATCH_TIER"
-	local dispatch_model_tier="$_DLW_DISPATCH_MODEL_TIER"
-	local selected_model="$_DLW_SELECTED_MODEL"
+	local dispatch_tier="$_DLW_DISPATCH_TIER" dispatch_model_tier="$_DLW_DISPATCH_MODEL_TIER" selected_model="$_DLW_SELECTED_MODEL"
 
 	if _dlw_blocked_by_hard_stop "$issue_number" "$repo_slug" "$issue_meta_json"; then
 		return 2
@@ -1734,12 +1747,7 @@ _dispatch_launch_worker() {
 	fi
 	_ds_record "$issue_number" "$repo_slug" "canary_preflight" "$_ds_t0"
 
-	_ds_t0=$(_ds_now_ns)
-	if ! _dlw_issue_still_open_before_claim "$issue_number" "$repo_slug"; then
-		_ds_record "$issue_number" "$repo_slug" "preclaim_state_refresh" "$_ds_t0"
-		return 2
-	fi
-	_ds_record "$issue_number" "$repo_slug" "preclaim_state_refresh" "$_ds_t0"
+	_dlw_preclaim_state_refresh_or_skip "$issue_number" "$repo_slug" || return 2
 
 	if ! _dlw_claim_lock_after_canary "$issue_number" "$repo_slug" "$self_login"; then
 		return 2
