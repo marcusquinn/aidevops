@@ -476,6 +476,7 @@ _invoke_opencode() {
 		# fires while _invoke_opencode is still waiting for the worker.
 		_WORKER_ISOLATED_DB_PATH="${isolated_data_dir}/opencode/opencode.db"
 		print_info "[lifecycle] db_isolated dir=$isolated_data_dir pid=$$"
+		_sync_worker_db_migration_metadata "$isolated_data_dir"
 		if [[ -n "${_invoke_persisted_session:-}" ]]; then
 			_seed_worker_db_session_context "$isolated_data_dir" "$_invoke_persisted_session"
 			print_info "[lifecycle] db_seeded session=$_invoke_persisted_session pid=$$"

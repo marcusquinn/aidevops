@@ -1088,6 +1088,50 @@ _seed_worker_db_session_context() {
 	return 0
 }
 
+#######################################
+# Synchronise OpenCode migration metadata into a pre-existing worker DB.
+#
+# Pre-warmed isolated DB directories can contain user tables before the worker
+# starts. If the migration ledger is empty/missing, OpenCode/Drizzle replays
+# CREATE TABLE migrations and aborts with errors such as "table project already
+# exists" before the seed prompt reaches the model. Copy only migration ledger
+# tables from the shared DB; session/message data remains isolated.
+#######################################
+_sync_worker_db_migration_metadata() {
+	local isolated_dir="$1"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	local shared_db="${HOME}/.local/share/opencode/opencode.db"
+
+	[[ -n "$isolated_dir" ]] || return 0
+	[[ -f "$worker_db" ]] || return 0
+	[[ -f "$shared_db" ]] || return 0
+
+	local has_project has_schema_migrations has_data_migration
+	has_project=$(sqlite3 "$worker_db" "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'project' LIMIT 1;" 2>/dev/null || true)
+	[[ -n "$has_project" ]] || return 0
+
+	has_schema_migrations=$(sqlite3 "$worker_db" "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '__drizzle_migrations' LIMIT 1;" 2>/dev/null || true)
+	has_data_migration=$(sqlite3 "$worker_db" "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'data_migration' LIMIT 1;" 2>/dev/null || true)
+
+	if [[ -z "$has_schema_migrations" ]]; then
+		sqlite3 "$shared_db" ".schema __drizzle_migrations" 2>/dev/null | sqlite3 "$worker_db" >/dev/null 2>&1 || true
+	fi
+	if [[ -z "$has_data_migration" ]]; then
+		sqlite3 "$shared_db" ".schema data_migration" 2>/dev/null | sqlite3 "$worker_db" >/dev/null 2>&1 || true
+	fi
+
+	local shared_db_sql
+	shared_db_sql=$(sql_escape "$shared_db")
+	sqlite3 "$worker_db" <<-SQL >/dev/null 2>&1 || true
+		.timeout 5000
+		ATTACH DATABASE '${shared_db_sql}' AS shared;
+		INSERT OR IGNORE INTO __drizzle_migrations SELECT * FROM shared.__drizzle_migrations;
+		INSERT OR IGNORE INTO data_migration SELECT * FROM shared.data_migration;
+		DETACH DATABASE shared;
+	SQL
+	return 0
+}
+
 # --- Section 10: Dispatch Ledger / Session Locks ---
 
 # _register_dispatch_ledger: register this dispatch in the in-flight ledger (GH#6696).

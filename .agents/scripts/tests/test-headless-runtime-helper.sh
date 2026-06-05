@@ -1090,6 +1090,43 @@ SQL
 	return 0
 }
 
+test_sync_worker_db_migration_metadata_repairs_prewarmed_project_table() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/isolated-opencode-prewarm"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+	rm -f "$shared_db" "$worker_db"
+
+	sqlite3 "$shared_db" <<'SQL'
+CREATE TABLE __drizzle_migrations (id INTEGER PRIMARY KEY, hash TEXT NOT NULL, created_at INTEGER);
+CREATE TABLE data_migration (id TEXT PRIMARY KEY, updated_at INTEGER NOT NULL);
+CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
+INSERT INTO __drizzle_migrations VALUES (1, 'schema-ready', 12345);
+INSERT INTO data_migration VALUES ('data-ready', 67890);
+SQL
+	sqlite3 "$worker_db" <<'SQL'
+CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
+INSERT INTO project VALUES ('prewarmed-project', 'Prewarmed Project');
+SQL
+
+	_sync_worker_db_migration_metadata "$isolated_dir"
+
+	local schema_migrations data_migrations projects
+	schema_migrations=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM __drizzle_migrations WHERE hash = 'schema-ready';")
+	data_migrations=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM data_migration WHERE id = 'data-ready';")
+	projects=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM project WHERE id = 'prewarmed-project';")
+
+	if [[ "$schema_migrations" == "1" && "$data_migrations" == "1" && "$projects" == "1" ]]; then
+		print_result "sync worker DB migration metadata repairs prewarmed project table" 0
+		return 0
+	fi
+
+	print_result "sync worker DB migration metadata repairs prewarmed project table" 1 \
+		"schema_migrations=$schema_migrations data_migrations=$data_migrations projects=$projects"
+	return 0
+}
+
 test_large_opencode_prompt_uses_file_attachment() {
 	local prompt="large-seed-prompt-with-worker-contract"
 	local old_threshold="${HEADLESS_PROMPT_FILE_THRESHOLD_BYTES:-}"
@@ -1770,6 +1807,7 @@ main() {
 	test_copy_scoped_opencode_auth_keeps_selected_provider_only
 	test_seed_worker_db_session_context_copies_only_selected_session
 	test_seed_worker_db_session_context_copies_migration_metadata
+	test_sync_worker_db_migration_metadata_repairs_prewarmed_project_table
 	test_large_opencode_prompt_uses_file_attachment
 	test_large_claude_prompt_uses_stdin_file
 	test_registered_prompt_temp_cleanup_removes_dir
