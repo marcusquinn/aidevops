@@ -276,6 +276,26 @@ pulse_merge_zero_progress_record 0 0 >/dev/null 2>&1
 got=$(pulse_stats_get_gauge "pulse_merge_zero_progress_cycles")
 assert_eq "5b: merged=0 + eligible=0 resets cycles to 0 (was 2)" "0" "$got"
 
+# 5b.1: a healthy idle cycle also sweeps stale open zero-progress issues when
+# pulse-stats.json has already lost the non-zero gauge (for example after log
+# rotation/truncation). The sweep is throttled in production, so disable the
+# interval here for deterministic coverage.
+PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE="23036"
+AIDEVOPS_MERGE_ZERO_PROGRESS_RECOVERY_CHECK_SECONDS=0
+: >"$GH_CALLS"
+pulse_stats_set_gauge "pulse_merge_zero_progress_cycles" "0" >/dev/null 2>&1
+pulse_merge_zero_progress_record 0 0 >/dev/null 2>&1
+if grep -q 'gh issue close 23036 --repo marcusquinn/aidevops --reason completed' "$GH_CALLS"; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 5b.1: stale zero-progress meta-issue is swept after recovered idle cycle"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 5b.1: stale zero-progress meta-issue sweep is missing"
+	echo "  gh calls: $(cat "$GH_CALLS")"
+fi
+TESTS_RUN=$((TESTS_RUN + 1))
+PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE=""
+AIDEVOPS_MERGE_ZERO_PROGRESS_RECOVERY_CHECK_SECONDS=3600
+
 # 5c: merged=0 + eligible>0 → gauge increments by 1
 pulse_stats_set_gauge "pulse_merge_zero_progress_cycles" "0" >/dev/null 2>&1
 pulse_merge_zero_progress_record 4 0 >/dev/null 2>&1

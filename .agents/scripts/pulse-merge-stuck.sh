@@ -108,6 +108,7 @@ fi
 : "${AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES:=5}"
 : "${AIDEVOPS_MERGE_PATTERN_MIN_PRS:=3}"
 : "${AIDEVOPS_MERGE_STUCK_ENABLED:=1}"
+: "${AIDEVOPS_MERGE_ZERO_PROGRESS_RECOVERY_CHECK_SECONDS:=3600}"
 
 # ── Constants (literal-dedup) ────────────────────────────────────────────────
 # Counter and gauge names that would otherwise repeat 3+ times in the body
@@ -115,6 +116,7 @@ fi
 readonly _PMS_COUNTER_ESCALATIONS_FILED="pulse_merge_stuck_escalations_filed"
 readonly _PMS_COUNTER_QUEUE_SATURATION_EVENTS="pulse_actions_queue_saturation_events"
 readonly _PMS_GAUGE_ZERO_PROGRESS_CYCLES='pulse_merge_zero_progress_cycles'
+readonly _PMS_GAUGE_ZERO_PROGRESS_RECOVERY_CHECK_TS='pulse_merge_zero_progress_recovery_check_ts'
 readonly _PMS_JQ_NULL_GUARD="null"
 readonly _PMS_RUNNER_SATURATION_MARKER_TEXT="merge-stuck:runner-queue-saturation"
 # jq filter snippet that selects normalized REST check entries with a failing
@@ -1403,6 +1405,31 @@ pulse_merge_stuck_run_pass() {
 }
 
 #######################################
+# Close stale zero-progress meta-issues after recovery is already gauged 0.
+#
+# Covers pulse-stats.json loss/rotation: the next healthy cycle has cur_before=0,
+# so the normal transition close path would miss an already-open meta-issue.
+# Args: $1 - human-readable recovery reason
+#######################################
+_pms_close_zero_progress_meta_issue_if_recovered_due() {
+	local reason="$1"
+	local now_epoch
+	now_epoch=$(date +%s 2>/dev/null) || now_epoch=0
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=0
+	local interval="${AIDEVOPS_MERGE_ZERO_PROGRESS_RECOVERY_CHECK_SECONDS:-3600}"
+	[[ "$interval" =~ ^[0-9]+$ ]] || interval=3600
+	local last_check
+	last_check=$(pulse_stats_get_gauge "$_PMS_GAUGE_ZERO_PROGRESS_RECOVERY_CHECK_TS")
+	[[ "$last_check" =~ ^[0-9]+$ ]] || last_check=0
+	if [[ "$interval" -gt 0 && "$last_check" -gt 0 && $((now_epoch - last_check)) -lt "$interval" ]]; then
+		return 0
+	fi
+	pulse_stats_set_gauge "$_PMS_GAUGE_ZERO_PROGRESS_RECOVERY_CHECK_TS" "$now_epoch"
+	_pms_close_zero_progress_meta_issue_if_recovered "$reason"
+	return 0
+}
+
+#######################################
 # Increment the zero-progress counter for the current pulse cycle.
 # Called by pulse-merge.sh::merge_ready_prs_all_repos at the END of the
 # merge pass — see the wiring there.
@@ -1433,6 +1460,8 @@ pulse_merge_zero_progress_record() {
 		pulse_stats_set_gauge "$_PMS_GAUGE_ZERO_PROGRESS_CYCLES" "0"
 		if [[ "$cur_before" -gt 0 ]]; then
 			_pms_close_zero_progress_meta_issue_if_recovered "${merged_count} PR(s) merged after a ${cur_before}-cycle zero-progress streak"
+		else
+			_pms_close_zero_progress_meta_issue_if_recovered_due "${merged_count} PR(s) merged while zero-progress gauge was already 0"
 		fi
 		return 0
 	fi
@@ -1444,6 +1473,8 @@ pulse_merge_zero_progress_record() {
 		pulse_stats_set_gauge "$_PMS_GAUGE_ZERO_PROGRESS_CYCLES" "0"
 		if [[ "$cur_before" -gt 0 ]]; then
 			_pms_close_zero_progress_meta_issue_if_recovered "eligible-unmerged dropped to 0 after a ${cur_before}-cycle zero-progress streak"
+		else
+			_pms_close_zero_progress_meta_issue_if_recovered_due "eligible-unmerged is 0 while zero-progress gauge was already 0"
 		fi
 		return 0
 	fi
