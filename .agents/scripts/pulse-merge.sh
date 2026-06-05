@@ -980,7 +980,7 @@ _process_single_ready_pr() {
 	# when the PR is otherwise green. First ask GitHub to enqueue/auto-merge the
 	# PR without admin bypass, then fall back to a direct non-admin merge for repos
 	# whose rulesets allow immediate maintainer merges.
-	local merge_output _merge_exit _auto_merge_output _auto_merge_exit
+	local merge_output="" _merge_exit=0 _auto_merge_output="" _auto_merge_exit=0
 	merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --admin 2>&1)
 	_merge_exit=$?
 	if [[ $_merge_exit -ne 0 && "$merge_output" == *"Repository rule violations found"* ]]; then
