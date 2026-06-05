@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# Regression test for GH#23087: when GitHub rulesets reject the historical
-# `gh pr merge --admin` path, deterministic merge retries a normal squash merge
-# instead of recording another failed zero-progress cycle.
+# Regression test for GH#23087/GH#24438: when GitHub rulesets reject the
+# historical `gh pr merge --admin` path, deterministic merge first asks GitHub
+# to auto-merge/queue the PR without admin bypass instead of recording another
+# failed zero-progress cycle.
 
 set -euo pipefail
 
@@ -57,8 +58,13 @@ if [[ "$1" == "pr" && "$2" == "merge" && "$*" == *"--admin"* ]]; then
 	exit 1
 fi
 
-if [[ "$1" == "pr" && "$2" == "merge" ]]; then
+if [[ "$1" == "pr" && "$2" == "merge" && "$*" == *"--auto"* ]]; then
 	exit 0
+fi
+
+if [[ "$1" == "pr" && "$2" == "merge" ]]; then
+	printf '%s\n' 'X Pull request owner/repo#77 is not mergeable: the base branch policy prohibits the merge.' >&2
+	exit 1
 fi
 
 exit 0
@@ -107,7 +113,7 @@ _set_native_auto_merge_or_skip() { return 1; }
 _handle_post_merge_actions() { return 0; }
 gh_pr_view() { printf '{"labels":[]}'; return 0; }
 
-test_ruleset_violation_retries_without_admin() {
+test_ruleset_violation_enables_auto_merge_without_admin() {
 	setup_test_env
 	define_function_under_test || { teardown_test_env; return 0; }
 
@@ -125,17 +131,22 @@ test_ruleset_violation_retries_without_admin() {
 		teardown_test_env
 		return 0
 	fi
-	if ! grep -qE 'gh pr merge 77 --repo owner/repo --squash$' "$GH_LOG"; then
-		print_result "ruleset violation fallback retries without admin" 1 "gh log: $(cat "$GH_LOG")"
+	if ! grep -qE 'gh pr merge 77 --repo owner/repo --auto --squash$' "$GH_LOG"; then
+		print_result "ruleset violation fallback enables native auto-merge" 1 "gh log: $(cat "$GH_LOG")"
 		teardown_test_env
 		return 0
 	fi
-	if ! grep -qE 'retrying without --admin.*GH#23087' "$LOGFILE"; then
+	if grep -qE 'gh pr merge 77 --repo owner/repo --squash$' "$GH_LOG"; then
+		print_result "ruleset violation fallback avoids direct policy-prohibited merge" 1 "gh log: $(cat "$GH_LOG")"
+		teardown_test_env
+		return 0
+	fi
+	if ! grep -qE 'retrying with native auto-merge without --admin.*GH#24438' "$LOGFILE"; then
 		print_result "ruleset violation fallback writes audit log" 1 "pulse log: $(cat "$LOGFILE")"
 		teardown_test_env
 		return 0
 	fi
-	print_result "ruleset violation fallback retries without admin and succeeds" 0
+	print_result "ruleset violation fallback enables native auto-merge and succeeds" 0
 	teardown_test_env
 	return 0
 }
@@ -169,7 +180,7 @@ test_draft_pr_without_origin_labels_skips_merge_write() {
 }
 
 main() {
-	test_ruleset_violation_retries_without_admin
+	test_ruleset_violation_enables_auto_merge_without_admin
 	test_draft_pr_without_origin_labels_skips_merge_write
 
 	printf '\n=================================\n'
