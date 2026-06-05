@@ -2304,9 +2304,9 @@
       "pr": 15086
     },
     ".agents/scripts/headless-runtime-lib.sh": {
-      "at": "2026-06-05T11:22:44Z",
-      "hash": "ac7f54bbe1874e304e4d768e109586b455b724dd",
-      "passes": 36,
+      "at": "2026-06-05T14:52:40Z",
+      "hash": "9699028afabb4f0841328021df317ac00bcef611",
+      "passes": 37,
       "pr": 18707
     },
     ".agents/scripts/interactive-session-helper.sh": {
