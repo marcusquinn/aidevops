@@ -62,6 +62,7 @@
 #      rate-limit probe while leaving GraphQL-only PR list fields on GraphQL
 #  33. AIDEVOPS_GH_PR_VIEW_CACHE coalesces duplicate REST PR view reads
 #  34. AIDEVOPS_GH_PR_VIEW_CACHE coalesces duplicate GraphQL-only PR view reads
+#  35. _rest_split_csv suppresses Broken pipe noise when consumers close early
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
 # precedence over PATH binaries, so the stub captures all `gh` invocations
@@ -1191,6 +1192,34 @@ else
 fi
 
 unset AIDEVOPS_GITHUB_APP_ENABLED AIDEVOPS_GITHUB_APP_ID AIDEVOPS_GITHUB_APP_INSTALLATION_ID AIDEVOPS_GITHUB_APP_REST_FIRST
+
+# =============================================================================
+# Test 35: _rest_split_csv suppresses early-close Broken pipe noise
+# =============================================================================
+long_csv=""
+for i in $(seq 1 5000); do
+	if [[ -z "$long_csv" ]]; then
+		long_csv="token-${i}"
+	else
+		long_csv="${long_csv},token-${i}"
+	fi
+done
+
+early_close_output=""
+early_close_stderr=$({
+	early_close_output=$(_rest_split_csv "$long_csv" | {
+		IFS= read -r first_token || true
+		printf '%s\n' "$first_token"
+	})
+	printf '%s\n' "$early_close_output" >"$TMP/early-close-output.log"
+} 2>&1)
+
+if [[ "$(cat "$TMP/early-close-output.log")" == "token-1" && "$early_close_stderr" != *"Broken pipe"* ]]; then
+	pass "_rest_split_csv suppresses Broken pipe noise when consumers close early"
+else
+	fail "_rest_split_csv suppresses Broken pipe noise when consumers close early" \
+		"stdout=$(cat "$TMP/early-close-output.log") stderr=${early_close_stderr}"
+fi
 
 # =============================================================================
 # Summary

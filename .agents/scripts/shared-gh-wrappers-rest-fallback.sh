@@ -202,6 +202,24 @@ _rest_append_sig() {
 }
 
 #######################################
+# Emit one REST helper output line while tolerating early-closing consumers.
+#
+# Pulse prefetch/list callers may pipe REST fallback output into consumers that
+# intentionally exit after the first match. Bash's printf reports EPIPE as noisy
+# "Broken pipe" stderr output unless stderr is suppressed at the emit site.
+# Return 1 so callers can stop emitting without treating the closed pipe as a
+# legitimate REST fallback failure.
+#
+# Args: $1=line
+# Returns: 0 when emitted, 1 when the output pipe is closed.
+#######################################
+_rest_emit_line() {
+	local _line="$1"
+	printf '%s\n' "$_line" 2>/dev/null || return 1
+	return 0
+}
+
+#######################################
 # _rest_split_csv: portable CSV tokeniser. Emits one token per line to stdout.
 #
 # Works in bash 3.2+, zsh 5+, and BusyBox ash — uses POSIX parameter
@@ -224,10 +242,10 @@ _rest_split_csv() {
 	local _delim="${2:-,}"
 	while [[ -n "$_str" ]]; do
 		if [[ "$_str" == *"$_delim"* ]]; then
-			printf '%s\n' "${_str%%"$_delim"*}"
+			_rest_emit_line "${_str%%"$_delim"*}" || break
 			_str="${_str#*"$_delim"}"
 		else
-			printf '%s\n' "$_str"
+			_rest_emit_line "$_str" || break
 			_str=""
 		fi
 	done
