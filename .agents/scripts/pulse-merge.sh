@@ -965,13 +965,6 @@ _process_single_ready_pr() {
 		0)
 			return 4
 			;;
-		2)
-			# t3508: auto-merge has been stuck on required pending checks past
-			# threshold. Route bounded CI repair feedback rather than silently
-			# deferring forever or attempting an admin bypass through pending CI.
-			_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "ci" "$pr_labels" "" "$pr_updated_at" "$pr_head_ref_oid" || true
-			return 1
-			;;
 	esac
 
 	# Merge. Prefer the historical admin path for owned repos, but fall back to
