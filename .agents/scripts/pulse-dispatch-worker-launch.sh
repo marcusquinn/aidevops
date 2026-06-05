@@ -1654,6 +1654,30 @@ _dlw_blocked_by_hard_stop() {
 	return 1
 }
 
+_dlw_issue_still_open_before_claim() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local refreshed_state=""
+
+	# GH#24437: the canonical metadata bundle is fetched before canary/model
+	# preflight and may be stale by the time the dispatcher is about to publish a
+	# persistent DISPATCH_CLAIM. Refresh just the issue state immediately before
+	# cross-runner claim/label/worktree mutation so auto-resolved meta-issues do
+	# not consume worker capacity after they close.
+	refreshed_state=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
+		--json state --jq '.state // ""' 2>/dev/null | tr '[:lower:]' '[:upper:]') || refreshed_state=""
+	if [[ -z "$refreshed_state" ]]; then
+		echo "[dispatch_with_dedup] Warning: unable to refresh issue state for #${issue_number} in ${repo_slug} before claim; proceeding with prior dispatch gates" >>"$LOGFILE"
+		return 0
+	fi
+	if [[ "$refreshed_state" != "OPEN" ]]; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: refreshed issue state before claim is ${refreshed_state} (GH#24437)" >>"$LOGFILE"
+		return 1
+	fi
+
+	return 0
+}
+
 #######################################
 # Thin orchestrator for worker launch. Delegates each distinct concern
 # (assignment + labels, log files, model resolution, issue lock, repo pull,
@@ -1709,6 +1733,13 @@ _dispatch_launch_worker() {
 		return 2
 	fi
 	_ds_record "$issue_number" "$repo_slug" "canary_preflight" "$_ds_t0"
+
+	_ds_t0=$(_ds_now_ns)
+	if ! _dlw_issue_still_open_before_claim "$issue_number" "$repo_slug"; then
+		_ds_record "$issue_number" "$repo_slug" "preclaim_state_refresh" "$_ds_t0"
+		return 2
+	fi
+	_ds_record "$issue_number" "$repo_slug" "preclaim_state_refresh" "$_ds_t0"
 
 	if ! _dlw_claim_lock_after_canary "$issue_number" "$repo_slug" "$self_login"; then
 		return 2

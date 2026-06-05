@@ -202,6 +202,11 @@ _dlw_resolve_tier_and_model() {
 	return 0
 }
 _dlw_canary_preflight() { return 0; }
+STUB_REFRESH_STATE="OPEN"
+gh_issue_view() {
+	printf '%s\n' "$STUB_REFRESH_STATE"
+	return 0
+}
 CLAIM_LOCK_CALLS_FILE="${TMP}/claim-lock-calls.txt"
 _dedup_layer7_claim_lock() {
 	printf '%s\n' "${1:-}" >>"$CLAIM_LOCK_CALLS_FILE"
@@ -396,7 +401,48 @@ else
 fi
 
 # =============================================================================
-# Test 7: _dispatch_launch_worker skips dispatch when pre-creation fails
+# Test 7: _dispatch_launch_worker refreshes state before claim
+# =============================================================================
+_dlw_canary_preflight() { return 0; }
+STUB_REFRESH_STATE="CLOSED"
+
+: >"$LOGFILE"
+: >"${TMP}/setsid-calls.txt"
+: >"$CLAIM_LOCK_CALLS_FILE"
+
+launch_rc=0
+_dispatch_launch_worker "77778" "owner/repo" "test-dispatch" "Test Issue" \
+	"testuser" "$FAKE_REPO" "test prompt" "session-key-closed" "" \
+	'{"state":"OPEN","body":""}' || launch_rc=$?
+
+if [[ "$launch_rc" -eq 2 ]]; then
+	pass "closed pre-claim refresh returns explicit no-op rc=2"
+else
+	fail "closed pre-claim refresh returns explicit no-op rc=2" "got rc=$launch_rc"
+fi
+
+if [[ ! -s "$CLAIM_LOCK_CALLS_FILE" ]]; then
+	pass "closed pre-claim refresh does not post dispatch claim"
+else
+	fail "closed pre-claim refresh does not post dispatch claim" "claim lock calls: $(cat "$CLAIM_LOCK_CALLS_FILE")"
+fi
+
+if [[ ! -s "${TMP}/setsid-calls.txt" ]]; then
+	pass "closed pre-claim refresh does not spawn worker"
+else
+	fail "closed pre-claim refresh does not spawn worker" "setsid was called"
+fi
+
+if grep -q "refreshed issue state before claim is CLOSED" "$LOGFILE" 2>/dev/null; then
+	pass "closed pre-claim refresh logs blocked state"
+else
+	fail "closed pre-claim refresh logs blocked state" "LOGFILE: $(cat "$LOGFILE")"
+fi
+
+STUB_REFRESH_STATE="OPEN"
+
+# =============================================================================
+# Test 8: _dispatch_launch_worker skips dispatch when pre-creation fails
 # =============================================================================
 _dlw_canary_preflight() { return 0; }
 
@@ -437,7 +483,7 @@ else
 fi
 
 # =============================================================================
-# Test 8: worktree_precreation_failed_count counter is incremented
+# Test 9: worktree_precreation_failed_count counter is incremented
 # =============================================================================
 local_count=""
 if command -v jq &>/dev/null; then
@@ -457,7 +503,7 @@ else
 fi
 
 # =============================================================================
-# Test 9: --dir argument no longer contains repo_path fallback
+# Test 10: --dir argument no longer contains repo_path fallback
 # =============================================================================
 # Grep the source file for the old pattern (single quotes intentional — literal search)
 # shellcheck disable=SC2016
