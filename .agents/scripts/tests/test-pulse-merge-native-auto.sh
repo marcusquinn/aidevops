@@ -141,13 +141,13 @@ teardown_test_env() {
 define_helpers_under_test() {
 	local src_stuck src_repo_allow src_set_native
 	src_stuck=$(awk '
-		/^_auto_merge_stuck_seconds\(\) \{/,/^\}$/ { print }
+		/^_auto_merge_stuck_seconds\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
 	' "$PROCESS_SCRIPT")
 	src_repo_allow=$(awk '
-		/^_repo_allows_auto_merge\(\) \{/,/^\}$/ { print }
+		/^_repo_allows_auto_merge\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
 	' "$PROCESS_SCRIPT")
 	src_set_native=$(awk '
-		/^_set_native_auto_merge_or_skip\(\) \{/,/^\}$/ { print }
+		/^_set_native_auto_merge_or_skip\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
 	' "$PROCESS_SCRIPT")
 	if [[ -z "$src_stuck" || -z "$src_repo_allow" || -z "$src_set_native" ]]; then
 		printf 'ERROR: could not extract helpers from %s\n' "$PROCESS_SCRIPT" >&2
@@ -379,10 +379,10 @@ test_case_e_stale_pending_defers() {
 test_native_auto_defer_not_counted_as_completed_merge() {
 	local process_src merge_src
 	process_src=$(awk '
-		/^_merge_ready_prs_for_repo\(\) \{/,/^\}$/ { print }
+		/^_merge_ready_prs_for_repo\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
 	' "$PROCESS_SCRIPT")
 	merge_src=$(awk '
-		/^_process_single_ready_pr\(\) \{/,/^\}$/ { print }
+		/^_process_single_ready_pr\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
 	' "$MERGE_SCRIPT")
 
 	if [[ -z "$process_src" || -z "$merge_src" ]]; then
