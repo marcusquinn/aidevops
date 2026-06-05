@@ -61,7 +61,7 @@ optuna==4.6.0
 packaging==25.0
 pandas==2.3.3
 propcache==0.4.1
-pyarrow==21.0.0
+pyarrow==23.0.1
 pydantic==2.12.4
 pydantic_core==2.41.5
 Pygments==2.19.2
