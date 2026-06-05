@@ -19,7 +19,11 @@
 #   Case (D): Repo allow_auto_merge=false
 #             → returns 1; no `gh pr merge --auto` invocation
 #   Case (E): autoMergeRequest pending past threshold
-#             → returns 2 so caller routes bounded CI repair
+#             → returns 0 and keeps deferring because pending checks are non-terminal
+#
+# Also verifies the caller contract: native auto-merge defer returns 4 from
+# _process_single_ready_pr and _merge_ready_prs_for_repo does not count that as
+# a completed merge. This keeps zero-progress telemetry tied to real merges.
 #
 # No real repository is touched. The `gh` binary is replaced with a mock
 # stub that serves canned responses from TEST_ROOT fixture files and logs
@@ -32,6 +36,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 PROCESS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process.sh"
+MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -154,6 +159,18 @@ define_helpers_under_test() {
 	eval "$src_repo_allow"
 	# shellcheck disable=SC1090
 	eval "$src_set_native"
+	gh_pr_view() {
+		gh pr view "$@"
+		return $?
+	}
+	_check_required_checks_passing() {
+		local _repo_slug="$1"
+		local _pr_number="$2"
+		local pending_count
+		pending_count=$(cat "${TEST_ROOT}/pending_count.txt")
+		[[ "$pending_count" == "0" ]]
+		return $?
+	}
 	return 0
 }
 
@@ -319,7 +336,7 @@ test_case_d_repo_disallows_falls_through() {
 # =============================================================================
 # Case (E): PR already has autoMergeRequest but required checks are stale-pending
 # =============================================================================
-test_case_e_stale_pending_routes_repair() {
+test_case_e_stale_pending_defers() {
 	setup_test_env
 	define_helpers_under_test || { teardown_test_env; return 0; }
 
@@ -336,9 +353,9 @@ test_case_e_stale_pending_routes_repair() {
 	_set_native_auto_merge_or_skip "500" "owner/repo" || result=$?
 	unset AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS
 
-	if [[ "$result" -ne 2 ]]; then
-		print_result "Case (E): stale pending auto_merge → returns 2 (repair)" 1 \
-			"Expected exit 2, got ${result}"
+	if [[ "$result" -ne 0 ]]; then
+		print_result "Case (E): stale pending auto_merge → returns 0 (defer)" 1 \
+			"Expected exit 0, got ${result}"
 		teardown_test_env
 		return 0
 	fi
@@ -348,14 +365,45 @@ test_case_e_stale_pending_routes_repair() {
 		teardown_test_env
 		return 0
 	fi
-	if ! grep -qE 'routing CI repair.*t3508' "$LOGFILE"; then
-		print_result "Case (E): stale pending auto_merge → repair audit log written" 1 \
+	if ! grep -qE 'required check\(s\) pending.*t3567' "$LOGFILE"; then
+		print_result "Case (E): stale pending auto_merge → defer audit log written" 1 \
 			"pulse log: $(cat "$LOGFILE")"
 		teardown_test_env
 		return 0
 	fi
-	print_result "Case (E): stale pending auto_merge → returns 2 for repair" 0
+	print_result "Case (E): stale pending auto_merge → returns 0 and defers" 0
 	teardown_test_env
+	return 0
+}
+
+test_native_auto_defer_not_counted_as_completed_merge() {
+	local process_src merge_src
+	process_src=$(awk '
+		/^_merge_ready_prs_for_repo\(\) \{/,/^\}$/ { print }
+	' "$PROCESS_SCRIPT")
+	merge_src=$(awk '
+		/^_process_single_ready_pr\(\) \{/,/^\}$/ { print }
+	' "$MERGE_SCRIPT")
+
+	if [[ -z "$process_src" || -z "$merge_src" ]]; then
+		print_result "Native auto defer contract is inspectable" 1 \
+			"Could not extract merge process functions"
+		return 0
+	fi
+
+	if [[ "$merge_src" != *'return 4'* ]]; then
+		print_result "Native auto defer returns distinct non-merged code" 1 \
+			"Expected _process_single_ready_pr native-auto branch to return 4"
+		return 0
+	fi
+
+	if [[ "$process_src" != *'4) ;;'* ]]; then
+		print_result "Native auto defer is not counted as completed merge" 1 \
+			"Expected _merge_ready_prs_for_repo to handle rc=4 without merged++"
+		return 0
+	fi
+
+	print_result "Native auto defer is not counted as completed merge" 0
 	return 0
 }
 
@@ -364,7 +412,8 @@ main() {
 	test_case_b_ci_green_falls_through
 	test_case_c_already_set_no_op
 	test_case_d_repo_disallows_falls_through
-	test_case_e_stale_pending_routes_repair
+	test_case_e_stale_pending_defers
+	test_native_auto_defer_not_counted_as_completed_merge
 
 	printf '\n=================================\n'
 	printf 'Tests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"

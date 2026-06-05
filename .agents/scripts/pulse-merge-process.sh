@@ -427,6 +427,7 @@ _merge_ready_prs_for_repo() {
 		0) merged=$((merged + 1)) ;;
 		2) closed=$((closed + 1)) ;;
 		3) failed=$((failed + 1)) ;;
+		4) ;;
 		esac
 	done
 
