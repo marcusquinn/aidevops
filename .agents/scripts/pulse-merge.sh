@@ -974,16 +974,24 @@ _process_single_ready_pr() {
 	esac
 
 	# Merge. Prefer the historical admin path for owned repos, but fall back to
-	# a protection-respecting merge when repository rulesets reject admin bypass.
-	# GitHub reports ruleset blocks as a generic GraphQL error; retrying the same
-	# --admin call every pulse cycle creates a zero-progress loop even when the PR
-	# is otherwise green. The non-admin retry lets rulesets/merge queue evaluate
-	# the PR normally instead of counting it as a deterministic merge failure.
-	local merge_output _merge_exit
+	# protection-respecting merge paths when repository rulesets reject admin
+	# bypass. GitHub reports ruleset blocks as a generic GraphQL error; retrying
+	# the same --admin call every pulse cycle creates a zero-progress loop even
+	# when the PR is otherwise green. First ask GitHub to enqueue/auto-merge the
+	# PR without admin bypass, then fall back to a direct non-admin merge for repos
+	# whose rulesets allow immediate maintainer merges.
+	local merge_output _merge_exit _auto_merge_output _auto_merge_exit
 	merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --admin 2>&1)
 	_merge_exit=$?
 	if [[ $_merge_exit -ne 0 && "$merge_output" == *"Repository rule violations found"* ]]; then
-		echo "[pulse-wrapper] Deterministic merge: admin merge hit repository rulesets for PR #${pr_number} in ${repo_slug}; retrying without --admin (GH#23087): ${merge_output}" >>"$LOGFILE"
+		echo "[pulse-wrapper] Deterministic merge: admin merge hit repository rulesets for PR #${pr_number} in ${repo_slug}; retrying with native auto-merge without --admin (GH#24438): ${merge_output}" >>"$LOGFILE"
+		_auto_merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --auto --squash 2>&1)
+		_auto_merge_exit=$?
+		if [[ $_auto_merge_exit -eq 0 ]]; then
+			echo "[pulse-wrapper] Deterministic merge: enabled native auto-merge for PR #${pr_number} in ${repo_slug} after ruleset blocked admin bypass (GH#24438)" >>"$LOGFILE"
+			return 0
+		fi
+		echo "[pulse-wrapper] Deterministic merge: native auto-merge fallback failed for PR #${pr_number} in ${repo_slug}; retrying direct merge without --admin (GH#23087): ${_auto_merge_output}" >>"$LOGFILE"
 		merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash 2>&1)
 		_merge_exit=$?
 	fi
