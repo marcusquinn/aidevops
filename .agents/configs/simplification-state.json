@@ -2298,15 +2298,15 @@
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "at": "2026-05-26T05:27:01Z",
-      "hash": "1179bc3b8b7147f3b2187e3a279f807606432407",
-      "passes": 53,
+      "at": "2026-06-05T11:22:44Z",
+      "hash": "e9586943f36c0f3659726219c016c24b9230a89c",
+      "passes": 54,
       "pr": 15086
     },
     ".agents/scripts/headless-runtime-lib.sh": {
-      "at": "2026-06-01T12:26:55Z",
-      "hash": "aa3797676dc07cbd4545d1c2fde0222edf53dffd",
-      "passes": 35,
+      "at": "2026-06-05T11:22:44Z",
+      "hash": "ac7f54bbe1874e304e4d768e109586b455b724dd",
+      "passes": 36,
       "pr": 18707
     },
     ".agents/scripts/interactive-session-helper.sh": {
