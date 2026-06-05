@@ -79,7 +79,12 @@ SQL
 
 db_query() {
 	local query="$1"
-	sqlite3 -cmd ".timeout 5000" "$STATE_DB" "$query" 2>/dev/null
+	sqlite3_with_timeout "$STATE_DB" "$query" 2>/dev/null
+	return $?
+}
+
+sqlite3_with_timeout() {
+	sqlite3 -cmd ".timeout 5000" "$@"
 	return $?
 }
 
@@ -1114,10 +1119,10 @@ _sync_worker_db_migration_metadata() {
 	has_data_migration=$(sqlite3 "$worker_db" "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'data_migration' LIMIT 1;" 2>/dev/null || true)
 
 	if [[ -z "$has_schema_migrations" ]]; then
-		sqlite3 "$shared_db" ".schema __drizzle_migrations" 2>/dev/null | sqlite3 "$worker_db" >/dev/null 2>&1 || true
+		sqlite3_with_timeout "$shared_db" ".schema __drizzle_migrations" 2>/dev/null | sqlite3_with_timeout "$worker_db" >/dev/null 2>&1 || true
 	fi
 	if [[ -z "$has_data_migration" ]]; then
-		sqlite3 "$shared_db" ".schema data_migration" 2>/dev/null | sqlite3 "$worker_db" >/dev/null 2>&1 || true
+		sqlite3_with_timeout "$shared_db" ".schema data_migration" 2>/dev/null | sqlite3_with_timeout "$worker_db" >/dev/null 2>&1 || true
 	fi
 
 	local shared_db_sql
