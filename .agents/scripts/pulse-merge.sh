@@ -757,6 +757,7 @@ _Closed by deterministic merge pass (GH#24399)._" 2>/dev/null || true
 #   1 = skipped (gate failure or non-mergeable)
 #   2 = closed conflicting
 #   3 = merge failed
+#   4 = native auto-merge requested/deferred; no merge completed this cycle
 #######################################
 _process_single_ready_pr() {
 	local repo_slug="$1"
@@ -962,7 +963,7 @@ _process_single_ready_pr() {
 	_set_native_auto_merge_or_skip "$pr_number" "$repo_slug" || _native_auto_rc=$?
 	case "$_native_auto_rc" in
 		0)
-			return 0
+			return 4
 			;;
 		2)
 			# t3508: auto-merge has been stuck on required pending checks past
@@ -1042,6 +1043,7 @@ _process_single_ready_pr() {
 #   1 = skipped (gate failure, non-mergeable, or PR not found)
 #   2 = closed conflicting
 #   3 = merge failed
+#   4 = native auto-merge requested/deferred; no merge completed this cycle
 #######################################
 process_pr() {
 	local repo_slug="$1"
