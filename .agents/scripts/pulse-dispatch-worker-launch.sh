@@ -1664,8 +1664,8 @@ _dlw_issue_still_open_before_claim() {
 	# persistent DISPATCH_CLAIM. Refresh just the issue state immediately before
 	# cross-runner claim/label/worktree mutation so auto-resolved meta-issues do
 	# not consume worker capacity after they close.
-	refreshed_state=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
-		--json state --jq '.state // ""' 2>/dev/null | tr '[:lower:]' '[:upper:]') || refreshed_state=""
+	refreshed_state=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json state --jq '.state // ""' | tr '[:lower:]' '[:upper:]') || refreshed_state=""
 	if [[ -z "$refreshed_state" ]]; then
 		echo "[dispatch_with_dedup] Warning: unable to refresh issue state for #${issue_number} in ${repo_slug} before claim; proceeding with prior dispatch gates" >>"$LOGFILE"
 		return 0
