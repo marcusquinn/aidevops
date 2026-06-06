@@ -203,8 +203,13 @@ _dlw_resolve_tier_and_model() {
 }
 _dlw_canary_preflight() { return 0; }
 STUB_REFRESH_STATE="OPEN"
-gh_issue_view() {
-	printf '%s\n' "$STUB_REFRESH_STATE"
+
+gh() {
+	if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
+		printf '%s\n' "$STUB_REFRESH_STATE"
+		return 0
+	fi
+
 	return 0
 }
 CLAIM_LOCK_CALLS_FILE="${TMP}/claim-lock-calls.txt"
