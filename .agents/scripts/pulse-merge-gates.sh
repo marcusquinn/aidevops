@@ -162,6 +162,46 @@ _is_trusted_dependabot_update_pr() {
 }
 
 #######################################
+# Verify all non-review-bot checks are green for trusted Dependabot updates.
+#
+# GitHub's review-bot-gate workflow can remain red on Dependabot PRs because
+# AI review bots often skip dependency-only updates. This helper is the narrow
+# escape hatch: it ignores only review-bot-gate contexts and requires every
+# other check/status in the rollup to be terminal-success/neutral/skipped.
+# Args: $1=pr_number, $2=repo_slug
+# Returns: 0 non-review checks green, 1 otherwise
+#######################################
+_trusted_dependabot_non_review_checks_green() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_json=""
+	local result=""
+	local non_review_count="0" blocker_count="0"
+
+	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 1
+	pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" --json statusCheckRollup 2>/dev/null) || return 1
+	[[ -n "$pr_json" && "$pr_json" != "null" ]] || return 1
+
+	result=$(printf '%s' "$pr_json" | jq -r '
+		def up(v): (v // "" | ascii_upcase);
+		def check_label: (.name // .context // "");
+		def is_review_gate: ((check_label | test("(^|/ )review-bot-gate$|^review-bot-gate$"; "i")) or ((.workflowName // "") == "Review Bot Gate"));
+		def passish: (up(.conclusion) == "SUCCESS" or up(.conclusion) == "NEUTRAL" or up(.conclusion) == "SKIPPED" or up(.state) == "SUCCESS");
+		def pendingish: (up(.status) == "QUEUED" or up(.status) == "IN_PROGRESS" or up(.state) == "PENDING" or up(.state) == "EXPECTED" or ((up(.conclusion) == "") and (up(.state) != "SUCCESS") and (up(.status) != "COMPLETED")));
+		[([.statusCheckRollup[]? | select(is_review_gate | not)] | length),
+		 ([.statusCheckRollup[]? | select((is_review_gate | not) and (pendingish or (passish | not)))] | length)] | @tsv
+	' 2>/dev/null) || return 1
+	read -r non_review_count blocker_count <<<"$result"
+	[[ "$non_review_count" =~ ^[0-9]+$ && "$blocker_count" =~ ^[0-9]+$ ]] || return 1
+	if [[ "$non_review_count" -gt 0 && "$blocker_count" -eq 0 ]]; then
+		echo "[pulse-wrapper] trusted Dependabot checks: PR #${pr_number} in ${repo_slug} has all non-review-bot checks green" >>"$LOGFILE"
+		return 0
+	fi
+	echo "[pulse-wrapper] trusted Dependabot checks: PR #${pr_number} in ${repo_slug} blocked (non_review=${non_review_count}, blockers=${blocker_count})" >>"$LOGFILE"
+	return 1
+}
+
+#######################################
 # Check and flag external-contributor PRs (t1391)
 #
 # Deterministic idempotency guard for the external-contributor comment.
