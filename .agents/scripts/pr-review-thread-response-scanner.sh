@@ -63,10 +63,10 @@ _prrts_parse_repo_slug() {
 	local repo_slug="$1"
 	local owner_var="$2"
 	local name_var="$3"
-	local owner="${repo_slug%%/*}"
-	local name="${repo_slug##*/}"
-	printf -v "$owner_var" '%s' "$owner"
-	printf -v "$name_var" '%s' "$name"
+	local parsed_owner="${repo_slug%%/*}"
+	local parsed_name="${repo_slug##*/}"
+	printf -v "$owner_var" '%s' "$parsed_owner"
+	printf -v "$name_var" '%s' "$parsed_name"
 	return 0
 }
 
