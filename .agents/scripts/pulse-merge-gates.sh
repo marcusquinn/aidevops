@@ -120,7 +120,7 @@ _is_trusted_dependabot_update_pr() {
 	[[ -n "$pr_json" && "$pr_json" != "null" ]] || return 1
 
 	local repo_owner="${repo_slug%%/*}"
-	local api_author head_owner head_repo
+	local api_author="" head_owner="" head_repo=""
 	api_author=$(printf '%s' "$pr_json" | jq -r '.author.login // ""' 2>/dev/null) || return 1
 	head_owner=$(printf '%s' "$pr_json" | jq -r '.headRepositoryOwner.login // .headRepositoryOwner.name // ""' 2>/dev/null) || return 1
 	head_repo=$(printf '%s' "$pr_json" | jq -r '.headRepository.nameWithOwner // ""' 2>/dev/null) || return 1
