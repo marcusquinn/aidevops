@@ -54,6 +54,37 @@
 _SHARED_GH_WRAPPERS_CHECKS_LIB_LOADED=1
 
 #######################################
+# Internal: invoke a read-only `gh api` request with a wall-clock cap.
+#
+# Prefer the shared `_gh_with_timeout` wrapper when this sub-library is loaded
+# through shared-gh-wrappers.sh. Keep a local fallback because some tests and
+# single-purpose pulse helpers source shared-gh-wrappers-checks.sh directly.
+#
+# Args:
+#   $1 - REST API endpoint
+#   $@ - remaining gh api arguments
+# Returns: passthrough command exit code (124 when coreutils timeout fires)
+#######################################
+_gh_checks_api_read() {
+	local endpoint="$1"
+	shift
+
+	if declare -f _gh_with_timeout >/dev/null 2>&1; then
+		_gh_with_timeout read gh api "$endpoint" "$@"
+		return $?
+	fi
+
+	local secs="${AIDEVOPS_GH_READ_TIMEOUT:-15}"
+	if command -v timeout >/dev/null 2>&1; then
+		timeout "$secs" gh api "$endpoint" "$@"
+		return $?
+	fi
+
+	gh api "$endpoint" "$@"
+	return $?
+}
+
+#######################################
 # Aggregate PR check status via REST `/commits/{sha}/check-suites`.
 #
 # REST check-suites is ~15x smaller than GraphQL statusCheckRollup
@@ -80,7 +111,7 @@ gh_pr_check_status_rest() {
 	# read-only special variable, which would silently fail under zsh-sourced
 	# interactive use even though the script declares `#!/usr/bin/env bash`.
 	local _check_state=""
-	_check_state=$(gh api "repos/${slug}/commits/${sha}/check-suites" --jq '
+	_check_state=$(_gh_checks_api_read "repos/${slug}/commits/${sha}/check-suites" --jq '
 		if (.check_suites | length) == 0 then "none"
 		elif (.check_suites | all(.conclusion == "success" or .conclusion == "skipped" or .conclusion == "neutral")) then "PASS"
 		elif (.check_suites | any(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled")) then "FAIL"
@@ -131,7 +162,7 @@ gh_pr_check_runs_rest() {
 	# fails, we emit empty so callers can fail-closed; /status alone is
 	# insufficient signal for branch-protection gating.
 	local runs=""
-	runs=$(gh api "repos/${slug}/commits/${sha}/check-runs" --paginate \
+	runs=$(_gh_checks_api_read "repos/${slug}/commits/${sha}/check-runs" --paginate \
 		--jq '[.check_runs[]? | {name, conclusion, status}]' 2>/dev/null) || runs=""
 
 	if [[ -z "$runs" ]]; then
@@ -151,7 +182,7 @@ gh_pr_check_runs_rest() {
 	# ($ok/$fail) avoid repeating "success"/"failure" literals three times
 	# each across the file (string-literal ratchet gate).
 	# shellcheck disable=SC2016  # $ok/$fail are jq variables, not bash expansions
-	statuses=$(gh api "repos/${slug}/commits/${sha}/status" \
+	statuses=$(_gh_checks_api_read "repos/${slug}/commits/${sha}/status" \
 		--jq '[.statuses[]? |
 			"success" as $ok | "failure" as $fail |
 			{
