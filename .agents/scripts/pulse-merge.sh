@@ -214,7 +214,9 @@ _check_pr_merge_gates() {
 	# (requires root-owned SSH key that workers cannot forge). Symmetric with
 	# t3052 which extended the worker-briefed gate the same way (PR #21767).
 	if ! _is_collaborator_author "$pr_author" "$repo_slug"; then
-		if _has_maintainer_crypto_approval "$pr_number" "$repo_slug"; then
+		if _is_trusted_dependabot_update_pr "$pr_number" "$repo_slug" "$pr_author"; then
+			echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — author ${pr_author} is trusted Dependabot with allowlisted dependency update, proceeding (GH#24473)" >>"$LOGFILE"
+		elif _has_maintainer_crypto_approval "$pr_number" "$repo_slug"; then
 			echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — author ${pr_author} is not a collaborator but has maintainer crypto-approval, proceeding (t3063)" >>"$LOGFILE"
 		else
 			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — author ${pr_author} is not a collaborator" >>"$LOGFILE"
@@ -312,6 +314,10 @@ _check_pr_merge_gates() {
 	# --admin bypasses branch protection; enforce in code (see review-bot-gate-helper.sh).
 	local rbg_helper="${AGENTS_DIR:-$HOME/.aidevops/agents}/scripts/review-bot-gate-helper.sh"
 	if [[ -f "$rbg_helper" ]]; then
+		if _is_trusted_dependabot_update_pr "$pr_number" "$repo_slug" "$pr_author"; then
+			echo "[pulse-wrapper] Review bot gate: SKIP for trusted Dependabot dependency update PR #${pr_number} in ${repo_slug} (GH#24473)" >>"$LOGFILE"
+			return 0
+		fi
 		local rbg_result="" rbg_status=""
 		rbg_result=$(bash "$rbg_helper" check "$pr_number" "$repo_slug" 2>/dev/null) || rbg_result=""
 		rbg_status=$(printf '%s' "$rbg_result" | grep -oE '^(PASS|SKIP|WAITING|PASS_RATE_LIMITED)' | head -1)
