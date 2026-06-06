@@ -79,7 +79,7 @@ assert count == 1, count
 assert \"- '-i'\" not in repaired, repaired
 assert 'TABBY_AUTORUN: opencode' not in repaired, repaired
 assert \"- '-l'\" in repaired and \"- '-c'\" in repaired, repaired
-assert 'opencode; exec zsh' in repaired, repaired
+assert 'aidevops opencode; exec zsh' in repaired, repaired
 assert 'env: {}' in repaired, repaired
 "
 
@@ -90,17 +90,17 @@ repaired, count = mod.repair_broken_opencode_launch_profiles(config)
 assert count == 1, count
 assert \"args: ['-l', '-i', '-c', opencode]\" not in repaired, repaired
 assert 'TABBY_AUTORUN: opencode' not in repaired, repaired
-assert 'opencode; exec zsh' in repaired, repaired
+assert 'aidevops opencode; exec zsh' in repaired, repaired
 "
 
-_info "Test 3: generated profiles keep direct OpenCode launch shape"
-run_python_test "generated profile uses direct launch shape" "${load_module_code}
+_info "Test 3: generated profiles use aidevops OpenCode launcher"
+run_python_test "generated profile uses aidevops launcher" "${load_module_code}
 scheme = {'name': 'Test', 'foreground': '#fff', 'background': '#000', 'cursor': '#fff', 'colors': ['#000', '#fff']}
 profile = mod.build_profile_yaml('aidevops', '/tmp/aidevops', '#123456', scheme, 'group-1')
 assert \"- '-i'\" not in profile, profile
 assert 'TABBY_AUTORUN: opencode' not in profile, profile
 assert \"- '-l'\" in profile and \"- '-c'\" in profile, profile
-assert \"- 'opencode; exec zsh'\" in profile, profile
+assert \"- 'aidevops opencode; exec zsh'\" in profile, profile
 assert 'env: {}' in profile, profile
 "
 
@@ -121,7 +121,7 @@ repaired, count = mod.repair_broken_opencode_launch_profiles(config)
 assert count == 1, count
 assert \"- '-i'\" not in repaired, repaired
 assert 'TABBY_AUTORUN: opencode' not in repaired, repaired
-assert 'opencode; exec zsh' in repaired, repaired
+assert 'aidevops opencode; exec zsh' in repaired, repaired
 assert 'env: {}' in repaired, repaired
 "
 
@@ -140,7 +140,7 @@ assert count == 1, count
 assert 'command: /bin/zsh -l -c \'opencode; exec zsh\'' not in repaired, repaired
 assert 'args: []' not in repaired, repaired
 assert \"- '-l'\" in repaired and \"- '-c'\" in repaired, repaired
-assert 'opencode; exec zsh' in repaired, repaired
+assert 'aidevops opencode; exec zsh' in repaired, repaired
 assert repaired.count('      env: {}') == 1, repaired
 "
 
@@ -161,8 +161,8 @@ assert 'command: /bin/zsh -l -c \'opencode; exec zsh\'' not in repaired, repaire
 assert repaired.count('      env: {}') == 1, repaired
 "
 
-_info "Test 7: split direct profiles are already valid"
-run_python_test "split direct profile remains unchanged" "${load_module_code}
+_info "Test 7: split direct profiles are upgraded to aidevops launcher"
+run_python_test "split direct profile upgraded" "${load_module_code}
 config = '''profiles:
   - name: aidevops
     options:
@@ -175,10 +175,10 @@ config = '''profiles:
       cwd: /tmp/aidevops
 '''
 repaired, count = mod.repair_broken_opencode_launch_profiles(config)
-assert count == 0, count
+assert count == 1, count
 assert repaired.count('      env: {}') == 1, repaired
 assert 'TABBY_AUTORUN: opencode' not in repaired, repaired
-assert 'opencode; exec zsh' in repaired, repaired
+assert 'aidevops opencode; exec zsh' in repaired, repaired
 "
 
 _info "Test 8: comments do not hide broken command-field profiles or env blocks"
@@ -196,7 +196,7 @@ repaired, count = mod.repair_broken_opencode_launch_profiles(config)
 assert count == 1, count
 assert 'command: /bin/zsh -l -c' not in repaired, repaired
 assert repaired.count('      env: {}') == 1, repaired
-assert \"- 'opencode; exec zsh'\" in repaired, repaired
+assert \"- 'aidevops opencode; exec zsh'\" in repaired, repaired
 "
 
 _info "Test 9: custom non-OpenCode webserver profiles remain byte-for-byte unchanged"
@@ -256,7 +256,7 @@ with open(tabby_config, "w") as handle:
 """)
 PY
 sync_output=$(PYTHONPATH="${REPO_ROOT}/.agents/scripts" python3 "${HELPER}" --repos-json "${repos_json}" --tabby-config "${tabby_config}")
-if [[ "${sync_output}" == *"Repaired 1 existing Tabby profile(s)."* ]] && grep -q -- "opencode; exec zsh" "${tabby_config}" && ! grep -q -- "TABBY_AUTORUN: opencode" "${tabby_config}"; then
+if [[ "${sync_output}" == *"Repaired 1 existing Tabby profile(s)."* ]] && grep -q -- "aidevops opencode; exec zsh" "${tabby_config}" && ! grep -q -- "TABBY_AUTORUN: opencode" "${tabby_config}"; then
 	_pass "sync repairs existing broken profile"
 else
 	_fail "sync did not repair existing profile: ${sync_output}"
