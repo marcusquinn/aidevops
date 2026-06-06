@@ -2442,9 +2442,9 @@
       "pr": 18690
     },
     ".agents/scripts/pulse-merge.sh": {
-      "at": "2026-06-06T01:06:09Z",
-      "hash": "6507853c103c0555ecd569fbc88dbb5294d6c618",
-      "passes": 47,
+      "at": "2026-06-06T03:51:04Z",
+      "hash": "a27ced954624de6a3bb894b9221a051c65a6f94e",
+      "passes": 48,
       "pr": 18829
     },
     ".agents/scripts/pulse-prefetch.sh": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-06-06T01:11:16Z",
-      "hash": "526848094ee0e7768b0dc68af8ae6c05890eaef1",
-      "passes": 212,
+      "at": "2026-06-06T04:01:29Z",
+      "hash": "5d7bb1f970979944fbf257eeae3c8394bf2cc69a",
+      "passes": 213,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-06-06T01:11:17Z",
-      "hash": "d884a16c5f8f395c90a18c6f329c0560b90389c3",
-      "passes": 208,
+      "at": "2026-06-06T04:01:30Z",
+      "hash": "826f95bb714b4e7941d8e133ad134bf295cd6e0e",
+      "passes": 209,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
