@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.22] - 2026-06-07
+
+### Fixed
+
+- preserve PR review scanner repo slug fields (#24505)
+
 ## [3.20.21] - 2026-06-06
 
 ### Changed
