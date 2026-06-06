@@ -2304,9 +2304,9 @@
       "pr": 15086
     },
     ".agents/scripts/headless-runtime-lib.sh": {
-      "at": "2026-06-05T14:52:40Z",
-      "hash": "9699028afabb4f0841328021df317ac00bcef611",
-      "passes": 37,
+      "at": "2026-06-06T01:06:00Z",
+      "hash": "b4085e9d310a00bf614d676806f4e88083beb198",
+      "passes": 38,
       "pr": 18707
     },
     ".agents/scripts/interactive-session-helper.sh": {
@@ -2442,9 +2442,9 @@
       "pr": 18690
     },
     ".agents/scripts/pulse-merge.sh": {
-      "at": "2026-06-02T22:58:36Z",
-      "hash": "e98a9bbcf376b64a71cc350f554b807d615abb55",
-      "passes": 46,
+      "at": "2026-06-06T01:06:09Z",
+      "hash": "6507853c103c0555ecd569fbc88dbb5294d6c618",
+      "passes": 47,
       "pr": 18829
     },
     ".agents/scripts/pulse-prefetch.sh": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-06-05T02:58:41Z",
-      "hash": "3b3286af24b539ef246b5d95f36de4181b3a40cb",
-      "passes": 211,
+      "at": "2026-06-06T01:11:16Z",
+      "hash": "526848094ee0e7768b0dc68af8ae6c05890eaef1",
+      "passes": 212,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-06-05T02:58:43Z",
-      "hash": "45f74b9885aab05864f9429cdf0ca79085d16782",
-      "passes": 207,
+      "at": "2026-06-06T01:11:17Z",
+      "hash": "d884a16c5f8f395c90a18c6f329c0560b90389c3",
+      "passes": 208,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7768,10 +7768,10 @@
       "passes": 6
     },
     ".agents/scripts/pulse-dispatch-worker-launch.sh": {
-      "hash": "edeb72ed3f2c9f7e9db8552e48b1699d3ad1a2c2",
-      "at": "2026-05-22T22:11:29Z",
+      "hash": "f9014b5153bf15bdc3cf430804c23f404dffb1f6",
+      "at": "2026-06-06T01:06:07Z",
       "pr": 20617,
-      "passes": 26
+      "passes": 27
     },
     ".agents/reference/dispatch-blockers.md": {
       "hash": "f851df78931bea90695c3a46e9c95f98a6c03d9a",
