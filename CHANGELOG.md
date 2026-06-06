@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.18] - 2026-06-06
+
+### Changed
+
+- enforce role-aware review-thread automation (#24493)
+- fix: sanitize zero-progress threshold (#24491)
+- Maintenance: update simplification state registry
+- Maintenance: bump pyarrow in the pip group across 1 directory (#24473)
+
+### Fixed
+
+- ignore review gate for trusted dependabot CI (#24478)
+
 ## [3.20.17] - 2026-06-06
 
 ### Added
