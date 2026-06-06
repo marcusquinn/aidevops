@@ -908,7 +908,10 @@ _process_single_ready_pr() {
 		# CI-failure routing path, preserving the contributor security gate.
 		local _rcl_labels
 		_rcl_labels="$pr_labels"
-		if [[ ",${_rcl_labels}," == *"${_OW_LABEL_PAT}"* ]] \
+		if _is_trusted_dependabot_update_pr "$pr_number" "$repo_slug" "$pr_author" \
+			&& _trusted_dependabot_non_review_checks_green "$pr_number" "$repo_slug"; then
+			echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: _pr_required_checks_pass bypassed for trusted Dependabot — all non-review-bot checks are green (GH#24477)" >>"$LOGFILE"
+		elif [[ ",${_rcl_labels}," == *"${_OW_LABEL_PAT}"* ]] \
 			&& _check_required_checks_passing "$repo_slug" "$pr_number"; then
 			echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: _pr_required_checks_pass bypassed for origin:worker — branch-protection required contexts all pass (t2922)" >>"$LOGFILE"
 			# Fall through to linked-issue fetch and merge gate checks

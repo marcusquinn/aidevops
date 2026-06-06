@@ -43,6 +43,7 @@ write_pr_fixture() {
 	local commit_login="$2"
 	local changed_path="$3"
 	local security_conclusion="$4"
+	local framework_conclusion="${5:-SUCCESS}"
 	cat >"${TEST_ROOT}/pr.json" <<EOF
 {
   "author": {"login": "${author_login}"},
@@ -55,10 +56,11 @@ write_pr_fixture() {
   "files": [
     {"path": "${changed_path}"}
   ],
-  "statusCheckRollup": [
-    {"name": "Socket Security: Pull Request Alerts", "conclusion": "${security_conclusion}", "status": "COMPLETED"},
-    {"name": "Framework Validation", "conclusion": "SUCCESS", "status": "COMPLETED"}
-  ]
+	"statusCheckRollup": [
+		{"name": "Socket Security: Pull Request Alerts", "conclusion": "${security_conclusion}", "status": "COMPLETED"},
+		{"name": "Framework Validation", "conclusion": "${framework_conclusion}", "status": "COMPLETED"},
+		{"name": "gate / review-bot-gate", "workflowName": "Review Bot Gate", "conclusion": "FAILURE", "status": "COMPLETED"}
+	]
 }
 EOF
 	return 0
@@ -142,6 +144,7 @@ define_helpers_under_test() {
 		/^_trusted_dependabot_updates_conf\(\) \{/,/^}$/ { print }
 		/^_trusted_dependabot_dependency_allowed\(\) \{/,/^}$/ { print }
 		/^_is_trusted_dependabot_update_pr\(\) \{/,/^}$/ { print }
+		/^_trusted_dependabot_non_review_checks_green\(\) \{/,/^}$/ { print }
 	' "$GATES_SCRIPT")
 	approve_src=$(awk '/^approve_collaborator_pr\(\) \{/,/^}$/ { print }' "$GATES_SCRIPT")
 	collab_src=$(awk '/^_is_collaborator_author\(\) \{/,/^}$/ { print }' "$AUTHOR_CHECKS_SCRIPT")
@@ -209,6 +212,26 @@ test_trusted_dependabot_can_be_approved() {
 	return 0
 }
 
+test_review_bot_failure_is_ignored_when_other_checks_green() {
+	write_pr_fixture "dependabot[bot]" "dependabot[bot]" "requirements-lock.txt" "SUCCESS" "SUCCESS"
+	if _trusted_dependabot_non_review_checks_green "24473" "owner/repo"; then
+		print_result "review-bot failure ignored when non-review checks green" 0
+		return 0
+	fi
+	print_result "review-bot failure ignored when non-review checks green" 1 "Expected non-review check helper to pass. Log: $(<"$LOGFILE")"
+	return 0
+}
+
+test_non_review_failure_blocks_required_check_bypass() {
+	write_pr_fixture "dependabot[bot]" "dependabot[bot]" "requirements-lock.txt" "SUCCESS" "FAILURE"
+	if _trusted_dependabot_non_review_checks_green "24473" "owner/repo"; then
+		print_result "non-review failure blocks Dependabot required-check bypass" 1 "Unexpected bypass"
+		return 0
+	fi
+	print_result "non-review failure blocks Dependabot required-check bypass" 0
+	return 0
+}
+
 main() {
 	setup_test_env
 	trap teardown_test_env EXIT
@@ -218,6 +241,8 @@ main() {
 	test_security_failure_fails
 	test_non_dependency_file_fails
 	test_trusted_dependabot_can_be_approved
+	test_review_bot_failure_is_ignored_when_other_checks_green
+	test_non_review_failure_blocks_required_check_bypass
 
 	printf '\nTests run: %s\n' "$TESTS_RUN"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
