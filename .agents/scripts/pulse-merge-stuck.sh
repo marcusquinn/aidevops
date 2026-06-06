@@ -1479,7 +1479,6 @@ pulse_merge_zero_progress_record() {
 		return 0
 	fi
 
-	# Increment the gauge by 1.
 	local cur
 	cur=$(pulse_stats_get_gauge "$_PMS_GAUGE_ZERO_PROGRESS_CYCLES")
 	[[ "$cur" =~ ^[0-9]+$ ]] || cur=0
@@ -1487,7 +1486,6 @@ pulse_merge_zero_progress_record() {
 	pulse_stats_set_gauge "$_PMS_GAUGE_ZERO_PROGRESS_CYCLES" "$cur"
 	local threshold="${AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES:-}"
 	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=5
-
 	echo "[pulse-merge-stuck] pulse_merge_zero_progress_record: zero_progress_cycles=${cur}/${threshold}, eligible_unmerged=${eligible_unmerged}" >>"$LOGFILE"
 
 	# File only on the threshold-crossing edge to prevent post-close issue storms.
