@@ -136,17 +136,45 @@ ON CONFLICT(role) DO UPDATE SET
 	return 0
 }
 
+_provider_session_repo_slug() {
+	local repo_slug="${WORKER_REPO_SLUG:-${DISPATCH_REPO_SLUG:-${GITHUB_REPOSITORY:-}}}"
+	repo_slug="${repo_slug#https://github.com/}"
+	repo_slug="${repo_slug#git@github.com:}"
+	repo_slug="${repo_slug%.git}"
+	case "$repo_slug" in
+	*/*) printf '%s' "$repo_slug" ;;
+	*) printf '%s' "" ;;
+	esac
+	return 0
+}
+
+scoped_provider_session_key() {
+	local session_key="$1"
+	local repo_slug=""
+	repo_slug=$(_provider_session_repo_slug)
+	if [[ "$session_key" == issue-* && -n "$repo_slug" ]]; then
+		printf '%s#%s' "$repo_slug" "$session_key"
+		return 0
+	fi
+	printf '%s' "$session_key"
+	return 0
+}
+
 get_session_id() {
 	local provider="$1"
 	local session_key="$2"
-	db_query "SELECT session_id FROM provider_sessions WHERE provider = '$(sql_escape "$provider")' AND session_key = '$(sql_escape "$session_key")';"
+	local scoped_key=""
+	scoped_key=$(scoped_provider_session_key "$session_key")
+	db_query "SELECT session_id FROM provider_sessions WHERE provider = '$(sql_escape "$provider")' AND session_key = '$(sql_escape "$scoped_key")';"
 	return 0
 }
 
 clear_session_id() {
 	local provider="$1"
 	local session_key="$2"
-	db_query "DELETE FROM provider_sessions WHERE provider = '$(sql_escape "$provider")' AND session_key = '$(sql_escape "$session_key")';" >/dev/null
+	local scoped_key=""
+	scoped_key=$(scoped_provider_session_key "$session_key")
+	db_query "DELETE FROM provider_sessions WHERE provider = '$(sql_escape "$provider")' AND session_key IN ('$(sql_escape "$scoped_key")', '$(sql_escape "$session_key")');" >/dev/null
 	return 0
 }
 
@@ -155,11 +183,16 @@ store_session_id() {
 	local session_key="$2"
 	local session_id="$3"
 	local model="$4"
+	local scoped_key=""
+	scoped_key=$(scoped_provider_session_key "$session_key")
+	if [[ "$scoped_key" != "$session_key" ]]; then
+		db_query "DELETE FROM provider_sessions WHERE provider = '$(sql_escape "$provider")' AND session_key = '$(sql_escape "$session_key")';" >/dev/null
+	fi
 	db_query "
 INSERT INTO provider_sessions (provider, session_key, session_id, model, updated_at)
 VALUES (
     '$(sql_escape "$provider")',
-    '$(sql_escape "$session_key")',
+    '$(sql_escape "$scoped_key")',
     '$(sql_escape "$session_id")',
     '$(sql_escape "$model")',
     strftime('%Y-%m-%dT%H:%M:%SZ', 'now')

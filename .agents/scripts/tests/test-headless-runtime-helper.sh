@@ -660,6 +660,53 @@ EOF
 	print_result "extract_session_id_from_output returns latest session id" 1 "Expected ses_latest, got ${session_id:-<empty>}"
 	return 0
 }
+
+test_provider_sessions_scope_issue_keys_by_repo_slug() {
+	local provider="openai"
+	local model="openai/gpt-5.5"
+	export WORKER_REPO_SLUG="owner/one"
+	store_session_id "$provider" "issue-47" "ses_one" "$model"
+	export WORKER_REPO_SLUG="owner/two"
+	store_session_id "$provider" "issue-47" "ses_two" "$model"
+
+	local first_session="" second_session="" unscoped_count=""
+	export WORKER_REPO_SLUG="owner/one"
+	first_session=$(get_session_id "$provider" "issue-47")
+	export WORKER_REPO_SLUG="owner/two"
+	second_session=$(get_session_id "$provider" "issue-47")
+	unscoped_count=$(db_query "SELECT count(*) FROM provider_sessions WHERE provider = 'openai' AND session_key = 'issue-47';")
+	unset WORKER_REPO_SLUG
+
+	if [[ "$first_session" == "ses_one" && "$second_session" == "ses_two" && "$unscoped_count" == "0" ]]; then
+		print_result "provider_sessions scope issue keys by repo slug" 0
+		return 0
+	fi
+
+	print_result "provider_sessions scope issue keys by repo slug" 1 \
+		"first=${first_session:-<empty>} second=${second_session:-<empty>} unscoped_count=${unscoped_count:-<empty>}"
+	return 0
+}
+
+test_provider_sessions_keep_pulse_unscoped() {
+	local provider="openai"
+	local model="openai/gpt-5.5"
+	export WORKER_REPO_SLUG="owner/one"
+	store_session_id "$provider" "pulse" "ses_pulse" "$model"
+	local pulse_session="" pulse_count=""
+	pulse_session=$(get_session_id "$provider" "pulse")
+	pulse_count=$(db_query "SELECT count(*) FROM provider_sessions WHERE provider = 'openai' AND session_key = 'pulse';")
+	unset WORKER_REPO_SLUG
+
+	if [[ "$pulse_session" == "ses_pulse" && "$pulse_count" == "1" ]]; then
+		print_result "provider_sessions keep pulse sessions unscoped" 0
+		return 0
+	fi
+
+	print_result "provider_sessions keep pulse sessions unscoped" 1 \
+		"pulse=${pulse_session:-<empty>} count=${pulse_count:-<empty>}"
+	return 0
+}
+
 test_blocked_completion_records_blocked_label() {
 	local output_file="${TEST_ROOT}/blocked-output.jsonl"
 	printf '%s\n' '{"type":"text","sessionID":"ses_blocked","text":"BLOCKED: missing dependency credentials"}' >"$output_file"
@@ -1798,6 +1845,8 @@ main() {
 	test_deleted_launch_cwd_recovers_to_work_dir
 	test_does_not_double_append
 	test_extract_session_id_from_output_returns_latest_session_id
+	test_provider_sessions_scope_issue_keys_by_repo_slug
+	test_provider_sessions_keep_pulse_unscoped
 	test_blocked_completion_records_blocked_label
 	test_missing_context_blocked_requests_brief_recovery
 	test_headless_activity_timeout_default_matches_watchdog
