@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.17] - 2026-06-06
+
+### Added
+
+- isolate opencode launch databases
+
 ## [3.20.16] - 2026-06-06
 
 ### Changed
