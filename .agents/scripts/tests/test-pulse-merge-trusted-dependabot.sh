@@ -222,6 +222,21 @@ test_review_bot_failure_is_ignored_when_other_checks_green() {
 	return 0
 }
 
+test_precomputed_status_rollup_skips_pr_view() {
+	local pr_json=""
+
+	write_pr_fixture "dependabot[bot]" "dependabot[bot]" "requirements-lock.txt" "SUCCESS" "SUCCESS"
+	pr_json=$(<"${TEST_ROOT}/pr.json")
+	: >"$GH_LOG"
+	if _trusted_dependabot_non_review_checks_green "24473" "owner/repo" "$pr_json" \
+		&& ! grep -qF 'gh pr view 24473' "$GH_LOG"; then
+		print_result "precomputed status rollup skips PR view" 0
+		return 0
+	fi
+	print_result "precomputed status rollup skips PR view" 1 "Expected no gh pr view call. gh log: $(<"$GH_LOG")"
+	return 0
+}
+
 test_non_review_failure_blocks_required_check_bypass() {
 	write_pr_fixture "dependabot[bot]" "dependabot[bot]" "requirements-lock.txt" "SUCCESS" "FAILURE"
 	if _trusted_dependabot_non_review_checks_green "24473" "owner/repo"; then
@@ -242,6 +257,7 @@ main() {
 	test_non_dependency_file_fails
 	test_trusted_dependabot_can_be_approved
 	test_review_bot_failure_is_ignored_when_other_checks_green
+	test_precomputed_status_rollup_skips_pr_view
 	test_non_review_failure_blocks_required_check_bypass
 
 	printf '\nTests run: %s\n' "$TESTS_RUN"

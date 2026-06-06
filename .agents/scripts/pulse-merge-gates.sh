@@ -168,18 +168,20 @@ _is_trusted_dependabot_update_pr() {
 # AI review bots often skip dependency-only updates. This helper is the narrow
 # escape hatch: it ignores only review-bot-gate contexts and requires every
 # other check/status in the rollup to be terminal-success/neutral/skipped.
-# Args: $1=pr_number, $2=repo_slug
+# Args: $1=pr_number, $2=repo_slug, $3=optional precomputed PR JSON
 # Returns: 0 non-review checks green, 1 otherwise
 #######################################
 _trusted_dependabot_non_review_checks_green() {
 	local pr_number="$1"
 	local repo_slug="$2"
-	local pr_json=""
+	local pr_json="${3:-}"
 	local result=""
 	local non_review_count="0" blocker_count="0"
 
 	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo_slug" ]] || return 1
-	pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" --json statusCheckRollup 2>/dev/null) || return 1
+	if [[ -z "$pr_json" ]]; then
+		pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" --json statusCheckRollup 2>/dev/null) || return 1
+	fi
 	[[ -n "$pr_json" && "$pr_json" != "null" ]] || return 1
 
 	result=$(printf '%s' "$pr_json" | jq -r '

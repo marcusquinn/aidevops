@@ -98,7 +98,7 @@ _pm_issue_api() {
 # caller that builds a PR object on this helper so draft/label/staleness
 # metadata cannot drift between list-based and webhook-triggered merge paths.
 _pulse_merge_ready_pr_json_fields() {
-	printf '%s' 'number,mergeable,reviewDecision,author,title,isDraft,labels,updatedAt,headRefOid,createdAt'
+	printf '%s' 'number,mergeable,reviewDecision,author,title,isDraft,labels,updatedAt,headRefOid,createdAt,statusCheckRollup'
 	return 0
 }
 
@@ -909,7 +909,7 @@ _process_single_ready_pr() {
 		local _rcl_labels
 		_rcl_labels="$pr_labels"
 		if _is_trusted_dependabot_update_pr "$pr_number" "$repo_slug" "$pr_author" \
-			&& _trusted_dependabot_non_review_checks_green "$pr_number" "$repo_slug"; then
+			&& _trusted_dependabot_non_review_checks_green "$pr_number" "$repo_slug" "$pr_obj"; then
 			echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: _pr_required_checks_pass bypassed for trusted Dependabot — all non-review-bot checks are green (GH#24477)" >>"$LOGFILE"
 		elif [[ ",${_rcl_labels}," == *"${_OW_LABEL_PAT}"* ]] \
 			&& _check_required_checks_passing "$repo_slug" "$pr_number"; then
