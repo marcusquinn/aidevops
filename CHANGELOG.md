@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.16] - 2026-06-06
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- trust safe dependabot updates (#24476)
+
 ## [3.20.15] - 2026-06-06
 
 ### Fixed
