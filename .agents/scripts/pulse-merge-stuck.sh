@@ -957,8 +957,8 @@ _pms_file_runner_saturation_issue() {
 
 # ── Zero-progress meta-issue ────────────────────────────────────────────────
 
-# File ONE meta-issue describing the throughput collapse when consecutive
-# zero-progress cycles cross the threshold. Dedup'd by the fixed marker.
+# File ONE meta-issue when consecutive zero-progress cycles cross the threshold.
+# The caller invokes this on the crossing edge; open-issue dedupe is a safety net.
 # Disabled while the GraphQL circuit-breaker is tripped — the breaker
 # already names the root cause and a meta-issue would just be noise.
 _pms_file_zero_progress_meta_issue() {
@@ -1071,7 +1071,7 @@ The pulse merge zero-progress detector recovered automatically: ${reason}.
 
 Evidence:
 - pulse_merge_zero_progress_cycles was reset to 0.
-- The next detector cycle can file a fresh issue if throughput collapses again.
+- A fresh issue is filed only if a new zero-progress streak crosses the threshold.
 
 Closing this stale zero-progress meta-issue so auto-dispatch does not spend worker capacity on an already-recovered incident."
 
@@ -1488,8 +1488,9 @@ pulse_merge_zero_progress_record() {
 
 	echo "[pulse-merge-stuck] pulse_merge_zero_progress_record: zero_progress_cycles=${cur}/${AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES}, eligible_unmerged=${eligible_unmerged}" >>"$LOGFILE"
 
-	# At threshold, file the meta-issue (dedup'd by marker).
-	if [[ "$cur" -ge "$AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES" ]]; then
+	# File only on the threshold-crossing edge to prevent post-close issue storms.
+	if [[ "$cur_before" -lt "$AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES" \
+		&& "$cur" -ge "$AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES" ]]; then
 		local stuck_summary
 		stuck_summary=$(pulse_stats_get_gauge "pulse_merge_eligible_stuck_pr_count")
 		stuck_summary="eligible_unmerged_this_cycle=${eligible_unmerged}, eligible_stuck_count=${stuck_summary}, zero_progress_cycles=${cur}"
