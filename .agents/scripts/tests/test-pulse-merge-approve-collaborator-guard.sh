@@ -222,6 +222,9 @@ define_helpers_under_test() {
 		cat "${TEST_ROOT}/linked-issue.txt" 2>/dev/null || true
 		return 0
 	}
+	# This test focuses on the collaborator/crypto guard. Dependabot-specific
+	# allowances are covered by test-pulse-merge-trusted-dependabot.sh.
+	_is_trusted_dependabot_update_pr() { return 1; }
 
 	# shellcheck disable=SC1090
 	eval "$collab_src"
