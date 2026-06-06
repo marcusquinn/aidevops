@@ -338,6 +338,19 @@ pulse_merge_zero_progress_record 1 0 >/dev/null 2>&1
 pulse_merge_zero_progress_record 1 0 >/dev/null 2>&1
 create_count=$(grep -c 'gh_create_issue --repo marcusquinn/aidevops' "$GH_CALLS")
 assert_eq "5g: zero-progress meta-issue files once on threshold crossing" "1" "$create_count"
+
+# 5h: an invalid threshold environment value falls back to the safe default
+# instead of making Bash integer comparisons abort the pulse.
+: >"$GH_CALLS"
+AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES="not-a-number"
+pulse_stats_set_gauge "pulse_merge_zero_progress_cycles" "4" >/dev/null 2>&1
+pulse_stats_set_gauge "pulse_merge_eligible_stuck_pr_count" "0" >/dev/null 2>&1
+pulse_merge_zero_progress_record 1 0 >/dev/null 2>&1
+got=$(pulse_stats_get_gauge "pulse_merge_zero_progress_cycles")
+create_count=$(grep -c 'gh_create_issue --repo marcusquinn/aidevops' "$GH_CALLS")
+assert_eq "5h: invalid zero-progress threshold still increments gauge" "5" "$got"
+assert_eq "5h: invalid zero-progress threshold falls back to default for filing" "1" "$create_count"
+AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES=5
 echo ""
 
 # ---------------------------------------------------------------------------
