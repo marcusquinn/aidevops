@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.21] - 2026-06-06
+
+### Changed
+
+- Documentation: add t3593 collaborator permission auth brief (#24499)
+
+### Fixed
+
+- prewarm isolated opencode databases
+
 ## [3.20.20] - 2026-06-06
 
 ### Changed
