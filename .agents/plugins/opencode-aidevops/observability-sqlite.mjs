@@ -10,6 +10,10 @@
 import { execSync, spawn } from "child_process";
 
 const SQLITE_SENTINEL = "__AIDEVOPS_QUERY_DONE__";
+const SQLITE_BUSY_RE = /database is locked|SQLITE_BUSY|database table is locked/i;
+const SQLITE_QUEUE_MAX = Number.parseInt(process.env.AIDEVOPS_SQLITE_QUEUE_MAX || "1000", 10);
+const SQLITE_TIMEOUT_MS_RAW = Number.parseInt(process.env.AIDEVOPS_SQLITE_TIMEOUT_MS || "15000", 10);
+const SQLITE_TIMEOUT_MS = Number.isFinite(SQLITE_TIMEOUT_MS_RAW) && SQLITE_TIMEOUT_MS_RAW > 0 ? SQLITE_TIMEOUT_MS_RAW : 15000;
 
 let _sqliteProc = null;
 let _queryQueue = [];
@@ -28,9 +32,10 @@ function _spawnSqlite() {
   if (_sqliteProc) return;
 
   try {
-    _sqliteProc = spawn("sqlite3", ["-cmd", ".timeout 5000", _dbPath], {
+    _sqliteProc = spawn("sqlite3", ["-cmd", `.timeout ${SQLITE_TIMEOUT_MS}`, _dbPath], {
       stdio: ["pipe", "pipe", "pipe"],
     });
+    _sqliteProc.stdin.write(`PRAGMA busy_timeout=${SQLITE_TIMEOUT_MS};\nPRAGMA journal_mode=WAL;\nPRAGMA synchronous=NORMAL;\n`);
   } catch (err) {
     console.error(`[aidevops] Failed to spawn sqlite3: ${err.message}`);
     return;
@@ -54,7 +59,7 @@ function _spawnSqlite() {
 
   _sqliteProc.stderr.on("data", (chunk) => {
     const msg = chunk.toString().trim();
-    if (msg) console.error(`[aidevops] SQLite: ${msg}`);
+    if (msg && !isSqliteBusyError(msg)) console.error(`[aidevops] SQLite: ${msg}`);
   });
 
   _sqliteProc.on("close", (code) => {
@@ -109,10 +114,17 @@ function _drainQueue() {
 }
 
 export function sqliteExec(sql) {
+  const queueMax = Number.isFinite(SQLITE_QUEUE_MAX) && SQLITE_QUEUE_MAX > 0 ? SQLITE_QUEUE_MAX : 1000;
+  if (_queryQueue.length >= queueMax) {
+    if (process.env.AIDEVOPS_SQLITE_QUEUE_WARN !== "0") {
+      console.error(`[aidevops] SQLite async queue full (${queueMax}); dropping observability write`);
+    }
+    return;
+  }
   _queryQueue.push({
     sql,
     callback: (err) => {
-      if (err) console.error(`[aidevops] SQLite async exec failed: ${err.message}`);
+      if (err && !isSqliteBusyError(err.message)) console.error(`[aidevops] SQLite async exec failed: ${err.message}`);
     },
   });
   _drainQueue();
@@ -120,7 +132,7 @@ export function sqliteExec(sql) {
 
 export function sqliteExecSync(sql, timeout = 5000) {
   try {
-    return execSync(`sqlite3 -cmd ".timeout 5000" "${_dbPath}"`, {
+    return execSync(`sqlite3 -cmd ".timeout ${SQLITE_TIMEOUT_MS}" "${_dbPath}"`, {
       input: sql,
       encoding: "utf-8",
       timeout,
@@ -130,6 +142,10 @@ export function sqliteExecSync(sql, timeout = 5000) {
     console.error(`[aidevops] SQLite sync exec failed: ${e.stderr || e.message}`);
     return null;
   }
+}
+
+export function isSqliteBusyError(message) {
+  return SQLITE_BUSY_RE.test(String(message || ""));
 }
 
 export function shutdownSqlite() {

@@ -840,6 +840,7 @@ _help_commands() {
 	echo "  model-accounts-pool OAuth account pool (list/check/diagnose/add/rotate/reset-cooldowns)"
 	echo "  client-format      Client request format alignment (extract/check/canary/monitor)"
 	echo "  opencode-db <cmd>  OpenCode SQLite maintenance/session lookup (check/report/sessions/maintain/window/status/install)"
+	echo "  opencode [args]    Launch OpenCode with aidevops per-session DB isolation"
 	echo "  opencode-sandbox   Test OpenCode versions in isolation (install/run/check/clean)"
 	echo "  approve <cmd>      Cryptographic issue/PR approval (setup/issue/pr/verify/status)"
 	echo "  circuit-breaker    Supervisor circuit breaker (status/reset/check/trip) (alias: cb)"
@@ -1610,6 +1611,7 @@ main() {
 	client-format) _cmd_client_format "$@" ;;
 	github-app-auth | github-app | gh-auth) _dispatch_helper "github-app-auth-helper.sh" "github-app-auth-helper.sh" "$@" ;;
 	opencode-db | oc-db) _dispatch_helper "opencode-db-maintenance-helper.sh" "opencode-db-maintenance-helper.sh" "$@" ;;
+	opencode | oc) _dispatch_helper "opencode-launcher-helper.sh" "opencode-launcher-helper.sh" "$@" ;;
 	opencode-sandbox | oc-sandbox) _dispatch_helper "opencode-sandbox-helper.sh" "opencode-sandbox-helper.sh" "$@" ;;
 	review-gate | review_gate) _dispatch_helper "review-gate-config-helper.sh" "review-gate-config-helper.sh" "$@" ;;
 	secret | secrets) _dispatch_helper "secret-helper.sh" "secret-helper.sh" "$@" ;;
