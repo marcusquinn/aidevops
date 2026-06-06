@@ -140,7 +140,9 @@ main() {
     local data_dir
     data_dir=$(build_session_data_dir "${session_id}")
     mkdir -p "${data_dir}/opencode" || return 1
-    copy_auth_json "${data_dir}" || print_info "Could not copy OpenCode auth.json; continuing with isolated data dir"
+    # Keep stdout/stderr clean before exec: OpenCode's TUI is sensitive to any
+    # pre-launch terminal output and can leave visible redraw artifacts.
+    copy_auth_json "${data_dir}" || true
 
     if ((dry_run == 1)); then
         printf 'XDG_DATA_HOME=%q AIDEVOPS_OPENCODE_ISOLATED_DB=1 cd %q && opencode' "${data_dir}" "${launch_dir}"
@@ -149,7 +151,6 @@ main() {
         return 0
     fi
 
-    print_success "Launching OpenCode with isolated DB: ${data_dir}/opencode/opencode.db"
     cd "${launch_dir}" || return 1
     export XDG_DATA_HOME="${data_dir}"
     export AIDEVOPS_OPENCODE_ISOLATED_DB=1
