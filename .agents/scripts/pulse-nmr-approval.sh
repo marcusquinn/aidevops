@@ -26,6 +26,7 @@
 #   - notify_ever_nmr_without_approval
 #   - _find_qualifying_pr_for_stale_recovery
 #   - _notify_stale_recovery_resolved_by_pr
+#   - _nmr_current_actor_can_post_maintainer_approval
 #   - auto_approve_maintainer_issues
 #
 # This is a pure move from pulse-wrapper.sh. The function bodies are
@@ -760,6 +761,60 @@ notify_ever_nmr_without_approval() {
 }
 
 #######################################
+# Verify that this runner is allowed to post maintainer-authority approval
+# comments for the upstream repo.
+#
+# <!-- aidevops:trust-boundary -->
+# Local repos.json can be wrong or copied to an external contributor's machine.
+# Before automation posts `aidevops-signed-approval` or says "maintainer is
+# author", self-validate against GitHub: the current token actor must have
+# write/maintain/admin permission on the target repo, and the issue author must
+# be an upstream OWNER/MEMBER with the expected maintainer login.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug (owner/repo)
+#   $3 - expected maintainer login from repos.json
+#   $4 - issue author login from the list response
+# Returns: 0 when approval comments may be posted, 1 otherwise.
+#######################################
+_nmr_current_actor_can_post_maintainer_approval() {
+	local issue_num="$1"
+	local slug="$2"
+	local maintainer="$3"
+	local listed_author="$4"
+
+	[[ -n "$issue_num" && -n "$slug" && -n "$maintainer" && -n "$listed_author" ]] || return 1
+	[[ "$listed_author" == "$maintainer" ]] || return 1
+
+	local issue_meta issue_api_path
+	printf -v issue_api_path 'repos/%s/issues/%s' "$slug" "$issue_num"
+	issue_meta=$(gh api "$issue_api_path" 2>/dev/null) || issue_meta=""
+	[[ -n "$issue_meta" ]] || return 1
+
+	local issue_author issue_assoc
+	issue_author=$(printf '%s' "$issue_meta" | jq -r '.user.login // empty' 2>/dev/null) || issue_author=""
+	issue_assoc=$(printf '%s' "$issue_meta" | jq -r '.author_association // "NONE"' 2>/dev/null) || issue_assoc="NONE"
+	[[ "$issue_author" == "$maintainer" ]] || return 1
+	case "$issue_assoc" in
+	OWNER | MEMBER) ;;
+	*) return 1 ;;
+	esac
+
+	local actor
+	actor=$(gh api user --jq '.login // empty' 2>/dev/null) || actor=""
+	[[ -n "$actor" ]] || return 1
+
+	local actor_permission
+	actor_permission=$(gh api "repos/${slug}/collaborators/${actor}/permission" \
+		--jq '.permission // "none"' 2>/dev/null) || actor_permission="none"
+	case "$actor_permission" in
+	admin | maintain | write) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+#######################################
 # t3049: Evaluate linked OPEN PRs against the trust boundary gates and return
 # the number of the first qualifying PR, or empty string if none qualifies.
 #
@@ -1085,7 +1140,9 @@ auto_approve_maintainer_issues() {
 			# Case 1: maintainer created the issue — auto-approve unless NMR
 			# was manually applied by the maintainer (intentional hold).
 			if [[ "$issue_author" == "$maintainer" ]]; then
-				if _nmr_applied_by_maintainer "$issue_num" "$slug" "$maintainer"; then
+				if ! _nmr_current_actor_can_post_maintainer_approval "$issue_num" "$slug" "$maintainer" "$issue_author"; then
+					echo "[pulse-wrapper] Skipping auto-approve for #${issue_num} in ${slug} — maintainer-authority trust-boundary check failed" >>"$LOGFILE"
+				elif _nmr_applied_by_maintainer "$issue_num" "$slug" "$maintainer"; then
 					echo "[pulse-wrapper] Skipping auto-approve for #${issue_num} in ${slug} — NMR manually applied by maintainer" >>"$LOGFILE"
 				else
 					should_approve=true
