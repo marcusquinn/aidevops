@@ -787,12 +787,14 @@ _nmr_current_actor_can_post_maintainer_approval() {
 	[[ -n "$issue_num" && -n "$slug" && -n "$maintainer" && -n "$listed_author" ]] || return 1
 	[[ "$listed_author" == "$maintainer" ]] || return 1
 
-	local issue_meta issue_api_path
+	local issue_meta
+	local issue_api_path
 	printf -v issue_api_path 'repos/%s/issues/%s' "$slug" "$issue_num"
 	issue_meta=$(gh api "$issue_api_path" 2>/dev/null) || issue_meta=""
 	[[ -n "$issue_meta" ]] || return 1
 
-	local issue_author issue_assoc
+	local issue_author
+	local issue_assoc
 	issue_author=$(printf '%s' "$issue_meta" | jq -r '.user.login // empty' 2>/dev/null) || issue_author=""
 	issue_assoc=$(printf '%s' "$issue_meta" | jq -r '.author_association // "NONE"' 2>/dev/null) || issue_assoc="NONE"
 	[[ "$issue_author" == "$maintainer" ]] || return 1
