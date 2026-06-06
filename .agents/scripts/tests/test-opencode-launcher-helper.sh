@@ -35,6 +35,9 @@ make_fake_opencode() {
     mkdir -p "${bin_dir}"
     cat >"${bin_dir}/opencode" <<'SH'
 #!/usr/bin/env bash
+if [[ -n "${FAKE_OPENCODE_LOG:-}" ]]; then
+    printf '%s|%s\n' "${XDG_DATA_HOME:-}" "$*" >>"${FAKE_OPENCODE_LOG}"
+fi
 printf 'XDG_DATA_HOME=%s\n' "${XDG_DATA_HOME:-}"
 printf 'AIDEVOPS_OPENCODE_ISOLATED_DB=%s\n' "${AIDEVOPS_OPENCODE_ISOLATED_DB:-}"
 printf 'PWD=%s\n' "$PWD"
@@ -50,16 +53,28 @@ fake_bin="${tmp_root}/bin"
 work_dir="${tmp_root}/work"
 launch_dir="${tmp_root}/repo"
 home_dir="${tmp_root}/home"
+fake_log="${tmp_root}/fake-opencode.log"
 mkdir -p "${work_dir}" "${launch_dir}" "${home_dir}/.local/share/opencode"
 make_fake_opencode "${fake_bin}"
 printf '{"anthropic":{}}\n' >"${home_dir}/.local/share/opencode/auth.json"
 
-output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" \
+output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" FAKE_OPENCODE_LOG="${fake_log}" \
     "${HELPER}" --dir "${launch_dir}" --session-id test-session -- --version 2>&1)
+line_count=0
+prewarm_line=""
+while IFS= read -r line; do
+    line_count=$((line_count + 1))
+    if [[ ${line_count} -eq 1 ]]; then
+        prewarm_line="${line}"
+    fi
+done <"${fake_log}"
 if [[ "${output}" == *"AIDEVOPS_OPENCODE_ISOLATED_DB=1"* ]] \
     && [[ "${output}" == *"XDG_DATA_HOME=${work_dir}/opencode-interactive/test-session"* ]] \
     && [[ "${output}" == *"PWD=${launch_dir}"* ]] \
-    && [[ -f "${work_dir}/opencode-interactive/test-session/opencode/auth.json" ]]; then
+    && [[ -f "${work_dir}/opencode-interactive/test-session/opencode/auth.json" ]] \
+    && [[ "${line_count}" == "2" ]] \
+    && [[ "${prewarm_line}" == *"|--version" ]] \
+    && [[ "${output}" != *"sqlite-migration"* ]]; then
     _pass "isolated launcher sets per-session data dir and copies auth"
 else
     _fail "isolated launcher output unexpected: ${output}"

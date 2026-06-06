@@ -66,6 +66,18 @@ copy_auth_json() {
     return 0
 }
 
+prewarm_opencode_data_dir() {
+    local target_data_dir="$1"
+
+    # OpenCode writes a first-run database migration progress bar to stderr
+    # before the TUI starts when opencode.db is absent. Run that migration with
+    # stderr/stdout detached so the subsequent interactive TUI starts on a clean
+    # terminal frame.
+    [[ -f "${target_data_dir}/opencode/opencode.db" ]] && return 0
+    XDG_DATA_HOME="${target_data_dir}" opencode --version >/dev/null 2>&1 || true
+    return 0
+}
+
 build_session_data_dir() {
     local session_id="$1"
     local safe_id
@@ -143,6 +155,7 @@ main() {
     # Keep stdout/stderr clean before exec: OpenCode's TUI is sensitive to any
     # pre-launch terminal output and can leave visible redraw artifacts.
     copy_auth_json "${data_dir}" || true
+    prewarm_opencode_data_dir "${data_dir}"
 
     if ((dry_run == 1)); then
         printf 'XDG_DATA_HOME=%q AIDEVOPS_OPENCODE_ISOLATED_DB=1 cd %q && opencode' "${data_dir}" "${launch_dir}"
