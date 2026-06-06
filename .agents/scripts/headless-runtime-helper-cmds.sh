@@ -132,7 +132,7 @@ cmd_session() {
 			print_error "Usage: session clear <provider> <session_key>"
 			return 1
 		}
-		db_query "DELETE FROM provider_sessions WHERE provider = '$(sql_escape "$provider")' AND session_key = '$(sql_escape "$session_key")';" >/dev/null
+		clear_session_id "$provider" "$session_key"
 		return 0
 		;;
 	*)

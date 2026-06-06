@@ -257,11 +257,12 @@ _diagnose_cooldown_for_rate_limit_count() {
 }
 
 # Summarise headless runtime attempts for an issue and project retry/backoff state.
-# Args: $1=issue_number $2=metrics_file
+# Args: $1=issue_number $2=metrics_file $3=repo_slug (optional)
 # Outputs compact JSON object.
 _issue_attempt_summary_json() {
 	local issue_number="$1"
 	local metrics_file="$2"
+	local repo_slug="${3:-}"
 	local session_key="issue-${issue_number}"
 
 	if [[ ! -f "$metrics_file" ]] || ! command -v jq >/dev/null 2>&1; then
@@ -270,15 +271,17 @@ _issue_attempt_summary_json() {
 	fi
 
 	local summary=""
-	summary=$(jq -rs --arg sk "$session_key" --arg issue "$issue_number" '
+	summary=$(jq -rs --arg sk "$session_key" --arg issue "$issue_number" --arg repo "$repo_slug" '
 		def is_issue:
 			((.session_key // "") == $sk) or (((.issue_number // "") | tostring) == $issue);
+		def is_repo:
+			($repo == "") or ((.repo_slug // "") == $repo);
 		def is_rate_limit:
 			(.result // "") == "rate_limit"
 			or (.result // "") == "rate_limit_fast"
 			or (.provider_error_type // "") == "rate_limit"
 			or ((.provider_status // "") | tostring) == "429";
-		[.[] | select(is_issue)] as $attempts
+		[.[] | select(is_issue and is_repo)] as $attempts
 		| ($attempts | map(select(is_rate_limit))) as $rl
 		| {
 			attempt_count: ($attempts | length),
@@ -286,7 +289,7 @@ _issue_attempt_summary_json() {
 			last_attempt_ts: (($attempts | map(.ts // 0) | max) // 0),
 			last_rate_limit_ts: (($rl | map(.ts // 0) | max) // 0),
 			results: ($attempts | group_by(.result // "unknown") | map({result: (.[0].result // "unknown"), count: length}) | sort_by(.result)),
-			recent_attempts: ($attempts | sort_by(.ts // 0) | reverse | .[0:5] | map({ts: (.ts // 0), result: (.result // "unknown"), failure_reason: (.failure_reason // ""), provider: (.provider // ""), model: (.model // ""), exit_code: (.exit_code // null)}))
+			recent_attempts: ($attempts | sort_by(.ts // 0) | reverse | .[0:5] | map({ts: (.ts // 0), result: (.result // "unknown"), failure_reason: (.failure_reason // ""), provider: (.provider // ""), model: (.model // ""), exit_code: (.exit_code // null), repo_slug: (.repo_slug // "")}))
 		}
 	' "$metrics_file" 2>/dev/null) || summary=""
 
@@ -1571,7 +1574,7 @@ cmd_issue() {
 	issue_json=$(_fetch_issue_metadata "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG")
 	comments_json=$(_fetch_issue_comments "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG")
 	pr_numbers=$(_fetch_issue_linked_prs "$_CMD_ISSUE_NUMBER" "$_CMD_ISSUE_REPO_SLUG")
-	attempt_summary_json=$(_issue_attempt_summary_json "$_CMD_ISSUE_NUMBER" "$metrics_file")
+	attempt_summary_json=$(_issue_attempt_summary_json "$_CMD_ISSUE_NUMBER" "$metrics_file" "$_CMD_ISSUE_REPO_SLUG")
 	issue_log_lines=$(_collect_issue_log_lines "$_CMD_ISSUE_NUMBER" "$logfile" "$logdir")
 
 	if [[ "$_CMD_ISSUE_JSON_OUTPUT" -eq 1 ]]; then
