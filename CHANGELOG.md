@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.14] - 2026-06-06
+
+### Changed
+
+- fix: skip closed issue dispatch before claim (#24440)
+- fix: queue ruleset-blocked pulse merges (#24439)
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Maintenance: bump aiohttp from 3.13.4 to 3.14.0 in the pip group across 1 directory (#24427)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- sync opencode migration ledger tables (#24474)
+- simplify native auto merge defer handling (#24446)
+- close stale zero-progress meta issues (#24443)
+- repair opencode worker db migration seeding (#24433)
+
 ## [3.20.13] - 2026-06-05
 
 ### Changed
