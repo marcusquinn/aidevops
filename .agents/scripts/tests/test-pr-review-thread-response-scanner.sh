@@ -38,14 +38,35 @@ setup_test_env() {
 	mkdir -p "${HOME}" "${TEST_ROOT}/bin" "${TEST_ROOT}/repo" "${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}"
 	cat >"${TEST_ROOT}/bin/gh" <<'GH_STUB'
 #!/usr/bin/env bash
+if [[ "$1" == "api" && "${2:-}" == "rate_limit" ]]; then
+	printf '100\n'
+	exit 0
+fi
 if [[ "$1" == "pr" && "${2:-}" == "list" ]]; then
 	printf '%s\n' "${STUB_PR_LIST:-1	Fix active PR	false	origin:worker	feature/review	worker-bot}"
 	exit 0
 fi
 if [[ "$1" == "api" && "${2:-}" == "graphql" ]]; then
+	if [[ "$*" == *"addPullRequestReviewThreadReply"* ]]; then
+		printf 'reply\n' >>"${GRAPHQL_MUTATIONS_LOG:-/dev/null}"
+		printf '{"data":{"addPullRequestReviewThreadReply":{"comment":{"id":"COMMENT1","url":"https://example.invalid/reply"}}}}\n'
+		exit 0
+	fi
+	if [[ "$*" == *"resolveReviewThread"* ]]; then
+		printf 'resolve\n' >>"${GRAPHQL_MUTATIONS_LOG:-/dev/null}"
+		printf '{"data":{"resolveReviewThread":{"thread":{"id":"THREAD1","isResolved":true}}}}\n'
+		exit 0
+	fi
+	if [[ "$*" == *"node(id: $thread)"* || "$*" == *"comments(first: 100)"* ]]; then
+		printf '{"data":{"node":{"comments":{"nodes":[]}}}}\n'
+		exit 0
+	fi
 	case "${STUB_THREADS_MODE:-unresolved}" in
 	none)
 		printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}\n'
+		;;
+	outdated)
+		printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"THREAD_OLD","isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai[bot]"},"path":"old.sh","line":7,"url":"https://example.invalid/outdated","updatedAt":"2026-06-03T00:00:00Z"}]}}]}}}}}'
 		;;
 	*)
 		printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"THREAD1","isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"gemini-code-assist[bot]"},"path":".agents/scripts/example.sh","line":42,"url":"https://example.invalid/thread","updatedAt":"2026-06-03T00:00:00Z"}]}},{"id":"THREAD2","isResolved":true,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"coderabbitai[bot]"},"path":"old.sh","line":1,"url":"https://example.invalid/resolved","updatedAt":"2026-06-03T00:00:00Z"}]}}]}}}}}'
@@ -80,7 +101,9 @@ HEADLESS_STUB
 	chmod +x "${TEST_ROOT}/headless-runtime-helper.sh"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
 	export HEADLESS_RUNTIME_HELPER="${TEST_ROOT}/headless-runtime-helper.sh"
+	export GRAPHQL_MUTATIONS_LOG="${TEST_ROOT}/graphql-mutations.log"
 	export PR_REVIEW_THREAD_RESPONSE_COOLDOWN=3600
+	: >"$GRAPHQL_MUTATIONS_LOG"
 	return 0
 }
 
@@ -131,6 +154,20 @@ test_scan_skips_draft_prs() {
 	return 0
 }
 
+test_scan_includes_outdated_unresolved_threads() {
+	setup_test_env
+	export STUB_THREADS_MODE="outdated"
+	local output=""
+	output="$($SCANNER scan owner/repo "${TEST_ROOT}/repo")"
+	if [[ "$output" == *"THREAD_OLD"* && "$output" == *"(outdated)"* ]]; then
+		print_result "scan includes unresolved outdated bot thread" 0
+	else
+		print_result "scan includes unresolved outdated bot thread" 1 "output=${output}"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_dispatch_launches_worker_and_writes_state() {
 	setup_test_env
 	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
@@ -160,11 +197,65 @@ test_dispatch_is_idempotent_for_same_fingerprint() {
 	return 0
 }
 
+test_reply_and_resolve_use_graphql_mutations() {
+	setup_test_env
+	local body_file="${TEST_ROOT}/reply.md"
+	printf '<!-- aidevops:review-thread-response:THREAD1 -->\n@reviewer fixed at file.sh:1; verified with test.sh\n' >"$body_file"
+	$SCANNER reply owner/repo THREAD1 "$body_file" 'aidevops:review-thread-response:THREAD1'
+	$SCANNER resolve owner/repo THREAD1
+	if grep -q '^reply$' "$GRAPHQL_MUTATIONS_LOG" 2>/dev/null && grep -q '^resolve$' "$GRAPHQL_MUTATIONS_LOG" 2>/dev/null; then
+		print_result "reply and resolve use GraphQL mutations" 0
+	else
+		print_result "reply and resolve use GraphQL mutations" 1 "mutations=$(tr '\n' ',' <"$GRAPHQL_MUTATIONS_LOG" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_reply_skips_duplicate_marker() {
+	setup_test_env
+	export STUB_THREADS_MODE="marker"
+	cat >"${TEST_ROOT}/bin/gh" <<'GH_STUB_MARKER'
+#!/usr/bin/env bash
+if [[ "$1" == "api" && "${2:-}" == "rate_limit" ]]; then
+	printf '100\n'
+	exit 0
+fi
+if [[ "$1" == "api" && "${2:-}" == "graphql" ]]; then
+	if [[ "$*" == *"comments(first: 100)"* ]]; then
+		printf '{"data":{"node":{"comments":{"nodes":[{"body":"<!-- aidevops:review-thread-response:THREAD1 --> already"}]}}}}\n'
+		exit 0
+	fi
+	if [[ "$*" == *"addPullRequestReviewThreadReply"* ]]; then
+		printf 'reply\n' >>"${GRAPHQL_MUTATIONS_LOG:-/dev/null}"
+		printf '{}\n'
+		exit 0
+	fi
+fi
+printf '{}\n'
+exit 0
+GH_STUB_MARKER
+	chmod +x "${TEST_ROOT}/bin/gh"
+	local body_file="${TEST_ROOT}/reply.md"
+	printf '<!-- aidevops:review-thread-response:THREAD1 -->\n@reviewer duplicate\n' >"$body_file"
+	$SCANNER reply owner/repo THREAD1 "$body_file" 'aidevops:review-thread-response:THREAD1'
+	if [[ ! -s "$GRAPHQL_MUTATIONS_LOG" ]]; then
+		print_result "reply skips duplicate idempotency marker" 0
+	else
+		print_result "reply skips duplicate idempotency marker" 1 "unexpected mutation"
+	fi
+	teardown_test_env
+	return 0
+}
+
 main() {
 	test_scan_finds_unresolved_bot_thread
 	test_scan_skips_draft_prs
+	test_scan_includes_outdated_unresolved_threads
 	test_dispatch_launches_worker_and_writes_state
 	test_dispatch_is_idempotent_for_same_fingerprint
+	test_reply_and_resolve_use_graphql_mutations
+	test_reply_skips_duplicate_marker
 
 	printf '\nTests run: %d\n' "$TESTS_RUN"
 	printf 'Tests failed: %d\n' "$TESTS_FAILED"
