@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.19] - 2026-06-06
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- keep opencode launcher TUI clean
+- keep opencode launcher TUI clean
+
 ## [3.20.18] - 2026-06-06
 
 ### Changed
