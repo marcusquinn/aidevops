@@ -261,6 +261,11 @@ gh() {
 	return 1
 }
 
+gh_create_issue() {
+	printf '%s\n' "gh_create_issue $*" >>"$GH_CALLS"
+	return 0
+}
+
 # Reset gauge for a clean state.
 pulse_stats_set_gauge "pulse_merge_zero_progress_cycles" "0" >/dev/null 2>&1
 
@@ -321,6 +326,18 @@ else
 fi
 TESTS_RUN=$((TESTS_RUN + 1))
 PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE=""
+
+# 5g: issue filing is edge-triggered at the configured threshold. Once the
+# gauge is already above threshold, closing the open issue externally must not
+# produce one fresh meta-issue per pulse cycle.
+: >"$GH_CALLS"
+AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES=5
+pulse_stats_set_gauge "pulse_merge_zero_progress_cycles" "4" >/dev/null 2>&1
+pulse_stats_set_gauge "pulse_merge_eligible_stuck_pr_count" "0" >/dev/null 2>&1
+pulse_merge_zero_progress_record 1 0 >/dev/null 2>&1
+pulse_merge_zero_progress_record 1 0 >/dev/null 2>&1
+create_count=$(grep -c 'gh_create_issue --repo marcusquinn/aidevops' "$GH_CALLS")
+assert_eq "5g: zero-progress meta-issue files once on threshold crossing" "1" "$create_count"
 echo ""
 
 # ---------------------------------------------------------------------------
