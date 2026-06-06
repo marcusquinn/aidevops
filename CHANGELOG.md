@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.15] - 2026-06-06
+
+### Fixed
+
+- edge-trigger zero-progress meta issue filing (#24475)
+
 ## [3.20.14] - 2026-06-06
 
 ### Changed
