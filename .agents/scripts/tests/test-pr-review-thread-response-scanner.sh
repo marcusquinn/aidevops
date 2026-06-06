@@ -47,6 +47,12 @@ if [[ "$1" == "pr" && "${2:-}" == "list" ]]; then
 	exit 0
 fi
 if [[ "$1" == "api" && "${2:-}" == "graphql" ]]; then
+	for arg in "$@"; do
+		if [[ "$arg" == "owner=" || "$arg" == "name=" ]]; then
+			printf 'empty repo GraphQL field: %s\n' "$arg" >&2
+			exit 1
+		fi
+	done
 	if [[ "$*" == *"addPullRequestReviewThreadReply"* ]]; then
 		printf 'reply\n' >>"${GRAPHQL_MUTATIONS_LOG:-/dev/null}"
 		printf '{"data":{"addPullRequestReviewThreadReply":{"comment":{"id":"COMMENT1","url":"https://example.invalid/reply"}}}}\n'
