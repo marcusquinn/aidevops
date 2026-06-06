@@ -1485,12 +1485,14 @@ pulse_merge_zero_progress_record() {
 	[[ "$cur" =~ ^[0-9]+$ ]] || cur=0
 	cur=$((cur + 1))
 	pulse_stats_set_gauge "$_PMS_GAUGE_ZERO_PROGRESS_CYCLES" "$cur"
+	local threshold="${AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES:-}"
+	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=5
 
-	echo "[pulse-merge-stuck] pulse_merge_zero_progress_record: zero_progress_cycles=${cur}/${AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES}, eligible_unmerged=${eligible_unmerged}" >>"$LOGFILE"
+	echo "[pulse-merge-stuck] pulse_merge_zero_progress_record: zero_progress_cycles=${cur}/${threshold}, eligible_unmerged=${eligible_unmerged}" >>"$LOGFILE"
 
 	# File only on the threshold-crossing edge to prevent post-close issue storms.
-	if [[ "$cur_before" -lt "$AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES" \
-		&& "$cur" -ge "$AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES" ]]; then
+	if [[ "$cur_before" -lt "$threshold" \
+		&& "$cur" -ge "$threshold" ]]; then
 		local stuck_summary
 		stuck_summary=$(pulse_stats_get_gauge "pulse_merge_eligible_stuck_pr_count")
 		stuck_summary="eligible_unmerged_this_cycle=${eligible_unmerged}, eligible_stuck_count=${stuck_summary}, zero_progress_cycles=${cur}"
