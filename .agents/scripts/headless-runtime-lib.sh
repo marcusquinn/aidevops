@@ -1013,6 +1013,53 @@ _watchdog_kill() {
 # --- Section 9: DB Merge ---
 
 #######################################
+# Copy one OpenCode migration ledger table from shared DB to worker DB.
+# Args: $1 = worker DB path, $2 = shared DB path, $3 = ledger table name.
+# The ledger table list is intentionally allowlisted by the caller; this helper
+# creates a missing worker-side table from the shared DB schema before copying
+# rows so OpenCode does not replay migrations against pre-created user tables.
+#######################################
+_copy_worker_db_migration_ledger_table() {
+	local worker_db="$1"
+	local shared_db="$2"
+	local ledger_table="$3"
+	local has_shared has_worker shared_db_sql
+
+	has_shared=$(sqlite3 "$shared_db" "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '${ledger_table}' LIMIT 1;" 2>/dev/null || true)
+	[[ -n "$has_shared" ]] || return 0
+
+	has_worker=$(sqlite3 "$worker_db" "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '${ledger_table}' LIMIT 1;" 2>/dev/null || true)
+	if [[ -z "$has_worker" ]]; then
+		sqlite3_with_timeout "$shared_db" ".schema ${ledger_table}" 2>/dev/null | sqlite3_with_timeout "$worker_db" >/dev/null 2>&1 || true
+	fi
+
+	shared_db_sql=$(sql_escape "$shared_db")
+	sqlite3 "$worker_db" <<-SQL >/dev/null 2>&1 || true
+		.timeout 5000
+		ATTACH DATABASE '${shared_db_sql}' AS shared;
+		INSERT OR IGNORE INTO main."${ledger_table}" SELECT * FROM shared."${ledger_table}";
+		DETACH DATABASE shared;
+	SQL
+	return 0
+}
+
+#######################################
+# Synchronise all known OpenCode migration ledger tables into worker DB.
+# Args: $1 = worker DB path, $2 = shared DB path.
+#######################################
+_sync_worker_db_migration_ledgers() {
+	local worker_db="$1"
+	local shared_db="$2"
+	local ledger_table
+
+	[[ -f "$worker_db" && -f "$shared_db" ]] || return 0
+	for ledger_table in __drizzle_migrations data_migration migration; do
+		_copy_worker_db_migration_ledger_table "$worker_db" "$shared_db" "$ledger_table"
+	done
+	return 0
+}
+
+#######################################
 # Merge worker's isolated SQLite DB back to the shared DB.
 # Called after worker exits -- no contention risk.
 # Uses ATTACH DATABASE to copy session and message rows.
@@ -1071,16 +1118,11 @@ _seed_worker_db_session_context() {
 		sqlite3 -cmd ".timeout 5000" "$shared_db" .schema 2>/dev/null | sqlite3 "$worker_db" >/dev/null 2>&1 || return 0
 	fi
 
+	_sync_worker_db_migration_ledgers "$worker_db" "$shared_db"
+
 	local shared_db_sql session_id_sql
 	shared_db_sql=$(sql_escape "$shared_db")
 	session_id_sql=$(sql_escape "$session_id")
-	sqlite3 "$worker_db" <<-SQL >/dev/null 2>&1 || true
-		.timeout 5000
-		ATTACH DATABASE '${shared_db_sql}' AS shared;
-		INSERT OR IGNORE INTO __drizzle_migrations SELECT * FROM shared.__drizzle_migrations;
-		INSERT OR IGNORE INTO data_migration SELECT * FROM shared.data_migration;
-		DETACH DATABASE shared;
-	SQL
 	sqlite3 "$worker_db" <<-SQL >/dev/null 2>&1 || true
 		.timeout 5000
 		ATTACH DATABASE '${shared_db_sql}' AS shared;
@@ -1111,29 +1153,11 @@ _sync_worker_db_migration_metadata() {
 	[[ -f "$worker_db" ]] || return 0
 	[[ -f "$shared_db" ]] || return 0
 
-	local has_project has_schema_migrations has_data_migration
+	local has_project
 	has_project=$(sqlite3 "$worker_db" "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'project' LIMIT 1;" 2>/dev/null || true)
 	[[ -n "$has_project" ]] || return 0
 
-	has_schema_migrations=$(sqlite3 "$worker_db" "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '__drizzle_migrations' LIMIT 1;" 2>/dev/null || true)
-	has_data_migration=$(sqlite3 "$worker_db" "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'data_migration' LIMIT 1;" 2>/dev/null || true)
-
-	if [[ -z "$has_schema_migrations" ]]; then
-		sqlite3_with_timeout "$shared_db" ".schema __drizzle_migrations" 2>/dev/null | sqlite3_with_timeout "$worker_db" >/dev/null 2>&1 || true
-	fi
-	if [[ -z "$has_data_migration" ]]; then
-		sqlite3_with_timeout "$shared_db" ".schema data_migration" 2>/dev/null | sqlite3_with_timeout "$worker_db" >/dev/null 2>&1 || true
-	fi
-
-	local shared_db_sql
-	shared_db_sql=$(sql_escape "$shared_db")
-	sqlite3 "$worker_db" <<-SQL >/dev/null 2>&1 || true
-		.timeout 5000
-		ATTACH DATABASE '${shared_db_sql}' AS shared;
-		INSERT OR IGNORE INTO __drizzle_migrations SELECT * FROM shared.__drizzle_migrations;
-		INSERT OR IGNORE INTO data_migration SELECT * FROM shared.data_migration;
-		DETACH DATABASE shared;
-	SQL
+	_sync_worker_db_migration_ledgers "$worker_db" "$shared_db"
 	return 0
 }
 

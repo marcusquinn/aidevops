@@ -1062,11 +1062,13 @@ test_seed_worker_db_session_context_copies_migration_metadata() {
 	sqlite3 "$shared_db" <<'SQL'
 CREATE TABLE __drizzle_migrations (id INTEGER PRIMARY KEY, hash TEXT NOT NULL, created_at INTEGER);
 CREATE TABLE data_migration (id TEXT PRIMARY KEY, updated_at INTEGER NOT NULL);
+CREATE TABLE migration (id TEXT PRIMARY KEY, time_completed INTEGER NOT NULL);
 CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
 CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL);
 CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);
 INSERT INTO __drizzle_migrations VALUES (1, 'schema-ready', 12345);
 INSERT INTO data_migration VALUES ('data-ready', 67890);
+INSERT INTO migration VALUES ('opencode-v16-ready', 1700000000);
 INSERT INTO project VALUES ('project-keep', 'Keep Project');
 INSERT INTO session VALUES ('session-keep', 'project-keep', 'Keep');
 INSERT INTO message VALUES ('message-keep', 'session-keep', 'one');
@@ -1074,19 +1076,20 @@ SQL
 
 	_seed_worker_db_session_context "$isolated_dir" "session-keep"
 
-	local schema_migrations data_migrations sessions messages
+	local schema_migrations data_migrations migration_rows sessions messages
 	schema_migrations=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM __drizzle_migrations WHERE hash = 'schema-ready';")
 	data_migrations=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM data_migration WHERE id = 'data-ready';")
+	migration_rows=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM migration WHERE id = 'opencode-v16-ready';")
 	sessions=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM session WHERE id = 'session-keep';")
 	messages=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM message WHERE session_id = 'session-keep';")
 
-	if [[ "$schema_migrations" == "1" && "$data_migrations" == "1" && "$sessions" == "1" && "$messages" == "1" ]]; then
+	if [[ "$schema_migrations" == "1" && "$data_migrations" == "1" && "$migration_rows" == "1" && "$sessions" == "1" && "$messages" == "1" ]]; then
 		print_result "seed worker DB copies migration metadata for continuation" 0
 		return 0
 	fi
 
 	print_result "seed worker DB copies migration metadata for continuation" 1 \
-		"schema_migrations=$schema_migrations data_migrations=$data_migrations sessions=$sessions messages=$messages"
+		"schema_migrations=$schema_migrations data_migrations=$data_migrations migration_rows=$migration_rows sessions=$sessions messages=$messages"
 	return 0
 }
 
@@ -1101,9 +1104,11 @@ test_sync_worker_db_migration_metadata_repairs_prewarmed_project_table() {
 	sqlite3 "$shared_db" <<'SQL'
 CREATE TABLE __drizzle_migrations (id INTEGER PRIMARY KEY, hash TEXT NOT NULL, created_at INTEGER);
 CREATE TABLE data_migration (id TEXT PRIMARY KEY, updated_at INTEGER NOT NULL);
+CREATE TABLE migration (id TEXT PRIMARY KEY, time_completed INTEGER NOT NULL);
 CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
 INSERT INTO __drizzle_migrations VALUES (1, 'schema-ready', 12345);
 INSERT INTO data_migration VALUES ('data-ready', 67890);
+INSERT INTO migration VALUES ('opencode-v16-ready', 1700000000);
 SQL
 	sqlite3 "$worker_db" <<'SQL'
 CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
@@ -1112,18 +1117,19 @@ SQL
 
 	_sync_worker_db_migration_metadata "$isolated_dir"
 
-	local schema_migrations data_migrations projects
+	local schema_migrations data_migrations migration_rows projects
 	schema_migrations=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM __drizzle_migrations WHERE hash = 'schema-ready';")
 	data_migrations=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM data_migration WHERE id = 'data-ready';")
+	migration_rows=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM migration WHERE id = 'opencode-v16-ready';")
 	projects=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM project WHERE id = 'prewarmed-project';")
 
-	if [[ "$schema_migrations" == "1" && "$data_migrations" == "1" && "$projects" == "1" ]]; then
+	if [[ "$schema_migrations" == "1" && "$data_migrations" == "1" && "$migration_rows" == "1" && "$projects" == "1" ]]; then
 		print_result "sync worker DB migration metadata repairs prewarmed project table" 0
 		return 0
 	fi
 
 	print_result "sync worker DB migration metadata repairs prewarmed project table" 1 \
-		"schema_migrations=$schema_migrations data_migrations=$data_migrations projects=$projects"
+		"schema_migrations=$schema_migrations data_migrations=$data_migrations migration_rows=$migration_rows projects=$projects"
 	return 0
 }
 
