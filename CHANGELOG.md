@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.29] - 2026-06-07
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- clean up repo sync auth capture (#24534)
+- improve gh checks timeout portability (#24532)
+
 ## [3.20.28] - 2026-06-07
 
 ### Changed
