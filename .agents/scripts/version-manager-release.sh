@@ -257,19 +257,24 @@ _verify_maintainer_identity() {
 		return 1
 	fi
 
+	local repo_owner="${slug%%/*}"
+	if [[ "$current_user" == "$repo_owner" ]]; then
+		return 0
+	fi
+
 	# Check repo collaboration level — OWNER and MEMBER can push hotfixes
-	user_association=$(gh api "repos/${slug}/collaborators/${current_user}/permission" --jq '.role_name' 2>/dev/null || echo "")
+	# #aidevops:trust-boundary — hotfix releases require confirmed write+ access;
+	# permission lookup failures abort as failures, not as confirmed no-access.
+	if ! _gh_collaborator_permission_lookup "$slug" "$current_user" user_association; then
+		print_error "hotfix release requires maintainer identity (permission check failed for ${current_user}, HTTP ${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-unknown})"
+		return 1
+	fi
 
 	case "$user_association" in
 	admin | maintain | write)
 		return 0
 		;;
 	*)
-		# Fallback: check if the user is the repo owner (slug prefix matches)
-		local repo_owner="${slug%%/*}"
-		if [[ "$current_user" == "$repo_owner" ]]; then
-			return 0
-		fi
 		print_error "hotfix release requires maintainer identity (current: ${current_user}, role: ${user_association:-unknown})"
 		return 1
 		;;

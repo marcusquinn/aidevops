@@ -24,7 +24,15 @@ if [[ "$1" == "api" && "$2" == "user" ]]; then
   printf '%s\n' "tester"
   exit 0
 fi
-if [[ "$1" == "api" && "$2" == repos/*/collaborators/*/permission ]]; then
+if [[ "$1" == "api" && "$2" == "-i" && "${3:-}" == */collaborators/*/permission ]]; then
+  if [[ "$mode" == "managed" ]]; then
+    printf 'HTTP/2.0 200 OK\n\n{"permission":"write"}\n'
+    exit 0
+  fi
+  printf 'HTTP/2.0 403 Forbidden\n\n{"message":"Must have push access"}\n' >&2
+  exit 1
+fi
+if [[ "$1" == "api" && ( "$2" == repos/*/collaborators/*/permission || "$2" == /repos/*/collaborators/*/permission ) ]]; then
   if [[ "$mode" == "managed" ]]; then
     printf '%s\n' "write"
     exit 0

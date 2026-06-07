@@ -72,6 +72,18 @@ setup_test_env() {
 set -euo pipefail
 if [[ "${1:-}" == "api" ]]; then
 	path="${2:-}"
+	if [[ "$path" == "-i" ]]; then
+		path="${3:-}"
+		if [[ "$path" == */collaborators/*/permission ]]; then
+			if [[ "$(cat "$PERMISSION_FIXTURE")" == "FAIL" ]]; then
+				printf 'HTTP/2.0 403 Forbidden\n\n{"message":"Forbidden"}\n'
+				exit 1
+			fi
+			printf 'HTTP/2.0 200 OK\n\n'
+			cat "$PERMISSION_FIXTURE"
+			exit 0
+		fi
+	fi
 	jq_filter=""
 	shift 2 2>/dev/null || true
 	while [[ $# -gt 0 ]]; do
@@ -125,6 +137,12 @@ define_helpers_under_test() {
 		printf 'ERROR: could not extract _is_maintainer_equivalent_author from %s\n' "$QF_SCRIPT" >&2
 		return 1
 	fi
+	# shellcheck source=../github-app-auth-helper.sh
+	source "${SCRIPT_DIR}/../github-app-auth-helper.sh"
+	# shellcheck source=../shared-gh-wrappers-rest-fallback.sh
+	source "${SCRIPT_DIR}/../shared-gh-wrappers-rest-fallback.sh"
+	# shellcheck source=../shared-gh-collaborator-permission.sh
+	source "${SCRIPT_DIR}/../shared-gh-collaborator-permission.sh"
 	# shellcheck disable=SC1090
 	eval "$trust_src"
 	return 0

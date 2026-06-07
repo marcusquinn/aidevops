@@ -162,8 +162,9 @@ _triage_awaiting_contributor_reply() {
 
 	# Check if the last commenter is a repo collaborator (maintainer/member)
 	local perm_level=""
-	perm_level=$(gh api "repos/${repo_slug}/collaborators/${last_human_author}/permission" \
-		--jq '.permission // ""' 2>/dev/null) || perm_level=""
+	# #aidevops:trust-boundary — contributor-reply triage skipping requires a
+	# confirmed collaborator; permission lookup failures keep triage eligible.
+	_gh_collaborator_permission_lookup "$repo_slug" "$last_human_author" perm_level || return 1
 
 	case "$perm_level" in
 	admin | maintain | write)

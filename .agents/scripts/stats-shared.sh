@@ -55,6 +55,26 @@ _sanitize_runner_identity_for_cache() {
 	return 0
 }
 
+#######################################
+# Read an expired runner-role cache entry for transient API failure fallback.
+# Args: $1=disk_cache_file $2=repo_slug
+# Output: stale role, when present.
+# Returns: 0 always.
+#######################################
+_get_stale_runner_role() {
+	local disk_cache_file="$1"
+	local repo_slug="$2"
+	local stale_role="" stale_ts=""
+	if [[ -f "$disk_cache_file" ]]; then
+		IFS='|' read -r stale_role stale_ts <"$disk_cache_file" 2>/dev/null || stale_role=""
+		if [[ -n "$stale_role" ]]; then
+			echo "[stats] _get_runner_role: API failed for ${repo_slug}, using stale cache: ${stale_role}" >>"${LOGFILE:-/dev/null}"
+		fi
+	fi
+	printf '%s\n' "$stale_role"
+	return 0
+}
+
 # check_session_count: now provided by worker-lifecycle-common.sh (sourced by caller).
 # Previously duplicated here (17 lines) — see t1431. Consolidated to eliminate
 # divergence risk and ensure single source of truth.
@@ -139,9 +159,11 @@ _get_runner_role() {
 	# On failure, use expired disk cache if available rather than defaulting
 	# to "contributor" — this prevents role flip-flop on transient errors.
 	local role=""
-	local api_path="repos/${repo_slug}/collaborators/${runner_user}/permission"
-	local response
-	response=$(gh api "$api_path" --jq '.permission // empty' 2>/dev/null) || response=""
+	local response=""
+	local lookup_failed=0
+	# #aidevops:trust-boundary — runner role classification uses confirmed
+	# collaborator permission; transient lookup failures prefer stale cache.
+	_gh_collaborator_permission_lookup "$repo_slug" "$runner_user" response || lookup_failed=1
 
 	case "$response" in
 	admin | maintain | write)
@@ -151,16 +173,7 @@ _get_runner_role() {
 		role="contributor"
 		;;
 	"")
-		# API failure — use expired disk cache if available (stale > wrong)
-		if [[ -f "$disk_cache_file" ]]; then
-			local stale_role _stale_ts
-			IFS='|' read -r stale_role _stale_ts <"$disk_cache_file" 2>/dev/null || stale_role=""
-			if [[ -n "$stale_role" ]]; then
-				echo "[stats] _get_runner_role: API failed for ${repo_slug}, using stale cache: ${stale_role}" >>"${LOGFILE:-/dev/null}"
-				role="$stale_role"
-			fi
-		fi
-		# No cache at all — default to contributor (fail closed)
+		role=$(_get_stale_runner_role "$disk_cache_file" "$repo_slug")
 		[[ -z "$role" ]] && role="contributor"
 		;;
 	*)
@@ -168,6 +181,11 @@ _get_runner_role() {
 		role="contributor"
 		;;
 	esac
+
+	if [[ "$lookup_failed" -eq 1 ]]; then
+		echo "$role"
+		return 0
+	fi
 
 	# Persist to both caches
 	export "$cache_key=$role"

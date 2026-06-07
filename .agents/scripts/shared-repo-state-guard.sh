@@ -13,6 +13,23 @@
 [[ -n "${_SHARED_REPO_STATE_GUARD_LOADED:-}" ]] && return 0
 _SHARED_REPO_STATE_GUARD_LOADED=1
 
+if ! declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
+	_SHARED_REPO_STATE_GUARD_DIR="${BASH_SOURCE[0]%/*}"
+	if [[ -f "${_SHARED_REPO_STATE_GUARD_DIR}/github-app-auth-helper.sh" ]]; then
+		# shellcheck source=./github-app-auth-helper.sh
+		source "${_SHARED_REPO_STATE_GUARD_DIR}/github-app-auth-helper.sh"
+	fi
+	if [[ -f "${_SHARED_REPO_STATE_GUARD_DIR}/shared-gh-wrappers-rest-fallback.sh" ]]; then
+		# shellcheck source=./shared-gh-wrappers-rest-fallback.sh
+		source "${_SHARED_REPO_STATE_GUARD_DIR}/shared-gh-wrappers-rest-fallback.sh"
+	fi
+	if [[ -f "${_SHARED_REPO_STATE_GUARD_DIR}/shared-gh-collaborator-permission.sh" ]]; then
+		# shellcheck source=./shared-gh-collaborator-permission.sh
+		source "${_SHARED_REPO_STATE_GUARD_DIR}/shared-gh-collaborator-permission.sh"
+	fi
+	unset _SHARED_REPO_STATE_GUARD_DIR
+fi
+
 #######################################
 # Resolve the authenticated GitHub login.
 # Returns: login on stdout, empty on failure.
@@ -65,8 +82,14 @@ aidevops_can_manage_repo_issue_state() {
 	fi
 
 	local permission=""
-	permission=$(gh api "repos/${slug}/collaborators/${user}/permission" \
-		--jq '.permission // ""' 2>/dev/null || printf '')
+	# #aidevops:trust-boundary — issue-state writes require confirmed write+ access;
+	# API lookup failures fail closed but remain distinct from confirmed non-access.
+	if declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
+		_gh_collaborator_permission_lookup "$slug" "$user" permission || return 1
+	else
+		permission=$(gh api "/repos/${slug}/collaborators/${user}/permission" \
+			--jq '.permission // ""' 2>/dev/null || printf '')
+	fi
 	case "$permission" in
 		admin | maintain | write)
 			return 0

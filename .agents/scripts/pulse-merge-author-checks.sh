@@ -36,24 +36,97 @@ _PULSE_MERGE_AUTHOR_CHECKS_LOADED=1
 : "${REPOS_JSON:=${HOME}/.config/aidevops/repos.json}"
 _INTERACTIVE_PR_BOOL_FALSE=false
 
+if ! declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
+	_PULSE_MERGE_AUTHOR_CHECKS_DIR="${BASH_SOURCE[0]%/*}"
+	if [[ -f "${_PULSE_MERGE_AUTHOR_CHECKS_DIR}/github-app-auth-helper.sh" ]]; then
+		# shellcheck source=./github-app-auth-helper.sh
+		source "${_PULSE_MERGE_AUTHOR_CHECKS_DIR}/github-app-auth-helper.sh"
+	fi
+	if [[ -f "${_PULSE_MERGE_AUTHOR_CHECKS_DIR}/shared-gh-wrappers-rest-fallback.sh" ]]; then
+		# shellcheck source=./shared-gh-wrappers-rest-fallback.sh
+		source "${_PULSE_MERGE_AUTHOR_CHECKS_DIR}/shared-gh-wrappers-rest-fallback.sh"
+	fi
+	if [[ -f "${_PULSE_MERGE_AUTHOR_CHECKS_DIR}/shared-gh-collaborator-permission.sh" ]]; then
+		# shellcheck source=./shared-gh-collaborator-permission.sh
+		source "${_PULSE_MERGE_AUTHOR_CHECKS_DIR}/shared-gh-collaborator-permission.sh"
+	fi
+	unset _PULSE_MERGE_AUTHOR_CHECKS_DIR
+fi
+
+_PULSE_AUTHOR_PERMISSION_UNKNOWN="unknown"
+_PULSE_AUTHOR_PERMISSION_LOOKUP_STATE="$_PULSE_AUTHOR_PERMISSION_UNKNOWN"
+_PULSE_AUTHOR_PERMISSION_HTTP="$_PULSE_AUTHOR_PERMISSION_UNKNOWN"
+
+#######################################
+# Record collaborator-permission lookup state for merge callers.
+# Args: $1=state, $2=http-status
+# Returns: 0 always.
+#######################################
+_pulse_author_permission_state_set() {
+	local state="$1"
+	local http_status="$2"
+	_PULSE_AUTHOR_PERMISSION_LOOKUP_STATE="$state"
+	_PULSE_AUTHOR_PERMISSION_HTTP="$http_status"
+	return 0
+}
+
+#######################################
+# Look up a PR author's repository permission via App-aware REST when available.
+# #aidevops:trust-boundary — collaborator/maintainer trust checks must not
+# collapse API lookup failures into confirmed non-collaborator results.
+# Args: $1=author login, $2=repo slug, $3=optional output variable
+# Output: permission level on lookup success.
+# Returns: 0=lookup success, 2=lookup failure.
+#######################################
+_pulse_author_permission_lookup() {
+	local author="$1"
+	local repo_slug="$2"
+	local out_var="${3:-}"
+	local pulse_perm_value=""
+	_pulse_author_permission_state_set "$_PULSE_AUTHOR_PERMISSION_UNKNOWN" "$_PULSE_AUTHOR_PERMISSION_UNKNOWN"
+	if declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
+		_gh_collaborator_permission_lookup "$repo_slug" "$author" pulse_perm_value
+		local rc=$?
+		if [[ "$rc" -ne 0 ]]; then
+			_pulse_author_permission_state_set "failed" "${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-$_PULSE_AUTHOR_PERMISSION_UNKNOWN}"
+			return 2
+		fi
+		_pulse_author_permission_state_set "ok" "${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-$_PULSE_AUTHOR_PERMISSION_UNKNOWN}"
+		if [[ -n "$out_var" ]]; then
+			printf -v "$out_var" '%s' "$pulse_perm_value"
+		else
+			printf '%s\n' "$pulse_perm_value"
+		fi
+		return 0
+	fi
+
+	pulse_perm_value=$(gh api "/repos/${repo_slug}/collaborators/${author}/permission" \
+		--jq '.permission // ""' 2>/dev/null) || {
+		_pulse_author_permission_state_set "failed" "$_PULSE_AUTHOR_PERMISSION_UNKNOWN"
+		return 2
+	}
+	_pulse_author_permission_state_set "ok" "$_PULSE_AUTHOR_PERMISSION_UNKNOWN"
+	if [[ -n "$out_var" ]]; then
+		printf -v "$out_var" '%s' "$pulse_perm_value"
+	else
+		printf '%s\n' "$pulse_perm_value"
+	fi
+	return 0
+}
+
 #######################################
 # Check if a PR author is a collaborator (admin/maintain/write).
 # Args: $1=author login, $2=repo slug
-# Returns: 0=collaborator, 1=not collaborator or error
+# Returns: 0=collaborator, 1=not collaborator, 2=permission lookup failure
 #######################################
 _is_collaborator_author() {
 	local author="$1"
 	local repo_slug="$2"
-	local perm_url="repos/${repo_slug}/collaborators/${author}/permission"
-	local perm_response
-	perm_response=$(gh api -i "$perm_url" 2>/dev/null | head -1)
-	if [[ "$perm_response" == *"200"* ]]; then
-		local perm
-		perm=$(gh api "$perm_url" --jq '.permission' 2>/dev/null)
-		case "$perm" in
-		admin | maintain | write) return 0 ;;
-		esac
-	fi
+	local perm=""
+	_pulse_author_permission_lookup "$author" "$repo_slug" perm || return 2
+	case "$perm" in
+	admin | maintain | write) return 0 ;;
+	esac
 	return 1
 }
 
@@ -63,21 +136,16 @@ _is_collaborator_author() {
 # collaborators (outside contributors). Used by the origin:interactive
 # auto-merge gate (t2411).
 # Args: $1=author login, $2=repo slug
-# Returns: 0=owner or member, 1=collaborator/not collaborator or error
+# Returns: 0=owner or member, 1=collaborator/not collaborator, 2=lookup failure
 #######################################
 _is_owner_or_member_author() {
 	local author="$1"
 	local repo_slug="$2"
-	local perm_url="repos/${repo_slug}/collaborators/${author}/permission"
-	local perm_response
-	perm_response=$(gh api -i "$perm_url" 2>/dev/null | head -1)
-	if [[ "$perm_response" == *"200"* ]]; then
-		local perm
-		perm=$(gh api "$perm_url" --jq '.permission' 2>/dev/null)
-		case "$perm" in
-		admin | maintain) return 0 ;;
-		esac
-	fi
+	local perm=""
+	_pulse_author_permission_lookup "$author" "$repo_slug" perm || return 2
+	case "$perm" in
+	admin | maintain) return 0 ;;
+	esac
 	return 1
 }
 

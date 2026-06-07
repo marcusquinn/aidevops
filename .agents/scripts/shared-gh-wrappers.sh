@@ -90,6 +90,10 @@ if [[ -n "$_SHARED_GH_WRAPPERS_DIR" && -f "$_SHARED_GH_WRAPPERS_DIR/shared-gh-wr
 	# shellcheck source=shared-gh-wrappers-rest-fallback.sh
 	source "$_SHARED_GH_WRAPPERS_DIR/shared-gh-wrappers-rest-fallback.sh"
 fi
+if [[ -n "$_SHARED_GH_WRAPPERS_DIR" && -f "$_SHARED_GH_WRAPPERS_DIR/shared-gh-collaborator-permission.sh" ]]; then
+	# shellcheck source=shared-gh-collaborator-permission.sh
+	source "$_SHARED_GH_WRAPPERS_DIR/shared-gh-collaborator-permission.sh"
+fi
 # gh API instrumentation (t2902): records every routed gh call partitioned
 # by endpoint family (graphql/rest/search-*) so heavy GraphQL consumers can
 # be identified. The recorder is fail-open — if the helper is missing, the

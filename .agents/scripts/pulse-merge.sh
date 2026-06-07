@@ -213,7 +213,15 @@ _check_pr_merge_gates() {
 	# or its linked issue is a stronger trust signal than author-association
 	# (requires root-owned SSH key that workers cannot forge). Symmetric with
 	# t3052 which extended the worker-briefed gate the same way (PR #21767).
-	if ! _is_collaborator_author "$pr_author" "$repo_slug"; then
+	local _author_collab_rc=0
+	_is_collaborator_author "$pr_author" "$repo_slug"
+	_author_collab_rc=$?
+	if [[ "$_author_collab_rc" -eq 2 ]]; then
+		check_permission_failure_pr "$pr_number" "$repo_slug" "$pr_author" "${_PULSE_AUTHOR_PERMISSION_HTTP:-unknown}" || true
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — permission check failed for author ${pr_author} (HTTP ${_PULSE_AUTHOR_PERMISSION_HTTP:-unknown})" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ "$_author_collab_rc" -ne 0 ]]; then
 		if _is_trusted_dependabot_update_pr "$pr_number" "$repo_slug" "$pr_author"; then
 			echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — author ${pr_author} is trusted Dependabot with allowlisted dependency update, proceeding (GH#24473)" >>"$LOGFILE"
 		elif _has_maintainer_crypto_approval "$pr_number" "$repo_slug"; then
