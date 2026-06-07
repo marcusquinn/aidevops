@@ -10,9 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.30] - 2026-06-07
+
 ### Changed
 
-- Improve README positioning, dynamic README count maintenance, and humanise routing for style-sensitive docs updates.
+- Documentation: improve README positioning and humanise routing (#24539)
 
 ## [3.20.29] - 2026-06-07
 
