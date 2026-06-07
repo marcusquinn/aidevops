@@ -19,6 +19,23 @@
 [[ -n "${_QF_ISSUES_LIB_LOADED:-}" ]] && return 0
 readonly _QF_ISSUES_LIB_LOADED=1
 
+if ! declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
+	_QF_ISSUES_LIB_DIR="${BASH_SOURCE[0]%/*}"
+	if [[ -f "${_QF_ISSUES_LIB_DIR}/github-app-auth-helper.sh" ]]; then
+		# shellcheck source=./github-app-auth-helper.sh
+		source "${_QF_ISSUES_LIB_DIR}/github-app-auth-helper.sh"
+	fi
+	if [[ -f "${_QF_ISSUES_LIB_DIR}/shared-gh-wrappers-rest-fallback.sh" ]]; then
+		# shellcheck source=./shared-gh-wrappers-rest-fallback.sh
+		source "${_QF_ISSUES_LIB_DIR}/shared-gh-wrappers-rest-fallback.sh"
+	fi
+	if [[ -f "${_QF_ISSUES_LIB_DIR}/shared-gh-collaborator-permission.sh" ]]; then
+		# shellcheck source=./shared-gh-collaborator-permission.sh
+		source "${_QF_ISSUES_LIB_DIR}/shared-gh-collaborator-permission.sh"
+	fi
+	unset _QF_ISSUES_LIB_DIR
+fi
+
 #######################################
 # Tag scanned PRs where all review feedback has been actioned (t1413)
 #
@@ -631,9 +648,13 @@ _is_maintainer_equivalent_author() {
 	fi
 
 	# Stage 2: collaborator permission probe. Accepts admin or maintain.
+	# #aidevops:trust-boundary — maintainer-equivalent classification requires
+	# confirmed admin/maintain; lookup failures fail closed separately from none.
 	local collab_permission=""
-	collab_permission=$(gh api "repos/${repo_slug}/collaborators/${pr_author}/permission" \
-		--jq '.permission // empty' 2>/dev/null || echo "")
+	_gh_collaborator_permission_lookup "$repo_slug" "$pr_author" collab_permission || {
+		echo "[quality-feedback] permission check failed for author ${pr_author} on ${repo_slug} (HTTP ${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-unknown}) — not treating as maintainer-equivalent" >&2
+		return 1
+	}
 	if [[ "$collab_permission" == "admin" || "$collab_permission" == "maintain" ]]; then
 		echo "[quality-feedback] author ${pr_author} has ${collab_permission} permission on ${repo_slug} — treating as maintainer-equivalent (t2686)" >&2
 		return 0

@@ -37,6 +37,23 @@
 [[ -n "${_PULSE_NMR_APPROVAL_LOADED:-}" ]] && return 0
 _PULSE_NMR_APPROVAL_LOADED=1
 
+if ! declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
+	_PULSE_NMR_APPROVAL_DIR="${BASH_SOURCE[0]%/*}"
+	if [[ -f "${_PULSE_NMR_APPROVAL_DIR}/github-app-auth-helper.sh" ]]; then
+		# shellcheck source=./github-app-auth-helper.sh
+		source "${_PULSE_NMR_APPROVAL_DIR}/github-app-auth-helper.sh"
+	fi
+	if [[ -f "${_PULSE_NMR_APPROVAL_DIR}/shared-gh-wrappers-rest-fallback.sh" ]]; then
+		# shellcheck source=./shared-gh-wrappers-rest-fallback.sh
+		source "${_PULSE_NMR_APPROVAL_DIR}/shared-gh-wrappers-rest-fallback.sh"
+	fi
+	if [[ -f "${_PULSE_NMR_APPROVAL_DIR}/shared-gh-collaborator-permission.sh" ]]; then
+		# shellcheck source=./shared-gh-collaborator-permission.sh
+		source "${_PULSE_NMR_APPROVAL_DIR}/shared-gh-collaborator-permission.sh"
+	fi
+	unset _PULSE_NMR_APPROVAL_DIR
+fi
+
 #######################################
 # Cached ever-NMR provenance helpers (GH#17458)
 #
@@ -808,8 +825,9 @@ _nmr_current_actor_can_post_maintainer_approval() {
 	[[ -n "$actor" ]] || return 1
 
 	local actor_permission
-	actor_permission=$(gh api "repos/${slug}/collaborators/${actor}/permission" \
-		--jq '.permission // "none"' 2>/dev/null) || actor_permission="none"
+	# #aidevops:trust-boundary — maintainer approval posting requires confirmed
+	# write+ access; transient permission lookup failures fail closed.
+	_gh_collaborator_permission_lookup "$slug" "$actor" actor_permission || return 1
 	case "$actor_permission" in
 	admin | maintain | write) return 0 ;;
 	*) return 1 ;;

@@ -98,9 +98,9 @@ if [[ "${1:-}" == "api" && "${2:-}" == "-i" && "$*" == *"/collaborators/"*"/perm
 	_user="${3#*/collaborators/}"
 	_user="${_user%/permission}"
 	if grep -Fxq "$_user" "${TEST_ROOT}/collaborators.txt"; then
-		printf 'HTTP/2.0 200 OK\n'
+		printf 'HTTP/2.0 200 OK\n\n{"permission":"admin"}\n'
 	else
-		printf 'HTTP/2.0 404 Not Found\n'
+		printf 'HTTP/2.0 404 Not Found\n\n{"message":"Not Found"}\n'
 	fi
 	exit 0
 fi
@@ -139,7 +139,7 @@ teardown_test_env() {
 define_helpers_under_test() {
 	local dependabot_src=""
 	local approve_src=""
-	local collab_src=""
+	local runner_src=""
 	dependabot_src=$(awk '
 		/^_trusted_dependabot_updates_conf\(\) \{/,/^}$/ { print }
 		/^_trusted_dependabot_dependency_allowed\(\) \{/,/^}$/ { print }
@@ -147,12 +147,14 @@ define_helpers_under_test() {
 		/^_trusted_dependabot_non_review_checks_green\(\) \{/,/^}$/ { print }
 	' "$GATES_SCRIPT")
 	approve_src=$(awk '/^approve_collaborator_pr\(\) \{/,/^}$/ { print }' "$GATES_SCRIPT")
-	collab_src=$(awk '/^_is_collaborator_author\(\) \{/,/^}$/ { print }' "$AUTHOR_CHECKS_SCRIPT")
-	[[ -n "$dependabot_src" && -n "$approve_src" && -n "$collab_src" ]] || return 1
+	runner_src=$(awk '/^_approve_collaborator_runner_has_write\(\) \{/,/^}$/ { print }' "$GATES_SCRIPT")
+	[[ -n "$dependabot_src" && -n "$approve_src" && -n "$runner_src" ]] || return 1
 
 	_has_maintainer_crypto_approval() { return 1; }
+	# shellcheck source=../pulse-merge-author-checks.sh
+	source "$AUTHOR_CHECKS_SCRIPT"
 	# shellcheck disable=SC1090
-	eval "$collab_src"
+	eval "$runner_src"
 	# shellcheck disable=SC1090
 	eval "$dependabot_src"
 	# shellcheck disable=SC1090

@@ -45,6 +45,13 @@ setup_test_env() {
 set -euo pipefail
 if [[ "${1:-}" == "api" ]]; then
 	path="${2:-}"
+	if [[ "$path" == "-i" ]]; then
+		path="${3:-}"
+		if [[ "$path" == */collaborators/runner/permission ]]; then
+			printf 'HTTP/2.0 200 OK\n\n{"permission":"%s"}\n' "${ACTOR_PERMISSION:-none}"
+			exit 0
+		fi
+	fi
 	jq_filter=""
 	shift 2 2>/dev/null || true
 	while [[ $# -gt 0 ]]; do

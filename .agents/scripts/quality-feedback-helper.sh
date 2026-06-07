@@ -131,8 +131,16 @@ _check_write_permission() {
 		return 0
 	fi
 
-	permission=$(gh api "repos/${repo_slug}/collaborators/${user}/permission" \
-		--jq '.permission' 2>/dev/null || echo "none")
+	# #aidevops:trust-boundary — quality-feedback issue creation requires
+	# confirmed write+ access; transient lookup failures are not cached as a
+	# confirmed non-collaborator result.
+	if ! _gh_collaborator_permission_lookup "$repo_slug" "$user" permission; then
+		_QF_PERMISSION_CHECKED=""
+		_QF_PERMISSION_REPO=""
+		_QF_HAS_WRITE="false"
+		echo "false"
+		return 0
+	fi
 
 	_QF_PERMISSION_CHECKED="true"
 	_QF_PERMISSION_REPO="$repo_slug"

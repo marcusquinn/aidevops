@@ -483,8 +483,12 @@ _complexity_scan_permission_gate() {
 	current_user=$(gh api user --jq '.login' 2>/dev/null) || current_user=""
 	if [[ -n "$current_user" ]]; then
 		local perm_level
-		perm_level=$(gh api "repos/${aidevops_slug}/collaborators/${current_user}/permission" \
-			--jq '.permission' 2>/dev/null) || perm_level=""
+		# #aidevops:trust-boundary — simplification issue creation requires
+		# confirmed admin access; permission lookup failures skip explicitly.
+		if ! _gh_collaborator_permission_lookup "$aidevops_slug" "$current_user" perm_level; then
+			echo "[pulse-wrapper] Complexity scan: skipped — permission check failed for user '$current_user' on $aidevops_slug (HTTP ${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-unknown})" >>"$LOGFILE"
+			return 1
+		fi
 		case "$perm_level" in
 		admin) ;; # allowed — repo owner/admin only
 		*)

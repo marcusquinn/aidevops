@@ -31,6 +31,21 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+if ! declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
+	if [[ -f "${SCRIPT_DIR}/github-app-auth-helper.sh" ]]; then
+		# shellcheck source=./github-app-auth-helper.sh
+		source "${SCRIPT_DIR}/github-app-auth-helper.sh"
+	fi
+	if [[ -f "${SCRIPT_DIR}/shared-gh-wrappers-rest-fallback.sh" ]]; then
+		# shellcheck source=./shared-gh-wrappers-rest-fallback.sh
+		source "${SCRIPT_DIR}/shared-gh-wrappers-rest-fallback.sh"
+	fi
+	if [[ -f "${SCRIPT_DIR}/shared-gh-collaborator-permission.sh" ]]; then
+		# shellcheck source=./shared-gh-collaborator-permission.sh
+		source "${SCRIPT_DIR}/shared-gh-collaborator-permission.sh"
+	fi
+fi
+
 # =============================================================================
 # GitHub issue filing (t2810)
 # =============================================================================
@@ -72,8 +87,12 @@ _upstream_watch_issue_creation_authorized() {
 	fi
 
 	local permission=""
-	permission=$(gh api "repos/${aidevops_slug}/collaborators/${login}/permission" \
-		--jq '.permission // ""' 2>/dev/null) || permission=""
+	# #aidevops:trust-boundary — public upstream-watch issue creation requires
+	# confirmed write+ access; API lookup failures skip without claiming none.
+	if ! _gh_collaborator_permission_lookup "$aidevops_slug" "$login" permission; then
+		_log_warn "Skipping public upstream-watch issue creation in ${aidevops_slug}: permission check failed for gh user ${login} (HTTP ${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-unknown})"
+		return 1
+	fi
 
 	case "$permission" in
 		admin | maintain | write)
@@ -103,7 +122,7 @@ _write_upstream_watch_local_report() {
 
 	mkdir -p "$report_dir"
 	local report_file
-	report_file=$(mktemp "${report_dir}/${stamp}.XXXXXX.md")
+	report_file=$(mktemp "${report_dir}/${stamp}.md.XXXXXX")
 	{
 		printf '# %s\n\n' "$title"
 		printf '%s\n' "$body"

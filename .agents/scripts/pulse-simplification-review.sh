@@ -91,8 +91,12 @@ run_daily_codebase_review() {
 		return 0
 	fi
 	local perm_level
-	perm_level=$(gh api "repos/${aidevops_slug}/collaborators/${current_user}/permission" \
-		--jq '.permission' 2>/dev/null) || perm_level=""
+	# #aidevops:trust-boundary — review-trigger comments require confirmed
+	# collaborator write access; API lookup failures skip with explicit wording.
+	if ! _gh_collaborator_permission_lookup "$aidevops_slug" "$current_user" perm_level; then
+		echo "[pulse-wrapper] CodeRabbit review: skipped — permission check failed for user '$current_user' on $aidevops_slug (HTTP ${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-unknown})" >>"$LOGFILE"
+		return 0
+	fi
 	case "$perm_level" in
 	admin | maintain | write) ;; # allowed
 	*)

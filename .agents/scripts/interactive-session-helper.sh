@@ -146,8 +146,10 @@ _isc_can_manage_issue_state() {
 	fi
 
 	local permission=""
-	permission=$(gh api "repos/${slug}/collaborators/${user}/permission" \
-		--jq '.permission // ""' 2>/dev/null) || permission=""
+	# #aidevops:trust-boundary — managed-repo claim/state writes require a
+	# confirmed collaborator permission; lookup failures fail closed without
+	# being treated as confirmed non-collaborators.
+	_gh_collaborator_permission_lookup "$slug" "$user" permission || return 1
 	case "$permission" in
 		admin | maintain | write)
 			return 0

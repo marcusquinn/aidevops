@@ -68,7 +68,11 @@ gh() {
 		printf 'test-login\n'
 		return 0
 	fi
-	if [[ "$1" == "api" && "${2:-}" == repos/*/collaborators/*/permission ]]; then
+	if [[ "$1" == "api" && "${2:-}" == "-i" && "${3:-}" == */collaborators/*/permission ]]; then
+		printf 'HTTP/2.0 200 OK\n\n{"permission":"%s"}\n' "${GH_PERMISSION:-read}"
+		return 0
+	fi
+	if [[ "$1" == "api" && ( "${2:-}" == repos/*/collaborators/*/permission || "${2:-}" == /repos/*/collaborators/*/permission ) ]]; then
 		printf '%s\n' "${GH_PERMISSION:-read}"
 		return 0
 	fi

@@ -120,16 +120,16 @@ if [[ "${1:-}" == "api" && "${2:-}" == "user" ]]; then
 	exit 0
 fi
 
-# `gh api -i repos/SLUG/collaborators/USER/permission` — return 200/404 line
-# Used by _is_collaborator_author for the membership probe (head -1).
+	# `gh api -i /repos/SLUG/collaborators/USER/permission` — return status+body.
+	# Used by the App-aware collaborator permission lookup helper.
 if [[ "${1:-}" == "api" && "${2:-}" == "-i" && "$*" == *"/collaborators/"*"/permission" ]]; then
 	# Extract the username segment between /collaborators/ and /permission.
 	_user="${3#*/collaborators/}"
 	_user="${_user%/permission}"
 	if grep -Fxq "$_user" "${TEST_ROOT}/collaborators.txt"; then
-		printf 'HTTP/2.0 200 OK\n'
+		printf 'HTTP/2.0 200 OK\n\n{"permission":"admin"}\n'
 	else
-		printf 'HTTP/2.0 404 Not Found\n'
+		printf 'HTTP/2.0 404 Not Found\n\n{"message":"Not Found"}\n'
 	fi
 	exit 0
 fi
@@ -188,15 +188,14 @@ teardown_test_env() {
 # keeping the unit boundary at approve_collaborator_pr.
 define_helpers_under_test() {
 	local approve_src
-	local collab_src
+	local runner_src
 	local crypto_src
 	approve_src=$(awk '
 		/^approve_collaborator_pr\(\) \{/,/^}$/ { print }
 	' "$MERGE_SCRIPT")
-	# _is_collaborator_author was extracted to pulse-merge-author-checks.sh (GH#21426)
-	collab_src=$(awk '
-		/^_is_collaborator_author\(\) \{/,/^}$/ { print }
-	' "$AUTHOR_CHECKS_SCRIPT")
+	runner_src=$(awk '
+		/^_approve_collaborator_runner_has_write\(\) \{/,/^}$/ { print }
+	' "$MERGE_SCRIPT")
 	# _has_maintainer_crypto_approval was added in t3063
 	crypto_src=$(awk '
 		/^_has_maintainer_crypto_approval\(\) \{/,/^}$/ { print }
@@ -206,8 +205,8 @@ define_helpers_under_test() {
 		printf 'ERROR: could not extract approve_collaborator_pr from %s\n' "$MERGE_SCRIPT" >&2
 		return 1
 	fi
-	if [[ -z "$collab_src" ]]; then
-		printf 'ERROR: could not extract _is_collaborator_author from %s\n' "$AUTHOR_CHECKS_SCRIPT" >&2
+	if [[ -z "$runner_src" ]]; then
+		printf 'ERROR: could not extract _approve_collaborator_runner_has_write from %s\n' "$MERGE_SCRIPT" >&2
 		return 1
 	fi
 	if [[ -z "$crypto_src" ]]; then
@@ -226,8 +225,10 @@ define_helpers_under_test() {
 	# allowances are covered by test-pulse-merge-trusted-dependabot.sh.
 	_is_trusted_dependabot_update_pr() { return 1; }
 
+	# shellcheck source=../pulse-merge-author-checks.sh
+	source "$AUTHOR_CHECKS_SCRIPT"
 	# shellcheck disable=SC1090
-	eval "$collab_src"
+	eval "$runner_src"
 	# shellcheck disable=SC1090
 	eval "$crypto_src"
 	# shellcheck disable=SC1090

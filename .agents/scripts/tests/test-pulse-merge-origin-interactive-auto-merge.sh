@@ -74,7 +74,8 @@ _all_args=("$@")
 
 # HEAD call for permission check (-i flag)
 if [[ "$*" == *"-i"* && "$*" == *"permission"* ]]; then
-	printf 'HTTP/2 200\n'
+	printf 'HTTP/2 200\n\n'
+	cat "${TEST_ROOT}/perm.json"
 	exit 0
 fi
 

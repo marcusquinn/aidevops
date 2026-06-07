@@ -570,6 +570,30 @@ check_permission_failure_pr() {
 }
 
 #######################################
+# Confirm the current runner has approval-counting write access.
+# #aidevops:trust-boundary — approval must never be posted by an unconfirmed
+# collaborator; permission lookup failure is a distinct fail-closed skip.
+# Args: $1=current_user, $2=repo_slug
+# Returns: 0=confirmed write+, 1=skip approval.
+#######################################
+_approve_collaborator_runner_has_write() {
+	local current_user="$1"
+	local repo_slug="$2"
+	local runner_collab_rc=0
+	_is_collaborator_author "$current_user" "$repo_slug"
+	runner_collab_rc=$?
+	if [[ "$runner_collab_rc" -eq 2 ]]; then
+		echo "[pulse-wrapper] approve_collaborator_pr: permission check failed for current user ($current_user) on $repo_slug (HTTP ${_PULSE_AUTHOR_PERMISSION_HTTP:-unknown}) — skipping approval" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ "$runner_collab_rc" -ne 0 ]]; then
+		echo "[pulse-wrapper] approve_collaborator_pr: current user ($current_user) lacks write access to $repo_slug — skipping approval" >>"$LOGFILE"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
 # Auto-approve a collaborator's PR before merging (GH#10522, t1691)
 #
 # Branch protection requires required_approving_review_count=1.
@@ -616,11 +640,7 @@ approve_collaborator_pr() {
 			return 0
 		fi
 
-		# Guard: only collaborators (write/maintain/admin) may approve.
-		# Non-collaborator approvals are accepted by GitHub on public repos
-		# but don't count toward branch protection — they just create noise.
-		if ! _is_collaborator_author "$current_user" "$repo_slug"; then
-			echo "[pulse-wrapper] approve_collaborator_pr: current user ($current_user) lacks write access to $repo_slug — skipping approval" >>"$LOGFILE"
+		if ! _approve_collaborator_runner_has_write "$current_user" "$repo_slug"; then
 			return 0
 		fi
 
@@ -654,7 +674,18 @@ approve_collaborator_pr() {
 	# pinned by test-pulse-merge-approve-collaborator-guard.sh Case P.
 	local approval_body
 	approval_body="Auto-approved by pulse runner @${current_user:-unknown} — author @${pr_author} confirmed collaborator, pre-merge gates passed."
-	if [[ -n "$pr_author" ]] && [[ "$pr_author" != "unknown" ]] && ! _is_collaborator_author "$pr_author" "$repo_slug"; then
+	local _author_collab_rc=0
+	if [[ -n "$pr_author" ]] && [[ "$pr_author" != "unknown" ]]; then
+		_is_collaborator_author "$pr_author" "$repo_slug"
+		_author_collab_rc=$?
+	else
+		_author_collab_rc=0
+	fi
+	if [[ "$_author_collab_rc" -eq 2 ]]; then
+		echo "[pulse-wrapper] approve_collaborator_pr: permission check failed for PR #$pr_number author (@$pr_author) on $repo_slug (HTTP ${_PULSE_AUTHOR_PERMISSION_HTTP:-unknown}) — refusing to auto-approve" >>"$LOGFILE"
+		return 0
+	fi
+	if [[ "$_author_collab_rc" -ne 0 ]]; then
 		if _is_trusted_dependabot_update_pr "$pr_number" "$repo_slug" "$pr_author"; then
 			approval_body="Auto-approved by pulse runner @${current_user:-unknown} — trusted Dependabot dependency update verified: GitHub bot identity, same-repo branch, dependabot-authored commits, dependency-file-only diff, maintainer allowlist, no security-scan failures, and pre-merge gates passed."
 			echo "[pulse-wrapper] approve_collaborator_pr: PR #$pr_number author (@$pr_author) is trusted Dependabot with allowlisted dependency update — proceeding (GH#24473)" >>"$LOGFILE"

@@ -89,7 +89,15 @@ auth)
 			printf 'testuser\n'
 			exit 0
 		fi
-		if [[ "$2" == repos/*/collaborators/*/permission ]]; then
+		if [[ "$2" == "-i" && "${3:-}" == */collaborators/*/permission ]]; then
+			if [[ "${STUB_PERMISSION_FAIL:-0}" == "1" ]]; then
+				printf 'HTTP/2.0 403 Forbidden\n\n{"message":"Forbidden"}\n'
+				exit 1
+			fi
+			printf 'HTTP/2.0 200 OK\n\n{"permission":"%s"}\n' "${STUB_PERMISSION:-admin}"
+			exit 0
+		fi
+		if [[ "$2" == repos/*/collaborators/*/permission || "$2" == /repos/*/collaborators/*/permission ]]; then
 			if [[ "${STUB_PERMISSION_FAIL:-0}" == "1" ]]; then
 				exit 1
 			fi
