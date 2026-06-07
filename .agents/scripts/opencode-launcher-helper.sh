@@ -74,7 +74,7 @@ prewarm_opencode_data_dir() {
     # stderr/stdout detached so the subsequent interactive TUI starts on a clean
     # terminal frame.
     [[ -f "${target_data_dir}/opencode/opencode.db" ]] && return 0
-    XDG_DATA_HOME="${target_data_dir}" opencode --version >/dev/null 2>&1 || true
+    XDG_DATA_HOME="${target_data_dir}" opencode db path >/dev/null 2>&1 || true
     return 0
 }
 
@@ -174,7 +174,7 @@ main() {
     prewarm_opencode_data_dir "${data_dir}"
 
     if ((dry_run == 1)); then
-        printf 'XDG_DATA_HOME=%q AIDEVOPS_OPENCODE_ISOLATED_DB=1 cd %q && opencode' "${data_dir}" "${launch_dir}"
+        printf 'cd %q && XDG_DATA_HOME=%q AIDEVOPS_OPENCODE_ISOLATED_DB=1 opencode' "${launch_dir}" "${data_dir}"
         printf ' %q' "${opencode_args[@]}"
         printf '\n'
         return 0

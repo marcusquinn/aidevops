@@ -78,7 +78,7 @@ if [[ "${output}" == *"AIDEVOPS_OPENCODE_ISOLATED_DB=1"* ]] \
     && [[ "${output}" == *"PWD=${launch_dir}"* ]] \
     && [[ "${project_auth_count}" == "1" ]] \
     && [[ "${line_count}" == "2" ]] \
-    && [[ "${prewarm_line}" == *"|--version" ]] \
+    && [[ "${prewarm_line}" == *"|db path" ]] \
     && [[ "${output}" != *"sqlite-migration"* ]]; then
     _pass "isolated launcher sets per-session data dir and copies auth"
 else
