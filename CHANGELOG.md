@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.25] - 2026-06-07
+
+### Fixed
+
+- reuse project opencode shards
+- reuse project opencode shards
+
 ## [3.20.24] - 2026-06-07
 
 ### Fixed
