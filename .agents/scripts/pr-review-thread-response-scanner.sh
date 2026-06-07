@@ -5,16 +5,19 @@
 #
 # Usage:
 #   pr-review-thread-response-scanner.sh scan <repo_slug> [repo_path]
+#   pr-review-thread-response-scanner.sh scan-pr <repo_slug> <pr_number>
 #   pr-review-thread-response-scanner.sh dispatch <repo_slug> <repo_path>
+#   pr-review-thread-response-scanner.sh dispatch-pr <repo_slug> <repo_path> <pr_number>
 #   pr-review-thread-response-scanner.sh dry-run <repo_slug> [repo_path]
 #   pr-review-thread-response-scanner.sh reply <repo_slug> <thread_id> <body_file> [marker]
 #   pr-review-thread-response-scanner.sh resolve <repo_slug> <thread_id>
 #
 # This helper is intentionally conservative: it never resolves review threads
-# itself. It only detects unresolved bot review threads on open
-# non-draft PRs and dispatches a bounded worker prompt to verify and respond via
-# the existing PR-review loop model. The worker must read/verify the thread
-# before editing code or resolving/commenting.
+# itself. It only detects unresolved bot review threads on open non-draft PRs by
+# default and dispatches a bounded worker prompt to verify and respond via the
+# existing PR-review loop model. The targeted merge-blocker path can opt in to
+# human-authored threads with PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN=true. The
+# worker must read/verify the thread before editing code or resolving/commenting.
 
 set -euo pipefail
 
@@ -31,6 +34,7 @@ PR_REVIEW_THREAD_RESPONSE_MAX_PER_REPO="${PR_REVIEW_THREAD_RESPONSE_MAX_PER_REPO
 PR_REVIEW_THREAD_RESPONSE_COOLDOWN="${PR_REVIEW_THREAD_RESPONSE_COOLDOWN:-3600}"
 PR_REVIEW_THREAD_RESPONSE_MODEL="${PR_REVIEW_THREAD_RESPONSE_MODEL:-}"
 PR_REVIEW_THREAD_RESPONSE_BOT_RE="${PR_REVIEW_THREAD_RESPONSE_BOT_RE:-coderabbitai|gemini-code-assist|claude-review|gpt-review|augment-code|augmentcode|copilot}"
+PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN="${PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN:-false}"
 PRRTS_BOOL_TRUE="true"
 PRRTS_BOOL_FALSE="false"
 
@@ -49,7 +53,7 @@ _prrts_log() {
 }
 
 _prrts_usage() {
-	printf 'Usage: %s {scan|dispatch|dry-run|reply|resolve} <repo_slug> ...\n' "$(basename "$0")"
+	printf 'Usage: %s {scan|scan-pr|dispatch|dispatch-pr|dry-run|reply|resolve} <repo_slug> ...\n' "$(basename "$0")"
 	return 0
 }
 
@@ -320,11 +324,12 @@ _prrts_review_thread_summary() {
 	if [[ "$rc" -ne 0 ]]; then
 		return "$rc"
 	fi
-	summary=$(printf '%s' "$json" | jq -r --arg bots "$PR_REVIEW_THREAD_RESPONSE_BOT_RE" '
+	summary=$(printf '%s' "$json" | jq -r --arg bots "$PR_REVIEW_THREAD_RESPONSE_BOT_RE" \
+		--arg include_human "$PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN" '
 		[.data.repository.pullRequest.reviewThreads.nodes[]?
 			| select((.isResolved // false) == false)
 			| {thread_id: (.id // ""), is_outdated: (.isOutdated // false), comment: (.comments.nodes[0]? // {})}
-			| select((.comment.author.login // "") | test($bots; "i"))
+			| select(($include_human == "true") or ((.comment.author.login // "") | test($bots; "i")))
 		] as $threads
 		| [
 			($threads | length),
@@ -336,6 +341,38 @@ _prrts_review_thread_summary() {
 		return 2
 	}
 	printf '%s\n' "$summary"
+	return 0
+}
+
+cmd_scan_pr() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local title head_ref author summary rc
+	local thread_count fingerprint preview
+	title="PR #${pr_number}"
+	head_ref=""
+	author=""
+	summary=""
+	rc=0
+	thread_count=""
+	fingerprint=""
+	preview=""
+
+	[[ -n "$repo_slug" && "$pr_number" =~ ^[0-9]+$ ]] || {
+		_prrts_usage >&2
+		return 2
+	}
+	summary="$(_prrts_review_thread_summary "$repo_slug" "$pr_number")" || rc=$?
+	if [[ "$rc" -ne 0 ]]; then
+		_prrts_log "scan-pr: ${repo_slug}#${pr_number} skipped — review-thread fetch failed"
+		return 0
+	fi
+	IFS=$'\t' read -r thread_count fingerprint preview <<<"$summary"
+	[[ "$thread_count" =~ ^[0-9]+$ ]] || thread_count=0
+	if [[ "$thread_count" -gt 0 ]]; then
+		printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+			"$pr_number" "$thread_count" "$fingerprint" "$title" "$head_ref" "$author" "$preview"
+	fi
 	return 0
 }
 
@@ -602,6 +639,47 @@ _prrts_dispatch_repo() {
 	return 0
 }
 
+_prrts_dispatch_pr() {
+	local repo_slug="$1"
+	local repo_path="$2"
+	local pr_number="$3"
+	local dry_run="$4"
+	local candidate now_epoch thread_count fingerprint title head_ref author preview
+	candidate=""
+	now_epoch=""
+	thread_count=""
+	fingerprint=""
+	title=""
+	head_ref=""
+	author=""
+	preview=""
+
+	if [[ -z "$repo_path" || ! -d "${repo_path/#\~/$HOME}" || ! "$pr_number" =~ ^[0-9]+$ ]]; then
+		_prrts_log "dispatch-pr: ${repo_slug}#${pr_number} skipped — repo path missing/invalid or PR number invalid (${repo_path})"
+		return 0
+	fi
+	repo_path="${repo_path/#\~/$HOME}"
+	candidate="$(cmd_scan_pr "$repo_slug" "$pr_number")"
+	[[ -n "$candidate" ]] || {
+		_prrts_log "dispatch-pr: ${repo_slug}#${pr_number} has no unresolved review threads matching current filters"
+		return 0
+	}
+	now_epoch="$(date +%s)"
+	IFS=$'\t' read -r pr_number thread_count fingerprint title head_ref author preview <<<"$candidate"
+	if ! _prrts_should_dispatch "$repo_slug" "$pr_number" "$fingerprint" "$now_epoch"; then
+		return 0
+	fi
+	if [[ "$dry_run" == "$PRRTS_BOOL_TRUE" ]]; then
+		printf 'DRY-RUN would dispatch %s#%s (%s unresolved thread(s))\n' "$repo_slug" "$pr_number" "$thread_count"
+		_prrts_log "dry-run: would dispatch targeted ${repo_slug}#${pr_number} (${thread_count} unresolved thread(s), include_human=${PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN})"
+		return 0
+	fi
+	_prrts_dispatch_worker "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$preview" || return 0
+	_prrts_write_state "$repo_slug" "$pr_number" "$fingerprint" "$thread_count" "$now_epoch"
+	_prrts_log "dispatch-pr: ${repo_slug}#${pr_number} completed, dispatched=1, include_human=${PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN}"
+	return 0
+}
+
 main() {
 	local command="${1:-}"
 	local repo_slug="${2:-}"
@@ -614,12 +692,22 @@ main() {
 		fi
 		cmd_scan "$repo_slug" "$repo_path"
 		;;
+	scan-pr)
+		cmd_scan_pr "$repo_slug" "${3:-}"
+		;;
 	dispatch)
 		if [[ -z "$repo_slug" || -z "$repo_path" ]]; then
 			_prrts_usage >&2
 			return 2
 		fi
 		_prrts_dispatch_repo "$repo_slug" "$repo_path" "$PRRTS_BOOL_FALSE"
+		;;
+	dispatch-pr)
+		if [[ -z "$repo_slug" || -z "$repo_path" || -z "${4:-}" ]]; then
+			_prrts_usage >&2
+			return 2
+		fi
+		_prrts_dispatch_pr "$repo_slug" "$repo_path" "${4:-}" "$PRRTS_BOOL_FALSE"
 		;;
 	dry-run)
 		if [[ -z "$repo_slug" ]]; then
