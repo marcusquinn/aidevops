@@ -293,6 +293,171 @@ is_working_tree_clean() {
 }
 
 #######################################
+# Last stderr captured from a git command run by repo-sync.
+#######################################
+_REPO_SYNC_LAST_GIT_STDERR=""
+
+#######################################
+# Sanitize git stderr before writing it to repo-sync logs.
+# Arguments:
+#   $1 - stderr text
+# Outputs: sanitized stderr text
+#######################################
+sanitize_git_stderr() {
+	local stderr_text="$1"
+	printf '%s\n' "$stderr_text" | sed -E \
+		-e 's#https://[^/@[:space:]]+@github\.com#https://[redacted-credential]@github.com#g' \
+		-e 's#([Aa][Uu][Tt][Hh][Oo][Rr][Ii][Zz][Aa][Tt][Ii][Oo][Nn]:[[:space:]]*[Bb][Aa][Ss][Ii][Cc][[:space:]]+)[^[:space:]]+#\1[redacted]#g' \
+		-e 's#(x-access-token:)[^[:space:]@]+#\1[redacted]#g'
+	return 0
+}
+
+#######################################
+# Log captured git stderr after sanitization.
+# Arguments:
+#   $1 - stderr text
+#######################################
+log_git_stderr() {
+	local stderr_text="$1"
+	[[ -z "$stderr_text" ]] && return 0
+	sanitize_git_stderr "$stderr_text" >>"$LOG_FILE"
+	return 0
+}
+
+#######################################
+# Detect GitHub HTTPS remotes eligible for gh credential fallback.
+# Arguments:
+#   $1 - remote URL
+# Returns: 0 when URL is https://github.com/... with optional username
+#######################################
+is_github_https_remote() {
+	local remote_url="$1"
+	case "$remote_url" in
+	https://github.com/* | https://*@github.com/*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+#######################################
+# Detect auth/password-prompt git failures that are safe to retry with gh.
+# Arguments:
+#   $1 - stderr text
+# Returns: 0 when stderr indicates a non-interactive auth failure
+#######################################
+is_git_auth_failure() {
+	local stderr_text="$1"
+	case "$stderr_text" in
+	*"could not read Password"* | *"could not read Username"* | *"Authentication failed"* | *"terminal prompts disabled"*)
+		return 0
+		;;
+	*) return 1 ;;
+	esac
+}
+
+#######################################
+# Check whether gh has GitHub auth available without printing a token.
+# Returns: 0 when gh auth is available for github.com
+#######################################
+gh_auth_available() {
+	command -v gh >/dev/null 2>&1 || return 1
+	gh auth status --hostname github.com >/dev/null 2>&1
+	return $?
+}
+
+#######################################
+# Run git with stderr captured for sanitized logging.
+# Arguments:
+#   $1 - repo path
+#   $@ - git command and arguments after repo path
+# Returns: git exit code
+#######################################
+run_git_capturing_stderr() {
+	local repo_path="$1"
+	shift
+	local stderr_file
+	stderr_file=$(mktemp) || return 1
+	_REPO_SYNC_LAST_GIT_STDERR=""
+
+	if GIT_TERMINAL_PROMPT=0 git -C "$repo_path" "$@" 2>"$stderr_file"; then
+		rm -f "$stderr_file"
+		return 0
+	else
+		local rc=$?
+		_REPO_SYNC_LAST_GIT_STDERR=$(<"$stderr_file")
+		rm -f "$stderr_file"
+		return "$rc"
+	fi
+}
+
+#######################################
+# Run git with transient gh credential helper for GitHub HTTPS retry.
+# Arguments:
+#   $1 - repo path
+#   $@ - git command and arguments after repo path
+# Returns: git exit code
+#######################################
+run_git_with_gh_credential() {
+	local repo_path="$1"
+	shift
+	local stderr_file
+	stderr_file=$(mktemp) || return 1
+	_REPO_SYNC_LAST_GIT_STDERR=""
+
+	if GIT_TERMINAL_PROMPT=0 git -C "$repo_path" \
+		-c credential.helper= \
+		-c "credential.helper=!gh auth git-credential" \
+		"$@" 2>"$stderr_file"; then
+		rm -f "$stderr_file"
+		return 0
+	else
+		local rc=$?
+		_REPO_SYNC_LAST_GIT_STDERR=$(<"$stderr_file")
+		rm -f "$stderr_file"
+		return "$rc"
+	fi
+}
+
+#######################################
+# Run a git command and retry GitHub HTTPS auth failures via gh credentials.
+# Arguments:
+#   $1 - repo path
+#   $2 - repo name
+#   $3 - remote name
+#   $4 - operation name for logs
+#   $@ - git command and arguments after operation
+# Returns: 0 on success, 1 on failure
+#######################################
+run_git_with_auth_fallback() {
+	local repo_path="$1"
+	local repo_name="$2"
+	local remote="$3"
+	local operation="$4"
+	shift 4
+	local remote_url
+	remote_url=$(git -C "$repo_path" remote get-url "$remote" 2>/dev/null || true)
+
+	if run_git_capturing_stderr "$repo_path" "$@"; then
+		return 0
+	fi
+
+	local plain_stderr="$_REPO_SYNC_LAST_GIT_STDERR"
+	if is_github_https_remote "$remote_url" && is_git_auth_failure "$plain_stderr"; then
+		if gh_auth_available; then
+			log_info "AUTH $repo_name: retrying git $operation with gh credential helper"
+			if run_git_with_gh_credential "$repo_path" "$@"; then
+				return 0
+			fi
+			log_git_stderr "$_REPO_SYNC_LAST_GIT_STDERR"
+			return 1
+		fi
+		log_info "AUTH $repo_name: gh auth unavailable for GitHub HTTPS fallback"
+	fi
+
+	log_git_stderr "$plain_stderr"
+	return 1
+}
+
+#######################################
 # Sync a single git repo
 # Arguments:
 #   $1 - repo path
@@ -347,7 +512,8 @@ sync_repo() {
 
 	# Fetch and pull --ff-only
 	log_info "SYNC $repo_name: fetching from $remote..."
-	if ! git -C "$repo_path" fetch "$remote" "$default_branch" --quiet 2>>"$LOG_FILE"; then
+	if ! run_git_with_auth_fallback "$repo_path" "$repo_name" "$remote" "fetch" \
+		fetch "$remote" "$default_branch" --quiet; then
 		log_error "FAIL $repo_name: git fetch failed"
 		return 1
 	fi
@@ -363,7 +529,8 @@ sync_repo() {
 	fi
 
 	# Pull with ff-only (safe: never creates merge commits)
-	if git -C "$repo_path" pull --ff-only "$remote" "$default_branch" --quiet 2>>"$LOG_FILE"; then
+	if run_git_with_auth_fallback "$repo_path" "$repo_name" "$remote" "pull" \
+		pull --ff-only "$remote" "$default_branch" --quiet; then
 		local new_sha
 		new_sha=$(git -C "$repo_path" rev-parse --short HEAD 2>/dev/null || true)
 		log_info "PULLED $repo_name: updated to $new_sha"
