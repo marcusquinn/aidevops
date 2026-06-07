@@ -267,6 +267,29 @@ _update_health_issue_for_repo() {
 }
 
 #######################################
+# Filter repo entries to repos where public routines are authorized.
+# Arguments:
+#   $1 - newline-delimited slug|path entries
+#   $2 - authenticated GitHub user
+# Output: authorized slug|path entries
+#######################################
+_filter_routine_eligible_repo_entries() {
+	local repo_entries="$1"
+	local routine_runner_user="$2"
+	local slug path
+
+	while IFS='|' read -r slug path; do
+		[[ -z "$slug" ]] && continue
+		if ! aidevops_can_run_repo_routines "$slug" "$routine_runner_user"; then
+			echo "[stats] Health dashboard skipped for ${slug}: ${routine_runner_user} is not maintainer-equivalent" >>"$LOGFILE"
+			continue
+		fi
+		printf '%s|%s\n' "$slug" "$path"
+	done <<<"$repo_entries"
+	return 0
+}
+
+#######################################
 # Update health issues for ALL pulse-enabled repos
 #
 # Iterates repos.json and calls _update_health_issue_for_repo for each
@@ -296,6 +319,18 @@ update_health_issues() {
 		return 0
 	fi
 
+	local routine_runner_user
+	routine_runner_user=$(aidevops_repo_state_current_user)
+	if [[ -z "$routine_runner_user" ]]; then
+		echo "[stats] Health dashboard skipped: could not resolve authenticated GitHub user" >>"$LOGFILE"
+		return 0
+	fi
+
+	repo_entries=$(_filter_routine_eligible_repo_entries "$repo_entries" "$routine_runner_user")
+	if [[ -z "$repo_entries" ]]; then
+		return 0
+	fi
+
 	# Refresh person-stats cache if stale (t1426: hourly, not every pulse)
 	_refresh_person_stats_cache || true
 
@@ -312,7 +347,7 @@ update_health_issues() {
 	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh"
 	if [[ -x "$activity_helper" ]]; then
 		local all_repo_paths
-		all_repo_paths=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false) | .path' "$repos_json" || echo "")
+		all_repo_paths=$(printf '%s\n' "$repo_entries" | awk -F'|' 'NF >= 2 && $2 != "" { print $2 }')
 		if [[ -n "$all_repo_paths" ]]; then
 			local -a cross_args=()
 			while IFS= read -r rp; do

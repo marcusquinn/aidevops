@@ -143,12 +143,23 @@ run_daily_quality_sweep() {
 		return 0
 	fi
 
+	local routine_runner_user
+	routine_runner_user=$(aidevops_repo_state_current_user)
+	if [[ -z "$routine_runner_user" ]]; then
+		echo "[stats] Quality sweep skipped: could not resolve authenticated GitHub user" >>"$LOGFILE"
+		return 0
+	fi
+
 	echo "[stats] Starting daily code quality sweep..." >>"$LOGFILE"
 
 	local swept=0
 	while IFS='|' read -r slug path; do
 		[[ -z "$slug" ]] && continue
 		[[ ! -d "$path" ]] && continue
+		if ! aidevops_can_run_repo_routines "$slug" "$routine_runner_user"; then
+			echo "[stats] Quality sweep skipped for ${slug}: ${routine_runner_user} is not maintainer-equivalent" >>"$LOGFILE"
+			continue
+		fi
 		_quality_sweep_for_repo "$slug" "$path" || true
 		swept=$((swept + 1))
 	done <<<"$repo_entries"
