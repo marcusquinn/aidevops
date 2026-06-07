@@ -7480,21 +7480,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-06-07T00:57:37Z",
-      "hash": "0a02a953d28e96b4435c86bff72e63f1e976c58f",
-      "passes": 144,
+      "at": "2026-06-07T22:56:22Z",
+      "hash": "bf34194ca0f9e7c551e50183149313d4075f48a7",
+      "passes": 145,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-06-07T16:30:04Z",
-      "hash": "4df6b1275572c14da381d3df7c4269f0a8091ae1",
-      "passes": 217,
+      "at": "2026-06-07T22:56:23Z",
+      "hash": "c48dd06ecff51029882bdb094a5454a86b862288",
+      "passes": 218,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-06-07T16:30:06Z",
-      "hash": "ddfa059be41912b5da226f67e7ba093cf6bb6427",
-      "passes": 213,
+      "at": "2026-06-07T22:56:26Z",
+      "hash": "282b46bb0f776cb13899bf4c397d4012cdbc7081",
+      "passes": 214,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7786,10 +7786,10 @@
       "passes": 1
     },
     ".agents/reference/reusable-workflows.md": {
-      "hash": "ca258ea5cfb509833b7ef261bec8bee3ab39a64a",
-      "at": "2026-05-10T22:08:22Z",
+      "hash": "285f8c85f4643f5bb96afdd5946e26d8cb082394",
+      "at": "2026-06-07T22:38:37Z",
       "pr": 20698,
-      "passes": 7
+      "passes": 8
     },
     ".agents/reference/pulse-wrapper-churn-investigation.md": {
       "hash": "c483bb156bea80d70625002d02a39166f30baa05",
