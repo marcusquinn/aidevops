@@ -309,6 +309,50 @@ _assert_contains "GH#21897 → already-injected runner is no-op" "$OUT_12" "no a
 _assert_exit "GH#21897 → no-op exits 0" 0 "$EXIT_12"
 rm -rf "$TMPDIR_12"
 
+# ─── Test 13: GH#24520 — apply renders configured reusable repo/ref ─────────
+TMPDIR_13="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_13"
+BARE_13="$TMPDIR_13/bare.git"
+git init --bare -q "$BARE_13" 2>/dev/null
+REPO_13="$TMPDIR_13/repo-org-target"
+mkdir -p "$REPO_13/.github/workflows"
+git -C "$REPO_13" init -q 2>/dev/null
+git -C "$REPO_13" config user.email test@example.com
+git -C "$REPO_13" config user.name Test
+git -C "$REPO_13" config commit.gpgsign false
+git -C "$REPO_13" symbolic-ref HEAD refs/heads/main 2>/dev/null
+printf '%s\n' "$LEGACY_CONTENT" >"$REPO_13/.github/workflows/issue-sync.yml"
+git -C "$REPO_13" add -A >/dev/null
+git -C "$REPO_13" commit -q -m "initial"
+git -C "$REPO_13" remote add origin "$BARE_13" 2>/dev/null
+git -C "$REPO_13" push -q origin main 2>/dev/null
+git -C "$REPO_13" fetch -q origin 2>/dev/null
+git -C "$REPO_13" remote set-head origin main 2>/dev/null
+_write_repos_json "$TMPDIR_13" "{\"workflow_reusable_repo\":\"ORG/.github\",\"workflow_reusable_ref\":\"1234567890abcdef1234567890abcdef12345678\",\"initialized_repos\":[{\"path\":\"$REPO_13\",\"slug\":\"owner/repo-org-target\",\"runner\":\"ubuntu-latest-arm64\"}]}"
+SYNC_BRANCH_13="chore/workflow-sync-$(date +%Y%m%d)"
+HOME="$TMPDIR_13" bash "$HELPER" --apply 2>/dev/null || true
+WF_USES_13=$(git -C "$REPO_13" show "${SYNC_BRANCH_13}:.github/workflows/issue-sync.yml" 2>/dev/null \
+	| grep -E "^[[:space:]]+uses:" | head -n 1 || true)
+WF_RUNNER_13=$(git -C "$REPO_13" show "${SYNC_BRANCH_13}:.github/workflows/issue-sync.yml" 2>/dev/null \
+	| grep -E "^[[:space:]]+runner:" | head -n 1 || true)
+if [[ "$WF_USES_13" == *"ORG/.github/.github/workflows/issue-sync-reusable.yml@1234567890abcdef1234567890abcdef12345678"* ]]; then
+	printf '%sPASS%s GH#24520 apply writes configured org reusable target\n' "$GREEN" "$NC"
+	((_PASS++))
+else
+	printf '%sFAIL%s GH#24520 apply writes configured org reusable target\n' "$RED" "$NC"
+	printf '       got: %s\n' "$WF_USES_13"
+	((_FAIL++))
+fi
+if [[ "$WF_RUNNER_13" == *"ubuntu-latest-arm64"* ]]; then
+	printf '%sPASS%s GH#24520 runner injection survives configured org target\n' "$GREEN" "$NC"
+	((_PASS++))
+else
+	printf '%sFAIL%s GH#24520 runner injection survives configured org target\n' "$RED" "$NC"
+	printf '       got: %s\n' "$WF_RUNNER_13"
+	((_FAIL++))
+fi
+rm -rf "$TMPDIR_13"
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 printf '\n'
 if [[ "$_FAIL" -eq 0 ]]; then

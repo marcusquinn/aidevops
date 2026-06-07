@@ -89,6 +89,10 @@ readonly _STATUS_FAILED="FAILED"
 readonly _CLASS_DRIFTED='DRIFTED/CALLER'
 readonly _CLASS_NEEDS_MIGRATION='NEEDS-MIGRATION'
 readonly _CLASS_CURRENT_CALLER='CURRENT/CALLER'
+readonly _CLASS_DRIFTED_REUSABLE='DRIFTED/REUSABLE'
+
+readonly _DEFAULT_WORKFLOW_REUSABLE_REPO="marcusquinn/aidevops"
+readonly _DEFAULT_WORKFLOW_REUSABLE_REF="main"
 
 # Canonical default branch name used in the template and as preflight fallback.
 readonly _BRANCH_DEFAULT_NAME="main"
@@ -100,6 +104,35 @@ _die() {
 	local _code="${2:-2}"
 	printf '[%s] %sERROR%s: %s\n' "$SCRIPT_NAME" "$_C_RED" "$_C_NC" "$_msg" >&2
 	exit "$_code"
+}
+
+_escape_sed_replacement() {
+	local _text="$1"
+	printf '%s' "$_text" | sed 's/[&|]/\\&/g'
+	return 0
+}
+
+_normalise_reusable_ref() {
+	local _ref="$1"
+	_ref="${_ref#@}"
+	printf '%s\n' "$_ref"
+	return 0
+}
+
+_validate_reusable_repo() {
+	local _repo="$1"
+	if [[ ! "$_repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+		_die "invalid workflow_reusable_repo: $_repo"
+	fi
+	return 0
+}
+
+_validate_reusable_ref() {
+	local _ref="$1"
+	if [[ -z "$_ref" || "$_ref" =~ [[:space:][:cntrl:]] ]]; then
+		_die "invalid workflow_reusable_ref: $_ref"
+	fi
+	return 0
 }
 
 _warn() {
@@ -192,15 +225,17 @@ _extract_ref_pin() {
 	return 0
 }
 
-# Render the caller template with a target @ref, writing to stdout.
-_render_template_with_ref() {
+# Render the caller template with a target reusable repo/ref, writing to stdout.
+_render_template_with_target() {
 	local _template="$1"
-	local _ref="$2"
+	local _repo="$2"
+	local _ref="$3"
 	# Escape sed replacement special chars (&, |) before interpolation.
-	local _ref_escaped
-	_ref_escaped=$(printf '%s' "$_ref" | sed 's/[&|]/\\&/g')
-	# Template ships with `@main` by default; rewrite to target ref.
-	sed -E 's|(uses:[[:space:]]*marcusquinn/aidevops/.github/workflows/[^@]+)@[^[:space:]]+|\1'"$_ref_escaped"'|' "$_template"
+	local _repo_escaped _ref_escaped
+	_repo_escaped=$(_escape_sed_replacement "$_repo")
+	_ref_escaped=$(_escape_sed_replacement "${_ref#@}")
+	# Template ships with `marcusquinn/aidevops@main` by default; rewrite both.
+	sed -E 's|(uses:[[:space:]]*)marcusquinn/aidevops(/.github/workflows/[^@]+)@[^[:space:]]+|\1'"$_repo_escaped"'\2@'"$_ref_escaped"'|' "$_template"
 	return 0
 }
 
@@ -222,6 +257,37 @@ _rewrite_content_branch_filter() {
 }
 
 # ─── Runner Override Injection ──────────────────────────────────────────────
+
+_read_workflow_reusable_field() {
+	local _slug="$1"
+	local _field="$2"
+	jq -r --arg s "$_slug" --arg f "$_field" '
+		([.initialized_repos[]? | select(.slug == $s) | .[$f] // empty] | first // "") as $repo_value
+		| if $repo_value != "" then $repo_value else (.[$f] // empty) end
+	' "$REPOS_JSON" 2>/dev/null
+	return 0
+}
+
+_workflow_reusable_repo_for_slug() {
+	local _slug="$1"
+	local _repo
+	_repo=$(_read_workflow_reusable_field "$_slug" "workflow_reusable_repo")
+	[[ -z "$_repo" ]] && _repo="$_DEFAULT_WORKFLOW_REUSABLE_REPO"
+	_validate_reusable_repo "$_repo"
+	printf '%s\n' "$_repo"
+	return 0
+}
+
+_workflow_reusable_ref_for_slug() {
+	local _slug="$1"
+	local _ref
+	_ref=$(_read_workflow_reusable_field "$_slug" "workflow_reusable_ref")
+	[[ -z "$_ref" ]] && _ref="$_DEFAULT_WORKFLOW_REUSABLE_REF"
+	_ref=$(_normalise_reusable_ref "$_ref")
+	_validate_reusable_ref "$_ref"
+	printf '%s\n' "$_ref"
+	return 0
+}
 
 # _read_runner_field <slug>
 # Reads the optional "runner" field for a slug from repos.json.
@@ -254,7 +320,7 @@ _inject_runner_in_content() {
 	else
 		# No with: block — inject one after the uses: line.
 		printf '%s\n' "$_content" | \
-			sed -E "s|^(    uses:[[:space:]]*marcusquinn/aidevops/.+)$|\\1\n    with:\n      runner: ${_runner_escaped}|"
+			sed -E "s|^(    uses:[[:space:]]*[^[:space:]]+/.github/workflows/.+)$|\\1\n    with:\n      runner: ${_runner_escaped}|"
 	fi
 	return 0
 }
@@ -375,7 +441,7 @@ _format_pr_body() {
 	printf '## Why\n\n'
 	printf 'The aidevops framework ships managed GitHub Actions workflows as reusable\n'
 	printf 'workflows. Downstream repos carry ~45-line callers that delegate all logic\n'
-	printf 'to `marcusquinn/aidevops/.github/workflows/*-reusable.yml`.\n\n'
+	printf 'to the configured aidevops reusable workflow repository/ref.\n\n'
 	printf 'This PR brings this repo in line with the canonical template, eliminating\n'
 	printf 'drift and unblocking automatic updates when the framework evolves.\n\n'
 	printf '## How to verify\n\n'
@@ -530,7 +596,7 @@ _sync_open_pr() {
 	return 0
 }
 
-# _sync_one_repo <slug> <path> <status> <template_path> <target_ref> <force_ref> <branch_name> <apply> <workflow_relpath>
+# _sync_one_repo <slug> <path> <status> <template_path> <target_repo> <target_ref> <force_ref> <branch_name> <apply> <workflow_relpath>
 # Emits a single-line summary; returns 0 on success, 1 on failure.
 # workflow_relpath — path relative to repo root e.g. .github/workflows/review-bot-gate.yml
 _sync_one_repo() {
@@ -538,18 +604,19 @@ _sync_one_repo() {
 	local _path="$2"
 	local _status="$3"
 	local _template="$4"
-	local _target_ref="$5"
-	local _force_ref="$6"
-	local _branch_name="$7"
-	local _apply="$8"
-	local _workflow_relpath="${9:-.github/workflows/issue-sync.yml}"
+	local _target_repo="$5"
+	local _target_ref="$6"
+	local _force_ref="$7"
+	local _branch_name="$8"
+	local _apply="$9"
+	local _workflow_relpath="${10:-.github/workflows/issue-sync.yml}"
 
 	local _workflow="$_path/$_workflow_relpath"
 	local _effective_ref
 	_effective_ref=$(_resolve_effective_ref "$_status" "$_workflow" "$_target_ref" "$_force_ref")
 
 	local _target_content
-	if ! _target_content=$(_render_template_with_ref "$_template" "$_effective_ref"); then
+	if ! _target_content=$(_render_template_with_target "$_template" "$_target_repo" "$_effective_ref"); then
 		printf '%s\t%s\t%s\ttemplate render failed\n' "$_slug" "$_status" "$_STATUS_FAILED"
 		return 1
 	fi
@@ -604,7 +671,7 @@ _parse_args() {
 	_OPT_FILTER_SLUG=""
 	_OPT_FILTER_WORKFLOW=""
 	_OPT_FORCE_REF=0
-	_OPT_TARGET_REF="@main"
+	_OPT_TARGET_REF=""
 	_OPT_BRANCH_NAME=""
 	_OPT_JSON=0
 	while (($# > 0)); do
@@ -678,11 +745,18 @@ _process_rows() {
 			_warn "$_slug: cannot resolve template for workflow '${_workflow_name}' — skipping"
 			continue
 		fi
+		local _target_repo _target_ref
+		_target_repo=$(_workflow_reusable_repo_for_slug "$_slug")
+		if [[ -n "$_OPT_TARGET_REF" ]]; then
+			_target_ref="${_OPT_TARGET_REF#@}"
+		else
+			_target_ref=$(_workflow_reusable_ref_for_slug "$_slug")
+		fi
 
 		local _result
 		if _result=$(_sync_one_repo \
 			"$_slug" "$_path" "$_status" "$_template" \
-			"$_OPT_TARGET_REF" "$_OPT_FORCE_REF" "$_OPT_BRANCH_NAME" "$_OPT_APPLY" \
+			"$_target_repo" "@${_target_ref}" "$_OPT_FORCE_REF" "$_OPT_BRANCH_NAME" "$_OPT_APPLY" \
 			"$_workflow_relpath"); then
 			:
 		else
@@ -694,7 +768,7 @@ _process_rows() {
 		"$_STATUS_PLANNED") ((_COUNT_PLANNED++)) ;;
 		"$_STATUS_SKIPPED") ((_COUNT_SKIPPED++)) ;;
 		esac
-		_print_result_row "$_OPT_JSON" "$_OPT_TARGET_REF" "$_OPT_BRANCH_NAME" "$_result"
+		_print_result_row "$_OPT_JSON" "@${_target_ref}" "$_OPT_BRANCH_NAME" "$_result"
 	done <<<"$_tsv"
 	return "$_any_failed"
 }

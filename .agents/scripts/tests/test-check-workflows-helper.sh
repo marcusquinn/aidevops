@@ -336,6 +336,53 @@ else
 fi
 rm -rf "$TMPDIR_12"
 
+# Test 13: Configured org-owned reusable repo + pinned SHA → CURRENT/CALLER.
+TMPDIR_13="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_13"
+_make_repo_with_workflow "$TMPDIR_13/repos/org-current"
+sed 's|marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml@main|ORG/.github/.github/workflows/issue-sync-reusable.yml@1234567890abcdef1234567890abcdef12345678|g' \
+	"$CANONICAL_TEMPLATE" > "$TMPDIR_13/repos/org-current/.github/workflows/issue-sync.yml"
+_write_repos_json "$TMPDIR_13" \
+	"$(jq -n --arg path "$TMPDIR_13/repos/org-current" '{workflow_reusable_repo: "ORG/.github", workflow_reusable_ref: "1234567890abcdef1234567890abcdef12345678", initialized_repos: [{slug: "x/org-current", path: $path, local_only: false}]}')"
+result=$(_run_and_classify "$TMPDIR_13")
+if [[ "$result" == "CURRENT/CALLER" ]]; then
+	_pass "configured org-owned pinned caller → CURRENT/CALLER"
+else
+	_fail "configured org-owned pinned caller → CURRENT/CALLER" "got: $result"
+fi
+rm -rf "$TMPDIR_13"
+
+# Test 14: Unconfigured third-party reusable repo is not silently trusted.
+TMPDIR_14="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_14"
+_make_repo_with_workflow "$TMPDIR_14/repos/untrusted"
+sed 's|marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml@main|OTHER/.github/.github/workflows/issue-sync-reusable.yml@main|g' \
+	"$CANONICAL_TEMPLATE" > "$TMPDIR_14/repos/untrusted/.github/workflows/issue-sync.yml"
+_write_repos_json "$TMPDIR_14" \
+	"$(jq -n --arg path "$TMPDIR_14/repos/untrusted" '{workflow_reusable_repo: "ORG/.github", initialized_repos: [{slug: "x/untrusted", path: $path, local_only: false}]}')"
+result=$(_run_and_classify "$TMPDIR_14")
+if [[ "$result" == "NEEDS-MIGRATION" ]]; then
+	_pass "unconfigured third-party caller → NEEDS-MIGRATION"
+else
+	_fail "unconfigured third-party caller → NEEDS-MIGRATION" "got: $result"
+fi
+rm -rf "$TMPDIR_14"
+
+# Test 15: Registered org-owned reusable repo still surfaces reusable content drift.
+TMPDIR_15="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_15"
+mkdir -p "$TMPDIR_15/repos/org-dotgithub/.github/workflows"
+printf '%s\n' 'name: stale org-owned reusable copy' > "$TMPDIR_15/repos/org-dotgithub/.github/workflows/issue-sync-reusable.yml"
+_write_repos_json "$TMPDIR_15" \
+	"$(jq -n --arg path "$TMPDIR_15/repos/org-dotgithub" '{workflow_reusable_repo: "ORG/.github", initialized_repos: [{slug: "ORG/.github", path: $path, local_only: false}]}')"
+result=$(_run_and_classify "$TMPDIR_15" --repo "ORG/.github")
+if [[ "$result" == "DRIFTED/REUSABLE" ]]; then
+	_pass "org-owned reusable content drift → DRIFTED/REUSABLE"
+else
+	_fail "org-owned reusable content drift → DRIFTED/REUSABLE" "got: $result"
+fi
+rm -rf "$TMPDIR_15"
+
 # ─── Summary ────────────────────────────────────────────────────────────────
 
 echo

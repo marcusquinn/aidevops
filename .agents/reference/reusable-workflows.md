@@ -65,6 +65,28 @@ downstream repo (thin callers):
   (no .agents/scripts/ needed — maintainer-gate is self-contained; issue-sync/review-bot-gate fetched via __aidevops/)
 ```
 
+### Organization-owned reusable workflow targets
+
+By default, downstream callers delegate to `marcusquinn/aidevops`. Organizations that mirror or review reusable workflows in an organization-owned repository can configure the expected target in `~/.config/aidevops/repos.json`:
+
+```json
+{
+  "workflow_reusable_repo": "ORG/.github",
+  "workflow_reusable_ref": "<reviewed-sha-or-branch>",
+  "initialized_repos": [
+    {
+      "slug": "ORG/example",
+      "workflow_reusable_repo": "ORG/.github",
+      "workflow_reusable_ref": "<repo-specific-reviewed-sha>"
+    }
+  ]
+}
+```
+
+Per-repo values override the global default. The default remains `marcusquinn/aidevops@main`. `check-workflows` treats only the explicitly configured repo/ref as trusted; it does not accept arbitrary repositories that happen to use the same reusable workflow filename.
+
+Pinned refs are allowed for caller classification, but they do not suppress reusable-content update visibility. If the configured reusable repo is also registered in `repos.json` and has local `*-reusable.yml` copies, `check-workflows` compares those files against the aidevops baseline and reports `DRIFTED/REUSABLE` when an update should be reviewed.
+
 ### How a run flows
 
 1. Event fires in downstream repo (e.g. a PR is merged).
