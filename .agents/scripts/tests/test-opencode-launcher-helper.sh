@@ -59,25 +59,39 @@ make_fake_opencode "${fake_bin}"
 printf '{"anthropic":{}}\n' >"${home_dir}/.local/share/opencode/auth.json"
 
 output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" FAKE_OPENCODE_LOG="${fake_log}" \
-    "${HELPER}" --dir "${launch_dir}" --session-id test-session -- --version 2>&1)
+    "${HELPER}" --dir "${launch_dir}" -- --version 2>&1)
 line_count=0
 prewarm_line=""
+project_auth_count=0
 while IFS= read -r line; do
     line_count=$((line_count + 1))
     if [[ ${line_count} -eq 1 ]]; then
         prewarm_line="${line}"
     fi
 done <"${fake_log}"
+for auth_file in "${work_dir}"/opencode-interactive/project-repo-*/opencode/auth.json; do
+    [[ -f "${auth_file}" ]] || continue
+    project_auth_count=$((project_auth_count + 1))
+done
 if [[ "${output}" == *"AIDEVOPS_OPENCODE_ISOLATED_DB=1"* ]] \
-    && [[ "${output}" == *"XDG_DATA_HOME=${work_dir}/opencode-interactive/test-session"* ]] \
+    && [[ "${output}" == *"XDG_DATA_HOME=${work_dir}/opencode-interactive/project-repo-"* ]] \
     && [[ "${output}" == *"PWD=${launch_dir}"* ]] \
-    && [[ -f "${work_dir}/opencode-interactive/test-session/opencode/auth.json" ]] \
+    && [[ "${project_auth_count}" == "1" ]] \
     && [[ "${line_count}" == "2" ]] \
     && [[ "${prewarm_line}" == *"|--version" ]] \
     && [[ "${output}" != *"sqlite-migration"* ]]; then
     _pass "isolated launcher sets per-session data dir and copies auth"
 else
     _fail "isolated launcher output unexpected: ${output}"
+fi
+
+rm -f "${fake_log}"
+output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" FAKE_OPENCODE_LOG="${fake_log}" \
+    "${HELPER}" --dir "${launch_dir}" --session-id test-session -- --version 2>&1)
+if [[ "${output}" == *"XDG_DATA_HOME=${work_dir}/opencode-interactive/test-session"* ]]; then
+    _pass "explicit session-id still controls isolated data dir"
+else
+    _fail "explicit session-id output unexpected: ${output}"
 fi
 
 output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" \

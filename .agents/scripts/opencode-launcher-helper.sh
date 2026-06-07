@@ -28,12 +28,12 @@ usage() {
     cat <<'EOF'
 Usage: aidevops opencode [options] [--] [opencode args...]
 
-Launch OpenCode with an isolated per-session SQLite DB by default.
+Launch OpenCode with an isolated per-project SQLite DB by default.
 
 Options:
   --shared-db          Use OpenCode's normal shared data directory
   --dir PATH           Working directory for OpenCode (default: current dir)
-  --session-id ID      Stable session directory name (default: timestamp-pid)
+  --session-id ID      Explicit isolated DB name (default: stable per-project shard)
   --dry-run            Print the environment/command without executing
   -h, --help           Show this help
 
@@ -86,12 +86,25 @@ build_session_data_dir() {
     return 0
 }
 
+build_project_session_id() {
+    local launch_dir="$1"
+    local resolved_dir=""
+    local base_name=""
+    local checksum=""
+
+    resolved_dir=$(cd "${launch_dir}" && pwd -P) || resolved_dir="${launch_dir}"
+    base_name=$(basename "${resolved_dir}")
+    checksum=$(printf '%s' "${resolved_dir}" | cksum)
+    checksum=${checksum%% *}
+    printf 'project-%s-%s' "$(sql_escape_label "${base_name}")" "${checksum}"
+    return 0
+}
+
 main() {
     local use_shared_db=0
     local dry_run=0
     local launch_dir="$PWD"
-    local session_id
-    session_id="$(date -u +%Y%m%dT%H%M%SZ)-$$"
+    local session_id=""
     local -a opencode_args=()
 
     while (($# > 0)); do
@@ -132,6 +145,9 @@ main() {
 
     [[ -d "${launch_dir}" ]] || { print_error "Directory not found: ${launch_dir}"; return 1; }
     command -v opencode >/dev/null 2>&1 || { print_error "opencode not found in PATH"; return 1; }
+    if [[ -z "${session_id}" ]]; then
+        session_id=$(build_project_session_id "${launch_dir}")
+    fi
 
     if ((${#opencode_args[@]} == 0)); then
         opencode_args=()
