@@ -372,19 +372,19 @@ gh_auth_available() {
 # Returns: git exit code
 #######################################
 run_git_capturing_stderr() {
-	local repo_path="$1"
-	shift
-	local stderr_file
-	stderr_file=$(mktemp) || return 1
 	_REPO_SYNC_LAST_GIT_STDERR=""
+	local -a git_args=("$@")
+	local repo_path
+	repo_path="${git_args[0]}"
+	shift
+	local rc
+	local stderr_output
 
-	if GIT_TERMINAL_PROMPT=0 git -C "$repo_path" "$@" 2>"$stderr_file"; then
-		rm -f "$stderr_file"
+	if { stderr_output=$(GIT_TERMINAL_PROMPT=0 git -C "$repo_path" "$@" 2>&1 >&3); } 3>&1; then
 		return 0
 	else
-		local rc=$?
-		_REPO_SYNC_LAST_GIT_STDERR=$(<"$stderr_file")
-		rm -f "$stderr_file"
+		rc=$?
+		_REPO_SYNC_LAST_GIT_STDERR="$stderr_output"
 		return "$rc"
 	fi
 }
@@ -397,22 +397,22 @@ run_git_capturing_stderr() {
 # Returns: git exit code
 #######################################
 run_git_with_gh_credential() {
-	local repo_path="$1"
-	shift
-	local stderr_file
-	stderr_file=$(mktemp) || return 1
 	_REPO_SYNC_LAST_GIT_STDERR=""
+	local -a git_args=("$@")
+	local repo_path
+	repo_path="${git_args[0]}"
+	shift
+	local rc
+	local stderr_output
 
-	if GIT_TERMINAL_PROMPT=0 git -C "$repo_path" \
+	if { stderr_output=$(GIT_TERMINAL_PROMPT=0 git -C "$repo_path" \
 		-c credential.helper= \
 		-c "credential.helper=!gh auth git-credential" \
-		"$@" 2>"$stderr_file"; then
-		rm -f "$stderr_file"
+		"$@" 2>&1 >&3); } 3>&1; then
 		return 0
 	else
-		local rc=$?
-		_REPO_SYNC_LAST_GIT_STDERR=$(<"$stderr_file")
-		rm -f "$stderr_file"
+		rc=$?
+		_REPO_SYNC_LAST_GIT_STDERR="$stderr_output"
 		return "$rc"
 	fi
 }
