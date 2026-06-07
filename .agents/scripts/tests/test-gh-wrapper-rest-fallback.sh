@@ -1233,6 +1233,17 @@ else
 		"perm=${collab_perm} GH_CALLS=$(cat "$GH_CALLS") | TOKENS=$(cat "$GH_APP_TOKEN_CALLS")"
 fi
 
+export STUB_COLLAB_PERMISSION=triage
+collab_perm=""
+_gh_collaborator_permission_lookup "owner/repo" "testuser" collab_perm 2>/dev/null || true
+if [[ "$collab_perm" == "triage" && "${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-}" == "ok" ]]; then
+	pass "collaborator permission lookup accepts triage role"
+else
+	fail "collaborator permission lookup accepts triage role" \
+		"perm=${collab_perm} reason=${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-unset}"
+fi
+export STUB_COLLAB_PERMISSION=write
+
 export STUB_COLLAB_STATUS=404
 collab_perm=""
 _gh_collaborator_permission_lookup "owner/repo" "outsider" collab_perm 2>/dev/null || true
