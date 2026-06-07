@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.26] - 2026-06-07
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- prewarm isolated opencode databases
+
 ## [3.20.25] - 2026-06-07
 
 ### Fixed
