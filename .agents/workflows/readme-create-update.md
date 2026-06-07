@@ -55,6 +55,10 @@ Use `--sections` after adding a feature, changing install steps, or when full re
 
 ## Before Writing
 
+### Step 0: Load voice and style guidance when requested
+
+If the user asks to humanise copy, match their writing style, improve tone, reduce AI writing patterns, make prose sound more natural, or rewrite marketing/introductory copy, read `content/humanise.md` before drafting. Use it alongside this README workflow so wording changes keep project facts accurate while avoiding generic AI phrasing.
+
 ### Step 1: Detect Project Type and Deployment
 
 **CRITICAL**: Explore before writing. Never assume — verify.

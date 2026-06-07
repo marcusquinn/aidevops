@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Improve README positioning, dynamic README count maintenance, and humanise routing for style-sensitive docs updates.
+
 ## [3.20.29] - 2026-06-07
 
 ### Changed
@@ -83,7 +87,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.20.19] - 2026-06-06
 
@@ -187,7 +190,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.20.9] - 2026-06-02
 

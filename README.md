@@ -3,31 +3,29 @@
 
 # AI DevOps Framework
 
-**[aidevops.sh](https://aidevops.sh)** — An [OpenCode](https://opencode.ai/) plugin and AI operations platform for launching and managing development, business, marketing, and creative projects. 11 primary agents handle automatable work across every domain so your time is preserved for real-world discovery and decisions that AI cannot yet reach.
+**[aidevops.sh](https://aidevops.sh)** is an [OpenCode](https://opencode.ai/) plugin and AI DevOps framework for people who want AI to do useful work across code, infrastructure, business, marketing, content, and creative projects without turning every job into another long, fragile chat.
+
+Most AI tools still leave you doing the hard coordination yourself: finding the right context, choosing a model, protecting secrets, managing branches, watching CI, spotting stuck work, and remembering what went wrong last time. aidevops puts structure around that work so agents can share context, work safely in parallel, spend model budget where it matters, and leave the system better than they found it.
 
 > **Recommended setup:** [OpenCode](https://opencode.ai/) + OpenAI models. GPT-5.5 is the preferred high-capability model for complex agent work; GPT-5.4 mini is the preferred fast, lower-cost model for triage and routine implementation. Claude models (Anthropic) remain fully supported, and other model providers are evaluated from time to time as their quality, latency, and cost profiles change.
 
-*"Scope a mission to redesign the landing pages — break it into milestones, dispatch workers in parallel, validate each milestone, and track budget across the whole project"*
+*"Scope a mission to redesign the landing pages — break it into milestones, dispatch workers in parallel, validate each milestone, and track budget across the whole project."*
 
-**One conversation, autonomous project delivery — with enterprise-level security & quality-control.**
+**One conversation, autonomous project delivery, with security, teamwork, token efficiency, and quality control built in.**
 
 Founded by [Marcus Quinn](https://github.com/marcusquinn) on 9th November 2025 to help anyone level-up their AI & Open-Source game.
 
-## **The Philosophy**
+## **The Aim**
 
-**Maximum value for your time and money.** **[aidevops](https://aidevops.sh)** is built on these principles:
+**Maximum value for your time and money.** **[aidevops](https://aidevops.sh)** is built for the gap between “the model can probably do this” and “the work is actually done, verified, safe, and worth the cost.”
 
-- **Autonomous orchestration** - An AI supervisor runs every 2 minutes, dispatching parallel workers, merging PRs, detecting stuck processes, and advancing multi-day missions — no human babysitting required
-- **Multi-domain agents** - 11 primary agents covering code, automation, product, SEO, marketing/sales, content/video/social, legal, research, business/accounts, health, and framework operations with 900+ subagents loaded on demand
-- **Multi-model safety** - High-stakes operations (force push, production deploy, data migration) are verified by a second cross-provider model before execution — different providers have different failure modes, so correlated hallucinations are rare
-- **Resource efficiency** - Cost-aware model routing across OpenAI, Anthropic, Gemini, Cursor, and local models; project-type bundles auto-configure quality gates and model tiers, with budget tracking and burn-rate analysis
-- **Self-healing** - When something breaks, diagnose the root cause, create tasks, and fix it. Every error is a live test case for a permanent solution
-- **Self-improving** - When patterns of failure or inefficiency emerge, improve the framework itself. Session mining extracts learnings from past sessions automatically
-- **Gap awareness** - Every session is an opportunity to identify what's missing — gaps in automation, documentation, coverage, or processes — and create tasks to fill them
-- **Git-first workflow** - Protected branches, PR reviews, quality gates before merge. Sane vibe-coding through structure
-- **Parallel agents** - Multiple AI sessions running full [Ralph loops](#ralph-loop---iterative-ai-development) on separate branches via [git worktrees](#git-worktrees---parallel-branch-development)
-- **Progressive discovery** - `/slash` commands and `@subagent` mentions load knowledge into context only when needed
-- **Open-source ready** - Contribute to any project the same way you work on your own. Clone a repo, develop solutions to issues locally, and submit pull requests — the same full-loop workflow works everywhere
+- Load the right context when it is needed, instead of stuffing every agent, skill, and tool into the prompt.
+- Spend tokens and model budget deliberately. Cheap and fast models should handle routine work; stronger models should handle judgement, architecture, review, and risk.
+- Keep secrets out of chat. Credentials, tenants, scans, confirmations, and audit logs are part of the workflow, not an afterthought.
+- Let people and agents work across machines without trampling each other. Worktrees, branches, PRs, task IDs, mailbox state, and memory keep the work separated and traceable.
+- Notice when the system is struggling. Stuck workers, orphaned PRs, stale assignments, CI failures, review-bot traps, and repeated mistakes should become visible signals.
+- Improve the framework from real use. Imported skills, session learnings, quality findings, and better patterns should become better agents, hooks, scripts, and docs.
+- Optimise for profitable outcomes: useful work shipped, lower supervision cost, safer operations, and decisions that make sense beyond the next prompt.
 
 The result: an AI operations platform that manages projects across every business domain — absorbing everything automatable so you can focus on what matters.
 
@@ -35,15 +33,15 @@ The result: an AI operations platform that manages projects across every busines
 
 ## **Why This Framework?**
 
-**Beyond single-task AI.** Most AI coding tools handle one conversation, one repo, one task at a time. aidevops manages your entire operation — dispatching parallel AI agents across multiple repos, routing tasks to domain-specialist agents, and running autonomously for days on multi-milestone projects.
+**Beyond single-task AI.** A normal AI harness can be brilliant for one job and still weak at the work around the job. aidevops is for the surrounding discipline: context, routing, safety, git hygiene, collaboration, verification, memory, and follow-through.
 
 **What makes it different:**
 
-- **Autonomous supervisor** - AI pulse runs every 2 minutes: merges ready PRs, dispatches workers, kills stuck processes, advances missions, triages quality findings — no human in the loop
-- **Cross-domain intelligence** - 11 primary agents spanning code, automation, product, business, marketing/sales, legal, content/video/social, research, SEO, health, and framework operations — each with domain expertise and specialist subagents
-- **Multi-model safety** - Destructive operations verified by a second AI model from a different provider before execution
-- **30+ service integrations** - Hosting, Git platforms, DNS, security, monitoring, deployment, payments, communications
-- **Mission orchestration** - Multi-day autonomous projects broken into milestones with validation, budget tracking, and automatic advancement
+- **Pulse supervision** - scheduled checks can dispatch workers, merge ready PRs, close loops, and surface stuck work.
+- **Domain agents** - code, automation, product, business, marketing, legal, content, research, SEO, health, reports, and framework work each get their own guidance.
+- **Cross-model checks** - risky operations can be reviewed by a second provider to reduce shared failure modes.
+- **Service coverage** - hosting, Git platforms, DNS, security, monitoring, deployment, payments, communications, and more are handled through repeatable helpers.
+- **Mission work** - larger goals can be split into milestones with validation, budget tracking, and automatic advancement.
 
 ---
 
@@ -115,9 +113,9 @@ The result: an AI operations platform that manages projects across every busines
 
 ### Agent Structure
 
-- 11 primary agents (Build+, Automate, Product, SEO, Marketing-Sales, etc.) with specialist @subagents on demand
-- 900+ subagent markdown files organized by domain
-- 1,200+ helper scripts in `.agents/scripts/`
+- 12 primary agents (Build+, Automate, Product, SEO, Marketing-Sales, etc.) with specialist @subagents on demand
+- 2,050+ subagent markdown files organized by domain
+- 1,480+ helper scripts in `.agents/scripts/`
 - 90+ slash commands and workflow guides for common operations
 
 ### What You Can Ask aidevops To Do
@@ -751,9 +749,9 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 
 | Pattern | Description | aidevops Implementation |
 |---------|-------------|------------------------|
-| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 1,200+ helper scripts |
+| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 1,480+ helper scripts |
 | **Multi-Layer Action Space** | Few tools, push actions to computer | Per-agent MCP filtering (~12-20 tools each) |
-| **Knowledge Graph Routing** | Indexed, cross-referenced agents instead of isolated skills | `subagent-index.toon` maps 900+ agents by domain, purpose, and dependency — agents discover related context through the graph, not just their own file |
+| **Knowledge Graph Routing** | Indexed, cross-referenced agents instead of isolated skills | `subagent-index.toon` maps 2,050+ agents by domain, purpose, and dependency — agents discover related context through the graph, not just their own file |
 | **Progressive Disclosure** | Load context on-demand | Subagent routing with content summaries, YAML frontmatter, read-on-demand |
 | **Offload Context** | Write results to filesystem | `.agent-workspace/work/[project]/` for persistence |
 | **Cache Context** | Prompt caching for cost | Stable instruction prefixes |
@@ -1855,7 +1853,7 @@ aidevops is registered as a **Claude Code plugin marketplace**. Install with two
 /plugin install aidevops@aidevops
 ```
 
-This installs the complete framework: 11 primary agents, 900+ subagents, and 1,200+ helper scripts.
+This installs the complete framework: 12 primary agents, 2,050+ subagents, and 1,480+ helper scripts.
 
 ### Importing External Skills
 
@@ -1985,7 +1983,7 @@ The long-term direction is to make slash commands and `@mentions` unnecessary al
 
 ### **Example Subagents with MCP Integration**
 
-These are examples of subagents that have supporting MCPs enabled. See `.agents/` for the full list of 900+ subagents organized by domain.
+These are examples of subagents that have supporting MCPs enabled. See `.agents/` for the full list of 2,050+ subagents organized by domain.
 
 | Agent | Purpose | MCPs Enabled |
 |-------|---------|--------------|
@@ -2680,8 +2678,8 @@ aidevops/
 ├── AGENTS.md                      # AI agent guidance (dev)
 ├── .agents/                        # Agents and documentation
 │   ├── AGENTS.md                  # User guide (deployed to ~/.aidevops/agents/)
-│   ├── *.md                       # 11 primary agents
-│   ├── scripts/                   # 1,200+ helper scripts
+│   ├── *.md                       # 12 primary agents
+│   ├── scripts/                   # 1,480+ helper scripts
 │   ├── tools/                     # Cross-domain utilities (video, browser, git, etc.)
 │   ├── services/                  # External service integrations
 │   └── workflows/                 # Development process guides
@@ -2805,7 +2803,7 @@ See `.agents/tools/credentials/multi-tenant.md` for complete documentation.
 - Autonomous supervisor — pulse runs every 2 minutes, merging PRs, dispatching workers, killing stuck processes, advancing missions
 - Operational intelligence — struggle-ratio detection, orphaned PR recovery, circuit breaker, dynamic concurrency
 - Cost-aware routing — provider-aware model selection across OpenAI, Anthropic, Gemini, Cursor, Grok, and local models with budget tracking
-- Progressive context — 900+ subagents loaded on demand, project bundles auto-configuring quality gates and model tiers
+- Progressive context — 2,050+ subagents loaded on demand, project bundles auto-configuring quality gates and model tiers
 - Self-improving — session mining extracts learnings, quality findings auto-create tasks, patterns feed back into agent prompts
 
 **Get Started:**
