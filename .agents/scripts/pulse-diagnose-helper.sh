@@ -275,7 +275,7 @@ _issue_attempt_summary_json() {
 		def is_issue:
 			((.session_key // "") == $sk) or (((.issue_number // "") | tostring) == $issue);
 		def is_repo:
-			($repo == "") or ((.repo_slug // "") == $repo);
+			($repo == "") or (((.repo_slug // "") | ascii_downcase) == ($repo | ascii_downcase));
 		def is_rate_limit:
 			(.result // "") == "rate_limit"
 			or (.result // "") == "rate_limit_fast"

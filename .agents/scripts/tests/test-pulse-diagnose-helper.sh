@@ -350,7 +350,7 @@ recent_rate_limit_2=$(( now_epoch - 120 ))
 recent_success=$(( now_epoch - 60 ))
 cat > "$FIXTURE_METRICS" <<METRICS
 {"ts":${recent_rate_limit_1},"role":"worker","session_key":"issue-21860","issue_number":21860,"repo_slug":"marcusquinn/aidevops","provider":"openai","model":"openai/gpt-5.5","result":"rate_limit","failure_reason":"rate_limit","exit_code":143}
-{"ts":${recent_rate_limit_2},"role":"worker","session_key":"issue-21860","issue_number":21860,"repo_slug":"marcusquinn/aidevops","provider":"openai","model":"openai/gpt-5.5","result":"rate_limit_fast","failure_reason":"rate_limit_fast","provider_error_type":"rate_limit","provider_status":429,"exit_code":143}
+{"ts":${recent_rate_limit_2},"role":"worker","session_key":"issue-21860","issue_number":21860,"repo_slug":"MarcusQuinn/aidevops","provider":"openai","model":"openai/gpt-5.5","result":"rate_limit_fast","failure_reason":"rate_limit_fast","provider_error_type":"rate_limit","provider_status":429,"exit_code":143}
 {"ts":${recent_success},"role":"worker","session_key":"issue-21860","issue_number":21860,"repo_slug":"marcusquinn/aidevops","provider":"openai","model":"openai/gpt-5.5","result":"success","failure_reason":"","exit_code":0}
 {"ts":${recent_success},"role":"worker","session_key":"issue-21860","issue_number":21860,"repo_slug":"example/other","provider":"openai","model":"openai/gpt-5.5","result":"rate_limit","failure_reason":"rate_limit","exit_code":143}
 METRICS
