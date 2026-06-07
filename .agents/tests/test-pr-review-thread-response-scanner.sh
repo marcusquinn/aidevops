@@ -50,7 +50,31 @@ fi
 
 if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
 	printf '%s\n' "$*" >>"${FAKE_GH_CAPTURE:?}"
+	if [[ "$*" == *"addPullRequestReviewThreadReply"* ]]; then
+		while [[ "$#" -gt 0 ]]; do
+			if [[ "${1:-}" == "-F" && "${2:-}" == body=* ]]; then
+				printf '%s' "${2#body=}" >"${FAKE_GH_REPLY_CAPTURE:?}"
+				break
+			fi
+			shift
+		done
+		printf '%s\n' '{"data":{"addPullRequestReviewThreadReply":{"comment":{"id":"COMMENT_1","url":""}}}}'
+		exit 0
+	fi
+	if [[ "$*" == *"-F thread="* && "$*" == *"comments(first: 1)"* ]]; then
+		printf '%s\n' '{"data":{"node":{"comments":{"nodes":[{"author":{"login":"gemini-code-assist"}}]}}}}'
+		exit 0
+	fi
 	printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"THREAD_1","isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"coderabbitai"},"path":"script.sh","line":12,"url":"","body":"fixture","diffHunk":"@@","updatedAt":"2026-06-01T00:00:00Z"}]}}]}}}}}'
+	exit 0
+fi
+
+if [[ "${1:-}" == "api" && "${2:-}" == "rate_limit" ]]; then
+	if [[ "$*" == *"--jq"* ]]; then
+		printf '%s\n' '100'
+		exit 0
+	fi
+	printf '%s\n' '{"resources":{"graphql":{"remaining":100},"core":{"remaining":100}}}'
 	exit 0
 fi
 
@@ -86,8 +110,69 @@ test_scan_passes_nonempty_owner_and_name_to_graphql() {
 	return 0
 }
 
+test_reply_recognises_existing_mention_after_whitespace_and_comment() {
+	printf '==> reply recognises author mention after blank/comment lines\n'
+	_setup
+	local fake_bin="${TEST_TMPDIR}/bin"
+	local capture="${TEST_TMPDIR}/gh-args.log"
+	local reply_capture="${TEST_TMPDIR}/reply-body.txt"
+	local body_file="${TEST_TMPDIR}/body.md"
+	local expected=$'   \n\t<!-- generated marker -->  \n@gemini-code-assist already handled'
+	_write_fake_gh "$fake_bin"
+	printf '%s' "$expected" >"$body_file"
+
+	if FAKE_GH_CAPTURE="$capture" FAKE_GH_REPLY_CAPTURE="$reply_capture" PATH="${fake_bin}:$PATH" "$SCANNER" reply "marcusquinn/aidevops" "THREAD_1" "$body_file"; then
+		_pass "reply command succeeds"
+	else
+		_fail "reply command succeeds"
+	fi
+
+	local actual=""
+	actual="$(<"$reply_capture")"
+	if [[ "$actual" == "$expected" ]]; then
+		_pass "existing mention is not duplicated"
+	else
+		_fail "existing mention is not duplicated" "body: ${actual}"
+	fi
+
+	_teardown
+	return 0
+}
+
+test_reply_prepends_author_when_first_content_is_not_mention() {
+	printf '==> reply prepends author when first content is not a mention\n'
+	_setup
+	local fake_bin="${TEST_TMPDIR}/bin"
+	local capture="${TEST_TMPDIR}/gh-args.log"
+	local reply_capture="${TEST_TMPDIR}/reply-body.txt"
+	local body_file="${TEST_TMPDIR}/body.md"
+	local body=$'   \n<!-- generated marker-->\nPlease fix this.'
+	local expected="@gemini-code-assist ${body}"
+	_write_fake_gh "$fake_bin"
+	printf '%s' "$body" >"$body_file"
+
+	if FAKE_GH_CAPTURE="$capture" FAKE_GH_REPLY_CAPTURE="$reply_capture" PATH="${fake_bin}:$PATH" "$SCANNER" reply "marcusquinn/aidevops" "THREAD_1" "$body_file"; then
+		_pass "reply command succeeds without existing mention"
+	else
+		_fail "reply command succeeds without existing mention"
+	fi
+
+	local actual=""
+	actual="$(<"$reply_capture")"
+	if [[ "$actual" == "$expected" ]]; then
+		_pass "author mention is prepended"
+	else
+		_fail "author mention is prepended" "body: ${actual}"
+	fi
+
+	_teardown
+	return 0
+}
+
 main() {
 	test_scan_passes_nonempty_owner_and_name_to_graphql
+	test_reply_recognises_existing_mention_after_whitespace_and_comment
+	test_reply_prepends_author_when_first_content_is_not_mention
 	printf 'Results: %d passed, %d failed\n' "$TESTS_PASSED" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
 		return 1

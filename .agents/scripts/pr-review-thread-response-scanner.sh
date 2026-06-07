@@ -141,8 +141,8 @@ _prrts_thread_author_login() {
 		_prrts_log "reply: author lookup failed for thread ${thread_id} (rc=${rc})"
 		return 1
 	fi
-	login=$(printf '%s' "$response" | jq -r '.data.node.comments.nodes[0].author.login // ""' 2>/dev/null) || login=""
-	if [[ -z "$login" || "$login" == "null" ]]; then
+	login=$(printf '%s' "$response" | jq -r '.data.node.comments?.nodes[0]?.author?.login // ""') || login=""
+	if [[ -z "$login" ]]; then
 		_prrts_log "reply: author login missing for thread ${thread_id}"
 		return 1
 	fi
@@ -154,13 +154,13 @@ _prrts_body_content_starts_with_mention() {
 	local body="$1"
 	local author_login="$2"
 	local mention="@${author_login}"
-	local line="" next_char=""
+	local line="" next_char="" html_comment_re='^[[:space:]]*<!--.*-->[[:space:]]*$'
 
 	while IFS= read -r line || [[ -n "$line" ]]; do
-		if [[ -z "$line" ]]; then
+		if [[ "$line" =~ ^[[:space:]]*$ ]]; then
 			continue
 		fi
-		if [[ "$line" == "<!-- "*" -->" ]]; then
+		if [[ "$line" =~ $html_comment_re ]]; then
 			continue
 		fi
 		if [[ "${line:0:${#mention}}" != "$mention" ]]; then
