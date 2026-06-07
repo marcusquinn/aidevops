@@ -12,7 +12,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)" || exit
-AGENT_DIR="$REPO_ROOT/.agent"
+AGENT_DIR="$REPO_ROOT/.agents"
 
 # Cached counts (populated once, reused)
 _CACHED_MAIN_AGENTS=""
@@ -77,6 +77,16 @@ round_subagents() {
 	echo "$((count / 50 * 50))"
 }
 
+format_count() {
+	local count="$1"
+	if [[ $count -ge 1000 ]]; then
+		printf "%d,%03d\n" "$((count / 1000))" "$((count % 1000))"
+		return 0
+	fi
+	printf "%d\n" "$count"
+	return 0
+}
+
 # Get all counts as JSON
 get_counts_json() {
 	local main_agents subagents scripts
@@ -101,8 +111,8 @@ get_approximate_counts() {
 
 	# For subagents and scripts, use consistent rounding functions
 	local approx_subagents approx_scripts
-	approx_subagents="$(round_subagents "$subagents")+"
-	approx_scripts="$(round_scripts "$scripts")+"
+	approx_subagents="$(format_count "$(round_subagents "$subagents")")+"
+	approx_scripts="$(format_count "$(round_scripts "$scripts")")+"
 
 	echo "main_agents=$approx_agents"
 	echo "subagents=$approx_subagents"
@@ -133,10 +143,11 @@ check_readme_counts() {
 	# Check for count patterns in README
 	local stale=0
 
-	# Check main agents count (patterns like "~15 main agents" or "14 domain agents")
-	if grep -qE "~?[0-9]+ (main|domain) agents" "$readme_file"; then
+	# Check main agents count (patterns like "~15 main agents", "14 domain agents", or "12 primary agents")
+	if grep -qE "~?[0-9][0-9,]* (main|domain|primary) agents" "$readme_file"; then
 		local readme_count
-		readme_count=$(grep -oE "~?[0-9]+ (main|domain) agents" "$readme_file" | head -1 | grep -oE "[0-9]+")
+		readme_count=$(grep -oE "~?[0-9][0-9,]* (main|domain|primary) agents" "$readme_file" | head -1 | grep -oE "[0-9,]+")
+		readme_count=${readme_count//,/}
 		local diff=$((main_agents - readme_count))
 		if [[ ${diff#-} -gt 2 ]]; then
 			print_warning "Main agents count may be stale: README says ~$readme_count, actual is $main_agents"
@@ -146,10 +157,11 @@ check_readme_counts() {
 		fi
 	fi
 
-	# Check scripts count (patterns like "100+ helper scripts" or "130+ scripts")
-	if grep -qE "[0-9]+\+ (helper )?scripts" "$readme_file"; then
+	# Check scripts count (patterns like "100+ helper scripts", "1,200+ helper scripts", or "130+ scripts")
+	if grep -qE "[0-9][0-9,]*\+ (helper )?scripts" "$readme_file"; then
 		local readme_scripts
-		readme_scripts=$(grep -oE "[0-9]+\+ (helper )?scripts" "$readme_file" | head -1 | grep -oE "[0-9]+")
+		readme_scripts=$(grep -oE "[0-9][0-9,]*\+ (helper )?scripts" "$readme_file" | head -1 | grep -oE "[0-9,]+")
+		readme_scripts=${readme_scripts//,/}
 		if [[ $scripts -lt $readme_scripts ]]; then
 			print_warning "Scripts count may be overstated: README says $readme_scripts+, actual is $scripts"
 			stale=1
@@ -162,9 +174,10 @@ check_readme_counts() {
 	fi
 
 	# Check subagents count
-	if grep -qE "[0-9]+\+ subagent" "$readme_file"; then
+	if grep -qE "[0-9][0-9,]*\+ (subagent|agents by domain)" "$readme_file"; then
 		local readme_subagents
-		readme_subagents=$(grep -oE "[0-9]+\+ subagent" "$readme_file" | head -1 | grep -oE "[0-9]+")
+		readme_subagents=$(grep -oE "[0-9][0-9,]*\+ (subagent|agents by domain)" "$readme_file" | head -1 | grep -oE "[0-9,]+")
+		readme_subagents=${readme_subagents//,/}
 		if [[ $subagents -lt $readme_subagents ]]; then
 			print_warning "Subagents count may be overstated: README says $readme_subagents+, actual is $subagents"
 			stale=1
@@ -203,8 +216,8 @@ update_readme_counts() {
 
 	# Calculate approximate values using consistent rounding functions
 	local approx_scripts approx_subagents
-	approx_scripts=$(round_scripts "$scripts")
-	approx_subagents=$(round_subagents "$subagents")
+	approx_scripts=$(format_count "$(round_scripts "$scripts")")
+	approx_subagents=$(format_count "$(round_subagents "$subagents")")
 
 	if [[ "$dry_run" == "true" ]]; then
 		print_info "Dry run - would update:"
@@ -221,13 +234,14 @@ update_readme_counts() {
 
 	# Update patterns
 	# ~N main agents or ~N domain agents
-	sed_inplace -E "s/~[0-9]+ (main|domain) agents/~$main_agents \1 agents/g" "$readme_file"
+	sed_inplace -E "s/~?[0-9][0-9,]* (main|domain|primary) agents/$main_agents \1 agents/g" "$readme_file"
 
 	# N+ helper scripts
-	sed_inplace -E "s/[0-9]+\+ helper scripts/${approx_scripts}+ helper scripts/g" "$readme_file"
+	sed_inplace -E "s/[0-9][0-9,]*\+ helper scripts/${approx_scripts}+ helper scripts/g" "$readme_file"
 
 	# N+ subagent markdown files
-	sed_inplace -E "s/[0-9]+\+ subagent/${approx_subagents}+ subagent/g" "$readme_file"
+	sed_inplace -E "s/[0-9][0-9,]*\+ subagent/${approx_subagents}+ subagent/g" "$readme_file"
+	sed_inplace -E "s/[0-9][0-9,]*\+ agents by domain/${approx_subagents}+ agents by domain/g" "$readme_file"
 
 	print_success "Updated README counts"
 	print_info "Backup saved to $readme_file.bak"

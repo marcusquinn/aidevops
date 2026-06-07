@@ -20,9 +20,10 @@ Use `--sections` for targeted updates (adding a feature, changing install/config
 ## Workflow
 
 1. **Load guidance** — read `workflows/readme-create-update.md`
-2. **Explore codebase** — detect project type, deployment platform, existing README, key info
-3. **Generate/update** — follow workflow section order; preserve structure for partial updates
-4. **Confirm changes** — present diff and ask before writing (interactive only)
+2. **Load voice guidance when relevant** — if the request mentions humanise, writing style, tone, voice, less AI writing, or marketing/intro copy, read `content/humanise.md`
+3. **Explore codebase** — detect project type, deployment platform, existing README, key info
+4. **Generate/update** — follow workflow section order; preserve structure for partial updates
+5. **Confirm changes** — present diff and ask before writing (interactive only)
 
 ## Section Mapping
 
