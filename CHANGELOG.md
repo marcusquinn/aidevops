@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.32] - 2026-06-07
+
+### Changed
+
+- Maintenance: mark t3594 complete (pr:#24538 completed:2026-06-07) [skip ci]
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- support configured reusable workflow targets (#24538)
+
 ## [3.20.31] - 2026-06-07
 
 ### Fixed
