@@ -122,7 +122,7 @@ _write_upstream_watch_local_report() {
 
 	mkdir -p "$report_dir"
 	local report_file
-	report_file=$(mktemp "${report_dir}/${stamp}.XXXXXX.md")
+	report_file=$(mktemp "${report_dir}/${stamp}.md.XXXXXX")
 	{
 		printf '# %s\n\n' "$title"
 		printf '%s\n' "$body"
