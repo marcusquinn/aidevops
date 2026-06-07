@@ -113,8 +113,15 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          # tokei lands in Ubuntu repos; jq is preinstalled on ubuntu-latest but kept explicit.
-          sudo apt-get install -y --no-install-recommends tokei jq
+          # jq is available from Ubuntu apt; tokei is not packaged for Ubuntu/Debian.
+          sudo apt-get install -y --no-install-recommends jq
+          if ! command -v cargo >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+            # shellcheck source=/dev/null
+            source "$HOME/.cargo/env"
+          fi
+          cargo install --locked tokei
+          export PATH="$HOME/.cargo/bin:$PATH"
           tokei --version
           jq --version
 
