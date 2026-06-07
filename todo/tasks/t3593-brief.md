@@ -103,11 +103,11 @@ Reference wrapper pattern:
 # Prefer a leading /repos/... path so github_app_api_call can extract repo
 # context when selecting an installation token.
 github_app_api_call read rest-core gh api \
-  "/repos/${repo_slug}/collaborators/${author}/permission" --jq '.permission'
+  "/repos/${repo_slug}/collaborators/${author}/permission" --jq '.permission // ""'
 
 # Where shared-gh-wrappers-rest-fallback.sh is already sourced, prefer:
 _rest_api_call read gh api \
-  "/repos/${repo_slug}/collaborators/${author}/permission" --jq '.permission'
+  "/repos/${repo_slug}/collaborators/${author}/permission" --jq '.permission // ""'
 ```
 
 Critical semantic rule: a 404/permission `none` result may mean "not collaborator"; 403, 429, 5xx, timeout, and network failures must be treated as "permission API failed" and must fail closed without claiming the author is non-collaborator.
