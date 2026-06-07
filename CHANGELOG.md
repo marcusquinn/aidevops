@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.31] - 2026-06-07
+
+### Fixed
+
+- dispatch review thread remediation on merge blockers (#24540)
+
 ## [3.20.30] - 2026-06-07
 
 ### Changed
