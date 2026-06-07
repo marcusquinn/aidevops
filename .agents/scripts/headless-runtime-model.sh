@@ -141,6 +141,7 @@ _provider_session_repo_slug() {
 	repo_slug="${repo_slug#https://github.com/}"
 	repo_slug="${repo_slug#git@github.com:}"
 	repo_slug="${repo_slug%.git}"
+	repo_slug=$(printf '%s' "$repo_slug" | tr '[:upper:]' '[:lower:]')
 	case "$repo_slug" in
 	*/*) printf '%s' "$repo_slug" ;;
 	*) printf '%s' "" ;;
