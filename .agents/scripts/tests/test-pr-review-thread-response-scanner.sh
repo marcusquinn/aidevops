@@ -54,6 +54,11 @@ if [[ "$1" == "api" && "${2:-}" == "graphql" ]]; then
 		fi
 	done
 	if [[ "$*" == *"addPullRequestReviewThreadReply"* ]]; then
+		for arg in "$@"; do
+			if [[ "$arg" == body=* ]]; then
+				printf '%s' "${arg#body=}" >"${GRAPHQL_BODY_CAPTURE:-/dev/null}"
+			fi
+		done
 		printf 'reply\n' >>"${GRAPHQL_MUTATIONS_LOG:-/dev/null}"
 		printf '{"data":{"addPullRequestReviewThreadReply":{"comment":{"id":"COMMENT1","url":"https://example.invalid/reply"}}}}\n'
 		exit 0
@@ -63,7 +68,15 @@ if [[ "$1" == "api" && "${2:-}" == "graphql" ]]; then
 		printf '{"data":{"resolveReviewThread":{"thread":{"id":"THREAD1","isResolved":true}}}}\n'
 		exit 0
 	fi
-	if [[ "$*" == *"node(id: $thread)"* || "$*" == *"comments(first: 100)"* ]]; then
+	if [[ "$*" == *"node(id:"* && "$*" == *"comments(first: 1)"* ]]; then
+		if [[ "${STUB_THREAD_AUTHOR_MODE:-ok}" == "missing" ]]; then
+			printf '{"data":{"node":{"comments":{"nodes":[{"author":null}]}}}}\n'
+		else
+			printf '{"data":{"node":{"comments":{"nodes":[{"author":{"login":"%s"}}]}}}}\n' "${STUB_THREAD_AUTHOR_LOGIN:-reviewer}"
+		fi
+		exit 0
+	fi
+	if [[ "$*" == *"node(id:"* || "$*" == *"comments(first: 100)"* ]]; then
 		printf '{"data":{"node":{"comments":{"nodes":[]}}}}\n'
 		exit 0
 	fi
@@ -108,8 +121,10 @@ HEADLESS_STUB
 	export PATH="${TEST_ROOT}/bin:${PATH}"
 	export HEADLESS_RUNTIME_HELPER="${TEST_ROOT}/headless-runtime-helper.sh"
 	export GRAPHQL_MUTATIONS_LOG="${TEST_ROOT}/graphql-mutations.log"
+	export GRAPHQL_BODY_CAPTURE="${TEST_ROOT}/graphql-body.txt"
 	export PR_REVIEW_THREAD_RESPONSE_COOLDOWN=3600
 	: >"$GRAPHQL_MUTATIONS_LOG"
+	: >"$GRAPHQL_BODY_CAPTURE"
 	return 0
 }
 
@@ -218,6 +233,55 @@ test_reply_and_resolve_use_graphql_mutations() {
 	return 0
 }
 
+test_reply_auto_prepends_thread_author() {
+	setup_test_env
+	local body_file="${TEST_ROOT}/reply.md"
+	local captured=""
+	printf '<!-- aidevops:review-thread-response:THREAD1 -->\nfixed at file.sh:1; verified with test.sh\n' >"$body_file"
+	$SCANNER reply owner/repo THREAD1 "$body_file" 'aidevops:review-thread-response:THREAD1'
+	captured=$(<"$GRAPHQL_BODY_CAPTURE")
+	if [[ "$captured" == @reviewer\ * ]]; then
+		print_result "reply prepends review thread author mention" 0
+	else
+		print_result "reply prepends review thread author mention" 1 "body=${captured}"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_reply_does_not_double_prepend_thread_author() {
+	setup_test_env
+	local body_file="${TEST_ROOT}/reply.md"
+	local mention_count=""
+	printf '<!-- aidevops:review-thread-response:THREAD1 -->\n@reviewer fixed at file.sh:1; verified with test.sh\n' >"$body_file"
+	$SCANNER reply owner/repo THREAD1 "$body_file" 'aidevops:review-thread-response:THREAD1'
+	mention_count=$(grep -o '@reviewer' "$GRAPHQL_BODY_CAPTURE" 2>/dev/null | wc -l | tr -d '[:space:]')
+	if [[ "$mention_count" == "1" ]]; then
+		print_result "reply does not double-prepend thread author mention" 0
+	else
+		print_result "reply does not double-prepend thread author mention" 1 "count=${mention_count}"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_reply_falls_back_when_thread_author_missing() {
+	setup_test_env
+	export STUB_THREAD_AUTHOR_MODE="missing"
+	local body_file="${TEST_ROOT}/reply.md"
+	local captured=""
+	printf '<!-- aidevops:review-thread-response:THREAD1 -->\nfixed at file.sh:1; verified with test.sh\n' >"$body_file"
+	$SCANNER reply owner/repo THREAD1 "$body_file" 'aidevops:review-thread-response:THREAD1'
+	captured=$(<"$GRAPHQL_BODY_CAPTURE")
+	if [[ "$captured" == '<!-- aidevops:review-thread-response:THREAD1 -->'* ]]; then
+		print_result "reply falls back when thread author is missing" 0
+	else
+		print_result "reply falls back when thread author is missing" 1 "body=${captured}"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_reply_skips_duplicate_marker() {
 	setup_test_env
 	export STUB_THREADS_MODE="marker"
@@ -261,6 +325,9 @@ main() {
 	test_dispatch_launches_worker_and_writes_state
 	test_dispatch_is_idempotent_for_same_fingerprint
 	test_reply_and_resolve_use_graphql_mutations
+	test_reply_auto_prepends_thread_author
+	test_reply_does_not_double_prepend_thread_author
+	test_reply_falls_back_when_thread_author_missing
 	test_reply_skips_duplicate_marker
 
 	printf '\nTests run: %d\n' "$TESTS_RUN"
