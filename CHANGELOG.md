@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.23] - 2026-06-07
+
+### Fixed
+
+- restrict stats routines to maintainers (#24507)
+
 ## [3.20.22] - 2026-06-07
 
 ### Fixed
