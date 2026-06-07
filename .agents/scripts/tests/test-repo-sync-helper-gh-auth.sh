@@ -8,6 +8,13 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER="${SCRIPT_DIR}/../repo-sync-helper.sh"
 
 failures=0
+declare -a TEMP_DIRS=()
+
+cleanup() {
+	rm -rf "${TEMP_DIRS[@]}"
+	return 0
+}
+trap cleanup EXIT
 
 pass() {
 	local message="$1"
@@ -31,10 +38,12 @@ make_fake_tools() {
 }
 
 run_case() {
-	local case_name="$1"
+	local case_name
+	case_name="$1"
 	shift
 	local tmp_dir
 	tmp_dir=$(mktemp -d)
+	TEMP_DIRS+=("$tmp_dir")
 	mkdir -p "${tmp_dir}/home/.config/aidevops" "${tmp_dir}/parent/repo/.git"
 	make_fake_tools "$tmp_dir"
 	printf '{"git_parent_dirs":["%s"]}\n' "${tmp_dir}/parent" >"${tmp_dir}/home/.config/aidevops/repos.json"
