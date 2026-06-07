@@ -78,6 +78,9 @@ _gh_checks_api_read() {
 	if command -v timeout >/dev/null 2>&1; then
 		timeout "$secs" gh api "$endpoint" "$@"
 		return $?
+	elif command -v gtimeout >/dev/null 2>&1; then
+		gtimeout "$secs" gh api "$endpoint" "$@"
+		return $?
 	fi
 
 	gh api "$endpoint" "$@"
