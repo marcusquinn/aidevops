@@ -21,7 +21,7 @@ _SHARED_GH_COLLABORATOR_PERMISSION_LOADED=1
 #   AIDEVOPS_GH_COLLAB_PERMISSION_REASON
 #
 # Args: $1=repo_slug owner/repo, $2=user login, $3=optional output variable
-# Output: permission value (admin|maintain|write|read|none) on lookup success.
+# Output: permission value (admin|maintain|write|triage|read|none) on lookup success.
 # Returns: 0=lookup succeeded (404 maps to none), 2=lookup/API/parse failure.
 #######################################
 _gh_collaborator_permission_lookup() {
@@ -99,7 +99,7 @@ _gh_collaborator_permission_lookup() {
 
 	permission_value=$(printf '%s' "$body" | jq -r '.permission // .role_name // ""' 2>/dev/null) || permission_value=""
 	case "$permission_value" in
-	admin | maintain | write | read | none)
+	admin | maintain | write | triage | read | none)
 		AIDEVOPS_GH_COLLAB_PERMISSION_REASON="ok"
 		export AIDEVOPS_GH_COLLAB_PERMISSION_REASON
 		if [[ -n "$out_var" ]]; then
