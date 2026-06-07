@@ -59,6 +59,11 @@
 set -uo pipefail
 
 SCRIPT_NAME=$(basename "$0")
+SELF_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null) || SELF_DIR=""
+REPO_ROOT=""
+if [[ -n "$SELF_DIR" ]]; then
+	REPO_ROOT=$(cd "$SELF_DIR/../.." && pwd 2>/dev/null) || REPO_ROOT=""
+fi
 
 # ─── Known managed workflows ────────────────────────────────────────────────
 #
@@ -89,15 +94,25 @@ readonly _KNOWN_WORKFLOWS=(
 _resolve_canonical_template() {
 	local _template_filename="$1"
 	local _deployed="$HOME/.aidevops/agents/templates/workflows/${_template_filename}"
-	local _self_dir
-	_self_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd 2>/dev/null) || _self_dir=""
-	local _repo_local="$_self_dir/../templates/workflows/${_template_filename}"
+	local _repo_local="$SELF_DIR/../templates/workflows/${_template_filename}"
 
 	if [[ -f "$_deployed" ]]; then
 		printf '%s\n' "$_deployed"
 		return 0
 	fi
-	if [[ -n "$_self_dir" && -f "$_repo_local" ]]; then
+	if [[ -n "$SELF_DIR" && -f "$_repo_local" ]]; then
+		printf '%s\n' "$_repo_local"
+		return 0
+	fi
+	return 1
+}
+
+# _resolve_canonical_reusable <reusable_filename>
+# Emits the aidevops source reusable workflow path for content-update checks.
+_resolve_canonical_reusable() {
+	local _reusable_filename="$1"
+	local _repo_local="$REPO_ROOT/.github/workflows/${_reusable_filename}"
+	if [[ -n "$REPO_ROOT" && -f "$_repo_local" ]]; then
 		printf '%s\n' "$_repo_local"
 		return 0
 	fi
@@ -126,9 +141,93 @@ _usage() {
 	return 0
 }
 
+# ─── Reusable Target Resolution ─────────────────────────────────────────────
+
+readonly _DEFAULT_WORKFLOW_REUSABLE_REPO="marcusquinn/aidevops"
+readonly _DEFAULT_WORKFLOW_REUSABLE_REF="main"
+
+_escape_ere() {
+	local _text="$1"
+	printf '%s' "$_text" | sed -E 's/[][(){}.^$*+?|]/\\&/g'
+	return 0
+}
+
+_escape_sed_replacement() {
+	local _text="$1"
+	printf '%s' "$_text" | sed 's/[&|]/\\&/g'
+	return 0
+}
+
+_normalise_reusable_ref() {
+	local _ref="$1"
+	_ref="${_ref#@}"
+	printf '%s\n' "$_ref"
+	return 0
+}
+
+_validate_reusable_repo() {
+	local _repo="$1"
+	if [[ ! "$_repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+		_die "invalid workflow_reusable_repo: $_repo"
+	fi
+	return 0
+}
+
+_validate_reusable_ref() {
+	local _ref="$1"
+	if [[ -z "$_ref" || "$_ref" =~ [[:space:][:cntrl:]] ]]; then
+		_die "invalid workflow_reusable_ref: $_ref"
+	fi
+	return 0
+}
+
+_read_workflow_reusable_field() {
+	local _slug="$1"
+	local _field="$2"
+	jq -r --arg s "$_slug" --arg f "$_field" '
+		([.initialized_repos[]? | select(.slug == $s) | .[$f] // empty] | first // "") as $repo_value
+		| if $repo_value != "" then $repo_value else (.[$f] // empty) end
+	' "$REPOS_JSON" 2>/dev/null
+	return 0
+}
+
+_workflow_reusable_repo_for_slug() {
+	local _slug="$1"
+	local _repo
+	_repo=$(_read_workflow_reusable_field "$_slug" "workflow_reusable_repo")
+	[[ -z "$_repo" ]] && _repo="$_DEFAULT_WORKFLOW_REUSABLE_REPO"
+	_validate_reusable_repo "$_repo"
+	printf '%s\n' "$_repo"
+	return 0
+}
+
+_workflow_reusable_ref_for_slug() {
+	local _slug="$1"
+	local _ref
+	_ref=$(_read_workflow_reusable_field "$_slug" "workflow_reusable_ref")
+	[[ -z "$_ref" ]] && _ref="$_DEFAULT_WORKFLOW_REUSABLE_REF"
+	_ref=$(_normalise_reusable_ref "$_ref")
+	_validate_reusable_ref "$_ref"
+	printf '%s\n' "$_ref"
+	return 0
+}
+
+_render_template_for_target() {
+	local _template="$1"
+	local _repo="$2"
+	local _reusable_file="$3"
+	local _ref="$4"
+	local _reusable_escaped _repo_repl _ref_repl
+	_reusable_escaped=$(_escape_ere "$_reusable_file")
+	_repo_repl=$(_escape_sed_replacement "$_repo")
+	_ref_repl=$(_escape_sed_replacement "$_ref")
+	sed -E "s|(uses:[[:space:]]*)${_DEFAULT_WORKFLOW_REUSABLE_REPO}(/\.github/workflows/${_reusable_escaped})@[^[:space:]]+|\1${_repo_repl}\2@${_ref_repl}|" "$_template"
+	return 0
+}
+
 # ─── Classification ─────────────────────────────────────────────────────────
 
-# _normalize_wf_for_compare <file> <reusable_escaped>
+# _normalize_wf_for_compare <file> <target_escaped>
 # Normalise a workflow file for byte-comparison:
 #   - Replaces the @<ref> suffix on reusable `uses:` lines with @REF so that
 #     `@main` vs `@v3.9.0` doesn't count as drift.
@@ -140,7 +239,7 @@ _usage() {
 # Emits normalised content on stdout.
 _normalize_wf_for_compare() {
 	local _file="$1"
-	local _reusable_escaped="$2"
+	local _target_escaped="$2"
 	# Step 1: normalise @ref and branch filter (existing logic).
 	# Step 2: remove injected `      runner: <value>` lines.
 	# Step 3: remove `    with:` block headers that are now empty (runner was
@@ -154,7 +253,7 @@ _normalize_wf_for_compare() {
 	#         (e.g. callers missing `secrets: inherit`) classify as DRIFTED/CALLER.
 	#         Dropping pending at EOF is correct — there is no legitimate scenario
 	#         where a `with:` followed by no children should survive normalisation.
-	sed -E "s|(marcusquinn/aidevops/\.github/workflows/${_reusable_escaped})@[^[:space:]]+|\1@REF|g" "$_file" \
+	sed -E "s|(${_target_escaped})@[^[:space:]]+|\1@REF|g" "$_file" \
 		| sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|' \
 		| sed -E '/^      runner: /d' \
 		| awk '
@@ -175,22 +274,53 @@ _normalize_wf_for_compare() {
 	return 0
 }
 
-# _classify_workflow <workflow-file> <canonical-template> <reusable-escaped> [<canon-norm>]
+_normalize_wf_text_for_compare() {
+	local _content="$1"
+	local _target_escaped="$2"
+	printf '%s\n' "$_content" \
+		| sed -E "s|(${_target_escaped})@[^[:space:]]+|\1@REF|g" \
+		| sed -E 's|^([[:space:]]+branches:) \[[^]]+\]$|\1 [BRANCH]|' \
+		| sed -E '/^      runner: /d' \
+		| awk '
+			/^    with:$/ { pending = $0; next }
+			pending {
+				if (/^      /) {
+					print pending
+					pending = ""
+					print
+					next
+				}
+				pending = ""
+				print
+				next
+			}
+			{ print }
+		'
+	return 0
+}
+
+# _classify_workflow <workflow-file> <canonical-template> <reusable-file> <target-repo> <target-ref> [<canon-norm>]
 # Prints the classification string on stdout.
 # Returns 0 always; status is carried via the emitted string.
 #
 # Parameters:
 #   _wf               — path to the workflow file to classify
 #   _canon            — path to the canonical caller template
-#   _reusable_escaped — dot-escaped filename of the reusable workflow (e.g. "issue-sync-reusable\.yml")
-#                       pre-computed by caller to avoid redundant subshell per repo
+#   _reusable_file    — filename of the reusable workflow (e.g. "issue-sync-reusable.yml")
+#   _target_repo      — configured trusted reusable workflow repository
+#   _target_ref       — configured trusted reusable workflow ref, without leading @
 #   _canon_norm_pre   — optional pre-computed normalised form of the canonical template
 #                       (loop-invariant optimisation; skip the inner sed call when provided)
 _classify_workflow() {
 	local _wf="$1"
 	local _canon="$2"
-	local _reusable_escaped="$3"
-	local _canon_norm_pre="${4:-}"
+	local _reusable_file="$3"
+	local _target_repo="$4"
+	local _target_ref="$5"
+	local _canon_norm_pre="${6:-}"
+	local _reusable_escaped _target_escaped
+	_reusable_escaped=$(_escape_ere "$_reusable_file")
+	_target_escaped="$(_escape_ere "$_target_repo")/\.github/workflows/${_reusable_escaped}"
 
 	if [[ ! -f "$_wf" ]]; then
 		printf 'NO-WORKFLOW\n'
@@ -211,7 +341,7 @@ _classify_workflow() {
 	# Detect caller pattern: any `uses:` line pointing at the reusable workflow.
 	# Accept any `@<ref>` variant (main, v3.9.0, a commit SHA, etc).
 	local _downstream_pattern
-	_downstream_pattern="uses:[[:space:]]*marcusquinn/aidevops/\.github/workflows/${_reusable_escaped}@"
+	_downstream_pattern="uses:[[:space:]]*${_target_escaped}@"
 	if grep -qE "$_downstream_pattern" "$_wf"; then
 		# It's a caller. Compare against canonical, normalising the @ref so that
 		# `@main` vs `@v3.9.0` doesn't count as drift (intentional pinning is OK).
@@ -219,14 +349,15 @@ _classify_workflow() {
 		# `branches: [develop]` installed by sync-workflows is not flagged as
 		# drift — the branch name reflects the downstream default, not the template.
 		local _wf_norm _canon_norm
-		# _reusable_escaped is pre-computed by caller — no subshell needed here.
-		_wf_norm=$(_normalize_wf_for_compare "$_wf" "$_reusable_escaped")
+		_wf_norm=$(_normalize_wf_for_compare "$_wf" "$_target_escaped")
 		# Use pre-computed canon_norm when available (caller hoist); fall back to
 		# computing it here so the function remains usable in isolation.
 		if [[ -n "$_canon_norm_pre" ]]; then
 			_canon_norm="$_canon_norm_pre"
 		else
-			_canon_norm=$(_normalize_wf_for_compare "$_canon" "$_reusable_escaped")
+			local _canon_rendered
+			_canon_rendered=$(_render_template_for_target "$_canon" "$_target_repo" "$_reusable_file" "$_target_ref")
+			_canon_norm=$(_normalize_wf_text_for_compare "$_canon_rendered" "$_target_escaped")
 		fi
 
 		if [[ "$_wf_norm" == "$_canon_norm" ]]; then
@@ -291,8 +422,8 @@ _render_row_human() {
 	if [[ -t 1 ]]; then
 		_colour_reset=$'\e[0m'
 		case "$_class" in
-		CURRENT/CALLER | CURRENT/SELF-CALLER) _colour=$'\e[32m' ;; # green
-		DRIFTED/CALLER) _colour=$'\e[33m' ;;                      # yellow
+		CURRENT/CALLER | CURRENT/SELF-CALLER | CURRENT/REUSABLE) _colour=$'\e[32m' ;; # green
+		DRIFTED/CALLER | DRIFTED/REUSABLE) _colour=$'\e[33m' ;;                       # yellow
 		NEEDS-MIGRATION) _colour=$'\e[31m' ;;                     # red
 		NO-WORKFLOW | LOCAL-ONLY) _colour=$'\e[90m' ;;            # grey
 		NO-TEMPLATE) _colour=$'\e[35m' ;;                         # magenta
@@ -392,14 +523,37 @@ _parse_args() {
 # Side-effects: prints a classification line; caller updates counters.
 #
 # Emits: class\tnote
-# _classify_row <path> <local_only_flag> <canonical> <reusable_escaped> <workflow_file> [<canon_norm>]
-_classify_row() {
+# _classify_reusable_workflow <repo-path> <canonical-reusable> <reusable-file>
+_classify_reusable_workflow() {
 	local _path="$1"
-	local _local_only_flag="$2"
-	local _canonical="$3"
-	local _reusable_escaped="$4"
-	local _workflow_file="$5"
-	local _canon_norm="${6:-}"
+	local _canonical_reusable="$2"
+	local _reusable_file="$3"
+	local _wf="$_path/.github/workflows/${_reusable_file}"
+	if [[ ! -f "$_wf" ]]; then
+		printf 'NO-WORKFLOW\treusable workflow not present for configured reusable repo\n'
+		return 0
+	fi
+	if [[ -z "$_canonical_reusable" ]]; then
+		printf 'NO-TEMPLATE\tcanonical reusable workflow missing — update check deferred\n'
+		return 0
+	fi
+	if diff -q "$_canonical_reusable" "$_wf" >/dev/null 2>&1; then
+		printf 'CURRENT/REUSABLE\treusable workflow content matches aidevops baseline\n'
+	else
+		printf 'DRIFTED/REUSABLE\torg-owned reusable workflow differs; review/update from aidevops baseline\n'
+	fi
+	return 0
+}
+
+# _classify_row <slug> <path> <local_only_flag> <canonical> <reusable_file> <workflow_file> [<canon_norm>]
+_classify_row() {
+	local _slug="$1"
+	local _path="$2"
+	local _local_only_flag="$3"
+	local _canonical="$4"
+	local _reusable_file="$5"
+	local _workflow_file="$6"
+	local _canon_norm="${7:-}"
 
 	if [[ "$_local_only_flag" == "true" ]]; then
 		printf 'LOCAL-ONLY\t\n'
@@ -412,6 +566,16 @@ _classify_row() {
 	fi
 
 	local _wf="$_path/.github/workflows/${_workflow_file}"
+	local _target_repo _target_ref
+	_target_repo=$(_workflow_reusable_repo_for_slug "$_slug")
+	_target_ref=$(_workflow_reusable_ref_for_slug "$_slug")
+	if [[ "$_slug" == "$_target_repo" ]]; then
+		local _canonical_reusable
+		_canonical_reusable=$(_resolve_canonical_reusable "$_reusable_file") || _canonical_reusable=""
+		_classify_reusable_workflow "$_path" "$_canonical_reusable" "$_reusable_file"
+		return 0
+	fi
+
 	if [[ -z "$_canonical" ]]; then
 		if [[ -f "$_wf" ]]; then
 			printf 'NO-TEMPLATE\tcanonical template missing — classification deferred\n'
@@ -422,7 +586,7 @@ _classify_row() {
 	fi
 
 	local _class
-	_class=$(_classify_workflow "$_wf" "$_canonical" "$_reusable_escaped" "$_canon_norm")
+	_class=$(_classify_workflow "$_wf" "$_canonical" "$_reusable_file" "$_target_repo" "$_target_ref" "$_canon_norm")
 	local _note=""
 	case "$_class" in
 	NEEDS-MIGRATION)
@@ -492,18 +656,9 @@ _process_rows() {
 
 		local _canonical
 		_canonical=$(_resolve_wf_canonical "$_template_file")
-		# Pre-compute once per workflow (loop-invariant); avoids a subshell per repo.
-		local _reusable_escaped
-		_reusable_escaped=$(printf '%s' "$_reusable_file" | sed 's/\./\\./g')
-		# Pre-compute normalised canonical content once per workflow type (not once per
-		# repo). Passes _canon_norm to _classify_row → _classify_workflow, activating
-		# the pre-computed path at _classify_workflow:193-194 and skipping the per-repo
-		# _normalize_wf_for_compare subshell. Guard for empty _canonical (template not
-		# found) — _classify_row handles that path; _canon_norm is not needed there.
+		# Canonical normalisation now depends on the configured reusable repo/ref for
+		# each slug, so it cannot be safely hoisted per workflow type.
 		local _canon_norm=""
-		if [[ -n "$_canonical" ]]; then
-			_canon_norm=$(_normalize_wf_for_compare "$_canonical" "$_reusable_escaped")
-		fi
 
 		local _path _local_only_flag _slug
 		while IFS=$'\t' read -r _path _local_only_flag _slug; do
@@ -516,15 +671,15 @@ _process_rows() {
 
 			local _class _note
 			IFS=$'\t' read -r _class _note < <(_classify_row \
-				"$_path" "$_local_only_flag" "$_canonical" \
-				"$_reusable_escaped" "$_workflow_file" "$_canon_norm")
+				"$_slug" "$_path" "$_local_only_flag" "$_canonical" \
+				"$_reusable_file" "$_workflow_file" "$_canon_norm")
 
 			case "$_class" in
 			LOCAL-ONLY) _local_only=$((_local_only + 1)) ;;
 			NO-WORKFLOW) _no_wf=$((_no_wf + 1)) ;;
 			NO-TEMPLATE) _no_template=$((_no_template + 1)) ;;
-			CURRENT/CALLER | CURRENT/SELF-CALLER) _current=$((_current + 1)) ;;
-			DRIFTED/CALLER)
+			CURRENT/CALLER | CURRENT/SELF-CALLER | CURRENT/REUSABLE) _current=$((_current + 1)) ;;
+			DRIFTED/CALLER | DRIFTED/REUSABLE)
 				_drifted=$((_drifted + 1)); _any_failure=1
 				((_verbose == 1)) && [[ "$_mode" == "$_MODE_HUMAN" ]] && _note="see diff below"
 				;;
@@ -538,6 +693,10 @@ _process_rows() {
 				_render_row_human "$_label" "$_path" "$_class" "$_note" "$_workflow_name"
 				if ((_verbose == 1)) && [[ "$_class" == "DRIFTED/CALLER" ]] && [[ -n "$_canonical" ]]; then
 					echo ""; _diff_summary "$_path/.github/workflows/${_workflow_file}" "$_canonical"; echo ""
+				elif ((_verbose == 1)) && [[ "$_class" == "DRIFTED/REUSABLE" ]]; then
+					local _canonical_reusable
+					_canonical_reusable=$(_resolve_canonical_reusable "$_reusable_file") || _canonical_reusable=""
+					[[ -n "$_canonical_reusable" ]] && { echo ""; _diff_summary "$_path/.github/workflows/${_reusable_file}" "$_canonical_reusable"; echo ""; }
 				fi
 			fi
 		done <<<"$_rows"
