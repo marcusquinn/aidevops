@@ -18,7 +18,7 @@ spec.loader.exec_module(git_safety_guard)
 class TestCanonicalBranchSwitchDash(unittest.TestCase):
     """Protect canonical checkouts from ``git switch -`` bypasses."""
 
-    def _patch_canonical_repo(self, previous_branch):
+    def _patch_canonical_repo(self, previous_branch: str) -> mock.MagicMock:
         """Patch repository helpers and return the authorization mock."""
         patchers = [
             mock.patch.object(git_safety_guard.os, "getcwd", return_value="/repo"),
