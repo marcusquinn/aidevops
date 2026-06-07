@@ -7480,21 +7480,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-05-28T00:10:12Z",
-      "hash": "913a7e9699363aa2a7a28d3691767ab3f521662c",
-      "passes": 143,
+      "at": "2026-06-07T00:57:37Z",
+      "hash": "0a02a953d28e96b4435c86bff72e63f1e976c58f",
+      "passes": 144,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-06-06T14:49:22Z",
-      "hash": "ec9ce34e6fc96109ae05ac51761529ae42597898",
-      "passes": 214,
+      "at": "2026-06-07T00:57:47Z",
+      "hash": "dd9fab445a58408b165551df5f0bb2cee7357f8f",
+      "passes": 215,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-06-06T14:49:22Z",
-      "hash": "1f4814cdd1a35ea8d742669d6cde4d07d59e876e",
-      "passes": 210,
+      "at": "2026-06-07T00:58:50Z",
+      "hash": "cc4059f002d5d385a20193a735ad975cd0046d6a",
+      "passes": 211,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7696,10 +7696,10 @@
       "passes": 5
     },
     ".agents/scripts/pulse-diagnose-helper.sh": {
-      "hash": "afe56efeb38eb2333a62822f677820e294aac5b0",
-      "at": "2026-05-13T12:55:47Z",
+      "hash": "d10f257d29187b79038a9f78edd4a5c404e4620c",
+      "at": "2026-06-06T23:43:16Z",
       "pr": 20414,
-      "passes": 8
+      "passes": 9
     },
     ".agents/scripts/pulse-routines.sh": {
       "hash": "8cd1496ba47e9d9aab51c70d25d0c091fbb35c4d",
