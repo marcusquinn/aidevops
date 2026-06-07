@@ -121,12 +121,79 @@ _prrts_thread_has_marker() {
 	return $?
 }
 
+_prrts_thread_author_login() {
+	local thread_id="$1"
+	local response="" login="" rc=0
+	[[ -n "$thread_id" ]] || return 1
+
+	# shellcheck disable=SC2016
+	response=$(gh api graphql \
+		-F thread="$thread_id" -f query='
+			query($thread: ID!) {
+				node(id: $thread) {
+					... on PullRequestReviewThread {
+						comments(first: 1) { nodes { author { login } } }
+					}
+				}
+			}
+		' 2>/dev/null) || rc=$?
+	if [[ "$rc" -ne 0 ]]; then
+		_prrts_log "reply: author lookup failed for thread ${thread_id} (rc=${rc})"
+		return 1
+	fi
+	login=$(printf '%s' "$response" | jq -r '.data.node.comments.nodes[0].author.login // ""' 2>/dev/null) || login=""
+	if [[ -z "$login" || "$login" == "null" ]]; then
+		_prrts_log "reply: author login missing for thread ${thread_id}"
+		return 1
+	fi
+	printf '%s\n' "$login"
+	return 0
+}
+
+_prrts_body_content_starts_with_mention() {
+	local body="$1"
+	local author_login="$2"
+	local mention="@${author_login}"
+	local line="" next_char=""
+
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		if [[ -z "$line" ]]; then
+			continue
+		fi
+		if [[ "$line" == "<!-- "*" -->" ]]; then
+			continue
+		fi
+		if [[ "${line:0:${#mention}}" != "$mention" ]]; then
+			return 1
+		fi
+		next_char="${line:${#mention}:1}"
+		[[ -z "$next_char" || ! "$next_char" =~ [[:alnum:]_-] ]]
+		return $?
+	done <<<"$body"
+	return 1
+}
+
+_prrts_body_with_author_mention() {
+	local body="$1"
+	local author_login="$2"
+	[[ -n "$body" && -n "$author_login" ]] || {
+		printf '%s' "$body"
+		return 0
+	}
+	if _prrts_body_content_starts_with_mention "$body" "$author_login"; then
+		printf '%s' "$body"
+		return 0
+	fi
+	printf '@%s %s' "$author_login" "$body"
+	return 0
+}
+
 cmd_reply() {
 	local repo_slug="$1"
 	local thread_id="$2"
 	local body_file="$3"
 	local marker="${4:-}"
-	local body="" dry_run="${PR_REVIEW_THREAD_RESPONSE_DRY_RUN:-false}"
+	local body="" dry_run="${PR_REVIEW_THREAD_RESPONSE_DRY_RUN:-false}" author_login=""
 
 	[[ -n "$repo_slug" && -n "$thread_id" && -n "$body_file" && -f "$body_file" ]] || {
 		_prrts_usage >&2
@@ -144,6 +211,11 @@ cmd_reply() {
 		return 0
 	fi
 	_prrts_graphql_rate_limit_ok || return 1
+	if author_login="$(_prrts_thread_author_login "$thread_id")"; then
+		body="$(_prrts_body_with_author_mention "$body" "$author_login")"
+	else
+		_prrts_log "reply: posting without author mention for ${repo_slug} thread ${thread_id}"
+	fi
 
 	# shellcheck disable=SC2016
 	gh api graphql \
