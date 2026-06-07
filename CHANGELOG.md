@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.27] - 2026-06-07
+
+### Changed
+
+- use gh auth fallback for repo-sync (#24510)
+
 ## [3.20.26] - 2026-06-07
 
 ### Changed
