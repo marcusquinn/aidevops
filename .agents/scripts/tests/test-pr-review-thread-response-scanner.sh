@@ -27,15 +27,7 @@ print_result() {
 	return 0
 }
 
-setup_test_env() {
-	unset STUB_PR_LIST STUB_THREADS_MODE
-	TEST_ROOT="$(mktemp -d -t prrts.XXXXXX)"
-	export HOME="${TEST_ROOT}/home"
-	export LOGFILE="${TEST_ROOT}/scanner.log"
-	export AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR="${TEST_ROOT}/state"
-	export HEADLESS_LOG="${TEST_ROOT}/headless.log"
-	export HEADLESS_PROMPT_CAPTURE="${TEST_ROOT}/prompt.md"
-	mkdir -p "${HOME}" "${TEST_ROOT}/bin" "${TEST_ROOT}/repo" "${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}"
+write_fake_gh_stub() {
 	cat >"${TEST_ROOT}/bin/gh" <<'GH_STUB'
 #!/usr/bin/env bash
 if [[ "$1" == "api" && "${2:-}" == "rate_limit" ]]; then
@@ -84,6 +76,9 @@ if [[ "$1" == "api" && "${2:-}" == "graphql" ]]; then
 	none)
 		printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}\n'
 		;;
+	human)
+		printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"THREAD_HUMAN","isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"maintainer"},"path":"script.sh","line":12,"url":"https://example.invalid/human","updatedAt":"2026-06-03T00:00:00Z"}]}},{"id":"THREAD_BOT","isResolved":false,"isOutdated":false,"comments":{"nodes":[{"author":{"login":"coderabbitai[bot]"},"path":"bot.sh","line":3,"url":"https://example.invalid/bot","updatedAt":"2026-06-03T00:00:00Z"}]}}]}}}}}'
+		;;
 	outdated)
 		printf '%s\n' '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[{"id":"THREAD_OLD","isResolved":false,"isOutdated":true,"comments":{"nodes":[{"author":{"login":"coderabbitai[bot]"},"path":"old.sh","line":7,"url":"https://example.invalid/outdated","updatedAt":"2026-06-03T00:00:00Z"}]}}]}}}}}'
 		;;
@@ -97,6 +92,19 @@ printf '[]\n'
 exit 0
 GH_STUB
 	chmod +x "${TEST_ROOT}/bin/gh"
+	return 0
+}
+
+setup_test_env() {
+	unset STUB_PR_LIST STUB_THREADS_MODE
+	TEST_ROOT="$(mktemp -d -t prrts.XXXXXX)"
+	export HOME="${TEST_ROOT}/home"
+	export LOGFILE="${TEST_ROOT}/scanner.log"
+	export AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR="${TEST_ROOT}/state"
+	export HEADLESS_LOG="${TEST_ROOT}/headless.log"
+	export HEADLESS_PROMPT_CAPTURE="${TEST_ROOT}/prompt.md"
+	mkdir -p "${HOME}" "${TEST_ROOT}/bin" "${TEST_ROOT}/repo" "${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}"
+	write_fake_gh_stub
 	cat >"${TEST_ROOT}/headless-runtime-helper.sh" <<'HEADLESS_STUB'
 #!/usr/bin/env bash
 prompt_file=""
@@ -189,6 +197,34 @@ test_scan_includes_outdated_unresolved_threads() {
 	return 0
 }
 
+test_scan_pr_excludes_human_threads_by_default() {
+	setup_test_env
+	export STUB_THREADS_MODE="human"
+	local output=""
+	output="$($SCANNER scan-pr owner/repo 1)"
+	if [[ "$output" == *"THREAD_BOT"* && "$output" != *"THREAD_HUMAN"* ]]; then
+		print_result "scan-pr keeps human review threads excluded by default" 0
+	else
+		print_result "scan-pr keeps human review threads excluded by default" 1 "output=${output}"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_scan_pr_can_include_human_threads_with_opt_in() {
+	setup_test_env
+	export STUB_THREADS_MODE="human"
+	local output=""
+	output="$(PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN=true $SCANNER scan-pr owner/repo 1)"
+	if [[ "$output" == *"THREAD_HUMAN"* && "$output" == *"THREAD_BOT"* && "$output" == *$'1\t2\t'* ]]; then
+		print_result "scan-pr includes human review threads only with opt-in" 0
+	else
+		print_result "scan-pr includes human review threads only with opt-in" 1 "output=${output}"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_dispatch_launches_worker_and_writes_state() {
 	setup_test_env
 	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
@@ -198,6 +234,21 @@ test_dispatch_launches_worker_and_writes_state() {
 		print_result "dispatch launches bounded worker and writes state" 0
 	else
 		print_result "dispatch launches bounded worker and writes state" 1 "headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), state=${state_file}"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_pr_launches_targeted_worker_with_human_opt_in() {
+	setup_test_env
+	export STUB_THREADS_MODE="human"
+	PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN=true $SCANNER dispatch-pr owner/repo "${TEST_ROOT}/repo" 1
+	wait_for_headless_log || true
+	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	if [[ -s "$HEADLESS_LOG" && -f "$state_file" ]] && grep -q 'Target: PR #1 in owner/repo' "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null; then
+		print_result "dispatch-pr launches bounded targeted worker with human opt-in" 0
+	else
+		print_result "dispatch-pr launches bounded targeted worker with human opt-in" 1 "headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), state=${state_file}"
 	fi
 	teardown_test_env
 	return 0
@@ -322,7 +373,10 @@ main() {
 	test_scan_finds_unresolved_bot_thread
 	test_scan_skips_draft_prs
 	test_scan_includes_outdated_unresolved_threads
+	test_scan_pr_excludes_human_threads_by_default
+	test_scan_pr_can_include_human_threads_with_opt_in
 	test_dispatch_launches_worker_and_writes_state
+	test_dispatch_pr_launches_targeted_worker_with_human_opt_in
 	test_dispatch_is_idempotent_for_same_fingerprint
 	test_reply_and_resolve_use_graphql_mutations
 	test_reply_auto_prepends_thread_author

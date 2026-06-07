@@ -94,6 +94,39 @@ _pm_issue_api() {
 	return 0
 }
 
+_pulse_merge_repo_path_for_slug() {
+	local repo_slug="$1"
+	local repos_json="${AIDEVOPS_REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	local repo_path=""
+	[[ -n "$repo_slug" && -f "$repos_json" ]] || return 1
+	repo_path=$(jq -r --arg slug "$repo_slug" '
+		.initialized_repos[]? | select(.slug == $slug) | .path // empty
+	' "$repos_json" 2>/dev/null | sed -n '1p') || repo_path=""
+	[[ -n "$repo_path" ]] || return 1
+	printf '%s\n' "${repo_path/#\~/$HOME}"
+	return 0
+}
+
+_pulse_merge_maybe_dispatch_review_thread_remediation() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local merge_output="$3"
+	local repo_path="" scanner="${_PULSE_MERGE_DIR}/pr-review-thread-response-scanner.sh"
+
+	[[ "$merge_output" == *"A conversation must be resolved"* ]] || return 0
+	if [[ ! -x "$scanner" ]]; then
+		echo "[pulse-merge] review-thread remediation skipped for PR #${pr_number} in ${repo_slug}: scanner missing or not executable (${scanner})" >>"$LOGFILE"
+		return 0
+	fi
+	if ! repo_path="$(_pulse_merge_repo_path_for_slug "$repo_slug")"; then
+		echo "[pulse-merge] review-thread remediation skipped for PR #${pr_number} in ${repo_slug}: repo path not found in configured repos" >>"$LOGFILE"
+		return 0
+	fi
+	PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN=true "$scanner" dispatch-pr "$repo_slug" "$repo_path" "$pr_number" >>"$LOGFILE" 2>&1 || true
+	echo "[pulse-merge] review-thread remediation queued for PR #${pr_number} in ${repo_slug} after unresolved conversation merge blocker" >>"$LOGFILE"
+	return 0
+}
+
 # Standard PR JSON fields consumed by _process_single_ready_pr. Keep every
 # caller that builds a PR object on this helper so draft/label/staleness
 # metadata cannot drift between list-based and webhook-triggered merge paths.
@@ -1037,6 +1070,7 @@ _process_single_ready_pr() {
 		return $?
 	else
 		echo "[pulse-wrapper] Deterministic merge: FAILED PR #${pr_number} in ${repo_slug}: ${merge_output}" >>"$LOGFILE"
+		_pulse_merge_maybe_dispatch_review_thread_remediation "$pr_number" "$repo_slug" "$merge_output"
 		return 3
 	fi
 }
