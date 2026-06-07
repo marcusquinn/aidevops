@@ -1622,9 +1622,9 @@
       "pr": 14943
     },
     ".agents/reference/agent-routing.md": {
-      "at": "2026-05-25T15:39:05Z",
-      "hash": "3252f82e0a5a59e0e5d3e1f2e1220d2cfe297783",
-      "passes": 5,
+      "at": "2026-06-07T08:47:29Z",
+      "hash": "c8b70a5e88292ee8eca0ed90b6336c7b8a16e801",
+      "passes": 6,
       "pr": 14650
     },
     ".agents/reference/attribution-monitoring.md": {
@@ -2054,9 +2054,9 @@
       "pr": 13117
     },
     ".agents/scripts/commands/readme.md": {
-      "at": "2026-04-04T14:54:13Z",
-      "hash": "649a3483e9e073b8f1f1d2cffbe07b8575f79a92",
-      "passes": 1,
+      "at": "2026-06-07T08:48:24Z",
+      "hash": "1a0e7a6a61d9f4c821a30b16228e1aee5e04507e",
+      "passes": 2,
       "pr": 17278
     },
     ".agents/scripts/commands/recall.md": {
@@ -2310,9 +2310,9 @@
       "pr": 18707
     },
     ".agents/scripts/interactive-session-helper.sh": {
-      "at": "2026-05-09T23:10:09Z",
-      "hash": "f616c81c164ca69e1231c569363ec2f731627dca",
-      "passes": 15,
+      "at": "2026-06-07T08:48:45Z",
+      "hash": "f1baa5c288a505b1f5befda74d8ad6db049ae1bc",
+      "passes": 16,
       "pr": 18843
     },
     ".agents/scripts/issue-sync-helper.sh": {
@@ -2442,9 +2442,9 @@
       "pr": 18690
     },
     ".agents/scripts/pulse-merge.sh": {
-      "at": "2026-06-06T14:45:51Z",
-      "hash": "d2f78d29c30a804363fd58b9376ae2936aef6c0b",
-      "passes": 49,
+      "at": "2026-06-07T08:49:09Z",
+      "hash": "d4a875d6a9204f7f063ddc82ba36ba8e2a3ec5f9",
+      "passes": 50,
       "pr": 18829
     },
     ".agents/scripts/pulse-prefetch.sh": {
@@ -2490,15 +2490,15 @@
       "pr": 19009
     },
     ".agents/scripts/quality-feedback-helper.sh": {
-      "at": "2026-04-14T21:13:01Z",
-      "hash": "257a7f0e60d5b7b6ce51b93f4e150b0fb2babff7",
-      "passes": 3,
+      "at": "2026-06-07T08:49:39Z",
+      "hash": "acd5265849903ce265a2d8537b8319f65d4c4f38",
+      "passes": 4,
       "pr": 19000
     },
     ".agents/scripts/quality-feedback-issues-lib.sh": {
-      "at": "2026-05-04T14:42:44Z",
-      "hash": "a14158f53c6f07685f7f83d4686732b3faf6d337",
-      "passes": 6,
+      "at": "2026-06-07T08:49:45Z",
+      "hash": "9f6f499c54a51c09f0e67517036722d32e3ae39d",
+      "passes": 7,
       "pr": 19004
     },
     ".agents/scripts/routine-log-helper.sh": {
@@ -2550,15 +2550,15 @@
       "pr": 18847
     },
     ".agents/scripts/stats-functions.sh": {
-      "at": "2026-04-15T00:41:03Z",
-      "hash": "6144ef3ed8663dfddb977ab01d686e3fcf22bf7f",
-      "passes": 10,
+      "at": "2026-06-07T08:50:08Z",
+      "hash": "029090a2779b851f071194393798c31c85b4a43d",
+      "passes": 11,
       "pr": 18808
     },
     ".agents/scripts/stats-quality-sweep.sh": {
-      "at": "2026-05-03T12:51:59Z",
-      "hash": "0d90d976d437d7e2e75b4abc1b36be03d7050c76",
-      "passes": 9,
+      "at": "2026-06-07T08:50:26Z",
+      "hash": "b166277c1ec05f2a73874627c8d4e834b923604a",
+      "passes": 10,
       "pr": 18810
     },
     ".agents/scripts/tabby-helper.sh": {
@@ -7348,9 +7348,9 @@
       "pr": 11789
     },
     ".agents/workflows/readme-create-update.md": {
-      "at": "2026-03-28T16:40:10Z",
-      "hash": "0b1c731168591b51353e46c85c9fdcacfac2daec",
-      "passes": 1,
+      "at": "2026-06-07T10:08:54Z",
+      "hash": "d89d83a6a9fa4196e535218ec4612339cc64da4f",
+      "passes": 2,
       "pr": 12038
     },
     ".agents/workflows/release.md": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-06-07T00:57:47Z",
-      "hash": "dd9fab445a58408b165551df5f0bb2cee7357f8f",
-      "passes": 215,
+      "at": "2026-06-07T10:09:04Z",
+      "hash": "43660dba4341bfcaa89c2b3e2295bd525cc7d79a",
+      "passes": 216,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-06-07T00:58:50Z",
-      "hash": "cc4059f002d5d385a20193a735ad975cd0046d6a",
-      "passes": 211,
+      "at": "2026-06-07T10:09:05Z",
+      "hash": "ca65d1d25005d9334d9302a5c1b140707918bc02",
+      "passes": 212,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
