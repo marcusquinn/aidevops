@@ -29,6 +29,10 @@ if [[ "$1" == "api" && "$2" == repos/*/collaborators/*/permission ]]; then
     printf '%s\n' "write"
     exit 0
   fi
+  if [[ "$mode" == "routine-maintain" ]]; then
+    printf '%s\n' "maintain"
+    exit 0
+  fi
   printf '%s\n' '{"message":"Must have push access"}' >&2
   exit 1
 fi
@@ -77,10 +81,22 @@ else
 	check 0 "repo owner may manage state"
 fi
 
+if aidevops_can_run_repo_routines "tester/project"; then
+	check 1 "repo owner may run routines"
+else
+	check 0 "repo owner may run routines"
+fi
+
 if aidevops_can_manage_repo_issue_state "other/project"; then
 	check 0 "external non-maintainer is blocked"
 else
 	check 1 "external non-maintainer is blocked"
+fi
+
+if aidevops_can_run_repo_routines "other/project"; then
+	check 0 "external non-maintainer routine is blocked"
+else
+	check 1 "external non-maintainer routine is blocked"
 fi
 
 printf 'managed\n' >"$mode_file"
@@ -88,6 +104,19 @@ if aidevops_can_manage_repo_issue_state "other/project"; then
 	check 1 "write collaborator may manage state"
 else
 	check 0 "write collaborator may manage state"
+fi
+
+if aidevops_can_run_repo_routines "other/project"; then
+	check 0 "write collaborator routine is blocked"
+else
+	check 1 "write collaborator routine is blocked"
+fi
+
+printf 'routine-maintain\n' >"$mode_file"
+if aidevops_can_run_repo_routines "other/project"; then
+	check 1 "maintain collaborator may run routines"
+else
+	check 0 "maintain collaborator may run routines"
 fi
 
 printf 'external\n' >"$mode_file"

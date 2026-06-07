@@ -57,6 +57,9 @@ fi
 STATS_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 # Phase 1: shared utility functions (slug validation, runner role)
+# shellcheck source=shared-repo-state-guard.sh
+source "${STATS_SCRIPT_DIR}/shared-repo-state-guard.sh"
+
 # shellcheck source=stats-shared.sh
 source "${STATS_SCRIPT_DIR}/stats-shared.sh"
 
