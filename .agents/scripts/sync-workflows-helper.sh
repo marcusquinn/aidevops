@@ -235,7 +235,7 @@ _render_template_with_target() {
 	_repo_escaped=$(_escape_sed_replacement "$_repo")
 	_ref_escaped=$(_escape_sed_replacement "${_ref#@}")
 	# Template ships with `marcusquinn/aidevops@main` by default; rewrite both.
-	sed -E 's|(uses:[[:space:]]*)marcusquinn/aidevops(/.github/workflows/[^@]+)@[^[:space:]]+|\1'"$_repo_escaped"'\2@'"$_ref_escaped"'|' "$_template"
+	sed -E 's|(uses:[[:space:]]*)marcusquinn/aidevops(/\.github/workflows/[^@]+)@[^[:space:]]+|\1'"$_repo_escaped"'\2@'"$_ref_escaped"'|' "$_template"
 	return 0
 }
 
@@ -320,7 +320,7 @@ _inject_runner_in_content() {
 	else
 		# No with: block — inject one after the uses: line.
 		printf '%s\n' "$_content" | \
-			sed -E "s|^(    uses:[[:space:]]*[^[:space:]]+/.github/workflows/.+)$|\\1\n    with:\n      runner: ${_runner_escaped}|"
+			sed -E "s|^(    uses:[[:space:]]*[^[:space:]]+/\.github/workflows/.+)$|\\1\n    with:\n      runner: ${_runner_escaped}|"
 	fi
 	return 0
 }
