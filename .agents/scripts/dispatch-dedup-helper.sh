@@ -901,6 +901,7 @@ check_worker_branch_orphan_loop() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local branch_name="$3"
+	local todo_file="${4:-}"
 
 	[[ -n "$issue_number" && -n "$repo_slug" && -n "$branch_name" ]] || return 1
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
@@ -912,10 +913,15 @@ check_worker_branch_orphan_loop() {
 	[[ "$window_s" =~ ^[0-9]+$ ]] || window_s=7200
 	[[ "$threshold" -gt 0 && "$window_s" -gt 0 ]] || return 1
 
+	if [[ -n "$todo_file" ]] && check_worker_orphan_remote_children "$issue_number" "$repo_slug" "$todo_file"; then
+		return 0
+	fi
+
 	# Fetch all comment pages. The issue-comments endpoint is oldest-first and may
 	# hold orphan markers beyond the first 30/100 results on noisy issues. Keep the
 	# POST endpoint separate because --paginate --slurp returns page arrays for jq.
-	local comments_post_endpoint="repos/${repo_slug}/issues/${issue_number}/comments"
+	local comments_issue_endpoint="repos/${repo_slug}/issues/${issue_number}"
+	local comments_post_endpoint="${comments_issue_endpoint}/comments"
 	local comments_endpoint="${comments_post_endpoint}?per_page=100"
 	local comments_json
 	comments_json=$(gh api --paginate --slurp "$comments_endpoint" 2>/dev/null) || return 1
@@ -977,6 +983,90 @@ check_worker_branch_orphan_loop() {
 
 	printf 'WORKER_BRANCH_ORPHAN_LOOP_BLOCKED (issue=%s repo=%s branch=%s count=%s threshold=%s window_s=%s latest=%s pr=%s)\n' \
 		"$issue_number" "$repo_slug" "$branch_name" "$count" "$threshold" "$window_s" "${latest_iso:-unknown}" "$pr_hint"
+	return 0
+}
+
+#######################################
+# Hold orphan redispatch when remote child issues exist but local TODO lacks them.
+#
+# This is intentionally conservative: it does not import issue bodies or trust
+# remote relationships. It only detects the dangerous retry state from GH#24565
+# and posts one quarantine diagnostic so maintainers can reconcile or import the
+# canonical child set before a retry allocates replacement task IDs.
+#
+# Args: $1 = parent issue number, $2 = repo slug, $3 = TODO.md path (optional)
+# Returns: exit 0 if remote children require a hold, exit 1 otherwise.
+#######################################
+check_worker_orphan_remote_children() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local todo_file="${3:-TODO.md}"
+
+	[[ -n "$issue_number" && -n "$repo_slug" ]] || return 1
+	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
+
+	local comments_post_endpoint="repos/${repo_slug}/issues/${issue_number}/comments"
+	local comments_endpoint="${comments_post_endpoint}?per_page=100"
+	local comments_json=""
+	comments_json=$(gh api --paginate --slurp "$comments_endpoint" 2>/dev/null) || return 1
+	[[ -n "$comments_json" ]] || return 1
+
+	local orphan_count="0"
+	orphan_count=$(printf '%s' "$comments_json" |
+		jq -r '[.[][] | (.body // empty) | select(contains("WORKER_BRANCH_ORPHAN"))] | length' 2>/dev/null) || orphan_count="0"
+	[[ "$orphan_count" =~ ^[0-9]+$ ]] || orphan_count=0
+	[[ "$orphan_count" -gt 0 ]] || return 1
+
+	local children_json=""
+	children_json=$(gh issue list --repo "$repo_slug" --state open \
+		--search "#${issue_number} in:body" \
+		--json number,title,body,labels --limit 50 2>/dev/null) || return 1
+	[[ -n "$children_json" ]] || return 1
+
+	local candidate_rows=""
+	candidate_rows=$(printf '%s' "$children_json" |
+		jq -r --arg parent "${issue_number}" '
+			.[]
+			| select((.number | tostring) != $parent)
+			| select(((.body // empty) + "\n" + (.title // empty))
+				| test("(#|GH#|issue[[:space:]]+#?)" + $parent + "\\b"; "i"))
+			| [.number, (.title // empty)] | @tsv
+		' 2>/dev/null) || candidate_rows=""
+	[[ -n "$candidate_rows" ]] || return 1
+
+	local missing_count=0
+	local candidate_count=0
+	local missing_lines=""
+	local child_number="" child_title=""
+	while IFS=$'\t' read -r child_number child_title; do
+		[[ "$child_number" =~ ^[0-9]+$ ]] || continue
+		candidate_count=$((candidate_count + 1))
+		if [[ ! -f "$todo_file" ]] || ! grep -qE "ref:GH#${child_number}([^0-9]|$)" "$todo_file" 2>/dev/null; then
+			missing_count=$((missing_count + 1))
+			missing_lines="${missing_lines}- #${child_number}: ${child_title}\n"
+		fi
+	done <<<"$candidate_rows"
+
+	[[ "$candidate_count" -gt 0 && "$missing_count" -gt 0 ]] || return 1
+
+	local existing_block="0"
+	existing_block=$(printf '%s' "$comments_json" |
+		jq -r '[.[][] | (.body // empty) | select(contains("worker-orphan-remote-children:blocked"))] | length' 2>/dev/null) || existing_block="0"
+	[[ "$existing_block" =~ ^[0-9]+$ ]] || existing_block=0
+
+	if [[ "$existing_block" -eq 0 ]]; then
+		local diag=""
+		# shellcheck disable=SC2016 # Backticks are literal Markdown in this printf template.
+		diag=$(printf '<!-- ops:start -->\n<!-- worker-orphan-remote-children:blocked issue=%s missing=%s -->\n## Dispatch held: orphaned remote child issues need reconciliation\n\nThis parent has `WORKER_BRANCH_ORPHAN` telemetry and open child-like issues that reference #%s, but local TODO state does not contain `ref:GH#` entries for every candidate. Auto-dispatch is held to avoid allocating replacement task IDs and creating duplicate children.\n\nMissing local refs detected:\n%s\nNext verification:\n- Run `issue-sync pull` or manually reconcile the canonical child set.\n- Validate blocker relationships before trusting recovered issue bodies.\n- Re-run dispatch only after TODO/brief state exists or the duplicates are closed/quarantined.\n<!-- ops:end -->' \
+			"$issue_number" "$missing_count" "$issue_number" "$missing_lines")
+		gh api "$comments_post_endpoint" \
+			--method POST \
+			--field body="$diag" \
+			>/dev/null 2>&1 || true
+	fi
+
+	printf 'WORKER_BRANCH_ORPHAN_REMOTE_CHILDREN_BLOCKED (issue=%s repo=%s candidates=%s missing_local_refs=%s)\n' \
+		"$issue_number" "$repo_slug" "$candidate_count" "$missing_count"
 	return 0
 }
 
@@ -1909,8 +1999,8 @@ Usage:
                                                        t2007: cost circuit breaker (exit 0=tripped, 1=under budget)
   dispatch-dedup-helper.sh sum-issue-token-spend <issue> <slug>
                                                        t2007: aggregate token spend (returns "spent|attempts")
-  dispatch-dedup-helper.sh check-orphan-loop <issue> <slug> <branch>
-                                                       Hold repeated worker_branch_orphan loops for same branch
+  dispatch-dedup-helper.sh check-orphan-loop <issue> <slug> <branch> [todo-file]
+                                                       Hold repeated worker_branch_orphan loops or unreconciled remote children
   dispatch-dedup-helper.sh has-fix-the-fixer-label <issue> <slug>
                                                        t3077: detect the fix-the-fixer label (exit 0=labeled, 1=unlabeled).
                                                        Used by headless-runtime-helper.sh to enable verbose lifecycle,
@@ -2031,9 +2121,9 @@ main() {
 		has_open_pr "$1" "$2" "${3:-}"
 		;;
 	check-orphan-loop)
-		_require_args check-orphan-loop 3 "$#" "<issue-number> <repo-slug> <branch>" || return 1
-		local _ol_issue="$1" _ol_repo="$2" _ol_branch="$3"
-		check_worker_branch_orphan_loop "$_ol_issue" "$_ol_repo" "$_ol_branch"
+		_require_args check-orphan-loop 3 "$#" "<issue-number> <repo-slug> <branch> [todo-file]" || return 1
+		local _ol_issue="$1" _ol_repo="$2" _ol_branch="$3" _ol_todo="${4:-}"
+		check_worker_branch_orphan_loop "$_ol_issue" "$_ol_repo" "$_ol_branch" "$_ol_todo"
 		;;
 	claim)
 		_require_args claim 2 "$#" "<issue-number> <repo-slug> [runner-login]" || return 1
