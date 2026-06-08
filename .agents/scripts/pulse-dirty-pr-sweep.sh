@@ -63,6 +63,10 @@ fi
 source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
 init_log_file 2>/dev/null || true
 
+# shellcheck source=pulse-repo-meta.sh
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/pulse-repo-meta.sh" 2>/dev/null || true
+
 # t2976 / GH#21699: canonical-guard + audit logger for ephemeral worktree
 # cleanup. Defence-in-depth: even though _dps_rebase_in_ephemeral creates its
 # worktree under /tmp via mktemp (never a canonical path), an
@@ -1109,8 +1113,8 @@ dirty_pr_sweep_all_repos() {
 
 	while IFS='|' read -r repo_slug repo_path; do
 		[[ -n "$repo_slug" ]] || continue
-		if declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
-			&& ! repo_allows_pulse_write_actions "$repo_slug"; then
+		if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
+			|| ! repo_allows_pulse_write_actions "$repo_slug"; then
 			_dps_log "skipping ${repo_slug}: repo role is contributor/read-only"
 			continue
 		fi

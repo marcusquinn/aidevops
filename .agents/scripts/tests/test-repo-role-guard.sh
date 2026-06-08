@@ -143,6 +143,25 @@ else
 fi
 assert_eq "dirty PR sweep checks contributor write-action guard" "yes" "$guard_present"
 
+# Test 12: Dirty PR sweep standalone path loads the repo metadata guard.
+if grep -q "source \"\${SCRIPT_DIR}/pulse-repo-meta.sh\"" "${PARENT_DIR}/pulse-dirty-pr-sweep.sh"; then
+	guard_present="yes"
+else
+	guard_present="no"
+fi
+assert_eq "dirty PR sweep loads repo-role guard for standalone execution" "yes" "$guard_present"
+
+# Test 13: Write sweeps fail closed when the guard helper is unavailable.
+if grep -q '! declare -F repo_allows_pulse_write_actions' "${PARENT_DIR}/pulse-merge-process.sh" \
+	&& grep -q "|| ! repo_allows_pulse_write_actions \"\$repo_slug\"" "${PARENT_DIR}/pulse-merge-process.sh" \
+	&& grep -q '! declare -F repo_allows_pulse_write_actions' "${PARENT_DIR}/pulse-dirty-pr-sweep.sh" \
+	&& grep -q "|| ! repo_allows_pulse_write_actions \"\$repo_slug\"" "${PARENT_DIR}/pulse-dirty-pr-sweep.sh"; then
+	guard_present="yes"
+else
+	guard_present="no"
+fi
+assert_eq "write sweeps fail closed when repo-role guard is unavailable" "yes" "$guard_present"
+
 echo ""
 echo "Results: ${_TESTS_PASSED}/${_TESTS_RUN} passed, ${_TESTS_FAILED} failed"
 
