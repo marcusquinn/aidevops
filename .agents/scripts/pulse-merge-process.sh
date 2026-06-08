@@ -297,8 +297,8 @@ merge_ready_prs_all_repos() {
 
 	while IFS='|' read -r repo_slug repo_path; do
 		[[ -n "$repo_slug" ]] || continue
-		if declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
-			&& ! repo_allows_pulse_write_actions "$repo_slug"; then
+		if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
+			|| ! repo_allows_pulse_write_actions "$repo_slug"; then
 			echo "[pulse-wrapper] Deterministic merge pass skipped ${repo_slug}: repo role is contributor/read-only" >>"$_mr_logfile"
 			continue
 		fi
