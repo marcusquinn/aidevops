@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.34] - 2026-06-08
+
+### Changed
+
+- Maintenance: update simplification state registry
+- fix: suppress repeated FOSS dispatches (#24545)
+
+### Fixed
+
+- enforce GitHub rate-limit cooldown headers (#24548)
+
 ## [3.20.33] - 2026-06-08
 
 ### Changed
