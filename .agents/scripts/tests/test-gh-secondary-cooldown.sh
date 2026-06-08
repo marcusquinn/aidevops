@@ -150,9 +150,53 @@ test_no_jq_fallback_escapes_json_strings() {
 	return 1
 }
 
+test_header_parsers_ignore_response_body() {
+	local response_text=$'HTTP/2 200\r\nX-RateLimit-Remaining: 5\r\n\r\nX-RateLimit-Remaining: 0\nHTTP/2 429'
+	local remaining=""
+	local status=""
+
+	remaining="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-remaining")"
+	status="$(_gh_secondary_cooldown_status "$response_text")"
+	if [[ "$remaining" == "5" && "$status" == "200" ]]; then
+		printf 'PASS header parsers ignore response body lookalikes\n'
+		return 0
+	fi
+	printf 'FAIL header parsers read body lookalikes: status=%s remaining=%s\n' "$status" "$remaining"
+	return 1
+}
+
+test_timeout_temp_cleanup_when_out_mktemp_fails() {
+	reset_case
+	local leaked_file="${TMP_HOME}/leaked.err"
+	_GH_TEST_MKTEMP_CALLS=0
+	mktemp() {
+		local template="${1:-}"
+		: "$template"
+		_GH_TEST_MKTEMP_CALLS=$((_GH_TEST_MKTEMP_CALLS + 1))
+		if [[ "$_GH_TEST_MKTEMP_CALLS" -eq 1 ]]; then
+			: >"$leaked_file"
+			printf '%s\n' "$leaked_file"
+			return 0
+		fi
+		return 1
+	}
+	_gh_with_timeout read gh issue list --repo owner/repo >"${TMP_HOME}/mktemp-fail.out" 2>"$ERR_LOG"
+	local rc=$?
+	unset -f mktemp
+	unset _GH_TEST_MKTEMP_CALLS
+	if [[ "$rc" -eq 0 && ! -e "$leaked_file" ]] && grep -q 'GH issue list --repo owner/repo' "$CALL_LOG"; then
+		printf 'PASS timeout wrapper cleans partial temp file on mktemp failure\n'
+		return 0
+	fi
+	printf 'FAIL timeout wrapper leaked partial temp file or skipped command\n'
+	return 1
+}
+
 test_secondary_response_writes_cooldown
 test_header_response_writes_retry_after_cooldown
 test_active_cooldown_skips_without_gh_call
 test_override_allows_audited_call
 test_default_path_without_home_is_user_scoped
 test_no_jq_fallback_escapes_json_strings
+test_header_parsers_ignore_response_body
+test_timeout_temp_cleanup_when_out_mktemp_fails
