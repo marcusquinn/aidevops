@@ -82,6 +82,81 @@ _foss_issue_list_for_label() {
 }
 
 #######################################
+# Resolve the authenticated GitHub login for FOSS PR ownership checks.
+#
+# stdout: login, or empty when unavailable.
+# Returns: 0 always (missing auth must fail open for FOSS dispatch).
+#######################################
+_foss_current_gh_login() {
+	if [[ -n "${FOSS_CURRENT_GH_LOGIN:-}" ]]; then
+		printf '%s\n' "$FOSS_CURRENT_GH_LOGIN"
+		return 0
+	fi
+	gh api user --jq '.login // ""' 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Check whether this account already has an open PR for a FOSS issue.
+#
+# Args:
+#   $1 - repo_slug (owner/repo)
+#   $2 - issue number
+# Returns: 0 when an open PR exists, 1 otherwise.
+#######################################
+_foss_open_pr_exists_for_issue() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	local login
+	login=$(_foss_current_gh_login)
+	[[ -n "$login" ]] || return 1
+
+	local count
+	count=$(gh_pr_list --repo "$repo_slug" --state open --author "$login" \
+		--search "$issue_number" --json number --jq 'length' 2>/dev/null || printf '%s' '0')
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	[[ "$count" -gt 0 ]] && return 0
+	return 1
+}
+
+#######################################
+# Check recent FOSS worker metrics for terminal evidence or local-error backoff.
+#
+# Args:
+#   $1 - FOSS session key (foss-owner/repo-issue)
+#   $2 - mode: local|terminal
+# Returns: 0 when recent evidence exists, 1 otherwise.
+#######################################
+_foss_recent_runtime_evidence() {
+	local session_key="$1"
+	local mode="$2"
+	local metrics_file="${FOSS_RUNTIME_METRICS_FILE:-${HOME}/.aidevops/logs/headless-runtime-metrics.jsonl}"
+	local backoff_seconds="${FOSS_LOCAL_ERROR_BACKOFF_SECONDS:-3600}"
+	local terminal_seconds="${FOSS_TERMINAL_EVIDENCE_SECONDS:-604800}"
+	local window_seconds="$backoff_seconds"
+	[[ "$mode" == "terminal" ]] && window_seconds="$terminal_seconds"
+	[[ -n "$session_key" && -f "$metrics_file" ]] || return 1
+	[[ "$window_seconds" =~ ^[0-9]+$ ]] || window_seconds=3600
+
+	local matches
+	matches=$(jq -rs --arg key "$session_key" --arg mode "$mode" --arg result_field "result" \
+		--arg local_result "local_error" --arg success_result "success" --arg blocked_result "blocked" \
+		--argjson window "$window_seconds" '
+		def result_match:
+			(.[$result_field] // "") as $runtime_result
+			| if $mode == "local" then ($runtime_result == $local_result)
+			else ($runtime_result == $success_result or $runtime_result == $blocked_result)
+			end;
+		[.[] | select((.session_key // "") == $key)
+			| select(((.ts // 0) | tonumber) >= (now - $window))
+			| select(result_match)] | length
+	' "$metrics_file" 2>/dev/null || printf '%s' '0')
+	[[ "$matches" =~ ^[0-9]+$ ]] || matches=0
+	[[ "$matches" -gt 0 ]] && return 0
+	return 1
+}
+
+#######################################
 # Ensure the triage-failed label exists in the target repo.
 #
 # Uses gh label create --force (idempotent — creates if missing,
@@ -1348,6 +1423,18 @@ dispatch_foss_workers() {
 		local foss_session_key="foss-${foss_slug}-${foss_issue_num}"
 		if [[ "${foss_session_keys_seen}" == *$'\n'"${foss_session_key}"$'\n'* ]]; then
 			echo "[pulse-wrapper] FOSS dispatch skipped duplicate session key ${foss_session_key} in this cycle" >>"$LOGFILE"
+			continue
+		fi
+		if _foss_open_pr_exists_for_issue "$foss_slug" "$foss_issue_num"; then
+			echo "[pulse-wrapper] FOSS dispatch skipped ${foss_session_key}: authenticated account already has an open PR for issue #${foss_issue_num}" >>"$LOGFILE"
+			continue
+		fi
+		if _foss_recent_runtime_evidence "$foss_session_key" "terminal"; then
+			echo "[pulse-wrapper] FOSS dispatch skipped ${foss_session_key}: recent success/blocked runtime evidence already exists" >>"$LOGFILE"
+			continue
+		fi
+		if _foss_recent_runtime_evidence "$foss_session_key" "local"; then
+			echo "[pulse-wrapper] FOSS dispatch skipped ${foss_session_key}: recent local runtime failure is in backoff" >>"$LOGFILE"
 			continue
 		fi
 		foss_session_keys_seen="${foss_session_keys_seen}${foss_session_key}"$'\n'

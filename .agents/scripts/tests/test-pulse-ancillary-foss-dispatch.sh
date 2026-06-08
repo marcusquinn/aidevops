@@ -109,6 +109,29 @@ gh_issue_list() {
 	return 0
 }
 
+gh_pr_list() {
+	local author=""
+	local search=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--author)
+			author="$2"
+			shift 2
+			;;
+		--search)
+			search="$2"
+			shift 2
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
+	printf '%s|%s\n' "$author" "$search" >>"${TEST_TMP}/pr-list.log"
+	printf '%s\n' "${GH_OPEN_PR_COUNT:-0}"
+	return 0
+}
+
 sleep() {
 	return 0
 }
@@ -121,8 +144,12 @@ HEADLESS_INVOCATION_LOG="${TEST_TMP}/headless.log"
 GH_ISSUE_LIST_LABEL_LOG="${TEST_TMP}/issue-labels.log"
 HOME="${TEST_TMP}/home"
 LOGFILE="${TEST_TMP}/pulse.log"
+FOSS_CURRENT_GH_LOGIN="test-bot"
+FOSS_RUNTIME_METRICS_FILE="${TEST_TMP}/headless-runtime-metrics.jsonl"
 export HEADLESS_INVOCATION_LOG
 export GH_ISSUE_LIST_LABEL_LOG
+export FOSS_CURRENT_GH_LOGIN
+export FOSS_RUNTIME_METRICS_FILE
 
 # shellcheck source=../pulse-ancillary-dispatch.sh
 source "${SCRIPTS_DIR}/pulse-ancillary-dispatch.sh"
@@ -142,6 +169,26 @@ available_after_empty="$(FOSS_MAX_DISPATCH_PER_CYCLE=2 dispatch_foss_workers 2 "
 if ! grep -q 'FOSS dispatch skipped no issue selection for owner/project' "$LOGFILE"; then
 	fail "empty selection did not log an auditable no-work reason"
 fi
+
+GH_ISSUE_LIST_OUTPUT='42|Fix duplicate dispatch'
+GH_OPEN_PR_COUNT=1
+available_after_open_pr="$(FOSS_MAX_DISPATCH_PER_CYCLE=2 dispatch_foss_workers 2 "$repos_json")" || fail "open PR guard dispatch failed"
+[[ "$available_after_open_pr" == "2" ]] || fail "open PR guard changed available worker count"
+[[ ! -f "$HEADLESS_INVOCATION_LOG" ]] || fail "open PR guard launched a worker"
+if ! grep -q 'authenticated account already has an open PR for issue #42' "$LOGFILE"; then
+	fail "open PR guard did not log an auditable skip reason"
+fi
+GH_OPEN_PR_COUNT=0
+
+metric_ts="$(date +%s)"
+printf '{"ts":%s,"role":"worker","session_key":"foss-owner/project-42","result":"local_error"}\n' "$metric_ts" >"$FOSS_RUNTIME_METRICS_FILE"
+available_after_local_error="$(FOSS_MAX_DISPATCH_PER_CYCLE=2 dispatch_foss_workers 2 "$repos_json")" || fail "local error backoff dispatch failed"
+[[ "$available_after_local_error" == "2" ]] || fail "local error backoff changed available worker count"
+[[ ! -f "$HEADLESS_INVOCATION_LOG" ]] || fail "local error backoff launched a worker"
+if ! grep -q 'recent local runtime failure is in backoff' "$LOGFILE"; then
+	fail "local error backoff did not log an auditable skip reason"
+fi
+rm -f "$FOSS_RUNTIME_METRICS_FILE"
 
 GH_ISSUE_LIST_OUTPUT='42|Fix duplicate dispatch'
 available_output="${TEST_TMP}/available.out"
@@ -201,6 +248,8 @@ fi
 
 printf 'PASS: FOSS null issue selections are skipped\n'
 printf 'PASS: FOSS empty issue selections are logged as no work\n'
+printf 'PASS: FOSS open PR selections are skipped\n'
+printf 'PASS: FOSS recent local runtime failures are backed off\n'
 printf 'PASS: FOSS duplicate session keys are deduplicated per cycle\n'
 printf 'PASS: FOSS dispatch falls back across configured labels\n'
 printf 'PASS: FOSS repo paths expand leading tilde before worker launch\n'
