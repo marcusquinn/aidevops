@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.33] - 2026-06-08
+
+### Changed
+
+- Maintenance: mark t3595 complete (pr:#24543 completed:2026-06-08) [skip ci]
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- pin loc badge tokei install
+
 ## [3.20.32] - 2026-06-07
 
 ### Changed
