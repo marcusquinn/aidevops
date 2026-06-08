@@ -647,8 +647,8 @@ query($owner:String!,$name:String!,$number:Int!) {
 		-F owner="$owner" -F name="$repo_name" -F number="$issue_number" \
 		--jq '.data.repository.issue.blockedBy.nodes[]? | "\(.number):\(.state)"' \
 		2>/dev/null); then
-		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} native blockedBy lookup failed — skipping dispatch (GH#23932)" >>"$LOGFILE"
-		return 0
+		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} native blockedBy lookup failed — falling back to body markers (GH#24576)" >>"$LOGFILE"
+		return 1
 	fi
 
 	local rel_state="" rel_num="" state="" saw_relationship="false"
