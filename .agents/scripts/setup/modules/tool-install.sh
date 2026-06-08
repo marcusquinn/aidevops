@@ -1287,6 +1287,23 @@ setup_claudebar() {
 	# Check if ClaudeBar is already installed
 	if [[ -d "/Applications/ClaudeBar.app" ]]; then
 		print_success "ClaudeBar already installed"
+		print_info "ClaudeBar v0.4.66 adds live background menu-bar refresh and suppresses its own quota probe events"
+		if command -v brew >/dev/null 2>&1; then
+			local upgrade_claudebar
+			setup_prompt upgrade_claudebar "Upgrade ClaudeBar via Homebrew cask? [y/N]: " "N"
+			if [[ "$upgrade_claudebar" =~ ^[Yy]$ ]]; then
+				if run_with_spinner "Upgrading ClaudeBar" brew upgrade --cask claudebar; then
+					print_success "ClaudeBar upgraded"
+				else
+					print_warning "Failed to upgrade ClaudeBar via Homebrew"
+					print_info "Manual ClaudeBar download: $claudebar_release_url"
+				fi
+			else
+				print_info "Upgrade later: brew upgrade --cask claudebar"
+			fi
+		else
+			print_info "Update manually: $claudebar_release_url"
+		fi
 		return 0
 	fi
 
@@ -1299,7 +1316,7 @@ setup_claudebar() {
 
 	print_info "ClaudeBar monitors AI coding assistant usage quotas in your menu bar"
 	echo "  Supports: Claude, Codex, Gemini, Copilot, Antigravity, Kimi, Kiro, Amp"
-	echo "  Features: live menu-bar refresh, real-time quota tracking, provider process detection, status notifications, multiple themes"
+	echo "  Features: live menu-bar refresh, quota probe suppression, real-time quota tracking, provider process detection, status notifications, multiple themes"
 	echo "  Requires: macOS 15+, CLI tools for providers you want to monitor"
 	echo ""
 
