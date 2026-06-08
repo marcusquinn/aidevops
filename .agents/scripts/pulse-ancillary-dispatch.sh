@@ -1382,8 +1382,7 @@ dispatch_foss_workers() {
 	local foss_count=0
 	local foss_max="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"
 	local foss_session_keys_seen=$'\n'
-	local foss_slug foss_path disclosure labels_filter_json
-	local foss_login
+	local foss_slug foss_path disclosure labels_filter_json foss_login
 	foss_login=$(_foss_current_gh_login)
 
 	[[ "$available" =~ ^[0-9]+$ ]] || available=0
@@ -1395,9 +1394,8 @@ dispatch_foss_workers() {
 		# Pre-dispatch eligibility check (budget + rate limit)
 		"${SCRIPT_DIR}/foss-contribution-helper.sh" check "$foss_slug" >/dev/null || continue
 
-		# Scan for a suitable issue. labels_filter_json comes from the outer jq
-		# pass so configured labels stay as JSON array elements, including labels
-		# that contain commas, while avoiding a second repos.json parse per repo.
+		# labels_filter_json keeps configured labels as JSON array elements,
+		# including commas, while avoiding a second repos.json parse per repo.
 		local foss_issue foss_issue_num foss_issue_title
 		local foss_label_candidates=()
 		local foss_label
