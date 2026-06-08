@@ -1275,8 +1275,45 @@ setup_minisim() {
 	return 0
 }
 
+setup_claudebar_needs_upgrade() {
+	local installed_version="$1"
+	local target_version="$2"
+	local installed_major="" installed_minor="" installed_patch=""
+	local target_major="" target_minor="" target_patch=""
+
+	installed_version="${installed_version#v}"
+	target_version="${target_version#v}"
+
+	if [[ ! "$installed_version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+		return 0
+	fi
+	installed_major="${BASH_REMATCH[1]}"
+	installed_minor="${BASH_REMATCH[2]}"
+	installed_patch="${BASH_REMATCH[3]}"
+
+	if [[ ! "$target_version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+		return 0
+	fi
+	target_major="${BASH_REMATCH[1]}"
+	target_minor="${BASH_REMATCH[2]}"
+	target_patch="${BASH_REMATCH[3]}"
+
+	if ((10#$installed_major > 10#$target_major)); then
+		return 1
+	fi
+	if ((10#$installed_major == 10#$target_major && 10#$installed_minor > 10#$target_minor)); then
+		return 1
+	fi
+	if ((10#$installed_major == 10#$target_major && 10#$installed_minor == 10#$target_minor && 10#$installed_patch >= 10#$target_patch)); then
+		return 1
+	fi
+
+	return 0
+}
+
 setup_claudebar() {
 	local claudebar_release_url="https://github.com/tddworks/ClaudeBar/releases/latest"
+	local claudebar_target_version="0.4.66"
 	# Only available on macOS (native Swift menu bar app)
 	if [[ "$(uname)" != "Darwin" ]]; then
 		return 0
@@ -1286,7 +1323,19 @@ setup_claudebar() {
 
 	# Check if ClaudeBar is already installed
 	if [[ -d "/Applications/ClaudeBar.app" ]]; then
+		local claudebar_info_plist="/Applications/ClaudeBar.app/Contents/Info.plist"
+		local installed_version=""
+
+		if [[ -f "$claudebar_info_plist" ]]; then
+			installed_version="$(defaults read "$claudebar_info_plist" CFBundleShortVersionString 2>/dev/null || true)"
+		fi
+
 		print_success "ClaudeBar already installed"
+		if ! setup_claudebar_needs_upgrade "$installed_version" "$claudebar_target_version"; then
+			print_info "ClaudeBar ${installed_version} already includes the v${claudebar_target_version} setup upgrade"
+			return 0
+		fi
+
 		print_info "ClaudeBar v0.4.66 adds live background menu-bar refresh and suppresses its own quota probe events"
 		if command -v brew >/dev/null 2>&1; then
 			local upgrade_claudebar
