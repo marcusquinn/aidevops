@@ -45,6 +45,12 @@
 [[ -n "${_PULSE_EVENTS_TICKLE_LOADED:-}" ]] && return 0
 _PULSE_EVENTS_TICKLE_LOADED=1
 
+_PULSE_EVENTS_TICKLE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || _PULSE_EVENTS_TICKLE_DIR=""
+if [[ -n "$_PULSE_EVENTS_TICKLE_DIR" && -f "$_PULSE_EVENTS_TICKLE_DIR/shared-gh-secondary-cooldown.sh" ]]; then
+	# shellcheck source=shared-gh-secondary-cooldown.sh
+	source "$_PULSE_EVENTS_TICKLE_DIR/shared-gh-secondary-cooldown.sh"
+fi
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -132,6 +138,60 @@ _events_tickle_parse_etag() {
 	return 0
 }
 
+_events_tickle_record_rate_limit_response() {
+	local rc="$1"
+	local response="$2"
+	if declare -F _gh_secondary_cooldown_record_response_if_needed >/dev/null 2>&1; then
+		_gh_secondary_cooldown_record_response_if_needed "$rc" "$response"
+	fi
+	return 0
+}
+
+_events_tickle_rate_limited_response() {
+	local response="$1"
+	local http_status="$2"
+	local remaining=""
+	case "$http_status" in
+	403|429) return 0 ;;
+	esac
+	if declare -F _gh_secondary_cooldown_header_value >/dev/null 2>&1; then
+		remaining="$(_gh_secondary_cooldown_header_value "$response" "x-ratelimit-remaining")"
+		[[ "$remaining" =~ ^[0-9]+$ && "$remaining" -eq 0 ]] && return 0
+	fi
+	return 1
+}
+
+_events_tickle_retry_org_endpoint() {
+	local owner="$1"
+	local cache_file="$2"
+	local org_response=""
+	local org_exit=0
+	local org_status=""
+	local new_etag=""
+
+	declare -F gh_record_call >/dev/null 2>&1 && gh_record_call rest events_tickle_org_retry || true
+	org_response=$(gh api -i "/orgs/${owner}/events?per_page=1" 2>&1) || org_exit=$?
+	org_status=$(_events_tickle_parse_status "$org_response")
+	_events_tickle_record_rate_limit_response "$org_exit" "$org_response"
+	if _events_tickle_rate_limited_response "$org_response" "$org_status"; then
+		_events_tickle_log "cooldown recorded for owner=${owner} (org retry status=${org_status:-none} exit=${org_exit}); skipping search fanout"
+		_PULSE_EVENTS_TICKLE_FRESH=$((_PULSE_EVENTS_TICKLE_FRESH + 1))
+		return 0
+	fi
+	if [[ "$org_status" == "200" ]]; then
+		new_etag=$(_events_tickle_parse_etag "$org_response")
+		if [[ -n "$new_etag" ]]; then
+			_events_tickle_write_cache "$cache_file" "$new_etag" "orgs"
+		fi
+		_events_tickle_log "stale for owner=${owner} (org endpoint, 200 on retry)"
+		_PULSE_EVENTS_TICKLE_STALE=$((_PULSE_EVENTS_TICKLE_STALE + 1))
+		return 1
+	fi
+	_events_tickle_log "unknown for owner=${owner} (404 on both user/org endpoints)"
+	_PULSE_EVENTS_TICKLE_STALE=$((_PULSE_EVENTS_TICKLE_STALE + 1))
+	return 2
+}
+
 # ---------------------------------------------------------------------------
 # Public function: events_tickle
 # ---------------------------------------------------------------------------
@@ -146,10 +206,11 @@ _events_tickle_parse_etag() {
 #   3. 304 → return 0 (fresh): batch search can be skipped.
 #   4. 200 → update cache with new ETag, return 1 (stale): search must run.
 #   5. 404 → retry with the other endpoint type (user ↔ org), update cache.
-#   6. Error / rate-limit → return 2 (unknown): fail-open, treat as stale.
+#   6. Rate-limit headers/status → record shared cooldown and skip fanout.
+#   7. Other errors → return 2 (unknown): fail-open, treat as stale.
 #
 # Returns:
-#   0 — fresh (304 Not Modified)
+#   0 — fresh (304 Not Modified) or rate-limited cooldown skip
 #   1 — stale (200 OK, events present or ETag changed)
 #   2 — unknown (error, rate-limit, network failure, or feature disabled)
 events_tickle() {
@@ -158,6 +219,13 @@ events_tickle() {
 	# Feature flag gate — disabled means we cannot skip batch search.
 	if [[ "${PULSE_EVENTS_TICKLE_ENABLED:-1}" != "1" ]]; then
 		return 2
+	fi
+	if declare -F _gh_secondary_cooldown_preflight >/dev/null 2>&1; then
+		if ! _gh_secondary_cooldown_preflight read >/dev/null 2>&1; then
+			_events_tickle_log "cooldown active for owner=${owner}; skipping search fanout"
+			_PULSE_EVENTS_TICKLE_FRESH=$((_PULSE_EVENTS_TICKLE_FRESH + 1))
+			return 0
+		fi
 	fi
 
 	# Ensure the ETag cache directory exists.
@@ -189,9 +257,15 @@ events_tickle() {
 	else
 		response=$(gh api -i "$api_path" 2>&1) || exit_code=$?
 	fi
+	_events_tickle_record_rate_limit_response "$exit_code" "$response"
 
 	local http_status
 	http_status=$(_events_tickle_parse_status "$response")
+	if _events_tickle_rate_limited_response "$response" "$http_status"; then
+		_events_tickle_log "cooldown recorded for owner=${owner} (status=${http_status:-none} exit=${exit_code}); skipping search fanout"
+		_PULSE_EVENTS_TICKLE_FRESH=$((_PULSE_EVENTS_TICKLE_FRESH + 1))
+		return 0
+	fi
 
 	case "$http_status" in
 
@@ -215,28 +289,10 @@ events_tickle() {
 		;;
 
 	404)
-		# Endpoint mismatch — owner type (user vs org) may be wrong.
-		# Retry with the other type; update cache if the retry succeeds.
 		if [[ "$owner_type" == "users" ]]; then
-			local org_response="" org_exit=0
-			declare -F gh_record_call >/dev/null 2>&1 && gh_record_call rest events_tickle_org_retry || true
-			org_response=$(gh api -i "/orgs/${owner}/events?per_page=1" 2>&1) || org_exit=$?
-			local org_status
-			org_status=$(_events_tickle_parse_status "$org_response")
-
-			if [[ "$org_status" == "200" ]]; then
-				owner_type="orgs"
-				local new_etag
-				new_etag=$(_events_tickle_parse_etag "$org_response")
-				if [[ -n "$new_etag" ]]; then
-					_events_tickle_write_cache "$cache_file" "$new_etag" "$owner_type"
-				fi
-				_events_tickle_log "stale for owner=${owner} (org endpoint, 200 on retry)"
-				_PULSE_EVENTS_TICKLE_STALE=$((_PULSE_EVENTS_TICKLE_STALE + 1))
-				return 1
-			fi
+			_events_tickle_retry_org_endpoint "$owner" "$cache_file"
+			return $?
 		fi
-		# 404 on both endpoints — fail-open.
 		_events_tickle_log "unknown for owner=${owner} (404 on both user/org endpoints)"
 		_PULSE_EVENTS_TICKLE_STALE=$((_PULSE_EVENTS_TICKLE_STALE + 1))
 		return 2

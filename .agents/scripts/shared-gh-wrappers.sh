@@ -152,45 +152,61 @@ _gh_with_timeout() {
 	esac
 	local cmd="${1:-}"
 	local err_file=""
+	local out_file=""
+	local response_text=""
 	local rc=0
 	if [[ -n "$cmd" ]] && declare -f "$cmd" >/dev/null; then
 		err_file=$(mktemp -t aidevops-gh-secondary.XXXXXX) || {
 			"$@"
 			return $?
 		}
-		"$@" 2>"$err_file"
+		out_file=$(mktemp -t aidevops-gh-response.XXXXXX) || {
+			"$@" 2>"$err_file"
+			rc=$?
+			cat "$err_file" >&2 2>/dev/null || true
+			rm -f "$err_file"
+			return $rc
+		}
+		"$@" >"$out_file" 2>"$err_file"
 		rc=$?
+		cat "$out_file" 2>/dev/null || true
 		cat "$err_file" >&2 2>/dev/null || true
 		if command -v _gh_secondary_cooldown_record_if_needed >/dev/null 2>&1; then
-			_gh_secondary_cooldown_record_if_needed "$rc" "$(cat "$err_file" 2>/dev/null || true)"
+			response_text="$(cat "$out_file" 2>/dev/null || true)
+$(cat "$err_file" 2>/dev/null || true)"
+			_gh_secondary_cooldown_record_if_needed "$rc" "$response_text"
 		fi
-		rm -f "$err_file"
+		rm -f "$err_file" "$out_file"
 		return $rc
 	fi
 	err_file=$(mktemp -t aidevops-gh-secondary.XXXXXX) || err_file=""
+	out_file=$(mktemp -t aidevops-gh-response.XXXXXX) || out_file=""
 	if command -v timeout >/dev/null 2>&1; then
-		if [[ -n "$err_file" ]]; then
-			timeout "$secs" "$@" 2>"$err_file"
+		if [[ -n "$err_file" && -n "$out_file" ]]; then
+			timeout "$secs" "$@" >"$out_file" 2>"$err_file"
 			rc=$?
 		else
 			timeout "$secs" "$@"
 			rc=$?
 		fi
 	else
-		if [[ -n "$err_file" ]]; then
-			"$@" 2>"$err_file"
+		if [[ -n "$err_file" && -n "$out_file" ]]; then
+			"$@" >"$out_file" 2>"$err_file"
 			rc=$?
 		else
 			"$@"
 			rc=$?
 		fi
 	fi
-	if [[ -n "$err_file" ]]; then
+	if [[ -n "$err_file" && -n "$out_file" ]]; then
+		cat "$out_file" 2>/dev/null || true
 		cat "$err_file" >&2 2>/dev/null || true
 		if command -v _gh_secondary_cooldown_record_if_needed >/dev/null 2>&1; then
-			_gh_secondary_cooldown_record_if_needed "$rc" "$(cat "$err_file" 2>/dev/null || true)"
+			response_text="$(cat "$out_file" 2>/dev/null || true)
+$(cat "$err_file" 2>/dev/null || true)"
+			_gh_secondary_cooldown_record_if_needed "$rc" "$response_text"
 		fi
-		rm -f "$err_file"
+		rm -f "$err_file" "$out_file"
 	fi
 	return $rc
 }

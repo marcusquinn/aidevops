@@ -51,9 +51,10 @@ _gh_secondary_cooldown_json_string() {
 	return 0
 }
 
-_gh_secondary_cooldown_write() {
+_gh_secondary_cooldown_write_until() {
 	local reason="$1"
 	local response_text="${2:-}"
+	local expires_at="${3:-}"
 	local now=""
 	local expires=""
 	local file=""
@@ -63,7 +64,11 @@ _gh_secondary_cooldown_write() {
 	local request_id_json=""
 
 	now="$(_gh_secondary_cooldown_now)"
-	expires=$((now + AIDEVOPS_GH_SECONDARY_COOLDOWN_SECS))
+	if [[ "$expires_at" =~ ^[0-9]+$ && "$expires_at" -gt "$now" ]]; then
+		expires="$expires_at"
+	else
+		expires=$((now + AIDEVOPS_GH_SECONDARY_COOLDOWN_SECS))
+	fi
 	file="$(_gh_secondary_cooldown_file)"
 	dir="${file%/*}"
 	request_id="$(_gh_secondary_cooldown_request_id "$response_text")"
@@ -90,6 +95,78 @@ _gh_secondary_cooldown_write() {
 	fi
 	mv "${file}.tmp" "$file" || return 1
 	printf '[gh-cooldown] secondary-rate-limit active=true expires_at=%s reason=%s\n' "$expires" "$reason" >&2
+	return 0
+}
+
+_gh_secondary_cooldown_write() {
+	local reason="$1"
+	local response_text="${2:-}"
+	_gh_secondary_cooldown_write_until "$reason" "$response_text" ""
+	return $?
+}
+
+_gh_secondary_cooldown_header_value() {
+	local response_text="$1"
+	local header_name="$2"
+	printf '%s\n' "$response_text" | awk -v name="$header_name" '
+		BEGIN { target = tolower(name) ":" }
+		{ line = $0; sub(/\r$/, "", line); lower = tolower(line); if (index(lower, target) == 1) { sub(/^[^:]*:[[:space:]]*/, "", line); print line; exit } }
+	' 2>/dev/null
+	return 0
+}
+
+_gh_secondary_cooldown_status() {
+	local response_text="$1"
+	printf '%s\n' "$response_text" | awk '/^HTTP\// { print $2; exit }' | tr -d '\r' 2>/dev/null || printf ''
+	return 0
+}
+
+_gh_secondary_cooldown_header_expires_at() {
+	local response_text="$1"
+	local now=""
+	local retry_after=""
+	local reset_at=""
+
+	now="$(_gh_secondary_cooldown_now)"
+	retry_after="$(_gh_secondary_cooldown_header_value "$response_text" "retry-after")"
+	if [[ "$retry_after" =~ ^[0-9]+$ && "$retry_after" -gt 0 ]]; then
+		printf '%s' $((now + retry_after))
+		return 0
+	fi
+	reset_at="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-reset")"
+	if [[ "$reset_at" =~ ^[0-9]+$ && "$reset_at" -gt "$now" ]]; then
+		printf '%s' "$reset_at"
+		return 0
+	fi
+	printf '%s' $((now + AIDEVOPS_GH_SECONDARY_COOLDOWN_SECS))
+	return 0
+}
+
+_gh_secondary_cooldown_record_response_if_needed() {
+	local rc="$1"
+	local response_text="${2:-}"
+	local status=""
+	local remaining=""
+	local expires_at=""
+
+	status="$(_gh_secondary_cooldown_status "$response_text")"
+	remaining="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-remaining")"
+	case "$status" in
+	403|429)
+		expires_at="$(_gh_secondary_cooldown_header_expires_at "$response_text")"
+		_gh_secondary_cooldown_write_until "github-api-rate-limit-status-${status}" "$response_text" "$expires_at" || true
+		return 0
+		;;
+	esac
+	if [[ "$remaining" =~ ^[0-9]+$ && "$remaining" -eq 0 ]]; then
+		expires_at="$(_gh_secondary_cooldown_header_expires_at "$response_text")"
+		_gh_secondary_cooldown_write_until "github-api-rate-limit-remaining-zero" "$response_text" "$expires_at" || true
+		return 0
+	fi
+	if [[ "$rc" -ne 0 ]]; then
+		_gh_secondary_cooldown_detect "$response_text" || return 0
+		_gh_secondary_cooldown_write "github-secondary-rate-limit" "$response_text" || true
+	fi
 	return 0
 }
 
@@ -144,8 +221,6 @@ _gh_secondary_cooldown_preflight() {
 _gh_secondary_cooldown_record_if_needed() {
 	local rc="$1"
 	local response_text="${2:-}"
-	[[ "$rc" -ne 0 ]] || return 0
-	_gh_secondary_cooldown_detect "$response_text" || return 0
-	_gh_secondary_cooldown_write "github-secondary-rate-limit" "$response_text" || true
+	_gh_secondary_cooldown_record_response_if_needed "$rc" "$response_text"
 	return 0
 }

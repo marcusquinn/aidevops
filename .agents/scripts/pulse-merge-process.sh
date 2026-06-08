@@ -412,10 +412,10 @@ _merge_ready_prs_for_repo() {
 	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
 	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
 
-	# Process each PR — extract its JSON object and delegate to inner helper
 	local i=0
 	while [[ "$i" -lt "$pr_count" ]]; do
 		[[ -f "$STOP_FLAG" ]] && break
+		declare -F _gh_secondary_cooldown_preflight >/dev/null 2>&1 && ! _gh_secondary_cooldown_preflight write >/dev/null 2>&1 && { echo "[pulse-wrapper] Merge pass: GitHub cooldown active for ${repo_slug}; pausing remaining PR processing" >>"$LOGFILE"; break; }
 		local pr_obj
 		pr_obj=$(printf '%s' "$pr_json" | jq -c ".[$i]" 2>/dev/null)
 		i=$((i + 1))
