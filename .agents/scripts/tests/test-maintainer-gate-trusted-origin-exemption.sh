@@ -145,7 +145,8 @@ assert_contains "pr_author_has_maintainer_authority" \
 	"defines shared maintainer-authority helper"
 assert_contains "CONTRIBUTOR\)" \
 	"helper handles ambiguous CONTRIBUTOR webhook association"
-collaborator_case_count=$(grep -cE 'COLLABORATOR\)' "$WORKFLOW_FILE" 2>/dev/null || echo "0")
+collaborator_case_count=$(grep -cE 'COLLABORATOR\)' "$WORKFLOW_FILE" 2>/dev/null || true)
+[[ "$collaborator_case_count" =~ ^[0-9]+$ ]] || collaborator_case_count=0
 if [[ "$collaborator_case_count" -eq 1 ]]; then
 	print_result "helper does not add bare COLLABORATOR string exemption" 0
 else
