@@ -122,7 +122,7 @@ Test the LOC helper against this repo:
 
 ```bash
 brew install tokei jq    # macOS
-# apt install tokei jq   # Ubuntu
+# cargo install tokei --version 14.0.0 --locked && sudo apt install jq   # Linux
 
 .agents/scripts/loc-badge-helper.sh --output-dir /tmp/badge-test
 ls /tmp/badge-test/      # loc-total.svg + loc-languages.svg

@@ -54,7 +54,7 @@ jobs:
   generate:
     name: Generate LOC badges
     runs-on: ${{ inputs.runner }}
-    timeout-minutes: 5
+    timeout-minutes: 15
     concurrency:
       group: loc-badge-${{ github.ref }}
       cancel-in-progress: false
@@ -108,21 +108,26 @@ jobs:
           ref: ${{ inputs.aidevops_ref || 'main' }}
           fetch-depth: 1
 
-      - name: Install tokei + jq
+      - name: Install pinned tokei + jq
         if: steps.check-author.outputs.skip != 'true'
+        env:
+          TOKEI_VERSION: '14.0.0'
         run: |
           set -euo pipefail
           sudo apt-get update -qq
-          # jq is available from Ubuntu apt; tokei is not packaged for Ubuntu/Debian.
+          # jq is preinstalled on ubuntu-latest but kept explicit for runner parity.
           sudo apt-get install -y --no-install-recommends jq
+
           if ! command -v cargo >/dev/null 2>&1; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-            # shellcheck source=/dev/null
-            source "$HOME/.cargo/env"
+            echo "::error::cargo is required to install pinned tokei ${TOKEI_VERSION}; install Rust on this runner or use ubuntu-latest."
+            exit 1
           fi
-          cargo install --locked tokei
+
+          timeout 600 cargo install tokei --version "$TOKEI_VERSION" --locked
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.cargo/bin:$PATH"
-          tokei --version
+
+          tokei --version | grep -F "$TOKEI_VERSION"
           jq --version
 
       - name: Build extra-excludes args

@@ -38,7 +38,7 @@
 #   2 — usage error
 #
 # Dependencies:
-#   tokei   — the line counter (apt: tokei, brew: tokei, cargo: tokei)
+#   tokei   — the line counter (brew: tokei, cargo: tokei --version 14.0.0 --locked)
 #   jq      — JSON parsing
 #   awk     — number formatting (POSIX, present everywhere)
 
@@ -169,7 +169,7 @@ require_dep() {
 }
 
 check_dependencies() {
-	require_dep tokei "install: apt-get install tokei | brew install tokei | cargo install tokei"
+	require_dep tokei "install: brew install tokei | cargo install tokei --version 14.0.0 --locked"
 	require_dep jq "install: apt-get install jq | brew install jq"
 	return 0
 }
