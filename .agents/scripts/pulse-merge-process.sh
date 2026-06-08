@@ -299,7 +299,7 @@ merge_ready_prs_all_repos() {
 
 	while IFS='|' read -r repo_slug repo_path; do
 		[[ -n "$repo_slug" ]] || continue
-		declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 && ! repo_allows_pulse_write_actions "$repo_slug" && { echo "[pulse-wrapper] Deterministic merge pass skipped ${repo_slug}: repo role is contributor/read-only" >>"$_mr_logfile"; continue; }
+		! repo_allows_pulse_write_actions "$repo_slug" && { echo "[pulse-wrapper] Deterministic merge pass skipped ${repo_slug}: repo role is contributor/read-only" >>"$_mr_logfile"; continue; }
 		local repo_merged=0 repo_closed=0 repo_failed=0
 
 		_merge_ready_prs_for_repo "$repo_slug" repo_merged repo_closed repo_failed
