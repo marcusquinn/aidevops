@@ -4240,3 +4240,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t3591 Bound person-stats GitHub calls with portable timeouts #auto-dispatch #bug #reliability #shell ref:GH#23761 pr:#23764 completed:2026-05-18
 
 - [ ] t3592 Add report-token-use session token reporting #bug ref:GH#24221
+
+- [ ] t3596 Constrain pulse write sweeps to maintainer repos #bug ref:GH#24567
