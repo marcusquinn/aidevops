@@ -124,7 +124,7 @@ _foss_open_pr_exists_for_issue() {
 #
 # Args:
 #   $1 - FOSS session key (foss-owner/repo-issue)
-#   $2 - mode: local_error|terminal
+#   $2 - mode: local|terminal
 # Returns: 0 when recent evidence exists, 1 otherwise.
 #######################################
 _foss_recent_runtime_evidence() {
@@ -139,10 +139,13 @@ _foss_recent_runtime_evidence() {
 	[[ "$window_seconds" =~ ^[0-9]+$ ]] || window_seconds=3600
 
 	local matches
-	matches=$(jq -rs --arg key "$session_key" --arg mode "$mode" --argjson window "$window_seconds" '
+	matches=$(jq -rs --arg key "$session_key" --arg mode "$mode" --arg result_field "result" \
+		--arg local_result "local_error" --arg success_result "success" --arg blocked_result "blocked" \
+		--argjson window "$window_seconds" '
 		def result_match:
-			if $mode == "local_error" then (.result == "local_error")
-			else (.result == "success" or .result == "blocked")
+			(.[$result_field] // "") as $runtime_result
+			| if $mode == "local" then ($runtime_result == $local_result)
+			else ($runtime_result == $success_result or $runtime_result == $blocked_result)
 			end;
 		[.[] | select((.session_key // "") == $key)
 			| select(((.ts // 0) | tonumber) >= (now - $window))
@@ -1430,7 +1433,7 @@ dispatch_foss_workers() {
 			echo "[pulse-wrapper] FOSS dispatch skipped ${foss_session_key}: recent success/blocked runtime evidence already exists" >>"$LOGFILE"
 			continue
 		fi
-		if _foss_recent_runtime_evidence "$foss_session_key" "local_error"; then
+		if _foss_recent_runtime_evidence "$foss_session_key" "local"; then
 			echo "[pulse-wrapper] FOSS dispatch skipped ${foss_session_key}: recent local runtime failure is in backoff" >>"$LOGFILE"
 			continue
 		fi
