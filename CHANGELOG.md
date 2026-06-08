@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.38] - 2026-06-08
+
+### Changed
+
+- Tests: annotate git safety guard helper (#24572)
+
+### Fixed
+
+- hold orphan retries with remote children (#24573)
+
 ## [3.20.37] - 2026-06-08
 
 ### Changed
