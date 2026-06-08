@@ -1382,7 +1382,7 @@ dispatch_foss_workers() {
 	local foss_count=0
 	local foss_max="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"
 	local foss_session_keys_seen=$'\n'
-	local foss_slug foss_path disclosure labels_filter_json foss_login
+	local foss_slug="" foss_path="" disclosure="" labels_filter_json="" foss_login=""
 	foss_login=$(_foss_current_gh_login)
 
 	[[ "$available" =~ ^[0-9]+$ ]] || available=0
