@@ -2382,9 +2382,9 @@
       "pr": 15455
     },
     ".agents/scripts/post-merge-review-scanner.sh": {
-      "at": "2026-05-01T21:34:09Z",
-      "hash": "ea9ebecee08d5d8d63b8bc51c8803319193903ea",
-      "passes": 8,
+      "at": "2026-06-08T15:20:29Z",
+      "hash": "1fbecae77a22ba88c2b89016d8b42f6148c9e6c3",
+      "passes": 9,
       "pr": 18801
     },
     ".agents/scripts/profile-readme-helper.sh": {
@@ -2394,9 +2394,9 @@
       "pr": 17590
     },
     ".agents/scripts/pulse-ancillary-dispatch.sh": {
-      "at": "2026-06-08T01:51:13Z",
-      "hash": "cfc780fe46f6df5408b443e9eadcf0f77fd49c49",
-      "passes": 21,
+      "at": "2026-06-08T15:20:31Z",
+      "hash": "e9a002f7a6360ee687344554d0c3595d83ef710f",
+      "passes": 22,
       "pr": 18657
     },
     ".agents/scripts/pulse-cleanup.sh": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-06-08T01:58:33Z",
-      "hash": "0864d9ecaa8dcd4697c7e27f1363a206e092d9bb",
-      "passes": 219,
+      "at": "2026-06-08T15:54:35Z",
+      "hash": "0b07e7285a03301563df8701bc6a4b42a97c144e",
+      "passes": 220,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-06-08T01:58:35Z",
-      "hash": "f0781e055414b8b585228bf24010a7b667bdd3dc",
-      "passes": 215,
+      "at": "2026-06-08T15:54:40Z",
+      "hash": "189240977ce61822c420fb9da1a13f1d54ea30c0",
+      "passes": 216,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
