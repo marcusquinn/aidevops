@@ -234,7 +234,7 @@ update_readme_counts() {
 
 	# Update patterns
 	# ~N main agents or ~N domain agents
-	sed_inplace -E "s/~?[0-9][0-9,]* (main|domain|primary) agents/$main_agents \1 agents/g" "$readme_file"
+	sed_inplace -E "s/(~?)[0-9][0-9,]* (main|domain|primary) agents/\1$main_agents \2 agents/g" "$readme_file"
 
 	# N+ helper scripts
 	sed_inplace -E "s/[0-9][0-9,]*\+ helper scripts/${approx_scripts}+ helper scripts/g" "$readme_file"
