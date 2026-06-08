@@ -157,6 +157,14 @@ source "${SCRIPTS_DIR}/pulse-ancillary-dispatch.sh"
 repos_json="${TEST_TMP}/repos.json"
 write_repos_json "$repos_json"
 
+: >"${TEST_TMP}/pr-list.log"
+GH_OPEN_PR_COUNT=1
+_foss_open_pr_exists_for_issue "owner/project" "42" "precomputed-bot" || fail "precomputed login open PR check failed"
+if ! grep -q '^precomputed-bot|42$' "${TEST_TMP}/pr-list.log"; then
+	fail "open PR check did not use the precomputed login"
+fi
+GH_OPEN_PR_COUNT=0
+
 GH_ISSUE_LIST_OUTPUT='null|null'
 available_after_null="$(FOSS_MAX_DISPATCH_PER_CYCLE=2 dispatch_foss_workers 2 "$repos_json")" || fail "null selection dispatch failed"
 [[ "$available_after_null" == "2" ]] || fail "null selection changed available worker count"
@@ -248,6 +256,7 @@ fi
 
 printf 'PASS: FOSS null issue selections are skipped\n'
 printf 'PASS: FOSS empty issue selections are logged as no work\n'
+printf 'PASS: FOSS open PR checks accept precomputed logins\n'
 printf 'PASS: FOSS open PR selections are skipped\n'
 printf 'PASS: FOSS recent local runtime failures are backed off\n'
 printf 'PASS: FOSS duplicate session keys are deduplicated per cycle\n'
