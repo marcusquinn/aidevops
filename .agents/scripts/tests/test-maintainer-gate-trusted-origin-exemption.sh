@@ -4,7 +4,7 @@
 #
 # test-maintainer-gate-trusted-origin-exemption.sh — t2451 regression guard.
 #
-# Structural assertions over `.github/workflows/maintainer-gate.yml`:
+# Structural assertions over `.github/workflows/maintainer-gate-reusable.yml`:
 #
 #   A. The file parses as valid YAML.
 #   B. Job 1 Check 2 includes a HAS_TRUSTED_ORIGIN_LABEL computation
@@ -20,6 +20,8 @@
 #      origin:worker PRs with OWNER/MEMBER author and a trusted issue author
 #      with no non-maintainer comments.
 #   F. REPO_OWNER env var is wired through both Job 1 and Job 3 steps.
+#   G. GH#24546 private-org CONTRIBUTOR fallback uses authenticated
+#      collaborator permission metadata and fails closed.
 #
 # Workflow execution cannot be tested locally — this is a static shape
 # check that prevents accidental regressions to the exemption logic
@@ -51,7 +53,7 @@ print_result() {
 # Resolve the workflow file relative to the test (tests live in .agents/scripts/tests/)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-WORKFLOW_FILE="${REPO_ROOT}/.github/workflows/maintainer-gate.yml"
+WORKFLOW_FILE="${REPO_ROOT}/.github/workflows/maintainer-gate-reusable.yml"
 
 if [[ ! -f "$WORKFLOW_FILE" ]]; then
 	print_result "workflow file exists" 1 "not found: $WORKFLOW_FILE"
@@ -64,9 +66,9 @@ print_result "workflow file exists" 0
 # Check A: YAML parses
 # -------------------------------------------------------------------
 if python3 -c "import yaml,sys; yaml.safe_load(open(sys.argv[1]))" "$WORKFLOW_FILE" 2>/dev/null; then
-	print_result "maintainer-gate.yml parses as valid YAML" 0
+	print_result "maintainer-gate-reusable.yml parses as valid YAML" 0
 else
-	print_result "maintainer-gate.yml parses as valid YAML" 1 "python3 yaml.safe_load failed"
+	print_result "maintainer-gate-reusable.yml parses as valid YAML" 1 "python3 yaml.safe_load failed"
 fi
 
 assert_contains() {
@@ -133,6 +135,34 @@ else
 	print_result "REPO_OWNER env in both Job 1 and Job 3" 1 \
 		"expected >=2 occurrences, found $owner_env_count"
 fi
+
+# -------------------------------------------------------------------
+# Check G: GH#24546 private-org CONTRIBUTOR permission fallback
+# -------------------------------------------------------------------
+assert_contains "PR_AUTHOR:[[:space:]]*\\$\\{\\{[[:space:]]*github\.event\.pull_request\.user\.login" \
+	"Job 1 exposes PR_AUTHOR for permission fallback"
+assert_contains "pr_author_has_maintainer_authority" \
+	"defines shared maintainer-authority helper"
+assert_contains "CONTRIBUTOR\)" \
+	"helper handles ambiguous CONTRIBUTOR webhook association"
+collaborator_case_count=$(grep -cE 'COLLABORATOR\)' "$WORKFLOW_FILE" 2>/dev/null || true)
+[[ "$collaborator_case_count" =~ ^[0-9]+$ ]] || collaborator_case_count=0
+if [[ "$collaborator_case_count" -eq 1 ]]; then
+	print_result "helper does not add bare COLLABORATOR string exemption" 0
+else
+	print_result "helper does not add bare COLLABORATOR string exemption" 1 \
+		"expected only the existing label-protection COLLABORATOR case, found $collaborator_case_count"
+fi
+assert_contains "collaborators/.*/permission" \
+	"helper uses authenticated collaborator permission endpoint"
+assert_contains "admin\|maintain\|write" \
+	"helper accepts admin/maintain/write permissions"
+assert_contains "permission fallback failed" \
+	"helper logs and fails closed on permission API failure"
+assert_contains "#aidevops:trust-boundary GH#24546" \
+	"trust-boundary marker documents authenticated fallback"
+assert_contains "authorAssociation,author" \
+	"Job 3 fetches PR author login with author association"
 
 # -------------------------------------------------------------------
 # Summary

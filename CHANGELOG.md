@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.35] - 2026-06-08
+
+### Fixed
+
+- add maintainer gate permission fallback (#24549)
+
 ## [3.20.34] - 2026-06-08
 
 ### Changed

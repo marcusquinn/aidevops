@@ -121,6 +121,7 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
           REPO: ${{ github.repository }}
@@ -162,6 +163,49 @@ jobs:
                 exit 1
               }
             return 0
+          }
+
+          pr_author_has_maintainer_authority() {
+            local author_association="$1"
+            local pr_author="$2"
+            local permission=""
+
+            case "$author_association" in
+              OWNER|MEMBER)
+                return 0
+                ;;
+              CONTRIBUTOR)
+                ;;
+              *)
+                return 1
+                ;;
+            esac
+
+            if [[ -z "$pr_author" ]]; then
+              echo "INFO: PR author unavailable for authenticated permission fallback — treating $author_association as non-maintainer"
+              return 1
+            fi
+
+            #aidevops:trust-boundary GH#24546: webhook author_association can
+            # report CONTRIBUTOR for private org members. Use an authenticated,
+            # metadata-only permission lookup as the fallback and fail closed on
+            # API errors or permissions below write.
+            permission=$(gh api "repos/${REPO}/collaborators/${pr_author}/permission" \
+              --jq '.permission' 2>/dev/null) || {
+              echo "INFO: permission fallback failed for PR author $pr_author — treating $author_association as non-maintainer"
+              return 1
+            }
+
+            case "$permission" in
+              admin|maintain|write)
+                echo "INFO: PR author $pr_author has authenticated repo permission '$permission' despite webhook association $author_association — treating as maintainer-authority"
+                return 0
+                ;;
+              *)
+                echo "INFO: PR author $pr_author permission '$permission' is below maintainer-authority threshold"
+                return 1
+                ;;
+            esac
           }
 
           # ---------------------------------------------------------------
@@ -254,17 +298,16 @@ jobs:
           # flow still hit the full linked-issue gate despite being the exact
           # case the rule was supposed to cover.
           #
-          # Security gate: ONLY passes for OWNER or MEMBER author_association.
-          # COLLABORATOR is excluded — write-access contributors must still go
-          # through the normal gate. A contributor could apply origin:interactive
-          # manually (labels are not protected like origin:worker), so we verify
-          # the PR author is actually a maintainer via GitHub's author_association.
-          # The authorship check is unchanged from the pre-t2030 version — the
-          # only change is which PRs reach it.
+          # Security gate: passes for OWNER/MEMBER author_association, or for
+          # an ambiguous CONTRIBUTOR webhook value only when an authenticated
+          # collaborator permission lookup confirms admin/maintain/write access
+          # (GH#24546 private-org membership fallback). Bare COLLABORATOR is
+          # still excluded from the string-only path: write-access contributors
+          # must not bypass the normal gate unless the authenticated fallback
+          # proves maintainer-authority for this PR author.
           # ---------------------------------------------------------------
           if echo "$PR_LABELS" | grep -q 'origin:interactive'; then
-            if [[ "$PR_AUTHOR_ASSOCIATION" == "OWNER" ]] || \
-               [[ "$PR_AUTHOR_ASSOCIATION" == "MEMBER" ]]; then
+            if pr_author_has_maintainer_authority "$PR_AUTHOR_ASSOCIATION" "$PR_AUTHOR"; then
               echo "PASS: PR #$PR_NUMBER has origin:interactive and author is maintainer ($PR_AUTHOR_ASSOCIATION) — implied approval (t2030: applies to linked-issue PRs too)"
               post_maintainer_gate_status_once \
                 success \
@@ -272,7 +315,7 @@ jobs:
                 2>/dev/null || true
               exit 0
             else
-              echo "SKIP: PR #$PR_NUMBER has origin:interactive but author is $PR_AUTHOR_ASSOCIATION (not OWNER/MEMBER) — continuing normal gate checks"
+              echo "SKIP: PR #$PR_NUMBER has origin:interactive but author is $PR_AUTHOR_ASSOCIATION without maintainer-authority — continuing normal gate checks"
             fi
           fi
 
@@ -342,11 +385,11 @@ jobs:
             fi
 
             # Check 2: no assignee
-            # Exempt when BOTH conditions hold (GH#6623, GH#18197, GH#19956, GH#20195):
-            #   1) PR author is OWNER or MEMBER (maintainer-tier only).
-            #      COLLABORATOR is excluded — write-access contributors must have the
-            #      issue explicitly assigned before their PR passes the gate.
-            #      On personal repos there are no MEMBERs, so effectively OWNER-only.
+            # Exempt when BOTH conditions hold (GH#6623, GH#18197, GH#19956, GH#20195, GH#24546):
+            #   1) PR author has maintainer-authority: OWNER/MEMBER, or an
+            #      ambiguous CONTRIBUTOR webhook value backed by authenticated
+            #      admin/maintain/write collaborator permission. Bare
+            #      COLLABORATOR remains excluded from string-only exemption.
             #   2) AND one of:
             #      a) Issue was created by github-actions[bot] — immutable, cannot be spoofed, OR
             #      b) Issue carries a source:* automation label (non-spoofable — only the
@@ -370,8 +413,7 @@ jobs:
             # worker's behaviour.
             if [[ -z "$ASSIGNEES" ]]; then
               PR_AUTHOR_IS_MAINTAINER=false
-              if [[ "$PR_AUTHOR_ASSOCIATION" == "OWNER" ]] || \
-                 [[ "$PR_AUTHOR_ASSOCIATION" == "MEMBER" ]]; then
+              if pr_author_has_maintainer_authority "$PR_AUTHOR_ASSOCIATION" "$PR_AUTHOR"; then
                 PR_AUTHOR_IS_MAINTAINER=true
               fi
 
@@ -600,6 +642,48 @@ jobs:
             return 0
           }
 
+          pr_author_has_maintainer_authority() {
+            local author_association="$1"
+            local pr_author="$2"
+            local permission=""
+
+            case "$author_association" in
+              OWNER|MEMBER)
+                return 0
+                ;;
+              CONTRIBUTOR)
+                ;;
+              *)
+                return 1
+                ;;
+            esac
+
+            if [[ -z "$pr_author" ]]; then
+              echo "INFO: PR author unavailable for authenticated permission fallback — treating $author_association as non-maintainer"
+              return 1
+            fi
+
+            #aidevops:trust-boundary GH#24546: mirror Job 1's private-org
+            # membership fallback using authenticated metadata only. Fail closed
+            # when the permission endpoint is unavailable or below write.
+            permission=$(gh api "repos/${REPO}/collaborators/${pr_author}/permission" \
+              --jq '.permission' 2>/dev/null) || {
+              echo "INFO: permission fallback failed for PR author $pr_author — treating $author_association as non-maintainer"
+              return 1
+            }
+
+            case "$permission" in
+              admin|maintain|write)
+                echo "INFO: PR author $pr_author has authenticated repo permission '$permission' despite webhook association $author_association — treating as maintainer-authority"
+                return 0
+                ;;
+              *)
+                echo "INFO: PR author $pr_author permission '$permission' is below maintainer-authority threshold"
+                return 1
+                ;;
+            esac
+          }
+
           echo "Issue #$ISSUE_NUMBER updated (labels/assignee) — checking for linked PRs"
 
           # Find open PRs that reference this issue via body closing keywords
@@ -652,18 +736,19 @@ jobs:
             # origin:interactive PRs. For those PRs the gate will always pass,
             # so post success directly and skip the rerun entirely.
             #
-            # Security gate: same as Job 1 — only OWNER or MEMBER. COLLABORATOR
-            # is excluded (write-access contributors must still use the normal gate).
+            # Security gate: same as Job 1 — OWNER/MEMBER, plus the
+            # authenticated private-org CONTRIBUTOR fallback from GH#24546.
+            # Bare COLLABORATOR remains excluded from string-only exemption.
             # -----------------------------------------------------------------
             PR_INFO=$(gh pr view "$PR_NUM" --repo "$REPO" \
-              --json labels,authorAssociation \
-              --jq '{labels: [.labels[].name], assoc: .authorAssociation}' \
+              --json labels,authorAssociation,author \
+              --jq '{labels: [.labels[].name], assoc: .authorAssociation, author: .author.login}' \
               2>/dev/null || true)
             PR_LABELS_J3=$(printf '%s' "$PR_INFO" | jq -r '.labels[]' 2>/dev/null || true)
             PR_AUTHOR_ASSOC_J3=$(printf '%s' "$PR_INFO" | jq -r '.assoc' 2>/dev/null || true)
+            PR_AUTHOR_J3=$(printf '%s' "$PR_INFO" | jq -r '.author // empty' 2>/dev/null || true)
             if printf '%s' "$PR_LABELS_J3" | grep -q 'origin:interactive'; then
-              if [[ "$PR_AUTHOR_ASSOC_J3" == "OWNER" ]] || \
-                 [[ "$PR_AUTHOR_ASSOC_J3" == "MEMBER" ]]; then
+              if pr_author_has_maintainer_authority "$PR_AUTHOR_ASSOC_J3" "$PR_AUTHOR_J3"; then
                 echo "SKIP rerun: PR #$PR_NUM has origin:interactive and author is maintainer ($PR_AUTHOR_ASSOC_J3) — posting success, no Job 1 rerun needed"
                 post_maintainer_gate_status_once \
                   success \
@@ -687,8 +772,7 @@ jobs:
             # gate will definitely pass.
             # -----------------------------------------------------------------
             if printf '%s' "$PR_LABELS_J3" | grep -q 'origin:worker'; then
-              if [[ "$PR_AUTHOR_ASSOC_J3" == "OWNER" ]] || \
-                 [[ "$PR_AUTHOR_ASSOC_J3" == "MEMBER" ]]; then
+              if pr_author_has_maintainer_authority "$PR_AUTHOR_ASSOC_J3" "$PR_AUTHOR_J3"; then
                 ISSUE_DATA_J3=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" \
                   --jq '{author: .user.login}' 2>/dev/null || true)
                 ISSUE_AUTHOR_J3=$(printf '%s' "$ISSUE_DATA_J3" | jq -r '.author // empty' 2>/dev/null || true)
