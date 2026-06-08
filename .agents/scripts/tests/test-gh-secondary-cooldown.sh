@@ -31,6 +31,10 @@ gh() {
 		printf '{"message":"You have exceeded a secondary rate limit. Please wait a few minutes before you try again."}\n' >&2
 		return 1
 	fi
+	if [[ "${GH_HEADER_LIMIT_FAIL:-0}" == "1" ]]; then
+		printf 'HTTP/2 429\r\nRetry-After: 42\r\nX-RateLimit-Remaining: 0\r\nX-GitHub-Request-Id: REQ-429\r\n\r\n{"message":"rate limit exceeded"}\n'
+		return 1
+	fi
 	printf '{"ok":true}\n'
 	return 0
 }
@@ -42,7 +46,7 @@ reset_case() {
 	: >"$CALL_LOG"
 	: >"$ERR_LOG"
 	rm -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE"
-	unset GH_SECONDARY_FAIL AIDEVOPS_GH_SECONDARY_COOLDOWN_OVERRIDE 2>/dev/null || true
+	unset GH_SECONDARY_FAIL GH_HEADER_LIMIT_FAIL AIDEVOPS_GH_SECONDARY_COOLDOWN_OVERRIDE 2>/dev/null || true
 	_GH_SECONDARY_COOLDOWN_LOGGED_ACTIVE=0
 	return 0
 }
@@ -64,6 +68,26 @@ test_secondary_response_writes_cooldown() {
 		return 0
 	fi
 	printf 'FAIL cooldown file missing or malformed\n'
+	return 1
+}
+
+test_header_response_writes_retry_after_cooldown() {
+	reset_case
+	export GH_HEADER_LIMIT_FAIL=1
+	set +e
+	_gh_with_timeout read gh api -i repos/owner/repo/issues >"${TMP_HOME}/headers.out" 2>"$ERR_LOG"
+	local rc=$?
+	set -e
+	if [[ "$rc" -ne 1 ]]; then
+		printf 'FAIL expected header-limited wrapped gh rc=1, got %s\n' "$rc"
+		return 1
+	fi
+	if [[ -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" ]] && \
+		jq -e '.reason == "github-api-rate-limit-status-429" and .last_request_id == "REQ-429" and ((.expires_at - .first_seen) >= 40) and ((.expires_at - .first_seen) <= 45)' "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" >/dev/null; then
+		printf 'PASS header response writes retry-after cooldown file\n'
+		return 0
+	fi
+	printf 'FAIL header cooldown file missing or malformed\n'
 	return 1
 }
 
@@ -127,6 +151,7 @@ test_no_jq_fallback_escapes_json_strings() {
 }
 
 test_secondary_response_writes_cooldown
+test_header_response_writes_retry_after_cooldown
 test_active_cooldown_skips_without_gh_call
 test_override_allows_audited_call
 test_default_path_without_home_is_user_scoped

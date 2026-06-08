@@ -12,7 +12,7 @@
 #   3. 200 response (ETag changed) → returns 1 (stale), cache updated
 #   4. 200 sends correct If-None-Match header when ETag is stored
 #   5. 404 on users/ → retries as orgs/, returns 1 (stale), type cached
-#   6. Rate-limit error → returns 2 (unknown), fail-open
+#   6. Rate-limit error → records cooldown and skips search fanout
 #   7. Feature disabled (PULSE_EVENTS_TICKLE_ENABLED=0) → returns 2 (unknown)
 #   8. Batch prefetch integration: fresh owner skips search calls
 #   9. Batch prefetch integration: stale owner runs search calls
@@ -111,6 +111,8 @@ setup_sandbox() {
 	export HOME="${TEST_ROOT}/home"
 	mkdir -p "${HOME}/.aidevops/logs"
 	mkdir -p "${HOME}/.aidevops/cache/pulse-events-etag"
+	mkdir -p "${HOME}/.aidevops/cache"
+	export AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE="${HOME}/.aidevops/cache/gh-secondary-cooldown.json"
 	LOGFILE="${HOME}/.aidevops/logs/pulse-wrapper.log"
 	export LOGFILE
 
@@ -336,14 +338,14 @@ STUB_EOF
 }
 
 # ---------------------------------------------------------------------------
-# Test 6: Rate-limit error → returns 2 (unknown), fail-open
+# Test 6: Rate-limit error → records cooldown and skips search fanout
 # ---------------------------------------------------------------------------
 test_rate_limit_returns_unknown() {
 	setup_sandbox
 
 	local stub="${TEST_ROOT}/gh-ratelimit"
 	write_gh_stub "$stub" \
-		"printf 'HTTP/2 403\r\nX-RateLimit-Remaining: 0\r\n\r\n{\"message\":\"rate limit exceeded\"}\n'; exit 1"
+		"printf 'HTTP/2 403\r\nRetry-After: 60\r\nX-RateLimit-Remaining: 0\r\nX-GitHub-Request-Id: TEST-RATE-LIMIT\r\n\r\n{\"message\":\"rate limit exceeded\"}\n'; exit 1"
 	local bin_dir="${TEST_ROOT}/bin"
 	cp "$stub" "${bin_dir}/gh"
 
@@ -352,8 +354,12 @@ test_rate_limit_returns_unknown() {
 	local rc=0
 	events_tickle "ratewatcher" || rc=$?
 
-	assert_equals "test_rate_limit: returns exit 2 (unknown)" "2" "$rc"
-	assert_equals "test_rate_limit: TICKLE_STALE incremented (fail-open)" "1" "$_PULSE_EVENTS_TICKLE_STALE"
+	assert_equals "test_rate_limit: returns exit 0 (cooldown skip)" "0" "$rc"
+	assert_equals "test_rate_limit: TICKLE_FRESH incremented (skip fanout)" "1" "$_PULSE_EVENTS_TICKLE_FRESH"
+	assert_file_exists "test_rate_limit: cooldown file created" \
+		"${HOME}/.aidevops/cache/gh-secondary-cooldown.json"
+	assert_file_contains "test_rate_limit: cooldown reason recorded" \
+		"${HOME}/.aidevops/cache/gh-secondary-cooldown.json" "github-api-rate-limit-status-403"
 
 	teardown_sandbox
 	return 0
