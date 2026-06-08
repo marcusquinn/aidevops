@@ -110,14 +110,17 @@ _gh_secondary_cooldown_header_value() {
 	local header_name="$2"
 	printf '%s\n' "$response_text" | awk -v name="$header_name" '
 		BEGIN { target = tolower(name) ":" }
-		{ line = $0; sub(/\r$/, "", line); lower = tolower(line); if (index(lower, target) == 1) { sub(/^[^:]*:[[:space:]]*/, "", line); print line; exit } }
+		{ line = $0; sub(/\r$/, "", line); if (line == "") { exit } lower = tolower(line); if (index(lower, target) == 1) { sub(/^[^:]*:[[:space:]]*/, "", line); print line; exit } }
 	' 2>/dev/null
 	return 0
 }
 
 _gh_secondary_cooldown_status() {
 	local response_text="$1"
-	printf '%s\n' "$response_text" | awk '/^HTTP\// { print $2; exit }' | tr -d '\r' 2>/dev/null || printf ''
+	printf '%s\n' "$response_text" | awk '
+		{ line = $0; sub(/\r$/, "", line); if (line == "") { exit } }
+		line ~ /^HTTP\// { split(line, parts, /[[:space:]]+/); print parts[2]; exit }
+	' 2>/dev/null || printf ''
 	return 0
 }
 

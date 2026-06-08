@@ -180,7 +180,13 @@ $(cat "$err_file" 2>/dev/null || true)"
 		return $rc
 	fi
 	err_file=$(mktemp -t aidevops-gh-secondary.XXXXXX) || err_file=""
-	out_file=$(mktemp -t aidevops-gh-response.XXXXXX) || out_file=""
+	out_file=""
+	if [[ -n "$err_file" ]]; then
+		out_file=$(mktemp -t aidevops-gh-response.XXXXXX) || {
+			rm -f "$err_file"
+			err_file=""
+		}
+	fi
 	if command -v timeout >/dev/null 2>&1; then
 		if [[ -n "$err_file" && -n "$out_file" ]]; then
 			timeout "$secs" "$@" >"$out_file" 2>"$err_file"
