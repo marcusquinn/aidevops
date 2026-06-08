@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.37] - 2026-06-08
+
+### Changed
+
+- fail closed pulse write guard fallback (#24571)
+- Maintenance: mark t3596 complete (pr:#24569 completed:2026-06-08) [skip ci]
+- Maintenance: sync ref:GH#24567 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+
 ## [3.20.36] - 2026-06-08
 
 ### Changed
