@@ -111,6 +111,38 @@ assert_eq "unknown slug, owner matches gh user → maintainer" "maintainer" "$ro
 role=$(get_repo_role_by_slug "stranger/unknown-repo")
 assert_eq "unknown slug, different owner → contributor" "contributor" "$role"
 
+# Test 8: Write-capable pulse actions are allowed only on maintainer repos.
+if repo_allows_pulse_write_actions "alice/owned-repo"; then
+	write_allowed="yes"
+else
+	write_allowed="no"
+fi
+assert_eq "write actions allowed for maintainer repo" "yes" "$write_allowed"
+
+# Test 9: Contributor repos stay read-only/noise-free for write-capable sweeps.
+if repo_allows_pulse_write_actions "bob/external-repo"; then
+	write_allowed="yes"
+else
+	write_allowed="no"
+fi
+assert_eq "write actions blocked for contributor repo" "no" "$write_allowed"
+
+# Test 10: Deterministic merge pass uses the write-action role guard.
+if grep -q "repo_allows_pulse_write_actions \"\$repo_slug\"" "${PARENT_DIR}/pulse-merge-process.sh"; then
+	guard_present="yes"
+else
+	guard_present="no"
+fi
+assert_eq "merge pass checks contributor write-action guard" "yes" "$guard_present"
+
+# Test 11: Dirty PR sweep uses the write-action role guard.
+if grep -q "repo_allows_pulse_write_actions \"\$repo_slug\"" "${PARENT_DIR}/pulse-dirty-pr-sweep.sh"; then
+	guard_present="yes"
+else
+	guard_present="no"
+fi
+assert_eq "dirty PR sweep checks contributor write-action guard" "yes" "$guard_present"
+
 echo ""
 echo "Results: ${_TESTS_PASSED}/${_TESTS_RUN} passed, ${_TESTS_FAILED} failed"
 

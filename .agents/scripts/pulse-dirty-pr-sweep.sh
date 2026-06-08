@@ -1109,6 +1109,11 @@ dirty_pr_sweep_all_repos() {
 
 	while IFS='|' read -r repo_slug repo_path; do
 		[[ -n "$repo_slug" ]] || continue
+		if declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
+			&& ! repo_allows_pulse_write_actions "$repo_slug"; then
+			_dps_log "skipping ${repo_slug}: repo role is contributor/read-only"
+			continue
+		fi
 		# Path may be missing in repos.json; try to resolve from git config.
 		if [[ -z "$repo_path" ]]; then
 			repo_path=""
