@@ -615,6 +615,36 @@ else
 fi
 
 echo ""
+echo "Test: NOOP_RE — already-provided feedback summary is filtered"
+write_graphql_fixture "$FIX_GRAPHQL"
+write_reviews_fixture "$FIX_REVIEWS" \
+	"gemini-code-assist" "This pull request updates the ExampleACL configuration by adding explanatory comments regarding access restrictions. Feedback was provided to correct an inconsistency in one of the new comments, where the text refers to 'proxy-service' instead of 'actual-worker' as defined in the actual ACL rule."
+out=$(fetch_review_summaries_md "stub/repo" "42")
+if [[ -z "$out" ]]; then
+	echo "  PASS: already-provided feedback summary is filtered (empty output)"
+	PASS=$((PASS + 1))
+else
+	echo "  FAIL: already-provided feedback summary was NOT filtered"
+	echo "    actual (first 200): ${out:0:200}"
+	FAIL=$((FAIL + 1))
+fi
+
+echo ""
+echo "Test: NOOP_RE — already-addressed and resolved feedback summaries are filtered"
+write_graphql_fixture "$FIX_GRAPHQL"
+write_reviews_fixture "$FIX_REVIEWS" \
+	"gemini-code-assist" "The requested updates have been resolved and the feedback was already addressed in commit abc123."
+out=$(fetch_review_summaries_md "stub/repo" "42")
+if [[ -z "$out" ]]; then
+	echo "  PASS: already-addressed feedback summary is filtered (empty output)"
+	PASS=$((PASS + 1))
+else
+	echo "  FAIL: already-addressed feedback summary was NOT filtered"
+	echo "    actual (first 200): ${out:0:200}"
+	FAIL=$((FAIL + 1))
+fi
+
+echo ""
 echo "Test: NOOP_RE positive control — actionable prose with 'feedback' keyword is preserved"
 # A real review that contains the word "feedback" in actionable prose should
 # NOT be suppressed by NOOP_RE. Only the exact deny-list phrases should match.
