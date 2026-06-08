@@ -101,8 +101,9 @@ BOT_RE="coderabbitai|gemini-code-assist|claude-review|gpt-review"
 # comments the thread-resolution filter is the canonical signal — every
 # unresolved review thread is by definition a finding worth surfacing.
 ACT_RE="should|consider|fix|change|update|refactor|missing|add"
-# NOOP_RE matches review bodies that are LGTM/no-feedback statements even when
-# they incidentally contain ACT_RE keywords. The canonical false-positive pattern
+# NOOP_RE matches review bodies that are LGTM/no-feedback/already-resolved
+# statements even when they incidentally contain ACT_RE keywords. The canonical
+# false-positive pattern
 # (webapp#2349, Gemini on PR #2308): bot writes a PR description
 # containing "refactors" (matches ACT_RE "refactor"), then concludes with "I have
 # no feedback to provide." — the entire body is a description + LGTM, not an
@@ -118,7 +119,7 @@ ACT_RE="should|consider|fix|change|update|refactor|missing|add"
 # issue creation) over the more frequent false positive (an empty LGTM fires a
 # dispatch cycle). Gemini's deterministic empty-review sentence makes the saving
 # repeatable; losing a genuine finding to an incidental phrase match is rare.
-NOOP_RE="(I have no feedback to provide|no feedback to provide|have no feedback|have no suggestions|no actionable feedback|no actionable suggestions|no further feedback|no issues to report|no suggestions to (add|provide|make)|no review comments)"
+NOOP_RE="(I have no feedback to provide|no feedback to provide|have no feedback|have no suggestions|no actionable feedback|no actionable suggestions|no further feedback|no issues to report|no suggestions to (add|provide|make)|no review comments|feedback was (already )?(provided|addressed|corrected)|addressed in commit|already (fixed|resolved|addressed)|has been (resolved|addressed|fixed))"
 
 log() { echo "[scanner] $*" >&2; }
 
