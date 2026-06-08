@@ -19,6 +19,7 @@
 #   - get_repo_maintainer_by_slug
 #   - get_repo_priority_by_slug
 #   - get_repo_role_by_slug (t2145)
+#   - repo_allows_pulse_write_actions (t3596)
 #   - list_dispatchable_issue_candidates_json
 #   - list_dispatchable_issue_candidates
 
@@ -27,6 +28,9 @@
 # verify idempotency.
 [[ -n "${_PULSE_REPO_META_LOADED:-}" ]] && return 0
 _PULSE_REPO_META_LOADED=1
+
+_PULSE_REPO_ROLE_MAINTAINER="maintainer"
+_PULSE_REPO_ROLE_CONTRIBUTOR="contributor"
 
 #######################################
 # Resolve managed repo path from slug
@@ -128,7 +132,7 @@ get_repo_priority_by_slug() {
 get_repo_role_by_slug() {
 	local repo_slug="$1"
 	if [[ -z "$repo_slug" ]]; then
-		echo "contributor"
+		echo "$_PULSE_REPO_ROLE_CONTRIBUTOR"
 		return 0
 	fi
 
@@ -138,7 +142,7 @@ get_repo_role_by_slug() {
 		explicit_role=$(jq -r --arg slug "$repo_slug" \
 			'.initialized_repos[] | select(.slug == $slug) | .role // ""' \
 			"$REPOS_JSON" 2>/dev/null | head -n 1) || explicit_role=""
-		if [[ "$explicit_role" == "maintainer" || "$explicit_role" == "contributor" ]]; then
+		if [[ "$explicit_role" == "$_PULSE_REPO_ROLE_MAINTAINER" || "$explicit_role" == "$_PULSE_REPO_ROLE_CONTRIBUTOR" ]]; then
 			printf '%s\n' "$explicit_role"
 			return 0
 		fi
@@ -151,13 +155,30 @@ get_repo_role_by_slug() {
 	fi
 	local slug_owner="${repo_slug%%/*}"
 	if [[ -n "$_CACHED_GH_USER" && "$slug_owner" == "$_CACHED_GH_USER" ]]; then
-		echo "maintainer"
+		echo "$_PULSE_REPO_ROLE_MAINTAINER"
 		return 0
 	fi
 
 	# 3. Default: contributor (safe — blocks scanners on repos we don't own)
-	echo "contributor"
+	echo "$_PULSE_REPO_ROLE_CONTRIBUTOR"
 	return 0
+}
+
+#######################################
+# Return success only for repos where pulse may write to GitHub PR/issue state.
+# Contributor repos stay read-only/noise-free: session and memory mining remain
+# allowed, but merge/stuck/dirty sweeps must not post, label, close, or rebase.
+# Arguments:
+#   $1 - repo slug (owner/repo)
+# Returns: 0 when role=maintainer, 1 otherwise
+#######################################
+repo_allows_pulse_write_actions() {
+	local repo_slug="$1"
+	local repo_role="$_PULSE_REPO_ROLE_CONTRIBUTOR"
+
+	repo_role=$(get_repo_role_by_slug "$repo_slug" 2>/dev/null) || repo_role="$_PULSE_REPO_ROLE_CONTRIBUTOR"
+	[[ "$repo_role" == "$_PULSE_REPO_ROLE_MAINTAINER" ]] && return 0
+	return 1
 }
 
 #######################################

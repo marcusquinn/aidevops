@@ -293,12 +293,15 @@ merge_ready_prs_all_repos() {
 	local total_closed=0
 	local total_failed=0
 
-	# t3193: track eligible-but-unmerged across all repos for the zero-progress
-	# circuit breaker. Eligible = APPROVED + MERGEABLE + !draft + !hold-for-review.
 	local total_eligible_unmerged=0
 
 	while IFS='|' read -r repo_slug repo_path; do
 		[[ -n "$repo_slug" ]] || continue
+		if declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
+			&& ! repo_allows_pulse_write_actions "$repo_slug"; then
+			echo "[pulse-wrapper] Deterministic merge pass skipped ${repo_slug}: repo role is contributor/read-only" >>"$_mr_logfile"
+			continue
+		fi
 
 		local repo_merged=0
 		local repo_closed=0
@@ -310,16 +313,12 @@ merge_ready_prs_all_repos() {
 		total_closed=$((total_closed + repo_closed))
 		total_failed=$((total_failed + repo_failed))
 
-		# t3193: run the stuck-merge detector pass for this repo. Resolves
-		# at runtime via bash lazy lookup — defined in pulse-merge-stuck.sh
-		# which is sourced by pulse-wrapper.sh after pulse-merge.sh.
+		# t3193: run the stuck-merge detector pass for this repo.
 		if declare -F pulse_merge_stuck_run_pass >/dev/null 2>&1; then
 			pulse_merge_stuck_run_pass "$repo_slug" || true
 		fi
 
-		# t3193: count this repo's eligible-but-unmerged contribution to the
-		# all-repos total. Cheap second pass (uses the same gh pr list cache
-		# that the merge pass already warmed for the iteration window).
+		# t3193: count this repo's eligible-but-unmerged contribution.
 		if declare -F _pms_count_eligible_unmerged_for_repo >/dev/null 2>&1; then
 			local _repo_eligible
 			_repo_eligible=$(_pms_count_eligible_unmerged_for_repo "$repo_slug" 2>/dev/null) || _repo_eligible=0
