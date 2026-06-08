@@ -102,13 +102,14 @@ _foss_current_gh_login() {
 # Args:
 #   $1 - repo_slug (owner/repo)
 #   $2 - issue number
+#   $3 - optional precomputed authenticated GitHub login
 # Returns: 0 when an open PR exists, 1 otherwise.
 #######################################
 _foss_open_pr_exists_for_issue() {
 	local repo_slug="$1"
 	local issue_number="$2"
-	local login
-	login=$(_foss_current_gh_login)
+	local login="${3:-}"
+	[[ -n "$login" ]] || login=$(_foss_current_gh_login)
 	[[ -n "$login" ]] || return 1
 
 	local count
@@ -139,18 +140,17 @@ _foss_recent_runtime_evidence() {
 	[[ "$window_seconds" =~ ^[0-9]+$ ]] || window_seconds=3600
 
 	local matches
-	matches=$(jq -rs --arg key "$session_key" --arg mode "$mode" --arg result_field "result" \
-		--arg local_result "local_error" --arg success_result "success" --arg blocked_result "blocked" \
+	matches=$(jq -rs --arg key "$session_key" --arg mode "$mode" \
 		--argjson window "$window_seconds" '
 		def result_match:
-			(.[$result_field] // "") as $runtime_result
-			| if $mode == "local" then ($runtime_result == $local_result)
-			else ($runtime_result == $success_result or $runtime_result == $blocked_result)
+			(.result // "") as $runtime_result
+			| if $mode == "local" then ($runtime_result == "local_error")
+			else ($runtime_result == "success" or $runtime_result == "blocked")
 			end;
 		[.[] | select((.session_key // "") == $key)
 			| select(((.ts // 0) | tonumber) >= (now - $window))
 			| select(result_match)] | length
-	' "$metrics_file" 2>/dev/null || printf '%s' '0')
+	' "$metrics_file" || printf '%s' '0')
 	[[ "$matches" =~ ^[0-9]+$ ]] || matches=0
 	[[ "$matches" -gt 0 ]] && return 0
 	return 1
@@ -1382,7 +1382,8 @@ dispatch_foss_workers() {
 	local foss_count=0
 	local foss_max="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"
 	local foss_session_keys_seen=$'\n'
-	local foss_slug foss_path disclosure labels_filter_json
+	local foss_slug="" foss_path="" disclosure="" labels_filter_json="" foss_login=""
+	foss_login=$(_foss_current_gh_login)
 
 	[[ "$available" =~ ^[0-9]+$ ]] || available=0
 
@@ -1393,9 +1394,8 @@ dispatch_foss_workers() {
 		# Pre-dispatch eligibility check (budget + rate limit)
 		"${SCRIPT_DIR}/foss-contribution-helper.sh" check "$foss_slug" >/dev/null || continue
 
-		# Scan for a suitable issue. labels_filter_json comes from the outer jq
-		# pass so configured labels stay as JSON array elements, including labels
-		# that contain commas, while avoiding a second repos.json parse per repo.
+		# labels_filter_json keeps configured labels as JSON array elements,
+		# including commas, while avoiding a second repos.json parse per repo.
 		local foss_issue foss_issue_num foss_issue_title
 		local foss_label_candidates=()
 		local foss_label
@@ -1425,7 +1425,7 @@ dispatch_foss_workers() {
 			echo "[pulse-wrapper] FOSS dispatch skipped duplicate session key ${foss_session_key} in this cycle" >>"$LOGFILE"
 			continue
 		fi
-		if _foss_open_pr_exists_for_issue "$foss_slug" "$foss_issue_num"; then
+		if _foss_open_pr_exists_for_issue "$foss_slug" "$foss_issue_num" "$foss_login"; then
 			echo "[pulse-wrapper] FOSS dispatch skipped ${foss_session_key}: authenticated account already has an open PR for issue #${foss_issue_num}" >>"$LOGFILE"
 			continue
 		fi
