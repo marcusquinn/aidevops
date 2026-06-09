@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.41] - 2026-06-09
+
+### Added
+
+- add compact API budget diagnostics (#24586)
+
+### Changed
+
+- enforce ruleset required PR approvals (#24585)
+- perf: reuse pulse PR metadata context (#24589)
+- Tests: enforce PR metadata freshness classes (#24587)
+
 ## [3.20.40] - 2026-06-09
 
 ### Fixed
