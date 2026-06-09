@@ -82,6 +82,7 @@ FIXTURE_LOGDIR="${TMPDIR_TEST}"
 FIXTURE_METRICS="${TMPDIR_TEST}/headless-runtime-metrics.jsonl"
 FIXTURE_STATS="${TMPDIR_TEST}/pulse-stats.json"
 FIXTURE_GH_API_LOG="${TMPDIR_TEST}/gh-api-calls.log"
+FIXTURE_TIMER="${TMPDIR_TEST}/aidevops-supervisor-pulse.timer"
 
 # Create fixture pulse.log with 3+ distinct rule outcomes:
 # 1. PR #20329: escalated by dirty-pr-sweep (notify), then admin-bypass merge
@@ -100,9 +101,22 @@ cat > "$FIXTURE_LOGFILE" <<'FIXTURE'
 2026-04-21T19:10:01Z [shared-gh-wrappers] gh_pr_view cache miss for PR #20340
 2026-04-21T19:10:02Z [shared-gh-wrappers] FORCE_REST reads enabled for low GraphQL budget
 2026-04-21T19:10:03Z [pulse-wrapper] Merge pass: PR #20340 in marcusquinn/aidevops — mergeable resolved to MERGEABLE after retry
+2026-04-21T19:10:04Z [pulse-wrapper] REST-first read routing enabled for REST-equivalent gh issue/pr list/view calls (GH#22525)
+2026-04-21T19:10:05Z [pulse-wrapper] Per-cycle PR view cache enabled for duplicate repo#PR reads ttl=3600s (GH#23433/GH#23604)
 2026-04-21T19:30:00Z [pulse-dirty-pr-sweep] sweep complete: rebased=1 closed=0 notified=2
 2026-04-21T20:00:00Z [pulse-wrapper] Deterministic merge pass complete: merged=3, closed_conflicting=0, failed=0
 FIXTURE
+
+cat > "$FIXTURE_TIMER" <<'TIMER'
+[Unit]
+Description=aidevops supervisor pulse Timer
+
+[Timer]
+OnActiveSec=10s
+OnBootSec=180s
+OnUnitActiveSec=180s
+Persistent=true
+TIMER
 
 cat > "$FIXTURE_STATS" <<'STATS'
 {
@@ -515,6 +529,7 @@ printf '\nTest 21: api-budget compact sanitized summary\n'
 output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
 	PULSE_DIAGNOSE_STATS_FILE="$FIXTURE_STATS" \
 	PULSE_DIAGNOSE_GH_API_LOG="$FIXTURE_GH_API_LOG" \
+	PULSE_DIAGNOSE_SYSTEMD_TIMER_FILE="$FIXTURE_TIMER" \
 	"$HELPER" api-budget 2>&1) || true
 
 assert_contains "api-budget shows heading" "GitHub API Budget Compact Diagnostic" "$output"
@@ -525,6 +540,9 @@ assert_contains "api-budget shows REST cache decisions" "_rest_pr_view repo#PR c
 assert_contains "api-budget shows cache key cardinality" "Cache key cardinality:" "$output"
 assert_contains "api-budget shows mutation bypass attribution" "Mutation bypass attribution:  bypass_disabled_total=2 expected_mutation_sensitive_lower_bound=1 unexplained_lower_bound=1 attribution=limited_by_log_schema" "$output"
 assert_contains "api-budget shows API calls by caller" "API calls by caller:" "$output"
+assert_contains "api-budget shows systemd cadence" "Pulse systemd cadence:        source=systemd_user_timer present=yes configured_interval=180s on_active=10s" "$output"
+assert_contains "api-budget shows log cadence" "Pulse log cadence:            cycles=4 lock_skips=0 cache_enabled_cycles=1" "$output"
+assert_contains "api-budget shows cadence risk" "Cadence/API risk:             risk=watch reason=fast_timer_detected_without_lock_skip_evidence" "$output"
 assert_contains "api-budget warns before cache broadening" "Do not broaden gh_pr_view cache semantics" "$output"
 assert_contains "api-budget documents unique PR limitation" "current gh-api rows do not carry repo#PR identifiers" "$output"
 assert_contains "api-budget includes sanitized summary template" "Comment-ready summary template:" "$output"
@@ -535,6 +553,7 @@ printf '\nTest 22: api-budget --json counters\n'
 output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
 	PULSE_DIAGNOSE_STATS_FILE="$FIXTURE_STATS" \
 	PULSE_DIAGNOSE_GH_API_LOG="$FIXTURE_GH_API_LOG" \
+	PULSE_DIAGNOSE_SYSTEMD_TIMER_FILE="$FIXTURE_TIMER" \
 	"$HELPER" api-budget --json 2>&1) || true
 
 if command -v jq >/dev/null 2>&1; then
@@ -546,6 +565,10 @@ if command -v jq >/dev/null 2>&1; then
 	assert_eq "JSON api-budget caller totals" "1" "$json_callers_total"
 	json_rest_cache=$(echo "$output" | jq -r '.rest_pr_view_repo_cache' 2>/dev/null || echo "")
 	assert_contains "JSON api-budget REST cache counts" "miss=1" "$json_rest_cache"
+	json_cadence=$(echo "$output" | jq -r '.pulse_systemd_cadence' 2>/dev/null || echo "")
+	assert_contains "JSON api-budget cadence" "on_active=10s" "$json_cadence"
+	json_risk=$(echo "$output" | jq -r '.cadence_api_risk' 2>/dev/null || echo "")
+	assert_contains "JSON api-budget cadence risk" "risk=watch" "$json_risk"
 fi
 
 # =============================================================================
