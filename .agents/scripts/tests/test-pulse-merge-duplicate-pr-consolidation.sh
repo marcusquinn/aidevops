@@ -54,12 +54,15 @@ teardown_test_env() {
 
 define_functions_under_test() {
 	local fn_src
+	_PMDC_REVIEW_NONE="NONE"
+	_PMDC_DRAFT_TRUE="true"
 	fn_src=$(awk '
 		/^_pmp_pr_label_csv\(\) \{/,/^}$/ { print }
 		/^_pmp_pr_is_worker_owned_for_consolidation\(\) \{/,/^}$/ { print }
 		/^_pmp_normalize_mergeable_for_consolidation_into\(\) \{/,/^}$/ { print }
 		/^_pmp_issue_blocks_pr_consolidation\(\) \{/,/^}$/ { print }
 		/^_pmp_pr_consolidation_health_score\(\) \{/,/^}$/ { print }
+		/^_pmp_pr_consolidation_candidate_is_healthy\(\) \{/,/^}$/ { print }
 		/^_pmp_close_superseded_sibling_pr\(\) \{/,/^}$/ { print }
 		/^_pmp_consolidate_duplicate_pr_group\(\) \{/,/^}$/ { print }
 		/^_pmp_consolidate_duplicate_pr_groups\(\) \{/,/^}$/ { print }
@@ -252,6 +255,38 @@ test_noop_for_untrusted_gated_or_unverified_groups() {
 	return 0
 }
 
+test_noop_when_candidate_is_not_healthy_enough() {
+	reset_case
+	TEST_LINKED_ISSUES=$'601=905\n602=905'
+	local weak_json
+	weak_json='[
+		{"number":601,"mergeable":"UNKNOWN","reviewDecision":"NONE","isDraft":false,"createdAt":"2026-05-08T10:00:00Z","labels":[{"name":"origin:worker"}]},
+		{"number":602,"mergeable":"MERGEABLE","reviewDecision":"NONE","isDraft":false,"createdAt":"2026-05-08T12:00:00Z","labels":[{"name":"origin:worker"}]}
+	]'
+	_pmp_consolidate_duplicate_pr_groups "owner/repo" "$weak_json"
+	assert_log_not_contains "$GH_CALL_LOG" "verify 905 602 owner/repo" "weak candidate is not scope-verified"
+	assert_log_not_contains "$GH_CALL_LOG" "pr close" "weak candidate leaves sibling PRs open"
+	assert_log_contains "$LOGFILE" "not healthy enough" "weak candidate reason is logged"
+	return 0
+}
+
+test_close_is_comment_only_and_keeps_branch() {
+	reset_case
+	TEST_LINKED_ISSUES=$'701=906\n702=906'
+	TEST_PASSING_CHECKS="702"
+	local pr_json
+	pr_json='[
+		{"number":701,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"createdAt":"2026-05-08T10:00:00Z","labels":[{"name":"origin:worker"}]},
+		{"number":702,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"createdAt":"2026-05-08T11:00:00Z","labels":[{"name":"origin:worker"}]}
+	]'
+	_pmp_consolidate_duplicate_pr_groups "owner/repo" "$pr_json"
+	assert_log_contains "$GH_CALL_LOG" "pr close 701" "superseded PR close command is used"
+	assert_log_contains "$GH_CALL_LOG" "--comment" "superseded close carries evidence comment"
+	assert_log_not_contains "$GH_CALL_LOG" "--delete-branch" "superseded close does not delete branches"
+	assert_log_not_contains "$GH_CALL_LOG" "issue close" "superseded duplicate consolidation never closes issues"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -263,6 +298,8 @@ main() {
 	test_health_score_handles_precomputed_legacy_mergeable_values
 	test_health_score_uses_shared_mergeable_normalizer_when_available
 	test_noop_for_untrusted_gated_or_unverified_groups
+	test_noop_when_candidate_is_not_healthy_enough
+	test_close_is_comment_only_and_keeps_branch
 
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -eq 0 ]]; then
