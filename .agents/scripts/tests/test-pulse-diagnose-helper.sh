@@ -81,6 +81,7 @@ FIXTURE_LOGFILE="${TMPDIR_TEST}/pulse.log"
 FIXTURE_LOGDIR="${TMPDIR_TEST}"
 FIXTURE_METRICS="${TMPDIR_TEST}/headless-runtime-metrics.jsonl"
 FIXTURE_STATS="${TMPDIR_TEST}/pulse-stats.json"
+FIXTURE_GH_API_LOG="${TMPDIR_TEST}/gh-api-calls.log"
 
 # Create fixture pulse.log with 3+ distinct rule outcomes:
 # 1. PR #20329: escalated by dirty-pr-sweep (notify), then admin-bypass merge
@@ -112,6 +113,17 @@ cat > "$FIXTURE_STATS" <<'STATS'
   "pulse_cache_prime_failures": 1
 }
 STATS
+
+cat > "$FIXTURE_GH_API_LOG" <<'GHAPILOG'
+1700000000	gh_pr_view_cache	rest	gh-pat	rest-core	hit	4999
+1700000001	gh_pr_view_cache	rest	gh-pat	rest-core	miss	4998
+1700000002	gh_pr_view_cache	rest	gh-pat	rest-core	stale	4997
+1700000003	gh_pr_view_cache	rest	gh-pat	rest-core	bypass	4996
+1700000004	gh_pr_view_cache	rest	gh-pat	rest-core	store	4995
+1700000005	gh_pr_view_cache	rest	gh-pat	rest-core	invalid-json	4994
+1700000006	gh_pr_view_cache	rest	gh-pat	rest-core	bypass-disabled	4993
+1700000007	rest_pr_view_cache	rest	gh-pat	rest-core	hit	4992
+GHAPILOG
 
 # Also create a rotated log with older PR #20329 entries
 cat > "${TMPDIR_TEST}/pulse.log.1" <<'ROTATED'
@@ -495,11 +507,13 @@ assert_contains "help shows issue subcommand" "issue <N>" "$output"
 printf '\nTest 21: api-budget compact sanitized summary\n'
 output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
 	PULSE_DIAGNOSE_STATS_FILE="$FIXTURE_STATS" \
+	PULSE_DIAGNOSE_GH_API_LOG="$FIXTURE_GH_API_LOG" \
 	"$HELPER" api-budget 2>&1) || true
 
 assert_contains "api-budget shows heading" "GitHub API Budget Compact Diagnostic" "$output"
 assert_contains "api-budget shows circuit count" "GraphQL circuit-breaker trips: 2" "$output"
-assert_contains "api-budget shows cache hit miss" "gh_pr_view cache hits/misses: 1/1" "$output"
+assert_contains "api-budget shows log hit miss" "gh_pr_view log hit/miss refs: 1/1" "$output"
+assert_contains "api-budget shows exact cache decisions" "gh_pr_view exact cache:       hit=1 miss=1 stale=1 bypass=1 store=1 invalid_json=1 bypass_disabled=1" "$output"
 assert_contains "api-budget warns before cache broadening" "Do not broaden gh_pr_view cache semantics" "$output"
 assert_contains "api-budget includes sanitized summary template" "Comment-ready summary template:" "$output"
 assert_not_contains "api-budget omits repo slug" "marcusquinn/aidevops" "$output"
@@ -508,6 +522,7 @@ assert_not_contains "api-budget omits repo slug" "marcusquinn/aidevops" "$output
 printf '\nTest 22: api-budget --json counters\n'
 output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
 	PULSE_DIAGNOSE_STATS_FILE="$FIXTURE_STATS" \
+	PULSE_DIAGNOSE_GH_API_LOG="$FIXTURE_GH_API_LOG" \
 	"$HELPER" api-budget --json 2>&1) || true
 
 if command -v jq >/dev/null 2>&1; then
