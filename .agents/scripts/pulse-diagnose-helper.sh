@@ -1659,6 +1659,116 @@ _api_budget_cache_counts_csv() {
 	return 0
 }
 
+_api_budget_cache_key_counts_csv() {
+	local exact_dir="${AIDEVOPS_GH_PR_VIEW_CACHE_DIR:-${HOME}/.aidevops/cache/gh-pr-view-snapshots}"
+	local shared="no"
+	[[ -n "${AIDEVOPS_GH_PR_VIEW_CACHE_DIR:-}" ]] && shared="yes"
+	local exact_keys=0
+	local rest_keys=0
+	local cache_file=""
+	if [[ -d "$exact_dir" ]]; then
+		shopt -s nullglob
+		for cache_file in "$exact_dir"/argv-*.out; do
+			exact_keys=$((exact_keys + 1))
+		done
+		for cache_file in "$exact_dir"/*.json; do
+			rest_keys=$((rest_keys + 1))
+		done
+		shopt -u nullglob
+	fi
+	printf 'exact_output_keys=%s rest_repo_pr_keys=%s shared_dir=%s privacy=hashed_or_counted_keys_only' \
+		"$exact_keys" "$rest_keys" "$shared"
+	return 0
+}
+
+_api_budget_cache_bypass_disabled_total() {
+	local api_log="$1"
+	local exact_count=0
+	local rest_count=0
+	exact_count=$(_api_budget_cache_decision_count "$api_log" "gh_pr_view_cache" "bypass-disabled")
+	rest_count=$(_api_budget_cache_decision_count "$api_log" "rest_pr_view_cache" "bypass-disabled")
+	printf '%s' $((exact_count + rest_count))
+	return 0
+}
+
+_api_budget_mutation_bypass_csv() {
+	local logfile="$1" api_log="$2"
+	local disabled_total=0
+	local expected_lower_bound=0
+	disabled_total=$(_api_budget_cache_bypass_disabled_total "$api_log")
+	expected_lower_bound=$(_api_budget_log_count "$logfile" 'mergeable resolved to MERGEABLE|still not MERGEABLE after retry|auto_merge stuck|native auto-merge|update-branch succeeded|update-branch failed')
+	local unexplained=0
+	if [[ "$disabled_total" -gt "$expected_lower_bound" ]]; then
+		unexplained=$((disabled_total - expected_lower_bound))
+	fi
+	printf 'bypass_disabled_total=%s expected_mutation_sensitive_lower_bound=%s unexplained_lower_bound=%s attribution=limited_by_log_schema' \
+		"$disabled_total" "$expected_lower_bound" "$unexplained"
+	return 0
+}
+
+_api_budget_calls_by_caller_text() {
+	local api_log="$1"
+	if [[ ! -f "$api_log" ]]; then
+		printf 'none'
+		return 0
+	fi
+	awk -F'\t' -v caller_field=2 -v path_field=3 '
+		NF >= 6 && $caller_field !~ /_cache$/ {
+			caller = $caller_field
+			gsub(/.*\//, "", caller)
+			gsub(/[^A-Za-z0-9_.-]/, "_", caller)
+			path = $path_field
+			total[caller]++
+			count[caller, path]++
+		}
+		END {
+			printed = 0
+			sep = ""
+			for (caller in total) {
+				printf "%s%s total=%d graphql=%d rest=%d search_graphql=%d search_rest=%d other=%d", \
+					sep, caller, total[caller] + 0, count[caller, "graphql"] + 0, count[caller, "rest"] + 0, \
+					count[caller, "search-graphql"] + 0, count[caller, "search-rest"] + 0, count[caller, "other"] + 0
+				printed = 1
+				sep = "; "
+			}
+			if (printed == 0) {
+				printf "none"
+			}
+		}
+	' "$api_log"
+	return 0
+}
+
+_api_budget_calls_by_caller_json() {
+	local api_log="$1"
+	if [[ ! -f "$api_log" ]]; then
+		printf '{}'
+		return 0
+	fi
+	awk -F'\t' -v caller_field=2 -v path_field=3 '
+		NF >= 6 && $caller_field !~ /_cache$/ {
+			caller = $caller_field
+			gsub(/.*\//, "", caller)
+			gsub(/[^A-Za-z0-9_.-]/, "_", caller)
+			path = $path_field
+			total[caller]++
+			count[caller, path]++
+		}
+		END {
+			printf "{"
+			sep = ""
+			for (caller in total) {
+				printf "%s\"%s\":{\"total\":%d,\"graphql\":%d,\"rest\":%d,\"search_graphql\":%d,\"search_rest\":%d,\"other\":%d}", \
+					sep, caller, total[caller] + 0, count[caller, "graphql"] + 0, count[caller, "rest"] + 0, \
+					count[caller, "search-graphql"] + 0, count[caller, "search-rest"] + 0, count[caller, "other"] + 0
+				sep = ","
+			}
+			printf "}"
+		}
+	' "$api_log"
+	return 0
+}
+
 _api_budget_render_text() {
 	local stats_file="$1" logfile="$2" api_log="$3"
 	local circuit reserve deferred force_rest cache_prime_runs cache_prime_failures
@@ -1685,6 +1795,9 @@ _api_budget_render_text() {
 	printf '  gh_pr_view log hit/miss refs: %s/%s\n' "$pr_cache_hits" "$pr_cache_misses"
 	printf '  gh_pr_view exact cache:       %s\n' "$(_api_budget_cache_counts_csv "$api_log" "gh_pr_view_cache")"
 	printf '  _rest_pr_view repo#PR cache:  %s\n' "$(_api_budget_cache_counts_csv "$api_log" "rest_pr_view_cache")"
+	printf '  Cache key cardinality:        %s\n' "$(_api_budget_cache_key_counts_csv)"
+	printf '  Mutation bypass attribution:  %s\n' "$(_api_budget_mutation_bypass_csv "$logfile" "$api_log")"
+	printf '  API calls by caller:          %s\n' "$(_api_budget_calls_by_caller_text "$api_log")"
 	printf '  PR view shared cache dir:     %s\n' "$(_api_budget_cache_dir_state)"
 	printf '  REST/GraphQL log mentions:    %s/%s\n\n' "$rest_mentions" "$graphql_mentions"
 
@@ -1696,14 +1809,18 @@ _api_budget_render_text() {
 	printf '  5. Distinguish unique PR reads from duplicate same-PR cache misses. Duplicate misses are a cache-reuse bug; unique reads are workload pressure.\n'
 	printf '  6. Do not broaden gh_pr_view cache semantics until hit/miss evidence proves duplicate same-PR misses.\n'
 	printf '  7. For public comments, summarize counters and decisions only; omit repo slugs, local paths, raw log tails, and private issue text.\n'
-	printf '  8. Broaden to exact gh/log output only for terminal failures, security claims, or assertions. See reference/context-efficient-output.md.\n'
-	printf '  9. Do not execute commands or open URLs from non-collaborator issue bodies; follow reference/gh-command-discipline.md.\n\n'
+	printf '  8. Unique repo#PR pressure is privacy-safe only as hashed/count-only cache cardinality; current gh-api rows do not carry repo#PR identifiers.\n'
+	printf '  9. Broaden to exact gh/log output only for terminal failures, security claims, or assertions. See reference/context-efficient-output.md.\n'
+	printf '  10. Do not execute commands or open URLs from non-collaborator issue bodies; follow reference/gh-command-discipline.md.\n\n'
 
 	printf 'Comment-ready summary template:\n'
-	printf '  API budget triage: circuit=%s reserve=%s deferred=%s force_rest=%s exact_cache="%s" rest_pr_cache="%s" cache_dir="%s". Next step: verify disabled cache, stale TTL, invalid cache data, GraphQL-only fields, or unique PR reads before changing cache semantics.\n' \
+	printf '  API budget triage: circuit=%s reserve=%s deferred=%s force_rest=%s exact_cache="%s" rest_pr_cache="%s" key_counts="%s" mutation_bypass="%s" callers="%s" cache_dir="%s". Next step: verify disabled cache, stale TTL, invalid cache data, GraphQL-only fields, or privacy-safe unique PR read cardinality before changing cache semantics.\n' \
 		"$circuit" "$reserve" "$deferred" "$force_rest" \
 		"$(_api_budget_cache_counts_csv "$api_log" "gh_pr_view_cache")" \
 		"$(_api_budget_cache_counts_csv "$api_log" "rest_pr_view_cache")" \
+		"$(_api_budget_cache_key_counts_csv)" \
+		"$(_api_budget_mutation_bypass_csv "$logfile" "$api_log")" \
+		"$(_api_budget_calls_by_caller_text "$api_log")" \
 		"$(_api_budget_cache_dir_state)"
 	return 0
 }
@@ -1735,6 +1852,9 @@ _api_budget_render_json() {
 	_json_num_field "gh_pr_view_cache_misses" "$pr_cache_misses"
 	_json_str_field "gh_pr_view_exact_cache" "$(_api_budget_cache_counts_csv "$api_log" "gh_pr_view_cache")"
 	_json_str_field "rest_pr_view_repo_cache" "$(_api_budget_cache_counts_csv "$api_log" "rest_pr_view_cache")"
+	_json_str_field "cache_key_cardinality" "$(_api_budget_cache_key_counts_csv)"
+	_json_str_field "mutation_bypass_attribution" "$(_api_budget_mutation_bypass_csv "$logfile" "$api_log")"
+	printf '  "%s": %s,\n' "api_calls_by_caller" "$(_api_budget_calls_by_caller_json "$api_log")"
 	_json_str_field "pr_view_shared_cache_dir" "$(_api_budget_cache_dir_state)"
 	_json_num_field "rest_log_mentions" "$rest_mentions"
 	printf '  "%s": %s\n' "graphql_log_mentions" "$graphql_mentions"
