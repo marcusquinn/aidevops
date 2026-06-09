@@ -796,7 +796,7 @@ test_profile_readme_install_does_not_kickstart() {
 	local install_count=0
 	local kickstart_count=0
 	local expected_plist_content
-	expected_plist_content=$(cat <<PROFILE_PLIST
+	expected_plist_content=$(cat <<'PROFILE_PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -806,21 +806,21 @@ test_profile_readme_install_does_not_kickstart() {
 	<key>ProgramArguments</key>
 	<array>
 		<string>/bin/bash</string>
-		<string>/fake/profile-readme-helper.sh</string>
-		<string>update</string>
+		<string>-lc</string>
+		<string>start_epoch=$(date +%s); status=success; "/fake/profile-readme-helper.sh" update; rc=$?; end_epoch=$(date +%s); duration=$((end_epoch - start_epoch)); if [ "$rc" -ne 0 ]; then status=failure; fi; if [ -x "\$HOME/.aidevops/agents/scripts/routine-log-helper.sh" ]; then "\$HOME/.aidevops/agents/scripts/routine-log-helper.sh" update "r908" --status "$status" --duration "$duration" >/dev/null 2>&1 || true; fi; exit "$rc"</string>
 	</array>
 	<key>StartInterval</key>
 	<integer>3600</integer>
 	<key>StandardOutPath</key>
-	<string>${fake_home}/.aidevops/.agent-workspace/logs/profile-readme-update.log</string>
+	<string>__FAKE_HOME__/.aidevops/.agent-workspace/logs/profile-readme-update.log</string>
 	<key>StandardErrorPath</key>
-	<string>${fake_home}/.aidevops/.agent-workspace/logs/profile-readme-update.log</string>
+	<string>__FAKE_HOME__/.aidevops/.agent-workspace/logs/profile-readme-update.log</string>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
 		<string>/usr/bin:/bin</string>
 		<key>HOME</key>
-		<string>${fake_home}</string>
+		<string>__FAKE_HOME__</string>
 	</dict>
 	<key>RunAtLoad</key>
 	<false/>
@@ -836,6 +836,7 @@ test_profile_readme_install_does_not_kickstart() {
 </plist>
 PROFILE_PLIST
 )
+	expected_plist_content=${expected_plist_content//__FAKE_HOME__/$fake_home}
 	printf '%s\n' "$expected_plist_content" >"$plist_path"
 
 	_launchd_has_agent() { return 0; }
