@@ -92,6 +92,8 @@ readonly OPENCODE_WAL="${OPENCODE_DB}-wal"
 readonly OPENCODE_SHM="${OPENCODE_DB}-shm"
 readonly MAINTENANCE_WINDOW_MODE="maintenance-window"
 readonly SQLITE_QUICK_CHECK="PRAGMA quick_check;"
+readonly PRAGMA_PAGE_COUNT="page_count"
+readonly PRAGMA_FREELIST_COUNT="freelist_count"
 readonly SESSION_PARENT_ID_COLUMN="parent_id"
 readonly SESSION_PROJECT_ID_COLUMN="project_id"
 
@@ -246,6 +248,36 @@ _pragma() {
 	local db="$1"
 	local name="$2"
 	sqlite3 "$db" "PRAGMA ${name};" 2>/dev/null
+	return 0
+}
+
+_state_json_field() {
+	local field="$1"
+	[[ -f "$STATE_FILE" ]] || {
+		printf '%s' ""
+		return 0
+	}
+	if command -v jq >/dev/null 2>&1; then
+		jq -r --arg field "$field" '.[$field] // empty' "$STATE_FILE" 2>/dev/null || true
+		return 0
+	fi
+	local value
+	value=$(sed -n "s/^[[:space:]]*\"${field}\"[[:space:]]*:[[:space:]]*\"\{0,1\}\([^\",}]*\)\"\{0,1\}.*/\1/p" "$STATE_FILE" 2>/dev/null | awk 'NR == 1 {print; exit}' || true)
+	printf '%s' "$value"
+	return 0
+}
+
+_freelist_exceeds_threshold() {
+	local freelist_count="$1"
+	local page_count="$2"
+	[[ "$page_count" -gt 0 ]] || return 1
+	local pct_num pct_threshold
+	pct_num=$((freelist_count * 100))
+	pct_threshold=$(awk "BEGIN {printf \"%d\", (${VACUUM_FREELIST_THRESHOLD}) * 100}")
+	if [[ $((pct_num / page_count)) -ge "$pct_threshold" ]]; then
+		return 0
+	fi
+	return 1
 }
 
 # _wal_checkpoint_probe <db>
@@ -614,6 +646,52 @@ cmd_check() {
 # Subcommand: report
 # -----------------------------------------------------------------------------
 
+_report_print_compact_large_note() {
+	local top_tables="$1"
+	local top_table_name="" top_table_bytes="" top_table_line=""
+	if [[ -n "$top_tables" ]]; then
+		top_table_line=${top_tables%%$'\n'*}
+		top_table_name=${top_table_line%%|*}
+		top_table_bytes=${top_table_line#*|}
+	fi
+	printf '\n  Maintenance note: DB is compact but large; WAL and free pages are below maintenance thresholds.\n'
+	if [[ -n "$top_table_name" && "$top_table_line" == *'|'* ]]; then
+		printf '                    Largest object is %s (%s), which may be retained live data.\n' \
+			"$top_table_name" "$(_db_size_human "$top_table_bytes")"
+	fi
+	printf '                    Re-running maintenance-window is unlikely to reclaim space.\n'
+	return 0
+}
+
+_report_print_wal_status() {
+	local wal_bytes="$1"
+	local wal_mb_report=$((wal_bytes / 1048576))
+	[[ "$wal_mb_report" -ge "${WAL_LARGE_THRESHOLD_MB}" ]] || return 0
+	[[ -f "$OPENCODE_WAL" ]] || return 0
+	local rp_result rp_blocked rp_log rp_ckpt
+	rp_result=$(_wal_checkpoint_probe "$OPENCODE_DB")
+	read -r rp_blocked rp_log rp_ckpt <<<"$rp_result"
+	if [[ "$rp_blocked" == "1" ]]; then
+		local rp_unckpt=$((rp_log - rp_ckpt))
+		printf '  WAL status:    BUSY — checkpoint blocked by active readers\n'
+		printf '                 (%s frames total, %s checkpointed, %s held)\n' \
+			"$rp_log" "$rp_ckpt" "$rp_unckpt"
+		local rp_holders
+		rp_holders=$(_wal_list_db_holders "$OPENCODE_DB")
+		if [[ -n "$rp_holders" ]]; then
+			printf '  WAL blockers:  (PID process)\n'
+			while IFS=' ' read -r pid name; do
+				printf '                 PID %-8s %s\n' "$pid" "$name"
+			done <<<"$rp_holders"
+		fi
+		printf '  Next step:     close all OpenCode sessions, then:\n'
+		printf '                 opencode-db-maintenance-helper.sh maintain\n'
+	else
+		printf '  WAL status:    ok (checkpoint not blocked)\n'
+	fi
+	return 0
+}
+
 cmd_report() {
 	if ! _opencode_installed; then
 		print_info "opencode not installed — nothing to report"
@@ -629,9 +707,9 @@ cmd_report() {
 	wal_bytes=$(_db_size_bytes "$OPENCODE_WAL")
 
 	local page_count page_size freelist_count
-	page_count=$(_pragma "$OPENCODE_DB" "page_count")
+	page_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_COUNT")
 	page_size=$(_pragma "$OPENCODE_DB" "page_size")
-	freelist_count=$(_pragma "$OPENCODE_DB" "freelist_count")
+	freelist_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_FREELIST_COUNT")
 
 	local freelist_pct=0
 	if [[ "$page_count" -gt 0 ]]; then
@@ -650,32 +728,15 @@ cmd_report() {
 	printf '  WAL size:      %s\n' "$(_db_size_human "$wal_bytes")"
 	# WAL status: distinguish active-DB table size from WAL size; show checkpoint state
 	# when WAL is large so users understand why it hasn't shrunk after archiving.
-	local wal_mb_report=$(( wal_bytes / 1048576 ))
-	if [[ "$wal_mb_report" -ge "${WAL_LARGE_THRESHOLD_MB}" ]] && [[ -f "$OPENCODE_WAL" ]]; then
-		local rp_result rp_blocked rp_log rp_ckpt
-		rp_result=$(_wal_checkpoint_probe "$OPENCODE_DB")
-		read -r rp_blocked rp_log rp_ckpt <<<"$rp_result"
-		if [[ "$rp_blocked" == "1" ]]; then
-			local rp_unckpt=$(( rp_log - rp_ckpt ))
-			printf '  WAL status:    BUSY — checkpoint blocked by active readers\n'
-			printf '                 (%s frames total, %s checkpointed, %s held)\n' \
-				"$rp_log" "$rp_ckpt" "$rp_unckpt"
-			local rp_holders
-			rp_holders=$(_wal_list_db_holders "$OPENCODE_DB")
-			if [[ -n "$rp_holders" ]]; then
-				printf '  WAL blockers:  (PID process)\n'
-				while IFS=' ' read -r pid name; do
-					printf '                 PID %-8s %s\n' "$pid" "$name"
-				done <<<"$rp_holders"
-			fi
-			printf '  Next step:     close all OpenCode sessions, then:\n'
-			printf '                 opencode-db-maintenance-helper.sh maintain\n'
-		else
-			printf '  WAL status:    ok (checkpoint not blocked)\n'
-		fi
-	fi
+	_report_print_wal_status "$wal_bytes"
 	printf '  Pages:         %s (page_size=%sB)\n' "$page_count" "$page_size"
 	printf '  Free pages:    %s (%s%% of total)\n' "$freelist_count" "$freelist_pct"
+	local compact_large=false
+	if [[ $((db_bytes / 1048576)) -ge "$FORCE_VACUUM_SIZE_MB" ]] && \
+		[[ $((wal_bytes / 1048576)) -lt "$WAL_LARGE_THRESHOLD_MB" ]] && \
+		! _freelist_exceeds_threshold "$freelist_count" "$page_count"; then
+		compact_large=true
+	fi
 	printf '\n  PRAGMAs (fresh CLI connection — not what opencode uses):\n'
 	printf '    journal_mode = %s\n' "$journal_mode"
 	printf '    synchronous  = %s\n' "$sync_mode"
@@ -696,6 +757,9 @@ cmd_report() {
 		printf '%s\n' "$top_tables" | while IFS='|' read -r name bytes; do
 			printf '    %-40s %s\n' "$name" "$(_db_size_human "$bytes")"
 		done
+	fi
+	if [[ "$compact_large" == true ]]; then
+		_report_print_compact_large_note "$top_tables"
 	fi
 
 	# Last run info
@@ -762,19 +826,13 @@ _maintain_preflight() {
 _maintain_should_vacuum() {
 	local before_bytes="$1"
 	local freelist_count page_count size_mb
-	freelist_count=$(_pragma "$OPENCODE_DB" "freelist_count")
-	page_count=$(_pragma "$OPENCODE_DB" "page_count")
+	freelist_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_FREELIST_COUNT")
+	page_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_COUNT")
 	size_mb=$((before_bytes / 1048576))
 
-	if [[ "$page_count" -gt 0 ]]; then
-		local pct_num pct_threshold
-		# Integer math to avoid bc dependency in comparison
-		pct_num=$((freelist_count * 100))
-		pct_threshold=$(echo "${VACUUM_FREELIST_THRESHOLD} * 100" | awk '{printf "%d", $1}')
-		if [[ $((pct_num / page_count)) -ge "$pct_threshold" ]]; then
-			printf '%s %s %s %s' true "$freelist_count" "$page_count" "$size_mb"
-			return 0
-		fi
+	if _freelist_exceeds_threshold "$freelist_count" "$page_count"; then
+		printf '%s %s %s %s' true "$freelist_count" "$page_count" "$size_mb"
+		return 0
 	fi
 	if [[ "$size_mb" -ge "$FORCE_VACUUM_SIZE_MB" ]]; then
 		printf '%s %s %s %s' true "$freelist_count" "$page_count" "$size_mb"
@@ -1285,7 +1343,7 @@ cmd_notice() {
 		return 0
 	fi
 
-	local now last_ts age db_bytes wal_bytes db_mb wal_mb due=false reason=""
+	local now last_ts age db_bytes wal_bytes db_mb wal_mb due=false reason="" compact_notice=false
 	now=$(date +%s)
 	last_ts=$(_state_mtime_epoch "$STATE_FILE")
 	db_bytes=$(_db_size_bytes "$OPENCODE_DB")
@@ -1308,12 +1366,33 @@ cmd_notice() {
 		due=true
 		reason="WAL ${wal_mb}MB >= ${WAL_LARGE_THRESHOLD_MB}MB"
 	elif [[ "$db_mb" -ge "$FORCE_VACUUM_SIZE_MB" ]]; then
-		due=true
-		reason="DB ${db_mb}MB >= ${FORCE_VACUUM_SIZE_MB}MB"
+		if [[ "$due" == true ]]; then
+			reason="${reason}; DB ${db_mb}MB >= ${FORCE_VACUUM_SIZE_MB}MB"
+		elif _sqlite_available; then
+			local page_count freelist_count state_outcome
+			page_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_COUNT")
+			freelist_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_FREELIST_COUNT")
+			[[ "$page_count" =~ ^[0-9]+$ ]] || page_count=0
+			[[ "$freelist_count" =~ ^[0-9]+$ ]] || freelist_count=0
+			state_outcome=$(_state_json_field "outcome")
+			if [[ "$last_ts" -gt 0 ]] && [[ "$state_outcome" == "success" ]] && \
+				! _freelist_exceeds_threshold "$freelist_count" "$page_count"; then
+				compact_notice=true
+			else
+				due=true
+				reason="DB ${db_mb}MB >= ${FORCE_VACUUM_SIZE_MB}MB"
+			fi
+		else
+			due=true
+			reason="DB ${db_mb}MB >= ${FORCE_VACUUM_SIZE_MB}MB"
+		fi
 	fi
 
 	if [[ "$due" == true ]]; then
 		printf '[OPENCODE MAINTENANCE] Recommended: %s. Run aidevops opencode-db maintenance-window off-hours; pulse/headless workers pause during the window.\n' "$reason"
+	elif [[ "$compact_notice" == true ]]; then
+		printf '[OPENCODE MAINTENANCE] Compact but large: DB %sMB >= %sMB, WAL is low, and free pages are below threshold after recent successful maintenance. Re-running maintenance-window is unlikely to reclaim space; run aidevops opencode-db report for retained-data details.\n' \
+			"$db_mb" "$FORCE_VACUUM_SIZE_MB"
 	fi
 	return 0
 }
