@@ -488,7 +488,7 @@ _resolve_pr_mergeable_status() {
 		[[ -z "$original_mergeable" ]] && _was_label="empty"
 		# Separate local declaration from assignment to preserve exit code (SC2181).
 		local _retry_output _retry_exit
-		_retry_output=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+		_retry_output=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$pr_number" --repo "$repo_slug" \
 			--json mergeable --jq '.mergeable // ""')
 		_retry_exit=$?
 		[[ $_retry_exit -eq 0 && -n "$_retry_output" ]] && pr_mergeable="$_retry_output" || pr_mergeable="UNKNOWN"
@@ -1421,7 +1421,7 @@ _set_native_auto_merge_or_skip() {
 	# Fetch auto_merge metadata + merge state in one call so the stuck-state
 	# check (t3192) does not require an extra round trip.
 	local _pr_state
-	_pr_state=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+	_pr_state=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$pr_number" --repo "$repo_slug" \
 		--json autoMergeRequest,mergeStateStatus,mergeable,reviewDecision 2>/dev/null)
 
 	local _existing_auto=""

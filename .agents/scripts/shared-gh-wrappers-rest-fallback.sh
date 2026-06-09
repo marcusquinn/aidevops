@@ -67,10 +67,8 @@ _GH_REST_PR_VIEW_CACHE_DIR=""
 
 #######################################
 # Return 0 when REST PR view responses may be reused within this shell.
-# The cache is intentionally process-scoped: pulse stages that source the shared
-# wrappers reuse duplicate REST reads during one cycle, while later cycles start
-# with fresh state. Callers can bypass before mutation-sensitive reads with
-# AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1.
+# Process-scoped: later pulse cycles start fresh. Mutation-sensitive callers
+# MUST bypass with AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1.
 # Returns: 0 when enabled, 1 otherwise.
 #######################################
 _rest_pr_view_cache_enabled() {
@@ -368,6 +366,9 @@ _rest_pr_list_can_preserve_args() {
 
 #######################################
 # Return 0 when gh pr view argv is safe to translate to REST proactively.
+# Field classes: stable-within-cycle REST fields may use repo#PR cache; volatile
+# fields like mergeable need caller refetch after mutation; GraphQL-only fields
+# below never use REST projection.
 # Args: gh-style argv
 #######################################
 _rest_pr_view_can_preserve_args() {
@@ -377,7 +378,7 @@ _rest_pr_view_can_preserve_args() {
 	local field
 	while IFS= read -r field; do
 		case "$field" in
-		statusCheckRollup|reviews|latestReviews|reviewThreads|commits|files) return 1 ;;
+		statusCheckRollup|reviews|latestReviews|reviewThreads|commits|files|reviewDecision|autoMergeRequest|mergeStateStatus) return 1 ;;
 		*) ;;
 		esac
 	done < <(_rest_split_csv "$fields")
