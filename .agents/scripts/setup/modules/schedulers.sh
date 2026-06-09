@@ -496,7 +496,7 @@ setup_screen_time_snapshot() {
 		# XML-escape paths for safe plist embedding
 		local _xml_st_script _xml_st_home
 		local st_command
-		st_command=$(_core_routine_logged_command "r909" "\"${st_script}\" snapshot")
+		st_command=$(_core_routine_logged_command "r909" "$(_core_routine_shell_quote "$st_script") snapshot")
 		_xml_st_script=$(_xml_escape "$st_command")
 		_xml_st_home=$(_xml_escape "$HOME")
 

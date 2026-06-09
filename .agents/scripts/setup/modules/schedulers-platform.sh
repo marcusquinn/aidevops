@@ -507,12 +507,20 @@ _run_profile_readme_init() {
 	return 0
 }
 
+_core_routine_shell_quote() {
+	local value="$1"
+	printf "'"
+	printf '%s' "$value" | sed "s/'/'\\\\''/g"
+	printf "'"
+	return 0
+}
+
 _core_routine_logged_command() {
 	local routine_id="$1"
 	local exec_command="$2"
 	local log_helper="\$HOME/.aidevops/agents/scripts/routine-log-helper.sh"
 	# shellcheck disable=SC2016 # command string is expanded by the generated scheduler shell.
-	printf 'start_epoch=$(date +%%s); status=success; %s; rc=$?; end_epoch=$(date +%%s); duration=$((end_epoch - start_epoch)); if [ "$rc" -ne 0 ]; then status=failure; fi; if [ -x "%s" ]; then "%s" update "%s" --status "$status" --duration "$duration" >/dev/null 2>&1 || true; fi; exit "$rc"' \
+	printf 'start_epoch=$(date +%%s); status=success; %s; rc=$?; end_epoch=$(date +%%s); duration=$(( ${end_epoch:-0} - ${start_epoch:-0} )); if [ "$rc" -ne 0 ]; then status=failure; fi; if [ -x "%s" ]; then "%s" update "%s" --status "$status" --duration "$duration" >/dev/null 2>&1 || true; fi; exit "$rc"' \
 		"$exec_command" \
 		"$log_helper" \
 		"$log_helper" \
@@ -526,7 +534,7 @@ _install_profile_readme_launchd() {
 	local pr_plist="$HOME/Library/LaunchAgents/${pr_label}.plist"
 	local _xml_pr_script _xml_pr_home
 	local pr_command
-	pr_command=$(_core_routine_logged_command "r908" "\"${pr_script}\" update")
+	pr_command=$(_core_routine_logged_command "r908" "$(_core_routine_shell_quote "$pr_script") update")
 	_xml_pr_script=$(_xml_escape "$pr_command")
 	_xml_pr_home=$(_xml_escape "$HOME")
 

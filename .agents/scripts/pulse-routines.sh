@@ -123,7 +123,7 @@ _routine_execute() {
 			if [[ -x "$ROUTINE_LOG_HELPER" ]]; then
 				local ended_epoch
 				ended_epoch=$(date +%s)
-				local duration=$((ended_epoch - started_epoch))
+				local duration=$(( ${ended_epoch:-0} - ${started_epoch:-0} ))
 				"$ROUTINE_LOG_HELPER" update "$routine_id" --status failure --duration "$duration" 2>/dev/null || true
 			fi
 			return 1
@@ -181,7 +181,7 @@ _routine_execute() {
 	if [[ -x "$ROUTINE_LOG_HELPER" ]]; then
 		local ended_epoch
 		ended_epoch=$(date +%s)
-		local duration=$((ended_epoch - started_epoch))
+		local duration=$(( ${ended_epoch:-0} - ${started_epoch:-0} ))
 		"$ROUTINE_LOG_HELPER" update "$routine_id" --status "$status" --duration "$duration" 2>/dev/null || true
 	fi
 
