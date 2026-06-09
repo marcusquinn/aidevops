@@ -279,6 +279,22 @@ _probe_build_request() {
 	return 0
 }
 
+# Detect provider quota exhaustion from an HTTP error body before generic auth
+# handling. OpenAI returns HTTP 403 for both auth and billing quota failures, so
+# status-code-only parsing can incorrectly trigger OAuth fallback and record a
+# quota-exhausted provider as healthy.
+_probe_body_has_quota_error() {
+	local body="$1"
+	local body_lc
+
+	body_lc=$(printf '%s\n' "$body" | tr '[:upper:]' '[:lower:]')
+	if [[ "$body_lc" == *"insufficient_quota"* ]] || [[ "$body_lc" == *"quota exceeded"* ]] || [[ "$body_lc" == *"exceeded your current quota"* ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
 # Parse an HTTP response code into status, error_msg, models_count, and exit_code.
 # Outputs four lines: status, error_msg, models_count, exit_code.
 _probe_parse_http_response() {
@@ -303,10 +319,17 @@ _probe_parse_http_response() {
 		[[ "$quiet" != "true" ]] && print_success "$provider: healthy (${models_count} models)"
 		;;
 	401 | 403)
-		status="key_invalid"
-		error_msg="Authentication failed (HTTP $http_code)"
-		exit_code=3
-		[[ "$quiet" != "true" ]] && print_error "$provider: API key invalid (HTTP $http_code)"
+		if _probe_body_has_quota_error "$body"; then
+			status="quota_exceeded"
+			error_msg="Quota exceeded (HTTP $http_code)"
+			exit_code=1
+			[[ "$quiet" != "true" ]] && print_error "$provider: quota exceeded (HTTP $http_code)"
+		else
+			status="key_invalid"
+			error_msg="Authentication failed (HTTP $http_code)"
+			exit_code=3
+			[[ "$quiet" != "true" ]] && print_error "$provider: API key invalid (HTTP $http_code)"
+		fi
 		;;
 	429)
 		status="rate_limited"
