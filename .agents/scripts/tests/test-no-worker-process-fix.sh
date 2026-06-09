@@ -81,8 +81,7 @@ print_result() {
 # canonical log paths.
 test_claim_released_reads_log() {
 	local shared_lifecycle="${AGENT_SCRIPT_DIR}/shared-claim-lifecycle.sh"
-	# shellcheck disable=SC2016  # literal text in source — no expansion intended
-	if grep -q '/tmp/pulse-\${safe_slug}-\${issue_number}.log' "$shared_lifecycle" \
+	if grep -q 'aidevops_pulse_worker_log_candidates' "$shared_lifecycle" \
 		&& grep -q 'log_candidates=' "$shared_lifecycle" \
 		&& grep -q '_read_worker_log_tail_classified' "$PULSE_CLEANUP"; then
 		print_result "fix #1: _post_launch_recovery_claim_released enumerates worker-log paths" 0

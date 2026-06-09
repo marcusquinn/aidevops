@@ -861,8 +861,9 @@ _dispatch_infra_failure_advisory() {
 	local issue_number="$1"
 	local repo_slug="$2"
 
-	local safe_slug="${repo_slug//\//-}"
-	local log_path_hint="/tmp/pulse-${safe_slug}-${issue_number}.log"
+	local log_path_hint=""
+	log_path_hint=$(aidevops_pulse_worker_log_path "$repo_slug" "$issue_number" 2>/dev/null || true)
+	[[ -n "$log_path_hint" ]] || log_path_hint="<pulse-temp>/pulse-${issue_number}.log"
 
 	cat <<MARKER_EOF
 ## Dispatch infrastructure failure detected
@@ -879,7 +880,7 @@ A \`session_count=0\` release indicates the worker died in setup (sandbox crash,
 
 1. Read the most recent worker logs:
    - \`${log_path_hint}\`
-   - \`/tmp/pulse-${safe_slug}-${issue_number}.log.*\` (rotated copies)
+   - \`${log_path_hint}.*\` (rotated copies)
 2. Identify the failure family — sandbox / auth / OpenCode / prompt / SIGTERM source.
 3. Once the underlying issue is fixed, clear NMR with:
 
@@ -1864,8 +1865,8 @@ reap_zombie_workers() {
 #
 # t2814 (Phase 3, fix #1): Include the tail of the worker log in the claim-
 # released comment for `no_worker_process` failures. Closes the diagnostic
-# gap identified in t2813 root cause analysis: worker logs at
-# /tmp/pulse-${safe_slug}-${issue_number}.log existed but were never read
+# gap identified in t2813 root cause analysis: worker logs in the pulse temp
+# directory existed but were never read
 # during recovery, so every `no_worker_process` event ended with the same
 # opaque "no active worker process" message and no insight into whether the
 # canary failed, the session lock collided, or the runtime crashed before
@@ -2138,19 +2139,21 @@ cleanup_stalled_workers() {
 		issue_num=$(echo "$cmd" | grep -oE 'issue #[0-9]+' | grep -oE '[0-9]+' | head -1)
 		[[ -n "$issue_num" ]] || continue
 
-		local safe_slug log_file log_size
+		local log_file log_size
 		# Check all pulse-enabled repos for matching log
 		local found_log=""
-		for safe_slug in $(jq -r '.initialized_repos[] | select(.pulse == true) | .slug // ""' "$REPOS_JSON" | tr '/:' '--'); do
-			log_file="/tmp/pulse-${safe_slug}-${issue_num}.log"
+		local repo_slug=""
+		while IFS= read -r repo_slug; do
+			[[ -n "$repo_slug" ]] || continue
+			log_file=$(aidevops_pulse_worker_log_path "$repo_slug" "$issue_num" 2>/dev/null || true)
 			if [[ -f "$log_file" ]]; then
 				found_log="$log_file"
 				break
 			fi
-		done
+		done < <(jq -r '.initialized_repos[] | select(.pulse == true) | .slug // ""' "$REPOS_JSON")
 		# Fallback log path
 		if [[ -z "$found_log" ]]; then
-			log_file="/tmp/pulse-${issue_num}.log"
+			log_file=$(aidevops_pulse_worker_log_fallback_path "$issue_num" 2>/dev/null || true)
 			[[ -f "$log_file" ]] && found_log="$log_file"
 		fi
 

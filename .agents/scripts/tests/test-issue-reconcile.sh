@@ -192,9 +192,7 @@ STUB
 chmod +x "${STUB_DIR}/gh"
 
 # Create a worker log with current timestamp (active guard should fire: < 600s old)
-# slug "owner/testrepo" → tr '/:' '--' → "owner-testrepo"
-SAFE_SLUG="owner-testrepo"
-WORKER_LOG="/tmp/pulse-${SAFE_SLUG}-77.log"
+WORKER_LOG=$(aidevops_pulse_worker_log_path "owner/testrepo" "77")
 touch "$WORKER_LOG"
 
 rm -f "$GH_EDIT_ARGS_FILE"

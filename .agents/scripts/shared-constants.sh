@@ -979,6 +979,13 @@ suppress_stderr() {
 	return $?
 }
 
+_shared_constants_dir="${BASH_SOURCE[0]%/*}"
+if [[ -r "${_shared_constants_dir}/pulse-temp-helper.sh" ]]; then
+	# shellcheck source=pulse-temp-helper.sh
+	source "${_shared_constants_dir}/pulse-temp-helper.sh"
+fi
+unset _shared_constants_dir
+
 # =============================================================================
 # RETURN Trap Cleanup Stack (t196)
 # =============================================================================

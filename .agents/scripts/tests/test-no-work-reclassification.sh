@@ -132,17 +132,16 @@ test_env_override_documented() {
 # shellcheck source=../shared-claim-lifecycle.sh
 source "$SHARED_CLAIM_LIFECYCLE"
 
-# Helper: write a fake log to a fresh /tmp path (the canonical location the
-# reader scans), invoke the reader, capture classification + content.
+# Helper: write a fake log to the per-user pulse temp path the reader scans,
+# invoke the reader, capture classification + content.
 _run_classifier_with_log() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local log_content="$3"
-	local safe_slug
-	safe_slug=$(printf '%s' "$repo_slug" | tr '/:' '--')
-	local log_file="/tmp/pulse-${safe_slug}-${issue_number}.log"
+	local log_file=""
+	log_file=$(aidevops_pulse_worker_log_path "$repo_slug" "$issue_number")
 	# Clean any prior fixture
-	rm -f "$log_file" "/tmp/pulse-${issue_number}.log" 2>/dev/null || true
+	rm -f "$log_file" "$(aidevops_pulse_worker_log_fallback_path "$issue_number")" 2>/dev/null || true
 	if [[ -n "$log_content" ]]; then
 		printf '%s\n' "$log_content" >"$log_file"
 	fi
@@ -250,9 +249,8 @@ _log_no_work_skip_escalation() {
 # Fixture with tool-call markers — real_coding → return 1 (no reclass)
 test_reclassify_real_coding_no_op() {
 	: >"$RECLASS_CAPTURE"
-	local safe_slug
-	safe_slug=$(printf '%s' "test/repo-r1" | tr '/:' '--')
-	local log_file="/tmp/pulse-${safe_slug}-91001.log"
+	local log_file=""
+	log_file=$(aidevops_pulse_worker_log_path "test/repo-r1" "91001")
 	printf 'tool_use Edit foo.sh\ngit commit succeeded\n' >"$log_file"
 	# Make the log "young" so the no_tool_calls timing path is irrelevant
 	if _maybe_reclassify_worker_failed_as_no_work 91001 "test/repo-r1" 1 "worker_failed"; then
@@ -274,9 +272,8 @@ test_reclassify_real_coding_no_op() {
 # Fixture with no tool calls + young log → reclass with no_tool_calls_in_log
 test_reclassify_no_tool_calls_fires() {
 	: >"$RECLASS_CAPTURE"
-	local safe_slug
-	safe_slug=$(printf '%s' "test/repo-r2" | tr '/:' '--')
-	local log_file="/tmp/pulse-${safe_slug}-91002.log"
+	local log_file=""
+	log_file=$(aidevops_pulse_worker_log_path "test/repo-r2" "91002")
 	printf 'session init\nwaiting for stream\nconnection refused\n' >"$log_file"
 	# Force a young mtime (now)
 	touch "$log_file"
@@ -299,9 +296,8 @@ test_reclassify_no_tool_calls_fires() {
 # Fixture with canary marker → reclass with canary_post_spawn_failure
 test_reclassify_canary_fires() {
 	: >"$RECLASS_CAPTURE"
-	local safe_slug
-	safe_slug=$(printf '%s' "test/repo-r3" | tr '/:' '--')
-	local log_file="/tmp/pulse-${safe_slug}-91003.log"
+	local log_file=""
+	log_file=$(aidevops_pulse_worker_log_path "test/repo-r3" "91003")
 	printf '[t2814:early_exit] worker PID 12345 exited\ncanary diagnostics\n' >"$log_file"
 	if _maybe_reclassify_worker_failed_as_no_work 91003 "test/repo-r3" 1 "worker_failed"; then
 		if grep -q 'reason=no_work:canary_post_spawn_failure' "$RECLASS_CAPTURE"; then
@@ -321,9 +317,8 @@ test_reclassify_canary_fires() {
 # NO_WORK_RECLASS_ELAPSED_MAX honoured — old log + no_tool_calls → no reclass
 test_reclassify_old_no_tool_calls_skipped() {
 	: >"$RECLASS_CAPTURE"
-	local safe_slug
-	safe_slug=$(printf '%s' "test/repo-r4" | tr '/:' '--')
-	local log_file="/tmp/pulse-${safe_slug}-91004.log"
+	local log_file=""
+	log_file=$(aidevops_pulse_worker_log_path "test/repo-r4" "91004")
 	printf 'session init\nwaiting\n' >"$log_file"
 	# Use a low elapsed-max, then backdate the log to exceed it.
 	local saved_max="$NO_WORK_RECLASS_ELAPSED_MAX"
@@ -351,7 +346,7 @@ test_reclassify_old_no_tool_calls_skipped() {
 test_reclassify_no_log_falls_through() {
 	: >"$RECLASS_CAPTURE"
 	# Ensure no log file exists for this issue
-	rm -f /tmp/pulse-test--repo-r5-91005.log /tmp/pulse-91005.log 2>/dev/null || true
+	rm -f "$(aidevops_pulse_worker_log_path "test/repo-r5" "91005")" "$(aidevops_pulse_worker_log_fallback_path "91005")" 2>/dev/null || true
 	if _maybe_reclassify_worker_failed_as_no_work 91005 "test/repo-r5" 1 "worker_failed"; then
 		print_result "reclass: no log file → fall-through (no regression)" 1 \
 			"Expected return 1 (fall-through) for missing log"
@@ -369,9 +364,8 @@ test_reclassify_no_log_falls_through() {
 # Reasons that should NOT reclassify (rate_limit, etc.)
 test_reclassify_skips_rate_limit() {
 	: >"$RECLASS_CAPTURE"
-	local safe_slug
-	safe_slug=$(printf '%s' "test/repo-r6" | tr '/:' '--')
-	local log_file="/tmp/pulse-${safe_slug}-91006.log"
+	local log_file=""
+	log_file=$(aidevops_pulse_worker_log_path "test/repo-r6" "91006")
 	# Even with a no_tool_calls log, rate_limit should fall through.
 	printf 'session init\nwaiting\n' >"$log_file"
 	touch "$log_file"
