@@ -606,7 +606,6 @@ _pr_required_checks_pass() {
 #
 # Rate-limit: one call per PR per merge cycle — same as t2116.
 #
-# Args: $1=pr_number, $2=repo_slug, $3=base_ref_name (optional), $4=head_ref_oid (optional)
 # t2805
 #######################################
 _attempt_pr_ci_rebase_retry() {
@@ -615,8 +614,7 @@ _attempt_pr_ci_rebase_retry() {
 	local _base_branch="${3:-}"
 	local _head_oid="${4:-}"
 
-	# Prefer the per-cycle PR list context. Fetch only when a direct/webhook
-	# caller did not provide the stable branch metadata.
+	# Prefer per-cycle PR list context; direct/webhook callers may omit it.
 	if [[ -z "$_base_branch" || -z "$_head_oid" ]]; then
 		local _pr_info
 		_pr_info=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
@@ -743,16 +741,10 @@ _route_pr_to_fix_worker() {
 }
 
 #######################################
-# Retarget any open PRs that are stacked on the head branch of a PR
-# that is about to be merged (and its branch deleted). GitHub auto-closes
-# stacked children when their base branch disappears; retargeting to main
-# before the delete prevents the auto-close.
-#
-# Limitation: only direct children are retargeted. Grandchildren are
-# naturally handled when their own parent PR merges and retargets them.
+# Retarget direct child PRs before deleting the merged parent branch.
 #
 # Args:
-#   $1 - parent PR number (the PR being merged)
+#   $1 - parent PR number
 #   $2 - repo slug
 #   $3 - parent head ref from per-cycle PR context (optional)
 # Returns: 0 always (errors are non-fatal)
