@@ -84,6 +84,7 @@ unset AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE
 unset AIDEVOPS_GH_PR_LIST_CACHE_DIR
 unset AIDEVOPS_GH_PR_LIST_CACHE_TTL
 unset AIDEVOPS_GH_PR_LIST_CACHE_DISABLE
+unset AIDEVOPS_GH_API_LOG
 
 SCRIPT_DIR_TEST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 SCRIPTS_DIR="$(cd "${SCRIPT_DIR_TEST}/.." && pwd)" || exit 1
@@ -125,6 +126,7 @@ trap 'rm -rf "$TMP"' EXIT
 GH_CALLS="${TMP}/gh_calls.log"
 GH_INFO_OUTPUT="${TMP}/info_output.log"
 GH_APP_TOKEN_CALLS="${TMP}/gh_app_token_calls.log"
+export AIDEVOPS_GH_API_LOG="${TMP}/gh-api-calls.log"
 
 # Configurable stub behaviour per test via env vars:
 #   STUB_RATE_LIMIT_REMAINING  — what gh api rate_limit returns (default: 5000)
@@ -1143,6 +1145,7 @@ unset AIDEVOPS_GH_PR_LIST_CACHE_DIR AIDEVOPS_GH_PR_LIST_CACHE_TTL
 
 : >"$GH_CALLS"
 : >"$GH_INFO_OUTPUT"
+: >"$AIDEVOPS_GH_API_LOG"
 export AIDEVOPS_GH_PR_VIEW_CACHE=1
 export AIDEVOPS_GH_PR_VIEW_CACHE_DIR="$TMP/pr-view-cache"
 export AIDEVOPS_GH_PR_VIEW_CACHE_TTL=30
@@ -1150,11 +1153,52 @@ gh_pr_view 123 --repo "owner/repo" --json statusCheckRollup --jq '.number // 0' 
 gh_pr_view 123 --repo "owner/repo" --json statusCheckRollup --jq '.number // 0' >/dev/null 2>&1 || true
 
 pr_view_calls=$(grep -cE '^pr view 123 --repo owner/repo --json statusCheckRollup' "$GH_CALLS" 2>/dev/null || true)
-if [[ "$pr_view_calls" == "1" ]]; then
+
+exact_cache_misses=$(grep -c $'gh_pr_view_cache\tother\tunknown\tother\tmiss' "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)
+exact_cache_hits=$(grep -c $'gh_pr_view_cache\tother\tunknown\tother\thit' "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)
+exact_cache_stores=$(grep -c $'gh_pr_view_cache\tother\tunknown\tother\tstore' "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)
+if [[ "$pr_view_calls" == "1" && "$exact_cache_misses" == "1" && "$exact_cache_hits" == "1" && "$exact_cache_stores" == "1" ]]; then
 	pass "gh_pr_view exact-output cache coalesces identical GraphQL-only PR reads"
 else
 	fail "gh_pr_view exact-output cache coalesces identical GraphQL-only PR reads" \
-		"pr_view_calls=${pr_view_calls} GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+		"pr_view_calls=${pr_view_calls} miss=${exact_cache_misses} hit=${exact_cache_hits} store=${exact_cache_stores} GH_CALLS=$(cat "$GH_CALLS") API_LOG=$(cat "$AIDEVOPS_GH_API_LOG") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+unset AIDEVOPS_GH_PR_VIEW_CACHE AIDEVOPS_GH_PR_VIEW_CACHE_DIR AIDEVOPS_GH_PR_VIEW_CACHE_TTL
+
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+: >"$AIDEVOPS_GH_API_LOG"
+export STUB_RATE_LIMIT_REMAINING=0
+export AIDEVOPS_GH_PR_VIEW_CACHE=1
+export AIDEVOPS_GH_PR_VIEW_CACHE_DIR="$TMP/rest-pr-view-cache"
+export AIDEVOPS_GH_PR_VIEW_CACHE_TTL=30
+rm -rf "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR"
+_rest_pr_view 123 --repo "owner/repo" --json title --jq '.title' >/dev/null 2>&1 || true
+_rest_pr_view 123 --repo "owner/repo" --json title --jq '.title' >/dev/null 2>&1 || true
+
+rest_pr_view_calls=$(grep -cE '^api /repos/owner/repo/pulls/123( |$)' "$GH_CALLS" 2>/dev/null || true)
+rest_cache_misses=$(grep -c $'rest_pr_view_cache\tother\tunknown\tother\tmiss' "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)
+rest_cache_hits=$(grep -c $'rest_pr_view_cache\tother\tunknown\tother\thit' "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)
+rest_cache_stores=$(grep -c $'rest_pr_view_cache\tother\tunknown\tother\tstore' "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)
+if [[ "$rest_pr_view_calls" == "1" && "$rest_cache_misses" == "1" && "$rest_cache_hits" == "1" && "$rest_cache_stores" == "1" ]]; then
+	pass "_rest_pr_view repo#PR cache records miss/store/hit for duplicate reads"
+else
+	fail "_rest_pr_view repo#PR cache records miss/store/hit for duplicate reads" \
+		"calls=${rest_pr_view_calls} miss=${rest_cache_misses} hit=${rest_cache_hits} store=${rest_cache_stores} GH_CALLS=$(cat "$GH_CALLS") API_LOG=$(cat "$AIDEVOPS_GH_API_LOG")"
+fi
+diag_output=$(PULSE_DIAGNOSE_GH_API_LOG="$AIDEVOPS_GH_API_LOG" \
+	PULSE_DIAGNOSE_STATS_FILE="$TMP/pulse-stats.json" \
+	PULSE_DIAGNOSE_LOGFILE="$TMP/pulse.log" \
+	AIDEVOPS_GH_PR_VIEW_CACHE_DIR="$AIDEVOPS_GH_PR_VIEW_CACHE_DIR" \
+	"${SCRIPTS_DIR}/pulse-diagnose-helper.sh" api-budget --json 2>/dev/null || true)
+if printf '%s' "$diag_output" | grep -q 'rest_pr_view_repo_cache' &&
+	printf '%s' "$diag_output" | grep -q 'hit=1 miss=1' &&
+	! printf '%s' "$diag_output" | grep -q 'owner/repo' &&
+	! printf '%s' "$diag_output" | grep -q "$TMP"; then
+	pass "pulse-diagnose api-budget reports sanitized PR view cache counters"
+else
+	fail "pulse-diagnose api-budget reports sanitized PR view cache counters" \
+		"diag=${diag_output}"
 fi
 unset AIDEVOPS_GH_PR_VIEW_CACHE AIDEVOPS_GH_PR_VIEW_CACHE_DIR AIDEVOPS_GH_PR_VIEW_CACHE_TTL
 

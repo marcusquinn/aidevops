@@ -1019,17 +1019,8 @@ _rest_issue_object_json_jq() {
 	return 0
 }
 
-#######################################
-# _rest_pr_view: GET /repos/{owner}/{repo}/pulls/{N}.  (t3037)
-# Parses gh-style args (--repo, --json, --jq, -q) and returns a single
-# PR object or jq-filtered output via the REST API.
-# Mirrors `gh pr view <N> --repo SLUG [--json FIELDS] [--jq EXPR]`.
-#
-# --json FIELDS is accepted for parity but ignored (the REST endpoint
-# returns the full object; use --jq/-q to select).
-#
-# Returns the underlying gh api exit code.
-#######################################
+# _rest_pr_view: GET /repos/{owner}/{repo}/pulls/{N}; mirrors common
+# `gh pr view <N> --repo SLUG [--json FIELDS] [--jq EXPR]` read shapes.
 _rest_pr_view() {
 	local num_or_url=""
 	local repo=""
@@ -1069,15 +1060,22 @@ _rest_pr_view() {
 
 	local cache_path=""
 	local raw_json=""
+	local cache_name="rest_pr_view_cache"
 	if _rest_pr_view_cache_enabled; then
-		cache_path="$(_rest_pr_view_cache_path "$repo" "$num")" || cache_path=""
+		cache_path="$(_rest_pr_view_cache_path "$repo" "$num")" || { cache_path=""; gh_record_call other "$cache_name" unknown other bypass 2>/dev/null || true; }
 		if [[ -n "$cache_path" && -s "$cache_path" ]]; then
 			raw_json="$(jq -c '.' "$cache_path" 2>/dev/null)" || raw_json=""
 			if [[ -n "$raw_json" ]]; then
+				gh_record_call other "$cache_name" unknown other hit 2>/dev/null || true
 				_rest_pr_view_emit_json "$raw_json" "$json_fields" "$jq_expr"
 				return $?
 			fi
+			gh_record_call other "$cache_name" unknown other invalid-json 2>/dev/null || true
+		elif [[ -n "$cache_path" ]]; then
+			gh_record_call other "$cache_name" unknown other miss 2>/dev/null || true
 		fi
+	elif [[ "${AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE:-0}" == "1" || "${AIDEVOPS_GH_PR_VIEW_CACHE:-0}" == "1" ]]; then
+		gh_record_call other "$cache_name" unknown other bypass-disabled 2>/dev/null || true
 	fi
 
 	gh_record_call rest _rest_pr_view 2>/dev/null || true
@@ -1099,7 +1097,7 @@ _rest_pr_view() {
 			return $_rc
 		fi
 		if mv "$_tmp_cache" "$cache_path"; then
-			:
+			gh_record_call other "$cache_name" unknown other store 2>/dev/null || true
 		else
 			_rc=$?
 			printf '_rest_pr_view: failed to move temporary cache file %s to cache path: %s\n' "$_tmp_cache" "$cache_path" >&2
