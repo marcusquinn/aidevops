@@ -63,8 +63,10 @@
 #  33. AIDEVOPS_GH_PR_VIEW_CACHE coalesces duplicate REST PR view reads
 #  34. AIDEVOPS_GH_PR_VIEW_CACHE coalesces duplicate GraphQL-only PR view reads
 #  35. PR metadata freshness classes keep GraphQL-only PR view fields off REST
-#  36. AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE bypasses both PR view cache layers
-#  37. _rest_split_csv suppresses Broken pipe noise when consumers close early
+#  36. AIDEVOPS_GH_PR_VIEW_CACHE enabled with missing prerequisites records
+#      non-disabled REST cache bypass telemetry
+#  37. AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE bypasses both PR view cache layers
+#  38. _rest_split_csv suppresses Broken pipe noise when consumers close early
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
 # precedence over PATH binaries, so the stub captures all `gh` invocations
@@ -1233,6 +1235,28 @@ fi
 
 : >"$GH_CALLS"
 : >"$GH_INFO_OUTPUT"
+: >"$AIDEVOPS_GH_API_LOG"
+export STUB_RATE_LIMIT_REMAINING=0
+export AIDEVOPS_GH_PR_VIEW_CACHE=1
+export STUB_PR_VIEW_FIXTURE='{"number":123,"title":"uncached title"}'
+saved_path="$PATH"
+PATH="$TMP/missing-jq-bin"
+pr_view_uncached_json=$(_rest_pr_view 123 --repo "owner/repo" 2>/dev/null || true)
+PATH="$saved_path"
+rest_cache_bypasses=$(grep -c $'rest_pr_view_cache\tother\tunknown\tother\tbypass' "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)
+rest_cache_disabled_bypasses=$(grep -c $'rest_pr_view_cache\tother\tunknown\tother\tbypass-disabled' "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)
+if [[ "$pr_view_uncached_json" == *'"uncached title"'* && "$rest_cache_bypasses" == "1" && "$rest_cache_disabled_bypasses" == "0" ]]; then
+	pass "AIDEVOPS_GH_PR_VIEW_CACHE unavailable prerequisites record non-disabled REST bypass"
+else
+	fail "AIDEVOPS_GH_PR_VIEW_CACHE unavailable prerequisites record non-disabled REST bypass" \
+		"json=${pr_view_uncached_json} bypass=${rest_cache_bypasses} disabled=${rest_cache_disabled_bypasses} API_LOG=$(cat "$AIDEVOPS_GH_API_LOG")"
+fi
+unset STUB_PR_VIEW_FIXTURE
+unset AIDEVOPS_GH_PR_VIEW_CACHE
+
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+: >"$AIDEVOPS_GH_API_LOG"
 export STUB_RATE_LIMIT_REMAINING=0
 export AIDEVOPS_GH_PR_VIEW_CACHE=1
 export AIDEVOPS_GH_PR_VIEW_CACHE_DIR="$TMP/pr-view-disable-cache"
@@ -1243,11 +1267,13 @@ pr_view_stale_title=$(gh_pr_view 123 --repo "owner/repo" --json title --jq '.tit
 export STUB_PR_VIEW_FIXTURE='{"number":123,"title":"fresh title"}'
 pr_view_fresh_title=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view 123 --repo "owner/repo" --json title --jq '.title' 2>/dev/null || true)
 pr_view_disable_calls=$(grep -cE '^api /repos/owner/repo/pulls/123( |$)' "$GH_CALLS" 2>/dev/null || true)
-if [[ "$pr_view_stale_title" == "stale title" && "$pr_view_fresh_title" == "fresh title" && "$pr_view_disable_calls" == "2" ]]; then
+exact_cache_disabled_bypasses=$(grep -c $'gh_pr_view_cache\tother\tunknown\tother\tbypass-disabled' "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)
+rest_cache_disabled_bypasses=$(grep -c $'rest_pr_view_cache\tother\tunknown\tother\tbypass-disabled' "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)
+if [[ "$pr_view_stale_title" == "stale title" && "$pr_view_fresh_title" == "fresh title" && "$pr_view_disable_calls" == "2" && "$exact_cache_disabled_bypasses" == "1" && "$rest_cache_disabled_bypasses" == "1" ]]; then
 	pass "AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE bypasses exact-output and REST-object PR view caches"
 else
 	fail "AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE bypasses exact-output and REST-object PR view caches" \
-		"stale=${pr_view_stale_title} fresh=${pr_view_fresh_title} calls=${pr_view_disable_calls} GH_CALLS=$(cat "$GH_CALLS")"
+		"stale=${pr_view_stale_title} fresh=${pr_view_fresh_title} calls=${pr_view_disable_calls} exact_disabled=${exact_cache_disabled_bypasses} rest_disabled=${rest_cache_disabled_bypasses} GH_CALLS=$(cat "$GH_CALLS") API_LOG=$(cat "$AIDEVOPS_GH_API_LOG")"
 fi
 unset STUB_PR_VIEW_FIXTURE
 unset AIDEVOPS_GH_PR_VIEW_CACHE AIDEVOPS_GH_PR_VIEW_CACHE_DIR AIDEVOPS_GH_PR_VIEW_CACHE_TTL
