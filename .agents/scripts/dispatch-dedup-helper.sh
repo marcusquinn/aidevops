@@ -1934,7 +1934,7 @@ classify_dispatch_blocker_reason() {
 			printf 'runner_health_circuit_breaker\n'
 			return 0
 			;;
-		*dispatch_block_reason*ever_nmr_without_approval* | *blocked*ever*nmr* | *requires*cryptographic*approval*)
+		*dispatch_block_reason*ever_nmr_without_approval* | *blocked*ever*nmr*lacks*approval* | *requires*cryptographic*approval*)
 			printf 'ever_nmr_without_approval\n'
 			return 0
 			;;
@@ -1950,7 +1950,7 @@ classify_dispatch_blocker_reason() {
 			printf 'missing_worker_context\n'
 			return 0
 			;;
-		*worktree*cap* | *max*worktree* | *disk*space* | *large*file*)
+		*local*capacity*gate* | *worktree*cap* | *max*worktree* | *disk*space* | *large*file*)
 			printf 'local_capacity_gate\n'
 			return 0
 			;;

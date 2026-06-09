@@ -28,6 +28,7 @@ assert_reason 'DISPATCH_COOLDOWN_ACTIVE until=2026-05-02T23:00:00Z reason=no_wor
 assert_reason 'dispatch_with_dedup: BLOCKED #3638 in awardsapp/awardsapp — requires cryptographic approval (ever-NMR)' 'ever_nmr_without_approval'
 assert_reason 'DISPATCH_BLOCK_REASON reason=ever_nmr_without_approval signal=ever-NMR issue requires approval' 'ever_nmr_without_approval'
 assert_reason 'dispatch_with_dedup: BLOCKED #3638 in awardsapp/awardsapp — ever-NMR issue lacks approval' 'ever_nmr_without_approval'
+assert_reason 'blocked by local capacity gate (ever-nmr check not run)' 'local_capacity_gate'
 assert_reason 'review-followup exemption: skipping historical ever-NMR check (GH#18648)' 'unclassified_signal'
 assert_reason 'skipping historical ever-NMR check for bot-generated cleanup issue (GH#18648)' 'unclassified_signal'
 assert_reason 'pre-dispatch validator failed: missing worker context; needs-brief label present' 'missing_worker_context'
