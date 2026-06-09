@@ -1601,7 +1601,7 @@ _api_budget_log_count() {
 
 _api_budget_render_text() {
 	local stats_file="$1" logfile="$2"
-	local circuit reserve deferred force_rest cache_prime_runs cache_prime_failures
+	local circuit="" reserve="" deferred="" force_rest="" cache_prime_runs="" cache_prime_failures=""
 	circuit=$(_api_budget_counter "$stats_file" "pulse_dispatch_circuit_broken")
 	reserve=$(_api_budget_counter "$stats_file" "pulse_graphql_budget_reserve_mode")
 	deferred=$(_api_budget_counter "$stats_file" "pulse_graphql_budget_stage_deferred")
@@ -1609,7 +1609,7 @@ _api_budget_render_text() {
 	cache_prime_runs=$(_api_budget_counter "$stats_file" "pulse_cache_prime_runs")
 	cache_prime_failures=$(_api_budget_counter "$stats_file" "pulse_cache_prime_failures")
 
-	local pr_cache_hits pr_cache_misses rest_mentions graphql_mentions
+	local pr_cache_hits="" pr_cache_misses="" rest_mentions="" graphql_mentions=""
 	pr_cache_hits=$(_api_budget_log_count "$logfile" 'gh_pr_view.*cache.*hit|cache.*hit.*gh_pr_view')
 	pr_cache_misses=$(_api_budget_log_count "$logfile" 'gh_pr_view.*cache.*miss|cache.*miss.*gh_pr_view')
 	rest_mentions=$(_api_budget_log_count "$logfile" 'REST fallback|FORCE_REST|force_rest|REST reads')
@@ -1644,7 +1644,7 @@ _api_budget_render_text() {
 
 _api_budget_render_json() {
 	local stats_file="$1" logfile="$2"
-	local circuit reserve deferred force_rest cache_prime_runs cache_prime_failures
+	local circuit="" reserve="" deferred="" force_rest="" cache_prime_runs="" cache_prime_failures=""
 	circuit=$(_api_budget_counter "$stats_file" "pulse_dispatch_circuit_broken")
 	reserve=$(_api_budget_counter "$stats_file" "pulse_graphql_budget_reserve_mode")
 	deferred=$(_api_budget_counter "$stats_file" "pulse_graphql_budget_stage_deferred")
@@ -1652,7 +1652,7 @@ _api_budget_render_json() {
 	cache_prime_runs=$(_api_budget_counter "$stats_file" "pulse_cache_prime_runs")
 	cache_prime_failures=$(_api_budget_counter "$stats_file" "pulse_cache_prime_failures")
 
-	local pr_cache_hits pr_cache_misses rest_mentions graphql_mentions
+	local pr_cache_hits="" pr_cache_misses="" rest_mentions="" graphql_mentions=""
 	pr_cache_hits=$(_api_budget_log_count "$logfile" 'gh_pr_view.*cache.*hit|cache.*hit.*gh_pr_view')
 	pr_cache_misses=$(_api_budget_log_count "$logfile" 'gh_pr_view.*cache.*miss|cache.*miss.*gh_pr_view')
 	rest_mentions=$(_api_budget_log_count "$logfile" 'REST fallback|FORCE_REST|force_rest|REST reads')
