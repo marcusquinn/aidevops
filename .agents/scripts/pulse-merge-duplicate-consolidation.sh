@@ -208,8 +208,8 @@ _pmp_consolidate_duplicate_pr_group() {
 	local repo_slug="$1"
 	local issue_number="$2"
 	local group_file="$3"
-	local group_count=0 candidate_line="" candidate_pr="" candidate_score="" candidate_is_draft=""
-	local group_pattern="^${issue_number}|"
+	local group_count=0 candidate_line="" candidate_pr="" candidate_score="" candidate_is_draft="" _issue="" _created=""
+	local group_pattern="^${issue_number}[|]"
 	group_count=$(grep -c "$group_pattern" "$group_file" 2>/dev/null || true)
 	[[ "$group_count" =~ ^[0-9]+$ ]] || group_count=0
 	[[ "$group_count" -gt 1 ]] || return 0
@@ -220,9 +220,7 @@ _pmp_consolidate_duplicate_pr_group() {
 	fi
 
 	candidate_line=$(grep "$group_pattern" "$group_file" | sort -t'|' -k3,3nr -k4,4r | head -1) || candidate_line=""
-	candidate_pr=$(printf '%s' "$candidate_line" | cut -d'|' -f2)
-	candidate_score=$(printf '%s' "$candidate_line" | cut -d'|' -f3)
-	candidate_is_draft=$(printf '%s' "$candidate_line" | cut -d'|' -f5)
+	IFS='|' read -r _issue candidate_pr candidate_score _created candidate_is_draft <<<"$candidate_line"
 	[[ "$candidate_pr" =~ ^[0-9]+$ ]] || return 0
 	if ! _pmp_pr_consolidation_candidate_is_healthy "$candidate_score" "$candidate_is_draft"; then
 		echo "[pulse-wrapper] Duplicate PR consolidation: candidate PR #${candidate_pr} for issue #${issue_number} is not healthy enough for superseding close — leaving sibling PRs open" >>"$LOGFILE"
