@@ -1617,7 +1617,7 @@ _api_budget_cache_decision_count() {
 		return 0
 	fi
 	local count=0
-	local log_ts caller path auth pool route budget
+	local log_ts="" caller="" path="" auth="" pool="" route="" budget=""
 	while IFS=$'\t' read -r log_ts caller path auth pool route budget; do
 		[[ "$caller" == "$cache_name" && "$route" == "$decision" ]] && count=$((count + 1))
 	done < "$api_log"
@@ -1642,7 +1642,7 @@ _api_budget_cache_dir_state() {
 
 _api_budget_cache_counts_csv() {
 	local api_log="$1" cache_name="$2"
-	local hit miss stale bypass store invalid bypass_disabled
+	local hit="" miss="" stale="" bypass="" store="" invalid="" bypass_disabled=""
 	hit=$(_api_budget_cache_decision_count "$api_log" "$cache_name" "hit")
 	miss=$(_api_budget_cache_decision_count "$api_log" "$cache_name" "miss")
 	stale=$(_api_budget_cache_decision_count "$api_log" "$cache_name" "stale")
