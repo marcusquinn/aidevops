@@ -283,6 +283,24 @@ teardown_test_env() {
 	return 0
 }
 
+eval_function_from_file() {
+	local fn_name="$1"
+	local source_file="$2"
+	local fn_src=""
+	fn_src=$(awk -v name="$fn_name" '
+		$0 ~ "^" name "\\(\\) \\{" { capture = 1 }
+		capture { print }
+		capture && /^}$/ { capture = 0; exit }
+	' "$source_file")
+	if [[ -z "$fn_src" ]]; then
+		printf 'ERROR: could not extract %s from %s\n' "$fn_name" "$source_file" >&2
+		return 1
+	fi
+	# shellcheck disable=SC1090  # dynamic source from extracted helper
+	eval "$fn_src"
+	return 0
+}
+
 # Extract _pr_required_checks_pass plus its helper stack into the current shell.
 define_function_under_test() {
 	local checks_lib="${SCRIPT_DIR}/../shared-gh-wrappers-checks.sh"
@@ -299,104 +317,15 @@ define_function_under_test() {
 		return 1
 	}
 
-	local ref_match_src
-	ref_match_src=$(awk '
-		/^_ruleset_ref_matches_default_branch\(\) \{/,/^}$/ { print }
-	' "$MERGE_SCRIPT")
-	if [[ -z "$ref_match_src" ]]; then
-		printf 'ERROR: could not extract _ruleset_ref_matches_default_branch from %s\n' "$MERGE_SCRIPT" >&2
-		return 1
-	fi
-	# shellcheck disable=SC1090  # dynamic source from extracted helper
-	eval "$ref_match_src"
-
-	local pr_checks_fallback_src
-	pr_checks_fallback_src=$(awk '
-		/^_check_required_pr_checks_passing_fallback\(\) \{/,/^}$/ { print }
-	' "$REQUIRED_CHECKS_SCRIPT")
-	if [[ -z "$pr_checks_fallback_src" ]]; then
-		printf 'ERROR: could not extract _check_required_pr_checks_passing_fallback from %s\n' "$REQUIRED_CHECKS_SCRIPT" >&2
-		return 1
-	fi
-	# shellcheck disable=SC1090  # dynamic source from extracted helper
-	eval "$pr_checks_fallback_src"
-
-	local rulesets_src
-	rulesets_src=$(awk '
-		/^_required_contexts_from_rulesets_for_default_branch\(\) \{/,/^}$/ { print }
-	' "$MERGE_SCRIPT")
-	if [[ -z "$rulesets_src" ]]; then
-		printf 'ERROR: could not extract _required_contexts_from_rulesets_for_default_branch from %s\n' "$MERGE_SCRIPT" >&2
-		return 1
-	fi
-	# shellcheck disable=SC1090  # dynamic source from extracted helper
-	eval "$rulesets_src"
-
-	local review_count_src
-	review_count_src=$(awk '
-		/^_ruleset_required_review_count_for_default_branch\(\) \{/,/^}$/ { print }
-	' "$REQUIRED_CHECKS_SCRIPT")
-	if [[ -z "$review_count_src" ]]; then
-		printf 'ERROR: could not extract _ruleset_required_review_count_for_default_branch from %s\n' "$REQUIRED_CHECKS_SCRIPT" >&2
-		return 1
-	fi
-	# shellcheck disable=SC1090  # dynamic source from extracted helper
-	eval "$review_count_src"
-
-	local review_gate_src
-	review_gate_src=$(awk '
-		/^_check_ruleset_required_reviews_passing\(\) \{/,/^}$/ { print }
-	' "$REQUIRED_CHECKS_SCRIPT")
-	if [[ -z "$review_gate_src" ]]; then
-		printf 'ERROR: could not extract _check_ruleset_required_reviews_passing from %s\n' "$REQUIRED_CHECKS_SCRIPT" >&2
-		return 1
-	fi
-	# shellcheck disable=SC1090  # dynamic source from extracted helper
-	eval "$review_gate_src"
-
-	local required_src
-	required_src=$(awk '
-		/^_required_contexts_for_default_branch\(\) \{/,/^}$/ { print }
-	' "$MERGE_SCRIPT")
-	if [[ -z "$required_src" ]]; then
-		printf 'ERROR: could not extract _required_contexts_for_default_branch from %s\n' "$MERGE_SCRIPT" >&2
-		return 1
-	fi
-	# shellcheck disable=SC1090  # dynamic source from extracted helper
-	eval "$required_src"
-
-	local checks_src
-	checks_src=$(awk '
-		/^_check_required_checks_passing\(\) \{/,/^}$/ { print }
-	' "$MERGE_SCRIPT")
-	if [[ -z "$checks_src" ]]; then
-		printf 'ERROR: could not extract _check_required_checks_passing from %s\n' "$MERGE_SCRIPT" >&2
-		return 1
-	fi
-	# shellcheck disable=SC1090  # dynamic source from extracted helper
-	eval "$checks_src"
-
-	local terminal_src
-	terminal_src=$(awk '
-		/^_check_required_checks_has_terminal_failure\(\) \{/,/^}$/ { print }
-	' "$REQUIRED_CHECKS_SCRIPT")
-	if [[ -z "$terminal_src" ]]; then
-		printf 'ERROR: could not extract _check_required_checks_has_terminal_failure from %s\n' "$REQUIRED_CHECKS_SCRIPT" >&2
-		return 1
-	fi
-	# shellcheck disable=SC1090  # dynamic source from extracted helper
-	eval "$terminal_src"
-
-	local fn_src
-	fn_src=$(awk '
-		/^_pr_required_checks_pass\(\) \{/,/^}$/ { print }
-	' "$MERGE_SCRIPT")
-	if [[ -z "$fn_src" ]]; then
-		printf 'ERROR: could not extract _pr_required_checks_pass from %s\n' "$MERGE_SCRIPT" >&2
-		return 1
-	fi
-	# shellcheck disable=SC1090  # dynamic source from extracted helper
-	eval "$fn_src"
+	eval_function_from_file _ruleset_ref_matches_default_branch "$MERGE_SCRIPT" || return 1
+	eval_function_from_file _required_contexts_from_rulesets_for_default_branch "$MERGE_SCRIPT" || return 1
+	eval_function_from_file _required_contexts_for_default_branch "$MERGE_SCRIPT" || return 1
+	eval_function_from_file _check_required_checks_passing "$MERGE_SCRIPT" || return 1
+	eval_function_from_file _pr_required_checks_pass "$MERGE_SCRIPT" || return 1
+	eval_function_from_file _check_required_pr_checks_passing_fallback "$REQUIRED_CHECKS_SCRIPT" || return 1
+	eval_function_from_file _ruleset_required_review_count_for_default_branch "$REQUIRED_CHECKS_SCRIPT" || return 1
+	eval_function_from_file _check_ruleset_required_reviews_passing "$REQUIRED_CHECKS_SCRIPT" || return 1
+	eval_function_from_file _check_required_checks_has_terminal_failure "$REQUIRED_CHECKS_SCRIPT" || return 1
 	return 0
 }
 
