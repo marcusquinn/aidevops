@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.43] - 2026-06-09
+
+### Fixed
+
+- reword compact opencode db notices (#24618)
+
 ## [3.20.42] - 2026-06-09
 
 ### Changed
