@@ -1160,7 +1160,7 @@ unset AIDEVOPS_GH_PR_VIEW_CACHE AIDEVOPS_GH_PR_VIEW_CACHE_DIR AIDEVOPS_GH_PR_VIE
 
 : >"$GH_CALLS"
 : >"$GH_INFO_OUTPUT"
-unsupported_pr_view_fields=(statusCheckRollup reviews latestReviews reviewThreads commits files reviewDecision autoMergeRequest mergeStateStatus)
+unsupported_pr_view_fields=(statusCheckRollup reviews latestReviews reviewThreads commits files reviewDecision autoMergeRequest mergeStateStatus comments)
 unsupported_preserve_ok=1
 for field in "${unsupported_pr_view_fields[@]}"; do
 	if _rest_pr_view_can_preserve_args 123 --repo "owner/repo" --json "$field"; then
