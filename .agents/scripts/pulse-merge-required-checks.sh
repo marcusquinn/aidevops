@@ -50,6 +50,126 @@ _check_required_pr_checks_passing_fallback() {
 }
 
 #######################################
+# Resolve the maximum required approval count from active rulesets matching
+# the repository default branch. This is separate from required status checks:
+# GitHub stores ruleset approval requirements under pull_request rules, not as
+# CI contexts, so an empty status context list is not enough to allow a merge.
+#
+# Args: $1=repo_slug, $2=default_branch
+# Stdout: integer maximum required_approving_review_count (0 when none)
+# Returns: 0=requirement resolved, 1=ruleset API/parse error
+#######################################
+_ruleset_required_review_count_for_default_branch() {
+	local repo_slug="$1"
+	local default_branch="$2"
+
+	local rulesets_json=""
+	rulesets_json=$(gh api "repos/${repo_slug}/rulesets" 2>/dev/null) || {
+		echo "[pulse-merge] _ruleset_required_review_count_for_default_branch: rulesets list failed for ${repo_slug} — caller will fail closed (GH#24577)" >>"$LOGFILE"
+		return 1
+	}
+	[[ -n "$rulesets_json" && "$rulesets_json" != "[]" && "$rulesets_json" != null ]] || {
+		printf '0'
+		return 0
+	}
+
+	local active_ids=""
+	active_ids=$(printf '%s' "$rulesets_json" | jq -r '.[]? | select(.enforcement == "active") | .id // empty' 2>/dev/null) || {
+		echo "[pulse-merge] _ruleset_required_review_count_for_default_branch: rulesets list parse failed for ${repo_slug} — caller will fail closed (GH#24577)" >>"$LOGFILE"
+		return 1
+	}
+	[[ -n "$active_ids" ]] || {
+		printf '0'
+		return 0
+	}
+
+	local max_required=0
+	local id="" detail="" include_patterns="" exclude_patterns="" pattern=""
+	local matches_default=0 excluded_default=0 approval_count=""
+	while IFS= read -r id; do
+		[[ -n "$id" ]] || continue
+		detail=$(gh api "repos/${repo_slug}/rulesets/${id}" 2>/dev/null) || {
+			echo "[pulse-merge] _ruleset_required_review_count_for_default_branch: ruleset detail ${id} failed for ${repo_slug} — caller will fail closed (GH#24577)" >>"$LOGFILE"
+			return 1
+		}
+		include_patterns=$(printf '%s' "$detail" | jq -r '.conditions.ref_name.include // [] | .[]' 2>/dev/null) || return 1
+		exclude_patterns=$(printf '%s' "$detail" | jq -r '.conditions.ref_name.exclude // [] | .[]' 2>/dev/null) || return 1
+
+		matches_default=0
+		while IFS= read -r pattern; do
+			[[ -n "$pattern" ]] || continue
+			_ruleset_ref_matches_default_branch "$pattern" "$default_branch" || continue
+			matches_default=1
+			break
+		done <<<"$include_patterns"
+		[[ "$matches_default" -eq 1 ]] || continue
+
+		excluded_default=0
+		while IFS= read -r pattern; do
+			[[ -n "$pattern" ]] || continue
+			_ruleset_ref_matches_default_branch "$pattern" "$default_branch" || continue
+			excluded_default=1
+			break
+		done <<<"$exclude_patterns"
+		[[ "$excluded_default" -eq 0 ]] || continue
+
+		approval_count=$(printf '%s' "$detail" | jq -r '[.rules[]? | select(.type == "pull_request") | (.parameters.required_approving_review_count // 0)] | max // 0' 2>/dev/null) || {
+			echo "[pulse-merge] _ruleset_required_review_count_for_default_branch: pull-request rule parse failed for ruleset ${id} in ${repo_slug} — caller will fail closed (GH#24577)" >>"$LOGFILE"
+			return 1
+		}
+		[[ "$approval_count" =~ ^[0-9]+$ ]] || approval_count=0
+		[[ "$approval_count" -gt "$max_required" ]] && max_required="$approval_count"
+	done <<<"$active_ids"
+
+	printf '%s' "$max_required"
+	return 0
+}
+
+#######################################
+# Verify active ruleset pull_request approval requirements for one PR.
+#
+# Args: $1=repo_slug, $2=pr_number, $3=pr_author
+# Returns: 0=passes/no ruleset approval requirement, 1=missing/unverifiable
+#######################################
+_check_ruleset_required_reviews_passing() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local pr_author="$3"
+
+	local default_branch="" required_count=""
+	default_branch=$(gh api "repos/${repo_slug}" --jq '.default_branch' 2>/dev/null) || default_branch=""
+	if [[ -z "$default_branch" ]]; then
+		echo "[pulse-merge] _check_ruleset_required_reviews_passing: failed to resolve default branch for ${repo_slug} — failing closed (GH#24577)" >>"$LOGFILE"
+		return 1
+	fi
+	required_count=$(_ruleset_required_review_count_for_default_branch "$repo_slug" "$default_branch") || return 1
+	[[ "$required_count" =~ ^[0-9]+$ ]] || required_count=0
+	[[ "$required_count" -eq 0 ]] && return 0
+
+	local reviews_json="" approved_count=""
+	reviews_json=$(gh_pr_view "$pr_number" --repo "$repo_slug" --json reviews 2>/dev/null) || reviews_json=""
+	if [[ -z "$reviews_json" || "$reviews_json" == null ]]; then
+		echo "[pulse-merge] _check_ruleset_required_reviews_passing: review fetch failed for PR #${pr_number} in ${repo_slug} with ruleset requiring ${required_count} approval(s) — failing closed (GH#24577)" >>"$LOGFILE"
+		return 1
+	fi
+	approved_count=$(jq -r --arg author "$pr_author" '
+		[.reviews[]?] | sort_by(.submittedAt // "") | group_by(.author.login // "")
+		| map(last) | map(select((.author.login // "") != $author))
+		| map(select((.state // "" | ascii_upcase) == "APPROVED")) | length
+	' <<<"$reviews_json" 2>/dev/null) || approved_count=""
+	if [[ ! "$approved_count" =~ ^[0-9]+$ ]]; then
+		echo "[pulse-merge] _check_ruleset_required_reviews_passing: review parse failed for PR #${pr_number} in ${repo_slug} — failing closed (GH#24577)" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ "$approved_count" -lt "$required_count" ]]; then
+		echo "[pulse-merge] _check_ruleset_required_reviews_passing: PR #${pr_number} in ${repo_slug} has ${approved_count}/${required_count} ruleset-required approval(s) — deferring merge (GH#24577)" >>"$LOGFILE"
+		return 1
+	fi
+	echo "[pulse-merge] _check_ruleset_required_reviews_passing: PR #${pr_number} in ${repo_slug} satisfies ${approved_count}/${required_count} ruleset-required approval(s) (GH#24577)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # Return whether any branch-protection-required check on a PR is in a terminal
 # failed state. Pending states are explicitly non-terminal: queued, pending,
 # in_progress, waiting, skipped-by-dependency, expected, absent-from-rollup,

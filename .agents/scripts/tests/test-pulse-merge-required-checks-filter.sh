@@ -113,12 +113,32 @@ apply_jq() {
 }
 
 if [[ "$1" == "api" && "$2" == repos/* && "$*" == *"/rulesets/"* ]]; then
-	apply_jq '{"conditions":{"ref_name":{"include":[]}},"rules":[]}' "$@"
+	case "${MOCK_GH_MODE:-all_pass}" in
+	ruleset_review_only_missing | ruleset_review_only_approved)
+		apply_jq '{"conditions":{"ref_name":{"include":["refs/heads/main"]}},"rules":[{"type":"pull_request","parameters":{"required_approving_review_count":1}}]}' "$@"
+		;;
+	ruleset_mixed_review_status)
+		apply_jq '{"conditions":{"ref_name":{"include":["refs/heads/main"]}},"rules":[{"type":"pull_request","parameters":{"required_approving_review_count":1}},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"required-a"}]}}]}' "$@"
+		;;
+	ruleset_review_zero)
+		apply_jq '{"conditions":{"ref_name":{"include":["refs/heads/main"]}},"rules":[{"type":"pull_request","parameters":{"required_approving_review_count":0}}]}' "$@"
+		;;
+	*)
+		apply_jq '{"conditions":{"ref_name":{"include":[]}},"rules":[]}' "$@"
+		;;
+	esac
 	exit 0
 fi
 
 if [[ "$1" == "api" && "$2" == repos/* && "$*" == *"/rulesets"* ]]; then
-	apply_jq '[]' "$@"
+	case "${MOCK_GH_MODE:-all_pass}" in
+	ruleset_review_only_missing | ruleset_review_only_approved | ruleset_mixed_review_status | ruleset_review_zero)
+		apply_jq '[{"id":101,"enforcement":"active"}]' "$@"
+		;;
+	*)
+		apply_jq '[]' "$@"
+		;;
+	esac
 	exit 0
 fi
 
@@ -147,6 +167,18 @@ fi
 
 if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"headRefOid"* ]]; then
 	apply_jq '{"headRefOid":"abc123def456789000000000000000000000abcd"}' "$@"
+	exit 0
+fi
+
+if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"reviews"* ]]; then
+	case "${MOCK_GH_MODE:-all_pass}" in
+	ruleset_review_only_approved | ruleset_mixed_review_status)
+		apply_jq '{"reviews":[{"state":"APPROVED","submittedAt":"2026-06-01T00:00:00Z","author":{"login":"reviewer"}}]}' "$@"
+		;;
+	*)
+		apply_jq '{"reviews":[]}' "$@"
+		;;
+	esac
 	exit 0
 fi
 
@@ -296,6 +328,28 @@ define_function_under_test() {
 	# shellcheck disable=SC1090  # dynamic source from extracted helper
 	eval "$rulesets_src"
 
+	local review_count_src
+	review_count_src=$(awk '
+		/^_ruleset_required_review_count_for_default_branch\(\) \{/,/^}$/ { print }
+	' "$REQUIRED_CHECKS_SCRIPT")
+	if [[ -z "$review_count_src" ]]; then
+		printf 'ERROR: could not extract _ruleset_required_review_count_for_default_branch from %s\n' "$REQUIRED_CHECKS_SCRIPT" >&2
+		return 1
+	fi
+	# shellcheck disable=SC1090  # dynamic source from extracted helper
+	eval "$review_count_src"
+
+	local review_gate_src
+	review_gate_src=$(awk '
+		/^_check_ruleset_required_reviews_passing\(\) \{/,/^}$/ { print }
+	' "$REQUIRED_CHECKS_SCRIPT")
+	if [[ -z "$review_gate_src" ]]; then
+		printf 'ERROR: could not extract _check_ruleset_required_reviews_passing from %s\n' "$REQUIRED_CHECKS_SCRIPT" >&2
+		return 1
+	fi
+	# shellcheck disable=SC1090  # dynamic source from extracted helper
+	eval "$review_gate_src"
+
 	local required_src
 	required_src=$(awk '
 		/^_required_contexts_for_default_branch\(\) \{/,/^}$/ { print }
@@ -379,6 +433,45 @@ assert_pr_checks_fallback_returns() {
 		print_result "$label" 0
 	else
 		print_result "$label" 1 "Expected rc=$expected_rc output='$expected_output', got rc=$actual_rc output='$actual_output'"
+	fi
+	return 0
+}
+
+assert_ruleset_review_gate_returns() {
+	local expected_rc="$1"
+	local label="$2"
+	local actual_rc=0
+	_check_ruleset_required_reviews_passing "marcusquinn/aidevops" "19023" "author" || actual_rc=$?
+	if [[ "$actual_rc" -eq "$expected_rc" ]]; then
+		print_result "$label" 0
+	else
+		print_result "$label" 1 "Expected rc=$expected_rc, got rc=$actual_rc"
+	fi
+	return 0
+}
+
+assert_ruleset_review_count_output() {
+	local expected_output="$1"
+	local label="$2"
+	local actual_output=""
+	actual_output=$(_ruleset_required_review_count_for_default_branch "marcusquinn/aidevops" "main") || actual_output="ERR"
+	if [[ "$actual_output" == "$expected_output" ]]; then
+		print_result "$label" 0
+	else
+		print_result "$label" 1 "Expected output='$expected_output', got output='$actual_output'"
+	fi
+	return 0
+}
+
+assert_ruleset_contexts_output() {
+	local expected_output="$1"
+	local label="$2"
+	local actual_output=""
+	actual_output=$(_required_contexts_from_rulesets_for_default_branch "marcusquinn/aidevops" "main") || actual_output="ERR"
+	if [[ "$actual_output" == "$expected_output" ]]; then
+		print_result "$label" 0
+	else
+		print_result "$label" 1 "Expected output='$expected_output', got output='$actual_output'"
 	fi
 	return 0
 }
@@ -555,6 +648,46 @@ test_skipping_required_allows_merge() {
 	return 0
 }
 
+test_ruleset_review_only_missing_blocks_merge() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="ruleset_review_only_missing"
+	assert_ruleset_review_count_output "1" "ruleset-only pull_request approval count extracted"
+	assert_ruleset_review_gate_returns 1 "ruleset-only missing approval → merge blocked (GH#24577)"
+	assert_log_contains "0/1 ruleset-required approval" \
+		"ruleset-only missing approval: skip reason logged"
+	return 0
+}
+
+test_ruleset_review_only_approved_allows_merge() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="ruleset_review_only_approved"
+	assert_ruleset_review_gate_returns 0 "ruleset-only satisfied approval → merge allowed (GH#24577)"
+	assert_log_contains "satisfies 1/1 ruleset-required approval" \
+		"ruleset-only satisfied approval: pass logged"
+	return 0
+}
+
+test_ruleset_mixed_review_status_preserves_both_gates() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="ruleset_mixed_review_status"
+	assert_ruleset_review_count_output "1" "mixed ruleset review count extracted"
+	assert_ruleset_contexts_output "required-a" "mixed ruleset status context still extracted"
+	assert_ruleset_review_gate_returns 0 "mixed ruleset satisfied approval → review gate allows"
+	return 0
+}
+
+test_ruleset_review_zero_does_not_require_approval() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="ruleset_review_zero"
+	assert_ruleset_review_count_output "0" "ruleset pull_request count zero extracted as no gate"
+	assert_ruleset_review_gate_returns 0 "ruleset approval count zero → merge allowed (GH#24577)"
+	return 0
+}
+
 test_gh_api_error_fails_closed() {
 	# gh exits 1 → the function MUST return 1 (fail-closed). A bubbling
 	# gh error must never auto-merge when --admin would bypass branch
@@ -592,6 +725,10 @@ main() {
 	test_queued_required_is_non_terminal
 	test_expected_required_is_non_terminal
 	test_skipping_required_allows_merge
+	test_ruleset_review_only_missing_blocks_merge
+	test_ruleset_review_only_approved_allows_merge
+	test_ruleset_mixed_review_status_preserves_both_gates
+	test_ruleset_review_zero_does_not_require_approval
 	test_gh_api_error_fails_closed
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
