@@ -43,11 +43,21 @@ _responded_file_for_repo() {
 	return 0
 }
 
+_comment_already_recorded() {
+	local responded_file="$1"
+	local comment_id="$2"
+	local comment_line_regex="^${comment_id}$"
+	if grep -q "$comment_line_regex" "$responded_file" 2>/dev/null; then
+		return 0
+	fi
+	return 1
+}
+
 _mark_comment_skipped() {
 	local responded_file="$1"
 	local comment_id="$2"
 	local reason="$3"
-	if grep -q "^${comment_id}$" "$responded_file" 2>/dev/null; then
+	if _comment_already_recorded "$responded_file" "$comment_id"; then
 		return 0
 	fi
 	printf '%s\n' "$comment_id" >>"$responded_file"
@@ -133,7 +143,7 @@ cmd_scan() {
 				fi
 
 				# Skip if already responded to
-				if grep -q "^${comment_id}$" "$responded_file" 2>/dev/null; then
+				if _comment_already_recorded "$responded_file" "$comment_id"; then
 					continue
 				fi
 
@@ -162,7 +172,7 @@ cmd_dispatch() {
 	touch "$responded_file"
 
 	# Double-check the comment still exists and hasn't been responded to
-	if grep -q "^${comment_id}$" "$responded_file" 2>/dev/null; then
+	if _comment_already_recorded "$responded_file" "$comment_id"; then
 		_log "dispatch: comment ${comment_id} on #${issue_number} already responded to — skipping"
 		return 0
 	fi
