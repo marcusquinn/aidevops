@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.42] - 2026-06-09
+
+### Changed
+
+- perf: count cache decisions in one pass (#24610)
+- feat: adopt ClaudeBar v0.4.66 setup upgrade (#24570)
+- Maintenance: update simplification state registry
+- fix: ignore routine ops audit comments (#24593)
+- feat: instrument PR view cache decisions (#24588)
+
+### Fixed
+
+- classify OpenAI quota probe failures (#24616)
+- narrow ever-nmr blocker classifier (#24612)
+
 ## [3.20.41] - 2026-06-09
 
 ### Added
