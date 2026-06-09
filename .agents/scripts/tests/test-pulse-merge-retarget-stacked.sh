@@ -72,7 +72,9 @@ setup_test_env() {
 	# _retarget_stacked_children was refactored to use the wrapper post-GH#21595
 	# so the test must surface the same args through the gh-args.log path.
 	gh_pr_list() { gh pr list "$@"; }
+	gh_pr_view() { gh pr view "$@"; }
 	export -f gh_pr_list 2>/dev/null || true
+	export -f gh_pr_view 2>/dev/null || true
 	return 0
 }
 
@@ -284,7 +286,33 @@ test_audit_log_carries_t2412_tag() {
 }
 
 # ---------------------------------------------------------------
-# Test 6: Static check — _retarget_stacked_children called before
+# Test 6: provided headRefName context avoids duplicate gh pr view
+# ---------------------------------------------------------------
+test_provided_head_ref_context_skips_view() {
+	: >"$LOGFILE"
+	: >"$LAST_GH_ARGS_FILE"
+	install_gh_stub "feature/from-view" "501" "main"
+
+	_retarget_stacked_children "100" "marcusquinn/aidevops" "feature/from-context"
+
+	if grep -q "pr view" "$LAST_GH_ARGS_FILE"; then
+		print_result "provided headRefName context skips gh_pr_view" 1 \
+			"Unexpected gh pr view call. Args: $(cat "$LAST_GH_ARGS_FILE")"
+		return 0
+	fi
+
+	if ! grep -q -- "pr list --repo marcusquinn/aidevops --base feature/from-context" "$LAST_GH_ARGS_FILE"; then
+		print_result "provided headRefName context skips gh_pr_view" 1 \
+			"Expected child lookup to use context branch. Args: $(cat "$LAST_GH_ARGS_FILE")"
+		return 0
+	fi
+
+	print_result "provided headRefName context skips gh_pr_view" 0
+	return 0
+}
+
+# ---------------------------------------------------------------
+# Test 7: Static check — _retarget_stacked_children called before
 #         gh pr merge in _process_single_ready_pr
 # ---------------------------------------------------------------
 test_retarget_called_before_merge() {
@@ -340,6 +368,7 @@ main() {
 	test_two_children_both_retargeted
 	test_head_ref_failure_noop
 	test_audit_log_carries_t2412_tag
+	test_provided_head_ref_context_skips_view
 	test_retarget_called_before_merge
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
