@@ -18,8 +18,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOGFILE="${HOME}/.aidevops/.agent-workspace/cron/routine-comments/responder.log"
-STATE_DIR="${HOME}/.aidevops/.agent-workspace/cron/routine-comments"
+LOGFILE="${ROUTINE_COMMENT_LOGFILE:-${HOME}/.aidevops/.agent-workspace/cron/routine-comments/responder.log}"
+STATE_DIR="${ROUTINE_COMMENT_STATE_DIR:-${HOME}/.aidevops/.agent-workspace/cron/routine-comments}"
 mkdir -p "$STATE_DIR"
 
 # ---------------------------------------------------------------------------
@@ -35,6 +35,49 @@ _log() {
 _get_self_login() {
 	gh api user --jq '.login' 2>/dev/null || echo ""
 	return 0
+}
+
+_responded_file_for_repo() {
+	local repo_slug="$1"
+	printf '%s\n' "${STATE_DIR}/${repo_slug//\//_}_responded.txt"
+	return 0
+}
+
+_comment_already_recorded() {
+	local responded_file="$1"
+	local comment_id="$2"
+	local comment_line_regex="^${comment_id}$"
+	if grep -q "$comment_line_regex" "$responded_file" 2>/dev/null; then
+		return 0
+	fi
+	return 1
+}
+
+_mark_comment_skipped() {
+	local responded_file="$1"
+	local comment_id="$2"
+	local reason="$3"
+	if _comment_already_recorded "$responded_file" "$comment_id"; then
+		return 0
+	fi
+	printf '%s\n' "$comment_id" >>"$responded_file"
+	_log "dispatch: comment ${comment_id} marked skipped (${reason})"
+	return 0
+}
+
+_routine_ops_comment_regex() {
+	printf '%s\n' '^(DISPATCH_CLAIM|DISPATCH_RELEASED|CLAIM_RELEASED|<!-- ops:|<!-- routine-description|<!-- aidevops:sig|## (Cascade Tier Escalation|BLOCKED|Closing|Routine|Worker|Dispatch|Audit|MERGE_SUMMARY)|### (Worker|Audit)|\[aidevops\])'
+	return 0
+}
+
+_is_routine_ops_comment() {
+	local body="$1"
+	local ops_regex
+	ops_regex=$(_routine_ops_comment_regex)
+	if printf '%s' "$body" | grep -qE "$ops_regex"; then
+		return 0
+	fi
+	return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -66,8 +109,12 @@ cmd_scan() {
 		return 0
 	fi
 
-	local responded_file="${STATE_DIR}/${repo_slug//\//_}_responded.txt"
+	local responded_file
+	responded_file=$(_responded_file_for_repo "$repo_slug")
 	touch "$responded_file"
+
+	local ops_regex
+	ops_regex=$(_routine_ops_comment_regex)
 
 	local found=0
 	while IFS= read -r issue_number; do
@@ -81,7 +128,7 @@ cmd_scan() {
 		[[ -z "$comments_json" ]] && continue
 
 		# Process each comment — find user comments that haven't been responded to
-		echo "$comments_json" | jq -r 'select(.is_bot == false) | select(.body | test("^DISPATCH_CLAIM|^<!-- ops:|^<!-- routine-description") | not) | "\(.id)|\(.author)|\(.body | split("\n")[0] | .[0:100])"' 2>/dev/null |
+		echo "$comments_json" | jq -r --arg ops_regex "$ops_regex" 'select(.is_bot == false) | select(.body | test($ops_regex) | not) | "\(.id)|\(.author)|\(.body | split("\n")[0] | .[0:100])"' 2>/dev/null |
 			while IFS='|' read -r comment_id author body_preview; do
 				[[ -z "$comment_id" ]] && continue
 
@@ -90,13 +137,13 @@ cmd_scan() {
 				if [[ "$author" == "$self_login" ]]; then
 					# Check if this looks like a genuine user comment (not automation)
 					# Automation comments start with specific markers
-					if echo "$body_preview" | grep -qE '^(DISPATCH_CLAIM|<!-- |## (Closing|BLOCKED|Routine))'; then
+					if _is_routine_ops_comment "$body_preview"; then
 						continue
 					fi
 				fi
 
 				# Skip if already responded to
-				if grep -q "^${comment_id}$" "$responded_file" 2>/dev/null; then
+				if _comment_already_recorded "$responded_file" "$comment_id"; then
 					continue
 				fi
 
@@ -120,21 +167,37 @@ cmd_dispatch() {
 	local issue_number="$3"
 	local comment_id="$4"
 
-	local responded_file="${STATE_DIR}/${repo_slug//\//_}_responded.txt"
+	local responded_file
+	responded_file=$(_responded_file_for_repo "$repo_slug")
 	touch "$responded_file"
 
 	# Double-check the comment still exists and hasn't been responded to
-	if grep -q "^${comment_id}$" "$responded_file" 2>/dev/null; then
+	if _comment_already_recorded "$responded_file" "$comment_id"; then
 		_log "dispatch: comment ${comment_id} on #${issue_number} already responded to — skipping"
 		return 0
 	fi
 
 	# Get the comment body
-	local comment_body
+	local comment_body lookup_error
+	lookup_error=""
 	comment_body=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments/${comment_id}" \
-		--jq '.body' 2>/dev/null) || comment_body=""
+		--jq '.body' 2>&1) || {
+		lookup_error="$comment_body"
+		comment_body=""
+	}
 	if [[ -z "$comment_body" ]]; then
-		_log "dispatch: comment ${comment_id} not found — skipping"
+		local lookup_summary="empty response"
+		if [[ -n "$lookup_error" ]]; then
+			lookup_summary="${lookup_error%%$'\n'*}"
+		fi
+		_log "dispatch: comment ${comment_id} on #${issue_number} lookup failed — skipping (${lookup_summary})"
+		_mark_comment_skipped "$responded_file" "$comment_id" "lookup failed"
+		return 0
+	fi
+
+	if _is_routine_ops_comment "$comment_body"; then
+		_log "dispatch: comment ${comment_id} on #${issue_number} is routine ops/audit content — skipping"
+		_mark_comment_skipped "$responded_file" "$comment_id" "routine ops/audit content"
 		return 0
 	fi
 
