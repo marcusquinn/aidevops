@@ -1074,8 +1074,10 @@ _rest_pr_view() {
 		elif [[ -n "$cache_path" ]]; then
 			gh_record_call other "$cache_name" unknown other miss 2>/dev/null || true
 		fi
-	elif [[ "${AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE:-0}" == "1" || "${AIDEVOPS_GH_PR_VIEW_CACHE:-0}" == "1" ]]; then
+	elif [[ "${AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE:-0}" == "1" ]]; then
 		gh_record_call other "$cache_name" unknown other bypass-disabled 2>/dev/null || true
+	elif [[ "${AIDEVOPS_GH_PR_VIEW_CACHE:-0}" == "1" ]]; then
+		gh_record_call other "$cache_name" unknown other bypass 2>/dev/null || true
 	fi
 
 	gh_record_call rest _rest_pr_view 2>/dev/null || true
