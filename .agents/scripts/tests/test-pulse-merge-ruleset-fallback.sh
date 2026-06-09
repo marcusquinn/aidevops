@@ -106,6 +106,7 @@ _extract_linked_issue() { printf '123'; return 0; }
 _check_pr_merge_gates() { return 0; }
 _pr_required_checks_pass() { return 0; }
 approve_collaborator_pr() { return 0; }
+_check_ruleset_required_reviews_passing() { return 0; }
 _extract_merge_summary() { printf 'summary'; return 0; }
 _retarget_stacked_children() { return 0; }
 _pulse_merge_admin_safety_check() { return 0; }

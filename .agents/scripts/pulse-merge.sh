@@ -986,6 +986,9 @@ _process_single_ready_pr() {
 
 	# Approve (satisfies REVIEW_REQUIRED for collaborator PRs)
 	approve_collaborator_pr "$pr_number" "$repo_slug" "$pr_author" 2>/dev/null || true
+	if ! _check_ruleset_required_reviews_passing "$repo_slug" "$pr_number" "$pr_author"; then
+		return 1
+	fi
 
 	# Extract merge summary: MERGE_SUMMARY comment → PR body → generic fallback
 	local merge_summary

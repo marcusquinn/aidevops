@@ -74,6 +74,7 @@ print_result() {
 #   empty_required_pending_fallback — branch/ruleset APIs expose no contexts,
 #      but `gh pr checks --required` reports a pending required check
 #   pr_checks_empty_failure — PR-level required checks exits non-zero with no JSON
+#   ruleset_review_malformed_optional — ruleset detail has unexpected shapes
 #   error           — branch-protection API exits non-zero
 setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
@@ -113,12 +114,35 @@ apply_jq() {
 }
 
 if [[ "$1" == "api" && "$2" == repos/* && "$*" == *"/rulesets/"* ]]; then
-	apply_jq '{"conditions":{"ref_name":{"include":[]}},"rules":[]}' "$@"
+	case "${MOCK_GH_MODE:-all_pass}" in
+	ruleset_review_only_missing | ruleset_review_only_approved)
+		apply_jq '{"conditions":{"ref_name":{"include":["refs/heads/main"]}},"rules":[{"type":"pull_request","parameters":{"required_approving_review_count":1}}]}' "$@"
+		;;
+	ruleset_mixed_review_status)
+		apply_jq '{"conditions":{"ref_name":{"include":["refs/heads/main"]}},"rules":[{"type":"pull_request","parameters":{"required_approving_review_count":1}},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"required-a"}]}}]}' "$@"
+		;;
+	ruleset_review_zero)
+		apply_jq '{"conditions":{"ref_name":{"include":["refs/heads/main"]}},"rules":[{"type":"pull_request","parameters":{"required_approving_review_count":0}}]}' "$@"
+		;;
+	ruleset_review_malformed_optional)
+		apply_jq '{"conditions":{"ref_name":"unexpected"},"rules":[{"type":"pull_request","parameters":"unexpected"}]}' "$@"
+		;;
+	*)
+		apply_jq '{"conditions":{"ref_name":{"include":[]}},"rules":[]}' "$@"
+		;;
+	esac
 	exit 0
 fi
 
 if [[ "$1" == "api" && "$2" == repos/* && "$*" == *"/rulesets"* ]]; then
-	apply_jq '[]' "$@"
+	case "${MOCK_GH_MODE:-all_pass}" in
+	ruleset_review_only_missing | ruleset_review_only_approved | ruleset_mixed_review_status | ruleset_review_zero | ruleset_review_malformed_optional)
+		apply_jq '[{"id":101,"enforcement":"active"}]' "$@"
+		;;
+	*)
+		apply_jq '[]' "$@"
+		;;
+	esac
 	exit 0
 fi
 
@@ -147,6 +171,18 @@ fi
 
 if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"headRefOid"* ]]; then
 	apply_jq '{"headRefOid":"abc123def456789000000000000000000000abcd"}' "$@"
+	exit 0
+fi
+
+if [[ "$1" == "pr" && "$2" == "view" && "$*" == *"reviews"* ]]; then
+	case "${MOCK_GH_MODE:-all_pass}" in
+	ruleset_review_only_approved | ruleset_mixed_review_status)
+		apply_jq '{"reviews":[{"state":"APPROVED","submittedAt":"2026-06-01T00:00:00Z","author":{"login":"reviewer"}}]}' "$@"
+		;;
+	*)
+		apply_jq '{"reviews":[]}' "$@"
+		;;
+	esac
 	exit 0
 fi
 
@@ -247,6 +283,24 @@ teardown_test_env() {
 	return 0
 }
 
+eval_function_from_file() {
+	local fn_name="$1"
+	local source_file="$2"
+	local fn_src=""
+	fn_src=$(awk -v name="$fn_name" '
+		$0 ~ "^" name "\\(\\) \\{" { capture = 1 }
+		capture { print }
+		capture && /^}$/ { capture = 0; exit }
+	' "$source_file")
+	if [[ -z "$fn_src" ]]; then
+		printf 'ERROR: could not extract %s from %s\n' "$fn_name" "$source_file" >&2
+		return 1
+	fi
+	# shellcheck disable=SC1090  # dynamic source from extracted helper
+	eval "$fn_src"
+	return 0
+}
+
 # Extract _pr_required_checks_pass plus its helper stack into the current shell.
 define_function_under_test() {
 	local checks_lib="${SCRIPT_DIR}/../shared-gh-wrappers-checks.sh"
@@ -263,82 +317,15 @@ define_function_under_test() {
 		return 1
 	}
 
-	local ref_match_src
-	ref_match_src=$(awk '
-		/^_ruleset_ref_matches_default_branch\(\) \{/,/^}$/ { print }
-	' "$MERGE_SCRIPT")
-	if [[ -z "$ref_match_src" ]]; then
-		printf 'ERROR: could not extract _ruleset_ref_matches_default_branch from %s\n' "$MERGE_SCRIPT" >&2
-		return 1
-	fi
-	# shellcheck disable=SC1090  # dynamic source from extracted helper
-	eval "$ref_match_src"
-
-	local pr_checks_fallback_src
-	pr_checks_fallback_src=$(awk '
-		/^_check_required_pr_checks_passing_fallback\(\) \{/,/^}$/ { print }
-	' "$REQUIRED_CHECKS_SCRIPT")
-	if [[ -z "$pr_checks_fallback_src" ]]; then
-		printf 'ERROR: could not extract _check_required_pr_checks_passing_fallback from %s\n' "$REQUIRED_CHECKS_SCRIPT" >&2
-		return 1
-	fi
-	# shellcheck disable=SC1090  # dynamic source from extracted helper
-	eval "$pr_checks_fallback_src"
-
-	local rulesets_src
-	rulesets_src=$(awk '
-		/^_required_contexts_from_rulesets_for_default_branch\(\) \{/,/^}$/ { print }
-	' "$MERGE_SCRIPT")
-	if [[ -z "$rulesets_src" ]]; then
-		printf 'ERROR: could not extract _required_contexts_from_rulesets_for_default_branch from %s\n' "$MERGE_SCRIPT" >&2
-		return 1
-	fi
-	# shellcheck disable=SC1090  # dynamic source from extracted helper
-	eval "$rulesets_src"
-
-	local required_src
-	required_src=$(awk '
-		/^_required_contexts_for_default_branch\(\) \{/,/^}$/ { print }
-	' "$MERGE_SCRIPT")
-	if [[ -z "$required_src" ]]; then
-		printf 'ERROR: could not extract _required_contexts_for_default_branch from %s\n' "$MERGE_SCRIPT" >&2
-		return 1
-	fi
-	# shellcheck disable=SC1090  # dynamic source from extracted helper
-	eval "$required_src"
-
-	local checks_src
-	checks_src=$(awk '
-		/^_check_required_checks_passing\(\) \{/,/^}$/ { print }
-	' "$MERGE_SCRIPT")
-	if [[ -z "$checks_src" ]]; then
-		printf 'ERROR: could not extract _check_required_checks_passing from %s\n' "$MERGE_SCRIPT" >&2
-		return 1
-	fi
-	# shellcheck disable=SC1090  # dynamic source from extracted helper
-	eval "$checks_src"
-
-	local terminal_src
-	terminal_src=$(awk '
-		/^_check_required_checks_has_terminal_failure\(\) \{/,/^}$/ { print }
-	' "$REQUIRED_CHECKS_SCRIPT")
-	if [[ -z "$terminal_src" ]]; then
-		printf 'ERROR: could not extract _check_required_checks_has_terminal_failure from %s\n' "$REQUIRED_CHECKS_SCRIPT" >&2
-		return 1
-	fi
-	# shellcheck disable=SC1090  # dynamic source from extracted helper
-	eval "$terminal_src"
-
-	local fn_src
-	fn_src=$(awk '
-		/^_pr_required_checks_pass\(\) \{/,/^}$/ { print }
-	' "$MERGE_SCRIPT")
-	if [[ -z "$fn_src" ]]; then
-		printf 'ERROR: could not extract _pr_required_checks_pass from %s\n' "$MERGE_SCRIPT" >&2
-		return 1
-	fi
-	# shellcheck disable=SC1090  # dynamic source from extracted helper
-	eval "$fn_src"
+	eval_function_from_file _ruleset_ref_matches_default_branch "$MERGE_SCRIPT" || return 1
+	eval_function_from_file _required_contexts_from_rulesets_for_default_branch "$MERGE_SCRIPT" || return 1
+	eval_function_from_file _required_contexts_for_default_branch "$MERGE_SCRIPT" || return 1
+	eval_function_from_file _check_required_checks_passing "$MERGE_SCRIPT" || return 1
+	eval_function_from_file _pr_required_checks_pass "$MERGE_SCRIPT" || return 1
+	eval_function_from_file _check_required_pr_checks_passing_fallback "$REQUIRED_CHECKS_SCRIPT" || return 1
+	eval_function_from_file _ruleset_required_review_count_for_default_branch "$REQUIRED_CHECKS_SCRIPT" || return 1
+	eval_function_from_file _check_ruleset_required_reviews_passing "$REQUIRED_CHECKS_SCRIPT" || return 1
+	eval_function_from_file _check_required_checks_has_terminal_failure "$REQUIRED_CHECKS_SCRIPT" || return 1
 	return 0
 }
 
@@ -379,6 +366,45 @@ assert_pr_checks_fallback_returns() {
 		print_result "$label" 0
 	else
 		print_result "$label" 1 "Expected rc=$expected_rc output='$expected_output', got rc=$actual_rc output='$actual_output'"
+	fi
+	return 0
+}
+
+assert_ruleset_review_gate_returns() {
+	local expected_rc="$1"
+	local label="$2"
+	local actual_rc=0
+	_check_ruleset_required_reviews_passing "marcusquinn/aidevops" "19023" "author" || actual_rc=$?
+	if [[ "$actual_rc" -eq "$expected_rc" ]]; then
+		print_result "$label" 0
+	else
+		print_result "$label" 1 "Expected rc=$expected_rc, got rc=$actual_rc"
+	fi
+	return 0
+}
+
+assert_ruleset_review_count_output() {
+	local expected_output="$1"
+	local label="$2"
+	local actual_output=""
+	actual_output=$(_ruleset_required_review_count_for_default_branch "marcusquinn/aidevops" "main") || actual_output="ERR"
+	if [[ "$actual_output" == "$expected_output" ]]; then
+		print_result "$label" 0
+	else
+		print_result "$label" 1 "Expected output='$expected_output', got output='$actual_output'"
+	fi
+	return 0
+}
+
+assert_ruleset_contexts_output() {
+	local expected_output="$1"
+	local label="$2"
+	local actual_output=""
+	actual_output=$(_required_contexts_from_rulesets_for_default_branch "marcusquinn/aidevops" "main") || actual_output="ERR"
+	if [[ "$actual_output" == "$expected_output" ]]; then
+		print_result "$label" 0
+	else
+		print_result "$label" 1 "Expected output='$expected_output', got output='$actual_output'"
 	fi
 	return 0
 }
@@ -555,6 +581,55 @@ test_skipping_required_allows_merge() {
 	return 0
 }
 
+test_ruleset_review_only_missing_blocks_merge() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="ruleset_review_only_missing"
+	assert_ruleset_review_count_output "1" "ruleset-only pull_request approval count extracted"
+	assert_ruleset_review_gate_returns 1 "ruleset-only missing approval → merge blocked (GH#24577)"
+	assert_log_contains "0/1 ruleset-required approval" \
+		"ruleset-only missing approval: skip reason logged"
+	return 0
+}
+
+test_ruleset_review_only_approved_allows_merge() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="ruleset_review_only_approved"
+	assert_ruleset_review_gate_returns 0 "ruleset-only satisfied approval → merge allowed (GH#24577)"
+	assert_log_contains "satisfies 1/1 ruleset-required approval" \
+		"ruleset-only satisfied approval: pass logged"
+	return 0
+}
+
+test_ruleset_mixed_review_status_preserves_both_gates() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="ruleset_mixed_review_status"
+	assert_ruleset_review_count_output "1" "mixed ruleset review count extracted"
+	assert_ruleset_contexts_output "required-a" "mixed ruleset status context still extracted"
+	assert_ruleset_review_gate_returns 0 "mixed ruleset satisfied approval → review gate allows"
+	return 0
+}
+
+test_ruleset_review_zero_does_not_require_approval() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="ruleset_review_zero"
+	assert_ruleset_review_count_output "0" "ruleset pull_request count zero extracted as no gate"
+	assert_ruleset_review_gate_returns 0 "ruleset approval count zero → merge allowed (GH#24577)"
+	return 0
+}
+
+test_ruleset_review_malformed_optional_does_not_fail_parse() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="ruleset_review_malformed_optional"
+	assert_ruleset_review_count_output "0" "malformed optional ruleset fields parse as no review gate"
+	assert_ruleset_review_gate_returns 0 "malformed optional ruleset fields do not fail closed"
+	return 0
+}
+
 test_gh_api_error_fails_closed() {
 	# gh exits 1 → the function MUST return 1 (fail-closed). A bubbling
 	# gh error must never auto-merge when --admin would bypass branch
@@ -592,6 +667,11 @@ main() {
 	test_queued_required_is_non_terminal
 	test_expected_required_is_non_terminal
 	test_skipping_required_allows_merge
+	test_ruleset_review_only_missing_blocks_merge
+	test_ruleset_review_only_approved_allows_merge
+	test_ruleset_mixed_review_status_preserves_both_gates
+	test_ruleset_review_zero_does_not_require_approval
+	test_ruleset_review_malformed_optional_does_not_fail_parse
 	test_gh_api_error_fails_closed
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
