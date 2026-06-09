@@ -339,7 +339,7 @@ test_has_open_pr_blocks_approved_mergeable_sibling() {
 	local output=""
 	if output=$("$HELPER_SCRIPT" has-open-pr 23250 marcusquinn/aidevops 't3500: dispatch sibling dedup'); then
 		case "$output" in
-		*'open PR #23288 is approved and mergeable for issue #23250'*)
+		*'open PR #23288 is approved or mergeable for issue #23250'*)
 			print_result "has-open-pr blocks approved mergeable sibling PR" 0
 			return 0
 			;;
@@ -352,6 +352,49 @@ test_has_open_pr_blocks_approved_mergeable_sibling() {
 	return 0
 }
 
+test_has_open_pr_blocks_approved_conflicted_sibling() {
+	# Feature 2.3 blocks an approved sibling even when mergeStateStatus is DIRTY:
+	# the merge path can consolidate or repair the existing candidate instead of
+	# launching another duplicate worker for the same issue.
+	set_gh_fixtures 'marcusquinn/aidevops|open|#23255|[{"number":23295,"title":"Approved sibling needing rebase","body":"For #23255. Existing reviewed candidate.","isDraft":false,"reviewDecision":"APPROVED","mergeStateStatus":"DIRTY"}]'
+
+	local output=""
+	if output=$("$HELPER_SCRIPT" has-open-pr 23255 marcusquinn/aidevops 't3505: approved sibling dedup'); then
+		case "$output" in
+		*'open PR #23295 is approved or mergeable for issue #23255'*)
+			print_result "has-open-pr blocks approved sibling even when conflicted" 0
+			return 0
+			;;
+		esac
+		print_result "has-open-pr blocks approved sibling even when conflicted" 1 "Unexpected output: ${output}"
+		return 0
+	fi
+
+	print_result "has-open-pr blocks approved sibling even when conflicted" 1 "Expected approved sibling PR to block redispatch"
+	return 0
+}
+
+test_has_open_pr_blocks_mergeable_unapproved_sibling() {
+	# Feature 2.3 also blocks a mergeable sibling before review is complete so a
+	# healthy candidate can proceed through review instead of duplicate dispatch.
+	set_gh_fixtures 'marcusquinn/aidevops|open|#23256|[{"number":23296,"title":"Mergeable sibling awaiting review","body":"For #23256. Healthy candidate awaiting review.","isDraft":false,"reviewDecision":"REVIEW_REQUIRED","mergeStateStatus":"CLEAN"}]'
+
+	local output=""
+	if output=$("$HELPER_SCRIPT" has-open-pr 23256 marcusquinn/aidevops 't3506: mergeable sibling dedup'); then
+		case "$output" in
+		*'open PR #23296 is approved or mergeable for issue #23256'*)
+			print_result "has-open-pr blocks mergeable unapproved sibling PR" 0
+			return 0
+			;;
+		esac
+		print_result "has-open-pr blocks mergeable unapproved sibling PR" 1 "Unexpected output: ${output}"
+		return 0
+	fi
+
+	print_result "has-open-pr blocks mergeable unapproved sibling PR" 1 "Expected mergeable sibling PR to block redispatch"
+	return 0
+}
+
 test_has_open_pr_blocks_refs_colon_healthy_sibling() {
 	# Check 0 supports common reference variants used by PR bodies, including
 	# plural `Refs` and colon punctuation after the keyword.
@@ -360,7 +403,7 @@ test_has_open_pr_blocks_refs_colon_healthy_sibling() {
 	local output=""
 	if output=$("$HELPER_SCRIPT" has-open-pr 23252 marcusquinn/aidevops 't3502: dispatch sibling refs dedup'); then
 		case "$output" in
-		*'open PR #23292 is approved and mergeable for issue #23252'*)
+		*'open PR #23292 is approved or mergeable for issue #23252'*)
 			print_result "has-open-pr blocks approved sibling using Refs: #N" 0
 			return 0
 			;;
@@ -381,7 +424,7 @@ test_has_open_pr_blocks_behind_healthy_sibling() {
 	local output=""
 	if output=$("$HELPER_SCRIPT" has-open-pr 23253 marcusquinn/aidevops 't3503: dispatch sibling behind dedup'); then
 		case "$output" in
-		*'open PR #23293 is approved and mergeable for issue #23253'*)
+		*'open PR #23293 is approved or mergeable for issue #23253'*)
 			print_result "has-open-pr blocks approved BEHIND sibling PR" 0
 			return 0
 			;;
@@ -395,14 +438,14 @@ test_has_open_pr_blocks_behind_healthy_sibling() {
 }
 
 test_has_open_pr_allows_when_no_healthy_sibling() {
-	# Unhealthy siblings (draft, unapproved, or conflicting) must not hold the
-	# issue forever. They are not candidates the merge path can finish safely, so
-	# redispatch remains allowed when no other PR evidence exists.
-	set_gh_fixtures 'marcusquinn/aidevops|open|#23251|[{"number":23289,"title":"Draft sibling","body":"For #23251.","isDraft":true,"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN"},{"number":23290,"title":"Needs review","body":"For #23251.","isDraft":false,"reviewDecision":"REVIEW_REQUIRED","mergeStateStatus":"CLEAN"},{"number":23291,"title":"Conflicting sibling","body":"For #23251.","isDraft":false,"reviewDecision":"APPROVED","mergeStateStatus":"DIRTY"}]'
+	# Unhealthy siblings (draft or neither approved nor mergeable) must not hold
+	# the issue forever. They are not candidates the merge path can finish safely,
+	# so redispatch remains allowed when no other PR evidence exists.
+	set_gh_fixtures 'marcusquinn/aidevops|open|#23251|[{"number":23289,"title":"Draft sibling","body":"For #23251.","isDraft":true,"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN"},{"number":23291,"title":"Conflicting unreviewed sibling","body":"For #23251.","isDraft":false,"reviewDecision":"REVIEW_REQUIRED","mergeStateStatus":"DIRTY"}]'
 
 	if "$HELPER_SCRIPT" has-open-pr 23251 marcusquinn/aidevops 't3501: allow unhealthy sibling recovery'; then
 		print_result "has-open-pr allows dispatch when no healthy sibling exists" 1 \
-			"Expected exit 1: draft/unapproved/conflicting siblings must not block redispatch"
+			"Expected exit 1: draft and unapproved/conflicting siblings must not block redispatch"
 		return 0
 	fi
 
@@ -458,6 +501,8 @@ main() {
 	test_has_open_pr_ignores_open_body_planning_for_reference
 	test_has_open_pr_requires_open_close_keyword_for_our_issue
 	test_has_open_pr_blocks_approved_mergeable_sibling
+	test_has_open_pr_blocks_approved_conflicted_sibling
+	test_has_open_pr_blocks_mergeable_unapproved_sibling
 	test_has_open_pr_blocks_refs_colon_healthy_sibling
 	test_has_open_pr_blocks_behind_healthy_sibling
 	test_has_open_pr_allows_when_no_healthy_sibling

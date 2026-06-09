@@ -17,10 +17,10 @@
 # has_open_pr Check 0: healthy open sibling PRs for this issue.
 #
 # Redispatch should not create another worker when an existing sibling PR for
-# the same issue is already approved and mergeable. This catches PRs that are
-# ready for the merge path but do not use a closing keyword in the body (for
-# example parent/phase work using `For #NNN`), while still allowing dispatch
-# when only draft, unapproved, or conflicting candidates exist.
+# the same issue is already approved or mergeable. This catches PRs that are
+# ready for the review/merge path but do not use a closing keyword in the body
+# (for example parent/phase work using `For #NNN`), while still allowing
+# dispatch when only draft or conflicting candidates exist.
 #
 # Args: $1 = issue number, $2 = repo slug
 # Returns: exit 0 if a healthy sibling PR matches, exit 1 if none
@@ -44,14 +44,16 @@ _has_open_pr_check_healthy_sibling() {
 		'[
 			.[] | select(
 				(.isDraft // false | not) and
-				((.reviewDecision // "") == "APPROVED") and
-				((.mergeStateStatus // "") | test($healthy_pattern)) and
+				(
+					((.reviewDecision // "") == "APPROVED") or
+					((.mergeStateStatus // "") | test($healthy_pattern))
+				) and
 				(((.title // "") | test($issue_pattern; "i")) or ((.body // "") | test($issue_pattern; "i")))
 			)
 		] | .[0].number // empty' 2>/dev/null) || match_pr=""
 
 	if [[ -n "$match_pr" ]]; then
-		printf 'open PR #%s is approved and mergeable for issue #%s\n' "$match_pr" "$issue_number"
+		printf 'open PR #%s is approved or mergeable for issue #%s\n' "$match_pr" "$issue_number"
 		return 0
 	fi
 	return 1
