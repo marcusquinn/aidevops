@@ -29,10 +29,12 @@ FAIL=0
 _pass() {
 	PASS=$((PASS + 1))
 	printf '  \033[0;32mPASS\033[0m %s\n' "$1"
+	return 0
 }
 _fail() {
 	FAIL=$((FAIL + 1))
 	printf '  \033[0;31mFAIL\033[0m %s\n' "$1"
+	return 0
 }
 
 # -----------------------------------------------------------------------------
@@ -55,6 +57,7 @@ mkdir -p "$AIDEVOPS_WS"
 # of each invocation.
 _run_helper() {
 	HOME="$SANDBOX/fakehome" "$HELPER" "$@"
+	return $?
 }
 
 _make_opencode_db() {
@@ -88,6 +91,7 @@ SQL
 			"INSERT INTO message VALUES ('msg$i', 'ses1', $i, $i, '$payload');" 2>/dev/null
 	done
 	sqlite3 "$OPENCODE_DIR/opencode.db" "DELETE FROM message WHERE CAST(substr(id, 4) AS INTEGER) % 2 = 0;" 2>/dev/null
+	return 0
 }
 
 # -----------------------------------------------------------------------------
@@ -264,6 +268,20 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# Test 10b: report identifies compact-but-large DBs as retained live data
+# -----------------------------------------------------------------------------
+
+set +e
+out=$(FORCE_VACUUM_SIZE_MB=0 WAL_LARGE_THRESHOLD_MB=999 _run_helper report 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] && grep -q "compact but large" <<<"$out" && grep -q "Re-running maintenance-window is unlikely" <<<"$out"; then
+	_pass "report explains compact-but-large DBs"
+else
+	_fail "report missing compact-but-large note (rc=$rc) — output: $out"
+fi
+
+# -----------------------------------------------------------------------------
 # Test 11: check shows WAL info when WAL_LARGE_THRESHOLD_MB=0
 # -----------------------------------------------------------------------------
 
@@ -303,6 +321,34 @@ if [[ "$rc" -eq 0 ]] && grep -q "Sun 03:30" <<<"$out" && grep -q "pauses pulse/h
 	_pass "notice warns about scheduled maintenance-window pause"
 else
 	_fail "notice missing scheduled maintenance-window warning (rc=$rc) — output: $out"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 11d: notice rewords size-only trigger after recent compact success
+# -----------------------------------------------------------------------------
+
+set +e
+out=$(FORCE_VACUUM_SIZE_MB=0 WAL_LARGE_THRESHOLD_MB=999 _run_helper notice 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] && grep -q "Compact but large" <<<"$out" && ! grep -q "Run aidevops opencode-db maintenance-window" <<<"$out"; then
+	_pass "notice does not recommend repeat maintenance for compact large DB"
+else
+	_fail "notice should reword compact large DB (rc=$rc) — output: $out"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 11e: notice still recommends maintenance when free-page threshold is due
+# -----------------------------------------------------------------------------
+
+set +e
+out=$(FORCE_VACUUM_SIZE_MB=0 VACUUM_FREELIST_THRESHOLD=0 WAL_LARGE_THRESHOLD_MB=999 _run_helper notice 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] && grep -q "Recommended:" <<<"$out" && grep -q "maintenance-window" <<<"$out"; then
+	_pass "notice still recommends maintenance when freelist threshold is due"
+else
+	_fail "notice should recommend when freelist threshold is due (rc=$rc) — output: $out"
 fi
 
 # -----------------------------------------------------------------------------
