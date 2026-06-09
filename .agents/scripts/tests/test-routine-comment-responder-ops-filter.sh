@@ -88,6 +88,8 @@ if [[ "${1:-}" == "api" && "${2:-}" == "repos/owner/repo/issues/42/comments" ]];
 {"id":103,"author":"maintainer","is_bot":false,"created":"2026-01-01T00:02:00Z","body":"CLAIM_RELEASED reason=worker_failed"}
 {"id":104,"author":"maintainer","is_bot":false,"created":"2026-01-01T00:03:00Z","body":"## Cascade Tier Escalation\nEscalating worker"}
 {"id":105,"author":"maintainer","is_bot":false,"created":"2026-01-01T00:04:00Z","body":"<!-- ops: pulse audit -->"}
+{"id":107,"author":"maintainer","is_bot":false,"created":"2026-01-01T00:04:30Z","body":"Can this be clarified?\nBLOCKED by missing context"}
+{"id":108,"author":"user","is_bot":false,"created":"2026-01-01T00:04:45Z"}
 {"id":106,"author":"user","is_bot":false,"created":"2026-01-01T00:05:00Z","body":"Can this routine run hourly?"}
 JSON
 	exit 0
@@ -110,9 +112,17 @@ mkdir -p "$ROUTINE_COMMENT_STATE_DIR"
 
 scan_output=$(bash "${PARENT_DIR}/routine-comment-responder.sh" scan "owner/repo" "$TMPDIR_TEST")
 assert_contains "real user question emitted" "42|106|user|Can this routine run hourly?" "$scan_output"
+assert_contains "missing body normalized" "42|108|user|" "$scan_output"
+assert_contains "multiline non-ops owner comment emitted" "42|107|maintainer|Can this be clarified?" "$scan_output"
 assert_not_contains "CLAIM_RELEASED ignored" "103|" "$scan_output"
 assert_not_contains "cascade escalation ignored" "104|" "$scan_output"
 assert_not_contains "ops marker ignored" "105|" "$scan_output"
+
+if ROUTINE_COMMENT_LOGFILE="$ROUTINE_COMMENT_LOGFILE" ROUTINE_COMMENT_STATE_DIR="$ROUTINE_COMMENT_STATE_DIR" bash -c 'source "$1"; _is_routine_ops_comment $'"'"'Can this be clarified?\nBLOCKED by missing context'"'"'' bash "${PARENT_DIR}/routine-comment-responder.sh"; then
+	assert_equals "multiline helper does not match later marker" "non-ops" "ops"
+else
+	assert_equals "multiline helper does not match later marker" "non-ops" "non-ops"
+fi
 
 bash "${PARENT_DIR}/routine-comment-responder.sh" dispatch "owner/repo" "$TMPDIR_TEST" 42 999
 bash "${PARENT_DIR}/routine-comment-responder.sh" dispatch "owner/repo" "$TMPDIR_TEST" 42 999

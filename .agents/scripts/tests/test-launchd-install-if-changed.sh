@@ -807,7 +807,7 @@ test_profile_readme_install_does_not_kickstart() {
 	<array>
 		<string>/bin/bash</string>
 		<string>-lc</string>
-		<string>start_epoch=$(date +%s); status=success; "/fake/profile-readme-helper.sh" update; rc=$?; end_epoch=$(date +%s); duration=$((end_epoch - start_epoch)); if [ "$rc" -ne 0 ]; then status=failure; fi; if [ -x "\$HOME/.aidevops/agents/scripts/routine-log-helper.sh" ]; then "\$HOME/.aidevops/agents/scripts/routine-log-helper.sh" update "r908" --status "$status" --duration "$duration" >/dev/null 2>&1 || true; fi; exit "$rc"</string>
+		<string>start_epoch=$(date +%s); status=success; '/fake/profile-readme-helper.sh' update; rc=$?; end_epoch=$(date +%s); duration=$(( ${end_epoch:-0} - ${start_epoch:-0} )); if [ "$rc" -ne 0 ]; then status=failure; fi; if [ -x "\$HOME/.aidevops/agents/scripts/routine-log-helper.sh" ]; then "\$HOME/.aidevops/agents/scripts/routine-log-helper.sh" update "r908" --status "$status" --duration "$duration" >/dev/null 2>&1 || true; fi; exit "$rc"</string>
 	</array>
 	<key>StartInterval</key>
 	<integer>3600</integer>
