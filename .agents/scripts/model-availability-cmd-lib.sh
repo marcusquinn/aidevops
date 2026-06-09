@@ -196,6 +196,7 @@ _status_print_providers() {
 		case "$stat" in
 		healthy) status_display="${GREEN}healthy${NC}" ;;
 		unhealthy | unreachable) status_display="${RED}$stat${NC}" ;;
+		quota_exceeded) status_display="${RED}quota-exc${NC}" ;;
 		rate_limited) status_display="${YELLOW}rate-ltd${NC}" ;;
 		key_invalid) status_display="${RED}bad-key${NC}" ;;
 		no_key) status_display="${YELLOW}no-key${NC}" ;;
@@ -588,4 +589,3 @@ cmd_help() {
 	echo ""
 	return 0
 }
-

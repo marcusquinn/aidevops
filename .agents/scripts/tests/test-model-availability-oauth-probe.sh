@@ -247,6 +247,35 @@ else
 	print_result "stale-env-key+no-oauth: _probe_check_oauth_fallback returns 3 (no override)" 1 \
 		"(got rc=$rc — expected 3; no auth.json OAuth should not produce a false healthy)"
 fi
+
+# Assertion 4d — OpenAI quota-specific 403 is unavailable, not auth fallback.
+# GH#24595: OpenAI returns HTTP 403 for insufficient billing quota. The parser
+# must classify that as quota_exceeded with a non-3 exit code so probe_provider
+# cannot convert it to healthy via auth.json OAuth fallback.
+quota_body='{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","code":"insufficient_quota"}}'
+parsed=$(_probe_parse_http_response openai 403 "$quota_body" true)
+status=$(printf '%s\n' "$parsed" | sed -n '1p')
+error_msg=$(printf '%s\n' "$parsed" | sed -n '2p')
+exit_code=$(printf '%s\n' "$parsed" | sed -n '4p')
+if [[ "$status" == "quota_exceeded" && "$error_msg" == "Quota exceeded (HTTP 403)" && "$exit_code" -eq 1 ]]; then
+	print_result "openai-quota-403: parser returns quota_exceeded without OAuth fallback exit" 0
+else
+	print_result "openai-quota-403: parser returns quota_exceeded without OAuth fallback exit" 1 \
+		"(got status='$status', error='$error_msg', exit=$exit_code — expected quota_exceeded / Quota exceeded / exit 1)"
+fi
+
+# Assertion 4e — generic 403 remains key_invalid and preserves existing t3229
+# fallback eligibility for stale non-env keys.
+auth_body='{"error":{"message":"Invalid API key","type":"invalid_request_error","code":"invalid_api_key"}}'
+parsed=$(_probe_parse_http_response openai 403 "$auth_body" true)
+status=$(printf '%s\n' "$parsed" | sed -n '1p')
+exit_code=$(printf '%s\n' "$parsed" | sed -n '4p')
+if [[ "$status" == "key_invalid" && "$exit_code" -eq 3 ]]; then
+	print_result "openai-auth-403: parser preserves key_invalid fallback exit" 0
+else
+	print_result "openai-auth-403: parser preserves key_invalid fallback exit" 1 \
+		"(got status='$status', exit=$exit_code — expected key_invalid / exit 3)"
+fi
 # =============================================================================
 # Assertion 5 — ChatGPT OAuth denylist blocks known-unsupported pro models
 # (GH#21990)
