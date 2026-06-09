@@ -395,6 +395,96 @@ JSON
 	return 0
 }
 
+
+test_dispatch_max_caps_raw_backlog_to_solvable_candidates_plus_probe() {
+	reset_guardrail_env
+	local captured_slots_file="${TEST_ROOT}/captured-effective-slots"
+	: >"$captured_slots_file"
+
+	gh() {
+		local subcommand="$1"
+		local target="${2:-}"
+		local jq_flag="${3:-}"
+		local jq_query="${4:-}"
+		if [[ "$subcommand" == "api" && "$target" == "user" && "$jq_flag" == "--jq" && "$jq_query" == ".login" ]]; then
+			printf 'aidevops-bot\n'
+			return 0
+		fi
+		return 1
+	}
+
+	_dispatch_compute_capacity() {
+		printf '8 0 8\n'
+		return 0
+	}
+
+	count_runnable_candidates() {
+		printf '3\n'
+		return 0
+	}
+
+	count_queued_without_worker() {
+		printf '0\n'
+		return 0
+	}
+
+	normalize_count_output() {
+		local raw_output="$1"
+		printf '%s\n' "$raw_output"
+		return 0
+	}
+
+	build_ranked_dispatch_candidates_json() {
+		cat <<'JSON'
+[
+  {"number": 31, "updatedAt": "2026-05-01T00:00:00Z", "labels": [{"name": "tier:simple"}]},
+  {"number": 32, "updatedAt": "2026-05-02T00:00:00Z", "labels": [{"name": "enhancement"}]},
+  {"number": 33, "updatedAt": "2026-05-03T00:00:00Z", "labels": [{"name": "research"}]}
+]
+JSON
+		return 0
+	}
+
+	_dispatch_run_prepasses() {
+		local available_slots="$1"
+		printf '%s 0\n' "$available_slots"
+		return 0
+	}
+
+	_dispatch_max_compute_parallel() {
+		local effective_slots="$1"
+		printf '%s\n' "$effective_slots"
+		return 0
+	}
+
+	_dispatch_max_loop() {
+		local candidate_file="$1"
+		local effective_slots="$2"
+		printf '%s %s\n' "$candidate_file" "$effective_slots" >/dev/null
+		printf '%s\n' "$effective_slots" >"$captured_slots_file"
+		printf '0 0\n'
+		return 0
+	}
+
+	_dispatch_max_aggregate_outcomes() {
+		return 0
+	}
+
+	_dispatch_maybe_engage_throttle() {
+		return 0
+	}
+
+	local dispatched="" captured=""
+	dispatched=$(dispatch_max)
+	captured=$(<"$captured_slots_file")
+	if [[ "$dispatched" == "0" && "$captured" == "2" ]] && grep -q 'Dispatch solvable-work cap: capped_available=2/8' "$LOGFILE"; then
+		print_result "guardrail: dispatch_max caps raw backlog to solvable work plus one probe" 0
+	else
+		print_result "guardrail: dispatch_max caps raw backlog to solvable work plus one probe" 1 "dispatched=${dispatched} captured=${captured}"
+	fi
+	return 0
+}
+
 test_provider_rate_limits_pause_without_success
 test_provider_rate_limits_keep_probe_slot_with_success
 test_repeated_failures_pause_without_success
@@ -407,9 +497,10 @@ test_pr_target_reason_is_classified_as_benign_block
 test_benign_block_ledger_is_cycle_local_and_cleaned
 test_external_benign_block_ledger_is_preserved_and_refreshed
 test_dispatch_max_exports_benign_ledger_for_direct_callers
-test_apply_dispatch_max_preserves_benign_ledger_across_refill
 test_ranked_candidates_prioritise_solvable_work
 test_ranked_candidates_prioritise_low_complexity_over_research
+test_dispatch_max_caps_raw_backlog_to_solvable_candidates_plus_probe
+test_apply_dispatch_max_preserves_benign_ledger_across_refill
 
 printf '\n====================\n'
 printf 'Tests run: %s\n' "$TESTS_RUN"

@@ -360,6 +360,33 @@ build_ranked_dispatch_candidates_json() {
 
 
 #######################################
+# Count candidates that carry labels indicating worker-solvable implementation
+# work rather than broad raw backlog. This lets dispatch capacity use ranking as
+# more than an ordering hint: scarce slots go to candidates likely to close.
+#
+# Arguments:
+#   $1 - ranked candidate JSON array
+# Stdout: integer count
+#######################################
+_dispatch_solvable_candidate_count() {
+	local candidates_json="$1"
+	local count=""
+	count=$(printf '%s' "$candidates_json" | jq '[.[] | ((.labels // []) | map(.name? // .)) as $labels | select(
+		($labels | index("tier:simple")) != null
+		or ($labels | index("tier:standard")) != null
+		or ($labels | index("low-complexity")) != null
+		or ($labels | index("worker-ready")) != null
+		or ($labels | index("status:available")) != null
+		or ($labels | index("good first issue")) != null
+		or ($labels | index("quick-win")) != null
+	)] | length' 2>/dev/null) || count=0
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
+	printf '%s\n' "$count"
+	return 0
+}
+
+
+#######################################
 # Dispatch_max for obvious backlog.
 #
 # This is intentionally narrow: it only materializes already-eligible issues
@@ -404,7 +431,7 @@ dispatch_max() {
 		return 0
 	fi
 
-	local candidates_json candidate_count
+	local candidates_json candidate_count solvable_candidate_count
 	candidates_json=$(build_ranked_dispatch_candidates_json "$PULSE_RUNNABLE_ISSUE_LIMIT") || candidates_json='[]'
 	candidate_count=$(printf '%s' "$candidates_json" | jq 'length' 2>/dev/null) || candidate_count=0
 	[[ "$candidate_count" =~ ^[0-9]+$ ]] || candidate_count=0
@@ -413,8 +440,27 @@ dispatch_max() {
 		echo 0
 		return 0
 	fi
+	solvable_candidate_count=$(_dispatch_solvable_candidate_count "$candidates_json")
+	[[ "$solvable_candidate_count" =~ ^[0-9]+$ ]] || solvable_candidate_count=0
+	if [[ "${AIDEVOPS_SKIP_PULSE_SOLVABLE_WORK_CAP:-0}" != "1" && "$available_slots" -gt 1 ]]; then
+		local solvable_slot_cap="$solvable_candidate_count"
+		if ((candidate_count > solvable_candidate_count)); then
+			# Keep one probe for newly-dispatchable broad work, but do not let raw
+			# backlog consume all concurrency after the solvable candidates run out.
+			solvable_slot_cap=$((solvable_slot_cap + 1))
+		fi
+		if ((solvable_slot_cap < 1)); then
+			solvable_slot_cap=1
+		fi
+		if ((available_slots > solvable_slot_cap)); then
+			echo "[pulse-wrapper] Dispatch solvable-work cap: capped_available=${solvable_slot_cap}/${available_slots} solvable_candidates=${solvable_candidate_count} candidates=${candidate_count}" >>"$LOGFILE"
+			_dispatch_stats_gauge "pulse_dispatch_solvable_candidates" "$solvable_candidate_count"
+			_dispatch_stats_increment_candidate_failed "solvable_work_cap"
+			available_slots="$solvable_slot_cap"
+		fi
+	fi
 
-	echo "[pulse-wrapper] Dispatch_max: available=${available_slots}, runnable=${runnable_count}, queued_without_worker=${queued_without_worker}, candidates=${candidate_count}" >>"$LOGFILE"
+	echo "[pulse-wrapper] Dispatch_max: available=${available_slots}, runnable=${runnable_count}, queued_without_worker=${queued_without_worker}, candidates=${candidate_count}, solvable_candidates=${solvable_candidate_count}" >>"$LOGFILE"
 
 	local prepass_line=""
 	local triage_dispatched=0
