@@ -1642,16 +1642,20 @@ _api_budget_cache_dir_state() {
 
 _api_budget_cache_counts_csv() {
 	local api_log="$1" cache_name="$2"
-	local hit="" miss="" stale="" bypass="" store="" invalid="" bypass_disabled=""
-	hit=$(_api_budget_cache_decision_count "$api_log" "$cache_name" "hit")
-	miss=$(_api_budget_cache_decision_count "$api_log" "$cache_name" "miss")
-	stale=$(_api_budget_cache_decision_count "$api_log" "$cache_name" "stale")
-	bypass=$(_api_budget_cache_decision_count "$api_log" "$cache_name" "bypass")
-	store=$(_api_budget_cache_decision_count "$api_log" "$cache_name" "store")
-	invalid=$(_api_budget_cache_decision_count "$api_log" "$cache_name" "invalid-json")
-	bypass_disabled=$(_api_budget_cache_decision_count "$api_log" "$cache_name" "bypass-disabled")
-	printf 'hit=%s miss=%s stale=%s bypass=%s store=%s invalid_json=%s bypass_disabled=%s' \
-		"$hit" "$miss" "$stale" "$bypass" "$store" "$invalid" "$bypass_disabled"
+	if [[ ! -f "$api_log" ]]; then
+		printf 'hit=0 miss=0 stale=0 bypass=0 store=0 invalid_json=0 bypass_disabled=0'
+		return 0
+	fi
+	awk -F'\t' -v cache="$cache_name" -v cache_field=2 -v decision_field=6 '
+		$cache_field == cache { count[$decision_field]++ }
+		END {
+			keys = "hit miss stale bypass store invalid-json bypass-disabled"
+			split(keys, key, " ")
+			printf "hit=%d miss=%d stale=%d bypass=%d store=%d invalid_json=%d bypass_disabled=%d", \
+				count[key[1]] + 0, count[key[2]] + 0, count[key[3]] + 0, count[key[4]] + 0, count[key[5]] + 0, \
+				count[key[6]] + 0, count[key[7]] + 0
+		}
+	' "$api_log"
 	return 0
 }
 
