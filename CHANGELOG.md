@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.40] - 2026-06-09
+
+### Fixed
+
+- fail closed on native blockedBy lookup gaps (#24584)
+
 ## [3.20.39] - 2026-06-09
 
 ### Changed

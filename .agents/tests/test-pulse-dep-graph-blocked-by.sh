@@ -215,14 +215,19 @@ test_native_relationship_open_blocks_duplicate_text_marker() {
 	return 0
 }
 
-test_native_relationship_lookup_failure_falls_back_to_empty_body() {
+test_native_relationship_lookup_failure_fails_closed_empty_body() {
 	printf '\n=== native blockedBy lookup failure ===\n'
 	_setup_blocked_by_resolution_test
 	TEST_GH_RELATIONSHIP_MODE="fail"
 
 	local rc=0
 	is_blocked_by_unresolved '' 'owner/repo' '2000' || rc=$?
-	_assert_rc "native blockedBy lookup failure allows empty body fallback" 1 "$rc"
+	_assert_rc "native blockedBy lookup failure with empty body fails closed" 0 "$rc"
+	if grep -q 'native blockedBy lookup unavailable and issue body is empty' "$LOGFILE"; then
+		_pass "native lookup failure empty-body log is distinct"
+	else
+		_fail "native lookup failure empty-body log is distinct" "missing native-unavailable empty-body log"
+	fi
 	_cleanup_blocked_by_resolution_test
 	return 0
 }
@@ -436,7 +441,7 @@ main() {
 	test_native_relationship_clear_allows_empty_body
 	test_native_relationship_clear_ignores_duplicate_text_marker
 	test_native_relationship_open_blocks_duplicate_text_marker
-	test_native_relationship_lookup_failure_falls_back_to_empty_body
+	test_native_relationship_lookup_failure_fails_closed_empty_body
 	test_native_relationship_lookup_failure_checks_body_markers
 	test_unknown_task_blocker_fails_closed
 	test_live_task_lookup_failure_fails_closed

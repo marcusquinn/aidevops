@@ -80,6 +80,7 @@ trap 'rm -rf "$TMPDIR_TEST"' EXIT
 FIXTURE_LOGFILE="${TMPDIR_TEST}/pulse.log"
 FIXTURE_LOGDIR="${TMPDIR_TEST}"
 FIXTURE_METRICS="${TMPDIR_TEST}/headless-runtime-metrics.jsonl"
+FIXTURE_STATS="${TMPDIR_TEST}/pulse-stats.json"
 
 # Create fixture pulse.log with 3+ distinct rule outcomes:
 # 1. PR #20329: escalated by dirty-pr-sweep (notify), then admin-bypass merge
@@ -94,9 +95,23 @@ cat > "$FIXTURE_LOGFILE" <<'FIXTURE'
 2026-04-21T18:30:03Z [pulse-merge] auto-merged origin:interactive PR #20336 (author=marcusquinn, role=admin)
 2026-04-21T19:00:00Z [pulse-wrapper] Merge pass: skipping PR #20340 in marcusquinn/aidevops — 2 required status check(s) failing (t2104)
 2026-04-21T19:00:01Z [pulse-wrapper] _dispatch_ci_fix_worker: routed CI failure feedback from PR #20340 to issue #20300 in marcusquinn/aidevops
+2026-04-21T19:10:00Z [shared-gh-wrappers] gh_pr_view cache hit for PR #20340
+2026-04-21T19:10:01Z [shared-gh-wrappers] gh_pr_view cache miss for PR #20340
+2026-04-21T19:10:02Z [shared-gh-wrappers] FORCE_REST reads enabled for low GraphQL budget
 2026-04-21T19:30:00Z [pulse-dirty-pr-sweep] sweep complete: rebased=1 closed=0 notified=2
 2026-04-21T20:00:00Z [pulse-wrapper] Deterministic merge pass complete: merged=3, closed_conflicting=0, failed=0
 FIXTURE
+
+cat > "$FIXTURE_STATS" <<'STATS'
+{
+  "pulse_dispatch_circuit_broken": 2,
+  "pulse_graphql_budget_reserve_mode": 3,
+  "pulse_graphql_budget_stage_deferred": 4,
+  "pulse_graphql_budget_force_rest_reads": 5,
+  "pulse_cache_prime_runs": 6,
+  "pulse_cache_prime_failures": 1
+}
+STATS
 
 # Also create a rotated log with older PR #20329 entries
 cat > "${TMPDIR_TEST}/pulse.log.1" <<'ROTATED'
@@ -475,6 +490,32 @@ assert_contains "issue shows usage on missing arg" "usage:" "$output"
 printf '\nTest 20: help output includes issue subcommand\n'
 output=$("$HELPER" help 2>&1) || true
 assert_contains "help shows issue subcommand" "issue <N>" "$output"
+
+# --- Test 21: api-budget compact sanitized summary ---
+printf '\nTest 21: api-budget compact sanitized summary\n'
+output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
+	PULSE_DIAGNOSE_STATS_FILE="$FIXTURE_STATS" \
+	"$HELPER" api-budget 2>&1) || true
+
+assert_contains "api-budget shows heading" "GitHub API Budget Compact Diagnostic" "$output"
+assert_contains "api-budget shows circuit count" "GraphQL circuit-breaker trips: 2" "$output"
+assert_contains "api-budget shows cache hit miss" "gh_pr_view cache hits/misses: 1/1" "$output"
+assert_contains "api-budget warns before cache broadening" "Do not broaden gh_pr_view cache semantics" "$output"
+assert_contains "api-budget includes sanitized summary template" "Comment-ready summary template:" "$output"
+assert_not_contains "api-budget omits repo slug" "marcusquinn/aidevops" "$output"
+
+# --- Test 22: api-budget --json counters ---
+printf '\nTest 22: api-budget --json counters\n'
+output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
+	PULSE_DIAGNOSE_STATS_FILE="$FIXTURE_STATS" \
+	"$HELPER" api-budget --json 2>&1) || true
+
+if command -v jq >/dev/null 2>&1; then
+	json_circuit=$(echo "$output" | jq '.graphql_circuit_breaker_trips' 2>/dev/null || echo 0)
+	assert_eq "JSON api-budget circuit count" "2" "$json_circuit"
+	json_cache_misses=$(echo "$output" | jq '.gh_pr_view_cache_misses' 2>/dev/null || echo 0)
+	assert_eq "JSON api-budget cache misses" "1" "$json_cache_misses"
+fi
 
 # =============================================================================
 # Summary

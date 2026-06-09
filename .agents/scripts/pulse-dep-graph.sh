@@ -617,6 +617,8 @@ _blocked_by_extract_nums() {
 #   0 - native relationship is open/unknown (caller should block dispatch)
 #   1 - no native relationships were found (caller should check text fallback)
 #   2 - native relationships exist and are positively clear
+#   3 - native relationship lookup unavailable (caller should check text
+#       fallback, then fail closed if no fallback marker can prove intent)
 #######################################
 _blocked_by_check_native_relationships() {
 	local repo_slug="$1"
@@ -647,8 +649,8 @@ query($owner:String!,$name:String!,$number:Int!) {
 		-F owner="$owner" -F name="$repo_name" -F number="$issue_number" \
 		--jq '.data.repository.issue.blockedBy.nodes[]? | "\(.number):\(.state)"' \
 		2>/dev/null); then
-		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} native blockedBy lookup failed — falling back to body markers (GH#24576)" >>"$LOGFILE"
-		return 1
+		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} native blockedBy lookup unavailable — checking body fallback (GH#24576)" >>"$LOGFILE"
+		return 3
 	fi
 
 	local rel_state="" rel_num="" state="" saw_relationship="false"
@@ -914,14 +916,24 @@ is_blocked_by_unresolved() {
 	# re-blocked by stale duplicate text markers.
 	local native_rc=0
 	_blocked_by_check_native_relationships "$repo_slug" "$issue_number" || native_rc=$?
+	local native_lookup_unavailable="false"
 	if [[ "$native_rc" -eq 0 ]]; then
 		return 0
 	fi
 	if [[ "$native_rc" -eq 2 ]]; then
 		return 1
 	fi
+	if [[ "$native_rc" -eq 3 ]]; then
+		native_lookup_unavailable="true"
+	fi
 
-	[[ -n "$issue_body" ]] || return 1
+	if [[ -z "$issue_body" ]]; then
+		if [[ "$native_lookup_unavailable" == "true" ]]; then
+			echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} native blockedBy lookup unavailable and issue body is empty — skipping dispatch (GH#24576)" >>"$LOGFILE"
+			return 0
+		fi
+		return 1
+	fi
 
 	# Extract blocked-by references (tNNN and #NNN) via two single-return
 	# helpers. GH#18830: the previous NUL-delimited two-value return was
@@ -932,6 +944,10 @@ is_blocked_by_unresolved() {
 
 	# No blocked-by references → not blocked
 	if [[ -z "$blocker_task_ids" && -z "$blocker_issue_nums" ]]; then
+		if [[ "$native_lookup_unavailable" == "true" ]]; then
+			echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} native blockedBy lookup unavailable and no body blocked-by markers found — skipping dispatch (GH#24576)" >>"$LOGFILE"
+			return 0
+		fi
 		return 1
 	fi
 
