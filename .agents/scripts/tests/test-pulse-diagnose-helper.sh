@@ -99,6 +99,7 @@ cat > "$FIXTURE_LOGFILE" <<'FIXTURE'
 2026-04-21T19:10:00Z [shared-gh-wrappers] gh_pr_view cache hit for PR #20340
 2026-04-21T19:10:01Z [shared-gh-wrappers] gh_pr_view cache miss for PR #20340
 2026-04-21T19:10:02Z [shared-gh-wrappers] FORCE_REST reads enabled for low GraphQL budget
+2026-04-21T19:10:03Z [pulse-wrapper] Merge pass: PR #20340 in marcusquinn/aidevops — mergeable resolved to MERGEABLE after retry
 2026-04-21T19:30:00Z [pulse-dirty-pr-sweep] sweep complete: rebased=1 closed=0 notified=2
 2026-04-21T20:00:00Z [pulse-wrapper] Deterministic merge pass complete: merged=3, closed_conflicting=0, failed=0
 FIXTURE
@@ -123,6 +124,12 @@ cat > "$FIXTURE_GH_API_LOG" <<'GHAPILOG'
 1700000005	gh_pr_view_cache	rest	gh-pat	rest-core	invalid-json	4994
 1700000006	gh_pr_view_cache	rest	gh-pat	rest-core	bypass-disabled	4993
 1700000007	rest_pr_view_cache	rest	gh-pat	rest-core	hit	4992
+1700000008	rest_pr_view_cache	rest	gh-pat	rest-core	miss	4991
+1700000009	rest_pr_view_cache	rest	gh-pat	rest-core	store	4990
+1700000010	rest_pr_view_cache	rest	gh-pat	rest-core	invalid-json	4989
+1700000011	rest_pr_view_cache	rest	gh-pat	rest-core	bypass-disabled	4988
+1700000012	pulse-wrapper.sh	graphql	gh-pat	graphql	graphql-selected	1200
+1700000013	_rest_pr_view	rest	gh-pat	rest-core	rest-core-selected	4987
 GHAPILOG
 
 # Also create a rotated log with older PR #20329 entries
@@ -514,7 +521,12 @@ assert_contains "api-budget shows heading" "GitHub API Budget Compact Diagnostic
 assert_contains "api-budget shows circuit count" "GraphQL circuit-breaker trips: 2" "$output"
 assert_contains "api-budget shows log hit miss" "gh_pr_view log hit/miss refs: 1/1" "$output"
 assert_contains "api-budget shows exact cache decisions" "gh_pr_view exact cache:       hit=1 miss=1 stale=1 bypass=1 store=1 invalid_json=1 bypass_disabled=1" "$output"
+assert_contains "api-budget shows REST cache decisions" "_rest_pr_view repo#PR cache:  hit=1 miss=1 stale=0 bypass=0 store=1 invalid_json=1 bypass_disabled=1" "$output"
+assert_contains "api-budget shows cache key cardinality" "Cache key cardinality:" "$output"
+assert_contains "api-budget shows mutation bypass attribution" "Mutation bypass attribution:  bypass_disabled_total=2 expected_mutation_sensitive_lower_bound=1 unexplained_lower_bound=1 attribution=limited_by_log_schema" "$output"
+assert_contains "api-budget shows API calls by caller" "API calls by caller:" "$output"
 assert_contains "api-budget warns before cache broadening" "Do not broaden gh_pr_view cache semantics" "$output"
+assert_contains "api-budget documents unique PR limitation" "current gh-api rows do not carry repo#PR identifiers" "$output"
 assert_contains "api-budget includes sanitized summary template" "Comment-ready summary template:" "$output"
 assert_not_contains "api-budget omits repo slug" "marcusquinn/aidevops" "$output"
 
@@ -530,6 +542,10 @@ if command -v jq >/dev/null 2>&1; then
 	assert_eq "JSON api-budget circuit count" "2" "$json_circuit"
 	json_cache_misses=$(echo "$output" | jq '.gh_pr_view_cache_misses' 2>/dev/null || echo 0)
 	assert_eq "JSON api-budget cache misses" "1" "$json_cache_misses"
+	json_callers_total=$(echo "$output" | jq '.api_calls_by_caller["pulse-wrapper.sh"].total' 2>/dev/null || echo 0)
+	assert_eq "JSON api-budget caller totals" "1" "$json_callers_total"
+	json_rest_cache=$(echo "$output" | jq -r '.rest_pr_view_repo_cache' 2>/dev/null || echo "")
+	assert_contains "JSON api-budget REST cache counts" "miss=1" "$json_rest_cache"
 fi
 
 # =============================================================================
