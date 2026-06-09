@@ -92,8 +92,8 @@ _ruleset_required_review_count_for_default_branch() {
 			echo "[pulse-merge] _ruleset_required_review_count_for_default_branch: ruleset detail ${id} failed for ${repo_slug} — caller will fail closed (GH#24577)" >>"$LOGFILE"
 			return 1
 		}
-		include_patterns=$(printf '%s' "$detail" | jq -r '.conditions.ref_name.include // [] | .[]' 2>/dev/null) || return 1
-		exclude_patterns=$(printf '%s' "$detail" | jq -r '.conditions.ref_name.exclude // [] | .[]' 2>/dev/null) || return 1
+		include_patterns=$(printf '%s' "$detail" | jq -r '.conditions?.ref_name?.include? // [] | .[]' 2>/dev/null) || return 1
+		exclude_patterns=$(printf '%s' "$detail" | jq -r '.conditions?.ref_name?.exclude? // [] | .[]' 2>/dev/null) || return 1
 
 		matches_default=0
 		while IFS= read -r pattern; do
@@ -113,7 +113,7 @@ _ruleset_required_review_count_for_default_branch() {
 		done <<<"$exclude_patterns"
 		[[ "$excluded_default" -eq 0 ]] || continue
 
-		approval_count=$(printf '%s' "$detail" | jq -r '[.rules[]? | select(.type == "pull_request") | (.parameters.required_approving_review_count // 0)] | max // 0' 2>/dev/null) || {
+		approval_count=$(printf '%s' "$detail" | jq -r '[.rules[]? | select(.type == "pull_request") | (.parameters?.required_approving_review_count? // 0)] | max // 0' 2>/dev/null) || {
 			echo "[pulse-merge] _ruleset_required_review_count_for_default_branch: pull-request rule parse failed for ruleset ${id} in ${repo_slug} — caller will fail closed (GH#24577)" >>"$LOGFILE"
 			return 1
 		}

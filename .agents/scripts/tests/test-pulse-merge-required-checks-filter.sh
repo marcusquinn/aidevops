@@ -74,6 +74,7 @@ print_result() {
 #   empty_required_pending_fallback — branch/ruleset APIs expose no contexts,
 #      but `gh pr checks --required` reports a pending required check
 #   pr_checks_empty_failure — PR-level required checks exits non-zero with no JSON
+#   ruleset_review_malformed_optional — ruleset detail has unexpected shapes
 #   error           — branch-protection API exits non-zero
 setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
@@ -123,6 +124,9 @@ if [[ "$1" == "api" && "$2" == repos/* && "$*" == *"/rulesets/"* ]]; then
 	ruleset_review_zero)
 		apply_jq '{"conditions":{"ref_name":{"include":["refs/heads/main"]}},"rules":[{"type":"pull_request","parameters":{"required_approving_review_count":0}}]}' "$@"
 		;;
+	ruleset_review_malformed_optional)
+		apply_jq '{"conditions":{"ref_name":"unexpected"},"rules":[{"type":"pull_request","parameters":"unexpected"}]}' "$@"
+		;;
 	*)
 		apply_jq '{"conditions":{"ref_name":{"include":[]}},"rules":[]}' "$@"
 		;;
@@ -132,7 +136,7 @@ fi
 
 if [[ "$1" == "api" && "$2" == repos/* && "$*" == *"/rulesets"* ]]; then
 	case "${MOCK_GH_MODE:-all_pass}" in
-	ruleset_review_only_missing | ruleset_review_only_approved | ruleset_mixed_review_status | ruleset_review_zero)
+	ruleset_review_only_missing | ruleset_review_only_approved | ruleset_mixed_review_status | ruleset_review_zero | ruleset_review_malformed_optional)
 		apply_jq '[{"id":101,"enforcement":"active"}]' "$@"
 		;;
 	*)
@@ -688,6 +692,15 @@ test_ruleset_review_zero_does_not_require_approval() {
 	return 0
 }
 
+test_ruleset_review_malformed_optional_does_not_fail_parse() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="ruleset_review_malformed_optional"
+	assert_ruleset_review_count_output "0" "malformed optional ruleset fields parse as no review gate"
+	assert_ruleset_review_gate_returns 0 "malformed optional ruleset fields do not fail closed"
+	return 0
+}
+
 test_gh_api_error_fails_closed() {
 	# gh exits 1 → the function MUST return 1 (fail-closed). A bubbling
 	# gh error must never auto-merge when --admin would bypass branch
@@ -729,6 +742,7 @@ main() {
 	test_ruleset_review_only_approved_allows_merge
 	test_ruleset_mixed_review_status_preserves_both_gates
 	test_ruleset_review_zero_does_not_require_approval
+	test_ruleset_review_malformed_optional_does_not_fail_parse
 	test_gh_api_error_fails_closed
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
