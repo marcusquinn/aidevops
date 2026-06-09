@@ -47,7 +47,7 @@ test_ready_pr_fields_include_process_metadata() {
 	fields="$(_pulse_merge_ready_pr_json_fields)"
 
 	local required missing=""
-	for required in number mergeable reviewDecision author title isDraft labels updatedAt headRefOid createdAt; do
+	for required in number mergeable reviewDecision author title isDraft labels updatedAt headRefOid headRefName baseRefName createdAt; do
 		if [[ ",${fields}," != *",${required},"* ]]; then
 			missing="${missing:+${missing},}${required}"
 		fi
