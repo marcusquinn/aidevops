@@ -50,6 +50,19 @@ The report counts sessions, Bash tool calls, RTK helper calls, raw eligible list
 commands that should have started through RTK, and structured/exact list commands
 that correctly bypass RTK.
 
+For pulse/GitHub API-budget symptoms, start with the compact, sanitized local
+summary before reading long logs or running more `gh` calls:
+
+```bash
+pulse-diagnose-helper.sh api-budget
+pulse-current-state-helper.sh --window 15m --json
+```
+
+Then broaden only when the summary cannot prove whether the path is REST-first
+or GraphQL-only, whether shared cache priming exists, or whether `gh_pr_view`
+misses are duplicate same-PR misses rather than unique PR reads. Do not broaden
+`gh_pr_view` cache semantics before that hit/miss evidence exists.
+
 Use comparison results to classify a command:
 
 - **Good first-pass RTK candidate**: exit codes match, output shrinks, and the
