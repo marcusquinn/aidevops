@@ -1872,7 +1872,9 @@ _api_budget_render_text() {
 	pr_cache_misses=$(_api_budget_log_count "$logfile" 'gh_pr_view.*cache.*miss|cache.*miss.*gh_pr_view')
 	rest_mentions=$(_api_budget_log_count "$logfile" 'REST fallback|FORCE_REST|force_rest|REST reads')
 	graphql_mentions=$(_api_budget_log_count "$logfile" 'GraphQL|graphql')
-	local timer_summary cycle_summary cadence_risk
+	local timer_summary
+	local cycle_summary
+	local cadence_risk
 	timer_summary=$(_api_budget_timer_summary "$timer_file")
 	cycle_summary=$(_api_budget_cycle_counts_csv "$logfile")
 	cadence_risk=$(_api_budget_cadence_risk "$timer_summary" "$cycle_summary" "$pr_cache_misses" "$pr_cache_hits")
@@ -1935,7 +1937,9 @@ _api_budget_render_json() {
 	pr_cache_misses=$(_api_budget_log_count "$logfile" 'gh_pr_view.*cache.*miss|cache.*miss.*gh_pr_view')
 	rest_mentions=$(_api_budget_log_count "$logfile" 'REST fallback|FORCE_REST|force_rest|REST reads')
 	graphql_mentions=$(_api_budget_log_count "$logfile" 'GraphQL|graphql')
-	local timer_summary cycle_summary cadence_risk
+	local timer_summary
+	local cycle_summary
+	local cadence_risk
 	timer_summary=$(_api_budget_timer_summary "$timer_file")
 	cycle_summary=$(_api_budget_cycle_counts_csv "$logfile")
 	cadence_risk=$(_api_budget_cadence_risk "$timer_summary" "$cycle_summary" "$pr_cache_misses" "$pr_cache_hits")
