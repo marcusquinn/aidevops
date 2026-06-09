@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.39] - 2026-06-09
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- narrow ever-nmr blocker classifier (#24580)
+
 ## [3.20.38] - 2026-06-08
 
 ### Changed
