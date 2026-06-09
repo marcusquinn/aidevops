@@ -1239,10 +1239,17 @@ fi
 export STUB_RATE_LIMIT_REMAINING=0
 export AIDEVOPS_GH_PR_VIEW_CACHE=1
 export STUB_PR_VIEW_FIXTURE='{"number":123,"title":"uncached title"}'
-saved_path="$PATH"
-PATH="$TMP/missing-jq-bin"
-pr_view_uncached_json=$(_rest_pr_view 123 --repo "owner/repo" 2>/dev/null || true)
-PATH="$saved_path"
+command() {
+	local first_arg="${1:-}"
+	local second_arg="${2:-}"
+	if [[ "$first_arg" == "-v" && "$second_arg" == "jq" ]]; then
+		return 1
+	fi
+	builtin command "$@"
+	return $?
+}
+pr_view_uncached_json=$(_rest_pr_view 123 --repo "owner/repo" || true)
+unset -f command
 rest_cache_bypasses=$(grep -c $'rest_pr_view_cache\tother\tunknown\tother\tbypass' "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)
 rest_cache_disabled_bypasses=$(grep -c $'rest_pr_view_cache\tother\tunknown\tother\tbypass-disabled' "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)
 if [[ "$pr_view_uncached_json" == *'"uncached title"'* && "$rest_cache_bypasses" == "1" && "$rest_cache_disabled_bypasses" == "0" ]]; then
