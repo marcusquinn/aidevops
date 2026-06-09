@@ -495,7 +495,9 @@ setup_screen_time_snapshot() {
 
 		# XML-escape paths for safe plist embedding
 		local _xml_st_script _xml_st_home
-		_xml_st_script=$(_xml_escape "$st_script")
+		local st_command
+		st_command=$(_core_routine_logged_command "r909" "\"${st_script}\" snapshot")
+		_xml_st_script=$(_xml_escape "$st_command")
 		_xml_st_home=$(_xml_escape "$HOME")
 
 		local st_plist_content
@@ -510,8 +512,8 @@ setup_screen_time_snapshot() {
 	<key>ProgramArguments</key>
 	<array>
 		<string>$(_xml_escape "$(_resolve_modern_bash)")</string>
+		<string>-lc</string>
 		<string>${_xml_st_script}</string>
-		<string>snapshot</string>
 	</array>
 	<key>StartInterval</key>
 	<integer>21600</integer>
@@ -552,7 +554,7 @@ ST_PLIST
 			"$st_systemd" \
 			"aidevops: screen-time-snapshot" \
 			"0 */6 * * *" \
-			"\"${st_script}\" snapshot" \
+			"$(_core_routine_logged_command "r909" "\"${st_script}\" snapshot")" \
 			"21600" \
 			"$st_log" \
 			"" \

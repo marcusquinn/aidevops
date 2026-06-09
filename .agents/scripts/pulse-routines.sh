@@ -104,6 +104,8 @@ _routine_execute() {
 
 	local agents_dir="${HOME}/.aidevops/agents"
 	local status="success"
+	local started_epoch
+	started_epoch=$(date +%s)
 
 	if [[ -n "$run_script" ]]; then
 		# Script-only dispatch — zero LLM tokens.
@@ -118,6 +120,12 @@ _routine_execute() {
 		if [[ ! -x "$script_path" ]]; then
 			echo "[pulse-wrapper] routine ${routine_id}: script not found or not executable: ${script_path}" >>"$LOGFILE"
 			_routine_update_state "$routine_id" "failure"
+			if [[ -x "$ROUTINE_LOG_HELPER" ]]; then
+				local ended_epoch
+				ended_epoch=$(date +%s)
+				local duration=$((ended_epoch - started_epoch))
+				"$ROUTINE_LOG_HELPER" update "$routine_id" --status failure --duration "$duration" 2>/dev/null || true
+			fi
 			return 1
 		fi
 		if [[ ${#script_args[@]} -gt 0 ]]; then
@@ -171,7 +179,10 @@ _routine_execute() {
 
 	# Call routine-log-helper.sh if available (t1926)
 	if [[ -x "$ROUTINE_LOG_HELPER" ]]; then
-		"$ROUTINE_LOG_HELPER" update "$routine_id" "$status" 2>/dev/null || true
+		local ended_epoch
+		ended_epoch=$(date +%s)
+		local duration=$((ended_epoch - started_epoch))
+		"$ROUTINE_LOG_HELPER" update "$routine_id" --status "$status" --duration "$duration" 2>/dev/null || true
 	fi
 
 	return 0

@@ -507,12 +507,27 @@ _run_profile_readme_init() {
 	return 0
 }
 
+_core_routine_logged_command() {
+	local routine_id="$1"
+	local exec_command="$2"
+	local log_helper="\$HOME/.aidevops/agents/scripts/routine-log-helper.sh"
+	# shellcheck disable=SC2016 # command string is expanded by the generated scheduler shell.
+	printf 'start_epoch=$(date +%%s); status=success; %s; rc=$?; end_epoch=$(date +%%s); duration=$((end_epoch - start_epoch)); if [ "$rc" -ne 0 ]; then status=failure; fi; if [ -x "%s" ]; then "%s" update "%s" --status "$status" --duration "$duration" >/dev/null 2>&1 || true; fi; exit "$rc"' \
+		"$exec_command" \
+		"$log_helper" \
+		"$log_helper" \
+		"$routine_id"
+	return 0
+}
+
 _install_profile_readme_launchd() {
 	local pr_label="$1"
 	local pr_script="$2"
 	local pr_plist="$HOME/Library/LaunchAgents/${pr_label}.plist"
 	local _xml_pr_script _xml_pr_home
-	_xml_pr_script=$(_xml_escape "$pr_script")
+	local pr_command
+	pr_command=$(_core_routine_logged_command "r908" "\"${pr_script}\" update")
+	_xml_pr_script=$(_xml_escape "$pr_command")
 	_xml_pr_home=$(_xml_escape "$HOME")
 
 	local pr_plist_content
@@ -527,8 +542,8 @@ _install_profile_readme_launchd() {
 	<key>ProgramArguments</key>
 	<array>
 		<string>$(_xml_escape "$(_resolve_modern_bash)")</string>
+		<string>-lc</string>
 		<string>${_xml_pr_script}</string>
-		<string>update</string>
 	</array>
 	<key>StartInterval</key>
 	<integer>3600</integer>
@@ -591,7 +606,7 @@ _install_profile_readme_scheduler() {
 		"$pr_systemd" \
 		"aidevops: profile-readme-update" \
 		"$CRON_HOURLY" \
-		"\"${pr_script}\" update" \
+		"$(_core_routine_logged_command "r908" "\"${pr_script}\" update")" \
 		"3600" \
 		"$pr_log" \
 		"" \
