@@ -74,7 +74,7 @@ _is_routine_ops_comment() {
 	local body="$1"
 	local ops_regex
 	ops_regex=$(_routine_ops_comment_regex)
-	if printf '%s' "$body" | grep -qE "$ops_regex"; then
+	if [[ "$body" =~ $ops_regex ]]; then
 		return 0
 	fi
 	return 1
@@ -128,7 +128,7 @@ cmd_scan() {
 		[[ -z "$comments_json" ]] && continue
 
 		# Process each comment — find user comments that haven't been responded to
-		echo "$comments_json" | jq -r --arg ops_regex "$ops_regex" 'select(.is_bot == false) | select(.body | test($ops_regex) | not) | "\(.id)|\(.author)|\(.body | split("\n")[0] | .[0:100])"' 2>/dev/null |
+		echo "$comments_json" | jq -r --arg ops_regex "$ops_regex" 'select(.is_bot == false) | .body |= (. // "") | select(.body | test($ops_regex) | not) | "\(.id)|\(.author)|\(.body | split("\n")[0] | .[0:100])"' |
 			while IFS='|' read -r comment_id author body_preview; do
 				[[ -z "$comment_id" ]] && continue
 
