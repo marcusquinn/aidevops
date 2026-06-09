@@ -62,7 +62,9 @@
 #      rate-limit probe while leaving GraphQL-only PR list fields on GraphQL
 #  33. AIDEVOPS_GH_PR_VIEW_CACHE coalesces duplicate REST PR view reads
 #  34. AIDEVOPS_GH_PR_VIEW_CACHE coalesces duplicate GraphQL-only PR view reads
-#  35. _rest_split_csv suppresses Broken pipe noise when consumers close early
+#  35. PR metadata freshness classes keep GraphQL-only PR view fields off REST
+#  36. AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE bypasses both PR view cache layers
+#  37. _rest_split_csv suppresses Broken pipe noise when consumers close early
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
 # precedence over PATH binaries, so the stub captures all `gh` invocations
@@ -1154,6 +1156,56 @@ else
 	fail "gh_pr_view exact-output cache coalesces identical GraphQL-only PR reads" \
 		"pr_view_calls=${pr_view_calls} GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
 fi
+unset AIDEVOPS_GH_PR_VIEW_CACHE AIDEVOPS_GH_PR_VIEW_CACHE_DIR AIDEVOPS_GH_PR_VIEW_CACHE_TTL
+
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+unsupported_pr_view_fields=(statusCheckRollup reviews latestReviews reviewThreads commits files reviewDecision autoMergeRequest mergeStateStatus)
+unsupported_preserve_ok=1
+for field in "${unsupported_pr_view_fields[@]}"; do
+	if _rest_pr_view_can_preserve_args 123 --repo "owner/repo" --json "$field"; then
+		unsupported_preserve_ok=0
+	fi
+	gh_pr_view 123 --repo "owner/repo" --json "$field" >/dev/null 2>&1 || true
+done
+
+unsupported_rest_calls=$(grep -cE '^api /repos/owner/repo/pulls/123$' "$GH_CALLS" 2>/dev/null || true)
+unsupported_graphql_calls=$(grep -cE '^pr view 123 --repo owner/repo --json ' "$GH_CALLS" 2>/dev/null || true)
+if [[ "$unsupported_preserve_ok" == "1" && "$unsupported_rest_calls" == "0" && "$unsupported_graphql_calls" == "${#unsupported_pr_view_fields[@]}" ]]; then
+	pass "gh_pr_view freshness classes keep GraphQL-only fields off REST reuse"
+else
+	fail "gh_pr_view freshness classes keep GraphQL-only fields off REST reuse" \
+		"preserve_ok=${unsupported_preserve_ok} rest_calls=${unsupported_rest_calls} graphql_calls=${unsupported_graphql_calls} GH_CALLS=$(cat "$GH_CALLS")"
+fi
+
+if grep -q 'stable-within-cycle' "${SCRIPTS_DIR}/shared-gh-wrappers-rest-fallback.sh" 2>/dev/null &&
+	grep -q 'fields like mergeable' "${SCRIPTS_DIR}/shared-gh-wrappers-rest-fallback.sh" 2>/dev/null &&
+	grep -q 'GraphQL-only fields' "${SCRIPTS_DIR}/shared-gh-wrappers-rest-fallback.sh" 2>/dev/null; then
+	pass "gh_pr_view freshness classes document stable, volatile, and GraphQL-only fields"
+else
+	fail "gh_pr_view freshness classes document stable, volatile, and GraphQL-only fields" \
+		"missing freshness class comments in shared-gh-wrappers-rest-fallback.sh"
+fi
+
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+export AIDEVOPS_GH_PR_VIEW_CACHE=1
+export AIDEVOPS_GH_PR_VIEW_CACHE_DIR="$TMP/pr-view-disable-cache"
+export AIDEVOPS_GH_PR_VIEW_CACHE_TTL=30
+rm -rf "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR"
+export STUB_PR_VIEW_FIXTURE='{"number":123,"title":"stale title"}'
+pr_view_stale_title=$(gh_pr_view 123 --repo "owner/repo" --json title --jq '.title' 2>/dev/null || true)
+export STUB_PR_VIEW_FIXTURE='{"number":123,"title":"fresh title"}'
+pr_view_fresh_title=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view 123 --repo "owner/repo" --json title --jq '.title' 2>/dev/null || true)
+pr_view_disable_calls=$(grep -cE '^api /repos/owner/repo/pulls/123( |$)' "$GH_CALLS" 2>/dev/null || true)
+if [[ "$pr_view_stale_title" == "stale title" && "$pr_view_fresh_title" == "fresh title" && "$pr_view_disable_calls" == "2" ]]; then
+	pass "AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE bypasses exact-output and REST-object PR view caches"
+else
+	fail "AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE bypasses exact-output and REST-object PR view caches" \
+		"stale=${pr_view_stale_title} fresh=${pr_view_fresh_title} calls=${pr_view_disable_calls} GH_CALLS=$(cat "$GH_CALLS")"
+fi
+unset STUB_PR_VIEW_FIXTURE
 unset AIDEVOPS_GH_PR_VIEW_CACHE AIDEVOPS_GH_PR_VIEW_CACHE_DIR AIDEVOPS_GH_PR_VIEW_CACHE_TTL
 
 unset AIDEVOPS_GH_REST_FIRST_READS

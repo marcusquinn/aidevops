@@ -173,6 +173,12 @@ _gh_pr_list_snapshot_put() {
 # Return 0 when gh_pr_view exact-output caching is enabled. This cache is scoped
 # to pulse cycles (or explicit callers) through AIDEVOPS_GH_PR_VIEW_CACHE and is
 # keyed by the full argv, so different field sets never share projected output.
+# It is intentionally separate from the repo#PR REST-object cache in
+# shared-gh-wrappers-rest-fallback.sh: exact-output hits preserve one argv shape,
+# while REST-object reuse projects supported fields from one REST response.
+# Mutation-sensitive merge gates must set AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1
+# before reading mergeable/reviewDecision/check state after update-branch, label,
+# review, or merge-state mutations.
 #######################################
 _gh_pr_view_snapshot_enabled() {
 	[[ "${AIDEVOPS_GH_PR_VIEW_CACHE:-0}" == "1" ]] || return 1
