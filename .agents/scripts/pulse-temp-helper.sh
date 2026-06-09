@@ -21,7 +21,7 @@ aidevops_pulse_tmp_root() {
 		root="${HOME}/.aidevops/.agent-workspace/tmp/pulse"
 	fi
 	mkdir -p "$root" 2>/dev/null || return 1
-	chmod 700 "$root" 2>/dev/null || true
+	chmod 700 "$root" || return 1
 	printf '%s\n' "$root"
 	return 0
 }
