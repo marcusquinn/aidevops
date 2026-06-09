@@ -606,18 +606,23 @@ _pr_required_checks_pass() {
 #
 # Rate-limit: one call per PR per merge cycle — same as t2116.
 #
-# Args: $1=pr_number, $2=repo_slug
+# Args: $1=pr_number, $2=repo_slug, $3=base_ref_name (optional), $4=head_ref_oid (optional)
 # t2805
 #######################################
 _attempt_pr_ci_rebase_retry() {
 	local pr_number="$1"
 	local repo_slug="$2"
+	local _base_branch="${3:-}"
+	local _head_oid="${4:-}"
 
-	# Fetch baseRefName and headRefOid in a single REST-first PR view call.
-	local _pr_info _base_branch _head_oid
-	_pr_info=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-		--json baseRefName,headRefOid --jq '(.baseRefName // "") + " " + (.headRefOid // "")' 2>/dev/null) || _pr_info=""
-	read -r _base_branch _head_oid <<< "$_pr_info"
+	# Prefer the per-cycle PR list context. Fetch only when a direct/webhook
+	# caller did not provide the stable branch metadata.
+	if [[ -z "$_base_branch" || -z "$_head_oid" ]]; then
+		local _pr_info
+		_pr_info=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+			--json baseRefName,headRefOid --jq '(.baseRefName // "") + " " + (.headRefOid // "")' 2>/dev/null) || _pr_info=""
+		read -r _base_branch _head_oid <<< "$_pr_info"
+	fi
 
 	if [[ -n "$_base_branch" && -n "$_head_oid" ]]; then
 		local _compare_behind
@@ -749,13 +754,16 @@ _route_pr_to_fix_worker() {
 # Args:
 #   $1 - parent PR number (the PR being merged)
 #   $2 - repo slug
+#   $3 - parent head ref from per-cycle PR context (optional)
 # Returns: 0 always (errors are non-fatal)
 #######################################
 _retarget_stacked_children() {
 	local parent_pr_number="$1"
 	local repo_slug="$2"
-	local parent_head_ref
-	parent_head_ref=$(gh_pr_view "$parent_pr_number" --repo "$repo_slug" --json headRefName -q '.headRefName' 2>/dev/null) || parent_head_ref=""
+	local parent_head_ref="${3:-}"
+	if [[ -z "$parent_head_ref" ]]; then
+		parent_head_ref=$(gh_pr_view "$parent_pr_number" --repo "$repo_slug" --json headRefName -q '.headRefName' 2>/dev/null) || parent_head_ref=""
+	fi
 	if [[ -z "$parent_head_ref" ]]; then
 		return 0
 	fi

@@ -131,7 +131,7 @@ _pulse_merge_maybe_dispatch_review_thread_remediation() {
 # caller that builds a PR object on this helper so draft/label/staleness
 # metadata cannot drift between list-based and webhook-triggered merge paths.
 _pulse_merge_ready_pr_json_fields() {
-	printf '%s' 'number,mergeable,reviewDecision,author,title,isDraft,labels,updatedAt,headRefOid,createdAt,statusCheckRollup'
+	printf '%s' 'number,mergeable,reviewDecision,author,title,isDraft,labels,updatedAt,headRefOid,headRefName,baseRefName,createdAt,statusCheckRollup'
 	return 0
 }
 
@@ -192,7 +192,7 @@ source "${_PULSE_MERGE_DIR}/pulse-merge-required-checks.sh"
 # Run all merge-eligibility gate checks for a single PR.
 # Returns 0 if all gates pass (PR may proceed to merge).
 # Returns 1 if any gate fails (PR should be skipped).
-# Args: $1=pr_number, $2=repo_slug, $3=pr_author, $4=pr_review, $5=linked_issue
+# Args: $1=pr_number, $2=repo_slug, $3=pr_author, $4=pr_review, $5=linked_issue, $6=pr_labels (optional)
 #######################################
 _check_pr_merge_gates() {
 	local pr_number="$1"
@@ -200,6 +200,7 @@ _check_pr_merge_gates() {
 	local pr_author="$3"
 	local pr_review="$4"
 	local linked_issue="$5"
+	local pr_labels="${6:-}"
 
 	# Skip CHANGES_REQUESTED — needs a fix worker, not a merge.
 	#
@@ -219,9 +220,11 @@ _check_pr_merge_gates() {
 	if [[ "$pr_review" == "CHANGES_REQUESTED" ]]; then
 		# Fetch labels once — reused by both the nits-ok check and the
 		# worker-routing block below.
-		local _cr_pr_labels
-		_cr_pr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _cr_pr_labels=""
+		local _cr_pr_labels="$pr_labels"
+		if [[ -z "$_cr_pr_labels" ]]; then
+			_cr_pr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+				--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _cr_pr_labels=""
+		fi
 
 		# t2179: coderabbit-nits-ok path.
 		if [[ ",${_cr_pr_labels}," == *",coderabbit-nits-ok,"* ]]; then
@@ -810,7 +813,7 @@ _process_single_ready_pr() {
 	local repo_slug="$1"
 	local pr_obj="$2"
 
-	local pr_number="" pr_mergeable="" pr_review="" pr_author="" pr_title="" pr_updated_at="" pr_head_ref_oid="" pr_labels="" pr_is_draft="false"
+	local pr_number="" pr_mergeable="" pr_review="" pr_author="" pr_title="" pr_updated_at="" pr_head_ref_oid="" pr_head_ref_name="" pr_base_ref_name="" pr_labels="" pr_is_draft="false"
 	# Consolidate into a single jq pass to reduce process-spawn overhead.
 	# CRITICAL: use non-whitespace delimiter (ASCII 0x1E record separator)
 	# instead of \t. Bash read collapses consecutive IFS whitespace chars
@@ -820,9 +823,9 @@ _process_single_ready_pr() {
 	# caused pr_author to receive the PR title, breaking the collaborator
 	# check and blocking ALL merges across every repo (observed downstream).
 	local _RS=$'\x1e'
-	IFS="$_RS" read -r pr_number pr_mergeable pr_review pr_author pr_title pr_updated_at pr_head_ref_oid pr_labels pr_is_draft < <(
+	IFS="$_RS" read -r pr_number pr_mergeable pr_review pr_author pr_title pr_updated_at pr_head_ref_oid pr_head_ref_name pr_base_ref_name pr_labels pr_is_draft < <(
 		printf '%s' "$pr_obj" | jq -r \
-			'"\(.number // "")\u001e\(.mergeable // "UNKNOWN")\u001e\(if (.reviewDecision | length) == 0 then "NONE" else .reviewDecision end)\u001e\(.author.login // "unknown")\u001e\(.title // "")\u001e\(.updatedAt // "")\u001e\(.headRefOid // "")\u001e\([(.labels // [])[].name] | join(","))\u001e\(.isDraft // false | tostring)"'
+			'"\(.number // "")\u001e\(.mergeable // "UNKNOWN")\u001e\(if (.reviewDecision | length) == 0 then "NONE" else .reviewDecision end)\u001e\(.author.login // "unknown")\u001e\(.title // "")\u001e\(.updatedAt // "")\u001e\(.headRefOid // "")\u001e\(.headRefName // "")\u001e\(.baseRefName // "")\u001e\([(.labels // [])[].name] | join(","))\u001e\(.isDraft // false | tostring)"'
 	)
 	_pmp_normalize_mergeable_state_into pr_mergeable "$pr_mergeable"
 
@@ -921,7 +924,7 @@ _process_single_ready_pr() {
 	# maintainer gate, external-contributor gate, review bot gate) before both
 	# merge and CI-repair paths. This preserves the security boundary for PRs
 	# that are red but would not be trusted if green.
-	if ! _check_pr_merge_gates "$pr_number" "$repo_slug" "$pr_author" "$pr_review" "$linked_issue"; then
+	if ! _check_pr_merge_gates "$pr_number" "$repo_slug" "$pr_author" "$pr_review" "$linked_issue" "$pr_labels"; then
 		return 1
 	fi
 
@@ -961,7 +964,7 @@ _process_single_ready_pr() {
 			# failures in unrelated tests are often fixed by base advancement.
 			# If rebase succeeds, skip fix-worker routing — next pulse cycle
 			# will re-check CI on the rebased HEAD.
-			if _attempt_pr_ci_rebase_retry "$pr_number" "$repo_slug"; then
+			if _attempt_pr_ci_rebase_retry "$pr_number" "$repo_slug" "$pr_base_ref_name" "$pr_head_ref_oid"; then
 				return 1
 			fi
 			# CI failure: route to fix worker if applicable (t2203: consolidated).
@@ -992,7 +995,7 @@ _process_single_ready_pr() {
 	# kills their base. GitHub auto-closes children without warning when their
 	# base branch disappears; retargeting to the default branch prevents this.
 	# (t2412 / GH#20005)
-	_retarget_stacked_children "$pr_number" "$repo_slug"
+	_retarget_stacked_children "$pr_number" "$repo_slug" "$pr_head_ref_name"
 
 	# Defense-in-depth (t2934). Refuse `--admin` merge for external/fork PRs
 	# without crypto approval, evaluated at the bypass call site so that any
@@ -1046,9 +1049,7 @@ _process_single_ready_pr() {
 	if [[ $_merge_exit -eq 0 ]]; then
 		echo "[pulse-wrapper] Deterministic merge: merged PR #${pr_number} in ${repo_slug}" >>"$LOGFILE"
 		# t2411: emit audit log for origin:interactive auto-merges
-		local _ipr_labels
-		_ipr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _ipr_labels=""
+		local _ipr_labels="$pr_labels"
 		if [[ "$_ipr_labels" == *"origin:interactive"* ]]; then
 			local _ipr_role="collaborator"
 			_is_owner_or_member_author "$pr_author" "$repo_slug" \
@@ -1063,9 +1064,7 @@ _process_single_ready_pr() {
 		return 0
 	elif [[ "$merge_output" == *"Merge already in progress"* ]]; then
 		echo "[pulse-wrapper] Deterministic merge: PR #${pr_number} in ${repo_slug} already has a merge in progress; counting as merge progress (GH#24383): ${merge_output}" >>"$LOGFILE"
-		local _ipr_labels
-		_ipr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _ipr_labels=""
+		local _ipr_labels="$pr_labels"
 		_handle_post_merge_actions "$pr_number" "$repo_slug" "$linked_issue" "$merge_summary" "$_ipr_labels"
 		return $?
 	else
