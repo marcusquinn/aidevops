@@ -2139,7 +2139,7 @@ cleanup_stalled_workers() {
 		issue_num=$(echo "$cmd" | grep -oE 'issue #[0-9]+' | grep -oE '[0-9]+' | head -1)
 		[[ -n "$issue_num" ]] || continue
 
-		local log_file log_size
+		local log_file="" log_size=""
 		# Check all pulse-enabled repos for matching log
 		local found_log=""
 		local repo_slug=""
