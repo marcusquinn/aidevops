@@ -63,9 +63,14 @@ load_scheduler_helpers() {
 
 test_core_routine_logged_command_shape() {
 	local command_text
-	command_text=$(_core_routine_logged_command "r908" '"/tmp/profile-readme-helper.sh" update')
-	if [[ "$command_text" != *'"/tmp/profile-readme-helper.sh" update'* ]]; then
+	command_text=$(_core_routine_logged_command "r908" "'$TEST_DIR/profile-readme-helper.sh' update")
+	if [[ "$command_text" != *"'$TEST_DIR/profile-readme-helper.sh' update"* ]]; then
 		print_result "core routine logged command keeps original command" 1 "$command_text"
+		return 0
+	fi
+	# shellcheck disable=SC2016 # the generated command must defer variable expansion to runtime.
+	if [[ "$command_text" != *'duration=$(( ${end_epoch:-0} - ${start_epoch:-0} ))'* ]]; then
+		print_result "core routine logged command uses robust duration arithmetic" 1 "$command_text"
 		return 0
 	fi
 	# shellcheck disable=SC2016 # the generated command must defer variable expansion to runtime.
@@ -164,8 +169,10 @@ HELPER
 
 	_routine_execute "r777" "sample" "scripts/sample.sh" "" "$TEST_DIR"
 
-	local args
-	args=$(<"$ROUTINE_LOG_CAPTURE")
+	local args=""
+	if [[ -f "$ROUTINE_LOG_CAPTURE" ]]; then
+		args=$(<"$ROUTINE_LOG_CAPTURE")
+	fi
 	if [[ "$args" == update\ r777\ --status\ success\ --duration\ * ]]; then
 		print_result "pulse routine update passes flags and duration" 0
 	else
