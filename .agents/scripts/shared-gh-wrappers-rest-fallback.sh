@@ -79,6 +79,35 @@ _rest_pr_view_cache_enabled() {
 }
 
 #######################################
+# Record REST repo#PR cache decisions in the shared gh API instrumentation log.
+# The caller field is intentionally the cache name (not the repo slug) so public
+# diagnostics can aggregate hit/miss/store/bypass reasons without leaking repo
+# names or local paths.
+# Args: $1=decision
+# Returns: 0 always.
+#######################################
+_rest_pr_view_cache_record() {
+	local decision="$1"
+	gh_record_call other "rest_pr_view_cache" unknown other "$decision" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Record why the REST repo#PR cache is unavailable without logging every normal
+# non-cache call. Pulse enables AIDEVOPS_GH_PR_VIEW_CACHE, so disabled/invalid
+# states remain visible where cache behaviour matters.
+# Returns: 0 always.
+#######################################
+_rest_pr_view_cache_record_disabled() {
+	if [[ "${AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE:-0}" == "1" ]]; then
+		_rest_pr_view_cache_record bypass-disabled
+	elif [[ "${AIDEVOPS_GH_PR_VIEW_CACHE:-0}" == "1" ]]; then
+		_rest_pr_view_cache_record bypass-disabled
+	fi
+	return 0
+}
+
+#######################################
 # Resolve the per-process REST PR view cache directory.
 # Returns: path on stdout; 0 on success, 1 on mkdir failure.
 #######################################
@@ -1070,14 +1099,20 @@ _rest_pr_view() {
 	local cache_path=""
 	local raw_json=""
 	if _rest_pr_view_cache_enabled; then
-		cache_path="$(_rest_pr_view_cache_path "$repo" "$num")" || cache_path=""
+		cache_path="$(_rest_pr_view_cache_path "$repo" "$num")" || { cache_path=""; _rest_pr_view_cache_record bypass; }
 		if [[ -n "$cache_path" && -s "$cache_path" ]]; then
 			raw_json="$(jq -c '.' "$cache_path" 2>/dev/null)" || raw_json=""
 			if [[ -n "$raw_json" ]]; then
+				_rest_pr_view_cache_record hit
 				_rest_pr_view_emit_json "$raw_json" "$json_fields" "$jq_expr"
 				return $?
 			fi
+			_rest_pr_view_cache_record invalid-json
+		elif [[ -n "$cache_path" ]]; then
+			_rest_pr_view_cache_record miss
 		fi
+	else
+		_rest_pr_view_cache_record_disabled
 	fi
 
 	gh_record_call rest _rest_pr_view 2>/dev/null || true
@@ -1099,7 +1134,7 @@ _rest_pr_view() {
 			return $_rc
 		fi
 		if mv "$_tmp_cache" "$cache_path"; then
-			:
+			_rest_pr_view_cache_record store
 		else
 			_rc=$?
 			printf '_rest_pr_view: failed to move temporary cache file %s to cache path: %s\n' "$_tmp_cache" "$cache_path" >&2

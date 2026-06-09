@@ -124,6 +124,21 @@ _gh_read_cache_record() {
 }
 
 #######################################
+# Record why the exact-output gh_pr_view cache is unavailable without making
+# normal non-cache callers noisy. Pulse enables AIDEVOPS_GH_PR_VIEW_CACHE, so
+# these records expose disabled/invalid TTL states during cache triage.
+# Returns: 0 always.
+#######################################
+_gh_pr_view_snapshot_record_disabled() {
+	if [[ "${AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE:-0}" == "1" ]]; then
+		_gh_read_cache_record gh_pr_view_cache bypass-disabled
+	elif [[ "${AIDEVOPS_GH_PR_VIEW_CACHE:-0}" == "1" ]]; then
+		_gh_read_cache_record gh_pr_view_cache bypass
+	fi
+	return 0
+}
+
+#######################################
 # Read a cached gh_pr_list snapshot when present and fresh.
 # Args: gh-style argv
 # Stdout: cached command output
@@ -218,7 +233,7 @@ _gh_pr_view_snapshot_path() {
 # Stdout: cached command output
 #######################################
 _gh_pr_view_snapshot_get() {
-	_gh_pr_view_snapshot_enabled || return 1
+	_gh_pr_view_snapshot_enabled || { _gh_pr_view_snapshot_record_disabled; return 1; }
 	local _ttl="${AIDEVOPS_GH_PR_VIEW_CACHE_TTL:-15}"
 	local _path _now _mtime _age
 	_path="$(_gh_pr_view_snapshot_path "$@")" || { _gh_read_cache_record gh_pr_view_cache bypass; return 1; }
