@@ -208,8 +208,24 @@ _pmp_consolidate_duplicate_pr_group() {
 	local repo_slug="$1"
 	local issue_number="$2"
 	local group_file="$3"
-	local group_count=0 candidate_line="" candidate_pr="" candidate_score="" candidate_is_draft="" _issue="" _created=""
-	local group_pattern="^${issue_number}[|]"
+	local group_count
+	local candidate_line
+	local candidate_pr
+	local candidate_score
+	local candidate_is_draft
+	local group_pattern
+	local pr_number
+	local _issue
+	local _created
+	local _score
+	local _is_draft
+
+	group_count=0
+	candidate_line=""
+	candidate_pr=""
+	candidate_score=""
+	candidate_is_draft=""
+	group_pattern="^${issue_number}[|]"
 	group_count=$(grep -c "$group_pattern" "$group_file" 2>/dev/null || true)
 	[[ "$group_count" =~ ^[0-9]+$ ]] || group_count=0
 	[[ "$group_count" -gt 1 ]] || return 0

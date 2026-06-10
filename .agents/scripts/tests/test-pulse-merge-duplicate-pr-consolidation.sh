@@ -287,6 +287,28 @@ test_close_is_comment_only_and_keeps_branch() {
 	return 0
 }
 
+test_group_parsing_vars_do_not_pollute_global_scope() {
+	reset_case
+	TEST_LINKED_ISSUES=$'801=907\n802=907'
+	TEST_PASSING_CHECKS="802"
+	local pr_json
+	pr_json='[
+		{"number":801,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"createdAt":"2026-05-08T10:00:00Z","labels":[{"name":"origin:worker"}]},
+		{"number":802,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"createdAt":"2026-05-08T11:00:00Z","labels":[{"name":"origin:worker"}]}
+	]'
+	pr_number="sentinel-pr"
+	_score="sentinel-score"
+	_is_draft="sentinel-draft"
+	_pmp_consolidate_duplicate_pr_groups "owner/repo" "$pr_json"
+	if [[ "$pr_number" == "sentinel-pr" && "$_score" == "sentinel-score" && "$_is_draft" == "sentinel-draft" ]]; then
+		pass "group parsing variables stay local"
+	else
+		fail "group parsing variables stay local" "Expected sentinel globals, got pr_number=${pr_number}, _score=${_score}, _is_draft=${_is_draft}"
+	fi
+	unset pr_number _score _is_draft
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -300,6 +322,7 @@ main() {
 	test_noop_for_untrusted_gated_or_unverified_groups
 	test_noop_when_candidate_is_not_healthy_enough
 	test_close_is_comment_only_and_keeps_branch
+	test_group_parsing_vars_do_not_pollute_global_scope
 
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -eq 0 ]]; then
