@@ -34,6 +34,11 @@ _systemd_user_available() {
 	return 0
 }
 
+uname() {
+	printf 'Linux\n'
+	return 0
+}
+
 systemctl() {
 	local scope="${1:-}"
 	local action="${2:-}"
@@ -64,6 +69,10 @@ WRAPPER_SCRIPT="$HOME/.aidevops/agents/scripts/pulse-wrapper.sh"
 touch "$WRAPPER_SCRIPT"
 chmod +x "$WRAPPER_SCRIPT"
 
+PMR_SCRIPT="$HOME/.aidevops/agents/scripts/pulse-merge-routine.sh"
+touch "$PMR_SCRIPT"
+chmod +x "$PMR_SCRIPT"
+
 # shellcheck source=.agents/scripts/setup/modules/schedulers.sh
 source "$SCHEDULERS_SCRIPT"
 
@@ -73,6 +82,11 @@ _scheduler_detect_installed() {
 }
 
 _systemd_user_available() {
+	return 0
+}
+
+_resolve_log_dir() {
+	printf '%s' "$HOME/.aidevops/logs"
 	return 0
 }
 
@@ -140,3 +154,20 @@ if ! grep -qE '^Environment=OPENCODE_BIN=' "$SERVICE_FILE"; then
 fi
 
 printf 'PASS %s\n' "GH#18439 Bug 2 OPENCODE_BIN propagated to Linux systemd service"
+
+setup_pulse_merge_routine
+
+PMR_SERVICE_FILE="$HOME/.config/systemd/user/aidevops-pulse-merge.service"
+PMR_TIMER_FILE="$HOME/.config/systemd/user/aidevops-pulse-merge.timer"
+
+if ! grep -q '^TimeoutStartSec=660$' "$PMR_SERVICE_FILE"; then
+	echo "expected pulse-merge TimeoutStartSec=660 in ${PMR_SERVICE_FILE}" >&2
+	exit 1
+fi
+
+if ! grep -q '^OnUnitActiveSec=60$' "$PMR_TIMER_FILE"; then
+	echo "expected pulse-merge OnUnitActiveSec=60 in ${PMR_TIMER_FILE}" >&2
+	exit 1
+fi
+
+printf 'PASS %s\n' "pulse-merge systemd timeout exceeds routine watchdog with 60s cadence"
