@@ -237,6 +237,46 @@ else
 fi
 unset OPENAI_API_KEY
 
+# Assertion 4b.2 — OpenAI OAuth fallback must not mark healthy from type alone.
+# GH#24636: after a rejected static key, openai.type == "oauth" in auth.json is
+# insufficient unless the runtime has a refresh token or currently-live access.
+cat >"$AUTH_FILE" <<JSON
+{
+  "openai": {
+    "type": "oauth"
+  }
+}
+JSON
+_probe_check_oauth_fallback openai true "gopass:OPENAI_API_KEY"
+rc=$?
+if [[ "$rc" -eq 3 ]]; then
+	print_result "openai-oauth-type-only: fallback fails closed (GH#24636)" 0
+else
+	print_result "openai-oauth-type-only: fallback fails closed (GH#24636)" 1 \
+		"(got rc=$rc — expected 3; type-only auth.json must not record healthy)"
+fi
+
+# Assertion 4b.3 — A currently-live OpenAI OAuth access token is usable even
+# without refresh, preserving runtime-compatible OAuth fallback when verified.
+future_ms=$(($(date +%s) * 1000 + 3600000))
+cat >"$AUTH_FILE" <<JSON
+{
+  "openai": {
+    "type": "oauth",
+    "access": "fake-openai-live-access-token",
+    "expires": ${future_ms}
+  }
+}
+JSON
+_probe_check_oauth_fallback openai true "gopass:OPENAI_API_KEY"
+rc=$?
+if [[ "$rc" -eq 0 ]]; then
+	print_result "openai-oauth-live-access: verified fallback remains healthy" 0
+else
+	print_result "openai-oauth-live-access: verified fallback remains healthy" 1 \
+		"(got rc=$rc — expected 0; live OAuth access should remain eligible)"
+fi
+
 # Assertion 4c — no OAuth in auth.json → fallback returns 3 (no override).
 rm -f "$AUTH_FILE"
 _probe_check_oauth_fallback openai true

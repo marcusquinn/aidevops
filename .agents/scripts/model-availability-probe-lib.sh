@@ -472,6 +472,34 @@ _probe_allows_oauth_fallback_after_rejected_key() {
 	return 0
 }
 
+_probe_openai_oauth_fallback_verified() {
+	local auth_file="$1"
+
+	[[ -f "$auth_file" ]] || return 1
+	command -v jq >/dev/null 2>&1 || return 1
+
+	# OpenAI ChatGPT OAuth is usable by the runtime when auth.json contains a
+	# refresh token, or a still-live access token. Do not treat openai.type ==
+	# "oauth" alone as provider health after a rejected static key (GH#24636).
+	local has_refresh
+	has_refresh=$(jq -r '.openai.refresh // empty' "$auth_file" 2>/dev/null) || has_refresh=""
+	if [[ -n "$has_refresh" ]]; then
+		return 0
+	fi
+
+	local access_token expires_ms now_ms
+	access_token=$(jq -r '.openai.access // empty' "$auth_file" 2>/dev/null) || access_token=""
+	expires_ms=$(jq -r '.openai.expires // empty' "$auth_file" 2>/dev/null) || expires_ms=""
+	if [[ -n "$access_token" && "$expires_ms" =~ ^[0-9]+$ ]]; then
+		now_ms=$(($(date +%s) * 1000))
+		if [[ "$expires_ms" -gt "$now_ms" ]]; then
+			return 0
+		fi
+	fi
+
+	return 1
+}
+
 # _probe_check_oauth_fallback: called when an HTTP probe rejected the resolved
 # key with exit code 3 (HTTP 401/403). Checks whether auth.json has an OAuth
 # entry for the provider and whether the runtime path can actually prefer that
@@ -498,6 +526,10 @@ _probe_check_oauth_fallback() {
 	local auth_type
 	auth_type=$(jq -r --arg p "$provider" '.[$p].type // empty' "$auth_file" 2>/dev/null) || auth_type=""
 	if [[ "$auth_type" == "oauth" ]]; then
+		if [[ "$provider" == openai ]] && ! _probe_openai_oauth_fallback_verified "$auth_file"; then
+			[[ "$quiet" != "true" ]] && print_warning "$provider: env key rejected (HTTP 401/403); OpenAI OAuth in auth.json is not refreshable or currently valid"
+			return 3
+		fi
 		[[ "$quiet" != "true" ]] && print_success "$provider: env key rejected (HTTP 401/403) but OAuth found in auth.json — recording healthy (t3229)"
 		_record_health "$provider" "healthy" 0 0 "OAuth available (env key rejected, t3229)" 0
 		return 0
