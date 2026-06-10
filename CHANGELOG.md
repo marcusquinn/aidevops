@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.44] - 2026-06-10
+
+### Changed
+
+- Maintenance: mark t3597 complete (pr:#24629 completed:2026-06-10) [skip ci]
+- Satisfy release ShellCheck path stub (#24629)
+- Maintenance: sync ref:GH#24628 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- feat: add pulse cadence API diagnostics (#24619)
+
+### Fixed
+
+- extend pulse-merge systemd timeout (#24627)
+
 ## [3.20.43] - 2026-06-09
 
 ### Fixed
