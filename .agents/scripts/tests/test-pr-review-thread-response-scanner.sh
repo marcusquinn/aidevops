@@ -269,6 +269,40 @@ test_dispatch_is_idempotent_for_same_fingerprint() {
 	return 0
 }
 
+test_dispatch_skips_mixed_fingerprint_during_inflight_window() {
+	setup_test_env
+	export STUB_THREADS_MODE="human"
+	PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN=true $SCANNER dispatch-pr owner/repo "${TEST_ROOT}/repo" 1
+	wait_for_headless_log || true
+	: >"$HEADLESS_LOG"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	if [[ ! -s "$HEADLESS_LOG" ]]; then
+		print_result "dispatch skips mixed fingerprint during in-flight window" 0
+	else
+		print_result "dispatch skips mixed fingerprint during in-flight window" 1 "mixed fingerprint dispatch unexpectedly launched"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_pr_skips_when_pr_lock_held() {
+	setup_test_env
+	local lock_dir="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.lock"
+	mkdir -p "$lock_dir"
+	{
+		printf 'pid=%s\n' "$$"
+		printf 'created_at=%s\n' "$(date +%s)"
+	} >"${lock_dir}/metadata"
+	$SCANNER dispatch-pr owner/repo "${TEST_ROOT}/repo" 1
+	if [[ ! -s "$HEADLESS_LOG" ]]; then
+		print_result "dispatch-pr skips when repo PR lock is held" 0
+	else
+		print_result "dispatch-pr skips when repo PR lock is held" 1 "lock-held dispatch unexpectedly launched"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_reply_and_resolve_use_graphql_mutations() {
 	setup_test_env
 	local body_file="${TEST_ROOT}/reply.md"
@@ -378,6 +412,8 @@ main() {
 	test_dispatch_launches_worker_and_writes_state
 	test_dispatch_pr_launches_targeted_worker_with_human_opt_in
 	test_dispatch_is_idempotent_for_same_fingerprint
+	test_dispatch_skips_mixed_fingerprint_during_inflight_window
+	test_dispatch_pr_skips_when_pr_lock_held
 	test_reply_and_resolve_use_graphql_mutations
 	test_reply_auto_prepends_thread_author
 	test_reply_does_not_double_prepend_thread_author
