@@ -205,9 +205,11 @@ Output a brief summary of total actions taken across all cycles (past tense).
 
 ## PRs — Merge, Fix, or Flag
 
-### Pre-merge checks (MANDATORY for every PR)
+### Pre-merge checks (MANDATORY for every PR in write-authorized managed repos)
 
-1. **External contributor gate.** `check_external_contributor_pr` / `check_permission_failure_pr` from `pulse-wrapper.sh`. NEVER auto-merge external PRs.
+For repos where `repo_allows_pulse_write_actions SLUG` fails (role=`contributor`/read-only), observe only: never comment, label, approve, close, merge, dispatch, or apply aidevops maintainer-gate policy.
+
+1. **External contributor gate.** On write-authorized managed repos only, use `check_external_contributor_pr` / `check_permission_failure_pr` from `pulse-wrapper.sh`. NEVER auto-merge external PRs.
 
 2. **Maintainer review gate.** If ANY linked issue has `needs-maintainer-review`, do NOT merge.
 
