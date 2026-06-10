@@ -73,6 +73,31 @@ _status_ai_configs() {
 	return 0
 }
 
+_status_headless_runtime_config() {
+	print_header "Headless Runtime Configuration"
+	local allowlist_set=false
+	local credentials_file="${AIDEVOPS_CREDENTIALS_FILE:-${CONFIG_DIR:-$HOME/.config/aidevops}/credentials.sh}"
+	local credentials_has_allowlist=false
+
+	if [[ -n "${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}" ]]; then
+		allowlist_set=true
+	fi
+	if [[ -f "$credentials_file" ]] && grep -Eq '^[[:space:]]*(export[[:space:]]+)?AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=' "$credentials_file" 2>/dev/null; then
+		credentials_has_allowlist=true
+	fi
+
+	if [[ "$credentials_has_allowlist" == "true" ]]; then
+		print_success "Headless provider allowlist is configured in credentials.sh"
+	elif [[ "$allowlist_set" == "true" ]]; then
+		print_warning "Headless provider allowlist is only set in this shell; pulse/systemd/cron may not see shell rc files"
+		print_info "Add the export to ~/.config/aidevops/credentials.sh for daemon-visible headless routing"
+	else
+		print_info "No headless provider allowlist configured"
+	fi
+	echo ""
+	return 0
+}
+
 # Status command
 cmd_status() {
 	print_header "AI DevOps Framework Status"
@@ -120,6 +145,7 @@ cmd_status() {
 	_status_ai_tools
 	_status_dev_envs
 	_status_ai_configs
+	_status_headless_runtime_config
 	print_header "SSH Configuration"
 	check_file "$HOME/.ssh/id_ed25519" && print_success "Ed25519 SSH key" || print_warning "Ed25519 SSH key - not found"
 	echo ""
