@@ -404,6 +404,9 @@ _install_pulse_merge_routine_linux() {
 	local pmr_script="$1"
 	local _pmr_log_dir="$2"
 	local pmr_systemd="aidevops-pulse-merge"
+	# Keep systemd above pulse-merge-routine.sh's default 600s watchdog so
+	# the script reaches its own timeout/cleanup path before systemd stops it.
+	local pmr_timeout_sec="660"
 
 	# One-time migration: remove legacy systemd/cron entry for aidevops-pulse-merge-routine.
 	if _systemd_user_available 2>/dev/null; then
@@ -427,7 +430,9 @@ _install_pulse_merge_routine_linux() {
 		"Pulse merge pass enabled (every 60s via pulse-merge-routine.sh)" \
 		"Failed to install pulse merge pass scheduler" \
 		"true" \
-		"true"
+		"true" \
+		"" \
+		"${pmr_timeout_sec}"
 	return 0
 }
 
