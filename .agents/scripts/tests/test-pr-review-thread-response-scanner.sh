@@ -303,6 +303,28 @@ test_dispatch_pr_skips_when_pr_lock_held() {
 	return 0
 }
 
+test_dispatch_pr_reclaims_stale_lock() {
+	setup_test_env
+	local lock_dir="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.lock"
+	local old_epoch=""
+	old_epoch="$(($(date +%s) - 120))"
+	mkdir -p "$lock_dir"
+	{
+		printf 'pid=%s\n' "999999"
+		printf 'created_at=%s\n' "$old_epoch"
+	} >"${lock_dir}/metadata"
+	PR_REVIEW_THREAD_RESPONSE_LOCK_STALE=60 $SCANNER dispatch-pr owner/repo "${TEST_ROOT}/repo" 1
+	wait_for_headless_log || true
+	local state_file="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR}/owner-repo-1.state"
+	if [[ -s "$HEADLESS_LOG" && -f "$state_file" && ! -d "$lock_dir" ]]; then
+		print_result "dispatch-pr reclaims stale repo PR lock" 0
+	else
+		print_result "dispatch-pr reclaims stale repo PR lock" 1 "headless=$(wc -c <"$HEADLESS_LOG" 2>/dev/null || printf 0), state=${state_file}, lock_dir=${lock_dir}"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_reply_and_resolve_use_graphql_mutations() {
 	setup_test_env
 	local body_file="${TEST_ROOT}/reply.md"
@@ -414,6 +436,7 @@ main() {
 	test_dispatch_is_idempotent_for_same_fingerprint
 	test_dispatch_skips_mixed_fingerprint_during_inflight_window
 	test_dispatch_pr_skips_when_pr_lock_held
+	test_dispatch_pr_reclaims_stale_lock
 	test_reply_and_resolve_use_graphql_mutations
 	test_reply_auto_prepends_thread_author
 	test_reply_does_not_double_prepend_thread_author

@@ -449,10 +449,12 @@ _prrts_lock_dir() {
 _prrts_write_lock_metadata() {
 	local lock_dir="$1"
 	local now_epoch="$2"
+	local metadata_tmp="${lock_dir}/metadata.$$"
 	{
 		printf 'pid=%s\n' "$$"
 		printf 'created_at=%s\n' "$now_epoch"
-	} >"${lock_dir}/metadata"
+	} >"$metadata_tmp"
+	mv "$metadata_tmp" "${lock_dir}/metadata"
 	return 0
 }
 
@@ -485,22 +487,25 @@ _prrts_acquire_dispatch_lock() {
 	local repo_slug="$1"
 	local pr_number="$2"
 	local lock_var="$3"
-	local lock_dir="" now_epoch=""
+	local lock_path="" now_epoch="" stale_rename=""
 	_prrts_ensure_dirs
-	lock_dir="$(_prrts_lock_dir "$repo_slug" "$pr_number")"
+	lock_path="$(_prrts_lock_dir "$repo_slug" "$pr_number")"
 	now_epoch="$(date +%s)"
-	if mkdir "$lock_dir" 2>/dev/null; then
-		_prrts_write_lock_metadata "$lock_dir" "$now_epoch"
-		printf -v "$lock_var" '%s' "$lock_dir"
+	if mkdir "$lock_path" 2>/dev/null; then
+		_prrts_write_lock_metadata "$lock_path" "$now_epoch"
+		printf -v "$lock_var" '%s' "$lock_path"
 		return 0
 	fi
-	if _prrts_lock_is_stale "$lock_dir" "$now_epoch"; then
+	if _prrts_lock_is_stale "$lock_path" "$now_epoch"; then
 		_prrts_log "dispatch: ${repo_slug}#${pr_number} removing stale dispatch lock"
-		_prrts_remove_lock_dir "$lock_dir"
-		if mkdir "$lock_dir" 2>/dev/null; then
-			_prrts_write_lock_metadata "$lock_dir" "$now_epoch"
-			printf -v "$lock_var" '%s' "$lock_dir"
-			return 0
+		stale_rename="${lock_path}.stale.$$"
+		if mv "$lock_path" "$stale_rename"; then
+			_prrts_remove_lock_dir "$stale_rename"
+			if mkdir "$lock_path" 2>/dev/null; then
+				_prrts_write_lock_metadata "$lock_path" "$now_epoch"
+				printf -v "$lock_var" '%s' "$lock_path"
+				return 0
+			fi
 		fi
 	fi
 	_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — dispatch lock already held"
