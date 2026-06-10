@@ -32,6 +32,8 @@ HEADLESS_RUNTIME_HELPER="${HEADLESS_RUNTIME_HELPER:-${SCRIPT_DIR}/headless-runti
 PR_REVIEW_THREAD_RESPONSE_PR_LIMIT="${PR_REVIEW_THREAD_RESPONSE_PR_LIMIT:-50}"
 PR_REVIEW_THREAD_RESPONSE_MAX_PER_REPO="${PR_REVIEW_THREAD_RESPONSE_MAX_PER_REPO:-2}"
 PR_REVIEW_THREAD_RESPONSE_COOLDOWN="${PR_REVIEW_THREAD_RESPONSE_COOLDOWN:-3600}"
+PR_REVIEW_THREAD_RESPONSE_INFLIGHT_TTL="${PR_REVIEW_THREAD_RESPONSE_INFLIGHT_TTL:-300}"
+PR_REVIEW_THREAD_RESPONSE_LOCK_STALE="${PR_REVIEW_THREAD_RESPONSE_LOCK_STALE:-600}"
 PR_REVIEW_THREAD_RESPONSE_MODEL="${PR_REVIEW_THREAD_RESPONSE_MODEL:-}"
 PR_REVIEW_THREAD_RESPONSE_BOT_RE="${PR_REVIEW_THREAD_RESPONSE_BOT_RE:-coderabbitai|gemini-code-assist|claude-review|gpt-review|augment-code|augmentcode|copilot}"
 PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN="${PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN:-false}"
@@ -435,6 +437,81 @@ _prrts_state_file() {
 	return 0
 }
 
+_prrts_lock_dir() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local safe_slug=""
+	safe_slug="$(_prrts_safe_slug "$repo_slug")"
+	printf '%s/%s-%s.lock\n' "$STATE_DIR" "$safe_slug" "$pr_number"
+	return 0
+}
+
+_prrts_write_lock_metadata() {
+	local lock_dir="$1"
+	local now_epoch="$2"
+	local metadata_tmp="${lock_dir}/metadata.$$"
+	{
+		printf 'pid=%s\n' "$$"
+		printf 'created_at=%s\n' "$now_epoch"
+	} >"$metadata_tmp"
+	mv "$metadata_tmp" "${lock_dir}/metadata"
+	return 0
+}
+
+_prrts_lock_is_stale() {
+	local lock_dir="$1"
+	local now_epoch="$2"
+	local stale_after="" metadata_file="" created_at="0" key="" value="" age_seconds="0"
+	stale_after="$(_prrts_normalise_int "$PR_REVIEW_THREAD_RESPONSE_LOCK_STALE" "600" "60")"
+	metadata_file="${lock_dir}/metadata"
+	[[ -f "$metadata_file" ]] || return 1
+	while IFS='=' read -r key value; do
+		case "$key" in
+		created_at) created_at="$value" ;;
+		esac
+	done <"$metadata_file"
+	[[ "$created_at" =~ ^[0-9]+$ ]] || return 1
+	age_seconds=$((now_epoch - created_at))
+	[[ "$age_seconds" -ge "$stale_after" ]]
+	return $?
+}
+
+_prrts_remove_lock_dir() {
+	local lock_dir="$1"
+	[[ -n "$lock_dir" && "$lock_dir" == "${STATE_DIR}/"* && -d "$lock_dir" ]] || return 0
+	rm -rf "$lock_dir"
+	return 0
+}
+
+_prrts_acquire_dispatch_lock() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local lock_var="$3"
+	local lock_path="" now_epoch="" stale_rename=""
+	_prrts_ensure_dirs
+	lock_path="$(_prrts_lock_dir "$repo_slug" "$pr_number")"
+	now_epoch="$(date +%s)"
+	if mkdir "$lock_path" 2>/dev/null; then
+		_prrts_write_lock_metadata "$lock_path" "$now_epoch"
+		printf -v "$lock_var" '%s' "$lock_path"
+		return 0
+	fi
+	if _prrts_lock_is_stale "$lock_path" "$now_epoch"; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} removing stale dispatch lock"
+		stale_rename="${lock_path}.stale.$$"
+		if mv "$lock_path" "$stale_rename"; then
+			_prrts_remove_lock_dir "$stale_rename"
+			if mkdir "$lock_path" 2>/dev/null; then
+				_prrts_write_lock_metadata "$lock_path" "$now_epoch"
+				printf -v "$lock_var" '%s' "$lock_path"
+				return 0
+			fi
+		fi
+	fi
+	_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — dispatch lock already held"
+	return 1
+}
+
 _prrts_session_key() {
 	local repo_slug="$1"
 	local pr_number="$2"
@@ -482,9 +559,10 @@ _prrts_should_dispatch() {
 	local pr_number="$2"
 	local fingerprint="$3"
 	local now_epoch="$4"
-	local state_file="" last_fingerprint="" dispatched_at="0" cooldown="" age_seconds="0"
+	local state_file="" last_fingerprint="" dispatched_at="0" cooldown="" inflight_ttl="" age_seconds="0"
 	state_file="$(_prrts_state_file "$repo_slug" "$pr_number")"
 	cooldown="$(_prrts_normalise_int "$PR_REVIEW_THREAD_RESPONSE_COOLDOWN" "3600" "60")"
+	inflight_ttl="$(_prrts_normalise_int "$PR_REVIEW_THREAD_RESPONSE_INFLIGHT_TTL" "300" "1")"
 	_prrts_read_state "$state_file" last_fingerprint dispatched_at
 
 	if _prrts_worker_active "$repo_slug" "$pr_number"; then
@@ -492,6 +570,10 @@ _prrts_should_dispatch() {
 		return 1
 	fi
 	age_seconds=$((now_epoch - dispatched_at))
+	if [[ "$dispatched_at" -gt 0 && "$age_seconds" -lt "$inflight_ttl" ]]; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — dispatch state active ${age_seconds}s ago"
+		return 1
+	fi
 	if [[ "$fingerprint" == "$last_fingerprint" && "$age_seconds" -lt "$cooldown" ]]; then
 		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — same thread fingerprint dispatched ${age_seconds}s ago"
 		return 1
@@ -601,6 +683,46 @@ _prrts_dispatch_worker() {
 	return 0
 }
 
+_prrts_dispatch_guarded() {
+	local repo_slug="$1"
+	local repo_path="$2"
+	local pr_number="$3"
+	local title="$4"
+	local thread_count="$5"
+	local fingerprint="$6"
+	local preview="$7"
+	local now_epoch="$8"
+	local dry_run="$9"
+	local dispatch_mode="${10}"
+	local head_ref="${11:-}"
+	local author="${12:-}"
+	local lock_dir=""
+	if ! _prrts_acquire_dispatch_lock "$repo_slug" "$pr_number" lock_dir; then
+		return 1
+	fi
+	if ! _prrts_should_dispatch "$repo_slug" "$pr_number" "$fingerprint" "$now_epoch"; then
+		_prrts_remove_lock_dir "$lock_dir"
+		return 1
+	fi
+	if [[ "$dry_run" == "$PRRTS_BOOL_TRUE" ]]; then
+		printf 'DRY-RUN would dispatch %s#%s (%s unresolved thread(s))\n' "$repo_slug" "$pr_number" "$thread_count"
+		if [[ "$dispatch_mode" == "dispatch-pr" ]]; then
+			_prrts_log "dry-run: would dispatch targeted ${repo_slug}#${pr_number} (${thread_count} unresolved thread(s), include_human=${PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN})"
+		else
+			_prrts_log "dry-run: would dispatch ${repo_slug}#${pr_number} (${thread_count} unresolved thread(s), head=${head_ref}, author=${author})"
+		fi
+		_prrts_remove_lock_dir "$lock_dir"
+		return 0
+	fi
+	if ! _prrts_dispatch_worker "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$preview"; then
+		_prrts_remove_lock_dir "$lock_dir"
+		return 1
+	fi
+	_prrts_write_state "$repo_slug" "$pr_number" "$fingerprint" "$thread_count" "$now_epoch"
+	_prrts_remove_lock_dir "$lock_dir"
+	return 0
+}
+
 _prrts_dispatch_repo() {
 	local repo_slug="$1"
 	local repo_path="$2"
@@ -623,17 +745,9 @@ _prrts_dispatch_repo() {
 	while IFS=$'\t' read -r pr_number thread_count fingerprint title head_ref author preview; do
 		[[ -n "$pr_number" ]] || continue
 		[[ "$dispatched" -lt "$max_per_repo" ]] || break
-		if ! _prrts_should_dispatch "$repo_slug" "$pr_number" "$fingerprint" "$now_epoch"; then
-			continue
+		if _prrts_dispatch_guarded "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview" "$now_epoch" "$dry_run" "dispatch" "$head_ref" "$author"; then
+			dispatched=$((dispatched + 1))
 		fi
-		if [[ "$dry_run" == "$PRRTS_BOOL_TRUE" ]]; then
-			printf 'DRY-RUN would dispatch %s#%s (%s unresolved thread(s))\n' "$repo_slug" "$pr_number" "$thread_count"
-			_prrts_log "dry-run: would dispatch ${repo_slug}#${pr_number} (${thread_count} unresolved thread(s), head=${head_ref}, author=${author})"
-		else
-			_prrts_dispatch_worker "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$preview" || continue
-			_prrts_write_state "$repo_slug" "$pr_number" "$fingerprint" "$thread_count" "$now_epoch"
-		fi
-		dispatched=$((dispatched + 1))
 	done <<<"$candidates"
 	_prrts_log "dispatch: ${repo_slug} completed, dispatched=${dispatched}, dry_run=${dry_run}"
 	return 0
@@ -666,17 +780,11 @@ _prrts_dispatch_pr() {
 	}
 	now_epoch="$(date +%s)"
 	IFS=$'\t' read -r pr_number thread_count fingerprint title head_ref author preview <<<"$candidate"
-	if ! _prrts_should_dispatch "$repo_slug" "$pr_number" "$fingerprint" "$now_epoch"; then
-		return 0
+	if _prrts_dispatch_guarded "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview" "$now_epoch" "$dry_run" "dispatch-pr" "$head_ref" "$author"; then
+		if [[ "$dry_run" != "$PRRTS_BOOL_TRUE" ]]; then
+			_prrts_log "dispatch-pr: ${repo_slug}#${pr_number} completed, dispatched=1, include_human=${PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN}"
+		fi
 	fi
-	if [[ "$dry_run" == "$PRRTS_BOOL_TRUE" ]]; then
-		printf 'DRY-RUN would dispatch %s#%s (%s unresolved thread(s))\n' "$repo_slug" "$pr_number" "$thread_count"
-		_prrts_log "dry-run: would dispatch targeted ${repo_slug}#${pr_number} (${thread_count} unresolved thread(s), include_human=${PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN})"
-		return 0
-	fi
-	_prrts_dispatch_worker "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$preview" || return 0
-	_prrts_write_state "$repo_slug" "$pr_number" "$fingerprint" "$thread_count" "$now_epoch"
-	_prrts_log "dispatch-pr: ${repo_slug}#${pr_number} completed, dispatched=1, include_human=${PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN}"
 	return 0
 }
 
