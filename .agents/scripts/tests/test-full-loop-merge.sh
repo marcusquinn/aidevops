@@ -82,6 +82,7 @@ teardown_test_env() {
 #   $4 = "graphql-rate-limit" — gh pr merge fails with GraphQL quota, REST succeeds
 #   $5 = "graphql-rate-limit-rest-fail" — gh pr merge fails with GraphQL quota, REST fails
 #   $6 = "fallback-nmr" — branch protection fails, but linked issue still needs maintainer review
+#   $7 = "stale-cache-401" — first gh pr merge returns cached 401, live auth succeeds, retry succeeds
 create_gh_stub() {
 	local mode="$1"
 
@@ -92,7 +93,24 @@ _gh_cmd="\$1"
 _gh_sub="\$2"
 echo "gh \$*" >> "${TEST_ROOT}/logs/gh-calls.txt"
 
+_merge_count_file="${TEST_ROOT}/logs/merge-count.txt"
+
 if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "merge" ]]; then
+	if [[ "$mode" == "stale-cache-401" ]]; then
+		_merge_count=0
+		if [[ -f "\$_merge_count_file" ]]; then
+			_merge_count=\$(cat "\$_merge_count_file")
+		fi
+		_merge_count=\$((_merge_count + 1))
+		printf '%s\n' "\$_merge_count" >"\$_merge_count_file"
+		if [[ "\$_merge_count" -eq 1 ]]; then
+			echo 'non-200 OK status code: 401 Unauthorized body: "{ \"message\": \"Requires authentication\" }"' >&2
+			exit 1
+		fi
+		echo "Merged PR after cache remediation"
+		exit 0
+	fi
+
 	# Check if --admin flag is present
 	_gh_has_admin=0
 	for _gh_arg in "\$@"; do
@@ -157,6 +175,10 @@ fi
 
 if [[ "\$_gh_cmd" == "api" ]]; then
 	echo "gh api \$*" >> "${TEST_ROOT}/logs/gh-api-calls.txt"
+	if [[ "\$*" == "user" ]]; then
+		echo '{"login":"tester"}'
+		exit 0
+	fi
 	if [[ "\$*" == *"repos/testorg/testrepo/pulls/42/merge"* ]]; then
 		if [[ "$mode" == "graphql-rate-limit-rest-fail" ]]; then
 			echo "REST merge failed" >&2
@@ -220,6 +242,7 @@ RUNNER_EOF
 	# Run in a subprocess with our stubs on PATH
 	local rc=0
 	env PATH="${TEST_ROOT}/bin:${scripts_dir}:${PATH}" \
+		HOME="${TEST_ROOT}/home" \
 		AIDEVOPS_MODEL="test-model" \
 		bash "$tmp_runner" 2>&1 || rc=$?
 	rm -f "$tmp_runner"
@@ -251,6 +274,7 @@ RUNNER_EOF
 
 	local rc=0
 	env PATH="${TEST_ROOT}/bin:${scripts_dir}:${PATH}" \
+		HOME="${TEST_ROOT}/home" \
 		AIDEVOPS_MODEL="test-model" \
 		bash "$tmp_runner" 2>&1 || rc=$?
 	rm -f "$tmp_runner"
@@ -470,6 +494,45 @@ test_review_gate_failure_blocks_rest_fallback() {
 	return 0
 }
 
+# Test 8: cached gh HTTP 401 is quarantined and gh pr merge is retried once.
+test_stale_cache_401_retry() {
+	rm -f "${TEST_ROOT}/logs/"*.txt
+	rm -rf "${TEST_ROOT:?}/home"
+	mkdir -p "${TEST_ROOT}/home/.cache/gh"
+	cat >"${TEST_ROOT}/home/.cache/gh/graphql-401.cache" <<'CACHE'
+HTTP/2.0 401 Unauthorized
+X-Gh-Cache-Ttl: 24h0m0s
+{"message":"Requires authentication","documentation_url":"https://docs.github.com/graphql"}
+CACHE
+	cat >"${TEST_ROOT}/home/.cache/gh/healthy.cache" <<'CACHE'
+HTTP/2.0 200 OK
+{"data":{"viewer":{"login":"tester"}}}
+CACHE
+
+	create_gh_stub "stale-cache-401"
+
+	local exit_code=0
+	run_merge_execute "42" "testorg/testrepo" "--squash" "0" "0" >/dev/null 2>&1 || exit_code=$?
+	print_result "stale gh cache 401: retry succeeds" "$exit_code"
+
+	local merge_count="0"
+	[[ -f "${TEST_ROOT}/logs/merge-count.txt" ]] && merge_count=$(cat "${TEST_ROOT}/logs/merge-count.txt")
+	print_result "stale gh cache 401: gh pr merge called exactly twice" "$((merge_count == 2 ? 0 : 1))" "merge_count=${merge_count}"
+
+	local stale_quarantined=0
+	if [[ ! -f "${TEST_ROOT}/home/.cache/gh/graphql-401.cache" ]] && \
+		find "${TEST_ROOT}/home/.cache/gh" -path '*/aidevops-quarantine-*/*graphql-401.cache*' -type f | grep -q .; then
+		stale_quarantined=1
+	fi
+	print_result "stale gh cache 401: only matching 401 cache quarantined" "$((1 - stale_quarantined))"
+
+	local healthy_preserved=0
+	[[ -f "${TEST_ROOT}/home/.cache/gh/healthy.cache" ]] && healthy_preserved=1
+	print_result "stale gh cache 401: healthy cache preserved" "$((1 - healthy_preserved))"
+
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -485,6 +548,7 @@ main() {
 	test_graphql_rate_limit_cmd_merge_phase_autofile
 	test_graphql_rate_limit_auto_no_rest_fallback
 	test_review_gate_failure_blocks_rest_fallback
+	test_stale_cache_401_retry
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
