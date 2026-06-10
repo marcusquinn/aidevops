@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.47] - 2026-06-10
+
+### Changed
+
+- fix: harden opencode db threshold handling (#24654)
+- fix: harden duplicate consolidation parsing locals (#24650)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- preserve opencode oauth in ai research (#24659)
+- isolate pulse worker logs per user (#24622)
+
 ## [3.20.46] - 2026-06-10
 
 ### Changed
