@@ -76,7 +76,7 @@ _status_ai_configs() {
 _status_headless_runtime_config() {
 	print_header "Headless Runtime Configuration"
 	local allowlist_set=false
-	local credentials_file="${AIDEVOPS_CREDENTIALS_FILE:-$HOME/.config/aidevops/credentials.sh}"
+	local credentials_file="${AIDEVOPS_CREDENTIALS_FILE:-${CONFIG_DIR:-$HOME/.config/aidevops}/credentials.sh}"
 	local credentials_has_allowlist=false
 
 	if [[ -n "${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}" ]]; then

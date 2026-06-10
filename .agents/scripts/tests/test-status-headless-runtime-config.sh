@@ -64,12 +64,15 @@ run_status_check() {
 # shellcheck source=../aidevops-cli/aidevops-status-lib.sh
 source "$STATUS_LIB"
 
-TMP_DIR=$(mktemp -d -t aidevops-status-env.XXXXXX)
-trap 'rm -rf "$TMP_DIR"' EXIT
+TMP_DIR=$(mktemp -d -t aidevops-status-env.XXXXXX) || exit 1
+trap '[[ -n "${TMP_DIR:-}" ]] && rm -rf "$TMP_DIR"' EXIT
 
 missing_credentials="${TMP_DIR}/missing-credentials.sh"
 configured_credentials="${TMP_DIR}/credentials.sh"
+config_dir="${TMP_DIR}/config"
+mkdir -p "$config_dir"
 printf '%s\n' 'export AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST="anthropic"' >"$configured_credentials"
+printf '%s\n' 'export AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST="openai"' >"${config_dir}/credentials.sh"
 
 AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST="anthropic" output=$(run_status_check "$missing_credentials" 2>&1)
 if printf '%s' "$output" | grep -q 'only set in this shell' && printf '%s' "$output" | grep -q 'credentials.sh'; then
@@ -91,6 +94,14 @@ if printf '%s' "$output" | grep -q 'configured in credentials.sh'; then
 	print_result "accepts daemon-visible allowlist without shell env" 0
 else
 	print_result "accepts daemon-visible allowlist without shell env" 1 "$output"
+fi
+
+unset AIDEVOPS_CREDENTIALS_FILE
+CONFIG_DIR="$config_dir" output=$(_status_headless_runtime_config 2>&1)
+if printf '%s' "$output" | grep -q 'configured in credentials.sh'; then
+	print_result "uses CONFIG_DIR credentials fallback" 0
+else
+	print_result "uses CONFIG_DIR credentials fallback" 1 "$output"
 fi
 
 output=$(run_status_check "$missing_credentials" 2>&1)
