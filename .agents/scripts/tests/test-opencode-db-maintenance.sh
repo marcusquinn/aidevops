@@ -433,6 +433,22 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# Test 15: threshold parsing does not execute awk code from environment
+# -----------------------------------------------------------------------------
+
+injection_marker="$SANDBOX/awk-threshold-injection"
+threshold_payload="0); system(\"touch ${injection_marker}\"); (0"
+set +e
+out=$(VACUUM_FREELIST_THRESHOLD="$threshold_payload" FORCE_VACUUM_SIZE_MB=0 WAL_LARGE_THRESHOLD_MB=999 _run_helper notice 2>&1)
+rc=$?
+set -e
+if [[ ! -e "$injection_marker" ]]; then
+	_pass "freelist threshold environment value is not executable awk code"
+else
+	_fail "freelist threshold environment value executed code (rc=$rc) — output: $out"
+fi
+
+# -----------------------------------------------------------------------------
 # Summary
 # -----------------------------------------------------------------------------
 
