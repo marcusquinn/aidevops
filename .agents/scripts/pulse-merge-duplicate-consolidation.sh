@@ -10,6 +10,9 @@ _PULSE_MERGE_DUPLICATE_CONSOLIDATION_LOADED=1
 
 : "${LOGFILE:=${HOME}/.aidevops/logs/pulse.log}"
 
+_PMDC_REVIEW_NONE="NONE"
+_PMDC_DRAFT_TRUE="true"
+
 #######################################
 # Return comma-padded label CSV for a PR JSON object.
 #
@@ -111,9 +114,9 @@ _pmp_pr_consolidation_health_score() {
 	local arg_count="$#"
 	local precomputed_pr_number="${3:-}"
 	local precomputed_mergeable="${4:-UNKNOWN}"
-	local precomputed_review="${5:-NONE}"
+	local precomputed_review="${5:-$_PMDC_REVIEW_NONE}"
 	local precomputed_is_draft="${6:-false}"
-	local pr_number="" mergeable="UNKNOWN" review="NONE" is_draft="false" score=0
+	local pr_number="" mergeable="UNKNOWN" review="$_PMDC_REVIEW_NONE" is_draft="false" score=0
 	local parsed_fields=""
 	if [[ "$arg_count" -ge 6 ]]; then
 		pr_number="$precomputed_pr_number"
@@ -130,7 +133,7 @@ _pmp_pr_consolidation_health_score() {
 		if [[ -n "$parsed_fields" ]]; then
 			IFS=$'\t' read -r pr_number mergeable review is_draft <<<"$parsed_fields"
 			[[ -n "$mergeable" ]] || mergeable="UNKNOWN"
-			[[ -n "$review" ]] || review="NONE"
+			[[ -n "$review" ]] || review="$_PMDC_REVIEW_NONE"
 			[[ -n "$is_draft" ]] || is_draft="false"
 		fi
 	fi
@@ -142,8 +145,28 @@ _pmp_pr_consolidation_health_score() {
 	_pmp_normalize_mergeable_for_consolidation_into mergeable "$mergeable" || mergeable="UNKNOWN"
 	[[ "$mergeable" == "MERGEABLE" ]] && score=$((score + 200))
 	[[ "$review" == "APPROVED" ]] && score=$((score + 100))
-	[[ "$is_draft" != "true" ]] && score=$((score + 50))
+	[[ "$is_draft" != "$_PMDC_DRAFT_TRUE" ]] && score=$((score + 50))
 	printf '%s' "$score"
+	return 0
+}
+
+#######################################
+# Check whether the selected duplicate-group candidate is healthy enough to
+# justify closing sibling PRs. Scope verification alone proves issue fit; this
+# guard ensures the kept candidate is also a viable merge candidate.
+#
+# Args: $1 = numeric health score, $2 = isDraft value
+# Returns: 0 healthy candidate, 1 too weak/protected
+#######################################
+_pmp_pr_consolidation_candidate_is_healthy() {
+	local score="$1"
+	local is_draft="$2"
+
+	[[ "$score" =~ ^[0-9]+$ ]] || score=0
+	[[ "$is_draft" != "$_PMDC_DRAFT_TRUE" ]] || return 1
+	# Require either required checks passing, or mergeable+approved+nondraft.
+	# This prevents closing siblings against merely newer unreviewed PRs.
+	[[ "$score" -ge 300 ]] || return 1
 	return 0
 }
 
@@ -185,8 +208,9 @@ _pmp_consolidate_duplicate_pr_group() {
 	local repo_slug="$1"
 	local issue_number="$2"
 	local group_file="$3"
-	local group_count=0 candidate_line="" candidate_pr=""
-	group_count=$(grep -c "^${issue_number}|" "$group_file" 2>/dev/null || true)
+	local group_count=0 candidate_line="" candidate_pr="" candidate_score="" candidate_is_draft="" _issue="" _created=""
+	local group_pattern="^${issue_number}[|]"
+	group_count=$(grep -c "$group_pattern" "$group_file" 2>/dev/null || true)
 	[[ "$group_count" =~ ^[0-9]+$ ]] || group_count=0
 	[[ "$group_count" -gt 1 ]] || return 0
 
@@ -195,19 +219,23 @@ _pmp_consolidate_duplicate_pr_group() {
 		return 0
 	fi
 
-	candidate_line=$(grep "^${issue_number}|" "$group_file" | sort -t'|' -k3,3nr -k4,4r | head -1) || candidate_line=""
-	candidate_pr=$(printf '%s' "$candidate_line" | cut -d'|' -f2)
+	candidate_line=$(grep "$group_pattern" "$group_file" | sort -t'|' -k3,3nr -k4,4r | head -1) || candidate_line=""
+	IFS='|' read -r _issue candidate_pr candidate_score _created candidate_is_draft <<<"$candidate_line"
 	[[ "$candidate_pr" =~ ^[0-9]+$ ]] || return 0
+	if ! _pmp_pr_consolidation_candidate_is_healthy "$candidate_score" "$candidate_is_draft"; then
+		echo "[pulse-wrapper] Duplicate PR consolidation: candidate PR #${candidate_pr} for issue #${issue_number} is not healthy enough for superseding close — leaving sibling PRs open" >>"$LOGFILE"
+		return 0
+	fi
 	if ! _verify_superseding_pr_for_issue "$issue_number" "$candidate_pr" "$repo_slug"; then
 		echo "[pulse-wrapper] Duplicate PR consolidation: candidate PR #${candidate_pr} for issue #${issue_number} failed verification — leaving sibling PRs open" >>"$LOGFILE"
 		return 0
 	fi
 
-	while IFS='|' read -r _issue pr_number _score _created; do
+	while IFS='|' read -r _issue pr_number _score _created _is_draft; do
 		[[ "$pr_number" =~ ^[0-9]+$ ]] || continue
 		[[ "$pr_number" != "$candidate_pr" ]] || continue
 		_pmp_close_superseded_sibling_pr "$repo_slug" "$issue_number" "$pr_number" "$candidate_pr"
-	done < <(grep "^${issue_number}|" "$group_file")
+	done < <(grep "$group_pattern" "$group_file")
 	return 0
 }
 
@@ -232,7 +260,7 @@ _pmp_consolidate_duplicate_pr_groups() {
 	group_file=$(mktemp 2>/dev/null) || group_file="${TMPDIR:-/tmp}/pulse-duplicate-pr-groups-$$.tmp"
 	: >"$group_file"
 
-	local pr_number="" created_at="" labels_csv="" mergeable="UNKNOWN" review="NONE" is_draft="false" pr_obj="" linked_issue="" score=0
+	local pr_number="" created_at="" labels_csv="" mergeable="UNKNOWN" review="$_PMDC_REVIEW_NONE" is_draft="false" pr_obj="" linked_issue="" score=0
 	while IFS=$'\t' read -r pr_number created_at labels_csv mergeable review is_draft pr_obj; do
 		linked_issue=""
 		score=0
@@ -242,7 +270,7 @@ _pmp_consolidate_duplicate_pr_groups() {
 		linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked_issue=""
 		[[ "$linked_issue" =~ ^[0-9]+$ ]] || continue
 		score=$(_pmp_pr_consolidation_health_score "$repo_slug" "$pr_obj" "$pr_number" "$mergeable" "$review" "$is_draft") || score=0
-		printf '%s|%s|%s|%s\n' "$linked_issue" "$pr_number" "$score" "$created_at" >>"$group_file"
+		printf '%s|%s|%s|%s|%s\n' "$linked_issue" "$pr_number" "$score" "$created_at" "$is_draft" >>"$group_file"
 	done < <(printf '%s' "$pr_json" | jq -r '.[] | [
 		(.number // "" | tostring),
 		(.createdAt // ""),
