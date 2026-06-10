@@ -92,14 +92,14 @@ bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh get sonar-token  # S
 
 ## How It Works
 
-`credentials.sh` contains shell exports (`export SONAR_TOKEN="xxx"`). Shell startup sources it automatically:
+`credentials.sh` contains shell exports (`export SONAR_TOKEN="xxx"`). Shell startup sources it automatically for interactive terminals:
 
 ```bash
 # Added to ~/.zshrc (and ~/.bashrc/~/.bash_profile if present) by setup:
 [[ -f ~/.config/aidevops/credentials.sh ]] && source ~/.config/aidevops/credentials.sh
 ```
 
-All processes (terminals, scripts, MCPs) inherit these env vars.
+Interactive terminals inherit these env vars after their shell startup file runs. aidevops daemons and scheduled jobs do not source `.bashrc`, `.zshrc`, or `.profile`; they read `~/.config/aidevops/credentials.sh` directly when needed. Put persistent headless routing pins such as `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST` in `credentials.sh`, not only in a shell rc file.
 
 ## Permissions
 
@@ -116,7 +116,7 @@ chmod 700 ~/.config/aidevops && chmod 600 ~/.config/aidevops/credentials.sh
 
 **Key not found**: Check storage (`setup-local-api-keys.sh get service-name`), check env (`echo $SERVICE_NAME`), re-add if missing.
 
-**Changes not taking effect**: `source ~/.zshrc` (or `~/.bashrc`), or restart terminal.
+**Interactive changes not taking effect**: `source ~/.zshrc` (or `~/.bashrc`), or restart terminal. For pulse/systemd/cron behaviour, update `~/.config/aidevops/credentials.sh`; shell rc exports alone are not daemon-visible.
 
 **Shell integration missing**: Re-run `setup-local-api-keys.sh setup` to add sourcing lines.
 

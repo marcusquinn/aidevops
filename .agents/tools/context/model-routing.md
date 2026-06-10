@@ -94,6 +94,7 @@ Auto-update overwrites `~/.aidevops/agents/configs/*.json` and `~/.aidevops/agen
 
 - Put persistent model-order overrides in `~/.aidevops/agents/custom/configs/model-routing-table.json`
 - Put the provider pin in `~/.config/aidevops/credentials.sh`
+- Do not rely on `.bashrc`, `.zshrc`, or `.profile` for pulse/worker provider pins; scheduled daemons intentionally do not source interactive shell startup files.
 
 Example custom override for OpenAI-capable headless routing:
 
