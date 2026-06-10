@@ -44,6 +44,31 @@ _PULSE_MERGE_GATES_LOADED=1
 # --- Functions ---
 
 #######################################
+# Confirm PR gate helpers may write GitHub issue/PR state for this repo.
+# #aidevops:trust-boundary — contributor/read-only repos are external
+# observation targets. Pulse must never comment, label, close, approve, or
+# impose aidevops maintainer-gate policy on repos it does not manage.
+# Args: $1=repo_slug, $2=gate_name
+# Returns: 0=write actions allowed, 1=blocked/fail-closed.
+#######################################
+_pulse_repo_allows_pr_gate_writes() {
+	local repo_slug="$1"
+	local gate_name="$2"
+
+	if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1; then
+		echo "[pulse-wrapper] ${gate_name}: repo write-action guard unavailable for ${repo_slug} — skipping PR gate write (fail closed)" >>"$LOGFILE"
+		return 1
+	fi
+
+	if ! repo_allows_pulse_write_actions "$repo_slug"; then
+		echo "[pulse-wrapper] ${gate_name}: skipping PR gate writes in ${repo_slug} — repo role is contributor/read-only" >>"$LOGFILE"
+		return 1
+	fi
+
+	return 0
+}
+
+#######################################
 # Resolve the trusted Dependabot update allowlist path.
 # Output: config path
 # Returns: 0 always
@@ -222,10 +247,11 @@ _trusted_dependabot_non_review_checks_green() {
 # Exit codes:
 #   0 - already flagged (label or comment exists) — no action needed
 #   1 - not yet flagged AND API calls succeeded — caller should post
-#   2 - API error (fail closed) — caller must skip, next pulse retries
+#   2 - API/role-guard error (fail closed) — caller must skip
 #
 # Side effects when exit=1 (caller invokes with --post):
-#   Posts the external-contributor comment and adds the label.
+#   Posts the external-contributor comment and adds the label, but only for
+#   repos where repo_allows_pulse_write_actions confirms maintainer ownership.
 #######################################
 check_external_contributor_pr() {
 	local pr_number="$1"
@@ -236,6 +262,9 @@ check_external_contributor_pr() {
 	# Validate arguments
 	if [[ -z "$pr_number" || -z "$repo_slug" || -z "$pr_author" ]]; then
 		echo "[pulse-wrapper] check_external_contributor_pr: missing arguments" >>"$LOGFILE"
+		return 2
+	fi
+	if ! _pulse_repo_allows_pr_gate_writes "$repo_slug" "check_external_contributor_pr"; then
 		return 2
 	fi
 
@@ -533,7 +562,7 @@ _pulse_merge_admin_safety_check() {
 #
 # Exit codes:
 #   0 - comment already exists or was just posted
-#   2 - API error checking for existing comment (fail closed, skip)
+#   2 - API/role-guard error checking for existing comment (fail closed, skip)
 #######################################
 check_permission_failure_pr() {
 	local pr_number="$1"
@@ -543,6 +572,9 @@ check_permission_failure_pr() {
 
 	if [[ -z "$pr_number" || -z "$repo_slug" || -z "$pr_author" ]]; then
 		echo "[pulse-wrapper] check_permission_failure_pr: missing arguments" >>"$LOGFILE"
+		return 2
+	fi
+	if ! _pulse_repo_allows_pr_gate_writes "$repo_slug" "check_permission_failure_pr"; then
 		return 2
 	fi
 
