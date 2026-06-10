@@ -976,7 +976,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t3588 offer gh upgrade and OpenCode prerequisite toast — follow-up to GH#23427/#23428: setup offers an explicit Linux gh upgrade/remediation path when `gh <2.51.0`, `aidevops update` and session-start update checks warn, and OpenCode greeting toast escalates the prerequisite warning. #bug #framework #no-auto-dispatch ~1h tier:standard ref:GH#23435 source:GH#23427 started:2026-05-12 pr:#23440 completed:2026-05-12
 
-- [ ] t3597 Release preflight ShellCheck SC2123 blocks v3.20.44 #bug ref:GH#24628
+- [x] t3597 Release preflight ShellCheck SC2123 blocks v3.20.44 #bug ref:GH#24628 pr:#24629 completed:2026-06-10
 
 ## In Progress
 
@@ -4245,4 +4245,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3596 Constrain pulse write sweeps to maintainer repos #bug ref:GH#24567 pr:#24569 completed:2026-06-08
 
-- [ ] t3597 Release preflight ShellCheck SC2123 blocks v3.20.44 #bug ref:GH#24628
+- [x] t3597 Release preflight ShellCheck SC2123 blocks v3.20.44 #bug ref:GH#24628 pr:#24629 completed:2026-06-10
