@@ -270,16 +270,10 @@ _state_json_field() {
 _freelist_exceeds_threshold() {
 	local freelist_count="$1"
 	local page_count="$2"
-	[[ "$freelist_count" =~ ^[0-9]+$ ]] || return 1
-	[[ "$page_count" =~ ^[0-9]+$ ]] || return 1
-	[[ "$VACUUM_FREELIST_THRESHOLD" =~ ^[0-9]+([.][0-9]+)?$ ]] || return 1
+	[[ "$freelist_count" =~ ^[0-9]+$ && "$page_count" =~ ^[0-9]+$ && "$VACUUM_FREELIST_THRESHOLD" =~ ^[0-9]+([.][0-9]+)?$ ]] || return 1
 	[[ "$page_count" -gt 0 ]] || return 1
 	local threshold_met
-	threshold_met=$(awk \
-		-v free="$freelist_count" \
-		-v pages="$page_count" \
-		-v threshold="$VACUUM_FREELIST_THRESHOLD" \
-		'BEGIN { if (pages <= 0) { print 0; exit } print ((free / pages) >= threshold) ? 1 : 0 }')
+	threshold_met=$(awk -v free="$freelist_count" -v pages="$page_count" -v threshold="$VACUUM_FREELIST_THRESHOLD" 'BEGIN { if (pages <= 0) { print 0; exit } print ((free / pages) >= threshold) ? 1 : 0 }')
 	if [[ "$threshold_met" -eq 1 ]]; then
 		return 0
 	fi
@@ -717,8 +711,7 @@ cmd_report() {
 	page_size=$(_pragma "$OPENCODE_DB" "page_size")
 	freelist_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_FREELIST_COUNT")
 	if [[ ! "$page_count" =~ ^[0-9]+$ || ! "$freelist_count" =~ ^[0-9]+$ ]]; then
-		print_error "Unable to read SQLite page counts from $OPENCODE_DB"
-		return 1
+		print_error "Unable to read SQLite page counts from $OPENCODE_DB"; return 1
 	fi
 
 	local freelist_pct=0
