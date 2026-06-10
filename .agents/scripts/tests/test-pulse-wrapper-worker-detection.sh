@@ -463,6 +463,44 @@ test_review_issue_pr_session_key_fallback_dedup() {
 	return 0
 }
 
+test_review_thread_response_session_key_fallback_dedup() {
+	# GH#24625: review-thread response workers use pr-review-thread-response
+	# session keys. The dedup key extraction must fall back to that key and
+	# preserve only the trailing PR number, even when the repo slug contains digits.
+	set_ps_fixture "950 S 00:10 opencode run --dir /tmp/repo --session-key pr-review-thread-response-org2--repo-206 --title PR #206 \"/full-loop respond\"
+951 S 00:11 /opt/homebrew/lib/node_modules/opencode-ai/bin/.opencode run --dir /tmp/repo --session-key pr-review-thread-response-org2--repo-206 --title PR #206 \"/full-loop respond\"
+952 S 00:09 opencode run --dir /tmp/repo --session-key pr-review-thread-response-org2--repo-207 --title PR #207 \"/full-loop respond\""
+
+	local count output line_count
+	count=$(count_active_workers)
+	if [[ "$count" != "2" ]]; then
+		print_result "review-thread response session-key fallback deduplicates correctly (GH#24625)" 1 "Expected 2, got ${count}"
+		return 0
+	fi
+
+	output=$(list_active_worker_processes)
+	line_count=$(printf '%s\n' "$output" | awk 'END { print NR }')
+	if [[ "$line_count" != "2" ]]; then
+		print_result "review-thread response session-key fallback deduplicates correctly (GH#24625)" 1 "Expected 2 logical workers in output, got ${line_count}: ${output}"
+		return 0
+	fi
+	if ! printf '%s\n' "$output" | grep -q "^950 "; then
+		print_result "review-thread response session-key fallback deduplicates correctly (GH#24625)" 1 "Expected PID 950 in output"
+		return 0
+	fi
+	if printf '%s\n' "$output" | grep -q "^951 "; then
+		print_result "review-thread response session-key fallback deduplicates correctly (GH#24625)" 1 "Expected duplicate PID 951 to be deduplicated away"
+		return 0
+	fi
+	if ! printf '%s\n' "$output" | grep -q "^952 "; then
+		print_result "review-thread response session-key fallback deduplicates correctly (GH#24625)" 1 "Expected PID 952 in output"
+		return 0
+	fi
+
+	print_result "review-thread response session-key fallback deduplicates correctly (GH#24625)" 0
+	return 0
+}
+
 test_worker_title_prefixes_issue_number() {
 	local title
 	title=$(_dlw_build_worker_title "21994" "t3237: standardize session title guidance" "Issue #21994")
@@ -1363,6 +1401,7 @@ main() {
 	test_deduplicates_chain_but_keeps_standalone_opencode_binary
 	test_counts_review_issue_pr_workers
 	test_review_issue_pr_session_key_fallback_dedup
+	test_review_thread_response_session_key_fallback_dedup
 	test_worker_title_prefixes_issue_number
 	test_check_dispatch_dedup_treats_merged_pr_as_duplicate
 	test_dispatch_with_dedup_blocks_when_duplicate

@@ -45,6 +45,12 @@
         gsub(/[^0-9]/, "", rest)
         issue = rest
     }
+    # Fallback: extract from review-thread response session keys.
+    if (issue == "" && match($0, /--session-key[[:space:]]+pr-review-thread-response-[^[:space:]]+-[0-9]+/)) {
+        rest = substr($0, RSTART, RLENGTH)
+        sub(/^.*-/, "", rest)
+        issue = rest
+    }
 
     # Extract --dir path for dedup key (same issue in different repos
     # = different logical workers)
