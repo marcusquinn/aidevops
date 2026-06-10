@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Warn on shell-only headless allowlist (#24664)
+
+## [3.20.51] - 2026-06-10
+
+### Changed
+
 - clarify daemon-visible headless provider allowlist configuration and add status diagnostics (#24664)
 
 ## [3.20.50] - 2026-06-10
