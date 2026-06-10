@@ -835,6 +835,19 @@ _process_single_ready_pr() {
 		return 1
 	fi
 
+	# REST-first PR lists cannot preserve GraphQL-only mergeable state, so a
+	# truly conflicting PR may enter this function as UNKNOWN. Refresh that
+	# value before the CONFLICTING branch; otherwise the later non-MERGEABLE
+	# skip makes conflict remediation unreachable (GH#24634).
+	if [[ "$pr_mergeable" == UNKNOWN || -z "$pr_mergeable" ]]; then
+		local _pre_conflict_mergeable _pre_conflict_exit
+		_pre_conflict_mergeable=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$pr_number" --repo "$repo_slug" \
+			--json mergeable --jq '.mergeable // ""')
+		_pre_conflict_exit=$?
+		[[ $_pre_conflict_exit -eq 0 && -n "$_pre_conflict_mergeable" ]] && pr_mergeable="$_pre_conflict_mergeable" || pr_mergeable=UNKNOWN
+		_pmp_normalize_mergeable_state_into pr_mergeable "$pr_mergeable"
+	fi
+
 	# CONFLICTING handling (t2116): before closing, attempt to salvage the
 	# PR via `gh pr update-branch` which fast-forwards the base branch into
 	# the PR's branch when the conflict is purely due to base advancement

@@ -12,6 +12,8 @@
 #      `needs-maintainer-review` — verified indirectly via a smoke test that
 #      drives `_process_single_ready_pr` through a mocked `gh` binary and
 #      asserts the close path is NOT taken.
+#   4. GH#24634: UNKNOWN mergeable is refreshed before the CONFLICTING branch
+#      so REST-first list metadata cannot make conflict remediation unreachable.
 #
 # Mock pattern follows test-pulse-merge-rebase-nudge.sh: extract the helper
 # source from the real pulse-merge.sh via awk, eval it into the test shell,
@@ -407,6 +409,39 @@ test_mergeable_refetch_after_update_branch() {
 	return 0
 }
 
+test_unknown_mergeable_refreshed_before_conflict_handler() {
+	local function_src refresh_pos conflict_pos
+	function_src=$(awk '
+		/^_process_single_ready_pr\(\) \{/ { in_fn=1 }
+		in_fn { print }
+		in_fn && /^\}$/ { exit }
+	' "$MERGE_SCRIPT")
+
+	refresh_pos=$(printf '%s\n' "$function_src" | awk '/GH#24634/ { print NR; exit }')
+	conflict_pos=$(printf '%s\n' "$function_src" | awk '/if \[\[ "\$pr_mergeable" == "CONFLICTING"/ { print NR; exit }')
+
+	if [[ -z "$refresh_pos" || -z "$conflict_pos" ]]; then
+		print_result "UNKNOWN mergeable refresh precedes CONFLICTING branch" 1 \
+			"Expected GH#24634 refresh and CONFLICTING branch in _process_single_ready_pr (refresh=${refresh_pos}, conflict=${conflict_pos})"
+		return 0
+	fi
+
+	if [[ "$refresh_pos" -ge "$conflict_pos" ]]; then
+		print_result "UNKNOWN mergeable refresh precedes CONFLICTING branch" 1 \
+			"Refresh must run before CONFLICTING branch (refresh=${refresh_pos}, conflict=${conflict_pos})"
+		return 0
+	fi
+
+	if [[ "$function_src" != *"AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view"* || "$function_src" != *"_pmp_normalize_mergeable_state_into pr_mergeable"* ]]; then
+		print_result "UNKNOWN mergeable refresh precedes CONFLICTING branch" 1 \
+			"Refresh must bypass stale PR-view cache and normalize into pr_mergeable"
+		return 0
+	fi
+
+	print_result "UNKNOWN mergeable refresh precedes CONFLICTING branch" 0
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -426,6 +461,7 @@ main() {
 	test_nmr_guard_exists_before_close
 	test_stale_route_runs_before_protected_precheck
 	test_mergeable_refetch_after_update_branch
+	test_unknown_mergeable_refreshed_before_conflict_handler
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
