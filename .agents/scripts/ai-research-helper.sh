@@ -296,12 +296,12 @@ call_opencode() {
 	wrapped_prompt="You are a non-interactive AI research helper. Do not use tools. Do not ask follow-up questions. Do not greet. Return only the requested answer text, with no preamble or markdown. Task:\n${prompt}"
 
 	if [[ -n "$timeout_cmd" ]]; then
-		raw=$(cd "$run_dir" && $timeout_cmd opencode run --pure --format json -m "$model_id" "$wrapped_prompt" 2>&1) || {
+		raw=$(cd "$run_dir" && AIDEVOPS_HEADLESS=1 $timeout_cmd opencode run --format json -m "$model_id" "$wrapped_prompt" 2>&1) || {
 			log_error "OpenCode AI research call failed"
 			return 1
 		}
 	else
-		raw=$(cd "$run_dir" && opencode run --pure --format json -m "$model_id" "$wrapped_prompt" 2>&1) || {
+		raw=$(cd "$run_dir" && AIDEVOPS_HEADLESS=1 opencode run --format json -m "$model_id" "$wrapped_prompt" 2>&1) || {
 			log_error "OpenCode AI research call failed"
 			return 1
 		}
