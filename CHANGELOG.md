@@ -10,8 +10,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [3.20.50] - 2026-06-10
-
 ### Fixed
 
 - retry `gh pr merge` once after quarantining stale GitHub CLI HTTP 401 cache entries (#24662)
