@@ -257,7 +257,7 @@ parsed=$(_probe_parse_http_response openai 403 "$quota_body" true)
 status=$(printf '%s\n' "$parsed" | sed -n '1p')
 error_msg=$(printf '%s\n' "$parsed" | sed -n '2p')
 exit_code=$(printf '%s\n' "$parsed" | sed -n '4p')
-if [[ "$status" == "quota_exceeded" && "$error_msg" == "Quota exceeded (HTTP 403)" && "$exit_code" -eq 1 ]]; then
+if [[ "$status" == "quota_exceeded" && "$error_msg" == "Quota exceeded (HTTP 403)" && "$exit_code" == "1" ]]; then
 	print_result "openai-quota-403: parser returns quota_exceeded without OAuth fallback exit" 0
 else
 	print_result "openai-quota-403: parser returns quota_exceeded without OAuth fallback exit" 1 \
@@ -270,7 +270,7 @@ auth_body='{"error":{"message":"Invalid API key","type":"invalid_request_error",
 parsed=$(_probe_parse_http_response openai 403 "$auth_body" true)
 status=$(printf '%s\n' "$parsed" | sed -n '1p')
 exit_code=$(printf '%s\n' "$parsed" | sed -n '4p')
-if [[ "$status" == "key_invalid" && "$exit_code" -eq 3 ]]; then
+if [[ "$status" == "key_invalid" && "$exit_code" == "3" ]]; then
 	print_result "openai-auth-403: parser preserves key_invalid fallback exit" 0
 else
 	print_result "openai-auth-403: parser preserves key_invalid fallback exit" 1 \
