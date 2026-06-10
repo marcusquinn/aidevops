@@ -159,6 +159,12 @@ source "${_PULSE_MERGE_DIR}/shared-dispatch-label-cleanup.sh"
 # shellcheck source=pr-supersession-helper.sh
 source "${_PULSE_MERGE_DIR}/pr-supersession-helper.sh"
 
+# Targeted remediation for stale GitHub CLI HTTP cache entries that can make
+# `gh pr merge` return a cached 401 even after live gh auth succeeds (GH#24656).
+# shellcheck source=gh-merge-cache-remediation-lib.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via _PULSE_MERGE_DIR
+source "${_PULSE_MERGE_DIR}/gh-merge-cache-remediation-lib.sh"
+
 readonly _PM_PARENT_TASK_LABEL_NEEDLE=",parent-task,"
 
 # Source author permission check helpers (GH#21426 — extracted to bring
@@ -1046,6 +1052,17 @@ _process_single_ready_pr() {
 	local merge_output="" _merge_exit=0 _auto_merge_output="" _auto_merge_exit=0
 	merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --admin 2>&1)
 	_merge_exit=$?
+	if [[ $_merge_exit -ne 0 ]] && gh_merge_remediate_stale_auth_cache "$merge_output" "pulse merge PR #${pr_number} in ${repo_slug}" "$LOGFILE"; then
+		local _merge_original_output="$merge_output"
+		merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --admin 2>&1)
+		_merge_exit=$?
+		if [[ $_merge_exit -ne 0 ]]; then
+			merge_output="${_merge_original_output}
+
+[retry after stale gh cache remediation]
+${merge_output}"
+		fi
+	fi
 	if [[ $_merge_exit -ne 0 && "$merge_output" == *"Repository rule violations found"* ]]; then
 		echo "[pulse-wrapper] Deterministic merge: admin merge hit repository rulesets for PR #${pr_number} in ${repo_slug}; retrying with native auto-merge without --admin (GH#24438): ${merge_output}" >>"$LOGFILE"
 		_auto_merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --auto --squash 2>&1)
@@ -1057,6 +1074,17 @@ _process_single_ready_pr() {
 		echo "[pulse-wrapper] Deterministic merge: native auto-merge fallback failed for PR #${pr_number} in ${repo_slug}; retrying direct merge without --admin (GH#23087): ${_auto_merge_output}" >>"$LOGFILE"
 		merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash 2>&1)
 		_merge_exit=$?
+		if [[ $_merge_exit -ne 0 ]] && gh_merge_remediate_stale_auth_cache "$merge_output" "pulse direct merge PR #${pr_number} in ${repo_slug}" "$LOGFILE"; then
+			local _direct_merge_original_output="$merge_output"
+			merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash 2>&1)
+			_merge_exit=$?
+			if [[ $_merge_exit -ne 0 ]]; then
+				merge_output="${_direct_merge_original_output}
+
+[retry after stale gh cache remediation]
+${merge_output}"
+			fi
+		fi
 	fi
 
 	# Rate-limit: 1 second between merges to avoid GitHub API abuse

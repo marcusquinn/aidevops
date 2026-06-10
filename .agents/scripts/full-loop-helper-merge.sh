@@ -40,6 +40,12 @@ fi
 # shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
 source "${SCRIPT_DIR}/shared-phase-filing.sh"
 
+# Targeted remediation for stale GitHub CLI HTTP cache entries that can make
+# `gh pr merge` return a cached 401 even after live gh auth succeeds (GH#24656).
+# shellcheck source=./gh-merge-cache-remediation-lib.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via SCRIPT_DIR
+source "${SCRIPT_DIR}/gh-merge-cache-remediation-lib.sh"
+
 # --- Repo Resolution ---
 
 # _merge_resolve_repo — resolve repo slug from argument or auto-detect from git remote.
@@ -315,6 +321,20 @@ _merge_execute() {
 		_merge_rc=0
 	else
 		_merge_rc=$?
+	fi
+	if [[ $_merge_rc -ne 0 ]] && gh_merge_remediate_stale_auth_cache "$_merge_out" "full-loop PR #${pr_number} in ${repo}" ""; then
+		local _merge_retry_out="" _merge_original_out="$_merge_out"
+		print_info "gh pr merge returned 401 while live gh auth succeeds; quarantined stale gh cache entries and retrying once..."
+		if _merge_retry_out=$(gh pr merge "$pr_number" --repo "$repo" "$merge_method" ${merge_flags[@]+"${merge_flags[@]}"} 2>&1); then
+			_merge_out="$_merge_retry_out"
+			_merge_rc=0
+		else
+			_merge_rc=$?
+			_merge_out="${_merge_original_out}
+
+[retry after stale gh cache remediation]
+${_merge_retry_out}"
+		fi
 	fi
 
 	if [[ $_merge_rc -ne 0 ]]; then

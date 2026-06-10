@@ -43,15 +43,38 @@ setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
 	mkdir -p "${TEST_ROOT}/bin"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
+	export GH_STUB_MODE="${GH_STUB_MODE:-ruleset}"
 	export LOGFILE="${TEST_ROOT}/pulse.log"
 	: >"$LOGFILE"
 	GH_LOG="${TEST_ROOT}/gh-calls.log"
 	: >"$GH_LOG"
 	export TEST_ROOT GH_LOG
 
-	cat >"${TEST_ROOT}/bin/gh" <<'GHEOF'
+cat >"${TEST_ROOT}/bin/gh" <<'GHEOF'
 #!/usr/bin/env bash
 printf '%s\n' "gh $*" >>"${GH_LOG:-/dev/null}"
+
+mode="${GH_STUB_MODE:-ruleset}"
+
+if [[ "$1" == "api" && "${2:-}" == "user" ]]; then
+	printf '%s\n' '{"login":"tester"}'
+	exit 0
+fi
+
+if [[ "$mode" == "stale-cache-401" && "$1" == "pr" && "$2" == "merge" && "$*" == *"--admin"* ]]; then
+	count_file="${TEST_ROOT}/merge-count.txt"
+	count=0
+	if [[ -f "$count_file" ]]; then
+		count=$(cat "$count_file")
+	fi
+	count=$((count + 1))
+	printf '%s\n' "$count" >"$count_file"
+	if [[ "$count" -eq 1 ]]; then
+		printf '%s\n' 'non-200 OK status code: 401 Unauthorized body: "{ \"message\": \"Requires authentication\" }"' >&2
+		exit 1
+	fi
+	exit 0
+fi
 
 if [[ "$1" == "pr" && "$2" == "merge" && "$*" == *"--admin"* ]]; then
 	printf '%s\n' 'GraphQL: Repository rule violations found' >&2
@@ -90,6 +113,8 @@ define_function_under_test() {
 		return 1
 	fi
 	# shellcheck disable=SC1090
+	source "${SCRIPT_DIR}/../gh-merge-cache-remediation-lib.sh"
+	# shellcheck disable=SC1090
 	eval "$src_process"
 	return 0
 }
@@ -113,6 +138,21 @@ _pulse_merge_admin_safety_check() { return 0; }
 _set_native_auto_merge_or_skip() { return 1; }
 _handle_post_merge_actions() { return 0; }
 gh_pr_view() { printf '{"labels":[]}'; return 0; }
+
+prepare_stale_cache_fixture() {
+	export HOME="${TEST_ROOT}/home"
+	mkdir -p "${HOME}/.cache/gh"
+	cat >"${HOME}/.cache/gh/graphql-401.cache" <<'CACHE'
+HTTP/2.0 401 Unauthorized
+X-Gh-Cache-Ttl: 24h0m0s
+{"message":"Requires authentication","documentation_url":"https://docs.github.com/graphql"}
+CACHE
+	cat >"${HOME}/.cache/gh/healthy.cache" <<'CACHE'
+HTTP/2.0 200 OK
+{"data":{"viewer":{"login":"tester"}}}
+CACHE
+	return 0
+}
 
 test_ruleset_violation_enables_auto_merge_without_admin() {
 	setup_test_env
@@ -153,6 +193,7 @@ test_ruleset_violation_enables_auto_merge_without_admin() {
 }
 
 test_draft_pr_without_origin_labels_skips_merge_write() {
+	unset GH_STUB_MODE
 	setup_test_env
 	define_function_under_test || { teardown_test_env; return 0; }
 
@@ -180,9 +221,64 @@ test_draft_pr_without_origin_labels_skips_merge_write() {
 	return 0
 }
 
+test_stale_cache_401_retries_admin_merge_once() {
+	GH_STUB_MODE="stale-cache-401"
+	setup_test_env
+	prepare_stale_cache_fixture
+	define_function_under_test || { teardown_test_env; unset GH_STUB_MODE; return 0; }
+
+	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
+	local result=0
+	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "stale cache 401 retries admin merge" 1 "Expected 0, got ${result}; log: $(cat "$LOGFILE")"
+		teardown_test_env
+		unset GH_STUB_MODE
+		return 0
+	fi
+
+	local merge_count="0"
+	[[ -f "${TEST_ROOT}/merge-count.txt" ]] && merge_count=$(cat "${TEST_ROOT}/merge-count.txt")
+	if [[ "$merge_count" != "2" ]]; then
+		print_result "stale cache 401 retries admin merge exactly once" 1 "merge_count=${merge_count}; gh log: $(cat "$GH_LOG")"
+		teardown_test_env
+		unset GH_STUB_MODE
+		return 0
+	fi
+
+	if [[ -f "${HOME}/.cache/gh/graphql-401.cache" ]] || \
+		! find "${HOME}/.cache/gh" -path '*/aidevops-quarantine-*/*graphql-401.cache*' -type f | grep -q .; then
+		print_result "stale cache 401 quarantines only matching cache file" 1 "cache remediation did not quarantine stale 401 file"
+		teardown_test_env
+		unset GH_STUB_MODE
+		return 0
+	fi
+
+	if [[ ! -f "${HOME}/.cache/gh/healthy.cache" ]]; then
+		print_result "stale cache 401 preserves healthy cache file" 1 "healthy cache file was moved"
+		teardown_test_env
+		unset GH_STUB_MODE
+		return 0
+	fi
+
+	if ! grep -qE 'quarantined 1 stale gh HTTP 401 cache file' "$LOGFILE"; then
+		print_result "stale cache 401 writes remediation audit log" 1 "pulse log: $(cat "$LOGFILE")"
+		teardown_test_env
+		unset GH_STUB_MODE
+		return 0
+	fi
+
+	print_result "stale cache 401 retries admin merge once and succeeds" 0
+	teardown_test_env
+	unset GH_STUB_MODE
+	return 0
+}
+
 main() {
 	test_ruleset_violation_enables_auto_merge_without_admin
 	test_draft_pr_without_origin_labels_skips_merge_write
+	test_stale_cache_401_retries_admin_merge_once
 
 	printf '\n=================================\n'
 	printf 'Tests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
