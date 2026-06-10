@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.45] - 2026-06-10
+
+### Changed
+
+- guard review-thread dispatch with per-PR lock (#24626)
+
 ## [3.20.44] - 2026-06-10
 
 ### Changed
