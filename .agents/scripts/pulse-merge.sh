@@ -840,7 +840,7 @@ _process_single_ready_pr() {
 	# value before the CONFLICTING branch; otherwise the later non-MERGEABLE
 	# skip makes conflict remediation unreachable (GH#24634).
 	if [[ "$pr_mergeable" == UNKNOWN || -z "$pr_mergeable" ]]; then
-		local _pre_conflict_mergeable _pre_conflict_exit
+		local _pre_conflict_mergeable="" _pre_conflict_exit=0
 		_pre_conflict_mergeable=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$pr_number" --repo "$repo_slug" \
 			--json mergeable --jq '.mergeable // ""')
 		_pre_conflict_exit=$?
