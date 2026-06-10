@@ -35,8 +35,15 @@ _systemd_user_available() {
 }
 
 uname() {
-	printf 'Linux\n'
-	return 0
+	local flag="${1:-}"
+
+	if [[ -z "$flag" || "$flag" == "-s" ]]; then
+		printf 'Linux\n'
+		return 0
+	fi
+
+	command uname "$@"
+	return $?
 }
 
 systemctl() {
