@@ -130,6 +130,16 @@ test_auto_provider_prefers_opencode() {
 	rm -f "${HOME}/.aidevops/oauth-pool.json"
 	cat >"${TEST_ROOT}/bin/opencode" <<'STUB'
 #!/usr/bin/env bash
+if [[ "${AIDEVOPS_HEADLESS:-}" != "1" ]]; then
+	printf 'missing AIDEVOPS_HEADLESS=1\n' >&2
+	exit 43
+fi
+for arg in "$@"; do
+	if [[ "$arg" == "--pure" ]]; then
+		printf 'unexpected --pure flag\n' >&2
+		exit 44
+	fi
+done
 printf '%s\n' '> Build+ · gpt-5.4-mini'
 printf '%s\n' 'VERDICT: YES - opencode primary works'
 exit 0
@@ -151,10 +161,10 @@ STUB
 	unset ANTHROPIC_API_KEY
 	set -e
 	if [[ "$rc" -eq 0 && "$output" == "VERDICT: YES - opencode primary works" ]]; then
-		record_result "auto provider prefers OpenCode runtime even when Anthropic is configured" 0
+		record_result "auto provider uses OpenCode headless without pure mode" 0
 		return 0
 	fi
-	record_result "auto provider prefers OpenCode runtime even when Anthropic is configured" 1 \
+	record_result "auto provider uses OpenCode headless without pure mode" 1 \
 		"rc=${rc} output=${output} err=$(tr '\n' ' ' <"${TEST_ROOT}/auto-provider.err")"
 	return 0
 }
