@@ -204,9 +204,8 @@ _normalize_stale_should_skip_reset() {
 	fi
 
 	# Check 3: worker log recency — log written in last 10 min means worker may still be active
-	local safe_slug_check
-	safe_slug_check=$(printf '%s' "$slug" | tr '/:' '--')
-	local worker_log="/tmp/pulse-${safe_slug_check}-${stale_num}.log"
+	local worker_log=""
+	worker_log=$(aidevops_pulse_worker_log_path "$slug" "$stale_num" 2>/dev/null || true)
 	if [[ -f "$worker_log" ]]; then
 		local log_mtime
 		log_mtime=$(_file_mtime_epoch "$worker_log")

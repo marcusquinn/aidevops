@@ -50,6 +50,13 @@
 [[ -n "${_SHARED_CLAIM_LIFECYCLE_LOADED:-}" ]] && return 0
 _SHARED_CLAIM_LIFECYCLE_LOADED=1
 
+_scl_script_dir="${BASH_SOURCE[0]%/*}"
+if ! declare -F aidevops_pulse_worker_log_candidates >/dev/null 2>&1 && [[ -r "${_scl_script_dir}/shared-constants.sh" ]]; then
+	# shellcheck source=shared-constants.sh
+	source "${_scl_script_dir}/shared-constants.sh"
+fi
+unset _scl_script_dir
+
 #######################################
 # Release the interactive claim for a linked issue after a PR merge.
 #
@@ -357,10 +364,8 @@ _attempt_orphan_recovery_pr() {
 #      to reclassify `worker_failed` events as `no_work` when the log shows the
 #      worker never produced tool calls (Phase 5 / t2820).
 #
-# Locates the worker log by enumerating the same candidate paths
-# `_post_launch_recovery_claim_released` uses:
-#     /tmp/pulse-${safe_slug}-${issue_number}.log
-#     /tmp/pulse-${issue_number}.log
+# Locates the worker log by enumerating the same per-user candidate paths
+# `_post_launch_recovery_claim_released` uses via shared pulse temp helpers.
 #
 # Reads the last 20 lines (capped at 4KB to match Phase 3's bounds — keeps
 # comments readable and limits credential-leak surface). Classifies the tail
@@ -406,12 +411,11 @@ _read_worker_log_tail_classified() {
 
 	[[ -n "$issue_number" && -n "$repo_slug" ]] || return 0
 
-	local safe_slug
-	safe_slug=$(printf '%s' "$repo_slug" | tr '/:' '--')
-	local -a log_candidates=(
-		"/tmp/pulse-${safe_slug}-${issue_number}.log"
-		"/tmp/pulse-${issue_number}.log"
-	)
+	local -a log_candidates=()
+	local _candidate=""
+	while IFS= read -r _candidate; do
+		[[ -n "$_candidate" ]] && log_candidates+=("$_candidate")
+	done < <(aidevops_pulse_worker_log_candidates "$repo_slug" "$issue_number" 2>/dev/null || true)
 
 	local log_file=""
 	for log_file in "${log_candidates[@]}"; do

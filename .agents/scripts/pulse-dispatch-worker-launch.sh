@@ -136,7 +136,7 @@ _dlw_assign_and_label() {
 #######################################
 # Create per-issue worker log files with a shared fallback symlink (GH#14483).
 # The primary log is namespaced by repo_slug + issue_number; the fallback is
-# a plain `/tmp/pulse-{issue}.log` symlink that older validators expect.
+# a plain `pulse-{issue}.log` symlink in the same per-user pulse temp dir.
 #
 # Arguments: repo_slug, issue_number
 # Stdout: absolute path to the primary worker log
@@ -144,10 +144,10 @@ _dlw_assign_and_label() {
 _dlw_setup_worker_log() {
 	local repo_slug="$1"
 	local issue_number="$2"
-	local safe_slug="" worker_log="" worker_log_fallback=""
-	safe_slug=$(printf '%s' "$repo_slug" | tr '/:' '--')
-	worker_log="/tmp/pulse-${safe_slug}-${issue_number}.log"
-	worker_log_fallback="/tmp/pulse-${issue_number}.log"
+	local worker_log="" worker_log_fallback=""
+	aidevops_pulse_tmp_cleanup "${AIDEVOPS_PULSE_TMP_MAX_AGE_MINUTES:-2880}" || true
+	worker_log=$(aidevops_pulse_worker_log_path "$repo_slug" "$issue_number") || return 1
+	worker_log_fallback=$(aidevops_pulse_worker_log_fallback_path "$issue_number") || return 1
 	rm -f "$worker_log" "$worker_log_fallback"
 	: >"$worker_log"
 	ln -s "$worker_log" "$worker_log_fallback" 2>/dev/null || true

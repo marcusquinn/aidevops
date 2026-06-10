@@ -696,7 +696,7 @@ Investigate the root cause of supervisor circuit-breaker trip Ref #${trip_issue_
 
 - \`~/.aidevops/logs/pulse-wrapper.log\` — pulse-side dispatch trace; grep for the failed task ID and surrounding cycle.
 - \`~/.aidevops/logs/headless-runtime-metrics.jsonl\` — per-worker outcome ledger; filter \`select(.session_key | contains(\"${last_task_id}\"))\` for terminal events.
-- \`/tmp/pulse-<runner>-<repo>-<task>.log\` — per-worker stdout/stderr if still on disk.
+- \`~/.aidevops/.agent-workspace/tmp/pulse/pulse-<repo>-<task>.log\` (or \`$XDG_RUNTIME_DIR/aidevops/pulse/\`) — per-worker stdout/stderr if still on disk.
 - \`~/.aidevops/.agent-workspace/headless-runtime/canary-last-fail*\` — canary failure artifacts when the canary itself is the live blocker.
 - \`~/.aidevops/logs/dispatch-stages.tsv\` — dispatch-stage timing; recent rows show how far each spawn got before failing.
 

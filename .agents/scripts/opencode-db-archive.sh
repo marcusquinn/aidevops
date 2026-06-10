@@ -104,8 +104,11 @@ get_active_worker_sessions() {
 	local one_hour_ago
 	one_hour_ago=$(($(date +%s) - 3600))
 
-	# Check /tmp/pulse-*.log files modified within the last hour
-	for logfile in /tmp/pulse-*.log; do
+	# Check per-user pulse worker logs modified within the last hour.
+	local pulse_tmp_root=""
+	pulse_tmp_root=$(aidevops_pulse_tmp_root 2>/dev/null || true)
+	[[ -n "$pulse_tmp_root" ]] || return 0
+	for logfile in "$pulse_tmp_root"/pulse-*.log; do
 		[[ -f "$logfile" ]] || continue
 		local file_mtime
 		file_mtime=$(_file_mtime_epoch "$logfile")

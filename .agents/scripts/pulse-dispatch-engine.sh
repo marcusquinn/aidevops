@@ -199,12 +199,11 @@ check_worker_launch() {
 		grace_seconds=1
 	fi
 
-	local safe_slug
-	safe_slug=$(echo "$repo_slug" | tr '/:' '--')
-	local -a log_candidates=(
-		"/tmp/pulse-${safe_slug}-${issue_number}.log"
-		"/tmp/pulse-${issue_number}.log"
-	)
+	local -a log_candidates=()
+	local _candidate=""
+	while IFS= read -r _candidate; do
+		[[ -n "$_candidate" ]] && log_candidates+=("$_candidate")
+	done < <(aidevops_pulse_worker_log_candidates "$repo_slug" "$issue_number" 2>/dev/null || true)
 
 	local elapsed=0
 	local poll_seconds=2
