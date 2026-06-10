@@ -1791,8 +1791,13 @@ _api_budget_timer_summary() {
 	local raw_line="" timer_key="" timer_value=""
 	while IFS= read -r raw_line || [[ -n "$raw_line" ]]; do
 		[[ "$raw_line" == *=* ]] || continue
+		[[ "$raw_line" =~ ^[[:space:]]*[#\;] ]] && continue
 		timer_key="${raw_line%%=*}"
+		timer_key="${timer_key#"${timer_key%%[![:space:]]*}"}"
+		timer_key="${timer_key%"${timer_key##*[![:space:]]}"}"
 		timer_value="${raw_line#*=}"
+		timer_value="${timer_value#"${timer_value%%[![:space:]]*}"}"
+		timer_value="${timer_value%"${timer_value##*[![:space:]]}"}"
 		timer_value=$(printf '%s' "$timer_value" | tr -c 'A-Za-z0-9:.,_@* -' '_')
 		[[ -n "$timer_value" ]] || timer_value="empty"
 		case "$timer_key" in
@@ -1824,11 +1829,17 @@ _api_budget_cycle_counts_csv() {
 		printf 'cycles=0 lock_skips=0 cache_enabled_cycles=0'
 		return 0
 	fi
-	local cycles=0 lock_skips=0 cache_cycles=0
-	cycles=$(_api_budget_log_count "$logfile" 'REST-first read routing enabled|Deterministic merge pass complete|Per-cycle PR view cache enabled')
-	lock_skips=$(_api_budget_log_count "$logfile" 'LLM session already running|Pulse already running|Lock verification failed|Lost mkdir lock race|skipping.*lock held')
-	cache_cycles=$(_api_budget_log_count "$logfile" 'Per-cycle PR view cache enabled')
-	printf 'cycles=%s lock_skips=%s cache_enabled_cycles=%s' "$cycles" "$lock_skips" "$cache_cycles"
+	awk '
+		{
+			line = tolower($0)
+			if (line ~ /rest-first read routing enabled|deterministic merge pass complete|per-cycle pr view cache enabled/) cycles++
+			if (line ~ /llm session already running|pulse already running|lock verification failed|lost mkdir lock race|skipping.*lock held/) lock_skips++
+			if (line ~ /per-cycle pr view cache enabled/) cache_cycles++
+		}
+		END {
+			printf "cycles=%d lock_skips=%d cache_enabled_cycles=%d", cycles + 0, lock_skips + 0, cache_cycles + 0
+		}
+	' "$logfile"
 	return 0
 }
 

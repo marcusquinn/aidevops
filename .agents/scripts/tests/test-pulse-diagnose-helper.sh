@@ -112,9 +112,10 @@ cat > "$FIXTURE_TIMER" <<'TIMER'
 Description=aidevops supervisor pulse Timer
 
 [Timer]
-OnActiveSec=10s
+ ; Leading comment with an equals sign should be ignored: ignored=yes
+OnActiveSec = 10s
 OnBootSec=180s
-OnUnitActiveSec=180s
+OnUnitActiveSec = 180s
 Persistent=true
 TIMER
 
