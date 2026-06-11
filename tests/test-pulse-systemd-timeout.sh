@@ -37,7 +37,7 @@ _systemd_user_available() {
 uname() {
 	local flag="${1:-}"
 
-	if [[ -z "$flag" || "$flag" == "-s" ]]; then
+	if [[ -z "$flag" || "$flag" == "-s" || "$flag" == "--kernel-name" ]]; then
 		printf 'Linux\n'
 		return 0
 	fi
