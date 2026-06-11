@@ -104,12 +104,12 @@ readonly LOG_FILE="${STATE_DIR}/maintenance.log"
 # Thresholds — overrideable via env for advanced users.
 # VACUUM_FREELIST_THRESHOLD: only VACUUM if free pages > this fraction (default 10%)
 : "${VACUUM_FREELIST_THRESHOLD:=0.10}"
-# FORCE_VACUUM_SIZE_MB: always VACUUM if DB larger than this (default 500 MB)
 : "${FORCE_VACUUM_SIZE_MB:=500}"
-# AUTO_MIN_SECONDS_BETWEEN: skip auto run if last run was within N seconds (default 6 days)
 : "${AUTO_MIN_SECONDS_BETWEEN:=518400}"
-# WAL_LARGE_THRESHOLD_MB: warn/report large WAL if it exceeds this size (default 500 MB)
 : "${WAL_LARGE_THRESHOLD_MB:=500}"
+[[ "$FORCE_VACUUM_SIZE_MB" =~ ^[0-9]+$ ]] || FORCE_VACUUM_SIZE_MB=500
+[[ "$AUTO_MIN_SECONDS_BETWEEN" =~ ^[0-9]+$ ]] || AUTO_MIN_SECONDS_BETWEEN=518400
+[[ "$WAL_LARGE_THRESHOLD_MB" =~ ^[0-9]+$ ]] || WAL_LARGE_THRESHOLD_MB=500
 # MAINTENANCE_WINDOW_KEEP_SESSIONS: count target for disruptive maintenance-window archive
 : "${MAINTENANCE_WINDOW_KEEP_SESSIONS:=500}"
 # Scheduler knobs: safe default is weekly Sun 04:00 running non-disruptive auto.
@@ -264,17 +264,6 @@ _state_json_field() {
 	local value
 	value=$(sed -n "s/^[[:space:]]*\"${field}\"[[:space:]]*:[[:space:]]*\"\{0,1\}\([^\",}]*\)\"\{0,1\}.*/\1/p" "$STATE_FILE" 2>/dev/null | awk 'NR == 1 {print; exit}' || true)
 	printf '%s' "$value"
-	return 0
-}
-
-_nonnegative_integer_or_default() {
-	local value="$1"
-	local fallback="$2"
-	if [[ "$value" =~ ^[0-9]+$ ]]; then
-		printf '%s' "$value"
-		return 0
-	fi
-	printf '%s' "$fallback"
 	return 0
 }
 
@@ -746,11 +735,8 @@ cmd_report() {
 	printf '  Pages:         %s (page_size=%sB)\n' "$page_count" "$page_size"
 	printf '  Free pages:    %s (%s%% of total)\n' "$freelist_count" "$freelist_pct"
 	local compact_large=false
-	local force_vacuum_size_mb wal_large_threshold_mb
-	force_vacuum_size_mb=$(_nonnegative_integer_or_default "$FORCE_VACUUM_SIZE_MB" 500)
-	wal_large_threshold_mb=$(_nonnegative_integer_or_default "$WAL_LARGE_THRESHOLD_MB" 500)
-	if [[ $((db_bytes / 1048576)) -ge "$force_vacuum_size_mb" ]] && \
-		[[ $((wal_bytes / 1048576)) -lt "$wal_large_threshold_mb" ]] && \
+	if [[ $((db_bytes / 1048576)) -ge "$FORCE_VACUUM_SIZE_MB" ]] && \
+		[[ $((wal_bytes / 1048576)) -lt "$WAL_LARGE_THRESHOLD_MB" ]] && \
 		! _freelist_exceeds_threshold "$freelist_count" "$page_count"; then
 		compact_large=true
 	fi
@@ -842,17 +828,16 @@ _maintain_preflight() {
 # Echoes "true"/"false" based on size and freelist thresholds.
 _maintain_should_vacuum() {
 	local before_bytes="$1"
-	local freelist_count page_count size_mb force_vacuum_size_mb
+	local freelist_count page_count size_mb
 	freelist_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_FREELIST_COUNT")
 	page_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_COUNT")
 	size_mb=$((before_bytes / 1048576))
-	force_vacuum_size_mb=$(_nonnegative_integer_or_default "$FORCE_VACUUM_SIZE_MB" 500)
 
 	if _freelist_exceeds_threshold "$freelist_count" "$page_count"; then
 		printf '%s %s %s %s' true "$freelist_count" "$page_count" "$size_mb"
 		return 0
 	fi
-	if [[ "$size_mb" -ge "$force_vacuum_size_mb" ]]; then
+	if [[ "$size_mb" -ge "$FORCE_VACUUM_SIZE_MB" ]]; then
 		printf '%s %s %s %s' true "$freelist_count" "$page_count" "$size_mb"
 		return 0
 	fi
@@ -1362,34 +1347,30 @@ cmd_notice() {
 	fi
 
 	local now last_ts age db_bytes wal_bytes db_mb wal_mb due=false reason="" compact_notice=false
-	local auto_min_seconds_between force_vacuum_size_mb wal_large_threshold_mb
 	now=$(date +%s)
 	last_ts=$(_state_mtime_epoch "$STATE_FILE")
 	db_bytes=$(_db_size_bytes "$OPENCODE_DB")
 	wal_bytes=$(_db_size_bytes "$OPENCODE_WAL")
 	db_mb=$((db_bytes / 1048576))
 	wal_mb=$((wal_bytes / 1048576))
-	auto_min_seconds_between=$(_nonnegative_integer_or_default "$AUTO_MIN_SECONDS_BETWEEN" 518400)
-	force_vacuum_size_mb=$(_nonnegative_integer_or_default "$FORCE_VACUUM_SIZE_MB" 500)
-	wal_large_threshold_mb=$(_nonnegative_integer_or_default "$WAL_LARGE_THRESHOLD_MB" 500)
 
 	if [[ "$last_ts" -eq 0 ]]; then
 		due=true
 		reason="no previous run recorded"
 	else
 		age=$((now - last_ts))
-		if [[ "$age" -ge "$auto_min_seconds_between" ]]; then
+		if [[ "$age" -ge "$AUTO_MIN_SECONDS_BETWEEN" ]]; then
 			due=true
 			reason="last run older than scheduler interval"
 		fi
 	fi
 
-	if [[ "$wal_mb" -ge "$wal_large_threshold_mb" ]]; then
+	if [[ "$wal_mb" -ge "$WAL_LARGE_THRESHOLD_MB" ]]; then
 		due=true
-		reason="WAL ${wal_mb}MB >= ${wal_large_threshold_mb}MB"
-	elif [[ "$db_mb" -ge "$force_vacuum_size_mb" ]]; then
+		reason="WAL ${wal_mb}MB >= ${WAL_LARGE_THRESHOLD_MB}MB"
+	elif [[ "$db_mb" -ge "$FORCE_VACUUM_SIZE_MB" ]]; then
 		if [[ "$due" == true ]]; then
-			reason="${reason}; DB ${db_mb}MB >= ${force_vacuum_size_mb}MB"
+			reason="${reason}; DB ${db_mb}MB >= ${FORCE_VACUUM_SIZE_MB}MB"
 		elif _sqlite_available; then
 			local page_count freelist_count state_outcome
 			page_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_COUNT")
@@ -1402,11 +1383,11 @@ cmd_notice() {
 				compact_notice=true
 			else
 				due=true
-				reason="DB ${db_mb}MB >= ${force_vacuum_size_mb}MB"
+				reason="DB ${db_mb}MB >= ${FORCE_VACUUM_SIZE_MB}MB"
 			fi
 		else
 			due=true
-			reason="DB ${db_mb}MB >= ${force_vacuum_size_mb}MB"
+			reason="DB ${db_mb}MB >= ${FORCE_VACUUM_SIZE_MB}MB"
 		fi
 	fi
 
@@ -1414,7 +1395,7 @@ cmd_notice() {
 		printf '[OPENCODE MAINTENANCE] Recommended: %s. Run aidevops opencode-db maintenance-window off-hours; pulse/headless workers pause during the window.\n' "$reason"
 	elif [[ "$compact_notice" == true ]]; then
 		printf '[OPENCODE MAINTENANCE] Compact but large: DB %sMB >= %sMB, WAL is low, and free pages are below threshold after recent successful maintenance. Re-running maintenance-window is unlikely to reclaim space; run aidevops opencode-db report for retained-data details.\n' \
-			"$db_mb" "$force_vacuum_size_mb"
+			"$db_mb" "$FORCE_VACUUM_SIZE_MB"
 	fi
 	return 0
 }
