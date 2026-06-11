@@ -104,12 +104,12 @@ readonly LOG_FILE="${STATE_DIR}/maintenance.log"
 # Thresholds — overrideable via env for advanced users.
 # VACUUM_FREELIST_THRESHOLD: only VACUUM if free pages > this fraction (default 10%)
 : "${VACUUM_FREELIST_THRESHOLD:=0.10}"
-# FORCE_VACUUM_SIZE_MB: always VACUUM if DB larger than this (default 500 MB)
 : "${FORCE_VACUUM_SIZE_MB:=500}"
-# AUTO_MIN_SECONDS_BETWEEN: skip auto run if last run was within N seconds (default 6 days)
 : "${AUTO_MIN_SECONDS_BETWEEN:=518400}"
-# WAL_LARGE_THRESHOLD_MB: warn/report large WAL if it exceeds this size (default 500 MB)
 : "${WAL_LARGE_THRESHOLD_MB:=500}"
+[[ "$FORCE_VACUUM_SIZE_MB" =~ ^[0-9]+$ ]] && FORCE_VACUUM_SIZE_MB=$((10#$FORCE_VACUUM_SIZE_MB)) || FORCE_VACUUM_SIZE_MB=500
+[[ "$AUTO_MIN_SECONDS_BETWEEN" =~ ^[0-9]+$ ]] && AUTO_MIN_SECONDS_BETWEEN=$((10#$AUTO_MIN_SECONDS_BETWEEN)) || AUTO_MIN_SECONDS_BETWEEN=518400
+[[ "$WAL_LARGE_THRESHOLD_MB" =~ ^[0-9]+$ ]] && WAL_LARGE_THRESHOLD_MB=$((10#$WAL_LARGE_THRESHOLD_MB)) || WAL_LARGE_THRESHOLD_MB=500
 # MAINTENANCE_WINDOW_KEEP_SESSIONS: count target for disruptive maintenance-window archive
 : "${MAINTENANCE_WINDOW_KEEP_SESSIONS:=500}"
 # Scheduler knobs: safe default is weekly Sun 04:00 running non-disruptive auto.
@@ -271,7 +271,7 @@ _freelist_exceeds_threshold() {
 	local freelist_count="$1"
 	local page_count="$2"
 	[[ "$freelist_count" =~ ^[0-9]+$ && "$page_count" =~ ^[0-9]+$ && "$VACUUM_FREELIST_THRESHOLD" =~ ^[0-9]+([.][0-9]+)?$ ]] || return 1
-	[[ "$page_count" -gt 0 ]] || return 1
+	[[ $((10#$page_count)) -eq 0 ]] && return 1
 	local threshold_met
 	threshold_met=$(awk -v free="$freelist_count" -v pages="$page_count" -v threshold="$VACUUM_FREELIST_THRESHOLD" 'BEGIN { if (pages <= 0) { print 0; exit } print ((free / pages) >= threshold) ? 1 : 0 }' </dev/null)
 	if [[ "$threshold_met" == "1" ]]; then
@@ -715,8 +715,8 @@ cmd_report() {
 	fi
 
 	local freelist_pct=0
-	if [[ "$page_count" -gt 0 ]]; then
-		freelist_pct=$(echo "scale=2; $freelist_count * 100 / $page_count" | bc -l 2>/dev/null || echo 0)
+	if [[ $((10#$page_count)) -ne 0 ]]; then
+		freelist_pct=$(awk -v free="$freelist_count" -v pages="$page_count" 'BEGIN { if (pages <= 0) { print "0"; exit } printf "%.2f", (free * 100) / pages }' </dev/null)
 	fi
 
 	local journal_mode sync_mode busy_timeout mmap_size
