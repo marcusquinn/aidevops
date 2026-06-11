@@ -299,13 +299,15 @@ test_group_parsing_vars_do_not_pollute_global_scope() {
 	pr_number="sentinel-pr"
 	_score="sentinel-score"
 	_is_draft="sentinel-draft"
+	_issue="sentinel-issue"
+	_created="sentinel-created"
 	_pmp_consolidate_duplicate_pr_groups "owner/repo" "$pr_json"
-	if [[ "$pr_number" == "sentinel-pr" && "$_score" == "sentinel-score" && "$_is_draft" == "sentinel-draft" ]]; then
+	if [[ "$pr_number" == "sentinel-pr" && "$_score" == "sentinel-score" && "$_is_draft" == "sentinel-draft" && "$_issue" == "sentinel-issue" && "$_created" == "sentinel-created" ]]; then
 		pass "group parsing variables stay local"
 	else
-		fail "group parsing variables stay local" "Expected sentinel globals, got pr_number=${pr_number}, _score=${_score}, _is_draft=${_is_draft}"
+		fail "group parsing variables stay local" "Expected sentinel globals, got pr_number=${pr_number}, _score=${_score}, _is_draft=${_is_draft}, _issue=${_issue}, _created=${_created}"
 	fi
-	unset pr_number _score _is_draft
+	unset pr_number _score _is_draft _issue _created
 	return 0
 }
 
