@@ -111,6 +111,42 @@ _pmp_normalize_mergeable_state_into() {
 }
 
 #######################################
+# Refresh empty/UNKNOWN PR mergeable state into a caller variable.
+#
+# REST-first PR list reads cannot preserve GraphQL-only mergeable data. Before
+# write decisions, refresh only ambiguous per-PR states through gh_pr_view with
+# the PR-view cache disabled so existing CONFLICTING handling can run.
+#
+# Args:
+#   $1 - destination variable name
+#   $2 - PR number
+#   $3 - repo slug
+#   $4 - current mergeable state
+#######################################
+_pmp_refresh_unknown_mergeable_state_into() {
+	local dest_var="$1"
+	local pr_number="$2"
+	local repo_slug="$3"
+	local current_mergeable="$4"
+	local refreshed_mergeable=""
+	local refresh_exit=0
+
+	[[ "$dest_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	_pmp_normalize_mergeable_state_into refreshed_mergeable "$current_mergeable"
+
+	if [[ "$refreshed_mergeable" == "UNKNOWN" || -z "$refreshed_mergeable" ]]; then
+		refreshed_mergeable=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$pr_number" --repo "$repo_slug" \
+			--json mergeable --jq '.mergeable // ""')
+		refresh_exit=$?
+		[[ $refresh_exit -eq 0 && -n "$refreshed_mergeable" ]] || refreshed_mergeable="UNKNOWN"
+		_pmp_normalize_mergeable_state_into refreshed_mergeable "$refreshed_mergeable"
+	fi
+
+	printf -v "$dest_var" '%s' "$refreshed_mergeable"
+	return 0
+}
+
+#######################################
 # Classify one PR object into a scheduling/observability backlog bucket.
 # This is intentionally advisory: it never decides merge eligibility. The
 # existing per-PR gate stack remains authoritative.

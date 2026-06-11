@@ -112,10 +112,11 @@ define_helper_under_test() {
 	helper_src=$(awk '
 		/^_pmp_normalize_mergeable_state\(\) \{/,/^}$/ { print }
 		/^_pmp_normalize_mergeable_state_into\(\) \{/,/^}$/ { print }
+		/^_pmp_refresh_unknown_mergeable_state_into\(\) \{/,/^}$/ { print }
 		/^_attempt_pr_update_branch\(\) \{/,/^}$/ { print }
 		/^_resolve_pr_mergeable_status\(\) \{/,/^}$/ { print }
 	' "$PROCESS_SCRIPT")
-	if [[ -z "$helper_src" || "$helper_src" != *"_pmp_normalize_mergeable_state"* || "$helper_src" != *"_pmp_normalize_mergeable_state_into"* || "$helper_src" != *"_attempt_pr_update_branch"* || "$helper_src" != *"_resolve_pr_mergeable_status"* ]]; then
+	if [[ -z "$helper_src" || "$helper_src" != *"_pmp_normalize_mergeable_state"* || "$helper_src" != *"_pmp_normalize_mergeable_state_into"* || "$helper_src" != *"_pmp_refresh_unknown_mergeable_state_into"* || "$helper_src" != *"_attempt_pr_update_branch"* || "$helper_src" != *"_resolve_pr_mergeable_status"* ]]; then
 		printf 'ERROR: could not extract pulse-merge-process helpers from %s\n' "$PROCESS_SCRIPT" >&2
 		return 1
 	fi
@@ -294,6 +295,29 @@ test_resolve_mergeable_retries_empty_and_logs_empty() {
 	return 0
 }
 
+test_refresh_unknown_mergeable_surfaces_conflicting() {
+	install_gh_stub
+	: >"$LAST_GH_ARGS_FILE"
+	local pr_mergeable="UNKNOWN"
+	local rc=0
+	GH_VIEW_MERGEABLE=CONFLICTING _pmp_refresh_unknown_mergeable_state_into pr_mergeable "24658" "marcusquinn/aidevops" "$pr_mergeable" || rc=$?
+
+	if [[ $rc -ne 0 || "$pr_mergeable" != "CONFLICTING" ]]; then
+		print_result "UNKNOWN refresh surfaces CONFLICTING before conflict handler" 1 \
+			"Expected pr_mergeable=CONFLICTING and rc=0, got pr_mergeable=${pr_mergeable}, rc=${rc}"
+		return 0
+	fi
+
+	if ! grep -qE '^pr view 24658 --repo marcusquinn/aidevops --json mergeable --jq' "$LAST_GH_ARGS_FILE"; then
+		print_result "UNKNOWN refresh surfaces CONFLICTING before conflict handler" 1 \
+			"Expected gh pr view refresh in args. Got: $(cat "$LAST_GH_ARGS_FILE")"
+		return 0
+	fi
+
+	print_result "UNKNOWN refresh surfaces CONFLICTING before conflict handler" 0
+	return 0
+}
+
 # ---------------------------------------------------------------
 # Static analysis of the t2116 block in _process_single_ready_pr.
 # The full control-flow of _process_single_ready_pr depends on many
@@ -432,9 +456,21 @@ test_unknown_mergeable_refreshed_before_conflict_handler() {
 		return 0
 	fi
 
-	if [[ "$function_src" != *"AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view"* || "$function_src" != *"_pmp_normalize_mergeable_state_into pr_mergeable"* ]]; then
+	if [[ "$function_src" != *"_pmp_refresh_unknown_mergeable_state_into pr_mergeable"* ]]; then
 		print_result "UNKNOWN mergeable refresh precedes CONFLICTING branch" 1 \
-			"Refresh must bypass stale PR-view cache and normalize into pr_mergeable"
+			"Refresh must use helper to bypass stale PR-view cache and normalize into pr_mergeable"
+		return 0
+	fi
+
+	local helper_src
+	helper_src=$(awk '
+		/^_pmp_refresh_unknown_mergeable_state_into\(\) \{/ { in_fn=1 }
+		in_fn { print }
+		in_fn && /^\}$/ { exit }
+	' "$PROCESS_SCRIPT")
+	if [[ "$helper_src" != *"AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view"* || "$helper_src" != *"_pmp_normalize_mergeable_state_into refreshed_mergeable"* || "$helper_src" != *"printf -v \"\$dest_var\""* ]]; then
+		print_result "UNKNOWN mergeable refresh precedes CONFLICTING branch" 1 \
+			"Helper must bypass cache, normalize refreshed state, and write caller variable"
 		return 0
 	fi
 
@@ -458,6 +494,7 @@ main() {
 	test_resolve_mergeable_accepts_boolean_true
 	test_resolve_mergeable_retries_boolean_true
 	test_resolve_mergeable_retries_empty_and_logs_empty
+	test_refresh_unknown_mergeable_surfaces_conflicting
 	test_nmr_guard_exists_before_close
 	test_stale_route_runs_before_protected_precheck
 	test_mergeable_refetch_after_update_branch
