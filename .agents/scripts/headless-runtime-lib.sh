@@ -157,8 +157,10 @@ if not text:
 def emit(reason, provider_type, status, pattern):
     print('\t'.join([reason, provider_type, status, 'trusted_provider', pattern]))
 
-if any(token in text for token in ('rate limit', 'rate_limit', 'too many requests', 'quota exceeded')) or re.search(r'\b429\b', text):
-    emit('rate_limit', 'rate_limit', '429', 'trusted_rate_limit|429|too_many_requests|quota_exceeded')
+if any(token in text for token in ('insufficient_quota', 'insufficient quota', 'quota_exceeded', 'quota exceeded', 'exceeded your current quota')):
+    emit('quota_exceeded', 'quota_exceeded', '429', 'trusted_quota|insufficient_quota|quota_exceeded')
+elif any(token in text for token in ('rate limit', 'rate_limit', 'too many requests')) or re.search(r'\b429\b', text):
+    emit('rate_limit', 'rate_limit', '429', 'trusted_rate_limit|429|too_many_requests')
 elif re.search(r'\b(500|502|503|504)\b', text) or any(token in text for token in ('server_error', 'internal server error', 'service unavailable', 'bad gateway', 'gateway timeout', 'connection refused', 'connection reset', 'overloaded')):
     status = '500'
     if '504' in text or 'gateway timeout' in text:
@@ -1520,7 +1522,7 @@ _classify_canary_failure_reason() {
 	local reason
 	reason=$(classify_failure_reason "$output_file")
 	case "$reason" in
-		auth_error | rate_limit | provider_error)
+		auth_error | quota_exceeded | rate_limit | provider_error)
 			printf '%s' "$reason"
 			return 0
 			;;
@@ -1536,6 +1538,23 @@ _classify_canary_failure_reason() {
 			;;
 	esac
 	printf '%s' "local_error"
+	return 0
+}
+
+_record_canary_provider_backoff() {
+	local canary_model="$1"
+	local canary_reason="$2"
+	local canary_output="$3"
+	case "$canary_reason" in
+	auth_error | quota_exceeded | rate_limit | provider_error)
+		local canary_provider
+		canary_provider=$(extract_provider "$canary_model" 2>/dev/null || printf '%s' "")
+		if [[ -n "$canary_provider" ]]; then
+			record_provider_backoff "$canary_provider" "$canary_reason" "$canary_output" "$canary_model" || true
+		fi
+		;;
+	*) ;;
+	esac
 	return 0
 }
 
@@ -1801,6 +1820,7 @@ _run_canary_test() {
 	mkdir -p "${STATE_DIR}" 2>/dev/null || true
 	date +%s >"$fail_cache_file" 2>/dev/null || true
 	printf '%s\n' "$canary_reason" >"$fail_reason_file" 2>/dev/null || true
+	_record_canary_provider_backoff "$canary_model" "$canary_reason" "$canary_output"
 	rm -f "$canary_output"
 	return 1
 }

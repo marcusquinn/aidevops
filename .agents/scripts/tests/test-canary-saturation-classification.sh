@@ -170,6 +170,10 @@ classify_failure_reason() {
 		printf '%s' "rate_limit"
 		return 0
 	fi
+	if grep -q "QUOTA_EXCEEDED_FAKE" "$output_file" 2>/dev/null; then
+		printf '%s' "quota_exceeded"
+		return 0
+	fi
 	if grep -q "PROVIDER_ERROR_FAKE" "$output_file" 2>/dev/null; then
 		printf '%s' "provider_error"
 		return 0
@@ -197,8 +201,17 @@ extract_classifier() {
 	' "${SCRIPT_DIR}/headless-runtime-lib.sh"
 }
 
+extract_canary_backoff_recorder() {
+	awk '
+		/^_record_canary_provider_backoff\(\)/ { in_fn = 1 }
+		in_fn { print }
+		in_fn && /^}$/ { in_fn = 0 }
+	' "${SCRIPT_DIR}/headless-runtime-lib.sh"
+}
+
 # shellcheck disable=SC2046
 eval "$(extract_classifier)"
+eval "$(extract_canary_backoff_recorder)"
 
 run_classifier() {
 	# run_classifier <fake_pct_csv> <exit_code> <output_file_marker>
@@ -270,6 +283,113 @@ test_classifier_auth_error_ignores_saturation() {
 	return 0
 }
 
+test_classifier_quota_exceeded_ignores_saturation() {
+	local result
+	result=$(run_classifier saturated 124 "QUOTA_EXCEEDED_FAKE")
+	if [[ "$result" == "quota_exceeded" ]]; then
+		print_result "classifier: quota_exceeded pattern ignores saturation" 0
+	else
+		print_result "classifier: quota_exceeded pattern ignores saturation" 1 "got=$result"
+	fi
+	return 0
+}
+
+extract_provider_backoff_recorder() {
+	awk '
+		/^record_provider_backoff\(\)/ { in_fn = 1 }
+		in_fn { print }
+		in_fn && /^}$/ { in_fn = 0 }
+	' "${SCRIPT_DIR}/headless-runtime-provider.sh"
+}
+
+RECORDED_BACKOFF_SQL=""
+OAUTH_POOL_HELPER=/bin/false
+
+parse_retry_after_seconds() {
+	local details_file="$1"
+	local provider="$2"
+	: "$details_file" "$provider"
+	printf '%s' "0"
+	return 0
+}
+
+clamp_rate_limit_retry_seconds() {
+	local reason="$1"
+	local retry_seconds="$2"
+	: "$reason"
+	printf '%s' "$retry_seconds"
+	return 0
+}
+
+get_auth_signature() {
+	local provider="$1"
+	printf '%s' "sig-${provider}"
+	return 0
+}
+
+db_query() {
+	local query="$1"
+	RECORDED_BACKOFF_SQL="$query"
+	return 0
+}
+
+sql_escape() {
+	local value="$1"
+	printf '%s' "${value//\'/\'\'}"
+	return 0
+}
+
+extract_provider() {
+	local model="$1"
+	if [[ "$model" == */* ]]; then
+		printf '%s' "${model%%/*}"
+		return 0
+	fi
+	return 1
+}
+
+# shellcheck disable=SC2046
+eval "$(extract_provider_backoff_recorder)"
+
+test_record_provider_backoff_quota_uses_provider_key() {
+	local details_file="${TEST_ROOT}/quota-details.txt"
+	printf '%s\n' "provider openai insufficient_quota" >"$details_file"
+	RECORDED_BACKOFF_SQL=""
+	record_provider_backoff "openai" "quota_exceeded" "$details_file" "openai/gpt-5.5"
+	if [[ "$RECORDED_BACKOFF_SQL" == *"'openai'"* && "$RECORDED_BACKOFF_SQL" != *"'openai/gpt-5.5'"* ]]; then
+		print_result "backoff: quota_exceeded records provider-level key" 0
+	else
+		print_result "backoff: quota_exceeded records provider-level key" 1 "sql=$RECORDED_BACKOFF_SQL"
+	fi
+	return 0
+}
+
+test_canary_backoff_recorder_skips_local_error() {
+	local details_file="${TEST_ROOT}/local-details.txt"
+	printf '%s\n' "local setup failure" >"$details_file"
+	RECORDED_BACKOFF_SQL=""
+	_record_canary_provider_backoff "openai/gpt-5.5" "local_error" "$details_file"
+	if [[ -z "$RECORDED_BACKOFF_SQL" ]]; then
+		print_result "canary backoff: local_error does not record provider backoff" 0
+	else
+		print_result "canary backoff: local_error does not record provider backoff" 1 "sql=$RECORDED_BACKOFF_SQL"
+	fi
+	return 0
+}
+
+test_canary_backoff_recorder_records_quota() {
+	local details_file="${TEST_ROOT}/canary-quota-details.txt"
+	printf '%s\n' "provider openai insufficient_quota" >"$details_file"
+	RECORDED_BACKOFF_SQL=""
+	_record_canary_provider_backoff "openai/gpt-5.5" "quota_exceeded" "$details_file"
+	if [[ "$RECORDED_BACKOFF_SQL" == *"'openai'"* && "$RECORDED_BACKOFF_SQL" == *"'quota_exceeded'"* ]]; then
+		print_result "canary backoff: quota_exceeded records provider backoff" 0
+	else
+		print_result "canary backoff: quota_exceeded records provider backoff" 1 "sql=$RECORDED_BACKOFF_SQL"
+	fi
+	return 0
+}
+
 test_classifier_runtime_error_unaffected() {
 	local result
 	result=$(run_classifier saturated 127 "")
@@ -308,6 +428,10 @@ test_classifier_timeout_saturated_to_timeout
 test_classifier_timeout_idle_to_timeout
 test_classifier_timeout_no_samples_to_timeout
 test_classifier_auth_error_ignores_saturation
+test_classifier_quota_exceeded_ignores_saturation
+test_record_provider_backoff_quota_uses_provider_key
+test_canary_backoff_recorder_skips_local_error
+test_canary_backoff_recorder_records_quota
 test_classifier_runtime_error_unaffected
 test_classifier_helper_missing_no_dependency
 
