@@ -351,6 +351,16 @@ else
 	_fail "notice should ignore invalid integer threshold environment values (rc=$rc) — output: $out"
 fi
 
+set +e
+out=$(FORCE_VACUUM_SIZE_MB=08 WAL_LARGE_THRESHOLD_MB=09 AUTO_MIN_SECONDS_BETWEEN=000001 _run_helper notice 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] && ! grep -q "value too great for base" <<<"$out" && ! grep -q "syntax error" <<<"$out"; then
+	_pass "notice normalizes leading-zero integer threshold environment values"
+else
+	_fail "notice should normalize leading-zero integer thresholds (rc=$rc) — output: $out"
+fi
+
 # -----------------------------------------------------------------------------
 # Test 11e: notice still recommends maintenance when free-page threshold is due
 # -----------------------------------------------------------------------------
