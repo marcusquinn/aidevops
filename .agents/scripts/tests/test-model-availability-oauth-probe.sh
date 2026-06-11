@@ -277,6 +277,36 @@ else
 		"(got rc=$rc — expected 0; live OAuth access should remain eligible)"
 fi
 
+# Assertion 4b.4 — date failures fail closed instead of producing arithmetic
+# syntax errors while checking a live OpenAI OAuth access token.
+cat >"$AUTH_FILE" <<JSON
+{
+  "openai": {
+    "type": "oauth",
+    "access": "fake-openai-live-access-token",
+    "expires": ${future_ms}
+  }
+}
+JSON
+DATE_STUB_DIR="${TEST_ROOT}/date-stub"
+mkdir -p "$DATE_STUB_DIR"
+cat >"${DATE_STUB_DIR}/date" <<'SH'
+#!/usr/bin/env bash
+exit 1
+SH
+chmod +x "${DATE_STUB_DIR}/date"
+ORIGINAL_PATH="$PATH"
+PATH="${DATE_STUB_DIR}:${PATH}"
+_probe_check_oauth_fallback openai true "gopass:OPENAI_API_KEY" >/dev/null 2>&1
+rc=$?
+PATH="$ORIGINAL_PATH"
+if [[ "$rc" -eq 3 ]]; then
+	print_result "openai-oauth-live-access: date failure fails closed" 0
+else
+	print_result "openai-oauth-live-access: date failure fails closed" 1 \
+		"(got rc=$rc — expected 3; invalid date output must not mark OAuth healthy)"
+fi
+
 # Assertion 4c — no OAuth in auth.json → fallback returns 3 (no override).
 rm -f "$AUTH_FILE"
 _probe_check_oauth_fallback openai true
