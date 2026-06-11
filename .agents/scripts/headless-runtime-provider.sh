@@ -373,10 +373,11 @@ record_provider_backoff() {
 		return 0
 	fi
 
-	# Auth errors back off at provider level (shared credentials).
-	# Rate limits and provider errors back off at model level so that
-	# other models from the same provider remain available as fallbacks.
-	if [[ "$reason" == "auth_error" ]]; then
+	# Auth errors and account quota exhaustion back off at provider level
+	# (shared credentials/account state). Rate limits and provider errors back
+	# off at model level so other models from the same provider remain
+	# available as fallbacks.
+	if [[ "$reason" == "auth_error" || "$reason" == "quota_exceeded" ]]; then
 		backoff_key="$provider"
 	else
 		backoff_key="$model"

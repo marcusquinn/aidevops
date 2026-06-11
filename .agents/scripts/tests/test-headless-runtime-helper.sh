@@ -795,6 +795,28 @@ test_failure_classifier_records_provenance() {
 	return 0
 }
 
+test_failure_classifier_distinguishes_quota_exhaustion() {
+	local output_file="${TEST_ROOT}/failure-classifier-quota.out"
+	local reason_file="${TEST_ROOT}/failure-classifier-quota.reason"
+	printf 'OpenAI provider error HTTP 429: {"error":{"code":"insufficient_quota","message":"You exceeded your current quota"}}\n' >"$output_file"
+
+	local reason
+	classify_failure_reason "$output_file" >"$reason_file"
+	reason=$(<"$reason_file")
+
+	if [[ "$reason" == "quota_exceeded" ]] &&
+		[[ "${_failure_provider_error_type:-}" == "quota_exceeded" ]] &&
+		[[ "${_failure_provider_status:-}" == "429" ]] &&
+		[[ "${_failure_classification_source:-}" == "trusted_provider" ]]; then
+		print_result "failure classifier distinguishes OpenAI quota exhaustion" 0
+		return 0
+	fi
+
+	print_result "failure classifier distinguishes OpenAI quota exhaustion" 1 \
+		"reason=$reason type=${_failure_provider_error_type:-} status=${_failure_provider_status:-} source=${_failure_classification_source:-} pattern=${_failure_classification_pattern:-}"
+	return 0
+}
+
 test_service_interruption_candidate_uses_separate_path() {
 	local output_file="${TEST_ROOT}/service-interruption.out"
 	printf '%s\n' '{"type":"text","sessionID":"ses_23037","text":"editing files"}' 'OpenAI 503 service unavailable after tool activity' >"$output_file"
@@ -1862,6 +1884,7 @@ main() {
 	test_headless_activity_timeout_default_matches_watchdog
 	test_activity_watchdog_classifiers_detect_rate_limit_and_ci_wait
 	test_failure_classifier_records_provenance
+	test_failure_classifier_distinguishes_quota_exhaustion
 	test_service_interruption_candidate_uses_separate_path
 	test_service_interruption_exhausted_metric_preserves_context
 	test_canary_pins_vanilla_agent_with_isolated_plugin_config
