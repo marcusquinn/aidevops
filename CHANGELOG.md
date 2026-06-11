@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.55] - 2026-06-11
+
+### Changed
+
+- fix: harden opencode db threshold handling (#24686)
+
+### Fixed
+
+- verify OpenAI OAuth fallback health (#24695)
+
 ## [3.20.54] - 2026-06-11
 
 ### Changed
