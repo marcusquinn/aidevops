@@ -295,11 +295,11 @@ cat >"${DATE_STUB_DIR}/date" <<'SH'
 exit 1
 SH
 chmod +x "${DATE_STUB_DIR}/date"
-ORIGINAL_PATH="$PATH"
-PATH="${DATE_STUB_DIR}:${PATH}"
-_probe_check_oauth_fallback openai true "gopass:OPENAI_API_KEY" >/dev/null 2>&1
-rc=$?
-PATH="$ORIGINAL_PATH"
+rc=$(
+	PATH="${DATE_STUB_DIR}:${PATH}"
+	_probe_check_oauth_fallback openai true "gopass:OPENAI_API_KEY" >/dev/null
+	printf '%s\n' "$?"
+)
 if [[ "$rc" -eq 3 ]]; then
 	print_result "openai-oauth-live-access: date failure fails closed" 0
 else
