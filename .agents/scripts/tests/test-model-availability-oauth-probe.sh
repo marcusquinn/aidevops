@@ -157,6 +157,32 @@ init_db >/dev/null 2>&1 || {
 	# Keep going so the summary still reports useful state.
 }
 
+OPENAI_OAUTH_STUB_DIR="${TEST_ROOT}/openai-oauth-curl-stub"
+OPENAI_OAUTH_CURL_LOG="${TEST_ROOT}/openai-oauth-curl.log"
+mkdir -p "$OPENAI_OAUTH_STUB_DIR"
+cat >"${OPENAI_OAUTH_STUB_DIR}/curl" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${OPENAI_OAUTH_CURL_LOG:?}"
+case "${OPENAI_OAUTH_STUB_MODE:-success}" in
+	success)
+		printf 'HTTP/2 200\n\n{"data":[{"id":"gpt-5.5"}]}\n0.001\n200\n'
+		;;
+	quota)
+		printf 'HTTP/2 403\n\n{"error":{"message":"You exceeded your current quota, please check your plan and billing details.","type":"insufficient_quota","code":"insufficient_quota"}}\n0.001\n403\n'
+		;;
+	auth)
+		printf 'HTTP/2 401\n\n{"error":{"message":"Invalid API key","type":"invalid_request_error","code":"invalid_api_key"}}\n0.001\n401\n'
+		;;
+	network)
+		exit 7
+		;;
+	*)
+		exit 2
+		;;
+esac
+SH
+chmod +x "${OPENAI_OAUTH_STUB_DIR}/curl"
+
 # Call the validator with quiet=true to suppress the print_success line.
 # Discard stdout (it echoes the api_key on success, which we don't want
 # printed even masked). Capture only the exit code.
@@ -211,15 +237,33 @@ else
 		"(got rc=$rc — expected 3; built-in openai would reuse the rejected env key)"
 fi
 
-# Assertion 4b — OAuth still wins when the rejected helper key is not from env.
+# Assertion 4b — OAuth still wins when the rejected helper key is not from env,
+# but only after a successful OpenAI API verification with the OAuth access
+# token (GH#24694).
 unset OPENAI_API_KEY
-_probe_check_oauth_fallback openai true "gopass:OPENAI_API_KEY"
-rc=$?
+future_ms=$(($(date +%s) * 1000 + 3600000))
+cat >"$AUTH_FILE" <<JSON
+{
+  "openai": {
+    "type": "oauth",
+    "access": "fake-openai-live-access-token",
+    "refresh": "fake-openai-refresh-token",
+    "expires": ${future_ms}
+  }
+}
+JSON
+rc=$(
+	OPENAI_OAUTH_STUB_MODE=success \
+		OPENAI_OAUTH_CURL_LOG="$OPENAI_OAUTH_CURL_LOG" \
+		PATH="${OPENAI_OAUTH_STUB_DIR}:${PATH}" \
+		_probe_check_oauth_fallback openai true "gopass:OPENAI_API_KEY" >/dev/null
+	printf '%s\n' "$?"
+)
 if [[ "$rc" -eq 0 ]]; then
-	print_result "rejected-non-env-key+openai-oauth: _probe_check_oauth_fallback returns 0 (t3229 preserved)" 0
+	print_result "rejected-non-env-key+openai-oauth: verified API fallback returns 0" 0
 else
-	print_result "rejected-non-env-key+openai-oauth: _probe_check_oauth_fallback returns 0 (t3229 preserved)" 1 \
-		"(got rc=$rc — expected 0; non-env stale key should not mask OAuth in auth.json)"
+	print_result "rejected-non-env-key+openai-oauth: verified API fallback returns 0" 1 \
+		"(got rc=$rc — expected 0; successful OAuth API verification should record healthy)"
 fi
 
 # Assertion 4b.1 — Sourced credentials.sh-style variables are not process env.
@@ -227,8 +271,13 @@ fi
 # OPENAI_API_KEY shell variable behind even though key_source is credentials:*.
 # That variable must not be mistaken for an exported runtime env key.
 OPENAI_API_KEY="[redacted-credential]"
-_probe_check_oauth_fallback openai true "credentials:OPENAI_API_KEY"
-rc=$?
+rc=$(
+	OPENAI_OAUTH_STUB_MODE=success \
+		OPENAI_OAUTH_CURL_LOG="$OPENAI_OAUTH_CURL_LOG" \
+		PATH="${OPENAI_OAUTH_STUB_DIR}:${PATH}" \
+		_probe_check_oauth_fallback openai true "credentials:OPENAI_API_KEY" >/dev/null
+	printf '%s\n' "$?"
+)
 if [[ "$rc" -eq 0 ]]; then
 	print_result "rejected-credentials-key+openai-oauth: sourced variable does not block OAuth fallback" 0
 else
@@ -257,7 +306,7 @@ else
 fi
 
 # Assertion 4b.3 — A currently-live OpenAI OAuth access token is usable even
-# without refresh, preserving runtime-compatible OAuth fallback when verified.
+# without refresh, but only when the OpenAI API verification succeeds.
 future_ms=$(($(date +%s) * 1000 + 3600000))
 cat >"$AUTH_FILE" <<JSON
 {
@@ -268,13 +317,112 @@ cat >"$AUTH_FILE" <<JSON
   }
 }
 JSON
-_probe_check_oauth_fallback openai true "gopass:OPENAI_API_KEY"
-rc=$?
+rc=$(
+	OPENAI_OAUTH_STUB_MODE=success \
+		OPENAI_OAUTH_CURL_LOG="$OPENAI_OAUTH_CURL_LOG" \
+		PATH="${OPENAI_OAUTH_STUB_DIR}:${PATH}" \
+		_probe_check_oauth_fallback openai true "gopass:OPENAI_API_KEY" >/dev/null
+	printf '%s\n' "$?"
+)
 if [[ "$rc" -eq 0 ]]; then
 	print_result "openai-oauth-live-access: verified fallback remains healthy" 0
 else
 	print_result "openai-oauth-live-access: verified fallback remains healthy" 1 \
-		"(got rc=$rc — expected 0; live OAuth access should remain eligible)"
+		"(got rc=$rc — expected 0; live OAuth access with successful API verification should remain eligible)"
+fi
+
+# Assertion 4b.3a — Refresh-token existence alone no longer proves health.
+cat >"$AUTH_FILE" <<JSON
+{
+  "openai": {
+    "type": "oauth",
+    "refresh": "fake-openai-refresh-token"
+  }
+}
+JSON
+rm -f "$OPENAI_OAUTH_CURL_LOG"
+rc=$(
+	OPENAI_OAUTH_STUB_MODE=success \
+		OPENAI_OAUTH_CURL_LOG="$OPENAI_OAUTH_CURL_LOG" \
+		PATH="${OPENAI_OAUTH_STUB_DIR}:${PATH}" \
+		_probe_check_oauth_fallback openai true "gopass:OPENAI_API_KEY" >/dev/null
+	printf '%s\n' "$?"
+)
+if [[ "$rc" -eq 3 && ! -f "$OPENAI_OAUTH_CURL_LOG" ]]; then
+	print_result "openai-oauth-refresh-only: fallback fails closed without API verification" 0
+else
+	print_result "openai-oauth-refresh-only: fallback fails closed without API verification" 1 \
+		"(got rc=$rc, curl_log_exists=$([[ -f "$OPENAI_OAUTH_CURL_LOG" ]] && printf yes || printf no) — expected rc=3 and no curl call)"
+fi
+
+# Assertion 4b.3b — Quota-exhausted OAuth verification is unhealthy, not healthy.
+cat >"$AUTH_FILE" <<JSON
+{
+  "openai": {
+    "type": "oauth",
+    "access": "fake-openai-quota-access-token",
+    "refresh": "fake-openai-refresh-token",
+    "expires": ${future_ms}
+  }
+}
+JSON
+rc=$(
+	OPENAI_OAUTH_STUB_MODE=quota \
+		OPENAI_OAUTH_CURL_LOG="$OPENAI_OAUTH_CURL_LOG" \
+		PATH="${OPENAI_OAUTH_STUB_DIR}:${PATH}" \
+		_probe_check_oauth_fallback openai true "gopass:OPENAI_API_KEY" >/dev/null
+	printf '%s\n' "$?"
+)
+if [[ "$rc" -eq 1 ]]; then
+	print_result "openai-oauth-quota: verification returns unhealthy instead of healthy" 0
+else
+	print_result "openai-oauth-quota: verification returns unhealthy instead of healthy" 1 \
+		"(got rc=$rc — expected 1; insufficient quota must not record healthy)"
+fi
+
+# Assertion 4b.3c — Generic OAuth auth failure remains key-invalid.
+rc=$(
+	OPENAI_OAUTH_STUB_MODE=auth \
+		OPENAI_OAUTH_CURL_LOG="$OPENAI_OAUTH_CURL_LOG" \
+		PATH="${OPENAI_OAUTH_STUB_DIR}:${PATH}" \
+		_probe_check_oauth_fallback openai true "gopass:OPENAI_API_KEY" >/dev/null
+	printf '%s\n' "$?"
+)
+if [[ "$rc" -eq 3 ]]; then
+	print_result "openai-oauth-auth-failure: verification returns key-invalid" 0
+else
+	print_result "openai-oauth-auth-failure: verification returns key-invalid" 1 \
+		"(got rc=$rc — expected 3; invalid OAuth token must not record healthy)"
+fi
+
+# Assertion 4b.3d — Network failure while verifying OAuth fails closed.
+rc=$(
+	OPENAI_OAUTH_STUB_MODE=network \
+		OPENAI_OAUTH_CURL_LOG="$OPENAI_OAUTH_CURL_LOG" \
+		PATH="${OPENAI_OAUTH_STUB_DIR}:${PATH}" \
+		_probe_check_oauth_fallback openai true "gopass:OPENAI_API_KEY" >/dev/null
+	printf '%s\n' "$?"
+)
+if [[ "$rc" -eq 1 ]]; then
+	print_result "openai-oauth-network-failure: verification fails closed" 0
+else
+	print_result "openai-oauth-network-failure: verification fails closed" 1 \
+		"(got rc=$rc — expected 1; network failure must not record healthy)"
+fi
+
+# Assertion 4b.3e — Probe output must not expose OAuth access tokens.
+oauth_output=$(
+	OPENAI_OAUTH_STUB_MODE=quota \
+		OPENAI_OAUTH_CURL_LOG="$OPENAI_OAUTH_CURL_LOG" \
+		PATH="${OPENAI_OAUTH_STUB_DIR}:${PATH}" \
+		_probe_check_oauth_fallback openai false "gopass:OPENAI_API_KEY" 2>&1
+)
+rc=$?
+if [[ "$rc" -eq 1 && "$oauth_output" != *"fake-openai-quota-access-token"* ]]; then
+	print_result "openai-oauth-token-logging: output does not expose access token" 0
+else
+	print_result "openai-oauth-token-logging: output does not expose access token" 1 \
+		"(got rc=$rc; output must not contain OAuth access token)"
 fi
 
 # Assertion 4b.4 — date failures fail closed instead of producing arithmetic
