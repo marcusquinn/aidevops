@@ -338,6 +338,20 @@ else
 fi
 
 # -----------------------------------------------------------------------------
+# Test 11d.1: invalid integer environment thresholds fall back safely
+# -----------------------------------------------------------------------------
+
+set +e
+out=$(FORCE_VACUUM_SIZE_MB=bogus WAL_LARGE_THRESHOLD_MB=bogus AUTO_MIN_SECONDS_BETWEEN=bogus _run_helper notice 2>&1)
+rc=$?
+set -e
+if [[ "$rc" -eq 0 ]] && ! grep -q "integer expression expected" <<<"$out" && ! grep -q "syntax error" <<<"$out"; then
+	_pass "notice handles invalid integer threshold environment values"
+else
+	_fail "notice should ignore invalid integer threshold environment values (rc=$rc) — output: $out"
+fi
+
+# -----------------------------------------------------------------------------
 # Test 11e: notice still recommends maintenance when free-page threshold is due
 # -----------------------------------------------------------------------------
 

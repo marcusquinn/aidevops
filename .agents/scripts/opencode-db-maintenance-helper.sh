@@ -267,11 +267,22 @@ _state_json_field() {
 	return 0
 }
 
+_nonnegative_integer_or_default() {
+	local value="$1"
+	local fallback="$2"
+	if [[ "$value" =~ ^[0-9]+$ ]]; then
+		printf '%s' "$value"
+		return 0
+	fi
+	printf '%s' "$fallback"
+	return 0
+}
+
 _freelist_exceeds_threshold() {
 	local freelist_count="$1"
 	local page_count="$2"
 	[[ "$freelist_count" =~ ^[0-9]+$ && "$page_count" =~ ^[0-9]+$ && "$VACUUM_FREELIST_THRESHOLD" =~ ^[0-9]+([.][0-9]+)?$ ]] || return 1
-	[[ "$page_count" -gt 0 ]] || return 1
+	[[ "$page_count" == "0" ]] && return 1
 	local threshold_met
 	threshold_met=$(awk -v free="$freelist_count" -v pages="$page_count" -v threshold="$VACUUM_FREELIST_THRESHOLD" 'BEGIN { if (pages <= 0) { print 0; exit } print ((free / pages) >= threshold) ? 1 : 0 }' </dev/null)
 	if [[ "$threshold_met" == "1" ]]; then
@@ -715,8 +726,8 @@ cmd_report() {
 	fi
 
 	local freelist_pct=0
-	if [[ "$page_count" -gt 0 ]]; then
-		freelist_pct=$(echo "scale=2; $freelist_count * 100 / $page_count" | bc -l 2>/dev/null || echo 0)
+	if [[ "$page_count" != "0" ]]; then
+		freelist_pct=$(awk -v free="$freelist_count" -v pages="$page_count" 'BEGIN { if (pages <= 0) { print "0"; exit } printf "%.2f", (free * 100) / pages }' </dev/null)
 	fi
 
 	local journal_mode sync_mode busy_timeout mmap_size
@@ -735,8 +746,11 @@ cmd_report() {
 	printf '  Pages:         %s (page_size=%sB)\n' "$page_count" "$page_size"
 	printf '  Free pages:    %s (%s%% of total)\n' "$freelist_count" "$freelist_pct"
 	local compact_large=false
-	if [[ $((db_bytes / 1048576)) -ge "$FORCE_VACUUM_SIZE_MB" ]] && \
-		[[ $((wal_bytes / 1048576)) -lt "$WAL_LARGE_THRESHOLD_MB" ]] && \
+	local force_vacuum_size_mb wal_large_threshold_mb
+	force_vacuum_size_mb=$(_nonnegative_integer_or_default "$FORCE_VACUUM_SIZE_MB" 500)
+	wal_large_threshold_mb=$(_nonnegative_integer_or_default "$WAL_LARGE_THRESHOLD_MB" 500)
+	if [[ $((db_bytes / 1048576)) -ge "$force_vacuum_size_mb" ]] && \
+		[[ $((wal_bytes / 1048576)) -lt "$wal_large_threshold_mb" ]] && \
 		! _freelist_exceeds_threshold "$freelist_count" "$page_count"; then
 		compact_large=true
 	fi
@@ -828,16 +842,17 @@ _maintain_preflight() {
 # Echoes "true"/"false" based on size and freelist thresholds.
 _maintain_should_vacuum() {
 	local before_bytes="$1"
-	local freelist_count page_count size_mb
+	local freelist_count page_count size_mb force_vacuum_size_mb
 	freelist_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_FREELIST_COUNT")
 	page_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_COUNT")
 	size_mb=$((before_bytes / 1048576))
+	force_vacuum_size_mb=$(_nonnegative_integer_or_default "$FORCE_VACUUM_SIZE_MB" 500)
 
 	if _freelist_exceeds_threshold "$freelist_count" "$page_count"; then
 		printf '%s %s %s %s' true "$freelist_count" "$page_count" "$size_mb"
 		return 0
 	fi
-	if [[ "$size_mb" -ge "$FORCE_VACUUM_SIZE_MB" ]]; then
+	if [[ "$size_mb" -ge "$force_vacuum_size_mb" ]]; then
 		printf '%s %s %s %s' true "$freelist_count" "$page_count" "$size_mb"
 		return 0
 	fi
@@ -1347,30 +1362,34 @@ cmd_notice() {
 	fi
 
 	local now last_ts age db_bytes wal_bytes db_mb wal_mb due=false reason="" compact_notice=false
+	local auto_min_seconds_between force_vacuum_size_mb wal_large_threshold_mb
 	now=$(date +%s)
 	last_ts=$(_state_mtime_epoch "$STATE_FILE")
 	db_bytes=$(_db_size_bytes "$OPENCODE_DB")
 	wal_bytes=$(_db_size_bytes "$OPENCODE_WAL")
 	db_mb=$((db_bytes / 1048576))
 	wal_mb=$((wal_bytes / 1048576))
+	auto_min_seconds_between=$(_nonnegative_integer_or_default "$AUTO_MIN_SECONDS_BETWEEN" 518400)
+	force_vacuum_size_mb=$(_nonnegative_integer_or_default "$FORCE_VACUUM_SIZE_MB" 500)
+	wal_large_threshold_mb=$(_nonnegative_integer_or_default "$WAL_LARGE_THRESHOLD_MB" 500)
 
 	if [[ "$last_ts" -eq 0 ]]; then
 		due=true
 		reason="no previous run recorded"
 	else
 		age=$((now - last_ts))
-		if [[ "$age" -ge "$AUTO_MIN_SECONDS_BETWEEN" ]]; then
+		if [[ "$age" -ge "$auto_min_seconds_between" ]]; then
 			due=true
 			reason="last run older than scheduler interval"
 		fi
 	fi
 
-	if [[ "$wal_mb" -ge "$WAL_LARGE_THRESHOLD_MB" ]]; then
+	if [[ "$wal_mb" -ge "$wal_large_threshold_mb" ]]; then
 		due=true
-		reason="WAL ${wal_mb}MB >= ${WAL_LARGE_THRESHOLD_MB}MB"
-	elif [[ "$db_mb" -ge "$FORCE_VACUUM_SIZE_MB" ]]; then
+		reason="WAL ${wal_mb}MB >= ${wal_large_threshold_mb}MB"
+	elif [[ "$db_mb" -ge "$force_vacuum_size_mb" ]]; then
 		if [[ "$due" == true ]]; then
-			reason="${reason}; DB ${db_mb}MB >= ${FORCE_VACUUM_SIZE_MB}MB"
+			reason="${reason}; DB ${db_mb}MB >= ${force_vacuum_size_mb}MB"
 		elif _sqlite_available; then
 			local page_count freelist_count state_outcome
 			page_count=$(_pragma "$OPENCODE_DB" "$PRAGMA_PAGE_COUNT")
@@ -1383,11 +1402,11 @@ cmd_notice() {
 				compact_notice=true
 			else
 				due=true
-				reason="DB ${db_mb}MB >= ${FORCE_VACUUM_SIZE_MB}MB"
+				reason="DB ${db_mb}MB >= ${force_vacuum_size_mb}MB"
 			fi
 		else
 			due=true
-			reason="DB ${db_mb}MB >= ${FORCE_VACUUM_SIZE_MB}MB"
+			reason="DB ${db_mb}MB >= ${force_vacuum_size_mb}MB"
 		fi
 	fi
 
@@ -1395,7 +1414,7 @@ cmd_notice() {
 		printf '[OPENCODE MAINTENANCE] Recommended: %s. Run aidevops opencode-db maintenance-window off-hours; pulse/headless workers pause during the window.\n' "$reason"
 	elif [[ "$compact_notice" == true ]]; then
 		printf '[OPENCODE MAINTENANCE] Compact but large: DB %sMB >= %sMB, WAL is low, and free pages are below threshold after recent successful maintenance. Re-running maintenance-window is unlikely to reclaim space; run aidevops opencode-db report for retained-data details.\n' \
-			"$db_mb" "$FORCE_VACUUM_SIZE_MB"
+			"$db_mb" "$force_vacuum_size_mb"
 	fi
 	return 0
 }
