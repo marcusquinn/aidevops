@@ -157,8 +157,8 @@ if not text:
 def emit(reason, provider_type, status, pattern):
     print('\t'.join([reason, provider_type, status, 'trusted_provider', pattern]))
 
-if any(token in text for token in ('insufficient_quota', 'insufficient quota', 'quota_exceeded', 'quota exceeded', 'exceeded your current quota')):
-    emit('quota_exceeded', 'quota_exceeded', '429', 'trusted_quota|insufficient_quota|quota_exceeded')
+if any(token in text for token in ('insufficient_quota', 'insufficient quota', 'quota_exceeded', 'quota exceeded', 'exceeded your current quota', 'credit_exhausted', 'credit exhausted', 'exhausted your credit')):
+    emit('quota_exceeded', 'quota_exceeded', '429', 'trusted_quota|insufficient_quota|quota_exceeded|credit_exhausted')
 elif any(token in text for token in ('rate limit', 'rate_limit', 'too many requests')) or re.search(r'\b429\b', text):
     emit('rate_limit', 'rate_limit', '429', 'trusted_rate_limit|429|too_many_requests')
 elif re.search(r'\b(500|502|503|504)\b', text) or any(token in text for token in ('server_error', 'internal server error', 'service unavailable', 'bad gateway', 'gateway timeout', 'connection refused', 'connection reset', 'overloaded')):

@@ -9,7 +9,7 @@ _GH_MERGE_CACHE_REMEDIATION_LIB_LOADED=1
 gh_merge_output_is_auth_401() {
 	local merge_output="$1"
 
-	printf '%s' "$merge_output" | grep -qiE '(^|[^0-9])(401)([^0-9]|$)|401 Unauthorized|Requires authentication'
+	printf '%s' "$merge_output" | grep -qiE 'HTTP([^[:alnum:]]+[0-9.]+)?[[:space:]]+401|status code:?[[:space:]]*401|401 Unauthorized|Requires authentication'
 	return $?
 }
 
@@ -31,17 +31,16 @@ gh_merge_cache_file_has_stale_auth_401() {
 	local cache_file="$1"
 
 	[[ -f "$cache_file" ]] || return 1
-	grep -Iq . "$cache_file" 2>/dev/null || return 1
-	grep -qiE '401 Unauthorized|Requires authentication|"message"[[:space:]]*:[[:space:]]*"Requires authentication"' "$cache_file" 2>/dev/null || return 1
-	grep -qiE 'api\.github\.com|graphql|GraphQL|X-Gh-Cache-Ttl|Requires authentication' "$cache_file" 2>/dev/null || return 1
-	return 0
+	grep -qiE '401 Unauthorized|Requires authentication' "$cache_file"
+	return $?
 }
 
 gh_merge_quarantine_stale_auth_cache() {
 	local cache_root="${GH_CACHE_DIR:-${XDG_CACHE_HOME:-${HOME}/.cache}/gh}"
 	local quarantine_dir=""
 	local cache_file=""
-	local base_name=""
+	local rel_path=""
+	local dest_file=""
 	local moved=0
 
 	[[ -d "$cache_root" ]] || return 1
@@ -53,13 +52,14 @@ gh_merge_quarantine_stale_auth_cache() {
 		"$cache_root"/aidevops-quarantine-*) continue ;;
 		esac
 		if gh_merge_cache_file_has_stale_auth_401 "$cache_file"; then
-			mkdir -p "$quarantine_dir" || return 1
-			base_name=$(basename "$cache_file")
-			if mv "$cache_file" "${quarantine_dir}/${base_name}.$$" 2>/dev/null; then
+			rel_path="${cache_file#"$cache_root"/}"
+			dest_file="${quarantine_dir}/${rel_path}"
+			mkdir -p "$(dirname "$dest_file")" || return 1
+			if mv "$cache_file" "$dest_file"; then
 				moved=$((moved + 1))
 			fi
 		fi
-	done < <(find "$cache_root" -type f -print 2>/dev/null)
+	done < <(find "$cache_root" -type f -print)
 
 	[[ "$moved" -gt 0 ]] || return 1
 	printf '%s\n' "$moved"
