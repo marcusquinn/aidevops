@@ -2304,9 +2304,9 @@
       "pr": 15086
     },
     ".agents/scripts/headless-runtime-lib.sh": {
-      "at": "2026-06-11T08:06:49Z",
-      "hash": "ebcb4ad811a984b29a1868317bbdc785c7589930",
-      "passes": 40,
+      "at": "2026-06-11T18:41:14Z",
+      "hash": "5d6dc447ac21ff7c48d1b546f4072ae12dc1b0a0",
+      "passes": 41,
       "pr": 18707
     },
     ".agents/scripts/interactive-session-helper.sh": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-06-11T08:46:48Z",
-      "hash": "d22fe42d671d297f1d743387abde8b0b51889d0a",
-      "passes": 226,
+      "at": "2026-06-11T19:37:25Z",
+      "hash": "660f297dbe8205bae520d6d72abe7265d4e45e12",
+      "passes": 227,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-06-11T08:46:49Z",
-      "hash": "c594ded385949bcccb4cd6d5f39aac432076aac4",
-      "passes": 222,
+      "at": "2026-06-11T19:37:34Z",
+      "hash": "37b04881d884f887e8962f7bdca073e6c2dd9dbb",
+      "passes": 223,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7756,10 +7756,10 @@
       "passes": 4
     },
     ".agents/scripts/shared-gh-wrappers-rest-fallback.sh": {
-      "hash": "f5b5e85168d2ce259f8814d73725cb68c0f2188d",
-      "at": "2026-06-09T19:19:58Z",
+      "hash": "77925cd5ece5b7917b6d6881a0e6c00a9aea2b09",
+      "at": "2026-06-11T19:02:49Z",
       "pr": 20552,
-      "passes": 19
+      "passes": 20
     },
     ".agents/scripts/pulse-dirty-pr-sweep.sh": {
       "hash": "a3f40cdfc58015d591dd777432181ffb260ddc39",
