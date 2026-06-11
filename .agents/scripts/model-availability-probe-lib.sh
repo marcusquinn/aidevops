@@ -487,13 +487,16 @@ _probe_openai_oauth_fallback_verified() {
 		return 0
 	fi
 
-	local access_token expires_ms now_ms
+	local access_token expires_ms now_s now_ms
 	access_token=$(jq -r '.openai.access // empty' "$auth_file" 2>/dev/null) || access_token=""
 	expires_ms=$(jq -r '.openai.expires // empty' "$auth_file" 2>/dev/null) || expires_ms=""
 	if [[ -n "$access_token" && "$expires_ms" =~ ^[0-9]+$ ]]; then
-		now_ms=$(($(date +%s) * 1000))
-		if [[ "$expires_ms" -gt "$now_ms" ]]; then
-			return 0
+		now_s=$(date +%s 2>/dev/null) || now_s=""
+		if [[ "$now_s" =~ ^[0-9]+$ ]]; then
+			now_ms=$((now_s * 1000))
+			if [[ "$expires_ms" -gt "$now_ms" ]]; then
+				return 0
+			fi
 		fi
 	fi
 
