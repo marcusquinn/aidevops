@@ -21,7 +21,7 @@ tools:
 
 ## Quick Reference
 
-- **Install**: `brew install tddworks/tap/asccli` (NOT `brew install asc` — different package)
+- **Install**: `brew install asccli` (NOT `brew install asc` — different package)
 - **Auth**: `asc auth login --key-id KEY --issuer-id ISSUER --private-key-path ~/.asc/AuthKey.p8`
 - **API key**: Create at https://appstoreconnect.apple.com/access/integrations/api
 - **Project pin**: `asc init --app-id <id>` (saves `.asc/project.json`, auto-used by all commands)
@@ -35,7 +35,7 @@ tools:
 **Dependency check**: Before any `asc` command:
 
 ```bash
-command -v asc >/dev/null || { brew install tddworks/tap/asccli || exit 1; }
+command -v asc >/dev/null || { brew install asccli || exit 1; }
 command -v jq >/dev/null || { brew install jq || exit 1; }
 ```
 

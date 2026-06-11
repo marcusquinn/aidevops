@@ -31,7 +31,7 @@ tools:
 ## CLI Automation — asc
 
 ```bash
-brew install tddworks/tap/asccli
+brew install asccli
 asc auth login --key-id KEY --issuer-id ISSUER --private-key-path ~/.asc/AuthKey.p8
 asc apps list
 ```
