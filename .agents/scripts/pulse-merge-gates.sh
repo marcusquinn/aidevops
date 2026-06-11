@@ -55,13 +55,15 @@ _pulse_repo_allows_pr_gate_writes() {
 	local repo_slug="$1"
 	local gate_name="$2"
 
-	if ! command -v repo_allows_pulse_write_actions >/dev/null; then
-		echo "[pulse-wrapper] ${gate_name}: repo write-action guard unavailable for ${repo_slug} — skipping PR gate write (fail closed)" >>"$LOGFILE" || true
+	if ! command -v repo_allows_pulse_write_actions >/dev/null 2>&1; then
+		local msg="[pulse-wrapper] ${gate_name}: repo write-action guard unavailable for ${repo_slug} — skipping PR gate write (fail closed)"
+		echo "$msg" >>"$LOGFILE" || echo "Failed to write to $LOGFILE: $msg" >&2
 		return 1
 	fi
 
 	if ! repo_allows_pulse_write_actions "$repo_slug"; then
-		echo "[pulse-wrapper] ${gate_name}: skipping PR gate writes in ${repo_slug} — repo role is contributor/read-only" >>"$LOGFILE" || true
+		local msg="[pulse-wrapper] ${gate_name}: skipping PR gate writes in ${repo_slug} — repo role is contributor/read-only"
+		echo "$msg" >>"$LOGFILE" || echo "Failed to write to $LOGFILE: $msg" >&2
 		return 1
 	fi
 
