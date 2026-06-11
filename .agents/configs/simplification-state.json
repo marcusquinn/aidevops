@@ -2304,9 +2304,9 @@
       "pr": 15086
     },
     ".agents/scripts/headless-runtime-lib.sh": {
-      "at": "2026-06-06T14:45:45Z",
-      "hash": "d3d6c1c05303258e190ba8fd1690b97585efacba",
-      "passes": 39,
+      "at": "2026-06-11T08:06:49Z",
+      "hash": "ebcb4ad811a984b29a1868317bbdc785c7589930",
+      "passes": 40,
       "pr": 18707
     },
     ".agents/scripts/interactive-session-helper.sh": {
@@ -5001,9 +5001,9 @@
       "pr": 11338
     },
     ".agents/tools/context/model-routing.md": {
-      "at": "2026-05-01T21:38:14Z",
-      "hash": "4b9e7b4d100fd86277b94e179d3a31012cd527eb",
-      "passes": 5,
+      "at": "2026-06-11T08:23:23Z",
+      "hash": "dc6d0bdf964d62dfc9a7db97fb12510cc664ddf3",
+      "passes": 6,
       "pr": 13255
     },
     ".agents/tools/context/openapi-search.md": {
@@ -5055,9 +5055,9 @@
       "pr": 16751
     },
     ".agents/tools/credentials/api-key-setup.md": {
-      "at": "2026-04-30T07:54:42Z",
-      "hash": "297fdd46e9edc9ffeeb0af4bb6dddfe6ad1b2672",
-      "passes": 2,
+      "at": "2026-06-11T08:23:57Z",
+      "hash": "01905198c99e3746c1e25eef0941898ace532fb8",
+      "passes": 3,
       "pr": 13279
     },
     ".agents/tools/credentials/auth-troubleshooting.md": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-06-10T19:08:58Z",
-      "hash": "b6b3bbeb221ccc6db6f7481dca5350cafe4b96f8",
-      "passes": 225,
+      "at": "2026-06-11T08:46:48Z",
+      "hash": "d22fe42d671d297f1d743387abde8b0b51889d0a",
+      "passes": 226,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-06-10T19:09:05Z",
-      "hash": "fe03f643f788844165c8bf9fe0da27863929d22d",
-      "passes": 221,
+      "at": "2026-06-11T08:46:49Z",
+      "hash": "c594ded385949bcccb4cd6d5f39aac432076aac4",
+      "passes": 222,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
