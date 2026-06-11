@@ -75,6 +75,7 @@ _rest_pr_view_cache_enabled() {
 	[[ "${AIDEVOPS_GH_PR_VIEW_CACHE:-0}" == "1" ]] || return 1
 	[[ "${AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE:-0}" == "1" ]] && return 1
 	command -v jq >/dev/null 2>&1 || return 1
+	jq -n 'true' >/dev/null 2>&1 || return 1
 	return 0
 }
 
