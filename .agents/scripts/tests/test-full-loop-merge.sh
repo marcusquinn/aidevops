@@ -498,8 +498,18 @@ test_review_gate_failure_blocks_rest_fallback() {
 test_stale_cache_401_retry() {
 	rm -f "${TEST_ROOT}/logs/"*.txt
 	rm -rf "${TEST_ROOT:?}/home"
-	mkdir -p "${TEST_ROOT}/home/.cache/gh"
+	mkdir -p "${TEST_ROOT}/home/.cache/gh/api" "${TEST_ROOT}/home/.cache/gh/graphql"
 	cat >"${TEST_ROOT}/home/.cache/gh/graphql-401.cache" <<'CACHE'
+HTTP/2.0 401 Unauthorized
+X-Gh-Cache-Ttl: 24h0m0s
+{"message":"Requires authentication","documentation_url":"https://docs.github.com/graphql"}
+CACHE
+	cat >"${TEST_ROOT}/home/.cache/gh/api/shared.cache" <<'CACHE'
+HTTP/2.0 401 Unauthorized
+X-Gh-Cache-Ttl: 24h0m0s
+{"message":"Requires authentication","documentation_url":"https://docs.github.com/rest"}
+CACHE
+	cat >"${TEST_ROOT}/home/.cache/gh/graphql/shared.cache" <<'CACHE'
 HTTP/2.0 401 Unauthorized
 X-Gh-Cache-Ttl: 24h0m0s
 {"message":"Requires authentication","documentation_url":"https://docs.github.com/graphql"}
@@ -521,14 +531,42 @@ CACHE
 
 	local stale_quarantined=0
 	if [[ ! -f "${TEST_ROOT}/home/.cache/gh/graphql-401.cache" ]] && \
-		find "${TEST_ROOT}/home/.cache/gh" -path '*/aidevops-quarantine-*/*graphql-401.cache*' -type f | grep -q .; then
+		find "${TEST_ROOT}/home/.cache/gh" -path '*/aidevops-quarantine-*/graphql-401.cache' -type f | grep -q .; then
 		stale_quarantined=1
 	fi
-	print_result "stale gh cache 401: only matching 401 cache quarantined" "$((1 - stale_quarantined))"
+	print_result "stale gh cache 401: top-level 401 cache quarantined" "$((1 - stale_quarantined))"
+
+	local collision_paths_preserved=0
+	if [[ ! -f "${TEST_ROOT}/home/.cache/gh/api/shared.cache" ]] && \
+		[[ ! -f "${TEST_ROOT}/home/.cache/gh/graphql/shared.cache" ]] && \
+		find "${TEST_ROOT}/home/.cache/gh" -path '*/aidevops-quarantine-*/api/shared.cache' -type f | grep -q . && \
+		find "${TEST_ROOT}/home/.cache/gh" -path '*/aidevops-quarantine-*/graphql/shared.cache' -type f | grep -q .; then
+		collision_paths_preserved=1
+	fi
+	print_result "stale gh cache 401: quarantine preserves relative paths" "$((1 - collision_paths_preserved))"
 
 	local healthy_preserved=0
 	[[ -f "${TEST_ROOT}/home/.cache/gh/healthy.cache" ]] && healthy_preserved=1
 	print_result "stale gh cache 401: healthy cache preserved" "$((1 - healthy_preserved))"
+
+	return 0
+}
+
+# Test 9: 401 detection only matches authentication-shaped merge errors.
+test_auth_401_detection_avoids_numeric_false_positives() {
+	source "${SCRIPT_DIR}/../gh-merge-cache-remediation-lib.sh"
+
+	local false_positive=0
+	gh_merge_output_is_auth_401 "Merged PR #401" && false_positive=1
+	print_result "auth 401 detection: PR number 401 is not auth" "$false_positive"
+
+	false_positive=0
+	gh_merge_output_is_auth_401 "Merged commit a401b2c" && false_positive=1
+	print_result "auth 401 detection: SHA fragment 401 is not auth" "$false_positive"
+
+	local auth_detected=0
+	gh_merge_output_is_auth_401 "HTTP/2.0 401 Unauthorized" && auth_detected=1
+	print_result "auth 401 detection: HTTP 401 remains auth" "$((1 - auth_detected))"
 
 	return 0
 }
@@ -549,6 +587,7 @@ main() {
 	test_graphql_rate_limit_auto_no_rest_fallback
 	test_review_gate_failure_blocks_rest_fallback
 	test_stale_cache_401_retry
+	test_auth_401_detection_avoids_numeric_false_positives
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
