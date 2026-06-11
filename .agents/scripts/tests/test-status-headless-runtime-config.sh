@@ -61,18 +61,37 @@ run_status_check() {
 	return 0
 }
 
+cleanup_tmp_dir() {
+	local tmp_dir="${TMP_DIR:-}"
+	local tmp_base="${tmp_dir##*/}"
+
+	if [[ -z "$tmp_dir" ]]; then
+		return 0
+	fi
+	if [[ ! -d "$tmp_dir" ]]; then
+		return 0
+	fi
+	if [[ "$tmp_base" != aidevops-status-env.* ]]; then
+		printf 'Refusing to remove unexpected temp directory: %s\n' "$tmp_dir" >&2
+		return 1
+	fi
+
+	rm -rf "$tmp_dir"
+	return 0
+}
+
 # shellcheck source=../aidevops-cli/aidevops-status-lib.sh
 source "$STATUS_LIB"
 
 TMP_DIR=$(mktemp -d -t aidevops-status-env.XXXXXX) || exit 1
-trap '[[ -n "${TMP_DIR:-}" ]] && rm -rf "$TMP_DIR"' EXIT
+trap cleanup_tmp_dir EXIT
 
 missing_credentials="${TMP_DIR}/missing-credentials.sh"
 configured_credentials="${TMP_DIR}/credentials.sh"
 config_dir="${TMP_DIR}/config"
-mkdir -p "$config_dir"
-printf '%s\n' 'export AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST="anthropic"' >"$configured_credentials"
-printf '%s\n' 'export AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST="openai"' >"${config_dir}/credentials.sh"
+mkdir -p "$config_dir" || exit 1
+printf '%s\n' 'export AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST="anthropic"' >"$configured_credentials" || exit 1
+printf '%s\n' 'export AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST="openai"' >"${config_dir}/credentials.sh" || exit 1
 
 AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST="anthropic" output=$(run_status_check "$missing_credentials" 2>&1)
 if printf '%s' "$output" | grep -q 'only set in this shell' && printf '%s' "$output" | grep -q 'credentials.sh'; then
