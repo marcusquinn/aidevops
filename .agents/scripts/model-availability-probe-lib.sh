@@ -474,33 +474,34 @@ _probe_allows_oauth_fallback_after_rejected_key() {
 
 _probe_openai_oauth_fallback_verified() {
 	local auth_file="$1"
+	local quiet="${2:-false}"
 
-	[[ -f "$auth_file" ]] || return 1
-	command -v jq >/dev/null 2>&1 || return 1
+	[[ -f "$auth_file" ]] || return 3
+	command -v jq >/dev/null 2>&1 || return 3
 
-	# OpenAI ChatGPT OAuth is usable by the runtime when auth.json contains a
-	# refresh token, or a still-live access token. Do not treat openai.type ==
-	# "oauth" alone as provider health after a rejected static key (GH#24636).
-	local has_refresh
-	has_refresh=$(jq -r '.openai.refresh // empty' "$auth_file" 2>/dev/null) || has_refresh=""
-	if [[ -n "$has_refresh" ]]; then
-		return 0
-	fi
-
+	# OpenAI ChatGPT OAuth fallback is only provider-health evidence after a
+	# successful OpenAI API probe with a currently-live access token. Refresh-token
+	# presence alone proved too weak: quota-exhausted accounts still looked
+	# healthy and were selected for workers (GH#24694).
 	local access_token expires_ms now_s now_ms
 	access_token=$(jq -r '.openai.access // empty' "$auth_file" 2>/dev/null) || access_token=""
 	expires_ms=$(jq -r '.openai.expires // empty' "$auth_file" 2>/dev/null) || expires_ms=""
-	if [[ -n "$access_token" && "$expires_ms" =~ ^[0-9]+$ ]]; then
-		now_s=$(date +%s 2>/dev/null) || now_s=""
-		if [[ "$now_s" =~ ^[0-9]+$ ]]; then
-			now_ms=$((now_s * 1000))
-			if [[ "$expires_ms" -gt "$now_ms" ]]; then
-				return 0
-			fi
-		fi
+	if [[ -z "$access_token" || ! "$expires_ms" =~ ^[0-9]+$ ]]; then
+		return 3
 	fi
 
-	return 1
+	now_s=$(date +%s 2>/dev/null) || now_s=""
+	if [[ ! "$now_s" =~ ^[0-9]+$ ]]; then
+		return 3
+	fi
+
+	now_ms=$((now_s * 1000))
+	if [[ "$expires_ms" -le "$now_ms" ]]; then
+		return 3
+	fi
+
+	_probe_execute_http openai "$access_token" "$quiet"
+	return $?
 }
 
 # _probe_check_oauth_fallback: called when an HTTP probe rejected the resolved
@@ -529,9 +530,13 @@ _probe_check_oauth_fallback() {
 	local auth_type
 	auth_type=$(jq -r --arg p "$provider" '.[$p].type // empty' "$auth_file" 2>/dev/null) || auth_type=""
 	if [[ "$auth_type" == "oauth" ]]; then
-		if [[ "$provider" == openai ]] && ! _probe_openai_oauth_fallback_verified "$auth_file"; then
-			[[ "$quiet" != "true" ]] && print_warning "$provider: env key rejected (HTTP 401/403); OpenAI OAuth in auth.json is not refreshable or currently valid"
-			return 3
+		if [[ "$provider" == openai ]]; then
+			local oauth_exit=0
+			_probe_openai_oauth_fallback_verified "$auth_file" "$quiet" || oauth_exit=$?
+			if [[ "$oauth_exit" -ne 0 ]]; then
+				[[ "$quiet" != "true" ]] && print_warning "$provider: env key rejected (HTTP 401/403); OpenAI OAuth API verification failed"
+				return "$oauth_exit"
+			fi
 		fi
 		[[ "$quiet" != "true" ]] && print_success "$provider: env key rejected (HTTP 401/403) but OAuth found in auth.json — recording healthy (t3229)"
 		_record_health "$provider" "healthy" 0 0 "OAuth available (env key rejected, t3229)" 0
