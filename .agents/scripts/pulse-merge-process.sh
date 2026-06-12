@@ -124,25 +124,25 @@ _pmp_normalize_mergeable_state_into() {
 #   $4 - current mergeable state
 #######################################
 _pmp_refresh_unknown_mergeable_state_into() {
-	local dest_var="$1"
-	local pr_number="$2"
-	local repo_slug="$3"
-	local current_mergeable="$4"
-	local refreshed_mergeable=""
-	local refresh_exit=0
+	local _pmp_dest_var="$1"
+	local _pmp_pr_number="$2"
+	local _pmp_repo_slug="$3"
+	local _pmp_current_mergeable="$4"
+	local _pmp_refreshed_mergeable=""
+	local _pmp_refresh_exit=0
 
-	[[ "$dest_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
-	_pmp_normalize_mergeable_state_into refreshed_mergeable "$current_mergeable"
+	[[ "$_pmp_dest_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	_pmp_normalize_mergeable_state_into _pmp_refreshed_mergeable "$_pmp_current_mergeable"
 
-	if [[ "$refreshed_mergeable" == "UNKNOWN" || -z "$refreshed_mergeable" ]]; then
-		refreshed_mergeable=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$pr_number" --repo "$repo_slug" \
+	if [[ "$_pmp_refreshed_mergeable" == "UNKNOWN" || -z "$_pmp_refreshed_mergeable" ]]; then
+		_pmp_refreshed_mergeable=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$_pmp_pr_number" --repo "$_pmp_repo_slug" \
 			--json mergeable --jq '.mergeable // ""')
-		refresh_exit=$?
-		[[ $refresh_exit -eq 0 && -n "$refreshed_mergeable" ]] || refreshed_mergeable="UNKNOWN"
-		_pmp_normalize_mergeable_state_into refreshed_mergeable "$refreshed_mergeable"
+		_pmp_refresh_exit=$?
+		[[ $_pmp_refresh_exit -eq 0 && -n "$_pmp_refreshed_mergeable" ]] || _pmp_refreshed_mergeable="UNKNOWN"
+		_pmp_normalize_mergeable_state_into _pmp_refreshed_mergeable "$_pmp_refreshed_mergeable"
 	fi
 
-	printf -v "$dest_var" '%s' "$refreshed_mergeable"
+	printf -v "$_pmp_dest_var" '%s' "$_pmp_refreshed_mergeable"
 	return 0
 }
 
