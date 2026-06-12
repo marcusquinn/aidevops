@@ -192,9 +192,8 @@ _shim_is_headless_automation() {
 
 _shim_normalize_repo_slug() {
 	local target="$1"
-	target="${target#https://github.com/}"
-	target="${target#http://github.com/}"
-	target="${target#git@github.com:}"
+	target="${target#*github.com/}"
+	target="${target#*github.com:}"
 	target="${target%.git}"
 	if [[ "$target" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
 		printf '%s\n' "$target"
@@ -248,7 +247,6 @@ _shim_repo_from_api_path_args() {
 		api) ;;
 		/repos/* | repos/*) [[ -z "$path" ]] && path="$arg" ;;
 		-*) ;;
-		*) [[ -z "$path" ]] && path="$arg" ;;
 		esac
 		idx=$((idx + 1))
 	done
