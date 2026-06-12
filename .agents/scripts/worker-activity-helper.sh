@@ -270,7 +270,7 @@ _wah_provider_usage_json() {
 						count: length,
 						success: (map(select(.result == "success" and (.exit_code // 1) == 0)) | length),
 						rate_limited: (map(select(.result == "rate_limit" or .provider_error_type == "rate_limit" or .provider_status == "429")) | length),
-						other_failure: (map(select((.result // "") != "success" and (.result // "") != "rate_limit")) | length),
+						other_failure: (map(select((.result != "success" or (.exit_code // 1) != 0) and (.result // "") != "rate_limit" and (.provider_error_type // "") != "rate_limit" and (.provider_status // "") != "429")) | length),
 						latest_ts: (map(.ts // 0) | max)
 					})
 					| sort_by(.count, .latest_ts) | reverse | .[0:12]
@@ -300,7 +300,7 @@ _wah_provider_usage_json() {
 		jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" '
 			[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $w
 			| {
-				provider_model_usage: ($w | group_by([.provider // "unknown", .model // "unknown"]) | map({provider: (.[0].provider // "unknown"), model: (.[0].model // "unknown"), count: length, success: (map(select(.result == "success" and (.exit_code // 1) == 0)) | length), rate_limited: (map(select(.result == "rate_limit" or .provider_error_type == "rate_limit" or .provider_status == "429")) | length), other_failure: (map(select((.result // "") != "success" and (.result // "") != "rate_limit")) | length), latest_ts: (map(.ts // 0) | max)}) | sort_by(.count, .latest_ts) | reverse | .[0:12]),
+				provider_model_usage: ($w | group_by([.provider // "unknown", .model // "unknown"]) | map({provider: (.[0].provider // "unknown"), model: (.[0].model // "unknown"), count: length, success: (map(select(.result == "success" and (.exit_code // 1) == 0)) | length), rate_limited: (map(select(.result == "rate_limit" or .provider_error_type == "rate_limit" or .provider_status == "429")) | length), other_failure: (map(select((.result != "success" or (.exit_code // 1) != 0) and (.result // "") != "rate_limit" and (.provider_error_type // "") != "rate_limit" and (.provider_status // "") != "429")) | length), latest_ts: (map(.ts // 0) | max)}) | sort_by(.count, .latest_ts) | reverse | .[0:12]),
 				recent_events: ($w | sort_by(.ts // 0) | reverse | .[0:10] | map({ts, provider, model, result, exit_code, issue_number, session_key})),
 				account_pool: []
 			}' <"$input_file" 2>/dev/null || printf '{"provider_model_usage":[],"recent_events":[],"account_pool":[]}'
