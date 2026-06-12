@@ -152,9 +152,9 @@ _wah_metric_details_json() {
 		| {
 			result_counts: (reduce $w[] as $row ({}; .[$row.result // "unknown"] += 1)),
 			diagnostic_focus: {
-				premature_exit: ([$failures[] | select(.result? == "premature_exit" or .launch_failure_cause? == "model_stopped_before_completion")] | length),
-				local_runtime_error: ([$failures[] | select(.failure_reason? == "local_error" or .launch_failure_cause? == "local_runtime_error" or (.runtime_error_type? != null and .runtime_error_type? != ""))] | length),
-				stall_hard_killed: ([$failures[] | select(.result? == $watchdog_killed_result or .launch_failure_cause? == "stall_hard_killed" or .kill_reason? == "hard_kill_stall")] | length)
+				premature_exit: ($failures | map(select(.result == "premature_exit" or .launch_failure_cause == "model_stopped_before_completion")) | length),
+				local_runtime_error: ($failures | map(select(.failure_reason == "local_error" or .launch_failure_cause == "local_runtime_error" or (.runtime_error_type != null and .runtime_error_type != ""))) | length),
+				stall_hard_killed: ($failures | map(select(.result == $watchdog_killed_result or .launch_failure_cause == "stall_hard_killed" or .kill_reason == "hard_kill_stall")) | length)
 			},
 			timing_ms: {
 				samples: ($durations | length),
