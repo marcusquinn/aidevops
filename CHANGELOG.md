@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.57] - 2026-06-12
+
+### Added
+
+- expose worker diagnostic failure families (#24699)
+
+### Changed
+
+- Maintenance: mark t3598 complete (pr:#24719 completed:2026-06-12) [skip ci]
+- fix headless external gh write guard (#24719)
+- Maintenance: sync ref:GH#24720 to TODO.md [skip ci]
+- Tests: cover scheduler review regressions (#24717)
+- fix: namespace pulse merge refresh locals (#24714)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- expand sibling PR dispatch dedup (#24701)
+- classify local worker runtime diagnostics (#24700)
+
 ## [3.20.56] - 2026-06-12
 
 ### Changed
