@@ -160,8 +160,8 @@ _launchd_is_loaded() {
 #######################################
 _generate_plist() {
 	local script_path="$1"
-	local env_path="$3"
-	if [[ -z "${2:-}" ]]; then
+	local env_path="${3:-${2:-}}"
+	if [[ -z "$env_path" ]]; then
 		return 1
 	fi
 	env_path=$(aidevops_launchd_sanitized_path "$env_path")

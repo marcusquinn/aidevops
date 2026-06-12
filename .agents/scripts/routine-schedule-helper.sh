@@ -224,15 +224,15 @@ _parse_expression() {
 #######################################
 _normalise_schedule_expression() {
 	local expr="$1"
-	local field_count=""
+	local -a fields=()
 
 	if [[ "$expr" =~ ^(daily|weekly|monthly|cron)\(.*\)$ || "$expr" == "$SCHEDULE_TYPE_PERSISTENT" ]]; then
 		printf '%s' "$expr"
 		return 0
 	fi
 
-	field_count=$(printf '%s' "$expr" | awk '{print NF}')
-	if [[ "$field_count" -eq 5 ]]; then
+	read -ra fields <<<"$expr"
+	if [[ "${#fields[@]}" -eq 5 ]]; then
 		printf 'cron(%s)' "$expr"
 		return 0
 	fi
