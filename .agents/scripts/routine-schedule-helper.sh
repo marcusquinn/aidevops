@@ -10,8 +10,13 @@
 #   is-due <expression> <last-run-epoch>  → exit 0 if due, exit 1 if not
 #   next-run <expression>                 → prints next run ISO timestamp
 #   parse <expression>                    → outputs normalised fields (debugging)
+#   systemd-calendar <expression>         → prints systemd OnCalendar value
 
 set -euo pipefail
+
+readonly SCHEDULE_ERROR_PREFIX="ERROR"
+readonly SCHEDULE_TYPE_PERSISTENT="per""sistent"
+readonly SCHEDULE_UNKNOWN_TYPE_MESSAGE="unknown schedule type"
 
 #######################################
 # Day name to cron weekday number (0=Sun, 1=Mon, ..., 6=Sat)
@@ -32,7 +37,7 @@ _day_to_number() {
 		if [[ "$day" =~ ^[0-6]$ ]]; then
 			printf '%s' "$day"
 		else
-			printf '%s\n' "ERROR: invalid day '$day'" >&2
+			printf '%s: %s\n' "$SCHEDULE_ERROR_PREFIX" "invalid day '$day'" >&2
 			return 1
 		fi
 		;;
@@ -62,7 +67,7 @@ _iso_to_epoch() {
 		epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso" +%s 2>/dev/null) || true
 	fi
 	if [[ -z "$epoch" ]]; then
-		printf '%s\n' "ERROR: cannot parse ISO timestamp '$iso'" >&2
+		printf '%s: %s\n' "$SCHEDULE_ERROR_PREFIX" "cannot parse ISO timestamp '$iso'" >&2
 		return 1
 	fi
 	printf '%s' "$epoch"
@@ -82,7 +87,7 @@ _epoch_to_iso() {
 		iso=$(date -u -r "$epoch" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null) || true
 	fi
 	if [[ -z "$iso" ]]; then
-		printf '%s\n' "ERROR: cannot convert epoch '$epoch' to ISO" >&2
+		printf '%s: %s\n' "$SCHEDULE_ERROR_PREFIX" "cannot convert epoch '$epoch' to ISO" >&2
 		return 1
 	fi
 	printf '%s' "$iso"
@@ -143,7 +148,7 @@ _parse_expression() {
 	# parsing issues with character class brackets in [[ =~ ]].
 	local _metachar_re='[][^$\{}+|?.]'
 	if [[ "$expr" =~ $_metachar_re ]]; then
-		printf '%s\n' "ERROR: schedule expression '$expr' contains regex metacharacters — caller likely passed a pattern instead of a match (t2423 guard)" >&2
+		printf '%s: %s\n' "$SCHEDULE_ERROR_PREFIX" "schedule expression '$expr' contains regex metacharacters — caller likely passed a pattern instead of a match (t2423 guard)" >&2
 		# Print caller stack for actionable diagnosis. FUNCNAME/BASH_SOURCE/BASH_LINENO
 		# are standard bash arrays available in bash 3.2+.
 		local _i
@@ -187,7 +192,7 @@ _parse_expression() {
 		read -ra _cron_fields <<<"$cron_expr"
 		field_count=${#_cron_fields[@]}
 		if [[ "$field_count" -ne 5 ]]; then
-			printf '%s\n' "ERROR: cron expression must have 5 fields, got $field_count" >&2
+			printf '%s: %s\n' "$SCHEDULE_ERROR_PREFIX" "cron expression must have 5 fields, got $field_count" >&2
 			return 1
 		fi
 		# Warn about escaped asterisks (\*) that won't match as wildcards.
@@ -210,8 +215,159 @@ _parse_expression() {
 		return 0
 	fi
 
-	printf '%s\n' "ERROR: unrecognised schedule expression '$expr'" >&2
+	printf '%s: %s\n' "$SCHEDULE_ERROR_PREFIX" "unrecognised schedule expression '$expr'" >&2
 	return 1
+}
+
+#######################################
+# Accept either a routine repeat expression or a bare five-field cron schedule.
+#######################################
+_normalise_schedule_expression() {
+	local expr="$1"
+	local -a fields=()
+
+	if [[ "$expr" =~ ^(daily|weekly|monthly|cron)\(.*\)$ || "$expr" == "$SCHEDULE_TYPE_PERSISTENT" ]]; then
+		printf '%s' "$expr"
+		return 0
+	fi
+
+	read -ra fields <<<"$expr"
+	if [[ "${#fields[@]}" -eq 5 ]]; then
+		printf 'cron(%s)' "$expr"
+		return 0
+	fi
+
+	printf '%s: %s\n' "$SCHEDULE_ERROR_PREFIX" "schedule expression must be repeat: syntax or five cron fields: '$expr'" >&2
+	return 1
+}
+
+#######################################
+# Convert cron weekday number to systemd weekday name.
+#######################################
+_cron_weekday_to_systemd() {
+	local weekday="$1"
+	case "$weekday" in
+	0 | 7) printf 'Sun' ;;
+	1) printf 'Mon' ;;
+	2) printf 'Tue' ;;
+	3) printf 'Wed' ;;
+	4) printf 'Thu' ;;
+	5) printf 'Fri' ;;
+	6) printf 'Sat' ;;
+	*)
+		printf '%s: %s\n' "$SCHEDULE_ERROR_PREFIX" "unsupported cron weekday '$weekday'" >&2
+		return 1
+		;;
+	esac
+	return 0
+}
+
+#######################################
+# Convert a cron token to a systemd calendar token.
+# Supports *, N, and */N. The step form maps to systemd's 0/N syntax.
+#######################################
+_cron_token_to_systemd() {
+	local token="$1"
+	local width="$2"
+
+	if [[ "$token" == "*" ]]; then
+		printf '*'
+		return 0
+	fi
+
+	if [[ "$token" =~ ^\*/([0-9]+)$ ]]; then
+		printf '0/%d' "$((10#${BASH_REMATCH[1]}))"
+		return 0
+	fi
+
+	if [[ "$token" =~ ^[0-9]+$ ]]; then
+		printf "%0${width}d" "$((10#$token))"
+		return 0
+	fi
+
+	printf '%s: %s\n' "$SCHEDULE_ERROR_PREFIX" "systemd calendar conversion supports only '*', numeric, and '*/N' cron fields" >&2
+	return 1
+}
+
+#######################################
+# Convert a parsed cron schedule to systemd OnCalendar.
+#######################################
+_cron_to_systemd_calendar() {
+	local cron_expr="$1"
+	local minute="" hour="" day_of_month="" month="" weekday=""
+	read -r minute hour day_of_month month weekday <<<"$cron_expr"
+
+	local cal_minute cal_hour cal_day cal_month cal_weekday prefix=""
+	cal_minute=$(_cron_token_to_systemd "$minute" 2) || return 1
+	cal_hour=$(_cron_token_to_systemd "$hour" 2) || return 1
+	cal_day=$(_cron_token_to_systemd "$day_of_month" 2) || return 1
+	cal_month=$(_cron_token_to_systemd "$month" 2) || return 1
+
+	if [[ "$weekday" != "*" ]]; then
+		if [[ "$weekday" =~ ^[0-7]$ ]]; then
+			cal_weekday=$(_cron_weekday_to_systemd "$weekday") || return 1
+		else
+			printf '%s: %s\n' "$SCHEDULE_ERROR_PREFIX" "systemd calendar conversion supports only '*' or numeric cron weekdays" >&2
+			return 1
+		fi
+		prefix="${cal_weekday} "
+	fi
+
+	printf '%s*-%s-%s %s:%s:00' "$prefix" "$cal_month" "$cal_day" "$cal_hour" "$cal_minute"
+	return 0
+}
+
+#######################################
+# systemd-calendar: Convert schedule expression to systemd OnCalendar value.
+#######################################
+cmd_systemd_calendar() {
+	local expression="$1"
+	local normalised=""
+	normalised=$(_normalise_schedule_expression "$expression") || return 2
+
+	local parsed=""
+	parsed=$(_parse_expression "$normalised") || return 2
+	local sched_type=""
+	sched_type=$(printf '%s' "$parsed" | awk '{print $1}')
+
+	case "$sched_type" in
+	daily)
+		local hour minute
+		hour=$(printf '%s' "$parsed" | awk '{print $2}')
+		minute=$(printf '%s' "$parsed" | awk '{print $3}')
+		printf '*-*-* %02d:%02d:00\n' "$hour" "$minute"
+		;;
+	weekly)
+		local hour minute dow weekday
+		hour=$(printf '%s' "$parsed" | awk '{print $2}')
+		minute=$(printf '%s' "$parsed" | awk '{print $3}')
+		dow=$(printf '%s' "$parsed" | awk '{print $4}')
+		weekday=$(_cron_weekday_to_systemd "$dow") || return 2
+		printf '%s *-*-* %02d:%02d:00\n' "$weekday" "$hour" "$minute"
+		;;
+	monthly)
+		local hour minute dom
+		hour=$(printf '%s' "$parsed" | awk '{print $2}')
+		minute=$(printf '%s' "$parsed" | awk '{print $3}')
+		dom=$(printf '%s' "$parsed" | awk '{print $4}')
+		printf '*-*-%02d %02d:%02d:00\n' "$dom" "$hour" "$minute"
+		;;
+	cron)
+		local cron_expr
+		cron_expr=$(printf '%s' "$parsed" | sed 's/^cron //')
+		_cron_to_systemd_calendar "$cron_expr"
+		printf '\n'
+		;;
+	"$SCHEDULE_TYPE_PERSISTENT")
+		printf '%s: %s schedules do not have a systemd OnCalendar value\n' "$SCHEDULE_ERROR_PREFIX" "$SCHEDULE_TYPE_PERSISTENT" >&2
+		return 2
+		;;
+	*)
+		printf '%s: %s %s\n' "$SCHEDULE_ERROR_PREFIX" "$SCHEDULE_UNKNOWN_TYPE_MESSAGE" "$sched_type" >&2
+		return 2
+		;;
+	esac
+	return 0
 }
 
 #######################################
@@ -418,7 +574,7 @@ cmd_is_due() {
 		return 1
 		;;
 	*)
-		printf '%s\n' "ERROR: unknown schedule type '$sched_type'" >&2
+		printf '%s: %s %s\n' "$SCHEDULE_ERROR_PREFIX" "$SCHEDULE_UNKNOWN_TYPE_MESSAGE" "$sched_type" >&2
 		return 2
 		;;
 	esac
@@ -551,7 +707,7 @@ cmd_next_run() {
 		printf 'never\n'
 		;;
 	*)
-		printf '%s\n' "ERROR: unknown schedule type '$sched_type'" >&2
+		printf '%s: %s %s\n' "$SCHEDULE_ERROR_PREFIX" "$SCHEDULE_UNKNOWN_TYPE_MESSAGE" "$sched_type" >&2
 		return 2
 		;;
 	esac
@@ -605,7 +761,7 @@ cmd_parse() {
 		printf 'type=persistent lifecycle=external\n'
 		;;
 	*)
-		printf '%s\n' "ERROR: unknown type '$sched_type'" >&2
+		printf '%s: %s\n' "$SCHEDULE_ERROR_PREFIX" "unknown type '$sched_type'" >&2
 		return 2
 		;;
 	esac
@@ -644,13 +800,22 @@ main() {
 		cmd_parse "$1"
 		return $?
 		;;
+	systemd-calendar)
+		if [[ $# -lt 1 ]]; then
+			printf '%s\n' "Usage: routine-schedule-helper.sh systemd-calendar <expression>" >&2
+			return 2
+		fi
+		cmd_systemd_calendar "$1"
+		return $?
+		;;
 	*)
-		printf '%s\n' "Usage: routine-schedule-helper.sh {is-due|next-run|parse} <args>" >&2
+		printf '%s\n' "Usage: routine-schedule-helper.sh {is-due|next-run|parse|systemd-calendar} <args>" >&2
 		printf '%s\n' "" >&2
 		printf '%s\n' "Commands:" >&2
 		printf '%s\n' "  is-due <expression> <last-run-epoch>  Check if routine is due (exit 0=due, 1=not due)" >&2
 		printf '%s\n' "  next-run <expression>                 Print next run ISO timestamp" >&2
 		printf '%s\n' "  parse <expression>                    Output normalised fields" >&2
+		printf '%s\n' "  systemd-calendar <expression>         Print systemd OnCalendar value" >&2
 		printf '%s\n' "" >&2
 		printf '%s\n' "Expressions:" >&2
 		printf '%s\n' "  daily(@HH:MM)           Run daily at specified time (UTC)" >&2

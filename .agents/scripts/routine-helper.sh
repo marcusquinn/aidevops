@@ -202,43 +202,8 @@ parse_cron_to_launchd_xml() {
 
 parse_cron_to_oncalendar() {
 	local schedule="$1"
-	local minute=""
-	local hour=""
-	local day_of_month=""
-	local month=""
-	local weekday=""
-
-	read -r minute hour day_of_month month weekday <<<"$schedule"
-
-	local value
-	for value in "$minute" "$hour" "$day_of_month" "$month" "$weekday"; do
-		if [[ "$value" != "*" && ! "$value" =~ ^[0-9]+$ ]]; then
-			die "systemd install supports only '*' or numeric cron fields"
-			return 1
-		fi
-	done
-
-	local dow_map=("Sun" "Mon" "Tue" "Wed" "Thu" "Fri" "Sat" "Sun")
-	local cal_dow="*"
-	if [[ "$weekday" != "*" ]]; then
-		cal_dow="${dow_map[$weekday]}"
-	fi
-
-	local cal_month="*"
-	[[ "$month" != "*" ]] && cal_month=$(printf '%02d' "$month")
-
-	local cal_day="*"
-	[[ "$day_of_month" != "*" ]] && cal_day=$(printf '%02d' "$day_of_month")
-
-	local cal_hour="*"
-	[[ "$hour" != "*" ]] && cal_hour=$(printf '%02d' "$hour")
-
-	local cal_min="00"
-	[[ "$minute" != "*" ]] && cal_min=$(printf '%02d' "$minute")
-
-	local prefix=""
-	[[ "$cal_dow" != "*" ]] && prefix="${cal_dow} "
-	printf '%s*-%s-%s %s:%s:00' "$prefix" "$cal_month" "$cal_day" "$cal_hour" "$cal_min"
+	local schedule_helper="${SCRIPT_DIR}/routine-schedule-helper.sh"
+	"$schedule_helper" systemd-calendar "$schedule"
 	return $?
 }
 

@@ -403,8 +403,9 @@ AIDEVOPS_PULSE_ASYNC_POST_DISPATCH_HOUSEKEEPING=0"
 	return 0
 }
 
-# Read supervisor.pulse_interval_seconds from settings.json.
-# Falls back to 180 if the file is missing, the key is absent, or jq is unavailable.
+# Read orchestration.pulse_interval_seconds from settings.json.
+# Falls back to legacy supervisor.pulse_interval_seconds, then 180, when the
+# file is missing, the key is absent, or jq is unavailable.
 # Clamps to the validated range [30, 3600].
 # GH#18018: previously this was hardcoded as "120" in _install_supervisor_pulse.
 # t2744: default raised 120 → 180 to reduce GraphQL pressure (33% fewer cycles)
@@ -415,7 +416,7 @@ _read_pulse_interval_seconds() {
 
 	if command -v jq >/dev/null 2>&1 && [[ -f "$_settings_file" ]]; then
 		local _raw
-		_raw=$(jq -r '.supervisor.pulse_interval_seconds // empty' "$_settings_file" 2>/dev/null) || _raw=""
+		_raw=$(jq -r '.orchestration.pulse_interval_seconds // .supervisor.pulse_interval_seconds // empty' "$_settings_file" 2>/dev/null) || _raw=""
 		if [[ -n "$_raw" ]] && [[ "$_raw" =~ ^[0-9]+$ ]]; then
 			_interval="$_raw"
 		fi

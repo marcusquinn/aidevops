@@ -70,6 +70,7 @@ readonly LOG_FILE="$HOME/.aidevops/logs/repo-aidevops-health.log"
 readonly STATE_FILE="$HOME/.aidevops/cache/repo-aidevops-health-state.json"
 readonly CRON_MARKER="# aidevops-repo-aidevops-health"
 readonly DEFAULT_INTERVAL=1440
+readonly REPO_AIDEVOPS_HEALTH_SCHEDULE='daily(@03:30)'
 readonly LAUNCHD_LABEL="sh.aidevops.repo-aidevops-health"
 readonly LAUNCHD_DIR="$HOME/Library/LaunchAgents"
 readonly LAUNCHD_PLIST="${LAUNCHD_DIR}/${LAUNCHD_LABEL}.plist"
@@ -154,13 +155,15 @@ _launchd_is_loaded() {
 # Generate repo-aidevops-health LaunchAgent plist content
 # Arguments:
 #   $1 - script_path
-#   $2 - interval_seconds
+#   $2 - interval_seconds (legacy fallback label; schedule is canonical)
 #   $3 - env_path
 #######################################
 _generate_plist() {
 	local script_path="$1"
-	local interval_seconds="$2"
-	local env_path="$3"
+	local env_path="${3:-${2:-}}"
+	if [[ -z "$env_path" ]]; then
+		return 1
+	fi
 	env_path=$(aidevops_launchd_sanitized_path "$env_path")
 
 	cat <<EOF
@@ -175,8 +178,13 @@ _generate_plist() {
 		<string>${script_path}</string>
 		<string>check</string>
 	</array>
-	<key>StartInterval</key>
-	<integer>${interval_seconds}</integer>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>3</integer>
+		<key>Minute</key>
+		<integer>30</integer>
+	</dict>
 	<key>StandardOutPath</key>
 	<string>${LOG_FILE}</string>
 	<key>StandardErrorPath</key>
@@ -747,8 +755,8 @@ _enable_systemd() {
 	local interval="$2"
 	local service_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.service"
 	local timer_file="${SYSTEMD_SERVICE_DIR}/${SYSTEMD_UNIT_NAME}.timer"
-	local interval_sec
-	interval_sec=$((interval * 60))
+	local on_calendar=""
+	on_calendar=$("${SCRIPT_DIR}/routine-schedule-helper.sh" systemd-calendar "$REPO_AIDEVOPS_HEALTH_SCHEDULE") || return 1
 
 	mkdir -p "${SYSTEMD_SERVICE_DIR}"
 
@@ -771,8 +779,7 @@ StandardError=append:${LOG_FILE}
 Description=aidevops repo-aidevops-health Timer
 
 [Timer]
-OnBootSec=${interval_sec}
-OnUnitActiveSec=${interval_sec}
+OnCalendar=${on_calendar}
 Persistent=true
 
 [Install]
@@ -788,7 +795,7 @@ WantedBy=timers.target
 
 	update_state_action "enable" "enabled"
 
-	print_success "Repo sync enabled (every ${interval} minutes)"
+	print_success "Repo sync enabled (${REPO_AIDEVOPS_HEALTH_SCHEDULE})"
 	echo ""
 	echo "  Scheduler: systemd user timer"
 	echo "  Unit:      ${SYSTEMD_UNIT_NAME}.timer"
