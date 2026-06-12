@@ -205,6 +205,27 @@ PY
 		printf '%s' "local_error"
 		return 0
 	fi
+	if [[ "$lowered" == *"spawn"*"enoent"* ]] || [[ "$lowered" == *"command not found"* ]] || [[ "$lowered" == *"no such file or directory"* && "$lowered" == *"opencode"* ]]; then
+		_failure_runtime_error_type="runtime_command_missing"
+		_failure_classification_source="local_runtime"
+		_failure_classification_pattern="command_missing|spawn_enoent"
+		printf '%s' "local_error"
+		return 0
+	fi
+	if [[ "$lowered" == *"permission denied"* ]] || [[ "$lowered" == *"eacces"* ]]; then
+		_failure_runtime_error_type="runtime_permission_denied"
+		_failure_classification_source="local_runtime"
+		_failure_classification_pattern="permission_denied|eacces"
+		printf '%s' "local_error"
+		return 0
+	fi
+	if [[ "$lowered" == *"no space left on device"* ]] || [[ "$lowered" == *"enospc"* ]]; then
+		_failure_runtime_error_type="runtime_storage_full"
+		_failure_classification_source="local_runtime"
+		_failure_classification_pattern="no_space_left|enospc"
+		printf '%s' "local_error"
+		return 0
+	fi
 	# Provider/rate-limit/auth/server classification intentionally uses only
 	# trusted chunks above. Generic tool output, file reads, docs, and skill
 	# content can mention provider failures and must not trigger backoff.
