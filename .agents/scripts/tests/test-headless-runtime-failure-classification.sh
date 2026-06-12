@@ -115,6 +115,11 @@ check_classification \
 	"local_error" "" "" "runtime_command_missing" "local_runtime"
 
 check_classification \
+	"local_runtime_missing_command_reversed_spawn_order" \
+	'ENOENT: no such file or directory, spawn opencode' \
+	"local_error" "" "" "runtime_command_missing" "local_runtime"
+
+check_classification \
 	"local_runtime_permission_denied" \
 	'bash: /tmp/aidevops-worker/run.sh: Permission denied' \
 	"local_error" "" "" "runtime_permission_denied" "local_runtime"
