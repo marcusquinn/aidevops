@@ -109,6 +109,21 @@ fatal: not a git repository
 SQLiteError: disk I/O error' \
 	"local_error" "" "" "opencode_sqlite_io" "opencode_runtime"
 
+check_classification \
+	"local_runtime_missing_command" \
+	'Error: spawn opencode ENOENT' \
+	"local_error" "" "" "runtime_command_missing" "local_runtime"
+
+check_classification \
+	"local_runtime_permission_denied" \
+	'bash: /tmp/aidevops-worker/run.sh: Permission denied' \
+	"local_error" "" "" "runtime_permission_denied" "local_runtime"
+
+check_classification \
+	"local_runtime_storage_full" \
+	'OSError: [Errno 28] No space left on device while writing worker log' \
+	"local_error" "" "" "runtime_storage_full" "local_runtime"
+
 mkdir -p "$METRICS_DIR"
 append_runtime_metric "worker" "issue-22379" "openai/gpt-5.5" "openai" \
 	"provider_error" "1" "provider_error" "1" "1234" "22379" "marcusquinn/aidevops" \
