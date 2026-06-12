@@ -28,6 +28,8 @@ unset FULL_LOOP_HEADLESS
 unset AIDEVOPS_HEADLESS
 unset OPENCODE_HEADLESS
 unset GITHUB_ACTIONS
+unset AIDEVOPS_USER_INSTIGATED_EXTERNAL_GH_WRITE
+unset AIDEVOPS_EXTERNAL_GH_WRITE_ALLOWLIST
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
 REPO_DIR="$(cd "${SCRIPT_DIR}/../../.." && pwd)" || exit
@@ -456,7 +458,7 @@ else
 fi
 
 _reset_log
-AIDEVOPS_HEADLESS=1 "$SHIM_RUN" issue create --repo owner/repo --title "t3565: Headless labels" --body "tracking body" 2>/dev/null
+AIDEVOPS_HEADLESS=1 AIDEVOPS_USER_INSTIGATED_EXTERNAL_GH_WRITE=owner/repo "$SHIM_RUN" issue create --repo owner/repo --title "t3565: Headless labels" --body "tracking body" 2>/dev/null
 argv=$(_read_argv)
 if [[ "$argv" != *"origin:interactive"* ]] && [[ "$argv" != *"status:in-review"* ]]; then
 	_pass "headless issue creation is not normalized as interactive"
@@ -481,6 +483,91 @@ if [[ "$argv" == *$'--label\norigin:interactive'* ]] && [[ "$argv" == *$'--label
 	_pass "last title flag wins during normalization"
 else
 	_fail "multiple title flag handling" "argv: $argv"
+fi
+
+# =============================================================================
+# Test 18: headless external contributor write guard blocks raw comments
+# =============================================================================
+echo ""
+echo "Test 18: headless external write guard blocks raw comments"
+_reset_log
+if AIDEVOPS_HEADLESS=1 "$SHIM_RUN" issue comment 123 --repo external/repo --body "uninstigated" 2>"$TMP/guard-issue.err"; then
+	_fail "headless issue comment guard" "write unexpectedly passed"
+else
+	argv=$(_read_argv)
+	if [[ -z "$argv" ]] && grep -q "external-write-guard" "$TMP/guard-issue.err"; then
+		_pass "headless issue comment to contributor repo is blocked before gh exec"
+	else
+		_fail "headless issue comment guard" "argv: $argv err: $(cat "$TMP/guard-issue.err" 2>/dev/null || true)"
+	fi
+fi
+
+_reset_log
+if AIDEVOPS_SESSION_ORIGIN=pulse "$SHIM_RUN" pr comment 456 --repo external/repo --body "uninstigated" 2>"$TMP/guard-pr.err"; then
+	_fail "headless pr comment guard" "write unexpectedly passed"
+else
+	argv=$(_read_argv)
+	if [[ -z "$argv" ]] && grep -q "external-write-guard" "$TMP/guard-pr.err"; then
+		_pass "headless pr comment to contributor repo is blocked before gh exec"
+	else
+		_fail "headless pr comment guard" "argv: $argv err: $(cat "$TMP/guard-pr.err" 2>/dev/null || true)"
+	fi
+fi
+
+# =============================================================================
+# Test 19: headless external write guard blocks REST write endpoints
+# =============================================================================
+echo ""
+echo "Test 19: headless external write guard blocks REST writes"
+_reset_log
+if FULL_LOOP_HEADLESS=1 "$SHIM_RUN" api /repos/external/repo/issues/123/comments -X POST -f body="uninstigated" 2>"$TMP/guard-api.err"; then
+	_fail "headless REST comment guard" "write unexpectedly passed"
+else
+	argv=$(_read_argv)
+	if [[ -z "$argv" ]] && grep -q "external-write-guard" "$TMP/guard-api.err"; then
+		_pass "headless REST issue comment endpoint is blocked before gh exec"
+	else
+		_fail "headless REST comment guard" "argv: $argv err: $(cat "$TMP/guard-api.err" 2>/dev/null || true)"
+	fi
+fi
+
+# =============================================================================
+# Test 20: interactive or explicitly instigated writes still pass through
+# =============================================================================
+echo ""
+echo "Test 20: interactive and explicit external writes pass"
+_reset_log
+"$SHIM_RUN" issue comment 123 --repo external/repo --body "interactive" 2>/dev/null
+argv=$(_read_argv)
+if [[ "$argv" == *"<!-- aidevops:sig -->"* ]]; then
+	_pass "interactive external comment still receives normal signature handling"
+else
+	_fail "interactive external comment pass-through" "argv: $argv"
+fi
+
+_reset_log
+AIDEVOPS_HEADLESS=1 AIDEVOPS_USER_INSTIGATED_EXTERNAL_GH_WRITE=external/repo "$SHIM_RUN" pr comment 456 --repo external/repo --body "explicit" 2>/dev/null
+argv=$(_read_argv)
+if [[ "$argv" == *"<!-- aidevops:sig -->"* ]]; then
+	_pass "explicit per-repo headless allowance permits normal signature handling"
+else
+	_fail "explicit headless external allowance" "argv: $argv"
+fi
+
+# =============================================================================
+# Test 21: managed maintainer repos are not blocked in headless mode
+# =============================================================================
+echo ""
+echo "Test 21: maintainer repo metadata permits headless writes"
+repos_json="$TMP/repos.json"
+printf '{"initialized_repos":[{"slug":"managed/repo","role":"maintainer"}]}' >"$repos_json"
+_reset_log
+AIDEVOPS_HEADLESS=1 AIDEVOPS_REPOS_JSON="$repos_json" "$SHIM_RUN" issue comment 789 --repo managed/repo --body "managed" 2>/dev/null
+argv=$(_read_argv)
+if [[ "$argv" == *"<!-- aidevops:sig -->"* ]]; then
+	_pass "headless write to maintainer-managed repo proceeds normally"
+else
+	_fail "maintainer repo headless write" "argv: $argv"
 fi
 
 # =============================================================================
