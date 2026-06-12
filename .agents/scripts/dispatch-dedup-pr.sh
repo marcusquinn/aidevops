@@ -17,10 +17,11 @@
 # has_open_pr Check 0: healthy open sibling PRs for this issue.
 #
 # Redispatch should not create another worker when an existing sibling PR for
-# the same issue is already approved and mergeable. This catches PRs that are
+# the same issue is already approved or mergeable. This catches PRs that are
 # ready for the merge path but do not use a closing keyword in the body (for
 # example parent/phase work using `For #NNN`), while still allowing dispatch
-# when only draft, unapproved, or conflicting candidates exist.
+# when only draft, changes-requested, conflicting, or explicitly blocked
+# candidates exist.
 #
 # Args: $1 = issue number, $2 = repo slug
 # Returns: exit 0 if a healthy sibling PR matches, exit 1 if none
@@ -32,20 +33,27 @@ _has_open_pr_check_healthy_sibling() {
 	local pr_json match_pr
 	pr_json=$(gh pr list --repo "$repo_slug" --state open \
 		--search "#${issue_number}" --limit 20 \
-		--json number,title,body,isDraft,reviewDecision,mergeStateStatus 2>/dev/null) || pr_json="[]"
+		--json number,title,body,isDraft,reviewDecision,mergeStateStatus,mergeable 2>/dev/null) || pr_json="[]"
 
-	local issue_ref_pattern healthy_state_pattern
+	local issue_ref_pattern healthy_state_pattern blocked_state_pattern
 	issue_ref_pattern="([^[:alnum:]_]|^)((close[sd]?|fix(e[sd])?|resolve[sd]?|for|refs?):?[[:space:]]+([a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+)?#${issue_number}|GH#${issue_number}|#${issue_number})([^[:alnum:]_]|$)"
 	healthy_state_pattern="^(CLEAN|HAS_HOOKS|UNSTABLE|BEHIND)$"
+	blocked_state_pattern="^(DIRTY|BLOCKED|CONFLICTING)$"
 
 	match_pr=$(printf '%s' "$pr_json" | jq -r \
 		--arg issue_pattern "$issue_ref_pattern" \
 		--arg healthy_pattern "$healthy_state_pattern" \
+		--arg blocked_pattern "$blocked_state_pattern" \
 		'[
 			.[] | select(
 				(.isDraft // false | not) and
-				((.reviewDecision // "") == "APPROVED") and
-				((.mergeStateStatus // "") | test($healthy_pattern)) and
+				((.reviewDecision // "") != "CHANGES_REQUESTED") and
+				(((.mergeStateStatus // "") | test($blocked_pattern) | not)) and
+				(
+					((.reviewDecision // "") == "APPROVED") or
+					((.mergeStateStatus // "") | test($healthy_pattern)) or
+					((.mergeable // "") == "MERGEABLE")
+				) and
 				(((.title // "") | test($issue_pattern; "i")) or ((.body // "") | test($issue_pattern; "i")))
 			)
 		] | .[0].number // empty' 2>/dev/null) || match_pr=""
