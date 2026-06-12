@@ -46,6 +46,7 @@ WAH_PR_CACHE_FILE="${WAH_PR_CACHE_FILE:-${HOME}/.aidevops/cache/worker-activity-
 WAH_OAUTH_POOL_FILE="${WAH_OAUTH_POOL_FILE:-${HOME}/.aidevops/oauth-pool.json}"
 WAH_PR_CACHE_TTL="${WAH_PR_CACHE_TTL:-60}" # seconds
 WAH_SERVICE_INTERRUPTION_RESULT="service_interruption_continue"
+WAH_RESULT_WATCHDOG_STALL_KILLED="watchdog_stall_killed"
 
 #######################################
 # Convert short window spec to seconds. Caller owns the cutoff math.
@@ -100,19 +101,20 @@ _wah_aggregate_metrics() {
 	#          heartbeats even when their exit_code
 	#          is nonzero)
 	# Fail-open to zeros if jq fails (stale/corrupt jsonl).
-	local result service_result
+	local result service_result watchdog_killed_result
 	service_result="$WAH_SERVICE_INTERRUPTION_RESULT"
-	result=$(jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg service_result "$service_result" '
+	watchdog_killed_result="$WAH_RESULT_WATCHDOG_STALL_KILLED"
+	result=$(jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg service_result "$service_result" --arg watchdog_killed_result "$watchdog_killed_result" '
 		[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $w | {
 			total:  ($w | length),
 			succ:   ([$w[] | select(.result == "success" and .exit_code == 0)] | length),
-			wk:     ([$w[] | select(.result == "watchdog_stall_killed")] | length),
+			wk:     ([$w[] | select(.result == $watchdog_killed_result)] | length),
 			wc:     ([$w[] | select(.result == "watchdog_stall_continue")] | length),
 			sic:    ([$w[] | select(.result == $service_result)] | length),
 			rl:     ([$w[] | select(.result == "rate_limit")] | length),
 			of:     ([$w[] | select(
 				(.result != "success" or .exit_code != 0)
-				and .result != "watchdog_stall_killed"
+				and .result != $watchdog_killed_result
 				and .result != "watchdog_stall_continue"
 				and .result != $service_result
 				and .result != "rate_limit"
@@ -138,17 +140,22 @@ _wah_metric_details_json() {
 	local now_epoch
 
 	if [[ ! -f "$metrics" ]]; then
-		printf '{"result_counts":{},"timing_ms":{"avg":0,"max":0,"samples":0},"recent_examples":[],"failure_groups":[]}'
+		printf '{"result_counts":{},"diagnostic_focus":{},"timing_ms":{"avg":0,"max":0,"samples":0},"recent_examples":[],"failure_groups":[],"failure_families":[]}'
 		return 0
 	fi
 	now_epoch="${2:-$(date +%s)}"
 
-	jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" '
+	jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg watchdog_killed_result "$WAH_RESULT_WATCHDOG_STALL_KILLED" '
 		[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $w
 		| ($w | map(.duration_ms // 0)) as $durations
 		| ($w | map(select((.result // "") != "success" or (.exit_code // 1) != 0))) as $failures
 		| {
 			result_counts: (reduce $w[] as $row ({}; .[$row.result // "unknown"] += 1)),
+			diagnostic_focus: {
+				premature_exit: ($failures | map(select(.result == "premature_exit" or .launch_failure_cause == "model_stopped_before_completion")) | length),
+				local_runtime_error: ($failures | map(select(.failure_reason == "local_error" or .launch_failure_cause == "local_runtime_error" or (.runtime_error_type != null and .runtime_error_type != ""))) | length),
+				stall_hard_killed: ($failures | map(select(.result == $watchdog_killed_result or .launch_failure_cause == "stall_hard_killed" or .kill_reason == "hard_kill_stall")) | length)
+			},
 			timing_ms: {
 				samples: ($durations | length),
 				avg: (if ($durations | length) > 0 then (($durations | add) / ($durations | length) | floor) else 0 end),
@@ -202,9 +209,22 @@ _wah_metric_details_json() {
 					count: length,
 					examples: (sort_by(.ts // 0) | reverse | .[0:3] | map({ts, session_id, work_dir, output_file, exit_code, duration_ms, provider_error_type, provider_status, runtime_error_type, classification_source, classification_pattern, launch_failure_cause, kill_reason, next_action}))
 				}
+			] | sort_by(.count) | reverse | .[0:10]),
+			failure_families: ([
+				$failures
+				| group_by([.launch_failure_cause // "unknown", .kill_reason // "", .next_action // ""])
+				| .[]
+				| {
+					launch_failure_cause: (.[0].launch_failure_cause // "unknown"),
+					kill_reason: (.[0].kill_reason // ""),
+					next_action: (.[0].next_action // ""),
+					count: length,
+					results: (reduce .[] as $row ({}; .[$row.result // "unknown"] += 1)),
+					examples: (sort_by(.ts // 0) | reverse | .[0:3] | map({ts, session_key, issue_number, repo_slug, result, exit_code, output_file, launch_failure_cause, kill_reason, next_action}))
+				}
 			] | sort_by(.count) | reverse | .[0:10])
 		}' <"$metrics" 2>/dev/null || \
-		printf '{"result_counts":{},"timing_ms":{"avg":0,"max":0,"samples":0},"recent_examples":[],"failure_groups":[]}'
+		printf '{"result_counts":{},"diagnostic_focus":{},"timing_ms":{"avg":0,"max":0,"samples":0},"recent_examples":[],"failure_groups":[],"failure_families":[]}'
 	return 0
 }
 
@@ -396,12 +416,14 @@ _wah_emit_human() {
 	printf '  Rate-limited:                %d\n' "$rl"
 	printf '  Other failure:               %d\n' "$of"
 	printf '  Result classes:              %s\n' "$(printf '%s' "$details_json" | jq -c '.result_counts' 2>/dev/null || printf '{}')"
+	printf '  Diagnostic focus:            %s\n' "$(printf '%s' "$details_json" | jq -c '.diagnostic_focus // {}' 2>/dev/null || printf '{}')"
 	printf '  Timing ms (avg/max/samples): %s/%s/%s\n' \
 		"$(printf '%s' "$details_json" | jq -r '.timing_ms.avg // 0' 2>/dev/null || printf '0')" \
 		"$(printf '%s' "$details_json" | jq -r '.timing_ms.max // 0' 2>/dev/null || printf '0')" \
 		"$(printf '%s' "$details_json" | jq -r '.timing_ms.samples // 0' 2>/dev/null || printf '0')"
 	printf '  Provider/model usage:        worker-activity-helper.sh providers --since %s\n' "$since_label"
 	printf '  Failure groups:             %s\n' "$(printf '%s' "$details_json" | jq -c '.failure_groups // []' 2>/dev/null || printf '[]')"
+	printf '  Failure families:           %s\n' "$(printf '%s' "$details_json" | jq -c '.failure_families // []' 2>/dev/null || printf '[]')"
 	printf '\n'
 	printf 'pulse-stats.json (dispatch-side counters):\n'
 	printf '  pulse_dispatch_circuit_broken:           %d\n' "$cb"
@@ -499,9 +521,11 @@ _wah_emit_json() {
 				rate_limited: $rl,
 				other_failure: $of,
 				result_counts: $details.result_counts,
+				diagnostic_focus: ($details.diagnostic_focus // {}),
 				timing_ms: $details.timing_ms,
 				recent_examples: $details.recent_examples,
-				failure_groups: ($details.failure_groups // [])
+				failure_groups: ($details.failure_groups // []),
+				failure_families: ($details.failure_families // [])
 			},
 			pulse_stats: {
 				pulse_dispatch_circuit_broken: $cb,

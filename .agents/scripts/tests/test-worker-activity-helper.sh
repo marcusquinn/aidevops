@@ -114,16 +114,16 @@ T_FUTURE_SENTINEL_MS=$((T_FUTURE_SENTINEL * 1000))
 {
 	printf '{"ts":%d,"role":"worker","session_key":"issue-1","result":"success","exit_code":0,"duration_ms":1000,"load_1min":2.0,"load_per_cpu":0.25}\n' "$T_5MIN_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-2","result":"success","exit_code":0}\n' "$T_2H_AGO"
-	printf '{"ts":%d,"role":"worker","session_key":"issue-3","session_id":"ses_3","issue_number":22349,"repo_slug":"marcusquinn/aidevops","work_dir":"/tmp/wt-3","output_file":"/tmp/excerpt-3.log","result":"watchdog_stall_killed","failure_reason":"watchdog_stall_killed","exit_code":79}\n' "$T_2H_AGO"
+	printf '{"ts":%d,"role":"worker","session_key":"issue-3","session_id":"ses_3","issue_number":22349,"repo_slug":"marcusquinn/aidevops","work_dir":"/tmp/wt-3","output_file":"/tmp/excerpt-3.log","result":"watchdog_stall_killed","failure_reason":"watchdog_stall_killed","launch_failure_cause":"stall_hard_killed","kill_reason":"hard_kill_stall","next_action":"redispatch_worker","exit_code":79}\n' "$T_2H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-4","result":"watchdog_stall_continue","exit_code":0}\n' "$T_5MIN_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-5","model":"openai/gpt-5.5","provider":"openai","result":"rate_limit","failure_reason":"rate_limit","provider_error_type":"rate_limit","provider_status":"429","classification_source":"output_pattern","classification_pattern":"rate_limit|rate_limit|429|too_many_requests|quota_exceeded","exit_code":1}\n' "$T_2H_AGO"
-	printf '{"ts":%d,"role":"worker","session_key":"issue-6","model":"openai/gpt-5.5","provider":"openai","result":"provider_error","failure_reason":"provider_error","provider_error_type":"server_error","provider_status":"500","classification_source":"output_pattern","classification_pattern":"server_error|5xx|connection_failure|overloaded","exit_code":2}\n' "$T_2H_AGO"
+	printf '{"ts":%d,"role":"worker","session_key":"issue-6","model":"openai/gpt-5.5","provider":"openai","result":"provider_error","failure_reason":"provider_error","provider_error_type":"server_error","provider_status":"500","classification_source":"output_pattern","classification_pattern":"server_error|5xx|connection_failure|overloaded","launch_failure_cause":"provider_error","next_action":"inspect_failure_excerpt","exit_code":2}\n' "$T_2H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-7","result":"success","exit_code":0}\n' "$T_25H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-8","result":"watchdog_stall_continue","exit_code":124}\n' "$T_2H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-9","result":"success","exit_code":0}\n' "$T_FUTURE_SENTINEL"
 	printf '{"role":"worker","session_key":"issue-10","result":"success","exit_code":0}\n'
 	printf '{"ts":%d,"role":"worker","session_key":"issue-11","model":"openai/gpt-5.5","provider":"openai","result":"service_interruption_continue","failure_reason":"provider_error","provider_error_type":"server_error","provider_status":"503","exit_code":81}\n' "$T_2H_AGO"
-	printf '{"ts":%d,"role":"worker","session_key":"issue-12","model":"openai/gpt-5.5","provider":"openai","result":"service_interruption_exhausted","failure_reason":"local_error","runtime_error_type":"sigterm","exit_code":81}\n' "$T_2H_AGO"
+	printf '{"ts":%d,"role":"worker","session_key":"issue-12","model":"openai/gpt-5.5","provider":"openai","result":"service_interruption_exhausted","failure_reason":"local_error","runtime_error_type":"sigterm","launch_failure_cause":"local_runtime_error","next_action":"inspect_failure_excerpt_and_retry_if_transient","exit_code":81}\n' "$T_2H_AGO"
 } >"$METRICS"
 
 cat >"$OAUTH_POOL" <<EOF
@@ -243,6 +243,12 @@ assert_eq "2h10b: failure groups expose classification pattern" "server_error|5x
 	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_groups[] | select(.session_key == "issue-6") | .classification_pattern')"
 assert_eq "2h11: recent examples carry provider evidence" "openai/gpt-5.5" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.recent_examples[] | select(.session_key == "issue-11") | .model')"
+assert_eq "2h12: diagnostic focus counts stall-killed sessions" "1" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.diagnostic_focus.stall_hard_killed')"
+assert_eq "2h13: diagnostic focus counts local runtime errors" "1" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.diagnostic_focus.local_runtime_error')"
+assert_eq "2h14: failure families carry next action for stall kills" "redispatch_worker" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_families[] | select(.launch_failure_cause == "stall_hard_killed") | .next_action')"
 
 # Pulse-stats counters (24h window: 25h-ago timestamp must be excluded).
 assert_eq "2i: circuit_broken = 2" "2" \
@@ -313,6 +319,8 @@ assert_contains "5d2: human output shows service interruption resumes" \
 assert_contains "5e: human output shows pr-check opt-in note" "use --pr-check" "$OUT"
 assert_contains "5f: human output shows timing summary" "Timing ms" "$OUT"
 assert_contains "5g: human output shows failure groups" "Failure groups" "$OUT"
+assert_contains "5h: human output shows diagnostic focus" "Diagnostic focus" "$OUT"
+assert_contains "5i: human output shows failure families" "Failure families" "$OUT"
 
 # ---------------------------------------------------------------------------
 # Section 6: provider/account diagnostics expose redacted capacity slots.
