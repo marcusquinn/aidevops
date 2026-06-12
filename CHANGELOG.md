@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.56] - 2026-06-12
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- centralize routine systemd schedules (#24698)
+
 ## [3.20.55] - 2026-06-11
 
 ### Changed
