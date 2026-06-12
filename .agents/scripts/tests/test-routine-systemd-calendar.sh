@@ -125,6 +125,23 @@ test_pulse_step_minutes_supported() {
 	return 0
 }
 
+test_empty_schedule_fails_cleanly() {
+	local output=""
+	local rc=0
+	set +e
+	output=$("${REPO_SCRIPTS_DIR}/routine-schedule-helper.sh" parse '' 2>&1)
+	rc=$?
+	set -e
+
+	if [[ "$rc" -ne 0 && "$output" != *"unary operator expected"* && "$output" == *"unrecognised schedule expression"* ]]; then
+		print_result "empty schedule expression uses clean parse error" 0
+	else
+		print_result "empty schedule expression uses clean parse error" 1 \
+			"Expected clean non-zero parse error, rc=$rc output: $output"
+	fi
+	return 0
+}
+
 main() {
 	printf 'Running routine systemd calendar tests...\n\n'
 
@@ -133,6 +150,7 @@ main() {
 	test_step_minutes_supported
 	test_daily_expression_supported
 	test_pulse_step_minutes_supported
+	test_empty_schedule_fails_cleanly
 
 	printf '\n%s/%s tests passed.\n' \
 		"$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"

@@ -1449,4 +1449,6 @@ main() {
 	return 0
 }
 
-main "$@"
+if [[ "${AIDEVOPS_REPO_HEALTH_HELPER_SOURCE_ONLY:-0}" != "1" ]]; then
+	main "$@"
+fi

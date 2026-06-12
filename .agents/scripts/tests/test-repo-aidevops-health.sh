@@ -59,6 +59,16 @@ assert_contains() {
 	fi
 }
 
+load_helper_without_main() {
+	local source_copy="$1"
+	AIDEVOPS_REPO_HEALTH_HELPER_SOURCE_ONLY=1
+	# shellcheck source=/dev/null
+	source "$HELPER"
+	unset AIDEVOPS_REPO_HEALTH_HELPER_SOURCE_ONLY
+	: >"$source_copy"
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Test 1 — helper is executable
 # ---------------------------------------------------------------------------
@@ -127,7 +137,7 @@ CONFIG_FILE="$FIXTURE_DIR/repos.json" \
 	AIDEVOPS_REPO_HEALTH_DRY_RUN=1 \
 	"$HELPER" check >"$DRY_LOG" 2>&1 || true
 
-LOG_CONTENT="$(cat ~/.aidevops/logs/repo-aidevops-health.log 2>/dev/null | tail -30 || true)"
+LOG_CONTENT="$(tail -30 ~/.aidevops/logs/repo-aidevops-health.log 2>/dev/null || true)"
 
 # NOTE: The helper reads CONFIG_FILE from its own readonly — the env override
 # above is a best-effort. If the helper didn't honour it, the test will still
@@ -155,6 +165,14 @@ else
 	FAIL=$((FAIL + 1))
 fi
 assert_contains "unknown subcommand prints help" "$UNKNOWN_OUT" "Unknown command"
+
+# ---------------------------------------------------------------------------
+# Test 6 — plist generation accepts legacy two-argument invocation
+# ---------------------------------------------------------------------------
+load_helper_without_main "$FIXTURE_DIR/helper-functions.sh"
+PLIST_OUT=$(_generate_plist "/tmp/aidevops-health" "/usr/bin:/bin")
+assert_contains "plist two-argument legacy call keeps environment path" "$PLIST_OUT" "<string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>"
+assert_contains "plist generation uses calendar schedule" "$PLIST_OUT" "<key>StartCalendarInterval</key>"
 
 # ---------------------------------------------------------------------------
 # Summary
