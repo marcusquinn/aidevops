@@ -468,7 +468,7 @@ test_unknown_mergeable_refreshed_before_conflict_handler() {
 		in_fn { print }
 		in_fn && /^\}$/ { exit }
 	' "$PROCESS_SCRIPT")
-	if [[ "$helper_src" != *"AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view"* || "$helper_src" != *"_pmp_normalize_mergeable_state_into refreshed_mergeable"* || "$helper_src" != *"printf -v \"\$dest_var\""* ]]; then
+	if [[ "$helper_src" != *"AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view"* || "$helper_src" != *"_pmp_normalize_mergeable_state_into _pmp_refreshed_mergeable"* || "$helper_src" != *"printf -v \"\$_pmp_dest_var\""* ]]; then
 		print_result "UNKNOWN mergeable refresh precedes CONFLICTING branch" 1 \
 			"Helper must bypass cache, normalize refreshed state, and write caller variable"
 		return 0
