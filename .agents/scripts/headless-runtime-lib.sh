@@ -205,7 +205,7 @@ PY
 		printf '%s' "local_error"
 		return 0
 	fi
-	if [[ "$lowered" == *"spawn"*"enoent"* ]] || [[ "$lowered" == *"command not found"* ]] || [[ "$lowered" == *"no such file or directory"* && "$lowered" == *"opencode"* ]]; then
+	if [[ "$lowered" == *"spawn"* && "$lowered" == *"enoent"* ]] || [[ "$lowered" == *"command not found"* ]] || [[ "$lowered" == *"no such file or directory"* && "$lowered" == *"opencode"* ]]; then
 		_failure_runtime_error_type="runtime_command_missing"
 		_failure_classification_source="local_runtime"
 		_failure_classification_pattern="command_missing|spawn_enoent"
