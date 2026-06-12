@@ -535,8 +535,8 @@ _probe_check_oauth_fallback() {
 			_probe_openai_oauth_fallback_verified "$auth_file" "$quiet" || oauth_exit=$?
 			if [[ "$oauth_exit" -ne 0 ]]; then
 				[[ "$quiet" != "true" ]] && print_warning "$provider: env key rejected (HTTP 401/403); OpenAI OAuth API verification failed"
-				return "$oauth_exit"
 			fi
+			return "$oauth_exit"
 		fi
 		[[ "$quiet" != "true" ]] && print_success "$provider: env key rejected (HTTP 401/403) but OAuth found in auth.json — recording healthy (t3229)"
 		_record_health "$provider" "healthy" 0 0 "OAuth available (env key rejected, t3229)" 0

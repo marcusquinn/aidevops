@@ -266,6 +266,14 @@ else
 		"(got rc=$rc — expected 0; successful OAuth API verification should record healthy)"
 fi
 
+health_row=$(db_query "SELECT response_ms || ':' || models_count FROM provider_health WHERE provider = 'openai';")
+if [[ "$health_row" == "1:1" ]]; then
+	print_result "rejected-non-env-key+openai-oauth: preserves live probe health metrics" 0
+else
+	print_result "rejected-non-env-key+openai-oauth: preserves live probe health metrics" 1 \
+		"(got '$health_row' — expected response_ms:models_count of 1:1 from the live OAuth probe)"
+fi
+
 # Assertion 4b.1 — Sourced credentials.sh-style variables are not process env.
 # resolve_api_key sources credentials.sh into the helper process, leaving an
 # OPENAI_API_KEY shell variable behind even though key_source is credentials:*.
