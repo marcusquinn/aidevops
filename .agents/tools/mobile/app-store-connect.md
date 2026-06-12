@@ -27,7 +27,7 @@ tools:
 - **Project pin**: `asc init --app-id <id>` (saves `.asc/project.json`, auto-used by all commands)
 - **Verify**: `asc auth check` | **Multi-account**: `asc auth use <name>`
 - **Context resolution**: explicit `--app-id` > `.asc/project.json` > prompt user to `asc init` (CI must use `--app-id` or pre-run `asc init`)
-- **GitHub**: https://github.com/tddworks/asc-cli (MIT, Swift, 130+ commands; v0.18.1 adds review-submission item drill-down, sales-report rollups/schema selection, and an app-availability territory-limit fix)
+- **GitHub**: https://github.com/tddworks/asc-cli (MIT, Swift, 130+ commands; v0.18.1 adds review-submission item drill-down, sales-report rollups/schema selection, and an app-availability territory-limit fix; checked at `04fde49`, whose post-0.18.1 delta only refreshes homepage app-wall metadata for BetaReels and related app listings)
 - **Website**: https://asccli.app | **Web apps**: [Command Center](https://asccli.app/command-center), [Console](https://asccli.app/console), [Screenshot Studio](https://asccli.app/editor)
 - **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (27 command-group skills, checked at `6465c10feb89`) | [Community](https://github.com/rudrankriyam/app-store-connect-cli-skills) (23 workflow skills, checked at `ed0049a`)
 - **Requirements**: macOS 13+, App Store Connect API key, `jq` (workflow scripts use `jq -r`)
