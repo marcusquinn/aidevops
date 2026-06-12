@@ -24,10 +24,12 @@ set -euo pipefail
 # routing globally, but tests opt into that per scenario below.
 unset AIDEVOPS_GH_REST_FIRST_READS
 unset AIDEVOPS_GH_FORCE_REST_READS
+unset HEADLESS
 unset FULL_LOOP_HEADLESS
 unset AIDEVOPS_HEADLESS
 unset OPENCODE_HEADLESS
 unset GITHUB_ACTIONS
+unset AIDEVOPS_SESSION_ORIGIN
 unset AIDEVOPS_USER_INSTIGATED_EXTERNAL_GH_WRITE
 unset AIDEVOPS_EXTERNAL_GH_WRITE_ALLOWLIST
 
@@ -568,6 +570,45 @@ if [[ "$argv" == *"<!-- aidevops:sig -->"* ]]; then
 	_pass "headless write to maintainer-managed repo proceeds normally"
 else
 	_fail "maintainer repo headless write" "argv: $argv"
+fi
+
+_reset_log
+AIDEVOPS_HEADLESS=1 AIDEVOPS_REPOS_JSON="$repos_json" "$SHIM_RUN" issue comment 789 --repo ssh://git@github.com/managed/repo.git --body "managed" 2>/dev/null
+argv=$(_read_argv)
+if [[ "$argv" == *"<!-- aidevops:sig -->"* ]]; then
+	_pass "headless write guard normalizes ssh github repo URLs"
+else
+	_fail "ssh github repo URL normalization" "argv: $argv"
+fi
+
+_reset_log
+AIDEVOPS_HEADLESS=1 AIDEVOPS_REPOS_JSON="$repos_json" "$SHIM_RUN" issue comment 789 --repo https://token@github.com/managed/repo.git --body "managed" 2>/dev/null
+argv=$(_read_argv)
+if [[ "$argv" == *"<!-- aidevops:sig -->"* ]]; then
+	_pass "headless write guard normalizes credentialed github repo URLs"
+else
+	_fail "credentialed github repo URL normalization" "argv: $argv"
+fi
+
+_reset_log
+AIDEVOPS_HEADLESS=1 AIDEVOPS_REPOS_JSON="$repos_json" "$SHIM_RUN" issue comment 789 --repo git://github.com/managed/repo.git --body "managed" 2>/dev/null
+argv=$(_read_argv)
+if [[ "$argv" == *"<!-- aidevops:sig -->"* ]]; then
+	_pass "headless write guard normalizes git protocol github repo URLs"
+else
+	_fail "git protocol github repo URL normalization" "argv: $argv"
+fi
+
+_reset_log
+if FULL_LOOP_HEADLESS=1 "$SHIM_RUN" api --jq . /repos/external/repo/issues/123/comments -X POST -f body="uninstigated" 2>"$TMP/guard-api-positional.err"; then
+	_fail "headless REST guard ignores non-path positionals" "write unexpectedly passed"
+else
+	argv=$(_read_argv)
+	if [[ -z "$argv" ]] && grep -q "external-write-guard" "$TMP/guard-api-positional.err"; then
+		_pass "headless REST guard finds repo path after query positional"
+	else
+		_fail "headless REST guard path extraction after query positional" "argv: $argv err: $(cat "$TMP/guard-api-positional.err" 2>/dev/null || true)"
+	fi
 fi
 
 # =============================================================================
