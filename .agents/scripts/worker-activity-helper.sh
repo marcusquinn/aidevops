@@ -186,11 +186,10 @@ _wah_metric_details_json() {
 				load_1min,
 				load_per_cpu
 			})),
-			failure_groups: ([
+			failure_groups: (
 				$failures
 				| group_by([.result // "unknown", .failure_reason // "", .provider_error_type // "", .provider_status // "", .runtime_error_type // "", .classification_source // "", .classification_pattern // "", .launch_failure_cause // "", .kill_reason // "", .next_action // "", .provider // "", .model // "", .session_key // "", (.issue_number // "" | tostring), .repo_slug // ""])
-				| .[]
-				| {
+				| map({
 					result: (.[0].result // "unknown"),
 					failure_reason: (.[0].failure_reason // ""),
 					provider_error_type: (.[0].provider_error_type // ""),
@@ -208,21 +207,20 @@ _wah_metric_details_json() {
 					repo_slug: (.[0].repo_slug // ""),
 					count: length,
 					examples: (sort_by(.ts // 0) | reverse | .[0:3] | map({ts, session_id, work_dir, output_file, exit_code, duration_ms, provider_error_type, provider_status, runtime_error_type, classification_source, classification_pattern, launch_failure_cause, kill_reason, next_action}))
-				}
-			] | sort_by(.count) | reverse | .[0:10]),
-			failure_families: ([
+				})
+				| sort_by(.count) | reverse | .[0:10]),
+			failure_families: (
 				$failures
 				| group_by([.launch_failure_cause // "unknown", .kill_reason // "", .next_action // ""])
-				| .[]
-				| {
+				| map({
 					launch_failure_cause: (.[0].launch_failure_cause // "unknown"),
 					kill_reason: (.[0].kill_reason // ""),
 					next_action: (.[0].next_action // ""),
 					count: length,
 					results: (reduce .[] as $row ({}; .[$row.result // "unknown"] += 1)),
 					examples: (sort_by(.ts // 0) | reverse | .[0:3] | map({ts, session_key, issue_number, repo_slug, result, exit_code, output_file, launch_failure_cause, kill_reason, next_action}))
-				}
-			] | sort_by(.count) | reverse | .[0:10])
+				})
+				| sort_by(.count) | reverse | .[0:10])
 		}' <"$metrics" 2>/dev/null || \
 		printf '{"result_counts":{},"diagnostic_focus":{},"timing_ms":{"avg":0,"max":0,"samples":0},"recent_examples":[],"failure_groups":[],"failure_families":[]}'
 	return 0
@@ -270,9 +268,9 @@ _wah_provider_usage_json() {
 						provider: (.[0].provider // "unknown"),
 						model: (.[0].model // "unknown"),
 						count: length,
-						success: ([.[] | select(.result == "success" and (.exit_code // 1) == 0)] | length),
-						rate_limited: ([.[] | select(.result == "rate_limit" or .provider_error_type == "rate_limit" or .provider_status == "429")] | length),
-						other_failure: ([.[] | select((.result // "") != "success" and (.result // "") != "rate_limit")] | length),
+						success: (map(select(.result == "success" and (.exit_code // 1) == 0)) | length),
+						rate_limited: (map(select(.result == "rate_limit" or .provider_error_type == "rate_limit" or .provider_status == "429")) | length),
+						other_failure: (map(select((.result // "") != "success" and (.result // "") != "rate_limit")) | length),
 						latest_ts: (map(.ts // 0) | max)
 					})
 					| sort_by(.count, .latest_ts) | reverse | .[0:12]
@@ -293,7 +291,7 @@ _wah_provider_usage_json() {
 						active_idle: (.value | map(select(active_or_idle)) | length),
 						rate_limited: (.value | map(select(account_status == $status_rate_limited and ((.cooldownUntil // 0) > ($now * 1000)))) | length),
 						auth_errors: (.value | map(select(account_status == $status_auth_error)) | length),
-						latest_last_used: ([.value[]? | .lastUsed? // empty] | max // "")
+						latest_last_used: (.value | map(.lastUsed // empty) | max // "")
 					})
 					| sort_by(.provider)
 				)
@@ -302,7 +300,7 @@ _wah_provider_usage_json() {
 		jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" '
 			[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $w
 			| {
-				provider_model_usage: ($w | group_by([.provider // "unknown", .model // "unknown"]) | map({provider: (.[0].provider // "unknown"), model: (.[0].model // "unknown"), count: length, success: ([.[] | select(.result == "success" and (.exit_code // 1) == 0)] | length), rate_limited: ([.[] | select(.result == "rate_limit" or .provider_error_type == "rate_limit" or .provider_status == "429")] | length), other_failure: ([.[] | select((.result // "") != "success" and (.result // "") != "rate_limit")] | length), latest_ts: (map(.ts // 0) | max)}) | sort_by(.count, .latest_ts) | reverse | .[0:12]),
+				provider_model_usage: ($w | group_by([.provider // "unknown", .model // "unknown"]) | map({provider: (.[0].provider // "unknown"), model: (.[0].model // "unknown"), count: length, success: (map(select(.result == "success" and (.exit_code // 1) == 0)) | length), rate_limited: (map(select(.result == "rate_limit" or .provider_error_type == "rate_limit" or .provider_status == "429")) | length), other_failure: (map(select((.result // "") != "success" and (.result // "") != "rate_limit")) | length), latest_ts: (map(.ts // 0) | max)}) | sort_by(.count, .latest_ts) | reverse | .[0:12]),
 				recent_events: ($w | sort_by(.ts // 0) | reverse | .[0:10] | map({ts, provider, model, result, exit_code, issue_number, session_key})),
 				account_pool: []
 			}' <"$input_file" 2>/dev/null || printf '{"provider_model_usage":[],"recent_events":[],"account_pool":[]}'
