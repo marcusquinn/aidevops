@@ -274,7 +274,7 @@ _freelist_exceeds_threshold() {
 	[[ $((10#$page_count)) -eq 0 ]] && return 1
 	local threshold_met
 	threshold_met=$(awk -v free="$freelist_count" -v pages="$page_count" -v threshold="$VACUUM_FREELIST_THRESHOLD" 'BEGIN { if (pages <= 0) { print 0; exit } print ((free / pages) >= threshold) ? 1 : 0 }' </dev/null)
-	if [[ "$threshold_met" == "1" ]]; then
+	if [[ "$threshold_met" =~ ^[0-9]+$ && $((10#$threshold_met)) -eq 1 ]]; then
 		return 0
 	fi
 	return 1
