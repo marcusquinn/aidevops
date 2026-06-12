@@ -35,7 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Tests: guard headless status temp cleanup (#24684)
-- Maintenance: update simplification state registry
 - Documentation: update asc-cli install command (#24667)
 
 ### Fixed
