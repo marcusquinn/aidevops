@@ -175,6 +175,165 @@ _find_real_gh() {
 }
 
 # -----------------------------------------------------------------------------
+# Headless external-repo write guard.
+#
+# Signature/footer and privacy layers protect content shape. Automated pulse and
+# routine workers also need a trust-boundary guard: contributor/read-only repos
+# are observe-only unless a human explicitly instigates the exact target. Keep
+# this in the PATH shim so raw `gh ...` calls from LLM workers and scripts share
+# one fail-closed gate.
+# -----------------------------------------------------------------------------
+_shim_is_headless_automation() {
+	case ":${HEADLESS:-}:${FULL_LOOP_HEADLESS:-}:${AIDEVOPS_HEADLESS:-}:${OPENCODE_HEADLESS:-}:${GITHUB_ACTIONS:-}:${AIDEVOPS_SESSION_ORIGIN:-}:" in
+	*:1:* | *:true:* | *:worker:* | *:pulse:* | *:routine:* | *:headless:*) return 0 ;;
+	esac
+	return 1
+}
+
+_shim_normalize_repo_slug() {
+	local target="$1"
+	target="${target#https://github.com/}"
+	target="${target#http://github.com/}"
+	target="${target#git@github.com:}"
+	target="${target%.git}"
+	if [[ "$target" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+		printf '%s\n' "$target"
+		return 0
+	fi
+	return 1
+}
+
+_shim_repo_from_git_remote() {
+	local remote_url=""
+	remote_url=$(git remote get-url origin 2>/dev/null || true)
+	[[ -z "$remote_url" ]] && return 1
+	_shim_normalize_repo_slug "$remote_url"
+	return $?
+}
+
+_shim_repo_from_args() {
+	local args=("$@")
+	local idx=0
+	local arg=""
+	local next=""
+	while [[ $idx -lt ${#args[@]} ]]; do
+		arg="${args[$idx]}"
+		case "$arg" in
+		--repo | -R)
+			next="${args[idx + 1]:-}"
+			_shim_normalize_repo_slug "$next" && return 0
+			idx=$((idx + 2))
+			continue
+			;;
+		--repo=*) _shim_normalize_repo_slug "${arg#--repo=}" && return 0 ;;
+		-R*) _shim_normalize_repo_slug "${arg#-R}" && return 0 ;;
+		esac
+		idx=$((idx + 1))
+	done
+	return 1
+}
+
+_shim_repo_from_api_path_args() {
+	local args=("$@")
+	local idx=0
+	local arg=""
+	local path=""
+	while [[ $idx -lt ${#args[@]} ]]; do
+		arg="${args[$idx]}"
+		case "$arg" in
+		-f | --field | -F | --raw-field | --jq | -H | --header | --input | --template | --cache | --hostname | --preview | -X | --method)
+			idx=$((idx + 2))
+			continue
+			;;
+		api) ;;
+		/repos/* | repos/*) [[ -z "$path" ]] && path="$arg" ;;
+		-*) ;;
+		*) [[ -z "$path" ]] && path="$arg" ;;
+		esac
+		idx=$((idx + 1))
+	done
+	local npath="${path#/}"
+	if [[ "$npath" =~ ^repos/([^/]+/[^/]+)(/|$|\?) ]]; then
+		printf '%s\n' "${BASH_REMATCH[1]}"
+		return 0
+	fi
+	return 1
+}
+
+_shim_target_repo_slug() {
+	local repo_slug=""
+	repo_slug=$(_shim_repo_from_args "$@" 2>/dev/null || true)
+	if [[ -z "$repo_slug" && "${1:-}" == "api" ]]; then
+		repo_slug=$(_shim_repo_from_api_path_args "$@" 2>/dev/null || true)
+	fi
+	if [[ -z "$repo_slug" ]]; then
+		repo_slug=$(_shim_repo_from_git_remote 2>/dev/null || true)
+	fi
+	[[ -n "$repo_slug" ]] || return 1
+	printf '%s\n' "$repo_slug"
+	return 0
+}
+
+_shim_repo_role() {
+	local repo_slug="$1"
+	local repos_json="${AIDEVOPS_REPOS_JSON:-${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}}"
+	local explicit_role=""
+	if [[ -n "$repo_slug" && -f "$repos_json" ]] && command -v jq >/dev/null 2>&1; then
+		explicit_role=$(jq -r --arg slug "$repo_slug" 'first(.initialized_repos[]? | select(.slug == $slug) | .role) // ""' "$repos_json" 2>/dev/null || true)
+		case "$explicit_role" in
+		maintainer | contributor)
+			printf '%s\n' "$explicit_role"
+			return 0
+			;;
+		esac
+	fi
+	printf 'contributor\n'
+	return 0
+}
+
+_shim_external_write_has_explicit_instigation() {
+	local repo_slug="$1"
+	local allow="${AIDEVOPS_USER_INSTIGATED_EXTERNAL_GH_WRITE:-${AIDEVOPS_EXTERNAL_GH_WRITE_ALLOWLIST:-}}"
+	local item=""
+	local allow_items=()
+	[[ -z "$allow" ]] && return 1
+	IFS=',' read -r -a allow_items <<< "$allow"
+	for item in "${allow_items[@]}"; do
+		item="${item#"${item%%[![:space:]]*}"}"
+		item="${item%"${item##*[![:space:]]}"}"
+		if [[ "$item" == "$repo_slug" ]]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+_shim_is_content_write_command() {
+	case "${1:-}:${2:-}" in
+	issue:comment | issue:create | issue:edit | issue:close | issue:reopen | issue:lock | issue:pin | issue:delete | \
+	pr:create | pr:comment | pr:edit | pr:review | pr:merge | pr:close | pr:reopen | pr:ready | pr:lock | \
+	label:create | label:edit | label:delete | release:create | release:delete | release:upload)
+		return 0
+		;;
+	esac
+	return 1
+}
+
+_shim_block_headless_external_write_if_needed() {
+	_shim_is_headless_automation || return 0
+	local repo_slug=""
+	repo_slug=$(_shim_target_repo_slug "$@" 2>/dev/null || true)
+	[[ -z "$repo_slug" ]] && return 0
+	local repo_role="contributor"
+	repo_role=$(_shim_repo_role "$repo_slug" 2>/dev/null || printf 'contributor\n')
+	[[ "$repo_role" == "maintainer" ]] && return 0
+	_shim_external_write_has_explicit_instigation "$repo_slug" && return 0
+	printf '[aidevops][external-write-guard][BLOCK] Headless automation attempted a GitHub write to contributor/read-only repo %s.\n' "$repo_slug" >&2
+	printf '  This repo is observe-only for unattended pulse/routine workers. Re-run interactively or set AIDEVOPS_USER_INSTIGATED_EXTERNAL_GH_WRITE=%s for this exact target.\n' "$repo_slug" >&2
+	return 1
+}
+
+# -----------------------------------------------------------------------------
 # Fast pass-through for non-intercepted subcommands.
 # Every gh invocation pays this case-match plus one exec.
 # t2876: extended to include issue:edit and pr:edit so privacy-scan layer
@@ -185,7 +344,9 @@ _find_real_gh() {
 # -----------------------------------------------------------------------------
 _SHIM_READ_REWRITE=""
 case "${1:-}:${2:-}" in
-	issue:comment | issue:create | issue:edit | pr:create | pr:comment | pr:edit | pr:review) ;;
+	issue:comment | issue:create | issue:edit | issue:close | issue:reopen | issue:lock | issue:pin | issue:delete | \
+	pr:create | pr:comment | pr:edit | pr:review | pr:merge | pr:close | pr:reopen | pr:ready | pr:lock | \
+	label:create | label:edit | label:delete | release:create | release:delete | release:upload) ;;
 pr:view | issue:view | pr:list | issue:list)
 	# t3037: read subcommands — may be rewritten to REST when GraphQL budget
 	# is low. Falls through to the read-rewrite handler below.
@@ -939,6 +1100,12 @@ _shim_normalize_interactive_tracking_issue_create() {
 
 _shim_normalize_interactive_tracking_issue_create
 
+if _shim_is_content_write_command "${_modified_args[@]}"; then
+	if ! _shim_block_headless_external_write_if_needed "${_modified_args[@]}"; then
+		exit 1
+	fi
+fi
+
 # -----------------------------------------------------------------------------
 # Handle `gh api` subcommand: intercept write calls to content endpoints.
 # Non-targeted api calls pass straight through after this block.
@@ -946,6 +1113,9 @@ _shim_normalize_interactive_tracking_issue_create
 # -----------------------------------------------------------------------------
 if [[ "${1:-}" == "api" ]]; then
 	if _shim_api_is_write_endpoint; then
+		if ! _shim_block_headless_external_write_if_needed "${_modified_args[@]}"; then
+			exit 1
+		fi
 		_shim_api_inject_body_sig
 		if ! _shim_privacy_scan; then
 			exit 1
