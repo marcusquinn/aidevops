@@ -86,11 +86,53 @@ test_numeric_weekday_keeps_prefix() {
 	return 0
 }
 
+test_step_minutes_supported() {
+	local output=""
+	output=$(run_install_systemd '*/10 * * * *')
+
+	if [[ "$output" == *'OnCalendar=*-*-* *:0/10:00'* ]]; then
+		print_result "step minutes map to systemd calendar" 0
+	else
+		print_result "step minutes map to systemd calendar" 1 \
+			"Expected OnCalendar=*-*-* *:0/10:00, got: $output"
+	fi
+	return 0
+}
+
+test_daily_expression_supported() {
+	local output=""
+	output=$("${REPO_SCRIPTS_DIR}/routine-schedule-helper.sh" systemd-calendar 'daily(@03:30)')
+
+	if [[ "$output" == '*-*-* 03:30:00' ]]; then
+		print_result "daily repeat expression maps to systemd calendar" 0
+	else
+		print_result "daily repeat expression maps to systemd calendar" 1 \
+			"Expected *-*-* 03:30:00, got: $output"
+	fi
+	return 0
+}
+
+test_pulse_step_minutes_supported() {
+	local output=""
+	output=$("${REPO_SCRIPTS_DIR}/routine-schedule-helper.sh" systemd-calendar 'cron(*/2 * * * *)')
+
+	if [[ "$output" == '*-*-* *:0/2:00' ]]; then
+		print_result "r901 cron step maps to systemd calendar" 0
+	else
+		print_result "r901 cron step maps to systemd calendar" 1 \
+			"Expected *-*-* *:0/2:00, got: $output"
+	fi
+	return 0
+}
+
 main() {
 	printf 'Running routine systemd calendar tests...\n\n'
 
 	test_wildcard_weekday_omits_prefix
 	test_numeric_weekday_keeps_prefix
+	test_step_minutes_supported
+	test_daily_expression_supported
+	test_pulse_step_minutes_supported
 
 	printf '\n%s/%s tests passed.\n' \
 		"$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
