@@ -602,7 +602,6 @@ _shim_api_is_write_endpoint() {
 		api) ;;
 		/repos/* | repos/*) [[ -z "$path" ]] && path="$a" ;;
 		-*) ;;
-		*) [[ -z "$path" ]] && path="$a" ;;
 		esac
 		i=$((i + 1))
 	done
@@ -630,7 +629,6 @@ _shim_api_target_from_path() {
 		api) ;;
 		/repos/* | repos/*) [[ -z "$path" ]] && path="$a" ;;
 		-*) ;;
-		*) [[ -z "$path" ]] && path="$a" ;;
 		esac
 		i=$((i + 1))
 	done
