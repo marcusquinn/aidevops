@@ -245,7 +245,7 @@ test_budget_state_at_function_entry() {
 	fn_line=$(grep -n '^reconcile_issues_single_pass()' "${RECONCILE_SRC}" | head -1 | cut -d: -f1)
 	# SC2016: single-quoted grep pattern intentionally contains literal $SECONDS.
 	# shellcheck disable=SC2016
-	start_line=$(grep -n 'local .*_t2984_start_ts=\$SECONDS' "${RECONCILE_SRC}" | head -1 | cut -d: -f1)
+	start_line=$(grep -n 'local .*_t2984_start_ts=[$]SECONDS' "${RECONCILE_SRC}" | head -1 | cut -d: -f1)
 	# shellcheck disable=SC2016
 	budget_line=$(grep -n '_t2984_budget="${RECONCILE_TIME_BUDGET_SECS' "${RECONCILE_SRC}" | head -1 | cut -d: -f1)
 
