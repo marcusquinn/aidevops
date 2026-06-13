@@ -623,6 +623,20 @@ else
 	fi
 fi
 
+for short_opt in -q -p -t; do
+	_reset_log
+	if FULL_LOOP_HEADLESS=1 AIDEVOPS_REPOS_JSON="$repos_json" "$SHIM_RUN" api "$short_opt" /repos/managed/repo/issues/1/comments /repos/external/repo/issues/123/comments -X POST -f body="uninstigated" 2>"$TMP/guard-api-$short_opt-injection.err"; then
+		_fail "headless REST guard skips $short_opt argument" "write unexpectedly passed"
+	else
+		argv=$(_read_argv)
+		if [[ -z "$argv" ]] && grep -q "external-write-guard" "$TMP/guard-api-$short_opt-injection.err"; then
+			_pass "headless REST guard skips $short_opt argument before repo extraction"
+		else
+			_fail "headless REST guard skips $short_opt argument" "argv: $argv err: $(cat "$TMP/guard-api-$short_opt-injection.err" || true)"
+		fi
+	fi
+done
+
 # =============================================================================
 # Summary
 # =============================================================================
