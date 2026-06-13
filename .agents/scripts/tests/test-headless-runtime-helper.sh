@@ -1273,7 +1273,7 @@ test_sync_worker_db_migration_metadata_repeated_launch_reaches_seed() {
 	local isolated_dir="${TEST_ROOT}/isolated-opencode-repeat"
 	local shared_db="${shared_dir}/opencode.db"
 	local worker_db="${isolated_dir}/opencode/opencode.db"
-	local attempts=0 failures=0
+	local attempts=0 failures=0 launch_output=""
 	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
 	rm -f "$shared_db" "$worker_db"
 
@@ -1296,16 +1296,19 @@ SQL
 		_sync_worker_db_migration_metadata "$isolated_dir"
 		if ! _worker_db_migration_ledgers_match_shared "$worker_db" "$shared_db"; then
 			failures=$((failures + 1))
+			launch_output="${launch_output}SQLiteError: table project already exists\n"
+			continue
 		fi
+		launch_output="${launch_output}SEED_PROMPT_REACHED attempt=${attempts}\n"
 	done
 
-	if [[ "$attempts" -eq 2 && "$failures" -eq 0 ]]; then
+	if [[ "$attempts" -eq 2 && "$failures" -eq 0 && "$launch_output" == *"SEED_PROMPT_REACHED attempt=1"* && "$launch_output" == *"SEED_PROMPT_REACHED attempt=2"* ]]; then
 		print_result "sync worker DB lets repeated prewarmed launches reach seed prompt" 0
 		return 0
 	fi
 
 	print_result "sync worker DB lets repeated prewarmed launches reach seed prompt" 1 \
-		"attempts=${attempts} failures=${failures}"
+		"attempts=${attempts} failures=${failures} output=${launch_output}"
 	return 0
 }
 
