@@ -60,12 +60,9 @@ assert_contains() {
 }
 
 load_helper_without_main() {
-	local source_copy="$1"
-	AIDEVOPS_REPO_HEALTH_HELPER_SOURCE_ONLY=1
+	local AIDEVOPS_REPO_HEALTH_HELPER_SOURCE_ONLY=1
 	# shellcheck source=/dev/null
 	source "$HELPER"
-	unset AIDEVOPS_REPO_HEALTH_HELPER_SOURCE_ONLY
-	: >"$source_copy"
 	return 0
 }
 
@@ -104,7 +101,7 @@ mkdir -p "$FIXTURE_DIR/stale-repo"
 cd "$FIXTURE_DIR/stale-repo"
 git init -q
 echo '{"aidevops_version":"0.0.1"}' >.aidevops.json
-git add .aidevops.json && git -c user.email=t@t -c user.name=T commit -qm init >/dev/null 2>&1 || true
+git add .aidevops.json && git -c user.email=t@t -c user.name=T -c commit.gpgsign=false commit -qm init >/dev/null 2>&1 || true
 
 mkdir -p "$FIXTURE_DIR/unregistered-repo"
 cd "$FIXTURE_DIR/unregistered-repo"
@@ -169,9 +166,9 @@ assert_contains "unknown subcommand prints help" "$UNKNOWN_OUT" "Unknown command
 # ---------------------------------------------------------------------------
 # Test 6 — plist generation accepts legacy two-argument invocation
 # ---------------------------------------------------------------------------
-load_helper_without_main "$FIXTURE_DIR/helper-functions.sh"
+load_helper_without_main
 PLIST_OUT=$(_generate_plist "/tmp/aidevops-health" "/usr/bin:/bin")
-assert_contains "plist two-argument legacy call keeps environment path" "$PLIST_OUT" "<string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>"
+assert_contains "plist two-argument legacy call keeps environment path" "$PLIST_OUT" "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>"
 assert_contains "plist generation uses calendar schedule" "$PLIST_OUT" "<key>StartCalendarInterval</key>"
 
 # ---------------------------------------------------------------------------
