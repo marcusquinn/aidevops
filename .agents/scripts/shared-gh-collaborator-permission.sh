@@ -157,7 +157,7 @@ _gh_current_user_allows_repo_write() {
 	# #aidevops:trust-boundary — do not cache this lookup. Long-running pulse
 	# sessions can rotate GH_TOKEN/OAuth accounts between writes; a stale owner
 	# login would authorize a later non-collaborator token.
-	current_user=$(gh api user --jq '.login' 2>/dev/null) || current_user=""
+	current_user=$(gh api user --jq '.login // ""') || current_user=""
 	AIDEVOPS_GH_WRITE_PERMISSION_USER="$current_user"
 	export AIDEVOPS_GH_WRITE_PERMISSION_USER
 	if [[ -z "$current_user" ]]; then
