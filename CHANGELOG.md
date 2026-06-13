@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.59] - 2026-06-13
+
+### Changed
+
+- Tests: use portable literal dollar grep (#24753)
+- Tests: address scheduler review followups (#24752)
+- fix: harden collaborator permission fallback parser (#24749)
+
+### Fixed
+
+- recheck GitHub write identity after auth rotation (#24755)
+- harden gh api path parsing (#24751)
+
 ## [3.20.58] - 2026-06-13
 
 ### Changed
