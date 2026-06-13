@@ -7810,10 +7810,10 @@
       "passes": 4
     },
     ".agents/scripts/pre-dispatch-validator-helper.sh": {
-      "hash": "a25b64d4ebd85882de8cdaab21a3e41466901bab",
-      "at": "2026-05-22T10:12:05Z",
+      "hash": "c82c9f6020b20b6de8568f25b6d22de92b4e8fc4",
+      "at": "2026-06-13T04:13:30Z",
       "pr": 20875,
-      "passes": 7
+      "passes": 8
     },
     ".agents/scripts/commands/dispatch-issue.md": {
       "hash": "f0ffb3c374e28960e3912b888b34aa5a79bd911f",
