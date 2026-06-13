@@ -240,7 +240,7 @@ _shim_repo_from_api_path_args() {
 	while [[ $idx -lt ${#args[@]} ]]; do
 		arg="${args[$idx]}"
 		case "$arg" in
-		-f | --field | -F | --raw-field | --jq | -H | --header | --input | --template | --cache | --hostname | --preview | -X | --method)
+		-f | --field | -F | --raw-field | --jq | -q | -H | --header | --input | --template | -t | --cache | --hostname | --preview | -p | -X | --method)
 			idx=$((idx + 2))
 			continue
 			;;
@@ -595,7 +595,7 @@ _shim_api_is_write_endpoint() {
 			continue
 			;;
 		--method=*) method="${a#--method=}" ;;
-		-f | --field | -F | --raw-field | --jq | -H | --header | --input | --template | --cache | --hostname | --preview)
+		-f | --field | -F | --raw-field | --jq | -q | -H | --header | --input | --template | -t | --cache | --hostname | --preview | -p)
 			i=$((i + 2))
 			continue
 			;;
@@ -622,7 +622,7 @@ _shim_api_target_from_path() {
 	while [[ $i -lt ${#_modified_args[@]} ]]; do
 		a="${_modified_args[$i]}"
 		case "$a" in
-		-f | --field | -F | --raw-field | --jq | -H | --header | --input | --template | --cache | --hostname | --preview | -X | --method)
+		-f | --field | -F | --raw-field | --jq | -q | -H | --header | --input | --template | -t | --cache | --hostname | --preview | -p | -X | --method)
 			i=$((i + 2))
 			continue
 			;;
