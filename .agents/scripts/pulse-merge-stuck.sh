@@ -1079,8 +1079,8 @@ Evidence:
 
 Closing this stale zero-progress meta-issue so auto-dispatch does not spend worker capacity on an already-recovered incident."
 
-	gh issue comment "$existing" --repo "$meta_repo" --body "$body" >/dev/null 2>&1 || true
-	gh issue close "$existing" --repo "$meta_repo" --reason completed >/dev/null 2>&1 || true
+	gh_issue_comment "$existing" --repo "$meta_repo" --body "$body" >/dev/null 2>&1 || true
+	gh_issue_close_safe "$existing" --repo "$meta_repo" --reason completed >/dev/null 2>&1 || true
 	echo "[pulse-merge-stuck] _pms_close_zero_progress_meta_issue_if_recovered: closed #${existing} — ${reason}" >>"$LOGFILE"
 	return 0
 }
