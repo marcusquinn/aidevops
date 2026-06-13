@@ -607,7 +607,19 @@ else
 	if [[ -z "$argv" ]] && grep -q "external-write-guard" "$TMP/guard-api-positional.err"; then
 		_pass "headless REST guard finds repo path after query positional"
 	else
-		_fail "headless REST guard path extraction after query positional" "argv: $argv err: $(cat "$TMP/guard-api-positional.err" 2>/dev/null || true)"
+		_fail "headless REST guard path extraction after query positional" "argv: $argv err: $(cat "$TMP/guard-api-positional.err" || true)"
+	fi
+fi
+
+_reset_log
+if FULL_LOOP_HEADLESS=1 "$SHIM_RUN" api -q . /repos/external/repo/issues/123/comments -X POST -f body="uninstigated" 2>"$TMP/guard-api-positional-short.err"; then
+	_fail "headless REST guard ignores non-path positionals with short flag" "write unexpectedly passed"
+else
+	argv=$(_read_argv)
+	if [[ -z "$argv" ]] && grep -q "external-write-guard" "$TMP/guard-api-positional-short.err"; then
+		_pass "headless REST guard finds repo path after short query positional"
+	else
+		_fail "headless REST guard path extraction after short query positional" "argv: $argv err: $(cat "$TMP/guard-api-positional-short.err" || true)"
 	fi
 fi
 
