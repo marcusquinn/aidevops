@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.58] - 2026-06-13
+
+### Changed
+
+- fix: harden opencode worker db migration repair (#24735)
+- Maintenance: update simplification state registry
+- Tests: sync t2988 reconcile budget coverage (#24731)
+- Maintenance: mark t2199 complete (pr:#24732 completed:2026-06-13) [skip ci]
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- guard automated GitHub writes by repo permission (#24736)
+- block recovered merge-stuck dispatch (#24730)
+- harden gh shim repo extraction (#24724)
+
 ## [3.20.57] - 2026-06-12
 
 ### Added
