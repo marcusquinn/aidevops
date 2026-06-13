@@ -66,7 +66,8 @@
 #  36. AIDEVOPS_GH_PR_VIEW_CACHE enabled with missing prerequisites records
 #      non-disabled REST cache bypass telemetry
 #  37. AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE bypasses both PR view cache layers
-#  38. _rest_split_csv suppresses Broken pipe noise when consumers close early
+#  38. collaborator permission fallback parser ignores nested spoof fields
+#  39. _rest_split_csv suppresses Broken pipe noise when consumers close early
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
 # precedence over PATH binaries, so the stub captures all `gh` invocations
@@ -197,6 +198,16 @@ gh() {
 		if [[ "$status" == "404" ]]; then
 			printf 'HTTP/2.0 404 Not Found\n\n{"message":"Not Found"}\n'
 			return 1
+		fi
+		if [[ -n "${STUB_COLLAB_RAW_RESPONSE:-}" ]]; then
+			printf '%s\n' "$STUB_COLLAB_RAW_RESPONSE"
+			return 0
+		fi
+		if [[ -n "${STUB_COLLAB_RAW_RESPONSE_FILE:-}" ]]; then
+			while IFS= read -r raw_response_line || [[ -n "$raw_response_line" ]]; do
+				printf '%s\n' "$raw_response_line"
+			done <"$STUB_COLLAB_RAW_RESPONSE_FILE"
+			return 0
 		fi
 		printf 'HTTP/2.0 %s OK\n\n{"permission":"%s"}\n' "$status" "${STUB_COLLAB_PERMISSION:-write}"
 		return 0
@@ -1397,8 +1408,21 @@ else
 fi
 unset STUB_COLLAB_STATUS STUB_COLLAB_FAIL STUB_COLLAB_PERMISSION
 
+STUB_COLLAB_RAW_RESPONSE_FILE="${TMP}/collab-spoof-response.txt"
+printf '%s\n' 'HTTP/2.0 200 OK' '' '  "bio":"crafted \"permission\": \"admin\""' '  "permission":"write"' >"$STUB_COLLAB_RAW_RESPONSE_FILE"
+export STUB_COLLAB_RAW_RESPONSE_FILE
+collab_perm=""
+_gh_collaborator_permission_lookup "owner/repo" "testuser" collab_perm 2>/dev/null || true
+if [[ "$collab_perm" == "write" ]]; then
+	pass "collaborator permission fallback parser ignores nested spoof fields"
+else
+	fail "collaborator permission fallback parser ignores nested spoof fields" \
+		"perm=${collab_perm} reason=${AIDEVOPS_GH_COLLAB_PERMISSION_REASON:-unset}"
+fi
+unset STUB_COLLAB_RAW_RESPONSE_FILE
+
 # =============================================================================
-# Test 35: _rest_split_csv suppresses early-close Broken pipe noise
+# Test 39: _rest_split_csv suppresses early-close Broken pipe noise
 # =============================================================================
 long_csv=""
 for i in $(seq 1 5000); do
