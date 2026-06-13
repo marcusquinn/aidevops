@@ -101,7 +101,7 @@ _gh_collaborator_permission_lookup() {
 
 	permission_value=$(printf '%s' "$body" | jq -r '.permission // .role_name // ""' 2>/dev/null) || permission_value=""
 	if [[ -z "$permission_value" ]]; then
-		permission_value=$(printf '%s' "$api_response" | sed -nE 's/^[[:space:]]*"(permission|role_name)"[[:space:]]*:[[:space:]]*"(admin|maintain|write|triage|read|none)".*/\2/p' | tail -1) || permission_value=""
+		permission_value=$(printf '%s' "$api_response" | sed -nE 's/^[[:space:]]*\{?[[:space:]]*"(permission|role_name)"[[:space:]]*:[[:space:]]*"(admin|maintain|write|triage|read|none)".*/\2/p' | tail -1) || permission_value=""
 	fi
 	case "$permission_value" in
 	admin | maintain | write | triage | read | none)
