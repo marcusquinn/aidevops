@@ -1268,6 +1268,37 @@ SQL
 	return 0
 }
 
+test_sync_worker_db_migration_metadata_preserves_worker_db_when_shared_query_fails() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/isolated-opencode-shared-query-fails"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+	rm -f "$shared_db" "$worker_db"
+
+	printf '%s\n' 'not a sqlite database' >"$shared_db"
+	sqlite3 "$worker_db" <<'SQL'
+CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
+INSERT INTO project VALUES ('prewarmed-project', 'Prewarmed Project');
+SQL
+
+	_sync_worker_db_migration_metadata "$isolated_dir"
+
+	local backup_count=0 backup_file
+	for backup_file in "${isolated_dir}"/opencode/opencode.db.incomplete-migration-ledgers.*.bak; do
+		[[ -f "$backup_file" ]] || continue
+		backup_count=$((backup_count + 1))
+	done
+	if [[ -f "$worker_db" && "$backup_count" == "0" ]]; then
+		print_result "sync worker DB preserves prewarmed DB when shared query fails" 0
+		return 0
+	fi
+
+	print_result "sync worker DB preserves prewarmed DB when shared query fails" 1 \
+		"Expected worker DB preserved, file_exists=$([[ -f "$worker_db" ]] && printf yes || printf no) backups=${backup_count}"
+	return 0
+}
+
 test_sync_worker_db_migration_metadata_repeated_launch_reaches_seed() {
 	local shared_dir="${HOME}/.local/share/opencode"
 	local isolated_dir="${TEST_ROOT}/isolated-opencode-repeat"
@@ -1998,6 +2029,7 @@ main() {
 	test_seed_worker_db_session_context_copies_migration_metadata
 	test_sync_worker_db_migration_metadata_repairs_prewarmed_project_table
 	test_sync_worker_db_migration_metadata_archives_unrepairable_project_table
+	test_sync_worker_db_migration_metadata_preserves_worker_db_when_shared_query_fails
 	test_sync_worker_db_migration_metadata_repeated_launch_reaches_seed
 	test_large_opencode_prompt_uses_file_attachment
 	test_large_claude_prompt_uses_stdin_file

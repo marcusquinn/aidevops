@@ -1089,16 +1089,32 @@ _worker_db_migration_ledgers_match_shared() {
 	local worker_db="$1"
 	local shared_db="$2"
 	local ledger_table shared_count worker_count expected_ledgers=0
+	local has_table
 
 	[[ -f "$worker_db" && -f "$shared_db" ]] || return 1
 	for ledger_table in __drizzle_migrations data_migration migration; do
-		shared_count=$(sqlite3_with_timeout "$shared_db" "SELECT COUNT(*) FROM main.\"${ledger_table}\";" 2>/dev/null || printf '0')
+		if ! has_table=$(sqlite3_with_timeout "$shared_db" "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '${ledger_table}' LIMIT 1;"); then
+			return 0
+		fi
+		[[ -n "$has_table" ]] || continue
+
+		if ! shared_count=$(sqlite3_with_timeout "$shared_db" "SELECT COUNT(*) FROM main.\"${ledger_table}\";"); then
+			return 0
+		fi
 		[[ "$shared_count" =~ ^[0-9]+$ ]] || shared_count=0
 		if [[ "$shared_count" -eq 0 ]]; then
 			continue
 		fi
 		expected_ledgers=1
-		worker_count=$(sqlite3_with_timeout "$worker_db" "SELECT COUNT(*) FROM main.\"${ledger_table}\";" 2>/dev/null || printf '0')
+
+		if ! has_table=$(sqlite3_with_timeout "$worker_db" "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '${ledger_table}' LIMIT 1;"); then
+			return 0
+		fi
+		[[ -n "$has_table" ]] || return 1
+
+		if ! worker_count=$(sqlite3_with_timeout "$worker_db" "SELECT COUNT(*) FROM main.\"${ledger_table}\";"); then
+			return 0
+		fi
 		[[ "$worker_count" =~ ^[0-9]+$ ]] || worker_count=0
 		if [[ "$worker_count" -lt "$shared_count" ]]; then
 			return 1
