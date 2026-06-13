@@ -51,11 +51,13 @@ setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
 	mkdir -p "${TEST_ROOT}/bin"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
+	export AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE="${TEST_ROOT}/gh-secondary-cooldown.json"
 	return 0
 }
 
 teardown_test_env() {
 	unset PULSE_STATS_FILE
+	unset AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE
 	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
 		rm -rf "$TEST_ROOT"
 	fi
@@ -144,6 +146,7 @@ GHEOF
 }
 
 create_gh_stub_zero_progress_body() {
+	local permission_value="${1:-write}"
 	local body_file="${TEST_ROOT}/issue_body.txt"
 	printf '<!-- merge-stuck:zero-progress -->\n## What\nZero-progress meta issue.\n' >"$body_file"
 
@@ -153,6 +156,16 @@ set -euo pipefail
 
 if [[ "\${1:-}" == "api" ]] && printf '%s' "\${2:-}" | grep -qE '/issues/[0-9]+\$'; then
 	python3 -c "import sys; sys.stdout.write(open('${body_file}').read())" 2>/dev/null
+	exit 0
+fi
+
+if [[ "\${1:-}" == "api" ]] && [[ "\${2:-}" == "user" ]]; then
+	printf 'runner\n'
+	exit 0
+fi
+
+if [[ "\${1:-}" == "api" ]] && printf '%s' "\$*" | grep -qE '/repos/.*/collaborators/runner/permission'; then
+	printf 'HTTP/2.0 200 OK\n\n{"permission":"${permission_value}"}\n'
 	exit 0
 fi
 
@@ -455,7 +468,7 @@ test_bypass_env_var() {
 
 test_zero_progress_meta_recovered_blocks_dispatch() {
 	setup_test_env
-	create_gh_stub_zero_progress_body
+	create_gh_stub_zero_progress_body "write"
 	write_zero_progress_stats "0"
 
 	local rc=0
@@ -471,9 +484,27 @@ test_zero_progress_meta_recovered_blocks_dispatch() {
 	return 0
 }
 
+test_zero_progress_meta_recovered_readonly_allows_dispatch_without_write() {
+	setup_test_env
+	create_gh_stub_zero_progress_body "read"
+	write_zero_progress_stats "0"
+
+	local rc=0
+	"$HELPER_SCRIPT" validate "54" "marcusquinn/aidevops" >/dev/null 2>&1 || rc=$?
+
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "zero_progress meta recovered read-only exits 0 without write" 0
+	else
+		print_result "zero_progress meta recovered read-only exits 0 without write" 1 "Expected exit 0, got ${rc}"
+	fi
+
+	teardown_test_env
+	return 0
+}
+
 test_zero_progress_meta_active_allows_dispatch() {
 	setup_test_env
-	create_gh_stub_zero_progress_body
+	create_gh_stub_zero_progress_body "write"
 	write_zero_progress_stats "5"
 
 	local rc=0
@@ -592,6 +623,7 @@ main() {
 	test_validator_error
 	test_bypass_env_var
 	test_zero_progress_meta_recovered_blocks_dispatch
+	test_zero_progress_meta_recovered_readonly_allows_dispatch_without_write
 	test_zero_progress_meta_active_allows_dispatch
 	test_review_feedback_extended_extensions
 	test_review_feedback_keyword_scoring_whole_words
