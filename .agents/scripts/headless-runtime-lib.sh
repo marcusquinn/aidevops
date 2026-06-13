@@ -1082,6 +1082,55 @@ _sync_worker_db_migration_ledgers() {
 }
 
 #######################################
+# Check whether worker DB has copied every non-empty shared migration ledger.
+# Args: $1 = worker DB path, $2 = shared DB path.
+#######################################
+_worker_db_migration_ledgers_match_shared() {
+	local worker_db="$1"
+	local shared_db="$2"
+	local ledger_table shared_count worker_count expected_ledgers=0
+
+	[[ -f "$worker_db" && -f "$shared_db" ]] || return 1
+	for ledger_table in __drizzle_migrations data_migration migration; do
+		shared_count=$(sqlite3_with_timeout "$shared_db" "SELECT COUNT(*) FROM main.\"${ledger_table}\";" 2>/dev/null || printf '0')
+		[[ "$shared_count" =~ ^[0-9]+$ ]] || shared_count=0
+		if [[ "$shared_count" -eq 0 ]]; then
+			continue
+		fi
+		expected_ledgers=1
+		worker_count=$(sqlite3_with_timeout "$worker_db" "SELECT COUNT(*) FROM main.\"${ledger_table}\";" 2>/dev/null || printf '0')
+		[[ "$worker_count" =~ ^[0-9]+$ ]] || worker_count=0
+		if [[ "$worker_count" -lt "$shared_count" ]]; then
+			return 1
+		fi
+	done
+
+	[[ "$expected_ledgers" -eq 1 ]] || return 1
+	return 0
+}
+
+#######################################
+# Move aside a partial worker DB so OpenCode can initialise a clean schema.
+# Args: $1 = worker DB path, $2 = reason suffix for diagnostics.
+#######################################
+_archive_partial_worker_db() {
+	local worker_db="$1"
+	local reason="$2"
+	local backup_db="${worker_db}.${reason}.$$.bak"
+
+	[[ -f "$worker_db" ]] || return 0
+	mv "$worker_db" "$backup_db" 2>/dev/null || return 0
+	if [[ -f "${worker_db}-wal" ]]; then
+		mv "${worker_db}-wal" "${backup_db}-wal" 2>/dev/null || true
+	fi
+	if [[ -f "${worker_db}-shm" ]]; then
+		mv "${worker_db}-shm" "${backup_db}-shm" 2>/dev/null || true
+	fi
+	print_warning "OpenCode worker DB had user tables but incomplete migration ledgers; archived ${worker_db} to avoid startup migration replay (${reason})"
+	return 0
+}
+
+#######################################
 # Merge worker's isolated SQLite DB back to the shared DB.
 # Called after worker exits -- no contention risk.
 # Uses ATTACH DATABASE to copy session and message rows.
@@ -1180,6 +1229,9 @@ _sync_worker_db_migration_metadata() {
 	[[ -n "$has_project" ]] || return 0
 
 	_sync_worker_db_migration_ledgers "$worker_db" "$shared_db"
+	if ! _worker_db_migration_ledgers_match_shared "$worker_db" "$shared_db"; then
+		_archive_partial_worker_db "$worker_db" "incomplete-migration-ledgers"
+	fi
 	return 0
 }
 

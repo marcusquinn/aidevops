@@ -1235,6 +1235,80 @@ SQL
 	return 0
 }
 
+test_sync_worker_db_migration_metadata_archives_unrepairable_project_table() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/isolated-opencode-unrepairable"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+	rm -f "$shared_db" "$worker_db"
+
+	sqlite3 "$shared_db" <<'SQL'
+CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
+SQL
+	sqlite3 "$worker_db" <<'SQL'
+CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
+INSERT INTO project VALUES ('prewarmed-project', 'Prewarmed Project');
+SQL
+
+	_sync_worker_db_migration_metadata "$isolated_dir"
+
+	local backup_count=0 backup_file
+	for backup_file in "${isolated_dir}"/opencode/opencode.db.incomplete-migration-ledgers.*.bak; do
+		[[ -f "$backup_file" ]] || continue
+		backup_count=$((backup_count + 1))
+	done
+	if [[ ! -f "$worker_db" && "$backup_count" == "1" ]]; then
+		print_result "sync worker DB archives unrepairable prewarmed project table" 0
+		return 0
+	fi
+
+	print_result "sync worker DB archives unrepairable prewarmed project table" 1 \
+		"Expected worker DB archived once, file_exists=$([[ -f "$worker_db" ]] && printf yes || printf no) backups=${backup_count}"
+	return 0
+}
+
+test_sync_worker_db_migration_metadata_repeated_launch_reaches_seed() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/isolated-opencode-repeat"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	local attempts=0 failures=0
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+	rm -f "$shared_db" "$worker_db"
+
+	sqlite3 "$shared_db" <<'SQL'
+CREATE TABLE __drizzle_migrations (id INTEGER PRIMARY KEY, hash TEXT NOT NULL, created_at INTEGER);
+CREATE TABLE data_migration (name TEXT PRIMARY KEY, time_completed INTEGER NOT NULL);
+CREATE TABLE migration (id TEXT PRIMARY KEY, time_completed INTEGER NOT NULL);
+CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
+INSERT INTO __drizzle_migrations VALUES (1, 'schema-ready', 12345);
+INSERT INTO data_migration VALUES ('data-ready', 67890);
+INSERT INTO migration VALUES ('opencode-v17-ready', 1700000000);
+SQL
+	sqlite3 "$worker_db" <<'SQL'
+CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
+INSERT INTO project VALUES ('prewarmed-project', 'Prewarmed Project');
+SQL
+
+	while [[ "$attempts" -lt 2 ]]; do
+		attempts=$((attempts + 1))
+		_sync_worker_db_migration_metadata "$isolated_dir"
+		if ! _worker_db_migration_ledgers_match_shared "$worker_db" "$shared_db"; then
+			failures=$((failures + 1))
+		fi
+	done
+
+	if [[ "$attempts" -eq 2 && "$failures" -eq 0 ]]; then
+		print_result "sync worker DB lets repeated prewarmed launches reach seed prompt" 0
+		return 0
+	fi
+
+	print_result "sync worker DB lets repeated prewarmed launches reach seed prompt" 1 \
+		"attempts=${attempts} failures=${failures}"
+	return 0
+}
+
 test_large_opencode_prompt_uses_file_attachment() {
 	local prompt="large-seed-prompt-with-worker-contract"
 	local old_threshold="${HEADLESS_PROMPT_FILE_THRESHOLD_BYTES:-}"
@@ -1920,6 +1994,8 @@ main() {
 	test_seed_worker_db_session_context_copies_only_selected_session
 	test_seed_worker_db_session_context_copies_migration_metadata
 	test_sync_worker_db_migration_metadata_repairs_prewarmed_project_table
+	test_sync_worker_db_migration_metadata_archives_unrepairable_project_table
+	test_sync_worker_db_migration_metadata_repeated_launch_reaches_seed
 	test_large_opencode_prompt_uses_file_attachment
 	test_large_claude_prompt_uses_stdin_file
 	test_registered_prompt_temp_cleanup_removes_dir
