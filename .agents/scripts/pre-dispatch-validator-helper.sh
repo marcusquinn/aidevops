@@ -1116,6 +1116,40 @@ EOF
 	return 0
 }
 
+_run_pre_generator_validators() {
+	local issue_number="$1"
+	local slug="$2"
+	local issue_body="$3"
+	local issue_api_path="$4"
+
+	# Run self-hosting detector BEFORE generator-marker validators (t2819).
+	# Always returns 0; label mutation is advisory, not a dispatch block.
+	_detect_self_hosting_task "$issue_number" "$slug" "$issue_body"
+
+	# Run review-feedback/quality-debt supersession detector before launching a
+	# worker. Exit 10 only on clear same-file + finding-signal matches; ambiguous
+	# matches are commented and fail open so dispatch can proceed.
+	local review_feedback_rc=0
+	_detect_review_feedback_supersession "$issue_number" "$slug" "$issue_body" "$issue_api_path" || review_feedback_rc=$?
+	if [[ "$review_feedback_rc" -eq 10 ]]; then
+		return 10
+	fi
+	if [[ "$review_feedback_rc" -ne 0 ]]; then
+		_log "WARN" "#${issue_number}: review-feedback supersession detector returned rc=${review_feedback_rc} — dispatch proceeds"
+	fi
+
+	local zero_progress_rc=0
+	_close_zero_progress_meta_if_recovered "$issue_number" "$slug" "$issue_body" || zero_progress_rc=$?
+	if [[ "$zero_progress_rc" -eq 10 ]]; then
+		return 10
+	fi
+	if [[ "$zero_progress_rc" -ne 0 ]]; then
+		_log "WARN" "#${issue_number}: zero-progress meta validator returned rc=${zero_progress_rc} — dispatch proceeds"
+	fi
+
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # validate — main subcommand
 #
@@ -1151,29 +1185,13 @@ cmd_validate() {
 		return 20
 	}
 
-	# Run self-hosting detector BEFORE generator-marker validators (t2819).
-	# Always returns 0; label mutation is advisory, not a dispatch block.
-	_detect_self_hosting_task "$issue_number" "$slug" "$issue_body"
-
-	# Run review-feedback/quality-debt supersession detector before launching a
-	# worker. Exit 10 only on clear same-file + finding-signal matches; ambiguous
-	# matches are commented and fail open so dispatch can proceed.
-	local review_feedback_rc=0
-	_detect_review_feedback_supersession "$issue_number" "$slug" "$issue_body" "$issue_api_path" || review_feedback_rc=$?
-	if [[ "$review_feedback_rc" -eq 10 ]]; then
+	local pre_generator_rc=0
+	_run_pre_generator_validators "$issue_number" "$slug" "$issue_body" "$issue_api_path" || pre_generator_rc=$?
+	if [[ "$pre_generator_rc" -eq 10 ]]; then
 		return 10
 	fi
-	if [[ "$review_feedback_rc" -ne 0 ]]; then
-		_log "WARN" "#${issue_number}: review-feedback supersession detector returned rc=${review_feedback_rc} — dispatch proceeds"
-	fi
-
-	local zero_progress_rc=0
-	_close_zero_progress_meta_if_recovered "$issue_number" "$slug" "$issue_body" || zero_progress_rc=$?
-	if [[ "$zero_progress_rc" -eq 10 ]]; then
-		return 10
-	fi
-	if [[ "$zero_progress_rc" -ne 0 ]]; then
-		_log "WARN" "#${issue_number}: zero-progress meta validator returned rc=${zero_progress_rc} — dispatch proceeds"
+	if [[ "$pre_generator_rc" -ne 0 ]]; then
+		_log "WARN" "#${issue_number}: pre-generator validator returned rc=${pre_generator_rc} — dispatch proceeds"
 	fi
 
 	# Extract generator marker (supports both simple and attributed forms):
