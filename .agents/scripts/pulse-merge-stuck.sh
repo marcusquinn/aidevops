@@ -1053,17 +1053,13 @@ _pms_close_zero_progress_meta_issue_if_recovered() {
 	local reason="$1"
 	local meta_repo="marcusquinn/aidevops"
 	local marker_text="merge-stuck:zero-progress"
-
 	[[ -n "$reason" ]] || reason="merge progress recovered"
-	# #aidevops:trust-boundary — recovery comments/closes are repo-state writes.
-	# Public issue comments can succeed for non-collaborators, so require the
-	# authenticated runner to be admin/maintain/write before posting.
+	# #aidevops:trust-boundary — public issue comments can succeed for non-collaborators.
 	if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
 		|| ! repo_allows_pulse_write_actions "$meta_repo"; then
 		echo "[pulse-merge-stuck] _pms_close_zero_progress_meta_issue_if_recovered: skipping recovery write in ${meta_repo} — runner lacks repo write permission" >>"$LOGFILE"
 		return 0
 	fi
-
 	local existing
 	existing=$(gh issue list --repo "$meta_repo" --state open --search "$marker_text" \
 		--limit 1 --json number --jq '.[0].number' 2>/dev/null) || existing=""
@@ -1088,10 +1084,6 @@ Closing this stale zero-progress meta-issue so auto-dispatch does not spend work
 	echo "[pulse-merge-stuck] _pms_close_zero_progress_meta_issue_if_recovered: closed #${existing} — ${reason}" >>"$LOGFILE"
 	return 0
 }
-
-# ── Module entry point — called once per pulse cycle, per repo ─────────────
-
-#######################################
 # Count PRs in $repo_slug that are eligible-but-unmerged this cycle —
 # APPROVED + MERGEABLE + !draft + !hold-for-review, then narrowed to PRs
 # that are not known to be blocked by the read-only merge gates (NOT age-gated).
@@ -1107,7 +1099,6 @@ Closing this stale zero-progress meta-issue so auto-dispatch does not spend work
 #
 # Args: $1 = repo_slug
 # Stdout: integer count
-#######################################
 #######################################
 # Decide whether a basic eligible PR should contribute to the zero-progress
 # denominator. This is intentionally read-only and narrower than the full
