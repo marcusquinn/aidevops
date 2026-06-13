@@ -38,6 +38,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit 1
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/shared-constants.sh"
 
+if [[ -f "${SCRIPT_DIR}/pulse-repo-meta.sh" ]]; then
+	# shellcheck source=./pulse-repo-meta.sh
+	source "${SCRIPT_DIR}/pulse-repo-meta.sh"
+fi
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -147,6 +152,14 @@ _close_zero_progress_meta_if_recovered() {
 	}
 	if [[ "$zero_progress_cycles" != "0" ]]; then
 		_log "INFO" "#${issue_number}: zero-progress meta premise still active (pulse_merge_zero_progress_cycles=${zero_progress_cycles}) — dispatch proceeds"
+		return 0
+	fi
+	# #aidevops:trust-boundary — recovered-meta handling writes comments and
+	# closes issues. Public issue comments can succeed for non-collaborators, so
+	# never write unless the runner is admin/maintain/write on this repo.
+	if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
+		|| ! repo_allows_pulse_write_actions "$slug"; then
+		_log "WARN" "#${issue_number}: recovered zero-progress meta issue left untouched — runner lacks repo write permission"
 		return 0
 	fi
 

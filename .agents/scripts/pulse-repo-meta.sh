@@ -166,19 +166,25 @@ get_repo_role_by_slug() {
 
 #######################################
 # Return success only for repos where pulse may write to GitHub PR/issue state.
-# Contributor repos stay read-only/noise-free: session and memory mining remain
+# Contributor/read-only repos stay noise-free: session and memory mining remain
 # allowed, but merge/stuck/dirty sweeps must not post, label, close, or rebase.
+# The live GitHub collaborator permission check is authoritative because public
+# issue comments can otherwise succeed for users with no repo relationship.
 # Arguments:
 #   $1 - repo slug (owner/repo)
-# Returns: 0 when role=maintainer, 1 otherwise
+# Returns: 0 when current runner has admin/maintain/write, 1 otherwise
 #######################################
 repo_allows_pulse_write_actions() {
 	local repo_slug="$1"
-	local repo_role="$_PULSE_REPO_ROLE_CONTRIBUTOR"
 
-	repo_role=$(get_repo_role_by_slug "$repo_slug" 2>/dev/null) || repo_role="$_PULSE_REPO_ROLE_CONTRIBUTOR"
-	[[ "$repo_role" == "$_PULSE_REPO_ROLE_MAINTAINER" ]] && return 0
-	return 1
+	# #aidevops:trust-boundary — never rely on repos.json role or successful
+	# public comments as authority. Require the authenticated runner to be an
+	# admin, maintainer, or write collaborator on the target repo.
+	if ! declare -F _gh_current_user_allows_repo_write >/dev/null 2>&1; then
+		return 1
+	fi
+	_gh_current_user_allows_repo_write "$repo_slug"
+	return $?
 }
 
 #######################################

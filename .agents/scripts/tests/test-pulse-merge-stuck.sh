@@ -266,6 +266,13 @@ gh_create_issue() {
 	return 0
 }
 
+PMS_TEST_ALLOW_WRITE="1"
+repo_allows_pulse_write_actions() {
+	local repo_slug="$1"
+	[[ "$repo_slug" == "marcusquinn/aidevops" && "${PMS_TEST_ALLOW_WRITE:-1}" == "1" ]]
+	return $?
+}
+
 # Reset gauge for a clean state.
 pulse_stats_set_gauge "pulse_merge_zero_progress_cycles" "0" >/dev/null 2>&1
 
@@ -299,6 +306,26 @@ else
 fi
 TESTS_RUN=$((TESTS_RUN + 1))
 PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE=""
+AIDEVOPS_MERGE_ZERO_PROGRESS_RECOVERY_CHECK_SECONDS=3600
+
+# 5b.2: recovery writes are skipped when the authenticated runner is not a
+# repo admin/maintainer/write collaborator.
+PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE="23037"
+PMS_TEST_ALLOW_WRITE="0"
+AIDEVOPS_MERGE_ZERO_PROGRESS_RECOVERY_CHECK_SECONDS=0
+: >"$GH_CALLS"
+pulse_stats_set_gauge "pulse_merge_zero_progress_cycles" "0" >/dev/null 2>&1
+pulse_merge_zero_progress_record 0 0 >/dev/null 2>&1
+if grep -q 'gh issue close 23037' "$GH_CALLS"; then
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 5b.2: read-only runner must not close recovered zero-progress issue"
+	echo "  gh calls: $(cat "$GH_CALLS")"
+else
+	echo "${TEST_GREEN}PASS${TEST_NC}: 5b.2: read-only runner skips recovered zero-progress issue write"
+fi
+TESTS_RUN=$((TESTS_RUN + 1))
+PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE=""
+PMS_TEST_ALLOW_WRITE="1"
 AIDEVOPS_MERGE_ZERO_PROGRESS_RECOVERY_CHECK_SECONDS=3600
 
 # 5c: merged=0 + eligible>0 → gauge increments by 1

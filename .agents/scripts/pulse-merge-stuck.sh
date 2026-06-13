@@ -1055,6 +1055,14 @@ _pms_close_zero_progress_meta_issue_if_recovered() {
 	local marker_text="merge-stuck:zero-progress"
 
 	[[ -n "$reason" ]] || reason="merge progress recovered"
+	# #aidevops:trust-boundary — recovery comments/closes are repo-state writes.
+	# Public issue comments can succeed for non-collaborators, so require the
+	# authenticated runner to be admin/maintain/write before posting.
+	if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
+		|| ! repo_allows_pulse_write_actions "$meta_repo"; then
+		echo "[pulse-merge-stuck] _pms_close_zero_progress_meta_issue_if_recovered: skipping recovery write in ${meta_repo} — runner lacks repo write permission" >>"$LOGFILE"
+		return 0
+	fi
 
 	local existing
 	existing=$(gh issue list --repo "$meta_repo" --state open --search "$marker_text" \
