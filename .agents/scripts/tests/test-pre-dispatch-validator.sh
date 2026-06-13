@@ -9,6 +9,8 @@
 #   test_unregistered_generator     — issue without marker returns exit 0
 #   test_validator_error            — scan fails unexpectedly → exit 20
 #   test_bypass_env_var             — AIDEVOPS_SKIP_PREDISPATCH_VALIDATOR=1 → exit 0
+#   test_zero_progress_meta_recovered_blocks_dispatch — recovered meta issue → exit 10
+#   test_zero_progress_meta_active_allows_dispatch    — active meta issue → exit 0
 
 set -euo pipefail
 
@@ -53,6 +55,7 @@ setup_test_env() {
 }
 
 teardown_test_env() {
+	unset PULSE_STATS_FILE
 	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
 		rm -rf "$TEST_ROOT"
 	fi
@@ -137,6 +140,37 @@ printf 'unsupported gh invocation: %s\n' "\$*" >&2
 exit 1
 GHEOF
 	chmod +x "${TEST_ROOT}/bin/gh"
+	return 0
+}
+
+create_gh_stub_zero_progress_body() {
+	local body_file="${TEST_ROOT}/issue_body.txt"
+	printf '<!-- merge-stuck:zero-progress -->\n## What\nZero-progress meta issue.\n' >"$body_file"
+
+	cat >"${TEST_ROOT}/bin/gh" <<GHEOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "\${1:-}" == "api" ]] && printf '%s' "\${2:-}" | grep -qE '/issues/[0-9]+\$'; then
+	python3 -c "import sys; sys.stdout.write(open('${body_file}').read())" 2>/dev/null
+	exit 0
+fi
+
+if [[ "\${1:-}" == "issue" ]]; then
+	exit 0
+fi
+
+printf 'unsupported gh invocation: %s\n' "\$*" >&2
+exit 1
+GHEOF
+	chmod +x "${TEST_ROOT}/bin/gh"
+	return 0
+}
+
+write_zero_progress_stats() {
+	local gauge_value="$1"
+	export PULSE_STATS_FILE="${TEST_ROOT}/pulse-stats.json"
+	printf '{"gauges":{"pulse_merge_zero_progress_cycles":{"value":%s}}}\n' "$gauge_value" >"$PULSE_STATS_FILE"
 	return 0
 }
 
@@ -419,6 +453,42 @@ test_bypass_env_var() {
 	return 0
 }
 
+test_zero_progress_meta_recovered_blocks_dispatch() {
+	setup_test_env
+	create_gh_stub_zero_progress_body
+	write_zero_progress_stats "0"
+
+	local rc=0
+	"$HELPER_SCRIPT" validate "52" "marcusquinn/aidevops" >/dev/null 2>&1 || rc=$?
+
+	if [[ "$rc" -eq 10 ]]; then
+		print_result "zero_progress meta recovered exits 10" 0
+	else
+		print_result "zero_progress meta recovered exits 10" 1 "Expected exit 10, got ${rc}"
+	fi
+
+	teardown_test_env
+	return 0
+}
+
+test_zero_progress_meta_active_allows_dispatch() {
+	setup_test_env
+	create_gh_stub_zero_progress_body
+	write_zero_progress_stats "5"
+
+	local rc=0
+	"$HELPER_SCRIPT" validate "53" "marcusquinn/aidevops" >/dev/null 2>&1 || rc=$?
+
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "zero_progress meta active exits 0" 0
+	else
+		print_result "zero_progress meta active exits 0" 1 "Expected exit 0, got ${rc}"
+	fi
+
+	teardown_test_env
+	return 0
+}
+
 test_review_feedback_extended_extensions() {
 	setup_test_env
 	create_gh_stub_review_feedback "extended-extension"
@@ -521,6 +591,8 @@ main() {
 	test_unregistered_generator
 	test_validator_error
 	test_bypass_env_var
+	test_zero_progress_meta_recovered_blocks_dispatch
+	test_zero_progress_meta_active_allows_dispatch
 	test_review_feedback_extended_extensions
 	test_review_feedback_keyword_scoring_whole_words
 	test_review_feedback_preserves_version_directory_paths
