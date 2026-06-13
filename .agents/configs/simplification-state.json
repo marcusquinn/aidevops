@@ -2304,9 +2304,9 @@
       "pr": 15086
     },
     ".agents/scripts/headless-runtime-lib.sh": {
-      "at": "2026-06-12T17:19:42Z",
-      "hash": "3efc9a2794450202a5aaa010a48beb76a60575eb",
-      "passes": 42,
+      "at": "2026-06-13T22:06:52Z",
+      "hash": "f0f7831b193d2c8c5b49b7c1e9cf012e44029956",
+      "passes": 43,
       "pr": 18707
     },
     ".agents/scripts/interactive-session-helper.sh": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-06-12T17:25:48Z",
-      "hash": "1eedbd49e70639c4284bcb3f55f40d8e67a5c91f",
-      "passes": 228,
+      "at": "2026-06-13T22:13:15Z",
+      "hash": "8c5503afe233d96d3b9c4371d72b48d8b004b62f",
+      "passes": 229,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-06-12T17:25:49Z",
-      "hash": "527b0d1fa5321bfe78803a8c47716422a6e7b4e8",
-      "passes": 224,
+      "at": "2026-06-13T22:13:15Z",
+      "hash": "34a3cfe4c83fca3dd1b832054e6d00864de53013",
+      "passes": 225,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7810,10 +7810,10 @@
       "passes": 4
     },
     ".agents/scripts/pre-dispatch-validator-helper.sh": {
-      "hash": "c82c9f6020b20b6de8568f25b6d22de92b4e8fc4",
-      "at": "2026-06-13T04:13:30Z",
+      "hash": "7b2cbd97ed4ec406fc50f802074696232ceea8a2",
+      "at": "2026-06-13T22:06:54Z",
       "pr": 20875,
-      "passes": 8
+      "passes": 9
     },
     ".agents/scripts/commands/dispatch-issue.md": {
       "hash": "f0ffb3c374e28960e3912b888b34aa5a79bd911f",
