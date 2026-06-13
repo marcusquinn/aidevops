@@ -111,6 +111,61 @@ _register_validators() {
 }
 
 # ---------------------------------------------------------------------------
+# Merge-stuck zero-progress meta-issue validator (GH#24729)
+# ---------------------------------------------------------------------------
+_zero_progress_gauge_from_stats() {
+	local stats_file="${PULSE_STATS_FILE:-${HOME}/.aidevops/logs/pulse-stats.json}"
+
+	if [[ ! -f "$stats_file" ]]; then
+		return 1
+	fi
+
+	local gauge_value
+	gauge_value=$(jq -r '(.gauges.pulse_merge_zero_progress_cycles.value // empty) | tostring' \
+		"$stats_file" 2>/dev/null) || return 1
+	if [[ -z "$gauge_value" ]]; then
+		return 1
+	fi
+
+	printf '%s\n' "$gauge_value"
+	return 0
+}
+
+_close_zero_progress_meta_if_recovered() {
+	local issue_number="$1"
+	local slug="$2"
+	local issue_body="$3"
+
+	if [[ "$issue_body" != *"merge-stuck:zero-progress"* ]]; then
+		return 0
+	fi
+
+	local zero_progress_cycles
+	zero_progress_cycles=$(_zero_progress_gauge_from_stats) || {
+		_log "WARN" "#${issue_number}: zero-progress meta validator could not read pulse_merge_zero_progress_cycles — dispatch proceeds"
+		return 0
+	}
+	if [[ "$zero_progress_cycles" != "0" ]]; then
+		_log "INFO" "#${issue_number}: zero-progress meta premise still active (pulse_merge_zero_progress_cycles=${zero_progress_cycles}) — dispatch proceeds"
+		return 0
+	fi
+
+	local comment_body
+	comment_body="## Recovery detected
+
+The pulse merge zero-progress detector recovered before worker dispatch: \`pulse_merge_zero_progress_cycles\` is 0.
+
+Closing this stale zero-progress meta-issue in the pre-dispatch validator so auto-dispatch does not spend worker capacity on an already-recovered incident. A fresh issue will be filed if a new zero-progress streak crosses the threshold."
+
+	gh issue comment "$issue_number" --repo "$slug" --body "$comment_body" >/dev/null 2>&1 ||
+		_log "WARN" "#${issue_number}: failed to comment on recovered zero-progress meta-issue"
+	gh issue close "$issue_number" --repo "$slug" --reason completed >/dev/null 2>&1 ||
+		_log "WARN" "#${issue_number}: failed to close recovered zero-progress meta-issue"
+	_log "INFO" "#${issue_number}: zero-progress meta premise recovered — issue closed, dispatch blocked"
+	return 10
+}
+
+# ---------------------------------------------------------------------------
 # Ratchet-down validator
 #
 # Clones the target repo into a scratch directory and runs:
@@ -1110,6 +1165,15 @@ cmd_validate() {
 	fi
 	if [[ "$review_feedback_rc" -ne 0 ]]; then
 		_log "WARN" "#${issue_number}: review-feedback supersession detector returned rc=${review_feedback_rc} — dispatch proceeds"
+	fi
+
+	local zero_progress_rc=0
+	_close_zero_progress_meta_if_recovered "$issue_number" "$slug" "$issue_body" || zero_progress_rc=$?
+	if [[ "$zero_progress_rc" -eq 10 ]]; then
+		return 10
+	fi
+	if [[ "$zero_progress_rc" -ne 0 ]]; then
+		_log "WARN" "#${issue_number}: zero-progress meta validator returned rc=${zero_progress_rc} — dispatch proceeds"
 	fi
 
 	# Extract generator marker (supports both simple and attributed forms):
