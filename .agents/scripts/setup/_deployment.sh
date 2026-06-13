@@ -3,6 +3,43 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Agent deployment functions for setup.sh
 
+# Sync deployed agent bin shims into ~/.aidevops/bin for PATH discoverability.
+_sync_agent_bin_shims() {
+	local target_dir="$1"
+	local user_bin_dir="${HOME}/.aidevops/bin"
+	local shim=""
+	local shim_name=""
+	local existing=""
+	local existing_target=""
+
+	mkdir -p "$user_bin_dir"
+
+	# Remove stale links from previous aidevops agent-bin deployments. This is the
+	# uninstall path for retired shims: keep user files and unrelated symlinks, but
+	# delete links that still point into ~/.aidevops/agents/bin and no longer have a
+	# matching deployed source.
+	for existing in "$user_bin_dir"/*; do
+		[[ -L "$existing" ]] || continue
+		existing_target="$(readlink "$existing" 2>/dev/null || true)"
+		case "$existing_target" in
+			"${target_dir}/bin/"*)
+				if [[ ! -e "$existing_target" ]]; then
+					rm -f "$existing"
+				fi
+				;;
+		esac
+	done
+
+	if [[ -d "${target_dir}/bin" ]]; then
+		for shim in "${target_dir}/bin/"*; do
+			[[ -f "$shim" ]] || continue
+			shim_name="$(basename "$shim")"
+			ln -sf "$shim" "${user_bin_dir}/${shim_name}"
+		done
+	fi
+	return 0
+}
+
 # Deploy aidevops agents to ~/.aidevops/agents/
 #
 # Uses atomic swap: deploy to a temp directory first, then rename over the
@@ -89,16 +126,7 @@ deploy_aidevops_agents() {
 
 	# t2199: Symlink bin shims into ~/.aidevops/bin/ for PATH discoverability.
 	# ~/.aidevops/bin/ is already on PATH (managed by setup.sh shell-env).
-	if [[ -d "${target_dir}/bin" ]]; then
-		mkdir -p "${HOME}/.aidevops/bin"
-		local shim
-		for shim in "${target_dir}/bin/"*; do
-			[[ -f "$shim" ]] || continue
-			local shim_name
-			shim_name="$(basename "$shim")"
-			ln -sf "$shim" "${HOME}/.aidevops/bin/${shim_name}"
-		done
-	fi
+	_sync_agent_bin_shims "$target_dir"
 
 	echo "[deploy] Deployed agents to ${target_dir} ($(find "$target_dir" -type f | wc -l | tr -d ' ') files)"
 	return 0
