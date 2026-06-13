@@ -12,6 +12,11 @@ _sync_agent_bin_shims() {
 	local existing=""
 	local existing_target=""
 
+	if [[ -z "$target_dir" ]]; then
+		echo "[deploy] ERROR: target_dir is empty in _sync_agent_bin_shims" >&2
+		return 1
+	fi
+
 	mkdir -p "$user_bin_dir"
 
 	# Remove stale links from previous aidevops agent-bin deployments. This is the

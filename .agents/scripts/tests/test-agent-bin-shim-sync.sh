@@ -64,6 +64,19 @@ assert_exists() {
 	return 1
 }
 
+assert_empty_target_rejected() {
+	local test_name="$1"
+	if HOME="$tmp_home" _sync_agent_bin_shims "" >/dev/null 2>&1; then
+		echo "  FAIL: $test_name"
+		echo "    expected empty target_dir to fail"
+		FAIL=$((FAIL + 1))
+		return 1
+	fi
+	echo "  PASS: $test_name"
+	PASS=$((PASS + 1))
+	return 0
+}
+
 echo "Test: agent bin shim sync"
 echo "==========================="
 echo ""
@@ -83,6 +96,10 @@ printf 'user file\n' >"${tmp_home}/.aidevops/bin/user_tool"
 
 # shellcheck disable=SC1090
 source "$DEPLOYMENT_MODULE"
+
+assert_empty_target_rejected "empty target_dir is rejected before scanning /bin"
+assert_missing "empty target_dir does not link system /bin shims" \
+	"${tmp_home}/.aidevops/bin/sh"
 
 HOME="$tmp_home" _sync_agent_bin_shims "$tmp_target"
 
