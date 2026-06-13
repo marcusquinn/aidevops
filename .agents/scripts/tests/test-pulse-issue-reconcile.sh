@@ -202,9 +202,9 @@ test_body_in_prefetch_fetch() {
 
 	# safe_grep_count inline pattern (t2763): use guard form, not || echo 0.
 	local full_has_body delta_has_body
-	full_has_body=$(grep -c 'number,title,labels,updatedAt,assignees,body' "${prefetch_sh}" 2>/dev/null || true)
+	full_has_body=$(grep -c 'number,title,state,labels,updatedAt,assignees,body' "${prefetch_sh}" 2>/dev/null || true)
 	[[ "$full_has_body" =~ ^[0-9]+$ ]] || full_has_body=0
-	delta_has_body=$(grep -c 'number,title,labels,updatedAt,assignees,body' "${prefetch_fetch_sh}" 2>/dev/null || true)
+	delta_has_body=$(grep -c 'number,title,state,labels,updatedAt,assignees,body' "${prefetch_fetch_sh}" 2>/dev/null || true)
 	[[ "$delta_has_body" =~ ^[0-9]+$ ]] || delta_has_body=0
 
 	if [[ "$full_has_body" -ge 1 ]] && [[ "$delta_has_body" -ge 1 ]]; then
