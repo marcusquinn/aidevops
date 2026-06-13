@@ -126,12 +126,9 @@ test_pulse_step_minutes_supported() {
 }
 
 test_empty_schedule_fails_cleanly() {
-	local output=""
+	local output
 	local rc=0
-	set +e
-	output=$("${REPO_SCRIPTS_DIR}/routine-schedule-helper.sh" parse '' 2>&1)
-	rc=$?
-	set -e
+	output=$("${REPO_SCRIPTS_DIR}/routine-schedule-helper.sh" parse '' 2>&1) || rc=$?
 
 	if [[ "$rc" -ne 0 && "$output" != *"unary operator expected"* && "$output" == *"unrecognised schedule expression"* ]]; then
 		print_result "empty schedule expression uses clean parse error" 0
