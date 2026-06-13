@@ -371,7 +371,7 @@ merge_ready_prs_all_repos() {
 	# t3193: record the zero-progress signal AFTER all repos have been processed.
 	# Resolves at runtime via bash lazy lookup (pulse-merge-stuck.sh).
 	if declare -F pulse_merge_zero_progress_record >/dev/null 2>&1; then
-		pulse_merge_zero_progress_record "$total_eligible_unmerged" "$total_merged" || true
+		pulse_merge_zero_progress_record "$total_eligible_unmerged" "$total_merged" "$total_closed" || true
 	fi
 
 	echo "[pulse-wrapper] Deterministic merge pass complete: merged=${total_merged}, closed_conflicting=${total_closed}, failed=${total_failed}, eligible_unmerged=${total_eligible_unmerged}" >>"$_mr_logfile"

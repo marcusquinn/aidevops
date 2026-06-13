@@ -14,6 +14,7 @@
 #      against an isolated PULSE_STATS_FILE; non-numeric set is rejected.
 #   6. pulse_merge_zero_progress_record:
 #        merged>0 → gauge reset to 0
+#        non-merge deterministic progress → gauge reset to 0
 #        merged=0 + eligible=0 → gauge reset to 0 (streak broken)
 #        merged=0 + eligible>0 → gauge incremented by 1
 #   7. _pms_count_eligible_unmerged_for_repo excludes PRs blocked by
@@ -327,6 +328,24 @@ TESTS_RUN=$((TESTS_RUN + 1))
 PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE=""
 PMS_TEST_ALLOW_WRITE="1"
 AIDEVOPS_MERGE_ZERO_PROGRESS_RECOVERY_CHECK_SECONDS=3600
+
+# 5b.3: conflict close/remediation progress is not merge throughput, but it is
+# deterministic queue-draining progress and must break a zero-progress streak.
+PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE="23038"
+: >"$GH_CALLS"
+pulse_stats_set_gauge "pulse_merge_zero_progress_cycles" "3" >/dev/null 2>&1
+pulse_merge_zero_progress_record 2 0 1 >/dev/null 2>&1
+got=$(pulse_stats_get_gauge "pulse_merge_zero_progress_cycles")
+assert_eq "5b.3: conflict progress resets cycles to 0 (was 3)" "0" "$got"
+if grep -q 'gh issue close 23038 --repo marcusquinn/aidevops --reason completed' "$GH_CALLS"; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 5b.3: conflict progress auto-closes zero-progress issue"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 5b.3: conflict progress auto-closes zero-progress issue"
+	echo "  gh calls: $(cat "$GH_CALLS")"
+fi
+TESTS_RUN=$((TESTS_RUN + 1))
+PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE=""
 
 # 5c: merged=0 + eligible>0 → gauge increments by 1
 pulse_stats_set_gauge "pulse_merge_zero_progress_cycles" "0" >/dev/null 2>&1

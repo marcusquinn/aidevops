@@ -1436,31 +1436,40 @@ _pms_close_zero_progress_meta_issue_if_recovered_due() {
 # When the counter crosses AIDEVOPS_MERGE_ZERO_PROGRESS_CYCLES, files a
 # meta-issue (dedup'd by marker) describing the throughput collapse.
 #
-# Reset by a separate call to pulse_merge_zero_progress_reset on any
-# successful merge.
+# Reset by any deterministic merge-pass progress: a successful merge or a
+# conflicting PR close/remediation action that drained work from the queue.
 #
 # Args:
 #   $1 - count of PRs that were eligible-unmerged this cycle (>0 to count)
 #   $2 - count of PRs successfully merged this cycle
+#   $3 - count of non-merge deterministic progress actions this cycle
 #######################################
 pulse_merge_zero_progress_record() {
 	local eligible_unmerged="${1:-0}"
 	local merged_count="${2:-0}"
+	local progress_count="${3:-0}"
 
 	[[ "$eligible_unmerged" =~ ^[0-9]+$ ]] || eligible_unmerged=0
 	[[ "$merged_count" =~ ^[0-9]+$ ]] || merged_count=0
+	[[ "$progress_count" =~ ^[0-9]+$ ]] || progress_count=0
 
 	local cur_before
 	cur_before=$(pulse_stats_get_gauge "$_PMS_GAUGE_ZERO_PROGRESS_CYCLES")
 	[[ "$cur_before" =~ ^[0-9]+$ ]] || cur_before=0
 
-	# Successful merge resets the counter.
-	if [[ "$merged_count" -gt 0 ]]; then
+	# Any deterministic merge-pass progress resets the counter. Conflict close or
+	# remediation progress drains stuck work even when no PR merged in that cycle;
+	# keeping the streak alive would file false throughput-collapse meta-issues.
+	if [[ "$merged_count" -gt 0 || "$progress_count" -gt 0 ]]; then
 		pulse_stats_set_gauge "$_PMS_GAUGE_ZERO_PROGRESS_CYCLES" "0"
+		local recovery_reason="${merged_count} PR(s) merged after a ${cur_before}-cycle zero-progress streak"
+		if [[ "$merged_count" -le 0 ]]; then
+			recovery_reason="${progress_count} deterministic conflict/close progress action(s) after a ${cur_before}-cycle zero-progress streak"
+		fi
 		if [[ "$cur_before" -gt 0 ]]; then
-			_pms_close_zero_progress_meta_issue_if_recovered "${merged_count} PR(s) merged after a ${cur_before}-cycle zero-progress streak"
+			_pms_close_zero_progress_meta_issue_if_recovered "$recovery_reason"
 		else
-			_pms_close_zero_progress_meta_issue_if_recovered_due "${merged_count} PR(s) merged while zero-progress gauge was already 0"
+			_pms_close_zero_progress_meta_issue_if_recovered_due "$recovery_reason while zero-progress gauge was already 0"
 		fi
 		return 0
 	fi
