@@ -1061,9 +1061,12 @@ _copy_worker_db_migration_ledger_table() {
 
 	shared_db_sql=$(sql_escape "$shared_db")
 	sqlite3_with_timeout "$worker_db" <<-SQL >/dev/null 2>&1 || true
+		.bail on
 		ATTACH DATABASE '${shared_db_sql}' AS shared;
+		BEGIN IMMEDIATE;
 		DELETE FROM main."${ledger_table}";
 		INSERT OR IGNORE INTO main."${ledger_table}" SELECT * FROM shared."${ledger_table}";
+		COMMIT;
 		DETACH DATABASE shared;
 	SQL
 	return 0
