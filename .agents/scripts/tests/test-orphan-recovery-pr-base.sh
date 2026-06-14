@@ -130,6 +130,21 @@ test_awardsapp_pr_base_overrides_default_branch() {
 	return 0
 }
 
+test_explicit_dispatch_pr_base_overrides_repo_config() {
+	local resolved=""
+	WORKER_PR_BASE_BRANCH="release/2026"
+	resolved=$(_resolve_orphan_recovery_base_branch "owner/repo" "$TEST_ROOT")
+	unset WORKER_PR_BASE_BRANCH
+
+	if [[ "$resolved" == "release/2026" ]]; then
+		print_result "explicit dispatch PR base overrides repo configuration" 0
+		return 0
+	fi
+
+	print_result "explicit dispatch PR base overrides repo configuration" 1 "resolved=${resolved}"
+	return 0
+}
+
 test_unconfigured_repo_falls_back_to_github_default_branch() {
 	local resolved=""
 	resolved=$(_resolve_orphan_recovery_base_branch "owner/unconfigured" "$TEST_ROOT")
@@ -146,6 +161,7 @@ main() {
 	setup_test_env
 	test_orphan_recovery_uses_configured_pr_base
 	test_awardsapp_pr_base_overrides_default_branch
+	test_explicit_dispatch_pr_base_overrides_repo_config
 	test_unconfigured_repo_falls_back_to_github_default_branch
 	teardown_test_env
 
