@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.60] - 2026-06-14
+
+### Changed
+
+- fix: replace stale opencode worker db ledgers
+- Maintenance: sync ref:GH#24768 to TODO.md [skip ci]
+- fix: raise provider account capacity default (#24766)
+- Maintenance: update simplification state registry
+- fix: harden collaborator current user lookup (#24763)
+
+### Fixed
+
+- reset zero-progress on conflict progress (#24762)
+
 ## [3.20.59] - 2026-06-13
 
 ### Changed
