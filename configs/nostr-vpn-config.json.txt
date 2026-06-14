@@ -62,9 +62,18 @@
     "allowed_peers": ["npub1examplelaptop..."],
     "notes": "Store the token with aidevops secret set OPENCODE_SERVER_TOKEN; do not expose OpenCode ports on public interfaces."
   },
+  "aidevops_candidate_services": [
+    "OpenCode remote server after SSH is proven",
+    "private Git remotes over mesh SSH",
+    "MCP services bound to loopback or FIPS-only addresses",
+    "local dashboards and staging apps with explicit peer ACLs",
+    "homelab storage, GPU workers, and CI/debug workers without public listeners"
+  ],
   "security_defaults": {
     "peer_acl": "allowlist",
     "mesh_firewall": "enable-before-service-exposure",
+    "single_node_posture": "disable LaunchDaemon after install validation when no trusted peer is ready",
+    "fresh_install_acl_warning": "macOS v0.4.0-rc1 single-node testing observed effective_mode default_open with enforcement inactive",
     "lan_gateway": "disabled-until-reviewed",
     "exit_node": "disabled-until-reviewed",
     "public_relay_metadata_warning": true
@@ -80,8 +89,9 @@
     "4. Generate one persistent identity per device.",
     "5. Store recovery nsec with: aidevops secret set FIPS_NSEC (only if needed).",
     "6. Record npubs and aliases in a private local config, not in git.",
-    "7. Configure peer allowlists before joining untrusted meshes.",
-    "8. Enable the fips0 firewall baseline before exposing SSH/OpenCode.",
-    "9. Run: .agents/scripts/nostr-vpn-helper.sh diagnostics"
+    "7. If no trusted peer is ready, stop and disable the macOS LaunchDaemon after validating install state.",
+    "8. Configure peer allowlists before joining untrusted meshes.",
+    "9. Enable the fips0 firewall baseline before exposing SSH/OpenCode.",
+    "10. Run: .agents/scripts/nostr-vpn-helper.sh diagnostics and safe-posture"
   ]
 }

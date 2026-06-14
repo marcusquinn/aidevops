@@ -23,6 +23,7 @@ Commands:
   diagnostics      Run non-destructive local diagnostics
   secrets-help     Show aidevops secret setup guidance
   macos-source     Show macOS package verification and source fallback guidance
+  safe-posture     Show safe install, disable, and re-enable guidance
   opencode-guide   Show secure OpenCode remote compute guidance
   help             Show this help
 USAGE
@@ -136,6 +137,37 @@ run_diagnostics() {
 	return 0
 }
 
+show_safe_posture_guide() {
+	cat <<'GUIDE'
+Safe FIPS/Nostr VPN local posture:
+  - A successful macOS package install creates a root LaunchDaemon and may start FIPS immediately.
+  - Initial installs can listen on 0.0.0.0:2121/udp and 0.0.0.0:8443/tcp with ACL default-open.
+  - With no trusted second node ready, stop and disable the daemon after install validation.
+
+Check current state:
+  fipsctl show status
+  fipsctl acl show
+  launchctl print system/com.fips.daemon
+  netstat -an -p tcp | rg '(:8443|\.8443)' || true
+  netstat -an -p udp | rg '(:2121|\.2121)' || true
+
+Disable until ready to pair trusted peers:
+  sudo launchctl bootout system /Library/LaunchDaemons/com.fips.daemon.plist
+  sudo launchctl disable system/com.fips.daemon
+
+Expected disabled check:
+  launchctl print system/com.fips.daemon
+  # Bad request. Could not find service "com.fips.daemon" in domain for system
+
+Re-enable only when ready to test with an allowlisted peer:
+  sudo launchctl enable system/com.fips.daemon
+  sudo launchctl bootstrap system /Library/LaunchDaemons/com.fips.daemon.plist
+
+Do not expose SSH, OpenCode, dashboards, or gateway/exit-node modes until peer ACLs are explicit and default-open behavior is reviewed.
+GUIDE
+	return 0
+}
+
 show_secrets_help() {
 	cat <<'SECRETS'
 WARNING: Never paste secret values into AI chat.
@@ -200,6 +232,12 @@ Secure OpenCode remote compute over Nostr VPN/FIPS:
   4. Allow only the client npub in FIPS peer ACLs and fips0 firewall rules.
   5. Test SSH first, then test an authenticated OpenCode request over the mesh.
   6. Disable LAN gateway and exit-node modes unless the trust boundary is reviewed.
+
+Useful aidevops service candidates after SSH is proven:
+  - OpenCode remote server for heavier local or workstation compute.
+  - Git operations and repo maintenance over private SSH between devices.
+  - Self-hosted dashboards or MCP services bound to loopback/FIPS only.
+  - Homelab storage, GPU workers, or staging services without public ports.
 GUIDE
 	return 0
 }
@@ -239,6 +277,10 @@ main() {
 		;;
 	macos-source)
 		show_macos_source_guide "$@"
+		return $?
+		;;
+	safe-posture)
+		show_safe_posture_guide "$@"
 		return $?
 		;;
 	opencode-guide)

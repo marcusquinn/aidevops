@@ -163,6 +163,32 @@ test_macos_source_mentions_rc1_package_validation() {
 	return 0
 }
 
+test_safe_posture_mentions_disable_and_default_open() {
+	local output=""
+	output="$(bash "$HELPER_SCRIPT" safe-posture 2>&1)"
+
+	if [[ "$output" == *"default-open"* && "$output" == *"launchctl disable"* && "$output" == *"0.0.0.0:8443"* ]]; then
+		print_result "safe posture mentions disable and default open" 0
+		return 0
+	fi
+
+	print_result "safe posture mentions disable and default open" 1 "$output"
+	return 0
+}
+
+test_opencode_guide_mentions_aidevops_services() {
+	local output=""
+	output="$(bash "$HELPER_SCRIPT" opencode-guide 2>&1)"
+
+	if [[ "$output" == *"MCP services"* && "$output" == *"Git operations"* && "$output" == *"loopback/FIPS"* ]]; then
+		print_result "opencode guide mentions aidevops services" 0
+		return 0
+	fi
+
+	print_result "opencode guide mentions aidevops services" 1 "$output"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -174,6 +200,8 @@ main() {
 	test_secret_guidance_mentions_aidevops_secret
 	test_firewall_status_suppresses_systemctl_stderr
 	test_macos_source_mentions_rc1_package_validation
+	test_safe_posture_mentions_disable_and_default_open
+	test_opencode_guide_mentions_aidevops_services
 
 	printf '\nTests run: %d\n' "$TESTS_RUN"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
