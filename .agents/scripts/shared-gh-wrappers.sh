@@ -50,6 +50,69 @@ if ! command -v print_warning >/dev/null 2>&1; then
 	print_warning() { printf '[WARN] %s\n' "$*" >&2; return 0; }
 fi
 
+# Standalone-source cleanup compatibility.
+# shared-constants.sh provides the canonical cleanup stack before sourcing this
+# file in normal bash helper execution. OpenCode zsh recovery commands can
+# source shared-gh-wrappers.sh directly, so provide minimal fallbacks and avoid
+# bash-only `trap ... RETURN` under zsh.
+if ! command -v push_cleanup >/dev/null 2>&1; then
+	_CLEANUP_CMDS=""
+	_CLEANUP_SAVE_STACK=""
+	push_cleanup() {
+		local cmd="$1"
+		if [[ -n "$_CLEANUP_CMDS" ]]; then
+			_CLEANUP_CMDS="${_CLEANUP_CMDS}"$'\n'"${cmd}"
+		else
+			_CLEANUP_CMDS="${cmd}"
+		fi
+		return 0
+	}
+fi
+if ! command -v _run_cleanups >/dev/null 2>&1; then
+	_run_cleanups() {
+		if [[ -n "$_CLEANUP_CMDS" ]]; then
+			local reversed=""
+			local line
+			while IFS= read -r line; do
+				[[ -z "$line" ]] && continue
+				if [[ -n "$reversed" ]]; then
+					reversed="${line}"$'\n'"${reversed}"
+				else
+					reversed="$line"
+				fi
+			done <<<"$_CLEANUP_CMDS"
+			while IFS= read -r line; do
+				[[ -z "$line" ]] && continue
+				bash -c "$line" 2>/dev/null || true
+			done <<<"$reversed"
+		fi
+		local sep=$'\x1F'
+		if [[ -n "$_CLEANUP_SAVE_STACK" ]]; then
+			_CLEANUP_CMDS="${_CLEANUP_SAVE_STACK%%"${sep}"*}"
+			_CLEANUP_SAVE_STACK="${_CLEANUP_SAVE_STACK#*"${sep}"}"
+		else
+			_CLEANUP_CMDS=""
+		fi
+		return 0
+	}
+fi
+if ! command -v _save_cleanup_scope >/dev/null 2>&1; then
+	_save_cleanup_scope() {
+		local sep=$'\x1F'
+		_CLEANUP_SAVE_STACK="${_CLEANUP_CMDS}${sep}${_CLEANUP_SAVE_STACK}"
+		_CLEANUP_CMDS=""
+		return 0
+	}
+fi
+
+_gh_wrapper_enter_cleanup_scope() {
+	_save_cleanup_scope
+	if [[ -n "${BASH_VERSION:-}" ]]; then
+		trap '_run_cleanups' RETURN
+	fi
+	return 0
+}
+
 # t3461: optional user-owned GitHub App auth and route decisions. Source this
 # before the REST translators so _rest_api_call can use installation tokens for
 # REST core/search pools while native gh/PAT remains the fallback path.
