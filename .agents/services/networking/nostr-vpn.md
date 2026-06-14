@@ -38,6 +38,8 @@ Use **Nostr VPN/FIPS** when self-sovereign identity and no central control plane
 
 Do not present FIPS as the default aidevops networking layer until upstream protocol stability and security audit status improve.
 
+Do not present FIPS as “full anonymity” or “no spying possible”. It reduces dependence on a SaaS control plane, but relays, transport endpoints, timing, IPs, and compromised devices can still leak metadata.
+
 ## aidevops Use Cases
 
 - Secure SSH and OpenCode server access between personal devices across networks.
@@ -46,6 +48,29 @@ Do not present FIPS as the default aidevops networking layer until upstream prot
 - Run aidevops helpers on one node while using compute or services on another.
 - Test resilient routing over UDP, TCP, Ethernet, Tor, or Bluetooth transports.
 - Keep private admin paths for Git remotes, MCP services, dashboards, staging apps, backup/storage nodes, and CI/debug workers bound to loopback or FIPS-only addresses.
+
+## Privacy and Anonymity Best Practices
+
+Use FIPS as a private device mesh, not as a standalone anonymity network:
+
+1. Generate fresh per-device FIPS/Nostr identities; never reuse a public/social Nostr npub.
+2. Separate identities by purpose: personal devices, experiments, client/work, travel, and high-risk research.
+3. Prefer self-hosted or trusted private Nostr relays for discovery. If public relays are used, assume they can observe npubs, IPs, timestamps, and discovery metadata even when payload contents are encrypted.
+4. Keep peer ACLs explicit and default-deny. Treat default-open ACL state as unsafe for exposing SSH, OpenCode, MCP, dashboards, or gateways.
+5. Disable LAN gateway, exit-node, and broad listener modes unless the trust boundary is documented and reviewed.
+6. Bind services to loopback or the FIPS interface only; do not publish public listeners as a shortcut.
+7. Keep FIPS disabled when no trusted peer is ready; enable only for an intentional test window.
+8. Rotate identities after suspected compromise and remove stale peers from ACLs, known-hosts, and local host maps.
+
+For stronger privacy, combine FIPS with other aidevops guidance and tools:
+
+- `tools/security/opsec.md` — threat modelling, DNS privacy, device hygiene, identity compartmentalisation, anti-fingerprinting browsers, and incident response.
+- `services/communications/privacy-comparison.md` — choose SimpleX or Signal for private human messaging; do not use FIPS as a chat privacy substitute.
+- Tor or a reputable no-logs VPN — hide source IP from relays/transports where the threat model requires it.
+- Self-hosted Nostr relay — reduce third-party relay metadata exposure.
+- FileVault/LUKS/BitLocker, YubiKey-backed SSH/FIDO2, EXIF stripping, separate browser profiles, CamoFox, or hardened Firefox/Arkenfox — reduce endpoint and identity-correlation risk.
+
+Hard limit: full privacy and anonymity cannot be guaranteed by a VPN overlay alone. IP addresses, timing correlation, device fingerprints, writing style, payment trails, relay logs, and compromised endpoints can identify users.
 
 ## Setup Pattern
 
@@ -148,6 +173,7 @@ Other aidevops-adjacent candidates after SSH is proven: private Git remotes, MCP
 .agents/scripts/nostr-vpn-helper.sh secrets-help
 .agents/scripts/nostr-vpn-helper.sh macos-source
 .agents/scripts/nostr-vpn-helper.sh safe-posture
+.agents/scripts/nostr-vpn-helper.sh privacy-guide
 .agents/scripts/nostr-vpn-helper.sh opencode-guide
 ```
 
@@ -163,6 +189,8 @@ The helper is intentionally read-only except for printing operator instructions;
 - Enable `fips0` firewall rules before exposing SSH, OpenCode, dashboards, or LAN gateways.
 - Avoid LAN gateway and exit-node mode until the trust boundary is explicit.
 - Assume public Nostr relays can reveal metadata even when messages are encrypted.
+- Use fresh per-purpose identities and private/self-hosted relays where practical.
+- Use Tor, a no-logs VPN, or privacy-preserving transport only when IP hiding is part of the threat model; validate that the chosen FIPS transport actually uses it.
 - Rotate the device identity after suspected compromise; remove stale peers from ACLs and known-hosts.
 
 ## Verification
