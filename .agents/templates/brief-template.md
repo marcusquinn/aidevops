@@ -334,7 +334,13 @@ from `_parse_phases_section` — then add new logic to the slimmed parent functi
      typecheck, unit tests). Mark E2E/visual/performance checks as advisory
      unless this task targets staging/release promotion or directly changes a
      critical tested path. Advisory failures should become follow-up issues with
-     evidence, not hidden blockers. See `.agents/reference/ci-gate-policy.md`. -->
+     evidence, not hidden blockers. See `.agents/reference/ci-gate-policy.md`.
+
+     Generated-type lint trap: when changed files depend on generated Content
+     Collections or route/content types, include the CI changed-file lint path
+     when available: `node .github/scripts/lint-changed-files.mjs --base-ref <base>`.
+     Prefer runtime validation, local schemas, or typed wrappers that lint before
+     generation; avoid unused blanket eslint disables. -->
 
 ```bash
 {Command(s) to confirm the implementation works — e.g., shellcheck, grep, test run}
