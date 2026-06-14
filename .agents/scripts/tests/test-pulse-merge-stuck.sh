@@ -347,6 +347,25 @@ fi
 TESTS_RUN=$((TESTS_RUN + 1))
 PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE=""
 
+# 5b.4: recovery sweeps from an already-zero gauge must not compose a
+# contradictory "after a 0-cycle streak while gauge was already 0" reason.
+PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE="23039"
+AIDEVOPS_MERGE_ZERO_PROGRESS_RECOVERY_CHECK_SECONDS=0
+: >"$LOGFILE"
+pulse_stats_set_gauge "pulse_merge_zero_progress_cycles" "0" >/dev/null 2>&1
+pulse_merge_zero_progress_record 2 0 1 >/dev/null 2>&1
+if grep -q 'deterministic conflict/close progress action(s) while zero-progress gauge was already 0' "$LOGFILE" \
+	&& ! grep -q 'after a 0-cycle zero-progress streak while zero-progress gauge was already 0' "$LOGFILE"; then
+	echo "${TEST_GREEN}PASS${TEST_NC}: 5b.4: already-zero recovery reason is direct and non-contradictory"
+else
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 5b.4: already-zero recovery reason is contradictory"
+	echo "  log: $(cat "$LOGFILE")"
+fi
+TESTS_RUN=$((TESTS_RUN + 1))
+PMS_TEST_OPEN_ZERO_PROGRESS_ISSUE=""
+AIDEVOPS_MERGE_ZERO_PROGRESS_RECOVERY_CHECK_SECONDS=3600
+
 # 5c: merged=0 + eligible>0 → gauge increments by 1
 pulse_stats_set_gauge "pulse_merge_zero_progress_cycles" "0" >/dev/null 2>&1
 pulse_merge_zero_progress_record 4 0 >/dev/null 2>&1

@@ -1462,14 +1462,21 @@ pulse_merge_zero_progress_record() {
 	# keeping the streak alive would file false throughput-collapse meta-issues.
 	if [[ "$merged_count" -gt 0 || "$progress_count" -gt 0 ]]; then
 		pulse_stats_set_gauge "$_PMS_GAUGE_ZERO_PROGRESS_CYCLES" "0"
-		local recovery_reason="${merged_count} PR(s) merged after a ${cur_before}-cycle zero-progress streak"
-		if [[ "$merged_count" -le 0 ]]; then
-			recovery_reason="${progress_count} deterministic conflict/close progress action(s) after a ${cur_before}-cycle zero-progress streak"
-		fi
+		local recovery_reason
 		if [[ "$cur_before" -gt 0 ]]; then
+			if [[ "$merged_count" -gt 0 ]]; then
+				recovery_reason="${merged_count} PR(s) merged after a ${cur_before}-cycle zero-progress streak"
+			else
+				recovery_reason="${progress_count} deterministic conflict/close progress action(s) after a ${cur_before}-cycle zero-progress streak"
+			fi
 			_pms_close_zero_progress_meta_issue_if_recovered "$recovery_reason"
 		else
-			_pms_close_zero_progress_meta_issue_if_recovered_due "$recovery_reason while zero-progress gauge was already 0"
+			if [[ "$merged_count" -gt 0 ]]; then
+				recovery_reason="${merged_count} PR(s) merged while zero-progress gauge was already 0"
+			else
+				recovery_reason="${progress_count} deterministic conflict/close progress action(s) while zero-progress gauge was already 0"
+			fi
+			_pms_close_zero_progress_meta_issue_if_recovered_due "$recovery_reason"
 		fi
 		return 0
 	fi
