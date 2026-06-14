@@ -1049,14 +1049,14 @@ _copy_worker_db_migration_ledger_table() {
 	local worker_db="$1"
 	local shared_db="$2"
 	local ledger_table="$3"
-	local has_shared has_worker shared_db_sql
+	local has_shared has_worker schema shared_db_sql
 
 	has_shared=$(sqlite3_with_timeout "$shared_db" "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '${ledger_table}' LIMIT 1;" 2>/dev/null || true)
 	[[ -n "$has_shared" ]] || return 0
 
 	has_worker=$(sqlite3_with_timeout "$worker_db" "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '${ledger_table}' LIMIT 1;" 2>/dev/null || true)
 	if [[ -z "$has_worker" ]]; then
-		if ! sqlite3_with_timeout "$shared_db" ".schema ${ledger_table}" 2>/dev/null | sqlite3_with_timeout "$worker_db" >/dev/null 2>&1; then
+		if ! schema=$(sqlite3_with_timeout "$shared_db" ".schema ${ledger_table}" 2>/dev/null) || [[ -z "$schema" ]] || ! printf '%s\n' "$schema" | sqlite3_with_timeout "$worker_db" >/dev/null 2>&1; then
 			print_warning "OpenCode worker DB could not create ${ledger_table} migration ledger from shared DB"
 			return 1
 		fi

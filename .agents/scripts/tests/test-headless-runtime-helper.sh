@@ -1338,6 +1338,61 @@ SQL
 	return 0
 }
 
+test_copy_worker_db_migration_ledger_stops_when_schema_query_fails() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/isolated-opencode-schema-query-failure"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	local sqlite_wrapper
+	local create_attempts=0
+	local rc=0
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+	rm -f "$shared_db" "$worker_db"
+
+	sqlite3 "$shared_db" <<'SQL'
+CREATE TABLE __drizzle_migrations (id INTEGER PRIMARY KEY, hash TEXT NOT NULL, created_at INTEGER);
+INSERT INTO __drizzle_migrations VALUES (1, 'shared-schema-ready', 12345);
+SQL
+	sqlite3 "$worker_db" <<'SQL'
+CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
+SQL
+
+	sqlite_wrapper=$(declare -f sqlite3_with_timeout | sed '1s/sqlite3_with_timeout/sqlite3_with_timeout_original_for_test/')
+	eval "$sqlite_wrapper"
+	sqlite3_with_timeout() {
+		local db_path="${1:-}"
+		local sql_arg="${2:-}"
+		local line
+
+		if [[ "$db_path" == "$shared_db" && "$sql_arg" == ".schema __drizzle_migrations" ]]; then
+			return 1
+		fi
+		if [[ "$db_path" == "$worker_db" && "$#" -eq 1 ]]; then
+			create_attempts=$((create_attempts + 1))
+			while IFS= read -r line; do
+				:
+			done
+			return 0
+		fi
+
+		sqlite3_with_timeout_original_for_test "$@"
+		return $?
+	}
+
+	_copy_worker_db_migration_ledger_table "$worker_db" "$shared_db" "__drizzle_migrations" >/dev/null 2>&1 || rc=$?
+
+	eval "$(declare -f sqlite3_with_timeout_original_for_test | sed '1s/sqlite3_with_timeout_original_for_test/sqlite3_with_timeout/')"
+	unset -f sqlite3_with_timeout_original_for_test
+
+	if [[ "$rc" == "1" && "$create_attempts" == "0" ]]; then
+		print_result "copy worker DB migration ledger stops when schema query fails" 0
+		return 0
+	fi
+
+	print_result "copy worker DB migration ledger stops when schema query fails" 1 "rc=$rc create_attempts=$create_attempts"
+	return 0
+}
+
 test_sync_worker_db_migration_metadata_archives_unrepairable_project_table() {
 	local shared_dir="${HOME}/.local/share/opencode"
 	local isolated_dir="${TEST_ROOT}/isolated-opencode-unrepairable"
@@ -2133,6 +2188,7 @@ main() {
 	test_sync_worker_db_migration_metadata_repairs_prewarmed_project_table
 	test_sync_worker_db_migration_metadata_replaces_stale_ledgers
 	test_copy_worker_db_migration_ledger_preserves_rows_when_attach_fails
+	test_copy_worker_db_migration_ledger_stops_when_schema_query_fails
 	test_sync_worker_db_migration_metadata_archives_unrepairable_project_table
 	test_sync_worker_db_migration_metadata_preserves_worker_db_when_shared_query_fails
 	test_sync_worker_db_migration_metadata_repeated_launch_reaches_seed
