@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.62] - 2026-06-15
+
+### Changed
+
+- Tests: cover configured orphan recovery PR base (#24805)
+- Maintenance: update simplification state registry
+- fix: harden orphan recovery base handling (#24804)
+- Documentation: clarify renderer secret storage boundary (#24791)
+- fix provider multiplier config fallback (#24779)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- allow linked worktree gh body files (#24810)
+- mirror CI changed-file lint guidance (#24807)
+- make gh wrappers safe from zsh (#24806)
+- allow orphan recovery diagnostic command (#24803)
+- use configured base for orphan recovery (#24799)
+- harden worker ledger schema copy (#24794)
+- harden worker migration ledger replacement (#24784)
+
 ## [3.20.61] - 2026-06-14
 
 ### Changed
