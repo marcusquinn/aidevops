@@ -31,6 +31,7 @@
 #   6. zsh:  standalone source emits no 'command not found' stderr (skip if no zsh)
 #   7. zsh:  print_info + print_warning defined after standalone sourcing (skip if no zsh)
 #   8. zsh:  all major wrapper functions defined after standalone sourcing (skip if no zsh)
+#   9. zsh:  gh_create_pr --help emits no cleanup/trap errors (skip if no zsh)
 
 set -uo pipefail
 
@@ -252,6 +253,20 @@ fi
 	else
 		fail "8: zsh: all major wrapper functions defined after standalone sourcing" \
 			"output: $(printf '%q' "$zsh_wrappers")"
+	fi
+
+	# Test 9: zsh — gh_create_pr --help should exercise the wrapper entry path
+	# without bash-only cleanup helper or RETURN trap errors.
+	zsh_help_output=$(zsh -c "
+source '${WRAPPERS_FILE}'
+gh(){ printf 'gh-called:%s\\n' \"\$*\"; return 0; }
+gh_create_pr --help
+" 2>&1)
+	if [[ "$zsh_help_output" == *"_save_cleanup_scope"* ]] || [[ "$zsh_help_output" == *"undefined signal: RETURN"* ]]; then
+		fail "9: zsh: gh_create_pr --help emits no cleanup/trap errors" \
+			"output: $(printf '%q' "$zsh_help_output")"
+	else
+		pass "9: zsh: gh_create_pr --help emits no cleanup/trap errors"
 	fi
 fi
 
