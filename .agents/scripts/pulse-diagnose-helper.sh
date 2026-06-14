@@ -1660,11 +1660,9 @@ _api_budget_cache_counts_csv() {
 	awk -F'\t' -v cache="$cache_name" -v cache_field=2 -v decision_field=6 '
 		$cache_field == cache { count[$decision_field]++ }
 		END {
-			keys = "hit miss stale bypass store invalid-json bypass-disabled"
-			split(keys, key, " ")
 			printf "hit=%d miss=%d stale=%d bypass=%d store=%d invalid_json=%d bypass_disabled=%d", \
-				count[key[1]] + 0, count[key[2]] + 0, count[key[3]] + 0, count[key[4]] + 0, count[key[5]] + 0, \
-				count[key[6]] + 0, count[key[7]] + 0
+				count["hit"] + 0, count["miss"] + 0, count["stale"] + 0, count["bypass"] + 0, count["store"] + 0, \
+				count["invalid-json"] + 0, count["bypass-disabled"] + 0
 		}
 	' "$api_log"
 	return 0
