@@ -75,7 +75,6 @@ source "${SCRIPT_DIR}/dispatch-dedup-stale.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/dispatch-dedup-pr.sh"
 
-#######################################
 # Resolve configured PR base branch for worker-orphan diagnostics.
 #
 # Args: $1 = repo slug

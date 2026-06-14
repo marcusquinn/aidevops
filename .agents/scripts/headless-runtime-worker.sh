@@ -591,13 +591,14 @@ _handle_worker_branch_orphan() {
 	# target_branch is the branch the worker was DISPATCHED to operate on
 	# (set by the dispatch path via WORKER_TARGET_BRANCH env if present);
 	# final_head is the HEAD SHA the worker exited on; ahead_count is commits
-	# ahead of origin/$base_branch (DISPATCH_REPO_DEFAULT_BRANCH, fallback to
+	# ahead of origin/$base_branch (configured PR base branch, fallback to
 	# origin/master when the primary ref is missing); work_dir is the worktree path.
 	local target_branch="${WORKER_TARGET_BRANCH:-<unset>}"
 	local final_head=""
 	final_head=$(git -C "$work_dir" rev-parse --short=12 HEAD 2>/dev/null || printf '<unreadable>')
 	local ahead_count=0
-	local base_branch="${DISPATCH_REPO_DEFAULT_BRANCH:-main}"
+	local base_branch=""
+	base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir")
 	local rev_output=""
 	# Fallback to master only when the primary ref is MISSING (non-zero exit),
 	# not when the count happens to be zero (worker exited on default branch).
@@ -628,7 +629,7 @@ _handle_worker_branch_orphan() {
 				_orphan_base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir")
 			fi
 			# shellcheck disable=SC2016 # backticks are literal markdown, not command substitution
-			_ops_comment=$(printf '<!-- ops:start -->\n<!-- worker-branch-orphan:key=%s -->\nWORKER_BRANCH_ORPHAN branch=%s session=%s ts=%s\n\nThis worker pushed branch `%s` but no PR could be opened automatically. To recover, open a PR manually:\n\n```\ngh pr create --head %s --base %s --repo %s\n```\n<!-- ops:end -->' \
+			_ops_comment=$(printf '<!-- ops:start -->\n<!-- worker-branch-orphan:key=%s -->\nWORKER_BRANCH_ORPHAN branch=%s session=%s ts=%s\n\nThis worker pushed branch `%s` but no PR could be opened automatically. To recover, open a PR manually against the configured PR base branch:\n\n```\ngh pr create --head %s --base %s --repo %s\n```\n<!-- ops:end -->' \
 				"$_orphan_key" \
 				"$branch_name" "$session_key" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 				"$branch_name" "$branch_name" "$_orphan_base_branch" "$repo_slug")
