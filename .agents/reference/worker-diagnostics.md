@@ -750,11 +750,18 @@ gh pr checks <PR> --repo <owner/repo> --watch=false
 | Classification | Canonical check names | Resolution |
 |---|---|---|
 | `FORMAT_FAILURE` | `*Format*`, `*Prettier*`, `*Biome*`, `*gofmt*`, `*cargo fmt*`, `*Black*` | Run the project's format command, amend, push with lease. |
-| `LINT_FAILURE` | `*Lint*`, `*ESLint*`, `*Clippy*`, `*ruff*` | Run the project's lint-fix command first; hand-fix remaining findings. |
+| `LINT_FAILURE` | `*Lint*`, `*ESLint*`, `*Clippy*`, `*ruff*` | Run the project's lint-fix command first; if local package lint passed but CI failed, mirror CI changed-file lint with `node .github/scripts/lint-changed-files.mjs --base-ref <base>` before hand-fixing remaining findings. |
 | `TYPECHECK_FAILURE` | `*Typecheck*`, `*tsc*`, `*mypy*` | Read the failing check and fix types in code. Never auto-suppress with `@ts-ignore`, `as any`, or `type: ignore` without explicit authorisation. |
 | `OTHER` | Everything else | Generic worker guidance only. |
 
 Add a pattern by editing `.agents/configs/ci-failure-patterns.conf`, adding a case to `.agents/scripts/tests/test-ci-failure-pattern-detection.sh`, then running that test plus `shellcheck .agents/scripts/pulse-merge-feedback.sh`.
+
+CI-only ESLint failures can differ from full local package lint when generated
+type artifacts are present locally but absent during the CI changed-file lint
+step. For generated Content Collections or route/content type surfaces, prefer
+runtime validation, local schemas, or typed wrappers that lint clean before
+generation; do not add unused blanket disables just to satisfy post-generation
+package lint.
 
 ## Diagnostic Quick Reference
 

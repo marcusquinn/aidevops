@@ -230,9 +230,9 @@ _pr_exists_for_branch_or_issue() {
 #######################################
 # _resolve_orphan_recovery_base_branch — PR base for orphan recovery.
 #
-# Prefers the repository's configured PR target branch over GitHub's default
-# branch. This covers managed repos whose integration branch is `develop` while
-# their default branch remains `main` (GH#80).
+# Prefers an explicit dispatch PR base, then repository configuration, over
+# GitHub's default branch. This covers managed repos whose integration branch
+# is `develop` while their default branch remains `main` (GH#80/GH#24800).
 #
 # Args:
 #   $1 = repo_slug (owner/repo)

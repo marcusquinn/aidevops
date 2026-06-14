@@ -19,7 +19,7 @@
 #      Guidance block when non-OTHER patterns are present
 #  10. _build_ci_feedback_section does NOT emit guidance for OTHER-only
 #  11. FORMAT_FAILURE guidance contains auto-fix sequence (write/--fix)
-#  12. LINT_FAILURE guidance contains lint --fix command
+#  12. LINT_FAILURE guidance contains lint --fix and changed-file CI commands
 #  13. TYPECHECK_FAILURE guidance does NOT suggest auto-fix
 #  14. TEST_FAILURE guidance includes pnpm/Vitest hermeticity triage
 #  15. pulse-merge-feedback.sh passes shellcheck after t3225 changes
@@ -256,6 +256,10 @@ lint_guidance=$(_emit_ci_failure_guidance_blocks "$lint_class" "$CONF_FILE")
 assert_contains "4d: LINT classification emits guidance" \
 	"### Pattern-Specific Resolution Guidance" "$lint_guidance"
 assert_contains "4e: LINT guidance mentions --fix" "--fix" "$lint_guidance"
+assert_contains "4e2: LINT guidance points to changed-file lint reproduction" \
+	"node .github/scripts/lint-changed-files.mjs --base-ref <base>" "$lint_guidance"
+assert_contains "4e3: LINT guidance flags generated type trap" \
+	"generated Content Collections" "$lint_guidance"
 
 # 4f: TYPECHECK_FAILURE classification → guidance does NOT mention auto-fix
 tc_class=$(_classify_ci_failures_by_pattern "Typecheck" "$CONF_FILE")
@@ -302,6 +306,15 @@ assert_contains "5c: Pattern-Specific guidance present (FORMAT case)" \
 	"### Pattern-Specific Resolution Guidance" "$section_with_guidance"
 assert_contains "5d: generic Worker guidance still present (fallback)" \
 	"### Worker guidance" "$section_with_guidance"
+
+# 5d2: CI-only lint trap: section points to changed-file reproduction when lint failed
+sample_lint_failing="- **ESLint**: fail — [link](https://example.com)"
+lint_class_input=$(_classify_ci_failures_by_pattern "ESLint" "$CONF_FILE")
+lint_section=$(_build_ci_feedback_section "12345" "$sample_lint_failing" "$lint_class_input")
+assert_contains "5d2: ESLint section includes changed-file lint command" \
+	"node .github/scripts/lint-changed-files.mjs --base-ref <base>" "$lint_section"
+assert_contains "5d3: ESLint section avoids generic-only pnpm lint guidance" \
+	"CI changed-file path" "$lint_section"
 
 # 5e: Without classification arg, section omits pattern guidance (back-compat)
 section_no_classification=$(_build_ci_feedback_section "12345" "$sample_failing")

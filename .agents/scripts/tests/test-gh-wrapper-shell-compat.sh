@@ -290,6 +290,43 @@ else
 fi
 
 # =============================================================================
+# Test 9: OpenCode default shell shape — sourcing wrappers and calling gh_create_pr
+# under zsh must not emit cleanup/trap false-negative errors.
+# =============================================================================
+if ! command -v zsh >/dev/null 2>&1; then
+	skip "9: gh_create_pr sourced under zsh has quiet cleanup setup" "zsh not installed"
+else
+	ZSH_PR_CALLS="${TMP}/zsh_pr_calls.log"
+	: >"$ZSH_PR_CALLS"
+	zsh_pr_out=$(zsh -c "
+gh() {
+    printf '%s\n' \"\$*\" >>'${ZSH_PR_CALLS}'
+    if [[ \"\$1\" == 'pr' && \"\$2\" == 'create' ]]; then
+        printf 'https://github.com/owner/repo/pull/1\n'
+    fi
+    return 0
+}
+source '${WRAPPERS_FILE}'
+_ensure_origin_labels_for_args() { return 0; }
+_gh_validate_edit_args() { return 0; }
+_rest_should_fallback() { return 1; }
+session_origin_label() { printf 'origin:worker'; return 0; }
+detect_session_origin() { printf 'worker'; return 0; }
+_gh_wrapper_auto_sig() { _GH_WRAPPER_SIG_MODIFIED_ARGS=(\"\$@\"); return 0; }
+gh_create_pr --repo owner/repo --title 'zsh smoke' --body 'body'
+" 2>&1) || true
+	if [[ "$zsh_pr_out" == *"https://github.com/owner/repo/pull/1"* && \
+	      "$zsh_pr_out" != *"_save_cleanup_scope"* && \
+	      "$zsh_pr_out" != *"can't set signal handler for SIGRETURN"* && \
+	      "$zsh_pr_out" != *"trap: RETURN"* ]]; then
+		pass "9: gh_create_pr sourced under zsh has quiet cleanup setup"
+	else
+		fail "9: gh_create_pr sourced under zsh has quiet cleanup setup" \
+			"output: $(printf '%q' "$zsh_pr_out")"
+	fi
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 printf '\n'
