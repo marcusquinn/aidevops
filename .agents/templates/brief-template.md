@@ -218,6 +218,14 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
       signatures may have been updated since. A wrong signature in a brief causes the
       worker to write broken code and burn tokens debugging.
 
+      THIRD-PARTY API/ERROR MAPPING COMPATIBILITY (GH#24812):
+      If the task changes mappings, translations, or tests for third-party API or error
+      codes, require the worker to verify the installed dependency version plus local
+      exported symbols/source from the package manifest, lockfile, and installed package
+      before implementing upstream-reported values. If the local version does not expose
+      the upstream value, add a compatibility regression test or an explicit upgrade task
+      instead of adding unavailable mappings.
+
       ALWAYS-LOADED PROMPT BUDGET RULE (Phase 8 of #22616):
       If this task edits AGENTS.md, .agents/AGENTS.md, prompts/build.txt, or another
       always-loaded instruction surface, require progressive disclosure by default:
