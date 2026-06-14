@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.63] - 2026-06-15
+
+### Changed
+
+- Documentation: document job-level CI log fallback (#24818)
+
+### Fixed
+
+- add CI heartbeat guidance (#24823)
+- require dependency evidence for error mappings (#24820)
+
 ## [3.20.62] - 2026-06-15
 
 ### Changed
