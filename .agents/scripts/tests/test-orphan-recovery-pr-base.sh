@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# test-orphan-recovery-pr-base.sh — GH#24798 regression guard.
+# test-orphan-recovery-pr-base.sh — GH#24795/GH#24798 regression guard.
 
 set -euo pipefail
 
@@ -44,7 +44,8 @@ setup_test_env() {
 	cat >"${HOME}/.config/aidevops/repos.json" <<'JSON'
 {
   "initialized_repos": [
-    {"slug": "owner/repo", "pr_base_branch": "develop", "default_branch": "main"}
+    {"slug": "owner/repo", "pr_base_branch": "develop", "default_branch": "main"},
+    {"slug": "awardsapp/awardsapp", "pr_base_branch": "develop", "default_branch": "main"}
   ]
 }
 JSON
@@ -117,9 +118,35 @@ test_orphan_recovery_uses_configured_pr_base() {
 	return 0
 }
 
+test_awardsapp_pr_base_overrides_default_branch() {
+	local resolved=""
+	resolved=$(_resolve_orphan_recovery_base_branch "awardsapp/awardsapp" "$TEST_ROOT")
+	if [[ "$resolved" == "develop" ]]; then
+		print_result "AwardsApp-style repo uses configured PR base over default branch" 0
+		return 0
+	fi
+
+	print_result "AwardsApp-style repo uses configured PR base over default branch" 1 "resolved=${resolved}"
+	return 0
+}
+
+test_unconfigured_repo_falls_back_to_github_default_branch() {
+	local resolved=""
+	resolved=$(_resolve_orphan_recovery_base_branch "owner/unconfigured" "$TEST_ROOT")
+	if [[ "$resolved" == "main" ]]; then
+		print_result "unconfigured repo falls back to GitHub default branch" 0
+		return 0
+	fi
+
+	print_result "unconfigured repo falls back to GitHub default branch" 1 "resolved=${resolved}"
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_orphan_recovery_uses_configured_pr_base
+	test_awardsapp_pr_base_overrides_default_branch
+	test_unconfigured_repo_falls_back_to_github_default_branch
 	teardown_test_env
 
 	printf '\nTests run: %d\n' "$TESTS_RUN"
