@@ -87,6 +87,17 @@ test_core_routine_logged_command_shape() {
 	return 0
 }
 
+test_core_routine_shell_quote_escapes_single_quotes() {
+	local quoted
+	quoted=$(_core_routine_shell_quote "one'two")
+	if [[ "$quoted" != "'one'\\''two'" ]]; then
+		print_result "core routine shell quote escapes single quotes" 1 "$quoted"
+		return 0
+	fi
+	print_result "core routine shell quote escapes single quotes" 0
+	return 0
+}
+
 test_linux_core_scheduler_commands_are_logged() {
 	local fake_home="$TEST_DIR/scheduler-home"
 	mkdir -p "$fake_home/.aidevops/agents/scripts" "$fake_home/.aidevops/.agent-workspace/logs"
@@ -185,6 +196,7 @@ main() {
 	setup
 	load_scheduler_helpers
 	test_core_routine_logged_command_shape
+	test_core_routine_shell_quote_escapes_single_quotes
 	test_linux_core_scheduler_commands_are_logged
 	test_pulse_routine_update_uses_flags_and_duration
 	printf '\n%d/%d tests passed\n' "$TESTS_PASSED" "$TESTS_RUN"

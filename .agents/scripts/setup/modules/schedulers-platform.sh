@@ -514,7 +514,8 @@ _run_profile_readme_init() {
 
 _core_routine_shell_quote() {
 	local value="$1"
-	printf "'%s'" "${value//\'/\'\\\'\'}"
+	local sq="'"
+	printf "'%s'" "${value//$sq/$sq\\$sq$sq}"
 	return 0
 }
 
