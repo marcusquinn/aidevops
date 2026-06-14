@@ -997,7 +997,7 @@ check_worker_branch_orphan_loop() {
 	pr_line=$(gh pr list --repo "$repo_slug" --head "$branch_name" --state all \
 		--json number,state,url --jq '.[0] | select(.number != null) | "#\(.number) (\(.state)) \(.url)"' 2>/dev/null || true)
 	[[ -n "$pr_line" ]] && pr_hint="$pr_line"
-	local next_action="Open recovery PR: \`gh pr create --repo ${repo_slug} --head ${branch_name} --base ${pr_base_branch}\`"
+	local next_action="Open recovery PR: \`gh pr create --repo ${repo_slug} --head ${branch_name} --base ${pr_base_branch}\`" # aidevops-allow: raw-gh-wrapper
 	if [[ "$pr_hint" != "none found" ]]; then
 		next_action="Link, review, or merge the existing PR for this branch."
 	fi
