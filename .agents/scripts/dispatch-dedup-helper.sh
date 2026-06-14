@@ -76,6 +76,34 @@ source "${SCRIPT_DIR}/dispatch-dedup-stale.sh"
 source "${SCRIPT_DIR}/dispatch-dedup-pr.sh"
 
 #######################################
+# Resolve configured PR base branch for worker-orphan diagnostics.
+#
+# Args: $1 = repo slug
+# Outputs: branch name
+# Returns: 0 always
+#######################################
+_ddh_resolve_pr_base_branch() {
+	local repo_slug="$1"
+	local base_branch="${WORKER_PR_BASE_BRANCH:-${DISPATCH_REPO_PR_BASE_BRANCH:-${AIDEVOPS_PR_BASE_BRANCH:-}}}"
+	local repos_json="${AIDEVOPS_REPOS_JSON:-${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}}"
+
+	if [[ -z "$base_branch" && -n "$repo_slug" && -f "$repos_json" ]] && command -v jq >/dev/null 2>&1; then
+		base_branch=$(jq -r --arg slug "$repo_slug" '
+			.initialized_repos[]?
+			| select(.slug == $slug)
+			| .pr_base_branch // .pr_target_branch // .base_branch // .default_branch // empty
+		' "$repos_json" 2>/dev/null | sed -n '1p') || base_branch=""
+	fi
+
+	if [[ -z "$base_branch" && -n "$repo_slug" ]]; then
+		base_branch=$(gh repo view "$repo_slug" --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || true)
+	fi
+
+	printf '%s' "${base_branch:-main}"
+	return 0
+}
+
+#######################################
 # Extract canonical dedup keys from a title string.
 # Looks for patterns: issue #NNN, PR #NNN, tNNN (task IDs), issue-NNN, pr-NNN.
 # Args: $1 = title string
@@ -964,17 +992,23 @@ check_worker_branch_orphan_loop() {
 
 	local pr_hint="none found"
 	local pr_line=""
+	local pr_base_branch=""
+	pr_base_branch=$(_ddh_resolve_pr_base_branch "$repo_slug")
 	pr_line=$(gh pr list --repo "$repo_slug" --head "$branch_name" --state all \
 		--json number,state,url --jq '.[0] | select(.number != null) | "#\(.number) (\(.state)) \(.url)"' 2>/dev/null || true)
 	[[ -n "$pr_line" ]] && pr_hint="$pr_line"
+	local next_action="Open recovery PR: \`gh pr create --repo ${repo_slug} --head ${branch_name} --base ${pr_base_branch}\`"
+	if [[ "$pr_hint" != "none found" ]]; then
+		next_action="Link, review, or merge the existing PR for this branch."
+	fi
 
 	if [[ "$existing_block" -eq 0 ]]; then
 		local diag
 		# shellcheck disable=SC2016 # Backticks are literal Markdown in this printf template.
-		diag=$(printf '<!-- ops:start -->\n<!-- worker-branch-orphan-loop:blocked branch=%s issue=%s count=%s window_s=%s -->\n## Dispatch held: repeated worker_branch_orphan\n\nThe dispatch path has seen `%s` `WORKER_BRANCH_ORPHAN` outcomes for issue #%s on branch `%s` within the last %s seconds. Dispatch is held for this same branch to avoid burning more worker attempts while preserving evidence.\n\n- Branch: `%s`\n- Latest orphan marker: `%s`\n- PR for branch: %s\n- Next verification: `gh pr list --repo %s --head %s --state all --json number,state,url`\n\nIf the branch already has the intended PR, link or merge that PR. If the branch is stale or corrupt, remove/reset that worktree/branch so a fresh branch can dispatch.\n<!-- ops:end -->' \
+		diag=$(printf '<!-- ops:start -->\n<!-- worker-branch-orphan-loop:blocked branch=%s issue=%s count=%s window_s=%s -->\n## Dispatch held: repeated worker_branch_orphan\n\nThe dispatch path has seen `%s` `WORKER_BRANCH_ORPHAN` outcomes for issue #%s on branch `%s` within the last %s seconds. Dispatch is held for this same branch to avoid burning more worker attempts while preserving evidence.\n\n- Branch: `%s`\n- Latest orphan marker: `%s`\n- PR for branch: %s\n- Next action: %s\n- Next verification: `gh pr list --repo %s --head %s --state all --json number,state,url`\n\nIf no PR exists and the branch has commits, open the recovery PR against `%s`. If no commits exist to PR, remove/reset that worktree/branch so a fresh branch can dispatch.\n<!-- ops:end -->' \
 			"$branch_name" "$issue_number" "$count" "$window_s" \
 			"$count" "$issue_number" "$branch_name" "$window_s" \
-			"$branch_name" "${latest_iso:-unknown}" "$pr_hint" "$repo_slug" "$branch_name")
+			"$branch_name" "${latest_iso:-unknown}" "$pr_hint" "$next_action" "$repo_slug" "$branch_name" "$pr_base_branch")
 		gh api "$comments_post_endpoint" \
 			--method POST \
 			--field body="$diag" \

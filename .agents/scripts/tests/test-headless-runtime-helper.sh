@@ -1856,6 +1856,7 @@ test_attempt_orphan_recovery_pr_calls_gh_create() {
 	local work_dir="${TEST_ROOT}/repo-orphan-recovery"
 	_setup_test_git_repo "$work_dir" 1
 	git -C "$work_dir" push -q origin "feature/auto-test-issue-99999"
+	printf '{"pr_base_branch":"develop"}\n' >"${work_dir}/.aidevops.json"
 
 	local gh_head="" gh_base="" gh_repo="" gh_label=""
 	local gh_called=0
@@ -1900,6 +1901,13 @@ test_attempt_orphan_recovery_pr_calls_gh_create() {
 	else
 		print_result "_attempt_orphan_recovery_pr passes --label origin:worker-takeover" 1 \
 			"Expected --label=origin:worker-takeover, got '${gh_label}'"
+	fi
+
+	if [[ "$gh_base" == "develop" ]]; then
+		print_result "_attempt_orphan_recovery_pr uses configured PR base" 0
+	else
+		print_result "_attempt_orphan_recovery_pr uses configured PR base" 1 \
+			"Expected --base=develop, got '${gh_base}'"
 	fi
 
 	return 0
@@ -1981,10 +1989,20 @@ test_cmd_run_finish_orphan_recovery_failure_emits_branch_orphan() {
 	_setup_test_git_repo "$work_dir" 1
 	git -C "$work_dir" push -q origin "feature/auto-test-issue-99999"
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
+	AIDEVOPS_PR_BASE_BRANCH="develop"
 
 	# Stub gh: pr list returns 0, issue view = OPEN, pr create FAILS
+	local posted_body=""
 	gh() {
-		if [[ "${*}" == *"pr list"* ]]; then
+		if [[ "${1:-}" == "api" ]]; then
+			local arg=""
+			for arg in "$@"; do
+				if [[ "$arg" == body=* ]]; then
+					posted_body="${arg#body=}"
+				fi
+			done
+			return 0
+		elif [[ "${*}" == *"pr list"* ]]; then
 			printf '0'
 			return 0
 		elif [[ "${*}" == *"issue view"* ]]; then
@@ -2009,6 +2027,7 @@ test_cmd_run_finish_orphan_recovery_failure_emits_branch_orphan() {
 	_cmd_run_finish "issue-99999" "complete" "$work_dir"
 
 	unset DISPATCH_REPO_SLUG 2>/dev/null || true
+	unset AIDEVOPS_PR_BASE_BRANCH 2>/dev/null || true
 	unset -f gh 2>/dev/null || true
 
 	if [[ "$released_reason" == "worker_branch_orphan" ]]; then
@@ -2016,6 +2035,13 @@ test_cmd_run_finish_orphan_recovery_failure_emits_branch_orphan() {
 	else
 		print_result "_cmd_run_finish emits worker_branch_orphan when PR creation fails" 1 \
 			"Expected worker_branch_orphan (PR create failed), got '${released_reason}'"
+	fi
+
+	if [[ "$posted_body" == *"gh pr create --head feature/auto-test-issue-99999 --base develop --repo test-owner/test-repo"* ]]; then
+		print_result "worker_branch_orphan comment uses configured PR base" 0
+	else
+		print_result "worker_branch_orphan comment uses configured PR base" 1 \
+			"Expected orphan recovery comment with --base develop, got '${posted_body}'"
 	fi
 	return 0
 }

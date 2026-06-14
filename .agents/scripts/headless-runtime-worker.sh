@@ -623,11 +623,15 @@ _handle_worker_branch_orphan() {
 		if [[ -n "$issue_number" && -n "$repo_slug" && -n "$branch_name" ]]; then
 			local _ops_comment
 			local _orphan_key="${repo_slug}#${issue_number}#${branch_name}#worker_branch_orphan"
+			local _orphan_base_branch="main"
+			if declare -F _resolve_orphan_recovery_base_branch >/dev/null 2>&1; then
+				_orphan_base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir")
+			fi
 			# shellcheck disable=SC2016 # backticks are literal markdown, not command substitution
-			_ops_comment=$(printf '<!-- ops:start -->\n<!-- worker-branch-orphan:key=%s -->\nWORKER_BRANCH_ORPHAN branch=%s session=%s ts=%s\n\nThis worker pushed branch `%s` but no PR could be opened automatically. To recover, open a PR manually:\n\n```\ngh pr create --head %s --base main --repo %s\n```\n<!-- ops:end -->' \
+			_ops_comment=$(printf '<!-- ops:start -->\n<!-- worker-branch-orphan:key=%s -->\nWORKER_BRANCH_ORPHAN branch=%s session=%s ts=%s\n\nThis worker pushed branch `%s` but no PR could be opened automatically. To recover, open a PR manually:\n\n```\ngh pr create --head %s --base %s --repo %s\n```\n<!-- ops:end -->' \
 				"$_orphan_key" \
 				"$branch_name" "$session_key" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-				"$branch_name" "$branch_name" "$repo_slug")
+				"$branch_name" "$branch_name" "$_orphan_base_branch" "$repo_slug")
 			gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 				--method POST \
 				--field body="$_ops_comment" \

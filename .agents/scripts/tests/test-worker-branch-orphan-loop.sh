@@ -43,8 +43,12 @@ setup_test_env() {
 	TEST_ROOT=$(mktemp -d)
 	mkdir -p "${TEST_ROOT}/bin" "${TEST_ROOT}/posts"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
+	export AIDEVOPS_REPOS_JSON="${TEST_ROOT}/repos.json"
 	export WORKER_BRANCH_ORPHAN_LOOP_THRESHOLD=2
 	export WORKER_BRANCH_ORPHAN_LOOP_WINDOW_S=7200
+	cat >"$AIDEVOPS_REPOS_JSON" <<'EOF'
+{"initialized_repos":[{"slug":"owner/develop-repo","pr_base_branch":"develop"}]}
+EOF
 	create_gh_stub
 	return 0
 }
@@ -83,6 +87,15 @@ EOF
 ]
 EOF
 
+	cat >"${TEST_ROOT}/comments-300.json" <<EOF
+[
+  [
+    {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/reused session=issue-300 ts=${now_iso}\n<!-- ops:end -->"},
+    {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/reused session=issue-300 ts=${now_iso}\n<!-- ops:end -->"}
+  ]
+]
+EOF
+
 	cat >"${TEST_ROOT}/bin/gh" <<'GHEOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -110,7 +123,15 @@ if [[ "${1:-}" == "api" ]]; then
 fi
 
 if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
+	if [[ "$*" == *"owner/develop-repo"* ]]; then
+		exit 0
+	fi
 	printf '#123 (OPEN) https://example.invalid/pr/123\n'
+	exit 0
+fi
+
+if [[ "${1:-}" == "repo" && "${2:-}" == "view" ]]; then
+	printf 'main\n'
 	exit 0
 fi
 
@@ -162,12 +183,27 @@ test_unrelated_failure_class_does_not_block() {
 	return 0
 }
 
+test_orphan_loop_next_action_uses_configured_base() {
+	local output=""
+	if output=$(TEST_ROOT="$TEST_ROOT" "$HELPER_SCRIPT" check-orphan-loop 300 owner/develop-repo feature/reused 2>/dev/null); then
+		if [[ "$output" == *"WORKER_BRANCH_ORPHAN_LOOP_BLOCKED"* ]] && grep -q -- "gh pr create --repo owner/develop-repo --head feature/reused --base develop" "${TEST_ROOT}/posts/300.argv"; then
+			print_result "orphan-loop diagnostic uses configured PR base" 0
+			return 0
+		fi
+		print_result "orphan-loop diagnostic uses configured PR base" 1 "Output/post missing develop base: ${output}"
+		return 0
+	fi
+	print_result "orphan-loop diagnostic uses configured PR base" 1 "Expected dispatch hold"
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_same_issue_branch_blocks_and_posts_diagnostic
 	test_different_branch_does_not_block
 	test_different_issue_does_not_block
 	test_unrelated_failure_class_does_not_block
+	test_orphan_loop_next_action_uses_configured_base
 	teardown_test_env
 
 	printf '\nTests run: %d\n' "$TESTS_RUN"
