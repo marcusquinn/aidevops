@@ -41,6 +41,24 @@ For prompt-economy reasons these rules live here rather than in always-on AGENTS
 - Workers/scripts that source `shared-gh-wrappers.sh` should call `gh_issue_comment`, `gh_create_issue`, `gh_pr_comment`, or `gh_create_pr` by name — these already auto-inject via `_gh_wrapper_auto_sig`.
 - If the plugin hook blocks your command with a parse-failure, the fix is ALWAYS to add the helper call explicitly — never to work around with `AIDEVOPS_GH_SHIM_DISABLE=1`, which only defeats layer (a) and leaves the audit trail inconsistent.
 
+## Job logs for in-progress workflow runs
+
+When diagnosing CI, distinguish the workflow run state from individual job
+state. `gh run view <run-id> --job <job-id> --log-failed` can refuse logs while
+the workflow run is still `in_progress`, even when that specific job has already
+finished with `conclusion=failure`.
+
+Use `gh run view <run-id> --json status,conclusion,jobs` to confirm the target
+job has `status=completed` and `conclusion=failure`. Then fetch the job log via
+REST instead of waiting for the whole workflow:
+
+```bash
+gh api "repos/<owner/repo>/actions/jobs/<job-id>/logs" > failed-job.log
+```
+
+Keep pending/running jobs out of failure feedback until they are terminal; this
+fallback is for terminal failed jobs whose parent workflow has not completed.
+
 ## Thread-clean reading rules (8a-8d)
 
 ### Signature footer skip when reading (8a, token waste prevention)
