@@ -107,7 +107,9 @@ test_orphan_recovery_uses_configured_pr_base() {
 	fi
 
 	local argv=""
-	argv=$(<"${TEST_ROOT}/calls/pr-create.argv")
+	if [[ -f "${TEST_ROOT}/calls/pr-create.argv" ]]; then
+		argv=$(<"${TEST_ROOT}/calls/pr-create.argv")
+	fi
 	if [[ "$argv" == *'--head feature/auto-gh24798 --base develop'* ]] && [[ "$argv" != *'--base main'* ]]; then
 		print_result "orphan recovery creates PR against configured base" 0
 		return 0
