@@ -398,6 +398,16 @@ _gh_validate_edit_args() {
 			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
 			return 1
 		fi
+		if [[ ! -f "$body_file_val" ]]; then
+			_GH_EDIT_REJECTION_REASON="body-file '${body_file_val}' does not exist"
+			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			return 1
+		fi
+		if [[ ! -r "$body_file_val" ]]; then
+			_GH_EDIT_REJECTION_REASON="body-file '${body_file_val}' is not readable"
+			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+			return 1
+		fi
 		if [[ -f "$body_file_val" ]]; then
 			local file_size
 			file_size=$(wc -c <"$body_file_val" 2>/dev/null || echo "0")

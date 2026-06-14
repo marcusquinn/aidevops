@@ -88,7 +88,6 @@ fi
 source "$SHARED_GH" >/dev/null 2>&1 || true
 
 _ensure_origin_labels_for_args() { return 0; }
-_gh_validate_edit_args() { return 0; }
 _gh_should_fallback_to_rest() { return 1; }
 _rest_should_fallback() { return 1; }
 _gh_auto_link_sub_issue() { return 0; }
@@ -137,9 +136,50 @@ assert_existing_signature_not_duplicated() {
 	return 0
 }
 
+assert_signed_relative_body_file_normalized() {
+	local rel_dir="relative-bodies"
+	local body_name="already-signed-relative.md"
+	local body_file="${TEST_ROOT}/${rel_dir}/${body_name}"
+	mkdir -p "${TEST_ROOT}/${rel_dir}"
+	printf '## Summary\n\nBody\n\n<!-- aidevops:sig -->\n---\n[aidevops.sh](https://aidevops.sh) existing\n' >"$body_file"
+	reset_capture
+	(
+		cd "$TEST_ROOT" || exit 1
+		gh_create_pr --repo o/r --title "Fix relative body-file" --body-file "${rel_dir}/${body_name}" >/dev/null 2>&1
+	)
+	local abs_count rel_count
+	abs_count=$(grep -c "<${body_file}>" "$GH_ARGV_RECORD_FILE" 2>/dev/null || true)
+	rel_count=$(grep -c "<${rel_dir}/${body_name}>" "$GH_ARGV_RECORD_FILE" 2>/dev/null || true)
+	if [[ "$abs_count" == "1" && "$rel_count" == "0" ]]; then
+		print_result "signed relative --body-file is normalized before gh" 0
+	else
+		print_result "signed relative --body-file is normalized before gh" 1 "abs_count=${abs_count}, rel_count=${rel_count}"
+	fi
+	return 0
+}
+
+assert_missing_body_file_rejected_before_gh() {
+	reset_capture
+	if gh_create_pr --repo o/r --title "Reject missing body-file" --body-file "missing-body.md" >/dev/null 2>"${TEST_ROOT}/missing.err"; then
+		print_result "missing --body-file is rejected before gh" 1 "wrapper returned success"
+		return 0
+	fi
+	local gh_calls rejection_count
+	gh_calls=$(wc -l <"$GH_ARGV_RECORD_FILE" | tr -d '[:space:]')
+	rejection_count=$(grep -c "body-file 'missing-body.md' does not exist" "${TEST_ROOT}/missing.err" 2>/dev/null || true)
+	if [[ "$gh_calls" == "0" && "$rejection_count" == "1" ]]; then
+		print_result "missing --body-file is rejected before gh" 0
+	else
+		print_result "missing --body-file is rejected before gh" 1 "gh_calls=${gh_calls}, rejection_count=${rejection_count}"
+	fi
+	return 0
+}
+
 assert_body_file_signed "gh_create_pr --body-file signs temp body" "pr-create"
 assert_body_file_signed "gh_pr_comment --body-file signs temp body" "pr-comment"
 assert_existing_signature_not_duplicated
+assert_signed_relative_body_file_normalized
+assert_missing_body_file_rejected_before_gh
 
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]]

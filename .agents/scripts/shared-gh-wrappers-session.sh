@@ -348,6 +348,23 @@ _gh_wrapper_auto_assignee() {
 #   set -- "${_GH_WRAPPER_SIG_MODIFIED_ARGS[@]}"
 # Non-fatal: if signature generation fails, original args are preserved.
 _GH_WRAPPER_SIG_MODIFIED_ARGS=()
+_gh_wrapper_abs_body_file_path() {
+	local body_file_path="$1"
+	[[ -z "$body_file_path" ]] && return 1
+	case "$body_file_path" in
+	/*)
+		printf '%s\n' "$body_file_path"
+		return 0
+		;;
+	esac
+	local body_file_dir body_file_base
+	body_file_dir=$(dirname "$body_file_path") || return 1
+	body_file_base=$(basename "$body_file_path") || return 1
+	body_file_dir=$(cd "$body_file_dir" 2>/dev/null && pwd) || return 1
+	printf '%s/%s\n' "$body_file_dir" "$body_file_base"
+	return 0
+}
+
 _gh_wrapper_auto_sig() {
 	_GH_WRAPPER_SIG_MODIFIED_ARGS=("$@")
 	local sig_helper
@@ -402,7 +419,14 @@ _gh_wrapper_auto_sig() {
 	# signed temp copy and point argv at it so callers using --body-file get the
 	# same footer behaviour as --body without surprising filesystem side effects.
 	if [[ $body_file_idx -ge 0 && -n "$body_file_val" && -f "$body_file_val" ]]; then
-		if grep -q '<!-- aidevops:sig -->' "$body_file_val" 2>/dev/null; then
+		local abs_body_file_val
+		abs_body_file_val=$(_gh_wrapper_abs_body_file_path "$body_file_val") || abs_body_file_val="$body_file_val"
+		if grep -q '<!-- aidevops:sig -->' "$abs_body_file_val" 2>/dev/null; then
+			if [[ "$bf_is_eq" -eq 1 ]]; then
+				_GH_WRAPPER_SIG_MODIFIED_ARGS[body_file_idx]="--body-file=${abs_body_file_val}"
+			else
+				_GH_WRAPPER_SIG_MODIFIED_ARGS[body_file_idx + 1]="$abs_body_file_val"
+			fi
 			return 0
 		fi
 		local sig_footer
@@ -415,7 +439,7 @@ _gh_wrapper_auto_sig() {
 		# until the wrapper delegates to gh, then the wrapper-level trap removes it.
 		push_cleanup "rm -f \"$signed_body_file\""
 		{
-			cat "$body_file_val"
+			cat "$abs_body_file_val"
 			printf '%s' "$sig_footer"
 		} >"$signed_body_file" || return 0
 		if [[ "$bf_is_eq" -eq 1 ]]; then
