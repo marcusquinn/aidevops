@@ -78,7 +78,8 @@ create_gh_stub() {
     {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/reused session=issue-100 ts=${now_iso}\n<!-- ops:end -->"},
     {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/reused session=issue-100 ts=${now_iso}\n<!-- ops:end -->"},
     {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/other session=issue-100 ts=${now_iso}\n<!-- ops:end -->"},
-    {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/missing session=issue-100 ts=${now_iso}\n<!-- ops:end -->"}
+    {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/missing session=issue-100 ts=${now_iso}\n<!-- ops:end -->"},
+    {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/empty session=issue-100 ts=${now_iso}\n<!-- ops:end -->"}
   ]
 ]
 EOF
@@ -175,8 +176,8 @@ if [[ "${1:-}" == "ls-remote" ]]; then
 fi
 
 if [[ "${1:-}" == "rev-list" && "${2:-}" == "--count" ]]; then
-	case "$worktree_path" in
-		*/wt-zero-commits)
+	case "${3:-}" in
+		origin/main..origin/feature/empty|origin/feature/empty)
 			printf '0\n'
 			;;
 		*)
@@ -264,15 +265,15 @@ test_orphan_comment_without_remote_branch_blocks_immediately() {
 
 test_orphan_comment_with_zero_commits_blocks_immediately() {
 	local output=""
-	if output=$("$HELPER_SCRIPT" check-orphan-loop 100 owner/repo feature/reused "" "${TEST_ROOT}/wt-zero-commits" 2>/dev/null); then
-		if [[ "$output" == *"WORKER_BRANCH_ORPHAN_UNRECOVERABLE_BLOCKED"* && "$output" == *"reason=zero_commits"* ]] && grep -q -- "Worktree commit count: \`0\`" "${TEST_ROOT}/posts/100.argv"; then
-			print_result "orphan marker with zero worktree commits holds dispatch" 0
+	if output=$("$HELPER_SCRIPT" check-orphan-loop 100 owner/repo feature/empty "" "${TEST_ROOT}/wt-zero-commits" 2>/dev/null); then
+		if [[ "$output" == *"WORKER_BRANCH_ORPHAN_UNRECOVERABLE_BLOCKED"* && "$output" == *"reason=zero_commits"* ]] && grep -q -- "Branch commit count: \`0\`" "${TEST_ROOT}/posts/100.argv"; then
+			print_result "orphan marker with zero remote branch commits holds dispatch" 0
 			return 0
 		fi
-		print_result "orphan marker with zero worktree commits holds dispatch" 1 "Output/post missing zero-commit evidence: ${output}"
+		print_result "orphan marker with zero remote branch commits holds dispatch" 1 "Output/post missing zero-commit evidence: ${output}"
 		return 0
 	fi
-	print_result "orphan marker with zero worktree commits holds dispatch" 1 "Expected dispatch hold"
+	print_result "orphan marker with zero remote branch commits holds dispatch" 1 "Expected dispatch hold"
 	return 0
 }
 

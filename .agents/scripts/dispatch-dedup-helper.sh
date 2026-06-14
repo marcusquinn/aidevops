@@ -124,9 +124,9 @@ _ddh_probe_orphan_branch_state() {
 		local remote_rc=0
 		remote_probe="git ls-remote --exit-code origin refs/heads/${branch_name}"
 		if [[ -n "$worktree_path" && ( -d "$worktree_path/.git" || -f "$worktree_path/.git" ) ]]; then
-			git -C "$worktree_path" ls-remote --exit-code origin "refs/heads/${branch_name}" >/dev/null 2>&1 || remote_rc=$?
+			GIT_TERMINAL_PROMPT=0 git -C "$worktree_path" ls-remote --exit-code origin "refs/heads/${branch_name}" >/dev/null || remote_rc=$?
 		else
-			git ls-remote --exit-code origin "refs/heads/${branch_name}" >/dev/null 2>&1 || remote_rc=$?
+			GIT_TERMINAL_PROMPT=0 git ls-remote --exit-code origin "refs/heads/${branch_name}" >/dev/null || remote_rc=$?
 		fi
 		case "$remote_rc" in
 		0)
@@ -142,9 +142,9 @@ _ddh_probe_orphan_branch_state() {
 	fi
 
 	if [[ -n "$worktree_path" && ( -d "$worktree_path/.git" || -f "$worktree_path/.git" ) ]]; then
-		commit_count=$(git -C "$worktree_path" rev-list --count "origin/${base_branch}..HEAD" 2>/dev/null || true)
+		commit_count=$(git -C "$worktree_path" rev-list --count "origin/${base_branch}..origin/${branch_name}" || true)
 		if ! [[ "$commit_count" =~ ^[0-9]+$ ]]; then
-			commit_count=$(git -C "$worktree_path" rev-list --count HEAD 2>/dev/null || true)
+			commit_count=$(git -C "$worktree_path" rev-list --count "origin/${branch_name}" || true)
 		fi
 		[[ "$commit_count" =~ ^[0-9]+$ ]] || commit_count="$unknown_value"
 	fi
@@ -184,7 +184,7 @@ _ddh_hold_unrecoverable_orphan_branch() {
 	if [[ "$existing_block" -eq 0 ]]; then
 		local diag=""
 		# shellcheck disable=SC2016 # Backticks are literal Markdown in this printf template.
-		diag=$(printf '<!-- ops:start -->\n<!-- worker-branch-orphan-unrecoverable:blocked branch=%s issue=%s reason=%s remote_exists=%s commit_count=%s -->\n## Dispatch held: unrecoverable worker_branch_orphan\n\nThe dispatch path found `WORKER_BRANCH_ORPHAN` telemetry for issue #%s on branch `%s`, but the recovery evidence is not actionable. Standard redispatch is held to avoid burning additional worker attempts.\n\n- Branch: `%s`\n- Remote-branch probe: `%s`\n- Remote branch exists: `%s`\n- Worktree commit count: `%s`\n- Root cause: `%s`\n- Next action: inspect the worker worktree/logs, recover or recreate the missing commits, then remove the stale orphan marker/worktree before dispatching again.\n<!-- ops:end -->' \
+		diag=$(printf '<!-- ops:start -->\n<!-- worker-branch-orphan-unrecoverable:blocked branch=%s issue=%s reason=%s remote_exists=%s commit_count=%s -->\n## Dispatch held: unrecoverable worker_branch_orphan\n\nThe dispatch path found `WORKER_BRANCH_ORPHAN` telemetry for issue #%s on branch `%s`, but the recovery evidence is not actionable. Standard redispatch is held to avoid burning additional worker attempts.\n\n- Branch: `%s`\n- Remote-branch probe: `%s`\n- Remote branch exists: `%s`\n- Branch commit count: `%s`\n- Root cause: `%s`\n- Next action: inspect the worker worktree/logs, recover or recreate the missing commits, then remove the stale orphan marker/worktree before dispatching again.\n<!-- ops:end -->' \
 			"$branch_name" "$issue_number" "$hold_reason" "$remote_exists" "$commit_count" \
 			"$issue_number" "$branch_name" "$branch_name" "$remote_probe" "$remote_exists" "$commit_count" "$hold_reason")
 		gh api "$comments_post_endpoint" \
