@@ -244,7 +244,12 @@ _wah_provider_usage_json() {
 	now_epoch=$(date +%s)
 	input_file="/dev/null"
 	[[ -f "$metrics" ]] && input_file="$metrics"
-	account_multiplier="${WAH_PROVIDER_ACCOUNT_SLOT_MULTIPLIER:-${PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER:-24}}"
+	account_multiplier="${WAH_PROVIDER_ACCOUNT_SLOT_MULTIPLIER:-${PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER:-}}"
+	if [[ -z "$account_multiplier" ]]; then
+		# shellcheck source=config-helper.sh
+		source "${SCRIPT_DIR}/config-helper.sh"
+		account_multiplier=$(config_get "orchestration.provider_account_slot_multiplier" "24")
+	fi
 	[[ "$account_multiplier" =~ ^[0-9]+$ ]] || account_multiplier=24
 	((account_multiplier < 1)) && account_multiplier=1
 
