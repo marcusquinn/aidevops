@@ -4247,3 +4247,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3596 Constrain pulse write sweeps to maintainer repos #bug ref:GH#24567 pr:#24569 completed:2026-06-08
 
+
+- [ ] t3599 Document app-stack guidance #documentation ref:GH#24768
