@@ -783,6 +783,7 @@ gh pr checks <PR> --repo <owner/repo> --watch=false
 | `FORMAT_FAILURE` | `*Format*`, `*Prettier*`, `*Biome*`, `*gofmt*`, `*cargo fmt*`, `*Black*` | Run the project's format command, amend, push with lease. |
 | `LINT_FAILURE` | `*Lint*`, `*ESLint*`, `*Clippy*`, `*ruff*` | Run the project's lint-fix command first; if local package lint passed but CI failed, mirror CI changed-file lint with `node .github/scripts/lint-changed-files.mjs --base-ref <base>` before hand-fixing remaining findings. |
 | `TYPECHECK_FAILURE` | `*Typecheck*`, `*tsc*`, `*mypy*` | Read the failing check and fix types in code. Never auto-suppress with `@ts-ignore`, `as any`, or `type: ignore` without explicit authorisation. |
+| `TIMEOUT_NO_OUTPUT` | `*Timeout*`, `*Watchdog*`, `*Runner*communication*` | Add heartbeat output around the long-running command before rerunning silent failures; preserve exit codes and distinguish 124/137/143 from real diagnostics. |
 | `OTHER` | Everything else | Generic worker guidance only. |
 
 Add a pattern by editing `.agents/configs/ci-failure-patterns.conf`, adding a case to `.agents/scripts/tests/test-ci-failure-pattern-detection.sh`, then running that test plus `shellcheck .agents/scripts/pulse-merge-feedback.sh`.
@@ -793,6 +794,22 @@ step. For generated Content Collections or route/content type surfaces, prefer
 runtime validation, local schemas, or typed wrappers that lint clean before
 generation; do not add unused blanket disables just to satisfy post-generation
 package lint.
+
+### Silent long-running required checks
+
+When a required check fails after a long quiet period, do not keep rerunning it
+without better telemetry. Exit code `124` usually means a timeout wrapper fired;
+`137` often means the process was killed; `143` usually means termination by
+signal. Runner communication-loss messages and watchdog/no-output kills are the
+same diagnostic class until the log proves otherwise.
+
+Before redispatching or hand-fixing application code, add a heartbeat wrapper
+around the long command that prints every 30-60s with the command label, elapsed
+seconds, and timeout budget, while preserving the child exit status. The next log
+must make clear whether CI stopped because of timeout/kill/no-output, memory or
+runner infrastructure, recursive scope, or actual lint/type/test diagnostics.
+Keep heartbeat wrappers narrowly scoped or temporary unless the project already
+has a reusable CI helper.
 
 ## Diagnostic Quick Reference
 

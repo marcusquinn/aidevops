@@ -32,6 +32,10 @@ feedback loops when they find defects.
 6. If an E2E failure is required by branch protection, fix or explicitly
    quarantine the failing path before merge; do not bypass production/release
    gates silently.
+7. In JS/TS monorepos, make affected-package checks non-recursive. For Turbo,
+   a broad filter such as `--filter="...[origin/<base>]"` can include the
+   workspace root; if root `lint`/`typecheck` scripts call Turbo, exclude root
+   with `--filter="!//"` or run root checks in a separate job.
 
 ## Ruleset checklist
 
@@ -73,3 +77,5 @@ work; only defects in the PR's own code block the PR.
   follow-up tasks.
 - Treating delayed, pending, cancelled, or infrastructure-timed-out checks as
   proof of a source-code defect.
+- Broad affected Turbo lint/typecheck filters that include a recursive root
+  script, making CI look hung or quiet instead of testing changed packages.

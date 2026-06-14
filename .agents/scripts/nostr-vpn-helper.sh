@@ -24,6 +24,7 @@ Commands:
   secrets-help     Show aidevops secret setup guidance
   macos-source     Show macOS package verification and source fallback guidance
   safe-posture     Show safe install, disable, and re-enable guidance
+  privacy-guide    Show privacy/anonymity best-practice guidance
   opencode-guide   Show secure OpenCode remote compute guidance
   help             Show this help
 USAGE
@@ -174,6 +175,33 @@ GUIDE
 	return 0
 }
 
+show_privacy_guide() {
+	cat <<'GUIDE'
+FIPS/Nostr VPN privacy guidance:
+  - Treat FIPS as a private self-sovereign mesh, not as an anonymity network.
+  - Use fresh per-device Nostr/FIPS identities; never reuse a public/social npub.
+  - Separate identities by purpose: personal devices, experiments, client/work, and travel.
+  - Prefer self-hosted or trusted private Nostr relays; public relays may observe discovery metadata.
+  - Keep peer ACLs explicit and default-deny; do not expose services while ACL state is default-open.
+  - Disable LAN gateway, exit-node, and broad service exposure unless the trust boundary is documented.
+  - Bind SSH, OpenCode, MCP servers, and dashboards to loopback or the FIPS interface only.
+  - Keep the daemon disabled when no trusted peer is ready; enable only for an intentional test window.
+  - Do not paste nsec/private keys into chat; store recovery material only with aidevops secret storage.
+
+Companion privacy tooling:
+  - Network privacy: use a reputable no-logs VPN or Tor where the threat model requires IP hiding.
+  - Relay privacy: self-host relays where possible; otherwise assume relay IP/timing metadata exists.
+  - Communications: use SimpleX or Signal for human messages when metadata minimisation matters more than mesh networking.
+  - Browser isolation: use separate browser profiles, CamoFox, or hardened Firefox/Arkenfox for web identity separation.
+  - Device hygiene: FileVault/LUKS/BitLocker, strong passphrases, YubiKey-backed SSH/FIDO2, and EXIF stripping.
+
+Hard limit:
+  - Full privacy and anonymity cannot be guaranteed by FIPS alone. IP addresses, relay timing,
+    traffic correlation, device fingerprints, writing style, and compromised endpoints can still identify users.
+GUIDE
+	return 0
+}
+
 show_secrets_help() {
 	cat <<'SECRETS'
 WARNING: Never paste secret values into AI chat.
@@ -287,6 +315,10 @@ main() {
 		;;
 	safe-posture)
 		show_safe_posture_guide "$@"
+		return $?
+		;;
+	privacy-guide)
+		show_privacy_guide "$@"
 		return $?
 		;;
 	opencode-guide)

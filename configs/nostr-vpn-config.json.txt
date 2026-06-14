@@ -26,6 +26,7 @@
   },
   "identity": {
     "mode": "per-device",
+    "privacy_mode": "fresh identity per device and purpose; do not reuse public/social Nostr npubs",
     "private_key_storage": "aidevops secret set FIPS_NSEC for import/recovery only; otherwise use the upstream key file with owner-only permissions",
     "public_address_format": "npub",
     "never_commit": [
@@ -78,6 +79,14 @@
     "exit_node": "disabled-until-reviewed",
     "public_relay_metadata_warning": true
   },
+  "privacy_defaults": {
+    "positioning": "private self-sovereign device mesh, not a standalone anonymity network",
+    "relay_policy": "prefer self-hosted or trusted private relays; assume public relays can observe npubs, IPs, timing, and discovery metadata",
+    "identity_compartmentalization": ["personal", "experiment", "client-work", "travel", "high-risk-research"],
+    "service_binding": "loopback-or-fips-interface-only",
+    "companion_tools": ["tools/security/opsec.md", "services/communications/privacy-comparison.md", "Tor or reputable no-logs VPN", "self-hosted Nostr relay", "FileVault/LUKS/BitLocker", "YubiKey", "EXIF stripping", "separate browser profiles", "CamoFox or hardened Firefox/Arkenfox"],
+    "hard_limit": "full privacy/anonymity cannot be guaranteed by FIPS alone; IPs, timing, fingerprints, writing style, relay logs, and compromised endpoints can identify users"
+  },
   "tools": {
     "required": ["fips", "fipsctl"],
     "optional": ["fipstop", "fips-gateway", "jq", "systemctl", "launchctl", "git", "cargo", "pkgbuild", "xcode-select"]
@@ -92,6 +101,6 @@
     "7. If no trusted peer is ready, stop and disable the macOS LaunchDaemon after validating install state.",
     "8. Configure peer allowlists before joining untrusted meshes.",
     "9. Enable the fips0 firewall baseline before exposing SSH/OpenCode.",
-    "10. Run: .agents/scripts/nostr-vpn-helper.sh diagnostics and safe-posture"
+    "10. Run: .agents/scripts/nostr-vpn-helper.sh diagnostics, safe-posture, and privacy-guide"
   ]
 }

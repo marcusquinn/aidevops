@@ -6,7 +6,7 @@
 # pattern-aware CI-failure resolution guidance in pulse-merge-feedback.sh.
 #
 # Verifies:
-#   1. ci-failure-patterns.conf exists, contains all five classifications,
+#   1. ci-failure-patterns.conf exists, contains all six classifications,
 #      and keeps TEST_FAILURE guidance reachable through one broad entry
 #   2. _classify_ci_failures_by_pattern identifies FORMAT_FAILURE checks
 #   3. _classify_ci_failures_by_pattern identifies LINT_FAILURE checks
@@ -15,14 +15,16 @@
 #   6. _classify_ci_failures_by_pattern falls back to OTHER for unmatched
 #   7. Mixed-pattern CI: multiple classifications emitted on separate lines
 #   8. Empty input: no classification output
-#   9. _build_ci_feedback_section emits ### Pattern-Specific Resolution
+#   9. _classify_ci_failures_by_pattern identifies TIMEOUT_NO_OUTPUT checks
+#  10. _build_ci_feedback_section emits ### Pattern-Specific Resolution
 #      Guidance block when non-OTHER patterns are present
-#  10. _build_ci_feedback_section does NOT emit guidance for OTHER-only
-#  11. FORMAT_FAILURE guidance contains auto-fix sequence (write/--fix)
-#  12. LINT_FAILURE guidance contains lint --fix and changed-file CI commands
-#  13. TYPECHECK_FAILURE guidance does NOT suggest auto-fix
-#  14. TEST_FAILURE guidance includes pnpm/Vitest hermeticity triage
-#  15. pulse-merge-feedback.sh passes shellcheck after t3225 changes
+#  11. _build_ci_feedback_section does NOT emit guidance for OTHER-only
+#  12. FORMAT_FAILURE guidance contains auto-fix sequence (write/--fix)
+#  13. LINT_FAILURE guidance contains lint --fix and changed-file CI commands
+#  14. TYPECHECK_FAILURE guidance does NOT suggest auto-fix
+#  15. TEST_FAILURE guidance includes pnpm/Vitest hermeticity triage
+#  16. TIMEOUT_NO_OUTPUT guidance includes heartbeat and exit-code triage
+#  17. pulse-merge-feedback.sh passes shellcheck after t3225 changes
 #
 # Tests are structural — no live GitHub API calls.
 
@@ -114,7 +116,7 @@ else
 	echo "${TEST_RED}FAIL${TEST_NC}: 1a: ci-failure-patterns.conf NOT found at $CONF_FILE"
 fi
 
-for class in FORMAT_FAILURE LINT_FAILURE TYPECHECK_FAILURE TEST_FAILURE OTHER; do
+for class in FORMAT_FAILURE LINT_FAILURE TYPECHECK_FAILURE TEST_FAILURE TIMEOUT_NO_OUTPUT OTHER; do
 	TESTS_RUN=$((TESTS_RUN + 1))
 	if grep -qE "^${class}" "$CONF_FILE" 2>/dev/null; then
 		echo "${TEST_GREEN}PASS${TEST_NC}: 1: conf contains ${class} entry"
@@ -204,13 +206,25 @@ assert_contains "2m: Vitest → TEST_FAILURE" "TEST_FAILURE" "$vitest_out"
 pnpm_test_out=$(_classify_ci_failures_by_pattern "pnpm test" "$CONF_FILE")
 assert_contains "2n: pnpm test → TEST_FAILURE" "TEST_FAILURE" "$pnpm_test_out"
 
-# 2o: Unknown / catch-all → OTHER
-other_out=$(_classify_ci_failures_by_pattern "SonarCloud Analysis" "$CONF_FILE")
-assert_contains "2o: 'SonarCloud Analysis' → OTHER" "OTHER" "$other_out"
+# 2o: Timeout check name
+timeout_out=$(_classify_ci_failures_by_pattern "CI Timeout" "$CONF_FILE")
+assert_contains "2o: 'CI Timeout' → TIMEOUT_NO_OUTPUT" "TIMEOUT_NO_OUTPUT" "$timeout_out"
 
-# 2p: Empty input → empty output
+# 2o2: runner communication check name
+runner_comm_out=$(_classify_ci_failures_by_pattern "Runner communication lost" "$CONF_FILE")
+assert_contains "2o2: runner communication → TIMEOUT_NO_OUTPUT" "TIMEOUT_NO_OUTPUT" "$runner_comm_out"
+
+# 2o3: watchdog check name
+watchdog_out=$(_classify_ci_failures_by_pattern "Watchdog no output" "$CONF_FILE")
+assert_contains "2o3: watchdog → TIMEOUT_NO_OUTPUT" "TIMEOUT_NO_OUTPUT" "$watchdog_out"
+
+# 2p: Unknown / catch-all → OTHER
+other_out=$(_classify_ci_failures_by_pattern "SonarCloud Analysis" "$CONF_FILE")
+assert_contains "2p: 'SonarCloud Analysis' → OTHER" "OTHER" "$other_out"
+
+# 2q: Empty input → empty output
 empty_out=$(_classify_ci_failures_by_pattern "" "$CONF_FILE")
-assert_empty "2p: empty input → empty output" "$empty_out"
+assert_empty "2q: empty input → empty output" "$empty_out"
 
 echo ""
 
@@ -219,13 +233,14 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "--- Section 3: mixed-pattern CI failures ---"
 
-# Four checks: one Format, one Lint, one Typecheck, one Test — expect four lines
-mixed_input=$(printf '%s\n' "Format" "Lint" "Typecheck" "Test")
+# Five checks: one Format, one Lint, one Typecheck, one Test, one Timeout — expect five lines
+mixed_input=$(printf '%s\n' "Format" "Lint" "Typecheck" "Test" "CI Timeout")
 mixed_out=$(_classify_ci_failures_by_pattern "$mixed_input" "$CONF_FILE")
 assert_contains "3a: mixed has FORMAT_FAILURE" "FORMAT_FAILURE" "$mixed_out"
 assert_contains "3b: mixed has LINT_FAILURE" "LINT_FAILURE" "$mixed_out"
 assert_contains "3c: mixed has TYPECHECK_FAILURE" "TYPECHECK_FAILURE" "$mixed_out"
 assert_contains "3d: mixed has TEST_FAILURE" "TEST_FAILURE" "$mixed_out"
+assert_contains "3d2: mixed has TIMEOUT_NO_OUTPUT" "TIMEOUT_NO_OUTPUT" "$mixed_out"
 
 # Mix with OTHER
 mixed_other=$(printf '%s\n' "Format" "Random Bot Check")
@@ -260,6 +275,9 @@ assert_contains "4e2: LINT guidance points to changed-file lint reproduction" \
 	"node .github/scripts/lint-changed-files.mjs --base-ref <base>" "$lint_guidance"
 assert_contains "4e3: LINT guidance flags generated type trap" \
 	"generated Content Collections" "$lint_guidance"
+assert_contains "4e4: LINT guidance flags timeout/no-output trap" \
+	"Timeout/no-output trap" "$lint_guidance"
+assert_contains "4e5: LINT guidance mentions heartbeat" "heartbeat" "$lint_guidance"
 
 # 4f: TYPECHECK_FAILURE classification → guidance does NOT mention auto-fix
 tc_class=$(_classify_ci_failures_by_pattern "Typecheck" "$CONF_FILE")
@@ -286,6 +304,16 @@ assert_contains "4l: TEST guidance warns against production secrets" \
 	"Do NOT require production secrets" "$test_guidance"
 assert_contains "4m: TEST guidance mentions stale Vitest mocks" \
 	"vi.mock" "$test_guidance"
+
+# 4n: TIMEOUT_NO_OUTPUT classification → heartbeat guidance emitted
+timeout_class=$(_classify_ci_failures_by_pattern "CI Timeout" "$CONF_FILE")
+timeout_guidance=$(_emit_ci_failure_guidance_blocks "$timeout_class" "$CONF_FILE")
+assert_contains "4n: TIMEOUT guidance emitted" \
+	"### Pattern-Specific Resolution Guidance" "$timeout_guidance"
+assert_contains "4o: TIMEOUT guidance mentions heartbeat" "heartbeat" "$timeout_guidance"
+assert_contains "4p: TIMEOUT guidance mentions exit code 124" "124" "$timeout_guidance"
+assert_contains "4q: TIMEOUT guidance mentions exit code 137" "137" "$timeout_guidance"
+assert_contains "4r: TIMEOUT guidance mentions exit code 143" "143" "$timeout_guidance"
 
 echo ""
 
@@ -315,6 +343,15 @@ assert_contains "5d2: ESLint section includes changed-file lint command" \
 	"node .github/scripts/lint-changed-files.mjs --base-ref <base>" "$lint_section"
 assert_contains "5d3: ESLint section avoids generic-only pnpm lint guidance" \
 	"CI changed-file path" "$lint_section"
+
+# 5d4: Timeout/no-output trap: section points to heartbeat triage
+sample_timeout_failing="- **CI Timeout**: fail — [link](https://example.com)"
+timeout_class_input=$(_classify_ci_failures_by_pattern "CI Timeout" "$CONF_FILE")
+timeout_section=$(_build_ci_feedback_section "12345" "$sample_timeout_failing" "$timeout_class_input")
+assert_contains "5d4: timeout section includes heartbeat guidance" \
+	"heartbeat" "$timeout_section"
+assert_contains "5d5: timeout section includes killed/timeout exit codes" \
+	"124, 137, or 143" "$timeout_section"
 
 # 5e: Without classification arg, section omits pattern guidance (back-compat)
 section_no_classification=$(_build_ci_feedback_section "12345" "$sample_failing")
