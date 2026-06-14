@@ -67,7 +67,7 @@ For upstream macOS packages:
 shasum -a 256 fips-0.4.0-rc1-macos-$(uname -m).pkg
 pkgutil --check-signature fips-0.4.0-rc1-macos-$(uname -m).pkg
 pkgutil --payload-files fips-0.4.0-rc1-macos-$(uname -m).pkg
-rm -rf /tmp/fips-pkg-expanded && pkgutil --expand fips-0.4.0-rc1-macos-$(uname -m).pkg /tmp/fips-pkg-expanded
+rm -rf /tmp/fips-pkg-expanded-${USER} && pkgutil --expand fips-0.4.0-rc1-macos-$(uname -m).pkg /tmp/fips-pkg-expanded-${USER}
 xar -tf fips-0.4.0-rc1-macos-$(uname -m).pkg
 sudo installer -pkg fips-0.4.0-rc1-macos-$(uname -m).pkg -target /
 ```
@@ -82,11 +82,11 @@ git checkout v0.4.0-rc1
 
 pkgutil --check-signature deploy/fips-0.4.0-rc1-macos-$(uname -m).pkg
 pkgutil --payload-files deploy/fips-0.4.0-rc1-macos-$(uname -m).pkg
-rm -rf /tmp/fips-source-pkg-expanded && pkgutil --expand deploy/fips-0.4.0-rc1-macos-$(uname -m).pkg /tmp/fips-source-pkg-expanded
+rm -rf /tmp/fips-source-pkg-expanded-${USER} && pkgutil --expand deploy/fips-0.4.0-rc1-macos-$(uname -m).pkg /tmp/fips-source-pkg-expanded-${USER}
 sudo installer -pkg deploy/fips-0.4.0-rc1-macos-$(uname -m).pkg -target /
 ```
 
-Prerequisites for source builds: Rust toolchain from https://rustup.rs and Xcode command line tools (`xcode-select --install`). Remove any previous `/tmp/fips-pkg-expanded` directory before expanding because `pkgutil --expand` fails when the destination already exists. Do not install if package integrity checks fail.
+Prerequisites for source builds: Rust toolchain from https://rustup.rs and Xcode command line tools (`xcode-select --install`). Remove any previous user-scoped `/tmp/fips-*-pkg-expanded-${USER}` directory before expanding because `pkgutil --expand` fails when the destination already exists. Do not install if package integrity checks fail.
 
 ## Safe Local Posture
 
