@@ -54,7 +54,7 @@ export default defineConfig({
 - One feature or operational concern per migration; separate schema, RLS, seed, and large data backfill steps when reviewability improves.
 - Review generated SQL before applying; hand-write safe renames, data backfills, RLS policies, trigger changes, and zero-downtime indexes.
 - Prefer additive migrations: add nullable/defaulted columns, backfill, deploy code, then enforce `NOT NULL` or constraints.
-- Runtime metadata can create controlled DDL for configurable entities, but durable core objects still need reviewed migrations and an append-only DDL/audit log.
+- Runtime metadata can create controlled DDL only for configurable/custom entities. Durable core standard objects still need reviewed migrations and an append-only DDL/audit log.
 - Use external provider IDs as integration fields, not primary keys.
 
 ## Verification

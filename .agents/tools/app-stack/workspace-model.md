@@ -44,7 +44,7 @@ Start with these concepts before app-specific objects:
 
 ## Boundary rules
 
-- Every durable business record belongs to exactly one workspace unless the product explicitly needs cross-workspace sharing.
+- Every durable business record belongs to exactly one workspace unless the product explicitly needs cross-workspace sharing. Workspace is the default tenancy and RLS root.
 - RLS policies include workspace membership and role checks.
 - Teams group users; roles grant capabilities. Do not collapse teams/user groups into roles.
 - AI agents receive only the workspace context needed for the task.

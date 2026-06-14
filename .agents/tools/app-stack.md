@@ -35,6 +35,7 @@ mode: subagent
 | Place schemas and migrations | `app-stack/migration-layout.md` |
 | Choose standard app objects | `app-stack/standard-objects.md` |
 | Design RBAC/capabilities | `app-stack/rbac-permissions.md` |
+| Design workflows and automations | `app-stack/workflow-architecture.md` |
 | Build metadata-driven entities/layouts/workflows | `app-stack/metadata-architecture.md` |
 | Add encrypted/local-first collaboration | `app-stack/encrypted-collaboration.md` |
 | Shape app/control-room UX shell | `app-stack/ux-shell-patterns.md` |
@@ -51,6 +52,19 @@ Prefer boring, shared primitives that compound across apps:
 6. Use `Workspace` as the data container, permission boundary, AI context boundary, and collaboration scope.
 7. Start from standard object packs: issues, labels/tags, users, teams, roles, conversations/channels, calendar/CRM activities, files/folders, accounts, contacts, quotes, invoices, payments, prices, and referrals.
 8. Keep web/CMS/site routing explicit: WordPress for editors; no-build static for plain sites; static generator only after repeated-layout/content scale proves it.
+
+## Builder interpretation rules
+
+When asked to build a new app or data architecture:
+
+1. Start with `Workspace`, `packages/db`, RLS, users, teams, roles, labels, audit, files, and integrations.
+2. Pick canonical object roots from `app-stack/standard-objects.md` before inventing domain tables.
+3. Use types, labels, views, and metadata before separate tables; split tables only for distinct validation, lifecycle, permissions, integrations, or indexes.
+4. Add workflows as definitions plus runtime events/runs; do not hide state machines in UI-only code.
+5. Preserve external sync handles for WebDAV, CalDAV, CardDAV, payment, accounting, and forge integrations.
+6. Verify one complete path: object → permission → workflow → audit → import/export or sync.
+
+Read order for full app/data design: `monorepo-app-stack.md` → `workspace-model.md` → `database-foundation.md` → `standard-objects.md` → `rbac-permissions.md` → `workflow-architecture.md` → `metadata-architecture.md` → `migration-layout.md`.
 
 ## Related docs
 

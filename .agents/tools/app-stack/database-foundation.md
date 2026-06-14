@@ -8,7 +8,7 @@ mode: subagent
 
 # Database Foundation
 
-Default to Postgres + Drizzle for durable application data. Add RLS when records are scoped by workspace, organisation, account, or user.
+Default to Postgres + Drizzle for durable application data. `workspace_id` is the default tenancy and RLS root; organisation, account, and user scopes are ownership/domain filters unless explicitly promoted to tenancy roots.
 
 ## Naming doctrine
 
@@ -40,7 +40,8 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 - `issues` with forge-compatible fields: title, body, state, type, priority, assignee, labels, milestones, parent/related issues, external provider IDs.
 - Conversations: conversation groups, channel/direct/group/entity conversation types, messages, threads, reactions, mentions, read receipts, attachments.
 - Calendar/CRM activities: calendar collections, activity types such as calls/meetings/tasks, participants, alarms/reminders, recurrence, calendar/timeline links.
-- Tasks, milestones, comments, activity streams, decisions, approvals.
+- Workflows: definitions, states, transitions, guards, actions, runs/events, timers, decisions, approvals.
+- Tasks, milestones, comments, activity streams.
 - Issue relationships: blocks, duplicates, relates-to, split-from, supersedes.
 
 ### Business relationship pack
@@ -52,13 +53,13 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 ### Metadata pack
 
 - Entity definitions, field definitions, layouts, views, filters.
-- Labels, ACL/RBAC policies, capability definitions, workflow definitions, automations, validation rules.
+- Labels, ACL/RBAC policies, capability definitions, workflow/state/transition definitions, automations, validation rules.
 
 ### Optional packs
 
 - CRM: leads, opportunities, campaigns, cases, referrers, referrals.
 - Commercial: products/items, services, prices, price lists, discount/voucher codes, quotes/estimates, orders.
-- Accounting: invoices, pro-forma invoices, credit notes, bills, payments, refund payments, payment allocations, ledger entries, tax codes.
+- Accounting: invoices, pro-forma invoices, credit notes, bills, payments, refund payments, payment allocations, `ledger_accounts` / `chart_accounts`, ledger entries, tax codes.
 - Inventory: items, stock movements, locations.
 - Projects: projects, tasks, milestones, time entries.
 - Collaboration: threads, decisions, approvals.
@@ -88,6 +89,7 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 
 - Scope tables by `workspace_id` where possible.
 - Use membership/role tables for policy checks.
+- Treat RBAC scope `all` as all records in the current workspace; platform-global access is a separate system capability.
 - Add external IDs per integration, not as primary keys.
 - Audit writes with actor, workspace, entity type, entity ID, action, and diff summary.
 
@@ -96,5 +98,5 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 - Draw the object graph before writing migrations.
 - Identify every table's workspace boundary and RLS policy.
 - Confirm `accounts` and `contacts` cover imported synonyms before adding new party/person tables.
-- Confirm issues, conversations/channels/chats, calendar/CRM activities, WebDAV-style files/folders, CardDAV-style contacts/address books, labels/tags, users, teams, roles, prices, quotes, invoices, payments, credits, and refunds are either implemented or intentionally out of scope.
+- Confirm issues, conversations/channels/chats, workflows/approvals, calendar/CRM activities, WebDAV-style files/folders, CardDAV-style contacts/address books, labels/tags, users, teams, roles, prices, quotes, invoices, payments, credits, and refunds are either implemented or intentionally out of scope.
 - Run Drizzle generate/migrate checks and inspect generated SQL.
