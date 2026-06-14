@@ -189,6 +189,19 @@ test_opencode_guide_mentions_aidevops_services() {
 	return 0
 }
 
+test_privacy_guide_mentions_limits_and_companions() {
+	local output=""
+	output="$(bash "$HELPER_SCRIPT" privacy-guide 2>&1)"
+
+	if [[ "$output" == *"not as an anonymity network"* && "$output" == *"SimpleX or Signal"* && "$output" == *"self-hosted or trusted private Nostr relays"* ]]; then
+		print_result "privacy guide mentions limits and companions" 0
+		return 0
+	fi
+
+	print_result "privacy guide mentions limits and companions" 1 "$output"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -202,6 +215,7 @@ main() {
 	test_macos_source_mentions_rc1_package_validation
 	test_safe_posture_mentions_disable_and_default_open
 	test_opencode_guide_mentions_aidevops_services
+	test_privacy_guide_mentions_limits_and_companions
 
 	printf '\nTests run: %d\n' "$TESTS_RUN"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
