@@ -49,6 +49,21 @@ fi
 if ! command -v print_warning >/dev/null 2>&1; then
 	print_warning() { printf '[WARN] %s\n' "$*" >&2; return 0; }
 fi
+if ! command -v _save_cleanup_scope >/dev/null 2>&1; then
+	_save_cleanup_scope() { return 0; }
+fi
+if ! command -v _run_cleanups >/dev/null 2>&1; then
+	_run_cleanups() { return 0; }
+fi
+
+_gh_wrapper_enter_cleanup_scope() {
+	_save_cleanup_scope
+	if [[ -n "${ZSH_VERSION:-}" ]]; then
+		return 0
+	fi
+	trap '_run_cleanups' RETURN
+	return 0
+}
 
 # Standalone-source cleanup compatibility.
 # shared-constants.sh provides the canonical cleanup stack before sourcing this

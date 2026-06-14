@@ -45,7 +45,7 @@
 
 import { existsSync, readFileSync, appendFileSync, realpathSync } from "fs";
 import { execFileSync } from "child_process";
-import { join, sep } from "path";
+import { isAbsolute, join, resolve, sep } from "path";
 import { tmpdir } from "os";
 
 import { FAIL_REASON, formatGateThrowMessage } from "./quality-hooks-signature-failures.mjs";
@@ -291,12 +291,51 @@ function _isPathWithin(childPath, parentPath) {
  * @param {string} filePath
  * @returns {{ status: "ok", filePath: string } | { status: "fail", reason: string, detail: string }}
  */
-function _resolveAllowedBodyFilePath(filePath) {
-  const realFilePath = realpathSync(filePath);
-  const allowedRoots = [process.cwd(), tmpdir()]
+function _safeRealpath(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    return "";
+  }
+}
+
+function _gitValue(args) {
+  try {
+    return execFileSync("git", args, {
+      encoding: "utf-8",
+      timeout: 1000,
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    return "";
+  }
+}
+
+function _gitCommonDir(path) {
+  const topLevel = _gitValue(["-C", path, "rev-parse", "--show-toplevel"]);
+  if (!topLevel) return "";
+  const commonDir = _gitValue(["-C", topLevel, "rev-parse", "--git-common-dir"]);
+  if (!commonDir) return "";
+  return _safeRealpath(isAbsolute(commonDir) ? commonDir : resolve(topLevel, commonDir));
+}
+
+function _sameGitRepository(pathA, pathB) {
+  const commonA = _gitCommonDir(pathA);
+  const commonB = _gitCommonDir(pathB);
+  return Boolean(commonA && commonB && commonA === commonB);
+}
+
+function _resolveAllowedBodyFilePath(filePath, commandWorkdir = process.cwd()) {
+  const realCommandWorkdir = _safeRealpath(commandWorkdir) || process.cwd();
+  const candidatePath = isAbsolute(filePath) ? filePath : resolve(realCommandWorkdir, filePath);
+  const realFilePath = realpathSync(candidatePath);
+  const allowedRoots = [realCommandWorkdir, process.cwd(), tmpdir()]
     .filter((root) => existsSync(root))
     .map((root) => realpathSync(root));
   if (allowedRoots.some((root) => _isPathWithin(realFilePath, root))) {
+    return { status: "ok", filePath: realFilePath };
+  }
+  if (_sameGitRepository(realFilePath, realCommandWorkdir)) {
     return { status: "ok", filePath: realFilePath };
   }
   return {
@@ -321,9 +360,9 @@ function _resolveAllowedBodyFilePath(filePath) {
  * @param {Function} log
  * @returns {{ status: "ok", cmd: string } | { status: "fail", reason: string, detail: string }}
  */
-function _repairBodyFile(cmd, filePath, helperPath, log) {
+function _repairBodyFile(cmd, filePath, helperPath, log, commandWorkdir = process.cwd()) {
   try {
-    const resolved = _resolveAllowedBodyFilePath(filePath);
+    const resolved = _resolveAllowedBodyFilePath(filePath, commandWorkdir);
     if (resolved.status === "fail") {
       log("WARN", `Refusing --body-file outside allowed roots: ${resolved.detail}`);
       return resolved;
@@ -438,7 +477,7 @@ function _repairBodyArg(cmd, parsed, helperPath, log) {
  * @param {Function} log
  * @returns {{ status: "ok", cmd: string } | { status: "fail", reason: string, detail?: string }}
  */
-export function tryRepairSignature(cmd, scriptsDir, log) {
+export function tryRepairSignature(cmd, scriptsDir, log, options = {}) {
   if (hasTrustedSignatureSignal(cmd) || isMachineProtocolCommand(cmd)) {
     log("INFO", "Command is exempt or already includes trusted signature signal; no repair needed");
     return { status: "ok", cmd };
@@ -456,7 +495,7 @@ export function tryRepairSignature(cmd, scriptsDir, log) {
   );
   if (bodyFileMatch) {
     const filePath = bodyFileMatch[2] || bodyFileMatch[4];
-    return _repairBodyFile(cmd, filePath, helperPath, log);
+    return _repairBodyFile(cmd, filePath, helperPath, log, options.commandWorkdir);
   }
 
   if (!existsSync(helperPath)) {
@@ -489,7 +528,8 @@ export function checkSignatureFooterGate(cmd, log, scriptsDir, output) {
   // without thinking about the footer. Mutate the command in place so the
   // user/session gets correct output without an error-retry cycle.
   if (scriptsDir && output && output.args) {
-    const result = tryRepairSignature(cmd, scriptsDir, log);
+    const commandWorkdir = output.args.workdir || output.args.cwd || process.cwd();
+    const result = tryRepairSignature(cmd, scriptsDir, log, { commandWorkdir });
     if (result.status === "ok") {
       if (result.cmd !== cmd) {
         output.args.command = result.cmd;
