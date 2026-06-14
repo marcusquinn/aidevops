@@ -1062,7 +1062,7 @@ check_worker_branch_orphan_loop() {
 
 	local pr_base_branch=""
 	pr_base_branch=$(_ddh_resolve_pr_base_branch "$repo_slug")
-	if [[ "$orphan_marker_count" -gt 0 ]]; then
+	if [[ "$orphan_marker_count" -gt 0 && -n "$worktree_path" ]]; then
 		local branch_state="" state_repo="" remote_probe="" remote_exists="" commit_count=""
 		branch_state=$(_ddh_probe_orphan_branch_state "$repo_slug" "$branch_name" "$worktree_path" "$pr_base_branch")
 		IFS='|' read -r state_repo remote_probe remote_exists commit_count <<<"$branch_state"
