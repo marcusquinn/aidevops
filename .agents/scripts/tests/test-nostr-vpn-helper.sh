@@ -193,7 +193,7 @@ test_privacy_guide_mentions_limits_and_companions() {
 	local output=""
 	output="$(bash "$HELPER_SCRIPT" privacy-guide 2>&1)"
 
-	if [[ "$output" == *"not as an anonymity network"* && "$output" == *"SimpleX or Signal"* && "$output" == *"self-hosted or trusted private Nostr relays"* ]]; then
+	if [[ "$output" == *"not as an anonymity network"* && "$output" == *"SimpleX or Signal"* && "$output" == *"self-hosted or trusted private Nostr relays"* && "$output" == *"high-risk research"* && "$output" == *"Rotate identities after suspected compromise"* ]]; then
 		print_result "privacy guide mentions limits and companions" 0
 		return 0
 	fi
