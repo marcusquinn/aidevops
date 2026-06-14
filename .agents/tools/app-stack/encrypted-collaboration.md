@@ -17,7 +17,7 @@ Add encryption and collaboration deliberately. Start by identifying which data m
 | Public/static | Static files or public database rows |
 | Workspace shared | Postgres rows with RLS and audit |
 | Local private | Device store, PGlite/SQLite, or OS keychain-backed files |
-| Secret material | aidevops secret storage, OS keychain, or encrypted config; never stored in renderer rows |
+| Secret material | aidevops secret storage, OS keychain, or encrypted config; never stored in renderer-accessible rows |
 | End-to-end encrypted | Client-side encrypted payloads; server stores ciphertext and metadata only |
 
 ## Collaboration choices
