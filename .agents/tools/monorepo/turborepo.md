@@ -53,6 +53,19 @@ pnpm --filter "./packages/*" build     # by directory
 pnpm --filter "!web" build             # exclude
 ```
 
+**Affected CI filters:** broad affected selectors can include the workspace root.
+If the root `package.json` task calls Turbo again, split root checks from package
+affected checks or exclude the root selector:
+
+```bash
+pnpm exec turbo run lint --continue --filter="...[origin/<base>]" --filter="!//"
+pnpm exec turbo run typecheck --continue --filter="...[origin/<base>]" --filter="!//"
+```
+
+Use this when root scripts look like `"lint": "turbo lint"` or
+`"typecheck": "turbo typecheck"`; otherwise CI can recursively schedule the root
+task, appear hung, or hit no-output watchdogs.
+
 ## Package Exports & Dependencies
 
 ```json
@@ -117,6 +130,7 @@ pnpm --filter @workspace/db db:studio    # open studio UI
 | Cache not invalidating | Check `outputs` in turbo.json; add env vars to `globalEnv` |
 | Wrong workspace protocol | Use `"workspace:*"` not `"*"` |
 | TypeScript path issues | Use `moduleResolution: "bundler"`; match `exports` in package.json |
+| Affected lint/typecheck appears hung | Check whether the root task invokes Turbo; add `--filter="!//"` or run root checks separately |
 
 ## Related
 
