@@ -115,9 +115,10 @@ _ddh_probe_orphan_branch_state() {
 	local branch_name="$2"
 	local worktree_path="${3:-}"
 	local base_branch="${4:-main}"
+	local unknown_value="unknown"
 	local remote_probe="unavailable"
-	local remote_exists="unknown"
-	local commit_count="unknown"
+	local remote_exists="$unknown_value"
+	local commit_count="$unknown_value"
 
 	if [[ -n "$branch_name" && "$branch_name" != "HEAD" ]]; then
 		local remote_rc=0
@@ -135,7 +136,7 @@ _ddh_probe_orphan_branch_state() {
 			remote_exists="no"
 			;;
 		*)
-			remote_exists="unknown"
+			remote_exists="$unknown_value"
 			;;
 		esac
 	fi
@@ -145,7 +146,7 @@ _ddh_probe_orphan_branch_state() {
 		if ! [[ "$commit_count" =~ ^[0-9]+$ ]]; then
 			commit_count=$(git -C "$worktree_path" rev-list --count HEAD 2>/dev/null || true)
 		fi
-		[[ "$commit_count" =~ ^[0-9]+$ ]] || commit_count="unknown"
+		[[ "$commit_count" =~ ^[0-9]+$ ]] || commit_count="$unknown_value"
 	fi
 
 	printf '%s|%s|%s|%s\n' "$repo_slug" "$remote_probe" "$remote_exists" "$commit_count"
