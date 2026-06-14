@@ -67,7 +67,7 @@ For upstream macOS packages:
 shasum -a 256 fips-0.4.0-rc1-macos-$(uname -m).pkg
 pkgutil --check-signature fips-0.4.0-rc1-macos-$(uname -m).pkg
 pkgutil --payload-files fips-0.4.0-rc1-macos-$(uname -m).pkg
-pkgutil --expand fips-0.4.0-rc1-macos-$(uname -m).pkg /tmp/fips-pkg-expanded
+rm -rf /tmp/fips-pkg-expanded && pkgutil --expand fips-0.4.0-rc1-macos-$(uname -m).pkg /tmp/fips-pkg-expanded
 xar -tf fips-0.4.0-rc1-macos-$(uname -m).pkg
 sudo installer -pkg fips-0.4.0-rc1-macos-$(uname -m).pkg -target /
 ```
@@ -82,7 +82,7 @@ git checkout v0.4.0-rc1
 
 pkgutil --check-signature deploy/fips-0.4.0-rc1-macos-$(uname -m).pkg
 pkgutil --payload-files deploy/fips-0.4.0-rc1-macos-$(uname -m).pkg
-pkgutil --expand deploy/fips-0.4.0-rc1-macos-$(uname -m).pkg /tmp/fips-source-pkg-expanded
+rm -rf /tmp/fips-source-pkg-expanded && pkgutil --expand deploy/fips-0.4.0-rc1-macos-$(uname -m).pkg /tmp/fips-source-pkg-expanded
 sudo installer -pkg deploy/fips-0.4.0-rc1-macos-$(uname -m).pkg -target /
 ```
 
