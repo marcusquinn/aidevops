@@ -1051,12 +1051,13 @@ check_worker_branch_orphan_loop() {
 	comments_json=$(gh api --paginate --slurp "$comments_endpoint" 2>/dev/null) || return 1
 	[[ -n "$comments_json" ]] || return 1
 
+	local orphan_marker_prefix="WORKER_BRANCH_ORPHAN branch=${branch_name} "
 	local orphan_marker_count="0"
 	orphan_marker_count=$(printf '%s' "$comments_json" |
-		jq -r --arg branch "$branch_name" '
+		jq -r --arg marker "$orphan_marker_prefix" '
 			[.[][]
 			| (.body // "")
-			| select(contains("WORKER_BRANCH_ORPHAN branch=" + $branch + " "))] | length
+			| select(contains($marker))] | length
 		' 2>/dev/null) || orphan_marker_count="0"
 	[[ "$orphan_marker_count" =~ ^[0-9]+$ ]] || orphan_marker_count=0
 
@@ -1099,10 +1100,10 @@ check_worker_branch_orphan_loop() {
 			latest_iso="$marker_iso"
 		fi
 	done < <(printf '%s' "$comments_json" |
-		jq -r --arg branch "$branch_name" '
+		jq -r --arg marker "$orphan_marker_prefix" '
 			.[][]
 			| (.body // "")
-			| select(contains("WORKER_BRANCH_ORPHAN branch=" + $branch + " "))
+			| select(contains($marker))
 			| (capture("WORKER_BRANCH_ORPHAN branch=[^ ]+ session=[^ ]+ ts=(?<ts>[^\\n ]+)")? // {})
 			| .ts // empty
 		' 2>/dev/null) || return 1
