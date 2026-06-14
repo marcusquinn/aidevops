@@ -55,20 +55,22 @@ _check_required_pr_checks_passing_fallback() {
 # GitHub stores ruleset approval requirements under pull_request rules, not as
 # CI contexts, so an empty status context list is not enough to allow a merge.
 #
-# Args: $1=repo_slug, $2=default_branch
+# Args: $1=repo_slug, $2=default_branch, $3=optional pre-fetched rulesets JSON
 # Stdout: integer maximum required_approving_review_count (0 when none)
 # Returns: 0=requirement resolved, 1=ruleset API/parse error
 #######################################
 _ruleset_required_review_count_for_default_branch() {
 	local repo_slug="$1"
 	local default_branch="$2"
+	local rulesets_json="${3:-}"
 	local log_target="${LOGFILE:-/dev/stderr}"
 
-	local rulesets_json=""
-	rulesets_json=$(gh api "repos/${repo_slug}/rulesets" 2>/dev/null) || {
-		echo "[pulse-merge] _ruleset_required_review_count_for_default_branch: rulesets list failed for ${repo_slug} — caller will fail closed (GH#24577)" >>"$log_target"
-		return 1
-	}
+	if [[ -z "$rulesets_json" ]]; then
+		rulesets_json=$(gh api "repos/${repo_slug}/rulesets" 2>/dev/null) || {
+			echo "[pulse-merge] _ruleset_required_review_count_for_default_branch: rulesets list failed for ${repo_slug} — caller will fail closed (GH#24577)" >>"$log_target"
+			return 1
+		}
+	fi
 	[[ -n "$rulesets_json" && "$rulesets_json" != "[]" && "$rulesets_json" != null ]] || {
 		printf '0'
 		return 0
