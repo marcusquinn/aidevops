@@ -38,8 +38,8 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 ### Collaboration and work pack
 
 - `issues` with forge-compatible fields: title, body, state, type, priority, assignee, labels, milestones, parent/related issues, external provider IDs.
-- Channels, channel groups, chats, messages, threads, reactions, mentions, read receipts, attachments.
-- Activities: calls, meetings, tasks, reminders, participants, calendar/timeline links.
+- Conversations: conversation groups, channel/direct/group/entity conversation types, messages, threads, reactions, mentions, read receipts, attachments.
+- Calendar/CRM activities: calendar collections, activity types such as calls/meetings/tasks, participants, alarms/reminders, recurrence, calendar/timeline links.
 - Tasks, milestones, comments, activity streams, decisions, approvals.
 - Issue relationships: blocks, duplicates, relates-to, split-from, supersedes.
 
@@ -96,5 +96,5 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 - Draw the object graph before writing migrations.
 - Identify every table's workspace boundary and RLS policy.
 - Confirm `accounts` and `contacts` cover imported synonyms before adding new party/person tables.
-- Confirm issues, channels/chats, CRM activities, files/folders, labels/tags, users, teams, roles, prices, quotes, invoices, payments, credits, and refunds are either implemented or intentionally out of scope.
+- Confirm issues, conversations/channels/chats, calendar/CRM activities, WebDAV-style files/folders, CardDAV-style contacts/address books, labels/tags, users, teams, roles, prices, quotes, invoices, payments, credits, and refunds are either implemented or intentionally out of scope.
 - Run Drizzle generate/migrate checks and inspect generated SQL.

@@ -49,7 +49,7 @@ Prefer boring, shared primitives that compound across apps:
 4. Keep schema and migration ownership in `packages/db` for monorepos; generated SQL and metadata snapshots are versioned artifacts.
 5. Treat metadata as product infrastructure: entity definitions, fields, layouts, views, ACL, workflows, labels, audit, import/export, and notifications.
 6. Use `Workspace` as the data container, permission boundary, AI context boundary, and collaboration scope.
-7. Start from standard object packs: issues, labels/tags, users, teams, roles, chats/channels, CRM activities, files/folders, accounts, contacts, quotes, invoices, payments, prices, and referrals.
+7. Start from standard object packs: issues, labels/tags, users, teams, roles, conversations/channels, calendar/CRM activities, files/folders, accounts, contacts, quotes, invoices, payments, prices, and referrals.
 8. Keep web/CMS/site routing explicit: WordPress for editors; no-build static for plain sites; static generator only after repeated-layout/content scale proves it.
 
 ## Related docs
