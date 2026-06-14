@@ -1056,11 +1056,14 @@ _copy_worker_db_migration_ledger_table() {
 
 	has_worker=$(sqlite3_with_timeout "$worker_db" "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '${ledger_table}' LIMIT 1;" 2>/dev/null || true)
 	if [[ -z "$has_worker" ]]; then
-		sqlite3_with_timeout "$shared_db" ".schema ${ledger_table}" 2>/dev/null | sqlite3_with_timeout "$worker_db" >/dev/null 2>&1 || true
+		if ! sqlite3_with_timeout "$shared_db" ".schema ${ledger_table}" 2>/dev/null | sqlite3_with_timeout "$worker_db" >/dev/null 2>&1; then
+			print_warning "OpenCode worker DB could not create ${ledger_table} migration ledger from shared DB"
+			return 1
+		fi
 	fi
 
 	shared_db_sql=$(sql_escape "$shared_db")
-	sqlite3_with_timeout "$worker_db" <<-SQL >/dev/null 2>&1 || true
+	if ! sqlite3_with_timeout "$worker_db" <<-SQL >/dev/null 2>&1; then
 		.bail on
 		ATTACH DATABASE '${shared_db_sql}' AS shared;
 		BEGIN IMMEDIATE;
@@ -1069,6 +1072,9 @@ _copy_worker_db_migration_ledger_table() {
 		COMMIT;
 		DETACH DATABASE shared;
 	SQL
+		print_warning "OpenCode worker DB could not replace ${ledger_table} migration ledger from shared DB"
+		return 1
+	fi
 	return 0
 }
 
@@ -1083,7 +1089,7 @@ _sync_worker_db_migration_ledgers() {
 
 	[[ -f "$worker_db" && -f "$shared_db" ]] || return 0
 	for ledger_table in __drizzle_migrations data_migration migration; do
-		_copy_worker_db_migration_ledger_table "$worker_db" "$shared_db" "$ledger_table"
+		_copy_worker_db_migration_ledger_table "$worker_db" "$shared_db" "$ledger_table" || true
 	done
 	return 0
 }
