@@ -15,7 +15,8 @@
 
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync, readFileSync, chmodSync, symlinkSync, rmSync } from "fs";
+import { execFileSync } from "child_process";
+import { mkdtempSync, writeFileSync, readFileSync, chmodSync, symlinkSync, rmSync, mkdirSync } from "fs";
 import { tmpdir, homedir } from "os";
 import { join } from "path";
 
@@ -298,6 +299,44 @@ describe("tryRepairSignature", () => {
       `sig should be appended to file: ${fileContent}`,
     );
     assert.ok(fileContent.includes("unsigned content"), "original preserved");
+  });
+
+  test("resolves relative --body-file from Bash tool workdir", () => {
+    const dir = setupStubHelper();
+    const workdir = join(dir, "linked-worktree-cwd");
+    mkdirSync(workdir);
+    const bodyFile = join(workdir, "relative-body.md");
+    writeFileSync(bodyFile, "relative unsigned content\n");
+    const { log } = makeLogger();
+    const cmd = "gh pr create --repo o/r --title test --body-file relative-body.md";
+    const out = tryRepairSignature(cmd, dir, log, { commandWorkdir: workdir });
+    assert.equal(out.status, "ok", "relative body-file should resolve from command workdir");
+    assert.ok(readFileSync(bodyFile, "utf-8").includes(SIG_MARKER));
+  });
+
+  test("allows absolute --body-file from a linked worktree for the same repo", () => {
+    const dir = setupStubHelper();
+    const repo = join(dir, "repo");
+    const linked = join(dir, "repo-linked");
+    mkdirSync(repo);
+    execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
+    execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: repo });
+    execFileSync("git", ["config", "user.name", "Test"], { cwd: repo });
+    execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: repo });
+    writeFileSync(join(repo, "README.md"), "fixture\n");
+    execFileSync("git", ["add", "README.md"], { cwd: repo, stdio: "ignore" });
+    execFileSync("git", ["commit", "--no-gpg-sign", "-m", "init"], { cwd: repo, stdio: "ignore" });
+    execFileSync("git", ["worktree", "add", "-b", "linked-fixture", linked], {
+      cwd: repo,
+      stdio: "ignore",
+    });
+    const bodyFile = join(linked, "linked-body.md");
+    writeFileSync(bodyFile, "linked unsigned content\n");
+    const { log } = makeLogger();
+    const cmd = `gh pr create --repo o/r --title test --body-file ${bodyFile}`;
+    const out = tryRepairSignature(cmd, dir, log, { commandWorkdir: repo });
+    assert.equal(out.status, "ok", "same-repo linked worktree body-file should be allowed");
+    assert.ok(readFileSync(bodyFile, "utf-8").includes(SIG_MARKER));
   });
 
   test("uses cheap no-session helper path when repairing body-file", () => {
