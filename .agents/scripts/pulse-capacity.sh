@@ -274,11 +274,14 @@ pulse_apply_provider_load_capacity_cap() {
 	[[ "$provider_5xx" =~ ^[0-9]+$ ]] || provider_5xx=0
 	[[ "$progress_heartbeats" =~ ^[0-9]+$ ]] || progress_heartbeats=0
 
-	local account_multiplier="${PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER:-}"
+	local account_multiplier="${PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER:-}" account_multiplier_source="env:PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER"
 	if [[ -z "$account_multiplier" ]] && declare -F config_get >/dev/null 2>&1; then
-		account_multiplier=$(config_get "orchestration.provider_account_slot_multiplier" "2")
+		account_multiplier=$(config_get "orchestration.provider_account_slot_multiplier" "24")
+		account_multiplier_source="config:orchestration.provider_account_slot_multiplier"
+	elif [[ -z "$account_multiplier" ]]; then
+		account_multiplier_source="default:24"
 	fi
-	[[ "$account_multiplier" =~ ^[0-9]+$ ]] || account_multiplier=2
+	[[ "$account_multiplier" =~ ^[0-9]+$ ]] || account_multiplier=24
 	((account_multiplier < 1)) && account_multiplier=1
 	local account_cap=-1
 	if ((account_available >= 0)); then
@@ -335,8 +338,8 @@ pulse_apply_provider_load_capacity_cap() {
 		_dispatch_stats_gauge "dispatch_capacity_recent_failures" "$failures"
 		_dispatch_stats_gauge "dispatch_capacity_final_max_workers" "$final_max"
 	fi
-	printf '[pulse-wrapper] Dispatch_capacity: raw_max=%s final_max=%s active=%s provider=%s provider_accounts_total=%s provider_accounts_available=%s account_cap=%s rate_limited_accounts=%s auth_error_accounts=%s load_points=%s failures=%s rate_limits=%s service_interruptions=%s provider_5xx=%s progress_heartbeats=%s min_floor=%s floor_allowed=%s floor_active=%s\n' \
-		"$raw_max_workers" "$final_max" "$active_workers" "${provider:-unknown}" "$account_total" "$account_available" "$account_cap" "$account_limited" "$account_auth_errors" "$load_points" "$failures" "$rate_limits" "$service_interruptions" "$provider_5xx" "$progress_heartbeats" "$min_worker_floor" "$floor_allowed" "$floor_active" >>"${LOGFILE:-/dev/null}" 2>/dev/null || true
+	printf '[pulse-wrapper] Dispatch_capacity: raw_max=%s final_max=%s active=%s provider=%s provider_accounts_total=%s provider_accounts_available=%s account_cap=%s provider_account_slot_multiplier=%s provider_account_slot_multiplier_source=%s override_hint="lower orchestration.provider_account_slot_multiplier or PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER if provider plan cannot sustain this concurrency" rate_limited_accounts=%s auth_error_accounts=%s load_points=%s failures=%s rate_limits=%s service_interruptions=%s provider_5xx=%s progress_heartbeats=%s min_floor=%s floor_allowed=%s floor_active=%s\n' \
+		"$raw_max_workers" "$final_max" "$active_workers" "${provider:-unknown}" "$account_total" "$account_available" "$account_cap" "$account_multiplier" "$account_multiplier_source" "$account_limited" "$account_auth_errors" "$load_points" "$failures" "$rate_limits" "$service_interruptions" "$provider_5xx" "$progress_heartbeats" "$min_worker_floor" "$floor_allowed" "$floor_active" >>"${LOGFILE:-/dev/null}" 2>/dev/null || true
 	printf '%s %s\n' "$final_max" "$floor_active"
 	return 0
 }
