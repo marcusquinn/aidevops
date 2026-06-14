@@ -32,13 +32,15 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 - `workspaces`, memberships, teams/user groups, roles, role assignments, invitations, settings.
 - `users` / auth identity mapping.
 - `audit_events`, `activity_events`, comments, notifications.
-- `files`, attachments, labels/tags, imports, exports.
+- `files`, folders, attachments, labels/tags, imports, exports.
 - `integrations`, external IDs, sync cursors.
 
 ### Collaboration and work pack
 
 - `issues` with forge-compatible fields: title, body, state, type, priority, assignee, labels, milestones, parent/related issues, external provider IDs.
-- Tasks, milestones, comments, activity streams, mentions, attachments, decisions, approvals.
+- Channels, channel groups, chats, messages, threads, reactions, mentions, read receipts, attachments.
+- Activities: calls, meetings, tasks, reminders, participants, calendar/timeline links.
+- Tasks, milestones, comments, activity streams, decisions, approvals.
 - Issue relationships: blocks, duplicates, relates-to, split-from, supersedes.
 
 ### Business relationship pack
@@ -65,7 +67,8 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 ## Universal labels/tags
 
 - Make labels/tags available to all user-facing object types through a shared assignment model.
-- Use governed `labels` plus `label_assignments` for workflow, reporting, permissions, and sync.
+- Use governed `label_groups`, `labels`, and `label_assignments` for grouping, workflow, reporting, permissions, and sync.
+- Use grouped keys such as `status:normal`, `priority:high`, and `type:support`; make groups exclusive per entity when only one value is valid.
 - Use free-form array tags only for local, low-risk filtering or imported metadata.
 - Prefer typed join tables for high-volume or referentially critical objects.
 
@@ -93,5 +96,5 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 - Draw the object graph before writing migrations.
 - Identify every table's workspace boundary and RLS policy.
 - Confirm `accounts` and `contacts` cover imported synonyms before adding new party/person tables.
-- Confirm issues, labels/tags, users, teams, roles, prices, quotes, invoices, payments, credits, and refunds are either implemented or intentionally out of scope.
+- Confirm issues, channels/chats, CRM activities, files/folders, labels/tags, users, teams, roles, prices, quotes, invoices, payments, credits, and refunds are either implemented or intentionally out of scope.
 - Run Drizzle generate/migrate checks and inspect generated SQL.

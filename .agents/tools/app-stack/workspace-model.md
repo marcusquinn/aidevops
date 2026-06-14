@@ -18,7 +18,7 @@ A workspace is a named boundary that groups:
 - Members, teams/user groups, roles, role assignments, invitations, and access policies.
 - AI memory/context, tool permissions, and audit trails.
 - Integrations, secrets references, and environment settings.
-- Collaboration state such as issues, comments, activity, notifications, labels, and tasks.
+- Collaboration state such as issues, channels, chats, comments, activity, notifications, labels, files, folders, and tasks.
 
 ## Kernel tables
 
@@ -34,8 +34,11 @@ Start with these concepts before app-specific objects:
 - `workspace_settings`
 - `labels` / `label_assignments`
 - `issues` / issue relationships
+- `channel_groups` / `channels` / `chats`
+- `messages` / `threads` / `reactions`
+- `activities` / calls / meetings / tasks / reminders
 - `audit_events`
-- `files` / `attachments`
+- `files` / `folders` / `attachments`
 - `comments` / `activity_events`
 - `notifications`
 
