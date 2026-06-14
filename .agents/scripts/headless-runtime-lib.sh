@@ -1041,6 +1041,9 @@ _watchdog_kill() {
 # The ledger table list is intentionally allowlisted by the caller; this helper
 # creates a missing worker-side table from the shared DB schema before copying
 # rows so OpenCode does not replay migrations against pre-created user tables.
+# Existing worker ledger rows are replaced, not merely inserted, because a
+# pre-warmed DB can have stale rows with matching primary keys/counts; leaving
+# those in place can still make OpenCode/Drizzle treat the schema as unmigrated.
 #######################################
 _copy_worker_db_migration_ledger_table() {
 	local worker_db="$1"
@@ -1058,8 +1061,12 @@ _copy_worker_db_migration_ledger_table() {
 
 	shared_db_sql=$(sql_escape "$shared_db")
 	sqlite3_with_timeout "$worker_db" <<-SQL >/dev/null 2>&1 || true
+		.bail on
 		ATTACH DATABASE '${shared_db_sql}' AS shared;
+		BEGIN IMMEDIATE;
+		DELETE FROM main."${ledger_table}";
 		INSERT OR IGNORE INTO main."${ledger_table}" SELECT * FROM shared."${ledger_table}";
+		COMMIT;
 		DETACH DATABASE shared;
 	SQL
 	return 0

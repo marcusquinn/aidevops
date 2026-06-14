@@ -1235,6 +1235,52 @@ SQL
 	return 0
 }
 
+test_sync_worker_db_migration_metadata_replaces_stale_ledgers() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/isolated-opencode-stale-ledger"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+	rm -f "$shared_db" "$worker_db"
+
+	sqlite3 "$shared_db" <<'SQL'
+CREATE TABLE __drizzle_migrations (id INTEGER PRIMARY KEY, hash TEXT NOT NULL, created_at INTEGER);
+CREATE TABLE data_migration (id TEXT PRIMARY KEY, updated_at INTEGER NOT NULL);
+CREATE TABLE migration (id TEXT PRIMARY KEY, time_completed INTEGER NOT NULL);
+CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
+INSERT INTO __drizzle_migrations VALUES (1, 'shared-schema-ready', 12345);
+INSERT INTO data_migration VALUES ('shared-data-ready', 67890);
+INSERT INTO migration VALUES ('shared-opencode-ready', 1700000000);
+SQL
+	sqlite3 "$worker_db" <<'SQL'
+CREATE TABLE __drizzle_migrations (id INTEGER PRIMARY KEY, hash TEXT NOT NULL, created_at INTEGER);
+CREATE TABLE data_migration (id TEXT PRIMARY KEY, updated_at INTEGER NOT NULL);
+CREATE TABLE migration (id TEXT PRIMARY KEY, time_completed INTEGER NOT NULL);
+CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
+INSERT INTO __drizzle_migrations VALUES (1, 'stale-schema-row', 11111);
+INSERT INTO data_migration VALUES ('shared-data-ready', 22222);
+INSERT INTO migration VALUES ('shared-opencode-ready', 33333);
+INSERT INTO project VALUES ('prewarmed-project', 'Prewarmed Project');
+SQL
+
+	_sync_worker_db_migration_metadata "$isolated_dir"
+
+	local schema_hash data_updated_at migration_completed projects
+	schema_hash=$(sqlite3 "$worker_db" "SELECT hash FROM __drizzle_migrations WHERE id = 1;")
+	data_updated_at=$(sqlite3 "$worker_db" "SELECT updated_at FROM data_migration WHERE id = 'shared-data-ready';")
+	migration_completed=$(sqlite3 "$worker_db" "SELECT time_completed FROM migration WHERE id = 'shared-opencode-ready';")
+	projects=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM project WHERE id = 'prewarmed-project';")
+
+	if [[ "$schema_hash" == "shared-schema-ready" && "$data_updated_at" == "67890" && "$migration_completed" == "1700000000" && "$projects" == "1" ]]; then
+		print_result "sync worker DB replaces stale migration ledger rows" 0
+		return 0
+	fi
+
+	print_result "sync worker DB replaces stale migration ledger rows" 1 \
+		"schema_hash=$schema_hash data_updated_at=$data_updated_at migration_completed=$migration_completed projects=$projects"
+	return 0
+}
+
 test_sync_worker_db_migration_metadata_archives_unrepairable_project_table() {
 	local shared_dir="${HOME}/.local/share/opencode"
 	local isolated_dir="${TEST_ROOT}/isolated-opencode-unrepairable"
@@ -2028,6 +2074,7 @@ main() {
 	test_seed_worker_db_session_context_copies_only_selected_session
 	test_seed_worker_db_session_context_copies_migration_metadata
 	test_sync_worker_db_migration_metadata_repairs_prewarmed_project_table
+	test_sync_worker_db_migration_metadata_replaces_stale_ledgers
 	test_sync_worker_db_migration_metadata_archives_unrepairable_project_table
 	test_sync_worker_db_migration_metadata_preserves_worker_db_when_shared_query_fails
 	test_sync_worker_db_migration_metadata_repeated_launch_reaches_seed
