@@ -58,58 +58,6 @@ fi
 unset _scl_script_dir
 
 #######################################
-# Resolve the branch orphan recovery should target for new PRs.
-#
-# Prefer explicit dispatch/repo configuration over GitHub's repository default
-# because some managed repos require PRs against an integration branch such as
-# develop while keeping main as the default branch.
-#
-# Args: $1 = repo slug (owner/repo)
-# Outputs: branch name
-#######################################
-_resolve_orphan_recovery_pr_base() {
-	local repo_slug="$1"
-	local configured_base=""
-	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
-	local null_value="null"
-
-	configured_base="${WORKER_PR_BASE_BRANCH:-${DISPATCH_REPO_PR_BASE_BRANCH:-${AIDEVOPS_PR_BASE_BRANCH:-}}}"
-	if [[ -n "$configured_base" && "$configured_base" != "$null_value" ]]; then
-		printf '%s\n' "$configured_base"
-		return 0
-	fi
-
-	if [[ -n "$repo_slug" && -f "$repos_json" ]] && command -v jq >/dev/null 2>&1; then
-		configured_base=$(jq -r --arg slug "$repo_slug" '
-			first(.initialized_repos[]? | select(.slug == $slug) |
-				.pr_base_branch // .pr_target_branch // .default_branch // empty) // empty
-		' "$repos_json" 2>/dev/null || true)
-		if [[ -n "$configured_base" && "$configured_base" != "$null_value" ]]; then
-			printf '%s\n' "$configured_base"
-			return 0
-		fi
-	fi
-
-	configured_base="${DISPATCH_REPO_DEFAULT_BRANCH:-}"
-	if [[ -n "$configured_base" && "$configured_base" != "$null_value" ]]; then
-		printf '%s\n' "$configured_base"
-		return 0
-	fi
-
-	if [[ -n "$repo_slug" ]]; then
-		configured_base=$(gh repo view "$repo_slug" \
-			--json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || true)
-		if [[ -n "$configured_base" && "$configured_base" != "$null_value" ]]; then
-			printf '%s\n' "$configured_base"
-			return 0
-		fi
-	fi
-
-	printf 'main\n'
-	return 0
-}
-
-#######################################
 # Release the interactive claim for a linked issue after a PR merge.
 #
 # Called from pulse-merge.sh::_handle_post_merge_actions (deterministic merge)
