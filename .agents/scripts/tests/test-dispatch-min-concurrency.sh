@@ -212,6 +212,38 @@ JSON
 	return 0
 }
 
+test_capacity_defaults_single_account_to_max_cap() {
+	reset_capacity_pressure_env
+	TEST_MAX_WORKERS=24
+	TEST_ACTIVE_WORKERS=0
+	AIDEVOPS_MIN_WORKER_CONCURRENCY=0
+	local provider result capacity_file failures
+	failures=0
+	for provider in openai anthropic; do
+		reset_capacity_pressure_env
+		TEST_MAX_WORKERS=24
+		TEST_ACTIVE_WORKERS=0
+		AIDEVOPS_MIN_WORKER_CONCURRENCY=0
+		PULSE_MODEL="${provider}/test-model"
+		cat >"${HOME}/.aidevops/oauth-pool.json" <<JSON
+{"${provider}":[{"status":"idle"}]}
+JSON
+		capacity_file=$(mktemp)
+		_dispatch_compute_capacity >"$capacity_file"
+		result=$(<"$capacity_file")
+		rm -f "$capacity_file"
+		if [[ "$result" != "24 0 24" ]]; then
+			failures=$((failures + 1))
+		fi
+	done
+	if [[ "$failures" -eq 0 ]]; then
+		print_result "capacity: one healthy account defaults to max cap for OpenAI and Anthropic" 0
+	else
+		print_result "capacity: one healthy account defaults to max cap for OpenAI and Anthropic" 1 "failures=${failures} last_result=${result}"
+	fi
+	return 0
+}
+
 test_capacity_recent_service_interruptions_reduce_slots() {
 	reset_capacity_pressure_env
 	TEST_MAX_WORKERS=12
@@ -433,6 +465,7 @@ test_capacity_respects_existing_higher_cap
 test_capacity_caps_by_provider_accounts_and_high_load
 test_capacity_uses_configured_provider_account_multiplier
 test_capacity_env_multiplier_overrides_config
+test_capacity_defaults_single_account_to_max_cap
 test_capacity_recent_service_interruptions_reduce_slots
 test_capacity_recent_progress_gets_runway_under_pressure
 test_throttle_does_not_force_serial_under_floor

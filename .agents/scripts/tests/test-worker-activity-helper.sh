@@ -335,13 +335,13 @@ RC=$?
 assert_rc "6a: providers --json exits 0" 0 "$RC"
 assert_eq "6b: openai available accounts exclude auth-error/rate-limited" "2" \
 	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.account_pool[] | select(.provider == "openai") | .available')"
-assert_eq "6c: openai capacity_slots uses redacted multiplier" "4" \
+assert_eq "6c: openai capacity_slots uses redacted multiplier" "48" \
 	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.account_pool[] | select(.provider == "openai") | .capacity_slots')"
 assert_eq "6c2: nonzero-exit success counts as other provider failure" "4" \
 	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.provider_model_usage[] | select(.provider == "openai" and .model == "openai/gpt-5.5") | .other_failure')"
 
 OUT=$(env "${RUN_ENV[@]}" "$HELPER" providers --since 24h 2>&1)
-assert_contains "6d: human provider output shows capacity slots" "capacity_slots=4" "$OUT"
+assert_contains "6d: human provider output shows capacity slots" "capacity_slots=48" "$OUT"
 
 # ---------------------------------------------------------------------------
 # Section 7: solved:worker attribution query excludes origin-only PR counts.
