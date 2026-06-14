@@ -386,12 +386,24 @@ assert_ruleset_review_gate_returns() {
 assert_ruleset_review_count_output() {
 	local expected_output="$1"
 	local label="$2"
+	local rulesets_json="${3:-}"
 	local actual_output=""
-	actual_output=$(_ruleset_required_review_count_for_default_branch "marcusquinn/aidevops" "main") || actual_output="ERR"
+	actual_output=$(_ruleset_required_review_count_for_default_branch "marcusquinn/aidevops" "main" "$rulesets_json") || actual_output="ERR"
 	if [[ "$actual_output" == "$expected_output" ]]; then
 		print_result "$label" 0
 	else
 		print_result "$label" 1 "Expected output='$expected_output', got output='$actual_output'"
+	fi
+	return 0
+}
+
+assert_gh_call_absent() {
+	local pattern="$1"
+	local label="$2"
+	if grep -Fxq -- "$pattern" "$GH_CALL_LOG" 2>/dev/null; then
+		print_result "$label" 1 "Unexpected gh invocation: $pattern"
+	else
+		print_result "$label" 0
 	fi
 	return 0
 }
@@ -592,6 +604,18 @@ test_ruleset_review_only_missing_blocks_merge() {
 	return 0
 }
 
+test_ruleset_review_count_accepts_prefetched_rulesets_json() {
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="ruleset_review_only_missing"
+	assert_ruleset_review_count_output "1" \
+		"pre-fetched rulesets JSON skips rulesets list fetch" \
+		'[{"id":101,"enforcement":"active"}]'
+	assert_gh_call_absent "api repos/marcusquinn/aidevops/rulesets" \
+		"pre-fetched rulesets JSON avoids redundant rulesets list API call"
+	return 0
+}
+
 test_ruleset_review_only_approved_allows_merge() {
 	: >"$GH_CALL_LOG"
 	: >"$LOGFILE"
@@ -668,6 +692,7 @@ main() {
 	test_expected_required_is_non_terminal
 	test_skipping_required_allows_merge
 	test_ruleset_review_only_missing_blocks_merge
+	test_ruleset_review_count_accepts_prefetched_rulesets_json
 	test_ruleset_review_only_approved_allows_merge
 	test_ruleset_mixed_review_status_preserves_both_gates
 	test_ruleset_review_zero_does_not_require_approval
