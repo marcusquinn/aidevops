@@ -180,12 +180,13 @@ show_privacy_guide() {
 FIPS/Nostr VPN privacy guidance:
   - Treat FIPS as a private self-sovereign mesh, not as an anonymity network.
   - Use fresh per-device Nostr/FIPS identities; never reuse a public/social npub.
-  - Separate identities by purpose: personal devices, experiments, client/work, and travel.
+  - Separate identities by purpose: personal devices, experiments, client/work, travel, and high-risk research.
   - Prefer self-hosted or trusted private Nostr relays; public relays may observe discovery metadata.
   - Keep peer ACLs explicit and default-deny; do not expose services while ACL state is default-open.
   - Disable LAN gateway, exit-node, and broad service exposure unless the trust boundary is documented.
   - Bind SSH, OpenCode, MCP servers, and dashboards to loopback or the FIPS interface only.
   - Keep the daemon disabled when no trusted peer is ready; enable only for an intentional test window.
+  - Rotate identities after suspected compromise and remove stale peers from ACLs, known-hosts, and local host maps.
   - Do not paste nsec/private keys into chat; store recovery material only with aidevops secret storage.
 
 Companion privacy tooling:
