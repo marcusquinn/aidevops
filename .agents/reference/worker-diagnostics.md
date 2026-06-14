@@ -118,6 +118,37 @@ staging/release boundaries. If advisory E2E finds a real defect, file a focused
 follow-up task with the failing check/artifact evidence instead of closing the
 current PR or redispatching duplicate workers. Full policy: `ci-gate-policy.md`.
 
+### Failed job inside a still-running workflow
+
+GitHub can expose a terminal failed job before its parent workflow run finishes.
+In that state, `gh run view <run-id> --repo <owner/repo> --job <job-id>
+--log-failed` may return only:
+
+```text
+run <run-id> is still in progress; logs will be available when it is complete
+```
+
+Do not wait or rerun blindly when job-level state is already terminal. First
+verify the run/job split:
+
+```bash
+gh run view <run-id> --repo <owner/repo> --json status,conclusion,jobs
+```
+
+If the workflow `status` is still `in_progress` but the relevant job has
+`status=completed` and `conclusion=failure`, fetch that job's logs directly via
+the REST job-log endpoint and diagnose from the output:
+
+```bash
+gh api "repos/<owner/repo>/actions/jobs/<job-id>/logs" > failed-job.log
+```
+
+Only treat still-running CI as pending when the job itself is not terminal, or
+when the job log endpoint is unavailable after the status/conclusion check. The
+failure-mining helper already follows this fallback pattern in
+`.agents/scripts/gh-failure-miner-helper.sh` after `gh run view --log-failed`
+returns no useful failed log output.
+
 ## Architecture Decisions
 
 ### SQLite DB Isolation (v3.6.130)
