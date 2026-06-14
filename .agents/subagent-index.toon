@@ -22,7 +22,7 @@ pro,gemini-2.5-pro,Capable large context
 grok,grok-3,Research and real-time web knowledge
 -->
 
-<!--TOON:subagents[109]{folder,purpose,key_files}:
+<!--TOON:subagents[110]{folder,purpose,key_files}:
 aidevops/,aidevops subagents,add-new-mcp-to-aidevops|agent-sources|api-integrations|architecture|claude-flow-comparison|configs|docs|extension|graduated-learnings|mcp-integrations|mcp-troubleshooting|memory-patterns|onboarding|orchestration-analysis|plugins|providers|recommendations|requirements|resources|security|security-requirements|self-improving-agents|service-links|services|setup|supervisor-module-map|troubleshooting
 content/,content subagents,content-calendar|context-templates|distribution-blog|distribution-email|distribution-podcast|distribution-short-form|distribution-social|distribution-youtube-channel-intel|distribution-youtube|distribution-youtube-optimizer|distribution-youtube-pipeline|distribution-youtube-readme|distribution-youtube-script-writer|distribution-youtube-topic-research|editor|guidelines
 content/heygen-skill/,content/heygen-skill subagents,rules-assets|rules-authentication|rules-avatars|rules-backgrounds|rules-captions|rules-dimensions|rules-photo-avatars|rules-quota|rules-remotion-integration|rules-scripts|rules-streaming-avatars|rules-templates|rules-text-overlays|rules-video-agent|rules-video-generation|rules-video-status|rules-video-translation|rules-voices|rules-webhooks
@@ -60,6 +60,7 @@ tools/ai-generation/,tools/ai-generation subagents,comfy-cli
 tools/ai-orchestration/,tools/ai-orchestration subagents,autogen|crewai|langflow|openprose|overview|packaging
 tools/animation/,tools/animation subagents,animejs
 tools/api/,tools/api subagents,better-auth|cloudflare-mcp|drizzle|hono|vercel-ai-sdk
+tools/app-stack/,tools/app-stack subagents,database-foundation|decision-matrix|electron-desktop|encrypted-collaboration|metadata-architecture|monorepo-app-stack|static-site-starter|ux-shell-patterns|workspace-model
 tools/architecture/clean-ddd-hexagonal-skill/,tools/architecture/clean-ddd-hexagonal-skill subagents,cheatsheet|cqrs-events|ddd-strategic|ddd-tactical
 tools/architecture/clean-ddd-hexagonal-skill/hexagonal/,tools/architecture/clean-ddd-hexagonal-skill/hexagonal subagents,01-introduction|02-ports|03-adapters|04-naming-conventions|05-project-structure|06-configurability|07-strong-vs-weak-ports
 tools/architecture/clean-ddd-hexagonal-skill/,tools/architecture/clean-ddd-hexagonal-skill subagents,hexagonal|layers|testing
@@ -102,7 +103,7 @@ tools/mcp/,tools/mcp subagents,cloudflare-code-mode
 tools/mcp-toolkit/,tools/mcp-toolkit subagents,mcporter
 tools/mobile/,tools/mobile subagents,agent-device|app-dev-analytics|app-dev-assets|app-dev-backend|app-dev-expo|app-dev|app-dev-monetisation|app-dev-notifications|app-dev-onboarding|app-dev-planning|app-dev-publishing|app-dev-swift|app-dev-testing|app-dev-ui-design|app-store-connect|axe-cli|ios-simulator-mcp|maestro|minisim|xcodebuild-mcp
 tools/monorepo/,tools/monorepo subagents,turborepo
-tools/,tools subagents,auto-reason|multimodal-evaluation
+tools/,tools subagents,app-stack|auto-reason|multimodal-evaluation
 tools/ocr/,tools/ocr subagents,glm-ocr|ocr-research|overview|paddleocr
 tools/opencode/,tools/opencode subagents,opencode-anthropic-auth|opencode|opencode-openai-auth
 tools/pdf/,tools/pdf subagents,libpdf|overview
