@@ -147,20 +147,26 @@ Safe FIPS/Nostr VPN local posture:
 Check current state:
   fipsctl show status
   fipsctl acl show
+  # shell-portability: ignore next - printed macOS-only operator guidance.
   launchctl print system/com.fips.daemon
   netstat -an -p tcp | rg '(:8443|\.8443)' || true
   netstat -an -p udp | rg '(:2121|\.2121)' || true
 
 Disable until ready to pair trusted peers:
+  # shell-portability: ignore next - printed macOS-only operator guidance.
   sudo launchctl bootout system /Library/LaunchDaemons/com.fips.daemon.plist
+  # shell-portability: ignore next - printed macOS-only operator guidance.
   sudo launchctl disable system/com.fips.daemon
 
 Expected disabled check:
+  # shell-portability: ignore next - printed macOS-only operator guidance.
   launchctl print system/com.fips.daemon
   # Bad request. Could not find service "com.fips.daemon" in domain for system
 
 Re-enable only when ready to test with an allowlisted peer:
+  # shell-portability: ignore next - printed macOS-only operator guidance.
   sudo launchctl enable system/com.fips.daemon
+  # shell-portability: ignore next - printed macOS-only operator guidance.
   sudo launchctl bootstrap system /Library/LaunchDaemons/com.fips.daemon.plist
 
 Do not expose SSH, OpenCode, dashboards, or gateway/exit-node modes until peer ACLs are explicit and default-open behavior is reviewed.
