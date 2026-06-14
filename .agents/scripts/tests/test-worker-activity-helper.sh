@@ -340,6 +340,24 @@ assert_eq "6c: openai capacity_slots uses redacted multiplier" "48" \
 assert_eq "6c2: nonzero-exit success counts as other provider failure" "4" \
 	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.provider_model_usage[] | select(.provider == "openai" and .model == "openai/gpt-5.5") | .other_failure')"
 
+JSONC_DEFAULTS="$FIXTURE_DIR/aidevops.defaults.jsonc"
+JSONC_USER="$FIXTURE_DIR/config.jsonc"
+printf '{"orchestration":{"provider_account_slot_multiplier":11}}\n' >"$JSONC_DEFAULTS"
+printf '{"orchestration":{"provider_account_slot_multiplier":7}}\n' >"$JSONC_USER"
+
+JSON=$(env \
+	"WAH_METRICS_FILE=$METRICS" \
+	"WAH_PULSE_STATS_FILE=$STATS" \
+	"WAH_PR_CACHE_FILE=$PR_CACHE" \
+	"WAH_OAUTH_POOL_FILE=$OAUTH_POOL" \
+	"JSONC_DEFAULTS=$JSONC_DEFAULTS" \
+	"JSONC_USER=$JSONC_USER" \
+	"$HELPER" providers --since 24h --json 2>&1)
+RC=$?
+assert_rc "6c3: providers reads config multiplier when env unset" 0 "$RC"
+assert_eq "6c4: config multiplier overrides defaults" "14" \
+	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.account_pool[] | select(.provider == "openai") | .capacity_slots')"
+
 OUT=$(env "${RUN_ENV[@]}" "$HELPER" providers --since 24h 2>&1)
 assert_contains "6d: human provider output shows capacity slots" "capacity_slots=48" "$OUT"
 
