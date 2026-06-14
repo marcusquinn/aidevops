@@ -228,10 +228,50 @@ _pr_exists_for_branch_or_issue() {
 }
 
 #######################################
+# _resolve_orphan_recovery_base_branch — PR base for orphan recovery.
+#
+# Prefers the repository's configured PR target branch over GitHub's default
+# branch. This covers managed repos whose integration branch is `develop` while
+# their default branch remains `main` (GH#80).
+#
+# Args:
+#   $1 = repo_slug (owner/repo)
+#   $2 = work_dir   (path to git worktree; optional)
+# Outputs: branch name
+# Returns: 0 always (falls back to main)
+#######################################
+_resolve_orphan_recovery_base_branch() {
+	local repo_slug="$1"
+	local work_dir="${2:-}"
+	local base_branch="${WORKER_PR_BASE_BRANCH:-${DISPATCH_REPO_PR_BASE_BRANCH:-${AIDEVOPS_PR_BASE_BRANCH:-}}}"
+
+	if [[ -z "$base_branch" && -n "$work_dir" && -f "${work_dir}/.aidevops.json" ]] && command -v jq >/dev/null 2>&1; then
+		base_branch=$(jq -r '.pr_base_branch // .pr_target_branch // .base_branch // .default_branch // empty' "${work_dir}/.aidevops.json" 2>/dev/null || true)
+	fi
+
+	local repos_json="${AIDEVOPS_REPOS_JSON:-${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}}"
+	if [[ -z "$base_branch" && -n "$repo_slug" && -f "$repos_json" ]] && command -v jq >/dev/null 2>&1; then
+		base_branch=$(jq -r --arg slug "$repo_slug" '
+			.initialized_repos[]?
+			| select(.slug == $slug)
+			| .pr_base_branch // .pr_target_branch // .base_branch // .default_branch // empty
+		' "$repos_json" 2>/dev/null | sed -n '1p') || base_branch=""
+	fi
+
+	if [[ -z "$base_branch" && -n "$repo_slug" ]]; then
+		base_branch=$(gh repo view "$repo_slug" \
+			--json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || true)
+	fi
+
+	printf '%s' "${base_branch:-main}"
+	return 0
+}
+
+#######################################
 # _attempt_orphan_recovery_pr — auto-recover a worker_branch_orphan (GH#20819)
 #
 # Called when a worker pushed a branch but exited without opening a PR.
-# Attempts to open a non-draft PR against the repo's default branch with
+# Attempts to open a non-draft PR against the repo's configured PR base branch with
 # origin:worker-takeover label so the normal review/merge pipeline applies.
 #
 # Short-circuits (returns 1) when:
@@ -308,12 +348,8 @@ _attempt_orphan_recovery_pr() {
 		fi
 	fi
 
-	# Detect repo default branch (fallback: main)
-	local default_branch="main"
-	local detected_default=""
-	detected_default=$(gh repo view "$repo_slug" \
-		--json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || true)
-	[[ -n "$detected_default" ]] && default_branch="$detected_default"
+	local base_branch=""
+	base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir")
 
 	# Build PR metadata
 	local pr_title="auto-recover: orphaned worker branch"
@@ -345,7 +381,7 @@ _attempt_orphan_recovery_pr() {
 	local create_args=(
 		--repo "$repo_slug"
 		--head "$branch_name"
-		--base "$default_branch"
+		--base "$base_branch"
 		--title "$pr_title"
 		--body "$pr_body"
 		--label "origin:worker-takeover"

@@ -55,6 +55,7 @@ Agent-source repos receive non-destructive template management:
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
+| `pr_base_branch` | string | GitHub default branch | Branch workers should target when creating or recovering PRs. Use for repos whose integration branch differs from the GitHub default branch, e.g. `"develop"`. Aliases accepted by orphan recovery: `pr_target_branch`, `base_branch`, `default_branch`. |
 | `interactive_pr_auto_merge` | bool | unset → global config/default | Per-repo preference for `origin:interactive` PR merge throughput. `true` allows pulse to merge maintainer-authored interactive PRs after normal gates pass and the PR is ready/non-draft. `false` keeps this repo manual even if global config is true. PR-specific `allow-auto-merge` still opts in one PR; `hold-for-review` or draft state still blocks. |
 
 Global equivalent: `orchestration.interactive_pr_auto_merge` in `~/.config/aidevops/config.jsonc`. Env override for the current pulse/session: `AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE`.
