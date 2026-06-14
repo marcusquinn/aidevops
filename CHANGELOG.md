@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.61] - 2026-06-14
+
+### Changed
+
+- Maintenance: mark t3599 complete (pr:#24767 completed:2026-06-14) [skip ci]
+- docs: add app stack guidance (#24767)
+
 ## [3.20.60] - 2026-06-14
 
 ### Changed
