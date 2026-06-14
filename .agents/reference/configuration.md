@@ -107,6 +107,8 @@ Supervisor, dispatch, and autonomous operation settings.
 |-----|------|---------|-------------|-------------|
 | `orchestration.supervisor_pulse` | boolean | `true` | `AIDEVOPS_SUPERVISOR_PULSE` | Enable the autonomous supervisor pulse. Dispatches workers, merges PRs, evaluates results every 3 minutes (configurable via `supervisor.pulse_interval_seconds`). |
 | `orchestration.repo_sync` | boolean | `true` | `AIDEVOPS_REPO_SYNC` | Daily `git pull --ff-only` on clean repos in `repos.json`. |
+| `orchestration.max_workers_cap` | integer | RAM-derived, capped at `64` | `AIDEVOPS_MAX_WORKERS_CAP` | Hard ceiling for pulse worker pool size after RAM-based calculation. |
+| `orchestration.provider_account_slot_multiplier` | integer | `24` | `PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER` | Worker slots allowed per available provider OAuth account. One healthy OpenAI/Anthropic account can use the configured max worker cap by default; lower this if the provider plan/account cannot sustain that concurrency. RAM, load, recent failures/rate limits/service interruptions/provider 5xx, auth errors, and explicit overrides still reduce capacity. |
 
 ### safety
 

@@ -210,6 +210,19 @@ Use this when a runner's dashboard is fresh but **Active Workers = 0**.
    `oauth-pool-helper.sh reset-cooldowns <provider>` after confirming the
    provider is healthy.
 
+   Pulse capacity no longer treats a single healthy provider account as a
+   low-concurrency signal by itself. By default,
+   `orchestration.provider_account_slot_multiplier=24`, so one available
+   OpenAI or Anthropic account may reach the configured `max_workers_cap` when
+   RAM/load and provider-health gates are clean. If the dashboard or
+   `pulse.log` `Dispatch_capacity` line shows `final_max` below `raw_max`, use
+   the logged fields (`account_cap`, `provider_account_slot_multiplier`,
+   `rate_limits`, `service_interruptions`, `provider_5xx`, `auth_error_accounts`,
+   `load_points`) to identify the reducing gate. Lower concurrency explicitly
+   with `aidevops config set orchestration.provider_account_slot_multiplier <n>`
+   or `PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER=<n>` when a provider plan cannot
+   sustain the default.
+
 5. Read the dashboard's **Worker Dispatch Diagnostics** section. It is rendered only when Active Workers is 0 and distinguishes:
    - no eligible work (`Assigned Issues=0`, `Total Issues=0`)
    - auth/model unavailable (OpenAI/Anthropic both missing)

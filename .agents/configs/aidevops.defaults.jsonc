@@ -136,8 +136,11 @@
     "quality_debt_cap_pct": 30,
 
     // Worker slots allowed per available provider OAuth account.
+    // Default 24 lets a single healthy provider account use the configured
+    // max worker cap; RAM, load, health/rate-limit, auth, and explicit user
+    // overrides still reduce capacity.
     // Env override: PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER
-    "provider_account_slot_multiplier": 2,
+    "provider_account_slot_multiplier": 24,
 
     // DEPRECATED (v3.7+, GH#17769): Model routing is now derived from
     // pool + routing table at runtime. These fields are ignored.

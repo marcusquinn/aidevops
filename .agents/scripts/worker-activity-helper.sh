@@ -244,8 +244,8 @@ _wah_provider_usage_json() {
 	now_epoch=$(date +%s)
 	input_file="/dev/null"
 	[[ -f "$metrics" ]] && input_file="$metrics"
-	account_multiplier="${WAH_PROVIDER_ACCOUNT_SLOT_MULTIPLIER:-${PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER:-2}}"
-	[[ "$account_multiplier" =~ ^[0-9]+$ ]] || account_multiplier=2
+	account_multiplier="${WAH_PROVIDER_ACCOUNT_SLOT_MULTIPLIER:-${PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER:-24}}"
+	[[ "$account_multiplier" =~ ^[0-9]+$ ]] || account_multiplier=24
 	((account_multiplier < 1)) && account_multiplier=1
 
 	if [[ -f "$pool" ]]; then
