@@ -22,7 +22,7 @@ Commands:
   firewall-status  Show fips0 firewall/service status hints
   diagnostics      Run non-destructive local diagnostics
   secrets-help     Show aidevops secret setup guidance
-  macos-source     Show macOS build-from-source guidance
+  macos-source     Show macOS package verification and source fallback guidance
   opencode-guide   Show secure OpenCode remote compute guidance
   help             Show this help
 USAGE
@@ -155,22 +155,35 @@ SECRETS
 
 show_macos_source_guide() {
 	cat <<'GUIDE'
-macOS source-build fallback while upstream packages are unavailable:
+macOS package verification for FIPS v0.4.0-rc1 and later:
+  1. Download the package for this Mac's architecture and checksums-macos.txt.
+  2. Verify the package hash before any install:
+       shasum -a 256 fips-0.4.0-rc1-macos-$(uname -m).pkg
+  3. Confirm the hash matches the architecture line in checksums-macos.txt.
+  4. Run structural checks before installing:
+       pkgutil --check-signature fips-0.4.0-rc1-macos-$(uname -m).pkg
+       pkgutil --payload-files fips-0.4.0-rc1-macos-$(uname -m).pkg
+       pkgutil --expand fips-0.4.0-rc1-macos-$(uname -m).pkg /tmp/fips-pkg-expanded
+       xar -tf fips-0.4.0-rc1-macos-$(uname -m).pkg
+  5. Install only after hash and structural checks pass:
+       sudo installer -pkg fips-0.4.0-rc1-macos-$(uname -m).pkg -target /
+
+Source-build fallback if release packages are unavailable or fail integrity:
   1. Install prerequisites outside AI chat:
        - Rust toolchain from https://rustup.rs
        - Xcode command line tools: xcode-select --install
   2. Clone upstream source in a temporary working directory:
        git clone https://github.com/jmcorgan/fips.git
        cd fips
-       git checkout v0.3.0
+       git checkout v0.4.0-rc1
   3. Build the macOS package for the local architecture:
        ./packaging/macos/build-pkg.sh
   4. Verify the generated package before installing:
-       pkgutil --check-signature deploy/fips-0.3.0-macos-$(uname -m).pkg
-       pkgutil --payload-files deploy/fips-0.3.0-macos-$(uname -m).pkg
-       rm -rf /tmp/fips-pkg-expanded && pkgutil --expand deploy/fips-0.3.0-macos-$(uname -m).pkg /tmp/fips-pkg-expanded
+       pkgutil --check-signature deploy/fips-0.4.0-rc1-macos-$(uname -m).pkg
+       pkgutil --payload-files deploy/fips-0.4.0-rc1-macos-$(uname -m).pkg
+       pkgutil --expand deploy/fips-0.4.0-rc1-macos-$(uname -m).pkg /tmp/fips-source-pkg-expanded
   5. Install only after package integrity checks pass:
-       sudo installer -pkg deploy/fips-0.3.0-macos-$(uname -m).pkg -target /
+       sudo installer -pkg deploy/fips-0.4.0-rc1-macos-$(uname -m).pkg -target /
 
 Do not paste nsec/private keys into chat. Store recovery material with:
   aidevops secret set FIPS_NSEC
