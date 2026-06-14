@@ -47,7 +47,7 @@ Use for plain public sites that need speed, metadata quality, accessibility, and
 ## Interaction rules
 
 - Prefer native links/buttons/details before custom widgets.
-- If tabs are used, implement roving tabindex, arrow keys, Home/End, `aria-selected`, `aria-controls`, and `aria-hidden`.
+- If tabs are used, implement roving `tabindex`, arrow keys, `Home`/`End`, `aria-selected`, `aria-controls`, and `aria-hidden`.
 - Keep JavaScript null-safe and scoped in small modules.
 - Update visual state and accessibility state together.
 - Theme state may persist locally, but the page must remain readable without JavaScript.
