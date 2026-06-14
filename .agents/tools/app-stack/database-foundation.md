@@ -29,11 +29,17 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 
 ### Always-on kernel
 
-- `workspaces`, memberships, roles, invitations, settings.
+- `workspaces`, memberships, teams/user groups, roles, role assignments, invitations, settings.
 - `users` / auth identity mapping.
 - `audit_events`, `activity_events`, comments, notifications.
-- `files`, attachments, imports, exports.
+- `files`, attachments, labels/tags, imports, exports.
 - `integrations`, external IDs, sync cursors.
+
+### Collaboration and work pack
+
+- `issues` with forge-compatible fields: title, body, state, type, priority, assignee, labels, milestones, parent/related issues, external provider IDs.
+- Tasks, milestones, comments, activity streams, mentions, attachments, decisions, approvals.
+- Issue relationships: blocks, duplicates, relates-to, split-from, supersedes.
 
 ### Business relationship pack
 
@@ -44,16 +50,36 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 ### Metadata pack
 
 - Entity definitions, field definitions, layouts, views, filters.
-- ACL policies, workflow definitions, automations, validation rules.
+- Labels, ACL/RBAC policies, capability definitions, workflow definitions, automations, validation rules.
 
 ### Optional packs
 
-- CRM: leads, opportunities, campaigns, cases.
-- Accounting: invoices, bills, payments, ledger entries, tax codes.
+- CRM: leads, opportunities, campaigns, cases, referrers, referrals.
+- Commercial: products/items, services, prices, price lists, discount/voucher codes, quotes/estimates, orders.
+- Accounting: invoices, pro-forma invoices, credit notes, bills, payments, refund payments, payment allocations, ledger entries, tax codes.
 - Inventory: items, stock movements, locations.
 - Projects: projects, tasks, milestones, time entries.
 - Collaboration: threads, decisions, approvals.
 - AI: prompts, runs, tool calls, memory references, evaluations.
+
+## Universal labels/tags
+
+- Make labels/tags available to all user-facing object types through a shared assignment model.
+- Use governed `labels` plus `label_assignments` for workflow, reporting, permissions, and sync.
+- Use free-form array tags only for local, low-risk filtering or imported metadata.
+- Prefer typed join tables for high-volume or referentially critical objects.
+
+## Access model defaults
+
+- Keep teams/user groups distinct from roles: teams group people; roles grant capabilities.
+- Use RBAC permission rules across users, teams, roles, objects, panels, fields, workflows, and scopes.
+- Model common scopes as `own`, `team`, `workspace`, and `all`, with workspace RLS as the database backstop.
+
+## Migration home
+
+- In TypeScript monorepos, `packages/db` owns schemas, relations, seeds, migration helpers, and `migrations/`.
+- Use `packages/db/src/schema/index.ts` as the Drizzle schema entrypoint and `packages/db/migrations/` for generated SQL and metadata snapshots.
+- See `app-stack/migration-layout.md` for the full layout.
 
 ## RLS defaults
 
@@ -67,4 +93,5 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 - Draw the object graph before writing migrations.
 - Identify every table's workspace boundary and RLS policy.
 - Confirm `accounts` and `contacts` cover imported synonyms before adding new party/person tables.
+- Confirm issues, labels/tags, users, teams, roles, prices, quotes, invoices, payments, credits, and refunds are either implemented or intentionally out of scope.
 - Run Drizzle generate/migrate checks and inspect generated SQL.

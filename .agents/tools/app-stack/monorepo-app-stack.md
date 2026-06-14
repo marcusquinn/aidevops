@@ -21,6 +21,8 @@ apps/
   extension/    # WXT extension when needed
 packages/
   db/           # Drizzle schema, migrations, repositories
+    migrations/ # generated SQL and Drizzle metadata snapshots
+    src/schema/ # table definitions and relations, re-exported by index.ts
   domain/       # entities, services, workflow rules, validation
   ui/           # shared components/tokens
   config/       # eslint/tsconfig/tailwind/build config
@@ -42,6 +44,8 @@ Add surfaces only when a user workflow requires them; keep package boundaries re
 ## Package rules
 
 - `packages/db` owns table definitions, relations, migration helpers, and seed data.
+- `packages/db/drizzle.config.ts` points `out` to `./migrations` and `schema` to `./src/schema/index.ts`.
+- `packages/db/migrations/` and `packages/db/migrations/meta/` are versioned source artifacts.
 - `packages/domain` owns business rules and metadata interpretation; avoid framework imports.
 - `packages/ui` owns presentational components and interaction primitives.
 - Apps compose packages; apps do not become dumping grounds for reusable logic.
@@ -52,5 +56,6 @@ Add surfaces only when a user workflow requires them; keep package boundaries re
 - Show the planned directory tree before implementation.
 - Confirm which surfaces are in-scope now.
 - Confirm database ownership and migration command.
+- Confirm migration files live under `packages/db/migrations/` unless the app intentionally has multiple databases.
 - Run typecheck, lint, tests, and surface-specific build for changed packages.
 - For UI changes, use `workflows/ui-verification.md` for browser evidence.

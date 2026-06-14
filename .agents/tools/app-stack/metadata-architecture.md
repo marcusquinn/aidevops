@@ -18,8 +18,11 @@ Use metadata when the app needs configurable entities, layouts, permissions, imp
 | `field_definitions` | Field key, type, validation, display, indexing, privacy |
 | `relationship_definitions` | One-to-many, many-to-many, polymorphic references |
 | `layout_definitions` | Detail/edit/create/list layouts and panels |
+| `panel_definitions` | Relationship/admin/dashboard panels and visibility rules |
 | `view_definitions` | Saved filters, columns, sorting, grouping |
-| `acl_rules` | Role/user/workspace/entity/field/action permissions |
+| `label_definitions` | Governed labels available across entity types |
+| `capability_definitions` | Named product actions beyond CRUD |
+| `permission_rules` | Role/user/team/workspace/entity/field/panel/action permissions |
 | `workflow_definitions` | States, transitions, guards, actions, timers |
 | `automation_rules` | Trigger/action rules and integration hooks |
 | `import_mappings` | CSV/API/source-to-canonical field maps |
@@ -32,6 +35,9 @@ Use metadata when the app needs configurable entities, layouts, permissions, imp
 - Put labels/descriptions/help text in metadata so AI agents can explain fields.
 - Keep validation close to field definitions and enforce again at API/database boundaries.
 - Model layouts separately from fields so the same entity can have role/context-specific views.
+- Model panels separately from layouts so related lists, admin panels, and dashboards can have independent permissions.
+- Make labels/tags a first-class metadata concern for every user-facing entity.
+- Keep roles, teams, capabilities, and permission rules separate so teams do not become roles.
 - Make workflows explicit: state, transition, actor, guard, side effects.
 - Preserve import provenance: source, source row ID/hash, mapping version, confidence, reviewer.
 
@@ -44,5 +50,7 @@ Use metadata when the app needs configurable entities, layouts, permissions, imp
 ## Verification
 
 - Demonstrate one entity from definition to list view, detail layout, edit validation, ACL, workflow transition, audit event, and export.
+- Demonstrate one label assignment and one issue relationship if the app exposes work tracking.
 - Confirm field-level privacy and AI exposure rules.
+- Confirm role/team permission behaviour for object, panel, field, and workflow actions.
 - Confirm imports can be replayed or explained with provenance.

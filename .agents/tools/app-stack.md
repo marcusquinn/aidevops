@@ -32,6 +32,9 @@ mode: subagent
 | Choose/shape desktop shell | `app-stack/electron-desktop.md` |
 | Model workspace tenancy/collaboration | `app-stack/workspace-model.md` |
 | Design app database foundation | `app-stack/database-foundation.md` |
+| Place schemas and migrations | `app-stack/migration-layout.md` |
+| Choose standard app objects | `app-stack/standard-objects.md` |
+| Design RBAC/capabilities | `app-stack/rbac-permissions.md` |
 | Build metadata-driven entities/layouts/workflows | `app-stack/metadata-architecture.md` |
 | Add encrypted/local-first collaboration | `app-stack/encrypted-collaboration.md` |
 | Shape app/control-room UX shell | `app-stack/ux-shell-patterns.md` |
@@ -43,9 +46,11 @@ Prefer boring, shared primitives that compound across apps:
 1. Start web-first with TypeScript and React/Next for app UX.
 2. Put reusable domain logic, database schema, UI, config, and API clients in packages.
 3. Use Postgres + Drizzle as the canonical data model; add RLS from the first multi-user boundary.
-4. Treat metadata as product infrastructure: entity definitions, fields, layouts, views, ACL, workflows, audit, import/export, and notifications.
-5. Use `Workspace` as the data container, permission boundary, AI context boundary, and collaboration scope.
-6. Keep web/CMS/site routing explicit: WordPress for editors; no-build static for plain sites; static generator only after repeated-layout/content scale proves it.
+4. Keep schema and migration ownership in `packages/db` for monorepos; generated SQL and metadata snapshots are versioned artifacts.
+5. Treat metadata as product infrastructure: entity definitions, fields, layouts, views, ACL, workflows, labels, audit, import/export, and notifications.
+6. Use `Workspace` as the data container, permission boundary, AI context boundary, and collaboration scope.
+7. Start from standard object packs: issues, labels/tags, users, teams, roles, accounts, contacts, quotes, invoices, payments, prices, and referrals.
+8. Keep web/CMS/site routing explicit: WordPress for editors; no-build static for plain sites; static generator only after repeated-layout/content scale proves it.
 
 ## Related docs
 
