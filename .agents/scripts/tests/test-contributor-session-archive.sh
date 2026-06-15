@@ -131,33 +131,52 @@ test_session_time_includes_archive_and_dedupes() {
 	insert_session_fixture "$archive_db" "near-month-interactive" "Near month interactive" "$near_month_ms" "$TEST_DIR/repo"
 	insert_session_fixture "$archive_db" "old-worker" "Issue #123: archived worker" "$old_ms" "$TEST_DIR/repo"
 
-	local year_json month_json twenty_eight_json year_sessions month_sessions twenty_eight_sessions worker_sessions observed_days
+	local year_json month_json twenty_eight_json repo_json year_sessions month_sessions twenty_eight_sessions worker_sessions interactive_sessions repo_sessions repo_worker_sessions observed_days
 	year_json=$(HOME="${TEST_DIR}/home" session_time --all-dirs --period year --format json)
 	month_json=$(HOME="${TEST_DIR}/home" session_time --all-dirs --period month --format json)
 	twenty_eight_json=$(HOME="${TEST_DIR}/home" session_time --all-dirs --period 28d --format json)
+	repo_json=$(HOME="${TEST_DIR}/home" session_time "${TEST_DIR}/repo" --period year --format json)
 	year_sessions=$(echo "$year_json" | jq -r '.total_sessions')
 	month_sessions=$(echo "$month_json" | jq -r '.total_sessions')
 	twenty_eight_sessions=$(echo "$twenty_eight_json" | jq -r '.total_sessions')
 	worker_sessions=$(echo "$year_json" | jq -r '.worker_sessions')
+	interactive_sessions=$(echo "$year_json" | jq -r '.interactive_sessions')
+	repo_sessions=$(echo "$repo_json" | jq -r '.total_sessions')
+	repo_worker_sessions=$(echo "$repo_json" | jq -r '.worker_sessions')
 	observed_days=$(echo "$year_json" | jq -r '.observed_days')
 
-	if [[ "$year_sessions" != "4" ]]; then
-		print_result "$test_name" 1 "expected 4 year sessions, got ${year_sessions}; JSON: ${year_json}"
+	if [[ "$year_sessions" != "5" ]]; then
+		print_result "$test_name" 1 "expected 5 year sessions including temp workers and NULL dirs, got ${year_sessions}; JSON: ${year_json}"
 		teardown
 		return 0
 	fi
-	if [[ "$month_sessions" != "3" ]]; then
-		print_result "$test_name" 1 "expected 3 month sessions in 30-day window, got ${month_sessions}; JSON: ${month_json}"
+	if [[ "$month_sessions" != "4" ]]; then
+		print_result "$test_name" 1 "expected 4 month sessions in 30-day window, got ${month_sessions}; JSON: ${month_json}"
 		teardown
 		return 0
 	fi
-	if [[ "$twenty_eight_sessions" != "2" ]]; then
-		print_result "$test_name" 1 "expected 2 sessions in 28-day window, got ${twenty_eight_sessions}; JSON: ${twenty_eight_json}"
+	if [[ "$twenty_eight_sessions" != "3" ]]; then
+		print_result "$test_name" 1 "expected 3 sessions in 28-day window, got ${twenty_eight_sessions}; JSON: ${twenty_eight_json}"
 		teardown
 		return 0
 	fi
-	if [[ "$worker_sessions" != "1" ]]; then
-		print_result "$test_name" 1 "expected archived worker classification, got ${worker_sessions}; JSON: ${year_json}"
+	if [[ "$worker_sessions" != "2" ]]; then
+		print_result "$test_name" 1 "expected archived and temp worker classification, got ${worker_sessions}; JSON: ${year_json}"
+		teardown
+		return 0
+	fi
+	if [[ "$interactive_sessions" != "3" ]]; then
+		print_result "$test_name" 1 "expected NULL-directory and archive interactive sessions preserved, got ${interactive_sessions}; JSON: ${year_json}"
+		teardown
+		return 0
+	fi
+	if [[ "$repo_sessions" != "3" ]]; then
+		print_result "$test_name" 1 "expected repo-specific filter to exclude temp and NULL dirs, got ${repo_sessions}; JSON: ${repo_json}"
+		teardown
+		return 0
+	fi
+	if [[ "$repo_worker_sessions" != "1" ]]; then
+		print_result "$test_name" 1 "expected repo-specific worker classification unaffected, got ${repo_worker_sessions}; JSON: ${repo_json}"
 		teardown
 		return 0
 	fi
