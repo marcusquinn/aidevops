@@ -423,6 +423,7 @@ cmd_refresh() {
 	fi
 	if [[ "$had_failure" == "true" ]]; then
 		print_warning "Some accounts failed to refresh — may need re-auth via: oauth-pool-helper.sh add ${provider}"
+		return 2
 	fi
 
 	return 0

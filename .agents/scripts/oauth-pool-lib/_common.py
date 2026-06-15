@@ -36,6 +36,15 @@ CLIENT_IDS: dict[str, str] = {
     "google": "681255809395-oo8ft6t5t0rnmhfqgpnkqtev5b9a2i5j.apps.googleusercontent.com",
 }
 
+TOKEN_REFRESH_ERROR_KEY = "__aidevops_token_refresh_error__"
+_AUTH_ERROR_CODES = {
+    "access_denied",
+    "invalid_client",
+    "invalid_grant",
+    "invalid_request",
+    "unauthorized_client",
+}
+
 
 # ---------------------------------------------------------------------------
 # Cross-platform exclusive file lock (stdlib only, no pip dependencies).
@@ -124,6 +133,30 @@ def build_auth_entry(provider: str, account: dict, current_auth: dict) -> dict:
     return entry
 
 
+def token_refresh_error_label(response: dict | None) -> str:
+    """Return the sanitized token-refresh error label carried by ``response``."""
+    if not isinstance(response, dict):
+        return ""
+    label = response.get(TOKEN_REFRESH_ERROR_KEY, "")
+    return label if isinstance(label, str) else ""
+
+
+def _classify_http_error(exc: urllib.error.HTTPError) -> str:
+    """Classify an OAuth HTTP error without exposing response bodies or tokens."""
+    status = int(getattr(exc, "code", 0) or 0)
+    label = f"http_{status}" if status else "http_error"
+    try:
+        body = exc.read(4096).decode("utf-8", errors="replace")
+        parsed = json.loads(body)
+    except (OSError, ValueError, TypeError):
+        return label
+
+    error_code = parsed.get("error", "") if isinstance(parsed, dict) else ""
+    if isinstance(error_code, str) and error_code in _AUTH_ERROR_CODES:
+        return f"auth_{error_code}"
+    return label
+
+
 # ---------------------------------------------------------------------------
 # OAuth refresh request (shared by cmd_refresh + cmd_rotate auto-refresh).
 # ---------------------------------------------------------------------------
@@ -137,9 +170,10 @@ def call_token_endpoint(
 ) -> dict | None:
     """POST a refresh-token grant to ``token_url`` and return the parsed JSON.
 
-    Returns ``None`` on any HTTP/network error. The caller is responsible for
-    deciding what counts as success — a 200 response that omits
-    ``access_token`` should still be treated as a failure by the caller.
+    Returns a dict carrying ``TOKEN_REFRESH_ERROR_KEY`` on HTTP/network errors.
+    The caller is responsible for deciding what counts as success — a 200
+    response that omits ``access_token`` should still be treated as a failure by
+    the caller.
     """
     body = json.dumps(
         {
@@ -160,5 +194,7 @@ def call_token_endpoint(
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read().decode("utf-8"))
-    except (urllib.error.URLError, urllib.error.HTTPError, OSError):
-        return None
+    except urllib.error.HTTPError as exc:
+        return {TOKEN_REFRESH_ERROR_KEY: _classify_http_error(exc)}
+    except (urllib.error.URLError, OSError):
+        return {TOKEN_REFRESH_ERROR_KEY: "network"}

@@ -37,11 +37,27 @@ import sys
 import tempfile
 import time
 import unittest
+import urllib.error
+from io import BytesIO
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 POOL_OPS_DIR = REPO_ROOT / "scripts" / "oauth-pool-lib"
 POOL_OPS_PY = POOL_OPS_DIR / "pool_ops.py"
+
+# Load the dispatcher once so its hyphenated-directory package alias is
+# registered as ``oauth_pool_lib`` for direct unit tests of shared helpers.
+import importlib.util
+
+_POOL_OPS_SPEC = importlib.util.spec_from_file_location("oauth_pool_lib.pool_ops", POOL_OPS_PY)
+assert _POOL_OPS_SPEC is not None
+_POOL_OPS_MOD = importlib.util.module_from_spec(_POOL_OPS_SPEC)
+assert _POOL_OPS_SPEC.loader is not None
+_POOL_OPS_SPEC.loader.exec_module(_POOL_OPS_MOD)
+
+from oauth_pool_lib import _common  # noqa: E402
+from oauth_pool_lib import pool_ops_refresh  # noqa: E402
 
 
 def run_pool_ops(command: str, env: dict[str, str], stdin: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -621,6 +637,45 @@ class RefreshTests(PoolOpsTestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), "NONE")
+
+    def test_http_refresh_error_is_sanitized_and_actionable(self) -> None:
+        error = urllib.error.HTTPError(
+            url="https://auth.example.invalid/token",
+            code=400,
+            msg="Bad Request",
+            hdrs={},
+            fp=BytesIO(b'{"error":"invalid_grant","error_description":"do not log this"}'),
+        )
+        with mock.patch("urllib.request.urlopen", side_effect=error):
+            result = _common.call_token_endpoint("https://auth.example.invalid/token", "client", "secret-refresh", "ua")
+
+        self.assertEqual(_common.token_refresh_error_label(result), "auth_invalid_grant")
+        self.assertNotIn("secret-refresh", json.dumps(result))
+        self.assertNotIn("do not log this", json.dumps(result))
+
+    def test_unauthorized_refresh_error_is_sanitized(self) -> None:
+        error = urllib.error.HTTPError(
+            url="https://auth.example.invalid/token",
+            code=401,
+            msg="Unauthorized",
+            hdrs={},
+            fp=BytesIO(b'{"error":"server_changed_shape"}'),
+        )
+        with mock.patch("urllib.request.urlopen", side_effect=error):
+            result = _common.call_token_endpoint("https://auth.example.invalid/token", "client", "secret-refresh", "ua")
+
+        self.assertEqual(_common.token_refresh_error_label(result), "http_401")
+        self.assertNotIn("secret-refresh", json.dumps(result))
+
+    def test_refresh_account_reports_sanitized_http_failure(self) -> None:
+        account = {"email": "a@example.com", "access": "old", "refresh": "secret-refresh", "expires": 1}
+        ctx = pool_ops_refresh._RefreshContext("https://auth.example.invalid/token", "client", "ua", "all")
+        with mock.patch.object(pool_ops_refresh, "call_token_endpoint", return_value={_common.TOKEN_REFRESH_ERROR_KEY: "http_401"}):
+            ok, label = pool_ops_refresh._refresh_one_account(account, ctx, int(time.time() * 1000))
+
+        self.assertFalse(ok)
+        self.assertEqual(label, "a@example.com(http_401)")
+        self.assertNotIn("secret-refresh", label)
 
 
 # ---------------------------------------------------------------------------
