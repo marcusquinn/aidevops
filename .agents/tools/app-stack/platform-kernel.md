@@ -41,6 +41,7 @@ Rules:
 - Security and compliance audit events are append-only and access-controlled.
 - Activity feeds can be denormalised/read-optimised, but must link back to authoritative records.
 - Capture actor, workspace, entity type, entity ID, request/job ID, IP/session where applicable, and timestamp.
+- Minimise log data: avoid raw session IDs, hash or truncate IPs where appropriate, apply retention/redaction, and prevent operational logs from becoming public support artifacts.
 
 ## Imports, exports, and data quality
 
@@ -78,6 +79,7 @@ Rules:
 - Store secret references, not secret values.
 - Use idempotency keys and dedupe keys for every external event.
 - External IDs are integration fields, never primary keys.
+- Strip credentials and transient query tokens from URLs, classify sensitive source paths, prefer opaque provider IDs for joins, and avoid raw private/local paths in exportable or public-facing rows.
 
 ## Search, search history, and discovery
 

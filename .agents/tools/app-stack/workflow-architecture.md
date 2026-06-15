@@ -24,12 +24,12 @@ Model workflows as explicit, versioned state machines with runtime events. Workf
 | `approval_requests` | Human approval/rejection/delegation step assigned to user, team, role, or capability |
 | `automation_rules` | Event/schedule/integration triggers that start workflows or enqueue safe actions |
 | `workflow_timers` | Delays, SLA timers, escalation, reminders, timeouts, retry windows |
-| `workflow_outbox` | Reliable side-effect queue for email, webhooks, AI calls, documents, ledger posts |
+| `outbox_events` | Reliable side-effect queue for workflow-triggered email, webhooks, AI calls, documents, ledger posts |
 
 ## Definition vs runtime
 
 - Definition tables describe allowed states, transitions, guards, actions, and approvals.
-- Runtime tables record the current workflow run, transition history, pending approvals, timers, and outbox jobs.
+- Runtime tables record the current workflow run, transition history, pending approvals, timers, and outbox events.
 - `workflow_runs.current_state` is authoritative for workflow-managed records. A business-record status field may denormalise current state for fast queries, but transition history still lives in `workflow_transition_events`.
 - Labels such as `status:normal` can mirror workflow state for grouping; they are not the source of truth for a state machine.
 
@@ -47,11 +47,11 @@ Model workflows as explicit, versioned state machines with runtime events. Workf
 
 - Guards are side-effect free checks. Examples: role/capability, amount threshold, required fields, related approval, no open blockers, valid transition.
 - Actions run only after guards pass. Examples: update state, create task/issue/activity, request approval, send notification, enqueue webhook, generate document, post ledger entry.
-- Actions that touch external systems use `workflow_outbox` and idempotency keys.
+- Actions that touch external systems use `outbox_events` and idempotency keys.
 
 ## Approvals
 
-- Approval definitions belong to the workflow, not only to comments or tasks.
+- Approval definitions belong to the workflow, not only to messages or tasks.
 - Approval requests record approver user/team/role/capability, due date, delegation, decision, reason, and audit metadata.
 - Multi-step approvals need order, quorum/all-of/any-of policy, escalation, and override rules.
 - Approval permissions are capabilities such as `invoice.approve`, `workflow.override`, or `quote.reject`.
@@ -60,14 +60,14 @@ Model workflows as explicit, versioned state machines with runtime events. Workf
 
 - Issues track human-visible work; workflows can create, update, block, or close issues.
 - Activities schedule/log calls, meetings, tasks, deadlines, and reminders; workflows can wait for or create activities.
-- Conversations/comments discuss records; workflow actions can emit comments/messages, but comments are not workflow state.
+- Conversations and entity-scoped messages discuss records; workflow actions can emit messages, but messages are not workflow state.
 - Labels group/filter records; typed state and transition events remain authoritative.
-- Files/documents can be workflow inputs/outputs; document generation and signing use outbox jobs and audit events.
+- Files/documents can be workflow inputs/outputs; document generation and signing use outbox events and audit events.
 
 ## Verification
 
 - Draw the state diagram before writing migrations.
-- Demonstrate one workflow from draft definition to active version, start trigger, transition, guard, approval, action, timer, outbox job, and audit event.
+- Demonstrate one workflow from draft definition to active version, start trigger, transition, guard, approval, action, timer, outbox event, and audit event.
 - Prove invalid transitions fail, stale versions remain reproducible, and repeated external events are idempotent.
 - Test RBAC/RLS for transition, approval, override, export, and privileged read actions.
 - Confirm workflow events are append-only and enough to explain current state.

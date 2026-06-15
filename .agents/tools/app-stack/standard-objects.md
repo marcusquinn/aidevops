@@ -31,6 +31,8 @@ workspace
 
 Use separate tables only when the subtype needs distinct validation, lifecycle, permissions, integrations, or high-volume indexes. Otherwise use a typed row plus metadata.
 
+The hierarchy abbreviates always-on platform/kernel objects; see `app-stack/platform-kernel.md` for the full notification, audit, import/export, integration, search, report, form, settings, job, and retention model.
+
 For cross-object relationships, default to generic link tables with `entity_type` and `entity_id`. Use typed join tables only for high-volume, referentially critical, permission-critical, or heavily indexed relationships.
 
 ## Slugs, routes, and hierarchy
@@ -92,7 +94,9 @@ Core fields:
 - `workspace_id`, `title`, `body`, `state`, `state_reason`, `issue_type`, `priority`, `severity`.
 - `author_id`, `assignee_id`, `team_id`, `milestone_id`, `parent_issue_id`, `due_at`, `closed_at`.
 - External mapping: `source_provider`, `source_project`, `source_issue_id`, `source_issue_number`, `source_url`.
-- Labels via `label_assignments`; comments, activity, files, and audit via shared collaboration objects.
+- Labels via `label_assignments`; entity-scoped messages, activity, files, and audit via shared collaboration objects.
+
+Treat external URLs and paths as sensitive integration metadata: strip credentials and transient query tokens, prefer opaque provider IDs for matching, and avoid exposing private/local paths in public exports or support artifacts.
 
 Support issue relationships:
 
@@ -179,7 +183,7 @@ Rules:
 - Version workflow definitions; existing runtime runs keep the definition version they started with unless migrated deliberately.
 - Treat transition events as append-only audit records; never infer history only from the current state.
 - Keep guards deterministic and side-effect free; actions perform side effects after guards pass.
-- Model approvals as workflow steps, not as free-floating comments.
+- Model approvals as workflow steps, not as free-floating messages.
 - Automation rules can start workflows, enqueue actions, or create issues/tasks, but should not bypass RBAC or RLS.
 - Use outbox/job rows for webhooks, email, AI actions, document generation, ledger posting, and external integration calls.
 
@@ -187,7 +191,7 @@ Relationship to other objects:
 
 - Issues track work; workflows control state and process.
 - Activities log or schedule CRM/calendar events; workflows can create activities or wait for them.
-- Conversations/comments discuss records; workflows can require/emit comments but should not use comments as state.
+- Conversations and entity-scoped messages discuss records; workflows can require or emit messages, but messages are not state.
 - Labels group and filter; typed workflow state remains the source of truth.
 
 ## Conversations, chat, and communication
@@ -277,6 +281,7 @@ When an app may mirror with WebDAV, CalDAV, or CardDAV, preserve standard sync h
 Rules:
 
 - Store external UID, source URL/path, ETag, sync token/change tag, component type, last synced time, deletion/tombstone state, and raw payload hash where applicable.
+- Strip credentials and transient query tokens from URLs, classify sensitive source paths, prefer opaque provider IDs for joins, and avoid raw private/local paths in exportable or public-facing rows.
 - Keep `contacts` canonical for people; map CardDAV vCards into contacts/contact methods, and map organisation fields to `accounts` when they represent companies.
 - Use address books as sync/grouping containers, not replacements for workspace/account/contact boundaries.
 - Preserve recurrence, attendee, organizer, timezone, alarm, and free/busy fields for calendar objects even if the product UI starts simpler.
@@ -322,7 +327,7 @@ Accounting rules:
 - Map incoming synonyms to canonical objects before adding new tables.
 - Confirm labels/tags are available for each user-facing object type.
 - Confirm grouped label keys such as `status:normal` have a label group/category and exclusivity policy.
-- Trace one issue through label assignment, comments, state transition, audit event, and external-provider sync.
+- Trace one issue through label assignment, entity-scoped message, state transition, audit event, and external-provider sync.
 - Trace one content entry through type definition, route, revision, block/media link, taxonomy/label assignment, workflow, SEO metadata, and publish/preview output.
 - Trace one workflow through definition, state, transition, guard, action, approval, timer, runtime event, and audit record.
 - Trace one conversation message through thread replies, reactions, mentions, read receipts, attachments, audit, and retention rules.

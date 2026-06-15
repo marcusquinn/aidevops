@@ -19,7 +19,7 @@ Use metadata when the app needs configurable entities, layouts, permissions, imp
 | `relationship_definitions` | One-to-many, many-to-many, polymorphic references |
 | `layout_definitions` | Detail/edit/create/list layouts and panels |
 | `panel_definitions` | Relationship/admin/dashboard panels and visibility rules |
-| `view_definitions` | Saved filters, columns, sorting, grouping |
+| `view_definitions` | Template/default list, detail, and search views; runtime saved views live in `saved_views` |
 | `content_type_definitions` | Optional editor-configurable content schemas akin post types |
 | `label_group_definitions` | Optional templates/catalog rows for label namespaces such as status, priority, type |
 | `label_definitions` | Optional templates/catalog rows for governed labels, e.g. `status:normal` |

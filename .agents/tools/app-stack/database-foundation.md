@@ -31,8 +31,8 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 
 - `workspaces`, memberships, teams/user groups, roles, role assignments, invitations, settings.
 - `users` / auth identity mapping.
-- `audit_events`, `activity_events`, comments, notifications.
-- `files`, folders, attachments, labels/tags, imports, exports.
+- `audit_events`, `activity_events`, entity-scoped conversation messages, notifications.
+- `files`, folders, file links, labels/tags, imports, exports.
 - `integrations`, external IDs, sync cursors.
 - Platform kernel objects for search/history, saved views, reports, forms, dashboards, jobs, webhooks, feature flags, localisation, and retention; see `app-stack/platform-kernel.md`.
 
@@ -40,10 +40,10 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 
 - `issues` with forge-compatible fields: title, body, state, type, priority, assignee, labels, milestones, parent/related issues, external provider IDs.
 - Content: content types, entries, pages/routes, revisions, blocks, taxonomies, terms, menus, redirects, SEO metadata.
-- Conversations: conversation groups, channel/direct/group/entity conversation types, messages, threads, reactions, mentions, read receipts, attachments.
+- Conversations: conversation groups, channel/direct/group/entity conversation types, messages, threads, reactions, mentions, read receipts, message attachments.
 - Calendar/CRM activities: calendar collections, activity types such as calls/meetings/tasks, participants, alarms/reminders, recurrence, calendar/timeline links.
 - Workflows: definitions, states, transitions, guards, actions, runs/events, timers, decisions, approvals.
-- Tasks, milestones, comments, activity streams.
+- Tasks, milestones, entity-scoped conversation messages, activity streams.
 - Issue relationships: blocks, duplicates, relates-to, split-from, supersedes.
 
 ### Business relationship pack
