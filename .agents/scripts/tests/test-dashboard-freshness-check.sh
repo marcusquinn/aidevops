@@ -326,6 +326,7 @@ home_marker='~'
 if grep -q 'macOS / launchd:' "$alert_body" \
 	&& grep -q 'launchctl list | grep -i aidevops-stats-wrapper' "$alert_body" \
 	&& grep -q 'Linux / systemd user timers:' "$alert_body" \
+	&& grep -q 'systemctl --user status aidevops-stats-wrapper.timer --no-pager' "$alert_body" \
 	&& grep -q 'systemctl --user status aidevops-stats-wrapper.service --no-pager' "$alert_body" \
 	&& grep -q "systemctl --user list-timers --all --no-pager 'aidevops\*'" "$alert_body" \
 	&& grep -q "${home_marker}/.config/systemd/user/aidevops-stats-wrapper\.\*" "$alert_body" \
