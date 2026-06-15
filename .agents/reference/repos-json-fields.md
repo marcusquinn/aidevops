@@ -15,6 +15,7 @@ Config file: `~/.config/aidevops/repos.json`. Structure: `{"initialized_repos": 
 | `maintainer` | string | GitHub username. Auto-detected from `gh api user`; falls back to slug owner |
 | `role` | string | `"maintainer"` or `"contributor"`. Controls which pulse scanners run |
 | `init_scope` | string | `"minimal"`, `"standard"` (default), or `"public"`. Controls `aidevops init` scaffolding |
+| `has_interface` | bool | Explicit GUI/interface flag. `true` forces DESIGN.md scaffolding/backfill; `false` suppresses heuristic interface detection. |
 | `agent_source` | bool | `true` = repo is a managed private agent source pack; `aidevops init` seeds core-style agent structure and `aidevops update` refreshes framework-owned organization templates |
 
 ### `role` detail
@@ -31,6 +32,10 @@ Auto-detected from slug owner vs `gh api user` when omitted.
 - `public`: adds LICENCE, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md
 
 Auto-inferred when absent: `local_only`/no-remote → `minimal`; others → `standard`. Stored in `.aidevops.json` per project. Preserved on re-registration.
+
+### `has_interface` detail
+
+`aidevops init` records this field in `.aidevops.json` and mirrors it into `repos.json` during registration. When absent, design helpers infer it from UI markers such as Next/Vite/Nuxt/Astro/Svelte config, React/Vue/Svelte entry files, view templates, frontend/client/web directories, or UI dependencies. Minimal-scope repos with `has_interface: true` still receive a root `DESIGN.md`; standard/public scopes continue to seed it by default.
 
 ### `agent_source` detail
 

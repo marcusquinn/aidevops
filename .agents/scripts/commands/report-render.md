@@ -36,6 +36,12 @@ Direct helper options:
   --output report.html
 ```
 
+Brand guideline handoff from a project `DESIGN.md`:
+
+```bash
+aidevops design guidelines . --pdf
+```
+
 ## Templates and profiles
 
 Templates:

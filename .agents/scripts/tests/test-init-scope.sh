@@ -206,6 +206,46 @@ test_infer_init_scope() {
 	return 0
 }
 
+# ---- Test interface detection for DESIGN.md scaffolding ----
+
+test_interface_detection() {
+	echo ""
+	echo "=== Testing interface detection ==="
+
+	TEST_ROOT=$(mktemp -d)
+
+	local helper_path_func detect_func
+	helper_path_func=$(sed -n '/_init_design_helper_path() {/,/^}/p' "$AIDEVOPS_REPOS_LIB")
+	detect_func=$(sed -n '/_init_repo_has_interface() {/,/^}/p' "$AIDEVOPS_REPOS_LIB")
+	AGENTS_DIR="$REPO_ROOT/.agents"
+	INSTALL_DIR="$REPO_ROOT"
+	eval "$helper_path_func"
+	eval "$detect_func"
+
+	local ui_dir="$TEST_ROOT/ui-repo"
+	mkdir -p "$ui_dir/src"
+	git -C "$ui_dir" init --quiet 2>/dev/null
+	touch "$ui_dir/src/App.tsx"
+	_init_repo_has_interface "$ui_dir"
+	print_result "React entry file detects interface" "$?"
+
+	local explicit_false_dir="$TEST_ROOT/explicit-false"
+	mkdir -p "$explicit_false_dir/src"
+	git -C "$explicit_false_dir" init --quiet 2>/dev/null
+	touch "$explicit_false_dir/src/App.tsx"
+	printf '%s\n' '{"has_interface": false}' >"$explicit_false_dir/.aidevops.json"
+	assert_negative "has_interface:false suppresses heuristic markers" _init_repo_has_interface "$explicit_false_dir"
+
+	local cli_dir="$TEST_ROOT/cli-repo"
+	mkdir -p "$cli_dir"
+	git -C "$cli_dir" init --quiet 2>/dev/null
+	assert_negative "CLI-only repo does not detect interface" _init_repo_has_interface "$cli_dir"
+
+	rm -rf "$TEST_ROOT"
+	TEST_ROOT=""
+	return 0
+}
+
 # ---- Test scaffold_repo_courtesy_files with scope ----
 
 # Shared setup for scaffold scope tests — extracts needed functions from aidevops.sh
@@ -313,6 +353,7 @@ test_aidevops_json_roundtrip() {
   "version": "3.8.72",
   "initialized": "2026-04-19T00:00:00Z",
   "init_scope": "minimal",
+  "has_interface": true,
   "features": {
     "planning": true
   }
@@ -328,6 +369,10 @@ EOF
 	local has_scope
 	has_scope=$(jq 'has("init_scope")' "$test_dir/.aidevops.json")
 	assert_equals "true" "$has_scope" ".aidevops.json has init_scope field"
+
+	local has_interface
+	has_interface=$(jq -r '.has_interface' "$test_dir/.aidevops.json")
+	assert_equals "true" "$has_interface" ".aidevops.json has has_interface field"
 
 	rm -rf "$TEST_ROOT"
 	TEST_ROOT=""
@@ -430,6 +475,7 @@ echo "============================================================="
 
 test_scope_includes
 test_infer_init_scope
+test_interface_detection
 test_scaffold_minimal_scope
 test_scaffold_standard_scope
 test_scaffold_public_scope
