@@ -22,8 +22,8 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
-SCRIPTS_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)" || exit 1
+TEST_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+SCRIPTS_DIR="$(cd "${TEST_SCRIPT_DIR}/.." && pwd)" || exit 1
 
 # Isolate from real state files
 TMP_HOME=$(mktemp -d)
