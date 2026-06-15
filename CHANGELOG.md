@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.67] - 2026-06-15
+
+### Added
+
+- add design init and guideline exports (#24838)
+- add design guidelines handoff (#24836)
+
+### Changed
+
+- test: improve nostr vpn privacy guide diagnostics (#24853)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- handle behind native auto-merge PRs (#24856)
+
 ## [3.20.66] - 2026-06-15
 
 ### Fixed
