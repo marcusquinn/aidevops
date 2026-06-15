@@ -91,6 +91,24 @@ _session_time_archive_db_for() {
 }
 
 #######################################
+# SQL clause that excludes runtime temp sessions from profile-level all-dir stats.
+# Output: SQL AND clause to stdout
+#######################################
+_session_time_temp_dir_exclusion_clause() {
+	cat <<'SQL'
+AND (s.directory IS NULL OR (
+	s.directory NOT IN ('/private/tmp/opencode', '/tmp/opencode')
+	AND s.directory NOT LIKE '/private/tmp/opencode.%' ESCAPE '\'
+	AND s.directory NOT LIKE '/private/tmp/opencode-%' ESCAPE '\'
+	AND s.directory NOT LIKE '/tmp/opencode.%' ESCAPE '\'
+	AND s.directory NOT LIKE '/tmp/opencode-%' ESCAPE '\'
+	AND s.directory NOT LIKE '/var/folders/%/T/opencode%'
+))
+SQL
+	return 0
+}
+
+#######################################
 # Auto-detect all SQLite session DBs that make up the local history.
 # Output: one database path per line, primary first, archive second if present
 #######################################
@@ -196,9 +214,12 @@ _session_time_query_db() {
 
 	# Build directory filter clause.
 	# When abs_repo_path is empty (--all-dirs), dir_clause stays empty
-	# to aggregate sessions across all repos (profile-level stats).
+	# to aggregate sessions across all repos (profile-level stats), while
+	# temp_dir_clause excludes short runtime classifier sessions created in
+	# OpenCode temp workdirs so they do not masquerade as interactive work.
 	# Uses parameter expansion to avoid an if/fi block (nesting budget).
 	local dir_clause=""
+	local temp_dir_clause=""
 	local safe_path="${abs_repo_path//\'/\'\'}"
 	local like_path="${safe_path//%/\\%}"
 	like_path="${like_path//_/\\_}"
@@ -208,6 +229,9 @@ _session_time_query_db() {
 	dir_clause="${safe_path:+AND (s.directory = '${safe_path}'
 			       OR s.directory LIKE '${like_path}.%' ESCAPE '\\'
 			       OR s.directory LIKE '${like_path}-%' ESCAPE '\\')}"
+	if [[ -z "$abs_repo_path" ]]; then
+		temp_dir_clause=$(_session_time_temp_dir_exclusion_clause)
+	fi
 
 	# Query per-session human vs machine time using window functions.
 	# LAG() compares each message with the previous one in the same session:
@@ -233,6 +257,7 @@ _session_time_query_db() {
 			WHERE s.parent_id IS NULL
 			  AND m.time_created > ${since_ms}
 			  ${dir_clause}
+			  ${temp_dir_clause}
 		)
 		SELECT
 			session_id,
