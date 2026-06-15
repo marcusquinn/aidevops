@@ -28,10 +28,21 @@ mode: subagent
 |------|------|
 | Pick site/app platform | `app-stack/decision-matrix.md` |
 | Build a no-build website starter | `app-stack/static-site-starter.md` |
+| Define required public pages, schema, docs/API/MCP/CLI surfaces | `app-stack/public-site-surfaces.md` |
 | Design TypeScript monorepo app structure | `app-stack/monorepo-app-stack.md` |
 | Choose/shape desktop shell | `app-stack/electron-desktop.md` |
 | Model workspace tenancy/collaboration | `app-stack/workspace-model.md` |
 | Design app database foundation | `app-stack/database-foundation.md` |
+| Place schemas and migrations | `app-stack/migration-layout.md` |
+| Standardise platform/kernel objects | `app-stack/platform-kernel.md` |
+| Model change history, merges, and relationships | `app-stack/data-history-relationships.md` |
+| Design background jobs, scheduled tasks, and operations | `app-stack/operations-jobs-scheduling.md` |
+| Define API and service contracts | `app-stack/api-service-contracts.md` |
+| Model identity and security lifecycle | `app-stack/identity-security-lifecycle.md` |
+| Plan privacy, sync, scale, and test data | `app-stack/data-protection-sync-scale.md` |
+| Choose standard app objects | `app-stack/standard-objects.md` |
+| Design RBAC/capabilities | `app-stack/rbac-permissions.md` |
+| Design workflows and automations | `app-stack/workflow-architecture.md` |
 | Build metadata-driven entities/layouts/workflows | `app-stack/metadata-architecture.md` |
 | Add encrypted/local-first collaboration | `app-stack/encrypted-collaboration.md` |
 | Shape app/control-room UX shell | `app-stack/ux-shell-patterns.md` |
@@ -43,9 +54,25 @@ Prefer boring, shared primitives that compound across apps:
 1. Start web-first with TypeScript and React/Next for app UX.
 2. Put reusable domain logic, database schema, UI, config, and API clients in packages.
 3. Use Postgres + Drizzle as the canonical data model; add RLS from the first multi-user boundary.
-4. Treat metadata as product infrastructure: entity definitions, fields, layouts, views, ACL, workflows, audit, import/export, and notifications.
-5. Use `Workspace` as the data container, permission boundary, AI context boundary, and collaboration scope.
-6. Keep web/CMS/site routing explicit: WordPress for editors; no-build static for plain sites; static generator only after repeated-layout/content scale proves it.
+4. Keep schema and migration ownership in `packages/db` for monorepos; generated SQL and metadata snapshots are versioned artifacts.
+5. Treat metadata as product infrastructure: entity definitions, fields, layouts, views, ACL, workflows, labels, audit, jobs, import/export, API contracts, privacy, and notifications.
+6. Use `Workspace` as the data container, permission boundary, AI context boundary, and collaboration scope.
+7. Start from standard object packs: issues, labels/tags, users, teams, roles, content/pages, conversations/channels, calendar/CRM activities, files/folders, accounts, contacts, jobs/processes, quotes, invoices, payments, prices, and referrals.
+8. Keep public surfaces explicit: `/about`, `/contact`, `/privacy`, `/terms`, docs, API, MCP, CLI, sitemap, schema, and support routes.
+9. Keep web/CMS/site routing explicit: WordPress for editors; no-build static for plain sites; static generator only after repeated-layout/content scale proves it.
+
+## Builder interpretation rules
+
+When asked to build a new app or data architecture:
+
+1. Start with `Workspace`, `packages/db`, RLS, users, teams, roles, labels, audit, files, and integrations.
+2. Pick canonical object roots from `app-stack/standard-objects.md` before inventing domain tables.
+3. Use types, labels, views, and metadata before separate tables; split tables only for distinct validation, lifecycle, permissions, integrations, or indexes.
+4. Add workflows as definitions plus runtime events/runs; do not hide state machines in UI-only code.
+5. Preserve external sync handles for WebDAV, CalDAV, CardDAV, payment, accounting, and forge integrations.
+6. Verify one complete path: object → permission → workflow → audit → import/export or sync.
+
+Read order for full app/data design: `monorepo-app-stack.md` → `public-site-surfaces.md` → `workspace-model.md` → `database-foundation.md` → `platform-kernel.md` → `operations-jobs-scheduling.md` → `api-service-contracts.md` → `identity-security-lifecycle.md` → `data-protection-sync-scale.md` → `data-history-relationships.md` → `standard-objects.md` → `rbac-permissions.md` → `workflow-architecture.md` → `metadata-architecture.md` → `migration-layout.md`.
 
 ## Related docs
 

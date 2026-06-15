@@ -16,11 +16,20 @@ Use metadata when the app needs configurable entities, layouts, permissions, imp
 |--------|---------|
 | `entity_definitions` | Entity key, label, table/source, ownership, lifecycle |
 | `field_definitions` | Field key, type, validation, display, indexing, privacy |
-| `relationship_definitions` | One-to-many, many-to-many, polymorphic references |
+| `relationship_definitions` | One-to-one, one-to-many, many-to-one, many-to-many, and polymorphic references |
 | `layout_definitions` | Detail/edit/create/list layouts and panels |
-| `view_definitions` | Saved filters, columns, sorting, grouping |
-| `acl_rules` | Role/user/workspace/entity/field/action permissions |
-| `workflow_definitions` | States, transitions, guards, actions, timers |
+| `panel_definitions` | Relationship/admin/dashboard panels and visibility rules |
+| `view_definitions` | Template/default list, detail, and search views; runtime saved views live in `saved_views` |
+| `content_type_definitions` | Optional editor-configurable content schemas akin post types |
+| `label_group_definitions` | Optional templates/catalog rows for label namespaces such as status, priority, type |
+| `label_definitions` | Optional templates/catalog rows for governed labels, e.g. `status:normal` |
+| `capability_definitions` | Optional catalog rows for named product actions beyond CRUD |
+| `permission_rules` | Role/user/team/workspace/entity/field/panel/action permissions |
+| `workflow_definitions` | Workflow key, entity scope, version, lifecycle, trigger model |
+| `workflow_state_definitions` | Initial, normal, terminal, cancelled, error, or approval states |
+| `workflow_transition_definitions` | From/to states, actor, capability, guard, side effects |
+| `workflow_guard_definitions` | Deterministic predicates used by transitions and actions |
+| `workflow_action_definitions` | Field updates, tasks, approvals, notifications, webhooks, jobs |
 | `automation_rules` | Trigger/action rules and integration hooks |
 | `import_mappings` | CSV/API/source-to-canonical field maps |
 | `audit_events` | Immutable change/event ledger |
@@ -28,11 +37,17 @@ Use metadata when the app needs configurable entities, layouts, permissions, imp
 ## Design rules
 
 - Metadata augments typed code; it does not replace migrations for core tables.
+- Runtime metadata DDL is opt-in for configurable/custom entities only; core standard objects still use reviewed migrations.
 - Keep entity keys stable and human-readable.
 - Put labels/descriptions/help text in metadata so AI agents can explain fields.
 - Keep validation close to field definitions and enforce again at API/database boundaries.
 - Model layouts separately from fields so the same entity can have role/context-specific views.
-- Make workflows explicit: state, transition, actor, guard, side effects.
+- Model panels separately from layouts so related lists, admin panels, and dashboards can have independent permissions.
+- Model relationships with explicit source, target, cardinality, inverse label, requiredness, delete behaviour, and permission inheritance policy.
+- Make labels/tags a first-class metadata concern for every user-facing entity; model label groups, exclusivity, display order, colour, and scope.
+- Use content type definitions for configurable editorial/domain content; use migrations for core content tables and route ownership.
+- Keep roles, teams, capabilities, and permission rules separate so teams do not become roles.
+- Make workflows explicit: state, transition, actor, guard, side effects, runtime event, audit record.
 - Preserve import provenance: source, source row ID/hash, mapping version, confidence, reviewer.
 
 ## When not to use metadata
@@ -44,5 +59,9 @@ Use metadata when the app needs configurable entities, layouts, permissions, imp
 ## Verification
 
 - Demonstrate one entity from definition to list view, detail layout, edit validation, ACL, workflow transition, audit event, and export.
+- Demonstrate one workflow definition through state, transition, guard, action, approval or timer, runtime event, and audit log.
+- Demonstrate one grouped label assignment such as `status:normal` and one issue relationship if the app exposes work tracking.
+- Demonstrate each configured relationship cardinality and prove uniqueness/foreign-key/link-table constraints.
 - Confirm field-level privacy and AI exposure rules.
+- Confirm role/team permission behaviour for object, panel, field, and workflow actions.
 - Confirm imports can be replayed or explained with provenance.

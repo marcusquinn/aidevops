@@ -15,10 +15,10 @@ Use `Workspace` as the default container abstraction for app data, permissions, 
 A workspace is a named boundary that groups:
 
 - Data records and files.
-- Members, roles, invitations, and access policies.
+- Members, teams/user groups, roles, role assignments, invitations, and access policies.
 - AI memory/context, tool permissions, and audit trails.
 - Integrations, secrets references, and environment settings.
-- Collaboration state such as comments, activity, notifications, and tasks.
+- Collaboration state such as issues, conversations/channels/chats, entity-scoped messages, calendar activities, notifications, labels, files, folders, and tasks.
 
 ## Kernel tables
 
@@ -26,18 +26,27 @@ Start with these concepts before app-specific objects:
 
 - `workspaces`
 - `workspace_memberships`
-- `workspace_roles`
+- `teams` / `user_groups`
+- `team_memberships`
+- `roles`
+- `role_assignments`
 - `workspace_invitations`
 - `workspace_settings`
+- `labels` / `label_assignments`
+- `issues` / issue relationships
+- `conversation_groups` / `conversations`
+- `messages` / `message_threads` / `message_reactions`
+- `calendar_collections` / `activities` / `activity_alarms`
 - `audit_events`
-- `files` / `attachments`
-- `comments` / `activity_events`
+- `files` / `folders` / `file_links`
+- `activity_events`
 - `notifications`
 
 ## Boundary rules
 
-- Every durable business record belongs to exactly one workspace unless the product explicitly needs cross-workspace sharing.
+- Every durable business record belongs to exactly one workspace unless the product explicitly needs cross-workspace sharing. Workspace is the default tenancy and RLS root.
 - RLS policies include workspace membership and role checks.
+- Teams group users; roles grant capabilities. Do not collapse teams/user groups into roles.
 - AI agents receive only the workspace context needed for the task.
 - Secrets are referenced by name/handle, not copied into workspace rows.
 - Cross-workspace reporting uses read models or controlled exports, not hidden permission bypasses.
