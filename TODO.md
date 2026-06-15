@@ -4249,3 +4249,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 
 - [x] t3599 Document app-stack guidance #documentation ref:GH#24768 pr:#24767 completed:2026-06-14
+
+- [ ] t3600 Expand app-stack architecture guidance #documentation ref:GH#24827
