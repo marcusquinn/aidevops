@@ -31,7 +31,7 @@
 #     task-id fallback) and should be skipped by pulse dispatch.
 #     Exit 0 = PR evidence exists (do NOT dispatch), exit 1 = no evidence.
 #
-#   dispatch-dedup-helper.sh check-orphan-loop <issue> <slug> <branch>
+#   dispatch-dedup-helper.sh check-orphan-loop <issue> <slug> <branch> [todo-file] [worktree-path]
 #     Check whether repeated worker_branch_orphan outcomes for the same issue
 #     and branch should hold dispatch before launching another worker.
 #     Exit 0 = threshold reached (do NOT dispatch), exit 1 = no hold.
@@ -75,6 +75,8 @@ source "${SCRIPT_DIR}/dispatch-dedup-stale.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/dispatch-dedup-pr.sh"
 
+_DDH_ORPHAN_PR_HINT_NONE="none found"
+
 #######################################
 # Resolve configured PR base branch for worker-orphan diagnostics.
 #
@@ -100,6 +102,116 @@ _ddh_resolve_pr_base_branch() {
 	fi
 
 	printf '%s' "${base_branch:-main}"
+	return 0
+}
+
+#######################################
+# Build the issue comments endpoint used by orphan-branch checks.
+#
+# Args: $1 = repo slug, $2 = issue number
+# Outputs: GitHub API endpoint path
+# Returns: 0 always
+#######################################
+_ddh_issue_comments_endpoint() {
+	local repo_slug="$1"
+	local issue_number="$2"
+
+	printf 'repos/%s/issues/%s/comments' "$repo_slug" "$issue_number"
+	return 0
+}
+
+#######################################
+# Probe a branch-orphan candidate before redispatch.
+#
+# Args: $1 = repo slug, $2 = branch name, $3 = worktree path, $4 = base branch
+# Outputs: pipe-delimited remote status and commit count fields.
+# Returns: 0 always
+#######################################
+_ddh_probe_orphan_branch_state() {
+	local repo_slug="$1"
+	local branch_name="$2"
+	local worktree_path="${3:-}"
+	local base_branch="${4:-main}"
+	local unknown_value="unknown"
+	local remote_probe="unavailable"
+	local remote_exists="$unknown_value"
+	local commit_count="$unknown_value"
+
+	if [[ -n "$branch_name" && "$branch_name" != "HEAD" ]]; then
+		local remote_rc=0
+		remote_probe="git ls-remote --exit-code origin refs/heads/${branch_name}"
+		if [[ -n "$worktree_path" && ( -d "$worktree_path/.git" || -f "$worktree_path/.git" ) ]]; then
+			GIT_TERMINAL_PROMPT=0 git -C "$worktree_path" ls-remote --exit-code origin "refs/heads/${branch_name}" >/dev/null || remote_rc=$?
+		else
+			GIT_TERMINAL_PROMPT=0 git ls-remote --exit-code origin "refs/heads/${branch_name}" >/dev/null || remote_rc=$?
+		fi
+		case "$remote_rc" in
+		0)
+			remote_exists="yes"
+			;;
+		2)
+			remote_exists="no"
+			;;
+		*)
+			remote_exists="$unknown_value"
+			;;
+		esac
+	fi
+
+	if [[ -n "$worktree_path" && ( -d "$worktree_path/.git" || -f "$worktree_path/.git" ) ]]; then
+		commit_count=$(git -C "$worktree_path" rev-list --count "origin/${base_branch}..origin/${branch_name}" || true)
+		if ! [[ "$commit_count" =~ ^[0-9]+$ ]]; then
+			commit_count=$(git -C "$worktree_path" rev-list --count "origin/${branch_name}" || true)
+		fi
+		[[ "$commit_count" =~ ^[0-9]+$ ]] || commit_count="$unknown_value"
+	fi
+
+	printf '%s|%s|%s|%s\n' "$repo_slug" "$remote_probe" "$remote_exists" "$commit_count"
+	return 0
+}
+
+#######################################
+# Post a diagnostic and hold dispatch for unrecoverable orphan evidence.
+#
+# Args: $1 issue, $2 repo, $3 branch, $4 reason, $5 remote probe,
+#       $6 remote exists, $7 commit count, $8 comments endpoint,
+#       $9 comments json
+# Returns: 0 always
+#######################################
+_ddh_hold_unrecoverable_orphan_branch() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local branch_name="$3"
+	local hold_reason="$4"
+	local remote_probe="$5"
+	local remote_exists="$6"
+	local commit_count="$7"
+	local comments_post_endpoint="$8"
+	local comments_json="$9"
+	local existing_block="0"
+
+	existing_block=$(printf '%s' "$comments_json" |
+		jq -r --arg branch "$branch_name" --arg reason "$hold_reason" '
+			[.[][] | (.body // empty)
+			| select(contains("worker-branch-orphan-unrecoverable:blocked branch=" + $branch + " "))
+			| select(contains("reason=" + $reason + " "))] | length
+		' 2>/dev/null) || existing_block="0"
+	[[ "$existing_block" =~ ^[0-9]+$ ]] || existing_block=0
+
+	if [[ "$existing_block" -eq 0 ]]; then
+		local diag=""
+		# shellcheck disable=SC2016 # Backticks are literal Markdown in this printf template.
+		diag=$(printf '<!-- ops:start -->\n<!-- worker-branch-orphan-unrecoverable:blocked branch=%s issue=%s reason=%s remote_exists=%s commit_count=%s -->\n## Dispatch held: unrecoverable worker_branch_orphan\n\nThe dispatch path found `WORKER_BRANCH_ORPHAN` telemetry for issue #%s on branch `%s`, but the recovery evidence is not actionable. Standard redispatch is held to avoid burning additional worker attempts.\n\n- Branch: `%s`\n- Remote-branch probe: `%s`\n- Remote branch exists: `%s`\n- Branch commit count: `%s`\n- Root cause: `%s`\n- Next action: inspect the worker worktree/logs, recover or recreate the missing commits, then remove the stale orphan marker/worktree before dispatching again.\n<!-- ops:end -->' \
+			"$branch_name" "$issue_number" "$hold_reason" "$remote_exists" "$commit_count" \
+			"$issue_number" "$branch_name" "$branch_name" "$remote_probe" "$remote_exists" "$commit_count" "$hold_reason")
+		gh api "$comments_post_endpoint" \
+			--method POST \
+			--field body="$diag" \
+			>/dev/null 2>&1 || true
+	fi
+
+	printf 'WORKER_BRANCH_ORPHAN_UNRECOVERABLE_BLOCKED (issue=%s repo=%s branch=%s reason=%s remote_probe=%s remote_exists=%s commit_count=%s)\n' \
+		"$issue_number" "$repo_slug" "$branch_name" "$hold_reason" "$remote_probe" "$remote_exists" "$commit_count"
 	return 0
 }
 
@@ -905,6 +1017,200 @@ _is_assigned_check_dispatch_cooldown() {
 }
 
 #######################################
+# Fetch paginated issue comments for orphan-branch checks.
+#
+# Args: $1 = issue number, $2 = repo slug
+# Outputs: JSON from `gh api --paginate --slurp`
+# Returns: gh api exit status
+#######################################
+_ddh_fetch_issue_comments() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local comments_post_endpoint=""
+	comments_post_endpoint=$(_ddh_issue_comments_endpoint "$repo_slug" "$issue_number")
+	local comments_endpoint="${comments_post_endpoint}?per_page=100"
+
+	gh api --paginate --slurp "$comments_endpoint" 2>/dev/null
+	return $?
+}
+
+#######################################
+# Count orphan markers matching an exact branch marker prefix.
+#
+# Args: $1 = comments JSON, $2 = marker prefix
+# Outputs: numeric count
+# Returns: 0 always (parse failures output 0)
+#######################################
+_ddh_count_orphan_marker_prefix() {
+	local comments_json="$1"
+	local orphan_marker_prefix="$2"
+	local orphan_marker_count="0"
+
+	orphan_marker_count=$(printf '%s' "$comments_json" |
+		jq -r --arg marker "$orphan_marker_prefix" '
+			[.[][]
+			| (.body // "")
+			| select(contains($marker))] | length
+		' 2>/dev/null) || orphan_marker_count="0"
+	[[ "$orphan_marker_count" =~ ^[0-9]+$ ]] || orphan_marker_count=0
+	printf '%s' "$orphan_marker_count"
+	return 0
+}
+
+#######################################
+# Hold an orphan branch when recovery evidence is not actionable.
+#
+# Args: $1 issue, $2 repo, $3 branch, $4 worktree path, $5 base branch,
+#       $6 comments endpoint, $7 comments JSON
+# Returns: 0 if dispatch was held, 1 otherwise
+#######################################
+_ddh_hold_unrecoverable_orphan_branch_if_needed() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local branch_name="$3"
+	local worktree_path="$4"
+	local pr_base_branch="$5"
+	local comments_post_endpoint="$6"
+	local comments_json="$7"
+	local branch_state="" state_repo="" remote_probe="" remote_exists="" commit_count=""
+
+	[[ -n "$worktree_path" ]] || return 1
+	branch_state=$(_ddh_probe_orphan_branch_state "$repo_slug" "$branch_name" "$worktree_path" "$pr_base_branch")
+	IFS='|' read -r state_repo remote_probe remote_exists commit_count <<<"$branch_state"
+	: "${state_repo}"
+
+	if [[ "$remote_exists" == "no" ]]; then
+		_ddh_hold_unrecoverable_orphan_branch "$issue_number" "$repo_slug" "$branch_name" \
+			"remote_branch_missing" "$remote_probe" "$remote_exists" "$commit_count" \
+			"$comments_post_endpoint" "$comments_json"
+		return 0
+	fi
+	if [[ "$commit_count" == "0" ]]; then
+		_ddh_hold_unrecoverable_orphan_branch "$issue_number" "$repo_slug" "$branch_name" \
+			"zero_commits" "$remote_probe" "$remote_exists" "$commit_count" \
+			"$comments_post_endpoint" "$comments_json"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Count recent orphan markers and return the latest timestamp seen.
+#
+# Args: $1 = comments JSON, $2 = marker prefix, $3 = window seconds
+# Outputs: count|latest_iso
+# Returns: 0 on parse success, 1 on date/jq failure
+#######################################
+_ddh_recent_orphan_marker_summary() {
+	local comments_json="$1"
+	local orphan_marker_prefix="$2"
+	local window_s="$3"
+	local now_epoch="" marker_list="" count=0 latest_iso="" marker_iso=""
+
+	now_epoch=$(date -u +%s 2>/dev/null) || return 1
+	marker_list=$(printf '%s' "$comments_json" |
+		jq -r --arg marker "$orphan_marker_prefix" '
+			.[][]
+			| (.body // "")
+			| select(contains($marker))
+			| (capture("WORKER_BRANCH_ORPHAN branch=[^ ]+ session=[^ ]+ ts=(?<ts>[^\\n ]+)")? // {})
+			| .ts // empty
+		' 2>/dev/null) || return 1
+
+	while IFS= read -r marker_iso; do
+		[[ -n "$marker_iso" ]] || continue
+		local marker_epoch=""
+		marker_epoch=$(date -u -d "$marker_iso" +%s 2>/dev/null) ||
+			marker_epoch=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$marker_iso" +%s 2>/dev/null) ||
+			continue
+		[[ "$marker_epoch" =~ ^[0-9]+$ ]] || continue
+		if [[ $((now_epoch - marker_epoch)) -le "$window_s" ]]; then
+			count=$((count + 1))
+			latest_iso="$marker_iso"
+		fi
+	done <<<"$marker_list"
+
+	printf '%s|%s\n' "$count" "$latest_iso"
+	return 0
+}
+
+#######################################
+# Count existing orphan-loop diagnostic blocks for a branch.
+#
+# Args: $1 = comments JSON, $2 = branch name
+# Outputs: numeric count
+# Returns: 0 always (parse failures output 0)
+#######################################
+_ddh_count_orphan_loop_blocks() {
+	local comments_json="$1"
+	local branch_name="$2"
+	local existing_block="0"
+
+	existing_block=$(printf '%s' "$comments_json" |
+		jq -r --arg branch "$branch_name" '
+			[.[][] | (.body // "") | select(contains("worker-branch-orphan-loop:blocked branch=" + $branch + " "))] | length
+		' 2>/dev/null) || existing_block="0"
+	[[ "$existing_block" =~ ^[0-9]+$ ]] || existing_block=0
+	printf '%s' "$existing_block"
+	return 0
+}
+
+#######################################
+# Resolve a human PR hint for an orphan branch.
+#
+# Args: $1 = repo slug, $2 = branch name
+# Outputs: PR hint string
+# Returns: 0 always
+#######################################
+_ddh_orphan_branch_pr_hint() {
+	local repo_slug="$1"
+	local branch_name="$2"
+	local pr_line=""
+
+	pr_line=$(gh pr list --repo "$repo_slug" --head "$branch_name" --state all \
+		--json number,state,url --jq '.[0] | select(.number != null) | "#\(.number) (\(.state)) \(.url)"' 2>/dev/null || true)
+	if [[ -n "$pr_line" ]]; then
+		printf '%s' "$pr_line"
+		return 0
+	fi
+	printf '%s' "$_DDH_ORPHAN_PR_HINT_NONE"
+	return 0
+}
+
+#######################################
+# Post the repeated-orphan-loop diagnostic comment.
+#
+# Args: $1 issue, $2 repo, $3 branch, $4 count, $5 window seconds,
+#       $6 latest ISO, $7 PR hint, $8 next action, $9 base branch,
+#       $10 comments endpoint
+# Returns: 0 always
+#######################################
+_ddh_post_orphan_loop_diagnostic() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local branch_name="$3"
+	local count="$4"
+	local window_s="$5"
+	local latest_iso="$6"
+	local pr_hint="$7"
+	local next_action="$8"
+	local pr_base_branch="$9"
+	local comments_post_endpoint="${10}"
+	local diag=""
+
+	# shellcheck disable=SC2016 # Backticks are literal Markdown in this printf template.
+	diag=$(printf '<!-- ops:start -->\n<!-- worker-branch-orphan-loop:blocked branch=%s issue=%s count=%s window_s=%s -->\n## Dispatch held: repeated worker_branch_orphan\n\nThe dispatch path has seen `%s` `WORKER_BRANCH_ORPHAN` outcomes for issue #%s on branch `%s` within the last %s seconds. Dispatch is held for this same branch to avoid burning more worker attempts while preserving evidence.\n\n- Branch: `%s`\n- Latest orphan marker: `%s`\n- PR for branch: %s\n- Next action: %s\n- Next verification: `gh pr list --repo %s --head %s --state all --json number,state,url`\n\nIf no PR exists and the branch has commits, open the recovery PR against `%s`. If no commits exist to PR, remove/reset that worktree/branch so a fresh branch can dispatch.\n<!-- ops:end -->' \
+		"$branch_name" "$issue_number" "$count" "$window_s" \
+		"$count" "$issue_number" "$branch_name" "$window_s" \
+		"$branch_name" "${latest_iso:-unknown}" "$pr_hint" "$next_action" "$repo_slug" "$branch_name" "$pr_base_branch")
+	gh api "$comments_post_endpoint" \
+		--method POST \
+		--field body="$diag" \
+		>/dev/null 2>&1 || true
+	return 0
+}
+
+#######################################
 # Check repeated worker_branch_orphan outcomes for a single issue+branch.
 #
 # This is a surgical dispatch-loop fuse for the branch-orphan class. The
@@ -921,7 +1227,8 @@ _is_assigned_check_dispatch_cooldown() {
 # a blast-radius limiter, not a security gate; unrelated dispatch should not be
 # starved by telemetry read failures.
 #
-# Args: $1 = issue number, $2 = repo slug, $3 = branch name
+# Args: $1 = issue number, $2 = repo slug, $3 = branch name,
+#       $4 = TODO.md path (optional), $5 = worktree path (optional)
 # Returns: exit 0 if loop threshold reached (prints ORPHAN_LOOP_BLOCKED),
 #          exit 1 otherwise.
 #######################################
@@ -930,6 +1237,7 @@ check_worker_branch_orphan_loop() {
 	local repo_slug="$2"
 	local branch_name="$3"
 	local todo_file="${4:-}"
+	local worktree_path="${5:-}"
 
 	[[ -n "$issue_number" && -n "$repo_slug" && -n "$branch_name" ]] || return 1
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
@@ -945,74 +1253,45 @@ check_worker_branch_orphan_loop() {
 		return 0
 	fi
 
-	# Fetch all comment pages. The issue-comments endpoint is oldest-first and may
-	# hold orphan markers beyond the first 30/100 results on noisy issues. Keep the
-	# POST endpoint separate because --paginate --slurp returns page arrays for jq.
-	local comments_issue_endpoint="repos/${repo_slug}/issues/${issue_number}"
-	local comments_post_endpoint="${comments_issue_endpoint}/comments"
-	local comments_endpoint="${comments_post_endpoint}?per_page=100"
-	local comments_json
-	comments_json=$(gh api --paginate --slurp "$comments_endpoint" 2>/dev/null) || return 1
+	local comments_post_endpoint=""
+	comments_post_endpoint=$(_ddh_issue_comments_endpoint "$repo_slug" "$issue_number")
+	local comments_json=""
+	comments_json=$(_ddh_fetch_issue_comments "$issue_number" "$repo_slug") || return 1
 	[[ -n "$comments_json" ]] || return 1
 
-	local now_epoch
-	now_epoch=$(date -u +%s 2>/dev/null) || return 1
+	local orphan_marker_prefix="WORKER_BRANCH_ORPHAN branch=${branch_name} "
+	local orphan_marker_count="0"
+	orphan_marker_count=$(_ddh_count_orphan_marker_prefix "$comments_json" "$orphan_marker_prefix")
 
-	local count=0
-	local latest_iso=""
-	local marker_iso=""
-	while IFS= read -r marker_iso; do
-		[[ -n "$marker_iso" ]] || continue
-		local marker_epoch=""
-		marker_epoch=$(date -u -d "$marker_iso" +%s 2>/dev/null) ||
-			marker_epoch=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$marker_iso" +%s 2>/dev/null) ||
-			continue
-		[[ "$marker_epoch" =~ ^[0-9]+$ ]] || continue
-		if [[ $((now_epoch - marker_epoch)) -le "$window_s" ]]; then
-			count=$((count + 1))
-			latest_iso="$marker_iso"
-		fi
-	done < <(printf '%s' "$comments_json" |
-		jq -r --arg branch "$branch_name" '
-			.[][]
-			| (.body // "")
-			| select(contains("WORKER_BRANCH_ORPHAN branch=" + $branch + " "))
-			| (capture("WORKER_BRANCH_ORPHAN branch=[^ ]+ session=[^ ]+ ts=(?<ts>[^\\n ]+)")? // {})
-			| .ts // empty
-		' 2>/dev/null) || return 1
+	local pr_base_branch=""
+	pr_base_branch=$(_ddh_resolve_pr_base_branch "$repo_slug")
+	if [[ "$orphan_marker_count" -gt 0 ]] && _ddh_hold_unrecoverable_orphan_branch_if_needed \
+		"$issue_number" "$repo_slug" "$branch_name" "$worktree_path" "$pr_base_branch" \
+		"$comments_post_endpoint" "$comments_json"; then
+		return 0
+	fi
+
+	local summary="" count="0" latest_iso=""
+	summary=$(_ddh_recent_orphan_marker_summary "$comments_json" "$orphan_marker_prefix" "$window_s") || return 1
+	IFS='|' read -r count latest_iso <<<"$summary"
+	[[ "$count" =~ ^[0-9]+$ ]] || count=0
 
 	[[ "$count" -ge "$threshold" ]] || return 1
 
 	local existing_block=""
-	existing_block=$(printf '%s' "$comments_json" |
-		jq -r --arg branch "$branch_name" '
-			[.[][] | (.body // "") | select(contains("worker-branch-orphan-loop:blocked branch=" + $branch + " "))] | length
-		' 2>/dev/null) || existing_block="0"
-	[[ "$existing_block" =~ ^[0-9]+$ ]] || existing_block=0
+	existing_block=$(_ddh_count_orphan_loop_blocks "$comments_json" "$branch_name")
 
-	local pr_hint="none found"
-	local pr_line=""
-	local pr_base_branch=""
-	pr_base_branch=$(_ddh_resolve_pr_base_branch "$repo_slug")
-	pr_line=$(gh pr list --repo "$repo_slug" --head "$branch_name" --state all \
-		--json number,state,url --jq '.[0] | select(.number != null) | "#\(.number) (\(.state)) \(.url)"' 2>/dev/null || true)
-	[[ -n "$pr_line" ]] && pr_hint="$pr_line"
+	local pr_hint="$_DDH_ORPHAN_PR_HINT_NONE"
+	pr_hint=$(_ddh_orphan_branch_pr_hint "$repo_slug" "$branch_name")
 	local next_action="Open recovery PR: \`gh pr create --repo ${repo_slug} --head ${branch_name} --base ${pr_base_branch}\`" # aidevops-allow: raw-gh-wrapper
-	if [[ "$pr_hint" != "none found" ]]; then
+	if [[ "$pr_hint" != "$_DDH_ORPHAN_PR_HINT_NONE" ]]; then
 		next_action="Link, review, or merge the existing PR for this branch."
 	fi
 
 	if [[ "$existing_block" -eq 0 ]]; then
-		local diag
-		# shellcheck disable=SC2016 # Backticks are literal Markdown in this printf template.
-		diag=$(printf '<!-- ops:start -->\n<!-- worker-branch-orphan-loop:blocked branch=%s issue=%s count=%s window_s=%s -->\n## Dispatch held: repeated worker_branch_orphan\n\nThe dispatch path has seen `%s` `WORKER_BRANCH_ORPHAN` outcomes for issue #%s on branch `%s` within the last %s seconds. Dispatch is held for this same branch to avoid burning more worker attempts while preserving evidence.\n\n- Branch: `%s`\n- Latest orphan marker: `%s`\n- PR for branch: %s\n- Next action: %s\n- Next verification: `gh pr list --repo %s --head %s --state all --json number,state,url`\n\nIf no PR exists and the branch has commits, open the recovery PR against `%s`. If no commits exist to PR, remove/reset that worktree/branch so a fresh branch can dispatch.\n<!-- ops:end -->' \
-			"$branch_name" "$issue_number" "$count" "$window_s" \
-			"$count" "$issue_number" "$branch_name" "$window_s" \
-			"$branch_name" "${latest_iso:-unknown}" "$pr_hint" "$next_action" "$repo_slug" "$branch_name" "$pr_base_branch")
-		gh api "$comments_post_endpoint" \
-			--method POST \
-			--field body="$diag" \
-			>/dev/null 2>&1 || true
+		_ddh_post_orphan_loop_diagnostic "$issue_number" "$repo_slug" "$branch_name" \
+			"$count" "$window_s" "$latest_iso" "$pr_hint" "$next_action" \
+			"$pr_base_branch" "$comments_post_endpoint"
 	fi
 
 	printf 'WORKER_BRANCH_ORPHAN_LOOP_BLOCKED (issue=%s repo=%s branch=%s count=%s threshold=%s window_s=%s latest=%s pr=%s)\n' \
@@ -1039,7 +1318,8 @@ check_worker_orphan_remote_children() {
 	[[ -n "$issue_number" && -n "$repo_slug" ]] || return 1
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
 
-	local comments_post_endpoint="repos/${repo_slug}/issues/${issue_number}/comments"
+	local comments_post_endpoint=""
+	comments_post_endpoint=$(_ddh_issue_comments_endpoint "$repo_slug" "$issue_number")
 	local comments_endpoint="${comments_post_endpoint}?per_page=100"
 	local comments_json=""
 	comments_json=$(gh api --paginate --slurp "$comments_endpoint" 2>/dev/null) || return 1
@@ -2033,7 +2313,7 @@ Usage:
                                                        t2007: cost circuit breaker (exit 0=tripped, 1=under budget)
   dispatch-dedup-helper.sh sum-issue-token-spend <issue> <slug>
                                                        t2007: aggregate token spend (returns "spent|attempts")
-  dispatch-dedup-helper.sh check-orphan-loop <issue> <slug> <branch> [todo-file]
+  dispatch-dedup-helper.sh check-orphan-loop <issue> <slug> <branch> [todo-file] [worktree-path]
                                                        Hold repeated worker_branch_orphan loops or unreconciled remote children
   dispatch-dedup-helper.sh has-fix-the-fixer-label <issue> <slug>
                                                        t3077: detect the fix-the-fixer label (exit 0=labeled, 1=unlabeled).
@@ -2155,9 +2435,9 @@ main() {
 		has_open_pr "$1" "$2" "${3:-}"
 		;;
 	check-orphan-loop)
-		_require_args check-orphan-loop 3 "$#" "<issue-number> <repo-slug> <branch> [todo-file]" || return 1
-		local _ol_issue="$1" _ol_repo="$2" _ol_branch="$3" _ol_todo="${4:-}"
-		check_worker_branch_orphan_loop "$_ol_issue" "$_ol_repo" "$_ol_branch" "$_ol_todo"
+		_require_args check-orphan-loop 3 "$#" "<issue-number> <repo-slug> <branch> [todo-file] [worktree-path]" || return 1
+		local _ol_issue="$1" _ol_repo="$2" _ol_branch="$3" _ol_todo="${4:-}" _ol_worktree="${5:-}"
+		check_worker_branch_orphan_loop "$_ol_issue" "$_ol_repo" "$_ol_branch" "$_ol_todo" "$_ol_worktree"
 		;;
 	claim)
 		_require_args claim 2 "$#" "<issue-number> <repo-slug> [runner-login]" || return 1

@@ -1475,7 +1475,8 @@ Dispatching worker (deterministic).
 #
 # Args: $1 = issue number, $2 = repo slug, $3 = worker worktree branch,
 #       $4 = 1 when the branch was reused, 0 for a freshly-created branch,
-#       $5 = TODO.md path for remote-child reconciliation (optional)
+#       $5 = TODO.md path for remote-child reconciliation (optional),
+#       $6 = worker worktree path for orphan recovery probes (optional)
 # Returns: exit 0 if dispatch should be held, exit 1 if safe to continue
 #######################################
 _dlw_check_worker_branch_orphan_loop() {
@@ -1484,6 +1485,7 @@ _dlw_check_worker_branch_orphan_loop() {
 	local worker_worktree_branch="$3"
 	local worker_worktree_reused="${4:-0}"
 	local todo_file="${5:-TODO.md}"
+	local worker_worktree_path="${6:-}"
 
 	[[ "$worker_worktree_reused" == "1" ]] || return 1
 	[[ -n "$worker_worktree_branch" ]] || return 1
@@ -1492,7 +1494,7 @@ _dlw_check_worker_branch_orphan_loop() {
 	[[ -x "$dedup_helper" ]] || return 1
 
 	local orphan_loop_out=""
-	if orphan_loop_out=$("$dedup_helper" check-orphan-loop "$issue_number" "$repo_slug" "$worker_worktree_branch" "$todo_file" 2>/dev/null); then
+	if orphan_loop_out=$("$dedup_helper" check-orphan-loop "$issue_number" "$repo_slug" "$worker_worktree_branch" "$todo_file" "$worker_worktree_path" 2>/dev/null); then
 		echo "[dispatch_with_dedup] Dispatch held for #${issue_number} in ${repo_slug}: ${orphan_loop_out}" >>"$LOGFILE"
 		return 0
 	fi
@@ -1792,7 +1794,7 @@ _dispatch_launch_worker() {
 	local worker_worktree_path="$_DLW_WORKTREE_PATH"
 	local worker_worktree_branch="$_DLW_WORKTREE_BRANCH"
 	local worker_worktree_reused="${_DLW_WORKTREE_REUSED:-0}"
-	if _dlw_check_worker_branch_orphan_loop "$issue_number" "$repo_slug" "$worker_worktree_branch" "$worker_worktree_reused" "${repo_path}/TODO.md"; then
+	if _dlw_check_worker_branch_orphan_loop "$issue_number" "$repo_slug" "$worker_worktree_branch" "$worker_worktree_reused" "${repo_path}/TODO.md" "$worker_worktree_path"; then
 		return 2
 	fi
 
