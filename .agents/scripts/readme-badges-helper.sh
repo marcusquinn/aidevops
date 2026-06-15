@@ -32,6 +32,8 @@
 #   {{OWNER}}           — owner
 #   {{REPO}}            — repo
 #   {{DEFAULT_BRANCH}}  — default branch (default: main)
+#   {{HAS_ACTIONS_WORKFLOW}} — "1" when a concrete Actions workflow file is known
+#   {{ACTIONS_WORKFLOW_FILE}} — workflow file used for the native GitHub badge
 #   {{HAS_LOC_BADGE}}   — "1" if the loc-badge workflow is wired up
 #                         (presence of .github/badges/loc-total.svg or
 #                          loc-badge.yml in the repo); "" otherwise
@@ -48,6 +50,7 @@
 # Options:
 #   --branch BRANCH        Override default branch detection
 #   --template PATH        Override template location
+#   --workflow-file FILE   Override GitHub Actions workflow badge file
 #   --no-loc-badge         Force HAS_LOC_BADGE empty (skip LOC line)
 #   --has-releases 0|1     Force the "has releases" flag (skip gh probe)
 #   -h, --help             Show usage
@@ -140,6 +143,7 @@ SLUG=""
 README_PATH=""
 BRANCH_OVERRIDE=""
 TEMPLATE_OVERRIDE=""
+WORKFLOW_FILE_OVERRIDE=""
 NO_LOC_BADGE=0
 HAS_RELEASES_OVERRIDE=""
 
@@ -193,6 +197,13 @@ parse_args() {
 				TEMPLATE_OVERRIDE="$_val"
 				shift 2
 				;;
+			--workflow-file)
+				[[ $# -ge 2 ]] || die "--workflow-file requires an argument" 2
+				local _val="$2"
+				validate_workflow_file "$_val"
+				WORKFLOW_FILE_OVERRIDE="$_val"
+				shift 2
+				;;
 			--no-loc-badge)
 				NO_LOC_BADGE=1
 				shift
@@ -222,6 +233,14 @@ validate_slug() {
 	local _slug="$1"
 	if [[ ! "$_slug" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
 		die "invalid slug (expected owner/repo, got: $_slug)" 2
+	fi
+	return 0
+}
+
+validate_workflow_file() {
+	local _workflow_file="$1"
+	if [[ ! "$_workflow_file" =~ ^[A-Za-z0-9._-]+\.ya?ml$ ]]; then
+		die "invalid workflow file (expected basename ending .yml/.yaml, got: $_workflow_file)" 2
 	fi
 	return 0
 }
@@ -272,11 +291,98 @@ detect_default_branch() {
 	return 0
 }
 
+expand_repo_path() {
+	local _path="$1"
+	if [[ "${_path:0:1}" == "~" && "${_path:1:1}" == "/" ]]; then
+		printf '%s/%s' "$HOME" "${_path#~/}"
+	else
+		printf '%s' "$_path"
+	fi
+	return 0
+}
+
+detect_workflow_in_path() {
+	local _repo_path="$1"
+	[[ -n "$_repo_path" ]] || return 1
+
+	_repo_path=$(expand_repo_path "$_repo_path")
+	local _workflow_dir="$_repo_path/.github/workflows"
+	[[ -d "$_workflow_dir" ]] || return 1
+
+	local _candidate
+	local _preferred=(
+		"code-quality.yml"
+		"code-quality.yaml"
+		"ci.yml"
+		"ci.yaml"
+		"test.yml"
+		"test.yaml"
+		"tests.yml"
+		"tests.yaml"
+		"build.yml"
+		"build.yaml"
+	)
+	for _candidate in "${_preferred[@]}"; do
+		if [[ -f "$_workflow_dir/$_candidate" ]]; then
+			printf '%s' "$_candidate"
+			return 0
+		fi
+	done
+
+	local _found=""
+	local _count=0
+	for _candidate in "$_workflow_dir"/*.yml "$_workflow_dir"/*.yaml; do
+		[[ -f "$_candidate" ]] || continue
+		_count=$((_count + 1))
+		_found="${_candidate##*/}"
+	done
+
+	if [[ "$_count" -eq 1 && -n "$_found" ]]; then
+		printf '%s' "$_found"
+		return 0
+	fi
+
+	return 1
+}
+
+# Detect a concrete workflow file before rendering an Actions badge. This avoids
+# broken image badges caused by hardcoded workflow names such as "CI" when a
+# repo uses a different workflow file.
+detect_actions_workflow_file() {
+	local _slug="$1"
+	if [[ -n "$WORKFLOW_FILE_OVERRIDE" ]]; then
+		printf '%s' "$WORKFLOW_FILE_OVERRIDE"
+		return 0
+	fi
+
+	local _workflow_file=""
+	local _repo_path=""
+	if [[ -n "$README_PATH" ]]; then
+		_repo_path=$(cd "$(dirname "$README_PATH")" 2>/dev/null && pwd || dirname "$README_PATH")
+		if _workflow_file=$(detect_workflow_in_path "$_repo_path"); then
+			printf '%s' "$_workflow_file"
+			return 0
+		fi
+	fi
+
+	_repo_path=$(repos_json_lookup "$_slug" "path" "")
+	if [[ -n "$_repo_path" ]]; then
+		if _workflow_file=$(detect_workflow_in_path "$_repo_path"); then
+			printf '%s' "$_workflow_file"
+			return 0
+		fi
+	fi
+
+	printf ''
+	return 0
+}
+
 # ───────────────────────────── template render ────────────────────────────
 
 # Substitute {{KEY}} with the value of the corresponding env var (KEY must
-# match a name like SLUG / OWNER / REPO / DEFAULT_BRANCH / HAS_LOC_BADGE /
-# HAS_RELEASES / IS_FOSS). Conditional lines:
+# match a name like SLUG / OWNER / REPO / DEFAULT_BRANCH /
+# HAS_ACTIONS_WORKFLOW / ACTIONS_WORKFLOW_FILE / HAS_LOC_BADGE / HAS_RELEASES /
+# IS_FOSS). Conditional lines:
 #   "{{?KEY}}rest"   — included only if KEY is non-empty (prefix stripped)
 #   "{{!KEY}}rest"   — included only if KEY is empty (prefix stripped)
 render_template() {
@@ -289,6 +395,8 @@ render_template() {
 		-v owner="${OWNER_VAL}" \
 		-v repo="${REPO_VAL}" \
 		-v branch="${DEFAULT_BRANCH_VAL}" \
+		-v has_actions_workflow="${HAS_ACTIONS_WORKFLOW_VAL}" \
+		-v actions_workflow_file="${ACTIONS_WORKFLOW_FILE_VAL}" \
 		-v has_loc_badge="${HAS_LOC_BADGE_VAL}" \
 		-v has_releases="${HAS_RELEASES_VAL}" \
 		-v is_foss="${IS_FOSS_VAL}" \
@@ -299,6 +407,8 @@ render_template() {
 			if (k == "OWNER") return owner
 			if (k == "REPO") return repo
 			if (k == "DEFAULT_BRANCH") return branch
+			if (k == "HAS_ACTIONS_WORKFLOW") return has_actions_workflow
+			if (k == "ACTIONS_WORKFLOW_FILE") return actions_workflow_file
 			if (k == "HAS_LOC_BADGE") return has_loc_badge
 			if (k == "HAS_RELEASES") return has_releases
 			if (k == "IS_FOSS") return is_foss
@@ -361,6 +471,12 @@ prepare_render_vars() {
 	OWNER_VAL="${SLUG%%/*}"
 	REPO_VAL="${SLUG##*/}"
 	DEFAULT_BRANCH_VAL=$(detect_default_branch "$SLUG")
+	ACTIONS_WORKFLOW_FILE_VAL=$(detect_actions_workflow_file "$SLUG")
+	if [[ -n "$ACTIONS_WORKFLOW_FILE_VAL" ]]; then
+		HAS_ACTIONS_WORKFLOW_VAL="1"
+	else
+		HAS_ACTIONS_WORKFLOW_VAL=""
+	fi
 
 	# Repo metadata from repos.json (fail-soft to "")
 	local _local_only

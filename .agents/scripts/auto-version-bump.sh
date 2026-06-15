@@ -63,9 +63,9 @@ update_version_badge() {
 	local readme_file="$REPO_ROOT/README.md"
 
 	if [[ -f "$readme_file" ]]; then
-		# Skip if using dynamic GitHub release badge
+		# Dynamic GitHub-backed Shields badges can render upstream API errors in README.
 		if grep -q "img.shields.io/github/v/release" "$readme_file"; then
-			print_success "README.md uses dynamic GitHub release badge (no update needed)"
+			print_warning "README.md uses dynamic GitHub release badge; prefer static Version-$new_version badge to avoid Shields GitHub token-pool outages"
 			return 0
 		fi
 
@@ -81,7 +81,7 @@ update_version_badge() {
 				print_warning "README.md version badge exists but update failed (pattern mismatch)"
 			fi
 		else
-			print_warning "README.md has no version badge (consider adding dynamic GitHub release badge)"
+			print_warning "README.md has no version badge (consider adding static Version-$new_version badge)"
 		fi
 	fi
 	return 0
