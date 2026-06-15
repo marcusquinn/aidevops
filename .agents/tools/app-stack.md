@@ -28,6 +28,7 @@ mode: subagent
 |------|------|
 | Pick site/app platform | `app-stack/decision-matrix.md` |
 | Build a no-build website starter | `app-stack/static-site-starter.md` |
+| Define required public pages, schema, docs/API/MCP/CLI surfaces | `app-stack/public-site-surfaces.md` |
 | Design TypeScript monorepo app structure | `app-stack/monorepo-app-stack.md` |
 | Choose/shape desktop shell | `app-stack/electron-desktop.md` |
 | Model workspace tenancy/collaboration | `app-stack/workspace-model.md` |
@@ -57,7 +58,8 @@ Prefer boring, shared primitives that compound across apps:
 5. Treat metadata as product infrastructure: entity definitions, fields, layouts, views, ACL, workflows, labels, audit, jobs, import/export, API contracts, privacy, and notifications.
 6. Use `Workspace` as the data container, permission boundary, AI context boundary, and collaboration scope.
 7. Start from standard object packs: issues, labels/tags, users, teams, roles, content/pages, conversations/channels, calendar/CRM activities, files/folders, accounts, contacts, jobs/processes, quotes, invoices, payments, prices, and referrals.
-8. Keep web/CMS/site routing explicit: WordPress for editors; no-build static for plain sites; static generator only after repeated-layout/content scale proves it.
+8. Keep public surfaces explicit: `/about`, `/contact`, `/privacy`, `/terms`, docs, API, MCP, CLI, sitemap, schema, and support routes.
+9. Keep web/CMS/site routing explicit: WordPress for editors; no-build static for plain sites; static generator only after repeated-layout/content scale proves it.
 
 ## Builder interpretation rules
 
@@ -70,7 +72,7 @@ When asked to build a new app or data architecture:
 5. Preserve external sync handles for WebDAV, CalDAV, CardDAV, payment, accounting, and forge integrations.
 6. Verify one complete path: object → permission → workflow → audit → import/export or sync.
 
-Read order for full app/data design: `monorepo-app-stack.md` → `workspace-model.md` → `database-foundation.md` → `platform-kernel.md` → `operations-jobs-scheduling.md` → `api-service-contracts.md` → `identity-security-lifecycle.md` → `data-protection-sync-scale.md` → `data-history-relationships.md` → `standard-objects.md` → `rbac-permissions.md` → `workflow-architecture.md` → `metadata-architecture.md` → `migration-layout.md`.
+Read order for full app/data design: `monorepo-app-stack.md` → `public-site-surfaces.md` → `workspace-model.md` → `database-foundation.md` → `platform-kernel.md` → `operations-jobs-scheduling.md` → `api-service-contracts.md` → `identity-security-lifecycle.md` → `data-protection-sync-scale.md` → `data-history-relationships.md` → `standard-objects.md` → `rbac-permissions.md` → `workflow-architecture.md` → `metadata-architecture.md` → `migration-layout.md`.
 
 ## Related docs
 

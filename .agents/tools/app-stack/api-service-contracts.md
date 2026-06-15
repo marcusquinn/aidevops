@@ -64,6 +64,15 @@ Rules:
 - Outbound webhooks use `outbox_events`, retry/backoff, delivery logs, and operator replay controls.
 - Webhook payloads use public contract DTOs, not internal table shape.
 
+## Public developer surfaces
+
+- `/api` explains API status, base URLs, auth, versioning, rate limits, SDKs, schemas, and support.
+- API reference should be generated from OpenAPI/RPC metadata when possible; prose docs cover concepts and examples.
+- `/mcp` documents MCP server URL, tool catalog, auth/scopes, safety rules, and agent examples when an MCP server exists.
+- `/cli` documents CLI install, auth, command groups, examples, updates, and support when a CLI exists.
+- MCP and CLI integrations use the same service contracts, permissions, audit, rate limits, and idempotency rules as the API.
+- Keep `/api`, `/mcp`, and `/cli` stable even if they redirect to docs sections.
+
 ## Package defaults
 
 - `packages/api` owns route adapters, transport-specific middleware, API DTOs, and OpenAPI/RPC metadata.
@@ -76,4 +85,5 @@ Rules:
 - Trace one list route through filter validation, RLS/RBAC, cursor pagination, field expansion, and response DTO.
 - Trace one mutation through idempotency key, validation, service call, audit event, outbox/job enqueue, and response.
 - Trace one webhook from signature validation to persisted event, dedupe, job processing, retry, and delivery log.
+- Confirm `/api`, `/mcp`, and `/cli` pages match implemented endpoints, tools, auth, scopes, and examples.
 - Confirm errors are stable, documented, retry-aware, and do not leak internals or secrets.
