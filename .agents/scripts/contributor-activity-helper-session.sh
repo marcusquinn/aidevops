@@ -98,6 +98,8 @@ _session_time_detect_wrapper_db_paths() {
 	local work_dir="${AIDEVOPS_WORK_DIR:-${HOME}/.aidevops/.agent-workspace/work}"
 	local candidate
 
+	[[ -d "${work_dir}/opencode-interactive" ]] || return 0
+
 	for candidate in "${work_dir}"/opencode-interactive/*/opencode/opencode.db; do
 		[[ -f "$candidate" ]] || continue
 		printf '%s\n' "$candidate"
