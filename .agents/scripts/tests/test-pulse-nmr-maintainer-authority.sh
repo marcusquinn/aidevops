@@ -36,6 +36,8 @@ setup_test_env() {
 	export REPOS_JSON="${TEST_ROOT}/repos.json"
 	export POSTED_COMMENT="${TEST_ROOT}/posted-comment.txt"
 	export ISSUE_ASSOC="OWNER"
+	export ISSUE_API_AUTHOR="maintainer"
+	export ISSUE_LIST_AUTHOR="maintainer"
 	export ACTOR_PERMISSION="write"
 	: >"$LOGFILE"
 	: >"$POSTED_COMMENT"
@@ -70,7 +72,7 @@ if [[ "${1:-}" == "api" ]]; then
 		exit 0
 	fi
 	if [[ "$path" == */issues/24479 ]]; then
-		printf '{"user":{"login":"maintainer"},"author_association":"%s","labels":[]}\n' "${ISSUE_ASSOC:-NONE}"
+		printf '{"user":{"login":"%s"},"author_association":"%s","labels":[]}\n' "${ISSUE_API_AUTHOR:-maintainer}" "${ISSUE_ASSOC:-NONE}"
 		exit 0
 	fi
 	if [[ "$path" == */timeline ]]; then
@@ -103,7 +105,7 @@ teardown_test_env() {
 }
 
 gh_issue_list() {
-	printf '[{"number":24479,"author":{"login":"maintainer"}}]\n'
+	printf '[{"number":24479,"author":{"login":"%s"}}]\n' "${ISSUE_LIST_AUTHOR:-maintainer}"
 	return 0
 }
 export -f gh_issue_list
@@ -144,6 +146,21 @@ test_blocks_none_author_association() {
 	return 0
 }
 
+test_blocks_external_author_even_with_nmr_automation() {
+	setup_test_env
+	export ISSUE_LIST_AUTHOR="external-contributor"
+	export ISSUE_API_AUTHOR="external-contributor"
+	export ISSUE_ASSOC="NONE"
+	run_auto_approve
+	if [[ ! -s "$POSTED_COMMENT" ]]; then
+		print_result "auto-approval blocks non-maintainer issue author with NMR" 0
+	else
+		print_result "auto-approval blocks non-maintainer issue author with NMR" 1 "unexpected approval comment"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_blocks_actor_without_write_permission() {
 	setup_test_env
 	export ISSUE_ASSOC="OWNER"
@@ -174,6 +191,7 @@ test_allows_owner_author_with_write_permission() {
 
 main() {
 	test_blocks_none_author_association
+	test_blocks_external_author_even_with_nmr_automation
 	test_blocks_actor_without_write_permission
 	test_allows_owner_author_with_write_permission
 	printf '\nTests run: %d\n' "$TESTS_RUN"

@@ -148,12 +148,15 @@ set_timeline() {
 # Extract helpers from the source file. Same awk-extract-and-eval
 # pattern used by the force-dispatch and bot-cleanup test suites.
 define_helpers_under_test() {
-	local sig_src breaker_src sort_src current_src retry_src maint_src
+	local sig_src breaker_src security_src sort_src current_src retry_src maint_src
 	sig_src=$(awk '
 		/^_nmr_application_has_automation_signature\(\) \{/,/^}$/ { print }
 	' "$NMR_SCRIPT")
 	breaker_src=$(awk '
 		/^_nmr_application_is_circuit_breaker_trip\(\) \{/,/^}$/ { print }
+	' "$NMR_SCRIPT")
+	security_src=$(awk '
+		/^_nmr_application_is_security_sensitive\(\) \{/,/^}$/ { print }
 	' "$NMR_SCRIPT")
 	sort_src=$(awk '
 		/^_nmr_version_sort_key\(\) \{/,/^}$/ { print }
@@ -167,7 +170,7 @@ define_helpers_under_test() {
 	maint_src=$(awk '
 		/^_nmr_applied_by_maintainer\(\) \{/,/^}$/ { print }
 	' "$NMR_SCRIPT")
-	if [[ -z "$sig_src" || -z "$breaker_src" || -z "$sort_src" || -z "$current_src" || -z "$retry_src" || -z "$maint_src" ]]; then
+	if [[ -z "$sig_src" || -z "$breaker_src" || -z "$security_src" || -z "$sort_src" || -z "$current_src" || -z "$retry_src" || -z "$maint_src" ]]; then
 		printf 'ERROR: could not extract one of the NMR helpers from %s\n' "$NMR_SCRIPT" >&2
 		return 1
 	fi
@@ -175,6 +178,8 @@ define_helpers_under_test() {
 	eval "$sig_src"
 	# shellcheck disable=SC1090
 	eval "$breaker_src"
+	# shellcheck disable=SC1090
+	eval "$security_src"
 	# shellcheck disable=SC1090
 	eval "$sort_src"
 	# shellcheck disable=SC1090
@@ -487,6 +492,41 @@ test_breaker_trip_empty_args_returns_nonzero() {
 	return 0
 }
 
+# --- _nmr_application_is_security_sensitive (security review boundary) ---
+
+test_security_sensitive_detects_security_label() {
+	set_issue_meta '{"labels":[{"name":"needs-maintainer-review"},{"name":"security"},{"name":"source:review-feedback"}]}'
+	if _nmr_application_is_security_sensitive 24841 marcusquinn/aidevops; then
+		print_result "security_sensitive detects security label" 0
+		return 0
+	fi
+	print_result "security_sensitive detects security label" 1 \
+		"Expected exit 0 — security label must preserve NMR"
+	return 0
+}
+
+test_security_sensitive_detects_security_review_label() {
+	set_issue_meta '{"labels":[{"name":"needs-maintainer-review"},{"name":"security-review"}]}'
+	if _nmr_application_is_security_sensitive 24842 marcusquinn/aidevops; then
+		print_result "security_sensitive detects security-review label" 0
+		return 0
+	fi
+	print_result "security_sensitive detects security-review label" 1 \
+		"Expected exit 0 — security-review label must preserve NMR"
+	return 0
+}
+
+test_security_sensitive_ignores_non_security_labels() {
+	set_issue_meta '{"labels":[{"name":"needs-maintainer-review"},{"name":"source:review-feedback"},{"name":"quality-debt"}]}'
+	if _nmr_application_is_security_sensitive 24843 marcusquinn/aidevops; then
+		print_result "security_sensitive ignores non-security labels" 1 \
+			"Expected exit 1 — normal review-feedback issues can still use creation-default auto-approval"
+		return 0
+	fi
+	print_result "security_sensitive ignores non-security labels" 0
+	return 0
+}
+
 # --- _nmr_applied_by_maintainer end-to-end (#19756 loop regression) ---
 
 test_19756_loop_prevention_breaker_trip_preserves_nmr() {
@@ -524,6 +564,22 @@ test_scanner_default_still_auto_approves() {
 	return 0
 }
 
+test_security_review_feedback_preserves_nmr() {
+	# Security-labelled review-feedback issues are still automation-created, but
+	# the security label makes NMR a real approval boundary. Without this guard,
+	# source:review-feedback would be treated as a creation default and cleared.
+	set_timeline '[{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"marcusquinn"},"created_at":"2026-06-15T18:00:00Z"}]'
+	set_comments '[]'
+	set_issue_meta '{"labels":[{"name":"needs-maintainer-review"},{"name":"source:review-feedback"},{"name":"security"}],"created_at":"2026-06-15T17:59:57Z"}'
+	if _nmr_applied_by_maintainer 24841 marcusquinn/aidevops marcusquinn; then
+		print_result "security review-feedback issue preserves NMR" 0
+		return 0
+	fi
+	print_result "security review-feedback issue preserves NMR" 1 \
+		"Expected exit 0 — security findings require cryptographic approval, not auto-clear"
+	return 0
+}
+
 test_manual_hold_still_preserves_nmr() {
 	# No signature of any kind — genuine manual hold. Must preserve NMR.
 	set_timeline '[{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"marcusquinn"},"created_at":"2026-04-19T05:00:00Z"}]'
@@ -538,18 +594,21 @@ test_manual_hold_still_preserves_nmr() {
 	return 0
 }
 
-test_non_maintainer_actor_auto_approves() {
-	# Someone other than the maintainer applied NMR → not a manual hold
-	# by the maintainer, so auto-approve is OK (return 1).
+test_non_maintainer_label_actor_is_not_manual_maintainer_hold() {
+	# This helper only classifies the latest NMR label event, not issue-author
+	# trust. A non-maintainer label actor is not a manual hold by the configured
+	# maintainer, so the helper returns 1. `auto_approve_maintainer_issues` still
+	# separately requires the issue AUTHOR to be the maintainer (or a crypto
+	# approval) before it can clear NMR.
 	set_timeline '[{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"external-contributor"},"created_at":"2026-04-19T05:00:00Z"}]'
 	set_comments '[]'
 	set_issue_meta '{"labels":[{"name":"needs-maintainer-review"}]}'
 	if _nmr_applied_by_maintainer 99 marcusquinn/aidevops marcusquinn; then
-		print_result "non-maintainer actor → auto-approve OK" 1 \
+		print_result "non-maintainer label actor is not manual maintainer hold" 1 \
 			"Expected exit 1 — non-maintainer actor is not a manual hold"
 		return 0
 	fi
-	print_result "non-maintainer actor → auto-approve OK" 0
+	print_result "non-maintainer label actor is not manual maintainer hold" 0
 	return 0
 }
 
@@ -684,11 +743,17 @@ main() {
 	test_breaker_trip_ignores_marker_outside_window
 	test_breaker_trip_empty_args_returns_nonzero
 
+	# _nmr_application_is_security_sensitive (security review boundary)
+	test_security_sensitive_detects_security_label
+	test_security_sensitive_detects_security_review_label
+	test_security_sensitive_ignores_non_security_labels
+
 	# _nmr_applied_by_maintainer end-to-end (#19756 loop regression)
 	test_19756_loop_prevention_breaker_trip_preserves_nmr
 	test_scanner_default_still_auto_approves
+	test_security_review_feedback_preserves_nmr
 	test_manual_hold_still_preserves_nmr
-	test_non_maintainer_actor_auto_approves
+	test_non_maintainer_label_actor_is_not_manual_maintainer_hold
 	test_peer_runner_breaker_trip_preserves_nmr
 	test_paginated_timeline_latest_nmr_event_preserves_breaker_trip
 	test_release_upgrade_allows_rate_limit_breaker_retry

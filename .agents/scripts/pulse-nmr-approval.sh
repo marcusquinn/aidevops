@@ -23,6 +23,7 @@
 #   - issue_was_ever_nmr
 #   - issue_has_required_approval
 #   - _nmr_applied_by_maintainer
+#   - _nmr_application_is_security_sensitive
 #   - notify_ever_nmr_without_approval
 #   - _find_qualifying_pr_for_stale_recovery
 #   - _notify_stale_recovery_resolved_by_pr
@@ -464,6 +465,54 @@ _nmr_application_is_circuit_breaker_trip() {
 }
 
 #######################################
+# Check whether an NMR issue is security-sensitive.
+#
+# Security-labelled work must not be auto-cleared by the generic
+# creation-default path. The NMR label is the human review gate for findings
+# involving credentials, auth, approval/merge gates, supply chain, and similar
+# security boundaries. A scanner provenance marker proves automation created
+# the issue; it does not prove the recommended remediation is safe to dispatch.
+#
+# <!-- aidevops:trust-boundary -->
+# Treat the public `security` and `security-review` labels as authoritative
+# current-state holds. Once present, NMR requires cryptographic approval instead
+# of maintainer auto-approval.
+#
+# Args:
+#   $1 - issue_num  : GitHub issue number
+#   $2 - slug       : repo slug (owner/repo)
+#
+# Exit codes:
+#   0 - security-sensitive label present (NMR must be preserved)
+#   1 - no security-sensitive label found
+#######################################
+_nmr_application_is_security_sensitive() {
+	local issue_num="$1"
+	local slug="$2"
+
+	[[ -n "$issue_num" && -n "$slug" ]] || return 1
+
+	local issue_meta_json
+	local issue_api_path
+	printf -v issue_api_path 'repos/%s/issues/%s' "$slug" "$issue_num"
+	issue_meta_json=$(gh api "$issue_api_path" 2>/dev/null) || issue_meta_json=""
+	[[ -n "$issue_meta_json" ]] || return 1
+
+	local has_security_label
+	has_security_label=$(printf '%s' "$issue_meta_json" \
+		| jq --arg security_label 'security' --arg security_review_label 'security-review' \
+			'[(.labels // [])[].name] | map(select(. == $security_label or . == $security_review_label)) | length' \
+			2>/dev/null) || has_security_label=0
+	[[ "$has_security_label" =~ ^[0-9]+$ ]] || has_security_label=0
+
+	if [[ "$has_security_label" -gt 0 ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
 # Convert a dotted version string into a sortable zero-padded key.
 #
 # Args:
@@ -607,13 +656,15 @@ _nmr_breaker_release_retry_reason() {
 #   1. Human maintainer clicks the label (manual hold)
 #   2. Pulse scanner applies default NMR at creation (auto-clear OK)
 #   3. Circuit breaker trips (t2007 cost / t2008 stale) — MUST preserve
+#   4. Security-sensitive automation applies NMR — MUST preserve
 #
-# Cases 1 and 3 are both "preserve NMR" (return 0); case 2 is
-# "auto-clear OK" (return 1). The split is driven by the two companion
-# helpers `_nmr_application_has_automation_signature` (creation
-# defaults) and `_nmr_application_is_circuit_breaker_trip` (breaker
-# trips). See t2386 brief for the #19756 infinite-loop incident that
-# motivated the split.
+# Cases 1, 3, and 4 are "preserve NMR" (return 0); case 2 is
+# "auto-clear OK" (return 1). The split is driven by companion helpers:
+# `_nmr_application_has_automation_signature` (creation defaults),
+# `_nmr_application_is_circuit_breaker_trip` (breaker trips), and
+# `_nmr_application_is_security_sensitive` (security review boundary).
+# See t2386 brief for the #19756 infinite-loop incident that motivated
+# the automation split.
 #
 # Arguments:
 #   $1 - issue_num  : GitHub issue number
@@ -671,6 +722,11 @@ _nmr_applied_by_maintainer() {
 			_notify_stale_recovery_resolved_by_pr "$issue_num" "$slug" "$nmr_at" || true
 			return 0
 		fi
+	fi
+
+	if _nmr_application_is_security_sensitive "$issue_num" "$slug"; then
+		echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — security-sensitive label present — PRESERVING NMR, requires 'sudo aidevops approve issue ${issue_num} ${slug}'" >>"$LOGFILE"
+		return 0
 	fi
 
 	if [[ "$nmr_actor" != "$maintainer" ]]; then
