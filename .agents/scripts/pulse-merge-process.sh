@@ -684,6 +684,53 @@ _attempt_pr_ci_rebase_retry() {
 }
 
 #######################################
+# Update an already-auto-merge-enabled PR that is otherwise green but behind.
+#
+# GitHub native auto-merge does not merge a PR while mergeStateStatus=BEHIND;
+# it waits for the branch to be updated first. Pulse used to defer forever once
+# autoMergeRequest was present because _set_native_auto_merge_or_skip treated
+# every existing auto-merge request as GitHub-owned unless it was BLOCKED+stuck.
+#
+# Caller must have already passed maintainer/review/security gates and stopped
+# DRY_RUN before invoking because this helper performs a GitHub write.
+#
+# Returns 0 if update-branch succeeded and caller should defer to the next
+# cycle; 1 if no update was needed or update-branch failed.
+# GH#24839 / GH#24840
+#######################################
+_attempt_existing_auto_merge_behind_update_branch() {
+	local pr_number="$1"
+	local repo_slug="$2"
+
+	local _pr_state=""
+	_pr_state=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$pr_number" --repo "$repo_slug" \
+		--json autoMergeRequest,mergeStateStatus,mergeable 2>/dev/null) || _pr_state=""
+	[[ -n "$_pr_state" ]] || return 1
+
+	local _existing_auto="" _merge_state="" _mergeable=""
+	IFS=$'\t' read -r _existing_auto _merge_state _mergeable <<<"$(printf '%s' "$_pr_state" \
+		| jq -r '[if .autoMergeRequest then "present" else "" end, .mergeStateStatus // "", .mergeable // ""] | @tsv' \
+		|| true)"
+	_pmp_normalize_mergeable_state_into _mergeable "$_mergeable"
+
+	[[ -n "$_existing_auto" ]] || return 1
+	[[ "$_merge_state" == BEHIND ]] || return 1
+	[[ "$_mergeable" == MERGEABLE ]] || return 1
+	_check_required_checks_passing "$repo_slug" "$pr_number" >/dev/null 2>&1 || return 1
+
+	local _ub_output="" _ub_exit=0
+	_ub_output=$(gh pr update-branch "$pr_number" --repo "$repo_slug" 2>&1)
+	_ub_exit=$?
+	if [[ $_ub_exit -eq 0 ]]; then
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge is green but BEHIND — update-branch succeeded, deferring to next cycle (GH#24839)" >>"$LOGFILE"
+		return 0
+	fi
+
+	echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge is green but BEHIND — update-branch failed, falling through: ${_ub_output}" >>"$LOGFILE"
+	return 1
+}
+
+#######################################
 # Route a PR to the appropriate fix worker based on origin label and kind.
 #
 # Consolidates the shared routing pattern used by the review, conflict, and CI

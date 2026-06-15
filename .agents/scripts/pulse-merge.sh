@@ -998,6 +998,14 @@ _process_single_ready_pr() {
 		return 0
 	fi
 
+	# GH#24839/GH#24840: existing native auto-merge requests can wedge when
+	# GitHub reports MERGEABLE+BEHIND with all required checks green. Update the
+	# branch before the t3070 native-auto defer path, otherwise pulse keeps
+	# waiting for GitHub to do work that GitHub requires a branch update for.
+	if _attempt_existing_auto_merge_behind_update_branch "$pr_number" "$repo_slug"; then
+		return 1
+	fi
+
 	# Approve (satisfies REVIEW_REQUIRED for collaborator PRs)
 	approve_collaborator_pr "$pr_number" "$repo_slug" "$pr_author" 2>/dev/null || true
 	if ! _check_ruleset_required_reviews_passing "$repo_slug" "$pr_number" "$pr_author"; then
