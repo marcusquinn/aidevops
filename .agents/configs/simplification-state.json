@@ -2238,9 +2238,9 @@
       "pr": 16879
     },
     ".agents/scripts/dispatch-dedup-helper.sh": {
-      "at": "2026-06-14T20:35:43Z",
-      "hash": "26d387e55270dc737ee72dc5b1f414258f5d46b1",
-      "passes": 40,
+      "at": "2026-06-15T05:25:23Z",
+      "hash": "00cf51c08ddc608ea2e255af38dfb32fb0398ad3",
+      "passes": 41,
       "pr": 18917
     },
     ".agents/scripts/email-agent-helper.sh": {
@@ -2592,9 +2592,9 @@
       "pr": 15905
     },
     ".agents/scripts/validate-version-consistency.sh": {
-      "at": "2026-04-19T00:33:37Z",
-      "hash": "b8732445aa340861f77e600812c5e6f4c544982c",
-      "passes": 2,
+      "at": "2026-06-15T05:25:41Z",
+      "hash": "300a11cc9ce6bb3a3920c5722278ae3d2698dad2",
+      "passes": 3,
       "pr": 17537
     },
     ".agents/scripts/verify-issue-close-helper.sh": {
@@ -7480,21 +7480,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-06-14T05:33:09Z",
-      "hash": "192f77baa0ca1fd2182cc63c3d3a0010db01ed1a",
-      "passes": 151,
+      "at": "2026-06-15T06:08:14Z",
+      "hash": "f8cda75690095fec78a682f0db2ff4028670d2c4",
+      "passes": 152,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-06-15T00:40:50Z",
-      "hash": "979a8c8a95e231577f564faedba39aef878a5e56",
-      "passes": 231,
+      "at": "2026-06-15T06:08:16Z",
+      "hash": "c63b4cd8143a9a0a2c82ee0c484636442ef4e8d1",
+      "passes": 232,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-06-15T00:40:50Z",
-      "hash": "c88a26a2b635bba1d6067aa548bb5ed6a743b7c3",
-      "passes": 227,
+      "at": "2026-06-15T06:08:17Z",
+      "hash": "160c82fa8ed107db0b9fca3c57017bc7b1061710",
+      "passes": 228,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7768,10 +7768,10 @@
       "passes": 7
     },
     ".agents/scripts/pulse-dispatch-worker-launch.sh": {
-      "hash": "60831cb8afb308bd096e1950f3369c2179723af0",
-      "at": "2026-06-10T18:12:20Z",
+      "hash": "a836df731c660a6f3ca446ab01d0aa7b0f049bdd",
+      "at": "2026-06-15T05:25:31Z",
       "pr": 20617,
-      "passes": 30
+      "passes": 31
     },
     ".agents/reference/dispatch-blockers.md": {
       "hash": "f851df78931bea90695c3a46e9c95f98a6c03d9a",
@@ -7822,10 +7822,10 @@
       "passes": 2
     },
     ".agents/aidevops/badges.md": {
-      "hash": "3b48edd5b95ced7d1b351bbc851e1c4182734b58",
-      "at": "2026-06-08T01:39:38Z",
+      "hash": "faf128daabb80c48f501b914409d8a946eb6559c",
+      "at": "2026-06-15T05:15:32Z",
       "pr": 20995,
-      "passes": 4
+      "passes": 5
     },
     ".agents/scripts/commands/setup-git.md": {
       "hash": "d5ea8af8dae571ad7371e5131d23fe22173adedb",
