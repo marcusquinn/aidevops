@@ -32,6 +32,33 @@ Use separate tables only when the subtype needs distinct validation, lifecycle, 
 
 For cross-object relationships, default to generic link tables with `entity_type` and `entity_id`. Use typed join tables only for high-volume, referentially critical, permission-critical, or heavily indexed relationships.
 
+## Slugs, routes, and hierarchy
+
+Use stable IDs for identity. Use slugs and routes for human-readable addressing.
+
+| Concept | Standard meaning |
+|---------|------------------|
+| `slug` | URL-safe local segment or human-readable key, e.g. `about-us`; not a primary key and not necessarily a full path |
+| `path` | Full route/permalink path, e.g. `/company/about-us` |
+| `routes` / `content_routes` | URL ownership, canonical target, redirects, previews, locale, and publication state |
+| `parent_id` | Single-parent hierarchy for pages, folders, terms, menu items, issues, teams, or accounts when needed |
+| `sort_order` | Sibling ordering within the same parent/container |
+
+Slug rules:
+
+- Do not use slugs as primary keys. Store stable IDs and treat slugs as mutable display/routing fields.
+- Scope slug uniqueness by workspace plus parent/container plus locale/type, e.g. `(workspace_id, parent_id, slug, locale)`.
+- Preserve old slugs as redirect rows when public URLs change.
+- Use `slug` for a segment; use `path` on `routes` for the full permalink.
+
+Hierarchy rules:
+
+- Default to an adjacency list: nullable `parent_id`, `sort_order`, and a cycle-prevention check in application/service code.
+- Add `depth`, `path`, or materialized-path/cache columns only for fast breadcrumbs, URL generation, tree queries, or sync.
+- Add closure tables such as `term_ancestors` or `folder_ancestors` only for deep trees, inherited permissions, or high-volume ancestor queries.
+- Parent-child hierarchy is not permission inheritance unless the product explicitly defines inheritance and tests it.
+- Use assignment/link tables instead of `parent_id` for many-to-many grouping.
+
 ## Universal labels and tags
 
 Every durable object type should be label/tag capable unless there is a deliberate product reason not to expose it.
@@ -82,7 +109,8 @@ WordPress concept mapping:
 |-------------------|------------------|
 | Post type | `content_types` |
 | Post/page/custom post record | `content_entries` |
-| Page URL/permalink | `routes` or `content_routes` |
+| Slug/post name | `slug` field scoped to parent/container/locale/type |
+| Page URL/permalink | `routes` or `content_routes` with full `path` |
 | Revisions | `content_revisions` |
 | Blocks/patterns | `content_blocks` |
 | Categories/tags/custom taxonomies | `taxonomies`, `terms`, `term_assignments` |
@@ -98,9 +126,9 @@ Core model:
 | `content_entries` | Typed content record with title, slug, status, owner, locale, dates, summary/body |
 | `content_revisions` | Immutable revisions with editor, diff/source snapshot, reason, publish metadata |
 | `content_blocks` | Structured page sections or rich-content blocks ordered within an entry/revision |
-| `routes` / `content_routes` | URL path, canonical target, redirects, locale, route status |
+| `routes` / `content_routes` | Full URL path/permalink, local slug/segment when useful, parent route, canonical target, redirects, locale, route status |
 | `taxonomies` | Content classification vocabularies such as category, tag, topic, audience; hierarchical or flat |
-| `terms` | Values inside a taxonomy, e.g. News, AI, Developers |
+| `terms` | Values inside a taxonomy, e.g. News, AI, Developers; hierarchical terms use `parent_id` |
 | `term_assignments` | Entry-to-term assignments with sort/context metadata |
 | `menus` / `menu_items` | Navigation structures independent of content storage |
 | `seo_metadata` | Title, description, robots, canonical URL, social cards, structured-data hints |
@@ -108,7 +136,8 @@ Core model:
 Rules:
 
 - Pages and posts are content entries with different `content_type` values by default; use separate tables only for distinct lifecycle, validation, or performance needs.
-- Use `routes` for URL ownership so slugs, redirects, previews, and localized routes do not become hidden fields on unrelated tables.
+- Use `routes` for URL ownership so full paths, redirects, previews, and localized routes do not become hidden fields on unrelated tables.
+- Use `slug` for the local content or route segment; use route `path` for the full permalink.
 - Use workflows for draft/review/approved/published/archived lifecycles; labels can mirror editorial status but are not the source of truth.
 - Use files/file links for media assets; do not create a separate media-blob system for content.
 - Use metadata field definitions when content types are editor-configurable; use migrations for core product content tables.

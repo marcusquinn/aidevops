@@ -100,5 +100,5 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 - Draw the object graph before writing migrations.
 - Identify every table's workspace boundary and RLS policy.
 - Confirm `accounts` and `contacts` cover imported synonyms before adding new party/person tables.
-- Confirm issues, content/pages, conversations/channels/chats, workflows/approvals, calendar/CRM activities, WebDAV-style files/folders, CardDAV-style contacts/address books, labels/tags, users, teams, roles, prices, quotes, invoices, payments, credits, and refunds are either implemented or intentionally out of scope.
+- Confirm issues, content/pages, slugs/routes, parent-child hierarchy, conversations/channels/chats, workflows/approvals, calendar/CRM activities, WebDAV-style files/folders, CardDAV-style contacts/address books, labels/tags, users, teams, roles, prices, quotes, invoices, payments, credits, and refunds are either implemented or intentionally out of scope.
 - Run Drizzle generate/migrate checks and inspect generated SQL.
