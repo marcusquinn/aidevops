@@ -410,6 +410,15 @@ _init_scaffold_design_md() {
 	return 0
 }
 
+_repo_registration_maintainer() {
+	local maintainer=""
+	if command -v gh &>/dev/null; then
+		maintainer=$(gh api user --jq '.login' 2>/dev/null) || maintainer=""
+	fi
+	printf '%s\n' "$maintainer"
+	return 0
+}
+
 # Register a repo in repos.json
 # Usage: register_repo <path> <version> <features>
 register_repo() {
@@ -455,27 +464,20 @@ register_repo() {
 		fi
 	fi
 
-	# Auto-detect maintainer from gh API (current authenticated user)
-	# Only runs once per registration — preserved on subsequent updates
 	local maintainer=""
-	if command -v gh &>/dev/null; then
-		maintainer=$(gh api user --jq '.login' 2>/dev/null) || maintainer=""
-	fi
+	maintainer=$(_repo_registration_maintainer)
 
 	local DEFAULT_PULSE="false"
 	local DEFAULT_PRIORITY=""
 	eval "$(_compute_repo_registration_defaults "$repo_path" "$slug" "$is_local_only" "$maintainer")"
 
-	# Infer default init_scope; pass is_local_only (already computed) to skip redundant I/O
 	local default_init_scope
 	default_init_scope=$(_infer_init_scope "$repo_path" "$is_local_only")
 
 	local has_interface
 	has_interface=$(_repo_config_has_interface_value "$repo_path")
 
-	# Check if repo already registered
 	if jq -e --arg path "$repo_path" '.initialized_repos[] | select(.path == $path)' "$REPOS_FILE" &>/dev/null; then
-		# Update existing entry, preserving pulse/priority/local_only/maintainer/init_scope if already set
 		local temp_file="${REPOS_FILE}.tmp"
 		jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
 			--arg slug "$slug" --argjson local_only "$is_local_only" --arg maintainer "$maintainer" \
@@ -493,7 +495,6 @@ register_repo() {
 			)' \
 			"$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
 	else
-		# Add new entry with slug, defaults, maintainer, and init_scope
 		local temp_file="${REPOS_FILE}.tmp"
 		jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
 			--arg slug "$slug" --arg maintainer "$maintainer" \
