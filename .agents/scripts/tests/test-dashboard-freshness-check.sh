@@ -192,7 +192,9 @@ run_scan_with_stubs() {
 	local extra_env="${3:-}"
 	local alert_kind="${4:-stale}"
 	local gh_calls="${TMP}/gh-calls.log"
+	local alert_body_capture="${TMP}/alert-body.md"
 	: >"$gh_calls"
+	: >"$alert_body_capture"
 
 	# Reset last-scan marker so cadence gate doesn't suppress unless the
 	# test explicitly sets DASHBOARD_FRESHNESS_SCAN_INTERVAL high.
@@ -207,6 +209,7 @@ run_scan_with_stubs() {
 		BODY_FIXTURE="$body_file" \
 		ALERT_EXISTS="$alert_exists" \
 		ALERT_KIND="$alert_kind" \
+		ALERT_BODY_CAPTURE="$alert_body_capture" \
 		EXTRA_ENV="$extra_env" \
 		SCANNER_PATH="$SCANNER" \
 		bash -c '
@@ -264,6 +267,18 @@ run_scan_with_stubs() {
 								return 0
 								;;
 							create)
+								local prev=""
+								local body_path=""
+								for arg in "$@"; do
+									if [[ "$prev" == "--body-file" ]]; then
+										body_path="$arg"
+										break
+									fi
+									prev="$arg"
+								done
+								if [[ -n "$body_path" && -f "$body_path" ]]; then
+									cp "$body_path" "$ALERT_BODY_CAPTURE"
+								fi
 								printf "https://example.invalid/test/repo/issues/99\n"
 								return 0
 								;;
@@ -304,6 +319,20 @@ if grep -q 'review-followup' "$calls_file" \
 	pass "alert labelled review-followup + priority:high"
 else
 	fail "alert labelling" "calls:\n$(cat "$calls_file")"
+fi
+
+alert_body="${TMP}/alert-body.md"
+home_marker='~'
+if grep -q 'macOS / launchd:' "$alert_body" \
+	&& grep -q 'launchctl list | grep -i aidevops-stats-wrapper' "$alert_body" \
+	&& grep -q 'Linux / systemd user timers:' "$alert_body" \
+	&& grep -q 'systemctl --user status aidevops-stats-wrapper.service --no-pager' "$alert_body" \
+	&& grep -q "systemctl --user list-timers --all --no-pager 'aidevops\*'" "$alert_body" \
+	&& grep -q "${home_marker}/.config/systemd/user/aidevops-stats-wrapper\.\*" "$alert_body" \
+	&& grep -q 'Linux missing or inactive systemd timer' "$alert_body"; then
+	pass "alert body includes macOS launchd and Linux systemd remediation"
+else
+	fail "alert body scheduler remediation" "body:\n$(cat "$alert_body")"
 fi
 
 # ---------------------------------------------------------------------------
