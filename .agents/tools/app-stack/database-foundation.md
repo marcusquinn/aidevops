@@ -38,6 +38,7 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 ### Collaboration and work pack
 
 - `issues` with forge-compatible fields: title, body, state, type, priority, assignee, labels, milestones, parent/related issues, external provider IDs.
+- Content: content types, entries, pages/routes, revisions, blocks, taxonomies, terms, menus, redirects, SEO metadata.
 - Conversations: conversation groups, channel/direct/group/entity conversation types, messages, threads, reactions, mentions, read receipts, attachments.
 - Calendar/CRM activities: calendar collections, activity types such as calls/meetings/tasks, participants, alarms/reminders, recurrence, calendar/timeline links.
 - Workflows: definitions, states, transitions, guards, actions, runs/events, timers, decisions, approvals.
@@ -60,6 +61,7 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 - CRM: leads, opportunities, campaigns, cases, referrers, referrals.
 - Commercial: products/items, services, prices, price lists, discount/voucher codes, quotes/estimates, orders.
 - Accounting: invoices, pro-forma invoices, credit notes, bills, payments, refund payments, payment allocations, `ledger_accounts` / `chart_accounts`, ledger entries, tax codes.
+- Content/editorial: content entries, publishing workflows, navigation, taxonomies, forms, search indexes.
 - Inventory: items, stock movements, locations.
 - Projects: projects, tasks, milestones, time entries.
 - Collaboration: threads, decisions, approvals.
@@ -98,5 +100,5 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 - Draw the object graph before writing migrations.
 - Identify every table's workspace boundary and RLS policy.
 - Confirm `accounts` and `contacts` cover imported synonyms before adding new party/person tables.
-- Confirm issues, conversations/channels/chats, workflows/approvals, calendar/CRM activities, WebDAV-style files/folders, CardDAV-style contacts/address books, labels/tags, users, teams, roles, prices, quotes, invoices, payments, credits, and refunds are either implemented or intentionally out of scope.
+- Confirm issues, content/pages, conversations/channels/chats, workflows/approvals, calendar/CRM activities, WebDAV-style files/folders, CardDAV-style contacts/address books, labels/tags, users, teams, roles, prices, quotes, invoices, payments, credits, and refunds are either implemented or intentionally out of scope.
 - Run Drizzle generate/migrate checks and inspect generated SQL.

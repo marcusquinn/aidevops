@@ -20,6 +20,7 @@ Use metadata when the app needs configurable entities, layouts, permissions, imp
 | `layout_definitions` | Detail/edit/create/list layouts and panels |
 | `panel_definitions` | Relationship/admin/dashboard panels and visibility rules |
 | `view_definitions` | Saved filters, columns, sorting, grouping |
+| `content_type_definitions` | Optional editor-configurable content schemas akin post types |
 | `label_group_definitions` | Optional templates/catalog rows for label namespaces such as status, priority, type |
 | `label_definitions` | Optional templates/catalog rows for governed labels, e.g. `status:normal` |
 | `capability_definitions` | Optional catalog rows for named product actions beyond CRUD |
@@ -43,6 +44,7 @@ Use metadata when the app needs configurable entities, layouts, permissions, imp
 - Model layouts separately from fields so the same entity can have role/context-specific views.
 - Model panels separately from layouts so related lists, admin panels, and dashboards can have independent permissions.
 - Make labels/tags a first-class metadata concern for every user-facing entity; model label groups, exclusivity, display order, colour, and scope.
+- Use content type definitions for configurable editorial/domain content; use migrations for core content tables and route ownership.
 - Keep roles, teams, capabilities, and permission rules separate so teams do not become roles.
 - Make workflows explicit: state, transition, actor, guard, side effects, runtime event, audit record.
 - Preserve import provenance: source, source row ID/hash, mapping version, confidence, reviewer.

@@ -20,6 +20,7 @@ workspace
   users / teams / roles / permissions
   accounts / contacts / address_books
   issues / issue_relationships
+  content_types / content_entries / content_revisions / routes
   workflow_definitions / workflow_runs / workflow_transition_events / approval_requests
   conversation_groups / conversations / messages / message_threads / message_reactions
   calendar_collections / activities / activity_participants / activity_alarms
@@ -70,6 +71,49 @@ Support issue relationships:
 - `blocks`, `blocked_by`, `duplicates`, `duplicated_by`, `relates_to`, `split_from`, `supersedes`.
 
 Use `issues` for user-visible work, defects, support requests, and change requests. Use `activities` with `activity_type = task` for calendar/todo items. Add a separate task/checklist table only when task-specific lifecycle, nesting, or execution queues justify it.
+
+## Content, posts, and pages
+
+Use WordPress for full editorial/CMS sites where editors need the WordPress ecosystem. In product apps or custom portals, use an app-native content model that mirrors the useful post/post-type/page concepts without adopting WordPress table names.
+
+WordPress concept mapping:
+
+| WordPress concept | App-stack object |
+|-------------------|------------------|
+| Post type | `content_types` |
+| Post/page/custom post record | `content_entries` |
+| Page URL/permalink | `routes` or `content_routes` |
+| Revisions | `content_revisions` |
+| Blocks/patterns | `content_blocks` |
+| Categories/tags/custom taxonomies | `taxonomies`, `terms`, `term_assignments`, labels |
+| Media library item | `files` with `file_links` |
+| Menus | `menus`, `menu_items` |
+| SEO fields | `seo_metadata` linked to content/routes |
+
+Core model:
+
+| Object | Purpose |
+|--------|---------|
+| `content_types` | Editorial/domain content type: page, post, article, help doc, landing page, product page |
+| `content_entries` | Typed content record with title, slug, status, owner, locale, dates, summary/body |
+| `content_revisions` | Immutable revisions with editor, diff/source snapshot, reason, publish metadata |
+| `content_blocks` | Structured page sections or rich-content blocks ordered within an entry/revision |
+| `routes` / `content_routes` | URL path, canonical target, redirects, locale, route status |
+| `taxonomies` | Category/tag vocabularies, hierarchical or flat |
+| `terms` | Taxonomy values; can mirror labels when simple grouping is enough |
+| `term_assignments` | Entry-to-term assignments with sort/context metadata |
+| `menus` / `menu_items` | Navigation structures independent of content storage |
+| `seo_metadata` | Title, description, robots, canonical URL, social cards, structured-data hints |
+
+Rules:
+
+- Pages and posts are content entries with different `content_type` values by default; use separate tables only for distinct lifecycle, validation, or performance needs.
+- Use `routes` for URL ownership so slugs, redirects, previews, and localized routes do not become hidden fields on unrelated tables.
+- Use workflows for draft/review/approved/published/archived lifecycles; labels can mirror editorial status but are not the source of truth.
+- Use files/file links for media assets; do not create a separate media-blob system for content.
+- Use metadata field definitions when content types are editor-configurable; use migrations for core product content tables.
+
+Choose WordPress instead when routine editors need posts/pages/media library/revisions/forms/SEO plugins/themes/plugin ecosystem more than product-specific app integration.
 
 ## Workflows and automations
 
@@ -240,6 +284,7 @@ Accounting rules:
 - Confirm labels/tags are available for each user-facing object type.
 - Confirm grouped label keys such as `status:normal` have a label group/category and exclusivity policy.
 - Trace one issue through label assignment, comments, state transition, audit event, and external-provider sync.
+- Trace one content entry through type definition, route, revision, block/media link, taxonomy/label assignment, workflow, SEO metadata, and publish/preview output.
 - Trace one workflow through definition, state, transition, guard, action, approval, timer, runtime event, and audit record.
 - Trace one conversation message through thread replies, reactions, mentions, read receipts, attachments, audit, and retention rules.
 - Trace one CRM/calendar activity through participants, alarms/reminders, recurrence, parent entity links, labels, and calendar/timeline output.
