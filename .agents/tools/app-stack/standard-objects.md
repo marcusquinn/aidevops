@@ -127,8 +127,8 @@ Core model:
 | `content_revisions` | Immutable revisions with editor, diff/source snapshot, reason, publish metadata |
 | `content_blocks` | Structured page sections or rich-content blocks ordered within an entry/revision |
 | `routes` / `content_routes` | Full URL path/permalink, local slug/segment when useful, parent route, canonical target, redirects, locale, route status |
-| `taxonomies` | Content classification vocabularies such as category, tag, topic, audience; hierarchical or flat |
-| `terms` | Values inside a taxonomy, e.g. News, AI, Developers; hierarchical terms use `parent_id` |
+| `taxonomies` | Content classification vocabularies such as category, tag, topic, audience; includes hierarchy and navigation policy |
+| `terms` | Values inside a taxonomy, e.g. News, AI, Developers; include slug, description, SEO metadata, and optional `parent_id` |
 | `term_assignments` | Entry-to-term assignments with sort/context metadata |
 | `menus` / `menu_items` | Navigation structures independent of content storage |
 | `seo_metadata` | Title, description, robots, canonical URL, social cards, structured-data hints |
@@ -142,6 +142,14 @@ Rules:
 - Use files/file links for media assets; do not create a separate media-blob system for content.
 - Use metadata field definitions when content types are editor-configurable; use migrations for core product content tables.
 - Use taxonomies/terms for content classification. Use labels for cross-object operational grouping such as `status:normal` or `priority:high`. Only use labels as content tags in deliberately simple flat-tag products with no taxonomy hierarchy, term metadata, or editorial taxonomy UI.
+
+Category/tag taxonomy rules:
+
+- Category-style taxonomies are hierarchical, navigational, and high-level. Use them for primary site/app information architecture, menus, archive pages, breadcrumbs, and broad editorial grouping.
+- Tag-style taxonomies are flat keyword/topic facets. Use them for long-tail discovery, search/filtering, related-content matching, and SEO topic coverage.
+- Model taxonomy behaviour explicitly with fields such as `is_hierarchical`, `is_navigational`, `has_public_archive`, `allows_multiple`, and `term_description_required`.
+- Term descriptions should be editorial content, not keyword stuffing. For public archive pages, a 150-300 character description is a useful default target.
+- If term descriptions render on public pages, support safe internal links to relevant canonical content or related terms, with validation/sanitisation and no raw HTML bypass.
 
 Choose WordPress instead when routine editors need posts/pages/media library/revisions/forms/SEO plugins/themes/plugin ecosystem more than product-specific app integration.
 
