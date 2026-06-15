@@ -29,6 +29,7 @@ from ._common import (
     build_auth_entry,
     call_token_endpoint,
     release_lock,
+    token_refresh_error_label,
 )
 
 
@@ -92,6 +93,9 @@ def _refresh_one_account(
     email = account.get("email", "unknown")
     refresh_tok = account.get("refresh", "")
     rdata = call_token_endpoint(ctx.token_url, ctx.client_id, refresh_tok, ctx.ua_header)
+    error_label = token_refresh_error_label(rdata)
+    if error_label:
+        return False, f"{email}({error_label})"
     if rdata is None:
         return False, f"{email}(network)"
     if _apply_refresh_response(account, rdata, now_ms):
