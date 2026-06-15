@@ -202,7 +202,7 @@ _sweep_qlty() {
 
 	# Use SARIF output for machine-parseable smell data (structured by rule, file, location)
 	local qlty_sarif
-	qlty_sarif=$(cd "$repo_path" && "$qlty_bin" smells --all --sarif --no-snippets --quiet 2>/dev/null) || qlty_sarif=""
+	qlty_sarif=$(cd -- "$repo_path" && "$qlty_bin" smells --all --sarif --no-snippets --quiet) || qlty_sarif=""
 
 	local qlty_smell_count=0
 	local qlty_grade="UNKNOWN"
