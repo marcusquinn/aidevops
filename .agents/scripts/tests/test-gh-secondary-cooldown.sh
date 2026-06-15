@@ -24,6 +24,7 @@ trap cleanup EXIT
 export HOME="$TMP_HOME"
 export AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE="${TMP_HOME}/.aidevops/cache/gh-secondary-cooldown.json"
 export AIDEVOPS_GH_SECONDARY_COOLDOWN_SECS=600
+export AIDEVOPS_GH_READ_RAMP_STATE_FILE="${TMP_HOME}/.aidevops/cache/gh-read-ramp-state.tsv"
 
 gh() {
 	printf 'GH %s\n' "$*" >>"$CALL_LOG"
@@ -46,8 +47,11 @@ reset_case() {
 	: >"$CALL_LOG"
 	: >"$ERR_LOG"
 	rm -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE"
-	unset GH_SECONDARY_FAIL GH_HEADER_LIMIT_FAIL AIDEVOPS_GH_SECONDARY_COOLDOWN_OVERRIDE 2>/dev/null || true
+	rm -f "$AIDEVOPS_GH_READ_RAMP_STATE_FILE"
+	unset GH_SECONDARY_FAIL GH_HEADER_LIMIT_FAIL AIDEVOPS_GH_SECONDARY_COOLDOWN_OVERRIDE AIDEVOPS_GH_READ_RAMP_BUDGET AIDEVOPS_GH_READ_RAMP_BOOT_SECS AIDEVOPS_GH_READ_RAMP_RECOVERY_SECS AIDEVOPS_GH_READ_RAMP_OVERRIDE 2>/dev/null || true
 	_GH_SECONDARY_COOLDOWN_LOGGED_ACTIVE=0
+	_GH_SECONDARY_COOLDOWN_LOGGED_RAMP=0
+	_gh_secondary_system_boot_ts() { return 1; }
 	return 0
 }
 
@@ -192,6 +196,67 @@ test_timeout_temp_cleanup_when_out_mktemp_fails() {
 	return 1
 }
 
+test_boot_ramp_defers_after_per_minute_budget() {
+	reset_case
+	local now=""
+	now="$(_gh_secondary_cooldown_now)"
+	_gh_secondary_system_boot_ts() { printf '%s' "$((now - 10))"; return 0; }
+	export AIDEVOPS_GH_READ_RAMP_BOOT_SECS=120
+	export AIDEVOPS_GH_READ_RAMP_BUDGET=1
+	_gh_with_timeout read gh issue list --repo owner/repo >"${TMP_HOME}/ramp-first.json" 2>"$ERR_LOG"
+	set +e
+	_gh_with_timeout read gh issue list --repo owner/repo >"${TMP_HOME}/ramp-second.json" 2>>"$ERR_LOG"
+	local rc=$?
+	set -e
+	if [[ "$rc" -eq 75 ]] && [[ "$(wc -l <"$CALL_LOG" | tr -d ' ')" -eq 1 ]] && grep -q 'read-ramp active=true phase=boot' "$ERR_LOG"; then
+		printf 'PASS boot ramp defers reads after per-minute budget\n'
+		return 0
+	fi
+	printf 'FAIL boot ramp did not defer after budget\n'
+	sed 's/^/  /' "$CALL_LOG"
+	sed 's/^/  /' "$ERR_LOG"
+	return 1
+}
+
+test_cooldown_recovery_ramp_defers_after_budget() {
+	reset_case
+	local now=""
+	now="$(_gh_secondary_cooldown_now)"
+	local dir="${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE%/*}"
+	mkdir -p "$dir"
+	printf '{"reason":"test","first_seen":%s,"expires_at":%s,"last_request_id":""}\n' "$((now - 120))" "$((now - 10))" >"$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE"
+	export AIDEVOPS_GH_READ_RAMP_RECOVERY_SECS=120
+	export AIDEVOPS_GH_READ_RAMP_BUDGET=1
+	_gh_with_timeout read gh issue list --repo owner/repo >"${TMP_HOME}/recovery-first.json" 2>"$ERR_LOG"
+	set +e
+	_gh_with_timeout read gh issue list --repo owner/repo >"${TMP_HOME}/recovery-second.json" 2>>"$ERR_LOG"
+	local rc=$?
+	set -e
+	if [[ "$rc" -eq 75 ]] && [[ "$(wc -l <"$CALL_LOG" | tr -d ' ')" -eq 1 ]] && grep -q 'read-ramp active=true phase=cooldown-recovery' "$ERR_LOG"; then
+		printf 'PASS cooldown recovery ramp defers reads after budget\n'
+		return 0
+	fi
+	printf 'FAIL cooldown recovery ramp did not defer after budget\n'
+	return 1
+}
+
+test_read_ramp_does_not_defer_writes() {
+	reset_case
+	local now=""
+	now="$(_gh_secondary_cooldown_now)"
+	_gh_secondary_system_boot_ts() { printf '%s' "$((now - 10))"; return 0; }
+	export AIDEVOPS_GH_READ_RAMP_BOOT_SECS=120
+	export AIDEVOPS_GH_READ_RAMP_BUDGET=1
+	_gh_with_timeout read gh issue list --repo owner/repo >"${TMP_HOME}/write-ramp-first.json" 2>"$ERR_LOG"
+	_gh_with_timeout write gh issue comment 123 --repo owner/repo --body ok >"${TMP_HOME}/write-ramp.json" 2>>"$ERR_LOG"
+	if grep -q 'GH issue comment 123' "$CALL_LOG"; then
+		printf 'PASS read ramp does not defer writes\n'
+		return 0
+	fi
+	printf 'FAIL read ramp deferred write call\n'
+	return 1
+}
+
 test_secondary_response_writes_cooldown
 test_header_response_writes_retry_after_cooldown
 test_active_cooldown_skips_without_gh_call
@@ -200,3 +265,6 @@ test_default_path_without_home_is_user_scoped
 test_no_jq_fallback_escapes_json_strings
 test_header_parsers_ignore_response_body
 test_timeout_temp_cleanup_when_out_mktemp_fails
+test_boot_ramp_defers_after_per_minute_budget
+test_cooldown_recovery_ramp_defers_after_budget
+test_read_ramp_does_not_defer_writes

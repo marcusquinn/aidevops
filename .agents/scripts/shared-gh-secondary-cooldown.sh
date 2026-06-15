@@ -13,8 +13,15 @@ _SHARED_GH_SECONDARY_COOLDOWN_LOADED=1
 : "${AIDEVOPS_GH_SECONDARY_COOLDOWN_SECS:=300}"
 : "${AIDEVOPS_GH_SECONDARY_COOLDOWN_HOME:=${HOME:-/tmp/.aidevops-${USER:-uid-${UID:-unknown}}}}"
 : "${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE:=${AIDEVOPS_GH_SECONDARY_COOLDOWN_HOME}/.aidevops/cache/gh-secondary-cooldown.json}"
+: "${AIDEVOPS_GH_READ_RAMP_ENABLED:=1}"
+: "${AIDEVOPS_GH_READ_RAMP_BOOT_SECS:=180}"
+: "${AIDEVOPS_GH_READ_RAMP_RECOVERY_SECS:=300}"
+: "${AIDEVOPS_GH_READ_RAMP_BUDGET:=60}"
+: "${AIDEVOPS_GH_READ_RAMP_STATE_FILE:=${AIDEVOPS_GH_SECONDARY_COOLDOWN_HOME}/.aidevops/cache/gh-read-ramp-state.tsv}"
 
 _GH_SECONDARY_COOLDOWN_LOGGED_ACTIVE=0
+_GH_SECONDARY_COOLDOWN_LOGGED_RAMP=0
+_GH_SECONDARY_READ_OP="read"
 
 _gh_secondary_cooldown_now() {
 	date +%s
@@ -195,6 +202,118 @@ _gh_secondary_cooldown_active() {
 	return 0
 }
 
+_gh_secondary_system_boot_ts() {
+	local boot_ts=""
+	if [[ -r /proc/stat ]]; then
+		boot_ts=$(sed -nE 's/^btime[[:space:]]+([0-9]+).*/\1/p' /proc/stat 2>/dev/null | sed -n '1p')
+		if [[ "$boot_ts" =~ ^[0-9]+$ ]]; then
+			printf '%s' "$boot_ts"
+			return 0
+		fi
+	fi
+	if command -v sysctl >/dev/null 2>&1; then
+		boot_ts=$(sysctl -n kern.boottime 2>/dev/null | sed -nE 's/.*sec = ([0-9]+).*/\1/p' | sed -n '1p')
+		if [[ "$boot_ts" =~ ^[0-9]+$ ]]; then
+			printf '%s' "$boot_ts"
+			return 0
+		fi
+	fi
+	return 1
+}
+
+_gh_secondary_read_ramp_phase() {
+	local now=""
+	local boot_ts=""
+	local expires=""
+	now="$(_gh_secondary_cooldown_now)"
+	boot_ts="$(_gh_secondary_system_boot_ts 2>/dev/null || true)"
+	if [[ "$boot_ts" =~ ^[0-9]+$ && "$AIDEVOPS_GH_READ_RAMP_BOOT_SECS" =~ ^[0-9]+$ ]]; then
+		if [[ "$now" -ge "$boot_ts" && $((now - boot_ts)) -lt "$AIDEVOPS_GH_READ_RAMP_BOOT_SECS" ]]; then
+			printf 'boot'
+			return 0
+		fi
+	fi
+	expires="$(_gh_secondary_cooldown_expires_at 2>/dev/null || true)"
+	if [[ "$expires" =~ ^[0-9]+$ && "$AIDEVOPS_GH_READ_RAMP_RECOVERY_SECS" =~ ^[0-9]+$ ]]; then
+		if [[ "$now" -ge "$expires" && $((now - expires)) -lt "$AIDEVOPS_GH_READ_RAMP_RECOVERY_SECS" ]]; then
+			printf 'cooldown-recovery'
+			return 0
+		fi
+	fi
+	return 1
+}
+
+_gh_secondary_read_ramp_state_file() {
+	printf '%s' "$AIDEVOPS_GH_READ_RAMP_STATE_FILE"
+	return 0
+}
+
+_gh_secondary_read_ramp_take_token() {
+	local phase="$1"
+	local now=""
+	local minute=""
+	local file=""
+	local dir=""
+	local lock_dir=""
+	local old_phase=""
+	local old_minute=""
+	local old_count=""
+	local count=0
+	[[ "$AIDEVOPS_GH_READ_RAMP_BUDGET" =~ ^[0-9]+$ && "$AIDEVOPS_GH_READ_RAMP_BUDGET" -gt 0 ]] || return 0
+	now="$(_gh_secondary_cooldown_now)"
+	minute=$((now / 60))
+	file="$(_gh_secondary_read_ramp_state_file)"
+	dir="${file%/*}"
+	lock_dir="${file}.lock"
+	mkdir -p "$dir" 2>/dev/null || return 0
+	if ! mkdir "$lock_dir" 2>/dev/null; then
+		return 0
+	fi
+	if [[ -r "$file" ]]; then
+		IFS=$'\t' read -r old_phase old_minute old_count <"$file" || true
+	fi
+	if [[ "$old_phase" == "$phase" && "$old_minute" == "$minute" && "$old_count" =~ ^[0-9]+$ ]]; then
+		count="$old_count"
+	fi
+	if [[ "$count" -ge "$AIDEVOPS_GH_READ_RAMP_BUDGET" ]]; then
+		rmdir "$lock_dir" 2>/dev/null || true
+		return 1
+	fi
+	count=$((count + 1))
+	printf '%s\t%s\t%s\n' "$phase" "$minute" "$count" >"${file}.tmp" 2>/dev/null || {
+		rmdir "$lock_dir" 2>/dev/null || true
+		return 0
+	}
+	mv "${file}.tmp" "$file" 2>/dev/null || true
+	rmdir "$lock_dir" 2>/dev/null || true
+	return 0
+}
+
+_gh_secondary_read_ramp_log_deferred() {
+	local phase="$1"
+	local budget="$AIDEVOPS_GH_READ_RAMP_BUDGET"
+	if [[ "$_GH_SECONDARY_COOLDOWN_LOGGED_RAMP" -eq 1 ]]; then
+		return 0
+	fi
+	printf '[gh-cooldown] read-ramp active=true phase=%s budget_per_minute=%s action=defer\n' "$phase" "$budget" >&2
+	_GH_SECONDARY_COOLDOWN_LOGGED_RAMP=1
+	return 0
+}
+
+_gh_secondary_read_ramp_preflight() {
+	local op_class="${1:-}"
+	local phase=""
+	[[ -n "$op_class" ]] || op_class="$_GH_SECONDARY_READ_OP"
+	[[ "${AIDEVOPS_GH_READ_RAMP_ENABLED:-1}" == "1" ]] || return 0
+	[[ "$op_class" == "$_GH_SECONDARY_READ_OP" ]] || return 0
+	[[ "${AIDEVOPS_GH_READ_RAMP_OVERRIDE:-0}" == "1" ]] && return 0
+	phase="$(_gh_secondary_read_ramp_phase 2>/dev/null || true)"
+	[[ -n "$phase" ]] || return 0
+	_gh_secondary_read_ramp_take_token "$phase" && return 0
+	_gh_secondary_read_ramp_log_deferred "$phase"
+	return 75
+}
+
 _gh_secondary_cooldown_log_active_once() {
 	local op_class="$1"
 	local expires=""
@@ -208,8 +327,10 @@ _gh_secondary_cooldown_log_active_once() {
 }
 
 _gh_secondary_cooldown_preflight() {
-	local op_class="${1:-read}"
+	local op_class="${1:-}"
+	[[ -n "$op_class" ]] || op_class="$_GH_SECONDARY_READ_OP"
 	if ! _gh_secondary_cooldown_active; then
+		_gh_secondary_read_ramp_preflight "$op_class" || return $?
 		return 0
 	fi
 	if [[ "${AIDEVOPS_GH_SECONDARY_COOLDOWN_OVERRIDE:-0}" == "1" ]]; then
