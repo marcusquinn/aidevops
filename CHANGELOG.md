@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.73] - 2026-06-15
+
+### Changed
+
+- Maintenance: mark t3602 complete (pr:#24867 completed:2026-06-15) [skip ci]
+- classify profile temp sessions as workers (#24867)
+- Maintenance: sync ref:GH#24866 to TODO.md [skip ci]
+
 ## [3.20.72] - 2026-06-15
 
 ### Changed

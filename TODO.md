@@ -4255,4 +4255,3 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3599 Document app-stack guidance #documentation ref:GH#24768 pr:#24767 completed:2026-06-14
 
-- [x] t3602 Fix profile temp sessions as workers #bug ref:GH#24866 pr:#24867 completed:2026-06-15
