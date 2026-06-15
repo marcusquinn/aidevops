@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.76] - 2026-06-16
+
+### Fixed
+
+- trust maintainer simplification sweeps (#24885)
+- surface OAuth refresh failures (#24883)
+- include systemd timer freshness triage (#24880)
+- harden qlty sweep directory change (#24879)
+
 ## [3.20.75] - 2026-06-15
 
 ### Changed
