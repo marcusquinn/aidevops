@@ -639,6 +639,7 @@ _write_stale_alert_body() {
 	# remediation guidance. The heredoc expansion produces the literal
 	# token for the reader verbatim.
 	local macos_launchctl="launchctl"
+	local linux_systemctl="systemctl"
 
 	# Tempfile + cat >>file instead of $(cat <<EOF) — the subshell form
 	# trips the bash32-compat regression gate (heredoc-in-subshell class).
@@ -653,12 +654,23 @@ The supervisor health dashboard is the framework's primary single-glance health 
 
 ## Triage
 
-1. Inspect the stats scheduler status (macOS):
+1. Inspect the stats scheduler status.
+
+   macOS / launchd:
 
    \`\`\`bash
    ${macos_launchctl} list | grep -i aidevops-stats-wrapper
    tail -40 ~/.aidevops/logs/stats.log
    ls -la ~/Library/LaunchAgents/com.aidevops.aidevops-stats-wrapper.plist
+   \`\`\`
+
+   Linux / systemd user timers:
+
+   \`\`\`bash
+   ${linux_systemctl} --user status aidevops-stats-wrapper.service --no-pager
+   ${linux_systemctl} --user list-timers --all --no-pager 'aidevops*'
+   tail -40 ~/.aidevops/logs/stats.log
+   ls -la ~/.config/systemd/user/aidevops-stats-wrapper.*
    \`\`\`
 
 2. Run the refresh manually and capture the error:
@@ -675,7 +687,8 @@ The supervisor health dashboard is the framework's primary single-glance health 
 
 ## Remediation
 
-- **Missing plist:** re-run \`setup.sh --non-interactive\` (or \`aidevops update\`) with PULSE_ENABLED=true so \`setup_stats_wrapper\` reinstalls \`com.aidevops.aidevops-stats-wrapper.plist\`.
+- **macOS missing plist:** re-run \`setup.sh --non-interactive\` (or \`aidevops update\`) with PULSE_ENABLED=true so \`setup_stats_wrapper\` reinstalls \`com.aidevops.aidevops-stats-wrapper.plist\`.
+- **Linux missing or inactive systemd timer:** re-run \`setup.sh --non-interactive\` (or \`aidevops update\`) with PULSE_ENABLED=true so the Linux scheduler setup reinstalls and enables \`aidevops-stats-wrapper.timer\` and \`aidevops-stats-wrapper.service\` under \`~/.config/systemd/user\`.
 - **\`set -euo pipefail\` fail:** the post-t2418 wrapper emits \`HEALTH-DASHBOARD-FAIL exit=<N>\` on error. Grep \`stats.log\` on that prefix.
 - **Body size / API error:** inspect \`stats.log\` — look at \`gh\` HTTP errors and \`_update_health_issue_for_repo\` failures.
 
