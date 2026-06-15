@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.70] - 2026-06-15
+
+### Fixed
+
+- add Linux/systemd dashboard freshness remediation (#24860)
+
 ## [3.20.69] - 2026-06-15
 
 ### Fixed
