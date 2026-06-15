@@ -3,10 +3,12 @@
 
 # Badges — README badge template + LOC reusable workflow
 
-aidevops ships a consistent badge block for every managed repo: shields.io
-badges for stats GitHub already exposes, plus a self-hosted SVG for lines
-of code (the only badge that needs custom infrastructure because shields.io's
-tokei endpoint is too unreliable to depend on).
+aidevops ships a consistent badge block for every managed repo: a native
+GitHub Actions badge when a concrete workflow file is known, static shields.io
+badges for values that do not require GitHub API access, and self-hosted SVGs
+for lines of code. The template deliberately avoids `img.shields.io/github/...`
+endpoints because those can render upstream service text such as "Unable to
+select next GitHub token from pool" in public READMEs.
 
 Use `aidevops badges render|check|sync|install` to manage README badge blocks
 and LOC badge workflows for repos listed in `repos.json`.
@@ -27,10 +29,10 @@ Three artifacts deployed by `setup.sh`:
    - `.github/badges/loc-languages.svg` — GitHub-style horizontal stacked
      bar of the top-N languages with a percentage legend
 2. **`.agents/scripts/readme-badges-helper.sh`** — renders the badges
-   markdown for a slug, injects/checks an idempotent block in a README
+   markdown for a slug, injects/checks an idempotent block in a README, and
+   only emits an Actions badge after resolving an actual workflow file
 3. **`.agents/templates/readme/badges.md.tmpl`** — the canonical badges
-   block, with conditional sections for licence, releases, and FOSS-only
-   community badges
+   block, with conditional sections for native Actions, licence, and LOC badges
 
 Plus the GitHub Actions wiring:
 
@@ -64,6 +66,14 @@ generates and commits the SVGs into `.github/badges/`. The README block
 references those SVGs via raw.githubusercontent.com, so they update
 automatically on every push.
 
+Do not add GitHub-backed Shields badges such as repository size, stars,
+watchers, language count, release date, or issue counts to the canonical block.
+Those badges depend on Shields' GitHub token pool and can intermittently render
+the provider error string instead of the intended value. Prefer GitHub-native
+badges for Actions, self-hosted generated SVGs for repository metrics, static
+Shields badges for local/static facts, and direct Markdown links for GitHub
+pages that do not need a badge.
+
 ## How the marker block works
 
 The injected block is bounded by HTML comment markers that are invisible
@@ -72,8 +82,9 @@ in rendered Markdown:
 ```markdown
 <!-- aidevops:badges:start -->
 <!-- managed by aidevops badges; edit the template, not this block -->
+[![GitHub Actions](...)](...)
+[![License](...)](...)
 [![Lines of code](...)](...)
-[![Last commit](...)](...)
 ...
 <!-- aidevops:badges:end -->
 ```
@@ -102,9 +113,11 @@ Available variables (computed from `repos.json` + live `gh` probes):
 | `OWNER` | derived | first segment of slug |
 | `REPO` | derived | second segment of slug |
 | `DEFAULT_BRANCH` | `gh api repos/{slug}` | falls back to `main` |
+| `HAS_ACTIONS_WORKFLOW` | local workflow-file detection | enables the native Actions badge |
+| `ACTIONS_WORKFLOW_FILE` | local workflow-file detection or `--workflow-file` | exact `.github/workflows/*.yml` basename |
 | `HAS_LOC_BADGE` | `--no-loc-badge` flag | default `1`; empty if disabled |
 | `HAS_RELEASES` | `gh api releases?per_page=1` | empty for `local_only` repos |
-| `IS_FOSS` | `repos.json[].foss` | enables Stars/Forks/Open lines |
+| `IS_FOSS` | `repos.json[].foss` | retained for compatibility; unused by the resilient template |
 | `HAS_LICENSE` | (Phase 2: filesystem probe) | currently always `1` |
 
 To add or remove a badge, edit the template — never edit the rendered

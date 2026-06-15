@@ -46,7 +46,7 @@ The result: an AI operations platform that manages projects across every busines
 ---
 
 <!-- Build & Quality Status -->
-[![GitHub Actions](https://github.com/marcusquinn/aidevops/workflows/Code%20Quality%20Analysis/badge.svg)](https://github.com/marcusquinn/aidevops/actions)
+[![GitHub Actions](https://github.com/marcusquinn/aidevops/actions/workflows/code-quality.yml/badge.svg?branch=main)](https://github.com/marcusquinn/aidevops/actions/workflows/code-quality.yml)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=marcusquinn_aidevops&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=marcusquinn_aidevops)
 [![CodeFactor](https://www.codefactor.io/repository/github/marcusquinn/aidevops/badge)](https://www.codefactor.io/repository/github/marcusquinn/aidevops)
 [![Maintainability](https://qlty.sh/gh/marcusquinn/projects/aidevops/maintainability.svg)](https://qlty.sh/gh/marcusquinn/projects/aidevops)
@@ -57,28 +57,11 @@ The result: an AI operations platform that manages projects across every busines
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Copyright](https://img.shields.io/badge/Copyright-Marcus%20Quinn%202025--2026-blue.svg)](https://github.com/marcusquinn)
 
-<!-- GitHub Stats -->
-[![GitHub stars](https://img.shields.io/github/stars/marcusquinn/aidevops.svg?style=social)](https://github.com/marcusquinn/aidevops/stargazers)
-[![GitHub forks](https://img.shields.io/github/forks/marcusquinn/aidevops.svg?style=social)](https://github.com/marcusquinn/aidevops/network)
-[![GitHub watchers](https://img.shields.io/github/watchers/marcusquinn/aidevops.svg?style=social)](https://github.com/marcusquinn/aidevops/watchers)
-
 <!-- Release & Version Info -->
-[![GitHub release (latest by date)](https://img.shields.io/github/v/release/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-3.20.64-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
 [![npm version](https://img.shields.io/npm/v/aidevops)](https://www.npmjs.com/package/aidevops)
 [![Homebrew](https://img.shields.io/badge/homebrew-marcusquinn%2Ftap-orange)](https://github.com/marcusquinn/homebrew-tap)
-[![GitHub Release Date](https://img.shields.io/github/release-date/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops/releases)
-[![GitHub commits since latest release](https://img.shields.io/github/commits-since/marcusquinn/aidevops/latest)](https://github.com/marcusquinn/aidevops/commits/main)
-
-<!-- Repository Stats (dynamic badges only - no hardcoded versions/counts) -->
-[![GitHub repo size](https://img.shields.io/github/repo-size/marcusquinn/aidevops?style=flat&color=blue)](https://github.com/marcusquinn/aidevops)
-[![GitHub language count](https://img.shields.io/github/languages/count/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops)
-[![GitHub top language](https://img.shields.io/github/languages/top/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops)
-
-<!-- Community & Issues -->
-[![GitHub issues](https://img.shields.io/github/issues/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops/issues)
-[![GitHub closed issues](https://img.shields.io/github/issues-closed/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops/issues?q=is%3Aissue+is%3Aclosed)
-[![GitHub pull requests](https://img.shields.io/github/issues-pr/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops/pulls)
-[![GitHub contributors](https://img.shields.io/github/contributors/marcusquinn/aidevops)](https://github.com/marcusquinn/aidevops/graphs/contributors)
+[![GitHub repository](https://img.shields.io/badge/github-repository-181717.svg?logo=github)](https://github.com/marcusquinn/aidevops)
 
 <!-- Framework Specific -->
 [![Services Supported](https://img.shields.io/badge/Services%20Supported-30+-brightgreen.svg)](#comprehensive-service-coverage)

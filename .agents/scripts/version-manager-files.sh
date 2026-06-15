@@ -95,8 +95,8 @@ _update_readme_version_badge() {
 	fi
 
 	if grep -q "$dynamic_badge_pattern" "$REPO_ROOT/README.md"; then
-		# Dynamic badge - no update needed, GitHub handles it automatically
-		print_success "README.md uses dynamic GitHub release badge (no update needed)" >&2
+		# Dynamic GitHub-backed Shields badges can render upstream API errors in README.
+		print_warning "README.md uses dynamic GitHub release badge; prefer static Version-$new_version badge to avoid Shields GitHub token-pool outages" >&2
 	elif grep -q "$hardcoded_badge_pattern" "$REPO_ROOT/README.md"; then
 		# Hardcoded badge - update it
 		sed_inplace "s/$hardcoded_badge_pattern/Version-$new_version-blue/" "$REPO_ROOT/README.md"
@@ -108,7 +108,7 @@ _update_readme_version_badge() {
 		fi
 	else
 		# No version badge found - that's okay, just warn
-		print_warning "README.md has no version badge (consider adding dynamic GitHub release badge)" >&2
+		print_warning "README.md has no version badge (consider adding static Version-$new_version badge)" >&2
 	fi
 	return 0
 }

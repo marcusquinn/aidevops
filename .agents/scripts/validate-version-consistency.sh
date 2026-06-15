@@ -93,14 +93,15 @@ _check_readme_badge() {
 	local repo_root="$2"
 	if [[ -f "$repo_root/README.md" ]]; then
 		if grep -q "img.shields.io/github/v/release" "$repo_root/README.md"; then
-			print_success "README.md uses dynamic GitHub release badge (recommended)"
+			print_warning "README.md uses dynamic GitHub release badge; prefer static Version-$expected_version badge to avoid Shields GitHub token-pool outages"
+			_vc_warnings=$((_vc_warnings + 1))
 		elif grep -q "Version-$expected_version-blue" "$repo_root/README.md"; then
 			print_success "README.md badge: $expected_version"
 		else
 			local current_badge
 			current_badge=$(grep -o "Version-[0-9]\+\.[0-9]\+\.[0-9]\+-blue" "$repo_root/README.md" || echo "not found")
 			if [[ "$current_badge" == "not found" ]]; then
-				print_warning "README.md has no version badge (consider adding dynamic GitHub release badge)"
+				print_warning "README.md has no version badge (consider adding static Version-$expected_version badge)"
 				_vc_warnings=$((_vc_warnings + 1))
 			else
 				print_error "README.md badge shows '$current_badge', expected 'Version-$expected_version-blue'"
