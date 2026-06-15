@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.69] - 2026-06-15
+
+### Fixed
+
+- run qlty sweep from repo path (#24859)
+
 ## [3.20.68] - 2026-06-15
 
 ### Changed
