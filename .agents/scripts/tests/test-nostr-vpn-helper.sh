@@ -193,12 +193,29 @@ test_privacy_guide_mentions_limits_and_companions() {
 	local output=""
 	output="$(bash "$HELPER_SCRIPT" privacy-guide 2>&1)"
 
-	if [[ "$output" == *"not as an anonymity network"* && "$output" == *"SimpleX or Signal"* && "$output" == *"self-hosted or trusted private Nostr relays"* && "$output" == *"high-risk research"* && "$output" == *"Rotate identities after suspected compromise"* ]]; then
+	local expected=(
+		"not as an anonymity network"
+		"SimpleX or Signal"
+		"self-hosted or trusted private Nostr relays"
+		"high-risk research"
+		"Rotate identities after suspected compromise"
+	)
+	local missing=()
+	local missing_report=""
+	local item
+	for item in "${expected[@]}"; do
+		if [[ "$output" != *"$item"* ]]; then
+			missing+=("$item")
+			missing_report+="[$item] "
+		fi
+	done
+
+	if [[ "${#missing[@]}" -eq 0 ]]; then
 		print_result "privacy guide mentions limits and companions" 0
 		return 0
 	fi
 
-	print_result "privacy guide mentions limits and companions" 1 "$output"
+	print_result "privacy guide mentions limits and companions" 1 "missing (${#missing[@]}): $missing_report"
 	return 0
 }
 
