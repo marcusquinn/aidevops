@@ -71,6 +71,48 @@ _session_time_detect_db() {
 }
 
 #######################################
+# Resolve the OpenCode archive DB associated with a primary session DB.
+# Arguments:
+#   $1 - primary db path
+# Output: archive database path to stdout, or empty string if unavailable
+#######################################
+_session_time_archive_db_for() {
+	local db_path="$1"
+	local archive_path="${OPENCODE_ARCHIVE_DB_PATH:-${OPENCODE_ARCHIVE_DB:-}}"
+
+	if [[ -z "$archive_path" && "$db_path" == */opencode.db ]]; then
+		archive_path="${db_path%/opencode.db}/opencode-archive.db"
+	fi
+
+	if [[ -n "$archive_path" && "$archive_path" != "$db_path" && -f "$archive_path" ]]; then
+		printf '%s\n' "$archive_path"
+	fi
+	return 0
+}
+
+#######################################
+# Auto-detect all SQLite session DBs that make up the local history.
+# Output: one database path per line, primary first, archive second if present
+#######################################
+_session_time_detect_db_paths() {
+	local primary_db
+	primary_db=$(_session_time_detect_db)
+	if [[ -z "$primary_db" ]]; then
+		printf '%s' ""
+		return 0
+	fi
+
+	printf '%s\n' "$primary_db"
+
+	local archive_db
+	archive_db=$(_session_time_archive_db_for "$primary_db")
+	if [[ -n "$archive_db" ]]; then
+		printf '%s\n' "$archive_db"
+	fi
+	return 0
+}
+
+#######################################
 # Handle --period all for session_time
 #
 # Calls session_time for each sub-period and combines into a single table.
@@ -195,6 +237,8 @@ _session_time_query_db() {
 		SELECT
 			session_id,
 			title,
+			MIN(created) AS first_message_ms,
+			MAX(COALESCE(completed, created)) AS last_message_ms,
 			SUM(CASE
 				WHEN role = 'user' AND prev_role = 'assistant'
 				     AND prev_completed IS NOT NULL
@@ -219,6 +263,45 @@ _session_time_query_db() {
 	fi
 
 	echo "$query_result"
+	return 0
+}
+
+#######################################
+# Query all detected session databases and de-duplicate copied archive rows.
+# Arguments:
+#   $1 - newline-delimited db paths
+#   $2 - abs repo path (empty string = all directories)
+#   $3 - since_ms (milliseconds threshold)
+# Output: JSON array of session rows to stdout
+#######################################
+_session_time_query_db_paths() {
+	local db_paths="$1"
+	local abs_repo_path="$2"
+	local since_ms="$3"
+	local combined_json=""
+	local db_path
+
+	while IFS= read -r db_path; do
+		[[ -z "$db_path" || ! -f "$db_path" ]] && continue
+
+		local db_json
+		db_json=$(_session_time_query_db "$db_path" "$abs_repo_path" "$since_ms") || db_json="[]"
+		if echo "$db_json" | jq -e . >/dev/null 2>&1; then
+			combined_json="${combined_json}${db_json}"$'\n'
+		fi
+	done <<<"$db_paths"
+
+	if [[ -z "$combined_json" ]]; then
+		echo "[]"
+		return 0
+	fi
+
+	printf '%s' "$combined_json" | jq -s '
+		add
+		| reduce .[] as $row ([];
+			if any(.[]; .session_id == $row.session_id) then . else . + [$row] end
+		)
+	' 2>/dev/null || echo "[]"
 	return 0
 }
 
@@ -272,18 +355,37 @@ stats = {
     'interactive': {'count': 0, 'human_ms': 0, 'machine_ms': 0},
     'worker':      {'count': 0, 'human_ms': 0, 'machine_ms': 0},
 }
+first_seen = []
+last_seen = []
+
+def number_or_zero(value):
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
 for row in sessions:
     title = row.get('title', '')
     stype = classify_session(title)
     stats[stype]['count'] += 1
-    stats[stype]['human_ms'] += row.get('human_ms', 0)
-    stats[stype]['machine_ms'] += row.get('machine_ms', 0)
+    stats[stype]['human_ms'] += number_or_zero(row.get('human_ms'))
+    stats[stype]['machine_ms'] += number_or_zero(row.get('machine_ms'))
+    first_ms = number_or_zero(row.get('first_message_ms'))
+    last_ms = number_or_zero(row.get('last_message_ms'))
+    if first_ms > 0:
+        first_seen.append(first_ms)
+    if last_ms > 0:
+        last_seen.append(last_ms)
 
 def ms_to_h(ms):
     return round(ms / 3600000, 1)
 
 i = stats['interactive']
 w = stats['worker']
+observed_days = 0
+if first_seen and last_seen:
+    observed_days = round(max(0, max(last_seen) - min(first_seen)) / 86400000, 1)
+
 print(json.dumps({
     'interactive_sessions': i['count'],
     'interactive_human_hours': ms_to_h(i['human_ms']),
@@ -294,6 +396,7 @@ print(json.dumps({
     'total_human_hours': ms_to_h(i['human_ms'] + w['human_ms']),
     'total_machine_hours': ms_to_h(i['machine_ms'] + w['machine_ms']),
     'total_sessions': i['count'] + w['count'],
+    'observed_days': observed_days,
 }, indent=2))
 "
 	return 0
@@ -431,20 +534,6 @@ session_time() {
 		repo_path="${repo_path:-.}"
 	fi
 
-	# Auto-detect database path
-	if [[ -z "$db_path" ]]; then
-		db_path=$(_session_time_detect_db)
-	fi
-
-	if [[ -z "$db_path" ]]; then
-		if [[ "$format" == "json" ]]; then
-			echo '{"interactive_sessions":0,"interactive_human_hours":0,"interactive_machine_hours":0,"worker_sessions":0,"worker_machine_hours":0,"total_human_hours":0,"total_machine_hours":0,"total_sessions":0}'
-		else
-			echo "_Session database not found._"
-		fi
-		return 0
-	fi
-
 	if ! command -v sqlite3 &>/dev/null; then
 		if [[ "$format" == "json" ]]; then
 			echo '{"interactive_sessions":0,"interactive_human_hours":0,"interactive_machine_hours":0,"worker_sessions":0,"worker_machine_hours":0,"total_human_hours":0,"total_machine_hours":0,"total_sessions":0}'
@@ -464,11 +553,28 @@ session_time() {
 		return 0
 	fi
 
+	local db_paths=""
+	if [[ -n "$db_path" ]]; then
+		db_paths="$db_path"
+	else
+		db_paths=$(_session_time_detect_db_paths)
+	fi
+
+	if [[ -z "$db_paths" ]]; then
+		if [[ "$format" == "json" ]]; then
+			echo '{"interactive_sessions":0,"interactive_human_hours":0,"interactive_machine_hours":0,"worker_sessions":0,"worker_machine_hours":0,"total_human_hours":0,"total_machine_hours":0,"total_sessions":0}'
+		else
+			echo "_Session database not found._"
+		fi
+		return 0
+	fi
+
 	# Determine --since threshold in milliseconds (single Python call)
 	local seconds
 	case "$period" in
 	day) seconds=86400 ;;
 	week) seconds=604800 ;;
+	28d | 28day | 28days) seconds=2419200 ;;
 	month) seconds=2592000 ;;
 	quarter) seconds=7776000 ;;
 	year) seconds=31536000 ;;
@@ -485,7 +591,7 @@ session_time() {
 	fi
 
 	local query_result
-	query_result=$(_session_time_query_db "$db_path" "$abs_repo_path" "$since_ms")
+	query_result=$(_session_time_query_db_paths "$db_paths" "$abs_repo_path" "$since_ms")
 
 	_session_time_process "$query_result" "$format" "$period"
 	return 0

@@ -131,11 +131,13 @@ unset _SHARED_CONSTANTS
 # Prevents XML injection if paths contain &, <, >, ", or ' characters.
 _xml_escape() {
 	local str="$1"
-	str="${str//&/&amp;}"
-	str="${str//</&lt;}"
-	str="${str//>/&gt;}"
-	str="${str//\"/&quot;}"
-	str="${str//\'/&apos;}"
+	# Escape replacement ampersands so Bash 5.2+ with patsub_replacement
+	# enabled does not turn "&apos;" into "'apos;" in generated plists.
+	str="${str//&/\&amp;}"
+	str="${str//</\&lt;}"
+	str="${str//>/\&gt;}"
+	str="${str//\"/\&quot;}"
+	str="${str//\'/\&apos;}"
 	printf '%s' "$str"
 	return 0
 }

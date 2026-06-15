@@ -470,6 +470,14 @@ _generate_work_with_ai_table() {
 		;;
 	esac
 
+	local session_coverage_note=""
+	local session_observed_days
+	session_observed_days=$(echo "$year_json" | jq -r '(.observed_days // 0 | floor)')
+	if [[ "$session_observed_days" =~ ^[0-9]+$ ]] &&
+		[[ "$session_observed_days" -gt 0 && "$session_observed_days" -lt 330 ]]; then
+		session_coverage_note=$'\n\n'"_AI session 365-day totals cover ${session_observed_days} days of local assistant session history (not extrapolated)._"
+	fi
+
 	cat <<EOF
 ## Work with AI
 
@@ -484,7 +492,7 @@ _generate_work_with_ai_table() {
 
 _Screen time from ${screen_source}, snapshotted daily.$([ -n "$year_suffix" ] && echo " *365-day extrapolated (accumulating real data).")_
 
-_User AI session hours measured from AI message timestamps (reading, thinking, typing between responses)._
+_User AI session hours measured from AI message timestamps (reading, thinking, typing between responses)._${session_coverage_note}
 EOF
 	return 0
 }
@@ -498,7 +506,9 @@ cmd_generate() {
 	local day_json week_json month_json year_json
 	day_json=$(_get_session_time day)
 	week_json=$(_get_session_time week)
-	month_json=$(_get_session_time month)
+	# The profile table column is explicitly 28 days; keep AI session windows
+	# aligned with the screen-time window instead of contributor "month" (30d).
+	month_json=$(_get_session_time 28d)
 	year_json=$(_get_session_time year)
 
 	local model_json_30d model_json_all
