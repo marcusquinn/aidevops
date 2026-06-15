@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.75] - 2026-06-15
+
+### Changed
+
+- Maintenance: mark t3603 complete (pr:#24871 completed:2026-06-15) [skip ci]
+- include wrapper OpenCode session DBs (#24871)
+- Maintenance: sync ref:GH#24870 to TODO.md [skip ci]
+
 ## [3.20.74] - 2026-06-15
 
 ### Fixed
