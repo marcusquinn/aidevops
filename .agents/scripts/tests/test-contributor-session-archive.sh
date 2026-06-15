@@ -106,6 +106,7 @@ test_session_time_includes_archive_and_dedupes() {
 	old_ms=$((now_ms - (100 * 86400000)))
 
 	insert_session_fixture "$active_db" "current-interactive" "Current interactive" "$recent_ms" "$TEST_DIR/repo"
+	insert_session_fixture "$active_db" "temp-classifier" "NO Issue is a classifier run" "$recent_ms" "/private/tmp/opencode"
 	insert_session_fixture "$archive_db" "current-interactive" "Current interactive duplicate" "$recent_ms" "$TEST_DIR/repo"
 	insert_session_fixture "$archive_db" "near-month-interactive" "Near month interactive" "$near_month_ms" "$TEST_DIR/repo"
 	insert_session_fixture "$archive_db" "old-worker" "Issue #123: archived worker" "$old_ms" "$TEST_DIR/repo"
