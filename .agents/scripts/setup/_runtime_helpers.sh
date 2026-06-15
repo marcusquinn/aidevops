@@ -106,6 +106,32 @@ _should_setup_noninteractive_stats_wrapper() {
 	return 1
 }
 
+# Complexity scan is part of the pulse-maintained quality-debt loop. It was
+# split out of pulse dispatch into a standalone scheduler (t2903, GH#21049),
+# so existing pulse-enabled installs need the same first-time non-interactive
+# escape hatch as stats-wrapper and pulse-merge-routine. The generic scheduler
+# gate only regenerates units that are already installed, which strands older
+# Linux/systemd installs without aidevops-complexity-scan.timer (GH#24841).
+_should_setup_noninteractive_complexity_scan() {
+	if _should_setup_noninteractive_scheduler \
+		"Complexity scan" \
+		"sh.aidevops.complexity-scan" \
+		"aidevops: complexity-scan" \
+		"aidevops-complexity-scan"; then
+		return 0
+	fi
+
+	# Pulse-dependency escape hatch: install the standalone complexity scan
+	# whenever the supervisor pulse is (or will be) enabled. This preserves the
+	# non-interactive consent gate while backfilling the new timer for existing
+	# pulse users during update.
+	if _should_setup_noninteractive_supervisor_pulse; then
+		return 0
+	fi
+
+	return 1
+}
+
 # Pulse-merge-routine is a REQUIRED dependency of the supervisor pulse — it
 # is the merge-side of pulse, running merge_ready_prs_all_repos() on a fast
 # 120s cadence so green PRs land within ~3 min of CI completion instead of

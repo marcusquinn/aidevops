@@ -1392,8 +1392,10 @@ _setup_noninteractive_schedulers() {
 	if _should_setup_noninteractive_scheduler "Contribution watch" "sh.aidevops.contribution-watch" "aidevops: contribution-watch" "aidevops-contribution-watch"; then
 		_time_step "setup_contribution_watch" setup_contribution_watch
 	fi
-	# t2903 (#21049): complexity scan — extracted from pulse dispatch preflight
-	if _should_setup_noninteractive_scheduler "Complexity scan" "sh.aidevops.complexity-scan" "aidevops: complexity-scan" "aidevops-complexity-scan"; then
+	# t2903 (#21049): complexity scan — extracted from pulse dispatch preflight.
+	# GH#24841: use a pulse-dependency escape hatch so non-interactive updates
+	# backfill the standalone timer for existing pulse-enabled installs.
+	if _should_setup_noninteractive_complexity_scan; then
 		_time_step "setup_complexity_scan" setup_complexity_scan
 	fi
 	# t2862 (GH#20919): pulse merge routine — fast 120s standalone merge pass.
