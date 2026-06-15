@@ -38,6 +38,7 @@ print_result() {
 setup() {
 	TEST_DIR=$(mktemp -d)
 	mkdir -p "${TEST_DIR}/home/.local/share/opencode"
+	mkdir -p "${TEST_DIR}/home/.aidevops/.agent-workspace/work/opencode-interactive/project-test/opencode"
 	return 0
 }
 
@@ -115,8 +116,10 @@ test_session_time_includes_archive_and_dedupes() {
 
 	local active_db="${TEST_DIR}/home/.local/share/opencode/opencode.db"
 	local archive_db="${TEST_DIR}/home/.local/share/opencode/opencode-archive.db"
+	local wrapper_db="${TEST_DIR}/home/.aidevops/.agent-workspace/work/opencode-interactive/project-test/opencode/opencode.db"
 	create_session_db "$active_db"
 	create_session_db "$archive_db"
+	create_session_db "$wrapper_db"
 
 	local now_ms old_ms near_month_ms recent_ms
 	now_ms=$(python3 -c 'import time; print(int(time.time() * 1000))')
@@ -130,6 +133,7 @@ test_session_time_includes_archive_and_dedupes() {
 	insert_session_fixture "$archive_db" "current-interactive" "Current interactive duplicate" "$recent_ms" "$TEST_DIR/repo"
 	insert_session_fixture "$archive_db" "near-month-interactive" "Near month interactive" "$near_month_ms" "$TEST_DIR/repo"
 	insert_session_fixture "$archive_db" "old-worker" "Issue #123: archived worker" "$old_ms" "$TEST_DIR/repo"
+	insert_session_fixture "$wrapper_db" "wrapper-interactive" "Wrapper interactive" "$recent_ms" "$TEST_DIR/repo"
 
 	local year_json month_json twenty_eight_json repo_json year_sessions month_sessions twenty_eight_sessions worker_sessions interactive_sessions repo_sessions repo_worker_sessions observed_days
 	year_json=$(HOME="${TEST_DIR}/home" session_time --all-dirs --period year --format json)
@@ -145,18 +149,18 @@ test_session_time_includes_archive_and_dedupes() {
 	repo_worker_sessions=$(echo "$repo_json" | jq -r '.worker_sessions')
 	observed_days=$(echo "$year_json" | jq -r '.observed_days')
 
-	if [[ "$year_sessions" != "5" ]]; then
-		print_result "$test_name" 1 "expected 5 year sessions including temp workers and NULL dirs, got ${year_sessions}; JSON: ${year_json}"
+	if [[ "$year_sessions" != "6" ]]; then
+		print_result "$test_name" 1 "expected 6 year sessions including wrapper DBs, temp workers, and NULL dirs, got ${year_sessions}; JSON: ${year_json}"
 		teardown
 		return 0
 	fi
-	if [[ "$month_sessions" != "4" ]]; then
-		print_result "$test_name" 1 "expected 4 month sessions in 30-day window, got ${month_sessions}; JSON: ${month_json}"
+	if [[ "$month_sessions" != "5" ]]; then
+		print_result "$test_name" 1 "expected 5 month sessions in 30-day window, got ${month_sessions}; JSON: ${month_json}"
 		teardown
 		return 0
 	fi
-	if [[ "$twenty_eight_sessions" != "3" ]]; then
-		print_result "$test_name" 1 "expected 3 sessions in 28-day window, got ${twenty_eight_sessions}; JSON: ${twenty_eight_json}"
+	if [[ "$twenty_eight_sessions" != "4" ]]; then
+		print_result "$test_name" 1 "expected 4 sessions in 28-day window, got ${twenty_eight_sessions}; JSON: ${twenty_eight_json}"
 		teardown
 		return 0
 	fi
@@ -165,13 +169,13 @@ test_session_time_includes_archive_and_dedupes() {
 		teardown
 		return 0
 	fi
-	if [[ "$interactive_sessions" != "3" ]]; then
-		print_result "$test_name" 1 "expected NULL-directory and archive interactive sessions preserved, got ${interactive_sessions}; JSON: ${year_json}"
+	if [[ "$interactive_sessions" != "4" ]]; then
+		print_result "$test_name" 1 "expected wrapper, NULL-directory, and archive interactive sessions preserved, got ${interactive_sessions}; JSON: ${year_json}"
 		teardown
 		return 0
 	fi
-	if [[ "$repo_sessions" != "3" ]]; then
-		print_result "$test_name" 1 "expected repo-specific filter to exclude temp and NULL dirs, got ${repo_sessions}; JSON: ${repo_json}"
+	if [[ "$repo_sessions" != "4" ]]; then
+		print_result "$test_name" 1 "expected repo-specific filter to include wrapper repo sessions and exclude temp and NULL dirs, got ${repo_sessions}; JSON: ${repo_json}"
 		teardown
 		return 0
 	fi

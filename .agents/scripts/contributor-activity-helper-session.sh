@@ -91,24 +91,39 @@ _session_time_archive_db_for() {
 }
 
 #######################################
+# Detect aidevops OpenCode wrapper-scoped SQLite session DBs.
+# Output: zero or more database paths, one per line
+#######################################
+_session_time_detect_wrapper_db_paths() {
+	local work_dir="${AIDEVOPS_WORK_DIR:-${HOME}/.aidevops/.agent-workspace/work}"
+	local candidate
+
+	for candidate in "${work_dir}"/opencode-interactive/*/opencode/opencode.db; do
+		[[ -f "$candidate" ]] || continue
+		printf '%s\n' "$candidate"
+	done
+	return 0
+}
+
+#######################################
 # Auto-detect all SQLite session DBs that make up the local history.
-# Output: one database path per line, primary first, archive second if present
+# Output: one database path per line, primary first, archive second if present,
+# followed by aidevops wrapper-scoped OpenCode DBs.
 #######################################
 _session_time_detect_db_paths() {
 	local primary_db
 	primary_db=$(_session_time_detect_db)
-	if [[ -z "$primary_db" ]]; then
-		printf '%s' ""
-		return 0
+	if [[ -n "$primary_db" ]]; then
+		printf '%s\n' "$primary_db"
+
+		local archive_db
+		archive_db=$(_session_time_archive_db_for "$primary_db")
+		if [[ -n "$archive_db" ]]; then
+			printf '%s\n' "$archive_db"
+		fi
 	fi
 
-	printf '%s\n' "$primary_db"
-
-	local archive_db
-	archive_db=$(_session_time_archive_db_for "$primary_db")
-	if [[ -n "$archive_db" ]]; then
-		printf '%s\n' "$archive_db"
-	fi
+	_session_time_detect_wrapper_db_paths
 	return 0
 }
 
