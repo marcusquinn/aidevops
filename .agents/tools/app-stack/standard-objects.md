@@ -19,6 +19,7 @@ workspace
   labels / label_groups / label_assignments
   users / teams / roles / permissions
   notifications / audit_events / integrations / search_queries / saved_views
+  record_revisions / entity_relationships / merge_jobs
   accounts / contacts / address_books
   issues / issue_relationships
   content_types / content_entries / content_revisions / routes
@@ -33,7 +34,7 @@ Use separate tables only when the subtype needs distinct validation, lifecycle, 
 
 The hierarchy abbreviates always-on platform/kernel objects; see `app-stack/platform-kernel.md` for the full notification, audit, import/export, integration, search, report, form, settings, job, and retention model.
 
-For cross-object relationships, default to generic link tables with `entity_type` and `entity_id`. Use typed join tables only for high-volume, referentially critical, permission-critical, or heavily indexed relationships.
+For cross-object relationships, default to generic link tables with `entity_type` and `entity_id`. Use typed join tables only for high-volume, referentially critical, permission-critical, or heavily indexed relationships. Model cardinality, inverse labels, merge handling, and history using `app-stack/data-history-relationships.md`.
 
 ## Slugs, routes, and hierarchy
 

@@ -33,6 +33,7 @@ Rules:
 | `audit_events` | Immutable security/business change ledger: actor, action, entity, before/after summary, reason |
 | `activity_events` | Human-readable timeline/feed events for records and workspaces |
 | `change_events` | Low-level data change stream for sync, search indexing, automation, cache invalidation |
+| `record_revisions` | User-visible revision history and restore/compare checkpoints for business records |
 | `provenance_records` | Source, import, AI/tool, external system, confidence, reviewer, and evidence metadata |
 | `app_log_events` | Operational logs/errors tied to request/job/user/workspace context |
 
@@ -42,6 +43,7 @@ Rules:
 - Activity feeds can be denormalised/read-optimised, but must link back to authoritative records.
 - Capture actor, workspace, entity type, entity ID, request/job ID, IP/session where applicable, and timestamp.
 - Minimise log data: avoid raw session IDs, hash or truncate IPs where appropriate, apply retention/redaction, and prevent operational logs from becoming public support artifacts.
+- Use `record_revisions` for compare/restore UX; keep audit events append-only and access-controlled. Full pattern: `app-stack/data-history-relationships.md`.
 
 ## Imports, exports, and data quality
 
@@ -52,6 +54,7 @@ Rules:
 | `import_rows` | Staged source rows with raw payload hash, parsed values, status, matched entity |
 | `import_errors` | Row/cell validation, permission, duplicate, integrity, or transform errors |
 | `dedupe_candidates` | Potential duplicates with confidence, evidence, decision, reviewer |
+| `merge_jobs` | Reviewed duplicate-record merge plan/execution with field and relationship choices |
 | `export_jobs` | Export run: query/scope, format, status, file link, notification preference |
 | `export_files` | Links to generated files plus expiry, sensitivity, and access policy |
 
@@ -59,6 +62,7 @@ Rules:
 
 - Imports stage before mutating production rows when validation/dedupe/review is needed.
 - Preserve raw row hashes and mapping versions so imports can be replayed or explained.
+- Duplicate merges need a reviewed merge plan, per-field choices, per-relationship choices, aliases/tombstones, and audit/provenance links; see `app-stack/data-history-relationships.md`.
 - Exports need permission checks, audit events, expiry, and sensitivity labels.
 
 ## Integrations, sync, and webhooks

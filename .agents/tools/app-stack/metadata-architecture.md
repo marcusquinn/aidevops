@@ -16,7 +16,7 @@ Use metadata when the app needs configurable entities, layouts, permissions, imp
 |--------|---------|
 | `entity_definitions` | Entity key, label, table/source, ownership, lifecycle |
 | `field_definitions` | Field key, type, validation, display, indexing, privacy |
-| `relationship_definitions` | One-to-many, many-to-many, polymorphic references |
+| `relationship_definitions` | One-to-one, one-to-many, many-to-one, many-to-many, and polymorphic references |
 | `layout_definitions` | Detail/edit/create/list layouts and panels |
 | `panel_definitions` | Relationship/admin/dashboard panels and visibility rules |
 | `view_definitions` | Template/default list, detail, and search views; runtime saved views live in `saved_views` |
@@ -43,6 +43,7 @@ Use metadata when the app needs configurable entities, layouts, permissions, imp
 - Keep validation close to field definitions and enforce again at API/database boundaries.
 - Model layouts separately from fields so the same entity can have role/context-specific views.
 - Model panels separately from layouts so related lists, admin panels, and dashboards can have independent permissions.
+- Model relationships with explicit source, target, cardinality, inverse label, requiredness, delete behaviour, and permission inheritance policy.
 - Make labels/tags a first-class metadata concern for every user-facing entity; model label groups, exclusivity, display order, colour, and scope.
 - Use content type definitions for configurable editorial/domain content; use migrations for core content tables and route ownership.
 - Keep roles, teams, capabilities, and permission rules separate so teams do not become roles.
@@ -60,6 +61,7 @@ Use metadata when the app needs configurable entities, layouts, permissions, imp
 - Demonstrate one entity from definition to list view, detail layout, edit validation, ACL, workflow transition, audit event, and export.
 - Demonstrate one workflow definition through state, transition, guard, action, approval or timer, runtime event, and audit log.
 - Demonstrate one grouped label assignment such as `status:normal` and one issue relationship if the app exposes work tracking.
+- Demonstrate each configured relationship cardinality and prove uniqueness/foreign-key/link-table constraints.
 - Confirm field-level privacy and AI exposure rules.
 - Confirm role/team permission behaviour for object, panel, field, and workflow actions.
 - Confirm imports can be replayed or explained with provenance.
