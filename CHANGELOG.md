@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.64] - 2026-06-15
+
+### Changed
+
+- Maintenance: sync ref:GH#24827 to TODO.md [skip ci]
+- Documentation: expand app-stack architecture guidance (#24826)
+- Maintenance: update simplification state registry
+
 ## [3.20.63] - 2026-06-15
 
 ### Changed
