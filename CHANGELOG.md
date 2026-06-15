@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.74] - 2026-06-15
+
+### Fixed
+
+- preserve NMR for security-sensitive issues (#24868)
+
 ## [3.20.73] - 2026-06-15
 
 ### Changed
