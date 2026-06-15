@@ -201,10 +201,12 @@ test_privacy_guide_mentions_limits_and_companions() {
 		"Rotate identities after suspected compromise"
 	)
 	local missing=()
+	local missing_report=""
 	local item
 	for item in "${expected[@]}"; do
 		if [[ "$output" != *"$item"* ]]; then
 			missing+=("$item")
+			missing_report+="[$item] "
 		fi
 	done
 
@@ -213,7 +215,7 @@ test_privacy_guide_mentions_limits_and_companions() {
 		return 0
 	fi
 
-	print_result "privacy guide mentions limits and companions" 1 "missing: ${missing[*]}"
+	print_result "privacy guide mentions limits and companions" 1 "missing (${#missing[@]}): $missing_report"
 	return 0
 }
 
