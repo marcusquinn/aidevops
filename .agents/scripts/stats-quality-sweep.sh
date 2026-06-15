@@ -57,6 +57,14 @@ source "${SCRIPT_DIR}/stats-quality-sweep-tools.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/stats-quality-sweep-issues.sh"
 
+if ! declare -F _gh_current_user_allows_repo_write >/dev/null 2>&1; then
+	if [[ -f "${SCRIPT_DIR}/shared-gh-collaborator-permission.sh" ]]; then
+		# shellcheck source=./shared-gh-collaborator-permission.sh
+		# shellcheck disable=SC1091  # shared helper resolved at runtime via $SCRIPT_DIR
+		source "${SCRIPT_DIR}/shared-gh-collaborator-permission.sh"
+	fi
+fi
+
 # --- Orchestrator functions ---
 
 #######################################
@@ -632,9 +640,9 @@ _create_simplification_issues() {
 	local sarif_json="$2"
 	# t2066: retuned caps for throughput. The old values (5/3/200) were set for
 	# a world where simplification issues were a trickle. With the current
-	# ~109-smell baseline we need flow, not trickle — and the
-	# needs-maintainer-review gate already ensures human approval rate-limits
-	# actual dispatch. See GH#18774.
+	# ~109-smell baseline we need flow, not trickle. The review gate is only for
+	# external/non-collaborator automation identities; maintainer-owned sweeps are
+	# already approved by their trusted issue provenance.
 	local max_issues_per_sweep=5
 	local min_smells_threshold=3
 	local total_open_cap=30
@@ -678,6 +686,20 @@ _create_simplification_issues() {
 		"${HOME}/.config/aidevops/repos.json" 2>/dev/null) || maintainer=""
 	if [[ -z "$maintainer" ]]; then
 		maintainer="${repo_slug%%/*}"
+	fi
+
+	local simplification_labels=("function-complexity-debt" "source:quality-sweep" "tier:thinking")
+	# #aidevops:trust-boundary — NMR is an external-origin approval gate. When
+	# the authenticated sweep identity has repo write authority, the issue author
+	# is already trusted and should not be parked behind maintainer review. If the
+	# permission helper is unavailable or the lookup fails, fail closed and keep
+	# needs-maintainer-review.
+	if declare -F _gh_current_user_allows_repo_write >/dev/null 2>&1 \
+		&& _gh_current_user_allows_repo_write "$repo_slug"; then
+		echo "[stats] Function-complexity-debt issues: trusted current user ${AIDEVOPS_GH_WRITE_PERMISSION_USER:-unknown} (${AIDEVOPS_GH_WRITE_PERMISSION_LEVEL:-unknown}) — skipping needs-maintainer-review" >>"$LOGFILE"
+	else
+		simplification_labels+=("needs-maintainer-review")
+		echo "[stats] Function-complexity-debt issues: current user not verified as repo writer (${AIDEVOPS_GH_WRITE_PERMISSION_REASON:-helper-unavailable}) — keeping needs-maintainer-review" >>"$LOGFILE"
 	fi
 
 	# Total-open cap: stop creating when backlog is already large
@@ -726,9 +748,15 @@ _create_simplification_issues() {
 		qlty_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$issue_body" 2>/dev/null || true)
 		issue_body="${issue_body}${qlty_sig}"
 
+		local label_args=()
+		local label_name
+		for label_name in "${simplification_labels[@]}"; do
+			label_args+=(--label "$label_name")
+		done
+
 		if gh_create_issue --repo "$repo_slug" \
 			--title "$issue_title" \
-			--label "function-complexity-debt" --label "needs-maintainer-review" --label "source:quality-sweep" --label "tier:thinking" \
+			"${label_args[@]}" \
 			--assignee "$maintainer" \
 			--body "$issue_body" >/dev/null 2>&1; then
 			issues_created=$((issues_created + 1))
@@ -737,7 +765,7 @@ _create_simplification_issues() {
 
 	if [[ "$issues_created" -gt 0 ]]; then
 		qlty_section="${qlty_section}
-_Created ${issues_created} function-complexity-debt issue(s) for high-smell files (needs maintainer review, tier:thinking)._
+_Created ${issues_created} function-complexity-debt issue(s) for high-smell files (tier:thinking)._
 "
 	fi
 
