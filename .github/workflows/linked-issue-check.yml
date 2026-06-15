@@ -116,7 +116,10 @@ jobs:
               return;
             }
 
-            // No linked issue found — block
+            // No linked issue found — block via the required commit status while
+            // leaving the workflow job successful. The workflow's CheckRun is an
+            // implementation detail; failing it turns expected policy blocks into
+            // noisy systemic CI failures for automation that mines failed jobs.
             console.log(`No linked issue reference found in PR body`);
             await github.rest.repos.createCommitStatus({
               owner: repo.owner,
@@ -127,8 +130,8 @@ jobs:
               description: 'No linked issue — add Closes/Fixes/Resolves/For #NNN to PR body'
             });
 
-            core.setFailed(
-              'PR body must reference a linked issue.\n' +
-              'Add one of: `Closes #NNN`, `Fixes #NNN`, `Resolves #NNN`, `For #NNN`, or `Ref #NNN`\n' +
+            core.notice(
+              'PR body must reference a linked issue. ' +
+              'Add one of: `Closes #NNN`, `Fixes #NNN`, `Resolves #NNN`, `For #NNN`, or `Ref #NNN`. ' +
               'If no issue exists for this change, please create one first.'
             );
