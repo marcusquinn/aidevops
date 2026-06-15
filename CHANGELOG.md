@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.68] - 2026-06-15
+
+### Changed
+
+- fix profile session metrics (#24858)
+
 ## [3.20.67] - 2026-06-15
 
 ### Added
