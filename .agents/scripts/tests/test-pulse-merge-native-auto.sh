@@ -20,6 +20,8 @@
 #             → returns 1; no `gh pr merge --auto` invocation
 #   Case (E): autoMergeRequest pending past threshold
 #             → returns 0 and keeps deferring because pending checks are non-terminal
+#   Case (F): autoMergeRequest + MERGEABLE + BEHIND + green required checks
+#             → update-branch succeeds and caller defers to the next cycle
 #
 # Also verifies the caller contract: native auto-merge defer returns 4 from
 # _process_single_ready_pr and _merge_ready_prs_for_repo does not count that as
@@ -119,6 +121,11 @@ if [[ "$1" == "pr" && "$2" == "merge" && "$*" == *"--auto"* ]]; then
 	exit 0
 fi
 
+# `gh pr update-branch <N> --repo <slug>`
+if [[ "$1" == "pr" && "$2" == "update-branch" ]]; then
+	exit 0
+fi
+
 # Default: succeed silently for any other call shape.
 exit 0
 GHEOF
@@ -139,17 +146,20 @@ teardown_test_env() {
 # into the test shell. _set_native_auto_merge_or_skip calls
 # _auto_merge_stuck_seconds (t3192), so we extract that too.
 define_helpers_under_test() {
-	local src_stuck src_repo_allow src_set_native
+	local src_stuck src_repo_allow src_green_behind src_set_native
 	src_stuck=$(awk '
 		/^_auto_merge_stuck_seconds\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
 	' "$PROCESS_SCRIPT")
 	src_repo_allow=$(awk '
 		/^_repo_allows_auto_merge\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
 	' "$PROCESS_SCRIPT")
+	src_green_behind=$(awk '
+		/^_attempt_existing_auto_merge_behind_update_branch\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
+	' "$PROCESS_SCRIPT")
 	src_set_native=$(awk '
 		/^_set_native_auto_merge_or_skip\(\)[[:space:]]*\{[[:space:]]*$/, /^\}[[:space:]]*$/ { print }
 	' "$PROCESS_SCRIPT")
-	if [[ -z "$src_stuck" || -z "$src_repo_allow" || -z "$src_set_native" ]]; then
+	if [[ -z "$src_stuck" || -z "$src_repo_allow" || -z "$src_green_behind" || -z "$src_set_native" ]]; then
 		printf 'ERROR: could not extract helpers from %s\n' "$PROCESS_SCRIPT" >&2
 		return 1
 	fi
@@ -158,10 +168,22 @@ define_helpers_under_test() {
 	# shellcheck disable=SC1090
 	eval "$src_repo_allow"
 	# shellcheck disable=SC1090
+	eval "$src_green_behind"
+	# shellcheck disable=SC1090
 	eval "$src_set_native"
 	gh_pr_view() {
 		gh pr view "$@"
 		return $?
+	}
+	_pmp_normalize_mergeable_state_into() {
+		local __target_var="$1"
+		local __value="$2"
+		case "$__value" in
+			MERGEABLE | CONFLICTING | UNKNOWN) ;;
+			*) __value="UNKNOWN" ;;
+		esac
+		printf -v "$__target_var" '%s' "$__value"
+		return 0
 	}
 	_check_required_checks_passing() {
 		local _repo_slug="$1"
@@ -376,6 +398,43 @@ test_case_e_stale_pending_defers() {
 	return 0
 }
 
+# =============================================================================
+# Case (F): existing auto-merge is green but behind → update branch and defer
+# =============================================================================
+test_case_f_green_behind_updates_branch() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	printf '{"autoMergeRequest":{"enabledAt":"2026-06-15T14:00:00Z"},"mergeStateStatus":"BEHIND","mergeable":"MERGEABLE","reviewDecision":"APPROVED"}' \
+		>"${TEST_ROOT}/auto_merge_request.txt"
+	printf '0' >"${TEST_ROOT}/pending_count.txt"
+
+	local result=0
+	_attempt_existing_auto_merge_behind_update_branch "600" "owner/repo" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "Case (F): green BEHIND auto_merge → update-branch returns 0" 1 \
+			"Expected exit 0, got ${result}"
+		teardown_test_env
+		return 0
+	fi
+	if ! grep -qE 'gh pr update-branch 600 --repo owner/repo' "$GH_LOG"; then
+		print_result "Case (F): green BEHIND auto_merge → invokes update-branch" 1 \
+			"gh log: $(cat "$GH_LOG")"
+		teardown_test_env
+		return 0
+	fi
+	if ! grep -qE 'green but BEHIND.*update-branch succeeded.*GH#24839' "$LOGFILE"; then
+		print_result "Case (F): green BEHIND auto_merge → audit log written" 1 \
+			"pulse log: $(cat "$LOGFILE")"
+		teardown_test_env
+		return 0
+	fi
+	print_result "Case (F): green BEHIND auto_merge → updates branch and defers" 0
+	teardown_test_env
+	return 0
+}
+
 test_native_auto_defer_not_counted_as_completed_merge() {
 	local process_src merge_src
 	process_src=$(awk '
@@ -413,6 +472,7 @@ main() {
 	test_case_c_already_set_no_op
 	test_case_d_repo_disallows_falls_through
 	test_case_e_stale_pending_defers
+	test_case_f_green_behind_updates_branch
 	test_native_auto_defer_not_counted_as_completed_merge
 
 	printf '\n=================================\n'

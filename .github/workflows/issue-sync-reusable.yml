@@ -291,7 +291,9 @@ jobs:
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 3
     concurrency:
-      group: issue-dedup-${{ github.event.issue.number }}
+      # Serialize same-author issue openings so double-click / retry storms cannot
+      # race both dedup jobs before the older issue is visible to the newer run.
+      group: issue-dedup-${{ github.repository }}-${{ github.event.issue.user.login }}
       cancel-in-progress: false
     permissions:
       issues: write
@@ -359,15 +361,27 @@ jobs:
             exit 0
           fi
 
+          since_epoch=$((new_epoch - WINDOW))
+          since_iso=$(date -u -d "@${since_epoch}" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
+
           echo "[dedup] Fetching recent open issues by @${ISSUE_AUTHOR}..."
-          issues_json=$(gh issue list --repo "$REPO" \
-            --author "$ISSUE_AUTHOR" --state open \
-            --limit 20 --json number,title,body,createdAt 2>/dev/null || echo "[]")
+          # Use the REST issues endpoint rather than `gh issue list`; the latter
+          # can be backed by GitHub search/indexing and miss an issue opened only
+          # seconds earlier, which is exactly the race this server-side guard
+          # exists to close (GH#24840 duplicate of GH#24839).
+          issues_json=$(gh api "repos/${REPO}/issues" \
+            -f state=open -f creator="$ISSUE_AUTHOR" -f since="$since_iso" -f per_page=100 \
+            --jq '[.[] | select(.pull_request | not) | {number,title,body:(.body//""),createdAt:.created_at}]' \
+            2>/dev/null || echo "[]")
 
           cand_count=$(printf '%s' "$issues_json" | jq 'length')
           echo "[dedup] Found ${cand_count} open issue(s) by @${ISSUE_AUTHOR}"
 
           canonical_num=""
+          if [[ "$cand_count" -eq 0 ]]; then
+            echo "[dedup] No recent open issues found — issue is unique"
+            exit 0
+          fi
           for i in $(seq 0 $((cand_count - 1))); do
             cand_num=$(printf '%s' "$issues_json" | jq -r ".[$i].number")
 
