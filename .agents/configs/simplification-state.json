@@ -288,9 +288,9 @@
       "pr": 11812
     },
     ".agents/commands/AGENTS.md": {
-      "at": "2026-05-12T23:36:31Z",
-      "hash": "1e6efb903e31b147744621a8502031d82df2b3cd",
-      "passes": 84,
+      "at": "2026-06-14T23:40:15Z",
+      "hash": "91273ec671c6450c4692523d2e43b4f1825921c2",
+      "passes": 85,
       "pr": 18117
     },
     ".agents/commands/aidevops-automate.md": {
@@ -1802,9 +1802,9 @@
       "pr": "pending"
     },
     ".agents/reference/worker-diagnostics.md": {
-      "at": "2026-06-14T05:09:04Z",
-      "hash": "d8a047a5f2bd416804e7daf8c5aa836759a30814",
-      "passes": 18,
+      "at": "2026-06-14T23:53:18Z",
+      "hash": "7926f0ab203a5bdb763fb21d73256103e6370051",
+      "passes": 19,
       "pr": 17659
     },
     ".agents/research.md": {
@@ -6342,9 +6342,9 @@
       "pr": 16539
     },
     ".agents/tools/monorepo/turborepo.md": {
-      "at": "2026-03-30T06:49:45Z",
-      "hash": "cfe5067e6064e097d19bd7538172ac0201c72b65",
-      "passes": 2,
+      "at": "2026-06-15T00:40:12Z",
+      "hash": "b1243371c4b6bc80edb4c99bce8d6a3e1af4dbab",
+      "passes": 3,
       "pr": 13795
     },
     ".agents/tools/multimodal-evaluation.md": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-06-14T05:33:13Z",
-      "hash": "475238d51d8ea3cf2852e253f161fb8cc781860c",
-      "passes": 230,
+      "at": "2026-06-15T00:40:50Z",
+      "hash": "979a8c8a95e231577f564faedba39aef878a5e56",
+      "passes": 231,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-06-14T05:33:20Z",
-      "hash": "c69da1b2e7273f958ce7e2a807aa24ade29266f0",
-      "passes": 226,
+      "at": "2026-06-15T00:40:50Z",
+      "hash": "c88a26a2b635bba1d6067aa548bb5ed6a743b7c3",
+      "passes": 227,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7606,10 +7606,10 @@
       "passes": 2
     },
     ".agents/scripts/pulse-merge-feedback.sh": {
-      "hash": "bb970a96a65b439aaf9efeb90e93a93088bbf8fe",
-      "at": "2026-05-08T04:44:50Z",
+      "hash": "2653248e212f529f3b40cc0b2d9fbd3f9037717e",
+      "at": "2026-06-14T23:57:08Z",
       "pr": 20057,
-      "passes": 13
+      "passes": 14
     },
     ".agents/reference/hot-deploy.md": {
       "hash": "3a66b934462bb8f144f83d2522d569068d4898d1",
