@@ -85,7 +85,7 @@ WordPress concept mapping:
 | Page URL/permalink | `routes` or `content_routes` |
 | Revisions | `content_revisions` |
 | Blocks/patterns | `content_blocks` |
-| Categories/tags/custom taxonomies | `taxonomies`, `terms`, `term_assignments`, labels |
+| Categories/tags/custom taxonomies | `taxonomies`, `terms`, `term_assignments` |
 | Media library item | `files` with `file_links` |
 | Menus | `menus`, `menu_items` |
 | SEO fields | `seo_metadata` linked to content/routes |
@@ -99,8 +99,8 @@ Core model:
 | `content_revisions` | Immutable revisions with editor, diff/source snapshot, reason, publish metadata |
 | `content_blocks` | Structured page sections or rich-content blocks ordered within an entry/revision |
 | `routes` / `content_routes` | URL path, canonical target, redirects, locale, route status |
-| `taxonomies` | Category/tag vocabularies, hierarchical or flat |
-| `terms` | Taxonomy values; can mirror labels when simple grouping is enough |
+| `taxonomies` | Content classification vocabularies such as category, tag, topic, audience; hierarchical or flat |
+| `terms` | Values inside a taxonomy, e.g. News, AI, Developers |
 | `term_assignments` | Entry-to-term assignments with sort/context metadata |
 | `menus` / `menu_items` | Navigation structures independent of content storage |
 | `seo_metadata` | Title, description, robots, canonical URL, social cards, structured-data hints |
@@ -112,6 +112,7 @@ Rules:
 - Use workflows for draft/review/approved/published/archived lifecycles; labels can mirror editorial status but are not the source of truth.
 - Use files/file links for media assets; do not create a separate media-blob system for content.
 - Use metadata field definitions when content types are editor-configurable; use migrations for core product content tables.
+- Use taxonomies/terms for content classification. Use labels for cross-object operational grouping such as `status:normal` or `priority:high`. Only use labels as content tags in deliberately simple flat-tag products with no taxonomy hierarchy, term metadata, or editorial taxonomy UI.
 
 Choose WordPress instead when routine editors need posts/pages/media library/revisions/forms/SEO plugins/themes/plugin ecosystem more than product-specific app integration.
 
