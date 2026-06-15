@@ -14,10 +14,12 @@ Request: $ARGUMENTS
 ## Decision Tree
 
 1. If the project lacks `DESIGN.md`, create/lint it first via `tools/design/design-md.md`.
-2. If the task is implementation in an existing codebase, use aidevops UI agents directly.
-3. If the task is artifact-first preview/export (deck, poster, carousel, mobile mock, email, one-off HTML), consider `/open-design route "$ARGUMENTS"`.
-4. If Open Design is used, keep generated files in its `.od/` workspace until selected outputs are reviewed.
-5. Run verification: `workflows/ui-verification.md`, `email-design-test-helper.sh`, or media/deck export checks.
+2. For brand guideline handoff, run `aidevops design guidelines . --pdf` and review `_reports/brand-guidelines/`.
+3. For cross-repo rollout, run `aidevops design survey --json` then `aidevops design issues --apply` to file worker-ready GUI repo tasks.
+4. If the task is implementation in an existing codebase, use aidevops UI agents directly.
+5. If the task is artifact-first preview/export (deck, poster, carousel, mobile mock, email, one-off HTML), consider `/open-design route "$ARGUMENTS"`.
+6. If Open Design is used, keep generated files in its `.od/` workspace until selected outputs are reviewed.
+7. Run verification: `workflows/ui-verification.md`, `email-design-test-helper.sh`, or media/deck export checks.
 
 ## Recommended Outputs
 

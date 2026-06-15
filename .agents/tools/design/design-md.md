@@ -32,6 +32,8 @@ model: sonnet
 - **Template**: `templates/DESIGN.md.template`
 - **Library**: `tools/design/library/` (86 brand examples, style templates, and report presentation presets)
 - **Preview**: `tools/design/library/_template/preview.html.template`
+- **Brand guide export**: `scripts/design-guidelines-helper.sh guidelines . --pdf`
+- **Repo rollout**: `scripts/design-guidelines-helper.sh survey --json` then `scripts/design-guidelines-helper.sh issues --apply`
 - **Palette tools**: `tools/design/colour-palette.md`, `scripts/colormind-helper.sh`
 - **Preview capture**: `scripts/design-preview-helper.sh`
 
@@ -60,8 +62,9 @@ Upstream `@google/design.md` v0.2.0 and follow-up commit `18508f2` were reviewed
 3. **Create** — from scratch (interview), links/local style guides (`tools/design/design-md-from-links.md`), report presentation (`tools/design/report-presentation.md`), or library example.
 4. **Validate** — run `npx @google/design.md lint DESIGN.md`. Zero errors, warnings reviewed.
 5. **Preview** — generate `preview.html` to visually verify the design system.
-6. **Iterate** — spin palettes, adjust tokens, regenerate preview until satisfied.
-7. **Build** — hand DESIGN.md to coding agents for consistent, on-brand UI output.
+6. **Brand guide** — run `aidevops design guidelines . --pdf` to create `_reports/brand-guidelines/` Markdown, HTML, and PDF handoff files.
+7. **Iterate** — spin palettes, adjust tokens, regenerate preview/guide until satisfied.
+8. **Build** — hand DESIGN.md to coding agents for consistent, on-brand UI output.
 
 <!-- AI-CONTEXT-END -->
 
@@ -216,6 +219,8 @@ Choose method based on what exists:
 | Styled report, HTML export, or PDF-ready output | Report presentation | `tools/design/report-presentation.md` |
 | Known brand/style | Library copy | `tools/design/library/brands/` or `library/styles/` |
 | `brand-identity.toon` exists | Brand identity | Map dimensions to sections (see below) |
+
+`aidevops init` now records `has_interface` and creates root `DESIGN.md` for standard-scope repos plus minimal-scope repos where interface markers are detected. Use `aidevops design scaffold . --force` for unusual GUI repos without detectable markers.
 
 **Method 1 (Interview):** Brand identity interview (`tools/design/brand-identity.md`) → select UI style from `ui-ux-catalogue.toon` → generate palette (`colour-palette.md`) → copy closest library example → synthesise into template → lint + preview + iterate.
 

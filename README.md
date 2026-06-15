@@ -233,6 +233,7 @@ aidevops auto-update      # Manage automatic update polling (every 10 min)
 aidevops init             # Initialize aidevops in any project
 aidevops features         # List available features
 aidevops repos            # List/add/remove registered projects
+aidevops design           # DESIGN.md detection + brand guideline HTML/PDF exports
 aidevops detect           # Scan for unregistered aidevops projects
 aidevops upgrade-planning # Upgrade TODO.md/PLANS.md to latest templates
 aidevops update-tools     # Check and update installed tools
@@ -244,6 +245,9 @@ aidevops uninstall        # Remove aidevops
 aidevops now treats design as a self-contained stack with optional peripherals:
 
 - **Google `DESIGN.md` standard**: AI-readable design systems with YAML tokens, linting, previews, and brand/style libraries (`.agents/tools/design/design-md.md`).
+- **Init-aware design files**: `aidevops init` records `has_interface` and seeds root `DESIGN.md` for standard repos plus minimal-scope repos with detected GUI/interface markers.
+- **Brand guideline exports**: `aidevops design guidelines . --pdf` generates `_reports/brand-guidelines/brand-guidelines.md`, HTML, and A4/US Letter/slides PDFs from `DESIGN.md`.
+- **Repo rollout**: `aidevops design survey --json` audits owned initialized GUI repos; `aidevops design issues --apply` files worker-ready auto-dispatch issues for missing `DESIGN.md`/brand-guideline artifacts.
 - **Design agents and skills**: brand identity, palettes, UI inspiration, product UI rules, shadcn/Tailwind/UI skills, Nothing-style design, email rendering, Remotion/video, and browser-based UI verification.
 - **Artifact routing commands**: `/design-artifact` decides whether to use aidevops-native implementation or a companion artifact studio; `/open-design` manages optional Open Design workflows.
 - **Verification gates**: Playwright screenshots, accessibility/contrast checks, email rendering, deck export/fidelity checks, and media smoke tests before generated artifacts are accepted.
@@ -585,7 +589,7 @@ See `.agents/tools/terminal/terminal-title.md` for customization options.
 
 **Collaborator compatibility:** Projects initialized with `aidevops init` include pointer files (`.cursorrules`, `.windsurfrules`, etc.) that reference `AGENTS.md`, helping collaborators using other editors find project context. aidevops does not install into or configure those tools.
 
-**Repo courtesy files:** `aidevops init` scaffolds standard repo files if they don't exist: `README.md`, `LICENCE` (MIT), `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`. Author name and email are auto-detected from git config. Existing files are never overwritten.
+**Repo courtesy files:** `aidevops init` scaffolds standard repo files if they don't exist: `DESIGN.md` for GUI/interface repos, `README.md`, `LICENCE` (MIT), `CHANGELOG.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`. Author name and email are auto-detected from git config. Existing files are never overwritten.
 
 ## **Core Capabilities**
 

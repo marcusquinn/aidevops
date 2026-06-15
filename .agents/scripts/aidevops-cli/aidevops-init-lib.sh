@@ -610,13 +610,14 @@ _init_scaffold_commands_symlinks() {
 	return 0
 }
 
-# Scaffold optional files gated by init_scope (t2265).
+# Scaffold optional files gated by init_scope (t2265) and interface detection.
 # Extracted from cmd_init to reduce nesting depth and function length.
-# Usage: _init_scaffold_scope_gated_files <project_root> <init_scope> <repo_name>
+# Usage: _init_scaffold_scope_gated_files <project_root> <init_scope> <repo_name> [has_interface]
 _init_scaffold_scope_gated_files() {
 	local project_root="$1"
 	local init_scope="$2"
 	local repo_name="$3"
+	local has_interface="${4:-false}"
 
 	# Collaborator pointer files — require standard scope
 	if _scope_includes "$init_scope" "standard"; then
@@ -641,19 +642,11 @@ _init_scaffold_scope_gated_files() {
 		print_info "Collaborator pointer files skipped (init_scope: $init_scope)"
 	fi
 
-	# DESIGN.md — requires standard scope
-	if _scope_includes "$init_scope" "standard"; then
-		if [[ ! -f "$project_root/DESIGN.md" ]]; then
-			local design_template="$AGENTS_DIR/templates/DESIGN.md.template"
-			if [[ -f "$design_template" ]]; then
-				sed "s/{Project Name}/$repo_name/g" "$design_template" >"$project_root/DESIGN.md"
-				print_success "Created DESIGN.md (design system skeleton — populate with tools/design/design-md.md)"
-			fi
-		else
-			print_info "DESIGN.md already exists, skipping"
-		fi
+	# DESIGN.md — standard scope, plus minimal-scope repos when a GUI/interface is detected.
+	if _scope_includes "$init_scope" "standard" || [[ "$has_interface" == "true" ]]; then
+		_init_scaffold_design_md "$project_root" "$repo_name"
 	else
-		print_info "DESIGN.md skipped (init_scope: $init_scope)"
+		print_info "DESIGN.md skipped (init_scope: $init_scope, interface: $has_interface)"
 	fi
 
 	# Courtesy files (README, LICENCE, CHANGELOG, etc.) — scope handled internally
@@ -796,6 +789,9 @@ cmd_init() {
 	init_scope=$(_infer_init_scope "$project_root")
 	print_info "Init scope: $init_scope (controls which scaffolding files are created)"
 
+	local has_interface=false
+	_init_repo_has_interface "$project_root" && has_interface=true
+
 	local is_agent_source=false
 	if is_agent_source_repo "$project_root"; then
 		is_agent_source=true
@@ -813,6 +809,7 @@ cmd_init() {
   "version": "$aidevops_version",
   "initialized": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "init_scope": "$init_scope",
+  "has_interface": $has_interface,
   "agent_source": $is_agent_source,
   "features": {
     "planning": $enable_planning,
@@ -1296,7 +1293,7 @@ GITATTRSEOF
 	# Scaffold optional files gated by init_scope (collaborator pointers,
 	# DESIGN.md, courtesy files, MODELS.md). Extracted to reduce cmd_init
 	# nesting depth and function length (t2265).
-	_init_scaffold_scope_gated_files "$project_root" "$init_scope" "$repo_name"
+	_init_scaffold_scope_gated_files "$project_root" "$init_scope" "$repo_name" "$has_interface"
 
 	_init_configure_coderabbit_abort_on_close "$project_root" "$enable_code_quality"
 

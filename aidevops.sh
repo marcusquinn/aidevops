@@ -836,6 +836,7 @@ _help_commands() {
 	echo "  repo-sync <cmd>    Daily git pull for repos in parent dirs (enable/disable/status/dirs)"
 	echo "  update-tools       Check for outdated tools (--update to auto-update)"
 	echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
+	echo "  design <cmd>       DESIGN.md detection, scaffolding, and brand guideline exports"
 	echo "  cleanup <cmd>      Cleanup helpers (remote branch audit/delete)"
 	echo "  model-accounts-pool OAuth account pool (list/check/diagnose/add/rotate/reset-cooldowns)"
 	echo "  client-format      Client request format alignment (extract/check/canary/monitor)"
@@ -950,6 +951,13 @@ _help_detailed_sections() {
 	echo "  aidevops knowledge add <file|url>      # Ingest file or URL into sources/"
 	echo "  aidevops knowledge list [--state s] [--kind k]  # List all known sources"
 	echo "  aidevops knowledge search <query>      # Search sources (grep fallback)"
+	echo ""
+	echo "Design Systems:"
+	echo "  aidevops design detect [path]          # Detect whether a repo has a GUI/interface"
+	echo "  aidevops design scaffold [path]        # Create DESIGN.md skeleton when missing"
+	echo "  aidevops design guidelines [path] --pdf # Generate brand guideline HTML/PDF exports"
+	echo "  aidevops design survey [--json]        # Audit owned initialized GUI repos"
+	echo "  aidevops design issues --apply         # File auto-dispatch issues for missing design artifacts"
 	echo ""
 	echo "Campaign Plane:"
 	echo "  aidevops campaign init [<path>]          # Provision _campaigns/ directory contract (P1)"
@@ -1500,6 +1508,7 @@ main() {
 	update-tools | tools) cmd_update_tools "$@" ;;
 	upgrade-planning | up) cmd_upgrade_planning "$@" ;;
 	repos | projects) cmd_repos "$@" ;;
+	design) _dispatch_helper "design-guidelines-helper.sh" "design-guidelines-helper.sh" "$@" ;;
 	skill) cmd_skill "$@" ;;
 	skills) cmd_skills "$@" ;;
 	sources | agent-sources) _dispatch_helper "agent-sources-helper.sh" "agent-sources-helper.sh" "$@" ;;

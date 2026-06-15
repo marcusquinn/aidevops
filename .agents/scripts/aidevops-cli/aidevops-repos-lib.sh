@@ -358,6 +358,67 @@ resolve_canonical_repo_path() {
 	return 0
 }
 
+_repo_config_has_interface_value() {
+	local repo_path="$1"
+	local has_interface=""
+	if command -v jq &>/dev/null && [[ -f "$repo_path/.aidevops.json" ]]; then
+		has_interface=$(jq -r 'if has("has_interface") then .has_interface elif has("interface") then .interface else empty end' "$repo_path/.aidevops.json" 2>/dev/null || echo "")
+		case "$has_interface" in
+		true | false)
+			printf '%s\n' "$has_interface"
+			return 0
+			;;
+		esac
+	fi
+	printf '\n'
+	return 0
+}
+
+_init_design_helper_path() {
+	local helper="$AGENTS_DIR/scripts/design-guidelines-helper.sh"
+	[[ -x "$helper" ]] || helper="$INSTALL_DIR/.agents/scripts/design-guidelines-helper.sh"
+	[[ -x "$helper" ]] || return 1
+	printf '%s\n' "$helper"
+	return 0
+}
+
+_init_repo_has_interface() {
+	local project_root="$1"
+	local helper
+	helper=$(_init_design_helper_path) || return 1
+	"$helper" detect "$project_root" >/dev/null 2>&1
+	return $?
+}
+
+_init_scaffold_design_md() {
+	local project_root="$1"
+	local repo_name="$2"
+	local helper
+	if [[ -f "$project_root/DESIGN.md" ]]; then
+		print_info "DESIGN.md already exists, skipping"
+		return 0
+	fi
+	helper=$(_init_design_helper_path) || {
+		print_warning "DESIGN.md helper not found; run aidevops update and retry"
+		return 0
+	}
+	if "$helper" scaffold "$project_root" --force >/dev/null; then
+		print_success "Created DESIGN.md for $repo_name (design system skeleton — populate with tools/design/design-md.md)"
+	else
+		print_warning "DESIGN.md scaffolding failed"
+	fi
+	return 0
+}
+
+_repo_registration_maintainer() {
+	local maintainer=""
+	if command -v gh &>/dev/null; then
+		maintainer=$(gh api user --jq '.login' 2>/dev/null) || maintainer=""
+	fi
+	printf '%s\n' "$maintainer"
+	return 0
+}
+
 # Register a repo in repos.json
 # Usage: register_repo <path> <version> <features>
 register_repo() {
@@ -403,29 +464,25 @@ register_repo() {
 		fi
 	fi
 
-	# Auto-detect maintainer from gh API (current authenticated user)
-	# Only runs once per registration — preserved on subsequent updates
 	local maintainer=""
-	if command -v gh &>/dev/null; then
-		maintainer=$(gh api user --jq '.login' 2>/dev/null) || maintainer=""
-	fi
+	maintainer=$(_repo_registration_maintainer)
 
 	local DEFAULT_PULSE="false"
 	local DEFAULT_PRIORITY=""
 	eval "$(_compute_repo_registration_defaults "$repo_path" "$slug" "$is_local_only" "$maintainer")"
 
-	# Infer default init_scope; pass is_local_only (already computed) to skip redundant I/O
 	local default_init_scope
 	default_init_scope=$(_infer_init_scope "$repo_path" "$is_local_only")
 
-	# Check if repo already registered
+	local has_interface
+	has_interface=$(_repo_config_has_interface_value "$repo_path")
+
 	if jq -e --arg path "$repo_path" '.initialized_repos[] | select(.path == $path)' "$REPOS_FILE" &>/dev/null; then
-		# Update existing entry, preserving pulse/priority/local_only/maintainer/init_scope if already set
 		local temp_file="${REPOS_FILE}.tmp"
 		jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
 			--arg slug "$slug" --argjson local_only "$is_local_only" --arg maintainer "$maintainer" \
 			--argjson pulse_default "$DEFAULT_PULSE" --arg priority_default "$DEFAULT_PRIORITY" \
-			--arg init_scope_default "$default_init_scope" \
+			--arg init_scope_default "$default_init_scope" --arg has_interface "$has_interface" \
 			'(.initialized_repos[] | select(.path == $path)) |= (
 				. + {path: $path, version: $version, features: ($features | split(",")), updated: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}
 				| if $slug != "" then .slug = $slug else . end
@@ -434,15 +491,15 @@ register_repo() {
 				| if (.priority == null or .priority == "") and $priority_default != "" then .priority = $priority_default else . end
 				| if (.maintainer == null or .maintainer == "") and $maintainer != "" then .maintainer = $maintainer else . end
 				| if (.init_scope == null or .init_scope == "") then .init_scope = $init_scope_default else . end
+				| if $has_interface == "true" then .has_interface = true elif $has_interface == "false" then .has_interface = false else . end
 			)' \
 			"$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
 	else
-		# Add new entry with slug, defaults, maintainer, and init_scope
 		local temp_file="${REPOS_FILE}.tmp"
 		jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
 			--arg slug "$slug" --arg maintainer "$maintainer" \
 			--argjson local_only "$is_local_only" --argjson pulse_default "$DEFAULT_PULSE" \
-			--arg priority_default "$DEFAULT_PRIORITY" --arg init_scope "$default_init_scope" \
+			--arg priority_default "$DEFAULT_PRIORITY" --arg init_scope "$default_init_scope" --arg has_interface "$has_interface" \
 			'.initialized_repos += [(
 				{
 					path: $path,
@@ -456,6 +513,7 @@ register_repo() {
 				| if $slug != "" then . + {slug: $slug} else . end
 				| if $local_only then . + {local_only: true, pulse: false} else . end
 				| if $priority_default != "" then . + {priority: $priority_default} else . end
+				| if $has_interface == "true" then . + {has_interface: true} elif $has_interface == "false" then . + {has_interface: false} else . end
 			)]' \
 			"$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
 	fi
