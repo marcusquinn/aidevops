@@ -36,7 +36,7 @@
 #   4. The routine file initialises PULSE_START_EPOCH (grep guard)
 #   5. The routine file sources pulse-dispatch-core.sh (grep guard)
 #   6. The routine file sources pulse-fast-fail.sh (grep guard)
-#   7. setup.sh has the _should_setup_noninteractive_pulse_merge_routine helper
+#   7. runtime helpers define _should_setup_noninteractive_pulse_merge_routine
 #   8. setup.sh call site uses the new helper (not the generic gate)
 #   9. scheduler uses timeout-protected pulse-merge-routine
 #   10. merge LaunchAgent uses normal spawn priority with explicit KeepAlive=false
@@ -49,6 +49,7 @@ REPO_ROOT="$(cd "${SCRIPTS_DIR}/../.." && pwd)" || exit 1
 
 ROUTINE_FILE="${SCRIPTS_DIR}/pulse-merge-routine.sh"
 SETUP_FILE="${REPO_ROOT}/setup.sh"
+RUNTIME_HELPERS_FILE="${REPO_ROOT}/.agents/scripts/setup/_runtime_helpers.sh"
 
 if [[ -t 1 ]]; then
 	TEST_GREEN=$'\033[0;32m'
@@ -174,21 +175,21 @@ else
 fi
 
 # =============================================================================
-# Test 7: setup.sh has the new escape-hatch helper (Bug 1 fix)
+# Test 7: runtime helpers define the escape-hatch helper (Bug 1 fix)
 # =============================================================================
 printf '\n=== setup.sh escape-hatch guard (Bug 1) ===\n'
 
 if [[ ! -f "$SETUP_FILE" ]]; then
-	skip "7: setup.sh has _should_setup_noninteractive_pulse_merge_routine" \
+	skip "7: runtime helpers define _should_setup_noninteractive_pulse_merge_routine" \
 		"setup.sh not found at $SETUP_FILE"
 	skip "8: setup.sh call site uses new helper" \
 		"setup.sh not found at $SETUP_FILE"
 else
-	if grep -qE '^_should_setup_noninteractive_pulse_merge_routine\(\)' "$SETUP_FILE"; then
-		pass "7: setup.sh has _should_setup_noninteractive_pulse_merge_routine"
+	if [[ -f "$RUNTIME_HELPERS_FILE" ]] && grep -qE '^_should_setup_noninteractive_pulse_merge_routine\(\)' "$RUNTIME_HELPERS_FILE"; then
+		pass "7: runtime helpers define _should_setup_noninteractive_pulse_merge_routine"
 	else
-		fail "7: setup.sh has _should_setup_noninteractive_pulse_merge_routine" \
-			"missing function definition"
+		fail "7: runtime helpers define _should_setup_noninteractive_pulse_merge_routine" \
+			"missing function definition in $RUNTIME_HELPERS_FILE"
 	fi
 
 	# =========================================================================
