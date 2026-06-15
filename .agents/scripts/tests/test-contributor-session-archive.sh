@@ -87,6 +87,25 @@ SQL
 	return 0
 }
 
+insert_null_directory_session_fixture() {
+	local db_path="$1"
+	local session_id="$2"
+	local title="$3"
+	local start_ms="$4"
+	local assistant_completed=$((start_ms + 10000))
+	local user_created=$((assistant_completed + 20000))
+
+	sqlite3 "$db_path" <<SQL
+INSERT INTO session(id, title, parent_id, directory)
+VALUES('${session_id}', '${title}', NULL, NULL);
+INSERT INTO message(session_id, data, time_created)
+VALUES('${session_id}', '{"role":"assistant","time":{"completed":${assistant_completed}}}', ${start_ms});
+INSERT INTO message(session_id, data, time_created)
+VALUES('${session_id}', '{"role":"user"}', ${user_created});
+SQL
+	return 0
+}
+
 test_session_time_includes_archive_and_dedupes() {
 	local test_name="session time includes OpenCode archive and dedupes"
 	setup
@@ -107,6 +126,7 @@ test_session_time_includes_archive_and_dedupes() {
 
 	insert_session_fixture "$active_db" "current-interactive" "Current interactive" "$recent_ms" "$TEST_DIR/repo"
 	insert_session_fixture "$active_db" "temp-classifier" "NO Issue is a classifier run" "$recent_ms" "/private/tmp/opencode"
+	insert_null_directory_session_fixture "$active_db" "global-interactive" "Global interactive" "$recent_ms"
 	insert_session_fixture "$archive_db" "current-interactive" "Current interactive duplicate" "$recent_ms" "$TEST_DIR/repo"
 	insert_session_fixture "$archive_db" "near-month-interactive" "Near month interactive" "$near_month_ms" "$TEST_DIR/repo"
 	insert_session_fixture "$archive_db" "old-worker" "Issue #123: archived worker" "$old_ms" "$TEST_DIR/repo"
@@ -121,18 +141,18 @@ test_session_time_includes_archive_and_dedupes() {
 	worker_sessions=$(echo "$year_json" | jq -r '.worker_sessions')
 	observed_days=$(echo "$year_json" | jq -r '.observed_days')
 
-	if [[ "$year_sessions" != "3" ]]; then
-		print_result "$test_name" 1 "expected 3 year sessions, got ${year_sessions}; JSON: ${year_json}"
+	if [[ "$year_sessions" != "4" ]]; then
+		print_result "$test_name" 1 "expected 4 year sessions, got ${year_sessions}; JSON: ${year_json}"
 		teardown
 		return 0
 	fi
-	if [[ "$month_sessions" != "2" ]]; then
-		print_result "$test_name" 1 "expected 2 month sessions in 30-day window, got ${month_sessions}; JSON: ${month_json}"
+	if [[ "$month_sessions" != "3" ]]; then
+		print_result "$test_name" 1 "expected 3 month sessions in 30-day window, got ${month_sessions}; JSON: ${month_json}"
 		teardown
 		return 0
 	fi
-	if [[ "$twenty_eight_sessions" != "1" ]]; then
-		print_result "$test_name" 1 "expected 1 session in 28-day window, got ${twenty_eight_sessions}; JSON: ${twenty_eight_json}"
+	if [[ "$twenty_eight_sessions" != "2" ]]; then
+		print_result "$test_name" 1 "expected 2 sessions in 28-day window, got ${twenty_eight_sessions}; JSON: ${twenty_eight_json}"
 		teardown
 		return 0
 	fi

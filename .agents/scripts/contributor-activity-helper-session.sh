@@ -96,12 +96,14 @@ _session_time_archive_db_for() {
 #######################################
 _session_time_temp_dir_exclusion_clause() {
 	cat <<'SQL'
-AND s.directory NOT IN ('/private/tmp/opencode', '/tmp/opencode')
-AND s.directory NOT LIKE '/private/tmp/opencode.%' ESCAPE '\'
-AND s.directory NOT LIKE '/private/tmp/opencode-%' ESCAPE '\'
-AND s.directory NOT LIKE '/tmp/opencode.%' ESCAPE '\'
-AND s.directory NOT LIKE '/tmp/opencode-%' ESCAPE '\'
-AND s.directory NOT LIKE '/var/folders/%/T/opencode%'
+AND (s.directory IS NULL OR (
+	s.directory NOT IN ('/private/tmp/opencode', '/tmp/opencode')
+	AND s.directory NOT LIKE '/private/tmp/opencode.%' ESCAPE '\'
+	AND s.directory NOT LIKE '/private/tmp/opencode-%' ESCAPE '\'
+	AND s.directory NOT LIKE '/tmp/opencode.%' ESCAPE '\'
+	AND s.directory NOT LIKE '/tmp/opencode-%' ESCAPE '\'
+	AND s.directory NOT LIKE '/var/folders/%/T/opencode%'
+))
 SQL
 	return 0
 }
