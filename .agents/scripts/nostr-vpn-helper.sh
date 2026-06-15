@@ -229,7 +229,7 @@ macOS package verification for FIPS v0.4.0-rc1 and later:
   4. Run structural checks before installing:
        pkgutil --check-signature fips-0.4.0-rc1-macos-$(uname -m).pkg
        pkgutil --payload-files fips-0.4.0-rc1-macos-$(uname -m).pkg
-       pkgutil --expand fips-0.4.0-rc1-macos-$(uname -m).pkg /tmp/fips-pkg-expanded
+       rm -rf /tmp/fips-pkg-expanded-${USER} && pkgutil --expand fips-0.4.0-rc1-macos-$(uname -m).pkg /tmp/fips-pkg-expanded-${USER}
        xar -tf fips-0.4.0-rc1-macos-$(uname -m).pkg
   5. Install only after hash and structural checks pass:
        sudo installer -pkg fips-0.4.0-rc1-macos-$(uname -m).pkg -target /
@@ -247,7 +247,7 @@ Source-build fallback if release packages are unavailable or fail integrity:
   4. Verify the generated package before installing:
        pkgutil --check-signature deploy/fips-0.4.0-rc1-macos-$(uname -m).pkg
        pkgutil --payload-files deploy/fips-0.4.0-rc1-macos-$(uname -m).pkg
-       pkgutil --expand deploy/fips-0.4.0-rc1-macos-$(uname -m).pkg /tmp/fips-source-pkg-expanded
+       rm -rf /tmp/fips-source-pkg-expanded-${USER} && pkgutil --expand deploy/fips-0.4.0-rc1-macos-$(uname -m).pkg /tmp/fips-source-pkg-expanded-${USER}
   5. Install only after package integrity checks pass:
        sudo installer -pkg deploy/fips-0.4.0-rc1-macos-$(uname -m).pkg -target /
 
