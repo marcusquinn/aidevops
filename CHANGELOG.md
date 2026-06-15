@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.72] - 2026-06-15
+
+### Changed
+
+- Maintenance: mark t3601 complete (pr:#24865 completed:2026-06-15) [skip ci]
+- add GitHub read ramp pacing (#24865)
+
 ## [3.20.71] - 2026-06-15
 
 ### Changed
