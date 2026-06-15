@@ -19,6 +19,9 @@ REPOS_FILE="${AIDEVOPS_REPOS_FILE:-$HOME/.config/aidevops/repos.json}"
 [[ -z "${YELLOW+x}" ]] && YELLOW='\033[1;33m'
 [[ -z "${NC+x}" ]] && NC='\033[0m'
 
+DG_TRUE=true
+DG_FALSE=false
+
 _dg_info() {
 	local message="$1"
 	printf '%b[INFO]%b %s\n' "$BLUE" "$NC" "$message" >&2
@@ -249,17 +252,17 @@ cmd_detect() {
 
 cmd_scaffold() {
 	local repo_path="."
-	local force=false
-	local dry_run=false
+	local force="$DG_FALSE"
+	local dry_run="$DG_FALSE"
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
 		case "$arg" in
 		--force)
-			force=true
+			force="$DG_TRUE"
 			shift
 			;;
 		--dry-run)
-			dry_run=true
+			dry_run="$DG_TRUE"
 			shift
 			;;
 		-h | --help)
@@ -284,7 +287,7 @@ cmd_scaffold() {
 		return 0
 	fi
 
-	if [[ "$force" != "true" ]] && ! repo_has_interface "$repo_path"; then
+	if [[ "$force" != "$DG_TRUE" ]] && ! repo_has_interface "$repo_path"; then
 		_dg_info "No interface markers detected; use --force to scaffold DESIGN.md anyway"
 		return 0
 	fi
@@ -293,7 +296,7 @@ cmd_scaffold() {
 	template_path=$(_dg_template_path) || _dg_die "DESIGN.md template not found"
 	local repo_name
 	repo_name=$(_dg_repo_name "$repo_path")
-	if [[ "$dry_run" == "true" ]]; then
+	if [[ "$dry_run" == "$DG_TRUE" ]]; then
 		printf 'would-create %s from %s\n' "$design_path" "$template_path"
 		return 0
 	fi
@@ -409,11 +412,11 @@ _dg_render_one_guidelines_pdf() {
 	local theme="$7"
 	local browser_bin="$8"
 	local profile_html="$html_path"
-	local remove_profile_html=false
+	local remove_profile_html="$DG_FALSE"
 	if [[ "$profile" != "a4" ]]; then
 		profile_html="$output_dir/.brand-guidelines-${profile}.html"
 		"$report_helper" render "$markdown_path" --template "$template" --theme "$theme" --pdf-profile "$profile" --output "$profile_html"
-		remove_profile_html=true
+		remove_profile_html="$DG_TRUE"
 	fi
 	local pdf_path
 	pdf_path=$(_dg_profile_pdf_name "$output_dir" "$profile")
@@ -422,7 +425,7 @@ _dg_render_one_guidelines_pdf() {
 	else
 		_dg_warn "PDF export failed for profile $profile"
 	fi
-	[[ "$remove_profile_html" == "true" ]] && rm -f "$profile_html"
+	[[ "$remove_profile_html" == "$DG_TRUE" ]] && rm -f "$profile_html"
 	return 0
 }
 
@@ -435,7 +438,7 @@ _dg_render_guidelines_pdfs() {
 	local report_helper="$6"
 	local template="$7"
 	local theme="$8"
-	[[ "$render_pdf" == "true" ]] || return 0
+	[[ "$render_pdf" == "$DG_TRUE" ]] || return 0
 	local browser_bin=""
 	browser_bin=$(_dg_browser_bin 2>/dev/null || printf '')
 	if [[ -z "$browser_bin" ]]; then
@@ -455,7 +458,7 @@ cmd_guidelines() {
 	local output_dir=""
 	local template="signal-agency"
 	local theme="auto"
-	local render_pdf=true
+	local render_pdf="$DG_TRUE"
 	local requested_profile="all"
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
@@ -476,11 +479,11 @@ cmd_guidelines() {
 			shift 2
 			;;
 		--pdf)
-			render_pdf=true
+			render_pdf="$DG_TRUE"
 			shift
 			;;
 		--no-pdf)
-			render_pdf=false
+			render_pdf="$DG_FALSE"
 			shift
 			;;
 		--pdf-profile | --profile)
@@ -553,12 +556,12 @@ _dg_repo_is_owned() {
 }
 
 cmd_survey() {
-	local json=false
+	local json="$DG_FALSE"
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
 		case "$arg" in
 		--json)
-			json=true
+			json="$DG_TRUE"
 			shift
 			;;
 		-h | --help)
@@ -579,25 +582,25 @@ cmd_survey() {
 	local tmp_json
 	tmp_json=$(mktemp)
 	printf '[\n' >"$tmp_json"
-	local first=true
+	local first="$DG_TRUE"
 
 	while IFS=$'\t' read -r repo_path slug maintainer role local_only; do
 		[[ -n "$repo_path" && -d "$repo_path" ]] || continue
 		[[ -f "$repo_path/.aidevops.json" ]] || continue
-		[[ "$local_only" == "true" ]] && continue
+		[[ "$local_only" == "$DG_TRUE" ]] && continue
 		_dg_repo_is_owned "$slug" "$maintainer" "$role" "$login" || continue
 		repo_has_interface "$repo_path" || continue
 
-		local has_design=false
-		local has_html=false
-		local has_pdf=false
-		[[ -f "$repo_path/DESIGN.md" ]] && has_design=true
-		[[ -f "$repo_path/_reports/brand-guidelines/brand-guidelines.html" ]] && has_html=true
-		[[ -f "$repo_path/_reports/brand-guidelines/brand-guidelines-a4.pdf" ]] && has_pdf=true
+		local has_design="$DG_FALSE"
+		local has_html="$DG_FALSE"
+		local has_pdf="$DG_FALSE"
+		[[ -f "$repo_path/DESIGN.md" ]] && has_design="$DG_TRUE"
+		[[ -f "$repo_path/_reports/brand-guidelines/brand-guidelines.html" ]] && has_html="$DG_TRUE"
+		[[ -f "$repo_path/_reports/brand-guidelines/brand-guidelines-a4.pdf" ]] && has_pdf="$DG_TRUE"
 
-		if [[ "$json" == "true" ]]; then
-			[[ "$first" == "true" ]] || printf ',\n' >>"$tmp_json"
-			first=false
+		if [[ "$json" == "$DG_TRUE" ]]; then
+			[[ "$first" == "$DG_TRUE" ]] || printf ',\n' >>"$tmp_json"
+			first="$DG_FALSE"
 			jq -n --arg path "$repo_path" --arg slug "$slug" --argjson has_design "$has_design" --argjson has_html "$has_html" --argjson has_pdf "$has_pdf" \
 				'{path:$path, slug:$slug, has_design:$has_design, has_brand_guidelines_html:$has_html, has_brand_guidelines_pdf:$has_pdf}' >>"$tmp_json"
 		else
@@ -605,7 +608,7 @@ cmd_survey() {
 		fi
 	done < <(jq -r '.initialized_repos // [] | .[] | [.path // "", .slug // "", .maintainer // "", .role // "", (.local_only // false | tostring)] | @tsv' "$REPOS_FILE")
 
-	if [[ "$json" == "true" ]]; then
+	if [[ "$json" == "$DG_TRUE" ]]; then
 		printf '\n]\n' >>"$tmp_json"
 		cat "$tmp_json"
 	fi
@@ -686,16 +689,16 @@ _dg_existing_design_issue() {
 }
 
 cmd_issues() {
-	local apply=false
+	local apply="$DG_FALSE"
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
 		case "$arg" in
 		--apply)
-			apply=true
+			apply="$DG_TRUE"
 			shift
 			;;
 		--dry-run)
-			apply=false
+			apply="$DG_FALSE"
 			shift
 			;;
 		-h | --help)
@@ -711,7 +714,7 @@ cmd_issues() {
 	[[ -f "$REPOS_FILE" ]] || _dg_die "repos.json not found: $REPOS_FILE"
 	command -v jq >/dev/null 2>&1 || _dg_die "jq required for issues"
 	command -v gh >/dev/null 2>&1 || _dg_die "gh required for issues"
-	if [[ "$apply" == "true" ]]; then
+	if [[ "$apply" == "$DG_TRUE" ]]; then
 		_dg_ensure_gh_create_issue || _dg_die "gh_create_issue wrapper unavailable"
 	fi
 
@@ -723,7 +726,7 @@ cmd_issues() {
 
 	while IFS=$'\t' read -r slug has_design has_html has_pdf; do
 		[[ -n "$slug" ]] || continue
-		if [[ "$has_design" == "true" && "$has_html" == "true" && "$has_pdf" == "true" ]]; then
+		if [[ "$has_design" == "$DG_TRUE" && "$has_html" == "$DG_TRUE" && "$has_pdf" == "$DG_TRUE" ]]; then
 			continue
 		fi
 		local existing=""
@@ -733,7 +736,7 @@ cmd_issues() {
 			skipped=$((skipped + 1))
 			continue
 		fi
-		if [[ "$apply" != "true" ]]; then
+		if [[ "$apply" != "$DG_TRUE" ]]; then
 			printf 'would-create %s %s\n' "$slug" "$title"
 			dry=$((dry + 1))
 			continue
