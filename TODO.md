@@ -1036,6 +1036,7 @@ t165,Provider-agnostic task claiming via TODO.md,marcusquinn,orchestration archi
 -->
 
 ## Done
+- [x] t3600 Expand app-stack architecture guidance #documentation ref:GH#24827 pr:#24826 testing:runtime-verified completed:2026-06-15
 - [x] t3438 Audit pulse GitHub API prefetch for need-to-know caching #auto-dispatch #enhancement ref:GH#22288 pr:#22333 completed:2026-05-02
 - [x] t3384 optimize skill generator to finish within setup timeout #auto-dispatch #bug #framework ref:GH#22140 pr:#22170 completed:2026-05-01
 - [x] t3369 Bound serialized setup wait on stale setup process #auto-dispatch #bug #framework ref:GH#22084 pr:#22177 testing:runtime-verified completed:2026-05-01
@@ -4250,4 +4251,3 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3599 Document app-stack guidance #documentation ref:GH#24768 pr:#24767 completed:2026-06-14
 
-- [ ] t3600 Expand app-stack architecture guidance #documentation ref:GH#24827
