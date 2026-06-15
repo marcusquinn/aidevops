@@ -292,8 +292,8 @@ Rules:
 - `users`: global/auth identity records.
 - `workspaces`: data and permission boundary.
 - `teams` / `user_groups`: collections of users; distinct from roles.
-- `roles`: permission bundles; assigned to users and/or teams within a workspace.
-- `invitations`, sessions, auth accounts, API keys, and audit events belong in the always-on kernel.
+- `roles`: permission bundles; assigned to users, service accounts, and/or teams within a workspace.
+- `workspace_invitations`, sessions, auth accounts, API keys, and audit events belong in the always-on kernel.
 
 ## Commercial and accounting pack
 

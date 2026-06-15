@@ -29,12 +29,13 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 
 ### Always-on kernel
 
-- `workspaces`, memberships, teams/user groups, roles, role assignments, invitations, settings.
+- `workspaces`, memberships, teams/user groups, roles, role assignments, workspace invitations, settings.
 - `users` / auth identity mapping.
 - `audit_events`, `activity_events`, `record_revisions`, entity-scoped conversation messages, notifications.
 - `files`, folders, file links, labels/tags, imports, exports.
 - `integrations`, external IDs, sync cursors.
 - `relationship_definitions`, `entity_relationships`, `dedupe_candidates`, `merge_jobs`, and aliases/tombstones.
+- API clients/keys, idempotency keys, service accounts, security events, data classifications, sync clients, conflicts, read models, and seed scenarios.
 - Platform kernel objects for search/history, saved views, reports, forms, dashboards, jobs, webhooks, feature flags, localisation, and retention; see `app-stack/platform-kernel.md`.
 
 ### Collaboration and work pack

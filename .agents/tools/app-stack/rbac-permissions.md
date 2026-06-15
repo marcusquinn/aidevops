@@ -14,13 +14,14 @@ Standardise permissions from the first multi-user boundary. Roles describe what 
 
 | Concept | Purpose |
 |---------|---------|
-| `users` | Authenticated people or service identities |
+| `users` | Authenticated human identity records |
+| `service_accounts` | Non-human actors for integrations, automations, imports, jobs, and API clients |
 | `teams` / `user_groups` | User collections, departments, queues, or collaboration groups |
 | `team_memberships` | User membership in teams, with optional position/title |
 | `roles` | Named permission bundles, not user groups |
 | `role_assignments` | Role assigned to a user or team within a workspace |
 | `capabilities` | Named actions such as `invoice.issue`, `issue.triage`, `file.export` |
-| `permission_rules` | Grants/denies by role, user, team, entity, action, and scope |
+| `permission_rules` | Grants/denies by role, user, service account, team, entity, action, and scope |
 | `field_permission_rules` | Field-level read/update/mask/hidden rules |
 | `panel_permission_rules` | Layout/panel visibility and action rules |
 | `workflow_transition_rules` | Who can move records between states |
@@ -39,7 +40,7 @@ Standardise permissions from the first multi-user boundary. Roles describe what 
 - Default deny for every non-public action.
 - Workspace membership is the first gate; RLS enforces coarse workspace and row boundaries.
 - System roles such as owner/admin/member/viewer bootstrap workspace access; custom roles hold product-specific capabilities. If a product needs immutable ceilings, model them separately and test them explicitly.
-- Assign roles to users and teams; merge grants across assignments.
+- Assign roles to users, service accounts, and teams; merge grants across assignments.
 - Prefer additive grants. Avoid explicit denies by default; if denies are enabled, deny-overrides-grant precedence and tests are required.
 - Apply field/panel/workflow rules after object-level permission so list/detail/edit screens cannot leak hidden fields or invalid actions.
 - Cache permission matrices only with invalidation on role, team, membership, and field-rule changes.

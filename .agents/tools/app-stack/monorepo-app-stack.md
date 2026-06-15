@@ -16,6 +16,7 @@ Use when the product has durable app state, shared domain logic, multiple surfac
 apps/
   web/          # React/Next web app
   api/          # API/server runtime when not colocated with web
+  worker/       # background jobs/schedules when not hosting-native
   desktop/      # Electron shell when needed
   mobile/       # Expo app when needed
   extension/    # WXT extension when needed
@@ -24,6 +25,8 @@ packages/
     migrations/ # generated SQL and Drizzle metadata snapshots
     src/schema/ # table definitions and relations, re-exported by index.ts
   domain/       # entities, services, workflow rules, validation
+  api/          # route adapters, DTOs, errors, API metadata
+  jobs/         # job handlers, schedules, queues when shared across runtimes
   ui/           # shared components/tokens
   config/       # eslint/tsconfig/tailwind/build config
   sdk/          # typed client/API helpers
@@ -38,7 +41,7 @@ Add surfaces only when a user workflow requires them; keep package boundaries re
 - Data: Postgres + Drizzle + migrations; RLS for workspace/user boundaries.
 - Validation: shared schemas in domain/API packages.
 - UI: component library package with design tokens and accessibility rules.
-- Background jobs: explicit worker package or hosting-native queue/cron.
+- Background jobs: explicit `apps/worker` / `packages/jobs` or hosting-native queue/cron; see `operations-jobs-scheduling.md`.
 - Local-first desktop/extension cache: PGlite only when Postgres schema reuse is worth the startup/performance trade-off.
 
 ## Package rules
@@ -47,6 +50,8 @@ Add surfaces only when a user workflow requires them; keep package boundaries re
 - `packages/db/drizzle.config.ts` points `out` to `./migrations` and `schema` to `./src/schema/index.ts`.
 - `packages/db/migrations/` and `packages/db/migrations/meta/` are versioned source artifacts.
 - `packages/domain` owns business rules and metadata interpretation; avoid framework imports.
+- `packages/api` owns route adapters, transport-specific middleware, DTOs, errors, and API metadata.
+- `packages/jobs` owns background handlers, schedule definitions, queue names, and retry policies when workers are not fully hosting-native.
 - `packages/ui` owns presentational components and interaction primitives.
 - Apps compose packages; apps do not become dumping grounds for reusable logic.
 - Keep server-only code out of renderer/mobile/extension bundles.

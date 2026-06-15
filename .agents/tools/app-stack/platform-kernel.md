@@ -179,6 +179,8 @@ Rules:
 | `scheduled_jobs` | Recurring schedule definitions, cron/interval, owner, enabled state |
 | `job_runs` | Execution history, started/finished time, worker, result, error |
 | `job_locks` | Concurrency/advisory locks and leases |
+| `process_runs` | Long-running business/admin process with progress, steps, cancellation, result |
+| `mass_actions` | User-requested bulk action with entity scope, filter snapshot, status, counts |
 | `operation_logs` | Admin/maintenance operations, actor, scope, outcome, evidence |
 
 Rules:
@@ -186,6 +188,7 @@ Rules:
 - Jobs are runtime execution records; workflows are business state machines. Link them but do not collapse them.
 - Use idempotency keys and retry/backoff metadata for side effects.
 - Long-running jobs should emit progress/activity events.
+- Use `process_runs` or `mass_actions` when users need progress, cancellation, partial-success detail, notification, or audit beyond a single job row. Full pattern: `app-stack/operations-jobs-scheduling.md`.
 
 ## Retention, archive, and compliance
 

@@ -35,6 +35,10 @@ mode: subagent
 | Place schemas and migrations | `app-stack/migration-layout.md` |
 | Standardise platform/kernel objects | `app-stack/platform-kernel.md` |
 | Model change history, merges, and relationships | `app-stack/data-history-relationships.md` |
+| Design background jobs, scheduled tasks, and operations | `app-stack/operations-jobs-scheduling.md` |
+| Define API and service contracts | `app-stack/api-service-contracts.md` |
+| Model identity and security lifecycle | `app-stack/identity-security-lifecycle.md` |
+| Plan privacy, sync, scale, and test data | `app-stack/data-protection-sync-scale.md` |
 | Choose standard app objects | `app-stack/standard-objects.md` |
 | Design RBAC/capabilities | `app-stack/rbac-permissions.md` |
 | Design workflows and automations | `app-stack/workflow-architecture.md` |
@@ -50,9 +54,9 @@ Prefer boring, shared primitives that compound across apps:
 2. Put reusable domain logic, database schema, UI, config, and API clients in packages.
 3. Use Postgres + Drizzle as the canonical data model; add RLS from the first multi-user boundary.
 4. Keep schema and migration ownership in `packages/db` for monorepos; generated SQL and metadata snapshots are versioned artifacts.
-5. Treat metadata as product infrastructure: entity definitions, fields, layouts, views, ACL, workflows, labels, audit, import/export, and notifications.
+5. Treat metadata as product infrastructure: entity definitions, fields, layouts, views, ACL, workflows, labels, audit, jobs, import/export, API contracts, privacy, and notifications.
 6. Use `Workspace` as the data container, permission boundary, AI context boundary, and collaboration scope.
-7. Start from standard object packs: issues, labels/tags, users, teams, roles, content/pages, conversations/channels, calendar/CRM activities, files/folders, accounts, contacts, quotes, invoices, payments, prices, and referrals.
+7. Start from standard object packs: issues, labels/tags, users, teams, roles, content/pages, conversations/channels, calendar/CRM activities, files/folders, accounts, contacts, jobs/processes, quotes, invoices, payments, prices, and referrals.
 8. Keep web/CMS/site routing explicit: WordPress for editors; no-build static for plain sites; static generator only after repeated-layout/content scale proves it.
 
 ## Builder interpretation rules
@@ -66,7 +70,7 @@ When asked to build a new app or data architecture:
 5. Preserve external sync handles for WebDAV, CalDAV, CardDAV, payment, accounting, and forge integrations.
 6. Verify one complete path: object → permission → workflow → audit → import/export or sync.
 
-Read order for full app/data design: `monorepo-app-stack.md` → `workspace-model.md` → `database-foundation.md` → `platform-kernel.md` → `data-history-relationships.md` → `standard-objects.md` → `rbac-permissions.md` → `workflow-architecture.md` → `metadata-architecture.md` → `migration-layout.md`.
+Read order for full app/data design: `monorepo-app-stack.md` → `workspace-model.md` → `database-foundation.md` → `platform-kernel.md` → `operations-jobs-scheduling.md` → `api-service-contracts.md` → `identity-security-lifecycle.md` → `data-protection-sync-scale.md` → `data-history-relationships.md` → `standard-objects.md` → `rbac-permissions.md` → `workflow-architecture.md` → `metadata-architecture.md` → `migration-layout.md`.
 
 ## Related docs
 
