@@ -667,6 +667,7 @@ The supervisor health dashboard is the framework's primary single-glance health 
    Linux / systemd user timers:
 
    \`\`\`bash
+   ${linux_systemctl} --user status aidevops-stats-wrapper.timer --no-pager
    ${linux_systemctl} --user status aidevops-stats-wrapper.service --no-pager
    ${linux_systemctl} --user list-timers --all --no-pager 'aidevops*'
    tail -40 ~/.aidevops/logs/stats.log
