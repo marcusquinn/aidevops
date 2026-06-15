@@ -75,6 +75,8 @@ source "${SCRIPT_DIR}/dispatch-dedup-stale.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/dispatch-dedup-pr.sh"
 
+_DDH_ORPHAN_PR_HINT_NONE="none found"
+
 #######################################
 # Resolve configured PR base branch for worker-orphan diagnostics.
 #
@@ -100,6 +102,21 @@ _ddh_resolve_pr_base_branch() {
 	fi
 
 	printf '%s' "${base_branch:-main}"
+	return 0
+}
+
+#######################################
+# Build the issue comments endpoint used by orphan-branch checks.
+#
+# Args: $1 = repo slug, $2 = issue number
+# Outputs: GitHub API endpoint path
+# Returns: 0 always
+#######################################
+_ddh_issue_comments_endpoint() {
+	local repo_slug="$1"
+	local issue_number="$2"
+
+	printf 'repos/%s/issues/%s/comments' "$repo_slug" "$issue_number"
 	return 0
 }
 
@@ -1009,7 +1026,9 @@ _is_assigned_check_dispatch_cooldown() {
 _ddh_fetch_issue_comments() {
 	local issue_number="$1"
 	local repo_slug="$2"
-	local comments_endpoint="repos/${repo_slug}/issues/${issue_number}/comments?per_page=100"
+	local comments_post_endpoint=""
+	comments_post_endpoint=$(_ddh_issue_comments_endpoint "$repo_slug" "$issue_number")
+	local comments_endpoint="${comments_post_endpoint}?per_page=100"
 
 	gh api --paginate --slurp "$comments_endpoint" 2>/dev/null
 	return $?
@@ -1154,7 +1173,7 @@ _ddh_orphan_branch_pr_hint() {
 		printf '%s' "$pr_line"
 		return 0
 	fi
-	printf '%s' "none found"
+	printf '%s' "$_DDH_ORPHAN_PR_HINT_NONE"
 	return 0
 }
 
@@ -1234,7 +1253,8 @@ check_worker_branch_orphan_loop() {
 		return 0
 	fi
 
-	local comments_post_endpoint="repos/${repo_slug}/issues/${issue_number}/comments"
+	local comments_post_endpoint=""
+	comments_post_endpoint=$(_ddh_issue_comments_endpoint "$repo_slug" "$issue_number")
 	local comments_json=""
 	comments_json=$(_ddh_fetch_issue_comments "$issue_number" "$repo_slug") || return 1
 	[[ -n "$comments_json" ]] || return 1
@@ -1261,10 +1281,10 @@ check_worker_branch_orphan_loop() {
 	local existing_block=""
 	existing_block=$(_ddh_count_orphan_loop_blocks "$comments_json" "$branch_name")
 
-	local pr_hint="none found"
+	local pr_hint="$_DDH_ORPHAN_PR_HINT_NONE"
 	pr_hint=$(_ddh_orphan_branch_pr_hint "$repo_slug" "$branch_name")
 	local next_action="Open recovery PR: \`gh pr create --repo ${repo_slug} --head ${branch_name} --base ${pr_base_branch}\`" # aidevops-allow: raw-gh-wrapper
-	if [[ "$pr_hint" != "none found" ]]; then
+	if [[ "$pr_hint" != "$_DDH_ORPHAN_PR_HINT_NONE" ]]; then
 		next_action="Link, review, or merge the existing PR for this branch."
 	fi
 
@@ -1298,7 +1318,8 @@ check_worker_orphan_remote_children() {
 	[[ -n "$issue_number" && -n "$repo_slug" ]] || return 1
 	[[ "$issue_number" =~ ^[0-9]+$ ]] || return 1
 
-	local comments_post_endpoint="repos/${repo_slug}/issues/${issue_number}/comments"
+	local comments_post_endpoint=""
+	comments_post_endpoint=$(_ddh_issue_comments_endpoint "$repo_slug" "$issue_number")
 	local comments_endpoint="${comments_post_endpoint}?per_page=100"
 	local comments_json=""
 	comments_json=$(gh api --paginate --slurp "$comments_endpoint" 2>/dev/null) || return 1
