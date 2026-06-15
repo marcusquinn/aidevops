@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.71] - 2026-06-15
+
+### Changed
+
+- install complexity scheduler with pulse (#24864)
+
 ## [3.20.70] - 2026-06-15
 
 ### Changed
