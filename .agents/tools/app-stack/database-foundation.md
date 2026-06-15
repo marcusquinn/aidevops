@@ -8,7 +8,7 @@ mode: subagent
 
 # Database Foundation
 
-Default to Postgres + Drizzle for durable application data. Add RLS when records are scoped by workspace, organisation, account, or user.
+Default to Postgres + Drizzle for durable application data. `workspace_id` is the default tenancy and RLS root; organisation, account, and user scopes are ownership/domain filters unless explicitly promoted to tenancy roots.
 
 ## Naming doctrine
 
@@ -29,11 +29,24 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 
 ### Always-on kernel
 
-- `workspaces`, memberships, roles, invitations, settings.
+- `workspaces`, memberships, teams/user groups, roles, role assignments, workspace invitations, settings.
 - `users` / auth identity mapping.
-- `audit_events`, `activity_events`, comments, notifications.
-- `files`, attachments, imports, exports.
+- `audit_events`, `activity_events`, `record_revisions`, entity-scoped conversation messages, notifications.
+- `files`, folders, file links, labels/tags, imports, exports.
 - `integrations`, external IDs, sync cursors.
+- `relationship_definitions`, `entity_relationships`, `dedupe_candidates`, `merge_jobs`, and aliases/tombstones.
+- API clients/keys, idempotency keys, service accounts, security events, data classifications, sync clients, conflicts, read models, and seed scenarios.
+- Platform kernel objects for search/history, saved views, reports, forms, dashboards, jobs, webhooks, feature flags, localisation, and retention; see `app-stack/platform-kernel.md`.
+
+### Collaboration and work pack
+
+- `issues` with forge-compatible fields: title, body, state, type, priority, assignee, labels, milestones, parent/related issues, external provider IDs.
+- Content: content types, entries, pages/routes, revisions, blocks, taxonomies, terms, menus, redirects, SEO metadata.
+- Conversations: conversation groups, channel/direct/group/entity conversation types, messages, threads, reactions, mentions, read receipts, message attachments.
+- Calendar/CRM activities: calendar collections, activity types such as calls/meetings/tasks, participants, alarms/reminders, recurrence, calendar/timeline links.
+- Workflows: definitions, states, transitions, guards, actions, runs/events, timers, decisions, approvals.
+- Tasks, milestones, entity-scoped conversation messages, activity streams.
+- Issue relationships: blocks, duplicates, relates-to, split-from, supersedes.
 
 ### Business relationship pack
 
@@ -44,21 +57,44 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 ### Metadata pack
 
 - Entity definitions, field definitions, layouts, views, filters.
-- ACL policies, workflow definitions, automations, validation rules.
+- Labels, ACL/RBAC policies, capability definitions, workflow/state/transition definitions, automations, validation rules.
 
 ### Optional packs
 
-- CRM: leads, opportunities, campaigns, cases.
-- Accounting: invoices, bills, payments, ledger entries, tax codes.
+- CRM: leads, opportunities, campaigns, cases, referrers, referrals.
+- Commercial: products/items, services, prices, price lists, discount/voucher codes, quotes/estimates, orders.
+- Accounting: invoices, pro-forma invoices, credit notes, bills, payments, refund payments, payment allocations, `ledger_accounts` / `chart_accounts`, ledger entries, tax codes.
+- Content/editorial: content entries, publishing workflows, navigation, taxonomies, forms, search indexes.
 - Inventory: items, stock movements, locations.
 - Projects: projects, tasks, milestones, time entries.
 - Collaboration: threads, decisions, approvals.
 - AI: prompts, runs, tool calls, memory references, evaluations.
 
+## Universal labels/tags
+
+- Make labels/tags available to all user-facing object types through a shared assignment model.
+- Use governed `label_groups`, `labels`, and `label_assignments` for grouping, workflow, reporting, permissions, and sync.
+- Use grouped keys such as `status:normal`, `priority:high`, and `type:support`; make groups exclusive per entity when only one value is valid.
+- Use free-form array tags only for local, low-risk filtering or imported metadata.
+- Prefer typed join tables for high-volume or referentially critical objects.
+
+## Access model defaults
+
+- Keep teams/user groups distinct from roles: teams group people; roles grant capabilities.
+- Use RBAC permission rules across users, teams, roles, objects, panels, fields, workflows, and scopes.
+- Model common scopes as `own`, `team`, `workspace`, and `all`, with workspace RLS as the database backstop.
+
+## Migration home
+
+- In TypeScript monorepos, `packages/db` owns schemas, relations, seeds, migration helpers, and `migrations/`.
+- Use `packages/db/src/schema/index.ts` as the Drizzle schema entrypoint and `packages/db/migrations/` for generated SQL and metadata snapshots.
+- See `app-stack/migration-layout.md` for the full layout.
+
 ## RLS defaults
 
 - Scope tables by `workspace_id` where possible.
 - Use membership/role tables for policy checks.
+- Treat RBAC scope `all` as all records in the current workspace; platform-global access is a separate system capability.
 - Add external IDs per integration, not as primary keys.
 - Audit writes with actor, workspace, entity type, entity ID, action, and diff summary.
 
@@ -67,4 +103,5 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 - Draw the object graph before writing migrations.
 - Identify every table's workspace boundary and RLS policy.
 - Confirm `accounts` and `contacts` cover imported synonyms before adding new party/person tables.
+- Confirm issues, content/pages, slugs/routes, parent-child hierarchy, conversations/channels/chats, workflows/approvals, calendar/CRM activities, WebDAV-style files/folders, CardDAV-style contacts/address books, labels/tags, users, teams, roles, prices, quotes, invoices, payments, credits, and refunds are either implemented or intentionally out of scope.
 - Run Drizzle generate/migrate checks and inspect generated SQL.
