@@ -18,6 +18,7 @@ Avoid competing roots. Prefer a small set of canonical containers, then model pr
 workspace
   labels / label_groups / label_assignments
   users / teams / roles / permissions
+  notifications / audit_events / integrations / search_queries / saved_views
   accounts / contacts / address_books
   issues / issue_relationships
   content_types / content_entries / content_revisions / routes

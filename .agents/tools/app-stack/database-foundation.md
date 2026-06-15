@@ -34,6 +34,7 @@ Keep synonyms at the import/integration edge instead of making them canonical ta
 - `audit_events`, `activity_events`, comments, notifications.
 - `files`, folders, attachments, labels/tags, imports, exports.
 - `integrations`, external IDs, sync cursors.
+- Platform kernel objects for search/history, saved views, reports, forms, dashboards, jobs, webhooks, feature flags, localisation, and retention; see `app-stack/platform-kernel.md`.
 
 ### Collaboration and work pack
 

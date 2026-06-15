@@ -33,6 +33,7 @@ mode: subagent
 | Model workspace tenancy/collaboration | `app-stack/workspace-model.md` |
 | Design app database foundation | `app-stack/database-foundation.md` |
 | Place schemas and migrations | `app-stack/migration-layout.md` |
+| Standardise platform/kernel objects | `app-stack/platform-kernel.md` |
 | Choose standard app objects | `app-stack/standard-objects.md` |
 | Design RBAC/capabilities | `app-stack/rbac-permissions.md` |
 | Design workflows and automations | `app-stack/workflow-architecture.md` |
@@ -64,7 +65,7 @@ When asked to build a new app or data architecture:
 5. Preserve external sync handles for WebDAV, CalDAV, CardDAV, payment, accounting, and forge integrations.
 6. Verify one complete path: object → permission → workflow → audit → import/export or sync.
 
-Read order for full app/data design: `monorepo-app-stack.md` → `workspace-model.md` → `database-foundation.md` → `standard-objects.md` → `rbac-permissions.md` → `workflow-architecture.md` → `metadata-architecture.md` → `migration-layout.md`.
+Read order for full app/data design: `monorepo-app-stack.md` → `workspace-model.md` → `database-foundation.md` → `platform-kernel.md` → `standard-objects.md` → `rbac-permissions.md` → `workflow-architecture.md` → `metadata-architecture.md` → `migration-layout.md`.
 
 ## Related docs
 
