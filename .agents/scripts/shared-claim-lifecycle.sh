@@ -271,8 +271,9 @@ _resolve_orphan_recovery_base_branch() {
 # _attempt_orphan_recovery_pr — auto-recover a worker_branch_orphan (GH#20819)
 #
 # Called when a worker pushed a branch but exited without opening a PR.
-# Attempts to open a non-draft PR against the repo's configured PR base branch with
-# origin:worker-takeover label so the normal review/merge pipeline applies.
+# Attempts to open a non-draft PR against the repo's configured PR base branch
+# with origin:worker-takeover + status:in-review labels so the normal
+# review/merge pipeline applies immediately.
 #
 # Short-circuits (returns 1) when:
 #   - repo_slug is empty (cannot query or construct PR)
@@ -385,6 +386,7 @@ _attempt_orphan_recovery_pr() {
 		--title "$pr_title"
 		--body "$pr_body"
 		--label "origin:worker-takeover"
+		--label "status:in-review"
 	)
 	gh pr create "${create_args[@]}" >/dev/null 2>&1 # aidevops-allow: raw-gh-wrapper
 	return $?

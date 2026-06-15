@@ -1858,7 +1858,7 @@ test_attempt_orphan_recovery_pr_calls_gh_create() {
 	git -C "$work_dir" push -q origin "feature/auto-test-issue-99999"
 	printf '{"pr_base_branch":"develop"}\n' >"${work_dir}/.aidevops.json"
 
-	local gh_head="" gh_base="" gh_repo="" gh_label=""
+	local gh_head="" gh_base="" gh_repo="" gh_labels=""
 	local gh_called=0
 	gh() {
 		# Capture pr create args
@@ -1868,7 +1868,13 @@ test_attempt_orphan_recovery_pr_calls_gh_create() {
 			"--head") gh_head="$arg" ;;
 			"--base") gh_base="$arg" ;;
 			"--repo") gh_repo="$arg" ;;
-			"--label") gh_label="$arg" ;;
+			"--label")
+				if [[ -z "$gh_labels" ]]; then
+					gh_labels="$arg"
+				else
+					gh_labels="${gh_labels},${arg}"
+				fi
+				;;
 			esac
 			_last_flag="$arg"
 		done
@@ -1896,11 +1902,18 @@ test_attempt_orphan_recovery_pr_calls_gh_create() {
 			"Expected --head=feature/auto-test-issue-99999, got '${gh_head}'"
 	fi
 
-	if [[ "$gh_label" == "origin:worker-takeover" ]]; then
+	if [[ ",${gh_labels}," == *",origin:worker-takeover,"* ]]; then
 		print_result "_attempt_orphan_recovery_pr passes --label origin:worker-takeover" 0
 	else
 		print_result "_attempt_orphan_recovery_pr passes --label origin:worker-takeover" 1 \
-			"Expected --label=origin:worker-takeover, got '${gh_label}'"
+			"Expected --label=origin:worker-takeover, got '${gh_labels}'"
+	fi
+
+	if [[ ",${gh_labels}," == *",status:in-review,"* ]]; then
+		print_result "_attempt_orphan_recovery_pr passes --label status:in-review" 0
+	else
+		print_result "_attempt_orphan_recovery_pr passes --label status:in-review" 1 \
+			"Expected --label=status:in-review, got '${gh_labels}'"
 	fi
 
 	if [[ "$gh_base" == "develop" ]]; then
