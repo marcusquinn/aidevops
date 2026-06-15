@@ -274,7 +274,16 @@ _load_schedulers_platform_functions() {
 	_install_scheduler_linux() { return 0; }
 	_uninstall_scheduler()    { return 0; }
 	_resolve_modern_bash()    { printf '%s\n' "/bin/bash"; return 0; }
-	_xml_escape()             { printf '%s' "$1"; return 0; }
+	_xml_escape() {
+		local value="$1"
+		value="${value//&/\&amp;}"
+		value="${value//</\&lt;}"
+		value="${value//>/\&gt;}"
+		value="${value//\"/\&quot;}"
+		value="${value//\'/\&apos;}"
+		printf '%s' "$value"
+		return 0
+	}
 	aidevops_launchd_sanitized_path() { printf '%s\n' "/usr/bin:/bin"; return 0; }
 	_launchd_install_if_changed() { return 0; }
 	_launchd_kickstart_and_recover() { return 1; }
@@ -807,7 +816,7 @@ test_profile_readme_install_does_not_kickstart() {
 	<array>
 		<string>/bin/bash</string>
 		<string>-lc</string>
-		<string>start_epoch=$(date +%s); status=success; '/fake/profile-readme-helper.sh' update; rc=$?; end_epoch=$(date +%s); duration=$(( ${end_epoch:-0} - ${start_epoch:-0} )); if [ "$rc" -ne 0 ]; then status=failure; fi; if [ -x "\$HOME/.aidevops/agents/scripts/routine-log-helper.sh" ]; then "\$HOME/.aidevops/agents/scripts/routine-log-helper.sh" update "r908" --status "$status" --duration "$duration" >/dev/null 2>&1 || true; fi; exit "$rc"</string>
+		<string>start_epoch=$(date +%s); status=success; &apos;/fake/profile-readme-helper.sh&apos; update; rc=$?; end_epoch=$(date +%s); duration=$(( ${end_epoch:-0} - ${start_epoch:-0} )); if [ &quot;$rc&quot; -ne 0 ]; then status=failure; fi; if [ -x &quot;$HOME/.aidevops/agents/scripts/routine-log-helper.sh&quot; ]; then &quot;$HOME/.aidevops/agents/scripts/routine-log-helper.sh&quot; update &quot;r908&quot; --status &quot;$status&quot; --duration &quot;$duration&quot; &gt;/dev/null 2&gt;&amp;1 || true; fi; exit &quot;$rc&quot;</string>
 	</array>
 	<key>StartInterval</key>
 	<integer>3600</integer>

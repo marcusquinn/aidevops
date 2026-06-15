@@ -113,11 +113,11 @@ validate_routine_prompt() {
 
 xml_escape() {
 	local value="$1"
-	value="${value//&/&amp;}"
-	value="${value//</&lt;}"
-	value="${value//>/&gt;}"
-	value="${value//\"/&quot;}"
-	value="${value//\'/&apos;}"
+	value="${value//&/\&amp;}"
+	value="${value//</\&lt;}"
+	value="${value//>/\&gt;}"
+	value="${value//\"/\&quot;}"
+	value="${value//\'/\&apos;}"
 	printf '%s' "$value"
 	return 0
 }

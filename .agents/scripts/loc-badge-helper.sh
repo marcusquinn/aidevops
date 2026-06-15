@@ -339,11 +339,11 @@ language_color() {
 # Escape characters that would break SVG/XML content.
 xml_escape() {
 	local _s="$1"
-	_s="${_s//&/&amp;}"
-	_s="${_s//</&lt;}"
-	_s="${_s//>/&gt;}"
-	_s="${_s//\"/&quot;}"
-	_s="${_s//\'/&apos;}"
+	_s="${_s//&/\&amp;}"
+	_s="${_s//</\&lt;}"
+	_s="${_s//>/\&gt;}"
+	_s="${_s//\"/\&quot;}"
+	_s="${_s//\'/\&apos;}"
 	printf '%s' "$_s"
 	return 0
 }
