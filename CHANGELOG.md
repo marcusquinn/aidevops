@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.81] - 2026-06-16
+
+### Changed
+
+- Add bounded GitHub cooldown diagnostics (#24909)
+- Maintenance: update simplification state registry
+
 ## [3.20.80] - 2026-06-16
 
 ### Changed
