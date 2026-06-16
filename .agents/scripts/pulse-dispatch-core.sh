@@ -80,6 +80,10 @@ source "${BASH_SOURCE[0]%/*}/pulse-stats-helper.sh"
 # t3034: per-stage dispatch ceremony timing instrumentation
 # shellcheck source=dispatch-stage-instrument.sh
 source "${BASH_SOURCE[0]%/*}/dispatch-stage-instrument.sh"
+if ! declare -F _gh_collaborator_permission_lookup >/dev/null 2>&1; then
+	# shellcheck source=shared-gh-collaborator-permission.sh
+	source "${BASH_SOURCE[0]%/*}/shared-gh-collaborator-permission.sh"
+fi
 
 #######################################
 # Resolve the worker tier from issue labels. When multiple tier:* labels
@@ -542,7 +546,9 @@ _task_id_in_changed_files() {
 #   3. If NMR is not currently present, skip historical ever-NMR for
 #      trusted maintainer threads: issue author is OWNER/MEMBER and every
 #      issue comment is OWNER/MEMBER or a known framework-generated GitHub
-#      Actions hold/remediation notice. This preserves prompt-injection
+#      Actions hold/remediation notice. COLLABORATOR authors/comments are
+#      trusted only after an authenticated collaborator-permission lookup
+#      confirms write/admin/maintain. This preserves prompt-injection
 #      protection while avoiding permanent crypto approval for internal
 #      retry/hold labels that a maintainer has already removed.
 #   4. Call issue_has_required_approval with the determined state.
@@ -569,11 +575,17 @@ _issue_thread_is_trusted_maintainer_only() {
 	local issue_api_path="repos/${repo_slug}/issues/"
 	issue_api_path="${issue_api_path}${issue_number}"
 	local issue_comments_path="${issue_api_path}/comments"
+	local issue_json
 	local issue_author_association
-	issue_author_association=$(gh api "$issue_api_path" \
-		--jq '.author_association // "NONE"' 2>/dev/null) || issue_author_association=""
+	local issue_author_login
+	issue_json=$(gh api "$issue_api_path" 2>/dev/null) || return 1
+	issue_author_association=$(printf '%s' "$issue_json" | jq -r '.author_association // "NONE"' 2>/dev/null) || issue_author_association=""
+	issue_author_login=$(printf '%s' "$issue_json" | jq -r '.user.login // .author.login // ""' 2>/dev/null) || issue_author_login=""
 	case "$issue_author_association" in
 		OWNER | MEMBER)
+			;;
+		COLLABORATOR)
+			_issue_actor_has_repo_write_permission "$repo_slug" "$issue_author_login" || return 1
 			;;
 		*)
 			return 1
@@ -591,7 +603,7 @@ _issue_thread_is_trusted_maintainer_only() {
 		elif type == $array_type then .
 		else [] end)
 		| [ .[] | select(
-			((.author_association // "NONE") as $a | ($a != "OWNER" and $a != "MEMBER"))
+			((.author_association // "NONE") as $a | ($a != "OWNER" and $a != "MEMBER" and $a != "COLLABORATOR"))
 			and (((.user.login // .author.login // "") as $login
 				| ((($login == "github-actions[bot]") or ($login == "github-actions"))
 					and ((.body // "") | test("^<!-- (nmr-hold-guidance|ever-nmr-remediation) -->")))) | not)
@@ -599,10 +611,42 @@ _issue_thread_is_trusted_maintainer_only() {
 		| length
 	' 2>/dev/null) || return 1
 	[[ "$untrusted_comment_count" =~ ^[0-9]+$ ]] || return 1
+	[[ "$untrusted_comment_count" -eq 0 ]] || return 1
 
-	if [[ "$untrusted_comment_count" -eq 0 ]]; then
-		return 0
-	fi
+	local collaborator_comment_logins
+	collaborator_comment_logins=$(printf '%s' "$comments_json" | jq -r --arg array_type "array" '
+		(if type == $array_type and (.[0]? | type) == $array_type then [.[][]]
+		elif type == $array_type then .
+		else [] end)
+		| [ .[] | select((.author_association // "NONE") == "COLLABORATOR") | (.user.login // .author.login // "") ]
+		| unique | .[]
+	' 2>/dev/null) || return 1
+	local comment_login
+	while IFS= read -r comment_login; do
+		[[ -n "$comment_login" ]] || continue
+		_issue_actor_has_repo_write_permission "$repo_slug" "$comment_login" || return 1
+	done <<<"$collaborator_comment_logins"
+
+	return 0
+
+	return 1
+}
+
+_issue_actor_has_repo_write_permission() {
+	local repo_slug="$1"
+	local login="$2"
+	local permission=""
+
+	[[ -n "$repo_slug" && -n "$login" ]] || return 1
+	# #aidevops:trust-boundary — never trust bare COLLABORATOR association for
+	# ever-NMR bypass. GitHub can use COLLABORATOR for ambiguous private-org
+	# events; require an authenticated per-repo permission lookup.
+	_gh_collaborator_permission_lookup "$repo_slug" "$login" permission || return 1
+	case "$permission" in
+		admin | maintain | write)
+			return 0
+			;;
+	esac
 
 	return 1
 }
