@@ -96,8 +96,14 @@ def extract_body_parts(msg, output_dir):
 
     Returns (body_text_path, body_html_path, attachments_list).
     """
-    body_text = ""
-    body_html = ""
+    body_text, body_html, attachments = _collect_body_content(msg, output_dir)
+    body_text_path, body_html_path = _write_body_files(output_dir, body_text, body_html)
+    return body_text_path, body_html_path, attachments
+
+
+def _collect_body_content(msg, output_dir):
+    """Collect first text/plain, first text/html, and attachments from a message."""
+    bodies = {"text/plain": "", "text/html": ""}
     attachments = []
     att_dir = os.path.join(output_dir, "attachments")
 
@@ -113,35 +119,38 @@ def extract_body_parts(msg, output_dir):
             )
             continue
 
-        # Body parts
-        if content_type == "text/plain" and not body_text:
-            payload = _decode_payload(part)
-            if payload:
-                body_text = payload
-        elif content_type == "text/html" and not body_html:
-            payload = _decode_payload(part)
-            if payload:
-                body_html = payload
+        _capture_body_part(part, content_type, bodies)
 
-    # Write body files
+    return bodies["text/plain"], bodies["text/html"], attachments
+
+
+def _capture_body_part(part, content_type, bodies):
+    """Capture the first decoded text or HTML body for a MIME part."""
+    if content_type not in bodies or bodies[content_type]:
+        return None
+    payload = _decode_payload(part)
+    if payload:
+        bodies[content_type] = payload
+    return None
+
+
+def _write_body_files(output_dir, body_text, body_html):
+    """Write extracted body files and return their paths."""
+    if not body_text and body_html:
+        body_text = html_to_text(body_html)
+
     body_text_path = ""
     body_html_path = ""
 
     if body_text:
         body_text_path = os.path.join(output_dir, "body_text.txt")
         _write_file(body_text_path, body_text)
-    elif body_html:
-        # HTML-only: generate text from HTML
-        body_text = html_to_text(body_html)
-        if body_text:
-            body_text_path = os.path.join(output_dir, "body_text.txt")
-            _write_file(body_text_path, body_text)
 
     if body_html:
         body_html_path = os.path.join(output_dir, "body_html.html")
         _write_file(body_html_path, body_html)
 
-    return body_text_path, body_html_path, attachments
+    return body_text_path, body_html_path
 
 
 def _is_attachment(disposition, filename, content_type):
@@ -157,25 +166,37 @@ def _decode_payload(part):
     """Safely decode a MIME part payload to string."""
     try:
         payload = part.get_content()
-        if isinstance(payload, bytes):
-            # Try UTF-8 first, then latin-1 as fallback
-            try:
-                return payload.decode("utf-8")
-            except UnicodeDecodeError:
-                return payload.decode("latin-1", errors="replace")
-        return str(payload) if payload else ""
     except Exception:
-        # Fallback: get_payload with decode=True
-        try:
-            raw = part.get_payload(decode=True)
-            if raw:
-                try:
-                    return raw.decode("utf-8")
-                except UnicodeDecodeError:
-                    return raw.decode("latin-1", errors="replace")
-        except Exception:
-            pass
-    return ""
+        payload = _fallback_payload(part)
+    return _normalise_payload(payload)
+
+
+def _normalise_payload(payload):
+    """Convert MIME payload data to text."""
+    if isinstance(payload, bytes):
+        return _decode_bytes(payload)
+    return str(payload) if payload else ""
+
+
+def _decode_bytes(payload):
+    """Decode bytes with UTF-8 first, then latin-1 fallback."""
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeDecodeError:
+        text = payload.decode("latin-1", errors="replace")
+    return text
+
+
+def _fallback_payload(part):
+    """Fallback to decoded raw payload when get_content fails."""
+    payload = b""
+    try:
+        raw = part.get_payload(decode=True)
+    except Exception:
+        raw = None
+    if raw:
+        payload = raw
+    return payload
 
 
 def _save_attachment(part, filename, content_type, att_dir, index):
