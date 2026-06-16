@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.78] - 2026-06-16
+
+### Fixed
+
+- unblock trusted ever-NMR simplification issues (#24891)
+
 ## [3.20.77] - 2026-06-16
 
 ### Changed
