@@ -39,6 +39,11 @@ Use `Resolves #NNN` for leaf fixes that close the issue. Use `For #NNN` or
 
 ## Documentation-only changes
 
+Documentation-only PRs are welcome when they stay small, scoped, and linked to
+a GitHub issue. Prefer using `/log-issue-aidevops` to file the issue or request:
+it creates a comprehensive report, checks for duplicates, and follows the
+project contribution guidelines.
+
 For small documentation-only improvements such as README clarifications,
 spelling fixes, broken-link fixes, or contribution-guide updates:
 
