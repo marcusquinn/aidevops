@@ -28,7 +28,7 @@ mode: subagent
 |------|------|
 | Pick site/app platform | `app-stack/decision-matrix.md` |
 | Build a no-build website starter | `app-stack/static-site-starter.md` |
-| Define required public pages, schema, docs/API/MCP/CLI surfaces | `app-stack/public-site-surfaces.md` |
+| Define required/optional public pages, trust pages, schema, docs/API/MCP/CLI surfaces | `app-stack/public-site-surfaces.md` |
 | Standardise user-facing record fields and relationships | `app-stack/standard-objects.md` |
 | Design TypeScript monorepo app structure | `app-stack/monorepo-app-stack.md` |
 | Choose/shape desktop shell | `app-stack/electron-desktop.md` |
