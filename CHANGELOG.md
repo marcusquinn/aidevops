@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.77] - 2026-06-16
+
+### Fixed
+
+- preserve GitHub cooldown response provenance (#24887)
+
 ## [3.20.76] - 2026-06-16
 
 ### Fixed
