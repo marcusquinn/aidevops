@@ -398,7 +398,7 @@ _finding_still_exists_on_main() {
 	file_content=$(_fetch_file_on_branch "$repo_slug" "$file_path" "$default_branch") || fetch_rc=$?
 	fetch_rc="${fetch_rc:-0}"
 
-	if [[ "$fetch_rc" -eq 1 || -z "$file_content" ]]; then
+	if [[ "$fetch_rc" -eq 1 || ( "$fetch_rc" -eq 0 && -z "$file_content" ) ]]; then
 		echo "[scan] Skipping resolved finding: ${file_path}:${line_num} - file missing on ${default_branch}" >&2
 		echo '{"result":false,"status":"resolved"}'
 		return 1
@@ -916,11 +916,7 @@ _process_pr_scan_loop() {
 
 		local findings
 		findings=$(_scan_single_pr "$repo_slug" "$pr_num" "$min_severity" "$include_positive") || {
-			# In dry-run mode, don't mark PRs as scanned so they can be re-scanned
-			if [[ "$dry_run" != true ]]; then
-				gh pr edit "$pr_num" --repo "$repo_slug" --add-label "review-feedback-scanned" >/dev/null 2>&1 || true
-				newly_scanned+=("$pr_num")
-			fi
+			echo "  Scan failed for PR #${pr_num}; leaving unmarked for retry" >&2
 			batch_count=$((batch_count + 1))
 			continue
 		}

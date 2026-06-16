@@ -206,6 +206,8 @@ main() {
 	echo "Running quality-debt security classification tests (GH#22429)"
 	test_quality_debt_security_labels_for_security_review_feedback
 	test_quality_debt_security_labels_do_not_overprioritize_ordinary_feedback
+	test_filter_findings_by_head_files_handles_large_head_file_json
+	test_failed_scan_does_not_mark_pr_review_feedback_scanned
 
 	echo "Running quality-feedback main-branch verification tests"
 	test_skips_resolved_finding_when_snippet_missing
