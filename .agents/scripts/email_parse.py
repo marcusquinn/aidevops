@@ -126,12 +126,10 @@ def _collect_body_content(msg, output_dir):
 
 def _capture_body_part(part, content_type, bodies):
     """Capture the first decoded text or HTML body for a MIME part."""
-    if content_type not in bodies or bodies[content_type]:
-        return None
-    payload = _decode_payload(part)
-    if payload:
-        bodies[content_type] = payload
-    return None
+    if content_type in bodies and not bodies[content_type]:
+        payload = _decode_payload(part)
+        if payload:
+            bodies[content_type] = payload
 
 
 def _write_body_files(output_dir, body_text, body_html):
@@ -189,14 +187,10 @@ def _decode_bytes(payload):
 
 def _fallback_payload(part):
     """Fallback to decoded raw payload when get_content fails."""
-    payload = b""
     try:
-        raw = part.get_payload(decode=True)
+        return part.get_payload(decode=True) or b""
     except Exception:
-        raw = None
-    if raw:
-        payload = raw
-    return payload
+        return b""
 
 
 def _save_attachment(part, filename, content_type, att_dir, index):
