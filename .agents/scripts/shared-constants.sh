@@ -1205,6 +1205,8 @@ clear_active_status_on_release() {
 	# `Ref` or `For` — those are planning references that MUST NOT block
 	# assignee cleanup (see t2046).
 	local has_linked_pr=false
+	local has_open_linked_pr=0
+	local linked_open_pr_numbers=""
 	local linked_prs_json=""
 	linked_prs_json=$(gh pr list --repo "$repo_slug" --state all \
 		--search "#${issue_num} in:body" \
@@ -1216,6 +1218,12 @@ clear_active_status_on_release() {
 		'[.[] | select((.state == "OPEN" or .state == "MERGED") and ((.body // "") | test("(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]*#" + $num + "\\b"; "i")))] | length > 0' \
 		>/dev/null 2>&1; then
 		has_linked_pr=true
+	fi
+	linked_open_pr_numbers=$(printf '%s' "$linked_prs_json" | jq -r --arg num "$issue_num" \
+		'.[] | select(.state == "OPEN" and ((.body // "") | test("(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]*#" + $num + "\\b"; "i"))) | .number' \
+		2>/dev/null || true)
+	if [[ -n "$linked_open_pr_numbers" ]]; then
+		has_open_linked_pr=1
 	fi
 
 	local -a _flags=()
@@ -1229,9 +1237,19 @@ clear_active_status_on_release() {
 		if [[ -n "$worker_login" ]]; then
 			_flags+=(--remove-assignee "$worker_login")
 		fi
+	elif [[ "$has_open_linked_pr" -eq 1 && ",${labels_json}," != *",status:done,"* ]]; then
+		_flags+=(--remove-label "status:available")
+		_flags+=(--add-label "status:in-review")
 	fi
 
 	gh issue edit "$issue_num" --repo "$repo_slug" "${_flags[@]}" 2>/dev/null || return 1
+	if [[ "$has_open_linked_pr" -eq 1 ]]; then
+		local linked_pr_number=""
+		while IFS= read -r linked_pr_number; do
+			[[ -z "$linked_pr_number" ]] && continue
+			set_issue_status "$linked_pr_number" "$repo_slug" "in-review" >/dev/null 2>&1 || true
+		done <<<"$linked_open_pr_numbers"
+	fi
 	return 0
 }
 

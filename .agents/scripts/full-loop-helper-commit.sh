@@ -548,7 +548,7 @@ _rebase_and_push() {
 	# Reset to origin/main's value to prevent silent regression on merge.
 	if [[ -f .task-counter ]]; then
 		local branch_counter="" base_counter=""
-		branch_counter=$(cat .task-counter 2>/dev/null | tr -d '[:space:]') || true
+		branch_counter=$(tr -d '[:space:]' <.task-counter 2>/dev/null) || true
 		base_counter=$(git show origin/main:.task-counter 2>/dev/null | tr -d '[:space:]') || true
 		if [[ -n "$branch_counter" && -n "$base_counter" ]] \
 			&& [[ "$branch_counter" =~ ^[0-9]+$ ]] \
@@ -973,6 +973,7 @@ _post_merge_summary() {
 # Arguments: issue_number, repo
 _label_issue_in_review() {
 	local issue_number="$1" repo="$2"
+	local review_status="in-review"
 
 	local issue_state=""
 	issue_state=$(gh issue view "$issue_number" --repo "$repo" --json state -q '.state' 2>/dev/null || echo "")
@@ -981,11 +982,25 @@ _label_issue_in_review() {
 		local current_user=""
 		current_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
 		if [[ -n "$current_user" && "$current_user" != "null" ]]; then
-			set_issue_status "$issue_number" "$repo" "in-review" \
+			set_issue_status "$issue_number" "$repo" "$review_status" \
 				--add-assignee "$current_user" >/dev/null 2>&1 || true
 		else
-			set_issue_status "$issue_number" "$repo" "in-review" >/dev/null 2>&1 || true
+			set_issue_status "$issue_number" "$repo" "$review_status" >/dev/null 2>&1 || true
 		fi
 	fi
+	return 0
+}
+
+# Label the newly opened PR as in-review, removing stale status:available that
+# can be inherited from issue-style label operations on PR issues.
+# Arguments: pr_number, repo
+_label_pr_in_review() {
+	local pr_number="$1" repo="$2"
+	local review_status="in-review"
+
+	if [[ -z "$pr_number" || -z "$repo" ]]; then
+		return 0
+	fi
+	set_issue_status "$pr_number" "$repo" "$review_status" >/dev/null 2>&1 || true
 	return 0
 }

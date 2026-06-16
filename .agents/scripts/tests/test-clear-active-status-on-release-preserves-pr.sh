@@ -10,6 +10,7 @@
 #   1. Does NOT emit --remove-assignee (worker's assignee is preserved)
 #   2. Does NOT emit --remove-label status:in-review (label is preserved)
 #   3. STILL emits --remove-label for status:queued, status:claimed, status:in-progress
+#   4. Removes stale status:available and ensures status:in-review on the issue and PR
 #
 # Motivation: maintainer-gate.yml Job 1 Check 2 blocks PRs with no assignee.
 # Without this behaviour the worker's CLAIM_RELEASED cleanup strands every
@@ -126,6 +127,9 @@ clear_active_status_on_release 20156 owner/repo alice
 assert_grep "remove-label status:queued" "removes queued when PR open"
 assert_grep "remove-label status:claimed" "removes claimed when PR open"
 assert_grep "remove-label status:in-progress" "removes in-progress when PR open"
+assert_grep "remove-label status:available" "removes available when PR open"
+assert_grep "add-label status:in-review" "ensures issue in-review when PR open"
+assert_grep "issue edit 20188 --repo owner/repo" "normalizes linked PR status when PR open"
 assert_not_grep "remove-label status:in-review" "preserves in-review when PR open (Resolves)"
 assert_not_grep "remove-assignee" "preserves assignee when PR open (Resolves)"
 
