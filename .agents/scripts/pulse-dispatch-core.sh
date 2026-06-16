@@ -579,8 +579,11 @@ _issue_thread_is_trusted_maintainer_only() {
 	local issue_author_association
 	local issue_author_login
 	issue_json=$(gh api "$issue_api_path" 2>/dev/null) || return 1
-	issue_author_association=$(printf '%s' "$issue_json" | jq -r '.author_association // "NONE"' 2>/dev/null) || issue_author_association=""
-	issue_author_login=$(printf '%s' "$issue_json" | jq -r '.user.login // .author.login // ""' 2>/dev/null) || issue_author_login=""
+	IFS=$'\t' read -r issue_author_association issue_author_login < <(printf '%s' "$issue_json" \
+		| jq -r '[.author_association // "NONE", (.user.login // .author.login // "")] | @tsv' 2>/dev/null) || {
+		issue_author_association=""
+		issue_author_login=""
+	}
 	case "$issue_author_association" in
 		OWNER | MEMBER)
 			;;
@@ -628,8 +631,6 @@ _issue_thread_is_trusted_maintainer_only() {
 	done <<<"$collaborator_comment_logins"
 
 	return 0
-
-	return 1
 }
 
 _issue_actor_has_repo_write_permission() {
