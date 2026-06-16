@@ -87,6 +87,44 @@ function resolveAllowedBodyFilePath(filePath, commandWorkdir = process.cwd()) {
   };
 }
 
+function okResult(cmd) {
+  return { status: "ok", cmd };
+}
+
+function missingHelperResult(helperPath, log) {
+  log("WARN", `gh-signature-helper.sh not found at ${helperPath}; cannot repair`);
+  return { status: "fail", reason: FAIL_REASON.HELPER_MISSING, detail: helperPath };
+}
+
+function repairResolvedBodyFile(cmd, resolvedFilePath, helperPath, log, options) {
+  const current = readFileSync(resolvedFilePath, "utf-8");
+  if (current.includes(options.sigMarker)) return okResult(cmd);
+  if (options.isMachineProtocolCommand(current)) {
+    log("INFO", `Body-file ${resolvedFilePath} contains machine-protocol content; no repair needed`);
+    return okResult(cmd);
+  }
+  if (!existsSync(helperPath)) return missingHelperResult(helperPath, log);
+  const sigResult = options.generateSignature(helperPath, current, log);
+  if (sigResult.status === "fail") return sigResult;
+  appendFileSync(resolvedFilePath, sigResult.sig);
+  log("INFO", `Auto-appended signature footer to body-file ${resolvedFilePath} (t2685)`);
+  return okResult(cmd);
+}
+
+function handleBodyFileRepairError(cmd, filePath, error, log) {
+  const reason =
+    error.code === "ENOENT" ? FAIL_REASON.FILE_NOT_FOUND : FAIL_REASON.FILE_UNREADABLE;
+  if (reason === FAIL_REASON.FILE_NOT_FOUND && hasPriorSameCommandBodyFileCreation(cmd, filePath)) {
+    log(
+      "INFO",
+      `Body-file ${filePath} appears to be created before gh in the same bash command; deferring signature injection to PATH shim`,
+    );
+    return okResult(cmd);
+  }
+  log("WARN", `Could not repair --body-file ${filePath}: ${error.message} (${reason})`);
+  return { status: "fail", reason, detail: `${filePath}: ${error.message}` };
+}
+
 /**
  * Repair a `--body-file PATH` form by appending the signature footer to the
  * referenced file if missing.
@@ -104,35 +142,8 @@ export function repairBodyFile(cmd, filePath, helperPath, log, options) {
       log("WARN", `Refusing --body-file outside allowed roots: ${resolved.detail}`);
       return resolved;
     }
-    const current = readFileSync(resolved.filePath, "utf-8");
-    if (current.includes(options.sigMarker)) return { status: "ok", cmd };
-    if (options.isMachineProtocolCommand(current)) {
-      log(
-        "INFO",
-        `Body-file ${resolved.filePath} contains machine-protocol content; no repair needed`,
-      );
-      return { status: "ok", cmd };
-    }
-    if (!existsSync(helperPath)) {
-      log("WARN", `gh-signature-helper.sh not found at ${helperPath}; cannot repair`);
-      return { status: "fail", reason: FAIL_REASON.HELPER_MISSING, detail: helperPath };
-    }
-    const sigResult = options.generateSignature(helperPath, current, log);
-    if (sigResult.status === "fail") return sigResult;
-    appendFileSync(resolved.filePath, sigResult.sig);
-    log("INFO", `Auto-appended signature footer to body-file ${resolved.filePath} (t2685)`);
-    return { status: "ok", cmd };
+    return repairResolvedBodyFile(cmd, resolved.filePath, helperPath, log, options);
   } catch (e) {
-    const reason =
-      e.code === "ENOENT" ? FAIL_REASON.FILE_NOT_FOUND : FAIL_REASON.FILE_UNREADABLE;
-    if (reason === FAIL_REASON.FILE_NOT_FOUND && hasPriorSameCommandBodyFileCreation(cmd, filePath)) {
-      log(
-        "INFO",
-        `Body-file ${filePath} appears to be created before gh in the same bash command; deferring signature injection to PATH shim`,
-      );
-      return { status: "ok", cmd };
-    }
-    log("WARN", `Could not repair --body-file ${filePath}: ${e.message} (${reason})`);
-    return { status: "fail", reason, detail: `${filePath}: ${e.message}` };
+    return handleBodyFileRepairError(cmd, filePath, e, log);
   }
 }
