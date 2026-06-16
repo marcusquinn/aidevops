@@ -166,6 +166,38 @@ test_external_comment_preserves_ever_nmr_gate() {
 	return 0
 }
 
+test_framework_actions_guidance_comment_bypasses_historical_nmr() {
+	setup_case "OWNER" '[{"author_association":"CONTRIBUTOR","user":{"login":"github-actions[bot]"},"body":"<!-- nmr-hold-guidance -->\nGenerated hold guidance."}]'
+	if _check_nmr_approval_gate 106 "owner/repo" '{"labels":[{"name":"auto-dispatch"}]}'; then
+		print_result "framework Actions hold guidance bypasses historical NMR" 1 "gate blocked; known_status=${APPROVAL_KNOWN_STATUS}"
+		cleanup_case
+		return 0
+	fi
+	if [[ "$APPROVAL_KNOWN_STATUS" == "false" ]]; then
+		print_result "framework Actions hold guidance bypasses historical NMR" 0
+	else
+		print_result "framework Actions hold guidance bypasses historical NMR" 1 "expected known_status=false, got ${APPROVAL_KNOWN_STATUS}"
+	fi
+	cleanup_case
+	return 0
+}
+
+test_unmarked_actions_comment_preserves_ever_nmr_gate() {
+	setup_case "OWNER" '[{"author_association":"CONTRIBUTOR","user":{"login":"github-actions[bot]"},"body":"unmarked comment"}]'
+	if _check_nmr_approval_gate 107 "owner/repo" '{"labels":[{"name":"auto-dispatch"}]}'; then
+		if [[ "$APPROVAL_KNOWN_STATUS" == "unknown" ]]; then
+			print_result "unmarked Actions comment preserves ever-NMR gate" 0
+		else
+			print_result "unmarked Actions comment preserves ever-NMR gate" 1 "expected known_status=unknown, got ${APPROVAL_KNOWN_STATUS}"
+		fi
+		cleanup_case
+		return 0
+	fi
+	print_result "unmarked Actions comment preserves ever-NMR gate" 1 "gate unexpectedly allowed dispatch"
+	cleanup_case
+	return 0
+}
+
 test_active_nmr_label_preserves_gate() {
 	setup_case "OWNER" '[{"author_association":"OWNER"}]'
 	if _check_nmr_approval_gate 104 "owner/repo" '{"labels":[{"name":"needs-maintainer-review"}]}'; then
@@ -207,6 +239,8 @@ main() {
 	test_owner_author_owner_member_comments_bypasses_historical_nmr
 	test_member_author_no_comments_bypasses_historical_nmr
 	test_external_comment_preserves_ever_nmr_gate
+	test_framework_actions_guidance_comment_bypasses_historical_nmr
+	test_unmarked_actions_comment_preserves_ever_nmr_gate
 	test_active_nmr_label_preserves_gate
 	test_collaborator_author_does_not_bypass_historical_nmr
 
