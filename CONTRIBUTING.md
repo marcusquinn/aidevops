@@ -37,6 +37,19 @@ or `Ref #NNN`.
 Use `Resolves #NNN` for leaf fixes that close the issue. Use `For #NNN` or
 `Ref #NNN` for parent, research, or non-closing work.
 
+## Documentation-only changes
+
+For small documentation-only improvements such as README clarifications,
+spelling fixes, broken-link fixes, or contribution-guide updates:
+
+1. Reference a GitHub issue before opening a pull request.
+2. Keep the change limited to documentation files.
+3. Do not change code, dependencies, workflows, defaults, configuration
+   structure, or agent framework behaviour.
+4. Run the relevant local checks before committing.
+5. Use a conventional commit such as `docs: clarify contribution guide`.
+6. Link the issue in the pull request body with `Ref #NNN` or `Resolves #NNN`.
+
 ## Development Setup
 
 ```bash
