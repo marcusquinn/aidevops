@@ -310,14 +310,24 @@ _filter_findings_by_head_files() {
 	head_files=$(gh api "repos/${repo_slug}/git/trees/HEAD?recursive=1" \
 		--jq '[.tree[].path]') || head_files="[]"
 
-	echo "$findings" | jq --argjson head_files "$head_files" '
+	local head_files_file
+	head_files_file=$(mktemp) || return 1
+	printf '%s' "$head_files" >"$head_files_file" || {
+		rm -f "$head_files_file"
+		return 1
+	}
+
+	local jq_status
+	printf '%s' "$findings" | jq --slurpfile head_files "$head_files_file" '
 		[.[] |
 		if .file == null then .  # review bodies without file refs — keep
-		elif (.file as $f | $head_files | any(. == $f)) then .  # file still exists
+		elif (.file as $f | $head_files[0] | any(. == $f)) then .  # file still exists
 		else empty  # file was removed/renamed — skip
 		end]
 	'
-	return 0
+	jq_status=$?
+	rm -f "$head_files_file"
+	return "$jq_status"
 }
 
 # _check_empty_review_guard: return 0 (skip) when the PR has zero inline

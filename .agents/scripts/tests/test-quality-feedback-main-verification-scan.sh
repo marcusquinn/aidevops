@@ -41,6 +41,10 @@ _restore_mock_gh() {
 			_mock_gh_issue "$@"
 			return $?
 			;;
+		pr)
+			echo "{}"
+			return 0
+			;;
 		esac
 		echo "unexpected gh call: ${command}" >&2
 		return 1
@@ -77,6 +81,96 @@ test_quality_debt_security_labels_do_not_overprioritize_ordinary_feedback() {
 
 	print_result "quality-debt leaves ordinary review feedback at normal priority" 1 \
 		"labels=${labels}"
+	return 0
+}
+
+test_filter_findings_by_head_files_handles_large_head_file_json() {
+	reset_mock_state
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			python3 - <<'PY'
+import json
+paths = [f"dir_{i:05d}/file_{i:05d}.py" for i in range(6000)]
+paths.append("src/live.py")
+print(json.dumps(paths, separators=(",", ":")))
+PY
+			return 0
+			;;
+		label | issue | pr) return 0 ;;
+		esac
+		printf 'unexpected gh call: %s\n' "$command" >&2
+		return 1
+	}
+
+	local findings
+	findings='[{"pr":1,"file":"src/live.py","body":"keep"},{"pr":1,"file":"src/deleted.py","body":"drop"},{"pr":1,"file":null,"body":"body"}]'
+
+	local filtered
+	filtered=$(_filter_findings_by_head_files "owner/repo" "$findings")
+	local files
+	files=$(printf '%s' "$filtered" | jq -r '[.[].file] | @json')
+
+	if [[ "$files" == '["src/live.py",null]' ]]; then
+		print_result "head-file filtering handles large JSON without jq --argjson" 0
+	else
+		print_result "head-file filtering handles large JSON without jq --argjson" 1 "files=${files}"
+	fi
+
+	_restore_mock_gh
+	return 0
+}
+
+test_failed_scan_does_not_mark_pr_review_feedback_scanned() {
+	reset_mock_state
+
+	local state_file
+	state_file=$(mktemp)
+	printf '{"scanned_prs":[],"last_run":null,"issues_created":0}' >"$state_file"
+	local edit_count_file
+	edit_count_file=$(mktemp)
+
+	(
+		gh() {
+			local command="$1"
+			shift
+			case "$command" in
+			pr)
+				if [[ "${1:-}" == "edit" ]]; then
+					printf 'edit\n' >>"$edit_count_file"
+				fi
+				return 0
+				;;
+			api | label | issue) return 0 ;;
+			esac
+			printf 'unexpected gh call: %s\n' "$command" >&2
+			return 1
+		}
+
+		_scan_single_pr() {
+			return 1
+		}
+
+		_process_pr_scan_loop "owner/repo" "medium" "false" "false" "false" "false" "20" "false" "$state_file" "123" >/dev/null 2>&1
+	)
+
+	local gh_pr_edit_count
+	gh_pr_edit_count=$(wc -l <"$edit_count_file" | tr -d ' ')
+	local scanned_count
+	scanned_count=$(jq '.scanned_prs | length' "$state_file")
+	rm -f "$state_file" "${state_file}.findings_tmp" "$edit_count_file"
+
+	if [[ "$gh_pr_edit_count" -eq 0 && "$scanned_count" -eq 0 ]]; then
+		print_result "failed scan does not add review-feedback-scanned label or state" 0
+	else
+		print_result "failed scan does not add review-feedback-scanned label or state" 1 \
+			"gh_pr_edit_count=${gh_pr_edit_count} scanned_count=${scanned_count}"
+	fi
+
+	_restore_mock_gh
 	return 0
 }
 
