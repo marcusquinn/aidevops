@@ -58,6 +58,7 @@ _POOL_OPS_SPEC.loader.exec_module(_POOL_OPS_MOD)
 
 from oauth_pool_lib import _common  # noqa: E402
 from oauth_pool_lib import pool_ops_refresh  # noqa: E402
+from oauth_pool_lib import pool_ops_rotate  # noqa: E402
 
 
 def run_pool_ops(command: str, env: dict[str, str], stdin: str | None = None) -> subprocess.CompletedProcess[str]:
@@ -666,6 +667,34 @@ class RefreshTests(PoolOpsTestCase):
 
         self.assertEqual(_common.token_refresh_error_label(result), "http_401")
         self.assertNotIn("secret-refresh", json.dumps(result))
+
+    def test_successful_refresh_with_invalid_json_is_sanitized(self) -> None:
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b"not-json"
+        with mock.patch("urllib.request.urlopen", return_value=response):
+            result = _common.call_token_endpoint("https://auth.example.invalid/token", "client", "secret-refresh", "ua")
+
+        self.assertEqual(_common.token_refresh_error_label(result), "invalid_response")
+        self.assertNotIn("secret-refresh", json.dumps(result))
+
+    def test_successful_refresh_with_non_dict_json_is_sanitized(self) -> None:
+        response = mock.MagicMock()
+        response.__enter__.return_value.read.return_value = b'[]'
+        with mock.patch("urllib.request.urlopen", return_value=response):
+            result = _common.call_token_endpoint("https://auth.example.invalid/token", "client", "secret-refresh", "ua")
+
+        self.assertEqual(_common.token_refresh_error_label(result), "invalid_response")
+
+    def test_rotate_reports_invalid_refresh_response(self) -> None:
+        account = {"email": "a@example.com", "access": "old", "refresh": "secret-refresh", "expires": 1}
+        with mock.patch.object(pool_ops_rotate, "TOKEN_URLS", {"anthropic": "https://auth.example.invalid/token"}), \
+            mock.patch.object(pool_ops_rotate, "CLIENT_IDS", {"anthropic": "client"}), \
+            mock.patch.object(pool_ops_rotate, "call_token_endpoint", return_value={_common.TOKEN_REFRESH_ERROR_KEY: "invalid_response"}), \
+            mock.patch("sys.stderr") as stderr:
+            pool_ops_rotate._try_refresh_token(account, "anthropic", int(time.time() * 1000), "ua")
+
+        self.assertEqual(stderr.write.call_args_list[0].args[0], "REFRESH_FAILED:invalid_response")
+        self.assertEqual(account["access"], "old")
 
     def test_refresh_account_reports_sanitized_http_failure(self) -> None:
         account = {"email": "a@example.com", "access": "old", "refresh": "secret-refresh", "expires": 1}
