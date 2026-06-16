@@ -36,6 +36,18 @@ gh() {
 		printf 'HTTP/2 429\r\nRetry-After: 42\r\nX-RateLimit-Remaining: 0\r\nX-GitHub-Request-Id: REQ-429\r\n\r\n{"message":"rate limit exceeded"}\n'
 		return 1
 	fi
+	if [[ "${GH_GENERIC_403_FAIL:-0}" == "1" ]]; then
+		printf 'HTTP/2 403\r\nX-RateLimit-Remaining: 5\r\nX-GitHub-Request-Id: REQ-403\r\n\r\n{"message":"Resource not accessible by integration"}\n'
+		return 1
+	fi
+	if [[ "${GH_ABUSE_403_FAIL:-0}" == "1" ]]; then
+		printf 'HTTP/2 403\r\nRetry-After: 30\r\nX-RateLimit-Remaining: 5\r\nX-GitHub-Request-Id: REQ-ABUSE\r\n\r\n{"message":"You have triggered an abuse detection mechanism."}\n'
+		return 1
+	fi
+	if [[ "${GH_PRIMARY_REMAINING_ZERO_FAIL:-0}" == "1" ]]; then
+		printf 'HTTP/2 200\r\nX-RateLimit-Remaining: 0\r\nX-RateLimit-Reset: 9999999999\r\nX-RateLimit-Resource: graphql\r\nX-GitHub-Request-Id: REQ-PRIMARY\r\n\r\n{"message":"GraphQL: API rate limit already exceeded"}\n'
+		return 1
+	fi
 	printf '{"ok":true}\n'
 	return 0
 }
@@ -48,7 +60,7 @@ reset_case() {
 	: >"$ERR_LOG"
 	rm -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE"
 	rm -f "$AIDEVOPS_GH_READ_RAMP_STATE_FILE"
-	unset GH_SECONDARY_FAIL GH_HEADER_LIMIT_FAIL AIDEVOPS_GH_SECONDARY_COOLDOWN_OVERRIDE AIDEVOPS_GH_READ_RAMP_BUDGET AIDEVOPS_GH_READ_RAMP_BOOT_SECS AIDEVOPS_GH_READ_RAMP_RECOVERY_SECS AIDEVOPS_GH_READ_RAMP_OVERRIDE 2>/dev/null || true
+	unset GH_SECONDARY_FAIL GH_HEADER_LIMIT_FAIL GH_GENERIC_403_FAIL GH_ABUSE_403_FAIL GH_PRIMARY_REMAINING_ZERO_FAIL AIDEVOPS_GH_SECONDARY_COOLDOWN_OVERRIDE AIDEVOPS_GH_READ_RAMP_BUDGET AIDEVOPS_GH_READ_RAMP_BOOT_SECS AIDEVOPS_GH_READ_RAMP_RECOVERY_SECS AIDEVOPS_GH_READ_RAMP_OVERRIDE 2>/dev/null || true
 	_GH_SECONDARY_COOLDOWN_LOGGED_ACTIVE=0
 	_GH_SECONDARY_COOLDOWN_LOGGED_RAMP=0
 	_gh_secondary_system_boot_ts() { return 1; }
@@ -67,7 +79,7 @@ test_secondary_response_writes_cooldown() {
 		return 1
 	fi
 	if [[ -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" ]] && \
-		jq -e '.reason == "github-secondary-rate-limit" and (.expires_at > .first_seen)' "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" >/dev/null; then
+		jq -e '.reason == "github-secondary-rate-limit" and (.expires_at > .first_seen) and .diagnostic.decision_branch == "secondary-text" and .diagnostic.body_classification == "secondary-rate-limit"' "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" >/dev/null; then
 		printf 'PASS secondary response writes cooldown file\n'
 		return 0
 	fi
@@ -87,11 +99,71 @@ test_header_response_writes_retry_after_cooldown() {
 		return 1
 	fi
 	if [[ -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" ]] && \
-		jq -e '.reason == "github-api-rate-limit-status-429" and .last_request_id == "REQ-429" and ((.expires_at - .first_seen) >= 40) and ((.expires_at - .first_seen) <= 45)' "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" >/dev/null; then
+		jq -e '.reason == "github-api-rate-limit-status-429" and .last_request_id == "REQ-429" and .diagnostic.decision_branch == "status-429" and .diagnostic.http_status == "429" and .diagnostic.headers.retry_after == "42" and ((.expires_at - .first_seen) >= 40) and ((.expires_at - .first_seen) <= 45)' "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" >/dev/null; then
 		printf 'PASS header response writes retry-after cooldown file\n'
 		return 0
 	fi
 	printf 'FAIL header cooldown file missing or malformed\n'
+	return 1
+}
+
+test_generic_403_diagnostic_distinguishes_forbidden() {
+	reset_case
+	export GH_GENERIC_403_FAIL=1
+	set +e
+	_gh_with_timeout read gh api -i repos/owner/repo/issues >"${TMP_HOME}/generic-403.out" 2>"$ERR_LOG"
+	local rc=$?
+	set -e
+	if [[ "$rc" -ne 1 ]]; then
+		printf 'FAIL expected generic 403 wrapped gh rc=1, got %s\n' "$rc"
+		return 1
+	fi
+	if [[ -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" ]] && \
+		jq -e '.reason == "github-api-rate-limit-status-403" and .last_request_id == "REQ-403" and .diagnostic.decision_branch == "status-403" and .diagnostic.body_classification == "generic-forbidden" and .diagnostic.headers.x_ratelimit_remaining == "5"' "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" >/dev/null; then
+		printf 'PASS generic 403 diagnostic distinguishes forbidden response\n'
+		return 0
+	fi
+	printf 'FAIL generic 403 diagnostic missing or malformed\n'
+	return 1
+}
+
+test_abuse_403_diagnostic_distinguishes_abuse_text() {
+	reset_case
+	export GH_ABUSE_403_FAIL=1
+	set +e
+	_gh_with_timeout read gh api -i repos/owner/repo/issues >"${TMP_HOME}/abuse-403.out" 2>"$ERR_LOG"
+	local rc=$?
+	set -e
+	if [[ "$rc" -ne 1 ]]; then
+		printf 'FAIL expected abuse 403 wrapped gh rc=1, got %s\n' "$rc"
+		return 1
+	fi
+	if [[ -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" ]] && \
+		jq -e '.reason == "github-api-rate-limit-status-403" and .last_request_id == "REQ-ABUSE" and .diagnostic.decision_branch == "status-403" and .diagnostic.body_classification == "abuse-detection" and .diagnostic.headers.retry_after == "30"' "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" >/dev/null; then
+		printf 'PASS abuse 403 diagnostic distinguishes abuse text\n'
+		return 0
+	fi
+	printf 'FAIL abuse 403 diagnostic missing or malformed\n'
+	return 1
+}
+
+test_remaining_zero_diagnostic_classifies_primary_quota() {
+	reset_case
+	export GH_PRIMARY_REMAINING_ZERO_FAIL=1
+	set +e
+	_gh_with_timeout read gh api -i graphql >"${TMP_HOME}/primary-quota.out" 2>"$ERR_LOG"
+	local rc=$?
+	set -e
+	if [[ "$rc" -ne 1 ]]; then
+		printf 'FAIL expected primary quota wrapped gh rc=1, got %s\n' "$rc"
+		return 1
+	fi
+	if [[ -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" ]] && \
+		jq -e '.reason == "github-api-rate-limit-remaining-zero" and .last_request_id == "REQ-PRIMARY" and .diagnostic.decision_branch == "remaining-zero" and .diagnostic.body_classification == "primary-rate-limit" and .diagnostic.headers.x_ratelimit_resource == "graphql"' "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" >/dev/null; then
+		printf 'PASS remaining-zero diagnostic classifies primary quota\n'
+		return 0
+	fi
+	printf 'FAIL remaining-zero diagnostic missing or malformed\n'
 	return 1
 }
 
@@ -146,7 +218,7 @@ test_no_jq_fallback_escapes_json_strings() {
 		ln -sf "$(command -v "$tool")" "${nojq_bin}/${tool}"
 	done
 	PATH="$nojq_bin" _gh_secondary_cooldown_write 'quote " reason' 'request id: REQ-123' >/dev/null 2>&1
-	if jq -e '.reason == "quote \" reason" and .last_request_id == "REQ-123" and (.expires_at > .first_seen)' "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" >/dev/null; then
+	if jq -e '.reason == "quote \" reason" and .last_request_id == "REQ-123" and (.expires_at > .first_seen) and .diagnostic.decision_branch == "quote \" reason" and .diagnostic.request_id == "REQ-123"' "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" >/dev/null; then
 		printf 'PASS no-jq fallback escapes JSON strings\n'
 		return 0
 	fi
@@ -259,6 +331,9 @@ test_read_ramp_does_not_defer_writes() {
 
 test_secondary_response_writes_cooldown
 test_header_response_writes_retry_after_cooldown
+test_generic_403_diagnostic_distinguishes_forbidden
+test_abuse_403_diagnostic_distinguishes_abuse_text
+test_remaining_zero_diagnostic_classifies_primary_quota
 test_active_cooldown_skips_without_gh_call
 test_override_allows_audited_call
 test_default_path_without_home_is_user_scoped

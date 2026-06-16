@@ -47,6 +47,98 @@ _gh_secondary_cooldown_request_id() {
 	return 0
 }
 
+_gh_secondary_cooldown_safe_value() {
+	local value="$1"
+	local max_len="${2:-120}"
+	value=${value//$'\r'/ }
+	value=${value//$'\n'/ }
+	value=${value//$'\t'/ }
+	if [[ "$max_len" =~ ^[0-9]+$ && "${#value}" -gt "$max_len" ]]; then
+		value="${value:0:$max_len}"
+	fi
+	printf '%s' "$value"
+	return 0
+}
+
+_gh_secondary_cooldown_safe_family() {
+	local value="$1"
+	local max_len="${2:-80}"
+	value="${value##*/}"
+	value="$(_gh_secondary_cooldown_safe_value "$value" "$max_len")"
+	value=$(printf '%s' "$value" | tr -c 'A-Za-z0-9._:@+=,-' '_' 2>/dev/null || printf 'unknown')
+	[[ -n "$value" ]] || value="unknown"
+	printf '%s' "$value"
+	return 0
+}
+
+_gh_secondary_cooldown_caller_family() {
+	local i=1
+	local src=""
+	local base=""
+	while [[ "$i" -lt "${#BASH_SOURCE[@]}" ]]; do
+		src="${BASH_SOURCE[$i]:-}"
+		base="${src##*/}"
+		case "$base" in
+		shared-gh-secondary-cooldown.sh | shared-gh-wrappers.sh | shared-constants.sh | bash | -bash | zsh | -zsh | "")
+			i=$((i + 1))
+			continue
+			;;
+		esac
+		_gh_secondary_cooldown_safe_family "$base" 80
+		return 0
+	done
+	printf 'unknown'
+	return 0
+}
+
+_gh_secondary_cooldown_endpoint_family() {
+	local endpoint="${AIDEVOPS_GH_COOLDOWN_ENDPOINT_FAMILY:-${AIDEVOPS_GH_API_POOL:-${AIDEVOPS_GH_ROUTE_DECISION:-unknown}}}"
+	case "$endpoint" in
+	graphql | rest | rest-core | rest-search | search-graphql | search-rest | other | unknown) ;;
+	*) endpoint="unknown" ;;
+	esac
+	_gh_secondary_cooldown_safe_family "$endpoint" 80
+	return 0
+}
+
+_gh_secondary_cooldown_body_classification() {
+	local response_text="$1"
+	local status="${2:-}"
+	local remaining="${3:-}"
+	if printf '%s' "$response_text" | grep -Eqi 'abuse detection mechanism'; then
+		printf 'abuse-detection'
+		return 0
+	fi
+	if printf '%s' "$response_text" | grep -Eqi 'secondary rate limit|You have exceeded a secondary rate limit'; then
+		printf 'secondary-rate-limit'
+		return 0
+	fi
+	if printf '%s' "$response_text" | grep -Eqi 'GraphQL: API rate limit already exceeded|API rate limit exceeded'; then
+		printf 'primary-rate-limit'
+		return 0
+	fi
+	if [[ "$remaining" =~ ^[0-9]+$ && "$remaining" -eq 0 ]]; then
+		printf 'primary-rate-limit'
+		return 0
+	fi
+	case "$status" in
+	403)
+		printf 'generic-forbidden'
+		return 0
+		;;
+	429)
+		printf 'rate-limit-message'
+		return 0
+		;;
+	esac
+	if [[ -z "${response_text//[[:space:]]/}" ]]; then
+		printf 'empty-response'
+		return 0
+	fi
+	printf 'other-error'
+	return 0
+}
+
 _gh_secondary_cooldown_json_string() {
 	local value="$1"
 	value=${value//\\/\\\\}
@@ -62,13 +154,35 @@ _gh_secondary_cooldown_write_until() {
 	local reason="$1"
 	local response_text="${2:-}"
 	local expires_at="${3:-}"
+	local decision_branch="${4:-$reason}"
 	local now=""
 	local expires=""
 	local file=""
 	local dir=""
 	local request_id=""
+	local status=""
+	local retry_after=""
+	local ratelimit_limit=""
+	local ratelimit_remaining=""
+	local ratelimit_reset=""
+	local ratelimit_used=""
+	local ratelimit_resource=""
+	local body_classification=""
+	local caller_family=""
+	local endpoint_family=""
 	local reason_json=""
 	local request_id_json=""
+	local decision_branch_json=""
+	local status_json=""
+	local retry_after_json=""
+	local ratelimit_limit_json=""
+	local ratelimit_remaining_json=""
+	local ratelimit_reset_json=""
+	local ratelimit_used_json=""
+	local ratelimit_resource_json=""
+	local body_classification_json=""
+	local caller_family_json=""
+	local endpoint_family_json=""
 
 	now="$(_gh_secondary_cooldown_now)"
 	if [[ "$expires_at" =~ ^[0-9]+$ && "$expires_at" -gt "$now" ]]; then
@@ -79,6 +193,16 @@ _gh_secondary_cooldown_write_until() {
 	file="$(_gh_secondary_cooldown_file)"
 	dir="${file%/*}"
 	request_id="$(_gh_secondary_cooldown_request_id "$response_text")"
+	status="$(_gh_secondary_cooldown_status "$response_text")"
+	retry_after="$(_gh_secondary_cooldown_header_value "$response_text" "retry-after")"
+	ratelimit_limit="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-limit")"
+	ratelimit_remaining="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-remaining")"
+	ratelimit_reset="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-reset")"
+	ratelimit_used="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-used")"
+	ratelimit_resource="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-resource")"
+	body_classification="$(_gh_secondary_cooldown_body_classification "$response_text" "$status" "$ratelimit_remaining")"
+	caller_family="$(_gh_secondary_cooldown_caller_family)"
+	endpoint_family="$(_gh_secondary_cooldown_endpoint_family)"
 	mkdir -p "$dir" 2>/dev/null || return 1
 
 	if command -v jq >/dev/null 2>&1; then
@@ -87,15 +211,37 @@ _gh_secondary_cooldown_write_until() {
 			--arg first_seen "$now" \
 			--arg expires_at "$expires" \
 			--arg request_id "$request_id" \
-			'{reason:$reason, first_seen:($first_seen|tonumber), expires_at:($expires_at|tonumber), last_request_id:$request_id}' >"${file}.tmp" || {
+			--arg decision_branch "$decision_branch" \
+			--arg status "$status" \
+			--arg retry_after "$retry_after" \
+			--arg ratelimit_limit "$ratelimit_limit" \
+			--arg ratelimit_remaining "$ratelimit_remaining" \
+			--arg ratelimit_reset "$ratelimit_reset" \
+			--arg ratelimit_used "$ratelimit_used" \
+			--arg ratelimit_resource "$ratelimit_resource" \
+			--arg body_classification "$body_classification" \
+			--arg caller_family "$caller_family" \
+			--arg endpoint_family "$endpoint_family" \
+			'{reason:$reason, first_seen:($first_seen|tonumber), expires_at:($expires_at|tonumber), last_request_id:$request_id, diagnostic:{decision_branch:$decision_branch, http_status:$status, request_id:$request_id, body_classification:$body_classification, caller_family:$caller_family, endpoint_family:$endpoint_family, headers:{retry_after:$retry_after, x_ratelimit_limit:$ratelimit_limit, x_ratelimit_remaining:$ratelimit_remaining, x_ratelimit_reset:$ratelimit_reset, x_ratelimit_used:$ratelimit_used, x_ratelimit_resource:$ratelimit_resource}}}' >"${file}.tmp" || {
 			printf 'Failed to write to %s\n' "${file}.tmp" >&2
 			return 1
 		}
 	else
 		reason_json="$(_gh_secondary_cooldown_json_string "$reason")"
 		request_id_json="$(_gh_secondary_cooldown_json_string "$request_id")"
-		printf '{"reason":%s,"first_seen":%s,"expires_at":%s,"last_request_id":%s}\n' \
-			"$reason_json" "$now" "$expires" "$request_id_json" >"${file}.tmp" || {
+		decision_branch_json="$(_gh_secondary_cooldown_json_string "$decision_branch")"
+		status_json="$(_gh_secondary_cooldown_json_string "$status")"
+		retry_after_json="$(_gh_secondary_cooldown_json_string "$retry_after")"
+		ratelimit_limit_json="$(_gh_secondary_cooldown_json_string "$ratelimit_limit")"
+		ratelimit_remaining_json="$(_gh_secondary_cooldown_json_string "$ratelimit_remaining")"
+		ratelimit_reset_json="$(_gh_secondary_cooldown_json_string "$ratelimit_reset")"
+		ratelimit_used_json="$(_gh_secondary_cooldown_json_string "$ratelimit_used")"
+		ratelimit_resource_json="$(_gh_secondary_cooldown_json_string "$ratelimit_resource")"
+		body_classification_json="$(_gh_secondary_cooldown_json_string "$body_classification")"
+		caller_family_json="$(_gh_secondary_cooldown_json_string "$caller_family")"
+		endpoint_family_json="$(_gh_secondary_cooldown_json_string "$endpoint_family")"
+		printf '{"reason":%s,"first_seen":%s,"expires_at":%s,"last_request_id":%s,"diagnostic":{"decision_branch":%s,"http_status":%s,"request_id":%s,"body_classification":%s,"caller_family":%s,"endpoint_family":%s,"headers":{"retry_after":%s,"x_ratelimit_limit":%s,"x_ratelimit_remaining":%s,"x_ratelimit_reset":%s,"x_ratelimit_used":%s,"x_ratelimit_resource":%s}}}\n' \
+			"$reason_json" "$now" "$expires" "$request_id_json" "$decision_branch_json" "$status_json" "$request_id_json" "$body_classification_json" "$caller_family_json" "$endpoint_family_json" "$retry_after_json" "$ratelimit_limit_json" "$ratelimit_remaining_json" "$ratelimit_reset_json" "$ratelimit_used_json" "$ratelimit_resource_json" >"${file}.tmp" || {
 			printf 'Failed to write to %s\n' "${file}.tmp" >&2
 			return 1
 		}
@@ -164,18 +310,18 @@ _gh_secondary_cooldown_record_response_if_needed() {
 	case "$status" in
 	403|429)
 		expires_at="$(_gh_secondary_cooldown_header_expires_at "$response_text")"
-		_gh_secondary_cooldown_write_until "github-api-rate-limit-status-${status}" "$response_text" "$expires_at" || true
+		_gh_secondary_cooldown_write_until "github-api-rate-limit-status-${status}" "$response_text" "$expires_at" "status-${status}" || true
 		return 0
 		;;
 	esac
 	if [[ "$remaining" =~ ^[0-9]+$ && "$remaining" -eq 0 ]]; then
 		expires_at="$(_gh_secondary_cooldown_header_expires_at "$response_text")"
-		_gh_secondary_cooldown_write_until "github-api-rate-limit-remaining-zero" "$response_text" "$expires_at" || true
+		_gh_secondary_cooldown_write_until "github-api-rate-limit-remaining-zero" "$response_text" "$expires_at" "remaining-zero" || true
 		return 0
 	fi
 	if [[ "$rc" -ne 0 ]]; then
 		_gh_secondary_cooldown_detect "$response_text" || return 0
-		_gh_secondary_cooldown_write "github-secondary-rate-limit" "$response_text" || true
+		_gh_secondary_cooldown_write_until "github-secondary-rate-limit" "$response_text" "" "secondary-text" || true
 	fi
 	return 0
 }
