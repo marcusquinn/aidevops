@@ -258,6 +258,30 @@ test_skips_no_suggestions_for_improvement_review() {
 	return 0
 }
 
+test_skips_review_thread_response_inline_comment() {
+	local comments result
+	comments='[{"user":{"login":"marcusquinn"},"body":"<!-- aidevops:review-thread-response:PRRT_1 -->\nAddressed in 055c869cb by building a jq lookup map. Verified with bash -n and shellcheck.","path":".agents/scripts/quality-feedback-findings-lib.sh","line":329,"html_url":"https://example.invalid/review","created_at":"2026-06-16T00:00:00Z"}]'
+	result=$(_build_inline_findings "$comments" "24936" "medium" | jq 'length')
+	if [[ "$result" == "0" ]]; then
+		print_result "skip review-thread response inline comment" 0
+	else
+		print_result "skip review-thread response inline comment" 1 "expected 0 findings, got ${result}"
+	fi
+	return 0
+}
+
+test_skips_no_further_concerns_inline_ack() {
+	local comments result
+	comments='[{"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the update. The lookup map implementation is the correct approach, and I have no further concerns regarding this implementation.","path":".agents/scripts/quality-feedback-findings-lib.sh","line":329,"html_url":"https://example.invalid/review","created_at":"2026-06-16T00:00:00Z"}]'
+	result=$(_build_inline_findings "$comments" "24936" "medium" | jq 'length')
+	if [[ "$result" == "0" ]]; then
+		print_result "skip no-further-concerns inline acknowledgement" 0
+	else
+		print_result "skip no-further-concerns inline acknowledgement" 1 "expected 0 findings, got ${result}"
+	fi
+	return 0
+}
+
 test_keeps_actionable_approved_review() {
 	# APPROVED review that also contains actionable critique — must be kept
 	local result
