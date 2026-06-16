@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.80] - 2026-06-16
+
+### Changed
+
+- Documentation: add universal app record field guidance
+- refactor: split signature detection helpers (#24897)
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 49→46 (-3) [skip ci]
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 51→49 (-2) [skip ci]
+- refactor: reduce signature hook complexity (#24895)
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 53→51 (-2) [skip ci]
+
 ## [3.20.79] - 2026-06-16
 
 ### Fixed
