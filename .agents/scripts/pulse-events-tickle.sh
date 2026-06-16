@@ -141,8 +141,10 @@ _events_tickle_parse_etag() {
 _events_tickle_record_rate_limit_response() {
 	local rc="$1"
 	local response="$2"
+	local endpoint="${3:-}"
+	local operation="${4:-events_tickle}"
 	if declare -F _gh_secondary_cooldown_record_response_if_needed >/dev/null 2>&1; then
-		_gh_secondary_cooldown_record_response_if_needed "$rc" "$response"
+		_gh_secondary_cooldown_record_response_if_needed "$rc" "$response" "GET" "$endpoint" "" "$operation" "pulse-events-tickle" "events-tickle"
 	fi
 	return 0
 }
@@ -172,7 +174,7 @@ _events_tickle_retry_org_endpoint() {
 	declare -F gh_record_call >/dev/null 2>&1 && gh_record_call rest events_tickle_org_retry || true
 	org_response=$(gh api -i "/orgs/${owner}/events?per_page=1" 2>&1) || org_exit=$?
 	org_status=$(_events_tickle_parse_status "$org_response")
-	_events_tickle_record_rate_limit_response "$org_exit" "$org_response"
+	_events_tickle_record_rate_limit_response "$org_exit" "$org_response" "/orgs/${owner}/events?per_page=1" "events_tickle_org_retry"
 	if _events_tickle_rate_limited_response "$org_response" "$org_status"; then
 		_events_tickle_log "cooldown recorded for owner=${owner} (org retry status=${org_status:-none} exit=${org_exit}); skipping search fanout"
 		_PULSE_EVENTS_TICKLE_FRESH=$((_PULSE_EVENTS_TICKLE_FRESH + 1))
@@ -257,7 +259,7 @@ events_tickle() {
 	else
 		response=$(gh api -i "$api_path" 2>&1) || exit_code=$?
 	fi
-	_events_tickle_record_rate_limit_response "$exit_code" "$response"
+	_events_tickle_record_rate_limit_response "$exit_code" "$response" "$api_path" "events_tickle_events"
 
 	local http_status
 	http_status=$(_events_tickle_parse_status "$response")

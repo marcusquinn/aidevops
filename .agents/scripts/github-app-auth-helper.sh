@@ -298,41 +298,97 @@ _github_app_extract_repo_from_api_args() {
 	return 1
 }
 
+_github_app_api_invoke() {
+	local timeout_class="$1"
+	shift
+	if command -v _gh_with_timeout >/dev/null 2>&1; then
+		_gh_with_timeout "$timeout_class" "$@"
+		return $?
+	fi
+	"$@"
+	return $?
+}
+
 github_app_api_call() {
 	local timeout_class="$1"
 	local api_pool="$2"
 	shift 2
-	local repo token old_token token_was_set old_auth auth_was_set old_pool pool_was_set old_route route_was_set rc
+	local repo token installation_id context_wrapper context_operation context_stage
+	local old_token token_was_set old_auth auth_was_set old_principal principal_was_set
+	local old_pool pool_was_set old_route route_was_set old_context_operation context_operation_was_set
+	local old_context_wrapper context_wrapper_was_set old_context_stage context_stage_was_set rc
 	repo=$(_github_app_extract_repo_from_api_args "$@" 2>/dev/null || true)
 	token=$(github_app_token_for_repo "$repo" 2>/dev/null || true)
-	if [[ -z "$token" ]]; then
-		if command -v _gh_with_timeout >/dev/null 2>&1; then
-			_gh_with_timeout "$timeout_class" "$@"
-		else
-			"$@"
-		fi
-		return $?
-	fi
+	context_wrapper="${FUNCNAME[1]:-github_app_api_call}"
+	context_operation="${FUNCNAME[2]:-$context_wrapper}"
+	context_stage="${AIDEVOPS_GH_COOLDOWN_STAGE:-github-app-auth}"
+	[[ "$context_wrapper" == "_rest_api_call" ]] && context_stage="${AIDEVOPS_GH_COOLDOWN_STAGE:-rest-fallback}"
 	old_token="${GH_TOKEN:-}"; token_was_set="${GH_TOKEN+x}"
 	old_auth="${AIDEVOPS_GH_AUTH_MODE:-}"; auth_was_set="${AIDEVOPS_GH_AUTH_MODE+x}"
+	old_principal="${AIDEVOPS_GH_AUTH_PRINCIPAL:-}"; principal_was_set="${AIDEVOPS_GH_AUTH_PRINCIPAL+x}"
 	old_pool="${AIDEVOPS_GH_API_POOL:-}"; pool_was_set="${AIDEVOPS_GH_API_POOL+x}"
 	old_route="${AIDEVOPS_GH_ROUTE_DECISION:-}"; route_was_set="${AIDEVOPS_GH_ROUTE_DECISION+x}"
-	GH_TOKEN="$token"
-	AIDEVOPS_GH_AUTH_MODE="github-app"
+	old_context_operation="${AIDEVOPS_GH_COOLDOWN_OPERATION:-}"; context_operation_was_set="${AIDEVOPS_GH_COOLDOWN_OPERATION+x}"
+	old_context_wrapper="${AIDEVOPS_GH_COOLDOWN_WRAPPER:-}"; context_wrapper_was_set="${AIDEVOPS_GH_COOLDOWN_WRAPPER+x}"
+	old_context_stage="${AIDEVOPS_GH_COOLDOWN_STAGE:-}"; context_stage_was_set="${AIDEVOPS_GH_COOLDOWN_STAGE+x}"
+	AIDEVOPS_GH_COOLDOWN_OPERATION="$context_operation"
+	AIDEVOPS_GH_COOLDOWN_WRAPPER="$context_wrapper"
+	AIDEVOPS_GH_COOLDOWN_STAGE="$context_stage"
 	AIDEVOPS_GH_API_POOL="$api_pool"
-	AIDEVOPS_GH_ROUTE_DECISION="${api_pool}-github-app"
-	export GH_TOKEN AIDEVOPS_GH_AUTH_MODE AIDEVOPS_GH_API_POOL AIDEVOPS_GH_ROUTE_DECISION
-	if command -v _gh_with_timeout >/dev/null 2>&1; then
-		_gh_with_timeout "$timeout_class" "$@"
-		rc=$?
+	if [[ -n "$token" ]]; then
+		installation_id=$(github_app_installation_id 2>/dev/null || true)
+		GH_TOKEN="$token"
+		AIDEVOPS_GH_AUTH_MODE="github-app"
+		AIDEVOPS_GH_AUTH_PRINCIPAL="app-installation:${installation_id:-unknown}"
+		AIDEVOPS_GH_ROUTE_DECISION="${api_pool}-github-app"
 	else
-		"$@"
-		rc=$?
+		AIDEVOPS_GH_AUTH_MODE="gh-pat"
+		AIDEVOPS_GH_AUTH_PRINCIPAL="${AIDEVOPS_GH_AUTH_PRINCIPAL:-unknown}"
+		AIDEVOPS_GH_ROUTE_DECISION="${api_pool}-gh-pat"
 	fi
-	if [[ -n "$token_was_set" ]]; then GH_TOKEN="$old_token"; else unset GH_TOKEN; fi
-	if [[ -n "$auth_was_set" ]]; then AIDEVOPS_GH_AUTH_MODE="$old_auth"; else unset AIDEVOPS_GH_AUTH_MODE; fi
-	if [[ -n "$pool_was_set" ]]; then AIDEVOPS_GH_API_POOL="$old_pool"; else unset AIDEVOPS_GH_API_POOL; fi
-	if [[ -n "$route_was_set" ]]; then AIDEVOPS_GH_ROUTE_DECISION="$old_route"; else unset AIDEVOPS_GH_ROUTE_DECISION; fi
+	export GH_TOKEN AIDEVOPS_GH_AUTH_MODE AIDEVOPS_GH_AUTH_PRINCIPAL AIDEVOPS_GH_API_POOL AIDEVOPS_GH_ROUTE_DECISION AIDEVOPS_GH_COOLDOWN_OPERATION AIDEVOPS_GH_COOLDOWN_WRAPPER AIDEVOPS_GH_COOLDOWN_STAGE
+	_github_app_api_invoke "$timeout_class" "$@"
+	rc=$?
+	if [[ -n "$token_was_set" ]]; then
+		GH_TOKEN="$old_token"
+	else
+		unset GH_TOKEN
+	fi
+	if [[ -n "$auth_was_set" ]]; then
+		AIDEVOPS_GH_AUTH_MODE="$old_auth"
+	else
+		unset AIDEVOPS_GH_AUTH_MODE
+	fi
+	if [[ -n "$principal_was_set" ]]; then
+		AIDEVOPS_GH_AUTH_PRINCIPAL="$old_principal"
+	else
+		unset AIDEVOPS_GH_AUTH_PRINCIPAL
+	fi
+	if [[ -n "$pool_was_set" ]]; then
+		AIDEVOPS_GH_API_POOL="$old_pool"
+	else
+		unset AIDEVOPS_GH_API_POOL
+	fi
+	if [[ -n "$route_was_set" ]]; then
+		AIDEVOPS_GH_ROUTE_DECISION="$old_route"
+	else
+		unset AIDEVOPS_GH_ROUTE_DECISION
+	fi
+	if [[ -n "$context_operation_was_set" ]]; then
+		AIDEVOPS_GH_COOLDOWN_OPERATION="$old_context_operation"
+	else
+		unset AIDEVOPS_GH_COOLDOWN_OPERATION
+	fi
+	if [[ -n "$context_wrapper_was_set" ]]; then
+		AIDEVOPS_GH_COOLDOWN_WRAPPER="$old_context_wrapper"
+	else
+		unset AIDEVOPS_GH_COOLDOWN_WRAPPER
+	fi
+	if [[ -n "$context_stage_was_set" ]]; then
+		AIDEVOPS_GH_COOLDOWN_STAGE="$old_context_stage"
+	else
+		unset AIDEVOPS_GH_COOLDOWN_STAGE
+	fi
 	return "$rc"
 }
 

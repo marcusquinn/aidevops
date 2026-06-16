@@ -203,6 +203,126 @@ fi
 : "${AIDEVOPS_GH_READ_TIMEOUT:=15}"
 : "${AIDEVOPS_GH_WRITE_TIMEOUT:=45}"
 
+_GH_COOLDOWN_CONTEXT_UNKNOWN="unknown"
+_GH_COOLDOWN_CONTEXT_DEFAULT_WRAPPER="_gh_with_timeout"
+_GH_COOLDOWN_CONTEXT_METHOD="$_GH_COOLDOWN_CONTEXT_UNKNOWN"
+_GH_COOLDOWN_CONTEXT_ENDPOINT="$_GH_COOLDOWN_CONTEXT_UNKNOWN"
+_GH_COOLDOWN_CONTEXT_QUERY_SHAPE=""
+_GH_COOLDOWN_CONTEXT_OPERATION="$_GH_COOLDOWN_CONTEXT_UNKNOWN"
+_GH_COOLDOWN_CONTEXT_WRAPPER="$_GH_COOLDOWN_CONTEXT_DEFAULT_WRAPPER"
+_GH_COOLDOWN_CONTEXT_STAGE="$_GH_COOLDOWN_CONTEXT_UNKNOWN"
+
+_gh_cooldown_context_append_query_key() {
+	local shape="$1"
+	local assignment="$2"
+	local key=""
+	key="${assignment%%=*}"
+	key="${key%%:*}"
+	key=$(printf '%s' "$key" | tr -c 'A-Za-z0-9_.-' '_' 2>/dev/null || printf 'field')
+	[[ -n "$key" ]] || key="field"
+	if [[ -n "$shape" ]]; then
+		printf '%s&%s=<redacted>' "$shape" "$key"
+	else
+		printf '%s=<redacted>' "$key"
+	fi
+	return 0
+}
+
+_gh_cooldown_context_from_gh_api_args() {
+	local op_class="$1"
+	shift || true
+	local method="GET"
+	local endpoint=""
+	local shape=""
+	local arg=""
+	local expect=""
+	while [[ "$#" -gt 0 ]]; do
+		arg="$1"
+		shift || true
+		if [[ -n "$expect" ]]; then
+			case "$expect" in
+			method) method="$arg" ;;
+			field) shape="$(_gh_cooldown_context_append_query_key "$shape" "$arg")" ;;
+			skip) ;;
+			*) ;;
+			esac
+			expect=""
+			continue
+		fi
+		case "$arg" in
+		-X | --method)
+			expect="method"
+			;;
+		-X*)
+			method="${arg#-X}"
+			;;
+		--method=*)
+			method="${arg#--method=}"
+			;;
+		-f | -F | --field | --raw-field)
+			expect="field"
+			;;
+		-f* | -F*)
+			shape="$(_gh_cooldown_context_append_query_key "$shape" "${arg#??}")"
+			;;
+		--field=* | --raw-field=*)
+			shape="$(_gh_cooldown_context_append_query_key "$shape" "${arg#*=}")"
+			;;
+		-H | --header | -q | --jq | --template | --input | --hostname)
+			expect="skip"
+			;;
+		--header=* | --jq=* | --template=* | --input=* | --hostname=* | --paginate | --slurp | -i)
+			;;
+		-*)
+			;;
+		*)
+			[[ -n "$endpoint" ]] || endpoint="$arg"
+			;;
+		esac
+	done
+	[[ -n "$endpoint" ]] || endpoint="$_GH_COOLDOWN_CONTEXT_UNKNOWN"
+	if [[ "$endpoint" == "graphql" && "$method" == "GET" ]]; then
+		method="POST"
+	fi
+	_GH_COOLDOWN_CONTEXT_METHOD="$method"
+	_GH_COOLDOWN_CONTEXT_ENDPOINT="$endpoint"
+	_GH_COOLDOWN_CONTEXT_QUERY_SHAPE="$shape"
+	_GH_COOLDOWN_CONTEXT_OPERATION="${AIDEVOPS_GH_COOLDOWN_OPERATION:-gh_api}"
+	_GH_COOLDOWN_CONTEXT_WRAPPER="${AIDEVOPS_GH_COOLDOWN_WRAPPER:-$_GH_COOLDOWN_CONTEXT_DEFAULT_WRAPPER}"
+	_GH_COOLDOWN_CONTEXT_STAGE="${AIDEVOPS_GH_COOLDOWN_STAGE:-wrapper-${op_class}}"
+	return 0
+}
+
+_gh_cooldown_context_from_args() {
+	local op_class="$1"
+	shift || true
+	local cmd="${1:-$_GH_COOLDOWN_CONTEXT_UNKNOWN}"
+	local subcommand="${2:-}"
+	local action="${3:-}"
+	_GH_COOLDOWN_CONTEXT_METHOD="GH-CLI"
+	_GH_COOLDOWN_CONTEXT_ENDPOINT="${cmd:-$_GH_COOLDOWN_CONTEXT_UNKNOWN}"
+	_GH_COOLDOWN_CONTEXT_QUERY_SHAPE=""
+	_GH_COOLDOWN_CONTEXT_OPERATION="${cmd:-$_GH_COOLDOWN_CONTEXT_UNKNOWN}"
+	_GH_COOLDOWN_CONTEXT_WRAPPER="$_GH_COOLDOWN_CONTEXT_DEFAULT_WRAPPER"
+	_GH_COOLDOWN_CONTEXT_STAGE="${AIDEVOPS_GH_COOLDOWN_STAGE:-wrapper-${op_class}}"
+	if [[ "$cmd" == "gh" && "$subcommand" == "api" ]]; then
+		if [[ "$#" -ge 2 ]]; then
+			shift 2
+		else
+			shift "$#"
+		fi
+		_gh_cooldown_context_from_gh_api_args "$op_class" "$@"
+		return 0
+	fi
+	if [[ "$cmd" == "gh" ]]; then
+		_GH_COOLDOWN_CONTEXT_ENDPOINT="gh://${subcommand:-command}/${action:-run}"
+		_GH_COOLDOWN_CONTEXT_OPERATION="gh_${subcommand:-command}_${action:-run}"
+		return 0
+	fi
+	_GH_COOLDOWN_CONTEXT_OPERATION="$cmd"
+	return 0
+}
+
 # _gh_with_timeout — invoke a command (typically `gh ...`) with a wall-clock
 # cap classified by operation type. Falls through to direct invocation when
 # coreutils `timeout` is not on PATH (rare; macOS users have it via Homebrew
@@ -219,6 +339,7 @@ fi
 _gh_with_timeout() {
 	local op_class="${1:-read}"
 	shift
+	_gh_cooldown_context_from_args "$op_class" "$@"
 	if command -v _gh_secondary_cooldown_preflight >/dev/null 2>&1; then
 		_gh_secondary_cooldown_preflight "$op_class" || return $?
 	fi
@@ -252,7 +373,7 @@ _gh_with_timeout() {
 		if command -v _gh_secondary_cooldown_record_if_needed >/dev/null 2>&1; then
 			response_text="$(cat "$out_file" 2>/dev/null || true)
 $(cat "$err_file" 2>/dev/null || true)"
-			_gh_secondary_cooldown_record_if_needed "$rc" "$response_text"
+			_gh_secondary_cooldown_record_if_needed "$rc" "$response_text" "$_GH_COOLDOWN_CONTEXT_METHOD" "$_GH_COOLDOWN_CONTEXT_ENDPOINT" "$_GH_COOLDOWN_CONTEXT_QUERY_SHAPE" "$_GH_COOLDOWN_CONTEXT_OPERATION" "$_GH_COOLDOWN_CONTEXT_WRAPPER" "$_GH_COOLDOWN_CONTEXT_STAGE"
 		fi
 		rm -f "$err_file" "$out_file"
 		return $rc
@@ -288,7 +409,7 @@ $(cat "$err_file" 2>/dev/null || true)"
 		if command -v _gh_secondary_cooldown_record_if_needed >/dev/null 2>&1; then
 			response_text="$(cat "$out_file" 2>/dev/null || true)
 $(cat "$err_file" 2>/dev/null || true)"
-			_gh_secondary_cooldown_record_if_needed "$rc" "$response_text"
+			_gh_secondary_cooldown_record_if_needed "$rc" "$response_text" "$_GH_COOLDOWN_CONTEXT_METHOD" "$_GH_COOLDOWN_CONTEXT_ENDPOINT" "$_GH_COOLDOWN_CONTEXT_QUERY_SHAPE" "$_GH_COOLDOWN_CONTEXT_OPERATION" "$_GH_COOLDOWN_CONTEXT_WRAPPER" "$_GH_COOLDOWN_CONTEXT_STAGE"
 		fi
 		rm -f "$err_file" "$out_file"
 	fi
