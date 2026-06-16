@@ -540,8 +540,9 @@ _task_id_in_changed_files() {
 #      cleanup issues whose NMR label was applied by the fast-fail
 #      escalation path and has since been removed.
 #   3. If NMR is not currently present, skip historical ever-NMR for
-#      maintainer-only threads: issue author is OWNER/MEMBER and every
-#      issue comment is also OWNER/MEMBER. This preserves prompt-injection
+#      trusted maintainer threads: issue author is OWNER/MEMBER and every
+#      issue comment is OWNER/MEMBER or a known framework-generated GitHub
+#      Actions hold/remediation notice. This preserves prompt-injection
 #      protection while avoiding permanent crypto approval for internal
 #      retry/hold labels that a maintainer has already removed.
 #   4. Call issue_has_required_approval with the determined state.
@@ -589,7 +590,12 @@ _issue_thread_is_trusted_maintainer_only() {
 		(if type == $array_type and (.[0]? | type) == $array_type then [.[][]]
 		elif type == $array_type then .
 		else [] end)
-		| [ .[] | select((.author_association // "NONE") as $a | ($a != "OWNER" and $a != "MEMBER")) ]
+		| [ .[] | select(
+			((.author_association // "NONE") as $a | ($a != "OWNER" and $a != "MEMBER"))
+			and (((.user.login // .author.login // "") as $login
+				| ((($login == "github-actions[bot]") or ($login == "github-actions"))
+					and ((.body // "") | test("^<!-- (nmr-hold-guidance|ever-nmr-remediation) -->")))) | not)
+		) ]
 		| length
 	' 2>/dev/null) || return 1
 	[[ "$untrusted_comment_count" =~ ^[0-9]+$ ]] || return 1
@@ -625,7 +631,7 @@ _check_nmr_approval_gate() {
 	# MEMBER, allow dispatch without requiring a cryptographic approval marker.
 	if [[ "$known_ever_nmr" != "true" ]] && _issue_thread_is_trusted_maintainer_only "$issue_number" "$repo_slug"; then
 		known_ever_nmr=false
-		echo "[pulse-wrapper] dispatch_with_dedup: trusted maintainer-only thread exemption for #${issue_number} in ${repo_slug} — skipping historical ever-NMR check" >>"$LOGFILE"
+		echo "[pulse-wrapper] dispatch_with_dedup: trusted maintainer thread exemption for #${issue_number} in ${repo_slug} — skipping historical ever-NMR check" >>"$LOGFILE"
 	fi
 
 	if ! issue_has_required_approval "$issue_number" "$repo_slug" "$known_ever_nmr"; then
