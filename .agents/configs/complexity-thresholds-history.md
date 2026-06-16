@@ -165,3 +165,4 @@ and monotonically decreases".
 | 53 | GH#24220/GH#24221 | /report-token-use released in v3.20.0 with 3 qlty smells in the initial local reporting helper; post-release main reports 51 smells vs threshold 48. This follow-up splits rendering out for maintainability, but total remains 51. 51 actual + 2 buffer = 53; ratchet back down after helper simplification removes the smells. |
 | 51 | ratchet-post-merge | auto-ratchet after 924e426 ("wip: reduce token report complexity (#24894)"): count 49 + 2 buffer = 51 (previously 53, reduction 2) |
 | 49 | ratchet-post-merge | auto-ratchet after d9b0ad2 ("GH#24872: refactor: reduce signature hook complexity (#24895)"): count 47 + 2 buffer = 49 (previously 51, reduction 2) |
+| 46 | ratchet-post-merge | auto-ratchet after df377bc ("wip: reduce email parser complexity (#24896)"): count 44 + 2 buffer = 46 (previously 49, reduction 3) |
