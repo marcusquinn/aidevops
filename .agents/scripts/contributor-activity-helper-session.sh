@@ -211,23 +211,6 @@ _session_time_query_db() {
 	local abs_repo_path="$2"
 	local since_ms="$3"
 
-	# Build directory filter clause.
-	# When abs_repo_path is empty (--all-dirs), dir_clause stays empty to
-	# aggregate sessions across all repos (profile-level stats). Runtime temp
-	# sessions are retained and classified as worker sessions later so 24h/7d
-	# worker activity remains visible without masquerading as user work.
-	# Uses parameter expansion to avoid an if/fi block (nesting budget).
-	local dir_clause=""
-	local safe_path="${abs_repo_path//\'/\'\'}"
-	local like_path="${safe_path//%/\\%}"
-	like_path="${like_path//_/\\_}"
-	# Only set dir_clause when a path was provided; empty abs_repo_path
-	# produces empty safe_path, so the :+ expansion yields nothing.
-	# shellcheck disable=SC2016,SC1003 # Single quotes are SQL delimiters, not bash
-	dir_clause="${safe_path:+AND (s.directory = '${safe_path}'
-			       OR s.directory LIKE '${like_path}.%' ESCAPE '\\'
-			       OR s.directory LIKE '${like_path}-%' ESCAPE '\\')}"
-
 	# Query per-session human vs machine time using window functions.
 	# LAG() compares each message with the previous one in the same session:
 	#   human_time = user.created - prev_assistant.completed (reading + thinking + typing)
@@ -235,48 +218,80 @@ _session_time_query_db() {
 	# Caps human gaps at 1 hour to exclude idle/abandoned sessions.
 	# Worker sessions (headless) have ~0% human time; interactive ~70-85%.
 	local query_result
-	query_result=$(sqlite3 -cmd ".timeout 5000" -json "$db_path" "
-		WITH msg_data AS (
-			SELECT
-				s.id AS session_id,
-				s.title,
-				s.directory,
-				json_extract(m.data, '\$.role') AS role,
-				m.time_created AS created,
-				json_extract(m.data, '\$.time.completed') AS completed,
-				LAG(json_extract(m.data, '\$.role'))
-					OVER (PARTITION BY s.id ORDER BY m.time_created) AS prev_role,
-				LAG(json_extract(m.data, '\$.time.completed'))
-					OVER (PARTITION BY s.id ORDER BY m.time_created) AS prev_completed
-			FROM session s
-			JOIN message m ON m.session_id = s.id
-			WHERE s.parent_id IS NULL
-			  AND m.time_created > ${since_ms}
-			  ${dir_clause}
-		)
-		SELECT
-			session_id,
-			title,
-			directory,
-			MIN(created) AS first_message_ms,
-			MAX(COALESCE(completed, created)) AS last_message_ms,
-			SUM(CASE
-				WHEN role = 'user' AND prev_role = 'assistant'
-				     AND prev_completed IS NOT NULL
-				     AND (created - prev_completed) BETWEEN 1 AND 3600000
-				THEN created - prev_completed
-				ELSE 0
-			END) AS human_ms,
-			SUM(CASE
-				WHEN role = 'assistant' AND completed IS NOT NULL
-				     AND (completed - created) > 0
-				THEN completed - created
-				ELSE 0
-			END) AS machine_ms
-		FROM msg_data
-		GROUP BY session_id
-		HAVING human_ms + machine_ms > 5000
-	" 2>/dev/null) || query_result="[]"
+	query_result=$(python3 - "$db_path" "$abs_repo_path" "$since_ms" <<'PY' 2>/dev/null
+import json
+import sqlite3
+import sys
+
+db_path = sys.argv[1]
+abs_repo_path = sys.argv[2]
+since_ms = int(float(sys.argv[3] or 0))
+
+where = ["s.parent_id IS NULL", "m.time_created > ?"]
+params = [since_ms]
+if abs_repo_path:
+    like_path = (
+        abs_repo_path
+        .replace('\\', '\\\\')
+        .replace('%', '\\%')
+        .replace('_', '\\_')
+    )
+    where.append("""(s.directory = ?
+        OR s.directory LIKE ? ESCAPE '\\'
+        OR s.directory LIKE ? ESCAPE '\\')""")
+    params.extend([
+        abs_repo_path,
+        f"{like_path}.%",
+        f"{like_path}-%",
+    ])
+
+query = f"""
+    WITH msg_data AS (
+        SELECT
+            s.id AS session_id,
+            s.title,
+            s.directory,
+            json_extract(m.data, '$.role') AS role,
+            m.time_created AS created,
+            json_extract(m.data, '$.time.completed') AS completed,
+            LAG(json_extract(m.data, '$.role'))
+                OVER (PARTITION BY s.id ORDER BY m.time_created) AS prev_role,
+            LAG(json_extract(m.data, '$.time.completed'))
+                OVER (PARTITION BY s.id ORDER BY m.time_created) AS prev_completed
+        FROM session s
+        JOIN message m ON m.session_id = s.id
+        WHERE {' AND '.join(where)}
+    )
+    SELECT
+        session_id,
+        title,
+        directory,
+        MIN(created) AS first_message_ms,
+        MAX(COALESCE(completed, created)) AS last_message_ms,
+        SUM(CASE
+            WHEN role = 'user' AND prev_role = 'assistant'
+                 AND prev_completed IS NOT NULL
+                 AND (created - prev_completed) BETWEEN 1 AND 3600000
+            THEN created - prev_completed
+            ELSE 0
+        END) AS human_ms,
+        SUM(CASE
+            WHEN role = 'assistant' AND completed IS NOT NULL
+                 AND (completed - created) > 0
+            THEN completed - created
+            ELSE 0
+        END) AS machine_ms
+    FROM msg_data
+    GROUP BY session_id
+    HAVING human_ms + machine_ms > 5000
+"""
+
+with sqlite3.connect(db_path, timeout=5) as conn:
+    conn.row_factory = sqlite3.Row
+    rows = [dict(row) for row in conn.execute(query, params)]
+print(json.dumps(rows))
+PY
+	) || query_result="[]"
 
 	# t1427: sqlite3 -json returns "" (not "[]") when no rows match.
 	if [[ "$query_result" != "["* ]]; then
