@@ -528,16 +528,7 @@ _gh_secondary_cooldown_record_event() {
 	dir="${file%/*}"
 	mkdir -p "$dir" 2>/dev/null || return 0
 	request_id="$(_gh_secondary_cooldown_request_id "$response_text")"
-	status="$(_gh_secondary_cooldown_status "$response_text")"
-	retry_after="$(_gh_secondary_cooldown_header_value "$response_text" "retry-after")"
-	ratelimit_limit="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-limit")"
-	ratelimit_remaining="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-remaining")"
-	ratelimit_reset="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-reset")"
-	ratelimit_used="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-used")"
-	ratelimit_resource="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-resource")"
-	accepted_permissions="$(_gh_secondary_cooldown_header_value "$response_text" "x-accepted-github-permissions")"
-	oauth_scopes="$(_gh_secondary_cooldown_header_value "$response_text" "x-oauth-scopes")"
-	accepted_oauth_scopes="$(_gh_secondary_cooldown_header_value "$response_text" "x-accepted-oauth-scopes")"
+	_gh_secondary_cooldown_parse_response_metadata "$response_text"
 	body_classification="$(_gh_secondary_cooldown_body_classification "$response_text" "$status" "$ratelimit_remaining")"
 	body_excerpt="$(_gh_secondary_cooldown_body_message_excerpt "$response_text")"
 	method="$(_gh_secondary_cooldown_method "$method_arg")"
@@ -549,7 +540,7 @@ _gh_secondary_cooldown_record_event() {
 	operation="$(_gh_secondary_cooldown_safe_family "$operation_source" 120)"
 	wrapper="$(_gh_secondary_cooldown_safe_family "$wrapper_source" 120)"
 	pulse_stage="$(_gh_secondary_cooldown_safe_family "$pulse_stage_source" 120)"
-	auth_mode="$(_gh_secondary_cooldown_auth_mode)"
+	auth_mode="$(_gh_secondary_cooldown_auth_mode "")"
 	auth_principal="$(_gh_secondary_cooldown_auth_principal "" "$auth_mode")"
 	recent_403_count_1m="$(_gh_secondary_cooldown_recent_event_count http_status 403 60 "$now")"
 	recent_403_count_5m="$(_gh_secondary_cooldown_recent_event_count http_status 403 300 "$now")"
@@ -638,6 +629,37 @@ _gh_secondary_cooldown_write_state_fallback() {
 	return 0
 }
 
+_gh_secondary_cooldown_parse_response_metadata() {
+	local response_text="$1"
+	local meta_line=""
+	local meta_key=""
+	local meta_value=""
+	while IFS= read -r meta_line || [[ -n "$meta_line" ]]; do
+		meta_line="${meta_line%$'\r'}"
+		[[ -n "$meta_line" ]] || break
+		if [[ "$meta_line" =~ ^HTTP/[0-9.]+[[:space:]]+([0-9]+) ]]; then
+			status="${BASH_REMATCH[1]}"
+			continue
+		fi
+		[[ "$meta_line" =~ ^([^:]+):[[:space:]]*(.*)$ ]] || continue
+		meta_key="${BASH_REMATCH[1]}"
+		meta_value="${BASH_REMATCH[2]}"
+		case "$meta_key" in
+		[Rr][Ee][Tt][Rr][Yy]-[Aa][Ff][Tt][Ee][Rr]) retry_after="$meta_value" ;;
+		[Xx]-[Rr][Aa][Tt][Ee][Ll][Ii][Mm][Ii][Tt]-[Ll][Ii][Mm][Ii][Tt]) ratelimit_limit="$meta_value" ;;
+		[Xx]-[Rr][Aa][Tt][Ee][Ll][Ii][Mm][Ii][Tt]-[Rr][Ee][Mm][Aa][Ii][Nn][Ii][Ng]) ratelimit_remaining="$meta_value" ;;
+		[Xx]-[Rr][Aa][Tt][Ee][Ll][Ii][Mm][Ii][Tt]-[Rr][Ee][Ss][Ee][Tt]) ratelimit_reset="$meta_value" ;;
+		[Xx]-[Rr][Aa][Tt][Ee][Ll][Ii][Mm][Ii][Tt]-[Uu][Ss][Ee][Dd]) ratelimit_used="$meta_value" ;;
+		[Xx]-[Rr][Aa][Tt][Ee][Ll][Ii][Mm][Ii][Tt]-[Rr][Ee][Ss][Oo][Uu][Rr][Cc][Ee]) ratelimit_resource="$meta_value" ;;
+		[Xx]-[Aa][Cc][Cc][Ee][Pp][Tt][Ee][Dd]-[Gg][Ii][Tt][Hh][Uu][Bb]-[Pp][Ee][Rr][Mm][Ii][Ss][Ss][Ii][Oo][Nn][Ss]) accepted_permissions="$meta_value" ;;
+		[Xx]-[Oo][Aa][Uu][Tt][Hh]-[Ss][Cc][Oo][Pp][Ee][Ss]) oauth_scopes="$meta_value" ;;
+		[Xx]-[Aa][Cc][Cc][Ee][Pp][Tt][Ee][Dd]-[Oo][Aa][Uu][Tt][Hh]-[Ss][Cc][Oo][Pp][Ee][Ss]) accepted_oauth_scopes="$meta_value" ;;
+		*) ;;
+		esac
+	done <<<"$response_text"
+	return 0
+}
+
 _gh_secondary_cooldown_write_until() {
 	local reason="$1"
 	local response_text="${2:-}"
@@ -692,16 +714,7 @@ _gh_secondary_cooldown_write_until() {
 	file="$(_gh_secondary_cooldown_file)"
 	dir="${file%/*}"
 	request_id="$(_gh_secondary_cooldown_request_id "$response_text")"
-	status="$(_gh_secondary_cooldown_status "$response_text")"
-	retry_after="$(_gh_secondary_cooldown_header_value "$response_text" "retry-after")"
-	ratelimit_limit="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-limit")"
-	ratelimit_remaining="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-remaining")"
-	ratelimit_reset="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-reset")"
-	ratelimit_used="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-used")"
-	ratelimit_resource="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-resource")"
-	accepted_permissions="$(_gh_secondary_cooldown_header_value "$response_text" "x-accepted-github-permissions")"
-	oauth_scopes="$(_gh_secondary_cooldown_header_value "$response_text" "x-oauth-scopes")"
-	accepted_oauth_scopes="$(_gh_secondary_cooldown_header_value "$response_text" "x-accepted-oauth-scopes")"
+	_gh_secondary_cooldown_parse_response_metadata "$response_text"
 	body_classification="$(_gh_secondary_cooldown_body_classification "$response_text" "$status" "$ratelimit_remaining")"
 	body_excerpt="$(_gh_secondary_cooldown_body_message_excerpt "$response_text")"
 	caller_family="$(_gh_secondary_cooldown_caller_family)"
@@ -715,7 +728,7 @@ _gh_secondary_cooldown_write_until() {
 	operation="$(_gh_secondary_cooldown_safe_family "$operation_source" 120)"
 	wrapper="$(_gh_secondary_cooldown_safe_family "$wrapper_source" 120)"
 	pulse_stage="$(_gh_secondary_cooldown_safe_family "$pulse_stage_source" 120)"
-	auth_mode="$(_gh_secondary_cooldown_auth_mode)"
+	auth_mode="$(_gh_secondary_cooldown_auth_mode "")"
 	auth_principal="$(_gh_secondary_cooldown_auth_principal "" "$auth_mode")"
 	_gh_secondary_cooldown_record_event "$cooldown_action" "$reason" "$decision_branch" "$response_text" "$method_arg" "$endpoint_arg" "$query_shape_arg" "$operation_arg" "$wrapper_arg" "$pulse_stage_arg" "$now"
 	recent_403_count_1m="$(_gh_secondary_cooldown_recent_event_count http_status 403 60 "$now")"
