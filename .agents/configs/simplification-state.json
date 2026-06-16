@@ -408,9 +408,9 @@
       "pr": 18172
     },
     ".agents/configs/complexity-thresholds-history.md": {
-      "at": "2026-05-28T02:13:32Z",
-      "hash": "a8210e8df02c54749f56f341fea88c2c38282480",
-      "passes": 46,
+      "at": "2026-06-16T05:55:04Z",
+      "hash": "6ad1a7398f9aa448bd56bcb70ee2e4ff6e9e8cf5",
+      "passes": 47,
       "pr": 17979
     },
     ".agents/content.md": {
@@ -2412,9 +2412,9 @@
       "pr": 18796
     },
     ".agents/scripts/pulse-dispatch-core.sh": {
-      "at": "2026-05-21T21:25:45Z",
-      "hash": "c025ab25972d50120472e34d0f85d07312c75257",
-      "passes": 39,
+      "at": "2026-06-16T05:56:18Z",
+      "hash": "5c1b89eec05e720d9de62f5be906d832b6d1ee3c",
+      "passes": 40,
       "pr": 18832
     },
     ".agents/scripts/pulse-dispatch-engine.sh": {
@@ -2442,9 +2442,9 @@
       "pr": 18690
     },
     ".agents/scripts/pulse-merge.sh": {
-      "at": "2026-06-12T00:44:44Z",
-      "hash": "797dce7fa3de098505c02eb1597c89df9933ebb0",
-      "passes": 54,
+      "at": "2026-06-16T05:56:19Z",
+      "hash": "b74143cefc556b0e688d35c22b86749b0f326b34",
+      "passes": 55,
       "pr": 18829
     },
     ".agents/scripts/pulse-prefetch.sh": {
@@ -2556,9 +2556,9 @@
       "pr": 18808
     },
     ".agents/scripts/stats-quality-sweep.sh": {
-      "at": "2026-06-07T08:50:26Z",
-      "hash": "b166277c1ec05f2a73874627c8d4e834b923604a",
-      "passes": 10,
+      "at": "2026-06-16T05:56:23Z",
+      "hash": "7972bb2dcd61ff37b14e7708d5412329865076f0",
+      "passes": 11,
       "pr": 18810
     },
     ".agents/scripts/tabby-helper.sh": {
@@ -5283,10 +5283,10 @@
       "pr": 12754
     },
     ".agents/tools/design/design-md.md": {
-      "at": "2026-06-02T23:07:00Z",
-      "hash": "c618a54c9a681cea8377919f5c5d275a4ca860c0",
+      "at": "2026-06-16T05:58:00Z",
+      "hash": "d535b21786a21131ada5d225c0f0bc26f5fcbb4e",
       "issue": 16952,
-      "passes": 10,
+      "passes": 11,
       "pr": 16966
     },
     ".agents/tools/design/library/brands/airbnb/DESIGN.md": {
@@ -7480,21 +7480,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-06-15T06:08:14Z",
-      "hash": "f8cda75690095fec78a682f0db2ff4028670d2c4",
-      "passes": 152,
+      "at": "2026-06-16T05:59:27Z",
+      "hash": "f0bde168b061dd6612097d31a71859b450932f7f",
+      "passes": 153,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-06-15T06:08:16Z",
-      "hash": "c63b4cd8143a9a0a2c82ee0c484636442ef4e8d1",
-      "passes": 232,
+      "at": "2026-06-16T05:59:27Z",
+      "hash": "883a350cdcd611dd06e4b19b16ae8b0ab3be76cc",
+      "passes": 233,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-06-15T06:08:17Z",
-      "hash": "160c82fa8ed107db0b9fca3c57017bc7b1061710",
-      "passes": 228,
+      "at": "2026-06-16T05:59:28Z",
+      "hash": "aa12c1c3ce7549ee7460e06bf5b0cbab8a10c9f6",
+      "passes": 229,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7726,10 +7726,10 @@
       "passes": 6
     },
     ".agents/reference/repos-json-fields.md": {
-      "hash": "903f5803fd18803233767c803ddb8f017216de3a",
-      "at": "2026-06-14T20:35:07Z",
+      "hash": "164c78cb1b2a14d09a913cfd5a20e026b7c2974f",
+      "at": "2026-06-16T05:55:58Z",
       "pr": 20440,
-      "passes": 9
+      "passes": 10
     },
     ".agents/reference/progressive-disclosure.md": {
       "hash": "222cc0b8477a4947c750e5a735585efb2b1dd546",
