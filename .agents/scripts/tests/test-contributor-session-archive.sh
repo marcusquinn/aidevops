@@ -39,6 +39,7 @@ setup() {
 	TEST_DIR=$(mktemp -d)
 	mkdir -p "${TEST_DIR}/home/.local/share/opencode"
 	mkdir -p "${TEST_DIR}/home/.aidevops/.agent-workspace/work/opencode-interactive/project-test/opencode"
+	mkdir -p "${TEST_DIR}/home/.aidevops/.agent-workspace/observability"
 	return 0
 }
 
@@ -103,6 +104,32 @@ INSERT INTO message(session_id, data, time_created)
 VALUES('${session_id}', '{"role":"assistant","time":{"completed":${assistant_completed}}}', ${start_ms});
 INSERT INTO message(session_id, data, time_created)
 VALUES('${session_id}', '{"role":"user"}', ${user_created});
+SQL
+	return 0
+}
+
+create_observability_db() {
+	local db_path="$1"
+	sqlite3 "$db_path" '
+		CREATE TABLE llm_requests (
+			timestamp TEXT,
+			session_id TEXT,
+			duration_ms INTEGER,
+			project_path TEXT
+		);
+	'
+	return 0
+}
+
+insert_observability_fixture() {
+	local db_path="$1"
+	local session_id="$2"
+	local duration_ms="$3"
+	local project_path="$4"
+
+	sqlite3 "$db_path" <<SQL
+INSERT INTO llm_requests(timestamp, session_id, duration_ms, project_path)
+VALUES(strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), '${session_id}', ${duration_ms}, '${project_path}');
 SQL
 	return 0
 }
@@ -195,6 +222,54 @@ test_session_time_includes_archive_and_dedupes() {
 	return 0
 }
 
+test_session_time_uses_observability_machine_floor() {
+	local test_name="session time uses observability as worker machine floor"
+	setup
+
+	# shellcheck source=../contributor-activity-helper-session.sh
+	source "$SOURCE_SESSION_LIB"
+
+	local active_db="${TEST_DIR}/home/.local/share/opencode/opencode.db"
+	local obs_db="${TEST_DIR}/home/.aidevops/.agent-workspace/observability/llm-requests.db"
+	create_session_db "$active_db"
+	create_observability_db "$obs_db"
+
+	local now_ms recent_ms
+	now_ms=$(python3 -c 'import time; print(int(time.time() * 1000))')
+	recent_ms=$((now_ms - 60000))
+
+	insert_session_fixture "$active_db" "current-interactive" "Current interactive" "$recent_ms" "$TEST_DIR/repo"
+	insert_observability_fixture "$obs_db" "current-interactive" 10000 "$TEST_DIR/repo"
+	insert_observability_fixture "$obs_db" "worker-only" 7200000 "$TEST_DIR/repo-feature-auto-20260616-120000-gh123"
+
+	local all_json repo_json worker_machine total_machine repo_worker_machine
+	all_json=$(HOME="${TEST_DIR}/home" session_time --all-dirs --period day --format json)
+	repo_json=$(HOME="${TEST_DIR}/home" session_time "${TEST_DIR}/repo" --period day --format json)
+	worker_machine=$(echo "$all_json" | jq -r '.worker_machine_hours')
+	total_machine=$(echo "$all_json" | jq -r '.total_machine_hours')
+	repo_worker_machine=$(echo "$repo_json" | jq -r '.worker_machine_hours')
+
+	if [[ "$worker_machine" != "2" && "$worker_machine" != "2.0" ]]; then
+		print_result "$test_name" 1 "expected 2.0 worker machine hours from observability, got ${worker_machine}; JSON: ${all_json}"
+		teardown
+		return 0
+	fi
+	if [[ "$total_machine" != "2" && "$total_machine" != "2.0" ]]; then
+		print_result "$test_name" 1 "expected total machine hours to include observability floor, got ${total_machine}; JSON: ${all_json}"
+		teardown
+		return 0
+	fi
+	if [[ "$repo_worker_machine" != "2" && "$repo_worker_machine" != "2.0" ]]; then
+		print_result "$test_name" 1 "expected repo filter to include sibling feature-auto worker path, got ${repo_worker_machine}; JSON: ${repo_json}"
+		teardown
+		return 0
+	fi
+
+	print_result "$test_name" 0
+	teardown
+	return 0
+}
+
 main() {
 	if [[ ! -f "$SOURCE_SESSION_LIB" ]]; then
 		echo "Session library not found: ${SOURCE_SESSION_LIB}" >&2
@@ -206,6 +281,7 @@ main() {
 	fi
 
 	test_session_time_includes_archive_and_dedupes
+	test_session_time_uses_observability_machine_floor
 
 	echo ""
 	echo "Tests run: ${TESTS_RUN}"

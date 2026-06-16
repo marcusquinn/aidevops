@@ -595,7 +595,7 @@ test_session_time_vars_default_missing_null_values() {
 	source "${SOURCE_RENDER_LIB}"
 
 	local valid_json null_json empty_json assignments
-	valid_json='{"interactive_human_hours":1.25,"interactive_machine_hours":0.25,"worker_human_hours":2,"worker_machine_hours":3,"total_human_hours":4,"total_machine_hours":5,"interactive_sessions":6,"worker_sessions":7}'
+	valid_json='{"interactive_human_hours":1.2,"interactive_machine_hours":0.3,"worker_human_hours":2,"worker_machine_hours":3,"total_human_hours":4,"total_machine_hours":5,"interactive_sessions":6,"worker_sessions":7}'
 	null_json='{"interactive_human_hours":null,"interactive_machine_hours":null,"worker_human_hours":null,"worker_machine_hours":null,"total_human_hours":null,"total_machine_hours":null,"interactive_sessions":null,"worker_sessions":null}'
 	empty_json='{}'
 
@@ -627,12 +627,12 @@ test_session_time_vars_default_missing_null_values() {
 		print_result "${test_name}" 1 "missing/null count fields did not default to 0"
 		return 0
 	fi
-	if [[ "${month_human}" != "1.5" || "${month_worker}" != "5.0" || "${month_total}" != "9.0" || "${month_interactive}" != "6" || "${month_workers}" != "7" ]]; then
+	if [[ "${month_human}" != "1.2" || "${month_worker}" != "5.0" || "${month_total}" != "9.0" || "${month_interactive}" != "6" || "${month_workers}" != "7" ]]; then
 		print_result "${test_name}" 1 "valid session data rendering changed"
 		return 0
 	fi
-	if [[ "${year_human}" != "1.5" ]]; then
-		print_result "${test_name}" 1 "interactive machine hours were not included in user AI session hours"
+	if [[ "${year_human}" != "1.2" ]]; then
+		print_result "${test_name}" 1 "user AI session hours were not limited to attended interactive time"
 		return 0
 	fi
 
@@ -675,8 +675,13 @@ test_work_with_ai_worker_counts_above_thousand() {
 		return 0
 	fi
 
-	if ! grep -qF '| User AI session hours | 1.5h | 11.5h | 123.4h | 123.4h |' "${output_file}"; then
-		print_result "${test_name}" 1 "user AI session hours did not include interactive machine time"
+	if ! grep -qF '| User AI session hours | 1.0h | 10.0h | 100.0h | 100.0h |' "${output_file}"; then
+		print_result "${test_name}" 1 "user AI session hours were not limited to attended interactive time"
+		return 0
+	fi
+
+	if grep -qF '| User AI session hours | 1.5h | 11.5h | 123.4h | 123.4h |' "${output_file}"; then
+		print_result "${test_name}" 1 "user AI session hours still include AI generation time"
 		return 0
 	fi
 

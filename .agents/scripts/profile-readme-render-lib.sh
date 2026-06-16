@@ -310,7 +310,7 @@ _generate_session_time_vars() {
 	local year_json="$4"
 
 	local day_human day_worker day_total day_interactive day_workers
-	day_human=$(_format_hours "$(echo "$day_json" | jq -r '(.interactive_human_hours // 0) + (.interactive_machine_hours // 0)')")
+	day_human=$(_format_hours "$(echo "$day_json" | jq -r '(.interactive_human_hours // 0)')")
 	day_worker=$(_format_hours "$(echo "$day_json" | jq -r '(.worker_human_hours // 0) + (.worker_machine_hours // 0)')")
 	day_total=$(_format_hours "$(echo "$day_json" | jq -r '(.total_human_hours // 0) + (.total_machine_hours // 0)')")
 	# Keep counts raw here; _generate_work_with_ai_table formats them once.
@@ -320,21 +320,21 @@ _generate_session_time_vars() {
 	day_workers=$(echo "$day_json" | jq -r '(.worker_sessions // 0)')
 
 	local week_human week_worker week_total week_interactive week_workers
-	week_human=$(_format_hours "$(echo "$week_json" | jq -r '(.interactive_human_hours // 0) + (.interactive_machine_hours // 0)')")
+	week_human=$(_format_hours "$(echo "$week_json" | jq -r '(.interactive_human_hours // 0)')")
 	week_worker=$(_format_hours "$(echo "$week_json" | jq -r '(.worker_human_hours // 0) + (.worker_machine_hours // 0)')")
 	week_total=$(_format_hours "$(echo "$week_json" | jq -r '(.total_human_hours // 0) + (.total_machine_hours // 0)')")
 	week_interactive=$(echo "$week_json" | jq -r '(.interactive_sessions // 0)')
 	week_workers=$(echo "$week_json" | jq -r '(.worker_sessions // 0)')
 
 	local month_human month_worker month_total month_interactive month_workers
-	month_human=$(_format_hours "$(echo "$month_json" | jq -r '(.interactive_human_hours // 0) + (.interactive_machine_hours // 0)')")
+	month_human=$(_format_hours "$(echo "$month_json" | jq -r '(.interactive_human_hours // 0)')")
 	month_worker=$(_format_hours "$(echo "$month_json" | jq -r '(.worker_human_hours // 0) + (.worker_machine_hours // 0)')")
 	month_total=$(_format_hours "$(echo "$month_json" | jq -r '(.total_human_hours // 0) + (.total_machine_hours // 0)')")
 	month_interactive=$(echo "$month_json" | jq -r '(.interactive_sessions // 0)')
 	month_workers=$(echo "$month_json" | jq -r '(.worker_sessions // 0)')
 
 	local year_human year_worker year_total year_interactive year_workers
-	year_human=$(_format_hours "$(echo "$year_json" | jq -r '(.interactive_human_hours // 0) + (.interactive_machine_hours // 0)')")
+	year_human=$(_format_hours "$(echo "$year_json" | jq -r '(.interactive_human_hours // 0)')")
 	year_worker=$(_format_hours "$(echo "$year_json" | jq -r '(.worker_human_hours // 0) + (.worker_machine_hours // 0)')")
 	year_total=$(_format_hours "$(echo "$year_json" | jq -r '(.total_human_hours // 0) + (.total_machine_hours // 0)')")
 	year_interactive=$(echo "$year_json" | jq -r '(.interactive_sessions // 0)')
@@ -492,7 +492,7 @@ _generate_work_with_ai_table() {
 
 _Screen time from ${screen_source}, snapshotted daily.$([ -n "$year_suffix" ] && echo " *365-day extrapolated (accumulating real data).")_
 
-_User AI session hours are interactive session time (user attention + AI generation) measured from AI message timestamps._${session_coverage_note}
+_User AI session hours are attended interactive time measured from gaps between AI responses and the next user message; AI concurrency hours include attended time, AI generation, and background workers._${session_coverage_note}
 EOF
 	return 0
 }
