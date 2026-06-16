@@ -12,7 +12,7 @@ SCRIPTS_DIR="$(cd "${SCRIPT_DIR_TEST}/.." && pwd)" || exit 1
 
 TESTS_RUN=0
 TESTS_FAILED=0
-TMP=$(mktemp -d -t t-sweep-nmr.XXXXXX)
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/t-sweep-nmr.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT
 
 CREATE_CALLS="${TMP}/create-calls.log"
@@ -76,7 +76,7 @@ ORIGINAL_HOME="$HOME"
 export HOME="$TMP"
 
 # shellcheck source=../stats-quality-sweep.sh
-SCRIPT_DIR="$SCRIPTS_DIR" source "${SCRIPTS_DIR}/stats-quality-sweep.sh" 2>/dev/null || {
+SCRIPT_DIR="$SCRIPTS_DIR" source "${SCRIPTS_DIR}/stats-quality-sweep.sh" || {
 	printf 'FATAL could not source stats-quality-sweep.sh\n'
 	export HOME="$ORIGINAL_HOME"
 	exit 1
@@ -113,6 +113,7 @@ fi
 printf '\n[b] unverified identity keeps NMR\n'
 true >"$CREATE_CALLS"
 qlty_section=""
+unset AIDEVOPS_GH_WRITE_PERMISSION_USER AIDEVOPS_GH_WRITE_PERMISSION_LEVEL
 _gh_current_user_allows_repo_write() {
 	AIDEVOPS_GH_WRITE_PERMISSION_REASON="permission-lookup-failed:api-failure"
 	export AIDEVOPS_GH_WRITE_PERMISSION_REASON

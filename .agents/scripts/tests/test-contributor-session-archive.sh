@@ -78,14 +78,33 @@ insert_session_fixture() {
 	local assistant_completed=$((start_ms + 10000))
 	local user_created=$((assistant_completed + 20000))
 
-	sqlite3 "$db_path" <<SQL
-INSERT INTO session(id, title, parent_id, directory)
-VALUES('${session_id}', '${title}', NULL, '${directory}');
-INSERT INTO message(session_id, data, time_created)
-VALUES('${session_id}', '{"role":"assistant","time":{"completed":${assistant_completed}}}', ${start_ms});
-INSERT INTO message(session_id, data, time_created)
-VALUES('${session_id}', '{"role":"user"}', ${user_created});
-SQL
+	python3 - "$db_path" "$session_id" "$title" "$start_ms" "$directory" "$assistant_completed" "$user_created" <<'PY'
+import json
+import sqlite3
+import sys
+
+db_path = sys.argv[1]
+session_id = sys.argv[2]
+title = sys.argv[3]
+start_ms = int(sys.argv[4])
+directory = sys.argv[5]
+assistant_completed = int(sys.argv[6])
+user_created = int(sys.argv[7])
+
+with sqlite3.connect(db_path) as conn:
+    conn.execute(
+        "INSERT INTO session(id, title, parent_id, directory) VALUES(?, ?, NULL, ?)",
+        (session_id, title, directory),
+    )
+    conn.execute(
+        "INSERT INTO message(session_id, data, time_created) VALUES(?, ?, ?)",
+        (session_id, json.dumps({"role": "assistant", "time": {"completed": assistant_completed}}), start_ms),
+    )
+    conn.execute(
+        "INSERT INTO message(session_id, data, time_created) VALUES(?, ?, ?)",
+        (session_id, '{"role":"user"}', user_created),
+    )
+PY
 	return 0
 }
 
@@ -270,6 +289,50 @@ test_session_time_uses_observability_machine_floor() {
 	return 0
 }
 
+test_session_time_repo_filter_treats_path_metacharacters_literally() {
+	local test_name="session time repo filter treats SQL path metacharacters literally"
+	setup
+
+	# shellcheck source=../contributor-activity-helper-session.sh
+	source "$SOURCE_SESSION_LIB"
+
+	local active_db="${TEST_DIR}/home/.local/share/opencode/opencode.db"
+	create_session_db "$active_db"
+
+	local now_ms recent_ms repo_path sibling_path wildcard_path quote_path
+	now_ms=$(python3 -c 'import time; print(int(time.time() * 1000))')
+	recent_ms=$((now_ms - 60000))
+	repo_path="${TEST_DIR}/repo_100%\\literal"
+	sibling_path="${TEST_DIR}/repo_100%\\literal-feature-auto-20260616-120000-gh123"
+	wildcard_path="${TEST_DIR}/repoX100Y\\literal"
+	quote_path="${TEST_DIR}/repo_100%\\literal' OR 1=1 --"
+
+	insert_session_fixture "$active_db" "exact-special" "Exact special" "$recent_ms" "$repo_path"
+	insert_session_fixture "$active_db" "sibling-special" "Issue #123: sibling special" "$recent_ms" "$sibling_path"
+	insert_session_fixture "$active_db" "wildcard-looking" "Wildcard looking" "$recent_ms" "$wildcard_path"
+	insert_session_fixture "$active_db" "quote-injection-looking" "Quote injection looking" "$recent_ms" "$quote_path"
+
+	local repo_json repo_sessions repo_worker_sessions
+	repo_json=$(HOME="${TEST_DIR}/home" session_time "$repo_path" --period day --format json)
+	repo_sessions=$(echo "$repo_json" | jq -r '.total_sessions')
+	repo_worker_sessions=$(echo "$repo_json" | jq -r '.worker_sessions')
+
+	if [[ "$repo_sessions" != "2" ]]; then
+		print_result "$test_name" 1 "expected literal filter to include exact+sibling only, got ${repo_sessions}; JSON: ${repo_json}"
+		teardown
+		return 0
+	fi
+	if [[ "$repo_worker_sessions" != "1" ]]; then
+		print_result "$test_name" 1 "expected only sibling worker classification, got ${repo_worker_sessions}; JSON: ${repo_json}"
+		teardown
+		return 0
+	fi
+
+	print_result "$test_name" 0
+	teardown
+	return 0
+}
+
 main() {
 	if [[ ! -f "$SOURCE_SESSION_LIB" ]]; then
 		echo "Session library not found: ${SOURCE_SESSION_LIB}" >&2
@@ -282,6 +345,7 @@ main() {
 
 	test_session_time_includes_archive_and_dedupes
 	test_session_time_uses_observability_machine_floor
+	test_session_time_repo_filter_treats_path_metacharacters_literally
 
 	echo ""
 	echo "Tests run: ${TESTS_RUN}"

@@ -571,7 +571,9 @@ def _daily_usage(reports: list[SessionReport]) -> list[DailyUsage]:
     grouped: dict[str, dict[str, Any]] = {}
     for report in reports:
         date = (report.finished_at or report.started_at or "unknown")[:10]
-        _add_daily_usage_report(grouped.setdefault(date, _new_daily_usage_bucket()), report)
+        if date not in grouped:
+            grouped[date] = _new_daily_usage_bucket()
+        _add_daily_usage_report(grouped[date], report)
     return [
         _daily_usage_from_bucket(date, data)
         for date, data in sorted(grouped.items(), reverse=True)
