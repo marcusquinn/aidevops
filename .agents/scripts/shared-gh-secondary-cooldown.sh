@@ -399,25 +399,47 @@ _gh_secondary_cooldown_recent_secondary_count() {
 	return 0
 }
 
+_gh_secondary_cooldown_tail_event_lines() {
+	local file="$1"
+	local keep_lines="$2"
+	local tmp=""
+	[[ -f "$file" && "$keep_lines" =~ ^[0-9]+$ && "$keep_lines" -gt 0 ]] || return 1
+	tmp="${file}.tmp"
+	if tail -n "$keep_lines" "$file" >"$tmp" 2>/dev/null && mv "$tmp" "$file"; then
+		return 0
+	fi
+	rm -f "$tmp"
+	return 1
+}
+
 _gh_secondary_cooldown_trim_events() {
 	local file="$1"
 	local max_lines="${AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_LINES:-100}"
 	local max_bytes="${AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_BYTES:-262144}"
 	local line_count="0"
 	local byte_count="0"
-	local tmp=""
+	local keep_lines="0"
 	[[ -f "$file" ]] || return 0
 	[[ "$max_lines" =~ ^[0-9]+$ && "$max_lines" -gt 0 ]] || max_lines=100
 	[[ "$max_bytes" =~ ^[0-9]+$ && "$max_bytes" -gt 0 ]] || max_bytes=262144
 	line_count=$(wc -l <"$file" 2>/dev/null | tr -d ' ' || printf '0')
 	if [[ "$line_count" =~ ^[0-9]+$ && "$line_count" -gt "$max_lines" ]]; then
-		tmp="${file}.tmp"
-		tail -n "$max_lines" "$file" >"$tmp" 2>/dev/null && mv "$tmp" "$file" || rm -f "$tmp"
+		_gh_secondary_cooldown_tail_event_lines "$file" "$max_lines" || return 0
 	fi
 	byte_count=$(wc -c <"$file" 2>/dev/null | tr -d ' ' || printf '0')
 	if [[ "$byte_count" =~ ^[0-9]+$ && "$byte_count" -gt "$max_bytes" ]]; then
-		tmp="${file}.tmp"
-		tail -n "$max_lines" "$file" >"$tmp" 2>/dev/null && mv "$tmp" "$file" || rm -f "$tmp"
+		line_count=$(wc -l <"$file" 2>/dev/null | tr -d ' ' || printf '0')
+		[[ "$line_count" =~ ^[0-9]+$ && "$line_count" -gt 0 ]] || return 0
+		keep_lines="$line_count"
+		if [[ "$keep_lines" -gt "$max_lines" ]]; then
+			keep_lines="$max_lines"
+		fi
+		while [[ "$keep_lines" -gt 1 && "$byte_count" -gt "$max_bytes" ]]; do
+			keep_lines=$((keep_lines - 1))
+			_gh_secondary_cooldown_tail_event_lines "$file" "$keep_lines" || return 0
+			byte_count=$(wc -c <"$file" 2>/dev/null | tr -d ' ' || printf '0')
+			[[ "$byte_count" =~ ^[0-9]+$ ]] || return 0
+		done
 	fi
 	return 0
 }

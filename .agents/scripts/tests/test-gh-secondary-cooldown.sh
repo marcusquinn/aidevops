@@ -62,7 +62,7 @@ reset_case() {
 	rm -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE"
 	rm -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE"
 	rm -f "$AIDEVOPS_GH_READ_RAMP_STATE_FILE"
-	unset GH_SECONDARY_FAIL GH_HEADER_LIMIT_FAIL GH_GENERIC_403_FAIL GH_ABUSE_403_FAIL GH_PRIMARY_REMAINING_ZERO_FAIL AIDEVOPS_GH_SECONDARY_COOLDOWN_OVERRIDE AIDEVOPS_GH_READ_RAMP_BUDGET AIDEVOPS_GH_READ_RAMP_BOOT_SECS AIDEVOPS_GH_READ_RAMP_RECOVERY_SECS AIDEVOPS_GH_READ_RAMP_OVERRIDE AIDEVOPS_GH_AUTH_MODE AIDEVOPS_GH_AUTH_PRINCIPAL AIDEVOPS_GH_COOLDOWN_OPERATION AIDEVOPS_GH_COOLDOWN_WRAPPER AIDEVOPS_GH_COOLDOWN_STAGE AIDEVOPS_GH_API_POOL AIDEVOPS_GH_ROUTE_DECISION 2>/dev/null || true
+	unset GH_SECONDARY_FAIL GH_HEADER_LIMIT_FAIL GH_GENERIC_403_FAIL GH_ABUSE_403_FAIL GH_PRIMARY_REMAINING_ZERO_FAIL AIDEVOPS_GH_SECONDARY_COOLDOWN_OVERRIDE AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_LINES AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_BYTES AIDEVOPS_GH_READ_RAMP_BUDGET AIDEVOPS_GH_READ_RAMP_BOOT_SECS AIDEVOPS_GH_READ_RAMP_RECOVERY_SECS AIDEVOPS_GH_READ_RAMP_OVERRIDE AIDEVOPS_GH_AUTH_MODE AIDEVOPS_GH_AUTH_PRINCIPAL AIDEVOPS_GH_COOLDOWN_OPERATION AIDEVOPS_GH_COOLDOWN_WRAPPER AIDEVOPS_GH_COOLDOWN_STAGE AIDEVOPS_GH_API_POOL AIDEVOPS_GH_ROUTE_DECISION 2>/dev/null || true
 	_GH_SECONDARY_COOLDOWN_LOGGED_ACTIVE=0
 	_GH_SECONDARY_COOLDOWN_LOGGED_RAMP=0
 	_gh_secondary_system_boot_ts() { return 1; }
@@ -271,6 +271,34 @@ test_timeout_temp_cleanup_when_out_mktemp_fails() {
 	return 1
 }
 
+test_event_trim_enforces_bytes_below_line_cap() {
+	reset_case
+	local file="$AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE"
+	local dir="${file%/*}"
+	local line_count="0"
+	local byte_count="0"
+	local first_line=""
+	mkdir -p "$dir"
+	printf '%s\n' \
+		'{"event":"event-1","padding":"123456789012345678901234567890"}' \
+		'{"event":"event-2","padding":"123456789012345678901234567890"}' \
+		'{"event":"event-3","padding":"123456789012345678901234567890"}' \
+		'{"event":"event-4","padding":"123456789012345678901234567890"}' \
+		'{"event":"event-5","padding":"123456789012345678901234567890"}' >"$file"
+	export AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_LINES=100
+	export AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_BYTES=150
+	_gh_secondary_cooldown_trim_events "$file"
+	line_count=$(wc -l <"$file" | tr -d ' ')
+	byte_count=$(wc -c <"$file" | tr -d ' ')
+	first_line=$(sed -n '1p' "$file")
+	if [[ "$line_count" -lt 5 && "$byte_count" -le 150 && "$first_line" != *event-1* ]]; then
+		printf 'PASS event trim enforces bytes below line cap\n'
+		return 0
+	fi
+	printf 'FAIL event trim did not enforce bytes below line cap: lines=%s bytes=%s first=%s\n' "$line_count" "$byte_count" "$first_line"
+	return 1
+}
+
 test_boot_ramp_defers_after_per_minute_budget() {
 	reset_case
 	local now=""
@@ -343,6 +371,7 @@ test_default_path_without_home_is_user_scoped
 test_no_jq_fallback_escapes_json_strings
 test_header_parsers_ignore_response_body
 test_timeout_temp_cleanup_when_out_mktemp_fails
+test_event_trim_enforces_bytes_below_line_cap
 test_boot_ramp_defers_after_per_minute_budget
 test_cooldown_recovery_ramp_defers_after_budget
 test_read_ramp_does_not_defer_writes
