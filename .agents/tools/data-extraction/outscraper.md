@@ -23,7 +23,8 @@ tools:
 - **Auth**: `X-API-KEY` header; key from <https://auth.outscraper.com/profile>
 - **Env Var**: `OUTSCRAPER_API_KEY` in `~/.config/aidevops/credentials.sh` (600 perms)
 - **API Base**: `https://api.app.outscraper.com` (ignore `api.outscraper.cloud` in OpenAPI spec)
-- **Docs**: <https://app.outscraper.com/api-docs>
+- **Docs**: Live docs require Outscraper login: <https://app.outscraper.com/api-docs>
+- **Context7 OpenAPI snapshot**: <https://context7.com/openapi/uploaded-f547ce23-outscraper-api-docs.json> — user-uploaded convenience copy; may be outdated because the latest Outscraper API docs are only available after login
 - **SDK**: <https://github.com/outscraper/outscraper-python>
 - **Pricing**: Metered per request — <https://outscraper.com/pricing/> (free tier available)
 - **No MCP required** — curl works directly; MCP server available for tool-based access

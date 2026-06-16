@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.82] - 2026-06-16
+
+### Changed
+
+- Documentation: add Outscraper Context7 docs snapshot
+
+### Fixed
+
+- harden simplification NMR test (#24925)
+
 ## [3.20.81] - 2026-06-16
 
 ### Changed
