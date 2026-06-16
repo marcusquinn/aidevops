@@ -13,6 +13,9 @@ _SHARED_GH_SECONDARY_COOLDOWN_LOADED=1
 : "${AIDEVOPS_GH_SECONDARY_COOLDOWN_SECS:=300}"
 : "${AIDEVOPS_GH_SECONDARY_COOLDOWN_HOME:=${HOME:-/tmp/.aidevops-${USER:-uid-${UID:-unknown}}}}"
 : "${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE:=${AIDEVOPS_GH_SECONDARY_COOLDOWN_HOME}/.aidevops/cache/gh-secondary-cooldown.json}"
+: "${AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE:=${AIDEVOPS_GH_SECONDARY_COOLDOWN_HOME}/.aidevops/cache/gh-cooldown-events.jsonl}"
+: "${AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_LINES:=100}"
+: "${AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_BYTES:=262144}"
 : "${AIDEVOPS_GH_READ_RAMP_ENABLED:=1}"
 : "${AIDEVOPS_GH_READ_RAMP_BOOT_SECS:=180}"
 : "${AIDEVOPS_GH_READ_RAMP_RECOVERY_SECS:=300}"
@@ -22,6 +25,9 @@ _SHARED_GH_SECONDARY_COOLDOWN_LOADED=1
 _GH_SECONDARY_COOLDOWN_LOGGED_ACTIVE=0
 _GH_SECONDARY_COOLDOWN_LOGGED_RAMP=0
 _GH_SECONDARY_READ_OP="read"
+_GH_SECONDARY_COOLDOWN_ACTION_CREATED="created"
+_GH_SECONDARY_COOLDOWN_UNKNOWN="unknown"
+_GH_SECONDARY_COOLDOWN_GRAPHQL="graphql"
 
 _gh_secondary_cooldown_now() {
 	date +%s
@@ -30,6 +36,11 @@ _gh_secondary_cooldown_now() {
 
 _gh_secondary_cooldown_file() {
 	printf '%s' "${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE}"
+	return 0
+}
+
+_gh_secondary_cooldown_event_file() {
+	printf '%s' "${AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE}"
 	return 0
 }
 
@@ -66,8 +77,135 @@ _gh_secondary_cooldown_safe_family() {
 	value="${value##*/}"
 	value="$(_gh_secondary_cooldown_safe_value "$value" "$max_len")"
 	value=$(printf '%s' "$value" | tr -c 'A-Za-z0-9._:@+=,-' '_' 2>/dev/null || printf 'unknown')
-	[[ -n "$value" ]] || value="unknown"
+	[[ -n "$value" ]] || value="$_GH_SECONDARY_COOLDOWN_UNKNOWN"
 	printf '%s' "$value"
+	return 0
+}
+
+_gh_secondary_cooldown_safe_context_value() {
+	local value="$1"
+	local max_len="${2:-160}"
+	value="$(_gh_secondary_cooldown_safe_value "$value" "$max_len")"
+	value=$(printf '%s' "$value" | tr -c 'A-Za-z0-9._:/?&=<>{},+@ -' '_' 2>/dev/null || printf '%s' "$_GH_SECONDARY_COOLDOWN_UNKNOWN")
+	[[ -n "$value" ]] || value="$_GH_SECONDARY_COOLDOWN_UNKNOWN"
+	printf '%s' "$value"
+	return 0
+}
+
+_gh_secondary_cooldown_sanitized_endpoint() {
+	local endpoint="${1:-${AIDEVOPS_GH_COOLDOWN_ENDPOINT:-$_GH_SECONDARY_COOLDOWN_UNKNOWN}}"
+	local rest=""
+	local suffix=""
+	endpoint="${endpoint#https://api.github.com}"
+	endpoint="${endpoint#http://api.github.com}"
+	endpoint="${endpoint%%#*}"
+	endpoint="${endpoint%%\?*}"
+	[[ -n "$endpoint" ]] || endpoint="$_GH_SECONDARY_COOLDOWN_UNKNOWN"
+	if [[ "$endpoint" != "$_GH_SECONDARY_COOLDOWN_GRAPHQL" && "$endpoint" != gh://* && "$endpoint" != /* && "$endpoint" != "$_GH_SECONDARY_COOLDOWN_UNKNOWN" ]]; then
+		endpoint="/${endpoint}"
+	fi
+	case "$endpoint" in
+	/repos/*/*)
+		rest="${endpoint#/repos/}"
+		rest="${rest#*/}"
+		suffix="$(_gh_secondary_cooldown_owner_suffix "$rest")"
+		endpoint="/repos/<owner>/<repo>${suffix}"
+		;;
+	/users/*)
+		rest="${endpoint#/users/}"
+		suffix="$(_gh_secondary_cooldown_owner_suffix "$rest")"
+		endpoint="/users/<owner>${suffix}"
+		;;
+	/orgs/*)
+		rest="${endpoint#/orgs/}"
+		suffix="$(_gh_secondary_cooldown_owner_suffix "$rest")"
+		endpoint="/orgs/<owner>${suffix}"
+		;;
+	esac
+	_gh_secondary_cooldown_safe_context_value "$endpoint" 180
+	return 0
+}
+
+_gh_secondary_cooldown_owner_suffix() {
+	local rest="$1"
+	if [[ "$rest" == */* ]]; then
+		printf '/%s' "${rest#*/}"
+	fi
+	return 0
+}
+
+_gh_secondary_cooldown_sanitized_query_shape() {
+	local query="${1:-}"
+	local endpoint="${2:-${AIDEVOPS_GH_COOLDOWN_ENDPOINT:-}}"
+	local rest=""
+	local part=""
+	local key=""
+	local shape=""
+	if [[ -z "$query" && "$endpoint" == *\?* ]]; then
+		query="${endpoint#*\?}"
+	fi
+	query="${query%%#*}"
+	query="${query#\?}"
+	[[ -n "$query" ]] || {
+		printf ''
+		return 0
+	}
+	rest="$query"
+	while [[ -n "$rest" ]]; do
+		if [[ "$rest" == *'&'* ]]; then
+			part="${rest%%&*}"
+			rest="${rest#*&}"
+		else
+			part="$rest"
+			rest=""
+		fi
+		[[ -n "$part" ]] || continue
+		key="${part%%=*}"
+		key="$(_gh_secondary_cooldown_safe_family "$key" 60)"
+		if [[ -n "$shape" ]]; then
+			shape="${shape}&${key}=<redacted>"
+		else
+			shape="${key}=<redacted>"
+		fi
+	done
+	_gh_secondary_cooldown_safe_context_value "$shape" 180
+	return 0
+}
+
+_gh_secondary_cooldown_method() {
+	local method="${1:-${AIDEVOPS_GH_COOLDOWN_METHOD:-unknown}}"
+	method=$(printf '%s' "$method" | tr '[:lower:]' '[:upper:]' 2>/dev/null || printf 'UNKNOWN')
+	case "$method" in
+	GET | POST | PATCH | PUT | DELETE | HEAD | GH-CLI | GRAPHQL | UNKNOWN) ;;
+	*) method="$(_gh_secondary_cooldown_safe_family "$method" 24)" ;;
+	esac
+	printf '%s' "$method"
+	return 0
+}
+
+_gh_secondary_cooldown_auth_mode() {
+	local auth_mode="${1:-${AIDEVOPS_GH_AUTH_MODE:-}}"
+	[[ -n "$auth_mode" ]] || auth_mode="gh-pat"
+	case "$auth_mode" in
+	github-app | gh-pat | gh-oauth | unknown) ;;
+	*) auth_mode="$(_gh_secondary_cooldown_safe_family "$auth_mode" 40)" ;;
+	esac
+	printf '%s' "$auth_mode"
+	return 0
+}
+
+_gh_secondary_cooldown_auth_principal() {
+	local principal="${1:-${AIDEVOPS_GH_AUTH_PRINCIPAL:-}}"
+	local auth_mode="${2:-${AIDEVOPS_GH_AUTH_MODE:-}}"
+	if [[ -z "$principal" && "$auth_mode" == "github-app" ]]; then
+		principal="app-installation:unknown"
+	elif [[ -z "$principal" && -n "${GITHUB_ACTOR:-}" ]]; then
+		principal="user:${GITHUB_ACTOR}"
+	elif [[ -z "$principal" && -n "${AIDEVOPS_SESSION_USER:-}" ]]; then
+		principal="user:${AIDEVOPS_SESSION_USER}"
+	fi
+	[[ -n "$principal" ]] || principal="$_GH_SECONDARY_COOLDOWN_UNKNOWN"
+	_gh_secondary_cooldown_safe_context_value "$principal" 120
 	return 0
 }
 
@@ -92,10 +230,23 @@ _gh_secondary_cooldown_caller_family() {
 }
 
 _gh_secondary_cooldown_endpoint_family() {
+	local context_endpoint="${1:-${AIDEVOPS_GH_COOLDOWN_ENDPOINT:-}}"
 	local endpoint="${AIDEVOPS_GH_COOLDOWN_ENDPOINT_FAMILY:-${AIDEVOPS_GH_API_POOL:-${AIDEVOPS_GH_ROUTE_DECISION:-unknown}}}"
+	if [[ -n "$context_endpoint" && "$context_endpoint" != "$_GH_SECONDARY_COOLDOWN_GRAPHQL" && "$context_endpoint" != gh://* && "$context_endpoint" != /* ]]; then
+		context_endpoint="/${context_endpoint}"
+	fi
+	if [[ "$endpoint" == "$_GH_SECONDARY_COOLDOWN_UNKNOWN" || -z "$endpoint" ]]; then
+		case "$context_endpoint" in
+		"$_GH_SECONDARY_COOLDOWN_GRAPHQL") endpoint="$_GH_SECONDARY_COOLDOWN_GRAPHQL" ;;
+		/search/* | */search/*) endpoint="rest-search" ;;
+		/repos/* | /users/* | /orgs/*) endpoint="rest-core" ;;
+		gh://*) endpoint="other" ;;
+		*) endpoint="$_GH_SECONDARY_COOLDOWN_UNKNOWN" ;;
+		esac
+	fi
 	case "$endpoint" in
 	graphql | rest | rest-core | rest-search | search-graphql | search-rest | other | unknown) ;;
-	*) endpoint="unknown" ;;
+	*) endpoint="$_GH_SECONDARY_COOLDOWN_UNKNOWN" ;;
 	esac
 	_gh_secondary_cooldown_safe_family "$endpoint" 80
 	return 0
@@ -115,6 +266,14 @@ _gh_secondary_cooldown_body_classification() {
 	fi
 	if printf '%s' "$response_text" | grep -Eqi 'GraphQL: API rate limit already exceeded|API rate limit exceeded'; then
 		printf 'primary-rate-limit'
+		return 0
+	fi
+	if printf '%s' "$response_text" | grep -Eqi 'Resource not accessible by integration'; then
+		printf 'resource-not-accessible'
+		return 0
+	fi
+	if printf '%s' "$response_text" | grep -Eqi 'requires?.*(permission|scope)|permission.*required|must have.*(admin|write|read)|insufficient.*permission'; then
+		printf 'requires-permission'
 		return 0
 	fi
 	if [[ "$remaining" =~ ^[0-9]+$ && "$remaining" -eq 0 ]]; then
@@ -139,6 +298,52 @@ _gh_secondary_cooldown_body_classification() {
 	return 0
 }
 
+_gh_secondary_cooldown_response_body() {
+	local response_text="$1"
+	local body=""
+	body=$(printf '%s\n' "$response_text" | awk '
+		BEGIN { in_body = 0; saw_header = 0 }
+		/^HTTP\// { saw_header = 1 }
+		{ line = $0; sub(/\r$/, "", line) }
+		in_body { print line; next }
+		saw_header && line == "" { in_body = 1; next }
+	' 2>/dev/null || true)
+	if [[ -n "$body" ]]; then
+		printf '%s' "$body"
+	else
+		printf '%s' "$response_text"
+	fi
+	return 0
+}
+
+_gh_secondary_cooldown_body_message_excerpt() {
+	local response_text="$1"
+	local body=""
+	local excerpt=""
+	body="$(_gh_secondary_cooldown_response_body "$response_text")"
+	if command -v jq >/dev/null 2>&1; then
+		excerpt=$(printf '%s' "$body" | jq -r '.message // .errors[0].message // empty' 2>/dev/null || true)
+	fi
+	[[ -n "$excerpt" ]] || excerpt="$body"
+	excerpt="$(_gh_secondary_cooldown_safe_value "$excerpt" 180)"
+	printf '%s' "$excerpt"
+	return 0
+}
+
+_gh_secondary_cooldown_diagnostic_only_403() {
+	local status="$1"
+	local retry_after="$2"
+	local remaining="$3"
+	local body_classification="$4"
+	[[ "$status" == "403" ]] || return 1
+	[[ -z "$retry_after" ]] || return 1
+	[[ "$remaining" =~ ^[0-9]+$ && "$remaining" -gt 0 ]] || return 1
+	case "$body_classification" in
+	generic-forbidden | resource-not-accessible | requires-permission) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
 _gh_secondary_cooldown_json_string() {
 	local value="$1"
 	value=${value//\\/\\\\}
@@ -150,11 +355,279 @@ _gh_secondary_cooldown_json_string() {
 	return 0
 }
 
+_gh_secondary_cooldown_recent_event_count() {
+	local field="$1"
+	local value="$2"
+	local window_secs="$3"
+	local now="$4"
+	local file=""
+	local cutoff=0
+	local count="0"
+	file="$(_gh_secondary_cooldown_event_file)"
+	[[ -f "$file" && "$window_secs" =~ ^[0-9]+$ && "$now" =~ ^[0-9]+$ ]] || {
+		printf '0'
+		return 0
+	}
+	cutoff=$((now - window_secs))
+	if command -v jq >/dev/null 2>&1; then
+		count=$(jq -r --arg field "$field" --arg value "$value" --argjson cutoff "$cutoff" \
+			'select((.timestamp // 0) >= $cutoff and ((.[$field] // "") | tostring) == $value) | 1' "$file" 2>/dev/null | wc -l | tr -d ' ')
+	fi
+	[[ "$count" =~ ^[0-9]+$ ]] || count="0"
+	printf '%s' "$count"
+	return 0
+}
+
+_gh_secondary_cooldown_recent_secondary_count() {
+	local window_secs="$1"
+	local now="$2"
+	local file=""
+	local cutoff=0
+	local count="0"
+	file="$(_gh_secondary_cooldown_event_file)"
+	[[ -f "$file" && "$window_secs" =~ ^[0-9]+$ && "$now" =~ ^[0-9]+$ ]] || {
+		printf '0'
+		return 0
+	}
+	cutoff=$((now - window_secs))
+	if command -v jq >/dev/null 2>&1; then
+		count=$(jq -r --argjson cutoff "$cutoff" \
+			'select((.timestamp // 0) >= $cutoff and ((.body_message_class // "") == "secondary-rate-limit" or (.body_message_class // "") == "abuse-detection")) | 1' "$file" 2>/dev/null | wc -l | tr -d ' ')
+	fi
+	[[ "$count" =~ ^[0-9]+$ ]] || count="0"
+	printf '%s' "$count"
+	return 0
+}
+
+_gh_secondary_cooldown_trim_events() {
+	local file="$1"
+	local max_lines="${AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_LINES:-100}"
+	local max_bytes="${AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_BYTES:-262144}"
+	local line_count="0"
+	local byte_count="0"
+	local tmp=""
+	[[ -f "$file" ]] || return 0
+	[[ "$max_lines" =~ ^[0-9]+$ && "$max_lines" -gt 0 ]] || max_lines=100
+	[[ "$max_bytes" =~ ^[0-9]+$ && "$max_bytes" -gt 0 ]] || max_bytes=262144
+	line_count=$(wc -l <"$file" 2>/dev/null | tr -d ' ' || printf '0')
+	if [[ "$line_count" =~ ^[0-9]+$ && "$line_count" -gt "$max_lines" ]]; then
+		tmp="${file}.tmp"
+		tail -n "$max_lines" "$file" >"$tmp" 2>/dev/null && mv "$tmp" "$file" || rm -f "$tmp"
+	fi
+	byte_count=$(wc -c <"$file" 2>/dev/null | tr -d ' ' || printf '0')
+	if [[ "$byte_count" =~ ^[0-9]+$ && "$byte_count" -gt "$max_bytes" ]]; then
+		tmp="${file}.tmp"
+		tail -n "$max_lines" "$file" >"$tmp" 2>/dev/null && mv "$tmp" "$file" || rm -f "$tmp"
+	fi
+	return 0
+}
+
+_gh_secondary_cooldown_append_event_json() {
+	local file="$1"
+	jq -cn \
+		--argjson timestamp "$now" \
+		--arg cooldown_action "$cooldown_action" \
+		--arg cooldown_reason "$cooldown_reason" \
+		--arg decision_branch "$decision_branch" \
+		--arg method "$method" \
+		--arg endpoint "$endpoint" \
+		--arg query_shape "$query_shape" \
+		--arg operation "$operation" \
+		--arg wrapper "$wrapper" \
+		--arg pulse_stage "$pulse_stage" \
+		--arg auth_mode "$auth_mode" \
+		--arg auth_principal "$auth_principal" \
+		--arg status "$status" \
+		--arg body_message_class "$body_classification" \
+		--arg body_message_excerpt "$body_excerpt" \
+		--arg retry_after "$retry_after" \
+		--arg ratelimit_limit "$ratelimit_limit" \
+		--arg ratelimit_remaining "$ratelimit_remaining" \
+		--arg ratelimit_reset "$ratelimit_reset" \
+		--arg ratelimit_used "$ratelimit_used" \
+		--arg ratelimit_resource "$ratelimit_resource" \
+		--arg request_id "$request_id" \
+		--arg accepted_permissions "$accepted_permissions" \
+		--arg oauth_scopes "$oauth_scopes" \
+		--arg accepted_oauth_scopes "$accepted_oauth_scopes" \
+		--argjson recent_403_count_1m "$recent_403_count_1m" \
+		--argjson recent_403_count_5m "$recent_403_count_5m" \
+		--argjson recent_secondary_count_5m "$recent_secondary_count_5m" \
+		'{timestamp:$timestamp,cooldown_action:$cooldown_action,cooldown_reason:$cooldown_reason,decision_branch:$decision_branch,method:$method,endpoint:$endpoint,query_shape:$query_shape,operation:$operation,wrapper:$wrapper,pulse_stage:$pulse_stage,auth_mode:$auth_mode,auth_principal:$auth_principal,http_status:(if $status == "" then null else ($status|tonumber? // $status) end),body_message_class:$body_message_class,body_message_excerpt:$body_message_excerpt,headers:{retry_after:$retry_after,x_ratelimit_limit:$ratelimit_limit,x_ratelimit_remaining:$ratelimit_remaining,x_ratelimit_reset:$ratelimit_reset,x_ratelimit_used:$ratelimit_used,x_ratelimit_resource:$ratelimit_resource,x_github_request_id:$request_id,x_accepted_github_permissions:$accepted_permissions,x_oauth_scopes:$oauth_scopes,x_accepted_oauth_scopes:$accepted_oauth_scopes},recent_403_count_1m:$recent_403_count_1m,recent_403_count_5m:$recent_403_count_5m,recent_secondary_count_5m:$recent_secondary_count_5m}' >>"$file" 2>/dev/null
+	return $?
+}
+
+_gh_secondary_cooldown_record_event() {
+	local cooldown_action="$1"
+	local cooldown_reason="$2"
+	local decision_branch="$3"
+	local response_text="${4:-}"
+	local method_arg="${5:-}"
+	local endpoint_arg="${6:-}"
+	local query_shape_arg="${7:-}"
+	local operation_arg="${8:-}"
+	local wrapper_arg="${9:-}"
+	local pulse_stage_arg="${10:-}"
+	local now_arg="${11:-}"
+	local now=""
+	local file=""
+	local dir=""
+	local request_id=""
+	local status=""
+	local retry_after=""
+	local ratelimit_limit=""
+	local ratelimit_remaining=""
+	local ratelimit_reset=""
+	local ratelimit_used=""
+	local ratelimit_resource=""
+	local accepted_permissions=""
+	local oauth_scopes=""
+	local accepted_oauth_scopes=""
+	local body_classification=""
+	local body_excerpt=""
+	local method=""
+	local endpoint=""
+	local query_shape=""
+	local operation=""
+	local operation_source=""
+	local wrapper=""
+	local wrapper_source=""
+	local pulse_stage=""
+	local pulse_stage_source=""
+	local auth_mode=""
+	local auth_principal=""
+	local recent_403_count_1m="0"
+	local recent_403_count_5m="0"
+	local recent_secondary_count_5m="0"
+	command -v jq >/dev/null 2>&1 || return 0
+	now="$now_arg"
+	[[ "$now" =~ ^[0-9]+$ ]] || now="$(_gh_secondary_cooldown_now)"
+	file="$(_gh_secondary_cooldown_event_file)"
+	dir="${file%/*}"
+	mkdir -p "$dir" 2>/dev/null || return 0
+	request_id="$(_gh_secondary_cooldown_request_id "$response_text")"
+	status="$(_gh_secondary_cooldown_status "$response_text")"
+	retry_after="$(_gh_secondary_cooldown_header_value "$response_text" "retry-after")"
+	ratelimit_limit="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-limit")"
+	ratelimit_remaining="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-remaining")"
+	ratelimit_reset="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-reset")"
+	ratelimit_used="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-used")"
+	ratelimit_resource="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-resource")"
+	accepted_permissions="$(_gh_secondary_cooldown_header_value "$response_text" "x-accepted-github-permissions")"
+	oauth_scopes="$(_gh_secondary_cooldown_header_value "$response_text" "x-oauth-scopes")"
+	accepted_oauth_scopes="$(_gh_secondary_cooldown_header_value "$response_text" "x-accepted-oauth-scopes")"
+	body_classification="$(_gh_secondary_cooldown_body_classification "$response_text" "$status" "$ratelimit_remaining")"
+	body_excerpt="$(_gh_secondary_cooldown_body_message_excerpt "$response_text")"
+	method="$(_gh_secondary_cooldown_method "$method_arg")"
+	endpoint="$(_gh_secondary_cooldown_sanitized_endpoint "$endpoint_arg")"
+	query_shape="$(_gh_secondary_cooldown_sanitized_query_shape "$query_shape_arg" "$endpoint_arg")"
+	operation_source="${operation_arg:-${AIDEVOPS_GH_COOLDOWN_OPERATION:-$_GH_SECONDARY_COOLDOWN_UNKNOWN}}"
+	wrapper_source="${wrapper_arg:-${AIDEVOPS_GH_COOLDOWN_WRAPPER:-$(_gh_secondary_cooldown_caller_family)}}"
+	pulse_stage_source="${pulse_stage_arg:-${AIDEVOPS_GH_COOLDOWN_STAGE:-$_GH_SECONDARY_COOLDOWN_UNKNOWN}}"
+	operation="$(_gh_secondary_cooldown_safe_family "$operation_source" 120)"
+	wrapper="$(_gh_secondary_cooldown_safe_family "$wrapper_source" 120)"
+	pulse_stage="$(_gh_secondary_cooldown_safe_family "$pulse_stage_source" 120)"
+	auth_mode="$(_gh_secondary_cooldown_auth_mode)"
+	auth_principal="$(_gh_secondary_cooldown_auth_principal "" "$auth_mode")"
+	recent_403_count_1m="$(_gh_secondary_cooldown_recent_event_count http_status 403 60 "$now")"
+	recent_403_count_5m="$(_gh_secondary_cooldown_recent_event_count http_status 403 300 "$now")"
+	recent_secondary_count_5m="$(_gh_secondary_cooldown_recent_secondary_count 300 "$now")"
+	[[ "$recent_403_count_1m" =~ ^[0-9]+$ ]] || recent_403_count_1m="0"
+	[[ "$recent_403_count_5m" =~ ^[0-9]+$ ]] || recent_403_count_5m="0"
+	[[ "$recent_secondary_count_5m" =~ ^[0-9]+$ ]] || recent_secondary_count_5m="0"
+	if [[ "$status" == "403" ]]; then
+		recent_403_count_1m=$((recent_403_count_1m + 1))
+		recent_403_count_5m=$((recent_403_count_5m + 1))
+	fi
+	case "$body_classification" in
+	secondary-rate-limit | abuse-detection) recent_secondary_count_5m=$((recent_secondary_count_5m + 1)) ;;
+	*) ;;
+	esac
+	_gh_secondary_cooldown_append_event_json "$file" || return 0
+	_gh_secondary_cooldown_trim_events "$file"
+	return 0
+}
+
+_gh_secondary_cooldown_write_state_jq() {
+	local file="$1"
+	jq -n \
+		--arg reason "$reason" --arg first_seen "$now" --arg expires_at "$expires" \
+		--arg request_id "$request_id" --arg decision_branch "$decision_branch" \
+		--arg cooldown_action "$cooldown_action" --arg status "$status" \
+		--arg method "$method" --arg endpoint "$endpoint" --arg query_shape "$query_shape" \
+		--arg operation "$operation" --arg wrapper "$wrapper" --arg pulse_stage "$pulse_stage" \
+		--arg auth_mode "$auth_mode" --arg auth_principal "$auth_principal" \
+		--arg retry_after "$retry_after" --arg ratelimit_limit "$ratelimit_limit" \
+		--arg ratelimit_remaining "$ratelimit_remaining" --arg ratelimit_reset "$ratelimit_reset" \
+		--arg ratelimit_used "$ratelimit_used" --arg ratelimit_resource "$ratelimit_resource" \
+		--arg accepted_permissions "$accepted_permissions" --arg oauth_scopes "$oauth_scopes" \
+		--arg accepted_oauth_scopes "$accepted_oauth_scopes" \
+		--arg body_classification "$body_classification" --arg body_excerpt "$body_excerpt" \
+		--arg caller_family "$caller_family" --arg endpoint_family "$endpoint_family" \
+		--argjson recent_403_count_1m "$recent_403_count_1m" \
+		--argjson recent_403_count_5m "$recent_403_count_5m" \
+		--argjson recent_secondary_count_5m "$recent_secondary_count_5m" \
+		'{reason:$reason, first_seen:($first_seen|tonumber), expires_at:($expires_at|tonumber), last_request_id:$request_id, diagnostic:{cooldown_action:$cooldown_action, cooldown_reason:$reason, decision_branch:$decision_branch, method:$method, endpoint:$endpoint, query_shape:$query_shape, operation:$operation, wrapper:$wrapper, pulse_stage:$pulse_stage, auth_mode:$auth_mode, auth_principal:$auth_principal, http_status:$status, request_id:$request_id, body_classification:$body_classification, body_message_class:$body_classification, body_message_excerpt:$body_excerpt, caller_family:$caller_family, endpoint_family:$endpoint_family, headers:{retry_after:$retry_after, x_ratelimit_limit:$ratelimit_limit, x_ratelimit_remaining:$ratelimit_remaining, x_ratelimit_reset:$ratelimit_reset, x_ratelimit_used:$ratelimit_used, x_ratelimit_resource:$ratelimit_resource, x_github_request_id:$request_id, x_accepted_github_permissions:$accepted_permissions, x_oauth_scopes:$oauth_scopes, x_accepted_oauth_scopes:$accepted_oauth_scopes}, recent_403_count_1m:$recent_403_count_1m, recent_403_count_5m:$recent_403_count_5m, recent_secondary_count_5m:$recent_secondary_count_5m}}' >"${file}.tmp" || {
+		printf 'Failed to write to %s\n' "${file}.tmp" >&2
+		return 1
+	}
+	return 0
+}
+
+_gh_secondary_cooldown_write_state_fallback() {
+	local file="$1"
+	local reason_json request_id_json decision_branch_json status_json cooldown_action_json
+	local retry_after_json ratelimit_limit_json ratelimit_remaining_json ratelimit_reset_json
+	local ratelimit_used_json ratelimit_resource_json accepted_permissions_json oauth_scopes_json
+	local accepted_oauth_scopes_json body_classification_json body_excerpt_json caller_family_json
+	local endpoint_family_json method_json endpoint_json query_shape_json operation_json wrapper_json
+	local pulse_stage_json auth_mode_json auth_principal_json
+	reason_json="$(_gh_secondary_cooldown_json_string "$reason")"
+	request_id_json="$(_gh_secondary_cooldown_json_string "$request_id")"
+	decision_branch_json="$(_gh_secondary_cooldown_json_string "$decision_branch")"
+	status_json="$(_gh_secondary_cooldown_json_string "$status")"
+	cooldown_action_json="$(_gh_secondary_cooldown_json_string "$cooldown_action")"
+	retry_after_json="$(_gh_secondary_cooldown_json_string "$retry_after")"
+	ratelimit_limit_json="$(_gh_secondary_cooldown_json_string "$ratelimit_limit")"
+	ratelimit_remaining_json="$(_gh_secondary_cooldown_json_string "$ratelimit_remaining")"
+	ratelimit_reset_json="$(_gh_secondary_cooldown_json_string "$ratelimit_reset")"
+	ratelimit_used_json="$(_gh_secondary_cooldown_json_string "$ratelimit_used")"
+	ratelimit_resource_json="$(_gh_secondary_cooldown_json_string "$ratelimit_resource")"
+	accepted_permissions_json="$(_gh_secondary_cooldown_json_string "$accepted_permissions")"
+	oauth_scopes_json="$(_gh_secondary_cooldown_json_string "$oauth_scopes")"
+	accepted_oauth_scopes_json="$(_gh_secondary_cooldown_json_string "$accepted_oauth_scopes")"
+	body_classification_json="$(_gh_secondary_cooldown_json_string "$body_classification")"
+	body_excerpt_json="$(_gh_secondary_cooldown_json_string "$body_excerpt")"
+	caller_family_json="$(_gh_secondary_cooldown_json_string "$caller_family")"
+	endpoint_family_json="$(_gh_secondary_cooldown_json_string "$endpoint_family")"
+	method_json="$(_gh_secondary_cooldown_json_string "$method")"
+	endpoint_json="$(_gh_secondary_cooldown_json_string "$endpoint")"
+	query_shape_json="$(_gh_secondary_cooldown_json_string "$query_shape")"
+	operation_json="$(_gh_secondary_cooldown_json_string "$operation")"
+	wrapper_json="$(_gh_secondary_cooldown_json_string "$wrapper")"
+	pulse_stage_json="$(_gh_secondary_cooldown_json_string "$pulse_stage")"
+	auth_mode_json="$(_gh_secondary_cooldown_json_string "$auth_mode")"
+	auth_principal_json="$(_gh_secondary_cooldown_json_string "$auth_principal")"
+	printf '{"reason":%s,"first_seen":%s,"expires_at":%s,"last_request_id":%s,"diagnostic":{"cooldown_action":%s,"cooldown_reason":%s,"decision_branch":%s,"method":%s,"endpoint":%s,"query_shape":%s,"operation":%s,"wrapper":%s,"pulse_stage":%s,"auth_mode":%s,"auth_principal":%s,"http_status":%s,"request_id":%s,"body_classification":%s,"body_message_class":%s,"body_message_excerpt":%s,"caller_family":%s,"endpoint_family":%s,"headers":{"retry_after":%s,"x_ratelimit_limit":%s,"x_ratelimit_remaining":%s,"x_ratelimit_reset":%s,"x_ratelimit_used":%s,"x_ratelimit_resource":%s,"x_github_request_id":%s,"x_accepted_github_permissions":%s,"x_oauth_scopes":%s,"x_accepted_oauth_scopes":%s},"recent_403_count_1m":%s,"recent_403_count_5m":%s,"recent_secondary_count_5m":%s}}\n' \
+		"$reason_json" "$now" "$expires" "$request_id_json" "$cooldown_action_json" "$reason_json" "$decision_branch_json" "$method_json" "$endpoint_json" "$query_shape_json" "$operation_json" "$wrapper_json" "$pulse_stage_json" "$auth_mode_json" "$auth_principal_json" "$status_json" "$request_id_json" "$body_classification_json" "$body_classification_json" "$body_excerpt_json" "$caller_family_json" "$endpoint_family_json" "$retry_after_json" "$ratelimit_limit_json" "$ratelimit_remaining_json" "$ratelimit_reset_json" "$ratelimit_used_json" "$ratelimit_resource_json" "$request_id_json" "$accepted_permissions_json" "$oauth_scopes_json" "$accepted_oauth_scopes_json" "$recent_403_count_1m" "$recent_403_count_5m" "$recent_secondary_count_5m" >"${file}.tmp" || {
+		printf 'Failed to write to %s\n' "${file}.tmp" >&2
+		return 1
+	}
+	return 0
+}
+
 _gh_secondary_cooldown_write_until() {
 	local reason="$1"
 	local response_text="${2:-}"
 	local expires_at="${3:-}"
 	local decision_branch="${4:-$reason}"
+	local cooldown_action="${5:-$_GH_SECONDARY_COOLDOWN_ACTION_CREATED}"
+	local method_arg="${6:-}"
+	local endpoint_arg="${7:-}"
+	local query_shape_arg="${8:-}"
+	local operation_arg="${9:-}"
+	local wrapper_arg="${10:-}"
+	local pulse_stage_arg="${11:-}"
 	local now=""
 	local expires=""
 	local file=""
@@ -167,23 +640,27 @@ _gh_secondary_cooldown_write_until() {
 	local ratelimit_reset=""
 	local ratelimit_used=""
 	local ratelimit_resource=""
+	local accepted_permissions=""
+	local oauth_scopes=""
+	local accepted_oauth_scopes=""
 	local body_classification=""
+	local body_excerpt=""
 	local caller_family=""
 	local endpoint_family=""
-	local reason_json=""
-	local request_id_json=""
-	local decision_branch_json=""
-	local status_json=""
-	local retry_after_json=""
-	local ratelimit_limit_json=""
-	local ratelimit_remaining_json=""
-	local ratelimit_reset_json=""
-	local ratelimit_used_json=""
-	local ratelimit_resource_json=""
-	local body_classification_json=""
-	local caller_family_json=""
-	local endpoint_family_json=""
-
+	local method=""
+	local endpoint=""
+	local query_shape=""
+	local operation=""
+	local operation_source=""
+	local wrapper=""
+	local wrapper_source=""
+	local pulse_stage=""
+	local pulse_stage_source=""
+	local auth_mode=""
+	local auth_principal=""
+	local recent_403_count_1m="0"
+	local recent_403_count_5m="0"
+	local recent_secondary_count_5m="0"
 	now="$(_gh_secondary_cooldown_now)"
 	if [[ "$expires_at" =~ ^[0-9]+$ && "$expires_at" -gt "$now" ]]; then
 		expires="$expires_at"
@@ -200,51 +677,37 @@ _gh_secondary_cooldown_write_until() {
 	ratelimit_reset="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-reset")"
 	ratelimit_used="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-used")"
 	ratelimit_resource="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-resource")"
+	accepted_permissions="$(_gh_secondary_cooldown_header_value "$response_text" "x-accepted-github-permissions")"
+	oauth_scopes="$(_gh_secondary_cooldown_header_value "$response_text" "x-oauth-scopes")"
+	accepted_oauth_scopes="$(_gh_secondary_cooldown_header_value "$response_text" "x-accepted-oauth-scopes")"
 	body_classification="$(_gh_secondary_cooldown_body_classification "$response_text" "$status" "$ratelimit_remaining")"
+	body_excerpt="$(_gh_secondary_cooldown_body_message_excerpt "$response_text")"
 	caller_family="$(_gh_secondary_cooldown_caller_family)"
-	endpoint_family="$(_gh_secondary_cooldown_endpoint_family)"
+	endpoint_family="$(_gh_secondary_cooldown_endpoint_family "$endpoint_arg")"
+	method="$(_gh_secondary_cooldown_method "$method_arg")"
+	endpoint="$(_gh_secondary_cooldown_sanitized_endpoint "$endpoint_arg")"
+	query_shape="$(_gh_secondary_cooldown_sanitized_query_shape "$query_shape_arg" "$endpoint_arg")"
+	operation_source="${operation_arg:-${AIDEVOPS_GH_COOLDOWN_OPERATION:-$_GH_SECONDARY_COOLDOWN_UNKNOWN}}"
+	wrapper_source="${wrapper_arg:-${AIDEVOPS_GH_COOLDOWN_WRAPPER:-$caller_family}}"
+	pulse_stage_source="${pulse_stage_arg:-${AIDEVOPS_GH_COOLDOWN_STAGE:-$_GH_SECONDARY_COOLDOWN_UNKNOWN}}"
+	operation="$(_gh_secondary_cooldown_safe_family "$operation_source" 120)"
+	wrapper="$(_gh_secondary_cooldown_safe_family "$wrapper_source" 120)"
+	pulse_stage="$(_gh_secondary_cooldown_safe_family "$pulse_stage_source" 120)"
+	auth_mode="$(_gh_secondary_cooldown_auth_mode)"
+	auth_principal="$(_gh_secondary_cooldown_auth_principal "" "$auth_mode")"
+	_gh_secondary_cooldown_record_event "$cooldown_action" "$reason" "$decision_branch" "$response_text" "$method_arg" "$endpoint_arg" "$query_shape_arg" "$operation_arg" "$wrapper_arg" "$pulse_stage_arg" "$now"
+	recent_403_count_1m="$(_gh_secondary_cooldown_recent_event_count http_status 403 60 "$now")"
+	recent_403_count_5m="$(_gh_secondary_cooldown_recent_event_count http_status 403 300 "$now")"
+	recent_secondary_count_5m="$(_gh_secondary_cooldown_recent_secondary_count 300 "$now")"
+	[[ "$recent_403_count_1m" =~ ^[0-9]+$ ]] || recent_403_count_1m="0"
+	[[ "$recent_403_count_5m" =~ ^[0-9]+$ ]] || recent_403_count_5m="0"
+	[[ "$recent_secondary_count_5m" =~ ^[0-9]+$ ]] || recent_secondary_count_5m="0"
 	mkdir -p "$dir" 2>/dev/null || return 1
 
 	if command -v jq >/dev/null 2>&1; then
-		jq -n \
-			--arg reason "$reason" \
-			--arg first_seen "$now" \
-			--arg expires_at "$expires" \
-			--arg request_id "$request_id" \
-			--arg decision_branch "$decision_branch" \
-			--arg status "$status" \
-			--arg retry_after "$retry_after" \
-			--arg ratelimit_limit "$ratelimit_limit" \
-			--arg ratelimit_remaining "$ratelimit_remaining" \
-			--arg ratelimit_reset "$ratelimit_reset" \
-			--arg ratelimit_used "$ratelimit_used" \
-			--arg ratelimit_resource "$ratelimit_resource" \
-			--arg body_classification "$body_classification" \
-			--arg caller_family "$caller_family" \
-			--arg endpoint_family "$endpoint_family" \
-			'{reason:$reason, first_seen:($first_seen|tonumber), expires_at:($expires_at|tonumber), last_request_id:$request_id, diagnostic:{decision_branch:$decision_branch, http_status:$status, request_id:$request_id, body_classification:$body_classification, caller_family:$caller_family, endpoint_family:$endpoint_family, headers:{retry_after:$retry_after, x_ratelimit_limit:$ratelimit_limit, x_ratelimit_remaining:$ratelimit_remaining, x_ratelimit_reset:$ratelimit_reset, x_ratelimit_used:$ratelimit_used, x_ratelimit_resource:$ratelimit_resource}}}' >"${file}.tmp" || {
-			printf 'Failed to write to %s\n' "${file}.tmp" >&2
-			return 1
-		}
+		_gh_secondary_cooldown_write_state_jq "$file" || return 1
 	else
-		reason_json="$(_gh_secondary_cooldown_json_string "$reason")"
-		request_id_json="$(_gh_secondary_cooldown_json_string "$request_id")"
-		decision_branch_json="$(_gh_secondary_cooldown_json_string "$decision_branch")"
-		status_json="$(_gh_secondary_cooldown_json_string "$status")"
-		retry_after_json="$(_gh_secondary_cooldown_json_string "$retry_after")"
-		ratelimit_limit_json="$(_gh_secondary_cooldown_json_string "$ratelimit_limit")"
-		ratelimit_remaining_json="$(_gh_secondary_cooldown_json_string "$ratelimit_remaining")"
-		ratelimit_reset_json="$(_gh_secondary_cooldown_json_string "$ratelimit_reset")"
-		ratelimit_used_json="$(_gh_secondary_cooldown_json_string "$ratelimit_used")"
-		ratelimit_resource_json="$(_gh_secondary_cooldown_json_string "$ratelimit_resource")"
-		body_classification_json="$(_gh_secondary_cooldown_json_string "$body_classification")"
-		caller_family_json="$(_gh_secondary_cooldown_json_string "$caller_family")"
-		endpoint_family_json="$(_gh_secondary_cooldown_json_string "$endpoint_family")"
-		printf '{"reason":%s,"first_seen":%s,"expires_at":%s,"last_request_id":%s,"diagnostic":{"decision_branch":%s,"http_status":%s,"request_id":%s,"body_classification":%s,"caller_family":%s,"endpoint_family":%s,"headers":{"retry_after":%s,"x_ratelimit_limit":%s,"x_ratelimit_remaining":%s,"x_ratelimit_reset":%s,"x_ratelimit_used":%s,"x_ratelimit_resource":%s}}}\n' \
-			"$reason_json" "$now" "$expires" "$request_id_json" "$decision_branch_json" "$status_json" "$request_id_json" "$body_classification_json" "$caller_family_json" "$endpoint_family_json" "$retry_after_json" "$ratelimit_limit_json" "$ratelimit_remaining_json" "$ratelimit_reset_json" "$ratelimit_used_json" "$ratelimit_resource_json" >"${file}.tmp" || {
-			printf 'Failed to write to %s\n' "${file}.tmp" >&2
-			return 1
-		}
+		_gh_secondary_cooldown_write_state_fallback "$file" || return 1
 	fi
 	mv "${file}.tmp" "$file" || return 1
 	printf '[gh-cooldown] secondary-rate-limit active=true expires_at=%s reason=%s\n' "$expires" "$reason" >&2
@@ -301,27 +764,46 @@ _gh_secondary_cooldown_header_expires_at() {
 _gh_secondary_cooldown_record_response_if_needed() {
 	local rc="$1"
 	local response_text="${2:-}"
+	local method_arg="${3:-}"
+	local endpoint_arg="${4:-}"
+	local query_shape_arg="${5:-}"
+	local operation_arg="${6:-}"
+	local wrapper_arg="${7:-}"
+	local pulse_stage_arg="${8:-}"
 	local status=""
 	local remaining=""
+	local retry_after=""
+	local body_classification=""
 	local expires_at=""
 
 	status="$(_gh_secondary_cooldown_status "$response_text")"
 	remaining="$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-remaining")"
+	retry_after="$(_gh_secondary_cooldown_header_value "$response_text" "retry-after")"
+	body_classification="$(_gh_secondary_cooldown_body_classification "$response_text" "$status" "$remaining")"
 	case "$status" in
-	403|429)
+	403)
+		if _gh_secondary_cooldown_diagnostic_only_403 "$status" "$retry_after" "$remaining" "$body_classification"; then
+			_gh_secondary_cooldown_record_event "diagnostic-only" "github-api-forbidden-status-403" "status-403-diagnostic-only" "$response_text" "$method_arg" "$endpoint_arg" "$query_shape_arg" "$operation_arg" "$wrapper_arg" "$pulse_stage_arg"
+			return 0
+		fi
 		expires_at="$(_gh_secondary_cooldown_header_expires_at "$response_text")"
-		_gh_secondary_cooldown_write_until "github-api-rate-limit-status-${status}" "$response_text" "$expires_at" "status-${status}" || true
+		_gh_secondary_cooldown_write_until "github-api-rate-limit-status-${status}" "$response_text" "$expires_at" "status-${status}" "$_GH_SECONDARY_COOLDOWN_ACTION_CREATED" "$method_arg" "$endpoint_arg" "$query_shape_arg" "$operation_arg" "$wrapper_arg" "$pulse_stage_arg" || true
+		return 0
+		;;
+	429)
+		expires_at="$(_gh_secondary_cooldown_header_expires_at "$response_text")"
+		_gh_secondary_cooldown_write_until "github-api-rate-limit-status-${status}" "$response_text" "$expires_at" "status-${status}" "$_GH_SECONDARY_COOLDOWN_ACTION_CREATED" "$method_arg" "$endpoint_arg" "$query_shape_arg" "$operation_arg" "$wrapper_arg" "$pulse_stage_arg" || true
 		return 0
 		;;
 	esac
 	if [[ "$remaining" =~ ^[0-9]+$ && "$remaining" -eq 0 ]]; then
 		expires_at="$(_gh_secondary_cooldown_header_expires_at "$response_text")"
-		_gh_secondary_cooldown_write_until "github-api-rate-limit-remaining-zero" "$response_text" "$expires_at" "remaining-zero" || true
+		_gh_secondary_cooldown_write_until "github-api-rate-limit-remaining-zero" "$response_text" "$expires_at" "remaining-zero" "$_GH_SECONDARY_COOLDOWN_ACTION_CREATED" "$method_arg" "$endpoint_arg" "$query_shape_arg" "$operation_arg" "$wrapper_arg" "$pulse_stage_arg" || true
 		return 0
 	fi
 	if [[ "$rc" -ne 0 ]]; then
 		_gh_secondary_cooldown_detect "$response_text" || return 0
-		_gh_secondary_cooldown_write_until "github-secondary-rate-limit" "$response_text" "" "secondary-text" || true
+		_gh_secondary_cooldown_write_until "github-secondary-rate-limit" "$response_text" "" "secondary-text" "$_GH_SECONDARY_COOLDOWN_ACTION_CREATED" "$method_arg" "$endpoint_arg" "$query_shape_arg" "$operation_arg" "$wrapper_arg" "$pulse_stage_arg" || true
 	fi
 	return 0
 }
@@ -491,6 +973,12 @@ _gh_secondary_cooldown_preflight() {
 _gh_secondary_cooldown_record_if_needed() {
 	local rc="$1"
 	local response_text="${2:-}"
-	_gh_secondary_cooldown_record_response_if_needed "$rc" "$response_text"
+	local method_arg="${3:-}"
+	local endpoint_arg="${4:-}"
+	local query_shape_arg="${5:-}"
+	local operation_arg="${6:-}"
+	local wrapper_arg="${7:-}"
+	local pulse_stage_arg="${8:-}"
+	_gh_secondary_cooldown_record_response_if_needed "$rc" "$response_text" "$method_arg" "$endpoint_arg" "$query_shape_arg" "$operation_arg" "$wrapper_arg" "$pulse_stage_arg"
 	return 0
 }

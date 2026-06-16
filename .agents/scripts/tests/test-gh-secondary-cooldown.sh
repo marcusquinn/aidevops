@@ -23,6 +23,7 @@ trap cleanup EXIT
 
 export HOME="$TMP_HOME"
 export AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE="${TMP_HOME}/.aidevops/cache/gh-secondary-cooldown.json"
+export AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE="${TMP_HOME}/.aidevops/cache/gh-cooldown-events.jsonl"
 export AIDEVOPS_GH_SECONDARY_COOLDOWN_SECS=600
 export AIDEVOPS_GH_READ_RAMP_STATE_FILE="${TMP_HOME}/.aidevops/cache/gh-read-ramp-state.tsv"
 
@@ -59,8 +60,9 @@ reset_case() {
 	: >"$CALL_LOG"
 	: >"$ERR_LOG"
 	rm -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE"
+	rm -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE"
 	rm -f "$AIDEVOPS_GH_READ_RAMP_STATE_FILE"
-	unset GH_SECONDARY_FAIL GH_HEADER_LIMIT_FAIL GH_GENERIC_403_FAIL GH_ABUSE_403_FAIL GH_PRIMARY_REMAINING_ZERO_FAIL AIDEVOPS_GH_SECONDARY_COOLDOWN_OVERRIDE AIDEVOPS_GH_READ_RAMP_BUDGET AIDEVOPS_GH_READ_RAMP_BOOT_SECS AIDEVOPS_GH_READ_RAMP_RECOVERY_SECS AIDEVOPS_GH_READ_RAMP_OVERRIDE 2>/dev/null || true
+	unset GH_SECONDARY_FAIL GH_HEADER_LIMIT_FAIL GH_GENERIC_403_FAIL GH_ABUSE_403_FAIL GH_PRIMARY_REMAINING_ZERO_FAIL AIDEVOPS_GH_SECONDARY_COOLDOWN_OVERRIDE AIDEVOPS_GH_READ_RAMP_BUDGET AIDEVOPS_GH_READ_RAMP_BOOT_SECS AIDEVOPS_GH_READ_RAMP_RECOVERY_SECS AIDEVOPS_GH_READ_RAMP_OVERRIDE AIDEVOPS_GH_AUTH_MODE AIDEVOPS_GH_AUTH_PRINCIPAL AIDEVOPS_GH_COOLDOWN_OPERATION AIDEVOPS_GH_COOLDOWN_WRAPPER AIDEVOPS_GH_COOLDOWN_STAGE AIDEVOPS_GH_API_POOL AIDEVOPS_GH_ROUTE_DECISION 2>/dev/null || true
 	_GH_SECONDARY_COOLDOWN_LOGGED_ACTIVE=0
 	_GH_SECONDARY_COOLDOWN_LOGGED_RAMP=0
 	_gh_secondary_system_boot_ts() { return 1; }
@@ -91,7 +93,7 @@ test_header_response_writes_retry_after_cooldown() {
 	reset_case
 	export GH_HEADER_LIMIT_FAIL=1
 	set +e
-	_gh_with_timeout read gh api -i repos/owner/repo/issues >"${TMP_HOME}/headers.out" 2>"$ERR_LOG"
+	_gh_with_timeout read gh api -i -X GET "/repos/owner/repo/issues?state=open&labels=bug,help&per_page=100" >"${TMP_HOME}/headers.out" 2>"$ERR_LOG"
 	local rc=$?
 	set -e
 	if [[ "$rc" -ne 1 ]]; then
@@ -99,7 +101,8 @@ test_header_response_writes_retry_after_cooldown() {
 		return 1
 	fi
 	if [[ -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" ]] && \
-		jq -e '.reason == "github-api-rate-limit-status-429" and .last_request_id == "REQ-429" and .diagnostic.decision_branch == "status-429" and .diagnostic.http_status == "429" and .diagnostic.headers.retry_after == "42" and ((.expires_at - .first_seen) >= 40) and ((.expires_at - .first_seen) <= 45)' "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" >/dev/null; then
+		jq -e '.reason == "github-api-rate-limit-status-429" and .last_request_id == "REQ-429" and .diagnostic.cooldown_action == "created" and .diagnostic.decision_branch == "status-429" and .diagnostic.method == "GET" and .diagnostic.endpoint == "/repos/<owner>/<repo>/issues" and .diagnostic.query_shape == "state=<redacted>&labels=<redacted>&per_page=<redacted>" and .diagnostic.operation == "gh_api" and .diagnostic.wrapper == "_gh_with_timeout" and .diagnostic.auth_mode == "gh-pat" and .diagnostic.http_status == "429" and .diagnostic.headers.retry_after == "42" and .diagnostic.headers.x_github_request_id == "REQ-429" and ((.expires_at - .first_seen) >= 40) and ((.expires_at - .first_seen) <= 45)' "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" >/dev/null && \
+		jq -e 'select(.cooldown_action == "created" and .cooldown_reason == "github-api-rate-limit-status-429" and .method == "GET" and .endpoint == "/repos/<owner>/<repo>/issues" and .recent_secondary_count_5m == 0)' "$AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE" >/dev/null; then
 		printf 'PASS header response writes retry-after cooldown file\n'
 		return 0
 	fi
@@ -111,19 +114,19 @@ test_generic_403_diagnostic_distinguishes_forbidden() {
 	reset_case
 	export GH_GENERIC_403_FAIL=1
 	set +e
-	_gh_with_timeout read gh api -i repos/owner/repo/issues >"${TMP_HOME}/generic-403.out" 2>"$ERR_LOG"
+	_gh_with_timeout read gh api -i "/repos/owner/repo/issues" >"${TMP_HOME}/generic-403.out" 2>"$ERR_LOG"
 	local rc=$?
 	set -e
 	if [[ "$rc" -ne 1 ]]; then
 		printf 'FAIL expected generic 403 wrapped gh rc=1, got %s\n' "$rc"
 		return 1
 	fi
-	if [[ -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" ]] && \
-		jq -e '.reason == "github-api-rate-limit-status-403" and .last_request_id == "REQ-403" and .diagnostic.decision_branch == "status-403" and .diagnostic.body_classification == "generic-forbidden" and .diagnostic.headers.x_ratelimit_remaining == "5"' "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" >/dev/null; then
-		printf 'PASS generic 403 diagnostic distinguishes forbidden response\n'
+	if [[ ! -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" ]] && [[ -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE" ]] && \
+		jq -e 'select(.cooldown_action == "diagnostic-only" and .cooldown_reason == "github-api-forbidden-status-403" and .decision_branch == "status-403-diagnostic-only" and .method == "GET" and .endpoint == "/repos/<owner>/<repo>/issues" and .body_message_class == "resource-not-accessible" and .headers.x_ratelimit_remaining == "5" and .recent_403_count_1m == 1)' "$AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE" >/dev/null; then
+		printf 'PASS generic 403 diagnostic records event without global cooldown\n'
 		return 0
 	fi
-	printf 'FAIL generic 403 diagnostic missing or malformed\n'
+	printf 'FAIL generic 403 diagnostic event missing or cooldown was created\n'
 	return 1
 }
 
