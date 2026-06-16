@@ -29,6 +29,7 @@ mode: subagent
 | Pick site/app platform | `app-stack/decision-matrix.md` |
 | Build a no-build website starter | `app-stack/static-site-starter.md` |
 | Define required public pages, schema, docs/API/MCP/CLI surfaces | `app-stack/public-site-surfaces.md` |
+| Standardise user-facing record fields and relationships | `app-stack/standard-objects.md` |
 | Design TypeScript monorepo app structure | `app-stack/monorepo-app-stack.md` |
 | Choose/shape desktop shell | `app-stack/electron-desktop.md` |
 | Model workspace tenancy/collaboration | `app-stack/workspace-model.md` |
@@ -67,10 +68,11 @@ When asked to build a new app or data architecture:
 
 1. Start with `Workspace`, `packages/db`, RLS, users, teams, roles, labels, audit, files, and integrations.
 2. Pick canonical object roots from `app-stack/standard-objects.md` before inventing domain tables.
-3. Use types, labels, views, and metadata before separate tables; split tables only for distinct validation, lifecycle, permissions, integrations, or indexes.
-4. Add workflows as definitions plus runtime events/runs; do not hide state machines in UI-only code.
-5. Preserve external sync handles for WebDAV, CalDAV, CardDAV, payment, accounting, and forge integrations.
-6. Verify one complete path: object → permission → workflow → audit → import/export or sync.
+3. Add the standard record field pack from `app-stack/standard-objects.md` before object-specific fields.
+4. Use types, labels, views, and metadata before separate tables; split tables only for distinct validation, lifecycle, permissions, integrations, or indexes.
+5. Add workflows as definitions plus runtime events/runs; do not hide state machines in UI-only code.
+6. Preserve external sync handles for WebDAV, CalDAV, CardDAV, payment, accounting, and forge integrations.
+7. Verify one complete path: object → permission → workflow → audit → import/export or sync.
 
 Read order for full app/data design: `monorepo-app-stack.md` → `public-site-surfaces.md` → `workspace-model.md` → `database-foundation.md` → `platform-kernel.md` → `operations-jobs-scheduling.md` → `api-service-contracts.md` → `identity-security-lifecycle.md` → `data-protection-sync-scale.md` → `data-history-relationships.md` → `standard-objects.md` → `rbac-permissions.md` → `workflow-architecture.md` → `metadata-architecture.md` → `migration-layout.md`.
 

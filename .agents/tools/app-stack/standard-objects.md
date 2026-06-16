@@ -36,6 +36,36 @@ The hierarchy abbreviates always-on platform/kernel objects; see `app-stack/plat
 
 For cross-object relationships, default to generic link tables with `entity_type` and `entity_id`. Use typed join tables only for high-volume, referentially critical, permission-critical, or heavily indexed relationships. Model cardinality, inverse labels, merge handling, and history using `app-stack/data-history-relationships.md`.
 
+## Universal record field pack
+
+Every durable user-facing object should start from the same record shape before domain-specific fields are added. This follows the EspoCRM-style principle of shared base fields plus typed relationships, while keeping stable IDs separate from human-facing references.
+
+| Field/relationship | Standard |
+|--------------------|----------|
+| `id` | Stable internal ID used for identity, joins, URLs, imports, audit, and sync. Do not use display references as primary keys. |
+| `reference` | Human-facing sequence: uppercase object prefix, hyphen, zero-padded number sized for expected volume, e.g. `ISSUE-0001`, `EVENT-000001`, `PO-00001`, `SO-000001`. Scope sequence uniqueness by workspace and object type unless a product needs global references. |
+| `name` | User-visible record name/title. Allow manual entry or deterministic auto-population from object rules. |
+| `status` | Simple lifecycle defaults to `Open` / `Closed`. Use object-specific statuses only when they drive UX, workflow, reporting, or integration semantics. Workflow-managed records may denormalise current state here. |
+| `priority` | Default enum: `Low`, `Normal`, `High`; default value `Normal`. Add severity/impact separately when they are distinct concepts. |
+| `assigned_user_id` | Single accountable user/owner. Use assignment history or relationship rows when reassignment audit matters. |
+| `followers` | Multiple users watching/subscribed to the record, modelled through notification subscriptions or a typed follower join table. |
+| `archived` | Boolean or `archived_at` / `archived_by` state for hiding inactive records without deletion. Keep separate from soft delete and retention/legal-hold policy. |
+| `team_ids` | Multiple teams/user groups for visibility, queueing, ownership, or collaboration. Teams group staff; roles grant capabilities. |
+| `blocked` | Boolean that prevents configured automations, transactions, or releases for this record and specified related records. Store block reason/scope when users need explanation or overrides. |
+| `created_at`, `created_by_id` | Read-only creation timestamp and actor. |
+| `modified_at`, `modified_by_id` | Read-only last-modified timestamp and actor. |
+| attachments | Use `files` plus `file_links` for record attachments, with versioning, permissions, retention, and sensitivity metadata. |
+| tasks/reminders | Link related tasks, todos, reminders, or activities through `activities` with `activity_type = task` by default; use `issues` for user-visible work items. |
+
+Rules:
+
+- Keep the internal `id` immutable and API-safe; references are display/search keys and can be regenerated only through controlled migrations.
+- Pick reference prefixes early, keep them stable, and reserve enough padding for realistic object volume; avoid changing padding after public use.
+- Index `reference`, `status`, `priority`, `assigned_user_id`, `archived`, `blocked`, `created_at`, and common team/filter joins when they appear in list views.
+- Treat `blocked` as a guard input for workflows, automations, order release, posting, sync, exports, and other side effects; do not rely on UI-only disabling.
+- Prefer typed fields for `status`, `priority`, `archived`, and `blocked`; mirror to labels only for grouping/filtering.
+- Expose followers, attachments, tasks, audit, and activity through shared relationship/panel patterns instead of per-object bespoke tables unless scale or referential constraints require typed joins.
+
 ## Slugs, routes, and hierarchy
 
 Use stable IDs for identity. Use slugs and routes for human-readable addressing.
