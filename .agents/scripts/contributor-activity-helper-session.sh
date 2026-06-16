@@ -357,26 +357,48 @@ _session_time_query_observability() {
 		return 0
 	fi
 
-	local project_clause=""
-	local safe_path="${abs_repo_path//\'/\'\'}"
-	local like_path="${safe_path//%/\\%}"
-	like_path="${like_path//_/\\_}"
-	# shellcheck disable=SC2016,SC1003 # Single quotes are SQL delimiters, not bash
-	project_clause="${safe_path:+AND (project_path = '${safe_path}'
-			       OR project_path LIKE '${like_path}/%' ESCAPE '\\'
-			       OR project_path LIKE '${like_path}.%' ESCAPE '\\'
-			       OR project_path LIKE '${like_path}-%' ESCAPE '\\')}"
-
 	local result machine_ms sessions
-	result=$(sqlite3 -cmd ".timeout 5000" -separator '|' "$obs_db" "
-		SELECT
-			COALESCE(SUM(CASE WHEN duration_ms > 0 THEN duration_ms ELSE 0 END), 0),
-			COUNT(DISTINCT session_id)
-		FROM llm_requests
-		WHERE timestamp IS NOT NULL
-		  AND julianday(timestamp) >= (${since_ms} / 86400000.0 + 2440587.5)
-		  ${project_clause};
-	" 2>/dev/null) || result="0|0"
+	result=$(python3 - "$obs_db" "$abs_repo_path" "$since_ms" <<'PY' 2>/dev/null
+import sqlite3
+import sys
+
+db_path = sys.argv[1]
+abs_repo_path = sys.argv[2]
+since_ms = int(float(sys.argv[3] or 0))
+
+where = ["timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', ? / 1000.0, 'unixepoch')"]
+params = [since_ms]
+if abs_repo_path:
+    like_path = (
+        abs_repo_path
+        .replace('\\', '\\\\')
+        .replace('%', '\\%')
+        .replace('_', '\\_')
+    )
+    where.append("""(project_path = ?
+        OR project_path LIKE ? ESCAPE '\\'
+        OR project_path LIKE ? ESCAPE '\\'
+        OR project_path LIKE ? ESCAPE '\\')""")
+    params.extend([
+        abs_repo_path,
+        f"{like_path}/%",
+        f"{like_path}.%",
+        f"{like_path}-%",
+    ])
+
+query = f"""
+    SELECT
+        COALESCE(SUM(CASE WHEN duration_ms > 0 THEN duration_ms ELSE 0 END), 0),
+        COUNT(DISTINCT session_id)
+    FROM llm_requests
+    WHERE {' AND '.join(where)};
+"""
+
+with sqlite3.connect(db_path, timeout=5) as conn:
+    machine_ms, sessions = conn.execute(query, params).fetchone()
+print(f"{machine_ms or 0}|{sessions or 0}")
+PY
+	) || result="0|0"
 
 	IFS='|' read -r machine_ms sessions <<<"$result"
 	machine_ms="${machine_ms:-0}"
