@@ -319,9 +319,10 @@ _filter_findings_by_head_files() {
 
 	local jq_status
 	printf '%s' "$findings" | jq --slurpfile head_files "$head_files_file" '
+		(reduce $head_files[0][] as $f ({}; .[$f] = true)) as $existing_files |
 		[.[] |
 		if .file == null then .  # review bodies without file refs — keep
-		elif (.file as $f | $head_files[0] | any(. == $f)) then .  # file still exists
+		elif $existing_files[.file] then .  # file still exists
 		else empty  # file was removed/renamed — skip
 		end]
 	'
