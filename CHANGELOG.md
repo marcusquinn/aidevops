@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.20.77] - 2026-06-16
 
+### Changed
+
+- Documentation: update changelog for 3.20.77
+
+### Fixed
+
+- preserve GitHub cooldown provenance (#24887)
+
+## [3.20.77] - 2026-06-16
+
 ### Fixed
 
 - preserve GitHub cooldown response provenance (#24887)
