@@ -91,6 +91,13 @@ class DailyUsage:
     headless_worker_cost_usd: float = 0.0
 
 
+@dataclass(frozen=True)
+class OpencodeReportContext:
+    conn: sqlite3.Connection
+    obs_db: Path
+    configured_mcps: list[str]
+
+
 def _make_session_report(**values: Any) -> SessionReport:
     return SessionReport(**values)
 
@@ -241,13 +248,7 @@ def _strip_jsonc_comments(text: str) -> str:
         char = text[index]
         next_char = text[index + 1] if index + 1 < len(text) else ""
         if in_string:
-            output.append(char)
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
+            escaped, in_string = _append_jsonc_string_char(output, char, escaped)
             index += 1
             continue
         if char == '"':
@@ -256,18 +257,38 @@ def _strip_jsonc_comments(text: str) -> str:
             index += 1
             continue
         if char == "/" and next_char == "/":
-            while index < len(text) and text[index] not in "\r\n":
-                index += 1
+            index = _skip_jsonc_line_comment(text, index)
             continue
         if char == "/" and next_char == "*":
-            index += 2
-            while index + 1 < len(text) and not (text[index] == "*" and text[index + 1] == "/"):
-                index += 1
-            index += 2
+            index = _skip_jsonc_block_comment(text, index)
             continue
         output.append(char)
         index += 1
     return "".join(output)
+
+
+def _append_jsonc_string_char(output: list[str], char: str, escaped: bool) -> tuple[bool, bool]:
+    output.append(char)
+    if escaped:
+        return False, True
+    if char == "\\":
+        return True, True
+    if char == '"':
+        return False, False
+    return False, True
+
+
+def _skip_jsonc_line_comment(text: str, index: int) -> int:
+    while index < len(text) and text[index] not in "\r\n":
+        index += 1
+    return index
+
+
+def _skip_jsonc_block_comment(text: str, index: int) -> int:
+    index += 2
+    while index + 1 < len(text) and not (text[index] == "*" and text[index + 1] == "/"):
+        index += 1
+    return min(index + 2, len(text))
 
 
 def _model_switches(conn: sqlite3.Connection, session_ids: list[str]) -> set[str]:
@@ -387,22 +408,20 @@ def _models_for_group(
 
 
 def _opencode_report_from_group(
-    conn: sqlite3.Connection,
-    obs_db: Path,
-    configured_mcps: list[str],
+    context: OpencodeReportContext,
     root_id: str,
     root: SessionRow,
     group: list[SessionRow],
 ) -> SessionReport:
     session_ids = [row.session_id for row in group]
-    obs = _observability_for(obs_db, session_ids, configured_mcps)
+    obs = _observability_for(context.obs_db, session_ids, context.configured_mcps)
     tokens = _tokens_for_group(group)
     return _make_session_report(
         session_id=root_id,
         session_name=_safe_title(root.title),
         runtime="opencode",
         session_kind=_session_kind_for_group(group),
-        models_used=_models_for_group(conn, group, session_ids, obs),
+        models_used=_models_for_group(context.conn, group, session_ids, obs),
         tokens_input=tokens["input"],
         tokens_output=tokens["output"],
         tokens_reasoning=tokens["reasoning"],
@@ -412,7 +431,7 @@ def _opencode_report_from_group(
         net_tokens_total=tokens["net_total"],
         child_session_count=max(len(group) - 1, 0),
         compaction_count=sum(1 for row in group if row.parent_id or row.time_compacting),
-        mcps_active=configured_mcps,
+        mcps_active=context.configured_mcps,
         mcps_observed=sorted(obs["observed_mcps"]),
         started_at=_ms_to_iso(min(row.time_created for row in group)),
         finished_at=_ms_to_iso(max(row.time_updated for row in group)),
@@ -435,13 +454,13 @@ def _opencode_reports(args: argparse.Namespace) -> list[SessionReport]:
         by_id = {row.session_id: row for row in sessions}
         since_dt = _parse_since(args.since)
         since_ms = int(since_dt.timestamp() * 1000) if since_dt else None
-        configured_mcps = _configured_mcps()
+        context = OpencodeReportContext(conn=conn, obs_db=obs_db, configured_mcps=_configured_mcps())
         reports: list[SessionReport] = []
         for root_id, group in grouped.items():
             if not _session_in_scope(group, args.session, since_ms):
                 continue
             root = by_id.get(root_id, group[0])
-            reports.append(_opencode_report_from_group(conn, obs_db, configured_mcps, root_id, root, group))
+            reports.append(_opencode_report_from_group(context, root_id, root, group))
         reports.sort(key=lambda row: row.finished_at, reverse=True)
         return reports[: args.limit]
     finally:
@@ -552,53 +571,58 @@ def _daily_usage(reports: list[SessionReport]) -> list[DailyUsage]:
     grouped: dict[str, dict[str, Any]] = {}
     for report in reports:
         date = (report.finished_at or report.started_at or "unknown")[:10]
-        data = grouped.setdefault(
-            date,
-            {
-                "sessions": 0,
-                "raw": 0,
-                "net": 0,
-                "cost": 0.0,
-                "interactive_sessions": 0,
-                "interactive_raw": 0,
-                "interactive_net": 0,
-                "interactive_cost": 0.0,
-                "headless_worker_sessions": 0,
-                "headless_worker_raw": 0,
-                "headless_worker_net": 0,
-                "headless_worker_cost": 0.0,
-            },
-        )
-        data["sessions"] += 1
-        data["raw"] += report.raw_tokens_total
-        data["net"] += report.net_tokens_total
-        data["cost"] += report.cost_usd
-        if report.session_kind == "headless_worker":
-            prefix = "headless_worker"
-        else:
-            prefix = "interactive"
-        data[f"{prefix}_sessions"] += 1
-        data[f"{prefix}_raw"] += report.raw_tokens_total
-        data[f"{prefix}_net"] += report.net_tokens_total
-        data[f"{prefix}_cost"] += report.cost_usd
+        _add_daily_usage_report(grouped.setdefault(date, _new_daily_usage_bucket()), report)
     return [
-        DailyUsage(
-            date=date,
-            session_count=data["sessions"],
-            raw_tokens_total=data["raw"],
-            net_tokens_total=data["net"],
-            cost_usd=round(data["cost"], 6),
-            interactive_session_count=data["interactive_sessions"],
-            interactive_raw_tokens_total=data["interactive_raw"],
-            interactive_net_tokens_total=data["interactive_net"],
-            interactive_cost_usd=round(data["interactive_cost"], 6),
-            headless_worker_session_count=data["headless_worker_sessions"],
-            headless_worker_raw_tokens_total=data["headless_worker_raw"],
-            headless_worker_net_tokens_total=data["headless_worker_net"],
-            headless_worker_cost_usd=round(data["headless_worker_cost"], 6),
-        )
+        _daily_usage_from_bucket(date, data)
         for date, data in sorted(grouped.items(), reverse=True)
     ]
+
+
+def _new_daily_usage_bucket() -> dict[str, Any]:
+    return {
+        "sessions": 0,
+        "raw": 0,
+        "net": 0,
+        "cost": 0.0,
+        "interactive_sessions": 0,
+        "interactive_raw": 0,
+        "interactive_net": 0,
+        "interactive_cost": 0.0,
+        "headless_worker_sessions": 0,
+        "headless_worker_raw": 0,
+        "headless_worker_net": 0,
+        "headless_worker_cost": 0.0,
+    }
+
+
+def _add_daily_usage_report(data: dict[str, Any], report: SessionReport) -> None:
+    data["sessions"] += 1
+    data["raw"] += report.raw_tokens_total
+    data["net"] += report.net_tokens_total
+    data["cost"] += report.cost_usd
+    prefix = "headless_worker" if report.session_kind == "headless_worker" else "interactive"
+    data[f"{prefix}_sessions"] += 1
+    data[f"{prefix}_raw"] += report.raw_tokens_total
+    data[f"{prefix}_net"] += report.net_tokens_total
+    data[f"{prefix}_cost"] += report.cost_usd
+
+
+def _daily_usage_from_bucket(date: str, data: dict[str, Any]) -> DailyUsage:
+    return DailyUsage(
+        date=date,
+        session_count=data["sessions"],
+        raw_tokens_total=data["raw"],
+        net_tokens_total=data["net"],
+        cost_usd=round(data["cost"], 6),
+        interactive_session_count=data["interactive_sessions"],
+        interactive_raw_tokens_total=data["interactive_raw"],
+        interactive_net_tokens_total=data["interactive_net"],
+        interactive_cost_usd=round(data["interactive_cost"], 6),
+        headless_worker_session_count=data["headless_worker_sessions"],
+        headless_worker_raw_tokens_total=data["headless_worker_raw"],
+        headless_worker_net_tokens_total=data["headless_worker_net"],
+        headless_worker_cost_usd=round(data["headless_worker_cost"], 6),
+    )
 
 
 def _collect_daily_usage(args: argparse.Namespace) -> list[DailyUsage]:
