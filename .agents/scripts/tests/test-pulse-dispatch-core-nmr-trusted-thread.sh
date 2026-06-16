@@ -17,8 +17,10 @@ TESTS_RUN=0
 TESTS_FAILED=0
 TEST_ROOT=""
 ISSUE_ASSOC="OWNER"
+ISSUE_LOGIN="maintainer"
 COMMENTS_JSON="[]"
 APPROVAL_KNOWN_STATUS=""
+COLLAB_PERMISSION="write"
 
 print_result() {
 	local test_name="$1"
@@ -43,6 +45,7 @@ define_helpers_under_test() {
 	local helper_src
 	helper_src=$(awk '
 		/^_issue_thread_is_trusted_maintainer_only\(\) \{/,/^}$/ { print }
+		/^_issue_actor_has_repo_write_permission\(\) \{/,/^}$/ { print }
 		/^_check_nmr_approval_gate\(\) \{/,/^}$/ { print }
 	' "$CORE_SCRIPT")
 	if [[ -z "$helper_src" ]]; then
@@ -63,8 +66,10 @@ setup_case() {
 	: >"$LOGFILE"
 	ISSUE_ASSOC="$issue_association"
 	COMMENTS_JSON="$comments_json"
+	ISSUE_LOGIN="maintainer"
 	APPROVAL_KNOWN_STATUS=""
-	export LOGFILE ISSUE_ASSOC COMMENTS_JSON APPROVAL_KNOWN_STATUS
+	COLLAB_PERMISSION="write"
+	export LOGFILE ISSUE_ASSOC ISSUE_LOGIN COMMENTS_JSON APPROVAL_KNOWN_STATUS COLLAB_PERMISSION
 	return 0
 }
 
@@ -90,10 +95,26 @@ gh() {
 			return 0
 			;;
 		*)
-			printf '%s\n' "$ISSUE_ASSOC"
+			printf '{"author_association":"%s","user":{"login":"%s"}}\n' "$ISSUE_ASSOC" "$ISSUE_LOGIN"
 			return 0
 			;;
 	esac
+}
+
+_gh_collaborator_permission_lookup() {
+	local repo_slug="$1"
+	local login="$2"
+	local out_var="${3:-}"
+	[[ -n "$repo_slug" && -n "$login" ]] || return 2
+	if [[ "$COLLAB_PERMISSION" == "fail" ]]; then
+		return 2
+	fi
+	if [[ -n "$out_var" ]]; then
+		printf -v "$out_var" '%s' "$COLLAB_PERMISSION"
+	else
+		printf '%s\n' "$COLLAB_PERMISSION"
+	fi
+	return 0
 }
 
 _is_bot_generated_cleanup_issue() {
@@ -216,6 +237,8 @@ test_active_nmr_label_preserves_gate() {
 
 test_collaborator_author_does_not_bypass_historical_nmr() {
 	setup_case "COLLABORATOR" '[{"author_association":"OWNER"}]'
+	ISSUE_LOGIN="collaborator"
+	COLLAB_PERMISSION="read"
 	if _check_nmr_approval_gate 105 "owner/repo" '{"labels":[{"name":"auto-dispatch"}]}'; then
 		if [[ "$APPROVAL_KNOWN_STATUS" == "unknown" ]]; then
 			print_result "COLLABORATOR author does not bypass historical NMR" 0
@@ -226,6 +249,23 @@ test_collaborator_author_does_not_bypass_historical_nmr() {
 		return 0
 	fi
 	print_result "COLLABORATOR author does not bypass historical NMR" 1 "gate unexpectedly allowed dispatch"
+	cleanup_case
+	return 0
+}
+
+test_write_collaborator_comments_bypass_historical_nmr() {
+	setup_case "OWNER" '[{"author_association":"COLLABORATOR","user":{"login":"coadmin"},"body":"<!-- ops:start — workers: skip this comment -->"}]'
+	COLLAB_PERMISSION="write"
+	if _check_nmr_approval_gate 108 "owner/repo" '{"labels":[{"name":"auto-dispatch"}]}'; then
+		print_result "write collaborator comment bypasses historical NMR" 1 "gate blocked; known_status=${APPROVAL_KNOWN_STATUS}"
+		cleanup_case
+		return 0
+	fi
+	if [[ "$APPROVAL_KNOWN_STATUS" == "false" ]]; then
+		print_result "write collaborator comment bypasses historical NMR" 0
+	else
+		print_result "write collaborator comment bypasses historical NMR" 1 "expected known_status=false, got ${APPROVAL_KNOWN_STATUS}"
+	fi
 	cleanup_case
 	return 0
 }
@@ -243,6 +283,7 @@ main() {
 	test_unmarked_actions_comment_preserves_ever_nmr_gate
 	test_active_nmr_label_preserves_gate
 	test_collaborator_author_does_not_bypass_historical_nmr
+	test_write_collaborator_comments_bypass_historical_nmr
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
