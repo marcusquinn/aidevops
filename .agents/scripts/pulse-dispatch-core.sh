@@ -580,7 +580,7 @@ _issue_thread_is_trusted_maintainer_only() {
 	local issue_author_login
 	issue_json=$(gh api "$issue_api_path" 2>/dev/null) || return 1
 	IFS=$'\t' read -r issue_author_association issue_author_login < <(printf '%s' "$issue_json" \
-		| jq -r '[.author_association // "NONE", (.user.login // .author.login // "")] | @tsv' 2>/dev/null) || {
+		| jq -r '[.author_association // "NONE", (.user.login // .author.login // "")] | @tsv') || {
 		issue_author_association=""
 		issue_author_login=""
 	}
