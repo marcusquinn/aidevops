@@ -39,6 +39,7 @@ PR_REVIEW_THREAD_RESPONSE_BOT_RE="${PR_REVIEW_THREAD_RESPONSE_BOT_RE:-coderabbit
 PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN="${PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN:-false}"
 PRRTS_BOOL_TRUE="true"
 PRRTS_BOOL_FALSE="false"
+PRRTS_RC_GRAPHQL_EXHAUSTED=75
 
 _prrts_ensure_dirs() {
 	local log_dir=""
@@ -96,6 +97,14 @@ _prrts_graphql_rate_limit_ok() {
 		_prrts_log "write: skipped — GraphQL/API rate-limit remaining=${remaining}"
 		return 1
 	fi
+	return 0
+}
+
+_prrts_graphql_remaining() {
+	local remaining=""
+	remaining=$(gh api rate_limit --jq '.resources.graphql.remaining // 0' 2>/dev/null) || remaining="unknown"
+	[[ -n "$remaining" ]] || remaining="unknown"
+	printf '%s\n' "$remaining"
 	return 0
 }
 
@@ -307,7 +316,13 @@ _prrts_fetch_review_threads_json() {
 			}
 		' 2>/dev/null) || rc=$?
 	if [[ "$rc" -ne 0 ]]; then
-		_prrts_log "fetch: gh graphql failed for ${repo_slug}#${pr_number} (rc=${rc})"
+		local remaining=""
+		remaining="$(_prrts_graphql_remaining)"
+		if [[ "$remaining" =~ ^[0-9]+$ && "$remaining" -lt 1 ]]; then
+			_prrts_log "fetch: gh graphql failed for ${repo_slug}#${pr_number} — GraphQL budget exhausted (remaining=${remaining}, rc=${rc})"
+			return "$PRRTS_RC_GRAPHQL_EXHAUSTED"
+		fi
+		_prrts_log "fetch: gh graphql failed for ${repo_slug}#${pr_number} (rc=${rc}, graphql_remaining=${remaining})"
 		return 2
 	fi
 	if ! printf '%s' "$response" | jq -e '.data.repository.pullRequest.reviewThreads' >/dev/null 2>&1; then
@@ -391,14 +406,23 @@ _prrts_labels_block_response() {
 	esac
 }
 
-cmd_scan() {
+_prrts_scan_repo_to_files() {
 	local repo_slug="$1"
+	local candidates_file="$2"
+	local status_file="$3"
 	local pr_rows="" summary="" rc=0
 	local pr_number="" title="" is_draft="" labels="" head_ref="" author=""
 	local thread_count="" fingerprint="" preview=""
+	local checked_count=0 fetch_error_count=0 graphql_exhausted_count=0
 
 	pr_rows="$(_prrts_list_open_prs "$repo_slug")" || {
 		_prrts_log "scan: failed to list open PRs for ${repo_slug}"
+		{
+			printf 'checked=%s\n' "0"
+			printf 'fetch_errors=%s\n' "0"
+			printf 'graphql_exhausted=%s\n' "0"
+			printf 'list_failed=%s\n' "1"
+		} >"$status_file"
 		return 0
 	}
 
@@ -413,9 +437,16 @@ cmd_scan() {
 			continue
 		fi
 		rc=0
+		checked_count=$((checked_count + 1))
 		summary="$(_prrts_review_thread_summary "$repo_slug" "$pr_number")" || rc=$?
 		if [[ "$rc" -ne 0 ]]; then
-			_prrts_log "scan: ${repo_slug}#${pr_number} skipped — review-thread fetch failed"
+			fetch_error_count=$((fetch_error_count + 1))
+			if [[ "$rc" -eq "$PRRTS_RC_GRAPHQL_EXHAUSTED" ]]; then
+				graphql_exhausted_count=$((graphql_exhausted_count + 1))
+				_prrts_log "scan: ${repo_slug}#${pr_number} skipped — GraphQL budget exhausted"
+			else
+				_prrts_log "scan: ${repo_slug}#${pr_number} skipped — review-thread fetch failed"
+			fi
 			continue
 		fi
 		IFS=$'\t' read -r thread_count fingerprint preview <<<"$summary"
@@ -423,8 +454,30 @@ cmd_scan() {
 		if [[ "$thread_count" -gt 0 ]]; then
 			printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
 				"$pr_number" "$thread_count" "$fingerprint" "$title" "$head_ref" "$author" "$preview"
-		fi
+		fi >>"$candidates_file"
 	done <<<"$pr_rows"
+	{
+		printf 'checked=%s\n' "$checked_count"
+		printf 'fetch_errors=%s\n' "$fetch_error_count"
+		printf 'graphql_exhausted=%s\n' "$graphql_exhausted_count"
+		printf 'list_failed=%s\n' "0"
+	} >"$status_file"
+	return 0
+}
+
+cmd_scan() {
+	local repo_slug="$1"
+	local repo_path="${2:-}"
+	local candidates_file="" status_file=""
+	candidates_file="$(mktemp -t prrts-candidates.XXXXXX)" || return 1
+	status_file="$(mktemp -t prrts-status.XXXXXX)" || {
+		rm -f "$candidates_file"
+		return 1
+	}
+	_prrts_scan_repo_to_files "$repo_slug" "$candidates_file" "$status_file"
+	cat "$candidates_file"
+	rm -f "$candidates_file" "$status_file"
+	[[ -n "$repo_path" ]] || true
 	return 0
 }
 
@@ -727,16 +780,46 @@ _prrts_dispatch_repo() {
 	local repo_slug="$1"
 	local repo_path="$2"
 	local dry_run="$3"
-	local candidates="" now_epoch="" max_per_repo="" dispatched=0
+	local candidates="" candidates_file="" status_file="" now_epoch="" max_per_repo="" dispatched=0
 	local pr_number="" thread_count="" fingerprint="" title="" head_ref="" author="" preview=""
+	local checked_count=0 fetch_error_count=0 graphql_exhausted_count=0 list_failed=0
+	local status_key="" status_value=""
 
 	if [[ -z "$repo_path" || ! -d "${repo_path/#\~/$HOME}" ]]; then
 		_prrts_log "dispatch: ${repo_slug} skipped — repo path missing or not a directory (${repo_path})"
 		return 0
 	fi
 	repo_path="${repo_path/#\~/$HOME}"
-	candidates="$(cmd_scan "$repo_slug" "$repo_path")"
+	candidates_file="$(mktemp -t prrts-dispatch-candidates.XXXXXX)" || return 1
+	status_file="$(mktemp -t prrts-dispatch-status.XXXXXX)" || {
+		rm -f "$candidates_file"
+		return 1
+	}
+	_prrts_scan_repo_to_files "$repo_slug" "$candidates_file" "$status_file"
+	while IFS='=' read -r status_key status_value; do
+		case "$status_key" in
+		checked) checked_count="$status_value" ;;
+		fetch_errors) fetch_error_count="$status_value" ;;
+		graphql_exhausted) graphql_exhausted_count="$status_value" ;;
+		list_failed) list_failed="$status_value" ;;
+		esac
+	done <"$status_file"
+	candidates="$(cat "$candidates_file")"
+	rm -f "$candidates_file" "$status_file"
 	[[ -n "$candidates" ]] || {
+		if [[ "$graphql_exhausted_count" =~ ^[0-9]+$ && "$graphql_exhausted_count" -gt 0 ]]; then
+			_prrts_log "dispatch: ${repo_slug} skipped — GraphQL budget exhausted (${graphql_exhausted_count} PRs uncheckable)"
+			return 0
+		fi
+		if [[ "$fetch_error_count" =~ ^[0-9]+$ && "$fetch_error_count" -gt 0 ]]; then
+			_prrts_log "dispatch: ${repo_slug} skipped — ${fetch_error_count} PRs had fetch errors"
+			return 0
+		fi
+		if [[ "$list_failed" =~ ^[0-9]+$ && "$list_failed" -gt 0 ]]; then
+			_prrts_log "dispatch: ${repo_slug} skipped — open PR list failed"
+			return 0
+		fi
+		[[ -n "$checked_count" ]] || checked_count=0
 		_prrts_log "dispatch: ${repo_slug} has no active PRs with unresolved bot review threads"
 		return 0
 	}
