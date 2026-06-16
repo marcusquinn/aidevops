@@ -5,9 +5,9 @@
 // quality-hooks-signature.mjs to keep the gate orchestrator below the qlty
 // file-complexity and return-statement smell thresholds.
 
-import { existsSync, readFileSync, appendFileSync, realpathSync } from "fs";
+import { existsSync, readFileSync, appendFileSync, realpathSync, statSync } from "fs";
 import { execFileSync } from "child_process";
-import { isAbsolute, resolve, sep } from "path";
+import { dirname, isAbsolute, resolve, sep } from "path";
 import { tmpdir } from "os";
 
 import { FAIL_REASON } from "./quality-hooks-signature-failures.mjs";
@@ -54,7 +54,9 @@ function gitValue(args) {
 }
 
 function gitCommonDir(path) {
-  const topLevel = gitValue(["-C", path, "rev-parse", "--show-toplevel"]);
+  if (!path) return "";
+  const gitDir = existsSync(path) && statSync(path).isDirectory() ? path : dirname(path);
+  const topLevel = gitValue(["-C", gitDir, "rev-parse", "--show-toplevel"]);
   if (!topLevel) return "";
   const commonDir = gitValue(["-C", topLevel, "rev-parse", "--git-common-dir"]);
   if (!commonDir) return "";
