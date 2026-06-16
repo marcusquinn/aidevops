@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.79] - 2026-06-16
+
+### Fixed
+
+- correct profile AI hour semantics (#24888)
+- trust maintainer collaborator NMR comments (#24893)
+
 ## [3.20.78] - 2026-06-16
 
 ### Fixed
