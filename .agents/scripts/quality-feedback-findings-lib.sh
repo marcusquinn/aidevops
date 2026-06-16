@@ -38,8 +38,20 @@ _build_inline_findings() {
 		 else "human"
 		 end) as $reviewer |
 
-		# Extract severity from body
+		# Extract body for acknowledgement filtering and severity detection.
 		(.body) as $body |
+		# Skip thread-resolution replies and positive acknowledgements that appear
+		# as inline review comments. These are closure evidence from a review-thread
+		# response worker, not new quality debt (GH#24939).
+		($body | test(
+			"aidevops:review-thread-response|" +
+			"\\baddressed in [0-9a-f]{7,40}\\b|" +
+			"\\bno further concerns?\\b|" +
+			"\\bno further feedback\\b|" +
+			"\\bno further recommendations?\\b"; "i")) as $resolution_or_ack |
+		select($resolution_or_ack | not) |
+
+		# Extract severity from body
 		(if ($body | test("security-critical\\.svg|🔴.*critical|CRITICAL"; "i")) then "critical"
 		 elif ($body | test("critical\\.svg|severity:.*critical"; "i")) then "critical"
 		 elif ($body | test("high-priority\\.svg|severity:.*high|HIGH"; "i")) then "high"
