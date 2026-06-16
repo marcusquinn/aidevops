@@ -31,7 +31,7 @@ write_fake_gh_stub() {
 	cat >"${TEST_ROOT}/bin/gh" <<'GH_STUB'
 #!/usr/bin/env bash
 if [[ "$1" == "api" && "${2:-}" == "rate_limit" ]]; then
-	printf '100\n'
+	printf '%s\n' "${STUB_GRAPHQL_REMAINING:-100}"
 	exit 0
 fi
 if [[ "$1" == "pr" && "${2:-}" == "list" ]]; then
@@ -73,6 +73,10 @@ if [[ "$1" == "api" && "${2:-}" == "graphql" ]]; then
 		exit 0
 	fi
 	case "${STUB_THREADS_MODE:-unresolved}" in
+	rate_limit|error)
+		printf 'GraphQL failure\n' >&2
+		exit 1
+		;;
 	none)
 		printf '{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}\n'
 		;;
@@ -325,6 +329,34 @@ test_dispatch_pr_reclaims_stale_lock() {
 	return 0
 }
 
+test_dispatch_reports_graphql_budget_exhaustion_when_scan_blind() {
+	setup_test_env
+	export STUB_THREADS_MODE="rate_limit"
+	export STUB_GRAPHQL_REMAINING="0"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	if grep -q 'dispatch: owner/repo skipped — GraphQL budget exhausted (1 PRs uncheckable)' "$LOGFILE" 2>/dev/null; then
+		print_result "dispatch reports GraphQL exhaustion instead of no active PRs" 0
+	else
+		print_result "dispatch reports GraphQL exhaustion instead of no active PRs" 1 "log=$(tr '\n' ';' <"$LOGFILE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_reports_fetch_errors_when_scan_blind() {
+	setup_test_env
+	export STUB_THREADS_MODE="error"
+	export STUB_GRAPHQL_REMAINING="100"
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	if grep -q 'dispatch: owner/repo skipped — 1 PRs had fetch errors' "$LOGFILE" 2>/dev/null; then
+		print_result "dispatch reports fetch errors instead of no active PRs" 0
+	else
+		print_result "dispatch reports fetch errors instead of no active PRs" 1 "log=$(tr '\n' ';' <"$LOGFILE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_reply_and_resolve_use_graphql_mutations() {
 	setup_test_env
 	local body_file="${TEST_ROOT}/reply.md"
@@ -437,6 +469,8 @@ main() {
 	test_dispatch_skips_mixed_fingerprint_during_inflight_window
 	test_dispatch_pr_skips_when_pr_lock_held
 	test_dispatch_pr_reclaims_stale_lock
+	test_dispatch_reports_graphql_budget_exhaustion_when_scan_blind
+	test_dispatch_reports_fetch_errors_when_scan_blind
 	test_reply_and_resolve_use_graphql_mutations
 	test_reply_auto_prepends_thread_author
 	test_reply_does_not_double_prepend_thread_author
