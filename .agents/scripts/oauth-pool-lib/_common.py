@@ -193,8 +193,13 @@ def call_token_endpoint(
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            data = json.loads(resp.read().decode("utf-8"))
+            if isinstance(data, dict):
+                return data
+            return {TOKEN_REFRESH_ERROR_KEY: "invalid_response"}
     except urllib.error.HTTPError as exc:
         return {TOKEN_REFRESH_ERROR_KEY: _classify_http_error(exc)}
     except (urllib.error.URLError, OSError):
         return {TOKEN_REFRESH_ERROR_KEY: "network"}
+    except ValueError:
+        return {TOKEN_REFRESH_ERROR_KEY: "invalid_response"}
