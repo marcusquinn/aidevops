@@ -34,6 +34,9 @@ Use for plain public sites that need speed, metadata quality, accessibility, and
 | `contact.html` | Required contact/support/sales page |
 | `privacy.html` | Required privacy policy placeholder page |
 | `terms.html` | Required terms of service/use placeholder page |
+| `accessibility.html` | Optional accessibility statement describing implemented accessible features and reporting route |
+| `data-protection.html` | Optional data-protection/security overview linked to privacy and terms |
+| `confidentiality.html` | Optional confidentiality and conflict-handling statement for sensitive client/user data |
 | `docs.html` | Human docs entry point or redirect target |
 | `api.html` | API overview or redirect target for generated API docs |
 | `mcp.html` | MCP/agent integration overview or redirect target |
@@ -59,8 +62,11 @@ Use for plain public sites that need speed, metadata quality, accessibility, and
 
 - `/about`, `/contact`, `/privacy`, and `/terms` are launch blockers for every downstream site.
 - `/docs`, `/api`, `/mcp`, and `/cli` should exist as pages, honest status pages, or stable redirects to docs sections.
+- `/accessibility`, `/data-protection`, and `/confidentiality` are optional trust pages; add them when accessibility features, sensitive data handling, procurement, or client confidentiality matter.
 - Footer and sitemap link to every required page.
+- Footer and sitemap link to optional trust pages when present; root routes can redirect to `/legal/*` equivalents.
 - Placeholder legal/contact/developer copy must be visibly marked and replaced before launch.
+- Trust pages must describe implemented controls only; omit or clearly mark planned controls.
 
 ## Interaction rules
 
@@ -76,5 +82,6 @@ Use for plain public sites that need speed, metadata quality, accessibility, and
 - Keyboard-test all links, buttons, tabs, copy controls, and theme toggle.
 - Check metadata placeholders before launch.
 - Verify required public pages, developer pages, sitemap links, and structured data.
+- Verify optional trust pages if present, including footer links and cross-links to privacy/terms/contact.
 - Run accessibility and Lighthouse checks.
 - Confirm no site-specific brand, analytics key, secret, internal endpoint, private URL, private repository name, local path, command, non-public support contact, or product copy leaked from a reference site.

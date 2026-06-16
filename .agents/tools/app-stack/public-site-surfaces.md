@@ -1,5 +1,5 @@
 ---
-description: Required public pages, structured data, docs/API/MCP/CLI surfaces, and discoverability standards for websites and apps
+description: Required public pages, optional trust pages, structured data, docs/API/MCP/CLI surfaces, and discoverability standards for websites and apps
 mode: subagent
 ---
 
@@ -27,6 +27,52 @@ Rules:
 - Apps that require login still need public versions of these pages outside the authenticated shell.
 - Small no-build/static sites can ship placeholder pages, but placeholders must be obvious and replaced before launch.
 
+## Optional trust pages
+
+Add these pages when a site/app benefits from stronger trust, procurement, accessibility, or compliance signalling. They can live at the root routes below, under `/legal/*`, or redirect from the root route to a legal/trust section.
+
+| Route | Purpose |
+|-------|---------|
+| `/accessibility` | Public accessibility statement covering accessible features, WCAG target, keyboard/screen-reader support, contrast, responsive/zoom behaviour, form/error handling, AI/voice/caption support where relevant, limitations, testing, and contact route for reporting barriers. |
+| `/data-protection` | Plain-English data-protection/security overview covering data categories, tenancy/isolation, access controls, encryption in transit/at rest, files/uploads, backups, processors/integrations, retention, user rights, incident/contact route, and links to `/privacy` and `/terms`. |
+| `/confidentiality` | Confidentiality and conflict-handling statement covering sensitive client/user information, staff/internal access, role-based permissions, competing-client or conflict separation where relevant, AI/context boundaries, contractual confidentiality, and continuous improvement. |
+
+Composition rules:
+
+- Generate these pages from site/app facts; do not copy another product's claims, controls, dates, contacts, certifications, or legal wording.
+- Use generic structure from proven examples only after replacing product-specific terms, routes, jurisdictions, processors, support channels, and feature claims.
+- If a control is planned but not implemented, say so honestly or omit it; never imply compliance, certification, encryption, AI isolation, or human conflict separation without evidence.
+- Link trust pages from the footer, sitemap, `/privacy`, `/terms`, and each other when published.
+- Record effective date, last updated date, policy owner, and review cadence for legal/compliance pages.
+- Ask for legal review when jurisdiction, contractual promises, regulated data, children, health, finance, public sector, or enterprise procurement requirements are material.
+
+Suggested outline for `/accessibility`:
+
+1. Introduction and accessibility commitment.
+2. Visual comfort: themes, contrast, readable type, spacing, zoom, responsive layouts.
+3. Keyboard navigation and focus states.
+4. Screen-reader foundations: semantic HTML, landmarks, headings, labels, descriptive links.
+5. Forms, validation, status messages, and non-colour-only communication.
+6. Media/AI assistance such as captions, transcripts, voice, or drafting support when implemented.
+7. Testing standard, known limitations, continuous improvement, and contact route.
+
+Suggested outline for `/data-protection`:
+
+1. Introduction and relationship to `/privacy` and `/terms`.
+2. Data categories and purpose-specific processing.
+3. Workspace/organisation/account isolation and access control.
+4. Encryption, transport security, file handling, backups, and resilience.
+5. Processors/integrations, audit/monitoring, retention, deletion/export rights, and incident contact.
+
+Suggested outline for `/confidentiality`:
+
+1. Introduction and what information is treated as confidential.
+2. Staff, contractor, support, and account-manager access boundaries.
+3. Role-based permissions, team assignment, least privilege, and auditability.
+4. Conflict/competing-client separation where applicable.
+5. AI-assisted workflow boundaries and protected context handling.
+6. Contractual/legal terms, review cadence, and contact route.
+
 ## Structured data and schema
 
 | Surface | Structured data default |
@@ -36,6 +82,7 @@ Rules:
 | Contact page | `ContactPage`, contact points, area served, support channels |
 | Privacy page | Valid `WebPage`/`CreativeWork` policy metadata with publisher, dates, canonical URL; do not invent unsupported types |
 | Terms page | Valid `WebPage`/`CreativeWork` terms metadata with publisher, dates, canonical URL; do not invent unsupported types |
+| Trust pages | Valid `WebPage`/`CreativeWork` policy metadata with publisher, dates, canonical URL; visible claims must match implemented controls |
 | Docs/API/MCP/CLI pages | `WebPage`, `TechArticle`, `SoftwareApplication`, `HowTo`, or another validator-supported schema.org type |
 | Content/entity pages | Domain-specific schema for products, articles, events, FAQs, reviews, courses, jobs, places, datasets, or software |
 
@@ -86,8 +133,8 @@ Rules:
 
 ## Verification
 
-- Visit `/about`, `/contact`, `/privacy`, `/terms`, `/docs`, `/api`, `/mcp`, and `/cli` or their documented redirects/status pages.
-- Confirm footer, sitemap, robots policy, canonical URLs, and redirects expose required pages.
+- Visit `/about`, `/contact`, `/privacy`, `/terms`, `/docs`, `/api`, `/mcp`, and `/cli` or their documented redirects/status pages; visit `/accessibility`, `/data-protection`, and `/confidentiality` when published.
+- Confirm footer, sitemap, robots policy, canonical URLs, and redirects expose required pages and any optional trust pages.
 - Validate JSON-LD/schema for home, required pages, docs/API/developer pages, and one domain object page.
 - Confirm API/MCP/CLI pages match implemented auth, scopes, endpoints, tools, and support policy.
-- Confirm no placeholder legal/contact/API data remains before launch.
+- Confirm no placeholder legal/contact/API/trust-page data remains before launch.
