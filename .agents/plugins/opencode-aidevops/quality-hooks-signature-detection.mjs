@@ -62,6 +62,7 @@ function lineHasGhWriteCommand(line, ghWritePattern) {
  * @returns {boolean}
  */
 export function isGhWriteCommand(cmd) {
+  if (typeof cmd !== "string") return false;
   const ghWritePattern =
     /(^|[;&|(`!]|\$\()\s*(?:(?:sudo|time|env(?:\s+\w+=\S+)*)\s+)*gh\s+(pr\s+(create|comment)|issue\s+(create|comment))\b/;
   return stripHeredocBodies(cmd)
@@ -75,6 +76,7 @@ export function isGhWriteCommand(cmd) {
  * @returns {boolean}
  */
 export function isMachineProtocolCommand(cmd) {
+  if (typeof cmd !== "string") return false;
   return /DISPATCH_CLAIM|KILL_WORKER|DISPATCH_ACK|<!-- MERGE_SUMMARY -->/.test(cmd);
 }
 
@@ -84,6 +86,7 @@ export function isMachineProtocolCommand(cmd) {
  * @returns {boolean}
  */
 export function hasTrustedSignatureSignal(cmd) {
+  if (typeof cmd !== "string") return false;
   return (
     cmd.includes("gh-signature-helper.sh") ||
     cmd.includes("gh-signature-helper ") ||

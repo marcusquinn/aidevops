@@ -77,6 +77,11 @@ describe("isGhWriteCommand", () => {
     assert.equal(isGhWriteCommand('gh pr comment 1 --body "x"'), true);
   });
 
+  test("ignores non-string input", () => {
+    assert.equal(isGhWriteCommand(undefined), false);
+    assert.equal(isGhWriteCommand({ command: 'gh issue comment 1 --body "x"' }), false);
+  });
+
   test("ignores gh issue view (read)", () => {
     assert.equal(isGhWriteCommand("gh issue view 1"), false);
   });
@@ -201,6 +206,11 @@ describe("isMachineProtocolCommand", () => {
       false,
     );
   });
+
+  test("ignores non-string input", () => {
+    assert.equal(isMachineProtocolCommand(undefined), false);
+    assert.equal(isMachineProtocolCommand({ body: "DISPATCH_ACK" }), false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -257,6 +267,11 @@ describe("hasTrustedSignatureSignal", () => {
       hasTrustedSignatureSignal('gh issue comment 1 --body "thanks"'),
       false,
     );
+  });
+
+  test("ignores non-string input", () => {
+    assert.equal(hasTrustedSignatureSignal(undefined), false);
+    assert.equal(hasTrustedSignatureSignal({ body: SIG_MARKER }), false);
   });
 });
 
