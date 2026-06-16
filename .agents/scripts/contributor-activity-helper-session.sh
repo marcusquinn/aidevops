@@ -235,7 +235,7 @@ _session_time_query_db() {
 	# Caps human gaps at 1 hour to exclude idle/abandoned sessions.
 	# Worker sessions (headless) have ~0% human time; interactive ~70-85%.
 	local query_result
-	query_result=$(sqlite3 -json "$db_path" "
+	query_result=$(sqlite3 -cmd ".timeout 5000" -json "$db_path" "
 		WITH msg_data AS (
 			SELECT
 				s.id AS session_id,
@@ -276,7 +276,7 @@ _session_time_query_db() {
 		FROM msg_data
 		GROUP BY session_id
 		HAVING human_ms + machine_ms > 5000
-	") || query_result="[]"
+	" 2>/dev/null) || query_result="[]"
 
 	# t1427: sqlite3 -json returns "" (not "[]") when no rows match.
 	if [[ "$query_result" != "["* ]]; then
@@ -323,6 +323,146 @@ _session_time_query_db_paths() {
 			if any(.[]; .session_id == $row.session_id) then . else . + [$row] end
 		)
 	' 2>/dev/null || echo "[]"
+	return 0
+}
+
+#######################################
+# Resolve the shared OpenCode observability database, if available.
+# Output: database path to stdout, or empty string if unavailable
+#######################################
+_session_time_obs_db_path() {
+	local obs_db="${AIDEVOPS_OBS_DB_FILE:-${OBS_DB_FILE:-${HOME}/.aidevops/.agent-workspace/observability/llm-requests.db}}"
+
+	if [[ -f "$obs_db" ]]; then
+		printf '%s\n' "$obs_db"
+	fi
+	return 0
+}
+
+#######################################
+# Query OpenCode plugin observability for total AI generation duration.
+# Arguments:
+#   $1 - abs repo path (empty string = all directories)
+#   $2 - since_ms (milliseconds threshold)
+# Output: JSON object with observability_machine_ms and observability_sessions
+#######################################
+_session_time_query_observability() {
+	local abs_repo_path="$1"
+	local since_ms="$2"
+	local obs_db
+	obs_db=$(_session_time_obs_db_path)
+
+	if [[ -z "$obs_db" ]] || ! sqlite3 -cmd ".timeout 5000" "$obs_db" "SELECT 1 FROM sqlite_master WHERE type='table' AND name='llm_requests' LIMIT 1;" >/dev/null 2>&1; then
+		printf '%s\n' '{"observability_machine_ms":0,"observability_sessions":0}'
+		return 0
+	fi
+
+	local project_clause=""
+	local safe_path="${abs_repo_path//\'/\'\'}"
+	local like_path="${safe_path//%/\\%}"
+	like_path="${like_path//_/\\_}"
+	# shellcheck disable=SC2016,SC1003 # Single quotes are SQL delimiters, not bash
+	project_clause="${safe_path:+AND (project_path = '${safe_path}'
+			       OR project_path LIKE '${like_path}/%' ESCAPE '\\'
+			       OR project_path LIKE '${like_path}.%' ESCAPE '\\'
+			       OR project_path LIKE '${like_path}-%' ESCAPE '\\')}"
+
+	local result machine_ms sessions
+	result=$(sqlite3 -cmd ".timeout 5000" -separator '|' "$obs_db" "
+		SELECT
+			COALESCE(SUM(CASE WHEN duration_ms > 0 THEN duration_ms ELSE 0 END), 0),
+			COUNT(DISTINCT session_id)
+		FROM llm_requests
+		WHERE timestamp IS NOT NULL
+		  AND julianday(timestamp) >= (${since_ms} / 86400000.0 + 2440587.5)
+		  ${project_clause};
+	" 2>/dev/null) || result="0|0"
+
+	IFS='|' read -r machine_ms sessions <<<"$result"
+	machine_ms="${machine_ms:-0}"
+	sessions="${sessions:-0}"
+	printf '{"observability_machine_ms":%s,"observability_sessions":%s}\n' "$machine_ms" "$sessions"
+	return 0
+}
+
+#######################################
+# Merge observability AI-generation totals into session stats.
+#
+# Session DB timestamps are the best source for attended interactive time and
+# title/directory classification. The plugin observability DB is the durable
+# source for LLM generation duration across isolated headless workers. To avoid
+# double-counting interactive generation already present in session DBs, use
+# observability as a floor for total machine time: worker machine duration is
+# at least (observability total - interactive machine duration).
+#
+# Arguments:
+#   $1 - aggregated session stats JSON
+#   $2 - observability stats JSON
+# Output: merged stats JSON object to stdout
+#######################################
+_session_time_merge_observability_stats() {
+	local stats_json="$1"
+	local obs_json="$2"
+
+	python3 -c "
+import sys
+import json
+
+stats = json.loads(sys.argv[1] or '{}')
+obs = json.loads(sys.argv[2] or '{}')
+
+def number(value):
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+def ms_field(name, hours_name):
+    if name in stats:
+        return int(number(stats.get(name)))
+    return int(round(number(stats.get(hours_name)) * 3600000))
+
+def ms_to_h(ms):
+    return round(ms / 3600000, 1)
+
+interactive_human_ms = ms_field('interactive_human_ms', 'interactive_human_hours')
+interactive_machine_ms = ms_field('interactive_machine_ms', 'interactive_machine_hours')
+worker_human_ms = ms_field('worker_human_ms', 'worker_human_hours')
+worker_machine_ms = ms_field('worker_machine_ms', 'worker_machine_hours')
+obs_machine_ms = int(number(obs.get('observability_machine_ms')))
+obs_sessions = int(number(obs.get('observability_sessions')))
+
+observed_worker_machine_ms = max(0, obs_machine_ms - interactive_machine_ms)
+worker_machine_ms = max(worker_machine_ms, observed_worker_machine_ms)
+
+interactive_sessions = int(number(stats.get('interactive_sessions')))
+worker_sessions = int(number(stats.get('worker_sessions')))
+if worker_machine_ms > 0 and worker_sessions == 0:
+    worker_sessions = max(1, obs_sessions - interactive_sessions)
+
+total_human_ms = interactive_human_ms + worker_human_ms
+total_machine_ms = interactive_machine_ms + worker_machine_ms
+
+stats.update({
+    'interactive_human_ms': interactive_human_ms,
+    'interactive_machine_ms': interactive_machine_ms,
+    'worker_human_ms': worker_human_ms,
+    'worker_machine_ms': worker_machine_ms,
+    'interactive_sessions': interactive_sessions,
+    'worker_sessions': worker_sessions,
+    'interactive_human_hours': ms_to_h(interactive_human_ms),
+    'interactive_machine_hours': ms_to_h(interactive_machine_ms),
+    'worker_human_hours': ms_to_h(worker_human_ms),
+    'worker_machine_hours': ms_to_h(worker_machine_ms),
+    'total_human_hours': ms_to_h(total_human_ms),
+    'total_machine_hours': ms_to_h(total_machine_ms),
+    'total_sessions': interactive_sessions + worker_sessions,
+    'observability_machine_hours': ms_to_h(obs_machine_ms),
+    'observability_sessions': obs_sessions,
+})
+
+print(json.dumps(stats, indent=2))
+" "$stats_json" "$obs_json"
 	return 0
 }
 
@@ -426,9 +566,13 @@ if first_seen and last_seen:
 
 print(json.dumps({
     'interactive_sessions': i['count'],
+    'interactive_human_ms': i['human_ms'],
+    'interactive_machine_ms': i['machine_ms'],
     'interactive_human_hours': ms_to_h(i['human_ms']),
     'interactive_machine_hours': ms_to_h(i['machine_ms']),
     'worker_sessions': w['count'],
+    'worker_human_ms': w['human_ms'],
+    'worker_machine_ms': w['machine_ms'],
     'worker_human_hours': ms_to_h(w['human_ms']),
     'worker_machine_hours': ms_to_h(w['machine_ms']),
     'total_human_hours': ms_to_h(i['human_ms'] + w['human_ms']),
@@ -496,15 +640,21 @@ else:
 #   $1 - JSON array of session rows
 #   $2 - format: "markdown" or "json"
 #   $3 - period name (for empty-state messages)
+#   $4 - abs repo path (empty string = all directories)
+#   $5 - since_ms (milliseconds threshold)
 # Output: formatted table or JSON to stdout
 #######################################
 _session_time_process() {
 	local query_result="$1"
 	local format="$2"
 	local period="$3"
+	local abs_repo_path="${4:-}"
+	local since_ms="${5:-0}"
 
-	local stats_json
+	local stats_json obs_json
 	stats_json=$(echo "$query_result" | _session_time_classify_and_aggregate)
+	obs_json=$(_session_time_query_observability "$abs_repo_path" "$since_ms")
+	stats_json=$(_session_time_merge_observability_stats "$stats_json" "$obs_json")
 	_session_time_format_stats "$stats_json" "$format" "$period"
 	return 0
 }
@@ -599,15 +749,6 @@ session_time() {
 		db_paths=$(_session_time_detect_db_paths)
 	fi
 
-	if [[ -z "$db_paths" ]]; then
-		if [[ "$format" == "json" ]]; then
-			echo '{"interactive_sessions":0,"interactive_human_hours":0,"interactive_machine_hours":0,"worker_sessions":0,"worker_machine_hours":0,"total_human_hours":0,"total_machine_hours":0,"total_sessions":0}'
-		else
-			echo "_Session database not found._"
-		fi
-		return 0
-	fi
-
 	# Determine --since threshold in milliseconds (single Python call)
 	local seconds
 	case "$period" in
@@ -630,9 +771,13 @@ session_time() {
 	fi
 
 	local query_result
-	query_result=$(_session_time_query_db_paths "$db_paths" "$abs_repo_path" "$since_ms")
+	if [[ -n "$db_paths" ]]; then
+		query_result=$(_session_time_query_db_paths "$db_paths" "$abs_repo_path" "$since_ms")
+	else
+		query_result="[]"
+	fi
 
-	_session_time_process "$query_result" "$format" "$period"
+	_session_time_process "$query_result" "$format" "$period" "$abs_repo_path" "$since_ms"
 	return 0
 }
 
