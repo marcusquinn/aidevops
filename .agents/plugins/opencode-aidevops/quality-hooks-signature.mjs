@@ -49,142 +49,19 @@ import { join } from "path";
 
 import { FAIL_REASON, formatGateThrowMessage } from "./quality-hooks-signature-failures.mjs";
 import { repairBodyFile } from "./quality-hooks-signature-body-file.mjs";
-
-export const SIG_MARKER = "<!-- aidevops:sig -->";
+import {
+  SIG_MARKER,
+  hasTrustedSignatureSignal,
+  isGhWriteCommand,
+  isMachineProtocolCommand,
+} from "./quality-hooks-signature-detection.mjs";
 
 // Re-export FAIL_REASON so existing test imports
 // (`import { FAIL_REASON } from "../quality-hooks-signature.mjs"`) keep
 // working. Definition lives in quality-hooks-signature-failures.mjs to
 // keep this file under the qlty per-file complexity threshold (t2893).
 export { FAIL_REASON };
-
-/**
- * Strip heredoc body lines from a multi-line command string.
- * Lines inside <<MARKER ... MARKER blocks are removed so that prose
- * inside a heredoc body cannot trigger false-positive gh-write detection
- * (GH#20735 Failure 1).
- *
- * Handles: <<TAG  <<-TAG  <<'TAG'  <<"TAG"
- * Single-heredoc only; nested / multiple heredocs on one line are rare
- * and handled conservatively (opener line is kept, body stripped).
- * @param {string} cmd
- * @returns {string} cmd with heredoc body lines removed
- */
-function _stripHeredocBodies(cmd) {
-  const lines = cmd.split("\n");
-  const result = [];
-  let terminator = null;
-  for (const line of lines) {
-    if (terminator !== null) {
-      // Inside a heredoc — check for the terminator (possibly indented for <<-)
-      if (line.trim() === terminator) {
-        terminator = null;
-      }
-      // Skip this line regardless (heredoc body or terminator itself)
-      continue;
-    }
-    // Detect a heredoc opener: <<[-] with optional quotes around the tag
-    // Use [\w-]+ (not \w+) because bash allows hyphens in heredoc tags
-    // e.g. <<EOF-TAG, which \w+ would not match.
-    const m = line.match(/<<-?\s*['"]?([\w-]+)['"]?/);
-    if (m) {
-      terminator = m[1];
-    }
-    result.push(line);
-  }
-  return result.join("\n");
-}
-
-/**
- * Strip balanced single and double quoted strings from a shell line.
- * Replaces quoted content with empty quotes so that `gh …` tokens embedded
- * inside quoted arguments of other tools (rg, grep, memory-helper.sh …)
- * are invisible to the command-boundary check (GH#20735 Failures 2 & 3).
- *
- * Double quotes are stripped first (with basic escape handling), then
- * single quotes (no escapes inside single quotes in POSIX shell).
- * @param {string} line
- * @returns {string}
- */
-function _stripQuotedStrings(line) {
-  // Remove double-quoted strings (handles \" inside)
-  const withoutDouble = line.replace(/"(?:[^"\\]|\\.)*"/g, '""');
-  // Remove single-quoted strings (no escapes possible inside)
-  return withoutDouble.replace(/'[^']*'/g, "''");
-}
-
-/**
- * Decide whether a given bash command is a gh write that needs sig enforcement.
- *
- * Three-layer false-positive prevention (GH#20735):
- *   1. Heredoc stripping — removes lines inside <<TAG…TAG so prose in a
- *      heredoc body cannot match (Failure 1).
- *   2. Quoted-string stripping — replaces content inside balanced quotes
- *      with empty quotes, hiding `gh …` tokens inside string arguments of
- *      unrelated tools like `rg "gh issue create"` (Failures 2 & 3).
- *   3. Command-boundary anchor — requires `gh` to be at a shell command
- *      start: beginning of the trimmed line, or immediately after one of
- *      ; & | ( ` $( ! — preventing matches mid-argument after plain whitespace.
- *      Also allows optional prefixes (sudo, time, env VAR=val) between the
- *      boundary and `gh` to avoid false negatives on prefixed invocations.
- *
- * @param {string} cmd - Raw bash command string (may be multi-line)
- * @returns {boolean}
- */
-export function isGhWriteCommand(cmd) {
-  // Layer 3 pattern: gh must start a command segment.
-  // Boundaries: start-of-trimmed-line (^), semicolon, ampersand (covers &&),
-  // pipe (covers ||), open-paren (subshell / command-sub), backtick, literal $(.
-  // Also: ! (bash negation operator — gh still executes, needs sig).
-  // After a boundary, allow optional common command prefixes (sudo, time,
-  // env with optional VAR=val assignments) before gh to avoid false negatives
-  // for patterns like `sudo gh issue create` or `env GH_TOKEN=xxx gh pr create`.
-  const ghWritePattern =
-    /(^|[;&|(`!]|\$\()\s*(?:(?:sudo|time|env(?:\s+\w+=\S+)*)\s+)*gh\s+(pr\s+(create|comment)|issue\s+(create|comment))\b/;
-
-  // Layer 1: strip heredoc bodies from the full command string first
-  const noHeredoc = _stripHeredocBodies(cmd);
-
-  return noHeredoc.split("\n").some((line) => {
-    const trimmed = line.trim();
-    if (trimmed.startsWith("#")) return false;
-    if (/\bgit\s+commit\b/.test(trimmed)) return false;
-    // Layer 2: strip quoted strings so embedded gh tokens are invisible
-    const unquoted = _stripQuotedStrings(trimmed);
-    // Layer 3: require a command-boundary anchor before gh
-    return ghWritePattern.test(unquoted);
-  });
-}
-
-/**
- * Machine-protocol comments that are exempt from sig enforcement.
- * These are structured markers parsed by the pulse, not human-readable
- * messages; adding a footer would corrupt them.
- * @param {string} cmd
- * @returns {boolean}
- */
-export function isMachineProtocolCommand(cmd) {
-  return /DISPATCH_CLAIM|KILL_WORKER|DISPATCH_ACK|<!-- MERGE_SUMMARY -->/.test(cmd);
-}
-
-/**
- * Good-path signal: the command invokes gh-signature-helper directly OR
- * the body content already contains the canonical HTML marker OR a
- * footer-like variable is interpolated in.
- * @param {string} cmd
- * @returns {boolean}
- */
-export function hasTrustedSignatureSignal(cmd) {
-  // Footer variable interpolation — $FOOTER, ${SIGNATURE}, etc. Requires the
-  // cmd to assign the variable upstream; we trust it here because the
-  // downstream wrapper/shim will enforce the marker anyway.
-  return (
-    cmd.includes("gh-signature-helper.sh") ||
-    cmd.includes("gh-signature-helper ") ||
-    cmd.includes(SIG_MARKER) ||
-    /\$\{?\w*(?:footer|FOOTER|signature|SIGNATURE)\w*\}?/i.test(cmd)
-  );
-}
+export { SIG_MARKER, hasTrustedSignatureSignal, isGhWriteCommand, isMachineProtocolCommand };
 
 /**
  * Generate a signature footer by invoking gh-signature-helper.sh synchronously.
