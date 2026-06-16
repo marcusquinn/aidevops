@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.83] - 2026-06-16
+
+### Changed
+
+- Documentation: add optional website trust pages
+- Documentation: clarify documentation-only contributions (#24928)
+
 ## [3.20.82] - 2026-06-16
 
 ### Changed
