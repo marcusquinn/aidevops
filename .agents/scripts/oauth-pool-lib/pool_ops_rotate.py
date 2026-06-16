@@ -47,9 +47,6 @@ def _try_refresh_token(account: dict, provider: str, now_ms: int, ua_header: str
     if error_label:
         print(f"REFRESH_FAILED:{error_label}", file=sys.stderr)
         return
-    if rdata is None:
-        print("REFRESH_FAILED", file=sys.stderr)
-        return
     new_access = rdata.get("access_token", "")
     if not new_access:
         return
