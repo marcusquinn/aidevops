@@ -599,6 +599,67 @@ test_claim_retries_transient_post_failure() {
 	return 0
 }
 
+#######################################
+# Test: claim POST stderr fallback avoids predictable /tmp paths when mktemp fails.
+#######################################
+test_claim_post_error_fallback_avoids_tmp() {
+	local tmp_dir mock_path old_created_at claim_created_at output exit_code attempts test_home
+	tmp_dir=$(mktemp -d)
+	mock_path=$(create_mock_gh "$tmp_dir")
+	test_home="${tmp_dir}/home"
+	mkdir -p "$test_home"
+	old_created_at="$(iso_seconds_ago 600)"
+	claim_created_at="$(iso_seconds_ago 1)"
+
+	cat >"${mock_path}/mktemp" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+	chmod +x "${mock_path}/mktemp"
+
+	set +e
+	output=$(PATH="${mock_path}:$PATH" \
+		HOME="$test_home" \
+		MOCK_GH_STATE_DIR="$tmp_dir" \
+		MOCK_OLD_CLAIM_CREATED_AT="$old_created_at" \
+		MOCK_NEW_CLAIM_CREATED_AT="$claim_created_at" \
+		MOCK_OLD_CLAIM_RUNNER="other-runner" \
+		MOCK_POST_FAILS=1 \
+		DISPATCH_CLAIM_WINDOW=0 \
+		DISPATCH_CLAIM_MAX_AGE=300 \
+		DISPATCH_CLAIM_POST_ATTEMPTS=2 \
+		DISPATCH_CLAIM_POST_RETRY_DELAY=0 \
+		OPENCODE_VERSION=1.14.33 \
+		"$CLAIM_HELPER" claim 42 owner/repo mockrunner 2>&1)
+	exit_code=$?
+	set -e
+
+	if [[ "$exit_code" -eq 0 ]]; then
+		print_result "claim POST fallback works when mktemp fails" 0
+	else
+		print_result "claim POST fallback works when mktemp fails" 1 "got exit $exit_code output: $output"
+	fi
+
+	attempts=0
+	if [[ -f "${tmp_dir}/post_attempts.txt" ]]; then
+		attempts=$(<"${tmp_dir}/post_attempts.txt")
+	fi
+	if [[ "$attempts" -eq 2 ]]; then
+		print_result "claim POST fallback preserves retry stderr capture" 0
+	else
+		print_result "claim POST fallback preserves retry stderr capture" 1 "attempts=${attempts} output: $output"
+	fi
+
+	if grep -q '/tmp/aidevops-claim-post-error' "$CLAIM_HELPER"; then
+		print_result "claim POST fallback avoids predictable tmp path" 1 "predictable /tmp fallback remains"
+	else
+		print_result "claim POST fallback avoids predictable tmp path" 0
+	fi
+
+	rm -rf "$tmp_dir"
+	return 0
+}
+
 print_result() {
 	local test_name="$1"
 	local passed="$2"
@@ -1426,6 +1487,7 @@ main() {
 	test_claim_ignore_filter_preserves_self_claim
 	test_claim_structured_override_preserves_self_claim
 	test_claim_retries_transient_post_failure
+	test_claim_post_error_fallback_avoids_tmp
 	test_claim_marks_stale_worker_takeover
 	test_claim_marks_paginated_stale_worker_takeover
 	test_claim_marks_stale_worker_takeover_for_ops_wrapped_dispatch_comment
