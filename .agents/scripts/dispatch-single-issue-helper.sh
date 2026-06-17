@@ -60,6 +60,7 @@ _DSI_HEADLESS="${_DSI_SCRIPT_DIR}/headless-runtime-helper.sh"
 _DSI_LEDGER_HELPER="${_DSI_SCRIPT_DIR}/dispatch-ledger-helper.sh"
 _DSI_WORKTREE_HELPER="${_DSI_SCRIPT_DIR}/worktree-helper.sh"
 _DSI_DEDUP_HELPER="${_DSI_SCRIPT_DIR}/dispatch-dedup-helper.sh"
+_DSI_DISPATCH_BASE_BRANCH=""
 
 # Colors (guarded — don't collide with shared-constants)
 [[ -z "${_DSI_GREEN+x}" ]] && _DSI_GREEN='\033[0;32m'
@@ -314,6 +315,9 @@ _dsi_create_worktree() {
 	local ts
 	ts=$(date -u +%Y%m%d-%H%M%S)
 	local branch="feature/auto-${ts}-gh${issue_number}"
+	local dispatch_base_ref=""
+	dispatch_base_ref=$(_dsi_dispatch_base_ref "$repo_slug" "$repo_path")
+	_DSI_DISPATCH_BASE_BRANCH=$(_dsi_branch_from_ref "$dispatch_base_ref")
 
 	local attempt max_attempts
 	max_attempts=3
@@ -325,7 +329,7 @@ _dsi_create_worktree() {
 		# worktree-helper.sh add: outputs creation messages to stderr; the
 		# branch name is what we passed in.
 		if (cd "$repo_path" && AIDEVOPS_SKIP_AUTO_CLAIM=1 "$_DSI_WORKTREE_HELPER" add "$branch" \
-			--base "origin/$(_dsi_default_branch "$repo_path")" --issue "$issue_number") >&2; then
+			--base "$dispatch_base_ref" --issue "$issue_number") >&2; then
 			# Query git for the actual worktree path. worktree-helper.sh uses its
 			# own slug logic (lowercases, parent dir from get_repo_root) — recomputing
 			# that here is fragile. Read it back from `git worktree list` instead.
@@ -355,6 +359,73 @@ _dsi_create_worktree() {
 	_dsi_err "Failed to create worktree for branch ${branch} after ${max_attempts} attempts"
 	_dsi_info "  Inspect: git worktree list --porcelain | grep -A1 ${branch}"
 	return 1
+}
+
+#######################################
+# Return the branch component from a local/remote ref.
+# Args: $1 - branch or ref (develop, origin/develop, refs/heads/develop)
+# Outputs: branch name
+#######################################
+_dsi_branch_from_ref() {
+	local ref="$1"
+	ref="${ref#refs/remotes/origin/}"
+	ref="${ref#refs/heads/}"
+	ref="${ref#origin/}"
+	printf '%s' "$ref"
+	return 0
+}
+
+#######################################
+# Resolve the branch that should seed manual dispatch worktrees.
+# Prefers explicit env overrides and repo integration-branch policy, then
+# falls back to origin/HEAD through _dsi_default_branch.
+# Args: $1 - repo slug, $2 - local repo path
+# Outputs: branch name
+#######################################
+_dsi_dispatch_base_branch() {
+	local repo_slug="$1"
+	local repo_path="$2"
+	local base_branch="${AIDEVOPS_DISPATCH_BASE_BRANCH:-${DISPATCH_REPO_PR_BASE_BRANCH:-${AIDEVOPS_PR_BASE_BRANCH:-}}}"
+
+	if [[ -z "$base_branch" && -n "$repo_path" && -f "${repo_path}/.aidevops.json" ]] && command -v jq >/dev/null 2>&1; then
+		base_branch=$(jq -r '.dispatch_base_branch // .dispatch_base // .pr_base_branch // .pr_target_branch // .base_branch // empty' \
+			"${repo_path}/.aidevops.json" 2>/dev/null | sed -n '1p') || base_branch=""
+	fi
+
+	local repos_json="${AIDEVOPS_REPOS_JSON:-${REPOS_JSON:-${AIDEVOPS_REPOS_FILE:-${HOME}/.config/aidevops/repos.json}}}"
+	if [[ -z "$base_branch" && -n "$repo_slug" && -f "$repos_json" ]] && command -v jq >/dev/null 2>&1; then
+		base_branch=$(jq -r --arg slug "$repo_slug" '
+			.initialized_repos[]?
+			| select((.slug // "") == $slug and (.local_only // false) == false)
+			| .dispatch_base_branch // .dispatch_base // .pr_base_branch // .pr_target_branch // .base_branch // empty
+		' "$repos_json" 2>/dev/null | sed -n '1p') || base_branch=""
+	fi
+
+	if [[ -z "$base_branch" ]]; then
+		base_branch=$(_dsi_default_branch "$repo_path")
+	fi
+
+	_dsi_branch_from_ref "$base_branch"
+	return 0
+}
+
+#######################################
+# Resolve the exact base ref passed to worktree-helper.sh add --base.
+# Args: $1 - repo slug, $2 - local repo path
+# Outputs: git ref suitable for git worktree add
+#######################################
+_dsi_dispatch_base_ref() {
+	local repo_slug="$1"
+	local repo_path="$2"
+	local base_ref="${AIDEVOPS_DISPATCH_BASE_REF:-${AIDEVOPS_WORKTREE_BASE:-}}"
+
+	if [[ -n "$base_ref" ]]; then
+		printf '%s' "$base_ref"
+		return 0
+	fi
+
+	printf 'origin/%s' "$(_dsi_dispatch_base_branch "$repo_slug" "$repo_path")"
+	return 0
 }
 
 #######################################
@@ -819,6 +890,7 @@ _dsi_launch_worker() {
 		WORKER_GITHUB_LOGIN="$self_login"
 		WORKER_WORKTREE_PATH="$worktree_path"
 		WORKER_REPO_SLUG="$repo_slug"
+		WORKER_PR_BASE_BRANCH="$_DSI_DISPATCH_BASE_BRANCH"
 		GITHUB_REPOSITORY="$repo_slug"
 		AIDEVOPS_ALLOW_WORKER_WORKTREE_OWNER_TRANSFER=1
 		"$_DSI_HEADLESS" run
@@ -890,6 +962,15 @@ _dsi_parse_dispatch_args() {
 			_DSI_ARG_AGENT="${2}"
 			shift 2
 			;;
+		--base)
+			if [[ $# -lt 2 || -z "${2:-}" || "${2:-}" == --* ]]; then
+				_dsi_err "--base requires a branch or ref (e.g. develop or origin/develop)"
+				return 2
+			fi
+			AIDEVOPS_DISPATCH_BASE_REF="${2}"
+			export AIDEVOPS_DISPATCH_BASE_REF
+			shift 2
+			;;
 		--dry-run)
 			_DSI_ARG_DRYRUN=1
 			shift
@@ -953,6 +1034,10 @@ _dsi_print_dryrun() {
 	local dedup_state="$4"
 	local dedup_rc="$5"
 	local dedup_result="$6"
+	local repo_path=""
+	repo_path=$(_dsi_repo_path_for_slug "$repo_slug" 2>/dev/null || true)
+	local base_ref=""
+	base_ref=$(_dsi_dispatch_base_ref "$repo_slug" "$repo_path")
 	_dsi_info "DRY RUN — would dispatch:"
 	_dsi_info "  Issue:        #${issue_number} (${repo_slug})"
 	_dsi_info "  Title:        ${_DSI_ISSUE_TITLE}"
@@ -962,6 +1047,7 @@ _dsi_print_dryrun() {
 	_dsi_info "  Agent:        ${_DSI_ARG_AGENT}"
 	_dsi_info "  Session key:  ${session_key}"
 	_dsi_info "  Prompt:       $(_dsi_build_prompt "$issue_number" "$_DSI_ISSUE_URL")"
+	_dsi_info "  Base ref:     ${base_ref}"
 	_dsi_info "  Worktree:     would create auto-<ts>-gh${issue_number}"
 	if [[ "$_DSI_ARG_NO_CEREMONY" -eq 1 ]]; then
 		_dsi_info "  Ceremony:     SKIPPED (--no-ceremony) — labels and assignee unchanged"
@@ -1215,6 +1301,8 @@ Options:
   --model <id>    Override model (e.g. anthropic/claude-opus-4-7).
                   Default: inferred from tier:* and model:* labels.
   --agent <name>  Worker agent name. Default: Build+.
+  --base <ref>    Worktree base branch/ref. Default: repo dispatch/PR base
+                  policy from config, falling back to origin/HEAD.
   --dry-run       Print planned dispatch without launching.
   --no-ceremony   Skip the pre-launch ceremony (status:queued + origin:worker
                   + assignee normalize). Default: ceremony is ON. Use only
@@ -1225,6 +1313,7 @@ Examples:
   dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops
   dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --model anthropic/claude-opus-4-7
   dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --agent Build+
+  dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --base origin/develop
   dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --dry-run
   dispatch-single-issue-helper.sh dispatch 20882 marcusquinn/aidevops --no-ceremony
 EOF

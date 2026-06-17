@@ -653,6 +653,10 @@ test_create_worktree_registers_dispatch_owner() {
 	mkdir -p "$MOCK_REPO_PATH" "$MOCK_WORKTREE_PATH"
 	REGISTER_WORKTREE_LOG="${test_dir}/register-worktree.log"
 	MOCK_WORKTREE_HELPER_LOG="${test_dir}/worktree-helper.log"
+	local repos_file="${test_dir}/repos.json"
+	printf '%s\n' '{"initialized_repos":[{"slug":"owner/repo","path":"/tmp/repo","default_branch":"main","pr_base_branch":"develop"}]}' >"$repos_file"
+	local original_repos_json="${AIDEVOPS_REPOS_JSON:-}"
+	export AIDEVOPS_REPOS_JSON="$repos_file"
 	export MOCK_WORKTREE_HELPER_LOG
 	: >"$REGISTER_WORKTREE_LOG"
 	: >"$MOCK_WORKTREE_HELPER_LOG"
@@ -678,7 +682,7 @@ test_create_worktree_registers_dispatch_owner() {
 	local passed=1
 	if [[ "$rc" -eq 0 && "$registered" == *"register_worktree ${MOCK_WORKTREE_PATH} ${MOCK_WORKTREE_BRANCH}"* &&
 		"$registered" == *"--task 12345"* && "$registered" == *"--session dispatch-precreate-12345"* &&
-		"$helper_call" == *"--issue 12345"* ]]; then
+		"$helper_call" == *"--base origin/develop"* && "$helper_call" == *"--issue 12345"* ]]; then
 		passed=0
 	fi
 
@@ -689,10 +693,62 @@ test_create_worktree_registers_dispatch_owner() {
 	MOCK_WORKTREE_BRANCH=""
 	MOCK_DATE_UTC=""
 	REGISTER_WORKTREE_LOG=""
+	if [[ -n "$original_repos_json" ]]; then
+		export AIDEVOPS_REPOS_JSON="$original_repos_json"
+	else
+		unset AIDEVOPS_REPOS_JSON
+	fi
 	unset MOCK_WORKTREE_HELPER_LOG
 	MOCK_WORKTREE_HELPER_LOG=""
 	rm -rf "$test_dir"
 	print_result "worktree creation registers dispatch owner metadata" "$passed" "rc=$rc registered=$registered helper=$helper_call"
+	return 0
+}
+
+test_dispatch_base_ref_prefers_repo_configured_pr_base() {
+	local test_dir=""
+	test_dir=$(mktemp -d)
+	local repos_file="${test_dir}/repos.json"
+	local repo_path="${test_dir}/repo"
+	mkdir -p "$repo_path"
+	printf '%s\n' '{"initialized_repos":[{"slug":"owner/repo","path":"/tmp/repo","default_branch":"main","pr_base_branch":"develop"}]}' >"$repos_file"
+
+	local original_repos_json="${AIDEVOPS_REPOS_JSON:-}"
+	export AIDEVOPS_REPOS_JSON="$repos_file"
+	unset AIDEVOPS_DISPATCH_BASE_REF AIDEVOPS_WORKTREE_BASE AIDEVOPS_DISPATCH_BASE_BRANCH DISPATCH_REPO_PR_BASE_BRANCH AIDEVOPS_PR_BASE_BRANCH
+
+	local base_ref=""
+	base_ref=$(_dsi_dispatch_base_ref owner/repo "$repo_path")
+	local passed=1
+	[[ "$base_ref" == "origin/develop" ]] && passed=0
+
+	if [[ -n "$original_repos_json" ]]; then
+		export AIDEVOPS_REPOS_JSON="$original_repos_json"
+	else
+		unset AIDEVOPS_REPOS_JSON
+	fi
+	rm -rf "$test_dir"
+	print_result "dispatch base ref uses configured PR base over default branch" "$passed" "base_ref=$base_ref"
+	return 0
+}
+
+test_dispatch_base_ref_prefers_explicit_env_ref() {
+	local test_dir=""
+	test_dir=$(mktemp -d)
+	local repo_path="${test_dir}/repo"
+	mkdir -p "$repo_path"
+	export AIDEVOPS_DISPATCH_BASE_REF="upstream/integration"
+
+	local base_ref=""
+	base_ref=$(_dsi_dispatch_base_ref owner/repo "$repo_path")
+	local base_branch=""
+	base_branch=$(_dsi_branch_from_ref "$base_ref")
+	local passed=1
+	[[ "$base_ref" == "upstream/integration" && "$base_branch" == "upstream/integration" ]] && passed=0
+
+	unset AIDEVOPS_DISPATCH_BASE_REF
+	rm -rf "$test_dir"
+	print_result "dispatch base ref honors explicit env override" "$passed" "base_ref=$base_ref branch=$base_branch"
 	return 0
 }
 
@@ -865,6 +921,8 @@ _run_tests() {
 	test_launch_worker_forwards_github_login
 	test_create_worktree_uses_target_repo_path
 	test_create_worktree_registers_dispatch_owner
+	test_dispatch_base_ref_prefers_repo_configured_pr_base
+	test_dispatch_base_ref_prefers_explicit_env_ref
 	test_create_worktree_registration_warns_on_failure
 	test_readiness_accepts_worker_started_marker
 	test_readiness_rejects_live_child_without_ready_signal
