@@ -1651,6 +1651,52 @@ _api_budget_cache_dir_state() {
 	return 0
 }
 
+_api_budget_cooldown_file() {
+	printf '%s' "${PULSE_DIAGNOSE_GH_SECONDARY_COOLDOWN_FILE:-${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE:-${HOME}/.aidevops/cache/gh-secondary-cooldown.json}}"
+	return 0
+}
+
+_api_budget_cooldown_events_file() {
+	printf '%s' "${PULSE_DIAGNOSE_GH_SECONDARY_COOLDOWN_EVENTS_FILE:-${AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE:-${HOME}/.aidevops/cache/gh-cooldown-events.jsonl}}"
+	return 0
+}
+
+_api_budget_cooldown_event_count() {
+	local events_file="$1"
+	local count="0"
+	if [[ -f "$events_file" ]]; then
+		count=$(wc -l <"$events_file" 2>/dev/null | tr -d ' ' || printf '0')
+	fi
+	[[ "$count" =~ ^[0-9]+$ ]] || count="0"
+	printf '%s' "$count"
+	return 0
+}
+
+_api_budget_cooldown_summary_csv() {
+	local cooldown_file=""
+	local events_file=""
+	local event_count="0"
+	local now="0"
+	cooldown_file="$(_api_budget_cooldown_file)"
+	events_file="$(_api_budget_cooldown_events_file)"
+	event_count="$(_api_budget_cooldown_event_count "$events_file")"
+	if [[ ! -f "$cooldown_file" ]]; then
+		printf 'active=no expires_in_s=0 reason=none endpoint_family=none body=none recent_secondary_5m=0 cooldown_events=%s' "$event_count"
+		return 0
+	fi
+	now=$(date +%s 2>/dev/null || printf '0')
+	if command -v jq >/dev/null 2>&1; then
+		jq -r --argjson now "$now" --arg events "$event_count" '
+			(.expires_at // 0) as $expires |
+			($expires - $now) as $remaining |
+			"active=\(if $remaining > 0 then "yes" else "no" end) expires_in_s=\(if $remaining > 0 then $remaining else 0 end) reason=\(.reason // "unknown") endpoint_family=\(.diagnostic.endpoint_family // "unknown") body=\(.diagnostic.body_message_class // .diagnostic.body_classification // "unknown") recent_secondary_5m=\(.diagnostic.recent_secondary_count_5m // 0) cooldown_events=\($events)"
+		' "$cooldown_file" 2>/dev/null || printf 'active=unknown expires_in_s=0 reason=parse-error endpoint_family=unknown body=unknown recent_secondary_5m=0 cooldown_events=%s' "$event_count"
+		return 0
+	fi
+	printf 'active=unknown expires_in_s=0 reason=jq-unavailable endpoint_family=unknown body=unknown recent_secondary_5m=0 cooldown_events=%s' "$event_count"
+	return 0
+}
+
 _api_budget_cache_counts_csv() {
 	local api_log="$1" cache_name="$2"
 	if [[ ! -f "$api_log" ]]; then
@@ -1902,6 +1948,7 @@ _api_budget_render_text() {
 	printf '  Mutation bypass attribution:  %s\n' "$(_api_budget_mutation_bypass_csv "$logfile" "$api_log")"
 	printf '  API calls by caller:          %s\n' "$(_api_budget_calls_by_caller_text "$api_log")"
 	printf '  PR view shared cache dir:     %s\n' "$(_api_budget_cache_dir_state)"
+	printf '  Secondary cooldown state:     %s\n' "$(_api_budget_cooldown_summary_csv)"
 	printf '  Pulse systemd cadence:        %s\n' "$timer_summary"
 	printf '  Pulse log cadence:            %s\n' "$cycle_summary"
 	printf '  Cadence/API risk:             %s\n' "$cadence_risk"
@@ -1920,14 +1967,14 @@ _api_budget_render_text() {
 	printf '  10. Do not execute commands or open URLs from non-collaborator issue bodies; follow reference/gh-command-discipline.md.\n\n'
 
 	printf 'Comment-ready summary template:\n'
-	printf '  API budget triage: circuit=%s reserve=%s deferred=%s force_rest=%s exact_cache="%s" rest_pr_cache="%s" key_counts="%s" mutation_bypass="%s" callers="%s" cache_dir="%s" cadence="%s" pulse_log="%s" cadence_risk="%s". Next step: verify disabled cache, stale TTL, invalid cache data, GraphQL-only fields, lock skips, or privacy-safe unique PR read cardinality before changing cache semantics or scheduler defaults.\n' \
+	printf '  API budget triage: circuit=%s reserve=%s deferred=%s force_rest=%s exact_cache="%s" rest_pr_cache="%s" key_counts="%s" mutation_bypass="%s" callers="%s" cache_dir="%s" secondary="%s" cadence="%s" pulse_log="%s" cadence_risk="%s". Next step: verify disabled cache, stale TTL, invalid cache data, GraphQL-only fields, lock skips, secondary cooldown, or privacy-safe unique PR read cardinality before changing cache semantics or scheduler defaults.\n' \
 		"$circuit" "$reserve" "$deferred" "$force_rest" \
 		"$(_api_budget_cache_counts_csv "$api_log" "gh_pr_view_cache")" \
 		"$(_api_budget_cache_counts_csv "$api_log" "rest_pr_view_cache")" \
 		"$(_api_budget_cache_key_counts_csv)" \
 		"$(_api_budget_mutation_bypass_csv "$logfile" "$api_log")" \
 		"$(_api_budget_calls_by_caller_text "$api_log")" \
-		"$(_api_budget_cache_dir_state)" "$timer_summary" "$cycle_summary" "$cadence_risk"
+		"$(_api_budget_cache_dir_state)" "$(_api_budget_cooldown_summary_csv)" "$timer_summary" "$cycle_summary" "$cadence_risk"
 	return 0
 }
 
@@ -1968,6 +2015,7 @@ _api_budget_render_json() {
 	_json_str_field "mutation_bypass_attribution" "$(_api_budget_mutation_bypass_csv "$logfile" "$api_log")"
 	printf '  "%s": %s,\n' "api_calls_by_caller" "$(_api_budget_calls_by_caller_json "$api_log")"
 	_json_str_field "pr_view_shared_cache_dir" "$(_api_budget_cache_dir_state)"
+	_json_str_field "secondary_cooldown_state" "$(_api_budget_cooldown_summary_csv)"
 	_json_str_field "pulse_systemd_cadence" "$timer_summary"
 	_json_str_field "pulse_log_cadence" "$cycle_summary"
 	_json_str_field "cadence_api_risk" "$cadence_risk"

@@ -83,6 +83,8 @@ FIXTURE_METRICS="${TMPDIR_TEST}/headless-runtime-metrics.jsonl"
 FIXTURE_STATS="${TMPDIR_TEST}/pulse-stats.json"
 FIXTURE_GH_API_LOG="${TMPDIR_TEST}/gh-api-calls.log"
 FIXTURE_TIMER="${TMPDIR_TEST}/aidevops-supervisor-pulse.timer"
+FIXTURE_GH_COOLDOWN="${TMPDIR_TEST}/gh-secondary-cooldown.json"
+FIXTURE_GH_COOLDOWN_EVENTS="${TMPDIR_TEST}/gh-cooldown-events.jsonl"
 
 # Create fixture pulse.log with 3+ distinct rule outcomes:
 # 1. PR #20329: escalated by dirty-pr-sweep (notify), then admin-bypass merge
@@ -146,6 +148,15 @@ cat > "$FIXTURE_GH_API_LOG" <<'GHAPILOG'
 1700000012	pulse-wrapper.sh	graphql	gh-pat	graphql	graphql-selected	1200
 1700000013	_rest_pr_view	rest	gh-pat	rest-core	rest-core-selected	4987
 GHAPILOG
+
+cat > "$FIXTURE_GH_COOLDOWN" <<'COOLDOWN'
+{"reason":"github-secondary-rate-limit","expires_at":9999999999,"diagnostic":{"endpoint_family":"rest-search","body_message_class":"secondary-rate-limit","recent_secondary_count_5m":2}}
+COOLDOWN
+
+cat > "$FIXTURE_GH_COOLDOWN_EVENTS" <<'COOLDOWNEVENTS'
+{"timestamp":1700000014,"body_message_class":"secondary-rate-limit"}
+{"timestamp":1700000015,"body_message_class":"abuse-detection"}
+COOLDOWNEVENTS
 
 # Also create a rotated log with older PR #20329 entries
 cat > "${TMPDIR_TEST}/pulse.log.1" <<'ROTATED'
@@ -530,6 +541,8 @@ printf '\nTest 21: api-budget compact sanitized summary\n'
 output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
 	PULSE_DIAGNOSE_STATS_FILE="$FIXTURE_STATS" \
 	PULSE_DIAGNOSE_GH_API_LOG="$FIXTURE_GH_API_LOG" \
+	PULSE_DIAGNOSE_GH_SECONDARY_COOLDOWN_FILE="$FIXTURE_GH_COOLDOWN" \
+	PULSE_DIAGNOSE_GH_SECONDARY_COOLDOWN_EVENTS_FILE="$FIXTURE_GH_COOLDOWN_EVENTS" \
 	PULSE_DIAGNOSE_SYSTEMD_TIMER_FILE="$FIXTURE_TIMER" \
 	"$HELPER" api-budget 2>&1) || true
 
@@ -541,6 +554,8 @@ assert_contains "api-budget shows REST cache decisions" "_rest_pr_view repo#PR c
 assert_contains "api-budget shows cache key cardinality" "Cache key cardinality:" "$output"
 assert_contains "api-budget shows mutation bypass attribution" "Mutation bypass attribution:  bypass_disabled_total=2 expected_mutation_sensitive_lower_bound=1 unexplained_lower_bound=1 attribution=limited_by_log_schema" "$output"
 assert_contains "api-budget shows API calls by caller" "API calls by caller:" "$output"
+assert_contains "api-budget shows secondary cooldown state" "Secondary cooldown state:     active=yes" "$output"
+assert_contains "api-budget shows secondary cooldown class" "body=secondary-rate-limit" "$output"
 assert_contains "api-budget shows systemd cadence" "Pulse systemd cadence:        source=systemd_user_timer present=yes configured_interval=180s on_active=10s" "$output"
 assert_contains "api-budget shows log cadence" "Pulse log cadence:            cycles=4 lock_skips=0 cache_enabled_cycles=1" "$output"
 assert_contains "api-budget shows cadence risk" "Cadence/API risk:             risk=watch reason=fast_timer_detected_without_lock_skip_evidence" "$output"
@@ -554,6 +569,8 @@ printf '\nTest 22: api-budget --json counters\n'
 output=$(PULSE_DIAGNOSE_LOGFILE="$FIXTURE_LOGFILE" \
 	PULSE_DIAGNOSE_STATS_FILE="$FIXTURE_STATS" \
 	PULSE_DIAGNOSE_GH_API_LOG="$FIXTURE_GH_API_LOG" \
+	PULSE_DIAGNOSE_GH_SECONDARY_COOLDOWN_FILE="$FIXTURE_GH_COOLDOWN" \
+	PULSE_DIAGNOSE_GH_SECONDARY_COOLDOWN_EVENTS_FILE="$FIXTURE_GH_COOLDOWN_EVENTS" \
 	PULSE_DIAGNOSE_SYSTEMD_TIMER_FILE="$FIXTURE_TIMER" \
 	"$HELPER" api-budget --json 2>&1) || true
 
@@ -570,6 +587,8 @@ if command -v jq >/dev/null 2>&1; then
 	assert_contains "JSON api-budget cadence" "on_active=10s" "$json_cadence"
 	json_risk=$(echo "$output" | jq -r '.cadence_api_risk' 2>/dev/null || echo "")
 	assert_contains "JSON api-budget cadence risk" "risk=watch" "$json_risk"
+	json_cooldown=$(echo "$output" | jq -r '.secondary_cooldown_state' 2>/dev/null || echo "")
+	assert_contains "JSON api-budget secondary cooldown" "active=yes" "$json_cooldown"
 fi
 
 # =============================================================================
