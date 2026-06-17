@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.88] - 2026-06-17
+
+### Fixed
+
+- make pulse search prefetch last-resort (#24971)
+
 ## [3.20.87] - 2026-06-17
 
 ### Changed
