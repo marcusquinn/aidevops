@@ -108,6 +108,31 @@ HOOK
 	return 0
 }
 
+race_first_counter_reconciliation_push() {
+	local work_dir="$1"
+	local bare_dir
+	bare_dir=$(git -C "$work_dir" remote get-url origin 2>/dev/null) || return 1
+	mkdir -p "${bare_dir}/hooks" || return 1
+	cat >"${bare_dir}/hooks/update" <<'HOOK'
+#!/usr/bin/env bash
+set -u
+
+ref_name="$1"
+old_sha="$2"
+state_file="$(dirname "$0")/first-reconcile-raced"
+if [[ "$ref_name" == "refs/heads/develop" && ! -f "$state_file" ]]; then
+	printf 'seen\n' >"$state_file"
+	winning_sha=$(git rev-parse refs/heads/main 2>/dev/null) || exit 1
+	git update-ref "$ref_name" "$winning_sha" "$old_sha" >/dev/null 2>&1 || exit 1
+	printf 'remote: simulated compare-and-swap race for %s.\n' "$ref_name" >&2
+	exit 1
+fi
+exit 0
+HOOK
+	chmod +x "${bare_dir}/hooks/update" || return 1
+	return 0
+}
+
 test_counter_branch_desync_reconciles_before_claim() {
 	local name="counter branch desync is reconciled before allocation"
 	local tmpdir work_dir output rc task_id final_counter claim_commits unique_claims
@@ -201,6 +226,51 @@ test_reconciliation_protected_branch_rejection_is_unrecoverable() {
 	return 0
 }
 
+test_pre_reconciliation_race_continues_to_allocation() {
+	local name="pre-reconciliation race continues to allocation"
+	local tmpdir work_dir output rc task_id final_counter
+	tmpdir=$(mktemp -d) || { fail "$name" "mktemp failed"; return 0; }
+
+	work_dir=$(setup_desynced_remote "$tmpdir") || { fail "$name" "repo setup failed"; rm -rf "$tmpdir"; return 0; }
+	race_first_counter_reconciliation_push "$work_dir" || { fail "$name" "hook setup failed"; rm -rf "$tmpdir"; return 0; }
+
+	rc=0
+	output=$(CAS_MAX_RETRIES=3 CAS_WALL_TIMEOUT_S=20 CAS_SSH_FALLBACK_ENABLED=0 "$CLAIM_SCRIPT" \
+		--title "pre reconciliation race test" \
+		--no-issue \
+		--repo-path "$work_dir" \
+		--counter-branch develop 2>&1) || rc=$?
+
+	if [[ $rc -ne 0 ]]; then
+		fail "$name" "claim failed: $output"
+		rm -rf "$tmpdir"
+		return 0
+	fi
+	if ! printf '%s\n' "$output" | grep -q 'reconcile_raced'; then
+		fail "$name" "missing reconcile_raced status: $output"
+		rm -rf "$tmpdir"
+		return 0
+	fi
+	task_id=$(printf '%s\n' "$output" | awk -F= '/^task_id=/{print $2; exit}')
+	if [[ "$task_id" != "t1100" ]]; then
+		fail "$name" "expected t1100 after raced reconciliation, got ${task_id:-<empty>}"
+		rm -rf "$tmpdir"
+		return 0
+	fi
+
+	git -C "$work_dir" fetch origin develop >/dev/null 2>&1 || true
+	final_counter=$(git -C "$work_dir" show origin/develop:.task-counter 2>/dev/null | tr -d '[:space:]')
+	if [[ "$final_counter" != "1101" ]]; then
+		fail "$name" "expected develop counter 1101, got ${final_counter:-<empty>}"
+		rm -rf "$tmpdir"
+		return 0
+	fi
+
+	pass "$name"
+	rm -rf "$tmpdir"
+	return 0
+}
+
 test_reconciliation_adds_missing_counter_file() {
 	local name="reconciliation adds missing counter file"
 	local tmpdir work_dir output rc task_id final_counter
@@ -248,6 +318,7 @@ main() {
 	fi
 	test_counter_branch_desync_reconciles_before_claim
 	test_reconciliation_protected_branch_rejection_is_unrecoverable
+	test_pre_reconciliation_race_continues_to_allocation
 	test_reconciliation_adds_missing_counter_file
 	printf '%s passed, %s failed\n' "$PASS" "$FAIL"
 	[[ "$FAIL" -eq 0 ]] || return 1
