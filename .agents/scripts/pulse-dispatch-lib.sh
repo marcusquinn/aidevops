@@ -659,7 +659,11 @@ _dispatch_compute_capacity() {
 	# helper caps the final target by OAuth account availability, recent
 	# provider failures, load, and long-session runway before dispatch slots are
 	# exposed to the candidate loop.
-	local min_worker_floor="${AIDEVOPS_MIN_WORKER_CONCURRENCY:-6}"
+	local min_worker_floor="${AIDEVOPS_MIN_WORKER_CONCURRENCY:-}"
+	if [[ -z "$min_worker_floor" ]] && declare -F config_get >/dev/null 2>&1; then
+		min_worker_floor=$(config_get "orchestration.min_worker_concurrency" "6")
+	fi
+	[[ -n "$min_worker_floor" ]] || min_worker_floor=6
 	if ! [[ "$min_worker_floor" =~ ^[0-9]+$ ]]; then
 		min_worker_floor=6
 	fi

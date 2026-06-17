@@ -105,6 +105,35 @@ test_capacity_raises_soft_cap_to_floor() {
 	return 0
 }
 
+test_capacity_reads_min_floor_from_config_default() {
+	reset_capacity_pressure_env
+	TEST_MAX_WORKERS=1
+	TEST_ACTIVE_WORKERS=2
+	unset AIDEVOPS_MIN_WORKER_CONCURRENCY || true
+	config_get() {
+		local dotpath="$1" default="${2:-}"
+		if [[ "$dotpath" == "orchestration.min_worker_concurrency" ]]; then
+			printf '7\n'
+		else
+			printf '%s\n' "$default"
+		fi
+		return 0
+	}
+	unset _DISPATCH_MIN_WORKER_FLOOR_ACTIVE || true
+	local result capacity_file
+	capacity_file=$(mktemp)
+	_dispatch_compute_capacity >"$capacity_file"
+	result=$(<"$capacity_file")
+	rm -f "$capacity_file"
+	if [[ "$result" == "7 2 5" && "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-0}" == "1" ]]; then
+		print_result "capacity: reads minimum worker floor from config default" 0
+	else
+		print_result "capacity: reads minimum worker floor from config default" 1 "result=${result} floor_active=${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-unset}"
+	fi
+	unset -f config_get 2>/dev/null || true
+	return 0
+}
+
 test_capacity_respects_existing_higher_cap() {
 	reset_capacity_pressure_env
 	TEST_MAX_WORKERS=10
@@ -395,6 +424,53 @@ test_apply_dispatch_refills_until_active_floor_after_partial_launch() {
 	return 0
 }
 
+test_active_pulse_refill_uses_min_floor_above_raw_max() {
+	AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+	TEST_MAX_WORKERS=1
+	TEST_ACTIVE_WORKERS=2
+	TEST_DISPATCH_CALLS_FILE="${TEST_ROOT}/active-refill-dispatch-calls.txt"
+	printf '%s\n' 0 >"$TEST_DISPATCH_CALLS_FILE"
+	STOP_FLAG="${HOME}/.aidevops/logs/stop"
+	PULSE_ACTIVE_REFILL_INTERVAL=120
+	PULSE_ACTIVE_REFILL_IDLE_MIN=60
+	PULSE_ACTIVE_REFILL_STALL_MIN=120
+	# shellcheck disable=SC2329  # Override sourced function for this regression.
+	count_runnable_candidates() {
+		printf '4\n'
+		return 0
+	}
+	# shellcheck disable=SC2329  # Override sourced function for this regression.
+	count_queued_without_worker() {
+		printf '0\n'
+		return 0
+	}
+	# shellcheck disable=SC2329  # Override sourced function for this regression.
+	run_underfill_worker_recycler() {
+		return 0
+	}
+	# shellcheck disable=SC2329  # Override sourced function for this regression.
+	dispatch_max() {
+		local calls
+		calls=$(<"$TEST_DISPATCH_CALLS_FILE")
+		[[ "$calls" =~ ^[0-9]+$ ]] || calls=0
+		printf '%s\n' "$((calls + 1))" >"$TEST_DISPATCH_CALLS_FILE"
+		printf '0\n'
+		return 0
+	}
+
+	maybe_refill_underfilled_pool_during_active_pulse 0 180 180 true >/dev/null
+
+	local dispatch_calls
+	dispatch_calls=$(<"$TEST_DISPATCH_CALLS_FILE")
+	if [[ "$dispatch_calls" -ge 1 ]]; then
+		print_result "active refill: minimum floor overrides lower raw max target" 0
+	else
+		print_result "active refill: minimum floor overrides lower raw max target" 1 "dispatch_calls=${dispatch_calls}"
+	fi
+	unset TEST_DISPATCH_CALLS_FILE
+	return 0
+}
+
 write_recent_ledger_evidence() {
 	local status="$1"
 	local ledger_dir timestamp
@@ -461,6 +537,7 @@ EOF
 }
 
 test_capacity_raises_soft_cap_to_floor
+test_capacity_reads_min_floor_from_config_default
 test_capacity_respects_existing_higher_cap
 test_capacity_caps_by_provider_accounts_and_high_load
 test_capacity_uses_configured_provider_account_multiplier
@@ -472,6 +549,7 @@ test_throttle_does_not_force_serial_under_floor
 test_throttle_forces_serial_above_floor
 test_canary_preflight_marks_floor_without_cpu_bypass
 test_apply_dispatch_refills_until_active_floor_after_partial_launch
+test_active_pulse_refill_uses_min_floor_above_raw_max
 test_soft_canary_failure_bypasses_with_recent_worker_evidence
 test_hard_canary_failure_blocks_despite_recent_worker_evidence
 

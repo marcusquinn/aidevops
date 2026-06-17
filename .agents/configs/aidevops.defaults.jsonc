@@ -130,6 +130,11 @@
     // Env override: AIDEVOPS_MAX_WORKERS_CAP
     "max_workers_cap": 8,
 
+    // Minimum active implementation-worker floor. Pulse will try to refill to
+    // this target while provider/account health and host load are acceptable.
+    // Set to 0 to disable. Env override: AIDEVOPS_MIN_WORKER_CONCURRENCY
+    "min_worker_concurrency": 6,
+
     // Maximum share of worker slots that quality-debt issues may consume.
     // Default 30 preserves current behavior.
     // Env override: AIDEVOPS_QUALITY_DEBT_CAP_PCT

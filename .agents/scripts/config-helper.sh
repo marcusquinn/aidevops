@@ -315,6 +315,7 @@ _config_env_map() {
 	orchestration.repo_sync) echo "AIDEVOPS_REPO_SYNC" ;;
 	orchestration.repo_aidevops_health) echo "AIDEVOPS_REPO_HEALTH" ;;
 	orchestration.max_workers_cap) echo "AIDEVOPS_MAX_WORKERS_CAP" ;;
+	orchestration.min_worker_concurrency) echo "AIDEVOPS_MIN_WORKER_CONCURRENCY" ;;
 	orchestration.quality_debt_cap_pct) echo "AIDEVOPS_QUALITY_DEBT_CAP_PCT" ;;
 	orchestration.provider_account_slot_multiplier) echo "PULSE_PROVIDER_ACCOUNT_SLOT_MULTIPLIER" ;;
 	*) echo "" ;;

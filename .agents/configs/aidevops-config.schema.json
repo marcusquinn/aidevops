@@ -129,6 +129,12 @@
           "minimum": 1,
           "description": "Hard ceiling for pulse worker pool size after RAM-based calculation. Env: AIDEVOPS_MAX_WORKERS_CAP"
         },
+        "min_worker_concurrency": {
+          "type": "integer",
+          "default": 6,
+          "minimum": 0,
+          "description": "Minimum active implementation-worker floor while provider/account health and host load permit. Set to 0 to disable. Env: AIDEVOPS_MIN_WORKER_CONCURRENCY"
+        },
         "quality_debt_cap_pct": {
           "type": "integer",
           "default": 30,

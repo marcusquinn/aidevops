@@ -887,7 +887,11 @@ apply_dispatch_max() {
 # Returns 0 always; best-effort refill should not abort the pulse cycle.
 #######################################
 _dispatch_min_worker_floor_refill() {
-	local min_worker_floor="${AIDEVOPS_MIN_WORKER_CONCURRENCY:-6}"
+	local min_worker_floor="${AIDEVOPS_MIN_WORKER_CONCURRENCY:-}"
+	if [[ -z "$min_worker_floor" ]] && declare -F config_get >/dev/null 2>&1; then
+		min_worker_floor=$(config_get "orchestration.min_worker_concurrency" "6")
+	fi
+	[[ -n "$min_worker_floor" ]] || min_worker_floor=6
 	if ! [[ "$min_worker_floor" =~ ^[0-9]+$ ]]; then
 		min_worker_floor=6
 	fi
@@ -921,6 +925,31 @@ _dispatch_min_worker_floor_refill() {
 	done
 
 	echo "[pulse-wrapper] Minimum worker floor refill stopped: reached attempt cap ${max_refill_attempts}" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Return the worker target that should be treated as filled for refill/recycle
+# decisions, including the configured minimum active-worker floor.
+#
+# Args:
+#   $1 - raw max-worker target
+# Stdout: target >= 1
+#######################################
+_dispatch_floor_aware_worker_target() {
+	local max_workers="$1"
+	local min_worker_floor="${AIDEVOPS_MIN_WORKER_CONCURRENCY:-}"
+	if [[ -z "$min_worker_floor" ]] && declare -F config_get >/dev/null 2>&1; then
+		min_worker_floor=$(config_get "orchestration.min_worker_concurrency" "6")
+	fi
+	[[ -n "$min_worker_floor" ]] || min_worker_floor=6
+	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
+	[[ "$min_worker_floor" =~ ^[0-9]+$ ]] || min_worker_floor=6
+	if ((min_worker_floor > 0 && max_workers < min_worker_floor)); then
+		max_workers="$min_worker_floor"
+	fi
+	((max_workers < 1)) && max_workers=1
+	printf '%s\n' "$max_workers"
 	return 0
 }
 
@@ -1100,22 +1129,25 @@ maybe_refill_underfilled_pool_during_active_pulse() {
 		fi
 	fi
 
-	local max_workers active_workers runnable_count queued_without_worker
+	local max_workers active_workers refill_target runnable_count queued_without_worker
 	max_workers=$(get_max_workers_target)
 	active_workers=$(count_active_workers)
 	runnable_count=$(normalize_count_output "$(count_runnable_candidates)")
 	queued_without_worker=$(normalize_count_output "$(count_queued_without_worker)")
 	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
 	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
+	refill_target=$(_dispatch_floor_aware_worker_target "$max_workers")
+	[[ "$refill_target" =~ ^[0-9]+$ ]] || refill_target="$max_workers"
 
-	if [[ "$active_workers" -ge "$max_workers" || ("$runnable_count" -eq 0 && "$queued_without_worker" -eq 0) ]]; then
+	if [[ "$active_workers" -ge "$refill_target" || ("$runnable_count" -eq 0 && "$queued_without_worker" -eq 0) ]]; then
 		echo "$last_refill_epoch"
 		return 0
 	fi
 
-	echo "[pulse-wrapper] Active pulse refill: underfilled ${active_workers}/${max_workers} with runnable=${runnable_count}, queued_without_worker=${queued_without_worker}, idle=${idle_seconds}s, stall=${progress_stall_seconds}s" >>"$LOGFILE"
+	echo "[pulse-wrapper] Active pulse refill: underfilled ${active_workers}/${refill_target} (raw_max=${max_workers}) with runnable=${runnable_count}, queued_without_worker=${queued_without_worker}, idle=${idle_seconds}s, stall=${progress_stall_seconds}s" >>"$LOGFILE"
 	run_underfill_worker_recycler "$max_workers" "$active_workers" "$runnable_count" "$queued_without_worker"
 	dispatch_max >/dev/null || true
+	_dispatch_min_worker_floor_refill
 
 	echo "$now_epoch"
 	return 0
@@ -1311,15 +1343,17 @@ _run_early_exit_recycle_loop() {
 		fi
 
 		# Re-check worker state
-		local post_max post_active post_runnable post_queued
+		local post_max post_active post_target post_runnable post_queued
 		post_max=$(get_max_workers_target)
 		post_active=$(count_active_workers)
 		post_runnable=$(normalize_count_output "$(count_runnable_candidates)")
 		post_queued=$(normalize_count_output "$(count_queued_without_worker)")
 		[[ "$post_max" =~ ^[0-9]+$ ]] || post_max=1
 		[[ "$post_active" =~ ^[0-9]+$ ]] || post_active=0
+		post_target=$(_dispatch_floor_aware_worker_target "$post_max")
+		[[ "$post_target" =~ ^[0-9]+$ ]] || post_target="$post_max"
 
-		if [[ "$post_active" -ge "$post_max" ]]; then
+		if [[ "$post_active" -ge "$post_target" ]]; then
 			break
 		fi
 		if [[ "$post_runnable" -eq 0 && "$post_queued" -eq 0 ]]; then
@@ -1331,20 +1365,23 @@ _run_early_exit_recycle_loop() {
 		fi
 
 		dispatch_max >/dev/null || true
+		_dispatch_min_worker_floor_refill
 		post_active=$(count_active_workers)
 		post_runnable=$(normalize_count_output "$(count_runnable_candidates)")
 		post_queued=$(normalize_count_output "$(count_queued_without_worker)")
 		[[ "$post_active" =~ ^[0-9]+$ ]] || post_active=0
-		if [[ "$post_active" -ge "$post_max" ]]; then
+		post_target=$(_dispatch_floor_aware_worker_target "$post_max")
+		[[ "$post_target" =~ ^[0-9]+$ ]] || post_target="$post_max"
+		if [[ "$post_active" -ge "$post_target" ]]; then
 			break
 		fi
 		if [[ "$post_runnable" -eq 0 && "$post_queued" -eq 0 ]]; then
 			break
 		fi
 
-		local post_deficit_pct=$(((post_max - post_active) * 100 / post_max))
+		local post_deficit_pct=$(((post_target - post_active) * 100 / post_target))
 		recycle_attempt=$((recycle_attempt + 1))
-		echo "[pulse-wrapper] Early-exit recycle attempt ${recycle_attempt}/${PULSE_BACKFILL_MAX_ATTEMPTS}: pulse ran ${pulse_duration}s (<300s), pool underfilled (active ${post_active}/${post_max}, deficit ${post_deficit_pct}%, runnable=${post_runnable}, queued=${post_queued})" >>"$LOGFILE"
+		echo "[pulse-wrapper] Early-exit recycle attempt ${recycle_attempt}/${PULSE_BACKFILL_MAX_ATTEMPTS}: pulse ran ${pulse_duration}s (<300s), pool underfilled (active ${post_active}/${post_target}, raw_max=${post_max}, deficit ${post_deficit_pct}%, runnable=${post_runnable}, queued=${post_queued})" >>"$LOGFILE"
 
 		run_underfill_worker_recycler "$post_max" "$post_active" "$post_runnable" "$post_queued"
 
