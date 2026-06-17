@@ -15,6 +15,7 @@
 #   4. Pending/queued/expected required checks are non-terminal for CI repair
 #      routing; skipped required checks still allow the merge.
 #   5. API errors fail-closed (a bubbling gh failure must never auto-merge).
+#   6. Merge-read gh calls are routed through the timeout wrapper.
 #
 # Regression root cause: PR #19023 (GH#18787) had all required checks green
 # but statusCheckRollup contained a FAILURE entry from the post-merge
@@ -276,6 +277,15 @@ EOF
 	return 0
 }
 
+test_required_checks_gh_reads_are_timeout_wrapped() {
+	if grep -nE '^[[:space:]]*(gh api|gh pr checks|[a-zA-Z0-9_]+="?\$\(gh (api|pr checks))' "$REQUIRED_CHECKS_SCRIPT" >/dev/null 2>&1; then
+		print_result "required-check gh reads use timeout wrapper" 1
+	else
+		print_result "required-check gh reads use timeout wrapper" 0
+	fi
+	return 0
+}
+
 teardown_test_env() {
 	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
 		rm -rf "$TEST_ROOT"
@@ -322,6 +332,7 @@ define_function_under_test() {
 	eval_function_from_file _required_contexts_for_default_branch "$MERGE_SCRIPT" || return 1
 	eval_function_from_file _check_required_checks_passing "$MERGE_SCRIPT" || return 1
 	eval_function_from_file _pr_required_checks_pass "$MERGE_SCRIPT" || return 1
+	eval_function_from_file _pmrc_gh_read "$REQUIRED_CHECKS_SCRIPT" || return 1
 	eval_function_from_file _check_required_pr_checks_passing_fallback "$REQUIRED_CHECKS_SCRIPT" || return 1
 	eval_function_from_file _ruleset_required_review_count_for_default_branch "$REQUIRED_CHECKS_SCRIPT" || return 1
 	eval_function_from_file _check_ruleset_required_reviews_passing "$REQUIRED_CHECKS_SCRIPT" || return 1
@@ -698,6 +709,7 @@ main() {
 	test_ruleset_review_zero_does_not_require_approval
 	test_ruleset_review_malformed_optional_does_not_fail_parse
 	test_gh_api_error_fails_closed
+	test_required_checks_gh_reads_are_timeout_wrapped
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

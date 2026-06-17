@@ -6,6 +6,16 @@
 [[ -n "${_PULSE_MERGE_REQUIRED_CHECKS_LOADED:-}" ]] && return 0
 _PULSE_MERGE_REQUIRED_CHECKS_LOADED=1
 
+_pmrc_gh_read() {
+	local rc=0
+	if declare -F _gh_with_timeout >/dev/null 2>&1; then
+		_gh_with_timeout read "$@" || rc=$?
+	else
+		"$@" || rc=$?
+	fi
+	return "$rc"
+}
+
 #######################################
 # Fallback required-check verification for repositories where the classic branch
 # protection endpoint and repository-rulesets endpoint expose no contexts, but
@@ -22,7 +32,7 @@ _check_required_pr_checks_passing_fallback() {
 
 	local checks_json=""
 	local checks_exit=0
-	checks_json=$(gh pr checks "$pr_number" --repo "$repo_slug" --required --json name,state,bucket 2>/dev/null)
+	checks_json=$(_pmrc_gh_read gh pr checks "$pr_number" --repo "$repo_slug" --required --json name,state,bucket 2>/dev/null)
 	checks_exit=$?
 	if [[ $checks_exit -ne 0 && -z "$checks_json" ]]; then
 		return 2
@@ -66,7 +76,7 @@ _ruleset_required_review_count_for_default_branch() {
 	local log_target="${LOGFILE:-/dev/stderr}"
 
 	if [[ -z "$rulesets_json" ]]; then
-		rulesets_json=$(gh api "repos/${repo_slug}/rulesets" 2>/dev/null) || {
+		rulesets_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/rulesets" 2>/dev/null) || {
 			echo "[pulse-merge] _ruleset_required_review_count_for_default_branch: rulesets list failed for ${repo_slug} — caller will fail closed (GH#24577)" >>"$log_target"
 			return 1
 		}
@@ -91,7 +101,7 @@ _ruleset_required_review_count_for_default_branch() {
 	local matches_default=0 excluded_default=0 approval_count=""
 	while IFS= read -r id; do
 		[[ -n "$id" ]] || continue
-		detail=$(gh api "repos/${repo_slug}/rulesets/${id}" 2>/dev/null) || {
+		detail=$(_pmrc_gh_read gh api "repos/${repo_slug}/rulesets/${id}" 2>/dev/null) || {
 			echo "[pulse-merge] _ruleset_required_review_count_for_default_branch: ruleset detail ${id} failed for ${repo_slug} — caller will fail closed (GH#24577)" >>"$log_target"
 			return 1
 		}
@@ -140,7 +150,7 @@ _check_ruleset_required_reviews_passing() {
 	local pr_author="$3"
 
 	local default_branch="" required_count=""
-	default_branch=$(gh api "repos/${repo_slug}" --jq '.default_branch' 2>/dev/null) || default_branch=""
+	default_branch=$(_pmrc_gh_read gh api "repos/${repo_slug}" --jq '.default_branch' 2>/dev/null) || default_branch=""
 	if [[ -z "$default_branch" ]]; then
 		echo "[pulse-merge] _check_ruleset_required_reviews_passing: failed to resolve default branch for ${repo_slug} — failing closed (GH#24577)" >>"$LOGFILE"
 		return 1

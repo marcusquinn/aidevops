@@ -328,6 +328,7 @@ jobs:
           ISSUE_CREATED_AT: ${{ github.event.issue.created_at }}
           REPO: ${{ github.repository }}
           ISSUE_SYNC_DEDUP_WINDOW_SECONDS: '120'
+          ISSUE_SYNC_TITLE_DEDUP_WINDOW_SECONDS: '600'
         run: |
           set -euo pipefail
 
@@ -336,7 +337,8 @@ jobs:
           source __aidevops/.agents/scripts/lib/issue-fingerprint.sh
 
           WINDOW="${ISSUE_SYNC_DEDUP_WINDOW_SECONDS:-120}"
-          echo "[dedup] Checking issue #${ISSUE_NUMBER} by @${ISSUE_AUTHOR} (window: ${WINDOW}s)"
+          TITLE_WINDOW="${ISSUE_SYNC_TITLE_DEDUP_WINDOW_SECONDS:-600}"
+          echo "[dedup] Checking issue #${ISSUE_NUMBER} by @${ISSUE_AUTHOR} (fingerprint window: ${WINDOW}s, title window: ${TITLE_WINDOW}s)"
 
           # Fetch the full issue title and body via API (avoids env-var size limits
           # and injection risks from untrusted content in the event payload).
@@ -361,7 +363,9 @@ jobs:
             exit 0
           fi
 
-          since_epoch=$((new_epoch - WINDOW))
+          if ! [[ "$TITLE_WINDOW" =~ ^[0-9]+$ ]]; then TITLE_WINDOW=600; fi
+          if [[ "$TITLE_WINDOW" -lt "$WINDOW" ]]; then TITLE_WINDOW="$WINDOW"; fi
+          since_epoch=$((new_epoch - TITLE_WINDOW))
           since_iso=$(date -u -d "@${since_epoch}" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "")
 
           echo "[dedup] Fetching recent open issues by @${ISSUE_AUTHOR}..."
@@ -378,6 +382,7 @@ jobs:
           echo "[dedup] Found ${cand_count} open issue(s) by @${ISSUE_AUTHOR}"
 
           canonical_num=""
+          canonical_reason=""
           if [[ "$cand_count" -eq 0 ]]; then
             echo "[dedup] No recent open issues found — issue is unique"
             exit 0
@@ -397,7 +402,7 @@ jobs:
             # Only close the new issue when the candidate is strictly older and
             # within the dedup window. Positive time_diff = candidate is older.
             time_diff=$((new_epoch - cand_epoch))
-            if [[ "$time_diff" -le 0 ]] || [[ "$time_diff" -gt "$WINDOW" ]]; then
+            if [[ "$time_diff" -le 0 ]] || [[ "$time_diff" -gt "$TITLE_WINDOW" ]]; then
               echo "[dedup] Issue #${cand_num} not a prior duplicate (gap: ${time_diff}s) — skipping"
               continue
             fi
@@ -407,9 +412,22 @@ jobs:
 
             cand_fingerprint=$(_compute_issue_fingerprint "$cand_title" "$cand_body")
 
-            if [[ "$cand_fingerprint" == "$new_fingerprint" ]]; then
+            if [[ "$time_diff" -le "$WINDOW" ]] && [[ "$cand_fingerprint" == "$new_fingerprint" ]]; then
               canonical_num="$cand_num"
+              canonical_reason="identical content"
               echo "[dedup] Match: #${ISSUE_NUMBER} fingerprint matches #${canonical_num} (${time_diff}s apart)"
+              break
+            fi
+
+            # GH#24901/#24904: smaller-model retry loops can file the same
+            # titled report several times with slight body/footer drift that
+            # defeats exact fingerprinting. Exact-title, same-author issues
+            # opened inside TITLE_WINDOW are duplicates unless the title is
+            # intentionally reused much later for a fresh reproduction.
+            if [[ "$cand_title" == "$ISSUE_TITLE" ]] && [[ "$time_diff" -le "$TITLE_WINDOW" ]]; then
+              canonical_num="$cand_num"
+              canonical_reason="same title within ${TITLE_WINDOW}s"
+              echo "[dedup] Match: #${ISSUE_NUMBER} title matches #${canonical_num} (${time_diff}s apart)"
               break
             fi
           done
@@ -419,7 +437,7 @@ jobs:
             exit 0
           fi
 
-          echo "[dedup] Closing #${ISSUE_NUMBER} as duplicate of #${canonical_num}"
+          echo "[dedup] Closing #${ISSUE_NUMBER} as duplicate of #${canonical_num} (${canonical_reason})"
 
           # Ensure duplicate label exists before applying it
           gh label create "duplicate" --color "cfd3d7" \
@@ -427,7 +445,7 @@ jobs:
             --repo "$REPO" --force 2>/dev/null || true
 
           gh issue comment "$ISSUE_NUMBER" --repo "$REPO" \
-            --body "This issue appears to be a duplicate of #${canonical_num}, filed within ${WINDOW}s with identical content. Closing automatically — please continue the discussion in #${canonical_num}.
+            --body "This issue appears to be a duplicate of #${canonical_num} (${canonical_reason:-duplicate signal}). Closing automatically — please continue the discussion in #${canonical_num}.
 
           <!-- issue-dedup:auto-closed -->"
 

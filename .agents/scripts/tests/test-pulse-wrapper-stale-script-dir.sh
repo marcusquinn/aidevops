@@ -113,8 +113,19 @@ test_stale_script_dir_recovers_to_deployed_scripts() {
 	return 0
 }
 
+test_wrapper_reprioritises_framework_scripts_path() {
+	if grep -qF "export PATH=\"\${SCRIPT_DIR}:\${PATH}\"" "$WRAPPER_SCRIPT"; then
+		print_result "pulse wrapper re-prioritises framework scripts in PATH" 0
+	else
+		print_result "pulse wrapper re-prioritises framework scripts in PATH" 1 \
+			"missing SCRIPT_DIR PATH prepend after script-dir resolution"
+	fi
+	return 0
+}
+
 main() {
 	test_stale_script_dir_recovers_to_deployed_scripts
+	test_wrapper_reprioritises_framework_scripts_path
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

@@ -40,6 +40,7 @@
 #   8. setup.sh call site uses the new helper (not the generic gate)
 #   9. scheduler uses timeout-protected pulse-merge-routine
 #   10. merge LaunchAgent uses normal spawn priority with explicit KeepAlive=false
+#   11. standalone PATH repair keeps the framework gh shim first
 
 set -uo pipefail
 
@@ -172,6 +173,13 @@ if grep -qE 'source "\$\{SCRIPT_DIR\}/pulse-fast-fail\.sh"' "$ROUTINE_FILE"; the
 else
 	fail "6: pulse-fast-fail.sh sourced (fast_fail_reset)" \
 		"missing 'source ... pulse-fast-fail.sh' line"
+fi
+
+if grep -qF "export PATH=\"\${SCRIPT_DIR}:\${PATH}\"" "$ROUTINE_FILE"; then
+	pass "6b: routine re-prioritises framework scripts in PATH"
+else
+	fail "6b: routine re-prioritises framework scripts in PATH" \
+		"missing SCRIPT_DIR PATH prepend after script-dir resolution"
 fi
 
 # =============================================================================
