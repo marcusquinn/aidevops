@@ -106,7 +106,7 @@ _dispatch_stats_increment() {
 _dispatch_stats_increment_candidate_failed() {
 	local reason="$1"
 	case "$reason" in
-		cost_budget_exceeded | cooldown_no_worker_process | graphql_circuit_breaker | runner_health_circuit_breaker | ever_nmr_without_approval | canary_failed | launch_error | missing_worker_context | local_capacity_gate | policy_gate | no_recent_log_evidence | provider_rate_limit_pressure | repeated_failure_pressure | healthy_pr_backlog | no_dispatchable_evidence | unclassified_signal)
+		cost_budget_exceeded | cooldown_no_worker_process | graphql_circuit_breaker | runner_health_circuit_breaker | ever_nmr_without_approval | blocked_by_native_lookup_unavailable | canary_failed | launch_error | missing_worker_context | local_capacity_gate | policy_gate | no_recent_log_evidence | provider_rate_limit_pressure | repeated_failure_pressure | healthy_pr_backlog | no_dispatchable_evidence | unclassified_signal)
 			;;
 		*)
 			reason="unclassified_signal"
@@ -1173,9 +1173,25 @@ _dispatch_record_nonzero_dispatch_result() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local dispatch_rc="$3"
+	local recent_lines=""
 
 	echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — dispatch_with_dedup returned rc=${dispatch_rc}" >>"$LOGFILE"
 	if [[ "$dispatch_rc" -eq 2 ]]; then
+		if [[ -n "${LOGFILE:-}" && -f "$LOGFILE" ]]; then
+			recent_lines=$(awk -v issue="#${issue_number}" -v repo="$repo_slug" '
+				index($0, issue) && index($0, repo) { lines[++n] = $0 }
+				END {
+					start = n - 20
+					if (start < 1) { start = 1 }
+					for (i = start; i <= n; i++) { print lines[i] }
+				}
+			' "$LOGFILE" 2>/dev/null) || recent_lines=""
+		fi
+		if [[ "$recent_lines" == *"blocked_by_native_lookup_unavailable"* ]]; then
+			echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) pre-launch failure reason=blocked_by_native_lookup_unavailable" >>"$LOGFILE"
+			_dispatch_stats_increment_candidate_failed "blocked_by_native_lookup_unavailable"
+			return 0
+		fi
 		_dispatch_stats_increment "dispatch_candidate_noop"
 		return 0
 	fi

@@ -925,7 +925,7 @@ is_blocked_by_unresolved() {
 
 	if [[ -z "$issue_body" ]]; then
 		if [[ "$native_rc" -eq 3 ]]; then
-			echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} native blockedBy lookup unavailable and issue body is empty — skipping dispatch (GH#24576)" >>"$LOGFILE"
+			echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} DISPATCH_BLOCK_REASON reason=blocked_by_native_lookup_unavailable signal=native blockedBy lookup unavailable and issue body is empty — skipping dispatch (GH#24576)" >>"$LOGFILE"
 			return 0
 		fi
 		return 1
@@ -941,7 +941,7 @@ is_blocked_by_unresolved() {
 	# No blocked-by references → not blocked
 	if [[ -z "$blocker_task_ids" && -z "$blocker_issue_nums" ]]; then
 		if [[ "$native_rc" -eq 3 ]]; then
-			echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} native blockedBy lookup unavailable and no body blocked-by markers found — skipping dispatch (GH#24576)" >>"$LOGFILE"
+			echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} DISPATCH_BLOCK_REASON reason=blocked_by_native_lookup_unavailable signal=native blockedBy lookup unavailable and no body blocked-by markers found — skipping dispatch (GH#24576)" >>"$LOGFILE"
 			return 0
 		fi
 		return 1
