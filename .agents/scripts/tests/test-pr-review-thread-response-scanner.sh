@@ -5,7 +5,7 @@
 set -euo pipefail
 
 TEST_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SCANNER="${TEST_SCRIPT_DIR}/../pr-review-thread-response-scanner.sh"
+SCANNER="$(cd "${TEST_SCRIPT_DIR}/.." && pwd)/pr-review-thread-response-scanner.sh"
 TEST_ROOT=""
 TESTS_RUN=0
 TESTS_FAILED=0
@@ -243,6 +243,19 @@ test_dispatch_launches_worker_and_writes_state() {
 	return 0
 }
 
+test_dispatch_prompt_uses_framework_script_path() {
+	setup_test_env
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	if grep -q "${SCANNER} reply" "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null && grep -q "${SCANNER} resolve" "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null; then
+		print_result "dispatch prompt uses framework scanner path" 0
+	else
+		print_result "dispatch prompt uses framework scanner path" 1 "prompt=$(tr '\n' ' ' <"$HEADLESS_PROMPT_CAPTURE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_dispatch_pr_launches_targeted_worker_with_human_opt_in() {
 	setup_test_env
 	export STUB_THREADS_MODE="human"
@@ -464,6 +477,7 @@ main() {
 	test_scan_pr_excludes_human_threads_by_default
 	test_scan_pr_can_include_human_threads_with_opt_in
 	test_dispatch_launches_worker_and_writes_state
+	test_dispatch_prompt_uses_framework_script_path
 	test_dispatch_pr_launches_targeted_worker_with_human_opt_in
 	test_dispatch_is_idempotent_for_same_fingerprint
 	test_dispatch_skips_mixed_fingerprint_during_inflight_window

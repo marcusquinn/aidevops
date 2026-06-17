@@ -680,8 +680,8 @@ Thread preview: ${preview}
    PR, do not mark a draft PR ready, and do not bypass review-bot-gate.
 3. Do not use blanket auto-resolution scripts. For active review threads, respond
    in the same GitHub review thread with
-   '.agents/scripts/pr-review-thread-response-scanner.sh reply'; resolve with
-   '.agents/scripts/pr-review-thread-response-scanner.sh resolve' only after
+   '${SCRIPT_DIR}/pr-review-thread-response-scanner.sh reply'; resolve with
+   '${SCRIPT_DIR}/pr-review-thread-response-scanner.sh resolve' only after
    you have verified the finding is addressed or no longer applies.
 4. For each unresolved bot finding:
    - Verify the premise by reading the cited file and surrounding context.

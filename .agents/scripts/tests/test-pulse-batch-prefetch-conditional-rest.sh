@@ -197,11 +197,21 @@ test_conditional_failure_falls_open_to_search() {
 	return 0
 }
 
+test_prefetch_gh_reads_are_timeout_wrapped() {
+	if grep -nE '^[[:space:]]*(gh api|gh search|[a-zA-Z0-9_]+="?\$\(gh (api|search))' "$HELPER" >/dev/null 2>&1; then
+		print_result "prefetch gh reads use timeout wrapper" 1
+	else
+		print_result "prefetch gh reads use timeout wrapper" 0
+	fi
+	return 0
+}
+
 test_unchanged_repo_uses_304_cache
 test_changed_repo_refreshes_cache
 test_conditional_failure_falls_open_to_search
 test_legacy_issue_cache_falls_open_to_search
 test_read_cache_filters_closed_issues
+test_prefetch_gh_reads_are_timeout_wrapped
 
 printf 'Tests run: %s\n' "$TESTS_RUN"
 printf 'Tests failed: %s\n' "$TESTS_FAILED"

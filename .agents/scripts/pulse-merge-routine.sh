@@ -52,6 +52,11 @@ unset _aidevops_path_prefix
 # SCRIPT_DIR resolution — uses BASH_SOURCE[0]:-$0 for zsh portability (GH#3931).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
+# GH#24900: launchd/cron PATH repair must not bypass the aidevops gh shim.
+# Keep the framework script directory first so standalone merge runs inherit
+# GraphQL instrumentation, REST routing, and signature/write safeguards.
+export PATH="${SCRIPT_DIR}:${PATH}"
+
 # =============================================================================
 # Source pulse libraries
 # =============================================================================
@@ -190,6 +195,41 @@ _pmr_log() {
 	return 0
 }
 
+_pmr_gh_read() {
+	local rc=0
+	if declare -F _gh_with_timeout >/dev/null 2>&1; then
+		_gh_with_timeout read "$@" || rc=$?
+	else
+		"$@" || rc=$?
+	fi
+	return "$rc"
+}
+
+_pmr_graphql_remaining() {
+	local remaining="${AIDEVOPS_PULSE_GRAPHQL_BUDGET_REMAINING:-}"
+	if [[ "$remaining" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$remaining"
+		return 0
+	fi
+	remaining=$(_pmr_gh_read gh api rate_limit --jq '.resources.graphql.remaining // 0' 2>/dev/null) || remaining="0"
+	[[ "$remaining" =~ ^[0-9]+$ ]] || remaining=0
+	printf '%s\n' "$remaining"
+	return 0
+}
+
+_pmr_graphql_budget_allows_run() {
+	local threshold="${AIDEVOPS_PULSE_MERGE_GRAPHQL_MIN_REMAINING:-500}"
+	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=500
+	local remaining=""
+	remaining=$(_pmr_graphql_remaining)
+	[[ "$remaining" =~ ^[0-9]+$ ]] || remaining=0
+	if [[ "$remaining" -lt "$threshold" ]]; then
+		_pmr_log WARN "GraphQL budget depleted (${remaining} remaining < ${threshold}); deferring merge pass to next cycle (GH#24904)"
+		return 1
+	fi
+	return 0
+}
+
 # =============================================================================
 # File-based lock (mkdir-based for bash 3.2 + macOS portability)
 # =============================================================================
@@ -316,6 +356,10 @@ cmd_run() {
 	if ! _pmr_acquire_lock; then
 		exit 0
 	fi
+	if ! _pmr_graphql_budget_allows_run; then
+		date +%s >"$PULSE_MERGE_ROUTINE_LAST_RUN" 2>/dev/null || true
+		return 0
+	fi
 
 	# Wrap merge_ready_prs_all_repos with a hard timeout ceiling (t3041, GH#21708).
 	# Whatever the underlying hang site (gh API call, flock deadlock, infinite
@@ -378,6 +422,9 @@ cmd_dry_run() {
 	_pmr_log INFO "DRY-RUN mode: merge routine (pid=$$, timeout=${PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS}s)"
 	if ! _pmr_acquire_lock; then
 		exit 0
+	fi
+	if ! _pmr_graphql_budget_allows_run; then
+		return 0
 	fi
 
 	# Same timeout protection as cmd_run (t3041, GH#21708).

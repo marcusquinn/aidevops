@@ -81,6 +81,16 @@ if [[ -f "${SCRIPT_DIR}/pulse-stats-helper.sh" ]]; then
 	source "${SCRIPT_DIR}/pulse-stats-helper.sh" 2>/dev/null || true
 fi
 
+_prefetch_gh_read() {
+	local rc=0
+	if declare -F _gh_with_timeout >/dev/null 2>&1; then
+		_gh_with_timeout read "$@" || rc=$?
+	else
+		"$@" || rc=$?
+	fi
+	return "$rc"
+}
+
 # --- Configuration ---
 REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 BATCH_CACHE_DIR="${PULSE_BATCH_PREFETCH_CACHE_DIR:-${HOME}/.aidevops/logs/batch-prefetch}"
@@ -141,7 +151,7 @@ _prefetch_rest_issues_for_slug() {
 	local slug="$1"
 	declare -F gh_record_call >/dev/null && gh_record_call rest pulse_batch_prefetch_rest_issues || true
 	local rest_json
-	rest_json=$(gh api "/repos/${slug}/issues?state=open&per_page=${BATCH_SEARCH_LIMIT}" 2>/dev/null) || rest_json=""
+	rest_json=$(_prefetch_gh_read gh api "/repos/${slug}/issues?state=open&per_page=${BATCH_SEARCH_LIMIT}" 2>/dev/null) || rest_json=""
 	if [[ -z "$rest_json" || "$rest_json" == "$_JSON_NULL" || "$rest_json" == "$_JSON_EMPTY_ARR" ]]; then
 		_log "REST issues fallback: empty/null response for ${slug}"
 		return 1
@@ -182,7 +192,7 @@ _prefetch_rest_prs_for_slug() {
 	local slug="$1"
 	declare -F gh_record_call >/dev/null && gh_record_call rest pulse_batch_prefetch_rest_prs || true
 	local rest_json
-	rest_json=$(gh api "/repos/${slug}/pulls?state=open&per_page=${BATCH_SEARCH_LIMIT}" 2>/dev/null) || rest_json=""
+	rest_json=$(_prefetch_gh_read gh api "/repos/${slug}/pulls?state=open&per_page=${BATCH_SEARCH_LIMIT}" 2>/dev/null) || rest_json=""
 	if [[ -z "$rest_json" || "$rest_json" == "$_JSON_NULL" || "$rest_json" == "$_JSON_EMPTY_ARR" ]]; then
 		_log "REST PRs fallback: empty/null response for ${slug}"
 		return 1
@@ -377,9 +387,9 @@ _conditional_rest_refresh_slug() {
 	err_file=$(mktemp)
 	local rc=0
 	if [[ -n "$etag" ]]; then
-		gh api -i -H "Accept: application/vnd.github+json" -H "If-None-Match: ${etag}" "$endpoint" >"$response_file" 2>"$err_file" || rc=$?
+		_prefetch_gh_read gh api -i -H "Accept: application/vnd.github+json" -H "If-None-Match: ${etag}" "$endpoint" >"$response_file" 2>"$err_file" || rc=$?
 	else
-		gh api -i -H "Accept: application/vnd.github+json" "$endpoint" >"$response_file" 2>"$err_file" || rc=$?
+		_prefetch_gh_read gh api -i -H "Accept: application/vnd.github+json" "$endpoint" >"$response_file" 2>"$err_file" || rc=$?
 	fi
 	local status=""
 	status=$(_conditional_rest_update_cache_from_response "$kind" "$slug" "$response_file" "$cache_file" 2>/dev/null) || status=""
@@ -475,7 +485,7 @@ _refresh_owner_issues() {
 	local issue_err
 	issue_err=$(mktemp)
 	local issue_json=""
-	issue_json=$(gh search issues --owner "$owner" --state open \
+	issue_json=$(_prefetch_gh_read gh search issues --owner "$owner" --state open \
 		--limit "$BATCH_SEARCH_LIMIT" \
 		--json number,title,state,labels,updatedAt,assignees,repository 2>"$issue_err") || issue_json=""
 	_OWNER_SEARCH_CALLS=$((_OWNER_SEARCH_CALLS + 1))
@@ -535,7 +545,7 @@ _refresh_owner_prs() {
 	local pr_err
 	pr_err=$(mktemp)
 	local pr_json=""
-	pr_json=$(gh search prs --owner "$owner" --state open \
+	pr_json=$(_prefetch_gh_read gh search prs --owner "$owner" --state open \
 		--limit "$BATCH_SEARCH_LIMIT" \
 		--json number,title,labels,updatedAt,assignees,repository,createdAt,author 2>"$pr_err") || pr_json=""
 	_OWNER_SEARCH_CALLS=$((_OWNER_SEARCH_CALLS + 1))
@@ -631,7 +641,7 @@ _cmd_refresh() {
 	# fall back to their own rate-limit call (the existing behaviour).
 	local _graphql_remaining=""
 	declare -F gh_record_call >/dev/null && gh_record_call rest pulse_batch_prefetch_rate_limit || true
-	_graphql_remaining=$(gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null) || _graphql_remaining=""
+	_graphql_remaining=$(_prefetch_gh_read gh api rate_limit --jq '.resources.graphql.remaining' 2>/dev/null) || _graphql_remaining=""
 
 	# L1 tickle counters — reset per refresh cycle (module globals from
 	# pulse-events-tickle.sh; may already be 0 if sourced fresh, but
