@@ -14,7 +14,7 @@ import {
 // ---------------------------------------------------------------------------
 // Injects a synthetic message for interactive sessions when session context
 // exceeds a token threshold, prompting the LLM to advise the user to run
-// /compact. Fires at 250k tokens, then every 50k above that (300k, 350k, ...).
+// /compact. Fires at 300k tokens, then every 50k above that (350k, 400k, ...).
 // Uses the last assistant message's token counts — which represent the full
 // context sent to the model on that turn — so the number tracks real cost, not
 // model capacity.
@@ -23,7 +23,7 @@ import {
 // not spend output budget on user-facing cost advice, and GPT-5.5+ models are
 // registered with a 500k context limit so OpenCode auto-compacts around 400k.
 
-const TOKEN_ADVISORY_INITIAL = 250_000;
+const TOKEN_ADVISORY_INITIAL = 300_000;
 const TOKEN_ADVISORY_INTERVAL = 50_000;
 
 /**
