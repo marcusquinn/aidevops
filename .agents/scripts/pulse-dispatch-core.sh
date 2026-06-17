@@ -612,7 +612,7 @@ _issue_thread_is_trusted_maintainer_only() {
 					and ((.body // "") | test("^<!-- (nmr-hold-guidance|ever-nmr-remediation) -->")))) | not)
 		) ]
 		| length
-	' 2>/dev/null) || return 1
+	') || return 1
 	[[ "$untrusted_comment_count" =~ ^[0-9]+$ ]] || return 1
 	[[ "$untrusted_comment_count" -eq 0 ]] || return 1
 
@@ -623,7 +623,7 @@ _issue_thread_is_trusted_maintainer_only() {
 		else [] end)
 		| [ .[] | select((.author_association // "NONE") == "COLLABORATOR") | (.user.login // .author.login // "") ]
 		| unique | .[]
-	' 2>/dev/null) || return 1
+	') || return 1
 	local comment_login
 	while IFS= read -r comment_login; do
 		[[ -n "$comment_login" ]] || continue
