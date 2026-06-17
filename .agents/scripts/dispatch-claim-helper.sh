@@ -268,14 +268,36 @@ _post_claim() {
 ${machine_readable_part}
 <!-- ops:end -->"
 
-	local comment_id
-	comment_id=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-		--method POST \
-		--field body="$body" \
-		--jq '.id' 2>/dev/null) || {
-		echo "Error: failed to post claim comment on #${issue_number} in ${repo_slug}" >&2
+	local attempts="${DISPATCH_CLAIM_POST_ATTEMPTS:-3}"
+	local retry_delay="${DISPATCH_CLAIM_POST_RETRY_DELAY:-2}"
+	if ! [[ "$attempts" =~ ^[1-9][0-9]*$ ]]; then
+		attempts=3
+	fi
+	if ! [[ "$retry_delay" =~ ^[0-9]+$ ]]; then
+		retry_delay=2
+	fi
+
+	local comment_id="" attempt=1 post_err_file="" post_error_summary=""
+	post_err_file=$(mktemp 2>/dev/null || printf '%s' "/tmp/aidevops-claim-post-error.$$" )
+	while [[ "$attempt" -le "$attempts" ]]; do
+		comment_id=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+			--method POST \
+			--field body="$body" \
+			--jq '.id' 2>"$post_err_file") && break
+
+		post_error_summary=$(tr '\n' ' ' <"$post_err_file" | cut -c1-240 2>/dev/null || printf '%s' "unknown")
+		if [[ "$attempt" -lt "$attempts" ]]; then
+			echo "Warning: claim comment POST failed on #${issue_number} in ${repo_slug} (attempt ${attempt}/${attempts}): ${post_error_summary:-unknown}; retrying" >&2
+			sleep "$retry_delay"
+		fi
+		attempt=$((attempt + 1))
+	done
+	rm -f "$post_err_file" 2>/dev/null || true
+
+	if [[ -z "$comment_id" ]]; then
+		echo "Error: failed to post claim comment on #${issue_number} in ${repo_slug} after ${attempts} attempt(s): ${post_error_summary:-unknown}" >&2
 		return 1
-	}
+	fi
 
 	if [[ -z "$comment_id" || "$comment_id" == "null" ]]; then
 		echo "Error: claim comment posted but no ID returned" >&2
@@ -1278,6 +1300,8 @@ Environment:
   DISPATCH_CLAIM_WINDOW    Consensus window in seconds (default: 8)
   DISPATCH_CLAIM_MAX_AGE   Max age of claim comments in seconds (default: 1800 = 30 min)
   DISPATCH_CLAIM_ORPHAN_GRACE  Claim-only pre-launch grace in seconds (default: 120)
+  DISPATCH_CLAIM_POST_ATTEMPTS  Claim comment POST attempts (default: 3)
+  DISPATCH_CLAIM_POST_RETRY_DELAY  Seconds between claim POST attempts (default: 2)
 
 Protocol:
   1. Runner posts plain-text claim comment with unique nonce
