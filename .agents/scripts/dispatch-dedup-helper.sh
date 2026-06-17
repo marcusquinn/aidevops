@@ -2252,6 +2252,10 @@ classify_dispatch_blocker_reason() {
 			printf 'ever_nmr_without_approval\n'
 			return 0
 			;;
+		*blocked_by_native_lookup_unavailable* | *native*blocked*by*lookup*unavailable*)
+			printf 'blocked_by_native_lookup_unavailable\n'
+			return 0
+			;;
 		*canary*failed*)
 			printf 'canary_failed\n'
 			return 0
