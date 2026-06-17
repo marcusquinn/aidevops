@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.87] - 2026-06-17
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: remove invalid OAuth task ID (#24955)
+
+### Fixed
+
+- retry dispatch claim comment posts (#24970)
+
 ## [3.20.86] - 2026-06-17
 
 ### Fixed
