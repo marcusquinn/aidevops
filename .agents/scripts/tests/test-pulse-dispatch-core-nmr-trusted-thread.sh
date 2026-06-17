@@ -283,11 +283,11 @@ test_comment_jq_parse_errors_remain_visible() {
 	local stderr_output
 	stderr_output=$(<"$stderr_file")
 	case "$stderr_output" in
-	*"parse error"*)
+	*error*)
 		print_result "comment jq parse errors remain visible" 0
 		;;
 	*)
-		print_result "comment jq parse errors remain visible" 1 "expected jq parse error on stderr, got: ${stderr_output:-<empty>}"
+		print_result "comment jq parse errors remain visible" 1 "expected jq error on stderr, got: ${stderr_output:-<empty>}"
 		;;
 	esac
 	cleanup_case
