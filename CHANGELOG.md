@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.20.94] - 2026-06-18
 
+### Changed
+
+- Documentation: prepare changelog for 3.20.94
+
+### Fixed
+
+- preserve REST Search cooldown headers (#25053)
+
+## [3.20.94] - 2026-06-18
+
 ### Fixed
 
 - preserve REST Search cooldown headers (#25053)
