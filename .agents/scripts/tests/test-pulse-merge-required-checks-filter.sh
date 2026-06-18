@@ -278,8 +278,14 @@ EOF
 }
 
 test_required_checks_gh_reads_are_timeout_wrapped() {
-	if [[ -z "$REQUIRED_CHECKS_SCRIPT" ]]; then
+	if [[ -z "${REQUIRED_CHECKS_SCRIPT:-}" ]]; then
 		printf 'ERROR: REQUIRED_CHECKS_SCRIPT is empty or not set\n' >&2
+		print_result "required-check gh reads use timeout wrapper" 1
+		return 0
+	fi
+
+	if [[ ! -f "$REQUIRED_CHECKS_SCRIPT" ]]; then
+		printf 'ERROR: REQUIRED_CHECKS_SCRIPT file does not exist or is not a regular file: %s\n' "$REQUIRED_CHECKS_SCRIPT" >&2
 		print_result "required-check gh reads use timeout wrapper" 1
 		return 0
 	fi
