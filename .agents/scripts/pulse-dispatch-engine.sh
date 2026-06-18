@@ -865,7 +865,7 @@ apply_dispatch_max() {
 			fill_dispatched_p2=$(dispatch_max) || fill_dispatched_p2=0
 			[[ "$fill_dispatched_p2" =~ ^[0-9]+$ ]] || fill_dispatched_p2=0
 			_adaptive_launch_settle_wait "$fill_dispatched_p2" "dispatch_max phase 2"
-			_dispatch_min_worker_floor_refill "$_p2_max"
+			_dispatch_min_worker_floor_refill "$_p2_max" "$((_p2_active + fill_dispatched_p2))"
 		else
 			echo "[pulse-wrapper] Dispatch_max Phase 2: consolidation child created but slots full (active=${_p2_active}, max=${_p2_max}) — skipping (t2749)" >>"$LOGFILE"
 		fi
@@ -1402,8 +1402,10 @@ _run_early_exit_recycle_loop() {
 			break
 		fi
 
-		dispatch_max >/dev/null || true
-		_dispatch_min_worker_floor_refill "$post_max"
+		local early_dispatched
+		early_dispatched=$(dispatch_max) || early_dispatched=0
+		[[ "$early_dispatched" =~ ^[0-9]+$ ]] || early_dispatched=0
+		_dispatch_min_worker_floor_refill "$post_max" "$((post_active + early_dispatched))"
 		post_active=$(count_active_workers)
 		post_runnable=$(normalize_count_output "$(count_runnable_candidates)")
 		post_queued=$(normalize_count_output "$(count_queued_without_worker)")
