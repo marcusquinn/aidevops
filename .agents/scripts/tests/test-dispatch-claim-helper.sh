@@ -620,7 +620,7 @@ EOF
 	cat >"${mock_path}/chmod" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\t%s\n' "${1:-}" "${2:-}" >>"${MOCK_CHMOD_LOG:?}"
-/bin/chmod "$@"
+command -p chmod "$@"
 EOF
 	chmod +x "${mock_path}/chmod"
 
