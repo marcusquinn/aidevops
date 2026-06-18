@@ -1104,10 +1104,8 @@ _attempt_worker_briefed_auto_merge() {
 	local issue_author_login=""
 	read -r issue_author_assoc issue_author_login <<< "$_issue_meta"
 	local issue_author_permission=""
-	if [[ -n "$precomputed_issue_author_permission" ]]; then
-		if [[ -z "$precomputed_permission_login" || "$precomputed_permission_login" == "$issue_author_login" ]]; then
-			issue_author_permission="$precomputed_issue_author_permission"
-		fi
+	if [[ -n "$precomputed_issue_author_permission" && -n "$precomputed_permission_login" && "$precomputed_permission_login" == "$issue_author_login" ]]; then
+		issue_author_permission="$precomputed_issue_author_permission"
 	fi
 
 	# Fetch auto-approval signal once for the NMR crypto-vs-auto check (t2449).
