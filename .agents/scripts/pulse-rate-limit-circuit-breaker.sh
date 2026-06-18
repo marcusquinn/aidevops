@@ -69,8 +69,18 @@ fi
 # invocations (not via pulse-wrapper.sh) also use the canonical value.
 _CB_RL_CONF="${SCRIPT_DIR}/../configs/pulse-rate-limit.conf"
 if [[ -z "${AIDEVOPS_PULSE_CIRCUIT_BREAKER_THRESHOLD+x}" ]] && [[ -f "$_CB_RL_CONF" ]]; then
+	_CB_PULSE_BATCH_SEARCH_LAST_RESORT_WAS_SET=0
+	_CB_PULSE_BATCH_SEARCH_LAST_RESORT_SAVED=""
+	if [[ -n "${PULSE_BATCH_SEARCH_LAST_RESORT+x}" ]]; then
+		_CB_PULSE_BATCH_SEARCH_LAST_RESORT_WAS_SET=1
+		_CB_PULSE_BATCH_SEARCH_LAST_RESORT_SAVED="$PULSE_BATCH_SEARCH_LAST_RESORT"
+	fi
 	# shellcheck disable=SC1090
 	source "$_CB_RL_CONF"
+	if [[ "$_CB_PULSE_BATCH_SEARCH_LAST_RESORT_WAS_SET" == "1" ]]; then
+		PULSE_BATCH_SEARCH_LAST_RESORT="$_CB_PULSE_BATCH_SEARCH_LAST_RESORT_SAVED"
+	fi
+	unset _CB_PULSE_BATCH_SEARCH_LAST_RESORT_WAS_SET _CB_PULSE_BATCH_SEARCH_LAST_RESORT_SAVED
 fi
 
 # LOGFILE for sourced-mode usage (caller sets it; standalone mode defines a default).
