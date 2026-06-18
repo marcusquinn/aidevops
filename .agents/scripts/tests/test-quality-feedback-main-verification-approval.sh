@@ -294,6 +294,18 @@ test_skips_resolved_thread_inline_ack() {
 	return 0
 }
 
+test_skips_multispace_implementation_verified_inline_ack() {
+	local comments result
+	comments='[{"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the update. The implementation\nhas   been verified and the tests are passing.","path":".agents/scripts/pulse-dispatch-engine.sh","line":1406,"html_url":"https://example.invalid/review","created_at":"2026-06-18T00:00:00Z"}]'
+	result=$(_build_inline_findings "$comments" "25009" "medium" | jq 'length')
+	if [[ "$result" == "0" ]]; then
+		print_result "skip multispace implementation-verified inline acknowledgement" 0
+	else
+		print_result "skip multispace implementation-verified inline acknowledgement" 1 "expected 0 findings, got ${result}"
+	fi
+	return 0
+}
+
 test_skips_verified_tests_passing_inline_ack() {
 	local comments result
 	comments='[{"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the update. Since the implementation has been verified and the tests are passing, this thread is resolved.","path":".agents/scripts/pulse-dispatch-engine.sh","line":1406,"html_url":"https://example.invalid/review","created_at":"2026-06-18T00:00:00Z"}]'
