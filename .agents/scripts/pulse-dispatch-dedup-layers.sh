@@ -240,6 +240,7 @@ _dedup_layer5_dispatch_comment() {
 		local dispatch_comment_output=""
 		if dispatch_comment_output=$("$dedup_helper" has-dispatch-comment "$issue_number" "$repo_slug" "$self_login" 2>>"$LOGFILE"); then
 			echo "[pulse-wrapper] Dedup: #${issue_number} in ${repo_slug} has active dispatch comment — ${dispatch_comment_output}" >>"$LOGFILE"
+			printf '%s\n' "$dispatch_comment_output"
 			return 0
 		fi
 	fi
@@ -265,6 +266,7 @@ _dedup_layer6_assignee_and_stale() {
 			local assigned_reason="unknown"
 			assigned_reason=$("$dedup_helper" classify-blocker "$assigned_output" 2>/dev/null) || assigned_reason="unknown"
 			echo "[pulse-wrapper] Dedup: #${issue_number} in ${repo_slug} already assigned — DISPATCH_BLOCK_REASON reason=${assigned_reason} signal=${assigned_output}" >>"$LOGFILE"
+			printf '%s\n' "$assigned_output"
 			return 0
 		fi
 		# t1927: Stale recovery must record fast-fail. When _is_stale_assignment()
