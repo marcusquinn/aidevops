@@ -1202,8 +1202,8 @@ _pulse_run_deterministic_pipeline() {
 	local _pmr_skip=0
 	if [[ -d "$_pulse_merge_routine_lock_dir" && -f "${_pulse_merge_routine_lock_dir}/pid" ]]; then
 		local _pmr_lock_pid=""
-		_pmr_lock_pid=$(cat "${_pulse_merge_routine_lock_dir}/pid" 2>/dev/null || printf '0\n')
-		if [[ "$_pmr_lock_pid" =~ ^[0-9]+$ ]] && kill -0 "$_pmr_lock_pid" 2>/dev/null; then
+		_pmr_lock_pid=$(cat "${_pulse_merge_routine_lock_dir}/pid" 2>/dev/null || true)
+		if [[ "$_pmr_lock_pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$_pmr_lock_pid" 2>/dev/null; then
 			echo "[pulse-wrapper] deterministic_merge_pass: skipping (pulse-merge-routine pid=${_pmr_lock_pid} still running)" >>"$LOGFILE"
 			_pmr_skip=1
 		fi
