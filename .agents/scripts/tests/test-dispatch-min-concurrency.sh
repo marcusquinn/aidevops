@@ -314,6 +314,37 @@ test_capacity_recent_progress_gets_runway_under_pressure() {
 	return 0
 }
 
+test_capacity_clamps_provider_cap_below_active_to_zero_available() {
+	(
+		reset_capacity_pressure_env
+		TEST_MAX_WORKERS=8
+		TEST_ACTIVE_WORKERS=4
+		AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+		pulse_apply_provider_load_capacity_cap() {
+			printf '1 0\n'
+			return 0
+		}
+		unset _DISPATCH_MIN_WORKER_FLOOR_ACTIVE || true
+		local result capacity_file
+		capacity_file=$(mktemp)
+		_dispatch_compute_capacity >"$capacity_file"
+		result=$(<"$capacity_file")
+		rm -f "$capacity_file"
+		if [[ "$result" == "1 4 0" && "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-0}" == "0" ]]; then
+			return 0
+		fi
+		printf 'result=%s floor_active=%s\n' "$result" "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-unset}" >"${TEST_ROOT}/capacity-clamp-failure.txt"
+		return 1
+	)
+	local rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "capacity: provider cap below active clamps available to zero" 0
+	else
+		print_result "capacity: provider cap below active clamps available to zero" 1 "$(<"${TEST_ROOT}/capacity-clamp-failure.txt")"
+	fi
+	return 0
+}
+
 test_throttle_does_not_force_serial_under_floor() {
 	reset_capacity_pressure_env
 	_DISPATCH_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
@@ -391,6 +422,7 @@ test_apply_dispatch_refills_until_active_floor_after_partial_launch() {
 	printf '%s\n%s\n' 4 6 >"$TEST_ACTIVE_WORKERS_SEQUENCE_FILE"
 	printf '%s\n' 0 >"$TEST_DISPATCH_CALLS_FILE"
 	printf '%s\n%s\n' 2 2 >"$TEST_DISPATCH_RETURNS_FILE"
+	AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS=1
 	STOP_FLAG="${HOME}/.aidevops/logs/stop"
 	# shellcheck disable=SC2329  # Override sourced function for this regression.
 	dispatch_max() {
@@ -420,7 +452,54 @@ test_apply_dispatch_refills_until_active_floor_after_partial_launch() {
 	else
 		print_result "apply: refills minimum active-worker floor after partial launch" 1 "dispatch_calls=${dispatch_calls}"
 	fi
-	unset TEST_ACTIVE_WORKERS_SEQUENCE_FILE TEST_DISPATCH_CALLS_FILE TEST_DISPATCH_RETURNS_FILE
+	unset TEST_ACTIVE_WORKERS_SEQUENCE_FILE TEST_DISPATCH_CALLS_FILE TEST_DISPATCH_RETURNS_FILE AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS
+	return 0
+}
+
+test_apply_dispatch_skips_refill_when_capacity_cap_disables_floor() {
+	(
+		AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+		TEST_MAX_WORKERS=8
+		TEST_ACTIVE_WORKERS=4
+		TEST_DISPATCH_CALLS_FILE="${TEST_ROOT}/cap-refill-dispatch-calls.txt"
+		printf '%s\n' 0 >"$TEST_DISPATCH_CALLS_FILE"
+		STOP_FLAG="${HOME}/.aidevops/logs/stop"
+		: >"$LOGFILE"
+		pulse_apply_provider_load_capacity_cap() {
+			printf '1 0\n'
+			return 0
+		}
+		# shellcheck disable=SC2329  # Override sourced function for this regression.
+		dispatch_max() {
+			local calls
+			calls=$(<"$TEST_DISPATCH_CALLS_FILE")
+			[[ "$calls" =~ ^[0-9]+$ ]] || calls=0
+			printf '%s\n' "$((calls + 1))" >"$TEST_DISPATCH_CALLS_FILE"
+			printf '0\n'
+			return 0
+		}
+		# shellcheck disable=SC2329  # Override sourced function to keep the test fast.
+		_adaptive_launch_settle_wait() {
+			return 0
+		}
+
+		apply_dispatch_max
+
+		local dispatch_calls
+		dispatch_calls=$(<"$TEST_DISPATCH_CALLS_FILE")
+		if [[ "$dispatch_calls" -eq 1 ]] && ! grep -q 'Minimum worker floor refill:' "$LOGFILE" 2>/dev/null; then
+			return 0
+		fi
+		printf 'dispatch_calls=%s log=%s\n' "$dispatch_calls" "$(<"$LOGFILE")" >"${TEST_ROOT}/cap-refill-failure.txt"
+		return 1
+	)
+	local rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "apply: capacity cap disables minimum floor refill" 0
+	else
+		print_result "apply: capacity cap disables minimum floor refill" 1 "$(<"${TEST_ROOT}/cap-refill-failure.txt")"
+	fi
+	unset TEST_DISPATCH_CALLS_FILE
 	return 0
 }
 
@@ -545,10 +624,12 @@ test_capacity_env_multiplier_overrides_config
 test_capacity_defaults_single_account_to_max_cap
 test_capacity_recent_service_interruptions_reduce_slots
 test_capacity_recent_progress_gets_runway_under_pressure
+test_capacity_clamps_provider_cap_below_active_to_zero_available
 test_throttle_does_not_force_serial_under_floor
 test_throttle_forces_serial_above_floor
 test_canary_preflight_marks_floor_without_cpu_bypass
 test_apply_dispatch_refills_until_active_floor_after_partial_launch
+test_apply_dispatch_skips_refill_when_capacity_cap_disables_floor
 test_active_pulse_refill_uses_min_floor_above_raw_max
 test_soft_canary_failure_bypasses_with_recent_worker_evidence
 test_hard_canary_failure_blocks_despite_recent_worker_evidence
