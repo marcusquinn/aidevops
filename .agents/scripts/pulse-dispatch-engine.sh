@@ -843,7 +843,7 @@ apply_dispatch_max() {
 	[[ "$fill_dispatched" =~ ^[0-9]+$ ]] || fill_dispatched=0
 
 	_adaptive_launch_settle_wait "$fill_dispatched" "dispatch_max"
-	_dispatch_min_worker_floor_refill
+	_dispatch_min_worker_floor_refill "" ""
 
 	# t2749: Phase 2 — re-enumerate when consolidation created a child during
 	# Phase 1. The sentinel is written by _dispatch_issue_consolidation in
@@ -865,7 +865,7 @@ apply_dispatch_max() {
 			fill_dispatched_p2=$(dispatch_max) || fill_dispatched_p2=0
 			[[ "$fill_dispatched_p2" =~ ^[0-9]+$ ]] || fill_dispatched_p2=0
 			_adaptive_launch_settle_wait "$fill_dispatched_p2" "dispatch_max phase 2"
-			_dispatch_min_worker_floor_refill
+			_dispatch_min_worker_floor_refill "$_p2_max" "$((_p2_active + fill_dispatched_p2))"
 		else
 			echo "[pulse-wrapper] Dispatch_max Phase 2: consolidation child created but slots full (active=${_p2_active}, max=${_p2_max}) — skipping (t2749)" >>"$LOGFILE"
 		fi
@@ -885,6 +885,10 @@ apply_dispatch_max() {
 # and per-candidate blockers; a zero-dispatch round ends the refill.
 #
 # Returns 0 always; best-effort refill should not abort the pulse cycle.
+#
+# Args:
+#   $1 - optional capped max-worker target
+#   $2 - optional capped active-worker count
 #######################################
 _dispatch_min_worker_floor_refill() {
 	local min_worker_floor="${AIDEVOPS_MIN_WORKER_CONCURRENCY:-}"
@@ -898,9 +902,9 @@ _dispatch_min_worker_floor_refill() {
 	if ((min_worker_floor <= 0)); then
 		return 0
 	fi
-	local capped_max_workers capped_active_workers capped_available_slots
-	capped_max_workers=$(get_max_workers_target)
-	capped_active_workers=$(count_active_workers)
+	local capped_max_workers="${1:-}" capped_active_workers="${2:-}" capped_available_slots
+	[[ -n "$capped_max_workers" ]] || capped_max_workers=$(get_max_workers_target)
+	[[ -n "$capped_active_workers" ]] || capped_active_workers=$(count_active_workers)
 	[[ "$capped_max_workers" =~ ^[0-9]+$ ]] || capped_max_workers=1
 	[[ "$capped_active_workers" =~ ^[0-9]+$ ]] || capped_active_workers=0
 	local refill_floor_active=0
@@ -1181,7 +1185,7 @@ maybe_refill_underfilled_pool_during_active_pulse() {
 	echo "[pulse-wrapper] Active pulse refill: underfilled ${active_workers}/${refill_target} (raw_max=${max_workers}) with runnable=${runnable_count}, queued_without_worker=${queued_without_worker}, idle=${idle_seconds}s, stall=${progress_stall_seconds}s" >>"$LOGFILE"
 	run_underfill_worker_recycler "$max_workers" "$active_workers" "$runnable_count" "$queued_without_worker"
 	dispatch_max >/dev/null || true
-	_dispatch_min_worker_floor_refill
+	_dispatch_min_worker_floor_refill "$max_workers"
 
 	echo "$now_epoch"
 	return 0
@@ -1398,8 +1402,10 @@ _run_early_exit_recycle_loop() {
 			break
 		fi
 
-		dispatch_max >/dev/null || true
-		_dispatch_min_worker_floor_refill
+		local early_dispatched
+		early_dispatched=$(dispatch_max) || early_dispatched=0
+		[[ "$early_dispatched" =~ ^[0-9]+$ ]] || early_dispatched=0
+		_dispatch_min_worker_floor_refill "$post_max" "$((post_active + early_dispatched))"
 		post_active=$(count_active_workers)
 		post_runnable=$(normalize_count_output "$(count_runnable_candidates)")
 		post_queued=$(normalize_count_output "$(count_queued_without_worker)")
