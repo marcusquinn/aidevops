@@ -14,39 +14,20 @@ cleanup() {
 trap cleanup EXIT
 
 load_function() {
-	python3 - "$REPO_DIR/aidevops.sh" <<'PY'
-import sys
-
-path = sys.argv[1]
-collect = False
-depth = 0
-with open(path, "r", encoding="utf-8") as handle:
-    for line in handle:
-        if line.startswith("ensure_trailing_newline()"):
-            collect = True
-        if collect:
-            print(line, end="")
-            depth += line.count("{") - line.count("}")
-            if depth == 0 and line.strip() == "}":
-                break
-PY
+	sed -n '/^ensure_trailing_newline() {/,/^}/p' "$REPO_DIR/aidevops.sh"
 	return 0
 }
 
 eval "$(load_function)"
 
-assert_file_bytes() {
+assert_file_content() {
 	local file="$1"
 	local expected="$2"
-	local actual
-	actual="$(python3 - "$file" <<'PY'
-import sys
-with open(sys.argv[1], "rb") as handle:
-    print(repr(handle.read().decode("utf-8")))
-PY
-)"
-	if [[ "$actual" != "$expected" ]]; then
-		printf 'Expected %s, got %s\n' "$expected" "$actual" >&2
+	local expected_file="$TMP_DIR/expected.txt"
+
+	printf '%b' "$expected" >"$expected_file"
+	if ! cmp -s "$file" "$expected_file"; then
+		printf 'Expected %s to match expected content\n' "$file" >&2
 		return 1
 	fi
 	return 0
@@ -64,8 +45,8 @@ ensure_trailing_newline "$with_newline"
 ensure_trailing_newline "$without_newline"
 ensure_trailing_newline "$empty_file"
 
-assert_file_bytes "$with_newline" "'already newline\\n'"
-assert_file_bytes "$without_newline" "'missing newline\\n'"
-assert_file_bytes "$empty_file" "''"
+assert_file_content "$with_newline" 'already newline\n'
+assert_file_content "$without_newline" 'missing newline\n'
+assert_file_content "$empty_file" ''
 
 printf 'ensure_trailing_newline handles newline-present, newline-missing, and empty files\n'
