@@ -51,7 +51,7 @@ _build_inline_findings() {
 			"\\bno further recommendations?\\b|" +
 			"\\bno further action is needed\\b|" +
 			"\\bthread is resolved\\b|" +
-			"\\bimplementation (has been )?(confirmed|verified)\\b|" +
+			"\\bimplementation[[:space:]]+((is|was|has[[:space:]]+been)[[:space:]]+)?(confirmed|verified)\\b|" +
 			"\\btests are passing\\b"; "i")) as $resolution_or_ack |
 		select($resolution_or_ack | not) |
 
