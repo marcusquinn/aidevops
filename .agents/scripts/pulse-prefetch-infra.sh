@@ -240,7 +240,7 @@ _compute_repo_state_fingerprint() {
 	issues_json=$(gh_issue_list --repo "$slug" --state open \
 		--json number,labels,assignees,updatedAt \
 		--limit "$limit" 2>/dev/null) && issues_ok=true
-	prs_json=$(gh_pr_list --repo "$slug" --state open \
+	prs_json=$(pulse_pr_list_get --repo "$slug" --state open \
 		--json number,labels,assignees,reviewDecision,mergeable,updatedAt \
 		--limit "$limit" 2>/dev/null) && prs_ok=true
 

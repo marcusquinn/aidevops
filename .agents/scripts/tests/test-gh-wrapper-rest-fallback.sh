@@ -68,6 +68,7 @@
 #  37. AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE bypasses both PR view cache layers
 #  38. collaborator permission fallback parser ignores nested spoof fields
 #  39. _rest_split_csv suppresses Broken pipe noise when consumers close early
+#  40. gh_pr_list records exact argv shape telemetry for repeated-call analysis
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
 # precedence over PATH binaries, so the stub captures all `gh` invocations
@@ -878,6 +879,27 @@ if grep -qE '^api /repos/owner/repo/pulls\?' "$GH_CALLS" 2>/dev/null &&
 else
 	fail "gh_pr_list proactively routes to REST when GraphQL budget is low" \
 		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+
+# =============================================================================
+# Test 23a: gh_pr_list records exact argv shape telemetry
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+: >"$AIDEVOPS_GH_API_LOG"
+export STUB_RATE_LIMIT_REMAINING=5000
+
+gh_pr_list --repo "owner/repo" --state open --json number --limit 10 >/dev/null 2>&1 || true
+gh_pr_list --repo "owner/repo" --state open --json number --limit 10 >/dev/null 2>&1 || true
+gh_pr_list --repo "owner/repo" --state open --json number,title --limit 10 >/dev/null 2>&1 || true
+
+shape_total=$(grep -c $'\tgh_pr_list_shape\t' "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)
+shape_unique=$(grep $'\tgh_pr_list_shape\t' "$AIDEVOPS_GH_API_LOG" 2>/dev/null | cut -f6 | sort -u | wc -l | tr -d '[:space:]' || true)
+if [[ "$shape_total" == "3" && "$shape_unique" == "2" ]]; then
+	pass "gh_pr_list records exact argv shape telemetry for repeated-call analysis"
+else
+	fail "gh_pr_list records exact argv shape telemetry for repeated-call analysis" \
+		"shape_total=${shape_total} shape_unique=${shape_unique} log=$(cat "$AIDEVOPS_GH_API_LOG")"
 fi
 
 # =============================================================================
