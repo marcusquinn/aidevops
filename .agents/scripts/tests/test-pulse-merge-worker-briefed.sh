@@ -23,7 +23,9 @@
 #   Case (p): COLLABORATOR author + authenticated write permission → passes (GH#24958)
 #   Case (q): COLLABORATOR author + authenticated read permission → blocked (GH#24958)
 #   Case (r): precomputed write permission skips collaborator permission API (GH#25057)
-#   Case (s): issue-author=NONE + spoofed crypto marker → blocked (GH#21936)
+#   Case (s): worker gate reuses matching precomputed permission (GH#25070)
+#   Case (t): worker gate ignores mismatched precomputed permission (GH#25070)
+#   Case (u): issue-author=NONE + spoofed crypto marker → blocked (GH#21936)
 #
 # No real repository is touched. The gh binary is replaced with a mock stub
 # that serves canned responses from TEST_ROOT fixture files.
@@ -749,10 +751,65 @@ test_case_r_precomputed_permission_skips_api() {
 }
 
 # =============================================================================
-# Case (s): issue-author=NONE + spoofed approval marker but failed verification
+# Case (s): worker gate reuses matching precomputed permission (GH#25070)
+# =============================================================================
+test_case_s_worker_gate_uses_matching_precomputed_permission() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	printf '{"author_association":"COLLABORATOR","user":{"login":"maintainer-peer"}}' >"${TEST_ROOT}/issue.json"
+	printf '[]' >"${TEST_ROOT}/comments.json"
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
+
+	local result=0
+	_attempt_worker_briefed_auto_merge "118" "owner/repo" "origin:worker" "false" "60" "write" "maintainer-peer" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "Case (s): worker gate reuses matching precomputed permission (GH#25070)" 1 \
+			"Expected exit 0, got ${result}"
+	elif grep -q "/collaborators/maintainer-peer/permission" "$GH_LOG" 2>/dev/null; then
+		print_result "Case (s): worker gate reuses matching precomputed permission (GH#25070)" 1 \
+			"Expected worker gate to skip duplicate collaborator permission API call"
+	else
+		print_result "Case (s): worker gate reuses matching precomputed permission (GH#25070)" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+# =============================================================================
+# Case (t): worker gate ignores mismatched precomputed permission login (GH#25070)
+# =============================================================================
+test_case_t_worker_gate_ignores_mismatched_precomputed_permission() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	printf '{"author_association":"COLLABORATOR","user":{"login":"issue-author"}}' >"${TEST_ROOT}/issue.json"
+	printf '[]' >"${TEST_ROOT}/comments.json"
+	printf 'read' >"${TEST_ROOT}/permission.txt"
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
+
+	local result=0
+	_attempt_worker_briefed_auto_merge "119" "owner/repo" "origin:worker" "false" "61" "write" "different-pr-author" && result=0 || result=$?
+
+	if [[ "$result" -eq 0 ]]; then
+		print_result "Case (t): worker gate ignores mismatched precomputed permission (GH#25070)" 1 \
+			"Expected non-zero exit, got 0 (mismatched cached permission should not trust issue author)"
+	elif grep -q "/collaborators/issue-author/permission" "$GH_LOG" 2>/dev/null; then
+		print_result "Case (t): worker gate ignores mismatched precomputed permission (GH#25070)" 0
+	else
+		print_result "Case (t): worker gate ignores mismatched precomputed permission (GH#25070)" 1 \
+			"Expected fallback collaborator permission API call for issue-author"
+	fi
+	teardown_test_env
+	return 0
+}
+
+# =============================================================================
+# Case (u): issue-author=NONE + spoofed approval marker but failed verification
 # → blocked. Comment marker presence alone is not a trust signal (GH#21936).
 # =============================================================================
-test_case_s_spoofed_crypto_marker_blocked() {
+test_case_u_spoofed_crypto_marker_blocked() {
 	setup_test_env
 	define_helpers_under_test || { teardown_test_env; return 0; }
 
@@ -765,13 +822,13 @@ test_case_s_spoofed_crypto_marker_blocked() {
 	_attempt_worker_briefed_auto_merge "117" "owner/repo" "origin:worker" "false" "59" && result=0 || result=$?
 
 	if [[ "$result" -eq 0 ]]; then
-		print_result "Case (s): spoofed crypto marker without verification → blocked" 1 \
+		print_result "Case (u): spoofed crypto marker without verification → blocked" 1 \
 			"Expected non-zero exit, got 0 (unverified marker should block)"
 	else
 		if grep -q "no cryptographic approval signature found (t2449/t3052)" "$LOGFILE" 2>/dev/null; then
-			print_result "Case (s): spoofed crypto marker without verification → blocked" 0
+			print_result "Case (u): spoofed crypto marker without verification → blocked" 0
 		else
-			print_result "Case (s): spoofed crypto marker without verification → blocked" 1 \
+			print_result "Case (u): spoofed crypto marker without verification → blocked" 1 \
 				"Exit was non-zero but expected block log message not found"
 		fi
 	fi
@@ -806,7 +863,9 @@ main() {
 	test_case_p_collaborator_permission_passes
 	test_case_q_collaborator_read_permission_blocked
 	test_case_r_precomputed_permission_skips_api
-	test_case_s_spoofed_crypto_marker_blocked
+	test_case_s_worker_gate_uses_matching_precomputed_permission
+	test_case_t_worker_gate_ignores_mismatched_precomputed_permission
+	test_case_u_spoofed_crypto_marker_blocked
 
 	echo ""
 	printf 'Results: %d/%d passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"

@@ -56,17 +56,20 @@ fi
 _PULSE_AUTHOR_PERMISSION_UNKNOWN="unknown"
 _PULSE_AUTHOR_PERMISSION_LOOKUP_STATE="$_PULSE_AUTHOR_PERMISSION_UNKNOWN"
 _PULSE_AUTHOR_PERMISSION_HTTP="$_PULSE_AUTHOR_PERMISSION_UNKNOWN"
+_PULSE_AUTHOR_PERMISSION_VALUE="$_PULSE_AUTHOR_PERMISSION_UNKNOWN"
 
 #######################################
 # Record collaborator-permission lookup state for merge callers.
-# Args: $1=state, $2=http-status
+# Args: $1=state, $2=http-status, $3=permission-value(optional)
 # Returns: 0 always.
 #######################################
 _pulse_author_permission_state_set() {
 	local state="$1"
 	local http_status="$2"
+	local permission_value="${3:-$_PULSE_AUTHOR_PERMISSION_UNKNOWN}"
 	_PULSE_AUTHOR_PERMISSION_LOOKUP_STATE="$state"
 	_PULSE_AUTHOR_PERMISSION_HTTP="$http_status"
+	_PULSE_AUTHOR_PERMISSION_VALUE="$permission_value"
 	return 0
 }
 
@@ -91,7 +94,7 @@ _pulse_author_permission_lookup() {
 			_pulse_author_permission_state_set "failed" "${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-$_PULSE_AUTHOR_PERMISSION_UNKNOWN}"
 			return 2
 		fi
-		_pulse_author_permission_state_set "ok" "${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-$_PULSE_AUTHOR_PERMISSION_UNKNOWN}"
+		_pulse_author_permission_state_set "ok" "${AIDEVOPS_GH_COLLAB_PERMISSION_HTTP:-$_PULSE_AUTHOR_PERMISSION_UNKNOWN}" "$pulse_perm_value"
 		if [[ -n "$out_var" ]]; then
 			printf -v "$out_var" '%s' "$pulse_perm_value"
 		else
@@ -105,7 +108,7 @@ _pulse_author_permission_lookup() {
 		_pulse_author_permission_state_set "failed" "$_PULSE_AUTHOR_PERMISSION_UNKNOWN"
 		return 2
 	}
-	_pulse_author_permission_state_set "ok" "$_PULSE_AUTHOR_PERMISSION_UNKNOWN"
+	_pulse_author_permission_state_set "ok" "$_PULSE_AUTHOR_PERMISSION_UNKNOWN" "$pulse_perm_value"
 	if [[ -n "$out_var" ]]; then
 		printf -v "$out_var" '%s' "$pulse_perm_value"
 	else
