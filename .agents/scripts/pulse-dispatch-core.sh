@@ -1380,7 +1380,7 @@ _dispatch_dedup_check_layers() {
 		local _dedup_block_reason="dedup_active_claim"
 		if [[ -n "$_dedup_signal" ]]; then
 			_dedup_block_signal="${_dedup_signal%%$'\n'*}"
-			_dedup_block_reason=$("${BASH_SOURCE[0]%/*}/dispatch-dedup-helper.sh" classify-blocker "$_dedup_block_signal" 2>/dev/null) || _dedup_block_reason="dedup_active_claim"
+			_dedup_block_reason=$("${SCRIPT_DIR}/dispatch-dedup-helper.sh" classify-blocker "$_dedup_block_signal" 2>/dev/null) || _dedup_block_reason="dedup_active_claim"
 		fi
 		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=${_dedup_block_reason} signal=${_dedup_block_signal} issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
 		echo "[dispatch_with_dedup] Dedup guard blocked #${issue_number} in ${repo_slug}" >>"$LOGFILE"
