@@ -562,6 +562,7 @@ gh_pr_view() {
 	205) printf 'sha-legacy-failing' ;;
 	206) printf '{"labels":[],"mergeable":"MERGEABLE","headRefOid":"sha-legacy-error"}' ;;
 	207) printf 'sha-legacy-error' ;;
+	208) printf '{"labels":[],"mergeable":"MERGEABLE","headRefOid":"sha-clean-ruleset"}' ;;
 	*) printf '{"labels":[],"mergeable":"MERGEABLE","headRefOid":"sha-clean"}' ;;
 	esac
 	return 0
@@ -588,11 +589,30 @@ gh() {
 		printf 'main'
 		return 0
 	fi
+	if [[ "$command_name" == "api" && "$path_arg" == "repos/example/ruleset-repo" ]]; then
+		printf 'main'
+		return 0
+	fi
 	if [[ "$command_name" == "api" && "$path_arg" == "repos/example/repo/branches/main/protection/required_status_checks" ]]; then
 		printf '{}'
 		return 0
 	fi
+	if [[ "$command_name" == "api" && "$path_arg" == "repos/example/ruleset-repo/branches/main/protection/required_status_checks" ]]; then
+		printf '{"message":"Not Found"}' >&2
+		return 1
+	fi
 	return 1
+}
+
+_required_contexts_from_rulesets_for_default_branch() {
+	local repo_slug="$1"
+	local default_branch="$2"
+	[[ "$default_branch" == "main" ]] || return 1
+	if [[ "$repo_slug" == "example/ruleset-repo" ]]; then
+		printf 'CI / build\n'
+		return 0
+	fi
+	return 0
 }
 
 got=$(_classify_stuck_pr "201" "example/repo" "1")
@@ -622,6 +642,10 @@ assert_eq "7f: legacy status context state=error classifies as checks failing" \
 got=$(_pms_failure_fingerprint "207" "example/repo")
 assert_eq "7g: legacy error status context fingerprint uses context name" \
 	"legacy-error" "$got"
+
+got=$(_classify_stuck_pr "208" "example/ruleset-repo" "0")
+assert_eq "7h: rulesets required checks prevent branch-protection 404 classification" \
+	"STUCK_OTHER" "$got"
 echo ""
 
 # ---------------------------------------------------------------------------
