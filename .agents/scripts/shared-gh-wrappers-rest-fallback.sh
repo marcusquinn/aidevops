@@ -1492,8 +1492,12 @@ _rest_issue_search() {
 		return "$_rc"
 	fi
 
-	_body="$(awk 'BEGIN { body = 0 } { line = $0; sub(/\r$/, "", line); if (body) { print; next } if (line == "") { body = 1 } }' <<<"$_raw_response" 2>/dev/null)"
+	_body="$(awk 'BEGIN { body = 0 } { line = $0; sub(/\r$/, "", line); if (body) { print; next } if (line == "") { body = 1 } }' <<<"$_raw_response")"
 	[[ -z "$_body" && "$_raw_response" != HTTP/* ]] && _body="$_raw_response"
+	if [[ -z "$_body" ]]; then
+		printf '[]\n'
+		return 0
+	fi
 	printf '%s\n' "$_body" | jq -r "$_final_jq"
 	return $?
 }

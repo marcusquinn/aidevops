@@ -286,6 +286,10 @@ gh() {
 		return 0
 	fi
 	if [[ "$1" == "api" && ( "$2" =~ ^/search/issues || ( "$2" == "-i" && "${3:-}" =~ ^/search/issues ) ) ]]; then
+		if [[ -n "${STUB_SEARCH_RAW_RESPONSE:-}" ]]; then
+			printf '%s' "$STUB_SEARCH_RAW_RESPONSE"
+			return 0
+		fi
 		local fixture='{"items":[{"number":22430,"state":"open","title":"Reduce GraphQL list-call pressure"}]}'
 		fixture="${STUB_SEARCH_FIXTURE:-$fixture}"
 		if [[ "$2" == "-i" ]]; then
@@ -877,6 +881,18 @@ if [[ "$search_output" == "22430" ]] && grep -qE '^api -i /search/issues\?' "$GH
 	pass "_rest_issue_search includes headers for diagnostics without leaking them to callers"
 else
 	fail "_rest_issue_search includes headers for diagnostics without leaking them to callers" \
+		"output=${search_output} GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+
+# Test 22b: _rest_issue_search returns valid JSON when the response has no body
+: >"$GH_CALLS"; : >"$GH_INFO_OUTPUT"; export STUB_RATE_LIMIT_REMAINING=0
+STUB_SEARCH_RAW_RESPONSE=$'HTTP/2 204\r\nX-RateLimit-Remaining: 29\r\n\r\n'
+search_output=$(_rest_issue_search --repo "owner/repo" --search "fallback" --state open --json number --jq '.[0].number')
+unset STUB_SEARCH_RAW_RESPONSE
+if [[ "$search_output" == "[]" ]] && grep -qE '^api -i /search/issues\?' "$GH_CALLS" 2>/dev/null; then
+	pass "_rest_issue_search emits an empty JSON array for empty response bodies"
+else
+	fail "_rest_issue_search emits an empty JSON array for empty response bodies" \
 		"output=${search_output} GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
 fi
 
