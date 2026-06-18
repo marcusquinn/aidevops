@@ -270,6 +270,30 @@ test_write_collaborator_comments_bypass_historical_nmr() {
 	return 0
 }
 
+test_comment_jq_parse_errors_remain_visible() {
+	setup_case "OWNER" '{not-json'
+	local stderr_file="${TEST_ROOT}/jq-stderr.log"
+
+	if _issue_thread_is_trusted_maintainer_only 109 "owner/repo" 2>"$stderr_file"; then
+		print_result "comment jq parse errors remain visible" 1 "trusted-thread helper unexpectedly accepted malformed comments JSON"
+		cleanup_case
+		return 0
+	fi
+
+	local stderr_output
+	stderr_output=$(<"$stderr_file")
+	case "$stderr_output" in
+	*error*)
+		print_result "comment jq parse errors remain visible" 0
+		;;
+	*)
+		print_result "comment jq parse errors remain visible" 1 "expected jq error on stderr, got: ${stderr_output:-<empty>}"
+		;;
+	esac
+	cleanup_case
+	return 0
+}
+
 main() {
 	if ! define_helpers_under_test; then
 		printf 'FATAL: helper extraction failed\n' >&2
@@ -284,6 +308,7 @@ main() {
 	test_active_nmr_label_preserves_gate
 	test_collaborator_author_does_not_bypass_historical_nmr
 	test_write_collaborator_comments_bypass_historical_nmr
+	test_comment_jq_parse_errors_remain_visible
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
