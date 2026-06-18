@@ -117,6 +117,18 @@ _gh_collaborator_permission_lookup() {
 	return 0
 }
 
+stderr_contains_jq_error() {
+	local stderr_output="$1"
+	case "$stderr_output" in
+	*error*)
+		return 0
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
 _is_bot_generated_cleanup_issue() {
 	return 1
 }
@@ -282,15 +294,25 @@ test_comment_jq_parse_errors_remain_visible() {
 
 	local stderr_output
 	stderr_output=$(<"$stderr_file")
-	case "$stderr_output" in
-	*error*)
+	if stderr_contains_jq_error "$stderr_output"; then
 		print_result "comment jq parse errors remain visible" 0
-		;;
-	*)
+	else
 		print_result "comment jq parse errors remain visible" 1 "expected jq error on stderr, got: ${stderr_output:-<empty>}"
-		;;
-	esac
+	fi
 	cleanup_case
+	return 0
+}
+
+test_comment_jq_error_matcher_handles_jq_versions() {
+	if ! stderr_contains_jq_error 'parse error: Invalid numeric literal at line 1, column 5'; then
+		print_result "comment jq error matcher handles jq versions" 1 "did not match jq 1.6 parse error output"
+		return 0
+	fi
+	if ! stderr_contains_jq_error 'jq: error (at <stdin>:1): Invalid numeric literal at line 1, column 5'; then
+		print_result "comment jq error matcher handles jq versions" 1 "did not match jq 1.7 error output"
+		return 0
+	fi
+	print_result "comment jq error matcher handles jq versions" 0
 	return 0
 }
 
@@ -309,6 +331,7 @@ main() {
 	test_collaborator_author_does_not_bypass_historical_nmr
 	test_write_collaborator_comments_bypass_historical_nmr
 	test_comment_jq_parse_errors_remain_visible
+	test_comment_jq_error_matcher_handles_jq_versions
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
