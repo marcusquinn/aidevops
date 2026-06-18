@@ -1375,6 +1375,7 @@ _dispatch_dedup_check_layers() {
 	ISSUE_META_JSON="$issue_meta_json" \
 		check_dispatch_dedup "$issue_number" "$repo_slug" "$dispatch_title" "$issue_title" "$self_login" || _dedup_rc=$?
 	if [[ "$_dedup_rc" -eq 0 || "$_dedup_rc" -eq 3 ]]; then
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=dedup_active_claim signal=dedup_guard_blocked issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
 		echo "[dispatch_with_dedup] Dedup guard blocked #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 		_ds_record "$issue_number" "$repo_slug" "dedup.7_layers" "$_dss_t0"
 		if [[ "$_dedup_rc" -eq 3 ]]; then

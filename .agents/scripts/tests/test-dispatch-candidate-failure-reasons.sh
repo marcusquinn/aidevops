@@ -35,6 +35,8 @@ assert_reason 'skipping historical ever-NMR check for bot-generated cleanup issu
 assert_reason 'DISPATCH_BLOCK_REASON reason=blocked_by_native_lookup_unavailable signal=native blockedBy lookup unavailable and no body blocked-by markers found' 'blocked_by_native_lookup_unavailable'
 assert_reason 'pre-dispatch validator failed: missing worker context; needs-brief label present' 'missing_worker_context'
 assert_reason 'dedup.worktree_cap blocked by max worktree count' 'local_capacity_gate'
+assert_reason 'dedup guard blocked #303 in some-org/infrastructure' 'dedup_active_claim'
+assert_reason 'INFRASTRUCTURE_BLOCKED (label=infrastructure)' 'policy_gate'
 assert_reason 'external_author_gate blocked no-auto-dispatch policy' 'policy_gate'
 assert_reason '' 'no_recent_log_evidence'
 assert_reason 'new blocker shape not yet classified' 'unclassified_signal'
