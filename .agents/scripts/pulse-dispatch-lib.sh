@@ -629,7 +629,11 @@ _dispatch_ramp_now() {
 }
 
 _dispatch_ramp_system_boot_ts() {
-	local boot_ts=""
+	local boot_ts="${1:-}"
+	if [[ "$boot_ts" =~ ^[0-9]+$ ]]; then
+		printf '%s' "$boot_ts"
+		return 0
+	fi
 	if declare -F _gh_secondary_system_boot_ts >/dev/null 2>&1; then
 		boot_ts="$(_gh_secondary_system_boot_ts 2>/dev/null || true)"
 		if [[ "$boot_ts" =~ ^[0-9]+$ ]]; then
@@ -655,8 +659,12 @@ _dispatch_ramp_system_boot_ts() {
 }
 
 _dispatch_ramp_cooldown_expires_at() {
-	local expires=""
+	local expires="${1:-}"
 	local file="${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE:-${HOME}/.aidevops/cache/gh-secondary-cooldown.json}"
+	if [[ "$expires" =~ ^[0-9]+$ ]]; then
+		printf '%s' "$expires"
+		return 0
+	fi
 	if declare -F _gh_secondary_cooldown_expires_at >/dev/null 2>&1; then
 		expires="$(_gh_secondary_cooldown_expires_at 2>/dev/null || true)"
 		if [[ "$expires" =~ ^[0-9]+$ ]]; then
@@ -679,8 +687,8 @@ _dispatch_ramp_cooldown_expires_at() {
 
 _dispatch_ramp_phase_start() {
 	local now=""
-	local boot_ts=""
-	local expires=""
+	local boot_ts="${1:-}"
+	local expires="${2:-}"
 	local boot_secs="${AIDEVOPS_PULSE_DISPATCH_RAMP_BOOT_SECS:-${AIDEVOPS_GH_READ_RAMP_BOOT_SECS:-180}}"
 	local recovery_secs="${AIDEVOPS_PULSE_DISPATCH_RAMP_RECOVERY_SECS:-${AIDEVOPS_GH_READ_RAMP_RECOVERY_SECS:-300}}"
 	if [[ "${AIDEVOPS_PULSE_DISPATCH_RAMP_START_EPOCH:-}" =~ ^[0-9]+$ ]]; then
@@ -689,14 +697,18 @@ _dispatch_ramp_phase_start() {
 	fi
 	now="$(_dispatch_ramp_now)"
 	if [[ "$boot_secs" =~ ^[0-9]+$ && "$boot_secs" -gt 0 ]]; then
-		boot_ts="$(_dispatch_ramp_system_boot_ts 2>/dev/null || true)"
+		if [[ ! "$boot_ts" =~ ^[0-9]+$ ]]; then
+			boot_ts="$(_dispatch_ramp_system_boot_ts "" 2>/dev/null || true)"
+		fi
 		if [[ "$boot_ts" =~ ^[0-9]+$ && "$now" -ge "$boot_ts" && $((now - boot_ts)) -lt "$boot_secs" ]]; then
 			printf 'boot %s\n' "$boot_ts"
 			return 0
 		fi
 	fi
 	if [[ "$recovery_secs" =~ ^[0-9]+$ && "$recovery_secs" -gt 0 ]]; then
-		expires="$(_dispatch_ramp_cooldown_expires_at 2>/dev/null || true)"
+		if [[ ! "$expires" =~ ^[0-9]+$ ]]; then
+			expires="$(_dispatch_ramp_cooldown_expires_at "" 2>/dev/null || true)"
+		fi
 		if [[ "$expires" =~ ^[0-9]+$ && "$now" -ge "$expires" && $((now - expires)) -lt "$recovery_secs" ]]; then
 			printf 'cooldown-recovery %s\n' "$expires"
 			return 0
@@ -709,6 +721,8 @@ _dispatch_apply_startup_capacity_ramp() {
 	local max_workers="$1"
 	local active_workers="$2"
 	local slot_secs="${AIDEVOPS_PULSE_DISPATCH_RAMP_SLOT_SECS:-120}"
+	local boot_ts="${3:-}"
+	local expires="${4:-}"
 	local now=""
 	local phase_line=""
 	local phase=""
@@ -722,7 +736,7 @@ _dispatch_apply_startup_capacity_ramp() {
 	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
 	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
 	[[ "$slot_secs" =~ ^[0-9]+$ && "$slot_secs" -gt 0 ]] || slot_secs=120
-	phase_line="$(_dispatch_ramp_phase_start 2>/dev/null || true)"
+	phase_line="$(_dispatch_ramp_phase_start "$boot_ts" "$expires" 2>/dev/null || true)"
 	[[ -n "$phase_line" ]] || {
 		printf '%s\n' "$max_workers"
 		return 0
@@ -739,7 +753,7 @@ _dispatch_apply_startup_capacity_ramp() {
 	ramp_cap=$((1 + (elapsed / slot_secs)))
 	((ramp_cap < 1)) && ramp_cap=1
 	if ((ramp_cap < max_workers)); then
-		echo "[pulse-wrapper] Dispatch_ramp active: phase=${phase} cap=${ramp_cap} max_workers=${max_workers} active=${active_workers} step_seconds=${slot_secs}" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch_ramp active: phase=${phase} cap=${ramp_cap} max_workers=${max_workers} active=${active_workers} step_seconds=${slot_secs}" >>"${LOGFILE:-/dev/null}"
 		printf '%s\n' "$ramp_cap"
 		return 0
 	fi
