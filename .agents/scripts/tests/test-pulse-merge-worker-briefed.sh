@@ -20,6 +20,9 @@
 #   Case (m): origin:worker + OWNER author + no crypto → still passes (t3052)
 #   Case (n): COLLABORATOR author + login in trusted-issue-author allowlist → passes (t3062)
 #   Case (o): COLLABORATOR author + login NOT in allowlist + no crypto → blocked (t3062)
+#   Case (p): COLLABORATOR author + authenticated write permission → passes (GH#24958)
+#   Case (q): COLLABORATOR author + authenticated read permission → blocked (GH#24958)
+#   Case (r): issue-author=NONE + spoofed crypto marker → blocked (GH#21936)
 #
 # No real repository is touched. The gh binary is replaced with a mock stub
 # that serves canned responses from TEST_ROOT fixture files.
@@ -76,6 +79,8 @@ setup_test_env() {
 	printf '{"author_association":"OWNER"}' >"${TEST_ROOT}/issue.json"
 	# Default comments fixture: empty array (no NMR markers)
 	printf '[]' >"${TEST_ROOT}/comments.json"
+	# Default collaborator permission fixture: read (not maintainer-equivalent)
+	printf 'read' >"${TEST_ROOT}/permission.txt"
 
 	# Mock gh: logs every call and returns canned data from TEST_ROOT fixtures.
 	cat >"${TEST_ROOT}/bin/gh" <<'GHEOF'
@@ -117,6 +122,25 @@ if [[ "$*" == *"/comments"* ]]; then
 	exit 0
 fi
 
+# Collaborator permission API (maintainer-authority fallback)
+if [[ "$*" == *"/collaborators/"*"/permission"* ]]; then
+	_jq_filter=""
+	_permission="$(cat "${TEST_ROOT}/permission.txt" 2>/dev/null || printf 'read')"
+	_json="{\"permission\":\"${_permission}\"}"
+	for _i in "${!_all_args[@]}"; do
+		if [[ "${_all_args[$_i]}" == "--jq" ]]; then
+			_jq_filter="${_all_args[$((_i + 1))]:-}"
+			break
+		fi
+	done
+	if [[ -n "$_jq_filter" ]]; then
+		printf '%s' "$_json" | jq -r "$_jq_filter"
+	else
+		printf '%s\n' "$_json"
+	fi
+	exit 0
+fi
+
 exit 0
 GHEOF
 	chmod +x "${TEST_ROOT}/bin/gh"
@@ -147,7 +171,7 @@ teardown_test_env() {
 # _is_trusted_issue_author and _attempt_worker_briefed_auto_merge live in
 # pulse-merge-process.sh (post-split, t3062 adds the trusted-author helper).
 define_helpers_under_test() {
-	local src_worker_briefed src_issue_api src_trusted_author src_crypto_approval
+	local src_worker_briefed src_issue_api src_trusted_author src_issue_authority src_crypto_approval
 	src_issue_api=$(awk '
 		/^_pm_issue_api\(\) \{/,/^\}$/ { print }
 	' "$MERGE_SCRIPT")
@@ -158,6 +182,9 @@ define_helpers_under_test() {
 	fi
 	src_trusted_author=$(awk '
 		/^_is_trusted_issue_author\(\) \{/,/^\}$/ { print }
+	' "$extract_from")
+	src_issue_authority=$(awk '
+		/^_issue_author_has_maintainer_authority\(\) \{/,/^\}$/ { print }
 	' "$extract_from")
 	src_crypto_approval=$(awk '
 		/^_issue_has_verified_crypto_approval\(\) \{/,/^\}$/ { print }
@@ -173,6 +200,8 @@ define_helpers_under_test() {
 	eval "$src_issue_api"
 	# shellcheck disable=SC1090
 	eval "$src_trusted_author"
+	# shellcheck disable=SC1090
+	eval "$src_issue_authority"
 	# shellcheck disable=SC1090
 	eval "$src_crypto_approval"
 	# shellcheck disable=SC1090
@@ -633,10 +662,73 @@ test_case_o_trusted_author_not_in_allowlist_blocked() {
 }
 
 # =============================================================================
-# Case (p): issue-author=NONE + spoofed approval marker but failed verification
+# Case (p): COLLABORATOR author + authenticated write permission → passes
+# Maintainer-operated aidevops workers may surface as COLLABORATOR in webhook
+# metadata; authenticated collaborator permission is the trust source.
+# =============================================================================
+test_case_p_collaborator_permission_passes() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	printf '{"author_association":"COLLABORATOR","user":{"login":"maintainer-peer"}}' >"${TEST_ROOT}/issue.json"
+	printf '[]' >"${TEST_ROOT}/comments.json"
+	printf 'write' >"${TEST_ROOT}/permission.txt"
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
+
+	local result=0
+	_attempt_worker_briefed_auto_merge "115" "owner/repo" "origin:worker" "false" "57" || result=$?
+
+	if [[ "$result" -ne 0 ]]; then
+		print_result "Case (p): COLLABORATOR + authenticated write permission → passes (GH#24958)" 1 \
+			"Expected exit 0, got ${result}"
+	else
+		if grep -q "authenticated maintainer permission fallback (GH#24958)" "$LOGFILE" 2>/dev/null; then
+			print_result "Case (p): COLLABORATOR + authenticated write permission → passes (GH#24958)" 0
+		else
+			print_result "Case (p): COLLABORATOR + authenticated write permission → passes (GH#24958)" 1 \
+				"Exit was 0 but expected GH#24958 permission fallback log message not found"
+		fi
+	fi
+	teardown_test_env
+	return 0
+}
+
+# =============================================================================
+# Case (q): COLLABORATOR author + authenticated read permission → blocked
+# The fallback must fail closed when the login lacks write-level repo access.
+# =============================================================================
+test_case_q_collaborator_read_permission_blocked() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	printf '{"author_association":"COLLABORATOR","user":{"login":"read-only-peer"}}' >"${TEST_ROOT}/issue.json"
+	printf '[]' >"${TEST_ROOT}/comments.json"
+	printf 'read' >"${TEST_ROOT}/permission.txt"
+	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
+
+	local result=0
+	_attempt_worker_briefed_auto_merge "116" "owner/repo" "origin:worker" "false" "58" && result=0 || result=$?
+
+	if [[ "$result" -eq 0 ]]; then
+		print_result "Case (q): COLLABORATOR + authenticated read permission → blocked (GH#24958)" 1 \
+			"Expected non-zero exit, got 0 (read-only collaborator should block)"
+	else
+		if grep -q "no cryptographic approval signature found (t2449/t3052)" "$LOGFILE" 2>/dev/null; then
+			print_result "Case (q): COLLABORATOR + authenticated read permission → blocked (GH#24958)" 0
+		else
+			print_result "Case (q): COLLABORATOR + authenticated read permission → blocked (GH#24958)" 1 \
+				"Exit was non-zero but expected block log message not found"
+		fi
+	fi
+	teardown_test_env
+	return 0
+}
+
+# =============================================================================
+# Case (r): issue-author=NONE + spoofed approval marker but failed verification
 # → blocked. Comment marker presence alone is not a trust signal (GH#21936).
 # =============================================================================
-test_case_p_spoofed_crypto_marker_blocked() {
+test_case_r_spoofed_crypto_marker_blocked() {
 	setup_test_env
 	define_helpers_under_test || { teardown_test_env; return 0; }
 
@@ -646,16 +738,16 @@ test_case_p_spoofed_crypto_marker_blocked() {
 	export AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE=1
 
 	local result=0
-	_attempt_worker_briefed_auto_merge "115" "owner/repo" "origin:worker" "false" "57" && result=0 || result=$?
+	_attempt_worker_briefed_auto_merge "117" "owner/repo" "origin:worker" "false" "59" && result=0 || result=$?
 
 	if [[ "$result" -eq 0 ]]; then
-		print_result "Case (p): spoofed crypto marker without verification → blocked" 1 \
+		print_result "Case (r): spoofed crypto marker without verification → blocked" 1 \
 			"Expected non-zero exit, got 0 (unverified marker should block)"
 	else
 		if grep -q "no cryptographic approval signature found (t2449/t3052)" "$LOGFILE" 2>/dev/null; then
-			print_result "Case (p): spoofed crypto marker without verification → blocked" 0
+			print_result "Case (r): spoofed crypto marker without verification → blocked" 0
 		else
-			print_result "Case (p): spoofed crypto marker without verification → blocked" 1 \
+			print_result "Case (r): spoofed crypto marker without verification → blocked" 1 \
 				"Exit was non-zero but expected block log message not found"
 		fi
 	fi
@@ -687,7 +779,9 @@ main() {
 	test_case_m_owner_no_crypto_still_passes
 	test_case_n_trusted_author_allowlist_passes
 	test_case_o_trusted_author_not_in_allowlist_blocked
-	test_case_p_spoofed_crypto_marker_blocked
+	test_case_p_collaborator_permission_passes
+	test_case_q_collaborator_read_permission_blocked
+	test_case_r_spoofed_crypto_marker_blocked
 
 	echo ""
 	printf 'Results: %d/%d passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"

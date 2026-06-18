@@ -970,6 +970,39 @@ _is_trusted_issue_author() {
 }
 
 #######################################
+# Check whether an issue author has maintainer-equivalent repository access.
+#
+# GitHub can expose maintainer-operated issues/PRs as COLLABORATOR rather than
+# OWNER/MEMBER. For worker-briefed auto-merge, verify that ambiguous metadata
+# through the authenticated collaborator permission endpoint instead of forcing
+# per-issue cryptographic approvals for every maintainer-run aidevops worker.
+#
+# Args: $1=repo_slug, $2=github_login
+# Returns: 0=trusted maintainer-equivalent access, 1=not trusted or API error
+#######################################
+_issue_author_has_maintainer_authority() {
+	local repo_slug="$1"
+	local login="$2"
+	local permission=""
+
+	[[ -n "$repo_slug" && -n "$login" ]] || return 1
+
+	#aidevops:trust-boundary GH#24958: ambiguous GitHub issue
+	# author_association values are not sufficient to auto-merge worker PRs.
+	# Confirm maintainer-equivalent access with authenticated metadata and fail
+	# closed on API errors or permissions below write.
+	permission=$(gh api "repos/${repo_slug}/collaborators/${login}/permission" \
+		--jq '.permission // ""' 2>/dev/null) || return 1
+
+	case "$permission" in
+		admin | maintain | write)
+			return 0
+			;;
+	esac
+	return 1
+}
+
+#######################################
 # Verify that a linked issue has a maintainer cryptographic approval (t3052).
 #
 # Marker-string presence is not a trust signal: any user able to comment could
@@ -1079,13 +1112,16 @@ _attempt_worker_briefed_auto_merge() {
 		_has_crypto="true"
 	fi
 
-	# Gate: linked issue authored by OWNER/MEMBER, OR login is in the
+	# Gate: linked issue authored by OWNER/MEMBER, OR login has authenticated
+	# maintainer-equivalent repo permission (GH#24958), OR login is in the
 	# trusted-issue-author allowlist (t3062), OR cryptographically approved
 	# by maintainer (t3052). The trust chain "maintainer SSH-signed
 	# an approval on the issue" is at least as strong as the OWNER/MEMBER
 	# author check — the maintainer personally vouched with their private key.
 	if [[ "$issue_author_assoc" != "OWNER" && "$issue_author_assoc" != "MEMBER" ]]; then
-		if _is_trusted_issue_author "$issue_author_login"; then
+		if _issue_author_has_maintainer_authority "$repo_slug" "$issue_author_login"; then
+			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author ${issue_author_login} passes via authenticated maintainer permission fallback (GH#24958)" >>"$LOGFILE"
+		elif _is_trusted_issue_author "$issue_author_login"; then
 			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author ${issue_author_login} passes via trusted-issue-author allowlist (t3062)" >>"$LOGFILE"
 		elif [[ "$_has_crypto" != "true" ]]; then
 			echo "[pulse-merge] worker-briefed auto-merge: skipping PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author_association=${issue_author_assoc} (not OWNER/MEMBER) and no cryptographic approval signature found (t2449/t3052)" >>"$LOGFILE"

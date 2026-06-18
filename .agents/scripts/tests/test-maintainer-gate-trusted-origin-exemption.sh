@@ -20,7 +20,7 @@
 #      origin:worker PRs with OWNER/MEMBER author and a trusted issue author
 #      with no non-maintainer comments.
 #   F. REPO_OWNER env var is wired through both Job 1 and Job 3 steps.
-#   G. GH#24546 private-org CONTRIBUTOR fallback uses authenticated
+#   G. GH#24546/GH#24958 private-org CONTRIBUTOR/COLLABORATOR fallback uses authenticated
 #      collaborator permission metadata and fails closed.
 #
 # Workflow execution cannot be tested locally — this is a static shape
@@ -137,22 +137,14 @@ else
 fi
 
 # -------------------------------------------------------------------
-# Check G: GH#24546 private-org CONTRIBUTOR permission fallback
+# Check G: GH#24546/GH#24958 private-org CONTRIBUTOR/COLLABORATOR permission fallback
 # -------------------------------------------------------------------
 assert_contains "PR_AUTHOR:[[:space:]]*\\$\\{\\{[[:space:]]*github\.event\.pull_request\.user\.login" \
 	"Job 1 exposes PR_AUTHOR for permission fallback"
 assert_contains "pr_author_has_maintainer_authority" \
 	"defines shared maintainer-authority helper"
-assert_contains "CONTRIBUTOR\)" \
-	"helper handles ambiguous CONTRIBUTOR webhook association"
-collaborator_case_count=$(grep -cE 'COLLABORATOR\)' "$WORKFLOW_FILE" 2>/dev/null || true)
-[[ "$collaborator_case_count" =~ ^[0-9]+$ ]] || collaborator_case_count=0
-if [[ "$collaborator_case_count" -eq 1 ]]; then
-	print_result "helper does not add bare COLLABORATOR string exemption" 0
-else
-	print_result "helper does not add bare COLLABORATOR string exemption" 1 \
-		"expected only the existing label-protection COLLABORATOR case, found $collaborator_case_count"
-fi
+assert_contains "CONTRIBUTOR\|COLLABORATOR" \
+	"helper routes ambiguous CONTRIBUTOR/COLLABORATOR webhook association through permission fallback"
 assert_contains "collaborators/.*/permission" \
 	"helper uses authenticated collaborator permission endpoint"
 assert_contains "admin\|maintain\|write" \
@@ -161,6 +153,8 @@ assert_contains "permission fallback failed" \
 	"helper logs and fails closed on permission API failure"
 assert_contains "#aidevops:trust-boundary GH#24546" \
 	"trust-boundary marker documents authenticated fallback"
+assert_contains "GH#24546/GH#24958" \
+	"trust-boundary marker covers maintainer-operated collaborator fallback"
 assert_contains "authorAssociation,author" \
 	"Job 3 fetches PR author login with author association"
 
