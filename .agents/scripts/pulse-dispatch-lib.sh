@@ -688,6 +688,9 @@ _dispatch_compute_capacity() {
 	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
 	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
 	[[ "$available_slots" =~ ^-?[0-9]+$ ]] || available_slots=0
+	if ((available_slots < 0)); then
+		available_slots=0
+	fi
 
 	printf '%s %s %s\n' "$max_workers" "$active_workers" "$available_slots"
 	return 0

@@ -898,17 +898,50 @@ _dispatch_min_worker_floor_refill() {
 	if ((min_worker_floor <= 0)); then
 		return 0
 	fi
+	local capped_max_workers capped_active_workers capped_available_slots
+	capped_max_workers=$(get_max_workers_target)
+	capped_active_workers=$(count_active_workers)
+	[[ "$capped_max_workers" =~ ^[0-9]+$ ]] || capped_max_workers=1
+	[[ "$capped_active_workers" =~ ^[0-9]+$ ]] || capped_active_workers=0
+	local refill_floor_active=0
+	if declare -F pulse_apply_provider_load_capacity_cap >/dev/null 2>&1; then
+		local capacity_cap_line=""
+		capacity_cap_line=$(pulse_apply_provider_load_capacity_cap "$capped_max_workers" "$capped_active_workers" "$min_worker_floor") || capacity_cap_line="${capped_max_workers} 0"
+		read -r capped_max_workers refill_floor_active <<<"$capacity_cap_line"
+		[[ "$capped_max_workers" =~ ^[0-9]+$ ]] || capped_max_workers=1
+		[[ "$refill_floor_active" =~ ^[0-9]+$ ]] || refill_floor_active=0
+	elif ((min_worker_floor > 0 && capped_active_workers < min_worker_floor)); then
+		refill_floor_active=1
+		if ((capped_max_workers < min_worker_floor)); then
+			capped_max_workers="$min_worker_floor"
+		fi
+	fi
+	capped_available_slots=$((capped_max_workers - capped_active_workers))
+	local guardrail_line=""
+	guardrail_line=$(_dispatch_apply_current_state_guardrails "$capped_max_workers" "$capped_active_workers" "$capped_available_slots") || guardrail_line="${capped_max_workers} ${capped_active_workers} ${capped_available_slots}"
+	read -r capped_max_workers capped_active_workers capped_available_slots <<<"$guardrail_line"
+	[[ "$capped_max_workers" =~ ^[0-9]+$ ]] || capped_max_workers=1
+	[[ "$capped_active_workers" =~ ^[0-9]+$ ]] || capped_active_workers=0
+	[[ "$capped_available_slots" =~ ^-?[0-9]+$ ]] || capped_available_slots=0
+	if ((capped_available_slots < 0)); then
+		capped_available_slots=0
+	fi
+	if (( refill_floor_active <= 0 || capped_max_workers <= capped_active_workers || capped_available_slots <= 0 )); then
+		return 0
+	fi
 
 	local refill_attempt=0
 	local max_refill_attempts="$min_worker_floor"
-	local active_workers fill_dispatched
+	local active_workers="$capped_active_workers" active_workers_known=1 fill_dispatched
 	while ((refill_attempt < max_refill_attempts)); do
 		if [[ -f "$STOP_FLAG" ]]; then
 			echo "[pulse-wrapper] Minimum worker floor refill stopped: stop flag present" >>"$LOGFILE"
 			return 0
 		fi
-		active_workers=$(count_active_workers)
-		[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
+		if ((active_workers_known <= 0)); then
+			active_workers=$(count_active_workers)
+			[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
+		fi
 		if ((active_workers >= min_worker_floor)); then
 			return 0
 		fi
@@ -922,6 +955,7 @@ _dispatch_min_worker_floor_refill() {
 			return 0
 		fi
 		_adaptive_launch_settle_wait "$fill_dispatched" "minimum worker floor refill"
+		active_workers_known=0
 	done
 
 	echo "[pulse-wrapper] Minimum worker floor refill stopped: reached attempt cap ${max_refill_attempts}" >>"$LOGFILE"
