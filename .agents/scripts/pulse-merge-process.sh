@@ -81,7 +81,7 @@ _pmp_add_elapsed_seconds() {
 	elapsed=$((end_epoch - start_epoch))
 	[[ "$elapsed" =~ ^[0-9]+$ ]] || elapsed=0
 
-	current_value=$(eval "printf '%s' \"\${$dest_var:-0}\"" 2>/dev/null) || current_value=0
+	current_value="${!dest_var:-0}"
 	[[ "$current_value" =~ ^[0-9]+$ ]] || current_value=0
 	current_value=$((current_value + elapsed))
 	printf -v "$dest_var" '%s' "$current_value"
@@ -505,7 +505,10 @@ _merge_ready_prs_for_repo() {
 	local pr_count
 	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
 	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
-	[[ -z "$_pr_count_var" ]] || eval "${_pr_count_var}=${pr_count}"
+	if [[ -n "$_pr_count_var" ]]; then
+		[[ "$_pr_count_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+		printf -v "$_pr_count_var" '%s' "$pr_count"
+	fi
 
 	if [[ "$pr_count" -eq 0 ]]; then
 		eval "${_merged_var}=0; ${_closed_var}=0; ${_failed_var}=0"
