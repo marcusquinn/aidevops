@@ -392,7 +392,7 @@ _dsi_dispatch_base_branch() {
 			"${repo_path}/.aidevops.json" 2>/dev/null | sed -n '1p') || base_branch=""
 	fi
 
-	local repos_json="${AIDEVOPS_REPOS_JSON:-${REPOS_JSON:-${AIDEVOPS_REPOS_FILE:-${HOME}/.config/aidevops/repos.json}}}"
+	local repos_json="${AIDEVOPS_REPOS_FILE:-${HOME}/.config/aidevops/repos.json}"
 	if [[ -z "$base_branch" && -n "$repo_slug" && -f "$repos_json" ]] && command -v jq >/dev/null 2>&1; then
 		base_branch=$(jq -r --arg slug "$repo_slug" '
 			.initialized_repos[]?

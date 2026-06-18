@@ -796,6 +796,28 @@ _gh_secondary_cooldown_header_expires_at() {
 	return 0
 }
 
+_gh_secondary_cooldown_rest_reset_at() {
+	local endpoint_arg="${1:-}"
+	local endpoint_family=""
+	local resource_key="core"
+	local reset_at=""
+	local now=""
+	endpoint_family="$(_gh_secondary_cooldown_endpoint_family "$endpoint_arg")"
+	case "$endpoint_family" in
+	rest-core) resource_key="core" ;;
+	rest-search) resource_key="search" ;;
+	*) return 1 ;;
+	esac
+	command -v gh >/dev/null 2>&1 || return 1
+	reset_at=$(gh api rate_limit --jq ".resources.${resource_key} | select(.remaining == 0) | .reset" 2>/dev/null || true)
+	now="$(_gh_secondary_cooldown_now)"
+	if [[ "$reset_at" =~ ^[0-9]+$ && "$reset_at" -gt "$now" ]]; then
+		printf '%s' "$reset_at"
+		return 0
+	fi
+	return 1
+}
+
 _gh_secondary_cooldown_record_response_if_needed() {
 	local rc="$1"
 	local response_text="${2:-}"
@@ -822,17 +844,26 @@ _gh_secondary_cooldown_record_response_if_needed() {
 			return 0
 		fi
 		expires_at="$(_gh_secondary_cooldown_header_expires_at "$response_text")"
+		if [[ -z "$retry_after" ]] && ! [[ "$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-reset")" =~ ^[0-9]+$ ]]; then
+			expires_at="$(_gh_secondary_cooldown_rest_reset_at "$endpoint_arg" || printf '%s' "$expires_at")"
+		fi
 		_gh_secondary_cooldown_write_until "github-api-rate-limit-status-${status}" "$response_text" "$expires_at" "status-${status}" "$_GH_SECONDARY_COOLDOWN_ACTION_CREATED" "$method_arg" "$endpoint_arg" "$query_shape_arg" "$operation_arg" "$wrapper_arg" "$pulse_stage_arg" || true
 		return 0
 		;;
 	429)
 		expires_at="$(_gh_secondary_cooldown_header_expires_at "$response_text")"
+		if [[ -z "$retry_after" ]] && ! [[ "$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-reset")" =~ ^[0-9]+$ ]]; then
+			expires_at="$(_gh_secondary_cooldown_rest_reset_at "$endpoint_arg" || printf '%s' "$expires_at")"
+		fi
 		_gh_secondary_cooldown_write_until "github-api-rate-limit-status-${status}" "$response_text" "$expires_at" "status-${status}" "$_GH_SECONDARY_COOLDOWN_ACTION_CREATED" "$method_arg" "$endpoint_arg" "$query_shape_arg" "$operation_arg" "$wrapper_arg" "$pulse_stage_arg" || true
 		return 0
 		;;
 	esac
 	if [[ "$remaining" =~ ^[0-9]+$ && "$remaining" -eq 0 ]]; then
 		expires_at="$(_gh_secondary_cooldown_header_expires_at "$response_text")"
+		if [[ -z "$retry_after" ]] && ! [[ "$(_gh_secondary_cooldown_header_value "$response_text" "x-ratelimit-reset")" =~ ^[0-9]+$ ]]; then
+			expires_at="$(_gh_secondary_cooldown_rest_reset_at "$endpoint_arg" || printf '%s' "$expires_at")"
+		fi
 		_gh_secondary_cooldown_write_until "github-api-rate-limit-remaining-zero" "$response_text" "$expires_at" "remaining-zero" "$_GH_SECONDARY_COOLDOWN_ACTION_CREATED" "$method_arg" "$endpoint_arg" "$query_shape_arg" "$operation_arg" "$wrapper_arg" "$pulse_stage_arg" || true
 		return 0
 	fi

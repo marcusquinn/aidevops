@@ -312,19 +312,37 @@ _classify_stuck_pr() {
 			2>&1)
 		protection_exit=$?
 		if [[ $protection_exit -ne 0 ]]; then
-			# 404 = no protection (intentional or accidental — the
-			# rollup-pass path will still gate based on actual checks).
+			# 404 = no classic protection. Org/repo rulesets can still enforce
+			# required checks, so mirror pulse-merge-process.sh before treating the
+			# branch as unprotected (GH#24935 / GH#23019).
 			if grep -qi 'HTTP 404\|Not Found' <<<"$protection_resp"; then
-				printf 'STUCK_BRANCHPROTECT_404'
+				local ruleset_contexts_404=""
+				if declare -F _required_contexts_from_rulesets_for_default_branch >/dev/null 2>&1; then
+					local ruleset_contexts_rc=0
+					ruleset_contexts_404=$(_required_contexts_from_rulesets_for_default_branch "$repo_slug" "$default_branch") || ruleset_contexts_rc=$?
+					if [[ $ruleset_contexts_rc -ne 0 ]]; then
+						printf 'STUCK_BRANCHPROTECT_API_ERROR'
+						return "$ruleset_contexts_rc"
+					fi
+					if [[ -n "$ruleset_contexts_404" ]]; then
+						echo "[pulse-merge-stuck] _classify_stuck_pr: no classic branch protection on ${repo_slug} (HTTP 404), but active rulesets require contexts; continuing rollup classification (GH#24935)" >>"$LOGFILE"
+					else
+						printf 'STUCK_BRANCHPROTECT_404'
+						return 0
+					fi
+				else
+					printf 'STUCK_BRANCHPROTECT_404'
+					return 0
+				fi
+			else
+				# 401 / 403 / 5xx etc — transient or auth break.
+				if grep -qi 'HTTP 401\|authentication required\|bad credentials' <<<"$protection_resp"; then
+					printf 'STUCK_AUTH'
+					return 0
+				fi
+				printf 'STUCK_BRANCHPROTECT_API_ERROR'
 				return 0
 			fi
-			# 401 / 403 / 5xx etc — transient or auth break.
-			if grep -qi 'HTTP 401\|authentication required\|bad credentials' <<<"$protection_resp"; then
-				printf 'STUCK_AUTH'
-				return 0
-			fi
-			printf 'STUCK_BRANCHPROTECT_API_ERROR'
-			return 0
 		fi
 	fi
 

@@ -518,6 +518,35 @@ test_serial_loop_basic() {
 	return 0
 }
 
+test_serial_loop_isolates_candidate_stdout() {
+	# Stub: simulate noisy lower helpers before a successful launch. The serial
+	# loop must log that output instead of corrupting the count-only stdout
+	# consumed by pulse-dispatch-engine.sh.
+	# shellcheck disable=SC2317  # called via name resolution from loop
+	_dispatch_process_candidate() {
+		local candidate_json="$1"
+		printf 'lower-helper stdout before count for %s\n' "$candidate_json"
+		return 0
+	}
+
+	local candidate_file
+	candidate_file=$(mktemp)
+	printf '%s\n' '{"number":600,"repo_slug":"o/r","repo_path":"/t","url":"u","title":"t","labels":[]}' >"$candidate_file"
+
+	rm -f "$STOP_FLAG"
+	_DISPATCH_THROTTLE_CLEARED=0
+	local result
+	result=$(_dispatch_floor_loop "$candidate_file" 10 10 "test_user")
+	rm -f "$candidate_file"
+
+	if [[ "$result" == "1 1" ]]; then
+		print_result "serial_loop: isolates candidate stdout from count output" 0
+	else
+		print_result "serial_loop: isolates candidate stdout from count output" 1 "got=${result}"
+	fi
+	return 0
+}
+
 test_serial_loop_budget_cap() {
 	# Stub: every candidate succeeds
 	# shellcheck disable=SC2317  # called via name resolution from loop
@@ -569,6 +598,7 @@ test_parallel_loop_stop_flag_aborts
 test_parallel_loop_graphql_budget_aborts
 test_dispatch_with_timeout_noop_outcome
 test_serial_loop_basic
+test_serial_loop_isolates_candidate_stdout
 test_serial_loop_budget_cap
 
 # Final summary

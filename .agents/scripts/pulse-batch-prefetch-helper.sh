@@ -2,15 +2,16 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # =============================================================================
-# pulse-batch-prefetch-helper.sh — Batch prefetch via org-level gh search
+# pulse-batch-prefetch-helper.sh — Batch prefetch with search as last resort
 # =============================================================================
-# Groups pulse-enabled repos by owner and runs one `gh search issues` +
-# one `gh search prs` per owner, splitting results into per-slug cache
-# files. This is L3 in the layered cache hierarchy:
+# Groups pulse-enabled repos by owner and refreshes per-slug cache files. Search
+# fanout is deliberately a last resort because GitHub secondary-limit heuristics
+# penalize bursty search patterns more aggressively than ordinary cached REST
+# reads. This is L3 in the layered cache hierarchy:
 #
 #   L1: State fingerprint (t2041) — 0 API calls, local hash comparison
 #   L2: Idle skip (t2098)         — 0 API calls, reads L4 cache
-#   L3: Batch prefetch (THIS)     — 2 calls per owner via Search API
+#   L3: Batch prefetch (THIS)     — conditional REST first, Search only by opt-in
 #   L4: Delta prefetch (GH#15286) — 2 calls per repo for changes since last fetch
 #   L5: Per-PR enrichment         — 1 call per repo with open PRs (GraphQL)
 #
@@ -23,8 +24,9 @@
 # Feature flag: PULSE_BATCH_PREFETCH_ENABLED (default: 1)
 # When 0, all subcommands exit 0 immediately (no-op).
 #
-# GH#19963: Reduces GraphQL consumption by using the separate Search API
-# rate-limit bucket (30/min = 1800/hr, currently near 0 usage).
+# GH#19963: Originally reduced GraphQL consumption by using the separate Search
+# API bucket. Secondary-limit incidents showed that raw search bursts can still
+# cascade; the default is now REST/cache-first with Search available by opt-in.
 #
 # Part of aidevops framework: https://aidevops.sh
 # =============================================================================
@@ -99,6 +101,7 @@ PULSE_PREFETCH_FULL_SWEEP_INTERVAL="${PULSE_PREFETCH_FULL_SWEEP_INTERVAL:-14400}
 BATCH_SEARCH_LIMIT="${PULSE_BATCH_SEARCH_LIMIT:-200}"
 LOGFILE="${LOGFILE:-${HOME}/.aidevops/logs/pulse-wrapper.log}"
 PULSE_BATCH_CONDITIONAL_REST_ENABLED="${PULSE_BATCH_CONDITIONAL_REST_ENABLED:-1}"
+PULSE_BATCH_SEARCH_LAST_RESORT="${PULSE_BATCH_SEARCH_LAST_RESORT:-1}"
 
 # String constants to avoid repeated-literal ratchet violations
 _KIND_ISSUES="issues"
@@ -457,6 +460,31 @@ _write_per_slug_caches() {
 # Subcommand: refresh — per-owner fetch helpers
 # =============================================================================
 
+_search_should_route_to_rest() {
+	local graphql_remaining="${1:-}"
+	if [[ "${PULSE_BATCH_SEARCH_LAST_RESORT:-1}" == "1" ]]; then
+		return 0
+	fi
+	if _rest_should_fallback "$graphql_remaining" 2>/dev/null; then
+		return 0
+	fi
+	if declare -F _gh_secondary_cooldown_preflight >/dev/null 2>&1; then
+		_gh_secondary_cooldown_preflight read >/dev/null 2>&1 || return 0
+	fi
+	return 1
+}
+
+_route_owner_search_to_rest() {
+	local kind="$1"
+	local owner="$2"
+	local slugs="${3:-}"
+	local caller="pulse_batch_prefetch_search_${kind}_fallback"
+	_log "search last-resort active — routing ${kind} prefetch for owner=${owner} through per-repo REST"
+	declare -F gh_record_call >/dev/null && gh_record_call search-rest "$caller" || true
+	_prefetch_rest_per_slug "$kind" "$slugs"
+	return 0
+}
+
 # Fetch and cache issues for a single owner.
 # Sets _OWNER_SEARCH_CALLS, _OWNER_CACHE_WRITES, _OWNER_ERRORS (Bash 3.2 namerefs workaround)
 # Arguments: $1=owner  $2=slugs (comma-separated owner/repo list for REST fallback)
@@ -468,6 +496,10 @@ _refresh_owner_issues() {
 	local graphql_remaining="${3:-}"
 	if _conditional_rest_per_slug issues "$slugs"; then
 		_log "conditional REST issues complete for owner=${owner} — skipped search"
+		return 0
+	fi
+	if _search_should_route_to_rest "$graphql_remaining"; then
+		_route_owner_search_to_rest issues "$owner" "$slugs"
 		return 0
 	fi
 	# Proactive REST fallback (t2902): if GraphQL is at/below the fallback
@@ -531,6 +563,10 @@ _refresh_owner_prs() {
 	local graphql_remaining="${3:-}"
 	if _conditional_rest_per_slug prs "$slugs"; then
 		_log "conditional REST prs complete for owner=${owner} — skipped search"
+		return 0
+	fi
+	if _search_should_route_to_rest "$graphql_remaining"; then
+		_route_owner_search_to_rest prs "$owner" "$slugs"
 		return 0
 	fi
 	# Proactive REST fallback (t2902): same pattern as _refresh_owner_issues.
@@ -913,6 +949,7 @@ main() {
 		echo "  PULSE_BATCH_PREFETCH_ENABLED     Enable/disable (default: 1)"
 		echo "  PULSE_BATCH_PREFETCH_CACHE_DIR   Cache directory"
 		echo "  PULSE_BATCH_SEARCH_LIMIT         Max results per search call (default: 200)"
+		echo "  PULSE_BATCH_SEARCH_LAST_RESORT   Route owner search through REST/cache by default (default: 1)"
 		return 0
 		;;
 	*)

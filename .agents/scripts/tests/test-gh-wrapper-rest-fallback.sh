@@ -68,6 +68,7 @@
 #  37. AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE bypasses both PR view cache layers
 #  38. collaborator permission fallback parser ignores nested spoof fields
 #  39. _rest_split_csv suppresses Broken pipe noise when consumers close early
+#  40. gh_pr_list records exact argv shape telemetry for repeated-call analysis
 #
 # Stub strategy: define `gh` as a shell function. Shell functions take
 # precedence over PATH binaries, so the stub captures all `gh` invocations
@@ -279,6 +280,16 @@ gh() {
 		fi
 		if [[ -n "$jq_filter" ]]; then
 			printf '%s\n' "$fixture" | jq -c "$jq_filter"
+		else
+			printf '%s\n' "$fixture"
+		fi
+		return 0
+	fi
+	if [[ "$1" == "api" && ( "$2" =~ ^/search/issues || ( "$2" == "-i" && "${3:-}" =~ ^/search/issues ) ) ]]; then
+		local fixture='{"items":[{"number":22430,"state":"open","title":"Reduce GraphQL list-call pressure"}]}'
+		fixture="${STUB_SEARCH_FIXTURE:-$fixture}"
+		if [[ "$2" == "-i" ]]; then
+			printf 'HTTP/2 200\r\nX-RateLimit-Remaining: 29\r\nX-RateLimit-Resource: search\r\nX-GitHub-Request-Id: SEARCH-REQ\r\n\r\n%s\n' "$fixture"
 		else
 			printf '%s\n' "$fixture"
 		fi
@@ -845,22 +856,28 @@ else
 	fail "gh_issue_list uses primary path when GraphQL budget is healthy" \
 		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
 fi
-
 # =============================================================================
 # Test 22: gh_issue_list preserves --search by routing low-budget calls to search
 # =============================================================================
 : >"$GH_CALLS"
 : >"$GH_INFO_OUTPUT"
 export STUB_RATE_LIMIT_REMAINING=0
-
 gh_issue_list --repo "owner/repo" --search "fallback" --state open --json number --jq '.[0].number' >/dev/null 2>&1 || true
-
-if grep -qE '^api /search/issues\?' "$GH_CALLS" 2>/dev/null &&
+if grep -qE '^api (-i )?/search/issues\?' "$GH_CALLS" 2>/dev/null &&
 	! grep -qE '^issue list' "$GH_CALLS" 2>/dev/null; then
 	pass "gh_issue_list proactively routes --search to /search/issues"
 else
 	fail "gh_issue_list proactively routes --search to /search/issues" \
 		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+# Test 22a: _rest_issue_search captures headers but preserves caller output
+: >"$GH_CALLS"; : >"$GH_INFO_OUTPUT"; export STUB_RATE_LIMIT_REMAINING=0
+search_output=$(_rest_issue_search --repo "owner/repo" --search "fallback" --state open --json number --jq '.[0].number' 2>/dev/null || true)
+if [[ "$search_output" == "22430" ]] && grep -qE '^api -i /search/issues\?' "$GH_CALLS" 2>/dev/null && ! printf '%s\n' "$search_output" | grep -qE '^(HTTP/|X-RateLimit|X-GitHub-Request-Id)'; then
+	pass "_rest_issue_search includes headers for diagnostics without leaking them to callers"
+else
+	fail "_rest_issue_search includes headers for diagnostics without leaking them to callers" \
+		"output=${search_output} GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
 fi
 
 # =============================================================================
@@ -878,6 +895,27 @@ if grep -qE '^api /repos/owner/repo/pulls\?' "$GH_CALLS" 2>/dev/null &&
 else
 	fail "gh_pr_list proactively routes to REST when GraphQL budget is low" \
 		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+
+# =============================================================================
+# Test 23a: gh_pr_list records exact argv shape telemetry
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+: >"$AIDEVOPS_GH_API_LOG"
+export STUB_RATE_LIMIT_REMAINING=5000
+
+gh_pr_list --repo "owner/repo" --state open --json number --limit 10 >/dev/null 2>&1 || true
+gh_pr_list --repo "owner/repo" --state open --json number --limit 10 >/dev/null 2>&1 || true
+gh_pr_list --repo "owner/repo" --state open --json number,title --limit 10 >/dev/null 2>&1 || true
+
+shape_total=$(grep -c $'\tgh_pr_list_shape\t' "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)
+shape_unique=$(grep $'\tgh_pr_list_shape\t' "$AIDEVOPS_GH_API_LOG" 2>/dev/null | cut -f6 | sort -u | wc -l | tr -d '[:space:]' || true)
+if [[ "$shape_total" == "3" && "$shape_unique" == "2" ]]; then
+	pass "gh_pr_list records exact argv shape telemetry for repeated-call analysis"
+else
+	fail "gh_pr_list records exact argv shape telemetry for repeated-call analysis" \
+		"shape_total=${shape_total} shape_unique=${shape_unique} log=$(cat "$AIDEVOPS_GH_API_LOG")"
 fi
 
 # =============================================================================

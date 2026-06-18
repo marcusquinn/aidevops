@@ -174,7 +174,7 @@ jobs:
               OWNER|MEMBER)
                 return 0
                 ;;
-              CONTRIBUTOR)
+              CONTRIBUTOR|COLLABORATOR)
                 ;;
               *)
                 return 1
@@ -186,8 +186,9 @@ jobs:
               return 1
             fi
 
-            #aidevops:trust-boundary GH#24546: webhook author_association can
-            # report CONTRIBUTOR for private org members. Use an authenticated,
+            #aidevops:trust-boundary GH#24546/GH#24958: webhook
+            # author_association can report CONTRIBUTOR/COLLABORATOR for
+            # maintainer-equivalent humans using aidevops. Use an authenticated,
             # metadata-only permission lookup as the fallback and fail closed on
             # API errors or permissions below write.
             permission=$(gh api "repos/${REPO}/collaborators/${pr_author}/permission" \
@@ -651,7 +652,7 @@ jobs:
               OWNER|MEMBER)
                 return 0
                 ;;
-              CONTRIBUTOR)
+              CONTRIBUTOR|COLLABORATOR)
                 ;;
               *)
                 return 1
@@ -663,9 +664,10 @@ jobs:
               return 1
             fi
 
-            #aidevops:trust-boundary GH#24546: mirror Job 1's private-org
-            # membership fallback using authenticated metadata only. Fail closed
-            # when the permission endpoint is unavailable or below write.
+            #aidevops:trust-boundary GH#24546/GH#24958: mirror Job 1's
+            # private-org / maintainer-operated collaborator fallback using
+            # authenticated metadata only. Fail closed when the permission
+            # endpoint is unavailable or below write.
             permission=$(gh api "repos/${REPO}/collaborators/${pr_author}/permission" \
               --jq '.permission' 2>/dev/null) || {
               echo "INFO: permission fallback failed for PR author $pr_author — treating $author_association as non-maintainer"
@@ -737,8 +739,10 @@ jobs:
             # so post success directly and skip the rerun entirely.
             #
             # Security gate: same as Job 1 — OWNER/MEMBER, plus the
-            # authenticated private-org CONTRIBUTOR fallback from GH#24546.
-            # Bare COLLABORATOR remains excluded from string-only exemption.
+            # authenticated private-org CONTRIBUTOR/COLLABORATOR fallback from
+            # GH#24546/GH#24958. Bare COLLABORATOR remains excluded from
+            # string-only exemption because the fallback verifies repo
+            # permission before returning success.
             # -----------------------------------------------------------------
             PR_INFO=$(gh pr view "$PR_NUM" --repo "$REPO" \
               --json labels,authorAssociation,author \

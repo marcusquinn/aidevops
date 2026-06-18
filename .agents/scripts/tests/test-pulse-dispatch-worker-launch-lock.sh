@@ -120,6 +120,26 @@ if ! LOGFILE="${TEST_TMP}/pulse.log" _dlw_blocked_by_hard_stop "123" "owner/repo
 	fail "worker launch hard-stop did not block unresolved blocked-by dependency"
 fi
 
+unset -f is_blocked_by_unresolved
+# shellcheck source=../pulse-dep-graph.sh
+source "${SCRIPTS_DIR}/pulse-dep-graph.sh"
+
+cat >"${TEST_TMP}/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+chmod +x "${TEST_TMP}/bin/gh"
+
+if ! LOGFILE="${TEST_TMP}/pulse-native.log" PATH="${TEST_TMP}/bin:${PATH}" is_blocked_by_unresolved 'This issue has no dependencies.' 'owner/repo' '123'; then
+	fail "native blockedBy lookup failure without body markers must still block dispatch"
+fi
+
+if grep -q 'blocked_by_native_lookup_unavailable' "${TEST_TMP}/pulse-native.log" && ! grep -q 'unclassified_signal' "${TEST_TMP}/pulse-native.log"; then
+	:
+else
+	fail "native blockedBy lookup failure should emit blocked_by_native_lookup_unavailable"
+fi
+
 printf 'PASS: stale non-empty node_modules restore lock is reclaimed\n'
 printf 'PASS: root node_modules payload is skipped by default\n'
 printf 'PASS: root node_modules .bin tooling is linked by default\n'
@@ -127,4 +147,5 @@ printf 'PASS: precomputed zero-output evidence count skips redundant lookups\n'
 printf 'PASS: pulse worker launch forwards dispatching GitHub login\n'
 printf 'PASS: systemd PID resolver handles final unterminated property\n'
 printf 'PASS: worker launch hard-stops unresolved blocked-by dependencies\n'
+printf 'PASS: native blockedBy lookup failure remains fail-closed with classified reason\n'
 exit 0

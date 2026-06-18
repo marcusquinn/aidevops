@@ -818,8 +818,10 @@ _Closed by deterministic merge pass (GH#24399)._" 2>/dev/null || true
 _process_single_ready_pr() {
 	local repo_slug="$1"
 	local pr_obj="$2"
+	local timing_prefix="${3:-}"
 
 	local pr_number="" pr_mergeable="" pr_review="" pr_author="" pr_title="" pr_updated_at="" pr_head_ref_oid="" pr_head_ref_name="" pr_base_ref_name="" pr_labels="" pr_is_draft="false"
+	local _mergeability_start="" _branch_protection_start="" _ruleset_start=""
 	# Consolidate into a single jq pass to reduce process-spawn overhead.
 	# CRITICAL: use non-whitespace delimiter (ASCII 0x1E record separator)
 	# instead of \t. Bash read collapses consecutive IFS whitespace chars
@@ -834,6 +836,7 @@ _process_single_ready_pr() {
 			'"\(.number // "")\u001e\(.mergeable // "UNKNOWN")\u001e\(if (.reviewDecision | length) == 0 then "NONE" else .reviewDecision end)\u001e\(.author.login // "unknown")\u001e\(.title // "")\u001e\(.updatedAt // "")\u001e\(.headRefOid // "")\u001e\(.headRefName // "")\u001e\(.baseRefName // "")\u001e\([(.labels // [])[].name] | join(","))\u001e\(.isDraft // false | tostring)"'
 	)
 	_pmp_normalize_mergeable_state_into pr_mergeable "$pr_mergeable"
+	[[ -n "$timing_prefix" ]] && _mergeability_start=$(_pmp_now_epoch)
 
 	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
 	if [[ "$pr_is_draft" == "true" ]]; then
@@ -875,6 +878,7 @@ _process_single_ready_pr() {
 			if [[ "$_t2116_issue_labels" == *"needs-maintainer-review"* ]]; then
 				echo "[pulse-wrapper] Merge pass: skipping CONFLICTING-close of PR #${pr_number} in ${repo_slug} — linked issue #${_t2116_linked_issue} has needs-maintainer-review (t2116)" >>"$LOGFILE"
 				_post_rebase_nudge_on_worker_conflicting "$pr_number" "$repo_slug" "" "" 2>/dev/null || true
+				[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}mergeability_s" "$_mergeability_start"
 				return 1
 			fi
 		fi
@@ -897,35 +901,40 @@ _process_single_ready_pr() {
 			# conflict is semantic and unsalvageable. Fall through to close.
 		fi
 
-		if [[ "$pr_mergeable" == "CONFLICTING" ]]; then
+			if [[ "$pr_mergeable" == "CONFLICTING" ]]; then
 			# Conflict resolution feedback: route worker PRs and stale interactive
 			# PRs to fix workers before the protected-close precheck. Active
 			# interactive PRs remain protected because _route_pr_to_fix_worker only
 			# accepts origin:interactive after _interactive_pr_is_stale passes.
-			if _route_pr_to_fix_worker "$pr_number" "$repo_slug" "$_t2116_linked_issue" "conflict" "$pr_labels" "$pr_title" "$pr_updated_at" "$pr_head_ref_oid"; then
-				return 2
-			fi
+				if _route_pr_to_fix_worker "$pr_number" "$repo_slug" "$_t2116_linked_issue" "conflict" "$pr_labels" "$pr_title" "$pr_updated_at" "$pr_head_ref_oid"; then
+					[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}mergeability_s" "$_mergeability_start"
+					return 2
+				fi
 
 			# GH#23371: some PRs are already known to be protected from
 			# automated close handling from the PR list metadata (draft,
 			# origin:interactive, no-auto-dispatch, external-contributor).
 			# Skip them before the close-conflict ownership guard so pulse
 			# does not repeatedly hit the noisy metadata-fetch path.
-			if _close_conflicting_pr_skip_protected_precheck "$pr_number" "$repo_slug" "$pr_obj"; then
-				return 1
-			fi
+				if _close_conflicting_pr_skip_protected_precheck "$pr_number" "$repo_slug" "$pr_obj"; then
+					[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}mergeability_s" "$_mergeability_start"
+					return 1
+				fi
 
-			_close_conflicting_pr "$pr_number" "$repo_slug" "$pr_title"
-			return 2
-		fi
+				_close_conflicting_pr "$pr_number" "$repo_slug" "$pr_title"
+				[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}mergeability_s" "$_mergeability_start"
+				return 2
+			fi
 		# Otherwise pr_mergeable is now MERGEABLE/UNKNOWN — continue through
 		# the normal merge path below.
 	fi
 
 	# Resolve UNKNOWN mergeable state with one retry; skip if not MERGEABLE
 	if ! _resolve_pr_mergeable_status "$pr_number" "$repo_slug" "$pr_mergeable"; then
+		[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}mergeability_s" "$_mergeability_start"
 		return 1
 	fi
+	[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}mergeability_s" "$_mergeability_start"
 
 	# Fetch linked issue once — used in gate checks, CI repair routing, and
 	# post-merge close. Do this before CI repair routing so red/pending PRs are
@@ -954,6 +963,7 @@ _process_single_ready_pr() {
 	# idle interactive PRs are handed over via origin:worker-takeover and
 	# then routed through the same pipeline — human session must be gone
 	# (no status, no claim stamp, >24h idle) for handover to fire.
+	[[ -n "$timing_prefix" ]] && _branch_protection_start=$(_pmp_now_epoch)
 	if ! _pr_required_checks_pass "$pr_number" "$repo_slug"; then
 		# t2922: For origin:worker PRs, phantom-pending non-required checks
 		# (CodeRabbit, qlty, linked-issue-check, url-allowlist, etc.) can
@@ -979,13 +989,16 @@ _process_single_ready_pr() {
 			# If rebase succeeds, skip fix-worker routing — next pulse cycle
 			# will re-check CI on the rebased HEAD.
 			if _attempt_pr_ci_rebase_retry "$pr_number" "$repo_slug" "$pr_base_ref_name" "$pr_head_ref_oid"; then
+				[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}branch_protection_s" "$_branch_protection_start"
 				return 1
 			fi
 			# CI failure: route to fix worker if applicable (t2203: consolidated).
 			_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "ci" "$pr_labels" "" "$pr_updated_at" "$pr_head_ref_oid" || true
+			[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}branch_protection_s" "$_branch_protection_start"
 			return 1
 		fi
 	fi
+	[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}branch_protection_s" "$_branch_protection_start"
 
 	# Dry-run must stop before every write side effect. The standalone merge
 	# routine advertises DRY_RUN=1 as no-side-effects, but the historical path
@@ -1008,9 +1021,12 @@ _process_single_ready_pr() {
 
 	# Approve (satisfies REVIEW_REQUIRED for collaborator PRs)
 	approve_collaborator_pr "$pr_number" "$repo_slug" "$pr_author" 2>/dev/null || true
+	[[ -n "$timing_prefix" ]] && _ruleset_start=$(_pmp_now_epoch)
 	if ! _check_ruleset_required_reviews_passing "$repo_slug" "$pr_number" "$pr_author"; then
+		[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}ruleset_s" "$_ruleset_start"
 		return 1
 	fi
+	[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}ruleset_s" "$_ruleset_start"
 
 	# Extract merge summary: MERGE_SUMMARY comment → PR body → generic fallback
 	local merge_summary

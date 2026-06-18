@@ -79,6 +79,7 @@ set -euo pipefail
 local_state_dir="${MOCK_GH_STATE_DIR:?}"
 post_body_file="${local_state_dir}/post_body.txt"
 delete_log_file="${local_state_dir}/delete_ids.log"
+post_attempts_file="${local_state_dir}/post_attempts.txt"
 
 if [[ "${1:-}" != "api" ]]; then
 	exit 1
@@ -118,6 +119,16 @@ if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
 	done
 
 	if [[ "$method" == "POST" ]]; then
+		post_attempts=0
+		if [[ -f "$post_attempts_file" ]]; then
+			post_attempts=$(<"$post_attempts_file")
+		fi
+		post_attempts=$((post_attempts + 1))
+		printf '%s' "$post_attempts" >"$post_attempts_file"
+		if [[ "${MOCK_POST_FAILS:-0}" =~ ^[0-9]+$ && "$post_attempts" -le "${MOCK_POST_FAILS:-0}" ]]; then
+			printf 'mock transient claim post failure %s\n' "$post_attempts" >&2
+			exit 1
+		fi
 		printf '%s' "$body" >"$post_body_file"
 		printf '999\n'
 		exit 0
@@ -536,6 +547,137 @@ test_claim_marks_stale_worker_takeover_for_ops_wrapped_dispatch_comment() {
 		print_result "claim comments are ops-wrapped" 0
 	else
 		print_result "claim comments are ops-wrapped" 1 "body: ${post_body:-none}"
+	fi
+
+	rm -rf "$tmp_dir"
+	return 0
+}
+
+#######################################
+# Test: transient claim comment POST failures are retried before failing.
+#######################################
+test_claim_retries_transient_post_failure() {
+	local tmp_dir mock_path old_created_at claim_created_at output exit_code attempts
+	tmp_dir=$(mktemp -d)
+	mock_path=$(create_mock_gh "$tmp_dir")
+	old_created_at="$(iso_seconds_ago 600)"
+	claim_created_at="$(iso_seconds_ago 1)"
+
+	set +e
+	output=$(PATH="${mock_path}:$PATH" \
+		MOCK_GH_STATE_DIR="$tmp_dir" \
+		MOCK_OLD_CLAIM_CREATED_AT="$old_created_at" \
+		MOCK_NEW_CLAIM_CREATED_AT="$claim_created_at" \
+		MOCK_OLD_CLAIM_RUNNER="other-runner" \
+		MOCK_POST_FAILS=1 \
+		DISPATCH_CLAIM_WINDOW=0 \
+		DISPATCH_CLAIM_MAX_AGE=300 \
+		DISPATCH_CLAIM_POST_ATTEMPTS=2 \
+		DISPATCH_CLAIM_POST_RETRY_DELAY=0 \
+		OPENCODE_VERSION=1.14.33 \
+		"$CLAIM_HELPER" claim 42 owner/repo mockrunner 2>&1)
+	exit_code=$?
+	set -e
+
+	if [[ "$exit_code" -eq 0 ]]; then
+		print_result "claim retries transient POST failure" 0
+	else
+		print_result "claim retries transient POST failure" 1 "got exit $exit_code output: $output"
+	fi
+
+	attempts=0
+	if [[ -f "${tmp_dir}/post_attempts.txt" ]]; then
+		attempts=$(<"${tmp_dir}/post_attempts.txt")
+	fi
+	if [[ "$attempts" -eq 2 ]]; then
+		print_result "claim POST retry count recorded" 0
+	else
+		print_result "claim POST retry count recorded" 1 "attempts=${attempts} output: $output"
+	fi
+
+	rm -rf "$tmp_dir"
+	return 0
+}
+
+#######################################
+# Test: claim POST stderr fallback avoids predictable /tmp paths when mktemp fails.
+#######################################
+test_claim_post_error_fallback_avoids_tmp() {
+	local tmp_dir mock_path old_created_at claim_created_at output exit_code attempts test_home chmod_log chmod_mode chmod_path
+	tmp_dir=$(mktemp -d)
+	mock_path=$(create_mock_gh "$tmp_dir")
+	test_home="${tmp_dir}/home"
+	mkdir -p "$test_home"
+	old_created_at="$(iso_seconds_ago 600)"
+	claim_created_at="$(iso_seconds_ago 1)"
+
+	cat >"${mock_path}/mktemp" <<'EOF'
+#!/usr/bin/env bash
+exit 1
+EOF
+	chmod +x "${mock_path}/mktemp"
+	chmod_log="${tmp_dir}/chmod.log"
+	cat >"${mock_path}/chmod" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\t%s\n' "${1:-}" "${2:-}" >>"${MOCK_CHMOD_LOG:?}"
+command -p chmod "$@"
+EOF
+	chmod +x "${mock_path}/chmod"
+
+	set +e
+	output=$(PATH="${mock_path}:$PATH" \
+		HOME="${test_home}/" \
+		MOCK_CHMOD_LOG="$chmod_log" \
+		MOCK_GH_STATE_DIR="$tmp_dir" \
+		MOCK_OLD_CLAIM_CREATED_AT="$old_created_at" \
+		MOCK_NEW_CLAIM_CREATED_AT="$claim_created_at" \
+		MOCK_OLD_CLAIM_RUNNER="other-runner" \
+		MOCK_POST_FAILS=1 \
+		DISPATCH_CLAIM_WINDOW=0 \
+		DISPATCH_CLAIM_MAX_AGE=300 \
+		DISPATCH_CLAIM_POST_ATTEMPTS=2 \
+		DISPATCH_CLAIM_POST_RETRY_DELAY=0 \
+		OPENCODE_VERSION=1.14.33 \
+		"$CLAIM_HELPER" claim 42 owner/repo mockrunner 2>&1)
+	exit_code=$?
+	set -e
+
+	if [[ "$exit_code" -eq 0 ]]; then
+		print_result "claim POST fallback works when mktemp fails" 0
+	else
+		print_result "claim POST fallback works when mktemp fails" 1 "got exit $exit_code output: $output"
+	fi
+
+	attempts=0
+	if [[ -f "${tmp_dir}/post_attempts.txt" ]]; then
+		attempts=$(<"${tmp_dir}/post_attempts.txt")
+	fi
+	if [[ "$attempts" -eq 2 ]]; then
+		print_result "claim POST fallback preserves retry stderr capture" 0
+	else
+		print_result "claim POST fallback preserves retry stderr capture" 1 "attempts=${attempts} output: $output"
+	fi
+
+	if grep -q '/tmp/aidevops-claim-post-error' "$CLAIM_HELPER"; then
+		print_result "claim POST fallback avoids predictable tmp path" 1 "predictable /tmp fallback remains"
+	else
+		print_result "claim POST fallback avoids predictable tmp path" 0
+	fi
+
+	chmod_mode=""
+	chmod_path=""
+	if [[ -f "$chmod_log" ]]; then
+		IFS=$'\t' read -r chmod_mode chmod_path <"$chmod_log" || true
+	fi
+	if [[ "$chmod_mode" == "600" && "$chmod_path" == "${test_home}/.aidevops-claim-post-error."* ]]; then
+		print_result "claim POST fallback pre-creates private stderr file" 0
+	else
+		print_result "claim POST fallback pre-creates private stderr file" 1 "chmod_mode=${chmod_mode:-missing} chmod_path=${chmod_path:-missing} output: $output"
+	fi
+	if [[ "$chmod_path" == *"//.aidevops-claim-post-error."* ]]; then
+		print_result "claim POST fallback strips trailing HOME slash" 1 "chmod_path=${chmod_path}"
+	else
+		print_result "claim POST fallback strips trailing HOME slash" 0
 	fi
 
 	rm -rf "$tmp_dir"
@@ -1368,6 +1510,8 @@ main() {
 	test_claim_reads_lowercase_paginated_claim_marker
 	test_claim_ignore_filter_preserves_self_claim
 	test_claim_structured_override_preserves_self_claim
+	test_claim_retries_transient_post_failure
+	test_claim_post_error_fallback_avoids_tmp
 	test_claim_marks_stale_worker_takeover
 	test_claim_marks_paginated_stale_worker_takeover
 	test_claim_marks_stale_worker_takeover_for_ops_wrapped_dispatch_comment

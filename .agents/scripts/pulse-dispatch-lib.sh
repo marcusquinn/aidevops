@@ -106,7 +106,7 @@ _dispatch_stats_increment() {
 _dispatch_stats_increment_candidate_failed() {
 	local reason="$1"
 	case "$reason" in
-		cost_budget_exceeded | cooldown_no_worker_process | graphql_circuit_breaker | runner_health_circuit_breaker | ever_nmr_without_approval | canary_failed | launch_error | missing_worker_context | local_capacity_gate | policy_gate | no_recent_log_evidence | provider_rate_limit_pressure | repeated_failure_pressure | healthy_pr_backlog | no_dispatchable_evidence | unclassified_signal)
+		cost_budget_exceeded | cooldown_no_worker_process | graphql_circuit_breaker | runner_health_circuit_breaker | ever_nmr_without_approval | blocked_by_native_lookup_unavailable | canary_failed | launch_error | missing_worker_context | local_capacity_gate | policy_gate | no_recent_log_evidence | provider_rate_limit_pressure | repeated_failure_pressure | healthy_pr_backlog | no_dispatchable_evidence | unclassified_signal)
 			;;
 		*)
 			reason="unclassified_signal"
@@ -192,7 +192,7 @@ _dispatch_candidate_failure_reason() {
 _dispatch_candidate_benign_block_reason() {
 	local reason="$1"
 	case "$reason" in
-		dedup_active_claim | interactive_review_hold | pr_target_not_dispatchable)
+		dedup_active_claim | interactive_review_hold | pr_target_not_dispatchable | renovate_dependency_dashboard)
 			return 0
 			;;
 	esac
@@ -659,7 +659,11 @@ _dispatch_compute_capacity() {
 	# helper caps the final target by OAuth account availability, recent
 	# provider failures, load, and long-session runway before dispatch slots are
 	# exposed to the candidate loop.
-	local min_worker_floor="${AIDEVOPS_MIN_WORKER_CONCURRENCY:-6}"
+	local min_worker_floor="${AIDEVOPS_MIN_WORKER_CONCURRENCY:-}"
+	if [[ -z "$min_worker_floor" ]] && declare -F config_get >/dev/null 2>&1; then
+		min_worker_floor=$(config_get "orchestration.min_worker_concurrency" "6")
+	fi
+	[[ -n "$min_worker_floor" ]] || min_worker_floor=6
 	if ! [[ "$min_worker_floor" =~ ^[0-9]+$ ]]; then
 		min_worker_floor=6
 	fi
@@ -684,6 +688,9 @@ _dispatch_compute_capacity() {
 	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
 	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
 	[[ "$available_slots" =~ ^-?[0-9]+$ ]] || available_slots=0
+	if ((available_slots < 0)); then
+		available_slots=0
+	fi
 
 	printf '%s %s %s\n' "$max_workers" "$active_workers" "$available_slots"
 	return 0
@@ -1169,9 +1176,25 @@ _dispatch_record_nonzero_dispatch_result() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local dispatch_rc="$3"
+	local recent_lines=""
 
 	echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — dispatch_with_dedup returned rc=${dispatch_rc}" >>"$LOGFILE"
 	if [[ "$dispatch_rc" -eq 2 ]]; then
+		if [[ -n "${LOGFILE:-}" && -f "$LOGFILE" ]]; then
+			recent_lines=$(awk -v issue="#${issue_number}" -v repo="$repo_slug" '
+				index($0, issue) && index($0, repo) { lines[++n] = $0 }
+				END {
+					start = n - 20
+					if (start < 1) { start = 1 }
+					for (i = start; i <= n; i++) { print lines[i] }
+				}
+			' "$LOGFILE" 2>/dev/null) || recent_lines=""
+		fi
+		if [[ "$recent_lines" == *"blocked_by_native_lookup_unavailable"* ]]; then
+			echo "[pulse-wrapper] Dispatch_max: #${issue_number} (${repo_slug}) pre-launch failure reason=blocked_by_native_lookup_unavailable" >>"$LOGFILE"
+			_dispatch_stats_increment_candidate_failed "blocked_by_native_lookup_unavailable"
+			return 0
+		fi
 		_dispatch_stats_increment "dispatch_candidate_noop"
 		return 0
 	fi
@@ -1414,7 +1437,7 @@ _dispatch_floor_loop() {
 			break
 		fi
 		local _dispatch_proc_rc=0
-		_dispatch_process_candidate "$candidate_json" "$self_login" "$available_slots" || _dispatch_proc_rc=$?
+		_dispatch_process_candidate "$candidate_json" "$self_login" "$available_slots" >>"$LOGFILE" 2>&1 || _dispatch_proc_rc=$?
 		echo "[pulse-wrapper] Dispatch_max: loop iter=${processed_count} — _dispatch_process_candidate rc=${_dispatch_proc_rc}" >>"$LOGFILE"
 		if [[ "$_dispatch_proc_rc" -eq 0 ]]; then
 			dispatched_count=$((dispatched_count + 1))

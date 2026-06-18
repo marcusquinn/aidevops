@@ -71,6 +71,10 @@ mkdir -p "$TMP/bin"
 cat >"$TMP/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 # Stub gh that logs argv
+if [[ "$1" == "api" && "$2" == "user" ]]; then
+	printf '%s\n' "${STUB_GH_USER:-managed}"
+	exit 0
+fi
 : >"$STUB_GH_LOG"
 for arg in "$@"; do
 	printf '%s\n' "$arg" >>"$STUB_GH_LOG"
@@ -570,6 +574,56 @@ if [[ "$argv" == *"<!-- aidevops:sig -->"* ]]; then
 	_pass "headless write to maintainer-managed repo proceeds normally"
 else
 	_fail "maintainer repo headless write" "argv: $argv"
+fi
+
+repos_json_missing_role="$TMP/repos-missing-role.json"
+printf '{"initialized_repos":[{"slug":"managed/repo","maintainer":"managed","pulse":true}]}' >"$repos_json_missing_role"
+_reset_log
+AIDEVOPS_HEADLESS=1 AIDEVOPS_REPOS_JSON="$repos_json_missing_role" "$SHIM_RUN" api /repos/managed/repo/issues/789/comments -X POST -f body="managed" 2>"$TMP/guard-api-missing-role.err"
+argv=$(_read_argv)
+if [[ "$argv" == *$'api\n/repos/managed/repo/issues/789/comments'* ]]; then
+	_pass "omitted role on owned managed repo is derived as maintainer"
+else
+	_fail "missing role maintainer fallback" "argv: $argv err: $(cat "$TMP/guard-api-missing-role.err" 2>/dev/null || true)"
+fi
+
+repos_json_org_maintainer="$TMP/repos-org-maintainer.json"
+printf '{"initialized_repos":[{"slug":"org/repo","maintainer":"managed","pulse":true}]}' >"$repos_json_org_maintainer"
+_reset_log
+AIDEVOPS_HEADLESS=1 AIDEVOPS_REPOS_JSON="$repos_json_org_maintainer" "$SHIM_RUN" api /repos/org/repo/issues/789/comments -X POST -f body="managed" 2>"$TMP/guard-api-org-maintainer.err"
+argv=$(_read_argv)
+if [[ "$argv" == *$'api\n/repos/org/repo/issues/789/comments'* ]]; then
+	_pass "configured maintainer on non-owned repo is derived as maintainer"
+else
+	_fail "configured maintainer fallback" "argv: $argv err: $(cat "$TMP/guard-api-org-maintainer.err" 2>/dev/null || true)"
+fi
+
+repos_json_org_nonmaintainer="$TMP/repos-org-nonmaintainer.json"
+printf '{"initialized_repos":[{"slug":"org/repo","maintainer":"other","pulse":true}]}' >"$repos_json_org_nonmaintainer"
+_reset_log
+if AIDEVOPS_HEADLESS=1 AIDEVOPS_REPOS_JSON="$repos_json_org_nonmaintainer" "$SHIM_RUN" api /repos/org/repo/issues/789/comments -X POST -f body="managed" 2>"$TMP/guard-api-org-nonmaintainer.err"; then
+	_fail "non-owner non-maintainer remains blocked" "write unexpectedly passed"
+else
+	argv=$(_read_argv)
+	if [[ -z "$argv" ]] && grep -q "external-write-guard" "$TMP/guard-api-org-nonmaintainer.err"; then
+		_pass "non-owner non-maintainer remains blocked"
+	else
+		_fail "non-owner non-maintainer guard" "argv: $argv err: $(cat "$TMP/guard-api-org-nonmaintainer.err" 2>/dev/null || true)"
+	fi
+fi
+
+repos_json_contributor="$TMP/repos-contributor-role.json"
+printf '{"initialized_repos":[{"slug":"managed/repo","role":"contributor","maintainer":"managed","pulse":true}]}' >"$repos_json_contributor"
+_reset_log
+if AIDEVOPS_HEADLESS=1 AIDEVOPS_REPOS_JSON="$repos_json_contributor" "$SHIM_RUN" api /repos/managed/repo/issues/789/comments -X POST -f body="managed" 2>"$TMP/guard-api-explicit-contributor.err"; then
+	_fail "explicit contributor role overrides owner fallback" "write unexpectedly passed"
+else
+	argv=$(_read_argv)
+	if [[ -z "$argv" ]] && grep -q "external-write-guard" "$TMP/guard-api-explicit-contributor.err"; then
+		_pass "explicit contributor role remains blocked for owned slug"
+	else
+		_fail "explicit contributor role guard" "argv: $argv err: $(cat "$TMP/guard-api-explicit-contributor.err" 2>/dev/null || true)"
+	fi
 fi
 
 _reset_log

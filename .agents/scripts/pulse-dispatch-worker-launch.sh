@@ -1506,7 +1506,11 @@ _dlw_min_worker_floor_active() {
 	local active_workers="" min_worker_floor=""
 	active_workers=$(count_active_workers 2>/dev/null || echo 0)
 	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
-	min_worker_floor="${AIDEVOPS_MIN_WORKER_CONCURRENCY:-6}"
+	min_worker_floor="${AIDEVOPS_MIN_WORKER_CONCURRENCY:-}"
+	if [[ -z "$min_worker_floor" ]] && declare -F config_get >/dev/null 2>&1; then
+		min_worker_floor=$(config_get "orchestration.min_worker_concurrency" "6")
+	fi
+	[[ -n "$min_worker_floor" ]] || min_worker_floor=6
 	if ! [[ "$min_worker_floor" =~ ^[0-9]+$ ]]; then
 		min_worker_floor=6
 	fi

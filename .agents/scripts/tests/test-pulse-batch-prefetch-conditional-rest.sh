@@ -32,6 +32,7 @@ setup_env() {
 	export LOGFILE="$TEST_ROOT/pulse.log"
 	export PULSE_EVENTS_TICKLE_ENABLED=0
 	export PULSE_PREFETCH_FULL_SWEEP_INTERVAL=999999999
+	export PULSE_BATCH_SEARCH_LAST_RESORT=1
 	unset AIDEVOPS_GH_FORCE_REST_READS
 	unset AIDEVOPS_GH_REST_FIRST_READS
 	mkdir -p "$HOME" "$PULSE_BATCH_PREFETCH_CACHE_DIR" "$TEST_ROOT/bin"
@@ -148,17 +149,17 @@ test_changed_repo_refreshes_cache() {
 	return 0
 }
 
-test_legacy_issue_cache_falls_open_to_search() {
+test_legacy_issue_cache_avoids_search_by_default() {
 	setup_env
 	seed_legacy_issue_cache
 	write_gh_stub not_modified
 	"$HELPER" refresh >/dev/null
 	local issue_num
 	issue_num=$(jq -r '.items[0].number' "$PULSE_BATCH_PREFETCH_CACHE_DIR/issues-owner__repo.json")
-	if grep -q 'search issues' "$TEST_ROOT/gh-calls.log" && [[ "$issue_num" == "5" ]]; then
-		print_result "legacy issue cache without state falls open to search refresh" 0
+	if ! grep -q 'search issues' "$TEST_ROOT/gh-calls.log" && [[ "$issue_num" == "1" ]]; then
+		print_result "legacy issue cache without state avoids search by default" 0
 	else
-		print_result "legacy issue cache without state falls open to search refresh" 1
+		print_result "legacy issue cache without state avoids search by default" 1
 	fi
 	teardown_env
 	return 0
@@ -183,15 +184,31 @@ JSON
 	return 0
 }
 
-test_conditional_failure_falls_open_to_search() {
+test_conditional_failure_routes_to_rest_by_default() {
 	setup_env
 	seed_cache
 	write_gh_stub fail
 	"$HELPER" refresh >/dev/null
-	if grep -q 'search issues' "$TEST_ROOT/gh-calls.log" && grep -q 'search prs' "$TEST_ROOT/gh-calls.log"; then
-		print_result "conditional failure falls open to owner search" 0
+	if ! grep -q 'search issues' "$TEST_ROOT/gh-calls.log" && ! grep -q 'search prs' "$TEST_ROOT/gh-calls.log"; then
+		print_result "conditional failure routes to REST instead of owner search" 0
 	else
-		print_result "conditional failure falls open to owner search" 1
+		print_result "conditional failure routes to REST instead of owner search" 1
+	fi
+	teardown_env
+	return 0
+}
+
+test_search_opt_in_preserves_owner_search() {
+	setup_env
+	seed_cache
+	write_gh_stub fail
+	export PULSE_BATCH_SEARCH_LAST_RESORT=0
+	export AIDEVOPS_GH_READ_RAMP_ENABLED=0
+	"$HELPER" refresh >/dev/null
+	if grep -q 'search issues' "$TEST_ROOT/gh-calls.log" && grep -q 'search prs' "$TEST_ROOT/gh-calls.log"; then
+		print_result "search opt-in preserves owner search fallback" 0
+	else
+		print_result "search opt-in preserves owner search fallback" 1
 	fi
 	teardown_env
 	return 0
@@ -208,8 +225,9 @@ test_prefetch_gh_reads_are_timeout_wrapped() {
 
 test_unchanged_repo_uses_304_cache
 test_changed_repo_refreshes_cache
-test_conditional_failure_falls_open_to_search
-test_legacy_issue_cache_falls_open_to_search
+test_conditional_failure_routes_to_rest_by_default
+test_search_opt_in_preserves_owner_search
+test_legacy_issue_cache_avoids_search_by_default
 test_read_cache_filters_closed_issues
 test_prefetch_gh_reads_are_timeout_wrapped
 

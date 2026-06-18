@@ -664,6 +664,33 @@ test_sourcing_idempotency() {
 }
 
 #######################################
+# Test 9: deterministic merge guard honours the standalone routine lock.
+# GH#24962: the in-cycle merge pass must skip when pulse-merge-routine.sh owns
+# its PID lock, and its timestamp fallback must use the routine timeout window
+# rather than the historical 60s window.
+#######################################
+test_deterministic_merge_guard_uses_routine_lock() {
+	local wrapper_file="${PULSE_SCRIPTS_DIR}/pulse-wrapper.sh"
+
+	if grep -qF '.agent-workspace/locks/pulse-merge-routine.lock' "$wrapper_file" \
+		&& grep -qF "kill -0 \"\$_pmr_lock_pid\"" "$wrapper_file"; then
+		print_result "deterministic merge guard checks live pulse-merge-routine PID lock" 0
+	else
+		print_result "deterministic merge guard checks live pulse-merge-routine PID lock" 1 \
+			"missing lock-dir or kill -0 guard in pulse-wrapper.sh"
+	fi
+
+	if grep -qF 'PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS:-600' "$wrapper_file" \
+		&& grep -qF "window=\${_pmr_recent_window}s" "$wrapper_file"; then
+		print_result "deterministic merge timestamp guard uses routine timeout window" 0
+	else
+		print_result "deterministic merge timestamp guard uses routine timeout window" 1 \
+			"timestamp fallback should align with PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS"
+	fi
+	return 0
+}
+
+#######################################
 # Test 10: _pulse_is_sourced returns success when sourced from bash.
 # Every test above relies on this guard at L13786 preventing main() from
 # running. Verify it works as documented.
@@ -700,6 +727,7 @@ main() {
 	test_extract_milestone_summary
 	test_triage_content_hash
 	test_sourcing_idempotency
+	test_deterministic_merge_guard_uses_routine_lock
 	test_pulse_is_sourced_guard
 
 	teardown_sandbox

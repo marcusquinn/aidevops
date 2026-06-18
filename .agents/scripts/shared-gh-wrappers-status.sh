@@ -111,6 +111,19 @@ _gh_pr_list_snapshot_key() {
 }
 
 #######################################
+# Record one lightweight telemetry event for the exact gh_pr_list argv shape.
+# The shape key is the same full-argv hash used by the exact-output caches, so
+# repeated counts identify only semantics-preserving candidates for migration.
+# Args: gh-style argv
+#######################################
+_gh_pr_list_shape_record() {
+	local _key
+	_key="$(_gh_pr_list_snapshot_key "$@")" || return 0
+	_gh_read_cache_record gh_pr_list_shape "shape:${_key}"
+	return 0
+}
+
+#######################################
 # Record a lightweight cache decision in the same instrumentation stream as API
 # calls. These records use path=other so cache hit/miss/stale decisions are
 # visible without inflating REST/GraphQL call counts.
@@ -444,6 +457,7 @@ gh_issue_view() {
 gh_pr_list() {
 	local _has_search=1
 	_rest_args_have_search "$@" || _has_search=0
+	_gh_pr_list_shape_record "$@"
 	local _cached_output=""
 	if _cached_output=$(_gh_pr_list_snapshot_get "$@" 2>/dev/null); then
 		printf '%s' "$_cached_output"

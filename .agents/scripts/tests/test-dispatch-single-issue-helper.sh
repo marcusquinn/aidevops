@@ -655,8 +655,8 @@ test_create_worktree_registers_dispatch_owner() {
 	MOCK_WORKTREE_HELPER_LOG="${test_dir}/worktree-helper.log"
 	local repos_file="${test_dir}/repos.json"
 	printf '%s\n' '{"initialized_repos":[{"slug":"owner/repo","path":"/tmp/repo","default_branch":"main","pr_base_branch":"develop"}]}' >"$repos_file"
-	local original_repos_json="${AIDEVOPS_REPOS_JSON:-}"
-	export AIDEVOPS_REPOS_JSON="$repos_file"
+	local original_repos_file="${AIDEVOPS_REPOS_FILE:-}"
+	export AIDEVOPS_REPOS_FILE="$repos_file"
 	export MOCK_WORKTREE_HELPER_LOG
 	: >"$REGISTER_WORKTREE_LOG"
 	: >"$MOCK_WORKTREE_HELPER_LOG"
@@ -693,10 +693,10 @@ test_create_worktree_registers_dispatch_owner() {
 	MOCK_WORKTREE_BRANCH=""
 	MOCK_DATE_UTC=""
 	REGISTER_WORKTREE_LOG=""
-	if [[ -n "$original_repos_json" ]]; then
-		export AIDEVOPS_REPOS_JSON="$original_repos_json"
+	if [[ -n "$original_repos_file" ]]; then
+		export AIDEVOPS_REPOS_FILE="$original_repos_file"
 	else
-		unset AIDEVOPS_REPOS_JSON
+		unset AIDEVOPS_REPOS_FILE
 	fi
 	unset MOCK_WORKTREE_HELPER_LOG
 	MOCK_WORKTREE_HELPER_LOG=""
@@ -713,8 +713,8 @@ test_dispatch_base_ref_prefers_repo_configured_pr_base() {
 	mkdir -p "$repo_path"
 	printf '%s\n' '{"initialized_repos":[{"slug":"owner/repo","path":"/tmp/repo","default_branch":"main","pr_base_branch":"develop"}]}' >"$repos_file"
 
-	local original_repos_json="${AIDEVOPS_REPOS_JSON:-}"
-	export AIDEVOPS_REPOS_JSON="$repos_file"
+	local original_repos_file="${AIDEVOPS_REPOS_FILE:-}"
+	export AIDEVOPS_REPOS_FILE="$repos_file"
 	unset AIDEVOPS_DISPATCH_BASE_REF AIDEVOPS_WORKTREE_BASE AIDEVOPS_DISPATCH_BASE_BRANCH DISPATCH_REPO_PR_BASE_BRANCH AIDEVOPS_PR_BASE_BRANCH
 
 	local base_ref=""
@@ -722,10 +722,10 @@ test_dispatch_base_ref_prefers_repo_configured_pr_base() {
 	local passed=1
 	[[ "$base_ref" == "origin/develop" ]] && passed=0
 
-	if [[ -n "$original_repos_json" ]]; then
-		export AIDEVOPS_REPOS_JSON="$original_repos_json"
+	if [[ -n "$original_repos_file" ]]; then
+		export AIDEVOPS_REPOS_FILE="$original_repos_file"
 	else
-		unset AIDEVOPS_REPOS_JSON
+		unset AIDEVOPS_REPOS_FILE
 	fi
 	rm -rf "$test_dir"
 	print_result "dispatch base ref uses configured PR base over default branch" "$passed" "base_ref=$base_ref"

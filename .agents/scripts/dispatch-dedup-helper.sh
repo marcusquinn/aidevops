@@ -2252,6 +2252,10 @@ classify_dispatch_blocker_reason() {
 			printf 'ever_nmr_without_approval\n'
 			return 0
 			;;
+		*blocked_by_native_lookup_unavailable* | *native*blocked*by*lookup*unavailable*)
+			printf 'blocked_by_native_lookup_unavailable\n'
+			return 0
+			;;
 		*canary*failed*)
 			printf 'canary_failed\n'
 			return 0
@@ -2264,11 +2268,19 @@ classify_dispatch_blocker_reason() {
 			printf 'missing_worker_context\n'
 			return 0
 			;;
+		*renovate*dependency*dashboard*)
+			printf 'renovate_dependency_dashboard\n'
+			return 0
+			;;
 		*local*capacity*gate* | *worktree*cap* | *max*worktree* | *disk*space* | *large*file*)
 			printf 'local_capacity_gate\n'
 			return 0
 			;;
-		*no-auto-dispatch* | *infrastructure* | *external*author*gate* | *nmr*gate* | *approval*required*)
+		*dedup*guard*blocked*)
+			printf 'dedup_active_claim\n'
+			return 0
+			;;
+		*parent_task_blocked* | *parent-task* | *no-auto-dispatch* | *infrastructure_blocked* | *label=infrastructure* | *hold_for_review_blocked* | *hold-for-review* | *external*author*gate* | *nmr*gate* | *approval*required*)
 			printf 'policy_gate\n'
 			return 0
 			;;

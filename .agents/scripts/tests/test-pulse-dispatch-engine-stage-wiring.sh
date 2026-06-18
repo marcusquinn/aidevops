@@ -169,7 +169,7 @@ assert_grep \
 	"$DISPATCH_LIB"
 assert_grep \
 	"10b: interactive review hold is recognized as a benign block" \
-	'dedup_active_claim \| interactive_review_hold \| pr_target_not_dispatchable' \
+	'dedup_active_claim \| interactive_review_hold \| pr_target_not_dispatchable \| renovate_dependency_dashboard' \
 	"$DISPATCH_LIB"
 assert_grep \
 	"10b2: benign blocks are logged distinctly, not as pre-launch failures" \

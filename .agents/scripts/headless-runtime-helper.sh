@@ -826,6 +826,7 @@ _handle_run_result() {
 			fi
 			if [[ -s "$output_file" && "$role" != "pulse" ]]; then
 				_run_result_label="watchdog_startup_continue"
+				_run_failure_reason="startup_no_model_activity"
 				rm -f "$output_file"
 				print_warning "$selected_model watchdog startup stall without model activity — will attempt bounded continuation before provider backoff"
 				return 78

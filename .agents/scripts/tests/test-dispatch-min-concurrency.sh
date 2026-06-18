@@ -105,6 +105,35 @@ test_capacity_raises_soft_cap_to_floor() {
 	return 0
 }
 
+test_capacity_reads_min_floor_from_config_default() {
+	reset_capacity_pressure_env
+	TEST_MAX_WORKERS=1
+	TEST_ACTIVE_WORKERS=2
+	unset AIDEVOPS_MIN_WORKER_CONCURRENCY || true
+	config_get() {
+		local dotpath="$1" default="${2:-}"
+		if [[ "$dotpath" == "orchestration.min_worker_concurrency" ]]; then
+			printf '7\n'
+		else
+			printf '%s\n' "$default"
+		fi
+		return 0
+	}
+	unset _DISPATCH_MIN_WORKER_FLOOR_ACTIVE || true
+	local result capacity_file
+	capacity_file=$(mktemp)
+	_dispatch_compute_capacity >"$capacity_file"
+	result=$(<"$capacity_file")
+	rm -f "$capacity_file"
+	if [[ "$result" == "7 2 5" && "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-0}" == "1" ]]; then
+		print_result "capacity: reads minimum worker floor from config default" 0
+	else
+		print_result "capacity: reads minimum worker floor from config default" 1 "result=${result} floor_active=${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-unset}"
+	fi
+	unset -f config_get 2>/dev/null || true
+	return 0
+}
+
 test_capacity_respects_existing_higher_cap() {
 	reset_capacity_pressure_env
 	TEST_MAX_WORKERS=10
@@ -285,6 +314,37 @@ test_capacity_recent_progress_gets_runway_under_pressure() {
 	return 0
 }
 
+test_capacity_clamps_provider_cap_below_active_to_zero_available() {
+	(
+		reset_capacity_pressure_env
+		TEST_MAX_WORKERS=8
+		TEST_ACTIVE_WORKERS=4
+		AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+		pulse_apply_provider_load_capacity_cap() {
+			printf '1 0\n'
+			return 0
+		}
+		unset _DISPATCH_MIN_WORKER_FLOOR_ACTIVE || true
+		local result capacity_file
+		capacity_file=$(mktemp)
+		_dispatch_compute_capacity >"$capacity_file"
+		result=$(<"$capacity_file")
+		rm -f "$capacity_file"
+		if [[ "$result" == "1 4 0" && "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-0}" == "0" ]]; then
+			return 0
+		fi
+		printf 'result=%s floor_active=%s\n' "$result" "${_DISPATCH_MIN_WORKER_FLOOR_ACTIVE:-unset}" >"${TEST_ROOT}/capacity-clamp-failure.txt"
+		return 1
+	)
+	local rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "capacity: provider cap below active clamps available to zero" 0
+	else
+		print_result "capacity: provider cap below active clamps available to zero" 1 "$(<"${TEST_ROOT}/capacity-clamp-failure.txt")"
+	fi
+	return 0
+}
+
 test_throttle_does_not_force_serial_under_floor() {
 	reset_capacity_pressure_env
 	_DISPATCH_THROTTLE_FILE="${HOME}/.aidevops/logs/dispatch-throttle"
@@ -361,7 +421,8 @@ test_apply_dispatch_refills_until_active_floor_after_partial_launch() {
 	TEST_DISPATCH_RETURNS_FILE="${TEST_ROOT}/dispatch-returns.txt"
 	printf '%s\n%s\n' 4 6 >"$TEST_ACTIVE_WORKERS_SEQUENCE_FILE"
 	printf '%s\n' 0 >"$TEST_DISPATCH_CALLS_FILE"
-	printf '%s\n%s\n' 2 2 >"$TEST_DISPATCH_RETURNS_FILE"
+	printf '%s\n%s\n' 1 2 >"$TEST_DISPATCH_RETURNS_FILE"
+	AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS=1
 	STOP_FLAG="${HOME}/.aidevops/logs/stop"
 	# shellcheck disable=SC2329  # Override sourced function for this regression.
 	dispatch_max() {
@@ -391,7 +452,253 @@ test_apply_dispatch_refills_until_active_floor_after_partial_launch() {
 	else
 		print_result "apply: refills minimum active-worker floor after partial launch" 1 "dispatch_calls=${dispatch_calls}"
 	fi
-	unset TEST_ACTIVE_WORKERS_SEQUENCE_FILE TEST_DISPATCH_CALLS_FILE TEST_DISPATCH_RETURNS_FILE
+	unset TEST_ACTIVE_WORKERS_SEQUENCE_FILE TEST_DISPATCH_CALLS_FILE TEST_DISPATCH_RETURNS_FILE AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS
+	return 0
+}
+
+test_apply_dispatch_skips_refill_when_capacity_cap_disables_floor() {
+	(
+		AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+		TEST_MAX_WORKERS=8
+		TEST_ACTIVE_WORKERS=4
+		TEST_DISPATCH_CALLS_FILE="${TEST_ROOT}/cap-refill-dispatch-calls.txt"
+		printf '%s\n' 0 >"$TEST_DISPATCH_CALLS_FILE"
+		STOP_FLAG="${HOME}/.aidevops/logs/stop"
+		: >"$LOGFILE"
+		pulse_apply_provider_load_capacity_cap() {
+			printf '1 0\n'
+			return 0
+		}
+		# shellcheck disable=SC2329  # Override sourced function for this regression.
+		dispatch_max() {
+			local calls
+			calls=$(<"$TEST_DISPATCH_CALLS_FILE")
+			[[ "$calls" =~ ^[0-9]+$ ]] || calls=0
+			printf '%s\n' "$((calls + 1))" >"$TEST_DISPATCH_CALLS_FILE"
+			printf '0\n'
+			return 0
+		}
+		# shellcheck disable=SC2329  # Override sourced function to keep the test fast.
+		_adaptive_launch_settle_wait() {
+			return 0
+		}
+
+		apply_dispatch_max
+
+		local dispatch_calls
+		dispatch_calls=$(<"$TEST_DISPATCH_CALLS_FILE")
+		if [[ "$dispatch_calls" -eq 1 ]] && ! grep -q 'Minimum worker floor refill:' "$LOGFILE" 2>/dev/null; then
+			return 0
+		fi
+		printf 'dispatch_calls=%s log=%s\n' "$dispatch_calls" "$(<"$LOGFILE")" >"${TEST_ROOT}/cap-refill-failure.txt"
+		return 1
+	)
+	local rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "apply: capacity cap disables minimum floor refill" 0
+	else
+		print_result "apply: capacity cap disables minimum floor refill" 1 "$(<"${TEST_ROOT}/cap-refill-failure.txt")"
+	fi
+	unset TEST_DISPATCH_CALLS_FILE
+	return 0
+}
+
+test_min_worker_floor_refill_uses_precomputed_counts() {
+	(
+		AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+		AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS=1
+		STOP_FLAG="${HOME}/.aidevops/logs/stop"
+		TEST_GET_MAX_CALLED_FILE="${TEST_ROOT}/precomputed-get-max-called.txt"
+		TEST_COUNT_ACTIVE_CALLED_FILE="${TEST_ROOT}/precomputed-count-active-called.txt"
+		get_max_workers_target() {
+			printf 'called\n' >"$TEST_GET_MAX_CALLED_FILE"
+			printf '1\n'
+			return 0
+		}
+		count_active_workers() {
+			printf 'called\n' >"$TEST_COUNT_ACTIVE_CALLED_FILE"
+			printf '0\n'
+			return 0
+		}
+		dispatch_max() {
+			printf 'dispatch_max should not be called with active worker count at floor\n' >"${TEST_ROOT}/precomputed-dispatch-called.txt"
+			return 1
+		}
+
+		_dispatch_min_worker_floor_refill 8 6
+
+		if [[ ! -f "$TEST_GET_MAX_CALLED_FILE" && ! -f "$TEST_COUNT_ACTIVE_CALLED_FILE" && ! -f "${TEST_ROOT}/precomputed-dispatch-called.txt" ]]; then
+			return 0
+		fi
+		printf 'get_max_called=%s count_active_called=%s dispatch_called=%s\n' \
+			"$([[ -f "$TEST_GET_MAX_CALLED_FILE" ]] && printf yes || printf no)" \
+			"$([[ -f "$TEST_COUNT_ACTIVE_CALLED_FILE" ]] && printf yes || printf no)" \
+			"$([[ -f "${TEST_ROOT}/precomputed-dispatch-called.txt" ]] && printf yes || printf no)" >"${TEST_ROOT}/precomputed-refill-failure.txt"
+		return 1
+	)
+	local rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "refill: precomputed counts skip worker count reads" 0
+	else
+		print_result "refill: precomputed counts skip worker count reads" 1 "$(<"${TEST_ROOT}/precomputed-refill-failure.txt")"
+	fi
+	unset TEST_GET_MAX_CALLED_FILE TEST_COUNT_ACTIVE_CALLED_FILE AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS
+	return 0
+}
+
+test_apply_dispatch_refill_reuses_initial_worker_counts() {
+	(
+		AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+		AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS=1
+		STOP_FLAG="${HOME}/.aidevops/logs/stop"
+		TEST_COUNT_ACTIVE_CALLS_FILE="${TEST_ROOT}/apply-precomputed-count-active-calls.txt"
+		TEST_GET_MAX_CALLS_FILE="${TEST_ROOT}/apply-precomputed-get-max-calls.txt"
+		printf '%s\n' 0 >"$TEST_COUNT_ACTIVE_CALLS_FILE"
+		printf '%s\n' 0 >"$TEST_GET_MAX_CALLS_FILE"
+		count_active_workers() {
+			local calls
+			calls=$(<"$TEST_COUNT_ACTIVE_CALLS_FILE")
+			[[ "$calls" =~ ^[0-9]+$ ]] || calls=0
+			printf '%s\n' "$((calls + 1))" >"$TEST_COUNT_ACTIVE_CALLS_FILE"
+			printf '6\n'
+			return 0
+		}
+		get_max_workers_target() {
+			local calls
+			calls=$(<"$TEST_GET_MAX_CALLS_FILE")
+			[[ "$calls" =~ ^[0-9]+$ ]] || calls=0
+			printf '%s\n' "$((calls + 1))" >"$TEST_GET_MAX_CALLS_FILE"
+			printf '8\n'
+			return 0
+		}
+		dispatch_max() {
+			printf '0\n'
+			return 0
+		}
+		_adaptive_launch_settle_wait() {
+			return 0
+		}
+
+		apply_dispatch_max
+
+		local count_active_calls get_max_calls
+		count_active_calls=$(<"$TEST_COUNT_ACTIVE_CALLS_FILE")
+		get_max_calls=$(<"$TEST_GET_MAX_CALLS_FILE")
+		if [[ "$count_active_calls" -eq 1 && "$get_max_calls" -eq 1 ]]; then
+			return 0
+		fi
+		printf 'count_active_calls=%s get_max_calls=%s\n' "$count_active_calls" "$get_max_calls" >"${TEST_ROOT}/apply-precomputed-failure.txt"
+		return 1
+	)
+	local rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "apply: refill reuses precomputed worker counts" 0
+	else
+		print_result "apply: refill reuses precomputed worker counts" 1 "$(<"${TEST_ROOT}/apply-precomputed-failure.txt")"
+	fi
+	unset TEST_COUNT_ACTIVE_CALLS_FILE TEST_GET_MAX_CALLS_FILE AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS
+	return 0
+}
+
+test_early_exit_refill_reuses_precomputed_active_count() {
+	(
+		AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+		AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS=1
+		PULSE_BACKFILL_MAX_ATTEMPTS=1
+		PULSE_LAUNCH_GRACE_SECONDS=0
+		STOP_FLAG="${HOME}/.aidevops/logs/stop"
+		PRE_RUN_STAGE_TIMEOUT=1
+		TEST_COUNT_ACTIVE_CALLS_FILE="${TEST_ROOT}/early-precomputed-count-active-calls.txt"
+		printf '%s\n' 0 >"$TEST_COUNT_ACTIVE_CALLS_FILE"
+		get_max_workers_target() {
+			printf '6\n'
+			return 0
+		}
+		count_active_workers() {
+			local calls
+			calls=$(<"$TEST_COUNT_ACTIVE_CALLS_FILE")
+			[[ "$calls" =~ ^[0-9]+$ ]] || calls=0
+			printf '%s\n' "$((calls + 1))" >"$TEST_COUNT_ACTIVE_CALLS_FILE"
+			printf '1\n'
+			return 0
+		}
+		count_runnable_candidates() {
+			printf '8\n'
+			return 0
+		}
+		count_queued_without_worker() {
+			printf '0\n'
+			return 0
+		}
+		dispatch_max() {
+			printf '5\n'
+			return 0
+		}
+
+		_run_early_exit_recycle_loop 1
+
+		local count_active_calls
+		count_active_calls=$(<"$TEST_COUNT_ACTIVE_CALLS_FILE")
+		if [[ "$count_active_calls" -eq 1 ]]; then
+			return 0
+		fi
+		printf 'count_active_calls=%s\n' "$count_active_calls" >"${TEST_ROOT}/early-precomputed-failure.txt"
+		return 1
+	)
+	local rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "early recycle: refill reuses precomputed active count" 0
+	else
+		print_result "early recycle: refill reuses precomputed active count" 1 "$(<"${TEST_ROOT}/early-precomputed-failure.txt")"
+	fi
+	unset TEST_COUNT_ACTIVE_CALLS_FILE AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS PULSE_BACKFILL_MAX_ATTEMPTS PULSE_LAUNCH_GRACE_SECONDS PRE_RUN_STAGE_TIMEOUT
+	return 0
+}
+
+test_active_pulse_refill_uses_min_floor_above_raw_max() {
+	AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+	TEST_MAX_WORKERS=1
+	TEST_ACTIVE_WORKERS=2
+	TEST_DISPATCH_CALLS_FILE="${TEST_ROOT}/active-refill-dispatch-calls.txt"
+	printf '%s\n' 0 >"$TEST_DISPATCH_CALLS_FILE"
+	STOP_FLAG="${HOME}/.aidevops/logs/stop"
+	PULSE_ACTIVE_REFILL_INTERVAL=120
+	PULSE_ACTIVE_REFILL_IDLE_MIN=60
+	PULSE_ACTIVE_REFILL_STALL_MIN=120
+	# shellcheck disable=SC2329  # Override sourced function for this regression.
+	count_runnable_candidates() {
+		printf '4\n'
+		return 0
+	}
+	# shellcheck disable=SC2329  # Override sourced function for this regression.
+	count_queued_without_worker() {
+		printf '0\n'
+		return 0
+	}
+	# shellcheck disable=SC2329  # Override sourced function for this regression.
+	run_underfill_worker_recycler() {
+		return 0
+	}
+	# shellcheck disable=SC2329  # Override sourced function for this regression.
+	dispatch_max() {
+		local calls
+		calls=$(<"$TEST_DISPATCH_CALLS_FILE")
+		[[ "$calls" =~ ^[0-9]+$ ]] || calls=0
+		printf '%s\n' "$((calls + 1))" >"$TEST_DISPATCH_CALLS_FILE"
+		printf '0\n'
+		return 0
+	}
+
+	maybe_refill_underfilled_pool_during_active_pulse 0 180 180 true >/dev/null
+
+	local dispatch_calls
+	dispatch_calls=$(<"$TEST_DISPATCH_CALLS_FILE")
+	if [[ "$dispatch_calls" -ge 1 ]]; then
+		print_result "active refill: minimum floor overrides lower raw max target" 0
+	else
+		print_result "active refill: minimum floor overrides lower raw max target" 1 "dispatch_calls=${dispatch_calls}"
+	fi
+	unset TEST_DISPATCH_CALLS_FILE
 	return 0
 }
 
@@ -461,6 +768,7 @@ EOF
 }
 
 test_capacity_raises_soft_cap_to_floor
+test_capacity_reads_min_floor_from_config_default
 test_capacity_respects_existing_higher_cap
 test_capacity_caps_by_provider_accounts_and_high_load
 test_capacity_uses_configured_provider_account_multiplier
@@ -468,10 +776,16 @@ test_capacity_env_multiplier_overrides_config
 test_capacity_defaults_single_account_to_max_cap
 test_capacity_recent_service_interruptions_reduce_slots
 test_capacity_recent_progress_gets_runway_under_pressure
+test_capacity_clamps_provider_cap_below_active_to_zero_available
 test_throttle_does_not_force_serial_under_floor
 test_throttle_forces_serial_above_floor
 test_canary_preflight_marks_floor_without_cpu_bypass
 test_apply_dispatch_refills_until_active_floor_after_partial_launch
+test_apply_dispatch_skips_refill_when_capacity_cap_disables_floor
+test_min_worker_floor_refill_uses_precomputed_counts
+test_apply_dispatch_refill_reuses_initial_worker_counts
+test_early_exit_refill_reuses_precomputed_active_count
+test_active_pulse_refill_uses_min_floor_above_raw_max
 test_soft_canary_failure_bypasses_with_recent_worker_evidence
 test_hard_canary_failure_blocks_despite_recent_worker_evidence
 

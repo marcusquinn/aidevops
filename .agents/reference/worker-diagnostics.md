@@ -286,7 +286,7 @@ opencode run "Reply with exactly: CANARY_OK" -m anthropic/claude-sonnet-4-202505
 
 ### Minimum Worker Concurrency Floor (t3418)
 
-Pulse keeps a soft minimum implementation-worker floor so transient local pressure does not reduce useful dispatch to zero. Default: `AIDEVOPS_MIN_WORKER_CONCURRENCY=6`.
+Pulse keeps a soft minimum implementation-worker floor so transient local pressure does not reduce useful dispatch to zero. Default: `orchestration.min_worker_concurrency=6`; env override: `AIDEVOPS_MIN_WORKER_CONCURRENCY=6`.
 
 When active workers are below the floor:
 
@@ -294,7 +294,7 @@ When active workers are below the floor:
 - The worker canary still checks runtime/model health. CPU/load/saturation is not a canary throttle; auth checks, GraphQL circuit breaker, stop flag, memory/process failures, and other hard safety gates still apply.
 - Existing max worker caps above the floor still cap runaway dispatch.
 
-Set `AIDEVOPS_MIN_WORKER_CONCURRENCY=0` to disable the floor, or set a higher/lower integer for a runner-specific target.
+Set `orchestration.min_worker_concurrency=0` (or `AIDEVOPS_MIN_WORKER_CONCURRENCY=0`) to disable the floor, or set a higher/lower integer for a runner-specific target.
 
 ### Adaptive Worker Launch Staggering (t3482)
 

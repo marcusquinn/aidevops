@@ -163,6 +163,17 @@ test_pr_guard_emits_structured_block_reason() {
 	return 0
 }
 
+test_dedup_guard_emits_structured_block_reason() {
+	if grep -q "classify-blocker \"\$_dedup_block_signal\"" "$CORE_SCRIPT" \
+		&& grep -q "signal=\${_dedup_block_signal}" "$CORE_SCRIPT" \
+		&& grep -q 'dedup_guard_blocked' "$CORE_SCRIPT"; then
+		print_result "dedup guard emits classified structured block reason" 0
+		return 0
+	fi
+	print_result "dedup guard emits classified structured block reason" 1 "expected dedup guard to classify captured blocker signal with fallback"
+	return 0
+}
+
 main() {
 	if ! define_helpers_under_test; then
 		return 1
@@ -176,6 +187,7 @@ main() {
 	test_interactive_hold_allows_worker_issue
 	test_interactive_hold_emits_structured_block_reason
 	test_pr_guard_emits_structured_block_reason
+	test_dedup_guard_emits_structured_block_reason
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

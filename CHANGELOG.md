@@ -10,6 +10,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.93] - 2026-06-18
+
+### Changed
+
+- fix: harden dispatch claim stderr fallback (#25046)
+- fix: use script dir for dedup helper (#25039)
+- Maintenance: update simplification state registry
+- fix: combine gh shim repo metadata lookup (#25027)
+- fix: reuse precomputed refill worker counts (#25009)
+- fix: remove python dependency from newline test (#25010)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- trust maintainer collaborators in worker merge gates (#25049)
+- harden raw gh read wrapper test (#25048)
+- reject zero pulse merge lock pid (#25043)
+- propagate ruleset helper errors (#25023)
+- remove eval from merge timing counters (#25024)
+
+## [3.20.92] - 2026-06-18
+
+### Fixed
+
+- honor maintainer metadata in pulse role guard (#24998)
+- check rulesets before stuck branchprotect 404 (#24997)
+- classify dedup guard blocks before infra policy (#24994)
+
+## [3.20.91] - 2026-06-18
+
+### Added
+
+- classify blockedBy native lookup gaps (#24981)
+
+### Changed
+
+- feat: skip Renovate Dependency Dashboard issues (#24990)
+
+### Fixed
+
+- allow maintainer metadata in gh write guard (#24992)
+- guard in-cycle pulse merge lock (#24989)
+- pause REST core reads after reset (#24986)
+
+## [3.20.90] - 2026-06-18
+
+### Fixed
+
+- derive missing gh shim repo role (#24980)
+
+## [3.20.89] - 2026-06-17
+
+### Fixed
+
+- enforce configurable worker floor
+
+## [3.20.88] - 2026-06-17
+
+### Fixed
+
+- make pulse search prefetch last-resort (#24971)
+
+## [3.20.87] - 2026-06-17
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: remove invalid OAuth task ID (#24955)
+
+### Fixed
+
+- retry dispatch claim comment posts (#24970)
+
 ## [3.20.86] - 2026-06-17
 
 ### Fixed
