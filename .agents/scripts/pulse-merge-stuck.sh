@@ -318,13 +318,14 @@ _classify_stuck_pr() {
 			if grep -qi 'HTTP 404\|Not Found' <<<"$protection_resp"; then
 				local ruleset_contexts_404=""
 				if declare -F _required_contexts_from_rulesets_for_default_branch >/dev/null 2>&1; then
-					ruleset_contexts_404=$(_required_contexts_from_rulesets_for_default_branch "$repo_slug" "$default_branch") || {
+					local ruleset_contexts_rc=0
+					ruleset_contexts_404=$(_required_contexts_from_rulesets_for_default_branch "$repo_slug" "$default_branch") || ruleset_contexts_rc=$?
+					if [[ $ruleset_contexts_rc -ne 0 ]]; then
 						printf 'STUCK_BRANCHPROTECT_API_ERROR'
-						return 0
-					}
+						return "$ruleset_contexts_rc"
+					fi
 					if [[ -n "$ruleset_contexts_404" ]]; then
 						echo "[pulse-merge-stuck] _classify_stuck_pr: no classic branch protection on ${repo_slug} (HTTP 404), but active rulesets require contexts; continuing rollup classification (GH#24935)" >>"$LOGFILE"
-						protection_exit=0
 					else
 						printf 'STUCK_BRANCHPROTECT_404'
 						return 0
@@ -333,8 +334,7 @@ _classify_stuck_pr() {
 					printf 'STUCK_BRANCHPROTECT_404'
 					return 0
 				fi
-			fi
-			if [[ $protection_exit -ne 0 ]]; then
+			else
 				# 401 / 403 / 5xx etc — transient or auth break.
 				if grep -qi 'HTTP 401\|authentication required\|bad credentials' <<<"$protection_resp"; then
 					printf 'STUCK_AUTH'
