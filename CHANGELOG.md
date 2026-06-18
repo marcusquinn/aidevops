@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.91] - 2026-06-18
+
+### Added
+
+- classify blockedBy native lookup gaps (#24981)
+
+### Changed
+
+- feat: skip Renovate Dependency Dashboard issues (#24990)
+
+### Fixed
+
+- allow maintainer metadata in gh write guard (#24992)
+- guard in-cycle pulse merge lock (#24989)
+- pause REST core reads after reset (#24986)
+
 ## [3.20.90] - 2026-06-18
 
 ### Fixed
