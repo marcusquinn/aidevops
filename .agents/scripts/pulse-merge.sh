@@ -258,6 +258,7 @@ _check_pr_merge_gates() {
 	local _author_collab_rc=0
 	_is_collaborator_author "$pr_author" "$repo_slug"
 	_author_collab_rc=$?
+	local _author_collab_permission="${_PULSE_AUTHOR_PERMISSION_VALUE:-}"
 	if [[ "$_author_collab_rc" -eq 2 ]]; then
 		check_permission_failure_pr "$pr_number" "$repo_slug" "$pr_author" "${_PULSE_AUTHOR_PERMISSION_HTTP:-unknown}" || true
 		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — permission check failed for author ${pr_author} (HTTP ${_PULSE_AUTHOR_PERMISSION_HTTP:-unknown})" >>"$LOGFILE"
@@ -355,7 +356,7 @@ _check_pr_merge_gates() {
 	# Uses comma-delimited matching: ",origin:worker," does NOT match
 	# ",origin:worker-takeover," (substring-safe).
 	if [[ ",${_oi_labels_str}," == *"${_OW_LABEL_PAT}"* ]]; then
-		if ! _attempt_worker_briefed_auto_merge "$pr_number" "$repo_slug" "$_oi_labels_str" "$_oi_is_draft" "$linked_issue"; then
+		if ! _attempt_worker_briefed_auto_merge "$pr_number" "$repo_slug" "$_oi_labels_str" "$_oi_is_draft" "$linked_issue" "$_author_collab_permission" "$pr_author"; then
 			return 1
 		fi
 	fi

@@ -1055,7 +1055,9 @@ _issue_has_verified_crypto_approval() {
 # When OFF, all origin:worker PRs fall back to manual merge only.
 #
 # Args: $1=pr_number, $2=repo_slug, $3=labels_str (comma-separated),
-#       $4=is_draft, $5=linked_issue
+#       $4=is_draft, $5=linked_issue,
+#       $6=precomputed_issue_author_permission(optional),
+#       $7=precomputed_permission_login(optional)
 # Returns: 0=all gates pass (eligible for auto-merge), 1=blocked
 #######################################
 _attempt_worker_briefed_auto_merge() {
@@ -1064,6 +1066,8 @@ _attempt_worker_briefed_auto_merge() {
 	local labels_str="$3"
 	local is_draft="$4"
 	local linked_issue="$5"
+	local precomputed_issue_author_permission="${6:-}"
+	local precomputed_permission_login="${7:-}"
 
 	# Feature flag — when OFF, all origin:worker PRs fall back to manual merge
 	if [[ "${AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE:-1}" == "0" ]]; then
@@ -1099,6 +1103,10 @@ _attempt_worker_briefed_auto_merge() {
 	local issue_author_assoc=""
 	local issue_author_login=""
 	read -r issue_author_assoc issue_author_login <<< "$_issue_meta"
+	local issue_author_permission=""
+	if [[ -n "$precomputed_issue_author_permission" && -n "$precomputed_permission_login" && "$precomputed_permission_login" == "$issue_author_login" ]]; then
+		issue_author_permission="$precomputed_issue_author_permission"
+	fi
 
 	# Fetch auto-approval signal once for the NMR crypto-vs-auto check (t2449).
 	# Cryptographic approval is verified separately via approval-helper.sh; do not
@@ -1121,7 +1129,7 @@ _attempt_worker_briefed_auto_merge() {
 	# an approval on the issue" is at least as strong as the OWNER/MEMBER
 	# author check — the maintainer personally vouched with their private key.
 	if [[ "$issue_author_assoc" != "OWNER" && "$issue_author_assoc" != "MEMBER" ]]; then
-		if _issue_author_has_maintainer_authority "$repo_slug" "$issue_author_login"; then
+		if _issue_author_has_maintainer_authority "$repo_slug" "$issue_author_login" "$issue_author_permission"; then
 			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author ${issue_author_login} passes via authenticated maintainer permission fallback (GH#24958)" >>"$LOGFILE"
 		elif _is_trusted_issue_author "$issue_author_login"; then
 			echo "[pulse-merge] worker-briefed auto-merge: PR #${pr_number} in ${repo_slug} — linked issue #${linked_issue} author ${issue_author_login} passes via trusted-issue-author allowlist (t3062)" >>"$LOGFILE"
