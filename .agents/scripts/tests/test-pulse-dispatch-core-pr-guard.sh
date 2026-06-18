@@ -164,11 +164,13 @@ test_pr_guard_emits_structured_block_reason() {
 }
 
 test_dedup_guard_emits_structured_block_reason() {
-	if grep -q 'DISPATCH_BLOCK_REASON reason=dedup_active_claim signal=dedup_guard_blocked' "$CORE_SCRIPT"; then
-		print_result "dedup guard emits structured active-claim block reason" 0
+	if grep -q "classify-blocker \"\$_dedup_block_signal\"" "$CORE_SCRIPT" \
+		&& grep -q "signal=\${_dedup_block_signal}" "$CORE_SCRIPT" \
+		&& grep -q 'dedup_guard_blocked' "$CORE_SCRIPT"; then
+		print_result "dedup guard emits classified structured block reason" 0
 		return 0
 	fi
-	print_result "dedup guard emits structured active-claim block reason" 1 "expected dedup guard structured reason in dispatch core"
+	print_result "dedup guard emits classified structured block reason" 1 "expected dedup guard to classify captured blocker signal with fallback"
 	return 0
 }
 

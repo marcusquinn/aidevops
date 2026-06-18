@@ -2280,7 +2280,7 @@ classify_dispatch_blocker_reason() {
 			printf 'dedup_active_claim\n'
 			return 0
 			;;
-		*no-auto-dispatch* | *infrastructure_blocked* | *label=infrastructure* | *external*author*gate* | *nmr*gate* | *approval*required*)
+		*parent_task_blocked* | *parent-task* | *no-auto-dispatch* | *infrastructure_blocked* | *label=infrastructure* | *hold_for_review_blocked* | *hold-for-review* | *external*author*gate* | *nmr*gate* | *approval*required*)
 			printf 'policy_gate\n'
 			return 0
 			;;
