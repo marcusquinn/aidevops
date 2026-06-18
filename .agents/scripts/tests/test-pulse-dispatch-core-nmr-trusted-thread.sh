@@ -120,7 +120,7 @@ _gh_collaborator_permission_lookup() {
 stderr_contains_jq_error() {
 	local stderr_output="$1"
 	case "$stderr_output" in
-	*"parse error:"* | *"jq: error"*)
+	*"parse error:"* | *"jq:"*error*)
 		return 0
 		;;
 	*)
@@ -310,6 +310,10 @@ test_comment_jq_error_matcher_handles_jq_versions() {
 	fi
 	if ! stderr_contains_jq_error 'jq: error (at <stdin>:1): Invalid numeric literal at line 1, column 5'; then
 		print_result "comment jq error matcher handles jq versions" 1 "did not match jq 1.7 error output"
+		return 0
+	fi
+	if ! stderr_contains_jq_error 'jq: 1 compile error'; then
+		print_result "comment jq error matcher handles jq versions" 1 "did not match jq compile error output"
 		return 0
 	fi
 	if stderr_contains_jq_error 'bash: unrelated system error'; then
