@@ -192,7 +192,7 @@ _dispatch_candidate_failure_reason() {
 _dispatch_candidate_benign_block_reason() {
 	local reason="$1"
 	case "$reason" in
-		dedup_active_claim | interactive_review_hold | pr_target_not_dispatchable)
+		dedup_active_claim | interactive_review_hold | pr_target_not_dispatchable | renovate_dependency_dashboard)
 			return 0
 			;;
 	esac

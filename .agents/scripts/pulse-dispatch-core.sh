@@ -28,6 +28,7 @@
 #   - _is_bot_generated_cleanup_issue
 #   - _is_task_committed_to_main
 #   - _dispatch_target_is_pull_request
+#   - _is_renovate_dependency_dashboard_issue
 #   - _dispatch_has_interactive_hold
 #   - _dispatch_dedup_check_layers  (t1999: extracted from dispatch_with_dedup)
 #   - dispatch_with_dedup           (t1999: thin orchestrator, <80 lines)
@@ -977,6 +978,30 @@ _dispatch_target_is_pull_request() {
 }
 
 #######################################
+# Return success when issue metadata identifies a Renovate Dependency Dashboard
+# meta-issue. These are maintenance tracking issues, not implementation work.
+#
+# Args:
+#   $1 - issue_meta_json (pre-fetched JSON with .author and .title)
+# Returns:
+#   0 - renovate[bot] Dependency Dashboard issue
+#   1 - not a Renovate Dependency Dashboard issue
+#######################################
+_is_renovate_dependency_dashboard_issue() {
+	local issue_meta_json="$1"
+	local author_login="" issue_title="" title_lower=""
+
+	[[ -n "$issue_meta_json" ]] || return 1
+	author_login=$(printf '%s' "$issue_meta_json" | jq -r '.author.login // empty' 2>/dev/null | tr '[:upper:]' '[:lower:]') || author_login=""
+	issue_title=$(printf '%s' "$issue_meta_json" | jq -r '.title // empty' 2>/dev/null) || issue_title=""
+	title_lower=$(printf '%s' "$issue_title" | tr '[:upper:]' '[:lower:]')
+
+	[[ "$author_login" == "renovate[bot]" ]] || return 1
+	[[ "$title_lower" == *"dependency dashboard"* ]] || return 1
+	return 0
+}
+
+#######################################
 # t2955: Apply the `dispatch-blocked:committed-to-main` cache label.
 #
 # Called by `_check_commit_subject_dedup_gate` after the first scan
@@ -1557,7 +1582,7 @@ dispatch_with_dedup() {
 	_ds_t0=$(_ds_now_ns)
 	local issue_meta_json
 	issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
-		--json number,title,state,labels,assignees,body 2>/dev/null) || issue_meta_json=""
+		--json number,title,state,labels,assignees,body,author 2>/dev/null) || issue_meta_json=""
 	_ds_record "$issue_number" "$repo_slug" "gh_issue_view" "$_ds_t0"
 	if [[ -z "$issue_meta_json" ]]; then
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to load issue metadata" >>"$LOGFILE"
@@ -1580,7 +1605,13 @@ dispatch_with_dedup() {
 		return 1
 	fi
 
-	# Run all pre-dispatch validation and dedup check layers (9 gates total).
+	if _is_renovate_dependency_dashboard_issue "$issue_meta_json"; then
+		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: Renovate Dependency Dashboard issues are metadata only" >>"$LOGFILE"
+		echo "[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=renovate_dependency_dashboard signal=renovate_dependency_dashboard issue=#${issue_number} repo=${repo_slug}" >>"$LOGFILE"
+		return 3
+	fi
+
+	# Run all pre-dispatch validation and dedup check layers (10 gates total).
 	# Each gate logs its own blocked reason to LOGFILE before returning 1.
 	# _claim_comment_id is set by check_dispatch_dedup inside this call via
 	# bash dynamic scoping — accessible below because it was declared local above.

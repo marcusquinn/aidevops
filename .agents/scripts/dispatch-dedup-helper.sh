@@ -2268,6 +2268,10 @@ classify_dispatch_blocker_reason() {
 			printf 'missing_worker_context\n'
 			return 0
 			;;
+		*renovate*dependency*dashboard* | *dependency*dashboard*renovate*bot* | *renovate_dependency_dashboard*)
+			printf 'renovate_dependency_dashboard\n'
+			return 0
+			;;
 		*local*capacity*gate* | *worktree*cap* | *max*worktree* | *disk*space* | *large*file*)
 			printf 'local_capacity_gate\n'
 			return 0
