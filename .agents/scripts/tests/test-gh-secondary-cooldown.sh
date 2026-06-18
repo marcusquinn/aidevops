@@ -28,8 +28,17 @@ export AIDEVOPS_GH_SECONDARY_COOLDOWN_SECS=600
 export AIDEVOPS_GH_READ_RAMP_STATE_FILE="${TMP_HOME}/.aidevops/cache/gh-read-ramp-state.tsv"
 
 gh() {
-	printf 'GH %s\n' "$*" >>"$CALL_LOG"
-	case "$*" in
+	local gh_args="$*"
+	printf 'GH %s\n' "$gh_args" >>"$CALL_LOG"
+	case "$gh_args" in
+	"api rate_limit --jq "*.resources.search*)
+		if [[ -n "${GH_SEARCH_RATE_LIMIT_RESET:-}" ]]; then
+			printf '%s\n' "$GH_SEARCH_RATE_LIMIT_RESET"
+		else
+			printf '\n'
+		fi
+		return 0
+		;;
 	"api rate_limit --jq "*)
 		if [[ -n "${GH_CORE_RATE_LIMIT_RESET:-}" ]]; then
 			printf '%s\n' "$GH_CORE_RATE_LIMIT_RESET"
@@ -76,7 +85,7 @@ reset_case() {
 	rm -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE"
 	rm -f "$AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE"
 	rm -f "$AIDEVOPS_GH_READ_RAMP_STATE_FILE"
-	unset GH_SECONDARY_FAIL GH_REST_CORE_403_FAIL GH_CORE_RATE_LIMIT_RESET GH_HEADER_LIMIT_FAIL GH_GENERIC_403_FAIL GH_ABUSE_403_FAIL GH_PRIMARY_REMAINING_ZERO_FAIL AIDEVOPS_GH_SECONDARY_COOLDOWN_OVERRIDE AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_LINES AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_BYTES AIDEVOPS_GH_READ_RAMP_BUDGET AIDEVOPS_GH_READ_RAMP_BOOT_SECS AIDEVOPS_GH_READ_RAMP_RECOVERY_SECS AIDEVOPS_GH_READ_RAMP_OVERRIDE AIDEVOPS_GH_AUTH_MODE AIDEVOPS_GH_AUTH_PRINCIPAL AIDEVOPS_GH_COOLDOWN_OPERATION AIDEVOPS_GH_COOLDOWN_WRAPPER AIDEVOPS_GH_COOLDOWN_STAGE AIDEVOPS_GH_API_POOL AIDEVOPS_GH_ROUTE_DECISION 2>/dev/null || true
+	unset GH_SECONDARY_FAIL GH_REST_CORE_403_FAIL GH_CORE_RATE_LIMIT_RESET GH_SEARCH_RATE_LIMIT_RESET GH_HEADER_LIMIT_FAIL GH_GENERIC_403_FAIL GH_ABUSE_403_FAIL GH_PRIMARY_REMAINING_ZERO_FAIL AIDEVOPS_GH_SECONDARY_COOLDOWN_OVERRIDE AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_LINES AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_MAX_BYTES AIDEVOPS_GH_READ_RAMP_BUDGET AIDEVOPS_GH_READ_RAMP_BOOT_SECS AIDEVOPS_GH_READ_RAMP_RECOVERY_SECS AIDEVOPS_GH_READ_RAMP_OVERRIDE AIDEVOPS_GH_AUTH_MODE AIDEVOPS_GH_AUTH_PRINCIPAL AIDEVOPS_GH_COOLDOWN_OPERATION AIDEVOPS_GH_COOLDOWN_WRAPPER AIDEVOPS_GH_COOLDOWN_STAGE AIDEVOPS_GH_API_POOL AIDEVOPS_GH_ROUTE_DECISION 2>/dev/null || true
 	_GH_SECONDARY_COOLDOWN_LOGGED_ACTIVE=0
 	_GH_SECONDARY_COOLDOWN_LOGGED_RAMP=0
 	_gh_secondary_system_boot_ts() { return 1; }
@@ -171,6 +180,29 @@ test_rest_core_403_uses_rate_limit_reset_and_skips_next_call() {
 		return 0
 	fi
 	printf 'FAIL REST core cooldown did not suppress next REST call\n'
+	return 1
+}
+
+test_rest_search_403_uses_search_rate_limit_reset() {
+	reset_case
+	local now=""
+	now="$(_gh_secondary_cooldown_now)"
+	export GH_REST_CORE_403_FAIL=1
+	export GH_CORE_RATE_LIMIT_RESET=$((now + 1800))
+	export GH_SEARCH_RATE_LIMIT_RESET=$((now + 900))
+	set +e
+	_gh_with_timeout read gh api -i "/search/issues?q=repo:owner/repo+state:open" >"${TMP_HOME}/rest-search-403.out" 2>"$ERR_LOG"
+	local rc=$?
+	set -e
+	if [[ "$rc" -ne 1 ]]; then
+		printf 'FAIL expected REST search 403 wrapped gh rc=1, got %s\n' "$rc"
+		return 1
+	fi
+	if jq -e --argjson reset "$GH_SEARCH_RATE_LIMIT_RESET" '.reason == "github-api-rate-limit-status-403" and .last_request_id == "REQ-CORE" and .expires_at == $reset and .diagnostic.endpoint_family == "rest-search"' "$AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE" >/dev/null; then
+		printf 'PASS REST search 403 uses search reset timestamp\n'
+		return 0
+	fi
+	printf 'FAIL REST search 403 cooldown did not use search reset timestamp\n'
 	return 1
 }
 
@@ -408,6 +440,7 @@ test_secondary_response_writes_cooldown
 test_header_response_writes_retry_after_cooldown
 test_generic_403_diagnostic_distinguishes_forbidden
 test_rest_core_403_uses_rate_limit_reset_and_skips_next_call
+test_rest_search_403_uses_search_rate_limit_reset
 test_abuse_403_diagnostic_distinguishes_abuse_text
 test_remaining_zero_diagnostic_classifies_primary_quota
 test_active_cooldown_skips_without_gh_call
