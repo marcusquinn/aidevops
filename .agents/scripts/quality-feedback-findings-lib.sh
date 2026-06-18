@@ -48,7 +48,11 @@ _build_inline_findings() {
 			"\\baddressed in [0-9a-f]{7,40}\\b|" +
 			"\\bno further concerns?\\b|" +
 			"\\bno further feedback\\b|" +
-			"\\bno further recommendations?\\b"; "i")) as $resolution_or_ack |
+			"\\bno further recommendations?\\b|" +
+			"\\bno further action is needed\\b|" +
+			"\\bthread is resolved\\b|" +
+			"\\bimplementation (has been )?(confirmed|verified)\\b|" +
+			"\\btests are passing\\b"; "i")) as $resolution_or_ack |
 		select($resolution_or_ack | not) |
 
 		# Extract severity from body

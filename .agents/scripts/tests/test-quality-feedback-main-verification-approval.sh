@@ -282,6 +282,30 @@ test_skips_no_further_concerns_inline_ack() {
 	return 0
 }
 
+test_skips_resolved_thread_inline_ack() {
+	local comments result
+	comments='[{"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the verification. Since the implementation has been confirmed as correct and the thread is resolved, no further action is needed.","path":".agents/scripts/pulse-dispatch-engine.sh","line":868,"html_url":"https://example.invalid/review","created_at":"2026-06-18T00:00:00Z"}]'
+	result=$(_build_inline_findings "$comments" "25009" "medium" | jq 'length')
+	if [[ "$result" == "0" ]]; then
+		print_result "skip resolved-thread inline acknowledgement" 0
+	else
+		print_result "skip resolved-thread inline acknowledgement" 1 "expected 0 findings, got ${result}"
+	fi
+	return 0
+}
+
+test_skips_verified_tests_passing_inline_ack() {
+	local comments result
+	comments='[{"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the update. Since the implementation has been verified and the tests are passing, this thread is resolved.","path":".agents/scripts/pulse-dispatch-engine.sh","line":1406,"html_url":"https://example.invalid/review","created_at":"2026-06-18T00:00:00Z"}]'
+	result=$(_build_inline_findings "$comments" "25009" "medium" | jq 'length')
+	if [[ "$result" == "0" ]]; then
+		print_result "skip verified-tests-passing inline acknowledgement" 0
+	else
+		print_result "skip verified-tests-passing inline acknowledgement" 1 "expected 0 findings, got ${result}"
+	fi
+	return 0
+}
+
 test_keeps_actionable_approved_review() {
 	# APPROVED review that also contains actionable critique — must be kept
 	local result
