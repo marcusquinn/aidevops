@@ -221,6 +221,22 @@ _resolve_version() {
 }
 
 #######################################
+# Return a secure fallback file path for claim POST stderr capture.
+# Used only when mktemp is unavailable; never falls back to world-writable /tmp.
+# Returns:
+#   path on stdout, exit 0; exit 1 when no private writable directory is available
+#######################################
+_claim_post_error_fallback_path() {
+	if [[ -n "${HOME:-}" && -d "$HOME" && -w "$HOME" ]]; then
+		printf '%s' "${HOME}/.aidevops-claim-post-error.$$.$RANDOM"
+		return 0
+	fi
+
+	printf '%s\n' "Error: mktemp failed and HOME is unavailable for secure claim POST stderr capture" >&2
+	return 1
+}
+
+#######################################
 # Post a claim comment on a GitHub issue.
 # The comment is plain text — visible in rendered view.
 #
@@ -278,7 +294,7 @@ ${machine_readable_part}
 	fi
 
 	local comment_id="" attempt=1 post_err_file="" post_error_summary=""
-	post_err_file=$(mktemp 2>/dev/null || printf '%s' "/tmp/aidevops-claim-post-error.$$" )
+	post_err_file=$(mktemp 2>/dev/null || _claim_post_error_fallback_path) || return 1
 	while [[ "$attempt" -le "$attempts" ]]; do
 		comment_id=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 			--method POST \
