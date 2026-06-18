@@ -163,11 +163,16 @@ check_file() {
 ensure_trailing_newline() {
 	local file="$1"
 	local last
-	last="$(
-		tail -c 1 "$file"
-		printf x
-	)"
-	[[ -s "$file" ]] && [[ "$last" != $'\n'x ]] && printf '\n' >>"$file"
+	if [[ -s "$file" ]]; then
+		last="$(
+			tail -c 1 "$file"
+			printf x
+		)"
+		if [[ "$last" != $'\n'x ]]; then
+			printf '\n' >>"$file"
+		fi
+	fi
+	return 0
 }
 
 # Source CLI implementation modules from the namespaced module tree.
