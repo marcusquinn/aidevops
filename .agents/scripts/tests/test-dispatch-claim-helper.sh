@@ -603,7 +603,7 @@ test_claim_retries_transient_post_failure() {
 # Test: claim POST stderr fallback avoids predictable /tmp paths when mktemp fails.
 #######################################
 test_claim_post_error_fallback_avoids_tmp() {
-	local tmp_dir mock_path old_created_at claim_created_at output exit_code attempts test_home
+	local tmp_dir mock_path old_created_at claim_created_at output exit_code attempts test_home chmod_log chmod_mode chmod_path
 	tmp_dir=$(mktemp -d)
 	mock_path=$(create_mock_gh "$tmp_dir")
 	test_home="${tmp_dir}/home"
@@ -616,10 +616,18 @@ test_claim_post_error_fallback_avoids_tmp() {
 exit 1
 EOF
 	chmod +x "${mock_path}/mktemp"
+	chmod_log="${tmp_dir}/chmod.log"
+	cat >"${mock_path}/chmod" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\t%s\n' "${1:-}" "${2:-}" >>"${MOCK_CHMOD_LOG:?}"
+command -p chmod "$@"
+EOF
+	chmod +x "${mock_path}/chmod"
 
 	set +e
 	output=$(PATH="${mock_path}:$PATH" \
-		HOME="$test_home" \
+		HOME="${test_home}/" \
+		MOCK_CHMOD_LOG="$chmod_log" \
 		MOCK_GH_STATE_DIR="$tmp_dir" \
 		MOCK_OLD_CLAIM_CREATED_AT="$old_created_at" \
 		MOCK_NEW_CLAIM_CREATED_AT="$claim_created_at" \
@@ -654,6 +662,22 @@ EOF
 		print_result "claim POST fallback avoids predictable tmp path" 1 "predictable /tmp fallback remains"
 	else
 		print_result "claim POST fallback avoids predictable tmp path" 0
+	fi
+
+	chmod_mode=""
+	chmod_path=""
+	if [[ -f "$chmod_log" ]]; then
+		IFS=$'\t' read -r chmod_mode chmod_path <"$chmod_log" || true
+	fi
+	if [[ "$chmod_mode" == "600" && "$chmod_path" == "${test_home}/.aidevops-claim-post-error."* ]]; then
+		print_result "claim POST fallback pre-creates private stderr file" 0
+	else
+		print_result "claim POST fallback pre-creates private stderr file" 1 "chmod_mode=${chmod_mode:-missing} chmod_path=${chmod_path:-missing} output: $output"
+	fi
+	if [[ "$chmod_path" == *"//.aidevops-claim-post-error."* ]]; then
+		print_result "claim POST fallback strips trailing HOME slash" 1 "chmod_path=${chmod_path}"
+	else
+		print_result "claim POST fallback strips trailing HOME slash" 0
 	fi
 
 	rm -rf "$tmp_dir"
