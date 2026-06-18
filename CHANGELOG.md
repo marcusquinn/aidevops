@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.95] - 2026-06-18
+
+### Changed
+
+- ramp pulse dispatch capacity (#25051)
+- fix: address pulse review feedback (#25052)
+
 ## [3.20.94] - 2026-06-18
 
 ### Changed
