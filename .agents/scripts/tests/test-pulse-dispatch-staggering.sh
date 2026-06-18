@@ -45,7 +45,7 @@ reset_stagger_env() {
 	export PULSE_DISPATCH_PROVIDER_BACKOFF_ACTIVE=0
 	export PULSE_DISPATCH_STAGGER_JITTER_MAX_SECONDS=0
 	export PULSE_DISPATCH_STAGGER_MAX_SECONDS=20
-	unset AIDEVOPS_PULSE_DISPATCH_RAMP_ENABLED AIDEVOPS_PULSE_DISPATCH_RAMP_NOW AIDEVOPS_PULSE_DISPATCH_RAMP_START_EPOCH AIDEVOPS_PULSE_DISPATCH_RAMP_PHASE AIDEVOPS_PULSE_DISPATCH_RAMP_SLOT_SECS
+	unset AIDEVOPS_PULSE_DISPATCH_RAMP_ENABLED AIDEVOPS_PULSE_DISPATCH_RAMP_NOW AIDEVOPS_PULSE_DISPATCH_RAMP_START_EPOCH AIDEVOPS_PULSE_DISPATCH_RAMP_PHASE AIDEVOPS_PULSE_DISPATCH_RAMP_SLOT_SECS AIDEVOPS_PULSE_DISPATCH_RAMP_BOOT_SECS AIDEVOPS_PULSE_DISPATCH_RAMP_RECOVERY_SECS AIDEVOPS_GH_READ_RAMP_BOOT_SECS AIDEVOPS_GH_READ_RAMP_RECOVERY_SECS
 	return 0
 }
 
@@ -192,6 +192,52 @@ test_dispatch_ramp_can_be_disabled() {
 	return 0
 }
 
+test_dispatch_ramp_uses_precomputed_boot_timestamp() {
+	reset_stagger_env
+	export AIDEVOPS_PULSE_DISPATCH_RAMP_NOW=1100
+	export AIDEVOPS_PULSE_DISPATCH_RAMP_SLOT_SECS=120
+	local capped
+	capped=$(_dispatch_apply_startup_capacity_ramp 8 0 1000)
+	if [[ "$capped" == "1" ]]; then
+		print_result "dispatch ramp: accepts precomputed boot timestamp" 0
+	else
+		print_result "dispatch ramp: accepts precomputed boot timestamp" 1 "cap=${capped}"
+	fi
+	return 0
+}
+
+test_dispatch_ramp_uses_precomputed_cooldown_expiry() {
+	reset_stagger_env
+	export AIDEVOPS_PULSE_DISPATCH_RAMP_BOOT_SECS=0
+	export AIDEVOPS_PULSE_DISPATCH_RAMP_NOW=1120
+	export AIDEVOPS_PULSE_DISPATCH_RAMP_SLOT_SECS=120
+	local capped
+	capped=$(_dispatch_apply_startup_capacity_ramp 8 0 "" 1000)
+	if [[ "$capped" == "2" ]]; then
+		print_result "dispatch ramp: accepts precomputed cooldown expiry" 0
+	else
+		print_result "dispatch ramp: accepts precomputed cooldown expiry" 1 "cap=${capped}"
+	fi
+	return 0
+}
+
+test_dispatch_ramp_handles_unset_logfile() {
+	reset_stagger_env
+	export AIDEVOPS_PULSE_DISPATCH_RAMP_NOW=1000
+	export AIDEVOPS_PULSE_DISPATCH_RAMP_SLOT_SECS=120
+	local old_logfile="${LOGFILE:-}"
+	local capped
+	unset LOGFILE
+	capped=$(_dispatch_apply_startup_capacity_ramp 8 0 1000)
+	export LOGFILE="$old_logfile"
+	if [[ "$capped" == "1" ]]; then
+		print_result "dispatch ramp: unset LOGFILE falls back to dev null" 0
+	else
+		print_result "dispatch ramp: unset LOGFILE falls back to dev null" 1 "cap=${capped}"
+	fi
+	return 0
+}
+
 test_low_load_no_delay
 test_high_load_delay
 test_provider_backoff_delay
@@ -202,6 +248,9 @@ test_dispatch_ramp_limits_initial_capacity
 test_dispatch_ramp_adds_one_slot_per_pulse_interval
 test_dispatch_ramp_never_exceeds_max_capacity
 test_dispatch_ramp_can_be_disabled
+test_dispatch_ramp_uses_precomputed_boot_timestamp
+test_dispatch_ramp_uses_precomputed_cooldown_expiry
+test_dispatch_ramp_handles_unset_logfile
 
 echo ""
 echo "===================="
