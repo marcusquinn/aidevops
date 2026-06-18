@@ -977,22 +977,24 @@ _is_trusted_issue_author() {
 # through the authenticated collaborator permission endpoint instead of forcing
 # per-issue cryptographic approvals for every maintainer-run aidevops worker.
 #
-# Args: $1=repo_slug, $2=github_login
+# Args: $1=repo_slug, $2=github_login, $3=precomputed_permission(optional)
 # Returns: 0=trusted maintainer-equivalent access, 1=not trusted or API error
 #######################################
 _issue_author_has_maintainer_authority() {
 	local repo_slug="$1"
 	local login="$2"
-	local permission=""
+	local permission="${3:-}"
 
 	[[ -n "$repo_slug" && -n "$login" ]] || return 1
 
-	#aidevops:trust-boundary GH#24958: ambiguous GitHub issue
-	# author_association values are not sufficient to auto-merge worker PRs.
-	# Confirm maintainer-equivalent access with authenticated metadata and fail
-	# closed on API errors or permissions below write.
-	permission=$(gh api "repos/${repo_slug}/collaborators/${login}/permission" \
-		--jq '.permission // ""' 2>/dev/null) || return 1
+	if [[ -z "$permission" ]]; then
+		#aidevops:trust-boundary GH#24958: ambiguous GitHub issue
+		# author_association values are not sufficient to auto-merge worker PRs.
+		# Confirm maintainer-equivalent access with authenticated metadata and fail
+		# closed on API errors or permissions below write.
+		permission=$(gh api "repos/${repo_slug}/collaborators/${login}/permission" \
+			--jq '.permission // ""' 2>/dev/null) || return 1
+	fi
 
 	case "$permission" in
 		admin | maintain | write)
