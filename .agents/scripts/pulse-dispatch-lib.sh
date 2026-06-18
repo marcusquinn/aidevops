@@ -1434,7 +1434,7 @@ _dispatch_floor_loop() {
 			break
 		fi
 		local _dispatch_proc_rc=0
-		_dispatch_process_candidate "$candidate_json" "$self_login" "$available_slots" || _dispatch_proc_rc=$?
+		_dispatch_process_candidate "$candidate_json" "$self_login" "$available_slots" >>"$LOGFILE" 2>&1 || _dispatch_proc_rc=$?
 		echo "[pulse-wrapper] Dispatch_max: loop iter=${processed_count} — _dispatch_process_candidate rc=${_dispatch_proc_rc}" >>"$LOGFILE"
 		if [[ "$_dispatch_proc_rc" -eq 0 ]]; then
 			dispatched_count=$((dispatched_count + 1))
