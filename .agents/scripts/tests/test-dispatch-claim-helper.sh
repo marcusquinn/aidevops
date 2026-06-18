@@ -600,6 +600,27 @@ test_claim_retries_transient_post_failure() {
 }
 
 #######################################
+# Build a mock touch executable that records the mode immediately after creation.
+# Args:
+#   $1 = mock bin directory
+# Returns: exit 0
+#######################################
+create_mock_touch_logger() {
+	local mock_bin_dir="$1"
+	cat >"${mock_bin_dir}/touch" <<'EOF'
+#!/usr/bin/env bash
+command -p touch "$@"
+touch_mode=""
+if [[ -e "${1:-}" ]]; then
+	touch_mode=$(command -p stat -c '%a' "$1")
+fi
+printf '%s\t%s\n' "$touch_mode" "${1:-}" >>"${MOCK_TOUCH_LOG:?}"
+EOF
+	chmod +x "${mock_bin_dir}/touch"
+	return 0
+}
+
+#######################################
 # Test: claim POST stderr fallback avoids predictable /tmp paths when mktemp fails.
 #######################################
 test_claim_post_error_fallback_avoids_tmp() {
@@ -624,16 +645,7 @@ command -p chmod "$@"
 EOF
 	chmod +x "${mock_path}/chmod"
 	touch_log="${tmp_dir}/touch.log"
-	cat >"${mock_path}/touch" <<'EOF'
-#!/usr/bin/env bash
-command -p touch "$@"
-touch_mode=""
-if [[ -e "${1:-}" ]]; then
-	touch_mode=$(command -p stat -c '%a' "$1")
-fi
-printf '%s\t%s\n' "$touch_mode" "${1:-}" >>"${MOCK_TOUCH_LOG:?}"
-EOF
-	chmod +x "${mock_path}/touch"
+	create_mock_touch_logger "$mock_path"
 
 	set +e
 	output=$(PATH="${mock_path}:$PATH" \
