@@ -2276,7 +2276,11 @@ classify_dispatch_blocker_reason() {
 			printf 'local_capacity_gate\n'
 			return 0
 			;;
-		*no-auto-dispatch* | *infrastructure* | *external*author*gate* | *nmr*gate* | *approval*required*)
+		*dedup*guard*blocked*)
+			printf 'dedup_active_claim\n'
+			return 0
+			;;
+		*no-auto-dispatch* | *infrastructure_blocked* | *label=infrastructure* | *external*author*gate* | *nmr*gate* | *approval*required*)
 			printf 'policy_gate\n'
 			return 0
 			;;
