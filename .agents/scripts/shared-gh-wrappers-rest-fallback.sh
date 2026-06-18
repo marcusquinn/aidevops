@@ -1401,12 +1401,8 @@ _rest_issue_list() {
 
 #######################################
 # _rest_issue_search: GET /search/issues?q=...  (t2995)
-# REST-side equivalent of `gh issue list --search`. Used by the gh_issue_list
-# wrapper when GraphQL is exhausted AND the call carried a --search filter.
-# The plain /repos/{owner}/{repo}/issues endpoint does NOT support full-text
-# search, so the prior REST translator silently dropped --search and returned
-# label-only results — a silent-correctness bug that caused the file-size-debt
-# dedup helper to match wrong issues during exhaustion windows.
+# REST-side equivalent of `gh issue list --search`; preserves full-text search
+# semantics because /repos/{owner}/{repo}/issues does not support --search.
 #
 # Translation:
 #   gh issue list --repo OWNER/REPO --state open \
@@ -1415,15 +1411,7 @@ _rest_issue_list() {
 #   gh api /search/issues?q=QUERY+repo:OWNER/REPO+is:issue+is:open+label:LABEL \
 #     --jq '.items[0].number'
 #
-# Notes:
-#   - Search API has its own quota (30 req/min for authenticated users) —
-#     separate from both core REST and GraphQL pools.
-#   - Multiple --label flags are AND-joined into multiple `+label:"X"` qualifiers.
-#   - --json FIELDS is accepted for parity but ignored (caller uses --jq).
-#   - --jq expressions written for `gh issue list` operate on a flat array
-#     (e.g. `.[0].number`). The /search/issues endpoint wraps results in
-#     `{items:[...]}`. To preserve drop-in semantics, we extract `.items`
-#     before applying the user's jq filter.
+# Notes: Search has its own quota; caller jq expressions are applied to `.items`.
 #
 # Returns the underlying gh api exit code.
 #######################################
@@ -1494,7 +1482,18 @@ _rest_issue_search() {
 		_final_jq=".items"
 	fi
 
-	local _gh_cmd=(gh api "$_path" --jq "$_final_jq")
-	_rest_api_call read "${_gh_cmd[@]}"
+	local _raw_response=""
+	local _body=""
+	local _rc=0
+	local _gh_cmd=(gh api -i "$_path")
+	_raw_response="$(_rest_api_call read "${_gh_cmd[@]}")"
+	_rc=$?
+	if [[ "$_rc" -ne 0 ]]; then
+		return "$_rc"
+	fi
+
+	_body="$(awk 'BEGIN { body = 0 } { line = $0; sub(/\r$/, "", line); if (body) { print; next } if (line == "") { body = 1 } }' <<<"$_raw_response" 2>/dev/null)"
+	[[ -z "$_body" && "$_raw_response" != HTTP/* ]] && _body="$_raw_response"
+	printf '%s\n' "$_body" | jq -r "$_final_jq"
 	return $?
 }

@@ -285,6 +285,16 @@ gh() {
 		fi
 		return 0
 	fi
+	if [[ "$1" == "api" && ( "$2" =~ ^/search/issues || ( "$2" == "-i" && "${3:-}" =~ ^/search/issues ) ) ]]; then
+		local fixture='{"items":[{"number":22430,"state":"open","title":"Reduce GraphQL list-call pressure"}]}'
+		fixture="${STUB_SEARCH_FIXTURE:-$fixture}"
+		if [[ "$2" == "-i" ]]; then
+			printf 'HTTP/2 200\r\nX-RateLimit-Remaining: 29\r\nX-RateLimit-Resource: search\r\nX-GitHub-Request-Id: SEARCH-REQ\r\n\r\n%s\n' "$fixture"
+		else
+			printf '%s\n' "$fixture"
+		fi
+		return 0
+	fi
 	if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+$ ]]; then
 		printf '%s\n' "${STUB_REPO_DEFAULT_BRANCH:-main}"
 		return 0
@@ -846,22 +856,28 @@ else
 	fail "gh_issue_list uses primary path when GraphQL budget is healthy" \
 		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
 fi
-
 # =============================================================================
 # Test 22: gh_issue_list preserves --search by routing low-budget calls to search
 # =============================================================================
 : >"$GH_CALLS"
 : >"$GH_INFO_OUTPUT"
 export STUB_RATE_LIMIT_REMAINING=0
-
 gh_issue_list --repo "owner/repo" --search "fallback" --state open --json number --jq '.[0].number' >/dev/null 2>&1 || true
-
-if grep -qE '^api /search/issues\?' "$GH_CALLS" 2>/dev/null &&
+if grep -qE '^api (-i )?/search/issues\?' "$GH_CALLS" 2>/dev/null &&
 	! grep -qE '^issue list' "$GH_CALLS" 2>/dev/null; then
 	pass "gh_issue_list proactively routes --search to /search/issues"
 else
 	fail "gh_issue_list proactively routes --search to /search/issues" \
 		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
+fi
+# Test 22a: _rest_issue_search captures headers but preserves caller output
+: >"$GH_CALLS"; : >"$GH_INFO_OUTPUT"; export STUB_RATE_LIMIT_REMAINING=0
+search_output=$(_rest_issue_search --repo "owner/repo" --search "fallback" --state open --json number --jq '.[0].number' 2>/dev/null || true)
+if [[ "$search_output" == "22430" ]] && grep -qE '^api -i /search/issues\?' "$GH_CALLS" 2>/dev/null && ! printf '%s\n' "$search_output" | grep -qE '^(HTTP/|X-RateLimit|X-GitHub-Request-Id)'; then
+	pass "_rest_issue_search includes headers for diagnostics without leaking them to callers"
+else
+	fail "_rest_issue_search includes headers for diagnostics without leaking them to callers" \
+		"output=${search_output} GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
 fi
 
 # =============================================================================
