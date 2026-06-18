@@ -603,7 +603,7 @@ test_claim_retries_transient_post_failure() {
 # Test: claim POST stderr fallback avoids predictable /tmp paths when mktemp fails.
 #######################################
 test_claim_post_error_fallback_avoids_tmp() {
-	local tmp_dir mock_path old_created_at claim_created_at output exit_code attempts test_home chmod_log chmod_mode chmod_path suppressed_creation_pattern
+	local tmp_dir mock_path old_created_at claim_created_at output exit_code attempts test_home chmod_log chmod_mode chmod_path pre_chmod_mode suppressed_creation_pattern
 	tmp_dir=$(mktemp -d)
 	mock_path=$(create_mock_gh "$tmp_dir")
 	test_home="${tmp_dir}/home"
@@ -620,6 +620,15 @@ EOF
 	cat >"${mock_path}/chmod" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\t%s\n' "${1:-}" "${2:-}" >>"${MOCK_CHMOD_LOG:?}"
+if [[ -e "${2:-}" ]]; then
+	python3 - "${2:-}" >>"${MOCK_CHMOD_LOG:?}.pre" <<'PY' || true
+import os
+import stat
+import sys
+
+print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])
+PY
+fi
 command -p chmod "$@"
 EOF
 	chmod +x "${mock_path}/chmod"
@@ -673,10 +682,14 @@ EOF
 	else
 		print_result "claim POST fallback pre-creates private stderr file" 1 "chmod_mode=${chmod_mode:-missing} chmod_path=${chmod_path:-missing} output: $output"
 	fi
-	if grep -q "umask 077" "$CLAIM_HELPER"; then
+	pre_chmod_mode=""
+	if [[ -f "${chmod_log}.pre" ]]; then
+		IFS= read -r pre_chmod_mode <"${chmod_log}.pre" || true
+	fi
+	if [[ "$pre_chmod_mode" == "600" ]]; then
 		print_result "claim POST fallback creates file under restrictive umask" 0
 	else
-		print_result "claim POST fallback creates file under restrictive umask" 1 "umask 077 not found in helper"
+		print_result "claim POST fallback creates file under restrictive umask" 1 "pre_chmod_mode=${pre_chmod_mode:-missing} output: $output"
 	fi
 	if grep -q "set -C" "$CLAIM_HELPER"; then
 		print_result "claim POST fallback uses exclusive creation" 0
