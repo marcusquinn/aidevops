@@ -241,6 +241,8 @@ main() {
 	test_skips_no_suggestions_for_improvement_review
 	test_skips_review_thread_response_inline_comment
 	test_skips_no_further_concerns_inline_ack
+	test_skips_resolved_thread_inline_ack
+	test_skips_verified_tests_passing_inline_ack
 	test_keeps_actionable_approved_review
 	test_keeps_changes_requested_review
 	test_keeps_review_with_bug_report
