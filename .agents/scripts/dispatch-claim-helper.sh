@@ -228,8 +228,15 @@ _resolve_version() {
 #######################################
 _claim_post_error_fallback_path() {
 	if [[ -n "${HOME:-}" && -d "$HOME" && -w "$HOME" ]]; then
-		printf '%s' "${HOME}/.aidevops-claim-post-error.$$.$RANDOM"
-		return 0
+		local home_dir="${HOME%/}"
+		local path="${home_dir}/.aidevops-claim-post-error.$$.$RANDOM"
+		if touch "$path" 2>/dev/null; then
+			if chmod 600 "$path"; then
+				printf '%s' "$path"
+				return 0
+			fi
+			rm -f "$path" 2>/dev/null || true
+		fi
 	fi
 
 	printf '%s\n' "Error: mktemp failed and HOME is unavailable for secure claim POST stderr capture" >&2
