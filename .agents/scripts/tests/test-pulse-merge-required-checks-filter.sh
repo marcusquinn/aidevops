@@ -278,7 +278,8 @@ EOF
 }
 
 test_required_checks_gh_reads_are_timeout_wrapped() {
-	if grep -nE '^[[:space:]]*[^#]*\bgh (api|pr checks)\b' "$REQUIRED_CHECKS_SCRIPT" | grep -v '_pmrc_gh_read' >/dev/null 2>&1; then
+	if sed -E 's/_pmrc_gh_read[[:space:]]+gh[[:space:]]+(api|pr checks)//g' "$REQUIRED_CHECKS_SCRIPT" \
+		| grep -nE '^[[:space:]]*[^#]*\bgh (api|pr checks)\b' >/dev/null 2>&1; then
 		print_result "required-check gh reads use timeout wrapper" 1
 	else
 		print_result "required-check gh reads use timeout wrapper" 0
