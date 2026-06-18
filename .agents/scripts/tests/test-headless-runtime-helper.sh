@@ -155,13 +155,40 @@ test_startup_no_activity_timeout_returns_watchdog_continue() {
 	local status=0
 	_handle_run_result 124 "$output_file" "worker" "openai" "issue-22862" "openai/gpt-5.5" || status=$?
 
-	if [[ "$status" -eq 78 && "$_run_result_label" == "watchdog_startup_continue" && ! -f "$output_file" ]]; then
+	if [[ "$status" -eq 78 && "$_run_result_label" == "watchdog_startup_continue" && "$_run_failure_reason" == "startup_no_model_activity" && ! -f "$output_file" ]]; then
 		print_result "startup no-activity timeout attempts bounded continuation" 0
 		return 0
 	fi
 
 	print_result "startup no-activity timeout attempts bounded continuation" 1 \
-		"status=$status label=${_run_result_label:-<empty>} output_exists=$([[ -f "$output_file" ]] && printf yes || printf no)"
+		"status=$status label=${_run_result_label:-<empty>} reason=${_run_failure_reason:-<empty>} output_exists=$([[ -f "$output_file" ]] && printf yes || printf no)"
+	return 0
+}
+
+test_startup_no_activity_can_rotate_after_continuation_budget() {
+	local result status action next_model
+	result=$(
+		cmd_run_action=""
+		cmd_run_next_model=""
+		_run_failure_reason="startup_no_model_activity"
+		_run_should_retry=0
+		_HRW_STATUS_FAIL="fail"
+		print_warning() { return 0; }
+		choose_model() { printf '%s' 'anthropic/claude-sonnet-4-6'; return 0; }
+		_cmd_run_finish() { return 0; }
+		local retry_status=0
+		_cmd_run_prepare_retry "worker" "issue-24949" "" 1 3 "openai/gpt-5.5" 78 || retry_status=$?
+		printf '%s|%s|%s' "$retry_status" "$cmd_run_action" "$cmd_run_next_model"
+	)
+	IFS='|' read -r status action next_model <<<"$result"
+
+	if [[ "$status" -eq 0 && "$action" == "switch" && "$next_model" == "anthropic/claude-sonnet-4-6" ]]; then
+		print_result "startup no-activity can rotate after continuation budget" 0
+		return 0
+	fi
+
+	print_result "startup no-activity can rotate after continuation budget" 1 \
+		"status=$status action=${action:-<empty>} next=${next_model:-<empty>}"
 	return 0
 }
 
@@ -2188,6 +2215,7 @@ main() {
 	test_headless_contract_uses_deployed_framework_paths
 	test_parse_initial_model_does_not_set_explicit_override
 	test_startup_no_activity_timeout_returns_watchdog_continue
+	test_startup_no_activity_can_rotate_after_continuation_budget
 	test_sigkill_with_activity_attempts_continuation
 	test_dispatcher_initial_model_can_rotate_after_rate_limit
 	test_explicit_model_override_remains_pinned_on_rate_limit
