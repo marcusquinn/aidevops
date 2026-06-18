@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.92] - 2026-06-18
+
+### Fixed
+
+- honor maintainer metadata in pulse role guard (#24998)
+- check rulesets before stuck branchprotect 404 (#24997)
+- classify dedup guard blocks before infra policy (#24994)
+
 ## [3.20.91] - 2026-06-18
 
 ### Added
