@@ -81,11 +81,7 @@ _pmp_add_elapsed_seconds() {
 	elapsed=$((end_epoch - start_epoch))
 	[[ "$elapsed" =~ ^[0-9]+$ ]] || elapsed=0
 
-	if declare -p "$dest_var" >/dev/null 2>&1; then
-		current_value="${!dest_var}"
-	else
-		current_value=0
-	fi
+	current_value="${!dest_var:-0}"
 	[[ "$current_value" =~ ^[0-9]+$ ]] || current_value=0
 	current_value=$((current_value + elapsed))
 	printf -v "$dest_var" '%s' "$current_value"
