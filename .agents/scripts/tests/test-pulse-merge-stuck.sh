@@ -563,6 +563,7 @@ gh_pr_view() {
 	206) printf '{"labels":[],"mergeable":"MERGEABLE","headRefOid":"sha-legacy-error"}' ;;
 	207) printf 'sha-legacy-error' ;;
 	208) printf '{"labels":[],"mergeable":"MERGEABLE","headRefOid":"sha-clean-ruleset"}' ;;
+	209) printf '{"labels":[],"mergeable":"MERGEABLE","headRefOid":"sha-clean-ruleset-fail"}' ;;
 	*) printf '{"labels":[],"mergeable":"MERGEABLE","headRefOid":"sha-clean"}' ;;
 	esac
 	return 0
@@ -593,11 +594,19 @@ gh() {
 		printf 'main'
 		return 0
 	fi
+	if [[ "$command_name" == "api" && "$path_arg" == "repos/example/ruleset-fail" ]]; then
+		printf 'main'
+		return 0
+	fi
 	if [[ "$command_name" == "api" && "$path_arg" == "repos/example/repo/branches/main/protection/required_status_checks" ]]; then
 		printf '{}'
 		return 0
 	fi
 	if [[ "$command_name" == "api" && "$path_arg" == "repos/example/ruleset-repo/branches/main/protection/required_status_checks" ]]; then
+		printf '{"message":"Not Found"}' >&2
+		return 1
+	fi
+	if [[ "$command_name" == "api" && "$path_arg" == "repos/example/ruleset-fail/branches/main/protection/required_status_checks" ]]; then
 		printf '{"message":"Not Found"}' >&2
 		return 1
 	fi
@@ -611,6 +620,9 @@ _required_contexts_from_rulesets_for_default_branch() {
 	if [[ "$repo_slug" == "example/ruleset-repo" ]]; then
 		printf 'CI / build\n'
 		return 0
+	fi
+	if [[ "$repo_slug" == "example/ruleset-fail" ]]; then
+		return 7
 	fi
 	return 0
 }
@@ -646,6 +658,13 @@ assert_eq "7g: legacy error status context fingerprint uses context name" \
 got=$(_classify_stuck_pr "208" "example/ruleset-repo" "0")
 assert_eq "7h: rulesets required checks prevent branch-protection 404 classification" \
 	"STUCK_OTHER" "$got"
+
+got=$(_classify_stuck_pr "209" "example/ruleset-fail" "0")
+ruleset_fail_rc=$?
+assert_eq "7i: ruleset helper failure reports branch-protection API error" \
+	"STUCK_BRANCHPROTECT_API_ERROR" "$got"
+assert_eq "7j: ruleset helper failure propagates helper exit code" \
+	"7" "$ruleset_fail_rc"
 echo ""
 
 # ---------------------------------------------------------------------------
