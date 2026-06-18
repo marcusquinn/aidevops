@@ -53,6 +53,58 @@ _PULSE_MERGE_PROCESS_LOADED=1
 : "${STOP_FLAG:=${HOME}/.aidevops/logs/pulse-session.stop}"
 : "${PULSE_MERGE_BATCH_LIMIT:=50}"
 
+#######################################
+# Low-overhead timing helpers for per-repo merge summaries.
+#
+# The merge pass already emits one summary line per repo. These helpers keep
+# the timing capture cheap (integer seconds, no extra subprocess fan-out) so
+# the summary can report list / mergeability / ruleset / branch-protection /
+# stuck-detector phases without adding noisy per-PR logs.
+#######################################
+_pmp_now_epoch() {
+	local now_epoch
+	now_epoch=$(date +%s 2>/dev/null || printf '0')
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=0
+	printf '%s' "$now_epoch"
+	return 0
+}
+
+_pmp_add_elapsed_seconds() {
+	local dest_var="$1"
+	local start_epoch="${2:-0}"
+	local current_value="" end_epoch elapsed
+
+	[[ "$dest_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	[[ "$start_epoch" =~ ^[0-9]+$ ]] || start_epoch=0
+
+	end_epoch=$(_pmp_now_epoch)
+	elapsed=$((end_epoch - start_epoch))
+	[[ "$elapsed" =~ ^[0-9]+$ ]] || elapsed=0
+
+	current_value=$(eval "printf '%s' \"\${$dest_var:-0}\"" 2>/dev/null) || current_value=0
+	[[ "$current_value" =~ ^[0-9]+$ ]] || current_value=0
+	current_value=$((current_value + elapsed))
+	printf -v "$dest_var" '%s' "$current_value"
+	return 0
+}
+
+_pmp_log_repo_timing_summary() {
+	local repo_slug="$1"
+	local total_s="${2:-0}"
+	local list_s="${3:-0}"
+	local mergeability_s="${4:-0}"
+	local ruleset_s="${5:-0}"
+	local branch_protection_s="${6:-0}"
+	local stuck_detector_s="${7:-0}"
+	local merged="${8:-0}"
+	local closed="${9:-0}"
+	local failed="${10:-0}"
+	local pr_count="${11:-0}"
+
+	echo "[pulse-wrapper] deterministic_merge_pass timing: repo=${repo_slug} total_s=${total_s} list_s=${list_s} mergeability_s=${mergeability_s} ruleset_s=${ruleset_s} branch_protection_s=${branch_protection_s} stuck_detector_s=${stuck_detector_s} merged=${merged} closed=${closed} failed=${failed} prs=${pr_count}" >>"$LOGFILE"
+	return 0
+}
+
 # PR backlog categories exposed in logs. These are scheduling/observability
 # buckets only; _process_single_ready_pr still enforces every merge safety gate
 # before approving, merging, closing, or dispatching a fix worker.
@@ -314,6 +366,8 @@ merge_ready_prs_all_repos() {
 	local _mr_repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 	local _mr_logfile="${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}"
 	PULSE_MERGE_BATCH_LIMIT="${PULSE_MERGE_BATCH_LIMIT:-50}"
+	local _mr_pass_start
+	_mr_pass_start=$(_pmp_now_epoch)
 
 	if [[ -f "$_mr_stop_flag" ]]; then
 		echo "[pulse-wrapper] Deterministic merge pass skipped: stop flag present" >>"$_mr_logfile"
@@ -342,14 +396,20 @@ merge_ready_prs_all_repos() {
 		local repo_merged=0
 		local repo_closed=0
 		local repo_failed=0
+		local _mr_repo_list_s=0 _mr_repo_mergeability_s=0 _mr_repo_ruleset_s=0 _mr_repo_branch_protection_s=0 _mr_repo_stuck_detector_s=0
+		local _mr_repo_start
+		_mr_repo_start=$(_pmp_now_epoch)
 
-		_merge_ready_prs_for_repo "$repo_slug" repo_merged repo_closed repo_failed
+		local _mr_repo_pr_count=0
+		_merge_ready_prs_for_repo "$repo_slug" repo_merged repo_closed repo_failed _mr_repo_pr_count "_mr_repo_"
 
 		total_merged=$((total_merged + repo_merged))
 		total_closed=$((total_closed + repo_closed))
 		total_failed=$((total_failed + repo_failed))
 
 		# t3193: run the stuck-merge detector pass for this repo.
+		local _mr_repo_stuck_start
+		_mr_repo_stuck_start=$(_pmp_now_epoch)
 		if declare -F pulse_merge_stuck_run_pass >/dev/null 2>&1; then
 			pulse_merge_stuck_run_pass "$repo_slug" || true
 		fi
@@ -361,6 +421,10 @@ merge_ready_prs_all_repos() {
 			[[ "$_repo_eligible" =~ ^[0-9]+$ ]] || _repo_eligible=0
 			total_eligible_unmerged=$((total_eligible_unmerged + _repo_eligible))
 		fi
+		_pmp_add_elapsed_seconds _mr_repo_stuck_detector_s "$_mr_repo_stuck_start"
+		local _mr_repo_total_s=0
+		_pmp_add_elapsed_seconds _mr_repo_total_s "$_mr_repo_start"
+		_pmp_log_repo_timing_summary "$repo_slug" "$_mr_repo_total_s" "$_mr_repo_list_s" "$_mr_repo_mergeability_s" "$_mr_repo_ruleset_s" "$_mr_repo_branch_protection_s" "$_mr_repo_stuck_detector_s" "$repo_merged" "$repo_closed" "$repo_failed" "$_mr_repo_pr_count"
 
 		if [[ -f "$_mr_stop_flag" ]]; then
 			echo "[pulse-wrapper] Deterministic merge pass: stop flag appeared mid-run" >>"$_mr_logfile"
@@ -381,6 +445,9 @@ merge_ready_prs_all_repos() {
 	# The parent process reads this file after the stage completes.
 	local _health_delta_file="${TMPDIR:-/tmp}/pulse-health-merge-$$.tmp"
 	printf '%s %s\n' "$total_merged" "$total_closed" >"$_health_delta_file" || true
+	local _mr_pass_total_s=0
+	_pmp_add_elapsed_seconds _mr_pass_total_s "$_mr_pass_start"
+	echo "[pulse-wrapper] deterministic_merge_pass timing: total_s=${_mr_pass_total_s} merged=${total_merged} closed_conflicting=${total_closed} failed=${total_failed} eligible_unmerged=${total_eligible_unmerged}" >>"$_mr_logfile"
 	return 0
 }
 
@@ -409,6 +476,8 @@ _merge_ready_prs_for_repo() {
 	local _merged_var="$2"
 	local _closed_var="$3"
 	local _failed_var="$4"
+	local _pr_count_var="${5:-}"
+	local _timing_prefix="${6:-}"
 
 	local merged=0
 	local closed=0
@@ -418,6 +487,8 @@ _merge_ready_prs_for_repo() {
 	# enriched below from REST check-suites so merge polling preserves GraphQL
 	# budget for dispatch.
 	local pr_json pr_merge_err
+	local _list_start
+	_list_start=$(_pmp_now_epoch)
 	pr_merge_err=$(mktemp)
 	pr_json=$(gh_pr_list --repo "$repo_slug" --state open \
 		--json "$(_pulse_merge_ready_pr_json_fields)" \
@@ -429,10 +500,12 @@ _merge_ready_prs_for_repo() {
 		pr_json="[]"
 	fi
 	rm -f "$pr_merge_err"
+	[[ -n "$_timing_prefix" ]] && _pmp_add_elapsed_seconds "${_timing_prefix}list_s" "$_list_start"
 
 	local pr_count
 	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
 	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+	[[ -z "$_pr_count_var" ]] || eval "${_pr_count_var}=${pr_count}"
 
 	if [[ "$pr_count" -eq 0 ]]; then
 		eval "${_merged_var}=0; ${_closed_var}=0; ${_failed_var}=0"
@@ -456,7 +529,7 @@ _merge_ready_prs_for_repo() {
 		i=$((i + 1))
 		[[ -n "$pr_obj" ]] || continue
 
-		_process_single_ready_pr "$repo_slug" "$pr_obj"
+		_process_single_ready_pr "$repo_slug" "$pr_obj" "$_timing_prefix"
 		local _pr_rc=$?
 		case "$_pr_rc" in
 		0) merged=$((merged + 1)) ;;
