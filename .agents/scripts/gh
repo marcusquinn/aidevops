@@ -281,8 +281,8 @@ _shim_repo_role() {
 	local slug_owner=""
 	local metadata=""
 	if [[ -n "$repo_slug" && -f "$repos_json" ]] && command -v jq >/dev/null 2>&1; then
-		metadata=$(jq -r --arg slug "$repo_slug" '[.initialized_repos[]? | select(.slug == $slug)] | first // {} | [(.role // ""), (.maintainer // "")] | @tsv' "$repos_json" 2>/dev/null || true)
-		IFS=$'\t' read -r explicit_role configured_maintainer <<<"$metadata"
+		metadata=$(jq -r --arg slug "$repo_slug" '[.initialized_repos[]? | select(.slug == $slug)] | first // {} | "\(.role // "")\u001f\(.maintainer // "")"' "$repos_json" 2>/dev/null || true)
+		IFS=$'\037' read -r explicit_role configured_maintainer <<<"$metadata"
 		case "$explicit_role" in
 		maintainer | contributor)
 			printf '%s\n' "$explicit_role"
