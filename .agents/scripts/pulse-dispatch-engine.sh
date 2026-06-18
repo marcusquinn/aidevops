@@ -838,12 +838,18 @@ apply_dispatch_max() {
 
 	_dispatch_begin_benign_blocks_cycle >/dev/null
 
+	local apply_active_workers apply_max_workers
+	apply_active_workers=$(count_active_workers)
+	apply_max_workers=$(get_max_workers_target)
+	[[ "$apply_active_workers" =~ ^[0-9]+$ ]] || apply_active_workers=0
+	[[ "$apply_max_workers" =~ ^[0-9]+$ ]] || apply_max_workers=1
+
 	local fill_dispatched
 	fill_dispatched=$(dispatch_max) || fill_dispatched=0
 	[[ "$fill_dispatched" =~ ^[0-9]+$ ]] || fill_dispatched=0
 
 	_adaptive_launch_settle_wait "$fill_dispatched" "dispatch_max"
-	_dispatch_min_worker_floor_refill "" ""
+	_dispatch_min_worker_floor_refill "$apply_max_workers" "$((apply_active_workers + fill_dispatched))"
 
 	# t2749: Phase 2 — re-enumerate when consolidation created a child during
 	# Phase 1. The sentinel is written by _dispatch_issue_consolidation in
@@ -1184,8 +1190,10 @@ maybe_refill_underfilled_pool_during_active_pulse() {
 
 	echo "[pulse-wrapper] Active pulse refill: underfilled ${active_workers}/${refill_target} (raw_max=${max_workers}) with runnable=${runnable_count}, queued_without_worker=${queued_without_worker}, idle=${idle_seconds}s, stall=${progress_stall_seconds}s" >>"$LOGFILE"
 	run_underfill_worker_recycler "$max_workers" "$active_workers" "$runnable_count" "$queued_without_worker"
-	dispatch_max >/dev/null || true
-	_dispatch_min_worker_floor_refill "$max_workers"
+	local active_refill_dispatched
+	active_refill_dispatched=$(dispatch_max) || active_refill_dispatched=0
+	[[ "$active_refill_dispatched" =~ ^[0-9]+$ ]] || active_refill_dispatched=0
+	_dispatch_min_worker_floor_refill "$max_workers" "$((active_workers + active_refill_dispatched))"
 
 	echo "$now_epoch"
 	return 0
@@ -1406,7 +1414,7 @@ _run_early_exit_recycle_loop() {
 		early_dispatched=$(dispatch_max) || early_dispatched=0
 		[[ "$early_dispatched" =~ ^[0-9]+$ ]] || early_dispatched=0
 		_dispatch_min_worker_floor_refill "$post_max" "$((post_active + early_dispatched))"
-		post_active=$(count_active_workers)
+		post_active=$((post_active + early_dispatched))
 		post_runnable=$(normalize_count_output "$(count_runnable_candidates)")
 		post_queued=$(normalize_count_output "$(count_queued_without_worker)")
 		[[ "$post_active" =~ ^[0-9]+$ ]] || post_active=0

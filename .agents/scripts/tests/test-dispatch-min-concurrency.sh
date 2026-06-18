@@ -421,7 +421,7 @@ test_apply_dispatch_refills_until_active_floor_after_partial_launch() {
 	TEST_DISPATCH_RETURNS_FILE="${TEST_ROOT}/dispatch-returns.txt"
 	printf '%s\n%s\n' 4 6 >"$TEST_ACTIVE_WORKERS_SEQUENCE_FILE"
 	printf '%s\n' 0 >"$TEST_DISPATCH_CALLS_FILE"
-	printf '%s\n%s\n' 2 2 >"$TEST_DISPATCH_RETURNS_FILE"
+	printf '%s\n%s\n' 1 2 >"$TEST_DISPATCH_RETURNS_FILE"
 	AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS=1
 	STOP_FLAG="${HOME}/.aidevops/logs/stop"
 	# shellcheck disable=SC2329  # Override sourced function for this regression.
@@ -543,6 +543,115 @@ test_min_worker_floor_refill_uses_precomputed_counts() {
 		print_result "refill: precomputed counts skip worker count reads" 1 "$(<"${TEST_ROOT}/precomputed-refill-failure.txt")"
 	fi
 	unset TEST_GET_MAX_CALLED_FILE TEST_COUNT_ACTIVE_CALLED_FILE AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS
+	return 0
+}
+
+test_apply_dispatch_refill_reuses_initial_worker_counts() {
+	(
+		AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+		AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS=1
+		STOP_FLAG="${HOME}/.aidevops/logs/stop"
+		TEST_COUNT_ACTIVE_CALLS_FILE="${TEST_ROOT}/apply-precomputed-count-active-calls.txt"
+		TEST_GET_MAX_CALLS_FILE="${TEST_ROOT}/apply-precomputed-get-max-calls.txt"
+		printf '%s\n' 0 >"$TEST_COUNT_ACTIVE_CALLS_FILE"
+		printf '%s\n' 0 >"$TEST_GET_MAX_CALLS_FILE"
+		count_active_workers() {
+			local calls
+			calls=$(<"$TEST_COUNT_ACTIVE_CALLS_FILE")
+			[[ "$calls" =~ ^[0-9]+$ ]] || calls=0
+			printf '%s\n' "$((calls + 1))" >"$TEST_COUNT_ACTIVE_CALLS_FILE"
+			printf '6\n'
+			return 0
+		}
+		get_max_workers_target() {
+			local calls
+			calls=$(<"$TEST_GET_MAX_CALLS_FILE")
+			[[ "$calls" =~ ^[0-9]+$ ]] || calls=0
+			printf '%s\n' "$((calls + 1))" >"$TEST_GET_MAX_CALLS_FILE"
+			printf '8\n'
+			return 0
+		}
+		dispatch_max() {
+			printf '0\n'
+			return 0
+		}
+		_adaptive_launch_settle_wait() {
+			return 0
+		}
+
+		apply_dispatch_max
+
+		local count_active_calls get_max_calls
+		count_active_calls=$(<"$TEST_COUNT_ACTIVE_CALLS_FILE")
+		get_max_calls=$(<"$TEST_GET_MAX_CALLS_FILE")
+		if [[ "$count_active_calls" -eq 1 && "$get_max_calls" -eq 1 ]]; then
+			return 0
+		fi
+		printf 'count_active_calls=%s get_max_calls=%s\n' "$count_active_calls" "$get_max_calls" >"${TEST_ROOT}/apply-precomputed-failure.txt"
+		return 1
+	)
+	local rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "apply: refill reuses precomputed worker counts" 0
+	else
+		print_result "apply: refill reuses precomputed worker counts" 1 "$(<"${TEST_ROOT}/apply-precomputed-failure.txt")"
+	fi
+	unset TEST_COUNT_ACTIVE_CALLS_FILE TEST_GET_MAX_CALLS_FILE AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS
+	return 0
+}
+
+test_early_exit_refill_reuses_precomputed_active_count() {
+	(
+		AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+		AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS=1
+		PULSE_BACKFILL_MAX_ATTEMPTS=1
+		PULSE_LAUNCH_GRACE_SECONDS=0
+		STOP_FLAG="${HOME}/.aidevops/logs/stop"
+		PRE_RUN_STAGE_TIMEOUT=1
+		TEST_COUNT_ACTIVE_CALLS_FILE="${TEST_ROOT}/early-precomputed-count-active-calls.txt"
+		printf '%s\n' 0 >"$TEST_COUNT_ACTIVE_CALLS_FILE"
+		get_max_workers_target() {
+			printf '6\n'
+			return 0
+		}
+		count_active_workers() {
+			local calls
+			calls=$(<"$TEST_COUNT_ACTIVE_CALLS_FILE")
+			[[ "$calls" =~ ^[0-9]+$ ]] || calls=0
+			printf '%s\n' "$((calls + 1))" >"$TEST_COUNT_ACTIVE_CALLS_FILE"
+			printf '1\n'
+			return 0
+		}
+		count_runnable_candidates() {
+			printf '8\n'
+			return 0
+		}
+		count_queued_without_worker() {
+			printf '0\n'
+			return 0
+		}
+		dispatch_max() {
+			printf '5\n'
+			return 0
+		}
+
+		_run_early_exit_recycle_loop 1
+
+		local count_active_calls
+		count_active_calls=$(<"$TEST_COUNT_ACTIVE_CALLS_FILE")
+		if [[ "$count_active_calls" -eq 1 ]]; then
+			return 0
+		fi
+		printf 'count_active_calls=%s\n' "$count_active_calls" >"${TEST_ROOT}/early-precomputed-failure.txt"
+		return 1
+	)
+	local rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "early recycle: refill reuses precomputed active count" 0
+	else
+		print_result "early recycle: refill reuses precomputed active count" 1 "$(<"${TEST_ROOT}/early-precomputed-failure.txt")"
+	fi
+	unset TEST_COUNT_ACTIVE_CALLS_FILE AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS PULSE_BACKFILL_MAX_ATTEMPTS PULSE_LAUNCH_GRACE_SECONDS PRE_RUN_STAGE_TIMEOUT
 	return 0
 }
 
@@ -674,6 +783,8 @@ test_canary_preflight_marks_floor_without_cpu_bypass
 test_apply_dispatch_refills_until_active_floor_after_partial_launch
 test_apply_dispatch_skips_refill_when_capacity_cap_disables_floor
 test_min_worker_floor_refill_uses_precomputed_counts
+test_apply_dispatch_refill_reuses_initial_worker_counts
+test_early_exit_refill_reuses_precomputed_active_count
 test_active_pulse_refill_uses_min_floor_above_raw_max
 test_soft_canary_failure_bypasses_with_recent_worker_evidence
 test_hard_canary_failure_blocks_despite_recent_worker_evidence
