@@ -45,6 +45,7 @@ reset_stagger_env() {
 	export PULSE_DISPATCH_PROVIDER_BACKOFF_ACTIVE=0
 	export PULSE_DISPATCH_STAGGER_JITTER_MAX_SECONDS=0
 	export PULSE_DISPATCH_STAGGER_MAX_SECONDS=20
+	unset AIDEVOPS_PULSE_DISPATCH_RAMP_ENABLED AIDEVOPS_PULSE_DISPATCH_RAMP_NOW AIDEVOPS_PULSE_DISPATCH_RAMP_START_EPOCH AIDEVOPS_PULSE_DISPATCH_RAMP_PHASE AIDEVOPS_PULSE_DISPATCH_RAMP_SLOT_SECS
 	return 0
 }
 
@@ -131,12 +132,76 @@ test_first_launch_never_delayed() {
 	return 0
 }
 
+test_dispatch_ramp_limits_initial_capacity() {
+	reset_stagger_env
+	export AIDEVOPS_PULSE_DISPATCH_RAMP_START_EPOCH=1000
+	export AIDEVOPS_PULSE_DISPATCH_RAMP_NOW=1000
+	export AIDEVOPS_PULSE_DISPATCH_RAMP_SLOT_SECS=120
+	local capped
+	capped=$(_dispatch_apply_startup_capacity_ramp 8 0)
+	if [[ "$capped" == "1" ]]; then
+		print_result "dispatch ramp: initial startup capacity is one worker" 0
+	else
+		print_result "dispatch ramp: initial startup capacity is one worker" 1 "cap=${capped}"
+	fi
+	return 0
+}
+
+test_dispatch_ramp_adds_one_slot_per_pulse_interval() {
+	reset_stagger_env
+	export AIDEVOPS_PULSE_DISPATCH_RAMP_START_EPOCH=1000
+	export AIDEVOPS_PULSE_DISPATCH_RAMP_NOW=1240
+	export AIDEVOPS_PULSE_DISPATCH_RAMP_SLOT_SECS=120
+	local capped
+	capped=$(_dispatch_apply_startup_capacity_ramp 8 0)
+	if [[ "$capped" == "3" ]]; then
+		print_result "dispatch ramp: adds one slot per two-minute pulse" 0
+	else
+		print_result "dispatch ramp: adds one slot per two-minute pulse" 1 "cap=${capped}"
+	fi
+	return 0
+}
+
+test_dispatch_ramp_never_exceeds_max_capacity() {
+	reset_stagger_env
+	export AIDEVOPS_PULSE_DISPATCH_RAMP_START_EPOCH=1000
+	export AIDEVOPS_PULSE_DISPATCH_RAMP_NOW=4000
+	export AIDEVOPS_PULSE_DISPATCH_RAMP_SLOT_SECS=120
+	local capped
+	capped=$(_dispatch_apply_startup_capacity_ramp 6 0)
+	if [[ "$capped" == "6" ]]; then
+		print_result "dispatch ramp: stops at max concurrency" 0
+	else
+		print_result "dispatch ramp: stops at max concurrency" 1 "cap=${capped}"
+	fi
+	return 0
+}
+
+test_dispatch_ramp_can_be_disabled() {
+	reset_stagger_env
+	export AIDEVOPS_PULSE_DISPATCH_RAMP_ENABLED=0
+	export AIDEVOPS_PULSE_DISPATCH_RAMP_START_EPOCH=1000
+	export AIDEVOPS_PULSE_DISPATCH_RAMP_NOW=1000
+	local capped
+	capped=$(_dispatch_apply_startup_capacity_ramp 8 0)
+	if [[ "$capped" == "8" ]]; then
+		print_result "dispatch ramp: feature flag disables capacity cap" 0
+	else
+		print_result "dispatch ramp: feature flag disables capacity cap" 1 "cap=${capped}"
+	fi
+	return 0
+}
+
 test_low_load_no_delay
 test_high_load_delay
 test_provider_backoff_delay
 test_recent_failure_cluster_delay
 test_graphql_low_budget_delay
 test_first_launch_never_delayed
+test_dispatch_ramp_limits_initial_capacity
+test_dispatch_ramp_adds_one_slot_per_pulse_interval
+test_dispatch_ramp_never_exceeds_max_capacity
+test_dispatch_ramp_can_be_disabled
 
 echo ""
 echo "===================="
