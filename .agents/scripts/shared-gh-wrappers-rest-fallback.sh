@@ -1494,10 +1494,7 @@ _rest_issue_search() {
 
 	_body="$(awk 'BEGIN { body = 0 } { line = $0; sub(/\r$/, "", line); if (body) { print; next } if (line == "") { body = 1 } }' <<<"$_raw_response")"
 	[[ -z "$_body" && "$_raw_response" != HTTP/* ]] && _body="$_raw_response"
-	if [[ -z "$_body" ]]; then
-		printf '[]\n'
-		return 0
-	fi
+	[[ -z "$_body" ]] && { printf '[]\n'; return 0; }
 	printf '%s\n' "$_body" | jq -r "$_final_jq"
 	return $?
 }

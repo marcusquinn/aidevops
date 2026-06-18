@@ -24,52 +24,6 @@
 # (gh_create_issue, gh_issue_comment, gh_issue_edit_safe, set_issue_status)
 # to retry via REST when primary fails and GraphQL is exhausted.
 #
-# Tests:
-#   1. _rest_should_fallback returns 0 when remaining <= 10
-#   2. _rest_should_fallback returns 1 when remaining > 10
-#   3. _rest_should_fallback returns 1 when rate_limit call fails (fail-safe)
-#   4. _rest_issue_create translates --title/--body/--label → POST /repos/.../issues
-#   5. _rest_issue_create uses -F body=@file for newline/unicode safety
-#   6. _rest_issue_comment translates --body → POST /repos/.../issues/N/comments
-#   7. _rest_issue_comment extracts repo and num from a URL argument
-#   8. _rest_issue_edit translates --add-label/--remove-label into full labels array
-#   9. gh_issue_comment falls back to REST when gh fails AND graphql exhausted
-#  10. gh_issue_comment does NOT fall back when gh succeeds
-#  11. gh_issue_comment does NOT fall back when gh fails but graphql healthy
-#  12. _rest_pr_create translates --title/--head/--base → POST /repos/.../pulls
-#  13. _rest_pr_create uses -F body=@file for body
-#  14. _rest_pr_create applies labels via POST /repos/.../issues/{N}/labels
-#  15. gh_pr_comment falls back to REST when primary fails AND exhausted
-#  16. gh_pr_comment does NOT fall back when primary succeeds
-#  17. gh_pr_comment does NOT fall back when primary fails but graphql healthy
-#  18. gh_create_pr falls back to REST when primary fails AND exhausted
-#  19. gh_create_pr does NOT fall back when primary succeeds
-#  20. gh_create_pr does NOT fall back when primary fails but graphql healthy
-#  21. _rest_pr_create auto-detects --head from git HEAD when omitted
-#  22. _rest_pr_create auto-detects --base from repo default_branch via REST
-#  23. gh_issue_view routes directly to REST when GraphQL remaining is low
-#  24. gh_issue_list keeps the healthy GraphQL path
-#  25. gh_issue_list routes low-budget --search calls to /search/issues
-#  26. gh_pr_list routes directly to REST when GraphQL remaining is low
-#  27. gh_pr_list keeps --search on the GraphQL path when budget is low
-#  28. gh_pr_view routes directly to REST when GraphQL remaining is low
-#  29. gh_pr_view maps merged REST PR fields to gh GraphQL-compatible JSON
-#  30. AIDEVOPS_GH_FORCE_REST_READS routes supported reads through REST without
-#      a rate-limit probe
-#  31. gh_pr_list does NOT fall back for --search because REST pulls cannot
-#      preserve search semantics
-#  32. AIDEVOPS_GH_REST_FIRST_READS routes REST-equivalent reads without a
-#      rate-limit probe while leaving GraphQL-only PR list fields on GraphQL
-#  33. AIDEVOPS_GH_PR_VIEW_CACHE coalesces duplicate REST PR view reads
-#  34. AIDEVOPS_GH_PR_VIEW_CACHE coalesces duplicate GraphQL-only PR view reads
-#  35. PR metadata freshness classes keep GraphQL-only PR view fields off REST
-#  36. AIDEVOPS_GH_PR_VIEW_CACHE enabled with missing prerequisites records
-#      non-disabled REST cache bypass telemetry
-#  37. AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE bypasses both PR view cache layers
-#  38. collaborator permission fallback parser ignores nested spoof fields
-#  39. _rest_split_csv suppresses Broken pipe noise when consumers close early
-#  40. gh_pr_list records exact argv shape telemetry for repeated-call analysis
-#
 # Stub strategy: define `gh` as a shell function. Shell functions take
 # precedence over PATH binaries, so the stub captures all `gh` invocations
 # without PATH mutation. Sub-stubs (primary-fail, rate-limit-return) are
