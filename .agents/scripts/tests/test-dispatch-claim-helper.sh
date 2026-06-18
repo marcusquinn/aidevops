@@ -621,13 +621,7 @@ EOF
 #!/usr/bin/env bash
 printf '%s\t%s\n' "${1:-}" "${2:-}" >>"${MOCK_CHMOD_LOG:?}"
 if [[ -e "${2:-}" ]]; then
-	python3 - "${2:-}" >>"${MOCK_CHMOD_LOG:?}.pre" <<'PY' || true
-import os
-import stat
-import sys
-
-print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])
-PY
+	python3 -c 'import os, stat, sys; print(oct(stat.S_IMODE(os.stat(sys.argv[1]).st_mode))[2:])' "${2:-}" >>"${MOCK_CHMOD_LOG:?}.pre" || true
 fi
 command -p chmod "$@"
 EOF
