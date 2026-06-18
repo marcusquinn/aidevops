@@ -278,19 +278,21 @@ EOF
 }
 
 test_required_checks_gh_reads_are_timeout_wrapped() {
-	if [[ -z "${REQUIRED_CHECKS_SCRIPT:-}" ]]; then
+	local required_checks_script="${REQUIRED_CHECKS_SCRIPT:-}"
+
+	if [[ -z "$required_checks_script" ]]; then
 		printf 'ERROR: REQUIRED_CHECKS_SCRIPT is empty or not set\n' >&2
 		print_result "required-check gh reads use timeout wrapper" 1
 		return 0
 	fi
 
-	if [[ ! -f "$REQUIRED_CHECKS_SCRIPT" ]]; then
-		printf 'ERROR: REQUIRED_CHECKS_SCRIPT file does not exist or is not a regular file: %s\n' "$REQUIRED_CHECKS_SCRIPT" >&2
+	if [[ ! -f "$required_checks_script" ]]; then
+		printf 'ERROR: REQUIRED_CHECKS_SCRIPT file does not exist or is not a regular file: %s\n' "$required_checks_script" >&2
 		print_result "required-check gh reads use timeout wrapper" 1
 		return 0
 	fi
 
-	if { awk '{ if (sub(/\\$/, "")) { printf "%s", $0 } else { print } }' "$REQUIRED_CHECKS_SCRIPT" \
+	if { awk '{ if (sub(/\\$/, "")) { printf "%s", $0 } else { print } }' "$required_checks_script" \
 		| sed -E 's/_pmrc_gh_read[[:space:]]+gh[[:space:]]+(api|pr[[:space:]]+checks)//g' \
 		| grep -nE '^[[:space:]]*[^#]*(^|[[:space:]])gh[[:space:]]+(api|pr[[:space:]]+checks)([[:space:]]|$)'; } >/dev/null 2>&1; then
 		print_result "required-check gh reads use timeout wrapper" 1
