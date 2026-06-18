@@ -276,6 +276,7 @@ _shim_repo_role() {
 	local repo_slug="$1"
 	local repos_json="${AIDEVOPS_REPOS_JSON:-${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}}"
 	local explicit_role=""
+	local configured_maintainer=""
 	local current_user=""
 	local slug_owner=""
 	if [[ -n "$repo_slug" && -f "$repos_json" ]] && command -v jq >/dev/null 2>&1; then
@@ -286,13 +287,15 @@ _shim_repo_role() {
 			return 0
 			;;
 		esac
+		configured_maintainer=$(jq -r --arg slug "$repo_slug" 'first(.initialized_repos[]? | select(.slug == $slug) | .maintainer) // ""' "$repos_json" 2>/dev/null || true)
 	fi
 	# Match pulse/repo metadata semantics: omitted role is derived from the
-	# authenticated user and slug owner, then fail-closed to contributor.
+	# authenticated user and either configured maintainer or slug owner, then
+	# fail-closed to contributor.
 	if [[ -n "$repo_slug" && "$repo_slug" == */* && -n "${REAL_GH:-}" ]]; then
 		slug_owner="${repo_slug%%/*}"
 		current_user=$("$REAL_GH" api user --jq '.login' 2>/dev/null || true)
-		if [[ -n "$current_user" && "$slug_owner" == "$current_user" ]]; then
+		if [[ -n "$current_user" && ( "$configured_maintainer" == "$current_user" || "$slug_owner" == "$current_user" ) ]]; then
 			printf 'maintainer\n'
 			return 0
 		fi
