@@ -32,6 +32,7 @@ trap 'rm -rf "$TMP_DIR" 2>/dev/null || true' EXIT
 
 GH_CALLS="${TMP_DIR}/gh-calls.log"
 : >"$GH_CALLS"
+unset PULSE_PR_LIST_PROVIDER_CACHE_DISABLE
 
 gh_pr_list() {
 	printf '%s\n' "$*" >>"$GH_CALLS"
@@ -62,6 +63,19 @@ if [[ "$third_output" == '[{"number":1,"reviewDecision":"APPROVED","headRefOid":
 else
 	fail "provider cache keys different field sets separately" \
 		"third=${third_output} different_shape_calls=${different_shape_calls} calls=$(<"$GH_CALLS")"
+fi
+
+: >"$GH_CALLS"
+pulse_pr_list_get --repo owner/repo --state open --head branch-a --json number --limit 10 >/dev/null
+pulse_pr_list_get --repo owner/repo --state open --head branch-a --json number --limit 10 >/dev/null
+pulse_pr_list_get --repo owner/repo --state open --head branch-b --json number --limit 10 >/dev/null
+head_a_calls=$(grep -c -- '--head branch-a' "$GH_CALLS" 2>/dev/null || true)
+head_b_calls=$(grep -c -- '--head branch-b' "$GH_CALLS" 2>/dev/null || true)
+if [[ "$head_a_calls" == "1" && "$head_b_calls" == "1" ]]; then
+	pass "provider cache keys different filter arguments separately"
+else
+	fail "provider cache keys different filter arguments separately" \
+		"head_a_calls=${head_a_calls} head_b_calls=${head_b_calls} calls=$(<"$GH_CALLS")"
 fi
 
 : >"$GH_CALLS"

@@ -424,7 +424,7 @@ _count_dispatchable_product_repos() {
 			local pr_json daily_pr_count pr_alloc_err
 			# GH#4412: use --state all to count merged/closed PRs too
 			pr_alloc_err=$(mktemp)
-			pr_json=$(gh_pr_list --repo "$slug" --state all --json createdAt --limit 200 2>"$pr_alloc_err") || pr_json="[]"
+			pr_json=$(pulse_pr_list_get --repo "$slug" --state all --json createdAt --limit 200 2>"$pr_alloc_err") || pr_json="[]"
 			if [[ -z "$pr_json" ]]; then
 				local _pr_alloc_err_msg
 				_pr_alloc_err_msg=$(cat "$pr_alloc_err" 2>/dev/null || echo "unknown error")
