@@ -2268,7 +2268,7 @@ classify_dispatch_blocker_reason() {
 			printf 'missing_worker_context\n'
 			return 0
 			;;
-		*renovate*dependency*dashboard* | *dependency*dashboard*renovate*bot* | *renovate_dependency_dashboard*)
+		*renovate*dependency*dashboard*)
 			printf 'renovate_dependency_dashboard\n'
 			return 0
 			;;
