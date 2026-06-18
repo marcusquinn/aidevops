@@ -1685,6 +1685,7 @@ _api_budget_cooldown_summary_csv() {
 		return 0
 	fi
 	now=$(date +%s 2>/dev/null || printf '0')
+	[[ "$now" =~ ^[0-9]+$ ]] || now="0"
 	if command -v jq >/dev/null 2>&1; then
 		jq -r --argjson now "$now" --arg events "$event_count" '
 			(.expires_at // 0) as $expires |
