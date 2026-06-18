@@ -503,6 +503,49 @@ test_apply_dispatch_skips_refill_when_capacity_cap_disables_floor() {
 	return 0
 }
 
+test_min_worker_floor_refill_uses_precomputed_counts() {
+	(
+		AIDEVOPS_MIN_WORKER_CONCURRENCY=6
+		AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS=1
+		STOP_FLAG="${HOME}/.aidevops/logs/stop"
+		TEST_GET_MAX_CALLED_FILE="${TEST_ROOT}/precomputed-get-max-called.txt"
+		TEST_COUNT_ACTIVE_CALLED_FILE="${TEST_ROOT}/precomputed-count-active-called.txt"
+		get_max_workers_target() {
+			printf 'called\n' >"$TEST_GET_MAX_CALLED_FILE"
+			printf '1\n'
+			return 0
+		}
+		count_active_workers() {
+			printf 'called\n' >"$TEST_COUNT_ACTIVE_CALLED_FILE"
+			printf '0\n'
+			return 0
+		}
+		dispatch_max() {
+			printf 'dispatch_max should not be called with active worker count at floor\n' >"${TEST_ROOT}/precomputed-dispatch-called.txt"
+			return 1
+		}
+
+		_dispatch_min_worker_floor_refill 8 6
+
+		if [[ ! -f "$TEST_GET_MAX_CALLED_FILE" && ! -f "$TEST_COUNT_ACTIVE_CALLED_FILE" && ! -f "${TEST_ROOT}/precomputed-dispatch-called.txt" ]]; then
+			return 0
+		fi
+		printf 'get_max_called=%s count_active_called=%s dispatch_called=%s\n' \
+			"$([[ -f "$TEST_GET_MAX_CALLED_FILE" ]] && printf yes || printf no)" \
+			"$([[ -f "$TEST_COUNT_ACTIVE_CALLED_FILE" ]] && printf yes || printf no)" \
+			"$([[ -f "${TEST_ROOT}/precomputed-dispatch-called.txt" ]] && printf yes || printf no)" >"${TEST_ROOT}/precomputed-refill-failure.txt"
+		return 1
+	)
+	local rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "refill: precomputed counts skip worker count reads" 0
+	else
+		print_result "refill: precomputed counts skip worker count reads" 1 "$(<"${TEST_ROOT}/precomputed-refill-failure.txt")"
+	fi
+	unset TEST_GET_MAX_CALLED_FILE TEST_COUNT_ACTIVE_CALLED_FILE AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS
+	return 0
+}
+
 test_active_pulse_refill_uses_min_floor_above_raw_max() {
 	AIDEVOPS_MIN_WORKER_CONCURRENCY=6
 	TEST_MAX_WORKERS=1
@@ -630,6 +673,7 @@ test_throttle_forces_serial_above_floor
 test_canary_preflight_marks_floor_without_cpu_bypass
 test_apply_dispatch_refills_until_active_floor_after_partial_launch
 test_apply_dispatch_skips_refill_when_capacity_cap_disables_floor
+test_min_worker_floor_refill_uses_precomputed_counts
 test_active_pulse_refill_uses_min_floor_above_raw_max
 test_soft_canary_failure_bypasses_with_recent_worker_evidence
 test_hard_canary_failure_blocks_despite_recent_worker_evidence
