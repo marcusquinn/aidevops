@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.94] - 2026-06-18
+
+### Fixed
+
+- preserve REST Search cooldown headers (#25053)
+
 ## [3.20.93] - 2026-06-18
 
 ### Changed
