@@ -14,7 +14,16 @@ cleanup() {
 trap cleanup EXIT
 
 load_function() {
-	sed -n '/^ensure_trailing_newline() {/,/^}/p' "$REPO_DIR/aidevops.sh"
+	awk '
+	/^ensure_trailing_newline\(\) [{]/ { collect = 1 }
+	collect {
+		print
+		depth += gsub(/[{]/, "{") - gsub(/[}]/, "}")
+		if (depth == 0 && $0 ~ /^[[:space:]]*[}]/) {
+			exit
+		}
+	}
+	' "$REPO_DIR/aidevops.sh"
 	return 0
 }
 
