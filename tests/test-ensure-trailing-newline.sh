@@ -36,7 +36,8 @@ assert_file_content() {
 
 	printf '%b' "$expected" >"$expected_file"
 	if ! cmp -s "$file" "$expected_file"; then
-		printf 'Expected %s to match expected content\n' "$file" >&2
+		printf 'Expected %s to match expected content. Diff:\n' "$file" >&2
+		diff -u "$expected_file" "$file" >&2 || true
 		return 1
 	fi
 	return 0
