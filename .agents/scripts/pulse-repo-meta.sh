@@ -114,7 +114,7 @@ get_repo_priority_by_slug() {
 #
 # Returns "maintainer" or "contributor". Resolution order:
 #   1. Explicit "role" field in repos.json entry
-#   2. Auto-detect: if slug owner matches the current gh user → maintainer
+#   2. Configured maintainer or slug owner matches current gh user → maintainer
 #   3. Default: contributor (safe default — gates scanners rather than
 #      allowing them on repos we don't own)
 #
@@ -137,6 +137,7 @@ get_repo_role_by_slug() {
 	fi
 
 	# 1. Explicit role field in repos.json
+	local configured_maintainer=""
 	if [[ -f "$REPOS_JSON" ]]; then
 		local explicit_role
 		explicit_role=$(jq -r --arg slug "$repo_slug" \
@@ -146,15 +147,18 @@ get_repo_role_by_slug() {
 			printf '%s\n' "$explicit_role"
 			return 0
 		fi
+		configured_maintainer=$(jq -r --arg slug "$repo_slug" \
+			'.initialized_repos[] | select(.slug == $slug) | .maintainer // ""' \
+			"$REPOS_JSON" 2>/dev/null | head -n 1) || configured_maintainer=""
 	fi
 
-	# 2. Auto-detect from slug owner vs current gh user.
+	# 2. Auto-detect from configured maintainer or slug owner vs current gh user.
 	# Cache the gh user for the process lifetime to avoid repeated API calls.
 	if [[ -z "${_CACHED_GH_USER:-}" ]]; then
 		_CACHED_GH_USER=$(gh api user --jq '.login' 2>/dev/null) || _CACHED_GH_USER=""
 	fi
 	local slug_owner="${repo_slug%%/*}"
-	if [[ -n "$_CACHED_GH_USER" && "$slug_owner" == "$_CACHED_GH_USER" ]]; then
+	if [[ -n "$_CACHED_GH_USER" && ( "$configured_maintainer" == "$_CACHED_GH_USER" || "$slug_owner" == "$_CACHED_GH_USER" ) ]]; then
 		echo "$_PULSE_REPO_ROLE_MAINTAINER"
 		return 0
 	fi

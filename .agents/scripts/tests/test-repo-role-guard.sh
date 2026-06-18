@@ -58,6 +58,16 @@ cat >"$TEST_REPOS_JSON" <<'JSON'
     {
       "slug": "charlie/auto-detect-other",
       "pulse": true
+    },
+    {
+      "slug": "org/maintained-repo",
+      "pulse": true,
+      "maintainer": "alice"
+    },
+    {
+      "slug": "org/not-maintained-repo",
+      "pulse": true,
+      "maintainer": "charlie"
     }
   ],
   "git_parent_dirs": []
@@ -110,6 +120,14 @@ assert_eq "auto-detect: slug owner matches gh user → maintainer" "maintainer" 
 # Test 4: Auto-detect — slug owner differs from gh user → contributor
 role=$(get_repo_role_by_slug "charlie/auto-detect-other")
 assert_eq "auto-detect: slug owner differs → contributor" "contributor" "$role"
+
+# Test 4b: Configured maintainer matches gh user even when slug owner differs.
+role=$(get_repo_role_by_slug "org/maintained-repo")
+assert_eq "auto-detect: configured maintainer matches gh user → maintainer" "maintainer" "$role"
+
+# Test 4c: Configured maintainer differs and slug owner differs → contributor.
+role=$(get_repo_role_by_slug "org/not-maintained-repo")
+assert_eq "auto-detect: configured maintainer differs → contributor" "contributor" "$role"
 
 # Test 5: Empty slug → contributor (safe default)
 role=$(get_repo_role_by_slug "")
