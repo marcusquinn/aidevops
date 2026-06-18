@@ -600,31 +600,10 @@ test_claim_retries_transient_post_failure() {
 }
 
 #######################################
-# Build a mock touch executable that records the mode immediately after creation.
-# Args:
-#   $1 = mock bin directory
-# Returns: exit 0
-#######################################
-create_mock_touch_logger() {
-	local mock_bin_dir="$1"
-	cat >"${mock_bin_dir}/touch" <<'EOF'
-#!/usr/bin/env bash
-command -p touch "$@"
-touch_mode=""
-if [[ -e "${1:-}" ]]; then
-	touch_mode=$(command -p stat -c '%a' "$1")
-fi
-printf '%s\t%s\n' "$touch_mode" "${1:-}" >>"${MOCK_TOUCH_LOG:?}"
-EOF
-	chmod +x "${mock_bin_dir}/touch"
-	return 0
-}
-
-#######################################
 # Test: claim POST stderr fallback avoids predictable /tmp paths when mktemp fails.
 #######################################
 test_claim_post_error_fallback_avoids_tmp() {
-	local tmp_dir mock_path old_created_at claim_created_at output exit_code attempts test_home chmod_log chmod_mode chmod_path touch_log touch_mode touch_path suppressed_creation_pattern
+	local tmp_dir mock_path old_created_at claim_created_at output exit_code attempts test_home chmod_log chmod_mode chmod_path suppressed_creation_pattern
 	tmp_dir=$(mktemp -d)
 	mock_path=$(create_mock_gh "$tmp_dir")
 	test_home="${tmp_dir}/home"
@@ -644,14 +623,10 @@ printf '%s\t%s\n' "${1:-}" "${2:-}" >>"${MOCK_CHMOD_LOG:?}"
 command -p chmod "$@"
 EOF
 	chmod +x "${mock_path}/chmod"
-	touch_log="${tmp_dir}/touch.log"
-	create_mock_touch_logger "$mock_path"
-
 	set +e
 	output=$(PATH="${mock_path}:$PATH" \
 		HOME="${test_home}/" \
 		MOCK_CHMOD_LOG="$chmod_log" \
-		MOCK_TOUCH_LOG="$touch_log" \
 		MOCK_GH_STATE_DIR="$tmp_dir" \
 		MOCK_OLD_CLAIM_CREATED_AT="$old_created_at" \
 		MOCK_NEW_CLAIM_CREATED_AT="$claim_created_at" \
@@ -698,15 +673,15 @@ EOF
 	else
 		print_result "claim POST fallback pre-creates private stderr file" 1 "chmod_mode=${chmod_mode:-missing} chmod_path=${chmod_path:-missing} output: $output"
 	fi
-	touch_mode=""
-	touch_path=""
-	if [[ -f "$touch_log" ]]; then
-		IFS=$'\t' read -r touch_mode touch_path <"$touch_log" || true
-	fi
-	if [[ "$touch_mode" == "600" && "$touch_path" == "${test_home}/.aidevops-claim-post-error."* ]]; then
+	if grep -q "umask 077" "$CLAIM_HELPER"; then
 		print_result "claim POST fallback creates file under restrictive umask" 0
 	else
-		print_result "claim POST fallback creates file under restrictive umask" 1 "touch_mode=${touch_mode:-missing} touch_path=${touch_path:-missing} output: $output"
+		print_result "claim POST fallback creates file under restrictive umask" 1 "umask 077 not found in helper"
+	fi
+	if grep -q "set -C" "$CLAIM_HELPER"; then
+		print_result "claim POST fallback uses exclusive creation" 0
+	else
+		print_result "claim POST fallback uses exclusive creation" 1 "set -C not found in helper"
 	fi
 	suppressed_creation_pattern=": >\"\$path\") 2>/dev/null"
 	if grep -Fq "$suppressed_creation_pattern" "$CLAIM_HELPER"; then

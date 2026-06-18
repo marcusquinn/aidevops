@@ -230,7 +230,7 @@ _claim_post_error_fallback_path() {
 	if [[ -n "${HOME:-}" && -d "$HOME" && -w "$HOME" ]]; then
 		local home_dir="${HOME%/}"
 		local path="${home_dir}/.aidevops-claim-post-error.$$.$RANDOM"
-		if (umask 077 && touch "$path"); then
+		if (set -C; umask 077; : >"$path"); then
 			if chmod 600 "$path"; then
 				printf '%s' "$path"
 				return 0
