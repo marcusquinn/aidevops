@@ -336,19 +336,21 @@ else
 fi
 rm -rf "$TMPDIR_12"
 
-# Test 13: Configured org-owned reusable repo + pinned SHA → CURRENT/CALLER.
+# Test 13: Configured org-owned reusable repo + pinned SHA + rendered comments → CURRENT/CALLER.
 TMPDIR_13="$(mktemp -d)"
 _setup_fake_home "$TMPDIR_13"
 _make_repo_with_workflow "$TMPDIR_13/repos/org-current"
-sed 's|marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml@main|ORG/.github/.github/workflows/issue-sync-reusable.yml@1234567890abcdef1234567890abcdef12345678|g' \
+sed \
+	-e 's|marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml@main|ORG/.github/.github/workflows/issue-sync-reusable.yml@1234567890abcdef1234567890abcdef12345678|g' \
+	-e 's|marcusquinn/aidevops/.github/workflows/issue-sync-reusable.yml|ORG/.github/.github/workflows/issue-sync-reusable.yml|g' \
 	"$CANONICAL_TEMPLATE" > "$TMPDIR_13/repos/org-current/.github/workflows/issue-sync.yml"
 _write_repos_json "$TMPDIR_13" \
 	"$(jq -n --arg path "$TMPDIR_13/repos/org-current" '{workflow_reusable_repo: "ORG/.github", workflow_reusable_ref: "1234567890abcdef1234567890abcdef12345678", initialized_repos: [{slug: "x/org-current", path: $path, local_only: false}]}')"
 result=$(_run_and_classify "$TMPDIR_13")
 if [[ "$result" == "CURRENT/CALLER" ]]; then
-	_pass "configured org-owned pinned caller → CURRENT/CALLER"
+	_pass "configured org-owned pinned caller with rendered comments → CURRENT/CALLER"
 else
-	_fail "configured org-owned pinned caller → CURRENT/CALLER" "got: $result"
+	_fail "configured org-owned pinned caller with rendered comments → CURRENT/CALLER" "got: $result"
 fi
 rm -rf "$TMPDIR_13"
 

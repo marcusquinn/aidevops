@@ -217,11 +217,13 @@ _render_template_for_target() {
 	local _repo="$2"
 	local _reusable_file="$3"
 	local _ref="$4"
-	local _reusable_escaped _repo_repl _ref_repl
+	local _default_repo_escaped _reusable_escaped _repo_repl _ref_repl
+	_default_repo_escaped=$(_escape_ere "$_DEFAULT_WORKFLOW_REUSABLE_REPO")
 	_reusable_escaped=$(_escape_ere "$_reusable_file")
 	_repo_repl=$(_escape_sed_replacement "$_repo")
 	_ref_repl=$(_escape_sed_replacement "$_ref")
-	sed -E "s|(uses:[[:space:]]*)${_DEFAULT_WORKFLOW_REUSABLE_REPO}(/\.github/workflows/${_reusable_escaped})@[^[:space:]]+|\1${_repo_repl}\2@${_ref_repl}|" "$_template"
+	sed -E "s|(uses:[[:space:]]*)${_default_repo_escaped}(/\.github/workflows/${_reusable_escaped})@[^[:space:]]+|\1${_repo_repl}\2@${_ref_repl}|" "$_template" \
+		| sed -E "s|${_default_repo_escaped}(/\.github/workflows/${_reusable_escaped})|${_repo_repl}\1|g"
 	return 0
 }
 
