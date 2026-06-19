@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.20.99] - 2026-06-20
 
+### Changed
+
+- Documentation: prepare changelog for 3.20.99
+
+### Fixed
+
+- route r914 version bumps through PRs (#25181)
+
+## [3.20.99] - 2026-06-20
+
 ### Fixed
 
 - route r914 version bumps through PRs (#25181)
