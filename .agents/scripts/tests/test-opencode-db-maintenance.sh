@@ -424,7 +424,7 @@ out=$(PATH="$mock_bin:$PATH" MOCK_PULSE_LOG="$mock_pulse_log" MOCK_ARCHIVE_LOG="
 	_run_helper maintenance-window --force-opencode --keep-sessions 123 2>&1)
 rc=$?
 set -e
-if [[ "$rc" -eq 0 ]] && grep -q '^stop$' "$mock_pulse_log" && grep -q '^start$' "$mock_pulse_log" && grep -q -- '--keep-sessions 123' "$mock_archive_log"; then
+if [[ "$rc" -eq 0 ]] && grep -q '^stop$' "$mock_pulse_log" && grep -q '^start$' "$mock_pulse_log" && grep -q -- '--retention-days 30' "$mock_archive_log" && grep -q -- '--keep-sessions 123' "$mock_archive_log"; then
 	_pass "maintenance-window stops pulse, archives, maintains, and restarts pulse"
 else
 	_fail "maintenance-window mocked lifecycle failed (rc=$rc) — output: $out"

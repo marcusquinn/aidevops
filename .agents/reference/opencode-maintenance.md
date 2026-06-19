@@ -122,6 +122,7 @@ All thresholds overrideable via environment variables:
 | `AUTO_MIN_SECONDS_BETWEEN` | `518400` | Throttle for `auto` mode (6 days) |
 | `WAL_LARGE_THRESHOLD_MB` | `500` | Report checkpoint/busy details above this WAL size |
 | `MAINTENANCE_WINDOW_KEEP_SESSIONS` | `500` | Count target used by `maintenance-window` archive |
+| `MAINTENANCE_WINDOW_RETENTION_DAYS` | `30` | Age target used by `maintenance-window` archive |
 | `OPENCODE_DB_MAINTENANCE_HOUR` | `4` | Scheduled local hour for the weekly routine |
 | `OPENCODE_DB_MAINTENANCE_MINUTE` | `0` | Scheduled local minute for the weekly routine |
 | `OPENCODE_DB_MAINTENANCE_MODE` | `auto` | `auto` or disruptive `maintenance-window` scheduler mode |
@@ -138,7 +139,7 @@ FORCE_VACUUM_SIZE_MB=0 VACUUM_FREELIST_THRESHOLD=0.0 \
 `opencode-db-archive.sh archive` supports two retention targets:
 
 - **Age-based retention** (`--retention-days N`) archives sessions whose last
-  update/activity is older than `N` days. This remains the default mode (`14`
+  update/activity is older than `N` days. This remains the default mode (`30`
   days) and is best when session volume is predictable. A resumed or updated
   session stays active even when its original creation time is older than the
   cutoff.
@@ -177,7 +178,8 @@ It does this in order:
 
 1. Stops aidevops-managed pulse/headless workers with `pulse-lifecycle-helper.sh
    stop`.
-2. Archives old sessions with `opencode-db-archive.sh archive --keep-sessions
+2. Archives old sessions with `opencode-db-archive.sh archive --retention-days
+   ${MAINTENANCE_WINDOW_RETENTION_DAYS} --keep-sessions
    ${MAINTENANCE_WINDOW_KEEP_SESSIONS}`.
 3. Runs normal maintenance, including final post-VACUUM WAL checkpoint.
 4. Runs `PRAGMA quick_check`.

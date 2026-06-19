@@ -295,6 +295,32 @@ fi
 
 _reset_dbs
 now_seconds=$(date +%s)
+old_default_ms=$(((now_seconds - 31 * 86400) * 1000))
+recent_default_ms=$(((now_seconds - 29 * 86400) * 1000))
+_make_active_db_with_sessions "default_old,${old_default_ms}
+default_recent,${recent_default_ms}"
+
+set +e
+out=$(OPENCODE_DB="$ACTIVE_DB" OPENCODE_ARCHIVE_DB="$ARCHIVE_DB" "$HELPER" archive --max-duration-seconds 30 2>&1)
+rc=$?
+set -e
+
+if [[ "$rc" -eq 0 ]]; then
+	_pass "archive succeeds with default 30-day retention"
+else
+	_fail "default 30-day archive failed with rc=$rc — output: $out"
+fi
+
+default_recent_active=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session WHERE id='default_recent';")
+default_old_archived=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM session WHERE id='default_old';")
+if [[ "$default_recent_active" == "1" && "$default_old_archived" == "1" ]]; then
+	_pass "default retention preserves 30-day /sessions history"
+else
+	_fail "default retention mismatch: recent_active=${default_recent_active}, old_archived=${default_old_archived}"
+fi
+
+_reset_dbs
+now_seconds=$(date +%s)
 old1_ms=$(((now_seconds - 10 * 86400) * 1000))
 old2_created_ms=$(((now_seconds - 9 * 86400) * 1000))
 old2_updated_ms=$(((now_seconds - 8 * 86400) * 1000))

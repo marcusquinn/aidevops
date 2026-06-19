@@ -31,7 +31,7 @@ _oda_dir="${BASH_SOURCE[0]%/*}"
 readonly SCRIPT_NAME="opencode-db-archive"
 readonly DEFAULT_DB="$HOME/.local/share/opencode/opencode.db"
 readonly DEFAULT_ARCHIVE_DB="$HOME/.local/share/opencode/opencode-archive.db"
-readonly DEFAULT_RETENTION_DAYS=14
+readonly DEFAULT_RETENTION_DAYS=30
 readonly DEFAULT_BATCH_SIZE=500
 readonly DEFAULT_MAX_DURATION=60
 
@@ -700,7 +700,7 @@ cmd_stats() {
 	local now_s
 	now_s=$(date +%s)
 	local seven_days_ms=$(((now_s - 7 * 86400) * 1000))
-	local fourteen_days_ms=$(((now_s - 14 * 86400) * 1000))
+	local thirty_days_ms=$(((now_s - 30 * 86400) * 1000))
 
 	echo ""
 	echo "=== Active DB: $ACTIVE_DB ==="
@@ -720,16 +720,16 @@ cmd_stats() {
 	echo "  Session shares: $share_count"
 
 	# Last-update distribution
-	local last_7d last_14d older
+	local last_7d last_30d older
 	last_7d=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session WHERE time_updated >= $seven_days_ms;")
-	last_14d=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session WHERE time_updated >= $fourteen_days_ms AND time_updated < $seven_days_ms;")
-	older=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session WHERE time_updated < $fourteen_days_ms;")
+	last_30d=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session WHERE time_updated >= $thirty_days_ms AND time_updated < $seven_days_ms;")
+	older=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session WHERE time_updated < $thirty_days_ms;")
 
 	echo ""
 	echo "  Last-update distribution:"
 	echo "    Last 7 days:   $last_7d"
-	echo "    7–14 days:     $last_14d"
-	echo "    Older than 14: $older"
+	echo "    7–30 days:     $last_30d"
+	echo "    Older than 30: $older"
 
 	if [[ -f "$ARCHIVE_DB" ]]; then
 		echo ""
@@ -750,16 +750,16 @@ cmd_stats() {
 		echo "  Session shares: $arch_share"
 
 		# Last-update distribution in archive
-		local arch_7d arch_14d arch_older
+		local arch_7d arch_30d arch_older
 		arch_7d=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM session WHERE time_updated >= $seven_days_ms;" 2>/dev/null || echo "0")
-		arch_14d=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM session WHERE time_updated >= $fourteen_days_ms AND time_updated < $seven_days_ms;" 2>/dev/null || echo "0")
-		arch_older=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM session WHERE time_updated < $fourteen_days_ms;" 2>/dev/null || echo "0")
+		arch_30d=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM session WHERE time_updated >= $thirty_days_ms AND time_updated < $seven_days_ms;" 2>/dev/null || echo "0")
+		arch_older=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM session WHERE time_updated < $thirty_days_ms;" 2>/dev/null || echo "0")
 
 		echo ""
 		echo "  Last-update distribution:"
 		echo "    Last 7 days:   $arch_7d"
-		echo "    7–14 days:     $arch_14d"
-		echo "    Older than 14: $arch_older"
+		echo "    7–30 days:     $arch_30d"
+		echo "    Older than 30: $arch_older"
 	else
 		echo ""
 		echo "=== Archive DB: (not yet created) ==="
@@ -781,7 +781,7 @@ COMMANDS:
   help      Show this help message
 
 ARCHIVE OPTIONS:
-  --retention-days N        Sessions inactive for N days are archived (default: 14)
+  --retention-days N        Sessions inactive for N days are archived (default: 30)
   --keep-sessions N         Keep newest N active sessions by last update; archive older sessions beyond the budget
   --dry-run                 Show what would be archived without doing it
   --max-duration-seconds N  Stop after N seconds even when not done (default: 60)
@@ -800,7 +800,7 @@ EXAMPLES:
   # Keep the 500 most recently updated active sessions, archive older sessions
   opencode-db-archive.sh archive --keep-sessions 500
 
-  # Archive with defaults (14 days, 60s time budget)
+  # Archive with defaults (30 days, 60s time budget)
   opencode-db-archive.sh archive
 
   # Archive as pulse pre-flight (short time budget)
