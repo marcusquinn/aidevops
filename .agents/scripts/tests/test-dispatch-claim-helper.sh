@@ -674,7 +674,7 @@ EOF
 	else
 		print_result "claim POST fallback pre-creates private stderr file" 1 "chmod_mode=${chmod_mode:-missing} chmod_path=${chmod_path:-missing} output: $output"
 	fi
-	if [[ -f "${chmod_log}.pre" ]]; then
+	if [[ -n "${chmod_log:-}" && -f "${chmod_log}.pre" ]]; then
 		IFS= read -r pre_chmod_mode <"${chmod_log}.pre" || true
 	fi
 	if [[ "$pre_chmod_mode" == "600" ]]; then
