@@ -251,13 +251,45 @@ service_interruption_continue_candidate() {
 
 	if [[ "$activity_detected" == "1" ]]; then
 		case "$exit_code" in
-		137 | 143)
+		137)
 			return 0
 			;;
 		esac
 	fi
 
 	return 1
+}
+
+runtime_signal_terminated_candidate() {
+	local output_file="$1"
+	local exit_code="$2"
+	local activity_detected="$3"
+
+	if [[ "$activity_detected" != "1" ]]; then
+		return 1
+	fi
+	if [[ "$exit_code" -eq 143 ]]; then
+		return 0
+	fi
+	if [[ ! -f "$output_file" ]]; then
+		return 1
+	fi
+	python3 - "$output_file" <<'PY'
+import sys
+from pathlib import Path
+
+try:
+    lines = [line.strip() for line in Path(sys.argv[1]).read_text(errors="ignore").splitlines() if line.strip()]
+except OSError:
+    sys.exit(1)
+if not lines:
+    sys.exit(1)
+tail = "\n".join(lines[-5:]).lower()
+if lines[-1].lower() == "terminated" or "sigterm" in tail or "received sigterm" in tail:
+    sys.exit(0)
+sys.exit(1)
+PY
+	return $?
 }
 
 extract_session_id_from_output() {

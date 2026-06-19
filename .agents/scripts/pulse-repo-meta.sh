@@ -244,8 +244,14 @@ list_dispatchable_issue_candidates_json() {
 	issue_json=$(gh_issue_list --repo "$repo_slug" --state open --json number,title,url,assignees,labels,updatedAt --limit "$limit" 2>"$issue_dispatch_err") || gh_exit_code=$?
 	if [[ "$gh_exit_code" -ne 0 ]] || [[ -z "$issue_json" || "$issue_json" == "null" ]]; then
 		local _issue_dispatch_err_msg
-		_issue_dispatch_err_msg=$(cat "$issue_dispatch_err" 2>/dev/null || echo "unknown error")
-		echo "[pulse-wrapper] list_dispatchable_issue_candidates: gh_issue_list FAILED for ${repo_slug} (exit ${gh_exit_code}): ${_issue_dispatch_err_msg}" >>"$LOGFILE"
+		_issue_dispatch_err_msg=$(<"$issue_dispatch_err") || _issue_dispatch_err_msg="unknown error"
+		if [[ "$gh_exit_code" -eq 75 || "$_issue_dispatch_err_msg" == *"secondary-rate-limit active=true skip=read"* ]]; then
+			printf '[pulse-wrapper] list_dispatchable_issue_candidates: gh_issue_list cooldown skip for %s (exit %s): %s\n' \
+				"$repo_slug" "$gh_exit_code" "$_issue_dispatch_err_msg" >>"$LOGFILE"
+		else
+			printf '[pulse-wrapper] list_dispatchable_issue_candidates: gh_issue_list FAILED for %s (exit %s): %s\n' \
+				"$repo_slug" "$gh_exit_code" "$_issue_dispatch_err_msg" >>"$LOGFILE"
+		fi
 		issue_json="[]"
 	fi
 	rm -f "$issue_dispatch_err"

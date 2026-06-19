@@ -868,6 +868,20 @@ _handle_run_result() {
 	# premature-exit or watchdog-stall continuation budgets. Require activity or
 	# session evidence so startup failures still follow normal backoff paths.
 	if [[ "$role" == "worker" && "$session_key" == issue-* ]] && \
+		runtime_signal_terminated_candidate "$output_file" "$exit_code" "$activity_detected"; then
+		if [[ -n "$discovered_session" ]]; then
+			store_session_id "$provider" "$session_key" "$discovered_session" "$selected_model"
+		fi
+		_run_result_label="signal_terminated_continue"
+		_run_failure_reason="signal_terminated_continue"
+		_run_runtime_error_type="sigterm"
+		_run_classification_source="worker_exit_diagnostics"
+		_run_classification_pattern="sigterm_or_terminated_tail"
+		rm -f "$output_file"
+		print_warning "$selected_model worker received SIGTERM after activity — will attempt session continuation"
+		return 78
+	fi
+	if [[ "$role" == "worker" && "$session_key" == issue-* ]] && \
 		service_interruption_continue_candidate \
 			"$failure_reason" "$exit_code" "$activity_detected" "$discovered_session" \
 			"${_failure_provider_error_type:-}"; then
@@ -1080,6 +1094,10 @@ _derive_worker_failure_evidence() {
 		;;
 	watchdog_stall_continue | service_interruption_continue | service_interruption_exhausted | signal_killed_continue)
 		launch_failure_cause="mid_session_interruption"
+		next_action="resume_existing_session"
+		;;
+	signal_terminated_continue)
+		launch_failure_cause="signal_terminated"
 		next_action="resume_existing_session"
 		;;
 	watchdog_stall_killed)
