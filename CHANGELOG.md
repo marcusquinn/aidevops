@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.96] - 2026-06-19
+
+### Changed
+
+- fix: verify claim fallback umask at runtime (#25095)
+- fix: validate required checks script path (#25083)
+- fix: reuse worker merge permission checks (#25081)
+- fix: preserve pulse batch search override (#25080)
+- fix: guard empty REST issue search bodies (#25065)
+- fix: harden dispatch claim fallback creation (#25064)
+- Tests: cover jq stderr formats (#25063)
+- fix: keep pulse jq parse errors visible (#24969)
+
+### Fixed
+
+- retain OpenCode sessions for 30 days (#25098)
+- broaden jq stderr matcher (#25091)
+- narrow jq stderr matcher (#25086)
+
 ## [3.20.95] - 2026-06-18
 
 ### Changed
