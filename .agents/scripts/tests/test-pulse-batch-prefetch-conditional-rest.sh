@@ -7,6 +7,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 HELPER="$SCRIPT_DIR/../pulse-batch-prefetch-helper.sh"
 
+# shellcheck source=../shared-constants.sh
+source "$SCRIPT_DIR/../shared-constants.sh"
+
 TEST_ROOT=""
 TESTS_RUN=0
 TESTS_FAILED=0
@@ -130,9 +133,13 @@ prefetch_raw_gh_read_matches() {
 }
 
 test_prefetch_raw_gh_read_detector_rejects_missing_file() {
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	setup_env
+	push_cleanup "rm -rf '${TEST_ROOT}'"
 	local empty_path=""
-	local missing_path="$TEST_ROOT/missing.sh"
-	local directory_path="$TEST_ROOT"
+	local missing_path="${TEST_ROOT:-}/missing.sh"
+	local directory_path="${TEST_ROOT:-}"
 	if prefetch_raw_gh_read_matches \
 		|| prefetch_raw_gh_read_matches "$empty_path" \
 		|| prefetch_raw_gh_read_matches "$missing_path" \
@@ -141,6 +148,7 @@ test_prefetch_raw_gh_read_detector_rejects_missing_file() {
 	else
 		print_result "prefetch raw gh detector rejects invalid file input" 0
 	fi
+	teardown_env
 	return 0
 }
 
