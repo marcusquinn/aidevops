@@ -309,7 +309,7 @@ test_opencode_archive_launchd_uses_safe_path_expansion() {
 		captured_plist="$content"
 		return 0
 	}
-	aidevops_launchd_sanitized_path() { local value="${1:-}"; printf '%s\n' "$value"; return 0; }
+	aidevops_launchd_sanitized_path() { local value="${1:-}"; printf '%s\n' "$value"; return $?; }
 	mkdir() { /bin/mkdir "$@"; return $?; }
 	uname() { printf 'Darwin\n'; return 0; }
 
@@ -320,7 +320,9 @@ test_opencode_archive_launchd_uses_safe_path_expansion() {
 	setup_opencode_db_archive
 	HOME="$orig_home"
 	PATH="$orig_path"
-	unset -f uname mkdir aidevops_launchd_sanitized_path _launchd_install_if_changed
+	unset -f uname mkdir
+	_launchd_install_if_changed() { return 0; }
+	aidevops_launchd_sanitized_path() { printf '%s\n' "/usr/bin:/bin"; return $?; }
 
 	local body
 	body=$(<"$SCHEDULERS_PLATFORM_SH")
