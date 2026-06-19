@@ -15,6 +15,7 @@
 #   - Draft responses (t1555): private repo + local draft storage
 #   - Profile README: auto-create and scheduled update
 #   - OAuth token refresh: launchd/systemd/cron/schtasks
+#   - OpenCode DB archive (GH#25136): daily archive/VACUUM scheduler
 #   - OpenCode DB maintenance (r913, t2183): weekly checkpoint/vacuum
 #   - Repo sync: daily fast-forward pull
 #   - Repo aidevops health (r914): daily drift keeper
@@ -901,6 +902,105 @@ setup_opencode_db_maintenance() {
 			"false" \
 			"true" \
 			"Sun *-*-* ${ocdbm_hour}:${ocdbm_minute}:00"
+	fi
+	return 0
+}
+
+# Setup opencode DB archive scheduler (GH#25136).
+# Runs independently from pulse preflight so archive/VACUUM work does not track
+# dispatch-loop cadence. The async helper keeps its single-runner lock and
+# last-run observability while this scheduler supplies the daily cadence.
+setup_opencode_db_archive() {
+	local archive_script="$HOME/.aidevops/agents/scripts/opencode-db-archive-async-helper.sh"
+	if ! [[ -x "$archive_script" ]]; then
+		return 0
+	fi
+
+	local archive_log_dir="$HOME/.aidevops/logs"
+	local archive_hour="${OPENCODE_DB_ARCHIVE_HOUR:-5}"
+	local archive_minute="${OPENCODE_DB_ARCHIVE_MINUTE:-0}"
+	local archive_budget_sec="${OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC:-60}"
+	local archive_env="OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC=${archive_budget_sec}"
+	mkdir -p "$archive_log_dir"
+
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		local archive_label="sh.aidevops.opencode-db-archive"
+		local archive_plist="$HOME/Library/LaunchAgents/${archive_label}.plist"
+		local _xml_archive_script _xml_archive_home _xml_archive_log _xml_archive_path
+		_xml_archive_script=$(_xml_escape "$archive_script")
+		_xml_archive_home=$(_xml_escape "$HOME")
+		_xml_archive_log=$(_xml_escape "${archive_log_dir}/opencode-db-archive.log")
+		_xml_archive_path=$(_xml_escape "$(aidevops_launchd_sanitized_path "/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}")")
+
+		local archive_plist_content
+		archive_plist_content=$(cat <<ARCHIVE_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${archive_label}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>$(_xml_escape "$(_resolve_modern_bash)")</string>
+		<string>${_xml_archive_script}</string>
+	</array>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>${archive_hour}</integer>
+		<key>Minute</key>
+		<integer>${archive_minute}</integer>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>${_xml_archive_log}</string>
+	<key>StandardErrorPath</key>
+	<string>${_xml_archive_log}</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>${_xml_archive_home}</string>
+		<key>PATH</key>
+		<string>${_xml_archive_path}</string>
+		<key>OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC</key>
+		<string>${archive_budget_sec}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityBackgroundIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+</dict>
+</plist>
+ARCHIVE_PLIST
+		)
+		if _launchd_install_if_changed "$archive_label" "$archive_plist" "$archive_plist_content"; then
+			print_info "OpenCode DB archive enabled (launchd, daily ${archive_hour}:${archive_minute})"
+		else
+			print_warning "Failed to install opencode DB archive LaunchAgent"
+		fi
+	elif _is_windows; then
+		return 0
+	else
+		_install_scheduler_linux \
+			"aidevops-opencode-db-archive" \
+			"aidevops: opencode-db-archive" \
+			"${archive_minute} ${archive_hour} * * *" \
+			"\"${archive_script}\"" \
+			"86400" \
+			"${archive_log_dir}/opencode-db-archive.log" \
+			"${archive_env}" \
+			"OpenCode DB archive enabled (daily ${archive_hour}:${archive_minute})" \
+			"Failed to install opencode DB archive scheduler" \
+			"false" \
+			"true" \
+			"*-*-* ${archive_hour}:${archive_minute}:00" \
+			"3600"
 	fi
 	return 0
 }

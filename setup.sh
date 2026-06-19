@@ -1423,6 +1423,9 @@ _setup_noninteractive_schedulers() {
 	# opencode DB maintenance (r913, t2183). Helper self-noops on missing
 	# DB — safe to install unconditionally in non-interactive mode too.
 	_time_step "setup_opencode_db_maintenance" setup_opencode_db_maintenance
+	# opencode DB archive/VACUUM (GH#25136). Dedicated low-priority scheduler;
+	# not tied to pulse preflight cadence.
+	_time_step "setup_opencode_db_archive" setup_opencode_db_archive
 	# Migrate cron entries to systemd after schedulers are installed (GH#17695 Finding D)
 	_time_step "migrate_cron_to_systemd" migrate_cron_to_systemd
 	_time_step "$SETUP_STAGE_TABBY" setup_tabby
@@ -1477,6 +1480,7 @@ _setup_post_setup_steps() {
 	setup_profile_readme
 	setup_oauth_token_refresh
 	setup_opencode_db_maintenance
+	setup_opencode_db_archive
 	# Migrate cron entries to systemd after schedulers are installed (GH#17695 Finding D)
 	migrate_cron_to_systemd
 	setup_tabby

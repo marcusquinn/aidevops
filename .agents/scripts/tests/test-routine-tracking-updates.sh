@@ -192,6 +192,93 @@ HELPER
 	return 0
 }
 
+test_opencode_archive_scheduler_is_daily_and_low_priority() {
+	local fake_home="$TEST_DIR/archive-home"
+	mkdir -p "$fake_home/.aidevops/agents/scripts"
+	local archive_script="$fake_home/.aidevops/agents/scripts/opencode-db-archive-async-helper.sh"
+	printf '#!/usr/bin/env bash\nexit 0\n' >"$archive_script"
+	chmod +x "$archive_script"
+
+	local captured_service=""
+	local captured_cron=""
+	local captured_command=""
+	local captured_interval=""
+	local captured_log=""
+	local captured_env=""
+	local captured_run_at_load=""
+	local captured_low_priority=""
+	local captured_calendar=""
+	_install_scheduler_linux() {
+		local service_name="$1"
+		local cron_tag="$2"
+		local cron_schedule="$3"
+		local exec_command="$4"
+		local interval_sec="$5"
+		local log_file="$6"
+		local env_vars="$7"
+		local success_message="$8"
+		local failure_message="$9"
+		local run_at_load="${10}"
+		local low_priority="${11}"
+		local on_calendar="${12:-}"
+		: "$cron_tag" "$success_message" "$failure_message"
+		captured_service="$service_name"
+		captured_cron="$cron_schedule"
+		captured_command="$exec_command"
+		captured_interval="$interval_sec"
+		captured_log="$log_file"
+		captured_env="$env_vars"
+		captured_run_at_load="$run_at_load"
+		captured_low_priority="$low_priority"
+		captured_calendar="$on_calendar"
+		return 0
+	}
+	uname() { printf 'Linux\n'; return 0; }
+
+	local orig_home="$HOME"
+	HOME="$fake_home"
+	setup_opencode_db_archive
+	HOME="$orig_home"
+	unset -f uname _install_scheduler_linux
+
+	if [[ "$captured_service" != "aidevops-opencode-db-archive" ]]; then
+		print_result "opencode archive scheduler uses dedicated service" 1 "$captured_service"
+		return 0
+	fi
+	if [[ "$captured_cron" != "0 5 * * *" || "$captured_interval" != "86400" || "$captured_calendar" != "*-*-* 5:0:00" ]]; then
+		print_result "opencode archive scheduler runs daily" 1 "cron=${captured_cron} interval=${captured_interval} calendar=${captured_calendar}"
+		return 0
+	fi
+	if [[ "$captured_command" != "\"${archive_script}\"" || "$captured_log" != "$fake_home/.aidevops/logs/opencode-db-archive.log" ]]; then
+		print_result "opencode archive scheduler invokes async helper" 1 "command=${captured_command} log=${captured_log}"
+		return 0
+	fi
+	if [[ "$captured_env" == *"OPENCODE_DB_ARCHIVE_ASYNC_CADENCE_MIN"* || "$captured_env" != "OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC=60" ]]; then
+		print_result "opencode archive scheduler leaves cadence to scheduler" 1 "$captured_env"
+		return 0
+	fi
+	if [[ "$captured_run_at_load" != "false" || "$captured_low_priority" != "true" ]]; then
+		print_result "opencode archive scheduler is low priority and not run-at-load" 1 "run_at_load=${captured_run_at_load} low_priority=${captured_low_priority}"
+		return 0
+	fi
+
+	print_result "opencode archive scheduler is daily and low priority" 0
+	return 0
+}
+
+test_pulse_preflight_does_not_launch_opencode_archive() {
+	local preflight_lib="$REPO_ROOT/.agents/scripts/pulse-dispatch-preflight-lib.sh"
+	local body
+	body=$(<"$preflight_lib")
+	# shellcheck disable=SC2016 # Match the literal pre-GH#25136 launch snippet.
+	if [[ "$body" == *'nohup "$_archive_async_helper"'* || "$body" == *'archive --max-duration-seconds 30'* ]]; then
+		print_result "pulse preflight does not launch opencode archive" 1 "archive launch still present"
+		return 0
+	fi
+	print_result "pulse preflight does not launch opencode archive" 0
+	return 0
+}
+
 main() {
 	setup
 	load_scheduler_helpers
@@ -199,6 +286,8 @@ main() {
 	test_core_routine_shell_quote_escapes_single_quotes
 	test_linux_core_scheduler_commands_are_logged
 	test_pulse_routine_update_uses_flags_and_duration
+	test_opencode_archive_scheduler_is_daily_and_low_priority
+	test_pulse_preflight_does_not_launch_opencode_archive
 	printf '\n%d/%d tests passed\n' "$TESTS_PASSED" "$TESTS_RUN"
 	[[ "$TESTS_FAILED" -eq 0 ]]
 	return $?
