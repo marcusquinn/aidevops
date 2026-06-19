@@ -57,7 +57,7 @@ gh() {
 		return 1
 	fi
 	if [[ "${GH_HEADER_LIMIT_FAIL:-0}" == "1" ]]; then
-		printf 'HTTP/2 429\r\nRetry-After: 42\r\nX-RateLimit-Remaining: 0\r\nX-GitHub-Request-Id: REQ-429\r\n\r\n{"message":"rate limit exceeded"}\n'
+		printf 'HTTP/2 429\r\nRetry-After: 42 \t\r\nX-RateLimit-Remaining: 0 \r\nX-GitHub-Request-Id: REQ-429\r\n\r\n{"message":"rate limit exceeded"}\n'
 		return 1
 	fi
 	if [[ "${GH_GENERIC_403_FAIL:-0}" == "1" ]]; then
