@@ -687,7 +687,9 @@ class RefreshTests(PoolOpsTestCase):
 
     def test_successful_refresh_with_type_error_is_sanitized(self) -> None:
         response = mock.MagicMock()
-        response.__enter__.return_value.read.return_value = None
+        body = mock.MagicMock()
+        body.decode.return_value = None
+        response.__enter__.return_value.read.return_value = body
         with mock.patch("urllib.request.urlopen", return_value=response):
             result = _common.call_token_endpoint("https://auth.example.invalid/token", "client", "secret-refresh", "ua")
 
