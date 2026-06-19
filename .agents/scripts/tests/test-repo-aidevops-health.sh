@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2218
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
@@ -42,6 +43,7 @@ assert() {
 		echo "  actual:   '$actual'"
 		FAIL=$((FAIL + 1))
 	fi
+	return 0
 }
 
 assert_contains() {
@@ -57,6 +59,7 @@ assert_contains() {
 		echo "  in: $(echo "$haystack" | head -3)"
 		FAIL=$((FAIL + 1))
 	fi
+	return 0
 }
 
 load_helper_without_main() {
@@ -170,6 +173,87 @@ load_helper_without_main
 PLIST_OUT=$(_generate_plist "/tmp/aidevops-health" "/usr/bin:/bin")
 assert_contains "plist two-argument legacy call keeps environment path" "$PLIST_OUT" "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>"
 assert_contains "plist generation uses calendar schedule" "$PLIST_OUT" "<key>StartCalendarInterval</key>"
+
+# ---------------------------------------------------------------------------
+# Test 7 — non-local version bump uses a branch + PR, not default-branch push
+# ---------------------------------------------------------------------------
+REMOTE_FIXTURE=$(mktemp -d)
+mkdir -p "$REMOTE_FIXTURE/bin"
+cat >"$REMOTE_FIXTURE/bin/gh" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$1" == "pr" && "$2" == "list" ]]; then
+	exit 0
+fi
+exit 1
+EOF
+chmod +x "$REMOTE_FIXTURE/bin/gh"
+
+git init --bare -q "$REMOTE_FIXTURE/origin.git"
+git -C "$REMOTE_FIXTURE/origin.git" symbolic-ref HEAD refs/heads/main
+git clone -q "$REMOTE_FIXTURE/origin.git" "$REMOTE_FIXTURE/repo"
+cat >"$REMOTE_FIXTURE/repo/.aidevops.json" <<'EOF'
+{"aidevops_version":"0.0.1"}
+EOF
+git -C "$REMOTE_FIXTURE/repo" add .aidevops.json
+git -C "$REMOTE_FIXTURE/repo" -c user.email=t@t -c user.name=T -c commit.gpgsign=false commit -qm init
+git -C "$REMOTE_FIXTURE/repo" push -q -u origin main
+git -C "$REMOTE_FIXTURE/repo" remote set-head origin -a >/dev/null 2>&1 || true
+
+ORIGINAL_PATH="$PATH"
+PATH="$REMOTE_FIXTURE/bin:$PATH"
+hash -r
+gh_create_pr() {
+	printf 'https://example.invalid/pr/1\n'
+	return 0
+}
+REMOTE_BUMP_OUT=$(_bump_single_repo "test/stale-repo" "$REMOTE_FIXTURE/repo" "false" "9.9.9" "0")
+unset -f gh_create_pr
+PATH="$ORIGINAL_PATH"
+hash -r
+assert "remote bump reports bumped after PR creation" "$REMOTE_BUMP_OUT" "bumped"
+REMOTE_CURRENT_BRANCH=$(git -C "$REMOTE_FIXTURE/repo" rev-parse --abbrev-ref HEAD)
+assert "remote bump restores default branch" "$REMOTE_CURRENT_BRANCH" "main"
+MAIN_VERSION=$(git -C "$REMOTE_FIXTURE/repo" show main:.aidevops.json | jq -r '.aidevops_version')
+assert "remote bump leaves local main unchanged" "$MAIN_VERSION" "0.0.1"
+if git -C "$REMOTE_FIXTURE/repo" rev-parse --verify "origin/chore/aidevops-version-v9.9.9" >/dev/null 2>&1; then
+	echo "${GREEN}PASS${NC} remote bump pushes version branch"
+	PASS=$((PASS + 1))
+else
+	echo "${RED}FAIL${NC} remote bump did not push version branch"
+	FAIL=$((FAIL + 1))
+fi
+
+# ---------------------------------------------------------------------------
+# Test 8 — branch push failures are counted as failed, not skipped
+# ---------------------------------------------------------------------------
+PUSH_FAIL_FIXTURE=$(mktemp -d)
+git init --bare -q "$PUSH_FAIL_FIXTURE/origin.git"
+git -C "$PUSH_FAIL_FIXTURE/origin.git" symbolic-ref HEAD refs/heads/main
+git clone -q "$PUSH_FAIL_FIXTURE/origin.git" "$PUSH_FAIL_FIXTURE/repo"
+cat >"$PUSH_FAIL_FIXTURE/repo/.aidevops.json" <<'EOF'
+{"aidevops_version":"0.0.1"}
+EOF
+git -C "$PUSH_FAIL_FIXTURE/repo" add .aidevops.json
+git -C "$PUSH_FAIL_FIXTURE/repo" -c user.email=t@t -c user.name=T -c commit.gpgsign=false commit -qm init
+git -C "$PUSH_FAIL_FIXTURE/repo" push -q -u origin main
+git -C "$PUSH_FAIL_FIXTURE/repo" remote set-head origin -a >/dev/null 2>&1 || true
+git() {
+	local arg
+	for arg in "$@"; do
+		if [[ "$arg" == "push" ]]; then
+			return 1
+		fi
+	done
+	command git "$@"
+	return $?
+}
+gh() {
+	return 1
+}
+PUSH_FAIL_OUT=$(_bump_single_repo "test/push-fails" "$PUSH_FAIL_FIXTURE/repo" "false" "9.9.9" "0")
+unset -f git
+unset -f gh
+assert "remote push failure reports failed" "$PUSH_FAIL_OUT" "failed"
 
 # ---------------------------------------------------------------------------
 # Summary
