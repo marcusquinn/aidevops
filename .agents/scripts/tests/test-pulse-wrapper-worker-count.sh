@@ -15,6 +15,8 @@ TESTS_RUN=0
 TESTS_FAILED=0
 PS_MOCK_OUTPUT=""
 GH_ISSUE_LIST_JSON="[]"
+GH_ISSUE_LIST_EXIT=0
+GH_ISSUE_LIST_ERR=""
 GH_PR_LIST_JSON="[]"
 GH_PR_CHECK_STATUS_JSON="[]"
 TEST_ROOT=""
@@ -53,6 +55,10 @@ setup_test_env() {
 	# this level bypasses _gh_with_timeout entirely and is the canonical test
 	# pattern (see test-large-file-gate-dedup.sh:94-131).
 	gh_issue_list() {
+		if [[ "$GH_ISSUE_LIST_EXIT" -ne 0 ]]; then
+			printf '%s\n' "$GH_ISSUE_LIST_ERR" >&2
+			return "$GH_ISSUE_LIST_EXIT"
+		fi
 		printf '%s\n' "$GH_ISSUE_LIST_JSON"
 		return 0
 	}
@@ -262,6 +268,8 @@ test_counts_review_issue_pr_workers() {
 }
 
 test_list_dispatchable_candidates_default_open_except_needs_labels() {
+	GH_ISSUE_LIST_EXIT=0
+	GH_ISSUE_LIST_ERR=""
 	local repos_json_path="${HOME}/.config/aidevops/repos.json"
 	mkdir -p "$(dirname "$repos_json_path")"
 	printf '{"initialized_repos":[{"slug":"owner/repo","path":"/tmp/repo","pulse":true,"maintainer":"maintainer-bot"}]}\n' >"$repos_json_path"
@@ -293,6 +301,28 @@ test_list_dispatchable_candidates_default_open_except_needs_labels() {
 	fi
 
 	print_result "list_dispatchable_issue_candidates is default-open except needs-* and active-status labels" 1 "Unexpected candidate set: ${output}"
+	return 0
+}
+
+test_list_dispatchable_candidates_logs_cooldown_skip_not_failure() {
+	GH_ISSUE_LIST_JSON='[]'
+	GH_ISSUE_LIST_EXIT=75
+	GH_ISSUE_LIST_ERR='[gh-cooldown] secondary-rate-limit active=true skip=read expires_at=2026-06-19T00:00:00Z'
+	: >"$LOGFILE"
+
+	local output log_text
+	output=$(list_dispatchable_issue_candidates "owner/repo" 100)
+	log_text=$(<"$LOGFILE")
+	GH_ISSUE_LIST_EXIT=0
+	GH_ISSUE_LIST_ERR=""
+
+	if [[ -z "$output" && "$log_text" == *"cooldown skip"* && "$log_text" != *"FAILED"* ]]; then
+		print_result "list_dispatchable_issue_candidates treats secondary cooldown as expected skip" 0
+		return 0
+	fi
+
+	print_result "list_dispatchable_issue_candidates treats secondary cooldown as expected skip" 1 \
+		"output=${output:-<empty>} log=${log_text:-<empty>}"
 	return 0
 }
 
@@ -758,6 +788,7 @@ main() {
 	test_has_worker_exact_dir_match_accepts_correct_path
 	test_counts_review_issue_pr_workers
 	test_list_dispatchable_candidates_default_open_except_needs_labels
+	test_list_dispatchable_candidates_logs_cooldown_skip_not_failure
 	test_count_runnable_candidates_counts_default_open_backlog
 	test_count_runnable_candidates_keeps_stdout_numeric_with_debug
 	test_count_queued_without_worker_keeps_stdout_numeric_with_debug

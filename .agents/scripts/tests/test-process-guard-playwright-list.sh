@@ -121,6 +121,20 @@ test_rejects_substring_grep_option() {
 	return 0
 }
 
+test_kill_log_format_carries_timestamp_and_process_class() {
+	local helper_text
+	helper_text=$(<"$HELPER")
+	if [[ "$helper_text" == *"class=%s cmd=%s rss_mb=%s age_seconds=%s"* && \
+		"$helper_text" == *"_process_guard_timestamp"* && \
+		"$helper_text" == *"process_class='playwright-list'"* ]]; then
+		print_result "kill log format carries timestamp and process class" 0
+		return 0
+	fi
+
+	print_result "kill log format carries timestamp and process class" 1
+	return 0
+}
+
 main() {
 	test_matches_stale_aidevops_playwright_list
 	test_matches_stale_aidevops_playwright_list_with_flexible_spacing
@@ -128,6 +142,7 @@ main() {
 	test_rejects_interactive_playwright_list
 	test_rejects_fresh_aidevops_playwright_list
 	test_rejects_substring_grep_option
+	test_kill_log_format_carries_timestamp_and_process_class
 
 	printf '\n%s/%s tests passed.\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

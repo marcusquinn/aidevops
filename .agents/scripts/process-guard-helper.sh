@@ -80,6 +80,11 @@ LOGFILE="${HOME}/.aidevops/logs/process-guard.log"
 
 mkdir -p "$(dirname "$LOGFILE")" || true
 
+_process_guard_timestamp() {
+	date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || printf '%s' 'unknown'
+	return 0
+}
+
 #######################################
 # List aidevops-related processes using pgrep (SC2009: avoids ps|grep)
 # Output: ps fields (pid,ppid,tty,rss,etime,command) for matching processes
@@ -398,8 +403,23 @@ cmd_kill_runaways() {
 
 		if [[ -n "$violation" ]]; then
 			local rss_mb=$((rss / 1024))
+			local process_class killed_at
+			process_class='other'
+			case "$cmd_base" in
+			shel[l]check) process_class='lint' ;;
+			node)
+				if [[ $cmd_full == *playwright* && $cmd_full == *--list* ]]; then
+					process_class='playwright-list'
+				else
+					process_class='node'
+				fi
+				;;
+			opencode | opencode-ai | claude | claude-ai) process_class='ai-runtime' ;;
+			esac
+			killed_at=$(_process_guard_timestamp)
 			echo "Killing PID $pid ($cmd_base) — $violation"
-			echo "[process-guard] Killing PID $pid ($cmd_base) — $violation" >>"$LOGFILE"
+			printf '[process-guard] %s Killing PID %s class=%s cmd=%s rss_mb=%s age_seconds=%s — %s\n' \
+				"$killed_at" "$pid" "$process_class" "$cmd_base" "$rss_mb" "$age_seconds" "$violation" >>"$LOGFILE"
 			kill "$pid" 2>/dev/null || true
 			sleep 1
 			if kill -0 "$pid" 2>/dev/null; then
@@ -412,7 +432,7 @@ cmd_kill_runaways() {
 
 	if [[ "$killed" -gt 0 ]]; then
 		echo "Killed $killed process(es), freed ~${total_freed_mb}MB"
-		echo "[process-guard] Killed $killed process(es), freed ~${total_freed_mb}MB" >>"$LOGFILE"
+		printf '[process-guard] %s Killed %s process(es), freed ~%sMB\n' "$(_process_guard_timestamp)" "$killed" "$total_freed_mb" >>"$LOGFILE"
 	else
 		echo "No runaway processes found"
 	fi

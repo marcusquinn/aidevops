@@ -891,11 +891,11 @@ test_service_interruption_candidate_uses_separate_path() {
 	status=0
 	_handle_run_result 143 "$local_output_file" "worker" "openai" "issue-23037" "openai/gpt-5.5" || status=$?
 
-	if [[ "$status" -eq 81 && "$_run_result_label" == "service_interruption_continue" && "$_run_failure_reason" == "local_error" && -f "$local_output_file" ]]; then
-		print_result "service interruption preserves specific failure reason and diagnostics" 0
+	if [[ "$status" -eq 78 && "$_run_result_label" == "signal_terminated_continue" && "$_run_runtime_error_type" == "sigterm" && ! -f "$local_output_file" ]]; then
+		print_result "SIGTERM uses signal-specific continuation path" 0
 	else
-		print_result "service interruption preserves specific failure reason and diagnostics" 1 \
-			"status=$status label=${_run_result_label:-<empty>} reason=${_run_failure_reason:-<empty>} output_exists=$([[ -f "$local_output_file" ]] && printf yes || printf no)"
+		print_result "SIGTERM uses signal-specific continuation path" 1 \
+			"status=$status label=${_run_result_label:-<empty>} runtime=${_run_runtime_error_type:-<empty>} output_exists=$([[ -f "$local_output_file" ]] && printf yes || printf no)"
 	fi
 
 	if ! service_interruption_continue_candidate "rate_limit" "1" "1" "" "rate_limit"; then
@@ -908,6 +908,20 @@ test_service_interruption_candidate_uses_separate_path() {
 		print_result "SIGKILL with activity can resume as interruption" 0
 	else
 		print_result "SIGKILL with activity can resume as interruption" 1
+	fi
+
+	if ! service_interruption_continue_candidate "local_error" "143" "1" "" ""; then
+		print_result "SIGTERM does not consume service interruption budget" 0
+	else
+		print_result "SIGTERM does not consume service interruption budget" 1
+	fi
+
+	local terminated_tail_file="${TEST_ROOT}/terminated-tail.out"
+	printf '%s\n' '{"type":"text","sessionID":"ses_tail","text":"editing files"}' 'Terminated' >"$terminated_tail_file"
+	if runtime_signal_terminated_candidate "$terminated_tail_file" "1" "1"; then
+		print_result "Terminated tail classifies as signal termination" 0
+	else
+		print_result "Terminated tail classifies as signal termination" 1
 	fi
 
 	return 0
