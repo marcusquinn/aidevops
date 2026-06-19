@@ -57,7 +57,7 @@ function gitCommonDir(path) {
   if (!path) return "";
   let gitDir = dirname(path);
   try {
-    if (existsSync(path) && statSync(path).isDirectory()) {
+    if (statSync(path).isDirectory()) {
       gitDir = path;
     }
   } catch {
