@@ -17,6 +17,8 @@ SCRIPTS_DIR="$(cd "${TEST_SCRIPT_DIR}/.." && pwd)" || exit 1
 
 TMP_HOME=$(mktemp -d)
 TMP_REPO=$(mktemp -d)
+TMP_REL_PARENT=$(mktemp -d)
+TMP_CDPATH_PARENT=$(mktemp -d)
 FAKE_BIN=$(mktemp -d)
 QLTY_PWD_FILE="${TMP_HOME}/qlty-pwd.txt"
 export HOME="$TMP_HOME"
@@ -27,7 +29,7 @@ PATH="${FAKE_BIN}:${PATH}"
 export PATH
 
 cleanup() {
-	rm -rf "$TMP_HOME" "$TMP_REPO" "$FAKE_BIN"
+	rm -rf "$TMP_HOME" "$TMP_REPO" "$TMP_REL_PARENT" "$TMP_CDPATH_PARENT" "$FAKE_BIN"
 	return 0
 }
 trap cleanup EXIT
@@ -82,6 +84,22 @@ fi
 
 if [[ "$qlty_section" != *"scripts/example.sh"* ]]; then
 	printf '%s\n' "FAIL qlty section omitted SARIF file path"
+	exit 1
+fi
+
+mkdir -p "${TMP_REL_PARENT}/target-repo/.qlty" "${TMP_CDPATH_PARENT}/target-repo/.qlty"
+printf '%s\n' '[plugins]' >"${TMP_REL_PARENT}/target-repo/.qlty/qlty.toml"
+printf '%s\n' '[plugins]' >"${TMP_CDPATH_PARENT}/target-repo/.qlty/qlty.toml"
+
+rm -f "$QLTY_PWD_FILE"
+(
+	cd "$TMP_REL_PARENT"
+	CDPATH="$TMP_CDPATH_PARENT" _sweep_qlty "owner/repo" "target-repo" >/dev/null
+)
+
+actual_pwd=$(<"$QLTY_PWD_FILE")
+if [[ "$actual_pwd" != "${TMP_REL_PARENT}/target-repo" ]]; then
+	printf '%s\n' "FAIL qlty relative path was hijacked by CDPATH: expected ${TMP_REL_PARENT}/target-repo, got ${actual_pwd}"
 	exit 1
 fi
 
