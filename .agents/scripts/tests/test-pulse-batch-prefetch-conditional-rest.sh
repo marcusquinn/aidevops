@@ -116,7 +116,10 @@ JSON
 }
 
 prefetch_raw_gh_read_matches() {
-	local file_path="$1"
+	local file_path="${1:-}"
+	if [[ -z "$file_path" || ! -f "$file_path" ]]; then
+		return 1
+	fi
 	if { sed -E 's/^[[:space:]]*#.*//' "$file_path" \
 		| awk '{ if (sub(/\\$/, "")) { printf "%s", $0 } else { print } }' \
 		| sed -E 's/_prefetch_gh_read[[:space:]]+gh[[:space:]]+(api|search)//g' \
@@ -124,6 +127,15 @@ prefetch_raw_gh_read_matches() {
 		return 0
 	fi
 	return 1
+}
+
+test_prefetch_raw_gh_read_detector_rejects_missing_file() {
+	if prefetch_raw_gh_read_matches || prefetch_raw_gh_read_matches "$TEST_ROOT/missing.sh"; then
+		print_result "prefetch raw gh detector rejects missing file input" 1
+	else
+		print_result "prefetch raw gh detector rejects missing file input" 0
+	fi
+	return 0
 }
 
 test_unchanged_repo_uses_304_cache() {
@@ -263,6 +275,7 @@ test_conditional_failure_routes_to_rest_by_default
 test_search_opt_in_preserves_owner_search
 test_legacy_issue_cache_avoids_search_by_default
 test_read_cache_filters_closed_issues
+test_prefetch_raw_gh_read_detector_rejects_missing_file
 test_prefetch_gh_reads_are_timeout_wrapped
 test_prefetch_raw_gh_read_detector_covers_shell_edges
 
