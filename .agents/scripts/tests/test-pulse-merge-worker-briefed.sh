@@ -806,9 +806,9 @@ test_case_t_worker_gate_ignores_mismatched_precomputed_permission() {
 }
 
 # =============================================================================
-# Case (u): worker gate ignores precomputed permission with empty login (GH#25090)
+# Case (u): worker gate ignores precomputed PR-author permission with empty login (GH#25105)
 # =============================================================================
-test_case_u_worker_gate_ignores_empty_precomputed_permission_login() {
+test_case_u_worker_gate_ignores_empty_precomputed_pr_author_login() {
 	setup_test_env
 	define_helpers_under_test || { teardown_test_env; return 0; }
 
@@ -821,12 +821,12 @@ test_case_u_worker_gate_ignores_empty_precomputed_permission_login() {
 	_attempt_worker_briefed_auto_merge "120" "owner/repo" "origin:worker" "false" "62" "write" "" && result=0 || result=$?
 
 	if [[ "$result" -eq 0 ]]; then
-		print_result "Case (u): worker gate ignores empty precomputed permission login (GH#25090)" 1 \
+		print_result "Case (u): worker gate ignores empty precomputed PR-author login (GH#25105)" 1 \
 			"Expected non-zero exit, got 0 (empty cached-permission login should not trust issue author)"
 	elif grep -q "/collaborators/issue-author/permission" "$GH_LOG" 2>/dev/null; then
-		print_result "Case (u): worker gate ignores empty precomputed permission login (GH#25090)" 0
+		print_result "Case (u): worker gate ignores empty precomputed PR-author login (GH#25105)" 0
 	else
-		print_result "Case (u): worker gate ignores empty precomputed permission login (GH#25090)" 1 \
+		print_result "Case (u): worker gate ignores empty precomputed PR-author login (GH#25105)" 1 \
 			"Expected fallback collaborator permission API call for issue-author"
 	fi
 	teardown_test_env
@@ -893,7 +893,7 @@ main() {
 	test_case_r_precomputed_permission_skips_api
 	test_case_s_worker_gate_uses_matching_precomputed_permission
 	test_case_t_worker_gate_ignores_mismatched_precomputed_permission
-	test_case_u_worker_gate_ignores_empty_precomputed_permission_login
+	test_case_u_worker_gate_ignores_empty_precomputed_pr_author_login
 	test_case_v_spoofed_crypto_marker_blocked
 
 	echo ""

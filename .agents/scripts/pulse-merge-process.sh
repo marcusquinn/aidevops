@@ -1057,7 +1057,7 @@ _issue_has_verified_crypto_approval() {
 # Args: $1=pr_number, $2=repo_slug, $3=labels_str (comma-separated),
 #       $4=is_draft, $5=linked_issue,
 #       $6=precomputed_pr_author_permission(optional),
-#       $7=precomputed_permission_login(optional)
+#       $7=precomputed_pr_author_login(optional)
 # Returns: 0=all gates pass (eligible for auto-merge), 1=blocked
 #######################################
 _attempt_worker_briefed_auto_merge() {
@@ -1067,7 +1067,7 @@ _attempt_worker_briefed_auto_merge() {
 	local is_draft="$4"
 	local linked_issue="$5"
 	local precomputed_pr_author_permission="${6:-}"
-	local precomputed_permission_login="${7:-}"
+	local precomputed_pr_author_login="${7:-}"
 
 	# Feature flag — when OFF, all origin:worker PRs fall back to manual merge
 	if [[ "${AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE:-1}" == "0" ]]; then
@@ -1105,7 +1105,7 @@ _attempt_worker_briefed_auto_merge() {
 	read -r issue_author_assoc issue_author_login <<< "$_issue_meta"
 	local issue_author_permission=""
 	#aidevops:trust-boundary — reuse PR-author permission only for the same non-empty issue-author login.
-	if [[ -n "$precomputed_pr_author_permission" && -n "$precomputed_permission_login" && "$precomputed_permission_login" == "$issue_author_login" ]]; then
+	if [[ -n "$precomputed_pr_author_permission" && -n "$precomputed_pr_author_login" && "$precomputed_pr_author_login" == "$issue_author_login" ]]; then
 		issue_author_permission="$precomputed_pr_author_permission"
 	fi
 
