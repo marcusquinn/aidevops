@@ -39,6 +39,7 @@ setup() {
 	TEST_DIR=$(mktemp -d)
 	mkdir -p "${TEST_DIR}/home/.local/share/opencode"
 	mkdir -p "${TEST_DIR}/home/.aidevops/.agent-workspace/work/opencode-interactive/project-test/opencode"
+	unset AIDEVOPS_WORK_DIR
 	mkdir -p "${TEST_DIR}/home/.aidevops/.agent-workspace/observability"
 	return 0
 }
