@@ -172,6 +172,46 @@ assert_contains "plist two-argument legacy call keeps environment path" "$PLIST_
 assert_contains "plist generation uses calendar schedule" "$PLIST_OUT" "<key>StartCalendarInterval</key>"
 
 # ---------------------------------------------------------------------------
+# Test 7 — non-local version bumps use branch + PR instead of direct main push
+# ---------------------------------------------------------------------------
+REMOTE_DIR=$(mktemp -d)
+WORK_REPO="$FIXTURE_DIR/pr-bump-repo"
+git init --bare -q "$REMOTE_DIR/origin.git"
+git init -q "$WORK_REPO"
+git -C "$WORK_REPO" checkout -q -b main
+git -C "$WORK_REPO" config user.email t@t
+git -C "$WORK_REPO" config user.name T
+git -C "$WORK_REPO" config commit.gpgsign false
+printf '%s\n' '{"aidevops_version":"0.0.1"}' >"$WORK_REPO/.aidevops.json"
+git -C "$WORK_REPO" add .aidevops.json
+git -C "$WORK_REPO" commit -qm init
+git -C "$WORK_REPO" remote add origin "$REMOTE_DIR/origin.git"
+git -C "$WORK_REPO" push -q -u origin main
+git -C "$WORK_REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+
+GH_CREATE_PR_ARGS="$FIXTURE_DIR/gh-create-pr-args.txt"
+gh() {
+	return 1
+}
+gh_create_pr() {
+	printf '%s\n' "$*" >"$GH_CREATE_PR_ARGS"
+	printf '%s\n' "https://example.invalid/pr/1"
+	return 0
+}
+
+BUMP_OUT=$(_bump_single_repo "test/pr-bump-repo" "$WORK_REPO" "false" "9.9.9" "0")
+assert "non-local bump reports bumped" "$BUMP_OUT" "bumped"
+CURRENT_BRANCH=$(git -C "$WORK_REPO" rev-parse --abbrev-ref HEAD)
+assert "non-local bump restores default branch" "$CURRENT_BRANCH" "main"
+DEFAULT_VERSION=$(git -C "$WORK_REPO" show main:.aidevops.json | jq -r '.aidevops_version')
+assert "non-local bump leaves default branch unchanged" "$DEFAULT_VERSION" "0.0.1"
+REMOTE_BRANCH_VERSION=$(git -C "$WORK_REPO" show "origin/chore/aidevops-version-v9.9.9-test-pr-bump-repo:.aidevops.json" | jq -r '.aidevops_version')
+assert "non-local bump pushes version branch" "$REMOTE_BRANCH_VERSION" "9.9.9"
+PR_ARGS=$(<"$GH_CREATE_PR_ARGS")
+assert_contains "non-local bump creates PR against repo" "$PR_ARGS" "--repo test/pr-bump-repo"
+assert_contains "non-local bump creates PR from version branch" "$PR_ARGS" "--head chore/aidevops-version-v9.9.9-test-pr-bump-repo"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
