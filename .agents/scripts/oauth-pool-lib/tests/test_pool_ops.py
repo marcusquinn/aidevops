@@ -696,6 +696,11 @@ class RefreshTests(PoolOpsTestCase):
         self.assertEqual(_common.token_refresh_error_label(result), "invalid_response")
         self.assertNotIn("secret-refresh", json.dumps(result))
 
+    def test_urlopen_type_error_is_not_reclassified_as_invalid_response(self) -> None:
+        with mock.patch("urllib.request.urlopen", side_effect=TypeError("bad timeout")):
+            with self.assertRaises(TypeError):
+                _common.call_token_endpoint("https://auth.example.invalid/token", "client", "secret-refresh", "ua")
+
     def test_rotate_reports_invalid_refresh_response(self) -> None:
         account = {"email": "a@example.com", "access": "old", "refresh": "secret-refresh", "expires": 1}
         with mock.patch.object(pool_ops_rotate, "TOKEN_URLS", {"anthropic": "https://auth.example.invalid/token"}), \
