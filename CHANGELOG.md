@@ -10,6 +10,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.97] - 2026-06-20
+
+### Changed
+
+- fix: guard qlty sweep against CDPATH stdout (#25161)
+- fix: harden signature body git dir lookup (#25154)
+- Tests: initialize prefetch detector invalid-input env (#25155)
+- schedule opencode archive outside pulse (#25152)
+- fix: trim cooldown response headers (#25148)
+- Tests: cover invalid prefetch detector inputs (#25144)
+- test: harden prefetch gh read detector (#25134)
+- fix: harden prefetch gh wrapper test (#25124)
+- Documentation: clarify issue requirement for documentation PRs (#25128)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- harden opencode archive scheduler environment (#25163)
+- stop scan after GraphQL exhaustion (#25126)
+- harden oauth token response parsing (#25123)
+- keep pulse rate-limit config static (#25112)
+- guard dispatch claim chmod precheck (#25100)
+
 ## [3.20.96] - 2026-06-19
 
 ### Changed
