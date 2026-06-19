@@ -516,6 +516,18 @@ test_security_sensitive_detects_security_review_label() {
 	return 0
 }
 
+test_security_sensitive_uses_precomputed_issue_meta() {
+	set_issue_meta '{"labels":[{"name":"needs-maintainer-review"},{"name":"quality-debt"}]}'
+	if _nmr_application_is_security_sensitive 24842 marcusquinn/aidevops \
+		'{"labels":[{"name":"needs-maintainer-review"},{"name":"security"}]}'; then
+		print_result "security_sensitive uses precomputed issue metadata" 0
+		return 0
+	fi
+	print_result "security_sensitive uses precomputed issue metadata" 1 \
+		"Expected exit 0 — supplied issue metadata should avoid fixture/API fallback"
+	return 0
+}
+
 test_security_sensitive_ignores_non_security_labels() {
 	set_issue_meta '{"labels":[{"name":"needs-maintainer-review"},{"name":"source:review-feedback"},{"name":"quality-debt"}]}'
 	if _nmr_application_is_security_sensitive 24843 marcusquinn/aidevops; then
@@ -746,6 +758,7 @@ main() {
 	# _nmr_application_is_security_sensitive (security review boundary)
 	test_security_sensitive_detects_security_label
 	test_security_sensitive_detects_security_review_label
+	test_security_sensitive_uses_precomputed_issue_meta
 	test_security_sensitive_ignores_non_security_labels
 
 	# _nmr_applied_by_maintainer end-to-end (#19756 loop regression)
