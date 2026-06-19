@@ -184,7 +184,7 @@ _gh_secondary_cooldown_method() {
 }
 
 _gh_secondary_cooldown_auth_mode() {
-	local auth_mode="${1:-${AIDEVOPS_GH_AUTH_MODE:-}}"
+	local auth_mode="${AIDEVOPS_GH_AUTH_MODE:-}"
 	[[ -n "$auth_mode" ]] || auth_mode="gh-pat"
 	case "$auth_mode" in
 	github-app | gh-pat | gh-oauth | unknown) ;;
@@ -540,7 +540,7 @@ _gh_secondary_cooldown_record_event() {
 	operation="$(_gh_secondary_cooldown_safe_family "$operation_source" 120)"
 	wrapper="$(_gh_secondary_cooldown_safe_family "$wrapper_source" 120)"
 	pulse_stage="$(_gh_secondary_cooldown_safe_family "$pulse_stage_source" 120)"
-	auth_mode="$(_gh_secondary_cooldown_auth_mode "")"
+	auth_mode="$(_gh_secondary_cooldown_auth_mode)"
 	auth_principal="$(_gh_secondary_cooldown_auth_principal "" "$auth_mode")"
 	recent_403_count_1m="$(_gh_secondary_cooldown_recent_event_count http_status 403 60 "$now")"
 	recent_403_count_5m="$(_gh_secondary_cooldown_recent_event_count http_status 403 300 "$now")"
@@ -629,6 +629,11 @@ _gh_secondary_cooldown_write_state_fallback() {
 	return 0
 }
 
+# Parses HTTP response metadata from response_text.
+# Modifies these caller-local variables via Bash dynamic scoping:
+#   status, retry_after, ratelimit_limit, ratelimit_remaining, ratelimit_reset,
+#   ratelimit_used, ratelimit_resource, accepted_permissions, oauth_scopes,
+#   accepted_oauth_scopes
 _gh_secondary_cooldown_parse_response_metadata() {
 	local response_text="$1"
 	local meta_line=""
@@ -644,6 +649,7 @@ _gh_secondary_cooldown_parse_response_metadata() {
 		[[ "$meta_line" =~ ^([^:]+):[[:space:]]*(.*)$ ]] || continue
 		meta_key="${BASH_REMATCH[1]}"
 		meta_value="${BASH_REMATCH[2]}"
+		meta_value="${meta_value%"${meta_value##*[![:space:]]}"}"
 		case "$meta_key" in
 		[Rr][Ee][Tt][Rr][Yy]-[Aa][Ff][Tt][Ee][Rr]) retry_after="$meta_value" ;;
 		[Xx]-[Rr][Aa][Tt][Ee][Ll][Ii][Mm][Ii][Tt]-[Ll][Ii][Mm][Ii][Tt]) ratelimit_limit="$meta_value" ;;
@@ -728,7 +734,7 @@ _gh_secondary_cooldown_write_until() {
 	operation="$(_gh_secondary_cooldown_safe_family "$operation_source" 120)"
 	wrapper="$(_gh_secondary_cooldown_safe_family "$wrapper_source" 120)"
 	pulse_stage="$(_gh_secondary_cooldown_safe_family "$pulse_stage_source" 120)"
-	auth_mode="$(_gh_secondary_cooldown_auth_mode "")"
+	auth_mode="$(_gh_secondary_cooldown_auth_mode)"
 	auth_principal="$(_gh_secondary_cooldown_auth_principal "" "$auth_mode")"
 	_gh_secondary_cooldown_record_event "$cooldown_action" "$reason" "$decision_branch" "$response_text" "$method_arg" "$endpoint_arg" "$query_shape_arg" "$operation_arg" "$wrapper_arg" "$pulse_stage_arg" "$now"
 	recent_403_count_1m="$(_gh_secondary_cooldown_recent_event_count http_status 403 60 "$now")"
@@ -761,7 +767,7 @@ _gh_secondary_cooldown_header_value() {
 	local header_name="$2"
 	printf '%s\n' "$response_text" | awk -v name="$header_name" '
 		BEGIN { target = tolower(name) ":" }
-		{ line = $0; sub(/\r$/, "", line); if (line == "") { exit } lower = tolower(line); if (index(lower, target) == 1) { sub(/^[^:]*:[[:space:]]*/, "", line); print line; exit } }
+		{ line = $0; sub(/\r$/, "", line); if (line == "") { exit } lower = tolower(line); if (index(lower, target) == 1) { sub(/^[^:]*:[[:space:]]*/, "", line); sub(/[[:space:]]+$/, "", line); print line; exit } }
 	' 2>/dev/null
 	return 0
 }
