@@ -266,6 +266,75 @@ test_opencode_archive_scheduler_is_daily_and_low_priority() {
 	return 0
 }
 
+test_opencode_archive_scheduler_tolerates_unset_home() {
+	local captured_warning=""
+	print_warning() { captured_warning="$1"; return 0; }
+
+	local had_home="false"
+	local orig_home=""
+	if [[ -n "${HOME+x}" ]]; then
+		had_home="true"
+		orig_home="$HOME"
+	fi
+	unset HOME
+	setup_opencode_db_archive
+	if [[ "$had_home" == "true" ]]; then
+		HOME="$orig_home"
+	else
+		unset HOME
+	fi
+	print_warning() { return 0; }
+
+	if [[ "$captured_warning" != "Skipping opencode DB archive scheduler: HOME is unset" ]]; then
+		print_result "opencode archive scheduler tolerates unset HOME" 1 "$captured_warning"
+		return 0
+	fi
+	print_result "opencode archive scheduler tolerates unset HOME" 0
+	return 0
+}
+
+test_opencode_archive_launchd_uses_safe_path_expansion() {
+	local fake_home="$TEST_DIR/archive-launchd-home"
+	mkdir -p "$fake_home/.aidevops/agents/scripts"
+	local archive_script="$fake_home/.aidevops/agents/scripts/opencode-db-archive-async-helper.sh"
+	printf '#!/usr/bin/env bash\nexit 0\n' >"$archive_script"
+	chmod +x "$archive_script"
+
+	local captured_plist=""
+	_launchd_install_if_changed() {
+		local label="$1"
+		local plist="$2"
+		local content="$3"
+		: "$label" "$plist"
+		captured_plist="$content"
+		return 0
+	}
+	aidevops_launchd_sanitized_path() { local value="${1:-}"; printf '%s\n' "$value"; return $?; }
+	mkdir() { /bin/mkdir "$@"; return $?; }
+	uname() { printf 'Darwin\n'; return 0; }
+
+	local orig_home="${HOME:-}"
+	local orig_path="${PATH:-}"
+	HOME="$fake_home"
+	PATH="/bin:/usr/bin"
+	setup_opencode_db_archive
+	HOME="$orig_home"
+	PATH="$orig_path"
+	unset -f uname mkdir
+	_launchd_install_if_changed() { return 0; }
+	aidevops_launchd_sanitized_path() { printf '%s\n' "/usr/bin:/bin"; return $?; }
+
+	local body
+	body=$(<"$SCHEDULERS_PLATFORM_SH")
+	# shellcheck disable=SC2016 # Match the literal safe expansion used in generated launchd PATH construction.
+	if [[ "$captured_plist" != *"/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:/bin:/usr/bin"* ]] || [[ "$body" != *'${PATH:+:${PATH}}'* ]]; then
+		print_result "opencode archive launchd uses safe PATH expansion" 1 "$captured_plist"
+		return 0
+	fi
+	print_result "opencode archive launchd uses safe PATH expansion" 0
+	return 0
+}
+
 test_pulse_preflight_does_not_launch_opencode_archive() {
 	local preflight_lib="$REPO_ROOT/.agents/scripts/pulse-dispatch-preflight-lib.sh"
 	local body
@@ -287,6 +356,8 @@ main() {
 	test_linux_core_scheduler_commands_are_logged
 	test_pulse_routine_update_uses_flags_and_duration
 	test_opencode_archive_scheduler_is_daily_and_low_priority
+	test_opencode_archive_scheduler_tolerates_unset_home
+	test_opencode_archive_launchd_uses_safe_path_expansion
 	test_pulse_preflight_does_not_launch_opencode_archive
 	printf '\n%d/%d tests passed\n' "$TESTS_PASSED" "$TESTS_RUN"
 	[[ "$TESTS_FAILED" -eq 0 ]]

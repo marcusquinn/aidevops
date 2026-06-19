@@ -911,12 +911,18 @@ setup_opencode_db_maintenance() {
 # dispatch-loop cadence. The async helper keeps its single-runner lock and
 # last-run observability while this scheduler supplies the daily cadence.
 setup_opencode_db_archive() {
-	local archive_script="$HOME/.aidevops/agents/scripts/opencode-db-archive-async-helper.sh"
+	local archive_home="${HOME:-}"
+	if [[ -z "$archive_home" ]]; then
+		print_warning "Skipping opencode DB archive scheduler: HOME is unset"
+		return 0
+	fi
+
+	local archive_script="$archive_home/.aidevops/agents/scripts/opencode-db-archive-async-helper.sh"
 	if ! [[ -x "$archive_script" ]]; then
 		return 0
 	fi
 
-	local archive_log_dir="$HOME/.aidevops/logs"
+	local archive_log_dir="$archive_home/.aidevops/logs"
 	local archive_hour="${OPENCODE_DB_ARCHIVE_HOUR:-5}"
 	local archive_minute="${OPENCODE_DB_ARCHIVE_MINUTE:-0}"
 	local archive_budget_sec="${OPENCODE_DB_ARCHIVE_ASYNC_BUDGET_SEC:-60}"
@@ -925,12 +931,12 @@ setup_opencode_db_archive() {
 
 	if [[ "$(uname -s)" == "Darwin" ]]; then
 		local archive_label="sh.aidevops.opencode-db-archive"
-		local archive_plist="$HOME/Library/LaunchAgents/${archive_label}.plist"
+		local archive_plist="$archive_home/Library/LaunchAgents/${archive_label}.plist"
 		local _xml_archive_script _xml_archive_home _xml_archive_log _xml_archive_path
 		_xml_archive_script=$(_xml_escape "$archive_script")
-		_xml_archive_home=$(_xml_escape "$HOME")
+		_xml_archive_home=$(_xml_escape "$archive_home")
 		_xml_archive_log=$(_xml_escape "${archive_log_dir}/opencode-db-archive.log")
-		_xml_archive_path=$(_xml_escape "$(aidevops_launchd_sanitized_path "/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}")")
+		_xml_archive_path=$(_xml_escape "$(aidevops_launchd_sanitized_path "/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin${PATH:+:${PATH}}")")
 
 		local archive_plist_content
 		archive_plist_content=$(cat <<ARCHIVE_PLIST
