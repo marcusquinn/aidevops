@@ -444,6 +444,7 @@ _prrts_scan_repo_to_files() {
 			if [[ "$rc" -eq "$PRRTS_RC_GRAPHQL_EXHAUSTED" ]]; then
 				graphql_exhausted_count=$((graphql_exhausted_count + 1))
 				_prrts_log "scan: ${repo_slug}#${pr_number} skipped — GraphQL budget exhausted"
+				break
 			else
 				_prrts_log "scan: ${repo_slug}#${pr_number} skipped — review-thread fetch failed"
 			fi
