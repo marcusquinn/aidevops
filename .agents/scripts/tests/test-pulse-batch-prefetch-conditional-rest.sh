@@ -115,6 +115,17 @@ JSON
 	return 0
 }
 
+prefetch_raw_gh_read_matches() {
+	local file_path="$1"
+	if { sed -E 's/^[[:space:]]*#.*//' "$file_path" \
+		| awk '{ if (sub(/\\$/, "")) { printf "%s", $0 } else { print } }' \
+		| sed -E 's/_prefetch_gh_read[[:space:]]+gh[[:space:]]+(api|search)//g' \
+		| grep -nE '^[[:space:]]*([{(][[:space:]]*)?((if|while|until|then|do|else|elif|!)[[:space:]]+)*gh[[:space:]]+(api|search)([[:space:]]|$)|[;|][[:space:]]*gh[[:space:]]+(api|search)([[:space:]]|$)|\$\([[:space:]]*gh[[:space:]]+(api|search)([[:space:]]|$|\))'; } >/dev/null 2>&1; then
+		return 0
+	fi
+	return 1
+}
+
 test_unchanged_repo_uses_304_cache() {
 	setup_env
 	seed_cache
@@ -215,14 +226,34 @@ test_search_opt_in_preserves_owner_search() {
 }
 
 test_prefetch_gh_reads_are_timeout_wrapped() {
-	if { sed -E '/^[[:space:]]*#/d' "$HELPER" \
-		| awk '{ if (sub(/\\$/, "")) { printf "%s", $0 } else { print } }' \
-		| sed -E 's/_prefetch_gh_read[[:space:]]+gh[[:space:]]+(api|search)//g' \
-		| grep -nE '^[[:space:]]*((if|while|until|then|do|else|elif)[[:space:]]+)*(![[:space:]]+)?gh[[:space:]]+(api|search)([[:space:]]|$)|[;|{(][[:space:]]*(![[:space:]]+)?gh[[:space:]]+(api|search)([[:space:]]|$)|\$\([[:space:]]*gh[[:space:]]+(api|search)([[:space:]]|[)])'; } >/dev/null 2>&1; then
+	if prefetch_raw_gh_read_matches "$HELPER"; then
 		print_result "prefetch gh reads use timeout wrapper" 1
 	else
 		print_result "prefetch gh reads use timeout wrapper" 0
 	fi
+	return 0
+}
+
+test_prefetch_raw_gh_read_detector_covers_shell_edges() {
+	local fixture=""
+	fixture=$(mktemp)
+	cat >"$fixture" <<'SH'
+# gh api repos/owner/repo/issues
+printf '%s\n' "mentioning gh api is documentation, not execution"
+if ! gh api repos/owner/repo/issues; then
+	return 1
+fi
+{ gh search prs --repo owner/repo; }
+for repo in $( gh api repos/owner/repo/issues --jq '.[].number'); do
+	printf '%s\n' "$repo"
+done
+SH
+	if prefetch_raw_gh_read_matches "$fixture"; then
+		print_result "prefetch raw gh detector covers shell edges" 0
+	else
+		print_result "prefetch raw gh detector covers shell edges" 1
+	fi
+	rm -f "$fixture"
 	return 0
 }
 
@@ -233,6 +264,7 @@ test_search_opt_in_preserves_owner_search
 test_legacy_issue_cache_avoids_search_by_default
 test_read_cache_filters_closed_issues
 test_prefetch_gh_reads_are_timeout_wrapped
+test_prefetch_raw_gh_read_detector_covers_shell_edges
 
 printf 'Tests run: %s\n' "$TESTS_RUN"
 printf 'Tests failed: %s\n' "$TESTS_FAILED"
