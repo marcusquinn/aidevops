@@ -12,6 +12,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -568,13 +569,10 @@ def _collect_reports(args: argparse.Namespace) -> list[SessionReport]:
 
 
 def _daily_usage(reports: list[SessionReport]) -> list[DailyUsage]:
-    grouped: dict[str, dict[str, Any]] = {}
+    grouped: defaultdict[str, dict[str, Any]] = defaultdict(_new_daily_usage_bucket)
     for report in reports:
         date = (report.finished_at or report.started_at or "unknown")[:10]
-        bucket = grouped.get(date)
-        if bucket is None:
-            grouped[date] = bucket = _new_daily_usage_bucket()
-        _add_daily_usage_report(bucket, report)
+        _add_daily_usage_report(grouped[date], report)
     return [
         _daily_usage_from_bucket(date, data)
         for date, data in sorted(grouped.items(), reverse=True)
