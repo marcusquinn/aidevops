@@ -55,7 +55,14 @@ function gitValue(args) {
 
 function gitCommonDir(path) {
   if (!path) return "";
-  const gitDir = existsSync(path) && statSync(path).isDirectory() ? path : dirname(path);
+  let gitDir = dirname(path);
+  try {
+    if (statSync(path).isDirectory()) {
+      gitDir = path;
+    }
+  } catch {
+    // Fall back to dirname(path) when statSync is blocked by permissions or a TOCTOU race.
+  }
   const topLevel = gitValue(["-C", gitDir, "rev-parse", "--show-toplevel"]);
   if (!topLevel) return "";
   const commonDir = gitValue(["-C", topLevel, "rev-parse", "--git-common-dir"]);
