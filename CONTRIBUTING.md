@@ -47,7 +47,8 @@ project contribution guidelines.
 For small documentation-only improvements such as README clarifications,
 spelling fixes, broken-link fixes, or contribution-guide updates:
 
-1. Reference a GitHub issue before opening a pull request.
+1. Ensure there is an associated GitHub issue (create one if it does not exist)
+   before opening a pull request.
 2. Keep the change limited to documentation files.
 3. Do not change code, dependencies, workflows, defaults, configuration
    structure, or agent framework behaviour.
