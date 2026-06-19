@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.98] - 2026-06-20
+
+### Fixed
+
+- render configured reusable workflow comment targets before caller drift comparison (#25176)
+
 ## [3.20.97] - 2026-06-20
 
 ### Changed
