@@ -110,8 +110,8 @@ readonly LOG_FILE="${STATE_DIR}/maintenance.log"
 [[ "$FORCE_VACUUM_SIZE_MB" =~ ^[0-9]+$ ]] && FORCE_VACUUM_SIZE_MB=$((10#$FORCE_VACUUM_SIZE_MB)) || FORCE_VACUUM_SIZE_MB=500
 [[ "$AUTO_MIN_SECONDS_BETWEEN" =~ ^[0-9]+$ ]] && AUTO_MIN_SECONDS_BETWEEN=$((10#$AUTO_MIN_SECONDS_BETWEEN)) || AUTO_MIN_SECONDS_BETWEEN=518400
 [[ "$WAL_LARGE_THRESHOLD_MB" =~ ^[0-9]+$ ]] && WAL_LARGE_THRESHOLD_MB=$((10#$WAL_LARGE_THRESHOLD_MB)) || WAL_LARGE_THRESHOLD_MB=500
-# MAINTENANCE_WINDOW_KEEP_SESSIONS: count target for disruptive maintenance-window archive
-: "${MAINTENANCE_WINDOW_KEEP_SESSIONS:=500}"
+: "${MAINTENANCE_WINDOW_KEEP_SESSIONS:=500}"  # maintenance-window count target
+: "${MAINTENANCE_WINDOW_RETENTION_DAYS:=30}" # maintenance-window age target
 # Scheduler knobs: safe default is weekly Sun 04:00 running non-disruptive auto.
 : "${OPENCODE_DB_MAINTENANCE_HOUR:=4}"
 : "${OPENCODE_DB_MAINTENANCE_MINUTE:=0}"
@@ -1000,6 +1000,7 @@ cmd_maintenance_window() {
 
 	local force_opencode=false
 	local keep_sessions="$MAINTENANCE_WINDOW_KEEP_SESSIONS"
+	local retention_days="$MAINTENANCE_WINDOW_RETENTION_DAYS"
 	local skip_archive=false
 	local arg
 
@@ -1007,16 +1008,16 @@ cmd_maintenance_window() {
 		local arg="$1"
 		case "$arg" in
 		--force-opencode)
-			force_opencode=true
-			shift
+			force_opencode=true; shift
 			;;
 		--keep-sessions)
-			keep_sessions="${2:-}"
-			shift 2
+			keep_sessions="${2:-}"; shift 2
+			;;
+		--retention-days)
+			retention_days="${2:-}"; shift 2
 			;;
 		--skip-archive)
-			skip_archive=true
-			shift
+			skip_archive=true; shift
 			;;
 		*)
 			print_error "Unknown maintenance-window option: $arg"
@@ -1025,10 +1026,8 @@ cmd_maintenance_window() {
 		esac
 	done
 
-	if [[ ! "$keep_sessions" =~ ^[0-9]+$ ]]; then
-		print_error "--keep-sessions must be a non-negative integer: ${keep_sessions}"
-		return 1
-	fi
+	[[ "$keep_sessions" =~ ^[0-9]+$ ]] || { print_error "--keep-sessions must be a non-negative integer: ${keep_sessions}"; return 1; }
+	[[ "$retention_days" =~ ^[0-9]+$ ]] || { print_error "--retention-days must be a non-negative integer: ${retention_days}"; return 1; }
 	if ! _opencode_installed; then
 		print_info "opencode not installed — nothing to maintain"
 		return 0
@@ -1058,8 +1057,8 @@ cmd_maintenance_window() {
 
 	local rc=0
 	if [[ "$skip_archive" != true ]] && [[ -x "$OPENCODE_DB_ARCHIVE_HELPER" ]]; then
-		print_info "Archiving old OpenCode sessions (keep newest ${keep_sessions})..."
-		"$OPENCODE_DB_ARCHIVE_HELPER" archive --keep-sessions "$keep_sessions" --max-duration-seconds 300 || rc=$?
+		print_info "Archiving old OpenCode sessions (inactive ${retention_days}+ days and outside newest ${keep_sessions})..."
+		"$OPENCODE_DB_ARCHIVE_HELPER" archive --retention-days "$retention_days" --keep-sessions "$keep_sessions" --max-duration-seconds 300 || rc=$?
 		if [[ "$rc" -ne 0 ]]; then
 			print_warning "archive step failed (rc=${rc}); continuing to maintenance"
 		fi
@@ -1447,6 +1446,7 @@ Environment variables (advanced):
   AUTO_MIN_SECONDS_BETWEEN     Throttle for auto mode (default 518400 = 6 days)
   WAL_LARGE_THRESHOLD_MB       Warn/report large WAL above this size (default 500)
   MAINTENANCE_WINDOW_KEEP_SESSIONS  Archive keep target for maintenance-window (default 500)
+  MAINTENANCE_WINDOW_RETENTION_DAYS Preserve active /sessions history during maintenance-window (default 30)
   OPENCODE_DB_MAINTENANCE_HOUR Scheduled local hour for install (default 4)
   OPENCODE_DB_MAINTENANCE_MINUTE Scheduled local minute for install (default 0)
   OPENCODE_DB_MAINTENANCE_MODE  Scheduler mode: auto or maintenance-window

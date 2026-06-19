@@ -266,7 +266,7 @@ _get_model_usage_from_opencode() {
 
 	local raw_json
 	# GH#17549: Query both active and archive DBs for all-time stats.
-	# The archive DB contains sessions >14 days old, moved by opencode-db-archive.sh.
+	# The archive DB contains sessions >30 days old, moved by opencode-db-archive.sh.
 	local attach_clause=""
 	local union_clause=""
 	if [[ -f "$OPENCODE_ARCHIVE_DB_FILE" ]]; then
