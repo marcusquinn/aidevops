@@ -43,6 +43,9 @@ def _try_refresh_token(account: dict, provider: str, now_ms: int, ua_header: str
     if not (refresh_tok and token_url and client_id):
         return
     rdata = call_token_endpoint(token_url, client_id, refresh_tok, ua_header)
+    if rdata is None:
+        print("REFRESH_FAILED", file=sys.stderr)
+        return
     error_label = token_refresh_error_label(rdata)
     if error_label:
         print(f"REFRESH_FAILED:{error_label}", file=sys.stderr)

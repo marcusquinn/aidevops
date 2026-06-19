@@ -712,6 +712,17 @@ class RefreshTests(PoolOpsTestCase):
         self.assertEqual(stderr.write.call_args_list[0].args[0], "REFRESH_FAILED:invalid_response")
         self.assertEqual(account["access"], "old")
 
+    def test_rotate_handles_none_refresh_response(self) -> None:
+        account = {"email": "a@example.com", "access": "old", "refresh": "secret-refresh", "expires": 1}
+        with mock.patch.object(pool_ops_rotate, "TOKEN_URLS", {"anthropic": "https://auth.example.invalid/token"}), \
+            mock.patch.object(pool_ops_rotate, "CLIENT_IDS", {"anthropic": "client"}), \
+            mock.patch.object(pool_ops_rotate, "call_token_endpoint", return_value=None), \
+            mock.patch("sys.stderr") as stderr:
+            pool_ops_rotate._try_refresh_token(account, "anthropic", int(time.time() * 1000), "ua")
+
+        self.assertEqual(stderr.write.call_args_list[0].args[0], "REFRESH_FAILED")
+        self.assertEqual(account["access"], "old")
+
     def test_refresh_account_reports_sanitized_http_failure(self) -> None:
         account = {"email": "a@example.com", "access": "old", "refresh": "secret-refresh", "expires": 1}
         ctx = pool_ops_refresh._RefreshContext("https://auth.example.invalid/token", "client", "ua", "all")
