@@ -767,7 +767,7 @@ _gh_secondary_cooldown_header_value() {
 	local header_name="$2"
 	printf '%s\n' "$response_text" | awk -v name="$header_name" '
 		BEGIN { target = tolower(name) ":" }
-		{ line = $0; sub(/\r$/, "", line); if (line == "") { exit } lower = tolower(line); if (index(lower, target) == 1) { sub(/^[^:]*:[[:space:]]*/, "", line); print line; exit } }
+		{ line = $0; sub(/\r$/, "", line); if (line == "") { exit } lower = tolower(line); if (index(lower, target) == 1) { sub(/^[^:]*:[[:space:]]*/, "", line); sub(/[[:space:]]+$/, "", line); print line; exit } }
 	' 2>/dev/null
 	return 0
 }
