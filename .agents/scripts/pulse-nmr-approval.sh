@@ -481,6 +481,7 @@ _nmr_application_is_circuit_breaker_trip() {
 # Args:
 #   $1 - issue_num  : GitHub issue number
 #   $2 - slug       : repo slug (owner/repo)
+#   $3 - issue_meta : optional precomputed issue metadata JSON
 #
 # Exit codes:
 #   0 - security-sensitive label present (NMR must be preserved)
@@ -489,13 +490,16 @@ _nmr_application_is_circuit_breaker_trip() {
 _nmr_application_is_security_sensitive() {
 	local issue_num="$1"
 	local slug="$2"
+	local precomputed_meta="${3:-}"
 
 	[[ -n "$issue_num" && -n "$slug" ]] || return 1
 
-	local issue_meta_json
-	local issue_api_path
-	printf -v issue_api_path 'repos/%s/issues/%s' "$slug" "$issue_num"
-	issue_meta_json=$(gh api "$issue_api_path" 2>/dev/null) || issue_meta_json=""
+	local issue_meta_json="$precomputed_meta"
+	if [[ -z "$issue_meta_json" ]]; then
+		local issue_api_path
+		printf -v issue_api_path 'repos/%s/issues/%s' "$slug" "$issue_num"
+		issue_meta_json=$(gh api "$issue_api_path" 2>/dev/null) || issue_meta_json=""
+	fi
 	[[ -n "$issue_meta_json" ]] || return 1
 
 	local has_security_label
