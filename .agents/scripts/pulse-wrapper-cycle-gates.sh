@@ -35,10 +35,10 @@ fi
 _pulse_scope_repos_for_available_work_gate() {
 	local _scope="${PULSE_SCOPE_REPOS:-}"
 	if [[ -z "$_scope" && -f "${SCOPE_FILE:-}" ]]; then
-		read -r _scope <"$SCOPE_FILE" 2>/dev/null || _scope=""
+		read -r _scope <"${SCOPE_FILE:-}" || [[ -n "$_scope" ]] || _scope=""
 	fi
 	if [[ -z "$_scope" && -f "${REPOS_JSON:-}" ]]; then
-		_scope=$(jq -r '[.initialized_repos[]? | select(.pulse == true and (.local_only // false) == false and (.slug // "") != "") | .slug] | join(",")' "$REPOS_JSON" 2>/dev/null) || _scope=""
+		_scope=$(jq -r '[.initialized_repos[]? | select(.pulse == true and (.local_only // false) == false and (.slug // "") != "") | .slug] | join(",")' "${REPOS_JSON:-}") || _scope=""
 	fi
 	local _slug=""
 	while IFS= read -r _slug; do
@@ -78,7 +78,7 @@ _pulse_check_idle_backoff_gate() {
 	local _ib_ts_file="${HOME}/.aidevops/logs/pulse-wrapper-last-run.ts"
 	local _ib_last=0
 	if [[ -f "$_ib_ts_file" ]]; then
-		read -r _ib_last <"$_ib_ts_file" || _ib_last=0
+		read -r _ib_last <"$_ib_ts_file" || [[ -n "$_ib_last" ]] || _ib_last=0
 		[[ "$_ib_last" =~ ^[0-9]+$ ]] || _ib_last=0
 	fi
 	# Helper convention: exit 0 = "skip this cycle", exit 1 = "proceed".
@@ -90,7 +90,7 @@ _pulse_check_idle_backoff_gate() {
 		_ib_count=$(echo "$_ib_state" | jq -r '.consecutive_idle // 0' 2>/dev/null || echo "0")
 		_ib_interval=$(echo "$_ib_state" | jq -r '.current_effective_interval_s // 90' 2>/dev/null || echo "90")
 		echo "[pulse-wrapper] Idle backoff: skipping cycle (consecutive_idle=${_ib_count}, effective_interval=${_ib_interval}s) (t3027)" >>"$WRAPPER_LOGFILE"
-		_PULSE_HEALTH_IDLE_CYCLE_SKIPPED=$((_PULSE_HEALTH_IDLE_CYCLE_SKIPPED + 1))
+		_PULSE_HEALTH_IDLE_CYCLE_SKIPPED=$((${_PULSE_HEALTH_IDLE_CYCLE_SKIPPED:-0} + 1))
 		if declare -F pulse_stats_increment >/dev/null 2>&1; then
 			pulse_stats_increment "pulse_idle_cycle_skipped" 2>/dev/null || true
 		fi
@@ -190,8 +190,10 @@ _pulse_run_fix_the_fixer_detector_if_stale() {
 	else
 		local _now_epoch="" _stamp_epoch="" _age_s=""
 		_now_epoch=$(date +%s 2>/dev/null)
+		[[ "$_now_epoch" =~ ^[0-9]+$ ]] || _now_epoch=0
 		_stamp_epoch=$(_file_mtime_epoch "$_ftf_sentinel")
-		_age_s=$(( ${_now_epoch:-0} - ${_stamp_epoch:-0} ))
+		[[ "$_stamp_epoch" =~ ^[0-9]+$ ]] || _stamp_epoch=0
+		_age_s=$((_now_epoch - _stamp_epoch))
 		[[ "$_age_s" -gt "$_ftf_max_age" ]] && _should_run=1
 	fi
 
@@ -235,13 +237,13 @@ _pulse_record_cycle_outcome() {
 		[[ "$_lc" =~ ^[0-9]+$ ]] && _ledger_after="$_lc"
 	fi
 	local _outcome="idle"
-	if [[ "$_PULSE_HEALTH_PRS_MERGED" -gt 0 ]] \
-		|| [[ "$_PULSE_HEALTH_PRS_CLOSED_CONFLICTING" -gt 0 ]] \
+	if [[ "${_PULSE_HEALTH_PRS_MERGED:-0}" -gt 0 ]] \
+		|| [[ "${_PULSE_HEALTH_PRS_CLOSED_CONFLICTING:-0}" -gt 0 ]] \
 		|| [[ "$_ledger_after" -gt "$_ledger_before" ]]; then
 		_outcome="active"
 	fi
 	"$_ib_helper" record-cycle "$_outcome" >/dev/null 2>&1 || true
-	echo "[pulse-wrapper] Cycle outcome: ${_outcome} (merged=${_PULSE_HEALTH_PRS_MERGED} closed=${_PULSE_HEALTH_PRS_CLOSED_CONFLICTING} ledger=${_ledger_before}→${_ledger_after}) (t3027)" >>"$LOGFILE"
+	echo "[pulse-wrapper] Cycle outcome: ${_outcome} (merged=${_PULSE_HEALTH_PRS_MERGED:-0} closed=${_PULSE_HEALTH_PRS_CLOSED_CONFLICTING:-0} ledger=${_ledger_before}→${_ledger_after}) (t3027)" >>"${LOGFILE:-/dev/null}"
 	return 0
 }
 
