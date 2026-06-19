@@ -130,10 +130,16 @@ prefetch_raw_gh_read_matches() {
 }
 
 test_prefetch_raw_gh_read_detector_rejects_missing_file() {
-	if prefetch_raw_gh_read_matches || prefetch_raw_gh_read_matches "$TEST_ROOT/missing.sh"; then
-		print_result "prefetch raw gh detector rejects missing file input" 1
+	local empty_path=""
+	local missing_path="$TEST_ROOT/missing.sh"
+	local directory_path="$TEST_ROOT"
+	if prefetch_raw_gh_read_matches \
+		|| prefetch_raw_gh_read_matches "$empty_path" \
+		|| prefetch_raw_gh_read_matches "$missing_path" \
+		|| prefetch_raw_gh_read_matches "$directory_path"; then
+		print_result "prefetch raw gh detector rejects invalid file input" 1
 	else
-		print_result "prefetch raw gh detector rejects missing file input" 0
+		print_result "prefetch raw gh detector rejects invalid file input" 0
 	fi
 	return 0
 }
