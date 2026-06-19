@@ -201,5 +201,5 @@ def call_token_endpoint(
         return {TOKEN_REFRESH_ERROR_KEY: _classify_http_error(exc)}
     except (urllib.error.URLError, OSError):
         return {TOKEN_REFRESH_ERROR_KEY: "network"}
-    except ValueError:
+    except (ValueError, TypeError):
         return {TOKEN_REFRESH_ERROR_KEY: "invalid_response"}
