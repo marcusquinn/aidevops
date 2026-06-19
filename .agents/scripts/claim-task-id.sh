@@ -897,7 +897,11 @@ _main_resolve_allocation() {
 		# merge activity.  Reconcile before claiming so we do not allocate IDs below
 		# the default branch's observed counter and then rely on manual fallback.
 		if [[ "$CAS_RECONCILE_RETRY_ON_FAILURE" == "1" && "${DEFAULT_BRANCH:-main}" != "$COUNTER_BRANCH" ]]; then
-			_cas_reconcile_counter_branch "$REPO_PATH" "${DEFAULT_BRANCH:-main}" >/dev/null || return 1
+			local _pre_reconcile_rc=0
+			_cas_reconcile_counter_branch "$REPO_PATH" "${DEFAULT_BRANCH:-main}" >/dev/null || _pre_reconcile_rc=$?
+			if [[ $_pre_reconcile_rc -ne 0 && $_pre_reconcile_rc -ne 2 ]]; then
+				return 1
+			fi
 		fi
 
 		if first_id_out=$(_allocate_online_with_collision_check "$REPO_PATH" "$ALLOC_COUNT"); then
