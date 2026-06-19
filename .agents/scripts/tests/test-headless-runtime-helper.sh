@@ -917,11 +917,11 @@ test_service_interruption_candidate_uses_separate_path() {
 	fi
 
 	local terminated_tail_file="${TEST_ROOT}/terminated-tail.out"
-	printf '%s\n' '{"type":"text","sessionID":"ses_tail","text":"editing files"}' 'Terminated' >"$terminated_tail_file"
+	printf '%s\n' '{"type":"text","sessionID":"ses_tail","text":"editing files"}' 'terminated' >"$terminated_tail_file"
 	if runtime_signal_terminated_candidate "$terminated_tail_file" "1" "1"; then
-		print_result "Terminated tail classifies as signal termination" 0
+		print_result "terminated tail classifies as signal termination" 0
 	else
-		print_result "Terminated tail classifies as signal termination" 1
+		print_result "terminated tail classifies as signal termination" 1
 	fi
 
 	return 0

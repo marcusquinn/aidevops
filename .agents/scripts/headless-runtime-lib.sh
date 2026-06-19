@@ -285,7 +285,7 @@ except OSError:
 if not lines:
     sys.exit(1)
 tail = "\n".join(lines[-5:]).lower()
-if lines[-1] == "Terminated" or "sigterm" in tail or "received sigterm" in tail:
+if lines[-1].lower() == "terminated" or "sigterm" in tail or "received sigterm" in tail:
     sys.exit(0)
 sys.exit(1)
 PY
