@@ -217,7 +217,7 @@ test_search_opt_in_preserves_owner_search() {
 test_prefetch_gh_reads_are_timeout_wrapped() {
 	if { awk '{ if (sub(/\\$/, "")) { printf "%s", $0 } else { print } }' "$HELPER" \
 		| sed -E 's/_prefetch_gh_read[[:space:]]+gh[[:space:]]+(api|search)//g' \
-		| grep -nE '^[[:space:]]*[^#]*(^|[[:space:]])gh[[:space:]]+(api|search)([[:space:]]|$)'; } >/dev/null 2>&1; then
+		| grep -nE '^[[:space:]]*((if|while|until|then|do|else|elif)[[:space:]]+)?gh[[:space:]]+(api|search)([[:space:]]|$)|^[[:space:]]*(local[[:space:]]+)?[A-Za-z_][A-Za-z0-9_]*="?\$\(gh[[:space:]]+(api|search)([[:space:]]|$))'; } >/dev/null 2>&1; then
 		print_result "prefetch gh reads use timeout wrapper" 1
 	else
 		print_result "prefetch gh reads use timeout wrapper" 0
