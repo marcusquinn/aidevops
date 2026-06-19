@@ -2364,9 +2364,9 @@
       "pr": 18705
     },
     ".agents/scripts/opencode-db-archive.sh": {
-      "at": "2026-06-10T18:11:52Z",
-      "hash": "b6f68c8ec5576d84a454aa7ad9c6c779e6222a93",
-      "passes": 7,
+      "at": "2026-06-19T05:39:28Z",
+      "hash": "7857cf83df92e14f7f472fbb48f3f220d352bdfd",
+      "passes": 8,
       "pr": 17584
     },
     ".agents/scripts/opencode-github-setup-helper.sh": {
@@ -2412,9 +2412,9 @@
       "pr": 18796
     },
     ".agents/scripts/pulse-dispatch-core.sh": {
-      "at": "2026-06-18T13:41:02Z",
-      "hash": "034384daa00f1a14a756975d1cb779e2568cb90b",
-      "passes": 43,
+      "at": "2026-06-19T05:39:32Z",
+      "hash": "aded47de3a8451abe6e7fe8102f49b30543c161d",
+      "passes": 44,
       "pr": 18832
     },
     ".agents/scripts/pulse-dispatch-engine.sh": {
@@ -2442,9 +2442,9 @@
       "pr": 18690
     },
     ".agents/scripts/pulse-merge.sh": {
-      "at": "2026-06-18T02:20:43Z",
-      "hash": "7c1731b87292aa19ba946344ad371a6914e0fed5",
-      "passes": 56,
+      "at": "2026-06-19T05:39:36Z",
+      "hash": "c3101c10ba379a7dc76631e4cb3335eb4f1c9591",
+      "passes": 57,
       "pr": 18829
     },
     ".agents/scripts/pulse-prefetch.sh": {
@@ -2478,15 +2478,15 @@
       "pr": 18655
     },
     ".agents/scripts/pulse-wrapper.sh": {
-      "at": "2026-06-18T02:21:03Z",
-      "hash": "12417c5170cf0297f27fa2826828cf0eac5cb13a",
-      "passes": 50,
+      "at": "2026-06-19T05:39:41Z",
+      "hash": "21d33957f42be69bc3e472ce17b897fc95dd28d3",
+      "passes": 51,
       "pr": 18689
     },
     ".agents/scripts/quality-feedback-findings-lib.sh": {
-      "at": "2026-06-17T09:56:38Z",
-      "hash": "781271611c3d55dbe3fcf4ce2c00921b7b709746",
-      "passes": 2,
+      "at": "2026-06-19T05:39:41Z",
+      "hash": "c6090acdd72c6e546af57ca30aa6fe46c172a29f",
+      "passes": 3,
       "pr": 19009
     },
     ".agents/scripts/quality-feedback-helper.sh": {
@@ -2580,9 +2580,9 @@
       "pr": 12971
     },
     ".agents/scripts/tests/test-quality-feedback-main-verification.sh": {
-      "at": "2026-06-17T09:57:08Z",
-      "hash": "d6784ba508a5f16d840675c7cae54cddaa664662",
-      "passes": 5,
+      "at": "2026-06-19T05:39:52Z",
+      "hash": "ac63807a1002d89c448431792e6dfc92ae76b873",
+      "passes": 6,
       "pr": 15931
     },
     ".agents/scripts/thumbnail-helper.sh": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-06-18T02:34:01Z",
-      "hash": "10db620ea2bac36ef2c71d6d35dd4e44b601ca45",
-      "passes": 235,
+      "at": "2026-06-19T06:16:56Z",
+      "hash": "bcc71418ef83079349e0cc77693ec40e233a64f2",
+      "passes": 236,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-06-18T02:34:02Z",
-      "hash": "42d42445e44198a893a0a40bfd98e4aeadf7d054",
-      "passes": 231,
+      "at": "2026-06-19T06:16:57Z",
+      "hash": "fd6316e46bd0cd10d4c40905cebf322382bdc888",
+      "passes": 232,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7624,10 +7624,10 @@
       "passes": 2
     },
     ".agents/reference/opencode-maintenance.md": {
-      "hash": "130689d2b2632cb543ba962f48066182217b216b",
-      "at": "2026-06-03T05:29:26Z",
+      "hash": "12e1a3e835c0c8ca6190aafe05e39e3d6bc6f83c",
+      "at": "2026-06-19T05:37:19Z",
       "pr": 20109,
-      "passes": 5
+      "passes": 6
     },
     ".agents/reference/observability.md": {
       "hash": "7f9d94cc1e07cd0168ed743a5d256eec4dcbd3ac",
@@ -7696,10 +7696,10 @@
       "passes": 5
     },
     ".agents/scripts/pulse-diagnose-helper.sh": {
-      "hash": "553e74b159c260f33d9baaf49e81ced6e6a58cbe",
-      "at": "2026-06-18T02:20:34Z",
+      "hash": "f86d3b953fbcbf3b90fd0bfdb335c5d7dd909018",
+      "at": "2026-06-19T05:39:31Z",
       "pr": 20414,
-      "passes": 15
+      "passes": 16
     },
     ".agents/scripts/pulse-routines.sh": {
       "hash": "6161010618a13f48b6cf69a41a0393038c28743b",
@@ -7756,10 +7756,10 @@
       "passes": 4
     },
     ".agents/scripts/shared-gh-wrappers-rest-fallback.sh": {
-      "hash": "77925cd5ece5b7917b6d6881a0e6c00a9aea2b09",
-      "at": "2026-06-11T19:02:49Z",
+      "hash": "cb118821deab71bcca55ead8e9b9bebecd3e3d4d",
+      "at": "2026-06-19T05:39:46Z",
       "pr": 20552,
-      "passes": 20
+      "passes": 21
     },
     ".agents/scripts/pulse-dirty-pr-sweep.sh": {
       "hash": "a3f40cdfc58015d591dd777432181ffb260ddc39",
