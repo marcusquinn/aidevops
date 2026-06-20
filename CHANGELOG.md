@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.21.0] - 2026-06-20
+
+### Added
+
+- add serve-sim mobile testing support (#25250)
+
 ## [3.20.106] - 2026-06-20
 
 ### Fixed
