@@ -23,6 +23,16 @@ function readIfExists(filepath) {
 }
 
 /**
+ * Return true when the agents directory is usable for deterministic framework
+ * file lookups.
+ * @param {string} value
+ * @returns {boolean}
+ */
+function hasAgentsDir(value) {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+/**
  * Extract the current OpenCode session ID from hook input variants.
  * @param {object} input
  * @returns {string}
@@ -111,7 +121,7 @@ export function createShellEnvHook(deps) {
     // Set aidevops version if available. Prefer the deployed framework version
     // source; ~/.aidevops/version is a legacy/stale compatibility fallback.
     const version = precomputedVersion ||
-      (agentsDir
+      (hasAgentsDir(agentsDir)
         ? readIfExists(join(agentsDir, "VERSION")) ||
           readIfExists(join(agentsDir, "..", "VERSION")) ||
           readIfExists(join(agentsDir, "..", "version"))
