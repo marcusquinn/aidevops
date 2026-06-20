@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.105] - 2026-06-20
+
+### Changed
+
+- Documentation: emphasize GUI containment goals (#25246)
+
 ## [3.20.104] - 2026-06-20
 
 ### Changed
