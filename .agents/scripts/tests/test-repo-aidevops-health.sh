@@ -251,8 +251,9 @@ assert "non-local bump rerun replaces remote version branch" "$REMOTE_BRANCH_VER
 # ---------------------------------------------------------------------------
 # Test 10 — recovery reset only runs when .aidevops.json is the sole ahead file
 # ---------------------------------------------------------------------------
-MULTI_REMOTE_DIR=$(mktemp -d)
+MULTI_REMOTE_DIR="$FIXTURE_DIR/multi-remote"
 MULTI_REPO="$FIXTURE_DIR/multi-ahead-repo"
+mkdir -p "$MULTI_REMOTE_DIR"
 git init --bare -q "$MULTI_REMOTE_DIR/origin.git"
 git init -q "$MULTI_REPO"
 git -C "$MULTI_REPO" checkout -q -b main
