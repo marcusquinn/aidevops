@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.101] - 2026-06-20
+
+### Changed
+
+- Maintenance: sync ref:GH#25227 to TODO.md [skip ci]
+- Documentation: update runner lifecycle runbook (#25216)
+- Documentation: clarify runner unit cleanup checks (#25212)
+- Maintenance: update simplification state registry
+- Documentation: clarify runner docker foreground mode (#25199)
+- Documentation: add self-hosted runner operations runbook (#25195)
+
 ## [3.20.100] - 2026-06-20
 
 ### Changed
