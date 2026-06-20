@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.103] - 2026-06-20
+
+### Changed
+
+- Documentation: add GUI control plane ADR (#25236)
+- Maintenance: sync ref:GH#25234 to TODO.md [skip ci]
+- Maintenance: reconcile task counter (3612->17995)
+- Maintenance: sync ref:GH#25231 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#25230 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#25229 to TODO.md [skip ci]
+
 ## [3.20.102] - 2026-06-20
 
 ### Changed
