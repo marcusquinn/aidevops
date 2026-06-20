@@ -110,11 +110,12 @@ export function createShellEnvHook(deps) {
 
     // Set aidevops version if available. Prefer the deployed framework version
     // source; ~/.aidevops/version is a legacy/stale compatibility fallback.
-    const version =
-      precomputedVersion ||
-      readIfExists(join(agentsDir, "VERSION")) ||
-      readIfExists(join(agentsDir, "..", "VERSION")) ||
-      readIfExists(join(agentsDir, "..", "version"));
+    const version = precomputedVersion ||
+      (agentsDir
+        ? readIfExists(join(agentsDir, "VERSION")) ||
+          readIfExists(join(agentsDir, "..", "VERSION")) ||
+          readIfExists(join(agentsDir, "..", "version"))
+        : "");
     if (version) {
       output.env.AIDEVOPS_VERSION = version;
     }
