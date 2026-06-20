@@ -106,10 +106,11 @@ Keep real environment values out of documentation, issue comments, and PRs. The
 environment file should contain only server-local configuration and secrets such
 as repository URL, runner labels, and runner registration credentials.
 
-The launch script should end by replacing the shell with Docker, for example
-`exec docker run ...`, rather than starting Docker as a child or background
-process. This lets systemd deliver stop signals to the Docker client directly and
-reduces the risk of orphaned runner containers or later container-name conflicts.
+The launch script should end by replacing the shell with a foreground Docker
+client, for example `exec docker run ...` without `-d` or `--detach`, rather
+than starting Docker as a child or background process. This lets systemd deliver
+stop signals to the Docker client directly and reduces the risk of orphaned
+runner containers, restart loops, or later container-name conflicts.
 
 ## Health checks
 
