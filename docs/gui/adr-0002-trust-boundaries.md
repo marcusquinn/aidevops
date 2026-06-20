@@ -104,7 +104,7 @@ local execution credentials or secret values. Local agents initiate connections,
 authenticate the Cloudron identity, fetch scoped intents, and enforce local
 authorization before doing anything.
 
-Cloudron compromise containment goal: an attacker controlling the hosted app may
+**Cloudron compromise containment goal:** an attacker controlling the hosted app may
 see or tamper with coordination data available to that app, but cannot run
 arbitrary commands on local machines, cannot read local secret values, and
 cannot expand capabilities beyond previously granted scopes without local
@@ -123,7 +123,7 @@ as a task capsule that includes:
 - Expiry and replay protection.
 - Audit and result-return requirements.
 
-Paired-machine compromise containment goal: an attacker controlling one paired
+**Paired-machine compromise containment goal:** an attacker controlling one paired
 machine can misuse only that machine's unexpired capsules and local resources;
 the attacker cannot mint new capabilities for other machines, cannot retrieve
 global secrets, and cannot silently mutate unrelated repos or infrastructure.
