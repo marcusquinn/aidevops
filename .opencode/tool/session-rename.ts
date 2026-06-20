@@ -1,22 +1,9 @@
 import { Database } from "bun:sqlite"
-import { homedir } from "node:os"
-import { join } from "node:path"
 import { tool } from "@opencode-ai/plugin"
+import { getDbPath } from "../lib/opencode-db-path"
 import { isDefaultBranchTitle, isTitleOverwritable } from "../lib/session-rename-guards"
 import { withAidevopsTitleSuffix } from "../lib/session-title-suffix"
 import { emitTerminalTitle } from "../lib/terminal-title"
-
-/**
- * Resolve the OpenCode SQLite database path.
- * OpenCode stores sessions in ~/.local/share/opencode/opencode.db (Drizzle ORM).
- * The OPENCODE_DB env var overrides the default path.
- */
-function getDbPath(): string {
-  if (process.env.OPENCODE_DB) {
-    return process.env.OPENCODE_DB
-  }
-  return join(homedir(), ".local", "share", "opencode", "opencode.db")
-}
 
 /**
  * Rename a session by updating the title directly in the SQLite database.

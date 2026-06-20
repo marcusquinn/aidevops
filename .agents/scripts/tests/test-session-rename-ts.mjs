@@ -23,6 +23,7 @@ import { join } from "node:path";
 const { isDefaultBranchTitle, isTitleOverwritable } = await import(
   "../../../.opencode/lib/session-rename-guards.ts"
 );
+const { getDbPath } = await import("../../../.opencode/lib/opencode-db-path.ts");
 const { getAidevopsVersion, withAidevopsTitleSuffix } = await import(
   "../../../.opencode/lib/session-title-suffix.ts"
 );
@@ -188,6 +189,19 @@ assertEq(
 process.env.AIDEVOPS_VERSION = "7.6.5";
 assertEq("env version override is read", "7.6.5", getAidevopsVersion());
 delete process.env.AIDEVOPS_VERSION;
+
+// --- OpenCode DB path helpers ------------------------------------------------
+console.log("\nGroup 5: OpenCode DB path helpers");
+assertEq(
+  "XDG_DATA_HOME selects isolated OpenCode DB",
+  "/tmp/aidevops-opencode/opencode/opencode.db",
+  getDbPath({ XDG_DATA_HOME: "/tmp/aidevops-opencode" }),
+);
+assertEq(
+  "OPENCODE_DB overrides XDG_DATA_HOME",
+  "/tmp/custom-opencode.db",
+  getDbPath({ OPENCODE_DB: "/tmp/custom-opencode.db", XDG_DATA_HOME: "/tmp/aidevops-opencode" }),
+);
 
 console.log("\n=== Results ===");
 console.log(`PASS: ${pass}`);
