@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.102] - 2026-06-20
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- render org workflow comments during sync (#25224)
+
 ## [3.20.101] - 2026-06-20
 
 ### Changed
