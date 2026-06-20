@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# Tool installation functions: git-clis, fd, ripgrep, shellcheck, shfmt, rosetta, worktrunk, minisim, recommended-tools, nodejs, python, orbstack
+# Tool installation functions: git-clis, fd, ripgrep, shellcheck, shfmt, rosetta, worktrunk, minisim, serve-sim, recommended-tools, nodejs, python, orbstack
 # Part of aidevops setup.sh modularization (t316.3)
 
 # Shell safety baseline
@@ -1270,6 +1270,100 @@ setup_minisim() {
 	else
 		print_info "Skipped MiniSim installation"
 		print_info "Install later: brew install --cask minisim"
+	fi
+
+	return 0
+}
+
+_setup_serve_sim_node_version_ok() {
+	local node_version="$1"
+	local version="${node_version#v}"
+	local major="${version%%.*}"
+
+	if [[ "$major" =~ ^[0-9]+$ ]] && ((10#$major >= 18)); then
+		return 0
+	fi
+	return 1
+}
+
+_setup_serve_sim_cli_version() {
+	if serve-sim --version >/dev/null 2>&1; then
+		serve-sim --version 2>/dev/null
+	else
+		printf '%s\n' 'installed'
+	fi
+	return 0
+}
+
+setup_serve_sim() {
+	# serve-sim currently ships an arm64 Apple Simulator helper.
+	if [[ "$(uname -s)" != "Darwin" ]]; then
+		return 0
+	fi
+
+	if [[ "$(uname -m)" != "arm64" ]]; then
+		print_info "serve-sim requires Apple Silicon (arm64); skipping on this Mac"
+		return 0
+	fi
+
+	print_info "Setting up serve-sim (Apple Simulator browser preview)..."
+
+	if command -v serve-sim >/dev/null 2>&1; then
+		local serve_sim_version
+		serve_sim_version=$(_setup_serve_sim_cli_version)
+		print_success "serve-sim already installed: ${serve_sim_version}"
+		print_info "Documentation: ~/.aidevops/agents/tools/mobile/serve-sim.md"
+		return 0
+	fi
+
+	if ! command -v xcrun >/dev/null 2>&1 || ! xcrun simctl list devices >/dev/null 2>&1; then
+		print_info "serve-sim requires Xcode command-line tools and simulator support"
+		print_info "Install Xcode/Command Line Tools, then re-run setup"
+		return 0
+	fi
+
+	if ! command -v node >/dev/null 2>&1; then
+		print_info "serve-sim requires Node.js 18+"
+		print_info "Install Node.js, then re-run setup"
+		return 0
+	fi
+
+	local node_version
+	node_version=$(node --version 2>/dev/null || printf '%s\n' 'unknown')
+	if ! _setup_serve_sim_node_version_ok "$node_version"; then
+		print_warning "serve-sim requires Node.js 18+, found ${node_version}"
+		print_info "Upgrade Node.js, then re-run setup"
+		return 0
+	fi
+
+	if ! command -v bun >/dev/null 2>&1 && ! command -v npm >/dev/null 2>&1; then
+		print_info "serve-sim installs via npm or bun; install Node.js/npm or Bun first"
+		return 0
+	fi
+
+	print_info "serve-sim streams booted Apple Simulators to a browser for agent/user review"
+	printf '%s\n' "  Features:"
+	printf '%s\n' "    - Browser preview at http://localhost:3200"
+	printf '%s\n' "    - MJPEG stream + WebSocket control channel"
+	printf '%s\n' "    - Gestures, hardware buttons, typing, rotation, memory warnings"
+	printf '%s\n' "    - Camera feed injection for simulator apps"
+	printf '%s\n' ""
+
+	local install_serve_sim
+	setup_prompt install_serve_sim "Install serve-sim globally? [Y/n]: " "Y"
+
+	if [[ "$install_serve_sim" =~ ^[Yy]?$ ]]; then
+		if run_with_spinner "Installing serve-sim" npm_global_install "serve-sim@latest"; then
+			print_success "serve-sim installed"
+			print_info "Start a booted simulator preview: serve-sim"
+			print_info "Documentation: ~/.aidevops/agents/tools/mobile/serve-sim.md"
+		else
+			print_warning "Failed to install serve-sim"
+			printf '%s\n' "  Try manually: npm install -g serve-sim"
+		fi
+	else
+		print_info "Skipped serve-sim installation"
+		print_info "Install later: npm install -g serve-sim (or bun install -g serve-sim)"
 	fi
 
 	return 0

@@ -1412,6 +1412,12 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
   - Multi-profile management - Persistent/clean/warm/disposable profiles (like AdsPower/GoLogin)
   - Proxy integration - Residential, SOCKS5, VPN per profile with geo-targeting
 
+**Mobile & Simulator Testing:**
+
+- [serve-sim](https://github.com/EvanBacon/serve-sim) - Apple Simulator browser preview/control for iOS, iPad, and Apple Watch simulators (setup offers global install on supported Macs)
+- [agent-device](.agents/tools/mobile/agent-device.md) - AI-driven mobile app interaction across iOS and Android
+- [Maestro](.agents/tools/mobile/maestro.md) - Repeatable YAML E2E flows for mobile apps
+
 **SEO & Research:**
 
 - [Google Search Console](https://developers.google.com/webmaster-tools) - Search performance insights (MCP)
@@ -1547,6 +1553,7 @@ Tested on macOS ARM64, all headless, warm daemon:
 | **Self-hosted crawling** | WaterCrawl | Docker deployment, web search, sitemap generation |
 | **CLI/CI/CD** | playwright-cli or agent-browser | No server needed, `--session` isolation |
 | **iOS mobile testing** | agent-browser | Real Safari in iOS Simulator (macOS only) |
+| **Apple Simulator streaming** | serve-sim | Browser-visible iOS/iPad/watch simulator stream and control (macOS Apple Silicon) |
 | **Unknown pages** | Stagehand | Natural language, self-healing |
 | **Performance debugging** | Chrome DevTools MCP | Companion tool, pairs with any browser |
 | **Mobile/tablet emulation** | Playwright | 100+ device presets, viewport, touch, geolocation, locale |
@@ -2649,6 +2656,7 @@ bash .agents/scripts/continue-cli.sh review
 - **[API Integrations](.agents/aidevops/api-integrations.md)** - Service APIs
 - **[Browser Automation](.agents/tools/browser/browser-automation.md)** - 8 tools + anti-detect stack: decision tree, parallel, extensions, fingerprinting
 - **[Device Emulation](.agents/tools/browser/playwright-emulation.md)** - Mobile/tablet testing: 100+ device presets, viewport, geolocation, locale, dark mode
+- **[serve-sim](.agents/tools/mobile/serve-sim.md)** - Apple Simulator browser preview/control for mobile app QA
 - **[Anti-Detect Browser](.agents/tools/browser/anti-detect-browser.md)** - Multi-profile management, fingerprint rotation, proxy integration
 - **[Web Performance](.agents/tools/performance/performance.md)** - Core Web Vitals, network dependencies, accessibility (Chrome DevTools MCP)
 - **[PageSpeed](.agents/tools/browser/pagespeed.md)** - Lighthouse CLI and PageSpeed Insights API

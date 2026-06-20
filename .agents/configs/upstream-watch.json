@@ -44,6 +44,13 @@
       "added_at": "2026-03-21"
     },
     {
+      "slug": "EvanBacon/serve-sim",
+      "description": "Apple Simulator browser preview/control CLI and upstream Agent Skill",
+      "relevance": "Documented in tools/mobile/serve-sim.md and installed by setup_serve_sim on supported Macs. CLI command changes, skill references, and npm engine requirements affect mobile QA workflows.",
+      "default_branch": "main",
+      "added_at": "2026-06-20"
+    },
+    {
       "slug": "google-labs-code/design.md",
       "description": "A format specification for describing a visual identity to coding agents. DESIGN.md gives agents a persistent, structured understanding of a design system.",
       "relevance": "DESIGN.md format spec at version alpha — aidevops design-md agent (.agents/tools/design/design-md.md) and template (.agents/templates/DESIGN.md.template) adopted v0.1.0 in t2807/PR #20749. New releases may change YAML schema, rename sections, add/remove linter rules, or alter component property set. CLI is @google/design.md on npm. Watch for v1 release (signals format stabilisation) and breaking schema changes.",

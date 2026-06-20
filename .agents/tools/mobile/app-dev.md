@@ -51,6 +51,7 @@
 - `tools/mobile/xcodebuild-mcp.md` - Xcode build/test/deploy
 - `tools/mobile/maestro.md` - E2E test flows
 - `tools/mobile/ios-simulator-mcp.md` - iOS simulator interaction
+- `tools/mobile/serve-sim.md` - Apple Simulator browser preview and control
 - `tools/mobile/minisim.md` - Simulator launcher
 - `tools/browser/playwright-emulation.md` - Mobile web preview
 - `tools/design/design-inspiration.md` - 60+ UI/UX design inspiration resources
@@ -98,7 +99,7 @@ Search for UI patterns, competitor screenshots, design systems using browser too
 
 ### Stage 5: Testing (`tools/mobile/app-dev-testing.md`)
 
-Full testing stack: `agent-device` (AI-driven interaction) + `maestro` (repeatable E2E) + `xcodebuild-mcp` (build verification) + `ios-simulator-mcp` (simulator QA) + `playwright-emulation` (web-based mobile preview) + physical device via TestFlight (iOS) or internal testing (Android).
+Full testing stack: `agent-device` (AI-driven interaction) + `maestro` (repeatable E2E) + `xcodebuild-mcp` (build verification) + `ios-simulator-mcp` (simulator QA) + `serve-sim` (Apple Simulator browser stream/control) + `playwright-emulation` (web-based mobile preview) + physical device via TestFlight (iOS) or internal testing (Android).
 
 ### Stage 6: Publishing (`tools/mobile/app-dev-publishing.md`)
 

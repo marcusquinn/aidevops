@@ -119,10 +119,12 @@ appId: com.example.app
 | MiniSim | Boot simulators/emulators before `maestro test` |
 | XcodeBuildMCP | Build iOS `.app`, install on simulator, then test |
 | iOS Simulator MCP | Manage simulator state alongside Maestro flows |
+| serve-sim | Share a live Apple Simulator stream while reviewing or debugging a flow |
 
 Workflow: `xcrun simctl boot` → `xcodebuild` → `maestro test flows/`
 
 ## Related Tools
 
 - `tools/mobile/minisim.md` - Simulator/emulator launcher
+- `tools/mobile/serve-sim.md` - Apple Simulator browser stream/control
 - `tools/browser/playwright.md` - Web E2E testing

@@ -28,6 +28,7 @@ AI-driven exploratory?     -> agent-device (CLI, both platforms)
 Repeatable E2E flows?      -> maestro (YAML, flakiness tolerance)
 Build/test/deploy iOS?     -> xcodebuild-mcp (Xcode, LLDB)
 iOS simulator interaction? -> ios-simulator-mcp (tap/swipe/type/screenshot)
+Simulator browser preview? -> serve-sim (Apple Simulator stream + control)
 Mobile web layout?         -> playwright-emulation (device presets, touch)
 ```
 
@@ -61,7 +62,16 @@ agent-device click @e3                       # Interact via refs
 agent-device screenshot ./evidence.png       # Capture state
 ```
 
-**Visual**: Screenshots at key states via `ios-simulator-mcp` or `agent-device`. Test light/dark modes across: iPhone SE, iPhone 16, iPhone 16 Pro Max, iPad.
+**Shared simulator preview (serve-sim)**:
+
+```bash
+serve-sim --detach -q                 # JSON with browser preview URL
+serve-sim type "demo@example.com"      # Type into focused field
+serve-sim button home                  # Hardware button control
+serve-sim --kill                       # Cleanup helper(s)
+```
+
+**Visual**: Screenshots at key states via `ios-simulator-mcp` or `agent-device`; use `serve-sim` when the user or agent needs a live browser-visible Apple Simulator stream. Test light/dark modes across: iPhone SE, iPhone 16, iPhone 16 Pro Max, iPad.
 
 **Accessibility**: `agent-device snapshot` — inspect tree. Verify labels, VoiceOver/TalkBack, colour contrast, Dynamic Type. See `tools/accessibility/accessibility-audit.md`.
 
@@ -104,5 +114,6 @@ Use `playwright-emulation` device presets for web-based testing.
 - `tools/mobile/xcodebuild-mcp.md` — Xcode build/test
 - `tools/mobile/maestro.md` — E2E test flows
 - `tools/mobile/ios-simulator-mcp.md` — simulator interaction
+- `tools/mobile/serve-sim.md` — Apple Simulator browser stream/control
 - `tools/browser/playwright-emulation.md` — mobile web testing
 - `tools/accessibility/accessibility-audit.md` — accessibility

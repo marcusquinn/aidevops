@@ -1269,6 +1269,7 @@ _setup_run_interactive() {
 	confirm_step "Setup recommended tools (Tabby, Zed, etc.)" && setup_recommended_tools
 	confirm_step "Setup PIM tools (Reminders, Calendar, Contacts)" && setup_pim_tools
 	confirm_step "Setup MiniSim (iOS/Android emulator launcher)" && setup_minisim
+	confirm_step "Setup serve-sim (Apple Simulator browser preview)" && setup_serve_sim
 	confirm_step "Setup ClaudeBar (AI quota monitor in menu bar)" && setup_claudebar
 	confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis
 	confirm_step "Setup file discovery tools (fd, ripgrep, ripgrep-all)" && setup_file_discovery_tools

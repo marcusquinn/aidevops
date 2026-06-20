@@ -101,7 +101,7 @@ tools/legal/,tools/legal subagents,legal-research
 tools/local-models/,tools/local-models subagents,huggingface|local-models
 tools/mcp/,tools/mcp subagents,cloudflare-code-mode
 tools/mcp-toolkit/,tools/mcp-toolkit subagents,mcporter
-tools/mobile/,tools/mobile subagents,agent-device|app-dev-analytics|app-dev-assets|app-dev-backend|app-dev-expo|app-dev|app-dev-monetisation|app-dev-notifications|app-dev-onboarding|app-dev-planning|app-dev-publishing|app-dev-swift|app-dev-testing|app-dev-ui-design|app-store-connect|axe-cli|ios-simulator-mcp|maestro|minisim|xcodebuild-mcp
+tools/mobile/,tools/mobile subagents,agent-device|app-dev-analytics|app-dev-assets|app-dev-backend|app-dev-expo|app-dev|app-dev-monetisation|app-dev-notifications|app-dev-onboarding|app-dev-planning|app-dev-publishing|app-dev-swift|app-dev-testing|app-dev-ui-design|app-store-connect|axe-cli|ios-simulator-mcp|maestro|minisim|serve-sim|xcodebuild-mcp
 tools/monorepo/,tools/monorepo subagents,turborepo
 tools/,tools subagents,app-stack|auto-reason|multimodal-evaluation
 tools/ocr/,tools/ocr subagents,glm-ocr|ocr-research|overview|paddleocr
