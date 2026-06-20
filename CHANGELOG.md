@@ -10,9 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.21.1] - 2026-06-20
+
 ### Changed
 
-- Documentation: refresh README feature coverage for OpenCode GUI/control-plane planning, mobile simulator testing, self-hosted runner operations, pulse diagnostics, worker observability, and OpenCode runtime polish.
+- Documentation: refresh README feature coverage
+- Maintenance: bump ujson in the pip group across 1 directory (#25192)
+- Documentation: clarify runner ExecStop race guard (#25273)
+- Documentation: apply GUI ADR review feedback (#25277)
+- Tests: cover unset serve-sim prompt response (#25272)
+
+### Fixed
+
+- use isolated OpenCode DB for session renames (#25278)
+- preserve plugin debug error objects (#25271)
 
 ## [3.21.0] - 2026-06-20
 
