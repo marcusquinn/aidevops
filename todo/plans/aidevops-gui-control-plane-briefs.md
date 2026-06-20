@@ -715,19 +715,25 @@ It should point to:
 
 Specialist context to load per phase:
 
-| Phase | Specialist context |
-|-------|--------------------|
-| P1, P3, P5, P6, P7, P8 | code/app architecture agents |
-| P2, P14 | security references and secret-handling docs |
-| P4 | code/app architecture agents, helper/API references |
-| P9 | Research/content agents with source verification |
-| P10 | routines reference and routine command docs |
-| P11 | `caldav-calendar` skill |
-| P12 | Product/design agents plus this document |
-| P13 | `cloudron-app-packaging` skill |
-| P15 | OpenCode plugin/session references |
-| P16 | release/signing/deployment references |
-| P17 | CI gate policy, TypeScript test tooling, security/redaction references |
+| Phase | Specialist context | Primary references |
+|-------|--------------------|--------------------|
+| P1 | `architecture`, product planning context | `docs/gui/control-plane.md`, `.agents/aidevops/architecture.md` |
+| P2 | `security`, threat-model context | `docs/gui/control-plane.md`, `.agents/reference/secret-handling.md`, `.agents/reference/pre-push-guards.md` |
+| P3 | `architecture`, data-model context | `docs/gui/control-plane.md`, P1 ADR, P2 ADR |
+| P4 | `code`, `architecture`, helper/API context | `.agents/scripts/`, `.agents/reference/services.md`, `.agents/reference/task-lifecycle.md` |
+| P5 | `code`, `architecture`, TypeScript/app scaffold context | P1-P4 ADRs/contracts, P17 testing strategy |
+| P6 | `code`, setup/status helper context | P4 helper/API contract, setup/config helper docs, secret-status rules |
+| P7 | `git-workflow`, `github-cli`, Git source-of-truth context | P4 helper/API contract, `.agents/reference/repo-organization.md`, `.agents/reference/task-lifecycle.md` |
+| P8 | `architecture`, infrastructure/resource graph context | P3 data-model ADR, `docs/gui/control-plane.md` infrastructure inventory sections |
+| P9 | research/content context with source verification | `docs/gui/control-plane.md` provider catalog notes, `.agents/reference/secret-handling.md` |
+| P10 | routines/automation context | `.agents/reference/routines.md`, `.agents/scripts/commands/routine.md`, P4 helper/API contract |
+| P11 | `caldav-calendar` skill | `docs/gui/control-plane.md` CalDAV/CardDAV notes, `.agents/reference/secret-handling.md` |
+| P12 | product/design and agent-capability context | `.agents/reference/agent-routing.md`, `.agents/reference/domain-index.md`, `.agents/reference/progressive-disclosure.md` |
+| P13 | `cloudron-app-packaging` and `cloudron-server-ops` skills | P2 trust-boundary ADR, Cloudron package docs, `.agents/reference/secret-handling.md` |
+| P14 | `security`, orchestration/multi-machine context | P2 trust-boundary ADR, P3 data-model ADR, `.agents/reference/worker-discipline.md` |
+| P15 | `customize-opencode`, OpenCode/session context | `.agents/reference/session.md`, `.agents/reference/memory-lookup.md`, OpenCode plugin/session docs |
+| P16 | `release`, desktop packaging/signing context | P1 stack ADR, `.agents/reference/ci-gate-policy.md`, `.agents/workflows/release.md` |
+| P17 | `github-actions`, `qlty`, testing/security context | P1 stack ADR, P2 trust-boundary ADR, `.agents/reference/ci-gate-policy.md`, `.agents/reference/shell-style-guide.md` |
 
 ## First wave recommendation
 
