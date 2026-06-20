@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.100] - 2026-06-20
+
+### Changed
+
+- Maintenance: bump aiohttp in the pip group across 1 directory (#24953)
+
+### Fixed
+
+- harden repo health version-bump recovery (#25185)
+
 ## [3.20.99] - 2026-06-20
 
 ### Changed
