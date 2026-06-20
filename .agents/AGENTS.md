@@ -150,7 +150,7 @@ Route clear domain triggers to specialists before Build+: SEO, WordPress, conten
 
 ## Worker Diagnostics
 
-Headless worker failures/stalls/loops: `reference/worker-diagnostics.md`. Start with `worker-activity-helper.sh summary` and `pulse-diagnose-helper.sh pr <N>`. Pre-dispatch validators: `reference/pre-dispatch-validators.md`. GitHub API budget/circuit breaker/cache priming: `reference/worker-diagnostics.md`.
+Headless worker failures/stalls/loops: `reference/worker-diagnostics.md`. Start with `worker-activity-helper.sh summary` and `pulse-diagnose-helper.sh pr <N>`. Pre-dispatch validators: `reference/pre-dispatch-validators.md`. GitHub self-hosted runner operations: `reference/github-self-hosted-runners.md`. GitHub API budget/circuit breaker/cache priming: `reference/worker-diagnostics.md`.
 
 ## Memory and Sessions
 
