@@ -294,7 +294,7 @@ export async function AidevopsPlugin({ directory, client }) {
 
   const debugEventError = (label, err) => {
     if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
-      console.error(`[aidevops] ${label} error: ${err?.message ?? err}`);
+      console.error(`[aidevops] ${label} error:`, err);
     }
   };
 
