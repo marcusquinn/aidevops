@@ -87,7 +87,7 @@ typer-slim==0.20.0
 typing-inspection==0.4.2
 typing_extensions==4.15.0
 tzdata==2025.2
-ujson==5.12.1
+ujson==5.13.0
 urllib3==2.7.0
 xxhash==3.6.0
 yarl==1.22.0
