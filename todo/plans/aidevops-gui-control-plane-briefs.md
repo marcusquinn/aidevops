@@ -102,6 +102,7 @@ PROGRAM-PARENT
 ├── P1 Product, stack, and repo-layout ADR
 ├── P2 Security threat model and trust-boundary ADR
 ├── P3 Data model and infrastructure graph ADR
+│   └── P14 Multi-machine pairing and scoped task capsules (also blocked by P2)
 ├── P4 Helper/API contract for existing aidevops surfaces
 ├── P17 GUI testing and CI/CD strategy
 │   └── P5 Local read-only API and dashboard scaffold
@@ -111,11 +112,10 @@ PROGRAM-PARENT
 │       ├── P9 Provider bookmarks and recommendation catalog
 │       ├── P10 Routines dashboard
 │       ├── P11 Nextcloud CalDAV/CardDAV setup guidance
-│       └── P12 Agent knowledgebase/capability browser
-├── P13 Cloudron package and hosted-control-plane mode
-├── P14 Multi-machine pairing and scoped task capsules
-├── P15 OpenCode session/chat UI spike
-└── P16 Desktop wrapper, signing, and auto-update plan
+│       ├── P12 Agent knowledgebase/capability browser
+│       ├── P13 Cloudron package and hosted-control-plane mode (also blocked by P1, P2, P4)
+│       ├── P15 OpenCode session/chat UI spike (also blocked by P2)
+│       └── P16 Desktop wrapper, signing, and auto-update plan (also blocked by P1)
 ```
 
 Recommended blockers:
@@ -312,12 +312,13 @@ Files to modify:
 Deliverable:
 
 - Minimal local read-only GUI that can show aidevops setup/status from typed
-  mock or real adapter calls.
+  mock or real adapter calls, with the SQLite database connection scaffolded.
 
 Implementation steps:
 
 1. Follow the P1 stack ADR exactly.
-2. Add shared schemas in `packages/gui-core` before UI code.
+2. Add shared schemas and database connection/ORM initialization in
+   `packages/gui-core` before UI code.
 3. Add a read-only status route in `apps/gui-server`.
 4. Add a basic dashboard shell in `apps/gui-web` with aidevops branding.
 5. Add the test scripts and CI hooks required by P17 for the scaffolded packages.
@@ -555,6 +556,8 @@ Acceptance criteria:
 - [ ] Supports proxyauth/OIDC plan or documented first-phase auth fallback.
 - [ ] Does not require centralising local machine secrets on Cloudron.
 - [ ] Health check and backup/restore behavior are documented.
+- [ ] Defines pull-based polling for local agents to retrieve signed task
+      capsules from Cloudron without opening inbound ports on local machines.
 
 ### P14: Multi-machine pairing and scoped task capsules
 
@@ -578,6 +581,8 @@ Acceptance criteria:
 - [ ] Task capsules include repo scope, allowed actions, expiry, and approval
       requirements.
 - [ ] Cloudron compromise and single-machine compromise are contained.
+- [ ] Local agents use pull-based polling for signed task capsules rather than
+      exposing inbound control-plane ports.
 - [ ] NetBird/Nostr/VPN integration is deferred as transport and not required
       for authorization.
 

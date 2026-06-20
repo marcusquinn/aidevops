@@ -260,7 +260,8 @@ TaskCapsule
   id, issuer_machine_id, target_machine_id, repo_scope, allowed_actions[], expires_at
 
 AuditEvent
-  id, actor_ref, action, target_ref, result, redacted_metadata, created_at
+  id, actor_ref, machine_id, origin_ip_ref, action, target_ref, result,
+  redacted_metadata, created_at
 ```
 
 Implementation notes:
