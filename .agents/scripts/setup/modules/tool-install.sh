@@ -1352,7 +1352,7 @@ setup_serve_sim() {
 	local install_serve_sim
 	setup_prompt install_serve_sim "Install serve-sim globally? [Y/n]: " "Y"
 
-	if [[ "$install_serve_sim" =~ ^[Yy]?$ ]]; then
+	if [[ "${install_serve_sim:-}" =~ ^[Yy]?$ ]]; then
 		if run_with_spinner "Installing serve-sim" npm_global_install "serve-sim@latest"; then
 			print_success "serve-sim installed"
 			print_info "Start a booted simulator preview: serve-sim"
