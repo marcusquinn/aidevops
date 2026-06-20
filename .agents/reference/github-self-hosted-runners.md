@@ -115,10 +115,12 @@ the actual container start via `ExecStart`.
 
 `ExecStop` intentionally treats a missing container as success. Ephemeral runner
 containers are started with `docker run --rm`, so a completed job can remove the
-container before or during `ExecStop`. Run `docker stop` directly instead of
-checking first, then ignore only Docker's missing-container/object errors so
-other stop failures still surface. Escape literal percent signs as `%%` in the
-systemd unit so systemd does not treat shell `printf` formats as unit specifiers.
+container before or during `ExecStop`. Do not preflight with `docker inspect`:
+that reintroduces a time-of-check/time-of-use race between the existence check
+and the stop command. Run `docker stop` directly, then ignore only Docker's
+missing-container/object errors so other stop failures still surface. Escape
+literal percent signs as `%%` in the systemd unit so systemd does not treat shell
+`printf` formats as unit specifiers.
 
 The launch script should end by replacing the shell with a foreground Docker
 client, for example `exec docker run ...` without `-d` or `--detach`, rather
