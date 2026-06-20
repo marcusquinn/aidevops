@@ -988,6 +988,18 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t3603 Fix profile AI hours missing wrapper DBs #bug #no-auto-dispatch ref:GH#24870 pr:#24871 completed:2026-06-15
 
+- [ ] t3607 Build aidevops GUI control plane for setup, infrastructure, routines, and safe multi-machine AI-agent operations #dashboard #feat #infrastructure #parent-task #product ref:GH#25229
+
+- [ ] t3608 GUI ADR: product scope, stack, and repo layout #architecture #auto-dispatch #dashboard #documentation #product ref:GH#25230
+
+- [ ] t3609 GUI ADR: security threat model and trust boundaries #architecture #auto-dispatch #dashboard #security ref:GH#25231
+
+- [ ] t3610 GUI ADR: data model and infrastructure graph #architecture #auto-dispatch #dashboard #database #infrastructure ref:GH#25232
+
+- [ ] t3611 GUI contract: helper/API boundary for existing aidevops surfaces #api #auto-dispatch #dashboard #setup blocked-by:t3608,t3609,t3610 ref:GH#25233
+
+- [ ] t17995 GUI testing and CI/CD strategy #architecture #auto-dispatch #ci #dashboard #testing blocked-by:t3608,t3609 ref:GH#25234
+
 ## In Progress
 
 - [x] t2744 raise GraphQL throttle defaults and reduce pulse/stats cycle pressure — circuit breaker default `0.05`→`0.30` (trips at 1500 remaining instead of 250), REST fallback default `10`→`1000` (REST takes over earlier, GraphQL kept in reserve), pulse interval default `120s`→`180s`, stats-wrapper interval `900s`→`3600s`. Also fixes macOS launchd path that ignored `supervisor.pulse_interval_seconds` from settings. Evidence: GraphQL=0/5000 vs REST=4044/5000 with 21 EXHAUSTED events in current pulse log; per-cycle cost (~400-700 pts) × 30 cycles/hr × 14 repos exceeds 5000/hr ceiling by 2-4×. All env-overridable, fully backwards-compatible. See `todo/tasks/t2744-brief.md`. #framework #pulse #interactive ~1h ref:GH#20482 started:2026-04-22 pr:#20483 completed:2026-04-22
