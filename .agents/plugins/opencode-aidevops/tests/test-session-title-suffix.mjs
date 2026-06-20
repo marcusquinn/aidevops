@@ -133,6 +133,36 @@ test("session.updated handler is idempotent when suffix already exists", async (
   });
 });
 
+test("session.updated handler ignores default titles so stale updates do not overwrite fallback titles", async () => {
+  await withTempAgentsDir(async (agentsDir) => {
+    writeFileSync(join(agentsDir, "VERSION"), "3.21.4\n");
+    const calls = [];
+    const client = { session: { update: async (payload) => calls.push(payload) } };
+    const handler = createSessionTitleSuffixHandler({ agentsDir, client });
+
+    await handler({
+      event: {
+        type: "session.updated",
+        properties: {
+          sessionID: "ses_test",
+          info: { id: "ses_test", title: "New session - 2026-06-20T22:54:09.982Z" },
+        },
+      },
+    });
+    await handler({
+      event: {
+        type: "session.updated",
+        properties: {
+          sessionID: "ses_test",
+          info: { id: "ses_test", title: "New session - 2026-06-20T22:54:09.982Z · AIDevOps 3.21.4" },
+        },
+      },
+    });
+
+    assert.deepEqual(calls, []);
+  });
+});
+
 test("session.updated handler ignores unavailable session update API", async () => {
   await withTempAgentsDir(async (agentsDir) => {
     writeFileSync(join(agentsDir, "VERSION"), "3.20.103\n");

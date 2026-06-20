@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 
 const AIDEVOPS_TITLE_SUFFIX_RE = /\s+· AIDevOps \d+\.\d+\.\d+$/;
+const DEFAULT_SESSION_TITLE_RE = /^New session - /;
 
 function readIfExists(filepath) {
   try {
@@ -36,6 +37,17 @@ export function withAidevopsTitleSuffix(title, version) {
   const baseTitle = String(title || "").replace(AIDEVOPS_TITLE_SUFFIX_RE, "");
   if (!version) return baseTitle;
   return `${baseTitle} · AIDevOps ${version}`;
+}
+
+function isDefaultSessionTitle(title) {
+  const baseTitle = String(title || "").replace(AIDEVOPS_TITLE_SUFFIX_RE, "").trim();
+  return DEFAULT_SESSION_TITLE_RE.test(baseTitle) || baseTitle === "New Session";
+}
+
+function shouldSuffixSessionTitle(update) {
+  if (update.eventType !== "session.updated") return false;
+  if (!update.title) return false;
+  return !isDefaultSessionTitle(update.title);
 }
 
 function getEventInfo(input) {
@@ -77,21 +89,20 @@ export function createSessionTitleSuffixHandler({ agentsDir, client }) {
   return async function sessionTitleSuffixHandler(input) {
     if (typeof client?.session?.update !== "function") return;
 
-    const { eventType, sessionID, title } = getSessionUpdate(input);
-    if (eventType !== "session.updated") return;
-    if (!title) return;
+    const update = getSessionUpdate(input);
+    if (!shouldSuffixSessionTitle(update)) return;
 
     const version = readAidevopsVersion(agentsDir);
-    const suffixedTitle = withAidevopsTitleSuffix(title, version);
-    if (suffixedTitle === title) return;
+    const suffixedTitle = withAidevopsTitleSuffix(update.title, version);
+    if (suffixedTitle === update.title) return;
 
-    if (!sessionID || inFlight.has(sessionID)) return;
+    if (!update.sessionID || inFlight.has(update.sessionID)) return;
 
-    inFlight.add(sessionID);
+    inFlight.add(update.sessionID);
     try {
-      await updateSessionTitle(client, sessionID, suffixedTitle);
+      await updateSessionTitle(client, update.sessionID, suffixedTitle);
     } finally {
-      inFlight.delete(sessionID);
+      inFlight.delete(update.sessionID);
     }
   };
 }
