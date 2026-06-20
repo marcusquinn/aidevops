@@ -62,6 +62,9 @@ source_extracted() {
 		local prompt_text="$2"
 		local default_value="$3"
 		: "$prompt_text"
+		if [[ "${SETUP_PROMPT_MODE:-default}" == "leave-unset" ]]; then
+			return 0
+		fi
 		printf -v "$var_name" '%s' "$default_value"
 		return 0
 	}
@@ -110,6 +113,7 @@ run_setup_with_env() {
 	local arch="$1"
 	local node_version="$2"
 	local include_serve_sim="$3"
+	local prompt_mode="${4:-default}"
 	local bin_dir="$SANDBOX/bin-$arch-$node_version-$include_serve_sim"
 	mkdir -p "$bin_dir"
 	: >"$SANDBOX/install.log"
@@ -123,8 +127,8 @@ run_setup_with_env() {
 	fi
 
 	(
-		PATH="$bin_dir:/usr/bin:/bin" source_extracted
-		PATH="$bin_dir:/usr/bin:/bin" setup_serve_sim
+		PATH="$bin_dir:/usr/bin:/bin" SETUP_PROMPT_MODE="$prompt_mode" source_extracted
+		PATH="$bin_dir:/usr/bin:/bin" SETUP_PROMPT_MODE="$prompt_mode" setup_serve_sim
 	) >"$SANDBOX/out.log" 2>&1
 	printf '%s\n' "$(wc -l <"$SANDBOX/install.log" | tr -d ' ')"
 	return 0
@@ -164,6 +168,7 @@ rc=0
 assert_eq "Node 17 fails serve-sim engine" "1" "$rc"
 
 assert_eq "Supported arm64 host prompts/install path" "1" "$(run_setup_with_env arm64 v20.0.0 no)"
+assert_eq "Unset prompt response uses safe default expansion" "1" "$(run_setup_with_env arm64 v20.0.0 no leave-unset)"
 assert_eq "Existing serve-sim suppresses install" "0" "$(run_setup_with_env arm64 v20.0.0 yes)"
 assert_eq "Intel Mac skips install" "0" "$(run_setup_with_env x86_64 v20.0.0 no)"
 assert_eq "Old Node skips install" "0" "$(run_setup_with_env arm64 v16.20.0 no)"
