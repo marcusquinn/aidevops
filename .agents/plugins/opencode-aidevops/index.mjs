@@ -36,6 +36,7 @@ import { compactingHook } from "./compaction.mjs";
 import { INTENT_FIELD } from "./intent-tracing.mjs";
 import { createGreetingHandler } from "./greeting.mjs";
 import { applyImageSizeGuard } from "./quality-hooks-image.mjs";
+import { applyTitleAgentSuffix } from "./session-title-suffix.mjs";
 
 // Existing modules
 import { createTools } from "./tools.mjs";
@@ -220,7 +221,7 @@ export async function AidevopsPlugin({ directory, client }) {
   const {
     systemTransformHook: ttsrSystemTransformHook,
     messagesTransformHook: ttsrMessagesTransformHook,
-    textCompleteHook,
+    textCompleteHook: ttsrTextCompleteHook,
   } = createTtsrHooks({
     agentsDir: AGENTS_DIR,
     scriptsDir: SCRIPTS_DIR,
@@ -276,6 +277,14 @@ export async function AidevopsPlugin({ directory, client }) {
     } catch (err) {
       qualityLog("WARN", `[image-size-guard] Unexpected error: ${err?.message ?? err}`);
     }
+  };
+
+  // Compose post-completion hooks. OpenCode's built-in hidden `title` agent
+  // generates the initial prompt-digestion session title outside aidevops-owned
+  // rename tools, so append the version suffix at the text completion boundary.
+  const textCompleteHook = async (input, output) => {
+    await ttsrTextCompleteHook(input, output);
+    applyTitleAgentSuffix(input, output, AGENTS_DIR);
   };
 
   // Greeting handler (t2724) — emits session-start framework status as
