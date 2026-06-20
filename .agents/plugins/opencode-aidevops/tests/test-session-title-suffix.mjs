@@ -112,6 +112,25 @@ test("session.updated handler is idempotent when suffix already exists", async (
   });
 });
 
+test("session.updated handler ignores unavailable session update API", async () => {
+  await withTempAgentsDir(async (agentsDir) => {
+    writeFileSync(join(agentsDir, "VERSION"), "3.20.103\n");
+    const handler = createSessionTitleSuffixHandler({ agentsDir, client: { session: {} } });
+
+    await assert.doesNotReject(() =>
+      handler({
+        event: {
+          type: "session.updated",
+          properties: {
+            sessionID: "ses_test",
+            info: { id: "ses_test", title: "Unavailable update" },
+          },
+        },
+      }),
+    );
+  });
+});
+
 test("session.updated handler falls back to sessionID path shape", async () => {
   await withoutEnvVersion(() =>
     withTempAgentsDir(async (agentsDir) => {

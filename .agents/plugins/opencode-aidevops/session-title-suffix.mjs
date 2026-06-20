@@ -64,7 +64,6 @@ async function updateSessionTitle(client, sessionID, title) {
       body: { title },
     });
   } catch (err) {
-    if (!client?.session?.update) throw err;
     await client.session.update({
       path: { sessionID },
       body: { title },
@@ -76,6 +75,8 @@ export function createSessionTitleSuffixHandler({ agentsDir, client }) {
   const inFlight = new Set();
 
   return async function sessionTitleSuffixHandler(input) {
+    if (typeof client?.session?.update !== "function") return;
+
     const { eventType, sessionID, title } = getSessionUpdate(input);
     if (eventType !== "session.updated") return;
     if (!title) return;
