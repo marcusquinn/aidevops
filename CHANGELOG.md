@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.21.7] - 2026-06-21
+
+### Changed
+
+- Maintenance: mark t3610 complete (pr:#25299 completed:2026-06-20) [skip ci]
+
+### Fixed
+
+- refresh opencode main agent discovery (#25302)
+- delay session title fallback (#25301)
+
 ## [3.21.6] - 2026-06-21
 
 ### Changed
