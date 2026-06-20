@@ -74,6 +74,7 @@ Verify the issue's cited symptoms actually match the codebase's behaviour. A rev
 - **"Y is too expensive"** → measure the actual cost — is the expense real, or a hypothetical based on misreading the code path?
 - **"Z is broken"** → check if Z is invoked at all — the cited path may be dead code, or the function may return early before reaching it.
 - **"A locks/unlocks repeatedly"** → grep for the specific events — the observed "churn" may be a different mechanism entirely (e.g., the user may mean "cycles repeatedly" but frame it as "lock/unlock").
+- **Producer/consumer mismatch** → when one helper writes state and another validates it, test the full chain. A validator-only fixture can pass while the writer still emits data the validator rejects (e.g., `sync-workflows` output later flagged by `check-workflows`).
 
 If the framing doesn't match reality, the review documents the mismatch before proposing changes. "The cited symptom doesn't reproduce, but here's what's actually happening" is more useful than reviewing a fix for a non-existent problem.
 
