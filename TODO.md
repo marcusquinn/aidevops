@@ -4270,7 +4270,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3611 GUI contract: helper/API boundary for existing aidevops surfaces #api #auto-dispatch #dashboard #setup blocked-by:t3608,t3609,t3610 ref:GH#25233
 
-- [ ] t3610 GUI ADR: data model and infrastructure graph #architecture #auto-dispatch #dashboard #database #infrastructure ref:GH#25232
+- [x] t3610 GUI ADR: data model and infrastructure graph #architecture #auto-dispatch #dashboard #database #infrastructure ref:GH#25232 pr:#25299 completed:2026-06-20
 
 - [x] t3609 GUI ADR: security threat model and trust boundaries #architecture #auto-dispatch #dashboard #security ref:GH#25231 pr:#25237 completed:2026-06-20
 
