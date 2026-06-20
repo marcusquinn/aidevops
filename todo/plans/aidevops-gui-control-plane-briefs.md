@@ -17,6 +17,8 @@ Canonical product memory: `docs/gui/control-plane.md`.
   GH#25231 via PR #25237.
 - Open first-wave children: `t3610` / GH#25232, `t3611` / GH#25233, and
   `t17995` / GH#25234.
+- Parent GH#25229 body lists GH#25230-GH#25234 under `## Children` so parent
+  reconciliation can track the first-wave decomposition.
 - Native sub-issue links are established from GH#25229 to GH#25230-GH#25234.
 - Native blockers are synced: `t3611` is blocked by `t3608`, `t3609`, and
   `t3610`; `t17995` is blocked by `t3608` and `t3609`.
