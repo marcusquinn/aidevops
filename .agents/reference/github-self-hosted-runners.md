@@ -94,9 +94,9 @@ EnvironmentFile=/etc/github-runner/<REPO>.env
 Restart=always
 RestartSec=5
 TimeoutStopSec=90
-ExecStartPre=/bin/sh -c '/usr/bin/docker inspect github-runner-dind-%i >/dev/null 2>&1 || exit 0; exec /usr/bin/docker rm -f github-runner-dind-%i'
+ExecStartPre=/bin/sh -c 'out=$(/usr/bin/docker rm -f github-runner-dind-%i 2>&1); rc=$?; [ $rc -eq 0 ] || printf "%s\n" "$out" | grep -qE "No such container|No such object"'
 ExecStart=/usr/local/sbin/github-runner-dind-start %i
-ExecStop=/bin/sh -c '/usr/bin/docker inspect github-runner-dind-%i >/dev/null 2>&1 || exit 0; exec /usr/bin/docker stop github-runner-dind-%i'
+ExecStop=/bin/sh -c 'out=$(/usr/bin/docker stop github-runner-dind-%i 2>&1); rc=$?; [ $rc -eq 0 ] || printf "%s\n" "$out" | grep -qE "No such container|No such object"'
 
 [Install]
 WantedBy=multi-user.target
@@ -106,11 +106,12 @@ Keep real environment values out of documentation, issue comments, and PRs. The
 environment file should contain only server-local configuration and secrets such
 as repository URL, runner labels, and runner registration credentials.
 
-The `ExecStartPre` and `ExecStop` checks intentionally treat a missing container
-as success. Ephemeral runner containers are started with `docker run --rm`, so a
-completed job can remove the container before systemd runs `ExecStop`. Checking
-with `docker inspect` first prevents false service failures while still letting
-real `docker rm -f` or `docker stop` errors surface when the container exists.
+The `ExecStartPre` and `ExecStop` commands intentionally treat a missing
+container as success. Ephemeral runner containers are started with
+`docker run --rm`, so a completed job can remove the container before systemd
+runs `ExecStop`. Running `docker rm -f` or `docker stop` directly and filtering
+only the expected missing-container errors avoids a time-of-check/time-of-use
+race while still letting real Docker errors surface.
 
 The launch script should end by replacing the shell with a foreground Docker
 client, for example `exec docker run ...` without `-d` or `--detach`, rather
