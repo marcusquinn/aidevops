@@ -36,6 +36,7 @@ import { compactingHook } from "./compaction.mjs";
 import { INTENT_FIELD } from "./intent-tracing.mjs";
 import { createGreetingHandler } from "./greeting.mjs";
 import { applyImageSizeGuard } from "./quality-hooks-image.mjs";
+import { createSessionTitleFallbackHandler } from "./session-title-fallback.mjs";
 import { createSessionTitleSuffixHandler } from "./session-title-suffix.mjs";
 
 // Existing modules
@@ -291,6 +292,10 @@ export async function AidevopsPlugin({ directory, client }) {
     agentsDir: AGENTS_DIR,
     client,
   });
+  const sessionTitleFallbackHandler = createSessionTitleFallbackHandler({
+    agentsDir: AGENTS_DIR,
+    client,
+  });
 
   const debugEventError = (label, err) => {
     if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
@@ -330,6 +335,7 @@ export async function AidevopsPlugin({ directory, client }) {
       await Promise.all([
         handleEvent(input),
         sessionTitleSuffixHandler(input).catch((err) => debugEventError("title suffix handler", err)),
+        sessionTitleFallbackHandler(input).catch((err) => debugEventError("title fallback handler", err)),
         greetingHandler(input).catch((err) => debugEventError("greeting handler", err)),
       ]);
     },

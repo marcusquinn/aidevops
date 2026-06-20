@@ -11,6 +11,11 @@ import {
   readAidevopsVersion,
   withAidevopsTitleSuffix,
 } from "../session-title-suffix.mjs";
+import {
+  createSessionTitleFallbackHandler,
+  deriveFallbackTitleFromPrompt,
+  isDefaultSessionTitle,
+} from "../session-title-fallback.mjs";
 
 async function withTempAgentsDir(fn) {
   const root = mkdtempSync(join(tmpdir(), "aidevops-title-suffix-"));
@@ -43,6 +48,22 @@ test("title suffix appends and replaces idempotently", () => {
     withAidevopsTitleSuffix("Investigate title path · AIDevOps 3.20.101", "3.20.102"),
     "Investigate title path · AIDevOps 3.20.102",
   );
+});
+
+test("default session title detection ignores AIDevOps suffix", () => {
+  assert.equal(isDefaultSessionTitle("New session - 2026-06-20T21:27:42.505Z"), true);
+  assert.equal(isDefaultSessionTitle("New session - 2026-06-20T21:27:42.505Z · AIDevOps 3.21.2"), true);
+  assert.equal(isDefaultSessionTitle("Study newsjack repository capabilities · AIDevOps 3.21.2"), false);
+});
+
+test("fallback title derives concise title from first meaningful prompt line", () => {
+  assert.equal(
+    deriveFallbackTitleFromPrompt(`https://github.com/elvisun/newsjack
+
+i'd like to add the capabilities this repo offers. there may be overlap`),
+    "Add the capabilities this repo offers. there may be overlap",
+  );
+  assert.equal(deriveFallbackTitleFromPrompt("please review PR #123"), "Review PR #123");
 });
 
 test("version reader prefers deployed agents VERSION", async () => {
@@ -164,4 +185,86 @@ test("session.updated handler falls back to sessionID path shape", async () => {
       });
     }),
   );
+});
+
+test("message part fallback replaces stuck New session title", async () => {
+  await withoutEnvVersion(() =>
+    withTempAgentsDir(async (agentsDir) => {
+      writeFileSync(join(agentsDir, "VERSION"), "3.21.2\n");
+      const calls = [];
+      const client = { session: { update: async (payload) => calls.push(payload) } };
+      const handler = createSessionTitleFallbackHandler({ agentsDir, client });
+
+      await handler({
+        event: {
+          type: "session.updated",
+          properties: {
+            sessionID: "ses_test",
+            info: { id: "ses_test", title: "New session - 2026-06-20T21:27:42.505Z" },
+          },
+        },
+      });
+      await handler({
+        event: {
+          type: "message.updated",
+          properties: {
+            sessionID: "ses_test",
+            info: { id: "msg_user", sessionID: "ses_test", role: "user" },
+          },
+        },
+      });
+      await handler({
+        event: {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "ses_test",
+            part: {
+              sessionID: "ses_test",
+              messageID: "msg_user",
+              type: "text",
+              text: "please study the newsjack repository capabilities",
+            },
+          },
+        },
+      });
+
+      assert.deepEqual(calls.at(-1), {
+        path: { id: "ses_test" },
+        body: { title: "Study the newsjack repository capabilities · AIDevOps 3.21.2" },
+      });
+    }),
+  );
+});
+
+test("message part fallback preserves meaningful session title", async () => {
+  await withTempAgentsDir(async (agentsDir) => {
+    writeFileSync(join(agentsDir, "VERSION"), "3.21.2\n");
+    const calls = [];
+    const client = { session: { update: async (payload) => calls.push(payload) } };
+    const handler = createSessionTitleFallbackHandler({ agentsDir, client });
+
+    await handler({
+      event: {
+        type: "session.updated",
+        properties: { sessionID: "ses_test", info: { id: "ses_test", title: "Existing title · AIDevOps 3.21.2" } },
+      },
+    });
+    await handler({
+      event: {
+        type: "message.updated",
+        properties: { sessionID: "ses_test", info: { id: "msg_user", sessionID: "ses_test", role: "user" } },
+      },
+    });
+    await handler({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          sessionID: "ses_test",
+          part: { sessionID: "ses_test", messageID: "msg_user", type: "text", text: "please replace me" },
+        },
+      },
+    });
+
+    assert.deepEqual(calls, []);
+  });
 });
