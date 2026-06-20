@@ -25,6 +25,14 @@ on GitHub Actions). Issues are then authored by the bot, which:
 2. Cannot push to a branch-protected default branch on most platforms,
    leaving TODO.md sync commits silently failing.
 
+Do not equate `bypass_pull_request_allowances` with `SYNC_PAT`. The former is
+the classic branch-protection bypass list for `github-actions[bot]`/apps; the
+latter changes the authenticated push principal to the maintainer/admin PAT
+owner. A missing or empty bypass list does not prove `SYNC_PAT` cannot help.
+Before filing or approving a false-positive advisory issue, prove that a
+correctly scoped admin/maintainer PAT cannot bypass the repo's actual
+protection settings.
+
 ## Security posture (cross-platform)
 
 Three rules apply on every platform:
@@ -127,6 +135,12 @@ If all four conditions resolve to "this repo needs `SYNC_PAT`", an advisory
 file is written at `~/.aidevops/advisories/sync-pat-<SLUG_SAFE>.advisory` and
 the `setup-debt-helper.sh` aggregator picks it up for the toast warning + the
 `/setup-git` walkthrough.
+
+`aidevops security dismiss sync-pat-*` is an operator opt-out/defer path for a
+known setup-debt warning. Treat dismissal as local risk acceptance or scheduling
+debt, not as evidence that `_check_sync_pat_need` is wrong. Do not suppress the
+advisory solely because `bypass_pull_request_allowances` is absent, null, empty,
+or unavailable.
 
 ---
 
