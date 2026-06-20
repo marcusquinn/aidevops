@@ -212,6 +212,69 @@ assert_contains "non-local bump creates PR against repo" "$PR_ARGS" "--repo test
 assert_contains "non-local bump creates PR from version branch" "$PR_ARGS" "--head chore/aidevops-version-v9.9.9-test-pr-bump-repo"
 
 # ---------------------------------------------------------------------------
+# Test 8 — PR creation failures restore the default branch
+# ---------------------------------------------------------------------------
+git -C "$WORK_REPO" checkout -q chore/aidevops-version-v9.9.9-test-pr-bump-repo
+gh_create_pr() {
+	printf '%s\n' "simulated PR creation failure"
+	return 1
+}
+
+set +e
+_open_version_bump_pr "test/pr-bump-repo" "$WORK_REPO" "chore/aidevops-version-v9.9.9-test-pr-bump-repo" "main" "0.0.1" "9.9.9" >/dev/null 2>&1
+OPEN_PR_RC=$?
+set -e
+if [[ "$OPEN_PR_RC" -ne 0 ]]; then
+	echo "${GREEN}PASS${NC} PR creation failure returns non-zero"
+	PASS=$((PASS + 1))
+else
+	echo "${RED}FAIL${NC} PR creation failure returned 0"
+	FAIL=$((FAIL + 1))
+fi
+CURRENT_BRANCH=$(git -C "$WORK_REPO" rev-parse --abbrev-ref HEAD)
+assert "PR creation failure restores default branch" "$CURRENT_BRANCH" "main"
+
+# ---------------------------------------------------------------------------
+# Test 9 — rerunning a machine branch force-pushes replacement commits
+# ---------------------------------------------------------------------------
+gh_create_pr() {
+	printf '%s\n' "$*" >"$GH_CREATE_PR_ARGS"
+	printf '%s\n' "https://example.invalid/pr/2"
+	return 0
+}
+
+BUMP_OUT=$(_bump_single_repo "test/pr-bump-repo" "$WORK_REPO" "false" "9.9.9" "0")
+assert "non-local bump rerun reports bumped" "$BUMP_OUT" "bumped"
+REMOTE_BRANCH_VERSION=$(git -C "$WORK_REPO" show "origin/chore/aidevops-version-v9.9.9-test-pr-bump-repo:.aidevops.json" | jq -r '.aidevops_version')
+assert "non-local bump rerun replaces remote version branch" "$REMOTE_BRANCH_VERSION" "9.9.9"
+
+# ---------------------------------------------------------------------------
+# Test 10 — recovery reset only runs when .aidevops.json is the sole ahead file
+# ---------------------------------------------------------------------------
+MULTI_REMOTE_DIR=$(mktemp -d)
+MULTI_REPO="$FIXTURE_DIR/multi-ahead-repo"
+git init --bare -q "$MULTI_REMOTE_DIR/origin.git"
+git init -q "$MULTI_REPO"
+git -C "$MULTI_REPO" checkout -q -b main
+git -C "$MULTI_REPO" config user.email t@t
+git -C "$MULTI_REPO" config user.name T
+git -C "$MULTI_REPO" config commit.gpgsign false
+printf '%s\n' '{"aidevops_version":"9.9.9"}' >"$MULTI_REPO/.aidevops.json"
+git -C "$MULTI_REPO" add .aidevops.json
+git -C "$MULTI_REPO" commit -qm init
+git -C "$MULTI_REPO" remote add origin "$MULTI_REMOTE_DIR/origin.git"
+git -C "$MULTI_REPO" push -q -u origin main
+git -C "$MULTI_REPO" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+printf '%s\n' '{"aidevops_version":"10.0.0"}' >"$MULTI_REPO/.aidevops.json"
+printf '%s\n' 'preserve me' >"$MULTI_REPO/extra.txt"
+git -C "$MULTI_REPO" add .aidevops.json extra.txt
+git -C "$MULTI_REPO" commit -qm 'local mixed changes'
+MULTI_OUT=$(_bump_single_repo "test/multi-ahead-repo" "$MULTI_REPO" "false" "9.9.9" "0")
+assert "mixed ahead files skip destructive recovery" "$MULTI_OUT" "skipped"
+MULTI_AHEAD_COUNT=$(git -C "$MULTI_REPO" rev-list --count origin/main..HEAD)
+assert "mixed ahead files remain preserved" "$MULTI_AHEAD_COUNT" "1"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
