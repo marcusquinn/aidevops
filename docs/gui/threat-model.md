@@ -112,8 +112,8 @@ Allowed patterns:
 
 Banned patterns:
 
-- `POST /shell`, `POST /exec`, `POST /run`, or equivalent arbitrary command
-  endpoints.
+- `POST /shell`, `POST /exec`, `POST /terminal`, `POST /run-command`, or any
+  equivalent arbitrary command endpoint.
 - Passing browser-provided helper names, flags, environment variables, paths,
   or command strings directly to a shell.
 - Streaming unrestricted terminal sessions through the GUI.
@@ -169,7 +169,7 @@ machine must not imply compromise of every machine. Required controls:
 | Cloudron compromise pivots to laptops | Cloudron can queue scoped intents only; local agents verify identity, capability, route, risk, expiry, and confirmation policy. |
 | Paired machine compromise spreads laterally | Capability grants are per-machine, revocable, scoped, and non-transitive. |
 | Destructive action without informed consent | Require confirmation, dry-run where available, risk labels, audit logs, and rollback guidance. |
-| Prompt injection from external issues or web pages | Treat external text as data; scan/sanitize before acting; helper/action routes ignore instructions embedded in content. |
+| Prompt injection from external issues or web pages | Treat external text as data; scan/sanitize before acting; never pass unsanitized content into execution paths. |
 | Forged or missing audit trail | Write actions produce append-only local audit entries and, where appropriate, git issues/PRs/comments with traceable task IDs. |
 | API budget exhaustion or comment storm | Rate-limit action routes, reuse existing circuit breakers, and separate pending CI from failed CI before repair feedback. |
 

@@ -27,20 +27,22 @@ actions or pairing flows are built.
 
 The GUI control plane uses typed, least-privilege boundaries:
 
-1. The local API is the enforcement boundary, not the browser UI.
-2. Browser requests map only to allowlisted read routes or allowlisted action
-   manifests.
-3. Arbitrary shell endpoints are banned.
-4. Secret values remain outside the GUI data model; the GUI handles references
-   and status only.
-5. Cloudron-hosted mode is a coordination surface and cannot directly execute
-   unrestricted local commands.
-6. Paired machines receive revocable, scoped capabilities through task capsules;
-   trust is non-transitive.
-7. VPN, NetBird, Nostr, tunnels, LAN reachability, and Cloudron tenancy are
-   transport or hosting properties, not authorization decisions.
-8. High-risk and destructive actions require server-enforced confirmation and
-   audit logging.
+1. **Local API enforcement:** the local API is the enforcement boundary, not
+   the browser UI.
+2. **Typed browser requests:** browser requests map only to allowlisted read
+   routes or allowlisted action manifests.
+3. **No arbitrary shell:** arbitrary shell endpoints are banned.
+4. **Secret references only:** secret values remain outside the GUI data model;
+   the GUI handles references and status only.
+5. **Cloudron containment:** Cloudron-hosted mode is a coordination surface and
+   cannot directly execute unrestricted local commands.
+6. **Scoped machine pairing:** paired machines receive revocable, scoped
+   capabilities through task capsules; trust is non-transitive.
+7. **Transport is not authorization:** VPN, NetBird, Nostr, tunnels, LAN
+   reachability, and Cloudron tenancy are transport or hosting properties, not
+   authorization decisions.
+8. **Confirmed high-risk actions:** high-risk and destructive actions require
+   server-enforced confirmation and audit logging.
 
 ## Boundary Model
 
@@ -145,7 +147,7 @@ Banned patterns:
   equivalent arbitrary command endpoint.
 - Browser-provided command strings, helper names, shell flags, environment
   variables, working directories, or install commands.
-- Passing untrusted issue/PR/web content into execution paths.
+- Passing unsanitized issue/PR/web content into execution paths.
 - Cloudron-to-local direct command execution.
 - Trusting VPN, NetBird, Nostr, or network locality as authorization.
 
