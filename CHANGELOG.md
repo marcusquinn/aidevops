@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.104] - 2026-06-20
+
+### Changed
+
+- Plan GUI control plane (#25240)
+- Documentation: clarify SYNC_PAT bypass semantics (#25241)
+- Maintenance: mark t3609 complete (pr:#25237 completed:2026-06-20) [skip ci]
+- docs: define gui security trust boundaries (#25237)
+- Maintenance: mark t3608 complete (pr:#25236 completed:2026-06-20) [skip ci]
+
 ## [3.20.103] - 2026-06-20
 
 ### Changed
