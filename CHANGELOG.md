@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.21.5] - 2026-06-21
+
+### Changed
+
+- Documentation: record GUI parent decomposition (#25296)
+
 ## [3.21.4] - 2026-06-20
 
 ### Changed
