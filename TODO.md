@@ -4265,3 +4265,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3606 Show AIDevOps version in OpenCode session titles #bug #type:enhancement ref:GH#25227
 
 - [ ] t3607 Build aidevops GUI control plane for setup, infrastructure, routines, and safe multi-machine AI-agent operations #dashboard #enhancement #infrastructure #parent #product ref:GH#25229
+
+- [ ] t3608 GUI ADR: product scope, stack, and repo layout #architecture #auto-dispatch #dashboard #documentation #product ref:GH#25230
