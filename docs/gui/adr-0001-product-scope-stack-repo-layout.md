@@ -96,7 +96,7 @@ A separate repository would isolate GUI dependencies, but it would split product
 memory, helper contracts, tests, and issue context before the architecture is
 stable. The first implementation should live with the aidevops helpers it wraps.
 
-### Ad hoc root-level app files
+### Ad-hoc root-level app files
 
 Adding root-level `web/`, `api/`, or similar paths without a package policy would
 violate the repository root contract. Staged package subtrees with an explicit
@@ -123,7 +123,7 @@ Expected future package boundaries:
 ## Consequences
 
 - Phase 6 may begin coding the read-only local API and dashboard scaffold after
-  the security, data model, helper/API contract, and testing/CI ADRs are in
+  the security, data model, helper/API contract, and testing/CI/CD ADRs are in
   place.
 - First implementation work should call existing aidevops helpers rather than
   reimplementing helper logic inside the GUI.
