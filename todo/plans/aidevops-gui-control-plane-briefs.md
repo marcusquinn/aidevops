@@ -717,10 +717,13 @@ Specialist context to load per phase:
 
 | Phase | Specialist context |
 |-------|--------------------|
-| P1, P3, P5, P8 | code/app architecture agents |
-| P2, P14, P15 | security references and secret-handling docs |
+| P1, P3, P5, P6, P7, P8 | code/app architecture agents |
+| P2, P14 | security references and secret-handling docs |
+| P4 | code/app architecture agents, helper/API references |
+| P9 | Research/content agents with source verification |
 | P10 | routines reference and routine command docs |
 | P11 | `caldav-calendar` skill |
+| P12 | Product/design agents plus this document |
 | P13 | `cloudron-app-packaging` skill |
 | P15 | OpenCode plugin/session references |
 | P16 | release/signing/deployment references |
