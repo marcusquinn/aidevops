@@ -112,7 +112,8 @@ Allowed patterns:
 
 Banned patterns:
 
-- `POST /shell`, `POST /exec`, `POST /terminal`, `POST /run-command`, or any
+- `POST /shell`, `POST /exec`, `POST /terminal`, `POST /run`,
+  `POST /run-command`, or any
   equivalent arbitrary command endpoint.
 - Passing browser-provided helper names, flags, environment variables, paths,
   or command strings directly to a shell.
