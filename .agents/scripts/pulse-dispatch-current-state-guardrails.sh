@@ -86,15 +86,18 @@ PY
 #   $1 - max workers
 #   $2 - active workers
 #   $3 - available slots
+#   $4 - minimum worker floor active (1=yes, optional)
 # Stdout: "<max_workers> <active_workers> <available_slots>" after capping.
 #######################################
 _dispatch_apply_current_state_guardrails() {
 	local max_workers="$1"
 	local active_workers="$2"
 	local available_slots="$3"
+	local min_worker_floor_active="${4:-0}"
 	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
 	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
 	[[ "$available_slots" =~ ^-?[0-9]+$ ]] || available_slots=0
+	[[ "$min_worker_floor_active" =~ ^[0-9]+$ ]] || min_worker_floor_active=0
 
 	if [[ "${AIDEVOPS_SKIP_PULSE_CURRENT_STATE_GUARDRAILS:-0}" == "1" || "$available_slots" -le 0 ]]; then
 		_dispatch_stats_gauge "pulse_dispatch_guardrail_available_slots" "$available_slots"
@@ -126,7 +129,14 @@ _dispatch_apply_current_state_guardrails() {
 	[[ "$empty_threshold" =~ ^[0-9]+$ ]] || empty_threshold=2
 
 	local capped_slots="$available_slots" reason=""
-	if ((empty_threshold > 0 && no_dispatchable >= empty_threshold && successes == 0)); then
+	if ((empty_threshold > 0 && no_dispatchable >= empty_threshold && successes == 0 && min_worker_floor_active > 0)); then
+		# Stale empty-candidate evidence must not self-lock the configured worker
+		# floor. The candidate loop still re-checks eligibility and stops on a true
+		# empty queue, but floor repair needs enough slots to test currently
+		# dispatchable work instead of a single stale probe.
+		reason="no_dispatchable_floor_bypass"
+		_dispatch_stats_increment "pulse_dispatch_current_state_guardrail_floor_bypass"
+	elif ((empty_threshold > 0 && no_dispatchable >= empty_threshold && successes == 0)); then
 		# Keep one probe slot alive. Otherwise stale "no dispatchable" evidence can
 		# self-lock the refill loop just as new review/conflict work becomes eligible.
 		capped_slots=1
@@ -150,9 +160,11 @@ _dispatch_apply_current_state_guardrails() {
 
 	if ((capped_slots < available_slots)); then
 		max_workers=$((active_workers + capped_slots))
-		echo "[pulse-wrapper] Dispatch current-state guardrail: reason=${reason} capped_available=${capped_slots}/${available_slots} successes=${successes} failures=${failures} rate_limits=${rate_limits} healthy_prs=${healthy_prs} no_dispatchable=${no_dispatchable}" >>"$LOGFILE"
+		echo "[pulse-wrapper] Dispatch current-state guardrail: reason=${reason} capped_available=${capped_slots}/${available_slots} successes=${successes} failures=${failures} rate_limits=${rate_limits} healthy_prs=${healthy_prs} no_dispatchable=${no_dispatchable} min_worker_floor_active=${min_worker_floor_active}" >>"$LOGFILE"
 		_dispatch_stats_increment "pulse_dispatch_current_state_guardrail_applied"
 		_dispatch_stats_increment_candidate_failed "$reason"
+	elif [[ "$reason" == "no_dispatchable_floor_bypass" ]]; then
+		echo "[pulse-wrapper] Dispatch current-state guardrail: reason=${reason} preserved_available=${available_slots} successes=${successes} failures=${failures} rate_limits=${rate_limits} healthy_prs=${healthy_prs} no_dispatchable=${no_dispatchable} min_worker_floor_active=${min_worker_floor_active}" >>"$LOGFILE"
 	fi
 	_dispatch_stats_gauge "pulse_dispatch_guardrail_available_slots" "$capped_slots"
 

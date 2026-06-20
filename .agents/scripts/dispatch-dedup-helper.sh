@@ -2215,6 +2215,49 @@ has_fix_the_fixer_label() {
 # metric reason.
 #
 # Args:
+#   $1 = lower-case blocker signal text
+# Output: one dispatch_candidate_failed reason token when matched
+#######################################
+_classify_structural_dispatch_blocker_reason() {
+	local lower_signal="$1"
+	case "$lower_signal" in
+		*footprint_overlap* | *footprint*overlap*)
+			printf 'footprint_overlap\n'
+			return 0
+			;;
+		*blocked_by_unresolved* | *blocked-by-unresolved* | *blocked*by*unresolved* | *unresolved*blocked-by* | *unresolved*blocked*by*)
+			printf 'blocked_by_unresolved\n'
+			return 0
+			;;
+		*issue_closed* | *issue*closed* | *state=closed* | *state*closed*)
+			printf 'issue_closed\n'
+			return 0
+			;;
+		*consolidated*)
+			printf 'consolidated\n'
+			return 0
+			;;
+		*parent_task_blocked* | *parent-task* | *label=meta*)
+			printf 'parent_task\n'
+			return 0
+			;;
+		*infrastructure_blocked* | *label=infrastructure* | *hold_for_review_blocked* | *hold-for-review* | *external*author*gate* | *nmr*gate* | *approval*required*)
+			printf 'policy_gate\n'
+			return 0
+			;;
+		*no_auto_dispatch_blocked* | *no-auto-dispatch*)
+			printf 'no_auto_dispatch\n'
+			return 0
+			;;
+	esac
+	return 1
+}
+
+#######################################
+# Classify a dispatch dedup/pre-launch blocker into a stable low-cardinality
+# metric reason.
+#
+# Args:
 #   $1 = blocker signal text emitted by dispatch-dedup-helper or pulse logs
 # Output: one of the dispatch_candidate_failed reason tokens
 #######################################
@@ -2222,6 +2265,9 @@ classify_dispatch_blocker_reason() {
 	local signal="$1"
 	local lower_signal
 	lower_signal=$(printf '%s' "$signal" | tr '[:upper:]' '[:lower:]')
+	if _classify_structural_dispatch_blocker_reason "$lower_signal"; then
+		return 0
+	fi
 
 	case "$lower_signal" in
 		*interactive_review_hold* | *interactive*review*hold*)
@@ -2278,10 +2324,6 @@ classify_dispatch_blocker_reason() {
 			;;
 		*dedup*guard*blocked*)
 			printf 'dedup_active_claim\n'
-			return 0
-			;;
-		*parent_task_blocked* | *parent-task* | *no-auto-dispatch* | *infrastructure_blocked* | *label=infrastructure* | *hold_for_review_blocked* | *hold-for-review* | *external*author*gate* | *nmr*gate* | *approval*required*)
-			printf 'policy_gate\n'
 			return 0
 			;;
 		*assigned* | *claim* | *ledger* | *has-open-pr* | *pr*evidence* | *duplicate* | *stale_recovered*)
