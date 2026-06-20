@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.21.2] - 2026-06-20
+
+### Changed
+
+- fix shell env hook deps fallback (#25283)
+
+### Fixed
+
+- type OpenCode DB env overrides (#25284)
+
 ## [3.21.1] - 2026-06-20
 
 ### Changed
