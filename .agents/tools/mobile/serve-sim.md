@@ -112,7 +112,7 @@ aidevops keeps this native guide so mobile-testing tasks route to `serve-sim` ev
 - **No simulator**: Boot one first with Xcode Simulator, MiniSim, or `xcrun simctl boot <device>`.
 - **Node too old**: Upgrade to Node.js 18+ before running the CLI.
 - **Port collision**: Stop stale helpers with `serve-sim --kill`.
-- **H.264/WebCodecs instability**: Use the Stream → Codec picker or `--codec mjpeg`; recent versions auto-downgrade fatal AVCC decoder failures to MJPEG.
+- **H.264/WebCodecs instability**: Use the Stream → Codec picker or append `?codec=mjpeg` to the preview URL; recent versions auto-downgrade fatal AVCC decoder failures to MJPEG.
 - **Camera injection**: Requires macOS 14+ and a simulator app bundle ID.
 
 ## Related
