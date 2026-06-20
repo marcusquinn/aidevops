@@ -99,7 +99,8 @@ _SKIP_CACHE=false
 RUNTIME_CACHE_HASH_FILE_PREFIX="${AGENTS_DIR}/.runtime-config-source-hash"
 
 # Compute a stable hash of all files the generator reads.
-# Includes: the script itself + all source .md/.toml/.json files under AGENTS_DIR.
+# Includes: the script itself + source .md/.toml/.json files and generator
+# .sh/.py libraries under AGENTS_DIR.
 # Uses file metadata (name/size/mtime) for speed (~10ms for 1600 files)
 # rather than content hashing (~80s per runtime).
 # Portable: uses _stat_translate_fmt from portable-stat.sh.
@@ -110,7 +111,7 @@ compute_runtime_source_hash() {
 	_stat_translate_fmt '%n %s %Y' || { echo "no-cache-${RANDOM}"; return 0; }
 	metadata=$({
 		stat "$_STAT_FLAG" "$_STAT_FMT" "${BASH_SOURCE[0]}" 2>/dev/null || true
-		find "$AGENTS_DIR" -type f \( -name "*.md" -o -name "*.toml" -o -name "*.json" \) \
+		find "$AGENTS_DIR" -type f \( -name "*.md" -o -name "*.toml" -o -name "*.json" -o -name "*.sh" -o -name "*.py" \) \
 			-print0 2>/dev/null | xargs -0 stat "$_STAT_FLAG" "$_STAT_FMT" 2>/dev/null || true
 	})
 
@@ -120,6 +121,59 @@ compute_runtime_source_hash() {
 
 	echo "$metadata" | LC_ALL=C sort | shasum -a 256 | cut -d' ' -f1
 	return 0
+}
+
+_opencode_agent_output_matches_source() {
+	python3 - <<'PY'
+import json
+import os
+import sys
+
+agents_dir = os.path.expanduser("~/.aidevops/agents")
+config_path = os.path.expanduser("~/.config/opencode/opencode.json")
+script_dir = os.path.expanduser("~/.aidevops/agents/scripts/lib")
+
+sys.path.insert(0, script_dir)
+
+try:
+    from agent_config import discover_primary_agents
+except Exception:
+    sys.exit(1)
+
+try:
+    _primary_agents, sorted_agents, _filtered = discover_primary_agents(agents_dir)
+except Exception:
+    sys.exit(1)
+
+try:
+    with open(config_path, "r", encoding="utf-8") as handle:
+        config = json.load(handle)
+except Exception:
+    sys.exit(1)
+
+configured = config.get("agent", {})
+if not isinstance(configured, dict):
+    sys.exit(1)
+
+expected = set(sorted_agents.keys())
+actual = {name for name, value in configured.items() if not (isinstance(value, dict) and value.get("disable") is True)}
+
+sys.exit(0 if expected <= actual else 1)
+PY
+	return $?
+}
+
+_runtime_output_matches_source() {
+	local runtime_id="$1"
+	case "$runtime_id" in
+	opencode)
+		_opencode_agent_output_matches_source
+		return $?
+		;;
+	*)
+		return 0
+		;;
+	esac
 }
 
 # =============================================================================
@@ -179,9 +233,11 @@ _generate_for_runtime() {
 					output_ok=true
 					;;
 				esac
-				if [[ "$output_ok" == true ]]; then
+				if [[ "$output_ok" == true ]] && _runtime_output_matches_source "$runtime_id"; then
 					print_info "$display_name config up to date (source unchanged) -- skipping generation"
 					return 0
+				elif [[ "$output_ok" == true ]]; then
+					print_info "$display_name config output is stale relative to source -- regenerating"
 				fi
 			fi
 		fi

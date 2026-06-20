@@ -254,6 +254,17 @@ _get_subagent_extra_tools() {
 	return 0
 }
 
+# Quote a scalar for YAML frontmatter. OpenCode parses agent frontmatter as
+# YAML; an unquoted description containing ':' can make the whole block invalid,
+# which can cause a subagent stub to appear in the primary tab cycle.
+_yaml_quote_scalar() {
+	local value="$1"
+	value="${value//\\/\\\\}"
+	value="${value//\"/\\\"}"
+	printf '"%s"' "$value"
+	return 0
+}
+
 # Write a single subagent markdown stub file.
 # Arguments: $1 - source .md file path
 # Requires: AGENTS_DIR and agent_dir to be set (exported for xargs usage)
@@ -299,10 +310,13 @@ _write_subagent_stub() {
 	local extra_tools
 	extra_tools=$(_get_subagent_extra_tools "$name")
 
+	local quoted_desc
+	quoted_desc=$(_yaml_quote_scalar "$src_desc")
+
 	{
 		printf '%s\n' \
 			"---" \
-			"description: ${src_desc}" \
+			"description: ${quoted_desc}" \
 			"mode: subagent" \
 			"temperature: 0.2" \
 			"permission:" \
@@ -414,6 +428,7 @@ _generate_subagents_opencode() {
 	_clean_generated_subagents "$agent_dir"
 
 	export -f _get_subagent_extra_tools 2>/dev/null || true
+	export -f _yaml_quote_scalar 2>/dev/null || true
 	export -f _write_subagent_stub 2>/dev/null || true
 	export AGENTS_DIR
 	export agent_dir

@@ -106,6 +106,31 @@ check_string_in_file() {
 	return 0
 }
 
+check_frontmatter_description_quoting() {
+	local file="$1"
+	local label="$2"
+	local path="${AGENTS_DIR}/${file}"
+	local description_line=""
+	local description_value=""
+	if [[ ! -f "$path" ]]; then
+		log_fail "${label}: ${file} — NOT FOUND"
+		return 0
+	fi
+	description_line=$(awk '
+		/^---$/ { fm++; next }
+		fm == 1 && /^description:/ { print; exit }
+		fm == 2 { exit }
+	' "$path" 2>/dev/null || true)
+	description_value="${description_line#description:}"
+	description_value="${description_value# }"
+	if [[ "$description_value" != "\""* && "$description_value" != "'"* && "$description_value" == *": "* ]]; then
+		log_fail "${label}: ${file} has unquoted description containing ':'"
+	else
+		log_ok "${label}: ${file} frontmatter description is safely quoted"
+	fi
+	return 0
+}
+
 # ─── Test 1: Extracted reference files exist and are non-empty ───────────────
 echo ""
 echo "=== 1. Extracted Reference Files ==="
@@ -194,6 +219,8 @@ AGENT_FILES=(
 for af in "${AGENT_FILES[@]}"; do
 	check_file_nonempty "$af" 100 "Primary agent file"
 done
+check_string_in_file "subagent-index.toon" "PR,pr.md" "subagent-index: PR display name is uppercase"
+check_frontmatter_description_quoting "services/communications/privacy-comparison.md" "OpenCode subagent YAML safety"
 
 # ─── Test 6: Capabilities section retains key entries ─────────────────────────
 echo ""

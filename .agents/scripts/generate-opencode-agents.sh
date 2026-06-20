@@ -204,6 +204,14 @@ _get_extra_tools() {
 	return 0
 }
 
+_yaml_quote_scalar() {
+	local value="$1"
+	value="${value//\\/\\\\}"
+	value="${value//\"/\\\"}"
+	printf '"%s"' "$value"
+	return 0
+}
+
 # GH#18509: Copy source verbatim (with model-name normalisation) when the
 # agent's frontmatter sets bash: false — it is security-sandboxed or has its
 # own tool restrictions and must not be overwritten with a permissive stub.
@@ -238,10 +246,12 @@ _write_permissive_stub() {
 	local src_desc="$2"
 	local rel_path="$3"
 	local extra_tools="$4"
+	local quoted_desc
+	quoted_desc=$(_yaml_quote_scalar "$src_desc")
 	{
 		printf '%s\n' \
 			"---" \
-			"description: ${src_desc}" \
+			"description: ${quoted_desc}" \
 			"mode: subagent" \
 			"temperature: 0.2" \
 			"permission:" \
@@ -279,7 +289,7 @@ generate_subagent_stub() {
 	return 0
 }
 
-export -f generate_subagent_stub _get_subagent_description _get_extra_tools _write_sandboxed_agent _write_permissive_stub 2>/dev/null || true
+export -f generate_subagent_stub _get_subagent_description _get_extra_tools _yaml_quote_scalar _write_sandboxed_agent _write_permissive_stub 2>/dev/null || true
 export AGENTS_DIR
 export OPENCODE_AGENT_DIR
 

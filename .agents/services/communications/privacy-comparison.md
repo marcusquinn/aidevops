@@ -1,5 +1,5 @@
 ---
-description: Privacy/security comparison matrix for all 15 chat platform integrations — select by threat model. Max privacy → SimpleX. E2E mainstream → Signal. Corporate compliance → Nextcloud Talk. Censorship resistance → Nostr/Urbit. Related: `tools/security/opsec.md`, `services/communications/`.
+description: "Privacy/security comparison matrix for all 15 chat platform integrations — select by threat model. Max privacy → SimpleX. E2E mainstream → Signal. Corporate compliance → Nextcloud Talk. Censorship resistance → Nostr/Urbit. Related: `tools/security/opsec.md`, `services/communications/`."
 mode: subagent
 tools:
   read: true
