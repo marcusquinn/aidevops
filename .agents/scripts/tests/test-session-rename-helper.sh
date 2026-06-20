@@ -13,6 +13,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
 HELPER="${SCRIPT_DIR}/../session-rename-helper.sh"
+export AIDEVOPS_VERSION="9.8.7"
 
 PASS=0
 FAIL=0
@@ -157,7 +158,7 @@ seed_session "New Session"
 run_sync_on_branch "feature/cool-thing"
 rc=$?
 assert_exit "exit 0 on feature branch" "0" "$rc"
-assert_eq "title renamed to feature branch" "feature/cool-thing" "$(get_title)"
+assert_eq "title renamed to feature branch with suffix" "feature/cool-thing · AIDevOps 9.8.7" "$(get_title)"
 
 # Test 4: do not clobber a meaningful existing title with a feature branch sync
 echo ""
@@ -175,7 +176,7 @@ seed_session ""
 run_sync_on_branch "feature/empty-title"
 rc=$?
 assert_exit "exit 0 on empty title sync" "0" "$rc"
-assert_eq "empty title filled in" "feature/empty-title" "$(get_title)"
+assert_eq "empty title filled in with suffix" "feature/empty-title · AIDevOps 9.8.7" "$(get_title)"
 
 # Test 6: existing 'main' title is overwritten on feature branch sync
 # (recovery path: sessions that already got stuck as 'main' by the old code
@@ -186,7 +187,7 @@ seed_session "main"
 run_sync_on_branch "feature/heal-me"
 rc=$?
 assert_exit "exit 0 heal" "0" "$rc"
-assert_eq "main title healed to feature" "feature/heal-me" "$(get_title)"
+assert_eq "main title healed to feature with suffix" "feature/heal-me · AIDevOps 9.8.7" "$(get_title)"
 
 # Test 7: existing 'master' title is overwritten too
 echo ""
@@ -195,7 +196,7 @@ seed_session "master"
 run_sync_on_branch "feature/heal-master"
 rc=$?
 assert_exit "exit 0 heal master" "0" "$rc"
-assert_eq "master title healed" "feature/heal-master" "$(get_title)"
+assert_eq "master title healed with suffix" "feature/heal-master · AIDevOps 9.8.7" "$(get_title)"
 
 # Test 8: explicit rename still works for main (direct rename command is unguarded)
 # The guards apply only to sync-branch (automatic, driven by cwd branch).
@@ -206,7 +207,25 @@ seed_session "New Session"
 OPENCODE_DB="$DB_PATH" "$HELPER" rename "$SESSION_ID" "main" >/dev/null 2>&1
 rc=$?
 assert_exit "exit 0 explicit rename" "0" "$rc"
-assert_eq "explicit rename to main allowed" "main" "$(get_title)"
+assert_eq "explicit rename to main allowed with suffix" "main · AIDevOps 9.8.7" "$(get_title)"
+
+# Test 9: explicit rename is idempotent and replaces older suffix versions
+echo ""
+echo "Test 9: explicit rename replaces existing AIDevOps suffix"
+seed_session "New Session"
+OPENCODE_DB="$DB_PATH" "$HELPER" rename "$SESSION_ID" "Issue #123: concise title · AIDevOps 1.2.3" >/dev/null 2>&1
+rc=$?
+assert_exit "exit 0 explicit suffix replacement" "0" "$rc"
+assert_eq "old suffix replaced" "Issue #123: concise title · AIDevOps 9.8.7" "$(get_title)"
+
+# Test 10: issue prefix remains first for OpenCode session search/grouping
+echo ""
+echo "Test 10: issue prefix remains first after suffix append"
+seed_session "New Session"
+OPENCODE_DB="$DB_PATH" "$HELPER" rename "$SESSION_ID" "Issue #456: preserve prefix" >/dev/null 2>&1
+rc=$?
+assert_exit "exit 0 explicit issue title" "0" "$rc"
+assert_eq "issue prefix preserved before suffix" "Issue #456: preserve prefix · AIDevOps 9.8.7" "$(get_title)"
 
 # -----------------------------------------------------------------------------
 # Summary

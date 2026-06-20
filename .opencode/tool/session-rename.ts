@@ -3,6 +3,7 @@ import { homedir } from "node:os"
 import { join } from "node:path"
 import { tool } from "@opencode-ai/plugin"
 import { isDefaultBranchTitle, isTitleOverwritable } from "../lib/session-rename-guards"
+import { withAidevopsTitleSuffix } from "../lib/session-title-suffix"
 import { emitTerminalTitle } from "../lib/terminal-title"
 
 /**
@@ -26,6 +27,7 @@ function getDbPath(): string {
  */
 function renameSession(sessionID: string, title: string): { success: boolean; message: string } {
   const dbPath = getDbPath()
+  const displayTitle = withAidevopsTitleSuffix(title)
 
   try {
     const db = new Database(dbPath)
@@ -33,14 +35,14 @@ function renameSession(sessionID: string, title: string): { success: boolean; me
       const nowMs = Date.now()
       const result = db.run(
         "UPDATE session SET title = ?, time_updated = ? WHERE id = ?",
-        [title, nowMs, sessionID],
+        [displayTitle, nowMs, sessionID],
       )
 
       if (result.changes === 0) {
         return { success: false, message: `Session ${sessionID} not found in database` }
       }
 
-      return { success: true, message: title }
+      return { success: true, message: displayTitle }
     } finally {
       db.close()
     }
@@ -82,17 +84,18 @@ function syncSessionWithBranch(
         }
       }
 
+      const displayTitle = withAidevopsTitleSuffix(branch)
       const nowMs = Date.now()
       const result = db.run(
         "UPDATE session SET title = ?, time_updated = ? WHERE id = ?",
-        [branch, nowMs, sessionID],
+        [displayTitle, nowMs, sessionID],
       )
 
       if (result.changes === 0) {
         return { outcome: "error", message: `Session ${sessionID} not found in database` }
       }
 
-      return { outcome: "renamed", message: branch }
+      return { outcome: "renamed", message: displayTitle }
     } finally {
       db.close()
     }

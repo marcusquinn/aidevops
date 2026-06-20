@@ -40,6 +40,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 readonly DEFAULT_DB_PATH="${HOME}/.local/share/opencode/opencode.db"
 readonly DEFAULT_LIST_LIMIT=10
+readonly AIDEVOPS_TITLE_SUFFIX_ERE='[[:space:]]+· AIDevOps [0-9]+\.[0-9]+\.[0-9]+$'
 
 # =============================================================================
 # Helpers
@@ -78,6 +79,50 @@ _require_sqlite3() {
 _sql_escape() {
 	local raw_value="$1"
 	printf '%s' "$raw_value" | sed "s/'/''/g"
+	return 0
+}
+
+# Read the currently deployed aidevops version.
+# Output: version on stdout, or empty string if unavailable.
+_get_aidevops_version() {
+	if [[ -n "${AIDEVOPS_VERSION:-}" ]]; then
+		printf '%s' "$AIDEVOPS_VERSION"
+		return 0
+	fi
+
+	local version_file="${SCRIPT_DIR}/../VERSION"
+	if [[ -f "$version_file" ]]; then
+		tr -d '[:space:]' <"$version_file"
+		return 0
+	fi
+
+	version_file="${HOME}/.aidevops/agents/VERSION"
+	if [[ -f "$version_file" ]]; then
+		tr -d '[:space:]' <"$version_file"
+		return 0
+	fi
+
+	return 0
+}
+
+# Append the aidevops version to titles, replacing any older suffix.
+# Arguments:
+#   $1 - raw title
+# Output: title with idempotent suffix when a version is known
+_with_aidevops_title_suffix() {
+	local raw_title="$1"
+	local version
+	version="$(_get_aidevops_version)"
+
+	local base_title
+	base_title="$(printf '%s' "$raw_title" | sed -E "s/${AIDEVOPS_TITLE_SUFFIX_ERE}//")"
+
+	if [[ -z "$version" ]]; then
+		printf '%s' "$base_title"
+		return 0
+	fi
+
+	printf '%s · AIDevOps %s' "$base_title" "$version"
 	return 0
 }
 
@@ -154,8 +199,11 @@ cmd_rename() {
 	local now_ms
 	now_ms="$(date +%s)000"
 
+	local display_title
+	display_title="$(_with_aidevops_title_suffix "$new_title")"
+
 	local escaped_title escaped_session_id
-	escaped_title="$(_sql_escape "$new_title")"
+	escaped_title="$(_sql_escape "$display_title")"
 	escaped_session_id="$(_sql_escape "$session_id")"
 
 	local changes
@@ -168,7 +216,7 @@ cmd_rename() {
 		return 1
 	fi
 
-	print_success "Session renamed to: ${new_title}"
+	print_success "Session renamed to: ${display_title}"
 	return 0
 }
 
