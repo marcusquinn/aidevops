@@ -23,6 +23,9 @@ import { join } from "node:path";
 const { isDefaultBranchTitle, isTitleOverwritable } = await import(
   "../../../.opencode/lib/session-rename-guards.ts"
 );
+const { withAidevopsTitleSuffix } = await import(
+  "../../../.opencode/lib/session-title-suffix.ts"
+);
 const { isTerminalTitleEnabled, sanitizeTerminalTitle, terminalTitleSequence } = await import(
   "../../../.opencode/lib/terminal-title.ts"
 );
@@ -159,6 +162,29 @@ assertEq(
   isTerminalTitleEnabled({ AIDEVOPS_TABBY_ENABLED: "false" }),
 );
 assertEq("terminal title emit defaults to enabled", true, isTerminalTitleEnabled({}));
+
+// --- AIDevOps session title suffix helpers ----------------------------------
+console.log("\nGroup 4: AIDevOps session title suffix helpers");
+assertEq(
+  "suffix is appended",
+  "Issue #123: concise title · AIDevOps 9.8.7",
+  withAidevopsTitleSuffix("Issue #123: concise title", "9.8.7"),
+);
+assertEq(
+  "existing suffix is idempotently replaced",
+  "Issue #123: concise title · AIDevOps 9.8.7",
+  withAidevopsTitleSuffix("Issue #123: concise title · AIDevOps 1.2.3", "9.8.7"),
+);
+assertEq(
+  "issue prefix remains first",
+  "Issue #456: preserve prefix · AIDevOps 9.8.7",
+  withAidevopsTitleSuffix("Issue #456: preserve prefix", "9.8.7"),
+);
+assertEq(
+  "missing version leaves title without stale suffix",
+  "Issue #123: concise title",
+  withAidevopsTitleSuffix("Issue #123: concise title · AIDevOps 1.2.3", ""),
+);
 
 console.log("\n=== Results ===");
 console.log(`PASS: ${pass}`);

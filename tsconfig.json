@@ -8,5 +8,9 @@
     "target": "ES2022",
     "types": ["bun"]
   },
-  "include": [".opencode/lib/session-rename-guards.ts", ".opencode/lib/terminal-title.ts"]
+  "include": [
+    ".opencode/lib/session-rename-guards.ts",
+    ".opencode/lib/session-title-suffix.ts",
+    ".opencode/lib/terminal-title.ts"
+  ]
 }
