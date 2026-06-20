@@ -447,6 +447,7 @@ _open_version_bump_pr() {
 
 	if ! command -v gh_create_pr >/dev/null 2>&1; then
 		log_warn "bump failed ($slug): gh_create_pr unavailable"
+		git -C "$repo_path" checkout -q "$default_branch" >/dev/null 2>&1 || true
 		return 1
 	fi
 
@@ -460,6 +461,7 @@ _open_version_bump_pr() {
 		--head "$branch_name" \
 		--base "$default_branch" 2>&1); then
 		log_warn "bump failed ($slug): gh_create_pr failed: $pr_url"
+		git -C "$repo_path" checkout -q "$default_branch" >/dev/null 2>&1 || true
 		return 1
 	fi
 	log_info "bumped: $slug → v${target_version} via PR $pr_url"
@@ -485,7 +487,7 @@ _push_version_bump_pr() {
 	local entry_version="$5"
 	local target_version="$6"
 
-	if ! git -C "$repo_path" push -u origin "$branch_name" >/dev/null 2>&1; then
+	if ! git -C "$repo_path" push -q -f -u origin "$branch_name"; then
 		log_warn "bump failed ($slug): branch push failed"
 		git -C "$repo_path" checkout -q "$default_branch" >/dev/null 2>&1 || true
 		return 1
@@ -547,7 +549,7 @@ _bump_single_repo() {
 			local ahead_count ahead_files branch_name
 			ahead_count=$(git -C "$repo_path" rev-list --count "origin/${default_branch}..HEAD" 2>/dev/null || echo 0)
 			ahead_files=$(git -C "$repo_path" diff --name-only "origin/${default_branch}..HEAD" 2>/dev/null || true)
-			if [[ "$ahead_count" != "0" && "$ahead_files" == *".aidevops.json"* ]]; then
+			if [[ "$ahead_count" != "0" && "$ahead_files" == ".aidevops.json" ]]; then
 				branch_name=$(_version_bump_branch_name "$slug" "$target_version")
 				if git -C "$repo_path" checkout -q -B "$branch_name" HEAD >/dev/null 2>&1 &&
 					_push_version_bump_pr "$slug" "$repo_path" "$branch_name" "$default_branch" "$entry_version" "$target_version"; then
