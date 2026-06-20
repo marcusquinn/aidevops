@@ -8,11 +8,33 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { createShellEnvHook } from "../shell-env.mjs";
 
 function makeHook() {
   return createShellEnvHook({
     agentsDir: "/tmp/aidevops-agents",
+    scriptsDir: "/tmp/aidevops-scripts",
+    workspaceDir: "/tmp/aidevops-workspace",
+  });
+}
+
+function withTempAgentsDir(fn) {
+  const root = mkdtempSync(join(tmpdir(), "aidevops-shell-env-"));
+  const dir = join(root, "agents");
+  mkdirSync(dir);
+  try {
+    return fn(dir);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function makeHookForAgentsDir(agentsDir) {
+  return createShellEnvHook({
+    agentsDir,
     scriptsDir: "/tmp/aidevops-scripts",
     workspaceDir: "/tmp/aidevops-workspace",
   });
@@ -61,4 +83,18 @@ test("headless OpenCode shell stamps worker origin", async () => {
   await hook({ sessionID: "worker-session" }, output);
 
   assert.equal(output.env.AIDEVOPS_SESSION_ORIGIN, "worker");
+});
+
+test("shell env version prefers deployed agents VERSION over legacy version", async () => {
+  await withTempAgentsDir(async (agentsDir) => {
+    writeFileSync(join(agentsDir, "VERSION"), "3.20.102\n");
+    writeFileSync(join(agentsDir, "..", "version"), "2.44.2\n");
+
+    const hook = makeHookForAgentsDir(agentsDir);
+    const output = { env: { PATH: "/usr/bin:/bin" } };
+
+    await hook({ sessionID: "interactive-session" }, output);
+
+    assert.equal(output.env.AIDEVOPS_VERSION, "3.20.102");
+  });
 });

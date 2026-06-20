@@ -107,8 +107,12 @@ export function createShellEnvHook(deps) {
     output.env.AIDEVOPS_WORKSPACE_DIR = workspaceDir;
     output.env.AIDEVOPS_SESSION_ORIGIN = shellSessionOrigin(output.env);
 
-    // Set aidevops version if available
-    const version = readIfExists(join(agentsDir, "..", "version"));
+    // Set aidevops version if available. Prefer the deployed framework version
+    // source; ~/.aidevops/version is a legacy/stale compatibility fallback.
+    const version =
+      readIfExists(join(agentsDir, "VERSION")) ||
+      readIfExists(join(agentsDir, "..", "VERSION")) ||
+      readIfExists(join(agentsDir, "..", "version"));
     if (version) {
       output.env.AIDEVOPS_VERSION = version;
     }
