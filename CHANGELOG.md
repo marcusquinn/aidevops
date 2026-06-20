@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation: refresh README feature coverage for OpenCode GUI/control-plane planning, mobile simulator testing, self-hosted runner operations, pulse diagnostics, worker observability, and OpenCode runtime polish.
+
 ## [3.21.0] - 2026-06-20
 
 ### Added

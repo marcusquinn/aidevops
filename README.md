@@ -79,6 +79,7 @@ The result: an AI operations platform that manages projects across every busines
 - **Recommended runtime/models**: OpenCode + OpenAI GPT-5.5 / GPT-5.4 mini
 - **Entry**: `aidevops` CLI, `~/.aidevops/agents/AGENTS.md`
 - **Stack**: Bash scripts, TypeScript (Bun), MCP servers
+- **Recent focus**: OpenCode control-plane safety, mobile simulator testing, self-hosted runner operations, and pulse/worker diagnostics
 
 ### Key Commands
 
@@ -93,13 +94,15 @@ The result: an AI operations platform that manages projects across every busines
 - `/auto-browse` - Learn, optimize, and graduate repeatable browser operations and web data-mining workflows
 - `/report-render` - Render report-ready Markdown or JSON to HTML with sticky TOC, print CSS, evidence badges, and source cards for PDF export
 - `/report-token-use` - Generate a local per-session token, model, compaction, and MCP-use report
+- `/pulse` - Run the autonomous supervisor loop for dispatch, merge, diagnostics, and stuck-work recovery
+- `/serve-sim` / `serve-sim-helper.sh` - Exercise mobile web flows in simulator-backed local previews
 
 ### Agent Structure
 
 - 12 primary agents (Build+, Automate, Product, SEO, Marketing-Sales, etc.) with specialist @subagents on demand
-- 2,050+ subagent markdown files organized by domain
-- 1,480+ helper scripts in `.agents/scripts/`
-- 90+ slash commands and workflow guides for common operations
+- 2,200+ agent and subagent markdown files organized by domain
+- 1,800+ helper scripts in `.agents/scripts/`
+- 185+ slash commands and workflow guides for common operations
 
 ### What You Can Ask aidevops To Do
 
@@ -108,6 +111,17 @@ The result: an AI operations platform that manages projects across every busines
 - Plan products, PRDs, onboarding, monetisation, growth, analytics, and UI direction.
 - Operate business, finance, receipts, invoices, marketing, outreach, SEO, content, video, and personal-productivity routines.
 - Discover the right capability with `/skills recommend "TASK"`, `/onboarding`, or the OpenCode agent picker.
+
+### Recent framework upgrades
+
+Since the last README feature refresh, aidevops has added or expanded:
+
+- **OpenCode GUI/control-plane planning**: ADRs, threat model, trust-boundary guidance, and containment rules for a future GUI that stays local-first, auditable, and explicitly separated from secret-bearing helpers (`docs/gui/`).
+- **Mobile and simulator workflows**: app-development guidance, App Store Connect support, Expo/Xcode/Swift workflows, Maestro/minisim/iOS Simulator MCP references, and `serve-sim` mobile web testing support (`.agents/tools/mobile/`).
+- **Self-hosted runner operations**: lifecycle and storage runbooks, Docker foreground-mode guidance, systemd timer freshness triage, and ExecStop race-guard documentation (`.agents/reference/github-self-hosted-runners.md`).
+- **Pulse diagnostics and reliability**: compact API-budget diagnostics, pulse cadence/API diagnostics, GitHub read ramp pacing, configurable worker floors, Renovate dashboard skipping, and more defensive duplicate/blocked-by/rate-limit handling.
+- **Worker and PR observability**: worker diagnostic failure families, runtime observability signals, review-thread response scanning, required-check validation, orphan-recovery base handling, and safer automated GitHub write guards.
+- **OpenCode runtime polish**: versioned session title suffixes, session archive retention, OAuth pool hardening, debug-error preservation, and reusable shell-env version lookup in the OpenCode plugin.
 
 <!-- AI-CONTEXT-END -->
 
@@ -608,11 +622,12 @@ See `.agents/tools/terminal/terminal-title.md` for customization options.
 - **Supervisor** - SQLite state machine dispatches tasks to parallel AI agents with retry cycles, batch management, and cron scheduling
 - **Runners** - Named headless agent instances with persistent identity, instructions, and memory namespaces
 - **`/runners` command** - Batch dispatch from task IDs, PR URLs, or descriptions with concurrency control and progress monitoring
+- **Self-hosted runner operations** - GitHub runner lifecycle, storage, Docker foreground mode, systemd timers, and cleanup race guidance for reliable local/hosted worker capacity
 - **Mailbox** - SQLite-backed inter-agent messaging for coordination across parallel sessions
 - **Worktree isolation** - Each agent works on its own branch in a separate directory, no merge conflicts
 - **Budget tracking** - Append-only cost log (`budget-tracker-helper.sh`) with burn-rate analysis and `/budget-analysis` command for model routing decisions
 - **Observability** - LLM request capture plugin (`observability.mjs`) for cost tracking, performance analysis, and debugging
-- **Rate limits** - Per-provider rate limit configuration (`rate-limits.json`) with throttle-risk warnings
+- **Rate limits and API budget diagnostics** - Per-provider rate-limit configuration, secondary cooldown capture, reset-aware pacing, and compact API budget summaries for pulse and worker decisions
 
 **Project Intelligence:**
 
@@ -622,6 +637,8 @@ See `.agents/tools/terminal/terminal-title.md` for customization options.
 - **Local models** - Run AI models locally via llama.cpp for free, private, offline inference (`local-model-helper.sh`) with HuggingFace GGUF model management
 - **Tech stack lookup** - `/tech-stack` detects technology stacks of URLs or finds sites using specific technologies (Wappalyzer, httpx, nuclei, BuiltWith)
 - **IP reputation** - `ip-reputation-helper.sh` checks IP addresses against multiple reputation databases (Spamhaus, ProxyCheck, AbuseIPDB) before VPS purchase or deployment
+- **Mobile app guidance** - Expo, Swift/Xcode, App Store Connect, simulator automation, push/onboarding/monetisation/testing, and mobile web previews through `serve-sim`
+- **GUI control plane planning** - Local-first product scope, stack and repo-layout ADRs, GUI trust boundaries, and threat model for future aidevops UI surfaces
 
 **Conversational Memory & Entity System:**
 
@@ -819,6 +836,7 @@ The pulse is the heartbeat of aidevops — an autonomous AI supervisor that runs
 | **Advance missions** | Check active multi-day missions, dispatch features, validate milestones, track budget |
 | **Triage quality** | Read daily quality sweep findings (ShellCheck, SonarCloud, Codacy, CodeRabbit), create issues for actionable findings |
 | **Sync TODOs** | Create GitHub issues for unsynced TODO entries, commit ref changes |
+| **Respect API budget** | Use cached/prefetched GitHub metadata, cooldown headers, and ramp pacing before spending more API calls |
 | **Kill stuck workers** | Workers running 3+ hours with no PR are killed to free slots |
 | **Detect orphaned PRs** | Open PRs with no active worker and no activity for 6+ hours are flagged for re-dispatch |
 
@@ -827,6 +845,8 @@ The pulse is the heartbeat of aidevops — an autonomous AI supervisor that runs
 - **Struggle-ratio** — computes `messages / max(1, commits)` for each active worker. High ratio (>30) with >30 min elapsed and zero commits flags the worker as "struggling". Ratio >50 after 1 hour flags "thrashing". Informational signal — the supervisor LLM decides the action (kill, wait, re-dispatch with more context)
 - **Circuit breaker** — prevents cascading failures by tracking success/failure rates and tripping when error rate exceeds threshold
 - **Dynamic concurrency** — worker slot count adapts to available RAM, not a hardcoded constant
+- **API budget diagnostics** — compact reports show GitHub core/search usage, cooldown provenance, cached PR metadata freshness, and pacing decisions before pulse burns through API quota
+- **Worker failure families** — headless runtime errors, local runtime diagnostics, blocked-by lookup gaps, provider quota/credit exhaustion, and review-thread remediation issues are classified for targeted redispatch
 - **Stale assignment recovery** — tasks assigned to workers that died (no active process, no PR, 3+ hours stale) are automatically unassigned and made available for re-dispatch
 - **Priority ordering** — green PRs (free merge) > failing PRs (closer to done) > high-priority/bug issues > active mission features > product repos > smaller tasks > oldest
 
@@ -932,6 +952,7 @@ Run multiple AI sessions concurrently with isolated contexts. Named **runners** 
 |---------|-------------|
 | **Headless dispatch** | `opencode run` for one-shot tasks, `opencode serve` + `--attach` for warm server |
 | **Runners** | Named agent instances with per-runner AGENTS.md, config, and run logs (`runner-helper.sh`) |
+| **Self-hosted runner runbooks** | GitHub runner storage, lifecycle, Docker foreground mode, timer freshness, and cleanup-race guidance (`.agents/reference/github-self-hosted-runners.md`) |
 | **Session management** | Resume sessions with `-s <id>` or `-c`, fork with SDK |
 | **Memory namespaces** | Per-runner memory isolation with shared access when needed |
 | **SDK orchestration** | `@opencode-ai/sdk` for TypeScript parallel dispatch via `Promise.all` |
@@ -1207,6 +1228,13 @@ The setup script offers to install these tools automatically.
 - **[Open Design](https://github.com/nexu-io/open-design)** *Optional peripheral*: Local-first design artifact studio by nexu-io (Apache-2.0) for sandboxed previews, design-skill pickers, `.od/` workspaces, and exports. It installs alongside aidevops only when requested; selected skills are ingested via aidevops build-agent optimisation, not imported verbatim.
 - **Local HTTPS previews**: `localdev-helper.sh` can wrap Open Design or other dev servers with mkcert-backed `.local` routes when tools only expose localhost.
 - **Verification**: `workflows/ui-verification.md`, `email-design-test-helper.sh`, design preview screenshots, and deck/media smoke tests provide evidence before generated artifacts ship.
+
+### **Mobile App & Simulator Testing**
+
+- **Mobile app stack guidance**: Expo, Swift/Xcode, backend, analytics, monetisation, onboarding, notification, publishing, and test strategy references for mobile delivery (`.agents/tools/mobile/`).
+- **Simulator-backed web testing**: `serve-sim` guidance and helpers cover local/mobile preview flows, prompt failure handling, and simulator smoke tests before mobile UI changes ship.
+- **Device and automation options**: agent-device, App Store Connect, Maestro, minisim, iOS Simulator MCP, Xcodebuild MCP, and accessibility tooling references help agents choose the right mobile verification path.
+- **Mobile-first artifact routing**: `/design-artifact` can route mobile mockups and app screens through the design stack, then hand implementation to mobile/testing specialists.
 
 ### **Video Creation**
 
