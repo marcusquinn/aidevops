@@ -94,9 +94,9 @@ EnvironmentFile=/etc/github-runner/<REPO>.env
 Restart=always
 RestartSec=5
 TimeoutStopSec=90
-ExecStartPre=/bin/sh -c 'out=$(/usr/bin/docker rm -f github-runner-dind-%i 2>&1); rc=$?; [ $rc -eq 0 ] || printf "%s\n" "$out" | grep -qE "No such container|No such object"'
+ExecStartPre=/bin/sh -c 'out=$(/usr/bin/docker rm -f github-runner-dind-%i 2>&1); rc=$?; [ $rc -eq 0 ] || printf "%%s\n" "$out" | grep -qE "No such container|No such object"'
 ExecStart=/usr/local/sbin/github-runner-dind-start %i
-ExecStop=/bin/sh -c 'out=$(/usr/bin/docker stop github-runner-dind-%i 2>&1); rc=$?; [ $rc -eq 0 ] || printf "%s\n" "$out" | grep -qE "No such container|No such object"'
+ExecStop=/bin/sh -c 'out=$(/usr/bin/docker stop github-runner-dind-%i 2>&1); rc=$?; [ $rc -eq 0 ] || printf "%%s\n" "$out" | grep -qE "No such container|No such object"'
 
 [Install]
 WantedBy=multi-user.target
