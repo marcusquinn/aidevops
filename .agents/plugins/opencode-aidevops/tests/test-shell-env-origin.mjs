@@ -120,3 +120,35 @@ test("shell env version uses precomputed dependency before filesystem fallbacks"
     assert.equal(output.env.AIDEVOPS_VERSION, "3.21.0");
   });
 });
+
+test("shell env hook tolerates missing dependency object", async () => {
+  await withCleanHeadlessProcessEnv(async () => {
+    const hook = createShellEnvHook();
+    const output = { env: { PATH: "/usr/bin:/bin" } };
+
+    await hook({ sessionID: "interactive-session" }, output);
+
+    assert.equal(output.env.AIDEVOPS_SESSION_ORIGIN, "interactive");
+  });
+});
+
+test("shell env hook without agentsDir does not read VERSION from process cwd", async () => {
+  await withCleanHeadlessProcessEnv(async () => {
+    const root = mkdtempSync(join(tmpdir(), "aidevops-shell-env-cwd-"));
+    const previousCwd = process.cwd();
+    try {
+      writeFileSync(join(root, "VERSION"), "9.9.9-cwd\n");
+      process.chdir(root);
+
+      const hook = createShellEnvHook();
+      const output = { env: { PATH: "/usr/bin:/bin" } };
+
+      await hook({ sessionID: "interactive-session" }, output);
+
+      assert.equal(output.env.AIDEVOPS_VERSION, undefined);
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

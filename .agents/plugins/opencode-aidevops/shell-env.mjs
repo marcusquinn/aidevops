@@ -86,8 +86,8 @@ function shellSessionOrigin(env) {
  * @returns {Function} Shell env hook function
  */
 export function createShellEnvHook(deps) {
-  const { agentsDir, scriptsDir, workspaceDir } = deps;
-  const precomputedVersion = typeof deps.version === "string" ? deps.version.trim() : "";
+  const { agentsDir = "", scriptsDir = "", workspaceDir = "", version } = deps || {};
+  const precomputedVersion = typeof version === "string" ? version.trim() : "";
 
   /**
    * Inject aidevops environment variables into shell sessions.
@@ -110,11 +110,12 @@ export function createShellEnvHook(deps) {
 
     // Set aidevops version if available. Prefer the deployed framework version
     // source; ~/.aidevops/version is a legacy/stale compatibility fallback.
-    const version =
-      precomputedVersion ||
-      readIfExists(join(agentsDir, "VERSION")) ||
-      readIfExists(join(agentsDir, "..", "VERSION")) ||
-      readIfExists(join(agentsDir, "..", "version"));
+    const version = precomputedVersion ||
+      (agentsDir
+        ? readIfExists(join(agentsDir, "VERSION")) ||
+          readIfExists(join(agentsDir, "..", "VERSION")) ||
+          readIfExists(join(agentsDir, "..", "version"))
+        : "");
     if (version) {
       output.env.AIDEVOPS_VERSION = version;
     }
