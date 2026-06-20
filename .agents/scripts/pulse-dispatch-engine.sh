@@ -928,7 +928,7 @@ _dispatch_min_worker_floor_refill() {
 	fi
 	capped_available_slots=$((capped_max_workers - capped_active_workers))
 	local guardrail_line=""
-	guardrail_line=$(_dispatch_apply_current_state_guardrails "$capped_max_workers" "$capped_active_workers" "$capped_available_slots") || guardrail_line="${capped_max_workers} ${capped_active_workers} ${capped_available_slots}"
+	guardrail_line=$(_dispatch_apply_current_state_guardrails "$capped_max_workers" "$capped_active_workers" "$capped_available_slots" "$refill_floor_active") || guardrail_line="${capped_max_workers} ${capped_active_workers} ${capped_available_slots}"
 	read -r capped_max_workers capped_active_workers capped_available_slots <<<"$guardrail_line"
 	[[ "$capped_max_workers" =~ ^[0-9]+$ ]] || capped_max_workers=1
 	[[ "$capped_active_workers" =~ ^[0-9]+$ ]] || capped_active_workers=0

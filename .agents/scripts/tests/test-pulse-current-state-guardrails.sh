@@ -56,6 +56,11 @@ pulse_stats_set_gauge() {
 	return 0
 }
 
+get_max_workers_target() {
+	printf '24\n'
+	return 0
+}
+
 reset_guardrail_env() {
 	: >"$LOGFILE"
 	: >"$AIDEVOPS_HEADLESS_METRICS_FILE"
@@ -73,8 +78,9 @@ reset_guardrail_env() {
 guardrail_slots() {
 	local counts="$1"
 	local available_slots="$2"
+	local floor_active="${3:-0}"
 	export PULSE_DISPATCH_CURRENT_STATE_COUNTS="$counts"
-	_dispatch_apply_current_state_guardrails 24 4 "$available_slots" | awk '{print $3}'
+	_dispatch_apply_current_state_guardrails 24 4 "$available_slots" "$floor_active" | awk '{print $3}'
 	return 0
 }
 
@@ -138,6 +144,18 @@ test_no_dispatchable_evidence_keeps_probe_slot() {
 	return 0
 }
 
+test_no_dispatchable_evidence_preserves_min_floor_slots() {
+	reset_guardrail_env
+	local slots
+	slots=$(guardrail_slots "0 0 0 0 2" 8 1)
+	if [[ "$slots" == "8" ]] && grep -q 'no_dispatchable_floor_bypass' "$LOGFILE"; then
+		print_result "guardrail: no-dispatchable evidence preserves minimum floor slots" 0
+	else
+		print_result "guardrail: no-dispatchable evidence preserves minimum floor slots" 1 "slots=${slots}"
+	fi
+	return 0
+}
+
 test_clean_state_preserves_available_slots() {
 	reset_guardrail_env
 	local slots
@@ -185,6 +203,22 @@ test_pr_target_reason_is_classified_as_benign_block() {
 		print_result "guardrail: PR target classifies as benign block" 0
 	else
 		print_result "guardrail: PR target classifies as benign block" 1 "reason=${reason}"
+	fi
+	return 0
+}
+
+test_deterministic_block_reasons_are_benign() {
+	reset_guardrail_env
+	local reason failures=0
+	for reason in blocked_by_unresolved consolidated footprint_overlap issue_closed no_auto_dispatch parent_task; do
+		if ! _dispatch_candidate_benign_block_reason "$reason"; then
+			failures=$((failures + 1))
+		fi
+	done
+	if [[ "$failures" -eq 0 ]]; then
+		print_result "guardrail: deterministic blocker reasons are benign blocks" 0
+	else
+		print_result "guardrail: deterministic blocker reasons are benign blocks" 1 "failures=${failures}"
 	fi
 	return 0
 }
@@ -400,10 +434,12 @@ test_provider_rate_limits_keep_probe_slot_with_success
 test_repeated_failures_pause_without_success
 test_healthy_pr_backlog_rations_new_launches
 test_no_dispatchable_evidence_keeps_probe_slot
+test_no_dispatchable_evidence_preserves_min_floor_slots
 test_clean_state_preserves_available_slots
 test_disabled_guardrail_still_updates_available_slots_gauge
 test_interactive_hold_reason_is_classified
 test_pr_target_reason_is_classified_as_benign_block
+test_deterministic_block_reasons_are_benign
 test_benign_block_ledger_is_cycle_local_and_cleaned
 test_external_benign_block_ledger_is_preserved_and_refreshed
 test_dispatch_max_exports_benign_ledger_for_direct_callers

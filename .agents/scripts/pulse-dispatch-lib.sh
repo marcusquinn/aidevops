@@ -106,7 +106,7 @@ _dispatch_stats_increment() {
 _dispatch_stats_increment_candidate_failed() {
 	local reason="$1"
 	case "$reason" in
-		cost_budget_exceeded | cooldown_no_worker_process | graphql_circuit_breaker | runner_health_circuit_breaker | ever_nmr_without_approval | blocked_by_native_lookup_unavailable | canary_failed | launch_error | missing_worker_context | local_capacity_gate | policy_gate | no_recent_log_evidence | provider_rate_limit_pressure | repeated_failure_pressure | healthy_pr_backlog | no_dispatchable_evidence | unclassified_signal)
+		blocked_by_native_lookup_unavailable | blocked_by_unresolved | canary_failed | consolidated | cooldown_no_worker_process | cost_budget_exceeded | dedup_active_claim | ever_nmr_without_approval | footprint_overlap | graphql_circuit_breaker | healthy_pr_backlog | interactive_review_hold | issue_closed | launch_error | local_capacity_gate | missing_worker_context | no_auto_dispatch | no_dispatchable_evidence | no_recent_log_evidence | parent_task | policy_gate | pr_target_not_dispatchable | provider_rate_limit_pressure | renovate_dependency_dashboard | repeated_failure_pressure | runner_health_circuit_breaker | unclassified_signal)
 			;;
 		*)
 			reason="unclassified_signal"
@@ -192,7 +192,7 @@ _dispatch_candidate_failure_reason() {
 _dispatch_candidate_benign_block_reason() {
 	local reason="$1"
 	case "$reason" in
-		dedup_active_claim | interactive_review_hold | pr_target_not_dispatchable | renovate_dependency_dashboard)
+		blocked_by_unresolved | consolidated | dedup_active_claim | footprint_overlap | interactive_review_hold | issue_closed | no_auto_dispatch | parent_task | pr_target_not_dispatchable | renovate_dependency_dashboard)
 			return 0
 			;;
 	esac
@@ -827,7 +827,7 @@ _dispatch_compute_capacity() {
 	available_slots=$((max_workers - active_workers))
 
 	local guardrail_line=""
-	guardrail_line=$(_dispatch_apply_current_state_guardrails "$max_workers" "$active_workers" "$available_slots") || guardrail_line="${max_workers} ${active_workers} ${available_slots}"
+	guardrail_line=$(_dispatch_apply_current_state_guardrails "$max_workers" "$active_workers" "$available_slots" "$_DISPATCH_MIN_WORKER_FLOOR_ACTIVE") || guardrail_line="${max_workers} ${active_workers} ${available_slots}"
 	read -r max_workers active_workers available_slots <<<"$guardrail_line"
 	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
 	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
