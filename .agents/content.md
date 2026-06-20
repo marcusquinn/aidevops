@@ -55,6 +55,7 @@ Content agent. Domain: blog, video, social, newsletters, podcasts, short-form, A
 
 - **Architecture**: Diamond pipeline -- Research -> Story -> Production fan-out -> Humanise -> Distribution fan-out
 - **Multiplier**: One researched story -> 10+ outputs across media types and channels
+- **PR handoff**: `pr.md` owns earned-media judgment, journalist lists, and pitch critique. Content turns approved PR angles into owned-channel assets after PR validates newsworthiness and standing.
 
 ```text
                     Research

@@ -21,11 +21,11 @@
 #   2. AGENTS.md has pointers to extracted reference files
 #   3. AGENTS.md Domain Index section has pointer to reference/domain-index.md
 #   4. reference/domain-index.md exists and has >=30 domain rows with trigger words
-#   5. All 11 primary agent files exist and are non-empty
+#   5. All 12 primary agent files exist and are non-empty
 #   6. Capabilities section retains key capability entries
 #   7. Self-Improvement section has pointer to reference/self-improvement.md
 #   8. Agent Routing section has pointer to reference/agent-routing.md
-#   9. subagent-index.toon TOON block counts are valid (>=11 agents, >=60 subagents)
+#   9. subagent-index.toon TOON block counts are valid (>=12 agents, >=60 subagents)
 #  10. Prompt-to-hook migration registry is discoverable
 #  11. Critical scripts for self-improvement workflow are executable
 #
@@ -176,7 +176,7 @@ fi
 # ─── Test 5: Primary agent @mention files ─────────────────────────────────────
 echo ""
 echo "=== 5. Primary Agent @Mention Files ==="
-# 11 primary agents: marketing-sales consolidates marketing+sales; content covers video/social; business covers accounts.
+# 12 primary agents: marketing-sales consolidates marketing+sales; content covers video/social; business covers accounts; PR covers earned media.
 AGENT_FILES=(
 	"aidevops.md"
 	"build-plus.md"
@@ -186,6 +186,7 @@ AGENT_FILES=(
 	"health.md"
 	"legal.md"
 	"marketing-sales.md"
+	"pr.md"
 	"product.md"
 	"research.md"
 	"seo.md"
@@ -251,13 +252,13 @@ if [[ ! -f "$TOON_FILE" ]]; then
 	log_fail "subagent-index.toon not found"
 else
 	# Extract declared count from TOON block header using sed (macOS-compatible)
-	# Format: <!--TOON:agents[11]{...}:
-	# 11 primary agents: marketing-sales consolidates marketing+sales; content covers video/social; business covers accounts.
+	# Format: <!--TOON:agents[12]{...}:
+	# 12 primary agents: marketing-sales consolidates marketing+sales; content covers video/social; business covers accounts; PR covers earned media.
 	AGENTS_COUNT=$(sed -n 's/.*<!--TOON:agents\[\([0-9]*\)\].*/\1/p' "$TOON_FILE" | head -1)
-	if [[ -n "$AGENTS_COUNT" && "$AGENTS_COUNT" -ge 11 ]]; then
-		log_ok "subagent-index.toon: agents block declares ${AGENTS_COUNT} agents (expected >=11)"
+	if [[ -n "$AGENTS_COUNT" && "$AGENTS_COUNT" -ge 12 ]]; then
+		log_ok "subagent-index.toon: agents block declares ${AGENTS_COUNT} agents (expected >=12)"
 	elif [[ -n "$AGENTS_COUNT" ]]; then
-		log_fail "subagent-index.toon: agents block declares only ${AGENTS_COUNT} agents (expected >=11)"
+		log_fail "subagent-index.toon: agents block declares only ${AGENTS_COUNT} agents (expected >=12)"
 	else
 		log_fail "subagent-index.toon: could not parse agents block count"
 	fi
