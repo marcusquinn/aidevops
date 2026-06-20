@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.20.106] - 2026-06-20
+
+### Fixed
+
+- reduce session title suffix complexity (#25249)
+
 ## [3.20.105] - 2026-06-20
 
 ### Changed
