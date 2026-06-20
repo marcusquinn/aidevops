@@ -94,7 +94,8 @@ npx expo prebuild        # Generate native projects
 2. `agent-device` — AI-driven interaction testing
 3. `maestro` — repeatable E2E test flows
 4. `ios-simulator-mcp` — screenshots and verification
-5. `playwright-emulation` — web-based mobile layout testing
+5. `serve-sim` — browser-visible iOS/iPad simulator stream at `/.sim` or localhost
+6. `playwright-emulation` — web-based mobile layout testing
 
 ## Related
 

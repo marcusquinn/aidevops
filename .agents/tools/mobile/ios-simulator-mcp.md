@@ -95,6 +95,7 @@ Post-implementation validation prompts:
 | **XcodeBuildMCP** | Build the app | Build with XcodeBuildMCP, then `install_app` + `launch_app` via this MCP |
 | **Maestro** | E2E test flows | Maestro for scripted repeatable flows; this MCP for ad-hoc AI-driven QA |
 | **MiniSim** | Simulator launcher | MiniSim manages simulator lifecycle; this MCP interacts with running sims |
+| **serve-sim** | Browser preview/control | serve-sim streams the same booted Apple Simulator to browser/preview surfaces |
 
 ## Comparison: ios-simulator-mcp vs AXe CLI
 
@@ -122,3 +123,4 @@ Post-implementation validation prompts:
 - `tools/mobile/xcodebuild-mcp.md` - Build iOS/macOS apps (build then install via this MCP)
 - `tools/mobile/maestro.md` - Scripted E2E mobile testing flows
 - `tools/mobile/axe-cli.md` - iOS simulator accessibility automation
+- `tools/mobile/serve-sim.md` - Apple Simulator browser stream/control

@@ -45,6 +45,7 @@ Use `--json` flag for structured output. Use `--session <name>` for multi-device
 | **agent-device** | AI-driven mobile app interaction and testing (CLI, both platforms) |
 | `xcodebuild-mcp` | Building, testing, deploying iOS/macOS apps (MCP, Xcode-focused) |
 | `ios-simulator-mcp` | iOS simulator interaction via MCP protocol (MCP, iOS only) |
+| `serve-sim` | Browser-visible Apple Simulator streaming/control and camera injection |
 | `maestro` | Human-authored YAML E2E test flows (declarative, both platforms) |
 | `minisim` | Quick simulator/emulator launching from menu bar (GUI) |
 
