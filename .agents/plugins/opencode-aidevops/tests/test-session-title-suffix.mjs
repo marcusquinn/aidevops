@@ -12,22 +12,22 @@ import {
   withAidevopsTitleSuffix,
 } from "../session-title-suffix.mjs";
 
-function withTempAgentsDir(fn) {
+async function withTempAgentsDir(fn) {
   const root = mkdtempSync(join(tmpdir(), "aidevops-title-suffix-"));
   const dir = join(root, "agents");
   mkdirSync(dir);
   try {
-    return fn(dir);
+    return await fn(dir);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 }
 
-function withoutEnvVersion(fn) {
+async function withoutEnvVersion(fn) {
   const saved = process.env.AIDEVOPS_VERSION;
   try {
     delete process.env.AIDEVOPS_VERSION;
-    return fn();
+    return await fn();
   } finally {
     if (saved === undefined) delete process.env.AIDEVOPS_VERSION;
     else process.env.AIDEVOPS_VERSION = saved;
@@ -45,8 +45,8 @@ test("title suffix appends and replaces idempotently", () => {
   );
 });
 
-test("version reader prefers deployed agents VERSION", () => {
-  withoutEnvVersion(() =>
+test("version reader prefers deployed agents VERSION", async () => {
+  await withoutEnvVersion(() =>
     withTempAgentsDir((agentsDir) => {
       writeFileSync(join(agentsDir, "VERSION"), "3.20.102\n");
       writeFileSync(join(agentsDir, "..", "version"), "2.44.2\n");
