@@ -36,7 +36,7 @@ import { compactingHook } from "./compaction.mjs";
 import { INTENT_FIELD } from "./intent-tracing.mjs";
 import { createGreetingHandler } from "./greeting.mjs";
 import { applyImageSizeGuard } from "./quality-hooks-image.mjs";
-import { applyTitleAgentSuffix, createSessionTitleSuffixHandler } from "./session-title-suffix.mjs";
+import { createSessionTitleSuffixHandler } from "./session-title-suffix.mjs";
 
 // Existing modules
 import { createTools } from "./tools.mjs";
@@ -221,7 +221,7 @@ export async function AidevopsPlugin({ directory, client }) {
   const {
     systemTransformHook: ttsrSystemTransformHook,
     messagesTransformHook: ttsrMessagesTransformHook,
-    textCompleteHook: ttsrTextCompleteHook,
+    textCompleteHook,
   } = createTtsrHooks({
     agentsDir: AGENTS_DIR,
     scriptsDir: SCRIPTS_DIR,
@@ -279,14 +279,6 @@ export async function AidevopsPlugin({ directory, client }) {
     }
   };
 
-  // Compose post-completion hooks. OpenCode's built-in hidden `title` agent
-  // generates the initial prompt-digestion session title outside aidevops-owned
-  // rename tools, so append the version suffix at the text completion boundary.
-  const textCompleteHook = async (input, output) => {
-    await ttsrTextCompleteHook(input, output);
-    applyTitleAgentSuffix(input, output, AGENTS_DIR);
-  };
-
   // Greeting handler (t2724) — emits session-start framework status as
   // TUI toasts via client.tui.showToast(). Fires once per plugin init on
   // the first session.created event. See greeting.mjs for classification
@@ -299,6 +291,12 @@ export async function AidevopsPlugin({ directory, client }) {
     agentsDir: AGENTS_DIR,
     client,
   });
+
+  const debugEventError = (label, err) => {
+    if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
+      console.error(`[aidevops] ${label} error: ${err.message}`);
+    }
+  };
 
   return {
     // Config: agent index, MCP registration, OAuth pool injection
@@ -331,16 +329,8 @@ export async function AidevopsPlugin({ directory, client }) {
       // Fire both in parallel — neither depends on the other's result.
       await Promise.all([
         handleEvent(input),
-        sessionTitleSuffixHandler(input).catch((err) => {
-          if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
-            console.error(`[aidevops] title suffix handler error: ${err.message}`);
-          }
-        }),
-        greetingHandler(input).catch((err) => {
-          if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
-            console.error(`[aidevops] greeting handler error: ${err.message}`);
-          }
-        }),
+        sessionTitleSuffixHandler(input).catch((err) => debugEventError("title suffix handler", err)),
+        greetingHandler(input).catch((err) => debugEventError("greeting handler", err)),
       ]);
     },
 

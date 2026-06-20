@@ -38,28 +38,6 @@ export function withAidevopsTitleSuffix(title, version) {
   return `${baseTitle} · AIDevOps ${version}`;
 }
 
-function getAgentName(input) {
-  const candidates = [
-    input?.agent,
-    input?.agentID,
-    input?.agent_id,
-    input?.agent?.id,
-    input?.agent?.name,
-  ];
-  return candidates.find((value) => typeof value === "string" && value.trim()) || "";
-}
-
-export function isTitleAgentCompletion(input) {
-  return getAgentName(input) === "title";
-}
-
-export function applyTitleAgentSuffix(input, output, agentsDir) {
-  if (!output?.text || !isTitleAgentCompletion(input)) return;
-
-  const version = readAidevopsVersion(agentsDir);
-  output.text = withAidevopsTitleSuffix(output.text, version);
-}
-
 function getEventInfo(input) {
   return input?.event?.properties?.info || input?.properties?.info || input?.info || null;
 }
@@ -68,38 +46,49 @@ function getEventSessionId(input, info) {
   return input?.event?.properties?.sessionID || input?.properties?.sessionID || input?.sessionID || info?.id || "";
 }
 
+function getSessionUpdate(input) {
+  const eventType = input?.event?.type || input?.type || "";
+  const info = getEventInfo(input);
+  return {
+    eventType,
+    info,
+    sessionID: getEventSessionId(input, info),
+    title: info?.title || "",
+  };
+}
+
+async function updateSessionTitle(client, sessionID, title) {
+  try {
+    await client.session.update({
+      path: { id: sessionID },
+      body: { title },
+    });
+  } catch (err) {
+    if (!client?.session?.update) throw err;
+    await client.session.update({
+      path: { sessionID },
+      body: { title },
+    });
+  }
+}
+
 export function createSessionTitleSuffixHandler({ agentsDir, client }) {
   const inFlight = new Set();
 
   return async function sessionTitleSuffixHandler(input) {
-    const eventType = input?.event?.type || input?.type || "";
+    const { eventType, sessionID, title } = getSessionUpdate(input);
     if (eventType !== "session.updated") return;
-
-    const info = getEventInfo(input);
-    const title = info?.title || "";
     if (!title) return;
 
     const version = readAidevopsVersion(agentsDir);
     const suffixedTitle = withAidevopsTitleSuffix(title, version);
     if (suffixedTitle === title) return;
 
-    const sessionID = getEventSessionId(input, info);
     if (!sessionID || inFlight.has(sessionID)) return;
 
     inFlight.add(sessionID);
     try {
-      try {
-        await client.session.update({
-          path: { id: sessionID },
-          body: { title: suffixedTitle },
-        });
-      } catch (err) {
-        if (!client?.session?.update) throw err;
-        await client.session.update({
-          path: { sessionID },
-          body: { title: suffixedTitle },
-        });
-      }
+      await updateSessionTitle(client, sessionID, suffixedTitle);
     } finally {
       inFlight.delete(sessionID);
     }
