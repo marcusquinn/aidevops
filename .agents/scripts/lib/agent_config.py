@@ -23,6 +23,7 @@ from discovery_utils import parse_frontmatter
 # If not in this map, derive from filename (e.g., build-agent.md -> Build-Agent)
 DISPLAY_NAMES = {
     "build-plus": "Build+",
+    "pr": "PR",
     "seo": "SEO",
     "social-media": "Social-Media",
 }
