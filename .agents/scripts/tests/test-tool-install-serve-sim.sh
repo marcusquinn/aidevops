@@ -82,6 +82,30 @@ source_extracted() {
 	return 0
 }
 
+source_extracted_with_prompt_failure() {
+	print_info() { printf 'INFO: %s\n' "$*"; return 0; }
+	print_success() { printf 'OK: %s\n' "$*"; return 0; }
+	print_warning() { printf 'WARN: %s\n' "$*"; return 0; }
+	setup_prompt() {
+		return 1
+	}
+	run_with_spinner() {
+		local label="$1"
+		shift
+		: "$label"
+		"$@"
+		return $?
+	}
+	npm_global_install() {
+		local package_name="$1"
+		printf '%s\n' "$package_name" >>"$SANDBOX/install.log"
+		return 0
+	}
+	# shellcheck disable=SC1090
+	source "$SANDBOX/extract.sh"
+	return 0
+}
+
 run_setup_with_env() {
 	local arch="$1"
 	local node_version="$2"
@@ -100,6 +124,24 @@ run_setup_with_env() {
 
 	(
 		PATH="$bin_dir:/usr/bin:/bin" source_extracted
+		PATH="$bin_dir:/usr/bin:/bin" setup_serve_sim
+	) >"$SANDBOX/out.log" 2>&1
+	printf '%s\n' "$(wc -l <"$SANDBOX/install.log" | tr -d ' ')"
+	return 0
+}
+
+run_setup_with_prompt_failure() {
+	local bin_dir="$SANDBOX/bin-prompt-failure"
+	mkdir -p "$bin_dir"
+	: >"$SANDBOX/install.log"
+
+	write_shim "$bin_dir/uname" "case \"\${1:-}\" in -s) printf '%s\\n' Darwin ;; -m) printf '%s\\n' arm64 ;; *) printf '%s\\n' Darwin ;; esac"
+	write_shim "$bin_dir/xcrun" "[[ \"\${1:-}\" == simctl && \"\${2:-}\" == list && \"\${3:-}\" == devices ]] && exit 0; exit 0"
+	write_shim "$bin_dir/node" "[[ \"\${1:-}\" == --version ]] && { printf '%s\\n' 'v20.0.0'; exit 0; }; exit 0"
+	write_shim "$bin_dir/npm" "exit 0"
+
+	(
+		PATH="$bin_dir:/usr/bin:/bin" source_extracted_with_prompt_failure
 		PATH="$bin_dir:/usr/bin:/bin" setup_serve_sim
 	) >"$SANDBOX/out.log" 2>&1
 	printf '%s\n' "$(wc -l <"$SANDBOX/install.log" | tr -d ' ')"
@@ -125,6 +167,7 @@ assert_eq "Supported arm64 host prompts/install path" "1" "$(run_setup_with_env 
 assert_eq "Existing serve-sim suppresses install" "0" "$(run_setup_with_env arm64 v20.0.0 yes)"
 assert_eq "Intel Mac skips install" "0" "$(run_setup_with_env x86_64 v20.0.0 no)"
 assert_eq "Old Node skips install" "0" "$(run_setup_with_env arm64 v16.20.0 no)"
+assert_eq "Prompt failure skips serve-sim install without set -u error" "0" "$(run_setup_with_prompt_failure)"
 
 if [[ "$FAIL" -gt 0 ]]; then
 	printf 'FAIL: %s serve-sim setup checks failed\n' "$FAIL" >&2
