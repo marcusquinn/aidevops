@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.21.6] - 2026-06-21
+
+### Changed
+
+- GUI testing and CI/CD strategy (#25298)
+
+### Fixed
+
+- avoid default title suffix race (#25297)
+
 ## [3.21.5] - 2026-06-21
 
 ### Changed
