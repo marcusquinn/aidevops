@@ -7,9 +7,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
-  applyTitleAgentSuffix,
   createSessionTitleSuffixHandler,
-  isTitleAgentCompletion,
   readAidevopsVersion,
   withAidevopsTitleSuffix,
 } from "../session-title-suffix.mjs";
@@ -56,38 +54,6 @@ test("version reader prefers deployed agents VERSION", () => {
       assert.equal(readAidevopsVersion(agentsDir), "3.20.102");
     }),
   );
-});
-
-test("title agent completion gets version suffix", () => {
-  withoutEnvVersion(() =>
-    withTempAgentsDir((agentsDir) => {
-      writeFileSync(join(agentsDir, "VERSION"), "3.20.102\n");
-      const output = { text: "Check live title capability" };
-
-      applyTitleAgentSuffix({ agent: "title" }, output, agentsDir);
-
-      assert.equal(output.text, "Check live title capability · AIDevOps 3.20.102");
-    }),
-  );
-});
-
-test("non-title completions are untouched", () => {
-  withTempAgentsDir((agentsDir) => {
-    writeFileSync(join(agentsDir, "VERSION"), "3.20.102\n");
-    const output = { text: "Normal assistant output" };
-
-    applyTitleAgentSuffix({ agent: "build" }, output, agentsDir);
-
-    assert.equal(output.text, "Normal assistant output");
-  });
-});
-
-test("title agent detection accepts known hook shapes", () => {
-  assert.equal(isTitleAgentCompletion({ agent: "title" }), true);
-  assert.equal(isTitleAgentCompletion({ agentID: "title" }), true);
-  assert.equal(isTitleAgentCompletion({ agent: { id: "title" } }), true);
-  assert.equal(isTitleAgentCompletion({ agent: { name: "title" } }), true);
-  assert.equal(isTitleAgentCompletion({ agent: "build" }), false);
 });
 
 test("session.updated handler appends suffix through OpenCode session update API", async () => {
