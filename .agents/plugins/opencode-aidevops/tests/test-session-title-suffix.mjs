@@ -39,6 +39,10 @@ async function withoutEnvVersion(fn) {
   }
 }
 
+function waitForTimer(ms = 5) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 test("title suffix appends and replaces idempotently", () => {
   assert.equal(
     withAidevopsTitleSuffix("Investigate title path", "3.20.102"),
@@ -223,7 +227,7 @@ test("message part fallback replaces stuck New session title", async () => {
       writeFileSync(join(agentsDir, "VERSION"), "3.21.2\n");
       const calls = [];
       const client = { session: { update: async (payload) => calls.push(payload) } };
-      const handler = createSessionTitleFallbackHandler({ agentsDir, client });
+      const handler = createSessionTitleFallbackHandler({ agentsDir, client, fallbackDelayMs: 1 });
 
       await handler({
         event: {
@@ -257,6 +261,7 @@ test("message part fallback replaces stuck New session title", async () => {
           },
         },
       });
+      await waitForTimer();
 
       assert.deepEqual(calls.at(-1), {
         path: { id: "ses_test" },
@@ -264,6 +269,46 @@ test("message part fallback replaces stuck New session title", async () => {
       });
     }),
   );
+});
+
+test("message part fallback waits for native title generation before replacing default title", async () => {
+  await withTempAgentsDir(async (agentsDir) => {
+    writeFileSync(join(agentsDir, "VERSION"), "3.21.6\n");
+    const calls = [];
+    const client = { session: { update: async (payload) => calls.push(payload) } };
+    const handler = createSessionTitleFallbackHandler({ agentsDir, client, fallbackDelayMs: 5 });
+
+    await handler({
+      event: {
+        type: "session.updated",
+        properties: { sessionID: "ses_test", info: { id: "ses_test", title: "New session - 2026-06-20T23:27:52.727Z" } },
+      },
+    });
+    await handler({
+      event: {
+        type: "message.updated",
+        properties: { sessionID: "ses_test", info: { id: "msg_user", sessionID: "ses_test", role: "user" } },
+      },
+    });
+    await handler({
+      event: {
+        type: "message.part.updated",
+        properties: {
+          sessionID: "ses_test",
+          part: { sessionID: "ses_test", messageID: "msg_user", type: "text", text: "please check pulse and workers" },
+        },
+      },
+    });
+    await handler({
+      event: {
+        type: "session.updated",
+        properties: { sessionID: "ses_test", info: { id: "ses_test", title: "Worker status check" } },
+      },
+    });
+    await waitForTimer(10);
+
+    assert.deepEqual(calls, []);
+  });
 });
 
 test("message part fallback preserves meaningful session title", async () => {
