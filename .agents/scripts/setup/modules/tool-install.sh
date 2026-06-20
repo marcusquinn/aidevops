@@ -1344,7 +1344,7 @@ setup_serve_sim() {
 	print_info "serve-sim streams booted Apple Simulators to a browser for agent/user review"
 	printf '%s\n' "  Features:"
 	printf '%s\n' "    - Browser preview at http://localhost:3200"
-	printf '%s\n' "    - MJPEG stream + WebSocket control channel"
+	printf '%s\n' "    - H.264/MJPEG stream with codec fallback + WebSocket control channel"
 	printf '%s\n' "    - Gestures, hardware buttons, typing, rotation, memory warnings"
 	printf '%s\n' "    - Camera feed injection for simulator apps"
 	printf '%s\n' ""
