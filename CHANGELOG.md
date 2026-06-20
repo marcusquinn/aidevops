@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.21.3] - 2026-06-20
+
+### Added
+
+- add public relations agent (#25290)
+
+### Fixed
+
+- fallback session title from first prompt (#25289)
+
 ## [3.21.2] - 2026-06-20
 
 ### Changed
