@@ -5,15 +5,25 @@
 
 Session origin: interactive OpenCode planning session on 2026-06-20.
 
-Purpose: preserve the current product intent and provide worker-ready phase and
-issue drafts for building the aidevops GUI/control plane over time. This file is
-the staging plan before actual GitHub parent/child issues are created.
+Purpose: preserve the current product intent, live issue graph, and
+worker-ready phase briefs for building the aidevops GUI/control plane over time.
 
 Canonical product memory: `docs/gui/control-plane.md`.
 
+## Current live issue graph
+
+- Parent: `t3607` / GH#25229.
+- Completed first-wave ADRs: `t3608` / GH#25230 via PR #25236 and `t3609` /
+  GH#25231 via PR #25237.
+- Open first-wave children: `t3610` / GH#25232, `t3611` / GH#25233, and
+  `t17995` / GH#25234.
+- Native sub-issue links are established from GH#25229 to GH#25230-GH#25234.
+- Native blockers are synced: `t3611` is blocked by `t3608`, `t3609`, and
+  `t3610`; `t17995` is blocked by `t3608` and `t3609`.
+
 ## Filing workflow
 
-When ready to create live issues:
+When creating or extending live issues:
 
 1. Use aidevops issue/TODO wrappers, not raw `gh issue create`.
 2. File the top-level program issue as `parent-task` and `tier:thinking`.
@@ -95,16 +105,16 @@ phases:
 
 ## Dependency graph
 
-Use live GitHub issue numbers once filed.
+Live first-wave graph:
 
 ```text
-PROGRAM-PARENT
-├── P1 Product, stack, and repo-layout ADR
-├── P2 Security threat model and trust-boundary ADR
-├── P3 Data model and infrastructure graph ADR
+GH#25229 / t3607
+├── P1 Product, stack, and repo-layout ADR (done: GH#25230 / t3608)
+├── P2 Security threat model and trust-boundary ADR (done: GH#25231 / t3609)
+├── P3 Data model and infrastructure graph ADR (open: GH#25232 / t3610)
 │   └── P14 Multi-machine pairing and scoped task capsules (also blocked by P2)
-├── P4 Helper/API contract for existing aidevops surfaces
-├── P17 GUI testing and CI/CD strategy
+├── P4 Helper/API contract for existing aidevops surfaces (open: GH#25233 / t3611)
+├── P17 GUI testing and CI/CD strategy (open: GH#25234 / t17995)
 │   └── P5 Local read-only API and dashboard scaffold
 │       ├── P6 Setup/status dashboard
 │       ├── P7 Repos/Git source-of-truth dashboard
@@ -133,6 +143,8 @@ Recommended blockers:
 ## Phase issue briefs
 
 ### P1: Product, stack, and repo-layout ADR
+
+Status: complete via PR #25236.
 
 Labels: `tier:thinking,documentation,architecture,product,dashboard,auto-dispatch`.
 
@@ -176,6 +188,8 @@ Acceptance criteria:
 
 ### P2: Security threat model and trust-boundary ADR
 
+Status: complete via PR #25237.
+
 Labels: `tier:thinking,security,architecture,dashboard,auto-dispatch`.
 
 Blocked by: none.
@@ -218,7 +232,8 @@ Acceptance criteria:
 
 Labels: `tier:thinking,architecture,infrastructure,database,dashboard,auto-dispatch`.
 
-Blocked by: P1 draft recommended, but can start from `docs/gui/control-plane.md`.
+Blocked by: none; P1 is complete and should be read before changing stack or
+layout assumptions.
 
 Files to modify:
 
@@ -259,7 +274,8 @@ Acceptance criteria:
 
 Labels: `tier:standard,api,setup,dashboard,auto-dispatch`.
 
-Blocked by: P1, P2, P3 preferred.
+Blocked by: P3 for native dependency tracking; P1 and P2 are complete and remain
+required reading.
 
 Files to modify:
 
