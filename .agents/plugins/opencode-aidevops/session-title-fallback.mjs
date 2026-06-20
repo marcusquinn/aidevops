@@ -7,6 +7,7 @@ const AIDEVOPS_TITLE_SUFFIX_RE = /\s+· AIDevOps \d+\.\d+\.\d+$/;
 const DEFAULT_SESSION_TITLE_RE = /^New session - /;
 const URL_RE = /https?:\/\/\S+/g;
 const TITLE_MAX_LENGTH = 72;
+const FALLBACK_DELAY_MS = 12000;
 
 export function isDefaultSessionTitle(title) {
   const baseTitle = String(title || "").replace(AIDEVOPS_TITLE_SUFFIX_RE, "").trim();
@@ -97,6 +98,22 @@ function rememberTitle(input, sessionTitles) {
   sessionTitles.set(getSessionId(input, info), info.title);
 }
 
+function clearPendingFallback(sessionID, pendingFallbacks) {
+  const pending = pendingFallbacks.get(sessionID);
+  if (!pending) return;
+  clearTimeout(pending);
+  pendingFallbacks.delete(sessionID);
+}
+
+function clearFallbackWhenTitleIsMeaningful(input, sessionTitles, pendingFallbacks, fallbackDone) {
+  const info = getInfo(input);
+  const sessionID = getSessionId(input, info);
+  const currentTitle = sessionTitles.get(sessionID) || "";
+  if (!sessionID || isDefaultSessionTitle(currentTitle)) return;
+  clearPendingFallback(sessionID, pendingFallbacks);
+  fallbackDone.add(sessionID);
+}
+
 function rememberUserMessage(input, userMessagesBySession) {
   const info = getInfo(input);
   const sessionID = getSessionId(input, info);
@@ -116,23 +133,41 @@ function shouldApplyFallback(input, sessionTitles, userMessagesBySession, fallba
   return isDefaultSessionTitle(currentTitle);
 }
 
-export function createSessionTitleFallbackHandler({ agentsDir, client }) {
+async function applyFallbackTitle(deps, sessionID, prompt) {
+  const currentTitle = deps.sessionTitles.get(sessionID) || "";
+  if (!isDefaultSessionTitle(currentTitle)) return;
+  const version = readAidevopsVersion(deps.agentsDir);
+  const title = withAidevopsTitleSuffix(deriveFallbackTitleFromPrompt(prompt), version);
+  await updateSessionTitle(deps.client, sessionID, title);
+  deps.sessionTitles.set(sessionID, title);
+  deps.fallbackDone.add(sessionID);
+}
+
+function scheduleFallback(input, deps) {
+  const part = getPart(input);
+  const sessionID = part.sessionID || getSessionId(input, null);
+  clearPendingFallback(sessionID, deps.pendingFallbacks);
+  const timer = setTimeout(() => {
+    deps.pendingFallbacks.delete(sessionID);
+    applyFallbackTitle(deps, sessionID, part.text).catch(() => {});
+  }, deps.fallbackDelayMs);
+  timer.unref?.();
+  deps.pendingFallbacks.set(sessionID, timer);
+}
+
+export function createSessionTitleFallbackHandler({ agentsDir, client, fallbackDelayMs = FALLBACK_DELAY_MS }) {
   const sessionTitles = new Map();
   const userMessagesBySession = new Map();
   const fallbackDone = new Set();
+  const pendingFallbacks = new Map();
 
   return async function sessionTitleFallbackHandler(input) {
     if (typeof client?.session?.update !== "function") return;
     rememberTitle(input, sessionTitles);
+    clearFallbackWhenTitleIsMeaningful(input, sessionTitles, pendingFallbacks, fallbackDone);
     rememberUserMessage(input, userMessagesBySession);
     if (!shouldApplyFallback(input, sessionTitles, userMessagesBySession, fallbackDone)) return;
 
-    const part = getPart(input);
-    const sessionID = part.sessionID || getSessionId(input, null);
-    const version = readAidevopsVersion(agentsDir);
-    const title = withAidevopsTitleSuffix(deriveFallbackTitleFromPrompt(part.text), version);
-    await updateSessionTitle(client, sessionID, title);
-    sessionTitles.set(sessionID, title);
-    fallbackDone.add(sessionID);
+    scheduleFallback(input, { agentsDir, client, fallbackDelayMs, fallbackDone, pendingFallbacks, sessionTitles });
   };
 }
