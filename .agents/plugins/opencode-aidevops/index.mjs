@@ -36,7 +36,7 @@ import { compactingHook } from "./compaction.mjs";
 import { INTENT_FIELD } from "./intent-tracing.mjs";
 import { createGreetingHandler } from "./greeting.mjs";
 import { applyImageSizeGuard } from "./quality-hooks-image.mjs";
-import { applyTitleAgentSuffix } from "./session-title-suffix.mjs";
+import { applyTitleAgentSuffix, createSessionTitleSuffixHandler } from "./session-title-suffix.mjs";
 
 // Existing modules
 import { createTools } from "./tools.mjs";
@@ -295,6 +295,10 @@ export async function AidevopsPlugin({ directory, client }) {
     scriptsDir: SCRIPTS_DIR,
     client,
   });
+  const sessionTitleSuffixHandler = createSessionTitleSuffixHandler({
+    agentsDir: AGENTS_DIR,
+    client,
+  });
 
   return {
     // Config: agent index, MCP registration, OAuth pool injection
@@ -327,6 +331,11 @@ export async function AidevopsPlugin({ directory, client }) {
       // Fire both in parallel — neither depends on the other's result.
       await Promise.all([
         handleEvent(input),
+        sessionTitleSuffixHandler(input).catch((err) => {
+          if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
+            console.error(`[aidevops] title suffix handler error: ${err.message}`);
+          }
+        }),
         greetingHandler(input).catch((err) => {
           if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
             console.error(`[aidevops] greeting handler error: ${err.message}`);

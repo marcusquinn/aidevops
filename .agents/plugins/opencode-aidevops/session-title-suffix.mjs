@@ -18,8 +18,6 @@ function readIfExists(filepath) {
 }
 
 export function readAidevopsVersion(agentsDir) {
-  if (process.env.AIDEVOPS_VERSION) return process.env.AIDEVOPS_VERSION.trim();
-
   const candidates = [
     join(agentsDir, "VERSION"),
     join(agentsDir, "..", "VERSION"),
@@ -60,4 +58,50 @@ export function applyTitleAgentSuffix(input, output, agentsDir) {
 
   const version = readAidevopsVersion(agentsDir);
   output.text = withAidevopsTitleSuffix(output.text, version);
+}
+
+function getEventInfo(input) {
+  return input?.event?.properties?.info || input?.properties?.info || input?.info || null;
+}
+
+function getEventSessionId(input, info) {
+  return input?.event?.properties?.sessionID || input?.properties?.sessionID || input?.sessionID || info?.id || "";
+}
+
+export function createSessionTitleSuffixHandler({ agentsDir, client }) {
+  const inFlight = new Set();
+
+  return async function sessionTitleSuffixHandler(input) {
+    const eventType = input?.event?.type || input?.type || "";
+    if (eventType !== "session.updated") return;
+
+    const info = getEventInfo(input);
+    const title = info?.title || "";
+    if (!title) return;
+
+    const version = readAidevopsVersion(agentsDir);
+    const suffixedTitle = withAidevopsTitleSuffix(title, version);
+    if (suffixedTitle === title) return;
+
+    const sessionID = getEventSessionId(input, info);
+    if (!sessionID || inFlight.has(sessionID)) return;
+
+    inFlight.add(sessionID);
+    try {
+      try {
+        await client.session.update({
+          path: { id: sessionID },
+          body: { title: suffixedTitle },
+        });
+      } catch (err) {
+        if (!client?.session?.update) throw err;
+        await client.session.update({
+          path: { sessionID },
+          body: { title: suffixedTitle },
+        });
+      }
+    } finally {
+      inFlight.delete(sessionID);
+    }
+  };
 }
