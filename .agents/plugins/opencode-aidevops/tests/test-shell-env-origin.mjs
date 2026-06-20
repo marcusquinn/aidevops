@@ -152,3 +152,24 @@ test("shell env hook without agentsDir does not read VERSION from process cwd", 
     }
   });
 });
+
+test("shell env hook with blank agentsDir does not read VERSION from process cwd", async () => {
+  await withCleanHeadlessProcessEnv(async () => {
+    const root = mkdtempSync(join(tmpdir(), "aidevops-shell-env-blank-cwd-"));
+    const previousCwd = process.cwd();
+    try {
+      writeFileSync(join(root, "VERSION"), "9.9.9-cwd\n");
+      process.chdir(root);
+
+      const hook = makeHookForAgentsDir("   ");
+      const output = { env: { PATH: "/usr/bin:/bin" } };
+
+      await hook({ sessionID: "interactive-session" }, output);
+
+      assert.equal(output.env.AIDEVOPS_VERSION, undefined);
+    } finally {
+      process.chdir(previousCwd);
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
