@@ -1369,6 +1369,12 @@ setup_serve_sim() {
 	return 0
 }
 
+setup_mobile_simulator_tools() {
+	setup_minisim
+	setup_serve_sim
+	return 0
+}
+
 setup_claudebar_needs_upgrade() {
 	local installed_version="$1"
 	local target_version="$2"

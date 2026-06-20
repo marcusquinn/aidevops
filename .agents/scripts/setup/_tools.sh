@@ -58,6 +58,12 @@ setup_serve_sim() {
 	return 0
 }
 
+# Setup mobile simulator tools (MiniSim and serve-sim)
+setup_mobile_simulator_tools() {
+	:
+	return 0
+}
+
 # Setup browser tools (Playwright, Puppeteer, etc.)
 setup_browser_tools() {
 	# TODO: Extract from setup.sh lines 4527-4647
