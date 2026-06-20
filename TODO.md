@@ -4261,3 +4261,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 
 - [ ] t3605 OneTrade leadership material ref:GH#24931
+
+- [ ] t3606 Show AIDevOps version in OpenCode session titles #bug #type:enhancement ref:GH#25227
