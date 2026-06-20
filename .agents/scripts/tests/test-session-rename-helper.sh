@@ -14,6 +14,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
 HELPER="${SCRIPT_DIR}/../session-rename-helper.sh"
 export AIDEVOPS_VERSION="9.8.7"
+ROOT_VERSION="$(tr -d '[:space:]' <"${SCRIPT_DIR}/../../../VERSION")"
 
 PASS=0
 FAIL=0
@@ -226,6 +227,15 @@ OPENCODE_DB="$DB_PATH" "$HELPER" rename "$SESSION_ID" "Issue #456: preserve pref
 rc=$?
 assert_exit "exit 0 explicit issue title" "0" "$rc"
 assert_eq "issue prefix preserved before suffix" "Issue #456: preserve prefix · AIDevOps 9.8.7" "$(get_title)"
+
+# Test 11: version fallback reads the repository root VERSION
+echo ""
+echo "Test 11: repo-root VERSION fallback works"
+seed_session "New Session"
+env -u AIDEVOPS_VERSION OPENCODE_DB="$DB_PATH" "$HELPER" rename "$SESSION_ID" "Issue #789: root version" >/dev/null 2>&1
+rc=$?
+assert_exit "exit 0 root version fallback" "0" "$rc"
+assert_eq "root VERSION suffix used" "Issue #789: root version · AIDevOps ${ROOT_VERSION}" "$(get_title)"
 
 # -----------------------------------------------------------------------------
 # Summary
