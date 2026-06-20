@@ -23,7 +23,7 @@ import { join } from "node:path";
 const { isDefaultBranchTitle, isTitleOverwritable } = await import(
   "../../../.opencode/lib/session-rename-guards.ts"
 );
-const { withAidevopsTitleSuffix } = await import(
+const { getAidevopsVersion, withAidevopsTitleSuffix } = await import(
   "../../../.opencode/lib/session-title-suffix.ts"
 );
 const { isTerminalTitleEnabled, sanitizeTerminalTitle, terminalTitleSequence } = await import(
@@ -185,6 +185,9 @@ assertEq(
   "Issue #123: concise title",
   withAidevopsTitleSuffix("Issue #123: concise title · AIDevOps 1.2.3", ""),
 );
+process.env.AIDEVOPS_VERSION = "7.6.5";
+assertEq("env version override is read", "7.6.5", getAidevopsVersion());
+delete process.env.AIDEVOPS_VERSION;
 
 console.log("\n=== Results ===");
 console.log(`PASS: ${pass}`);

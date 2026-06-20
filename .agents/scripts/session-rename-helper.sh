@@ -38,7 +38,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 # Constants
 # =============================================================================
 
-readonly DEFAULT_DB_PATH="${HOME}/.local/share/opencode/opencode.db"
+readonly DEFAULT_DB_PATH="${HOME:-}/.local/share/opencode/opencode.db"
 readonly DEFAULT_LIST_LIMIT=10
 readonly AIDEVOPS_TITLE_SUFFIX_ERE='[[:space:]]+· AIDevOps [0-9]+\.[0-9]+\.[0-9]+$'
 
@@ -90,13 +90,24 @@ _get_aidevops_version() {
 		return 0
 	fi
 
-	local version_file="${SCRIPT_DIR}/../VERSION"
+	local version_file="${SCRIPT_DIR}/../../VERSION"
 	if [[ -f "$version_file" ]]; then
 		tr -d '[:space:]' <"$version_file"
 		return 0
 	fi
 
-	version_file="${HOME}/.aidevops/agents/VERSION"
+	version_file="${SCRIPT_DIR}/../VERSION"
+	if [[ -f "$version_file" ]]; then
+		tr -d '[:space:]' <"$version_file"
+		return 0
+	fi
+
+	local home_dir="${HOME:-}"
+	if [[ -z "$home_dir" ]]; then
+		return 0
+	fi
+
+	version_file="${home_dir}/.aidevops/agents/VERSION"
 	if [[ -f "$version_file" ]]; then
 		tr -d '[:space:]' <"$version_file"
 		return 0

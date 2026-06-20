@@ -5,8 +5,12 @@ import { fileURLToPath } from "node:url"
 const AIDEVOPS_TITLE_SUFFIX_RE = /\s+· AIDevOps \d+\.\d+\.\d+$/
 
 function readVersionFile(path: string): string {
-  if (!existsSync(path)) return ""
-  return readFileSync(path, "utf8").trim()
+  try {
+    if (!existsSync(path)) return ""
+    return readFileSync(path, "utf8").trim()
+  } catch {
+    return ""
+  }
 }
 
 export function getAidevopsVersion(): string {
