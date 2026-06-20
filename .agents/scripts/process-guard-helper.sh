@@ -406,7 +406,7 @@ cmd_kill_runaways() {
 			local process_class killed_at
 			process_class='other'
 			case "$cmd_base" in
-			shel[l]check) process_class='lint' ;;
+			shellcheck) process_class='lint' ;;
 			node)
 				if [[ $cmd_full == *playwright* && $cmd_full == *--list* ]]; then
 					process_class='playwright-list'
