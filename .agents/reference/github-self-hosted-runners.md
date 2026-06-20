@@ -98,7 +98,7 @@ RestartSec=5
 TimeoutStopSec=90
 ExecStartPre=/bin/sh -c 'if /usr/bin/docker inspect github-runner-dind-%i >/dev/null 2>&1; then echo "Refusing to start: container github-runner-dind-%i already exists" >&2; exit 1; fi'
 ExecStart=/usr/local/sbin/github-runner-dind-start %i
-ExecStop=/bin/sh -c '/usr/bin/docker inspect github-runner-dind-%i >/dev/null 2>&1 || exit 0; exec /usr/bin/docker stop github-runner-dind-%i'
+ExecStop=/bin/sh -c 'out=$(/usr/bin/docker stop github-runner-dind-%i 2>&1); rc=$?; [ $rc -eq 0 ] || { printf "%s\n" "$out" | grep -qE "No such container|No such object" || { printf "%s\n" "$out" >&2; exit $rc; }; }'
 
 [Install]
 WantedBy=multi-user.target
@@ -115,8 +115,9 @@ the actual container start via `ExecStart`.
 
 `ExecStop` intentionally treats a missing container as success. Ephemeral runner
 containers are started with `docker run --rm`, so a completed job can remove the
-container before systemd runs `ExecStop`. Real `docker stop` errors still surface
-when the container exists.
+container before or during `ExecStop`. Run `docker stop` directly instead of
+checking first, then ignore only Docker's missing-container/object errors so
+other stop failures still surface.
 
 The launch script should end by replacing the shell with a foreground Docker
 client, for example `exec docker run ...` without `-d` or `--detach`, rather
