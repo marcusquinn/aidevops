@@ -86,8 +86,8 @@ function shellSessionOrigin(env) {
  * @returns {Function} Shell env hook function
  */
 export function createShellEnvHook(deps) {
-  const { agentsDir, scriptsDir, workspaceDir } = deps;
-  const precomputedVersion = typeof deps.version === "string" ? deps.version.trim() : "";
+  const { agentsDir = "", scriptsDir = "", workspaceDir = "", version } = deps || {};
+  const precomputedVersion = typeof version === "string" ? version.trim() : "";
 
   /**
    * Inject aidevops environment variables into shell sessions.

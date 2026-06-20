@@ -120,3 +120,14 @@ test("shell env version uses precomputed dependency before filesystem fallbacks"
     assert.equal(output.env.AIDEVOPS_VERSION, "3.21.0");
   });
 });
+
+test("shell env hook tolerates missing dependency object", async () => {
+  await withCleanHeadlessProcessEnv(async () => {
+    const hook = createShellEnvHook();
+    const output = { env: { PATH: "/usr/bin:/bin" } };
+
+    await hook({ sessionID: "interactive-session" }, output);
+
+    assert.equal(output.env.AIDEVOPS_SESSION_ORIGIN, "interactive");
+  });
+});
