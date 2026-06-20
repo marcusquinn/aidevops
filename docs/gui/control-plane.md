@@ -360,6 +360,9 @@ the GUI will introduce TypeScript workspace packages, web builds, Cloudron
 packaging, and eventually desktop release artifacts that should not run on every
 shell-only framework change.
 
+The scaffold verification contract, path-scoped CI policy, and later Cloudron
+and desktop release gates are defined in `docs/gui/testing-ci-cd.md`.
+
 ## Source-of-truth map
 
 | Domain | Source of truth | GUI role |
