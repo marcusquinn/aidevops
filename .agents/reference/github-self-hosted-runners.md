@@ -25,7 +25,7 @@ framework documentation does not expose private deployment identifiers.
 | Runner image | `<OWNER>/github-runner:<TAG>` |
 | Runner profiles | small, medium, large |
 | Container isolation mode | `--privileged` |
-| Docker storage driver inside runner | `vfs` |
+| Docker storage driver inside runner | `overlay2` preferred; `vfs` only as a temporary fallback |
 | Environment file | `/etc/github-runner/<REPO>.env` |
 
 The runner containers are started by systemd, run with Docker-in-Docker support,
@@ -70,7 +70,7 @@ GitHub Actions job
   -> repository self-hosted runner registration
   -> systemd github-runner-dind@N.service
   -> privileged runner container
-  -> inner dockerd using the vfs storage driver
+  -> inner dockerd using the overlay2 storage driver
   -> job checkout, build, test, and container operations
 ```
 
@@ -105,6 +105,11 @@ WantedBy=multi-user.target
 Keep real environment values out of documentation, issue comments, and PRs. The
 environment file should contain only server-local configuration and secrets such
 as repository URL, runner labels, and runner registration credentials.
+
+The launch script should end by replacing the shell with Docker, for example
+`exec docker run ...`, rather than starting Docker as a child or background
+process. This lets systemd deliver stop signals to the Docker client directly and
+reduces the risk of orphaned runner containers or later container-name conflicts.
 
 ## Health checks
 
@@ -165,9 +170,11 @@ sudo systemctl enable --now github-runner-dind@7.service github-runner-dind@8.se
 sudo systemctl disable --now github-runner-dind@9.service
 ```
 
-Change per-runner CPU or memory in `/usr/local/sbin/github-runner-dind-start`,
-then restart instances gradually. Canary one instance before rotating the whole
-pool when CI is active.
+Change per-runner CPU, memory, or inner Docker storage-driver settings in
+`/usr/local/sbin/github-runner-dind-start`, then restart instances gradually.
+Canary one instance before rotating the whole pool when CI is active. Prefer
+`overlay2` for the inner daemon; treat `vfs` as a short-term fallback because it
+does not use copy-on-write and can consume disk quickly.
 
 Stop one runner before maintenance:
 
@@ -217,7 +224,7 @@ Do not rotate all runners at once unless the current pool is already broken.
 | Runner offline in GitHub | `systemctl status github-runner-dind@N.service` | Restart the affected service and verify registration credentials. |
 | Service restarts repeatedly | `systemctl show ... NRestarts ExecMainStatus` | Check image entrypoint, registration token freshness, and network access. |
 | Docker commands fail inside workflow | Container process list for inner `dockerd` | Confirm the runner container is privileged and inner Docker daemon started. |
-| Builds are slow or disk-heavy | Inner Docker storage driver and job cache usage | `vfs` is simple but space-intensive; clean stale job artifacts and review image layers. |
+| Builds are slow or disk-heavy | Inner Docker storage driver and job cache usage | Confirm `overlay2` is active for the inner daemon; migrate off `vfs`, then clean stale job artifacts and review image layers. |
 | Container name conflict | `docker ps -a --filter name=github-runner-dind-N` | The unit already removes stale containers before start; restart the service. |
 
 ## Repair checklist
