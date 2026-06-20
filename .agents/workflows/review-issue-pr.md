@@ -75,6 +75,7 @@ Verify the issue's cited symptoms actually match the codebase's behaviour. A rev
 - **"Z is broken"** → check if Z is invoked at all — the cited path may be dead code, or the function may return early before reaching it.
 - **"A locks/unlocks repeatedly"** → grep for the specific events — the observed "churn" may be a different mechanism entirely (e.g., the user may mean "cycles repeatedly" but frame it as "lock/unlock").
 - **Producer/consumer mismatch** → when one helper writes state and another validates it, test the full chain. A validator-only fixture can pass while the writer still emits data the validator rejects (e.g., `sync-workflows` output later flagged by `check-workflows`).
+- **Security/setup advisory suppression** → identify the actual credential principal and require positive-path evidence before approving suppression. Known hazard: `SYNC_PAT` authenticates as the maintainer/admin PAT owner; `bypass_pull_request_allowances` only describes the classic `github-actions[bot]`/app bypass list. A missing or empty bypass list is not enough to prove the `SYNC_PAT` advisory is a false positive.
 
 If the framing doesn't match reality, the review documents the mismatch before proposing changes. "The cited symptom doesn't reproduce, but here's what's actually happening" is more useful than reviewing a fix for a non-existent problem.
 
@@ -157,6 +158,13 @@ aidevops has several safety gates. Every non-trivial change must be mapped again
 | **Origin labels** (`origin:interactive` / `origin:worker`) | Session provenance | Does this change behaviour based on provenance in a way that could be spoofed? |
 
 If the change touches any gate, the review must call it out explicitly. "Does not touch any gate" is a valid answer — but the question must be asked.
+
+For security or setup-advisory suppression proposals, require reproduction against
+the fully configured positive path before approval. Identify the credential
+principal being tested, the repo protection mechanism, and the bypass semantics
+that apply to that principal. For `SYNC_PAT`, require evidence that a correctly
+scoped admin/maintainer PAT cannot bypass the repo's actual protection settings;
+do not accept missing/empty `bypass_pull_request_allowances` as sufficient proof.
 
 #### 6.3 Symptom vs root cause
 

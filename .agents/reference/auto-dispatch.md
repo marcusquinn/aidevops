@@ -66,7 +66,7 @@ Full active lifecycle recognised: `status:queued`, `status:in-progress`, `status
 
 ## Issue-Sync TODO Auto-Completion (t2029 → t2166)
 
-`issue-sync.yml` auto-marks TODO entries complete on PR merge but cannot push to `main` without a `SYNC_PAT` — branch protection rejects `github-actions[bot]` pushes (`required_approving_review_count: 1`, no bypass on personal-account plans — `bypass_pull_request_allowances` returns HTTP 500, re-verified 2026-04-13).
+`issue-sync.yml` auto-marks TODO entries complete on PR merge but cannot push to `main` without a `SYNC_PAT` — branch protection rejects `github-actions[bot]` pushes (`required_approving_review_count: 1`). On personal-account classic protection, `bypass_pull_request_allowances` returning HTTP 500 describes the unsupported `github-actions[bot]` bypass-list path; it does not prove a fine-grained admin/maintainer PAT cannot help, because `SYNC_PAT` changes the authenticated push principal.
 
 **To enable auto-sync** (run in a separate terminal, NOT in AI chat):
 
