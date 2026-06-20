@@ -4268,10 +4268,10 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3608 GUI ADR: product scope, stack, and repo layout #architecture #auto-dispatch #dashboard #documentation #product ref:GH#25230 pr:#25236 completed:2026-06-20
 
-- [ ] t3611 GUI contract: helper/API boundary for existing aidevops surfaces #api #auto-dispatch #bug #dashboard #setup ref:GH#25233
+- [ ] t3611 GUI contract: helper/API boundary for existing aidevops surfaces #api #auto-dispatch #dashboard #setup blocked-by:t3608,t3609,t3610 ref:GH#25233
 
-- [ ] t3610 GUI ADR: data model and infrastructure graph #architecture #auto-dispatch #bug #dashboard #database #infrastructure ref:GH#25232
+- [ ] t3610 GUI ADR: data model and infrastructure graph #architecture #auto-dispatch #dashboard #database #infrastructure ref:GH#25232
 
 - [x] t3609 GUI ADR: security threat model and trust boundaries #architecture #auto-dispatch #dashboard #security ref:GH#25231 pr:#25237 completed:2026-06-20
 
-- [ ] t17995 GUI testing and CI/CD strategy #architecture #auto-dispatch #bug #ci #dashboard #testing ref:GH#25234
+- [ ] t17995 GUI testing and CI/CD strategy #architecture #auto-dispatch #ci #dashboard #testing blocked-by:t3608,t3609 ref:GH#25234
