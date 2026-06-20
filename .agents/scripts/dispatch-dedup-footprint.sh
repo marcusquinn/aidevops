@@ -98,7 +98,9 @@ _footprint_extract_paths() {
 # "In-flight" = issue has an active status label (status:in-progress,
 # status:in-review, status:claimed) which indicates a worker is currently
 # processing it. Issues with status:queued are not yet dispatched and
-# don't count.
+# don't count. Parent-task issues are coordination containers, not worker
+# implementation claims, so their broad planning footprints do not block
+# worker-ready child dispatch.
 #
 # Returns a newline-separated list of "file|issue_number" pairs.
 # Uses a TTL-based cache to avoid repeated API calls within a pulse cycle.
@@ -140,15 +142,15 @@ _footprint_get_inflight() {
 
 	# Launch all 3 queries in parallel
 	(gh issue list --repo "$repo_slug" --label "status:in-progress" --state open \
-		--json number,body --limit 50 2>/dev/null || echo "[]") >"${_fp_tmpdir}/in-progress.json" &
+		--json number,body,labels --limit 50 2>/dev/null || echo "[]") >"${_fp_tmpdir}/in-progress.json" &
 	local _fp_pid1=$!
 
 	(gh issue list --repo "$repo_slug" --label "status:in-review" --state open \
-		--json number,body --limit 50 2>/dev/null || echo "[]") >"${_fp_tmpdir}/in-review.json" &
+		--json number,body,labels --limit 50 2>/dev/null || echo "[]") >"${_fp_tmpdir}/in-review.json" &
 	local _fp_pid2=$!
 
 	(gh issue list --repo "$repo_slug" --label "status:claimed" --state open \
-		--json number,body --limit 50 2>/dev/null || echo "[]") >"${_fp_tmpdir}/claimed.json" &
+		--json number,body,labels --limit 50 2>/dev/null || echo "[]") >"${_fp_tmpdir}/claimed.json" &
 	local _fp_pid3=$!
 
 	# Wait for all to complete
@@ -176,9 +178,14 @@ _footprint_get_inflight() {
 	local cache_data=""
 	local i=0
 	while [[ "$i" -lt "$issue_count" ]]; do
-		local num body paths
+		local num body is_parent_task paths
 		num=$(printf '%s' "$all_inflight" | jq -r ".[$i].number // empty" 2>/dev/null)
 		body=$(printf '%s' "$all_inflight" | jq -r ".[$i].body // empty" 2>/dev/null)
+		is_parent_task=$(printf '%s' "$all_inflight" | jq -r ".[$i] | any((.labels // [])[]?; .name == \"parent-task\")" 2>/dev/null) || is_parent_task="false"
+		if [[ "$is_parent_task" == "true" ]]; then
+			i=$((i + 1))
+			continue
+		fi
 
 		if [[ -n "$num" && -n "$body" ]]; then
 			paths=$(_footprint_extract_paths "$body")

@@ -197,6 +197,47 @@ else
 fi
 
 # =============================================================================
+# Test 9 — _footprint_get_inflight excludes parent-task coordination footprints
+# =============================================================================
+TEST_BIN="${TEST_ROOT}/bin"
+mkdir -p "$TEST_BIN"
+cat >"${TEST_BIN}/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+label=""
+while [[ "$#" -gt 0 ]]; do
+	case "${1:-}" in
+		--label)
+			shift
+			label="${1:-}"
+			;;
+	esac
+	shift || true
+done
+
+if [[ "$label" == "status:in-review" ]]; then
+	printf '%s\n' '[{"number":400,"body":"## Files to Modify\n- `EDIT: docs/gui/control-plane.md`","labels":[{"name":"status:in-review"},{"name":"parent-task"}]},{"number":401,"body":"## Files to Modify\n- `EDIT: .agents/scripts/pulse-wrapper.sh`","labels":[{"name":"status:in-review"}]}]'
+else
+	printf '[]\n'
+fi
+MOCK_GH
+chmod +x "${TEST_BIN}/gh"
+
+OLD_PATH="$PATH"
+PATH="${TEST_BIN}:$PATH"
+_FOOTPRINT_CACHE_REPO=""
+_FOOTPRINT_CACHE_DATA=""
+_FOOTPRINT_CACHE_EPOCH=0
+
+result=$(_footprint_get_inflight "test/repo" "999")
+PATH="$OLD_PATH"
+if printf '%s' "$result" | grep -q "pulse-wrapper.sh|401" &&
+	! printf '%s' "$result" | grep -q "docs/gui/control-plane.md|400"; then
+	print_result "get_inflight: excludes parent-task coordination footprints" 0
+else
+	print_result "get_inflight: excludes parent-task coordination footprints" 1 "(got: ${result})"
+fi
+
+# =============================================================================
 # Summary
 # =============================================================================
 echo ""
