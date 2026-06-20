@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import {
   applyTitleAgentSuffix,
+  createSessionTitleSuffixHandler,
   isTitleAgentCompletion,
   readAidevopsVersion,
   withAidevopsTitleSuffix,
@@ -87,4 +88,95 @@ test("title agent detection accepts known hook shapes", () => {
   assert.equal(isTitleAgentCompletion({ agent: { id: "title" } }), true);
   assert.equal(isTitleAgentCompletion({ agent: { name: "title" } }), true);
   assert.equal(isTitleAgentCompletion({ agent: "build" }), false);
+});
+
+test("session.updated handler appends suffix through OpenCode session update API", async () => {
+  await withoutEnvVersion(() =>
+    withTempAgentsDir(async (agentsDir) => {
+      writeFileSync(join(agentsDir, "VERSION"), "3.20.103\n");
+      const calls = [];
+      const client = {
+        session: {
+          update: async (payload) => {
+            calls.push(payload);
+            return { data: {} };
+          },
+        },
+      };
+
+      const handler = createSessionTitleSuffixHandler({ agentsDir, client });
+      await handler({
+        event: {
+          type: "session.updated",
+          properties: {
+            sessionID: "ses_test",
+            info: { id: "ses_test", title: "Work on live title fix" },
+          },
+        },
+      });
+
+      assert.deepEqual(calls, [
+        {
+          path: { id: "ses_test" },
+          body: { title: "Work on live title fix · AIDevOps 3.20.103" },
+        },
+      ]);
+    }),
+  );
+});
+
+test("session.updated handler is idempotent when suffix already exists", async () => {
+  await withTempAgentsDir(async (agentsDir) => {
+    writeFileSync(join(agentsDir, "VERSION"), "3.20.103\n");
+    const calls = [];
+    const client = { session: { update: async (payload) => calls.push(payload) } };
+    const handler = createSessionTitleSuffixHandler({ agentsDir, client });
+
+    await handler({
+      event: {
+        type: "session.updated",
+        properties: {
+          sessionID: "ses_test",
+          info: { id: "ses_test", title: "Work · AIDevOps 3.20.103" },
+        },
+      },
+    });
+
+    assert.deepEqual(calls, []);
+  });
+});
+
+test("session.updated handler falls back to sessionID path shape", async () => {
+  await withoutEnvVersion(() =>
+    withTempAgentsDir(async (agentsDir) => {
+      writeFileSync(join(agentsDir, "VERSION"), "3.20.103\n");
+      const calls = [];
+      const client = {
+        session: {
+          update: async (payload) => {
+            calls.push(payload);
+            if (calls.length === 1) throw new Error("wrong path shape");
+            return { data: {} };
+          },
+        },
+      };
+      const handler = createSessionTitleSuffixHandler({ agentsDir, client });
+
+      await handler({
+        event: {
+          type: "session.updated",
+          properties: {
+            sessionID: "ses_test",
+            info: { id: "ses_test", title: "Fallback path" },
+          },
+        },
+      });
+
+      assert.equal(calls.length, 2);
+      assert.deepEqual(calls[1], {
+        path: { sessionID: "ses_test" },
+        body: { title: "Fallback path · AIDevOps 3.20.103" },
+      });
+    }),
+  );
 });
