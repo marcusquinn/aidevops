@@ -19,37 +19,39 @@ framework documentation does not expose private deployment identifiers.
 | Item | Value |
 |------|-------|
 | Service template | `/etc/systemd/system/github-runner-dind@.service` |
-| Service instances | `github-runner-dind@1.service` through `github-runner-dind@12.service` |
-| Container names | `github-runner-dind-1` through `github-runner-dind-12` |
+| Service instances | `github-runner-dind@1.service` through `github-runner-dind@8.service` enabled; higher numbers disabled unless deliberately scaling |
+| Container names | `github-runner-dind-1` through `github-runner-dind-8` |
 | Target repository | `<OWNER>/<REPO>` |
 | Runner image | `<OWNER>/github-runner:<TAG>` |
-| Runner profiles | small, medium, large |
+| Runner capacity | 8 large-capacity runners, each 4 CPU / 12 GiB |
 | Container isolation mode | `--privileged` |
 | Docker storage driver inside runner | `overlay2` preferred; `vfs` only as a temporary fallback |
 | Environment file | `/etc/github-runner/<REPO>.env` |
 
-The runner containers are started by systemd, run with Docker-in-Docker support,
-and are removed before each start with `docker rm -f github-runner-dind-%i`.
-Completed ephemeral jobs are replaced after the `RestartSec=5` delay.
+The runner containers are started by systemd and run with Docker-in-Docker
+support. A container with the target name must not exist before `ExecStart`; an
+existing container is a state conflict and should fail the start instead of being
+removed implicitly. Completed ephemeral jobs are replaced after the
+`RestartSec=5` delay.
 
-## Runner profiles
+## Runner capacity and labels
 
-The launch script assigns profiles by service instance number:
+The launch script supports the enabled service instance numbers only:
 
-| Profile | Instances | CPU | Memory | Extra labels | Intended jobs |
-|---------|-----------|-----|--------|--------------|---------------|
-| small | `1`-`6` | 2 | 4 GiB | `small` | lint, docs, formatting, small unit tests |
-| medium | `7`-`10` | 3 | 8 GiB | `medium` | application tests, builds, integration tests |
-| large | `11`-`12` | 4 | 12 GiB | `large`, `docker` | Docker-heavy builds, browser/e2e, service stacks |
+| Instances | CPU | Memory | Runner label | Intended jobs |
+|-----------|-----|--------|--------------|---------------|
+| `1`-`8` | 4 | 12 GiB | `large` | repository CI, Docker-heavy builds, browser/e2e, service stacks |
 
-Workflow jobs should target the smallest profile that satisfies the job:
+Repository workflows should not depend on capacity-profile labels. Target the
+stable capability labels instead:
 
 ```yaml
-runs-on: [self-hosted, linux, small]
+runs-on: [self-hosted, Linux, X64, dind]
 ```
 
-Use `medium` or `large` only when the job has measured CPU, memory, or Docker
-needs that justify the larger slot.
+The live runners may still carry a `large` label for operator visibility, but CI
+should not require it. This keeps scheduling independent from future pool sizing
+changes.
 
 ## Files and responsibility boundaries
 
@@ -94,9 +96,9 @@ EnvironmentFile=/etc/github-runner/<REPO>.env
 Restart=always
 RestartSec=5
 TimeoutStopSec=90
-ExecStartPre=/bin/sh -c 'out=$(/usr/bin/docker rm -f github-runner-dind-%i 2>&1); rc=$?; [ $rc -eq 0 ] || printf "%s\n" "$out" | grep -qE "No such container|No such object"'
+ExecStartPre=/bin/sh -c 'if /usr/bin/docker inspect github-runner-dind-%i >/dev/null 2>&1; then echo "Refusing to start: container github-runner-dind-%i already exists" >&2; exit 1; fi'
 ExecStart=/usr/local/sbin/github-runner-dind-start %i
-ExecStop=/bin/sh -c 'out=$(/usr/bin/docker stop github-runner-dind-%i 2>&1); rc=$?; [ $rc -eq 0 ] || printf "%s\n" "$out" | grep -qE "No such container|No such object"'
+ExecStop=/bin/sh -c '/usr/bin/docker inspect github-runner-dind-%i >/dev/null 2>&1 || exit 0; exec /usr/bin/docker stop github-runner-dind-%i'
 
 [Install]
 WantedBy=multi-user.target
@@ -106,12 +108,15 @@ Keep real environment values out of documentation, issue comments, and PRs. The
 environment file should contain only server-local configuration and secrets such
 as repository URL, runner labels, and runner registration credentials.
 
-The `ExecStartPre` and `ExecStop` commands intentionally treat a missing
-container as success. Ephemeral runner containers are started with
-`docker run --rm`, so a completed job can remove the container before systemd
-runs `ExecStop`. Running `docker rm -f` or `docker stop` directly and filtering
-only the expected missing-container errors avoids a time-of-check/time-of-use
-race while still letting real Docker errors surface.
+`ExecStartPre` is an invariant check, not cleanup. A runner container with the
+target name should not exist before `ExecStart`; if it does, startup should fail
+so the operator investigates the conflicting state. The launch script performs
+the actual container start via `ExecStart`.
+
+`ExecStop` intentionally treats a missing container as success. Ephemeral runner
+containers are started with `docker run --rm`, so a completed job can remove the
+container before systemd runs `ExecStop`. Real `docker stop` errors still surface
+when the container exists.
 
 The launch script should end by replacing the shell with a foreground Docker
 client, for example `exec docker run ...` without `-d` or `--detach`, rather
@@ -132,7 +137,7 @@ systemctl show 'github-runner-dind@1.service' --property=Id,Description,ActiveSt
 Expected healthy state:
 
 - `docker.service` is `active/running`.
-- `github-runner-dind@1.service` through `github-runner-dind@12.service` are
+- `github-runner-dind@1.service` through `github-runner-dind@8.service` are
   loaded and running or restarting after an ephemeral job exit.
 - `docker ps` shows one `github-runner-dind-N` container for each active service.
 - GitHub shows the self-hosted runners online for the target repository.
@@ -149,13 +154,11 @@ docker inspect github-runner-dind-1 \
   --format '{{.Name}} CPUs={{.HostConfig.NanoCpus}} Memory={{.HostConfig.Memory}} Privileged={{.HostConfig.Privileged}}'
 ```
 
-Expected resource values by profile:
+Expected resource values for the enabled runner pool:
 
-| Profile | CPU inspect value | Memory inspect value |
-|---------|-------------------|----------------------|
-| small | `CPUs=2000000000` | `Memory=4294967296` |
-| medium | `CPUs=3000000000` | `Memory=8589934592` |
-| large | `CPUs=4000000000` | `Memory=12884901888` |
+| Instances | CPU inspect value | Memory inspect value |
+|-----------|-------------------|----------------------|
+| `1`-`8` | `CPUs=4000000000` | `Memory=12884901888` |
 
 ## Operations
 
@@ -233,7 +236,7 @@ Do not rotate all runners at once unless the current pool is already broken.
 | Service restarts repeatedly | `systemctl show ... NRestarts ExecMainStatus` | Check image entrypoint, registration token freshness, and network access. |
 | Docker commands fail inside workflow | Container process list for inner `dockerd` | Confirm the runner container is privileged and inner Docker daemon started. |
 | Builds are slow or disk-heavy | Inner Docker storage driver and job cache usage | Confirm `overlay2` is active for the inner daemon; migrate off `vfs`, then clean stale job artifacts and review image layers. |
-| Container name conflict | `docker ps -a --filter name=github-runner-dind-N` | The unit already removes stale containers before start; restart the service. |
+| Container name conflict | `docker ps -a --filter name=github-runner-dind-N` | Startup should fail before replacing the container; inspect whether a job is still running, then remove only verified stale containers manually. |
 
 ## Repair checklist
 
