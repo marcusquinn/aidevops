@@ -40,6 +40,15 @@ function makeHookForAgentsDir(agentsDir) {
   });
 }
 
+function makeHookForAgentsDirAndVersion(agentsDir, version) {
+  return createShellEnvHook({
+    agentsDir,
+    scriptsDir: "/tmp/aidevops-scripts",
+    workspaceDir: "/tmp/aidevops-workspace",
+    version,
+  });
+}
+
 async function withCleanHeadlessProcessEnv(fn) {
   const keys = ["FULL_LOOP_HEADLESS", "AIDEVOPS_HEADLESS", "OPENCODE_HEADLESS", "GITHUB_ACTIONS"];
   const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
@@ -96,5 +105,18 @@ test("shell env version prefers deployed agents VERSION over legacy version", as
     await hook({ sessionID: "interactive-session" }, output);
 
     assert.equal(output.env.AIDEVOPS_VERSION, "3.20.102");
+  });
+});
+
+test("shell env version uses precomputed dependency before filesystem fallbacks", async () => {
+  await withTempAgentsDir(async (agentsDir) => {
+    writeFileSync(join(agentsDir, "VERSION"), "3.20.102\n");
+
+    const hook = makeHookForAgentsDirAndVersion(agentsDir, "3.21.0\n");
+    const output = { env: { PATH: "/usr/bin:/bin" } };
+
+    await hook({ sessionID: "interactive-session" }, output);
+
+    assert.equal(output.env.AIDEVOPS_VERSION, "3.21.0");
   });
 });
