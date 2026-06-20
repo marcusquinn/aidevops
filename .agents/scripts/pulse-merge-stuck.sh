@@ -1481,19 +1481,20 @@ pulse_merge_zero_progress_record() {
 	if [[ "$merged_count" -gt 0 || "$progress_count" -gt 0 ]]; then
 		pulse_stats_set_gauge "$_PMS_GAUGE_ZERO_PROGRESS_CYCLES" "0"
 		local recovery_reason
+		local recovery_suffix="after a ${cur_before}-cycle zero-progress streak"
+		if [[ "$cur_before" -le 0 ]]; then
+			recovery_suffix="while zero-progress gauge was already 0"
+		fi
+
+		if [[ "$merged_count" -gt 0 ]]; then
+			recovery_reason="${merged_count} PR(s) merged ${recovery_suffix}"
+		else
+			recovery_reason="${progress_count} deterministic conflict/close progress action(s) ${recovery_suffix}"
+		fi
+
 		if [[ "$cur_before" -gt 0 ]]; then
-			if [[ "$merged_count" -gt 0 ]]; then
-				recovery_reason="${merged_count} PR(s) merged after a ${cur_before}-cycle zero-progress streak"
-			else
-				recovery_reason="${progress_count} deterministic conflict/close progress action(s) after a ${cur_before}-cycle zero-progress streak"
-			fi
 			_pms_close_zero_progress_meta_issue_if_recovered "$recovery_reason"
 		else
-			if [[ "$merged_count" -gt 0 ]]; then
-				recovery_reason="${merged_count} PR(s) merged while zero-progress gauge was already 0"
-			else
-				recovery_reason="${progress_count} deterministic conflict/close progress action(s) while zero-progress gauge was already 0"
-			fi
 			_pms_close_zero_progress_meta_issue_if_recovered_due "$recovery_reason"
 		fi
 		return 0
