@@ -4267,3 +4267,9 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t3607 Build aidevops GUI control plane for setup, infrastructure, routines, and safe multi-machine AI-agent operations #dashboard #enhancement #infrastructure #parent #product ref:GH#25229
 
 - [ ] t3608 GUI ADR: product scope, stack, and repo layout #architecture #auto-dispatch #dashboard #documentation #product ref:GH#25230
+
+- [ ] t3611 GUI contract: helper/API boundary for existing aidevops surfaces #api #auto-dispatch #bug #dashboard #setup ref:GH#25233
+
+- [ ] t3610 GUI ADR: data model and infrastructure graph #architecture #auto-dispatch #bug #dashboard #database #infrastructure ref:GH#25232
+
+- [ ] t3609 GUI ADR: security threat model and trust boundaries #architecture #auto-dispatch #dashboard #security ref:GH#25231
