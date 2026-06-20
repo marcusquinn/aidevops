@@ -335,6 +335,10 @@ WF_USES_13=$(git -C "$REPO_13" show "${SYNC_BRANCH_13}:.github/workflows/issue-s
 	| grep -E "^[[:space:]]+uses:" | head -n 1 || true)
 WF_RUNNER_13=$(git -C "$REPO_13" show "${SYNC_BRANCH_13}:.github/workflows/issue-sync.yml" 2>/dev/null \
 	| grep -E "^[[:space:]]+runner:" | head -n 1 || true)
+git -C "$REPO_13" checkout -q "$SYNC_BRANCH_13" 2>/dev/null || true
+CHECK_CLASS_13=$(HOME="$TMPDIR_13" bash "$CHECK_HELPER" --json --repo "owner/repo-org-target" --workflow issue-sync 2>/dev/null \
+	| jq -r 'select(.slug == "owner/repo-org-target") | .classification' \
+	| head -n 1)
 if [[ "$WF_USES_13" == *"ORG/.github/.github/workflows/issue-sync-reusable.yml@1234567890abcdef1234567890abcdef12345678"* ]]; then
 	printf '%sPASS%s GH#24520 apply writes configured org reusable target\n' "$GREEN" "$NC"
 	((_PASS++))
@@ -349,6 +353,14 @@ if [[ "$WF_RUNNER_13" == *"ubuntu-latest-arm64"* ]]; then
 else
 	printf '%sFAIL%s GH#24520 runner injection survives configured org target\n' "$RED" "$NC"
 	printf '       got: %s\n' "$WF_RUNNER_13"
+	((_FAIL++))
+fi
+if [[ "$CHECK_CLASS_13" == "CURRENT/CALLER" ]]; then
+	printf '%sPASS%s GH#25222 sync-generated org caller checks clean\n' "$GREEN" "$NC"
+	((_PASS++))
+else
+	printf '%sFAIL%s GH#25222 sync-generated org caller checks clean\n' "$RED" "$NC"
+	printf '       got: %s\n' "$CHECK_CLASS_13"
 	((_FAIL++))
 fi
 rm -rf "$TMPDIR_13"

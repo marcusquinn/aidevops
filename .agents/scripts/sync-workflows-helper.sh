@@ -234,8 +234,13 @@ _render_template_with_target() {
 	local _repo_escaped _ref_escaped
 	_repo_escaped=$(_escape_sed_replacement "$_repo")
 	_ref_escaped=$(_escape_sed_replacement "${_ref#@}")
-	# Template ships with `marcusquinn/aidevops@main` by default; rewrite both.
-	sed -E 's|(uses:[[:space:]]*)marcusquinn/aidevops(/\.github/workflows/[^@]+)@[^[:space:]]+|\1'"$_repo_escaped"'\2@'"$_ref_escaped"'|' "$_template"
+	# Template ships with `marcusquinn/aidevops@main` by default; rewrite the
+	# executable `uses:` target and any managed comment/reference path so
+	# sync-generated org-owned callers are byte-comparable by check-workflows.
+	sed -E \
+		-e 's|(uses:[[:space:]]*)marcusquinn/aidevops(/\.github/workflows/[^@[:space:]]+)@[^[:space:]]+|\1'"$_repo_escaped"'\2@'"$_ref_escaped"'|' \
+		-e 's|marcusquinn/aidevops(/\.github/workflows/[^[:space:]]+)|'"$_repo_escaped"'\1|g' \
+		"$_template"
 	return 0
 }
 
