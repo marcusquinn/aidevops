@@ -146,7 +146,7 @@ Code changes use `/full-loop`; operational execution (reports, audits, monitorin
 
 ## Agent Routing and Capabilities
 
-Route clear domain triggers to specialists before Build+: SEO, WordPress, content/video/social, ads/CRO/outreach, legal/privacy/contract, finance/invoice, calendar, Cloudflare, Proxmox. References: `reference/agent-routing.md`, `reference/domain-index.md`, `reference/orchestration.md`, `reference/services.md`, `reference/skills.md`.
+Route clear domain triggers to specialists before Build+: SEO, WordPress, PR/public relations, content/video/social, ads/CRO/outreach, legal/privacy/contract, finance/invoice, calendar, Cloudflare, Proxmox. References: `reference/agent-routing.md`, `reference/domain-index.md`, `reference/orchestration.md`, `reference/services.md`, `reference/skills.md`.
 
 ## Worker Diagnostics
 

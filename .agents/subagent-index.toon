@@ -1,4 +1,4 @@
-<!--TOON:agents[11]{name,file,purpose,model_tier,triggers}:
+<!--TOON:agents[12]{name,file,purpose,model_tier,triggers}:
 Aidevops,aidevops.md,Framework operations setup troubleshooting and aidevops extension,opus,aidevops framework setup configuration troubleshooting mcp agent skill release
 Build+,build-plus.md,Enhanced Build with context tools,opus,code fix refactor bug ci tests pr implementation
 Automate,automate.md,Scheduling dispatch monitoring and background orchestration,sonnet,schedule cron dispatch pulse monitoring automation routine
@@ -7,6 +7,7 @@ Content,content.md,All media production and distribution including AI video gene
 Health,health.md,Health and wellness,opus,health wellness nutrition fitness medical lifestyle
 Legal,legal.md,Legal compliance,opus,legal compliance privacy policy terms contract gdpr
 Marketing-Sales,marketing-sales.md,Marketing strategy email campaigns paid ads CRO direct response copy CRM pipeline proposals outreach,opus,ads cro email crm copy outreach proposals sales funnel
+PR,pr.md,Public relations earned media journalist research media lists newsjacking and coverage tracking,opus,pr public relations press journalist media list pitch newsjacking coverage tracking reactive comment newsworthiness
 Product,product.md,Product management validation onboarding monetisation growth UI and analytics,opus,product prd roadmap validation onboarding monetisation growth analytics ux
 Research,research.md,Research and analysis tasks,gemini/grok,research compare market competitor technical analysis realtime
 SEO,seo.md,SEO optimization and analysis,opus,seo ranking keyword schema gsc sitemap backlinks
@@ -22,11 +23,12 @@ pro,gemini-2.5-pro,Capable large context
 grok,grok-3,Research and real-time web knowledge
 -->
 
-<!--TOON:subagents[110]{folder,purpose,key_files}:
+<!--TOON:subagents[111]{folder,purpose,key_files}:
 aidevops/,aidevops subagents,add-new-mcp-to-aidevops|agent-sources|api-integrations|architecture|claude-flow-comparison|configs|docs|extension|graduated-learnings|mcp-integrations|mcp-troubleshooting|memory-patterns|onboarding|orchestration-analysis|plugins|providers|recommendations|requirements|resources|security|security-requirements|self-improving-agents|service-links|services|setup|supervisor-module-map|troubleshooting
 content/,content subagents,content-calendar|context-templates|distribution-blog|distribution-email|distribution-podcast|distribution-short-form|distribution-social|distribution-youtube-channel-intel|distribution-youtube|distribution-youtube-optimizer|distribution-youtube-pipeline|distribution-youtube-readme|distribution-youtube-script-writer|distribution-youtube-topic-research|editor|guidelines
 content/heygen-skill/,content/heygen-skill subagents,rules-assets|rules-authentication|rules-avatars|rules-backgrounds|rules-captions|rules-dimensions|rules-photo-avatars|rules-quota|rules-remotion-integration|rules-scripts|rules-streaming-avatars|rules-templates|rules-text-overlays|rules-video-agent|rules-video-generation|rules-video-status|rules-video-translation|rules-voices|rules-webhooks
 content/,content subagents,humanise|internal-linker|meta-creator|optimization|platform-personas|production-audio|production-characters|production-image|production-video-01-model-selection|production-video-02-sora-template|production-video-03-veo-workflow|production-video-04-seed-bracketing|production-video-05-camera-shot-reference|production-video-06-two-track-production|production-video-07-post-production|production-video-08-talking-head-pipeline|production-video-09-tools-resources|production-video|production-writing|research|seo-writer|social-bird|social-linkedin|social-reddit|story|summarize|VERIFICATION|video-director|video-enhancor|video-higgsfield|video-higgsfield-ui|video-muapi|video-real-video-enhancer|video-runway|video-wavespeed
+public-relations/,public relations subagents,coverage-tracker|ethics|getting-started|journalist-fit-check|media-list-builder|news-search|newsjack-monitor|newsworthiness-check|pr-strategy|reactive-comment|routines
 seo/,seo subagents,ahrefs|ai-agent-discovery|ai-hallucination-defense|ai-search-kpi-template|ai-search-readiness|analytics-tracking|backlink-checker|bing-webmaster-tools|content-analyzer|contentking|data-export|dataforseo|debug-favicon|debug-opengraph|domain-research-api-reference|domain-research|eeat-score|geo-strategy|google-search-console|gsc-sitemaps|image-seo|keyword-mapper|keyword-research|mom-test-ux|moondream|neuronwriter|programmatic-seo|query-fanout-research|ranking-opportunities|rich-results|schema-validator|screaming-frog|semrush
 seo/seo-audit-skill/aeo-geo-patterns/,seo/seo-audit-skill/aeo-geo-patterns subagents,01-aeo-patterns|02-geo-patterns|03-authority-signals-and-attribution
 seo/seo-audit-skill/,seo/seo-audit-skill subagents,aeo-geo-patterns|ai-writing-detection

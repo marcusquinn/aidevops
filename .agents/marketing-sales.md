@@ -40,6 +40,7 @@ Marketing agent: strategy, campaigns, paid ads (Meta/Google), email, landing pag
 - **CRM**: FluentCRM MCP — `services/crm/fluentcrm.md` (requires plugin, app password, SMTP/SES). Credentials: `~/.config/aidevops/credentials.sh` (600 perms). Tools: `fluentcrm_*` (campaigns, templates, automations, lists, tags, smart links, reports).
 - **Analytics**: GA4 — `services/analytics/google-analytics.md` (loaded with `google-analytics` subagent)
 - **Content/copy**: `content.md` | **SEO**: `seo.md` | **Sales**: `sales.md`
+- **PR / journalists**: `pr.md` owns earned media, press strategy, journalist research, media lists, newsjacking, and pitch critique. Journalists are not sales leads; do not route them through cold-outreach automation.
 
 **Paid Advertising & CRO** ([Indexsy Skills](https://github.com/Indexsy-Skills/skills)):
 

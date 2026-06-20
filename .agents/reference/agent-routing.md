@@ -29,13 +29,14 @@ Full index: `subagent-index.toon`.
 | SEO | SEO, ranking, keyword, schema, GSC, sitemap, backlinks | SEO audits, keyword research, GSC, schema markup |
 | Content | blog, video, script, social, newsletter, audio, image | Media production and distribution: blog, video, audio, image, social, newsletters, AI video generation |
 | Marketing-Sales | ads, CRO, email campaign, CRM, copy, outreach, funnel | Email campaigns, FluentCRM, Meta Ads, CRO, direct response copy, CRM pipeline, proposals, outreach |
+| PR | PR, public relations, press, journalist, media list, pitch, newsjacking, coverage tracking, reactive comment | Earned media strategy, journalist research, media lists, newsworthiness, newsjacking, pitch critique, coverage tracking |
 | Product | product, PRD, roadmap, validation, onboarding, monetisation, growth, analytics, UX | Product management, requirements, validation, onboarding, monetisation, growth, UI/UX, analytics |
 | Business | company ops, finance, invoice, receipts, strategy, runners | Company operations, financial ops, invoicing, receipts, runner configs, strategy |
 | Legal | legal, compliance, privacy policy, terms, contract, GDPR | Compliance, terms of service, privacy policy |
 | Research | research, compare, market, competitor, technical analysis | Tech research, competitive analysis, market research |
 | Health | health, wellness, nutrition, fitness, medical lifestyle | Health and wellness content |
 
-For narrower domains such as Reports, App Stack, WordPress, Shopify, Cloudflare, Proxmox, Remotion, CalDAV, or browser/mobile work, read `reference/domain-index.md` and the relevant skill/subagent entry before defaulting to Build+. For repeatable browser operations or web data mining, route through `/auto-browse` and `.agents/workflows/auto-browse.md` so profile state, safety gates, and private/shareable artifact boundaries are handled consistently.
+For narrower domains such as Reports, App Stack, WordPress, Shopify, Cloudflare, Proxmox, Remotion, CalDAV, public relations, or browser/mobile work, read `reference/domain-index.md` and the relevant skill/subagent entry before defaulting to Build+. For repeatable browser operations or web data mining, route through `/auto-browse` and `.agents/workflows/auto-browse.md` so profile state, safety gates, and private/shareable artifact boundaries are handled consistently.
 
 For writing-quality requests such as humanise, tone, voice, writing style, less AI writing, make this sound natural, or match my style, read `content/humanise.md` before drafting or editing copy. This applies even when the primary task is README/docs, marketing copy, reports, or issue/PR text.
 
