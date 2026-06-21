@@ -28,6 +28,10 @@
       "name": "@aidevops/gui-api",
       "version": "0.0.0",
     },
+    "packages/gui-desktop": {
+      "name": "@aidevops/gui-desktop",
+      "version": "0.0.0",
+    },
     "packages/gui-shared": {
       "name": "@aidevops/gui-shared",
       "version": "0.0.0",
@@ -39,6 +43,8 @@
   },
   "packages": {
     "@aidevops/gui-api": ["@aidevops/gui-api@workspace:packages/gui-api"],
+
+    "@aidevops/gui-desktop": ["@aidevops/gui-desktop@workspace:packages/gui-desktop"],
 
     "@aidevops/gui-shared": ["@aidevops/gui-shared@workspace:packages/gui-shared"],
 

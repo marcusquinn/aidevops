@@ -8,6 +8,7 @@ describe("dashboard shell", () => {
 
     expect(html).toContain("aidevops control plane");
     expect(html).toContain("Read-only local dashboard scaffold");
+    expect(html).toContain("GUI app");
     expect(html).toContain("Secret references");
   });
 });

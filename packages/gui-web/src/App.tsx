@@ -23,6 +23,13 @@ export function App() {
         <p className="eyebrow">Read-only local dashboard scaffold</p>
         <h1>aidevops control plane</h1>
         {warning ? <p role="status">{warning}</p> : null}
+        {status.data.update.restart_required ? (
+          <p role="alert">
+            {status.data.update.message} Running {status.data.update.running_version}; installed {status.data.update.installed_version}.
+          </p>
+        ) : (
+          <p role="status">{status.data.update.message}</p>
+        )}
         <dl>
           <dt>Version</dt>
           <dd>{status.data.aidevops_version}</dd>
