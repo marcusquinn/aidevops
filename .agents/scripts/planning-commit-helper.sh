@@ -299,9 +299,14 @@ complete_task() {
 
 	log_info "Committing: $commit_msg"
 	if todo_commit_push "$repo_root" "$commit_msg" "TODO.md todo/"; then
-		log_success "Task completion committed and pushed"
+		if [[ "${TODO_COMMIT_PUSH_RESULT:-}" == "pr" ]]; then
+			log_success "Task completion submitted via planning PR: ${TODO_COMMIT_PUSH_PR_URL:-created}"
+		else
+			log_success "Task completion committed and pushed"
+		fi
 	else
-		log_warning "Committed locally (push failed after retries - will retry later)"
+		log_error "Task completion publication failed; no successful direct push or planning PR was created"
+		return 1
 	fi
 
 	return 0
@@ -556,9 +561,14 @@ commit_planning_files() {
 	# Use serialized commit+push (flock + pull-rebase-retry)
 	log_info "Committing: $commit_msg"
 	if todo_commit_push "$repo_root" "$commit_msg" "TODO.md todo/"; then
-		log_success "Planning files committed and pushed" # nice
+		if [[ "${TODO_COMMIT_PUSH_RESULT:-}" == "pr" ]]; then
+			log_success "Planning files submitted via planning PR: ${TODO_COMMIT_PUSH_PR_URL:-created}"
+		else
+			log_success "Planning files committed and pushed" # nice
+		fi
 	else
-		log_warning "Committed locally (push failed after retries - will retry later)"
+		log_error "Planning file publication failed; no successful direct push or planning PR was created"
+		return 1
 	fi
 
 	return 0

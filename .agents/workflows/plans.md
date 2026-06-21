@@ -203,7 +203,7 @@ After ANY edit to TODO.md, todo/PLANS.md, or todo/tasks/*, commit and push immed
 
 | Condition | Action |
 |-----------|--------|
-| TODO.md-only changes | Commit directly on main — `planning-commit-helper.sh "chore: add {description} to backlog"` |
+| TODO.md-only changes | Use `planning-commit-helper.sh "chore: add {description} to backlog"`; it pushes directly when allowed or opens a planning-only PR on protected default branches. |
 | Mixed changes (TODO + code/agent files) | Create a worktree (`wt switch -c chore/todo-{slug}`), make changes, commit, push, PR, merge |
 | Adding 3+ unrelated items while in a task worktree | Suggest a separate planning-only main commit instead |
 
