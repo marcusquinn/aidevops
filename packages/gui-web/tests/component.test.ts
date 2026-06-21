@@ -7,13 +7,13 @@ describe("dashboard shell", () => {
     const html = renderDashboardHtml(mockedStatus());
 
     expect(html).toContain("aidevops control plane");
-    expect(html).toContain("Read-only local control graph");
-    expect(html).toContain("Surface library");
+    expect(html).toContain("Read-only local app shell");
+    expect(html).toContain("Sidebar navigation");
     expect(html).toContain("Theme follows system preferences");
     expect(html).toContain("GUI app");
     expect(html).toContain("Projects");
     expect(html).toContain("Settings");
-    expect(html).toContain("Automation");
+    expect(html).toContain("Agents");
     expect(html).toContain("Secret references");
   });
 });
