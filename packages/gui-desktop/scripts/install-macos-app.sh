@@ -134,7 +134,7 @@ if ! url_ready "http://127.0.0.1:\${API_PORT}/api/status"; then
   nohup env AIDEVOPS_GUI_API_PORT="\${API_PORT}" bun run packages/gui-api/src/server.ts >"\${LOG_DIR}/api.log" 2>&1 &
 fi
 if ! url_ready "http://127.0.0.1:\${WEB_PORT}/"; then
-  nohup bun ./node_modules/vite/bin/vite.js --host 127.0.0.1 --port "\${WEB_PORT}" packages/gui-web >"\${LOG_DIR}/web.log" 2>&1 &
+  nohup bun ./node_modules/vite/bin/vite.js --config packages/gui-web/vite.config.ts --host 127.0.0.1 --port "\${WEB_PORT}" >"\${LOG_DIR}/web.log" 2>&1 &
 fi
 
 sleep 2
