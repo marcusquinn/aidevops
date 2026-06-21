@@ -30,6 +30,12 @@ section {
   text-transform: uppercase;
 }
 
+.lede {
+  color: #374151;
+  font-size: 1.05rem;
+  line-height: 1.6;
+}
+
 code {
   background: #f3f4f6;
   border-radius: 4px;

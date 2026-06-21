@@ -5,6 +5,12 @@ import { fetchStatus, mockedStatus } from "./status-client";
 export function App() {
   const [status, setStatus] = useState<GuiResponseEnvelope<GuiStatusData>>(mockedStatus());
   const [warning, setWarning] = useState<string | null>("Using local fixture until the API responds.");
+  const update = status.data.update ?? {
+    running_version: status.data.aidevops_version,
+    installed_version: status.data.aidevops_version,
+    restart_required: false,
+    message: "The GUI app is using local read-only status data.",
+  };
 
   useEffect(() => {
     fetchStatus()
@@ -22,13 +28,17 @@ export function App() {
       <section aria-label="aidevops status">
         <p className="eyebrow">Read-only local dashboard scaffold</p>
         <h1>aidevops control plane</h1>
+        <p className="lede">
+          This is the first local GUI surface: setup/status insight only, with no write,
+          destructive, Cloudron, pairing, shell, or exec controls.
+        </p>
         {warning ? <p role="status">{warning}</p> : null}
-        {status.data.update.restart_required ? (
+        {update.restart_required ? (
           <p role="alert">
-            {status.data.update.message} Running {status.data.update.running_version}; installed {status.data.update.installed_version}.
+            {update.message} Running {update.running_version}; installed {update.installed_version}.
           </p>
         ) : (
-          <p role="status">{status.data.update.message}</p>
+          <p role="status">{update.message}</p>
         )}
         <dl>
           <dt>Version</dt>
