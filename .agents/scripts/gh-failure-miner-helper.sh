@@ -673,6 +673,18 @@ render_issue_body_markdown() {
 	local events_json="$1"
 	local systemic_threshold="$2"
 	printf '%s\n' "$events_json" | jq -r '
+		def systemic_fix_guidance($check_name; $signature):
+			if (($check_name | test("CodeFactor"; "i")) or ($signature == "failure:codefactor.io")) then
+				"- CodeFactor is an external advisory/static-analysis check. GitHub Actions logs usually only show `failure:codefactor.io`; read the CodeFactor details URL in Evidence for the file, line, and rule.\n" +
+				"- Reproduce the provider finding locally with the nearest repo linter/style/static-analysis command, fix the source issue rather than suppressing CodeFactor, and add a focused regression guard for the reported rule/file.\n" +
+				"\n## Worker Guidance\n" +
+				"1. Open the CodeFactor details URL from Evidence first; do not infer the reported file/rule from the GitHub run alone.\n" +
+				"2. Inspect the affected source file and the closest existing lint/test guard for that file type. If no focused guard exists, add one under `.agents/scripts/tests/` or the target package tests.\n" +
+				"3. Run the focused guard plus the nearest local linter before opening a PR.\n"
+			else
+				"- Patch the failing workflow/check once at the source (workflow file, shared action, or toolchain pin), then rerun failed checks on affected PRs.\n" +
+				"- Add a regression guard to detect this signature early in future pulses.\n"
+			end;
 		def key: (.check_name + "|" + .signature);
 		(sort_by(key)
 		 | group_by(key)
@@ -707,8 +719,7 @@ render_issue_body_markdown() {
 			"## Root Cause Hypothesis\n" +
 			"- Workflow/config regression or shared dependency/integration break in `" + $top.check_name + "`.\n\n" +
 			"## Proposed Systemic Fix\n" +
-			"- Patch the failing workflow/check once at the source (workflow file, shared action, or toolchain pin), then rerun failed checks on affected PRs.\n" +
-			"- Add a regression guard to detect this signature early in future pulses.\n"
+			systemic_fix_guidance($top.check_name; $top.signature)
 		  end
 	' --argjson min_count "$systemic_threshold"
 	return 0
@@ -804,6 +815,18 @@ build_issue_body() {
 		' --arg pattern_id "$pattern_id" --argjson threshold "$threshold"
 	else
 		printf '%s\n' "$cluster_json" | jq -r '
+			def systemic_fix_guidance($check_name; $signature):
+				if (($check_name | test("CodeFactor"; "i")) or ($signature == "failure:codefactor.io")) then
+					"- CodeFactor is an external advisory/static-analysis check. GitHub Actions logs usually only show `failure:codefactor.io`; read the CodeFactor details URL in Evidence for the file, line, and rule.\n" +
+					"- Reproduce the provider finding locally with the nearest repo linter/style/static-analysis command, fix the source issue rather than suppressing CodeFactor, and add a focused regression guard for the reported rule/file.\n" +
+					"\n## Worker Guidance\n" +
+					"1. Open the CodeFactor details URL from Evidence first; do not infer the reported file/rule from the GitHub run alone.\n" +
+					"2. Inspect the affected source file and the closest existing lint/test guard for that file type. If no focused guard exists, add one under `.agents/scripts/tests/` or the target package tests.\n" +
+					"3. Run the focused guard plus the nearest local linter before opening a PR.\n"
+				else
+					"- Fix the workflow/check at the source, then rerun failed checks on affected PRs.\n" +
+					"- Add a regression guard for this signature in pulse routine outputs.\n"
+				end;
 			"## Summary\n" +
 			"- Pattern: `" + .check_name + "`\n" +
 			"- Error signature: `" + .signature + "`\n" +
@@ -822,8 +845,7 @@ build_issue_body() {
 			"## Root Cause Hypothesis\n" +
 			"- Regression or external dependency/toolchain break in the shared check path.\n\n" +
 			"## Proposed Systemic Fix\n" +
-			"- Fix the workflow/check at the source, then rerun failed checks on affected PRs.\n" +
-			"- Add a regression guard for this signature in pulse routine outputs.\n\n" +
+			systemic_fix_guidance(.check_name; .signature) + "\n" +
 			"Signal tag: `gh-failure-miner:" + $pattern_id + "`\n"
 		' --arg pattern_id "$pattern_id" --argjson threshold "$threshold"
 	fi
