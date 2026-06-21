@@ -2,16 +2,49 @@ import React, { useEffect, useState } from "react";
 import type { GuiNavigationItem, GuiResponseEnvelope, GuiStatusData } from "../../gui-shared/src";
 import { fetchStatus, mockedStatus } from "./status-client";
 
+type ThemePreference = "system" | "light" | "dark";
+
+function getSystemTheme(): "light" | "dark" {
+  if (typeof window === "undefined") {
+    return "light";
+  }
+
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
 export function App() {
   const [status, setStatus] = useState<GuiResponseEnvelope<GuiStatusData>>(mockedStatus());
   const [warning, setWarning] = useState<string | null>("Using local fixture until the API responds.");
   const [activeSection, setActiveSection] = useState<GuiNavigationItem["id"]>("overview");
+  const [themePreference, setThemePreference] = useState<ThemePreference>("system");
+  const [systemTheme, setSystemTheme] = useState<"light" | "dark">("light");
+  const resolvedTheme = themePreference === "system" ? systemTheme : themePreference;
   const update = status.data.update ?? {
     running_version: status.data.aidevops_version,
     installed_version: status.data.aidevops_version,
     restart_required: false,
     message: "The GUI app is using local read-only status data.",
   };
+
+  useEffect(() => {
+    const savedTheme = window.localStorage.getItem("aidevops-gui-theme");
+    if (savedTheme === "system" || savedTheme === "light" || savedTheme === "dark") {
+      setThemePreference(savedTheme);
+    }
+
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const updateSystemTheme = () => setSystemTheme(getSystemTheme());
+    updateSystemTheme();
+    mediaQuery.addEventListener("change", updateSystemTheme);
+
+    return () => mediaQuery.removeEventListener("change", updateSystemTheme);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = resolvedTheme;
+    document.documentElement.style.colorScheme = resolvedTheme;
+    window.localStorage.setItem("aidevops-gui-theme", themePreference);
+  }, [resolvedTheme, themePreference]);
 
   useEffect(() => {
     fetchStatus()
@@ -27,7 +60,24 @@ export function App() {
   return (
     <main className="app-shell">
       <aside className="sidebar" aria-label="Dashboard navigation">
-        <div className="brand-mark">aidevops</div>
+        <div className="brand-mark" aria-label="aidevops">
+          <span className="terminal-mark" aria-hidden="true">›_</span>
+          <span>aidevops</span>
+        </div>
+        <div className="theme-control" aria-label="Theme preference">
+          {(["system", "light", "dark"] as const).map((theme) => (
+            <button
+              aria-pressed={themePreference === theme}
+              className={themePreference === theme ? "theme-option active" : "theme-option"}
+              key={theme}
+              onClick={() => setThemePreference(theme)}
+              type="button"
+            >
+              {theme}
+            </button>
+          ))}
+          <small>Theme: {themePreference === "system" ? `system (${systemTheme})` : themePreference}</small>
+        </div>
         <nav>
           {status.data.navigation.map((item) => (
             <button
