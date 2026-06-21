@@ -284,6 +284,27 @@ test_coderabbit_nits_ok_dismissed_once_before_late_gate() {
 	return 0
 }
 
+test_changes_requested_explicit_empty_labels_skip_refetch() {
+	setup_test_env
+	define_process_helper || { print_result "defines process helper for explicit empty labels" 1 "could not extract review gate"; teardown_test_env; return 0; }
+
+	: >"$GH_LOG"
+	_handle_changes_requested_review_gate "556" "owner/repo" "CHANGES_REQUESTED" "42" "" || true
+
+	local label_fetch_count=0
+	label_fetch_count=$(grep -c -- '--json labels' "$GH_LOG" || true)
+	[[ "$label_fetch_count" =~ ^[0-9]+$ ]] || label_fetch_count=0
+	if [[ "$label_fetch_count" -ne 0 ]]; then
+		print_result "explicit empty PR labels do not refetch labels" 1 "label_fetch_count=${label_fetch_count}"
+	elif [[ "$ROUTE_CALLS" -ne 1 || "$ROUTE_ARGS" != "556|owner/repo|42|review" ]]; then
+		print_result "explicit empty PR labels do not refetch labels" 1 "route_calls=${ROUTE_CALLS}, route_args=${ROUTE_ARGS}"
+	else
+		print_result "explicit empty PR labels do not refetch labels" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_ci_feedback_dedupes_by_pr_head_sha() {
 	setup_test_env
 	define_feedback_helpers || { print_result "defines feedback helpers" 1 "could not extract feedback helpers"; teardown_test_env; return 0; }
@@ -412,6 +433,7 @@ main() {
 	test_red_pr_passes_gates_before_repair_route
 	test_changes_requested_unknown_routes_before_mergeable_skip
 	test_coderabbit_nits_ok_dismissed_once_before_late_gate
+	test_changes_requested_explicit_empty_labels_skip_refetch
 	test_ci_feedback_dedupes_by_pr_head_sha
 	test_ci_feedback_skips_pending_only_checks
 	test_ci_feedback_skips_mixed_pending_pass_checks

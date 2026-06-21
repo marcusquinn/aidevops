@@ -224,7 +224,7 @@ _handle_changes_requested_review_gate() {
 	# Fetch labels once — reused by both the nits-ok check and the
 	# worker-routing block below.
 	_cr_pr_labels="$pr_labels"
-	if [[ -z "$_cr_pr_labels" ]]; then
+	if [[ $# -lt 5 && -z "$_cr_pr_labels" ]]; then
 		_cr_pr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
 			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _cr_pr_labels=""
 	fi
