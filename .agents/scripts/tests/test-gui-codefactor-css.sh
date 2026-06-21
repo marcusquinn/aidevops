@@ -3,7 +3,8 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
 # Regression guard for GH#25321: CodeFactor/stylelint no-duplicate-selectors
-# findings in the GUI stylesheet.
+# findings in the GUI stylesheet, and GH#25332: CodeFactor-compatible media
+# query syntax in the GUI stylesheet.
 
 set -u
 
@@ -30,6 +31,13 @@ pending_line = 0
 with open(css_path, encoding="utf-8") as handle:
     for line_number, raw_line in enumerate(handle, start=1):
         line = raw_line.strip()
+        if re.match(r"@media\s*\([^)]*(?:<=|>=)[^)]*\)", line):
+            print(
+                "FAIL: use max-width/min-width media queries for CodeFactor compatibility "
+                f"at line {line_number}: {line}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         if not line or line.startswith("/*"):
             continue
 
