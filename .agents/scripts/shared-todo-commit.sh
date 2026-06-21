@@ -328,13 +328,9 @@ EOF
 	return 0
 }
 
-_todo_create_planning_pr() {
+_todo_planning_pr_slug() {
 	local repo_path="$1"
-	local commit_msg="$2"
-	local files="$3"
-	local current_branch="$4"
-	local default_branch="$5"
-	local log_target="$6"
+	local log_target="$2"
 
 	local slug=""
 	if ! command -v gh >/dev/null 2>&1 || ! command -v gh_create_pr >/dev/null 2>&1; then
@@ -345,14 +341,18 @@ _todo_create_planning_pr() {
 		printf '%s\n' "[todo_commit_push] Planning PR fallback unavailable: cannot resolve GitHub repo slug" >>"$log_target"
 		return 1
 	}
+	printf '%s\n' "$slug"
+	return 0
+}
 
-	local changed_files=""
-	changed_files=$(_todo_changed_planning_files "$repo_path" "$files")
-	if [[ -z "$changed_files" ]]; then
-		printf '%s\n' "[todo_commit_push] No planning changes available for PR fallback" >>"$log_target"
-		TODO_COMMIT_PUSH_RESULT="$TODO_COMMIT_RESULT_NOOP"
-		return 0
-	fi
+_TODO_PLANNING_PR_BRANCH=""
+_TODO_PLANNING_PR_WORKTREE=""
+
+_todo_create_planning_worktree() {
+	local repo_path="$1"
+	local commit_msg="$2"
+	local default_branch="$3"
+	local log_target="$4"
 
 	if git -C "$repo_path" remote get-url origin >/dev/null 2>&1; then
 		git -C "$repo_path" fetch -q origin "$default_branch" 2>>"$log_target" || {
@@ -380,6 +380,20 @@ _todo_create_planning_pr() {
 		return 1
 	}
 
+	_TODO_PLANNING_PR_BRANCH="$branch_name"
+	_TODO_PLANNING_PR_WORKTREE="$worktree_path"
+	return 0
+}
+
+_todo_commit_planning_worktree() {
+	local repo_path="$1"
+	local worktree_path="$2"
+	local changed_files="$3"
+	local files="$4"
+	local commit_msg="$5"
+	local branch_name="$6"
+	local log_target="$7"
+
 	if ! _todo_copy_planning_changes_to_worktree "$repo_path" "$worktree_path" "$changed_files"; then
 		printf '%s\n' "[todo_commit_push] Planning PR fallback failed: cannot copy planning changes" >>"$log_target"
 		_todo_remove_temp_worktree "$repo_path" "$worktree_path"
@@ -406,6 +420,16 @@ _todo_create_planning_pr() {
 		_todo_remove_temp_worktree "$repo_path" "$worktree_path"
 		return 1
 	}
+	return 0
+}
+
+_todo_open_planning_pr() {
+	local slug="$1"
+	local default_branch="$2"
+	local branch_name="$3"
+	local current_branch="$4"
+	local commit_msg="$5"
+	local log_target="$6"
 
 	local pr_title pr_body pr_url
 	pr_title="$commit_msg"
@@ -419,6 +443,32 @@ _todo_create_planning_pr() {
 		printf '%s\n' "[todo_commit_push] Planning PR fallback failed: PR creation failed" >>"$log_target"
 		return 1
 	}
+	printf '%s\n' "$pr_url"
+	return 0
+}
+
+_todo_create_planning_pr() {
+	local repo_path="$1"
+	local commit_msg="$2"
+	local files="$3"
+	local current_branch="$4"
+	local default_branch="$5"
+	local log_target="$6"
+
+	local slug="" changed_files="" branch_name="" worktree_path="" pr_url=""
+	slug=$(_todo_planning_pr_slug "$repo_path" "$log_target") || return 1
+	changed_files=$(_todo_changed_planning_files "$repo_path" "$files")
+	if [[ -z "$changed_files" ]]; then
+		printf '%s\n' "[todo_commit_push] No planning changes available for PR fallback" >>"$log_target"
+		TODO_COMMIT_PUSH_RESULT="$TODO_COMMIT_RESULT_NOOP"
+		return 0
+	fi
+
+	_todo_create_planning_worktree "$repo_path" "$commit_msg" "$default_branch" "$log_target" || return 1
+	branch_name="$_TODO_PLANNING_PR_BRANCH"
+	worktree_path="$_TODO_PLANNING_PR_WORKTREE"
+	_todo_commit_planning_worktree "$repo_path" "$worktree_path" "$changed_files" "$files" "$commit_msg" "$branch_name" "$log_target" || return 1
+	pr_url=$(_todo_open_planning_pr "$slug" "$default_branch" "$branch_name" "$current_branch" "$commit_msg" "$log_target") || return 1
 
 	if ! _todo_clean_source_planning_changes "$repo_path" "$changed_files"; then
 		printf '%s\n' "[todo_commit_push] Planning PR created but source planning cleanup failed" >>"$log_target"
