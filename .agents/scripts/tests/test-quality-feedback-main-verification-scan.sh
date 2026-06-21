@@ -694,6 +694,59 @@ test_scan_single_pr_positive_body_with_inline_comments_not_summary_only() {
 	return 0
 }
 
+test_scan_single_pr_filters_positive_inline_acknowledgement_reply() {
+	reset_mock_state
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			while [[ $# -gt 0 ]]; do
+				case "$1" in
+				repos/*/pulls/*/comments)
+					echo '[{"id":10,"user":{"login":"gemini-code-assist[bot]"},"path":".agents/scripts/pulse-merge.sh","line":230,"original_line":230,"position":37,"body":"Thank you for verifying the fix and adding the regression test. The implementation looks correct and addresses the efficiency concern regarding redundant API calls.","html_url":"https://github.com/example/repo/pull/1#discussion_r10","created_at":"2026-06-21T16:07:10Z"}]'
+					return 0
+					;;
+				repos/*/pulls/*/reviews)
+					echo '[]'
+					return 0
+					;;
+				repos/*/git/trees/*)
+					echo '[".agents/scripts/pulse-merge.sh"]'
+					return 0
+					;;
+				repos/*)
+					echo "main"
+					return 0
+					;;
+				esac
+				shift
+			done
+			echo "[]"
+			return 0
+			;;
+		label | pr) return 0 ;;
+		esac
+		echo "[]"
+		return 0
+	}
+
+	local findings
+	findings=$(_scan_single_pr "owner/repo" "1" "medium" "false" 2>/dev/null)
+	local count
+	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
+
+	if [[ "$count" -eq 0 ]]; then
+		print_result "positive inline acknowledgement reply is filtered" 0
+	else
+		print_result "positive inline acknowledgement reply is filtered" 1 "expected 0 findings, got ${count}"
+	fi
+
+	_restore_mock_gh
+	return 0
+}
+
 test_scan_single_pr_filters_issue3158_review_body() {
 	# Regression: PR #3060 Gemini review — "The changes are correct and well-justified."
 	# with summary praise (effectively, improves, correct, well-justified) must be filtered
