@@ -56,7 +56,7 @@ Note: allowlisted paths (`README.md`, `TODO.md`, `todo/**`) short-circuit to exi
 
 Pass `--file <path>` for path-based enforcement (preferred):
 
-- **Allowlisted path** (`README.md`, `TODO.md`, `todo/**`) → stay on `main`
+- **Allowlisted path** (`README.md`, `TODO.md`, `todo/**`) → stay on `main`; planning publication may still become a PR if branch protection requires it
 - **Any other path** → create worktree
 
 Fallback `--task` description keywords (when `--file` not provided):
@@ -68,7 +68,7 @@ Fallback `--task` description keywords (when `--file` not provided):
 
 Keep `~/Git/{repo}/` on `main`. Avoids blocked branch switches, parallel sessions inheriting the wrong branch, and `local changes would be overwritten` errors.
 
-Stay on `main` only for allowlisted paths: `README.md`, `TODO.md`, `todo/**`. Planning-file commits use `planning-commit-helper.sh "plan: add new task"`.
+Stay on `main` only for allowlisted paths: `README.md`, `TODO.md`, `todo/**`. Planning-file commits use `planning-commit-helper.sh "plan: add new task"`; the helper opens a planning-only PR instead of direct-pushing when the default branch is protected.
 
 Continue on current branch only when: task matches branch purpose, finishes this session, no parallel sessions expected.
 

@@ -151,7 +151,7 @@ If ANY source confirms a merged PR (with verified `mergedAt`), treat the task as
 
 ## Planning File Workflow
 
-**After ANY TODO/planning edit** (interactive sessions only, NOT workers): Commit and push immediately. Planning-only files (TODO.md, todo/) go directly to main — no branch, no PR. Mixed changes (planning + non-exception files) use a worktree. NEVER `git checkout -b` in the main repo.
+**After ANY TODO/planning edit** (interactive sessions only, NOT workers): publish immediately with `planning-commit-helper.sh`. Planning-only files (`TODO.md`, `todo/**`) go direct to the default branch only when that branch accepts direct planning pushes; protected default branches get a planning-only PR. Mixed changes (planning + non-exception files) use a worktree. NEVER `git checkout -b` in the main repo. Do not route `.task-counter` through planning PRs — task IDs remain CAS-allocated by `claim-task-id.sh` on the configured `counter_branch`.
 
 **PR required for ALL non-planning changes** (MANDATORY): Every change to scripts, agents, configs, workflows, or any file outside `TODO.md` and `todo/` MUST go through a worktree + PR + CI pipeline — no matter how small. The pre-edit-check script enforces this; never bypass it.
 
@@ -163,7 +163,7 @@ MANDATORY: Use `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for the nex
 2. `planning-commit-helper.sh next-id --title "Task title"` — wrapper function
 3. `claim-task-id.sh --title "Task title" --repo-path "$(pwd)"` — direct script
 
-**Atomic counter** (t1047): IDs allocated from `.task-counter` via CAS loop — fetch from `origin/main`, increment, commit, push. Push failure (another session grabbed the ID) → retry from fetch. Guarantees no collisions. Batch: `--count N` claims N consecutive IDs atomically. GitHub/GitLab issue creation happens after ID is secured (optional, non-blocking). Offline fallback: local `.task-counter` + 100 offset (reconcile when back online). Output: `task_id=tNNN ref=GH#NNN` (offline: `ref=offline reconcile=true`; batch: adds `task_id_last=tNNN task_count=N`). Retries up to 10 attempts with backoff — no manual intervention needed.
+**Atomic counter** (t1047): IDs allocated from `.task-counter` via CAS loop — fetch from the configured `counter_branch`, increment, commit, push. Push failure (another session grabbed the ID) → retry from fetch. Guarantees no collisions. A protected counter branch is a setup error: configure `counter_branch` to a dedicated unprotected branch rather than using a PR, because PR review is not an atomic lock. Batch: `--count N` claims N consecutive IDs atomically. GitHub/GitLab issue creation happens after ID is secured (optional, non-blocking). Offline fallback: local `.task-counter` + 100 offset (reconcile when back online). Output: `task_id=tNNN ref=GH#NNN` (offline: `ref=offline reconcile=true`; batch: adds `task_id_last=tNNN task_count=N`). Retries up to 10 attempts with backoff — no manual intervention needed.
 
 ## Worker TODO.md Restriction
 

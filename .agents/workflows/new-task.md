@@ -173,7 +173,12 @@ Canonical dispatch-blocker labels: `reference/dispatch-blockers.md`.
 ~/.aidevops/agents/scripts/planning-commit-helper.sh "plan: add ${task_id} ${short_title}"
 ```
 
-Brief and TODO.md are planning files — they go directly to main.
+Brief and TODO.md are planning files. Use `planning-commit-helper.sh`; it pushes
+directly only when the default branch accepts planning pushes. If the default
+branch requires PRs, the helper creates a planning-only PR for `TODO.md`/`todo/**`.
+Merge that PR before expecting pulse or issue-sync to see the new task. Do not
+put `.task-counter` in that PR path — task IDs still come from `claim-task-id.sh`
+CAS allocation on the configured `counter_branch`.
 
 ## Offline Handling
 
@@ -196,7 +201,7 @@ AI:   Added and claimed:
 
 ## Batch Mode
 
-When the user provides multiple task titles at once (e.g., a sprint planning list), use batch mode to avoid 11 interactive rounds. Batch mode creates all tasks in a single pass and emits **one commit+push** for all planning files.
+When the user provides multiple task titles at once (e.g., a sprint planning list), use batch mode to avoid 11 interactive rounds. Batch mode creates all tasks in a single pass and emits **one planning publication** for all planning files: direct push when allowed, or one planning-only PR when the default branch is protected.
 
 **When to use batch:** user provides a list of 3+ titles, or says "create these tasks in bulk", or pastes a list.
 
@@ -252,7 +257,7 @@ Tasks without a complete How section will fail tier:simple dispatch.
 
 - Each title still gets its own GitHub issue (separate API call per title).
 - The `.task-counter` branch is updated per allocation — that is unavoidable.
-- The planning files (`TODO.md`, `todo/tasks/*.md`) use a **single** commit+push.
+- The planning files (`TODO.md`, `todo/tasks/*.md`) use a **single** publication: direct commit+push when allowed, or one planning-only PR when branch protection requires PRs.
 - `--labels` applies the same label set to all tasks in the batch.
 - `--no-issue` skips GitHub issue creation (useful for offline / bulk planning).
 
