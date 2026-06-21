@@ -1,4 +1,4 @@
-import type { GuiStatusData } from "./contracts";
+import { GUI_FILE_ROOTS, type GuiFileExplorerData, type GuiStatusData } from "./contracts";
 
 export const statusFixture: GuiStatusData = {
   aidevops_version: "unknown",
@@ -38,19 +38,19 @@ export const statusFixture: GuiStatusData = {
       description: "Local setup, update, and API health.",
     },
     {
-      id: "repos",
-      label: "Repos",
-      description: "Read-only repository registry summary.",
+      id: "agents",
+      label: "Agents",
+      description: "Read-only file explorer for deployed agent files.",
     },
     {
-      id: "settings",
-      label: "Settings",
-      description: "Settings file health and keys only.",
+      id: "config",
+      label: "Config",
+      description: "Read-only file explorer for aidevops config.",
     },
     {
-      id: "capabilities",
-      label: "Capabilities",
-      description: "Available and planned dashboard surfaces.",
+      id: "git",
+      label: "Git",
+      description: "Read-only local git workspace browser.",
     },
     {
       id: "security",
@@ -100,6 +100,40 @@ export const statusFixture: GuiStatusData = {
   placeholders: [
     "Settings, repos, routines, OpenCode sessions, and capabilities will be added as read-only adapters.",
   ],
+};
+
+export const fileExplorerFixture: GuiFileExplorerData = {
+  root: GUI_FILE_ROOTS[0],
+  current_path_ref: "~/.aidevops/agents",
+  current_relative_path: "",
+  entry_limit: 80,
+  entries: [
+    {
+      name: "workflows",
+      kind: "directory",
+      path_ref: "~/.aidevops/agents/workflows",
+      relative_path: "workflows",
+      extension: "",
+      preview_allowed: false,
+    },
+    {
+      name: "AGENTS.md",
+      kind: "file",
+      path_ref: "~/.aidevops/agents/AGENTS.md",
+      relative_path: "AGENTS.md",
+      extension: ".md",
+      preview_allowed: true,
+    },
+  ],
+  selected_preview: {
+    path_ref: "~/.aidevops/agents/AGENTS.md",
+    relative_path: "AGENTS.md",
+    mode: "markdown",
+    language: "md",
+    content: "# AI DevOps Framework\n\nRead-only local preview.",
+    truncated: false,
+    reason: "",
+  },
 };
 
 export const unsafeSecretFixture = {

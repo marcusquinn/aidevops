@@ -1,10 +1,33 @@
 /* jshint esversion: 11 */
 import { useEffect, useState } from "react";
-import type { GuiResponseEnvelope, GuiStatusData } from "../../gui-shared/src";
-import { fetchStatus, mockedStatus } from "./status-client";
+import type {
+  GuiFileEntry,
+  GuiFileExplorerData,
+  GuiFilePreview,
+  GuiFileRootId,
+  GuiResponseEnvelope,
+  GuiStatusData,
+} from "../../gui-shared/src";
+import { fetchFileExplorer, fetchStatus, mockedFileExplorer, mockedStatus } from "./status-client";
 
 type ThemePreference = "system" | "light" | "dark";
-type SurfaceId = "overview" | "repos" | "capabilities" | "routines" | "integrations" | "settings" | "security";
+type SurfaceId =
+  | "overview"
+  | "agents"
+  | "config"
+  | "localSetup"
+  | "git"
+  | "routines"
+  | "apps"
+  | "installation"
+  | "personas"
+  | "brands"
+  | "domains"
+  | "registrars"
+  | "hosts"
+  | "servers"
+  | "projects"
+  | "security";
 
 interface SurfaceNavItem {
   badge?: string;
@@ -19,81 +42,144 @@ interface SurfaceNavGroup {
   label: string;
 }
 
+interface InventoryColumn {
+  key: string;
+  label: string;
+}
+
 const text = {
-  agentsAndHelpers: "Agents and helpers",
-  appName: "aidevops",
+  aidevops: "aidevops",
   appShell: "App shell",
-  api: "API",
-  automation: "Automation",
-  capabilities: "Agents",
-  capabilityIntro: "Capability cards map AI DevOps agent and helper surfaces that can become guided workflows.",
-  configuration: "Configuration",
-  controlPlaneTitle: "Local control plane",
+  apps: "Apps",
+  appsIntro: "App and CLI inventory for tools installed or updated by aidevops. Version and homepage adapters are planned.",
+  appStatusPending: "adapter pending",
+  brands: "Brands",
+  brandsIntro: "Draft brand inventory for names and website references.",
+  codeView: "Code",
+  config: "Config",
+  configIntro: "Read-only file explorer for ~/.config/aidevops. Contents stay hidden until redaction rules land.",
+  copyPath: "Copy path",
   dashboard: "Dashboard",
-  filesystemRefs: "Filesystem and helper references are displayed as safe path labels, not secret material.",
-  guarded: "Guarded",
-  guardrailIntro: "Secret values, prefixes, suffixes, raw credential files, and arbitrary commands are not exposed.",
-  guardrails: "Guardrails",
-  health: "Health",
-  helperAvailability: "Helper availability",
-  installedVersion: "installed",
-  integrations: "Integrations",
-  integrationsDetail: "Provider, infrastructure, and service status belongs here without control actions.",
+  domains: "Domains",
+  domainsIntro: "Draft domain ownership inventory across providers.",
+  draftOnly: "Local browser draft only. Saving requires a write-action manifest, confirmation, and audit trail.",
+  fileBrowser: "File browser",
+  folderOpenBlocked: "Native folder opening needs a desktop bridge and an allowlisted action.",
+  git: "Git",
+  gitIntro: "Read-only file explorer for ~/Git workspaces and worktrees.",
+  hosts: "Hosts",
+  hostsIntro: "Recommended and user-owned hosting providers with setup notes later.",
+  addRow: "Add row",
+  channel: "Channel",
+  installation: "Installation",
+  installationIntro: "Optional aidevops setup/update components. Toggles are shown as planned controls until writes are enabled.",
+  install: "Install",
   inventory: "Inventory",
-  keysOnly: "keys only",
-  localOnly: "Local only",
-  localPathLabel: "local path:",
-  localReadOnly: "Local read-only",
-  localSession: "Local session",
-  localSetupHealth: "Local setup health",
+  latest: "Latest",
+  localSetup: "Local Setup",
+  localSetupIntro: "Read-only file explorer for ~/.aidevops runtime folders, cache, memory, and deployed assets.",
+  markdownFormatted: "Markdown formatted",
+  markdownView: "Markdown",
+  name: "Name",
   noProjectEntries: "No project registry entries are available yet.",
-  noSettingsKeys: "No settings keys are available yet.",
-  operate: "Operate",
-  overview: "Overview",
+  noPreview: "Select a file to preview safe content.",
+  operations: "Operations",
+  parentDirectory: "..",
   path: "Path",
-  plannedAdapter: "Planned adapter",
-  plannedPlaceholder: "Read-only placeholder. No setup action is available from this preview.",
-  policy: "Policy",
+  personas: "Personas",
+  personasIntro: "Draft identity list for first and last names.",
+  planned: "planned",
+  plannedHomes: "Planned homes",
+  plannedNotice: "This surface is a local UI placeholder. Persistence and actions need explicit trust-boundary work.",
   projects: "Projects",
-  readOnlyApi: "Read-only API",
-  registrySummaryPrefix: "Read-only registry summary from ",
-  registrySummarySuffix: ".",
-  routineDetail: "Routine setup and scheduling status will appear here as read-only adapters land.",
+  readOnly: "Read-only",
+  registrars: "Registrars",
+  registrarsIntro: "Recommended and user-owned domain registrars.",
+  roadmapIntro: "The GUI plan already has homes for setup/status, Git/repos, infrastructure inventory, providers, routines, agents, Cloudron, pairing, OpenCode sessions, and desktop packaging.",
   routines: "Routines",
-  runningVersion: "Running",
-  searchPlaceholder: "Search setup, projects, agents",
+  routineDetail: "Routine schedule, next run, run history, script/LLM-backed type, and diagnostic homes are planned.",
+  searchPlaceholder: "Search setup, files, providers",
   security: "Security",
-  sessionInitials: "AD",
-  settings: "Settings",
-  settingsIntro: "Values are intentionally not rendered; this view shows keys and file health only.",
+  securityBoundary: "No write routes, no shell bridge, no hosted app control, no pairing, no secret values.",
+  servers: "Servers",
+  serversIntro: "Server inventory by provider, operating system, orchestrator, and installed apps.",
   setup: "Setup",
-  setupCardTitle: "Local control plane",
-  setupCardText: "Observe setup, repos, agents, routines, integrations, settings, and security posture without exposing secrets or running arbitrary commands.",
-  signals: "Signals",
-  version: "Version",
-  trustBoundary: "No write routes, no shell bridge, no hosted app control, no pairing, no secret values.",
+  theme: "Theme",
+  truncated: "Preview truncated for safety.",
+  update: "Update",
+  website: "Website",
   workspaceLabel: "aidevops workspace",
   navigationLabel: "aidevops navigation",
 } as const;
 
 const navGroups: SurfaceNavGroup[] = [
   {
-    label: text.operate,
+    label: text.operations,
     items: [
-      { id: "overview", label: text.dashboard, description: "Setup and status overview", icon: "⌘" },
-      { id: "repos", label: text.projects, description: "Repository registry", icon: "◇" },
-      { id: "capabilities", label: text.capabilities, description: "Agents and helpers", icon: "✦" },
-      { id: "routines", label: text.routines, description: "Scheduled workflows", icon: "◷", badge: "planned" },
+      { id: "overview", label: text.dashboard, description: "Setup, status, and roadmap homes", icon: "⌘" },
+      { id: "agents", label: "Agents", description: "~/.aidevops/agents explorer", icon: "A" },
+      { id: "config", label: text.config, description: "~/.config/aidevops explorer", icon: "C" },
+      { id: "localSetup", label: text.localSetup, description: "~/.aidevops explorer", icon: "L" },
+      { id: "git", label: text.git, description: "~/Git explorer", icon: "G" },
+      { id: "routines", label: text.routines, description: "Scheduled workflows", icon: "R", badge: text.planned },
     ],
   },
   {
-    label: text.configuration,
+    label: text.inventory,
     items: [
-      { id: "settings", label: text.settings, description: "Config keys only", icon: "⚙" },
-      { id: "integrations", label: text.integrations, description: "Providers and services", icon: "⬡", badge: "planned" },
-      { id: "security", label: text.security, description: "Secrets and guardrails", icon: "◈" },
+      { id: "apps", label: text.apps, description: "Installed tools and apps", icon: "P" },
+      { id: "installation", label: text.installation, description: "Optional setup toggles", icon: "I" },
+      { id: "personas", label: text.personas, description: "People and identities", icon: "P" },
+      { id: "brands", label: text.brands, description: "Brands and websites", icon: "B" },
+      { id: "domains", label: text.domains, description: "Owned domains", icon: "D" },
+      { id: "registrars", label: text.registrars, description: "Domain registrars", icon: "R" },
+      { id: "hosts", label: text.hosts, description: "Hosting providers", icon: "H" },
+      { id: "servers", label: text.servers, description: "Servers and orchestrators", icon: "S" },
     ],
   },
+  {
+    label: "Reference",
+    items: [
+      { id: "projects", label: text.projects, description: "repos.json summary", icon: "◇" },
+      { id: "security", label: text.security, description: "Trust boundary", icon: "◈" },
+    ],
+  },
+];
+
+const fileRootBySurface: Partial<Record<SurfaceId, GuiFileRootId>> = {
+  agents: "agents",
+  config: "config",
+  localSetup: "localSetup",
+  git: "git",
+};
+
+const appRows = [
+  { name: "aidevops", latest: text.appStatusPending, channel: "setup/update", website: "https://aidevops.sh" },
+  { name: "OpenCode", latest: text.appStatusPending, channel: "runtime", website: text.appStatusPending },
+  { name: "Bun", latest: text.appStatusPending, channel: "toolchain", website: text.appStatusPending },
+  { name: "GitHub CLI", latest: text.appStatusPending, channel: "git", website: text.appStatusPending },
+  { name: "ShellCheck", latest: text.appStatusPending, channel: "quality", website: text.appStatusPending },
+  { name: "Biome", latest: text.appStatusPending, channel: "quality", website: text.appStatusPending },
+];
+
+const installationRows = [
+  { name: "OpenCode runtime", install: true, update: true, scope: "core" },
+  { name: "GUI desktop launcher", install: true, update: true, scope: "local" },
+  { name: "Shell quality tools", install: true, update: true, scope: "quality" },
+  { name: "Cloudron helpers", install: false, update: false, scope: "optional" },
+  { name: "Calendar sync helpers", install: false, update: false, scope: "optional" },
+];
+
+const plannedHomes = [
+  { area: "Setup/status", home: "Dashboard + Local Setup", phase: "P6" },
+  { area: "Repos and local Git", home: "Projects + Git", phase: "P7" },
+  { area: "Infrastructure inventory", home: "Domains, Registrars, Hosts, Servers", phase: "P8" },
+  { area: "Provider catalog", home: "Registrars, Hosts, Apps", phase: "P9" },
+  { area: "Routines", home: "Routines", phase: "P10" },
+  { area: "Agents and knowledgebase", home: "Agents", phase: "P12" },
+  { area: "Cloudron and machine pairing", home: "Servers + Apps", phase: "P13/P14" },
+  { area: "OpenCode sessions", home: "Future Sessions surface", phase: "P15" },
+  { area: "Desktop wrapper", home: "Installation", phase: "P16" },
 ];
 
 function getSystemTheme(): "light" | "dark" {
@@ -116,27 +202,14 @@ function findSurface(id: SurfaceId): SurfaceNavItem {
   return navGroups[0].items[0];
 }
 
-function formatLocalPathStatus(localPathStatus: string): string {
-  return `${text.localPathLabel} ${localPathStatus}`;
-}
-
-function formatRestartNotice(update: GuiStatusData["update"]): string {
-  return `${update.message} ${text.runningVersion} ${update.running_version}; ${text.installedVersion} ${update.installed_version}.`;
-}
-
-function formatSessionMeta(resolvedTheme: "light" | "dark"): string {
-  return `${text.guarded} · ${resolvedTheme}`;
-}
-
 export function App() {
   const [status, setStatus] = useState<GuiResponseEnvelope<GuiStatusData>>(mockedStatus());
-  const [warning, setWarning] = useState<string | null>("Using local fixture until the API responds.");
   const [activeSurface, setActiveSurface] = useState<SurfaceId>("overview");
   const [themePreference, setThemePreference] = useState<ThemePreference>("system");
   const [systemTheme, setSystemTheme] = useState<"light" | "dark">("light");
   const resolvedTheme = themePreference === "system" ? systemTheme : themePreference;
-  const update = status.data.update;
   const activeItem = findSurface(activeSurface);
+  const fileRoot = fileRootBySurface[activeSurface];
 
   useEffect(() => {
     const savedTheme = window.localStorage.getItem("aidevops-gui-theme");
@@ -160,19 +233,14 @@ export function App() {
 
   useEffect(() => {
     fetchStatus()
-      .then((nextStatus) => {
-        setStatus(nextStatus);
-        setWarning(null);
-      })
-      .catch(() => {
-        setWarning("API unavailable; showing read-only fixture data.");
-      });
+      .then(setStatus)
+      .catch(() => setStatus(mockedStatus()));
   }, []);
 
   return (
     <main className="app-shell">
       <aside className="app-sidebar" aria-label={text.navigationLabel}>
-        <SidebarHeader status={status.data} />
+        <SidebarHeader />
         <nav className="sidebar-content">
           {navGroups.map((group) => (
             <section className="sidebar-group" key={group.label}>
@@ -199,7 +267,7 @@ export function App() {
             </section>
           ))}
         </nav>
-        <SidebarFooter resolvedTheme={resolvedTheme} setThemePreference={setThemePreference} themePreference={themePreference} />
+        <SidebarFooter setThemePreference={setThemePreference} themePreference={themePreference} />
       </aside>
 
       <section className="app-inset" aria-label={text.workspaceLabel}>
@@ -216,26 +284,23 @@ export function App() {
               <span>⌘K</span>
               <input disabled placeholder={text.searchPlaceholder} />
             </label>
-            <span className="read-only-pill"><i />{text.localReadOnly}</span>
+            <span className="read-only-pill"><i />{text.readOnly}</span>
           </div>
         </header>
 
         <div className="workspace-scroll">
-          {warning ? <p className="notice" role="status">{warning}</p> : null}
-          {update.restart_required ? (
-            <p className="alert" role="alert">
-              {formatRestartNotice(update)}
-            </p>
-          ) : (
-            <p className="notice" role="status">{update.message}</p>
-          )}
-
           {activeSurface === "overview" ? <OverviewSurface status={status.data} /> : null}
-          {activeSurface === "repos" ? <ProjectsSurface status={status.data} /> : null}
-          {activeSurface === "capabilities" ? <AgentsSurface status={status.data} /> : null}
+          {fileRoot ? <FileExplorerSurface key={fileRoot} rootId={fileRoot} /> : null}
           {activeSurface === "routines" ? <PlannedSurface label={text.routines} detail={text.routineDetail} /> : null}
-          {activeSurface === "integrations" ? <PlannedSurface label={text.integrations} detail={text.integrationsDetail} /> : null}
-          {activeSurface === "settings" ? <SettingsSurface status={status.data} /> : null}
+          {activeSurface === "apps" ? <AppsSurface /> : null}
+          {activeSurface === "installation" ? <InstallationSurface /> : null}
+          {activeSurface === "personas" ? <EditableInventorySurface title={text.personas} intro={text.personasIntro} columns={[{ key: "firstName", label: "First Name" }, { key: "lastName", label: "Last Name" }]} initialRows={[{ firstName: "", lastName: "" }]} /> : null}
+          {activeSurface === "brands" ? <EditableInventorySurface title={text.brands} intro={text.brandsIntro} columns={[{ key: "brandName", label: "Brand Name" }, { key: "website", label: "Website URL" }]} initialRows={[{ brandName: "", website: "" }]} /> : null}
+          {activeSurface === "domains" ? <EditableInventorySurface title={text.domains} intro={text.domainsIntro} columns={[{ key: "domain", label: "Domain" }, { key: "provider", label: "Provider" }, { key: "status", label: "Status" }]} initialRows={[{ domain: "", provider: "", status: "" }]} /> : null}
+          {activeSurface === "registrars" ? <EditableInventorySurface title={text.registrars} intro={text.registrarsIntro} columns={[{ key: "name", label: "Registrar" }, { key: "recommendation", label: "Recommendation" }, { key: "notes", label: "Notes" }]} initialRows={[{ name: "Porkbun", recommendation: "recommended", notes: "provider catalog" }, { name: "Cloudflare Registrar", recommendation: "recommended", notes: "provider catalog" }]} /> : null}
+          {activeSurface === "hosts" ? <EditableInventorySurface title={text.hosts} intro={text.hostsIntro} columns={[{ key: "name", label: "Host" }, { key: "category", label: "Category" }, { key: "notes", label: "Notes" }]} initialRows={[{ name: "Cloudron", category: "app platform", notes: "recommended" }, { name: "Coolify", category: "app platform", notes: "recommended" }, { name: "Ubicloud", category: "cloud", notes: "recommended" }]} /> : null}
+          {activeSurface === "servers" ? <EditableInventorySurface title={text.servers} intro={text.serversIntro} columns={[{ key: "provider", label: "Provider" }, { key: "server", label: "Server" }, { key: "os", label: "OS" }, { key: "orchestrator", label: "Orchestrator" }, { key: "apps", label: "Apps" }]} initialRows={[{ provider: "", server: "", os: "", orchestrator: "", apps: "" }]} /> : null}
+          {activeSurface === "projects" ? <ProjectsSurface status={status.data} /> : null}
           {activeSurface === "security" ? <SecuritySurface status={status.data} /> : null}
         </div>
       </section>
@@ -243,43 +308,24 @@ export function App() {
   );
 }
 
-function SidebarHeader({ status }: { status: GuiStatusData }) {
+function SidebarHeader() {
   return (
     <header className="sidebar-header">
       <div className="brand-lockup">
         <span className="terminal-mark" aria-hidden="true">›_</span>
-        <div>
-          <strong>{text.appName}</strong>
-          <small>{text.readOnlyApi}</small>
-        </div>
+        <strong>{text.aidevops}</strong>
       </div>
-      <section className="setup-card" aria-label="Local setup summary">
-        <span>{text.localOnly}</span>
-        <h2>{text.setupCardTitle}</h2>
-        <p>{text.setupCardText}</p>
-        <dl>
-          <div><dt>{text.version}</dt><dd>{status.aidevops_version}</dd></div>
-          <div><dt>{text.api}</dt><dd>{status.runtime.api}</dd></div>
-        </dl>
-      </section>
     </header>
   );
 }
 
-function SidebarFooter({ resolvedTheme, setThemePreference, themePreference }: {
-  resolvedTheme: "light" | "dark";
+function SidebarFooter({ setThemePreference, themePreference }: {
   setThemePreference: (theme: ThemePreference) => void;
   themePreference: ThemePreference;
 }) {
   return (
     <footer className="sidebar-footer">
-      <div className="session-card">
-        <div className="session-avatar" aria-hidden="true">{text.sessionInitials}</div>
-        <div>
-          <strong>{text.localSession}</strong>
-          <small>{formatSessionMeta(resolvedTheme)}</small>
-        </div>
-      </div>
+      <p>{text.theme}</p>
       <div className="theme-control compact">
         {(["system", "light", "dark"] as const).map((theme) => (
           <button
@@ -301,16 +347,15 @@ function OverviewSurface({ status }: { status: GuiStatusData }) {
   const metrics = [
     { label: text.setup, value: status.update.restart_required ? "restart" : "current", detail: status.update.installed_version },
     { label: text.projects, value: String(status.repos.total), detail: status.repos.health },
-    { label: text.settings, value: String(status.settings.key_count), detail: text.keysOnly },
+    { label: text.config, value: String(status.settings.key_count), detail: status.settings.value_policy },
     { label: text.security, value: String(status.secrets.length), detail: "secret references" },
   ];
 
   return (
     <section className="surface-page" aria-label="Overview">
-      <div className="hero-panel">
-        <p className="eyebrow">{text.localReadOnly}</p>
-        <h2>{text.controlPlaneTitle}</h2>
-        <p>{text.trustBoundary}</p>
+      <div className="hero-panel compact-hero">
+        <p className="eyebrow">{text.roadmapIntro}</p>
+        <h2>{text.aidevops}</h2>
       </div>
       <div className="metric-grid">
         {metrics.map((metric) => (
@@ -323,9 +368,23 @@ function OverviewSurface({ status }: { status: GuiStatusData }) {
       </div>
       <section className="panel">
         <div className="section-heading">
-          <p className="eyebrow">{text.signals}</p>
-          <h2>{text.localSetupHealth}</h2>
-          <p>{text.filesystemRefs}</p>
+          <p className="eyebrow">{text.plannedHomes}</p>
+          <h2>{text.fileBrowser}</h2>
+        </div>
+        <div className="planned-home-grid">
+          {plannedHomes.map((home) => (
+            <article className="planned-home" key={home.area}>
+              <span>{home.phase}</span>
+              <strong>{home.area}</strong>
+              <small>{home.home}</small>
+            </article>
+          ))}
+        </div>
+      </section>
+      <section className="panel">
+        <div className="section-heading">
+          <p className="eyebrow">{text.path}</p>
+          <h2>{text.localSetup}</h2>
         </div>
         <ul className="object-list">
           {status.paths.map((path) => (
@@ -333,6 +392,7 @@ function OverviewSurface({ status }: { status: GuiStatusData }) {
               <strong>{path.label}</strong>
               <span>{path.health}</span>
               <code>{path.path_ref}</code>
+              <PathActions pathRef={path.path_ref} />
             </li>
           ))}
         </ul>
@@ -341,13 +401,239 @@ function OverviewSurface({ status }: { status: GuiStatusData }) {
   );
 }
 
-function ProjectsSurface({ status }: { status: GuiStatusData }) {
+function FileExplorerSurface({ rootId }: { rootId: GuiFileRootId }) {
+  const [relativePath, setRelativePath] = useState("");
+  const [explorer, setExplorer] = useState<GuiResponseEnvelope<GuiFileExplorerData>>(() => mockedFileExplorer(rootId));
+  const [markdownFormatted, setMarkdownFormatted] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchFileExplorer(rootId, relativePath)
+      .then((response) => {
+        if (!cancelled) {
+          setExplorer(response);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setExplorer(mockedFileExplorer(rootId));
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [rootId, relativePath]);
+
+  const data = explorer.data;
+  const intro = rootId === "agents" ? data.root.description : rootId === "config" ? text.configIntro : rootId === "localSetup" ? text.localSetupIntro : text.gitIntro;
+
   return (
-    <section className="panel" aria-label="Projects">
+    <section className="surface-page" aria-label={data.root.label}>
+      <section className="panel explorer-panel">
+        <div className="section-heading split-heading">
+          <div>
+            <p className="eyebrow">{data.root.path_ref}</p>
+            <h2>{data.root.label}</h2>
+            <p>{intro}</p>
+          </div>
+          <PathActions pathRef={data.current_path_ref} />
+        </div>
+        <div className="file-workspace">
+          <ul className="file-list" aria-label={`${data.root.label} file list`}>
+            <li>
+              <button className="file-entry parent-entry" disabled={data.current_relative_path.length === 0} onClick={() => setRelativePath(parentPath(data.current_relative_path))} type="button">
+                <span>↰</span>
+                <strong>{text.parentDirectory}</strong>
+              </button>
+            </li>
+            {data.entries.map((entry) => (
+              <FileEntryButton entry={entry} key={entry.path_ref} setRelativePath={setRelativePath} />
+            ))}
+          </ul>
+          <FilePreviewPanel markdownFormatted={markdownFormatted} preview={data.selected_preview} setMarkdownFormatted={setMarkdownFormatted} />
+        </div>
+      </section>
+    </section>
+  );
+}
+
+function FileEntryButton({ entry, setRelativePath }: { entry: GuiFileEntry; setRelativePath: (path: string) => void }) {
+  return (
+    <li className="file-entry-row">
+      <button className="file-entry" onClick={() => setRelativePath(entry.relative_path)} type="button">
+        <span>{entry.kind === "directory" ? "▸" : "•"}</span>
+        <strong>{entry.name}</strong>
+        <small>{entry.kind}</small>
+      </button>
+      <PathActions pathRef={entry.path_ref} />
+    </li>
+  );
+}
+
+function FilePreviewPanel({ markdownFormatted, preview, setMarkdownFormatted }: {
+  markdownFormatted: boolean;
+  preview: GuiFilePreview | null;
+  setMarkdownFormatted: (value: boolean) => void;
+}) {
+  if (preview === null) {
+    return <aside className="file-preview empty-preview"><p>{text.noPreview}</p></aside>;
+  }
+
+  if (preview.mode === "blocked") {
+    return <aside className="file-preview empty-preview"><p>{preview.reason}</p></aside>;
+  }
+
+  const isMarkdown = preview.mode === "markdown";
+  return (
+    <aside className="file-preview">
+      <div className="preview-header">
+        <div>
+          <p className="eyebrow">{preview.language || text.codeView}</p>
+          <strong>{preview.path_ref}</strong>
+        </div>
+        {isMarkdown ? (
+          <label className="toggle-row">
+            <input checked={markdownFormatted} onChange={(event) => setMarkdownFormatted(event.currentTarget.checked)} type="checkbox" />
+            <span>{text.markdownFormatted}</span>
+          </label>
+        ) : null}
+      </div>
+      {preview.truncated ? <p className="notice compact-notice">{text.truncated}</p> : null}
+      {isMarkdown && markdownFormatted ? <MarkdownPreview content={preview.content} /> : <pre className="code-preview"><code>{preview.content}</code></pre>}
+    </aside>
+  );
+}
+
+function MarkdownPreview({ content }: { content: string }) {
+  return (
+    <div className="markdown-preview">
+      {content.split("\n").slice(0, 240).map((line, index) => {
+        if (line.startsWith("### ")) {
+          return <h4 key={`${index}:${line}`}>{line.slice(4)}</h4>;
+        }
+        if (line.startsWith("## ")) {
+          return <h3 key={`${index}:${line}`}>{line.slice(3)}</h3>;
+        }
+        if (line.startsWith("# ")) {
+          return <h2 key={`${index}:${line}`}>{line.slice(2)}</h2>;
+        }
+        if (line.startsWith("- ")) {
+          return <p className="markdown-bullet" key={`${index}:${line}`}>{line}</p>;
+        }
+        return <p key={`${index}:${line}`}>{line.length > 0 ? line : "\u00a0"}</p>;
+      })}
+    </div>
+  );
+}
+
+function AppsSurface() {
+  return (
+    <section className="panel" aria-label={text.apps}>
       <div className="section-heading">
         <p className="eyebrow">{text.inventory}</p>
-        <h2>{text.projects}</h2>
-        <p>{text.registrySummaryPrefix}<code>{status.repos.path_ref}</code>{text.registrySummarySuffix}</p>
+        <h2>{text.apps}</h2>
+        <p>{text.appsIntro}</p>
+      </div>
+      <div className="data-table">
+        <div className="data-row header-row"><span>{text.name}</span><span>{text.latest}</span><span>{text.channel}</span><span>{text.website}</span></div>
+        {appRows.map((row) => (
+          <div className="data-row" key={row.name}><span>{row.name}</span><span>{row.latest}</span><span>{row.channel}</span><span>{row.website}</span></div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function InstallationSurface() {
+  return (
+    <section className="panel" aria-label={text.installation}>
+      <div className="section-heading">
+        <p className="eyebrow">{text.setup}</p>
+        <h2>{text.installation}</h2>
+        <p>{text.installationIntro}</p>
+      </div>
+      <div className="installation-list">
+        {installationRows.map((row) => (
+          <article className="install-row" key={row.name}>
+            <div><strong>{row.name}</strong><small>{row.scope}</small></div>
+            <TogglePill checked={row.install} label={text.install} />
+            <TogglePill checked={row.update} label={text.update} />
+          </article>
+        ))}
+      </div>
+      <p className="empty-state">{text.plannedNotice}</p>
+    </section>
+  );
+}
+
+function TogglePill({ checked, label }: { checked: boolean; label: string }) {
+  return <span className={checked ? "toggle-pill checked" : "toggle-pill"}>{label}</span>;
+}
+
+function EditableInventorySurface({ columns, initialRows, intro, title }: {
+  columns: InventoryColumn[];
+  initialRows: Record<string, string>[];
+  intro: string;
+  title: string;
+}) {
+  const [draftRows, setDraftRows] = useState(initialRows);
+
+  function updateDraftRow(rowIndex: number, key: string, value: string): void {
+    setDraftRows((currentRows) => currentRows.map((row, index) => index === rowIndex ? { ...row, [key]: value } : row));
+  }
+
+  function addDraftRow(): void {
+    const emptyRow: Record<string, string> = {};
+    for (const column of columns) {
+      emptyRow[column.key] = "";
+    }
+    setDraftRows((currentRows) => [...currentRows, emptyRow]);
+  }
+
+  return (
+    <section className="panel" aria-label={title}>
+      <div className="section-heading split-heading">
+        <div>
+          <p className="eyebrow">{text.inventory}</p>
+          <h2>{title}</h2>
+          <p>{intro}</p>
+        </div>
+        <button className="secondary-action" onClick={addDraftRow} type="button">{text.addRow}</button>
+      </div>
+      <p className="notice compact-notice">{text.draftOnly}</p>
+      <div className="editable-table">
+        <div className="editable-row header-row">
+          {columns.map((column) => <span key={column.key}>{column.label}</span>)}
+        </div>
+        {draftRows.map((row, rowIndex) => (
+          <div className="editable-row" key={`${title}:${rowIndex}`}>
+            {columns.map((column) => (
+              <input
+                aria-label={`${title} ${column.label}`}
+                key={column.key}
+                onChange={(event) => updateDraftRow(rowIndex, column.key, event.currentTarget.value)}
+                placeholder={column.label}
+                value={row[column.key] ?? ""}
+              />
+            ))}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ProjectsSurface({ status }: { status: GuiStatusData }) {
+  return (
+    <section className="panel" aria-label={text.projects}>
+      <div className="section-heading split-heading">
+        <div>
+          <p className="eyebrow">{text.inventory}</p>
+          <h2>{text.projects}</h2>
+          <p>{status.repos.path_ref}</p>
+        </div>
+        <PathActions pathRef={status.repos.path_ref} />
       </div>
       {status.repos.repos.length === 0 ? (
         <p className="empty-state">{text.noProjectEntries}</p>
@@ -358,7 +644,7 @@ function ProjectsSurface({ status }: { status: GuiStatusData }) {
               <strong>{repo.name}</strong>
               <span>{repo.platform}</span>
               <small>{repo.slug}</small>
-              <small>{formatLocalPathStatus(repo.local_path_status)}</small>
+              <small>{repo.local_path_status}</small>
             </li>
           ))}
         </ul>
@@ -367,70 +653,13 @@ function ProjectsSurface({ status }: { status: GuiStatusData }) {
   );
 }
 
-function AgentsSurface({ status }: { status: GuiStatusData }) {
-  return (
-    <section className="panel" aria-label="Agents">
-      <div className="section-heading">
-        <p className="eyebrow">{text.automation}</p>
-        <h2>{text.agentsAndHelpers}</h2>
-        <p>{text.capabilityIntro}</p>
-      </div>
-      <div className="capability-grid">
-        {status.capabilities.map((capability) => (
-          <article className="capability-card" key={capability.id}>
-            <span>{capability.status}</span>
-            <strong>{capability.label}</strong>
-            <code>{capability.doc_ref}</code>
-          </article>
-        ))}
-      </div>
-      <h3>{text.helperAvailability}</h3>
-      <ul className="object-list compact-list">
-        {status.helper_availability.map((helper) => (
-          <li key={helper.name}>
-            <strong>{helper.name}</strong>
-            <span>{helper.status}</span>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-function SettingsSurface({ status }: { status: GuiStatusData }) {
-  return (
-    <section className="panel" aria-label="Settings">
-      <div className="section-heading">
-        <p className="eyebrow">{text.configuration}</p>
-        <h2>{text.settings}</h2>
-        <p>{text.settingsIntro}</p>
-      </div>
-      <dl className="inline-details">
-        <dt>{text.path}</dt>
-        <dd><code>{status.settings.path_ref}</code></dd>
-        <dt>{text.health}</dt>
-        <dd>{status.settings.health}</dd>
-        <dt>{text.policy}</dt>
-        <dd>{status.settings.value_policy}</dd>
-      </dl>
-      {status.settings.keys.length === 0 ? (
-        <p className="empty-state">{text.noSettingsKeys}</p>
-      ) : (
-        <ul className="tag-list">
-          {status.settings.keys.map((key) => <li key={key}>{key}</li>)}
-        </ul>
-      )}
-    </section>
-  );
-}
-
 function SecuritySurface({ status }: { status: GuiStatusData }) {
   return (
-    <section className="panel" aria-label="Security">
+    <section className="panel" aria-label={text.security}>
       <div className="section-heading">
-        <p className="eyebrow">{text.guardrails}</p>
+        <p className="eyebrow">{text.readOnly}</p>
         <h2>{text.security}</h2>
-        <p>{text.guardrailIntro}</p>
+        <p>{text.securityBoundary}</p>
       </div>
       <ul className="object-list">
         {status.secrets.map((secret) => (
@@ -440,7 +669,6 @@ function SecuritySurface({ status }: { status: GuiStatusData }) {
           </li>
         ))}
       </ul>
-      <p className="empty-state">{status.placeholders[0]}</p>
     </section>
   );
 }
@@ -449,11 +677,32 @@ function PlannedSurface({ detail, label }: { detail: string; label: string }) {
   return (
     <section className="panel" aria-label={label}>
       <div className="section-heading">
-        <p className="eyebrow">{text.plannedAdapter}</p>
+        <p className="eyebrow">{text.planned}</p>
         <h2>{label}</h2>
         <p>{detail}</p>
       </div>
-      <p className="empty-state">{text.plannedPlaceholder}</p>
+      <p className="empty-state">{text.plannedNotice}</p>
     </section>
   );
+}
+
+function PathActions({ pathRef }: { pathRef: string }) {
+  const copy = () => {
+    if (typeof navigator !== "undefined" && navigator.clipboard !== undefined) {
+      void navigator.clipboard.writeText(pathRef);
+    }
+  };
+
+  return (
+    <span className="path-actions">
+      <button aria-label={text.copyPath} onClick={copy} title={text.copyPath} type="button">⧉</button>
+      <button aria-label={text.folderOpenBlocked} disabled title={text.folderOpenBlocked} type="button">⌂</button>
+    </span>
+  );
+}
+
+function parentPath(relativePath: string): string {
+  const parts = relativePath.split("/").filter(Boolean);
+  parts.pop();
+  return parts.join("/");
 }

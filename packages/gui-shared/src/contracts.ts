@@ -1,6 +1,8 @@
 export type GuiRouteClassification = "read" | "write" | "destructive";
 
-export type GuiOperationId = "setup.status.read" | "capabilities.read";
+export type GuiOperationId = "setup.status.read" | "capabilities.read" | "filesystem.read";
+
+export type GuiFileRootId = "agents" | "config" | "localSetup" | "git";
 
 export interface GuiSourceRef {
   surface: string;
@@ -30,13 +32,49 @@ export interface GuiRouteManifest {
   redactions: readonly string[];
 }
 
+export interface GuiFileRootDefinition {
+  id: GuiFileRootId;
+  label: string;
+  path_ref: string;
+  description: string;
+  preview_policy: "agents_markdown_and_code" | "metadata_only";
+}
+
+export interface GuiFileEntry {
+  name: string;
+  kind: "directory" | "file";
+  path_ref: string;
+  relative_path: string;
+  extension: string;
+  preview_allowed: boolean;
+}
+
+export interface GuiFilePreview {
+  path_ref: string;
+  relative_path: string;
+  mode: "markdown" | "code" | "text" | "blocked";
+  language: string;
+  content: string;
+  truncated: boolean;
+  reason: string;
+}
+
+export interface GuiFileExplorerData {
+  root: GuiFileRootDefinition;
+  current_path_ref: string;
+  current_relative_path: string;
+  entries: GuiFileEntry[];
+  selected_preview: GuiFilePreview | null;
+  entry_limit: number;
+}
+
 export interface GuiSecretReference {
   name: string;
   status: "configured" | "missing" | "unchecked";
 }
 
 export interface GuiNavigationItem {
-  id: "overview" | "repos" | "settings" | "capabilities" | "security";
+  id: string;
   label: string;
   description: string;
 }
@@ -110,6 +148,48 @@ export const STATUS_ROUTE_MANIFEST: GuiRouteManifest = {
   command_pattern: ["aidevops", "status"],
   redactions: ["secret_values", "credential_paths", "private_key_material"],
 };
+
+export const FILE_EXPLORER_ROUTE_MANIFEST: GuiRouteManifest = {
+  route: "/api/files/:root",
+  method: "GET",
+  operation_id: "filesystem.read",
+  classification: "read",
+  source_surface: "filesystem",
+  adapter: "fileAdapter.readFileExplorer",
+  command_pattern: ["node:fs", "read-only", "root-allowlist"],
+  redactions: ["secret_values", "credential_paths", "private_key_material"],
+};
+
+export const GUI_FILE_ROOTS: readonly GuiFileRootDefinition[] = [
+  {
+    id: "agents",
+    label: "Agents",
+    path_ref: "~/.aidevops/agents",
+    description: "Agent, workflow, tool, service, and reference files deployed by aidevops.",
+    preview_policy: "agents_markdown_and_code",
+  },
+  {
+    id: "config",
+    label: "Config",
+    path_ref: "~/.config/aidevops",
+    description: "Local aidevops configuration files. Contents stay hidden until a redaction policy lands.",
+    preview_policy: "metadata_only",
+  },
+  {
+    id: "localSetup",
+    label: "Local Setup",
+    path_ref: "~/.aidevops",
+    description: "Local aidevops runtime folders, cache, memory, logs, and deployed assets.",
+    preview_policy: "metadata_only",
+  },
+  {
+    id: "git",
+    label: "Git",
+    path_ref: "~/Git",
+    description: "Local git workspace roots and worktrees.",
+    preview_policy: "metadata_only",
+  },
+] as const;
 
 export const BANNED_ROUTE_PATTERNS = [
   "/shell",

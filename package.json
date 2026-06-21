@@ -27,7 +27,7 @@
     "gui:api:dev": "bun run packages/gui-api/src/server.ts",
     "gui:web:dev": "bun ./node_modules/vite/bin/vite.js --config packages/gui-web/vite.config.ts --host 127.0.0.1 --port 5173",
     "gui:test:schema": "bun test packages/gui-shared/tests",
-    "gui:test:adapters": "bun test packages/gui-api/tests/status-adapter.test.ts",
+    "gui:test:adapters": "bun test packages/gui-api/tests/*adapter.test.ts",
     "gui:test:api": "bun test packages/gui-api/tests/status-route.test.ts",
     "gui:test:components": "bun test packages/gui-web/tests",
     "gui:test:security": "bun test packages/gui-shared/tests/security.test.ts packages/gui-api/tests/security.test.ts packages/gui-web/tests/security.test.ts",
