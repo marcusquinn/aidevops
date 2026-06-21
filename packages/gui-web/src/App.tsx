@@ -2,7 +2,8 @@
 import { useEffect, useState } from "react";
 import type { GuiResponseEnvelope, GuiStatusData } from "../../gui-shared/src";
 import { fetchStatus, mockedStatus } from "./status-client";
-import { Sidebar, Workspace } from "./AppSurfaces";
+import { Sidebar } from "./AppNavigation";
+import { Workspace } from "./AppWorkspace";
 import { fileRootBySurface, findSurface, getSystemTheme } from "./app-model";
 import type { SurfaceId, ThemePreference } from "./app-model";
 
