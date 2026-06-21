@@ -1,4 +1,3 @@
-/* jshint esversion: 11, module: true */
 import { useState, type ReactElement } from "react";
 import { appRows, installationRows, text } from "./app-model";
 import type { InventoryColumn } from "./app-model";

@@ -105,3 +105,13 @@ exclude_paths:
   # from our own config, task IDs, and session metadata. Excluding the dir
   # stops the noise; genuine review of plugin changes happens in PR review.
   - ".agents/plugins/opencode-aidevops/**"
+  # GUI TypeScript/TSX (GH#25304): Codacy's legacy JS parsers currently treat
+  # React TSX and Bun workspace imports as ES5/CommonJS and report false
+  # positives such as "ES2015 modules are forbidden" and unresolved workspace
+  # packages. Coverage is preserved by Biome baseline diff, `tsc --noEmit`, GUI
+  # schema/API/component/security/smoke tests, Qlty gates, and SonarCloud.
+  - "packages/gui-web/src/**"
+  # GUI read-only adapter (GH#25304): Codacy spellcheck reports shared `Gui*`
+  # type identifiers as misspellings; functional coverage is provided by the
+  # adapter/API/security tests and Qlty/SonarCloud gates.
+  - "packages/gui-api/src/file-adapter.ts"

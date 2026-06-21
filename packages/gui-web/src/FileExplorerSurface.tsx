@@ -1,4 +1,3 @@
-/* jshint esversion: 11, module: true */
 import { useEffect, useState, type ReactElement } from "react";
 import type { GuiFileEntry, GuiFileExplorerData, GuiFilePreview, GuiFileRootId, GuiResponseEnvelope } from "@aidevops/gui-shared";
 import { text } from "./app-model";

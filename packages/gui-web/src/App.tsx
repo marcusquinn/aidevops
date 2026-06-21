@@ -1,4 +1,3 @@
-/* jshint esversion: 11, module: true */
 import { useEffect, useState, type ReactElement } from "react";
 import type { GuiResponseEnvelope, GuiStatusData } from "@aidevops/gui-shared";
 import { fetchStatus, mockedStatus } from "./status-client";

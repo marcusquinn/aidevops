@@ -1,4 +1,3 @@
-/* jshint esversion: 11, module: true */
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, join, relative, resolve, sep } from "node:path";
 import {
