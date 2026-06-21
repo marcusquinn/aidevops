@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.21.8] - 2026-06-21
+
+### Added
+
+- add read-only dashboard navigation (#25315)
+- add macOS GUI launcher scaffold (#25306)
+- add local read-only GUI scaffold (#25305)
+
+### Changed
+
+- publish planning files via PR on protected defaults (#25312)
+- Tests: cover OpenCode DB env mocks (#25310)
+
+### Fixed
+
+- serve visible GUI from app launcher (#25314)
+- detach macOS GUI launcher (#25311)
+
 ## [3.21.7] - 2026-06-21
 
 ### Changed
