@@ -1070,6 +1070,7 @@ _process_single_ready_pr() {
 	# PR without admin bypass, then fall back to a direct non-admin merge for repos
 	# whose rulesets allow immediate maintainer merges.
 	local merge_output="" _merge_exit=0 _auto_merge_output="" _auto_merge_exit=0
+	local merge_failure_context=""
 	merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash --admin 2>&1)
 	_merge_exit=$?
 	if [[ $_merge_exit -ne 0 ]] && gh_merge_remediate_stale_auth_cache "$merge_output" "pulse merge PR #${pr_number} in ${repo_slug}" "$LOGFILE"; then
@@ -1083,6 +1084,10 @@ _process_single_ready_pr() {
 ${merge_output}"
 		fi
 	fi
+	if [[ $_merge_exit -ne 0 ]]; then
+		merge_failure_context="[admin merge]
+${merge_output}"
+	fi
 	if [[ $_merge_exit -ne 0 && "$merge_output" == *"Repository rule violations found"* ]]; then
 		echo "[pulse-wrapper] Deterministic merge: admin merge hit repository rulesets for PR #${pr_number} in ${repo_slug}; retrying with native auto-merge without --admin (GH#24438): ${merge_output}" >>"$LOGFILE"
 		_auto_merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --auto --squash 2>&1)
@@ -1091,6 +1096,10 @@ ${merge_output}"
 			echo "[pulse-wrapper] Deterministic merge: enabled native auto-merge for PR #${pr_number} in ${repo_slug} after ruleset blocked admin bypass (GH#24438)" >>"$LOGFILE"
 			return 0
 		fi
+		merge_failure_context="${merge_failure_context}
+
+[native auto-merge fallback]
+${_auto_merge_output}"
 		echo "[pulse-wrapper] Deterministic merge: native auto-merge fallback failed for PR #${pr_number} in ${repo_slug}; retrying direct merge without --admin (GH#23087): ${_auto_merge_output}" >>"$LOGFILE"
 		merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --squash 2>&1)
 		_merge_exit=$?
@@ -1104,6 +1113,12 @@ ${merge_output}"
 [retry after stale gh cache remediation]
 ${merge_output}"
 			fi
+		fi
+		if [[ $_merge_exit -ne 0 ]]; then
+			merge_failure_context="${merge_failure_context}
+
+[direct merge fallback]
+${merge_output}"
 		fi
 	fi
 
@@ -1132,8 +1147,10 @@ ${merge_output}"
 		_handle_post_merge_actions "$pr_number" "$repo_slug" "$linked_issue" "$merge_summary" "$_ipr_labels"
 		return $?
 	else
-		echo "[pulse-wrapper] Deterministic merge: FAILED PR #${pr_number} in ${repo_slug}: ${merge_output}" >>"$LOGFILE"
-		_pulse_merge_maybe_dispatch_review_thread_remediation "$pr_number" "$repo_slug" "$merge_output"
+		local final_merge_output="$merge_output"
+		[[ -n "$merge_failure_context" ]] && final_merge_output="$merge_failure_context"
+		echo "[pulse-wrapper] Deterministic merge: FAILED PR #${pr_number} in ${repo_slug}: ${final_merge_output}" >>"$LOGFILE"
+		_pulse_merge_maybe_dispatch_review_thread_remediation "$pr_number" "$repo_slug" "$final_merge_output"
 		return 3
 	fi
 }

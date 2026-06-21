@@ -20,6 +20,7 @@ TESTS_RUN=0
 TESTS_FAILED=0
 TEST_ROOT=""
 GH_LOG=""
+REMEDIATION_LOG=""
 _OW_LABEL_PAT=",origin:worker,"
 
 print_result() {
@@ -48,7 +49,9 @@ setup_test_env() {
 	: >"$LOGFILE"
 	GH_LOG="${TEST_ROOT}/gh-calls.log"
 	: >"$GH_LOG"
-	export TEST_ROOT GH_LOG
+	REMEDIATION_LOG="${TEST_ROOT}/remediation.log"
+	: >"$REMEDIATION_LOG"
+	export TEST_ROOT GH_LOG REMEDIATION_LOG
 
 cat >"${TEST_ROOT}/bin/gh" <<'GHEOF'
 #!/usr/bin/env bash
@@ -74,6 +77,22 @@ if [[ "$mode" == "stale-cache-401" && "$1" == "pr" && "$2" == "merge" && "$*" ==
 		exit 1
 	fi
 	exit 0
+fi
+
+if [[ "$mode" == "conversation-chain" && "$1" == "pr" && "$2" == "merge" && "$*" == *"--admin"* ]]; then
+	printf '%s\n' 'GraphQL: Repository rule violations found' >&2
+	printf '%s\n' 'GraphQL: A conversation must be resolved before merging' >&2
+	exit 1
+fi
+
+if [[ "$mode" == "conversation-chain" && "$1" == "pr" && "$2" == "merge" && "$*" == *"--auto"* ]]; then
+	printf '%s\n' 'GraphQL: Pull request is not eligible for native auto-merge' >&2
+	exit 1
+fi
+
+if [[ "$mode" == "conversation-chain" && "$1" == "pr" && "$2" == "merge" ]]; then
+	printf '%s\n' 'X Pull request owner/repo#77 is not mergeable: the base branch policy prohibits the merge.' >&2
+	exit 1
 fi
 
 if [[ "$1" == "pr" && "$2" == "merge" && "$*" == *"--admin"* ]]; then
@@ -136,8 +155,17 @@ _extract_merge_summary() { printf 'summary'; return 0; }
 _retarget_stacked_children() { return 0; }
 _pulse_merge_admin_safety_check() { return 0; }
 _set_native_auto_merge_or_skip() { return 1; }
+_attempt_existing_auto_merge_behind_update_branch() { return 1; }
 _handle_post_merge_actions() { return 0; }
 gh_pr_view() { printf '{"labels":[]}'; return 0; }
+
+_pulse_merge_maybe_dispatch_review_thread_remediation() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local merge_output="$3"
+	printf 'pr=%s repo=%s\n%s\n' "$pr_number" "$repo_slug" "$merge_output" >>"${REMEDIATION_LOG:?}"
+	return 0
+}
 
 prepare_stale_cache_fixture() {
 	export HOME="${TEST_ROOT}/home"
@@ -275,10 +303,59 @@ test_stale_cache_401_retries_admin_merge_once() {
 	return 0
 }
 
+test_ruleset_fallback_failure_preserves_admin_conversation_context() {
+	GH_STUB_MODE="conversation-chain"
+	setup_test_env
+	define_function_under_test || { teardown_test_env; unset GH_STUB_MODE; return 0; }
+
+	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
+	local result=0
+	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
+
+	if [[ "$result" -ne 3 ]]; then
+		print_result "fallback-chain failure preserves admin conversation context" 1 \
+			"Expected 3, got ${result}; log: $(tr '\n' ';' <"$LOGFILE")"
+		teardown_test_env
+		unset GH_STUB_MODE
+		return 0
+	fi
+
+	if ! grep -qF 'A conversation must be resolved' "$REMEDIATION_LOG"; then
+		print_result "fallback-chain failure preserves admin conversation context" 1 \
+			"remediation did not receive admin blocker: $(tr '\n' ';' <"$REMEDIATION_LOG")"
+		teardown_test_env
+		unset GH_STUB_MODE
+		return 0
+	fi
+
+	if ! grep -qF '[native auto-merge fallback]' "$REMEDIATION_LOG" \
+		|| ! grep -qF '[direct merge fallback]' "$REMEDIATION_LOG"; then
+		print_result "fallback-chain failure preserves admin conversation context" 1 \
+			"remediation did not receive accumulated fallback attempts: $(tr '\n' ';' <"$REMEDIATION_LOG")"
+		teardown_test_env
+		unset GH_STUB_MODE
+		return 0
+	fi
+
+	if ! grep -qF 'A conversation must be resolved' "$LOGFILE"; then
+		print_result "fallback-chain failure preserves admin conversation context" 1 \
+			"final failure log did not retain admin blocker: $(tr '\n' ';' <"$LOGFILE")"
+		teardown_test_env
+		unset GH_STUB_MODE
+		return 0
+	fi
+
+	print_result "fallback-chain failure preserves admin conversation context" 0
+	teardown_test_env
+	unset GH_STUB_MODE
+	return 0
+}
+
 main() {
 	test_ruleset_violation_enables_auto_merge_without_admin
 	test_draft_pr_without_origin_labels_skips_merge_write
 	test_stale_cache_401_retries_admin_merge_once
+	test_ruleset_fallback_failure_preserves_admin_conversation_context
 
 	printf '\n=================================\n'
 	printf 'Tests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
