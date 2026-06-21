@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+  FILE_EXPLORER_ROUTE_MANIFEST,
+  GUI_FILE_ROOTS,
   STATUS_ROUTE_MANIFEST,
   createEnvelope,
   isReadOnlyManifest,
@@ -10,6 +12,12 @@ describe("GUI shared schema contracts", () => {
   test("status route is declared as a read-only operation", () => {
     expect(isReadOnlyManifest(STATUS_ROUTE_MANIFEST)).toBe(true);
     expect(STATUS_ROUTE_MANIFEST.command_pattern).toEqual(["aidevops", "status"]);
+  });
+
+  test("file explorer route is read-only and root allowlisted", () => {
+    expect(isReadOnlyManifest(FILE_EXPLORER_ROUTE_MANIFEST)).toBe(true);
+    expect(FILE_EXPLORER_ROUTE_MANIFEST.operation_id).toBe("filesystem.read");
+    expect(GUI_FILE_ROOTS.map((root) => root.id)).toEqual(["agents", "config", "localSetup", "git"]);
   });
 
   test("status envelope preserves source and redaction metadata", () => {
@@ -29,7 +37,7 @@ describe("GUI shared schema contracts", () => {
     expect(envelope.redactions).toContain("secret_values");
     expect(envelope.data.runtime.read_only).toBe(true);
     expect(envelope.data.update.restart_required).toBe(false);
-    expect(envelope.data.navigation.map((item) => item.label)).toContain("Settings");
+    expect(envelope.data.navigation.map((item) => item.label)).toContain("Config");
     expect(envelope.data.settings.value_policy).toBe("keys_only_no_values");
     expect(envelope.data.capabilities[0].status).toBe("available");
   });

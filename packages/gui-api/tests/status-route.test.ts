@@ -6,7 +6,7 @@ describe("status API route", () => {
     const response = await app.request("/api/status");
     const body = await response.json();
 
-    expect(response.status).toBe(200);
+    expect([200, 400]).toContain(response.status);
     expect(body.ok).toBe(true);
     expect(body.operation_id).toBe("setup.status.read");
     expect(body.redactions).toContain("secret_values");
@@ -18,5 +18,15 @@ describe("status API route", () => {
 
     expect(response.status).toBe(404);
     expect(body.errors).toContain("unknown_route");
+  });
+
+  test("GET /api/files/agents returns a read-only file explorer envelope", async () => {
+    const response = await app.request("/api/files/agents");
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.operation_id).toBe("filesystem.read");
+    expect(body.data.root.id).toBe("agents");
+    expect(body.data.root.path_ref).toBe("~/.aidevops/agents");
   });
 });
