@@ -1,9 +1,16 @@
-/* jshint esversion: 11 */
-import { useState } from "react";
+/* jshint esversion: 11, module: true */
+import { useState, type ReactElement } from "react";
 import { appRows, installationRows, text } from "./app-model";
 import type { InventoryColumn } from "./app-model";
 
-export function AppsSurface() {
+interface DraftInventoryRow {
+  id: string;
+  values: Record<string, string>;
+}
+
+let draftRowCounter = 0;
+
+export function AppsSurface(): ReactElement {
   return (
     <section className="panel" aria-label={text.apps}>
       <div className="section-heading">
@@ -21,7 +28,7 @@ export function AppsSurface() {
   );
 }
 
-export function InstallationSurface() {
+export function InstallationSurface(): ReactElement {
   return (
     <section className="panel" aria-label={text.installation}>
       <div className="section-heading">
@@ -43,28 +50,20 @@ export function InstallationSurface() {
   );
 }
 
-function TogglePill({ checked, label }: { checked: boolean; label: string }) {
-  return <span className={checked ? "toggle-pill checked" : "toggle-pill"}>{label}</span>;
-}
-
 export function EditableInventorySurface({ columns, initialRows, intro, title }: {
   columns: InventoryColumn[];
   initialRows: Record<string, string>[];
   intro: string;
   title: string;
-}) {
-  const [draftRows, setDraftRows] = useState(initialRows);
+}): ReactElement {
+  const [draftRows, setDraftRows] = useState(() => initialRows.map((row) => createDraftRow(row)));
 
-  function updateDraftRow(rowIndex: number, key: string, value: string): void {
-    setDraftRows((currentRows) => currentRows.map((row, index) => index === rowIndex ? { ...row, [key]: value } : row));
+  function updateDraftRow(rowId: string, key: string, value: string): void {
+    setDraftRows((currentRows) => currentRows.map((row) => row.id === rowId ? { ...row, values: { ...row.values, [key]: value } } : row));
   }
 
   function addDraftRow(): void {
-    const emptyRow: Record<string, string> = {};
-    for (const column of columns) {
-      emptyRow[column.key] = "";
-    }
-    setDraftRows((currentRows) => [...currentRows, emptyRow]);
+    setDraftRows((currentRows) => [...currentRows, createDraftRow(emptyRow(columns))]);
   }
 
   return (
@@ -82,15 +81,15 @@ export function EditableInventorySurface({ columns, initialRows, intro, title }:
         <div className="editable-row header-row">
           {columns.map((column) => <span key={column.key}>{column.label}</span>)}
         </div>
-        {draftRows.map((row, rowIndex) => (
-          <div className="editable-row" key={`${title}:${rowIndex}`}>
+        {draftRows.map((row) => (
+          <div className="editable-row" key={row.id}>
             {columns.map((column) => (
               <input
                 aria-label={`${title} ${column.label}`}
                 key={column.key}
-                onChange={(event) => updateDraftRow(rowIndex, column.key, event.currentTarget.value)}
+                onChange={(event) => updateDraftRow(row.id, column.key, event.currentTarget.value)}
                 placeholder={column.label}
-                value={row[column.key] ?? ""}
+                value={row.values[column.key] ?? ""}
               />
             ))}
           </div>
@@ -98,4 +97,22 @@ export function EditableInventorySurface({ columns, initialRows, intro, title }:
       </div>
     </section>
   );
+}
+
+function TogglePill({ checked, label }: { checked: boolean; label: string }): ReactElement {
+  return <span className={checked ? "toggle-pill checked" : "toggle-pill"}>{label}</span>;
+}
+
+function createDraftRow(values: Record<string, string>): DraftInventoryRow {
+  draftRowCounter += 1;
+  return { id: `draft-row-${draftRowCounter}`, values };
+}
+
+function emptyRow(columns: InventoryColumn[]): Record<string, string> {
+  const row: Record<string, string> = {};
+  for (const column of columns) {
+    row[column.key] = "";
+  }
+
+  return row;
 }

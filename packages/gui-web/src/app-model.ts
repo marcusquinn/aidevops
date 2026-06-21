@@ -1,4 +1,5 @@
-import type { GuiFileRootId } from "../../gui-shared/src";
+/* jshint esversion: 11, module: true */
+import type { GuiFileRootId } from "@aidevops/gui-shared";
 
 export type ThemePreference = "system" | "light" | "dark";
 export const surfaceIds = [
