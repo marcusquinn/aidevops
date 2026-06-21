@@ -218,7 +218,7 @@ function OverviewSection({ status }: { status: GuiStatusData }) {
         <h2>Local operating graph</h2>
         <p>Nodes describe what aidevops can observe now and where guided setup or management flows can attach later.</p>
       </div>
-      <div className="flow-canvas" aria-label="aidevops capability graph">
+      <div className="flow-canvas">
         {nodes.map((node) => <FlowNodeCard key={node.id} node={node} />)}
       </div>
       <h2>Current local signals</h2>
