@@ -59,12 +59,25 @@ export function App() {
 
   return (
     <main className="app-shell">
-      <aside className="sidebar" aria-label="Dashboard navigation">
-        <div className="brand-mark" aria-label="aidevops">
-          <span className="terminal-mark" aria-hidden="true">›_</span>
-          <span>aidevops</span>
+      <header className="app-topbar" aria-label="App controls">
+        <div className="window-controls" aria-hidden="true">
+          <span className="traffic red" />
+          <span className="traffic yellow" />
+          <span className="traffic green" />
         </div>
-        <div className="theme-control" aria-label="Theme preference">
+        <div className="topbar-brand" aria-label="aidevops">
+          <span className="terminal-mark small" aria-hidden="true">›_</span>
+          <strong>aidevops</strong>
+        </div>
+        <div className="command-palette" aria-label="Read-only dashboard search placeholder">
+          <span aria-hidden="true">⌘K</span>
+          <input aria-label="Search dashboard" disabled placeholder="Search setup, repos, settings, capabilities" />
+        </div>
+        <div className="topbar-status">
+          <span className="status-dot" aria-hidden="true" />
+          <span>read-only</span>
+        </div>
+        <div className="theme-control compact" aria-label="Theme preference">
           {(["system", "light", "dark"] as const).map((theme) => (
             <button
               aria-pressed={themePreference === theme}
@@ -76,47 +89,83 @@ export function App() {
               {theme}
             </button>
           ))}
-          <small>Theme: {themePreference === "system" ? `system (${systemTheme})` : themePreference}</small>
         </div>
-        <nav>
-          {status.data.navigation.map((item) => (
-            <button
-              aria-current={activeSection === item.id ? "page" : undefined}
-              className={activeSection === item.id ? "nav-item active" : "nav-item"}
-              key={item.id}
-              onClick={() => setActiveSection(item.id)}
-              type="button"
-            >
-              <span>{item.label}</span>
-              <small>{item.description}</small>
-            </button>
-          ))}
-        </nav>
-      </aside>
+      </header>
 
-      <section className="content" aria-label="aidevops dashboard">
-        <header className="hero">
-          <p className="eyebrow">Read-only local dashboard</p>
-          <h1>aidevops control plane</h1>
-          <p className="lede">
-            Local setup, repos, settings, capabilities, and secret-reference health in one read-only surface.
-          </p>
-          {warning ? <p role="status">{warning}</p> : null}
-          {update.restart_required ? (
-            <p className="alert" role="alert">
-              {update.message} Running {update.running_version}; installed {update.installed_version}.
+      <div className="workspace">
+        <aside className="sidebar" aria-label="Dashboard navigation">
+          <div className="brand-mark" aria-label="aidevops">
+            <span className="terminal-mark" aria-hidden="true">›_</span>
+            <span>aidevops</span>
+          </div>
+          <p className="sidebar-kicker">Control library</p>
+          <nav>
+            {status.data.navigation.map((item) => (
+              <button
+                aria-current={activeSection === item.id ? "page" : undefined}
+                className={activeSection === item.id ? "nav-item active" : "nav-item"}
+                key={item.id}
+                onClick={() => setActiveSection(item.id)}
+                type="button"
+              >
+                <span>{item.label}</span>
+                <small>{item.description}</small>
+              </button>
+            ))}
+          </nav>
+        </aside>
+
+        <section className="content" aria-label="aidevops dashboard">
+          <header className="hero">
+            <p className="eyebrow">Read-only local dashboard</p>
+            <h1>aidevops control plane</h1>
+            <p className="lede">
+              Local setup, repos, settings, capabilities, and secret-reference health in one app-like surface.
             </p>
-          ) : (
-            <p className="notice" role="status">{update.message}</p>
-          )}
-        </header>
+            {warning ? <p role="status">{warning}</p> : null}
+            {update.restart_required ? (
+              <p className="alert" role="alert">
+                {update.message} Running {update.running_version}; installed {update.installed_version}.
+              </p>
+            ) : (
+              <p className="notice" role="status">{update.message}</p>
+            )}
+          </header>
 
-        {activeSection === "overview" ? <OverviewSection status={status.data} /> : null}
-        {activeSection === "repos" ? <ReposSection status={status.data} /> : null}
-        {activeSection === "settings" ? <SettingsSection status={status.data} /> : null}
-        {activeSection === "capabilities" ? <CapabilitiesSection status={status.data} /> : null}
-        {activeSection === "security" ? <SecuritySection status={status.data} /> : null}
-      </section>
+          {activeSection === "overview" ? <OverviewSection status={status.data} /> : null}
+          {activeSection === "repos" ? <ReposSection status={status.data} /> : null}
+          {activeSection === "settings" ? <SettingsSection status={status.data} /> : null}
+          {activeSection === "capabilities" ? <CapabilitiesSection status={status.data} /> : null}
+          {activeSection === "security" ? <SecuritySection status={status.data} /> : null}
+        </section>
+
+        <aside className="detail-rail" aria-label="Dashboard details">
+          <section className="rail-card now-card">
+            <p className="eyebrow">Now viewing</p>
+            <h2>{status.data.navigation.find((item) => item.id === activeSection)?.label ?? "Overview"}</h2>
+            <p>{status.data.navigation.find((item) => item.id === activeSection)?.description}</p>
+          </section>
+          <section className="rail-card">
+            <h3>Local mode</h3>
+            <ul>
+              <li><span>API</span><strong>{status.data.runtime.api}</strong></li>
+              <li><span>Version</span><strong>{status.data.aidevops_version}</strong></li>
+              <li><span>Theme</span><strong>{themePreference === "system" ? systemTheme : themePreference}</strong></li>
+            </ul>
+          </section>
+          <section className="rail-card">
+            <h3>Trust boundary</h3>
+            <p>No writes, shell, exec, Cloudron control, pairing, or secret values.</p>
+          </section>
+        </aside>
+      </div>
+
+      <footer className="app-statusbar" aria-label="App status">
+        <span>Local API: {status.data.runtime.api}</span>
+        <span>Repos: {status.data.repos.total}</span>
+        <span>Settings keys: {status.data.settings.key_count}</span>
+        <span>Theme: {themePreference === "system" ? `system/${systemTheme}` : themePreference}</span>
+      </footer>
     </main>
   );
 }
