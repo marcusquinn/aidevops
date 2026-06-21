@@ -2273,6 +2273,33 @@ setup_opencode_cli() {
 	return 0
 }
 
+setup_opencode_desktop_launcher() {
+	if [[ "$(uname -s)" != "Darwin" ]]; then
+		return 0
+	fi
+
+	local launcher_script="${HOME}/.aidevops/agents/scripts/opencode-launcher-helper.sh"
+	if ! [[ -x "$launcher_script" ]]; then
+		return 0
+	fi
+
+	local install_rc=0
+	bash "$launcher_script" desktop install-shortcut >/dev/null 2>&1 || install_rc=$?
+	case "$install_rc" in
+	0)
+		print_success "OpenCode AIDevOps Desktop app installed in ~/Applications"
+		;;
+	3)
+		# OpenCode Desktop is optional; do not warn on systems that only use the CLI.
+		return 0
+		;;
+	*)
+		print_warning "Failed to install OpenCode AIDevOps Desktop app wrapper"
+		;;
+	esac
+	return 0
+}
+
 setup_codex_cli() {
 	print_info "Setting up OpenAI Codex CLI..."
 

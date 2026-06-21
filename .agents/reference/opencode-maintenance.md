@@ -218,6 +218,32 @@ OPENCODE_DB_MAINTENANCE_HOUR=8 \
 - `~/.aidevops/.agent-workspace/work/opencode-maintenance/maintenance.log`
   — append-only history
 
+## OpenCode Desktop isolation on macOS
+
+OpenCode Desktop (`OpenCode.app`) also honors `XDG_DATA_HOME` for the session
+database. To keep Desktop off the shared CLI hot spot, aidevops installs a
+macOS app wrapper when Desktop is present:
+
+```bash
+aidevops opencode-desktop install-shortcut
+open ~/Applications/OpenCode\ AIDevOps.app
+```
+
+The generated `~/Applications/OpenCode AIDevOps.app` calls the deployed
+`opencode-launcher-helper.sh`, which exports an isolated Desktop data directory
+under `~/.aidevops/.agent-workspace/work/opencode-desktop/` before execing
+`/Applications/OpenCode.app/Contents/MacOS/OpenCode`. This keeps Desktop session
+rows out of `~/.local/share/opencode/opencode.db` while preserving the normal
+Electron app support directory for window state and preferences.
+
+CLI entry points:
+
+```bash
+aidevops opencode-desktop                 # launch Desktop with isolated DB
+aidevops opencode-desktop --dir ~/Git/repo # per-project Desktop shard
+aidevops opencode-desktop status          # show wrapper/source status
+```
+
 ## Hidden session lookup — child, archive, and project ID drift
 
 **Symptom:** The TUI `/sessions` picker or `opencode session list` does not show a session that should still exist. Closing and reopening opencode does not help.

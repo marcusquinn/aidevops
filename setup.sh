@@ -1110,6 +1110,7 @@ _setup_run_scoped_stage() {
 	case "$stage" in
 	"$SETUP_STAGE_OPENCODE")
 		_time_step "$SETUP_STAGE_OPENCODE" setup_opencode_cli
+		_time_step "setup_opencode_desktop_launcher" setup_opencode_desktop_launcher
 		;;
 	"$SETUP_STAGE_AGENTS")
 		_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents
@@ -1171,6 +1172,7 @@ _setup_run_non_interactive() {
 	_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents
 	_time_step "_setup_install_pulse_plist_early" _setup_install_pulse_plist_early
 	_time_step "_deploy_hotfix_config" _deploy_hotfix_config
+	_time_step "setup_opencode_desktop_launcher" setup_opencode_desktop_launcher
 	_time_step "sync_agent_sources" sync_agent_sources
 	_time_step "install_aidevops_cli" install_aidevops_cli
 	_time_step "setup_shellcheck_wrapper" setup_shellcheck_wrapper
@@ -1327,6 +1329,7 @@ _setup_run_interactive() {
 	confirm_step "Setup Ollama (local LLM for knowledge plane pii/sensitive/privileged tiers)" && setup_ollama_for_knowledge
 	confirm_step "Setup Google Workspace CLI (Gmail, Calendar, Drive)" && setup_google_workspace_cli
 	confirm_step "Setup OpenCode CLI (AI coding tool)" && setup_opencode_cli
+	confirm_step "Install OpenCode AIDevOps Desktop app wrapper" && setup_opencode_desktop_launcher
 	confirm_step "Setup OpenCode plugins" && setup_opencode_plugins
 	confirm_step "Setup Codex CLI (OpenAI AI coding tool)" && setup_codex_cli
 	confirm_step "Setup Droid CLI (Factory.AI coding tool)" && setup_droid_cli
