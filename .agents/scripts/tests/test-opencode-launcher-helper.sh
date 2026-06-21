@@ -57,6 +57,13 @@ fake_log="${tmp_root}/fake-opencode.log"
 mkdir -p "${work_dir}" "${launch_dir}" "${home_dir}/.local/share/opencode"
 make_fake_opencode "${fake_bin}"
 printf '{"anthropic":{}}\n' >"${home_dir}/.local/share/opencode/auth.json"
+desktop_source="${tmp_root}/OpenCode.app/Contents/MacOS/OpenCode"
+mkdir -p "$(dirname "${desktop_source}")"
+cat >"${desktop_source}" <<'SH'
+#!/usr/bin/env bash
+printf 'desktop source launched\n'
+SH
+chmod +x "${desktop_source}"
 
 output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" FAKE_OPENCODE_LOG="${fake_log}" \
     "${HELPER}" --dir "${launch_dir}" -- --version 2>&1)
@@ -102,6 +109,31 @@ if [[ "${output}" == *"AIDEVOPS_OPENCODE_ISOLATED_DB="* ]] \
     _pass "shared-db mode leaves OpenCode data dir untouched"
 else
     _fail "shared-db launcher output unexpected: ${output}"
+fi
+
+desktop_app_dir="${tmp_root}/Applications"
+output=$(HOME="${home_dir}" "${HELPER}" desktop install-shortcut --app-dir "${desktop_app_dir}" --source-binary "${desktop_source}" 2>&1)
+desktop_app="${desktop_app_dir}/OpenCode AIDevOps.app"
+desktop_wrapper="${desktop_app}/Contents/MacOS/opencode-aidevops"
+desktop_plist="${desktop_app}/Contents/Info.plist"
+if [[ -x "${desktop_wrapper}" ]] \
+    && [[ -f "${desktop_plist}" ]] \
+    && grep -q "sh.aidevops.opencode.desktop" "${desktop_plist}" \
+    && grep -q "desktop launch --from-app" "${desktop_wrapper}" \
+    && [[ "${output}" == *"Installed OpenCode AIDevOps.app"* ]]; then
+    _pass "desktop install-shortcut creates macOS app wrapper"
+else
+    _fail "desktop app wrapper install unexpected: ${output}"
+fi
+
+output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" \
+    "${HELPER}" desktop launch --source-binary "${desktop_source}" --dir "${launch_dir}" --dry-run 2>&1)
+if [[ "${output}" == *"XDG_DATA_HOME=${work_dir}/opencode-desktop/desktop-project-repo-"* ]] \
+    && [[ "${output}" == *"AIDEVOPS_OPENCODE_ISOLATED_DB=1"* ]] \
+    && [[ "${output}" == *"${desktop_source}"* ]]; then
+    _pass "desktop launch dry-run uses isolated per-project data dir"
+else
+    _fail "desktop launch dry-run output unexpected: ${output}"
 fi
 
 if ((fail_count > 0)); then
