@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.21.9] - 2026-06-21
+
+### Added
+
+- add GUI control graph (for #25304) (#25320)
+- add OpenCode Desktop app isolation (#25316)
+- make GUI shell app-like (#25319)
+- add branded theme controls (#25318)
+
+### Fixed
+
+- resolve CodeFactor GUI CSS duplicates (#25323)
+- address GUI Codacy annotations (#25322)
+
 ## [3.21.8] - 2026-06-21
 
 ### Added
