@@ -134,6 +134,8 @@ data/dspyground/
 
 # Node.js dependencies
 node_modules/
+packages/gui-web/dist/
+packages/gui-desktop/dist/
 package-lock.json
 pnpm-lock.yaml
 yarn.lock

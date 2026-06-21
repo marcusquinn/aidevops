@@ -25,10 +25,20 @@ export function readStatus(
   const aidevopsVersion = existsSync(versionPath)
     ? readFileSync(versionPath, "utf8").trim()
     : statusFixture.aidevops_version;
+  const installedVersion = readOptionalText(expandHome("~/.aidevops/agents/VERSION")) ?? aidevopsVersion;
+  const restartRequired = installedVersion !== aidevopsVersion;
 
   const data: GuiStatusData = {
     ...statusFixture,
     aidevops_version: aidevopsVersion || "unknown",
+    update: {
+      running_version: aidevopsVersion || "unknown",
+      installed_version: installedVersion || "unknown",
+      restart_required: restartRequired,
+      message: restartRequired
+        ? "aidevops has updated in the background. Restart the GUI app to use the latest installed version."
+        : "The GUI app is using the latest installed aidevops version.",
+    },
     paths: [
       {
         label: "deployed agents",
@@ -73,4 +83,12 @@ function expandHome(pathRef: string): string {
   }
 
   return join(process.env.HOME ?? "", pathRef.slice(2));
+}
+
+function readOptionalText(pathName: string): string | null {
+  if (!existsSync(pathName)) {
+    return null;
+  }
+
+  return readFileSync(pathName, "utf8").trim();
 }

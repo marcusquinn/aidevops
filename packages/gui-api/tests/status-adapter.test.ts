@@ -12,6 +12,8 @@ describe("status adapter", () => {
     expect(response.ok).toBe(true);
     expect(response.operation_id).toBe("setup.status.read");
     expect(response.data.runtime).toEqual({ host: "local", api: "hono", read_only: true });
+    expect(response.data.update.restart_required).toBeBoolean();
+    expect(response.data.update.message).toContain("GUI app");
     expect(response.data.secrets[0]).toEqual({ name: "GITHUB_TOKEN", status: "unchecked" });
   });
 });

@@ -2,6 +2,12 @@ import type { GuiStatusData } from "./contracts";
 
 export const statusFixture: GuiStatusData = {
   aidevops_version: "unknown",
+  update: {
+    running_version: "unknown",
+    installed_version: "unknown",
+    restart_required: false,
+    message: "The GUI app is using the latest installed aidevops version.",
+  },
   runtime: {
     host: "local",
     api: "hono",

@@ -37,6 +37,12 @@ export interface GuiSecretReference {
 
 export interface GuiStatusData {
   aidevops_version: string;
+  update: {
+    running_version: string;
+    installed_version: string;
+    restart_required: boolean;
+    message: string;
+  };
   runtime: {
     host: "local";
     api: "hono";

@@ -13,7 +13,7 @@ export function renderDashboardHtml(status: GuiResponseEnvelope<GuiStatusData>):
     .map((secret) => `<li>${escapeHtml(secret.name)}: ${escapeHtml(secret.status)}</li>`)
     .join("");
 
-  return `<section aria-label="aidevops status"><h1>aidevops control plane</h1><p>Read-only local dashboard scaffold.</p><dl><dt>Version</dt><dd>${escapeHtml(status.data.aidevops_version)}</dd><dt>API</dt><dd>${escapeHtml(status.data.runtime.api)}</dd></dl><h2>Path health</h2><ul>${paths}</ul><h2>Helper availability</h2><ul>${helpers}</ul><h2>Secret references</h2><ul>${secrets}</ul><p>${escapeHtml(status.data.placeholders[0] ?? "More read-only adapters are planned.")}</p></section>`;
+  return `<section aria-label="aidevops status"><h1>aidevops control plane</h1><p>Read-only local dashboard scaffold.</p><p>${escapeHtml(status.data.update.message)}</p><dl><dt>Version</dt><dd>${escapeHtml(status.data.aidevops_version)}</dd><dt>API</dt><dd>${escapeHtml(status.data.runtime.api)}</dd></dl><h2>Path health</h2><ul>${paths}</ul><h2>Helper availability</h2><ul>${helpers}</ul><h2>Secret references</h2><ul>${secrets}</ul><p>${escapeHtml(status.data.placeholders[0] ?? "More read-only adapters are planned.")}</p></section>`;
 }
 
 function escapeHtml(value: string): string {

@@ -6,7 +6,8 @@
   "workspaces": [
     "packages/gui-shared",
     "packages/gui-api",
-    "packages/gui-web"
+    "packages/gui-web",
+    "packages/gui-desktop"
   ],
   "bin": {
     "aidevops": "./bin/aidevops"
@@ -31,6 +32,8 @@
     "gui:test:components": "bun test packages/gui-web/tests",
     "gui:test:security": "bun test packages/gui-shared/tests/security.test.ts packages/gui-api/tests/security.test.ts packages/gui-web/tests/security.test.ts",
     "gui:test:smoke": "bun test packages/gui-api/tests/smoke.test.ts",
+    "gui:desktop:check": "bash packages/gui-desktop/scripts/install-macos-app.sh --check",
+    "gui:desktop:install:macos": "bash packages/gui-desktop/scripts/install-macos-app.sh",
     "postinstall": "node scripts/npm-postinstall.cjs || true"
   },
   "keywords": [
