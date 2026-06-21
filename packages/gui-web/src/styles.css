@@ -307,3 +307,267 @@ code {
   border-radius: 4px;
   padding: 2px 4px;
 }
+
+/* Desktop-app shell: closer to a native/web-app control surface than a document page. */
+.app-shell {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr;
+  grid-template-rows: 52px minmax(0, 1fr) 52px;
+  height: 100vh;
+  margin: 0;
+  max-width: none;
+  min-height: 0;
+  padding: 8px;
+}
+
+.app-topbar,
+.app-statusbar {
+  align-items: center;
+  background: color-mix(in srgb, var(--bg-primary) 92%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: 0 12px 40px rgb(0 0 0 / 18%);
+  display: flex;
+  gap: 14px;
+  min-width: 0;
+  padding: 8px 12px;
+}
+
+.window-controls {
+  display: flex;
+  gap: 8px;
+  padding: 0 4px;
+}
+
+.traffic {
+  border-radius: 50%;
+  display: block;
+  height: 13px;
+  width: 13px;
+}
+
+.traffic.red {
+  background: #ff5f57;
+}
+
+.traffic.yellow {
+  background: #febc2e;
+}
+
+.traffic.green {
+  background: #28c840;
+}
+
+.topbar-brand {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  min-width: 128px;
+}
+
+.terminal-mark.small {
+  font-size: 0.78rem;
+  height: 32px;
+  width: 38px;
+}
+
+.command-palette {
+  align-items: center;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  display: flex;
+  flex: 1;
+  gap: 10px;
+  min-width: 240px;
+  padding: 7px 14px;
+}
+
+.command-palette span {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.command-palette input {
+  background: transparent;
+  border: 0;
+  color: var(--text-secondary);
+  flex: 1;
+  font: inherit;
+  min-width: 0;
+}
+
+.topbar-status,
+.app-statusbar span {
+  align-items: center;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  display: inline-flex;
+  font-size: 0.82rem;
+  gap: 8px;
+  padding: 7px 11px;
+  white-space: nowrap;
+}
+
+.status-dot {
+  background: var(--accent);
+  border-radius: 50%;
+  box-shadow: 0 0 16px color-mix(in srgb, var(--accent) 70%, transparent);
+  height: 8px;
+  width: 8px;
+}
+
+.theme-control.compact {
+  display: flex;
+  gap: 4px;
+  margin: 0;
+  padding: 4px;
+}
+
+.theme-control.compact .theme-option {
+  padding: 7px 9px;
+}
+
+.workspace {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 300px minmax(520px, 1fr) 300px;
+  min-height: 0;
+}
+
+.workspace > .sidebar,
+.workspace > .content,
+.detail-rail {
+  border-radius: 16px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.workspace > .sidebar {
+  align-self: stretch;
+  padding: 20px;
+  position: static;
+}
+
+.sidebar-kicker {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  margin: 0 0 14px;
+  text-transform: uppercase;
+}
+
+.workspace > .content {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 16%, transparent) 0%, transparent 280px),
+    var(--bg-primary);
+  padding: 28px;
+}
+
+.detail-rail,
+.rail-card {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
+.detail-rail {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+  padding: 12px;
+}
+
+.rail-card {
+  border-radius: 16px;
+  box-shadow: none;
+  padding: 18px;
+}
+
+.rail-card h2,
+.rail-card h3 {
+  margin-top: 0;
+}
+
+.rail-card p {
+  color: var(--text-secondary);
+}
+
+.rail-card ul {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  padding: 0;
+}
+
+.rail-card li {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.rail-card li span {
+  color: var(--text-muted);
+}
+
+.app-statusbar {
+  justify-content: center;
+}
+
+.nav-item {
+  border-radius: 10px;
+  margin-bottom: 6px;
+}
+
+.hero {
+  margin-bottom: 18px;
+}
+
+.hero h1 {
+  font-size: clamp(2rem, 4vw, 4.5rem);
+  letter-spacing: -0.055em;
+  line-height: 0.95;
+  margin: 10px 0 16px;
+}
+
+.panel,
+.metric-card,
+.object-list li {
+  background: color-mix(in srgb, var(--bg-primary) 82%, var(--bg-tertiary));
+}
+
+@media (max-width: 1180px) {
+  .workspace {
+    grid-template-columns: 260px minmax(0, 1fr);
+  }
+
+  .detail-rail {
+    display: none;
+  }
+}
+
+@media (max-width: 820px) {
+  .app-shell {
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .app-topbar,
+  .app-statusbar,
+  .workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace {
+    display: grid;
+  }
+
+  .command-palette,
+  .topbar-status {
+    display: none;
+  }
+}
