@@ -718,13 +718,13 @@ code {
   color: var(--accent);
 }
 
-@media (width <= 1100px) {
+@media (max-width: 1100px) {
   .file-workspace {
     grid-template-columns: 1fr;
   }
 }
 
-@media (width <= 980px) {
+@media (max-width: 980px) {
   .app-shell {
     grid-template-columns: 1fr;
     height: auto;
@@ -749,7 +749,7 @@ code {
   }
 }
 
-@media (width <= 720px) {
+@media (max-width: 720px) {
   .app-shell {
     padding: 0;
   }
