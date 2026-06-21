@@ -14,6 +14,15 @@ import {
 const MAX_ENTRIES = 80;
 const MAX_PREVIEW_CHARS = 48_000;
 
+interface FileEnvelopeInput {
+  currentRelativePath: string;
+  entries: GuiFileEntry[];
+  errors: string[];
+  observedAt?: string;
+  root: GuiFileRootDefinition;
+  selectedPreview: GuiFilePreview | null;
+}
+
 export function readFileExplorer(
   rootId: string,
   requestedPath = "",
@@ -21,17 +30,38 @@ export function readFileExplorer(
 ): GuiResponseEnvelope<GuiFileExplorerData> {
   const root = GUI_FILE_ROOTS.find((entry) => entry.id === rootId);
   if (root === undefined) {
-    return createFileEnvelope(unknownRoot(), "", [], null, ["unknown_file_root"], observedAt);
+    return createFileEnvelope({
+      root: unknownRoot(),
+      currentRelativePath: "",
+      entries: [],
+      selectedPreview: null,
+      errors: ["unknown_file_root"],
+      observedAt,
+    });
   }
 
   const rootPath = resolvePathRef(root.path_ref);
   const targetPath = resolve(rootPath, requestedPath);
   if (!isInsideRoot(rootPath, targetPath)) {
-    return createFileEnvelope(root, "", [], blockedPreview(root, "Path is outside the allowed root."), ["path_outside_root"], observedAt);
+    return createFileEnvelope({
+      root,
+      currentRelativePath: "",
+      entries: [],
+      selectedPreview: blockedPreview(root, "Path is outside the allowed root."),
+      errors: ["path_outside_root"],
+      observedAt,
+    });
   }
 
   if (!existsSync(rootPath)) {
-    return createFileEnvelope(root, "", [], null, ["root_missing"], observedAt);
+    return createFileEnvelope({
+      root,
+      currentRelativePath: "",
+      entries: [],
+      selectedPreview: null,
+      errors: ["root_missing"],
+      observedAt,
+    });
   }
 
   const targetExists = existsSync(targetPath);
@@ -43,23 +73,23 @@ export function readFileExplorer(
     ? readPreview(root, rootPath, targetPath)
     : null;
 
-  return createFileEnvelope(root, currentRelativePath, entries, preview, targetExists ? [] : ["path_missing"], observedAt);
+  return createFileEnvelope({
+    root,
+    currentRelativePath,
+    entries,
+    selectedPreview: preview,
+    errors: targetExists ? [] : ["path_missing"],
+    observedAt,
+  });
 }
 
-function createFileEnvelope(
-  root: GuiFileRootDefinition,
-  currentRelativePath: string,
-  entries: GuiFileEntry[],
-  selectedPreview: GuiFilePreview | null,
-  errors: string[],
-  observedAt?: string,
-): GuiResponseEnvelope<GuiFileExplorerData> {
+function createFileEnvelope(input: FileEnvelopeInput): GuiResponseEnvelope<GuiFileExplorerData> {
   const data: GuiFileExplorerData = {
-    root,
-    current_path_ref: toPathRef(root.path_ref, currentRelativePath),
-    current_relative_path: currentRelativePath,
-    entries,
-    selected_preview: selectedPreview,
+    root: input.root,
+    current_path_ref: toPathRef(input.root.path_ref, input.currentRelativePath),
+    current_relative_path: input.currentRelativePath,
+    entries: input.entries,
+    selected_preview: input.selectedPreview,
     entry_limit: MAX_ENTRIES,
   };
   const envelope = createEnvelope({
@@ -67,11 +97,11 @@ function createFileEnvelope(
     source: {
       surface: "filesystem",
       authority: "local read-only allowlist",
-      path_refs: [root.path_ref],
+      path_refs: [input.root.path_ref],
     },
     data,
-    errors,
-    observed_at: observedAt,
+    errors: input.errors,
+    observed_at: input.observedAt,
   });
 
   assertNoSecretSentinels(envelope);

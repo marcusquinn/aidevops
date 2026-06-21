@@ -1,4 +1,4 @@
-import type { GuiFileRootId } from "../../gui-shared/src";
+import type { GuiFileRootId } from "@aidevops/gui-shared";
 
 export type ThemePreference = "system" | "light" | "dark";
 export const surfaceIds = [

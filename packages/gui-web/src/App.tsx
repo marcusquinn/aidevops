@@ -1,13 +1,12 @@
-/* jshint esversion: 11 */
-import { useEffect, useState } from "react";
-import type { GuiResponseEnvelope, GuiStatusData } from "../../gui-shared/src";
+import { useEffect, useState, type ReactElement } from "react";
+import type { GuiResponseEnvelope, GuiStatusData } from "@aidevops/gui-shared";
 import { fetchStatus, mockedStatus } from "./status-client";
 import { Sidebar } from "./AppNavigation";
 import { Workspace } from "./AppWorkspace";
 import { fileRootBySurface, findSurface, getSystemTheme } from "./app-model";
 import type { SurfaceId, ThemePreference } from "./app-model";
 
-export function App() {
+export function App(): ReactElement {
   const [status, setStatus] = useState<GuiResponseEnvelope<GuiStatusData>>(mockedStatus());
   const [activeSurface, setActiveSurface] = useState<SurfaceId>("overview");
   const [themePreference, setThemePreference] = useState<ThemePreference>("system");

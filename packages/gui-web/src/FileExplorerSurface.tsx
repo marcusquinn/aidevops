@@ -1,11 +1,10 @@
-/* jshint esversion: 11 */
-import { useEffect, useState } from "react";
-import type { GuiFileEntry, GuiFileExplorerData, GuiFilePreview, GuiFileRootId, GuiResponseEnvelope } from "../../gui-shared/src";
-import { fetchFileExplorer, mockedFileExplorer } from "./status-client";
+import { useEffect, useState, type ReactElement } from "react";
+import type { GuiFileEntry, GuiFileExplorerData, GuiFilePreview, GuiFileRootId, GuiResponseEnvelope } from "@aidevops/gui-shared";
 import { text } from "./app-model";
 import { PathActions } from "./PathActions";
+import { fetchFileExplorer, mockedFileExplorer } from "./status-client";
 
-export function FileExplorerSurface({ rootId }: { rootId: GuiFileRootId }) {
+export function FileExplorerSurface({ rootId }: { rootId: GuiFileRootId }): ReactElement {
   const [relativePath, setRelativePath] = useState("");
   const [explorer, setExplorer] = useState<GuiResponseEnvelope<GuiFileExplorerData>>(() => mockedFileExplorer(rootId));
   const [markdownFormatted, setMarkdownFormatted] = useState(true);
@@ -30,7 +29,7 @@ export function FileExplorerSurface({ rootId }: { rootId: GuiFileRootId }) {
   }, [rootId, relativePath]);
 
   const data = explorer.data;
-  const intro = rootId === "agents" ? data.root.description : rootId === "config" ? text.configIntro : rootId === "localSetup" ? text.localSetupIntro : text.gitIntro;
+  const intro = explorerIntro(rootId, data.root.description);
 
   return (
     <section className="surface-page" aria-label={data.root.label}>
@@ -62,7 +61,7 @@ export function FileExplorerSurface({ rootId }: { rootId: GuiFileRootId }) {
   );
 }
 
-function FileEntryButton({ entry, setRelativePath }: { entry: GuiFileEntry; setRelativePath: (path: string) => void }) {
+function FileEntryButton({ entry, setRelativePath }: { entry: GuiFileEntry; setRelativePath: (path: string) => void }): ReactElement {
   return (
     <li className="file-entry-row">
       <button className="file-entry" onClick={() => setRelativePath(entry.relative_path)} type="button">
@@ -79,7 +78,7 @@ function FilePreviewPanel({ markdownFormatted, preview, setMarkdownFormatted }: 
   markdownFormatted: boolean;
   preview: GuiFilePreview | null;
   setMarkdownFormatted: (value: boolean) => void;
-}) {
+}): ReactElement {
   if (preview === null) {
     return <aside className="file-preview empty-preview"><p>{text.noPreview}</p></aside>;
   }
@@ -109,24 +108,44 @@ function FilePreviewPanel({ markdownFormatted, preview, setMarkdownFormatted }: 
   );
 }
 
-function MarkdownPreview({ content }: { content: string }) {
+function MarkdownPreview({ content }: { content: string }): ReactElement {
   return (
     <div className="markdown-preview">
-      {content.split("\n").slice(0, 240).map((line, index) => {
-        if (line.startsWith("### ")) {
-          return <h4 key={`${index}:${line}`}>{line.slice(4)}</h4>;
-        }
-        if (line.startsWith("## ")) {
-          return <h3 key={`${index}:${line}`}>{line.slice(3)}</h3>;
-        }
-        if (line.startsWith("# ")) {
-          return <h2 key={`${index}:${line}`}>{line.slice(2)}</h2>;
-        }
-        if (line.startsWith("- ")) {
-          return <p className="markdown-bullet" key={`${index}:${line}`}>{line}</p>;
-        }
-        return <p key={`${index}:${line}`}>{line.length > 0 ? line : "\u00a0"}</p>;
-      })}
+      {content.split("\n").slice(0, 240).map((line, index) => renderMarkdownLine(line, index))}
     </div>
   );
+}
+
+function renderMarkdownLine(line: string, index: number): ReactElement {
+  if (line.startsWith("### ")) {
+    return <h4 key={`${index}:${line}`}>{line.slice(4)}</h4>;
+  }
+  if (line.startsWith("## ")) {
+    return <h3 key={`${index}:${line}`}>{line.slice(3)}</h3>;
+  }
+  if (line.startsWith("# ")) {
+    return <h2 key={`${index}:${line}`}>{line.slice(2)}</h2>;
+  }
+  if (line.startsWith("- ")) {
+    return <p className="markdown-bullet" key={`${index}:${line}`}>{line}</p>;
+  }
+
+  return <p key={`${index}:${line}`}>{line.length > 0 ? line : "\u00a0"}</p>;
+}
+
+function explorerIntro(rootId: GuiFileRootId, agentsDescription: string): string {
+  if (rootId === "agents") {
+    return agentsDescription;
+  }
+  if (rootId === "config") {
+    return text.configIntro;
+  }
+
+  return rootId === "localSetup" ? text.localSetupIntro : text.gitIntro;
+}
+
+function parentPath(relativePath: string): string {
+  const parts = relativePath.split("/").filter(Boolean);
+  parts.pop();
+  return parts.join("/");
 }
