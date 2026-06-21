@@ -24,19 +24,20 @@ tools:
 - **Purpose**: Stream a booted iOS, iPad, or Apple Watch Simulator to a browser and drive it from CLI/agent commands.
 - **Install**: `npm install -g serve-sim` or run ad hoc with `npx serve-sim`.
 - **Setup**: `./setup.sh` offers this on supported local Macs after MiniSim.
-- **Requirements**: macOS on Apple Silicon, Xcode command-line tools (`xcrun simctl`), Node.js 18+, and at least one booted Apple Simulator.
+- **Requirements**: macOS on Apple Silicon, Xcode command-line tools (`xcrun simctl`), Node.js 20+, and at least one booted Apple Simulator.
 - **GitHub**: https://github.com/EvanBacon/serve-sim (Apache-2.0)
 
 ```bash
 serve-sim                         # Preview UI at http://localhost:3200
 serve-sim --detach -q             # Start helper and return JSON with url/streamUrl
+serve-sim --codec mjpeg           # Pin stream codec when H.264 is unavailable
 serve-sim --list -q               # List running simulator streams
 serve-sim button home             # Send hardware button
 serve-sim type "hello"            # Type into focused field
 serve-sim --kill                  # Stop helper(s)
 ```
 
-Use `serve-sim` when the user needs a visible, browser-shareable simulator surface. Pair it with `agent-device`, `ios-simulator-mcp`, or `maestro` when the task needs accessibility refs, MCP tool calls, or repeatable E2E flows. The preview defaults to H.264 when available and can switch or auto-downgrade to MJPEG when hardware decoding is unstable during screen recording.
+Use `serve-sim` when the user needs a visible, browser-shareable simulator surface. Pair it with `agent-device`, `ios-simulator-mcp`, or `maestro` when the task needs accessibility refs, MCP tool calls, or repeatable E2E flows. The preview defaults to H.264 when available and can switch or auto-downgrade to MJPEG when hardware decoding is unstable during screen recording; use `--codec <auto|h264|mjpeg>` when the host must pin a server-side stream codec.
 
 <!-- AI-CONTEXT-END -->
 
@@ -70,7 +71,7 @@ Do **not** use it for Android emulators, real iOS hardware, building/installing 
 | Start daemon | `serve-sim --detach -q [device...]` | JSON output is safest for agents |
 | Stream only | `serve-sim --no-preview [device...]` | Foreground stream without React preview UI |
 | List streams | `serve-sim --list -q` | Use `-q` for machine-readable output |
-| Force compatibility stream | Open the preview with `?codec=mjpeg` or use Stream → Codec | Use MJPEG if H.264/WebCodecs stutters or fails while recording |
+| Force compatibility stream | `serve-sim --codec mjpeg [device...]`, open the preview with `?codec=mjpeg`, or use Stream → Codec | Use MJPEG if H.264/WebCodecs stutters or fails while recording |
 | Stop helpers | `serve-sim --kill [device]` | Stop all or one device helper |
 | Gesture | `serve-sim gesture '<json>' [-d udid]` | Use documented JSON shape; avoid guessing coordinates |
 | Button | `serve-sim button home [-d udid]` | Hardware/home/app-switcher style controls |
@@ -87,12 +88,12 @@ Do **not** use it for Android emulators, real iOS hardware, building/installing 
 3. Parse only JSON/quiet output; do not scrape human-readable output.
 4. Surface the returned `url` to the user. If the current runtime exposes a preview/open-url tool, pass the URL there too.
 5. Use `agent-device snapshot` or `ios-simulator-mcp` for accessibility-aware targeting; use `serve-sim` for the shared visual stream and simulator-specific commands.
-6. If the browser preview stutters, drops frames, or reports an H.264 decoder failure while screen recording, switch the Stream → Codec control to MJPEG or append `?codec=mjpeg` to the preview URL.
+6. If the browser preview stutters, drops frames, or reports an H.264 decoder failure while screen recording, restart with `serve-sim --codec mjpeg`, switch the Stream → Codec control to MJPEG, or append `?codec=mjpeg` to the preview URL.
 7. Clean up with `serve-sim --kill` unless the user asks to keep the simulator stream running.
 
 ## Expo / Dev Server Embedding
 
-`serve-sim/middleware` can mount the preview under an existing Connect-style server, including Expo Metro. This is useful when a mobile dev server should expose the simulator at a stable path such as `/.sim` while the helper runs in the background.
+`serve-sim/middleware` can mount the preview under an existing Connect-style server, including Expo Metro. This is useful when a mobile dev server should expose the simulator at a stable path such as `/.sim` while the helper runs in the background. Recent upstream versions can opt in to same-origin helper and WebKit DevTools proxying (`proxyHelpers`) when the host wires HTTP upgrade handling, so remote viewers only need the preview server port; plain `app.use(simMiddleware())` mounts still expose direct helper URLs.
 
 ## Upstream Agent Skill
 
@@ -110,9 +111,9 @@ aidevops keeps this native guide so mobile-testing tasks route to `serve-sim` ev
 
 - **Unsupported host**: The bundled helper is Apple Silicon only. Intel Macs should use other simulator tools.
 - **No simulator**: Boot one first with Xcode Simulator, MiniSim, or `xcrun simctl boot <device>`.
-- **Node too old**: Upgrade to Node.js 18+ before running the CLI.
+- **Node too old**: Upgrade to Node.js 20+ before running the CLI.
 - **Port collision**: Stop stale helpers with `serve-sim --kill`.
-- **H.264/WebCodecs instability**: Use the Stream → Codec picker or append `?codec=mjpeg` to the preview URL; recent versions auto-downgrade fatal AVCC decoder failures to MJPEG.
+- **H.264/WebCodecs instability**: Use `serve-sim --codec mjpeg`, the Stream → Codec picker, or append `?codec=mjpeg` to the preview URL; recent versions auto-downgrade fatal AVCC decoder failures to MJPEG.
 - **Camera injection**: Requires macOS 14+ and a simulator app bundle ID.
 
 ## Related

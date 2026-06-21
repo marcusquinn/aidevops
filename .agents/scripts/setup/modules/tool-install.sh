@@ -1280,7 +1280,7 @@ _setup_serve_sim_node_version_ok() {
 	local version="${node_version#v}"
 	local major="${version%%.*}"
 
-	if [[ "$major" =~ ^[0-9]+$ ]] && ((10#$major >= 18)); then
+	if [[ "$major" =~ ^[0-9]+$ ]] && ((10#$major >= 20)); then
 		return 0
 	fi
 	return 1
@@ -1323,7 +1323,7 @@ setup_serve_sim() {
 	fi
 
 	if ! command -v node >/dev/null 2>&1; then
-		print_info "serve-sim requires Node.js 18+"
+		print_info "serve-sim requires Node.js 20+"
 		print_info "Install Node.js, then re-run setup"
 		return 0
 	fi
@@ -1331,7 +1331,7 @@ setup_serve_sim() {
 	local node_version
 	node_version=$(node --version 2>/dev/null || printf '%s\n' 'unknown')
 	if ! _setup_serve_sim_node_version_ok "$node_version"; then
-		print_warning "serve-sim requires Node.js 18+, found ${node_version}"
+		print_warning "serve-sim requires Node.js 20+, found ${node_version}"
 		print_info "Upgrade Node.js, then re-run setup"
 		return 0
 	fi
@@ -1344,7 +1344,7 @@ setup_serve_sim() {
 	print_info "serve-sim streams booted Apple Simulators to a browser for agent/user review"
 	printf '%s\n' "  Features:"
 	printf '%s\n' "    - Browser preview at http://localhost:3200"
-	printf '%s\n' "    - H.264/MJPEG stream with codec fallback + WebSocket control channel"
+	printf '%s\n' "    - H.264/MJPEG stream with --codec control + WebSocket control channel"
 	printf '%s\n' "    - Gestures, hardware buttons, typing, rotation, memory warnings"
 	printf '%s\n' "    - Camera feed injection for simulator apps"
 	printf '%s\n' ""
