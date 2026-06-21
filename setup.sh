@@ -1246,6 +1246,31 @@ _setup_run_non_interactive() {
 	return 0
 }
 
+# Interactive runtime/tool setup prompts. Extracted so the parent interactive
+# setup function stays below the function-complexity gate while preserving the
+# prompt order around runtime-specific installers and config updates.
+_setup_run_interactive_runtime_tools() {
+	confirm_step "Deploy aidevops agents to runtime agent directories" && deploy_agents_to_runtimes
+	confirm_step "Setup Python environment (DSPy, crawl4ai)" && setup_python_env
+	confirm_step "Setup Node.js environment" && setup_nodejs_env
+	confirm_step "Install MCP packages globally (fast startup)" && install_mcp_packages
+	confirm_step "Setup LocalWP MCP server" && setup_localwp_mcp
+	confirm_step "Setup Beads task management" && setup_beads
+	confirm_step "Setup SEO integrations (curl subagents)" && setup_seo_mcps
+	confirm_step "Setup Google Analytics MCP" && setup_google_analytics_mcp
+	confirm_step "Setup QuickFile MCP (UK accounting)" && setup_quickfile_mcp
+	confirm_step "Setup browser automation tools" && setup_browser_tools
+	confirm_step "Setup AI orchestration frameworks info" && setup_ai_orchestration
+	confirm_step "Setup Ollama (local LLM for knowledge plane pii/sensitive/privileged tiers)" && setup_ollama_for_knowledge
+	confirm_step "Setup Google Workspace CLI (Gmail, Calendar, Drive)" && setup_google_workspace_cli
+	confirm_step "Setup OpenCode CLI (AI coding tool)" && setup_opencode_cli
+	confirm_step "Install OpenCode AIDevOps Desktop app wrapper" && setup_opencode_desktop_launcher
+	confirm_step "Setup OpenCode plugins" && setup_opencode_plugins
+	confirm_step "Setup Codex CLI (OpenAI AI coding tool)" && setup_codex_cli
+	confirm_step "Setup Droid CLI (Factory.AI coding tool)" && setup_droid_cli
+	return 0
+}
+
 # Interactive path: all optional steps gated behind confirm_step prompts.
 _setup_run_interactive() {
 	# Required steps (always run)
@@ -1315,24 +1340,7 @@ _setup_run_interactive() {
 	confirm_step "Check for skill updates from upstream" && check_skill_updates
 	confirm_step "Security scan imported skills" && scan_imported_skills
 	confirm_step "Inject agents reference into AI configs" && inject_agents_reference
-	confirm_step "Deploy aidevops agents to runtime agent directories" && deploy_agents_to_runtimes
-	confirm_step "Setup Python environment (DSPy, crawl4ai)" && setup_python_env
-	confirm_step "Setup Node.js environment" && setup_nodejs_env
-	confirm_step "Install MCP packages globally (fast startup)" && install_mcp_packages
-	confirm_step "Setup LocalWP MCP server" && setup_localwp_mcp
-	confirm_step "Setup Beads task management" && setup_beads
-	confirm_step "Setup SEO integrations (curl subagents)" && setup_seo_mcps
-	confirm_step "Setup Google Analytics MCP" && setup_google_analytics_mcp
-	confirm_step "Setup QuickFile MCP (UK accounting)" && setup_quickfile_mcp
-	confirm_step "Setup browser automation tools" && setup_browser_tools
-	confirm_step "Setup AI orchestration frameworks info" && setup_ai_orchestration
-	confirm_step "Setup Ollama (local LLM for knowledge plane pii/sensitive/privileged tiers)" && setup_ollama_for_knowledge
-	confirm_step "Setup Google Workspace CLI (Gmail, Calendar, Drive)" && setup_google_workspace_cli
-	confirm_step "Setup OpenCode CLI (AI coding tool)" && setup_opencode_cli
-	confirm_step "Install OpenCode AIDevOps Desktop app wrapper" && setup_opencode_desktop_launcher
-	confirm_step "Setup OpenCode plugins" && setup_opencode_plugins
-	confirm_step "Setup Codex CLI (OpenAI AI coding tool)" && setup_codex_cli
-	confirm_step "Setup Droid CLI (Factory.AI coding tool)" && setup_droid_cli
+	_setup_run_interactive_runtime_tools
 	# Run AFTER CLI installs so config dirs may exist for agent config
 	confirm_step "Update OpenCode configuration" && update_opencode_config
 	# Run AFTER OpenCode config so Claude Code gets equivalent setup
