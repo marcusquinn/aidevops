@@ -202,6 +202,11 @@ assertEq(
   "/tmp/custom-opencode.db",
   getDbPath({ OPENCODE_DB: "/tmp/custom-opencode.db", XDG_DATA_HOME: "/tmp/aidevops-opencode" }),
 );
+assertEq(
+  "mock env accepts unrelated variables",
+  "/tmp/mock-opencode.db",
+  getDbPath({ OPENCODE_DB: "/tmp/mock-opencode.db", NODE_ENV: "test" }),
+);
 
 console.log("\n=== Results ===");
 console.log(`PASS: ${pass}`);
