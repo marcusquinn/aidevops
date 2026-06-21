@@ -477,11 +477,51 @@ code {
   text-transform: uppercase;
 }
 
+.nav-group {
+  margin-bottom: 18px;
+}
+
+.nav-group > p {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  margin: 0 0 8px;
+  text-transform: uppercase;
+}
+
 .workspace > .content {
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--accent) 16%, transparent) 0%, transparent 280px),
     var(--bg-primary);
   padding: 28px;
+}
+
+.canvas-toolbar {
+  align-items: center;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  margin-bottom: 18px;
+  min-width: 0;
+}
+
+.canvas-toolbar h1 {
+  font-size: clamp(1.45rem, 2.6vw, 2.6rem);
+  letter-spacing: -0.045em;
+  line-height: 1;
+  margin: 6px 0 0;
+}
+
+.toolbar-messages {
+  display: grid;
+  gap: 8px;
+  max-width: 520px;
+}
+
+.toolbar-messages .notice,
+.toolbar-messages .alert {
+  margin: 0;
 }
 
 .detail-rail,
@@ -530,6 +570,22 @@ code {
   color: var(--text-muted);
 }
 
+.inspector-list {
+  display: grid;
+  gap: 8px 12px;
+  grid-template-columns: max-content 1fr;
+  margin: 18px 0 0;
+}
+
+.inspector-list dt {
+  color: var(--text-muted);
+  font-weight: 900;
+}
+
+.inspector-list dd {
+  margin: 0;
+}
+
 .app-statusbar {
   justify-content: center;
 }
@@ -552,8 +608,139 @@ code {
 
 .panel,
 .metric-card,
-.object-list li {
+.object-list li,
+.flow-node {
   background: color-mix(in srgb, var(--surface-elevated) 76%, var(--surface-muted));
+}
+
+.section-heading {
+  margin-bottom: 20px;
+  max-width: 760px;
+}
+
+.section-heading h2 {
+  letter-spacing: -0.035em;
+  line-height: 1.05;
+  margin: 6px 0 10px;
+}
+
+.section-heading p:last-child {
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.flow-panel {
+  background: transparent;
+  box-shadow: none;
+  padding: 0;
+}
+
+.flow-canvas {
+  background:
+    radial-gradient(circle at 1px 1px, color-mix(in srgb, var(--text-muted) 24%, transparent) 1px, transparent 0),
+    color-mix(in srgb, var(--bg-primary) 84%, var(--surface-muted));
+  background-size: 22px 22px, auto;
+  border-radius: 24px;
+  box-shadow: var(--shade-inset);
+  display: grid;
+  gap: 18px;
+  grid-template-columns: repeat(3, minmax(170px, 1fr));
+  margin-bottom: 24px;
+  padding: 24px;
+  position: relative;
+}
+
+.flow-canvas::before {
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--accent) 42%, transparent), transparent);
+  content: "";
+  height: 2px;
+  left: 11%;
+  opacity: 0.55;
+  position: absolute;
+  right: 11%;
+  top: 50%;
+}
+
+.flow-node {
+  border-radius: 18px;
+  box-shadow: var(--shade-raised);
+  min-height: 150px;
+  padding: 18px;
+  position: relative;
+  z-index: 1;
+}
+
+.flow-node:first-child {
+  grid-column: 1 / -1;
+  justify-self: center;
+  max-width: 360px;
+  width: min(100%, 360px);
+}
+
+.flow-node > div:not(.node-port) {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.flow-node strong {
+  font-size: 1rem;
+}
+
+.flow-node span {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 900;
+  padding: 4px 8px;
+  text-transform: uppercase;
+}
+
+.flow-node p {
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  margin: 12px 0;
+}
+
+.flow-node ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.flow-node li {
+  background: var(--surface-muted);
+  border-radius: 999px;
+  box-shadow: var(--shade-inset);
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  padding: 4px 8px;
+}
+
+.node-port {
+  background: var(--accent);
+  border-radius: 50%;
+  box-shadow: 0 0 18px color-mix(in srgb, var(--accent) 72%, transparent);
+  height: 10px;
+  left: -5px;
+  position: absolute;
+  top: 24px;
+  width: 10px;
+}
+
+.flow-node[data-tier="planned"] .node-port,
+.flow-node[data-tier="integration"] .node-port {
+  background: var(--text-muted);
+  box-shadow: none;
+}
+
+.compact-list {
+  margin-top: 10px;
 }
 
 @media (max-width: 1180px) {
@@ -585,5 +772,19 @@ code {
   .command-palette,
   .topbar-status {
     display: none;
+  }
+
+  .canvas-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .flow-canvas {
+    grid-template-columns: 1fr;
+  }
+
+  .flow-node:first-child {
+    grid-column: auto;
+    max-width: none;
   }
 }
