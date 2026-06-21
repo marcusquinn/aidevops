@@ -696,6 +696,7 @@ test_scan_single_pr_positive_body_with_inline_comments_not_summary_only() {
 
 test_scan_single_pr_filters_positive_inline_acknowledgement_reply() {
 	reset_mock_state
+	local acknowledgement_body="Thank you for verifying the fix and adding the regression test. The implementation looks correct and addresses the efficiency concern regarding redundant API calls."
 
 	gh() {
 		local command="$1"
@@ -705,7 +706,7 @@ test_scan_single_pr_filters_positive_inline_acknowledgement_reply() {
 			while [[ $# -gt 0 ]]; do
 				case "$1" in
 				repos/*/pulls/*/comments)
-					echo '[{"id":10,"user":{"login":"gemini-code-assist[bot]"},"path":".agents/scripts/pulse-merge.sh","line":230,"original_line":230,"position":37,"body":"Thank you for verifying the fix and adding the regression test. The implementation looks correct and addresses the efficiency concern regarding redundant API calls.","html_url":"https://github.com/example/repo/pull/1#discussion_r10","created_at":"2026-06-21T16:07:10Z"}]'
+					jq -n --arg body "$acknowledgement_body" '[{"id":10,"user":{"login":"gemini-code-assist[bot]"},"path":".agents/scripts/pulse-merge.sh","line":230,"original_line":230,"position":37,"body":$body,"html_url":"https://github.com/example/repo/pull/1#discussion_r10","created_at":"2026-06-21T16:07:10Z"}]'
 					return 0
 					;;
 				repos/*/pulls/*/reviews)
@@ -741,6 +742,16 @@ test_scan_single_pr_filters_positive_inline_acknowledgement_reply() {
 		print_result "positive inline acknowledgement reply is filtered" 0
 	else
 		print_result "positive inline acknowledgement reply is filtered" 1 "expected 0 findings, got ${count}"
+	fi
+
+	acknowledgement_body="The implementation looks correct and addressed the stale cleanup path."
+	findings=$(_scan_single_pr "owner/repo" "1" "medium" "false" 2>/dev/null)
+	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
+
+	if [[ "$count" -eq 0 ]]; then
+		print_result "positive inline acknowledgement reply using addressed is filtered" 0
+	else
+		print_result "positive inline acknowledgement reply using addressed is filtered" 1 "expected 0 findings, got ${count}"
 	fi
 
 	_restore_mock_gh
