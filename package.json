@@ -3,6 +3,11 @@
   "version": "3.21.7",
   "description": "AI DevOps Framework - AI-assisted development workflows, code quality, and deployment automation",
   "type": "module",
+  "workspaces": [
+    "packages/gui-shared",
+    "packages/gui-api",
+    "packages/gui-web"
+  ],
   "bin": {
     "aidevops": "./bin/aidevops"
   },
@@ -18,6 +23,14 @@
     "setup:bun": "bun install",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
+    "gui:api:dev": "bun run packages/gui-api/src/server.ts",
+    "gui:web:dev": "bun ./node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5173 packages/gui-web",
+    "gui:test:schema": "bun test packages/gui-shared/tests",
+    "gui:test:adapters": "bun test packages/gui-api/tests/status-adapter.test.ts",
+    "gui:test:api": "bun test packages/gui-api/tests/status-route.test.ts",
+    "gui:test:components": "bun test packages/gui-web/tests",
+    "gui:test:security": "bun test packages/gui-shared/tests/security.test.ts packages/gui-api/tests/security.test.ts packages/gui-web/tests/security.test.ts",
+    "gui:test:smoke": "bun test packages/gui-api/tests/smoke.test.ts",
     "postinstall": "node scripts/npm-postinstall.cjs || true"
   },
   "keywords": [
@@ -36,11 +49,18 @@
   "author": "Marcus Quinn <marcus@aidevops.sh>",
   "license": "MIT",
   "dependencies": {
-    "elysia": "^1.1.0"
+    "@vitejs/plugin-react": "^5.0.0",
+    "elysia": "^1.1.0",
+    "hono": "^4.6.0",
+    "vite": "^7.0.0"
   },
   "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
     "@secretlint/secretlint-rule-preset-recommend": "^11.2.5",
     "@types/bun": "latest",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "secretlint": "^11.2.5",
     "typescript": "^5.0.0"
   },
