@@ -12,7 +12,7 @@
   --surface-muted: #f1f3ef;
   --success-bg: rgba(178, 233, 105, 0.18);
   --success-text: #2f5f16;
-  --text-muted: rgba(17, 24, 39, 0.52);
+  --text-muted: rgb(17 24 39 / 52%);
   --text-primary: #111827;
   --text-secondary: rgba(17, 24, 39, 0.72);
   background: var(--bg-secondary);
@@ -27,15 +27,15 @@
   --bg-primary: #0a0a0a;
   --bg-secondary: #111111;
   --bg-tertiary: #1a1a1a;
-  --border: rgba(255, 255, 255, 0.08);
-  --code-bg: rgba(255, 255, 255, 0.07);
+  --border: rgb(255 255 255 / 8%);
+  --code-bg: rgb(255 255 255 / 7%);
   --shadow-soft: 0 24px 80px rgb(0 0 0 / 40%);
   --shadow-panel: 0 1px 0 rgb(255 255 255 / 5%) inset, 0 24px 70px rgb(0 0 0 / 32%);
   --surface-elevated: #151515;
   --surface-muted: #202020;
   --success-bg: rgba(178, 233, 105, 0.12);
   --success-text: #b2e969;
-  --text-muted: rgba(255, 255, 255, 0.44);
+  --text-muted: rgb(255 255 255 / 44%);
   --text-primary: #ffffff;
   --text-secondary: rgba(255, 255, 255, 0.72);
   color-scheme: dark;
@@ -219,7 +219,7 @@ code {
   color: var(--text-muted);
   font-size: 0.72rem;
   letter-spacing: 0.1em;
-  margin: 8px 8px;
+  margin: 8px;
   text-transform: uppercase;
 }
 
@@ -575,7 +575,7 @@ code {
   margin-top: 12px;
 }
 
-@media (max-width: 980px) {
+@media (width <= 980px) {
   .app-shell {
     grid-template-columns: 1fr;
     height: auto;
@@ -603,7 +603,7 @@ code {
   }
 }
 
-@media (max-width: 620px) {
+@media (width <= 620px) {
   .app-shell {
     padding: 0;
   }
