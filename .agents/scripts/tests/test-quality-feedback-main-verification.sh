@@ -269,6 +269,7 @@ main() {
 	echo "Running positive-review filter regression tests (GH#4814)"
 	test_scan_single_pr_filters_issue4814_pr2166_exact_body
 	test_scan_single_pr_positive_body_with_inline_comments_not_summary_only
+	test_scan_single_pr_filters_positive_inline_acknowledgement_reply
 
 	echo ""
 	echo "Running merge/CI-status comment filter tests (GH#5668)"
