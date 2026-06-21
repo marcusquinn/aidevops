@@ -6,25 +6,27 @@
 # pattern-aware CI-failure resolution guidance in pulse-merge-feedback.sh.
 #
 # Verifies:
-#   1. ci-failure-patterns.conf exists, contains all six classifications,
+#   1. ci-failure-patterns.conf exists, contains all seven classifications,
 #      and keeps TEST_FAILURE guidance reachable through one broad entry
 #   2. _classify_ci_failures_by_pattern identifies FORMAT_FAILURE checks
 #   3. _classify_ci_failures_by_pattern identifies LINT_FAILURE checks
-#   4. _classify_ci_failures_by_pattern identifies TYPECHECK_FAILURE checks
-#   5. _classify_ci_failures_by_pattern identifies TEST_FAILURE checks
-#   6. _classify_ci_failures_by_pattern falls back to OTHER for unmatched
-#   7. Mixed-pattern CI: multiple classifications emitted on separate lines
-#   8. Empty input: no classification output
-#   9. _classify_ci_failures_by_pattern identifies TIMEOUT_NO_OUTPUT checks
-#  10. _build_ci_feedback_section emits ### Pattern-Specific Resolution
+#   4. _classify_ci_failures_by_pattern identifies EXTERNAL_STATIC_ANALYSIS checks
+#   5. _classify_ci_failures_by_pattern identifies TYPECHECK_FAILURE checks
+#   6. _classify_ci_failures_by_pattern identifies TEST_FAILURE checks
+#   7. _classify_ci_failures_by_pattern falls back to OTHER for unmatched
+#   8. Mixed-pattern CI: multiple classifications emitted on separate lines
+#   9. Empty input: no classification output
+#  10. _classify_ci_failures_by_pattern identifies TIMEOUT_NO_OUTPUT checks
+#  11. _build_ci_feedback_section emits ### Pattern-Specific Resolution
 #      Guidance block when non-OTHER patterns are present
-#  11. _build_ci_feedback_section does NOT emit guidance for OTHER-only
-#  12. FORMAT_FAILURE guidance contains auto-fix sequence (write/--fix)
-#  13. LINT_FAILURE guidance contains lint --fix and changed-file CI commands
-#  14. TYPECHECK_FAILURE guidance does NOT suggest auto-fix
-#  15. TEST_FAILURE guidance includes pnpm/Vitest hermeticity triage
-#  16. TIMEOUT_NO_OUTPUT guidance includes heartbeat and exit-code triage
-#  17. pulse-merge-feedback.sh passes shellcheck after t3225 changes
+#  12. _build_ci_feedback_section does NOT emit guidance for OTHER-only
+#  13. FORMAT_FAILURE guidance contains auto-fix sequence (write/--fix)
+#  14. LINT_FAILURE guidance contains lint --fix and changed-file CI commands
+#  15. TYPECHECK_FAILURE guidance does NOT suggest auto-fix
+#  16. TEST_FAILURE guidance includes pnpm/Vitest hermeticity triage
+#  17. TIMEOUT_NO_OUTPUT guidance includes heartbeat and exit-code triage
+#  18. CodeFactor external failures receive source-quality guidance
+#  19. pulse-merge-feedback.sh passes shellcheck after t3225 changes
 #
 # Tests are structural — no live GitHub API calls.
 
@@ -116,7 +118,7 @@ else
 	echo "${TEST_RED}FAIL${TEST_NC}: 1a: ci-failure-patterns.conf NOT found at $CONF_FILE"
 fi
 
-for class in FORMAT_FAILURE LINT_FAILURE TYPECHECK_FAILURE TEST_FAILURE TIMEOUT_NO_OUTPUT OTHER; do
+for class in FORMAT_FAILURE LINT_FAILURE EXTERNAL_STATIC_ANALYSIS TYPECHECK_FAILURE TEST_FAILURE TIMEOUT_NO_OUTPUT OTHER; do
 	TESTS_RUN=$((TESTS_RUN + 1))
 	if grep -qE "^${class}" "$CONF_FILE" 2>/dev/null; then
 		echo "${TEST_GREEN}PASS${TEST_NC}: 1: conf contains ${class} entry"
@@ -181,6 +183,11 @@ assert_contains "2g: ESLint → LINT_FAILURE" "LINT_FAILURE" "$eslint_out"
 # 2h: Markdown Lint
 md_lint_out=$(_classify_ci_failures_by_pattern "Markdown Lint" "$CONF_FILE")
 assert_contains "2h: 'Markdown Lint' → LINT_FAILURE" "LINT_FAILURE" "$md_lint_out"
+
+# 2h2: CodeFactor external static analysis check
+codefactor_out=$(_classify_ci_failures_by_pattern "CodeFactor" "$CONF_FILE")
+assert_contains "2h2: CodeFactor → EXTERNAL_STATIC_ANALYSIS" \
+	"EXTERNAL_STATIC_ANALYSIS" "$codefactor_out"
 
 # 2i: Clippy
 clippy_out=$(_classify_ci_failures_by_pattern "Clippy" "$CONF_FILE")
@@ -279,6 +286,16 @@ assert_contains "4e4: LINT guidance flags timeout/no-output trap" \
 	"Timeout/no-output trap" "$lint_guidance"
 assert_contains "4e5: LINT guidance mentions heartbeat" "heartbeat" "$lint_guidance"
 
+# 4e6: CodeFactor external guidance points workers at provider details and regression guards.
+codefactor_class=$(_classify_ci_failures_by_pattern "CodeFactor" "$CONF_FILE")
+codefactor_guidance=$(_emit_ci_failure_guidance_blocks "$codefactor_class" "$CONF_FILE")
+assert_contains "4e6: CodeFactor guidance mentions external advisory/static-analysis" \
+	"external advisory/static-analysis check" "$codefactor_guidance"
+assert_contains "4e7: CodeFactor guidance mentions details URL" \
+	"details URL" "$codefactor_guidance"
+assert_contains "4e8: CodeFactor guidance mentions failure signature" \
+	"failure:codefactor.io" "$codefactor_guidance"
+
 # 4f: TYPECHECK_FAILURE classification → guidance does NOT mention auto-fix
 tc_class=$(_classify_ci_failures_by_pattern "Typecheck" "$CONF_FILE")
 tc_guidance=$(_emit_ci_failure_guidance_blocks "$tc_class" "$CONF_FILE")
@@ -352,6 +369,13 @@ assert_contains "5d4: timeout section includes heartbeat guidance" \
 	"heartbeat" "$timeout_section"
 assert_contains "5d5: timeout section includes killed/timeout exit codes" \
 	"124, 137, or 143" "$timeout_section"
+
+# 5d6: CodeFactor external failure gets source-quality guidance in pulse feedback.
+sample_codefactor_failing="- **CodeFactor**: failure — [details](https://www.codefactor.io/repository/github/marcusquinn/aidevops/pull/25324)"
+codefactor_class_input=$(_classify_ci_failures_by_pattern "CodeFactor" "$CONF_FILE")
+codefactor_section=$(_build_ci_feedback_section "12345" "$sample_codefactor_failing" "$codefactor_class_input")
+assert_contains "5d6: CodeFactor section includes source-quality guidance" \
+	"source-quality pattern" "$codefactor_section"
 
 # 5e: Without classification arg, section omits pattern guidance (back-compat)
 section_no_classification=$(_build_ci_feedback_section "12345" "$sample_failing")
