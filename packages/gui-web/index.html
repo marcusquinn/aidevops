@@ -7,8 +7,12 @@
   </head>
   <body>
     <div id="root">
-      <main>
-        <section aria-label="aidevops status">
+      <main class="app-shell">
+        <aside class="sidebar" aria-label="Dashboard navigation">
+          <div class="brand-mark">aidevops</div>
+          <button class="nav-item active" type="button"><span>Overview</span><small>Loading local dashboard.</small></button>
+        </aside>
+        <section class="content" aria-label="aidevops status">
           <p class="eyebrow">Read-only local dashboard scaffold</p>
           <h1>aidevops control plane</h1>
           <p class="lede">Loading the local GUI. If this message stays visible, refresh the page or check ~/Library/Logs/aidevops-gui/web.log.</p>

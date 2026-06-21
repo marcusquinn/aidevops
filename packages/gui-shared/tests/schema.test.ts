@@ -29,5 +29,8 @@ describe("GUI shared schema contracts", () => {
     expect(envelope.redactions).toContain("secret_values");
     expect(envelope.data.runtime.read_only).toBe(true);
     expect(envelope.data.update.restart_required).toBe(false);
+    expect(envelope.data.navigation.map((item) => item.label)).toContain("Settings");
+    expect(envelope.data.settings.value_policy).toBe("keys_only_no_values");
+    expect(envelope.data.capabilities[0].status).toBe("available");
   });
 });
