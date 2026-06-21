@@ -195,6 +195,62 @@ source "${_PULSE_MERGE_DIR}/pulse-merge-required-checks.sh"
 # (including _handle_post_merge_actions below) continue to work unchanged.
 
 #######################################
+# Handle terminal CHANGES_REQUESTED review state for a PR.
+#
+# Security invariant: this helper never marks a PR mergeable and never bypasses
+# collaborator, maintainer, review-bot, or branch-protection gates. A blocking
+# review either remains a skip/repair-route, or the existing maintainer-labeled
+# CodeRabbit-only dismissal path clears stale bot nits before normal gates run.
+#
+# Returns 0 if the caller may keep evaluating merge gates.
+# Returns 1 if the PR must be skipped for review feedback handling.
+# Args: $1=pr_number, $2=repo_slug, $3=pr_review, $4=linked_issue, $5=pr_labels (optional), $6=dismissed_dest_var (optional)
+#######################################
+_handle_changes_requested_review_gate() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local pr_review="$3"
+	local linked_issue="$4"
+	local pr_labels="${5:-}"
+	local dismissed_dest_var="${6:-}"
+	local _cr_pr_labels=""
+
+	if [[ -n "$dismissed_dest_var" && "$dismissed_dest_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+		printf -v "$dismissed_dest_var" '%s' "0"
+	fi
+
+	[[ "$pr_review" == "CHANGES_REQUESTED" ]] || return 0
+
+	# Fetch labels once — reused by both the nits-ok check and the
+	# worker-routing block below.
+	_cr_pr_labels="$pr_labels"
+	if [[ $# -lt 5 && -z "$_cr_pr_labels" ]]; then
+		_cr_pr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+			--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _cr_pr_labels=""
+	fi
+
+	# t2179: coderabbit-nits-ok path.
+	if [[ ",${_cr_pr_labels}," == *",coderabbit-nits-ok,"* ]]; then
+		if _pulse_merge_dismiss_coderabbit_nits "$pr_number" "$repo_slug"; then
+			echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — auto-dismissed CodeRabbit-only CHANGES_REQUESTED reviews (coderabbit-nits-ok label) (t2179)" >>"$LOGFILE"
+			if [[ -n "$dismissed_dest_var" && "$dismissed_dest_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+				printf -v "$dismissed_dest_var" '%s' "1"
+			fi
+			return 0
+		fi
+
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — coderabbit-nits-ok label present but human reviewer also blocking (t2179)" >>"$LOGFILE"
+		return 1
+	fi
+
+	# No coderabbit-nits-ok label — route worker-authored PRs for fix
+	# dispatch and skip the merge (t2203: consolidated in helper).
+	_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "review" "$_cr_pr_labels" || true
+	echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — reviewDecision=CHANGES_REQUESTED" >>"$LOGFILE"
+	return 1
+}
+
+#######################################
 # Run all merge-eligibility gate checks for a single PR.
 # Returns 0 if all gates pass (PR may proceed to merge).
 # Returns 1 if any gate fails (PR should be skipped).
@@ -223,31 +279,8 @@ _check_pr_merge_gates() {
 	# label and EVERY CHANGES_REQUESTED reviewer is coderabbitai[bot],
 	# auto-dismiss those reviews and fall through to the next gate. If any
 	# human reviewer is also blocking, the label is ignored.
-	if [[ "$pr_review" == "CHANGES_REQUESTED" ]]; then
-		# Fetch labels once — reused by both the nits-ok check and the
-		# worker-routing block below.
-		local _cr_pr_labels="$pr_labels"
-		if [[ -z "$_cr_pr_labels" ]]; then
-			_cr_pr_labels=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
-				--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || _cr_pr_labels=""
-		fi
-
-		# t2179: coderabbit-nits-ok path.
-		if [[ ",${_cr_pr_labels}," == *",coderabbit-nits-ok,"* ]]; then
-			if _pulse_merge_dismiss_coderabbit_nits "$pr_number" "$repo_slug"; then
-				echo "[pulse-wrapper] Merge pass: PR #${pr_number} in ${repo_slug} — auto-dismissed CodeRabbit-only CHANGES_REQUESTED reviews (coderabbit-nits-ok label) (t2179)" >>"$LOGFILE"
-				# Fall through to the next gate — do NOT return 1.
-			else
-				echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — coderabbit-nits-ok label present but human reviewer also blocking (t2179)" >>"$LOGFILE"
-				return 1
-			fi
-		else
-			# No coderabbit-nits-ok label — route worker-authored PRs for fix
-			# dispatch and skip the merge (t2203: consolidated in helper).
-			_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "review" "$_cr_pr_labels" || true
-			echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — reviewDecision=CHANGES_REQUESTED" >>"$LOGFILE"
-			return 1
-		fi
+	if ! _handle_changes_requested_review_gate "$pr_number" "$repo_slug" "$pr_review" "$linked_issue" "$pr_labels"; then
+		return 1
 	fi
 
 	# Skip external contributor PRs (non-collaborator).
@@ -928,6 +961,25 @@ _process_single_ready_pr() {
 			fi
 		# Otherwise pr_mergeable is now MERGEABLE/UNKNOWN — continue through
 		# the normal merge path below.
+	fi
+
+	# Review feedback routing is terminal for worker PRs and must not wait for
+	# GitHub's mergeable cache to resolve. Keep this narrow: conflict handling
+	# above retains precedence, and the helper only routes/skips CHANGES_REQUESTED
+	# via the same origin-label and stale-handover checks used by the later gate.
+	if [[ "$pr_review" == "CHANGES_REQUESTED" ]]; then
+		local _early_review_linked_issue=""
+		local _early_review_dismissed="0"
+		_early_review_linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || _early_review_linked_issue=""
+		if ! _handle_changes_requested_review_gate "$pr_number" "$repo_slug" "$pr_review" "$_early_review_linked_issue" "$pr_labels" _early_review_dismissed; then
+			[[ -n "$timing_prefix" ]] && _pmp_add_elapsed_seconds "${timing_prefix}mergeability_s" "$_mergeability_start"
+			return 1
+		fi
+		# Avoid re-processing stale CHANGES_REQUESTED metadata in the later merge
+		# gate after the CodeRabbit-only dismissal path has already succeeded.
+		if [[ "$_early_review_dismissed" == "1" ]]; then
+			pr_review="NONE"
+		fi
 	fi
 
 	# Resolve UNKNOWN mergeable state with one retry; skip if not MERGEABLE

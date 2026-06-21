@@ -108,7 +108,7 @@ case "$_subcmd" in
 		exit 0
 	fi
 	if [[ "$*" == *"--json name,bucket,conclusion,link"* ]]; then
-		printf '%s\n' '- **Lint**: failure — [check URL](https://example.invalid/check)'
+		printf '%s\n' '[{"name":"Lint","bucket":"fail","conclusion":"failure","link":"https://github.com/owner/repo/actions/runs/123/job/456"}]'
 		exit 0
 	fi
 	exit 0
@@ -201,6 +201,9 @@ define_helpers_under_test() {
 		_append_feedback_to_issue
 		_transition_issue_for_redispatch
 		_close_and_label_feedback_pr
+		_ci_check_url_has_infra_timeout_log
+		_ci_actionable_failed_checks_markdown
+		_ci_terminal_failed_check_results
 		_build_ci_feedback_section
 		_dispatch_ci_fix_worker
 		_dispatch_pr_fix_worker

@@ -156,29 +156,42 @@ extract_function() {
 }
 
 define_process_helper() {
-	local fn_src=""
+	local fn_src="" review_gate_src=""
+	review_gate_src=$(extract_function _handle_changes_requested_review_gate "$MERGE_SCRIPT")
 	fn_src=$(extract_function _process_single_ready_pr "$MERGE_SCRIPT")
-	[[ -n "$fn_src" ]] || return 1
+	[[ -n "$review_gate_src" && -n "$fn_src" ]] || return 1
 
 	_OW_LABEL_PAT=",origin:worker,"
 	PULSE_MERGE_CLOSE_CONFLICTING=false
 	DRY_RUN=0
 	GATE_CALLS=0
+	GATE_REVIEW_ARG=""
+	RESOLVE_CALLS=0
 	ROUTE_CALLS=0
 	ROUTE_ARGS=""
+	ROUTE_LABELS=""
+	DISMISS_CALLS=0
+	PR_REQUIRED_CHECKS_RC=1
+	REFRESHED_MERGEABLE="UNKNOWN"
 
-	_resolve_pr_mergeable_status() { local pr_number="$1" repo_slug="$2" mergeable="$3"; [[ -n "$pr_number$repo_slug$mergeable" ]]; return 0; }
+	_resolve_pr_mergeable_status() { local pr_number="$1" repo_slug="$2" mergeable="$3"; [[ -n "$pr_number$repo_slug$mergeable" ]]; RESOLVE_CALLS=$((RESOLVE_CALLS + 1)); return 0; }
+	_pmp_refresh_unknown_mergeable_state_into() { local dest_var="$1" pr_number="$2" repo_slug="$3" mergeable="$4"; [[ -n "$pr_number$repo_slug$mergeable" ]]; printf -v "$dest_var" '%s' "$REFRESHED_MERGEABLE"; return 0; }
 	_extract_linked_issue() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; printf '42\n'; return 0; }
-	_check_pr_merge_gates() { local pr_number="$1" repo_slug="$2" pr_author="$3" pr_review="$4" linked_issue="$5"; [[ -n "$pr_number$repo_slug$pr_author$pr_review$linked_issue" ]]; GATE_CALLS=$((GATE_CALLS + 1)); return 0; }
-	_pr_required_checks_pass() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; return 1; }
+	_check_pr_merge_gates() { local pr_number="$1" repo_slug="$2" pr_author="$3" pr_review="$4" linked_issue="$5"; [[ -n "$pr_number$repo_slug$pr_author$pr_review$linked_issue" ]]; GATE_CALLS=$((GATE_CALLS + 1)); GATE_REVIEW_ARG="$pr_review"; return 0; }
+	_pr_required_checks_pass() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; if [[ "$PR_REQUIRED_CHECKS_RC" -eq 0 ]]; then return 0; fi; return 1; }
 	_check_required_checks_passing() { local repo_slug="$1" pr_number="$2"; [[ -n "$repo_slug$pr_number" ]]; return 1; }
+	_is_trusted_dependabot_update_pr() { local pr_number="$1" repo_slug="$2" pr_author="$3"; [[ -n "$pr_number$repo_slug$pr_author" ]]; return 1; }
+	_trusted_dependabot_non_review_checks_green() { local pr_number="$1" repo_slug="$2" pr_obj="$3"; [[ -n "$pr_number$repo_slug$pr_obj" ]]; return 1; }
 	_attempt_pr_ci_rebase_retry() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; return 1; }
-	_route_pr_to_fix_worker() { local pr_number="$1" repo_slug="$2" linked_issue="$3" mode="$4"; ROUTE_CALLS=$((ROUTE_CALLS + 1)); ROUTE_ARGS="${pr_number}|${repo_slug}|${linked_issue}|${mode}"; return 0; }
+	_route_pr_to_fix_worker() { local pr_number="$1" repo_slug="$2" linked_issue="$3" mode="$4" pr_labels="${5:-}"; ROUTE_CALLS=$((ROUTE_CALLS + 1)); ROUTE_ARGS="${pr_number}|${repo_slug}|${linked_issue}|${mode}"; ROUTE_LABELS="$pr_labels"; return 0; }
+	_pulse_merge_dismiss_coderabbit_nits() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; DISMISS_CALLS=$((DISMISS_CALLS + 1)); if [[ "${DISMISS_NITS_RC:-0}" -eq 0 ]]; then return 0; fi; return 1; }
 	_attempt_pr_update_branch() { return 1; }
 	_close_conflicting_pr() { return 0; }
 	_pmp_normalize_mergeable_state_into() { return 0; }
 	printf -v PR_OBJECT '%s' '{"number":100,"mergeable":"MERGEABLE","reviewDecision":"","author":{"login":"worker-bot"},"title":"t1: fix"}'
 
+	# shellcheck disable=SC1090
+	eval "$review_gate_src"
 	# shellcheck disable=SC1090
 	eval "$fn_src"
 	return 0
@@ -220,6 +233,73 @@ test_red_pr_passes_gates_before_repair_route() {
 		print_result "red PR routes one CI repair after gates pass" 1 "route_calls=${ROUTE_CALLS}, route_args=${ROUTE_ARGS}"
 	else
 		print_result "red PR passes gates then routes exactly one CI repair" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_changes_requested_unknown_routes_before_mergeable_skip() {
+	setup_test_env
+	define_process_helper || { print_result "defines process helper for review routing" 1 "could not extract _process_single_ready_pr or review gate"; teardown_test_env; return 0; }
+
+	local pr_object rc=0
+	printf -v pr_object '%s' '{"number":554,"mergeable":"UNKNOWN","reviewDecision":"CHANGES_REQUESTED","author":{"login":"worker-bot"},"title":"GH#500: fix","updatedAt":"2026-06-21T00:00:00Z","headRefOid":"sha554","headRefName":"fix/review","baseRefName":"main","labels":[{"name":"origin:worker"},{"name":"status:in-review"}],"isDraft":false}'
+	_process_single_ready_pr "owner/repo" "$pr_object" || rc=$?
+
+	if [[ "$rc" -ne 1 ]]; then
+		print_result "CHANGES_REQUESTED+UNKNOWN routes before mergeability skip" 1 "Expected skip return 1, got ${rc}"
+	elif [[ "$ROUTE_CALLS" -ne 1 || "$ROUTE_ARGS" != "554|owner/repo|42|review" ]]; then
+		print_result "CHANGES_REQUESTED+UNKNOWN routes before mergeability skip" 1 "route_calls=${ROUTE_CALLS}, route_args=${ROUTE_ARGS}"
+	elif [[ "$RESOLVE_CALLS" -ne 0 || "$GATE_CALLS" -ne 0 ]]; then
+		print_result "CHANGES_REQUESTED+UNKNOWN routes before mergeability skip" 1 "resolve_calls=${RESOLVE_CALLS}, gate_calls=${GATE_CALLS}"
+	else
+		print_result "CHANGES_REQUESTED+UNKNOWN routes before mergeability skip" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_coderabbit_nits_ok_dismissed_once_before_late_gate() {
+	setup_test_env
+	define_process_helper || { print_result "defines process helper for coderabbit review routing" 1 "could not extract _process_single_ready_pr or review gate"; teardown_test_env; return 0; }
+
+	local pr_object rc=0
+	DRY_RUN=1
+	PR_REQUIRED_CHECKS_RC=0
+	printf -v pr_object '%s' '{"number":555,"mergeable":"UNKNOWN","reviewDecision":"CHANGES_REQUESTED","author":{"login":"worker-bot"},"title":"GH#501: fix","updatedAt":"2026-06-21T00:00:00Z","headRefOid":"sha555","headRefName":"fix/nits","baseRefName":"main","labels":[{"name":"origin:worker"},{"name":"status:in-review"},{"name":"coderabbit-nits-ok"}],"isDraft":false}'
+	_process_single_ready_pr "owner/repo" "$pr_object" || rc=$?
+
+	if [[ "$rc" -ne 0 ]]; then
+		print_result "coderabbit-nits-ok dismissal is not reprocessed by late gate" 1 "Expected dry-run success return 0, got ${rc}"
+	elif [[ "$DISMISS_CALLS" -ne 1 ]]; then
+		print_result "coderabbit-nits-ok dismissal is not reprocessed by late gate" 1 "dismiss_calls=${DISMISS_CALLS}"
+	elif [[ "$GATE_CALLS" -ne 1 || "$GATE_REVIEW_ARG" != "NONE" ]]; then
+		print_result "coderabbit-nits-ok dismissal is not reprocessed by late gate" 1 "gate_calls=${GATE_CALLS}, gate_review=${GATE_REVIEW_ARG}"
+	elif [[ "$ROUTE_CALLS" -ne 0 ]]; then
+		print_result "coderabbit-nits-ok dismissal is not reprocessed by late gate" 1 "route_calls=${ROUTE_CALLS}"
+	else
+		print_result "coderabbit-nits-ok dismissal is not reprocessed by late gate" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_changes_requested_explicit_empty_labels_skip_refetch() {
+	setup_test_env
+	define_process_helper || { print_result "defines process helper for explicit empty labels" 1 "could not extract review gate"; teardown_test_env; return 0; }
+
+	: >"$GH_LOG"
+	_handle_changes_requested_review_gate "556" "owner/repo" "CHANGES_REQUESTED" "42" "" || true
+
+	local label_fetch_count=0
+	label_fetch_count=$(grep -c -- '--json labels' "$GH_LOG" || true)
+	[[ "$label_fetch_count" =~ ^[0-9]+$ ]] || label_fetch_count=0
+	if [[ "$label_fetch_count" -ne 0 ]]; then
+		print_result "explicit empty PR labels do not refetch labels" 1 "label_fetch_count=${label_fetch_count}"
+	elif [[ "$ROUTE_CALLS" -ne 1 || "$ROUTE_ARGS" != "556|owner/repo|42|review" ]]; then
+		print_result "explicit empty PR labels do not refetch labels" 1 "route_calls=${ROUTE_CALLS}, route_args=${ROUTE_ARGS}"
+	else
+		print_result "explicit empty PR labels do not refetch labels" 0
 	fi
 	teardown_test_env
 	return 0
@@ -351,6 +431,9 @@ test_ci_feedback_emits_advisory_failure_when_required_clean() {
 
 main() {
 	test_red_pr_passes_gates_before_repair_route
+	test_changes_requested_unknown_routes_before_mergeable_skip
+	test_coderabbit_nits_ok_dismissed_once_before_late_gate
+	test_changes_requested_explicit_empty_labels_skip_refetch
 	test_ci_feedback_dedupes_by_pr_head_sha
 	test_ci_feedback_skips_pending_only_checks
 	test_ci_feedback_skips_mixed_pending_pass_checks
