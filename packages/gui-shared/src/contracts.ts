@@ -35,6 +35,41 @@ export interface GuiSecretReference {
   status: "configured" | "missing" | "unchecked";
 }
 
+export interface GuiNavigationItem {
+  id: "overview" | "repos" | "settings" | "capabilities" | "security";
+  label: string;
+  description: string;
+}
+
+export interface GuiSettingsSummary {
+  path_ref: string;
+  health: "present" | "missing" | "invalid" | "unchecked";
+  key_count: number;
+  keys: string[];
+  value_policy: "keys_only_no_values";
+}
+
+export interface GuiRepoSummary {
+  name: string;
+  platform: string;
+  slug: string;
+  local_path_status: "present" | "missing" | "not_provided" | "unchecked";
+}
+
+export interface GuiRepoRegistrySummary {
+  path_ref: string;
+  health: "present" | "missing" | "invalid" | "unchecked";
+  total: number;
+  repos: GuiRepoSummary[];
+}
+
+export interface GuiCapabilitySummary {
+  id: string;
+  label: string;
+  status: "available" | "planned" | "placeholder";
+  doc_ref: string;
+}
+
 export interface GuiStatusData {
   aidevops_version: string;
   update: {
@@ -57,6 +92,10 @@ export interface GuiStatusData {
     name: string;
     status: "available" | "missing" | "unchecked";
   }>;
+  navigation: GuiNavigationItem[];
+  settings: GuiSettingsSummary;
+  repos: GuiRepoRegistrySummary;
+  capabilities: GuiCapabilitySummary[];
   secrets: GuiSecretReference[];
   placeholders: string[];
 }

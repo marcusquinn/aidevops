@@ -31,6 +31,66 @@ export const statusFixture: GuiStatusData = {
       status: "unchecked",
     },
   ],
+  navigation: [
+    {
+      id: "overview",
+      label: "Overview",
+      description: "Local setup, update, and API health.",
+    },
+    {
+      id: "repos",
+      label: "Repos",
+      description: "Read-only repository registry summary.",
+    },
+    {
+      id: "settings",
+      label: "Settings",
+      description: "Settings file health and keys only.",
+    },
+    {
+      id: "capabilities",
+      label: "Capabilities",
+      description: "Available and planned dashboard surfaces.",
+    },
+    {
+      id: "security",
+      label: "Security",
+      description: "Secret-reference-only trust boundary.",
+    },
+  ],
+  settings: {
+    path_ref: "~/.config/aidevops/settings.json",
+    health: "unchecked",
+    key_count: 0,
+    keys: [],
+    value_policy: "keys_only_no_values",
+  },
+  repos: {
+    path_ref: "~/.config/aidevops/repos.json",
+    health: "unchecked",
+    total: 0,
+    repos: [],
+  },
+  capabilities: [
+    {
+      id: "setup-status",
+      label: "Setup/status",
+      status: "available",
+      doc_ref: "docs/gui/helper-api-contract.md:98",
+    },
+    {
+      id: "repos",
+      label: "Repository registry",
+      status: "placeholder",
+      doc_ref: "docs/gui/helper-api-contract.md:103",
+    },
+    {
+      id: "settings",
+      label: "Effective settings",
+      status: "placeholder",
+      doc_ref: "docs/gui/helper-api-contract.md:101",
+    },
+  ],
   secrets: [
     {
       name: "GITHUB_TOKEN",
