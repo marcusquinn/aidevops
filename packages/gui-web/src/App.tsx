@@ -1,17 +1,88 @@
-import React, { useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import type { GuiNavigationItem, GuiResponseEnvelope, GuiStatusData } from "../../gui-shared/src";
 import { fetchStatus, mockedStatus } from "./status-client";
 
 type ThemePreference = "system" | "light" | "dark";
 
-type ControlNode = {
+interface ControlNode {
   detail: string;
   id: string;
   refs: string[];
   state: string;
   tier: "core" | "inventory" | "automation" | "integration" | "guardrail" | "planned";
   title: string;
-};
+}
+
+interface NodeTypeSummary {
+  label: string;
+  value: string;
+}
+
+const uiText = {
+  agentsAndHelpers: "Agents and helpers",
+  api: "API",
+  automation: "Automation",
+  automationDetail: "Agents, helpers, routines, and dispatchable workflows.",
+  canvas: "Canvas",
+  capabilitiesCount: "capabilities",
+  capabilitiesDescription: "Capability cards map the aidevops agent and helper surfaces that can become guided workflows.",
+  configuration: "Configuration",
+  controlGraph: "Control graph",
+  current: "current",
+  currentLocalSignals: "Current local signals",
+  guarded: "guarded",
+  guardrails: "Guardrails",
+  helperAvailability: "Helper availability",
+  helpers: "helpers",
+  installed: "installed",
+  inspector: "Inspector",
+  integrations: "Integrations",
+  integrationsDetail: "Git hosts, infrastructure providers, calendars, and future Cloudron surfaces.",
+  interactionPolicy: "Interaction policy",
+  interactionPolicyText: "Read-only first. Future setup and management actions should appear as explicit guided flows, not generic command execution.",
+  inventory: "Inventory",
+  keys: "keys",
+  localOperatingGraph: "Local operating graph",
+  localReadOnly: "local read-only",
+  mode: "Mode",
+  needsRestart: "needs restart",
+  nodeTypes: "Node types",
+  nodesDescription: "Nodes describe what aidevops can observe now and where guided setup or management flows can attach later.",
+  noControlActions: "no control actions",
+  observed: "Observed",
+  planned: "planned",
+  providerStatusOnly: "provider status only",
+  providers: "providers",
+  projects: "Projects",
+  projectsDetail: "Known repositories and local path health.",
+  readOnlyControlGraph: "Read-only local control graph",
+  ready: "ready",
+  records: "records",
+  repos: "repos",
+  restartRequired: "restart required",
+  running: "Running",
+  routines: "routines",
+  secretRefs: "secret refs",
+  secrets: "secrets",
+  security: "Security",
+  securityDetail: "Secret references, security posture, and trust-boundary checks.",
+  settings: "Settings",
+  settingsDetail: "Configuration precedence and safe key-only visibility.",
+  setup: "Setup",
+  setupDetail: "Local framework install, update, and restart signal.",
+  source: "Source",
+  status: "status",
+  surfaceLibrary: "Surface library",
+  valuesHidden: "values hidden",
+} as const;
+
+const nodeTypeSummaries: NodeTypeSummary[] = [
+  { label: uiText.setup, value: uiText.status },
+  { label: uiText.projects, value: uiText.repos },
+  { label: uiText.automation, value: uiText.routines },
+  { label: uiText.integrations, value: uiText.providers },
+  { label: uiText.security, value: uiText.secrets },
+];
 
 function getSystemTheme(): "light" | "dark" {
   if (typeof window === "undefined") {
@@ -34,7 +105,7 @@ export function App() {
     restart_required: false,
     message: "The GUI app is using local read-only status data.",
   };
-  const activeItem = status.data.navigation.find((item) => item.id === activeSection) ?? status.data.navigation[0];
+  const activeItem = navigationItemById(status.data.navigation, activeSection);
   const navGroups: Array<{ label: string; items: GuiNavigationItem[] }> = [
     {
       label: "Operate",
@@ -99,7 +170,7 @@ export function App() {
         </div>
         <div className="topbar-status">
           <span className="status-dot" aria-hidden="true" />
-          <span>local read-only</span>
+          <span>{uiText.localReadOnly}</span>
         </div>
         <div className="theme-control compact" aria-label="Theme preference">
           {(["system", "light", "dark"] as const).map((theme) => (
@@ -122,7 +193,7 @@ export function App() {
             <span className="terminal-mark" aria-hidden="true">›_</span>
             <span>aidevops</span>
           </div>
-          <p className="sidebar-kicker">Surface library</p>
+          <p className="sidebar-kicker">{uiText.surfaceLibrary}</p>
           <nav>
             {navGroups.map((group) => (
               <div className="nav-group" key={group.label}>
@@ -147,14 +218,14 @@ export function App() {
         <section className="content" aria-label="aidevops dashboard">
           <header className="canvas-toolbar">
             <div>
-              <p className="eyebrow">Read-only local control graph</p>
+              <p className="eyebrow">{uiText.readOnlyControlGraph}</p>
               <h1>{activeSection === "overview" ? "aidevops control plane" : surfaceLabel(activeItem)}</h1>
             </div>
             <div className="toolbar-messages">
               {warning ? <p role="status">{warning}</p> : null}
               {update.restart_required ? (
                 <p className="alert" role="alert">
-                  {update.message} Running {update.running_version}; installed {update.installed_version}.
+                  {`${update.message} ${uiText.running} ${update.running_version}; ${uiText.installed} ${update.installed_version}.`}
                 </p>
               ) : (
                 <p className="notice" role="status">{update.message}</p>
@@ -171,37 +242,35 @@ export function App() {
 
         <aside className="detail-rail" aria-label="Inspector">
           <section className="rail-card now-card">
-            <p className="eyebrow">Inspector</p>
+            <p className="eyebrow">{uiText.inspector}</p>
             <h2>{surfaceLabel(activeItem)}</h2>
             <p>{surfaceDescription(activeItem)}</p>
             <dl className="inspector-list">
-              <dt>Source</dt>
+              <dt>{uiText.source}</dt>
               <dd>{status.source.authority}</dd>
-              <dt>Mode</dt>
-              <dd>{status.data.runtime.api} API</dd>
+              <dt>{uiText.mode}</dt>
+              <dd>{status.data.runtime.api} {uiText.api}</dd>
             </dl>
           </section>
           <section className="rail-card">
-            <h3>Node types</h3>
+            <h3>{uiText.nodeTypes}</h3>
             <ul>
-              <li><span>Setup</span><strong>status</strong></li>
-              <li><span>Projects</span><strong>repos</strong></li>
-              <li><span>Automation</span><strong>routines</strong></li>
-              <li><span>Integrations</span><strong>providers</strong></li>
-              <li><span>Security</span><strong>secrets</strong></li>
+              {nodeTypeSummaries.map((nodeType) => (
+                <li key={nodeType.label}><span>{nodeType.label}</span><strong>{nodeType.value}</strong></li>
+              ))}
             </ul>
           </section>
           <section className="rail-card">
-            <h3>Interaction policy</h3>
-            <p>Read-only first. Future setup and management actions should appear as explicit guided flows, not generic command execution.</p>
+            <h3>{uiText.interactionPolicy}</h3>
+            <p>{uiText.interactionPolicyText}</p>
           </section>
         </aside>
       </div>
 
       <footer className="app-statusbar" aria-label="App status">
-        <span>{status.data.runtime.api} API</span>
+        <span>{status.data.runtime.api} {uiText.api}</span>
         <span>{status.source.authority}</span>
-        <span>Observed {new Date(status.observed_at).toLocaleTimeString()}</span>
+        <span>{uiText.observed} {new Date(status.observed_at).toLocaleTimeString()}</span>
         <span>{themePreference === "system" ? `system/${systemTheme}` : themePreference}</span>
       </footer>
     </main>
@@ -214,14 +283,14 @@ function OverviewSection({ status }: { status: GuiStatusData }) {
   return (
     <section className="panel flow-panel" aria-label="Control graph">
       <div className="section-heading">
-        <p className="eyebrow">Canvas</p>
-        <h2>Local operating graph</h2>
-        <p>Nodes describe what aidevops can observe now and where guided setup or management flows can attach later.</p>
+        <p className="eyebrow">{uiText.canvas}</p>
+        <h2>{uiText.localOperatingGraph}</h2>
+        <p>{uiText.nodesDescription}</p>
       </div>
       <div className="flow-canvas">
         {nodes.map((node) => <FlowNodeCard key={node.id} node={node} />)}
       </div>
-      <h2>Current local signals</h2>
+      <h2>{uiText.currentLocalSignals}</h2>
       <ul className="object-list">
         {status.paths.map((path) => (
           <li key={path.label}>
@@ -255,8 +324,8 @@ function ReposSection({ status }: { status: GuiStatusData }) {
   return (
     <section className="panel" aria-label="Projects">
       <div className="section-heading">
-        <p className="eyebrow">Inventory</p>
-        <h2>Projects</h2>
+        <p className="eyebrow">{uiText.inventory}</p>
+        <h2>{uiText.projects}</h2>
         <p>Read-only registry summary from <code>{status.repos.path_ref}</code>.</p>
       </div>
       {status.repos.repos.length === 0 ? (
@@ -281,8 +350,8 @@ function SettingsSection({ status }: { status: GuiStatusData }) {
   return (
     <section className="panel" aria-label="Settings">
       <div className="section-heading">
-        <p className="eyebrow">Configuration</p>
-        <h2>Settings</h2>
+        <p className="eyebrow">{uiText.configuration}</p>
+        <h2>{uiText.settings}</h2>
         <p>Values are intentionally not rendered; this view shows keys and file health only.</p>
       </div>
       <dl className="inline-details">
@@ -308,9 +377,9 @@ function CapabilitiesSection({ status }: { status: GuiStatusData }) {
   return (
     <section className="panel" aria-label="Automation">
       <div className="section-heading">
-        <p className="eyebrow">Automation</p>
-        <h2>Agents and helpers</h2>
-        <p>Capability cards map the aidevops agent and helper surfaces that can become guided workflows.</p>
+        <p className="eyebrow">{uiText.automation}</p>
+        <h2>{uiText.agentsAndHelpers}</h2>
+        <p>{uiText.capabilitiesDescription}</p>
       </div>
       <ul className="object-list">
         {status.capabilities.map((capability) => (
@@ -321,7 +390,7 @@ function CapabilitiesSection({ status }: { status: GuiStatusData }) {
           </li>
         ))}
       </ul>
-      <h3>Helper availability</h3>
+      <h3>{uiText.helperAvailability}</h3>
       <ul className="object-list compact-list">
         {status.helper_availability.map((helper) => (
           <li key={helper.name}>
@@ -338,8 +407,8 @@ function SecuritySection({ status }: { status: GuiStatusData }) {
   return (
     <section className="panel" aria-label="Security">
       <div className="section-heading">
-        <p className="eyebrow">Guardrails</p>
-        <h2>Security</h2>
+        <p className="eyebrow">{uiText.guardrails}</p>
+        <h2>{uiText.security}</h2>
         <p>Secret values, prefixes, suffixes, raw credential files, and arbitrary commands are not exposed.</p>
       </div>
       <ul className="object-list">
@@ -358,69 +427,79 @@ function SecuritySection({ status }: { status: GuiStatusData }) {
 function controlNodes(status: GuiStatusData): ControlNode[] {
   return [
     {
-      detail: "Local framework install, update, and restart signal.",
+      detail: uiText.setupDetail,
       id: "setup",
-      refs: [`aidevops ${status.aidevops_version}`, status.update.restart_required ? "restart required" : "current"],
-      state: status.update.restart_required ? "needs restart" : "ready",
+      refs: [`aidevops ${status.aidevops_version}`, status.update.restart_required ? uiText.restartRequired : uiText.current],
+      state: status.update.restart_required ? uiText.needsRestart : uiText.ready,
       tier: "core",
-      title: "Setup",
+      title: uiText.setup,
     },
     {
-      detail: "Known repositories and local path health.",
+      detail: uiText.projectsDetail,
       id: "projects",
-      refs: [`${status.repos.total} records`, status.repos.path_ref],
+      refs: [`${status.repos.total} ${uiText.records}`, status.repos.path_ref],
       state: status.repos.health,
       tier: "inventory",
-      title: "Projects",
+      title: uiText.projects,
     },
     {
-      detail: "Agents, helpers, routines, and dispatchable workflows.",
+      detail: uiText.automationDetail,
       id: "automation",
-      refs: [`${status.capabilities.length} capabilities`, `${status.helper_availability.length} helpers`],
+      refs: [`${status.capabilities.length} ${uiText.capabilitiesCount}`, `${status.helper_availability.length} ${uiText.helpers}`],
       state: "observed",
       tier: "automation",
-      title: "Automation",
+      title: uiText.automation,
     },
     {
-      detail: "Git hosts, infrastructure providers, calendars, and future Cloudron surfaces.",
+      detail: uiText.integrationsDetail,
       id: "integrations",
-      refs: ["provider status only", "no control actions"],
-      state: "planned",
+      refs: [uiText.providerStatusOnly, uiText.noControlActions],
+      state: uiText.planned,
       tier: "integration",
-      title: "Integrations",
+      title: uiText.integrations,
     },
     {
-      detail: "Configuration precedence and safe key-only visibility.",
+      detail: uiText.settingsDetail,
       id: "settings",
-      refs: [`${status.settings.key_count} keys`, status.settings.value_policy],
+      refs: [`${status.settings.key_count} ${uiText.keys}`, status.settings.value_policy],
       state: status.settings.health,
       tier: "guardrail",
-      title: "Settings",
+      title: uiText.settings,
     },
     {
-      detail: "Secret references, security posture, and trust-boundary checks.",
+      detail: uiText.securityDetail,
       id: "security",
-      refs: [`${status.secrets.length} secret refs`, "values hidden"],
-      state: "guarded",
+      refs: [`${status.secrets.length} ${uiText.secretRefs}`, uiText.valuesHidden],
+      state: uiText.guarded,
       tier: "guardrail",
-      title: "Security",
+      title: uiText.security,
     },
   ];
 }
 
+function navigationItemById(items: GuiNavigationItem[], itemId: GuiNavigationItem["id"]): GuiNavigationItem | undefined {
+  for (const item of items) {
+    if (item.id === itemId) {
+      return item;
+    }
+  }
+
+  return items[0];
+}
+
 function surfaceLabel(item: GuiNavigationItem | undefined): string {
   if (!item) {
-    return "Control graph";
+    return uiText.controlGraph;
   }
 
   if (item.id === "overview") {
-    return "Control graph";
+    return uiText.controlGraph;
   }
   if (item.id === "repos") {
-    return "Projects";
+    return uiText.projects;
   }
   if (item.id === "capabilities") {
-    return "Automation";
+    return uiText.automation;
   }
 
   return item.label;
