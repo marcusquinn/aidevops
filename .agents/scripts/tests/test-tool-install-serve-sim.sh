@@ -156,16 +156,16 @@ extract_functions
 
 (
 	source_extracted
-	_setup_serve_sim_node_version_ok "v18.0.0"
+	_setup_serve_sim_node_version_ok "v20.0.0"
 ) >/dev/null 2>&1
-assert_eq "Node 18 satisfies serve-sim engine" "0" "$?"
+assert_eq "Node 20 satisfies serve-sim engine" "0" "$?"
 
 rc=0
 (
 	source_extracted
-	_setup_serve_sim_node_version_ok "v17.9.1"
+	_setup_serve_sim_node_version_ok "v18.19.0"
 ) >/dev/null 2>&1 || rc=$?
-assert_eq "Node 17 fails serve-sim engine" "1" "$rc"
+assert_eq "Node 18 fails serve-sim engine" "1" "$rc"
 
 assert_eq "Supported arm64 host prompts/install path" "1" "$(run_setup_with_env arm64 v20.0.0 no)"
 assert_eq "Unset prompt response uses safe default expansion" "1" "$(run_setup_with_env arm64 v20.0.0 no leave-unset)"
