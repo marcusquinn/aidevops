@@ -14,6 +14,10 @@ describe("status adapter", () => {
     expect(response.data.runtime).toEqual({ host: "local", api: "hono", read_only: true });
     expect(response.data.update.restart_required).toBeBoolean();
     expect(response.data.update.message).toContain("GUI app");
+    expect(response.data.navigation.map((item) => item.id)).toContain("repos");
+    expect(response.data.settings.value_policy).toBe("keys_only_no_values");
+    expect(response.data.repos.path_ref).toBe("~/.config/aidevops/repos.json");
+    expect(response.data.capabilities.length).toBeGreaterThan(0);
     expect(response.data.secrets[0]).toEqual({ name: "GITHUB_TOKEN", status: "unchecked" });
   });
 });
