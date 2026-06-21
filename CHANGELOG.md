@@ -10,6 +10,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.21.10] - 2026-06-21
+
+### Added
+
+- expand GUI app interface (#25328)
+- restart GUI app shell (#25324)
+
+### Changed
+
+- Refactor: reduce GUI interface complexity (for #25304) (#25331)
+- refactor: split GUI app surfaces (#25335)
+
+### Fixed
+
+- preserve merge failure context for remediation (#25339)
+- use CodeFactor-compatible GUI media queries (#25333)
+- add CodeFactor miner guidance (#25330)
+- address GUI shell review findings (#25326)
+- add CodeFactor CI failure guidance (#25327)
+
+## [3.21.10] - 2026-06-21
+
+### Added
+
+- expand GUI app interface (#25328)
+- restart GUI app shell (#25324)
+
+### Changed
+
+- reduce GUI interface complexity (for #25304) (#25331)
+- split GUI app surfaces (#25335)
+
+### Fixed
+
+- preserve merge failure context for remediation (#25339)
+- use CodeFactor-compatible GUI media queries (#25333)
+- add CodeFactor miner guidance (#25330)
+- address GUI shell review findings (#25326)
+- add CodeFactor CI failure guidance (#25327)
+
 ## [3.21.9] - 2026-06-21
 
 ### Added
