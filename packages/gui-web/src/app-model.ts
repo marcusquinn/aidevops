@@ -1,23 +1,26 @@
 import type { GuiFileRootId } from "../../gui-shared/src";
 
 export type ThemePreference = "system" | "light" | "dark";
-export type SurfaceId =
-  | "overview"
-  | "agents"
-  | "config"
-  | "localSetup"
-  | "git"
-  | "routines"
-  | "apps"
-  | "installation"
-  | "personas"
-  | "brands"
-  | "domains"
-  | "registrars"
-  | "hosts"
-  | "servers"
-  | "projects"
-  | "security";
+export const surfaceIds = [
+  "overview",
+  "agents",
+  "config",
+  "localSetup",
+  "git",
+  "routines",
+  "apps",
+  "installation",
+  "personas",
+  "brands",
+  "domains",
+  "registrars",
+  "hosts",
+  "servers",
+  "projects",
+  "security",
+] as const;
+
+export type SurfaceId = (typeof surfaceIds)[number];
 
 export interface SurfaceNavItem {
   badge?: string;

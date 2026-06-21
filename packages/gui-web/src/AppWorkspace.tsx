@@ -1,4 +1,5 @@
 /* jshint esversion: 11 */
+import type { ReactNode } from "react";
 import type { GuiFileRootId, GuiStatusData } from "../../gui-shared/src";
 import { inventorySurfaceConfigs, text } from "./app-model";
 import type { SurfaceId, SurfaceNavItem } from "./app-model";
@@ -49,6 +50,14 @@ function SurfaceContent({ activeSurface, fileRoot, status }: {
   status: GuiStatusData;
 }) {
   const inventoryConfig = inventorySurfaceConfigs[activeSurface];
+  const staticSurfaces: Partial<Record<SurfaceId, ReactNode>> = {
+    overview: <OverviewSurface status={status} />,
+    routines: <PlannedSurface label={text.routines} detail={text.routineDetail} />,
+    apps: <AppsSurface />,
+    installation: <InstallationSurface />,
+    projects: <ProjectsSurface status={status} />,
+    security: <SecuritySurface status={status} />,
+  };
 
   if (fileRoot) {
     return <FileExplorerSurface key={fileRoot} rootId={fileRoot} />;
@@ -58,20 +67,5 @@ function SurfaceContent({ activeSurface, fileRoot, status }: {
     return <EditableInventorySurface {...inventoryConfig} />;
   }
 
-  switch (activeSurface) {
-    case "overview":
-      return <OverviewSurface status={status} />;
-    case "routines":
-      return <PlannedSurface label={text.routines} detail={text.routineDetail} />;
-    case "apps":
-      return <AppsSurface />;
-    case "installation":
-      return <InstallationSurface />;
-    case "projects":
-      return <ProjectsSurface status={status} />;
-    case "security":
-      return <SecuritySurface status={status} />;
-    default:
-      return null;
-  }
+  return staticSurfaces[activeSurface] ?? null;
 }
