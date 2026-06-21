@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "allowImportingTsExtensions": true,
+    "jsx": "react-jsx",
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "noEmit": true,
@@ -11,6 +12,13 @@
   "include": [
     ".opencode/lib/session-rename-guards.ts",
     ".opencode/lib/session-title-suffix.ts",
-    ".opencode/lib/terminal-title.ts"
+    ".opencode/lib/terminal-title.ts",
+    "packages/gui-api/src/**/*.ts",
+    "packages/gui-api/tests/**/*.ts",
+    "packages/gui-shared/src/**/*.ts",
+    "packages/gui-shared/tests/**/*.ts",
+    "packages/gui-web/src/**/*.ts",
+    "packages/gui-web/src/**/*.tsx",
+    "packages/gui-web/tests/**/*.ts"
   ]
 }
