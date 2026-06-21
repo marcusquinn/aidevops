@@ -56,12 +56,14 @@ body {
 
 .app-shell {
   display: grid;
-  gap: 24px;
-  grid-template-columns: 320px minmax(0, 1fr);
-  margin: 0 auto;
-  max-width: 1440px;
-  min-height: 100vh;
-  padding: 32px;
+  gap: 8px;
+  grid-template-columns: 1fr;
+  grid-template-rows: 52px minmax(0, 1fr) 52px;
+  height: 100vh;
+  margin: 0;
+  max-width: none;
+  min-height: 0;
+  padding: 8px;
 }
 
 .sidebar,
@@ -148,11 +150,11 @@ body {
 .nav-item {
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 12px;
+  border-radius: 10px;
   color: var(--text-secondary);
   cursor: pointer;
   display: block;
-  margin: 0 0 8px;
+  margin: 0 0 6px;
   padding: 14px;
   text-align: left;
   width: 100%;
@@ -183,7 +185,7 @@ body {
 }
 
 .hero {
-  margin-bottom: 24px;
+  margin-bottom: 18px;
 }
 
 .panel {
@@ -320,19 +322,6 @@ code {
   background: var(--code-bg);
   border-radius: 4px;
   padding: 2px 4px;
-}
-
-/* Desktop-app shell: closer to a native/web-app control surface than a document page. */
-.app-shell {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: 1fr;
-  grid-template-rows: 52px minmax(0, 1fr) 52px;
-  height: 100vh;
-  margin: 0;
-  max-width: none;
-  min-height: 0;
-  padding: 8px;
 }
 
 .app-topbar,
@@ -588,15 +577,6 @@ code {
 
 .app-statusbar {
   justify-content: center;
-}
-
-.nav-item {
-  border-radius: 10px;
-  margin-bottom: 6px;
-}
-
-.hero {
-  margin-bottom: 18px;
 }
 
 .hero h1 {
