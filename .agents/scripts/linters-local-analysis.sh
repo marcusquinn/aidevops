@@ -446,18 +446,35 @@ _scan_function_complexity_git_blob() {
 	return 0
 }
 
+_nesting_depth_awk_program() {
+	cat <<'AWK'
+BEGIN { depth = 0; max_depth = 0; max_line = 0; heredoc = "" }
+heredoc != "" { end_line = $0; sub(/^[\t]+/, "", end_line); if (end_line == heredoc) { heredoc = "" }; next }
+/<</ { marker = $0; sub(/^.*<</, "", marker); sub(/^-/, "", marker); gsub(/^[ \t]+|[ \t]+$/, "", marker); gsub(/^["\047]|["\047]$/, "", marker); sub(/[ \t].*$/, "", marker); if (marker ~ /^[A-Za-z_][A-Za-z0-9_]*$/) { heredoc = marker; next } }
+/^[[:space:]]*#/ { next }
+/^[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; max_depth = (depth > max_depth ? depth : max_depth); max_line = (depth == max_depth ? NR : max_line) }
+/^[[:space:]]*(fi|done|esac)($|[[:space:]])/ { if (depth > 0) depth-- }
+END {
+	if (summary == 1) {
+		if (max_depth > block) {
+			printf "BLOCK %s:%d max nesting depth %d (max %d)\n", file, max_line, max_depth, block
+		} else if (max_depth > warn) {
+			printf "WARN %s:%d max nesting depth %d (max %d)\n", file, max_line, max_depth, warn
+		}
+	} else if (max_depth > block) {
+		printf "%s\tNEST\t%d\n", file, max_depth
+	}
+}
+AWK
+	return 0
+}
+
 _scan_nesting_depth_file() {
 	local file="$1"
 	local rel_file="$2"
 	local out_file="$3"
 
-	awk -v file="$rel_file" -v block="$MAX_NESTING_DEPTH_BLOCK" '
-		BEGIN { depth = 0; max_depth = 0; max_line = 0 }
-		/^[[:space:]]*#/ { next }
-		/^[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; max_depth = (depth > max_depth ? depth : max_depth); max_line = (depth == max_depth ? NR : max_line) }
-		/^[[:space:]]*(fi|done|esac)($|[[:space:]])/ { if (depth > 0) depth-- }
-		END { if (max_depth > block) { printf "%s\tNEST\t%d\n", file, max_depth } }
-	' "$file" >>"$out_file"
+	awk -v file="$rel_file" -v block="$MAX_NESTING_DEPTH_BLOCK" "$(_nesting_depth_awk_program)" "$file" >>"$out_file"
 	return 0
 }
 
@@ -466,13 +483,7 @@ _scan_nesting_depth_git_blob() {
 	local rel_file="$2"
 	local out_file="$3"
 
-	git show "${base_ref}:${rel_file}" 2>/dev/null | awk -v file="$rel_file" -v block="$MAX_NESTING_DEPTH_BLOCK" '
-		BEGIN { depth = 0; max_depth = 0; max_line = 0 }
-		/^[[:space:]]*#/ { next }
-		/^[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; max_depth = (depth > max_depth ? depth : max_depth); max_line = (depth == max_depth ? NR : max_line) }
-		/^[[:space:]]*(fi|done|esac)($|[[:space:]])/ { if (depth > 0) depth-- }
-		END { if (max_depth > block) { printf "%s\tNEST\t%d\n", file, max_depth } }
-	' >>"$out_file"
+	git show "${base_ref}:${rel_file}" 2>/dev/null | awk -v file="$rel_file" -v block="$MAX_NESTING_DEPTH_BLOCK" "$(_nesting_depth_awk_program)" >>"$out_file"
 	return 0
 }
 
@@ -649,22 +660,7 @@ check_nesting_depth() {
 
 		# Track nesting depth through control structures
 		# This is a heuristic — not a full parser — but catches the worst offenders
-		awk -v file="$file" -v warn="$MAX_NESTING_DEPTH_WARN" -v block="$MAX_NESTING_DEPTH_BLOCK" '
-			BEGIN { depth = 0; max_depth = 0; max_line = 0 }
-			# Skip comments and strings (rough heuristic)
-			/^[[:space:]]*#/ { next }
-			# Opening control structures
-			/^[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; if (depth > max_depth) { max_depth = depth; max_line = NR } }
-			# Closing control structures
-			/^[[:space:]]*(fi|done|esac)($|[[:space:]])/ { if (depth > 0) depth-- }
-			END {
-				if (max_depth > block) {
-					printf "BLOCK %s:%d max nesting depth %d (max %d)\n", file, max_line, max_depth, block
-				} else if (max_depth > warn) {
-					printf "WARN %s:%d max nesting depth %d (max %d)\n", file, max_line, max_depth, warn
-				}
-			}
-		' "$file" >>"$tmp_file"
+		awk -v file="$file" -v warn="$MAX_NESTING_DEPTH_WARN" -v block="$MAX_NESTING_DEPTH_BLOCK" -v summary=1 "$(_nesting_depth_awk_program)" "$file" >>"$tmp_file"
 	done
 
 	if [[ -s "$tmp_file" ]]; then

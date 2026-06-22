@@ -5,8 +5,19 @@
   "type": "module",
   "dependencies": {
     "@aidevops/gui-shared": "workspace:*",
+    "@fontsource/ibm-plex-mono": "^5.2.7",
+    "@fontsource/ibm-plex-sans": "^5.2.8",
+    "@fontsource/ibm-plex-serif": "^5.2.7",
+    "@fontsource/inter": "^5.2.8",
+    "@fontsource/playpen-sans": "^5.2.8",
+    "@fontsource/poppins": "^5.2.7",
+    "@fontsource/source-sans-3": "^5.2.9",
+    "@fontsource/source-serif-4": "^5.2.9",
+    "@fontsource/tilt-neon": "^5.2.10",
+    "@fontsource/ubuntu-mono": "^5.2.8",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "react-icons": "^5.5.0"
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1"

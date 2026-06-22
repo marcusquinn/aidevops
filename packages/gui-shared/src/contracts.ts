@@ -101,11 +101,104 @@ export interface GuiRepoRegistrySummary {
   repos: GuiRepoSummary[];
 }
 
+export interface GuiLocalRepoRemote {
+  name: string;
+  url_ref: string;
+}
+
+export interface GuiLocalRepoSetupSummary {
+  name: string;
+  path_ref: string;
+  aidevops_version: string;
+  default_branch: string;
+  remotes: GuiLocalRepoRemote[];
+  registered: boolean;
+  pulse: boolean | null;
+  local_only: boolean;
+  init_scope: string;
+  knowledge: string;
+  priority: string;
+  has_interface: boolean | null;
+  features: string[];
+  settings_policy: "read_only_no_writes";
+}
+
+export interface GuiLocalReposSetupSummary {
+  path_ref: string;
+  health: "present" | "missing" | "invalid" | "unchecked";
+  total: number;
+  excluded_worktrees: number;
+  repos: GuiLocalRepoSetupSummary[];
+}
+
+export type GuiAiProviderId = "anthropic" | "openai" | "cursor" | "google";
+
+export interface GuiOAuthPoolAccountSummary {
+  email_ref: string;
+  status: string;
+  priority: number | null;
+  last_used: string;
+  expires_at: string;
+  cooldown_until: string | null;
+}
+
+export interface GuiOAuthProviderSummary {
+  provider: GuiAiProviderId;
+  configured: boolean;
+  total: number;
+  available: number;
+  active_or_idle: number;
+  rate_limited: number;
+  auth_errors: number;
+  pending_token: boolean;
+  accounts: GuiOAuthPoolAccountSummary[];
+}
+
+export interface GuiOAuthPoolSummary {
+  path_ref: string;
+  health: "present" | "missing" | "invalid" | "unchecked";
+  value_policy: "metadata_only_no_tokens";
+  providers: GuiOAuthProviderSummary[];
+}
+
+export interface GuiSetupTargetSummary {
+  label: string;
+  path_ref: string;
+  health: "present" | "missing" | "unchecked";
+  purpose: string;
+  installed_version: string;
+  latest_version: string;
+  needs_update: boolean;
+}
+
+export interface GuiAiAppSummary {
+  name: string;
+  status: "found" | "missing" | "unchecked";
+  app_path_ref: string;
+  binary_path_ref: string;
+  config_path_ref: string;
+  aidevops_target_path_ref: string;
+  app_version: string;
+  aidevops_version: string;
+  latest_version: string;
+  needs_update: boolean;
+}
+
 export interface GuiCapabilitySummary {
   id: string;
   label: string;
   status: "available" | "planned" | "placeholder";
   doc_ref: string;
+}
+
+export interface GuiMachineSummary {
+  id: string;
+  label: string;
+  initials: string;
+  username: string;
+  hostname: string;
+  local_ips: string[];
+  public_ip: string | null;
 }
 
 export interface GuiStatusData {
@@ -121,6 +214,7 @@ export interface GuiStatusData {
     api: "hono";
     read_only: true;
   };
+  machine: GuiMachineSummary;
   paths: Array<{
     label: string;
     path_ref: string;
@@ -133,6 +227,10 @@ export interface GuiStatusData {
   navigation: GuiNavigationItem[];
   settings: GuiSettingsSummary;
   repos: GuiRepoRegistrySummary;
+  local_repos: GuiLocalReposSetupSummary;
+  oauth_pool: GuiOAuthPoolSummary;
+  setup_targets: GuiSetupTargetSummary[];
+  ai_apps: GuiAiAppSummary[];
   capabilities: GuiCapabilitySummary[];
   secrets: GuiSecretReference[];
   placeholders: string[];

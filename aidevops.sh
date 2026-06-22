@@ -763,6 +763,7 @@ _cmd_setup_help() {
 	printf '%s\n' "  hooks     Install safety hooks only"
 	printf '%s\n' "  tabby     Sync Tabby terminal profiles only"
 	printf '%s\n' "  pulse     Install/refresh the pulse scheduler only"
+	printf '%s\n' "  gui-desktop  Install native macOS aidevops.app only"
 	printf '%s\n' "  full      Run ./setup.sh --non-interactive"
 	return 0
 }
@@ -823,7 +824,7 @@ cmd_setup() {
 _help_commands() {
 	echo "Commands:"
 	echo "  init [features]    Initialize aidevops in current project"
-	echo "  setup --scope <s>  Run scoped setup/deploy (opencode, agents, hooks, tabby, pulse, full)"
+	echo "  setup --scope <s>  Run scoped setup/deploy (opencode, agents, hooks, tabby, pulse, gui-desktop, full)"
 	echo "  init-routines      Scaffold private routines repo (--org <name> | --local)"
 	echo "  upgrade-planning   Upgrade TODO.md/PLANS.md to latest templates"
 	echo "  features           List available features for init"

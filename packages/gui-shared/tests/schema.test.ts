@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  createEnvelope,
   FILE_EXPLORER_ROUTE_MANIFEST,
   GUI_FILE_ROOTS,
-  STATUS_ROUTE_MANIFEST,
-  createEnvelope,
   isReadOnlyManifest,
+  STATUS_ROUTE_MANIFEST,
   statusFixture,
 } from "../src";
 
@@ -36,9 +36,14 @@ describe("GUI shared schema contracts", () => {
     expect(envelope.operation_id).toBe("setup.status.read");
     expect(envelope.redactions).toContain("secret_values");
     expect(envelope.data.runtime.read_only).toBe(true);
+    expect(envelope.data.machine.initials).toBe("LM");
     expect(envelope.data.update.restart_required).toBe(false);
     expect(envelope.data.navigation.map((item) => item.label)).toContain("Config");
     expect(envelope.data.settings.value_policy).toBe("keys_only_no_values");
+    expect(envelope.data.local_repos.path_ref).toBe("~/Git");
+    expect(envelope.data.oauth_pool.value_policy).toBe("metadata_only_no_tokens");
+    expect(envelope.data.setup_targets[0].path_ref).toBe("~/.aidevops/agents/VERSION");
+    expect(envelope.data.ai_apps.map((app) => app.name)).toContain("OpenCode");
     expect(envelope.data.capabilities[0].status).toBe("available");
   });
 });
