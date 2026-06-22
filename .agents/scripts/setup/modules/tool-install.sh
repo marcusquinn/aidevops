@@ -1296,7 +1296,7 @@ _setup_serve_sim_cli_version() {
 }
 
 setup_serve_sim() {
-	# serve-sim currently ships an arm64 Apple Simulator helper.
+	# serve-sim currently ships an arm64 native Apple Simulator addon.
 	if [[ "$(uname -s)" != "Darwin" ]]; then
 		return 0
 	fi
@@ -1336,15 +1336,15 @@ setup_serve_sim() {
 		return 0
 	fi
 
-	if ! command -v bun >/dev/null 2>&1 && ! command -v npm >/dev/null 2>&1; then
-		print_info "serve-sim installs via npm or bun; install Node.js/npm or Bun first"
+	if ! command -v npm >/dev/null 2>&1; then
+		print_info "serve-sim installs via npm; install Node.js/npm first"
 		return 0
 	fi
 
 	print_info "serve-sim streams booted Apple Simulators to a browser for agent/user review"
 	printf '%s\n' "  Features:"
 	printf '%s\n' "    - Browser preview at http://localhost:3200"
-	printf '%s\n' "    - H.264/MJPEG stream with --codec control + WebSocket control channel"
+	printf '%s\n' "    - In-process native capture/HID with H.264/MJPEG stream control"
 	printf '%s\n' "    - Gestures, hardware buttons, typing, rotation, memory warnings"
 	printf '%s\n' "    - Camera feed injection for simulator apps"
 	printf '%s\n' ""
@@ -1363,7 +1363,7 @@ setup_serve_sim() {
 		fi
 	else
 		print_info "Skipped serve-sim installation"
-		print_info "Install later: npm install -g serve-sim (or bun install -g serve-sim)"
+		print_info "Install later: npm install -g serve-sim"
 	fi
 
 	return 0
