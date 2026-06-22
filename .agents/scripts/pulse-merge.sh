@@ -423,25 +423,26 @@ _check_pr_merge_gates() {
 # Perform all post-merge actions for a successfully merged PR:
 # build and post closing comment, close linked issue, unlock.
 # Best-effort — failures are logged but do not propagate.
-# Args: $1=pr_number, $2=repo_slug, $3=linked_issue, $4=merge_summary, $5=pr_labels
+# Args: $1=pr_number, $2=repo_slug, $3=linked_issue, $4=merge_summary, $5=pr_labels, $6=pr_base_ref_name (optional)
 #######################################
 #######################################
 # Build the closing comment body for a merged PR (with signature footer).
-# Args: $1=pr_number, $2=repo_slug, $3=linked_issue, $4=merge_summary
+# Args: $1=pr_number, $2=repo_slug, $3=linked_issue, $4=merge_summary, $5=pr_base_ref_name (optional)
 # Stdout: closing comment body
 # Returns: 0 always
 #######################################
 _pm_build_closing_comment() {
 	local pr_number="$1" repo_slug="$2" linked_issue="$3" merge_summary="$4"
+	local pr_base_ref_name="${5:-main}"
 	local body
 	if [[ -n "$merge_summary" ]]; then
 		body="${merge_summary}
 
 ---
-Merged via PR #${pr_number} to main.
+Merged via PR #${pr_number} to ${pr_base_ref_name}.
 _Merged by deterministic merge pass (pulse-wrapper.sh)._"
 	else
-		body="Completed via PR #${pr_number}, merged to main.
+		body="Completed via PR #${pr_number}, merged to ${pr_base_ref_name}.
 
 _Merged by deterministic merge pass (pulse-wrapper.sh). Neither MERGE_SUMMARY comment nor PR body text was available._"
 	fi
@@ -629,10 +630,11 @@ _handle_post_merge_actions() {
 	local linked_issue="$3"
 	local merge_summary="$4"
 	local pr_labels="${5:-}"
+	local pr_base_ref_name="${6:-main}"
 
 	local closing_comment
 	closing_comment=$(_pm_build_closing_comment "$pr_number" "$repo_slug" \
-		"$linked_issue" "$merge_summary")
+		"$linked_issue" "$merge_summary" "$pr_base_ref_name")
 
 	# Post closing comment on PR; unlock the merged PR (t1934)
 	gh_pr_comment "$pr_number" --repo "$repo_slug" \
@@ -1191,12 +1193,12 @@ ${merge_output}"
 		if [[ ",${_ipr_labels}," == *"${_OW_LABEL_PAT}"* ]]; then
 			echo "[pulse-merge] auto-merged origin:worker (worker-briefed) PR #${pr_number} (author=${pr_author}, linked_issue=#${linked_issue:-unknown})" >>"$LOGFILE"
 		fi
-		_handle_post_merge_actions "$pr_number" "$repo_slug" "$linked_issue" "$merge_summary" "$_ipr_labels"
+		_handle_post_merge_actions "$pr_number" "$repo_slug" "$linked_issue" "$merge_summary" "$_ipr_labels" "$pr_base_ref_name"
 		return 0
 	elif [[ "$merge_output" == *"Merge already in progress"* ]]; then
 		echo "[pulse-wrapper] Deterministic merge: PR #${pr_number} in ${repo_slug} already has a merge in progress; counting as merge progress (GH#24383): ${merge_output}" >>"$LOGFILE"
 		local _ipr_labels="$pr_labels"
-		_handle_post_merge_actions "$pr_number" "$repo_slug" "$linked_issue" "$merge_summary" "$_ipr_labels"
+		_handle_post_merge_actions "$pr_number" "$repo_slug" "$linked_issue" "$merge_summary" "$_ipr_labels" "$pr_base_ref_name"
 		return $?
 	else
 		local final_merge_output="$merge_output"
