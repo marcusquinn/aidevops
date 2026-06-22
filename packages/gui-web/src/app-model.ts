@@ -15,32 +15,34 @@ export type FontPreference =
   | "Tilt Neon"
   | "Ubuntu Mono";
 export type FontSizePreference = "xs" | "s" | "m" | "lg" | "xl";
-export type SurfaceIconName =
-  | "apps"
-  | "bookmark"
-  | "brand"
-  | "calendar"
-  | "chain"
-  | "clock"
-  | "device"
-  | "document"
-  | "download"
-  | "folder"
-  | "git"
-  | "globe"
-  | "grid"
-  | "hardDrive"
-  | "link"
-  | "list"
-  | "mail"
-  | "message"
-  | "note"
-  | "package"
-  | "server"
-  | "settings"
-  | "shield"
-  | "terminal"
-  | "users";
+export const surfaceIconNames = {
+  apps: true,
+  bookmark: true,
+  brand: true,
+  calendar: true,
+  chain: true,
+  clock: true,
+  device: true,
+  document: true,
+  download: true,
+  folder: true,
+  git: true,
+  globe: true,
+  grid: true,
+  hardDrive: true,
+  link: true,
+  list: true,
+  mail: true,
+  message: true,
+  note: true,
+  package: true,
+  server: true,
+  settings: true,
+  shield: true,
+  terminal: true,
+  users: true,
+} as const;
+export type SurfaceIconName = keyof typeof surfaceIconNames;
 export const surfaceIds = [
   "overview",
   "agents",

@@ -1,14 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { hostname, networkInterfaces, userInfo } from "node:os";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import {
   assertNoSecretSentinels,
   createEnvelope,
   type GuiAiAppSummary,
   type GuiAiProviderId,
-  type GuiLocalRepoSetupSummary,
-  type GuiLocalReposSetupSummary,
   type GuiOAuthPoolSummary,
   type GuiOAuthProviderSummary,
   type GuiRepoRegistrySummary,
@@ -19,6 +17,19 @@ import {
   type GuiStatusData,
   statusFixture,
 } from "../../gui-shared/src";
+import {
+  collapseHome,
+  cooldownReady,
+  expandHome,
+  formatEpochField,
+  formatNullableEpochField,
+  isRecord,
+  numberField,
+  readJsonObject,
+  readOptionalText,
+  stringField,
+} from "./status-adapter-utils";
+import { readLocalReposSetupSummary } from "./status-local-repos";
 
 export interface StatusAdapterOptions {
   repoRoot?: string;
@@ -296,62 +307,6 @@ function readRepoRegistrySummary(pathName: string, pathRef: string): GuiRepoRegi
   }
 }
 
-function readLocalReposSetupSummary(reposPath: string): GuiLocalReposSetupSummary {
-  const registry = readJsonObject(reposPath);
-  const registryEntries = extractInitializedRepoEntries(registry.value);
-  const parentRefs = extractGitParentDirs(registry.value);
-  const parentDirs = parentRefs.map(expandHome).filter((pathName) => existsSync(pathName));
-  const repos = new Map<string, GuiLocalRepoSetupSummary>();
-  let excludedWorktrees = 0;
-
-  for (const entry of registryEntries) {
-    const pathRef = stringField(entry, "path");
-    if (pathRef === undefined) {
-      continue;
-    }
-    const pathName = expandHome(pathRef);
-    if (!isGitRepoFolder(pathName)) {
-      continue;
-    }
-    if (isLinkedWorktree(pathName)) {
-      excludedWorktrees += 1;
-      continue;
-    }
-    const key = safeRealpath(pathName) ?? pathName;
-    repos.set(key, localRepoSummaryFromPath(pathName, entry));
-  }
-
-  for (const parentDir of parentDirs) {
-    for (const childPath of listChildDirectories(parentDir)) {
-      if (!isGitRepoFolder(childPath)) {
-        continue;
-      }
-      if (isLinkedWorktree(childPath)) {
-        excludedWorktrees += 1;
-        continue;
-      }
-      const key = safeRealpath(childPath) ?? childPath;
-      if (!repos.has(key)) {
-        repos.set(key, localRepoSummaryFromPath(childPath, matchingRegistryEntry(registryEntries, childPath)));
-      }
-    }
-  }
-
-  const health = registry.health === "invalid"
-    ? "invalid"
-    : parentDirs.length > 0 || repos.size > 0
-      ? "present"
-      : "missing";
-
-  return {
-    path_ref: parentRefs.join(", ") || "~/Git",
-    health,
-    total: repos.size,
-    excluded_worktrees: excludedWorktrees,
-    repos: Array.from(repos.values()).sort((left, right) => left.name.localeCompare(right.name)).slice(0, 80),
-  };
-}
-
 function readOAuthPoolSummary(pathName: string, pathRef: string): GuiOAuthPoolSummary {
   const parsed = readJsonObject(pathName);
   if (parsed.health === "missing") {
@@ -457,31 +412,6 @@ function isSourcePathRef(pathRef: string): boolean {
   return pathRef === "VERSION" || pathRef.startsWith("~/") || pathRef.startsWith("/");
 }
 
-function localRepoSummaryFromPath(pathName: string, registryEntry?: Record<string, unknown>): GuiLocalRepoSetupSummary {
-  const config = readJsonObject(join(pathName, ".aidevops.json")).value;
-  const initConfig = isRecord(config) ? config : {};
-  const registry = registryEntry ?? {};
-  const features = featureList(initConfig.features ?? registryEntry?.features);
-  const remotes = readGitRemotes(pathName);
-
-  return {
-    name: basename(pathName),
-    path_ref: collapseHome(safeRealpath(pathName) ?? pathName),
-    aidevops_version: stringField(initConfig, "version") ?? stringField(registry, "version") ?? "not initialized",
-    default_branch: readGitDefaultBranch(pathName),
-    remotes,
-    registered: registryEntry !== undefined,
-    pulse: booleanField(registry, "pulse"),
-    local_only: booleanField(registry, "local_only") ?? remotes.length === 0,
-    init_scope: stringField(initConfig, "init_scope") ?? stringField(registry, "init_scope") ?? "unknown",
-    knowledge: stringField(registry, "knowledge") ?? "off",
-    priority: stringField(registry, "priority") ?? "default",
-    has_interface: booleanField(initConfig, "has_interface") ?? booleanField(registry, "has_interface"),
-    features,
-    settings_policy: "read_only_no_writes",
-  };
-}
-
 function oauthProviderSummary(pool: Record<string, unknown>, provider: GuiAiProviderId): GuiOAuthProviderSummary {
   const accounts = Array.isArray(pool[provider]) ? pool[provider].filter(isRecord) : [];
   const now = Date.now();
@@ -551,228 +481,4 @@ function repoSummaryFromUnknown(value: unknown, fallbackName: string): GuiRepoSu
     slug,
     local_path_status: localPath === undefined ? "not_provided" : existsSync(expandHome(localPath)) ? "present" : "missing",
   };
-}
-
-function readJsonObject(pathName: string): { health: "present" | "missing" | "invalid"; value: Record<string, unknown> } {
-  if (!existsSync(pathName)) {
-    return { health: "missing", value: {} };
-  }
-
-  try {
-    const parsed = JSON.parse(readFileSync(pathName, "utf8"));
-    return isRecord(parsed) ? { health: "present", value: parsed } : { health: "invalid", value: {} };
-  } catch {
-    return { health: "invalid", value: {} };
-  }
-}
-
-function extractInitializedRepoEntries(value: unknown): Record<string, unknown>[] {
-  if (!isRecord(value) || !Array.isArray(value.initialized_repos)) {
-    return [];
-  }
-  return value.initialized_repos.filter(isRecord);
-}
-
-function extractGitParentDirs(value: unknown): string[] {
-  if (!isRecord(value) || !Array.isArray(value.git_parent_dirs)) {
-    return ["~/Git"];
-  }
-  const dirs = value.git_parent_dirs.filter((entry): entry is string => typeof entry === "string" && entry.length > 0);
-  return dirs.length > 0 ? dirs : ["~/Git"];
-}
-
-function listChildDirectories(parentDir: string): string[] {
-  try {
-    return readdirSync(parentDir)
-      .map((name) => join(parentDir, name))
-      .filter((pathName) => {
-        try {
-          return statSync(pathName).isDirectory();
-        } catch {
-          return false;
-        }
-      });
-  } catch {
-    return [];
-  }
-}
-
-function isGitRepoFolder(pathName: string): boolean {
-  try {
-    if (!statSync(pathName).isDirectory()) {
-      return false;
-    }
-    const gitMarker = statSync(join(pathName, ".git"));
-    return gitMarker.isDirectory() || gitMarker.isFile();
-  } catch {
-    return false;
-  }
-}
-
-function isLinkedWorktree(pathName: string): boolean {
-  try {
-    return statSync(join(pathName, ".git")).isFile();
-  } catch {
-    return false;
-  }
-}
-
-function matchingRegistryEntry(entries: Record<string, unknown>[], pathName: string): Record<string, unknown> | undefined {
-  return entries.find((entry) => {
-    const entryPath = stringField(entry, "path");
-    return entryPath !== undefined && pathsMatch(expandHome(entryPath), pathName);
-  });
-}
-
-function pathsMatch(left: string, right: string): boolean {
-  return (safeRealpath(left) ?? left) === (safeRealpath(right) ?? right);
-}
-
-function safeRealpath(pathName: string): string | null {
-  try {
-    return realpathSync(pathName);
-  } catch {
-    return null;
-  }
-}
-
-function readGitDefaultBranch(pathName: string): string {
-  const remoteHead = readOptionalText(join(pathName, ".git/refs/remotes/origin/HEAD"));
-  const remoteBranch = branchNameFromRef(remoteHead, "refs/remotes/origin/");
-  if (remoteBranch !== null) {
-    return remoteBranch;
-  }
-
-  const localHead = readOptionalText(join(pathName, ".git/HEAD"));
-  return branchNameFromRef(localHead, "refs/heads/") ?? "unknown";
-}
-
-function readGitRemotes(pathName: string): GuiLocalRepoSetupSummary["remotes"] {
-  const config = readOptionalText(join(pathName, ".git/config"));
-  if (config === null) {
-    return [];
-  }
-
-  const remotes: GuiLocalRepoSetupSummary["remotes"] = [];
-  let currentRemote = "";
-  for (const line of config.split("\n")) {
-    const section = line.match(/^\s*\[remote\s+"([^"]+)"\]\s*$/);
-    if (section !== null) {
-      currentRemote = section[1];
-      continue;
-    }
-    if (line.match(/^\s*\[/) !== null) {
-      currentRemote = "";
-      continue;
-    }
-    const url = line.match(/^\s*url\s*=\s*(.+)\s*$/);
-    if (url !== null && currentRemote.length > 0) {
-      remotes.push({ name: currentRemote, url_ref: sanitizeRemoteUrl(url[1]) });
-    }
-  }
-  return remotes;
-}
-
-function branchNameFromRef(value: string | null, prefix: string): string | null {
-  if (value === null || !value.startsWith("ref: ")) {
-    return null;
-  }
-  const ref = value.slice(5).trim();
-  return ref.startsWith(prefix) ? ref.slice(prefix.length) : null;
-}
-
-function sanitizeRemoteUrl(value: string): string {
-  try {
-    const parsed = new URL(value);
-    parsed.username = "";
-    parsed.password = "";
-    return parsed.toString().replace(/\/$/, "");
-  } catch {
-    return value.replace(/(https?:\/\/)[^/@\s]+@/i, "$1");
-  }
-}
-
-function collapseHome(pathName: string): string {
-  const home = process.env.HOME ?? "";
-  if (home.length > 0 && pathName === home) {
-    return "~";
-  }
-  if (home.length > 0 && pathName.startsWith(`${home}/`)) {
-    return `~/${pathName.slice(home.length + 1)}`;
-  }
-  return pathName;
-}
-
-function booleanField(value: Record<string, unknown>, key: string): boolean | null {
-  const field = value[key];
-  return typeof field === "boolean" ? field : null;
-}
-
-function numberField(value: Record<string, unknown>, key: string): number | null {
-  const field = value[key];
-  return typeof field === "number" && Number.isFinite(field) ? field : null;
-}
-
-function featureList(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0).sort();
-  }
-  if (typeof value === "string" && value.length > 0) {
-    return value.split(",").map((entry) => entry.trim()).filter(Boolean).sort();
-  }
-  if (isRecord(value)) {
-    return Object.entries(value)
-      .filter(([, enabled]) => enabled === true)
-      .map(([feature]) => feature)
-      .sort();
-  }
-  return [];
-}
-
-function formatNullableEpochField(value: unknown): string | null {
-  if (value === null || value === undefined || value === 0) {
-    return null;
-  }
-  return formatEpochField(value);
-}
-
-function formatEpochField(value: unknown): string {
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    return "unknown";
-  }
-  const millis = value > 9_999_999_999 ? value : value * 1000;
-  return new Date(millis).toISOString();
-}
-
-function cooldownReady(cooldownUntil: string | null, now: number): boolean {
-  if (cooldownUntil === null) {
-    return true;
-  }
-  const parsed = Date.parse(cooldownUntil);
-  return Number.isNaN(parsed) || parsed <= now;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function stringField(value: Record<string, unknown>, key: string): string | undefined {
-  const field = value[key];
-  return typeof field === "string" && field.length > 0 ? field : undefined;
-}
-
-function expandHome(pathRef: string): string {
-  if (!pathRef.startsWith("~/")) {
-    return pathRef;
-  }
-
-  return join(process.env.HOME ?? "", pathRef.slice(2));
-}
-
-function readOptionalText(pathName: string): string | null {
-  if (!existsSync(pathName)) {
-    return null;
-  }
-
-  return readFileSync(pathName, "utf8").trim();
 }
