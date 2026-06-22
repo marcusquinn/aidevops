@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.21.12] - 2026-06-22
+
+### Changed
+
+- fix: filter positive inline review acknowledgements (#25344)
+
+### Fixed
+
+- report actual merge target branch (#25351)
+
 ## [3.21.11] - 2026-06-21
 
 ### Changed
