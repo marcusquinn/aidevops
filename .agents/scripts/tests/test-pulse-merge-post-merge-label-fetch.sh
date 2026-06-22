@@ -216,6 +216,32 @@ test_superseded_pr_closes_original_issue() {
 	return 0
 }
 
+test_closing_comment_uses_pr_base_ref() {
+	: >"$GH_CALL_LOG"
+	: >"$SOLVED_LABEL_LOG"
+	export TEST_PR_LABELS="origin:worker"
+
+	_handle_post_merge_actions "753" "marcusquinn/aidevops" "25350" "merged" "origin:worker" "develop"
+
+	assert_log_contains "$GH_CALL_LOG" "Merged via PR #753 to develop" \
+		"closing comment names non-main PR base ref"
+	assert_log_not_contains "$GH_CALL_LOG" "Merged via PR #753 to main" \
+		"closing comment does not hardcode main when base ref is provided"
+	return 0
+}
+
+test_closing_comment_defaults_to_main_for_legacy_callers() {
+	: >"$GH_CALL_LOG"
+	: >"$SOLVED_LABEL_LOG"
+	export TEST_PR_LABELS="origin:worker"
+
+	_handle_post_merge_actions "754" "marcusquinn/aidevops" "25350" "" "origin:worker"
+
+	assert_log_contains "$GH_CALL_LOG" "Completed via PR #754, merged to main" \
+		"legacy post-merge callers default closing comment base ref to main"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -225,6 +251,8 @@ main() {
 	test_provided_empty_pr_labels_skip_refetch
 	test_omitted_pr_labels_fetches_fallback
 	test_superseded_pr_closes_original_issue
+	test_closing_comment_uses_pr_base_ref
+	test_closing_comment_defaults_to_main_for_legacy_callers
 
 	printf '\nTests run: %s, failed: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -eq 0 ]]; then
