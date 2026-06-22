@@ -45,6 +45,25 @@ See `.agents/aidevops/` (architecture, setup) and `.agents/tools/` (agent/MCP au
 | `.agents/aidevops/architecture.md` | Framework structure |
 | `.agents/aidevops/setup.md` | AI guide to setup.sh |
 
+## OpenCode Plugin
+
+The `opencode-aidevops` plugin (`.agents/plugins/opencode-aidevops/`) extends OpenCode with aidevops capabilities: agent loading, quality hooks, OAuth pool, observability, and context preservation.
+
+**Deploy**: `.agents/scripts/setup/_opencode.sh` → `add_opencode_plugin()`
+
+**Runtime location**: `~/.aidevops/agents/plugins/opencode-aidevops/`
+
+**Config reference** in `~/.config/opencode/opencode.json`:
+```json
+"plugin": ["file:///Users/robi/.aidevops/agents/plugins/opencode-aidevops/index.mjs"]
+```
+
+**Modules**: config-hook, quality-hooks, shell-env, compaction, intent-tracing, greeting, session-title, oauth-pool, provider-auth, cursor-proxy, google-proxy, observability, ttsr-rules.
+
+**Tests**: `cd .agents/plugins/opencode-aidevops && npm test`
+
+**Update cycle**: Plugin version tracks OpenCode SDK (`opencode-ai` peer dep). Run `add_opencode_plugin --force` to redeploy after aidevops updates.
+
 ## Agent Design Principles
 
 From `tools/build-agent/build-agent.md`:
