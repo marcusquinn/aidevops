@@ -583,9 +583,15 @@ function extractGitParentDirs(value: unknown): string[] {
 
 function listChildDirectories(parentDir: string): string[] {
   try {
-    return readdirSync(parentDir, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => join(parentDir, entry.name));
+    return readdirSync(parentDir)
+      .map((name) => join(parentDir, name))
+      .filter((pathName) => {
+        try {
+          return statSync(pathName).isDirectory();
+        } catch {
+          return false;
+        }
+      });
   } catch {
     return [];
   }
@@ -653,6 +659,10 @@ function readGitRemotes(pathName: string): GuiLocalRepoSetupSummary["remotes"] {
     const section = line.match(/^\s*\[remote\s+"([^"]+)"\]\s*$/);
     if (section !== null) {
       currentRemote = section[1];
+      continue;
+    }
+    if (line.match(/^\s*\[/) !== null) {
+      currentRemote = "";
       continue;
     }
     const url = line.match(/^\s*url\s*=\s*(.+)\s*$/);

@@ -262,13 +262,24 @@ function SidebarFooter({ accentHue, fontPreference, fontSizePreference, setAccen
   const AppearanceChevron = appearanceOpen ? FiChevronDown : FiChevronUp;
   const selectedFontFamily = fontFamilyForPreference(fontPreference);
   const fontSizeIndex = Math.max(0, fontSizeOptions.findIndex((option) => option.value === fontSizePreference));
+  const [hueInput, setHueInput] = useState(() => String(accentHue));
   const updateAccentHue = (value: number) => {
     if (!Number.isFinite(value)) {
-      setAccentHue(DEFAULT_ACCENT_HUE);
       return;
     }
     setAccentHue(Math.min(359, Math.max(0, value)));
   };
+  const updateHueInput = (value: string) => {
+    setHueInput(value);
+    if (value.trim().length === 0) {
+      return;
+    }
+    updateAccentHue(Number.parseInt(value, 10));
+  };
+
+  useEffect(() => {
+    setHueInput(String(accentHue));
+  }, [accentHue]);
 
   return (
     <footer className="sidebar-footer">
@@ -305,9 +316,9 @@ function SidebarFooter({ accentHue, fontPreference, fontSizePreference, setAccen
                   className="hue-number-input"
                   max="359"
                   min="0"
-                  onChange={(event) => updateAccentHue(Number.parseInt(event.currentTarget.value, 10))}
+                  onChange={(event) => updateHueInput(event.currentTarget.value)}
                   type="number"
-                  value={accentHue}
+                  value={hueInput}
                 />
               </div>
               <button aria-label="Reset hue to default" className="icon-reset-button" onClick={() => setAccentHue(DEFAULT_ACCENT_HUE)} title={text.reset} type="button"><FiRotateCcw aria-hidden="true" /></button>

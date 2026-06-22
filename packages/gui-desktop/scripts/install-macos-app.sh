@@ -51,7 +51,7 @@ validate_environment() {
 gui_dependencies_present() {
   local root="$1"
 
-  [[ -x "${root}/node_modules/vite/bin/vite.js" && -d "${root}/node_modules/react" && -d "${root}/node_modules/react-icons" ]]
+  [[ -f "${root}/node_modules/vite/bin/vite.js" && -d "${root}/node_modules/react" && -d "${root}/node_modules/react-icons" ]]
   return $?
 }
 
@@ -137,6 +137,7 @@ WEB_PORT="\${AIDEVOPS_GUI_WEB_PORT:-5173}"
 LOG_DIR="\${HOME}/Library/Logs/aidevops-gui"
 LAUNCHER_LOG="\${LOG_DIR}/launcher.log"
 BUN_BIN=""
+MODE="\${1:-start}"
 PATH="\${HOME}/.bun/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:\${PATH:-}"
 export PATH
 mkdir -p "\${LOG_DIR}"
@@ -145,7 +146,7 @@ cd "\${REPO_ROOT}"
 
 notify() {
   local message="\$1"
-  osascript -e "display notification \"\${message}\" with title \"aidevops\"" >/dev/null 2>&1 || true
+  osascript -e "display notification \"\${message}\" with title \"aidevops\"" >/dev/null || true
   return 0
 }
 
@@ -266,6 +267,12 @@ kill_gui_on_port_for_repo() {
   return 0
 }
 
+stop_gui_services() {
+  kill_gui_on_port_for_repo "\${API_PORT}"
+  kill_gui_on_port_for_repo "\${WEB_PORT}"
+  return 0
+}
+
 api_contract_current() {
   local payload=""
 
@@ -275,6 +282,11 @@ api_contract_current() {
   fi
   return 1
 }
+
+if [[ "\${MODE}" == "stop" ]]; then
+  stop_gui_services
+  exit 0
+fi
 
 if [[ -f "\${HOME}/.aidevops/agents/VERSION" && -f "\${REPO_ROOT}/VERSION" ]]; then
   INSTALLED_VERSION="\$(tr -d '\n' < "\${HOME}/.aidevops/agents/VERSION")"
@@ -362,6 +374,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         saveMainWindowFrame()
+        stopServices()
         return .terminateNow
     }
 
@@ -818,6 +831,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     private func runServiceHelper() -> (ok: Bool, message: String) {
+        return runServiceHelper(arguments: [])
+    }
+
+    private func stopServices() {
+        _ = runServiceHelper(arguments: ["stop"])
+    }
+
+    private func runServiceHelper(arguments: [String]) -> (ok: Bool, message: String) {
         guard let helperPath = Bundle.main.path(forResource: "aidevops-gui-services", ofType: "sh") else {
             return (false, "The bundled service helper is missing from aidevops.app.")
         }
@@ -825,7 +846,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let process = Process()
         let pipe = Pipe()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = [helperPath]
+        process.arguments = [helperPath] + arguments
         var environment = ProcessInfo.processInfo.environment
         environment["AIDEVOPS_GUI_WRAPPER"] = "webkit"
         process.environment = environment
