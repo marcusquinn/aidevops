@@ -1132,6 +1132,7 @@ _pms_pr_counts_for_zero_progress() {
 	local pr_author="${4:-}"
 
 	[[ -n "$repo_slug" && "$pr_number" =~ ^[0-9]+$ ]] || return 1
+	local labels_tokenized=",${labels_str},"
 
 	if declare -F _check_required_checks_passing >/dev/null 2>&1; then
 		if ! _check_required_checks_passing "$repo_slug" "$pr_number" >/dev/null 2>&1; then
@@ -1140,10 +1141,31 @@ _pms_pr_counts_for_zero_progress() {
 		fi
 	fi
 
-	if [[ ",${labels_str}," == *",origin:interactive,"* ]]; then
+	if [[ "$labels_tokenized" == *",origin:interactive,"* ]]; then
 		if ! declare -F _interactive_pr_auto_merge_allowed >/dev/null 2>&1 \
 			|| ! _interactive_pr_auto_merge_allowed "$pr_number" "$repo_slug" "$labels_str" >/dev/null 2>&1; then
 			echo "[pulse-merge-stuck] _pms_count_eligible_unmerged_for_repo: excluding PR #${pr_number} in ${repo_slug} — origin:interactive PR requires manual merge" >>"$LOGFILE"
+			return 1
+		fi
+	fi
+
+	# Keep parity with pulse-merge.sh::_check_pr_merge_gates external-contributor
+	# defence-in-depth. These PRs are intentionally skipped unless a linked issue
+	# carries maintainer crypto approval; counting them as eligible can produce a
+	# false zero-progress collapse when the merge pass is correctly preserving the
+	# trust boundary.
+	if [[ "$labels_tokenized" == *",external-contributor,"* ]]; then
+		local external_linked_issue=""
+		if declare -F _extract_linked_issue >/dev/null 2>&1; then
+			external_linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || external_linked_issue=""
+		fi
+		if [[ -z "$external_linked_issue" ]]; then
+			echo "[pulse-merge-stuck] _pms_count_eligible_unmerged_for_repo: excluding PR #${pr_number} in ${repo_slug} — external-contributor PR has no linked issue" >>"$LOGFILE"
+			return 1
+		fi
+		if ! declare -F _has_maintainer_crypto_approval >/dev/null 2>&1 \
+			|| ! _has_maintainer_crypto_approval "$pr_number" "$repo_slug"; then
+			echo "[pulse-merge-stuck] _pms_count_eligible_unmerged_for_repo: excluding PR #${pr_number} in ${repo_slug} — external-contributor PR linked issue #${external_linked_issue} lacks crypto approval" >>"$LOGFILE"
 			return 1
 		fi
 	fi
@@ -1163,7 +1185,7 @@ _pms_pr_counts_for_zero_progress() {
 		fi
 	fi
 
-	if [[ ",${labels_str}," == *",origin:worker,"* ]]; then
+	if [[ "$labels_tokenized" == *",origin:worker,"* ]]; then
 		local linked_issue=""
 		if declare -F _extract_linked_issue >/dev/null 2>&1; then
 			linked_issue=$(_extract_linked_issue "$pr_number" "$repo_slug" 2>/dev/null) || linked_issue=""
