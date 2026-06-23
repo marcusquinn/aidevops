@@ -360,6 +360,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private let defaultAccentHue: CGFloat = 123
     private let mainWindowFrameAutosaveName = "aidevops-main-window"
     private let titlebarHeight: CGFloat = 24
+    private let serviceQueue = DispatchQueue(label: "sh.aidevops.gui.services")
+    private var servicesStopped = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureMenu()
@@ -376,6 +378,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         saveMainWindowFrame()
         stopServices()
         return .terminateNow
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        saveMainWindowFrame()
+        stopServices()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -818,8 +825,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     private func startServicesAndLoadApp() {
-        DispatchQueue.global(qos: .userInitiated).async {
+        serviceQueue.async {
+            if self.servicesStopped {
+                return
+            }
             let result = self.runServiceHelper()
+            if self.servicesStopped {
+                return
+            }
             DispatchQueue.main.async {
                 if result.ok {
                     self.loadAppURL()
@@ -835,7 +848,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     private func stopServices() {
-        _ = runServiceHelper(arguments: ["stop"])
+        serviceQueue.sync {
+            if servicesStopped {
+                return
+            }
+            servicesStopped = true
+            _ = runServiceHelper(arguments: ["stop"])
+        }
     }
 
     private func runServiceHelper(arguments: [String]) -> (ok: Bool, message: String) {
