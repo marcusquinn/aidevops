@@ -2484,9 +2484,9 @@
       "pr": 18689
     },
     ".agents/scripts/quality-feedback-findings-lib.sh": {
-      "at": "2026-06-22T16:29:38Z",
-      "hash": "285afafff6f202b12ba49c5922917988eca57d8b",
-      "passes": 4,
+      "at": "2026-06-23T08:03:03Z",
+      "hash": "379729fd321dc7e63bed71d4f14c501afd81fa35",
+      "passes": 5,
       "pr": 19009
     },
     ".agents/scripts/quality-feedback-helper.sh": {
@@ -2580,9 +2580,9 @@
       "pr": 12971
     },
     ".agents/scripts/tests/test-quality-feedback-main-verification.sh": {
-      "at": "2026-06-22T16:34:31Z",
-      "hash": "da99388e1cce3f569a9134eb0daa2e19646ba308",
-      "passes": 7,
+      "at": "2026-06-23T08:07:28Z",
+      "hash": "51d5420005d216c8cb5e5131d2e922aaa019fbea",
+      "passes": 8,
       "pr": 15931
     },
     ".agents/scripts/thumbnail-helper.sh": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-06-22T17:46:55Z",
-      "hash": "c1bfaf7eb2ba1e610b5d78817d65bd5aaa753e05",
-      "passes": 239,
+      "at": "2026-06-23T09:07:51Z",
+      "hash": "1f90b2d573df87bb556fdc0ab778846be478df5b",
+      "passes": 240,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-06-22T17:46:56Z",
-      "hash": "537746f57a0033ff0425be15531b97ea3f3014a9",
-      "passes": 235,
+      "at": "2026-06-23T09:08:54Z",
+      "hash": "17e55c9f2ec12de3b8702b7ab9181c5d4eebe219",
+      "passes": 236,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
