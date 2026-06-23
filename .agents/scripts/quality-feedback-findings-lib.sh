@@ -51,6 +51,8 @@ _build_inline_findings() {
 			"\\bno further recommendations?\\b|" +
 			"\\bno further action is needed\\b|" +
 			"\\bthread is resolved\\b|" +
+			"\\bnecessary synchronization\\b.*\\b(already )?incorporates?\\b|" +
+			"\\brace condition\\b.*\\b(is|was) indeed addressed\\b|" +
 			"\\bimplementation[[:space:]]+((is|was|has[[:space:]]+been)[[:space:]]+)?(confirmed|verified)\\b|" +
 			"\\bimplementation looks correct and address(es|ed)?\\b|" +
 			"\\btests are passing\\b"; "i")) as $resolution_or_ack |
