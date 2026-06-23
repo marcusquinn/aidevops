@@ -105,10 +105,10 @@ Do **not** use it for Android emulators, real iOS hardware, building/installing 
 
 ## Upstream Agent Skill
 
-The upstream repository ships an Agent Skill under `skills/serve-sim`. For runtimes that support the Agent Skills standard, install it with:
+The upstream repository ships an Agent Skill under `skills/serve-sim`. For runtimes that support the Agent Skills standard, install it with the host's native skill/plugin installer:
 
 ```bash
-# Claude Code plugin marketplace
+# Claude Code plugin marketplace (current singular `/plugin` command flow)
 /plugin marketplace add EvanBacon/serve-sim
 /plugin install serve-sim
 
