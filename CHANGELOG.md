@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.22.0] - 2026-06-23
+
+### Added
+
+- polish native GUI desktop app (#25356)
+
+### Changed
+
+- Maintenance: update simplification state registry
+
 ## [3.21.12] - 2026-06-22
 
 ### Changed
