@@ -30,14 +30,16 @@ tools:
 ```bash
 serve-sim                         # Preview UI at http://localhost:3200
 serve-sim --detach -q             # Start background preview and return JSON with url/streamUrl
+serve-sim --host 0.0.0.0          # Expose preview on a trusted LAN
 serve-sim --codec mjpeg           # Pin stream codec when H.264 is unavailable
 serve-sim --list -q               # List running simulator streams
+serve-sim tap 0.5 0.9             # Tap normalized screen coordinates
 serve-sim button home             # Send hardware button
 serve-sim type "hello"            # Type into focused field
 serve-sim --kill                  # Stop stream(s)
 ```
 
-Use `serve-sim` when the user needs a visible, browser-shareable simulator surface. Pair it with `agent-device`, `ios-simulator-mcp`, or `maestro` when the task needs accessibility refs, MCP tool calls, or repeatable E2E flows. Current upstream builds serve capture, accessibility, and HID input through an in-process native addon instead of a separate `serve-sim-bin` helper, so malformed browser input should be ignored rather than crash the preview server. The preview defaults to H.264 when available and can switch or auto-downgrade to MJPEG when hardware decoding is unstable during screen recording; use `--codec <auto|mjpeg>` when the host must pin stream compatibility.
+Use `serve-sim` when the user needs a visible, browser-shareable simulator surface. Pair it with `agent-device`, `ios-simulator-mcp`, or `maestro` when the task needs accessibility refs, MCP tool calls, or repeatable E2E flows. Current upstream builds serve capture, accessibility, and HID input through an in-process native addon instead of a separate `serve-sim-bin` helper, so malformed browser input should be ignored rather than crash the preview server. The preview defaults to H.264 when available and can switch or auto-downgrade to MJPEG when hardware decoding is unstable during screen recording; use `--codec <auto|mjpeg>` when the host must pin stream compatibility. Recent upstream versions also use incremental MJPEG and AVCC buffering plus paged simulator-grid loading, which keeps large multi-device catalogs and long recording sessions responsive.
 
 <!-- AI-CONTEXT-END -->
 
@@ -68,11 +70,13 @@ Do **not** use it for Android emulators, real iOS hardware, building/installing 
 | Goal | Command | Notes |
 |------|---------|-------|
 | Start preview | `serve-sim [device...]` | Default preview server: `http://localhost:3200` |
+| Start LAN preview | `serve-sim --host 0.0.0.0 [device...]` | Trusted networks only; exposes the browser control surface |
 | Start daemon | `serve-sim --detach -q [device...]` | JSON output is safest for agents |
 | Stream only | `serve-sim --no-preview [device...]` | Foreground stream without React preview UI |
 | List streams | `serve-sim --list -q` | Use `-q` for machine-readable output |
 | Force compatibility stream | `serve-sim --codec mjpeg [device...]`, open the preview with `?codec=mjpeg`, or use Stream → Codec | Use MJPEG if H.264/WebCodecs stutters or fails while recording |
 | Stop streams | `serve-sim --kill [device]` | Stop all streams or one device stream |
+| Tap | `serve-sim tap 0.5 0.9 [-d udid]` | Normalized 0..1 screen coordinates; prefer this over raw gesture JSON for plain taps |
 | Gesture | `serve-sim gesture '<json>' [-d udid]` | Use documented JSON shape; avoid guessing coordinates |
 | Button | `serve-sim button home [-d udid]` | Hardware/home/app-switcher style controls |
 | Type | `serve-sim type "text" [-d udid]` | Also supports `--stdin` and `--file <path>` |
@@ -80,6 +84,8 @@ Do **not** use it for Android emulators, real iOS hardware, building/installing 
 | Rotate | `serve-sim rotate landscape_left [-d udid]` | portrait, portrait_upside_down, landscape_left, landscape_right |
 | Memory warning | `serve-sim memory-warning [-d udid]` | Simulator memory-pressure test |
 | CoreAnimation | `serve-sim ca-debug slow-animations on [-d udid]` | blended, copies, misaligned, offscreen, slow-animations |
+| UI settings | `serve-sim ui --help` | Get or set simulator-wide UI options exposed by upstream |
+| Permissions | `serve-sim permissions` | Manage app permissions with the upstream parser |
 | Camera injection | `serve-sim camera <bundle-id> --file <path>` | Also supports placeholder/webcam sources, `camera switch`, `camera mirror`, `camera status`, `--list-webcams`, and `--stop-webcam` |
 
 ## Agent Workflow
@@ -90,17 +96,23 @@ Do **not** use it for Android emulators, real iOS hardware, building/installing 
 4. Surface the returned `url` to the user. If the current runtime exposes a preview/open-url tool, pass the URL there too.
 5. Use `agent-device snapshot` or `ios-simulator-mcp` for accessibility-aware targeting; use `serve-sim` for the shared visual stream and simulator-specific commands.
 6. If the browser preview stutters, drops frames, or reports an H.264 decoder failure while screen recording, restart with `serve-sim --codec mjpeg`, switch the Stream → Codec control to MJPEG, or append `?codec=mjpeg` to the preview URL.
-7. Clean up with `serve-sim --kill` unless the user asks to keep the simulator stream running.
+7. For plain coordinate taps, use `serve-sim tap <x> <y>` with normalized 0..1 values; reserve `serve-sim gesture '<json>'` for drag, swipe, and multi-touch shapes.
+8. Clean up with `serve-sim --kill` unless the user asks to keep the simulator stream running.
 
 ## Expo / Dev Server Embedding
 
-`serve-sim/middleware` can mount the preview under an existing Connect-style server, including Expo Metro. This is useful when a mobile dev server should expose the simulator at a stable path such as `/.sim`. Recent upstream versions route the preview, same-origin helper endpoints, and WebKit DevTools proxying through the in-process server when the host wires HTTP upgrade handling, so remote viewers only need the preview server port.
+`serve-sim/middleware` can mount the preview under an existing Connect-style server, including Expo Metro. This is useful when a mobile dev server should expose the simulator at a stable path such as `/.sim`. Recent upstream versions route the preview, same-origin helper endpoints, and WebKit DevTools proxying through the in-process server when the host wires HTTP upgrade handling, so remote viewers only need the preview server port. The device grid is paged by default and exposes total/loaded counts; searching intentionally loads the full catalog, then clearing search resets to the paged window.
 
 ## Upstream Agent Skill
 
 The upstream repository ships an Agent Skill under `skills/serve-sim`. For runtimes that support the Agent Skills standard, install it with:
 
 ```bash
+# Claude Code plugin marketplace
+/plugin marketplace add EvanBacon/serve-sim
+/plugin install serve-sim
+
+# Other Agent Skills hosts
 npx skills add EvanBacon/serve-sim
 # or
 bunx add-skill EvanBacon/serve-sim
