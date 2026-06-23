@@ -64,6 +64,22 @@ const surfaceIcons: Record<SurfaceIconName, IconType> = {
   users: FiUsers,
 };
 
+export function hueFromInputValue(value: string): number | null {
+  const trimmedValue = value.trim();
+
+  if (trimmedValue.length === 0) {
+    return null;
+  }
+
+  const hue = Number(trimmedValue);
+
+  if (!Number.isInteger(hue)) {
+    return null;
+  }
+
+  return Math.min(359, Math.max(0, hue));
+}
+
 export function SurfaceGlyph({ icon }: { icon: SurfaceIconName }) {
   const Icon = surfaceIcons[icon];
 
@@ -271,10 +287,14 @@ function SidebarFooter({ accentHue, fontPreference, fontSizePreference, setAccen
   };
   const updateHueInput = (value: string) => {
     setHueInput(value);
-    if (value.trim().length === 0) {
+
+    const nextHue = hueFromInputValue(value);
+
+    if (nextHue === null) {
       return;
     }
-    updateAccentHue(Number.parseInt(value, 10));
+
+    updateAccentHue(nextHue);
   };
 
   useEffect(() => {

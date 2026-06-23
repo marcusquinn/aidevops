@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { appearanceStorageKeys, readStoredAppearancePreferences } from "../src/App";
+import { hueFromInputValue } from "../src/AppNavigation";
 import { DEFAULT_ACCENT_HUE, DEFAULT_FONT, DEFAULT_FONT_SIZE, surfaceRecordCounts } from "../src/app-model";
 import { renderDashboardHtml } from "../src/dashboard";
 import { fetchStatus, mockedStatus } from "../src/status-client";
@@ -124,6 +125,14 @@ describe("dashboard shell", () => {
     expect(preferences.showBorders).toBe(true);
     expect(preferences.showNavCounts).toBe(true);
     expect(preferences.themePreference).toBe("system");
+  });
+
+  test("allows clearing the editable hue input without resetting to the default", () => {
+    expect(hueFromInputValue("")).toBeNull();
+    expect(hueFromInputValue("   ")).toBeNull();
+    expect(hueFromInputValue("210")).toBe(210);
+    expect(hueFromInputValue("999")).toBe(359);
+    expect(hueFromInputValue("1e")).toBeNull();
   });
 });
 
