@@ -51,7 +51,7 @@ _build_inline_findings() {
 			"\\bno further recommendations?\\b|" +
 			"\\bno further action is needed\\b|" +
 			"\\bthread is resolved\\b|" +
-			"\\b(already )?incorporates?\\b.*\\bnecessary synchronization\\b|" +
+			"(?s)\\b(already )?incorporate[sd]?\\b.*\\bnecessary synchronization\\b|" +
 			"\\brace condition\\b.*\\b(is|was) indeed addressed\\b|" +
 			"\\bimplementation[[:space:]]+((is|was|has[[:space:]]+been)[[:space:]]+)?(confirmed|verified)\\b|" +
 			"\\bimplementation looks correct and address(es|ed)?\\b|" +
