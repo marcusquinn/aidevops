@@ -8,6 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="${SCRIPT_DIR}/../../.."
 SETUP_SH="${REPO_ROOT}/setup.sh"
 AIDEVOPS_SH="${REPO_ROOT}/aidevops.sh"
+PACKAGE_JSON="${REPO_ROOT}/package.json"
 
 TESTS_RUN=0
 TESTS_FAILED=0
@@ -65,6 +66,10 @@ test_setup_stage_contract() {
 	assert_contains "hooks scope maps to setup_safety_hooks" "$text" "hooks | \"\$SETUP_STAGE_HOOKS\") printf '%s' \"\$SETUP_STAGE_HOOKS\""
 	assert_contains "tabby scope maps to setup_tabby" "$text" "tabby | \"\$SETUP_STAGE_TABBY\") printf '%s' \"\$SETUP_STAGE_TABBY\""
 	assert_contains "pulse scope maps to setup_supervisor_pulse" "$text" "pulse | \"\$SETUP_STAGE_PULSE\") printf '%s' \"\$SETUP_STAGE_PULSE\""
+	assert_contains "gui-desktop scope maps to native app installer" "$text" "gui-desktop | gui | app | \"\$SETUP_STAGE_GUI_DESKTOP\") printf '%s' \"\$SETUP_STAGE_GUI_DESKTOP\""
+	assert_contains "gui desktop default path is opt-in gated" "$text" "_time_step \"setup_gui_desktop_app_opt_in\" _setup_offer_gui_desktop_app"
+	assert_contains "gui desktop env flag enables install" "$text" "AIDEVOPS_GUI_DESKTOP_INSTALL"
+	assert_contains "gui desktop scoped stage runs installer" "$text" "_time_step \"\$SETUP_STAGE_GUI_DESKTOP\" setup_gui_desktop_app"
 	assert_contains "unknown stages print actionable help" "$text" "Unknown setup stage/scope"
 	return 0
 }
@@ -78,14 +83,32 @@ test_cli_scope_contract() {
 
 	assert_contains "aidevops exposes setup command" "$text" "setup) cmd_setup \"\$@\" ;;"
 	assert_contains "aidevops setup requires scope" "$text" "Usage: aidevops setup --scope <scope>"
+	assert_contains "aidevops setup lists gui-desktop scope" "$text" "gui-desktop  Install native macOS aidevops.app only"
 	assert_contains "aidevops setup passes scope to setup.sh" "$text" "bash \"\$setup_script\" --stage \"\$scope\""
 	assert_contains "aidevops setup full preserves full setup" "$text" "bash \"\$setup_script\" --non-interactive"
+	return 0
+}
+
+test_gui_desktop_package_contract() {
+	local text=""
+	text="$(file_text "$PACKAGE_JSON")" || {
+		print_result "package.json is readable" 1 "$PACKAGE_JSON"
+		return 0
+	}
+
+	assert_contains "npm package includes Bun lockfile" "$text" '"bun.lock"'
+	assert_contains "npm package includes GUI shared sources" "$text" '"packages/gui-shared/src/"'
+	assert_contains "npm package includes GUI API sources" "$text" '"packages/gui-api/src/"'
+	assert_contains "npm package includes GUI web sources" "$text" '"packages/gui-web/src/"'
+	assert_contains "npm package includes GUI web config" "$text" '"packages/gui-web/vite.config.ts"'
+	assert_contains "npm package includes GUI desktop installer" "$text" '"packages/gui-desktop/scripts/"'
 	return 0
 }
 
 main() {
 	test_setup_stage_contract
 	test_cli_scope_contract
+	test_gui_desktop_package_contract
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then

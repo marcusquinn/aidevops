@@ -2,11 +2,11 @@ import {
   createEnvelope,
   fileExplorerFixture,
   GUI_FILE_ROOTS,
-  statusFixture,
   type GuiFileExplorerData,
   type GuiFileRootId,
   type GuiResponseEnvelope,
   type GuiStatusData,
+  statusFixture,
 } from "../../gui-shared/src";
 
 export async function fetchStatus(
@@ -17,7 +17,7 @@ export async function fetchStatus(
     throw new Error(`Status request failed with ${response.status}`);
   }
 
-  return (await response.json()) as GuiResponseEnvelope<GuiStatusData>;
+  return normalizeStatusEnvelope((await response.json()) as GuiResponseEnvelope<Partial<GuiStatusData>>);
 }
 
 export function mockedStatus(): GuiResponseEnvelope<GuiStatusData> {
@@ -63,4 +63,31 @@ export function mockedFileExplorer(rootId: GuiFileRootId): GuiResponseEnvelope<G
       selected_preview: root.id === "agents" ? fileExplorerFixture.selected_preview : null,
     },
   });
+}
+
+function normalizeStatusEnvelope(envelope: GuiResponseEnvelope<Partial<GuiStatusData>>): GuiResponseEnvelope<GuiStatusData> {
+  const data = envelope.data ?? {};
+
+  return {
+    ...envelope,
+    data: {
+      ...statusFixture,
+      ...data,
+      update: { ...statusFixture.update, ...data.update },
+      runtime: { ...statusFixture.runtime, ...data.runtime },
+      machine: { ...statusFixture.machine, ...data.machine },
+      paths: data.paths ?? statusFixture.paths,
+      helper_availability: data.helper_availability ?? statusFixture.helper_availability,
+      navigation: data.navigation ?? statusFixture.navigation,
+      settings: { ...statusFixture.settings, ...data.settings },
+      repos: { ...statusFixture.repos, ...data.repos, repos: data.repos?.repos ?? statusFixture.repos.repos },
+      local_repos: { ...statusFixture.local_repos, ...data.local_repos, repos: data.local_repos?.repos ?? statusFixture.local_repos.repos },
+      oauth_pool: { ...statusFixture.oauth_pool, ...data.oauth_pool, providers: data.oauth_pool?.providers ?? statusFixture.oauth_pool.providers },
+      setup_targets: data.setup_targets ?? statusFixture.setup_targets,
+      ai_apps: data.ai_apps ?? statusFixture.ai_apps,
+      capabilities: data.capabilities ?? statusFixture.capabilities,
+      secrets: data.secrets ?? statusFixture.secrets,
+      placeholders: data.placeholders ?? statusFixture.placeholders,
+    },
+  };
 }

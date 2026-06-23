@@ -1,6 +1,6 @@
-import { useState, type ReactElement } from "react";
-import { appRows, installationRows, text } from "./app-model";
+import { type ReactElement, useState } from "react";
 import type { InventoryColumn } from "./app-model";
+import { appRows, installationRows, text } from "./app-model";
 
 interface DraftInventoryRow {
   id: string;
@@ -13,7 +13,7 @@ export function AppsSurface(): ReactElement {
   return (
     <section className="panel" aria-label={text.apps}>
       <div className="section-heading">
-        <p className="eyebrow">{text.inventory}</p>
+        <p className="eyebrow">{text.infrastructure}</p>
         <h2>{text.apps}</h2>
         <p>{text.appsIntro}</p>
       </div>
@@ -69,7 +69,7 @@ export function EditableInventorySurface({ columns, initialRows, intro, title }:
     <section className="panel" aria-label={title}>
       <div className="section-heading split-heading">
         <div>
-          <p className="eyebrow">{text.inventory}</p>
+          <p className="eyebrow">{text.infrastructure}</p>
           <h2>{title}</h2>
           <p>{intro}</p>
         </div>

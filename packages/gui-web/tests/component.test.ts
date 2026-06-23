@@ -1,21 +1,134 @@
 import { describe, expect, test } from "bun:test";
-import { mockedStatus } from "../src/status-client";
+import { appearanceStorageKeys, readStoredAppearancePreferences } from "../src/App";
+import { DEFAULT_ACCENT_HUE, DEFAULT_FONT, DEFAULT_FONT_SIZE, surfaceRecordCounts } from "../src/app-model";
 import { renderDashboardHtml } from "../src/dashboard";
+import { fetchStatus, mockedStatus } from "../src/status-client";
 
 describe("dashboard shell", () => {
   test("renders setup/status placeholders", () => {
     const html = renderDashboardHtml(mockedStatus());
 
     expect(html).toContain("aidevops app interface");
-    expect(html).toContain("Read-only local app shell");
+    expect(html).toContain("Made for creators");
+    expect(html).toContain("AI-assisted development workflows, code quality, and deployment automation");
+    expect(html).toContain("DevOps");
+    expect(html).toContain("Comms");
     expect(html).toContain("Operations");
+    expect(html).toContain("Management");
+    expect(html).toContain("Documents");
+    expect(html).toContain("Email Accounts");
+    expect(html).toContain("Messaging Accounts");
+    expect(html).toContain("Calendars");
+    expect(html).toContain("Addressbooks");
+    expect(html).toContain("Notebooks");
+    expect(html).toContain("Identities");
+    expect(html).toContain("Sites");
+    expect(html).toContain("Websites");
+    expect(html).toContain("Forums");
+    expect(html).toContain("Social Media");
+    expect(html).toContain("Marketplaces");
+    expect(html).toContain("Local Repos");
+    expect(html).toContain("Remote Repos");
+    expect(html).toContain("Secrets");
+    expect(html).toContain("AI Providers");
+    expect(html).toContain("AI Provider Pools");
+    expect(html).toContain("AI Apps");
+    expect(html).toContain("Installed aidevops targets");
+    expect(html).toContain("VPNs &amp; Proxies");
     expect(html).toContain("Agents file explorer");
     expect(html).toContain("Local Setup");
     expect(html).toContain("Theme follows system preferences");
+    expect(html).toContain("Appearance controls can be hidden or shown");
+    expect(html).toContain("editable Hue");
+    expect(html).toContain("Show borders toggle");
+    expect(html).toContain("Show counts toggle");
+    expect(html).toContain("desktop status bar");
+    expect(html).toContain("Font size choices xs, s, m, lg, xl");
+    expect(html).toContain("Menlo (default)");
+    expect(html).toContain("IBM Plex Mono");
+    expect(html).toContain("Playpen Sans");
+    expect(html).toContain("Source Sans");
+    expect(html).toContain("Source Serif");
+    expect(html).toContain("Tilt Neon");
     expect(html).toContain("GUI app");
     expect(html).toContain("Installation");
     expect(html).toContain("Domains");
     expect(html).toContain("Servers");
     expect(html).toContain("Secret references");
   });
+
+  test("derives sidebar record counts from status records", () => {
+    const counts = surfaceRecordCounts(mockedStatus().data);
+
+    expect(counts.security).toBe(1);
+    expect(counts.localSetup).toBe(2);
+    expect(counts.agents).toBe(3);
+    expect(counts.apps).toBe(6);
+  });
+
+  test("normalizes legacy status payloads from older local API processes", async () => {
+    const legacyFetch = (async () => new Response(JSON.stringify({
+      ok: true,
+      operation_id: "setup.status.read",
+      source: { surface: "setup", authority: "legacy", path_refs: [] },
+      data: { aidevops_version: "legacy" },
+      warnings: [],
+      errors: [],
+      redactions: [],
+      observed_at: "2026-06-22T00:00:00.000Z",
+    }))) as unknown as typeof fetch;
+    const status = await fetchStatus(legacyFetch);
+
+    expect(status.data.local_repos.repos).toEqual([]);
+    expect(status.data.oauth_pool.providers.map((provider) => provider.provider)).toEqual(["anthropic", "openai", "cursor", "google"]);
+    expect(status.data.setup_targets[0].path_ref).toBe("~/.aidevops/agents/VERSION");
+    expect(status.data.ai_apps.map((app) => app.name)).toContain("OpenCode");
+    expect(status.data.machine.initials).toBe("LM");
+  });
+
+  test("loads saved appearance preferences before persistence effects run", () => {
+    const preferences = readStoredAppearancePreferences(storageFrom({
+      [appearanceStorageKeys.accentHue]: "210",
+      [appearanceStorageKeys.font]: "Poppins",
+      [appearanceStorageKeys.fontSize]: "xl",
+      [appearanceStorageKeys.machineRail]: "false",
+      [appearanceStorageKeys.showBorders]: "false",
+      [appearanceStorageKeys.showNavCounts]: "false",
+      [appearanceStorageKeys.theme]: "dark",
+    }), true);
+
+    expect(preferences.accentHue).toBe(210);
+    expect(preferences.fontPreference).toBe("Poppins");
+    expect(preferences.fontSizePreference).toBe("xl");
+    expect(preferences.machineRailVisible).toBe(false);
+    expect(preferences.showBorders).toBe(false);
+    expect(preferences.showNavCounts).toBe(false);
+    expect(preferences.themePreference).toBe("dark");
+  });
+
+  test("falls back safely for invalid saved appearance preferences", () => {
+    const preferences = readStoredAppearancePreferences(storageFrom({
+      [appearanceStorageKeys.accentHue]: "999",
+      [appearanceStorageKeys.font]: "Papyrus",
+      [appearanceStorageKeys.fontSize]: "huge",
+      [appearanceStorageKeys.machineRail]: "false",
+      [appearanceStorageKeys.showBorders]: "maybe",
+      [appearanceStorageKeys.showNavCounts]: "maybe",
+      [appearanceStorageKeys.theme]: "night",
+    }), false);
+
+    expect(preferences.accentHue).toBe(DEFAULT_ACCENT_HUE);
+    expect(preferences.fontPreference).toBe(DEFAULT_FONT);
+    expect(preferences.fontSizePreference).toBe(DEFAULT_FONT_SIZE);
+    expect(preferences.machineRailVisible).toBe(true);
+    expect(preferences.showBorders).toBe(true);
+    expect(preferences.showNavCounts).toBe(true);
+    expect(preferences.themePreference).toBe("system");
+  });
 });
+
+function storageFrom(values: Record<string, string>): Pick<Storage, "getItem"> {
+  return {
+    getItem: (key: string) => values[key] ?? null,
+  };
+}

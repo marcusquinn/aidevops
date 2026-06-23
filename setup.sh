@@ -37,6 +37,8 @@ SETUP_STAGE_AGENTS="deploy_aidevops_agents"
 SETUP_STAGE_HOOKS="setup_safety_hooks"
 SETUP_STAGE_TABBY="setup_tabby"
 SETUP_STAGE_PULSE="setup_supervisor_pulse"
+SETUP_STAGE_GUI_DESKTOP="setup_gui_desktop_app"
+SETUP_GUI_APP_NAME="aidevops.app"
 SETUP_OS_DARWIN="Darwin"
 # Python compatibility floor used by setup checks and skill/tool gating.
 # Keep in sync with .agents/scripts/setup/modules/plugins.sh requirements.
@@ -390,8 +392,9 @@ parse_args() {
 			echo "Use --clean after removing or renaming agents to sync deletions."
 			echo "Use --interactive to control each step individually."
 			echo "Use --non-interactive for CI/CD or AI agent shells (no stdin required)."
-			echo "Use --stage for targeted updates: opencode, agents, hooks, tabby, pulse, full."
-			echo "Stage aliases: ${SETUP_STAGE_OPENCODE}, ${SETUP_STAGE_AGENTS}, ${SETUP_STAGE_HOOKS}, ${SETUP_STAGE_TABBY}, ${SETUP_STAGE_PULSE}."
+			echo "Use --stage for targeted updates: opencode, agents, hooks, tabby, pulse, gui-desktop, full."
+			echo "Stage aliases: ${SETUP_STAGE_OPENCODE}, ${SETUP_STAGE_AGENTS}, ${SETUP_STAGE_HOOKS}, ${SETUP_STAGE_TABBY}, ${SETUP_STAGE_PULSE}, ${SETUP_STAGE_GUI_DESKTOP}."
+			echo "Install ${SETUP_GUI_APP_NAME} explicitly with --stage gui-desktop or AIDEVOPS_GUI_DESKTOP_INSTALL=true."
 			echo "Use --update to check for tool updates after setup completes."
 			exit 0
 			;;
@@ -415,6 +418,7 @@ _setup_print_stage_help() {
 	printf '  hooks    | %s          Install safety hooks only\n' "$SETUP_STAGE_HOOKS"
 	printf '  tabby    | %s                 Sync Tabby profiles only\n' "$SETUP_STAGE_TABBY"
 	printf '  pulse    | %s      Install/refresh pulse scheduler only\n' "$SETUP_STAGE_PULSE"
+	printf '  gui-desktop | gui | app | %s  Install native macOS %s only\n' "$SETUP_STAGE_GUI_DESKTOP" "$SETUP_GUI_APP_NAME"
 	printf '%s\n' "  full                                  Run the default full setup path"
 	return 0
 }
@@ -427,6 +431,7 @@ _setup_canonical_stage() {
 	hooks | "$SETUP_STAGE_HOOKS") printf '%s' "$SETUP_STAGE_HOOKS" ;;
 	tabby | "$SETUP_STAGE_TABBY") printf '%s' "$SETUP_STAGE_TABBY" ;;
 	pulse | "$SETUP_STAGE_PULSE") printf '%s' "$SETUP_STAGE_PULSE" ;;
+	gui-desktop | gui | app | "$SETUP_STAGE_GUI_DESKTOP") printf '%s' "$SETUP_STAGE_GUI_DESKTOP" ;;
 	full) printf '%s' "full" ;;
 	*) return 1 ;;
 	esac
@@ -441,6 +446,71 @@ _setup_validate_stage() {
 	print_error "Unknown setup stage/scope: $stage"
 	_setup_print_stage_help
 	return 1
+}
+
+_setup_gui_desktop_install_opted_in() {
+	local flag="${AIDEVOPS_GUI_DESKTOP_INSTALL:-false}"
+	case "$flag" in
+	1 | true | TRUE | yes | YES | on | ON)
+		return 0
+		;;
+	esac
+	return 1
+}
+
+setup_gui_desktop_app() {
+	local installer="${INSTALL_DIR}/packages/gui-desktop/scripts/install-macos-app.sh"
+	local os=""
+	local rc=0
+
+	os="$(uname -s)"
+	if [[ "$os" != "$SETUP_OS_DARWIN" ]]; then
+		print_skip "$SETUP_GUI_APP_NAME" "macOS only" "Run this stage from macOS when the desktop app is needed."
+		setup_track_skipped "$SETUP_GUI_APP_NAME" "macOS only"
+		return 0
+	fi
+
+	if [[ ! -f "$installer" ]]; then
+		print_warning "${SETUP_GUI_APP_NAME} installer not found at: $installer"
+		setup_track_deferred "$SETUP_GUI_APP_NAME" "Update aidevops, then run: aidevops setup --scope gui-desktop"
+		return 0
+	fi
+
+	bash "$installer" || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		setup_track_configured "$SETUP_GUI_APP_NAME"
+		return 0
+	fi
+
+	print_warning "${SETUP_GUI_APP_NAME} install skipped after installer exit $rc (non-fatal)"
+	setup_track_deferred "$SETUP_GUI_APP_NAME" "Install requirements, then run: aidevops setup --scope gui-desktop"
+	return 0
+}
+
+_setup_offer_gui_desktop_app() {
+	local answer=""
+
+	if _setup_gui_desktop_install_opted_in; then
+		setup_gui_desktop_app
+		return 0
+	fi
+
+	if [[ "$INTERACTIVE_MODE" == "true" ]]; then
+		echo ""
+		echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+		echo -e "${BLUE}Optional preview:${NC} Install native macOS ${SETUP_GUI_APP_NAME}"
+		echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+		setup_prompt answer "Install ${SETUP_GUI_APP_NAME} now? [y/N]: " "N"
+		case "$answer" in
+		y | Y | yes | YES)
+			setup_gui_desktop_app
+			return 0
+			;;
+		esac
+	fi
+
+	setup_track_skipped "$SETUP_GUI_APP_NAME" "opt-in: run aidevops setup --scope gui-desktop or set AIDEVOPS_GUI_DESKTOP_INSTALL=true"
+	return 0
 }
 
 # Initialize ~/.config/aidevops/settings.json with documented defaults.
@@ -1125,6 +1195,9 @@ _setup_run_scoped_stage() {
 	"$SETUP_STAGE_PULSE")
 		_time_step "$SETUP_STAGE_PULSE" setup_supervisor_pulse "$os"
 		;;
+	"$SETUP_STAGE_GUI_DESKTOP")
+		_time_step "$SETUP_STAGE_GUI_DESKTOP" setup_gui_desktop_app
+		;;
 	*)
 		print_error "Unsupported canonical setup stage: $stage"
 		return 1
@@ -1243,6 +1316,7 @@ _setup_run_non_interactive() {
 	_time_step "setup_knowledge_planes" setup_knowledge_planes
 	# Provision cases planes for repos where cases != "off" (idempotent).
 	_time_step "setup_cases_planes" setup_cases_planes
+	_time_step "setup_gui_desktop_app_opt_in" _setup_offer_gui_desktop_app
 	return 0
 }
 
@@ -1341,6 +1415,7 @@ _setup_run_interactive() {
 	confirm_step "Security scan imported skills" && scan_imported_skills
 	confirm_step "Inject agents reference into AI configs" && inject_agents_reference
 	_setup_run_interactive_runtime_tools
+	_setup_offer_gui_desktop_app
 	# Run AFTER CLI installs so config dirs may exist for agent config
 	confirm_step "Update OpenCode configuration" && update_opencode_config
 	# Run AFTER OpenCode config so Claude Code gets equivalent setup

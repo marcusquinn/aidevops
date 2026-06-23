@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactElement } from "react";
 import type { GuiFileEntry, GuiFileExplorerData, GuiFilePreview, GuiFileRootId, GuiResponseEnvelope } from "@aidevops/gui-shared";
+import { type ReactElement, useEffect, useState } from "react";
 import { text } from "./app-model";
 import { PathActions } from "./PathActions";
 import { fetchFileExplorer, mockedFileExplorer } from "./status-client";
@@ -43,17 +43,19 @@ export function FileExplorerSurface({ rootId }: { rootId: GuiFileRootId }): Reac
           <PathActions pathRef={data.current_path_ref} />
         </div>
         <div className="file-workspace">
-          <ul className="file-list" aria-label={`${data.root.label} file list`}>
-            <li>
-              <button className="file-entry parent-entry" disabled={data.current_relative_path.length === 0} onClick={() => setRelativePath(parentPath(data.current_relative_path))} type="button">
-                <span>↰</span>
-                <strong>{text.parentDirectory}</strong>
-              </button>
-            </li>
-            {data.entries.map((entry) => (
-              <FileEntryButton entry={entry} key={entry.path_ref} setRelativePath={setRelativePath} />
-            ))}
-          </ul>
+          <div className="file-list-pane">
+            <ul className="file-list" aria-label={`${data.root.label} file list`}>
+              <li>
+                <button className="file-entry parent-entry" disabled={data.current_relative_path.length === 0} onClick={() => setRelativePath(parentPath(data.current_relative_path))} type="button">
+                  <span>↰</span>
+                  <strong>{text.parentDirectory}</strong>
+                </button>
+              </li>
+              {data.entries.map((entry) => (
+                <FileEntryButton entry={entry} key={entry.path_ref} setRelativePath={setRelativePath} />
+              ))}
+            </ul>
+          </div>
           <FilePreviewPanel markdownFormatted={markdownFormatted} preview={data.selected_preview} setMarkdownFormatted={setMarkdownFormatted} />
         </div>
       </section>
