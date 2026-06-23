@@ -245,6 +245,7 @@ main() {
 	test_skips_multispace_implementation_verified_inline_ack
 	test_skips_verified_tests_passing_inline_ack
 	test_skips_pr25362_race_condition_ack
+	test_skips_incorporates_necessary_synchronization_ack_without_race_phrase
 	test_keeps_actionable_approved_review
 	test_keeps_changes_requested_review
 	test_keeps_review_with_bug_report

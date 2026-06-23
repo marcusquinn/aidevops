@@ -331,6 +331,19 @@ test_skips_pr25362_race_condition_ack() {
 	return 0
 }
 
+test_skips_incorporates_necessary_synchronization_ack_without_race_phrase() {
+	local comments result
+	# shellcheck disable=SC2016  # literal inline-comment JSON includes Markdown backticks
+	comments='[{"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the update. The current branch already incorporates the necessary synchronization using `serviceQueue` and the `servicesStopped` flag as discussed.","path":"packages/gui-desktop/scripts/install-macos-app.sh","line":848,"html_url":"https://example.invalid/review","created_at":"2026-06-23T00:00:00Z"}]'
+	result=$(_build_inline_findings "$comments" "25362" "medium" | jq 'length')
+	if [[ "$result" == "0" ]]; then
+		print_result "skip incorporates necessary-synchronization acknowledgement" 0
+	else
+		print_result "skip incorporates necessary-synchronization acknowledgement" 1 "expected 0 findings, got ${result}"
+	fi
+	return 0
+}
+
 test_keeps_actionable_approved_review() {
 	# APPROVED review that also contains actionable critique — must be kept
 	local result
