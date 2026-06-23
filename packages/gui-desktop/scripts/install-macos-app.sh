@@ -360,6 +360,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private let defaultAccentHue: CGFloat = 123
     private let mainWindowFrameAutosaveName = "aidevops-main-window"
     private let titlebarHeight: CGFloat = 24
+    private var servicesStopped = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureMenu()
@@ -376,6 +377,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         saveMainWindowFrame()
         stopServices()
         return .terminateNow
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        saveMainWindowFrame()
+        stopServices()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -835,6 +841,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     private func stopServices() {
+        if servicesStopped {
+            return
+        }
+        servicesStopped = true
         _ = runServiceHelper(arguments: ["stop"])
     }
 
