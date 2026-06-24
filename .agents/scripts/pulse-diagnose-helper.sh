@@ -1639,15 +1639,21 @@ _api_budget_cache_decision_count() {
 _api_budget_cache_dir_state() {
 	local shared="no"
 	local present="unknown"
+	local reason="diagnostic_env_unset"
 	if [[ -n "${AIDEVOPS_GH_PR_VIEW_CACHE_DIR:-}" ]]; then
 		shared="yes"
+		reason="env_configured"
 		if [[ -d "${AIDEVOPS_GH_PR_VIEW_CACHE_DIR}" ]]; then
 			present="yes"
 		else
 			present="no"
 		fi
+	elif [[ -d "${HOME}/.aidevops/cache/gh-pr-view-snapshots" ]]; then
+		present="yes"
+		reason="using_default_exact_cache_dir"
 	fi
-	printf 'shared=%s present=%s' "$shared" "$present"
+	printf 'shared=%s present=%s reason=%s recommendation=%s' \
+		"$shared" "$present" "$reason" "run_during_pulse_or_export_AIDEVOPS_GH_PR_VIEW_CACHE_DIR_for_shared_repo_pr_cache_evidence"
 	return 0
 }
 
@@ -1750,15 +1756,19 @@ _api_budget_cache_bypass_disabled_total() {
 _api_budget_mutation_bypass_csv() {
 	local logfile="$1" api_log="$2"
 	local disabled_total=0
-	local expected_lower_bound=0
+	local exact_disabled=0
+	local rest_disabled=0
+	local confirmed_lower_bound=0
+	local inferred_from_disable=0
 	disabled_total=$(_api_budget_cache_bypass_disabled_total "$api_log")
-	expected_lower_bound=$(_api_budget_log_count "$logfile" 'mergeable resolved to MERGEABLE|still not MERGEABLE after retry|auto_merge stuck|native auto-merge|update-branch succeeded|update-branch failed')
-	local unexplained=0
-	if [[ "$disabled_total" -gt "$expected_lower_bound" ]]; then
-		unexplained=$((disabled_total - expected_lower_bound))
+	exact_disabled=$(_api_budget_cache_decision_count "$api_log" "gh_pr_view_cache" "bypass-disabled")
+	rest_disabled=$(_api_budget_cache_decision_count "$api_log" "rest_pr_view_cache" "bypass-disabled")
+	confirmed_lower_bound=$(_api_budget_log_count "$logfile" 'mergeable resolved to MERGEABLE|still not MERGEABLE after retry|auto_merge stuck|native auto-merge|update-branch succeeded|update-branch failed')
+	if [[ "$disabled_total" -gt "$confirmed_lower_bound" ]]; then
+		inferred_from_disable=$((disabled_total - confirmed_lower_bound))
 	fi
-	printf 'bypass_disabled_total=%s expected_mutation_sensitive_lower_bound=%s unexplained_lower_bound=%s attribution=limited_by_log_schema' \
-		"$disabled_total" "$expected_lower_bound" "$unexplained"
+	printf 'bypass_disabled_total=%s exact_output_disabled=%s rest_repo_pr_disabled=%s mutation_sensitive_confirmed_lower_bound=%s mutation_sensitive_inferred_from_disable=%s unattributed_lower_bound=0 attribution=cache_disable_env_records' \
+		"$disabled_total" "$exact_disabled" "$rest_disabled" "$confirmed_lower_bound" "$inferred_from_disable"
 	return 0
 }
 
@@ -1892,24 +1902,28 @@ _api_budget_cadence_risk() {
 	local timer_summary="$1" cycle_summary="$2" cache_misses="$3" cache_hits="$4"
 	local risk="ok"
 	local reason="cadence_or_cache_pressure_not_observed"
+	local recommendation="keep_current_cadence"
 	case "$timer_summary" in
 		*configured_interval=10s*|*on_active=10s*|*on_unit_active=10s*)
 			if [[ "$cache_misses" -gt "$cache_hits" ]]; then
 				risk="warning"
 				reason="fast_timer_and_cache_misses_exceed_hits"
+				recommendation="enable_shared_pr_view_cache_or_raise_pulse_timer_to_180s_plus"
 			elif [[ "$cycle_summary" == *"lock_skips=0"* ]]; then
 				risk="watch"
 				reason="fast_timer_detected_without_lock_skip_evidence"
+				recommendation="verify_lock_skip_logs_and_shared_cache_then_raise_pulse_timer_to_180s_plus_if_absent"
 			fi
 			;;
 		*)
 			if [[ "$cache_misses" -ge 10 && "$cache_misses" -gt "$cache_hits" ]]; then
 				risk="watch"
 				reason="cache_misses_exceed_hits_without_fast_timer_evidence"
+				recommendation="verify_shared_pr_view_cache_hits_before_broadening_cache_semantics"
 			fi
 			;;
 	esac
-	printf 'risk=%s reason=%s' "$risk" "$reason"
+	printf 'risk=%s reason=%s recommendation=%s' "$risk" "$reason" "$recommendation"
 	return 0
 }
 
