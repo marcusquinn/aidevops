@@ -1988,6 +1988,43 @@ test_attempt_orphan_recovery_pr_calls_gh_create() {
 	return 0
 }
 
+test_ensure_orphan_recovery_rejects_empty_branch() {
+	local work_dir="${TEST_ROOT}/repo-orphan-recovery-empty-branch"
+	_setup_test_git_repo "$work_dir" 1
+
+	local recovery_state=""
+	if recovery_state=$(_ensure_orphan_recovery_branch_remote "$work_dir" "" "99999" "test-owner/test-repo"); then
+		print_result "_ensure_orphan_recovery_branch_remote rejects empty branch" 1 \
+			"Expected failure for empty branch, got '${recovery_state}'"
+		return 0
+	fi
+
+	if [[ -z "$recovery_state" ]]; then
+		print_result "_ensure_orphan_recovery_branch_remote rejects empty branch" 0
+	else
+		print_result "_ensure_orphan_recovery_branch_remote rejects empty branch" 1 \
+			"Expected no state for empty branch, got '${recovery_state}'"
+	fi
+	return 0
+}
+
+test_build_orphan_recovery_pr_body_tolerates_missing_publish_flag() {
+	local pr_body=""
+	if ! pr_body=$(_build_orphan_recovery_pr_body "issue-99999" "feature/auto-test-issue-99999" "Resolves #99999"); then
+		print_result "_build_orphan_recovery_pr_body tolerates missing publish flag" 1 \
+			"Function failed when published_local_branch arg was omitted"
+		return 0
+	fi
+
+	if [[ "$pr_body" == *"worker_branch_orphan"* ]] && [[ "$pr_body" != *"worker_local_branch_unpushed"* ]]; then
+		print_result "_build_orphan_recovery_pr_body tolerates missing publish flag" 0
+	else
+		print_result "_build_orphan_recovery_pr_body tolerates missing publish flag" 1 \
+			"Expected default orphan marker, got '${pr_body}'"
+	fi
+	return 0
+}
+
 # AC#4: on auto-PR success, _cmd_run_finish emits worker_complete with orphan note
 test_cmd_run_finish_orphan_recovery_success_emits_worker_complete() {
 	local work_dir="${TEST_ROOT}/repo-finish-orphan-ok"
@@ -2423,6 +2460,8 @@ main() {
 	test_cmd_run_finish_emits_complete_for_real_output
 	test_cmd_run_finish_emits_complete_when_no_workdir
 	test_attempt_orphan_recovery_pr_calls_gh_create
+	test_ensure_orphan_recovery_rejects_empty_branch
+	test_build_orphan_recovery_pr_body_tolerates_missing_publish_flag
 	test_cmd_run_finish_orphan_recovery_success_emits_worker_complete
 	test_cmd_run_finish_local_unpushed_pushes_and_recovers_pr
 	test_handle_worker_branch_orphan_empty_branch_existing_pr_releases_complete

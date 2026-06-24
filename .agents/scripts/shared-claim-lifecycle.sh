@@ -280,6 +280,10 @@ _ensure_orphan_recovery_branch_remote() {
 	local issue_number="$3"
 	local repo_slug="$4"
 
+	if [[ -z "$work_dir" || -z "$branch_name" ]] || ! git -C "$work_dir" rev-parse --git-dir >/dev/null 2>&1; then
+		return 1
+	fi
+
 	local remote_ref=""
 	if ! remote_ref=$(git -C "$work_dir" ls-remote origin "refs/heads/$branch_name" 2>/dev/null); then
 		return 1
@@ -295,9 +299,6 @@ _ensure_orphan_recovery_branch_remote() {
 		default_branch=$(_hrw_resolve_default_branch "$work_dir")
 	fi
 	[[ -z "$default_branch" ]] && default_branch="${DISPATCH_REPO_DEFAULT_BRANCH:-main}"
-	if [[ -z "$work_dir" ]] || ! git -C "$work_dir" rev-parse --git-dir >/dev/null 2>&1; then
-		return 1
-	fi
 	if [[ -z "$issue_number" || "$branch_name" == "$default_branch" || "$branch_name" != *"$issue_number"* ]]; then
 		return 1
 	fi
@@ -323,12 +324,12 @@ _build_orphan_recovery_pr_body() {
 	local session_key="$1"
 	local branch_name="$2"
 	local closing_line="$3"
-	local published_local_branch="$4"
+	local published_local_branch="${4:-}"
 
 	local pr_summary="Orphan recovery PR — worker pushed this branch but exited before opening a PR."
 	local pr_context="Branch \`${branch_name}\` was pushed by headless worker session \`${session_key}\` which released as \`worker_branch_orphan\`. This PR was auto-created by the orphan-recovery path (GH#20819) so the change can land via the normal review and merge pipeline."
 	local pr_marker="<!-- aidevops:orphan-recovery worker_branch_orphan session=${session_key} -->"
-	if [[ "$published_local_branch" -eq 1 ]]; then
+	if [[ "${published_local_branch:-}" == "1" ]]; then
 		pr_summary="Local branch recovery PR — worker committed locally but exited before pushing or opening a PR."
 		pr_context="Branch \`${branch_name}\` had local commits from headless worker session \`${session_key}\` and was published by the recovery path before this PR was created (GH#25374)."
 		pr_marker="<!-- aidevops:orphan-recovery worker_local_branch_unpushed session=${session_key} -->"
