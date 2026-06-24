@@ -1648,7 +1648,7 @@ _api_budget_cache_dir_state() {
 		else
 			present="no"
 		fi
-	elif [[ -n "${HOME:-}" && -d "${HOME}/.aidevops/cache/gh-pr-view-snapshots" ]]; then
+	elif [[ -n "${HOME:-}" && -d "${HOME:-}/.aidevops/cache/gh-pr-view-snapshots" ]]; then
 		present="yes"
 		reason="using_default_exact_cache_dir"
 	fi
