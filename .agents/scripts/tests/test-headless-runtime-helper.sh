@@ -1792,6 +1792,27 @@ test_worker_produced_output_branch_no_pr_returns_branch_orphan() {
 	return 0
 }
 
+test_worker_produced_output_local_branch_no_remote_returns_local_branch_unpushed() {
+	local work_dir="${TEST_ROOT}/repo-local-unpushed"
+	_setup_test_git_repo "$work_dir" 1
+	# Do not push the feature branch: local commits exist, remote branch absent.
+	DISPATCH_REPO_SLUG="test-owner/test-repo"
+	gh() { printf '0'; return 0; }
+
+	local classification
+	classification=$(_worker_produced_output "issue-99999" "$work_dir")
+	unset DISPATCH_REPO_SLUG 2>/dev/null || true
+	unset -f gh 2>/dev/null || true
+
+	if [[ "$classification" == "local_branch_unpushed" ]]; then
+		print_result "_worker_produced_output returns 'local_branch_unpushed' for local-only committed branch" 0
+	else
+		print_result "_worker_produced_output returns 'local_branch_unpushed' for local-only committed branch" 1 \
+			"Expected 'local_branch_unpushed' but got '${classification}'"
+	fi
+	return 0
+}
+
 # AC#2 variant: PR confirmed → pr_exists even when branch is pushed
 test_worker_produced_output_branch_with_pr_returns_pr_exists() {
 	local work_dir="${TEST_ROOT}/repo-pr-exists"
@@ -2004,6 +2025,60 @@ test_cmd_run_finish_orphan_recovery_success_emits_worker_complete() {
 	return 0
 }
 
+test_cmd_run_finish_local_unpushed_pushes_and_recovers_pr() {
+	local work_dir="${TEST_ROOT}/repo-finish-local-unpushed-ok"
+	_setup_test_git_repo "$work_dir" 1
+	DISPATCH_REPO_SLUG="test-owner/test-repo"
+
+	local gh_head="" gh_base="" gh_called=0
+	gh() {
+		local arg=""
+		for arg in "$@"; do
+			case "$_last_flag" in
+			"--head") gh_head="$arg" ;;
+			"--base") gh_base="$arg" ;;
+			esac
+			_last_flag="$arg"
+		done
+		if [[ "${*}" == *"pr list"* ]]; then printf '0'
+		elif [[ "${*}" == *"issue view"* ]]; then printf 'OPEN'
+		elif [[ "${*}" == *"repo view"* ]]; then printf 'main'
+		elif [[ "${*}" == *"pr create"* ]]; then gh_called=1
+		fi
+		return 0
+	}
+	_last_flag=""
+
+	local released_reason="" fast_fail_called=0
+	_release_dispatch_claim() { released_reason="$2"; return 0; }
+	_report_failure_to_fast_fail() { fast_fail_called=1; return 0; }
+	_update_dispatch_ledger() { return 0; }
+	_release_session_lock() { return 0; }
+	_increment_orphan_count_stat() { return 0; }
+
+	_cmd_run_finish "issue-99999" "complete" "$work_dir"
+
+	local remote_ref=""
+	remote_ref=$(git -C "$work_dir" ls-remote origin "refs/heads/feature/auto-test-issue-99999" 2>/dev/null || true)
+	unset DISPATCH_REPO_SLUG 2>/dev/null || true
+	unset -f gh 2>/dev/null || true
+
+	if [[ "$released_reason" == "worker_complete" && "$gh_called" -eq 1 && -n "$remote_ref" ]]; then
+		print_result "_cmd_run_finish pushes local branch and recovers PR" 0
+	else
+		print_result "_cmd_run_finish pushes local branch and recovers PR" 1 \
+			"Expected worker_complete, gh pr create, and remote ref; got reason='${released_reason}' gh_called=${gh_called} remote_ref='${remote_ref}'"
+	fi
+
+	if [[ "$gh_head" == "feature/auto-test-issue-99999" && "$gh_base" == "main" ]]; then
+		print_result "local unpushed recovery creates PR from pushed branch against base" 0
+	else
+		print_result "local unpushed recovery creates PR from pushed branch against base" 1 \
+			"Expected head feature/auto-test-issue-99999 base main, got head='${gh_head}' base='${gh_base}'"
+	fi
+	return 0
+}
+
 test_handle_worker_branch_orphan_empty_branch_existing_pr_releases_complete() {
 	local work_dir="${TEST_ROOT}/repo-finish-orphan-cleaned"
 	mkdir -p "$work_dir"
@@ -2096,6 +2171,66 @@ test_cmd_run_finish_orphan_recovery_failure_emits_branch_orphan() {
 	else
 		print_result "worker_branch_orphan comment uses configured PR base" 1 \
 			"Expected orphan recovery comment with --base develop, got '${posted_body}'"
+	fi
+	return 0
+}
+
+test_cmd_run_finish_local_unpushed_push_failure_emits_distinct_reason() {
+	local work_dir="${TEST_ROOT}/repo-finish-local-unpushed-fail"
+	_setup_test_git_repo "$work_dir" 1
+	git -C "$work_dir" remote set-url origin "${TEST_ROOT}/missing-remote.git"
+	DISPATCH_REPO_SLUG="test-owner/test-repo"
+	AIDEVOPS_PR_BASE_BRANCH="develop"
+
+	local posted_body=""
+	gh() {
+		if [[ "${1:-}" == "api" ]]; then
+			local arg=""
+			for arg in "$@"; do
+				if [[ "$arg" == body=* ]]; then
+					posted_body="${arg#body=}"
+				fi
+			done
+			return 0
+		elif [[ "${*}" == *"pr list"* ]]; then
+			printf '0'
+			return 0
+		elif [[ "${*}" == *"issue view"* ]]; then
+			printf 'OPEN'
+			return 0
+		elif [[ "${*}" == *"repo view"* ]]; then
+			printf 'main'
+			return 0
+		fi
+		return 0
+	}
+
+	local released_reason="" fast_fail_called=0
+	_release_dispatch_claim() { released_reason="$2"; return 0; }
+	_report_failure_to_fast_fail() { fast_fail_called=1; return 0; }
+	_update_dispatch_ledger() { return 0; }
+	_release_session_lock() { return 0; }
+	_increment_orphan_count_stat() { return 0; }
+
+	_cmd_run_finish "issue-99999" "complete" "$work_dir"
+
+	unset DISPATCH_REPO_SLUG 2>/dev/null || true
+	unset AIDEVOPS_PR_BASE_BRANCH 2>/dev/null || true
+	unset -f gh 2>/dev/null || true
+
+	if [[ "$released_reason" == "worker_local_branch_unpushed" ]]; then
+		print_result "_cmd_run_finish emits worker_local_branch_unpushed when local push recovery fails" 0
+	else
+		print_result "_cmd_run_finish emits worker_local_branch_unpushed when local push recovery fails" 1 \
+			"Expected worker_local_branch_unpushed, got '${released_reason}'"
+	fi
+
+	local expected_push_ref="HE""AD:feature/auto-test-issue-99999"
+	if [[ "$posted_body" == *"WORKER_LOCAL_BRANCH_UNPUSHED"* && "$posted_body" == *"git -C ${work_dir} push origin ${expected_push_ref}"* ]]; then
+		print_result "local unpushed failure comment is distinct and includes push recovery" 0
+	else
+		print_result "local unpushed failure comment is distinct and includes push recovery" 1 \
+			"Expected local-unpushed recovery comment, got '${posted_body}'"
 	fi
 	return 0
 }
@@ -2282,14 +2417,17 @@ main() {
 	test_worker_produced_output_invalid_workdir_returns_pr_exists
 	test_worker_produced_output_pushed_branch_no_slug_returns_pr_exists
 	test_worker_produced_output_branch_no_pr_returns_branch_orphan
+	test_worker_produced_output_local_branch_no_remote_returns_local_branch_unpushed
 	test_worker_produced_output_branch_with_pr_returns_pr_exists
 	test_cmd_run_finish_emits_noop_for_zero_output
 	test_cmd_run_finish_emits_complete_for_real_output
 	test_cmd_run_finish_emits_complete_when_no_workdir
 	test_attempt_orphan_recovery_pr_calls_gh_create
 	test_cmd_run_finish_orphan_recovery_success_emits_worker_complete
+	test_cmd_run_finish_local_unpushed_pushes_and_recovers_pr
 	test_handle_worker_branch_orphan_empty_branch_existing_pr_releases_complete
 	test_cmd_run_finish_orphan_recovery_failure_emits_branch_orphan
+	test_cmd_run_finish_local_unpushed_push_failure_emits_distinct_reason
 	test_cmd_run_finish_fail_recovers_branch_orphan_output
 	test_cmd_run_finish_fail_closed_issue_without_merged_pr_fails
 	test_cmd_run_finish_fail_existing_pr_recovery_remains_complete
