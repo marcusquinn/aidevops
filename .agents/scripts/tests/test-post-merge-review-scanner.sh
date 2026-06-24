@@ -656,6 +656,37 @@ Some feedback: the function name should be more descriptive. POSITIVE_CONTROL_MA
 out=$(fetch_review_summaries_md "stub/repo" "42")
 assert_contains "actionable prose with 'feedback' keyword is preserved" "POSITIVE_CONTROL_MARKER" "$out"
 
+echo ""
+echo "Test: do_scan — budget exhaustion yields with cursor instead of hard timeout"
+cat >"${STUB_BIN}/gh" <<'BUDGET_STUB_EOF'
+#!/usr/bin/env bash
+cmd="${1:-}"; sub="${2:-}"
+case "$cmd $sub" in
+"pr list") printf '101\n102\n' ;;
+"repo view") printf 'stub/repo\n' ;;
+"issue list") printf '[]\n' ;;
+*) printf '{}\n' ;;
+esac
+BUDGET_STUB_EOF
+chmod +x "${STUB_BIN}/gh"
+old_scanner_cursor_dir="$SCANNER_CURSOR_DIR"
+old_scanner_budget_seconds="$SCANNER_BUDGET_SECONDS"
+SCANNER_CURSOR_DIR="${TMP_DIR}/cursor-budget"
+SCANNER_BUDGET_SECONDS=0
+out=$(do_scan "stub/repo" "true" 2>&1)
+SCANNER_CURSOR_DIR="$old_scanner_cursor_dir"
+SCANNER_BUDGET_SECONDS="$old_scanner_budget_seconds"
+assert_contains "budgeted scan logs yield" "run_yield" "$out"
+cursor_file="${TMP_DIR}/cursor-budget/stub_repo.cursor"
+if [[ -f "$cursor_file" ]] && [[ "$(jq -r '.next_pr' "$cursor_file")" == "101" ]]; then
+	echo "  PASS: budgeted scan writes next-pr cursor"
+	PASS=$((PASS + 1))
+else
+	echo "  FAIL: budgeted scan did not write expected cursor"
+	FAIL=$((FAIL + 1))
+fi
+install_ok_gh
+
 # -----------------------------------------------------------------------------
 # Report
 # -----------------------------------------------------------------------------

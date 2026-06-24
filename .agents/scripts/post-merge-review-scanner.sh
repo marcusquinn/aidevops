@@ -26,6 +26,11 @@
 #        SCANNER_MAX_COMMENTS (default 10) — cap per issue body,
 #        SCANNER_DIFFHUNK_LINES (default 12) — tail lines of diffHunk to show,
 #        SCANNER_REFRESH_LIMIT (default 200) — max issues per refresh run,
+#        SCANNER_BUDGET_SECONDS (default 540) — cooperative wall-clock budget
+#          for scan runs. When exceeded, write cursor state and exit 0 so the
+#          pulse stage records a healthy yielded run instead of a hard timeout.
+#        SCANNER_CURSOR_DIR (default ~/.aidevops/logs/post-merge-review-scanner)
+#          — directory for per-repo resume cursors and fresh run logs.
 #        SCANNER_NEEDS_REVIEW (default false) — opt-in escape hatch to apply
 #          needs-maintainer-review at creation time. Normally the worker
 #          itself triages (verify premise → implement / close-wontfix /
@@ -96,6 +101,8 @@ SCANNER_MAX_COMMENTS="${SCANNER_MAX_COMMENTS:-10}"
 SCANNER_DIFFHUNK_LINES="${SCANNER_DIFFHUNK_LINES:-12}"
 SCANNER_REFRESH_LIMIT="${SCANNER_REFRESH_LIMIT:-200}"
 SCANNER_NEEDS_REVIEW="${SCANNER_NEEDS_REVIEW:-false}"
+SCANNER_BUDGET_SECONDS="${SCANNER_BUDGET_SECONDS:-540}"
+SCANNER_CURSOR_DIR="${SCANNER_CURSOR_DIR:-${HOME}/.aidevops/logs/post-merge-review-scanner}"
 BOT_RE="coderabbitai|gemini-code-assist|claude-review|gpt-review"
 # ACT_RE is retained ONLY for top-level review summary filtering. For inline
 # comments the thread-resolution filter is the canonical signal — every
@@ -121,7 +128,77 @@ ACT_RE="should|consider|fix|change|update|refactor|missing|add"
 # repeatable; losing a genuine finding to an incidental phrase match is rare.
 NOOP_RE="(I have no feedback to provide|no feedback to provide|have no feedback|have no suggestions|no actionable feedback|no actionable suggestions|no further feedback|no issues to report|no suggestions to (add|provide|make)|no review comments|feedback was (already )?(provided|addressed|corrected)|addressed in commit|already (fixed|resolved|addressed)|has been (resolved|addressed|fixed))"
 
-log() { echo "[scanner] $*" >&2; }
+log() {
+	echo "[scanner] $*" >&2
+	return 0
+}
+
+scanner_run_log() {
+	local repo="$1"
+	mkdir -p "$SCANNER_CURSOR_DIR" 2>/dev/null || return 0
+	local safe_repo
+	safe_repo=$(printf '%s' "$repo" | tr '/: ' '___')
+	printf '%s/%s.log' "$SCANNER_CURSOR_DIR" "$safe_repo"
+	return 0
+}
+
+log_run_event() {
+	local repo="$1" event="$2" detail="${3:-}"
+	local ts line run_log
+	ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	line="[scanner] run_${event} repo=${repo} ts=${ts}${detail:+ ${detail}}"
+	printf '%s\n' "$line" >&2
+	run_log=$(scanner_run_log "$repo")
+	[[ -n "$run_log" ]] || return 0
+	printf '%s\n' "$line" >>"$run_log" 2>/dev/null || true
+	return 0
+}
+
+scanner_cursor_file() {
+	local repo="$1"
+	mkdir -p "$SCANNER_CURSOR_DIR" 2>/dev/null || return 0
+	local safe_repo
+	safe_repo=$(printf '%s' "$repo" | tr '/: ' '___')
+	printf '%s/%s.cursor' "$SCANNER_CURSOR_DIR" "$safe_repo"
+	return 0
+}
+
+scanner_budget_exhausted() {
+	local start_epoch="$1"
+	[[ "$SCANNER_BUDGET_SECONDS" =~ ^[0-9]+$ ]] || SCANNER_BUDGET_SECONDS=540
+	local now_epoch elapsed
+	now_epoch=$(date +%s)
+	elapsed=$((now_epoch - start_epoch))
+	[[ "$elapsed" -ge "$SCANNER_BUDGET_SECONDS" ]]
+	return $?
+}
+
+write_scan_cursor() {
+	local repo="$1" next_pr="$2" cursor_file
+	cursor_file=$(scanner_cursor_file "$repo")
+	[[ -n "$cursor_file" ]] || return 0
+	jq -n --arg repo "$repo" --arg next_pr "$next_pr" \
+		--arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		'{repo: $repo, next_pr: $next_pr, updated_at: $ts}' \
+		>"$cursor_file" 2>/dev/null || true
+	return 0
+}
+
+read_scan_cursor_next_pr() {
+	local repo="$1" cursor_file
+	cursor_file=$(scanner_cursor_file "$repo")
+	[[ -f "$cursor_file" ]] || return 0
+	jq -r '.next_pr // empty' "$cursor_file" 2>/dev/null || true
+	return 0
+}
+
+clear_scan_cursor() {
+	local repo="$1" cursor_file
+	cursor_file=$(scanner_cursor_file "$repo")
+	[[ -n "$cursor_file" ]] || return 0
+	rm -f "$cursor_file" 2>/dev/null || true
+	return 0
+}
 
 get_lookback_date() {
 	local days="$1"
@@ -654,6 +731,9 @@ create_issue() {
 
 do_scan() {
 	local repo="$1" dry_run="$2" since_date
+	local scan_start_epoch
+	scan_start_epoch=$(date +%s)
+	log_run_event "$repo" "start" "mode=scan dry_run=${dry_run} budget=${SCANNER_BUDGET_SECONDS}s"
 	since_date=$(get_lookback_date "$SCANNER_DAYS")
 	log "Scanning ${repo} since ${since_date} (${SCANNER_DAYS}d)"
 	local pr_numbers
@@ -661,11 +741,30 @@ do_scan() {
 		--repo "$repo" --limit "$SCANNER_PR_LIMIT" --json number --jq '.[].number' || echo "")
 	if [[ -z "$pr_numbers" ]]; then
 		log "No merged PRs found"
+		clear_scan_cursor "$repo"
+		log_run_event "$repo" "finish" "status=complete issues_created=0"
 		return 0
 	fi
-	local issues_created=0
+	local issues_created=0 cursor_next_pr="" resume_ready=1
+	cursor_next_pr=$(read_scan_cursor_next_pr "$repo")
+	if [[ -n "$cursor_next_pr" ]]; then
+		resume_ready=0
+		log_run_event "$repo" "resume" "next_pr=${cursor_next_pr}"
+	fi
 	while IFS= read -r pr; do
 		[[ -z "$pr" ]] && continue
+		if [[ "$resume_ready" -eq 0 ]]; then
+			if [[ "$pr" == "$cursor_next_pr" ]]; then
+				resume_ready=1
+			else
+				continue
+			fi
+		fi
+		if scanner_budget_exhausted "$scan_start_epoch"; then
+			write_scan_cursor "$repo" "$pr"
+			log_run_event "$repo" "yield" "next_pr=${pr} issues_created=${issues_created}"
+			return 0
+		fi
 		if [[ "$issues_created" -ge "$SCANNER_MAX_ISSUES" ]]; then
 			log "Max issues reached (${SCANNER_MAX_ISSUES})"
 			break
@@ -695,7 +794,9 @@ do_scan() {
 		create_issue "$repo" "$pr" "$pr_title" "$body" "$dry_run"
 		issues_created=$((issues_created + 1))
 	done <<<"$pr_numbers"
+	clear_scan_cursor "$repo"
 	log "Done. Issues created: ${issues_created}"
+	log_run_event "$repo" "finish" "status=complete issues_created=${issues_created}"
 	return 0
 }
 
