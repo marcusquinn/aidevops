@@ -924,7 +924,7 @@ _ch_stage_stats() {
 			deg=(n>0 && (t/n)>0.50) ? "DEGRADED" : "ok"
 			printf "%s\t%d\t%d\t%d\t%d\t%s\t%s\n", \
 				stage, n, t, d[stage,p50_i], d[stage,p95_i], \
-				(last_ok[stage]?last_ok[stage]:""), deg
+				(last_ok[stage]?last_ok[stage]:"-"), deg
 		}
 	}' "$timings_file" 2>/dev/null | sort -t"	" -k1,1
 	return 0
@@ -1033,6 +1033,7 @@ _ch_render_text() {
 		printf '%s\n' "$(printf '%.0s-' {1..80})"
 		while IFS=$'\t' read -r stage runs timeouts p50 p95 last_ok degraded; do
 			[[ -z "$stage" ]] && continue
+			[[ "$last_ok" == "-" ]] && last_ok=""
 			local ago marker=""
 			ago=$(_ch_ts_ago "$last_ok")
 			[[ "$degraded" == "$_CH_DEGRADED" ]] && marker=" [DEGRADED]"
@@ -1107,6 +1108,7 @@ _ch_render_json() {
 	local first=1
 	while IFS=$'\t' read -r stage runs timeouts p50 p95 last_ok degraded; do
 		[[ -z "$stage" ]] && continue
+		[[ "$last_ok" == "-" ]] && last_ok=""
 		local deg_bool="false"
 		[[ "$degraded" == "$_CH_DEGRADED" ]] && deg_bool="true"
 		[[ "$first" -eq 0 ]] && printf ',\n'
