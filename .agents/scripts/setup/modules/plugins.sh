@@ -264,6 +264,28 @@ generate_agent_skills() {
 	fi
 }
 
+remove_duplicate_opencode_skill_symlink() {
+	local name="$1"
+	local full_path="$2"
+	local opencode_target="$HOME/.config/opencode/skills/$name/SKILL.md"
+	local existing_target=""
+
+	if [[ ! -L "$opencode_target" ]]; then
+		return 0
+	fi
+
+	existing_target=$(readlink "$opencode_target" 2>/dev/null || true)
+	if [[ "$existing_target" != "$full_path" ]]; then
+		return 0
+	fi
+
+	# OpenCode loads Claude-compatible global skills as well as its own skill
+	# directory. Keeping the aidevops-managed copy only in ~/.claude/skills avoids
+	# duplicate-name warnings while preserving one shared authoritative location.
+	rm -f "$opencode_target" 2>/dev/null || true
+	return 0
+}
+
 create_skill_symlinks() {
 	print_info "Creating symlinks for imported skills..."
 
@@ -290,9 +312,10 @@ create_skill_symlinks() {
 		return 0
 	fi
 
-	# AI assistant skill directories
+	# AI assistant skill directories. OpenCode also reads ~/.claude/skills, so
+	# imported aidevops skills use that shared location instead of duplicating the
+	# same name under ~/.config/opencode/skills.
 	local skill_dirs=(
-		"$HOME/.config/opencode/skills"
 		"$HOME/.codex/skills"
 		"$HOME/.claude/skills"
 		"$HOME/.config/amp/tools"
@@ -317,6 +340,7 @@ create_skill_symlinks() {
 			print_warning "Skill file not found: $full_path"
 			continue
 		fi
+		remove_duplicate_opencode_skill_symlink "$name" "$full_path"
 
 		# Create symlinks in each AI assistant directory
 		for skill_dir in "${skill_dirs[@]}"; do
