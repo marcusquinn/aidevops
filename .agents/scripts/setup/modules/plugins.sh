@@ -267,8 +267,13 @@ generate_agent_skills() {
 remove_duplicate_opencode_skill_symlink() {
 	local name="$1"
 	local full_path="$2"
-	local opencode_target="$HOME/.config/opencode/skills/$name/SKILL.md"
+	local home_dir="${HOME:-}"
+	local opencode_target="$home_dir/.config/opencode/skills/$name/SKILL.md"
 	local existing_target=""
+
+	if [[ -z "$home_dir" ]]; then
+		return 0
+	fi
 
 	if [[ ! -L "$opencode_target" ]]; then
 		return 0
@@ -289,8 +294,14 @@ remove_duplicate_opencode_skill_symlink() {
 create_skill_symlinks() {
 	print_info "Creating symlinks for imported skills..."
 
-	local skill_sources="$HOME/.aidevops/agents/configs/skill-sources.json"
-	local agents_dir="$HOME/.aidevops/agents"
+	local home_dir="${HOME:-}"
+	local skill_sources="$home_dir/.aidevops/agents/configs/skill-sources.json"
+	local agents_dir="$home_dir/.aidevops/agents"
+
+	if [[ -z "$home_dir" ]]; then
+		print_warning "HOME is not set - cannot create skill symlinks"
+		return 0
+	fi
 
 	# Skip if no skill-sources.json or jq not available
 	if [[ ! -f "$skill_sources" ]]; then
@@ -316,9 +327,9 @@ create_skill_symlinks() {
 	# imported aidevops skills use that shared location instead of duplicating the
 	# same name under ~/.config/opencode/skills.
 	local skill_dirs=(
-		"$HOME/.codex/skills"
-		"$HOME/.claude/skills"
-		"$HOME/.config/amp/tools"
+		"$home_dir/.codex/skills"
+		"$home_dir/.claude/skills"
+		"$home_dir/.config/amp/tools"
 	)
 
 	# Create skill directories if they don't exist
