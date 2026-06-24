@@ -10,7 +10,11 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)" || exit 1
 TESTS_RUN=0
 TESTS_FAILED=0
 TEST_TMP_DIR=""
-OLD_HOME="${HOME}"
+OLD_HOME="${HOME:-}"
+OLD_HOME_WAS_SET=0
+if [[ -n "${HOME+x}" ]]; then
+	OLD_HOME_WAS_SET=1
+fi
 
 print_info() {
 	return 0
@@ -44,7 +48,12 @@ print_result() {
 }
 
 cleanup() {
-	HOME="$OLD_HOME"
+	if [[ "$OLD_HOME_WAS_SET" -eq 1 ]]; then
+		HOME="$OLD_HOME"
+		export HOME
+	else
+		unset HOME
+	fi
 	if [[ -n "$TEST_TMP_DIR" && -d "$TEST_TMP_DIR" ]]; then
 		rm -rf "$TEST_TMP_DIR"
 	fi
@@ -111,6 +120,24 @@ test_imported_skills_use_shared_claude_path_for_opencode() {
 	return 0
 }
 
+test_create_skill_symlinks_handles_unset_home() {
+	local fixture_home="$HOME"
+	local rc=0
+
+	unset HOME
+	create_skill_symlinks >/dev/null || rc=$?
+	HOME="$fixture_home"
+	export HOME
+
+	if [[ "$rc" -ne 0 ]]; then
+		print_result "create_skill_symlinks tolerates unset HOME" 1 "unexpected rc $rc"
+		return 0
+	fi
+
+	print_result "create_skill_symlinks tolerates unset HOME" 0
+	return 0
+}
+
 main() {
 	trap cleanup EXIT
 	setup_fixture
@@ -118,6 +145,7 @@ main() {
 	source "$REPO_ROOT/.agents/scripts/setup/modules/plugins.sh"
 
 	test_imported_skills_use_shared_claude_path_for_opencode
+	test_create_skill_symlinks_handles_unset_home
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then
