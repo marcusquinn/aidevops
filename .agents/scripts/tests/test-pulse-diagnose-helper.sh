@@ -552,13 +552,14 @@ assert_contains "api-budget shows log hit miss" "gh_pr_view log hit/miss refs: 1
 assert_contains "api-budget shows exact cache decisions" "gh_pr_view exact cache:       hit=1 miss=1 stale=1 bypass=1 store=1 invalid_json=1 bypass_disabled=1" "$output"
 assert_contains "api-budget shows REST cache decisions" "_rest_pr_view repo#PR cache:  hit=1 miss=1 stale=0 bypass=0 store=1 invalid_json=1 bypass_disabled=1" "$output"
 assert_contains "api-budget shows cache key cardinality" "Cache key cardinality:" "$output"
-assert_contains "api-budget shows mutation bypass attribution" "Mutation bypass attribution:  bypass_disabled_total=2 expected_mutation_sensitive_lower_bound=1 unexplained_lower_bound=1 attribution=limited_by_log_schema" "$output"
+assert_contains "api-budget shows mutation bypass attribution" "Mutation bypass attribution:  bypass_disabled_total=2 exact_output_disabled=1 rest_repo_pr_disabled=1 mutation_sensitive_confirmed_lower_bound=1 mutation_sensitive_inferred_from_disable=1 unattributed_lower_bound=0 attribution=cache_disable_env_records" "$output"
 assert_contains "api-budget shows API calls by caller" "API calls by caller:" "$output"
+assert_contains "api-budget explains shared cache dir state" "PR view shared cache dir:     shared=no present=unknown reason=diagnostic_env_unset" "$output"
 assert_contains "api-budget shows secondary cooldown state" "Secondary cooldown state:     active=yes" "$output"
 assert_contains "api-budget shows secondary cooldown class" "body=secondary-rate-limit" "$output"
 assert_contains "api-budget shows systemd cadence" "Pulse systemd cadence:        source=systemd_user_timer present=yes configured_interval=180s on_active=10s" "$output"
 assert_contains "api-budget shows log cadence" "Pulse log cadence:            cycles=4 lock_skips=0 cache_enabled_cycles=1" "$output"
-assert_contains "api-budget shows cadence risk" "Cadence/API risk:             risk=watch reason=fast_timer_detected_without_lock_skip_evidence" "$output"
+assert_contains "api-budget shows cadence risk recommendation" "Cadence/API risk:             risk=watch reason=fast_timer_detected_without_lock_skip_evidence recommendation=verify_lock_skip_logs_and_shared_cache_then_raise_pulse_timer_to_180s_plus_if_absent" "$output"
 assert_contains "api-budget warns before cache broadening" "Do not broaden gh_pr_view cache semantics" "$output"
 assert_contains "api-budget documents unique PR limitation" "current gh-api rows do not carry repo#PR identifiers" "$output"
 assert_contains "api-budget includes sanitized summary template" "Comment-ready summary template:" "$output"
@@ -583,10 +584,14 @@ if command -v jq >/dev/null 2>&1; then
 	assert_eq "JSON api-budget caller totals" "1" "$json_callers_total"
 	json_rest_cache=$(echo "$output" | jq -r '.rest_pr_view_repo_cache' 2>/dev/null || echo "")
 	assert_contains "JSON api-budget REST cache counts" "miss=1" "$json_rest_cache"
+	json_cache_dir=$(echo "$output" | jq -r '.pr_view_shared_cache_dir' 2>/dev/null || echo "")
+	assert_contains "JSON api-budget shared cache dir explains state" "reason=diagnostic_env_unset" "$json_cache_dir"
+	json_bypass=$(echo "$output" | jq -r '.mutation_bypass_attribution' 2>/dev/null || echo "")
+	assert_contains "JSON api-budget bypass attribution has zero unattributed" "unattributed_lower_bound=0" "$json_bypass"
 	json_cadence=$(echo "$output" | jq -r '.pulse_systemd_cadence' 2>/dev/null || echo "")
 	assert_contains "JSON api-budget cadence" "on_active=10s" "$json_cadence"
 	json_risk=$(echo "$output" | jq -r '.cadence_api_risk' 2>/dev/null || echo "")
-	assert_contains "JSON api-budget cadence risk" "risk=watch" "$json_risk"
+	assert_contains "JSON api-budget cadence risk recommendation" "recommendation=verify_lock_skip_logs_and_shared_cache_then_raise_pulse_timer_to_180s_plus_if_absent" "$json_risk"
 	json_cooldown=$(echo "$output" | jq -r '.secondary_cooldown_state' 2>/dev/null || echo "")
 	assert_contains "JSON api-budget secondary cooldown" "active=yes" "$json_cooldown"
 fi
