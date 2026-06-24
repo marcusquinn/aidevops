@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.22.1] - 2026-06-24
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- fix: stop macOS GUI services on termination (#25362)
+
+### Fixed
+
+- recover local-only worker branches (#25382)
+- match synchronization acknowledgement order (#25367)
+
 ## [3.22.0] - 2026-06-23
 
 ### Added
