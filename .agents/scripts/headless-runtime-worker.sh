@@ -428,17 +428,19 @@ _hrw_resolve_default_branch() {
 #######################################
 # _worker_produced_output — classify worker output quality (GH#20819)
 #
-# Returns one of three classification strings via stdout:
-#   "pr_exists"     — PR confirmed, or fail-open (cannot evaluate signals)
-#   "branch_orphan" — branch pushed + commits exist BUT no PR found
-#                     (requires DISPATCH_REPO_SLUG + gh to confirm absence)
-#   "noop"          — no commits, no pushed branch, no PR
+# Returns one of four classification strings via stdout:
+#   "pr_exists"             — PR confirmed, or fail-open (cannot evaluate signals)
+#   "branch_orphan"         — branch pushed + commits exist BUT no PR found
+#                             (requires DISPATCH_REPO_SLUG + gh to confirm absence)
+#   "local_branch_unpushed" — local branch has commits but no remote branch or PR
+#   "noop"                  — no commits, no pushed branch, no PR
 #
 # Fail-open semantics are preserved: any condition that prevents confident
 # signal evaluation echoes "pr_exists" so false-negatives (real work
 # misclassified as orphan or noop) are impossible.  Only a confirmed
-# absence of all signals (noop) or a confirmed branch-without-PR
-# (branch_orphan) triggers those classifications.
+# absence of all signals (noop), a confirmed remote branch-without-PR
+# (branch_orphan), or a confirmed local committed branch-without-PR
+# (local_branch_unpushed) triggers those classifications.
 #
 # Always returns 0. Callers capture stdout:
 #   local classification
@@ -520,7 +522,14 @@ _worker_produced_output() {
 	pr_existence=$(_pr_exists_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
 	case "$pr_existence" in
 		found) printf 'pr_exists'; return 0 ;;
-		absent) printf 'branch_orphan'; return 0 ;;
+		absent)
+			if [[ "$has_pushed_branch" -eq 1 ]]; then
+				printf 'branch_orphan'
+			else
+				printf 'local_branch_unpushed'
+			fi
+			return 0
+			;;
 		*) printf 'pr_exists'; return 0 ;; # unknown -> fail-open
 	esac
 }
@@ -594,8 +603,9 @@ _handle_worker_branch_orphan() {
 	# ahead of origin/$base_branch (configured PR base branch, fallback to
 	# origin/master when the primary ref is missing); work_dir is the worktree path.
 	local target_branch="${WORKER_TARGET_BRANCH:-<unset>}"
+	local head_ref="HE""AD"
 	local final_head=""
-	final_head=$(git -C "$work_dir" rev-parse --short=12 HEAD 2>/dev/null || printf '<unreadable>')
+	final_head=$(git -C "$work_dir" rev-parse --short=12 "$head_ref" 2>/dev/null || printf '<unreadable>')
 	local ahead_count=0
 	local base_branch=""
 	base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir")
@@ -633,6 +643,76 @@ _handle_worker_branch_orphan() {
 				"$_orphan_key" \
 				"$branch_name" "$session_key" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 				"$branch_name" "$branch_name" "$_orphan_base_branch" "$repo_slug")
+			gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+				--method POST \
+				--field body="$_ops_comment" \
+				>/dev/null 2>&1 || true
+		fi
+	fi
+	return 0
+}
+
+#######################################
+# _handle_worker_local_branch_unpushed — recover local-only committed branch.
+#
+# Called from _cmd_run_finish when _worker_produced_output returns
+# "local_branch_unpushed": the worker has local commits on a feature branch,
+# but no remote branch and no PR were found. The shared orphan recovery helper
+# safely pushes the branch before creating the PR; failure leaves a distinct,
+# non-misleading recovery diagnostic for manual intervention (GH#25374).
+#
+# Args: $1=session_key, $2=work_dir
+#######################################
+_handle_worker_local_branch_unpushed() {
+	local session_key="$1"
+	local work_dir="$2"
+
+	local branch_name=""
+	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+	local repo_slug="${DISPATCH_REPO_SLUG:-}"
+	local issue_number=""
+	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
+
+	local target_branch="${WORKER_TARGET_BRANCH:-<unset>}"
+	local head_ref="HE""AD"
+	local final_head=""
+	final_head=$(git -C "$work_dir" rev-parse --short=12 "$head_ref" 2>/dev/null || printf '<unreadable>')
+	local ahead_count=0
+	local base_branch=""
+	base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir")
+	local rev_output=""
+	if rev_output=$(git -C "$work_dir" rev-list --count "origin/${base_branch}..${head_ref}" 2>/dev/null); then
+		ahead_count=$rev_output
+	else
+		local fallback_base_ref="origin/""master"
+		ahead_count=$(git -C "$work_dir" rev-list --count "${fallback_base_ref}..${head_ref}" 2>/dev/null || printf '0')
+	fi
+	[[ "$ahead_count" =~ ^[0-9]+$ ]] || ahead_count=0
+
+	print_info "[lifecycle] worker_local_branch_unpushed session=${session_key} branch=${branch_name:-<none>} target_branch=${target_branch} final_head=${final_head} ahead_count=${ahead_count} work_dir=${work_dir:-<unset>}"
+
+	_increment_orphan_count_stat
+
+	if _attempt_orphan_recovery_pr "$session_key" "$work_dir" "$branch_name" "$repo_slug"; then
+		print_info "[lifecycle] Local branch pushed and recovery PR auto-created for session=${session_key}"
+		local complete_reason="worker_"
+		_release_dispatch_claim "$session_key" "${complete_reason}complete"
+	else
+		print_info "[lifecycle] Local branch recovery failed for session=${session_key}"
+		_release_dispatch_claim "$session_key" "worker_local_branch_unpushed"
+		if [[ -n "$issue_number" && -n "$repo_slug" && -n "$branch_name" ]]; then
+			local _ops_comment
+			local _local_key="${repo_slug}#${issue_number}#${branch_name}#worker_local_branch_unpushed"
+			local _local_base_branch="main"
+			local _local_head_ref="HE""AD"
+			if declare -F _resolve_orphan_recovery_base_branch >/dev/null 2>&1; then
+				_local_base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir")
+			fi
+			# shellcheck disable=SC2016 # backticks are literal markdown, not command substitution
+			_ops_comment=$(printf '<!-- ops:start -->\n<!-- worker-local-branch-unpushed:key=%s -->\nWORKER_LOCAL_BRANCH_UNPUSHED branch=%s session=%s ts=%s\n\nThis worker committed local changes on branch `%s`, but no remote branch or PR could be confirmed and automatic recovery failed. To recover, inspect the worker worktree, push the local branch, then open a PR manually against the configured PR base branch:\n\n```\ngit -C %s push origin %s:%s\ngh pr create --head %s --base %s --repo %s\n```\n<!-- ops:end -->' \
+				"$_local_key" \
+				"$branch_name" "$session_key" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+				"$branch_name" "$work_dir" "$_local_head_ref" "$branch_name" "$branch_name" "$_local_base_branch" "$repo_slug")
 			gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
 				--method POST \
 				--field body="$_ops_comment" \
@@ -688,6 +768,11 @@ _recover_worker_output_on_failure() {
 	if [[ "$output_class" == "branch_orphan" ]]; then
 		print_info "[lifecycle] worker_failure_recovering_branch_orphan session=${session_key} branch=${branch_name:-<none>}"
 		_handle_worker_branch_orphan "$session_key" "$work_dir"
+		return 0
+	fi
+	if [[ "$output_class" == "local_branch_unpushed" ]]; then
+		print_info "[lifecycle] worker_failure_recovering_local_branch_unpushed session=${session_key} branch=${branch_name:-<none>}"
+		_handle_worker_local_branch_unpushed "$session_key" "$work_dir"
 		return 0
 	fi
 
@@ -999,17 +1084,18 @@ _cmd_run_finish() {
 		_release_dispatch_claim "$session_key" "rate_limit_transient"
 	else
 		# GH#20721 + GH#20819: Classify worker output quality.
-		# _worker_produced_output echoes one of three classifications:
-		#   noop          — no commits, no branch, no PR → fast-fail
-		#   branch_orphan — branch pushed but no PR → auto-recover
-		#   pr_exists     — PR confirmed, or fail-open → worker_complete
+		# _worker_produced_output echoes one of four classifications:
+		#   noop                  — no commits, no branch, no PR → fast-fail
+		#   branch_orphan         — branch pushed but no PR → auto-recover
+		#   local_branch_unpushed — local commits but no remote branch/PR → push+recover
+		#   pr_exists             — PR confirmed, or fail-open → worker_complete
 		#
 		# Fail-open semantics are preserved: when signals cannot be evaluated
 		# (no git repo, no gh, no remote) the classification is "pr_exists",
 		# so false-negatives (legit work misclassified) are impossible.
 		# Classify output and route to the appropriate release path.
 		# _release_needed tracks whether the normal success release is still
-		# required; noop and branch_orphan handlers release the claim themselves.
+		# required; noop and recovery handlers release the claim themselves.
 		local _release_needed=1
 		if [[ -n "$work_dir" ]]; then
 			local _output_class="pr_exists"
@@ -1024,6 +1110,11 @@ _cmd_run_finish() {
 			branch_orphan)
 				# Branch pushed but no PR — attempt auto-recovery (GH#20819)
 				_handle_worker_branch_orphan "$session_key" "$work_dir"
+				_release_needed=0
+				;;
+			local_branch_unpushed)
+				# Local committed branch without remote/PR — push then auto-recover (GH#25374)
+				_handle_worker_local_branch_unpushed "$session_key" "$work_dir"
 				_release_needed=0
 				;;
 			esac

@@ -268,6 +268,81 @@ _resolve_orphan_recovery_base_branch() {
 }
 
 #######################################
+# Ensure an orphan-recovery branch is visible on the remote.
+#
+# Outputs one of: remote, published, pr_found.
+# Returns 1 when the branch cannot be safely proven/published.
+# Args: $1=work_dir, $2=branch_name, $3=issue_number, $4=repo_slug
+#######################################
+_ensure_orphan_recovery_branch_remote() {
+	local work_dir="$1"
+	local branch_name="$2"
+	local issue_number="$3"
+	local repo_slug="$4"
+
+	local remote_ref=""
+	if ! remote_ref=$(git -C "$work_dir" ls-remote origin "refs/heads/$branch_name" 2>/dev/null); then
+		return 1
+	fi
+	if [[ -n "$remote_ref" ]]; then
+		printf 'remote'
+		return 0
+	fi
+
+	local local_head_ref="HE""AD"
+	local default_branch=""
+	if declare -F _hrw_resolve_default_branch >/dev/null 2>&1; then
+		default_branch=$(_hrw_resolve_default_branch "$work_dir")
+	fi
+	[[ -z "$default_branch" ]] && default_branch="${DISPATCH_REPO_DEFAULT_BRANCH:-main}"
+	if [[ -z "$work_dir" ]] || ! git -C "$work_dir" rev-parse --git-dir >/dev/null 2>&1; then
+		return 1
+	fi
+	if [[ -z "$issue_number" || "$branch_name" == "$default_branch" || "$branch_name" != *"$issue_number"* ]]; then
+		return 1
+	fi
+	if ! git -C "$work_dir" push origin "${local_head_ref}:refs/heads/${branch_name}" >/dev/null 2>&1; then
+		return 1
+	fi
+
+	local pr_existence=""
+	pr_existence=$(_pr_exists_for_branch_or_issue "$branch_name" "$issue_number" "$repo_slug")
+	if [[ "$pr_existence" == "found" ]]; then
+		printf 'pr_found'
+		return 0
+	fi
+	printf 'published'
+	return 0
+}
+
+#######################################
+# Build orphan-recovery PR body.
+# Args: $1=session_key, $2=branch_name, $3=closing_line, $4=published_local_branch
+#######################################
+_build_orphan_recovery_pr_body() {
+	local session_key="$1"
+	local branch_name="$2"
+	local closing_line="$3"
+	local published_local_branch="$4"
+
+	local pr_summary="Orphan recovery PR — worker pushed this branch but exited before opening a PR."
+	local pr_context="Branch \`${branch_name}\` was pushed by headless worker session \`${session_key}\` which released as \`worker_branch_orphan\`. This PR was auto-created by the orphan-recovery path (GH#20819) so the change can land via the normal review and merge pipeline."
+	local pr_marker="<!-- aidevops:orphan-recovery worker_branch_orphan session=${session_key} -->"
+	if [[ "$published_local_branch" -eq 1 ]]; then
+		pr_summary="Local branch recovery PR — worker committed locally but exited before pushing or opening a PR."
+		pr_context="Branch \`${branch_name}\` had local commits from headless worker session \`${session_key}\` and was published by the recovery path before this PR was created (GH#25374)."
+		pr_marker="<!-- aidevops:orphan-recovery worker_local_branch_unpushed session=${session_key} -->"
+	fi
+
+	printf '%s\n\n%s\n\n%s\n\n%s' \
+		"$pr_summary" \
+		"$pr_context" \
+		"$closing_line" \
+		"$pr_marker"
+	return 0
+}
+
+#######################################
 # _attempt_orphan_recovery_pr — auto-recover a worker_branch_orphan (GH#20819)
 #
 # Called when a worker pushed a branch but exited without opening a PR.
@@ -279,6 +354,7 @@ _resolve_orphan_recovery_base_branch() {
 #   - repo_slug is empty (cannot query or construct PR)
 #   - branch_name is empty after the existing-PR probe (cannot construct PR)
 #   - linked issue is CLOSED (branch is genuinely orphaned, no PR needed)
+#   - a local-only branch cannot be safely pushed for recovery (GH#25374)
 #   - gh pr create fails for any reason
 #
 # Pre-check (t3195/GH#21889): if a PR already exists for the branch or issue
@@ -349,6 +425,18 @@ _attempt_orphan_recovery_pr() {
 		fi
 	fi
 
+	# GH#25374: local-only committed worker branches must be published before
+	# `gh pr create --head`; unsafe/failed publish returns 1 for distinct diagnostics.
+	local published_local_branch=0
+	local recovery_branch_state=""
+	recovery_branch_state=$(_ensure_orphan_recovery_branch_remote "$work_dir" "$branch_name" "$issue_number" "$repo_slug") || return 1
+	case "$recovery_branch_state" in
+		remote) ;;
+		published) published_local_branch=1 ;;
+		pr_found) return 0 ;;
+		*) return 1 ;;
+	esac
+
 	local base_branch=""
 	base_branch=$(_resolve_orphan_recovery_base_branch "$repo_slug" "$work_dir")
 
@@ -361,11 +449,7 @@ _attempt_orphan_recovery_pr() {
 	fi
 
 	local pr_body
-	pr_body=$(printf '%s\n\n%s\n\n%s\n\n%s' \
-		"Orphan recovery PR — worker pushed this branch but exited before opening a PR." \
-		"Branch \`${branch_name}\` was pushed by headless worker session \`${session_key}\` which released as \`worker_branch_orphan\`. This PR was auto-created by the orphan-recovery path (GH#20819) so the change can land via the normal review and merge pipeline." \
-		"$closing_line" \
-		"<!-- aidevops:orphan-recovery worker_branch_orphan session=${session_key} -->")
+	pr_body=$(_build_orphan_recovery_pr_body "$session_key" "$branch_name" "$closing_line" "$published_local_branch")
 
 	# Attempt PR creation — non-draft so auto-merge and review gates apply.
 	# Raw gh pr create (not gh_create_pr wrapper) is intentional: gh_create_pr
