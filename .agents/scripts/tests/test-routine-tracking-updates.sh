@@ -45,19 +45,13 @@ setup() {
 }
 
 load_scheduler_helpers() {
-	print_info() { return 0; }
-	print_warning() { return 0; }
-	print_error() { return 0; }
-	_resolve_log_dir() { printf '%s\n' "$TEST_DIR/logs"; return 0; }
-	_install_scheduler_linux() { return 0; }
-	_uninstall_scheduler() { return 0; }
-	_resolve_modern_bash() { printf '%s\n' "/bin/bash"; return 0; }
-	_xml_escape() { local value="$1"; printf '%s' "$value"; return 0; }
-	aidevops_launchd_sanitized_path() { printf '%s\n' "/usr/bin:/bin"; return 0; }
-	_launchd_install_if_changed() { return 0; }
-	_launchd_has_agent() { return 1; }
+	if ! restore_scheduler_helper_mocks; then
+		return 1
+	fi
 	# shellcheck source=/dev/null
-	source "$SCHEDULERS_PLATFORM_SH"
+	if ! source "$SCHEDULERS_PLATFORM_SH"; then
+		return 1
+	fi
 	return 0
 }
 
