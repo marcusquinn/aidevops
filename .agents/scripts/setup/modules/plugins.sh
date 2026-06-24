@@ -268,12 +268,13 @@ remove_duplicate_opencode_skill_symlink() {
 	local name="$1"
 	local full_path="$2"
 	local home_dir="${HOME:-}"
-	local opencode_target="$home_dir/.config/opencode/skills/$name/SKILL.md"
-	local existing_target=""
 
 	if [[ -z "$home_dir" ]]; then
 		return 0
 	fi
+
+	local opencode_target="$home_dir/.config/opencode/skills/$name/SKILL.md"
+	local existing_target=""
 
 	if [[ ! -L "$opencode_target" ]]; then
 		return 0
@@ -295,13 +296,14 @@ create_skill_symlinks() {
 	print_info "Creating symlinks for imported skills..."
 
 	local home_dir="${HOME:-}"
-	local skill_sources="$home_dir/.aidevops/agents/configs/skill-sources.json"
-	local agents_dir="$home_dir/.aidevops/agents"
 
 	if [[ -z "$home_dir" ]]; then
 		print_warning "HOME is not set - cannot create skill symlinks"
 		return 0
 	fi
+
+	local skill_sources="$home_dir/.aidevops/agents/configs/skill-sources.json"
+	local agents_dir="$home_dir/.aidevops/agents"
 
 	# Skip if no skill-sources.json or jq not available
 	if [[ ! -f "$skill_sources" ]]; then
