@@ -839,6 +839,25 @@ _handle_run_result() {
 			print_warning "$selected_model activity watchdog timeout (no activity) — classifying as rate_limit for rotation"
 		fi
 	else
+		local local_kill_reason="${_metric_kill_reason:-}"
+		local natural_kill_reason=natural
+		local unknown_kill_reason=unknown
+		if [[ "$role" == "worker" && "$session_key" == issue-* ]] && \
+			[[ "$exit_code" -eq 137 || "$exit_code" -eq 143 ]] && \
+			[[ -n "$local_kill_reason" && "$local_kill_reason" != "$natural_kill_reason" && "$local_kill_reason" != "$unknown_kill_reason" ]]; then
+			_run_result_label="local_kill"
+			_run_failure_reason="$local_kill_reason"
+			if [[ "$exit_code" -eq 143 ]]; then
+				_run_runtime_error_type="sigterm"
+			else
+				_run_runtime_error_type="sigkill"
+			fi
+			_run_classification_source="worker_kill_reason_sentinel"
+			_run_classification_pattern="$local_kill_reason"
+			rm -f "$output_file"
+			print_warning "$selected_model worker was terminated by local kill source ${local_kill_reason} — not attempting provider/runtime continuation"
+			return 83
+		fi
 		if [[ "$exit_code" -eq 137 && "$activity_detected" == "1" ]]; then
 			local discovered_session_for_signal_continue
 			discovered_session_for_signal_continue=$(extract_session_id_from_output "$output_file")
@@ -1095,6 +1114,10 @@ _derive_worker_failure_evidence() {
 	watchdog_stall_continue | service_interruption_continue | service_interruption_exhausted | signal_killed_continue)
 		launch_failure_cause="mid_session_interruption"
 		next_action="resume_existing_session"
+		;;
+	local_kill)
+		launch_failure_cause="local_kill"
+		next_action="inspect_local_kill_source"
 		;;
 	signal_terminated_continue)
 		launch_failure_cause="signal_terminated"

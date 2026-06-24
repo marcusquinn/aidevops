@@ -111,6 +111,8 @@ T_FUTURE_SENTINEL_MS=$((T_FUTURE_SENTINEL * 1000))
 #   issue-11         — service_interruption_continue heartbeat, not terminal.
 #   issue-12         — service_interruption_exhausted terminal failure after the
 #                      dedicated continuation budget is spent.
+#   issue-14         — local SIGTERM/kill marker; must group separately from
+#                      provider/runtime stream interruptions.
 {
 	printf '{"ts":%d,"role":"worker","session_key":"issue-1","result":"success","exit_code":0,"duration_ms":1000,"load_1min":2.0,"load_per_cpu":0.25}\n' "$T_5MIN_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-2","result":"success","exit_code":0}\n' "$T_2H_AGO"
@@ -124,6 +126,7 @@ T_FUTURE_SENTINEL_MS=$((T_FUTURE_SENTINEL * 1000))
 	printf '{"role":"worker","session_key":"issue-10","result":"success","exit_code":0}\n'
 	printf '{"ts":%d,"role":"worker","session_key":"issue-11","model":"openai/gpt-5.5","provider":"openai","result":"service_interruption_continue","failure_reason":"provider_error","provider_error_type":"server_error","provider_status":"503","exit_code":81}\n' "$T_2H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-12","model":"openai/gpt-5.5","provider":"openai","result":"service_interruption_exhausted","failure_reason":"local_error","runtime_error_type":"sigterm","launch_failure_cause":"local_runtime_error","next_action":"inspect_failure_excerpt_and_retry_if_transient","exit_code":81}\n' "$T_2H_AGO"
+	printf '{"ts":%d,"role":"worker","session_key":"issue-14","model":"openai/gpt-5.5","provider":"openai","result":"local_kill","failure_reason":"no_output_stall","runtime_error_type":"sigterm","classification_source":"worker_kill_reason_sentinel","classification_pattern":"no_output_stall","launch_failure_cause":"local_kill","kill_reason":"no_output_stall","next_action":"inspect_local_kill_source","exit_code":83}\n' "$T_2H_AGO"
 } >"$METRICS"
 
 cat >"$OAUTH_POOL" <<EOF
@@ -208,10 +211,10 @@ else
 	echo "  output: $(printf '%q' "${JSON:0:300}")"
 fi
 
-# Assert exact counts. 24h window: events 1-6 + 8 + 11 + 12, excludes 7 (25h ago).
+# Assert exact counts. 24h window: events 1-6 + 8 + 11 + 12 + 14, excludes 7 (25h ago).
 # issue-8 (watchdog_stall_continue with exit_code=124) tests the t3215
 # regression case — must count as wc, not of, despite non-zero exit.
-assert_eq "2c: total = 9" "9" "$(printf '%s' "$JSON" | jq -r '.metrics.total')"
+assert_eq "2c: total = 10" "10" "$(printf '%s' "$JSON" | jq -r '.metrics.total')"
 assert_eq "2d: succeeded = 2" "2" "$(printf '%s' "$JSON" | jq -r '.metrics.succeeded')"
 assert_eq "2e: watchdog_killed = 1" "1" "$(printf '%s' "$JSON" | jq -r '.metrics.watchdog_killed')"
 assert_eq "2f: watchdog_continued = 2 (incl. nonzero-exit heartbeat)" "2" \
@@ -219,11 +222,11 @@ assert_eq "2f: watchdog_continued = 2 (incl. nonzero-exit heartbeat)" "2" \
 assert_eq "2f2: service_interrupted = 1 (heartbeat)" "1" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.service_interrupted')"
 assert_eq "2g: rate_limited = 1" "1" "$(printf '%s' "$JSON" | jq -r '.metrics.rate_limited')"
-assert_eq "2h: other_failure = 2 (heartbeat excluded, exhausted counted)" "2" \
+assert_eq "2h: other_failure = 3 (heartbeat excluded, exhausted/local kill counted)" "3" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.other_failure')"
 assert_eq "2h2: rich result_counts includes success bucket" "2" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.result_counts.success')"
-assert_eq "2h3: timing summary includes samples" "9" \
+assert_eq "2h3: timing summary includes samples" "10" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.timing_ms.samples')"
 assert_eq "2h4: recent example carries load context" "2.0" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.recent_examples[] | select(.session_key == "issue-1") | .load_1min')"
@@ -249,6 +252,10 @@ assert_eq "2h13: diagnostic focus counts local runtime errors" "1" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.diagnostic_focus.local_runtime_error')"
 assert_eq "2h14: failure families carry next action for stall kills" "redispatch_worker" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_families[] | select(.launch_failure_cause == "stall_hard_killed") | .next_action')"
+assert_eq "2h15: diagnostic focus groups local kills separately" "2" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.diagnostic_focus.local_kill')"
+assert_eq "2h16: failure families expose local kill next action" "inspect_local_kill_source" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_families[] | select(.launch_failure_cause == "local_kill") | .next_action')"
 
 # Pulse-stats counters (24h window: 25h-ago timestamp must be excluded).
 assert_eq "2i: circuit_broken = 2" "2" \
@@ -337,7 +344,7 @@ assert_eq "6b: openai available accounts exclude auth-error/rate-limited" "2" \
 	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.account_pool[] | select(.provider == "openai") | .available')"
 assert_eq "6c: openai capacity_slots uses redacted multiplier" "48" \
 	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.account_pool[] | select(.provider == "openai") | .capacity_slots')"
-assert_eq "6c2: nonzero-exit success counts as other provider failure" "4" \
+assert_eq "6c2: nonzero-exit success counts as other provider failure" "5" \
 	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.provider_model_usage[] | select(.provider == "openai" and .model == "openai/gpt-5.5") | .other_failure')"
 
 JSONC_DEFAULTS="$FIXTURE_DIR/aidevops.defaults.jsonc"

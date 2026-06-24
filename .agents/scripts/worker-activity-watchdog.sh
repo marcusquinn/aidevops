@@ -431,6 +431,7 @@ _kill_worker() {
 	# subshell may overwrite exit_code_file with its own exit code
 	# (race condition). The sentinel is authoritative.
 	touch "${EXIT_CODE_FILE}.watchdog_killed"
+	printf '%s\n' "no_output_stall" >"${EXIT_CODE_FILE}.kill_reason" 2>/dev/null || true
 
 	# t2956 / Issue #21231: Hard-kill sentinel — distinguishes proactive
 	# elapsed-time kills from passive no-output stall kills. The helper
@@ -441,6 +442,7 @@ _kill_worker() {
 	# sentinel, exit 78 still fires (legacy continuation behaviour).
 	if [[ "$kill_kind" == "stall_killed" ]]; then
 		touch "${EXIT_CODE_FILE}.watchdog_stall_killed"
+		printf '%s\n' "hard_kill_stall" >"${EXIT_CODE_FILE}.kill_reason" 2>/dev/null || true
 	fi
 
 	# Kill child processes first (pipeline members: opencode, tee),

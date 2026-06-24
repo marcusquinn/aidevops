@@ -1039,12 +1039,14 @@ _watchdog_kill() {
 	# exit_code_file with its own exit code (race condition). The marker
 	# file survives because only the watchdog writes to it.
 	touch "${exit_code_file}.watchdog_killed"
+	printf '%s\n' "no_output_stall" >"${exit_code_file}.kill_reason" 2>/dev/null || true
 	# t2956 / Issue #21231: Hard-kill sentinel for proactive elapsed-time
 	# kills. Helper reads this and returns 79 instead of 78 — no continuation,
 	# slot freed for re-dispatch. The .watchdog_killed sentinel is still
 	# written above so existing exit-code-124 detection paths keep working.
 	if [[ "$kill_kind" == "stall_killed" ]]; then
 		touch "${exit_code_file}.watchdog_stall_killed"
+		printf '%s\n' "hard_kill_stall" >"${exit_code_file}.kill_reason" 2>/dev/null || true
 	fi
 	# Kill child processes first (pipeline members: opencode, tee), then
 	# the subshell itself. pkill -P walks the process tree by PPID.

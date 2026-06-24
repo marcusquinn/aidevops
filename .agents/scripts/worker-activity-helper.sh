@@ -47,6 +47,7 @@ WAH_OAUTH_POOL_FILE="${WAH_OAUTH_POOL_FILE:-${HOME}/.aidevops/oauth-pool.json}"
 WAH_PR_CACHE_TTL="${WAH_PR_CACHE_TTL:-60}" # seconds
 WAH_SERVICE_INTERRUPTION_RESULT="service_interruption_continue"
 WAH_RESULT_WATCHDOG_STALL_KILLED="watchdog_stall_killed"
+WAH_RESULT_LOCAL_KILL="local_kill"
 
 #######################################
 # Convert short window spec to seconds. Caller owns the cutoff math.
@@ -145,7 +146,7 @@ _wah_metric_details_json() {
 	fi
 	now_epoch="${2:-$(date +%s)}"
 
-	jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg watchdog_killed_result "$WAH_RESULT_WATCHDOG_STALL_KILLED" '
+	jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg watchdog_killed_result "$WAH_RESULT_WATCHDOG_STALL_KILLED" --arg local_kill_result "$WAH_RESULT_LOCAL_KILL" '
 		[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $w
 		| ($w | map(.duration_ms // 0)) as $durations
 		| ($w | map(select((.result // "") != "success" or (.exit_code // 1) != 0))) as $failures
@@ -153,7 +154,8 @@ _wah_metric_details_json() {
 			result_counts: (reduce $w[] as $row ({}; .[$row.result // "unknown"] += 1)),
 			diagnostic_focus: {
 				premature_exit: ($failures | map(select(.result == "premature_exit" or .launch_failure_cause == "model_stopped_before_completion")) | length),
-				local_runtime_error: ($failures | map(select(.failure_reason == "local_error" or .launch_failure_cause == "local_runtime_error" or (.runtime_error_type != null and .runtime_error_type != ""))) | length),
+				local_runtime_error: ($failures | map(select((.result // null) != $local_kill_result and (.launch_failure_cause // null) != $local_kill_result and (.failure_reason == "local_error" or .launch_failure_cause == "local_runtime_error" or (.runtime_error_type != null and .runtime_error_type != "")))) | length),
+				local_kill: ($failures | map(select(.result == $local_kill_result or .launch_failure_cause == $local_kill_result or ((.kill_reason // null) as $kr | ($kr != null and $kr != "unknown" and $kr != "natural")))) | length),
 				stall_hard_killed: ($failures | map(select(.result == $watchdog_killed_result or .launch_failure_cause == "stall_hard_killed" or .kill_reason == "hard_kill_stall")) | length)
 			},
 			timing_ms: {
