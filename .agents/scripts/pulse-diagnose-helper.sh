@@ -44,12 +44,12 @@ set -euo pipefail
 # Constants
 # =============================================================================
 
-readonly DEFAULT_LOGFILE="${HOME}/.aidevops/logs/pulse.log"
-readonly DEFAULT_LOGDIR="${HOME}/.aidevops/logs"
-readonly DEFAULT_METRICS_FILE="${HOME}/.aidevops/logs/headless-runtime-metrics.jsonl"
-readonly DEFAULT_STATS_FILE="${HOME}/.aidevops/logs/pulse-stats.json"
-readonly DEFAULT_GH_API_LOG="${HOME}/.aidevops/logs/gh-api-calls.log"
-readonly DEFAULT_SYSTEMD_TIMER_FILE="${HOME}/.config/systemd/user/aidevops-supervisor-pulse.timer"
+readonly DEFAULT_LOGFILE="${HOME:-}/.aidevops/logs/pulse.log"
+readonly DEFAULT_LOGDIR="${HOME:-}/.aidevops/logs"
+readonly DEFAULT_METRICS_FILE="${HOME:-}/.aidevops/logs/headless-runtime-metrics.jsonl"
+readonly DEFAULT_STATS_FILE="${HOME:-}/.aidevops/logs/pulse-stats.json"
+readonly DEFAULT_GH_API_LOG="${HOME:-}/.aidevops/logs/gh-api-calls.log"
+readonly DEFAULT_SYSTEMD_TIMER_FILE="${HOME:-}/.config/systemd/user/aidevops-supervisor-pulse.timer"
 readonly _UNKNOWN="unknown"
 
 # =============================================================================
@@ -1648,7 +1648,7 @@ _api_budget_cache_dir_state() {
 		else
 			present="no"
 		fi
-	elif [[ -d "${HOME}/.aidevops/cache/gh-pr-view-snapshots" ]]; then
+	elif [[ -d "${HOME:-}/.aidevops/cache/gh-pr-view-snapshots" ]]; then
 		present="yes"
 		reason="using_default_exact_cache_dir"
 	fi
@@ -1658,12 +1658,12 @@ _api_budget_cache_dir_state() {
 }
 
 _api_budget_cooldown_file() {
-	printf '%s' "${PULSE_DIAGNOSE_GH_SECONDARY_COOLDOWN_FILE:-${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE:-${HOME}/.aidevops/cache/gh-secondary-cooldown.json}}"
+	printf '%s' "${PULSE_DIAGNOSE_GH_SECONDARY_COOLDOWN_FILE:-${AIDEVOPS_GH_SECONDARY_COOLDOWN_FILE:-${HOME:-}/.aidevops/cache/gh-secondary-cooldown.json}}"
 	return 0
 }
 
 _api_budget_cooldown_events_file() {
-	printf '%s' "${PULSE_DIAGNOSE_GH_SECONDARY_COOLDOWN_EVENTS_FILE:-${AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE:-${HOME}/.aidevops/cache/gh-cooldown-events.jsonl}}"
+	printf '%s' "${PULSE_DIAGNOSE_GH_SECONDARY_COOLDOWN_EVENTS_FILE:-${AIDEVOPS_GH_SECONDARY_COOLDOWN_EVENTS_FILE:-${HOME:-}/.aidevops/cache/gh-cooldown-events.jsonl}}"
 	return 0
 }
 
@@ -1722,7 +1722,7 @@ _api_budget_cache_counts_csv() {
 }
 
 _api_budget_cache_key_counts_csv() {
-	local exact_dir="${AIDEVOPS_GH_PR_VIEW_CACHE_DIR:-${HOME}/.aidevops/cache/gh-pr-view-snapshots}"
+	local exact_dir="${AIDEVOPS_GH_PR_VIEW_CACHE_DIR:-${HOME:-}/.aidevops/cache/gh-pr-view-snapshots}"
 	local shared="no"
 	[[ -n "${AIDEVOPS_GH_PR_VIEW_CACHE_DIR:-}" ]] && shared="yes"
 	local exact_keys=0
