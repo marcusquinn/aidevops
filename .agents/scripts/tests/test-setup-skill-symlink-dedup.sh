@@ -10,7 +10,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)" || exit 1
 TESTS_RUN=0
 TESTS_FAILED=0
 TEST_TMP_DIR=""
-OLD_HOME="${HOME}"
+OLD_HOME="${HOME:-}"
 
 print_info() {
 	return 0
@@ -44,7 +44,12 @@ print_result() {
 }
 
 cleanup() {
-	HOME="$OLD_HOME"
+	if [[ -n "$OLD_HOME" ]]; then
+		HOME="$OLD_HOME"
+		export HOME
+	else
+		unset HOME
+	fi
 	if [[ -n "$TEST_TMP_DIR" && -d "$TEST_TMP_DIR" ]]; then
 		rm -rf "$TEST_TMP_DIR"
 	fi

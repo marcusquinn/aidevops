@@ -267,8 +267,15 @@ generate_agent_skills() {
 remove_duplicate_opencode_skill_symlink() {
 	local name="$1"
 	local full_path="$2"
-	local opencode_target="$HOME/.config/opencode/skills/$name/SKILL.md"
+	local home_dir="${HOME:-}"
+	local opencode_target=""
 	local existing_target=""
+
+	if [[ -z "$home_dir" ]]; then
+		return 0
+	fi
+
+	opencode_target="$home_dir/.config/opencode/skills/$name/SKILL.md"
 
 	if [[ ! -L "$opencode_target" ]]; then
 		return 0
