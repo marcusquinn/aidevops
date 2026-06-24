@@ -61,6 +61,21 @@ load_scheduler_helpers() {
 	return 0
 }
 
+restore_scheduler_helper_mocks() {
+	print_info() { return 0; }
+	print_warning() { return 0; }
+	print_error() { return 0; }
+	_resolve_log_dir() { printf '%s\n' "$TEST_DIR/logs"; return 0; }
+	_install_scheduler_linux() { return 0; }
+	_uninstall_scheduler() { return 0; }
+	_resolve_modern_bash() { printf '%s\n' "/bin/bash"; return 0; }
+	_xml_escape() { local value="$1"; printf '%s' "$value"; return 0; }
+	aidevops_launchd_sanitized_path() { printf '%s\n' "/usr/bin:/bin"; return 0; }
+	_launchd_install_if_changed() { return 0; }
+	_launchd_has_agent() { return 1; }
+	return 0
+}
+
 test_core_routine_logged_command_shape() {
 	local command_text
 	command_text=$(_core_routine_logged_command "r908" "'$TEST_DIR/profile-readme-helper.sh' update")
@@ -135,7 +150,8 @@ test_linux_core_scheduler_commands_are_logged() {
 	setup_screen_time_snapshot
 	local screen_command="$_SCHEDULER_CAPTURED_COMMAND"
 	HOME="$orig_home"
-	unset -f uname _install_scheduler_linux
+	restore_scheduler_helper_mocks
+	unset -f uname
 
 	# shellcheck disable=SC2016 # the generated command must defer variable expansion to runtime.
 	if [[ "$profile_command" != *'update "r908" --status "$status" --duration "$duration"'* ]]; then
@@ -239,7 +255,8 @@ test_opencode_archive_scheduler_is_daily_and_low_priority() {
 	HOME="$fake_home"
 	setup_opencode_db_archive
 	HOME="$orig_home"
-	unset -f uname _install_scheduler_linux
+	restore_scheduler_helper_mocks
+	unset -f uname
 
 	if [[ "$captured_service" != "aidevops-opencode-db-archive" ]]; then
 		print_result "opencode archive scheduler uses dedicated service" 1 "$captured_service"
@@ -283,7 +300,7 @@ test_opencode_archive_scheduler_tolerates_unset_home() {
 	else
 		unset HOME
 	fi
-	print_warning() { return 0; }
+	restore_scheduler_helper_mocks
 
 	if [[ "$captured_warning" != "Skipping opencode DB archive scheduler: HOME is unset" ]]; then
 		print_result "opencode archive scheduler tolerates unset HOME" 1 "$captured_warning"
@@ -321,8 +338,7 @@ test_opencode_archive_launchd_uses_safe_path_expansion() {
 	HOME="$orig_home"
 	PATH="$orig_path"
 	unset -f uname mkdir
-	_launchd_install_if_changed() { return 0; }
-	aidevops_launchd_sanitized_path() { printf '%s\n' "/usr/bin:/bin"; return $?; }
+	restore_scheduler_helper_mocks
 
 	local body
 	body=$(<"$SCHEDULERS_PLATFORM_SH")
