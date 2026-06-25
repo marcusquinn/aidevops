@@ -65,8 +65,9 @@ _GH_API_INSTRUMENT_LOADED=1
 [[ "${BASH_SOURCE[0]}" == "${0}" ]] && set -euo pipefail
 
 # --- Configuration --------------------------------------------------------
-GH_API_LOG="${AIDEVOPS_GH_API_LOG:-${HOME:-/tmp}/.aidevops/logs/gh-api-calls.log}"
-GH_API_REPORT="${AIDEVOPS_GH_API_REPORT:-${HOME:-/tmp}/.aidevops/logs/gh-api-calls-by-stage.json}"
+_GH_API_HOME="${HOME:-${TMPDIR:-/tmp}/aidevops-${USER:-${UID:-shared}}}"
+GH_API_LOG="${AIDEVOPS_GH_API_LOG:-${_GH_API_HOME}/.aidevops/logs/gh-api-calls.log}"
+GH_API_REPORT="${AIDEVOPS_GH_API_REPORT:-${_GH_API_HOME}/.aidevops/logs/gh-api-calls-by-stage.json}"
 GH_API_LOG_MAX_LINES="${AIDEVOPS_GH_API_LOG_MAX_LINES:-50000}"
 
 # --- gh_record_call <path> [caller] [auth] [pool] [decision] [budget] ------
