@@ -176,6 +176,17 @@ _post_merge_scanner_scan_repo() {
 	return 0
 }
 
+_pulse_slug_list_contains() {
+	local needle="$1"
+	local slugs="$2"
+	local slug=""
+
+	while IFS= read -r slug; do
+		[[ "$slug" == "$needle" ]] && return 0
+	done <<<"$slugs"
+	return 1
+}
+
 _run_post_merge_review_scanner() {
 	local now_epoch
 	now_epoch=$(date +%s)
@@ -220,7 +231,7 @@ _run_post_merge_review_scanner() {
 	enabled_slugs=$(_pulse_enabled_repo_slugs "$repos_json" || echo "")
 	if [[ -f "$repo_cursor_file" ]]; then
 		resume_slug=$(sed -n '1p' "$repo_cursor_file" 2>/dev/null || true)
-		if [[ -n "$resume_slug" ]] && ! printf '%s\n' "$enabled_slugs" | grep -qFx "$resume_slug"; then
+		if [[ -n "$resume_slug" ]] && ! _pulse_slug_list_contains "$resume_slug" "$enabled_slugs"; then
 			echo "[pulse-wrapper] Post-merge scanner: resume cursor repo $resume_slug is no longer enabled; starting fresh scan" >>"${LOGFILE:-/dev/null}"
 			resume_slug=""
 		fi
