@@ -843,11 +843,11 @@ _handle_run_result() {
 		local natural_kill_reason=natural
 		local unknown_kill_reason=unknown
 		if [[ "$role" == "worker" && "$session_key" == issue-* ]] && \
-			[[ "$exit_code" -eq 137 || "$exit_code" -eq 143 ]] && \
+			[[ "$exit_code" == "137" || "$exit_code" == "143" ]] && \
 			[[ -n "$local_kill_reason" && "$local_kill_reason" != "$natural_kill_reason" && "$local_kill_reason" != "$unknown_kill_reason" ]]; then
 			_run_result_label="local_kill"
 			_run_failure_reason="$local_kill_reason"
-			if [[ "$exit_code" -eq 143 ]]; then
+			if [[ "$exit_code" == "143" ]]; then
 				_run_runtime_error_type="sigterm"
 			else
 				_run_runtime_error_type="sigkill"
