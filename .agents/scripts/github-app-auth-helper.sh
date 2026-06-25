@@ -121,6 +121,9 @@ _github_app_cache_dir() {
 	local cache_dir="${AIDEVOPS_GITHUB_APP_CACHE_DIR:-}"
 	local app_home="${AIDEVOPS_GITHUB_APP_HOME:-}"
 	local old_umask=""
+	if [[ -z "$cache_dir" ]]; then
+		return 1
+	fi
 	if [[ -L "$cache_dir" ]]; then
 		return 1
 	fi
