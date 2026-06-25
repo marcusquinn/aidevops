@@ -49,6 +49,12 @@ else
 fi
 
 fallback_home="${test_tmpdir}/aidevops-${fallback_uid}"
+if [[ -O "$fallback_home" ]]; then
+	print_result "unset HOME creates user-owned fallback root" 0
+else
+	print_result "unset HOME creates user-owned fallback root" 1 "fallback_home=${fallback_home}"
+fi
+
 if [[ -d "$fallback_home" && ! -L "$fallback_home" ]]; then
 	print_result "unset HOME creates fallback root as directory" 0
 else
@@ -66,6 +72,23 @@ case "$symlink_actual_dir" in
 	;;
 *)
 	print_result "unset HOME avoids symlinked fallback root" 1 "actual=${symlink_actual_dir} expected-prefix=${symlink_expected_dir}"
+	;;
+esac
+
+rm -rf "$fallback_home" "${test_tmpdir}/hijack-target"
+mkdir -p "${test_tmpdir}/hijack-target"
+# shellcheck disable=SC2016 # Inner bash must expand its own PID-specific fallback path.
+pid_symlink_actual_dir="$(env -u HOME -u USER -u LOGNAME REGISTRY_LIB="$REGISTRY_LIB" WORKTREE_REGISTRY_TMPDIR="$test_tmpdir" bash -c 'fallback_uid="$(id -u 2>/dev/null || printf '\''shared'\'')"; primary_home="${WORKTREE_REGISTRY_TMPDIR}/aidevops-${fallback_uid}"; pid_home="${primary_home}-$$"; ln -s "${WORKTREE_REGISTRY_TMPDIR}/hijack-target" "$primary_home"; ln -s "${WORKTREE_REGISTRY_TMPDIR}/hijack-target" "$pid_home"; source "$REGISTRY_LIB"; printf '\''%s'\'' "$WORKTREE_REGISTRY_DIR"')"
+
+case "$pid_symlink_actual_dir" in
+"${test_tmpdir}/hijack-target"*)
+	print_result "unset HOME avoids symlinked pid fallback root" 1 "actual=${pid_symlink_actual_dir}"
+	;;
+"${test_tmpdir}/aidevops-${fallback_uid}."*"/.aidevops/.agent-workspace")
+	print_result "unset HOME avoids symlinked pid fallback root" 0
+	;;
+*)
+	print_result "unset HOME avoids symlinked pid fallback root" 1 "actual=${pid_symlink_actual_dir}"
 	;;
 esac
 
