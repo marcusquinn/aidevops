@@ -118,38 +118,43 @@ github_app_enabled() {
 }
 
 _github_app_cache_dir() {
+	local cache_dir="${AIDEVOPS_GITHUB_APP_CACHE_DIR:-}"
+	local app_home="${AIDEVOPS_GITHUB_APP_HOME:-}"
 	local old_umask=""
-	if [[ -L "$AIDEVOPS_GITHUB_APP_CACHE_DIR" ]]; then
+	if [[ -z "$cache_dir" ]]; then
+		return 1
+	fi
+	if [[ -L "$cache_dir" ]]; then
 		return 1
 	fi
 	old_umask=$(umask)
 	umask 077
-	if [[ -z "${HOME:-}" && "$AIDEVOPS_GITHUB_APP_CACHE_DIR" == "$AIDEVOPS_GITHUB_APP_HOME"/* ]]; then
-		if [[ -L "$AIDEVOPS_GITHUB_APP_HOME" ]]; then
+	if [[ -z "${HOME:-}" && -n "$app_home" && "$cache_dir" == "$app_home"/* ]]; then
+		if [[ -L "$app_home" ]]; then
 			umask "$old_umask"
 			return 1
 		fi
-		mkdir -p "$AIDEVOPS_GITHUB_APP_HOME" 2>/dev/null || {
+		mkdir -p "$app_home" 2>/dev/null || {
 			umask "$old_umask"
 			return 1
 		}
-		[[ -d "$AIDEVOPS_GITHUB_APP_HOME" && ! -L "$AIDEVOPS_GITHUB_APP_HOME" ]] || {
+		[[ -d "$app_home" && ! -L "$app_home" ]] || {
 			umask "$old_umask"
 			return 1
 		}
-		chmod 700 "$AIDEVOPS_GITHUB_APP_HOME" 2>/dev/null || {
+		chmod 700 "$app_home" 2>/dev/null || {
 			umask "$old_umask"
 			return 1
 		}
 	fi
-	mkdir -p "$AIDEVOPS_GITHUB_APP_CACHE_DIR" 2>/dev/null || {
+	mkdir -p "$cache_dir" 2>/dev/null || {
 		umask "$old_umask"
 		return 1
 	}
 	umask "$old_umask"
-	[[ -d "$AIDEVOPS_GITHUB_APP_CACHE_DIR" && ! -L "$AIDEVOPS_GITHUB_APP_CACHE_DIR" ]] || return 1
-	chmod 700 "$AIDEVOPS_GITHUB_APP_CACHE_DIR" 2>/dev/null || return 1
-	printf '%s\n' "$AIDEVOPS_GITHUB_APP_CACHE_DIR"
+	[[ -d "$cache_dir" && ! -L "$cache_dir" ]] || return 1
+	chmod 700 "$cache_dir" 2>/dev/null || return 1
+	printf '%s\n' "$cache_dir"
 	return 0
 }
 

@@ -100,6 +100,25 @@ else
 	pass "unset HOME fallback cache rejects symlinked fallback root"
 fi
 
+# shellcheck disable=SC2016 # Keep variable unsets inside the env-isolated bash process.
+if env -i USER="unset-var-user" TMPDIR="$TMP/fallback-tmp" PATH="$PATH" MKDIR_LOG="$TMP/empty-cache-mkdir.log" bash -c '
+set -euo pipefail
+source "$1"
+unset AIDEVOPS_GITHUB_APP_CACHE_DIR AIDEVOPS_GITHUB_APP_HOME HOME
+mkdir() {
+	printf "mkdir called\n" >"$MKDIR_LOG"
+	return 1
+}
+if _github_app_cache_dir >/dev/null; then
+	exit 1
+fi
+[[ ! -e "$MKDIR_LOG" ]]
+' bash "${SCRIPTS_DIR}/github-app-auth-helper.sh"; then
+	pass "cache dir helper fails closed when cache/home variables are unset"
+else
+	fail "cache dir helper fails closed when cache/home variables are unset"
+fi
+
 route_auth=$(github_app_route_json issue-list owner/repo | jq -r '.auth_mode')
 assert_eq "no app configured falls back to gh/PAT auth" "gh-pat" "$route_auth"
 
