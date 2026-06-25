@@ -77,7 +77,7 @@ fi
 # Legacy paths (kept for backward compatibility and migration)
 # =============================================================================
 
-FEATURE_TOGGLES_HOME="${HOME:-/tmp/aidevops-uid-${UID:-unknown}}"
+FEATURE_TOGGLES_HOME="${HOME:-/tmp/aidevops-uid-${UID:-$(id -u || echo 'unknown')}}"
 FEATURE_TOGGLES_DEFAULTS="${FEATURE_TOGGLES_HOME}/.aidevops/agents/configs/feature-toggles.conf.defaults"
 FEATURE_TOGGLES_USER="${FEATURE_TOGGLES_HOME}/.config/aidevops/feature-toggles.conf"
 
