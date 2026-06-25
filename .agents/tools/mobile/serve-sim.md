@@ -24,7 +24,7 @@ tools:
 - **Purpose**: Stream a booted iOS, iPad, or Apple Watch Simulator to a browser and drive it from CLI/agent commands.
 - **Install**: `npm install -g serve-sim` or run ad hoc with `npx serve-sim`; Bun is not required to run the CLI.
 - **Setup**: `./setup.sh` offers this on supported local Macs after MiniSim.
-- **Requirements**: macOS on Apple Silicon, Xcode command-line tools (`xcrun simctl`), a maintained Node.js LTS release (Node.js 20+), and at least one booted Apple Simulator.
+- **Requirements**: macOS on Apple Silicon, Xcode command-line tools (`xcrun simctl`) with SwiftPM `swiftbuild` support, a maintained Node.js LTS release (Node.js 20+), and at least one booted Apple Simulator.
 - **GitHub**: https://github.com/EvanBacon/serve-sim (Apache-2.0)
 
 ```bash
@@ -39,7 +39,7 @@ serve-sim type "hello"            # Type into focused field
 serve-sim --kill                  # Stop stream(s)
 ```
 
-Use `serve-sim` when the user needs a visible, browser-shareable simulator surface. Pair it with `agent-device`, `ios-simulator-mcp`, or `maestro` when the task needs accessibility refs, MCP tool calls, or repeatable E2E flows. Current upstream builds serve capture, accessibility, and HID input through an in-process native addon instead of a separate `serve-sim-bin` helper, so malformed browser input should be ignored rather than crash the preview server. The preview defaults to H.264 when available and can switch or auto-downgrade to MJPEG when hardware decoding is unstable during screen recording; use `--codec <auto|mjpeg>` when the host must pin stream compatibility. Recent upstream versions also use incremental MJPEG and AVCC buffering plus paged simulator-grid loading, which keeps large multi-device catalogs and long recording sessions responsive.
+Use `serve-sim` when the user needs a visible, browser-shareable simulator surface. Pair it with `agent-device`, `ios-simulator-mcp`, or `maestro` when the task needs accessibility refs, MCP tool calls, or repeatable E2E flows. Current upstream builds serve capture, accessibility, and HID input through an in-process native addon instead of a separate `serve-sim-bin` helper, so malformed browser input should be ignored rather than crash the preview server. Native builds now use SwiftPM's `swiftbuild` build system for the Node addon, so source installs need a current Xcode/Swift toolchain rather than only simulator runtime access. The preview defaults to H.264 when available and can switch or auto-downgrade to MJPEG when hardware decoding is unstable during screen recording; use `--codec <auto|mjpeg>` when the host must pin stream compatibility. Recent upstream versions also use incremental MJPEG and AVCC buffering plus paged simulator-grid loading, which keeps large multi-device catalogs and long recording sessions responsive.
 
 <!-- AI-CONTEXT-END -->
 
@@ -97,7 +97,8 @@ Do **not** use it for Android emulators, real iOS hardware, building/installing 
 5. Use `agent-device snapshot` or `ios-simulator-mcp` for accessibility-aware targeting; use `serve-sim` for the shared visual stream and simulator-specific commands.
 6. If the browser preview stutters, drops frames, or reports an H.264 decoder failure while screen recording, restart with `serve-sim --codec mjpeg`, switch the Stream → Codec control to MJPEG, or append `?codec=mjpeg` to the preview URL.
 7. For plain coordinate taps, use `serve-sim tap <x> <y>` with normalized 0..1 values; reserve `serve-sim gesture '<json>'` for drag, swipe, and multi-touch shapes.
-8. Clean up with `serve-sim --kill` unless the user asks to keep the simulator stream running.
+8. Treat isolated `ConnectionRefused` / `server not alive` failures in shared-simulator suites as possible simulator wedges: reboot the simulator and retry once before attributing the failure to app code.
+9. Clean up with `serve-sim --kill` unless the user asks to keep the simulator stream running.
 
 ## Expo / Dev Server Embedding
 
@@ -124,6 +125,7 @@ aidevops keeps this native guide so mobile-testing tasks route to `serve-sim` ev
 
 - **Unsupported host**: The native simulator addon is Apple Silicon only. Intel Macs should use other simulator tools.
 - **No simulator**: Boot one first with Xcode Simulator, MiniSim, or `xcrun simctl boot <device>`.
+- **Native build fails**: Update Xcode/Command Line Tools so SwiftPM supports the `swiftbuild` build system used by upstream native addon builds.
 - **Node too old**: Upgrade to a maintained Node.js LTS release (Node.js 20+) before running the CLI.
 - **Port collision**: Stop stale streams with `serve-sim --kill`.
 - **H.264/WebCodecs instability**: Use `serve-sim --codec mjpeg`, the Stream → Codec picker, or append `?codec=mjpeg` to the preview URL; recent versions auto-downgrade fatal AVCC decoder failures to MJPEG.
