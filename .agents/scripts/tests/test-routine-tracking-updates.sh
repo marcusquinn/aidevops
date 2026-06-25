@@ -47,8 +47,8 @@ setup() {
 load_scheduler_helpers() {
 	restore_scheduler_helper_mocks || return $?
 	# shellcheck source=/dev/null
-	source "$SCHEDULERS_PLATFORM_SH"
-	return $?
+	source "$SCHEDULERS_PLATFORM_SH" || return $?
+	return 0
 }
 
 restore_scheduler_helper_mocks() {
