@@ -106,7 +106,8 @@ if [[ -z "${SCANNER_CURSOR_DIR:-}" ]]; then
 	if [[ -n "${HOME:-}" ]]; then
 		SCANNER_CURSOR_DIR="${HOME}/.aidevops/logs/post-merge-review-scanner"
 	else
-		SCANNER_CURSOR_DIR="/tmp/.aidevops-${USER:-shared}/logs/post-merge-review-scanner"
+		SCANNER_TMP_USER="${USER:-${LOGNAME:-$(id -un || printf '%s' shared)}}"
+		SCANNER_CURSOR_DIR="/tmp/.aidevops-${SCANNER_TMP_USER}/logs/post-merge-review-scanner"
 	fi
 fi
 BOT_RE="coderabbitai|gemini-code-assist|claude-review|gpt-review"
