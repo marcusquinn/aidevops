@@ -269,7 +269,7 @@ remove_duplicate_opencode_skill_symlink() {
 	local full_path="$2"
 	local home_dir="${HOME:-}"
 
-	if [[ -z "$home_dir" ]]; then
+	if [[ -z "$name" || -z "$full_path" || -z "$home_dir" ]]; then
 		return 0
 	fi
 

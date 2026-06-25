@@ -138,6 +138,21 @@ test_create_skill_symlinks_handles_unset_home() {
 	return 0
 }
 
+test_duplicate_opencode_cleanup_handles_empty_arguments() {
+	local rc=0
+
+	remove_duplicate_opencode_skill_symlink "" "$HOME/.aidevops/agents/tools/video/video-use-skill.md" || rc=$?
+	remove_duplicate_opencode_skill_symlink "video-use" "" || rc=$?
+
+	if [[ "$rc" -ne 0 ]]; then
+		print_result "duplicate OpenCode cleanup tolerates empty arguments" 1 "unexpected rc $rc"
+		return 0
+	fi
+
+	print_result "duplicate OpenCode cleanup tolerates empty arguments" 0
+	return 0
+}
+
 main() {
 	trap cleanup EXIT
 	setup_fixture
@@ -146,6 +161,7 @@ main() {
 
 	test_imported_skills_use_shared_claude_path_for_opencode
 	test_create_skill_symlinks_handles_unset_home
+	test_duplicate_opencode_cleanup_handles_empty_arguments
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then
