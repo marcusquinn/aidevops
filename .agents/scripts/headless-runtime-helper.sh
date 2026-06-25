@@ -690,6 +690,9 @@ _handle_run_result() {
 	local provider="$4"
 	local session_key="$5"
 	local selected_model="$6"
+	if [[ ! "${exit_code:-}" =~ ^[0-9]+$ ]]; then
+		exit_code=1
+	fi
 
 	local discovered_session activity_detected
 	discovered_session=$(extract_session_id_from_output "$output_file")
@@ -702,7 +705,7 @@ _handle_run_result() {
 	_run_classification_source=""
 	_run_classification_pattern=""
 
-	if [[ "$exit_code" -eq 0 ]]; then
+	if [[ "${exit_code:-}" == "0" ]]; then
 		if [[ "$activity_detected" != "1" ]]; then
 			_run_result_label="no_activity"
 			# Do NOT record provider backoff for no_activity. Exit 0 with no LLM
@@ -791,7 +794,7 @@ _handle_run_result() {
 	# - 124 + startup output but no activity → return 78 so the retry loop can
 	#   try a bounded fresh continuation before provider backoff/rotation.
 	# - 124 + no output or explicit provider marker → rate_limit as before.
-	if [[ "$exit_code" -eq 124 ]]; then
+	if [[ "${exit_code:-}" == "124" ]]; then
 		failure_reason=$(classify_failure_reason "$output_file")
 		if [[ "$failure_reason" == "rate_limit" ]]; then
 			print_warning "$selected_model watchdog saw provider/rate-limit marker — classifying as rate_limit for rotation"
@@ -843,11 +846,11 @@ _handle_run_result() {
 		local natural_kill_reason=natural
 		local unknown_kill_reason=unknown
 		if [[ "$role" == "worker" && "$session_key" == issue-* ]] && \
-			[[ "$exit_code" == "137" || "$exit_code" == "143" ]] && \
+			[[ "${exit_code:-}" == "137" || "${exit_code:-}" == "143" ]] && \
 			[[ -n "$local_kill_reason" && "$local_kill_reason" != "$natural_kill_reason" && "$local_kill_reason" != "$unknown_kill_reason" ]]; then
 			_run_result_label="local_kill"
 			_run_failure_reason="$local_kill_reason"
-			if [[ "$exit_code" == "143" ]]; then
+			if [[ "${exit_code:-}" == "143" ]]; then
 				_run_runtime_error_type="sigterm"
 			else
 				_run_runtime_error_type="sigkill"
@@ -858,7 +861,7 @@ _handle_run_result() {
 			print_warning "$selected_model worker was terminated by local kill source ${local_kill_reason} — not attempting provider/runtime continuation"
 			return 83
 		fi
-		if [[ "$exit_code" -eq 137 && "$activity_detected" == "1" ]]; then
+		if [[ "${exit_code:-}" == "137" && "$activity_detected" == "1" ]]; then
 			local discovered_session_for_signal_continue
 			discovered_session_for_signal_continue=$(extract_session_id_from_output "$output_file")
 			if [[ "$role" != "pulse" && -n "$discovered_session_for_signal_continue" ]]; then
@@ -1140,13 +1143,13 @@ _derive_worker_failure_evidence() {
 		next_action="none"
 		;;
 	*)
-		if [[ "$exit_code" -eq 124 ]]; then
+		if [[ "${exit_code:-}" == "124" ]]; then
 			launch_failure_cause="watchdog_timeout"
 			next_action="inspect_watchdog_and_runtime_logs"
-		elif [[ "$exit_code" -eq 137 || "$exit_code" -eq 143 ]]; then
+		elif [[ "${exit_code:-}" == "137" || "${exit_code:-}" == "143" ]]; then
 			launch_failure_cause="signal_terminated"
 			next_action="inspect_host_or_watchdog_kill_source"
-		elif [[ "$exit_code" -ne 0 ]]; then
+		elif [[ "${exit_code:-}" != "0" ]]; then
 			launch_failure_cause="local_runtime_error"
 			next_action="inspect_failure_excerpt_and_retry_if_transient"
 		fi
@@ -1217,13 +1220,16 @@ _normalize_worker_exit_code_and_kill_reason() {
 	local exit_code_file="$1"
 	local exit_code="$2"
 	local metric_kill_reason=""
+	if [[ ! "${exit_code:-}" =~ ^[0-9]+$ ]]; then
+		exit_code=1
+	fi
 
 	metric_kill_reason=$(classify_worker_kill_reason "$exit_code_file" "$exit_code" 2>/dev/null || true)
 	if [[ -f "${exit_code_file}.watchdog_killed" ]]; then
 		exit_code=124
 		rm -f "${exit_code_file}.watchdog_killed"
 	fi
-	if [[ "$exit_code" -eq 0 && "$metric_kill_reason" != "natural" ]]; then
+	if [[ "${exit_code:-}" == "0" && "$metric_kill_reason" != "natural" ]]; then
 		exit_code=124
 	fi
 
@@ -1441,7 +1447,7 @@ _execute_run_attempt() {
 	# or a different machine), OpenCode exits non-zero with "Session not found"
 	# instead of creating a new session. Detect this, clear the stale ID, and
 	# retry once without --session so a fresh session is created.
-	if [[ "$exit_code" -ne 0 && "$runtime" != "claude" && -n "$persisted_session" ]]; then
+	if [[ "${exit_code:-}" != "0" && "$runtime" != "claude" && -n "$persisted_session" ]]; then
 		local output_text=""
 		output_text=$(cat "$output_file" 2>/dev/null || true)
 		if [[ "$output_text" == *"Session not found"* ]]; then
@@ -1522,7 +1528,7 @@ _execute_run_attempt() {
 		_metric_session_id=$(extract_session_id_from_output "$output_file" 2>/dev/null || true)
 		_metric_output_file=$(_metric_failure_excerpt_path "$output_file" "$session_key")
 	fi
-	if [[ "$exit_code" -eq 0 && -n "$_metric_session_id" ]]; then
+	if [[ "${exit_code:-}" == "0" && -n "$_metric_session_id" ]]; then
 		_diag_session_id="$_metric_session_id"
 		if [[ -n "$_diag_session_id" ]]; then
 			_diag_incomplete_msgs=$(sqlite3 ~/.local/share/opencode/opencode.db \
@@ -1534,16 +1540,16 @@ _execute_run_attempt() {
 			"$exit_code" "$selected_model" "$role" "$session_key"
 		printf '[WORKER_EXIT_DIAGNOSTICS] structured exit_code=%s kill_reason=%s session_key=%s\n' \
 			"$exit_code" "${_metric_kill_reason:-unknown}" "$session_key"
-		if [[ "$exit_code" -eq 124 ]]; then
+		if [[ "${exit_code:-}" == "124" ]]; then
 			printf '[WORKER_EXIT_DIAGNOSTICS] cause=watchdog_kill (no LLM activity within timeout)\n'
-		elif [[ "$exit_code" -eq 137 ]]; then
+		elif [[ "${exit_code:-}" == "137" ]]; then
 			printf '[WORKER_EXIT_DIAGNOSTICS] cause=SIGKILL (OOM or external kill)\n'
-		elif [[ "$exit_code" -eq 143 ]]; then
+		elif [[ "${exit_code:-}" == "143" ]]; then
 			printf '[WORKER_EXIT_DIAGNOSTICS] cause=SIGTERM (graceful termination)\n'
-		elif [[ "$exit_code" -eq 0 && "$_diag_incomplete_msgs" -gt 0 ]]; then
+		elif [[ "${exit_code:-}" == "0" && "$_diag_incomplete_msgs" -gt 0 ]]; then
 			printf '[WORKER_EXIT_DIAGNOSTICS] cause=mid_turn_death (session %s has %s incomplete assistant messages — API likely dropped)\n' \
 				"$_diag_session_id" "$_diag_incomplete_msgs"
-		elif [[ "$exit_code" -ne 0 ]]; then
+		elif [[ "${exit_code:-}" != "0" ]]; then
 			printf '[WORKER_EXIT_DIAGNOSTICS] cause=unknown (exit_code=%s)\n' "$exit_code"
 		fi
 	} >>"$output_file" 2>/dev/null || true

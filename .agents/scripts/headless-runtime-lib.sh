@@ -268,7 +268,7 @@ runtime_signal_terminated_candidate() {
 	if [[ "$activity_detected" != "1" ]]; then
 		return 1
 	fi
-	if [[ "$exit_code" -eq 143 ]]; then
+	if [[ "${exit_code:-}" == "143" ]]; then
 		return 0
 	fi
 	if [[ ! -f "$output_file" ]]; then
