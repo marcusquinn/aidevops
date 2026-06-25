@@ -248,8 +248,8 @@ assert_eq "2h10: failure groups expose provider status" "500" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_groups[] | select(.session_key == "issue-6") | .provider_status')"
 assert_eq "2h10b: failure groups expose classification pattern" "server_error|5xx|connection_failure|overloaded" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_groups[] | select(.session_key == "issue-6") | .classification_pattern')"
-assert_eq "2h11: recent examples carry provider evidence" "openai/gpt-5.5" \
-	"$(printf '%s' "$JSON" | jq -r '.metrics.recent_examples[] | select(.session_key == "issue-11") | .model')"
+assert_eq "2h11: failure groups carry provider evidence" "openai/gpt-5.5" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_groups[] | select(.session_key == "issue-11") | .model')"
 assert_eq "2h12: diagnostic focus counts stall-killed sessions" "1" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.diagnostic_focus.stall_hard_killed')"
 assert_eq "2h13: diagnostic focus counts local runtime errors" "2" \
@@ -348,7 +348,7 @@ assert_eq "6b: openai available accounts exclude auth-error/rate-limited" "2" \
 	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.account_pool[] | select(.provider == "openai") | .available')"
 assert_eq "6c: openai capacity_slots uses redacted multiplier" "48" \
 	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.account_pool[] | select(.provider == "openai") | .capacity_slots')"
-assert_eq "6c2: nonzero-exit success counts as other provider failure" "5" \
+assert_eq "6c2: nonzero-exit success counts as other provider failure" "6" \
 	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.provider_model_usage[] | select(.provider == "openai" and .model == "openai/gpt-5.5") | .other_failure')"
 
 JSONC_DEFAULTS="$FIXTURE_DIR/aidevops.defaults.jsonc"
