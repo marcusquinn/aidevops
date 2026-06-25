@@ -28,8 +28,19 @@ if ! command -v print_error >/dev/null 2>&1; then
 	print_error() { printf '[ERROR] %s\n' "$*" >&2; return 0; }
 fi
 
-: "${AIDEVOPS_GITHUB_APP_CONFIG:=${HOME:-/tmp}/.config/aidevops/github-app-auth.json}"
-: "${AIDEVOPS_GITHUB_APP_CACHE_DIR:=${HOME:-/tmp}/.aidevops/cache/github-app}"
+_github_app_default_home() {
+	local user_slug="${USER:-}"
+	local tmp_root="${TMPDIR:-/tmp}"
+	if [[ -z "$user_slug" ]]; then
+		user_slug="uid-${UID:-unknown}"
+	fi
+	printf '%s/aidevops-%s\n' "${tmp_root%/}" "$user_slug"
+	return 0
+}
+
+: "${AIDEVOPS_GITHUB_APP_HOME:=${HOME:-$(_github_app_default_home)}}"
+: "${AIDEVOPS_GITHUB_APP_CONFIG:=${AIDEVOPS_GITHUB_APP_HOME}/.config/aidevops/github-app-auth.json}"
+: "${AIDEVOPS_GITHUB_APP_CACHE_DIR:=${AIDEVOPS_GITHUB_APP_HOME}/.aidevops/cache/github-app}"
 : "${AIDEVOPS_GITHUB_APP_RATE_LIMIT_CACHE_TTL:=20}"
 : "${AIDEVOPS_GITHUB_APP_REST_FIRST:=1}"
 
@@ -107,8 +118,37 @@ github_app_enabled() {
 }
 
 _github_app_cache_dir() {
-	mkdir -p "$AIDEVOPS_GITHUB_APP_CACHE_DIR" 2>/dev/null || true
-	chmod 700 "$AIDEVOPS_GITHUB_APP_CACHE_DIR" 2>/dev/null || true
+	local old_umask=""
+	if [[ -L "$AIDEVOPS_GITHUB_APP_CACHE_DIR" ]]; then
+		return 1
+	fi
+	old_umask=$(umask)
+	umask 077
+	if [[ -z "${HOME:-}" && "$AIDEVOPS_GITHUB_APP_CACHE_DIR" == "$AIDEVOPS_GITHUB_APP_HOME"/* ]]; then
+		if [[ -L "$AIDEVOPS_GITHUB_APP_HOME" ]]; then
+			umask "$old_umask"
+			return 1
+		fi
+		mkdir -p "$AIDEVOPS_GITHUB_APP_HOME" 2>/dev/null || {
+			umask "$old_umask"
+			return 1
+		}
+		[[ -d "$AIDEVOPS_GITHUB_APP_HOME" && ! -L "$AIDEVOPS_GITHUB_APP_HOME" ]] || {
+			umask "$old_umask"
+			return 1
+		}
+		chmod 700 "$AIDEVOPS_GITHUB_APP_HOME" 2>/dev/null || {
+			umask "$old_umask"
+			return 1
+		}
+	fi
+	mkdir -p "$AIDEVOPS_GITHUB_APP_CACHE_DIR" 2>/dev/null || {
+		umask "$old_umask"
+		return 1
+	}
+	umask "$old_umask"
+	[[ -d "$AIDEVOPS_GITHUB_APP_CACHE_DIR" && ! -L "$AIDEVOPS_GITHUB_APP_CACHE_DIR" ]] || return 1
+	chmod 700 "$AIDEVOPS_GITHUB_APP_CACHE_DIR" 2>/dev/null || return 1
 	printf '%s\n' "$AIDEVOPS_GITHUB_APP_CACHE_DIR"
 	return 0
 }
