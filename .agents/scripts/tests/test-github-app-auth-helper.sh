@@ -76,6 +76,30 @@ source "${SCRIPTS_DIR}/github-app-auth-helper.sh"
 
 printf 'Running GitHub App auth helper tests\n'
 
+# shellcheck disable=SC2016 # Keep the inner script expanded by the env-isolated bash process.
+fallback_output=$(env -i USER="fallback-user" TMPDIR="$TMP/fallback-tmp" PATH="$PATH" bash -c '
+source "$1"
+_github_app_cache_dir >/dev/null
+printf "%s\n%s\n%s\n" "$AIDEVOPS_GITHUB_APP_HOME" "$AIDEVOPS_GITHUB_APP_CONFIG" "$AIDEVOPS_GITHUB_APP_CACHE_DIR"
+' bash "${SCRIPTS_DIR}/github-app-auth-helper.sh")
+fallback_home=$(printf '%s\n' "$fallback_output" | sed -n '1p')
+fallback_config=$(printf '%s\n' "$fallback_output" | sed -n '2p')
+fallback_cache=$(printf '%s\n' "$fallback_output" | sed -n '3p')
+assert_eq "unset HOME uses user-scoped tmp fallback root" "$TMP/fallback-tmp/aidevops-fallback-user" "$fallback_home"
+assert_eq "unset HOME config stays under user-scoped fallback" "$TMP/fallback-tmp/aidevops-fallback-user/.config/aidevops/github-app-auth.json" "$fallback_config"
+assert_eq "unset HOME cache stays under user-scoped fallback" "$TMP/fallback-tmp/aidevops-fallback-user/.aidevops/cache/github-app" "$fallback_cache"
+mkdir -p "$TMP/fallback-tmp"
+ln -s "$TMP" "$TMP/fallback-tmp/aidevops-linked-user"
+# shellcheck disable=SC2016 # Keep the inner script expanded by the env-isolated bash process.
+if env -i USER="linked-user" TMPDIR="$TMP/fallback-tmp" PATH="$PATH" bash -c '
+source "$1"
+_github_app_cache_dir >/dev/null
+' bash "${SCRIPTS_DIR}/github-app-auth-helper.sh"; then
+	fail "unset HOME fallback cache rejects symlinked fallback root"
+else
+	pass "unset HOME fallback cache rejects symlinked fallback root"
+fi
+
 route_auth=$(github_app_route_json issue-list owner/repo | jq -r '.auth_mode')
 assert_eq "no app configured falls back to gh/PAT auth" "gh-pat" "$route_auth"
 
