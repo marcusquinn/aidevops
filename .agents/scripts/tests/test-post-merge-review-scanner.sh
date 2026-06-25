@@ -220,15 +220,9 @@ fi
 # shellcheck disable=SC1091
 source "$SCANNER"
 
-scanner_cursor_without_home="$(
-	HOME=
-	SCANNER_CURSOR_DIR=
-	# shellcheck source=../post-merge-review-scanner.sh
-	# shellcheck disable=SC1091
-	source "$SCANNER"
-	printf "%s" "$SCANNER_CURSOR_DIR"
-)"
-assert_equals "SCANNER_CURSOR_DIR falls back to /tmp when HOME is empty" "/tmp/.aidevops/logs/post-merge-review-scanner" "$scanner_cursor_without_home"
+# shellcheck disable=SC2016
+scanner_cursor_without_home="$(env -u HOME SCANNER_CURSOR_DIR= bash -c 'set -euo pipefail; source "$1"; printf "%s" "$SCANNER_CURSOR_DIR"' _ "$SCANNER")"
+assert_equals "SCANNER_CURSOR_DIR falls back to /tmp when HOME is unset" "/tmp/.aidevops/logs/post-merge-review-scanner" "$scanner_cursor_without_home"
 
 # -----------------------------------------------------------------------------
 # Fixture builders

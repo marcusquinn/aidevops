@@ -28,8 +28,8 @@ if ! command -v print_error >/dev/null 2>&1; then
 	print_error() { printf '[ERROR] %s\n' "$*" >&2; return 0; }
 fi
 
-: "${AIDEVOPS_GITHUB_APP_CONFIG:=${HOME}/.config/aidevops/github-app-auth.json}"
-: "${AIDEVOPS_GITHUB_APP_CACHE_DIR:=${HOME}/.aidevops/cache/github-app}"
+: "${AIDEVOPS_GITHUB_APP_CONFIG:=${HOME:-/tmp}/.config/aidevops/github-app-auth.json}"
+: "${AIDEVOPS_GITHUB_APP_CACHE_DIR:=${HOME:-/tmp}/.aidevops/cache/github-app}"
 : "${AIDEVOPS_GITHUB_APP_RATE_LIMIT_CACHE_TTL:=20}"
 : "${AIDEVOPS_GITHUB_APP_REST_FIRST:=1}"
 

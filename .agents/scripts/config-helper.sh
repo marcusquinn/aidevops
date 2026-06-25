@@ -65,12 +65,12 @@ fi
 # ---------------------------------------------------------------------------
 # File paths (use defaults if not already set — allows override for testing)
 # ---------------------------------------------------------------------------
-JSONC_DEFAULTS="${JSONC_DEFAULTS:-${HOME}/.aidevops/agents/configs/aidevops.defaults.jsonc}"
-JSONC_USER="${JSONC_USER:-${HOME}/.config/aidevops/config.jsonc}"
-JSONC_SCHEMA="${JSONC_SCHEMA:-${HOME}/.aidevops/agents/configs/aidevops-config.schema.json}"
-OLD_CONF_USER="${OLD_CONF_USER:-${HOME}/.config/aidevops/feature-toggles.conf}"
-OLD_CONF_DEFAULTS="${OLD_CONF_DEFAULTS:-${HOME}/.aidevops/agents/configs/feature-toggles.conf.defaults}"
-MIGRATE_FAILED_FLAG="${MIGRATE_FAILED_FLAG:-${HOME}/.aidevops/migrate_failed}"
+JSONC_DEFAULTS="${JSONC_DEFAULTS:-${HOME:-/tmp}/.aidevops/agents/configs/aidevops.defaults.jsonc}"
+JSONC_USER="${JSONC_USER:-${HOME:-/tmp}/.config/aidevops/config.jsonc}"
+JSONC_SCHEMA="${JSONC_SCHEMA:-${HOME:-/tmp}/.aidevops/agents/configs/aidevops-config.schema.json}"
+OLD_CONF_USER="${OLD_CONF_USER:-${HOME:-/tmp}/.config/aidevops/feature-toggles.conf}"
+OLD_CONF_DEFAULTS="${OLD_CONF_DEFAULTS:-${HOME:-/tmp}/.aidevops/agents/configs/feature-toggles.conf.defaults}"
+MIGRATE_FAILED_FLAG="${MIGRATE_FAILED_FLAG:-${HOME:-/tmp}/.aidevops/migrate_failed}"
 
 # nice — cache avoids re-parsing on every call
 _JSONC_MERGED_CACHE=""

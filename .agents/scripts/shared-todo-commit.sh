@@ -90,7 +90,7 @@ _SHARED_TODO_COMMIT_LOADED=1
 # Guard against re-declaration when shared-constants.sh is sourced more than once
 # in a process (the readonly statement would otherwise abort the second source).
 if [[ -z "${TODO_LOCK_DIR:-}" ]]; then
-	readonly TODO_LOCK_DIR="${HOME}/.aidevops/locks"
+	readonly TODO_LOCK_DIR="${HOME:-/tmp}/.aidevops/locks"
 	readonly TODO_LOCK_PATH="${TODO_LOCK_DIR}/todo-md.lock"
 	readonly TODO_MAX_RETRIES=3
 	readonly TODO_LOCK_TIMEOUT=30
