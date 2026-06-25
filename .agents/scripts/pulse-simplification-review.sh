@@ -155,22 +155,22 @@ _post_merge_scanner_scan_repo() {
 	elapsed_for_budget=$((now_for_budget - stage_start_epoch))
 	remaining_budget=$((stage_budget - elapsed_for_budget))
 	if [[ "$remaining_budget" -le "$stage_reserve" ]]; then
-		echo "[pulse-wrapper] Post-merge scanner: yielding before $slug (remaining=${remaining_budget}s reserve=${stage_reserve}s)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Post-merge scanner: yielding before $slug (remaining=${remaining_budget}s reserve=${stage_reserve}s)" >>"${LOGFILE:-/dev/null}"
 		return 2
 	fi
 
 	repo_budget=$((remaining_budget - stage_reserve))
-	echo "[pulse-wrapper] Post-merge scanner: scanning $slug" >>"$LOGFILE"
+	echo "[pulse-wrapper] Post-merge scanner: scanning $slug" >>"${LOGFILE:-/dev/null}"
 	SCANNER_DAYS="${SCANNER_DAYS:-7}" \
 		SCANNER_BUDGET_SECONDS="$repo_budget" \
 		SCANNER_CURSOR_DIR="$scanner_cursor_dir" \
-		"$scanner" scan "$slug" >>"$LOGFILE" 2>&1 || true
+		"$scanner" scan "$slug" >>"${LOGFILE:-/dev/null}" 2>&1 || true
 
 	local safe_slug="" repo_scan_cursor=""
 	safe_slug=$(printf '%s' "$slug" | tr '/: ' '___')
 	repo_scan_cursor="${scanner_cursor_dir}/${safe_slug}.cursor"
 	if [[ -f "$repo_scan_cursor" ]]; then
-		echo "[pulse-wrapper] Post-merge scanner: yielded in $slug; cursor preserved for next cycle" >>"$LOGFILE"
+		echo "[pulse-wrapper] Post-merge scanner: yielded in $slug; cursor preserved for next cycle" >>"${LOGFILE:-/dev/null}"
 		return 2
 	fi
 	return 0
@@ -185,7 +185,7 @@ _run_post_merge_review_scanner() {
 	[[ "$stage_budget" =~ ^[0-9]+$ ]] || stage_budget=600
 	local stage_reserve="${AIDEVOPS_POST_MERGE_SCANNER_STAGE_RESERVE_SECONDS:-30}"
 	[[ "$stage_reserve" =~ ^[0-9]+$ ]] || stage_reserve=30
-	local scanner_cursor_dir="${AIDEVOPS_POST_MERGE_SCANNER_CURSOR_DIR:-${HOME}/.aidevops/logs/post-merge-review-scanner}"
+	local scanner_cursor_dir="${AIDEVOPS_POST_MERGE_SCANNER_CURSOR_DIR:-${HOME:-}/.aidevops/logs/post-merge-review-scanner}"
 	local repo_cursor_file="${scanner_cursor_dir}/repo.cursor"
 
 	# Time gate: skip if last run was within the interval
@@ -216,8 +216,14 @@ _run_post_merge_review_scanner() {
 	local skipped_contributor=0
 	local scan_yielded=0
 	local resume_slug=""
+	local enabled_slugs=""
+	enabled_slugs=$(_pulse_enabled_repo_slugs "$repos_json" || echo "")
 	if [[ -f "$repo_cursor_file" ]]; then
 		resume_slug=$(sed -n '1p' "$repo_cursor_file" 2>/dev/null || true)
+		if [[ -n "$resume_slug" ]] && ! printf '%s\n' "$enabled_slugs" | grep -qFx "$resume_slug"; then
+			echo "[pulse-wrapper] Post-merge scanner: resume cursor repo $resume_slug is no longer enabled; starting fresh scan" >>"${LOGFILE:-/dev/null}"
+			resume_slug=""
+		fi
 	fi
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
@@ -247,13 +253,13 @@ _run_post_merge_review_scanner() {
 			total_repos=$((total_repos + 1))
 			;;
 		esac
-	done < <(_pulse_enabled_repo_slugs "$repos_json")
+	done <<<"$enabled_slugs"
 	if [[ "$skipped_contributor" -gt 0 ]]; then
-		echo "[pulse-wrapper] Post-merge scanner: skipped ${skipped_contributor} contributor-role repo(s) (t2145)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Post-merge scanner: skipped ${skipped_contributor} contributor-role repo(s) (t2145)" >>"${LOGFILE:-/dev/null}"
 	fi
 	if [[ "$scan_yielded" -eq 1 ]]; then
-		echo "[pulse-wrapper] Post-merge scanner: yielded after ${total_repos} repo(s); cursor state saved" >>"$LOGFILE"
-		if declare -F _log_substage_timing >/dev/null 2>&1; then
+		echo "[pulse-wrapper] Post-merge scanner: yielded after ${total_repos} repo(s); cursor state saved" >>"${LOGFILE:-/dev/null}"
+		if declare -F _log_substage_timing >/dev/null; then
 			_log_substage_timing "post_merge_scanner:yielded" "$stage_start_seconds" 0
 		fi
 		return 0
@@ -261,7 +267,7 @@ _run_post_merge_review_scanner() {
 
 	rm -f "$repo_cursor_file" 2>/dev/null || true
 	printf '%s\n' "$now_epoch" >"$POST_MERGE_SCANNER_LAST_RUN"
-	echo "[pulse-wrapper] Post-merge scanner: completed ${total_repos} repo(s), next run in ~$((POST_MERGE_SCANNER_INTERVAL / 3600))h" >>"$LOGFILE"
+	echo "[pulse-wrapper] Post-merge scanner: completed ${total_repos} repo(s), next run in ~$(( ${POST_MERGE_SCANNER_INTERVAL:-86400} / 3600 ))h" >>"${LOGFILE:-/dev/null}"
 	return 0
 }
 
