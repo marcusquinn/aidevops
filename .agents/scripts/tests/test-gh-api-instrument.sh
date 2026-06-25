@@ -195,6 +195,34 @@ assert_eq "explicit caller: PR search counted separately" "1" "$search_pr_count"
 tickle_count=$(jq -r '.by_caller["events_tickle_events"].rest_calls' "$AIDEVOPS_GH_API_REPORT")
 assert_eq "explicit caller: events tickle REST call counted separately" "1" "$tickle_count"
 
+# --- Test 8: HOME-less temp fallback is owned and private -------------
+unset _GH_API_INSTRUMENT_LOADED AIDEVOPS_GH_API_LOG AIDEVOPS_GH_API_REPORT
+FAKE_BIN="$TMPDIR/fake-bin"
+mkdir -p "$FAKE_BIN"
+cat >"$FAKE_BIN/getent" <<'EOF_GETENT'
+#!/usr/bin/env bash
+exit 2
+EOF_GETENT
+chmod +x "$FAKE_BIN/getent"
+FALLBACK_TMP="$TMPDIR/fallback-root"
+set +e
+PATH="$FAKE_BIN:$PATH" HOME='' TMPDIR="$FALLBACK_TMP" USER="ghapitest" bash -c '
+	set -euo pipefail
+	# shellcheck source=../gh-api-instrument.sh
+	source "$1"
+	gh_record_call rest fallback-test
+	mode=$(stat -f %Lp "$TMPDIR/aidevops-$USER" 2>/dev/null || stat -c %a "$TMPDIR/aidevops-$USER")
+	[[ "$mode" == "700" ]]
+	[[ -f "$TMPDIR/aidevops-$USER/.aidevops/logs/gh-api-calls.log" ]]
+' _ "${PARENT_DIR}/gh-api-instrument.sh"
+fallback_status="$?"
+set -e
+assert_eq "HOME-less temp fallback is private" "0" "$fallback_status"
+
+# Restore per-test overrides for summary diagnostics if future tests append.
+export AIDEVOPS_GH_API_LOG="$TMPDIR/gh-api-calls.log"
+export AIDEVOPS_GH_API_REPORT="$TMPDIR/report.json"
+
 # --- Summary ----------------------------------------------------------
 echo ""
 echo "===================================================="
