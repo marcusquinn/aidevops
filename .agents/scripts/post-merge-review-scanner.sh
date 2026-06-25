@@ -102,12 +102,12 @@ SCANNER_DIFFHUNK_LINES="${SCANNER_DIFFHUNK_LINES:-12}"
 SCANNER_REFRESH_LIMIT="${SCANNER_REFRESH_LIMIT:-200}"
 SCANNER_NEEDS_REVIEW="${SCANNER_NEEDS_REVIEW:-false}"
 SCANNER_BUDGET_SECONDS="${SCANNER_BUDGET_SECONDS:-540}"
-if [[ -n "${SCANNER_CURSOR_DIR:-}" ]]; then
-	SCANNER_CURSOR_DIR="${SCANNER_CURSOR_DIR}"
-elif [[ -n "${HOME:-}" ]]; then
-	SCANNER_CURSOR_DIR="${HOME}/.aidevops/logs/post-merge-review-scanner"
-else
-	SCANNER_CURSOR_DIR="/tmp/.aidevops-${USER:-shared}/logs/post-merge-review-scanner"
+if [[ -z "${SCANNER_CURSOR_DIR:-}" ]]; then
+	if [[ -n "${HOME:-}" ]]; then
+		SCANNER_CURSOR_DIR="${HOME}/.aidevops/logs/post-merge-review-scanner"
+	else
+		SCANNER_CURSOR_DIR="/tmp/.aidevops-${USER:-shared}/logs/post-merge-review-scanner"
+	fi
 fi
 BOT_RE="coderabbitai|gemini-code-assist|claude-review|gpt-review"
 # ACT_RE is retained ONLY for top-level review summary filtering. For inline
