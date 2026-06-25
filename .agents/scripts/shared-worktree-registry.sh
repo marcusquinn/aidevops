@@ -24,6 +24,25 @@ _SHARED_WORKTREE_REGISTRY_LOADED=1
 # Worktree Ownership Registry (t189)
 # =============================================================================
 
+_worktree_registry_dir_is_safe() {
+	local path="$1"
+	[[ -n "$path" ]] || return 1
+	[[ -L "$path" ]] && return 1
+	[[ -e "$path" && ! -O "$path" ]] && return 1
+	[[ -e "$path" && ! -d "$path" ]] && return 1
+	return 0
+}
+
+_worktree_registry_ensure_dir() {
+	local path="$1"
+	_worktree_registry_dir_is_safe "$path" || return 1
+	if [[ ! -d "$path" ]]; then
+		mkdir -m 0700 "$path" || return 1
+	fi
+	_worktree_registry_dir_is_safe "$path" || return 1
+	return 0
+}
+
 _WORKTREE_REGISTRY_HOME="${HOME:-}"
 if [[ -z "$_WORKTREE_REGISTRY_HOME" ]]; then
 	if _WORKTREE_REGISTRY_UID="$(id -u)"; then
@@ -33,12 +52,15 @@ if [[ -z "$_WORKTREE_REGISTRY_HOME" ]]; then
 	fi
 	_WORKTREE_REGISTRY_TMPDIR="${WORKTREE_REGISTRY_TMPDIR:-/tmp}"
 	_WORKTREE_REGISTRY_HOME="${_WORKTREE_REGISTRY_TMPDIR}/aidevops-${_WORKTREE_REGISTRY_UID}"
-	if [[ -L "$_WORKTREE_REGISTRY_HOME" || ( -e "$_WORKTREE_REGISTRY_HOME" && ! -O "$_WORKTREE_REGISTRY_HOME" ) ]]; then
+	if ! _worktree_registry_ensure_dir "$_WORKTREE_REGISTRY_HOME"; then
 		_WORKTREE_REGISTRY_HOME="${_WORKTREE_REGISTRY_TMPDIR}/aidevops-${_WORKTREE_REGISTRY_UID}-$$"
 	fi
-	if [[ ! -d "$_WORKTREE_REGISTRY_HOME" ]] && ! mkdir -m 0700 "$_WORKTREE_REGISTRY_HOME"; then
-		_WORKTREE_REGISTRY_HOME="${_WORKTREE_REGISTRY_TMPDIR}/aidevops-${_WORKTREE_REGISTRY_UID}-$$"
-		[[ -d "$_WORKTREE_REGISTRY_HOME" ]] || mkdir -m 0700 "$_WORKTREE_REGISTRY_HOME" || true
+	if ! _worktree_registry_ensure_dir "$_WORKTREE_REGISTRY_HOME"; then
+		_WORKTREE_REGISTRY_HOME="$(mktemp -d "${_WORKTREE_REGISTRY_TMPDIR}/aidevops-${_WORKTREE_REGISTRY_UID}.XXXXXXXXXX")" || _WORKTREE_REGISTRY_HOME=""
+	fi
+	if [[ -z "${_WORKTREE_REGISTRY_HOME:-}" ]] || ! _worktree_registry_dir_is_safe "$_WORKTREE_REGISTRY_HOME"; then
+		printf 'ERROR: unable to create a safe worktree registry home under %s\n' "${_WORKTREE_REGISTRY_TMPDIR:-}" >&2
+		return 1
 	fi
 fi
 WORKTREE_REGISTRY_DIR="${WORKTREE_REGISTRY_DIR:-${_WORKTREE_REGISTRY_HOME}/.aidevops/.agent-workspace}"
