@@ -1295,6 +1295,22 @@ _setup_serve_sim_cli_version() {
 	return 0
 }
 
+_setup_serve_sim_swiftpm_ok() {
+	if ! command -v xcrun >/dev/null 2>&1; then
+		return 1
+	fi
+
+	if ! xcrun simctl list devices >/dev/null 2>&1; then
+		return 1
+	fi
+
+	if ! xcrun swift build --version >/dev/null 2>&1; then
+		return 1
+	fi
+
+	return 0
+}
+
 setup_serve_sim() {
 	# serve-sim currently ships an arm64 native Apple Simulator addon.
 	if [[ "$(uname -s)" != "Darwin" ]]; then
@@ -1316,7 +1332,7 @@ setup_serve_sim() {
 		return 0
 	fi
 
-	if ! command -v xcrun >/dev/null 2>&1 || ! xcrun simctl list devices >/dev/null 2>&1; then
+	if ! _setup_serve_sim_swiftpm_ok; then
 		print_info "serve-sim requires Xcode command-line tools, SwiftPM swiftbuild support, and simulator support"
 		print_info "Install Xcode/Command Line Tools, then re-run setup"
 		return 0
