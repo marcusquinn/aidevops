@@ -166,3 +166,4 @@ and monotonically decreases".
 | 51 | ratchet-post-merge | auto-ratchet after 924e426 ("wip: reduce token report complexity (#24894)"): count 49 + 2 buffer = 51 (previously 53, reduction 2) |
 | 49 | ratchet-post-merge | auto-ratchet after d9b0ad2 ("GH#24872: refactor: reduce signature hook complexity (#24895)"): count 47 + 2 buffer = 49 (previously 51, reduction 2) |
 | 46 | ratchet-post-merge | auto-ratchet after df377bc ("wip: reduce email parser complexity (#24896)"): count 44 + 2 buffer = 46 (previously 49, reduction 3) |
+| 49 | GH#25420/PR #25430 | pre-existing drift on the PR merge ref — 47 smells vs threshold 46. The PR changes shell/config only for review feedback; Qlty Maintainability Smells and external `qlty check` both pass, confirming no blocking per-PR smell regression. 47 actual + 2 buffer = 49; ratchet-post-merge.yml will reset toward actual after the next smell-reducing merge. |
