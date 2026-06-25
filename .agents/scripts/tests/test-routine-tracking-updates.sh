@@ -45,14 +45,10 @@ setup() {
 }
 
 load_scheduler_helpers() {
-	if ! restore_scheduler_helper_mocks; then
-		return 1
-	fi
+	restore_scheduler_helper_mocks || return $?
 	# shellcheck source=/dev/null
-	if ! source "$SCHEDULERS_PLATFORM_SH"; then
-		return 1
-	fi
-	return 0
+	source "$SCHEDULERS_PLATFORM_SH"
+	return $?
 }
 
 restore_scheduler_helper_mocks() {
