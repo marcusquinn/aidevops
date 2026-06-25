@@ -102,7 +102,7 @@ SCANNER_DIFFHUNK_LINES="${SCANNER_DIFFHUNK_LINES:-12}"
 SCANNER_REFRESH_LIMIT="${SCANNER_REFRESH_LIMIT:-200}"
 SCANNER_NEEDS_REVIEW="${SCANNER_NEEDS_REVIEW:-false}"
 SCANNER_BUDGET_SECONDS="${SCANNER_BUDGET_SECONDS:-540}"
-SCANNER_CURSOR_DIR="${SCANNER_CURSOR_DIR:-${HOME}/.aidevops/logs/post-merge-review-scanner}"
+SCANNER_CURSOR_DIR="${SCANNER_CURSOR_DIR:-${HOME:-}/.aidevops/logs/post-merge-review-scanner}"
 BOT_RE="coderabbitai|gemini-code-assist|claude-review|gpt-review"
 # ACT_RE is retained ONLY for top-level review summary filtering. For inline
 # comments the thread-resolution filter is the canonical signal — every
