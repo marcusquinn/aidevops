@@ -79,34 +79,36 @@ FIXTURE_WRAPPER="${TMPDIR_TEST}/pulse-wrapper.log"
 # We use a fixed reference point relative to "now" via env override + 24h window.
 
 cat > "$FIXTURE_TIMINGS" <<'TIMINGS'
-2026-04-23T00:00:01Z	cleanup_orphans	2	0	11111
-2026-04-23T00:00:03Z	cleanup_stale_opencode	2	0	11111
-2026-04-23T00:00:05Z	cleanup_stalled_workers	2	0	11111
-2026-04-23T00:01:10Z	cleanup_worktrees	5	0	11111
-2026-04-23T00:01:20Z	cleanup_stashes	3	0	11111
-2026-04-23T00:02:00Z	preflight_cleanup_and_ledger	60	0	11111
-2026-04-23T00:03:00Z	preflight_capacity_and_labels	60	0	11111
-2026-04-23T00:05:00Z	preflight_early_dispatch	120	0	11111
-2026-04-23T00:06:00Z	deterministic_merge_pass	30	0	11111
-2026-04-23T00:10:01Z	cleanup_orphans	2	0	22222
-2026-04-23T00:10:03Z	cleanup_stale_opencode	2	0	22222
-2026-04-23T00:10:05Z	cleanup_stalled_workers	2	0	22222
-2026-04-23T00:11:10Z	cleanup_worktrees	61	124	22222
-2026-04-23T00:11:20Z	cleanup_stashes	5	0	22222
-2026-04-23T00:20:01Z	cleanup_orphans	2	0	33333
-2026-04-23T00:20:03Z	cleanup_stale_opencode	2	0	33333
-2026-04-23T00:20:05Z	cleanup_stalled_workers	2	0	33333
-2026-04-23T00:21:10Z	cleanup_worktrees	61	124	33333
-2026-04-23T00:21:20Z	cleanup_stashes	3	0	33333
-2026-04-23T00:22:00Z	preflight_cleanup_and_ledger	55	0	33333
-2026-04-23T00:23:00Z	preflight_capacity_and_labels	58	0	33333
-2026-04-23T00:26:00Z	preflight_early_dispatch	180	0	33333
-2026-04-23T00:27:00Z	deterministic_merge_pass	35	0	33333
-2026-04-23T00:30:01Z	cleanup_orphans	2	0	44444
-2026-04-23T00:30:03Z	cleanup_stale_opencode	2	0	44444
-2026-04-23T00:30:05Z	cleanup_stalled_workers	2	0	44444
-2026-04-23T00:31:10Z	cleanup_worktrees	62	124	44444
-2026-04-23T00:31:20Z	cleanup_stashes	4	0	44444
+2026-06-24T00:00:01Z	cleanup_orphans	2	0	11111
+2026-06-24T00:00:03Z	cleanup_stale_opencode	2	0	11111
+2026-06-24T00:00:05Z	cleanup_stalled_workers	2	0	11111
+2026-06-24T00:01:10Z	cleanup_worktrees	5	0	11111
+2026-06-24T00:01:20Z	cleanup_stashes	3	0	11111
+2026-06-24T00:02:00Z	preflight_cleanup_and_ledger	60	0	11111
+2026-06-24T00:03:00Z	preflight_capacity_and_labels	60	0	11111
+2026-06-24T00:05:00Z	preflight_early_dispatch	120	0	11111
+2026-06-24T00:06:00Z	deterministic_merge_pass	30	0	11111
+2026-06-24T00:10:01Z	cleanup_orphans	2	0	22222
+2026-06-24T00:10:03Z	cleanup_stale_opencode	2	0	22222
+2026-06-24T00:10:05Z	cleanup_stalled_workers	2	0	22222
+2026-06-24T00:11:10Z	cleanup_worktrees	61	124	22222
+2026-06-24T00:11:20Z	cleanup_stashes	5	0	22222
+2026-06-24T00:20:01Z	cleanup_orphans	2	0	33333
+2026-06-24T00:20:03Z	cleanup_stale_opencode	2	0	33333
+2026-06-24T00:20:05Z	cleanup_stalled_workers	2	0	33333
+2026-06-24T00:21:10Z	cleanup_worktrees	61	124	33333
+2026-06-24T00:21:20Z	cleanup_stashes	3	0	33333
+2026-06-24T00:22:00Z	preflight_cleanup_and_ledger	55	0	33333
+2026-06-24T00:23:00Z	preflight_capacity_and_labels	58	0	33333
+2026-06-24T00:26:00Z	preflight_early_dispatch	180	0	33333
+2026-06-24T00:27:00Z	deterministic_merge_pass	35	0	33333
+2026-06-24T00:30:01Z	cleanup_orphans	2	0	44444
+2026-06-24T00:30:03Z	cleanup_stale_opencode	2	0	44444
+2026-06-24T00:30:05Z	cleanup_stalled_workers	2	0	44444
+2026-06-24T00:31:10Z	cleanup_worktrees	62	124	44444
+2026-06-24T00:31:20Z	cleanup_stashes	4	0	44444
+2026-06-24T00:32:00Z	post_merge_scanner	602	124	44444
+2026-06-24T00:33:00Z	post_merge_scanner	602	124	44444
 TIMINGS
 
 # Wrapper log: 3 acquired, 2 exited early = 40% churn
@@ -253,13 +255,37 @@ else
 fi
 
 # --- Test 11: cycle-health shows in help text ---
-printf '\nTest 11: cycle-health appears in help output\n'
+printf '\nTest 11: --json keeps degraded marker out of empty last_ok_ts\n'
+if command -v jq >/dev/null 2>&1; then
+	output=$(PULSE_DIAGNOSE_TIMINGS_FILE="$FIXTURE_TIMINGS" \
+		PULSE_DIAGNOSE_WRAPPER_LOG="$FIXTURE_WRAPPER" \
+		PULSE_DIAGNOSE_LOGDIR="$TMPDIR_TEST" \
+		"$HELPER" cycle-health --window 24h --json 2>&1) || true
+	post_merge_last_ok=$(printf '%s' "$output" | \
+		jq -r '.stages[] | select(.stage=="post_merge_scanner") | .last_ok_ts' 2>/dev/null || echo "missing")
+	post_merge_degraded=$(printf '%s' "$output" | \
+		jq -r '.stages[] | select(.stage=="post_merge_scanner") | .degraded' 2>/dev/null || echo "false")
+	TOTAL=$((TOTAL + 1))
+	if [[ -z "$post_merge_last_ok" ]]; then
+		PASS=$((PASS + 1))
+		printf '  ✓ post_merge_scanner has empty last_ok_ts\n'
+	else
+		FAIL=$((FAIL + 1))
+		printf '  ✗ post_merge_scanner last_ok_ts should be empty, got: %s\n' "$post_merge_last_ok"
+	fi
+	assert_contains "post_merge_scanner remains degraded" "true" "$post_merge_degraded"
+else
+	printf '  (skipping jq validation — jq not installed)\n'
+fi
+
+# --- Test 12: cycle-health shows in help text ---
+printf '\nTest 12: cycle-health appears in help output\n'
 output=$("$HELPER" help 2>&1) || true
 assert_contains "help shows cycle-health command" "cycle-health" "$output"
 assert_contains "help shows window option" "window <W>" "$output"
 
-# --- Test 12: unknown option returns error ---
-printf '\nTest 12: unknown option returns non-zero exit\n'
+# --- Test 13: unknown option returns error ---
+printf '\nTest 13: unknown option returns non-zero exit\n'
 rc=0
 "$HELPER" cycle-health --invalid-flag 2>/dev/null || rc=$?
 assert_exit_code "unknown option exits non-zero" 1 "$rc"

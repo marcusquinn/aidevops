@@ -139,9 +139,54 @@ run_daily_codebase_review() {
 # Time-gated to run at most once per POST_MERGE_SCANNER_INTERVAL (default 24h).
 # Reference pattern: run_daily_codebase_review.
 #######################################
+_post_merge_scanner_scan_repo() {
+	local slug="$1" scanner="$2" scanner_cursor_dir="$3" stage_start_epoch="$4" stage_budget="$5" stage_reserve="$6"
+	local repo_role
+	repo_role=$(get_repo_role_by_slug "$slug")
+	if [[ "$repo_role" != "maintainer" ]]; then
+		return 3
+	fi
+
+	mkdir -p "$scanner_cursor_dir" 2>/dev/null || true
+	printf '%s\n' "$slug" >"${scanner_cursor_dir}/repo.cursor" 2>/dev/null || true
+
+	local now_for_budget="" elapsed_for_budget="" remaining_budget="" repo_budget=""
+	now_for_budget=$(date +%s)
+	elapsed_for_budget=$((now_for_budget - stage_start_epoch))
+	remaining_budget=$((stage_budget - elapsed_for_budget))
+	if [[ "$remaining_budget" -le "$stage_reserve" ]]; then
+		echo "[pulse-wrapper] Post-merge scanner: yielding before $slug (remaining=${remaining_budget}s reserve=${stage_reserve}s)" >>"$LOGFILE"
+		return 2
+	fi
+
+	repo_budget=$((remaining_budget - stage_reserve))
+	echo "[pulse-wrapper] Post-merge scanner: scanning $slug" >>"$LOGFILE"
+	SCANNER_DAYS="${SCANNER_DAYS:-7}" \
+		SCANNER_BUDGET_SECONDS="$repo_budget" \
+		SCANNER_CURSOR_DIR="$scanner_cursor_dir" \
+		"$scanner" scan "$slug" >>"$LOGFILE" 2>&1 || true
+
+	local safe_slug="" repo_scan_cursor=""
+	safe_slug=$(printf '%s' "$slug" | tr '/: ' '___')
+	repo_scan_cursor="${scanner_cursor_dir}/${safe_slug}.cursor"
+	if [[ -f "$repo_scan_cursor" ]]; then
+		echo "[pulse-wrapper] Post-merge scanner: yielded in $slug; cursor preserved for next cycle" >>"$LOGFILE"
+		return 2
+	fi
+	return 0
+}
+
 _run_post_merge_review_scanner() {
 	local now_epoch
 	now_epoch=$(date +%s)
+	local stage_start_epoch="$now_epoch"
+	local stage_start_seconds="$SECONDS"
+	local stage_budget="${AIDEVOPS_POST_MERGE_SCANNER_STAGE_BUDGET_SECONDS:-${PREFLIGHT_GROUP_TIMEOUT:-${PRE_RUN_STAGE_TIMEOUT:-600}}}"
+	[[ "$stage_budget" =~ ^[0-9]+$ ]] || stage_budget=600
+	local stage_reserve="${AIDEVOPS_POST_MERGE_SCANNER_STAGE_RESERVE_SECONDS:-30}"
+	[[ "$stage_reserve" =~ ^[0-9]+$ ]] || stage_reserve=30
+	local scanner_cursor_dir="${AIDEVOPS_POST_MERGE_SCANNER_CURSOR_DIR:-${HOME}/.aidevops/logs/post-merge-review-scanner}"
+	local repo_cursor_file="${scanner_cursor_dir}/repo.cursor"
 
 	# Time gate: skip if last run was within the interval
 	if [[ -f "$POST_MERGE_SCANNER_LAST_RUN" ]]; then
@@ -169,25 +214,52 @@ _run_post_merge_review_scanner() {
 
 	local total_repos=0
 	local skipped_contributor=0
+	local scan_yielded=0
+	local resume_slug=""
+	if [[ -f "$repo_cursor_file" ]]; then
+		resume_slug=$(sed -n '1p' "$repo_cursor_file" 2>/dev/null || true)
+	fi
 	while IFS= read -r slug; do
 		[[ -n "$slug" ]] || continue
-		# t2145: skip repos where the user is a contributor, not the maintainer.
-		# Scanners that scrape repo data (PR bot comments) duplicate what the
-		# maintainer's own pulse already sees, creating NMR noise.
-		local repo_role
-		repo_role=$(get_repo_role_by_slug "$slug")
-		if [[ "$repo_role" != "maintainer" ]]; then
-			skipped_contributor=$((skipped_contributor + 1))
-			continue
+		if [[ -n "$resume_slug" ]]; then
+			if [[ "$slug" == "$resume_slug" ]]; then
+				resume_slug=""
+			else
+				continue
+			fi
 		fi
-		total_repos=$((total_repos + 1))
-		echo "[pulse-wrapper] Post-merge scanner: scanning $slug" >>"$LOGFILE"
-		SCANNER_DAYS="${SCANNER_DAYS:-7}" "$scanner" scan "$slug" >>"$LOGFILE" 2>&1 || true
+		local scan_rc=0
+		_post_merge_scanner_scan_repo "$slug" "$scanner" "$scanner_cursor_dir" \
+			"$stage_start_epoch" "$stage_budget" "$stage_reserve" || scan_rc=$?
+		case "$scan_rc" in
+		0)
+			total_repos=$((total_repos + 1))
+			;;
+		2)
+			total_repos=$((total_repos + 1))
+			scan_yielded=1
+			break
+			;;
+		3)
+			skipped_contributor=$((skipped_contributor + 1))
+			;;
+		*)
+			total_repos=$((total_repos + 1))
+			;;
+		esac
 	done < <(_pulse_enabled_repo_slugs "$repos_json")
 	if [[ "$skipped_contributor" -gt 0 ]]; then
 		echo "[pulse-wrapper] Post-merge scanner: skipped ${skipped_contributor} contributor-role repo(s) (t2145)" >>"$LOGFILE"
 	fi
+	if [[ "$scan_yielded" -eq 1 ]]; then
+		echo "[pulse-wrapper] Post-merge scanner: yielded after ${total_repos} repo(s); cursor state saved" >>"$LOGFILE"
+		if declare -F _log_substage_timing >/dev/null 2>&1; then
+			_log_substage_timing "post_merge_scanner:yielded" "$stage_start_seconds" 0
+		fi
+		return 0
+	fi
 
+	rm -f "$repo_cursor_file" 2>/dev/null || true
 	printf '%s\n' "$now_epoch" >"$POST_MERGE_SCANNER_LAST_RUN"
 	echo "[pulse-wrapper] Post-merge scanner: completed ${total_repos} repo(s), next run in ~$((POST_MERGE_SCANNER_INTERVAL / 3600))h" >>"$LOGFILE"
 	return 0
