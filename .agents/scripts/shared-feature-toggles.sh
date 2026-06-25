@@ -77,8 +77,8 @@ fi
 # Legacy paths (kept for backward compatibility and migration)
 # =============================================================================
 
-FEATURE_TOGGLES_DEFAULTS="${HOME}/.aidevops/agents/configs/feature-toggles.conf.defaults"
-FEATURE_TOGGLES_USER="${HOME}/.config/aidevops/feature-toggles.conf"
+FEATURE_TOGGLES_DEFAULTS="${HOME:-/tmp}/.aidevops/agents/configs/feature-toggles.conf.defaults"
+FEATURE_TOGGLES_USER="${HOME:-/tmp}/.config/aidevops/feature-toggles.conf"
 
 # Prefix for dynamic toggle variables exposed by legacy mode (e.g. _FT_auto_update).
 readonly _FT_VAR_PREFIX="_FT_"
