@@ -73,6 +73,20 @@ assert_rc() {
 	return 0
 }
 
+assert_equals() {
+	local test_name="$1" expected="$2" actual="$3"
+	if [[ "$expected" == "$actual" ]]; then
+		echo "  PASS: $test_name"
+		PASS=$((PASS + 1))
+	else
+		echo "  FAIL: $test_name"
+		echo "    expected: $expected"
+		echo "    actual:   $actual"
+		FAIL=$((FAIL + 1))
+	fi
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Test harness setup: stub `gh` via PATH override
 # -----------------------------------------------------------------------------
@@ -205,6 +219,16 @@ fi
 # shellcheck source=../post-merge-review-scanner.sh
 # shellcheck disable=SC1091
 source "$SCANNER"
+
+scanner_cursor_without_home="$(
+	HOME=
+	SCANNER_CURSOR_DIR=
+	# shellcheck source=../post-merge-review-scanner.sh
+	# shellcheck disable=SC1091
+	source "$SCANNER"
+	printf "%s" "$SCANNER_CURSOR_DIR"
+)"
+assert_equals "SCANNER_CURSOR_DIR falls back to /tmp when HOME is empty" "/tmp/.aidevops/logs/post-merge-review-scanner" "$scanner_cursor_without_home"
 
 # -----------------------------------------------------------------------------
 # Fixture builders
