@@ -150,7 +150,7 @@ _post_merge_scanner_scan_repo() {
 	mkdir -p "$scanner_cursor_dir" 2>/dev/null || true
 	printf '%s\n' "$slug" >"${scanner_cursor_dir}/repo.cursor" 2>/dev/null || true
 
-	local now_for_budget elapsed_for_budget remaining_budget repo_budget
+	local now_for_budget="" elapsed_for_budget="" remaining_budget="" repo_budget=""
 	now_for_budget=$(date +%s)
 	elapsed_for_budget=$((now_for_budget - stage_start_epoch))
 	remaining_budget=$((stage_budget - elapsed_for_budget))
@@ -166,7 +166,7 @@ _post_merge_scanner_scan_repo() {
 		SCANNER_CURSOR_DIR="$scanner_cursor_dir" \
 		"$scanner" scan "$slug" >>"$LOGFILE" 2>&1 || true
 
-	local safe_slug repo_scan_cursor
+	local safe_slug="" repo_scan_cursor=""
 	safe_slug=$(printf '%s' "$slug" | tr '/: ' '___')
 	repo_scan_cursor="${scanner_cursor_dir}/${safe_slug}.cursor"
 	if [[ -f "$repo_scan_cursor" ]]; then
