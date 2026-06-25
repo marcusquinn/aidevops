@@ -222,13 +222,15 @@ source "$SCANNER"
 
 scanner_cursor_without_home="$(
 	HOME=
+	USER=scanner-test-user
 	SCANNER_CURSOR_DIR=
 	# shellcheck source=../post-merge-review-scanner.sh
 	# shellcheck disable=SC1091
 	source "$SCANNER"
 	printf "%s" "$SCANNER_CURSOR_DIR"
 )"
-assert_equals "SCANNER_CURSOR_DIR falls back to /tmp when HOME is empty" "/tmp/.aidevops/logs/post-merge-review-scanner" "$scanner_cursor_without_home"
+assert_equals "SCANNER_CURSOR_DIR uses a user-isolated /tmp fallback when HOME is empty" "/tmp/.aidevops-scanner-test-user/logs/post-merge-review-scanner" "$scanner_cursor_without_home"
+assert_not_contains "SCANNER_CURSOR_DIR does not use shared /tmp fallback when HOME is empty" "$scanner_cursor_without_home" "/tmp/.aidevops/logs/post-merge-review-scanner"
 
 # -----------------------------------------------------------------------------
 # Fixture builders
