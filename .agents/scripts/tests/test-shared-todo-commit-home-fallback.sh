@@ -14,7 +14,7 @@ SCRIPT_DIR="${BASH_SOURCE[0]%/*}/.."
 SCRIPT_DIR="$(cd "$SCRIPT_DIR" && pwd)"
 
 # shellcheck disable=SC2016 # Inner shell expands $1 and $TODO_LOCK_DIR after sourcing.
-actual=$(env -u HOME USER=tester UID=12345 bash -c 'source "$1"; printf "%s\n" "$TODO_LOCK_DIR"' _ "${SCRIPT_DIR}/shared-todo-commit.sh")
+actual=$(env -u HOME USER=tester bash -c 'source "$1"; printf "%s\n" "$TODO_LOCK_DIR"' _ "${SCRIPT_DIR}/shared-todo-commit.sh")
 expected="/tmp/aidevops-tester/.aidevops/locks"
 
 if [[ "$actual" != "$expected" ]]; then
