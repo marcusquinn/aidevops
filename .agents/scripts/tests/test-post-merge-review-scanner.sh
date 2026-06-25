@@ -230,11 +230,11 @@ scanner_cursor_without_home="$(
 	printf "%s" "$SCANNER_CURSOR_DIR"
 )"
 assert_equals "SCANNER_CURSOR_DIR uses a user-isolated /tmp fallback when HOME is empty" "/tmp/.aidevops-scanner-test-user/logs/post-merge-review-scanner" "$scanner_cursor_without_home"
-assert_not_contains "SCANNER_CURSOR_DIR does not use shared /tmp fallback when HOME is empty" "$scanner_cursor_without_home" "/tmp/.aidevops/logs/post-merge-review-scanner"
+assert_not_contains "SCANNER_CURSOR_DIR does not use shared /tmp fallback when HOME is empty" "/tmp/.aidevops/logs/post-merge-review-scanner" "$scanner_cursor_without_home"
 # shellcheck disable=SC2016
 scanner_cursor_with_unset_home="$(env -u HOME USER=scanner-test-user SCANNER_CURSOR_DIR= bash -c 'set -euo pipefail; source "$1"; printf "%s" "$SCANNER_CURSOR_DIR"' _ "$SCANNER")"
 assert_equals "SCANNER_CURSOR_DIR uses a user-isolated /tmp fallback when HOME is unset" "/tmp/.aidevops-scanner-test-user/logs/post-merge-review-scanner" "$scanner_cursor_with_unset_home"
-assert_not_contains "SCANNER_CURSOR_DIR does not use shared /tmp fallback when HOME is unset" "$scanner_cursor_with_unset_home" "/tmp/.aidevops/logs/post-merge-review-scanner"
+assert_not_contains "SCANNER_CURSOR_DIR does not use shared /tmp fallback when HOME is unset" "/tmp/.aidevops/logs/post-merge-review-scanner" "$scanner_cursor_with_unset_home"
 
 # -----------------------------------------------------------------------------
 # Fixture builders
