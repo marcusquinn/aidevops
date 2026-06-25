@@ -65,7 +65,34 @@ _GH_API_INSTRUMENT_LOADED=1
 [[ "${BASH_SOURCE[0]}" == "${0}" ]] && set -euo pipefail
 
 # --- Configuration --------------------------------------------------------
-_GH_API_HOME="${HOME:-${TMPDIR:-/tmp}/aidevops-${USER:-${UID:-shared}}}"
+_GH_API_HOME="${HOME:-}"
+if [[ -z "$_GH_API_HOME" ]]; then
+	_GH_API_UID="${UID:-}"
+	[[ -z "$_GH_API_UID" ]] && _GH_API_UID="$(id -u)"
+	if command -v getent >/dev/null 2>&1; then
+		_GH_API_HOME="$(getent passwd "$_GH_API_UID" | cut -d: -f6 || true)"
+	fi
+	_GH_API_HOME="${_GH_API_HOME:-${TMPDIR:-/tmp}/aidevops-${USER:-${_GH_API_UID:-shared}}}"
+fi
+
+# If HOME cannot be resolved and we must fall back under a shared temporary
+# parent, create/lock down a user-owned root before any nested log path exists.
+# Otherwise a pre-created /tmp/aidevops-* tree can contain symlinks that make the
+# later append follow attacker-controlled paths.
+case "$_GH_API_HOME" in
+"${TMPDIR:-/tmp}"/* | /tmp/*)
+	if [[ ! -e "$_GH_API_HOME" ]]; then
+		mkdir -p "$_GH_API_HOME" 2>/dev/null || AIDEVOPS_GH_API_INSTRUMENT_DISABLE=1
+	fi
+	if [[ -e "$_GH_API_HOME" ]]; then
+		if [[ ! -O "$_GH_API_HOME" ]]; then
+			AIDEVOPS_GH_API_INSTRUMENT_DISABLE=1
+		else
+			chmod 0700 "$_GH_API_HOME" 2>/dev/null || true
+		fi
+	fi
+	;;
+esac
 GH_API_LOG="${AIDEVOPS_GH_API_LOG:-${_GH_API_HOME}/.aidevops/logs/gh-api-calls.log}"
 GH_API_REPORT="${AIDEVOPS_GH_API_REPORT:-${_GH_API_HOME}/.aidevops/logs/gh-api-calls-by-stage.json}"
 GH_API_LOG_MAX_LINES="${AIDEVOPS_GH_API_LOG_MAX_LINES:-50000}"
