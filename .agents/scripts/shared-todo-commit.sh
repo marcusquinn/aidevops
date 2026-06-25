@@ -35,7 +35,8 @@
 #                                        TODO_MAX_RETRIES.
 #
 # Tunable constants (readonly):
-#   - TODO_LOCK_DIR              — ${HOME}/.aidevops/locks
+#   - TODO_LOCK_DIR              — ${HOME}/.aidevops/locks, or a user-scoped
+#                                  /tmp fallback when HOME is unset
 #   - TODO_LOCK_PATH             — ${TODO_LOCK_DIR}/todo-md.lock
 #   - TODO_MAX_RETRIES           — 3
 #   - TODO_LOCK_TIMEOUT          — 30 (seconds to wait for lock acquisition)
@@ -90,7 +91,7 @@ _SHARED_TODO_COMMIT_LOADED=1
 # Guard against re-declaration when shared-constants.sh is sourced more than once
 # in a process (the readonly statement would otherwise abort the second source).
 if [[ -z "${TODO_LOCK_DIR:-}" ]]; then
-	readonly TODO_LOCK_DIR="${HOME:-/tmp}/.aidevops/locks"
+	readonly TODO_LOCK_DIR="${HOME:-/tmp/aidevops-${USER:-uid-${UID:-shared}}}/.aidevops/locks"
 	readonly TODO_LOCK_PATH="${TODO_LOCK_DIR}/todo-md.lock"
 	readonly TODO_MAX_RETRIES=3
 	readonly TODO_LOCK_TIMEOUT=30
