@@ -218,6 +218,33 @@ EOF
 	return 0
 }
 
+test_sigterm_with_local_kill_reason_does_not_resume_as_provider_drop() {
+	local output_file="${TEST_ROOT}/sigterm-local-kill.jsonl"
+	cat >"$output_file" <<'EOF'
+{"type":"text","text":"I was working before the local watchdog killed me."}
+[WORKER_EXIT_DIAGNOSTICS] exit_code=143 model=openai/gpt-5.5 role=worker session_key=issue-25394
+EOF
+	_run_result_label=""
+	_run_failure_reason=""
+	_run_runtime_error_type=""
+	_run_classification_source=""
+	_run_classification_pattern=""
+	_metric_kill_reason="no_output_stall"
+
+	local status=0
+	_handle_run_result 143 "$output_file" "worker" "openai" "issue-25394" "openai/gpt-5.5" || status=$?
+	unset _metric_kill_reason 2>/dev/null || true
+
+	if [[ "$status" -eq 83 && "$_run_result_label" == "local_kill" && "$_run_failure_reason" == "no_output_stall" && "$_run_runtime_error_type" == "sigterm" && "$_run_classification_source" == "worker_kill_reason_sentinel" && ! -f "$output_file" ]]; then
+		print_result "SIGTERM with local kill reason is not treated as provider/runtime drop" 0
+		return 0
+	fi
+
+	print_result "SIGTERM with local kill reason is not treated as provider/runtime drop" 1 \
+		"status=$status label=${_run_result_label:-<empty>} reason=${_run_failure_reason:-<empty>} runtime=${_run_runtime_error_type:-<empty>} source=${_run_classification_source:-<empty>} output_exists=$([[ -f "$output_file" ]] && printf yes || printf no)"
+	return 0
+}
+
 test_dispatcher_initial_model_can_rotate_after_rate_limit() {
 	local result status action next_model
 	result=$(
@@ -2403,6 +2430,7 @@ main() {
 	test_startup_no_activity_timeout_returns_watchdog_continue
 	test_startup_no_activity_can_rotate_after_continuation_budget
 	test_sigkill_with_activity_attempts_continuation
+	test_sigterm_with_local_kill_reason_does_not_resume_as_provider_drop
 	test_dispatcher_initial_model_can_rotate_after_rate_limit
 	test_explicit_model_override_remains_pinned_on_rate_limit
 	test_issue_worker_env_contract_rejects_missing_env
