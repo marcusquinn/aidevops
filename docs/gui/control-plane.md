@@ -29,7 +29,7 @@ The first usable product remains local-first:
 4. Helper/API contract.
 5. GUI testing and CI/CD strategy.
 6. Local read-only API and dashboard scaffold.
-7. Setup/status, repos/Git, infrastructure, provider bookmarks, routines,
+7. Setup/status, repos/git, infrastructure, provider bookmarks, routines,
    CalDAV/CardDAV, and capability browser surfaces.
 8. Cloudron package.
 9. Multi-machine pairing and scoped task capsules.
@@ -40,14 +40,14 @@ The first usable product remains local-first:
 - ADR 0001 chooses a Vite React web app, Hono local API, and SQLite-first local
   storage for the first scaffold.
 - First code should land in this repository as staged package subtrees, not as a
-  separate repository and not as new root-level ad hoc app files.
+  separate repository and not as new root-level ad-hoc app files.
 - Future phases that introduce new top-level directories must update
   `.agents/configs/repo-layout-policy.conf` before adding those paths.
 
 ## Implementation gates
 
 - Coding may begin in Phase 6 after ADRs for product/stack, threat model, data
-  model, helper/API contract, and testing/CI strategy are complete.
+  model, helper/API contract, and testing/CI/CD strategy are complete.
 - Write actions remain gated on explicit trust-boundary documentation, helper
   contracts, and tests for destructive-operation safeguards.
 - Cloudron packaging, machine pairing, and desktop packaging remain later-phase
