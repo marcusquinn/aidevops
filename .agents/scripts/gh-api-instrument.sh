@@ -81,14 +81,16 @@ fi
 # later append follow attacker-controlled paths.
 case "$_GH_API_HOME" in
 "${TMPDIR:-/tmp}"/* | /tmp/*)
-	if [[ ! -e "$_GH_API_HOME" ]]; then
+	if [[ -L "$_GH_API_HOME" ]]; then
+		AIDEVOPS_GH_API_INSTRUMENT_DISABLE=1
+	elif [[ ! -e "$_GH_API_HOME" ]]; then
 		mkdir -p "$_GH_API_HOME" 2>/dev/null || AIDEVOPS_GH_API_INSTRUMENT_DISABLE=1
 	fi
-	if [[ -e "$_GH_API_HOME" ]]; then
-		if [[ ! -O "$_GH_API_HOME" ]]; then
+	if [[ -e "$_GH_API_HOME" && "${AIDEVOPS_GH_API_INSTRUMENT_DISABLE:-0}" != "1" ]]; then
+		if [[ ! -O "$_GH_API_HOME" || -L "$_GH_API_HOME" ]]; then
 			AIDEVOPS_GH_API_INSTRUMENT_DISABLE=1
 		else
-			chmod 0700 "$_GH_API_HOME" 2>/dev/null || true
+			chmod 0700 "$_GH_API_HOME" || true
 		fi
 	fi
 	;;

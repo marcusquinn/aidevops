@@ -219,6 +219,25 @@ fallback_status="$?"
 set -e
 assert_eq "HOME-less temp fallback is private" "0" "$fallback_status"
 
+# --- Test 9: HOME-less temp fallback rejects pre-created symlink ------
+unset _GH_API_INSTRUMENT_LOADED AIDEVOPS_GH_API_LOG AIDEVOPS_GH_API_REPORT
+SYMLINK_TMP="$TMPDIR/symlink-root"
+SYMLINK_TARGET="$TMPDIR/symlink-target"
+mkdir -p "$SYMLINK_TMP" "$SYMLINK_TARGET"
+ln -s "$SYMLINK_TARGET" "$SYMLINK_TMP/aidevops-ghapitest"
+set +e
+PATH="$FAKE_BIN:$PATH" HOME='' TMPDIR="$SYMLINK_TMP" USER="ghapitest" bash -c '
+	set -euo pipefail
+	# shellcheck source=../gh-api-instrument.sh
+	source "$1"
+	gh_record_call rest symlink-fallback-test
+	[[ "${AIDEVOPS_GH_API_INSTRUMENT_DISABLE:-0}" == "1" ]]
+	[[ ! -e "$TMPDIR/aidevops-$USER/.aidevops/logs/gh-api-calls.log" ]]
+' _ "${PARENT_DIR}/gh-api-instrument.sh"
+symlink_status="$?"
+set -e
+assert_eq "HOME-less temp fallback rejects symlink" "0" "$symlink_status"
+
 # Restore per-test overrides for summary diagnostics if future tests append.
 export AIDEVOPS_GH_API_LOG="$TMPDIR/gh-api-calls.log"
 export AIDEVOPS_GH_API_REPORT="$TMPDIR/report.json"
