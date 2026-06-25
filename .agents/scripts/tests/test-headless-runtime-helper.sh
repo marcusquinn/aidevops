@@ -245,6 +245,39 @@ EOF
 	return 0
 }
 
+test_handle_run_result_tolerates_empty_or_non_numeric_exit_code() {
+	local empty_output_file="${TEST_ROOT}/empty-exit-code.jsonl"
+	local text_output_file="${TEST_ROOT}/text-exit-code.jsonl"
+	printf '%s\n' 'runtime exited before writing a numeric status' >"$empty_output_file"
+	printf '%s\n' 'runtime wrote a non-numeric status' >"$text_output_file"
+	_run_result_label=""
+	_run_failure_reason=""
+	_run_should_retry=0
+
+	local empty_status=0 empty_error=""
+	set +e
+	empty_error=$(_handle_run_result "" "$empty_output_file" "worker" "openai" "issue-25437" "openai/gpt-5.5" 2>&1)
+	empty_status=$?
+	set -e
+
+	local text_status=0 text_error=""
+	set +e
+	text_error=$(_handle_run_result "not-a-number" "$text_output_file" "worker" "openai" "issue-25437" "openai/gpt-5.5" 2>&1)
+	text_status=$?
+	set -e
+
+	if [[ "$empty_status" -eq 1 && "$text_status" -eq 1 ]] && \
+		[[ "$empty_error" != *"syntax error"* && "$empty_error" != *"numeric argument"* ]] && \
+		[[ "$text_error" != *"syntax error"* && "$text_error" != *"numeric argument"* ]]; then
+		print_result "_handle_run_result tolerates empty or non-numeric exit code" 0
+		return 0
+	fi
+
+	print_result "_handle_run_result tolerates empty or non-numeric exit code" 1 \
+		"empty_status=$empty_status empty_error=${empty_error:-<empty>} text_status=$text_status text_error=${text_error:-<empty>}"
+	return 0
+}
+
 test_dispatcher_initial_model_can_rotate_after_rate_limit() {
 	local result status action next_model
 	result=$(
@@ -2431,6 +2464,7 @@ main() {
 	test_startup_no_activity_can_rotate_after_continuation_budget
 	test_sigkill_with_activity_attempts_continuation
 	test_sigterm_with_local_kill_reason_does_not_resume_as_provider_drop
+	test_handle_run_result_tolerates_empty_or_non_numeric_exit_code
 	test_dispatcher_initial_model_can_rotate_after_rate_limit
 	test_explicit_model_override_remains_pinned_on_rate_limit
 	test_issue_worker_env_contract_rejects_missing_env
