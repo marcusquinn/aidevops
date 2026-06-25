@@ -1317,7 +1317,7 @@ setup_serve_sim() {
 	fi
 
 	if ! command -v xcrun >/dev/null 2>&1 || ! xcrun simctl list devices >/dev/null 2>&1; then
-		print_info "serve-sim requires Xcode command-line tools and simulator support"
+		print_info "serve-sim requires Xcode command-line tools, SwiftPM swiftbuild support, and simulator support"
 		print_info "Install Xcode/Command Line Tools, then re-run setup"
 		return 0
 	fi
@@ -1345,6 +1345,7 @@ setup_serve_sim() {
 	printf '%s\n' "  Features:"
 	printf '%s\n' "    - Browser preview at http://localhost:3200"
 	printf '%s\n' "    - In-process native capture/HID with H.264/MJPEG stream control"
+	printf '%s\n' "    - SwiftPM swiftbuild-backed native addon on current Xcode toolchains"
 	printf '%s\n' "    - Gestures, hardware buttons, typing, rotation, memory warnings"
 	printf '%s\n' "    - Camera feed injection for simulator apps"
 	printf '%s\n' ""
