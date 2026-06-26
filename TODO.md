@@ -988,6 +988,36 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t3603 Fix profile AI hours missing wrapper DBs #bug #no-auto-dispatch ref:GH#24870 pr:#24871 completed:2026-06-15
 
+- [ ] t17996 Vault: encrypted aidevops data, fleet sync, remote control, messaging, and audit #architecture #parent-task #plan #security tier:thinking ~20h ref:GH#25533 logged:2026-06-26 -> [todo/tasks/t17996-brief.md]
+
+- [ ] t17997 vault: define threat model, data classification, and security architecture RFC #architecture #auto-dispatch #documentation #feat #local-models #opsec #security tier:thinking ~6h ref:GH#25534 logged:2026-06-26 -> [todo/tasks/t17997-brief.md]
+
+- [ ] t17998 vault: implement local broker, crypto envelope, and CLI lock/unlock gate #architecture #auto-dispatch #cli #feat #security #tools blocked-by:t17997 tier:thinking ~8h ref:GH#25535 logged:2026-06-26 -> [todo/tasks/t17998-brief.md]
+
+- [ ] t17999 vault: build first-use passphrase test, restart verification, recovery, and archive flow #architecture #auto-dispatch #documentation #feat #security #setup blocked-by:t17998 tier:thinking ~6h ref:GH#25536 logged:2026-06-26 -> [todo/tasks/t17999-brief.md]
+
+- [ ] t18000 vault: protect managed AI session and history storage behind unlocked Vault profiles #architecture #auto-dispatch #feat #memory #opencode #security #session-miner blocked-by:t17998,t17999 tier:thinking ~6h ref:GH#25537 logged:2026-06-26 -> [todo/tasks/t18000-brief.md]
+
+- [ ] t18001 vault: migrate aidevops memory, workspace, knowledge, and config data with scrub-safe rollback #architecture #auto-dispatch #database #documents #feat #memory #security blocked-by:t17999,t18000 tier:thinking ~8h ref:GH#25538 logged:2026-06-26 -> [todo/tasks/t18001-brief.md]
+
+- [ ] t18002 vault: add GUI Vault sidebar, setup navigation, padlock indicators, and locked-state gates #architecture #auto-dispatch #design #feat #product #security blocked-by:t17999 tier:thinking ~5h ref:GH#25539 logged:2026-06-26 -> [todo/tasks/t18002-brief.md]
+
+- [ ] t18003 vault: implement device identity, trust, revocation, and fleet unlock status model #architecture #auto-dispatch #feat #orchestration #security blocked-by:t17998 tier:thinking ~6h ref:GH#25540 logged:2026-06-26 -> [todo/tasks/t18003-brief.md]
+
+- [ ] t18004 vault: add encrypted sync, export, import, rekey, and public-Git-safe replication #architecture #auto-dispatch #communications #database #feat #git #security blocked-by:t18001,t18003 tier:thinking ~8h ref:GH#25541 logged:2026-06-26 -> [todo/tasks/t18004-brief.md]
+
+- [ ] t18005 vault: implement secure device messaging over Git transport with SimpleX adapter option #architecture #auto-dispatch #communications #feat #git #security blocked-by:t18003,t18004 tier:thinking ~6h ref:GH#25542 logged:2026-06-26 -> [todo/tasks/t18005-brief.md]
+
+- [ ] t18006 vault: add remote lock, unlock-request, and sudo plus passphrase remote unlock policy #architecture #auth #auto-dispatch #feat #opsec #security blocked-by:t18003,t18005 tier:thinking ~6h ref:GH#25543 logged:2026-06-26 -> [todo/tasks/t18006-brief.md]
+
+- [ ] t18007 vault: build tamper-evident access logs with peer replication and public-safe anchors #architecture #audit #auto-dispatch #feat #monitoring #security #security-review blocked-by:t17998,t18003,t18004 tier:thinking ~6h ref:GH#25544 logged:2026-06-26 -> [todo/tasks/t18007-brief.md]
+
+- [ ] t18008 vault: enforce confidential data policy for provider AI, local LLM, and task dispatch routing #architecture #auto-dispatch #feat #local-models #model-routing #routing #security blocked-by:t17997,t17998 tier:thinking ~5h ref:GH#25545 logged:2026-06-26 -> [todo/tasks/t18008-brief.md]
+
+- [ ] t18009 vault: create Vault agent guidance, user workflows, command docs, and dispatch gates #agents #architecture #auto-dispatch #brief #documentation #feat #security blocked-by:t18002,t18004,t18006,t18007,t18008 tier:thinking ~5h ref:GH#25546 logged:2026-06-26 -> [todo/tasks/t18009-brief.md]
+
+- [ ] t18010 vault: add security validation suite, crash drills, destructive-migration gates, and release criteria #architecture #auto-dispatch #ci #feat #security #security-review #testing blocked-by:t17999,t18001,t18004,t18006,t18007,t18009 tier:thinking ~6h ref:GH#25547 logged:2026-06-26 -> [todo/tasks/t18010-brief.md]
+
 ## In Progress
 
 - [x] t2744 raise GraphQL throttle defaults and reduce pulse/stats cycle pressure — circuit breaker default `0.05`→`0.30` (trips at 1500 remaining instead of 250), REST fallback default `10`→`1000` (REST takes over earlier, GraphQL kept in reserve), pulse interval default `120s`→`180s`, stats-wrapper interval `900s`→`3600s`. Also fixes macOS launchd path that ignored `supervisor.pulse_interval_seconds` from settings. Evidence: GraphQL=0/5000 vs REST=4044/5000 with 21 EXHAUSTED events in current pulse log; per-cycle cost (~400-700 pts) × 30 cycles/hr × 14 repos exceeds 5000/hr ceiling by 2-4×. All env-overridable, fully backwards-compatible. See `todo/tasks/t2744-brief.md`. #framework #pulse #interactive ~1h ref:GH#20482 started:2026-04-22 pr:#20483 completed:2026-04-22
