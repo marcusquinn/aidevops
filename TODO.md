@@ -4299,3 +4299,9 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18003 vault: implement device identity, trust, revocation, and fleet unlock status model #architecture #auto-dispatch #enhancement #infrastructure #orchestration #security ref:GH#25540
 
 - [ ] t18002 vault: add GUI Vault sidebar, setup navigation, padlock indicators, and locked-state gates #architecture #auto-dispatch #design #enhancement #product #security ref:GH#25539
+
+- [ ] t18010 vault: add security validation suite, crash drills, destructive-migration gates, and release criteria #architecture #auto-dispatch #ci #enhancement #security #security-review #testing ref:GH#25547
+
+- [ ] t18009 vault: create Vault agent guidance, user workflows, command docs, and dispatch gates #agents #architecture #auto-dispatch #brief #documentation #enhancement #security ref:GH#25546
+
+- [ ] t18008 vault: enforce confidential data policy for provider AI, local LLM, and task dispatch routing #architecture #auto-dispatch #enhancement #local-models #model-routing #routing #security ref:GH#25545
