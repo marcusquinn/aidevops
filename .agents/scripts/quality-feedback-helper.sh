@@ -1002,6 +1002,40 @@ _filter_unscanned_prs() {
 # _print_scan_summary: emit the final scan summary to stdout.
 # Arguments: $1=json_output $2=backfill $3=dry_run $4=all_findings_json
 #            $5=batch_count $6=total_findings $7=total_issues_created
+_print_scan_summary_json() {
+	local details_json="$1"
+	local dry_run="$2"
+	local batch_count="$3"
+	local total_findings="$4"
+	local total_issues_created="$5"
+
+	[[ -n "$details_json" && "$details_json" != "null" ]] || details_json="[]"
+
+	local details_file
+	details_file=$(mktemp) || return 1
+	if ! printf '%s' "$details_json" >"$details_file"; then
+		rm -f "$details_file"
+		return 1
+	fi
+
+	local dry_run_json="false"
+	[[ "$dry_run" == true ]] && dry_run_json="true"
+
+	local jq_output jq_status
+	jq_status=0
+	jq_output=$(jq -n \
+		--argjson scanned "$batch_count" \
+		--argjson findings "$total_findings" \
+		--argjson issues_created "$total_issues_created" \
+		--slurpfile details "$details_file" \
+		--argjson dry_run "$dry_run_json" \
+		'{scanned: $scanned, findings: $findings, issues_created: $issues_created, details: ($details[0] // []), dry_run: $dry_run}') || jq_status=$?
+	rm -f "$details_file"
+	[[ "$jq_status" -eq 0 ]] || return "$jq_status"
+	printf '%s\n' "$jq_output"
+	return 0
+}
+
 _print_scan_summary() {
 	local json_output="$1"
 	local backfill="$2"
@@ -1014,13 +1048,7 @@ _print_scan_summary() {
 	if [[ "$json_output" == "true" ]]; then
 		local details_json="$all_findings_json"
 		[[ "$backfill" == true && "$dry_run" != true ]] && details_json="[]"
-		jq -n \
-			--argjson scanned "$batch_count" \
-			--argjson findings "$total_findings" \
-			--argjson issues_created "$total_issues_created" \
-			--argjson details "$details_json" \
-			--argjson dry_run "$([[ "$dry_run" == true ]] && echo 'true' || echo 'false')" \
-			'{scanned: $scanned, findings: $findings, issues_created: $issues_created, details: $details, dry_run: $dry_run}'
+		_print_scan_summary_json "$details_json" "$dry_run" "$batch_count" "$total_findings" "$total_issues_created" || return 1
 	else
 		echo ""
 		echo -e "${BLUE:-}=== Scan Summary ===${NC:-}"

@@ -503,6 +503,61 @@ _prefetch_single_repo_idle_skip() {
 	return 0
 }
 
+#######################################
+# Build a per-repo prefetch cache entry without passing large JSON via argv.
+#
+# Large PR/issue arrays can exceed Linux MAX_ARG_STRLEN when passed through
+# jq --argjson. Store them in temp files and load with --slurpfile instead.
+#
+# Arguments:
+#   $1 - last_prefetch ISO timestamp
+#   $2 - last_full_sweep ISO timestamp
+#   $3 - state fingerprint
+#   $4 - PR JSON array
+#   $5 - issue JSON array
+# Outputs: JSON cache entry object
+#######################################
+_prefetch_build_cache_entry() {
+	local now_iso="$1"
+	local last_full_sweep="$2"
+	local fingerprint="$3"
+	local prs_json="$4"
+	local issues_json="$5"
+
+	[[ -n "$prs_json" && "$prs_json" != "null" ]] || prs_json="[]"
+	[[ -n "$issues_json" && "$issues_json" != "null" ]] || issues_json="[]"
+
+	local prs_file issues_file
+	prs_file=$(mktemp) || return 1
+	issues_file=$(mktemp) || {
+		rm -f "$prs_file"
+		return 1
+	}
+
+	if ! printf '%s' "$prs_json" >"$prs_file"; then
+		rm -f "$prs_file" "$issues_file"
+		return 1
+	fi
+	if ! printf '%s' "$issues_json" >"$issues_file"; then
+		rm -f "$prs_file" "$issues_file"
+		return 1
+	fi
+
+	local jq_output jq_status
+	jq_status=0
+	jq_output=$(jq -n \
+		--arg now "$now_iso" \
+		--arg lfs "$last_full_sweep" \
+		--arg fp "$fingerprint" \
+		--slurpfile prs "$prs_file" \
+		--slurpfile issues "$issues_file" \
+		'{last_prefetch: $now, last_full_sweep: $lfs, state_fingerprint: $fp, prs: ($prs[0] // []), issues: ($issues[0] // [])}') || jq_status=$?
+	rm -f "$prs_file" "$issues_file"
+	[[ "$jq_status" -eq 0 ]] || return "$jq_status"
+	printf '%s\n' "$jq_output"
+	return 0
+}
+
 _prefetch_single_repo() {
 	local slug="$1"
 	local path="$2"
@@ -603,24 +658,21 @@ _prefetch_single_repo() {
 	local fingerprint="${PREFETCH_CURRENT_FINGERPRINT:-}"
 	local new_entry
 	if [[ "$sweep_mode" == "$_PREFETCH_ISSUE_SWEEP_FULL" ]]; then
-		new_entry=$(jq -n \
-			--arg now "$now_iso" \
-			--arg fp "$fingerprint" \
-			--argjson prs "${PREFETCH_UPDATED_PRS:-[]}" \
-			--argjson issues "${PREFETCH_UPDATED_ISSUES:-[]}" \
-			'{last_prefetch: $now, last_full_sweep: $now, state_fingerprint: $fp, prs: $prs, issues: $issues}')
+		new_entry=$(_prefetch_build_cache_entry \
+			"$now_iso" "$now_iso" "$fingerprint" \
+			"${PREFETCH_UPDATED_PRS:-[]}" "${PREFETCH_UPDATED_ISSUES:-[]}") || new_entry=""
 	else
 		local last_full_sweep
 		last_full_sweep=$(echo "$cache_entry" | jq -r '.last_full_sweep // ""' 2>/dev/null) || last_full_sweep=""
-		new_entry=$(jq -n \
-			--arg now "$now_iso" \
-			--arg lfs "$last_full_sweep" \
-			--arg fp "$fingerprint" \
-			--argjson prs "${PREFETCH_UPDATED_PRS:-[]}" \
-			--argjson issues "${PREFETCH_UPDATED_ISSUES:-[]}" \
-			'{last_prefetch: $now, last_full_sweep: $lfs, state_fingerprint: $fp, prs: $prs, issues: $issues}')
+		new_entry=$(_prefetch_build_cache_entry \
+			"$now_iso" "$last_full_sweep" "$fingerprint" \
+			"${PREFETCH_UPDATED_PRS:-[]}" "${PREFETCH_UPDATED_ISSUES:-[]}") || new_entry=""
 	fi
-	_prefetch_cache_set "$slug" "$new_entry"
+	if [[ -n "$new_entry" && "$new_entry" != "null" ]]; then
+		_prefetch_cache_set "$slug" "$new_entry"
+	else
+		echo "[pulse-wrapper] _prefetch_single_repo: failed to build cache entry for ${slug}" >>"$LOGFILE"
+	fi
 
 	return 0
 }

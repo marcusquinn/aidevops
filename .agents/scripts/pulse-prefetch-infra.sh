@@ -258,12 +258,34 @@ _compute_repo_state_fingerprint() {
 	[[ -n "$issues_json" && "$issues_json" != "null" ]] || issues_json="[]"
 	[[ -n "$prs_json" && "$prs_json" != "null" ]] || prs_json="[]"
 
-	# Canonicalize both lists. jq --argjson merges the PR list into the
-	# top-level object so the hash covers both.
+	# Canonicalize both lists. The PR/issue arrays can exceed Linux
+	# MAX_ARG_STRLEN, so pass them through temp files instead of jq --argjson.
 	local canon
+	local issues_file prs_file
+	issues_file=$(mktemp) || {
+		echo ""
+		return 0
+	}
+	prs_file=$(mktemp) || {
+		rm -f "$issues_file"
+		echo ""
+		return 0
+	}
+	if ! printf '%s' "$issues_json" >"$issues_file"; then
+		rm -f "$issues_file" "$prs_file"
+		echo ""
+		return 0
+	fi
+	if ! printf '%s' "$prs_json" >"$prs_file"; then
+		rm -f "$issues_file" "$prs_file"
+		echo ""
+		return 0
+	fi
 	canon=$(jq -cSn \
-		--argjson issues "$issues_json" \
-		--argjson prs "$prs_json" '
+		--slurpfile issues "$issues_file" \
+		--slurpfile prs "$prs_file" '
+		($issues[0] // []) as $issues |
+		($prs[0] // []) as $prs |
 		{
 			issues: ($issues | sort_by(.number) | map({
 				n: .number,
@@ -281,6 +303,7 @@ _compute_repo_state_fingerprint() {
 			}))
 		}
 	' 2>/dev/null) || canon=""
+	rm -f "$issues_file" "$prs_file"
 	[[ -n "$canon" ]] || {
 		echo ""
 		return 0
@@ -480,16 +503,29 @@ _prefetch_cache_set() {
 	if [[ -f "$cache_file" ]]; then
 		existing=$(cat "$cache_file" 2>/dev/null) || existing="{}"
 		# Validate JSON; reset if corrupt
-		echo "$existing" | jq empty 2>/dev/null || existing="{}"
+		printf '%s' "$existing" | jq empty 2>/dev/null || existing="{}"
 	fi
 
-	local tmp_file
+	local tmp_file entry_file
+	local failure_msg
+	failure_msg='[pulse-wrapper] _prefetch_cache_set: failed to write cache for'
 	tmp_file=$(mktemp "${cache_dir}/.pulse-prefetch-cache.XXXXXX")
-	echo "$existing" | jq --arg slug "$slug" --argjson entry "$entry" \
-		'.[$slug] = $entry' >"$tmp_file" 2>/dev/null && mv "$tmp_file" "$cache_file" || {
+	entry_file=$(mktemp "${cache_dir}/.pulse-prefetch-entry.XXXXXX") || {
 		rm -f "$tmp_file"
-		echo "[pulse-wrapper] _prefetch_cache_set: failed to write cache for ${slug}" >>"$LOGFILE"
+		printf '%s %s\n' "$failure_msg" "$slug" >>"$LOGFILE"
+		return 0
 	}
+	if ! printf '%s' "$entry" >"$entry_file"; then
+		rm -f "$tmp_file" "$entry_file"
+		printf '%s %s\n' "$failure_msg" "$slug" >>"$LOGFILE"
+		return 0
+	fi
+	printf '%s' "$existing" | jq --arg slug "$slug" --slurpfile entry "$entry_file" \
+		'.[$slug] = ($entry[0] // {})' >"$tmp_file" 2>/dev/null && mv "$tmp_file" "$cache_file" || {
+		rm -f "$tmp_file" "$entry_file"
+		printf '%s %s\n' "$failure_msg" "$slug" >>"$LOGFILE"
+	}
+	rm -f "$entry_file"
 	return 0
 }
 
