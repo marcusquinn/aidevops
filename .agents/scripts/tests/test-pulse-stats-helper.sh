@@ -40,4 +40,11 @@ help_output="${TMP_DIR}/help.txt"
 "$HELPER" help >"$help_output"
 grep -q 'get-gauge <gauge>' "$help_output"
 
+printf '' >"$PULSE_STATS_FILE"
+# shellcheck disable=SC1090
+source "$HELPER"
+pulse_stats_set_gauge pulse_merge_zero_progress_cycles 0
+gauge_value="$("$HELPER" get-gauge pulse_merge_zero_progress_cycles)"
+[[ "$gauge_value" == "0" ]]
+
 printf 'PASS pulse-stats-helper\n'

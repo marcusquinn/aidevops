@@ -61,6 +61,15 @@ _pulse_stats_ensure_file() {
 	fi
 	if [[ ! -f "$PULSE_STATS_FILE" ]]; then
 		printf '{"counters":{}}\n' >"$PULSE_STATS_FILE" 2>/dev/null || return 0
+		return 0
+	fi
+
+	# GH#25584: an interrupted writer or external truncation can leave the stats
+	# file present but empty/invalid. Gauge writers previously treated that as a
+	# jq no-op, leaving stale merge-stuck meta-issues unable to observe recovery.
+	# Reinitialize to the minimal schema so the next atomic update can proceed.
+	if ! jq -e 'type == "object"' "$PULSE_STATS_FILE" >/dev/null 2>&1; then
+		printf '{"counters":{}}\n' >"$PULSE_STATS_FILE" 2>/dev/null || return 0
 	fi
 	return 0
 }
