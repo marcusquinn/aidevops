@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 # shellcheck source=vault-storage-lib.sh
 source "${SCRIPT_DIR}/vault-storage-lib.sh"
 
-MIGRATION_ROOT="${AIDEVOPS_VAULT_MIGRATION_ROOT:-$HOME/.aidevops/.agent-workspace}"
+MIGRATION_ROOT="${AIDEVOPS_VAULT_MIGRATION_ROOT:-${HOME:-}/.aidevops/.agent-workspace}"
 MANIFEST_DIR="${AIDEVOPS_VAULT_MIGRATION_MANIFEST_DIR:-$(vault_storage_dir)/migration-manifests}"
 MANIFEST_FILE="${AIDEVOPS_VAULT_MIGRATION_MANIFEST:-${MANIFEST_DIR}/aidevops-data-migration.tsv}"
 MANIFEST_HEADER_COLLECTION="collection"
