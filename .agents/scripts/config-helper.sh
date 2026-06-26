@@ -66,6 +66,18 @@ fi
 # File paths (use defaults if not already set — allows override for testing)
 # ---------------------------------------------------------------------------
 _CONFIG_HOME="${HOME:-/tmp/aidevops-${USER:-uid-${UID:-shared}}}"
+_validate_config_home() {
+	local config_home="$1"
+	if [[ "$config_home" == /tmp/* && -e "$config_home" ]]; then
+		if [[ -L "$config_home" || ! -O "$config_home" ]]; then
+			echo "[ERROR] Security risk: $config_home is a symlink or not owned by the current user." >&2
+			return 1
+		fi
+	fi
+	return 0
+}
+
+_validate_config_home "$_CONFIG_HOME" || return 1 2>/dev/null || exit 1
 JSONC_DEFAULTS="${JSONC_DEFAULTS:-${_CONFIG_HOME}/.aidevops/agents/configs/aidevops.defaults.jsonc}"
 JSONC_USER="${JSONC_USER:-${_CONFIG_HOME}/.config/aidevops/config.jsonc}"
 JSONC_SCHEMA="${JSONC_SCHEMA:-${_CONFIG_HOME}/.aidevops/agents/configs/aidevops-config.schema.json}"
@@ -1090,6 +1102,7 @@ main() {
 			if [[ -n "$migrate_stderr" ]]; then
 				echo "[WARN] Migration error: ${migrate_stderr}" >&2
 			fi
+			mkdir -p "$(dirname "$MIGRATE_FAILED_FLAG")"
 			touch "$MIGRATE_FAILED_FLAG"
 		else
 			rm -f "$MIGRATE_FAILED_FLAG"
