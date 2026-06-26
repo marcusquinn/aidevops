@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.22.6] - 2026-06-26
+
+### Fixed
+
+- avoid jq argv E2BIG failures for large pulse and quality feedback JSON payloads (#25589)
+
 ## [3.22.5] - 2026-06-26
 
 ### Added
