@@ -4286,7 +4286,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18000 vault: protect managed AI session and history storage behind unlocked Vault profiles #architecture #auto-dispatch #enhancement #memory #opencode #security #session-miner ref:GH#25537
 
-- [ ] t17999 vault: build first-use passphrase test, restart verification, recovery, and archive flow #architecture #auto-dispatch #documentation #enhancement #security #setup ref:GH#25536
+- [x] t17999 vault: build first-use passphrase test, restart verification, recovery, and archive flow #architecture #auto-dispatch #documentation #enhancement #security #setup ref:GH#25536 pr:#25554 completed:2026-06-26
 
 - [ ] t18007 vault: build tamper-evident access logs with peer replication and public-safe anchors #architecture #audit #auto-dispatch #enhancement #monitoring #security #security-review ref:GH#25544
 
