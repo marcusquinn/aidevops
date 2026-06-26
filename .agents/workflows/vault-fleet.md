@@ -74,6 +74,15 @@ Each collection manifest should include:
 Payloads should be encrypted before transport with envelope encryption and AEAD
 as defined in `reference/vault.md`.
 
+The first deterministic sync implementation is
+`.agents/scripts/vault-sync-helper.sh`. It creates append-only signed records
+with an opaque `record_id`, collection name, namespace hash, author device,
+public signing key, sequence/vector metadata, content hash, tombstone flag,
+signature, ciphertext, and optional random padding. It stages imported records in
+the local encrypted sync inbox and rebuilds searchable state locally after a
+trusted unlock; plaintext full-text or semantic indexes are never transport
+payloads.
+
 ## 4. Transport Rules
 
 Treat all transports as untrusted delivery mechanisms:
@@ -90,6 +99,20 @@ Treat all transports as untrusted delivery mechanisms:
   payload encryption and signatures still apply.
 - **Third-party VPS:** may store locked ciphertext and run limited automation;
   must not store unlock material beside ciphertext.
+
+`.agents/scripts/vault-git-transport-helper.sh` is the public/private Git-safe
+transport adapter. It writes records only under `.vault/records/<prefix>/<opaque
+record id>.json`, so repo-visible names do not include private filenames,
+namespaces, local paths, client names, message subjects, or collection-specific
+entry identifiers. Git still leaks metadata such as commit timing, record count,
+record sizes, author account, and activity frequency; use padding, batching, and
+delayed pushes for sensitive workflows.
+
+Importers must reject unsigned, tampered, expired, replayed, rolled-back, or
+revoked-device records before staging payloads for local rewrap. Conflicts are
+collection-specific: memory is append-only, knowledge keeps versioned blobs and
+conflict copies, and settings remain per-device by default unless a future
+collection policy explicitly opts into shared settings.
 
 ## 5. Remote Lock
 

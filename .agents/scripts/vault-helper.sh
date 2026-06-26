@@ -20,7 +20,7 @@ Commands:
   lost-passphrase         Show safe recovery options
   lost-passphrase archive-and-start-fresh
                           Archive encrypted Vault files intact and reset setup
-  export|import|rekey     Reserved placeholders; fail safely until sync/rekey ships
+  export|import|rekey     Encrypted sync export/import and local passphrase rekey
   read <name>             Read an entry through the unlocked broker
   update <name>           Read a new entry value from stdin and encrypt it
   change-passphrase       Rewrap the root key through hidden TTY prompts
@@ -47,10 +47,15 @@ main() {
 		usage
 		return 0
 		;;
-	init | unlock | lock | status | setup-state | read | update | change-passphrase | lost-passphrase | export | import | rekey)
+	init | unlock | lock | status | setup-state | read | update | change-passphrase | lost-passphrase)
 		shift || true
 		require_crypto_helper || return 1
 		python3 "$CRYPTO_HELPER" "$command" "$@"
+		return $?
+		;;
+	export | import | rekey)
+		shift || true
+		"$SCRIPT_DIR/vault-sync-helper.sh" "$command" "$@"
 		return $?
 		;;
 	*)
