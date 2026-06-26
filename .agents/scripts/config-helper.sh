@@ -68,7 +68,7 @@ fi
 _CONFIG_HOME="${HOME:-/tmp/aidevops-${USER:-uid-${UID:-shared}}}"
 _validate_config_home() {
 	local config_home="$1"
-	if [[ "${config_home:-}" == /tmp/* ]]; then
+	if [[ "${config_home:-}" == /tmp || "${config_home:-}" == /tmp/* ]]; then
 		if [[ -L "${config_home:-}" ]]; then
 			echo "[ERROR] Security risk: ${config_home:-} is a symlink." >&2
 			return 1

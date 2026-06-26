@@ -83,5 +83,13 @@ else
 	print_result "creates missing tmp config home with secure mode" 1 "rc=${rc} mode=${mode} output=${output}"
 fi
 
+output=$(run_validate_config_home /tmp 2>&1)
+rc=$?
+if [[ "$rc" -ne 0 && "$output" == *'not owned by the current user'* ]]; then
+	print_result "rejects bare /tmp config home" 0
+else
+	print_result "rejects bare /tmp config home" 1 "rc=${rc} output=${output}"
+fi
+
 printf '\nTests: %d run, %d passed, %d failed\n' "$TESTS_RUN" "$TESTS_PASSED" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]]
