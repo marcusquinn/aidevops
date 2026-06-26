@@ -400,8 +400,8 @@ fetch_pr_changed_paths_json() {
 		printf '%s\n' '[]'
 		return 0
 	fi
-	gh api --paginate "repos/${repo_slug}/pulls/${pr_number}/files?per_page=100" 2>/dev/null |
-		jq -R -s '[splits("\n") | select(length > 0) | fromjson? | .filename? // empty] | unique' 2>/dev/null || printf '%s\n' '[]'
+	gh api --paginate "repos/${repo_slug}/pulls/${pr_number}/files?per_page=100" --jq '.[].filename' 2>/dev/null |
+		jq -c -R -s '[splits("\n") | select(length > 0)] | unique' 2>/dev/null || printf '%s\n' '[]'
 	return 0
 }
 
