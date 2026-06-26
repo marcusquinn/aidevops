@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.23.0] - 2026-06-26
+
+### Added
+
+- add encrypted vault sync transport (#25596)
+- add vault device messaging (#25597)
+- add vault audit helper (#25599)
+
+### Fixed
+
+- handle corrupted vault audit sequence (#25614)
+- guard pulse prefetch cache temp file (#25616)
+- harden pulse cache jq input (#25617)
+- harden vault message transport handling (#25618)
+- harden vault sync import (#25619)
+- ignore inactive queued check suites in REST status aggregation (#25620)
+
 ## [3.22.9] - 2026-06-26
 
 ### Fixed
@@ -273,7 +290,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.21.3] - 2026-06-20
 
