@@ -207,16 +207,12 @@ field_id = os.environ["VAULT_DEVICE_FIELD_ID"]
 field_schema = os.environ["VAULT_DEVICE_FIELD_SCHEMA"]
 field_devices = os.environ["VAULT_DEVICE_FIELD_DEVICES"]
 
-def empty_registry():
-    return {field_schema: 1, field_devices: []}
-
 def load_registry():
     if not os.path.exists(registry_path):
-        return empty_registry()
+        return {field_schema: 1, field_devices: []}
     with open(registry_path) as handle:
         data = json.load(handle)
-    data.setdefault(field_schema, 1)
-    data.setdefault(field_devices, [])
+    data.setdefault(field_schema, 1); data.setdefault(field_devices, [])
     return data
 
 def save_registry(data):
@@ -226,16 +222,11 @@ def save_registry(data):
         json.dump(data, handle, indent=2, sort_keys=True)
         handle.write("\n")
     os.replace(tmp, registry_path)
-    try:
-        os.chmod(registry_path, 0o600)
-    except OSError:
-        pass
+    try: os.chmod(registry_path, 0o600)
+    except OSError: pass
 
 def find_device(data, device_id):
-    for device in data[field_devices]:
-        if device.get(field_id) == device_id:
-            return device
-    return None
+    return next((device for device in data[field_devices] if device.get(field_id) == device_id), None)
 
 data = load_registry()
 field_class = os.environ["VAULT_DEVICE_FIELD_CLASS"]
@@ -281,20 +272,13 @@ elif mode == "revoke":
     data["rotation_required_after"] = ts
     save_registry(data)
 elif mode == "list-json":
-    safe = {
-        field_schema: data.get(field_schema, 1),
-        field_devices: [],
-    }
+    safe = {field_schema: data.get(field_schema, 1), field_devices: []}
     for device in data.get(field_devices, []):
         safe[field_devices].append({
-            field_id: device.get(field_id),
-            field_name: device.get(field_name),
-            field_class: device.get(field_class),
-            field_trust_state: device.get(field_trust_state),
-            field_grants: device.get(field_grants, []),
-            field_caps: device.get(field_caps, []),
-            field_created: device.get(field_created),
-            field_trusted_at: device.get(field_trusted_at),
+            field_id: device.get(field_id), field_name: device.get(field_name),
+            field_class: device.get(field_class), field_trust_state: device.get(field_trust_state),
+            field_grants: device.get(field_grants, []), field_caps: device.get(field_caps, []),
+            field_created: device.get(field_created), field_trusted_at: device.get(field_trusted_at),
             field_revoked_at: device.get(field_revoked_at),
         })
     print(json.dumps(safe, indent=2, sort_keys=True))
