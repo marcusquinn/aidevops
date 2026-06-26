@@ -4296,7 +4296,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18004 vault: add encrypted sync, export, import, rekey, and public-Git-safe replication #architecture #auto-dispatch #communications #database #enhancement #git #security ref:GH#25541
 
-- [ ] t18003 vault: implement device identity, trust, revocation, and fleet unlock status model #architecture #auto-dispatch #enhancement #infrastructure #orchestration #security ref:GH#25540
+- [x] t18003 vault: implement device identity, trust, revocation, and fleet unlock status model #architecture #auto-dispatch #enhancement #infrastructure #orchestration #security ref:GH#25540 pr:#25557 completed:2026-06-26
 
 - [ ] t18002 vault: add GUI Vault sidebar, setup navigation, padlock indicators, and locked-state gates #architecture #auto-dispatch #design #enhancement #product #security ref:GH#25539
 
