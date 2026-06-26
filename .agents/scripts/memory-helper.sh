@@ -46,6 +46,8 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=vault-storage-lib.sh
+source "${SCRIPT_DIR}/vault-storage-lib.sh"
 
 set -euo pipefail
 
@@ -416,8 +418,8 @@ main() {
 	fi
 
 	case "$command" in
-	store) cmd_store "$@" ;;
-	recall) cmd_recall "$@" ;;
+	store) vault_storage_require_unlocked "memory" && cmd_store "$@" ;;
+	recall) vault_storage_require_unlocked "memory" && cmd_recall "$@" ;;
 	feedback) cmd_feedback "$@" ;;
 	log) cmd_log "$@" ;;
 	history) cmd_history "$@" ;;

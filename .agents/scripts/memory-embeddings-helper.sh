@@ -31,6 +31,8 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=vault-storage-lib.sh
+source "${SCRIPT_DIR}/vault-storage-lib.sh"
 
 set -euo pipefail
 
@@ -40,6 +42,7 @@ readonly LOCAL_MODEL_NAME="all-MiniLM-L6-v2"
 readonly LOCAL_EMBEDDING_DIM=384
 readonly OPENAI_MODEL_NAME="text-embedding-3-small"
 readonly OPENAI_EMBEDDING_DIM=1536
+readonly VAULT_COLLECTION_MEMORY_EMBEDDINGS="memory-embeddings"
 
 # Namespace support: resolved in main() before command dispatch
 EMBEDDINGS_NAMESPACE=""
@@ -197,14 +200,14 @@ main() {
 	fi
 
 	case "$command" in
-	setup) cmd_setup "$@" ;;
-	index) cmd_index ;;
-	search) cmd_search "$@" ;;
-	add) cmd_add "${1:-}" ;;
-	auto-index) cmd_auto_index "${1:-}" ;;
-	find-similar) cmd_find_similar "$@" ;;
-	status) cmd_status ;;
-	rebuild) cmd_rebuild ;;
+	setup) vault_storage_require_unlocked "$VAULT_COLLECTION_MEMORY_EMBEDDINGS" && cmd_setup "$@" ;;
+	index) vault_storage_require_unlocked "$VAULT_COLLECTION_MEMORY_EMBEDDINGS" && cmd_index ;;
+	search) vault_storage_require_unlocked "$VAULT_COLLECTION_MEMORY_EMBEDDINGS" && cmd_search "$@" ;;
+	add) vault_storage_require_unlocked "$VAULT_COLLECTION_MEMORY_EMBEDDINGS" && cmd_add "${1:-}" ;;
+	auto-index) vault_storage_require_unlocked "$VAULT_COLLECTION_MEMORY_EMBEDDINGS" && cmd_auto_index "${1:-}" ;;
+	find-similar) vault_storage_require_unlocked "$VAULT_COLLECTION_MEMORY_EMBEDDINGS" && cmd_find_similar "$@" ;;
+	status) vault_storage_require_unlocked "$VAULT_COLLECTION_MEMORY_EMBEDDINGS" && cmd_status ;;
+	rebuild) vault_storage_require_unlocked "$VAULT_COLLECTION_MEMORY_EMBEDDINGS" && cmd_rebuild ;;
 	provider) cmd_provider "${1:-}" ;;
 	help | --help | -h) cmd_help ;;
 	*)
