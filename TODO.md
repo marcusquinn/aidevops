@@ -4287,3 +4287,15 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18000 vault: protect managed AI session and history storage behind unlocked Vault profiles #architecture #auto-dispatch #enhancement #memory #opencode #security #session-miner ref:GH#25537
 
 - [ ] t17999 vault: build first-use passphrase test, restart verification, recovery, and archive flow #architecture #auto-dispatch #documentation #enhancement #security #setup ref:GH#25536
+
+- [ ] t18007 vault: build tamper-evident access logs with peer replication and public-safe anchors #architecture #audit #auto-dispatch #enhancement #monitoring #security #security-review ref:GH#25544
+
+- [ ] t18006 vault: add remote lock, unlock-request, and sudo plus passphrase remote unlock policy #architecture #auth #auto-dispatch #enhancement #opsec #security ref:GH#25543
+
+- [ ] t18005 vault: implement secure device messaging over Git transport with SimpleX adapter option #architecture #auto-dispatch #communications #enhancement #git #security ref:GH#25542
+
+- [ ] t18004 vault: add encrypted sync, export, import, rekey, and public-Git-safe replication #architecture #auto-dispatch #communications #database #enhancement #git #security ref:GH#25541
+
+- [ ] t18003 vault: implement device identity, trust, revocation, and fleet unlock status model #architecture #auto-dispatch #enhancement #infrastructure #orchestration #security ref:GH#25540
+
+- [ ] t18002 vault: add GUI Vault sidebar, setup navigation, padlock indicators, and locked-state gates #architecture #auto-dispatch #design #enhancement #product #security ref:GH#25539
