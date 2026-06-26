@@ -254,6 +254,8 @@ assert_eq "2h12: diagnostic focus counts stall-killed sessions" "1" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.diagnostic_focus.stall_hard_killed')"
 assert_eq "2h13: diagnostic focus counts local runtime errors" "2" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.diagnostic_focus.local_runtime_error')"
+assert_eq "2h13b: failure groups preserve false runtime markers" "false" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_groups[] | select(.session_key == "issue-15") | .runtime_error_type')"
 assert_eq "2h14: failure families carry next action for stall kills" "redispatch_worker" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_families[] | select(.launch_failure_cause == "stall_hard_killed") | .next_action')"
 assert_eq "2h15: diagnostic focus groups local kills separately" "2" \

@@ -265,13 +265,11 @@ export const fontOptions: FontOption[] = [
   { value: "Ubuntu Mono", label: "Ubuntu Mono", fontFamily: '"Ubuntu Mono", Menlo, Monaco, Consolas, monospace' },
 ];
 
-export const fontSizeOptions: FontSizeOption[] = [
-  { value: "xs", label: "xs", cssSize: "14px" },
-  { value: "s", label: "s", cssSize: "15px" },
-  { value: "m", label: "m", cssSize: "16px" },
-  { value: "lg", label: "lg", cssSize: "17px" },
-  { value: "xl", label: "xl", cssSize: "18px" },
-];
+export const fontSizeOptions: FontSizeOption[] = (["xs", "s", "m", "lg", "xl"] as const).map((size, index) => ({
+  value: size,
+  label: size,
+  cssSize: `${14 + index}px`,
+}));
 
 export const navGroups: SurfaceNavGroup[] = [
   {

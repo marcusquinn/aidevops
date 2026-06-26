@@ -41,32 +41,12 @@ export const statusFixture: GuiStatusData = {
     },
   ],
   navigation: [
-    {
-      id: "overview",
-      label: "Overview",
-      description: "Local setup, update, and API health.",
-    },
-    {
-      id: "agents",
-      label: "Agents",
-      description: "Read-only file explorer for deployed agent files.",
-    },
-    {
-      id: "config",
-      label: "Config",
-      description: "Read-only file explorer for aidevops config.",
-    },
-    {
-      id: "git",
-      label: "Local Repos",
-      description: "Read-only local git workspace browser.",
-    },
-    {
-      id: "security",
-      label: "Secrets",
-      description: "Secret-reference-only trust boundary.",
-    },
-  ],
+    ["overview", "Overview", "Local setup, update, and API health."],
+    ["agents", "Agents", "Read-only file explorer for deployed agent files."],
+    ["config", "Config", "Read-only file explorer for aidevops config."],
+    ["git", "Local Repos", "Read-only local git workspace browser."],
+    ["security", "Secrets", "Secret-reference-only trust boundary."],
+  ].map(([id, label, description]) => ({ id, label, description })),
   settings: {
     path_ref: "~/.config/aidevops/settings.json",
     health: "unchecked",
