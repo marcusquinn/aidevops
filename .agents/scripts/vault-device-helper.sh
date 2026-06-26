@@ -175,22 +175,25 @@ write_local_state() {
 	local vector_value="$4"
 	local updated_at=""
 	updated_at="$(now_iso)"
-	python3 - "$device_id" "$status_value" "$generation" "$vector_value" "$VAULT_DEVICE_FIELD_ID" <<'PY' | write_json_atomic "$VAULT_DEVICE_LOCAL_STATE"
+	local state_json=""
+	state_json=$(python3 - "$device_id" "$status_value" "$generation" "$vector_value" "$VAULT_DEVICE_FIELD_ID" "$updated_at" <<'PY'
 import json, os, sys
-device_id, status, generation, vector, field_id = sys.argv[1:]
+device_id, status, generation, vector, field_id, updated_at = sys.argv[1:]
 field_unlock_status = os.environ["VAULT_DEVICE_FIELD_UNLOCK_STATUS"]
 field_gen = os.environ["VAULT_DEVICE_FIELD_GEN"]
 field_vector = os.environ["VAULT_DEVICE_FIELD_VECTOR"]
 field_updated = "updated_at"
 print(json.dumps({
-    "schema" + "_version": 1,
+    "schema_version": 1,
     field_id: device_id,
     field_unlock_status: status,
     field_gen: int(generation or "0"),
     field_vector: vector,
-    field_updated: "__UPDATED_AT__",
-}, indent=2, sort_keys=True).replace('"__UPDATED_AT__"', json.dumps(os.environ.get('VAULT_DEVICE_UPDATED_AT', ''))))
+    field_updated: os.environ.get("VAULT_DEVICE_UPDATED_AT", updated_at),
+}, indent=2, sort_keys=True))
 PY
+)
+	printf '%s\n' "$state_json" | write_json_atomic "$VAULT_DEVICE_LOCAL_STATE"
 	return 0
 }
 
@@ -301,17 +304,31 @@ cmd_enroll() {
 	device_name="$(hostname 2>/dev/null || printf 'device')"
 	while [[ $# -gt 0 ]]; do
 		local current_arg="$1"
-		local current_value="${2:-}"
 		case "$current_arg" in
 		--name)
+			if [[ $# -lt 2 ]]; then
+				print_error "--name requires a value"
+				return 2
+			fi
+			local current_value="$2"
 			device_name="$current_value"
 			shift 2
 			;;
 		--class)
+			if [[ $# -lt 2 ]]; then
+				print_error "--class requires a value"
+				return 2
+			fi
+			local current_value="$2"
 			device_class="$current_value"
 			shift 2
 			;;
 		--capabilities)
+			if [[ $# -lt 2 ]]; then
+				print_error "--capabilities requires a value"
+				return 2
+			fi
+			local current_value="$2"
 			capabilities_csv="$current_value"
 			shift 2
 			;;
@@ -453,7 +470,7 @@ cmd_heartbeat() {
 			;;
 		esac
 	done
-	local device_id heartbeat_file now_ts
+	local device_id heartbeat_file now_ts heartbeat_json
 	device_id="$(load_local_device_id)" || {
 		print_error "$VAULT_DEVICE_ERR_NOT_ENROLLED"
 		return 1
@@ -461,7 +478,7 @@ cmd_heartbeat() {
 	ensure_dirs
 	heartbeat_file="${VAULT_DEVICE_HEARTBEATS_DIR}/${device_id}.json"
 	now_ts="$(now_epoch)"
-	python3 - "$VAULT_DEVICE_LOCAL_STATE" "$VAULT_DEVICE_REGISTRY" "$device_id" "$now_ts" "$active_workers" "$max_workers" "$VAULT_DEVICE_FIELD_ID" <<'PY' | write_json_atomic "$heartbeat_file"
+	heartbeat_json=$(python3 - "$VAULT_DEVICE_LOCAL_STATE" "$VAULT_DEVICE_REGISTRY" "$device_id" "$now_ts" "$active_workers" "$max_workers" "$VAULT_DEVICE_FIELD_ID" <<'PY'
 import json, os, sys
 local_state_path, registry_path, device_id, now_ts, active_workers, max_workers, field_id = sys.argv[1:]
 field_caps = os.environ["VAULT_DEVICE_FIELD_CAPS"]
@@ -469,17 +486,18 @@ field_gen = os.environ["VAULT_DEVICE_FIELD_GEN"]
 field_vector = os.environ["VAULT_DEVICE_FIELD_VECTOR"]
 field_max_workers = os.environ["VAULT_DEVICE_FIELD_MAX_WORKERS"]
 state_locked = os.environ["VAULT_DEVICE_STATE_LOCKED"]
+state_unsynced = os.environ["VAULT_DEVICE_STATE_UNSYNCED"]
 field_unlock_status = os.environ["VAULT_DEVICE_FIELD_UNLOCK_STATUS"]
-with open(local_state_path) as handle:
+with open(local_state_path, encoding="utf-8") as handle:
     state = json.load(handle)
-with open(registry_path) as handle:
+with open(registry_path, encoding="utf-8") as handle:
     registry = json.load(handle)
-device = next((item for item in registry.get("dev" + "ices", []) if item.get(field_id) == device_id), {})
+device = next((item for item in registry.get("devices", []) if item.get(field_id) == device_id), {})
 print(json.dumps({
-    "schema" + "_version": 1,
+    "schema_version": 1,
     field_id: device_id,
     "status": state.get(field_unlock_status, state_locked),
-    os.environ["VAULT_DEVICE_FIELD_SYNC_STATUS"]: "synced" if state.get(field_unlock_status) != "un" + "synced" else "unsynced",
+    os.environ["VAULT_DEVICE_FIELD_SYNC_STATUS"]: "synced" if state.get(field_unlock_status) != state_unsynced else state_unsynced,
     "version": "1",
     field_caps: device.get(field_caps, []),
     field_gen: state.get(field_gen, 0),
@@ -489,6 +507,8 @@ print(json.dumps({
     "updated_at_epoch": int(now_ts),
 }, indent=2, sort_keys=True))
 PY
+)
+	printf '%s\n' "$heartbeat_json" | write_json_atomic "$heartbeat_file"
 	printf '%s\n' "$heartbeat_file"
 	return 0
 }
