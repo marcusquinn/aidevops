@@ -195,6 +195,15 @@ export function readVaultSummary(repoRoot: string): GuiVaultStatusData {
 }
 
 const AI_PROVIDER_IDS: GuiAiProviderId[] = ["anthropic", "openai", "cursor", "google"];
+const GUI_VAULT_STATUSES: readonly GuiVaultStatus[] = ["uninitialized", "locked", "unlocked", "corrupted", "unknown"];
+const GUI_VAULT_SETUP_STATES: readonly GuiVaultSetupState[] = [
+  "uninitialized",
+  "test-created",
+  "restart-required",
+  "test-verified",
+  "migration-ready",
+  "unknown",
+];
 
 function readVaultCommand<T extends string>(
   helperPath: string,
@@ -215,11 +224,11 @@ function readVaultCommand<T extends string>(
 }
 
 function isGuiVaultStatus(value: string): value is GuiVaultStatus {
-  return value === "uninitialized" || value === "locked" || value === "unlocked" || value === "corrupted" || value === "unknown";
+  return (GUI_VAULT_STATUSES as readonly string[]).includes(value);
 }
 
 function isGuiVaultSetupState(value: string): value is GuiVaultSetupState {
-  return value === "uninitialized" || value === "test-created" || value === "restart-required" || value === "test-verified" || value === "migration-ready" || value === "unknown";
+  return (GUI_VAULT_SETUP_STATES as readonly string[]).includes(value);
 }
 
 function vaultCollectionState(status: GuiVaultStatus): GuiVaultStatusData["collections"][number]["state"] {

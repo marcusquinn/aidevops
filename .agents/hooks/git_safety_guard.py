@@ -609,28 +609,17 @@ def _check_main_branch_allowlist(file_path: str) -> "dict | None":
 
     Returns a deny dict if the write should be blocked, None if allowed.
     """
-    # Early exit: invalid inputs
-    if not file_path:
-        return None
-
     # Always use cwd for git commands — avoids failures for new (not-yet-created) files
     cwd = os.getcwd()
 
     # Resolve repo root from cwd (reliable even for new files)
-    repo_root = _get_repo_root(cwd)
-    if not repo_root:
-        return None  # Not in a git repo — allow
+    repo_root = _get_repo_root(cwd) if file_path else ""
+    branch = _get_current_branch(repo_root) if repo_root else ""
+    if not file_path or not repo_root or not branch:
+        return None  # Invalid path, not in git, or cannot determine branch — allow
 
-    branch = _get_current_branch(repo_root)
-    if not branch:
-        return None  # Cannot determine branch — allow
-
-    # Linked worktrees are always allowed, regardless of branch
-    if _is_linked_worktree(repo_root):
-        return None
-
-    # Explicit escape valve (use sparingly — document reason at call site)
-    if os.environ.get("AIDEVOPS_SKIP_CANONICAL_GUARD"):
+    # Linked worktrees are always allowed; explicit escape valve is for documented exceptions.
+    if _is_linked_worktree(repo_root) or os.environ.get("AIDEVOPS_SKIP_CANONICAL_GUARD"):
         return None
 
     # Detect default branch dynamically (replaces hardcoded "main"/"master" check)
