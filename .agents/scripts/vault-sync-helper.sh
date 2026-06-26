@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 import hashlib
 import json
 import os
@@ -47,6 +48,7 @@ from pathlib import Path
 from typing import Any
 
 from cryptography.exceptions import InvalidSignature
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
@@ -110,8 +112,13 @@ def private_write_json(path: Path, data: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
     tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding=ENCODING)
-    os.chmod(tmp, 0o600)
+    payload = (json.dumps(data, indent=2, sort_keys=True) + "\n").encode(ENCODING)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    fd = os.open(tmp, flags, 0o600)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(payload)
     tmp.replace(path)
 
 
@@ -177,10 +184,17 @@ def sign_record(record: dict[str, Any], private_key_b64: str) -> str:
 
 
 def verify_record(record: dict[str, Any], signature: str) -> None:
-    public_key = Ed25519PublicKey.from_public_bytes(b64d(str(record["author_public_key"])))
+    try:
+        author_public_key = b64d(str(record["author_public_key"]))
+    except (KeyError, binascii.Error, ValueError) as exc:
+        raise SyncError("VAULT_SYNC_BAD_SIGNATURE", "Vault sync record author public key is invalid", 4) from exc
+    author_device = str(record.get(FIELD_AUTHOR_DEVICE, ""))
+    if hashlib.sha256(author_public_key).hexdigest() != author_device:
+        raise SyncError("VAULT_SYNC_BAD_SIGNATURE", "Vault sync record author device does not match public key", 4)
+    public_key = Ed25519PublicKey.from_public_bytes(author_public_key)
     try:
         public_key.verify(b64d(signature), canonical(record))
-    except InvalidSignature as exc:
+    except (InvalidSignature, binascii.Error, ValueError) as exc:
         raise SyncError("VAULT_SYNC_BAD_SIGNATURE", "Vault sync record signature is invalid", 4) from exc
 
 
@@ -264,10 +278,20 @@ def cmd_import(args: argparse.Namespace) -> int:
     if sequence <= int(device_sequences.get(author, 0)):
         raise SyncError("VAULT_SYNC_ROLLBACK", "Vault sync sequence rolls back", 4)
     ciphertext = record.get("ciphertext", {})
-    plaintext = AESGCM(b64d(str(key[FIELD_TRANSPORT_KEY]))).decrypt(
-        b64d(str(ciphertext["nonce"])), b64d(str(ciphertext["payload"])), b"aidevops-vault-sync-record"
-    )
-    payload = json.loads(plaintext.decode(ENCODING))
+    if not isinstance(ciphertext, dict):
+        raise SyncError("VAULT_SYNC_RECORD_INVALID", "Vault sync record ciphertext is invalid", 3)
+    try:
+        plaintext = AESGCM(b64d(str(key[FIELD_TRANSPORT_KEY]))).decrypt(
+            b64d(str(ciphertext["nonce"])), b64d(str(ciphertext["payload"])), b"aidevops-vault-sync-record"
+        )
+    except (KeyError, binascii.Error, InvalidTag, ValueError) as exc:
+        raise SyncError("VAULT_SYNC_DECRYPT_FAILED", "Failed to decrypt sync record payload", 4) from exc
+    try:
+        payload = json.loads(plaintext.decode(ENCODING))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SyncError("VAULT_SYNC_RECORD_INVALID", "Failed to parse sync record payload", 3) from exc
+    if not isinstance(payload, dict):
+        raise SyncError("VAULT_SYNC_RECORD_INVALID", "Vault sync record payload is invalid", 3)
     inbox = load_json(vault_dir / INBOX_FILE) if (vault_dir / INBOX_FILE).exists() else {FIELD_SCHEMA_VERSION: SCHEMA_VERSION, FIELD_RECORDS: {}}
     records = dict(inbox.get(FIELD_RECORDS, {}))
     records[record_id] = {FIELD_COLLECTION: record.get(FIELD_COLLECTION), FIELD_NAMESPACE_HASH: record.get(FIELD_NAMESPACE_HASH), FIELD_ENTRY: payload.get(FIELD_ENTRY)}
