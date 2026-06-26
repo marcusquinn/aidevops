@@ -336,13 +336,35 @@ jobs:
           # shellcheck source=__aidevops/.agents/scripts/lib/issue-fingerprint.sh
           source __aidevops/.agents/scripts/lib/issue-fingerprint.sh
 
+          # Run gh api through a temp file so fallback JSON never appends to
+          # partial stdout from a non-zero gh exit. Appended fallback produces a
+          # multi-document stream (for example, candidate length "3\n0"), which
+          # made the duplicate scan skip obvious same-title reports.
+          _dedup_gh_api_json() {
+            local fallback="$1"
+            shift
+            local tmp_file=""
+            tmp_file=$(mktemp) || {
+              printf '%s\n' "$fallback"
+              return 0
+            }
+            if gh api "$@" >"$tmp_file"; then
+              printf '%s\n' "$(<"$tmp_file")"
+              rm -f "$tmp_file"
+              return 0
+            fi
+            rm -f "$tmp_file"
+            printf '%s\n' "$fallback"
+            return 0
+          }
+
           WINDOW="${ISSUE_SYNC_DEDUP_WINDOW_SECONDS:-120}"
           TITLE_WINDOW="${ISSUE_SYNC_TITLE_DEDUP_WINDOW_SECONDS:-600}"
           echo "[dedup] Checking issue #${ISSUE_NUMBER} by @${ISSUE_AUTHOR} (fingerprint window: ${WINDOW}s, title window: ${TITLE_WINDOW}s)"
 
           # Fetch the full issue title and body via API (avoids env-var size limits
           # and injection risks from untrusted content in the event payload).
-          issue_json=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" --jq '{title:.title,body:(.body//""),createdAt:.created_at}' 2>/dev/null || echo '{}')
+          issue_json=$(_dedup_gh_api_json '{}' "repos/${REPO}/issues/${ISSUE_NUMBER}" --jq '{title:.title,body:(.body//""),createdAt:.created_at}' 2>/dev/null)
           ISSUE_TITLE=$(printf '%s' "$issue_json" | jq -r '.title // ""')
           ISSUE_BODY=$(printf '%s' "$issue_json" | jq -r '.body // ""')
           ISSUE_CREATED_AT_RESOLVED=$(printf '%s' "$issue_json" | jq -r '.createdAt // ""')
@@ -373,10 +395,10 @@ jobs:
           # can be backed by GitHub search/indexing and miss an issue opened only
           # seconds earlier, which is exactly the race this server-side guard
           # exists to close (GH#24840 duplicate of GH#24839).
-          issues_json=$(gh api "repos/${REPO}/issues" \
-            -f state=open -f creator="$ISSUE_AUTHOR" -f since="$since_iso" -f per_page=100 \
+          issues_json=$(_dedup_gh_api_json '[]' "repos/${REPO}/issues" \
+            --method GET -f state=open -f creator="$ISSUE_AUTHOR" -f since="$since_iso" -f per_page=100 \
             --jq '[.[] | select(.pull_request | not) | {number,title,body:(.body//""),createdAt:.created_at}]' \
-            2>/dev/null || echo "[]")
+            2>/dev/null)
 
           cand_count=$(printf '%s' "$issues_json" | jq 'length')
           echo "[dedup] Found ${cand_count} open issue(s) by @${ISSUE_AUTHOR}"
