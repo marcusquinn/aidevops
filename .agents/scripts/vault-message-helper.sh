@@ -306,7 +306,7 @@ def cmd_send(args: argparse.Namespace) -> int:
     message_file = outbox_dir / f"{message_id}.json"
     public_write_json(message_file, envelope)
     if args.transport == "git":
-        subprocess.run([args.git_helper, "stage-message", ARG_REPO, args.repo, "--message", str(message_file)], check=True, stdout=subprocess.PIPE, text=True)
+        subprocess.run(["bash", args.git_helper, "stage-message", ARG_REPO, args.repo, "--message", str(message_file)], check=True, stdout=subprocess.PIPE, text=True)
     else:
         subprocess.run([os.environ["AIDEVOPS_VAULT_SIMPLEX_ADAPTER"], "send", str(message_file)], check=True)
     outbox = load_json(vault_dir / OUTBOX_FILE) if (vault_dir / OUTBOX_FILE).exists() else {FIELD_SCHEMA_VERSION: SCHEMA_VERSION, FIELD_MESSAGES: {}}
@@ -330,6 +330,12 @@ def load_replay(vault_dir: Path) -> dict[str, Any]:
     return load_json(path)
 
 
+def require_message_string_fields(message: dict[str, Any], fields: tuple[str, ...]) -> None:
+    for field in fields:
+        if field not in message or not isinstance(message[field], str):
+            raise MessageError("VAULT_MESSAGE_INVALID", f"Message is missing or has invalid field: {field}", 3)
+
+
 def decrypt_message(key: dict[str, Any], message: dict[str, Any]) -> dict[str, Any]:
     recipient_private = X25519PrivateKey.from_private_bytes(b64d(str(key[FIELD_ENCRYPTION_PRIVATE_KEY])))
     sender_public = X25519PublicKey.from_public_bytes(b64d(str(message["sender_encryption_public_key"])))
@@ -345,7 +351,7 @@ def cmd_receive(args: argparse.Namespace) -> int:
     encrypted_dir = vault_dir / LOCAL_ENCRYPTED_DIR
     encrypted_dir.mkdir(parents=True, exist_ok=True)
     os.chmod(encrypted_dir, 0o700)
-    subprocess.run([args.git_helper, "collect-messages", ARG_REPO, args.repo, "--mailbox-id", str(key[FIELD_MAILBOX_ID]), "--output", str(encrypted_dir)], check=True, stdout=subprocess.PIPE, text=True)
+    subprocess.run(["bash", args.git_helper, "collect-messages", ARG_REPO, args.repo, "--mailbox-id", str(key[FIELD_MAILBOX_ID]), "--output", str(encrypted_dir)], check=True, stdout=subprocess.PIPE, text=True)
     revoked = load_revoked(args.revoked_devices)
     replay = load_replay(vault_dir)
     seen = dict(replay.get(FIELD_MESSAGES, {}))
@@ -360,7 +366,10 @@ def cmd_receive(args: argparse.Namespace) -> int:
         message = envelope.get(FIELD_MESSAGE)
         if not isinstance(message, dict):
             raise MessageError("VAULT_MESSAGE_INVALID", "Vault message envelope is invalid", 3)
-        signature = str(envelope.get("signature", ""))
+        require_message_string_fields(message, (FIELD_MESSAGE_ID, "sender_public_key", "sender_encryption_public_key", "nonce", "ciphertext"))
+        signature = envelope.get("signature")
+        if not isinstance(signature, str):
+            raise MessageError("VAULT_MESSAGE_INVALID", "Message is missing or has invalid field: signature", 3)
         verify_payload(message, signature, str(message["sender_public_key"]))
         message_id = str(message[FIELD_MESSAGE_ID])
         if message_id in seen:
@@ -431,7 +440,7 @@ def cmd_ack(args: argparse.Namespace) -> int:
     ack_dir = vault_dir / LOCAL_ACK_DIR
     ack_file = ack_dir / f"{ack_id}.json"
     public_write_json(ack_file, envelope)
-    subprocess.run([args.git_helper, "stage-ack", ARG_REPO, args.repo, "--ack", str(ack_file)], check=True, stdout=subprocess.PIPE, text=True)
+    subprocess.run(["bash", args.git_helper, "stage-ack", ARG_REPO, args.repo, "--ack", str(ack_file)], check=True, stdout=subprocess.PIPE, text=True)
     print(ack_id)
     return 0
 

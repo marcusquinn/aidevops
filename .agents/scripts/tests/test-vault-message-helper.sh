@@ -98,4 +98,28 @@ if ! grep -q "VAULT_MESSAGE_SIMPLEX_UNAVAILABLE" "$tmp_root/simplex.err"; then
 	exit 1
 fi
 
+python3 - "$transport_repo" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+transport_repo = Path(sys.argv[1])
+message_file = next((transport_repo / ".vault" / "messages" / "inbox").glob("*/*/*/*.json"))
+envelope = json.loads(message_file.read_text(encoding="utf-8"))
+envelope["message"].pop("sender_public_key", None)
+message_file.write_text(json.dumps(envelope, sort_keys=True) + "\n", encoding="utf-8")
+PY
+
+rm -f "$recipient_dir/message-replay-cache.json" "$recipient_dir/message-inbox.json"
+if "$MESSAGE_HELPER" receive --vault-dir "$recipient_dir" --repo "$transport_repo" >/dev/null 2>"$tmp_root/invalid.err"; then
+	printf '%s\n' "invalid transport message unexpectedly succeeded" >&2
+	exit 1
+fi
+if ! grep -q "VAULT_MESSAGE_INVALID" "$tmp_root/invalid.err"; then
+	printf '%s\n' "invalid transport message failure did not use stable error code" >&2
+	exit 1
+fi
+
 printf '%s\n' "vault message helper tests passed"
