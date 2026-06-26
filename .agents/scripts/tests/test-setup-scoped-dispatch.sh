@@ -71,6 +71,7 @@ test_setup_stage_contract() {
 	assert_contains "gui desktop env flag enables install" "$text" "AIDEVOPS_GUI_DESKTOP_INSTALL"
 	assert_contains "gui desktop app dir can be configured" "$text" "AIDEVOPS_GUI_DESKTOP_APP_DIR"
 	assert_contains "existing gui desktop app refreshes during update" "$text" "Refreshing existing macOS"
+	assert_contains "gui desktop app existence check guards empty app dir" "$text" "[[ -n \"\$app_dir\" && -n \"\${SETUP_GUI_APP_NAME:-}\" && -d \"\${app_dir}/\${SETUP_GUI_APP_NAME}\" ]]"
 	assert_contains "gui desktop scoped stage runs installer" "$text" "_time_step \"\$SETUP_STAGE_GUI_DESKTOP\" setup_gui_desktop_app"
 	assert_contains "unknown stages print actionable help" "$text" "Unknown setup stage/scope"
 	return 0

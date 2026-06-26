@@ -464,8 +464,8 @@ _setup_gui_desktop_app_dir() {
 }
 
 _setup_gui_desktop_app_exists() {
-	local app_dir="$1"
-	[[ -d "${app_dir}/${SETUP_GUI_APP_NAME}" ]]
+	local app_dir="${1:-}"
+	[[ -n "$app_dir" && -n "${SETUP_GUI_APP_NAME:-}" && -d "${app_dir}/${SETUP_GUI_APP_NAME}" ]]
 	return $?
 }
 
