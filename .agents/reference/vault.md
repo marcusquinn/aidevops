@@ -4,9 +4,9 @@
 # Aidevops Vault Security Architecture RFC
 
 > **Status:** RFC plus initial local CLI/broker implementation. The first shipped
-> helper covers local metadata, passphrase wrapping, an in-memory broker, and
-> locked-state gates; fleet sync, GUI routing, and protected data migrations are
-> still future phases.
+> helper covers local metadata, passphrase wrapping, an in-memory broker,
+> locked-state gates, managed history gates, and the first verified data-plane
+> migration helper; fleet sync and GUI routing are still future phases.
 
 <!-- AI-CONTEXT-START -->
 
@@ -335,6 +335,31 @@ VPS devices are expected to run locked unless a task explicitly requires unlocke
 protected data and the device has a fresh heartbeat plus matching grants. Never
 place recovery material in cloud-init, environment variables, issue comments,
 logs, or shell history.
+
+### Phase 2.5: Data-plane migration and locked-state gates
+
+`.agents/scripts/vault-storage-lib.sh` is the shared fail-closed gate for helpers
+that read or write protected local data. Memory recall/store, semantic memory
+embeddings, and knowledge add/list/search call it before opening plaintext stores.
+When Vault metadata exists, or `AIDEVOPS_VAULT_REQUIRE=1` is set for tests or
+managed deployments, a locked or unavailable broker returns `VAULT_LOCKED` and
+must not create fresh plaintext databases or generated semantic indexes.
+
+`.agents/scripts/vault-migration-helper.sh` migrates current aidevops data-plane
+files into Vault entries with a TSV manifest containing collection, source path,
+SHA-256 hash, encrypted entry reference, and verification state. It streams each
+source file to `vault update <entry>`, reads the entry back with `vault read`,
+compares hashes, and only then removes the plaintext original with best-effort
+scrubbing. Rollback restores files from verified Vault entries instead of keeping
+a plaintext rollback copy.
+
+Initial collection keys are `memory`, `embeddings`, `knowledge`, `workspace`,
+`mail-messages`, `config-metadata`, and `audit`. Public/private Git, object
+storage, and sync transports may carry only encrypted entries and non-secret
+manifests. The helper cannot erase historical plaintext from SSD remapping,
+APFS/journal metadata, filesystem snapshots, backups, swap, crash dumps, terminal
+scrollback, or committed Git history; full-disk encryption/FileVault remains a
+baseline requirement for historical remnants.
 
 ### Phase 3: Remote lock and unlock-request
 

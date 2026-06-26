@@ -41,6 +41,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=shared-constants.sh
 [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=vault-storage-lib.sh
+[[ -f "${SCRIPT_DIR}/vault-storage-lib.sh" ]] && source "${SCRIPT_DIR}/vault-storage-lib.sh"
 
 # Guard color fallbacks when shared-constants.sh is absent
 [[ -z "${GREEN+x}" ]] && GREEN='\033[0;32m'
@@ -73,6 +75,7 @@ KNOWLEDGE_ROOT="_knowledge"
 KNOWLEDGE_CONFIG_SUBDIR="_config"
 KNOWLEDGE_CONFIG_FILE="knowledge.json"
 KNOWLEDGE_DIRS=(inbox staging sources index collections)
+VAULT_COLLECTION_KNOWLEDGE="knowledge"
 
 SCRIPT_TEMPLATES_DIR="${SCRIPT_DIR%/scripts}/templates"
 GITIGNORE_TEMPLATE="${SCRIPT_TEMPLATES_DIR}/knowledge-gitignore.txt"
@@ -1104,12 +1107,12 @@ main() {
 	case "$subcommand" in
 	provision)   cmd_provision "$@" ;;
 	init)        cmd_init "$@" ;;
-	add)         cmd_add "$@" ;;
-	list)        cmd_list "$@" ;;
+	add)         vault_storage_require_unlocked "$VAULT_COLLECTION_KNOWLEDGE" && cmd_add "$@" ;;
+	list)        vault_storage_require_unlocked "$VAULT_COLLECTION_KNOWLEDGE" && cmd_list "$@" ;;
 	sensitivity) cmd_sensitivity "$@" ;;
 	enrich)      cmd_enrich "$@" ;;
 	status)      cmd_status "$@" ;;
-	search)      cmd_search "$@" ;;
+	search)      vault_storage_require_unlocked "$VAULT_COLLECTION_KNOWLEDGE" && cmd_search "$@" ;;
 	help | -h | --help) cmd_help ;;
 	*)
 		print_error "Unknown subcommand: $subcommand"
