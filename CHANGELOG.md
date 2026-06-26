@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.22.3] - 2026-06-26
+
+### Changed
+
+- Documentation: classify in-progress user messages (#25528)
+
 ## [3.22.2] - 2026-06-26
 
 ### Changed
