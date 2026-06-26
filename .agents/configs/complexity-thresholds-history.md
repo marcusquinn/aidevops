@@ -169,3 +169,4 @@ and monotonically decreases".
 | 51 | GH#25565/PR #25574 | pre-existing drift on the PR merge ref — local qlty telemetry in `linters-local.sh` reports 49 smells while the absolute-count CI threshold was 46. Qlty Smell Regression and qlty check both pass for the shell-only vault device fix, confirming no blocking new qlty smells from this diff. 49 actual + 2 buffer = 51; ratchet back down after smell-reducing merges. |
 | 48 | ratchet-post-merge | auto-ratchet after cb3a305 ("GH#25565: fix: harden vault device state writes (#25574)"): count 46 + 2 buffer = 48 (previously 51, reduction 3) |
 | 47 | ratchet-post-merge | auto-ratchet after ac6b8c7 ("wip: split vault status adapter (#25577)"): count 45 + 2 buffer = 47 (previously 48, reduction 1) |
+| 46 | ratchet-post-merge | auto-ratchet after 0938982 ("chore: reduce qlty smell count (#25575)"): count 44 + 2 buffer = 46 (previously 47, reduction 1) |
