@@ -26,16 +26,23 @@ Use the smallest tool that fits the problem:
 1. Single secret → `aidevops secret set NAME`
 2. Structured file you must commit → `sops-helper.sh encrypt file.enc.yaml`
 3. Sensitive directory at rest → `gocryptfs-helper.sh create vault-name`
+4. Framework-wide protected data policy → `reference/vault.md`
 
 | Tool | Best for | Scope | Git-safe | AI-safe | Docs |
 |------|----------|-------|----------|---------|------|
 | **gopass** | API keys, tokens, passwords | Per secret | No (separate store) | Yes (subprocess injection) | `tools/credentials/gopass.md` |
 | **SOPS** | Structured config files with secrets | Per file | Yes (encrypted in repo) | Yes (stdout only) | `tools/credentials/sops.md` |
 | **gocryptfs** | Sensitive directories at rest | Per directory | No (filesystem overlay) | Yes (mount/unmount) | `tools/credentials/gocryptfs.md` |
+| **Vault RFC** | Protected data classes, routing, trust, sync, audit | Framework-wide | Policy-dependent | Provider-gated | `reference/vault.md` |
 
 **Commands:** `aidevops secret set NAME` / `aidevops secret run CMD` (gopass) · `sops-helper.sh encrypt config.enc.yaml` (SOPS) · `gocryptfs-helper.sh create vault-name` (gocryptfs)
 
 **Storage:** gopass → `~/.local/share/gopass/stores/root/aidevops/` (fallback: `~/.config/aidevops/credentials.sh`, 600 perms) · SOPS → encrypted files in git (age preferred, GPG, AWS/GCP/Azure KMS) · gocryptfs → `~/.aidevops/.agent-workspace/vaults/` (AES-256-GCM)
+
+**Vault model:** `reference/vault.md` defines protected data classes, labels,
+provider routing, trust boundaries, and future encrypted sync. It does not
+replace gopass/SOPS/gocryptfs today; it explains when each primitive is the
+right building block.
 
 <!-- AI-CONTEXT-END -->
 
@@ -92,7 +99,28 @@ sops updatekeys config.enc.yaml
 4. **Key separation** -- each tool uses independent key material.
 5. **Audit trail** -- gopass and SOPS changes are git-versioned.
 
+## Relationship to Aidevops Vault
+
+Vault is the framework-level security model for memory, sessions, workspaces,
+knowledge, mail/messages, config metadata, audit logs, device registry, and sync
+collections. The existing tools remain the current implementation choices for
+specific storage scopes:
+
+- **gopass** stores individual `secret` values. Agents use `aidevops secret` so
+  values stay out of AI context.
+- **SOPS** stores structured secret-bearing files that must be committed to Git
+  in encrypted form.
+- **gocryptfs** protects sensitive directories at rest on local machines.
+- **Vault** defines classification labels, provider routing, fleet trust,
+  encrypted sync, and audit constraints across all protected data classes.
+
+For first-use setup and fleet behaviour, use `workflows/vault-setup.md` and
+`workflows/vault-fleet.md`.
+
 ## Related
 
+- `reference/vault.md` -- Aidevops Vault threat model and architecture RFC
+- `workflows/vault-setup.md` -- Vault first-use setup and migration workflow
+- `workflows/vault-fleet.md` -- Vault device trust and sync workflow
 - `tools/credentials/api-key-setup.md` -- API key setup guide
 - `tools/credentials/multi-tenant.md` -- Multi-tenant credential storage
