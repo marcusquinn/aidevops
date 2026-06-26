@@ -55,7 +55,8 @@ function getEventInfo(input) {
 }
 
 function getEventSessionId(input, info) {
-  return input?.event?.properties?.sessionID || input?.properties?.sessionID || input?.sessionID || info?.id || "";
+  const candidates = [input?.event?.properties?.sessionID, input?.properties?.sessionID, input?.sessionID, info?.id];
+  return candidates.find(Boolean) || "";
 }
 
 function getSessionUpdate(input) {

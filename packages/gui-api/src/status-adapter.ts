@@ -215,11 +215,20 @@ function readVaultCommand<T extends string>(
 }
 
 function isGuiVaultStatus(value: string): value is GuiVaultStatus {
-  return value === "uninitialized" || value === "locked" || value === "unlocked" || value === "corrupted" || value === "unknown";
+  const statuses: GuiVaultStatus[] = ["uninitialized", "locked", "unlocked", "corrupted", "unknown"];
+  return statuses.includes(value as GuiVaultStatus);
 }
 
 function isGuiVaultSetupState(value: string): value is GuiVaultSetupState {
-  return value === "uninitialized" || value === "test-created" || value === "restart-required" || value === "test-verified" || value === "migration-ready" || value === "unknown";
+  const setupStates: GuiVaultSetupState[] = [
+    "uninitialized",
+    "test-created",
+    "restart-required",
+    "test-verified",
+    "migration-ready",
+    "unknown",
+  ];
+  return setupStates.includes(value as GuiVaultSetupState);
 }
 
 function vaultCollectionState(status: GuiVaultStatus): GuiVaultStatusData["collections"][number]["state"] {
