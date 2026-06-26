@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - handle corrupted vault audit sequence (#25614)
 - guard pulse prefetch cache temp file (#25616)
+- log merge PR list failures (#25621)
 - harden pulse cache jq input (#25617)
 - harden vault message transport handling (#25618)
 - harden vault sync import (#25619)
