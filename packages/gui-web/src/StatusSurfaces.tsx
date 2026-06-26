@@ -103,6 +103,9 @@ export function SecuritySurface({ status }: { status: GuiStatusData }) {
         <h2>{text.security}</h2>
         <p>{text.securityBoundary}</p>
       </div>
+      <div className="notice compact-notice" role="note">
+        Vault data policy: Provider AI sends approved plaintext context to a third-party provider; Local AI keeps model processing on this device; Hybrid mode must redact or split protected context before any provider call.
+      </div>
       <ul className="object-list">
         {status.secrets.map((secret) => (
           <li key={secret.name}>
@@ -308,6 +311,9 @@ export function AiProvidersSurface({ status }: { status: GuiStatusData }) {
           <p>{text.aiProvidersIntro}</p>
         </div>
         <span className="count-pill">{status.oauth_pool.value_policy}</span>
+      </div>
+      <div className="notice compact-notice" role="note">
+        Data-leaves-device warning: provider accounts can process prompts outside this machine. Use `data_classification` and `runtime_policy` metadata to require Local AI or explicit provider approval for confidential work.
       </div>
       <div className="provider-grid">
         {status.oauth_pool.providers.map((provider) => <ProviderCard key={provider.provider} provider={provider} />)}

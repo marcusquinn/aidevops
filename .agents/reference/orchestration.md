@@ -24,6 +24,7 @@ Core pointers: `AGENTS.md`. Full docs: `tools/ai-assistants/headless-dispatch.md
 - **Commands**: `/route <task>` for tier suggestions with pattern data, `/compare-models` for pricing/capabilities.
 - **Availability check**: `model-availability-helper.sh check <provider>`. Exit codes: 0=available, 1=unavailable, 2=rate-limited, 3=invalid-key.
 - **Fallback chains**: each tier has a primary model plus cross-provider fallback (e.g., `opus`: `claude-opus-4-6` → `o3`). Handled automatically by `fallback-chain-helper.sh`.
+- **Vault policy gate**: tasks may declare `needs_vault`, `needs_collections`, `needs_device`, `needs_remote_unlock`, `data_classification`, and `runtime_policy`. `headless-runtime-helper.sh run` checks these with `vault-data-policy-helper.sh` after model selection and before launch. `local-only`/`local-LLM-only` requires local models; `confidential`/`client-confidential` requires `provider-allowed` or explicit provider approval; `secret` never enters prompts.
 
 ### Budget-aware routing (t1100)
 

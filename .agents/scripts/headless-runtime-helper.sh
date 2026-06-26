@@ -145,6 +145,8 @@ source "${SCRIPT_DIR}/shared-claim-lifecycle.sh"
 # shellcheck source=./headless-runtime-worker.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/headless-runtime-worker.sh"
+# shellcheck source=./vault-data-policy-helper.sh
+source "${SCRIPT_DIR}/vault-data-policy-helper.sh"
 
 # Activity watchdog timeout — used by _invoke_opencode and the inline watchdog fallback.
 # Keep this aligned with worker-activity-watchdog.sh and headless-runtime-lib.sh.
@@ -1705,6 +1707,10 @@ cmd_run() {
 		return "$choose_exit"
 	}
 	print_info "[lifecycle] post_model_select session=$session_key model=$selected_model pid=$$"
+	if ! vault_data_policy_check "$selected_model" "$title" "$prompt"; then
+		_cmd_run_finish "$session_key" "fail"
+		return 64
+	fi
 
 	# GH#17549: Version guard — runs on EVERY dispatch (not cached).
 	# Something keeps upgrading opencode to 1.3.17 between canary checks.
