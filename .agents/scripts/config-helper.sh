@@ -68,9 +68,27 @@ fi
 _CONFIG_HOME="${HOME:-/tmp/aidevops-${USER:-uid-${UID:-shared}}}"
 _validate_config_home() {
 	local config_home="$1"
-	if [[ "$config_home" == /tmp/* && -e "$config_home" ]]; then
-		if [[ -L "$config_home" || ! -O "$config_home" ]]; then
-			echo "[ERROR] Security risk: $config_home is a symlink or not owned by the current user." >&2
+	if [[ "${config_home:-}" == /tmp/* ]]; then
+		if [[ -L "${config_home:-}" ]]; then
+			echo "[ERROR] Security risk: ${config_home:-} is a symlink." >&2
+			return 1
+		fi
+		if [[ ! -e "${config_home:-}" ]]; then
+			if ! mkdir -m 700 "${config_home:-}"; then
+				if [[ -L "${config_home:-}" ]]; then
+					echo "[ERROR] Security risk: ${config_home:-} is a symlink." >&2
+					return 1
+				elif [[ ! -e "${config_home:-}" ]]; then
+					echo "[ERROR] Cannot create secure config home: ${config_home:-}." >&2
+					return 1
+				fi
+			fi
+		fi
+		if [[ ! -d "${config_home:-}" ]]; then
+			echo "[ERROR] Security risk: ${config_home:-} is not a directory." >&2
+			return 1
+		elif [[ ! -O "${config_home:-}" ]]; then
+			echo "[ERROR] Security risk: ${config_home:-} is not owned by the current user." >&2
 			return 1
 		fi
 	fi
