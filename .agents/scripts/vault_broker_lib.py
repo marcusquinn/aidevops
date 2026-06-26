@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from vault_crypto_core import (
+    SETUP_STATE_MIGRATION_READY,
+    SETUP_TEST_ENTRY_NAME,
     STATE_LOCKED,
     STATE_UNLOCKED,
     VaultError,
@@ -28,6 +30,8 @@ from vault_crypto_core import (
     store_path,
     write_private_json,
     encrypt_json,
+    metadata_path,
+    setup_state,
 )
 
 
@@ -124,6 +128,10 @@ def _read_entry(vault_dir: Path, root_key: bytes, name: str) -> dict[str, Any]:
 def _update_entry(vault_dir: Path, root_key: bytes, name: str, value: str) -> dict[str, Any]:
     if not name:
         return {"ok": False, "code": "VAULT_BAD_NAME", "message": "Vault entry name is required", "exit": 2}
+    if name != SETUP_TEST_ENTRY_NAME:
+        state = setup_state(load_json(metadata_path(vault_dir)))
+        if state != SETUP_STATE_MIGRATION_READY:
+            return {"ok": False, "code": "VAULT_MIGRATION_BLOCKED", "message": "Vault setup restart test is not verified", "exit": 8}
     store = read_store(vault_dir, root_key)
     entries = dict(store.get("entries", {}))
     entries[name] = value

@@ -12,10 +12,15 @@ usage() {
 Usage: vault-helper.sh <command> [options]
 
 Commands:
-  init [--force]          Create local Vault metadata through hidden TTY prompts
+  init [--force]          Create local Vault metadata and harmless restart test
   unlock                  Unlock into an in-memory local broker through a hidden TTY prompt
   lock                    Stop the local broker and forget in-memory keys
   status                  Print uninitialized, locked, unlocked, or corrupted
+  setup-state             Print the first-use setup state
+  lost-passphrase         Show safe recovery options
+  lost-passphrase archive-and-start-fresh
+                          Archive encrypted Vault files intact and reset setup
+  export|import|rekey     Reserved placeholders; fail safely until sync/rekey ships
   read <name>             Read an entry through the unlocked broker
   update <name>           Read a new entry value from stdin and encrypt it
   change-passphrase       Rewrap the root key through hidden TTY prompts
@@ -42,7 +47,7 @@ main() {
 		usage
 		return 0
 		;;
-	init | unlock | lock | status | read | update | change-passphrase)
+	init | unlock | lock | status | setup-state | read | update | change-passphrase | lost-passphrase | export | import | rekey)
 		shift || true
 		require_crypto_helper || return 1
 		python3 "$CRYPTO_HELPER" "$command" "$@"

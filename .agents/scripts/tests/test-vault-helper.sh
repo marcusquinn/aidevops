@@ -128,10 +128,11 @@ case "$read_locked_output" in
 esac
 
 set +e
-run_with_tty "${generated_pass}\n${generated_pass}\n" "$VAULT_HELPER" init >/dev/null 2>"$TEST_ROOT/init.err"
+run_with_tty "I UNDERSTAND\n${generated_pass}\n${generated_pass}\n" "$VAULT_HELPER" init >/dev/null 2>"$TEST_ROOT/init.err"
 init_rc=$?
 set -e
 assert_eq "init succeeds through tty prompt" "0" "$init_rc"
+assert_eq "init requires restart verification before migration" "restart-required" "$($VAULT_HELPER setup-state)"
 if grep -q "$generated_pass" "$TEST_ROOT/init.err"; then
 	fail "hidden init prompt does not echo passphrase"
 else
@@ -172,6 +173,7 @@ unlock_rc=$?
 set -e
 assert_eq "unlock succeeds through tty prompt" "0" "$unlock_rc"
 assert_eq "status reports unlocked" "unlocked" "$($VAULT_HELPER status)"
+assert_eq "unlock verifies restart test and enables migration" "migration-ready" "$($VAULT_HELPER setup-state)"
 
 printf 'protected value' | "$VAULT_HELPER" update sample >/dev/null
 assert_eq "read returns encrypted entry after unlock" "protected value" "$($VAULT_HELPER read sample)"
