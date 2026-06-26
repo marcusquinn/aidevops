@@ -485,36 +485,36 @@ rm -rf "$tmp_home_19"
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
 echo "Test 20: session-mode footer detection"
-result=$(env -u FULL_LOOP_HEADLESS -u AIDEVOPS_HEADLESS -u OPENCODE_HEADLESS \
+result=$(env -u FULL_LOOP_HEADLESS -u AIDEVOPS_HEADLESS -u OPENCODE_HEADLESS -u AIDEVOPS_SESSION_ORIGIN \
 	OPENCODE=1 AIDEVOPS_HEADLESS_VARIANT_SONNET="high" \
 	"$HELPER" generate --cli "OpenCode" --model "m" --tokens 1 --time 60)
 assert_contains "variant config alone remains interactive" "with the user in an interactive session" "$result"
 assert_not_contains "variant config does not imply worker" "as a headless worker" "$result"
 
-result=$(env -u FULL_LOOP_HEADLESS -u AIDEVOPS_HEADLESS -u OPENCODE_HEADLESS \
+result=$(env -u FULL_LOOP_HEADLESS -u AIDEVOPS_HEADLESS -u OPENCODE_HEADLESS -u AIDEVOPS_SESSION_ORIGIN \
 	OPENCODE=true AIDEVOPS_HEADLESS_VARIANT_SONNET="high" \
 	"$HELPER" generate --cli "OpenCode" --model "m" --tokens 1 --time 60)
 assert_contains "truthy OPENCODE marks interactive" "with the user in an interactive session" "$result"
 
-result=$(env -u FULL_LOOP_HEADLESS -u AIDEVOPS_HEADLESS -u OPENCODE_HEADLESS \
+result=$(env -u FULL_LOOP_HEADLESS -u AIDEVOPS_HEADLESS -u OPENCODE_HEADLESS -u AIDEVOPS_SESSION_ORIGIN \
 	-u OPENCODE_SESSION_ID -u CLAUDE_SESSION_ID OPENCODE=false CLAUDE_CODE=0 \
 	"$HELPER" generate --cli "OpenCode" --model "m" --tokens 1 --time 60)
 assert_not_contains "false runtime markers do not imply interactive" "with the user in an interactive session" "$result"
 
-result=$(env -u FULL_LOOP_HEADLESS -u AIDEVOPS_HEADLESS -u OPENCODE_HEADLESS \
+result=$(env -u FULL_LOOP_HEADLESS -u AIDEVOPS_HEADLESS -u OPENCODE_HEADLESS -u AIDEVOPS_SESSION_ORIGIN \
 	-u OPENCODE_SESSION_ID -u CLAUDE_SESSION_ID OPENCODE=0 CLAUDE_CODE=true \
 	"$HELPER" generate --cli "Claude Code" --model "m" --tokens 1 --time 60)
 assert_contains "truthy CLAUDE_CODE marks interactive" "with the user in an interactive session" "$result"
 
-result=$(env -u AIDEVOPS_HEADLESS -u OPENCODE_HEADLESS FULL_LOOP_HEADLESS=true \
+result=$(env -u AIDEVOPS_HEADLESS -u OPENCODE_HEADLESS -u AIDEVOPS_SESSION_ORIGIN FULL_LOOP_HEADLESS=true \
 	OPENCODE=1 "$HELPER" generate --cli "OpenCode" --model "m" --tokens 1 --time 60)
 assert_contains "FULL_LOOP_HEADLESS marks worker" "as a headless worker" "$result"
 
-result=$(env -u FULL_LOOP_HEADLESS -u OPENCODE_HEADLESS AIDEVOPS_HEADLESS=true \
+result=$(env -u FULL_LOOP_HEADLESS -u OPENCODE_HEADLESS -u AIDEVOPS_SESSION_ORIGIN AIDEVOPS_HEADLESS=true \
 	OPENCODE=1 "$HELPER" generate --cli "OpenCode" --model "m" --tokens 1 --time 60)
 assert_contains "AIDEVOPS_HEADLESS marks worker" "as a headless worker" "$result"
 
-result=$(env -u FULL_LOOP_HEADLESS -u AIDEVOPS_HEADLESS OPENCODE_HEADLESS=true \
+result=$(env -u FULL_LOOP_HEADLESS -u AIDEVOPS_HEADLESS -u AIDEVOPS_SESSION_ORIGIN OPENCODE_HEADLESS=true \
 	OPENCODE=1 "$HELPER" generate --cli "OpenCode" --model "m" --tokens 1 --time 60)
 assert_contains "OPENCODE_HEADLESS marks worker" "as a headless worker" "$result"
 

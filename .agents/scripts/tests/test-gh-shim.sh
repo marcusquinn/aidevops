@@ -132,6 +132,12 @@ mkdir -p "$TMP/scripts"
 cat >"$TMP/scripts/gh-signature-helper.sh" <<'EOF'
 #!/usr/bin/env bash
 # Stub emits fixed footer so tests are deterministic.
+if [[ -n "${STUB_SIG_LOG:-}" ]]; then
+	: >"$STUB_SIG_LOG"
+	for arg in "$@"; do
+		printf '%s\n' "$arg" >>"$STUB_SIG_LOG"
+	done
+fi
 printf '\n\n<!-- aidevops:sig -->\n---\n[aidevops.sh](https://aidevops.sh) v9.9.9 stub footer\n'
 EOF
 chmod +x "$TMP/scripts/gh-signature-helper.sh"
@@ -148,6 +154,7 @@ cp "$REPO_DIR/.agents/scripts/shared-gh-wrappers-rest-fallback.sh" "$TMP/scripts
 # $TMP/scripts (for direct invocation in tests).
 export PATH="$TMP/bin:$PATH"
 export STUB_GH_LOG="$TMP/gh-argv.log"
+export STUB_SIG_LOG="$TMP/sig-argv.log"
 
 SHIM_RUN="$TMP/scripts/gh"
 
@@ -163,6 +170,16 @@ _read_argv() {
 
 _reset_log() {
 	: >"$STUB_GH_LOG"
+	: >"$STUB_SIG_LOG"
+	return 0
+}
+
+_read_sig_argv() {
+	[[ -f "$STUB_SIG_LOG" ]] || {
+		echo "(no sig log)"
+		return 0
+	}
+	cat "$STUB_SIG_LOG"
 	return 0
 }
 
@@ -574,6 +591,20 @@ if [[ "$argv" == *"<!-- aidevops:sig -->"* ]]; then
 	_pass "headless write to maintainer-managed repo proceeds normally"
 else
 	_fail "maintainer repo headless write" "argv: $argv"
+fi
+
+_reset_log
+ops_body='<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+Dispatching worker (deterministic).
+- **Worker PID**: 123
+<!-- ops:end -->'
+AIDEVOPS_HEADLESS=1 AIDEVOPS_REPOS_JSON="$repos_json" "$SHIM_RUN" api /repos/managed/repo/issues/789/comments -X POST -f body="$ops_body" 2>/dev/null
+sig_argv=$(_read_sig_argv)
+argv=$(_read_argv)
+if [[ "$argv" == *"<!-- aidevops:sig -->"* ]] && [[ "$sig_argv" == *$'--no-session'* ]]; then
+	_pass "deterministic ops REST comments sign without session metrics"
+else
+	_fail "ops REST no-session signature" "argv: $argv sig argv: $sig_argv"
 fi
 
 repos_json_missing_role="$TMP/repos-missing-role.json"
