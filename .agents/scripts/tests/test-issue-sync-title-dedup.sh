@@ -51,6 +51,26 @@ test_title_window_not_shadowed_by_fingerprint_window() {
 	return 0
 }
 
+test_api_fallback_does_not_append_partial_stdout() {
+	if grep -q '_dedup_gh_api_json' "$WORKFLOW_FILE" \
+		&& grep -q "gh api \"\$@\" >\"\$tmp_file\"" "$WORKFLOW_FILE" \
+		&& ! grep -q "issues_json=\$(gh api" "$WORKFLOW_FILE"; then
+		print_result "dedup API fallback discards partial stdout before fallback" 0
+	else
+		print_result "dedup API fallback discards partial stdout before fallback" 1
+	fi
+	return 0
+}
+
+test_issue_candidate_fetch_uses_get_method() {
+	if grep -q -- '--method GET -f state=open' "$WORKFLOW_FILE"; then
+		print_result "candidate issue fetch stays a GET request" 0
+	else
+		print_result "candidate issue fetch stays a GET request" 1
+	fi
+	return 0
+}
+
 main() {
 	if [[ ! -f "$WORKFLOW_FILE" ]]; then
 		printf 'FATAL: workflow not found: %s\n' "$WORKFLOW_FILE" >&2
@@ -59,6 +79,8 @@ main() {
 	test_title_window_configured
 	test_title_match_sets_duplicate_reason
 	test_title_window_not_shadowed_by_fingerprint_window
+	test_api_fallback_does_not_append_partial_stdout
+	test_issue_candidate_fetch_uses_get_method
 	printf 'Tests run: %s\n' "$TESTS_RUN"
 	printf 'Tests failed: %s\n' "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
