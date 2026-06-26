@@ -42,6 +42,11 @@ describe("dashboard shell", () => {
     expect(html).toContain("Local Setup");
     expect(html).toContain("Theme follows system preferences");
     expect(html).toContain("Appearance controls can be hidden or shown");
+    expect(html).toContain("command palette");
+    expect(html).toContain("AI Assistant panel");
+    expect(html).toContain("profile menu");
+    expect(html).toContain("Notifications");
+    expect(html).toContain("Admin");
     expect(html).toContain("editable Hue");
     expect(html).toContain("Show borders toggle");
     expect(html).toContain("Show counts toggle");

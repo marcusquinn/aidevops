@@ -46,6 +46,9 @@ export const surfaceIconNames = {
 export type SurfaceIconName = keyof typeof surfaceIconNames;
 export const surfaceIds = [
   "overview",
+  "settings",
+  "notifications",
+  "admin",
   "vault",
   "agents",
   "config",
@@ -221,6 +224,7 @@ export const text = {
   secrets: "Secrets",
   security: "Secrets",
   securityBoundary: "No write routes, no shell bridge, no hosted app control, no pairing, no secret values. Vault policy distinguishes Provider AI, Local AI, and Hybrid modes before protected data leaves the device.",
+  settingsAccountIntro: "Hosted account settings are prepared as disabled controls until authenticated write routes, confirmation, and audit trails land.",
   servers: "Servers",
   serversIntro: "Server inventory by provider, operating system, orchestrator, and installed apps.",
   setup: "Setup",
@@ -379,8 +383,15 @@ export const dashboardNavItem: SurfaceNavItem = {
   icon: "grid",
 };
 
+export const utilityNavItems: SurfaceNavItem[] = [
+  { id: "settings", label: "Settings", description: "Profile, login, notifications, language, and theme preferences", icon: "settings", badge: text.planned },
+  { id: "notifications", label: "Notifications", description: "Notification inbox and delivery preferences", icon: "message", badge: text.planned },
+  { id: "admin", label: "Admin", description: "Hosted administration controls", icon: "shield", badge: text.planned },
+];
+
 export const orderedNavItems: SurfaceNavItem[] = [
   dashboardNavItem,
+  ...utilityNavItems,
   ...navGroups.flatMap((group) => group.items),
 ];
 
@@ -516,6 +527,10 @@ export function isFontSizePreference(value: string | null): value is FontSizePre
 }
 
 export function sidebarModeForSurface(id: SurfaceId): SidebarMode {
+  if (utilityNavItems.some((item) => item.id === id)) {
+    return "comms";
+  }
+
   return navGroups.find((group) => group.items.some((item) => item.id === id))?.mode ?? "devops";
 }
 
@@ -526,6 +541,10 @@ export function findSurface(id: SurfaceId): SurfaceNavItem {
 export function findSurfaceSectionLabel(id: SurfaceId): string {
   if (id === dashboardNavItem.id) {
     return text.aidevops;
+  }
+
+  if (utilityNavItems.some((item) => item.id === id)) {
+    return "Account";
   }
 
   for (const group of navGroups) {

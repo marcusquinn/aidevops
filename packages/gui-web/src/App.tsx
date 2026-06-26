@@ -191,7 +191,7 @@ export function App(): ReactElement {
         status={status.data}
         themePreference={themePreference}
       />
-      <Workspace activeItem={activeItem} activeSectionLabel={activeSectionLabel} activeSurface={activeSurface} fileRoot={fileRoot} status={status.data} />
+      <Workspace activeItem={activeItem} activeSectionLabel={activeSectionLabel} activeSurface={activeSurface} fileRoot={fileRoot} setActiveSurface={setActiveSurface} status={status.data} />
       <DesktopStatusBar status={status.data} />
     </main>
   );
