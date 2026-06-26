@@ -6,7 +6,8 @@
 > **Status:** RFC plus initial local CLI/broker implementation. The first shipped
 > helper covers local metadata, passphrase wrapping, an in-memory broker,
 > locked-state gates, managed history gates, the first verified data-plane
-> migration helper, and an initial encrypted sync/export/import transport;
+> migration helper, an initial encrypted sync/export/import transport, and
+> encrypted device-to-device message envelopes over opaque Git mailboxes;
 > GUI routing is still a future phase.
 
 <!-- AI-CONTEXT-START -->
@@ -331,6 +332,17 @@ names, entry identifiers, plaintext payloads, and search indexes must not appear
 in repo-visible names or files. Imports fail closed on bad signatures, replay,
 rollback, expiry, or revoked author devices, then stage encrypted payloads for a
 local trusted-device rewrap/reindex pass.
+
+`.agents/scripts/vault-message-helper.sh` is the first deterministic secure
+device messaging layer for human messages, sync requests, audit receipts, remote
+lock commands, unlock requests, and unlock-grant envelope placeholders. Each
+device owns local-only signing and X25519 encryption keys plus an opaque mailbox
+id. Senders encrypt each message to the recipient device encryption key, sign the
+transport envelope, set expiry/sequence metadata, and stage only ciphertext under
+public-Git-safe mailbox paths. Locked receivers can collect encrypted envelopes
+and report counts; plaintext decrypt/cache steps require a local unlocked Vault
+broker signal. Optional SimpleX delivery is an adapter path, not a trust boundary,
+and fails closed when unavailable.
 
 Revocation marks the device `revoked`, removes grants, writes a peer-visible
 registry update, and appends a local rotation task instructing follow-up workers
