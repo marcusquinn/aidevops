@@ -22,7 +22,7 @@ vault_storage_dir() {
 		printf '%s\n' "$configured"
 		return 0
 	fi
-	printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/aidevops/vault"
+	printf '%s\n' "${XDG_CONFIG_HOME:-${HOME:-}/.config}/aidevops/vault"
 	return 0
 }
 
@@ -43,7 +43,7 @@ vault_storage_require_unlocked() {
 		return 0
 	fi
 	helper=$(vault_storage_helper_path)
-	if [[ ! -x "$helper" ]]; then
+	if ! command -v "$helper" >/dev/null 2>&1; then
 		printf '%s\n' "VAULT_LOCKED: Vault helper is unavailable for ${collection}" >&2
 		return 6
 	fi
