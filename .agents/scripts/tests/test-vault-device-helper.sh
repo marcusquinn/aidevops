@@ -78,6 +78,16 @@ dev-*) pass "enroll returns opaque device id" ;;
 *) fail "enroll returns opaque device id" ;;
 esac
 
+set +e
+missing_name_output="$($VAULT_DEVICE_HELPER enroll --name 2>&1 >/dev/null)"
+missing_name_rc=$?
+set -e
+assert_nonzero "enroll rejects missing option value" "$missing_name_rc"
+case "$missing_name_output" in
+*"--name requires a value"*) pass "missing enroll value has deterministic reason" ;;
+*) fail "missing enroll value has deterministic reason" ;;
+esac
+
 list_file="$TEST_ROOT/list.json"
 "$VAULT_DEVICE_HELPER" list --json >"$list_file"
 if python3 -m json.tool "$list_file" >/dev/null; then
@@ -94,7 +104,24 @@ PY
 )"
 
 "$VAULT_DEVICE_HELPER" set-local-status --status locked --generation 2 --vector local:2
+state_before_invalid_update="$(python3 -m json.tool "$AIDEVOPS_VAULT_DEVICE_DIR/local-state.json")"
+set +e
+invalid_generation_output="$($VAULT_DEVICE_HELPER set-local-status --status locked --generation not-a-number 2>&1 >/dev/null)"
+invalid_generation_rc=$?
+set -e
+assert_nonzero "invalid local state update is rejected" "$invalid_generation_rc"
+state_after_invalid_update="$(python3 -m json.tool "$AIDEVOPS_VAULT_DEVICE_DIR/local-state.json")"
+assert_eq "failed local state update preserves previous json" "$state_before_invalid_update" "$state_after_invalid_update"
 "$VAULT_DEVICE_HELPER" heartbeat --active-workers 0 --max-workers 2 >/dev/null
+heartbeat_file="$AIDEVOPS_VAULT_DEVICE_DIR/heartbeats/$device_id.json"
+heartbeat_before_invalid_update="$(python3 -m json.tool "$heartbeat_file")"
+set +e
+invalid_heartbeat_output="$($VAULT_DEVICE_HELPER heartbeat --active-workers not-a-number 2>&1 >/dev/null)"
+invalid_heartbeat_rc=$?
+set -e
+assert_nonzero "invalid heartbeat update is rejected" "$invalid_heartbeat_rc"
+heartbeat_after_invalid_update="$(python3 -m json.tool "$heartbeat_file")"
+assert_eq "failed heartbeat update preserves previous json" "$heartbeat_before_invalid_update" "$heartbeat_after_invalid_update"
 set +e
 locked_output="$($VAULT_DEVICE_HELPER can-dispatch --needs-unlocked 2>&1 >/dev/null)"
 locked_rc=$?
