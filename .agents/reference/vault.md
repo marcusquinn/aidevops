@@ -5,8 +5,9 @@
 
 > **Status:** RFC plus initial local CLI/broker implementation. The first shipped
 > helper covers local metadata, passphrase wrapping, an in-memory broker,
-> locked-state gates, managed history gates, and the first verified data-plane
-> migration helper; fleet sync and GUI routing are still future phases.
+> locked-state gates, managed history gates, the first verified data-plane
+> migration helper, and an initial encrypted sync/export/import transport;
+> GUI routing is still a future phase.
 
 <!-- AI-CONTEXT-START -->
 
@@ -320,6 +321,16 @@ Supported trust grants are `sync-send`, `sync-receive`, `dispatch`,
 flows remain the safe default. `can-dispatch --needs-unlocked` lets schedulers
 distinguish locked, unlocked, unsynced, stale-heartbeat, capability-missing, and
 capacity-full devices without reading protected Vault contents.
+
+`.agents/scripts/vault-sync-helper.sh` and
+`.agents/scripts/vault-git-transport-helper.sh` are the first deterministic sync
+transport layer. Sync records are signed, append-only, encrypted before transport,
+and addressed by opaque random ids. Public Git-safe paths expose only the record
+id prefix and encrypted JSON record; private namespaces, local paths, client
+names, entry identifiers, plaintext payloads, and search indexes must not appear
+in repo-visible names or files. Imports fail closed on bad signatures, replay,
+rollback, expiry, or revoked author devices, then stage encrypted payloads for a
+local trusted-device rewrap/reindex pass.
 
 Revocation marks the device `revoked`, removes grants, writes a peer-visible
 registry update, and appends a local rotation task instructing follow-up workers
