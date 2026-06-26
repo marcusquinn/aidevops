@@ -13,8 +13,8 @@
 dspy==3.1.0b1
 
 # Core dependencies for AI/ML workflows
-openai==2.8.0
-litellm==1.79.3
+openai==2.20.0
+litellm==1.84.0
 pandas==2.3.3
 numpy==2.0.2
 requests==2.33.0
