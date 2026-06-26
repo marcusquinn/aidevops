@@ -99,6 +99,42 @@ if ! grep -q "VAULT_SYNC_BAD_SIGNATURE" "$tmp_root/tampered.err"; then
 	exit 1
 fi
 
+python3 - "$record_file" "$tmp_root/impersonated.json" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+data = json.loads(source.read_text(encoding="utf-8"))
+data["record"]["author_device"] = "0" * 64
+target.write_text(json.dumps(data, sort_keys=True) + "\n", encoding="utf-8")
+PY
+
+if "$SYNC_HELPER" import --vault-dir "$vault_dir" --input "$tmp_root/impersonated.json" >/dev/null 2>"$tmp_root/impersonated.err"; then
+	printf '%s\n' "impersonated author import unexpectedly succeeded" >&2
+	exit 1
+fi
+if ! grep -q "VAULT_SYNC_BAD_SIGNATURE" "$tmp_root/impersonated.err"; then
+	printf '%s\n' "impersonated author failure did not use stable error code" >&2
+	exit 1
+fi
+
+wrong_key_vault_dir="$tmp_root/wrong-key-vault"
+mkdir -p "$wrong_key_vault_dir"
+chmod 700 "$wrong_key_vault_dir"
+"$SYNC_HELPER" init --vault-dir "$wrong_key_vault_dir" >/dev/null
+if "$SYNC_HELPER" import --vault-dir "$wrong_key_vault_dir" --input "$record_file" >/dev/null 2>"$tmp_root/decrypt.err"; then
+	printf '%s\n' "wrong-key import unexpectedly succeeded" >&2
+	exit 1
+fi
+if ! grep -q "VAULT_SYNC_DECRYPT_FAILED" "$tmp_root/decrypt.err"; then
+	printf '%s\n' "wrong-key decrypt failure did not use stable error code" >&2
+	exit 1
+fi
+
 python3 - "$record_file" "$revoked_file" <<'PY'
 from __future__ import annotations
 
