@@ -1,13 +1,17 @@
 import { Hono } from "hono";
-import { BANNED_ROUTE_PATTERNS, FILE_EXPLORER_ROUTE_MANIFEST, STATUS_ROUTE_MANIFEST } from "../../gui-shared/src";
+import { BANNED_ROUTE_PATTERNS, FILE_EXPLORER_ROUTE_MANIFEST, STATUS_ROUTE_MANIFEST, VAULT_STATUS_ROUTE_MANIFEST } from "../../gui-shared/src";
 import { readFileExplorer } from "./file-adapter";
-import { readStatus } from "./status-adapter";
+import { readStatus, readVaultStatus } from "./status-adapter";
 
 export function createGuiApiApp() {
   const app = new Hono();
 
   app.get(STATUS_ROUTE_MANIFEST.route, (context) => {
     return context.json(readStatus());
+  });
+
+  app.get(VAULT_STATUS_ROUTE_MANIFEST.route, (context) => {
+    return context.json(readVaultStatus());
   });
 
   app.get(FILE_EXPLORER_ROUTE_MANIFEST.route, (context) => {

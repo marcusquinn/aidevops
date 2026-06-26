@@ -252,6 +252,7 @@ function DesktopStatusBar({ status }: { status: GuiStatusData }): ReactElement {
   const localRepoCount = status.local_repos.total || status.local_repos.repos.length;
   const remoteRepoCount = status.repos.total || status.repos.repos.length;
   const statusLabel = status.update.restart_required ? "Restart required" : "Ready";
+  const vaultLabel = status.vault.unlocked ? "Vault unlocked" : `Vault ${status.vault.status}`;
 
   return (
     <div className="desktop-status-bar" role="status">
@@ -262,6 +263,7 @@ function DesktopStatusBar({ status }: { status: GuiStatusData }): ReactElement {
       <span>{localRepoCount} local repos</span>
       <span>{remoteRepoCount} remote repos</span>
       <span>{status.secrets.length} secrets</span>
+      <span>{vaultLabel}</span>
       <span>{oauthAccounts} provider accounts</span>
       <span>{needsUpdate} need update</span>
     </div>

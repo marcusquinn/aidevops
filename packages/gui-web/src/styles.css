@@ -430,6 +430,39 @@ code {
   font-weight: 700;
 }
 
+.vault-padlock {
+  align-items: center;
+  background: color-mix(in srgb, #d97706 13%, transparent);
+  border: 1px solid color-mix(in srgb, #d97706 38%, transparent);
+  border-radius: 999px;
+  color: #b45309;
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 0.74rem;
+  font-weight: 900;
+  gap: 4px;
+  padding: 5px 9px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.vault-padlock svg {
+  height: 14px;
+  stroke-width: 2.6;
+  width: 14px;
+}
+
+.vault-padlock.compact {
+  font-size: 0.66rem;
+  padding: 3px 6px;
+}
+
+.vault-padlock[data-vault-state="unlocked"] {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+  color: var(--accent);
+}
+
 .sidebar-group h2 {
   font-size: max(12.5px, 0.84em);
 }
@@ -753,6 +786,32 @@ code {
     linear-gradient(135deg, color-mix(in srgb, var(--accent) 16%, transparent), transparent 58%),
     var(--surface-elevated);
   padding: clamp(24px, 5vw, 42px);
+}
+
+.vault-hero {
+  display: grid;
+  gap: 16px;
+}
+
+.vault-readiness-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.vault-readiness-strip span {
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  display: inline-flex;
+  gap: 6px;
+  padding: 7px 10px;
+}
+
+.vault-readiness-strip strong {
+  color: var(--accent);
+  text-transform: uppercase;
 }
 
 .compact-hero h2 {
@@ -1141,7 +1200,9 @@ code {
 .repo-card-grid,
 .provider-grid,
 .setup-card-grid,
-.ai-app-grid {
+.ai-app-grid,
+.vault-card-grid,
+.vault-device-grid {
   display: grid;
   gap: 14px;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -1150,7 +1211,9 @@ code {
 .repo-setup-card,
 .provider-card,
 .setup-target-card,
-.ai-app-card {
+.ai-app-card,
+.vault-feature-card,
+.vault-device-card {
   background: var(--surface-muted);
   border: 1px solid var(--border);
   border-radius: 18px;
@@ -1175,9 +1238,46 @@ code {
 .repo-setup-card h3,
 .provider-card h3,
 .setup-target-card h3,
-.ai-app-card h3 {
+.ai-app-card h3,
+.vault-device-card h3 {
   font-size: 1rem;
   margin: 0 0 5px;
+}
+
+.vault-feature-card span {
+  color: var(--accent);
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.vault-feature-card strong {
+  display: block;
+  font-size: 1.35rem;
+  letter-spacing: -0.04em;
+}
+
+.vault-feature-card small {
+  color: var(--text-muted);
+}
+
+.vault-step-list {
+  color: var(--text-secondary);
+  margin: 0;
+  padding-left: 1.2rem;
+}
+
+.vault-setup-panel code {
+  display: inline-block;
+  margin-top: 10px;
+}
+
+.vault-cta {
+  justify-self: start;
+}
+
+.vault-collection-list li {
+  align-items: center;
 }
 
 .repo-setup-card code,

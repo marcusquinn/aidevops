@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   assertNoSecretSentinels,
   createEnvelope,
+  VAULT_STATUS_ROUTE_MANIFEST,
   type GuiAiAppSummary,
   type GuiAiProviderId,
   type GuiOAuthPoolSummary,
@@ -15,6 +16,9 @@ import {
   type GuiSettingsSummary,
   type GuiSetupTargetSummary,
   type GuiStatusData,
+  type GuiVaultSetupState,
+  type GuiVaultStatus,
+  type GuiVaultStatusData,
   statusFixture,
 } from "../../gui-shared/src";
 import {
@@ -47,6 +51,7 @@ export function readStatus(
   const reposPathRef = "~/.config/aidevops/repos.json";
   const oauthPoolPathRef = "~/.aidevops/oauth-pool.json";
   const agentsPathRef = "~/.aidevops/agents";
+  const vaultPathRef = statusFixture.vault.path_ref;
   const settingsPath = expandHome(settingsPathRef);
   const reposPath = expandHome(reposPathRef);
   const oauthPoolPath = expandHome(oauthPoolPathRef);
@@ -57,11 +62,13 @@ export function readStatus(
   const restartRequired = installedVersion !== aidevopsVersion;
   const setupTargets = readSetupTargets(aidevopsVersion || "unknown", installedVersion || "unknown");
   const aiApps = readAiApps(aidevopsVersion || "unknown", installedVersion || "unknown");
+  const vault = readVaultSummary(repoRoot);
   const sourcePathRefs = [
     agentsPathRef,
     settingsPathRef,
     reposPathRef,
     oauthPoolPathRef,
+    vaultPathRef,
     "VERSION",
     ...setupTargets.map((target) => target.path_ref),
     ...aiApps.flatMap((app) => [app.app_path_ref, app.binary_path_ref, app.config_path_ref, app.aidevops_target_path_ref]),
@@ -110,6 +117,7 @@ export function readStatus(
     oauth_pool: readOAuthPoolSummary(oauthPoolPath, oauthPoolPathRef),
     setup_targets: setupTargets,
     ai_apps: aiApps,
+    vault,
   };
 
   const envelope = createEnvelope({
@@ -128,7 +136,105 @@ export function readStatus(
   return envelope;
 }
 
+export function readVaultStatus(
+  options: StatusAdapterOptions = {},
+): GuiResponseEnvelope<GuiVaultStatusData> {
+  const data = readVaultSummary(options.repoRoot ?? process.cwd());
+  const envelope = createEnvelope({
+    operation_id: VAULT_STATUS_ROUTE_MANIFEST.operation_id,
+    source: {
+      surface: "vault",
+      authority: "aidevops vault helper",
+      path_refs: [data.path_ref],
+    },
+    data,
+    warnings: ["Vault status exposes metadata only; passphrases, keys, recovery material, and payloads are never returned."],
+    observed_at: options.observedAt,
+  });
+
+  assertNoSecretSentinels(envelope);
+  return envelope;
+}
+
+export function readVaultSummary(repoRoot: string): GuiVaultStatusData {
+  const helperPath = join(repoRoot, ".agents", "scripts", "vault-helper.sh");
+  const helperExists = existsSync(helperPath);
+  const rawStatus = helperExists ? readVaultCommand(helperPath, ["status"], isGuiVaultStatus) : null;
+  const rawSetupState = helperExists ? readVaultCommand(helperPath, ["setup-state"], isGuiVaultSetupState) : null;
+  const helperStatus = !helperExists ? "missing" : rawStatus === null && rawSetupState === null ? "error" : "available";
+  const status = rawStatus ?? "unknown";
+  const setupState = rawSetupState ?? (status === "uninitialized" ? "uninitialized" : "unknown");
+  const unlocked = status === "unlocked";
+  const initialized = status === "locked" || status === "unlocked" || status === "corrupted";
+  const setupRequired = status === "uninitialized" || setupState === "uninitialized";
+  const restartTestRequired = setupState === "test-created" || setupState === "restart-required" || setupState === "test-verified";
+  const migrationAllowed = unlocked && setupState === "migration-ready";
+  const collectionState = vaultCollectionState(status);
+
+  return {
+    ...statusFixture.vault,
+    status,
+    setup_state: setupState,
+    initialized,
+    locked: !unlocked,
+    unlocked,
+    available: helperExists && helperStatus !== "error",
+    helper_status: helperStatus,
+    readiness: {
+      ...statusFixture.vault.readiness,
+      migration_allowed: migrationAllowed,
+      setup_required: setupRequired,
+      restart_test_required: restartTestRequired,
+      locked_content_hidden: !unlocked,
+    },
+    collections: statusFixture.vault.collections.map((collection) => ({
+      ...collection,
+      state: collection.state === "planned" ? "planned" : collectionState,
+    })),
+  };
+}
+
 const AI_PROVIDER_IDS: GuiAiProviderId[] = ["anthropic", "openai", "cursor", "google"];
+
+function readVaultCommand<T extends string>(
+  helperPath: string,
+  args: string[],
+  isAllowed: (value: string) => value is T,
+): T | null {
+  try {
+    const output = execFileSync(helperPath, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 1_000,
+    }).trim();
+    const firstLine = output.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() ?? "";
+    return isAllowed(firstLine) ? firstLine : null;
+  } catch {
+    return null;
+  }
+}
+
+function isGuiVaultStatus(value: string): value is GuiVaultStatus {
+  return value === "uninitialized" || value === "locked" || value === "unlocked" || value === "corrupted" || value === "unknown";
+}
+
+function isGuiVaultSetupState(value: string): value is GuiVaultSetupState {
+  return value === "uninitialized" || value === "test-created" || value === "restart-required" || value === "test-verified" || value === "migration-ready" || value === "unknown";
+}
+
+function vaultCollectionState(status: GuiVaultStatus): GuiVaultStatusData["collections"][number]["state"] {
+  if (status === "unlocked") {
+    return "unlocked";
+  }
+  if (status === "locked" || status === "corrupted") {
+    return "locked";
+  }
+  if (status === "uninitialized") {
+    return "not_configured";
+  }
+
+  return "unknown";
+}
 
 const SETUP_TARGET_DEFINITIONS: Array<Pick<GuiSetupTargetSummary, "label" | "path_ref" | "purpose">> = [
   {

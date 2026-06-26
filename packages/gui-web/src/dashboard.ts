@@ -27,6 +27,9 @@ export function renderDashboardHtml(status: GuiResponseEnvelope<GuiStatusData>):
   const aiApps = status.data.ai_apps
     .map((app) => `<li>${escapeHtml(app.name)}: ${escapeHtml(app.status)} ${escapeHtml(app.aidevops_version)} → ${escapeHtml(app.latest_version)}</li>`)
     .join("");
+  const vaultCollections = status.data.vault.collections
+    .map((collection) => `<li>${escapeHtml(collection.label)}: ${escapeHtml(collection.state)} ${escapeHtml(collection.preview_policy)}</li>`)
+    .join("");
   const settings = status.data.settings.keys
     .map((key) => `<li>${escapeHtml(key)}</li>`)
     .join("");
@@ -35,7 +38,7 @@ export function renderDashboardHtml(status: GuiResponseEnvelope<GuiStatusData>):
     .join("");
   const navSections = [
     { heading: "Development", items: ["Local Repos", "Remote Repos", "Secrets", "AI Providers"] },
-    { heading: "Operations", items: ["Dashboard", "Agents file explorer", "Config", "Local Setup", "Routines"] },
+    { heading: "Operations", items: ["Dashboard", "Vault", "Agents file explorer", "Config", "Local Setup", "Routines"] },
     { heading: "Infrastructure", items: ["Devices", "VPNs & Proxies", "Apps", "Installation", "Registrars", "Hosts", "Servers"] },
     { heading: "Identities", items: ["Brands", "Domains", "Personas"] },
     { heading: "Sites", items: ["Websites", "Forums", "Social Media", "Marketplaces"] },
@@ -53,11 +56,13 @@ export function renderDashboardHtml(status: GuiResponseEnvelope<GuiStatusData>):
     `<p>AI-assisted development workflows, code quality, and deployment automation.</p>`,
     `<p>Theme follows system preferences with light and dark overrides. Sidebar modes: DevOps and Comms. Appearance controls can be hidden or shown, and include editable Hue, icon Reset, Show borders toggle, Show counts toggle, Font size choices xs, s, m, lg, xl, and Font options: IBM Plex Mono, IBM Plex Sans, IBM Plex Serif, Inter, Menlo (default), Playpen Sans, Poppins, Source Sans, Source Serif, Tilt Neon, Ubuntu Mono. A desktop status bar shows local readiness, repo totals, secret reference count, provider accounts, and update state.</p>`,
     `<p>Secret references stay read-only and redacted.</p>`,
+    `<p>Vault surfaces show padlock indicators. Encrypted by aidevops Vault; contents visible only when unlocked through app or authorised vault commands.</p>`,
     `<p>${escapeHtml(status.data.update.message)}</p>`,
     renderedNavSections,
     `<h2>Path health</h2><ul>${paths}</ul>`,
     `<h2>Installed aidevops targets</h2><ul>${setupTargets}</ul>`,
     `<h2>AI Apps</h2><ul>${aiApps}</ul>`,
+    `<h2>Vault</h2><p>${escapeHtml(status.data.vault.status)} / ${escapeHtml(status.data.vault.setup_state)}</p><ul>${vaultCollections}</ul>`,
     `<h2>Local Repo Setup</h2><ul>${localRepos}</ul>`,
     `<h2>Remote Repos</h2><ul>${repos}</ul>`,
     `<h2>AI Provider Pools</h2><ul>${aiProviders}</ul>`,

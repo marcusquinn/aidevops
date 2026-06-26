@@ -1,6 +1,6 @@
 export type GuiRouteClassification = "read" | "write" | "destructive";
 
-export type GuiOperationId = "setup.status.read" | "capabilities.read" | "filesystem.read";
+export type GuiOperationId = "setup.status.read" | "capabilities.read" | "filesystem.read" | "vault.status.read";
 
 export type GuiFileRootId = "agents" | "config" | "localSetup" | "git";
 
@@ -201,6 +201,76 @@ export interface GuiMachineSummary {
   public_ip: string | null;
 }
 
+export type GuiVaultStatus = "uninitialized" | "locked" | "unlocked" | "corrupted" | "unknown";
+
+export type GuiVaultSetupState = "uninitialized" | "test-created" | "restart-required" | "test-verified" | "migration-ready" | "unknown";
+
+export type GuiVaultEncryptionState = "not_configured" | "locked" | "unlocked" | "planned" | "unknown";
+
+export interface GuiVaultCollectionSummary {
+  id: string;
+  label: string;
+  data_class: string;
+  labels: string[];
+  surface_ids: string[];
+  encrypted: boolean;
+  state: GuiVaultEncryptionState;
+  preview_policy: "hidden_while_locked" | "metadata_only" | "placeholder_only";
+  actions_policy: "disabled_while_locked" | "read_only" | "placeholder_disabled";
+}
+
+export interface GuiVaultReadinessSummary {
+  migration_allowed: boolean;
+  setup_required: boolean;
+  restart_test_required: boolean;
+  remote_unlock_enabled: boolean;
+  provider_routing_enforced: boolean;
+  locked_content_hidden: boolean;
+}
+
+export interface GuiVaultDeviceSummary {
+  id_ref: string;
+  label: string;
+  trust_state: "local" | "pending" | "trusted" | "limited" | "revoked" | "retired" | "planned" | "unknown";
+  last_seen: string;
+  audit_head_ref: string;
+}
+
+export interface GuiVaultSyncSummary {
+  status: "not_configured" | "planned" | "ready" | "error" | "unknown";
+  transport_policy: "encrypted_only_untrusted_transport";
+  encrypted_collections: number;
+  pending_requests: number;
+}
+
+export interface GuiVaultAuditSummary {
+  status: "not_started" | "planned" | "recording" | "error" | "unknown";
+  event_count: number;
+  latest_event_ref: string;
+}
+
+export interface GuiVaultStatusData {
+  status: GuiVaultStatus;
+  setup_state: GuiVaultSetupState;
+  initialized: boolean;
+  locked: boolean;
+  unlocked: boolean;
+  available: boolean;
+  helper_status: "available" | "missing" | "error" | "unchecked";
+  path_ref: string;
+  value_policy: "metadata_only_no_secret_material";
+  tooltip: string;
+  unlock_hint: string;
+  setup_hint: string;
+  readiness: GuiVaultReadinessSummary;
+  collections: GuiVaultCollectionSummary[];
+  devices: GuiVaultDeviceSummary[];
+  sync: GuiVaultSyncSummary;
+  secure_messages: GuiVaultSyncSummary;
+  backups: GuiVaultSyncSummary;
+  audit: GuiVaultAuditSummary;
+}
+
 export interface GuiStatusData {
   aidevops_version: string;
   update: {
@@ -231,6 +301,7 @@ export interface GuiStatusData {
   oauth_pool: GuiOAuthPoolSummary;
   setup_targets: GuiSetupTargetSummary[];
   ai_apps: GuiAiAppSummary[];
+  vault: GuiVaultStatusData;
   capabilities: GuiCapabilitySummary[];
   secrets: GuiSecretReference[];
   placeholders: string[];
@@ -256,6 +327,17 @@ export const FILE_EXPLORER_ROUTE_MANIFEST: GuiRouteManifest = {
   adapter: "fileAdapter.readFileExplorer",
   command_pattern: ["node:fs", "read-only", "root-allowlist"],
   redactions: ["secret_values", "credential_paths", "private_key_material"],
+};
+
+export const VAULT_STATUS_ROUTE_MANIFEST: GuiRouteManifest = {
+  route: "/api/vault/status",
+  method: "GET",
+  operation_id: "vault.status.read",
+  classification: "read",
+  source_surface: "vault",
+  adapter: "statusAdapter.readVaultStatus",
+  command_pattern: ["aidevops", "vault", "status"],
+  redactions: ["secret_values", "credential_paths", "private_key_material", "vault_passphrases", "recovery_material"],
 };
 
 export const GUI_FILE_ROOTS: readonly GuiFileRootDefinition[] = [
@@ -320,7 +402,7 @@ export function createEnvelope<TData>(input: {
     data: input.data,
     warnings: input.warnings ?? [],
     errors: input.errors ?? [],
-    redactions: ["secret_values", "credential_paths", "private_key_material"],
+    redactions: ["secret_values", "credential_paths", "private_key_material", "vault_passphrases", "recovery_material"],
     observed_at: input.observed_at ?? new Date().toISOString(),
   };
 }

@@ -17,6 +17,13 @@ describe("API trust boundary", () => {
     expect(containsSecretSentinel(body)).toBe(false);
   });
 
+  test("vault status route does not serialize secret sentinels", async () => {
+    const response = await app.request("/api/vault/status");
+    const body = await response.json();
+
+    expect(containsSecretSentinel(body)).toBe(false);
+  });
+
   test("file explorer rejects path traversal outside allowlisted roots", async () => {
     const response = await app.request("/api/files/agents?path=../../.ssh");
     const body = await response.json();

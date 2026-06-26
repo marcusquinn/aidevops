@@ -32,6 +32,8 @@ describe("dashboard shell", () => {
     expect(html).toContain("Remote Repos");
     expect(html).toContain("Secrets");
     expect(html).toContain("AI Providers");
+    expect(html).toContain("Vault");
+    expect(html).toContain("Encrypted by aidevops Vault; contents visible only when unlocked through app or authorised vault commands.");
     expect(html).toContain("AI Provider Pools");
     expect(html).toContain("AI Apps");
     expect(html).toContain("Installed aidevops targets");
@@ -64,6 +66,7 @@ describe("dashboard shell", () => {
     expect(counts.security).toBe(1);
     expect(counts.localSetup).toBe(2);
     expect(counts.agents).toBe(3);
+    expect(counts.vault).toBe(4);
     expect(counts.apps).toBe(6);
   });
 
@@ -82,6 +85,8 @@ describe("dashboard shell", () => {
 
     expect(status.data.local_repos.repos).toEqual([]);
     expect(status.data.oauth_pool.providers.map((provider) => provider.provider)).toEqual(["anthropic", "openai", "cursor", "google"]);
+    expect(status.data.vault.status).toBe("uninitialized");
+    expect(status.data.vault.collections.map((collection) => collection.surface_ids).flat()).toContain("agents");
     expect(status.data.setup_targets[0].path_ref).toBe("~/.aidevops/agents/VERSION");
     expect(status.data.ai_apps.map((app) => app.name)).toContain("OpenCode");
     expect(status.data.machine.initials).toBe("LM");

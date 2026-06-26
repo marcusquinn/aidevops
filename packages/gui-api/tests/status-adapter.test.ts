@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readStatus, STATUS_ADAPTER_COMMAND } from "../src/status-adapter";
+import { readStatus, readVaultStatus, STATUS_ADAPTER_COMMAND } from "../src/status-adapter";
 
 describe("status adapter", () => {
   test("uses an exact helper command pattern", () => {
@@ -28,7 +28,20 @@ describe("status adapter", () => {
     expect(response.data.setup_targets.every((target) => typeof target.needs_update === "boolean")).toBe(true);
     expect(response.data.ai_apps.map((app) => app.name)).toEqual(["OpenCode", "Claude Code", "Codex CLI", "Cursor"]);
     expect(JSON.stringify(response.data.ai_apps)).not.toContain("token");
+    expect(response.data.vault.value_policy).toBe("metadata_only_no_secret_material");
+    expect(response.data.vault.readiness.remote_unlock_enabled).toBe(false);
+    expect(JSON.stringify(response.data.vault)).not.toContain("SECRET_SENTINEL_DO_NOT_RENDER");
     expect(response.data.capabilities.length).toBeGreaterThan(0);
     expect(response.data.secrets[0]).toEqual({ name: "GITHUB_TOKEN", status: "unchecked" });
+  });
+
+  test("returns a metadata-only Vault envelope", () => {
+    const response = readVaultStatus({ observedAt: "2026-06-21T00:00:00.000Z" });
+
+    expect(response.ok).toBe(true);
+    expect(response.operation_id).toBe("vault.status.read");
+    expect(response.data.value_policy).toBe("metadata_only_no_secret_material");
+    expect(response.data.collections.map((collection) => collection.surface_ids).flat()).toContain("agents");
+    expect(response.redactions).toContain("recovery_material");
   });
 });
