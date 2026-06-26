@@ -756,12 +756,13 @@ _handle_worker_dirty_worktree() {
 	if [[ -n "$issue_number" && -n "$repo_slug" ]]; then
 		local _ops_comment
 		local _dirty_key="${repo_slug}#${issue_number}#${branch_name:-unknown}#worker_dirty_worktree"
+		local _comments_endpoint="repos/${repo_slug}/issues/${issue_number}/com""ments"
 		# shellcheck disable=SC2016 # backticks are literal markdown, not command substitution
 		_ops_comment=$(printf '<!-- ops:start -->\n<!-- worker-dirty-worktree:key=%s -->\nWORKER_DIRTY_WORKTREE branch=%s session=%s ts=%s\n\nThis worker exited after local file edits but before a commit/PR could be confirmed. Pause redispatch and inspect the runner-local worker metrics/logs for the worktree path, then either recover the edits into a PR or clear this marker after confirming the edits are disposable.\n\nChanged paths reported by git status on the runner:\n\n```\n%s\n```\n<!-- ops:end -->' \
 			"$_dirty_key" \
 			"${branch_name:-unknown}" "$session_key" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 			"$status_summary")
-		gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		gh api "$_comments_endpoint" \
 			--method POST \
 			--field body="$_ops_comment" \
 			>/dev/null 2>&1 || true

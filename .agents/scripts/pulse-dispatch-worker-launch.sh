@@ -1725,6 +1725,24 @@ _dlw_blocked_by_hard_stop() {
 	return 1
 }
 
+_dlw_prebootstrap_gates() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_meta_json="$3"
+	local repo_path="$4"
+
+	if _dlw_blocked_by_hard_stop "$issue_number" "$repo_slug" "$issue_meta_json" "$repo_path"; then
+		return 1
+	fi
+	if ! _dlw_opencode_storage_preflight "$issue_number" "$repo_slug"; then
+		return 1
+	fi
+	if ! _dlw_load_preflight "$issue_number" "$repo_slug"; then
+		return 1
+	fi
+	return 0
+}
+
 _dlw_issue_still_open_before_claim() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -1801,14 +1819,7 @@ _dispatch_launch_worker() {
 	local worker_log
 	worker_log=$(_dlw_setup_worker_log "$repo_slug" "$issue_number")
 
-	if _dlw_blocked_by_hard_stop "$issue_number" "$repo_slug" "$issue_meta_json" "$repo_path"; then
-		return 2
-	fi
-
-	if ! _dlw_opencode_storage_preflight "$issue_number" "$repo_slug"; then
-		return 2
-	fi
-	if ! _dlw_load_preflight "$issue_number" "$repo_slug"; then
+	if ! _dlw_prebootstrap_gates "$issue_number" "$repo_slug" "$issue_meta_json" "$repo_path"; then
 		return 2
 	fi
 
