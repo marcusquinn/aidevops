@@ -113,7 +113,10 @@ def _verify_setup_test_if_needed(vault_dir: Path, root_key: bytes) -> None:
 
 def _start_broker(vault_dir: Path, root_key: bytes) -> int:
     ensure_private_dir(runtime_dir(vault_dir))
-    subprocess.Popen(
+    # The broker process is this repo-controlled helper invoked via the current
+    # Python interpreter with generated key material; no user input reaches the
+    # executable path. Keep the annotation for external Bandit/CodeFactor B603.
+    subprocess.Popen(  # nosec B603
         [sys.executable, str(Path(__file__).resolve()), "broker", b64e(root_key)],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,

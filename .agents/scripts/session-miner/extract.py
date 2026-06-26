@@ -312,7 +312,10 @@ def resolve_managed_history_db(db_path: Path) -> Path:
         return db_path
     if "AIDEVOPS_VAULT_MANAGED_SESSION_HISTORY" not in __import__("os").environ:
         return db_path
-    result = subprocess.run(
+    # The command is a repo-controlled helper path plus literal arguments; no
+    # user input reaches the argv vector. Keep the explicit annotation so
+    # external Bandit/CodeFactor B603 checks do not block safe Vault gating.
+    result = subprocess.run(  # nosec B603
         [str(VAULT_HISTORY_HELPER), "require-read", "opencode"],
         check=False,
         text=True,
