@@ -16,8 +16,6 @@ import {
   type GuiSettingsSummary,
   type GuiSetupTargetSummary,
   type GuiStatusData,
-  type GuiVaultSetupState,
-  type GuiVaultStatus,
   type GuiVaultStatusData,
   statusFixture,
 } from "../../gui-shared/src";
@@ -34,6 +32,9 @@ import {
   stringField,
 } from "./status-adapter-utils";
 import { readLocalReposSetupSummary } from "./status-local-repos";
+import { readVaultSummary } from "./status-vault";
+
+export { readVaultSummary } from "./status-vault";
 
 export interface StatusAdapterOptions {
   repoRoot?: string;
@@ -156,95 +157,7 @@ export function readVaultStatus(
   return envelope;
 }
 
-export function readVaultSummary(repoRoot: string): GuiVaultStatusData {
-  const helperPath = join(repoRoot, ".agents", "scripts", "vault-helper.sh");
-  const helperExists = existsSync(helperPath);
-  const rawStatus = helperExists ? readVaultCommand(helperPath, ["status"], isGuiVaultStatus) : null;
-  const rawSetupState = helperExists ? readVaultCommand(helperPath, ["setup-state"], isGuiVaultSetupState) : null;
-  const helperStatus = !helperExists ? "missing" : rawStatus === null && rawSetupState === null ? "error" : "available";
-  const status = rawStatus ?? "unknown";
-  const setupState = rawSetupState ?? (status === "uninitialized" ? "uninitialized" : "unknown");
-  const unlocked = status === "unlocked";
-  const initialized = status === "locked" || status === "unlocked" || status === "corrupted";
-  const setupRequired = status === "uninitialized" || setupState === "uninitialized";
-  const restartTestRequired = setupState === "test-created" || setupState === "restart-required" || setupState === "test-verified";
-  const migrationAllowed = unlocked && setupState === "migration-ready";
-  const collectionState = vaultCollectionState(status);
-
-  return {
-    ...statusFixture.vault,
-    status,
-    setup_state: setupState,
-    initialized,
-    locked: !unlocked,
-    unlocked,
-    available: helperExists && helperStatus !== "error",
-    helper_status: helperStatus,
-    readiness: {
-      ...statusFixture.vault.readiness,
-      migration_allowed: migrationAllowed,
-      setup_required: setupRequired,
-      restart_test_required: restartTestRequired,
-      locked_content_hidden: !unlocked,
-    },
-    collections: statusFixture.vault.collections.map((collection) => ({
-      ...collection,
-      state: collection.state === "planned" ? "planned" : collectionState,
-    })),
-  };
-}
-
 const AI_PROVIDER_IDS: GuiAiProviderId[] = ["anthropic", "openai", "cursor", "google"];
-const GUI_VAULT_STATUSES: readonly GuiVaultStatus[] = ["uninitialized", "locked", "unlocked", "corrupted", "unknown"];
-const GUI_VAULT_SETUP_STATES: readonly GuiVaultSetupState[] = [
-  "uninitialized",
-  "test-created",
-  "restart-required",
-  "test-verified",
-  "migration-ready",
-  "unknown",
-];
-
-function readVaultCommand<T extends string>(
-  helperPath: string,
-  args: string[],
-  isAllowed: (value: string) => value is T,
-): T | null {
-  try {
-    const output = execFileSync("sh", [helperPath, ...args], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 1_000,
-    }).trim();
-    const firstLine = output.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() ?? "";
-    return isAllowed(firstLine) ? firstLine : null;
-  } catch {
-    return null;
-  }
-}
-
-function isGuiVaultStatus(value: string): value is GuiVaultStatus {
-  return (GUI_VAULT_STATUSES as readonly string[]).includes(value);
-}
-
-function isGuiVaultSetupState(value: string): value is GuiVaultSetupState {
-  return (GUI_VAULT_SETUP_STATES as readonly string[]).includes(value);
-}
-
-function vaultCollectionState(status: GuiVaultStatus): GuiVaultStatusData["collections"][number]["state"] {
-  if (status === "unlocked") {
-    return "unlocked";
-  }
-  if (status === "locked" || status === "corrupted") {
-    return "locked";
-  }
-  if (status === "uninitialized") {
-    return "not_configured";
-  }
-
-  return "unknown";
-}
-
 const SETUP_TARGET_DEFINITIONS: Array<Pick<GuiSetupTargetSummary, "label" | "path_ref" | "purpose">> = [
   {
     label: "Deployed agents",
