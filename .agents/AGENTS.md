@@ -45,6 +45,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 
 - Use TodoWrite for multi-step work. Mark one task in progress and complete items immediately.
 - Infer task intent: `/full-loop` or "work on this now" means implement now; "background/worker" means create a worker-ready brief and auto-dispatch; "later/save/log" means brief for later and ask numbered dispatch options. Task and issue bodies use `workflows/brief.md`. Details: `reference/task-lifecycle.md`.
+- During in-progress work, classify new user messages before acting: immediate correction/steerage changes the active plan; supplemental context is retained/applied when relevant; follow-up work becomes a todo after the current work reaches a safe pause or completion point.
 - Drive to verified completion. Run relevant tests/lint/build before claiming done; if not verified, say so.
 - Never present intent as completed work. Every claim needs proof: path, command result, PR/issue number, or metric.
 - Stuck: replan, inspect current state, and use `session-introspect-helper.sh patterns` when loops appear.
