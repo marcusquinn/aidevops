@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.22.6] - 2026-06-26
 
+### Changed
+
+- avoid large jq argv for cache JSON
+
+### Fixed
+
+- reconcile TODO task sync drift (#25588)
+
+## [3.22.6] - 2026-06-26
+
 ### Fixed
 
 - avoid jq argv E2BIG failures for large pulse and quality feedback JSON payloads (#25589)
