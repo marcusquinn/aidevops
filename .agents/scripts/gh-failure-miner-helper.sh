@@ -400,8 +400,13 @@ fetch_pr_changed_paths_json() {
 		printf '%s\n' '[]'
 		return 0
 	fi
-	gh api --paginate "repos/${repo_slug}/pulls/${pr_number}/files?per_page=100" --jq '.[].filename' 2>/dev/null |
-		jq -c -R -s '[splits("\n") | select(length > 0)] | unique' 2>/dev/null || printf '%s\n' '[]'
+
+	local files
+	if ! files=$(gh api --paginate "repos/${repo_slug}/pulls/${pr_number}/files?per_page=100" --jq '.[].filename' 2>/dev/null); then
+		printf '%s\n' '[]'
+		return 0
+	fi
+	printf '%s\n' "$files" | jq -c -R -s '[splits("\n") | select(length > 0)] | unique' || printf '%s\n' '[]'
 	return 0
 }
 
@@ -551,16 +556,21 @@ process_failed_runs() {
 			is_infra="true"
 		fi
 
+		local run_affected_paths="[]"
 		if [[ "$source_kind" == "pr" ]] && [[ -n "$pr_number" ]] &&
 			{ [[ "$check_name" =~ [Cc]ode[Ff]actor ]] || [[ "$signature" == "failure:codefactor.io" ]]; } &&
 			[[ "$affected_paths_json" == "[]" ]]; then
 			affected_paths_json=$(fetch_pr_changed_paths_json "$repo_slug" "$pr_number")
 		fi
+		if [[ "$source_kind" == "pr" ]] && [[ -n "$pr_number" ]] &&
+			{ [[ "$check_name" =~ [Cc]ode[Ff]actor ]] || [[ "$signature" == "failure:codefactor.io" ]]; }; then
+			run_affected_paths="$affected_paths_json"
+		fi
 
 		emit_event_json "$repo_slug" "$source_kind" "$source_ref" "$source_url" \
 			"$pr_number" "$commit_sha" "$check_name" "$conclusion" \
 			"$run_id" "$html_url" "$details_url" "$completed_at" \
-			"$signature" "$notification_updated_at" "$is_infra" "$affected_paths_json" >>"$event_file"
+			"$signature" "$notification_updated_at" "$is_infra" "$run_affected_paths" >>"$event_file"
 
 		failed_index=$((failed_index + 1))
 	done

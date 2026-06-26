@@ -32,6 +32,20 @@ assert_contains() {
 	return 0
 }
 
+assert_equals() {
+	local label="$1" expected="$2" actual="$3"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$actual" == "$expected" ]]; then
+		printf '%sPASS%s: %s\n' "$TEST_GREEN" "$TEST_NC" "$label"
+	else
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		printf '%sFAIL%s: %s\n' "$TEST_RED" "$TEST_NC" "$label"
+		printf '  expected: %s\n' "$(printf '%q' "$expected")"
+		printf '  actual:   %s\n' "$(printf '%q' "$actual")"
+	fi
+	return 0
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
 HELPER="$SCRIPT_DIR/gh-failure-miner-helper.sh"
 
@@ -47,7 +61,11 @@ set -- help
 source "$HELPER" >/dev/null
 
 gh() {
-	local _api="$1" _paginate="$2" _endpoint="$3" _jq_flag="$4" _jq_expr="$5"
+	local _api="${1:-}" _paginate="${2:-}" _endpoint="${3:-}" _jq_flag="${4:-}" _jq_expr="${5:-}"
+	if [[ "${GH_MODE:-success}" == "fail" ]]; then
+		printf '%s\n' "simulated gh api failure" >&2
+		return 1
+	fi
 	if [[ "$_api" == "api" && "$_paginate" == "--paginate" && "$_endpoint" == "repos/marcusquinn/aidevops/pulls/25324/files?per_page=100" && "$_jq_flag" == "--jq" && "$_jq_expr" == ".[].filename" ]]; then
 		printf '%s\n' ".agents/scripts/vault-helper.sh" ".agents/scripts/vault-crypto-helper.py" ".agents/scripts/vault-helper.sh"
 		return 0
@@ -99,6 +117,42 @@ JSON
 body=$(build_issue_body "$cluster_json" "46250abc5695" "2" "false")
 legacy_body=$(render_issue_body_markdown "$events_json" "2")
 paths_json=$(fetch_pr_changed_paths_json "marcusquinn/aidevops" "25324")
+GH_MODE=fail
+failed_paths_json=$(fetch_pr_changed_paths_json "marcusquinn/aidevops" "25324")
+GH_MODE=success
+
+failed_runs_json=$(cat <<'JSON'
+[
+  {
+    "name": "CodeFactor",
+    "conclusion": "failure",
+    "details_url": "https://www.codefactor.io/repository/github/marcusquinn/aidevops/pull/25324",
+    "html_url": "https://github.com/marcusquinn/aidevops/runs/82536587204",
+    "completed_at": "2026-06-26T07:00:00Z",
+    "app": {"name": "codefactor.io"}
+  },
+  {
+    "name": "ShellCheck",
+    "conclusion": "failure",
+    "details_url": "https://github.com/marcusquinn/aidevops/actions/runs/82536587205/job/1",
+    "html_url": "https://github.com/marcusquinn/aidevops/runs/82536587205",
+    "completed_at": "2026-06-26T07:01:00Z",
+    "app": {"name": "GitHub Actions"}
+  }
+]
+JSON
+)
+checks_json=$(cat <<'JSON'
+{"check_runs":[]}
+JSON
+)
+event_file=$(mktemp)
+process_failed_runs "$failed_runs_json" "marcusquinn/aidevops" "pr" "#25324" "https://github.com/marcusquinn/aidevops/pull/25324" \
+	"25324" "46250abc5695" "2026-06-26T07:02:00Z" "false" "0" "0" "$event_file" "$checks_json" >/dev/null
+mined_events_json=$(jq -s '.' "$event_file")
+codefactor_paths_json=$(printf '%s\n' "$mined_events_json" | jq -c '.[0].affected_paths')
+shellcheck_paths_json=$(printf '%s\n' "$mined_events_json" | jq -c '.[1].affected_paths')
+rm -f "$event_file"
 
 assert_contains "build_issue_body includes Worker Guidance" "## Worker Guidance" "$body"
 assert_contains "build_issue_body directs workers to CodeFactor details" "Open the CodeFactor details URL from Evidence first" "$body"
@@ -110,6 +164,9 @@ assert_contains "render_issue_body_markdown includes Worker Guidance" "## Worker
 assert_contains "render_issue_body_markdown directs workers to provider details" "details URL" "$legacy_body"
 assert_contains "render_issue_body_markdown includes affected file fallback" "affected files: .agents/scripts/vault-crypto-helper.py, .agents/scripts/vault-helper.sh" "$legacy_body"
 assert_contains "fetch_pr_changed_paths_json returns unique sorted paths" '[".agents/scripts/vault-crypto-helper.py",".agents/scripts/vault-helper.sh"]' "$paths_json"
+assert_equals "fetch_pr_changed_paths_json emits one JSON array on gh failure" '[]' "$failed_paths_json"
+assert_equals "process_failed_runs attaches paths to CodeFactor failure" '[".agents/scripts/vault-crypto-helper.py",".agents/scripts/vault-helper.sh"]' "$codefactor_paths_json"
+assert_equals "process_failed_runs does not leak CodeFactor paths to later checks" '[]' "$shellcheck_paths_json"
 
 printf '\nTests run: %s\n' "$TESTS_RUN"
 if [[ "$TESTS_FAILED" -ne 0 ]]; then
