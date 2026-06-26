@@ -1602,6 +1602,22 @@ SQL
 	return 0
 }
 
+test_opencode_project_table_migration_replay_detected() {
+	local output_file="${TEST_ROOT}/opencode-project-replay.log"
+	local project_table_error="table \`project\` already exists"
+	printf '%s\n' 'Error: Unexpected error' "$project_table_error" >"$output_file"
+
+	if _opencode_project_table_migration_replay_detected 1 "$output_file" && \
+		! _opencode_project_table_migration_replay_detected 0 "$output_file"; then
+		print_result "detects OpenCode project table migration replay startup failure" 0
+		return 0
+	fi
+
+	print_result "detects OpenCode project table migration replay startup failure" 1 \
+		"Expected non-zero exit with project table replay output to be detected only on failure"
+	return 0
+}
+
 test_large_opencode_prompt_uses_file_attachment() {
 	local prompt="large-seed-prompt-with-worker-contract"
 	local old_threshold="${HEADLESS_PROMPT_FILE_THRESHOLD_BYTES:-}"
@@ -2507,6 +2523,7 @@ main() {
 	test_sync_worker_db_migration_metadata_archives_unrepairable_project_table
 	test_sync_worker_db_migration_metadata_preserves_worker_db_when_shared_query_fails
 	test_sync_worker_db_migration_metadata_repeated_launch_reaches_seed
+	test_opencode_project_table_migration_replay_detected
 	test_large_opencode_prompt_uses_file_attachment
 	test_large_claude_prompt_uses_stdin_file
 	test_registered_prompt_temp_cleanup_removes_dir
