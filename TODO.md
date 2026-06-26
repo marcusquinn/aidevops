@@ -4279,3 +4279,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t17996 Vault: encrypted aidevops data, fleet sync, remote control, messaging, and audit #architecture #parent #plan #security ref:GH#25533
 
 - [ ] t17997 vault: define threat model, data classification, and security architecture RFC #architecture #auto-dispatch #documentation #enhancement #local-models #opsec #security ref:GH#25534
+
+- [ ] t17998 vault: implement local broker, crypto envelope, and CLI lock/unlock gate #architecture #auto-dispatch #cli #enhancement #security #tools ref:GH#25535
