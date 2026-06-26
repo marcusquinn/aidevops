@@ -29,6 +29,12 @@ STATE_UNINITIALIZED = "uninitialized"
 STATE_LOCKED = "locked"
 STATE_UNLOCKED = "unlocked"
 STATE_CORRUPTED = "corrupted"
+SETUP_STATE_TEST_CREATED = "test-created"
+SETUP_STATE_RESTART_REQUIRED = "restart-required"
+SETUP_STATE_TEST_VERIFIED = "test-verified"
+SETUP_STATE_MIGRATION_READY = "migration-ready"
+SETUP_TEST_ENTRY_NAME = "__aidevops_setup_test__"
+SETUP_TEST_VALUE = "aidevops vault setup restart verification test"
 
 
 class VaultError(Exception):
@@ -159,17 +165,29 @@ def decrypt_json(key: bytes, envelope: dict[str, Any], aad: bytes) -> dict[str, 
     return data
 
 
-def prompt_passphrase(confirm: bool = False) -> str:
+def prompt_passphrase(confirm: bool = False, require_strong: bool = False) -> str:
     if not sys.stdin.isatty() or not sys.stderr.isatty():
         raise VaultError("VAULT_TTY_REQUIRED", "Vault passphrase entry requires a local TTY", 5)
     first = getpass.getpass("Vault passphrase: ", stream=sys.stderr)
     if not first:
         raise VaultError("VAULT_PASSPHRASE_EMPTY", "Vault passphrase cannot be empty", 5)
+    if require_strong and len(first) < 12:
+        raise VaultError("VAULT_PASSPHRASE_WEAK", "Vault passphrase must be at least 12 characters", 5)
     if confirm:
         second = getpass.getpass("Confirm Vault passphrase: ", stream=sys.stderr)
         if not secrets.compare_digest(first, second):
             raise VaultError("VAULT_PASSPHRASE_MISMATCH", "Vault passphrases did not match", 5)
     return first
+
+
+def prompt_acknowledgement() -> None:
+    if not sys.stdin.isatty() or not sys.stderr.isatty():
+        raise VaultError("VAULT_TTY_REQUIRED", "Vault setup acknowledgement requires a local TTY", 5)
+    print("Vault cannot recover a lost passphrase. Save it in a trusted password manager with backups.", file=sys.stderr)
+    print("Type I UNDERSTAND to continue: ", end="", file=sys.stderr, flush=True)
+    answer = sys.stdin.readline().rstrip("\n")
+    if answer != "I UNDERSTAND":
+        raise VaultError("VAULT_ACK_REQUIRED", "Vault setup requires the no-recovery acknowledgement", 5)
 
 
 def validate_metadata(meta: dict[str, Any]) -> None:
@@ -202,7 +220,27 @@ def build_metadata(root_key: bytes, passphrase: str) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "created_at": int(time.time()),
+        "setup_state": SETUP_STATE_TEST_CREATED,
         "kdf": {"name": KDF_NAME, "salt": b64e(salt), "params": DEFAULT_SCRYPT},
         "wrapped_root_key": wrapped,
         "broker": {"persisted_unlock_tokens": False, "transport": "local-unix-socket"},
     }
+
+
+def setup_state(meta: dict[str, Any]) -> str:
+    state = str(meta.get("setup_state", SETUP_STATE_MIGRATION_READY))
+    allowed = {
+        SETUP_STATE_TEST_CREATED,
+        SETUP_STATE_RESTART_REQUIRED,
+        SETUP_STATE_TEST_VERIFIED,
+        SETUP_STATE_MIGRATION_READY,
+    }
+    if state not in allowed:
+        raise VaultError("VAULT_METADATA_CORRUPTED", "Vault setup state is invalid", 3)
+    return state
+
+
+def write_setup_state(vault_dir: Path, state: str) -> None:
+    meta = load_json(metadata_path(vault_dir))
+    meta["setup_state"] = state
+    write_private_json(metadata_path(vault_dir), meta)

@@ -137,6 +137,10 @@ tool context, so provider-side logs/retention remain outside Vault's technical
 control. Future local LLM mode reduces provider exposure but not local host
 compromise risk.
 
+**Vault passphrase warning:** aidevops cannot recover a lost Vault passphrase.
+Save it in a trusted password manager with backups; never paste it into AI chat,
+CLI arguments, environment variables, logs, issue comments, or test fixtures.
+
 ### Report creation, previews, and PDF exports
 
 Use aidevops to turn evidence bundles into decision-ready reports while keeping Markdown or JSON as the canonical source. Report agents can produce AI-search audits, SEO/GEO scorecards, delivery reviews, campaign reports, board packs, incident summaries, recurring client handoffs, and before/after remediation evidence.

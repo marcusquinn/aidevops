@@ -11,11 +11,13 @@
 <!-- AI-CONTEXT-START -->
 
 **TL;DR:** Vault setup is local-first. Use `aidevops vault init`, `aidevops
-vault unlock`, `aidevops vault lock`, and `aidevops vault status` for the first
-local broker gate. Never ask for or accept Vault passphrases, recovery phrases,
-private keys, or raw secrets in AI chat, CLI arguments, environment variables,
-logs, issue comments, or fixtures. Use local interactive prompts, classify data
-before migration, and keep third-party AI provider routing explicit.
+vault unlock`, `aidevops vault lock`, `aidevops vault status`, and `aidevops
+vault setup-state` for the first local broker gate. Real data migration remains
+blocked until a fresh unlock verifies the harmless setup test record. Never ask
+for or accept Vault passphrases, recovery phrases, private keys, or raw secrets
+in AI chat, CLI arguments, environment variables, logs, issue comments, or
+fixtures. Use local interactive prompts, classify data before migration, and
+keep third-party AI provider routing explicit.
 
 <!-- AI-CONTEXT-END -->
 
@@ -65,24 +67,34 @@ hidden prompt:
 
 ```bash
 aidevops vault init
+aidevops vault setup-state
 aidevops vault status
 aidevops vault unlock
+aidevops vault setup-state
 aidevops vault lock
 ```
 
 Expected states:
 
 - Before setup: `aidevops vault status` prints `uninitialized`.
-- After setup and before unlock: status prints `locked`.
-- After a successful local TTY unlock: status prints `unlocked` while the broker
-  process is alive.
+- After setup and before unlock: status prints `locked`; setup-state prints
+  `restart-required`.
+- After a successful local TTY unlock in a fresh process: status prints
+  `unlocked` while the broker process is alive; setup-state prints
+  `migration-ready` after the harmless encrypted test record is read.
 - After `aidevops vault lock`, broker exit, crash, or restart: status prints
   `locked` and protected reads/updates fail closed.
+Real data writes are blocked with `VAULT_MIGRATION_BLOCKED` until setup-state is
+`migration-ready`.
 
 The initial helper writes `vault.json`, encrypted store data, and redacted audit
 events under `~/.config/aidevops/vault/` unless `AIDEVOPS_VAULT_DIR` relocates
 the store. Do not publish that path when it contains private machine or client
 context.
+
+Initial setup requires a 12+ character passphrase, confirmation, and the exact
+local acknowledgement `I UNDERSTAND` that aidevops cannot recover a lost
+passphrase. Store the passphrase in a trusted password manager with backups.
 
 ### Step 1: Explain boundaries
 
@@ -176,6 +188,20 @@ Recovery must be safe by default:
 Acceptable recovery approaches include offline recovery codes, hardware-backed
 keys, Shamir-style splits implemented by audited libraries, or trusted-device
 approval. Avoid bespoke recovery cryptography.
+
+The currently implemented lost-passphrase CLI flow is conservative:
+
+```bash
+aidevops vault lost-passphrase
+aidevops vault lost-passphrase archive-and-start-fresh
+```
+
+The archive-and-start-fresh path moves active encrypted metadata, store, and
+audit files into a private `archives/lost-passphrase-*` directory, writes a
+README without secrets, clears the local broker runtime, and leaves the active
+Vault uninitialized so a new setup can start. It does not decrypt or delete the
+archive; future import tooling can attempt recovery if the passphrase is later
+found.
 
 ## 5. Migration Checklist
 
