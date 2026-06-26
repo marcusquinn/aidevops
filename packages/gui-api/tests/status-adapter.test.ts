@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { readStatus, readVaultStatus, STATUS_ADAPTER_COMMAND } from "../src/status-adapter";
+import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { readStatus, readVaultStatus, readVaultSummary, STATUS_ADAPTER_COMMAND } from "../src/status-adapter";
 
 describe("status adapter", () => {
   test("uses an exact helper command pattern", () => {
@@ -43,5 +46,30 @@ describe("status adapter", () => {
     expect(response.data.value_policy).toBe("metadata_only_no_secret_material");
     expect(response.data.collections.map((collection) => collection.surface_ids).flat()).toContain("agents");
     expect(response.redactions).toContain("recovery_material");
+  });
+
+  test("reads Vault helper output through sh without requiring an executable bit", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-vault-helper-"));
+    const scriptsDir = join(repoRoot, ".agents", "scripts");
+    const helperPath = join(scriptsDir, "vault-helper.sh");
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(
+      helperPath,
+      [
+        "case \"$1\" in",
+        "  status) printf '%s\\n' unlocked ;;",
+        "  setup-state) printf '%s\\n' migration-ready ;;",
+        "  *) exit 2 ;;",
+        "esac",
+      ].join("\n"),
+    );
+    chmodSync(helperPath, 0o600);
+
+    const vault = readVaultSummary(repoRoot);
+
+    expect(vault.helper_status).toBe("available");
+    expect(vault.status).toBe("unlocked");
+    expect(vault.setup_state).toBe("migration-ready");
+    expect(vault.readiness.migration_allowed).toBe(true);
   });
 });

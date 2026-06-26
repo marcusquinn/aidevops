@@ -202,7 +202,7 @@ function readVaultCommand<T extends string>(
   isAllowed: (value: string) => value is T,
 ): T | null {
   try {
-    const output = execFileSync(helperPath, args, {
+    const output = execFileSync("sh", [helperPath, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 1_000,
