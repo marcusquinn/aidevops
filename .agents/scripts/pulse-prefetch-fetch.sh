@@ -662,7 +662,7 @@ _prefetch_single_repo() {
 			"${PREFETCH_UPDATED_PRS:-[]}" "${PREFETCH_UPDATED_ISSUES:-[]}") || new_entry=""
 	else
 		local last_full_sweep
-		last_full_sweep=$(echo "$cache_entry" | jq -r '.last_full_sweep // ""' 2>/dev/null) || last_full_sweep=""
+		last_full_sweep=$(printf '%s\n' "$cache_entry" | jq -r '.last_full_sweep // ""') || last_full_sweep=""
 		new_entry=$(_prefetch_build_cache_entry \
 			"$now_iso" "$last_full_sweep" "$fingerprint" \
 			"${PREFETCH_UPDATED_PRS:-[]}" "${PREFETCH_UPDATED_ISSUES:-[]}") || new_entry=""
