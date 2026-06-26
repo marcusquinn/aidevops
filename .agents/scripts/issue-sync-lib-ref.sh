@@ -432,6 +432,7 @@ _seed_orphan_todo_line() {
 	local task_id_ere
 	task_id_ere=$(_escape_ere "$task_id")
 	if strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${task_id_ere} "; then
+		_dedupe_todo_task_lines "$task_id" "$todo_file" || true
 		{ log_verbose "ORPHAN already seeded: $task_id (ref:GH#$num) — skipping" || true; }
 		return 1
 	fi
@@ -457,5 +458,58 @@ _seed_orphan_todo_line() {
 	# Append after the last non-empty line (chronological tail)
 	printf '\n%s\n' "$todo_line" >> "$todo_file"
 	print_success "Seeded orphan TODO: $todo_line"
+	return 0
+}
+
+# Remove duplicate TODO.md task lines, preserving the richest canonical entry.
+# Preference order: completed lines, linked brief lines, detailed metadata, then
+# the first occurrence. This repairs historical simplified orphan duplicates
+# without discarding useful task metadata from the canonical upper section.
+_dedupe_todo_task_lines() {
+	local task_id="$1"
+	local todo_file="$2"
+	local task_id_ere duplicate_count tmp_file
+
+	task_id_ere=$(_escape_ere "$task_id")
+	duplicate_count=$(strip_code_fences <"$todo_file" | grep -Ec "^[[:space:]]*- \[.\] ${task_id_ere} " || true)
+	if [[ "$duplicate_count" -le 1 ]]; then
+		return 1
+	fi
+
+	tmp_file=$(mktemp "${todo_file}.dedupe.XXXXXX") || return 2
+	if ! awk -v task_pattern="$task_id_ere" '
+		BEGIN { pattern = "^[[:space:]]*- \\[.\\] " task_pattern " " }
+		$0 ~ pattern {
+			is_task[NR] = 1
+			score = 0
+			if ($0 ~ /^[[:space:]]*- \\[x\\] /) { score += 1000 }
+			if ($0 ~ / -> \[/) { score += 100 }
+			if ($0 ~ / blocked-by:/) { score += 25 }
+			if ($0 ~ / tier:/) { score += 25 }
+			if ($0 ~ / logged:/) { score += 25 }
+			if ($0 ~ / pr:#[0-9]+| verified:[0-9]{4}-[0-9]{2}-[0-9]{2}| completed:[0-9]{4}-[0-9]{2}-[0-9]{2}/) { score += 10 }
+			if (best_line == 0 || score > best_score) {
+				best_line = NR
+				best_score = score
+			}
+		}
+		{ lines[NR] = $0 }
+		END {
+			for (i = 1; i <= NR; i += 1) {
+				if (is_task[i] && i != best_line) { continue }
+				print lines[i]
+			}
+		}
+	' "$todo_file" >"$tmp_file"; then
+		rm -f "$tmp_file"
+		return 2
+	fi
+
+	if ! mv "$tmp_file" "$todo_file"; then
+		rm -f "$tmp_file"
+		return 2
+	fi
+
+	print_warning "Removed duplicate TODO.md entries for $task_id"
 	return 0
 }

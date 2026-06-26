@@ -157,20 +157,35 @@ _reopen_comment() {
 # Mark a TODO entry as done: [ ] -> [x] with completed: date.
 # Also handles [-] (cancelled/declined) entries — leaves marker as [-].
 _mark_todo_done() {
-	local task_id="$1" todo_file="$2"
+	local task_id="$1" todo_file="$2" proof_log="${3:-}"
 	local task_id_ere
 	task_id_ere=$(_escape_ere "$task_id")
 	local today
 	today=$(date -u +%Y-%m-%d)
+	[[ -n "$proof_log" && "$proof_log" != " "* ]] && proof_log=" $proof_log"
 
 	# Only flip [ ] -> [x]; skip if already [x] or [-]
 	# Use [[:space:]] not \s for macOS sed compatibility (bash 3.2)
 	if grep -qE "^[[:space:]]*- \[ \] ${task_id_ere} " "$todo_file" 2>/dev/null; then
 		# Flip checkbox and append completed: date
-		sed -i.bak -E "s/^([[:space:]]*- )\[ \] (${task_id_ere} .*)/\1[x] \2 completed:${today}/" "$todo_file"
+		sed -i.bak -E "s/^([[:space:]]*- )\[ \] (${task_id_ere} .*)/\1[x] \2${proof_log} completed:${today}/" "$todo_file"
 		rm -f "${todo_file}.bak"
+		_dedupe_todo_task_lines "$task_id" "$todo_file" || true
 		log_verbose "Marked $task_id as [x] in TODO.md"
 	fi
+	return 0
+}
+
+_closed_issue_worker_complete_date() {
+	local repo="$1" issue_number="$2"
+	local completed_at
+
+	completed_at=$(gh api "repos/${repo}/issues/${issue_number}/comments" \
+		--jq '[.[] | select(.body | contains("CLAIM_RELEASED reason=worker_complete")) | .created_at][0] // ""' 2>/dev/null || true)
+	if [[ -z "$completed_at" ]]; then
+		return 1
+	fi
+	printf '%s\n' "${completed_at%%T*}"
 	return 0
 }
 
@@ -383,6 +398,19 @@ cmd_reopen() {
 				add_pr_ref_to_todo "$tid" "$pr_num" "$todo_file" 2>/dev/null || true
 				_mark_todo_done "$tid" "$todo_file"
 				log_verbose "#$ref_num ($tid) has merged PR #$pr_num — marked TODO [x]"
+			fi
+			has_pr=$((has_pr + 1))
+			continue
+		fi
+
+		local worker_completed_date
+		worker_completed_date=$(_closed_issue_worker_complete_date "$repo" "$ref_num" || true)
+		if [[ -n "$worker_completed_date" ]]; then
+			if [[ "$DRY_RUN" == "true" ]]; then
+				print_info "[DRY-RUN] Would mark $tid [x] (worker_complete evidence on #$ref_num)"
+			else
+				_mark_todo_done "$tid" "$todo_file" "verified:${worker_completed_date}"
+				log_verbose "#$ref_num ($tid) has worker_complete evidence — marked TODO [x]"
 			fi
 			has_pr=$((has_pr + 1))
 			continue
