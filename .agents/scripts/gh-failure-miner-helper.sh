@@ -558,12 +558,10 @@ process_failed_runs() {
 
 		local run_affected_paths="[]"
 		if [[ "$source_kind" == "pr" ]] && [[ -n "$pr_number" ]] &&
-			{ [[ "$check_name" =~ [Cc]ode[Ff]actor ]] || [[ "$signature" == "failure:codefactor.io" ]]; } &&
-			[[ "$affected_paths_json" == "[]" ]]; then
-			affected_paths_json=$(fetch_pr_changed_paths_json "$repo_slug" "$pr_number")
-		fi
-		if [[ "$source_kind" == "pr" ]] && [[ -n "$pr_number" ]] &&
 			{ [[ "$check_name" =~ [Cc]ode[Ff]actor ]] || [[ "$signature" == "failure:codefactor.io" ]]; }; then
+			if [[ "$affected_paths_json" == "[]" ]]; then
+				affected_paths_json=$(fetch_pr_changed_paths_json "$repo_slug" "$pr_number")
+			fi
 			run_affected_paths="$affected_paths_json"
 		fi
 
