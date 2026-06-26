@@ -306,6 +306,36 @@ Argon2id migration can rewrap the root key without changing callers.
 - Replicate hash-chained audit summaries so devices can detect missing or forked
   history.
 
+`.agents/scripts/vault-device-helper.sh` is the first deterministic device/fleet
+model. It records per-device public identity metadata, explicit trust grants,
+local-only unlock state, non-secret heartbeat files, and revocation rotation
+tasks. It does not store passphrases, root keys, data-encryption keys, remote
+unlock tokens, private paths, or plaintext collection contents. Private device
+keys remain local-only for this phase; future sync layers must sign registry and
+heartbeat payloads before accepting them over untrusted transports.
+
+Supported trust grants are `sync-send`, `sync-receive`, `dispatch`,
+`remote-lock`, `unlock-request`, `true-remote-unlock`, and `audit-receipt`.
+`true-remote-unlock` is never granted by default; remote lock and unlock-request
+flows remain the safe default. `can-dispatch --needs-unlocked` lets schedulers
+distinguish locked, unlocked, unsynced, stale-heartbeat, capability-missing, and
+capacity-full devices without reading protected Vault contents.
+
+Revocation marks the device `revoked`, removes grants, writes a peer-visible
+registry update, and appends a local rotation task instructing follow-up workers
+to rewrap collection keys and notify peers. A stolen-device response should:
+
+1. Revoke the device immediately.
+2. Lock or shut down any reachable runner on that host.
+3. Rotate affected collection keys before accepting new sync payloads.
+4. Treat old Git/object/message transports as compromised ciphertext archives.
+5. Review audit summaries for missing or forked history.
+
+VPS devices are expected to run locked unless a task explicitly requires unlocked
+protected data and the device has a fresh heartbeat plus matching grants. Never
+place recovery material in cloud-init, environment variables, issue comments,
+logs, or shell history.
+
 ### Phase 3: Remote lock and unlock-request
 
 - Implement remote lock first: a trusted device can request that another device

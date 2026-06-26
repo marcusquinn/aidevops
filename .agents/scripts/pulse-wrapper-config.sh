@@ -67,6 +67,10 @@ if [[ "${_total_mb:-0}" -gt 0 ]]; then
 	[[ "$_default_cap" -gt "$MAX_WORKERS_CAP_CEILING" ]] && _default_cap="$MAX_WORKERS_CAP_CEILING"
 fi
 MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-$(config_get "orchestration.max_workers_cap" "$_default_cap")}"     # Derived from total RAM; override via config or env
+VAULT_DEVICE_HELPER="${VAULT_DEVICE_HELPER:-${SCRIPT_DIR}/vault-device-helper.sh}"                         # Non-secret Vault fleet status helper; schedulers may call can-dispatch for Vault-sensitive work
+VAULT_DEVICE_DISPATCH_PREFLIGHT="${VAULT_DEVICE_DISPATCH_PREFLIGHT:-0}"                                    # 0=disabled until task metadata requires Vault routing; 1=consult local heartbeat/trust state
+VAULT_DEVICE_DISPATCH_NEEDS_UNLOCKED="${VAULT_DEVICE_DISPATCH_NEEDS_UNLOCKED:-0}"                          # 1=Vault-sensitive work requires a fresh unlocked heartbeat before local dispatch
+export VAULT_DEVICE_HELPER VAULT_DEVICE_DISPATCH_PREFLIGHT VAULT_DEVICE_DISPATCH_NEEDS_UNLOCKED
 DAILY_PR_CAP="${DAILY_PR_CAP:-1000}"                                                                    # Max PRs created per repo per day (GH#3821)
 PRODUCT_RESERVATION_PCT="${PRODUCT_RESERVATION_PCT:-60}"                                                # % of worker slots reserved for product repos (t1423)
 QUALITY_DEBT_CAP_PCT="${QUALITY_DEBT_CAP_PCT:-$(config_get "orchestration.quality_debt_cap_pct" "30")}" # % cap for quality-debt dispatch share

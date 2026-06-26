@@ -38,6 +38,14 @@ currently evaluating (no pre-claim lock); which aidevops version another runner
 is on (version skew is a real failure mode — §4.4); whether another runner's
 worker is alive or stalled (determined by stale-assignment threshold — §2.6).
 
+**Vault fleet status is separate:** GitHub remains the task coordination source
+of truth. Vault device heartbeats and trust grants describe whether a machine is
+locked, unlocked, synced, stale, capable, or revoked for protected data work; they
+do not replace GitHub issue labels, assignees, dispatch comments, or PR state.
+Runners may use `.agents/scripts/vault-device-helper.sh can-dispatch` as a local
+non-secret preflight before launching Vault-sensitive work, but they must still
+perform every GitHub dedup layer below.
+
 ---
 
 ## 2. Coordination Signals
