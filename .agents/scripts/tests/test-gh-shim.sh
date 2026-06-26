@@ -170,16 +170,16 @@ _read_argv() {
 
 _reset_log() {
 	: >"$STUB_GH_LOG"
-	: >"$STUB_SIG_LOG"
+	[[ -n "${STUB_SIG_LOG:-}" ]] && : >"$STUB_SIG_LOG"
 	return 0
 }
 
 _read_sig_argv() {
-	[[ -f "$STUB_SIG_LOG" ]] || {
+	[[ -f "${STUB_SIG_LOG:-}" ]] || {
 		echo "(no sig log)"
 		return 0
 	}
-	cat "$STUB_SIG_LOG"
+	cat "${STUB_SIG_LOG:-}"
 	return 0
 }
 
