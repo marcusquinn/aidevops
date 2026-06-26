@@ -69,6 +69,8 @@ test_setup_stage_contract() {
 	assert_contains "gui-desktop scope maps to native app installer" "$text" "gui-desktop | gui | app | \"\$SETUP_STAGE_GUI_DESKTOP\") printf '%s' \"\$SETUP_STAGE_GUI_DESKTOP\""
 	assert_contains "gui desktop default path is opt-in gated" "$text" "_time_step \"setup_gui_desktop_app_opt_in\" _setup_offer_gui_desktop_app"
 	assert_contains "gui desktop env flag enables install" "$text" "AIDEVOPS_GUI_DESKTOP_INSTALL"
+	assert_contains "gui desktop app dir can be configured" "$text" "AIDEVOPS_GUI_DESKTOP_APP_DIR"
+	assert_contains "existing gui desktop app refreshes during update" "$text" "Refreshing existing macOS"
 	assert_contains "gui desktop scoped stage runs installer" "$text" "_time_step \"\$SETUP_STAGE_GUI_DESKTOP\" setup_gui_desktop_app"
 	assert_contains "unknown stages print actionable help" "$text" "Unknown setup stage/scope"
 	return 0
@@ -105,10 +107,24 @@ test_gui_desktop_package_contract() {
 	return 0
 }
 
+test_gui_desktop_installer_contract() {
+	local installer="${REPO_ROOT}/packages/gui-desktop/scripts/install-macos-app.sh"
+	local text=""
+	text="$(file_text "$installer")" || {
+		print_result "GUI desktop installer is readable" 1 "$installer"
+		return 0
+	}
+
+	assert_contains "installer honours configured app dir env" "$text" 'AIDEVOPS_GUI_DESKTOP_APP_DIR'
+	assert_contains "installer keeps explicit app-dir override" "$text" '--app-dir'
+	return 0
+}
+
 main() {
 	test_setup_stage_contract
 	test_cli_scope_contract
 	test_gui_desktop_package_contract
+	test_gui_desktop_installer_contract
 
 	printf '\nRan %s tests, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then
