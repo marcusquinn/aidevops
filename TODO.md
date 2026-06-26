@@ -4281,3 +4281,9 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t17997 vault: define threat model, data classification, and security architecture RFC #architecture #auto-dispatch #documentation #enhancement #local-models #opsec #security ref:GH#25534
 
 - [ ] t17998 vault: implement local broker, crypto envelope, and CLI lock/unlock gate #architecture #auto-dispatch #cli #enhancement #security #tools ref:GH#25535
+
+- [ ] t18001 vault: migrate aidevops memory, workspace, knowledge, and config data with scrub-safe rollback #architecture #auto-dispatch #database #documents #enhancement #memory #security ref:GH#25538
+
+- [ ] t18000 vault: protect managed AI session and history storage behind unlocked Vault profiles #architecture #auto-dispatch #enhancement #memory #opencode #security #session-miner ref:GH#25537
+
+- [ ] t17999 vault: build first-use passphrase test, restart verification, recovery, and archive flow #architecture #auto-dispatch #documentation #enhancement #security #setup ref:GH#25536
