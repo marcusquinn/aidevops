@@ -336,7 +336,11 @@ def verify_records(records: list[dict[str, Any]], trusted_device_id: str | None,
     expected_sequence = 1
     last_hash = GENESIS_HASH
     for record in records:
-        if int(record.get(FIELD_SEQUENCE, -1)) != expected_sequence:
+        try:
+            sequence = int(record.get(FIELD_SEQUENCE, -1))
+        except (TypeError, ValueError) as exc:
+            raise AuditError(ERR_CORRUPTED, "Vault audit sequence is not a valid integer", 3) from exc
+        if sequence != expected_sequence:
             raise AuditError("VAULT_AUDIT_SEQUENCE_GAP", "Vault audit sequence is missing or reordered", 6)
         if record.get(FIELD_PREV_HASH) != expected_prev:
             raise AuditError("VAULT_AUDIT_CHAIN_BROKEN", "Vault audit hash chain is broken", 6)
