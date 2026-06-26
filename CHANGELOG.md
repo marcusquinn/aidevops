@@ -10,6 +10,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.22.5] - 2026-06-26
+
+### Added
+
+- add vault setup verification flow (#25554)
+
+### Changed
+
+- plan Vault security epic (#25586)
+- Maintenance: update simplification state registry
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 47→46 (-1) [skip ci]
+- Maintenance: reduce qlty smell count (#25575)
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 48→47 (-1) [skip ci]
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 51→48 (-3) [skip ci]
+- fix: harden vault device state writes (#25574)
+- fix: tolerate unset HOME in vault migration (#25571)
+- Maintenance: mark t18001 complete (pr:#25560 completed:2026-06-26) [skip ci]
+- feat: migrate data planes behind vault (#25560)
+- Maintenance: mark t18003 complete (pr:#25557 completed:2026-06-26) [skip ci]
+- feat: add vault device fleet trust model (#25557)
+- Maintenance: mark t18000 complete (pr:#25555 completed:2026-06-26) [skip ci]
+- feat: gate managed session history behind vault (#25555)
+- Maintenance: mark t17999 complete (pr:#25554 completed:2026-06-26) [skip ci]
+- Maintenance: mark t18008 complete (pr:#25553 completed:2026-06-26) [skip ci]
+- Maintenance: mark t17998 complete (pr:#25549 completed:2026-06-26) [skip ci]
+- feat: add local vault broker (#25549)
+- Maintenance: mark t17997 complete (pr:#25548 completed:2026-06-26) [skip ci]
+- Documentation: define vault security architecture (#25548)
+- Maintenance: sync ref:GH#25545 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#25539 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#25536 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#25535 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#25534 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#25533 to TODO.md [skip ci]
+
+### Fixed
+
+- recover invalid pulse stats file (#25585)
+- tolerate missing vault device registry (#25579)
+- annotate CodeFactor subprocess safety (#25576)
+- guard vault status label (#25573)
+- run vault helper through sh (#25572)
+
 ## [3.22.4] - 2026-06-26
 
 ### Fixed

@@ -990,19 +990,19 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t17996 Vault: encrypted aidevops data, fleet sync, remote control, messaging, and audit #architecture #parent-task #plan #security tier:thinking ~20h ref:GH#25533 logged:2026-06-26 -> [todo/tasks/t17996-brief.md]
 
-- [ ] t17997 vault: define threat model, data classification, and security architecture RFC #architecture #auto-dispatch #documentation #feat #local-models #opsec #security tier:thinking ~6h ref:GH#25534 logged:2026-06-26 -> [todo/tasks/t17997-brief.md]
+- [x] t17997 vault: define threat model, data classification, and security architecture RFC #architecture #auto-dispatch #documentation #feat #local-models #opsec #security tier:thinking ~6h ref:GH#25534 logged:2026-06-26 -> [todo/tasks/t17997-brief.md] pr:#25548 completed:2026-06-26
 
-- [ ] t17998 vault: implement local broker, crypto envelope, and CLI lock/unlock gate #architecture #auto-dispatch #cli #feat #security #tools blocked-by:t17997 tier:thinking ~8h ref:GH#25535 logged:2026-06-26 -> [todo/tasks/t17998-brief.md]
+- [x] t17998 vault: implement local broker, crypto envelope, and CLI lock/unlock gate #architecture #auto-dispatch #cli #feat #security #tools blocked-by:t17997 tier:thinking ~8h ref:GH#25535 logged:2026-06-26 -> [todo/tasks/t17998-brief.md] pr:#25549 completed:2026-06-26
 
-- [ ] t17999 vault: build first-use passphrase test, restart verification, recovery, and archive flow #architecture #auto-dispatch #documentation #feat #security #setup blocked-by:t17998 tier:thinking ~6h ref:GH#25536 logged:2026-06-26 -> [todo/tasks/t17999-brief.md]
+- [x] t17999 vault: build first-use passphrase test, restart verification, recovery, and archive flow #architecture #auto-dispatch #documentation #feat #security #setup blocked-by:t17998 tier:thinking ~6h ref:GH#25536 logged:2026-06-26 -> [todo/tasks/t17999-brief.md] pr:#25554 completed:2026-06-26
 
-- [ ] t18000 vault: protect managed AI session and history storage behind unlocked Vault profiles #architecture #auto-dispatch #feat #memory #opencode #security #session-miner blocked-by:t17998,t17999 tier:thinking ~6h ref:GH#25537 logged:2026-06-26 -> [todo/tasks/t18000-brief.md]
+- [x] t18000 vault: protect managed AI session and history storage behind unlocked Vault profiles #architecture #auto-dispatch #feat #memory #opencode #security #session-miner blocked-by:t17998,t17999 tier:thinking ~6h ref:GH#25537 logged:2026-06-26 -> [todo/tasks/t18000-brief.md] pr:#25555 completed:2026-06-26
 
-- [ ] t18001 vault: migrate aidevops memory, workspace, knowledge, and config data with scrub-safe rollback #architecture #auto-dispatch #database #documents #feat #memory #security blocked-by:t17999,t18000 tier:thinking ~8h ref:GH#25538 logged:2026-06-26 -> [todo/tasks/t18001-brief.md]
+- [x] t18001 vault: migrate aidevops memory, workspace, knowledge, and config data with scrub-safe rollback #architecture #auto-dispatch #database #documents #feat #memory #security blocked-by:t17999,t18000 tier:thinking ~8h ref:GH#25538 logged:2026-06-26 -> [todo/tasks/t18001-brief.md] pr:#25560 completed:2026-06-26
 
 - [ ] t18002 vault: add GUI Vault sidebar, setup navigation, padlock indicators, and locked-state gates #architecture #auto-dispatch #design #feat #product #security blocked-by:t17999 tier:thinking ~5h ref:GH#25539 logged:2026-06-26 -> [todo/tasks/t18002-brief.md]
 
-- [ ] t18003 vault: implement device identity, trust, revocation, and fleet unlock status model #architecture #auto-dispatch #feat #orchestration #security blocked-by:t17998 tier:thinking ~6h ref:GH#25540 logged:2026-06-26 -> [todo/tasks/t18003-brief.md]
+- [x] t18003 vault: implement device identity, trust, revocation, and fleet unlock status model #architecture #auto-dispatch #feat #orchestration #security blocked-by:t17998 tier:thinking ~6h ref:GH#25540 logged:2026-06-26 -> [todo/tasks/t18003-brief.md] pr:#25557 completed:2026-06-26
 
 - [ ] t18004 vault: add encrypted sync, export, import, rekey, and public-Git-safe replication #architecture #auto-dispatch #communications #database #feat #git #security blocked-by:t18001,t18003 tier:thinking ~8h ref:GH#25541 logged:2026-06-26 -> [todo/tasks/t18004-brief.md]
 
@@ -1012,7 +1012,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18007 vault: build tamper-evident access logs with peer replication and public-safe anchors #architecture #audit #auto-dispatch #feat #monitoring #security #security-review blocked-by:t17998,t18003,t18004 tier:thinking ~6h ref:GH#25544 logged:2026-06-26 -> [todo/tasks/t18007-brief.md]
 
-- [ ] t18008 vault: enforce confidential data policy for provider AI, local LLM, and task dispatch routing #architecture #auto-dispatch #feat #local-models #model-routing #routing #security blocked-by:t17997,t17998 tier:thinking ~5h ref:GH#25545 logged:2026-06-26 -> [todo/tasks/t18008-brief.md]
+- [x] t18008 vault: enforce confidential data policy for provider AI, local LLM, and task dispatch routing #architecture #auto-dispatch #feat #local-models #model-routing #routing #security blocked-by:t17997,t17998 tier:thinking ~5h ref:GH#25545 logged:2026-06-26 -> [todo/tasks/t18008-brief.md] pr:#25553 completed:2026-06-26
 
 - [ ] t18009 vault: create Vault agent guidance, user workflows, command docs, and dispatch gates #agents #architecture #auto-dispatch #brief #documentation #feat #security blocked-by:t18002,t18004,t18006,t18007,t18008 tier:thinking ~5h ref:GH#25546 logged:2026-06-26 -> [todo/tasks/t18009-brief.md]
 
@@ -4308,15 +4308,10 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t17996 Vault: encrypted aidevops data, fleet sync, remote control, messaging, and audit #architecture #parent #plan #security ref:GH#25533
 
-- [x] t17997 vault: define threat model, data classification, and security architecture RFC #architecture #auto-dispatch #documentation #enhancement #local-models #opsec #security ref:GH#25534 pr:#25548 completed:2026-06-26
 
-- [x] t17998 vault: implement local broker, crypto envelope, and CLI lock/unlock gate #architecture #auto-dispatch #cli #enhancement #security #tools ref:GH#25535 pr:#25549 completed:2026-06-26
 
-- [x] t18001 vault: migrate aidevops memory, workspace, knowledge, and config data with scrub-safe rollback #architecture #auto-dispatch #database #documents #enhancement #memory #security ref:GH#25538 pr:#25560 completed:2026-06-26
 
-- [x] t18000 vault: protect managed AI session and history storage behind unlocked Vault profiles #architecture #auto-dispatch #enhancement #memory #opencode #security #session-miner ref:GH#25537 pr:#25555 completed:2026-06-26
 
-- [x] t17999 vault: build first-use passphrase test, restart verification, recovery, and archive flow #architecture #auto-dispatch #documentation #enhancement #security #setup ref:GH#25536 pr:#25554 completed:2026-06-26
 
 - [ ] t18007 vault: build tamper-evident access logs with peer replication and public-safe anchors #architecture #audit #auto-dispatch #enhancement #monitoring #security #security-review ref:GH#25544
 
@@ -4326,7 +4321,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18004 vault: add encrypted sync, export, import, rekey, and public-Git-safe replication #architecture #auto-dispatch #communications #database #enhancement #git #security ref:GH#25541
 
-- [x] t18003 vault: implement device identity, trust, revocation, and fleet unlock status model #architecture #auto-dispatch #enhancement #infrastructure #orchestration #security ref:GH#25540 pr:#25557 completed:2026-06-26
 
 - [ ] t18002 vault: add GUI Vault sidebar, setup navigation, padlock indicators, and locked-state gates #architecture #auto-dispatch #design #enhancement #product #security ref:GH#25539
 
@@ -4334,4 +4328,3 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18009 vault: create Vault agent guidance, user workflows, command docs, and dispatch gates #agents #architecture #auto-dispatch #brief #documentation #enhancement #security ref:GH#25546
 
-- [x] t18008 vault: enforce confidential data policy for provider AI, local LLM, and task dispatch routing #architecture #auto-dispatch #enhancement #local-models #model-routing #routing #security ref:GH#25545 pr:#25553 completed:2026-06-26
