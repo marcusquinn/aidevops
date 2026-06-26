@@ -74,9 +74,23 @@ test_callers_use_shared_field_helper() {
 	return 0
 }
 
+test_merge_ready_pr_list_failure_logs_error() {
+	if ! file_contains "$MERGE_PROCESS" '|| pr_json=""'; then
+		print_result "merge-ready list failure leaves empty output for error guard" 1 "gh_pr_list failure fallback must be empty so the existing -z guard logs the error"
+		return 0
+	fi
+	if file_contains "$MERGE_PROCESS" '|| pr_json="[]"'; then
+		print_result "merge-ready list failure avoids silent empty array fallback" 1 "gh_pr_list failure fallback still masks errors as []"
+		return 0
+	fi
+	print_result "merge-ready list failure reaches error logging guard" 0
+	return 0
+}
+
 main() {
 	test_ready_pr_fields_include_process_metadata
 	test_callers_use_shared_field_helper
+	test_merge_ready_pr_list_failure_logs_error
 
 	printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then

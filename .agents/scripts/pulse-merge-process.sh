@@ -496,7 +496,7 @@ _merge_ready_prs_for_repo() {
 	pr_merge_err=$(mktemp)
 	pr_json=$(gh_pr_list --repo "$repo_slug" --state open \
 		--json "$(_pulse_merge_ready_pr_json_fields)" \
-		--limit "$PULSE_MERGE_BATCH_LIMIT" 2>"$pr_merge_err") || pr_json="[]"
+		--limit "$PULSE_MERGE_BATCH_LIMIT" 2>"$pr_merge_err") || pr_json=""
 	if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
 		local _pr_merge_err_msg
 		_pr_merge_err_msg=$(cat "$pr_merge_err" 2>/dev/null || echo "unknown error")
