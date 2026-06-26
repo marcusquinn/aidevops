@@ -39,7 +39,7 @@ serve-sim type "hello"            # Type into focused field
 serve-sim --kill                  # Stop stream(s)
 ```
 
-Use `serve-sim` when the user needs a visible, browser-shareable simulator surface. Pair it with `agent-device`, `ios-simulator-mcp`, or `maestro` when the task needs accessibility refs, MCP tool calls, or repeatable E2E flows. Current upstream builds serve capture, accessibility, and HID input through an in-process native addon instead of a separate `serve-sim-bin` helper, so malformed browser input should be ignored rather than crash the preview server. Native builds now use SwiftPM's `swiftbuild` build system for the Node addon, so source installs need a current Xcode/Swift toolchain rather than only simulator runtime access. The preview defaults to H.264 when available and can switch or auto-downgrade to MJPEG when hardware decoding is unstable during screen recording; use `--codec <auto|mjpeg>` when the host must pin stream compatibility. Recent upstream versions also use incremental MJPEG and AVCC buffering plus paged simulator-grid loading, which keeps large multi-device catalogs and long recording sessions responsive.
+Use `serve-sim` when the user needs a visible, browser-shareable simulator surface. Pair it with `agent-device`, `ios-simulator-mcp`, or `maestro` when the task needs accessibility refs, MCP tool calls, or repeatable E2E flows. Current upstream builds serve capture, accessibility, and HID input through an in-process native addon instead of a separate `serve-sim-bin` helper, so malformed browser input should be ignored rather than crash the preview server. Native builds now use SwiftPM's `swiftbuild` build system for the Node addon, so source installs need a current Xcode/Swift toolchain rather than only simulator runtime access. The preview defaults to H.264 when available and can switch or auto-downgrade to MJPEG when hardware decoding is unstable during screen recording; use `--codec <auto|mjpeg>` when the host must pin stream compatibility. Recent upstream versions also use incremental MJPEG and AVCC buffering plus paged simulator-grid loading, which keeps large multi-device catalogs and long recording sessions responsive. Upstream simulator-backed test suites now serialize Bun test execution (`bun test --max-concurrency=1`) against the shared booted simulator and retry once after rebooting the simulator when transport-style failures indicate a simulator wedge.
 
 <!-- AI-CONTEXT-END -->
 
@@ -97,8 +97,9 @@ Do **not** use it for Android emulators, real iOS hardware, building/installing 
 5. Use `agent-device snapshot` or `ios-simulator-mcp` for accessibility-aware targeting; use `serve-sim` for the shared visual stream and simulator-specific commands.
 6. If the browser preview stutters, drops frames, or reports an H.264 decoder failure while screen recording, restart with `serve-sim --codec mjpeg`, switch the Stream → Codec control to MJPEG, or append `?codec=mjpeg` to the preview URL.
 7. For plain coordinate taps, use `serve-sim tap <x> <y>` with normalized 0..1 values; reserve `serve-sim gesture '<json>'` for drag, swipe, and multi-touch shapes.
-8. Treat isolated `ConnectionRefused` / `server not alive` failures in shared-simulator suites as possible simulator wedges: reboot the simulator and retry once before attributing the failure to app code.
-9. Clean up with `serve-sim --kill` unless the user asks to keep the simulator stream running.
+8. Run shared-simulator Bun suites serially (`bun test --max-concurrency=1 ...`) so one simulator stream, pointer state, or native helper crash does not cascade across concurrent tests.
+9. Treat isolated `ConnectionRefused` / `server not alive`, hook timeout, or `ECONNRESET` failures in shared-simulator suites as possible simulator wedges: reboot the simulator and retry once before attributing the failure to app code.
+10. Clean up with `serve-sim --kill` unless the user asks to keep the simulator stream running.
 
 ## Expo / Dev Server Embedding
 
