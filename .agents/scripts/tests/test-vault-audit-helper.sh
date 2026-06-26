@@ -55,6 +55,28 @@ if ! grep -q "VAULT_AUDIT_SEQUENCE_GAP\|VAULT_AUDIT_CHAIN_BROKEN" "$tmp_root/mis
 	exit 1
 fi
 
+corrupted_sequence_log="$tmp_root/corrupted-sequence.jsonl"
+python3 - "$vault_dir/audit-events.jsonl" "$corrupted_sequence_log" <<'PY'
+from pathlib import Path
+import json
+import sys
+
+source = Path(sys.argv[1])
+target = Path(sys.argv[2])
+records = [json.loads(line) for line in source.read_text(encoding="utf-8").splitlines()]
+records[0]["sequence"] = "not-an-integer"
+target.write_text("\n".join(json.dumps(record, sort_keys=True) for record in records) + "\n", encoding="utf-8")
+PY
+
+if "$VAULT_AUDIT_HELPER" verify --vault-dir "$vault_dir" --log "$corrupted_sequence_log" >/dev/null 2>"$tmp_root/corrupted-sequence.err"; then
+	printf '%s\n' "corrupted sequence unexpectedly verified" >&2
+	exit 1
+fi
+if ! grep -q "VAULT_AUDIT_CORRUPTED" "$tmp_root/corrupted-sequence.err"; then
+	printf '%s\n' "corrupted sequence did not use a stable corruption error code" >&2
+	exit 1
+fi
+
 tampered_log="$tmp_root/tampered.jsonl"
 python3 - "$vault_dir/audit-events.jsonl" "$tampered_log" <<'PY'
 from pathlib import Path
