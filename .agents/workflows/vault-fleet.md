@@ -143,12 +143,23 @@ audit are still required.
 
 The first message transport implementation is
 `.agents/scripts/vault-message-helper.sh`. It supports message classes
-`human`, `sync-request`, `audit-receipt`, `lock-command`, `unlock-request`, and
-`unlock-grant-envelope-placeholder`; encrypts each envelope to a recipient device
-key; signs the sender identity; stores locked inboxes as ciphertext; and writes
-signed acknowledgements. Git is the durable default transport. SimpleX is an
-optional lower-metadata adapter and must fail closed when no adapter is
-configured; it does not replace signature, expiry, replay, or revocation checks.
+`human`, `sync-request`, `audit-receipt`, `lock-command`, `unlock-request`,
+`unlock-grant`, and `unlock-grant-envelope-placeholder`; encrypts each envelope
+to a recipient device key; signs the sender identity; stores locked inboxes as
+ciphertext; and writes signed acknowledgements. Git is the durable default
+transport. SimpleX is an optional lower-metadata adapter and must fail closed
+when no adapter is configured; it does not replace signature, expiry, replay, or
+revocation checks.
+
+`.agents/scripts/vault-remote-control-helper.sh` is the deterministic
+remote-control gate layered above message transport. It validates target device,
+sender authorization, revocation, policy tier, expiry, nonce/replay state,
+message signature, and an audit append before applying a command. Remote lock is
+protective and requires only an authorized sender. Unlock-request queues a local
+operator decision. True remote unlock remains disabled unless the target policy
+is `sudo+passphrase` or `sudo+passphrase+2-of-N`; the controller side must run
+with sudo and a hidden TTY prompt, and the passphrase is never accepted in args,
+environment variables, chat, issue bodies, logs, or fixtures.
 
 ## 6. Unlock-Request
 
