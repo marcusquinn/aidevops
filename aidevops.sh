@@ -1055,9 +1055,8 @@ _help_management_sections() {
 	echo "  aidevops skills categories   # List all categories"
 	echo ""
 	echo "Installation:"
-	echo "  npm install -g aidevops && aidevops update      # via npm (recommended)"
-	echo "  brew install marcusquinn/tap/aidevops && aidevops update  # via Homebrew"
-	echo "  bash <(curl -fsSL https://aidevops.sh/install)                     # manual"
+	echo "  brew install marcusquinn/tap/aidevops && aidevops update  # macOS/Homebrew"
+	echo "  npm install -g aidevops && aidevops update                # Linux/cross-platform"
 	echo ""
 	echo "Documentation: https://github.com/marcusquinn/aidevops"
 	return 0
