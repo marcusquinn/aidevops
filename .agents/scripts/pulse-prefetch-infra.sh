@@ -509,7 +509,10 @@ _prefetch_cache_set() {
 	local tmp_file="" entry_file=""
 	local failure_msg
 	failure_msg='[pulse-wrapper] _prefetch_cache_set: failed to write cache for'
-	tmp_file=$(mktemp "${cache_dir}/.pulse-prefetch-cache.XXXXXX")
+	tmp_file=$(mktemp "${cache_dir}/.pulse-prefetch-cache.XXXXXX") || {
+		printf '%s %s\n' "$failure_msg" "$slug" >>"$LOGFILE"
+		return 0
+	}
 	entry_file=$(mktemp "${cache_dir}/.pulse-prefetch-entry.XXXXXX") || {
 		rm -f "$tmp_file"
 		printf '%s %s\n' "$failure_msg" "$slug" >>"$LOGFILE"
