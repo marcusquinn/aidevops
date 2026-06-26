@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.22.9] - 2026-06-26
+
+### Fixed
+
+- retry opencode project table replay (#25595)
+
 ## [3.22.8] - 2026-06-26
 
 ### Fixed
