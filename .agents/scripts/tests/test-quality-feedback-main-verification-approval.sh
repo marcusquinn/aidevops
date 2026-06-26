@@ -344,6 +344,19 @@ test_skips_incorporates_necessary_synchronization_ack_without_race_phrase() {
 	return 0
 }
 
+test_skips_pr25504_verification_ack() {
+	local comments result
+	# shellcheck disable=SC2016  # literal inline-comment JSON includes Markdown backticks
+	comments='[{"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for verifying the fix and adding the regression test. The updated logic correctly handles the `/tmp` edge case and ensures robust validation for the configuration home directory. This looks good.","path":".agents/scripts/config-helper.sh","line":71,"html_url":"https://example.invalid/review","created_at":"2026-06-26T00:00:00Z"}]'
+	result=$(_build_inline_findings "$comments" "25504" "medium" | jq 'length')
+	if [[ "$result" == "0" ]]; then
+		print_result "skip PR #25504 verification acknowledgement" 0
+	else
+		print_result "skip PR #25504 verification acknowledgement" 1 "expected 0 findings, got ${result}"
+	fi
+	return 0
+}
+
 test_keeps_actionable_approved_review() {
 	# APPROVED review that also contains actionable critique — must be kept
 	local result
