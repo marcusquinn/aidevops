@@ -2214,9 +2214,9 @@
       "pr": 17713
     },
     ".agents/scripts/config-helper.sh": {
-      "at": "2026-06-25T06:29:23Z",
-      "hash": "477a7c10863038ba210aefe727fa3b077f9e1de6",
-      "passes": 8,
+      "at": "2026-06-25T22:49:01Z",
+      "hash": "88d0c516b09bb5b4b05986ca182d0e5455b908e6",
+      "passes": 9,
       "pr": 16084
     },
     ".agents/scripts/cron-helper.sh": {
