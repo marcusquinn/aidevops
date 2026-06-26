@@ -678,22 +678,42 @@ check_python_version() {
 
 # Install a package globally via npm or bun, with sudo when needed on Linux.
 # Usage: npm_global_install "package-name" OR npm_global_install "package@version"
-# Uses bun if available (no sudo needed), falls back to npm.
+# OpenCode uses npm first when available so stale bun installs are not recreated.
+# Other packages keep the historic bun-first policy, then fall back to npm.
 # On Linux with apt-installed npm, automatically prepends sudo.
 # Returns: 0 on success, 1 on failure
+_npm_global_install_via_npm() {
+	local pkg="$1"
+
+	# npm global installs need sudo on Linux when prefix dir isn't writable
+	if [[ "$(uname)" != "Darwin" ]] && [[ ! -w "$(npm config get prefix 2>/dev/null)/lib" ]]; then
+		sudo npm install -g "$pkg"
+	else
+		npm install -g "$pkg"
+	fi
+	return $?
+}
+
 npm_global_install() {
 	local pkg="$1"
+
+	if [[ "$pkg" == opencode-ai || "$pkg" == opencode-ai@* ]]; then
+		if command -v npm >/dev/null 2>&1; then
+			_npm_global_install_via_npm "$pkg"
+			return $?
+		elif command -v bun >/dev/null 2>&1; then
+			bun install -g "$pkg"
+			return $?
+		else
+			return 1
+		fi
+	fi
 
 	if command -v bun >/dev/null 2>&1; then
 		bun install -g "$pkg"
 		return $?
 	elif command -v npm >/dev/null 2>&1; then
-		# npm global installs need sudo on Linux when prefix dir isn't writable
-		if [[ "$(uname)" != "Darwin" ]] && [[ ! -w "$(npm config get prefix 2>/dev/null)/lib" ]]; then
-			sudo npm install -g "$pkg"
-		else
-			npm install -g "$pkg"
-		fi
+		_npm_global_install_via_npm "$pkg"
 		return $?
 	else
 		return 1

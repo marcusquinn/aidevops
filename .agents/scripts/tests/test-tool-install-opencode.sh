@@ -19,9 +19,14 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
 TOOL_INSTALL="$REPO_ROOT/.agents/scripts/setup/modules/tool-install.sh"
+SETUP_COMMON="$REPO_ROOT/.agents/scripts/setup/_common.sh"
 
 if [[ ! -f "$TOOL_INSTALL" ]]; then
 	echo "FAIL: cannot find $TOOL_INSTALL" >&2
+	exit 1
+fi
+if [[ ! -f "$SETUP_COMMON" ]]; then
+	echo "FAIL: cannot find $SETUP_COMMON" >&2
 	exit 1
 fi
 
@@ -75,6 +80,20 @@ extract_functions() {
 	return 0
 }
 extract_functions
+
+extract_common_npm_global_install() {
+	awk '
+		/^_npm_global_install_via_npm\(\)/, /^}$/ { print; next }
+		/^npm_global_install\(\)/, /^}$/ { print; next }
+	' "$SETUP_COMMON" >"$SANDBOX/common-extract.sh"
+	if ! grep -q "^_npm_global_install_via_npm()" "$SANDBOX/common-extract.sh" || \
+		! grep -q "^npm_global_install()" "$SANDBOX/common-extract.sh"; then
+		echo "FAIL: extraction did not capture npm_global_install" >&2
+		exit 1
+	fi
+	return 0
+}
+extract_common_npm_global_install
 
 source_extracted() {
 	# shellcheck disable=SC2317
@@ -390,6 +409,41 @@ else
 	assert_eq "hanging auto-heal returns within bound" "elapsed<=12" "elapsed=${elapsed7}"
 fi
 
+# --- Test 7b: first install chooses npm when npm and bun are both present ----
+echo "Test 7b: setup_opencode_cli first install prompt prefers npm over bun"
+rm -f "$HOME/.aidevops/.opencode-bin-resolved" "$SANDBOX/bin/opencode"
+cat >"$SANDBOX/bin/npm" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+cat >"$SANDBOX/bin/bun" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$SANDBOX/bin/npm" "$SANDBOX/bin/bun"
+(
+	source_extracted
+	setup_prompt() {
+		local _var="$1"
+		local _prompt="$2"
+		local _default="$3"
+		printf '%s\n' "$_prompt"
+		printf -v "$_var" '%s' "$_default"
+		return $?
+	}
+	export -f setup_prompt 2>/dev/null || true
+	export PATH="$SANDBOX/bin:/usr/bin:/bin"
+	rc=0
+	setup_opencode_cli || rc=$?
+	echo "rc=$rc"
+) >"$SANDBOX/out7b" 2>&1
+rc7b=$(grep '^rc=' "$SANDBOX/out7b" | tail -1)
+npm_prompt7b=$(grep -c "Install OpenCode via npm" "$SANDBOX/out7b" || true)
+bun_prompt7b=$(grep -c "Install OpenCode via bun" "$SANDBOX/out7b" || true)
+assert_eq "first install npm+bun rc" "rc=0" "$rc7b"
+assert_eq "first install prompt uses npm" "1" "$npm_prompt7b"
+assert_eq "first install prompt avoids bun" "0" "$bun_prompt7b"
+
 # --- Test 8: install failure hint matches selected installer -----------------
 echo "Test 8: setup_opencode_cli install failure omits hard-coded sudo npm hint"
 rm -f "$HOME/.aidevops/.opencode-bin-resolved" "$SANDBOX/bin/opencode" "$SANDBOX/bin/bun"
@@ -456,6 +510,52 @@ sudo_hint9=$(grep -c "sudo npm install" "$SANDBOX/out9" || true)
 assert_eq "homebrew remediation rc" "rc=0" "$rc9"
 assert_eq "homebrew remediation uses brew" "1" "$brew_hint9"
 assert_eq "homebrew remediation has no sudo npm hint" "0" "$sudo_hint9"
+
+# --- Test 10: shared installer policy uses npm first for OpenCode -----------
+echo "Test 10: npm_global_install prefers npm for opencode-ai when bun also exists"
+mkdir -p "$SANDBOX/install-policy/bin" "$SANDBOX/install-policy/prefix/lib"
+cat >"$SANDBOX/install-policy/bin/npm" <<EOF
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "config" && "\${2:-}" == "get" && "\${3:-}" == "prefix" ]]; then
+	printf '%s\n' "$SANDBOX/install-policy/prefix"
+	exit 0
+fi
+printf 'npm %s\n' "\$*" >>"$SANDBOX/install-policy/calls"
+exit 0
+EOF
+cat >"$SANDBOX/install-policy/bin/bun" <<EOF
+#!/usr/bin/env bash
+printf 'bun %s\n' "\$*" >>"$SANDBOX/install-policy/calls"
+exit 0
+EOF
+chmod +x "$SANDBOX/install-policy/bin/npm" "$SANDBOX/install-policy/bin/bun"
+(
+	# shellcheck source=/dev/null
+	source "$SANDBOX/common-extract.sh"
+	export PATH="$SANDBOX/install-policy/bin:/usr/bin:/bin"
+	npm_global_install opencode-ai@latest
+) >"$SANDBOX/out10" 2>&1
+assert_eq "opencode-ai with npm+bun uses npm" "npm install -g opencode-ai@latest" "$(cat "$SANDBOX/install-policy/calls")"
+
+echo "Test 10b: npm_global_install keeps bun-first policy for other packages"
+rm -f "$SANDBOX/install-policy/calls"
+(
+	# shellcheck source=/dev/null
+	source "$SANDBOX/common-extract.sh"
+	export PATH="$SANDBOX/install-policy/bin:/usr/bin:/bin"
+	npm_global_install serve-sim@latest
+) >"$SANDBOX/out10b" 2>&1
+assert_eq "generic packages still use bun first" "bun install -g serve-sim@latest" "$(cat "$SANDBOX/install-policy/calls")"
+
+echo "Test 10c: npm_global_install falls back to bun for opencode-ai without npm"
+rm -f "$SANDBOX/install-policy/calls" "$SANDBOX/install-policy/bin/npm"
+(
+	# shellcheck source=/dev/null
+	source "$SANDBOX/common-extract.sh"
+	export PATH="$SANDBOX/install-policy/bin:/usr/bin:/bin"
+	npm_global_install opencode-ai@latest
+) >"$SANDBOX/out10c" 2>&1
+assert_eq "opencode-ai bun-only fallback" "bun install -g opencode-ai@latest" "$(cat "$SANDBOX/install-policy/calls")"
 
 echo ""
 echo "===== Results: $PASS passed, $FAIL failed ====="

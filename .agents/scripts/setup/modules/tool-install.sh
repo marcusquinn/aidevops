@@ -2146,10 +2146,10 @@ _setup_opencode_force_heal() {
 	print_info "Forcing reinstall of $install_pkg to heal bin collision (t2891)..."
 
 	local installer=""
-	if command -v bun >/dev/null 2>&1; then
-		installer="bun"
-	elif command -v npm >/dev/null 2>&1; then
+	if command -v npm >/dev/null 2>&1; then
 		installer="npm"
+	elif command -v bun >/dev/null 2>&1; then
+		installer="bun"
 	else
 		print_warning "Neither bun nor npm found — cannot heal OpenCode binary"
 		print_info "Install Node.js or Bun first, then re-run 'aidevops update'"
@@ -2157,8 +2157,8 @@ _setup_opencode_force_heal() {
 	fi
 
 	local install_timeout="${AIDEVOPS_OPENCODE_INSTALL_TIMEOUT:-180}"
-	# npm_global_install is the shared generic helper; despite its historic
-	# name, it uses bun when available and falls back to npm.
+	# npm_global_install intentionally uses npm first for opencode-ai when npm is
+	# available, falling back to bun only for bun-only systems.
 	if run_with_spinner "Reinstalling OpenCode via $installer (heal)" _setup_opencode_timeout_cmd "$install_timeout" npm_global_install "$install_pkg"; then
 		print_success "OpenCode reinstalled via $installer"
 	else
@@ -2242,13 +2242,13 @@ setup_opencode_cli() {
 
 	# Missing → first-time install path (preserves prompt for interactive UX).
 	local installer=""
-	if command -v bun >/dev/null 2>&1; then
-		installer="bun"
-	elif command -v npm >/dev/null 2>&1; then
+	if command -v npm >/dev/null 2>&1; then
 		installer="npm"
+	elif command -v bun >/dev/null 2>&1; then
+		installer="bun"
 	else
 		print_warning "Neither bun nor npm found - cannot install OpenCode"
-		print_info "Install Node.js first, then re-run setup"
+		print_info "Install Node.js or Bun first, then re-run setup"
 		return 0
 	fi
 
