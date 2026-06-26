@@ -25,6 +25,7 @@ model: haiku
 - **Default**: `sonnet`. **Rule**: smallest model that produces acceptable quality.
 - **Spectrum**: local ($0) → composer2 (0.17x) → flash (0.20x) → haiku (0.25x) → sonnet (1x) → pro (1.5x) → opus (3x)
 - **Frontmatter**: `model: haiku` in YAML. Absent → `sonnet`. `local` requires `local-model-helper.sh`; falls back to `composer2`.
+- **Vault metadata**: `data_classification`, `runtime_policy`, `needs_vault`, `needs_collections`, `needs_device`, and `needs_remote_unlock` can restrict dispatch before a prompt leaves the device.
 
 ## Model Tiers
 
@@ -45,7 +46,7 @@ model: haiku
 ## Decision Flowchart
 
 ```text
-Privacy/on-device? → YES → local running? → YES: local | NO: FAIL
+Privacy/on-device or Vault local-only? → YES → local running? → YES: local | NO: FAIL
   NO → bulk/offline? → YES → local running? → YES: local | NO: composer2
     NO → simple classification? → YES: haiku
       NO → >50K tokens? → YES → deep reasoning? → YES: pro | NO: flash
@@ -75,6 +76,13 @@ Supervisor resolves automatically. Interactive: `compare-models-helper.sh discov
 2. **Provider filter** (`AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST`) → optional local pinning such as `openai`
 3. **Auth + availability checks** (`headless-runtime-helper.sh`, `model-availability-helper.sh`) → providers/models that can actually run now
 4. **Result**: pulse resolves a sonnet-tier model; workers round-robin across the filtered sonnet-tier list
+
+Before the selected worker launches, `vault-data-policy-helper.sh` evaluates the
+task title/prompt metadata. Remote providers are denied for `local-only` and
+`local-LLM-only`; `confidential` and `client-confidential` require
+`provider-allowed`, `runtime_policy: provider-ai-approved`, or the explicit
+`AIDEVOPS_VAULT_PROVIDER_AI_APPROVED=1` dispatch gate. `secret` classification
+is always denied because secrets must flow through secret tooling, not prompts.
 
 - **Shared default**: The framework routing table lists smoke-tested OpenAI models first so workers can continue during Anthropic cooldowns. Anthropic remains the fallback, and local custom routing can still reorder or replace these defaults.
 - **Pulse**: Resolves `sonnet` through `model-availability-helper.sh resolve sonnet`, so it follows routing-table order, health checks, local routing-table overrides, and `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST`.

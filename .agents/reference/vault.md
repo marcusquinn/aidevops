@@ -93,6 +93,28 @@ restricted data, the agent should prefer local deterministic tools, local LLM
 mode where available, or a decision-ready prompt that asks the user to run a
 local command rather than exposing the data.
 
+### Task metadata and dispatch gates
+
+Worker-dispatchable tasks that may touch protected data should include explicit
+metadata near the brief/guidance section:
+
+| Key | Values | Dispatch meaning |
+|---|---|---|
+| `needs_vault` | `true`, `unlocked`, `locked-ok` | Whether plaintext Vault reads are expected. `unlocked` is a future fleet/device preflight requirement. |
+| `needs_collections` | collection names | Protected stores required for the task; names are routing hints, not secrets. |
+| `needs_device` | device class or identifier reference | Route to a machine that owns or can unlock the required collection. |
+| `needs_remote_unlock` | `false`, `request-only`, `required` | `required` is a policy exception; default is no true remote unlock. |
+| `data_classification` | labels from this section | Strictest labels controlling prompt/provider eligibility. |
+| `runtime_policy` | `provider-ai`, `provider-ai-approved`, `local-ai`, `local-LLM-only`, `hybrid` | Runtime allowed to process the decrypted context. |
+
+`.agents/scripts/vault-data-policy-helper.sh` is the first deterministic gate.
+`headless-runtime-helper.sh run` calls it after model selection and before the
+canary/runtime launch. It fails closed with `VAULT_POLICY_DENIED` when a remote
+provider is selected for `local-only`/`local-LLM-only` data, when
+`confidential`/`client-confidential` lacks `provider-allowed` or an explicit
+provider approval environment gate, or when any task marks prompt context as
+`secret`.
+
 ## 4. Threat Environments
 
 ### 4.1 Third-party VPS cloned disks, snapshots, and backups
@@ -284,6 +306,8 @@ Argon2id migration can rewrap the root key without changing callers.
 - Route `local-LLM-only` data to local model workers when available.
 - For remote providers, send the minimum provider-allowed context needed for the
   task and record redaction/routing decisions in audit metadata.
+- Enforce task metadata with `vault-data-policy-helper.sh` before launching
+  headless workers so provider-denied jobs stop before prompt delivery.
 
 ## 8. Protects
 
