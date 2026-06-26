@@ -3,17 +3,19 @@
 
 # Vault Setup Workflow
 
-> **Audience:** agents and maintainers designing first-use Vault setup,
-> migration, recovery, and safe prompts. Current status is RFC guidance; future
-> helper implementations must conform to `reference/vault.md`.
+> **Audience:** agents and maintainers using or extending first-use Vault setup,
+> migration, recovery, and safe prompts. The first local CLI/broker helper is
+> implemented; future storage, fleet, and GUI phases must conform to
+> `reference/vault.md`.
 
 <!-- AI-CONTEXT-START -->
 
-**TL;DR:** Vault setup is local-first. Never ask for or accept Vault
-passphrases, recovery phrases, private keys, or raw secrets in AI chat, CLI
-arguments, environment variables, logs, issue comments, or fixtures. Use local
-interactive prompts, classify data before migration, and keep third-party AI
-provider routing explicit.
+**TL;DR:** Vault setup is local-first. Use `aidevops vault init`, `aidevops
+vault unlock`, `aidevops vault lock`, and `aidevops vault status` for the first
+local broker gate. Never ask for or accept Vault passphrases, recovery phrases,
+private keys, or raw secrets in AI chat, CLI arguments, environment variables,
+logs, issue comments, or fixtures. Use local interactive prompts, classify data
+before migration, and keep third-party AI provider routing explicit.
 
 <!-- AI-CONTEXT-END -->
 
@@ -55,6 +57,32 @@ Agents may request non-secret evidence:
 - Lock/unlock status produced by a helper that redacts sensitive fields.
 
 ## 3. First-Use Flow
+
+### Current CLI quick start
+
+Run these commands only in a local terminal where the user can type into the
+hidden prompt:
+
+```bash
+aidevops vault init
+aidevops vault status
+aidevops vault unlock
+aidevops vault lock
+```
+
+Expected states:
+
+- Before setup: `aidevops vault status` prints `uninitialized`.
+- After setup and before unlock: status prints `locked`.
+- After a successful local TTY unlock: status prints `unlocked` while the broker
+  process is alive.
+- After `aidevops vault lock`, broker exit, crash, or restart: status prints
+  `locked` and protected reads/updates fail closed.
+
+The initial helper writes `vault.json`, encrypted store data, and redacted audit
+events under `~/.config/aidevops/vault/` unless `AIDEVOPS_VAULT_DIR` relocates
+the store. Do not publish that path when it contains private machine or client
+context.
 
 ### Step 1: Explain boundaries
 
