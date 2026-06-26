@@ -410,12 +410,31 @@ fetch_pr_changed_paths_json() {
 	return 0
 }
 
+fetch_check_run_annotations_summary_json() {
+	local repo_slug="$1" check_run_id="$2"
+	if [[ -z "$repo_slug" ]] || [[ -z "$check_run_id" ]]; then
+		printf '%s\n' '[]'
+		return 0
+	fi
+
+	local annotations
+	if ! annotations=$(gh api --paginate "repos/${repo_slug}/check-runs/${check_run_id}/annotations?per_page=100" \
+		--jq '.[] | {path: (.path // ""), start_line: (.start_line // null), annotation_level: (.annotation_level // ""), title: (.title // ""), message: ((.message // .raw_details // "") | gsub("[\r\n\t]+"; " ") | .[0:220])}' 2>/dev/null); then
+		printf '%s\n' '[]'
+		return 0
+	fi
+
+	printf '%s\n' "$annotations" | jq -s -c '[.[] | select(((.path // "") | length) > 0 or ((.message // "") | length) > 0)][0:5]' 2>/dev/null || printf '%s\n' '[]'
+	return 0
+}
+
 emit_event_json() {
 	local repo_slug="$1" source_kind="$2" source_ref="$3" source_url="$4"
 	local pr_number="$5" commit_sha="$6" check_name="$7" conclusion="$8"
 	local run_id="$9" html_url="${10}" details_url="${11}" completed_at="${12}"
 	local signature="${13}" notification_updated_at="${14}" is_infra="${15}"
 	local affected_paths_json="${16:-[]}"
+	local annotations_json="${17:-[]}"
 
 	local pr_url=""
 	if [[ -n "$pr_number" ]]; then
@@ -440,6 +459,7 @@ emit_event_json() {
 		--arg notification_updated_at "$notification_updated_at" \
 		--argjson is_infra "$is_infra" \
 		--argjson affected_paths "$affected_paths_json" \
+		--argjson annotations "$annotations_json" \
 		'{
 			repo: $repo,
 			source_kind: $source_kind,
@@ -457,7 +477,8 @@ emit_event_json() {
 			signature: $signature,
 			notification_updated_at: (if $notification_updated_at == "" then null else $notification_updated_at end),
 			is_infra: $is_infra,
-			affected_paths: $affected_paths
+			affected_paths: $affected_paths,
+			annotations: $annotations
 		}'
 	return 0
 }
@@ -557,12 +578,14 @@ process_failed_runs() {
 		fi
 
 		local run_affected_paths="[]"
+		local run_annotations="[]"
 		if [[ "$source_kind" == "pr" ]] && [[ -n "$pr_number" ]] &&
 			{ [[ "$check_name" =~ [Cc]ode[Ff]actor ]] || [[ "$signature" == "failure:codefactor.io" ]]; }; then
 			if [[ "$affected_paths_json" == "[]" ]]; then
 				affected_paths_json=$(fetch_pr_changed_paths_json "$repo_slug" "$pr_number")
 			fi
 			run_affected_paths="$affected_paths_json"
+			run_annotations=$(fetch_check_run_annotations_summary_json "$repo_slug" "$(printf '%s\n' "$run_json" | jq -r '.id // empty')")
 		fi
 		if [[ "$source_kind" == "pr" ]] && [[ -n "$pr_number" ]] &&
 			{ [[ "$check_name" =~ [Cc]ode[Ff]actor ]] || [[ "$signature" == "failure:codefactor.io" ]]; }; then
@@ -572,7 +595,7 @@ process_failed_runs() {
 		emit_event_json "$repo_slug" "$source_kind" "$source_ref" "$source_url" \
 			"$pr_number" "$commit_sha" "$check_name" "$conclusion" \
 			"$run_id" "$html_url" "$details_url" "$completed_at" \
-			"$signature" "$notification_updated_at" "$is_infra" "$run_affected_paths" >>"$event_file"
+			"$signature" "$notification_updated_at" "$is_infra" "$run_affected_paths" "$run_annotations" >>"$event_file"
 
 		failed_index=$((failed_index + 1))
 	done
@@ -733,7 +756,7 @@ render_issue_body_markdown() {
 			 count: length,
 			 repos: (map(.repo) | unique),
 			 sources: (map(.repo + "|" + .source_kind + "|" + .source_ref) | unique),
-				 examples: (.[0:5] | map({repo, source_kind, source_ref, source_url, run_url, details_url, conclusion, affected_paths}))
+				 examples: (.[0:5] | map({repo, source_kind, source_ref, source_url, run_url, details_url, conclusion, affected_paths, annotations}))
 		   })
 		 | sort_by(-.count)
 		 | .[0]) as $top
@@ -774,7 +797,7 @@ build_repo_clusters_json() {
 		count: length,
 		is_infra: (any(.[]; .is_infra == true)),
 		sources: (map(.source_kind + ":" + .source_ref) | unique),
-		examples: (.[0:5] | map({source_kind, source_ref, source_url, run_url, details_url, conclusion, affected_paths}))
+		examples: (.[0:5] | map({source_kind, source_ref, source_url, run_url, details_url, conclusion, affected_paths, annotations}))
 	}] | sort_by(-.count)'
 	return 0
 }
@@ -860,6 +883,14 @@ build_issue_body() {
 					"\n  affected files: " + (($example.affected_paths // []) | .[0:8] | join(", ")) +
 					(if (($example.affected_paths // []) | length) > 8 then ", ..." else "" end)
 				else "" end;
+			def annotations_line($example):
+				if (($example.annotations // []) | length) > 0 then
+					"\n  reported findings: " + (($example.annotations // []) | .[0:3] | map(
+						((.path // "unreported") + (if (.start_line // null) != null then ":" + ((.start_line // 0) | tostring) else "" end) +
+						(if ((.title // "") | length) > 0 then " — " + .title elif ((.message // "") | length) > 0 then " — " + .message else "" end))
+					) | join("; ")) +
+					(if (($example.annotations // []) | length) > 3 then "; ..." else "" end)
+				else "" end;
 			def systemic_fix_guidance($check_name; $signature):
 				if (($check_name | test("CodeFactor"; "i")) or ($signature == "failure:codefactor.io")) then
 					"- CodeFactor is an external advisory/static-analysis check. GitHub Actions logs usually only show `failure:codefactor.io`; read the CodeFactor details URL in Evidence for the file, line, and rule.\n" +
@@ -887,7 +918,8 @@ build_issue_body() {
 			  (if .source_url != null then " - " + .source_url else "" end) +
 			  (if .run_url != null then " - " + .run_url else "" end) +
 			  (if .details_url != null then " - " + .details_url else "" end) +
-			  affected_paths_line(.)
+			  affected_paths_line(.) +
+			  annotations_line(.)
 			) | join("\n")) + "\n\n" +
 			"## Root Cause Hypothesis\n" +
 			"- Regression or external dependency/toolchain break in the shared check path.\n\n" +
