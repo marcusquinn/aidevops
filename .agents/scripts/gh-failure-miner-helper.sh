@@ -694,13 +694,19 @@ render_issue_body_markdown() {
 	local events_json="$1"
 	local systemic_threshold="$2"
 	printf '%s\n' "$events_json" | jq -r '
+		def affected_paths_line($example):
+			if (($example.affected_paths // []) | length) > 0 then
+				"\n  affected files: " + (($example.affected_paths // []) | .[0:8] | join(", ")) +
+				(if (($example.affected_paths // []) | length) > 8 then ", ..." else "" end)
+			else "" end;
 		def systemic_fix_guidance($check_name; $signature):
 			if (($check_name | test("CodeFactor"; "i")) or ($signature == "failure:codefactor.io")) then
 				"- CodeFactor is an external advisory/static-analysis check. GitHub Actions logs usually only show `failure:codefactor.io`; read the CodeFactor details URL in Evidence for the file, line, and rule.\n" +
+				"- If the details URL is inaccessible, use the `affected files` evidence from the failing PRs to identify the nearest local linter/static-analysis guard before editing.\n" +
 				"- Reproduce the provider finding locally with the nearest repo linter/style/static-analysis command, fix the source issue rather than suppressing CodeFactor, and add a focused regression guard for the reported rule/file.\n" +
 				"\n## Worker Guidance\n" +
 				"1. Open the CodeFactor details URL from Evidence first; do not infer the reported file/rule from the GitHub run alone.\n" +
-				"2. Inspect the affected source file and the closest existing lint/test guard for that file type. If no focused guard exists, add one under `.agents/scripts/tests/` or the target package tests.\n" +
+				"2. If CodeFactor details are unavailable, inspect the affected files listed in Evidence and the closest existing lint/test guard for those file types. If no focused guard exists, add one under `.agents/scripts/tests/` or the target package tests.\n" +
 				"3. Run the focused guard plus the nearest local linter before opening a PR.\n"
 			else
 				"- Patch the failing workflow/check once at the source (workflow file, shared action, or toolchain pin), then rerun failed checks on affected PRs.\n" +
@@ -715,7 +721,7 @@ render_issue_body_markdown() {
 			 count: length,
 			 repos: (map(.repo) | unique),
 			 sources: (map(.repo + "|" + .source_kind + "|" + .source_ref) | unique),
-			 examples: (.[0:5] | map({repo, source_kind, source_ref, source_url, run_url, details_url, conclusion}))
+				 examples: (.[0:5] | map({repo, source_kind, source_ref, source_url, run_url, details_url, conclusion, affected_paths}))
 		   })
 		 | sort_by(-.count)
 		 | .[0]) as $top
@@ -735,7 +741,8 @@ render_issue_body_markdown() {
 			($top.examples | map("- " + .repo + " [" + .source_kind + ":" + .source_ref + "] (" + .conclusion + ")" +
 			  (if .source_url != null then " - " + .source_url else "" end) +
 			  (if .run_url != null then " - " + .run_url else "" end) +
-			  (if .details_url != null then " - " + .details_url else "" end)
+			  (if .details_url != null then " - " + .details_url else "" end) +
+			  affected_paths_line(.)
 			) | join("\n")) + "\n\n" +
 			"## Root Cause Hypothesis\n" +
 			"- Workflow/config regression or shared dependency/integration break in `" + $top.check_name + "`.\n\n" +
@@ -755,7 +762,7 @@ build_repo_clusters_json() {
 		count: length,
 		is_infra: (any(.[]; .is_infra == true)),
 		sources: (map(.source_kind + ":" + .source_ref) | unique),
-		examples: (.[0:5] | map({source_kind, source_ref, source_url, run_url, details_url, conclusion}))
+		examples: (.[0:5] | map({source_kind, source_ref, source_url, run_url, details_url, conclusion, affected_paths}))
 	}] | sort_by(-.count)'
 	return 0
 }
@@ -836,13 +843,19 @@ build_issue_body() {
 		' --arg pattern_id "$pattern_id" --argjson threshold "$threshold"
 	else
 		printf '%s\n' "$cluster_json" | jq -r '
+			def affected_paths_line($example):
+				if (($example.affected_paths // []) | length) > 0 then
+					"\n  affected files: " + (($example.affected_paths // []) | .[0:8] | join(", ")) +
+					(if (($example.affected_paths // []) | length) > 8 then ", ..." else "" end)
+				else "" end;
 			def systemic_fix_guidance($check_name; $signature):
 				if (($check_name | test("CodeFactor"; "i")) or ($signature == "failure:codefactor.io")) then
 					"- CodeFactor is an external advisory/static-analysis check. GitHub Actions logs usually only show `failure:codefactor.io`; read the CodeFactor details URL in Evidence for the file, line, and rule.\n" +
+					"- If the details URL is inaccessible, use the `affected files` evidence from the failing PRs to identify the nearest local linter/static-analysis guard before editing.\n" +
 					"- Reproduce the provider finding locally with the nearest repo linter/style/static-analysis command, fix the source issue rather than suppressing CodeFactor, and add a focused regression guard for the reported rule/file.\n" +
 					"\n## Worker Guidance\n" +
 					"1. Open the CodeFactor details URL from Evidence first; do not infer the reported file/rule from the GitHub run alone.\n" +
-					"2. Inspect the affected source file and the closest existing lint/test guard for that file type. If no focused guard exists, add one under `.agents/scripts/tests/` or the target package tests.\n" +
+					"2. If CodeFactor details are unavailable, inspect the affected files listed in Evidence and the closest existing lint/test guard for those file types. If no focused guard exists, add one under `.agents/scripts/tests/` or the target package tests.\n" +
 					"3. Run the focused guard plus the nearest local linter before opening a PR.\n"
 				else
 					"- Fix the workflow/check at the source, then rerun failed checks on affected PRs.\n" +
@@ -861,7 +874,8 @@ build_issue_body() {
 			(.examples | map("- " + .source_kind + ":" + .source_ref + " (" + .conclusion + ")" +
 			  (if .source_url != null then " - " + .source_url else "" end) +
 			  (if .run_url != null then " - " + .run_url else "" end) +
-			  (if .details_url != null then " - " + .details_url else "" end)
+			  (if .details_url != null then " - " + .details_url else "" end) +
+			  affected_paths_line(.)
 			) | join("\n")) + "\n\n" +
 			"## Root Cause Hypothesis\n" +
 			"- Regression or external dependency/toolchain break in the shared check path.\n\n" +
