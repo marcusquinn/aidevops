@@ -190,13 +190,13 @@ _wah_metric_details_json() {
 			})),
 			failure_groups: (
 				$failures
-				| group_by([.result // "unknown", .failure_reason // "", .provider_error_type // "", .provider_status // "", .runtime_error_type // "", .classification_source // "", .classification_pattern // "", .launch_failure_cause // "", .kill_reason // "", .next_action // "", .provider // "", .model // "", .session_key // "", (.issue_number // "" | tostring), .repo_slug // ""])
+				| group_by([.result // "unknown", .failure_reason // "", .provider_error_type // "", .provider_status // "", (if .runtime_error_type == null then "" else .runtime_error_type end), .classification_source // "", .classification_pattern // "", .launch_failure_cause // "", .kill_reason // "", .next_action // "", .provider // "", .model // "", .session_key // "", (.issue_number // "" | tostring), .repo_slug // ""])
 				| map({
 					result: (.[0].result // "unknown"),
 					failure_reason: (.[0].failure_reason // ""),
 					provider_error_type: (.[0].provider_error_type // ""),
 					provider_status: (.[0].provider_status // ""),
-					runtime_error_type: (.[0].runtime_error_type // ""),
+					runtime_error_type: (if .[0].runtime_error_type == null then "" else .[0].runtime_error_type end),
 					classification_source: (.[0].classification_source // ""),
 					classification_pattern: (.[0].classification_pattern // ""),
 					launch_failure_cause: (.[0].launch_failure_cause // ""),
