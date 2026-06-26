@@ -861,6 +861,7 @@ _help_commands() {
 	echo "  review-gate <cmd>  Configure review_gate merge policies (rate-limit/completion)"
 	echo "  github-app-auth    GitHub App auth setup/status and API route decisions"
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
+	echo "  vault <cmd>        Local encrypted Vault broker (init/unlock/lock/status/read/update)"
 	echo "  config <cmd>       Feature toggles (list/get/set/reset/path/help)"
 	echo "  knowledge <cmd>    Knowledge plane management (init/status/provision)"
 	echo "  campaign <cmd>     Campaign plane: init/provision/ls (P1) + asset (P4) + new/list/status/archive (P2) + draft (P5) + launch/promote (P6)"
@@ -936,6 +937,14 @@ _help_detailed_sections() {
 	echo "  aidevops secret init         # Initialize gopass encrypted store"
 	echo "  aidevops secret import       # Import from credentials.sh to gopass"
 	echo "  aidevops secret status       # Show backend status"
+	echo ""
+	echo "Vault:"
+	echo "  aidevops vault init          # Create local encrypted Vault metadata"
+	echo "  aidevops vault status        # Show uninitialized/locked/unlocked/corrupted"
+	echo "  aidevops vault unlock        # Unlock into an in-memory local broker"
+	echo "  aidevops vault lock          # Stop broker and forget in-memory keys"
+	echo "  aidevops vault read NAME     # Read protected data through broker"
+	echo "  aidevops vault update NAME   # Encrypt stdin value through broker"
 	echo ""
 	echo "GitHub App Auth:"
 	echo "  aidevops github-app-auth status --json       # Show active auth mode and budgets"
@@ -1631,6 +1640,7 @@ main() {
 	opencode-sandbox | oc-sandbox) _dispatch_helper "opencode-sandbox-helper.sh" "opencode-sandbox-helper.sh" "$@" ;;
 	review-gate | review_gate) _dispatch_helper "review-gate-config-helper.sh" "review-gate-config-helper.sh" "$@" ;;
 	secret | secrets) _dispatch_helper "secret-helper.sh" "secret-helper.sh" "$@" ;;
+	vault) _dispatch_helper "vault-helper.sh" "vault-helper.sh" "$@" ;;
 	approve) _dispatch_helper "approval-helper.sh" "approval-helper.sh" "$@" ;;
 	circuit-breaker | circuit_breaker | cb)
 		# Supervisor circuit breaker control (t1331). Bare invocation defaults to status.

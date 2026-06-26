@@ -3,17 +3,20 @@
 
 # Aidevops Vault Security Architecture RFC
 
-> **Status:** RFC. This records the canonical threat model and architecture
-> constraints for future Vault implementation work. It does not claim that every
-> control described here exists today.
+> **Status:** RFC plus initial local CLI/broker implementation. The first shipped
+> helper covers local metadata, passphrase wrapping, an in-memory broker, and
+> locked-state gates; fleet sync, GUI routing, and protected data migrations are
+> still future phases.
 
 <!-- AI-CONTEXT-START -->
 
 **TL;DR:** Aidevops Vault is the policy and architecture model for protecting
 agent memory, history, workspace, knowledge, mail, metadata, audits, device
-state, and sync collections. Current tools such as gopass, SOPS, and gocryptfs
-cover specific storage needs; Vault defines how protected data is classified,
-routed, encrypted, synced, audited, and withheld from third-party AI providers.
+state, and sync collections. `aidevops vault` now provides the first local
+encrypted metadata and in-memory broker gate; current tools such as gopass,
+SOPS, and gocryptfs still cover specific storage needs while Vault defines how
+protected data is classified, routed, encrypted, synced, audited, and withheld
+from third-party AI providers.
 
 **Hard limits:** Vault does not protect data from malware/root access while
 unlocked, provider-side AI logs after data is sent to a third-party model,
@@ -211,6 +214,30 @@ protocols:
   KDF upgrades without rewriting every payload when practical.
 
 ## 7. Phased Architecture
+
+### Initial implementation: local CLI/broker gate
+
+The local broker phase is implemented by `.agents/scripts/vault-helper.sh` and
+`.agents/scripts/vault-crypto-helper.py`, exposed as `aidevops vault`:
+
+- `init` creates `vault.json` metadata under `~/.config/aidevops/vault/` (or
+  `AIDEVOPS_VAULT_DIR`) with schema version, KDF parameters, salt, wrapped root
+  key, and no plaintext passphrase or root-key material.
+- `unlock` reads the passphrase only from a hidden local TTY prompt, unwraps the
+  root key, and starts a Unix-domain socket broker that keeps the root key in
+  process memory only.
+- `lock` stops the broker; process exit, crash, restart, or missing runtime
+  socket returns the system to locked state because no unlock token is persisted.
+- `status` returns `uninitialized`, `locked`, `unlocked`, or `corrupted`.
+- `read` and `update` fail closed with `VAULT_LOCKED` unless the broker is
+  currently unlocked. `update` reads protected payload data from stdin, but
+  passphrases are never accepted from stdin, arguments, environment variables,
+  issue bodies, chat, logs, or fixtures.
+
+Crypto trade-off: the initial helper uses Python `cryptography` with scrypt and
+AES-256-GCM because those audited primitives are available in the supported
+runtime today. The metadata records `kdf.name` and parameters so a later
+Argon2id migration can rewrap the root key without changing callers.
 
 ### Phase 0: RFC and labels
 
