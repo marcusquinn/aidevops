@@ -147,6 +147,7 @@ _wah_metric_details_json() {
 	now_epoch="${2:-$(date +%s)}"
 
 	jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg watchdog_killed_result "$WAH_RESULT_WATCHDOG_STALL_KILLED" --arg local_kill_result "$WAH_RESULT_LOCAL_KILL" '
+		def _wah_empty_if_null: if . == null then "" else . end;
 		[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $w
 		| ($w | map(.duration_ms // 0)) as $durations
 		| ($w | map(select((.result // "") != "success" or (.exit_code // 1) != 0))) as $failures
@@ -190,13 +191,13 @@ _wah_metric_details_json() {
 			})),
 			failure_groups: (
 				$failures
-				| group_by([.result // "unknown", .failure_reason // "", .provider_error_type // "", .provider_status // "", (if .runtime_error_type == null then "" else .runtime_error_type end), .classification_source // "", .classification_pattern // "", .launch_failure_cause // "", .kill_reason // "", .next_action // "", .provider // "", .model // "", .session_key // "", (.issue_number // "" | tostring), .repo_slug // ""])
+				| group_by([.result // "unknown", .failure_reason // "", .provider_error_type // "", .provider_status // "", (.runtime_error_type | _wah_empty_if_null), .classification_source // "", .classification_pattern // "", .launch_failure_cause // "", .kill_reason // "", .next_action // "", .provider // "", .model // "", .session_key // "", (.issue_number // "" | tostring), .repo_slug // ""])
 				| map({
 					result: (.[0].result // "unknown"),
 					failure_reason: (.[0].failure_reason // ""),
 					provider_error_type: (.[0].provider_error_type // ""),
 					provider_status: (.[0].provider_status // ""),
-					runtime_error_type: (if .[0].runtime_error_type == null then "" else .[0].runtime_error_type end),
+					runtime_error_type: (.[0].runtime_error_type | _wah_empty_if_null),
 					classification_source: (.[0].classification_source // ""),
 					classification_pattern: (.[0].classification_pattern // ""),
 					launch_failure_cause: (.[0].launch_failure_cause // ""),
