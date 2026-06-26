@@ -32,6 +32,7 @@ export const surfaceIconNames = {
   hardDrive: true,
   link: true,
   list: true,
+  lock: true,
   mail: true,
   message: true,
   note: true,
@@ -45,6 +46,7 @@ export const surfaceIconNames = {
 export type SurfaceIconName = keyof typeof surfaceIconNames;
 export const surfaceIds = [
   "overview",
+  "vault",
   "agents",
   "config",
   "localSetup",
@@ -238,6 +240,21 @@ export const text = {
   fontSize: "Font size",
   truncated: "Preview truncated for safety.",
   update: "Update",
+  vault: "Vault",
+  vaultAudit: "Audit Logs",
+  vaultBackups: "Backups & Recovery",
+  vaultCollectionIntro: "Encrypted collections are metadata-only while locked. Protected previews and write actions stay disabled until a local unlock succeeds.",
+  vaultDevices: "Devices",
+  vaultIntro: "Local encrypted metadata, lock/unlock readiness, device trust, encrypted sync, secure messages, backups, and audit placeholders.",
+  vaultLockedPreview: "Vault locked: protected previews are hidden and write actions are disabled.",
+  vaultLockUnlock: "Lock / Unlock",
+  vaultMessages: "Secure Messages",
+  vaultSetup: "First-use Setup",
+  vaultStatus: "Status",
+  vaultSync: "Sync",
+  vaultTooltip: "Encrypted by aidevops Vault; contents visible only when unlocked through app or authorised vault commands.",
+  vaultUnlockCta: "Unlock Vault",
+  vaultUnlockHint: "Run `aidevops vault unlock` in a local terminal and enter the passphrase only into the hidden prompt.",
   website: "Website",
   websites: "Websites",
   websitesIntro: "Websites, landing pages, publishing homes, and ownership status are planned.",
@@ -286,6 +303,7 @@ export const navGroups: SurfaceNavGroup[] = [
     label: text.operations,
     mode: "devops",
     items: [
+      { id: "vault", label: text.vault, description: "Encrypted metadata, setup, sync, and audit", icon: "lock" },
       { id: "agents", label: "Agents", description: "~/.aidevops/agents explorer", icon: "document" },
       { id: "config", label: text.config, description: "~/.config/aidevops explorer", icon: "settings" },
       { id: "localSetup", label: text.localSetup, description: "~/.aidevops explorer", icon: "terminal" },
@@ -392,6 +410,7 @@ export const installationRows = [
 
 export const plannedHomes = [
   { area: "Setup/status", home: "Dashboard + Local Setup", phase: "P6" },
+  { area: "Vault", home: "Vault status, setup, devices, sync, messages, backups, audit", phase: "P6/Vault" },
   { area: "Local and remote repos", home: "Local Repos + Remote Repos", phase: "P7" },
   { area: "Infrastructure inventory", home: "Domains, Registrars, Hosts, Servers", phase: "P8" },
   { area: "Provider catalog", home: "Registrars, Hosts, Apps", phase: "P9" },
@@ -536,6 +555,7 @@ export function surfaceRecordCounts(status: GuiStatusData): SurfaceRecordCounts 
     registrars: populatedInventoryRowCount("registrars"),
     security: status.secrets.length,
     servers: populatedInventoryRowCount("servers"),
+    vault: status.vault.collections.length,
   };
 }
 

@@ -6,7 +6,8 @@ import type { SurfaceId, SurfaceNavItem } from "./app-model";
 import { inventorySurfaceConfigs, text } from "./app-model";
 import { FileExplorerSurface } from "./FileExplorerSurface";
 import { AppsSurface, EditableInventorySurface, InstallationSurface } from "./InventorySurfaces";
-import { AiProvidersSurface, LocalReposSurface, OverviewSurface, PlannedSurface, ProjectsSurface, SecuritySurface } from "./StatusSurfaces";
+import { AiProvidersSurface, LocalReposSurface, LockedVaultGate, OverviewSurface, PlannedSurface, ProjectsSurface, SecuritySurface, VaultSurface } from "./StatusSurfaces";
+import { isVaultSurfaceLocked, vaultCollectionForSurface } from "./VaultBadges";
 
 export function Workspace({ activeItem, activeSectionLabel, activeSurface, fileRoot, status }: {
   activeItem: SurfaceNavItem;
@@ -19,7 +20,7 @@ export function Workspace({ activeItem, activeSectionLabel, activeSurface, fileR
     <section className="app-inset" aria-label={text.workspaceLabel}>
       <WorkspaceHeader activeItem={activeItem} activeSectionLabel={activeSectionLabel} version={displayVersion(status)} />
       <div className="workspace-scroll">
-        <SurfaceContent activeSurface={activeSurface} fileRoot={fileRoot} status={status} />
+        <SurfaceContent activeItem={activeItem} activeSurface={activeSurface} fileRoot={fileRoot} status={status} />
       </div>
     </section>
   );
@@ -60,14 +61,17 @@ function displayVersion(status: GuiStatusData): string {
   return status.aidevops_version;
 }
 
-function SurfaceContent({ activeSurface, fileRoot, status }: {
+function SurfaceContent({ activeItem, activeSurface, fileRoot, status }: {
+  activeItem: SurfaceNavItem;
   activeSurface: SurfaceId;
   fileRoot: GuiFileRootId | undefined;
   status: GuiStatusData;
 }) {
   const inventoryConfig = inventorySurfaceConfigs[activeSurface];
+  const vaultCollection = vaultCollectionForSurface(status.vault, activeSurface);
   const staticSurfaces: Partial<Record<SurfaceId, ReactNode>> = {
     overview: <OverviewSurface status={status} />,
+    vault: <VaultSurface status={status} />,
     routines: <PlannedSurface label={text.routines} detail={text.routineDetail} />,
     devices: <PlannedSurface label={text.devices} detail={text.devicesIntro} />,
     vpnsProxies: <PlannedSurface label={text.vpnsProxies} detail={text.vpnsProxiesIntro} />,
@@ -97,6 +101,10 @@ function SurfaceContent({ activeSurface, fileRoot, status }: {
     security: <SecuritySurface status={status} />,
     aiProviders: <AiProvidersSurface status={status} />,
   };
+
+  if (isVaultSurfaceLocked(status.vault, activeSurface) && vaultCollection) {
+    return <LockedVaultGate collection={vaultCollection} label={activeItem.label} vault={status.vault} />;
+  }
 
   if (activeSurface === "git") {
     return <LocalReposSurface status={status} />;

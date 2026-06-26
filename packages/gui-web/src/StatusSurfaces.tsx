@@ -1,9 +1,10 @@
 /* jshint esversion: 11 */
 import { useState } from "react";
-import type { GuiAiAppSummary, GuiLocalRepoSetupSummary, GuiOAuthProviderSummary, GuiSetupTargetSummary, GuiStatusData } from "../../gui-shared/src";
+import type { GuiAiAppSummary, GuiLocalRepoSetupSummary, GuiOAuthProviderSummary, GuiSetupTargetSummary, GuiStatusData, GuiVaultCollectionSummary, GuiVaultStatusData } from "../../gui-shared/src";
 import { plannedHomes, text } from "./app-model";
 import { FileExplorerSurface } from "./FileExplorerSurface";
 import { PathActions } from "./PathActions";
+import { VaultPadlock } from "./VaultBadges";
 
 export function OverviewSurface({ status }: { status: GuiStatusData }) {
   const metrics = [
@@ -115,6 +116,149 @@ export function SecuritySurface({ status }: { status: GuiStatusData }) {
         ))}
       </ul>
     </section>
+  );
+}
+
+export function VaultSurface({ status }: { status: GuiStatusData }) {
+  const vault = status.vault;
+  const vaultCollection = vault.collections.find((collection) => collection.surface_ids.includes("vault")) ?? vault.collections[0];
+  const readiness = [
+    { label: "migration", value: vault.readiness.migration_allowed ? "ready" : "blocked" },
+    { label: "setup", value: vault.readiness.setup_required ? "required" : "done" },
+    { label: "restart test", value: vault.readiness.restart_test_required ? "required" : "verified" },
+    { label: "remote unlock", value: vault.readiness.remote_unlock_enabled ? "enabled" : "disabled" },
+  ];
+  const featureCards = [
+    { label: text.vaultStatus, value: vault.status, detail: "Metadata-only lock state from the local helper." },
+    { label: text.vaultSetup, value: vault.setup_state, detail: vault.setup_hint },
+    { label: text.vaultLockUnlock, value: vault.locked ? "locked" : "unlocked", detail: vault.unlock_hint },
+    { label: text.vaultDevices, value: `${vault.devices.length} device`, detail: "Device trust metadata only; private keys are never exposed." },
+    { label: text.vaultSync, value: vault.sync.status, detail: "Encrypted bundles and signed manifests over untrusted transports." },
+    { label: text.vaultMessages, value: vault.secure_messages.status, detail: "Secure message placeholders keep payloads hidden while locked." },
+    { label: text.vaultBackups, value: vault.backups.status, detail: "Encrypted backups and recovery flows are metadata-only here." },
+    { label: text.vaultAudit, value: vault.audit.status, detail: `${vault.audit.event_count} redacted audit events; ${vault.audit.latest_event_ref}.` },
+  ];
+
+  return (
+    <section className="surface-page vault-surface" aria-label={text.vault}>
+      <div className="hero-panel vault-hero">
+        <div className="section-heading split-heading">
+          <div>
+            <p className="eyebrow">{vault.value_policy}</p>
+            <h2>{text.vault}</h2>
+            <p>{text.vaultIntro}</p>
+          </div>
+          {vaultCollection ? <VaultPadlock collection={vaultCollection} vault={vault} /> : null}
+        </div>
+        <div className="vault-readiness-strip" aria-label="Vault readiness">
+          {readiness.map((item) => <span key={item.label}><strong>{item.label}</strong>{item.value}</span>)}
+        </div>
+      </div>
+      {vault.locked ? (
+        <div className="notice compact-notice" role="note">
+          {text.vaultLockedPreview} {vault.unlock_hint}
+        </div>
+      ) : (
+        <div className="notice compact-notice" role="note">
+          Vault is unlocked for this local session. Protected actions remain read-only until audited write routes are implemented.
+        </div>
+      )}
+      <div className="vault-card-grid">
+        {featureCards.map((card) => <VaultFeatureCard detail={card.detail} key={card.label} label={card.label} value={card.value} />)}
+      </div>
+      <section className="panel vault-setup-panel" aria-label={text.vaultSetup}>
+        <div className="section-heading split-heading">
+          <div>
+            <p className="eyebrow">{text.vaultSetup}</p>
+            <h2>{vault.readiness.setup_required ? "Setup required" : "Setup metadata"}</h2>
+            <p>{vault.setup_hint}</p>
+          </div>
+          <button className="secondary-action vault-cta" disabled title={vault.unlock_hint} type="button">{text.vaultUnlockCta}</button>
+        </div>
+        <ol className="vault-step-list">
+          <li>Initialize locally with the hidden-prompt helper.</li>
+          <li>Verify the harmless restart test before migrating real data.</li>
+          <li>Keep passphrases, recovery material, and private keys out of chat, arguments, environment variables, logs, issues, and fixtures.</li>
+        </ol>
+        <code>{vault.unlock_hint}</code>
+      </section>
+      <section className="panel" aria-label="Vault encrypted collections">
+        <div className="section-heading">
+          <p className="eyebrow">{text.vaultStatus}</p>
+          <h2>Encrypted collections</h2>
+          <p>{text.vaultCollectionIntro}</p>
+        </div>
+        <ul className="object-list vault-collection-list">
+          {vault.collections.map((collection) => <VaultCollectionRow collection={collection} key={collection.id} vault={vault} />)}
+        </ul>
+      </section>
+      <section className="panel" aria-label="Vault devices and audit">
+        <div className="section-heading split-heading">
+          <div>
+            <p className="eyebrow">{text.vaultDevices}</p>
+            <h2>Devices, sync, messages, backups, and audit</h2>
+            <p>These placeholders expose readiness and redacted metadata only. Git, object storage, messaging, SSH, VPNs, and VPS disks remain untrusted transports.</p>
+          </div>
+          <span className="count-pill">{vault.sync.transport_policy}</span>
+        </div>
+        <div className="vault-device-grid">
+          {vault.devices.map((device) => (
+            <article className="vault-device-card" key={device.id_ref}>
+              <p className="eyebrow">{device.trust_state}</p>
+              <h3>{device.label}</h3>
+              <Detail label="device" value={device.id_ref} />
+              <Detail label="last seen" value={device.last_seen} />
+              <Detail label="audit head" value={device.audit_head_ref} />
+            </article>
+          ))}
+        </div>
+      </section>
+    </section>
+  );
+}
+
+export function LockedVaultGate({ collection, label, vault }: {
+  collection: GuiVaultCollectionSummary;
+  label: string;
+  vault: GuiVaultStatusData;
+}) {
+  return (
+    <section className="panel vault-locked-gate" aria-label={`${label} locked by Vault`}>
+      <div className="section-heading split-heading">
+        <div>
+          <p className="eyebrow">{collection.data_class}</p>
+          <h2>{label} is locked</h2>
+          <p>{text.vaultLockedPreview}</p>
+        </div>
+        <VaultPadlock collection={collection} vault={vault} />
+      </div>
+      <div className="notice compact-notice" role="note">
+        {text.vaultTooltip} {vault.unlock_hint}
+      </div>
+      <button className="secondary-action vault-cta" disabled title={vault.unlock_hint} type="button">{text.vaultUnlockCta}</button>
+    </section>
+  );
+}
+
+function VaultFeatureCard({ detail, label, value }: { detail: string; label: string; value: string }) {
+  return (
+    <article className="vault-feature-card">
+      <span>{label}</span>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </article>
+  );
+}
+
+function VaultCollectionRow({ collection, vault }: { collection: GuiVaultCollectionSummary; vault: GuiVaultStatusData }) {
+  return (
+    <li>
+      <strong>{collection.label}</strong>
+      <VaultPadlock collection={collection} compact vault={vault} />
+      <span>{collection.preview_policy}</span>
+      <small>{collection.labels.join(", ")}</small>
+      <small>{collection.surface_ids.join(", ")}</small>
+    </li>
   );
 }
 

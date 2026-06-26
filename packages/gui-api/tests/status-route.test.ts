@@ -29,4 +29,14 @@ describe("status API route", () => {
     expect(body.data.root.id).toBe("agents");
     expect(body.data.root.path_ref).toBe("~/.aidevops/agents");
   });
+
+  test("GET /api/vault/status returns metadata without unlock material", async () => {
+    const response = await app.request("/api/vault/status");
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.operation_id).toBe("vault.status.read");
+    expect(body.data.value_policy).toBe("metadata_only_no_secret_material");
+    expect(body.redactions).toContain("vault_passphrases");
+  });
 });

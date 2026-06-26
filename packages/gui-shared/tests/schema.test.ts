@@ -6,6 +6,7 @@ import {
   isReadOnlyManifest,
   STATUS_ROUTE_MANIFEST,
   statusFixture,
+  VAULT_STATUS_ROUTE_MANIFEST,
 } from "../src";
 
 describe("GUI shared schema contracts", () => {
@@ -18,6 +19,12 @@ describe("GUI shared schema contracts", () => {
     expect(isReadOnlyManifest(FILE_EXPLORER_ROUTE_MANIFEST)).toBe(true);
     expect(FILE_EXPLORER_ROUTE_MANIFEST.operation_id).toBe("filesystem.read");
     expect(GUI_FILE_ROOTS.map((root) => root.id)).toEqual(["agents", "config", "localSetup", "git"]);
+  });
+
+  test("vault route is metadata-only and read-only", () => {
+    expect(isReadOnlyManifest(VAULT_STATUS_ROUTE_MANIFEST)).toBe(true);
+    expect(VAULT_STATUS_ROUTE_MANIFEST.operation_id).toBe("vault.status.read");
+    expect(VAULT_STATUS_ROUTE_MANIFEST.redactions).toContain("vault_passphrases");
   });
 
   test("status envelope preserves source and redaction metadata", () => {
@@ -42,6 +49,8 @@ describe("GUI shared schema contracts", () => {
     expect(envelope.data.settings.value_policy).toBe("keys_only_no_values");
     expect(envelope.data.local_repos.path_ref).toBe("~/Git");
     expect(envelope.data.oauth_pool.value_policy).toBe("metadata_only_no_tokens");
+    expect(envelope.data.vault.value_policy).toBe("metadata_only_no_secret_material");
+    expect(envelope.data.vault.collections.map((collection) => collection.surface_ids).flat()).toContain("agents");
     expect(envelope.data.setup_targets[0].path_ref).toBe("~/.aidevops/agents/VERSION");
     expect(envelope.data.ai_apps.map((app) => app.name)).toContain("OpenCode");
     expect(envelope.data.capabilities[0].status).toBe("available");

@@ -22,6 +22,7 @@ import {
   FiLink,
   FiLink2,
   FiList,
+  FiLock,
   FiMail,
   FiMessageSquare,
   FiMonitor,
@@ -35,6 +36,7 @@ import {
 } from "react-icons/fi";
 import type { FontPreference, FontSizePreference, SidebarMode, SurfaceIconName, SurfaceId, SurfaceNavGroup, SurfaceNavItem, ThemePreference } from "./app-model";
 import { DEFAULT_ACCENT_HUE, dashboardNavItem, fontFamilyForPreference, fontOptions, fontSizeOptions, navGroups, sidebarModeForSurface, surfaceRecordCounts, text } from "./app-model";
+import { VaultPadlock, vaultCollectionForSurface } from "./VaultBadges";
 
 const surfaceIcons: Record<SurfaceIconName, IconType> = {
   apps: FiBox,
@@ -53,6 +55,7 @@ const surfaceIcons: Record<SurfaceIconName, IconType> = {
   hardDrive: FiHardDrive,
   link: FiLink,
   list: FiList,
+  lock: FiLock,
   mail: FiMail,
   message: FiMessageSquare,
   note: FiMessageSquare,
@@ -138,9 +141,9 @@ export function Sidebar({ activeSurface, accentHue, canGoBack, canGoForward, fon
       <nav className="sidebar-content">
         <SidebarModeTabs mode={sidebarMode} setMode={setSidebarMode} />
         <ul className="sidebar-top-link">
-          <SidebarItem activeSurface={activeSurface} item={dashboardNavItem} setActiveSurface={setActiveSurface} showCount={false} />
+          <SidebarItem activeSurface={activeSurface} item={dashboardNavItem} setActiveSurface={setActiveSurface} showCount={false} status={status} />
         </ul>
-        {visibleGroups.map((group) => <SidebarGroup activeSurface={activeSurface} group={group} key={group.label} recordCounts={recordCounts} setActiveSurface={setActiveSurface} showNavCounts={showNavCounts} />)}
+        {visibleGroups.map((group) => <SidebarGroup activeSurface={activeSurface} group={group} key={group.label} recordCounts={recordCounts} setActiveSurface={setActiveSurface} showNavCounts={showNavCounts} status={status} />)}
       </nav>
       <SidebarFooter
         accentHue={accentHue}
@@ -187,32 +190,36 @@ function SidebarModeTabs({ mode, setMode }: {
   );
 }
 
-function SidebarGroup({ activeSurface, group, recordCounts, setActiveSurface, showNavCounts }: {
+function SidebarGroup({ activeSurface, group, recordCounts, setActiveSurface, showNavCounts, status }: {
   activeSurface: SurfaceId;
   group: SurfaceNavGroup;
   recordCounts: Partial<Record<SurfaceId, number>>;
   setActiveSurface: (surface: SurfaceId) => void;
   showNavCounts: boolean;
+  status: GuiStatusData;
 }) {
   return (
     <section className="sidebar-group">
       <h2>{group.label}</h2>
       <ul>
-        {group.items.map((item) => <SidebarItem activeSurface={activeSurface} item={item} key={item.id} recordCount={recordCounts[item.id]} setActiveSurface={setActiveSurface} showCount={showNavCounts} />)}
+        {group.items.map((item) => <SidebarItem activeSurface={activeSurface} item={item} key={item.id} recordCount={recordCounts[item.id]} setActiveSurface={setActiveSurface} showCount={showNavCounts} status={status} />)}
       </ul>
     </section>
   );
 }
 
-function SidebarItem({ activeSurface, item, recordCount, setActiveSurface, showCount }: {
+function SidebarItem({ activeSurface, item, recordCount, setActiveSurface, showCount, status }: {
   activeSurface: SurfaceId;
   item: SurfaceNavItem;
   recordCount?: number;
   setActiveSurface: (surface: SurfaceId) => void;
   showCount: boolean;
+  status: GuiStatusData;
 }) {
   const isActive = activeSurface === item.id;
-  const tooltip = `${item.label}: ${item.description}`;
+  const vaultCollection = vaultCollectionForSurface(status.vault, item.id);
+  const vaultTooltip = vaultCollection ? ` ${text.vaultTooltip}` : "";
+  const tooltip = `${item.label}: ${item.description}${vaultTooltip}`;
   const shouldShowCount = showCount && recordCount !== undefined && recordCount > 0;
 
   return (
@@ -232,6 +239,7 @@ function SidebarItem({ activeSurface, item, recordCount, setActiveSurface, showC
             {shouldShowCount ? <span className="surface-count">({recordCount})</span> : null}
           </span>
         </span>
+        {vaultCollection ? <VaultPadlock collection={vaultCollection} compact vault={status.vault} /> : null}
         {item.badge ? <em>{item.badge}</em> : null}
       </button>
     </li>
