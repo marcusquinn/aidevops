@@ -4307,4 +4307,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t17995 GUI testing and CI/CD strategy #architecture #auto-dispatch #ci #dashboard #testing blocked-by:t3608,t3609 ref:GH#25234
 
 
-- [ ] t18011 Update setup/update to refresh the macOS aidevops GUI app bundle after releases #auto-dispatch ref:GH#25590
+- [x] t18011 Update setup/update to refresh the macOS aidevops GUI app bundle after releases #auto-dispatch ref:GH#25590 pr:#25591 completed:2026-06-26
