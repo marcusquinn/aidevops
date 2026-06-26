@@ -37,7 +37,8 @@ _worktree_registry_ensure_dir() {
 	local path="$1"
 	_worktree_registry_dir_is_safe "$path" || return 1
 	if [[ ! -d "$path" ]]; then
-		mkdir -m 0700 "$path" || [[ -d "$path" ]] || return 1
+		mkdir -p "$path" || return 1
+		chmod 0700 "$path" || return 1
 	fi
 	_worktree_registry_dir_is_safe "$path" || return 1
 	return 0
