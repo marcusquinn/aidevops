@@ -196,6 +196,8 @@ _run_post_merge_review_scanner() {
 	[[ "$stage_budget" =~ ^[0-9]+$ ]] || stage_budget=600
 	local stage_reserve="${AIDEVOPS_POST_MERGE_SCANNER_STAGE_RESERVE_SECONDS:-30}"
 	[[ "$stage_reserve" =~ ^[0-9]+$ ]] || stage_reserve=30
+	local post_merge_scanner_interval="${POST_MERGE_SCANNER_INTERVAL:-86400}"
+	[[ "$post_merge_scanner_interval" =~ ^[0-9]+$ ]] || post_merge_scanner_interval=86400
 	local scanner_cursor_dir="${AIDEVOPS_POST_MERGE_SCANNER_CURSOR_DIR:-${HOME:-}/.aidevops/logs/post-merge-review-scanner}"
 	local repo_cursor_file="${scanner_cursor_dir}/repo.cursor"
 
@@ -205,7 +207,7 @@ _run_post_merge_review_scanner() {
 		last_run=$(cat "$POST_MERGE_SCANNER_LAST_RUN" 2>/dev/null || echo "0")
 		[[ "$last_run" =~ ^[0-9]+$ ]] || last_run=0
 		local elapsed=$((now_epoch - last_run))
-		if [[ "$elapsed" -lt "$POST_MERGE_SCANNER_INTERVAL" ]]; then
+		if [[ "$elapsed" -lt "$post_merge_scanner_interval" ]]; then
 			return 0
 		fi
 	fi
@@ -278,7 +280,7 @@ _run_post_merge_review_scanner() {
 
 	rm -f "$repo_cursor_file" 2>/dev/null || true
 	printf '%s\n' "$now_epoch" >"$POST_MERGE_SCANNER_LAST_RUN"
-	echo "[pulse-wrapper] Post-merge scanner: completed ${total_repos} repo(s), next run in ~$(( ${POST_MERGE_SCANNER_INTERVAL:-86400} / 3600 ))h" >>"${LOGFILE:-/dev/null}"
+	echo "[pulse-wrapper] Post-merge scanner: completed ${total_repos} repo(s), next run in ~$(( post_merge_scanner_interval / 3600 ))h" >>"${LOGFILE:-/dev/null}"
 	return 0
 }
 
