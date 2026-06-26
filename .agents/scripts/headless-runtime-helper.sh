@@ -412,6 +412,29 @@ _recover_deleted_cwd_before_launch() {
 # Runtime invocation — OpenCode and Claude CLI
 # =============================================================================
 
+#######################################
+# Detect OpenCode/Drizzle replaying CREATE TABLE migrations against an already
+# prewarmed worker DB. This happens before the seed prompt reaches the model and
+# is safe to recover by retrying once with a fresh isolated DB.
+# Args: $1 = runtime exit code, $2 = output file path.
+#######################################
+_opencode_project_table_migration_replay_detected() {
+	local exit_code="$1"
+	local output_file="$2"
+	local project_table_backtick="table \`project\` already exists"
+	local output_text=""
+
+	[[ "${exit_code:-}" != "0" ]] || return 1
+	[[ -f "$output_file" ]] || return 1
+	output_text=$(<"$output_file") || output_text=""
+	case "$output_text" in
+	*"$project_table_backtick"* | *"table project already exists"* | *"table 'project' already exists"* | *'table "project" already exists'*)
+		return 0
+		;;
+	esac
+	return 1
+}
+
 # _invoke_opencode: run the opencode command (with or without sandbox) and capture output.
 # Args: output_file exit_code_file cmd_args (null-delimited, read from stdin via process sub)
 # Caller passes the cmd array elements as positional args after the two file args.
@@ -1443,6 +1466,34 @@ _execute_run_attempt() {
 	# and must be checked after the stale-session retry block.
 	local _rl_fast_sentinel="${exit_code_file}.rate_limit_fast"
 	rm -f "$exit_code_file"
+
+	# GH#25541: A prewarmed isolated OpenCode DB can still reach `opencode run`
+	# with user tables present but migration ledgers unusable/mismatched, causing
+	# Drizzle to replay CREATE TABLE and abort with `table project already exists`
+	# before the seed prompt/model activity. The DB is per-worker scratch state, so
+	# retry once with a fresh isolated dir and no dispatcher prewarm dir instead of
+	# releasing the claim as a model/worker failure.
+	if [[ "$runtime" != "claude" ]] && _opencode_project_table_migration_replay_detected "$exit_code" "$output_file"; then
+		print_warning "OpenCode worker DB migration replay detected for ${session_key}; retrying once with fresh isolated DB (GH#25541)"
+		unset AIDEVOPS_WORKER_PREWARM_DIR
+		rm -f "$output_file" 2>/dev/null || true
+		output_file=$(mktemp)
+		exit_code_file=$(mktemp)
+		exit_code=0
+		_invoke_opencode "$output_file" "$exit_code_file" "${cmd[@]}"
+		if ! read -r exit_code <"$exit_code_file" 2>/dev/null; then
+			exit_code=1
+		fi
+		_normalized_exit_info=$(_normalize_worker_exit_code_and_kill_reason "$exit_code_file" "$exit_code")
+		IFS=$'\t' read -r exit_code _metric_kill_reason <<<"$_normalized_exit_info"
+		local _project_retry_stall_killed_marker="${exit_code_file}.watchdog_stall_killed"
+		if [[ -f "$_project_retry_stall_killed_marker" ]]; then
+			_run_watchdog_hard_killed=1
+			rm -f "$_project_retry_stall_killed_marker"
+		fi
+		_rl_fast_sentinel="${exit_code_file}.rate_limit_fast"
+		rm -f "$exit_code_file"
+	fi
 
 	# GH#16978 Bug B: Stale session ID causes "Session not found" on OpenCode.
 	# When a persisted session ID is stale (e.g., from a previous OpenCode version
