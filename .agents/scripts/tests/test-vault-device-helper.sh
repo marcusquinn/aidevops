@@ -139,6 +139,14 @@ else
 	fail "revocation queues rotation task"
 fi
 
+rm -f "$AIDEVOPS_VAULT_DEVICE_DIR/registry.json"
+missing_registry_heartbeat="$($VAULT_DEVICE_HELPER heartbeat --active-workers 0 --max-workers 1)"
+if [[ -s "$missing_registry_heartbeat" ]]; then
+	pass "heartbeat tolerates missing registry"
+else
+	fail "heartbeat tolerates missing registry"
+fi
+
 if [[ "$FAIL" -ne 0 ]]; then
 	printf 'FAIL: %s failed, %s passed\n' "$FAIL" "$PASS" >&2
 	exit 1
