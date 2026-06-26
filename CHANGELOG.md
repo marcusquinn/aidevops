@@ -10,6 +10,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.22.2] - 2026-06-26
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Tests: cover exact tmp config home validation (#25525)
+- fix: preserve runtime false grouping (#25510)
+- fix: harden tmp config home validation (#25504)
+- fix: harden github app cache dir expansion (#25475)
+- Documentation: apply GUI ADR review feedback (#25469)
+- Maintenance: update simplification state registry
+- fix: isolate scanner cursor tmp fallback (#25445)
+- Maintenance: update simplification state registry
+- fix: make post-merge scanner yield safely (#25415)
+- fix: restore scheduler test mocks (#25391)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- harden issue dedup API fallback (#25527)
+- filter verified review acknowledgements (#25526)
+- simplify worker activity jq fallback (#25520)
+- make worktree registry mkdir race-safe (#25503)
+- clean home fallback test env (#25477)
+- preserve runtime error false markers (#25462)
+- scope todo lock tmp fallback (#25466)
+- keep post-merge scanner active after stale cursor (#25433)
+- harden local kill exit-code checks (#25430)
+- guard post-merge scanner cursor HOME fallback (#25425)
+
 ## [3.22.1] - 2026-06-24
 
 ### Changed
