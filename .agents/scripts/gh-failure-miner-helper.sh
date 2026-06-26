@@ -394,11 +394,23 @@ is_all_checks_failed() {
 	return 1
 }
 
+fetch_pr_changed_paths_json() {
+	local repo_slug="$1" pr_number="$2"
+	if [[ -z "$repo_slug" ]] || [[ -z "$pr_number" ]]; then
+		printf '%s\n' '[]'
+		return 0
+	fi
+	gh api --paginate "repos/${repo_slug}/pulls/${pr_number}/files?per_page=100" 2>/dev/null |
+		jq -R -s '[splits("\n") | select(length > 0) | fromjson? | .filename? // empty] | unique' 2>/dev/null || printf '%s\n' '[]'
+	return 0
+}
+
 emit_event_json() {
 	local repo_slug="$1" source_kind="$2" source_ref="$3" source_url="$4"
 	local pr_number="$5" commit_sha="$6" check_name="$7" conclusion="$8"
 	local run_id="$9" html_url="${10}" details_url="${11}" completed_at="${12}"
 	local signature="${13}" notification_updated_at="${14}" is_infra="${15}"
+	local affected_paths_json="${16:-[]}"
 
 	local pr_url=""
 	if [[ -n "$pr_number" ]]; then
@@ -422,6 +434,7 @@ emit_event_json() {
 		--arg signature "$signature" \
 		--arg notification_updated_at "$notification_updated_at" \
 		--argjson is_infra "$is_infra" \
+		--argjson affected_paths "$affected_paths_json" \
 		'{
 			repo: $repo,
 			source_kind: $source_kind,
@@ -438,7 +451,8 @@ emit_event_json() {
 			completed_at: (if $completed_at == "" then null else $completed_at end),
 			signature: $signature,
 			notification_updated_at: (if $notification_updated_at == "" then null else $notification_updated_at end),
-			is_infra: $is_infra
+			is_infra: $is_infra,
+			affected_paths: $affected_paths
 		}'
 	return 0
 }
@@ -508,6 +522,7 @@ process_failed_runs() {
 	fi
 
 	local failed_index=0
+	local affected_paths_json="[]"
 	while [[ "$failed_index" -lt "$failed_count" ]]; do
 		local run_json
 		run_json=$(printf '%s\n' "$failed_runs_json" | jq ".[${failed_index}]")
@@ -536,10 +551,16 @@ process_failed_runs() {
 			is_infra="true"
 		fi
 
+		if [[ "$source_kind" == "pr" ]] && [[ -n "$pr_number" ]] &&
+			{ [[ "$check_name" =~ [Cc]ode[Ff]actor ]] || [[ "$signature" == "failure:codefactor.io" ]]; } &&
+			[[ "$affected_paths_json" == "[]" ]]; then
+			affected_paths_json=$(fetch_pr_changed_paths_json "$repo_slug" "$pr_number")
+		fi
+
 		emit_event_json "$repo_slug" "$source_kind" "$source_ref" "$source_url" \
 			"$pr_number" "$commit_sha" "$check_name" "$conclusion" \
 			"$run_id" "$html_url" "$details_url" "$completed_at" \
-			"$signature" "$notification_updated_at" "$is_infra" >>"$event_file"
+			"$signature" "$notification_updated_at" "$is_infra" "$affected_paths_json" >>"$event_file"
 
 		failed_index=$((failed_index + 1))
 	done
