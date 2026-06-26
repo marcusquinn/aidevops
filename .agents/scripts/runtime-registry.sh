@@ -262,6 +262,53 @@ _RT_SESSION_DB_FORMAT=(
 	"json-dir"  # qwen
 )
 
+# --- Vault-managed session/history support ---
+_RT_VAULT_MODE_UNMANAGED="unmanaged"
+
+# Values:
+#   managed     aidevops can route this runtime's session/history store behind
+#               the local Vault managed-history boundary when enabled.
+#   unmanaged   known session/history store exists, but migration/broker support
+#               is not implemented yet; callers must warn instead of claiming
+#               Vault protection.
+#   external    runtime stores history outside local aidevops control.
+#   none        no known local history path.
+_RT_VAULT_SESSION_HISTORY_MODE=(
+	"managed"   # opencode (SQLite path can be relocated to Vault-managed root)
+	"managed"   # claude-code (JSONL project dir can be relocated to Vault-managed root)
+	"$_RT_VAULT_MODE_UNMANAGED" # codex
+	"$_RT_VAULT_MODE_UNMANAGED" # cursor
+	"$_RT_VAULT_MODE_UNMANAGED" # droid
+	"$_RT_VAULT_MODE_UNMANAGED" # gemini-cli
+	"$_RT_VAULT_MODE_UNMANAGED" # windsurf
+	"$_RT_VAULT_MODE_UNMANAGED" # continue
+	"$_RT_VAULT_MODE_UNMANAGED" # kilo
+	"$_RT_VAULT_MODE_UNMANAGED" # kiro
+	"none"      # per-repo markdown, not centrally managed
+	"external"  # amp (server-side)
+	"$_RT_VAULT_MODE_UNMANAGED" # kimi
+	"$_RT_VAULT_MODE_UNMANAGED" # qwen
+)
+
+# Vault-managed path relative to ${AIDEVOPS_VAULT_MANAGED_HISTORY_ROOT}.
+# Use "-" when the runtime is unsupported or externally hosted.
+_RT_VAULT_SESSION_HISTORY_RELATIVE_PATH=(
+	"opencode/opencode.db" # opencode
+	"claude-code/projects" # claude-code
+	"-"                    # codex
+	"-"                    # cursor
+	"-"                    # droid
+	"-"                    # gemini-cli
+	"-"                    # windsurf
+	"-"                    # continue
+	"-"                    # kilo
+	"-"                    # kiro
+	"-"                    # per-repo markdown
+	"-"                    # amp
+	"-"                    # kimi
+	"-"                    # qwen
+)
+
 # --- Process patterns (for pgrep/ps detection of running instances) ---
 _RT_PROCESS_PATTERN=(
 	"opencode" # opencode
@@ -643,6 +690,35 @@ rt_session_db_format() {
 	return 0
 }
 
+rt_vault_session_history_mode() {
+	local id="$1"
+	local idx
+	idx=$(_rt_index "$id") || return 1
+	echo "${_RT_VAULT_SESSION_HISTORY_MODE[$idx]}"
+	return 0
+}
+
+rt_vault_session_history_relative_path() {
+	local id="$1"
+	local idx
+	idx=$(_rt_index "$id") || return 1
+	echo "${_RT_VAULT_SESSION_HISTORY_RELATIVE_PATH[$idx]}"
+	return 0
+}
+
+rt_vault_session_history_path() {
+	local id="$1"
+	local rel root
+	rel=$(rt_vault_session_history_relative_path "$id") || return 1
+	if [[ -z "$rel" || "$rel" == "-" ]]; then
+		printf '\n'
+		return 0
+	fi
+	root="${AIDEVOPS_VAULT_MANAGED_HISTORY_ROOT:-$HOME/.aidevops/.agent-workspace/vault/managed-session-history}"
+	echo "${root%/}/$rel"
+	return 0
+}
+
 rt_process_pattern() {
 	local id="$1"
 	local idx
@@ -953,6 +1029,8 @@ rt_validate_registry() {
 		"_RT_PROMPT_MECHANISM"
 		"_RT_SESSION_DB"
 		"_RT_SESSION_DB_FORMAT"
+		"_RT_VAULT_SESSION_HISTORY_MODE"
+		"_RT_VAULT_SESSION_HISTORY_RELATIVE_PATH"
 		"_RT_PROCESS_PATTERN"
 		"_RT_HEADLESS_SUPPORT"
 		"_RT_HEADLESS_CMDLINE_PATTERN"

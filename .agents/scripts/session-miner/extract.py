@@ -29,6 +29,7 @@ import argparse
 import json
 import re
 import sqlite3
+import subprocess
 import sys
 from collections import defaultdict
 from datetime import datetime
@@ -51,6 +52,8 @@ from extract_steerage import (
 
 DEFAULT_DB = Path.home() / ".local/share/opencode/opencode.db"
 OUTPUT_DIR = Path.home() / ".aidevops/.agent-workspace/work/session-miner"
+SCRIPT_DIR = Path(__file__).resolve().parents[1]
+VAULT_HISTORY_HELPER = SCRIPT_DIR / "vault-managed-session-history-helper.sh"
 
 # --- Instruction candidate detection ---
 #
@@ -303,6 +306,26 @@ def connect_db(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
+def resolve_managed_history_db(db_path: Path) -> Path:
+    """Return the Vault-gated OpenCode DB path when managed history is enabled."""
+    if not VAULT_HISTORY_HELPER.exists():
+        return db_path
+    if "AIDEVOPS_VAULT_MANAGED_SESSION_HISTORY" not in __import__("os").environ:
+        return db_path
+    result = subprocess.run(
+        [str(VAULT_HISTORY_HELPER), "require-read", "opencode"],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode != 0:
+        message = result.stderr.strip() or "VAULT_LOCKED: managed session/history read denied"
+        print(message, file=sys.stderr)
+        sys.exit(result.returncode)
+    return Path(result.stdout.strip())
+
+
 def write_output(data: list[dict], output_dir: Path, fmt: str = "jsonl") -> Path:
     """Write extracted data to output files."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -357,6 +380,7 @@ def main():
     parser.add_argument("--repo-dir", type=str, default=None,
                         help="Only extract sessions whose directory is this repo or a subdirectory")
     args = parser.parse_args()
+    args.db = resolve_managed_history_db(args.db)
 
     print(f"Session Miner — Extracting from {args.db}", file=sys.stderr)
     if not args.db.exists():

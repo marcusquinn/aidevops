@@ -20,9 +20,9 @@ from third-party AI providers.
 
 **Hard limits:** Vault does not protect data from malware/root access while
 unlocked, provider-side AI logs after data is sent to a third-party model,
-unsupported runtime caches, or OS crash dumps/swap/snapshots created before
-encryption. Future local LLM mode reduces provider exposure but does not reduce
-local host compromise risk.
+unsupported runtime caches, unmanaged app crash reports, terminal scrollback,
+or OS crash dumps/swap/snapshots created before encryption. Future local LLM
+mode reduces provider exposure but does not reduce local host compromise risk.
 
 <!-- AI-CONTEXT-END -->
 
@@ -66,6 +66,24 @@ Vault must not:
 | Audit logs | Security operations, unlock/lock events, sync decisions, routing denials | `confidential` | Append-only hash-chained log; replicated encrypted summaries |
 | Device registry | Device public keys, trust state, revocation, last-seen audit heads | `confidential` | Signed registry; encrypted backup; public keys may sync over untrusted media |
 | Sync collections | Encrypted bundles, vector clocks, collection manifests, tombstones | `confidential` | End-to-end encrypted before Git/object/message transport |
+
+### 2.1 Managed runtime session/history profiles
+
+`.agents/scripts/runtime-registry.sh` records whether each runtime's local
+session/history store is `managed`, `unmanaged`, `external`, or `none` for Vault
+purposes. The first managed profiles are OpenCode and Claude Code. When
+`AIDEVOPS_VAULT_MANAGED_SESSION_HISTORY=1` is set, aidevops session/history
+readers must call `.agents/scripts/vault-managed-session-history-helper.sh
+require-read <runtime>` before opening local history. Locked Vault state fails
+closed with `VAULT_LOCKED`; unsupported runtimes fail with
+`VAULT_UNSUPPORTED_RUNTIME` so tools warn instead of implying protection.
+
+The managed path defaults to
+`~/.aidevops/.agent-workspace/vault/managed-session-history/<runtime>/...` and
+can be relocated with `AIDEVOPS_VAULT_MANAGED_HISTORY_ROOT`. Runtime launchers
+are responsible for pointing supported apps at the managed path only after a
+local Vault unlock. Current gates prevent aidevops mining/lookup reads while
+locked; they do not migrate existing plaintext app stores automatically.
 
 Data derived from a protected class inherits the stricter label unless a human-
 reviewed transformation explicitly declassifies it. Summaries, embeddings,
