@@ -57,7 +57,7 @@ run_validate_config_home() {
 	return $?
 }
 
-TMP_DIR=$(mktemp -d -t aidevops-config-home.XXXXXX) || exit 1
+TMP_DIR=$(mktemp -d /tmp/aidevops-config-home.XXXXXX) || exit 1
 trap cleanup_tmp_dir EXIT
 
 broken_symlink="${TMP_DIR}/broken-link"
