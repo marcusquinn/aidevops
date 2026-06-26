@@ -20,8 +20,10 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 import time
+from pathlib import Path
 
 PROVIDER_MARKERS = (
     "rate limit",
@@ -39,6 +41,29 @@ PROVIDER_MARKERS = (
     "etimedout",
     "service unavailable",
 )
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+VAULT_HISTORY_HELPER = SCRIPT_DIR / "vault-managed-session-history-helper.sh"
+
+
+def resolve_managed_db_path(db_path):
+    """Return a Vault-gated OpenCode DB path when managed history is enabled."""
+    if "AIDEVOPS_VAULT_MANAGED_SESSION_HISTORY" not in os.environ:
+        return db_path
+    if not VAULT_HISTORY_HELPER.exists():
+        return db_path
+    result = subprocess.run(
+        [str(VAULT_HISTORY_HELPER), "require-read", "opencode"],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or "managed session/history read denied"
+        print(f"vault-locked|{collapse(detail)}")
+        raise SystemExit(result.returncode)
+    return result.stdout.strip()
 
 
 def collapse(value, limit=120):
@@ -176,7 +201,7 @@ def format_summary(classification, resolved_title, recent_count,
 
 def main():
     """Entry point: read env vars, query DB, print classification."""
-    db_path = os.environ["SESSION_TAIL_DB_PATH"]
+    db_path = resolve_managed_db_path(os.environ["SESSION_TAIL_DB_PATH"])
     session_title = os.environ["SESSION_TAIL_TITLE"]
     timeout_seconds = int(os.environ["SESSION_TAIL_TIMEOUT"])
     part_limit = int(os.environ["SESSION_TAIL_LIMIT"])
