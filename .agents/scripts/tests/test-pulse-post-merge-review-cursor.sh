@@ -60,6 +60,23 @@ test_home_unset_does_not_abort() {
 	return 0
 }
 
+test_interval_unset_does_not_abort() {
+	local stub_scripts_dir="${TEST_ROOT}/interval-unset-scripts"
+	mkdir -p "$stub_scripts_dir"
+	SCRIPT_DIR="$stub_scripts_dir"
+	LOGFILE="${TEST_ROOT}/interval-unset.log"
+	POST_MERGE_SCANNER_LAST_RUN="${TEST_ROOT}/interval-unset.last"
+	printf '%s\n' "$(date +%s)" >"$POST_MERGE_SCANNER_LAST_RUN"
+	REPOS_JSON="${TEST_ROOT}/interval-unset-repos.json"
+	printf '{}\n' >"$REPOS_JSON"
+	unset POST_MERGE_SCANNER_INTERVAL
+
+	_run_post_merge_review_scanner
+	printf 'PASS POST_MERGE_SCANNER_INTERVAL unset does not abort post-merge scanner gate\n'
+	PASS=$((PASS + 1))
+	return 0
+}
+
 test_stale_repo_cursor_resets_to_enabled_repos() {
 	local stub_scripts_dir="${TEST_ROOT}/scripts"
 	local cursor_dir="${TEST_ROOT}/cursor"
@@ -93,6 +110,7 @@ STUB
 }
 
 test_home_unset_does_not_abort
+test_interval_unset_does_not_abort
 test_stale_repo_cursor_resets_to_enabled_repos
 
 printf '\nResults: %s passed, %s failed\n' "$PASS" "$FAIL"
