@@ -108,6 +108,14 @@ entry identifiers. Git still leaks metadata such as commit timing, record count,
 record sizes, author account, and activity frequency; use padding, batching, and
 delayed pushes for sensitive workflows.
 
+For secure device messaging, the same helper writes encrypted envelopes only
+under `.vault/messages/inbox/<mailbox-prefix>/<opaque-mailbox-id>/<message-prefix>/<opaque-message-id>.json`
+and signed acknowledgements under `.vault/messages/acks/...`. The mailbox id,
+message id, ack id, timestamps, sizes, author account, and commit cadence remain
+metadata; message class, plaintext subject/body, local paths, client names, and
+private basenames must never appear in Git-visible names or files. Operators may
+batch, pad, and delay pushes to reduce public metadata leakage.
+
 Importers must reject unsigned, tampered, expired, replayed, rolled-back, or
 revoked-device records before staging payloads for local rewrap. Conflicts are
 collection-specific: memory is append-only, knowledge keeps versioned blobs and
@@ -132,6 +140,15 @@ A valid remote-lock request:
 Remote lock must be safe to process over untrusted transports because the action
 is protective. Denial-of-service risk remains, so rate limits and user-visible
 audit are still required.
+
+The first message transport implementation is
+`.agents/scripts/vault-message-helper.sh`. It supports message classes
+`human`, `sync-request`, `audit-receipt`, `lock-command`, `unlock-request`, and
+`unlock-grant-envelope-placeholder`; encrypts each envelope to a recipient device
+key; signs the sender identity; stores locked inboxes as ciphertext; and writes
+signed acknowledgements. Git is the durable default transport. SimpleX is an
+optional lower-metadata adapter and must fail closed when no adapter is
+configured; it does not replace signature, expiry, replay, or revocation checks.
 
 ## 6. Unlock-Request
 
