@@ -166,3 +166,5 @@ and monotonically decreases".
 | 51 | ratchet-post-merge | auto-ratchet after 924e426 ("wip: reduce token report complexity (#24894)"): count 49 + 2 buffer = 51 (previously 53, reduction 2) |
 | 49 | ratchet-post-merge | auto-ratchet after d9b0ad2 ("GH#24872: refactor: reduce signature hook complexity (#24895)"): count 47 + 2 buffer = 49 (previously 51, reduction 2) |
 | 46 | ratchet-post-merge | auto-ratchet after df377bc ("wip: reduce email parser complexity (#24896)"): count 44 + 2 buffer = 46 (previously 49, reduction 3) |
+| 51 | GH#25565/PR #25574 | pre-existing drift on the PR merge ref — local qlty telemetry in `linters-local.sh` reports 49 smells while the absolute-count CI threshold was 46. Qlty Smell Regression and qlty check both pass for the shell-only vault device fix, confirming no blocking new qlty smells from this diff. 49 actual + 2 buffer = 51; ratchet back down after smell-reducing merges. |
+| 48 | ratchet-post-merge | auto-ratchet after cb3a305 ("GH#25565: fix: harden vault device state writes (#25574)"): count 46 + 2 buffer = 48 (previously 51, reduction 3) |

@@ -195,6 +195,15 @@ export function readVaultSummary(repoRoot: string): GuiVaultStatusData {
 }
 
 const AI_PROVIDER_IDS: GuiAiProviderId[] = ["anthropic", "openai", "cursor", "google"];
+const GUI_VAULT_STATUSES: readonly GuiVaultStatus[] = ["uninitialized", "locked", "unlocked", "corrupted", "unknown"];
+const GUI_VAULT_SETUP_STATES: readonly GuiVaultSetupState[] = [
+  "uninitialized",
+  "test-created",
+  "restart-required",
+  "test-verified",
+  "migration-ready",
+  "unknown",
+];
 
 function readVaultCommand<T extends string>(
   helperPath: string,
@@ -202,7 +211,7 @@ function readVaultCommand<T extends string>(
   isAllowed: (value: string) => value is T,
 ): T | null {
   try {
-    const output = execFileSync(helperPath, args, {
+    const output = execFileSync("sh", [helperPath, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 1_000,
@@ -215,20 +224,11 @@ function readVaultCommand<T extends string>(
 }
 
 function isGuiVaultStatus(value: string): value is GuiVaultStatus {
-  const statuses: GuiVaultStatus[] = ["uninitialized", "locked", "unlocked", "corrupted", "unknown"];
-  return statuses.includes(value as GuiVaultStatus);
+  return (GUI_VAULT_STATUSES as readonly string[]).includes(value);
 }
 
 function isGuiVaultSetupState(value: string): value is GuiVaultSetupState {
-  const setupStates: GuiVaultSetupState[] = [
-    "uninitialized",
-    "test-created",
-    "restart-required",
-    "test-verified",
-    "migration-ready",
-    "unknown",
-  ];
-  return setupStates.includes(value as GuiVaultSetupState);
+  return (GUI_VAULT_SETUP_STATES as readonly string[]).includes(value);
 }
 
 function vaultCollectionState(status: GuiVaultStatus): GuiVaultStatusData["collections"][number]["state"] {

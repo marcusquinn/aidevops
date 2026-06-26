@@ -564,6 +564,10 @@ process_failed_runs() {
 			fi
 			run_affected_paths="$affected_paths_json"
 		fi
+		if [[ "$source_kind" == "pr" ]] && [[ -n "$pr_number" ]] &&
+			{ [[ "$check_name" =~ [Cc]ode[Ff]actor ]] || [[ "$signature" == "failure:codefactor.io" ]]; }; then
+			run_affected_paths="$affected_paths_json"
+		fi
 
 		emit_event_json "$repo_slug" "$source_kind" "$source_ref" "$source_url" \
 			"$pr_number" "$commit_sha" "$check_name" "$conclusion" \
