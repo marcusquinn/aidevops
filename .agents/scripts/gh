@@ -39,6 +39,13 @@
 #   AIDEVOPS_GH_SHIM_DISABLE=1 gh …          # skip entire shim
 #   AIDEVOPS_GH_SHIM_NO_REST_REWRITE=1 gh …  # skip read-rewrite only (t3037)
 #
+# Ops/audit comments
+# ------------------
+# Deterministic ops comments such as the dispatch audit trail are posted by
+# shell automation, not by the worker LLM session. They must still be signed for
+# provenance, but the footer must not inherit stale OpenCode session duration or
+# token metrics from a long-lived Linux runner DB.
+#
 # Runtime-vs-pre-execution split (t2893)
 # --------------------------------------
 # Two enforcement layers cooperate, separated by WHEN they run:
@@ -656,6 +663,24 @@ _shim_api_target_from_path() {
 	return 1
 }
 
+_shim_body_is_ops_audit() {
+	local body="$1"
+	case "$body" in
+	*'<!-- ops:start'* | *'Dispatching worker (deterministic)'* | *'<!-- routine-description'* | *'<!-- dispatch-infrastructure-failure -->'*) return 0 ;;
+	esac
+	return 1
+}
+
+_shim_sig_footer_for_body() {
+	local body="${1:-}"
+	if _shim_body_is_ops_audit "$body"; then
+		"$SIG_HELPER" footer --body "$body" --no-session 2>/dev/null
+	else
+		"$SIG_HELPER" footer --body "$body" 2>/dev/null
+	fi
+	return $?
+}
+
 # -----------------------------------------------------------------------------
 # _shim_api_inject_body_sig
 # Scans _modified_args for -f/-F body=@<file> or body=<inline> arguments
@@ -674,14 +699,15 @@ _shim_api_inject_body_sig() {
 			body=@*)
 				_bfile="${_next#body=@}"
 				if [[ -f "$_bfile" ]] && ! grep -q "<!-- aidevops:sig -->" "$_bfile" 2>/dev/null; then
-					_footer=$("$SIG_HELPER" footer 2>/dev/null) || true
+					_bval=$(<"$_bfile") || _bval=""
+					_footer=$(_shim_sig_footer_for_body "$_bval") || true
 					[[ -n "$_footer" ]] && printf '%s' "$_footer" >>"$_bfile" || true
 				fi
 				;;
 			body=*)
 				_bval="${_next#body=}"
 				if [[ "$_bval" != *"<!-- aidevops:sig -->"* ]]; then
-					_footer=$("$SIG_HELPER" footer --body "$_bval" 2>/dev/null) || {
+					_footer=$(_shim_sig_footer_for_body "$_bval") || {
 						i=$((i + 2))
 						continue
 					}
@@ -704,14 +730,15 @@ _shim_api_inject_body_sig() {
 			body=@*)
 				_bfile="${_kv#body=@}"
 				if [[ -f "$_bfile" ]] && ! grep -q "<!-- aidevops:sig -->" "$_bfile" 2>/dev/null; then
-					_footer=$("$SIG_HELPER" footer 2>/dev/null) || true
+					_bval=$(<"$_bfile") || _bval=""
+					_footer=$(_shim_sig_footer_for_body "$_bval") || true
 					[[ -n "$_footer" ]] && printf '%s' "$_footer" >>"$_bfile" || true
 				fi
 				;;
 			body=*)
 				_bval="${_kv#body=}"
 				if [[ "$_bval" != *"<!-- aidevops:sig -->"* ]]; then
-					_footer=$("$SIG_HELPER" footer --body "$_bval" 2>/dev/null) || {
+					_footer=$(_shim_sig_footer_for_body "$_bval") || {
 						i=$((i + 1))
 						continue
 					}
