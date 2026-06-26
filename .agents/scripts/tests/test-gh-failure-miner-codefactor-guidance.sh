@@ -46,6 +46,15 @@ set -- help
 # shellcheck source=/dev/null
 source "$HELPER" >/dev/null
 
+gh() {
+	local _api="$1" _paginate="$2" _endpoint="$3" _jq_flag="$4" _jq_expr="$5"
+	if [[ "$_api" == "api" && "$_paginate" == "--paginate" && "$_endpoint" == "repos/marcusquinn/aidevops/pulls/25324/files?per_page=100" && "$_jq_flag" == "--jq" && "$_jq_expr" == ".[].filename" ]]; then
+		printf '%s\n' ".agents/scripts/vault-helper.sh" ".agents/scripts/vault-crypto-helper.py" ".agents/scripts/vault-helper.sh"
+		return 0
+	fi
+	return 1
+}
+
 cluster_json=$(cat <<'JSON'
 {
   "repo": "marcusquinn/aidevops",
@@ -61,6 +70,7 @@ cluster_json=$(cat <<'JSON'
       "source_url": "https://github.com/marcusquinn/aidevops/pull/25324",
       "run_url": "https://github.com/marcusquinn/aidevops/runs/82536587204",
       "details_url": "https://www.codefactor.io/repository/github/marcusquinn/aidevops/pull/25324",
+      "affected_paths": [".agents/scripts/vault-crypto-helper.py", ".agents/scripts/vault-helper.sh"],
       "conclusion": "failure"
     }
   ]
@@ -68,17 +78,38 @@ cluster_json=$(cat <<'JSON'
 JSON
 )
 
-events_json=$(printf '[%s]\n' "$cluster_json")
+events_json=$(cat <<'JSON'
+[
+  {
+    "repo": "marcusquinn/aidevops",
+    "source_kind": "pr",
+    "source_ref": "#25324",
+    "source_url": "https://github.com/marcusquinn/aidevops/pull/25324",
+    "check_name": "CodeFactor",
+    "signature": "failure:codefactor.io",
+    "run_url": "https://github.com/marcusquinn/aidevops/runs/82536587204",
+    "details_url": "https://www.codefactor.io/repository/github/marcusquinn/aidevops/pull/25324",
+    "affected_paths": [".agents/scripts/vault-crypto-helper.py", ".agents/scripts/vault-helper.sh"],
+    "conclusion": "failure"
+  }
+]
+JSON
+)
 
 body=$(build_issue_body "$cluster_json" "46250abc5695" "2" "false")
 legacy_body=$(render_issue_body_markdown "$events_json" "2")
+paths_json=$(fetch_pr_changed_paths_json "marcusquinn/aidevops" "25324")
 
 assert_contains "build_issue_body includes Worker Guidance" "## Worker Guidance" "$body"
 assert_contains "build_issue_body directs workers to CodeFactor details" "Open the CodeFactor details URL from Evidence first" "$body"
+assert_contains "build_issue_body includes affected file fallback" "affected files: .agents/scripts/vault-crypto-helper.py, .agents/scripts/vault-helper.sh" "$body"
+assert_contains "build_issue_body handles unavailable details" "If CodeFactor details are unavailable" "$body"
 assert_contains "build_issue_body preserves failure signature context" "failure:codefactor.io" "$body"
 assert_contains "build_issue_body asks for focused regression guard" "focused regression guard" "$body"
 assert_contains "render_issue_body_markdown includes Worker Guidance" "## Worker Guidance" "$legacy_body"
 assert_contains "render_issue_body_markdown directs workers to provider details" "details URL" "$legacy_body"
+assert_contains "render_issue_body_markdown includes affected file fallback" "affected files: .agents/scripts/vault-crypto-helper.py, .agents/scripts/vault-helper.sh" "$legacy_body"
+assert_contains "fetch_pr_changed_paths_json returns unique sorted paths" '[".agents/scripts/vault-crypto-helper.py",".agents/scripts/vault-helper.sh"]' "$paths_json"
 
 printf '\nTests run: %s\n' "$TESTS_RUN"
 if [[ "$TESTS_FAILED" -ne 0 ]]; then
