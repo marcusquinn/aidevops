@@ -4304,4 +4304,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18009 vault: create Vault agent guidance, user workflows, command docs, and dispatch gates #agents #architecture #auto-dispatch #brief #documentation #enhancement #security ref:GH#25546
 
-- [ ] t18008 vault: enforce confidential data policy for provider AI, local LLM, and task dispatch routing #architecture #auto-dispatch #enhancement #local-models #model-routing #routing #security ref:GH#25545
+- [x] t18008 vault: enforce confidential data policy for provider AI, local LLM, and task dispatch routing #architecture #auto-dispatch #enhancement #local-models #model-routing #routing #security ref:GH#25545 pr:#25553 completed:2026-06-26
