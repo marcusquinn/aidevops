@@ -261,7 +261,7 @@ _compute_repo_state_fingerprint() {
 	# Canonicalize both lists. The PR/issue arrays can exceed Linux
 	# MAX_ARG_STRLEN, so pass them through temp files instead of jq --argjson.
 	local canon
-	local issues_file prs_file
+	local issues_file="" prs_file=""
 	issues_file=$(mktemp) || {
 		echo ""
 		return 0
@@ -506,7 +506,7 @@ _prefetch_cache_set() {
 		printf '%s' "$existing" | jq empty 2>/dev/null || existing="{}"
 	fi
 
-	local tmp_file entry_file
+	local tmp_file="" entry_file=""
 	local failure_msg
 	failure_msg='[pulse-wrapper] _prefetch_cache_set: failed to write cache for'
 	tmp_file=$(mktemp "${cache_dir}/.pulse-prefetch-cache.XXXXXX")

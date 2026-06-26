@@ -527,7 +527,7 @@ _prefetch_build_cache_entry() {
 	[[ -n "$prs_json" && "$prs_json" != "null" ]] || prs_json="[]"
 	[[ -n "$issues_json" && "$issues_json" != "null" ]] || issues_json="[]"
 
-	local prs_file issues_file
+	local prs_file="" issues_file=""
 	prs_file=$(mktemp) || return 1
 	issues_file=$(mktemp) || {
 		rm -f "$prs_file"
@@ -543,8 +543,7 @@ _prefetch_build_cache_entry() {
 		return 1
 	fi
 
-	local jq_output jq_status
-	jq_status=0
+	local jq_output="" jq_status=0
 	jq_output=$(jq -n \
 		--arg now "$now_iso" \
 		--arg lfs "$last_full_sweep" \
