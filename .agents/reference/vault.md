@@ -332,6 +332,19 @@ in repo-visible names or files. Imports fail closed on bad signatures, replay,
 rollback, expiry, or revoked author devices, then stage encrypted payloads for a
 local trusted-device rewrap/reindex pass.
 
+`.agents/scripts/vault-audit-helper.sh` is the dedicated Vault audit layer, kept
+separate from the general `.agents/scripts/audit-log-helper.sh` because Vault
+events have a stricter trust boundary: full event payloads are encrypted for
+trusted audit readers, each record is signed with a device audit key that is
+separate from data/sync/control keys, and public anchors contain only checkpoint
+hashes plus sequence metadata. It supports append, verify, peer receipt, public
+anchor, replicate, and report commands. Verification fails closed on missing
+sequences, broken previous-hash links, edited encrypted payload hashes, invalid
+record signatures, or peer receipts that do not match the observed head. Vault
+CLI operations emit attempt/result events through this helper; set
+`AIDEVOPS_VAULT_AUDIT_REQUIRE=1` when sensitive deployments must fail closed if
+the audit event cannot be written.
+
 Revocation marks the device `revoked`, removes grants, writes a peer-visible
 registry update, and appends a local rotation task instructing follow-up workers
 to rewrap collection keys and notify peers. A stolen-device response should:
