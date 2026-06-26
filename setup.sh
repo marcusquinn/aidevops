@@ -458,8 +458,20 @@ _setup_gui_desktop_install_opted_in() {
 	return 1
 }
 
+_setup_gui_desktop_app_dir() {
+	printf '%s' "${AIDEVOPS_GUI_DESKTOP_APP_DIR:-/Applications}"
+	return 0
+}
+
+_setup_gui_desktop_app_exists() {
+	local app_dir="$1"
+	[[ -d "${app_dir}/${SETUP_GUI_APP_NAME}" ]]
+	return $?
+}
+
 setup_gui_desktop_app() {
 	local installer="${INSTALL_DIR}/packages/gui-desktop/scripts/install-macos-app.sh"
+	local app_dir=""
 	local os=""
 	local rc=0
 
@@ -476,7 +488,8 @@ setup_gui_desktop_app() {
 		return 0
 	fi
 
-	bash "$installer" || rc=$?
+	app_dir="$(_setup_gui_desktop_app_dir)"
+	bash "$installer" --app-dir "$app_dir" || rc=$?
 	if [[ "$rc" -eq 0 ]]; then
 		setup_track_configured "$SETUP_GUI_APP_NAME"
 		return 0
@@ -489,8 +502,16 @@ setup_gui_desktop_app() {
 
 _setup_offer_gui_desktop_app() {
 	local answer=""
+	local app_dir=""
 
 	if _setup_gui_desktop_install_opted_in; then
+		setup_gui_desktop_app
+		return 0
+	fi
+
+	app_dir="$(_setup_gui_desktop_app_dir)"
+	if [[ "$(uname -s)" == "$SETUP_OS_DARWIN" ]] && _setup_gui_desktop_app_exists "$app_dir"; then
+		print_info "Refreshing existing macOS ${SETUP_GUI_APP_NAME} in ${app_dir}"
 		setup_gui_desktop_app
 		return 0
 	fi

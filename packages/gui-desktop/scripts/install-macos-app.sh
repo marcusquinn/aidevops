@@ -9,6 +9,7 @@ DEFAULT_APP_DIR="/Applications"
 
 usage() {
   printf 'Usage: %s [--check] [--app-dir DIR]\n' "$0"
+  printf 'Environment: AIDEVOPS_GUI_DESKTOP_APP_DIR overrides the default app directory.\n'
   return 0
 }
 
@@ -991,7 +992,7 @@ PLIST
 
 main() {
   local mode="install"
-  local app_dir="$DEFAULT_APP_DIR"
+  local app_dir="${AIDEVOPS_GUI_DESKTOP_APP_DIR:-$DEFAULT_APP_DIR}"
   local root=""
 
   while [[ $# -gt 0 ]]; do
