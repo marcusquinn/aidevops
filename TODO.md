@@ -1000,7 +1000,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18001 vault: migrate aidevops memory, workspace, knowledge, and config data with scrub-safe rollback #architecture #auto-dispatch #database #documents #feat #memory #security blocked-by:t17999,t18000 tier:thinking ~8h ref:GH#25538 logged:2026-06-26 -> [todo/tasks/t18001-brief.md] pr:#25560 completed:2026-06-26
 
-- [ ] t18002 vault: add GUI Vault sidebar, setup navigation, padlock indicators, and locked-state gates #architecture #auto-dispatch #design #feat #product #security blocked-by:t17999 tier:thinking ~5h ref:GH#25539 logged:2026-06-26 -> [todo/tasks/t18002-brief.md]
+- [x] t18002 vault: add GUI Vault sidebar, setup navigation, padlock indicators, and locked-state gates #architecture #auto-dispatch #design #feat #product #security blocked-by:t17999 tier:thinking ~5h ref:GH#25539 logged:2026-06-26 -> [todo/tasks/t18002-brief.md] verified:2026-06-26 completed:2026-06-26
 
 - [x] t18003 vault: implement device identity, trust, revocation, and fleet unlock status model #architecture #auto-dispatch #feat #orchestration #security blocked-by:t17998 tier:thinking ~6h ref:GH#25540 logged:2026-06-26 -> [todo/tasks/t18003-brief.md] pr:#25557 completed:2026-06-26
 
@@ -4305,26 +4305,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t3609 GUI ADR: security threat model and trust boundaries #architecture #auto-dispatch #dashboard #security ref:GH#25231 pr:#25237 completed:2026-06-20
 
 - [ ] t17995 GUI testing and CI/CD strategy #architecture #auto-dispatch #ci #dashboard #testing blocked-by:t3608,t3609 ref:GH#25234
-
-- [ ] t17996 Vault: encrypted aidevops data, fleet sync, remote control, messaging, and audit #architecture #parent #plan #security ref:GH#25533
-
-
-
-
-
-
-- [ ] t18007 vault: build tamper-evident access logs with peer replication and public-safe anchors #architecture #audit #auto-dispatch #enhancement #monitoring #security #security-review ref:GH#25544
-
-- [ ] t18006 vault: add remote lock, unlock-request, and sudo plus passphrase remote unlock policy #architecture #auth #auto-dispatch #enhancement #opsec #security ref:GH#25543
-
-- [ ] t18005 vault: implement secure device messaging over Git transport with SimpleX adapter option #architecture #auto-dispatch #communications #enhancement #git #security ref:GH#25542
-
-- [ ] t18004 vault: add encrypted sync, export, import, rekey, and public-Git-safe replication #architecture #auto-dispatch #communications #database #enhancement #git #security ref:GH#25541
-
-
-- [ ] t18002 vault: add GUI Vault sidebar, setup navigation, padlock indicators, and locked-state gates #architecture #auto-dispatch #design #enhancement #product #security ref:GH#25539
-
-- [ ] t18010 vault: add security validation suite, crash drills, destructive-migration gates, and release criteria #architecture #auto-dispatch #ci #enhancement #security #security-review #testing ref:GH#25547
-
-- [ ] t18009 vault: create Vault agent guidance, user workflows, command docs, and dispatch gates #agents #architecture #auto-dispatch #brief #documentation #enhancement #security ref:GH#25546
 
