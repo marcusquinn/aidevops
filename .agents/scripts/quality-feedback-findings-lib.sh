@@ -46,6 +46,7 @@ _build_inline_findings() {
 		($body | test(
 			"aidevops:review-thread-response|" +
 			"\\baddressed in [0-9a-f]{7,40}\\b|" +
+			"(?s:\\bthank you for verifying\\b.*\\blooks good\\b)|" +
 			"\\bno further concerns?\\b|" +
 			"\\bno further feedback\\b|" +
 			"\\bno further recommendations?\\b|" +
