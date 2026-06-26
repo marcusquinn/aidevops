@@ -37,7 +37,7 @@ _worktree_registry_ensure_dir() {
 	local path="$1"
 	_worktree_registry_dir_is_safe "$path" || return 1
 	if [[ ! -d "$path" ]]; then
-		mkdir -m 0700 "$path" || return 1
+		mkdir -m 0700 "$path" || [[ -d "$path" ]] || return 1
 	fi
 	_worktree_registry_dir_is_safe "$path" || return 1
 	return 0
@@ -54,9 +54,9 @@ if [[ -z "$_WORKTREE_REGISTRY_HOME" ]]; then
 	_WORKTREE_REGISTRY_HOME="${_WORKTREE_REGISTRY_TMPDIR}/aidevops-${_WORKTREE_REGISTRY_UID}"
 	if ! _worktree_registry_ensure_dir "$_WORKTREE_REGISTRY_HOME"; then
 		_WORKTREE_REGISTRY_HOME="${_WORKTREE_REGISTRY_TMPDIR}/aidevops-${_WORKTREE_REGISTRY_UID}-$$"
-	fi
-	if ! _worktree_registry_ensure_dir "$_WORKTREE_REGISTRY_HOME"; then
-		_WORKTREE_REGISTRY_HOME="$(mktemp -d "${_WORKTREE_REGISTRY_TMPDIR}/aidevops-${_WORKTREE_REGISTRY_UID}.XXXXXXXXXX")" || _WORKTREE_REGISTRY_HOME=""
+		if ! _worktree_registry_ensure_dir "$_WORKTREE_REGISTRY_HOME"; then
+			_WORKTREE_REGISTRY_HOME="$(mktemp -d "${_WORKTREE_REGISTRY_TMPDIR}/aidevops-${_WORKTREE_REGISTRY_UID}.XXXXXXXXXX")" || _WORKTREE_REGISTRY_HOME=""
+		fi
 	fi
 	if [[ -z "${_WORKTREE_REGISTRY_HOME:-}" ]] || ! _worktree_registry_dir_is_safe "$_WORKTREE_REGISTRY_HOME"; then
 		printf 'ERROR: unable to create a safe worktree registry home under %s\n' "${_WORKTREE_REGISTRY_TMPDIR:-}" >&2
