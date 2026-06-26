@@ -46,7 +46,11 @@ collection_for_path() {
 
 hash_file() {
 	local path="$1"
-	sha256sum "$path" | cut -d' ' -f1
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$path" | cut -d' ' -f1
+		return 0
+	fi
+	shasum -a 256 "$path" | cut -d' ' -f1
 	return 0
 }
 
