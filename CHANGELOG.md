@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.23.1] - 2026-06-27
+
+### Changed
+
+- Documentation: adopt serve-sim simulator test guidance (#25626)
+
+### Fixed
+
+- remediate dependency security alerts (#25627)
+
 ## [3.23.0] - 2026-06-26
 
 ### Added
