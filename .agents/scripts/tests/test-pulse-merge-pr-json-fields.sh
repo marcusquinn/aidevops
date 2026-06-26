@@ -74,9 +74,20 @@ test_callers_use_shared_field_helper() {
 	return 0
 }
 
+test_merge_ready_list_failure_preserves_error_guard() {
+	local failure_fallback='|| pr_json=""'
+	if ! file_contains "$MERGE_PROCESS" "$failure_fallback"; then
+		print_result "merge-ready list failure preserves error guard" 1 "gh_pr_list failure should leave pr_json empty so the -z guard logs the error"
+		return 0
+	fi
+	print_result "merge-ready list failure preserves error guard" 0
+	return 0
+}
+
 main() {
 	test_ready_pr_fields_include_process_metadata
 	test_callers_use_shared_field_helper
+	test_merge_ready_list_failure_preserves_error_guard
 
 	printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then
