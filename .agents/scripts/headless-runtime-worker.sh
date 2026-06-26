@@ -433,6 +433,7 @@ _hrw_resolve_default_branch() {
 #   "branch_orphan"         — branch pushed + commits exist BUT no PR found
 #                             (requires DISPATCH_REPO_SLUG + gh to confirm absence)
 #   "local_branch_unpushed" — local branch has commits but no remote branch or PR
+#   "dirty_worktree"        — uncommitted/untracked edits exist after a crash
 #   "noop"                  — no commits, no pushed branch, no PR
 #
 # Fail-open semantics are preserved: any condition that prevents confident
@@ -500,6 +501,10 @@ _worker_produced_output() {
 	# Also covers the t2899 default-branch case: HEAD on main with no/any commits
 	# but no feature branch pushed → noop, not branch_orphan.
 	if [[ "$has_commits" -eq 0 && "$has_pushed_branch" -eq 0 ]]; then
+		if [[ -n "$(git -C "$work_dir" status --porcelain 2>/dev/null || true)" ]]; then
+			printf 'dirty_worktree'
+			return 0
+		fi
 		printf 'noop'
 		return 0
 	fi
@@ -723,6 +728,48 @@ _handle_worker_local_branch_unpushed() {
 }
 
 #######################################
+# _handle_worker_dirty_worktree — preserve uncommitted worker edits after crash.
+#
+# Local runtime failures can interrupt OpenCode after file edits but before the
+# worker commits or opens a PR. Do not redispatch blindly; publish a structured
+# ops marker so maintainers can inspect the runner-local worktree and recover the
+# edits before cleanup or duplicate workers overwrite context.
+#
+# Args: $1=session_key, $2=work_dir
+#######################################
+_handle_worker_dirty_worktree() {
+	local session_key="$1"
+	local work_dir="$2"
+	local repo_slug="${DISPATCH_REPO_SLUG:-}"
+	local issue_number=""
+	issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
+
+	local branch_name=""
+	branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+	local status_summary=""
+	status_summary=$(git -C "$work_dir" status --short 2>/dev/null | sed -n '1,20p' || true)
+	[[ -n "$status_summary" ]] || status_summary="<dirty state unavailable>"
+
+	print_info "[lifecycle] worker_dirty_worktree session=${session_key} branch=${branch_name:-<none>} work_dir_present=$([[ -d "$work_dir" ]] && printf 1 || printf 0)"
+	_release_dispatch_claim "$session_key" "worker_dirty_worktree"
+
+	if [[ -n "$issue_number" && -n "$repo_slug" ]]; then
+		local _ops_comment
+		local _dirty_key="${repo_slug}#${issue_number}#${branch_name:-unknown}#worker_dirty_worktree"
+		# shellcheck disable=SC2016 # backticks are literal markdown, not command substitution
+		_ops_comment=$(printf '<!-- ops:start -->\n<!-- worker-dirty-worktree:key=%s -->\nWORKER_DIRTY_WORKTREE branch=%s session=%s ts=%s\n\nThis worker exited after local file edits but before a commit/PR could be confirmed. Pause redispatch and inspect the runner-local worker metrics/logs for the worktree path, then either recover the edits into a PR or clear this marker after confirming the edits are disposable.\n\nChanged paths reported by git status on the runner:\n\n```\n%s\n```\n<!-- ops:end -->' \
+			"$_dirty_key" \
+			"${branch_name:-unknown}" "$session_key" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+			"$status_summary")
+		gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+			--method POST \
+			--field body="$_ops_comment" \
+			>/dev/null 2>&1 || true
+	fi
+	return 0
+}
+
+#######################################
 # Recover tangible worker output on failure paths.
 #
 # Watchdog/SIGKILL exits can happen after a worker has already pushed a branch
@@ -773,6 +820,11 @@ _recover_worker_output_on_failure() {
 	if [[ "$output_class" == "local_branch_unpushed" ]]; then
 		print_info "[lifecycle] worker_failure_recovering_local_branch_unpushed session=${session_key} branch=${branch_name:-<none>}"
 		_handle_worker_local_branch_unpushed "$session_key" "$work_dir"
+		return 0
+	fi
+	if [[ "$output_class" == "dirty_worktree" ]]; then
+		print_info "[lifecycle] worker_failure_preserving_dirty_worktree session=${session_key} branch=${branch_name:-<none>}"
+		_handle_worker_dirty_worktree "$session_key" "$work_dir"
 		return 0
 	fi
 
@@ -1084,10 +1136,11 @@ _cmd_run_finish() {
 		_release_dispatch_claim "$session_key" "rate_limit_transient"
 	else
 		# GH#20721 + GH#20819: Classify worker output quality.
-		# _worker_produced_output echoes one of four classifications:
+		# _worker_produced_output echoes one of five classifications:
 		#   noop                  — no commits, no branch, no PR → fast-fail
 		#   branch_orphan         — branch pushed but no PR → auto-recover
 		#   local_branch_unpushed — local commits but no remote branch/PR → push+recover
+		#   dirty_worktree        — local edits exist but no commit/PR → preserve marker
 		#   pr_exists             — PR confirmed, or fail-open → worker_complete
 		#
 		# Fail-open semantics are preserved: when signals cannot be evaluated
@@ -1115,6 +1168,11 @@ _cmd_run_finish() {
 			local_branch_unpushed)
 				# Local committed branch without remote/PR — push then auto-recover (GH#25374)
 				_handle_worker_local_branch_unpushed "$session_key" "$work_dir"
+				_release_needed=0
+				;;
+			dirty_worktree)
+				# Local uncommitted edits — preserve before cleanup/redispatch.
+				_handle_worker_dirty_worktree "$session_key" "$work_dir"
 				_release_needed=0
 				;;
 			esac

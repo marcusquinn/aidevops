@@ -1643,10 +1643,73 @@ _dlw_canary_preflight() {
 	return 1
 }
 
+_dlw_opencode_storage_preflight() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local state_dir="${HOME}/.local/share/opencode"
+	local db_path="${state_dir}/opencode.db"
+	local tmp_parent="${TMPDIR:-/tmp}"
+	local probe_dir=""
+
+	[[ "${AIDEVOPS_OPENCODE_STORAGE_PREFLIGHT:-1}" != "0" ]] || return 0
+	[[ -d "$state_dir" ]] || return 0
+	[[ -w "$state_dir" ]] || {
+		echo "[dispatch_with_dedup] Skipping #${issue_number} in ${repo_slug} — OpenCode state dir is not writable: ${state_dir}" >>"$LOGFILE"
+		return 1
+	}
+	if [[ -e "$db_path" && ! -w "$db_path" ]]; then
+		echo "[dispatch_with_dedup] Skipping #${issue_number} in ${repo_slug} — OpenCode session DB is not writable" >>"$LOGFILE"
+		return 1
+	fi
+	probe_dir=$(mktemp -d "${tmp_parent%/}/aidevops-opencode-snapshot-preflight.XXXXXX" 2>/dev/null) || {
+		echo "[dispatch_with_dedup] Skipping #${issue_number} in ${repo_slug} — unable to create OpenCode snapshot temp dir under ${tmp_parent}" >>"$LOGFILE"
+		return 1
+	}
+	if ! git -C "$probe_dir" init -q >/dev/null 2>&1; then
+		rm -rf "$probe_dir" 2>/dev/null || true
+		echo "[dispatch_with_dedup] Skipping #${issue_number} in ${repo_slug} — git cannot initialise temp snapshot probe" >>"$LOGFILE"
+		return 1
+	fi
+	rm -rf "$probe_dir" 2>/dev/null || true
+	return 0
+}
+
+_dlw_load_preflight() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local max_load_per_cpu="${AIDEVOPS_DISPATCH_MAX_LOAD_PER_CPU:-3.0}"
+	local current_ratio=""
+
+	[[ "${AIDEVOPS_DISPATCH_LOAD_PREFLIGHT:-1}" != "0" ]] || return 0
+	current_ratio=$(python3 - <<'PY' 2>/dev/null || true
+import os
+try:
+    load = os.getloadavg()[0]
+    cpus = os.cpu_count() or 1
+    print(f"{load / cpus:.3f}")
+except Exception:
+    print("")
+PY
+)
+	[[ -n "$current_ratio" ]] || return 0
+	if ! python3 - "$current_ratio" "$max_load_per_cpu" >/dev/null 2>&1 <<'PY'
+import sys
+current = float(sys.argv[1])
+maximum = float(sys.argv[2])
+sys.exit(0 if current <= maximum else 1)
+PY
+	then
+		echo "[dispatch_with_dedup] Skipping #${issue_number} in ${repo_slug} — local load_per_cpu=${current_ratio} exceeds dispatch threshold ${max_load_per_cpu}" >>"$LOGFILE"
+		return 1
+	fi
+	return 0
+}
+
 _dlw_blocked_by_hard_stop() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local issue_meta_json="$3"
+	local repo_path="${4:-}"
 
 	if [[ "$(type -t is_blocked_by_unresolved 2>/dev/null)" != "function" ]]; then
 		return 1
@@ -1654,7 +1717,7 @@ _dlw_blocked_by_hard_stop() {
 
 	local issue_body=""
 	issue_body=$(printf '%s' "$issue_meta_json" | jq -r '.body // ""' 2>/dev/null) || issue_body=""
-	if is_blocked_by_unresolved "$issue_body" "$repo_slug" "$issue_number"; then
+	if PULSE_DEP_GRAPH_REPO_PATH="$repo_path" is_blocked_by_unresolved "$issue_body" "$repo_slug" "$issue_number"; then
 		echo "[dispatch_with_dedup] Hard-stop before worker bootstrap for #${issue_number} in ${repo_slug}: unresolved blocked-by dependency (GH#23932)" >>"$LOGFILE"
 		return 0
 	fi
@@ -1738,14 +1801,21 @@ _dispatch_launch_worker() {
 	local worker_log
 	worker_log=$(_dlw_setup_worker_log "$repo_slug" "$issue_number")
 
+	if _dlw_blocked_by_hard_stop "$issue_number" "$repo_slug" "$issue_meta_json" "$repo_path"; then
+		return 2
+	fi
+
+	if ! _dlw_opencode_storage_preflight "$issue_number" "$repo_slug"; then
+		return 2
+	fi
+	if ! _dlw_load_preflight "$issue_number" "$repo_slug"; then
+		return 2
+	fi
+
 	_ds_t0=$(_ds_now_ns)
 	_dlw_resolve_tier_and_model "$issue_meta_json" "$model_override"
 	_ds_record "$issue_number" "$repo_slug" "resolve_tier_model" "$_ds_t0"
 	local dispatch_tier="$_DLW_DISPATCH_TIER" dispatch_model_tier="$_DLW_DISPATCH_MODEL_TIER" selected_model="$_DLW_SELECTED_MODEL"
-
-	if _dlw_blocked_by_hard_stop "$issue_number" "$repo_slug" "$issue_meta_json"; then
-		return 2
-	fi
 
 	_ds_t0=$(_ds_now_ns)
 	if ! _dlw_canary_preflight "$issue_number" "$repo_slug" "$worker_log" \

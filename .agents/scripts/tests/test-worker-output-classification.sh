@@ -416,6 +416,30 @@ test_external_terminal_complete_guards_before_github_calls() {
 	return 0
 }
 
+test_dirty_feature_worktree_preserved() {
+	make_repo_pair "case9" || {
+		print_result "case 9: dirty feature worktree is preserved" 1 "fixture setup failed"
+		return 0
+	}
+	(
+		cd "$WORK_DIR" || exit 1
+		git checkout -q -b feature/t9999-dirty
+		printf '%s\n' "uncommitted worker edit" > dirty.txt
+	) || {
+		print_result "case 9: dirty feature worktree is preserved" 1 "dirty setup failed"
+		return 0
+	}
+	export STUB_PR_COUNT=0
+	local got
+	got=$(_worker_produced_output "issue-1009" "$WORK_DIR")
+	if [[ "$got" == "dirty_worktree" ]]; then
+		print_result "case 9: dirty feature worktree is preserved" 0
+	else
+		print_result "case 9: dirty feature worktree is preserved" 1 "got: $got"
+	fi
+	return 0
+}
+
 # -----------------------------------------------------------------------------
 # Run
 # -----------------------------------------------------------------------------
@@ -428,6 +452,7 @@ test_failure_recovery_ignores_default_branch_pr_match
 test_feature_branch_without_default_ref_returns_branch_orphan
 test_external_terminal_complete_uses_trailing_issue_digits
 test_external_terminal_complete_guards_before_github_calls
+test_dirty_feature_worktree_preserved
 
 printf '\nRan %d test(s), %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 
