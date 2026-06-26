@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.22.8] - 2026-06-26
+
+### Fixed
+
+- avoid stale time on ops comments (#25594)
+
 ## [3.22.7] - 2026-06-26
 
 ### Changed
