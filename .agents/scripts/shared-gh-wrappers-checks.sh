@@ -114,10 +114,12 @@ gh_pr_check_status_rest() {
 	# read-only special variable, which would silently fail under zsh-sourced
 	# interactive use even though the script declares `#!/usr/bin/env bash`.
 	local _check_state=""
+	# shellcheck disable=SC2016 # jq program uses $active as a jq variable.
 	_check_state=$(_gh_checks_api_read "repos/${slug}/commits/${sha}/check-suites" --jq '
-		if (.check_suites | length) == 0 then "none"
-		elif (.check_suites | all(.conclusion == "success" or .conclusion == "skipped" or .conclusion == "neutral")) then "PASS"
-		elif (.check_suites | any(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled")) then "FAIL"
+		(.check_suites | map(select(.conclusion != null or .status != "queued"))) as $active |
+		if ($active | length) == 0 then "none"
+		elif ($active | all(.conclusion == "success" or .conclusion == "skipped" or .conclusion == "neutral")) then "PASS"
+		elif ($active | any(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled")) then "FAIL"
 		else "PENDING"
 		end' 2>/dev/null) || _check_state=""
 
