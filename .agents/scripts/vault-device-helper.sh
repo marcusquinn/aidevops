@@ -490,8 +490,10 @@ state_unsynced = os.environ["VAULT_DEVICE_STATE_UNSYNCED"]
 field_unlock_status = os.environ["VAULT_DEVICE_FIELD_UNLOCK_STATUS"]
 with open(local_state_path, encoding="utf-8") as handle:
     state = json.load(handle)
-with open(registry_path, encoding="utf-8") as handle:
-    registry = json.load(handle)
+registry = {}
+if os.path.exists(registry_path):
+    with open(registry_path, encoding="utf-8") as handle:
+        registry = json.load(handle)
 device = next((item for item in registry.get("devices", []) if item.get(field_id) == device_id), {})
 print(json.dumps({
     "schema_version": 1,
