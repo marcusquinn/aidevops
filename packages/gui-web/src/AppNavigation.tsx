@@ -110,19 +110,21 @@ export function MachineRail({ machine }: { machine?: GuiMachineSummary }) {
   );
 }
 
-export function Sidebar({ activeSurface, accentHue, conversationMode, fontPreference, fontSizePreference, selectedLocalRepoIndex, setAccentHue, setActiveSurface, setConversationMode, setFontPreference, setFontSizePreference, setSelectedLocalRepoIndex, setShellMode, setShowBorders, setShowNavCounts, setThemePreference, shellMode, showBorders, showNavCounts, status, themePreference }: {
+export function Sidebar({ activeSurface, accentHue, conversationMode, fontPreference, fontSizePreference, selectedLocalRepoIndex, selectedSessionId, setAccentHue, setActiveSurface, setConversationMode, setFontPreference, setFontSizePreference, setSelectedLocalRepoIndex, setSelectedSessionId, setShellMode, setShowBorders, setShowNavCounts, setThemePreference, shellMode, showBorders, showNavCounts, status, themePreference }: {
   activeSurface: SurfaceId;
   accentHue: number;
   conversationMode: ConversationMode;
   fontPreference: FontPreference;
   fontSizePreference: FontSizePreference;
   selectedLocalRepoIndex: number;
+  selectedSessionId: string | undefined;
   setAccentHue: (hue: number) => void;
   setActiveSurface: (surface: SurfaceId) => void;
   setConversationMode: (mode: ConversationMode) => void;
   setFontPreference: (font: FontPreference) => void;
   setFontSizePreference: (size: FontSizePreference) => void;
   setSelectedLocalRepoIndex: (index: number) => void;
+  setSelectedSessionId: (id: string | undefined) => void;
   setShellMode: (mode: ShellMode) => void;
   setShowBorders: (show: boolean) => void;
   setShowNavCounts: (show: boolean) => void;
@@ -154,8 +156,10 @@ export function Sidebar({ activeSurface, accentHue, conversationMode, fontPrefer
         </> : <ConversationSidebar
           conversationMode={conversationMode}
           selectedLocalRepoIndex={selectedLocalRepoIndex}
+          selectedSessionId={selectedSessionId}
           setConversationMode={setConversationMode}
           setSelectedLocalRepoIndex={setSelectedLocalRepoIndex}
+          setSelectedSessionId={setSelectedSessionId}
           status={status}
         />}
       </nav>
@@ -203,11 +207,13 @@ function IconSwitch<TValue extends string>({ ariaLabel, options, value }: {
   );
 }
 
-function ConversationSidebar({ conversationMode, selectedLocalRepoIndex, setConversationMode, setSelectedLocalRepoIndex, status }: {
+function ConversationSidebar({ conversationMode, selectedLocalRepoIndex, selectedSessionId, setConversationMode, setSelectedLocalRepoIndex, setSelectedSessionId, status }: {
   conversationMode: ConversationMode;
   selectedLocalRepoIndex: number;
+  selectedSessionId: string | undefined;
   setConversationMode: (mode: ConversationMode) => void;
   setSelectedLocalRepoIndex: (index: number) => void;
+  setSelectedSessionId: (id: string | undefined) => void;
   status: GuiStatusData;
 }) {
   const repos = status.local_repos.repos;
@@ -226,19 +232,18 @@ function ConversationSidebar({ conversationMode, selectedLocalRepoIndex, setConv
       <section className="repo-session-selector" aria-label={text.localRepoSelector}>
         <span className="repo-selector-heading" id="local-repo-selector-label">{text.localRepos}</span>
         <div className="selector-with-stepper repo-selector-row">
-          <button aria-label="Previous local repo" className="selector-step-button" disabled={!canSelectPreviousRepo} onClick={() => setSelectedLocalRepoIndex(Math.max(0, selectedLocalRepoIndex - 1))} type="button"><FiChevronLeft aria-hidden="true" /></button>
-          <select aria-labelledby="local-repo-selector-label" onChange={(event) => setSelectedLocalRepoIndex(Number.parseInt(event.currentTarget.value, 10))} value={Math.min(selectedLocalRepoIndex, Math.max(0, repos.length - 1))}>
+          <button aria-label="Previous local repo" className="selector-step-button" disabled={!canSelectPreviousRepo} onClick={() => { setSelectedLocalRepoIndex(Math.max(0, selectedLocalRepoIndex - 1)); setSelectedSessionId(undefined); }} type="button"><FiChevronLeft aria-hidden="true" /></button>
+          <select aria-labelledby="local-repo-selector-label" onChange={(event) => { setSelectedLocalRepoIndex(Number.parseInt(event.currentTarget.value, 10)); setSelectedSessionId(undefined); }} value={Math.min(selectedLocalRepoIndex, Math.max(0, repos.length - 1))}>
             {repos.length === 0 ? <option value={0}>No local repos</option> : repos.map((repo, index) => <option key={repo.path_ref} value={index}>{repo.name}</option>)}
           </select>
-          <button aria-label="Next local repo" className="selector-step-button" disabled={!canSelectNextRepo} onClick={() => setSelectedLocalRepoIndex(Math.min(repos.length - 1, selectedLocalRepoIndex + 1))} type="button"><FiChevronRight aria-hidden="true" /></button>
+          <button aria-label="Next local repo" className="selector-step-button" disabled={!canSelectNextRepo} onClick={() => { setSelectedLocalRepoIndex(Math.min(repos.length - 1, selectedLocalRepoIndex + 1)); setSelectedSessionId(undefined); }} type="button"><FiChevronRight aria-hidden="true" /></button>
         </div>
       </section>
       <section className="sidebar-group session-history-list">
-        <h2>{text.sessionHistory}</h2>
         {selectedRepo ? <ul>
           {sessions.length === 0
             ? <li><button className="surface-link active" type="button"><span className="surface-icon" aria-hidden="true"><FiHash /></span><span className="surface-copy"><strong>{selectedRepo.name}</strong><small>No OpenCode sessions found for this repo yet.</small></span><em>{text.planned}</em></button></li>
-            : sessions.map((session, index) => <li key={session.id_ref}><button className={index === 0 ? "surface-link active" : "surface-link"} type="button"><span className="surface-icon" aria-hidden="true"><FiHash /></span><span className="surface-copy"><strong>{session.title}</strong><small>{session.updated_at}</small></span></button></li>)}
+            : sessions.map((session) => <li key={session.id_ref}><button className={(selectedSessionId ?? sessions[0]?.id_ref) === session.id_ref ? "surface-link active" : "surface-link"} onClick={() => setSelectedSessionId(session.id_ref)} type="button"><span className="surface-icon" aria-hidden="true"><FiHash /></span><span className="surface-copy"><strong>{session.title}</strong><small>{session.updated_at}</small></span></button></li>)}
         </ul> : <p className="empty-sidebar-state">No local repos discovered.</p>}
       </section>
       </>}
@@ -251,13 +256,11 @@ function PeopleChannelList() {
     <section aria-label="People channels">
       <div className="notice compact-notice">{text.simplexReady}</div>
       <section className="sidebar-group session-history-list">
-        <h2>{text.teams}</h2>
         <ul>
           {["aidevops", "clients", "ops"].map((team) => <li key={team}><button className="surface-link" type="button"><span className="surface-icon" aria-hidden="true"><FiHash /></span><span className="surface-copy"><strong>{team}</strong><small>SimpleX team channel placeholder</small></span></button></li>)}
         </ul>
       </section>
       <section className="sidebar-group session-history-list">
-        <h2>{text.directMessages}</h2>
         <ul>
           {["Marcus", "AI DevOps"].map((person) => <li key={person}><button className="surface-link" type="button"><span className="surface-icon" aria-hidden="true"><FiMessageSquare /></span><span className="surface-copy"><strong>{person}</strong><small>encrypted DM placeholder</small></span></button></li>)}
         </ul>

@@ -5,7 +5,7 @@ import type { GuiFileRootId, GuiStatusData } from "../../gui-shared/src";
 import { SurfaceGlyph } from "./AppNavigation";
 import type { ConversationMode, ShellMode, SurfaceId, SurfaceNavItem } from "./app-model";
 import { inventorySurfaceConfigs, text } from "./app-model";
-import { CommandPalette, commandPaletteShortcutQuery } from "./CommandPalette";
+import { CommandPalette, type CommandPaletteSelection, commandPaletteShortcutQuery } from "./CommandPalette";
 import { FileExplorerSurface } from "./FileExplorerSurface";
 import { AppsSurface, EditableInventorySurface, InstallationSurface } from "./InventorySurfaces";
 import { AiProvidersSurface, LocalReposSurface, LockedVaultGate, OverviewSurface, PlannedSurface, ProjectsSurface, SecuritySurface, VaultSurface } from "./StatusSurfaces";
@@ -16,7 +16,7 @@ const communityLinks = {
   x: "https://x.com/marcuswquinn",
 } as const;
 
-export function Workspace({ activeItem, activeSectionLabel, activeSurface, canGoBack, canGoForward, conversationMode, fileRoot, goBack, goForward, selectedLocalRepoIndex, setActiveSurface, setConversationMode, setShellMode, shellMode, status }: {
+export function Workspace({ activeItem, activeSectionLabel, activeSurface, canGoBack, canGoForward, conversationMode, fileRoot, goBack, goForward, selectedLocalRepoIndex, selectedSessionId, setActiveSurface, setConversationMode, setSelectedLocalRepoIndex, setSelectedSessionId, setShellMode, shellMode, status }: {
   activeItem: SurfaceNavItem;
   activeSectionLabel: string;
   activeSurface: SurfaceId;
@@ -27,25 +27,28 @@ export function Workspace({ activeItem, activeSectionLabel, activeSurface, canGo
   goBack: () => void;
   goForward: () => void;
   selectedLocalRepoIndex: number;
+  selectedSessionId: string | undefined;
   setActiveSurface: (surface: SurfaceId) => void;
   setConversationMode: (mode: ConversationMode) => void;
+  setSelectedLocalRepoIndex: (index: number) => void;
+  setSelectedSessionId: (id: string | undefined) => void;
   setShellMode: (mode: ShellMode) => void;
   shellMode: ShellMode;
   status: GuiStatusData;
 }) {
   return (
     <section className="app-inset" aria-label={text.workspaceLabel}>
-      <WorkspaceHeader activeItem={activeItem} activeSectionLabel={activeSectionLabel} activeSurface={activeSurface} canGoBack={canGoBack} canGoForward={canGoForward} goBack={goBack} goForward={goForward} setActiveSurface={setActiveSurface} setConversationMode={setConversationMode} setShellMode={setShellMode} status={status} />
+      <WorkspaceHeader activeItem={activeItem} activeSectionLabel={activeSectionLabel} activeSurface={activeSurface} canGoBack={canGoBack} canGoForward={canGoForward} goBack={goBack} goForward={goForward} setActiveSurface={setActiveSurface} setConversationMode={setConversationMode} setSelectedLocalRepoIndex={setSelectedLocalRepoIndex} setSelectedSessionId={setSelectedSessionId} setShellMode={setShellMode} status={status} />
       <div className="workspace-scroll">
         {shellMode === "sessions"
-          ? <ConversationWorkspace conversationMode={conversationMode} selectedLocalRepoIndex={selectedLocalRepoIndex} status={status} />
+          ? <ConversationWorkspace conversationMode={conversationMode} selectedLocalRepoIndex={selectedLocalRepoIndex} selectedSessionId={selectedSessionId} status={status} />
           : <SurfaceContent activeItem={activeItem} activeSurface={activeSurface} fileRoot={fileRoot} status={status} />}
       </div>
     </section>
   );
 }
 
-function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoBack, canGoForward, goBack, goForward, setActiveSurface, setConversationMode, setShellMode, status }: {
+function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoBack, canGoForward, goBack, goForward, setActiveSurface, setConversationMode, setSelectedLocalRepoIndex, setSelectedSessionId, setShellMode, status }: {
   activeItem: SurfaceNavItem;
   activeSectionLabel: string;
   activeSurface: SurfaceId;
@@ -55,6 +58,8 @@ function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoB
   goForward: () => void;
   setActiveSurface: (surface: SurfaceId) => void;
   setConversationMode: (mode: ConversationMode) => void;
+  setSelectedLocalRepoIndex: (index: number) => void;
+  setSelectedSessionId: (id: string | undefined) => void;
   setShellMode: (mode: ShellMode) => void;
   status: GuiStatusData;
 }): ReactElement {
@@ -87,8 +92,13 @@ function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoB
     setProfileOpen(false);
   };
 
-  const openItem = ({ conversationMode, shellMode, surface }: { conversationMode?: ConversationMode; shellMode?: ShellMode; surface: SurfaceId }) => {
+  const openItem = ({ conversationMode, repoPathRef, sessionId, shellMode, surface }: CommandPaletteSelection) => {
+    const repoIndex = status.local_repos.repos.findIndex((repo) => repo.path_ref === repoPathRef);
     setShellMode(shellMode ?? "devices");
+    if (repoIndex >= 0) {
+      setSelectedLocalRepoIndex(repoIndex);
+    }
+    setSelectedSessionId(sessionId);
     if (conversationMode) {
       setConversationMode(conversationMode);
     }
@@ -176,15 +186,16 @@ function NotificationsMenu({ openSurface }: { openSurface: (surface: SurfaceId) 
   );
 }
 
-function ConversationWorkspace({ conversationMode, selectedLocalRepoIndex, status }: {
+function ConversationWorkspace({ conversationMode, selectedLocalRepoIndex, selectedSessionId, status }: {
   conversationMode: ConversationMode;
   selectedLocalRepoIndex: number;
+  selectedSessionId: string | undefined;
   status: GuiStatusData;
 }) {
   const selectedRepo = status.local_repos.repos[selectedLocalRepoIndex] ?? status.local_repos.repos[0];
   const selectedSession = selectedRepo === undefined
     ? undefined
-    : status.opencode_sessions.sessions.find((session) => session.repo_path_ref === selectedRepo.path_ref);
+    : status.opencode_sessions.sessions.find((session) => session.id_ref === selectedSessionId && session.repo_path_ref === selectedRepo.path_ref) ?? status.opencode_sessions.sessions.find((session) => session.repo_path_ref === selectedRepo.path_ref);
   const title = conversationMode === "ai" ? selectedRepo?.name ?? text.opencodeSessions : text.teams;
 
   return (
