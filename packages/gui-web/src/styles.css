@@ -69,6 +69,7 @@ body {
     radial-gradient(ellipse at top left, color-mix(in srgb, var(--accent) 16%, transparent) 0%, transparent 36%),
     var(--bg-secondary);
   color: var(--text-primary);
+  font-family: var(--font-family-app);
   line-height: 1.6;
   margin: 0;
   font-size: var(--font-size-app);
