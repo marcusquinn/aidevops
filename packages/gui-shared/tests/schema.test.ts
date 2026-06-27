@@ -3,10 +3,15 @@ import {
   createEnvelope,
   FILE_EXPLORER_ROUTE_MANIFEST,
   GUI_FILE_ROOTS,
+  conversationHasScope,
   isReadOnlyManifest,
+  participantCanReadConversation,
+  sortConversationMessageParts,
+  sortConversationMessages,
   STATUS_ROUTE_MANIFEST,
   statusFixture,
   VAULT_STATUS_ROUTE_MANIFEST,
+  type GuiConversationThread,
 } from "../src";
 
 describe("GUI shared schema contracts", () => {
@@ -55,4 +60,177 @@ describe("GUI shared schema contracts", () => {
     expect(envelope.data.ai_apps.map((app) => app.name)).toContain("OpenCode");
     expect(envelope.data.capabilities[0].status).toBe("available");
   });
+
+  test("conversation thread model preserves tenant scope and active membership", () => {
+    const thread = conversationThreadFixture();
+
+    expect(conversationHasScope(thread, {
+      tenant_ref: "tenant:local-owner",
+      workspace_ref: "workspace:aidevops",
+      repo_ref: "repo:marcusquinn/aidevops",
+    })).toBe(true);
+    expect(conversationHasScope(thread, {
+      tenant_ref: "tenant:other",
+      workspace_ref: "workspace:aidevops",
+      repo_ref: "repo:marcusquinn/aidevops",
+    })).toBe(false);
+    expect(participantCanReadConversation(thread, "participant:human-owner")).toBe(true);
+    expect(participantCanReadConversation(thread, "participant:removed-user")).toBe(false);
+  });
+
+  test("conversation messages and parts keep deterministic ordering", () => {
+    const thread = conversationThreadFixture();
+    const orderedMessages = sortConversationMessages(thread.messages);
+    const orderedParts = sortConversationMessageParts(thread.parts.filter((part) => part.message_id === "message:assistant-1"));
+
+    expect(orderedMessages.map((message) => message.id)).toEqual(["message:user-1", "message:assistant-1"]);
+    expect(orderedParts.map((part) => part.kind)).toEqual(["text", "tool_call", "tambo_component"]);
+    expect(orderedParts[2].payload_json).toEqual({ component: "ReleaseReadinessCard", status: "planned" });
+    expect(orderedMessages[1].usage?.total_tokens).toBe(168);
+  });
 });
+
+function conversationThreadFixture(): GuiConversationThread {
+  return {
+    conversation: {
+      id: "conversation:ai-session-1",
+      type: "ai_session",
+      title: "Plan AI collaboration workspace",
+      scope: {
+        tenant_ref: "tenant:local-owner",
+        workspace_ref: "workspace:aidevops",
+        repo_ref: "repo:marcusquinn/aidevops",
+      },
+      source_ref: "opencode:session:metadata-only",
+      status: "active",
+      created_at: "2026-06-27T18:00:00.000Z",
+      updated_at: "2026-06-27T18:01:00.000Z",
+    },
+    participants: [
+      {
+        id: "participant:human-owner",
+        conversation_id: "conversation:ai-session-1",
+        kind: "human",
+        display_name: "Local owner",
+        identity_ref: "identity:owner",
+        agent_ref: null,
+        worker_ref: null,
+        membership_state: "active",
+        joined_at: "2026-06-27T18:00:00.000Z",
+      },
+      {
+        id: "participant:assistant",
+        conversation_id: "conversation:ai-session-1",
+        kind: "ai_assistant",
+        display_name: "AI DevOps",
+        identity_ref: null,
+        agent_ref: "agent:build-plus",
+        worker_ref: null,
+        membership_state: "active",
+        joined_at: "2026-06-27T18:00:00.000Z",
+      },
+      {
+        id: "participant:removed-user",
+        conversation_id: "conversation:ai-session-1",
+        kind: "human",
+        display_name: "Former member",
+        identity_ref: "identity:former",
+        agent_ref: null,
+        worker_ref: null,
+        membership_state: "removed",
+        joined_at: "2026-06-27T18:00:00.000Z",
+      },
+    ],
+    messages: [
+      {
+        id: "message:assistant-1",
+        conversation_id: "conversation:ai-session-1",
+        sender_participant_id: "participant:assistant",
+        sender_kind: "ai_assistant",
+        sequence: 2,
+        status: "sent",
+        usage: {
+          provider_ref: "provider:anthropic",
+          model_ref: "model:claude-sonnet",
+          input_tokens: 120,
+          output_tokens: 48,
+          total_tokens: 168,
+          cost_ref: null,
+        },
+        created_at: "2026-06-27T18:01:00.000Z",
+        edited_at: null,
+      },
+      {
+        id: "message:user-1",
+        conversation_id: "conversation:ai-session-1",
+        sender_participant_id: "participant:human-owner",
+        sender_kind: "human",
+        sequence: 1,
+        status: "sent",
+        usage: null,
+        created_at: "2026-06-27T18:00:30.000Z",
+        edited_at: null,
+      },
+    ],
+    parts: [
+      {
+        id: "part:assistant-card",
+        message_id: "message:assistant-1",
+        kind: "tambo_component",
+        ordinal: 3,
+        text: null,
+        payload_json: { component: "ReleaseReadinessCard", status: "planned" },
+        file_ref: null,
+        source_ref: null,
+      },
+      {
+        id: "part:assistant-text",
+        message_id: "message:assistant-1",
+        kind: "text",
+        ordinal: 1,
+        text: "Here is the implementation map.",
+        payload_json: null,
+        file_ref: null,
+        source_ref: null,
+      },
+      {
+        id: "part:assistant-tool",
+        message_id: "message:assistant-1",
+        kind: "tool_call",
+        ordinal: 2,
+        text: null,
+        payload_json: { helper: "git ls-files", result: "ok" },
+        file_ref: null,
+        source_ref: "docs/architecture/ai-collaboration-workspace.md",
+      },
+      {
+        id: "part:user-text",
+        message_id: "message:user-1",
+        kind: "text",
+        ordinal: 1,
+        text: "Map the conversation model.",
+        payload_json: null,
+        file_ref: null,
+        source_ref: null,
+      },
+    ],
+    reactions: [
+      {
+        id: "reaction:ack",
+        message_id: "message:assistant-1",
+        participant_id: "participant:human-owner",
+        reaction: "ack",
+        created_at: "2026-06-27T18:02:00.000Z",
+      },
+    ],
+    read_states: [
+      {
+        conversation_id: "conversation:ai-session-1",
+        participant_id: "participant:human-owner",
+        last_read_message_id: "message:assistant-1",
+        last_read_sequence: 2,
+        updated_at: "2026-06-27T18:02:00.000Z",
+      },
+    ],
+  };
+}
