@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.26.0] - 2026-06-27
+
+### Added
+
+- polish GUI command centre
+
+### Fixed
+
+- center local repo selector label (#25681)
+
 ## [3.25.1] - 2026-06-27
 
 ### Added
