@@ -326,17 +326,21 @@ export const fontSizeOptions: FontSizeOption[] = (["xs", "s", "m", "lg", "xl"] a
   cssSize: `${14 + index}px`,
 }));
 
+function plannedNavItem(id: SurfaceId, label: string, description: string, icon: SurfaceIconName): SurfaceNavItem {
+  return { id, label, description, icon, badge: text.planned };
+}
+
 export const navGroups: SurfaceNavGroup[] = [
   {
     label: text.development,
     mode: "devops",
     items: [
-      { id: "aiSessions", label: text.aiSessions, description: "AI chat and OpenCode sessions", icon: "terminal", badge: text.planned },
-      { id: "workers", label: text.workers, description: "Worker activity and event threads", icon: "users", badge: text.planned },
+      plannedNavItem("aiSessions", text.aiSessions, "AI chat and OpenCode sessions", "terminal"),
+      plannedNavItem("workers", text.workers, "Worker activity and event threads", "users"),
       { id: "git", label: text.localRepos, description: "~/Git explorer", icon: "folder" },
-      { id: "repos", label: text.repos, description: "Unified local and remote repo context", icon: "git", badge: text.planned },
+      plannedNavItem("repos", text.repos, "Unified local and remote repo context", "git"),
       { id: "projects", label: text.projects, description: "repos.json summary", icon: "git" },
-      { id: "deployments", label: text.deployments, description: "Release and deployment activity", icon: "download", badge: text.planned },
+      plannedNavItem("deployments", text.deployments, "Release and deployment activity", "download"),
       { id: "security", label: text.secrets, description: "Secret references and trust boundary", icon: "shield" },
       { id: "aiProviders", label: text.aiProviders, description: "OAuth account pools", icon: "users" },
     ],
@@ -388,8 +392,8 @@ export const navGroups: SurfaceNavGroup[] = [
     label: text.management,
     mode: "comms",
     items: [
-      { id: "channels", label: text.channels, description: "Team channels", icon: "hash", badge: text.planned },
-      { id: "directMessages", label: text.directMessages, description: "Direct and group DMs", icon: "message", badge: text.planned },
+      plannedNavItem("channels", text.channels, "Team channels", "hash"),
+      plannedNavItem("directMessages", text.directMessages, "Direct and group DMs", "message"),
       { id: "emailAccounts", label: text.emailAccounts, description: "Mail account sync", icon: "mail", badge: text.planned },
       { id: "messagingAccounts", label: text.messagingAccounts, description: "Messaging account sync", icon: "message", badge: text.planned },
       { id: "events", label: text.calendars, description: "CalDAV calendar sync", icon: "calendar", badge: text.planned },
