@@ -221,14 +221,14 @@ function ConversationSidebar({ conversationMode, selectedLocalRepoIndex, setConv
       {conversationMode === "people" ? <PeopleChannelList /> : <>
       <button className="new-session-button" disabled title="Creating sessions needs an audited OpenCode write route." type="button">{text.newSession}</button>
       <section className="repo-session-selector" aria-label={text.localRepoSelector}>
-        <button aria-label="Previous local repo" className="selector-step-button" disabled={!canSelectPreviousRepo} onClick={() => setSelectedLocalRepoIndex(Math.max(0, selectedLocalRepoIndex - 1))} type="button"><FiChevronLeft aria-hidden="true" /></button>
-        <label>
-          <span>{text.localRepos}</span>
-          <select onChange={(event) => setSelectedLocalRepoIndex(Number.parseInt(event.currentTarget.value, 10))} value={Math.min(selectedLocalRepoIndex, Math.max(0, repos.length - 1))}>
+        <span className="repo-selector-heading" id="local-repo-selector-label">{text.localRepos}</span>
+        <div className="selector-with-stepper repo-selector-row">
+          <button aria-label="Previous local repo" className="selector-step-button" disabled={!canSelectPreviousRepo} onClick={() => setSelectedLocalRepoIndex(Math.max(0, selectedLocalRepoIndex - 1))} type="button"><FiChevronLeft aria-hidden="true" /></button>
+          <select aria-labelledby="local-repo-selector-label" onChange={(event) => setSelectedLocalRepoIndex(Number.parseInt(event.currentTarget.value, 10))} value={Math.min(selectedLocalRepoIndex, Math.max(0, repos.length - 1))}>
             {repos.length === 0 ? <option value={0}>No local repos</option> : repos.map((repo, index) => <option key={repo.path_ref} value={index}>{repo.name}</option>)}
           </select>
-        </label>
-        <button aria-label="Next local repo" className="selector-step-button" disabled={!canSelectNextRepo} onClick={() => setSelectedLocalRepoIndex(Math.min(repos.length - 1, selectedLocalRepoIndex + 1))} type="button"><FiChevronRight aria-hidden="true" /></button>
+          <button aria-label="Next local repo" className="selector-step-button" disabled={!canSelectNextRepo} onClick={() => setSelectedLocalRepoIndex(Math.min(repos.length - 1, selectedLocalRepoIndex + 1))} type="button"><FiChevronRight aria-hidden="true" /></button>
+        </div>
       </section>
       <section className="sidebar-group session-history-list">
         <h2>{text.sessionHistory}</h2>
