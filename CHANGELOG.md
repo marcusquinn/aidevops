@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.7] - 2026-06-27
+
+### Added
+
+- redesign managed apps UI
+
 ## [3.29.6] - 2026-06-27
 
 ### Added
