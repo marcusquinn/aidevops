@@ -42,6 +42,30 @@ assert_contains() {
 	return 0
 }
 
+assert_occurrence_count() {
+	local test_name="$1"
+	local haystack="$2"
+	local needle="$3"
+	local expected_count="$4"
+	python3 - "$test_name" "$haystack" "$needle" "$expected_count" <<'PY'
+import sys
+
+test_name, haystack, needle, expected_count = sys.argv[1:]
+actual_count = haystack.count(needle)
+if actual_count == int(expected_count):
+    sys.exit(0)
+print(f"{test_name}: expected {expected_count} occurrence(s), got {actual_count}")
+sys.exit(1)
+PY
+	local rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "$test_name" 0
+		return 0
+	fi
+	print_result "$test_name" 1 "occurrence count assertion failed"
+	return 0
+}
+
 file_text() {
 	local path="$1"
 	python3 - "$path" <<'PY'
@@ -72,6 +96,9 @@ test_setup_stage_contract() {
 	assert_contains "gui desktop app dir can be configured" "$text" "AIDEVOPS_GUI_DESKTOP_APP_DIR"
 	assert_contains "existing gui desktop app refreshes during update" "$text" "Refreshing existing macOS"
 	assert_contains "gui desktop scoped stage runs installer" "$text" "_time_step \"\$SETUP_STAGE_GUI_DESKTOP\" setup_gui_desktop_app"
+	assert_contains "agents scoped stage registers opencode plugin" "$text" "_time_step \"setup_opencode_plugins\" setup_opencode_plugins"
+	assert_occurrence_count "scoped and noninteractive setup register opencode plugin" "$text" \
+		"_time_step \"setup_opencode_plugins\" setup_opencode_plugins" 2
 	assert_contains "unknown stages print actionable help" "$text" "Unknown setup stage/scope"
 	return 0
 }

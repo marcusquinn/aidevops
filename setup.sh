@@ -1205,6 +1205,7 @@ _setup_run_scoped_stage() {
 		;;
 	"$SETUP_STAGE_AGENTS")
 		_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents
+		_time_step "setup_opencode_plugins" setup_opencode_plugins
 		_time_step "_deploy_hotfix_config" _deploy_hotfix_config
 		;;
 	"$SETUP_STAGE_HOOKS")
@@ -1264,6 +1265,7 @@ _setup_run_non_interactive() {
 	_time_step "$SETUP_STAGE_OPENCODE" setup_opencode_cli
 	_time_step "validate_opencode_config" validate_opencode_config
 	_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents
+	_time_step "setup_opencode_plugins" setup_opencode_plugins
 	_time_step "_setup_install_pulse_plist_early" _setup_install_pulse_plist_early
 	_time_step "_deploy_hotfix_config" _deploy_hotfix_config
 	_time_step "setup_opencode_desktop_launcher" setup_opencode_desktop_launcher
