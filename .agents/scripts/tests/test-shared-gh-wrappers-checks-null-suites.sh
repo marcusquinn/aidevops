@@ -64,6 +64,8 @@ assert_status() {
 }
 
 main() {
+	assert_status "missing check_suites defaults to none" "none" '{}'
+	assert_status "null check_suites defaults to none" "none" '{"check_suites":null}'
 	assert_status "null queued app suites ignored when actions passed" "PASS" '{"check_suites":[{"app":{"slug":"github-actions"},"status":"completed","conclusion":"success"},{"app":{"slug":"coderabbitai"},"status":"queued","conclusion":null}]}'
 	assert_status "all null suites mean no active checks" "none" '{"check_suites":[{"app":{"slug":"coderabbitai"},"status":"queued","conclusion":null}]}'
 	assert_status "terminal failure still fails" "FAIL" '{"check_suites":[{"app":{"slug":"github-actions"},"status":"completed","conclusion":"success"},{"app":{"slug":"github-actions"},"status":"completed","conclusion":"failure"},{"app":{"slug":"coderabbitai"},"status":"queued","conclusion":null}]}'
