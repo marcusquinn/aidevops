@@ -206,11 +206,13 @@ describe("dashboard shell", () => {
 
   test("ships critical loading styles before React hydrates", () => {
     const html = readFileSync("packages/gui-web/index.html", "utf8");
+    const css = readFileSync("packages/gui-web/src/styles.css", "utf8");
 
     expect(html).toContain("loading-brand-overlay");
     expect(html).toContain("loading-cursor-blink");
     expect(html).toContain("aidevops-gui-theme");
     expect(html).toContain("app-loading-shell");
+    expect(css).toContain("font-family: var(--font-family-app);");
   });
 
   test("maps command palette single-key shortcuts", () => {
