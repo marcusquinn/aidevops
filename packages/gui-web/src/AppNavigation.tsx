@@ -221,14 +221,14 @@ function ConversationSidebar({ conversationMode, selectedLocalRepoIndex, setConv
       {conversationMode === "people" ? <PeopleChannelList /> : <>
       <button className="new-session-button" disabled title="Creating sessions needs an audited OpenCode write route." type="button">{text.newSession}</button>
       <section className="repo-session-selector" aria-label={text.localRepoSelector}>
-        <button aria-label="Previous local repo" disabled={!canSelectPreviousRepo} onClick={() => setSelectedLocalRepoIndex(Math.max(0, selectedLocalRepoIndex - 1))} type="button"><FiChevronLeft /></button>
+        <button aria-label="Previous local repo" className="selector-step-button" disabled={!canSelectPreviousRepo} onClick={() => setSelectedLocalRepoIndex(Math.max(0, selectedLocalRepoIndex - 1))} type="button"><FiChevronLeft aria-hidden="true" /></button>
         <label>
           <span>{text.localRepos}</span>
           <select onChange={(event) => setSelectedLocalRepoIndex(Number.parseInt(event.currentTarget.value, 10))} value={Math.min(selectedLocalRepoIndex, Math.max(0, repos.length - 1))}>
             {repos.length === 0 ? <option value={0}>No local repos</option> : repos.map((repo, index) => <option key={repo.path_ref} value={index}>{repo.name}</option>)}
           </select>
         </label>
-        <button aria-label="Next local repo" disabled={!canSelectNextRepo} onClick={() => setSelectedLocalRepoIndex(Math.min(repos.length - 1, selectedLocalRepoIndex + 1))} type="button"><FiChevronRight /></button>
+        <button aria-label="Next local repo" className="selector-step-button" disabled={!canSelectNextRepo} onClick={() => setSelectedLocalRepoIndex(Math.min(repos.length - 1, selectedLocalRepoIndex + 1))} type="button"><FiChevronRight aria-hidden="true" /></button>
       </section>
       <section className="sidebar-group session-history-list">
         <h2>{text.sessionHistory}</h2>
@@ -386,8 +386,20 @@ function SidebarFooter({ accentHue, fontPreference, fontSizePreference, setAccen
   const [appearanceOpen, setAppearanceOpen] = useState(true);
   const AppearanceChevron = appearanceOpen ? FiChevronDown : FiChevronUp;
   const selectedFontFamily = fontFamilyForPreference(fontPreference);
+  const fontIndex = Math.max(0, fontOptions.findIndex((option) => option.value === fontPreference));
   const fontSizeIndex = Math.max(0, fontSizeOptions.findIndex((option) => option.value === fontSizePreference));
+  const canSelectPreviousFont = fontIndex > 0;
+  const canSelectNextFont = fontIndex < fontOptions.length - 1;
   const [hueInput, setHueInput] = useState(() => String(accentHue));
+  const setFontByIndex = (index: number) => {
+    const nextFont = fontOptions[index]?.value;
+
+    if (nextFont === undefined) {
+      return;
+    }
+
+    setFontPreference(nextFont);
+  };
   const updateAccentHue = (value: number) => {
     if (!Number.isFinite(value)) {
       return;
@@ -486,20 +498,25 @@ function SidebarFooter({ accentHue, fontPreference, fontSizePreference, setAccen
               {fontSizeOptions.map((option) => <span className={option.value === fontSizePreference ? "active" : ""} key={option.value}>{option.label}</span>)}
             </div>
           </div>
-          <label className="font-control">
-            <span>{text.font}</span>
-            <select
-              onChange={(event) => setFontPreference(event.currentTarget.value as FontPreference)}
-              style={{ fontFamily: selectedFontFamily }}
-              value={fontPreference}
-            >
-              {fontOptions.map((option) => (
-                <option key={option.value} style={{ fontFamily: option.fontFamily }} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="font-control">
+            <span id="appearance-font-selector-label">{text.font}</span>
+            <div className="selector-with-stepper font-selector-row">
+              <button aria-label="Previous font" className="selector-step-button" disabled={!canSelectPreviousFont} onClick={() => setFontByIndex(fontIndex - 1)} type="button"><FiChevronLeft aria-hidden="true" /></button>
+              <select
+                aria-labelledby="appearance-font-selector-label"
+                onChange={(event) => setFontPreference(event.currentTarget.value as FontPreference)}
+                style={{ fontFamily: selectedFontFamily }}
+                value={fontPreference}
+              >
+                {fontOptions.map((option) => (
+                  <option key={option.value} style={{ fontFamily: option.fontFamily }} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <button aria-label="Next font" className="selector-step-button" disabled={!canSelectNextFont} onClick={() => setFontByIndex(fontIndex + 1)} type="button"><FiChevronRight aria-hidden="true" /></button>
+            </div>
+          </div>
         </div>
         : null}
       </section>
