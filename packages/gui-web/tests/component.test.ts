@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { appearanceStorageKeys, readStoredAppearancePreferences } from "../src/App";
 import { hueFromInputValue } from "../src/AppNavigation";
-import { commandPaletteShortcutQuery, orderCommandItemsByRecency, rememberCommandPaletteItemId } from "../src/AppWorkspace";
+import { commandPaletteShortcutQuery, orderCommandItemsByRecency, rememberCommandPaletteItemId } from "../src/CommandPalette";
 import { DEFAULT_ACCENT_HUE, DEFAULT_FONT, DEFAULT_FONT_SIZE, surfaceRecordCounts } from "../src/app-model";
 import { renderDashboardHtml } from "../src/dashboard";
 import { fetchStatus, mockedStatus } from "../src/status-client";
