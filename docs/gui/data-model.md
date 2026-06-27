@@ -292,6 +292,105 @@ Suggested fields:
 Capsules are not bearer tokens for arbitrary shell access. They must be scoped,
 expiring, replay-protected, and enforced locally by the target machine.
 
+### Conversation
+
+A `Conversation` is the shared collaboration container for AI sessions,
+channels, direct messages, group DMs, and worker/event threads.
+
+Suggested fields:
+
+- `id`: stable internal ID.
+- `conversation_type`: `ai_session`, `channel`, `dm`, `group_dm`, or
+  `worker_thread`.
+- `title`: display name or generated session title.
+- `tenant_ref`, `workspace_ref`, `repo_ref`: local ownership and repo scope.
+- `source_ref`: OpenCode session, imported channel, worker run, or local draft
+  source reference.
+- `status`: `active`, `archived`, or `read_only`.
+- `created_at`, `updated_at`.
+
+Conversation scope is mandatory. The GUI must be able to prove that a thread is
+owned by the current local tenant/workspace and, where applicable, bound to the
+selected repo before rendering protected message payloads.
+
+### ConversationParticipant
+
+A `ConversationParticipant` links a human, AI assistant, worker, or system bot to
+a conversation.
+
+Suggested fields:
+
+- `id`: stable internal ID.
+- `conversation_id`.
+- `participant_kind`: `human`, `ai_assistant`, `worker`, or `system_bot`.
+- `display_name`: local display label.
+- `identity_ref`: optional `Identity` reference for human participants.
+- `agent_ref`: optional aidevops/OpenCode agent reference.
+- `worker_ref`: optional worker or task-capsule reference.
+- `membership_state`: `active`, `invited`, `left`, or `removed`.
+- `joined_at`.
+
+Membership gates read access. Removed participants must not be treated as active
+readers even if old messages reference them as historical senders.
+
+### ConversationMessage
+
+A `ConversationMessage` is an ordered envelope in a conversation. Payloads live
+in message parts so AI, event, and GenUI content can share the same timeline.
+
+Suggested fields:
+
+- `id`: stable internal ID.
+- `conversation_id`.
+- `sender_participant_id`: nullable for system-generated markers.
+- `sender_kind`: `human`, `ai_assistant`, `worker`, `system_bot`, or `system`.
+- `sequence`: monotonically increasing conversation-local order.
+- `status`: `draft`, `sent`, `delivered`, `failed`, or `redacted`.
+- `usage_metadata`: nullable provider/model/token/cost reference metadata.
+- `created_at`, `edited_at`.
+
+Message ordering uses `sequence` first and timestamp only as a deterministic
+tie-breaker. Import adapters should preserve source ordering and assign local
+sequence values before rendering.
+
+### ConversationMessagePart
+
+A `ConversationMessagePart` stores the ordered pieces that make up a message.
+
+Suggested fields:
+
+- `id`: stable internal ID.
+- `message_id`.
+- `part_kind`: `text`, `file`, `tool_call`, `source`, `tambo_component`,
+  `approval_prompt`, or `event_marker`.
+- `ordinal`: message-local order.
+- `text`: text payload when applicable.
+- `payload_json`: schema-validated non-secret structured payload.
+- `file_ref`: file/attachment reference, not raw file bytes.
+- `source_ref`: citation, helper, workflow, or evidence reference.
+
+Tambo component payloads are message parts, not separate conversation owners.
+Tool calls, approval prompts, and event markers may carry structured payloads,
+but those payloads must not include secret values, private keys, raw cookies, or
+credential-bearing command output.
+
+### ConversationReaction and read state
+
+`ConversationReaction` and `ConversationReadState` keep social feedback and read
+progress outside message payloads.
+
+Suggested reaction fields:
+
+- `id`, `message_id`, `participant_id`, `reaction`, `created_at`.
+
+Suggested read-state fields:
+
+- `conversation_id`, `participant_id`, `last_read_message_id`,
+  `last_read_sequence`, `updated_at`.
+
+Read state is participant-scoped and conversation-scoped. It must not leak which
+private repo or protected channel another tenant/workspace can see.
+
 ### AuditEvent
 
 An `AuditEvent` records non-secret evidence about reads, writes, confirmations,
