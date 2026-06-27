@@ -31,7 +31,7 @@ Commands:
       Remove expired decrypted cache entries and old transport staging files.
 
 Message classes: human, sync-request, audit-receipt, lock-command,
-unlock-request, unlock-grant-envelope-placeholder.
+  unlock-request, unlock-grant, unlock-grant-envelope-placeholder.
 
 Passphrases, recovery material, and Vault data keys are never accepted through
 arguments, environment variables, logs, issue bodies, chat, or fixtures. Git and
@@ -107,6 +107,7 @@ MESSAGE_CLASSES = {
     "audit-receipt",
     "lock-command",
     "unlock-request",
+    "unlock-grant",
     "unlock-grant-envelope-placeholder",
 }
 
