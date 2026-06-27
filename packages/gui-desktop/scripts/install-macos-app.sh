@@ -913,15 +913,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
           <style>
-            :root { --accent: #b2e969; --border: #2c3324; --panel: #11130f; --muted: #b9c3b0; }
+            :root { --accent: hsl(123 74% 66%); --border: rgb(255 255 255 / 11%); --panel: #151515; --muted: rgb(255 255 255 / 70%); }
             * { box-sizing: border-box; }
-            body { background: radial-gradient(ellipse at top left, rgb(178 233 105 / 10%), transparent 34%), #0a0a0a; color: #f6f7f2; font: 15px -apple-system, BlinkMacSystemFont, sans-serif; height: 100vh; margin: 0; }
+            body { background: radial-gradient(ellipse at top left, hsl(123 74% 66% / 16%), transparent 36%), #111; color: #fff; font: 15px -apple-system, BlinkMacSystemFont, sans-serif; height: 100vh; margin: 0; }
             .message { background: var(--panel); border: 1px solid var(--border); border-radius: 18px; left: 50%; max-width: 560px; padding: 28px; position: fixed; top: 50%; transform: translate(-50%, -50%); }
             h1 { font-size: 22px; margin: 0 0 10px; }
             p { color: #b9c3b0; line-height: 1.5; margin: 0; }
-            code { color: #b2e969; }
+            code { color: var(--accent); }
             .shell { display: grid; gap: 8px; grid-template-columns: 72px 302px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 30px; height: 100vh; padding: 30px 8px 8px; }
-            .brand { align-items: center; backdrop-filter: blur(18px); background: rgb(17 19 15 / 78%); border: 1px solid rgb(178 233 105 / 34%); border-radius: 24px; box-shadow: 0 24px 90px rgb(178 233 105 / 14%), 0 20px 80px rgb(0 0 0 / 35%); display: grid; gap: 10px; justify-items: center; left: 50%; padding: 26px 30px; position: fixed; top: 50%; transform: translate(-50%, -50%); width: min(360px, calc(100vw - 48px)); z-index: 20; }
+            .brand { align-items: center; backdrop-filter: blur(18px); background: rgb(10 10 10 / 78%); border: 1px solid hsl(123 74% 66% / 34%); border-radius: 24px; box-shadow: 0 24px 90px hsl(123 74% 66% / 14%), 0 24px 80px rgb(0 0 0 / 40%); display: grid; gap: 10px; justify-items: center; left: 50%; padding: 26px 30px; position: fixed; top: 50%; transform: translate(-50%, -50%); width: min(360px, calc(100vw - 48px)); z-index: 20; }
             .brand strong { align-items: baseline; display: inline-flex; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: clamp(34px, 7vw, 64px); font-weight: 900; letter-spacing: -0.08em; line-height: .9; }
             .brand span { color: #f6f7f2; font-size: .48em; letter-spacing: -0.04em; margin-right: .18em; }
             .brand b, .brand em { color: var(--accent); font-style: normal; }
@@ -947,7 +947,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             .status { align-items: center; display: flex; gap: 10px; grid-column: 1 / -1; justify-content: center; padding: 0 12px; }
             .status i { border-radius: 999px; height: 8px; width: 8px; }
             .status span { height: 10px; width: 96px; }
-            .rail i, .sidebar b, .sidebar span, .sidebar i, .workspace b, .workspace span, .workspace i, .cards i, .block, .status i, .status span { animation: pulse 1.35s ease-in-out infinite; background: linear-gradient(90deg, #1a2116, rgb(178 233 105 / 18%), #1a2116); background-size: 220% 100%; border: 1px solid var(--border); border-radius: 999px; display: block; }
+            .rail i, .sidebar b, .sidebar span, .sidebar i, .workspace b, .workspace span, .workspace i, .cards i, .block, .status i, .status span { animation: pulse 1.35s ease-in-out infinite; background: linear-gradient(90deg, #202020, hsl(123 74% 66% / 16%), #202020); background-size: 220% 100%; border: 1px solid var(--border); border-radius: 999px; display: block; }
             .block, .cards i { border-radius: 18px; }
             @keyframes pulse { 0% { background-position: 120% 0; opacity: .52; } 50% { opacity: .95; } 100% { background-position: -120% 0; opacity: .52; } }
             @keyframes cursor { 0%, 48% { opacity: 1; } 49%, 100% { opacity: 0; } }

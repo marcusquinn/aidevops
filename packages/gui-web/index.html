@@ -4,19 +4,67 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>aidevops GUI</title>
+    <script>
+      (() => {
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const savedTheme = window.localStorage.getItem("aidevops-gui-theme");
+          const systemDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+          document.documentElement.dataset.theme = savedTheme === "light" || savedTheme === "dark" ? savedTheme : systemDark ? "dark" : "light";
+          if (params.get("desktop") === "macos") {
+            document.documentElement.dataset.desktopShell = "macos";
+          }
+        } catch {
+          document.documentElement.dataset.theme = "dark";
+        }
+      })();
+    </script>
+    <style>
+      :root { --accent-hue: 123; --accent: hsl(var(--accent-hue) 50% 36%); --bg-secondary: #f8f8f8; --border: rgb(0 0 0 / 13%); --surface: #fff; --surface-elevated: #fff; --surface-muted: #f0f0f0; --text-primary: #111; --text-secondary: rgb(17 17 17 / 75%); color-scheme: light; }
+      :root[data-theme="dark"] { --accent: hsl(var(--accent-hue) 74% 66%); --bg-secondary: #111; --border: rgb(255 255 255 / 11%); --surface: #0a0a0a; --surface-elevated: #151515; --surface-muted: #202020; --text-primary: #fff; --text-secondary: rgb(255 255 255 / 70%); color-scheme: dark; }
+      * { box-sizing: border-box; }
+      body { background: radial-gradient(ellipse at top left, color-mix(in srgb, var(--accent) 16%, transparent) 0%, transparent 36%), var(--bg-secondary); color: var(--text-primary); font: 16px Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; margin: 0; }
+      .app-shell { display: grid; gap: 8px; grid-template-columns: 72px 302px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 30px; height: 100vh; padding: 30px 8px 8px; }
+      .loading-brand-overlay { align-items: center; backdrop-filter: blur(18px); background: color-mix(in srgb, var(--surface) 78%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border)); border-radius: 24px; box-shadow: 0 24px 90px color-mix(in srgb, var(--accent) 14%, transparent), 0 24px 80px rgb(0 0 0 / 40%); display: grid; gap: 10px; justify-items: center; left: 50%; padding: 26px 30px; position: fixed; top: 50%; transform: translate(-50%, -50%); width: min(360px, calc(100vw - 48px)); z-index: 20; }
+      .loading-brand-mark { align-items: baseline; display: inline-flex; font-size: clamp(2.1rem, 7vw, 4rem); font-weight: 900; letter-spacing: -0.08em; line-height: 0.9; }
+      .loading-brand-word { color: color-mix(in srgb, var(--text-primary) 86%, var(--accent)); font-size: 0.48em; letter-spacing: -0.04em; margin-right: 0.18em; }
+      .loading-brand-chevron, .loading-brand-cursor { color: var(--accent); }
+      .loading-brand-cursor { animation: loading-cursor-blink 0.95s steps(1, end) infinite; }
+      .loading-brand-status { color: var(--text-secondary); font-size: 0.78rem; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
+      .loading-panel, .desktop-status-bar { background: color-mix(in srgb, var(--surface-elevated) 96%, transparent); border: 1px solid var(--border); border-radius: 18px; box-shadow: inset 0 1px 0 rgb(255 255 255 / 10%); overflow: hidden; }
+      .machine-rail { align-content: start; display: grid; gap: 10px; justify-items: center; padding: 12px 8px; }
+      .app-sidebar { display: grid; grid-template-rows: auto auto 1fr auto; }
+      .app-inset { display: grid; grid-template-rows: auto 1fr; }
+      .loading-sidebar-header, .loading-workspace-header { align-items: center; display: flex; gap: 12px; padding: 16px; }
+      .loading-sidebar-footer, .loading-list, .loading-workspace-body { display: grid; gap: 12px; padding: 16px; }
+      .loading-sidebar-footer { border-top: 1px solid var(--border); margin-top: auto; }
+      .loading-workspace-header { border-bottom: 1px solid var(--border); }
+      .loading-workspace-header .loading-search { flex: 1; }
+      .loading-card-grid { display: grid; gap: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .desktop-status-bar { align-items: center; display: flex; gap: 10px; grid-column: 1 / -1; justify-content: center; padding: 0 12px; }
+      .loading-line, .loading-pill, .loading-orb, .loading-logo, .loading-icon, .loading-search, .loading-circle, .loading-card, .loading-panel-block, .loading-dot { animation: loading-pulse 1.35s ease-in-out infinite; background: linear-gradient(90deg, color-mix(in srgb, var(--surface-muted) 76%, transparent), color-mix(in srgb, var(--accent) 16%, var(--surface-elevated)), color-mix(in srgb, var(--surface-muted) 76%, transparent)); background-size: 220% 100%; border: 1px solid var(--border); display: block; }
+      .loading-line { border-radius: 999px; height: 14px; width: 100%; } .loading-line-wide { width: min(72%, 260px); } .loading-line-short { width: 58%; } .loading-line-hero { height: 34px; width: min(56%, 520px); } .loading-orb { border-radius: 999px; height: 48px; width: 48px; } .loading-logo { border-radius: 11px; height: 44px; width: 44px; } .loading-icon, .loading-circle { border-radius: 999px; height: 34px; width: 34px; } .loading-dot { border-radius: 999px; height: 8px; width: 8px; } .loading-pill, .loading-search { border-radius: 999px; height: 40px; width: 100%; } .loading-card { border-radius: 18px; height: 128px; } .loading-panel-block { border-radius: 20px; height: 240px; } .desktop-status-bar .loading-line { height: 10px; width: 96px; }
+      @keyframes loading-pulse { 0% { background-position: 120% 0; opacity: 0.52; } 50% { opacity: 0.95; } 100% { background-position: -120% 0; opacity: 0.52; } }
+      @keyframes loading-cursor-blink { 0%, 48% { opacity: 1; } 49%, 100% { opacity: 0; } }
+      @media (prefers-reduced-motion: reduce) { .loading-line, .loading-pill, .loading-orb, .loading-logo, .loading-icon, .loading-search, .loading-circle, .loading-card, .loading-panel-block, .loading-dot, .loading-brand-cursor { animation: none; } }
+    </style>
   </head>
   <body>
     <div id="root">
-      <main class="app-shell">
-        <aside class="sidebar" aria-label="Dashboard navigation">
-          <div class="brand-mark">aidevops</div>
-          <button class="nav-item active" type="button"><span>Overview</span><small>Loading local dashboard.</small></button>
+      <main class="app-shell app-loading-shell" aria-busy="true" aria-label="Loading aidevops interface">
+        <section class="loading-brand-overlay" aria-label="Starting aidevops"><span class="loading-brand-mark" aria-hidden="true"><span class="loading-brand-word">aidevops</span><span class="loading-brand-chevron">&gt;</span><span class="loading-brand-cursor">_</span></span><span class="loading-brand-status">Preparing local GUI</span></section>
+        <aside class="machine-rail loading-panel" aria-label="machine rail"><span class="loading-orb"></span><span class="loading-orb"></span><span class="loading-orb"></span><span class="loading-orb"></span><span class="loading-orb"></span><span class="loading-orb"></span></aside>
+        <aside class="app-sidebar loading-panel" aria-label="sidebar">
+          <div class="loading-sidebar-header"><span class="loading-logo"></span><span class="loading-line loading-line-wide"></span></div>
+          <span class="loading-pill"></span>
+          <div class="loading-list"><span class="loading-line loading-line-short"></span><span class="loading-line"></span><span class="loading-line"></span><span class="loading-line loading-line-short"></span><span class="loading-line"></span><span class="loading-line"></span><span class="loading-line loading-line-short"></span><span class="loading-line"></span></div>
+          <div class="loading-sidebar-footer"><span class="loading-pill"></span><span class="loading-line"></span></div>
         </aside>
-        <section class="content" aria-label="aidevops status">
-          <p class="eyebrow">Read-only local dashboard scaffold</p>
-          <h1>aidevops control plane</h1>
-          <p class="lede">Loading the local GUI. If this message stays visible, refresh the page or check ~/Library/Logs/aidevops-gui/web.log.</p>
+        <section class="app-inset loading-panel" aria-label="workspace">
+          <div class="loading-workspace-header"><span class="loading-icon"></span><span class="loading-line loading-line-wide"></span><span class="loading-search"></span><span class="loading-circle"></span><span class="loading-circle"></span></div>
+          <div class="loading-workspace-body"><span class="loading-line loading-line-hero"></span><div class="loading-card-grid"><span class="loading-card"></span><span class="loading-card"></span><span class="loading-card"></span><span class="loading-card"></span><span class="loading-card"></span><span class="loading-card"></span></div><span class="loading-panel-block"></span></div>
         </section>
+        <div class="desktop-status-bar" aria-label="status bar"><span class="loading-dot"></span><span class="loading-line"></span><span class="loading-line"></span><span class="loading-line"></span><span class="loading-line"></span></div>
       </main>
     </div>
     <script type="module" src="/src/main.tsx"></script>

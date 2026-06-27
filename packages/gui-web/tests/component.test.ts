@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { appearanceStorageKeys, clampSidebarWidth, loadingBrandGlyph, loadingSkeletonPanelLabels, readStoredAppearancePreferences } from "../src/App";
 import { hueFromInputValue } from "../src/AppNavigation";
 import { commandPaletteMatches, commandPaletteShortcutEntries, commandPaletteShortcutQuery, orderCommandItemsByRecency, rememberCommandPaletteItemId } from "../src/CommandPalette";
@@ -165,6 +166,15 @@ describe("dashboard shell", () => {
   test("keeps the loading skeleton aligned to the shell landmarks", () => {
     expect(loadingSkeletonPanelLabels).toEqual(["machine rail", "sidebar", "workspace", "status bar"]);
     expect(loadingBrandGlyph).toBe(">_");
+  });
+
+  test("ships critical loading styles before React hydrates", () => {
+    const html = readFileSync("packages/gui-web/index.html", "utf8");
+
+    expect(html).toContain("loading-brand-overlay");
+    expect(html).toContain("loading-cursor-blink");
+    expect(html).toContain("aidevops-gui-theme");
+    expect(html).toContain("app-loading-shell");
   });
 
   test("maps command palette single-key shortcuts", () => {
