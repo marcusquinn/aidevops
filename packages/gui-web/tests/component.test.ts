@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { appearanceStorageKeys, readStoredAppearancePreferences } from "../src/App";
+import { appearanceStorageKeys, clampSidebarWidth, readStoredAppearancePreferences } from "../src/App";
 import { hueFromInputValue } from "../src/AppNavigation";
 import { commandPaletteMatches, commandPaletteShortcutEntries, commandPaletteShortcutQuery, orderCommandItemsByRecency, rememberCommandPaletteItemId } from "../src/CommandPalette";
 import { DEFAULT_ACCENT_HUE, DEFAULT_FONT, DEFAULT_FONT_SIZE, surfaceRecordCounts } from "../src/app-model";
@@ -147,6 +147,12 @@ describe("dashboard shell", () => {
     expect(hueFromInputValue("1e")).toBeNull();
   });
 
+  test("clamps sidebar width to compact and wide bounds", () => {
+    expect(clampSidebarWidth(120)).toBe(248);
+    expect(clampSidebarWidth(360)).toBe(360);
+    expect(clampSidebarWidth(800)).toBe(520);
+  });
+
   test("maps command palette single-key shortcuts", () => {
     for (const [shortcut, query] of commandPaletteShortcutEntries) {
       expect(commandPaletteShortcutQuery(keyEvent(shortcut))).toBe(query);
@@ -179,6 +185,18 @@ describe("dashboard shell", () => {
     expect(commandPaletteMatches(items, "?", []).map((item) => item.tag)).toEqual(["Help"]);
     expect(commandPaletteMatches(items, ":", []).map((item) => item.tag)).toEqual(["Emoji"]);
     expect(commandPaletteMatches(items, "^", []).map((item) => item.tag)).toEqual(["Link"]);
+  });
+
+  test("filters scoped command palette queries after the shortcut symbol", () => {
+    const items = [
+      paletteItem("session-ui", "_UI command palette", "AI session"),
+      paletteItem("session-pulse", "_Pulse diagnostics", "AI session"),
+      paletteItem("channel-devops", "#devops", "Channel"),
+      paletteItem("channel-comms", "#comms", "Channel"),
+    ];
+
+    expect(commandPaletteMatches(items, "_pulse", []).map((item) => item.id)).toEqual(["session-pulse"]);
+    expect(commandPaletteMatches(items, "#comm", []).map((item) => item.id)).toEqual(["channel-comms"]);
   });
 
   test("orders command palette recent selections first", () => {

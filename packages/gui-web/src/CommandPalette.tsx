@@ -15,7 +15,9 @@ interface CommandPaletteItem {
   iconGlyph?: string;
   id: string;
   label: string;
+  repoPathRef?: string;
   searchText: string;
+  sessionId?: string;
   shellMode?: ShellMode;
   surface: SurfaceId;
   tag: string;
@@ -61,6 +63,8 @@ const plannedChannelItems: CommandPaletteItem[] = [
 
 export interface CommandPaletteSelection {
   conversationMode?: ConversationMode;
+  repoPathRef?: string;
+  sessionId?: string;
   shellMode?: ShellMode;
   surface: SurfaceId;
 }
@@ -80,7 +84,7 @@ export function CommandPalette({ activeSurface, close, initialQuery, openItem, s
       if (item.action === "copy-current-link") {
         void copyCurrentSurfaceLink(item.surface);
       }
-      openItem({ conversationMode: item.conversationMode, shellMode: item.shellMode, surface: item.surface });
+      openItem({ conversationMode: item.conversationMode, repoPathRef: item.repoPathRef, sessionId: item.sessionId, shellMode: item.shellMode, surface: item.surface });
     }
   }, [openItem, recentIds]);
 
@@ -165,13 +169,14 @@ export function commandPaletteMatches(items: CommandPaletteItem[], query: string
   const normalizedQuery = query.trim().toLowerCase();
   const prefix = normalizedQuery.charAt(0);
   const scopedItems = itemsForCommandPrefix(items, prefix);
+  const filterQuery = commandPaletteShortcutEntries.some(([shortcut]) => shortcut === prefix) ? normalizedQuery.slice(1).trim() : normalizedQuery;
 
   if (normalizedQuery.length === 0 || commandPaletteShortcutEntries.some(([shortcut]) => shortcut === normalizedQuery)) {
     return orderCommandItemsByRecency(scopedItems, recentIds).slice(0, 8);
   }
 
   return scopedItems
-    .filter((item) => item.searchText.toLowerCase().includes(normalizedQuery))
+    .filter((item) => item.searchText.toLowerCase().includes(filterQuery))
     .slice(0, 8);
 }
 
@@ -197,7 +202,9 @@ function commandPaletteItems(status: GuiStatusData, activeSurface: SurfaceId): C
     iconGlyph: "_",
     id: `session-${session.id_ref}`,
     label: `_${session.title}`,
+    repoPathRef: session.repo_path_ref,
     searchText: `_${session.title} ${session.title} ${session.repo_path_ref} ${session.agent} ${session.model}`,
+    sessionId: session.id_ref,
     surface: "git",
     shellMode: "sessions",
     conversationMode: "ai",

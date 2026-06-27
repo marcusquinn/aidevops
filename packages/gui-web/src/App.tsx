@@ -1,5 +1,5 @@
 import type { GuiResponseEnvelope, GuiStatusData } from "@aidevops/gui-shared";
-import { type ReactElement, useEffect, useState } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactElement, useEffect, useState } from "react";
 import { MachineRail, Sidebar } from "./AppNavigation";
 import { Workspace } from "./AppWorkspace";
 import type { ConversationMode, FontPreference, FontSizePreference, ShellMode, SurfaceId, ThemePreference } from "./app-model";
@@ -32,8 +32,13 @@ export const appearanceStorageKeys = {
   machineRail: "aidevops-gui-show-machine-rail",
   showBorders: "aidevops-gui-show-borders",
   showNavCounts: "aidevops-gui-show-nav-counts",
+  sidebarWidth: "aidevops-gui-sidebar-width",
   theme: "aidevops-gui-theme",
 } as const;
+
+const defaultSidebarWidth = 302;
+const minSidebarWidth = 248;
+const maxSidebarWidth = 520;
 
 export interface StoredAppearancePreferences {
   accentHue: number;
@@ -76,6 +81,7 @@ export function App(): ReactElement {
   const [shellMode, setShellMode] = useState<ShellMode>("devices");
   const [conversationMode, setConversationMode] = useState<ConversationMode>("ai");
   const [selectedLocalRepoIndex, setSelectedLocalRepoIndex] = useState(0);
+  const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>();
   const [systemTheme, setSystemTheme] = useState<"light" | "dark">("light");
   const resolvedTheme = themePreference === "system" ? systemTheme : themePreference;
   const activeSurface: SurfaceId = navigation.entries[navigation.index] ?? "overview";
@@ -184,12 +190,14 @@ export function App(): ReactElement {
         fontSizePreference={fontSizePreference}
         fontPreference={fontPreference}
         selectedLocalRepoIndex={selectedLocalRepoIndex}
+        selectedSessionId={selectedSessionId}
         setAccentHue={setAccentHue}
         setActiveSurface={setActiveSurface}
         setConversationMode={setConversationMode}
         setFontSizePreference={setFontSizePreference}
         setFontPreference={setFontPreference}
         setSelectedLocalRepoIndex={setSelectedLocalRepoIndex}
+        setSelectedSessionId={setSelectedSessionId}
         setShellMode={setShellMode}
         setShowBorders={setShowBorders}
         setShowNavCounts={setShowNavCounts}
@@ -200,6 +208,7 @@ export function App(): ReactElement {
         status={status.data}
         themePreference={themePreference}
       />
+      <SidebarResizeHandle />
       <Workspace
         activeItem={activeItem}
         activeSectionLabel={activeSectionLabel}
@@ -211,8 +220,11 @@ export function App(): ReactElement {
         goBack={goBack}
         goForward={goForward}
         selectedLocalRepoIndex={selectedLocalRepoIndex}
+        selectedSessionId={selectedSessionId}
         setActiveSurface={setActiveSurface}
         setConversationMode={setConversationMode}
+        setSelectedLocalRepoIndex={setSelectedLocalRepoIndex}
+        setSelectedSessionId={setSelectedSessionId}
         setShellMode={setShellMode}
         shellMode={shellMode}
         status={status.data}
@@ -220,6 +232,49 @@ export function App(): ReactElement {
       <DesktopStatusBar status={status.data} />
     </main>
   );
+}
+
+export function clampSidebarWidth(width: number): number {
+  return Math.min(maxSidebarWidth, Math.max(minSidebarWidth, Math.round(width)));
+}
+
+function SidebarResizeHandle(): ReactElement {
+  const [sidebarWidth, setSidebarWidth] = useState(() => readStoredSidebarWidth());
+
+  useEffect(() => {
+    document.documentElement.style.setProperty("--sidebar-width", `${sidebarWidth}px`);
+    persistAppearancePreference(appearanceStorageKeys.sidebarWidth, String(sidebarWidth));
+  }, [sidebarWidth]);
+
+  const startSidebarResize = (event: ReactMouseEvent<HTMLElement>) => {
+    const startX = event.clientX;
+    const startWidth = sidebarWidth;
+    const resizeSidebar = (moveEvent: MouseEvent) => setSidebarWidth(clampSidebarWidth(startWidth + moveEvent.clientX - startX));
+    const stopResize = () => {
+      document.documentElement.classList.remove("resizing-sidebar");
+      window.removeEventListener("mousemove", resizeSidebar);
+      window.removeEventListener("mouseup", stopResize);
+    };
+
+    event.preventDefault();
+    document.documentElement.classList.add("resizing-sidebar");
+    window.addEventListener("mousemove", resizeSidebar);
+    window.addEventListener("mouseup", stopResize);
+  };
+
+  const resizeSidebarWithKeyboard = (event: ReactKeyboardEvent<HTMLElement>) => {
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+      setSidebarWidth((current) => clampSidebarWidth(current + (event.key === "ArrowRight" ? 16 : -16)));
+    }
+  };
+
+  return <hr aria-label="Resize sidebar" aria-orientation="vertical" aria-valuemax={maxSidebarWidth} aria-valuemin={minSidebarWidth} aria-valuenow={sidebarWidth} className="sidebar-resize-handle" onKeyDown={resizeSidebarWithKeyboard} onMouseDown={startSidebarResize} tabIndex={0} />;
+}
+
+function readStoredSidebarWidth(storage: ReadableAppearanceStorage | undefined = browserLocalStorage()): number {
+  const savedWidth = Number.parseInt(storage?.getItem(appearanceStorageKeys.sidebarWidth) ?? "", 10);
+  return Number.isFinite(savedWidth) ? clampSidebarWidth(savedWidth) : defaultSidebarWidth;
 }
 
 function sendNativeAccentHue(hue: number): void {
