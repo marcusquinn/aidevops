@@ -1352,6 +1352,38 @@ code {
   padding: 14px;
 }
 
+.shortcut-list {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.shortcut-list li {
+  align-items: center;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+}
+
+.shortcut-list kbd {
+  align-items: center;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--accent);
+  display: inline-flex;
+  font-weight: 900;
+  justify-content: center;
+  min-width: 34px;
+  padding: 4px 8px;
+}
+
 .notification-list span {
   color: var(--text-muted);
 }

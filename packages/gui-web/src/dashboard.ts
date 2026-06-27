@@ -38,7 +38,7 @@ export function renderDashboardHtml(status: GuiResponseEnvelope<GuiStatusData>):
     .join("");
   const navSections = [
     { heading: "Development", items: ["Local Repos", "Remote Repos", "Secrets", "AI Providers"] },
-    { heading: "Account", items: ["Settings", "Notifications", "Admin"] },
+    { heading: "Account", items: ["Help", "Settings", "Notifications", "Admin"] },
     { heading: "Operations", items: ["Dashboard", "Vault", "Agents file explorer", "Config", "Local Setup", "Routines"] },
     { heading: "Infrastructure", items: ["Devices", "VPNs & Proxies", "Apps", "Installation", "Registrars", "Hosts", "Servers"] },
     { heading: "Identities", items: ["Brands", "Domains", "Personas"] },

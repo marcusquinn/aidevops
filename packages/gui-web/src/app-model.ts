@@ -32,6 +32,8 @@ export const surfaceIconNames = {
   globe: true,
   grid: true,
   hardDrive: true,
+  hash: true,
+  help: true,
   link: true,
   list: true,
   lock: true,
@@ -48,6 +50,7 @@ export const surfaceIconNames = {
 export type SurfaceIconName = keyof typeof surfaceIconNames;
 export const surfaceIds = [
   "overview",
+  "help",
   "settings",
   "notifications",
   "admin",
@@ -147,6 +150,8 @@ export const text = {
   configIntro: "Read-only file explorer for ~/.config/aidevops. Contents stay hidden until redaction rules land.",
   copyPath: "Copy path",
   dashboard: "Dashboard",
+  help: "Help",
+  helpIntro: "Command shortcuts, navigation hints, and aidevops workflow guidance will collect here.",
   domains: "Domains",
   domainsIntro: "Draft domain ownership inventory across providers.",
   draftOnly: "Local browser draft only. Saving requires a write-action manifest, confirmation, and audit trail.",
@@ -396,6 +401,7 @@ export const dashboardNavItem: SurfaceNavItem = {
 };
 
 export const utilityNavItems: SurfaceNavItem[] = [
+  { id: "help", label: text.help, description: "Shortcuts, command palette symbols, and support", icon: "help", badge: text.planned },
   { id: "settings", label: "Settings", description: "Profile, login, notifications, language, and theme preferences", icon: "settings", badge: text.planned },
   { id: "notifications", label: "Notifications", description: "Notification inbox and delivery preferences", icon: "message", badge: text.planned },
   { id: "admin", label: "Admin", description: "Hosted administration controls", icon: "shield", badge: text.planned },

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { appearanceStorageKeys, readStoredAppearancePreferences } from "../src/App";
 import { hueFromInputValue } from "../src/AppNavigation";
-import { commandPaletteShortcutQuery, orderCommandItemsByRecency, rememberCommandPaletteItemId } from "../src/CommandPalette";
+import { commandPaletteMatches, commandPaletteShortcutEntries, commandPaletteShortcutQuery, orderCommandItemsByRecency, rememberCommandPaletteItemId } from "../src/CommandPalette";
 import { DEFAULT_ACCENT_HUE, DEFAULT_FONT, DEFAULT_FONT_SIZE, surfaceRecordCounts } from "../src/app-model";
 import { renderDashboardHtml } from "../src/dashboard";
 import { fetchStatus, mockedStatus } from "../src/status-client";
@@ -46,6 +46,7 @@ describe("dashboard shell", () => {
     expect(html).toContain("command palette");
     expect(html).toContain("AI Assistant panel");
     expect(html).toContain("profile menu");
+    expect(html).toContain("Help");
     expect(html).toContain("Notifications");
     expect(html).toContain("Admin");
     expect(html).toContain("editable Hue");
@@ -147,11 +148,37 @@ describe("dashboard shell", () => {
   });
 
   test("maps command palette single-key shortcuts", () => {
-    expect(commandPaletteShortcutQuery(keyEvent("/"))).toBe("/");
-    expect(commandPaletteShortcutQuery(keyEvent("@"))).toBe("@");
-    expect(commandPaletteShortcutQuery(keyEvent("#"))).toBe("#");
-    expect(commandPaletteShortcutQuery(keyEvent("."))).toBe("");
+    for (const [shortcut, query] of commandPaletteShortcutEntries) {
+      expect(commandPaletteShortcutQuery(keyEvent(shortcut))).toBe(query);
+    }
     expect(commandPaletteShortcutQuery({ ...keyEvent("/"), metaKey: true })).toBeUndefined();
+  });
+
+  test("scopes command palette symbol prefixes", () => {
+    const items = [
+      paletteItem("session-1", "_session", "AI session"),
+      paletteItem("channel-1", "#devops", "Channel"),
+      paletteItem("surface-agents", "Agents", "Agent"),
+      paletteItem("surface-servers", "Servers", "Infrastructure"),
+      paletteItem("surface-help", "Help", "Help"),
+      paletteItem("terminal-new-command", "> command", "Terminal"),
+      paletteItem("add-secret", "+secret", "Add"),
+      paletteItem("remove-secret", "-secret", "Remove"),
+      paletteItem("slash-add-secret", "/add-secret", "Command"),
+      paletteItem("surface-comms", "Messaging", "Comms"),
+      paletteItem("surface-settings", "Settings", "Settings"),
+      paletteItem("surface-notifications", "Notifications", "Notifications"),
+      paletteItem("surface-security", "Secrets", "Secret"),
+      paletteItem("emoji-check", ":white_check_mark:", "Emoji"),
+      paletteItem("copy-current-link", "^ copy link", "Link"),
+    ];
+
+    expect(commandPaletteMatches(items, "#", []).map((item) => item.tag)).toEqual(["Channel"]);
+    expect(commandPaletteMatches(items, "_", []).map((item) => item.tag)).toEqual(["AI session"]);
+    expect(commandPaletteMatches(items, "&", []).map((item) => item.tag)).toEqual(["Infrastructure"]);
+    expect(commandPaletteMatches(items, "?", []).map((item) => item.tag)).toEqual(["Help"]);
+    expect(commandPaletteMatches(items, ":", []).map((item) => item.tag)).toEqual(["Emoji"]);
+    expect(commandPaletteMatches(items, "^", []).map((item) => item.tag)).toEqual(["Link"]);
   });
 
   test("orders command palette recent selections first", () => {
@@ -165,6 +192,10 @@ describe("dashboard shell", () => {
 
 function keyEvent(key: string): Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey"> {
   return { altKey: false, ctrlKey: false, key, metaKey: false };
+}
+
+function paletteItem(id: string, label: string, tag: string) {
+  return { description: label, icon: "grid" as const, id, label, searchText: label, surface: "overview" as const, tag };
 }
 
 function storageFrom(values: Record<string, string>): Pick<Storage, "getItem"> {

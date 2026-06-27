@@ -212,6 +212,8 @@ export function App(): ReactElement {
         goForward={goForward}
         selectedLocalRepoIndex={selectedLocalRepoIndex}
         setActiveSurface={setActiveSurface}
+        setConversationMode={setConversationMode}
+        setShellMode={setShellMode}
         shellMode={shellMode}
         status={status.data}
       />
