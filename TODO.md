@@ -1018,7 +1018,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18010 vault: add security validation suite, crash drills, destructive-migration gates, and release criteria #architecture #auto-dispatch #ci #feat #security #security-review #testing blocked-by:t17999,t18001,t18004,t18006,t18007,t18009 tier:thinking ~6h ref:GH#25547 logged:2026-06-26 -> [todo/tasks/t18010-brief.md]
 
-- [ ] t18012 Add aidevops app chat session navigation ref:GH#25636
+- [x] t18012 Add aidevops app chat session navigation ref:GH#25636 pr:#25637 completed:2026-06-27
 
 ## In Progress
 
@@ -4311,4 +4311,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18011 Update setup/update to refresh the macOS aidevops GUI app bundle after releases #auto-dispatch ref:GH#25590 pr:#25591 completed:2026-06-26
 
-- [ ] t18012 Add aidevops app chat session navigation #bug ref:GH#25636
+- [x] t18012 Add aidevops app chat session navigation #bug ref:GH#25636 pr:#25637 completed:2026-06-27
