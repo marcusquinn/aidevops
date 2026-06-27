@@ -10,6 +10,9 @@
 # Update versions deliberately via requirements-lock.txt, not automatically.
 
 # Core DSPy packages (dspy-ai was a legacy alias, removed in favour of dspy)
+# SECURITY: dspy currently resolves diskcache transitively. There is no patched
+# diskcache release yet; keep the package out of direct requirements so Dependabot
+# can reduce the direct alert while requirements-lock.txt retains the audited pin.
 dspy==3.1.0b1
 
 # Core dependencies for AI/ML workflows
@@ -21,7 +24,6 @@ requests==2.33.0
 
 # Data processing and storage
 datasets==4.4.1
-diskcache==5.6.3  # KNOWN: CVE-2025-69872 — no patch available yet, monitor for update
 joblib==1.5.2
 
 # Optimization and experimentation
