@@ -52,6 +52,7 @@ _PULSE_MERGE_PROCESS_LOADED=1
 : "${LOGFILE:=${HOME}/.aidevops/logs/pulse.log}"
 : "${STOP_FLAG:=${HOME}/.aidevops/logs/pulse-session.stop}"
 : "${PULSE_MERGE_BATCH_LIMIT:=50}"
+: "${PULSE_MERGE_CHECKPOINT_FILE:=${HOME}/.aidevops/logs/pulse-merge-checkpoint}"
 
 #######################################
 # Low-overhead timing helpers for per-repo merge summaries.
@@ -361,6 +362,43 @@ _pmp_log_pr_backlog_counts() {
 	return 0
 }
 
+_pmp_write_merge_checkpoint() {
+	local checkpoint_file="$1"
+	local repo_slug="$2"
+	local checkpoint_dir=""
+
+	[[ -n "$checkpoint_file" && -n "$repo_slug" ]] || return 0
+	checkpoint_dir="${checkpoint_file%/*}"
+	if [[ -n "$checkpoint_dir" && "$checkpoint_dir" != "$checkpoint_file" ]]; then
+		mkdir -p "$checkpoint_dir" 2>/dev/null || return 0
+	fi
+	printf '%s\n' "$repo_slug" >"$checkpoint_file" 2>/dev/null || true
+	return 0
+}
+
+_pmp_clear_merge_checkpoint() {
+	local checkpoint_file="$1"
+
+	[[ -n "$checkpoint_file" ]] || return 0
+	rm -f "$checkpoint_file" 2>/dev/null || true
+	return 0
+}
+
+_pmp_repo_rows_contain_slug() {
+	local repo_rows="$1"
+	local checkpoint_slug="$2"
+	local row_slug="" row_path=""
+
+	[[ -n "$repo_rows" && -n "$checkpoint_slug" ]] || return 1
+	while IFS='|' read -r row_slug row_path; do
+		[[ -n "$row_slug" ]] || continue
+		if [[ "$row_slug" == "$checkpoint_slug" ]]; then
+			return 0
+		fi
+	done <<<"$repo_rows"
+	return 1
+}
+
 merge_ready_prs_all_repos() {
 	# Initialise required env vars with ${VAR:-default} guards so this
 	# function can be called standalone from pulse-merge-routine.sh (t2862)
@@ -369,6 +407,7 @@ merge_ready_prs_all_repos() {
 	local _mr_stop_flag="${STOP_FLAG:-${HOME}/.aidevops/logs/pulse-session.stop}"
 	local _mr_repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 	local _mr_logfile="${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}"
+	local _mr_checkpoint_file="${PULSE_MERGE_CHECKPOINT_FILE:-${HOME}/.aidevops/logs/pulse-merge-checkpoint}"
 	PULSE_MERGE_BATCH_LIMIT="${PULSE_MERGE_BATCH_LIMIT:-50}"
 	local _mr_pass_start
 	_mr_pass_start=$(_pmp_now_epoch)
@@ -388,12 +427,40 @@ merge_ready_prs_all_repos() {
 	local total_failed=0
 
 	local total_eligible_unmerged=0
+	local _mr_repo_rows=""
+	local _mr_checkpoint=""
+	local _mr_resume_pending=0
+	local _mr_resumed_from_checkpoint=0
+	local _mr_completed_all=1
+
+	_mr_repo_rows=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | [.slug, .path] | join("|")' "$_mr_repos_json" 2>/dev/null) || _mr_repo_rows=""
+	if [[ -n "$_mr_checkpoint_file" && -f "$_mr_checkpoint_file" ]]; then
+		IFS= read -r _mr_checkpoint <"$_mr_checkpoint_file" || _mr_checkpoint=""
+		if [[ -n "$_mr_checkpoint" ]]; then
+			if _pmp_repo_rows_contain_slug "$_mr_repo_rows" "$_mr_checkpoint"; then
+				_mr_resume_pending=1
+				_mr_resumed_from_checkpoint=1
+				echo "[pulse-wrapper] Deterministic merge pass resuming after checkpoint repo=${_mr_checkpoint}" >>"$_mr_logfile"
+			else
+				echo "[pulse-wrapper] Deterministic merge pass ignoring stale checkpoint repo=${_mr_checkpoint}" >>"$_mr_logfile"
+				_pmp_clear_merge_checkpoint "$_mr_checkpoint_file"
+				_mr_checkpoint=""
+			fi
+		fi
+	fi
 
 	while IFS='|' read -r repo_slug repo_path; do
 		[[ -n "$repo_slug" ]] || continue
+		if [[ "$_mr_resume_pending" -eq 1 ]]; then
+			if [[ "$repo_slug" == "$_mr_checkpoint" ]]; then
+				_mr_resume_pending=0
+			fi
+			continue
+		fi
 		if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
 			|| ! repo_allows_pulse_write_actions "$repo_slug"; then
 			echo "[pulse-wrapper] Deterministic merge pass skipped ${repo_slug}: repo role is contributor/read-only" >>"$_mr_logfile"
+			_pmp_write_merge_checkpoint "$_mr_checkpoint_file" "$repo_slug"
 			continue
 		fi
 
@@ -429,16 +496,26 @@ merge_ready_prs_all_repos() {
 		local _mr_repo_total_s=0
 		_pmp_add_elapsed_seconds _mr_repo_total_s "$_mr_repo_start"
 		_pmp_log_repo_timing_summary "$repo_slug" "$_mr_repo_total_s" "$_mr_repo_list_s" "$_mr_repo_mergeability_s" "$_mr_repo_ruleset_s" "$_mr_repo_branch_protection_s" "$_mr_repo_stuck_detector_s" "$repo_merged" "$repo_closed" "$repo_failed" "$_mr_repo_pr_count"
+		_pmp_write_merge_checkpoint "$_mr_checkpoint_file" "$repo_slug"
 
 		if [[ -f "$_mr_stop_flag" ]]; then
 			echo "[pulse-wrapper] Deterministic merge pass: stop flag appeared mid-run" >>"$_mr_logfile"
+			_mr_completed_all=0
 			break
 		fi
-	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | [.slug, .path] | join("|")' "$_mr_repos_json" 2>/dev/null)
+	done <<<"$_mr_repo_rows"
+
+	if [[ "$_mr_completed_all" -eq 1 ]]; then
+		_pmp_clear_merge_checkpoint "$_mr_checkpoint_file"
+	fi
 
 	# t3193: record the zero-progress signal AFTER all repos have been processed.
+	# Checkpoint-resumed passes intentionally skip this aggregate signal because
+	# they only cover the tail of the repo list; the next fresh full pass records
+	# the all-repo zero-progress state without partial-pass distortion.
 	# Resolves at runtime via bash lazy lookup (pulse-merge-stuck.sh).
-	if declare -F pulse_merge_zero_progress_record >/dev/null 2>&1; then
+	if [[ "$_mr_completed_all" -eq 1 && "$_mr_resumed_from_checkpoint" -eq 0 ]] \
+		&& declare -F pulse_merge_zero_progress_record >/dev/null 2>&1; then
 		pulse_merge_zero_progress_record "$total_eligible_unmerged" "$total_merged" "$total_closed" || true
 	fi
 
