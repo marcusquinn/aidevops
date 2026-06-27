@@ -4326,3 +4326,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18018 Implement AI Sessions UI with Turbostarter and shadcn primitives #auto-dispatch #enhancement ref:GH#25711
 
 - [ ] t18020 Integrate Tambo generative UI cards into conversations #auto-dispatch #enhancement ref:GH#25713
+
+- [ ] t18021 Add per-page tours with signposts button beside notifications #auto-dispatch #enhancement ref:GH#25714
