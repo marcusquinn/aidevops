@@ -10,6 +10,16 @@ describe("status API route", () => {
     expect(body.ok).toBe(true);
     expect(body.operation_id).toBe("setup.status.read");
     expect(body.redactions).toContain("secret_values");
+    expect(body.data.managed_apps.map((app: { id: string }) => app.id)).toContain("aidevops");
+  });
+
+  test("app actions reject commands outside the allowlist", async () => {
+    const response = await app.request("/api/apps/not-real/actions/install", { method: "POST" });
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.operation_id).toBe("apps.action.run");
+    expect(body.errors).toContain("action_not_allowlisted");
   });
 
   test("unknown routes fail closed", async () => {

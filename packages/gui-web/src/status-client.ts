@@ -86,6 +86,7 @@ function normalizeStatusEnvelope(envelope: GuiResponseEnvelope<Partial<GuiStatus
       oauth_pool: { ...statusFixture.oauth_pool, ...data.oauth_pool, providers: data.oauth_pool?.providers ?? statusFixture.oauth_pool.providers },
       setup_targets: data.setup_targets ?? statusFixture.setup_targets,
       ai_apps: data.ai_apps ?? statusFixture.ai_apps,
+      managed_apps: data.managed_apps ?? statusFixture.managed_apps,
       vault: {
         ...statusFixture.vault,
         ...data.vault,

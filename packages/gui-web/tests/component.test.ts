@@ -73,7 +73,7 @@ describe("dashboard shell", () => {
     expect(counts.localSetup).toBe(2);
     expect(counts.agents).toBe(3);
     expect(counts.vault).toBe(4);
-    expect(counts.apps).toBe(6);
+    expect(counts.apps).toBe(2);
   });
 
   test("normalizes legacy status payloads from older local API processes", async () => {

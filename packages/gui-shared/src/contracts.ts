@@ -1,6 +1,6 @@
 export type GuiRouteClassification = "read" | "write" | "destructive";
 
-export type GuiOperationId = "setup.status.read" | "capabilities.read" | "filesystem.read" | "vault.status.read";
+export type GuiOperationId = "setup.status.read" | "capabilities.read" | "filesystem.read" | "vault.status.read" | "apps.action.run" | "apps.action.status";
 
 export type GuiFileRootId = "agents" | "config" | "localSetup" | "git";
 
@@ -23,7 +23,7 @@ export interface GuiResponseEnvelope<TData> {
 
 export interface GuiRouteManifest {
   route: string;
-  method: "GET";
+  method: "GET" | "POST";
   operation_id: GuiOperationId;
   classification: GuiRouteClassification;
   source_surface: string;
@@ -66,6 +66,44 @@ export interface GuiFileExplorerData {
   entries: GuiFileEntry[];
   selected_preview: GuiFilePreview | null;
   entry_limit: number;
+}
+
+export type GuiAppActionId = "install" | "update" | "reinstall" | "remove";
+
+export interface GuiManagedAppActionSummary {
+  id: GuiAppActionId;
+  label: string;
+  enabled: boolean;
+  command_preview: string;
+  confirmation: "none" | "recommended" | "required";
+}
+
+export interface GuiManagedAppSummary {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  origin_website_url: string;
+  origin_repo_url: string;
+  aidevops_install: boolean;
+  aidevops_update: boolean;
+  installed_version: string;
+  latest_version: string;
+  install_path_ref: string;
+  status: "found" | "missing" | "unchecked";
+  actions: GuiManagedAppActionSummary[];
+}
+
+export interface GuiAppActionJobSummary {
+  id: string;
+  app_id: string;
+  action: GuiAppActionId;
+  status: "running" | "completed" | "failed" | "rejected";
+  command_preview: string;
+  started_at: string;
+  finished_at: string | null;
+  exit_code: number | null;
+  output: string[];
 }
 
 export interface GuiSecretReference {
@@ -318,6 +356,7 @@ export interface GuiStatusData {
   oauth_pool: GuiOAuthPoolSummary;
   setup_targets: GuiSetupTargetSummary[];
   ai_apps: GuiAiAppSummary[];
+  managed_apps: GuiManagedAppSummary[];
   vault: GuiVaultStatusData;
   capabilities: GuiCapabilitySummary[];
   secrets: GuiSecretReference[];
@@ -355,6 +394,28 @@ export const VAULT_STATUS_ROUTE_MANIFEST: GuiRouteManifest = {
   adapter: "statusAdapter.readVaultStatus",
   command_pattern: ["aidevops", "vault", "status"],
   redactions: ["secret_values", "credential_paths", "private_key_material", "vault_passphrases", "recovery_material"],
+};
+
+export const APP_ACTION_ROUTE_MANIFEST: GuiRouteManifest = {
+  route: "/api/apps/:appId/actions/:action",
+  method: "POST",
+  operation_id: "apps.action.run",
+  classification: "write",
+  source_surface: "apps",
+  adapter: "appActions.startAppAction",
+  command_pattern: ["allowlisted", "aidevops", "setup/update", "background-job"],
+  redactions: ["secret_values", "credential_paths", "private_key_material"],
+};
+
+export const APP_ACTION_STATUS_ROUTE_MANIFEST: GuiRouteManifest = {
+  route: "/api/apps/jobs/:jobId",
+  method: "GET",
+  operation_id: "apps.action.status",
+  classification: "read",
+  source_surface: "apps",
+  adapter: "appActions.readAppActionJob",
+  command_pattern: ["background-job", "metadata-and-output-only"],
+  redactions: ["secret_values", "credential_paths", "private_key_material"],
 };
 
 export const GUI_FILE_ROOTS: readonly GuiFileRootDefinition[] = [

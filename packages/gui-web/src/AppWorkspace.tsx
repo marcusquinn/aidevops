@@ -274,7 +274,7 @@ function SurfaceContent({ activeItem, activeSurface, fileRoot, status }: {
     maintenance: <PlannedSurface label={text.maintenance} detail={text.projectWorkIntro} />,
     performance: <PlannedSurface label={text.performance} detail={text.projectWorkIntro} />,
     reports: <PlannedSurface label={text.reports} detail={text.projectWorkIntro} />,
-    apps: <AppsSurface />,
+    apps: <AppsSurface status={status} />,
     installation: <InstallationSurface />,
     projects: <ProjectsSurface status={status} />,
     security: <SecuritySurface status={status} />,
