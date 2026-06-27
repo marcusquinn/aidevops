@@ -421,23 +421,23 @@ function NotificationsSurface({ openSurface, status }: { openSurface: (surface: 
       <div className="planned-card notifications-hero">
         <h2>Notifications</h2>
         <p>OpenCode startup toasts and the GUI notification centre read the same aidevops status cache and local readiness data, so resolved items disappear or downgrade everywhere after the underlying status changes.</p>
-        <div className="notification-summary-strip" aria-label="Notification summary">
+        <section aria-label="Notification summary" className="notification-summary-strip">
           <span><strong>{active.length}</strong> active</span>
           <span><strong>{resolved.length}</strong> resolved</span>
           <span><strong>{status.notifications.length}</strong> total</span>
-        </div>
+        </section>
       </div>
-      <div className="github-notification-list" aria-label="aidevops notifications">
+      <ul aria-label="aidevops notifications" className="github-notification-list">
         {status.notifications.length === 0 ? <p className="empty-state">No aidevops notifications are currently reported.</p> : null}
         {status.notifications.map((notification) => <NotificationCard key={notification.id} notification={notification} openSurface={openSurface} />)}
-      </div>
+      </ul>
     </section>
   );
 }
 
 function NotificationCard({ notification, openSurface }: { notification: GuiNotificationSummary; openSurface: (surface: SurfaceId) => void }): ReactElement {
   return (
-    <article className={`github-notification-card ${notification.severity} ${notification.status}`}>
+    <li className={`github-notification-card ${notification.severity} ${notification.status}`}>
       <div className="notification-state-icon" aria-hidden="true"><NotificationIcon notification={notification} /></div>
       <div className="notification-card-body">
         <header>
@@ -460,7 +460,7 @@ function NotificationCard({ notification, openSurface }: { notification: GuiNoti
           })}
         </div>
       </div>
-    </article>
+    </li>
   );
 }
 
