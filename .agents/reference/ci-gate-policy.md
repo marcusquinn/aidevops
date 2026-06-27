@@ -36,6 +36,10 @@ feedback loops when they find defects.
    a broad filter such as `--filter="...[origin/<base>]"` can include the
    workspace root; if root `lint`/`typecheck` scripts call Turbo, exclude root
    with `--filter="!//"` or run root checks in a separate job.
+8. Vault changes require the fast deterministic security suite on develop/main
+   PRs. Broad reboot, fleet, migration-recovery, and manual crypto-review drills
+   are staging/release advisory until stable enough for every PR. See
+   `reference/vault-security-review.md`.
 
 ## Ruleset checklist
 

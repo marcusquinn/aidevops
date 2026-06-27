@@ -177,6 +177,27 @@ assert_eq "unlock verifies restart test and enables migration" "migration-ready"
 
 printf 'protected value' | "$VAULT_HELPER" update sample >/dev/null
 assert_eq "read returns encrypted entry after unlock" "protected value" "$($VAULT_HELPER read sample)"
+broker_pid_file="$AIDEVOPS_VAULT_RUNTIME_DIR/broker.pid"
+if [[ -s "$broker_pid_file" ]]; then
+	broker_pid="$(sed -n '1p' "$broker_pid_file")"
+	kill -9 "$broker_pid" >/dev/null 2>&1 || true
+	for _ in 1 2 3 4 5 6 7 8 9 10; do
+		[[ "$($VAULT_HELPER status 2>/dev/null || true)" == "locked" ]] && break
+		sleep 0.2
+	done
+	assert_eq "broker crash returns Vault to locked state" "locked" "$($VAULT_HELPER status 2>/dev/null || true)"
+	set +e
+	crash_read_output="$($VAULT_HELPER read sample 2>&1 >/dev/null)"
+	crash_read_rc=$?
+	set -e
+	assert_nonzero "broker crash denies plaintext read" "$crash_read_rc"
+	case "$crash_read_output" in
+	*VAULT_LOCKED*) pass "broker crash read reports VAULT_LOCKED" ;;
+	*) fail "broker crash read reports VAULT_LOCKED" ;;
+	esac
+else
+	fail "broker crash drill has broker pid"
+fi
 "$VAULT_HELPER" lock >/dev/null
 assert_eq "status reports locked after lock" "locked" "$($VAULT_HELPER status)"
 

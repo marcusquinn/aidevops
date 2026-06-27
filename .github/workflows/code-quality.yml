@@ -344,6 +344,12 @@ jobs:
         bash .agents/scripts/safety-policy-check.sh
         echo "Secret safety policy checks passed"
 
+    - name: Vault Security Suite
+      run: |
+        echo "Running Vault security validation suite..."
+        bash .agents/scripts/tests/test-vault-security-suite.sh
+        echo "Vault security validation suite passed"
+
     - name: Profile README Boundary Guard
       run: |
         echo "Running profile README boundary regression guard..."
