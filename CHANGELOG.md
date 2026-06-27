@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.5] - 2026-06-27
+
+### Fixed
+
+- polish gui loading handoff
+
 ## [3.29.4] - 2026-06-27
 
 ### Changed
