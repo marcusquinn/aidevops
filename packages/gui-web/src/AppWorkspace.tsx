@@ -1,7 +1,7 @@
 /* jshint esversion: 11 */
 import { type ReactElement, type ReactNode, useEffect, useState } from "react";
-import { FiAlertTriangle, FiBell, FiCheckCircle, FiChevronLeft, FiChevronRight, FiCommand, FiFileText, FiGlobe, FiHash, FiHelpCircle, FiInfo, FiLogOut, FiMessageSquare, FiPaperclip, FiSearch, FiSettings, FiShield, FiTerminal, FiTool, FiUser } from "react-icons/fi";
-import type { GuiFileRootId, GuiNotificationSummary, GuiStatusData } from "../../gui-shared/src";
+import { FiAlertTriangle, FiAtSign, FiBell, FiCheckCircle, FiChevronLeft, FiChevronRight, FiCommand, FiFileText, FiGlobe, FiHash, FiHelpCircle, FiInfo, FiLogOut, FiMessageSquare, FiPaperclip, FiSearch, FiSettings, FiShield, FiTerminal, FiTool, FiUser } from "react-icons/fi";
+import { sortConversationMessageParts, sortConversationMessages, type GuiConversationMessage, type GuiConversationMessagePart, type GuiConversationThread, type GuiFileRootId, type GuiNotificationSummary, type GuiStatusData } from "../../gui-shared/src";
 import { SurfaceGlyph } from "./AppNavigation";
 import type { ConversationMode, ShellMode, SurfaceId, SurfaceNavItem } from "./app-model";
 import { inventorySurfaceConfigs, surfaceIds, text } from "./app-model";
@@ -221,27 +221,135 @@ function ConversationWorkspace({ conversationMode, selectedLocalRepoIndex, selec
   }
 
   return (
-    <section className="chat-surface" aria-label="People chat">
-      <div className="chat-thread-panel">
+    <CommsConversationSurface mode={title === text.teams ? "people" : "channels"} />
+  );
+}
+
+function CommsConversationSurface({ mode }: { mode: "channels" | "directMessages" | "people" }): ReactElement {
+  const conversations = mode === "directMessages" ? conversationThreads.filter((thread) => thread.conversation.type === "dm" || thread.conversation.type === "group_dm") : conversationThreads.filter((thread) => thread.conversation.type === "channel");
+  const selectedThread = conversations[0] ?? conversationThreads[0];
+  const partsByMessage = new Map<string, GuiConversationMessagePart[]>();
+
+  for (const part of sortConversationMessageParts(selectedThread.parts)) {
+    partsByMessage.set(part.message_id, [...(partsByMessage.get(part.message_id) ?? []), part]);
+  }
+
+  return (
+    <section className="chat-surface comms-surface" aria-label={mode === "directMessages" ? text.directMessages : text.channels} data-tour="comms-conversations">
+      <aside className="chat-thread-panel conversation-list-panel" aria-label="Conversation list">
         <header className="chat-thread-header">
           <div>
-            <p className="eyebrow">SimpleX channels</p>
-            <h2><FiHash aria-hidden="true" /> {title}</h2>
+            <p className="eyebrow">Unified conversation model</p>
+            <h2>{mode === "directMessages" ? <FiAtSign aria-hidden="true" /> : <FiHash aria-hidden="true" />} {mode === "directMessages" ? text.directMessages : text.channels}</h2>
           </div>
-          <span className="count-pill">{text.readOnly}</span>
+          <button disabled title="Creating conversations needs encrypted transport and audited write routes" type="button">Create</button>
         </header>
-        <div className="chat-message-list">
-          <ChatBubble speaker="assistant" title="SimpleX transport" body={text.simplexReady} />
-          <ChatBubble speaker="user" title="People channel" body="Teams and direct messages share the same Slack-like channel layout while protected message payloads remain behind Vault policy." />
+        <label className="conversation-search"><FiSearch aria-hidden="true" /><span className="sr-only">Search conversations</span><input disabled placeholder="Search channels, DMs, mentions" /></label>
+        <div className="notice compact-notice">{text.simplexReady}</div>
+        <ul className="conversation-list">
+          {conversations.map((thread) => <ConversationListItem key={thread.conversation.id} thread={thread} />)}
+        </ul>
+      </aside>
+      <div className="chat-thread-panel conversation-detail-panel">
+        <header className="chat-thread-header">
+          <div>
+            <p className="eyebrow">{selectedThread.conversation.scope.workspace_ref} · {selectedThread.conversation.status}</p>
+            <h2>{selectedThread.conversation.type === "channel" ? <FiHash aria-hidden="true" /> : <FiMessageSquare aria-hidden="true" />} {selectedThread.conversation.title}</h2>
+          </div>
+          <span className="count-pill">{participantSummary(selectedThread)}</span>
+        </header>
+        <div className="participant-strip">
+          {selectedThread.participants.map((participant) => <span key={participant.id}>{participant.display_name}<small>{participant.kind}</small></span>)}
         </div>
-        <form className="chat-composer" aria-label="Chat composer">
+        <div className="chat-message-list" data-tour="comms-message-timeline">
+          {sortConversationMessages(selectedThread.messages).map((message) => <ConversationMessageRow key={message.id} message={message} parts={partsByMessage.get(message.id) ?? []} thread={selectedThread} />)}
+        </div>
+        <form className="chat-composer" aria-label="Conversation composer">
           <textarea disabled placeholder={text.chatInputPlaceholder} />
-          <button disabled type="button">Send</button>
+          <button disabled title="Sending messages needs the encrypted transport adapter" type="button">Send</button>
         </form>
       </div>
     </section>
   );
 }
+
+function ConversationListItem({ thread }: { thread: GuiConversationThread }): ReactElement {
+  const latestMessage = sortConversationMessages(thread.messages).at(-1);
+  const unread = unreadCount(thread);
+
+  return (
+    <li>
+      <button className="surface-link" type="button">
+        <span className="surface-icon" aria-hidden="true">{thread.conversation.type === "channel" ? <FiHash /> : <FiMessageSquare />}</span>
+        <span className="surface-copy"><strong>{thread.conversation.title}</strong><small>{latestMessage ? latestMessage.created_at : "No messages yet"}</small></span>
+        {unread > 0 ? <em>{unread}</em> : null}
+      </button>
+    </li>
+  );
+}
+
+function ConversationMessageRow({ message, parts, thread }: { message: GuiConversationMessage; parts: GuiConversationMessagePart[]; thread: GuiConversationThread }): ReactElement {
+  const sender = thread.participants.find((participant) => participant.id === message.sender_participant_id);
+  const reactions = thread.reactions.filter((reaction) => reaction.message_id === message.id);
+  const speaker = message.sender_kind === "human" ? "user" : "assistant";
+
+  return (
+    <article className={`chat-bubble ${speaker}`} data-sender-kind={message.sender_kind}>
+      <strong>{sender?.display_name ?? message.sender_kind}</strong>
+      {parts.map((part) => <p key={part.id}>{part.text ?? part.kind}</p>)}
+      <small>{message.status} · {message.created_at}</small>
+      {reactions.length > 0 ? <div className="reaction-row">{reactions.map((reaction) => <span key={reaction.id}>{reaction.reaction}</span>)}</div> : null}
+    </article>
+  );
+}
+
+function participantSummary(thread: GuiConversationThread): string {
+  const active = thread.participants.filter((participant) => participant.membership_state === "active").length;
+  return `${active} members`;
+}
+
+function unreadCount(thread: GuiConversationThread): number {
+  const lastSequence = Math.max(0, ...thread.messages.map((message) => message.sequence));
+  const localRead = thread.read_states[0]?.last_read_sequence ?? 0;
+  return Math.max(0, lastSequence - localRead);
+}
+
+const conversationThreads: GuiConversationThread[] = [
+  {
+    conversation: { id: "channel-general", type: "channel", title: "general", scope: { tenant_ref: "local", workspace_ref: "aidevops", repo_ref: null }, source_ref: "seed:channels/general", status: "read_only", created_at: "2026-06-27T00:00:00Z", updated_at: "2026-06-27T12:20:00Z" },
+    participants: [
+      { id: "participant-local", conversation_id: "channel-general", kind: "human", display_name: "Local user", identity_ref: "local:user", agent_ref: null, worker_ref: null, membership_state: "active", joined_at: "2026-06-27T00:00:00Z" },
+      { id: "participant-ai", conversation_id: "channel-general", kind: "ai_assistant", display_name: "AI DevOps", identity_ref: null, agent_ref: "aidevops", worker_ref: null, membership_state: "active", joined_at: "2026-06-27T00:00:00Z" },
+      { id: "participant-system", conversation_id: "channel-general", kind: "system_bot", display_name: "System", identity_ref: null, agent_ref: null, worker_ref: null, membership_state: "active", joined_at: "2026-06-27T00:00:00Z" },
+    ],
+    messages: [
+      { id: "message-general-1", conversation_id: "channel-general", sender_participant_id: "participant-system", sender_kind: "system", sequence: 1, status: "sent", usage: null, created_at: "2026-06-27T12:00:00Z", edited_at: null },
+      { id: "message-general-2", conversation_id: "channel-general", sender_participant_id: "participant-ai", sender_kind: "ai_assistant", sequence: 2, status: "delivered", usage: { provider_ref: "local", model_ref: "workflow-summary", input_tokens: 0, output_tokens: 0, total_tokens: 0, cost_ref: null }, created_at: "2026-06-27T12:15:00Z", edited_at: null },
+    ],
+    parts: [
+      { id: "part-general-1", message_id: "message-general-1", kind: "event_marker", ordinal: 1, text: "#general is ready for repo, deployment, review, and incident coordination.", payload_json: null, file_ref: null, source_ref: "seed" },
+      { id: "part-general-2", message_id: "message-general-2", kind: "text", ordinal: 1, text: "Mention @AI DevOps or a worker to turn a thread into an audited task once write routes land.", payload_json: null, file_ref: null, source_ref: null },
+    ],
+    reactions: [{ id: "reaction-general-1", message_id: "message-general-2", participant_id: "participant-local", reaction: "ack", created_at: "2026-06-27T12:16:00Z" }],
+    read_states: [{ conversation_id: "channel-general", participant_id: "participant-local", last_read_message_id: "message-general-1", last_read_sequence: 1, updated_at: "2026-06-27T12:10:00Z" }],
+  },
+  {
+    conversation: { id: "channel-workers", type: "channel", title: "worker-feed", scope: { tenant_ref: "local", workspace_ref: "aidevops", repo_ref: "current" }, source_ref: "seed:channels/worker-feed", status: "read_only", created_at: "2026-06-27T00:00:00Z", updated_at: "2026-06-27T12:30:00Z" },
+    participants: [{ id: "participant-worker", conversation_id: "channel-workers", kind: "worker", display_name: "Worker queue", identity_ref: null, agent_ref: null, worker_ref: "workers", membership_state: "active", joined_at: "2026-06-27T00:00:00Z" }],
+    messages: [{ id: "message-workers-1", conversation_id: "channel-workers", sender_participant_id: "participant-worker", sender_kind: "worker", sequence: 1, status: "delivered", usage: null, created_at: "2026-06-27T12:30:00Z", edited_at: null }],
+    parts: [{ id: "part-workers-1", message_id: "message-workers-1", kind: "event_marker", ordinal: 1, text: "Worker events for reviews, deployments, incidents, and releases collect here.", payload_json: null, file_ref: null, source_ref: "seed" }],
+    reactions: [],
+    read_states: [{ conversation_id: "channel-workers", participant_id: "participant-local", last_read_message_id: null, last_read_sequence: 0, updated_at: "2026-06-27T12:00:00Z" }],
+  },
+  {
+    conversation: { id: "dm-ai-devops", type: "dm", title: "AI DevOps", scope: { tenant_ref: "local", workspace_ref: "aidevops", repo_ref: null }, source_ref: "seed:dms/ai-devops", status: "read_only", created_at: "2026-06-27T00:00:00Z", updated_at: "2026-06-27T12:40:00Z" },
+    participants: [{ id: "participant-dm-local", conversation_id: "dm-ai-devops", kind: "human", display_name: "Local user", identity_ref: "local:user", agent_ref: null, worker_ref: null, membership_state: "active", joined_at: "2026-06-27T00:00:00Z" }, { id: "participant-dm-ai", conversation_id: "dm-ai-devops", kind: "ai_assistant", display_name: "AI DevOps", identity_ref: null, agent_ref: "aidevops", worker_ref: null, membership_state: "active", joined_at: "2026-06-27T00:00:00Z" }],
+    messages: [{ id: "message-dm-1", conversation_id: "dm-ai-devops", sender_participant_id: "participant-dm-ai", sender_kind: "ai_assistant", sequence: 1, status: "delivered", usage: null, created_at: "2026-06-27T12:40:00Z", edited_at: null }],
+    parts: [{ id: "part-dm-1", message_id: "message-dm-1", kind: "text", ordinal: 1, text: "Direct support threads share the same message parts, participants, reactions, and read state as channels.", payload_json: null, file_ref: null, source_ref: null }],
+    reactions: [],
+    read_states: [{ conversation_id: "dm-ai-devops", participant_id: "participant-dm-local", last_read_message_id: null, last_read_sequence: 0, updated_at: "2026-06-27T12:00:00Z" }],
+  },
+];
 
 function AiSessionsSurface({ selectedRepoIndex, selectedSessionId, status }: { selectedRepoIndex: number; selectedSessionId?: string; status: GuiStatusData }): ReactElement {
   const selectedRepo = status.local_repos?.repos?.[selectedRepoIndex] ?? status.local_repos?.repos?.[0];
@@ -394,8 +502,8 @@ function SurfaceContent({ activeItem, activeSurface, fileRoot, openSurface, stat
     admin: <AdminSurface />,
     vault: <VaultSurface status={status} />,
     aiSessions: <AiSessionsSurface selectedRepoIndex={0} status={status} />,
-    channels: <PlannedSurface label={text.channels} detail={text.channelsIntro} />,
-    directMessages: <PlannedSurface label={text.directMessages} detail={text.directMessagesIntro} />,
+    channels: <CommsConversationSurface mode="channels" />,
+    directMessages: <CommsConversationSurface mode="directMessages" />,
     workers: <PlannedSurface label={text.workers} detail={text.workersIntro} />,
     repos: <PlannedSurface label={text.repos} detail={text.reposIntro} />,
     deployments: <PlannedSurface label={text.deployments} detail={text.deploymentsIntro} />,
