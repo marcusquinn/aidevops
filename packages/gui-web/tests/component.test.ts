@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { appearanceStorageKeys, clampSidebarWidth, loadingBrandGlyph, loadingSkeletonPanelLabels, readStoredAppearancePreferences } from "../src/App";
 import { hueFromInputValue } from "../src/AppNavigation";
+import { Workspace } from "../src/AppWorkspace";
 import { commandPaletteMatches, commandPaletteShortcutEntries, commandPaletteShortcutQuery, orderCommandItemsByRecency, rememberCommandPaletteItemId } from "../src/CommandPalette";
-import { DEFAULT_ACCENT_HUE, DEFAULT_FONT, DEFAULT_FONT_SIZE, surfaceRecordCounts } from "../src/app-model";
+import { DEFAULT_ACCENT_HUE, DEFAULT_FONT, DEFAULT_FONT_SIZE, surfaceRecordCounts, type SurfaceNavItem } from "../src/app-model";
 import { renderDashboardHtml } from "../src/dashboard";
 import { fetchStatus, mockedStatus } from "../src/status-client";
 
@@ -85,6 +88,39 @@ describe("dashboard shell", () => {
     expect(counts.apps).toBe(2);
     expect(counts.aiSessions).toBe(mockedStatus().data.opencode_sessions.sessions.length);
     expect(counts.repos).toBe(mockedStatus().data.local_repos.total + mockedStatus().data.repos.total);
+  });
+
+  test("renders AI session controls with audited-route placeholders", () => {
+    const status = mockedStatus().data;
+    const html = renderToStaticMarkup(createElement(Workspace, {
+      activeItem: aiSessionsItem,
+      activeSectionLabel: "Development",
+      activeSurface: "aiSessions",
+      canGoBack: false,
+      canGoForward: false,
+      conversationMode: "ai",
+      fileRoot: undefined,
+      goBack: noop,
+      goForward: noop,
+      selectedLocalRepoIndex: 0,
+      selectedSessionId: status.opencode_sessions.sessions[0]?.id_ref,
+      setActiveSurface: noop,
+      setConversationMode: noop,
+      setSelectedLocalRepoIndex: noop,
+      setSelectedSessionId: noop,
+      setShellMode: noop,
+      shellMode: "sessions",
+      status,
+    }));
+
+    expect(html).toContain("AI Sessions");
+    expect(html).toContain("data-tour=\"ai-sessions-surface\"");
+    expect(html).toContain("Model/provider");
+    expect(html).toContain("Create worker task");
+    expect(html).toContain("Context attachment");
+    expect(html).toContain("Tool status");
+    expect(html).toContain("MessageScroller-compatible transcript");
+    expect(html).toContain("New, rename, pin, archive, delete, share, and export");
   });
 
   test("normalizes legacy status payloads from older local API processes", async () => {
@@ -238,6 +274,17 @@ function keyEvent(key: string): Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey
 
 function paletteItem(id: string, label: string, tag: string) {
   return { description: label, icon: "grid" as const, id, label, searchText: label, surface: "overview" as const, tag };
+}
+
+const aiSessionsItem: SurfaceNavItem = {
+  description: "AI session workspace",
+  icon: "terminal",
+  id: "aiSessions",
+  label: "AI Sessions",
+};
+
+function noop(): void {
+  // test callback placeholder
 }
 
 function storageFrom(values: Record<string, string>): Pick<Storage, "getItem"> {

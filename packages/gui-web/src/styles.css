@@ -1288,7 +1288,12 @@ code {
 
 .chat-surface {
   display: grid;
+  gap: 16px;
   min-height: 100%;
+}
+
+.ai-sessions-surface {
+  grid-template-columns: minmax(248px, 320px) minmax(0, 1fr);
 }
 
 .chat-thread-panel {
@@ -1354,6 +1359,10 @@ code {
   padding: 14px;
 }
 
+.chat-composer.ai-composer {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
 .chat-composer textarea {
   background: var(--surface-muted);
   border: 1px solid var(--border);
@@ -1365,12 +1374,30 @@ code {
 }
 
 .chat-composer button {
+  align-items: center;
   background: color-mix(in srgb, var(--accent) 16%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
   border-radius: 14px;
   color: var(--accent);
+  display: inline-flex;
   font-weight: 900;
+  gap: 8px;
   padding: 0 18px;
+}
+
+@media (max-width: 980px) {
+  .ai-sessions-surface {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-composer {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-composer button {
+    justify-content: center;
+    min-height: 44px;
+  }
 }
 
 .hero-panel,
