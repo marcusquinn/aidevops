@@ -284,7 +284,7 @@ const aiSessionsItem: SurfaceNavItem = {
 };
 
 function noop(): void {
-  return undefined;
+  // test callback placeholder
 }
 
 function storageFrom(values: Record<string, string>): Pick<Storage, "getItem"> {
