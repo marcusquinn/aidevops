@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.8] - 2026-06-27
+
+### Changed
+
+- Maintenance: mark t18019 complete (pr:#25730 completed:2026-06-27) [skip ci]
+- Add channels and DMs workspace (#25730)
+- Maintenance: mark t18018 complete (pr:#25729 completed:2026-06-27) [skip ci]
+- Add AI sessions workspace (#25729)
+
+### Fixed
+
+- restore GUI font switcher (#25731)
+
 ## [3.29.7] - 2026-06-27
 
 ### Added
