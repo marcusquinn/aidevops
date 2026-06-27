@@ -378,10 +378,8 @@ code {
 }
 
 .repo-session-selector {
-  align-items: end;
   display: grid;
-  gap: 8px;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 7px;
 }
 
 .selector-with-stepper {
@@ -421,17 +419,16 @@ code {
   width: 18px;
 }
 
-.repo-session-selector label {
-  display: grid;
-  gap: 5px;
-  min-width: 0;
-}
-
-.repo-session-selector label span {
+.repo-selector-heading {
   color: var(--text-muted);
   font-size: 0.72rem;
   font-weight: 900;
+  text-align: center;
   text-transform: uppercase;
+}
+
+.repo-selector-row {
+  align-items: center;
 }
 
 .repo-session-selector select {
