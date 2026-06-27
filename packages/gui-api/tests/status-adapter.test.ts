@@ -48,7 +48,7 @@ describe("status adapter", () => {
     expect(response.ok).toBe(true);
     expect(response.operation_id).toBe("vault.status.read");
     expect(response.data.value_policy).toBe("metadata_only_no_secret_material");
-    expect(response.data.collections.map((collection) => collection.surface_ids).flat()).toContain("agents");
+    expect(response.data.collections.flatMap((collection) => collection.surface_ids)).toContain("agents");
     expect(response.redactions).toContain("recovery_material");
   });
 

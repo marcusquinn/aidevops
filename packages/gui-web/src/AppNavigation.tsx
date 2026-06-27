@@ -220,7 +220,7 @@ function ConversationSidebar({ conversationMode, selectedLocalRepoIndex, setConv
       <SidebarModeTabs mode={conversationMode} setMode={setConversationMode} />
       {conversationMode === "people" ? <PeopleChannelList /> : <>
       <button className="new-session-button" disabled title="Creating sessions needs an audited OpenCode write route." type="button">{text.newSession}</button>
-      <div className="repo-session-selector" aria-label={text.localRepoSelector}>
+      <section className="repo-session-selector" aria-label={text.localRepoSelector}>
         <button aria-label="Previous local repo" disabled={!canSelectPreviousRepo} onClick={() => setSelectedLocalRepoIndex(Math.max(0, selectedLocalRepoIndex - 1))} type="button"><FiChevronLeft /></button>
         <label>
           <span>{text.localRepos}</span>
@@ -229,7 +229,7 @@ function ConversationSidebar({ conversationMode, selectedLocalRepoIndex, setConv
           </select>
         </label>
         <button aria-label="Next local repo" disabled={!canSelectNextRepo} onClick={() => setSelectedLocalRepoIndex(Math.min(repos.length - 1, selectedLocalRepoIndex + 1))} type="button"><FiChevronRight /></button>
-      </div>
+      </section>
       <section className="sidebar-group session-history-list">
         <h2>{text.sessionHistory}</h2>
         {selectedRepo ? <ul>
@@ -245,7 +245,7 @@ function ConversationSidebar({ conversationMode, selectedLocalRepoIndex, setConv
 
 function PeopleChannelList() {
   return (
-    <div aria-label="People channels">
+    <section aria-label="People channels">
       <div className="notice compact-notice">{text.simplexReady}</div>
       <section className="sidebar-group session-history-list">
         <h2>{text.teams}</h2>
@@ -259,7 +259,7 @@ function PeopleChannelList() {
           {["Marcus", "AI DevOps"].map((person) => <li key={person}><button className="surface-link" type="button"><span className="surface-icon" aria-hidden="true"><FiMessageSquare /></span><span className="surface-copy"><strong>{person}</strong><small>encrypted DM placeholder</small></span></button></li>)}
         </ul>
       </section>
-    </div>
+    </section>
   );
 }
 

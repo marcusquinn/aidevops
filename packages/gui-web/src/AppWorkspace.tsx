@@ -158,11 +158,11 @@ function ConversationWorkspace({ conversationMode, selectedLocalRepoIndex, statu
         </header>
         <div className="chat-message-list">
           {conversationMode === "ai" ? <>
-            <ChatBubble role="assistant" title={selectedSession?.title ?? "AI session bridge"} body={selectedSession ? `Most recent OpenCode session metadata: ${selectedSession.model} via ${selectedSession.agent}, updated ${selectedSession.updated_at}. Message payloads stay out of the status API until the turbostarter/ai chat bridge lands.` : "OpenCode session creation and continuation need an audited write route. This panel is ready for the turbostarter/ai chat surface once that adapter is connected."} />
-            <ChatBubble role="user" title={selectedRepo?.name ?? "Local repo"} body={selectedRepo ? `Selected repo: ${selectedRepo.path_ref}. Session metadata is grouped per local repo and sorted newest first from ${status.opencode_sessions.path_ref}.` : "No local repos were discovered yet."} />
+            <ChatBubble speaker="assistant" title={selectedSession?.title ?? "AI session bridge"} body={selectedSession ? `Most recent OpenCode session metadata: ${selectedSession.model} via ${selectedSession.agent}, updated ${selectedSession.updated_at}. Message payloads stay out of the status API until the turbostarter/ai chat bridge lands.` : "OpenCode session creation and continuation need an audited write route. This panel is ready for the turbostarter/ai chat surface once that adapter is connected."} />
+            <ChatBubble speaker="user" title={selectedRepo?.name ?? "Local repo"} body={selectedRepo ? `Selected repo: ${selectedRepo.path_ref}. Session metadata is grouped per local repo and sorted newest first from ${status.opencode_sessions.path_ref}.` : "No local repos were discovered yet."} />
           </> : <>
-            <ChatBubble role="assistant" title="SimpleX transport" body={text.simplexReady} />
-            <ChatBubble role="user" title="People channel" body="Teams and direct messages share the same Slack-like channel layout while protected message payloads remain behind Vault policy." />
+            <ChatBubble speaker="assistant" title="SimpleX transport" body={text.simplexReady} />
+            <ChatBubble speaker="user" title="People channel" body="Teams and direct messages share the same Slack-like channel layout while protected message payloads remain behind Vault policy." />
           </>}
         </div>
         <form className="chat-composer" aria-label="Chat composer">
@@ -174,9 +174,9 @@ function ConversationWorkspace({ conversationMode, selectedLocalRepoIndex, statu
   );
 }
 
-function ChatBubble({ body, role, title }: { body: string; role: "assistant" | "user"; title: string }) {
+function ChatBubble({ body, speaker, title }: { body: string; speaker: "assistant" | "user"; title: string }) {
   return (
-    <article className={`chat-bubble ${role}`}>
+    <article className={`chat-bubble ${speaker}`}>
       <strong>{title}</strong>
       <p>{body}</p>
     </article>
