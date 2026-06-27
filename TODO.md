@@ -1020,6 +1020,24 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18012 Add aidevops app chat session navigation ref:GH#25636 pr:#25637 completed:2026-06-27
 
+- [ ] t18014 aidevops.app AI collaboration workspace roadmap #feat #parent-task #priority:high ref:GH#25707
+
+- [ ] t18015 Audit aidevops.app navigation and choose chat primitive stack #auto-dispatch #feat #priority:high ref:GH#25708
+
+- [ ] t18016 Implement unified conversations for AI sessions channels and DMs #auto-dispatch #feat #priority:high ref:GH#25709
+
+- [ ] t18017 Add aidevops.app AI workspace navigation destinations #auto-dispatch #feat #priority:high ref:GH#25710
+
+- [ ] t18018 Implement AI Sessions UI with Turbostarter and shadcn primitives #auto-dispatch #feat #priority:high ref:GH#25711
+
+- [ ] t18019 Implement channels and direct messages for aidevops.app #auto-dispatch #feat #priority:high ref:GH#25712
+
+- [ ] t18020 Integrate Tambo generative UI cards into conversations #auto-dispatch #feat #priority:high ref:GH#25713
+
+- [ ] t18021 Add per-page tours with signposts button beside notifications #auto-dispatch #feat #priority:high ref:GH#25714
+
+- [ ] t18022 QA and release aidevops.app AI collaboration workspace #auto-dispatch #feat #priority:high ref:GH#25715
+
 ## In Progress
 
 - [x] t2744 raise GraphQL throttle defaults and reduce pulse/stats cycle pressure — circuit breaker default `0.05`→`0.30` (trips at 1500 remaining instead of 250), REST fallback default `10`→`1000` (REST takes over earlier, GraphQL kept in reserve), pulse interval default `120s`→`180s`, stats-wrapper interval `900s`→`3600s`. Also fixes macOS launchd path that ignored `supervisor.pulse_interval_seconds` from settings. Evidence: GraphQL=0/5000 vs REST=4044/5000 with 21 EXHAUSTED events in current pulse log; per-cycle cost (~400-700 pts) × 30 cycles/hr × 14 repos exceeds 5000/hr ceiling by 2-4×. All env-overridable, fully backwards-compatible. See `todo/tasks/t2744-brief.md`. #framework #pulse #interactive ~1h ref:GH#20482 started:2026-04-22 pr:#20483 completed:2026-04-22
@@ -4312,21 +4330,3 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18011 Update setup/update to refresh the macOS aidevops GUI app bundle after releases #auto-dispatch ref:GH#25590 pr:#25591 completed:2026-06-26
 
 - [x] t18012 Add aidevops app chat session navigation #bug ref:GH#25636 pr:#25637 completed:2026-06-27
-
-- [ ] t18014 aidevops.app AI collaboration workspace roadmap #enhancement #parent ref:GH#25707
-
-- [ ] t18015 Audit aidevops.app navigation and choose chat primitive stack #auto-dispatch #enhancement ref:GH#25708
-
-- [ ] t18016 Implement unified conversations for AI sessions channels and DMs #auto-dispatch #enhancement ref:GH#25709
-
-- [ ] t18017 Add aidevops.app AI workspace navigation destinations #auto-dispatch #enhancement ref:GH#25710
-
-- [ ] t18019 Implement channels and direct messages for aidevops.app #auto-dispatch #enhancement ref:GH#25712
-
-- [ ] t18018 Implement AI Sessions UI with Turbostarter and shadcn primitives #auto-dispatch #enhancement ref:GH#25711
-
-- [ ] t18020 Integrate Tambo generative UI cards into conversations #auto-dispatch #enhancement ref:GH#25713
-
-- [ ] t18021 Add per-page tours with signposts button beside notifications #auto-dispatch #enhancement ref:GH#25714
-
-- [ ] t18022 QA and release aidevops.app AI collaboration workspace #auto-dispatch #enhancement ref:GH#25715
