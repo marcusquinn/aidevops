@@ -1030,7 +1030,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18018 Implement AI Sessions UI with Turbostarter and shadcn primitives #auto-dispatch #feat #priority:high ref:GH#25711 pr:#25729 completed:2026-06-27
 
-- [ ] t18019 Implement channels and direct messages for aidevops.app #auto-dispatch #feat #priority:high ref:GH#25712
+- [x] t18019 Implement channels and direct messages for aidevops.app #auto-dispatch #feat #priority:high ref:GH#25712 pr:#25730 completed:2026-06-27
 
 - [ ] t18020 Integrate Tambo generative UI cards into conversations #auto-dispatch #feat #priority:high ref:GH#25713
 
