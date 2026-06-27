@@ -1355,8 +1355,12 @@ code {
   border-top: 1px solid var(--border);
   display: grid;
   gap: 10px;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   padding: 14px;
+}
+
+.chat-composer.ai-composer {
+  grid-template-columns: auto minmax(0, 1fr) auto;
 }
 
 .chat-composer textarea {

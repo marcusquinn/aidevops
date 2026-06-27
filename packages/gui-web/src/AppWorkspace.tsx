@@ -244,9 +244,9 @@ function ConversationWorkspace({ conversationMode, selectedLocalRepoIndex, selec
 }
 
 function AiSessionsSurface({ selectedRepoIndex, selectedSessionId, status }: { selectedRepoIndex: number; selectedSessionId?: string; status: GuiStatusData }): ReactElement {
-  const selectedRepo = status.local_repos.repos[selectedRepoIndex] ?? status.local_repos.repos[0];
+  const selectedRepo = status.local_repos?.repos?.[selectedRepoIndex] ?? status.local_repos?.repos?.[0];
   const selectedSession = selectedRepo === undefined ? undefined : sessionForRepo(status, selectedRepo.path_ref, selectedSessionId);
-  const providerOptions = status.oauth_pool.providers.filter((provider) => provider.configured || provider.total > 0);
+  const providerOptions = status.oauth_pool?.providers?.filter((provider) => provider.configured || provider.total > 0) ?? [];
   const sessionTitle = selectedSession?.title ?? "AI session bridge";
   const sessionMeta = selectedSession ? `${selectedSession.model} via ${selectedSession.agent}` : "No OpenCode session metadata selected";
 
@@ -264,7 +264,24 @@ function AiSessionsSurface({ selectedRepoIndex, selectedSessionId, status }: { s
         <div className="sidebar-history-controls">
           {sessionActions.map((action) => <button disabled key={action} title={`${action} needs the AI session write adapter`} type="button">{action}</button>)}
         </div>
-        <label className="settings-form"><span>Model/provider</span><select disabled defaultValue={providerOptions[0]?.provider ?? "local"} title="Model switching needs the Turbostarter AI transport adapter.">{providerOptions.length === 0 ? <option value="local">Provider setup required</option> : providerOptions.map((provider) => <option key={provider.provider} value={provider.provider}>{provider.provider} ({provider.available}/{provider.total})</option>)}</select></label>
+        <label className="settings-form">
+          <span>Model/provider</span>
+          <select
+            disabled
+            defaultValue={providerOptions[0]?.provider ?? "local"}
+            title="Model switching needs the Turbostarter AI transport adapter."
+          >
+            {providerOptions.length === 0 ? (
+              <option value="local">Provider setup required</option>
+            ) : (
+              providerOptions.map((provider) => (
+                <option key={provider.provider} value={provider.provider}>
+                  {provider.provider} ({provider.available}/{provider.total})
+                </option>
+              ))
+            )}
+          </select>
+        </label>
       </aside>
       <div className="chat-thread-panel" data-tour="ai-session-transcript">
         <header className="chat-thread-header">
@@ -276,12 +293,20 @@ function AiSessionsSurface({ selectedRepoIndex, selectedSessionId, status }: { s
         </header>
         <div className="chat-message-list" data-tour="message-scroller">
           <MessageMarker label="Session status" detail="MessageScroller-compatible transcript; auto-scroll must pause when the reader scrolls away from the latest message." />
-          <ChatBubble speaker="assistant" title={sessionTitle} body={selectedSession ? `Most recent OpenCode session metadata: ${sessionMeta}, updated ${selectedSession.updated_at}. Message payloads stay out of the status API until the Turbostarter AI chat bridge lands.` : "OpenCode session creation and continuation need an audited write route. This surface is ready for the Turbostarter AI adapter once connected."} />
+          <ChatBubble
+            speaker="assistant"
+            title={sessionTitle}
+            body={
+              selectedSession
+                ? `Most recent OpenCode session metadata: ${sessionMeta}, updated ${selectedSession.updated_at}. Message payloads stay out of the status API until the Turbostarter AI chat bridge lands.`
+                : "OpenCode session creation and continuation need an audited write route. This surface is ready for the Turbostarter AI adapter once connected."
+            }
+          />
           <AttachmentCard label="Context attachment" detail={selectedRepo ? `Selected repo context: ${selectedRepo.path_ref}` : "No local repos were discovered yet."} />
           <MessageMarker label="Reasoning" detail="Reasoning disclosure, tool status, sources, retries, errors, and token usage render here when the AI transport supplies those parts." />
           <ToolStatusCard />
         </div>
-        <form className="chat-composer" aria-label="AI prompt composer" data-tour="ai-composer">
+        <form className="chat-composer ai-composer" aria-label="AI prompt composer" data-tour="ai-composer">
           <button disabled title="Attachments need the audited upload/context adapter" type="button"><FiPaperclip aria-hidden="true" /> Attach</button>
           <textarea disabled placeholder={text.chatInputPlaceholder} />
           <button disabled title="Sending needs the Turbostarter AI transport adapter" type="button">Send</button>
@@ -294,7 +319,8 @@ function AiSessionsSurface({ selectedRepoIndex, selectedSessionId, status }: { s
 const sessionActions = ["New", "Rename", "Pin", "Archive", "Delete", "Share", "Export"] as const;
 
 function sessionForRepo(status: GuiStatusData, repoPathRef: string, selectedSessionId: string | undefined) {
-  return status.opencode_sessions.sessions.find((session) => session.id_ref === selectedSessionId && session.repo_path_ref === repoPathRef) ?? status.opencode_sessions.sessions.find((session) => session.repo_path_ref === repoPathRef);
+  const sessions = status.opencode_sessions?.sessions ?? [];
+  return sessions.find((session) => session.id_ref === selectedSessionId && session.repo_path_ref === repoPathRef) ?? sessions.find((session) => session.repo_path_ref === repoPathRef);
 }
 
 function MessageMarker({ detail, label }: { detail: string; label: string }) {
