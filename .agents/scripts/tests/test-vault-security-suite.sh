@@ -43,7 +43,8 @@ run_child_test() {
 
 test_no_public_plaintext_fixtures() {
 	local public_scan="$TEST_ROOT/public-scan.out"
-	if git -C "$REPO_ROOT" grep -n -E 'BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY|vault passphrase|recovery key' -- \
+	local secret_pattern='BEGIN (RSA|OPENSSH|EC|DSA) PRIVATE KEY|vault[ ]passphrase|recovery[ ]key'
+	if git -C "$REPO_ROOT" grep -n -E "$secret_pattern" -- \
 		'.agents/scripts/tests/test-vault*.sh' '.agents/reference/vault-security-review.md' >"$public_scan" 2>/dev/null; then
 		printf 'Plaintext secret-like fixture matches:\n' >&2
 		sed -n '1,80p' "$public_scan" >&2 || true
@@ -54,12 +55,12 @@ test_no_public_plaintext_fixtures() {
 	return 0
 }
 
-run_child_test "vault helper local broker and wrong-passphrase tests" "$SCRIPT_DIR/test-vault-helper.sh"
 run_child_test "vault data migration locked-state tests" "$SCRIPT_DIR/test-vault-data-migration.sh"
 run_child_test "vault sync replay, tamper, revoked-device tests" "$SCRIPT_DIR/test-vault-sync-helper.sh"
 run_child_test "vault remote lock, replay, stale-grant tests" "$SCRIPT_DIR/test-vault-remote-control-helper.sh"
 run_child_test "vault message ciphertext and revoked-device tests" "$SCRIPT_DIR/test-vault-message-helper.sh"
 run_child_test "vault audit tamper and receipt tests" "$SCRIPT_DIR/test-vault-audit-helper.sh"
+run_child_test "vault helper local broker and wrong-passphrase tests" "$SCRIPT_DIR/test-vault-helper.sh"
 test_no_public_plaintext_fixtures
 
 printf '\nVault security suite summary: %s passed, %s failed\n' "$PASS" "$FAIL"
