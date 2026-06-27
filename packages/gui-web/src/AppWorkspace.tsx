@@ -1,5 +1,6 @@
 /* jshint esversion: 11 */
 import { type ReactElement, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { FiBell, FiChevronLeft, FiChevronRight, FiCommand, FiCpu, FiGlobe, FiHash, FiLogOut, FiMessageSquare, FiSearch, FiSettings, FiShield, FiUser } from "react-icons/fi";
 import type { GuiFileRootId, GuiStatusData } from "../../gui-shared/src";
 import { SurfaceGlyph } from "./AppNavigation";
@@ -73,6 +74,20 @@ function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoB
       if (event.key === "/" && !isEditableShortcutTarget(event.target)) {
         event.preventDefault();
         setCommandInitialQuery("/");
+        setCommandOpen(true);
+        return;
+      }
+
+      if (["#", "@"].includes(event.key) && !isEditableShortcutTarget(event.target)) {
+        event.preventDefault();
+        setCommandInitialQuery(event.key);
+        setCommandOpen(true);
+        return;
+      }
+
+      if (event.key === "." && !isEditableShortcutTarget(event.target)) {
+        event.preventDefault();
+        setCommandInitialQuery("");
         setCommandOpen(true);
       }
     };
@@ -245,6 +260,9 @@ interface CommandPaletteItem {
   tag: string;
 }
 
+const commandPaletteRecentStorageKey = "aidevops-gui-command-palette-recents";
+const commandPaletteRecentLimit = 7;
+
 const slashCommandItems: CommandPaletteItem[] = [
   { id: "slash-add-device", label: "/add-device", description: "Start device pairing setup", icon: "device", searchText: "/add-device add device pair machine", surface: "devices", tag: "Command" },
   { id: "slash-add-local-repo", label: "/add-local-repo", description: "Add a local repository path", icon: "folder", searchText: "/add-local-repo add local repo git", surface: "git", tag: "Command" },
@@ -259,79 +277,89 @@ const plannedChannelItems: CommandPaletteItem[] = [
 ];
 
 function CommandPalette({ close, initialQuery, openSurface, status }: { close: () => void; initialQuery: string; openSurface: (surface: SurfaceId) => void; status: GuiStatusData }): ReactElement {
+  const allItems = useMemo(() => commandPaletteItems(status), [status]);
   const [query, setQuery] = useState(initialQuery);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [recentIds, setRecentIds] = useState<string[]>(() => readCommandPaletteRecentIds());
   const inputRef = useRef<HTMLInputElement>(null);
   const matches = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
-    const surfaceItems: CommandPaletteItem[] = orderedNavItems.map((item) => ({
-      description: item.description,
-      icon: item.icon,
-      id: `surface-${item.id}`,
-      label: item.label,
-      searchText: `${item.label} ${item.description}`,
-      surface: item.id,
-      tag: "Surface",
-    }));
-    const sessionItems: CommandPaletteItem[] = status.opencode_sessions.sessions.map((session) => ({
-      description: `AI session in ${session.repo_path_ref}`,
-      icon: "terminal",
-      id: `session-${session.id_ref}`,
-      label: `#${session.title}`,
-      searchText: `#${session.title} ${session.title} ${session.repo_path_ref} ${session.agent} ${session.model}`,
-      surface: "git",
-      tag: "AI session",
-    }));
-    const directMessageItems: CommandPaletteItem[] = [{
-      description: "Direct message thread placeholder",
-      icon: "users",
-      id: "dm-local-user",
-      label: `@${status.machine.username || "local-user"}`,
-      searchText: `@${status.machine.username || "local-user"} direct message dm person local user`,
-      surface: "messagingAccounts",
-      tag: "Direct message",
-    }];
-    const items = [...surfaceItems, ...sessionItems, ...plannedChannelItems, ...directMessageItems, ...slashCommandItems];
     const prefix = normalizedQuery.charAt(0);
-    const scopedItems = prefix === "/"
-      ? slashCommandItems
-      : prefix === "@"
-        ? directMessageItems
-        : prefix === "#"
-          ? [...sessionItems, ...plannedChannelItems]
-          : items;
+    const scopedItems = itemsForCommandPrefix(allItems, prefix);
+
+    if (normalizedQuery.length === 0 || ["/", "@", "#"].includes(normalizedQuery)) {
+      return orderCommandItemsByRecency(scopedItems, recentIds).slice(0, 8);
+    }
 
     return scopedItems
       .filter((item) => normalizedQuery.length === 0 || item.searchText.toLowerCase().includes(normalizedQuery))
       .slice(0, 8);
-  }, [query, status.machine.username, status.opencode_sessions.sessions]);
+  }, [allItems, query, recentIds]);
+
+  const selectItem = (item: CommandPaletteItem | undefined) => {
+    if (!item) {
+      return;
+    }
+
+    const nextRecentIds = [item.id, ...recentIds.filter((id) => id !== item.id)].slice(0, commandPaletteRecentLimit);
+    setRecentIds(nextRecentIds);
+    writeCommandPaletteRecentIds(nextRecentIds);
+    openSurface(item.surface);
+  };
 
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
 
   useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => {
+    setActiveIndex(0);
+  }, [query]);
+
+  useEffect(() => {
+    setActiveIndex((current) => Math.min(current, Math.max(0, matches.length - 1)));
+  }, [matches.length]);
+
+  useEffect(() => {
+    const handlePaletteKeys = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         close();
+        return;
+      }
+
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setActiveIndex((current) => Math.min(matches.length - 1, current + 1));
+        return;
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setActiveIndex((current) => Math.max(0, current - 1));
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        selectItem(matches[activeIndex]);
       }
     };
 
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [close]);
+    window.addEventListener("keydown", handlePaletteKeys);
+    return () => window.removeEventListener("keydown", handlePaletteKeys);
+  }, [activeIndex, close, matches, selectItem]);
 
-  return (
+  return createPortal(
     <div className="command-palette-backdrop" role="presentation">
       <button aria-label="Close command palette" className="command-palette-scrim" onClick={close} type="button" />
       <section aria-label="Command palette" className="command-palette">
         <label className="command-input-row">
           <FiSearch aria-hidden="true" />
-          <input ref={inputRef} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Search commands, #sessions, #channels, @people, or /actions" value={query} />
+          <input aria-activedescendant={matches[activeIndex]?.id} aria-controls="command-palette-results" aria-expanded="true" aria-autocomplete="list" ref={inputRef} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Search commands, #sessions, #channels, @people, or /actions" role="combobox" value={query} />
         </label>
-        <ul>
-          {matches.map((item) => (
+        <ul id="command-palette-results" role="listbox">
+          {matches.map((item, index) => (
             <li key={item.id}>
-              <button onClick={() => openSurface(item.surface)} type="button">
+              <button aria-selected={index === activeIndex} className={index === activeIndex ? "active" : undefined} id={item.id} onClick={() => selectItem(item)} role="option" type="button">
                 <span className="surface-icon" aria-hidden="true"><SurfaceGlyph icon={item.icon} /></span>
                 <span><strong>{item.label}</strong><small>{item.tag} · {item.description}</small></span>
               </button>
@@ -339,8 +367,84 @@ function CommandPalette({ close, initialQuery, openSurface, status }: { close: (
           ))}
         </ul>
       </section>
-    </div>
+    </div>,
+    document.body,
   );
+}
+
+function commandPaletteItems(status: GuiStatusData): CommandPaletteItem[] {
+  const surfaceItems: CommandPaletteItem[] = orderedNavItems.map((item) => ({
+    description: item.description,
+    icon: item.icon,
+    id: `surface-${item.id}`,
+    label: item.label,
+    searchText: `${item.label} ${item.description}`,
+    surface: item.id,
+    tag: "Surface",
+  }));
+  const sessionItems: CommandPaletteItem[] = status.opencode_sessions.sessions.map((session) => ({
+    description: `AI session in ${session.repo_path_ref}`,
+    icon: "terminal",
+    id: `session-${session.id_ref}`,
+    label: `#${session.title}`,
+    searchText: `#${session.title} ${session.title} ${session.repo_path_ref} ${session.agent} ${session.model}`,
+    surface: "git",
+    tag: "AI session",
+  }));
+  const directMessageItems: CommandPaletteItem[] = [{
+    description: "Direct message thread placeholder",
+    icon: "users",
+    id: "dm-local-user",
+    label: `@${status.machine.username || "local-user"}`,
+    searchText: `@${status.machine.username || "local-user"} direct message dm person local user`,
+    surface: "messagingAccounts",
+    tag: "Direct message",
+  }];
+
+  return [...surfaceItems, ...sessionItems, ...plannedChannelItems, ...directMessageItems, ...slashCommandItems];
+}
+
+function itemsForCommandPrefix(items: CommandPaletteItem[], prefix: string): CommandPaletteItem[] {
+  if (prefix === "/") {
+    return items.filter((item) => item.tag === "Command");
+  }
+
+  if (prefix === "@") {
+    return items.filter((item) => item.tag === "Direct message");
+  }
+
+  if (prefix === "#") {
+    return items.filter((item) => item.tag === "AI session" || item.tag === "Channel");
+  }
+
+  return items.filter((item) => item.tag === "Surface");
+}
+
+function orderCommandItemsByRecency(items: CommandPaletteItem[], recentIds: string[]): CommandPaletteItem[] {
+  const recentItems = recentIds
+    .map((id) => items.find((item) => item.id === id))
+    .filter((item): item is CommandPaletteItem => item !== undefined);
+  const recentItemIds = new Set(recentItems.map((item) => item.id));
+
+  return [...recentItems, ...items.filter((item) => !recentItemIds.has(item.id))];
+}
+
+function readCommandPaletteRecentIds(): string[] {
+  try {
+    const storedValue = window.localStorage.getItem(commandPaletteRecentStorageKey);
+    const parsedValue: unknown = storedValue ? JSON.parse(storedValue) : [];
+    return Array.isArray(parsedValue) ? parsedValue.filter((value): value is string => typeof value === "string").slice(0, commandPaletteRecentLimit) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCommandPaletteRecentIds(ids: string[]): void {
+  try {
+    window.localStorage.setItem(commandPaletteRecentStorageKey, JSON.stringify(ids.slice(0, commandPaletteRecentLimit)));
+  } catch {
+    // Ignore unavailable storage; command navigation still works without recents.
+  }
 }
 
 function SurfaceContent({ activeItem, activeSurface, fileRoot, status }: {

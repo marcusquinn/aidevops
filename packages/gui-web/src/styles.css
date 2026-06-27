@@ -1066,12 +1066,14 @@ code {
 
 .command-palette-backdrop {
   align-items: center;
-  background: rgb(0 0 0 / 28%);
+  backdrop-filter: blur(8px) saturate(120%);
+  background: rgb(0 0 0 / 34%);
   display: flex;
   inset: 0;
   justify-content: center;
   position: fixed;
   z-index: 20;
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
 }
 
 .command-palette-scrim {
@@ -1092,7 +1094,6 @@ code {
   max-width: min(680px, calc(100vw - 32px));
   padding: 14px;
   position: relative;
-  transform: translateY(-2vh);
   width: 100%;
 }
 
@@ -1137,7 +1138,8 @@ code {
 }
 
 .command-palette button:hover,
-.command-palette button:focus-visible {
+.command-palette button:focus-visible,
+.command-palette button.active {
   background: var(--surface-muted);
   color: var(--accent);
   outline: none;
