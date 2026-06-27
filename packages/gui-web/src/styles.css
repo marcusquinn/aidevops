@@ -211,6 +211,7 @@ code {
 .theme-control-heading,
 .appearance-panel-tab,
 .header-title,
+.header-center-controls,
 .header-actions,
 .workspace-search,
 .version-pill,
@@ -801,9 +802,9 @@ code {
   background: color-mix(in srgb, var(--surface-elevated) 94%, transparent);
   border-bottom: 1px solid var(--border);
   display: flex;
-  gap: 16px;
-  min-height: 58px;
-  padding: 10px 14px;
+  gap: 12px;
+  min-height: 54px;
+  padding: 8px 14px;
   position: sticky;
   top: 0;
   z-index: 2;
@@ -811,7 +812,7 @@ code {
 
 .header-title {
   flex: 0 0 auto;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -819,12 +820,14 @@ code {
   color: var(--text-muted);
   font-size: 0.76rem;
   font-weight: 900;
+  line-height: 1.15;
   margin: 0;
   text-transform: uppercase;
 }
 
 .header-title h1 {
   font-size: 1rem;
+  line-height: 1.15;
   margin: 0;
 }
 
@@ -840,15 +843,25 @@ code {
   align-items: center;
   color: var(--accent);
   display: inline-flex;
-  height: 34px;
+  height: 32px;
   justify-content: center;
-  width: 34px;
+  width: 32px;
 }
 
 .workspace-surface-icon svg {
-  height: 24px;
+  height: 23px;
   stroke-width: 2.2;
-  width: 24px;
+  width: 23px;
+}
+
+.header-center-controls {
+  gap: 10px;
+  left: 50%;
+  max-width: min(560px, 48vw);
+  min-width: 0;
+  position: absolute;
+  transform: translateX(-50%);
+  width: min(560px, 48vw);
 }
 
 .header-actions {
@@ -871,7 +884,7 @@ code {
 
 .command-trigger {
   justify-content: flex-start;
-  max-width: 340px;
+  max-width: none;
 }
 
 .command-trigger strong {
@@ -1055,12 +1068,11 @@ code {
 }
 
 .command-palette-backdrop {
-  align-items: flex-start;
+  align-items: center;
   background: rgb(0 0 0 / 28%);
   display: flex;
   inset: 0;
   justify-content: center;
-  padding-top: 12vh;
   position: fixed;
   z-index: 20;
 }
@@ -1083,6 +1095,7 @@ code {
   max-width: min(680px, calc(100vw - 32px));
   padding: 14px;
   position: relative;
+  transform: translateY(-2vh);
   width: 100%;
 }
 
@@ -2102,10 +2115,18 @@ code {
   }
 
   .workspace-header,
+  .header-center-controls,
   .header-actions,
   .split-heading {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .header-center-controls {
+    max-width: none;
+    position: static;
+    transform: none;
+    width: 100%;
   }
 
   .workspace-search {
