@@ -23,6 +23,10 @@ describe("status adapter", () => {
     expect(response.data.settings.value_policy).toBe("keys_only_no_values");
     expect(response.data.repos.path_ref).toBe("~/.config/aidevops/repos.json");
     expect(response.data.local_repos.excluded_worktrees).toBeGreaterThanOrEqual(0);
+    expect(response.data.opencode_sessions.path_ref).toBe("~/.local/share/opencode/opencode.db");
+    expect(response.data.opencode_sessions.value_policy).toBe("metadata_only_no_message_payloads");
+    expect(JSON.stringify(response.data.opencode_sessions)).not.toContain("content");
+    expect(JSON.stringify(response.data.opencode_sessions)).not.toContain("parts");
     expect(response.data.oauth_pool.value_policy).toBe("metadata_only_no_tokens");
     expect(response.data.oauth_pool.providers.map((provider) => provider.provider)).toEqual(["anthropic", "openai", "cursor", "google"]);
     expect(JSON.stringify(response.data.oauth_pool)).not.toContain("\"access\"");
@@ -44,7 +48,7 @@ describe("status adapter", () => {
     expect(response.ok).toBe(true);
     expect(response.operation_id).toBe("vault.status.read");
     expect(response.data.value_policy).toBe("metadata_only_no_secret_material");
-    expect(response.data.collections.map((collection) => collection.surface_ids).flat()).toContain("agents");
+    expect(response.data.collections.flatMap((collection) => collection.surface_ids)).toContain("agents");
     expect(response.redactions).toContain("recovery_material");
   });
 

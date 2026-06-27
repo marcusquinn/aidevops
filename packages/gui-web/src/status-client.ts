@@ -82,6 +82,7 @@ function normalizeStatusEnvelope(envelope: GuiResponseEnvelope<Partial<GuiStatus
       settings: { ...statusFixture.settings, ...data.settings },
       repos: { ...statusFixture.repos, ...data.repos, repos: data.repos?.repos ?? statusFixture.repos.repos },
       local_repos: { ...statusFixture.local_repos, ...data.local_repos, repos: data.local_repos?.repos ?? statusFixture.local_repos.repos },
+      opencode_sessions: { ...statusFixture.opencode_sessions, ...data.opencode_sessions, sessions: data.opencode_sessions?.sessions ?? statusFixture.opencode_sessions.sessions },
       oauth_pool: { ...statusFixture.oauth_pool, ...data.oauth_pool, providers: data.oauth_pool?.providers ?? statusFixture.oauth_pool.providers },
       setup_targets: data.setup_targets ?? statusFixture.setup_targets,
       ai_apps: data.ai_apps ?? statusFixture.ai_apps,

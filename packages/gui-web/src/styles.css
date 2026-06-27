@@ -206,6 +206,7 @@ code {
 .brand-lockup,
 .sidebar-titlebar,
 .sidebar-history-controls,
+.icon-switch,
 .sidebar-mode-tabs,
 .theme-control-heading,
 .appearance-panel-tab,
@@ -279,6 +280,40 @@ code {
   width: 26px;
 }
 
+.icon-switch {
+  background: color-mix(in srgb, var(--surface-muted) 72%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  gap: 2px;
+  padding: 2px;
+}
+
+.icon-switch button {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  display: inline-flex;
+  gap: 4px;
+  height: 28px;
+  justify-content: center;
+  min-width: 32px;
+  padding: 0 8px;
+}
+
+.icon-switch button span {
+  display: none;
+}
+
+.icon-switch button.active,
+.icon-switch button:hover,
+.icon-switch button:focus-visible {
+  background: var(--surface-elevated);
+  color: var(--accent);
+  outline: none;
+}
+
 .sidebar-history-controls button:hover:not(:disabled),
 .sidebar-history-controls button:focus-visible {
   background: var(--surface-elevated);
@@ -324,6 +359,71 @@ code {
   background: var(--surface-elevated);
   color: var(--accent);
   outline: none;
+}
+
+.conversation-panel {
+  display: grid;
+  gap: 12px;
+  padding: 0 6px;
+}
+
+.new-session-button {
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  border-radius: 12px;
+  color: var(--accent);
+  font-weight: 900;
+  padding: 10px 12px;
+}
+
+.repo-session-selector {
+  align-items: end;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.repo-session-selector button {
+  align-items: center;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  display: inline-flex;
+  height: 34px;
+  justify-content: center;
+  width: 34px;
+}
+
+.repo-session-selector label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.repo-session-selector label span {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.repo-session-selector select {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text-primary);
+  min-width: 0;
+  padding: 8px;
+}
+
+.session-history-list .surface-link {
+  min-height: 46px;
+}
+
+.empty-sidebar-state {
+  color: var(--text-muted);
+  margin: 8px;
 }
 
 .sidebar-group {
@@ -752,6 +852,10 @@ code {
   white-space: nowrap;
 }
 
+.workspace-history-controls {
+  flex: 0 0 auto;
+}
+
 .workspace-search span,
 .workspace-search input {
   color: var(--text-muted);
@@ -1013,6 +1117,93 @@ code {
 .surface-page {
   display: grid;
   gap: 16px;
+}
+
+.chat-surface {
+  display: grid;
+  min-height: 100%;
+}
+
+.chat-thread-panel {
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  display: grid;
+  grid-template-rows: auto minmax(320px, 1fr) auto;
+  min-height: 620px;
+  overflow: hidden;
+}
+
+.chat-thread-header {
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  padding: 18px;
+}
+
+.chat-thread-header h2 {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  margin: 0;
+}
+
+.chat-message-list {
+  align-content: start;
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+}
+
+.chat-bubble {
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  display: grid;
+  gap: 6px;
+  max-width: min(680px, 90%);
+  padding: 14px;
+}
+
+.chat-bubble.assistant {
+  background: var(--surface-muted);
+}
+
+.chat-bubble.user {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  justify-self: end;
+}
+
+.chat-bubble p {
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.chat-composer {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 14px;
+}
+
+.chat-composer textarea {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  color: var(--text-primary);
+  min-height: 54px;
+  padding: 12px;
+  resize: vertical;
+}
+
+.chat-composer button {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  border-radius: 14px;
+  color: var(--accent);
+  font-weight: 900;
+  padding: 0 18px;
 }
 
 .hero-panel,

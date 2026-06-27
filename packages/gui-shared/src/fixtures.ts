@@ -68,6 +68,12 @@ export const statusFixture: GuiStatusData = {
     excluded_worktrees: 0,
     repos: [],
   },
+  opencode_sessions: {
+    path_ref: "~/.local/share/opencode/opencode.db",
+    health: "unchecked",
+    value_policy: "metadata_only_no_message_payloads",
+    sessions: [],
+  },
   oauth_pool: {
     path_ref: "~/.aidevops/oauth-pool.json",
     health: "unchecked",
