@@ -379,7 +379,7 @@ _rest_pr_view_can_preserve_args() {
 	local field
 	while IFS= read -r field; do
 		case "$field" in
-		statusCheckRollup|reviews|latestReviews|reviewThreads|commits|files|reviewDecision|autoMergeRequest|mergeStateStatus) return 1 ;;
+		mergeable|statusCheckRollup|reviews|latestReviews|reviewThreads|commits|files|reviewDecision|autoMergeRequest|mergeStateStatus) return 1 ;;
 		*) ;;
 		esac
 	done < <(_rest_split_csv "$fields")
