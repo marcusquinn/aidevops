@@ -473,6 +473,9 @@ model:
 - Security-sensitive Vault work must include a negative test or checklist proving
   passphrases/secrets are not accepted through chat, arguments, environment
   variables, logs, issue comments, or fixtures.
+- Default-on destructive migration, remote unlock, or fleet sync requires the
+  release checklist and external security review in
+  `reference/vault-security-review.md`; keep true remote unlock feature-gated.
 - New always-loaded guidance should be a short pointer to this RFC or the Vault
   workflows, not a full rule expansion.
 - Any proposal for true remote unlock must start default-disabled and include a
