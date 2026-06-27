@@ -424,7 +424,7 @@ _pmp_prepare_merge_checkpoint_resume() {
 	[[ "$resumed_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
 
 	if [[ -n "$checkpoint_file" && -f "$checkpoint_file" ]]; then
-		IFS= read -r checkpoint <"$checkpoint_file" || checkpoint=""
+		IFS= read -r checkpoint <"$checkpoint_file" || [[ -n "$checkpoint" ]]
 		if [[ -n "$checkpoint" ]]; then
 			if _pmp_repo_rows_contain_slug "$repo_rows" "$checkpoint"; then
 				resume_pending=1
@@ -556,6 +556,7 @@ merge_ready_prs_all_repos() {
 	local _mr_resume_pending=0
 	local _mr_resumed_from_checkpoint=0
 	local _mr_completed_all=1
+	local repo_slug="" repo_path=""
 
 	_mr_repo_rows=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | [.slug, .path] | join("|")' "$_mr_repos_json" 2>/dev/null) || _mr_repo_rows=""
 	_pmp_prepare_merge_checkpoint_resume "$_mr_repo_rows" "$_mr_checkpoint_file" "$_mr_logfile" \
