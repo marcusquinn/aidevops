@@ -284,8 +284,25 @@ test_case_f_orphan_recovery_proceeds_when_no_pr() {
 	local pr_log="${TEST_ROOT}/pr-create-2.log"
 	: >"$pr_log"
 	export STUB_PR_CREATE_LOG="$pr_log"
+	local origin_dir="${TEST_ROOT}/case-f-origin.git"
+	local work_dir="${TEST_ROOT}/case-f-work"
+	git init --bare "$origin_dir" >/dev/null 2>&1 || return 1
+	git init "$work_dir" >/dev/null 2>&1 || return 1
+	git -C "$work_dir" config user.email test@example.invalid || return 1
+	git -C "$work_dir" config user.name "Test User" || return 1
+	printf 'base\n' >"${work_dir}/README.md"
+	git -C "$work_dir" add README.md >/dev/null 2>&1 || return 1
+	git -C "$work_dir" commit -m base >/dev/null 2>&1 || return 1
+	git -C "$work_dir" branch -M main >/dev/null 2>&1 || return 1
+	git -C "$work_dir" remote add origin "$origin_dir" || return 1
+	git -C "$work_dir" push origin main >/dev/null 2>&1 || return 1
+	git -C "$work_dir" checkout -b feature/real-orphan >/dev/null 2>&1 || return 1
+	printf 'change\n' >>"${work_dir}/README.md"
+	git -C "$work_dir" add README.md >/dev/null 2>&1 || return 1
+	git -C "$work_dir" commit -m change >/dev/null 2>&1 || return 1
+	git -C "$work_dir" push origin feature/real-orphan >/dev/null 2>&1 || return 1
 
-	_attempt_orphan_recovery_pr "issue-99999" "/tmp/unused-workdir" \
+	_attempt_orphan_recovery_pr "issue-99999" "$work_dir" \
 		"feature/real-orphan" "owner/repo" || true
 	# Whether create succeeded matters less than: did we ATTEMPT it?
 	if [[ -s "$pr_log" ]]; then
