@@ -123,6 +123,22 @@ describe("dashboard shell", () => {
     expect(html).toContain("New, rename, pin, archive, delete, share, and export");
   });
 
+  test("renders channel and DM conversation surfaces from the unified model", () => {
+    const channelHtml = renderWorkspaceSurface(channelsItem, "channels");
+    const dmHtml = renderWorkspaceSurface(directMessagesItem, "directMessages");
+
+    expect(channelHtml).toContain("Unified conversation model");
+    expect(channelHtml).toContain("general");
+    expect(channelHtml).toContain("worker-feed");
+    expect(channelHtml).toContain("data-sender-kind=\"system\"");
+    expect(channelHtml).toContain("ack");
+    expect(channelHtml).toContain("3 members");
+    expect(dmHtml).toContain("Direct Messages");
+    expect(dmHtml).toContain("AI DevOps");
+    expect(dmHtml).toContain("Direct support threads share the same message parts");
+    expect(dmHtml).toContain("Search channels, DMs, mentions");
+  });
+
   test("normalizes legacy status payloads from older local API processes", async () => {
     const legacyFetch = (async () => new Response(JSON.stringify({
       ok: true,
@@ -284,6 +300,43 @@ const aiSessionsItem: SurfaceNavItem = {
   id: "aiSessions",
   label: "AI Sessions",
 };
+
+const channelsItem: SurfaceNavItem = {
+  description: "Team channels",
+  icon: "hash",
+  id: "channels",
+  label: "Channels",
+};
+
+const directMessagesItem: SurfaceNavItem = {
+  description: "Direct messages",
+  icon: "message",
+  id: "directMessages",
+  label: "Direct Messages",
+};
+
+function renderWorkspaceSurface(activeItem: SurfaceNavItem, activeSurface: SurfaceNavItem["id"]): string {
+  return renderToStaticMarkup(createElement(Workspace, {
+    activeItem,
+    activeSectionLabel: "Management",
+    activeSurface,
+    canGoBack: false,
+    canGoForward: false,
+    conversationMode: "people",
+    fileRoot: undefined,
+    goBack: noop,
+    goForward: noop,
+    selectedLocalRepoIndex: 0,
+    selectedSessionId: undefined,
+    setActiveSurface: noop,
+    setConversationMode: noop,
+    setSelectedLocalRepoIndex: noop,
+    setSelectedSessionId: noop,
+    setShellMode: noop,
+    shellMode: "devices",
+    status: mockedStatus().data,
+  }));
+}
 
 function noop(): void {
   // test callback placeholder

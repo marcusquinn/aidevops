@@ -6,6 +6,7 @@ import { SurfaceGlyph } from "./AppNavigation";
 import type { ConversationMode, ShellMode, SurfaceId, SurfaceNavItem } from "./app-model";
 import { inventorySurfaceConfigs, surfaceIds, text } from "./app-model";
 import { CommandPalette, type CommandPaletteSelection, commandPaletteShortcutQuery } from "./CommandPalette";
+import { CommsConversationSurface } from "./CommsConversationSurface";
 import { FileExplorerSurface } from "./FileExplorerSurface";
 import { AppsSurface, EditableInventorySurface, InstallationSurface } from "./InventorySurfaces";
 import { AiProvidersSurface, LocalReposSurface, LockedVaultGate, OverviewSurface, PlannedSurface, ProjectsSurface, SecuritySurface, VaultSurface } from "./StatusSurfaces";
@@ -221,25 +222,7 @@ function ConversationWorkspace({ conversationMode, selectedLocalRepoIndex, selec
   }
 
   return (
-    <section className="chat-surface" aria-label="People chat">
-      <div className="chat-thread-panel">
-        <header className="chat-thread-header">
-          <div>
-            <p className="eyebrow">SimpleX channels</p>
-            <h2><FiHash aria-hidden="true" /> {title}</h2>
-          </div>
-          <span className="count-pill">{text.readOnly}</span>
-        </header>
-        <div className="chat-message-list">
-          <ChatBubble speaker="assistant" title="SimpleX transport" body={text.simplexReady} />
-          <ChatBubble speaker="user" title="People channel" body="Teams and direct messages share the same Slack-like channel layout while protected message payloads remain behind Vault policy." />
-        </div>
-        <form className="chat-composer" aria-label="Chat composer">
-          <textarea disabled placeholder={text.chatInputPlaceholder} />
-          <button disabled type="button">Send</button>
-        </form>
-      </div>
-    </section>
+    <CommsConversationSurface mode={title === text.teams ? "people" : "channels"} />
   );
 }
 
@@ -394,8 +377,8 @@ function SurfaceContent({ activeItem, activeSurface, fileRoot, openSurface, stat
     admin: <AdminSurface />,
     vault: <VaultSurface status={status} />,
     aiSessions: <AiSessionsSurface selectedRepoIndex={0} status={status} />,
-    channels: <PlannedSurface label={text.channels} detail={text.channelsIntro} />,
-    directMessages: <PlannedSurface label={text.directMessages} detail={text.directMessagesIntro} />,
+    channels: <CommsConversationSurface mode="channels" />,
+    directMessages: <CommsConversationSurface mode="directMessages" />,
     workers: <PlannedSurface label={text.workers} detail={text.workersIntro} />,
     repos: <PlannedSurface label={text.repos} detail={text.reposIntro} />,
     deployments: <PlannedSurface label={text.deployments} detail={text.deploymentsIntro} />,
