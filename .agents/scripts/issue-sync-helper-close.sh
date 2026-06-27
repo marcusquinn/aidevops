@@ -181,7 +181,7 @@ _closed_issue_worker_complete_date() {
 	local completed_at
 
 	completed_at=$(gh api "repos/${repo}/issues/${issue_number}/comments" \
-		--jq '[.[] | select(.body | contains("CLAIM_RELEASED reason=worker_complete")) | .created_at][0] // ""' 2>/dev/null || true)
+		--jq '[.[] | select((.body // "") | contains("CLAIM_RELEASED reason=worker_complete")) | .created_at][0] // ""' || true)
 	if [[ -z "$completed_at" ]]; then
 		return 1
 	fi
