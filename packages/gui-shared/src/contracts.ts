@@ -339,6 +339,31 @@ export interface GuiCapabilitySummary {
   doc_ref: string;
 }
 
+export type GuiNotificationSeverity = "success" | "info" | "warning" | "error";
+
+export type GuiNotificationCategory = "security" | "maintenance" | "release" | "runtime" | "setup";
+
+export interface GuiNotificationAction {
+  id: string;
+  label: string;
+  kind: "surface" | "command";
+  surface_id?: string;
+  command_preview?: string;
+  enabled: boolean;
+}
+
+export interface GuiNotificationSummary {
+  id: string;
+  title: string;
+  message: string;
+  severity: GuiNotificationSeverity;
+  category: GuiNotificationCategory;
+  source: "opencode-toast" | "gui-status";
+  source_ref: string;
+  status: "active" | "resolved";
+  actions: GuiNotificationAction[];
+}
+
 export interface GuiMachineSummary {
   id: string;
   label: string;
@@ -451,6 +476,7 @@ export interface GuiStatusData {
   setup_targets: GuiSetupTargetSummary[];
   ai_apps: GuiAiAppSummary[];
   managed_apps: GuiManagedAppSummary[];
+  notifications: GuiNotificationSummary[];
   vault: GuiVaultStatusData;
   capabilities: GuiCapabilitySummary[];
   secrets: GuiSecretReference[];

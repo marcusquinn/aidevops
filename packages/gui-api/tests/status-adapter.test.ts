@@ -35,6 +35,7 @@ describe("status adapter", () => {
     expect(response.data.setup_targets.every((target) => typeof target.needs_update === "boolean")).toBe(true);
     expect(response.data.ai_apps.map((app) => app.name)).toEqual(["OpenCode", "Claude Code", "Codex CLI", "Cursor"]);
     expect(JSON.stringify(response.data.ai_apps)).not.toContain("token");
+    expect(response.data.notifications.every((notification) => notification.source_ref.length > 0)).toBe(true);
     expect(response.data.vault.value_policy).toBe("metadata_only_no_secret_material");
     expect(response.data.vault.readiness.remote_unlock_enabled).toBe(false);
     expect(JSON.stringify(response.data.vault)).not.toContain("SECRET_SENTINEL_DO_NOT_RENDER");

@@ -119,3 +119,9 @@ exclude_paths:
   # false-positive class as the GUI adapters above; covered by tsc, Biome,
   # GUI API tests, Qlty gates, and SonarCloud.
   - "packages/gui-api/src/status-managed-apps.ts"
+  # GUI shared TypeScript notification helpers (GH#25722): same Codacy legacy
+  # parser/spellcheck false-positive class as the GUI exclusions above, e.g.
+  # ES2015 modules/let/const/Array.map forbidden and shared `Gui*` identifiers
+  # flagged as misspellings. Coverage is preserved by shared unit tests,
+  # adapter tests, tsc, Biome, Qlty gates, and SonarCloud.
+  - "packages/gui-shared/src/notifications.ts"

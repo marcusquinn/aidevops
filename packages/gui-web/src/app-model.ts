@@ -330,6 +330,10 @@ function plannedNavItem(id: SurfaceId, label: string, description: string, icon:
   return { id, label, description, icon, badge: text.planned };
 }
 
+function plannedCommsGroup(label: string, items: SurfaceNavItem[]): SurfaceNavGroup {
+  return { label, mode: "comms", items };
+}
+
 export const navGroups: SurfaceNavGroup[] = [
   {
     label: text.development,
@@ -388,36 +392,28 @@ export const navGroups: SurfaceNavGroup[] = [
       { id: "marketplaces", label: text.marketplaces, description: "Storefronts and seller profiles", icon: "package", badge: text.planned },
     ],
   },
-  {
-    label: text.management,
-    mode: "comms",
-    items: [
-      plannedNavItem("channels", text.channels, "Team channels", "hash"),
-      plannedNavItem("directMessages", text.directMessages, "Direct and group DMs", "message"),
-      { id: "emailAccounts", label: text.emailAccounts, description: "Mail account sync", icon: "mail", badge: text.planned },
-      { id: "messagingAccounts", label: text.messagingAccounts, description: "Messaging account sync", icon: "message", badge: text.planned },
-      { id: "events", label: text.calendars, description: "CalDAV calendar sync", icon: "calendar", badge: text.planned },
-      { id: "contacts", label: text.contacts, description: "CardDAV contact sync", icon: "users", badge: text.planned },
-      { id: "tasks", label: text.tasks, description: "CalDAV task sync", icon: "list", badge: text.planned },
-      { id: "notes", label: text.notes, description: "Synced notes", icon: "note", badge: text.planned },
-      { id: "bookmarks", label: text.bookmarks, description: "Saved links and references", icon: "bookmark", badge: text.planned },
-    ],
-  },
-  {
-    label: text.projectWork,
-    mode: "comms",
-    items: [
-      { id: "inbox", label: text.inbox, description: "Project intake", icon: "folder", badge: text.planned },
-      { id: "campaigns", label: text.campaigns, description: "Campaign folders", icon: "folder", badge: text.planned },
-      { id: "cases", label: text.cases, description: "Case folders", icon: "folder", badge: text.planned },
-      { id: "projectConfig", label: text.config, description: "Project configuration", icon: "folder", badge: text.planned },
-      { id: "feedback", label: text.feedback, description: "Feedback folders", icon: "folder", badge: text.planned },
-      { id: "knowledge", label: text.knowledge, description: "Knowledge folders", icon: "folder", badge: text.planned },
-      { id: "maintenance", label: text.maintenance, description: "Maintenance folders", icon: "folder", badge: text.planned },
-      { id: "performance", label: text.performance, description: "Performance folders", icon: "folder", badge: text.planned },
-      { id: "reports", label: text.reports, description: "Report folders", icon: "folder", badge: text.planned },
-    ],
-  },
+  plannedCommsGroup(text.management, [
+    plannedNavItem("channels", text.channels, "Team channels", "hash"),
+    plannedNavItem("directMessages", text.directMessages, "Direct and group DMs", "message"),
+    plannedNavItem("emailAccounts", text.emailAccounts, "Mail account sync", "mail"),
+    plannedNavItem("messagingAccounts", text.messagingAccounts, "Messaging account sync", "message"),
+    plannedNavItem("events", text.calendars, "CalDAV calendar sync", "calendar"),
+    plannedNavItem("contacts", text.contacts, "CardDAV contact sync", "users"),
+    plannedNavItem("tasks", text.tasks, "CalDAV task sync", "list"),
+    plannedNavItem("notes", text.notes, "Synced notes", "note"),
+    plannedNavItem("bookmarks", text.bookmarks, "Saved links and references", "bookmark"),
+  ]),
+  plannedCommsGroup(text.projectWork, [
+    plannedNavItem("inbox", text.inbox, "Project intake", "folder"),
+    plannedNavItem("campaigns", text.campaigns, "Campaign folders", "folder"),
+    plannedNavItem("cases", text.cases, "Case folders", "folder"),
+    plannedNavItem("projectConfig", text.config, "Project configuration", "folder"),
+    plannedNavItem("feedback", text.feedback, "Feedback folders", "folder"),
+    plannedNavItem("knowledge", text.knowledge, "Knowledge folders", "folder"),
+    plannedNavItem("maintenance", text.maintenance, "Maintenance folders", "folder"),
+    plannedNavItem("performance", text.performance, "Performance folders", "folder"),
+    plannedNavItem("reports", text.reports, "Report folders", "folder"),
+  ]),
 ];
 
 export const dashboardNavItem: SurfaceNavItem = {
@@ -607,6 +603,7 @@ export function surfaceRecordCounts(status: GuiStatusData): SurfaceRecordCounts 
     hosts: populatedInventoryRowCount("hosts"),
     installation: installationRows.length,
     localSetup: status.paths.length,
+    notifications: status.notifications.filter((notification) => notification.status === "active").length,
     projects: status.repos.total || status.repos.repos.length,
     repos: (status.local_repos.total || status.local_repos.repos.length) + (status.repos.total || status.repos.repos.length),
     registrars: populatedInventoryRowCount("registrars"),

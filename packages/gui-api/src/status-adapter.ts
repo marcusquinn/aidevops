@@ -20,6 +20,7 @@ import {
   type GuiSetupTargetSummary,
   type GuiStatusData,
   type GuiVaultStatusData,
+  buildStatusNotifications,
   statusFixture,
   VAULT_STATUS_ROUTE_MANIFEST,
 } from "../../gui-shared/src";
@@ -60,6 +61,7 @@ export function readStatus(
   const reposPathRef = "~/.config/aidevops/repos.json";
   const oauthPoolPathRef = "~/.aidevops/oauth-pool.json";
   const opencodeDbPathRef = "~/.local/share/opencode/opencode.db";
+  const greetingCachePathRef = "~/.aidevops/cache/session-greeting.txt";
   const agentsPathRef = "~/.aidevops/agents";
   const vaultPathRef = statusFixture.vault.path_ref;
   const settingsPath = expandHome(settingsPathRef);
@@ -76,13 +78,22 @@ export function readStatus(
   const managedApps = readManagedApps(aidevopsVersion || "unknown", installedVersion || "unknown");
   const localRepos = readLocalReposSetupSummary(reposPath);
   const opencodeSessions = readOpenCodeSessions(opencodeDbPath, opencodeDbPathRef, localRepos.repos);
+  const oauthPool = readOAuthPoolSummary(oauthPoolPath, oauthPoolPathRef);
   const vault = readVaultSummary(repoRoot);
+  const notifications = buildStatusNotifications({
+    aiApps,
+    greetingOutput: readOptionalText(expandHome(greetingCachePathRef)) ?? "",
+    oauthPool,
+    restartRequired,
+    setupTargets,
+  });
   const sourcePathRefs = [
     agentsPathRef,
     settingsPathRef,
     reposPathRef,
     oauthPoolPathRef,
     opencodeDbPathRef,
+    greetingCachePathRef,
     vaultPathRef,
     "VERSION",
     ...setupTargets.map((target) => target.path_ref),
@@ -131,10 +142,11 @@ export function readStatus(
     repos: readRepoRegistrySummary(reposPath, reposPathRef),
     local_repos: localRepos,
     opencode_sessions: opencodeSessions,
-    oauth_pool: readOAuthPoolSummary(oauthPoolPath, oauthPoolPathRef),
+    oauth_pool: oauthPool,
     setup_targets: setupTargets,
     ai_apps: aiApps,
     managed_apps: managedApps,
+    notifications,
     vault,
   };
 

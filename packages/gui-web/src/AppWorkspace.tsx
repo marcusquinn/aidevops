@@ -1,10 +1,10 @@
 /* jshint esversion: 11 */
 import { type ReactElement, type ReactNode, useEffect, useState } from "react";
-import { FiBell, FiChevronLeft, FiChevronRight, FiCommand, FiGlobe, FiHash, FiHelpCircle, FiLogOut, FiMessageSquare, FiSearch, FiSettings, FiShield, FiTerminal, FiUser } from "react-icons/fi";
-import type { GuiFileRootId, GuiStatusData } from "../../gui-shared/src";
+import { FiAlertTriangle, FiBell, FiCheckCircle, FiChevronLeft, FiChevronRight, FiCommand, FiGlobe, FiHash, FiHelpCircle, FiInfo, FiLogOut, FiMessageSquare, FiSearch, FiSettings, FiShield, FiTerminal, FiTool, FiUser } from "react-icons/fi";
+import type { GuiFileRootId, GuiNotificationSummary, GuiStatusData } from "../../gui-shared/src";
 import { SurfaceGlyph } from "./AppNavigation";
 import type { ConversationMode, ShellMode, SurfaceId, SurfaceNavItem } from "./app-model";
-import { inventorySurfaceConfigs, text } from "./app-model";
+import { inventorySurfaceConfigs, surfaceIds, text } from "./app-model";
 import { CommandPalette, type CommandPaletteSelection, commandPaletteShortcutQuery } from "./CommandPalette";
 import { FileExplorerSurface } from "./FileExplorerSurface";
 import { AppsSurface, EditableInventorySurface, InstallationSurface } from "./InventorySurfaces";
@@ -42,7 +42,7 @@ export function Workspace({ activeItem, activeSectionLabel, activeSurface, canGo
       <div className="workspace-scroll">
         {shellMode === "sessions"
           ? <ConversationWorkspace conversationMode={conversationMode} selectedLocalRepoIndex={selectedLocalRepoIndex} selectedSessionId={selectedSessionId} status={status} />
-          : <SurfaceContent activeItem={activeItem} activeSurface={activeSurface} fileRoot={fileRoot} status={status} />}
+          : <SurfaceContent activeItem={activeItem} activeSurface={activeSurface} fileRoot={fileRoot} openSurface={setActiveSurface} status={status} />}
       </div>
     </section>
   );
@@ -70,6 +70,7 @@ function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoB
   const [profileOpen, setProfileOpen] = useState(false);
   const userInitials = status.machine.initials || "AI";
   const userName = status.machine.username || "Local user";
+  const activeNotifications = status.notifications.filter((notification) => notification.status === "active");
 
   useEffect(() => {
     const openCommandPalette = (event: KeyboardEvent) => {
@@ -134,9 +135,9 @@ function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoB
           </button>
           <button aria-expanded={notificationsOpen} aria-label="Open notifications" className="header-icon-button" onClick={() => { setNotificationsOpen((current) => !current); setProfileOpen(false); }} type="button">
             <FiBell aria-hidden="true" />
-            <span className="notification-dot" aria-hidden="true" />
+            {activeNotifications.length > 0 ? <span className="notification-dot" aria-hidden="true" /> : null}
           </button>
-          {notificationsOpen ? <NotificationsMenu openSurface={(surface) => openItem({ surface })} /> : null}
+          {notificationsOpen ? <NotificationsMenu notifications={status.notifications} openSurface={(surface) => openItem({ surface })} /> : null}
         </div>
         <button aria-pressed={assistantOpen} aria-label="Toggle AI Assistant" className={assistantOpen ? "header-icon-button active" : "header-icon-button"} onClick={() => setAssistantOpen((current) => !current)} title="AI sessions (_)" type="button">
           <FiTerminal aria-hidden="true" />
@@ -176,13 +177,32 @@ function isEditableShortcutTarget(target: EventTarget | null): boolean {
   return target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName);
 }
 
-function NotificationsMenu({ openSurface }: { openSurface: (surface: SurfaceId) => void }): ReactElement {
+function NotificationsMenu({ notifications, openSurface }: { notifications: GuiNotificationSummary[]; openSurface: (surface: SurfaceId) => void }): ReactElement {
+  const active = notifications.filter((notification) => notification.status === "active");
+  const preview = notifications.slice(0, 4);
+
   return (
     <div className="popover-menu notifications-menu" role="menu">
-      <strong>Notifications</strong>
-      <p>Local readiness updates, release activity, and account alerts will collect here.</p>
+      <div className="notifications-menu-heading">
+        <strong>Notifications</strong>
+        <span>{active.length} active</span>
+      </div>
+      {preview.length === 0 ? <p>No current aidevops notifications.</p> : null}
+      {preview.map((notification) => <NotificationPreview key={notification.id} notification={notification} />)}
       <button onClick={() => openSurface("notifications")} role="menuitem" type="button">Open notifications</button>
     </div>
+  );
+}
+
+function NotificationPreview({ notification }: { notification: GuiNotificationSummary }): ReactElement {
+  return (
+    <article className={`notification-preview ${notification.severity}`}>
+      <span aria-hidden="true"><NotificationIcon notification={notification} /></span>
+      <div>
+        <strong>{notification.title}</strong>
+        <small>{notification.category} · {notification.status}</small>
+      </div>
+    </article>
   );
 }
 
@@ -268,10 +288,11 @@ function AssistantPanel({ activeSurface, userName }: { activeSurface: SurfaceId;
   );
 }
 
-function SurfaceContent({ activeItem, activeSurface, fileRoot, status }: {
+function SurfaceContent({ activeItem, activeSurface, fileRoot, openSurface, status }: {
   activeItem: SurfaceNavItem;
   activeSurface: SurfaceId;
   fileRoot: GuiFileRootId | undefined;
+  openSurface: (surface: SurfaceId) => void;
   status: GuiStatusData;
 }) {
   const inventoryConfig = inventorySurfaceConfigs[activeSurface];
@@ -280,7 +301,7 @@ function SurfaceContent({ activeItem, activeSurface, fileRoot, status }: {
     overview: <OverviewSurface status={status} />,
     help: <HelpSurface />,
     settings: <SettingsSurface status={status} />,
-    notifications: <NotificationsSurface />,
+    notifications: <NotificationsSurface openSurface={openSurface} status={status} />,
     admin: <AdminSurface />,
     vault: <VaultSurface status={status} />,
     aiSessions: <PlannedSurface label={text.aiSessions} detail={text.aiSessionsIntro} />,
@@ -391,20 +412,67 @@ function SettingsSurface({ status }: { status: GuiStatusData }): ReactElement {
   );
 }
 
-function NotificationsSurface(): ReactElement {
+function NotificationsSurface({ openSurface, status }: { openSurface: (surface: SurfaceId) => void; status: GuiStatusData }): ReactElement {
+  const active = status.notifications.filter((notification) => notification.status === "active");
+  const resolved = status.notifications.filter((notification) => notification.status === "resolved");
+
   return (
-    <section className="settings-surface">
-      <div className="planned-card">
+    <section className="settings-surface notifications-surface">
+      <div className="planned-card notifications-hero">
         <h2>Notifications</h2>
-        <p>Release updates, workflow failures, security notices, and hosted account messages will appear here.</p>
+        <p>OpenCode startup toasts and the GUI notification centre read the same aidevops status cache and local readiness data, so resolved items disappear or downgrade everywhere after the underlying status changes.</p>
+        <section aria-label="Notification summary" className="notification-summary-strip">
+          <span><strong>{active.length}</strong> active</span>
+          <span><strong>{resolved.length}</strong> resolved</span>
+          <span><strong>{status.notifications.length}</strong> total</span>
+        </section>
       </div>
-      <ul className="notification-list">
-        <li><strong>Readiness</strong><span>Local status and restart notices.</span></li>
-        <li><strong>Workflow</strong><span>PR, release, and routine activity.</span></li>
-        <li><strong>Security</strong><span>Vault and credentials posture reminders.</span></li>
+      <ul aria-label="aidevops notifications" className="github-notification-list">
+        {status.notifications.length === 0 ? <p className="empty-state">No aidevops notifications are currently reported.</p> : null}
+        {status.notifications.map((notification) => <NotificationCard key={notification.id} notification={notification} openSurface={openSurface} />)}
       </ul>
     </section>
   );
+}
+
+function NotificationCard({ notification, openSurface }: { notification: GuiNotificationSummary; openSurface: (surface: SurfaceId) => void }): ReactElement {
+  return (
+    <li className={`github-notification-card ${notification.severity} ${notification.status}`}>
+      <div className="notification-state-icon" aria-hidden="true"><NotificationIcon notification={notification} /></div>
+      <div className="notification-card-body">
+        <header>
+          <div>
+            <p className="eyebrow">{notification.category} · {notification.source}</p>
+            <h3>{notification.title}</h3>
+          </div>
+          <span className="notification-status-pill">{notification.status}</span>
+        </header>
+        <p>{notification.message}</p>
+        <small>{notification.source_ref}</small>
+        <div className="notification-actions">
+          {notification.actions.map((action) => {
+            if (action.kind === "surface" && isSurfaceId(action.surface_id)) {
+              const surfaceId = action.surface_id;
+              return <button className="secondary-action" disabled={!action.enabled} key={action.id} onClick={() => openSurface(surfaceId)} type="button">{action.label}</button>;
+            }
+
+            return <button className="secondary-action" disabled key={action.id} title={action.command_preview} type="button">{action.label}</button>;
+          })}
+        </div>
+      </div>
+    </li>
+  );
+}
+
+function NotificationIcon({ notification }: { notification: GuiNotificationSummary }): ReactElement {
+  if (notification.severity === "error") return <FiAlertTriangle />;
+  if (notification.severity === "warning") return <FiTool />;
+  if (notification.severity === "success") return <FiCheckCircle />;
+  return <FiInfo />;
+}
+
+function isSurfaceId(value: string | undefined): value is SurfaceId {
+  return surfaceIds.includes(value as SurfaceId);
 }
 
 function AdminSurface(): ReactElement {
