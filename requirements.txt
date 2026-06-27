@@ -10,6 +10,9 @@
 # Update versions deliberately via requirements-lock.txt, not automatically.
 
 # Core DSPy packages (dspy-ai was a legacy alias, removed in favour of dspy)
+# KNOWN: dspy resolves diskcache transitively and no patched diskcache release is
+# available yet. Avoid a direct application pin; keep the audited transitive pin
+# in requirements-lock.txt until dspy can resolve a fixed version or replacement.
 dspy==3.1.0b1
 
 # Core dependencies for AI/ML workflows
@@ -21,7 +24,6 @@ requests==2.33.0
 
 # Data processing and storage
 datasets==4.4.1
-diskcache==5.6.3  # KNOWN: no patched release; transitive via dspy, monitor for replacement/update
 joblib==1.5.2
 
 # Optimization and experimentation
