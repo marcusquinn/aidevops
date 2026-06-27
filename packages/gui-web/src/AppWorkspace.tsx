@@ -71,23 +71,10 @@ function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoB
         return;
       }
 
-      if (event.key === "/" && !isEditableShortcutTarget(event.target)) {
+      const shortcutQuery = commandPaletteShortcutQuery(event);
+      if (shortcutQuery !== undefined && !isEditableShortcutTarget(event.target)) {
         event.preventDefault();
-        setCommandInitialQuery("/");
-        setCommandOpen(true);
-        return;
-      }
-
-      if (["#", "@"].includes(event.key) && !isEditableShortcutTarget(event.target)) {
-        event.preventDefault();
-        setCommandInitialQuery(event.key);
-        setCommandOpen(true);
-        return;
-      }
-
-      if (event.key === "." && !isEditableShortcutTarget(event.target)) {
-        event.preventDefault();
-        setCommandInitialQuery("");
+        setCommandInitialQuery(shortcutQuery);
         setCommandOpen(true);
       }
     };
@@ -157,6 +144,22 @@ function isEditableShortcutTarget(target: EventTarget | null): boolean {
   }
 
   return target.isContentEditable || ["INPUT", "SELECT", "TEXTAREA"].includes(target.tagName);
+}
+
+export function commandPaletteShortcutQuery(event: Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey">): string | undefined {
+  if (event.metaKey || event.ctrlKey || event.altKey) {
+    return undefined;
+  }
+
+  if (["/", "@", "#"].includes(event.key)) {
+    return event.key;
+  }
+
+  if (event.key === ".") {
+    return "";
+  }
+
+  return undefined;
 }
 
 function NotificationsMenu({ openSurface }: { openSurface: (surface: SurfaceId) => void }): ReactElement {
@@ -301,9 +304,8 @@ function CommandPalette({ close, initialQuery, openSurface, status }: { close: (
       return;
     }
 
-    const nextRecentIds = [item.id, ...recentIds.filter((id) => id !== item.id)].slice(0, commandPaletteRecentLimit);
+    const nextRecentIds = rememberCommandPaletteItemId(item.id, recentIds);
     setRecentIds(nextRecentIds);
-    writeCommandPaletteRecentIds(nextRecentIds);
     openSurface(item.surface);
   };
 
@@ -420,13 +422,19 @@ function itemsForCommandPrefix(items: CommandPaletteItem[], prefix: string): Com
   return items.filter((item) => item.tag === "Surface");
 }
 
-function orderCommandItemsByRecency(items: CommandPaletteItem[], recentIds: string[]): CommandPaletteItem[] {
+export function orderCommandItemsByRecency<T extends { id: string }>(items: T[], recentIds: string[]): T[] {
   const recentItems = recentIds
     .map((id) => items.find((item) => item.id === id))
-    .filter((item): item is CommandPaletteItem => item !== undefined);
+    .filter((item): item is T => item !== undefined);
   const recentItemIds = new Set(recentItems.map((item) => item.id));
 
   return [...recentItems, ...items.filter((item) => !recentItemIds.has(item.id))];
+}
+
+export function rememberCommandPaletteItemId(itemId: string, currentIds: string[]): string[] {
+  const nextIds = [itemId, ...currentIds.filter((id) => id !== itemId)].slice(0, commandPaletteRecentLimit);
+  writeCommandPaletteRecentIds(nextIds);
+  return nextIds;
 }
 
 function readCommandPaletteRecentIds(): string[] {
