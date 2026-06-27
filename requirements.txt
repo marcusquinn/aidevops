@@ -21,6 +21,7 @@ requests==2.33.0
 
 # Data processing and storage
 datasets==4.4.1
+diskcache==5.6.3  # SECURITY: required by dspy; no patched version reported; do not use directly.
 joblib==1.5.2
 
 # Optimization and experimentation
