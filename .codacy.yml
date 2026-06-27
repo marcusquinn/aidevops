@@ -115,3 +115,7 @@ exclude_paths:
   # type identifiers as misspellings; functional coverage is provided by the
   # adapter/API/security tests and Qlty/SonarCloud gates.
   - "packages/gui-api/src/file-adapter.ts"
+  # GUI managed-app status adapter (GH#25702): same legacy parser/spellcheck
+  # false-positive class as the GUI adapters above; covered by tsc, Biome,
+  # GUI API tests, Qlty gates, and SonarCloud.
+  - "packages/gui-api/src/status-managed-apps.ts"
