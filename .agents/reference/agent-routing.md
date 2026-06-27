@@ -33,6 +33,7 @@ Full index: `subagent-index.toon`.
 | Product | product, PRD, roadmap, validation, onboarding, monetisation, growth, analytics, UX | Product management, requirements, validation, onboarding, monetisation, growth, UI/UX, analytics |
 | Business | company ops, finance, invoice, receipts, strategy, runners | Company operations, financial ops, invoicing, receipts, runner configs, strategy |
 | Legal | legal, compliance, privacy policy, terms, contract, GDPR | Compliance, terms of service, privacy policy |
+| Vault | vault, encrypted memory, protected data, lock, unlock, rekey, device trust, remote lock, remote unlock, secure sync | Vault setup/management, protected-data routing, encrypted sync/fleet trust, remote lock/unlock-request, secure-message policy |
 | Research | research, compare, market, competitor, technical analysis | Tech research, competitive analysis, market research |
 | Health | health, wellness, nutrition, fitness, medical lifestyle | Health and wellness content |
 

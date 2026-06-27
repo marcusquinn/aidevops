@@ -60,6 +60,28 @@ Agents may request non-secret evidence:
 
 ## 3. First-Use Flow
 
+### Setup intake questions
+
+Ask these as non-secret planning questions before directing the user to a local
+hidden prompt:
+
+1. Is the Vault passphrase saved in a trusted password manager with a separate
+   backup path?
+2. Has the user acknowledged that aidevops cannot recover a lost passphrase?
+3. Is this device a local workstation, laptop, cloud VPS, CI/runner host, or
+   other fleet member?
+4. Which sync transport will carry encrypted bundles: Git, object storage,
+   secure messaging, SSH/Tailscale/VPN, or none?
+5. Should remote control allow lock only, unlock-request, or a documented true
+   remote-unlock exception?
+6. Which audit events must replicate across devices or remain local-only?
+7. May decrypted context be routed to approved third-party providers, or must it
+   stay local/local-LLM-only?
+
+Do not ask for the passphrase, recovery material, private keys, raw tokens, or
+logs/screenshots containing those values. If setup needs a secret, tell the user
+to run the helper locally and enter it only into the hidden prompt.
+
 ### Current CLI quick start
 
 Run these commands only in a local terminal where the user can type into the

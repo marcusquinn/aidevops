@@ -20,6 +20,27 @@ audited, short-lived, device-bound exception.
 
 ## 1. Fleet Model
 
+### Fleet management questions
+
+Before advising or dispatching fleet work, ask only non-secret questions:
+
+1. Is the requested action lock/unlock, archive/start fresh, import/export,
+   rekey, device trust/revoke, sync, secure message handling, or audit
+   investigation?
+2. Which collection names or data classes are in scope? Use collection labels,
+   not secret values, private paths, client names, or plaintext subjects.
+3. Which device class should perform the action: current local device, trusted
+   workstation, limited project device, VPS, runner, or revoked/retired device?
+4. Is remote unlock explicitly disabled, unlock-request only, or covered by a
+   documented true remote-unlock policy exception?
+5. What provider policy applies to decrypted context: provider-approved,
+   local-only, local-LLM-only, or hybrid with redaction?
+6. Which audit evidence is needed: status, signed acknowledgement, audit head,
+   vector clock, import summary, or sanitized error code?
+
+Refuse requests to paste passphrases, unlock from chat, read locked data without
+Vault access evidence, or send protected plaintext over any untrusted transport.
+
 A Vault fleet is a set of user-approved devices that can hold encrypted Vault
 collections and prove their identity with signed metadata.
 
