@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.0] - 2026-06-27
+
+### Added
+
+- refine GUI session sidebar (#25704)
+- add gui managed apps controls (#25701)
+
+### Fixed
+
+- extract managed app status adapter (#25706)
+- harden GUI sidebar session selection (#25705)
+
 ## [3.28.0] - 2026-06-27
 
 ### Added
