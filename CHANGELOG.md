@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.25.1] - 2026-06-27
+
+### Added
+
+- monitor dependabot alerts in pulse (#25676)
+- add vault security validation suite (#25653)
+
+### Fixed
+
+- harden issue sync dedupe (#25673)
+- avoid jq in pulse stats ensure (#25671)
+- align selector step buttons (#25669)
+- report vault heartbeat test failure cleanly (#25667)
+- retry transient vault remote suite check (#25666)
+- stabilize vault security suite (#25655)
+
 ## [3.25.0] - 2026-06-27
 
 ### Added
