@@ -157,6 +157,13 @@ Headless worker failures/stalls/loops: `reference/worker-diagnostics.md`. Start 
 
 Memory recall details: `reference/memory-lookup.md`, `reference/memory.md`. User past-work references: search memory → TODO.md → git log → transcripts → GitHub API. Context compaction checkpoint: `~/.aidevops/.agent-workspace/tmp/session-checkpoint.md`; preserve task IDs/states, batch, worktree/branch, PRs, next actions, blockers, key paths. Observability: `reference/observability.md`.
 
+## Vault and Security
+
+Vault/security setup, encrypted sync, protected-data dispatch metadata, and
+remote lock/unlock-request flows use the Vault agent plus `reference/vault.md`,
+`workflows/vault-setup.md`, `workflows/vault-fleet.md`, and
+`scripts/commands/vault.md`.
+
 ## Security
 
 Run `aidevops security` for posture/scan/check/dismiss. Advisories arrive via `aidevops update`; remediate in a separate terminal. Config templates are committed as `configs/*.json.txt`; working `configs/*.json` are gitignored. Full docs: `tools/credentials/gopass.md`, `reference/secret-handling.md`, `reference/pre-push-guards.md`.
