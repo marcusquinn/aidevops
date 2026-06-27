@@ -37,13 +37,13 @@ export function renderDashboardHtml(status: GuiResponseEnvelope<GuiStatusData>):
     .map((capability) => `<li>${escapeHtml(capability.label)}: ${escapeHtml(capability.status)}</li>`)
     .join("");
   const navSections = [
-    { heading: "Development", items: ["Local Repos", "Remote Repos", "Secrets", "AI Providers"] },
+    { heading: "Development", items: ["AI Sessions", "Workers", "Local Repos", "Repos", "Remote Repos", "Deployments", "Secrets", "AI Providers"] },
     { heading: "Account", items: ["Help", "Settings", "Notifications", "Admin"] },
     { heading: "Operations", items: ["Dashboard", "Vault", "Agents file explorer", "Config", "Local Setup", "Routines"] },
     { heading: "Infrastructure", items: ["Devices", "VPNs & Proxies", "Apps", "Installation", "Registrars", "Hosts", "Servers"] },
     { heading: "Identities", items: ["Brands", "Domains", "Personas"] },
     { heading: "Sites", items: ["Websites", "Forums", "Social Media", "Marketplaces"] },
-    { heading: "Management", items: ["Email Accounts", "Messaging Accounts", "Calendars", "Addressbooks", "Tasks", "Notebooks", "Bookmarks"] },
+    { heading: "Management", items: ["Channels", "Direct Messages", "Email Accounts", "Messaging Accounts", "Calendars", "Addressbooks", "Tasks", "Notebooks", "Bookmarks"] },
     { heading: "Documents", items: ["Inbox", "Campaigns", "Cases", "Config", "Feedback", "Knowledge", "Maintenance", "Performance", "Reports"] },
   ];
   const renderedNavSections = navSections
@@ -55,7 +55,7 @@ export function renderDashboardHtml(status: GuiResponseEnvelope<GuiStatusData>):
     `<h1>aidevops app interface</h1>`,
     `<p>Made for creators.</p>`,
     `<p>AI-assisted development workflows, code quality, and deployment automation.</p>`,
-    `<p>Theme follows system preferences with light and dark overrides. Sidebar modes: DevOps and Comms. Appearance controls can be hidden or shown, and include editable Hue, icon Reset, Show borders toggle, Show counts toggle, Font size choices xs, s, m, lg, xl, and Font options: IBM Plex Mono, IBM Plex Sans, IBM Plex Serif, Inter, Menlo (default), Playpen Sans, Poppins, Source Sans, Source Serif, Tilt Neon, Ubuntu Mono. The workspace header includes a command palette, notifications menu, AI Assistant panel, and profile menu with Settings, Theme, Language, Community, Admin, and Logout entries. A desktop status bar shows local readiness, repo totals, secret reference count, provider accounts, and update state.</p>`,
+    `<p>Theme follows system preferences with light and dark overrides. Sidebar modes: DevOps and Comms. Appearance controls can be hidden or shown, and include editable Hue, icon Reset, Show borders toggle, Show counts toggle, Font size choices xs, s, m, lg, xl, and Font options: IBM Plex Mono, IBM Plex Sans, IBM Plex Serif, Inter, Menlo (default), Playpen Sans, Poppins, Source Sans, Source Serif, Tilt Neon, Ubuntu Mono. The workspace header includes a command palette, reserved signposts/help slot immediately left of notifications, notifications menu, AI Assistant panel, and profile menu with Settings, Theme, Language, Community, Admin, and Logout entries. A desktop status bar shows local readiness, repo totals, secret reference count, provider accounts, and update state.</p>`,
     `<p>Secret references stay read-only and redacted.</p>`,
     `<p>Vault surfaces show padlock indicators. Encrypted by aidevops Vault; contents visible only when unlocked through app or authorised vault commands.</p>`,
     `<p>${escapeHtml(status.data.update.message)}</p>`,
