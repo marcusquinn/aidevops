@@ -1028,7 +1028,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18017 Add aidevops.app AI workspace navigation destinations #auto-dispatch #feat #priority:high ref:GH#25710 pr:#25724 completed:2026-06-27
 
-- [ ] t18018 Implement AI Sessions UI with Turbostarter and shadcn primitives #auto-dispatch #feat #priority:high ref:GH#25711
+- [x] t18018 Implement AI Sessions UI with Turbostarter and shadcn primitives #auto-dispatch #feat #priority:high ref:GH#25711 pr:#25729 completed:2026-06-27
 
 - [ ] t18019 Implement channels and direct messages for aidevops.app #auto-dispatch #feat #priority:high ref:GH#25712
 
