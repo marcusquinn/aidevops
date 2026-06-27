@@ -339,7 +339,7 @@ test_has_open_pr_blocks_approved_mergeable_sibling() {
 	local output=""
 	if output=$("$HELPER_SCRIPT" has-open-pr 23250 marcusquinn/aidevops 't3500: dispatch sibling dedup'); then
 		case "$output" in
-		*'open PR #23288 is approved and mergeable for issue #23250'*)
+		*'open PR #23288 is approved or mergeable for issue #23250'*)
 			print_result "has-open-pr blocks approved mergeable sibling PR" 0
 			return 0
 			;;
@@ -361,7 +361,7 @@ test_has_open_pr_blocks_approved_sibling_without_merge_state() {
 	local output=""
 	if output=$("$HELPER_SCRIPT" has-open-pr 23255 marcusquinn/aidevops 't3505: approved sibling dedup'); then
 		case "$output" in
-		*'open PR #23295 is approved and mergeable for issue #23255'*)
+		*'open PR #23295 is approved or mergeable for issue #23255'*)
 			print_result "has-open-pr blocks approved sibling while merge state computes" 0
 			return 0
 			;;
@@ -382,7 +382,7 @@ test_has_open_pr_blocks_mergeable_sibling_without_approval() {
 	local output=""
 	if output=$("$HELPER_SCRIPT" has-open-pr 23256 marcusquinn/aidevops 't3506: mergeable sibling dedup'); then
 		case "$output" in
-		*'open PR #23296 is approved and mergeable for issue #23256'*)
+		*'open PR #23296 is approved or mergeable for issue #23256'*)
 			print_result "has-open-pr blocks mergeable sibling without approval" 0
 			return 0
 			;;
@@ -403,7 +403,7 @@ test_has_open_pr_blocks_refs_colon_healthy_sibling() {
 	local output=""
 	if output=$("$HELPER_SCRIPT" has-open-pr 23252 marcusquinn/aidevops 't3502: dispatch sibling refs dedup'); then
 		case "$output" in
-		*'open PR #23292 is approved and mergeable for issue #23252'*)
+		*'open PR #23292 is approved or mergeable for issue #23252'*)
 			print_result "has-open-pr blocks approved sibling using Refs: #N" 0
 			return 0
 			;;
@@ -424,7 +424,7 @@ test_has_open_pr_blocks_behind_healthy_sibling() {
 	local output=""
 	if output=$("$HELPER_SCRIPT" has-open-pr 23253 marcusquinn/aidevops 't3503: dispatch sibling behind dedup'); then
 		case "$output" in
-		*'open PR #23293 is approved and mergeable for issue #23253'*)
+		*'open PR #23293 is approved or mergeable for issue #23253'*)
 			print_result "has-open-pr blocks approved BEHIND sibling PR" 0
 			return 0
 			;;
@@ -471,6 +471,22 @@ test_has_open_pr_ignores_embedded_bare_sibling_reference() {
 	return 0
 }
 
+test_has_open_pr_ignores_adjacent_issue_number_sibling_reference() {
+	# GitHub full-text search can return adjacent issue numbers. Check 0 must
+	# require a trailing boundary so a healthy PR for #232541 does not block
+	# redispatch for issue #23254.
+	set_gh_fixtures 'marcusquinn/aidevops|open|#23254|[{"number":23298,"title":"Implement unrelated issue #232541","body":"For #232541. Adds unrelated worker changes.","isDraft":false,"reviewDecision":"APPROVED","mergeStateStatus":"CLEAN"}]'
+
+	if "$HELPER_SCRIPT" has-open-pr 23254 marcusquinn/aidevops 't3504: adjacent sibling ref guard'; then
+		print_result "has-open-pr ignores adjacent issue-number sibling reference" 1 \
+			"Expected exit 1: #232541 must not block redispatch for #23254"
+		return 0
+	fi
+
+	print_result "has-open-pr ignores adjacent issue-number sibling reference" 0
+	return 0
+}
+
 # Existing collision case (GH#18041 / t1957) must still allow dispatch:
 # different task used the same ID, merged PR closes some unrelated issue.
 test_has_open_pr_allows_dispatch_on_task_id_collision() {
@@ -508,6 +524,7 @@ main() {
 	test_has_open_pr_blocks_behind_healthy_sibling
 	test_has_open_pr_allows_when_no_healthy_sibling
 	test_has_open_pr_ignores_embedded_bare_sibling_reference
+	test_has_open_pr_ignores_adjacent_issue_number_sibling_reference
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
