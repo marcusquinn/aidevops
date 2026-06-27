@@ -1016,8 +1016,10 @@ unset STUB_PR_VIEW_FIXTURE
 : >"$GH_INFO_OUTPUT"
 export STUB_RATE_LIMIT_REMAINING=0
 export STUB_PR_VIEW_FIXTURE='{"number":123,"mergeable":true}'
+export STUB_PRIMARY_FAIL=1
 
 pr_view_mergeable=$(gh_pr_view 123 --repo "owner/repo" --json mergeable --jq '.mergeable' 2>/dev/null || true)
+unset STUB_PRIMARY_FAIL
 
 if [[ "$pr_view_mergeable" == "MERGEABLE" ]]; then
 	pass "gh_pr_view REST fallback normalizes mergeable=true to MERGEABLE"
@@ -1034,8 +1036,10 @@ unset STUB_PR_VIEW_FIXTURE
 : >"$GH_INFO_OUTPUT"
 export STUB_RATE_LIMIT_REMAINING=0
 export STUB_PR_VIEW_FIXTURE='{"number":123,"mergeable":null}'
+export STUB_PRIMARY_FAIL=1
 
 pr_view_mergeable=$(gh_pr_view 123 --repo "owner/repo" --json mergeable --jq '.mergeable' 2>/dev/null || true)
+unset STUB_PRIMARY_FAIL
 
 if [[ "$pr_view_mergeable" == "UNKNOWN" ]]; then
 	pass "gh_pr_view REST fallback normalizes mergeable=null to UNKNOWN"
@@ -1057,7 +1061,9 @@ export AIDEVOPS_GH_PR_VIEW_CACHE_DIR="${TMP}/pr_view_cache"
 rm -rf "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR"
 
 pr_view_cached_title=$(gh_pr_view 123 --repo "owner/repo" --json title --jq '.title' 2>/dev/null || true)
+export STUB_PRIMARY_FAIL=1
 pr_view_cached_mergeable=$(gh_pr_view 123 --repo "owner/repo" --json mergeable --jq '.mergeable' 2>/dev/null || true)
+unset STUB_PRIMARY_FAIL
 pr_view_rest_calls=$(grep -cE '^api /repos/owner/repo/pulls/123$' "$GH_CALLS" 2>/dev/null || true)
 
 if [[ "$pr_view_cached_title" == "cached title" && "$pr_view_cached_mergeable" == "MERGEABLE" && "$pr_view_rest_calls" == "1" ]]; then
@@ -1236,7 +1242,7 @@ unset AIDEVOPS_GH_PR_VIEW_CACHE AIDEVOPS_GH_PR_VIEW_CACHE_DIR AIDEVOPS_GH_PR_VIE
 
 : >"$GH_CALLS"
 : >"$GH_INFO_OUTPUT"
-unsupported_pr_view_fields=(statusCheckRollup reviews latestReviews reviewThreads commits files reviewDecision autoMergeRequest mergeStateStatus)
+unsupported_pr_view_fields=(mergeable statusCheckRollup reviews latestReviews reviewThreads commits files reviewDecision autoMergeRequest mergeStateStatus)
 unsupported_preserve_ok=1
 for field in "${unsupported_pr_view_fields[@]}"; do
 	if _rest_pr_view_can_preserve_args 123 --repo "owner/repo" --json "$field"; then
