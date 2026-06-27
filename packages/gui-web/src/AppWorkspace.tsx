@@ -129,7 +129,7 @@ function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoB
       </div>
       <div className="header-actions">
         <div className="header-action-menu">
-          <button aria-label="Open help" className="header-icon-button" onClick={() => openItem({ surface: "help" })} title="Help (?)" type="button">
+          <button aria-label="Open signposts and help" className="header-icon-button" onClick={() => openItem({ surface: "help" })} title="Signposts and help (?)" type="button">
             <FiHelpCircle aria-hidden="true" />
           </button>
           <button aria-expanded={notificationsOpen} aria-label="Open notifications" className="header-icon-button" onClick={() => { setNotificationsOpen((current) => !current); setProfileOpen(false); }} type="button">
@@ -283,6 +283,12 @@ function SurfaceContent({ activeItem, activeSurface, fileRoot, status }: {
     notifications: <NotificationsSurface />,
     admin: <AdminSurface />,
     vault: <VaultSurface status={status} />,
+    aiSessions: <PlannedSurface label={text.aiSessions} detail={text.aiSessionsIntro} />,
+    channels: <PlannedSurface label={text.channels} detail={text.channelsIntro} />,
+    directMessages: <PlannedSurface label={text.directMessages} detail={text.directMessagesIntro} />,
+    workers: <PlannedSurface label={text.workers} detail={text.workersIntro} />,
+    repos: <PlannedSurface label={text.repos} detail={text.reposIntro} />,
+    deployments: <PlannedSurface label={text.deployments} detail={text.deploymentsIntro} />,
     routines: <PlannedSurface label={text.routines} detail={text.routineDetail} />,
     devices: <PlannedSurface label={text.devices} detail={text.devicesIntro} />,
     vpnsProxies: <PlannedSurface label={text.vpnsProxies} detail={text.vpnsProxiesIntro} />,

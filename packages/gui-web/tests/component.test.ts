@@ -31,6 +31,12 @@ describe("dashboard shell", () => {
     expect(html).toContain("Marketplaces");
     expect(html).toContain("Local Repos");
     expect(html).toContain("Remote Repos");
+    expect(html).toContain("Repos");
+    expect(html).toContain("AI Sessions");
+    expect(html).toContain("Channels");
+    expect(html).toContain("Direct Messages");
+    expect(html).toContain("Workers");
+    expect(html).toContain("Deployments");
     expect(html).toContain("Secrets");
     expect(html).toContain("AI Providers");
     expect(html).toContain("Vault");
@@ -44,6 +50,7 @@ describe("dashboard shell", () => {
     expect(html).toContain("Theme follows system preferences");
     expect(html).toContain("Appearance controls can be hidden or shown");
     expect(html).toContain("command palette");
+    expect(html).toContain("reserved signposts/help slot immediately left of notifications");
     expect(html).toContain("AI Assistant panel");
     expect(html).toContain("profile menu");
     expect(html).toContain("Help");
@@ -75,6 +82,8 @@ describe("dashboard shell", () => {
     expect(counts.agents).toBe(3);
     expect(counts.vault).toBe(4);
     expect(counts.apps).toBe(2);
+    expect(counts.aiSessions).toBe(mockedStatus().data.opencode_sessions.sessions.length);
+    expect(counts.repos).toBe(mockedStatus().data.local_repos.total + mockedStatus().data.repos.total);
   });
 
   test("normalizes legacy status payloads from older local API processes", async () => {
