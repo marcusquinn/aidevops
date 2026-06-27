@@ -450,6 +450,70 @@ _pmp_checkpoint_resume_skip_repo() {
 	return 0
 }
 
+_pmp_add_counter_var() {
+	local counter_var="$1"
+	local increment="${2:-0}"
+	local current=""
+
+	[[ "$counter_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	current="${!counter_var}"
+	[[ "$current" =~ ^[0-9]+$ ]] || current=0
+	[[ "$increment" =~ ^[0-9]+$ ]] || increment=0
+	printf -v "$counter_var" '%s' "$((current + increment))"
+	return 0
+}
+
+_pmp_process_merge_repo_for_pass() {
+	local repo_slug="$1"
+	local checkpoint_file="$2"
+	local logfile="$3"
+	local stop_flag="$4"
+	local total_merged_var="$5"
+	local total_closed_var="$6"
+	local total_failed_var="$7"
+	local total_eligible_var="$8"
+	local completed_all_var="$9"
+
+	if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
+		|| ! repo_allows_pulse_write_actions "$repo_slug"; then
+		echo "[pulse-wrapper] Deterministic merge pass skipped ${repo_slug}: repo role is contributor/read-only" >>"$logfile"
+		_pmp_write_merge_checkpoint "$checkpoint_file" "$repo_slug"
+		return 0
+	fi
+
+	local repo_merged=0 repo_closed=0 repo_failed=0 _mr_repo_pr_count=0
+	local _mr_repo_list_s=0 _mr_repo_mergeability_s=0 _mr_repo_ruleset_s=0 _mr_repo_branch_protection_s=0 _mr_repo_stuck_detector_s=0
+	local _mr_repo_start _mr_repo_stuck_start _mr_repo_total_s=0
+	_mr_repo_start=$(_pmp_now_epoch)
+
+	_merge_ready_prs_for_repo "$repo_slug" repo_merged repo_closed repo_failed _mr_repo_pr_count "_mr_repo_"
+	_pmp_add_counter_var "$total_merged_var" "$repo_merged"
+	_pmp_add_counter_var "$total_closed_var" "$repo_closed"
+	_pmp_add_counter_var "$total_failed_var" "$repo_failed"
+
+	_mr_repo_stuck_start=$(_pmp_now_epoch)
+	if declare -F pulse_merge_stuck_run_pass >/dev/null 2>&1; then
+		pulse_merge_stuck_run_pass "$repo_slug" || true
+	fi
+	if declare -F _pms_count_eligible_unmerged_for_repo >/dev/null 2>&1; then
+		local _repo_eligible
+		_repo_eligible=$(_pms_count_eligible_unmerged_for_repo "$repo_slug" 2>/dev/null) || _repo_eligible=0
+		[[ "$_repo_eligible" =~ ^[0-9]+$ ]] || _repo_eligible=0
+		_pmp_add_counter_var "$total_eligible_var" "$_repo_eligible"
+	fi
+
+	_pmp_add_elapsed_seconds _mr_repo_stuck_detector_s "$_mr_repo_stuck_start"
+	_pmp_add_elapsed_seconds _mr_repo_total_s "$_mr_repo_start"
+	_pmp_log_repo_timing_summary "$repo_slug" "$_mr_repo_total_s" "$_mr_repo_list_s" "$_mr_repo_mergeability_s" "$_mr_repo_ruleset_s" "$_mr_repo_branch_protection_s" "$_mr_repo_stuck_detector_s" "$repo_merged" "$repo_closed" "$repo_failed" "$_mr_repo_pr_count"
+	_pmp_write_merge_checkpoint "$checkpoint_file" "$repo_slug"
+
+	if [[ -f "$stop_flag" ]]; then
+		echo "[pulse-wrapper] Deterministic merge pass: stop flag appeared mid-run" >>"$logfile"
+		printf -v "$completed_all_var" '%s' '0'
+	fi
+	return 0
+}
+
 merge_ready_prs_all_repos() {
 	# Initialise required env vars with ${VAR:-default} guards so this
 	# function can be called standalone from pulse-merge-routine.sh (t2862)
@@ -493,50 +557,9 @@ merge_ready_prs_all_repos() {
 		if _pmp_checkpoint_resume_skip_repo "$repo_slug" "$_mr_checkpoint" _mr_resume_pending; then
 			continue
 		fi
-		if ! declare -F repo_allows_pulse_write_actions >/dev/null 2>&1 \
-			|| ! repo_allows_pulse_write_actions "$repo_slug"; then
-			echo "[pulse-wrapper] Deterministic merge pass skipped ${repo_slug}: repo role is contributor/read-only" >>"$_mr_logfile"
-			_pmp_write_merge_checkpoint "$_mr_checkpoint_file" "$repo_slug"
-			continue
-		fi
-
-		local repo_merged=0
-		local repo_closed=0
-		local repo_failed=0
-		local _mr_repo_list_s=0 _mr_repo_mergeability_s=0 _mr_repo_ruleset_s=0 _mr_repo_branch_protection_s=0 _mr_repo_stuck_detector_s=0
-		local _mr_repo_start
-		_mr_repo_start=$(_pmp_now_epoch)
-
-		local _mr_repo_pr_count=0
-		_merge_ready_prs_for_repo "$repo_slug" repo_merged repo_closed repo_failed _mr_repo_pr_count "_mr_repo_"
-
-		total_merged=$((total_merged + repo_merged))
-		total_closed=$((total_closed + repo_closed))
-		total_failed=$((total_failed + repo_failed))
-
-		# t3193: run the stuck-merge detector pass for this repo.
-		local _mr_repo_stuck_start
-		_mr_repo_stuck_start=$(_pmp_now_epoch)
-		if declare -F pulse_merge_stuck_run_pass >/dev/null 2>&1; then
-			pulse_merge_stuck_run_pass "$repo_slug" || true
-		fi
-
-		# t3193: count this repo's eligible-but-unmerged contribution.
-		if declare -F _pms_count_eligible_unmerged_for_repo >/dev/null 2>&1; then
-			local _repo_eligible
-			_repo_eligible=$(_pms_count_eligible_unmerged_for_repo "$repo_slug" 2>/dev/null) || _repo_eligible=0
-			[[ "$_repo_eligible" =~ ^[0-9]+$ ]] || _repo_eligible=0
-			total_eligible_unmerged=$((total_eligible_unmerged + _repo_eligible))
-		fi
-		_pmp_add_elapsed_seconds _mr_repo_stuck_detector_s "$_mr_repo_stuck_start"
-		local _mr_repo_total_s=0
-		_pmp_add_elapsed_seconds _mr_repo_total_s "$_mr_repo_start"
-		_pmp_log_repo_timing_summary "$repo_slug" "$_mr_repo_total_s" "$_mr_repo_list_s" "$_mr_repo_mergeability_s" "$_mr_repo_ruleset_s" "$_mr_repo_branch_protection_s" "$_mr_repo_stuck_detector_s" "$repo_merged" "$repo_closed" "$repo_failed" "$_mr_repo_pr_count"
-		_pmp_write_merge_checkpoint "$_mr_checkpoint_file" "$repo_slug"
-
-		if [[ -f "$_mr_stop_flag" ]]; then
-			echo "[pulse-wrapper] Deterministic merge pass: stop flag appeared mid-run" >>"$_mr_logfile"
-			_mr_completed_all=0
+		_pmp_process_merge_repo_for_pass "$repo_slug" "$_mr_checkpoint_file" "$_mr_logfile" "$_mr_stop_flag" \
+			total_merged total_closed total_failed total_eligible_unmerged _mr_completed_all
+		if [[ "$_mr_completed_all" -eq 0 ]]; then
 			break
 		fi
 	done <<<"$_mr_repo_rows"
