@@ -128,7 +128,7 @@ Milestones are sequential; features within each milestone are parallelisable. Ea
 | 3.1 | Diagnose rate-limit classification and account-pool routing so 75/241 rate-limit outcomes become actionable capacity signals `[parallel-group:c]` | pending | implemented-local | ~4h | interactive | |
 | 3.2 | Add/adjust backoff and retry budgets for repeated issue attempts, preserving fast recovery after transient failures `[depends:3.1]` | pending | implemented-local | ~4h | interactive | |
 | 3.3 | Strengthen worker launch and watchdog diagnostics for premature exit, local errors, and stall-killed sessions `[parallel-group:c]` | pending | pending | ~4h | | |
-| 3.4 | Add pulse capacity/current-state guardrails that prioritise solvable issues over raw concurrency `[depends:3.1,3.2,3.3]` | pending | pending | ~4h | | |
+| 3.4 | Add pulse capacity/current-state guardrails that prioritise solvable issues over raw concurrency `[depends:3.1,3.2,3.3]` | #23236 | done | ~4h | worker | #23233 |
 
 ### Milestone 4: Local dogfood loop and release pipeline
 
@@ -211,6 +211,7 @@ Milestones are sequential; features within each milestone are parallelisable. Ea
 | 2026-05-04T03:52Z | Broader lint attempted | `.agents/scripts/linters-local.sh` passed Sonar, secretlint, Markdown, TOON, skill frontmatter, secret policy, pulse canary, layout; timed out after reporting pre-existing Bash 3.2 compatibility violations in unrelated scripts |
 | 2026-05-04T04:15Z | Classifier provenance and provider pressure throttle implemented locally | Metrics now carry `classification_pattern`; worker activity groups expose it; dispatch backoff now blocks provider/model-wide rate-limit storms. Targeted tests passed: `test-headless-runtime-helper.sh`, `test-brief-inline-classifier.sh`, `test-worker-activity-helper.sh`, `test-dispatch-backoff-helper.sh`, and `shellcheck` on changed shell files |
 | 2026-05-04T04:25Z | Worktree rebased | Rebasing onto `origin/main` hit one conflict in `test-headless-runtime-helper.sh` (`V8` vs `V9` contract expectation); resolved to V9 while preserving upstream BLOCKED-signal test. Post-rebase targeted tests and shellcheck passed. |
+| 2026-06-27T00:00Z | Mission task 3.4 reconciled | Issue #23236 is closed as completed via merged PR #23233. The current main branch includes `.agents/scripts/tests/test-pulse-current-state-guardrails.sh`, which covers provider pressure, repeated failures, active healthy PRs, and no-dispatchable cycles so pulse prioritises solvable issues over raw concurrency. |
 
 ## Next actions
 
@@ -230,6 +231,7 @@ This mission continues until pulse and workers are fully productive: open issues
 - [ ] Create/merge/release the combined progressive-context, classifier-provenance, and provider-pressure throttle fix.
 - [x] Add structured classifier provenance so rate-limit/provider/local/watchdog classifications cite source, matched pattern, exit code, and kill reason.
 - [x] Add provider/model-wide rate-limit pressure throttle so pulse does not launch many workers into one constrained account/model.
+- [x] Reconcile mission task 3.4 as completed by issue #23236 and merged PR #23233.
 - [ ] Add diagnostics for comment threads and repeated worker comments that fail to move issues toward closure; convert recurring patterns into framework tasks.
 - [ ] Run local tests/linters, full-loop PR(s), merge, release, and setup/update verification.
 - [ ] Monitor `worker-activity-helper.sh summary --since 24h --json`, solved:worker closure rate, repeated attempts per issue, and pulse capacity until the success criteria hold across sustained windows.
