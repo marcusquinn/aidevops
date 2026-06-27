@@ -1026,7 +1026,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18016 Implement unified conversations for AI sessions channels and DMs #auto-dispatch #feat #priority:high ref:GH#25709 pr:#25719 completed:2026-06-27
 
-- [ ] t18017 Add aidevops.app AI workspace navigation destinations #auto-dispatch #feat #priority:high ref:GH#25710
+- [x] t18017 Add aidevops.app AI workspace navigation destinations #auto-dispatch #feat #priority:high ref:GH#25710 pr:#25724 completed:2026-06-27
 
 - [ ] t18018 Implement AI Sessions UI with Turbostarter and shadcn primitives #auto-dispatch #feat #priority:high ref:GH#25711
 
