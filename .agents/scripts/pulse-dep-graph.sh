@@ -766,6 +766,9 @@ _blocked_by_check_task_id() {
 				echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked by t${task_id}=#${blocker_issue_num} (cache: open) — skipping dispatch (t1935)" >>"$LOGFILE"
 				return 0
 			fi
+			if _blocked_by_todo_marks_incomplete "$task_id" "$repo_slug" "$issue_number"; then
+				return 0
+			fi
 			return 1
 		fi
 		# Task not in map → fall through to live API (may be a new issue).
@@ -798,11 +801,41 @@ _blocked_by_check_task_id() {
 			return 0
 			;;
 		[Cc][Ll][Oo][Ss][Ee][Dd])
+			if _blocked_by_todo_marks_incomplete "$task_id" "$repo_slug" "$issue_number"; then
+				return 0
+			fi
 			return 1
 			;;
 	esac
 	echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-unresolved-reference t${task_id} (cache miss / live lookup inconclusive) — skipping dispatch" >>"$LOGFILE"
 	return 0
+}
+
+#######################################
+# Check whether local TODO.md still marks a task blocker incomplete.
+#
+# GitHub closure usually proves a blocker resolved, but stale TODO state means
+# post-merge task sync drift can mislead workers about dependency readiness.
+# When dispatch supplied PULSE_DEP_GRAPH_REPO_PATH and TODO.md still has an
+# unchecked canonical tNNN entry, hold dispatch so the next maintenance pass can
+# reconcile the task ledger instead of launching against contradictory context.
+#
+# Args: $1=task_id digits, $2=repo_slug, $3=issue_number
+# Returns: 0 when local TODO says incomplete, 1 otherwise.
+#######################################
+_blocked_by_todo_marks_incomplete() {
+	local task_id="$1"
+	local repo_slug="$2"
+	local issue_number="$3"
+	local repo_path="${PULSE_DEP_GRAPH_REPO_PATH:-}"
+
+	[[ -n "$repo_path" ]] || return 1
+	[[ -f "${repo_path}/TODO.md" ]] || return 1
+	if grep -Eq "^- \[ \] t${task_id}([:.[:space:]]|$)" "${repo_path}/TODO.md" 2>/dev/null; then
+		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-todo-drift t${task_id} in ${repo_slug} — GitHub blocker is closed but local TODO.md still marks it incomplete; skipping dispatch" >>"$LOGFILE"
+		return 0
+	fi
+	return 1
 }
 
 #######################################
