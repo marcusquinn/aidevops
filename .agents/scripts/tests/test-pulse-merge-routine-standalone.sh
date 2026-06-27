@@ -41,6 +41,7 @@
 #   9. scheduler uses timeout-protected pulse-merge-routine
 #   10. merge LaunchAgent uses normal spawn priority with explicit KeepAlive=false
 #   11. standalone PATH repair keeps the framework gh shim first
+#   12. leading --repo defaults to the run subcommand (GH#25698)
 
 set -uo pipefail
 
@@ -279,6 +280,53 @@ if [[ -f "$SCHEDULERS_PLATFORM_FILE" ]]; then
 else
 	skip "10: merge LaunchAgent uses normal spawn priority with explicit KeepAlive=false" \
 		".agents/scripts/setup/modules/schedulers-platform.sh not found"
+fi
+
+printf '\n=== Argument parser regression guards ===\n'
+
+PARSER_HARNESS=$(mktemp "${TMPDIR:-/tmp}/pmr-parser-harness-XXXXXX")
+trap 'rm -f "$PARSER_HARNESS"' EXIT
+
+cat >"$PARSER_HARNESS" <<'PARSER_HARNESS_EOF'
+#!/usr/bin/env bash
+set -uo pipefail
+
+RUNNER_LOG_FILE=/dev/null
+PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS=30
+
+_pmr_log() { return 0; }
+cmd_help() { return 0; }
+cmd_dry_run() { return 0; }
+cmd_run() {
+	if [[ -z "${REPOS_JSON:-}" ]]; then
+		return 1
+	fi
+	if grep -q '"slug":"example/repo"' "$REPOS_JSON"; then
+		return 0
+	fi
+	return 1
+}
+
+# Extract only _pmr_main so this test does not run the real merge routine.
+# shellcheck disable=SC1090
+source <(awk '
+	/^_pmr_main\(\)/ { capture=1 }
+	capture { print }
+	capture && /^}/ { capture=0 }
+' "$ROUTINE_FILE")
+
+_pmr_main --repo example/repo
+PARSER_HARNESS_EOF
+
+chmod +x "$PARSER_HARNESS"
+parser_output=$(ROUTINE_FILE="$ROUTINE_FILE" bash "$PARSER_HARNESS" 2>&1)
+parser_rc=$?
+
+if [[ "$parser_rc" -eq 0 ]]; then
+	pass "11: leading --repo defaults to run subcommand"
+else
+	fail "11: leading --repo defaults to run subcommand" \
+		"harness rc=${parser_rc}, output=${parser_output}"
 fi
 
 # =============================================================================
