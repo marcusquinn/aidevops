@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.2] - 2026-06-27
+
+### Added
+
+- add GUI conversation contracts (#25719)
+
+### Changed
+
+- Maintenance: mark t18016 complete (pr:#25719 completed:2026-06-27) [skip ci]
+- Maintenance: sync ref:GH#25708 to TODO.md [skip ci]
+- Maintenance: mark t18015 complete (pr:#25717 completed:2026-06-27) [skip ci]
+- Documentation: map AI collaboration workspace (#25717)
+
+### Fixed
+
+- cache pulse merge API lookups (#25723)
+- default pulse merge routine to run (#25718)
+
 ## [3.29.1] - 2026-06-27
 
 ### Changed
