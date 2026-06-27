@@ -221,6 +221,7 @@ function ConversationSidebar({ conversationMode, selectedLocalRepoIndex, selecte
   const sessions = selectedRepo === undefined
     ? []
     : status.opencode_sessions.sessions.filter((session) => session.repo_path_ref === selectedRepo.path_ref);
+  const activeSessionId = sessions.some((session) => session.id_ref === selectedSessionId) ? selectedSessionId : sessions[0]?.id_ref;
   const canSelectPreviousRepo = selectedLocalRepoIndex > 0;
   const canSelectNextRepo = selectedLocalRepoIndex < repos.length - 1;
 
@@ -243,7 +244,7 @@ function ConversationSidebar({ conversationMode, selectedLocalRepoIndex, selecte
         {selectedRepo ? <ul>
           {sessions.length === 0
             ? <li><button className="surface-link active" type="button"><span className="surface-icon" aria-hidden="true"><FiHash /></span><span className="surface-copy"><strong>{selectedRepo.name}</strong><small>No OpenCode sessions found for this repo yet.</small></span><em>{text.planned}</em></button></li>
-            : sessions.map((session) => <li key={session.id_ref}><button className={(selectedSessionId ?? sessions[0]?.id_ref) === session.id_ref ? "surface-link active" : "surface-link"} onClick={() => setSelectedSessionId(session.id_ref)} type="button"><span className="surface-icon" aria-hidden="true"><FiHash /></span><span className="surface-copy"><strong>{session.title}</strong><small>{session.updated_at}</small></span></button></li>)}
+            : sessions.map((session) => <li key={session.id_ref}><button className={activeSessionId === session.id_ref ? "surface-link active" : "surface-link"} onClick={() => setSelectedSessionId(session.id_ref)} type="button"><span className="surface-icon" aria-hidden="true"><FiHash /></span><span className="surface-copy"><strong>{session.title}</strong><small>{session.updated_at}</small></span></button></li>)}
         </ul> : <p className="empty-sidebar-state">No local repos discovered.</p>}
       </section>
       </>}
