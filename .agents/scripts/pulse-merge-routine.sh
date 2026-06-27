@@ -444,7 +444,7 @@ cmd_dry_run() {
 # =============================================================================
 
 _pmr_main() {
-	local _subcommand="${1:-run}"
+	local _subcommand="run"
 	local _repo_filter=""
 	local _pr_filter=""
 
