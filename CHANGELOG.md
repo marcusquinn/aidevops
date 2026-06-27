@@ -10,6 +10,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.1] - 2026-06-27
+
+### Changed
+
+- Maintenance: sync ref:GH#25715 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#25714 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#25713 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#25711 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#25710 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#25709 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#25708 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#25707 to TODO.md [skip ci]
+
+### Fixed
+
+- keep gui startup screen startup-only
+- keep gui status probes responsive
+- speed up gui startup readiness
+
 ## [3.29.0] - 2026-06-27
 
 ### Added
