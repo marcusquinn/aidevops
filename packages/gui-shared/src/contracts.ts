@@ -185,6 +185,100 @@ export interface GuiOpenCodeSessionRegistrySummary {
   sessions: GuiOpenCodeSessionSummary[];
 }
 
+export type GuiConversationType = "ai_session" | "channel" | "dm" | "group_dm" | "worker_thread";
+
+export type GuiConversationParticipantKind = "human" | "ai_assistant" | "worker" | "system_bot";
+
+export type GuiConversationMessageSenderKind = GuiConversationParticipantKind | "system";
+
+export type GuiConversationMessagePartKind = "text" | "file" | "tool_call" | "source" | "tambo_component" | "approval_prompt" | "event_marker";
+
+export interface GuiConversationScope {
+  tenant_ref: string;
+  workspace_ref: string;
+  repo_ref: string | null;
+}
+
+export interface GuiConversation {
+  id: string;
+  type: GuiConversationType;
+  title: string;
+  scope: GuiConversationScope;
+  source_ref: string;
+  status: "active" | "archived" | "read_only";
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GuiConversationParticipant {
+  id: string;
+  conversation_id: string;
+  kind: GuiConversationParticipantKind;
+  display_name: string;
+  identity_ref: string | null;
+  agent_ref: string | null;
+  worker_ref: string | null;
+  membership_state: "active" | "invited" | "left" | "removed";
+  joined_at: string;
+}
+
+export interface GuiConversationUsageMetadata {
+  provider_ref: string | null;
+  model_ref: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cost_ref: string | null;
+}
+
+export interface GuiConversationMessage {
+  id: string;
+  conversation_id: string;
+  sender_participant_id: string | null;
+  sender_kind: GuiConversationMessageSenderKind;
+  sequence: number;
+  status: "draft" | "sent" | "delivered" | "failed" | "redacted";
+  usage: GuiConversationUsageMetadata | null;
+  created_at: string;
+  edited_at: string | null;
+}
+
+export interface GuiConversationMessagePart {
+  id: string;
+  message_id: string;
+  kind: GuiConversationMessagePartKind;
+  ordinal: number;
+  text: string | null;
+  payload_json: Record<string, unknown> | null;
+  file_ref: string | null;
+  source_ref: string | null;
+}
+
+export interface GuiConversationReaction {
+  id: string;
+  message_id: string;
+  participant_id: string;
+  reaction: string;
+  created_at: string;
+}
+
+export interface GuiConversationReadState {
+  conversation_id: string;
+  participant_id: string;
+  last_read_message_id: string | null;
+  last_read_sequence: number;
+  updated_at: string;
+}
+
+export interface GuiConversationThread {
+  conversation: GuiConversation;
+  participants: GuiConversationParticipant[];
+  messages: GuiConversationMessage[];
+  parts: GuiConversationMessagePart[];
+  reactions: GuiConversationReaction[];
+  read_states: GuiConversationReadState[];
+}
+
 export type GuiAiProviderId = "anthropic" | "openai" | "cursor" | "google";
 
 export interface GuiOAuthPoolAccountSummary {
@@ -498,4 +592,20 @@ export function assertNoSecretSentinels(value: unknown): void {
 
 export function isReadOnlyManifest(manifest: GuiRouteManifest): boolean {
   return manifest.method === "GET" && manifest.classification === "read";
+}
+
+export function sortConversationMessages<TMessage extends Pick<GuiConversationMessage, "sequence" | "created_at">>(messages: TMessage[]): TMessage[] {
+  return [...messages].sort((left, right) => left.sequence - right.sequence || left.created_at.localeCompare(right.created_at));
+}
+
+export function sortConversationMessageParts<TPart extends Pick<GuiConversationMessagePart, "ordinal">>(parts: TPart[]): TPart[] {
+  return [...parts].sort((left, right) => left.ordinal - right.ordinal);
+}
+
+export function participantCanReadConversation(thread: GuiConversationThread, participantId: string): boolean {
+  return thread.participants.some((participant) => participant.id === participantId && participant.membership_state === "active");
+}
+
+export function conversationHasScope(thread: GuiConversationThread, scope: GuiConversationScope): boolean {
+  return thread.conversation.scope.tenant_ref === scope.tenant_ref && thread.conversation.scope.workspace_ref === scope.workspace_ref && thread.conversation.scope.repo_ref === scope.repo_ref;
 }
