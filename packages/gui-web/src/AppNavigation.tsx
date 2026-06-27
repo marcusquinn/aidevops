@@ -1,6 +1,6 @@
 /* jshint esversion: 11 */
 import type { GuiMachineSummary, GuiStatusData } from "@aidevops/gui-shared";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import type { IconType } from "react-icons";
 import {
   FiBookmark,
@@ -18,6 +18,7 @@ import {
   FiGitBranch,
   FiGlobe,
   FiGrid,
+  FiHash,
   FiHardDrive,
   FiLink,
   FiLink2,
@@ -34,7 +35,7 @@ import {
   FiTerminal,
   FiUsers,
 } from "react-icons/fi";
-import type { FontPreference, FontSizePreference, SidebarMode, SurfaceIconName, SurfaceId, SurfaceNavGroup, SurfaceNavItem, ThemePreference } from "./app-model";
+import type { ConversationMode, FontPreference, FontSizePreference, ShellMode, SidebarMode, SurfaceIconName, SurfaceId, SurfaceNavGroup, SurfaceNavItem, ThemePreference } from "./app-model";
 import { DEFAULT_ACCENT_HUE, dashboardNavItem, fontFamilyForPreference, fontOptions, fontSizeOptions, navGroups, sidebarModeForSurface, surfaceRecordCounts, text } from "./app-model";
 import { VaultPadlock, vaultCollectionForSurface } from "./VaultBadges";
 
@@ -106,22 +107,24 @@ export function MachineRail({ machine }: { machine?: GuiMachineSummary }) {
   );
 }
 
-export function Sidebar({ activeSurface, accentHue, canGoBack, canGoForward, fontPreference, fontSizePreference, goBack, goForward, setAccentHue, setActiveSurface, setFontPreference, setFontSizePreference, setShowBorders, setShowNavCounts, setThemePreference, showBorders, showNavCounts, status, themePreference }: {
+export function Sidebar({ activeSurface, accentHue, conversationMode, fontPreference, fontSizePreference, selectedLocalRepoIndex, setAccentHue, setActiveSurface, setConversationMode, setFontPreference, setFontSizePreference, setSelectedLocalRepoIndex, setShellMode, setShowBorders, setShowNavCounts, setThemePreference, shellMode, showBorders, showNavCounts, status, themePreference }: {
   activeSurface: SurfaceId;
   accentHue: number;
-  canGoBack: boolean;
-  canGoForward: boolean;
+  conversationMode: ConversationMode;
   fontPreference: FontPreference;
   fontSizePreference: FontSizePreference;
-  goBack: () => void;
-  goForward: () => void;
+  selectedLocalRepoIndex: number;
   setAccentHue: (hue: number) => void;
   setActiveSurface: (surface: SurfaceId) => void;
+  setConversationMode: (mode: ConversationMode) => void;
   setFontPreference: (font: FontPreference) => void;
   setFontSizePreference: (size: FontSizePreference) => void;
+  setSelectedLocalRepoIndex: (index: number) => void;
+  setShellMode: (mode: ShellMode) => void;
   setShowBorders: (show: boolean) => void;
   setShowNavCounts: (show: boolean) => void;
   setThemePreference: (theme: ThemePreference) => void;
+  shellMode: ShellMode;
   showBorders: boolean;
   showNavCounts: boolean;
   status: GuiStatusData;
@@ -137,13 +140,21 @@ export function Sidebar({ activeSurface, accentHue, canGoBack, canGoForward, fon
 
   return (
     <aside className="app-sidebar" aria-label={text.navigationLabel}>
-      <SidebarHeader canGoBack={canGoBack} canGoForward={canGoForward} goBack={goBack} goForward={goForward} />
+      <SidebarHeader setShellMode={setShellMode} shellMode={shellMode} />
       <nav className="sidebar-content">
-        <SidebarModeTabs mode={sidebarMode} setMode={setSidebarMode} />
-        <ul className="sidebar-top-link">
-          <SidebarItem activeSurface={activeSurface} item={dashboardNavItem} setActiveSurface={setActiveSurface} showCount={false} status={status} />
-        </ul>
-        {visibleGroups.map((group) => <SidebarGroup activeSurface={activeSurface} group={group} key={group.label} recordCounts={recordCounts} setActiveSurface={setActiveSurface} showNavCounts={showNavCounts} status={status} />)}
+        {shellMode === "devices" ? <>
+          <SidebarModeTabs mode={sidebarMode} setMode={(mode) => setSidebarMode(mode as SidebarMode)} />
+          <ul className="sidebar-top-link">
+            <SidebarItem activeSurface={activeSurface} item={dashboardNavItem} setActiveSurface={setActiveSurface} showCount={false} status={status} />
+          </ul>
+          {visibleGroups.map((group) => <SidebarGroup activeSurface={activeSurface} group={group} key={group.label} recordCounts={recordCounts} setActiveSurface={setActiveSurface} showNavCounts={showNavCounts} status={status} />)}
+        </> : <ConversationSidebar
+          conversationMode={conversationMode}
+          selectedLocalRepoIndex={selectedLocalRepoIndex}
+          setConversationMode={setConversationMode}
+          setSelectedLocalRepoIndex={setSelectedLocalRepoIndex}
+          status={status}
+        />}
       </nav>
       <SidebarFooter
         accentHue={accentHue}
@@ -163,14 +174,102 @@ export function Sidebar({ activeSurface, accentHue, canGoBack, canGoForward, fon
   );
 }
 
-function SidebarModeTabs({ mode, setMode }: {
-  mode: SidebarMode;
-  setMode: (mode: SidebarMode) => void;
+function IconSwitch<TValue extends string>({ ariaLabel, options, value }: {
+  ariaLabel: string;
+  options: Array<{ icon: ReactNode; label: string; onSelect: () => void; value: TValue }>;
+  value: TValue;
 }) {
-  const modes: Array<{ label: string; value: SidebarMode }> = [
-    { label: text.devops, value: "devops" },
-    { label: text.comms, value: "comms" },
-  ];
+  return (
+    <div className="icon-switch" role="tablist" aria-label={ariaLabel}>
+      {options.map((option) => (
+        <button
+          aria-label={option.label}
+          aria-selected={value === option.value}
+          className={value === option.value ? "active" : ""}
+          key={option.value}
+          onClick={option.onSelect}
+          role="tab"
+          title={option.label}
+          type="button"
+        >
+          {option.icon}
+          <span>{option.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ConversationSidebar({ conversationMode, selectedLocalRepoIndex, setConversationMode, setSelectedLocalRepoIndex, status }: {
+  conversationMode: ConversationMode;
+  selectedLocalRepoIndex: number;
+  setConversationMode: (mode: ConversationMode) => void;
+  setSelectedLocalRepoIndex: (index: number) => void;
+  status: GuiStatusData;
+}) {
+  const repos = status.local_repos.repos;
+  const selectedRepo = repos[selectedLocalRepoIndex] ?? repos[0];
+  const sessions = selectedRepo === undefined
+    ? []
+    : status.opencode_sessions.sessions.filter((session) => session.repo_path_ref === selectedRepo.path_ref);
+  const canSelectPreviousRepo = selectedLocalRepoIndex > 0;
+  const canSelectNextRepo = selectedLocalRepoIndex < repos.length - 1;
+
+  return (
+    <section className="conversation-panel" aria-label={text.opencodeSessions}>
+      <SidebarModeTabs mode={conversationMode} setMode={setConversationMode} />
+      {conversationMode === "people" ? <PeopleChannelList /> : <>
+      <button className="new-session-button" disabled title="Creating sessions needs an audited OpenCode write route." type="button">{text.newSession}</button>
+      <div className="repo-session-selector" aria-label={text.localRepoSelector}>
+        <button aria-label="Previous local repo" disabled={!canSelectPreviousRepo} onClick={() => setSelectedLocalRepoIndex(Math.max(0, selectedLocalRepoIndex - 1))} type="button"><FiChevronLeft /></button>
+        <label>
+          <span>{text.localRepos}</span>
+          <select onChange={(event) => setSelectedLocalRepoIndex(Number.parseInt(event.currentTarget.value, 10))} value={Math.min(selectedLocalRepoIndex, Math.max(0, repos.length - 1))}>
+            {repos.length === 0 ? <option value={0}>No local repos</option> : repos.map((repo, index) => <option key={repo.path_ref} value={index}>{repo.name}</option>)}
+          </select>
+        </label>
+        <button aria-label="Next local repo" disabled={!canSelectNextRepo} onClick={() => setSelectedLocalRepoIndex(Math.min(repos.length - 1, selectedLocalRepoIndex + 1))} type="button"><FiChevronRight /></button>
+      </div>
+      <section className="sidebar-group session-history-list">
+        <h2>{text.sessionHistory}</h2>
+        {selectedRepo ? <ul>
+          {sessions.length === 0
+            ? <li><button className="surface-link active" type="button"><span className="surface-icon" aria-hidden="true"><FiHash /></span><span className="surface-copy"><strong>{selectedRepo.name}</strong><small>No OpenCode sessions found for this repo yet.</small></span><em>{text.planned}</em></button></li>
+            : sessions.map((session, index) => <li key={session.id_ref}><button className={index === 0 ? "surface-link active" : "surface-link"} type="button"><span className="surface-icon" aria-hidden="true"><FiHash /></span><span className="surface-copy"><strong>{session.title}</strong><small>{session.updated_at}</small></span></button></li>)}
+        </ul> : <p className="empty-sidebar-state">No local repos discovered.</p>}
+      </section>
+      </>}
+    </section>
+  );
+}
+
+function PeopleChannelList() {
+  return (
+    <div aria-label="People channels">
+      <div className="notice compact-notice">{text.simplexReady}</div>
+      <section className="sidebar-group session-history-list">
+        <h2>{text.teams}</h2>
+        <ul>
+          {["aidevops", "clients", "ops"].map((team) => <li key={team}><button className="surface-link" type="button"><span className="surface-icon" aria-hidden="true"><FiHash /></span><span className="surface-copy"><strong>{team}</strong><small>SimpleX team channel placeholder</small></span></button></li>)}
+        </ul>
+      </section>
+      <section className="sidebar-group session-history-list">
+        <h2>{text.directMessages}</h2>
+        <ul>
+          {["Marcus", "AI DevOps"].map((person) => <li key={person}><button className="surface-link" type="button"><span className="surface-icon" aria-hidden="true"><FiMessageSquare /></span><span className="surface-copy"><strong>{person}</strong><small>encrypted DM placeholder</small></span></button></li>)}
+        </ul>
+      </section>
+    </div>
+  );
+}
+
+function SidebarModeTabs<TMode extends SidebarMode | ConversationMode>({ mode, setMode }: {
+  mode: TMode;
+  setMode: (mode: TMode) => void;
+}) {
+  const modes = (mode === "ai" || mode === "people"
+    ? [{ label: text.ai, value: "ai" }, { label: text.people, value: "people" }]
+    : [{ label: text.devops, value: "devops" }, { label: text.comms, value: "comms" }]) as Array<{ label: string; value: TMode }>;
 
   return (
     <div className="sidebar-mode-tabs" role="tablist" aria-label="Sidebar sections">
@@ -246,11 +345,9 @@ function SidebarItem({ activeSurface, item, recordCount, setActiveSurface, showC
   );
 }
 
-function SidebarHeader({ canGoBack, canGoForward, goBack, goForward }: {
-  canGoBack: boolean;
-  canGoForward: boolean;
-  goBack: () => void;
-  goForward: () => void;
+function SidebarHeader({ setShellMode, shellMode }: {
+  setShellMode: (mode: ShellMode) => void;
+  shellMode: ShellMode;
 }) {
   return (
     <header className="sidebar-header">
@@ -259,10 +356,14 @@ function SidebarHeader({ canGoBack, canGoForward, goBack, goForward }: {
           <span className="terminal-mark" aria-hidden="true">›_</span>
           <strong>{text.aidevops}</strong>
         </div>
-        <div className="sidebar-history-controls">
-          <button aria-label="Previous surface" disabled={!canGoBack} onClick={goBack} type="button"><FiChevronLeft /></button>
-          <button aria-label="Next surface" disabled={!canGoForward} onClick={goForward} type="button"><FiChevronRight /></button>
-        </div>
+        <IconSwitch
+          ariaLabel="Navigation scope"
+          options={[
+            { icon: <FiMonitor aria-hidden="true" />, label: text.devices, onSelect: () => setShellMode("devices"), value: "devices" },
+            { icon: <FiHash aria-hidden="true" />, label: text.opencodeSessions, onSelect: () => setShellMode("sessions"), value: "sessions" },
+          ]}
+          value={shellMode}
+        />
       </div>
     </header>
   );

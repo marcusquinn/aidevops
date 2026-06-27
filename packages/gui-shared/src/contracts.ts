@@ -131,6 +131,22 @@ export interface GuiLocalReposSetupSummary {
   repos: GuiLocalRepoSetupSummary[];
 }
 
+export interface GuiOpenCodeSessionSummary {
+  id_ref: string;
+  repo_path_ref: string;
+  title: string;
+  updated_at: string;
+  model: string;
+  agent: string;
+}
+
+export interface GuiOpenCodeSessionRegistrySummary {
+  path_ref: string;
+  health: "present" | "missing" | "invalid" | "unchecked";
+  value_policy: "metadata_only_no_message_payloads";
+  sessions: GuiOpenCodeSessionSummary[];
+}
+
 export type GuiAiProviderId = "anthropic" | "openai" | "cursor" | "google";
 
 export interface GuiOAuthPoolAccountSummary {
@@ -298,6 +314,7 @@ export interface GuiStatusData {
   settings: GuiSettingsSummary;
   repos: GuiRepoRegistrySummary;
   local_repos: GuiLocalReposSetupSummary;
+  opencode_sessions: GuiOpenCodeSessionRegistrySummary;
   oauth_pool: GuiOAuthPoolSummary;
   setup_targets: GuiSetupTargetSummary[];
   ai_apps: GuiAiAppSummary[];

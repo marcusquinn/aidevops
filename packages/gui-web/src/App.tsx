@@ -2,7 +2,7 @@ import type { GuiResponseEnvelope, GuiStatusData } from "@aidevops/gui-shared";
 import { type ReactElement, useEffect, useState } from "react";
 import { MachineRail, Sidebar } from "./AppNavigation";
 import { Workspace } from "./AppWorkspace";
-import type { FontPreference, FontSizePreference, SurfaceId, ThemePreference } from "./app-model";
+import type { ConversationMode, FontPreference, FontSizePreference, ShellMode, SurfaceId, ThemePreference } from "./app-model";
 import { DEFAULT_ACCENT_HUE, DEFAULT_FONT, DEFAULT_FONT_SIZE, fileRootBySurface, findSurface, findSurfaceSectionLabel, fontFamilyForPreference, fontSizeForPreference, getSystemTheme, isFontPreference, isFontSizePreference } from "./app-model";
 import { fetchStatus, mockedStatus } from "./status-client";
 
@@ -73,6 +73,9 @@ export function App(): ReactElement {
   const [machineRailVisible, setMachineRailVisible] = useState(storedAppearancePreferences.machineRailVisible);
   const [showNavCounts, setShowNavCounts] = useState(storedAppearancePreferences.showNavCounts);
   const [showBorders, setShowBorders] = useState(storedAppearancePreferences.showBorders);
+  const [shellMode, setShellMode] = useState<ShellMode>("devices");
+  const [conversationMode, setConversationMode] = useState<ConversationMode>("ai");
+  const [selectedLocalRepoIndex, setSelectedLocalRepoIndex] = useState(0);
   const [systemTheme, setSystemTheme] = useState<"light" | "dark">("light");
   const resolvedTheme = themePreference === "system" ? systemTheme : themePreference;
   const activeSurface: SurfaceId = navigation.entries[navigation.index] ?? "overview";
@@ -166,6 +169,10 @@ export function App(): ReactElement {
     persistAppearancePreference(appearanceStorageKeys.machineRail, String(machineRailVisible));
   }, [machineRailVisible]);
 
+  useEffect(() => {
+    setSelectedLocalRepoIndex((current) => Math.min(current, Math.max(0, status.data.local_repos.repos.length - 1)));
+  }, [status.data.local_repos.repos.length]);
+
   return (
     <main className={machineRailVisible ? "app-shell" : "app-shell machine-rail-collapsed"}>
       <div className="desktop-titlebar-tagline" aria-hidden="true">Your data protected. Your systems managed. Your creations published.</div>
@@ -173,25 +180,41 @@ export function App(): ReactElement {
       <Sidebar
         activeSurface={activeSurface}
         accentHue={accentHue}
-        canGoBack={canGoBack}
-        canGoForward={canGoForward}
+        conversationMode={conversationMode}
         fontSizePreference={fontSizePreference}
         fontPreference={fontPreference}
-        goBack={goBack}
-        goForward={goForward}
+        selectedLocalRepoIndex={selectedLocalRepoIndex}
         setAccentHue={setAccentHue}
         setActiveSurface={setActiveSurface}
+        setConversationMode={setConversationMode}
         setFontSizePreference={setFontSizePreference}
         setFontPreference={setFontPreference}
+        setSelectedLocalRepoIndex={setSelectedLocalRepoIndex}
+        setShellMode={setShellMode}
         setShowBorders={setShowBorders}
         setShowNavCounts={setShowNavCounts}
         setThemePreference={setThemePreference}
+        shellMode={shellMode}
         showBorders={showBorders}
         showNavCounts={showNavCounts}
         status={status.data}
         themePreference={themePreference}
       />
-      <Workspace activeItem={activeItem} activeSectionLabel={activeSectionLabel} activeSurface={activeSurface} fileRoot={fileRoot} setActiveSurface={setActiveSurface} status={status.data} />
+      <Workspace
+        activeItem={activeItem}
+        activeSectionLabel={activeSectionLabel}
+        activeSurface={activeSurface}
+        canGoBack={canGoBack}
+        canGoForward={canGoForward}
+        conversationMode={conversationMode}
+        fileRoot={fileRoot}
+        goBack={goBack}
+        goForward={goForward}
+        selectedLocalRepoIndex={selectedLocalRepoIndex}
+        setActiveSurface={setActiveSurface}
+        shellMode={shellMode}
+        status={status.data}
+      />
       <DesktopStatusBar status={status.data} />
     </main>
   );

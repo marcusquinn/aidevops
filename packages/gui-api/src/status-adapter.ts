@@ -2,7 +2,11 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { hostname, networkInterfaces, userInfo } from "node:os";
 import { join } from "node:path";
+import { Database } from "bun:sqlite";
 import {
+  type GuiLocalRepoSetupSummary,
+  type GuiOpenCodeSessionRegistrySummary,
+  type GuiOpenCodeSessionSummary,
   assertNoSecretSentinels,
   createEnvelope,
   VAULT_STATUS_ROUTE_MANIFEST,
@@ -51,11 +55,13 @@ export function readStatus(
   const settingsPathRef = "~/.config/aidevops/settings.json";
   const reposPathRef = "~/.config/aidevops/repos.json";
   const oauthPoolPathRef = "~/.aidevops/oauth-pool.json";
+  const opencodeDbPathRef = "~/.local/share/opencode/opencode.db";
   const agentsPathRef = "~/.aidevops/agents";
   const vaultPathRef = statusFixture.vault.path_ref;
   const settingsPath = expandHome(settingsPathRef);
   const reposPath = expandHome(reposPathRef);
   const oauthPoolPath = expandHome(oauthPoolPathRef);
+  const opencodeDbPath = expandHome(opencodeDbPathRef);
   const aidevopsVersion = existsSync(versionPath)
     ? readFileSync(versionPath, "utf8").trim()
     : statusFixture.aidevops_version;
@@ -63,12 +69,15 @@ export function readStatus(
   const restartRequired = installedVersion !== aidevopsVersion;
   const setupTargets = readSetupTargets(aidevopsVersion || "unknown", installedVersion || "unknown");
   const aiApps = readAiApps(aidevopsVersion || "unknown", installedVersion || "unknown");
+  const localRepos = readLocalReposSetupSummary(reposPath);
+  const opencodeSessions = readOpenCodeSessions(opencodeDbPath, opencodeDbPathRef, localRepos.repos);
   const vault = readVaultSummary(repoRoot);
   const sourcePathRefs = [
     agentsPathRef,
     settingsPathRef,
     reposPathRef,
     oauthPoolPathRef,
+    opencodeDbPathRef,
     vaultPathRef,
     "VERSION",
     ...setupTargets.map((target) => target.path_ref),
@@ -114,7 +123,8 @@ export function readStatus(
     ],
     settings: readSettingsSummary(settingsPath, settingsPathRef),
     repos: readRepoRegistrySummary(reposPath, reposPathRef),
-    local_repos: readLocalReposSetupSummary(reposPath),
+    local_repos: localRepos,
+    opencode_sessions: opencodeSessions,
     oauth_pool: readOAuthPoolSummary(oauthPoolPath, oauthPoolPathRef),
     setup_targets: setupTargets,
     ai_apps: aiApps,
@@ -417,6 +427,83 @@ function resolveBinary(binary: string): string | null {
   } catch {
     return null;
   }
+}
+
+interface OpenCodeSessionRow {
+  id: string;
+  directory: string;
+  title: string;
+  time_updated: number;
+  model: string | null;
+  agent: string | null;
+}
+
+function readOpenCodeSessions(dbPath: string, dbPathRef: string, repos: GuiLocalRepoSetupSummary[]): GuiOpenCodeSessionRegistrySummary {
+  if (!existsSync(dbPath)) {
+    return {
+      path_ref: dbPathRef,
+      health: "missing",
+      value_policy: "metadata_only_no_message_payloads",
+      sessions: [],
+    };
+  }
+
+  try {
+    const database = new Database(dbPath, { readonly: true });
+    try {
+      const rows = database.query(`
+        SELECT id, directory, title, time_updated, model, agent
+        FROM session
+        WHERE time_archived IS NULL
+        ORDER BY time_updated DESC
+        LIMIT 200
+      `).all() as OpenCodeSessionRow[];
+      const sessions = rows
+        .map((row) => opencodeSessionFromRow(row, repos))
+        .filter((session): session is GuiOpenCodeSessionSummary => session !== null);
+
+      return {
+        path_ref: dbPathRef,
+        health: "present",
+        value_policy: "metadata_only_no_message_payloads",
+        sessions,
+      };
+    } finally {
+      database.close();
+    }
+  } catch {
+    return {
+      path_ref: dbPathRef,
+      health: "invalid",
+      value_policy: "metadata_only_no_message_payloads",
+      sessions: [],
+    };
+  }
+}
+
+function opencodeSessionFromRow(row: OpenCodeSessionRow, repos: GuiLocalRepoSetupSummary[]): GuiOpenCodeSessionSummary | null {
+  const repo = repos.find((candidate) => row.directory === expandHome(candidate.path_ref) || row.directory.startsWith(`${expandHome(candidate.path_ref)}/`));
+
+  if (!repo) {
+    return null;
+  }
+
+  return {
+    id_ref: row.id,
+    repo_path_ref: repo.path_ref,
+    title: row.title.trim().length > 0 ? row.title : "Untitled session",
+    updated_at: formatUnixMillis(row.time_updated),
+    model: row.model ?? "unknown",
+    agent: row.agent ?? "unknown",
+  };
+}
+
+function formatUnixMillis(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) {
+    return "unknown";
+  }
+
+  return new Date(value).toISOString();
 }
 
 function readBinaryVersion(binaryPath: string, args: string[]): string {

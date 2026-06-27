@@ -1,9 +1,9 @@
 /* jshint esversion: 11 */
 import { type ReactElement, type ReactNode, useEffect, useMemo, useState } from "react";
-import { FiBell, FiCommand, FiCpu, FiGlobe, FiLogOut, FiMessageSquare, FiSearch, FiSettings, FiShield, FiUser } from "react-icons/fi";
+import { FiBell, FiChevronLeft, FiChevronRight, FiCommand, FiCpu, FiGlobe, FiHash, FiLogOut, FiMessageSquare, FiSearch, FiSettings, FiShield, FiUser } from "react-icons/fi";
 import type { GuiFileRootId, GuiStatusData } from "../../gui-shared/src";
 import { SurfaceGlyph } from "./AppNavigation";
-import type { SurfaceId, SurfaceNavItem } from "./app-model";
+import type { ConversationMode, ShellMode, SurfaceId, SurfaceNavItem } from "./app-model";
 import { inventorySurfaceConfigs, orderedNavItems, text } from "./app-model";
 import { FileExplorerSurface } from "./FileExplorerSurface";
 import { AppsSurface, EditableInventorySurface, InstallationSurface } from "./InventorySurfaces";
@@ -15,28 +15,41 @@ const communityLinks = {
   x: "https://x.com/marcuswquinn",
 } as const;
 
-export function Workspace({ activeItem, activeSectionLabel, activeSurface, fileRoot, setActiveSurface, status }: {
+export function Workspace({ activeItem, activeSectionLabel, activeSurface, canGoBack, canGoForward, conversationMode, fileRoot, goBack, goForward, selectedLocalRepoIndex, setActiveSurface, shellMode, status }: {
   activeItem: SurfaceNavItem;
   activeSectionLabel: string;
   activeSurface: SurfaceId;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  conversationMode: ConversationMode;
   fileRoot: GuiFileRootId | undefined;
+  goBack: () => void;
+  goForward: () => void;
+  selectedLocalRepoIndex: number;
   setActiveSurface: (surface: SurfaceId) => void;
+  shellMode: ShellMode;
   status: GuiStatusData;
 }) {
   return (
     <section className="app-inset" aria-label={text.workspaceLabel}>
-      <WorkspaceHeader activeItem={activeItem} activeSectionLabel={activeSectionLabel} activeSurface={activeSurface} setActiveSurface={setActiveSurface} status={status} />
+      <WorkspaceHeader activeItem={activeItem} activeSectionLabel={activeSectionLabel} activeSurface={activeSurface} canGoBack={canGoBack} canGoForward={canGoForward} goBack={goBack} goForward={goForward} setActiveSurface={setActiveSurface} status={status} />
       <div className="workspace-scroll">
-        <SurfaceContent activeItem={activeItem} activeSurface={activeSurface} fileRoot={fileRoot} status={status} />
+        {shellMode === "sessions"
+          ? <ConversationWorkspace conversationMode={conversationMode} selectedLocalRepoIndex={selectedLocalRepoIndex} status={status} />
+          : <SurfaceContent activeItem={activeItem} activeSurface={activeSurface} fileRoot={fileRoot} status={status} />}
       </div>
     </section>
   );
 }
 
-function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, setActiveSurface, status }: {
+function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoBack, canGoForward, goBack, goForward, setActiveSurface, status }: {
   activeItem: SurfaceNavItem;
   activeSectionLabel: string;
   activeSurface: SurfaceId;
+  canGoBack: boolean;
+  canGoForward: boolean;
+  goBack: () => void;
+  goForward: () => void;
   setActiveSurface: (surface: SurfaceId) => void;
   status: GuiStatusData;
 }): ReactElement {
@@ -80,6 +93,10 @@ function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, setAct
         </div>
       </div>
       <div className="header-actions">
+        <div className="sidebar-history-controls workspace-history-controls">
+          <button aria-label="Previous surface" disabled={!canGoBack} onClick={goBack} type="button"><FiChevronLeft /></button>
+          <button aria-label="Next surface" disabled={!canGoForward} onClick={goForward} type="button"><FiChevronRight /></button>
+        </div>
         <button className="workspace-search command-trigger" onClick={() => setCommandOpen(true)} type="button">
           <FiSearch aria-hidden="true" />
           <span>⌘K</span>
@@ -115,6 +132,54 @@ function NotificationsMenu({ openSurface }: { openSurface: (surface: SurfaceId) 
       <p>Local readiness updates, release activity, and account alerts will collect here.</p>
       <button onClick={() => openSurface("notifications")} role="menuitem" type="button">Open notifications</button>
     </div>
+  );
+}
+
+function ConversationWorkspace({ conversationMode, selectedLocalRepoIndex, status }: {
+  conversationMode: ConversationMode;
+  selectedLocalRepoIndex: number;
+  status: GuiStatusData;
+}) {
+  const selectedRepo = status.local_repos.repos[selectedLocalRepoIndex] ?? status.local_repos.repos[0];
+  const selectedSession = selectedRepo === undefined
+    ? undefined
+    : status.opencode_sessions.sessions.find((session) => session.repo_path_ref === selectedRepo.path_ref);
+  const title = conversationMode === "ai" ? selectedRepo?.name ?? text.opencodeSessions : text.teams;
+
+  return (
+    <section className="chat-surface" aria-label={conversationMode === "ai" ? text.opencodeSessions : "People chat"}>
+      <div className="chat-thread-panel">
+        <header className="chat-thread-header">
+          <div>
+            <p className="eyebrow">{conversationMode === "ai" ? text.opencodeSessions : "SimpleX channels"}</p>
+            <h2><FiHash aria-hidden="true" /> {title}</h2>
+          </div>
+          <span className="count-pill">{text.readOnly}</span>
+        </header>
+        <div className="chat-message-list">
+          {conversationMode === "ai" ? <>
+            <ChatBubble role="assistant" title={selectedSession?.title ?? "AI session bridge"} body={selectedSession ? `Most recent OpenCode session metadata: ${selectedSession.model} via ${selectedSession.agent}, updated ${selectedSession.updated_at}. Message payloads stay out of the status API until the turbostarter/ai chat bridge lands.` : "OpenCode session creation and continuation need an audited write route. This panel is ready for the turbostarter/ai chat surface once that adapter is connected."} />
+            <ChatBubble role="user" title={selectedRepo?.name ?? "Local repo"} body={selectedRepo ? `Selected repo: ${selectedRepo.path_ref}. Session metadata is grouped per local repo and sorted newest first from ${status.opencode_sessions.path_ref}.` : "No local repos were discovered yet."} />
+          </> : <>
+            <ChatBubble role="assistant" title="SimpleX transport" body={text.simplexReady} />
+            <ChatBubble role="user" title="People channel" body="Teams and direct messages share the same Slack-like channel layout while protected message payloads remain behind Vault policy." />
+          </>}
+        </div>
+        <form className="chat-composer" aria-label="Chat composer">
+          <textarea disabled placeholder={text.chatInputPlaceholder} />
+          <button disabled type="button">Send</button>
+        </form>
+      </div>
+    </section>
+  );
+}
+
+function ChatBubble({ body, role, title }: { body: string; role: "assistant" | "user"; title: string }) {
+  return (
+    <article className={`chat-bubble ${role}`}>
+      <strong>{title}</strong>
+      <p>{body}</p>
+    </article>
   );
 }
 

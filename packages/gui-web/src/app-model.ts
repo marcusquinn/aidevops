@@ -2,6 +2,8 @@ import type { GuiFileRootId, GuiStatusData } from "@aidevops/gui-shared";
 
 export type ThemePreference = "system" | "light" | "dark";
 export type SidebarMode = "devops" | "comms";
+export type ShellMode = "devices" | "sessions";
+export type ConversationMode = "ai" | "people";
 export type FontPreference =
   | "IBM Plex Mono"
   | "IBM Plex Sans"
@@ -208,6 +210,16 @@ export const text = {
   plannedHomes: "Planned homes",
   plannedNotice: "This surface is a local UI placeholder. Persistence and actions need explicit trust-boundary work.",
   comms: "Comms",
+  ai: "AI",
+  people: "People",
+  newSession: "New Session",
+  sessionHistory: "Session history",
+  opencodeSessions: "OpenCode sessions",
+  simplexReady: "SimpleX transport placeholder: encrypted channel adapters will mount here behind Vault and trust-boundary checks.",
+  teams: "Teams",
+  directMessages: "Direct Messages",
+  chatInputPlaceholder: "Write a message when audited session write routes are enabled.",
+  localRepoSelector: "Local repo selector",
   performance: "Performance",
   projectWorkIntro: "Document folders for inboxes, campaigns, cases, configuration, feedback, knowledge, maintenance, performance, and reports are planned.",
   projectWork: "Documents",
