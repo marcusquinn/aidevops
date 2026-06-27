@@ -1,6 +1,6 @@
 /* jshint esversion: 11 */
 import { type ReactElement, type ReactNode, useEffect, useState } from "react";
-import { FiBell, FiChevronLeft, FiChevronRight, FiCommand, FiCpu, FiGlobe, FiHash, FiLogOut, FiMessageSquare, FiSearch, FiSettings, FiShield, FiUser } from "react-icons/fi";
+import { FiBell, FiChevronLeft, FiChevronRight, FiCommand, FiGlobe, FiHash, FiHelpCircle, FiLogOut, FiMessageSquare, FiSearch, FiSettings, FiShield, FiTerminal, FiUser } from "react-icons/fi";
 import type { GuiFileRootId, GuiStatusData } from "../../gui-shared/src";
 import { SurfaceGlyph } from "./AppNavigation";
 import type { ConversationMode, ShellMode, SurfaceId, SurfaceNavItem } from "./app-model";
@@ -16,7 +16,7 @@ const communityLinks = {
   x: "https://x.com/marcuswquinn",
 } as const;
 
-export function Workspace({ activeItem, activeSectionLabel, activeSurface, canGoBack, canGoForward, conversationMode, fileRoot, goBack, goForward, selectedLocalRepoIndex, setActiveSurface, shellMode, status }: {
+export function Workspace({ activeItem, activeSectionLabel, activeSurface, canGoBack, canGoForward, conversationMode, fileRoot, goBack, goForward, selectedLocalRepoIndex, setActiveSurface, setConversationMode, setShellMode, shellMode, status }: {
   activeItem: SurfaceNavItem;
   activeSectionLabel: string;
   activeSurface: SurfaceId;
@@ -28,12 +28,14 @@ export function Workspace({ activeItem, activeSectionLabel, activeSurface, canGo
   goForward: () => void;
   selectedLocalRepoIndex: number;
   setActiveSurface: (surface: SurfaceId) => void;
+  setConversationMode: (mode: ConversationMode) => void;
+  setShellMode: (mode: ShellMode) => void;
   shellMode: ShellMode;
   status: GuiStatusData;
 }) {
   return (
     <section className="app-inset" aria-label={text.workspaceLabel}>
-      <WorkspaceHeader activeItem={activeItem} activeSectionLabel={activeSectionLabel} activeSurface={activeSurface} canGoBack={canGoBack} canGoForward={canGoForward} goBack={goBack} goForward={goForward} setActiveSurface={setActiveSurface} status={status} />
+      <WorkspaceHeader activeItem={activeItem} activeSectionLabel={activeSectionLabel} activeSurface={activeSurface} canGoBack={canGoBack} canGoForward={canGoForward} goBack={goBack} goForward={goForward} setActiveSurface={setActiveSurface} setConversationMode={setConversationMode} setShellMode={setShellMode} status={status} />
       <div className="workspace-scroll">
         {shellMode === "sessions"
           ? <ConversationWorkspace conversationMode={conversationMode} selectedLocalRepoIndex={selectedLocalRepoIndex} status={status} />
@@ -43,7 +45,7 @@ export function Workspace({ activeItem, activeSectionLabel, activeSurface, canGo
   );
 }
 
-function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoBack, canGoForward, goBack, goForward, setActiveSurface, status }: {
+function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoBack, canGoForward, goBack, goForward, setActiveSurface, setConversationMode, setShellMode, status }: {
   activeItem: SurfaceNavItem;
   activeSectionLabel: string;
   activeSurface: SurfaceId;
@@ -52,6 +54,8 @@ function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoB
   goBack: () => void;
   goForward: () => void;
   setActiveSurface: (surface: SurfaceId) => void;
+  setConversationMode: (mode: ConversationMode) => void;
+  setShellMode: (mode: ShellMode) => void;
   status: GuiStatusData;
 }): ReactElement {
   const [assistantOpen, setAssistantOpen] = useState(false);
@@ -64,31 +68,30 @@ function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoB
 
   useEffect(() => {
     const openCommandPalette = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setCommandInitialQuery("");
-        setCommandOpen(true);
-        return;
-      }
-
-      const shortcutQuery = commandPaletteShortcutQuery(event);
-      if (shortcutQuery !== undefined && !isEditableShortcutTarget(event.target)) {
-        event.preventDefault();
-        setCommandInitialQuery(shortcutQuery);
-        setCommandOpen(true);
-      }
+      handleWorkspaceShortcut(event, {
+        goBack,
+        goForward,
+        openCommand: (query) => {
+          setCommandInitialQuery(query);
+          setCommandOpen(true);
+        },
+      });
     };
 
     window.addEventListener("keydown", openCommandPalette);
     return () => window.removeEventListener("keydown", openCommandPalette);
-  }, []);
+  }, [goBack, goForward]);
 
   const closeMenus = () => {
     setNotificationsOpen(false);
     setProfileOpen(false);
   };
 
-  const openSurface = (surface: SurfaceId) => {
+  const openItem = ({ conversationMode, shellMode, surface }: { conversationMode?: ConversationMode; shellMode?: ShellMode; surface: SurfaceId }) => {
+    setShellMode(shellMode ?? "devices");
+    if (conversationMode) {
+      setConversationMode(conversationMode);
+    }
     setActiveSurface(surface);
     closeMenus();
     setCommandOpen(false);
@@ -116,26 +119,43 @@ function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoB
       </div>
       <div className="header-actions">
         <div className="header-action-menu">
+          <button aria-label="Open help" className="header-icon-button" onClick={() => openItem({ surface: "help" })} title="Help (?)" type="button">
+            <FiHelpCircle aria-hidden="true" />
+          </button>
           <button aria-expanded={notificationsOpen} aria-label="Open notifications" className="header-icon-button" onClick={() => { setNotificationsOpen((current) => !current); setProfileOpen(false); }} type="button">
             <FiBell aria-hidden="true" />
             <span className="notification-dot" aria-hidden="true" />
           </button>
-          {notificationsOpen ? <NotificationsMenu openSurface={openSurface} /> : null}
+          {notificationsOpen ? <NotificationsMenu openSurface={(surface) => openItem({ surface })} /> : null}
         </div>
-        <button aria-pressed={assistantOpen} aria-label="Toggle AI Assistant" className={assistantOpen ? "header-icon-button active" : "header-icon-button"} onClick={() => setAssistantOpen((current) => !current)} type="button">
-          <FiCpu aria-hidden="true" />
+        <button aria-pressed={assistantOpen} aria-label="Toggle AI Assistant" className={assistantOpen ? "header-icon-button active" : "header-icon-button"} onClick={() => setAssistantOpen((current) => !current)} title="AI sessions (_)" type="button">
+          <FiTerminal aria-hidden="true" />
         </button>
         <div className="header-action-menu">
           <button aria-expanded={profileOpen} aria-label={`Open profile menu for ${userName}`} className="profile-avatar-button" onClick={() => { setProfileOpen((current) => !current); setNotificationsOpen(false); }} title={userName} type="button">
             <span>{userInitials}</span>
           </button>
-          {profileOpen ? <ProfileMenu openSurface={openSurface} userName={userName} /> : null}
+          {profileOpen ? <ProfileMenu openSurface={(surface) => openItem({ surface })} userName={userName} /> : null}
         </div>
       </div>
       {assistantOpen ? <AssistantPanel activeSurface={activeSurface} userName={userName} /> : null}
-      {commandOpen ? <CommandPalette close={() => setCommandOpen(false)} initialQuery={commandInitialQuery} openSurface={openSurface} status={status} /> : null}
+      {commandOpen ? <CommandPalette activeSurface={activeSurface} close={() => setCommandOpen(false)} initialQuery={commandInitialQuery} openItem={openItem} status={status} /> : null}
     </header>
   );
+}
+
+function handleWorkspaceShortcut(event: KeyboardEvent, actions: { goBack: () => void; goForward: () => void; openCommand: (query: string) => void }): void {
+  const shortcutQuery = commandPaletteShortcutQuery(event);
+  const isEditableTarget = isEditableShortcutTarget(event.target);
+  const commandQuery = (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k" ? "" : shortcutQuery;
+
+  if (commandQuery !== undefined && !isEditableTarget) {
+    event.preventDefault();
+    actions.openCommand(commandQuery);
+  } else if (event.key === "Backspace" && !isEditableTarget) {
+    event.preventDefault();
+    (event.shiftKey ? actions.goForward : actions.goBack)();
+  }
 }
 
 function isEditableShortcutTarget(target: EventTarget | null): boolean {
@@ -247,6 +267,7 @@ function SurfaceContent({ activeItem, activeSurface, fileRoot, status }: {
   const vaultCollection = vaultCollectionForSurface(status.vault, activeSurface);
   const staticSurfaces: Partial<Record<SurfaceId, ReactNode>> = {
     overview: <OverviewSurface status={status} />,
+    help: <HelpSurface />,
     settings: <SettingsSurface status={status} />,
     notifications: <NotificationsSurface />,
     admin: <AdminSurface />,
@@ -298,6 +319,40 @@ function SurfaceContent({ activeItem, activeSurface, fileRoot, status }: {
   }
 
   return staticSurfaces[activeSurface] ?? null;
+}
+
+function HelpSurface(): ReactElement {
+  const shortcuts = [
+    ["#", "Channels"],
+    ["_", "AI sessions"],
+    ["&", "Infrastructure"],
+    ["?", "Help"],
+    [">", "New terminal command"],
+    ["+", "Add commands"],
+    ["-", "Remove commands"],
+    ["/", "Slash commands"],
+    ["=", "Comms"],
+    ["~", "Settings and config"],
+    ["!", "Notifications"],
+    [".", "Agents"],
+    ["*", "Secrets and passwords"],
+    [":", "Emoji picker"],
+    ["^", "Copy current page link"],
+  ];
+
+  return (
+    <section className="settings-surface help-surface">
+      <div className="planned-card">
+        <h2>Help</h2>
+        <p>Use the command palette shortcuts from anywhere outside text inputs. Recent selections appear first until you keep typing to filter.</p>
+      </div>
+      <ul className="shortcut-list">
+        {shortcuts.map(([shortcut, label]) => <li key={shortcut}><kbd>{shortcut}</kbd><span>{label}</span></li>)}
+        <li><kbd>Backspace</kbd><span>Previous page</span></li>
+        <li><kbd>Shift Backspace</kbd><span>Next page</span></li>
+      </ul>
+    </section>
+  );
 }
 
 function SettingsSurface({ status }: { status: GuiStatusData }): ReactElement {
