@@ -1022,7 +1022,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18014 aidevops.app AI collaboration workspace roadmap #feat #parent-task #priority:high ref:GH#25707
 
-- [ ] t18015 Audit aidevops.app navigation and choose chat primitive stack #auto-dispatch #feat #priority:high ref:GH#25708
+- [x] t18015 Audit aidevops.app navigation and choose chat primitive stack #auto-dispatch #feat #priority:high ref:GH#25708 pr:#25717 completed:2026-06-27
 
 - [ ] t18016 Implement unified conversations for AI sessions channels and DMs #auto-dispatch #feat #priority:high ref:GH#25709
 
