@@ -4316,3 +4316,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18014 aidevops.app AI collaboration workspace roadmap #enhancement #parent ref:GH#25707
 
 - [ ] t18015 Audit aidevops.app navigation and choose chat primitive stack #auto-dispatch #enhancement ref:GH#25708
+
+- [ ] t18016 Implement unified conversations for AI sessions channels and DMs #auto-dispatch #enhancement ref:GH#25709
