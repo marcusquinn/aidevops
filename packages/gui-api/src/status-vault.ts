@@ -63,7 +63,7 @@ function readVaultCommand<T extends string>(
     const output = execFileSync("sh", [helperPath, ...args], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
-      timeout: 1_000,
+      timeout: 300,
     }).trim();
     const firstLine = output.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() ?? "";
     return isAllowed(firstLine) ? firstLine : null;

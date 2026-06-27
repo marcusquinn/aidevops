@@ -313,6 +313,7 @@ if ! wait_for_url "\${WEB_HEALTH_URL}" 30 0.25; then
   exit 1
 fi
 
+printf 'aidevops GUI services ready: API %s, web %s\n' "\${API_HEALTH_URL}" "\${WEB_HEALTH_URL}" >"\${LAUNCHER_LOG}"
 exit 0
 LAUNCHER
   chmod 755 "$helper_path"
