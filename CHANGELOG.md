@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.25.0] - 2026-06-27
+
+### Added
+
+- add app chat session navigation (#25637)
+
+### Fixed
+
+- recover orphaned worker branch for #25546 (#25638)
+
 ## [3.24.2] - 2026-06-27
 
 ### Changed
