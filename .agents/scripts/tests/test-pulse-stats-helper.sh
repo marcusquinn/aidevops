@@ -47,4 +47,27 @@ pulse_stats_set_gauge pulse_merge_zero_progress_cycles 0
 gauge_value="$("$HELPER" get-gauge pulse_merge_zero_progress_cycles)"
 [[ "$gauge_value" == "0" ]]
 
+python3 - "$PULSE_STATS_FILE" <<'PY'
+import json
+import sys
+
+json.dump({'counters': {}, 'gauges': {}}, open(sys.argv[1], 'w'))
+PY
+FAKE_BIN="${TMP_DIR}/bin"
+mkdir -p "$FAKE_BIN"
+cat >"${FAKE_BIN}/jq" <<'SH'
+#!/usr/bin/env bash
+exit 42
+SH
+chmod +x "${FAKE_BIN}/jq"
+PATH="${FAKE_BIN}:${PATH}" _pulse_stats_ensure_file
+python3 - "$PULSE_STATS_FILE" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1]) as fh:
+    data = json.load(fh)
+assert data == {'counters': {}, 'gauges': {}}
+PY
+
 printf 'PASS pulse-stats-helper\n'

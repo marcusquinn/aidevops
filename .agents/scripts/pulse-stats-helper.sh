@@ -64,12 +64,15 @@ _pulse_stats_ensure_file() {
 		return 0
 	fi
 
-	# GH#25584: an interrupted writer or external truncation can leave the stats
-	# file present but empty/invalid. Gauge writers previously treated that as a
-	# jq no-op, leaving stale merge-stuck meta-issues unable to observe recovery.
-	# Reinitialize to the minimal schema so the next atomic update can proceed.
-	if ! jq -e 'type == "object"' "$PULSE_STATS_FILE" >/dev/null 2>&1; then
-		printf '{"counters":{}}\n' >"$PULSE_STATS_FILE" 2>/dev/null || return 0
+	# GH#25584/GH#25658: an interrupted writer or external truncation can leave
+	# the stats file empty or obviously malformed. Keep the common valid-file path
+	# pure Bash so every counter/gauge write does not spawn jq just to continue.
+	local first_char=""
+	if [[ ! -s "$PULSE_STATS_FILE" ]] || ! IFS= read -r -n 1 first_char <"$PULSE_STATS_FILE" || [[ "$first_char" != "{" ]]; then
+		printf '{"counters":{}}\n' >"$PULSE_STATS_FILE" || {
+			printf 'Error: Failed to write pulse stats file: %s\n' "$PULSE_STATS_FILE" >&2
+			return 1
+		}
 	fi
 	return 0
 }
