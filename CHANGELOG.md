@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.3] - 2026-06-27
+
+### Added
+
+- add AI workspace navigation (#25724)
+
+### Changed
+
+- Maintenance: mark t18017 complete (pr:#25724 completed:2026-06-27) [skip ci]
+
+### Fixed
+
+- reduce navigation model duplication (#25725)
+- resume pulse merge after checkpoints (#25721)
+
 ## [3.29.2] - 2026-06-27
 
 ### Added
