@@ -39,6 +39,7 @@ export const appearanceStorageKeys = {
 const defaultSidebarWidth = 302;
 const minSidebarWidth = 248;
 const maxSidebarWidth = 520;
+export const loadingSkeletonPanelLabels = ["machine rail", "sidebar", "workspace", "status bar"] as const;
 
 export interface StoredAppearancePreferences {
   accentHue: number;
@@ -70,6 +71,7 @@ export function readStoredAppearancePreferences(storage: ReadableAppearanceStora
 export function App(): ReactElement {
   const [storedAppearancePreferences] = useState<StoredAppearancePreferences>(() => readStoredAppearancePreferences());
   const [status, setStatus] = useState<GuiResponseEnvelope<GuiStatusData>>(mockedStatus());
+  const [statusLoading, setStatusLoading] = useState(true);
   const [navigation, setNavigation] = useState<NavigationHistory>({ entries: ["overview"], index: 0 });
   const [themePreference, setThemePreference] = useState<ThemePreference>(storedAppearancePreferences.themePreference);
   const [accentHue, setAccentHue] = useState(storedAppearancePreferences.accentHue);
@@ -159,7 +161,8 @@ export function App(): ReactElement {
   useEffect(() => {
     fetchStatus()
       .then(setStatus)
-      .catch(() => setStatus(mockedStatus()));
+      .catch(() => setStatus(mockedStatus()))
+      .finally(() => setStatusLoading(false));
   }, []);
 
   useEffect(() => {
@@ -178,6 +181,10 @@ export function App(): ReactElement {
   useEffect(() => {
     setSelectedLocalRepoIndex((current) => Math.min(current, Math.max(0, status.data.local_repos.repos.length - 1)));
   }, [status.data.local_repos.repos.length]);
+
+  if (statusLoading) {
+    return <AppLoadingSkeleton machineRailVisible={machineRailVisible} />;
+  }
 
   return (
     <main className={machineRailVisible ? "app-shell" : "app-shell machine-rail-collapsed"}>
@@ -230,6 +237,53 @@ export function App(): ReactElement {
         status={status.data}
       />
       <DesktopStatusBar status={status.data} />
+    </main>
+  );
+}
+
+export function AppLoadingSkeleton({ machineRailVisible }: { machineRailVisible: boolean }): ReactElement {
+  return (
+    <main className={machineRailVisible ? "app-shell app-loading-shell" : "app-shell app-loading-shell machine-rail-collapsed"} aria-busy="true" aria-label="Loading aidevops interface">
+      <div className="desktop-titlebar-tagline loading-line loading-titlebar" aria-hidden="true" />
+      {machineRailVisible ? (
+        <section className="machine-rail loading-panel" aria-label={loadingSkeletonPanelLabels[0]}>
+          {Array.from({ length: 6 }, (_, index) => <span className="loading-orb" key={index} />)}
+        </section>
+      ) : null}
+      <section className="app-sidebar loading-panel" aria-label={loadingSkeletonPanelLabels[1]}>
+        <div className="loading-sidebar-header">
+          <span className="loading-logo" />
+          <span className="loading-line loading-line-wide" />
+        </div>
+        <span className="loading-pill" />
+        <div className="loading-list">
+          {Array.from({ length: 12 }, (_, index) => <span className={index % 3 === 0 ? "loading-line loading-line-short" : "loading-line"} key={index} />)}
+        </div>
+        <div className="loading-sidebar-footer">
+          <span className="loading-pill" />
+          <span className="loading-line" />
+        </div>
+      </section>
+      <SidebarResizeHandle />
+      <section className="app-inset loading-panel" aria-label={loadingSkeletonPanelLabels[2]}>
+        <div className="workspace-header loading-workspace-header">
+          <span className="loading-icon" />
+          <span className="loading-line loading-line-wide" />
+          <span className="loading-search" />
+          <span className="loading-circle" />
+          <span className="loading-circle" />
+        </div>
+        <div className="loading-workspace-body">
+          <span className="loading-line loading-line-hero" />
+          <div className="loading-card-grid">
+            {Array.from({ length: 6 }, (_, index) => <span className="loading-card" key={index} />)}
+          </div>
+          <span className="loading-panel-block" />
+        </div>
+      </section>
+      <div className="desktop-status-bar loading-status-bar" aria-label={loadingSkeletonPanelLabels[3]}>
+        {Array.from({ length: 8 }, (_, index) => <span className={index === 0 ? "loading-dot" : "loading-line"} key={index} />)}
+      </div>
     </main>
   );
 }

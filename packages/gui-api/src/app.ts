@@ -35,6 +35,14 @@ const appActionJobs = new Map<string, GuiAppActionJobSummary>();
 export function createGuiApiApp() {
   const app = new Hono();
 
+  app.get("/api/health", (context) => {
+    return context.json(createEnvelope({
+      operation_id: "capabilities.read",
+      source: { surface: "health", authority: "in-process readiness probe", path_refs: [] },
+      data: { status: "ok", service: "aidevops-gui-api" },
+    }));
+  });
+
   app.get(STATUS_ROUTE_MANIFEST.route, (context) => {
     return context.json(readStatus());
   });

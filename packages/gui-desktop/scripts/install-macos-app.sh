@@ -135,6 +135,8 @@ set -euo pipefail
 REPO_ROOT="${root}"
 API_PORT="\${AIDEVOPS_GUI_API_PORT:-8787}"
 WEB_PORT="\${AIDEVOPS_GUI_WEB_PORT:-5173}"
+API_HEALTH_URL="http://127.0.0.1:\${API_PORT}/api/health"
+WEB_HEALTH_URL="http://127.0.0.1:\${WEB_PORT}/"
 LOG_DIR="\${HOME}/Library/Logs/aidevops-gui"
 LAUNCHER_LOG="\${LOG_DIR}/launcher.log"
 BUN_BIN=""
@@ -223,19 +225,17 @@ replace_stale_gui_on_port() {
   local pid=""
   local cwd=""
 
-  if ! url_ready "\${health_url}"; then
-    return 0
+  if url_ready "\${health_url}"; then
+    while IFS= read -r pid; do
+      if [[ -z "\${pid}" ]]; then
+        continue
+      fi
+      cwd="\$(pid_cwd "\${pid}" || true)"
+      if [[ "\${cwd}" == "\${REPO_ROOT}" ]]; then
+        return 0
+      fi
+    done < <(port_pids "\${port}")
   fi
-
-  while IFS= read -r pid; do
-    if [[ -z "\${pid}" ]]; then
-      continue
-    fi
-    cwd="\$(pid_cwd "\${pid}" || true)"
-    if [[ "\${cwd}" == "\${REPO_ROOT}" ]]; then
-      return 0
-    fi
-  done < <(port_pids "\${port}")
 
   while IFS= read -r pid; do
     if [[ -z "\${pid}" ]]; then
@@ -274,16 +274,6 @@ stop_gui_services() {
   return 0
 }
 
-api_contract_current() {
-  local payload=""
-
-  payload="\$(curl --silent --fail --max-time 2 "http://127.0.0.1:\${API_PORT}/api/status" 2>/dev/null || true)"
-  if [[ "\${payload}" == *'"local_repos"'* && "\${payload}" == *'"oauth_pool"'* ]]; then
-    return 0
-  fi
-  return 1
-}
-
 if [[ "\${MODE}" == "stop" ]]; then
   stop_gui_services
   exit 0
@@ -297,31 +287,27 @@ if [[ -f "\${HOME}/.aidevops/agents/VERSION" && -f "\${REPO_ROOT}/VERSION" ]]; t
   fi
 fi
 
-replace_stale_gui_on_port "\${API_PORT}" "http://127.0.0.1:\${API_PORT}/api/status"
-replace_stale_gui_on_port "\${WEB_PORT}" "http://127.0.0.1:\${WEB_PORT}/"
-if url_ready "http://127.0.0.1:\${API_PORT}/api/status" && ! api_contract_current; then
-  kill_gui_on_port_for_repo "\${API_PORT}"
-  kill_gui_on_port_for_repo "\${WEB_PORT}"
-fi
+replace_stale_gui_on_port "\${API_PORT}" "\${API_HEALTH_URL}"
+replace_stale_gui_on_port "\${WEB_PORT}" "\${WEB_HEALTH_URL}"
 sleep 1
 
-if ! url_ready "http://127.0.0.1:\${API_PORT}/api/status" || ! url_ready "http://127.0.0.1:\${WEB_PORT}/"; then
+if ! url_ready "\${API_HEALTH_URL}" || ! url_ready "\${WEB_HEALTH_URL}"; then
   require_bun
 fi
 
-if ! url_ready "http://127.0.0.1:\${API_PORT}/api/status"; then
+if ! url_ready "\${API_HEALTH_URL}"; then
   nohup env AIDEVOPS_GUI_API_PORT="\${API_PORT}" "\${BUN_BIN}" run packages/gui-api/src/server.ts >"\${LOG_DIR}/api.log" 2>&1 &
 fi
-if ! url_ready "http://127.0.0.1:\${WEB_PORT}/"; then
+if ! url_ready "\${WEB_HEALTH_URL}"; then
   nohup "\${BUN_BIN}" ./node_modules/vite/bin/vite.js --config packages/gui-web/vite.config.ts --host 127.0.0.1 --port "\${WEB_PORT}" >"\${LOG_DIR}/web.log" 2>&1 &
 fi
 
-if ! wait_for_url "http://127.0.0.1:\${API_PORT}/api/status" 20 1; then
+if ! wait_for_url "\${API_HEALTH_URL}" 20 0.25; then
   printf 'aidevops GUI API did not become ready. Check %s/api.log.\n' "\${LOG_DIR}" >"\${LAUNCHER_LOG}"
   notify "aidevops GUI API did not become ready. Check \${LOG_DIR}/api.log."
   exit 1
 fi
-if ! wait_for_url "http://127.0.0.1:\${WEB_PORT}/" 30 1; then
+if ! wait_for_url "\${WEB_HEALTH_URL}" 30 0.25; then
   printf 'aidevops GUI web did not become ready. Check %s/web.log.\n' "\${LOG_DIR}" >"\${LAUNCHER_LOG}"
   notify "aidevops GUI web did not become ready. Check \${LOG_DIR}/web.log."
   exit 1
@@ -901,6 +887,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func loadStatusHTML(title: String, detail: String) {
         let escapedTitle = escapeHTML(title)
         let escapedDetail = escapeHTML(detail).replacingOccurrences(of: "\n", with: "<br>")
+        let contentHTML: String
+        if title == "Starting aidevops" {
+            contentHTML = """
+            <main class="shell" aria-busy="true" aria-label="Loading aidevops interface">
+              <aside class="rail panel"><i></i><i></i><i></i><i></i><i></i><i></i></aside>
+              <aside class="sidebar panel"><header><b></b><span></span></header><nav><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></nav><footer><i></i><i></i></footer></aside>
+              <section class="workspace panel"><header><b></b><span></span><i></i><i></i></header><article><h1>\(escapedTitle)</h1><p>\(escapedDetail)</p><div class="cards"><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="block"></div></article></section>
+              <footer class="status"><i></i><span></span><span></span><span></span><span></span><span></span></footer>
+            </main>
+            """
+        } else {
+            contentHTML = "<main class=\"message\"><h1>\(escapedTitle)</h1><p>\(escapedDetail)</p></main>"
+        }
         let html = """
         <!doctype html>
         <html lang="en">
@@ -908,14 +907,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
           <style>
-            body { align-items: center; background: #0a0a0a; color: #f6f7f2; display: flex; font: 15px -apple-system, BlinkMacSystemFont, sans-serif; height: 100vh; justify-content: center; margin: 0; }
-            main { background: #11130f; border: 1px solid #2c3324; border-radius: 18px; max-width: 560px; padding: 28px; }
+            :root { --accent: #b2e969; --border: #2c3324; --panel: #11130f; --muted: #b9c3b0; }
+            * { box-sizing: border-box; }
+            body { background: radial-gradient(ellipse at top left, rgb(178 233 105 / 10%), transparent 34%), #0a0a0a; color: #f6f7f2; font: 15px -apple-system, BlinkMacSystemFont, sans-serif; height: 100vh; margin: 0; }
+            .message { background: var(--panel); border: 1px solid var(--border); border-radius: 18px; left: 50%; max-width: 560px; padding: 28px; position: fixed; top: 50%; transform: translate(-50%, -50%); }
             h1 { font-size: 22px; margin: 0 0 10px; }
             p { color: #b9c3b0; line-height: 1.5; margin: 0; }
             code { color: #b2e969; }
+            .shell { display: grid; gap: 8px; grid-template-columns: 72px 302px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 30px; height: 100vh; padding: 30px 8px 8px; }
+            .panel, .status { background: rgb(17 19 15 / 92%); border: 1px solid var(--border); border-radius: 18px; box-shadow: inset 0 1px 0 rgb(255 255 255 / 8%); overflow: hidden; }
+            .rail { align-content: start; display: grid; gap: 10px; justify-items: center; padding: 12px 8px; }
+            .rail i, .sidebar b, .workspace b { border-radius: 12px; height: 44px; width: 44px; }
+            .sidebar { display: grid; grid-template-rows: auto 1fr auto; }
+            .sidebar header, .workspace header { align-items: center; display: flex; gap: 12px; padding: 16px; }
+            .sidebar header span { flex: 1; height: 18px; }
+            .sidebar nav, .sidebar footer, .workspace article { display: grid; gap: 12px; padding: 16px; }
+            .sidebar nav i { height: 18px; }
+            .sidebar footer { border-top: 1px solid var(--border); }
+            .workspace { display: grid; grid-template-rows: auto 1fr; }
+            .workspace header { border-bottom: 1px solid var(--border); }
+            .workspace header span { flex: 1; height: 38px; }
+            .workspace header i { border-radius: 999px; height: 34px; width: 34px; }
+            .workspace article { align-content: start; gap: 18px; }
+            .cards { display: grid; gap: 14px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+            .cards i { border-radius: 18px; height: 128px; }
+            .block { border-radius: 20px; height: 220px; }
+            .status { align-items: center; display: flex; gap: 10px; grid-column: 1 / -1; justify-content: center; padding: 0 12px; }
+            .status i { border-radius: 999px; height: 8px; width: 8px; }
+            .status span { height: 10px; width: 96px; }
+            .rail i, .sidebar b, .sidebar span, .sidebar i, .workspace b, .workspace span, .workspace i, .cards i, .block, .status i, .status span { animation: pulse 1.35s ease-in-out infinite; background: linear-gradient(90deg, #1a2116, rgb(178 233 105 / 18%), #1a2116); background-size: 220% 100%; border: 1px solid var(--border); border-radius: 999px; display: block; }
+            .block, .cards i { border-radius: 18px; }
+            @keyframes pulse { 0% { background-position: 120% 0; opacity: .52; } 50% { opacity: .95; } 100% { background-position: -120% 0; opacity: .52; } }
+            @media (prefers-reduced-motion: reduce) { .rail i, .sidebar b, .sidebar span, .sidebar i, .workspace b, .workspace span, .workspace i, .cards i, .block, .status i, .status span { animation: none; } }
           </style>
         </head>
-        <body><main><h1>\(escapedTitle)</h1><p>\(escapedDetail)</p></main></body>
+        <body>\(contentHTML)</body>
         </html>
         """
         webView.loadHTMLString(html, baseURL: nil)
