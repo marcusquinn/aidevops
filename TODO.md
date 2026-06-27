@@ -4320,3 +4320,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18016 Implement unified conversations for AI sessions channels and DMs #auto-dispatch #enhancement ref:GH#25709
 
 - [ ] t18017 Add aidevops.app AI workspace navigation destinations #auto-dispatch #enhancement ref:GH#25710
+
+- [ ] t18019 Implement channels and direct messages for aidevops.app #auto-dispatch #enhancement ref:GH#25712
+
+- [ ] t18018 Implement AI Sessions UI with Turbostarter and shadcn primitives #auto-dispatch #enhancement ref:GH#25711
