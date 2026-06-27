@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
@@ -105,4 +106,38 @@ export function readOptionalText(pathName: string): string | null {
   }
 
   return readFileSync(pathName, "utf8").trim();
+}
+
+export function firstExistingPathRef(pathRefs: string[]): string | null {
+  return pathRefs.find((pathRef) => existsSync(expandHome(pathRef))) ?? null;
+}
+
+export function resolveBinary(binary: string): string | null {
+  try {
+    const output = execFileSync("/usr/bin/which", [binary], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 200,
+    }).trim();
+    return output.split("\n").find((line) => line.length > 0) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export function readBinaryVersion(binaryPath: string, args: string[]): string {
+  if (args.length === 0) {
+    return "unknown";
+  }
+
+  try {
+    const output = execFileSync(binaryPath, args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 500,
+    }).trim();
+    return output.split("\n").find((line) => line.length > 0) ?? "unknown";
+  } catch {
+    return "unknown";
+  }
 }

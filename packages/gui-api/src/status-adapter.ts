@@ -9,7 +9,6 @@ import {
   type GuiAiAppSummary,
   type GuiAiProviderId,
   type GuiLocalRepoSetupSummary,
-  type GuiManagedAppSummary,
   type GuiOAuthPoolSummary,
   type GuiOAuthProviderSummary,
   type GuiOpenCodeSessionRegistrySummary,
@@ -28,15 +27,19 @@ import {
   collapseHome,
   cooldownReady,
   expandHome,
+  firstExistingPathRef,
   formatEpochField,
   formatNullableEpochField,
   isRecord,
   numberField,
+  readBinaryVersion,
   readJsonObject,
   readOptionalText,
+  resolveBinary,
   stringField,
 } from "./status-adapter-utils";
 import { readLocalReposSetupSummary } from "./status-local-repos";
+import { readManagedApps } from "./status-managed-apps";
 import { readVaultSummary } from "./status-vault";
 
 export { readVaultSummary } from "./status-vault";
@@ -219,22 +222,6 @@ interface AiAppDefinition {
   version_args: string[];
 }
 
-interface ManagedAppDefinition {
-  id: string;
-  name: string;
-  description: string;
-  category: string;
-  binary: string | null;
-  version_args: string[];
-  install_path_refs: string[];
-  origin_website_url: string;
-  origin_repo_url: string;
-  aidevops_install: boolean;
-  aidevops_update: boolean;
-  latest_version_source: "aidevops" | "binary" | "unknown";
-  action_commands: Partial<Record<"install" | "update" | "reinstall" | "remove", string>>;
-}
-
 const AI_APP_DEFINITIONS: AiAppDefinition[] = [
   {
     name: "OpenCode",
@@ -269,36 +256,6 @@ const AI_APP_DEFINITIONS: AiAppDefinition[] = [
     version_args: [],
   },
 ];
-
-const MANAGED_APP_DEFINITIONS: ManagedAppDefinition[] = [
-  managedApp("aidevops", "aidevops", "Framework CLI, agents, workflows, scripts, and local GUI assets.", "core", "aidevops", ["--version"], ["~/.aidevops/agents", "/opt/homebrew/bin/aidevops", "/usr/local/bin/aidevops"], "https://aidevops.sh", "https://github.com/marcusquinn/aidevops.git", true, true, "aidevops", { install: "./setup.sh --non-interactive", update: "aidevops update", reinstall: "./setup.sh --non-interactive" }),
-  managedApp("agents", "Deployed agents", "Canonical aidevops agents, commands, workflows, scripts, and reference files.", "core", null, [], ["~/.aidevops/agents/VERSION"], "https://aidevops.sh", "https://github.com/marcusquinn/aidevops.git", true, true, "aidevops", { install: "aidevops setup --scope agents", update: "aidevops setup --scope agents", reinstall: "aidevops setup --scope agents" }),
-  managedApp("gui-desktop", "aidevops.app", "Native macOS desktop launcher for the local GUI.", "desktop", null, [], ["~/Applications/aidevops.app", "/Applications/aidevops.app"], "https://aidevops.sh", "https://github.com/marcusquinn/aidevops.git", true, true, "aidevops", { install: "aidevops setup --scope gui-desktop", update: "aidevops setup --scope gui-desktop", reinstall: "aidevops setup --scope gui-desktop" }),
-  managedApp("opencode", "OpenCode", "AI terminal runtime configured by aidevops for local sessions.", "ai runtime", "opencode", ["--version"], ["~/Applications/OpenCode AIDevOps.app", "/Applications/OpenCode.app", "~/.config/opencode/opencode.json"], "https://opencode.ai", "", true, true, "binary", { install: "aidevops setup --scope opencode", update: "aidevops setup --scope opencode", reinstall: "aidevops setup --scope opencode" }),
-  managedApp("hooks", "Safety hooks", "Git, prompt, privacy, complexity, task-id, and canonical-install guards.", "safety", null, [], ["~/.aidevops/hooks", "~/.config/aidevops"], "https://aidevops.sh", "https://github.com/marcusquinn/aidevops.git", true, true, "aidevops", { install: "aidevops setup --scope hooks", update: "aidevops setup --scope hooks", reinstall: "aidevops setup --scope hooks" }),
-  managedApp("pulse", "Pulse scheduler", "Launchd/cron supervisor for autonomous aidevops maintenance and dispatch routines.", "automation", null, [], ["~/Library/LaunchAgents/sh.aidevops.pulse.plist", "~/.aidevops/.agent-workspace/pulse"], "https://aidevops.sh", "https://github.com/marcusquinn/aidevops.git", true, true, "aidevops", { install: "aidevops setup --scope pulse", update: "aidevops setup --scope pulse", reinstall: "aidevops setup --scope pulse" }),
-  managedApp("tabby", "Tabby terminal profiles", "Terminal profile sync for aidevops-managed shells.", "terminal", "tabby", ["--version"], ["~/Library/Application Support/tabby", "/Applications/Tabby.app"], "https://github.com/Eugeny/tabby/releases/latest", "https://github.com/Eugeny/tabby/releases/latest", true, true, "binary", { install: "aidevops setup --scope tabby", update: "aidevops setup --scope tabby", reinstall: "aidevops setup --scope tabby" }),
-  managedApp("gh", "GitHub CLI", "GitHub issues, PRs, checks, releases, and API automation.", "git", "gh", ["--version"], ["/opt/homebrew/bin/gh", "/usr/local/bin/gh", "/usr/bin/gh"], "", "", true, true, "binary", { install: "./setup.sh --non-interactive", update: "aidevops update-tools --update" }),
-  managedApp("glab", "GitLab CLI", "GitLab repository, issue, merge request, and CI automation.", "git", "glab", ["--version"], ["/opt/homebrew/bin/glab", "/usr/local/bin/glab", "/usr/bin/glab"], "", "", true, true, "binary", { install: "./setup.sh --non-interactive", update: "aidevops update-tools --update" }),
-  managedApp("fd", "fd", "Fast file discovery for agents and developer workflows.", "search", "fd", ["--version"], ["/opt/homebrew/bin/fd", "/usr/local/bin/fd", "/usr/bin/fd"], "", "", true, true, "binary", { install: "./setup.sh --non-interactive", update: "aidevops update-tools --update" }),
-  managedApp("ripgrep", "ripgrep", "Fast code and text search used by agents and local diagnostics.", "search", "rg", ["--version"], ["/opt/homebrew/bin/rg", "/usr/local/bin/rg", "/usr/bin/rg"], "", "", true, true, "binary", { install: "./setup.sh --non-interactive", update: "aidevops update-tools --update" }),
-  managedApp("ripgrep-all", "ripgrep-all", "Document/archive-aware search companion for ripgrep.", "search", "rga", ["--version"], ["/opt/homebrew/bin/rga", "/usr/local/bin/rga", "/usr/bin/rga"], "", "", true, true, "binary", { install: "./setup.sh --non-interactive", update: "aidevops update-tools --update" }),
-  managedApp("shellcheck", "ShellCheck", "Shell script static analysis gate.", "quality", "shellcheck", ["--version"], ["/opt/homebrew/bin/shellcheck", "/usr/local/bin/shellcheck", "/usr/bin/shellcheck"], "", "", true, true, "binary", { install: "./setup.sh --non-interactive", update: "aidevops update-tools --update" }),
-  managedApp("shfmt", "shfmt", "Shell formatter used by local quality workflows.", "quality", "shfmt", ["--version"], ["/opt/homebrew/bin/shfmt", "/usr/local/bin/shfmt", "/usr/bin/shfmt"], "", "", true, true, "binary", { install: "./setup.sh --non-interactive", update: "aidevops update-tools --update" }),
-  managedApp("bun", "Bun", "JavaScript runtime used for the GUI and toolchain helpers.", "runtime", "bun", ["--version"], ["~/.bun/bin/bun", "/opt/homebrew/bin/bun", "/usr/local/bin/bun"], "https://bun.sh/install", "", true, true, "binary", { install: "./setup.sh --non-interactive", update: "aidevops update-tools --update" }),
-  managedApp("node", "Node.js", "JavaScript runtime required by npm-hosted helpers and frontend tooling.", "runtime", "node", ["--version"], ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"], "https://nodejs.org/", "", true, true, "binary", { install: "./setup.sh --non-interactive", update: "aidevops update-tools --update" }),
-  managedApp("homebrew", "Homebrew", "macOS package manager used by setup/update when available.", "package manager", "brew", ["--version"], ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"], "https://brew.sh", "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh", true, true, "binary", { install: "./setup.sh --non-interactive", update: "aidevops update-tools --update" }),
-  managedApp("qlty", "Qlty CLI", "Optional code quality aggregator installed by setup when selected.", "quality", "qlty", ["--version"], ["/opt/homebrew/bin/qlty", "/usr/local/bin/qlty", "~/.qlty/bin/qlty"], "https://qlty.sh", "", true, true, "binary", { install: "./setup.sh --non-interactive", update: "aidevops update-tools --update" }),
-  managedApp("rtk", "rtk", "Token-optimized GitHub/API helper used by interactive discovery.", "developer tooling", "rtk", ["--version"], ["~/.local/bin/rtk", "/opt/homebrew/bin/rtk", "/usr/local/bin/rtk"], "https://github.com/rtk-ai/rtk#installation", "https://github.com/rtk-ai/rtk", true, true, "binary", { install: "./setup.sh --non-interactive", update: "aidevops update-tools --update" }),
-  managedApp("cursor", "Cursor CLI", "Cursor command-line integration and config targets.", "ai runtime", "cursor", ["--version"], ["~/.cursor/bin/cursor", "/Applications/Cursor.app"], "https://cursor.com/install", "", true, true, "binary", { install: "./setup.sh --non-interactive", update: "aidevops update-tools --update" }),
-  managedApp("zed", "Zed", "Optional editor installed by setup when selected.", "editor", "zed", ["--version"], ["/Applications/Zed.app", "/opt/homebrew/bin/zed", "/usr/local/bin/zed"], "https://zed.dev/download", "", false, false, "binary", { install: "./setup.sh --non-interactive" }),
-  managedApp("orbstack", "OrbStack", "Optional local container/VM runtime for macOS development.", "runtime", "orb", ["version"], ["/Applications/OrbStack.app", "/opt/homebrew/bin/orb"], "https://orbstack.dev/", "", false, false, "binary", { install: "./setup.sh --non-interactive" }),
-  managedApp("ollama", "Ollama", "Optional local model runtime for local AI workflows.", "ai runtime", "ollama", ["--version"], ["/Applications/Ollama.app", "/opt/homebrew/bin/ollama", "/usr/local/bin/ollama"], "https://ollama.com", "", false, false, "binary", { install: "./setup.sh --non-interactive", update: "aidevops update-tools --update" }),
-];
-
-function managedApp(id: string, name: string, description: string, category: string, binary: string | null, versionArgs: string[], installPathRefs: string[], originWebsiteUrl: string, originRepoUrl: string, aidevopsInstall: boolean, aidevopsUpdate: boolean, latestVersionSource: ManagedAppDefinition["latest_version_source"], actionCommands: ManagedAppDefinition["action_commands"]): ManagedAppDefinition {
-  return { id, name, description, category, binary, version_args: versionArgs, install_path_refs: installPathRefs, origin_website_url: originWebsiteUrl, origin_repo_url: originRepoUrl, aidevops_install: aidevopsInstall, aidevops_update: aidevopsUpdate, latest_version_source: latestVersionSource, action_commands: actionCommands };
-}
 
 function readMachineSummary(): GuiStatusData["machine"] {
   const username = userInfo().username || "local";
@@ -440,55 +397,6 @@ function readAiApps(latestVersion: string, installedVersion: string): GuiAiAppSu
   return AI_APP_DEFINITIONS.map((definition) => aiAppSummary(definition, latestVersion, installedVersion));
 }
 
-function readManagedApps(latestVersion: string, installedVersion: string): GuiManagedAppSummary[] {
-  return MANAGED_APP_DEFINITIONS.map((definition) => managedAppSummary(definition, latestVersion, installedVersion));
-}
-
-function managedAppSummary(definition: ManagedAppDefinition, latestVersion: string, installedVersion: string): GuiManagedAppSummary {
-  const binaryPath = definition.binary === null ? null : resolveBinary(definition.binary);
-  const installPathRef = firstExistingPathRef(definition.install_path_refs) ?? definition.install_path_refs[0] ?? "not found";
-  const installedVersionText = readManagedAppVersion(definition, binaryPath, installedVersion);
-  const latestVersionText = definition.latest_version_source === "aidevops"
-    ? latestVersion
-    : definition.latest_version_source === "binary"
-      ? installedVersionText
-      : "unknown";
-
-  return {
-    id: definition.id,
-    name: definition.name,
-    description: definition.description,
-    category: definition.category,
-    origin_website_url: definition.origin_website_url,
-    origin_repo_url: definition.origin_repo_url,
-    aidevops_install: definition.aidevops_install,
-    aidevops_update: definition.aidevops_update,
-    installed_version: installedVersionText,
-    latest_version: latestVersionText,
-    install_path_ref: binaryPath === null ? installPathRef : collapseHome(binaryPath),
-    status: binaryPath !== null || definition.install_path_refs.some((pathRef) => existsSync(expandHome(pathRef))) ? "found" : "missing",
-    actions: (["install", "update", "reinstall", "remove"] as const).map((action) => ({
-      id: action,
-      label: action[0].toUpperCase() + action.slice(1),
-      enabled: definition.action_commands[action] !== undefined,
-      command_preview: definition.action_commands[action] ?? "No allowlisted command yet",
-      confirmation: action === "remove" ? "required" : action === "reinstall" ? "recommended" : "none",
-    })),
-  };
-}
-
-function readManagedAppVersion(definition: ManagedAppDefinition, binaryPath: string | null, installedVersion: string): string {
-  if (definition.latest_version_source === "aidevops") {
-    return firstExistingPathRef(definition.install_path_refs) === null ? "not installed" : installedVersion;
-  }
-
-  if (binaryPath === null) {
-    return "not installed";
-  }
-
-  return readBinaryVersion(binaryPath, definition.version_args);
-}
-
 function aiAppSummary(definition: AiAppDefinition, latestVersion: string, installedVersion: string): GuiAiAppSummary {
   const binaryPath = resolveBinary(definition.binary);
   const appPathRef = firstExistingPathRef(definition.app_path_refs) ?? definition.app_path_refs[0] ?? "not applicable";
@@ -509,23 +417,6 @@ function aiAppSummary(definition: AiAppDefinition, latestVersion: string, instal
     latest_version: latestVersion,
     needs_update: aidevopsTargetVersion !== latestVersion,
   };
-}
-
-function firstExistingPathRef(pathRefs: string[]): string | null {
-  return pathRefs.find((pathRef) => existsSync(expandHome(pathRef))) ?? null;
-}
-
-function resolveBinary(binary: string): string | null {
-  try {
-    const output = execFileSync("/usr/bin/which", [binary], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 200,
-    }).trim();
-    return output.split("\n").find((line) => line.length > 0) ?? null;
-  } catch {
-    return null;
-  }
 }
 
 interface OpenCodeSessionRow {
@@ -603,23 +494,6 @@ function formatUnixMillis(value: number): string {
   }
 
   return new Date(value).toISOString();
-}
-
-function readBinaryVersion(binaryPath: string, args: string[]): string {
-  if (args.length === 0) {
-    return "unknown";
-  }
-
-  try {
-    const output = execFileSync(binaryPath, args, {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 500,
-    }).trim();
-    return output.split("\n").find((line) => line.length > 0) ?? "unknown";
-  } catch {
-    return "unknown";
-  }
 }
 
 function isSourcePathRef(pathRef: string): boolean {
