@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.4] - 2026-06-27
+
+### Changed
+
+- Maintenance: mark t18023 complete (pr:#25726 completed:2026-06-27) [skip ci]
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- keep PR mergeable views on GraphQL (#25726)
+
 ## [3.29.3] - 2026-06-27
 
 ### Added
