@@ -141,7 +141,7 @@ export const text = {
   aidevops: "aidevops",
   appShell: "App shell",
   apps: "Apps",
-  appsIntro: "App and CLI inventory for tools installed or updated by aidevops. Version and homepage adapters are planned.",
+  appsIntro: "App and CLI inventory for tools installed or updated by aidevops, with origin links, install/update policy, versions, paths, and allowlisted background actions.",
   appStatusPending: "adapter pending",
   brands: "Brands",
   brandsIntro: "Draft brand inventory for names and website references.",
@@ -420,15 +420,6 @@ export const fileRootBySurface: Partial<Record<SurfaceId, GuiFileRootId>> = {
   git: "git",
 };
 
-export const appRows = [
-  { name: "aidevops", latest: text.appStatusPending, channel: "setup/update", website: "https://aidevops.sh" },
-  { name: "OpenCode", latest: text.appStatusPending, channel: "runtime", website: text.appStatusPending },
-  { name: "Bun", latest: text.appStatusPending, channel: "toolchain", website: text.appStatusPending },
-  { name: "GitHub CLI", latest: text.appStatusPending, channel: "git", website: text.appStatusPending },
-  { name: "ShellCheck", latest: text.appStatusPending, channel: "quality", website: text.appStatusPending },
-  { name: "Biome", latest: text.appStatusPending, channel: "quality", website: text.appStatusPending },
-];
-
 export const installationRows = [
   { name: "OpenCode runtime", install: true, update: true, scope: "core" },
   { name: "GUI desktop launcher", install: true, update: true, scope: "local" },
@@ -582,7 +573,7 @@ export function surfaceRecordCounts(status: GuiStatusData): SurfaceRecordCounts 
   return {
     agents: status.capabilities.length,
     aiProviders: oauthAccounts,
-    apps: appRows.length,
+    apps: status.managed_apps.length || status.ai_apps.length,
     config: status.settings.key_count || status.settings.keys.length,
     git: status.local_repos.total || status.local_repos.repos.length,
     hosts: populatedInventoryRowCount("hosts"),

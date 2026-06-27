@@ -162,6 +162,7 @@ export const statusFixture: GuiStatusData = {
       needs_update: false,
     },
   ],
+  managed_apps: [],
   vault: {
     status: "uninitialized",
     setup_state: "uninitialized",

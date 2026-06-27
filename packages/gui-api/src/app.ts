@@ -1,7 +1,36 @@
+import { spawn } from "node:child_process";
 import { Hono } from "hono";
-import { BANNED_ROUTE_PATTERNS, FILE_EXPLORER_ROUTE_MANIFEST, STATUS_ROUTE_MANIFEST, VAULT_STATUS_ROUTE_MANIFEST } from "../../gui-shared/src";
+import { APP_ACTION_ROUTE_MANIFEST, APP_ACTION_STATUS_ROUTE_MANIFEST, BANNED_ROUTE_PATTERNS, createEnvelope, FILE_EXPLORER_ROUTE_MANIFEST, type GuiAppActionId, type GuiAppActionJobSummary, STATUS_ROUTE_MANIFEST, VAULT_STATUS_ROUTE_MANIFEST } from "../../gui-shared/src";
 import { readFileExplorer } from "./file-adapter";
 import { readStatus, readVaultStatus } from "./status-adapter";
+
+const appActionCommands: Record<string, Partial<Record<GuiAppActionId, string[]>>> = {
+  aidevops: { install: ["./setup.sh", "--non-interactive"], update: ["aidevops", "update"], reinstall: ["./setup.sh", "--non-interactive"] },
+  agents: { install: ["aidevops", "setup", "--scope", "agents"], update: ["aidevops", "setup", "--scope", "agents"], reinstall: ["aidevops", "setup", "--scope", "agents"] },
+  "gui-desktop": { install: ["aidevops", "setup", "--scope", "gui-desktop"], update: ["aidevops", "setup", "--scope", "gui-desktop"], reinstall: ["aidevops", "setup", "--scope", "gui-desktop"] },
+  hooks: { install: ["aidevops", "setup", "--scope", "hooks"], update: ["aidevops", "setup", "--scope", "hooks"], reinstall: ["aidevops", "setup", "--scope", "hooks"] },
+  opencode: { install: ["aidevops", "setup", "--scope", "opencode"], update: ["aidevops", "setup", "--scope", "opencode"], reinstall: ["aidevops", "setup", "--scope", "opencode"] },
+  pulse: { install: ["aidevops", "setup", "--scope", "pulse"], update: ["aidevops", "setup", "--scope", "pulse"], reinstall: ["aidevops", "setup", "--scope", "pulse"] },
+  tabby: { install: ["aidevops", "setup", "--scope", "tabby"], update: ["aidevops", "setup", "--scope", "tabby"], reinstall: ["aidevops", "setup", "--scope", "tabby"] },
+  bun: { install: ["./setup.sh", "--non-interactive"], update: ["aidevops", "update-tools", "--update"] },
+  cursor: { install: ["./setup.sh", "--non-interactive"], update: ["aidevops", "update-tools", "--update"] },
+  fd: { install: ["./setup.sh", "--non-interactive"], update: ["aidevops", "update-tools", "--update"] },
+  gh: { install: ["./setup.sh", "--non-interactive"], update: ["aidevops", "update-tools", "--update"] },
+  glab: { install: ["./setup.sh", "--non-interactive"], update: ["aidevops", "update-tools", "--update"] },
+  homebrew: { install: ["./setup.sh", "--non-interactive"], update: ["aidevops", "update-tools", "--update"] },
+  node: { install: ["./setup.sh", "--non-interactive"], update: ["aidevops", "update-tools", "--update"] },
+  ollama: { install: ["./setup.sh", "--non-interactive"], update: ["aidevops", "update-tools", "--update"] },
+  orbstack: { install: ["./setup.sh", "--non-interactive"] },
+  qlty: { install: ["./setup.sh", "--non-interactive"], update: ["aidevops", "update-tools", "--update"] },
+  ripgrep: { install: ["./setup.sh", "--non-interactive"], update: ["aidevops", "update-tools", "--update"] },
+  "ripgrep-all": { install: ["./setup.sh", "--non-interactive"], update: ["aidevops", "update-tools", "--update"] },
+  rtk: { install: ["./setup.sh", "--non-interactive"], update: ["aidevops", "update-tools", "--update"] },
+  shellcheck: { install: ["./setup.sh", "--non-interactive"], update: ["aidevops", "update-tools", "--update"] },
+  shfmt: { install: ["./setup.sh", "--non-interactive"], update: ["aidevops", "update-tools", "--update"] },
+  zed: { install: ["./setup.sh", "--non-interactive"] },
+};
+
+const appActionJobs = new Map<string, GuiAppActionJobSummary>();
 
 export function createGuiApiApp() {
   const app = new Hono();
@@ -12,6 +41,48 @@ export function createGuiApiApp() {
 
   app.get(VAULT_STATUS_ROUTE_MANIFEST.route, (context) => {
     return context.json(readVaultStatus());
+  });
+
+  app.post(APP_ACTION_ROUTE_MANIFEST.route, (context) => {
+    const appId = context.req.param("appId");
+    const action = context.req.param("action") as GuiAppActionId;
+    const command = appActionCommands[appId]?.[action];
+
+    if (command === undefined) {
+      return context.json(createEnvelope({
+        operation_id: APP_ACTION_ROUTE_MANIFEST.operation_id,
+        source: { surface: "apps", authority: "allowlisted local command runner", path_refs: [] },
+        data: rejectedJob(appId, action, "No allowlisted command for this app action."),
+        errors: ["action_not_allowlisted"],
+      }), 400);
+    }
+
+    const job = startAppActionJob(appId, action, command);
+    return context.json(createEnvelope({
+      operation_id: APP_ACTION_ROUTE_MANIFEST.operation_id,
+      source: { surface: "apps", authority: "allowlisted local command runner", path_refs: ["setup.sh", "aidevops.sh"] },
+      data: job,
+      warnings: ["Command runs locally in the background. Output is retained in memory for this GUI API process only."],
+    }), 202);
+  });
+
+  app.get(APP_ACTION_STATUS_ROUTE_MANIFEST.route, (context) => {
+    const jobId = context.req.param("jobId");
+    const job = appActionJobs.get(jobId);
+    if (job === undefined) {
+      return context.json(createEnvelope({
+        operation_id: APP_ACTION_STATUS_ROUTE_MANIFEST.operation_id,
+        source: { surface: "apps", authority: "background job store", path_refs: [] },
+        data: rejectedJob("unknown", "install", "Unknown job."),
+        errors: ["unknown_job"],
+      }), 404);
+    }
+
+    return context.json(createEnvelope({
+      operation_id: APP_ACTION_STATUS_ROUTE_MANIFEST.operation_id,
+      source: { surface: "apps", authority: "background job store", path_refs: [] },
+      data: job,
+    }));
   });
 
   app.get(FILE_EXPLORER_ROUTE_MANIFEST.route, (context) => {
@@ -48,6 +119,59 @@ export function createGuiApiApp() {
   });
 
   return app;
+}
+
+function startAppActionJob(appId: string, action: GuiAppActionId, command: string[]): GuiAppActionJobSummary {
+  const now = new Date().toISOString();
+  const job: GuiAppActionJobSummary = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    app_id: appId,
+    action,
+    status: "running",
+    command_preview: command.join(" "),
+    started_at: now,
+    finished_at: null,
+    exit_code: null,
+    output: [`$ ${command.join(" ")}`],
+  };
+  appActionJobs.set(job.id, job);
+
+  const child = spawn(command[0], command.slice(1), {
+    cwd: process.cwd(),
+    env: { ...process.env, AIDEVOPS_NON_INTERACTIVE: "true" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  child.stdout.on("data", (chunk) => appendJobOutput(job, chunk.toString()));
+  child.stderr.on("data", (chunk) => appendJobOutput(job, chunk.toString()));
+  child.on("error", (error) => {
+    appendJobOutput(job, error.message);
+    job.status = "failed";
+    job.finished_at = new Date().toISOString();
+    job.exit_code = 127;
+  });
+  child.on("close", (code) => {
+    job.status = code === 0 ? "completed" : "failed";
+    job.finished_at = new Date().toISOString();
+    job.exit_code = code;
+  });
+
+  return job;
+}
+
+function appendJobOutput(job: GuiAppActionJobSummary, output: string): void {
+  job.output.push(...output.split(/\r?\n/).filter((line) => line.length > 0).map(redactOutputLine));
+  if (job.output.length > 400) {
+    job.output.splice(1, job.output.length - 400);
+  }
+}
+
+function redactOutputLine(line: string): string {
+  return line.replace(/(token|secret|password|authorization)=\S+/gi, "$1=[redacted]");
+}
+
+function rejectedJob(appId: string, action: GuiAppActionId, message: string): GuiAppActionJobSummary {
+  const now = new Date().toISOString();
+  return { id: "rejected", app_id: appId, action, status: "rejected", command_preview: "not run", started_at: now, finished_at: now, exit_code: null, output: [message] };
 }
 
 export const app = createGuiApiApp();
