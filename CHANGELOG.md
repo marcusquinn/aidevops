@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.26.1] - 2026-06-27
+
+### Changed
+
+- Tests: cover orphan recovery with valid worktree (#25686)
+
 ## [3.26.0] - 2026-06-27
 
 ### Added
