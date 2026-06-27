@@ -87,6 +87,7 @@ function normalizeStatusEnvelope(envelope: GuiResponseEnvelope<Partial<GuiStatus
       setup_targets: data.setup_targets ?? statusFixture.setup_targets,
       ai_apps: data.ai_apps ?? statusFixture.ai_apps,
       managed_apps: data.managed_apps ?? statusFixture.managed_apps,
+      notifications: data.notifications ?? statusFixture.notifications,
       vault: {
         ...statusFixture.vault,
         ...data.vault,

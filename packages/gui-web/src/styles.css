@@ -1044,6 +1044,78 @@ code {
   min-width: 240px;
 }
 
+.notifications-menu {
+  min-width: 320px;
+}
+
+.notifications-menu-heading,
+.notification-preview {
+  align-items: center;
+  display: flex;
+}
+
+.notifications-menu-heading {
+  justify-content: space-between;
+  padding: 2px 4px 6px;
+}
+
+.notifications-menu-heading span {
+  background: var(--surface-muted);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+  padding: 4px 8px;
+  text-transform: uppercase;
+}
+
+.notification-preview {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--notification-color, var(--accent));
+  border-radius: 12px;
+  gap: 10px;
+  padding: 10px;
+}
+
+.notification-preview > span {
+  color: var(--notification-color, var(--accent));
+}
+
+.notification-preview strong,
+.notification-preview small {
+  display: block;
+}
+
+.notification-preview small {
+  color: var(--text-muted);
+  font-size: 0.74rem;
+  text-transform: uppercase;
+}
+
+.notification-preview.error,
+.github-notification-card.error {
+  --notification-color: #cf222e;
+  --notification-bg: rgb(207 34 46 / 10%);
+}
+
+.notification-preview.warning,
+.github-notification-card.warning {
+  --notification-color: #9a6700;
+  --notification-bg: rgb(191 135 0 / 12%);
+}
+
+.notification-preview.info,
+.github-notification-card.info {
+  --notification-color: #0969da;
+  --notification-bg: rgb(9 105 218 / 10%);
+}
+
+.notification-preview.success,
+.github-notification-card.success {
+  --notification-color: #1a7f37;
+  --notification-bg: rgb(26 127 55 / 10%);
+}
+
 .popover-menu button,
 .popover-menu a {
   align-items: center;
@@ -1438,6 +1510,109 @@ code {
 
 .notification-list span {
   color: var(--text-muted);
+}
+
+.notifications-hero {
+  background:
+    linear-gradient(135deg, var(--notification-bg, color-mix(in srgb, var(--accent) 12%, transparent)), transparent 62%),
+    var(--surface-elevated);
+}
+
+.notification-summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.notification-summary-strip span,
+.notification-status-pill {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-weight: 800;
+  padding: 6px 10px;
+}
+
+.notification-summary-strip strong {
+  color: var(--accent);
+}
+
+.github-notification-list {
+  display: grid;
+  gap: 12px;
+}
+
+.github-notification-card {
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-left: 5px solid var(--notification-color, var(--accent));
+  border-radius: 18px;
+  box-shadow: var(--glass-panel-shadow);
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto minmax(0, 1fr);
+  padding: 16px;
+}
+
+.github-notification-card.resolved {
+  opacity: 0.78;
+}
+
+.notification-state-icon {
+  align-items: center;
+  background: var(--notification-bg, var(--success-bg));
+  border-radius: 999px;
+  color: var(--notification-color, var(--accent));
+  display: inline-flex;
+  height: 38px;
+  justify-content: center;
+  width: 38px;
+}
+
+.notification-state-icon svg {
+  height: 20px;
+  stroke-width: 2.5;
+  width: 20px;
+}
+
+.notification-card-body {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.notification-card-body header {
+  align-items: start;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.notification-card-body h3,
+.notification-card-body p {
+  margin: 0;
+}
+
+.notification-card-body p {
+  color: var(--text-secondary);
+}
+
+.notification-card-body small {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.notification-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.notification-actions .secondary-action {
+  padding: 8px 10px;
 }
 
 .metric-card span,

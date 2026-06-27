@@ -607,6 +607,7 @@ export function surfaceRecordCounts(status: GuiStatusData): SurfaceRecordCounts 
     hosts: populatedInventoryRowCount("hosts"),
     installation: installationRows.length,
     localSetup: status.paths.length,
+    notifications: status.notifications.filter((notification) => notification.status === "active").length,
     projects: status.repos.total || status.repos.repos.length,
     repos: (status.local_repos.total || status.local_repos.repos.length) + (status.repos.total || status.repos.repos.length),
     registrars: populatedInventoryRowCount("registrars"),

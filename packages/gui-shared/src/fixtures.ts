@@ -163,6 +163,19 @@ export const statusFixture: GuiStatusData = {
     },
   ],
   managed_apps: [],
+  notifications: [
+    {
+      id: "fixture-security-active",
+      title: "Security protections active",
+      message: "Security: all protections active",
+      severity: "success",
+      category: "security",
+      source: "opencode-toast",
+      source_ref: "~/.aidevops/cache/session-greeting.txt",
+      status: "resolved",
+      actions: [{ id: "open-security", label: "Open security", kind: "surface", surface_id: "security", enabled: true }],
+    },
+  ],
   vault: {
     status: "uninitialized",
     setup_state: "uninitialized",
