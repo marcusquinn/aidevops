@@ -172,11 +172,12 @@ function CommandPalette({ close, openSurface }: { close: () => void; openSurface
   }, [close]);
 
   return (
-    <div className="command-palette-backdrop" role="presentation" onMouseDown={close}>
-      <section aria-label="Command palette" className="command-palette" onMouseDown={(event) => event.stopPropagation()}>
+    <div className="command-palette-backdrop" role="presentation">
+      <button aria-label="Close command palette" className="command-palette-scrim" onClick={close} type="button" />
+      <section aria-label="Command palette" className="command-palette">
         <label className="command-input-row">
           <FiSearch aria-hidden="true" />
-          <input autoFocus onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Search commands and surfaces" value={query} />
+          <input onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Search commands and surfaces" value={query} />
         </label>
         <ul>
           {matches.map((item) => (

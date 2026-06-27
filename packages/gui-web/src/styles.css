@@ -930,6 +930,14 @@ code {
   z-index: 20;
 }
 
+.command-palette-scrim {
+  background: transparent;
+  border: 0;
+  inset: 0;
+  padding: 0;
+  position: absolute;
+}
+
 .command-palette {
   background: var(--surface-elevated);
   border: 1px solid var(--border);
@@ -939,6 +947,7 @@ code {
   gap: 12px;
   max-width: min(680px, calc(100vw - 32px));
   padding: 14px;
+  position: relative;
   width: 100%;
 }
 

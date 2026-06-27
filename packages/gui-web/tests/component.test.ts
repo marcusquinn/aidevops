@@ -91,7 +91,7 @@ describe("dashboard shell", () => {
     expect(status.data.local_repos.repos).toEqual([]);
     expect(status.data.oauth_pool.providers.map((provider) => provider.provider)).toEqual(["anthropic", "openai", "cursor", "google"]);
     expect(status.data.vault.status).toBe("uninitialized");
-    expect(status.data.vault.collections.map((collection) => collection.surface_ids).flat()).toContain("agents");
+    expect(status.data.vault.collections.flatMap((collection) => collection.surface_ids)).toContain("agents");
     expect(status.data.setup_targets[0].path_ref).toBe("~/.aidevops/agents/VERSION");
     expect(status.data.ai_apps.map((app) => app.name)).toContain("OpenCode");
     expect(status.data.machine.initials).toBe("LM");
