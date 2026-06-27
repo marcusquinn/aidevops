@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.27.0] - 2026-06-27
+
+### Added
+
+- improve GUI command palette navigation (#25685)
+
 ## [3.26.1] - 2026-06-27
 
 ### Changed
