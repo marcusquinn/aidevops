@@ -1,6 +1,6 @@
 import type { GuiAppActionId, GuiAppActionJobSummary, GuiManagedAppSummary, GuiResponseEnvelope, GuiStatusData } from "@aidevops/gui-shared";
 import { type Dispatch, type ReactElement, type SetStateAction, useEffect, useState } from "react";
-import { FiDownload, FiExternalLink, FiRefreshCw, FiRepeat, FiTrash2 } from "react-icons/fi";
+import { FiChevronDown, FiDownload, FiExternalLink, FiRefreshCw, FiRepeat, FiTrash2 } from "react-icons/fi";
 import type { InventoryColumn } from "./app-model";
 import { installationRows, text } from "./app-model";
 
@@ -13,8 +13,16 @@ let draftRowCounter = 0;
 
 export function AppsSurface({ status }: { status: GuiStatusData }): ReactElement {
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [expandedAppIds, setExpandedAppIds] = useState<Set<string>>(() => new Set(status.managed_apps.length > 0 ? [status.managed_apps[0].id] : []));
   const [jobs, setJobs] = useState<Record<string, GuiAppActionJobSummary>>({});
   const selectedJob = selectedJobId === null ? null : jobs[selectedJobId] ?? null;
+
+  useEffect(() => {
+    if (status.managed_apps.length === 0) {
+      return;
+    }
+    setExpandedAppIds((current) => current.size === 0 ? new Set([status.managed_apps[0].id]) : current);
+  }, [status.managed_apps]);
 
   useEffect(() => {
     if (selectedJob === null || selectedJob.status !== "running") {
@@ -37,28 +45,51 @@ export function AppsSurface({ status }: { status: GuiStatusData }): ReactElement
       </div>
       <div className="managed-app-list">
         {status.managed_apps.map((app) => (
-          <ManagedAppRow app={app} key={app.id} onJob={(job) => { setJobs((current) => ({ ...current, [job.id]: job })); setSelectedJobId(job.id); }} />
+          <ManagedAppPanel
+            app={app}
+            expanded={expandedAppIds.has(app.id)}
+            job={jobForApp(app.id, jobs, selectedJob)}
+            key={app.id}
+            onJob={(job) => {
+              setJobs((current) => ({ ...current, [job.id]: job }));
+              setSelectedJobId(job.id);
+              setExpandedAppIds((current) => toggledAppIds(current, app.id, true));
+            }}
+            onToggle={() => setExpandedAppIds((current) => toggledAppIds(current, app.id))}
+          />
         ))}
       </div>
-      {selectedJob ? <AppActionTerminal job={selectedJob} /> : <p className="empty-state compact-notice">Install/update actions run as allowlisted background jobs and stream here. xterm.js with a node-pty bridge is the right next step for full TUI apps such as OpenCode; this view starts with non-interactive command logs.</p>}
+      <p className="empty-state compact-notice">Install/update actions run as allowlisted background jobs and stream inside each app panel. xterm.js with a node-pty bridge is the right next step for full TUI apps such as OpenCode; this view starts with non-interactive command logs.</p>
     </section>
   );
 }
 
-function ManagedAppRow({ app, onJob }: { app: GuiManagedAppSummary; onJob: (job: GuiAppActionJobSummary) => void }): ReactElement {
+function ManagedAppPanel({ app, expanded, job, onJob, onToggle }: { app: GuiManagedAppSummary; expanded: boolean; job: GuiAppActionJobSummary | null; onJob: (job: GuiAppActionJobSummary) => void; onToggle: () => void }): ReactElement {
   return (
-    <article className="managed-app-row">
-      <div className="managed-app-main">
-        <div>
-          <p className="eyebrow">{app.category}</p>
-          <h3>{app.name}</h3>
-          <p>{app.description}</p>
+    <article className={expanded ? "managed-app-card expanded" : "managed-app-card"}>
+      <button aria-expanded={expanded} className="managed-app-summary" data-tooltip={`${expanded ? "Collapse" : "Expand"} ${app.name} controls`} onClick={onToggle} type="button">
+        <span className="managed-app-title-block">
+          <span className="eyebrow">{app.category}</span>
+          <strong>{app.name}</strong>
+          <span>{app.description}</span>
+        </span>
+        <span className="managed-app-summary-meta">
+          <SummaryChip label="Status" value={app.status} />
+          <SummaryChip label="Installed" value={app.installed_version} />
+          <SummaryChip label="Latest" value={app.latest_version} />
+          <FiChevronDown aria-hidden="true" className="managed-app-chevron" />
+        </span>
+      </button>
+      {expanded ? <div className="managed-app-body">
+        <div className="managed-app-toolbar">
+          <div className="managed-app-links">
+            <OriginLink href={app.origin_website_url} label={text.website} />
+            <OriginLink href={app.origin_repo_url} label="Repo" />
+          </div>
+          <div className="managed-app-actions">
+            {app.actions.map((action) => <AppActionButton action={action.id} app={app} disabled={!action.enabled} key={action.id} onJob={onJob} commandPreview={action.command_preview} />)}
+          </div>
         </div>
-        <div className="managed-app-links">
-          <OriginLink href={app.origin_website_url} label={text.website} />
-          <OriginLink href={app.origin_repo_url} label="Repo" />
-        </div>
-      </div>
       <div className="managed-app-details">
         <ToggleSwitch checked={app.aidevops_install} label="setup installs" />
         <ToggleSwitch checked={app.aidevops_update} label="update maintains" />
@@ -67,11 +98,14 @@ function ManagedAppRow({ app, onJob }: { app: GuiManagedAppSummary; onJob: (job:
         <AppMeta label={text.path} value={app.install_path_ref} />
         <AppMeta label="Status" value={app.status} />
       </div>
-      <div className="managed-app-actions">
-        {app.actions.map((action) => <AppActionButton action={action.id} app={app} disabled={!action.enabled} key={action.id} onJob={onJob} title={action.command_preview} />)}
-      </div>
+      {job ? <AppActionTerminal job={job} /> : <p className="empty-state compact-notice">No recent command output for this app. Run an action to open this app's terminal log.</p>}
+      </div> : null}
     </article>
   );
+}
+
+function SummaryChip({ label, value }: { label: string; value: string }): ReactElement {
+  return <span className="managed-summary-chip"><small>{label}</small><span>{value}</span></span>;
 }
 
 function OriginLink({ href, label }: { href: string; label: string }): ReactElement {
@@ -79,7 +113,7 @@ function OriginLink({ href, label }: { href: string; label: string }): ReactElem
     return <span className="origin-missing">{label}: source pending</span>;
   }
 
-  return <a href={href} rel="noreferrer" target="_blank">{label} <FiExternalLink aria-hidden="true" /></a>;
+  return <a data-tooltip={`Open ${label.toLowerCase()} destination`} href={href} rel="noreferrer" target="_blank">{label} <FiExternalLink aria-hidden="true" /></a>;
 }
 
 function ToggleSwitch({ checked, label }: { checked: boolean; label: string }): ReactElement {
@@ -90,7 +124,7 @@ function AppMeta({ label, value }: { label: string; value: string }): ReactEleme
   return <span className="app-meta"><small>{label}</small><strong>{value}</strong></span>;
 }
 
-function AppActionButton({ action, app, disabled, onJob, title }: { action: GuiAppActionId; app: GuiManagedAppSummary; disabled: boolean; onJob: (job: GuiAppActionJobSummary) => void; title: string }): ReactElement {
+function AppActionButton({ action, app, commandPreview, disabled, onJob }: { action: GuiAppActionId; app: GuiManagedAppSummary; commandPreview: string; disabled: boolean; onJob: (job: GuiAppActionJobSummary) => void }): ReactElement {
   const icon = action === "install" ? <FiDownload /> : action === "update" ? <FiRefreshCw /> : action === "reinstall" ? <FiRepeat /> : <FiTrash2 />;
 
   async function runAction(): Promise<void> {
@@ -106,7 +140,7 @@ function AppActionButton({ action, app, disabled, onJob, title }: { action: GuiA
     onJob(envelope.data);
   }
 
-  return <button aria-label={`${action} ${app.name}`} className="app-action-button" disabled={disabled} onClick={() => void runAction()} title={title} type="button">{icon}</button>;
+  return <button aria-label={`${action} ${app.name}`} className={action === "remove" ? "app-action-button remove" : "app-action-button"} data-tooltip={commandPreview} disabled={disabled} onClick={() => void runAction()} type="button">{icon}<span>{action}</span></button>;
 }
 
 function AppActionTerminal({ job }: { job: GuiAppActionJobSummary }): ReactElement {
@@ -125,6 +159,25 @@ async function refreshJob(jobId: string, setJobs: Dispatch<SetStateAction<Record
   }
   const envelope = await response.json() as GuiResponseEnvelope<GuiAppActionJobSummary>;
   setJobs((current) => ({ ...current, [envelope.data.id]: envelope.data }));
+}
+
+function jobForApp(appId: string, jobs: Record<string, GuiAppActionJobSummary>, selectedJob: GuiAppActionJobSummary | null): GuiAppActionJobSummary | null {
+  if (selectedJob?.app_id === appId) {
+    return selectedJob;
+  }
+
+  return Object.values(jobs).reverse().find((job) => job.app_id === appId) ?? null;
+}
+
+function toggledAppIds(current: Set<string>, appId: string, forceOpen = false): Set<string> {
+  const next = new Set(current);
+  if (forceOpen || !next.has(appId)) {
+    next.add(appId);
+  } else {
+    next.delete(appId);
+  }
+
+  return next;
 }
 
 export function InstallationSurface(): ReactElement {
