@@ -114,7 +114,7 @@ export function firstExistingPathRef(pathRefs: string[]): string | null {
 
 export function resolveBinary(binary: string): string | null {
   try {
-    const output = execFileSync("/usr/bin/which", [binary], {
+    const output = execFileSync("which", [binary], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
       timeout: 200,
