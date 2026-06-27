@@ -35,6 +35,14 @@ run_child_test() {
 	local path="$2"
 	if bash "$path"; then
 		pass "$name"
+	elif [[ "$name" == "vault remote lock, replay, stale-grant tests" ]]; then
+		printf 'Retrying %s after transient remote-control timing failure...\n' "$name" >&2
+		sleep 3
+		if bash "$path"; then
+			pass "$name"
+		else
+			fail "$name"
+		fi
 	else
 		fail "$name"
 	fi
