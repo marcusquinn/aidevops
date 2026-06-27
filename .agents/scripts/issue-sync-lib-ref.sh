@@ -479,6 +479,8 @@ _dedupe_todo_task_lines() {
 	tmp_file=$(mktemp "${todo_file}.dedupe.XXXXXX") || return 2
 	if ! awk -v task_pattern="$task_id_ere" '
 		BEGIN { pattern = "^[[:space:]]*- \\[.\\] " task_pattern " " }
+		/^[[:space:]]*```/ { in_fence = !in_fence; lines[NR] = $0; next }
+		in_fence { lines[NR] = $0; next }
 		$0 ~ pattern {
 			is_task[NR] = 1
 			score = 0
@@ -487,7 +489,9 @@ _dedupe_todo_task_lines() {
 			if ($0 ~ / blocked-by:/) { score += 25 }
 			if ($0 ~ / tier:/) { score += 25 }
 			if ($0 ~ / logged:/) { score += 25 }
-			if ($0 ~ / pr:#[0-9]+| verified:[0-9]{4}-[0-9]{2}-[0-9]{2}| completed:[0-9]{4}-[0-9]{2}-[0-9]{2}/) { score += 10 }
+			if ($0 ~ / pr:#[0-9]+/) { score += 10 }
+			if ($0 ~ / verified:[0-9]{4}-[0-9]{2}-[0-9]{2}/) { score += 10 }
+			if ($0 ~ / completed:[0-9]{4}-[0-9]{2}-[0-9]{2}/) { score += 10 }
 			if (best_line == 0 || score > best_score) {
 				best_line = NR
 				best_score = score

@@ -67,9 +67,51 @@ EOF
 	return 0
 }
 
+test_dedupe_ignores_markdown_fences() {
+	local tmpdir todo_file count fenced_count canonical_count
+	tmpdir=$(mktemp -d)
+	todo_file="${tmpdir}/TODO.md"
+	cat >"$todo_file" <<'EOF'
+```markdown
+- [ ] t18002 vault: example task inside docs ref:GH#25539
+```
+
+- [ ] t18002 vault: add GUI Vault sidebar #architecture ref:GH#25539
+EOF
+	_dedupe_todo_task_lines "t18002" "$todo_file" >/dev/null || true
+	count=$(grep -Ec '^[[:space:]]*- \[.\] t18002 ' "$todo_file" || true)
+	fenced_count=$(grep -Ec 'example task inside docs' "$todo_file" || true)
+	canonical_count=$(grep -Ec 'add GUI Vault sidebar' "$todo_file" || true)
+	[[ "$count" == "2" ]] || fail "expected fenced and canonical t18002 lines to remain, got $count"
+	[[ "$fenced_count" == "1" ]] || fail "expected fenced example line to remain"
+	[[ "$canonical_count" == "1" ]] || fail "expected canonical task line to remain"
+	rm -rf "$tmpdir"
+	pass "dedupe ignores markdown fences"
+	return 0
+}
+
+test_dedupe_scores_metadata_individually() {
+	local tmpdir todo_file line
+	tmpdir=$(mktemp -d)
+	todo_file="${tmpdir}/TODO.md"
+	cat >"$todo_file" <<'EOF'
+- [ ] t18002 vault: add GUI Vault sidebar #architecture ref:GH#25539 pr:#1
+- [ ] t18002 vault: add GUI Vault sidebar #architecture ref:GH#25539 verified:2026-06-26 completed:2026-06-27
+EOF
+	_dedupe_todo_task_lines "t18002" "$todo_file" >/dev/null
+	line=$(grep -E '^[[:space:]]*- \[.\] t18002 ' "$todo_file")
+	[[ "$line" == *'verified:2026-06-26'* ]] || fail "expected verified metadata to win cumulative score"
+	[[ "$line" == *'completed:2026-06-27'* ]] || fail "expected completed metadata to win cumulative score"
+	rm -rf "$tmpdir"
+	pass "dedupe scores metadata individually"
+	return 0
+}
+
 main() {
 	test_dedupe_preserves_canonical_brief_line
 	test_mark_done_dedupes_and_adds_verified_proof
+	test_dedupe_ignores_markdown_fences
+	test_dedupe_scores_metadata_individually
 	return 0
 }
 
