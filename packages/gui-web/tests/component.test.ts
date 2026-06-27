@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { appearanceStorageKeys, readStoredAppearancePreferences } from "../src/App";
 import { hueFromInputValue } from "../src/AppNavigation";
+import { commandPaletteShortcutQuery, orderCommandItemsByRecency, rememberCommandPaletteItemId } from "../src/CommandPalette";
 import { DEFAULT_ACCENT_HUE, DEFAULT_FONT, DEFAULT_FONT_SIZE, surfaceRecordCounts } from "../src/app-model";
 import { renderDashboardHtml } from "../src/dashboard";
 import { fetchStatus, mockedStatus } from "../src/status-client";
@@ -144,7 +145,27 @@ describe("dashboard shell", () => {
     expect(hueFromInputValue("999")).toBe(359);
     expect(hueFromInputValue("1e")).toBeNull();
   });
+
+  test("maps command palette single-key shortcuts", () => {
+    expect(commandPaletteShortcutQuery(keyEvent("/"))).toBe("/");
+    expect(commandPaletteShortcutQuery(keyEvent("@"))).toBe("@");
+    expect(commandPaletteShortcutQuery(keyEvent("#"))).toBe("#");
+    expect(commandPaletteShortcutQuery(keyEvent("."))).toBe("");
+    expect(commandPaletteShortcutQuery({ ...keyEvent("/"), metaKey: true })).toBeUndefined();
+  });
+
+  test("orders command palette recent selections first", () => {
+    const items = [{ id: "surface-vault" }, { id: "surface-git" }, { id: "slash-add-device" }];
+    const recentIds = rememberCommandPaletteItemId("surface-git", ["slash-add-device"]);
+
+    expect(recentIds).toEqual(["surface-git", "slash-add-device"]);
+    expect(orderCommandItemsByRecency(items, recentIds).map((item) => item.id)).toEqual(["surface-git", "slash-add-device", "surface-vault"]);
+  });
 });
+
+function keyEvent(key: string): Pick<KeyboardEvent, "key" | "metaKey" | "ctrlKey" | "altKey"> {
+  return { altKey: false, ctrlKey: false, key, metaKey: false };
+}
 
 function storageFrom(values: Record<string, string>): Pick<Storage, "getItem"> {
   return {

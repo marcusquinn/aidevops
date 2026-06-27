@@ -1,10 +1,11 @@
 /* jshint esversion: 11 */
-import { type ReactElement, type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactElement, type ReactNode, useEffect, useState } from "react";
 import { FiBell, FiChevronLeft, FiChevronRight, FiCommand, FiCpu, FiGlobe, FiHash, FiLogOut, FiMessageSquare, FiSearch, FiSettings, FiShield, FiUser } from "react-icons/fi";
 import type { GuiFileRootId, GuiStatusData } from "../../gui-shared/src";
 import { SurfaceGlyph } from "./AppNavigation";
 import type { ConversationMode, ShellMode, SurfaceId, SurfaceNavItem } from "./app-model";
-import { inventorySurfaceConfigs, orderedNavItems, text } from "./app-model";
+import { inventorySurfaceConfigs, text } from "./app-model";
+import { CommandPalette, commandPaletteShortcutQuery } from "./CommandPalette";
 import { FileExplorerSurface } from "./FileExplorerSurface";
 import { AppsSurface, EditableInventorySurface, InstallationSurface } from "./InventorySurfaces";
 import { AiProvidersSurface, LocalReposSurface, LockedVaultGate, OverviewSurface, PlannedSurface, ProjectsSurface, SecuritySurface, VaultSurface } from "./StatusSurfaces";
@@ -70,9 +71,10 @@ function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoB
         return;
       }
 
-      if (event.key === "/" && !isEditableShortcutTarget(event.target)) {
+      const shortcutQuery = commandPaletteShortcutQuery(event);
+      if (shortcutQuery !== undefined && !isEditableShortcutTarget(event.target)) {
         event.preventDefault();
-        setCommandInitialQuery("/");
+        setCommandInitialQuery(shortcutQuery);
         setCommandOpen(true);
       }
     };
@@ -232,114 +234,6 @@ function AssistantPanel({ activeSurface, userName }: { activeSurface: SurfaceId;
       </div>
       <div className="assistant-message">Hosted chat, local context, and workflow hand-off controls are planned.</div>
     </aside>
-  );
-}
-
-interface CommandPaletteItem {
-  description: string;
-  icon: SurfaceNavItem["icon"];
-  id: string;
-  label: string;
-  searchText: string;
-  surface: SurfaceId;
-  tag: string;
-}
-
-const slashCommandItems: CommandPaletteItem[] = [
-  { id: "slash-add-device", label: "/add-device", description: "Start device pairing setup", icon: "device", searchText: "/add-device add device pair machine", surface: "devices", tag: "Command" },
-  { id: "slash-add-local-repo", label: "/add-local-repo", description: "Add a local repository path", icon: "folder", searchText: "/add-local-repo add local repo git", surface: "git", tag: "Command" },
-  { id: "slash-add-remote-repo", label: "/add-remote-repo", description: "Register a remote repository", icon: "git", searchText: "/add-remote-repo add remote repo", surface: "projects", tag: "Command" },
-  { id: "slash-add-secret", label: "/add-secret", description: "Add a protected secret reference", icon: "shield", searchText: "/add-secret add secret vault", surface: "security", tag: "Command" },
-  { id: "slash-add-ai-provider", label: "/add-ai-provider", description: "Connect an AI provider account", icon: "users", searchText: "/add-ai-provider add ai provider oauth", surface: "aiProviders", tag: "Command" },
-];
-
-const plannedChannelItems: CommandPaletteItem[] = [
-  { id: "channel-devops", label: "#devops", description: "Chat channel for aidevops operations", icon: "message", searchText: "#devops devops channel chat", surface: "messagingAccounts", tag: "Channel" },
-  { id: "channel-comms", label: "#comms", description: "Chat channel for communications", icon: "message", searchText: "#comms comms channel chat", surface: "messagingAccounts", tag: "Channel" },
-];
-
-function CommandPalette({ close, initialQuery, openSurface, status }: { close: () => void; initialQuery: string; openSurface: (surface: SurfaceId) => void; status: GuiStatusData }): ReactElement {
-  const [query, setQuery] = useState(initialQuery);
-  const inputRef = useRef<HTMLInputElement>(null);
-  const matches = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    const surfaceItems: CommandPaletteItem[] = orderedNavItems.map((item) => ({
-      description: item.description,
-      icon: item.icon,
-      id: `surface-${item.id}`,
-      label: item.label,
-      searchText: `${item.label} ${item.description}`,
-      surface: item.id,
-      tag: "Surface",
-    }));
-    const sessionItems: CommandPaletteItem[] = status.opencode_sessions.sessions.map((session) => ({
-      description: `AI session in ${session.repo_path_ref}`,
-      icon: "terminal",
-      id: `session-${session.id_ref}`,
-      label: `#${session.title}`,
-      searchText: `#${session.title} ${session.title} ${session.repo_path_ref} ${session.agent} ${session.model}`,
-      surface: "git",
-      tag: "AI session",
-    }));
-    const directMessageItems: CommandPaletteItem[] = [{
-      description: "Direct message thread placeholder",
-      icon: "users",
-      id: "dm-local-user",
-      label: `@${status.machine.username || "local-user"}`,
-      searchText: `@${status.machine.username || "local-user"} direct message dm person local user`,
-      surface: "messagingAccounts",
-      tag: "Direct message",
-    }];
-    const items = [...surfaceItems, ...sessionItems, ...plannedChannelItems, ...directMessageItems, ...slashCommandItems];
-    const prefix = normalizedQuery.charAt(0);
-    const scopedItems = prefix === "/"
-      ? slashCommandItems
-      : prefix === "@"
-        ? directMessageItems
-        : prefix === "#"
-          ? [...sessionItems, ...plannedChannelItems]
-          : items;
-
-    return scopedItems
-      .filter((item) => normalizedQuery.length === 0 || item.searchText.toLowerCase().includes(normalizedQuery))
-      .slice(0, 8);
-  }, [query, status.machine.username, status.opencode_sessions.sessions]);
-
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
-  useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        close();
-      }
-    };
-
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [close]);
-
-  return (
-    <div className="command-palette-backdrop" role="presentation">
-      <button aria-label="Close command palette" className="command-palette-scrim" onClick={close} type="button" />
-      <section aria-label="Command palette" className="command-palette">
-        <label className="command-input-row">
-          <FiSearch aria-hidden="true" />
-          <input ref={inputRef} onChange={(event) => setQuery(event.currentTarget.value)} placeholder="Search commands, #sessions, #channels, @people, or /actions" value={query} />
-        </label>
-        <ul>
-          {matches.map((item) => (
-            <li key={item.id}>
-              <button onClick={() => openSurface(item.surface)} type="button">
-                <span className="surface-icon" aria-hidden="true"><SurfaceGlyph icon={item.icon} /></span>
-                <span><strong>{item.label}</strong><small>{item.tag} · {item.description}</small></span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      </section>
-    </div>
   );
 }
 
