@@ -267,6 +267,11 @@ function SidebarResizeHandle(): ReactElement {
       event.preventDefault();
       setSidebarWidth((current) => clampSidebarWidth(current + (event.key === "ArrowRight" ? 16 : -16)));
     }
+
+    if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      setSidebarWidth(event.key === "Home" ? minSidebarWidth : maxSidebarWidth);
+    }
   };
 
   return <hr aria-label="Resize sidebar" aria-orientation="vertical" aria-valuemax={maxSidebarWidth} aria-valuemin={minSidebarWidth} aria-valuenow={sidebarWidth} className="sidebar-resize-handle" onKeyDown={resizeSidebarWithKeyboard} onMouseDown={startSidebarResize} tabIndex={0} />;
