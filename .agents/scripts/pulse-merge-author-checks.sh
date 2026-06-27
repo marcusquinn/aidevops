@@ -73,6 +73,16 @@ _pulse_author_permission_state_set() {
 	return 0
 }
 
+_pulse_author_permission_cache_key() {
+	local repo_slug="$1"
+	local author="$2"
+	local safe_key=""
+	safe_key=$(printf '%s|%s' "$repo_slug" "$author" | tr -c '[:alnum:]._-' '_')
+	[[ -n "$safe_key" ]] || safe_key="empty"
+	printf '%s' "$safe_key"
+	return 0
+}
+
 #######################################
 # Look up a PR author's repository permission via App-aware REST when available.
 # #aidevops:trust-boundary — collaborator/maintainer trust checks must not
@@ -81,7 +91,7 @@ _pulse_author_permission_state_set() {
 # Output: permission level on lookup success.
 # Returns: 0=lookup success, 2=lookup failure.
 #######################################
-_pulse_author_permission_lookup() {
+_pulse_author_permission_lookup_uncached() {
 	local author="$1"
 	local repo_slug="$2"
 	local out_var="${3:-}"
@@ -115,6 +125,55 @@ _pulse_author_permission_lookup() {
 		printf '%s\n' "$pulse_perm_value"
 	fi
 	return 0
+}
+
+_pulse_author_permission_lookup() {
+	local author="$1"
+	local repo_slug="$2"
+	local out_var="${3:-}"
+	local cache_dir="${AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR:-}"
+	local cache_file="" cache_key=""
+	local cache_rc="" cache_state="" cache_http="" cache_value=""
+	local lookup_rc=0 lookup_value=""
+
+	if [[ -n "$cache_dir" && -d "$cache_dir" ]]; then
+		cache_key=$(_pulse_author_permission_cache_key "$repo_slug" "$author")
+		cache_file="${cache_dir}/${cache_key}"
+		if [[ -f "$cache_file" ]]; then
+			{
+				IFS= read -r cache_rc || cache_rc=""
+				IFS= read -r cache_state || cache_state="$_PULSE_AUTHOR_PERMISSION_UNKNOWN"
+				IFS= read -r cache_http || cache_http="$_PULSE_AUTHOR_PERMISSION_UNKNOWN"
+				IFS= read -r cache_value || cache_value="$_PULSE_AUTHOR_PERMISSION_UNKNOWN"
+			} <"$cache_file"
+			[[ "$cache_rc" =~ ^[0-9]+$ ]] || cache_rc=2
+			_pulse_author_permission_state_set "$cache_state" "$cache_http" "$cache_value"
+			if [[ "$cache_rc" -eq 0 ]]; then
+				if [[ -n "$out_var" ]]; then
+					printf -v "$out_var" '%s' "$cache_value"
+				else
+					printf '%s\n' "$cache_value"
+				fi
+				return 0
+			fi
+			return 2
+		fi
+	fi
+
+	_pulse_author_permission_lookup_uncached "$author" "$repo_slug" lookup_value
+	lookup_rc=$?
+	if [[ -n "$cache_file" ]]; then
+		printf '%s\n%s\n%s\n%s\n' "$lookup_rc" "$_PULSE_AUTHOR_PERMISSION_LOOKUP_STATE" "$_PULSE_AUTHOR_PERMISSION_HTTP" "$_PULSE_AUTHOR_PERMISSION_VALUE" >"$cache_file"
+	fi
+	if [[ "$lookup_rc" -eq 0 ]]; then
+		if [[ -n "$out_var" ]]; then
+			printf -v "$out_var" '%s' "$lookup_value"
+		else
+			printf '%s\n' "$lookup_value"
+		fi
+		return 0
+	fi
+	return 2
 }
 
 #######################################
