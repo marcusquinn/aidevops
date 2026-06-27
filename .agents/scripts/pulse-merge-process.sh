@@ -110,6 +110,15 @@ _pmp_log_repo_timing_summary() {
 	return 0
 }
 
+_pmp_cache_key() {
+	local raw_key="$1"
+	local safe_key=""
+	safe_key=$(printf '%s' "$raw_key" | tr -c '[:alnum:]._-' '_')
+	[[ -n "$safe_key" ]] || safe_key="empty"
+	printf '%s' "$safe_key"
+	return 0
+}
+
 # PR backlog categories exposed in logs. These are scheduling/observability
 # buckets only; _process_single_ready_pr still enforces every merge safety gate
 # before approving, merging, closing, or dispatching a fix worker.
@@ -596,6 +605,14 @@ _merge_ready_prs_for_repo() {
 		return 0
 	fi
 
+	local AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR=""
+	local AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR=""
+	AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-pulse-required-contexts.XXXXXX" 2>/dev/null) || AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR=""
+	AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-pulse-author-perms.XXXXXX" 2>/dev/null) || AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR=""
+	if [[ -z "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" || -z "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR" ]]; then
+		echo "[pulse-wrapper] Merge pass: per-repo cache setup incomplete for ${repo_slug}; continuing without one or more caches (GH#25696)" >>"$LOGFILE"
+	fi
+
 	pr_json=$(_pmp_enrich_prs_with_rest_check_status "$repo_slug" "$pr_json")
 
 	_pmp_log_pr_backlog_counts "$repo_slug" "$pr_json"
@@ -622,6 +639,9 @@ _merge_ready_prs_for_repo() {
 		4) ;;
 		esac
 	done
+
+	[[ -n "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" ]] && rm -rf -- "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR"
+	[[ -n "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR" ]] && rm -rf -- "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR"
 
 	eval "${_merged_var}=${merged}; ${_closed_var}=${closed}; ${_failed_var}=${failed}"
 	return 0
@@ -1406,7 +1426,7 @@ _required_contexts_from_rulesets_for_default_branch() {
 #   1 — real error (default branch resolve failed, or non-404 API error) —
 #       caller MUST fail closed to preserve t2922 invariant.
 #######################################
-_required_contexts_for_default_branch() {
+_required_contexts_for_default_branch_uncached() {
 	local repo_slug="$1"
 	local default_branch="" _db_exit=0
 	default_branch=$(gh api "repos/${repo_slug}" --jq '.default_branch' 2>/dev/null)
@@ -1467,6 +1487,44 @@ _required_contexts_for_default_branch() {
 		printf '%s\n' "$ruleset_contexts"
 	fi
 	return 0
+}
+
+_required_contexts_for_default_branch() {
+	local repo_slug="$1"
+	local cache_dir="${AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR:-}"
+	local cache_key="" cache_body_file="" cache_rc_file="" cache_rc=""
+	local contexts="" rc=0
+
+	if [[ -n "$cache_dir" && -d "$cache_dir" ]]; then
+		cache_key=$(_pmp_cache_key "$repo_slug")
+		cache_body_file="${cache_dir}/${cache_key}.body"
+		cache_rc_file="${cache_dir}/${cache_key}.rc"
+		if [[ -f "$cache_rc_file" && -f "$cache_body_file" ]]; then
+			cache_rc=$(<"$cache_rc_file")
+			[[ "$cache_rc" =~ ^[0-9]+$ ]] || cache_rc=1
+			if [[ "$cache_rc" -eq 0 && -s "$cache_body_file" ]]; then
+				while IFS= read -r contexts; do
+					printf '%s\n' "$contexts"
+				done <"$cache_body_file"
+			fi
+			return "$cache_rc"
+		fi
+	fi
+
+	contexts=$(_required_contexts_for_default_branch_uncached "$repo_slug")
+	rc=$?
+	if [[ -n "$cache_body_file" && -n "$cache_rc_file" ]]; then
+		printf '%s\n' "$rc" >"$cache_rc_file"
+		if [[ -n "$contexts" ]]; then
+			printf '%s\n' "$contexts" >"$cache_body_file"
+		else
+			: >"$cache_body_file"
+		fi
+	fi
+	if [[ "$rc" -eq 0 && -n "$contexts" ]]; then
+		printf '%s\n' "$contexts"
+	fi
+	return "$rc"
 }
 
 _check_required_checks_passing() {
