@@ -134,7 +134,7 @@ export function readBinaryVersion(binaryPath: string, args: string[]): string {
     const output = execFileSync(binaryPath, args, {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
-      timeout: 500,
+      timeout: 150,
     }).trim();
     return output.split("\n").find((line) => line.length > 0) ?? "unknown";
   } catch {

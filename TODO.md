@@ -1022,7 +1022,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [ ] t18014 aidevops.app AI collaboration workspace roadmap #feat #parent-task #priority:high ref:GH#25707
 
-- [ ] t18015 Audit aidevops.app navigation and choose chat primitive stack #auto-dispatch #feat #priority:high ref:GH#25708
+- [x] t18015 Audit aidevops.app navigation and choose chat primitive stack #auto-dispatch #feat #priority:high ref:GH#25708 pr:#25717 completed:2026-06-27
 
 - [ ] t18016 Implement unified conversations for AI sessions channels and DMs #auto-dispatch #feat #priority:high ref:GH#25709
 
@@ -4330,3 +4330,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18011 Update setup/update to refresh the macOS aidevops GUI app bundle after releases #auto-dispatch ref:GH#25590 pr:#25591 completed:2026-06-26
 
 - [x] t18012 Add aidevops app chat session navigation #bug ref:GH#25636 pr:#25637 completed:2026-06-27
+
+- [ ] t18023 Fix gh_pr_view mergeable REST exclusion so `gh_pr_view --json mergeable` stay... #auto-dispatch #bug #framework #pulse ref:GH#25695

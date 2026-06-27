@@ -2,6 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { app } from "../src/app";
 
 describe("status API route", () => {
+  test("GET /api/health returns a lightweight readiness envelope", async () => {
+    const response = await app.request("/api/health");
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.ok).toBe(true);
+    expect(body.operation_id).toBe("capabilities.read");
+    expect(body.data.status).toBe("ok");
+  });
+
   test("GET /api/status returns the shared response envelope", async () => {
     const response = await app.request("/api/status");
     const body = await response.json();
