@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.28.0] - 2026-06-27
+
+### Added
+
+- expand GUI command palette shortcuts (#25700)
+- deduplicate dispatch against sibling PRs (#25694)
+
+### Changed
+
+- Documentation: reconcile pulse guardrail mission status (#25693)
+- fix: document diskcache risk acceptance (#25691)
+
 ## [3.27.0] - 2026-06-27
 
 ### Added
