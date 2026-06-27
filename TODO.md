@@ -4312,3 +4312,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18011 Update setup/update to refresh the macOS aidevops GUI app bundle after releases #auto-dispatch ref:GH#25590 pr:#25591 completed:2026-06-26
 
 - [x] t18012 Add aidevops app chat session navigation #bug ref:GH#25636 pr:#25637 completed:2026-06-27
+
+- [ ] t18014 aidevops.app AI collaboration workspace roadmap #enhancement #parent ref:GH#25707
