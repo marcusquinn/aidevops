@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { appearanceStorageKeys, clampSidebarWidth, loadingSkeletonPanelLabels, readStoredAppearancePreferences } from "../src/App";
+import { appearanceStorageKeys, clampSidebarWidth, loadingBrandGlyph, loadingSkeletonPanelLabels, readStoredAppearancePreferences } from "../src/App";
 import { hueFromInputValue } from "../src/AppNavigation";
 import { commandPaletteMatches, commandPaletteShortcutEntries, commandPaletteShortcutQuery, orderCommandItemsByRecency, rememberCommandPaletteItemId } from "../src/CommandPalette";
 import { DEFAULT_ACCENT_HUE, DEFAULT_FONT, DEFAULT_FONT_SIZE, surfaceRecordCounts } from "../src/app-model";
@@ -155,6 +155,7 @@ describe("dashboard shell", () => {
 
   test("keeps the loading skeleton aligned to the shell landmarks", () => {
     expect(loadingSkeletonPanelLabels).toEqual(["machine rail", "sidebar", "workspace", "status bar"]);
+    expect(loadingBrandGlyph).toBe(">_");
   });
 
   test("maps command palette single-key shortcuts", () => {

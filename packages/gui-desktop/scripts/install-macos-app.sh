@@ -349,6 +349,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private let mainWindowFrameAutosaveName = "aidevops-main-window"
     private let titlebarHeight: CGFloat = 24
     private let serviceQueue = DispatchQueue(label: "sh.aidevops.gui.services")
+    private var hasLoadedDashboard = false
     private var servicesStopped = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -591,7 +592,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     @objc private func openDashboard(_ sender: Any?) {
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        loadAppURL()
+        if !hasLoadedDashboard {
+            loadAppURL()
+        }
     }
 
     @objc private func hideWindow(_ sender: Any?) {
@@ -882,6 +885,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             loadStatusHTML(title: "Invalid aidevops URL", detail: "The configured web port is not valid: \(webPort)")
             return
         }
+        hasLoadedDashboard = true
         webView.load(URLRequest(url: url))
     }
 
@@ -892,6 +896,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if title == "Starting aidevops" {
             contentHTML = """
             <main class="shell" aria-busy="true" aria-label="Loading aidevops interface">
+              <section class="brand" aria-label="Starting aidevops"><strong><span>aidevops</span><b>&gt;</b><em>_</em></strong><small>Preparing local GUI</small></section>
               <aside class="rail panel"><i></i><i></i><i></i><i></i><i></i><i></i></aside>
               <aside class="sidebar panel"><header><b></b><span></span></header><nav><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></nav><footer><i></i><i></i></footer></aside>
               <section class="workspace panel"><header><b></b><span></span><i></i><i></i></header><article><h1>\(escapedTitle)</h1><p>\(escapedDetail)</p><div class="cards"><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="block"></div></article></section>
@@ -916,6 +921,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             p { color: #b9c3b0; line-height: 1.5; margin: 0; }
             code { color: #b2e969; }
             .shell { display: grid; gap: 8px; grid-template-columns: 72px 302px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 30px; height: 100vh; padding: 30px 8px 8px; }
+            .brand { align-items: center; backdrop-filter: blur(18px); background: rgb(17 19 15 / 78%); border: 1px solid rgb(178 233 105 / 34%); border-radius: 24px; box-shadow: 0 24px 90px rgb(178 233 105 / 14%), 0 20px 80px rgb(0 0 0 / 35%); display: grid; gap: 10px; justify-items: center; left: 50%; padding: 26px 30px; position: fixed; top: 50%; transform: translate(-50%, -50%); width: min(360px, calc(100vw - 48px)); z-index: 20; }
+            .brand strong { align-items: baseline; display: inline-flex; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: clamp(34px, 7vw, 64px); font-weight: 900; letter-spacing: -0.08em; line-height: .9; }
+            .brand span { color: #f6f7f2; font-size: .48em; letter-spacing: -0.04em; margin-right: .18em; }
+            .brand b, .brand em { color: var(--accent); font-style: normal; }
+            .brand em { animation: cursor 0.95s steps(1, end) infinite; }
+            .brand small { color: var(--muted); font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
             .panel, .status { background: rgb(17 19 15 / 92%); border: 1px solid var(--border); border-radius: 18px; box-shadow: inset 0 1px 0 rgb(255 255 255 / 8%); overflow: hidden; }
             .rail { align-content: start; display: grid; gap: 10px; justify-items: center; padding: 12px 8px; }
             .rail i, .sidebar b, .workspace b { border-radius: 12px; height: 44px; width: 44px; }
@@ -939,7 +950,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             .rail i, .sidebar b, .sidebar span, .sidebar i, .workspace b, .workspace span, .workspace i, .cards i, .block, .status i, .status span { animation: pulse 1.35s ease-in-out infinite; background: linear-gradient(90deg, #1a2116, rgb(178 233 105 / 18%), #1a2116); background-size: 220% 100%; border: 1px solid var(--border); border-radius: 999px; display: block; }
             .block, .cards i { border-radius: 18px; }
             @keyframes pulse { 0% { background-position: 120% 0; opacity: .52; } 50% { opacity: .95; } 100% { background-position: -120% 0; opacity: .52; } }
-            @media (prefers-reduced-motion: reduce) { .rail i, .sidebar b, .sidebar span, .sidebar i, .workspace b, .workspace span, .workspace i, .cards i, .block, .status i, .status span { animation: none; } }
+            @keyframes cursor { 0%, 48% { opacity: 1; } 49%, 100% { opacity: 0; } }
+            @media (prefers-reduced-motion: reduce) { .rail i, .sidebar b, .sidebar span, .sidebar i, .workspace b, .workspace span, .workspace i, .cards i, .block, .status i, .status span, .brand em { animation: none; } }
           </style>
         </head>
         <body>\(contentHTML)</body>

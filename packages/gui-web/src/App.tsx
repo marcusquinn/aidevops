@@ -40,6 +40,7 @@ const defaultSidebarWidth = 302;
 const minSidebarWidth = 248;
 const maxSidebarWidth = 520;
 export const loadingSkeletonPanelLabels = ["machine rail", "sidebar", "workspace", "status bar"] as const;
+export const loadingBrandGlyph = ">_";
 
 export interface StoredAppearancePreferences {
   accentHue: number;
@@ -245,6 +246,7 @@ export function AppLoadingSkeleton({ machineRailVisible }: { machineRailVisible:
   return (
     <main className={machineRailVisible ? "app-shell app-loading-shell" : "app-shell app-loading-shell machine-rail-collapsed"} aria-busy="true" aria-label="Loading aidevops interface">
       <div className="desktop-titlebar-tagline loading-line loading-titlebar" aria-hidden="true" />
+      <LoadingBrandOverlay />
       {machineRailVisible ? (
         <section className="machine-rail loading-panel" aria-label={loadingSkeletonPanelLabels[0]}>
           {Array.from({ length: 6 }, (_, index) => <span className="loading-orb" key={index} />)}
@@ -285,6 +287,19 @@ export function AppLoadingSkeleton({ machineRailVisible }: { machineRailVisible:
         {Array.from({ length: 8 }, (_, index) => <span className={index === 0 ? "loading-dot" : "loading-line"} key={index} />)}
       </div>
     </main>
+  );
+}
+
+function LoadingBrandOverlay(): ReactElement {
+  return (
+    <div className="loading-brand-overlay" aria-label="Starting aidevops">
+      <span className="loading-brand-mark" aria-hidden="true">
+        <span className="loading-brand-word">aidevops</span>
+        <span className="loading-brand-chevron">&gt;</span>
+        <span className="loading-brand-cursor">_</span>
+      </span>
+      <span className="loading-brand-status">Preparing local GUI</span>
+    </div>
   );
 }
 
