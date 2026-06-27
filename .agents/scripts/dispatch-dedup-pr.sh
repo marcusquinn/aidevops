@@ -59,7 +59,7 @@ _has_open_pr_check_healthy_sibling() {
 		] | .[0].number // empty' 2>/dev/null) || match_pr=""
 
 	if [[ -n "$match_pr" ]]; then
-		printf 'open PR #%s is approved and mergeable for issue #%s\n' "$match_pr" "$issue_number"
+		printf 'open PR #%s is approved or mergeable for issue #%s\n' "$match_pr" "$issue_number"
 		return 0
 	fi
 	return 1
