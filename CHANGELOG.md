@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.24.2] - 2026-06-27
+
+### Changed
+
+- remove duplicate 3.24.0 changelog (#25635)
+
 ## [3.24.1] - 2026-06-27
 
 ### Added
