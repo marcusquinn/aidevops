@@ -1,4 +1,4 @@
-<!--TOON:agents[12]{name,file,purpose,model_tier,triggers}:
+<!--TOON:agents[13]{name,file,purpose,model_tier,triggers}:
 Aidevops,aidevops.md,Framework operations setup troubleshooting and aidevops extension,opus,aidevops framework setup configuration troubleshooting mcp agent skill release
 Build+,build-plus.md,Enhanced Build with context tools,opus,code fix refactor bug ci tests pr implementation
 Automate,automate.md,Scheduling dispatch monitoring and background orchestration,sonnet,schedule cron dispatch pulse monitoring automation routine
@@ -11,6 +11,7 @@ PR,pr.md,Public relations earned media journalist research media lists newsjacki
 Product,product.md,Product management validation onboarding monetisation growth UI and analytics,opus,product prd roadmap validation onboarding monetisation growth analytics ux
 Research,research.md,Research and analysis tasks,gemini/grok,research compare market competitor technical analysis realtime
 SEO,seo.md,SEO optimization and analysis,opus,seo ranking keyword schema gsc sitemap backlinks
+Vault,vault.md,Vault security operations encrypted stores fleet trust provider routing and protected-data dispatch,opus,vault encrypted memory protected data lock unlock rekey device trust remote lock remote unlock secure sync needs_vault
 -->
 
 <!--TOON:model_tiers[7]{tier,model_id,use_case}:
