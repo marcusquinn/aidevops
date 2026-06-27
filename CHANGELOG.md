@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.24.0] - 2026-06-27
+
+### Added
+
+- add vault remote control helper (#25630)
+
+### Fixed
+
+- harden worker dispatch recovery (#25632)
+- register the OpenCode aidevops plugin during non-interactive setup (#25631)
+
 ## [3.23.1] - 2026-06-27
 
 ### Changed
