@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { appearanceStorageKeys, clampSidebarWidth, readStoredAppearancePreferences } from "../src/App";
-import { hueFromInputValue } from "../src/AppNavigation";
+import { activeSidebarSessionId, hueFromInputValue } from "../src/AppNavigation";
 import { commandPaletteMatches, commandPaletteShortcutEntries, commandPaletteShortcutQuery, orderCommandItemsByRecency, rememberCommandPaletteItemId } from "../src/CommandPalette";
 import { DEFAULT_ACCENT_HUE, DEFAULT_FONT, DEFAULT_FONT_SIZE, surfaceRecordCounts } from "../src/app-model";
 import { renderDashboardHtml } from "../src/dashboard";
@@ -151,6 +151,14 @@ describe("dashboard shell", () => {
     expect(clampSidebarWidth(120)).toBe(248);
     expect(clampSidebarWidth(360)).toBe(360);
     expect(clampSidebarWidth(800)).toBe(520);
+  });
+
+  test("falls back to the first sidebar session when the selection is stale", () => {
+    const sessions = mockedStatus().data.opencode_sessions.sessions;
+
+    expect(activeSidebarSessionId(sessions, sessions[1]?.id_ref)).toBe(sessions[1]?.id_ref);
+    expect(activeSidebarSessionId(sessions, "stale-session-id")).toBe(sessions[0]?.id_ref);
+    expect(activeSidebarSessionId([], "stale-session-id")).toBeUndefined();
   });
 
   test("maps command palette single-key shortcuts", () => {

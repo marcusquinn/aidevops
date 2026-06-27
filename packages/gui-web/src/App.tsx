@@ -266,10 +266,16 @@ function SidebarResizeHandle(): ReactElement {
     if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
       event.preventDefault();
       setSidebarWidth((current) => clampSidebarWidth(current + (event.key === "ArrowRight" ? 16 : -16)));
+    } else if (event.key === "Home") {
+      event.preventDefault();
+      setSidebarWidth(minSidebarWidth);
+    } else if (event.key === "End") {
+      event.preventDefault();
+      setSidebarWidth(maxSidebarWidth);
     }
   };
 
-  return <hr aria-label="Resize sidebar" aria-orientation="vertical" aria-valuemax={maxSidebarWidth} aria-valuemin={minSidebarWidth} aria-valuenow={sidebarWidth} className="sidebar-resize-handle" onKeyDown={resizeSidebarWithKeyboard} onMouseDown={startSidebarResize} tabIndex={0} />;
+  return <hr aria-label="Resize sidebar" aria-orientation="vertical" aria-valuemax={maxSidebarWidth} aria-valuemin={minSidebarWidth} aria-valuenow={sidebarWidth} className="sidebar-resize-handle" onKeyDown={resizeSidebarWithKeyboard} onMouseDown={startSidebarResize} role="separator" tabIndex={0} />;
 }
 
 function readStoredSidebarWidth(storage: ReadableAppearanceStorage | undefined = browserLocalStorage()): number {
