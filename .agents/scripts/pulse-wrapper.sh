@@ -278,6 +278,8 @@ source "${SCRIPT_DIR}/pulse-meta-parse.sh"
 source "${SCRIPT_DIR}/pulse-repo-meta.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-routines.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/dependabot-alert-monitor.sh"
 # GH#23604: semantics-preserving exact-output PR-list provider cache used by
 # pulse hot paths that need GraphQL-only fields such as reviewDecision.
 # shellcheck source=/dev/null
@@ -464,7 +466,7 @@ _pulse_should_defer_budget_priority_stage() {
 	local _stage="$1"
 	[[ "${AIDEVOPS_PULSE_GRAPHQL_BUDGET_CLASS:-normal}" == "reserve" ]] || return 1
 	case "$_stage" in
-		cache_prime|fix_the_fixer_detector|coderabbit_review|post_merge_scanner|pr_review_thread_response|auto_decomposer_scanner|dedup_cleanup|fast_fail_prune_expired|evaluate_routines|canonical_maintenance|dashboard_freshness_check|llm_supervisor)
+		cache_prime|fix_the_fixer_detector|coderabbit_review|post_merge_scanner|pr_review_thread_response|auto_decomposer_scanner|dedup_cleanup|fast_fail_prune_expired|evaluate_routines|dependabot_alert_monitor|canonical_maintenance|dashboard_freshness_check|llm_supervisor)
 			return 0
 			;;
 		*)
@@ -886,6 +888,7 @@ _pulse_execute_self_check() {
 		normalize_count_output
 		_ff_key
 		build_dependency_graph_cache
+		dependabot_alert_monitor_scan_repos
 		dispatch_max
 		merge_ready_prs_all_repos
 		rotate_pulse_log
@@ -1318,6 +1321,16 @@ _pulse_run_deterministic_pipeline() {
 	else
 		run_stage_with_timeout "evaluate_routines" "$PRE_RUN_STAGE_TIMEOUT" \
 			evaluate_routines || true
+	fi
+
+	# Dependency-alert monitor: create grouped worker-ready issues for open
+	# Dependabot alerts across managed pulse repos. The helper dedupes by
+	# package/ecosystem/patched-version and uses neutral issue wording.
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Stop flag appeared — skipping Dependabot alert monitor" >>"$LOGFILE"
+	else
+		_pulse_run_optional_stage_with_timeout "dependabot_alert_monitor" "$PRE_RUN_STAGE_TIMEOUT" \
+			dependabot_alert_monitor_scan_repos || true
 	fi
 
 	# GH#19949: Canonical-repo fast-forward + stale worktree sweep.
