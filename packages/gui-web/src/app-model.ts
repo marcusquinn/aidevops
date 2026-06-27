@@ -330,6 +330,10 @@ function plannedNavItem(id: SurfaceId, label: string, description: string, icon:
   return { id, label, description, icon, badge: text.planned };
 }
 
+function plannedCommsGroup(label: string, items: SurfaceNavItem[]): SurfaceNavGroup {
+  return { label, mode: "comms", items };
+}
+
 export const navGroups: SurfaceNavGroup[] = [
   {
     label: text.development,
@@ -388,36 +392,28 @@ export const navGroups: SurfaceNavGroup[] = [
       { id: "marketplaces", label: text.marketplaces, description: "Storefronts and seller profiles", icon: "package", badge: text.planned },
     ],
   },
-  {
-    label: text.management,
-    mode: "comms",
-    items: [
-      plannedNavItem("channels", text.channels, "Team channels", "hash"),
-      plannedNavItem("directMessages", text.directMessages, "Direct and group DMs", "message"),
-      plannedNavItem("emailAccounts", text.emailAccounts, "Mail account sync", "mail"),
-      plannedNavItem("messagingAccounts", text.messagingAccounts, "Messaging account sync", "message"),
-      plannedNavItem("events", text.calendars, "CalDAV calendar sync", "calendar"),
-      plannedNavItem("contacts", text.contacts, "CardDAV contact sync", "users"),
-      plannedNavItem("tasks", text.tasks, "CalDAV task sync", "list"),
-      plannedNavItem("notes", text.notes, "Synced notes", "note"),
-      plannedNavItem("bookmarks", text.bookmarks, "Saved links and references", "bookmark"),
-    ],
-  },
-  {
-    label: text.projectWork,
-    mode: "comms",
-    items: [
-      plannedNavItem("inbox", text.inbox, "Project intake", "folder"),
-      plannedNavItem("campaigns", text.campaigns, "Campaign folders", "folder"),
-      plannedNavItem("cases", text.cases, "Case folders", "folder"),
-      plannedNavItem("projectConfig", text.config, "Project configuration", "folder"),
-      plannedNavItem("feedback", text.feedback, "Feedback folders", "folder"),
-      plannedNavItem("knowledge", text.knowledge, "Knowledge folders", "folder"),
-      plannedNavItem("maintenance", text.maintenance, "Maintenance folders", "folder"),
-      plannedNavItem("performance", text.performance, "Performance folders", "folder"),
-      plannedNavItem("reports", text.reports, "Report folders", "folder"),
-    ],
-  },
+  plannedCommsGroup(text.management, [
+    plannedNavItem("channels", text.channels, "Team channels", "hash"),
+    plannedNavItem("directMessages", text.directMessages, "Direct and group DMs", "message"),
+    plannedNavItem("emailAccounts", text.emailAccounts, "Mail account sync", "mail"),
+    plannedNavItem("messagingAccounts", text.messagingAccounts, "Messaging account sync", "message"),
+    plannedNavItem("events", text.calendars, "CalDAV calendar sync", "calendar"),
+    plannedNavItem("contacts", text.contacts, "CardDAV contact sync", "users"),
+    plannedNavItem("tasks", text.tasks, "CalDAV task sync", "list"),
+    plannedNavItem("notes", text.notes, "Synced notes", "note"),
+    plannedNavItem("bookmarks", text.bookmarks, "Saved links and references", "bookmark"),
+  ]),
+  plannedCommsGroup(text.projectWork, [
+    plannedNavItem("inbox", text.inbox, "Project intake", "folder"),
+    plannedNavItem("campaigns", text.campaigns, "Campaign folders", "folder"),
+    plannedNavItem("cases", text.cases, "Case folders", "folder"),
+    plannedNavItem("projectConfig", text.config, "Project configuration", "folder"),
+    plannedNavItem("feedback", text.feedback, "Feedback folders", "folder"),
+    plannedNavItem("knowledge", text.knowledge, "Knowledge folders", "folder"),
+    plannedNavItem("maintenance", text.maintenance, "Maintenance folders", "folder"),
+    plannedNavItem("performance", text.performance, "Performance folders", "folder"),
+    plannedNavItem("reports", text.reports, "Report folders", "folder"),
+  ]),
 ];
 
 export const dashboardNavItem: SurfaceNavItem = {
