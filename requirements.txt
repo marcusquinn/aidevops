@@ -21,7 +21,6 @@ requests==2.33.0
 
 # Data processing and storage
 datasets==4.4.1
-diskcache==5.6.3  # KNOWN: CVE-2025-69872 — no patch available yet, monitor for update
 joblib==1.5.2
 
 # Optimization and experimentation
