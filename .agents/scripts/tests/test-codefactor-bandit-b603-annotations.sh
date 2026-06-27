@@ -26,8 +26,8 @@ else
 fi
 
 assert_b603_annotated() {
-	local rel_path="$1"
-	local pattern="$2"
+	local rel_path="${1:-}"
+	local pattern="${2:-}"
 	local file="${REPO_ROOT}/${rel_path}"
 	local match=""
 
