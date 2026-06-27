@@ -4324,3 +4324,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18019 Implement channels and direct messages for aidevops.app #auto-dispatch #enhancement ref:GH#25712
 
 - [ ] t18018 Implement AI Sessions UI with Turbostarter and shadcn primitives #auto-dispatch #enhancement ref:GH#25711
+
+- [ ] t18020 Integrate Tambo generative UI cards into conversations #auto-dispatch #enhancement ref:GH#25713
