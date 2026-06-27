@@ -116,7 +116,7 @@ gh_pr_check_status_rest() {
 	local _check_state=""
 	# shellcheck disable=SC2016 # jq program uses $active as a jq variable.
 	_check_state=$(_gh_checks_api_read "repos/${slug}/commits/${sha}/check-suites" --jq '
-		(.check_suites | map(select(.conclusion != null or .status != "queued"))) as $active |
+		((.check_suites // []) | map(select(.conclusion != null or .status != "queued"))) as $active |
 		if ($active | length) == 0 then "none"
 		elif ($active | all(.conclusion == "success" or .conclusion == "skipped" or .conclusion == "neutral")) then "PASS"
 		elif ($active | any(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled")) then "FAIL"
