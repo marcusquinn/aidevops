@@ -7,10 +7,11 @@ import { hueFromInputValue } from "../src/AppNavigation";
 import { Workspace } from "../src/AppWorkspace";
 import { commandPaletteMatches, commandPaletteShortcutEntries, commandPaletteShortcutQuery, orderCommandItemsByRecency, rememberCommandPaletteItemId } from "../src/CommandPalette";
 import { CommsConversationSurface } from "../src/CommsConversationSurface";
+import { AppsSurface, nextRecommendedFilterValue } from "../src/InventorySurfaces";
 import { DEFAULT_ACCENT_HUE, DEFAULT_FONT, DEFAULT_FONT_SIZE, surfaceRecordCounts, type SurfaceNavItem } from "../src/app-model";
 import { renderDashboardHtml } from "../src/dashboard";
 import { fetchStatus, mockedStatus } from "../src/status-client";
-import type { GuiConversationThread } from "../../gui-shared/src";
+import type { GuiConversationThread, GuiManagedAppSummary } from "../../gui-shared/src";
 
 describe("dashboard shell", () => {
   test("renders setup/status placeholders", () => {
@@ -175,6 +176,25 @@ describe("dashboard shell", () => {
     expect(status.data.machine.initials).toBe("LM");
   });
 
+  test("renders updated Apps copy, casing, filter order, and compact managed metadata", () => {
+    const html = renderToStaticMarkup(createElement(AppsSurface, { status: { ...mockedStatus().data, managed_apps: [managedAppFixture] } }));
+    const source = readFileSync("packages/gui-web/src/InventorySurfaces.tsx", "utf8");
+
+    expect(html).toContain("AIDevOps");
+    expect(html).toContain("The app toolkit we use and recommend to enable all the things we can do with AI");
+    expect(html).not.toContain("App and CLI inventory for tools installed or updated by aidevops");
+    expect(source.indexOf("Recommended app operating system filters")).toBeLessThan(source.indexOf("Recommended app platform filters"));
+    expect(html).toContain("app-meta managed-app-path");
+    expect(sectionBetween(html, "managed-app-details", "app-meta managed-app-path")).not.toContain("Installed");
+    expect(sectionBetween(html, "managed-app-details", "app-meta managed-app-path")).not.toContain("Latest");
+  });
+
+  test("returns recommended filters to all when the active non-all option is selected again", () => {
+    expect(nextRecommendedFilterValue("macos", "macos", "all")).toBe("all");
+    expect(nextRecommendedFilterValue("macos", "linux", "all")).toBe("linux");
+    expect(nextRecommendedFilterValue("all", "all", "all")).toBe("all");
+  });
+
   test("loads saved appearance preferences before persistence effects run", () => {
     const preferences = readStoredAppearancePreferences(storageFrom({
       [appearanceStorageKeys.accentHue]: "210",
@@ -329,6 +349,22 @@ const directMessagesItem: SurfaceNavItem = {
   label: "Direct Messages",
 };
 
+const managedAppFixture: GuiManagedAppSummary = {
+  actions: [{ command_preview: "aidevops app update aidevops", confirmation: "recommended", enabled: true, id: "update", label: "Update" }],
+  aidevops_install: true,
+  aidevops_update: true,
+  category: "core",
+  description: "Framework CLI, agents, workflows, scripts, and local GUI assets.",
+  id: "aidevops",
+  install_path_ref: "/usr/local/bin/aidevops",
+  installed_version: "3.29.11",
+  latest_version: "3.29.11",
+  name: "aidevops",
+  origin_repo_url: "",
+  origin_website_url: "",
+  status: "found",
+};
+
 function renderWorkspaceSurface(activeItem: SurfaceNavItem, activeSurface: SurfaceNavItem["id"]): string {
   return renderToStaticMarkup(createElement(Workspace, {
     activeItem,
@@ -354,6 +390,16 @@ function renderWorkspaceSurface(activeItem: SurfaceNavItem, activeSurface: Surfa
 
 function noop(): void {
   // test callback placeholder
+}
+
+function sectionBetween(text: string, startNeedle: string, endNeedle: string): string {
+  const start = text.indexOf(startNeedle);
+  const end = text.indexOf(endNeedle, start);
+
+  expect(start).toBeGreaterThanOrEqual(0);
+  expect(end).toBeGreaterThanOrEqual(start);
+
+  return text.slice(start, end);
 }
 
 function storageFrom(values: Record<string, string>): Pick<Storage, "getItem"> {
