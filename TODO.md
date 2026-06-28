@@ -4342,3 +4342,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18024 Refine app sidebar and font controls #enhancement ref:GH#25753 pr:#25793 completed:2026-06-28
 
 
+
+- [ ] t18028 Fix vault remote-control CI test isolation #auto-dispatch ref:GH#25827
