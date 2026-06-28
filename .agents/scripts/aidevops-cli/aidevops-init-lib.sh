@@ -374,8 +374,9 @@ scaffold_agents_md() {
 	mkdir -p "$(dirname "$agents_md")"
 
 	if [[ -f "$agents_md" ]]; then
-		# File exists — update the Security section idempotently
-		_update_agents_md_security "$project_root"
+		# File exists — update managed sections idempotently
+		_update_agents_md_security "$project_root" || return 1
+		_update_agents_md_worktrees "$project_root"
 		return $?
 	fi
 
@@ -413,11 +414,63 @@ Create `.md` files in this directory for domain-specific context:
 
 Each file is read on demand by AI assistants when relevant to the task.
 
+## Git Worktrees
+
+Keep the canonical repo on `main`/`master`. Create temporary linked worktrees
+with `worktree-helper.sh`; aidevops stores them by default under
+`${AIDEVOPS_WORKTREE_BASE_DIR:-~/Git/_worktrees}` as flat `<repo>-<slug>`
+directories so that backup tools can exclude that directory.
+
 AGENTSEOF
 
 	# Append the generated security section
 	printf '%s\n' "$security_content" >>"$agents_md"
 
+	return 0
+}
+
+_generate_worktree_section() {
+	cat <<'EOF'
+## Git Worktrees
+
+Keep the canonical repo on `main`/`master`. Create temporary linked worktrees
+with `worktree-helper.sh`; aidevops stores them by default under
+`${AIDEVOPS_WORKTREE_BASE_DIR:-~/Git/_worktrees}` as flat `<repo>-<slug>`
+directories so that backup tools can exclude that directory.
+EOF
+	return 0
+}
+
+_update_agents_md_worktrees() {
+	local project_root="$1"
+	local agents_md="$project_root/.agents/AGENTS.md"
+	local tmp_file="${agents_md}.tmp.$$"
+	local worktree_content
+	worktree_content=$(_generate_worktree_section)
+	local in_section=false
+	local has_section=false
+
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		if [[ "$line" =~ ^'## Git Worktrees'[[:space:]]*$ ]]; then
+			in_section=true
+			has_section=true
+			printf '%s\n' "$worktree_content" >>"$tmp_file"
+			continue
+		fi
+		if [[ "$in_section" == "true" ]]; then
+			if [[ "$line" == "## "* ]]; then
+				in_section=false
+				printf '%s\n' "$line" >>"$tmp_file"
+			fi
+			continue
+		fi
+		printf '%s\n' "$line" >>"$tmp_file"
+	done <"$agents_md"
+
+	if [[ "$has_section" == "false" ]]; then
+		printf '\n%s\n' "$worktree_content" >>"$tmp_file"
+	fi
+	mv "$tmp_file" "$agents_md"
 	return 0
 }
 
@@ -917,7 +970,7 @@ EOF
 		[[ -f "$project_root/.agents/AGENTS.md" ]] && _agents_md_existed=true
 		scaffold_agents_md "$project_root"
 		if [[ "$_agents_md_existed" == "true" ]]; then
-			print_success "Updated Security section in .agents/AGENTS.md"
+			print_success "Updated managed sections in .agents/AGENTS.md"
 		else
 			print_success "Created .agents/AGENTS.md"
 		fi

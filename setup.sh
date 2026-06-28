@@ -12,7 +12,7 @@ shopt -s inherit_errexit 2>/dev/null || true
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.29.13
+# Version: 3.29.15
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -1330,6 +1330,8 @@ _setup_run_non_interactive() {
 	# at commit time (t2047). Belt-and-braces with the CI check in
 	# .github/workflows/task-id-collision-check.yml.
 	_time_step "setup_task_id_guard" setup_task_id_guard
+	# Configure the centralized flat linked-worktree directory used by helpers.
+	_time_step "setup_worktree_location" setup_worktree_location
 	# Apply Spotlight + Time Machine exclusions to every worktree across
 	# registered repos so the backup/index cascade triggered by node_modules
 	# copies doesn't burn CPU (t2885). Idempotent. macOS only — Linux

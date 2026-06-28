@@ -43,12 +43,12 @@ Remote has new commits → pull/rebase first. Uncommitted local changes → stas
 
 **Worktrees** (DEFAULT for all feature work):
 
-Main repo (`~/Git/{repo}/` or grouped `~/Git/{ecosystem}/{repo}/`) ALWAYS stays on `main`. Create linked worktrees as siblings of the canonical clone in the same parent; do not create durable implementation worktrees in runtime temp paths such as macOS `/var/folders/.../T/opencode/`.
+Main repo (`~/Git/{repo}/` or grouped `~/Git/{ecosystem}/{repo}/`) ALWAYS stays on `main`. Create linked worktrees under `${AIDEVOPS_WORKTREE_BASE_DIR:-~/Git/_worktrees}` using flat `<repo>-<branch-slug>` names; do not create durable implementation worktrees in runtime temp paths such as macOS `/var/folders/.../T/opencode/`.
 
 ```bash
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/my-feature
-# Creates a sibling, e.g. ~/Git/{repo}-feature-my-feature/ or ~/Git/mcp/{repo}-feature-my-feature/
-# Then cd into that sibling worktree path before editing.
+# Creates e.g. ~/Git/_worktrees/{repo}-feature-my-feature/
+# Then cd into the printed linked worktree path before editing.
 ```
 
 User-facing instructions must say "create a safe linked worktree for ...". Treat the Git ref/branch created inside that worktree as an internal implementation detail; never instruct agents to create a standalone local feature branch in the canonical repo.
@@ -102,7 +102,7 @@ Parse issue URLs to extract platform, owner, repo, and issue number, then create
 # WordPress -> ~/Git/wordpress/{repo}; EspoCRM -> ~/Git/espocrm/{repo}; MCP -> ~/Git/mcp/{repo}
 # Other repos -> ~/Git/{repo}. Details: reference/repo-organization.md
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add {type}/{issue_number}-{slug-from-title}
-# Then cd into the printed sibling worktree path before editing.
+# Then cd into the printed linked worktree path before editing.
 ```
 
 Supported: `github.com`, `gitlab.com`, and Gitea (`{domain}/{owner}/{repo}/issues/{num}`).

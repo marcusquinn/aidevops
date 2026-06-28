@@ -103,6 +103,10 @@ source "${SCRIPT_DIR}/worktree-helper-integration.sh"
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/worktree-helper-git.sh"
 
+# shellcheck source=./worktree-paths.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/worktree-paths.sh"
+
 # shellcheck source=./worktree-helper-add.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/worktree-helper-add.sh"

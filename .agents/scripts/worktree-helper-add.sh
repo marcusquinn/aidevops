@@ -112,22 +112,23 @@ trash_path() {
 	return 1
 }
 
-# Generate worktree path from branch name
-# Pattern: ~/Git/{repo}-{branch-slug}
+# Generate worktree path from branch name.
+# Default pattern: ~/Git/_worktrees/{repo}-{branch-slug}
 generate_worktree_path() {
 	local branch="$1"
-	local repo_name
+	local repo_root
+	repo_root=$(get_repo_root)
+	if declare -F aidevops_generate_worktree_path >/dev/null 2>&1; then
+		aidevops_generate_worktree_path "$repo_root" "$branch"
+		return $?
+	fi
+
+	local repo_name slug parent_dir
 	repo_name=$(get_repo_name)
-
-	# Convert branch to slug: feature/auth-system -> feature-auth-system
-	local slug
 	slug=$(echo "$branch" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
-
-	# Get parent directory of main repo
-	local parent_dir
-	parent_dir=$(dirname "$(get_repo_root)")
-
+	parent_dir=$(dirname "$repo_root")
 	echo "${parent_dir}/${repo_name}-${slug}"
+	return 0
 }
 
 # Check if branch exists
@@ -492,11 +493,15 @@ _cmd_add_assert_path_outside_repo() {
 	esac
 
 	# Mentoring error to stderr
-	local parent_dir repo_name slug suggested_path
-	parent_dir="$(dirname -- "$abs_repo")"
-	repo_name="$(basename -- "$abs_repo")"
-	slug="$(echo "$branch" | tr '/' '-' | tr '[:upper:]' '[:lower:]')"
-	suggested_path="${parent_dir}/${repo_name}-${slug}"
+	local suggested_path
+	suggested_path=$(generate_worktree_path "$branch" 2>/dev/null || true)
+	if [[ -z "$suggested_path" ]]; then
+		local parent_dir repo_name slug
+		parent_dir="$(dirname -- "$abs_repo")"
+		repo_name="$(basename -- "$abs_repo")"
+		slug="$(echo "$branch" | tr '/' '-' | tr '[:upper:]' '[:lower:]')"
+		suggested_path="${parent_dir}/${repo_name}-${slug}"
+	fi
 
 	{
 		echo -e "${RED}Error: Worktree path '$path' resolves to '$abs_path',${NC}"

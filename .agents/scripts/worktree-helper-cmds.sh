@@ -400,7 +400,7 @@ OVERVIEW
 COMMANDS
   add <branch> [path] [--issue NNN] [--base REF]
                          Create worktree for branch
-                         Path auto-generated as ~/Git/{repo}-{branch-slug}
+						 Path auto-generated as ~/Git/_worktrees/{repo}-{branch-slug}
                          --issue NNN: explicit issue number for auto-claim (t2260)
                          --base REF:  explicit base for new branch. Default is
                                       origin/<default-branch> (t2802). Also honours

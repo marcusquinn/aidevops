@@ -23,7 +23,7 @@ tools:
 
 ```bash
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add release/1.2.0
-# Then cd into the sibling worktree path printed by the helper before editing.
+# Then cd into the linked worktree path printed by the helper before editing.
 ```
 
 ## When to Create

@@ -22,7 +22,7 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Separate working directories per branch — no branch-switching conflicts
-- **Core principle**: Main repo (`~/Git/{repo}/` or grouped parent) ALWAYS stays on `main`. Create durable sibling worktrees under the same parent, not runtime temp dirs. Group WordPress repos under `~/Git/wordpress/`, EspoCRM under `~/Git/espocrm/`, and MCP under `~/Git/mcp/` (details: `reference/repo-organization.md`). **Never `git checkout -b` in the main repo** — the next session inherits wrong state.
+- **Core principle**: Main repo (`~/Git/{repo}/` or grouped parent) ALWAYS stays on `main`. Create durable linked worktrees under `${AIDEVOPS_WORKTREE_BASE_DIR:-~/Git/_worktrees}`, not runtime temp dirs. Group WordPress repos under `~/Git/wordpress/`, EspoCRM under `~/Git/espocrm/`, and MCP under `~/Git/mcp/` (details: `reference/repo-organization.md`). **Never `git checkout -b` in the main repo** — the next session inherits wrong state.
 - **Preferred tool**: [Worktrunk](https://worktrunk.dev) (`brew install max-sixty/worktrunk/wt`) — full docs: `tools/git/worktrunk.md`
 - **Fallback**: `~/.aidevops/agents/scripts/worktree-helper.sh`
 
@@ -44,7 +44,7 @@ opencode ~/Git/myrepo-feature-auth/    # Multiple AI sessions on separate worktr
 **worktree-helper.sh** (fallback — no cd support):
 
 ```bash
-${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/my-feature          # Auto-path: sibling of canonical repo; cd into printed path
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/my-feature          # Auto-path: ~/Git/_worktrees/<repo>-feature-my-feature; cd into printed path
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/my-feature ~/custom  # Custom path; cd into that path
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh list                            # List worktrees
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh status                          # Status overview

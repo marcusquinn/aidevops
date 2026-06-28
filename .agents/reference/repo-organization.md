@@ -24,7 +24,7 @@ gh repo clone owner/example-mcp ~/Git/mcp/example-mcp
 
 ## Worktrees
 
-Create worktrees as siblings of their canonical clone, in the same grouped parent. `worktree-helper.sh add <branch>` already does this because it derives the path from the canonical repo's parent directory.
+Create worktrees under `${AIDEVOPS_WORKTREE_BASE_DIR:-~/Git/_worktrees}` with flat `<repo>-<branch-slug>` names. `worktree-helper.sh add <branch>` already derives this path; existing sibling worktrees from older versions remain valid until cleanup removes them safely.
 
 Examples:
 
