@@ -6,9 +6,11 @@ import { appearanceStorageKeys, clampSidebarWidth, loadingBrandGlyph, loadingSke
 import { hueFromInputValue } from "../src/AppNavigation";
 import { Workspace } from "../src/AppWorkspace";
 import { commandPaletteMatches, commandPaletteShortcutEntries, commandPaletteShortcutQuery, orderCommandItemsByRecency, rememberCommandPaletteItemId } from "../src/CommandPalette";
+import { CommsConversationSurface } from "../src/CommsConversationSurface";
 import { DEFAULT_ACCENT_HUE, DEFAULT_FONT, DEFAULT_FONT_SIZE, surfaceRecordCounts, type SurfaceNavItem } from "../src/app-model";
 import { renderDashboardHtml } from "../src/dashboard";
 import { fetchStatus, mockedStatus } from "../src/status-client";
+import type { GuiConversationThread } from "../../gui-shared/src";
 
 describe("dashboard shell", () => {
   test("renders setup/status placeholders", () => {
@@ -137,6 +139,18 @@ describe("dashboard shell", () => {
     expect(dmHtml).toContain("AI DevOps");
     expect(dmHtml).toContain("Direct support threads share the same message parts");
     expect(dmHtml).toContain("Search channels, DMs, mentions");
+  });
+
+  test("renders conversation threads when optional collections are absent", () => {
+    const html = renderToStaticMarkup(createElement(CommsConversationSurface, {
+      mode: "channels",
+      threads: [{
+        conversation: { id: "channel-partial", type: "channel", title: "partial", scope: { tenant_ref: "local", workspace_ref: "aidevops", repo_ref: null }, source_ref: "test", status: "read_only", created_at: "2026-06-27T00:00:00Z", updated_at: "2026-06-27T00:00:00Z" },
+      } as GuiConversationThread],
+    }));
+
+    expect(html).toContain("partial");
+    expect(html).toContain("0 members");
   });
 
   test("normalizes legacy status payloads from older local API processes", async () => {

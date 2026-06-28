@@ -150,7 +150,7 @@ assert_equals "fresh full pass records zero-progress aggregate" "3:0:0 " "$ZERO_
 printf '%s' 'org/one' >"$PULSE_MERGE_CHECKPOINT_FILE"
 PROCESSED_REPOS=""
 merge_ready_prs_all_repos
-assert_equals "checkpoint without newline still resumes" "org/two org/three " "$PROCESSED_REPOS"
+assert_equals "unterminated checkpoint still resumes" "org/two org/three " "$PROCESSED_REPOS"
 if [[ ! -f "$PULSE_MERGE_CHECKPOINT_FILE" ]]; then
 	pass "checkpoint without newline clears after resume"
 else
