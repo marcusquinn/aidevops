@@ -58,6 +58,7 @@ _log() {
 # Add new validators here by calling _register_validators() pattern.
 # ---------------------------------------------------------------------------
 declare -A _VALIDATOR_REGISTRY=()
+_PREDISPATCH_CLOSE_REASON_NOT_PLANNED="not planned"
 
 # ---------------------------------------------------------------------------
 # Self-hosting dispatch-path file patterns (t2819, t2821)
@@ -176,6 +177,135 @@ Closing this stale zero-progress meta-issue in the pre-dispatch validator so aut
 		_log "WARN" "#${issue_number}: failed to close recovered zero-progress meta-issue"
 	_log "INFO" "#${issue_number}: zero-progress meta premise recovered — issue closed, dispatch blocked"
 	return 10
+}
+
+# ---------------------------------------------------------------------------
+# Function-complexity-sweep duplicate detector.
+#
+# The quality sweep emits one issue per cited file. Older sweep versions
+# deduped by title using the full path even though the title only contained the
+# basename, which allowed duplicate issues for the same cited_file marker. Close
+# later duplicates before worker launch so two workers do not race the same file.
+# ---------------------------------------------------------------------------
+_extract_function_complexity_sweep_cited_file() {
+	local issue_body="$1"
+	local generator_line=""
+
+	generator_line=$(printf '%s' "$issue_body" | grep -oE '<!-- aidevops:generator=function-complexity-sweep[^>]*-->' | head -1) || generator_line=""
+	[[ -n "$generator_line" ]] || return 1
+
+	printf '%s' "$generator_line" | grep -oE 'cited_file=[^ >]+' | sed 's/cited_file=//' 2>/dev/null
+	return 0
+}
+
+_function_complexity_sweep_duplicate_rows() {
+	local slug="$1"
+	local cited_file="$2"
+
+	gh issue list --repo "$slug" \
+		--label "function-complexity-debt" --state open \
+		--search "\"cited_file=${cited_file}\" in:body" \
+		--json number,labels \
+		--jq '.[] | [.number, ([.labels[].name] | join(","))] | @tsv' 2>/dev/null
+	return $?
+}
+
+_function_complexity_row_is_active() {
+	local labels="$1"
+
+	case ",$labels," in
+	*,status:in-progress,* | *,status:in-review,* | *,status:claimed,*)
+		return 0
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
+_select_function_complexity_survivor() {
+	local rows="$1"
+	local survivor=""
+	local first_number=""
+	local number=""
+	local labels=""
+
+	while IFS=$'\t' read -r number labels; do
+		[[ "$number" =~ ^[0-9]+$ ]] || continue
+		if [[ -z "$first_number" || "$number" -lt "$first_number" ]]; then
+			first_number="$number"
+		fi
+		if _function_complexity_row_is_active "$labels"; then
+			if [[ -z "$survivor" || "$number" -lt "$survivor" ]]; then
+				survivor="$number"
+			fi
+		fi
+	done <<<"$rows"
+
+	printf '%s' "${survivor:-$first_number}"
+	return 0
+}
+
+_close_function_complexity_duplicate_issue() {
+	local issue_number="$1"
+	local slug="$2"
+	local cited_file="$3"
+	local survivor="$4"
+
+	local comment_body=""
+	comment_body="## Duplicate quality-sweep issue
+
+This issue targets the same quality-sweep marker as #${survivor}: cited_file=${cited_file}.
+
+Closing it before worker dispatch so automation does not launch duplicate workers against the same file. Continue via #${survivor}."
+
+	gh_issue_comment "$issue_number" --repo "$slug" --body "$comment_body" >/dev/null 2>&1 ||
+		_log "WARN" "#${issue_number}: failed to comment on duplicate function-complexity-sweep issue"
+	gh issue close "$issue_number" --repo "$slug" --reason "$_PREDISPATCH_CLOSE_REASON_NOT_PLANNED" >/dev/null 2>&1 ||
+		_log "WARN" "#${issue_number}: failed to close duplicate function-complexity-sweep issue"
+	_log "INFO" "#${issue_number}: duplicate function-complexity-sweep issue closed; survivor=#${survivor} cited_file=${cited_file}"
+	return 0
+}
+
+_close_function_complexity_sweep_duplicates() {
+	local issue_number="$1"
+	local slug="$2"
+	local issue_body="$3"
+	local cited_file=""
+
+	cited_file=$(_extract_function_complexity_sweep_cited_file "$issue_body") || return 0
+	[[ -n "$cited_file" ]] || return 0
+
+	local rows=""
+	if ! rows=$(_function_complexity_sweep_duplicate_rows "$slug" "$cited_file"); then
+		_log "WARN" "#${issue_number}: duplicate function-complexity-sweep lookup failed for ${cited_file} — dispatch proceeds"
+		return 0
+	fi
+	[[ -n "$rows" ]] || return 0
+
+	local issue_count="0"
+	issue_count=$(printf '%s\n' "$rows" | awk -F '\t' '$1 ~ /^[0-9]+$/ { count++ } END { print count+0 }') || issue_count="0"
+	[[ "$issue_count" -gt 1 ]] || return 0
+
+	local survivor=""
+	survivor=$(_select_function_complexity_survivor "$rows")
+	[[ -n "$survivor" ]] || return 0
+
+	if [[ "$issue_number" != "$survivor" ]]; then
+		_close_function_complexity_duplicate_issue "$issue_number" "$slug" "$cited_file" "$survivor"
+		return 10
+	fi
+
+	local duplicate_number=""
+	local duplicate_labels=""
+	while IFS=$'\t' read -r duplicate_number duplicate_labels; do
+		: "$duplicate_labels"
+		[[ "$duplicate_number" =~ ^[0-9]+$ ]] || continue
+		[[ "$duplicate_number" == "$survivor" ]] && continue
+		_close_function_complexity_duplicate_issue "$duplicate_number" "$slug" "$cited_file" "$survivor"
+	done <<<"$rows"
+
+	return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -971,7 +1101,7 @@ EOF
 
 	gh_issue_comment "$issue_number" --repo "$slug" --body "$comment_body" >/dev/null 2>&1 ||
 		_log "WARN" "#${issue_number}: failed to post review-feedback supersession rationale"
-	gh issue close "$issue_number" --repo "$slug" --reason "not planned" >/dev/null 2>&1 ||
+	gh issue close "$issue_number" --repo "$slug" --reason "$_PREDISPATCH_CLOSE_REASON_NOT_PLANNED" >/dev/null 2>&1 ||
 		_log "WARN" "#${issue_number}: failed to close superseded review-feedback issue"
 
 	_log "INFO" "#${issue_number}: closed as superseded by merged PR #${pr_number}"
@@ -1122,7 +1252,7 @@ EOF
 		_log "WARN" "Failed to post rationale comment on #${issue_number}"
 
 	# Close the issue with reason "not planned"
-	gh issue close "$issue_number" --repo "$slug" --reason "not planned" >/dev/null 2>&1 ||
+	gh issue close "$issue_number" --repo "$slug" --reason "$_PREDISPATCH_CLOSE_REASON_NOT_PLANNED" >/dev/null 2>&1 ||
 		_log "WARN" "Failed to close issue #${issue_number}"
 
 	_log "INFO" "Closed issue #${issue_number} in ${slug} as not planned (premise falsified)"
@@ -1149,6 +1279,15 @@ _run_pre_generator_validators() {
 	fi
 	if [[ "$review_feedback_rc" -ne 0 ]]; then
 		_log "WARN" "#${issue_number}: review-feedback supersession detector returned rc=${review_feedback_rc} — dispatch proceeds"
+	fi
+
+	local quality_duplicate_rc=0
+	_close_function_complexity_sweep_duplicates "$issue_number" "$slug" "$issue_body" || quality_duplicate_rc=$?
+	if [[ "$quality_duplicate_rc" -eq 10 ]]; then
+		return 10
+	fi
+	if [[ "$quality_duplicate_rc" -ne 0 ]]; then
+		_log "WARN" "#${issue_number}: function-complexity-sweep duplicate detector returned rc=${quality_duplicate_rc} — dispatch proceeds"
 	fi
 
 	local zero_progress_rc=0

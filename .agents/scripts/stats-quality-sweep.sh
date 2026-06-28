@@ -715,13 +715,20 @@ _create_simplification_issues() {
 		[[ -z "$file_path" ]] && continue
 		[[ "$issues_created" -ge "$max_issues_per_sweep" ]] && break
 
-		# Deduplicate via server-side title search — accurate across all issues.
-		# The file path is in the title, so searching by path is reliable.
+		# Deduplicate via the generator marker in the issue body. The title only
+		# contains the basename, so title+full-path search misses existing issues
+		# and creates duplicate worker targets for the same file.
 		local existing_count
 		existing_count=$(gh issue list --repo "$repo_slug" \
 			--label "function-complexity-debt" --state open \
-			--search "in:title \"$file_path\"" \
-			--json number --jq 'length' 2>/dev/null) || existing_count="0"
+			--search "\"cited_file=${file_path}\" in:body" \
+			--json number --jq 'length' 2>/dev/null) || {
+			echo "[stats] Function-complexity-debt issue search failed for ${file_path}; skipping create to avoid duplicates" >>"$LOGFILE"
+			continue
+		}
+		if [[ ! "$existing_count" =~ ^[0-9]+$ ]]; then
+			existing_count="0"
+		fi
 		if [[ "${existing_count:-0}" -gt 0 ]]; then
 			continue
 		fi
