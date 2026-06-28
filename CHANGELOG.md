@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.9] - 2026-06-28
+
+### Added
+
+- expand recommended app links
+- refine apps surface recommendations
+
 ## [3.29.8] - 2026-06-27
 
 ### Changed
