@@ -943,9 +943,8 @@ code {
 .header-actions > .header-action-menu {
   align-items: center;
   display: inline-flex;
-  flex: 0 0 38px;
+  flex: 0 0 auto;
   justify-content: center;
-  width: 38px;
 }
 
 .workspace-search {
@@ -1001,6 +1000,7 @@ code {
 }
 
 .header-action-menu {
+  gap: 10px;
   position: relative;
 }
 
@@ -1784,15 +1784,23 @@ code {
 }
 
 .section-heading {
-  margin-bottom: 18px;
+  margin-bottom: 16px;
   max-width: 860px;
+}
+
+.section-heading .eyebrow {
+  margin: 0 0 9px;
 }
 
 .section-heading h2 {
   font-size: 1.7rem;
   letter-spacing: -0.05em;
   line-height: 1.04;
-  margin: 6px 0 8px;
+  margin: 0 0 16px;
+}
+
+.section-heading p {
+  margin: 0;
 }
 
 .section-heading p,
@@ -2003,13 +2011,25 @@ code {
 }
 
 .apps-surface {
-  display: grid;
   align-content: start;
-  gap: 10px;
+  display: grid;
+  gap: 0;
 }
 
 .apps-surface .section-heading {
-  margin-bottom: 8px;
+  margin-bottom: 18px;
+}
+
+.apps-surface > .app-subnav {
+  margin-bottom: 18px;
+}
+
+.apps-surface > .app-subnav + .app-subnav {
+  margin-bottom: 16px;
+}
+
+.apps-surface .compact-notice {
+  margin-bottom: 0;
 }
 
 .data-table,
@@ -2021,8 +2041,8 @@ code {
 }
 
 .managed-app-list {
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 16px;
+  margin-bottom: 16px;
   overflow: visible;
 }
 
@@ -2033,7 +2053,7 @@ code {
   border: 1px solid var(--border);
   border-radius: 18px;
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 7%);
-  overflow: hidden;
+  overflow: visible;
   transition: background 140ms ease, border-color 140ms ease;
 }
 
@@ -2071,14 +2091,23 @@ code {
 .managed-app-title-block,
 .app-meta {
   display: grid;
-  gap: 7px;
   min-width: 0;
+}
+
+.managed-app-title-block {
+  gap: 0;
+}
+
+.managed-app-title-block .eyebrow {
+  line-height: 1;
+  margin: 0 0 8px;
 }
 
 .managed-app-title-block strong {
   font-size: clamp(1.12rem, 2vw, 1.4rem);
   letter-spacing: -0.04em;
   line-height: 1.15;
+  margin-bottom: 16px;
 }
 
 .managed-app-title-block > span:last-child {
@@ -2097,14 +2126,16 @@ code {
 
 .managed-summary-chip {
   align-items: center;
+  align-content: center;
   background: color-mix(in srgb, var(--surface-elevated) 92%, transparent);
   border: 1px solid var(--border);
   border-radius: 999px;
   display: inline-grid;
   gap: 1px;
   justify-items: center;
+  min-height: 58px;
   min-width: 118px;
-  padding: 7px 11px;
+  padding: 7px 12px;
   text-align: center;
 }
 
@@ -2120,6 +2151,7 @@ code {
   color: var(--text-primary);
   font-size: 0.84rem;
   font-weight: 800;
+  line-height: 1.15;
   max-width: 18ch;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2139,7 +2171,7 @@ code {
 .managed-app-body {
   border-top: 1px solid var(--border);
   display: grid;
-  gap: 14px;
+  gap: 16px;
   padding: 0 16px 16px;
   position: relative;
 }
@@ -2147,9 +2179,9 @@ code {
 .managed-app-toolbar {
   align-items: start;
   display: grid;
-  gap: 12px;
+  gap: 16px;
   grid-template-columns: minmax(0, 1fr) auto;
-  padding-top: 14px;
+  padding-top: 16px;
 }
 
 .managed-app-links,
@@ -2195,11 +2227,16 @@ code {
   grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
 }
 
+.managed-app-path {
+  min-height: auto;
+}
+
 .managed-toggle,
 .app-meta {
   background: var(--surface-elevated);
   border: 1px solid var(--border);
   border-radius: 12px;
+  gap: 7px;
   min-width: 0;
   min-height: 64px;
   padding: 10px 12px;
@@ -2211,8 +2248,13 @@ code {
   display: flex;
   font-size: 0.78rem;
   font-weight: 800;
-  gap: 8px;
+  gap: 12px;
+  justify-content: space-between;
   text-transform: uppercase;
+}
+
+.managed-toggle-label {
+  min-width: 0;
 }
 
 button.managed-toggle {
@@ -2236,6 +2278,7 @@ button.managed-toggle:focus-visible {
   border: 1px solid color-mix(in srgb, #ef4444 44%, var(--border));
   border-radius: 999px;
   display: inline-flex;
+  flex: 0 0 auto;
   padding: 2px;
   width: 34px;
 }
@@ -2293,17 +2336,25 @@ button.managed-toggle:focus-visible {
   color: var(--accent);
   display: inline-flex;
   gap: 7px;
-  min-height: 42px;
   justify-content: center;
+  line-height: 1;
+  min-height: 42px;
   padding: 0 12px;
   position: relative;
   transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
 }
 
 .app-action-button span {
+  align-items: center;
+  display: inline-flex;
   font-size: 0.7rem;
   font-weight: 900;
+  line-height: 1;
   text-transform: uppercase;
+}
+
+.app-action-button svg {
+  flex: 0 0 auto;
 }
 
 .app-action-button:hover,
@@ -2421,7 +2472,7 @@ button.managed-toggle:focus-visible {
   content: attr(data-tooltip);
   font-size: 0.72rem;
   font-weight: 700;
-  left: clamp(10px, 50%, calc(100vw - 330px));
+  left: 50%;
   line-height: 1.35;
   max-width: min(320px, 72vw);
   opacity: 0;
@@ -2432,7 +2483,7 @@ button.managed-toggle:focus-visible {
   transform: translate(-50%, 4px);
   transition: opacity 140ms ease, transform 140ms ease;
   width: max-content;
-  z-index: 400;
+  z-index: 1000;
 }
 
 [data-tooltip]:hover::after,
@@ -2526,7 +2577,8 @@ button.managed-toggle:focus-visible {
 .recommended-filter-tabs {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 16px;
+  margin-bottom: 16px;
 }
 
 .recommended-app-grid {

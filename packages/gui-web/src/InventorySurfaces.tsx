@@ -29,6 +29,8 @@ export function AppsSurface({ status }: { status: GuiStatusData }): ReactElement
   const managedApps = sortedManagedApps(status.managed_apps).map((app) => applyManagedPolicyToggles(app, policyToggles[app.id]));
   const visibleManagedApps = managedApps.filter((app) => managedCategoryForApp(app) === managedCategory);
   const visibleRecommendedApps = recommendedApps.filter((app) => recommendedAppMatchesFilters(app, recommendedPlatform, recommendedOs));
+  const selectRecommendedPlatform = (value: RecommendedPlatformFilterId) => setRecommendedPlatform((current) => nextRecommendedFilterValue(current, value, "all"));
+  const selectRecommendedOs = (value: RecommendedOsId) => setRecommendedOs((current) => nextRecommendedFilterValue(current, value, "all"));
 
   useEffect(() => {
     setExpandedAppId(visibleManagedApps[0]?.id ?? null);
@@ -85,7 +87,7 @@ export function AppsSurface({ status }: { status: GuiStatusData }): ReactElement
           ))}
         </div>
         <p className="empty-state compact-notice">Install/update actions run as allowlisted background jobs and stream inside each app panel. xterm.js with a node-pty bridge is the right next step for full TUI apps such as OpenCode; this view starts with non-interactive command logs.</p>
-      </> : <RecommendedAppsSurface apps={visibleRecommendedApps} os={recommendedOs} platform={recommendedPlatform} setOs={setRecommendedOs} setPlatform={setRecommendedPlatform} />}
+      </> : <RecommendedAppsSurface apps={visibleRecommendedApps} os={recommendedOs} platform={recommendedPlatform} setOs={selectRecommendedOs} setPlatform={selectRecommendedPlatform} />}
     </section>
   );
 }
@@ -120,11 +122,9 @@ function ManagedAppPanel({ app, expanded, job, onJob, onPolicyToggle, onToggle, 
       <div className="managed-app-details">
         <ToggleSwitch checked={app.aidevops_install} disabled={lockedPolicy} label="setup installs" onChange={(value) => onPolicyToggle("setup", value)} />
         <ToggleSwitch checked={app.aidevops_update} disabled={lockedPolicy} label="update maintains" onChange={(value) => onPolicyToggle("update", value)} />
-        <AppMeta label="Installed" value={app.installed_version} />
-        <AppMeta label="Latest" value={app.latest_version} />
-        <AppMeta label={text.path} value={app.install_path_ref} />
         {job ? <AppLogLink job={job} /> : null}
       </div>
+      <AppMeta className="managed-app-path" label={text.path} value={app.install_path_ref} />
       {job ? <AppActionTerminal job={job} /> : null}
       {policyJobs.map((policyJob) => <AppActionTerminal job={policyJob} key={policyJob.id} />)}
       {job === null && policyJobs.length === 0 ? <p className="empty-state compact-notice">No recent command output for this app. Run an action or change a policy toggle to open this app's terminal log.</p> : null}
@@ -146,11 +146,11 @@ function OriginLink({ href, label }: { href: string; label: string }): ReactElem
 }
 
 function ToggleSwitch({ checked, disabled = false, label, onChange }: { checked: boolean; disabled?: boolean; label: string; onChange: (checked: boolean) => void }): ReactElement {
-  return <button aria-pressed={checked} className={checked ? "managed-toggle checked" : "managed-toggle"} data-tooltip={disabled ? "Essential aidevops component; policy is locked on" : undefined} disabled={disabled} onClick={() => onChange(!checked)} title={disabled ? "Essential aidevops component; policy is locked on" : undefined} type="button"><span aria-hidden="true" className={checked ? "switch-track checked" : "switch-track"}><span /></span>{label}</button>;
+  return <button aria-pressed={checked} className={checked ? "managed-toggle checked" : "managed-toggle"} data-tooltip={disabled ? "Essential aidevops component; policy is locked on" : undefined} disabled={disabled} onClick={() => onChange(!checked)} title={disabled ? "Essential aidevops component; policy is locked on" : undefined} type="button"><span className="managed-toggle-label">{label}</span><span aria-hidden="true" className={checked ? "switch-track checked" : "switch-track"}><span /></span></button>;
 }
 
-function AppMeta({ label, value }: { label: string; value: string }): ReactElement {
-  return <span className="app-meta"><small>{label}</small><strong>{value}</strong></span>;
+function AppMeta({ className = "", label, value }: { className?: string; label: string; value: string }): ReactElement {
+  return <span className={className.length > 0 ? `app-meta ${className}` : "app-meta"}><small>{label}</small><strong>{value}</strong></span>;
 }
 
 function AppLogLink({ job }: { job: GuiAppActionJobSummary }): ReactElement {
@@ -291,7 +291,7 @@ interface RecommendedApp {
 }
 
 const appCollectionTabs: TabOption<AppCollectionId>[] = [
-  { id: "aidevops", label: "aidevops" },
+  { id: "aidevops", label: "AIDevOps" },
   { id: "recommended", label: "Recommended" },
 ];
 
@@ -379,8 +379,8 @@ function TabNav<T extends string>({ label, onChange, tabs, value }: { label: str
 function RecommendedAppsSurface({ apps, os, platform, setOs, setPlatform }: { apps: RecommendedApp[]; os: RecommendedOsId; platform: RecommendedPlatformFilterId; setOs: (os: RecommendedOsId) => void; setPlatform: (platform: RecommendedPlatformFilterId) => void }): ReactElement {
   return <>
     <div className="recommended-filter-tabs">
-      <TabNav label="Recommended app platform filters" tabs={recommendedPlatformTabs} value={platform} onChange={setPlatform} />
       <TabNav label="Recommended app operating system filters" tabs={recommendedOsTabs} value={os} onChange={setOs} />
+      <TabNav label="Recommended app platform filters" tabs={recommendedPlatformTabs} value={platform} onChange={setPlatform} />
     </div>
     <div className="recommended-app-grid">
       {apps.map((app) => <RecommendedAppCard app={app} key={app.name} setOs={setOs} setPlatform={setPlatform} />)}
@@ -457,6 +457,10 @@ function recommendedAppMatchesFilters(app: RecommendedApp, platform: Recommended
   const osMatches = os === "all" || app.os.includes(os);
 
   return platformMatches && osMatches;
+}
+
+export function nextRecommendedFilterValue<T extends string>(current: T, next: T, defaultValue: T): T {
+  return current === next && next !== defaultValue ? defaultValue : next;
 }
 
 function applyManagedPolicyToggles(app: GuiManagedAppSummary, policy: Partial<Record<ManagedPolicyId, boolean>> | undefined): GuiManagedAppSummary {

@@ -147,7 +147,7 @@ export const text = {
   aidevops: "aidevops",
   appShell: "App shell",
   apps: "Apps",
-  appsIntro: "App and CLI inventory for tools installed or updated by aidevops, with origin links, install/update policy, versions, paths, and allowlisted background actions.",
+  appsIntro: "The app toolkit we use and recommend to enable all the things we can do with AI, development, and operations to create and share our work. Opinionated preferences based on open-source-first, lowest-costs, highest-quality UI & UX, teamwork, data security, privacy, and AI-usage capabilities.",
   appStatusPending: "adapter pending",
   brands: "Brands",
   brandsIntro: "Draft brand inventory for names and website references.",
