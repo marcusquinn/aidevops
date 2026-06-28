@@ -23,7 +23,6 @@ cloudpickle==3.1.2
 colorlog==6.10.1
 datasets==4.4.1
 dill==0.4.0
-# KNOWN: no patched diskcache release; retained because dspy requires diskcache>=5.6.0.
 diskcache==5.6.3
 distro==1.9.0
 dspy==3.1.0b1
