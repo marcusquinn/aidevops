@@ -44,6 +44,7 @@ _PULSE_MERGE_CONFLICT_LOADED=1
 # Ensures LOGFILE is safe to dereference in all functions when this module
 # is sourced outside the pulse-wrapper.sh bootstrap context.
 : "${LOGFILE:=${HOME}/.aidevops/logs/pulse.log}"
+: "${PULSE_PR_BASE_BRANCH_FALLBACK:=<base-branch>}"
 
 # t2948: Idle interactive PR handover threshold in seconds (default 4h).
 # Override via AIDEVOPS_IDLE_INTERACTIVE_HANDOVER_SECONDS env var.
@@ -91,12 +92,12 @@ _post_rebase_nudge_on_interactive_conflicting() {
 	local base_branch
 	local pr_refs
 	pr_refs=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json headRefName,baseRefName --jq '[.headRefName, .baseRefName] | @tsv' 2>/dev/null) || pr_refs=$'<branch>\t<base-branch>'
+		--json headRefName,baseRefName --jq '[.headRefName, .baseRefName] | @tsv' 2>/dev/null) || pr_refs=$(printf '%s\t%s' "<branch>" "$PULSE_PR_BASE_BRANCH_FALLBACK")
 	IFS=$'\t' read -r head_branch base_branch <<EOF
 $pr_refs
 EOF
 	[[ -n "$head_branch" ]] || head_branch="<branch>"
-	[[ -n "$base_branch" ]] || base_branch="<base-branch>"
+	[[ -n "$base_branch" ]] || base_branch="$PULSE_PR_BASE_BRANCH_FALLBACK"
 
 	local marker="<!-- pulse-rebase-nudge -->"
 	local nudge_body
@@ -161,12 +162,12 @@ _post_rebase_nudge_on_contributor_conflicting() {
 	local base_branch
 	local pr_refs
 	pr_refs=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json headRefName,baseRefName --jq '[.headRefName, .baseRefName] | @tsv' 2>/dev/null) || pr_refs=$'<branch>\t<base-branch>'
+		--json headRefName,baseRefName --jq '[.headRefName, .baseRefName] | @tsv' 2>/dev/null) || pr_refs=$(printf '%s\t%s' "<branch>" "$PULSE_PR_BASE_BRANCH_FALLBACK")
 	IFS=$'\t' read -r head_branch base_branch <<EOF
 $pr_refs
 EOF
 	[[ -n "$head_branch" ]] || head_branch="<branch>"
-	[[ -n "$base_branch" ]] || base_branch="<base-branch>"
+	[[ -n "$base_branch" ]] || base_branch="$PULSE_PR_BASE_BRANCH_FALLBACK"
 
 	local marker="<!-- pulse-rebase-nudge-contributor -->"
 	local nudge_body
@@ -552,12 +553,12 @@ _post_rebase_nudge_on_worker_conflicting() {
 	local base_branch
 	local pr_refs
 	pr_refs=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json headRefName,baseRefName --jq '[.headRefName, .baseRefName] | @tsv' 2>/dev/null) || pr_refs=$'<branch>\t<base-branch>'
+		--json headRefName,baseRefName --jq '[.headRefName, .baseRefName] | @tsv' 2>/dev/null) || pr_refs=$(printf '%s\t%s' "<branch>" "$PULSE_PR_BASE_BRANCH_FALLBACK")
 	IFS=$'\t' read -r head_branch base_branch <<EOF
 $pr_refs
 EOF
 	[[ -n "$head_branch" ]] || head_branch="<branch>"
-	[[ -n "$base_branch" ]] || base_branch="<base-branch>"
+	[[ -n "$base_branch" ]] || base_branch="$PULSE_PR_BASE_BRANCH_FALLBACK"
 
 	local matching_pr_clause=""
 	if [[ -n "$matching_pr" ]]; then
