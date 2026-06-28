@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.12] - 2026-06-28
+
+### Changed
+
+- Maintenance: remove generated lockfile comment (#25756)
+
+### Fixed
+
+- restore recommended app os filters
+- buffer gui app action output lines (#25776)
+- sync sidebar session selection (#25775)
+- harden GUI notification followups (#25774)
+- harden vault device helper (#25755)
+
 ## [3.29.11] - 2026-06-28
 
 ### Changed
