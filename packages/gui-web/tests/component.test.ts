@@ -13,6 +13,8 @@ import { renderDashboardHtml } from "../src/dashboard";
 import { fetchStatus, mockedStatus } from "../src/status-client";
 import type { GuiConversationThread, GuiManagedAppSummary } from "../../gui-shared/src";
 
+const guiWebRoot = `${import.meta.dir}/..`;
+
 describe("dashboard shell", () => {
   test("renders setup/status placeholders", () => {
     const html = renderDashboardHtml(mockedStatus());
@@ -68,7 +70,7 @@ describe("dashboard shell", () => {
     expect(html).toContain("Show counts toggle");
     expect(html).toContain("desktop status bar");
     expect(html).toContain("Font size choices xs, s, m, lg, xl");
-    expect(html).toContain("Menlo (default)");
+    expect(html).toContain("Inter (default)");
     expect(html).toContain("IBM Plex Mono");
     expect(html).toContain("Playpen Sans");
     expect(html).toContain("Source Sans");
@@ -178,7 +180,7 @@ describe("dashboard shell", () => {
 
   test("renders updated Apps copy, casing, filter order, and compact managed metadata", () => {
     const html = renderToStaticMarkup(createElement(AppsSurface, { status: { ...mockedStatus().data, managed_apps: [managedAppFixture] } }));
-    const source = readFileSync("packages/gui-web/src/InventorySurfaces.tsx", "utf8");
+    const source = readFileSync(`${guiWebRoot}/src/InventorySurfaces.tsx`, "utf8");
 
     expect(html).toContain("AIDevOps");
     expect(html).toContain("These are the apps we use and recommend from our tried &amp; tested toolkit — enabling all the things we can do with AI");
@@ -247,7 +249,7 @@ describe("dashboard shell", () => {
   });
 
   test("clamps sidebar width to compact and wide bounds", () => {
-    expect(clampSidebarWidth(120)).toBe(248);
+    expect(clampSidebarWidth(120)).toBe(300);
     expect(clampSidebarWidth(360)).toBe(360);
     expect(clampSidebarWidth(800)).toBe(520);
   });
@@ -258,14 +260,14 @@ describe("dashboard shell", () => {
   });
 
   test("ships critical loading styles before React hydrates", () => {
-    const html = readFileSync("packages/gui-web/index.html", "utf8");
-    const css = readFileSync("packages/gui-web/src/styles.css", "utf8");
+    const html = readFileSync(`${guiWebRoot}/index.html`, "utf8");
+    const css = readFileSync(`${guiWebRoot}/src/styles.css`, "utf8");
 
     expect(html).toContain("loading-brand-overlay");
     expect(html).toContain("loading-cursor-blink");
     expect(html).toContain("aidevops-gui-theme");
     expect(html).toContain("app-loading-shell");
-    expect(css).toContain("font-family: var(--font-family-app);");
+    expect(css).toMatch(/font-family:\s*var\(--font-family-app\);/);
   });
 
   test("maps command palette single-key shortcuts", () => {

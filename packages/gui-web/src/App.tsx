@@ -1,5 +1,5 @@
 import type { GuiResponseEnvelope, GuiStatusData } from "@aidevops/gui-shared";
-import { type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactElement, useEffect, useState } from "react";
+import { type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactElement, type SetStateAction, useEffect, useState } from "react";
 import { MachineRail, Sidebar } from "./AppNavigation";
 import { Workspace } from "./AppWorkspace";
 import type { ConversationMode, FontPreference, FontSizePreference, ShellMode, SurfaceId, ThemePreference } from "./app-model";
@@ -37,7 +37,7 @@ export const appearanceStorageKeys = {
 } as const;
 
 const defaultSidebarWidth = 302;
-const minSidebarWidth = 248;
+const minSidebarWidth = 300;
 const maxSidebarWidth = 520;
 export const loadingSkeletonPanelLabels = ["machine rail", "sidebar", "workspace", "status bar"] as const;
 export const loadingBrandGlyph = ">_";
@@ -69,6 +69,40 @@ export function readStoredAppearancePreferences(storage: ReadableAppearanceStora
   };
 }
 
+export function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  if (typeof HTMLElement === "undefined" || !(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return target.isContentEditable || target.closest("input, textarea, select, [contenteditable], [role='textbox']") !== null;
+}
+
+function nextHistoryIndex(current: NavigationHistory, direction: -1 | 1): number {
+  return Math.min(Math.max(0, current.entries.length - 1), Math.max(0, current.index + direction));
+}
+
+function useNavigationHistoryKeyboard(setNavigation: Dispatch<SetStateAction<NavigationHistory>>): void {
+  useEffect(() => {
+    const navigateHistoryWithKeyboard = (event: globalThis.KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || isEditableKeyboardTarget(event.target) || isEditableKeyboardTarget(document.activeElement)) {
+        return;
+      }
+
+      const direction: -1 | 1 | null = event.key === "[" ? -1 : event.key === "]" ? 1 : null;
+      if (direction === null) {
+        return;
+      }
+
+      event.preventDefault();
+      setNavigation((current) => ({ ...current, index: nextHistoryIndex(current, direction) }));
+    };
+
+    window.addEventListener("keydown", navigateHistoryWithKeyboard);
+
+    return () => window.removeEventListener("keydown", navigateHistoryWithKeyboard);
+  }, [setNavigation]);
+}
+
 export function App(): ReactElement {
   const [storedAppearancePreferences] = useState<StoredAppearancePreferences>(() => readStoredAppearancePreferences());
   const [status, setStatus] = useState<GuiResponseEnvelope<GuiStatusData>>(mockedStatus());
@@ -93,6 +127,7 @@ export function App(): ReactElement {
   const canGoBack = navigation.index > 0;
   const canGoForward = navigation.index < navigation.entries.length - 1;
   const fileRoot = fileRootBySurface[activeSurface];
+  useNavigationHistoryKeyboard(setNavigation);
 
   const setActiveSurface = (surface: SurfaceId) => {
     setNavigation((current) => {
@@ -108,11 +143,11 @@ export function App(): ReactElement {
   };
 
   const goBack = () => {
-    setNavigation((current) => ({ ...current, index: Math.max(0, current.index - 1) }));
+    setNavigation((current) => ({ ...current, index: nextHistoryIndex(current, -1) }));
   };
 
   const goForward = () => {
-    setNavigation((current) => ({ ...current, index: Math.min(current.entries.length - 1, current.index + 1) }));
+    setNavigation((current) => ({ ...current, index: nextHistoryIndex(current, 1) }));
   };
 
   useEffect(() => {

@@ -303,15 +303,15 @@ export const text = {
 } as const;
 
 export const DEFAULT_ACCENT_HUE = 123;
-export const DEFAULT_FONT: FontPreference = "Menlo";
-export const DEFAULT_FONT_SIZE: FontSizePreference = "m";
+export const DEFAULT_FONT: FontPreference = "Inter";
+export const DEFAULT_FONT_SIZE: FontSizePreference = "xs";
 
 export const fontOptions: FontOption[] = [
   { value: "IBM Plex Mono", label: "IBM Plex Mono", fontFamily: '"IBM Plex Mono", Menlo, Monaco, Consolas, monospace' },
   { value: "IBM Plex Sans", label: "IBM Plex Sans", fontFamily: '"IBM Plex Sans", Inter, system-ui, sans-serif' },
   { value: "IBM Plex Serif", label: "IBM Plex Serif", fontFamily: '"IBM Plex Serif", Georgia, serif' },
-  { value: "Inter", label: "Inter", fontFamily: 'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' },
-  { value: "Menlo", label: "Menlo (default)", fontFamily: 'Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace' },
+  { value: "Inter", label: "Inter (default)", fontFamily: 'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' },
+  { value: "Menlo", label: "Menlo", fontFamily: 'Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace' },
   { value: "Playpen Sans", label: "Playpen Sans", fontFamily: '"Playpen Sans", "Comic Sans MS", Inter, system-ui, sans-serif' },
   { value: "Poppins", label: "Poppins", fontFamily: 'Poppins, Inter, system-ui, sans-serif' },
   { value: "Source Sans", label: "Source Sans", fontFamily: '"Source Sans 3", "Source Sans Pro", "Source Sans", Inter, system-ui, sans-serif' },
@@ -543,11 +543,11 @@ export function getSystemTheme(): "light" | "dark" {
 }
 
 export function fontFamilyForPreference(font: FontPreference): string {
-  return fontOptions.find((option) => option.value === font)?.fontFamily ?? fontOptions.find((option) => option.value === DEFAULT_FONT)?.fontFamily ?? "Menlo, monospace";
+  return fontOptions.find((option) => option.value === font)?.fontFamily ?? fontOptions.find((option) => option.value === DEFAULT_FONT)?.fontFamily ?? "Inter, system-ui, sans-serif";
 }
 
 export function fontSizeForPreference(size: FontSizePreference): string {
-  return fontSizeOptions.find((option) => option.value === size)?.cssSize ?? fontSizeOptions.find((option) => option.value === DEFAULT_FONT_SIZE)?.cssSize ?? "16px";
+  return fontSizeOptions.find((option) => option.value === size)?.cssSize ?? fontSizeOptions.find((option) => option.value === DEFAULT_FONT_SIZE)?.cssSize ?? "14px";
 }
 
 export function isFontPreference(value: string | null): value is FontPreference {
