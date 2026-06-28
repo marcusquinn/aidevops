@@ -1,6 +1,10 @@
 import type { GuiAppActionId, GuiAppActionJobSummary, GuiManagedAppSummary, GuiResponseEnvelope, GuiStatusData } from "@aidevops/gui-shared";
 import { type Dispatch, type ReactElement, type SetStateAction, useEffect, useRef, useState } from "react";
-import { FiChevronDown, FiDownload, FiExternalLink, FiRefreshCw, FiRepeat, FiTrash2 } from "react-icons/fi";
+import type { IconType } from "react-icons";
+import { FaApple, FaLinux, FaWindows } from "react-icons/fa";
+import { FiChevronDown, FiDownload, FiExternalLink, FiGlobe, FiRefreshCw, FiRepeat, FiTrash2 } from "react-icons/fi";
+import { IoLogoAndroid } from "react-icons/io";
+import { SiIos } from "react-icons/si";
 import type { InventoryColumn } from "./app-model";
 import { installationRows, text } from "./app-model";
 
@@ -71,6 +75,8 @@ export function AppsSurface({ status }: { status: GuiStatusData }): ReactElement
 }
 
 function ManagedAppPanel({ app, expanded, job, onJob, onToggle }: { app: GuiManagedAppSummary; expanded: boolean; job: GuiAppActionJobSummary | null; onJob: (job: GuiAppActionJobSummary) => void; onToggle: () => void }): ReactElement {
+  const lockedPolicy = isEssentialManagedApp(app);
+
   return (
     <article className={expanded ? "managed-app-card expanded" : "managed-app-card"}>
       <button aria-expanded={expanded} className="managed-app-summary" data-tooltip={`${expanded ? "Collapse" : "Expand"} ${app.name} controls`} onClick={onToggle} type="button">
@@ -94,10 +100,10 @@ function ManagedAppPanel({ app, expanded, job, onJob, onToggle }: { app: GuiMana
           <div className="managed-app-actions">
             {app.actions.map((action) => <AppActionButton action={action.id} app={app} disabled={!action.enabled} key={action.id} onJob={onJob} commandPreview={action.command_preview} />)}
           </div>
-        </div>
+      </div>
       <div className="managed-app-details">
-        <ToggleSwitch checked={app.aidevops_install} label="setup installs" />
-        <ToggleSwitch checked={app.aidevops_update} label="update maintains" />
+        <ToggleSwitch checked={app.aidevops_install} disabled={lockedPolicy} label="setup installs" />
+        <ToggleSwitch checked={app.aidevops_update} disabled={lockedPolicy} label="update maintains" />
         <AppMeta label="Installed" value={app.installed_version} />
         <AppMeta label="Latest" value={app.latest_version} />
         <AppMeta label={text.path} value={app.install_path_ref} />
@@ -121,10 +127,10 @@ function OriginLink({ href, label }: { href: string; label: string }): ReactElem
   return <a data-tooltip={href} href={href} rel="noreferrer" target="_blank">{label} <FiExternalLink aria-hidden="true" /></a>;
 }
 
-function ToggleSwitch({ checked, label }: { checked: boolean; label: string }): ReactElement {
+function ToggleSwitch({ checked, disabled = false, label }: { checked: boolean; disabled?: boolean; label: string }): ReactElement {
   const [isChecked, setIsChecked] = useState(checked);
 
-  return <button aria-pressed={isChecked} className={isChecked ? "managed-toggle checked" : "managed-toggle"} onClick={() => setIsChecked((current) => !current)} type="button"><span aria-hidden="true" className={isChecked ? "switch-track checked" : "switch-track"}><span /></span>{label}</button>;
+  return <button aria-pressed={isChecked} className={isChecked ? "managed-toggle checked" : "managed-toggle"} data-tooltip={disabled ? "Essential aidevops component; policy is locked on" : undefined} disabled={disabled} onClick={() => setIsChecked((current) => !current)} title={disabled ? "Essential aidevops component; policy is locked on" : undefined} type="button"><span aria-hidden="true" className={isChecked ? "switch-track checked" : "switch-track"}><span /></span>{label}</button>;
 }
 
 function AppMeta({ label, value }: { label: string; value: string }): ReactElement {
@@ -214,6 +220,9 @@ function managedCategoryForApp(app: GuiManagedAppSummary): ManagedCategoryId {
   if (["core", "safety", "automation"].includes(app.category)) {
     return "core";
   }
+  if (app.category.includes("cli")) {
+    return "cli";
+  }
   if (app.category.includes("ai")) {
     return "ai";
   }
@@ -225,6 +234,10 @@ function managedCategoryForApp(app: GuiManagedAppSummary): ManagedCategoryId {
   }
 
   return "cli";
+}
+
+function isEssentialManagedApp(app: GuiManagedAppSummary): boolean {
+  return ["core", "safety", "automation"].includes(app.category);
 }
 
 type AppCollectionId = "aidevops" | "recommended";
@@ -242,6 +255,8 @@ interface RecommendedApp {
   websiteUrl: string;
   alternativeToUrl?: string;
   repoUrl?: string;
+  iosUrl?: string;
+  androidUrl?: string;
   os: RecommendedOsId[];
 }
 
@@ -280,7 +295,7 @@ const recommendedApps = ([
   { name: "Enpass", description: "Offline-first password manager.", websiteUrl: "https://www.enpass.io/", alternativeToUrl: "https://alternativeto.net/software/enpass/", os: ["macos", "linux", "windows", "ios", "android"] },
   { name: "EspoCRM", description: "Open source CRM.", websiteUrl: "https://www.espocrm.com/", alternativeToUrl: "https://alternativeto.net/software/espocrm/", os: ["linux"] },
   { name: "Fathom Analytics", description: "Privacy-first analytics.", websiteUrl: "https://usefathom.com/", alternativeToUrl: "https://alternativeto.net/software/fathom-analytics/", os: [] },
-  { name: "FonrBase", description: "Font management and reference tool.", websiteUrl: "https://fontba.se/", alternativeToUrl: "https://alternativeto.net/software/fontbase/", os: ["macos"] },
+  { name: "FontBase", description: "Font management and reference tool.", websiteUrl: "https://fontba.se/", alternativeToUrl: "https://alternativeto.net/software/fontbase/", os: ["macos"] },
   { name: "Forgejo", description: "Self-hosted Git forge.", websiteUrl: "https://forgejo.org/", alternativeToUrl: "https://alternativeto.net/software/forgejo/", os: ["linux"] },
   { name: "Ghost", description: "Publishing platform.", websiteUrl: "https://ghost.org/", alternativeToUrl: "https://alternativeto.net/software/ghost/", os: ["linux"] },
   { name: "Gitea", description: "Self-hosted Git service.", websiteUrl: "https://about.gitea.com/", alternativeToUrl: "https://alternativeto.net/software/gitea/", os: ["linux", "windows"] },
@@ -289,6 +304,7 @@ const recommendedApps = ([
   { name: "LocalWP", description: "Local WordPress development.", websiteUrl: "https://localwp.com/", alternativeToUrl: "https://alternativeto.net/software/local-by-flywheel/", os: ["macos", "linux", "windows"] },
   { name: "Matomo", description: "Open analytics platform.", websiteUrl: "https://matomo.org/", alternativeToUrl: "https://alternativeto.net/software/piwik/", os: ["linux"] },
   { name: "Nextcloud", description: "Open source content collaboration platform.", websiteUrl: "https://nextcloud.com/", alternativeToUrl: "https://alternativeto.net/software/nextcloud/", repoUrl: "https://github.com/nextcloud", os: ["macos", "linux", "windows", "ios", "android"] },
+  { name: "Nextcloud Talk", description: "Open source video calls, chat, and collaboration for Nextcloud.", websiteUrl: "https://nextcloud.com/talk/", repoUrl: "https://github.com/nextcloud/spreed", iosUrl: "https://apps.apple.com/us/app/nextcloud-talk/id1296825574", androidUrl: "https://play.google.com/store/apps/details?id=com.nextcloud.talk2&hl=en", os: ["ios", "android"] },
   { name: "OBS Studio", description: "Open source video recording and live streaming.", websiteUrl: "https://obsproject.com/", alternativeToUrl: "https://alternativeto.net/software/open-broadcaster-software/", repoUrl: "https://github.com/obsproject/obs-studio", os: ["macos", "linux", "windows"] },
   { name: "ONLYOFFICE", description: "Office and document collaboration.", websiteUrl: "https://www.onlyoffice.com/", alternativeToUrl: "https://alternativeto.net/software/onlyoffice/", os: ["macos", "linux", "windows", "ios", "android"] },
   { name: "OpenScreen", description: "Open screen-sharing project.", websiteUrl: "https://github.com/getopenscreen/openscreen", alternativeToUrl: "https://alternativeto.net/software/openscreen/", repoUrl: "https://github.com/getopenscreen/openscreen", os: ["linux"] },
@@ -309,7 +325,7 @@ const recommendedApps = ([
   { name: "Signal", description: "Private messenger.", websiteUrl: "https://signal.org/", alternativeToUrl: "https://alternativeto.net/software/signal-private-messenger/", os: ["macos", "linux", "windows", "ios", "android"] },
   { name: "SimpleX Chat", description: "Private messenger with no user IDs.", websiteUrl: "https://simplex.chat/", alternativeToUrl: "https://alternativeto.net/software/simplex-chat/about/", repoUrl: "https://github.com/simplex-chat", os: ["macos", "linux", "windows", "ios", "android"] },
   { name: "Thunderbird", description: "Email and calendar app.", websiteUrl: "https://www.thunderbird.net/", alternativeToUrl: "https://alternativeto.net/software/mozilla-thunderbird/about/", os: ["macos", "linux", "windows"] },
-  { name: "Ubicloud", description: "Open cloud platform.", websiteUrl: "https://www.ubicloud.com/", alternativeToUrl: "https://alternativeto.net/software/ubicloud/about/", os: ["linux"] },
+  { name: "Ubicloud", description: "Open cloud platform.", websiteUrl: "https://www.ubicloud.com/", alternativeToUrl: "https://alternativeto.net/software/ubicloud/about/", repoUrl: "https://github.com/ubicloud/ubicloud", os: ["linux"] },
   { name: "Vaultwarden", description: "Alternative Bitwarden server implementation.", websiteUrl: "https://github.com/dani-garcia/vaultwarden", alternativeToUrl: "https://alternativeto.net/software/vaultwarden/", repoUrl: "https://github.com/dani-garcia/vaultwarden", os: ["linux"] },
   { name: "VideoProc", description: "Video processing toolkit.", websiteUrl: "https://www.videoproc.com/", alternativeToUrl: "https://alternativeto.net/software/videoproc/about/", os: ["macos", "windows"] },
   { name: "VirtualBox", description: "Virtualization app.", websiteUrl: "https://www.virtualbox.org/", alternativeToUrl: "https://alternativeto.net/software/virtualbox/about/", os: ["macos", "linux", "windows"] },
@@ -340,17 +356,32 @@ function RecommendedAppCard({ app }: { app: RecommendedApp }): ReactElement {
       <OriginLink href={app.websiteUrl} label={text.website} />
       {app.alternativeToUrl ? <OriginLink href={app.alternativeToUrl} label="AlternativeTo" /> : null}
       {app.repoUrl ? <OriginLink href={app.repoUrl} label="Repo" /> : null}
+      {app.iosUrl ? <OriginLink href={app.iosUrl} label="App Store" /> : null}
+      {app.androidUrl ? <OriginLink href={app.androidUrl} label="Google Play" /> : null}
     </div>
   </article>;
 }
 
 function OsIconList({ os }: { os: RecommendedOsId[] }): ReactElement {
-  const icons: Record<RecommendedOsId, string> = { all: "*", macos: "⌘", linux: "🐧", windows: "⊞", ios: "iOS", android: "🤖" };
   if (os.length === 0) {
-    return <span className="os-icon-list"><span title="Web app">Web</span></span>;
+    return <span className="os-icon-list"><OsIcon id="all" /></span>;
   }
 
-  return <span className="os-icon-list">{os.map((item) => <span key={item} title={recommendedOsTabs.find((tab) => tab.id === item)?.label}>{icons[item]}</span>)}</span>;
+  return <span className="os-icon-list">{os.map((item) => <OsIcon id={item} key={item} />)}</span>;
+}
+
+function OsIcon({ id }: { id: RecommendedOsId }): ReactElement {
+  const iconMap: Record<RecommendedOsId, { Icon: IconType; label: string }> = {
+    all: { Icon: FiGlobe, label: "Web app" },
+    macos: { Icon: FaApple, label: "macOS" },
+    linux: { Icon: FaLinux, label: "Linux" },
+    windows: { Icon: FaWindows, label: "Windows" },
+    ios: { Icon: SiIos, label: "iOS" },
+    android: { Icon: IoLogoAndroid, label: "Android" },
+  };
+  const { Icon, label } = iconMap[id];
+
+  return <span aria-label={label} data-tooltip={label} role="img" title={label}><Icon aria-hidden="true" focusable="false" /></span>;
 }
 
 export function InstallationSurface(): ReactElement {

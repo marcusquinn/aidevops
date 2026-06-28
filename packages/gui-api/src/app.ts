@@ -10,6 +10,7 @@ const appActionCommands: Record<string, Partial<Record<GuiAppActionId, string[]>
   "gui-desktop": { install: ["aidevops", "setup", "--scope", "gui-desktop"], update: ["aidevops", "setup", "--scope", "gui-desktop"], reinstall: ["aidevops", "setup", "--scope", "gui-desktop"] },
   hooks: { install: ["aidevops", "setup", "--scope", "hooks"], update: ["aidevops", "setup", "--scope", "hooks"], reinstall: ["aidevops", "setup", "--scope", "hooks"] },
   opencode: { install: ["aidevops", "setup", "--scope", "opencode"], update: ["aidevops", "setup", "--scope", "opencode"], reinstall: ["aidevops", "setup", "--scope", "opencode"] },
+  "opencode-cli": { install: ["aidevops", "setup", "--scope", "opencode"], update: ["aidevops", "setup", "--scope", "opencode"], reinstall: ["aidevops", "setup", "--scope", "opencode"] },
   pulse: { install: ["aidevops", "setup", "--scope", "pulse"], update: ["aidevops", "setup", "--scope", "pulse"], reinstall: ["aidevops", "setup", "--scope", "pulse"] },
   tabby: { install: ["aidevops", "setup", "--scope", "tabby"], update: ["aidevops", "setup", "--scope", "tabby"], reinstall: ["aidevops", "setup", "--scope", "tabby"] },
   bun: { install: ["./setup.sh", "--non-interactive"], update: ["aidevops", "update-tools", "--update"] },

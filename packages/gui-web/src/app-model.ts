@@ -336,6 +336,19 @@ function plannedCommsGroup(label: string, items: SurfaceNavItem[]): SurfaceNavGr
 
 export const navGroups: SurfaceNavGroup[] = [
   {
+    label: text.infrastructure,
+    mode: "devops",
+    items: [
+      { id: "devices", label: text.devices, description: "Installed aidevops machines", icon: "device", badge: text.planned },
+      { id: "apps", label: text.apps, description: "Installed tools and apps", icon: "package" },
+      { id: "vpnsProxies", label: text.vpnsProxies, description: "VPN and proxy inventory", icon: "shield", badge: text.planned },
+      { id: "installation", label: text.installation, description: "Optional setup toggles", icon: "download" },
+      { id: "registrars", label: text.registrars, description: "Domain registrars", icon: "chain" },
+      { id: "hosts", label: text.hosts, description: "Hosting providers", icon: "server" },
+      { id: "servers", label: text.servers, description: "Servers and orchestrators", icon: "hardDrive" },
+    ],
+  },
+  {
     label: text.development,
     mode: "devops",
     items: [
@@ -358,19 +371,6 @@ export const navGroups: SurfaceNavGroup[] = [
       { id: "config", label: text.config, description: "~/.config/aidevops explorer", icon: "settings" },
       { id: "localSetup", label: text.localSetup, description: "~/.aidevops explorer", icon: "terminal" },
       { id: "routines", label: text.routines, description: "Scheduled workflows", icon: "clock", badge: text.planned },
-    ],
-  },
-  {
-    label: text.infrastructure,
-    mode: "devops",
-    items: [
-      { id: "devices", label: text.devices, description: "Installed aidevops machines", icon: "device", badge: text.planned },
-      { id: "vpnsProxies", label: text.vpnsProxies, description: "VPN and proxy inventory", icon: "shield", badge: text.planned },
-      { id: "apps", label: text.apps, description: "Installed tools and apps", icon: "package" },
-      { id: "installation", label: text.installation, description: "Optional setup toggles", icon: "download" },
-      { id: "registrars", label: text.registrars, description: "Domain registrars", icon: "chain" },
-      { id: "hosts", label: text.hosts, description: "Hosting providers", icon: "server" },
-      { id: "servers", label: text.servers, description: "Servers and orchestrators", icon: "hardDrive" },
     ],
   },
   {

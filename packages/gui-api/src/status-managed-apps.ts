@@ -83,12 +83,12 @@ const MANAGED_APP_DEFINITIONS: ManagedAppDefinition[] = [
   },
   {
     id: "opencode",
-    name: "OpenCode",
-    description: "AI terminal runtime configured by aidevops for local sessions.",
-    category: "ai runtime",
-    binary: "opencode",
-    version_args: ["--version"],
-    install_path_refs: ["~/Applications/OpenCode AIDevOps.app", "/Applications/OpenCode.app", "~/.config/opencode/opencode.json"],
+    name: "OpenCode Beta",
+    description: "Native OpenCode beta desktop app configured by aidevops.",
+    category: "desktop",
+    binary: null,
+    version_args: [],
+    install_path_refs: ["~/Applications/OpenCode AIDevOps.app", "~/Applications/OpenCode.app", "/Applications/OpenCode.app", "~/.config/opencode/opencode.json"],
     origin_website_url: "https://opencode.ai",
     origin_repo_url: "",
     aidevops_install: true,
@@ -96,6 +96,7 @@ const MANAGED_APP_DEFINITIONS: ManagedAppDefinition[] = [
     latest_version_source: "binary",
     action_commands: setupScopeActions("opencode"),
   },
+  binaryApp({ id: "opencode-cli", name: "OpenCode CLI", description: "Command-line runtime installed with OpenCode and configured by aidevops.", category: "cli", binary: "opencode", version_args: ["--version"], install_path_refs: ["/opt/homebrew/bin/opencode", "/usr/local/bin/opencode", "~/.bun/bin/opencode", "~/.config/opencode/opencode.json"], origin_website_url: "https://opencode.ai", origin_repo_url: "", aidevops_install: true, aidevops_update: true }),
   {
     id: "hooks",
     name: "Safety hooks",
@@ -139,7 +140,7 @@ const MANAGED_APP_DEFINITIONS: ManagedAppDefinition[] = [
   binaryApp({ id: "homebrew", name: "Homebrew", description: "macOS package manager used by setup/update when available.", category: "package manager", binary: "brew", version_args: ["--version"], install_path_refs: ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"], origin_website_url: "https://brew.sh", origin_repo_url: "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh" }),
   binaryApp({ id: "qlty", name: "Qlty CLI", description: "Optional code quality aggregator installed by setup when selected.", category: "quality", binary: "qlty", version_args: ["--version"], install_path_refs: ["/opt/homebrew/bin/qlty", "/usr/local/bin/qlty", "~/.qlty/bin/qlty"], origin_website_url: "https://qlty.sh", origin_repo_url: "" }),
   binaryApp({ id: "rtk", name: "rtk", description: "Token-optimized GitHub/API helper used by interactive discovery.", category: "developer tooling", binary: "rtk", version_args: ["--version"], install_path_refs: ["~/.local/bin/rtk", "/opt/homebrew/bin/rtk", "/usr/local/bin/rtk"], origin_website_url: "https://github.com/rtk-ai/rtk#installation", origin_repo_url: "https://github.com/rtk-ai/rtk" }),
-  binaryApp({ id: "cursor", name: "Cursor CLI", description: "Cursor command-line integration and config targets.", category: "ai runtime", binary: "cursor", version_args: ["--version"], install_path_refs: ["~/.cursor/bin/cursor", "/Applications/Cursor.app"], origin_website_url: "https://cursor.com/install", origin_repo_url: "" }),
+  binaryApp({ id: "cursor", name: "Cursor CLI", description: "Cursor command-line integration and config targets.", category: "cli", binary: "cursor", version_args: ["--version"], install_path_refs: ["~/.cursor/bin/cursor", "/Applications/Cursor.app"], origin_website_url: "https://cursor.com/install", origin_repo_url: "" }),
   binaryApp({ id: "zed", name: "Zed", description: "Optional editor installed by setup when selected.", category: "editor", binary: "zed", version_args: ["--version"], install_path_refs: ["/Applications/Zed.app", "/opt/homebrew/bin/zed", "/usr/local/bin/zed"], origin_website_url: "https://zed.dev/download", origin_repo_url: "", aidevops_install: false, aidevops_update: false }),
   binaryApp({ id: "orbstack", name: "OrbStack", description: "Optional local container/VM runtime for macOS development.", category: "runtime", binary: "orb", version_args: ["version"], install_path_refs: ["/Applications/OrbStack.app", "/opt/homebrew/bin/orb"], origin_website_url: "https://orbstack.dev/", origin_repo_url: "", aidevops_install: false, aidevops_update: false }),
   binaryApp({ id: "ollama", name: "Ollama", description: "Optional local model runtime for local AI workflows.", category: "ai runtime", binary: "ollama", version_args: ["--version"], install_path_refs: ["/Applications/Ollama.app", "/opt/homebrew/bin/ollama", "/usr/local/bin/ollama"], origin_website_url: "https://ollama.com", origin_repo_url: "" }),
@@ -221,8 +222,22 @@ function readManagedAppVersion(definition: ManagedAppDefinition, binaryPath: str
   }
 
   if (binaryPath === null) {
-    return "not installed";
+    const existingPathRef = firstExistingPathRef(definition.install_path_refs);
+
+    if (existingPathRef === null) {
+      return "not installed";
+    }
+
+    return readAppBundleVersion(existingPathRef) ?? "installed";
   }
 
   return readBinaryVersion(binaryPath, definition.version_args);
+}
+
+function readAppBundleVersion(pathRef: string): string | null {
+  if (!pathRef.endsWith(".app")) {
+    return null;
+  }
+
+  return readBinaryVersion("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleShortVersionString", `${expandHome(pathRef)}/Contents/Info.plist`]);
 }

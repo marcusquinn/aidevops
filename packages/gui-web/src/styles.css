@@ -916,7 +916,7 @@ code {
 
 .header-actions {
   flex: 1 1 auto;
-  gap: 10px;
+  gap: 8px;
   justify-content: flex-end;
   min-width: 0;
 }
@@ -1966,7 +1966,12 @@ code {
 
 .apps-surface {
   display: grid;
-  gap: 14px;
+  align-content: start;
+  gap: 10px;
+}
+
+.apps-surface .section-heading {
+  margin-bottom: 8px;
 }
 
 .data-table,
@@ -1990,11 +1995,19 @@ code {
   border: 1px solid var(--border);
   border-radius: 18px;
   box-shadow: inset 0 1px 0 rgb(255 255 255 / 7%);
-  overflow: visible;
+  overflow: hidden;
+  transition: background 140ms ease, border-color 140ms ease;
 }
 
 .managed-app-card.expanded {
   border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+}
+
+.managed-app-card:hover,
+.managed-app-card:focus-within {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 11%, transparent), transparent 40%),
+    var(--surface-muted);
 }
 
 .managed-app-summary {
@@ -2006,6 +2019,7 @@ code {
   gap: 16px;
   grid-template-columns: minmax(0, 1fr) auto;
   padding: 16px;
+  position: relative;
   text-align: left;
   width: 100%;
 }
@@ -2089,6 +2103,7 @@ code {
   display: grid;
   gap: 14px;
   padding: 0 16px 16px;
+  position: relative;
 }
 
 .managed-app-toolbar {
@@ -2165,6 +2180,11 @@ code {
 button.managed-toggle {
   cursor: pointer;
   text-align: left;
+}
+
+button.managed-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.82;
 }
 
 button.managed-toggle:hover,
@@ -2453,14 +2473,16 @@ button.managed-toggle:focus-visible {
   background: var(--surface-muted);
   border: 1px solid var(--border);
   border-radius: 999px;
-  display: flex;
+  align-items: center;
+  display: inline-flex;
   gap: 4px;
   padding: 5px;
-  width: min(100%, 520px);
+  width: max-content;
+  max-width: 100%;
 }
 
 .app-subnav {
-  width: fit-content;
+  justify-self: start;
 }
 
 .recommended-app-grid {
@@ -2497,17 +2519,22 @@ button.managed-toggle:focus-visible {
 
 .os-icon-list span {
   align-items: center;
-  background: var(--surface-elevated);
-  border: 1px solid var(--border);
-  border-radius: 999px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
   color: var(--text-secondary);
   display: inline-flex;
-  font-size: 0.72rem;
+  font-size: 1.12rem;
   font-weight: 900;
   justify-content: center;
-  min-height: 28px;
-  min-width: 28px;
-  padding: 4px 7px;
+  min-height: 24px;
+  min-width: 24px;
+  padding: 0;
+}
+
+.os-icon-list span:hover,
+.os-icon-list span:focus-visible {
+  color: var(--accent);
 }
 
 .pill-tabs button {
@@ -2515,18 +2542,28 @@ button.managed-toggle:focus-visible {
   border: 0;
   border-radius: 999px;
   color: var(--text-secondary);
-  flex: 1 1 0;
+  flex: 0 0 auto;
   font-weight: 800;
   min-height: 38px;
   padding: 9px 14px;
 }
 
-.pill-tabs button.active,
+.pill-tabs button.active {
+  background: var(--accent);
+  color: #ffffff;
+}
+
 .pill-tabs button:hover,
 .pill-tabs button:focus-visible {
-  background: var(--surface-elevated);
-  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-elevated));
+  color: var(--accent);
   outline: none;
+}
+
+.pill-tabs button.active:hover,
+.pill-tabs button.active:focus-visible {
+  background: var(--accent);
+  color: #ffffff;
 }
 
 .count-pill,
