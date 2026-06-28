@@ -37,7 +37,7 @@ export const appearanceStorageKeys = {
 } as const;
 
 const defaultSidebarWidth = 302;
-const minSidebarWidth = 248;
+const minSidebarWidth = 300;
 const maxSidebarWidth = 520;
 export const loadingSkeletonPanelLabels = ["machine rail", "sidebar", "workspace", "status bar"] as const;
 export const loadingBrandGlyph = ">_";
@@ -182,6 +182,28 @@ export function App(): ReactElement {
   useEffect(() => {
     setSelectedLocalRepoIndex((current) => Math.min(current, Math.max(0, status.data.local_repos.repos.length - 1)));
   }, [status.data.local_repos.repos.length]);
+
+  useEffect(() => {
+    const navigateHistoryWithKeyboard = (event: globalThis.KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) {
+        return;
+      }
+
+      if (event.key === "[") {
+        event.preventDefault();
+        setNavigation((current) => ({ ...current, index: Math.max(0, current.index - 1) }));
+      }
+
+      if (event.key === "]") {
+        event.preventDefault();
+        setNavigation((current) => ({ ...current, index: Math.min(current.entries.length - 1, current.index + 1) }));
+      }
+    };
+
+    window.addEventListener("keydown", navigateHistoryWithKeyboard);
+
+    return () => window.removeEventListener("keydown", navigateHistoryWithKeyboard);
+  }, []);
 
   if (statusLoading) {
     return <AppLoadingSkeleton machineRailVisible={machineRailVisible} />;

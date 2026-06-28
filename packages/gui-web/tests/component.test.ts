@@ -65,7 +65,7 @@ describe("dashboard shell", () => {
     expect(html).toContain("Show counts toggle");
     expect(html).toContain("desktop status bar");
     expect(html).toContain("Font size choices xs, s, m, lg, xl");
-    expect(html).toContain("Menlo (default)");
+    expect(html).toContain("Inter (default)");
     expect(html).toContain("IBM Plex Mono");
     expect(html).toContain("Playpen Sans");
     expect(html).toContain("Source Sans");
@@ -210,7 +210,7 @@ describe("dashboard shell", () => {
   });
 
   test("clamps sidebar width to compact and wide bounds", () => {
-    expect(clampSidebarWidth(120)).toBe(248);
+    expect(clampSidebarWidth(120)).toBe(300);
     expect(clampSidebarWidth(360)).toBe(360);
     expect(clampSidebarWidth(800)).toBe(520);
   });

@@ -9,8 +9,8 @@
   --border-hover: color-mix(in srgb, rgb(0 0 0 / 24%) 64%, rgb(255 255 255 / 48%));
   --code-bg: hsl(var(--accent-hue) 55% 91%);
   --desktop-titlebar-height: 0px;
-  --font-family-app: Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  --font-size-app: 16px;
+  --font-family-app: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-size-app: 14px;
   --glass-panel-shadow: inset 0 1px 0 rgb(255 255 255 / 58%), inset 0 -1px 0 rgb(0 0 0 / 3%), var(--shadow-soft);
   --shell-gutter: 8px;
   --shadow-soft: 0 18px 56px rgb(15 23 42 / 9%);
@@ -100,8 +100,8 @@ code {
 
 .app-shell {
   display: grid;
-  column-gap: 8px;
-  grid-template-columns: 72px var(--sidebar-width, 302px) 8px minmax(0, 1fr);
+  column-gap: 4px;
+  grid-template-columns: 72px var(--sidebar-width, 302px) 4px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) auto;
   height: 100vh;
   padding: calc(var(--shell-gutter) + var(--desktop-titlebar-height)) var(--shell-gutter) var(--shell-gutter);
@@ -109,7 +109,7 @@ code {
 }
 
 .app-shell.machine-rail-collapsed {
-  grid-template-columns: var(--sidebar-width, 302px) 8px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width, 302px) 4px minmax(0, 1fr);
 }
 
 .desktop-titlebar-tagline {
@@ -278,8 +278,19 @@ code {
 }
 
 .brand-lockup {
+  background: transparent;
+  border: 0;
+  border-radius: 12px;
+  color: var(--text-primary);
   gap: 12px;
   padding: 2px 4px;
+  text-align: left;
+}
+
+.brand-lockup:hover,
+.brand-lockup:focus-visible {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  outline: none;
 }
 
 .sidebar-titlebar {
@@ -809,20 +820,21 @@ code {
   text-transform: uppercase;
 }
 
-.range-labels span {
+.range-labels button {
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: inherit;
+  font: inherit;
+  padding: 2px 0;
   text-align: center;
 }
 
-.range-labels span:first-child {
-  text-align: left;
-}
-
-.range-labels span:last-child {
-  text-align: right;
-}
-
+.range-labels button:hover,
+.range-labels button:focus-visible,
 .range-labels .active {
   color: var(--accent);
+  outline: none;
 }
 
 .font-control select {
@@ -2116,7 +2128,7 @@ code {
   align-items: center;
   color: var(--text-secondary);
   display: inline-flex;
-  font-size: 0.78rem;
+  font-size: 0.9em;
   font-weight: 800;
   gap: 4px;
   max-width: 100%;

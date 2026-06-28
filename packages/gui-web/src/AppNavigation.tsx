@@ -145,7 +145,7 @@ export function Sidebar({ activeSurface, accentHue, conversationMode, fontPrefer
 
   return (
     <aside className="app-sidebar" aria-label={text.navigationLabel}>
-      <SidebarHeader setShellMode={setShellMode} shellMode={shellMode} />
+      <SidebarHeader setActiveSurface={setActiveSurface} setShellMode={setShellMode} shellMode={shellMode} />
       <nav className="sidebar-content">
         {shellMode === "devices" ? <>
           <SidebarModeTabs mode={sidebarMode} setMode={(mode) => setSidebarMode(mode as SidebarMode)} />
@@ -352,17 +352,18 @@ function SidebarItem({ activeSurface, item, recordCount, setActiveSurface, showC
   );
 }
 
-function SidebarHeader({ setShellMode, shellMode }: {
+function SidebarHeader({ setActiveSurface, setShellMode, shellMode }: {
+  setActiveSurface: (surface: SurfaceId) => void;
   setShellMode: (mode: ShellMode) => void;
   shellMode: ShellMode;
 }) {
   return (
     <header className="sidebar-header">
       <div className="sidebar-titlebar">
-        <div className="brand-lockup">
+        <button className="brand-lockup" onClick={() => { setShellMode("devices"); setActiveSurface("overview"); }} type="button">
           <span className="terminal-mark" aria-hidden="true">›_</span>
           <strong>{text.aidevops}</strong>
-        </div>
+        </button>
         <IconSwitch
           ariaLabel="Navigation scope"
           options={[
@@ -496,13 +497,23 @@ function SidebarFooter({ accentHue, fontPreference, fontSizePreference, setAccen
               id="font-size-slider"
               max={fontSizeOptions.length - 1}
               min="0"
-              onChange={(event) => setFontSizePreference(fontSizeOptions[Number.parseInt(event.currentTarget.value, 10)]?.value ?? "m")}
+              onChange={(event) => setFontSizePreference(fontSizeOptions[Number.parseInt(event.currentTarget.value, 10)]?.value ?? "xs")}
               step="1"
               type="range"
               value={fontSizeIndex}
             />
-            <div className="range-labels" aria-hidden="true">
-              {fontSizeOptions.map((option) => <span className={option.value === fontSizePreference ? "active" : ""} key={option.value}>{option.label}</span>)}
+            <div className="range-labels">
+              {fontSizeOptions.map((option) => (
+                <button
+                  aria-pressed={option.value === fontSizePreference}
+                  className={option.value === fontSizePreference ? "active" : ""}
+                  key={option.value}
+                  onClick={() => setFontSizePreference(option.value)}
+                  type="button"
+                >
+                  {option.label}
+                </button>
+              ))}
             </div>
           </div>
           <div className="font-control">
