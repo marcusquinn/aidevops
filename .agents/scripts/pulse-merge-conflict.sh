@@ -92,10 +92,8 @@ _post_rebase_nudge_on_interactive_conflicting() {
 	local base_branch
 	local pr_refs
 	pr_refs=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json headRefName,baseRefName --jq '[.headRefName, .baseRefName] | @tsv' 2>/dev/null) || pr_refs=$(printf '%s\t%s' "<branch>" "$PULSE_PR_BASE_BRANCH_FALLBACK")
-	IFS=$'\t' read -r head_branch base_branch <<EOF
-$pr_refs
-EOF
+		--json headRefName,baseRefName --jq '[.headRefName // "", .baseRefName // ""] | @tsv' 2>/dev/null) || pr_refs=$(printf '%s\t%s' "<branch>" "$PULSE_PR_BASE_BRANCH_FALLBACK")
+	IFS=$'\t' read -r head_branch base_branch <<<"$pr_refs"
 	[[ -n "$head_branch" ]] || head_branch="<branch>"
 	[[ -n "$base_branch" ]] || base_branch="$PULSE_PR_BASE_BRANCH_FALLBACK"
 
@@ -162,10 +160,8 @@ _post_rebase_nudge_on_contributor_conflicting() {
 	local base_branch
 	local pr_refs
 	pr_refs=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json headRefName,baseRefName --jq '[.headRefName, .baseRefName] | @tsv' 2>/dev/null) || pr_refs=$(printf '%s\t%s' "<branch>" "$PULSE_PR_BASE_BRANCH_FALLBACK")
-	IFS=$'\t' read -r head_branch base_branch <<EOF
-$pr_refs
-EOF
+		--json headRefName,baseRefName --jq '[.headRefName // "", .baseRefName // ""] | @tsv' 2>/dev/null) || pr_refs=$(printf '%s\t%s' "<branch>" "$PULSE_PR_BASE_BRANCH_FALLBACK")
+	IFS=$'\t' read -r head_branch base_branch <<<"$pr_refs"
 	[[ -n "$head_branch" ]] || head_branch="<branch>"
 	[[ -n "$base_branch" ]] || base_branch="$PULSE_PR_BASE_BRANCH_FALLBACK"
 
@@ -553,10 +549,8 @@ _post_rebase_nudge_on_worker_conflicting() {
 	local base_branch
 	local pr_refs
 	pr_refs=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json headRefName,baseRefName --jq '[.headRefName, .baseRefName] | @tsv' 2>/dev/null) || pr_refs=$(printf '%s\t%s' "<branch>" "$PULSE_PR_BASE_BRANCH_FALLBACK")
-	IFS=$'\t' read -r head_branch base_branch <<EOF
-$pr_refs
-EOF
+		--json headRefName,baseRefName --jq '[.headRefName // "", .baseRefName // ""] | @tsv' 2>/dev/null) || pr_refs=$(printf '%s\t%s' "<branch>" "$PULSE_PR_BASE_BRANCH_FALLBACK")
+	IFS=$'\t' read -r head_branch base_branch <<<"$pr_refs"
 	[[ -n "$head_branch" ]] || head_branch="<branch>"
 	[[ -n "$base_branch" ]] || base_branch="$PULSE_PR_BASE_BRANCH_FALLBACK"
 
@@ -1021,7 +1015,7 @@ _close_conflicting_pr_comment_landed() {
 
 	local base_branch
 	base_branch=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json baseRefName --jq '.baseRefName' 2>/dev/null) || base_branch="base branch"
+		--json baseRefName --jq '.baseRefName // ""' 2>/dev/null) || base_branch="base branch"
 	[[ -n "$base_branch" ]] || base_branch="base branch"
 
 	gh pr close "$pr_number" --repo "$repo_slug" \

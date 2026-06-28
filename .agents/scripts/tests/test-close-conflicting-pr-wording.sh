@@ -126,7 +126,16 @@ fi
 			;;
 		baseRefName)
 			response="\${TEST_ROOT}/pr-base.txt"
-			if [[ -f "\$response" ]]; then cat "\$response"; else echo "develop"; fi
+			if [[ -f "\$response" ]]; then
+				base_value=\$(cat "\$response")
+				if [[ "\$base_value" == "null" && "\$*" == *'.baseRefName // ""'* ]]; then
+					printf ''
+				else
+					printf '%s\n' "\$base_value"
+				fi
+			else
+				echo "develop"
+			fi
 			exit 0
 			;;
 		"labels,author,authorAssociation")
@@ -372,6 +381,37 @@ test_no_match_uses_fallback_message() {
 	fi
 
 	print_result "no-match uses 're-attempt' fallback, not 'landed on main'" \
+		"$result" \
+		"got: $(printf '%s' "$body" | head -c 200)"
+	teardown_sandbox
+	return 0
+}
+
+test_null_base_ref_uses_generic_base_branch_wording() {
+	setup_sandbox
+	set_responses \
+		'[{"sha":"abc1234567890abcdef","subject":"t2017: direct push to unknown base without going through a PR"}]' \
+		'.agents/workflows/review-issue-pr.md' \
+		'.agents/workflows/review-issue-pr.md'
+	printf '%s' 'null' >"${TEST_ROOT}/pr-base.txt"
+
+	load_functions_under_test
+
+	_close_conflicting_pr "18486" "marcusquinn/aidevops" \
+		"t2017: enhance /review-issue-pr"
+
+	local body
+	body=$(cat "$CAPTURED_COMMENT_FILE")
+
+	local result=0
+	if ! printf '%s' "$body" | grep -q "has already landed on base branch,"; then
+		result=1
+	fi
+	if printf '%s' "$body" | grep -q "landed on null"; then
+		result=1
+	fi
+
+	print_result "null base ref uses generic base branch wording" \
 		"$result" \
 		"got: $(printf '%s' "$body" | head -c 200)"
 	teardown_sandbox
@@ -756,6 +796,7 @@ STUB_EOF
 
 test_wording_with_squash_merge_pr_number
 test_wording_without_pr_number_fallback
+test_null_base_ref_uses_generic_base_branch_wording
 test_no_match_uses_fallback_message
 test_no_close_when_matching_commit_only_touches_planning_files
 test_close_when_matching_commit_overlaps_implementation_files

@@ -49,13 +49,14 @@ setup_test_env() {
 	mkdir -p "${TEST_ROOT}/bin"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
 	export LOGFILE="${TEST_ROOT}/pulse.log"
+	export PULSE_PR_BASE_BRANCH_FALLBACK="main"
 	: >"$LOGFILE"
 
 	# Stub `gh pr view --json headRefName,baseRefName` to return fixed branch refs.
 	cat >"${TEST_ROOT}/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "pr" && "${2:-}" == "view" && "$*" == *"headRefName"* ]]; then
-	printf 'fix/example-branch\tdevelop\n'
+	printf '%s\n' "${GH_PR_REFS_OUTPUT:-fix/example-branch	develop}"
 	exit 0
 fi
 # Any other gh call — return empty
@@ -233,6 +234,34 @@ test_noops_on_empty_repo_slug() {
 	return 0
 }
 
+test_null_pr_refs_fall_back_to_safe_placeholders() {
+	define_mock_idempotent_comment
+	LAST_NUDGE_BODY=""
+	LAST_NUDGE_ARGS=""
+	export GH_PR_REFS_OUTPUT=$'\t'
+
+	_post_rebase_nudge_on_interactive_conflicting "18604" "marcusquinn/aidevops"
+
+	unset GH_PR_REFS_OUTPUT
+	if [[ "$LAST_NUDGE_BODY" == *" null"* || "$LAST_NUDGE_BODY" == *"\`null\`"* ]]; then
+		print_result "null PR refs fall back to safe placeholders" 1 \
+			"Expected no literal null in nudge body"
+		return 0
+	fi
+	if [[ "$LAST_NUDGE_BODY" != *"wt switch <branch>"* ]]; then
+		print_result "null PR refs fall back to safe placeholders" 1 \
+			"Expected fallback head branch placeholder"
+		return 0
+	fi
+	if [[ "$LAST_NUDGE_BODY" != *"git pull --rebase origin main"* ]]; then
+		print_result "null PR refs fall back to safe placeholders" 1 \
+			"Expected base branch fallback in rebase command"
+		return 0
+	fi
+	print_result "null PR refs fall back to safe placeholders" 0
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -248,6 +277,7 @@ main() {
 	test_noops_when_idempotent_helper_undefined
 	test_noops_on_invalid_pr_number
 	test_noops_on_empty_repo_slug
+	test_null_pr_refs_fall_back_to_safe_placeholders
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
