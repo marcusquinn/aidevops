@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 export function readJsonObject(pathName: string): { health: "present" | "missing" | "invalid"; value: Record<string, unknown> } {
@@ -112,17 +112,60 @@ export function firstExistingPathRef(pathRefs: string[]): string | null {
   return pathRefs.find((pathRef) => existsSync(expandHome(pathRef))) ?? null;
 }
 
+export function firstExecutablePathRef(pathRefs: string[]): string | null {
+  return pathRefs.find((pathRef) => isExecutable(expandHome(pathRef))) ?? null;
+}
+
+export function isExecutable(pathName: string): boolean {
+  try {
+    if (!statSync(pathName).isFile()) {
+      return false;
+    }
+    accessSync(pathName, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function resolveBinary(binary: string): string | null {
+  const candidatePath = binaryPathCandidates(binary).find((pathName) => isExecutable(pathName));
+  if (candidatePath !== undefined) {
+    return candidatePath;
+  }
+
   try {
     const output = execFileSync("which", [binary], {
+      env: { ...process.env, PATH: expandedPath() },
       encoding: "utf8",
       stdio: ["ignore", "pipe", "ignore"],
-      timeout: 200,
+      timeout: 350,
     }).trim();
     return output.split("\n").find((line) => line.length > 0) ?? null;
   } catch {
     return null;
   }
+}
+
+function binaryPathCandidates(binary: string): string[] {
+  return expandedPath().split(":").filter(Boolean).map((dir) => join(dir, binary));
+}
+
+function expandedPath(): string {
+  const home = process.env.HOME ?? "";
+  const extraPaths = [
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+    join(home, ".bun/bin"),
+    join(home, ".local/bin"),
+    join(home, ".cursor/bin"),
+    join(home, ".qlty/bin"),
+  ];
+  return [...new Set([...(process.env.PATH ?? "").split(":"), ...extraPaths].filter(Boolean))].join(":");
 }
 
 export function readBinaryVersion(binaryPath: string, args: string[]): string {
@@ -132,9 +175,10 @@ export function readBinaryVersion(binaryPath: string, args: string[]): string {
 
   try {
     const output = execFileSync(binaryPath, args, {
+      env: { ...process.env, PATH: expandedPath() },
       encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 150,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 650,
     }).trim();
     return output.split("\n").find((line) => line.length > 0) ?? "unknown";
   } catch {

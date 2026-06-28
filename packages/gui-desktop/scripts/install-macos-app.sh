@@ -338,7 +338,7 @@ final class DraggableTitlebarView: NSView {
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScriptMessageHandler, NSMenuItemValidation, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, NSMenuItemValidation, NSWindowDelegate {
     private var window: NSWindow!
     private var aboutWindow: NSWindow?
     private var titlebarToggleButton: NSButton?
@@ -414,6 +414,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
 
         decisionHandler(.allow)
+    }
+
+    func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        guard let url = navigationAction.request.url else {
+            return nil
+        }
+
+        if url.scheme == "http" || url.scheme == "https" {
+            NSWorkspace.shared.open(url)
+        }
+
+        return nil
     }
 
     private func isLocalAppURL(_ url: URL) -> Bool {
@@ -677,11 +689,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private func configureWindow() {
         let configuration = WKWebViewConfiguration()
         configuration.defaultWebpagePreferences.allowsContentJavaScript = true
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
         let userContentController = WKUserContentController()
         userContentController.add(self, name: "accentHue")
         configuration.userContentController = userContentController
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
+        webView.uiDelegate = self
         webView.translatesAutoresizingMaskIntoConstraints = false
 
         let contentContainer = NSView()

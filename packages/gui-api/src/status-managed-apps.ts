@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import type { GuiAppActionId, GuiManagedAppSummary } from "../../gui-shared/src";
-import { collapseHome, expandHome, firstExistingPathRef, readBinaryVersion, resolveBinary } from "./status-adapter-utils";
+import { collapseHome, expandHome, firstExecutablePathRef, firstExistingPathRef, readBinaryVersion, resolveBinary } from "./status-adapter-utils";
 
 type ManagedAppActionCommands = Partial<Record<GuiAppActionId, string>>;
 
@@ -180,7 +180,7 @@ function setupScopeActions(scope: string): ManagedAppActionCommands {
 }
 
 function managedAppSummary(definition: ManagedAppDefinition, latestVersion: string, installedVersion: string): GuiManagedAppSummary {
-  const binaryPath = definition.binary === null ? null : resolveBinary(definition.binary);
+  const binaryPath = definition.binary === null ? null : executableInstallPath(definition.install_path_refs) ?? resolveBinary(definition.binary);
   const installPathRef = firstExistingPathRef(definition.install_path_refs) ?? definition.install_path_refs[0] ?? "not found";
   const installedVersionText = readManagedAppVersion(definition, binaryPath, installedVersion);
   const latestVersionText = definition.latest_version_source === "aidevops"
@@ -231,7 +231,13 @@ function readManagedAppVersion(definition: ManagedAppDefinition, binaryPath: str
     return readAppBundleVersion(existingPathRef) ?? "installed";
   }
 
-  return readBinaryVersion(binaryPath, definition.version_args);
+  const versionText = readBinaryVersion(binaryPath, definition.version_args);
+  return versionText === "unknown" ? "installed" : versionText;
+}
+
+function executableInstallPath(pathRefs: string[]): string | null {
+  const executablePathRef = firstExecutablePathRef(pathRefs);
+  return executablePathRef === null ? null : expandHome(executablePathRef);
 }
 
 function readAppBundleVersion(pathRef: string): string | null {
@@ -239,5 +245,11 @@ function readAppBundleVersion(pathRef: string): string | null {
     return null;
   }
 
-  return readBinaryVersion("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleShortVersionString", `${expandHome(pathRef)}/Contents/Info.plist`]);
+  const version = readBinaryVersion("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleShortVersionString", `${expandHome(pathRef)}/Contents/Info.plist`]);
+  if (version !== "unknown") {
+    return version;
+  }
+
+  const bundleVersion = readBinaryVersion("/usr/libexec/PlistBuddy", ["-c", "Print :CFBundleVersion", `${expandHome(pathRef)}/Contents/Info.plist`]);
+  return bundleVersion === "unknown" ? null : bundleVersion;
 }
