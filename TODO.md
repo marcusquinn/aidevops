@@ -1042,6 +1042,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18026 Fix Apps tooltips links and version detection ref:GH#25798 pr:#25797 completed:2026-06-28
 
+- [x] t18027 Polish GUI app interactions and contrast controls #bug ref:GH#25822 pr:#25823 completed:2026-06-28
+
 ## In Progress
 
 - [x] t2744 raise GraphQL throttle defaults and reduce pulse/stats cycle pressure — circuit breaker default `0.05`→`0.30` (trips at 1500 remaining instead of 250), REST fallback default `10`→`1000` (REST takes over earlier, GraphQL kept in reserve), pulse interval default `120s`→`180s`, stats-wrapper interval `900s`→`3600s`. Also fixes macOS launchd path that ignored `supervisor.pulse_interval_seconds` from settings. Evidence: GraphQL=0/5000 vs REST=4044/5000 with 21 EXHAUSTED events in current pulse log; per-cycle cost (~400-700 pts) × 30 cycles/hr × 14 repos exceeds 5000/hr ceiling by 2-4×. All env-overridable, fully backwards-compatible. See `todo/tasks/t2744-brief.md`. #framework #pulse #interactive ~1h ref:GH#20482 started:2026-04-22 pr:#20483 completed:2026-04-22
@@ -4340,4 +4342,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18024 Refine app sidebar and font controls #enhancement ref:GH#25753 pr:#25793 completed:2026-06-28
 
 
-- [ ] t18027 Polish GUI app interactions and contrast controls #bug ref:GH#25822
+- [x] t18027 Polish GUI app interactions and contrast controls #bug ref:GH#25822 pr:#25823 completed:2026-06-28

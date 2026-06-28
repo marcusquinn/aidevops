@@ -1,8 +1,9 @@
 import type { GuiAppActionId, GuiAppActionJobSummary, GuiManagedAppSummary, GuiResponseEnvelope } from "@aidevops/gui-shared";
-import { type MouseEvent as ReactMouseEvent, type ReactElement, useState } from "react";
+import { type ReactElement, useState } from "react";
 import { FiChevronDown, FiDownload, FiExternalLink, FiRefreshCw, FiRepeat, FiTrash2 } from "react-icons/fi";
 import { AppActionTerminal } from "./AppActionTerminal";
 import { text } from "./app-model";
+import { openExternalLink } from "./external-links";
 
 type ManagedPolicyId = "setup" | "update";
 
@@ -55,7 +56,7 @@ function isEssentialManagedApp(app: GuiManagedAppSummary): boolean {
 
 function SummaryChip({ label, value }: { label: string; value: string }): ReactElement {
   const tooltip = `${label}: ${value}`;
-  return <span className="managed-summary-chip" data-tooltip={tooltip} title={tooltip}><small>{label}</small><span>{value}</span></span>;
+  return <span className="managed-summary-chip" data-tooltip={tooltip}><small>{label}</small><span>{value}</span></span>;
 }
 
 function OriginLink({ href, label }: { href: string; label: string }): ReactElement {
@@ -63,11 +64,11 @@ function OriginLink({ href, label }: { href: string; label: string }): ReactElem
     return <span className="origin-missing">{label}: source pending</span>;
   }
 
-  return <a data-tooltip={href} href={href} onClick={(event) => openExternalLink(event, href)} rel="noreferrer" target="_blank" title={href}>{label} <FiExternalLink aria-hidden="true" /></a>;
+  return <a aria-label={`${label}: ${href}`} data-tooltip={href} href={href} onClick={(event) => openExternalLink(event, href)} rel="noreferrer" target="_blank">{label} <FiExternalLink aria-hidden="true" /></a>;
 }
 
 function ToggleSwitch({ checked, disabled = false, label, onChange }: { checked: boolean; disabled?: boolean; label: string; onChange: (checked: boolean) => void }): ReactElement {
-  return <button aria-pressed={checked} className={checked ? "managed-toggle checked" : "managed-toggle"} data-tooltip={disabled ? "Essential aidevops component; policy is locked on" : undefined} disabled={disabled} onClick={() => onChange(!checked)} title={disabled ? "Essential aidevops component; policy is locked on" : undefined} type="button"><span className="managed-toggle-label">{label}</span><span aria-hidden="true" className={checked ? "switch-track checked" : "switch-track"}><span /></span></button>;
+  return <button aria-pressed={checked} className={checked ? "managed-toggle checked" : "managed-toggle"} data-tooltip={disabled ? "Essential aidevops component; policy is locked on" : undefined} disabled={disabled} onClick={() => onChange(!checked)} type="button"><span className="managed-toggle-label">{label}</span><span aria-hidden="true" className={checked ? "switch-track checked" : "switch-track"}><span /></span></button>;
 }
 
 function AppMeta({ className = "", label, value }: { className?: string; label: string; value: string }): ReactElement {
@@ -138,29 +139,4 @@ function ConfirmActionModal({ action, app, close, commandPreview, confirm }: { a
       </section>
     </div>
   );
-}
-
-function openExternalLink(event: ReactMouseEvent<HTMLAnchorElement>, href: string): void {
-  event.stopPropagation();
-  if (!shouldUseBrowserDefault(event)) {
-    event.preventDefault();
-    openExternalDestination(href);
-  }
-}
-
-function shouldUseBrowserDefault(event: ReactMouseEvent<HTMLAnchorElement>): boolean {
-  return [event.defaultPrevented, event.metaKey, event.ctrlKey, event.shiftKey, event.altKey].some(Boolean);
-}
-
-function openExternalDestination(href: string): void {
-  if (document.documentElement.dataset.desktopShell === "macos") {
-    window.location.assign(href);
-  } else {
-    const opened = window.open(href, "_blank", "noopener,noreferrer");
-    if (opened === null) {
-      window.location.assign(href);
-    } else {
-      opened.opener = null;
-    }
-  }
 }

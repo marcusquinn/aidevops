@@ -36,8 +36,8 @@ import {
   FiTerminal,
   FiUsers,
 } from "react-icons/fi";
-import type { ConversationMode, FontPreference, FontSizePreference, ShellMode, SidebarMode, SurfaceIconName, SurfaceId, SurfaceNavGroup, SurfaceNavItem, ThemePreference } from "./app-model";
-import { DEFAULT_ACCENT_HUE, dashboardNavItem, fontFamilyForPreference, fontOptions, fontSizeOptions, navGroups, sidebarModeForSurface, surfaceRecordCounts, text } from "./app-model";
+import type { ContrastPreference, ConversationMode, FontPreference, FontSizePreference, ShellMode, SidebarMode, SurfaceIconName, SurfaceId, SurfaceNavGroup, SurfaceNavItem, ThemePreference } from "./app-model";
+import { DEFAULT_ACCENT_HUE, contrastOptions, dashboardNavItem, fontFamilyForPreference, fontOptions, fontSizeOptions, navGroups, sidebarModeForSurface, surfaceRecordCounts, text } from "./app-model";
 import { VaultPadlock, vaultCollectionForSurface } from "./VaultBadges";
 
 const surfaceIcons: Record<SurfaceIconName, IconType> = {
@@ -110,9 +110,10 @@ export function MachineRail({ machine }: { machine?: GuiMachineSummary }) {
   );
 }
 
-export function Sidebar({ activeSurface, accentHue, conversationMode, fontPreference, fontSizePreference, selectedLocalRepoIndex, selectedSessionId, setAccentHue, setActiveSurface, setConversationMode, setFontPreference, setFontSizePreference, setSelectedLocalRepoIndex, setSelectedSessionId, setShellMode, setShowBorders, setShowNavCounts, setThemePreference, shellMode, showBorders, showNavCounts, status, themePreference }: {
+export function Sidebar({ activeSurface, accentHue, contrastPreference, conversationMode, fontPreference, fontSizePreference, selectedLocalRepoIndex, selectedSessionId, setAccentHue, setActiveSurface, setContrastPreference, setConversationMode, setFontPreference, setFontSizePreference, setSelectedLocalRepoIndex, setSelectedSessionId, setShellMode, setShowBorders, setShowNavCounts, setThemePreference, shellMode, showBorders, showNavCounts, status, themePreference }: {
   activeSurface: SurfaceId;
   accentHue: number;
+  contrastPreference: ContrastPreference;
   conversationMode: ConversationMode;
   fontPreference: FontPreference;
   fontSizePreference: FontSizePreference;
@@ -120,6 +121,7 @@ export function Sidebar({ activeSurface, accentHue, conversationMode, fontPrefer
   selectedSessionId: string | undefined;
   setAccentHue: (hue: number) => void;
   setActiveSurface: (surface: SurfaceId) => void;
+  setContrastPreference: (contrast: ContrastPreference) => void;
   setConversationMode: (mode: ConversationMode) => void;
   setFontPreference: (font: FontPreference) => void;
   setFontSizePreference: (size: FontSizePreference) => void;
@@ -165,9 +167,11 @@ export function Sidebar({ activeSurface, accentHue, conversationMode, fontPrefer
       </nav>
       <SidebarFooter
         accentHue={accentHue}
+        contrastPreference={contrastPreference}
         fontPreference={fontPreference}
         fontSizePreference={fontSizePreference}
         setAccentHue={setAccentHue}
+        setContrastPreference={setContrastPreference}
         setFontPreference={setFontPreference}
         setFontSizePreference={setFontSizePreference}
         setShowBorders={setShowBorders}
@@ -365,7 +369,7 @@ function SidebarHeader({ setActiveSurface, setShellMode, shellMode }: {
   return (
     <header className="sidebar-header">
       <div className="sidebar-titlebar">
-        <button className="brand-lockup" onClick={() => setActiveSurface(dashboardNavItem.id)} title="Return to dashboard" type="button">
+        <button className="brand-lockup" onClick={() => { setShellMode("devices"); setActiveSurface(dashboardNavItem.id); }} title="Return to dashboard" type="button">
           <span className="terminal-mark" aria-hidden="true">›_</span>
           <strong>{text.aidevops}</strong>
         </button>
@@ -382,11 +386,13 @@ function SidebarHeader({ setActiveSurface, setShellMode, shellMode }: {
   );
 }
 
-function SidebarFooter({ accentHue, fontPreference, fontSizePreference, setAccentHue, setFontPreference, setFontSizePreference, setShowBorders, setShowNavCounts, setThemePreference, showBorders, showNavCounts, themePreference }: {
+function SidebarFooter({ accentHue, contrastPreference, fontPreference, fontSizePreference, setAccentHue, setContrastPreference, setFontPreference, setFontSizePreference, setShowBorders, setShowNavCounts, setThemePreference, showBorders, showNavCounts, themePreference }: {
   accentHue: number;
+  contrastPreference: ContrastPreference;
   fontPreference: FontPreference;
   fontSizePreference: FontSizePreference;
   setAccentHue: (hue: number) => void;
+  setContrastPreference: (contrast: ContrastPreference) => void;
   setFontPreference: (font: FontPreference) => void;
   setFontSizePreference: (size: FontSizePreference) => void;
   setShowBorders: (show: boolean) => void;
@@ -486,6 +492,22 @@ function SidebarFooter({ accentHue, fontPreference, fontSizePreference, setAccen
               value={accentHue}
             />
           </div>
+          <fieldset className="contrast-control" aria-label={text.contrast}>
+            <legend>{text.contrast}</legend>
+            <div className="contrast-options">
+              {contrastOptions.map((option) => (
+                <button
+                  aria-pressed={contrastPreference === option.value}
+                  className={contrastPreference === option.value ? "active" : ""}
+                  key={option.value}
+                  onClick={() => setContrastPreference(option.value)}
+                  type="button"
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
           <label className="switch-control appearance-switch">
             <strong>{text.showBorders}</strong>
             <input checked={showBorders} onChange={(event) => setShowBorders(event.currentTarget.checked)} type="checkbox" />

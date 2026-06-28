@@ -1,5 +1,5 @@
 /* jshint esversion: 11 */
-import { type ReactElement, type ReactNode, useEffect, useState } from "react";
+import { type ReactElement, type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import { FiAlertTriangle, FiBell, FiCheckCircle, FiChevronLeft, FiChevronRight, FiCommand, FiFileText, FiGlobe, FiHash, FiHelpCircle, FiInfo, FiLogOut, FiMessageSquare, FiPaperclip, FiSearch, FiSettings, FiShield, FiTerminal, FiTool, FiUser } from "react-icons/fi";
 import type { GuiFileRootId, GuiNotificationSummary, GuiStatusData } from "../../gui-shared/src";
 import { SurfaceGlyph } from "./AppNavigation";
@@ -69,9 +69,27 @@ function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoB
   const [commandOpen, setCommandOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const headerActionsRef = useRef<HTMLDivElement | null>(null);
+  const closeHeaderTimerRef = useRef<number | null>(null);
   const userInitials = status.machine.initials || "AI";
   const userName = status.machine.username || "Local user";
   const activeNotifications = status.notifications.filter((notification) => notification.status === "active");
+  const clearScheduledHeaderClose = useCallback(() => {
+    if (closeHeaderTimerRef.current !== null) {
+      window.clearTimeout(closeHeaderTimerRef.current);
+      closeHeaderTimerRef.current = null;
+    }
+  }, []);
+  const closeHeaderMenus = useCallback(() => {
+    clearScheduledHeaderClose();
+    setAssistantOpen(false);
+    setNotificationsOpen(false);
+    setProfileOpen(false);
+  }, [clearScheduledHeaderClose]);
+  const scheduleHeaderMenusClose = useCallback(() => {
+    clearScheduledHeaderClose();
+    closeHeaderTimerRef.current = window.setTimeout(closeHeaderMenus, 2_400);
+  }, [clearScheduledHeaderClose, closeHeaderMenus]);
 
   useEffect(() => {
     const openCommandPalette = (event: KeyboardEvent) => {
@@ -89,9 +107,32 @@ function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoB
     return () => window.removeEventListener("keydown", openCommandPalette);
   }, [goBack, goForward]);
 
+  useEffect(() => {
+    const closeOnPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && headerActionsRef.current?.contains(target)) {
+        return;
+      }
+
+      closeHeaderMenus();
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeHeaderMenus();
+      }
+    };
+
+    document.addEventListener("pointerdown", closeOnPointerDown, true);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnPointerDown, true);
+      document.removeEventListener("keydown", closeOnEscape);
+      clearScheduledHeaderClose();
+    };
+  }, [clearScheduledHeaderClose, closeHeaderMenus]);
+
   const closeMenus = () => {
-    setNotificationsOpen(false);
-    setProfileOpen(false);
+    closeHeaderMenus();
   };
 
   const openItem = ({ conversationMode, repoPathRef, sessionId, shellMode, surface }: CommandPaletteSelection) => {
@@ -129,22 +170,22 @@ function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoB
           <strong>{text.searchPlaceholder}</strong>
         </button>
       </div>
-      <div className="header-actions">
+      <div className="header-actions" onPointerEnter={clearScheduledHeaderClose} onPointerLeave={scheduleHeaderMenusClose} ref={headerActionsRef}>
         <div className="header-action-menu">
-          <button aria-label="Open signposts and help" className="header-icon-button" onClick={() => openItem({ surface: "help" })} title="Signposts and help (?)" type="button">
+          <button aria-label="Open signposts and help" className="header-icon-button" onClick={() => { closeHeaderMenus(); openItem({ surface: "help" }); }} title="Signposts and help (?)" type="button">
             <FiHelpCircle aria-hidden="true" />
           </button>
-          <button aria-expanded={notificationsOpen} aria-label="Open notifications" className="header-icon-button" onClick={() => { setNotificationsOpen((current) => !current); setProfileOpen(false); }} type="button">
+          <button aria-expanded={notificationsOpen} aria-label="Open notifications" className="header-icon-button" onClick={() => { clearScheduledHeaderClose(); setNotificationsOpen((current) => !current); setProfileOpen(false); setAssistantOpen(false); }} type="button">
             <FiBell aria-hidden="true" />
             {activeNotifications.length > 0 ? <span className="notification-dot" aria-hidden="true" /> : null}
           </button>
           {notificationsOpen ? <NotificationsMenu notifications={status.notifications} openSurface={(surface) => openItem({ surface })} /> : null}
         </div>
-        <button aria-pressed={assistantOpen} aria-label="Toggle AI Assistant" className={assistantOpen ? "header-icon-button active" : "header-icon-button"} onClick={() => setAssistantOpen((current) => !current)} title="AI sessions (_)" type="button">
+        <button aria-pressed={assistantOpen} aria-label="Toggle AI Assistant" className={assistantOpen ? "header-icon-button active" : "header-icon-button"} onClick={() => { clearScheduledHeaderClose(); setAssistantOpen((current) => !current); setNotificationsOpen(false); setProfileOpen(false); }} title="AI sessions (_)" type="button">
           <FiTerminal aria-hidden="true" />
         </button>
         <div className="header-action-menu">
-          <button aria-expanded={profileOpen} aria-label={`Open profile menu for ${userName}`} className="profile-avatar-button" onClick={() => { setProfileOpen((current) => !current); setNotificationsOpen(false); }} title={userName} type="button">
+          <button aria-expanded={profileOpen} aria-label={`Open profile menu for ${userName}`} className="profile-avatar-button" onClick={() => { clearScheduledHeaderClose(); setProfileOpen((current) => !current); setNotificationsOpen(false); setAssistantOpen(false); }} title={userName} type="button">
             <span>{userInitials}</span>
           </button>
           {profileOpen ? <ProfileMenu openSurface={(surface) => openItem({ surface })} userName={userName} /> : null}

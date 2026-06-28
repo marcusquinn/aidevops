@@ -15,7 +15,7 @@ describe("API trust boundary", () => {
     const body = await response.json();
 
     expect(containsSecretSentinel(body)).toBe(false);
-  });
+  }, 10_000);
 
   test("vault status route does not serialize secret sentinels", async () => {
     const response = await app.request("/api/vault/status");

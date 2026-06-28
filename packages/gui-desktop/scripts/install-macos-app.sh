@@ -382,18 +382,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        guard message.name == "accentHue" else {
+        switch message.name {
+        case "accentHue":
+            updateAccentHueFromMessage(message.body)
+        case "externalLink":
+            openExternalLinkFromMessage(message.body)
+        default:
             return
         }
+    }
 
-        if let number = message.body as? NSNumber {
+    private func updateAccentHueFromMessage(_ body: Any) {
+        if let number = body as? NSNumber {
             updateTitlebarAccent(hue: CGFloat(number.doubleValue))
             return
         }
 
-        if let value = message.body as? String, let hue = Double(value) {
+        if let value = body as? String, let hue = Double(value) {
             updateTitlebarAccent(hue: CGFloat(hue))
         }
+    }
+
+    private func openExternalLinkFromMessage(_ body: Any) {
+        guard let value = body as? String, let url = URL(string: value) else {
+            return
+        }
+
+        _ = openExternalURL(url)
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -407,8 +422,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             return
         }
 
-        if url.scheme == "http" || url.scheme == "https" {
-            NSWorkspace.shared.open(url)
+        if openExternalURL(url) {
             decisionHandler(.cancel)
             return
         }
@@ -421,11 +435,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             return nil
         }
 
-        if url.scheme == "http" || url.scheme == "https" {
-            NSWorkspace.shared.open(url)
-        }
+        _ = openExternalURL(url)
 
         return nil
+    }
+
+    private func openExternalURL(_ url: URL) -> Bool {
+        let scheme = url.scheme?.lowercased()
+        guard scheme == "http" || scheme == "https" else {
+            return false
+        }
+
+        NSWorkspace.shared.open(url)
+        return true
     }
 
     private func isLocalAppURL(_ url: URL) -> Bool {
@@ -692,6 +714,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = true
         let userContentController = WKUserContentController()
         userContentController.add(self, name: "accentHue")
+        userContentController.add(self, name: "externalLink")
         configuration.userContentController = userContentController
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self
