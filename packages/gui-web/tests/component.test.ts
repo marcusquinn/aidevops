@@ -187,8 +187,12 @@ describe("dashboard shell", () => {
     expect(html).not.toContain("App and CLI inventory for tools installed or updated by aidevops");
     expect(source.indexOf("Recommended app operating system filters")).toBeLessThan(source.indexOf("Recommended app platform filters"));
     expect(html).toContain("app-meta managed-app-path");
+    expect(html).toContain("data-tooltip=\"Installed: 3.29.11\"");
+    expect(html).toContain("data-tooltip=\"Latest: 3.29.11\"");
     expect(sectionBetween(html, "managed-app-details", "app-meta managed-app-path")).not.toContain("Installed");
     expect(sectionBetween(html, "managed-app-details", "app-meta managed-app-path")).not.toContain("Latest");
+    expect(source).toContain("data-tooltip={href}");
+    expect(source).toContain("app-global-tooltip");
     expect(source).toContain("terminalStatusLabel(job)");
     expect(source).toContain("https://apps.apple.com/us/app/telegram-messenger/id686449807");
     expect(source).toContain("https://play.google.com/store/apps/details?id=org.telegram.messenger");

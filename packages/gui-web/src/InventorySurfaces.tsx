@@ -1,5 +1,5 @@
 import type { GuiAppActionId, GuiAppActionJobSummary, GuiManagedAppSummary, GuiResponseEnvelope, GuiStatusData } from "@aidevops/gui-shared";
-import { type Dispatch, type MouseEvent as ReactMouseEvent, type ReactElement, type ReactNode, type SetStateAction, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type Dispatch, type FocusEvent as ReactFocusEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactElement, type ReactNode, type SetStateAction, useEffect, useRef, useState } from "react";
 import type { IconType } from "react-icons";
 import { FaApple, FaLinux, FaWindows } from "react-icons/fa";
 import { FiChevronDown, FiCode, FiDownload, FiExternalLink, FiGlobe, FiMonitor, FiRefreshCw, FiRepeat, FiTerminal, FiTrash2, FiX } from "react-icons/fi";
@@ -24,18 +24,20 @@ export function AppsSurface({ status }: { status: GuiStatusData }): ReactElement
   const [expandedAppId, setExpandedAppId] = useState<string | null>(() => sortedManagedApps(status.managed_apps).find((app) => managedCategoryForApp(app) === "core")?.id ?? null);
   const [jobs, setJobs] = useState<Record<string, GuiAppActionJobSummary>>({});
   const [dismissedJobIds, setDismissedJobIds] = useState<Set<string>>(() => new Set());
+  const [tooltip, setTooltip] = useState<AppTooltipState | null>(null);
   const [policyJobs, setPolicyJobs] = useState<Record<string, GuiAppActionJobSummary[]>>({});
   const [policyToggles, setPolicyToggles] = useState<ManagedPolicyToggleState>(() => readManagedPolicyToggles());
   const selectedJob = selectedJobId === null ? null : jobs[selectedJobId] ?? null;
   const managedApps = sortedManagedApps(status.managed_apps).map((app) => applyManagedPolicyToggles(app, policyToggles[app.id]));
   const visibleManagedApps = managedApps.filter((app) => managedCategoryForApp(app) === managedCategory);
+  const firstVisibleManagedAppId = visibleManagedApps[0]?.id ?? null;
   const visibleRecommendedApps = recommendedApps.filter((app) => recommendedAppMatchesFilters(app, recommendedPlatform, recommendedOs));
   const selectRecommendedPlatform = (value: RecommendedPlatformFilterId) => setRecommendedPlatform((current) => nextRecommendedFilterValue(current, value, "all"));
   const selectRecommendedOs = (value: RecommendedOsId) => setRecommendedOs((current) => nextRecommendedFilterValue(current, value, "all"));
 
   useEffect(() => {
-    setExpandedAppId(visibleManagedApps[0]?.id ?? null);
-  }, [managedCategory, status.managed_apps]);
+    setExpandedAppId(firstVisibleManagedAppId);
+  }, [firstVisibleManagedAppId]);
 
   const runningJobIdsKey = Object.values(jobs).filter((job) => job.status === "running").map((job) => job.id).sort().join("|");
 
@@ -57,7 +59,7 @@ export function AppsSurface({ status }: { status: GuiStatusData }): ReactElement
   }, [runningJobIdsKey]);
 
   return (
-    <section className="apps-surface" aria-label={text.apps}>
+    <section className="apps-surface" aria-label={text.apps} onBlur={() => setTooltip(null)} onFocus={showFocusedAppTooltip(setTooltip)} onPointerLeave={() => setTooltip(null)} onPointerMove={showPointedAppTooltip(setTooltip)}>
       <div className="section-heading">
         <p className="eyebrow">{text.infrastructure}</p>
         <h2>{text.apps}</h2>
@@ -103,6 +105,7 @@ export function AppsSurface({ status }: { status: GuiStatusData }): ReactElement
         </div>
         <p className="empty-state compact-notice">Install/update actions run as allowlisted background jobs and stream inside each app panel. xterm.js with a node-pty bridge is the right next step for full TUI apps such as OpenCode; this view starts with non-interactive command logs.</p>
       </> : <RecommendedAppsSurface apps={visibleRecommendedApps} os={recommendedOs} platform={recommendedPlatform} setOs={selectRecommendedOs} setPlatform={selectRecommendedPlatform} />}
+      {tooltip === null ? null : <AppTooltip tooltip={tooltip} />}
     </section>
   );
 }
@@ -151,7 +154,8 @@ function ManagedAppPanel({ app, dismissedJobIds, expanded, job, onDismissJob, on
 }
 
 function SummaryChip({ label, value }: { label: string; value: string }): ReactElement {
-  return <span className="managed-summary-chip"><small>{label}</small><span>{value}</span></span>;
+  const tooltip = `${label}: ${value}`;
+  return <span className="managed-summary-chip" data-tooltip={tooltip} title={tooltip}><small>{label}</small><span>{value}</span></span>;
 }
 
 function OriginLink({ href, label }: { href: string; label: string }): ReactElement {
@@ -159,7 +163,7 @@ function OriginLink({ href, label }: { href: string; label: string }): ReactElem
     return <span className="origin-missing">{label}: source pending</span>;
   }
 
-  return <a href={href} onClick={(event) => openExternalLink(event, href)} rel="noreferrer" target="_blank" title={href}>{label} <FiExternalLink aria-hidden="true" /></a>;
+  return <a data-tooltip={href} href={href} onClick={(event) => openExternalLink(event, href)} rel="noreferrer" target="_blank" title={href}>{label} <FiExternalLink aria-hidden="true" /></a>;
 }
 
 function ToggleSwitch({ checked, disabled = false, label, onChange }: { checked: boolean; disabled?: boolean; label: string; onChange: (checked: boolean) => void }): ReactElement {
@@ -218,7 +222,7 @@ function AppActionTerminal({ job, onDismiss }: { job: GuiAppActionJobSummary; on
     if (outputRef.current !== null) {
       outputRef.current.scrollTop = outputRef.current.scrollHeight;
     }
-  }, [job.output]);
+  }, [job.output.length]);
 
   return (
     <section className="app-terminal" id={`app-job-${job.id}`} aria-label="App action terminal output">
@@ -594,17 +598,70 @@ function writeManagedPolicyToggles(policy: ManagedPolicyToggleState): void {
   window.localStorage.setItem("aidevops-gui-managed-app-policy", JSON.stringify(policy));
 }
 
+interface AppTooltipState {
+  text: string;
+  x: number;
+  y: number;
+}
+
+function showPointedAppTooltip(setTooltip: Dispatch<SetStateAction<AppTooltipState | null>>) {
+  return (event: ReactPointerEvent<HTMLElement>) => {
+    const target = tooltipTarget(event.target);
+    setTooltip(target === null ? null : tooltipForElement(target));
+  };
+}
+
+function showFocusedAppTooltip(setTooltip: Dispatch<SetStateAction<AppTooltipState | null>>) {
+  return (event: ReactFocusEvent<HTMLElement>) => {
+    const target = tooltipTarget(event.target);
+    if (target !== null) {
+      setTooltip(tooltipForElement(target));
+    }
+  };
+}
+
+function tooltipTarget(target: EventTarget): HTMLElement | null {
+  return target instanceof HTMLElement ? target.closest<HTMLElement>("[data-tooltip]") : null;
+}
+
+function tooltipForElement(element: HTMLElement): AppTooltipState | null {
+  const textValue = element.dataset.tooltip;
+  if (textValue === undefined || textValue.length === 0) {
+    return null;
+  }
+
+  const rect = element.getBoundingClientRect();
+  return { text: textValue, x: rect.left + (rect.width / 2), y: rect.top };
+}
+
+function AppTooltip({ tooltip }: { tooltip: AppTooltipState }): ReactElement {
+  const style = {
+    "--tooltip-x": `${tooltip.x}px`,
+    "--tooltip-y": `${tooltip.y}px`,
+  } as CSSProperties;
+
+  return <div className="app-global-tooltip" role="tooltip" style={style}>{tooltip.text}</div>;
+}
+
 function openExternalLink(event: ReactMouseEvent<HTMLAnchorElement>, href: string): void {
   event.stopPropagation();
   if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
     return;
   }
 
+  event.preventDefault();
+  if (document.documentElement.dataset.desktopShell === "macos") {
+    window.location.assign(href);
+    return;
+  }
+
   const opened = window.open(href, "_blank", "noopener,noreferrer");
   if (opened !== null) {
-    event.preventDefault();
     opened.opener = null;
+    return;
   }
+
+  window.location.assign(href);
 }
 
 export function InstallationSurface(): ReactElement {

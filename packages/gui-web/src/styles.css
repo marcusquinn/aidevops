@@ -2558,6 +2558,32 @@ button.managed-toggle:focus-visible {
   transform: translate(-50%, 0);
 }
 
+.apps-surface [data-tooltip]::after {
+  content: none;
+}
+
+.app-global-tooltip {
+  background: color-mix(in srgb, var(--surface-elevated) 94%, black);
+  border: 1px solid color-mix(in srgb, var(--accent) 36%, var(--border));
+  border-radius: 10px;
+  box-shadow: 0 18px 46px rgb(0 0 0 / 38%);
+  color: var(--text-primary);
+  font-size: 0.72rem;
+  font-weight: 700;
+  left: clamp(12px, var(--tooltip-x), calc(100vw - 12px));
+  line-height: 1.35;
+  max-width: min(440px, 72vw);
+  overflow-wrap: anywhere;
+  padding: 8px 10px;
+  pointer-events: none;
+  position: fixed;
+  text-align: left;
+  top: var(--tooltip-y);
+  transform: translate(-50%, calc(-100% - 10px));
+  width: max-content;
+  z-index: 10000;
+}
+
 .data-row,
 .editable-row {
   display: grid;
