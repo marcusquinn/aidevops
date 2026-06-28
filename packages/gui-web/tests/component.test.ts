@@ -180,7 +180,11 @@ describe("dashboard shell", () => {
 
   test("renders updated Apps copy, casing, filter order, and compact managed metadata", () => {
     const html = renderToStaticMarkup(createElement(AppsSurface, { status: { ...mockedStatus().data, managed_apps: [managedAppFixture] } }));
-    const source = readFileSync(`${guiWebRoot}/src/InventorySurfaces.tsx`, "utf8");
+    const source = [
+      readFileSync(`${guiWebRoot}/src/AppActionTerminal.tsx`, "utf8"),
+      readFileSync(`${guiWebRoot}/src/InventorySurfaces.tsx`, "utf8"),
+      readFileSync(`${guiWebRoot}/src/RecommendedAppsSurface.tsx`, "utf8"),
+    ].join("\n");
 
     expect(html).toContain("AIDevOps");
     expect(html).toContain("These are the apps we use and recommend from our tried &amp; tested toolkit — enabling all the things we can do with AI");
