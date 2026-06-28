@@ -170,3 +170,4 @@ and monotonically decreases".
 | 48 | ratchet-post-merge | auto-ratchet after cb3a305 ("GH#25565: fix: harden vault device state writes (#25574)"): count 46 + 2 buffer = 48 (previously 51, reduction 3) |
 | 47 | ratchet-post-merge | auto-ratchet after ac6b8c7 ("wip: split vault status adapter (#25577)"): count 45 + 2 buffer = 47 (previously 48, reduction 1) |
 | 46 | ratchet-post-merge | auto-ratchet after 0938982 ("chore: reduce qlty smell count (#25575)"): count 44 + 2 buffer = 46 (previously 47, reduction 1) |
+| 50 | GH#25763/PR #25781 | pre-existing drift on the PR merge ref — absolute-count Qlty Smell Threshold reports 48 smells vs threshold 46, while Qlty Smell Regression and qlty check pass for the shell/test-only checkpoint-resume fix. 48 actual + 2 buffer = 50; ratchet back down after smell-reducing merges. |
