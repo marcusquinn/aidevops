@@ -19,11 +19,16 @@ main() {
 	local seen_dependency=0
 	local line_number=0
 
+	if [[ ! -f "${LOCK_FILE:-}" ]]; then
+		printf 'FAIL: requirements-lock.txt not found at %s\n' "${LOCK_FILE:-}" >&2
+		return 1
+	fi
+
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		line_number=$((line_number + 1))
 
 		if [[ "$seen_dependency" -eq 0 ]]; then
-			if [[ "$line" == *==* ]]; then
+			if [[ "$line" == *==* && "$line" != \#* ]]; then
 				seen_dependency=1
 			fi
 			continue
