@@ -9,7 +9,7 @@ Reduce duplicate worker PR churn by ensuring aidevops only routes CI repair feed
 
 ## Context
 
-The awardsapp convergence mission found many approved worker PRs blocked by CI timeout, kill, or advisory E2E failures rather than PR-specific code defects. Existing `pulse-merge-feedback.sh` treated `cancelled`, `timed_out`, and advisory/non-required failures as CI repair evidence, which closed PRs and requeued issues for duplicate worker attempts.
+The example-repo convergence mission found many approved worker PRs blocked by CI timeout, kill, or advisory E2E failures rather than PR-specific code defects. Existing `pulse-merge-feedback.sh` treated `cancelled`, `timed_out`, and advisory/non-required failures as CI repair evidence, which closed PRs and requeued issues for duplicate worker attempts.
 
 ## Files
 

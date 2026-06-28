@@ -115,7 +115,7 @@ Credentials in `~/.config/aidevops/credentials.sh`:
 
 ```bash
 export HOSTINGER_API_TOKEN="your-token"
-export HCLOUD_TOKEN_AWARDSAPP="your-token"   # Hetzner per-account
+export HCLOUD_TOKEN_PROJECT="your-token"   # Hetzner per-account
 # GSC: service account JSON at ~/.config/aidevops/gsc-credentials.json
 ```
 

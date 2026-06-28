@@ -82,7 +82,7 @@ test_prelaunch_reason_skips_nmr_breaker() {
 	reset_observations
 	local output=""
 	output=$(_log_no_work_skip_escalation \
-		"4003" "awardsapp/awardsapp" "3" \
+		"4003" "exampleorg/examplerepo" "3" \
 		"worker canary preflight failed before worktree pre-creation; will retry next cycle" 2>&1)
 
 	if [[ "$BREAKER_CALLS" -ne 0 ]]; then
@@ -105,7 +105,7 @@ test_worker_launch_rc_2_skips_nmr_breaker() {
 	reset_observations
 	local output=""
 	output=$(_log_no_work_skip_escalation \
-		"4003" "awardsapp/awardsapp" "3" \
+		"4003" "exampleorg/examplerepo" "3" \
 		"dispatch_aborted:worker_launch_rc_2" 2>&1)
 
 	if [[ "$BREAKER_CALLS" -ne 0 ]]; then
@@ -123,13 +123,13 @@ test_worker_launch_rc_2_skips_nmr_breaker() {
 test_launch_preflight_reason_skips_fast_fail_state() {
 	reset_observations
 	: >"$LOGFILE"
-	printf '{"awardsapp/awardsapp/4003":{"count":2,"ts":1,"reason":"prior","retry_after":1,"backoff_secs":600}}\n' >"$FAST_FAIL_STATE_FILE"
+	printf '{"exampleorg/examplerepo/4003":{"count":2,"ts":1,"reason":"prior","retry_after":1,"backoff_secs":600}}\n' >"$FAST_FAIL_STATE_FILE"
 
-	_fast_fail_record_locked "4003" "awardsapp/awardsapp" \
+	_fast_fail_record_locked "4003" "exampleorg/examplerepo" \
 		"worker_launch_rc_2" "anthropic" "no_work"
 
 	local count=""
-	count=$(jq -r '."awardsapp/awardsapp/4003".count' "$FAST_FAIL_STATE_FILE" 2>/dev/null) || count=""
+	count=$(jq -r '."exampleorg/examplerepo/4003".count' "$FAST_FAIL_STATE_FILE" 2>/dev/null) || count=""
 	if [[ "$count" != "2" ]]; then
 		fail "launch/preflight fast-fail skip preserves counter" "count: ${count:-unset}"
 		return 0
@@ -145,14 +145,14 @@ test_launch_preflight_reason_skips_fast_fail_state() {
 test_postlaunch_noop_still_applies_nmr_breaker() {
 	reset_observations
 	_log_no_work_skip_escalation \
-		"4003" "awardsapp/awardsapp" "3" \
+		"4003" "exampleorg/examplerepo" "3" \
 		"worker_noop_zero_output" >/dev/null 2>&1
 
 	if [[ "$BREAKER_CALLS" -ne 1 ]]; then
 		fail "postlaunch no_work still applies NMR" "breaker calls: ${BREAKER_CALLS}"
 		return 0
 	fi
-	if [[ "$LAST_BREAKER_PAYLOAD" != "4003|awardsapp/awardsapp|3|3|worker_noop_zero_output" ]]; then
+	if [[ "$LAST_BREAKER_PAYLOAD" != "4003|exampleorg/examplerepo|3|3|worker_noop_zero_output" ]]; then
 		fail "postlaunch no_work breaker payload is preserved" "payload: ${LAST_BREAKER_PAYLOAD}"
 		return 0
 	fi

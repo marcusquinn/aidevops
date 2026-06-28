@@ -828,7 +828,7 @@ _Automated by \`escalate_issue_tier()\` body quality gate (t1900) in worker-life
 #######################################
 # Count issue comments containing a marker across all paginated comment pages.
 #
-# Root cause fixed for awardsapp/awardsapp#4007: long issue threads can push
+# Root cause fixed for exampleorg/examplerepo#4007: long issue threads can push
 # breaker markers onto page 2+. `gh api --paginate --jq ...` applies jq per
 # page instead of across the full comment stream, so a page-local count can
 # miss existing t2769 markers and re-file/noise a no_work breaker. Slurping

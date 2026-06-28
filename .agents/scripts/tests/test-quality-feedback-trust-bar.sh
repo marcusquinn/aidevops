@@ -7,7 +7,7 @@
 #
 # t2686 background: the pre-fix trust check used strict equality against
 # repos.json .maintainer, which missed admin collaborators entirely. On
-# awardsapp/awardsapp that stranded 10 quality-debt issues with NMR labels
+# exampleorg/examplerepo that stranded 10 quality-debt issues with NMR labels
 # because co-admin PRs failed the single-maintainer equality test even
 # though pulse-merge.sh auto-merge already trusts the same principals
 # (t2411 criterion 2, t2449 criterion 2).
@@ -57,7 +57,7 @@ setup_test_env() {
 
 	# Isolated repos.json (so test doesn't read host's real config).
 	export REPOS_JSON="${TEST_ROOT}/repos.json"
-	printf '{"initialized_repos":[{"slug":"awardsapp/awardsapp","maintainer":"marcusquinn"}]}\n' >"$REPOS_JSON"
+	printf '{"initialized_repos":[{"slug":"exampleorg/examplerepo","maintainer":"marcusquinn"}]}\n' >"$REPOS_JSON"
 
 	# Permission fixture: what the gh stub returns for any
 	# repos/{slug}/collaborators/{user}/permission call.
@@ -154,11 +154,11 @@ define_helpers_under_test() {
 
 test_maintainer_fast_path_matches() {
 	# Stage 1: PR author matches repos.json .maintainer → trusted, no API call.
-	# repos.json already has awardsapp/awardsapp -> maintainer=marcusquinn
+	# repos.json already has exampleorg/examplerepo -> maintainer=marcusquinn
 	# We also set permission fixture to FAIL so the test confirms we NEVER
 	# reach stage 2 (fast path short-circuits).
 	set_permission_fixture "FAIL"
-	if _is_maintainer_equivalent_author "marcusquinn" "awardsapp/awardsapp"; then
+	if _is_maintainer_equivalent_author "marcusquinn" "exampleorg/examplerepo"; then
 		print_result "maintainer fast-path matches without API call (t2686)" 0
 		return 0
 	fi
@@ -169,9 +169,9 @@ test_maintainer_fast_path_matches() {
 
 test_admin_collaborator_is_trusted() {
 	# Stage 2: non-maintainer author, but gh api returns admin permission.
-	# This is the canonical t2686 case — alex-solovyev on awardsapp.
+	# This is the canonical t2686 case — alex-solovyev on example-repo.
 	set_permission_fixture '{"permission":"admin"}'
-	if _is_maintainer_equivalent_author "alex-solovyev" "awardsapp/awardsapp"; then
+	if _is_maintainer_equivalent_author "alex-solovyev" "exampleorg/examplerepo"; then
 		print_result "admin collaborator treated as maintainer-equivalent (t2686)" 0
 		return 0
 	fi
@@ -184,7 +184,7 @@ test_maintain_collaborator_is_trusted() {
 	# Stage 2: non-maintainer author with maintain permission. Matches the
 	# pulse-merge.sh auto-merge trust bar (admin OR maintain).
 	set_permission_fixture '{"permission":"maintain"}'
-	if _is_maintainer_equivalent_author "co-maintainer" "awardsapp/awardsapp"; then
+	if _is_maintainer_equivalent_author "co-maintainer" "exampleorg/examplerepo"; then
 		print_result "maintain collaborator treated as maintainer-equivalent (t2686)" 0
 		return 0
 	fi
@@ -198,7 +198,7 @@ test_write_collaborator_is_not_trusted() {
 	# Write collaborators can push branches but have not been granted the
 	# same institutional trust as admin/maintain.
 	set_permission_fixture '{"permission":"write"}'
-	if _is_maintainer_equivalent_author "contributor-dev" "awardsapp/awardsapp"; then
+	if _is_maintainer_equivalent_author "contributor-dev" "exampleorg/examplerepo"; then
 		print_result "write collaborator NOT treated as maintainer-equivalent (t2686)" 1 \
 			"Expected exit 1 — write permission is below the trust bar"
 		return 0
@@ -212,7 +212,7 @@ test_api_failure_is_fail_closed() {
 	# default to NOT trusted so NMR still applies. An unreachable API
 	# is not a trust signal.
 	set_permission_fixture "FAIL"
-	if _is_maintainer_equivalent_author "random-user" "awardsapp/awardsapp"; then
+	if _is_maintainer_equivalent_author "random-user" "exampleorg/examplerepo"; then
 		print_result "API failure fails closed (not trusted) (t2686)" 1 \
 			"Expected exit 1 — API failure must default to NOT trusted"
 		return 0
@@ -225,7 +225,7 @@ test_none_permission_is_not_trusted() {
 	# Stage 2: user exists but has no permission on the repo.
 	# gh api returns {"permission":"none"} — definitely not trusted.
 	set_permission_fixture '{"permission":"none"}'
-	if _is_maintainer_equivalent_author "stranger" "awardsapp/awardsapp"; then
+	if _is_maintainer_equivalent_author "stranger" "exampleorg/examplerepo"; then
 		print_result "none permission NOT treated as maintainer-equivalent (t2686)" 1 \
 			"Expected exit 1 — none permission must not be trusted"
 		return 0
@@ -237,7 +237,7 @@ test_none_permission_is_not_trusted() {
 test_empty_author_returns_nonzero() {
 	# Defensive: empty pr_author (gh pr view failed upstream) must not
 	# trust anyone.
-	if _is_maintainer_equivalent_author "" "awardsapp/awardsapp"; then
+	if _is_maintainer_equivalent_author "" "exampleorg/examplerepo"; then
 		print_result "empty pr_author returns not-trusted (t2686)" 1 \
 			"Expected exit 1 for empty pr_author"
 		return 0

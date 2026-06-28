@@ -53,7 +53,7 @@ import time
 # contains the literal `sk-failure-handler` (16 chars, matches the body) but
 # is NOT a credential. Without this anchor the regex corrupts identifiers
 # into `ta[redacted-credential]` and similar (see GH#21026 / t2892 for the
-# canonical incident on awardsapp/develop).
+# canonical incident on example-repo/develop).
 CREDENTIAL_PATTERN = re.compile(
     r"(?:^|(?<=[^A-Za-z0-9_-]))(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}",
     re.ASCII,

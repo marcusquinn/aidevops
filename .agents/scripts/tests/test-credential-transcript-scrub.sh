@@ -206,7 +206,7 @@ printf '\n%s\n' "${TEST_BLUE}Word-boundary anchor (t2892)${TEST_NC}"
 # `task-failure-handler` matched the substring `sk-failure-handler`
 # (16-char body suffix passes the {10,} gate) and was rewritten to
 # `ta[redacted-credential]` — corrupting committed source on
-# awardsapp/develop and breaking 4 PRs (#3168, #3155, #3068, #2984).
+# example-repo/develop and breaking 4 PRs (#3168, #3155, #3068, #2984).
 # The hook scrubs tool stream content fed to the model; the same regex bug
 # in `shared-constants.sh::scrub_credentials` corrupts source files at
 # write-time. All three locations must agree on the boundary anchor.

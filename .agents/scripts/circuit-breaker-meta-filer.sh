@@ -139,7 +139,7 @@ _cb_meta_repo_is_private_or_unknown() {
 #######################################
 # Choose where to file the meta-issue.
 #
-# Root cause fixed for awardsapp#4003: framework breaker meta-issues were filed
+# Root cause fixed for example-repo#4003: framework breaker meta-issues were filed
 # into application repos that do not contain aidevops framework scripts, so the
 # dispatched worker had no target files to edit and exited clean/no-work. Public
 # repos that lack the framework source route to the framework repo by default;

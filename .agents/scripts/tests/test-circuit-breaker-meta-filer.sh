@@ -238,7 +238,7 @@ printf '0' >"$FIXTURE_HAS_FRAMEWORK_SOURCE"
 printf 'false' >"$FIXTURE_REPO_PRIVATE"
 
 OUT=$("$META_FILER" file \
-	--issue 4003 --repo awardsapp/awardsapp \
+	--issue 4003 --repo exampleorg/examplerepo \
 	--breaker no_work --failure-count 3 \
 	--reason "worker canary preflight failed before worktree pre-creation" 2>&1)
 RC=$?
@@ -261,7 +261,7 @@ else
 	print_result "cross-repo: create call targets framework repo" 1 "stub log: $(cat "$STUB_LOG")"
 fi
 
-if grep -qE 'issue edit 4003 --repo awardsapp/awardsapp --add-label blocked-by:marcusquinn/aidevops#99999' "$STUB_LOG"; then
+if grep -qE 'issue edit 4003 --repo exampleorg/examplerepo --add-label blocked-by:marcusquinn/aidevops#99999' "$STUB_LOG"; then
 	print_result "cross-repo: original gets full blocked-by label" 0
 else
 	print_result "cross-repo: original gets full blocked-by label" 1 "stub log: $(cat "$STUB_LOG")"
@@ -318,7 +318,7 @@ cat >"$FIXTURE_COMMENTS_JSON" <<'EOF'
 EOF
 
 OUT=$("$META_FILER" file \
-	--issue 4003 --repo awardsapp/awardsapp \
+	--issue 4003 --repo exampleorg/examplerepo \
 	--breaker no_work --failure-count 4 \
 	--reason "second cross-repo trip" 2>&1)
 RC=$?
@@ -429,7 +429,7 @@ reset_stubs
 cat >"$FIXTURE_META_BODY" <<'EOF'
 ## Tracking original issue
 
-- Original: awardsapp/awardsapp#4003
+- Original: exampleorg/examplerepo#4003
 - Breaker: `t2769 no_work` (`cost-circuit-breaker:no_work_loop`)
 EOF
 
@@ -443,13 +443,13 @@ else
 	print_result "unblock-cross-repo: exit 0" 1 "rc=$RC, output: $OUT"
 fi
 
-if grep -qE 'issue edit 4003 --repo awardsapp/awardsapp --remove-label blocked-by:marcusquinn/aidevops#99999' "$STUB_LOG"; then
+if grep -qE 'issue edit 4003 --repo exampleorg/examplerepo --remove-label blocked-by:marcusquinn/aidevops#99999' "$STUB_LOG"; then
 	print_result "unblock-cross-repo: removes full blocked-by label" 0
 else
 	print_result "unblock-cross-repo: removes full blocked-by label" 1 "stub log: $(cat "$STUB_LOG")"
 fi
 
-if grep -qE 'issue comment 4003 --repo awardsapp/awardsapp' "$STUB_LOG"; then
+if grep -qE 'issue comment 4003 --repo exampleorg/examplerepo' "$STUB_LOG"; then
 	print_result "unblock-cross-repo: posts comment on original repo" 0
 else
 	print_result "unblock-cross-repo: posts comment on original repo" 1 "stub log: $(cat "$STUB_LOG")"

@@ -104,11 +104,11 @@ test_zero_advisories_empty_list() {
 test_single_advisory_human() {
 	_setup_sandbox
 	# Use a single-segment owner so the lastsplit reconstructs cleanly
-	echo "[ADVISORY] SYNC_PAT not set for awardsapp/awardsapp" > "$HOME/.aidevops/advisories/sync-pat-awardsapp-awardsapp.advisory"
+	echo "[ADVISORY] SYNC_PAT not set for exampleorg/examplerepo" > "$HOME/.aidevops/advisories/sync-pat-exampleorg-examplerepo.advisory"
 	local out
 	out="$("$HELPER" summary --format=human)"
-	# Expect: "1 SYNC_PAT advisory (awardsapp/awardsapp)"
-	if [[ "$out" != *"1 SYNC_PAT"* || "$out" != *"awardsapp/awardsapp"* ]]; then
+	# Expect: "1 SYNC_PAT advisory (exampleorg/examplerepo)"
+	if [[ "$out" != *"1 SYNC_PAT"* || "$out" != *"exampleorg/examplerepo"* ]]; then
 		echo "    expected count + slug, got: '$out'" >&2
 		return 1
 	fi
@@ -117,7 +117,7 @@ test_single_advisory_human() {
 
 test_single_advisory_toast() {
 	_setup_sandbox
-	echo "[ADVISORY] SYNC_PAT not set for awardsapp/awardsapp" > "$HOME/.aidevops/advisories/sync-pat-awardsapp-awardsapp.advisory"
+	echo "[ADVISORY] SYNC_PAT not set for exampleorg/examplerepo" > "$HOME/.aidevops/advisories/sync-pat-exampleorg-examplerepo.advisory"
 	local out
 	out="$("$HELPER" summary --format=toast)"
 	# Expect: "[WARN] 1 repo needs SYNC_PAT setup — run /setup-git in OpenCode or Claude Code"

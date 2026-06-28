@@ -342,7 +342,7 @@ CLAIM_RELEASED reason=launch_recovery:no_worker_process runner=<login> ts=<ISO>
 - Occurs in **time-correlated clusters**, not random transients. A single runner experiences 30+ failures across many issues within a 2–4 hour window, then recovers.
 - **Self-heals**: the underlying infrastructure issue (canary auth expiry, session lock collision) typically clears within minutes. The issue retries at the same tier — cascade tier escalation is NOT used for `no_worker_process` failures (t2815). 63/65 affected issues in the observed window resolved within the same day.
 - **Runner-specific**: 82% of events attributed to one runner (`alex-solovyev`), 17% to the other (`marcusquinn`). Likely reflects resource constraints on the failing runner at time of cluster.
-- **Cross-repo**: affects all pulse-enabled repos simultaneously (observed in `marcusquinn/aidevops` ~112 events, `awardsapp/awardsapp` ~130 events in 5-day window).
+- **Cross-repo**: affects all pulse-enabled repos simultaneously (observed in `marcusquinn/aidevops` ~112 events, `exampleorg/examplerepo` ~130 events in 5-day window).
 
 **Mitigation already in place**:
 - After 3 consecutive `no_worker_process` failures in a round, the canary cache is invalidated — next dispatch re-runs the canary to detect broken runtimes.

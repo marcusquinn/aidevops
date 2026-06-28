@@ -506,9 +506,9 @@ test_j_ever_nmr_remediation_includes_repo_slug() {
 	reset_posted_comment
 	set_comments '[]'
 
-	notify_ever_nmr_without_approval 3733 "awardsapp/awardsapp"
+	notify_ever_nmr_without_approval 3733 "exampleorg/examplerepo"
 
-	if was_comment_posted && posted_comment_contains "sudo aidevops approve issue 3733 awardsapp/awardsapp"; then
+	if was_comment_posted && posted_comment_contains "sudo aidevops approve issue 3733 exampleorg/examplerepo"; then
 		print_result "Case J: ever-NMR remediation includes repo slug" 0
 	else
 		print_result "Case J: ever-NMR remediation includes repo slug" 1 \

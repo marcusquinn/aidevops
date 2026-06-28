@@ -75,8 +75,8 @@ https://github.com/settings/personal-access-tokens/new
 
 Where:
 
-- `<SLUG_SAFE>` — the repo slug with `/` replaced by `-` (e.g., `awardsapp-awardsapp`)
-- `<SLUG_URLENC>` — URL-encoded slug (e.g., `awardsapp%2Fawardsapp`)
+- `<SLUG_SAFE>` — the repo slug with `/` replaced by `-` (e.g., `exampleorg-examplerepo`)
+- `<SLUG_URLENC>` — URL-encoded slug (e.g., `exampleorg%2Fexamplerepo`)
 - `<OWNER>` — the org/user that owns the repo
 
 The operator still has to:

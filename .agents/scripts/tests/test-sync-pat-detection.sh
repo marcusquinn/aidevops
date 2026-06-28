@@ -239,6 +239,8 @@ resolve_slug() {
 # Order matters: _branch_is_rulesets_protected is called by _check_sync_pat_need
 # (t2806), so it must be defined first.
 eval "$(sed -n '/^_emit_sync_pat_advisory()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
+eval "$(sed -n '/^_ruleset_targets_default_branch()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
+eval "$(sed -n '/^_default_branch_ruleset_details()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
 eval "$(sed -n '/^_branch_is_rulesets_protected()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
 eval "$(sed -n '/^_check_sync_pat_need()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
 eval "$(sed -n '/^check_sync_pat()/,/^}/p' "${SCRIPTS_DIR}/security-posture-helper-repo.sh")"
@@ -251,6 +253,11 @@ SEVERITY_WARNING="warning"
 SEVERITY_INFO="info"
 SEVERITY_PASS="pass"
 CAT_SYNC_PAT="sync_pat"
+SYNC_PAT_NEED_NOT_NEEDED="not_needed"
+RULESET_ENFORCEMENT_ACTIVE="active"
+RULESET_DEFAULT_BRANCH_TOKEN="~DEFAULT_BRANCH"
+RULESET_ALL_BRANCHES_TOKEN="~ALL"
+RULESET_ALL_HEADS_PATTERN="refs/heads/*"
 
 # Global result variable (t2806). _check_sync_pat_need writes here instead
 # of using stdout capture, which was broken by print_pass stdout output.
@@ -447,7 +454,7 @@ STUB_SECRET_RESPONSE=""
 check_sync_pat "$FAKE_REPO"
 
 if [[ -f "$ADVISORY_PATH" ]]; then
-	pass "Advisory fired for rulesets with required_status_checks (awardsapp/develop case)"
+	pass "Advisory fired for rulesets with required_status_checks (example-repo/develop case)"
 else
 	fail "Advisory NOT fired for status-checks rulesets" "Log: $(cat "$OUTPUT_LOG")"
 fi

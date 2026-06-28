@@ -45,13 +45,14 @@ setup_test_env() {
 {
   "initialized_repos": [
     {"slug": "owner/repo", "pr_base_branch": "develop", "default_branch": "main"},
-    {"slug": "awardsapp/awardsapp", "pr_base_branch": "develop", "default_branch": "main"}
+    {"slug": "exampleorg/examplerepo", "pr_base_branch": "develop", "default_branch": "main"}
   ]
 }
 JSON
 	create_gh_stub
 	# shellcheck source=/dev/null
 	source "$SHARED_CLAIM_SCRIPT"
+	install_test_overrides
 	return 0
 }
 
@@ -84,20 +85,34 @@ GHEOF
 	return 0
 }
 
-gh_issue_view() {
-	local issue_number="$1"
-	shift || true
-	[[ -n "$issue_number" ]] || return 1
-	printf 'OPEN\n'
-	return 0
-}
+install_test_overrides() {
+	gh_issue_view() {
+		local issue_number="$1"
+		shift || true
+		[[ -n "$issue_number" ]] || return 1
+		printf 'OPEN\n'
+		return 0
+	}
 
-_pr_exists_for_branch_or_issue() {
-	local branch_name="$1"
-	local issue_number="$2"
-	local repo_slug="$3"
-	[[ -n "$branch_name" && -n "$issue_number" && -n "$repo_slug" ]] || return 1
-	printf 'absent'
+	_pr_exists_for_branch_or_issue() {
+		local branch_name="$1"
+		local issue_number="$2"
+		local repo_slug="$3"
+		[[ -n "$branch_name" && -n "$issue_number" && -n "$repo_slug" ]] || return 1
+		printf 'absent'
+		return 0
+	}
+
+	_ensure_orphan_recovery_branch_remote() {
+		local work_dir="$1"
+		local branch_name="$2"
+		local issue_number="$3"
+		local repo_slug="$4"
+		[[ -n "$work_dir" && -n "$branch_name" && -n "$issue_number" && -n "$repo_slug" ]] || return 1
+		printf 'remote'
+		return 0
+	}
+
 	return 0
 }
 
@@ -118,15 +133,15 @@ test_orphan_recovery_uses_configured_pr_base() {
 	return 0
 }
 
-test_awardsapp_pr_base_overrides_default_branch() {
+test_configured_pr_base_overrides_default_branch() {
 	local resolved=""
-	resolved=$(_resolve_orphan_recovery_base_branch "awardsapp/awardsapp" "$TEST_ROOT")
+	resolved=$(_resolve_orphan_recovery_base_branch "exampleorg/examplerepo" "$TEST_ROOT")
 	if [[ "$resolved" == "develop" ]]; then
-		print_result "AwardsApp-style repo uses configured PR base over default branch" 0
+		print_result "configured-base repo uses configured PR base over default branch" 0
 		return 0
 	fi
 
-	print_result "AwardsApp-style repo uses configured PR base over default branch" 1 "resolved=${resolved}"
+	print_result "configured-base repo uses configured PR base over default branch" 1 "resolved=${resolved}"
 	return 0
 }
 
@@ -160,7 +175,7 @@ test_unconfigured_repo_falls_back_to_github_default_branch() {
 main() {
 	setup_test_env
 	test_orphan_recovery_uses_configured_pr_base
-	test_awardsapp_pr_base_overrides_default_branch
+	test_configured_pr_base_overrides_default_branch
 	test_explicit_dispatch_pr_base_overrides_repo_config
 	test_unconfigured_repo_falls_back_to_github_default_branch
 	teardown_test_env

@@ -667,7 +667,7 @@ unset -f _pcr_jq_required 2>/dev/null || true
 # Synthetic "user paths" — these never touch a real filesystem.
 declare -a leak_test_paths=(
 	"/home/dave/Git/request-handler"
-	"/Users/marcusquinn/Git/awardsapp"
+	"/Users/marcusquinn/Git/example-repo"
 	"/mnt/data/dave/Git/php-src"
 )
 
@@ -725,8 +725,8 @@ got=$(_pcr_sanitise_path "/mnt/data/dave/Git/php-src")
 # expansion semantics involved, the test asserts the exact byte sequence
 # the helper writes into the advisory file.
 # shellcheck disable=SC2088
-expected_home_subst='~/Git/awardsapp'
-got=$(_pcr_sanitise_path "${HOME}/Git/awardsapp")
+expected_home_subst='~/Git/example-repo'
+got=$(_pcr_sanitise_path "${HOME}/Git/example-repo")
 [[ "$got" == "$expected_home_subst" ]] \
 	&& print_result "sanitise: \$HOME/ → ~/" 0 \
 	|| print_result "sanitise: \$HOME/ → ~/" 1 "got: $got"

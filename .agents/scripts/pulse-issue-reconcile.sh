@@ -375,7 +375,7 @@ _normalize_get_stale_feedback_interactive_rows() {
 #######################################
 # Find auto-approved worker issues stranded by stale brief-rewrite labels.
 #
-# This recovers the awardsapp #4246/#4248 class: an actionable issue hit the
+# This recovers the example-repo #4246/#4248 class: an actionable issue hit the
 # old zero-output infrastructure loop, received needs-brief-rewrite, then NMR
 # was auto-approved/removed while the stale brief label, stale assignee, and
 # missing status:available kept pulse from reconsidering it.

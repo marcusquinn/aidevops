@@ -43,7 +43,7 @@ The same ingestion-index-retrieve pattern serves any long-running matter with do
 - Business cases get evidence management + AI-drafted comms (disputes, complaints, breaches, debts)
 - Limited companies get statutory document storage with audit trails (board minutes, statutory filings, contracts)
 - Asset portfolios get maintenance + incident histories (property, vehicles, IP, investments)
-- awardsapp t357 (file post-processing pipeline) becomes a thin SaaS layer over the same engine
+- example-repo t357 (file post-processing pipeline) becomes a thin SaaS layer over the same engine
 
 Without this primitive: every repo that needs document-shaped data invents its own ingestion + index + retrieval pattern. With it: standardised, audit-trailed, sensitivity-aware, retrievable across all aidevops-managed repos via one CLI surface.
 
@@ -201,7 +201,7 @@ Key decisions from the design session:
 2. **Underscore-prefix for user-data planes** — visible in Finder, sorts above regular files. Dot-prefix retained only for framework wiring (`.agents/`).
 3. **Sensitivity layer is cross-cutting, not a plane** — classification stamped on `meta.json`, LLM routing gated on classification.
 4. **Originals ≥30MB stored out-of-repo** — 30MB chosen to align with email attachment limits. Below threshold, in-repo for full audit trail.
-5. **awardsapp t357 framework-first** — build the framework primitive in aidevops, then awardsapp t357 becomes a thin SaaS layer over it (post-MVP).
+5. **example-repo t357 framework-first** — build the framework primitive in aidevops, then example-repo t357 becomes a thin SaaS layer over it (post-MVP).
 6. **Maintainer drops auto-promote** — NMR only for untrusted sources. Crypto-approved (`sudo aidevops approve issue <N>`) for explicit gate.
 7. **Insights promote to `_knowledge/` (with source refs), not just memory** — memory becomes a local cache of the canonical knowledge store, not a parallel system.
 8. **Per-repo case IDs** — case-YYYY-NNNN-<slug> scoped to repo. Cross-repo links via `related_cases` field.
@@ -221,7 +221,7 @@ Things explicitly ruled out (non-goals for MVP):
 - `_contacts-index/` and `_accounts-index/` adapters (P8, post-MVP)
 - `repo_type` system + per-type provisioning (P9, post-MVP)
 - Gitea adapter implementation (P9, post-MVP — abstraction layer in MVP, gh-only impl in MVP)
-- awardsapp t357 SaaS layer (P10, separate parent post-MVP)
+- example-repo t357 SaaS layer (P10, separate parent post-MVP)
 
 ## Relevant Files
 

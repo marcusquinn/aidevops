@@ -13,7 +13,7 @@ The old model (replicated workflows + replicated framework scripts per repo) cau
 |---|---|---|
 | Workflow YAML drift | GH#20637 (stale `issue-sync.yml` missing t2385 fix in downstream) | No propagation mechanism from aidevops to downstream copies |
 | Framework script drift | `really-simple-ssl-multisite` had 3 drifted `.agents/scripts/` files | Scripts shipped per-repo, no sync |
-| Silent workflow failures | `awardsapp` + `compressx-multisite` had workflow YAML but no `.agents/scripts/` | Workflow referenced scripts that didn't exist |
+| Silent workflow failures | `example-repo` + `compressx-multisite` had workflow YAML but no `.agents/scripts/` | Workflow referenced scripts that didn't exist |
 
 The reusable pattern solves all three at once:
 

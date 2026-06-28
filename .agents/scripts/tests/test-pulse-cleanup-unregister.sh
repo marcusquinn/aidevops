@@ -116,7 +116,7 @@ STUB
 #!/usr/bin/env bash
 cmd="${1:-}"
 if [[ "$cmd" == "check" ]]; then
-	printf '%s\n' '{"session_key":"issue-3964","issue_number":"3964","repo_slug":"awardsapp/awardsapp","pid":123,"status":"in-flight"}'
+	printf '%s\n' '{"session_key":"issue-3964","issue_number":"3964","repo_slug":"exampleorg/examplerepo","pid":123,"status":"in-flight"}'
 	exit 0
 fi
 exit 1
@@ -259,8 +259,8 @@ test_zombie_reaper_uses_ledger_repo_and_pid() {
 	SCRIPT_DIR="$original_script_dir"
 
 	grep -Fxq '123' "$kill_log" || fail "zombie reaper did not kill the ledger PID"
-	grep -q -- '--repo awardsapp/awardsapp' "$gh_log" || fail "zombie reaper did not query the ledger repo"
-	grep -q 'PR #5000 already merged in awardsapp/awardsapp' "$LOGFILE" || fail "missing ledger-repo reap audit log"
+	grep -q -- '--repo exampleorg/examplerepo' "$gh_log" || fail "zombie reaper did not query the ledger repo"
+	grep -q 'PR #5000 already merged in exampleorg/examplerepo' "$LOGFILE" || fail "missing ledger-repo reap audit log"
 	pass "zombie reaper uses ledger repo and PID"
 	return 0
 }

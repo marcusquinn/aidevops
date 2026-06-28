@@ -11,7 +11,7 @@
 #   - install: copies the loc-badge-caller.yml workflow into .github/workflows/
 #
 # Sync/install operations are restricted to owned-org repos
-# (marcusquinn, awardsapp, essentials-com, wpallstars, or ~/.config/aidevops/badge-orgs.conf).
+# (marcusquinn, essentials-com, wpallstars, or ~/.config/aidevops/badge-orgs.conf).
 # contributed:true repos and non-owned orgs are skipped with a SKIPPED/EXTERNAL note.
 #
 # Default mode is --dry-run. Pass --apply to actually write, commit, push,
@@ -92,7 +92,7 @@ readonly _CHECK_HELPER _BADGES_HELPER
 
 # ─── Owned-orgs allowlist ───────────────────────────────────────────────────
 
-readonly _DEFAULT_OWNED_ORGS=("marcusquinn" "awardsapp" "essentials-com" "wpallstars")
+readonly _DEFAULT_OWNED_ORGS=("marcusquinn" "essentials-com" "wpallstars")
 
 _load_owned_orgs() {
 	local _conf="$HOME/.config/aidevops/badge-orgs.conf"

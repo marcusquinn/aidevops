@@ -7,7 +7,7 @@ ref: GH#20299
 
 ## Session Origin
 
-Interactive session triggered by user request (2026-04-21). Ten `source:review-feedback` quality-debt issues on `awardsapp/awardsapp` (#2572–2578, #2583–2585) were stuck in NMR purgatory despite being filed by the maintainer's own pulse against PRs authored by an admin collaborator (`alex-solovyev`). Root-cause tracing surfaced two compounding bugs — the fix here addresses both.
+Interactive session triggered by user request (2026-04-21). Ten `source:review-feedback` quality-debt issues on `exampleorg/examplerepo` (#2572–2578, #2583–2585) were stuck in NMR purgatory despite being filed by the maintainer's own pulse against PRs authored by an admin collaborator (`alex-solovyev`). Root-cause tracing surfaced two compounding bugs — the fix here addresses both.
 
 ## What
 
@@ -25,7 +25,7 @@ Two surgical fixes to the quality-debt creation and auto-approval pipelines, plu
 
 **Bug 2 — auto-approve path (`pulse-nmr-approval.sh:281-321`).** `_nmr_application_has_automation_signature` only looks for `source:review-scanner` (emitted by `post-merge-review-scanner.sh`). The `quality-feedback-helper.sh` sibling emits `source:review-feedback`. Result: when the pulse applies NMR at creation via Bug 1, it cannot auto-clear it later because its own signature is invisible to the detector. `_nmr_applied_by_maintainer` then classifies the label application as a "manual hold" and `auto_approve_maintainer_issues` skips the issue forever.
 
-Together, Bug 1 applies NMR to trusted-collaborator quality-debt; Bug 2 guarantees it never comes off. Net effect: manual `sudo aidevops approve issue <N>` required per issue, multiplied by team size × PR frequency × file count per PR. The 10 stuck issues on `awardsapp/awardsapp` are the symptom; the structural problem is baked into the pipeline.
+Together, Bug 1 applies NMR to trusted-collaborator quality-debt; Bug 2 guarantees it never comes off. Net effect: manual `sudo aidevops approve issue <N>` required per issue, multiplied by team size × PR frequency × file count per PR. The 10 stuck issues on `exampleorg/examplerepo` are the symptom; the structural problem is baked into the pipeline.
 
 **Downstream gate awareness.** `issue_was_ever_nmr` reads the immutable GitHub timeline, so even after this fix lands, the 10 existing stuck issues still fail `issue_has_required_approval` at PR-merge time. Batch cryptographic approval (`sudo aidevops approve issue <N>`) is the one-shot cleanup that clears all three concerns at once: records the signed marker, removes NMR, adds `auto-dispatch`. Listed separately under "How" step 5.
 
@@ -85,7 +85,7 @@ After this PR merges, run in a separate terminal (requires sudo/password):
 
 ```bash
 for n in 2572 2573 2574 2575 2576 2577 2578 2583 2584 2585; do
-  sudo aidevops approve issue "$n" awardsapp/awardsapp
+  sudo aidevops approve issue "$n" exampleorg/examplerepo
 done
 ```
 
@@ -93,7 +93,7 @@ Each invocation: posts the signed `<!-- aidevops-signed-approval -->` marker (im
 
 ## Acceptance
 
-1. `awardsapp/awardsapp` PR authored by `alex-solovyev` (or any admin/maintain collaborator) generates a quality-debt issue WITHOUT `needs-maintainer-review` — matches behaviour for maintainer-authored PRs.
+1. `exampleorg/examplerepo` PR authored by `alex-solovyev` (or any admin/maintain collaborator) generates a quality-debt issue WITHOUT `needs-maintainer-review` — matches behaviour for maintainer-authored PRs.
 2. If for some reason NMR is later applied to a `source:review-feedback` issue (e.g. via a circuit-breaker trip — unchanged, still preserves NMR correctly), the next pulse cycle's `auto_approve_maintainer_issues` DOES recognise it as automation-default and auto-clear it. This is verified by the new test case.
 3. Existing `test-pulse-nmr-automation-signature.sh` cases still pass (no regression on `source:review-scanner`, `review-followup`, and breaker-trip handling).
 4. `shellcheck` clean on all three edited files.
