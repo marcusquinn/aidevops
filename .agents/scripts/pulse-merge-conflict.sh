@@ -88,16 +88,22 @@ _post_rebase_nudge_on_interactive_conflicting() {
 	fi
 
 	local head_branch
-	head_branch=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json headRefName --jq '.headRefName' 2>/dev/null) || head_branch="<branch>"
+	local base_branch
+	local pr_refs
+	pr_refs=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json headRefName,baseRefName --jq '[.headRefName, .baseRefName] | @tsv' 2>/dev/null) || pr_refs=$'<branch>\t<base-branch>'
+	IFS=$'\t' read -r head_branch base_branch <<EOF
+$pr_refs
+EOF
 	[[ -n "$head_branch" ]] || head_branch="<branch>"
+	[[ -n "$base_branch" ]] || base_branch="<base-branch>"
 
 	local marker="<!-- pulse-rebase-nudge -->"
 	local nudge_body
 	nudge_body="${marker}
-## Rebase needed — branch has diverged from \`main\`
+## Rebase needed — branch has diverged from \`${base_branch}\`
 
-This \`origin:interactive\` PR has merge conflicts against \`main\`. The pulse merge pass skips auto-close on maintainer session work (GH#18285), but there is no automated path to resolve conflicts on behalf of a human author — this PR needs your attention.
+This \`origin:interactive\` PR has merge conflicts against \`${base_branch}\`. The pulse merge pass skips auto-close on maintainer session work (GH#18285), but there is no automated path to resolve conflicts on behalf of a human author — this PR needs your attention.
 
 ### To resolve
 
@@ -105,7 +111,7 @@ From a terminal (not a chat session):
 
 \`\`\`bash
 wt switch ${head_branch}
-git pull --rebase origin main
+git pull --rebase origin ${base_branch}
 # resolve any conflicts, then:
 git push --force-with-lease
 \`\`\`
@@ -152,16 +158,22 @@ _post_rebase_nudge_on_contributor_conflicting() {
 	fi
 
 	local head_branch
-	head_branch=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json headRefName --jq '.headRefName' 2>/dev/null) || head_branch="<branch>"
+	local base_branch
+	local pr_refs
+	pr_refs=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json headRefName,baseRefName --jq '[.headRefName, .baseRefName] | @tsv' 2>/dev/null) || pr_refs=$'<branch>\t<base-branch>'
+	IFS=$'\t' read -r head_branch base_branch <<EOF
+$pr_refs
+EOF
 	[[ -n "$head_branch" ]] || head_branch="<branch>"
+	[[ -n "$base_branch" ]] || base_branch="<base-branch>"
 
 	local marker="<!-- pulse-rebase-nudge-contributor -->"
 	local nudge_body
 	nudge_body="${marker}
-## Rebase needed — branch has diverged from \`main\`
+## Rebase needed — branch has diverged from \`${base_branch}\`
 
-This PR has merge conflicts against \`main\`. The pulse merge pass does not auto-close contributor PRs (GH#20485) — this PR is kept open so your work is not lost.
+This PR has merge conflicts against \`${base_branch}\`. The pulse merge pass does not auto-close contributor PRs (GH#20485) — this PR is kept open so your work is not lost.
 
 ### To resolve
 
@@ -169,7 +181,7 @@ From a terminal:
 
 \`\`\`bash
 git fetch origin
-git rebase origin/main
+git rebase origin/${base_branch}
 # resolve any conflicts, then:
 git push --force-with-lease
 \`\`\`
@@ -537,9 +549,15 @@ _post_rebase_nudge_on_worker_conflicting() {
 	fi
 
 	local head_branch
-	head_branch=$(gh pr view "$pr_number" --repo "$repo_slug" \
-		--json headRefName --jq '.headRefName' 2>/dev/null) || head_branch="<branch>"
+	local base_branch
+	local pr_refs
+	pr_refs=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json headRefName,baseRefName --jq '[.headRefName, .baseRefName] | @tsv' 2>/dev/null) || pr_refs=$'<branch>\t<base-branch>'
+	IFS=$'\t' read -r head_branch base_branch <<EOF
+$pr_refs
+EOF
 	[[ -n "$head_branch" ]] || head_branch="<branch>"
+	[[ -n "$base_branch" ]] || base_branch="<base-branch>"
 
 	local matching_pr_clause=""
 	if [[ -n "$matching_pr" ]]; then
@@ -551,7 +569,7 @@ _post_rebase_nudge_on_worker_conflicting() {
 	nudge_body="${marker}
 ## Rebase needed — task-ID heuristic detected a planning-only match
 
-This worker PR has merge conflicts against \`main\`. The deterministic merge pass found a recent commit on main mentioning task ID \`${task_id}\`, but its file footprint does not overlap with this PR's implementation files.${matching_pr_clause}
+This worker PR has merge conflicts against \`${base_branch}\`. The deterministic merge pass found a recent commit on \`${base_branch}\` mentioning task ID \`${task_id}\`, but its file footprint does not overlap with this PR's implementation files.${matching_pr_clause}
 
 To prevent value loss, the merge pass left this PR open instead of auto-closing it. The implementation work in this branch needs to be rebased and re-validated.
 
@@ -561,7 +579,7 @@ From a terminal:
 
 \`\`\`bash
 gh pr checkout ${pr_number}
-git pull --rebase origin main
+git pull --rebase origin ${base_branch}
 # resolve any conflicts, then:
 git push --force-with-lease
 \`\`\`
@@ -972,7 +990,7 @@ _close_conflicting_pr_classify_landed() {
 }
 
 #######################################
-# Close the PR with the "work has already landed on main" wording.
+# Close the PR with the "work has already landed on the base branch" wording.
 # Cites the merging PR via `(via PR #NNN)` when one was parsed from
 # the matching commit's squash-merge suffix; otherwise omits the
 # parenthetical.
@@ -999,8 +1017,14 @@ _close_conflicting_pr_comment_landed() {
 	if [[ -n "$merging_pr" ]]; then
 		landed_via=" (via PR #${merging_pr})"
 	fi
+
+	local base_branch
+	base_branch=$(gh pr view "$pr_number" --repo "$repo_slug" \
+		--json baseRefName --jq '.baseRefName' 2>/dev/null) || base_branch="base branch"
+	[[ -n "$base_branch" ]] || base_branch="base branch"
+
 	gh pr close "$pr_number" --repo "$repo_slug" \
-		--comment "Closing — this PR has merge conflicts with the base branch. The work for this task (\`${task_id}\`) has already landed on main${landed_via}, so no re-attempt is needed.
+		--comment "Closing — this PR has merge conflicts with the base branch. The work for this task (\`${task_id}\`) has already landed on ${base_branch}${landed_via}, so no re-attempt is needed.
 
 _Closed by deterministic merge pass (pulse-wrapper.sh, GH#17574)._" 2>/dev/null || true
 
@@ -1012,7 +1036,7 @@ _Closed by deterministic merge pass (pulse-wrapper.sh, GH#17574)._" 2>/dev/null 
 	_close_superseded_duplicate_issue_if_verified \
 		"$pr_number" "$repo_slug" "$linked_issue" "$merging_pr" "$pr_labels_csv"
 
-	echo "[pulse-wrapper] Deterministic merge: closed conflicting PR #${pr_number} in ${repo_slug}: ${pr_title} (work already on main)" >>"$LOGFILE"
+	echo "[pulse-wrapper] Deterministic merge: closed conflicting PR #${pr_number} in ${repo_slug}: ${pr_title} (work already on ${base_branch})" >>"$LOGFILE"
 	return 0
 }
 
@@ -1055,7 +1079,7 @@ _Closed by deterministic merge pass (pulse-wrapper.sh)._" 2>/dev/null || true
 # Close a conflicting PR with audit comment.
 #
 # GH#17574: Before saying "remains open for re-attempt", check if
-# the work has already landed on main (via the linked issue's task
+# the work has already landed on the default branch (via the linked issue's task
 # ID in recent commits). If yes, close the PR with a message
 # referencing the audit trail.
 #
@@ -1092,7 +1116,7 @@ _close_conflicting_pr() {
 		return 0
 	fi
 
-	# Gate 2: classify whether the work has already landed on main.
+	# Gate 2: classify whether the work has already landed on the default branch.
 	# GH#17574 / t2032: Check if the work is already on the default
 	# branch. Extract task ID from PR title (e.g., "t153: add dark
 	# mode" → "t153") so the classifier can search recent commits

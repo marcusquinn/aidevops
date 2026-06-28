@@ -51,11 +51,11 @@ setup_test_env() {
 	export LOGFILE="${TEST_ROOT}/pulse.log"
 	: >"$LOGFILE"
 
-	# Stub `gh pr view --json headRefName` to return a fixed branch name.
+	# Stub `gh pr view --json headRefName,baseRefName` to return fixed branch refs.
 	cat >"${TEST_ROOT}/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "pr" && "${2:-}" == "view" && "$*" == *"headRefName"* ]]; then
-	printf 'fix/example-branch\n'
+	printf 'fix/example-branch\tdevelop\n'
 	exit 0
 fi
 # Any other gh call — return empty
@@ -121,6 +121,16 @@ test_nudge_body_contains_marker_and_branch() {
 	if [[ "$LAST_NUDGE_BODY" != *"wt switch fix/example-branch"* ]]; then
 		print_result "nudge body contains the idempotency marker" 1 \
 			"Expected 'wt switch fix/example-branch' in body (branch interpolation)"
+		return 0
+	fi
+	if [[ "$LAST_NUDGE_BODY" != *"git pull --rebase origin develop"* ]]; then
+		print_result "nudge body contains the idempotency marker" 1 \
+			"Expected 'git pull --rebase origin develop' in body (base branch interpolation)"
+		return 0
+	fi
+	if [[ "$LAST_NUDGE_BODY" == *"origin main"* || "$LAST_NUDGE_BODY" == *"against \`main\`"* ]]; then
+		print_result "nudge body contains the idempotency marker" 1 \
+			"Expected no hardcoded main references in body"
 		return 0
 	fi
 	if [[ "$LAST_NUDGE_BODY" != *"git push --force-with-lease"* ]]; then
