@@ -154,7 +154,7 @@ Completion: NEVER mark `[x]` without merged PR (`pr:#NNN`) or `verified:YYYY-MM-
 
 Code changes need worktree + PR. Implementation workers do not edit `TODO.md` as part of code fixes; supervisor/routine/issue-sync bookkeeping may update planning files under the allowlist below.
 
-**Main-branch planning exception (headless bookkeeping only, t1990):** `TODO.md`, `todo/*`, and `README.md` may go direct to `main` only for headless supervisor/routine/issue-sync bookkeeping or an explicitly planning-only worker task. **Interactive sessions have NO such exception** — every edit, including planning files, goes through a linked worktree at `~/Git/<repo>-<branch>/`. Enforced by `pre-edit-check.sh` `is_main_allowlisted_path()`.
+**Main-branch planning exception (headless bookkeeping only, t1990):** `TODO.md`, `todo/*`, and `README.md` may go direct to `main` only for headless supervisor/routine/issue-sync bookkeeping or an explicitly planning-only worker task. **Interactive sessions have NO such exception** — every edit, including planning files, goes through a linked worktree under `${AIDEVOPS_WORKTREE_BASE_DIR:-~/Git/_worktrees}`. Enforced by `pre-edit-check.sh` `is_main_allowlisted_path()`.
 
 **Simplification state policy:** Keep all changes to `.agents/configs/simplification-state.json`. It is the shared hash registry used by the simplification routine to detect unchanged vs changed files and decide when recheck/re-processing is needed.
 

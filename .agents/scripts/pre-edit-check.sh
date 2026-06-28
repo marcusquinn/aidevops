@@ -606,7 +606,7 @@ _show_protected_branch_warning() {
 		echo "    (Using Worktrunk - recommended)"
 	else
 		echo "    ~/.aidevops/agents/scripts/worktree-helper.sh add {type}/{description}"
-		echo "    cd ../{repo}-{type}-{description}"
+		echo "    cd ~/Git/_worktrees/{repo}-{type}-{description}"
 		echo ""
 		echo "    (Install Worktrunk for better experience: brew install max-sixty/worktrunk/wt)"
 	fi

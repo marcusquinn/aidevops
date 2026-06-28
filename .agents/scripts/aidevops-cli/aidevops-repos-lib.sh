@@ -27,17 +27,45 @@
 [[ -n "${_AIDEVOPS_REPOS_LIB_LOADED:-}" ]] && return 0
 _AIDEVOPS_REPOS_LIB_LOADED=1
 
+_aidevops_repos_source_worktree_paths() {
+	local helper=""
+	if [[ -n "${AGENTS_DIR:-}" && -f "${AGENTS_DIR}/scripts/worktree-paths.sh" ]]; then
+		helper="${AGENTS_DIR}/scripts/worktree-paths.sh"
+	elif [[ -n "${INSTALL_DIR:-}" && -f "${INSTALL_DIR}/.agents/scripts/worktree-paths.sh" ]]; then
+		helper="${INSTALL_DIR}/.agents/scripts/worktree-paths.sh"
+	elif [[ -f "${HOME}/.aidevops/agents/scripts/worktree-paths.sh" ]]; then
+		helper="${HOME}/.aidevops/agents/scripts/worktree-paths.sh"
+	fi
+	[[ -n "$helper" ]] || return 0
+	# shellcheck source=/dev/null
+	source "$helper"
+	return 0
+}
+
+_aidevops_repos_source_worktree_paths
+
 
 # Initialize repos.json if it doesn't exist
 init_repos_file() {
 	if [[ ! -f "$REPOS_FILE" ]]; then
 		mkdir -p "$CONFIG_DIR"
-		echo '{"initialized_repos": [], "git_parent_dirs": ["~/Git"]}' >"$REPOS_FILE"
+		echo '{"initialized_repos": [], "git_parent_dirs": ["~/Git"], "worktree_base_dir": "~/Git/_worktrees"}' >"$REPOS_FILE"
 	elif command -v jq &>/dev/null; then
 		# Migrate: add git_parent_dirs if missing from existing repos.json
 		if ! jq -e '.git_parent_dirs' "$REPOS_FILE" &>/dev/null; then
 			local temp_file="${REPOS_FILE}.tmp"
 			if jq '. + {"git_parent_dirs": ["~/Git"]}' "$REPOS_FILE" >"$temp_file"; then
+				mv "$temp_file" "$REPOS_FILE"
+			else
+				rm -f "$temp_file"
+			fi
+		fi
+		# Migrate: add centralized worktree base directory if missing.
+		if declare -F aidevops_migrate_repos_json_worktree_base_dir >/dev/null 2>&1; then
+			aidevops_migrate_repos_json_worktree_base_dir "$REPOS_FILE" "~"'/Git/_worktrees' || true
+		elif ! jq -e '.worktree_base_dir // .worktrees_dir // empty' "$REPOS_FILE" &>/dev/null; then
+			local temp_file="${REPOS_FILE}.tmp"
+			if jq '. + {"worktree_base_dir": "~/Git/_worktrees"}' "$REPOS_FILE" >"$temp_file"; then
 				mv "$temp_file" "$REPOS_FILE"
 			else
 				rm -f "$temp_file"

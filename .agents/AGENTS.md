@@ -89,7 +89,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 - Never create tracking issues with raw `gh issue create`; use aidevops wrappers, or immediately normalize with `origin:interactive`, `status:in-review`, and the appropriate type label.
 - Interactive issue pickup: for repos where you have maintainer-equivalent access, immediately run `interactive-session-helper.sh claim <N> <owner/repo>`; for external non-maintainer repos, never run claim/dispatch/label routines — submit a PR when possible and leave at most one concise issue comment explaining the proposed solution. Details: `workflows/git-workflow.md`.
 - Worker/maintainer gate interpretation: an unassigned managed-repo issue is not a maintainer blocker for an OWNER/MEMBER interactive session; claim it and continue. For headless workers, work only on the dispatched issue/PR and treat mismatched linked-issue writes as out of scope unless the dispatcher explicitly assigned that target.
-- Interactive sessions: no direct edits on canonical `main`/`master`; all work uses a linked worktree under `~/Git/`, never runtime temp dirs. Exception: release/version-manager commands may run on `main` after merged, verified changes and explicit user approval. Headless implementation workers use worktree+PR unless explicitly planning-only.
+- Interactive sessions: no direct edits on canonical `main`/`master`; all work uses a linked worktree under `${AIDEVOPS_WORKTREE_BASE_DIR:-~/Git/_worktrees}` (flat `<repo>-<slug>` names), never runtime temp dirs. Existing sibling worktrees remain valid until cleanup. Exception: release/version-manager commands may run on `main` after merged, verified changes and explicit user approval. Headless implementation workers use worktree+PR unless explicitly planning-only.
 - Pre-edit exit codes: 0 proceed, 1 stop on main, 2 create worktree, 3 warn off-main. Do not revert others' changes without explicit request.
 - After each logical change, commit WIP (`git add -A && git commit -m "wip: ..."`) unless generated/temp gitignored. Squash/amend later as needed.
 - Hook self-block: verify self-block cause, request explicit `--no-verify` authorization, include a regression test, and file sibling validator bugs separately.
@@ -129,7 +129,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 - Scripts: `~/.aidevops/agents/scripts/[service]-helper.sh [command] [account] [target]`.
 - Editing framework scripts: edit repo `.agents/scripts/<name>.sh`, not deployed `~/.aidevops/agents/scripts/`; deploy with `setup.sh --non-interactive`. Personal scripts go in `custom/`.
 - Working dirs: `~/.aidevops/.agent-workspace/{work,tmp,mail,memory}`. Agent tiers: `custom/` survives updates, `draft/` is experimental, root shared agents are overwritten.
-- Repo layout: group ecosystem repos under `~/Git/wordpress/`, `~/Git/espocrm/`, or `~/Git/mcp/`; create worktrees as siblings. Details: `reference/repo-organization.md`.
+- Repo layout: group ecosystem canonical repos under `~/Git/wordpress/`, `~/Git/espocrm/`, or `~/Git/mcp/`; create linked worktrees under `${AIDEVOPS_WORKTREE_BASE_DIR:-~/Git/_worktrees}`. Details: `reference/repo-organization.md`.
 - Knowledge plane: `aidevops knowledge [init|status|provision]`; config `knowledge: repo|personal`. Full contract: `aidevops/knowledge-plane.md`.
 - Secrets: `aidevops secret` preferred; plaintext fallback requires 600 perms.
 

@@ -35,7 +35,7 @@ See `workflows/plans.md` for the full planning workflow.
 
 ```bash
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/123-descriptive-name
-# Then cd into the sibling worktree path printed by the helper; keep the canonical repo on main.
+# Then cd into the linked worktree path printed by the helper; keep the canonical repo on main.
 ```
 
 ### 2. Understand Requirements

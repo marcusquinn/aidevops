@@ -20,7 +20,7 @@
 #   detect                  - report which tools are installed and which are
 #                             scriptable vs require a manual setup step.
 #   setup-backblaze         - print the sudo commands needed to add a Backblaze
-#                             exclusion rule covering ~/Git/<repo>-* worktree
+#                             exclusion rule covering centralized worktree paths
 #                             prefixes (root-only config file).
 #   help                    - print usage.
 #

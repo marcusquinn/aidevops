@@ -47,7 +47,7 @@ setup_fixture() {
 	export LOGFILE="$TEST_ROOT/cleanup.log"
 	export AIDEVOPS_ORPHAN_TRASH_ROOT="$TEST_ROOT/trash"
 	export ORPHAN_WORKTREE_GRACE_SECS=0
-	mkdir -p "$HOME/.config/aidevops" "$TEST_ROOT/Git" "$AIDEVOPS_ORPHAN_TRASH_ROOT"
+	mkdir -p "$HOME/.config/aidevops" "$TEST_ROOT/Git" "$TEST_ROOT/Git/_worktrees" "$AIDEVOPS_ORPHAN_TRASH_ROOT"
 
 	local repo="$TEST_ROOT/Git/aidevops"
 	mkdir -p "$repo"
@@ -59,7 +59,7 @@ setup_fixture() {
 	git -C "$repo" commit -q -m 'init'
 
 	cat >"$HOME/.config/aidevops/repos.json" <<JSON
-{"initialized_repos":[{"path":"$repo","slug":"example/aidevops","local_only":false}]}
+{"worktree_base_dir":"$TEST_ROOT/Git/_worktrees","initialized_repos":[{"path":"$repo","slug":"example/aidevops","local_only":false}]}
 JSON
 
 	# Registered valid worktree: matches worker naming but must be preserved.
@@ -78,6 +78,10 @@ JSON
 	printf 'gitdir: %s\n' "$TEST_ROOT/missing/feature-t2147" >"$TEST_ROOT/Git/aidevops-feature-t2147-contributor-insight-pipeline/.git"
 	mkdir -p "$TEST_ROOT/Git/aidevops.bugfix-skill-tag-rename"
 	printf 'legacy\n' >"$TEST_ROOT/Git/aidevops.bugfix-skill-tag-rename/NOTE.txt"
+	mkdir -p "$TEST_ROOT/Git/_worktrees/aidevops-feature-central-leftover"
+	printf 'central leftover\n' >"$TEST_ROOT/Git/_worktrees/aidevops-feature-central-leftover/NOTE.txt"
+	mkdir -p "$TEST_ROOT/Git/_worktrees/aidevops.bugfix-central-leftover"
+	printf 'central legacy\n' >"$TEST_ROOT/Git/_worktrees/aidevops.bugfix-central-leftover/NOTE.txt"
 
 	# Standalone repo: must not be trashed automatically.
 	mkdir -p "$TEST_ROOT/Git/aidevops-cloudron-app"
@@ -99,8 +103,8 @@ test_orphan_sibling_dirs_move_to_trash_only() {
 	local moved_count
 	moved_count=$(_pc_cleanup_orphan_sibling_dirs "$repo_json" "$(date +%s)")
 
-	if [[ "$moved_count" -ne 4 ]]; then
-		print_result "orphan sibling cleanup moves only eligible outliers" 1 "expected 4 moved, got $moved_count"
+	if [[ "$moved_count" -ne 6 ]]; then
+		print_result "orphan sibling cleanup moves eligible sibling and centralized outliers" 1 "expected 6 moved, got $moved_count"
 		return 0
 	fi
 
@@ -126,10 +130,10 @@ test_orphan_sibling_dirs_move_to_trash_only() {
 			trashed_count=$((trashed_count + 1))
 		done
 	done
-	if [[ "$trashed_count" -eq 4 ]]; then
+	if [[ "$trashed_count" -eq 6 ]]; then
 		print_result "eligible outliers are recoverable in trash bucket" 0
 	else
-		print_result "eligible outliers are recoverable in trash bucket" 1 "expected 4 trashed dirs, got $trashed_count"
+		print_result "eligible outliers are recoverable in trash bucket" 1 "expected 6 trashed dirs, got $trashed_count"
 	fi
 	return 0
 }

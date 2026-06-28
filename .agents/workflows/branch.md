@@ -20,8 +20,8 @@ tools:
 
 - Resume existing work first: `git worktree list` or `wt list`
 - Start from canonical repo on `main`: `wt switch -c {type}/{name}`
-- Fallback: `${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add {type}/{name}`, then `cd` into the printed sibling path
-- Keep `~/Git/{repo}/` or grouped `~/Git/{ecosystem}/{repo}/` on `main`; do task work in a sibling linked worktree path
+- Fallback: `${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add {type}/{name}`, then `cd` into the printed linked worktree path
+- Keep `~/Git/{repo}/` or grouped `~/Git/{ecosystem}/{repo}/` on `main`; do task work in the linked worktree path under `${AIDEVOPS_WORKTREE_BASE_DIR:-~/Git/_worktrees}`
 
 | Task Type | Branch Prefix | Subagent |
 |-----------|---------------|----------|
@@ -61,7 +61,7 @@ Commits: conventional (`feat:` `fix:` `refactor:` `docs:` `chore:` `test:`). Inc
 ## Worktree Rules
 
 - Create a safe linked worktree for every development task; the next session must inherit `main`, not a task ref.
-- Reference the sibling worktree path (`~/Git/{repo}-{type}-{slug}/` or `~/Git/{ecosystem}/{repo}-{type}-{slug}/`), not "switching the main repo to a branch".
+- Reference the linked worktree path (`~/Git/_worktrees/{repo}-{type}-{slug}/` by default), not "switching the main repo to a branch".
 - After switching to a worktree, re-read files at the worktree path before editing.
 - Never remove a worktree you did not create unless the user explicitly asked.
 

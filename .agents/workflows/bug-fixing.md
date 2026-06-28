@@ -79,7 +79,7 @@ For bugs requiring immediate release, create a safe linked worktree from the lat
 ```bash
 git tag -l "v*" --sort=-v:refname
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add hotfix/v{VERSION} --base v{LATEST_TAG}
-# Critical: cd into the sibling worktree path printed by the helper before editing;
+# Critical: cd into the linked worktree path printed by the helper before editing;
 # otherwise commits land in the canonical checkout and can disrupt active agents.
 # Apply minimal fix, bump PATCH, commit, tag, push
 # Merge back to main after release

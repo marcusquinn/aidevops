@@ -77,6 +77,34 @@ setup_worktree_exclusions() {
 	return 0
 }
 
+setup_worktree_location() {
+	local label="Worktree location"
+	local helper=""
+	local script_dir
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 0
+	if [[ -f "$script_dir/../worktree-paths.sh" ]]; then
+		helper="$script_dir/../worktree-paths.sh"
+	elif [[ -f "${HOME}/.aidevops/agents/scripts/worktree-paths.sh" ]]; then
+		helper="${HOME}/.aidevops/agents/scripts/worktree-paths.sh"
+	fi
+	if [[ -n "$helper" ]]; then
+		# shellcheck source=/dev/null
+		source "$helper"
+		local repos_json="${AIDEVOPS_REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+		aidevops_migrate_repos_json_worktree_base_dir "$repos_json" "~"'/Git/_worktrees' || true
+		local base_dir
+		base_dir=$(aidevops_worktree_base_dir_configured)
+		if aidevops_ensure_worktree_base_dir "$base_dir"; then
+			print_success "Configured linked worktree base: $base_dir"
+			setup_track_configured "$label"
+			return 0
+		fi
+	fi
+	print_warning "Could not configure centralized worktree location"
+	setup_track_skipped "$label" "helper unavailable or base dir unwritable"
+	return 0
+}
+
 #######################################
 # Post a one-time advisory if Backblaze is detected and the user has not yet
 # dismissed it. Advisory file is written under ~/.aidevops/advisories/ per the

@@ -100,7 +100,7 @@ git revert <release-commit-hash> && git push origin main
 gh release delete v{VERSION} --yes && git tag -d v{VERSION} && git push origin --delete v{VERSION}
 # Option C: Hotfix release from a safe linked worktree
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add hotfix/v{VERSION}.1 --base v{VERSION}
-# Critical: cd into the sibling worktree path printed by the helper before editing;
+# Critical: cd into the linked worktree path printed by the helper before editing;
 # otherwise commits land in the canonical checkout, which can corrupt main state
 # or disrupt active agents that depend on their own linked worktrees.
 # Example after changing into that linked worktree: stage the intended files first,

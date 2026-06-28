@@ -66,7 +66,7 @@ Fallback `--task` description keywords (when `--file` not provided):
 
 ## Worktree Default
 
-Keep `~/Git/{repo}/` on `main`. Avoids blocked branch switches, parallel sessions inheriting the wrong branch, and `local changes would be overwritten` errors.
+Keep `~/Git/{repo}/` on `main`. Create linked worktrees under `${AIDEVOPS_WORKTREE_BASE_DIR:-~/Git/_worktrees}`. This avoids blocked branch switches, parallel sessions inheriting the wrong branch, and `local changes would be overwritten` errors.
 
 Stay on `main` only for allowlisted paths: `README.md`, `TODO.md`, `todo/**`. Planning-file commits use `planning-commit-helper.sh "plan: add new task"`; the helper opens a planning-only PR instead of direct-pushing when the default branch is protected.
 

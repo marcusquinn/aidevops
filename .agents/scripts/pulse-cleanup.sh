@@ -75,6 +75,10 @@ if [[ -n "$_PULSE_CLEANUP_SCRIPT_DIR" && -f "$_PULSE_CLEANUP_SCRIPT_DIR/shared-d
 	# shellcheck source=shared-dispatch-label-cleanup.sh
 	source "$_PULSE_CLEANUP_SCRIPT_DIR/shared-dispatch-label-cleanup.sh"
 fi
+if [[ -n "$_PULSE_CLEANUP_SCRIPT_DIR" && -f "$_PULSE_CLEANUP_SCRIPT_DIR/worktree-paths.sh" ]]; then
+	# shellcheck source=worktree-paths.sh
+	source "$_PULSE_CLEANUP_SCRIPT_DIR/worktree-paths.sh"
+fi
 # GH#23677 / t3700: Do NOT `unset _PULSE_CLEANUP_SCRIPT_DIR`. The previous
 # version unset this immediately after sourcing the four sibling helpers,
 # but _cleanup_merged_prs_for_all_repos() (line ~251) reads it later to
@@ -1525,11 +1529,24 @@ _pc_classify_orphan_sibling_dir() {
 	local now_epoch="$3"
 	[[ -d "$candidate_path" ]] || return 1
 
-	local repo_parent
+	local repo_parent central_base
 	repo_parent=$(dirname "$rp_orphan")
+	central_base=""
+	if declare -F aidevops_worktree_base_dir_configured >/dev/null 2>&1; then
+		central_base=$(aidevops_worktree_base_dir_configured)
+	fi
 	case "$candidate_path" in
-	"$repo_parent"/*) ;;
-	*) return 1 ;;
+	"$repo_parent"/*) : ;;
+	*)
+		if [[ -n "$central_base" ]]; then
+			case "$candidate_path" in
+			"$central_base"/*) : ;;
+			*) return 1 ;;
+			esac
+		else
+			return 1
+		fi
+		;;
 	esac
 
 	if command -v is_registered_canonical >/dev/null 2>&1; then
@@ -1579,9 +1596,13 @@ _pc_cleanup_orphan_sibling_dirs() {
 	while IFS= read -r rp_orphan; do
 		[[ -z "$rp_orphan" ]] && continue
 		[[ -d "$rp_orphan/.git" || -f "$rp_orphan/.git" ]] || continue
-		local repo_parent repo_name candidate_path candidate_name reason
+		local repo_parent repo_name candidate_path candidate_name reason central_base
 		repo_parent=$(dirname "$rp_orphan")
 		repo_name=$(basename "$rp_orphan")
+		central_base=""
+		if declare -F aidevops_worktree_base_dir_configured >/dev/null 2>&1; then
+			central_base=$(aidevops_worktree_base_dir_configured)
+		fi
 		[[ -d "$repo_parent" && -n "$repo_name" ]] || continue
 		for candidate_path in "$repo_parent/$repo_name"-* "$repo_parent/$repo_name".*; do
 			[[ -d "$candidate_path" ]] || continue
@@ -1597,6 +1618,22 @@ _pc_cleanup_orphan_sibling_dirs() {
 				fi
 			fi
 		done
+		if [[ -n "$central_base" && -d "$central_base" && "$central_base" != "$repo_parent" ]]; then
+			for candidate_path in "$central_base/$repo_name"-* "$central_base/$repo_name".*; do
+				[[ -d "$candidate_path" ]] || continue
+				candidate_name=$(basename "$candidate_path")
+				_pc_orphan_sibling_name_allowed "$repo_name" "$candidate_name" || continue
+				if reason=$(_pc_classify_orphan_sibling_dir "$rp_orphan" "$candidate_path" "$now_epoch"); then
+					echo "[pulse-wrapper] Orphan dir cleanup ($repo_name): moving $candidate_path to trash — $reason" >>"$LOGFILE"
+					if _pc_trash_orphan_dir "$candidate_path"; then
+						log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_PC_CALLER" "$candidate_path" "$reason" "trash"
+						moved_count=$((moved_count + 1))
+					else
+						log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$candidate_path" "trash-failed" "skipped"
+					fi
+				fi
+			done
+		fi
 	done <<<"$repo_paths_orphan"
 
 	echo "$moved_count"

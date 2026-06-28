@@ -20,7 +20,7 @@ tools:
 
 ```bash
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add refactor/{description}
-# Then cd into the sibling worktree path printed by the helper before editing.
+# Then cd into the linked worktree path printed by the helper before editing.
 ```
 
 ## When to Use

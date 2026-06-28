@@ -1330,6 +1330,8 @@ _setup_run_non_interactive() {
 	# at commit time (t2047). Belt-and-braces with the CI check in
 	# .github/workflows/task-id-collision-check.yml.
 	_time_step "setup_task_id_guard" setup_task_id_guard
+	# Configure the centralized flat linked-worktree directory used by helpers.
+	_time_step "setup_worktree_location" setup_worktree_location
 	# Apply Spotlight + Time Machine exclusions to every worktree across
 	# registered repos so the backup/index cascade triggered by node_modules
 	# copies doesn't burn CPU (t2885). Idempotent. macOS only — Linux
