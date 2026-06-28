@@ -359,6 +359,40 @@ GHEOF
 	return 0
 }
 
+create_gh_stub_function_complexity_duplicate() {
+	local body_file="${TEST_ROOT}/issue_body.txt"
+	local actions_file="${TEST_ROOT}/gh-actions.log"
+	printf '<!-- aidevops:generator=function-complexity-sweep cited_file=packages/gui-web/src/InventorySurfaces.tsx smell_count=3 -->\n## Qlty Maintainability\n' >"$body_file"
+	: >"$actions_file"
+
+	cat >"${TEST_ROOT}/bin/gh" <<GHEOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+args="\$*"
+
+if [[ "\${1:-}" == "api" ]] && printf '%s' "\${2:-}" | grep -qE '/issues/[0-9]+\$'; then
+	python3 -c "import sys; sys.stdout.write(open('${body_file}').read())" 2>/dev/null
+	exit 0
+fi
+
+if [[ "\${1:-}" == "issue" && "\${2:-}" == "list" ]] && printf '%s' "\$args" | grep -qF 'cited_file=packages/gui-web/src/InventorySurfaces.tsx'; then
+	printf '25757\tstatus:available,function-complexity-debt\n25778\tstatus:available,function-complexity-debt\n'
+	exit 0
+fi
+
+if [[ "\${1:-}" == "issue" && ( "\${2:-}" == "comment" || "\${2:-}" == "close" ) ]]; then
+	printf '%s\n' "\$args" >>'${actions_file}'
+	exit 0
+fi
+
+printf 'unsupported gh invocation: %s\n' "\$*" >&2
+exit 1
+GHEOF
+	chmod +x "${TEST_ROOT}/bin/gh"
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -605,6 +639,29 @@ test_source_review_scanner_label_enters_supersession_scope() {
 	return 0
 }
 
+test_function_complexity_sweep_duplicate_closes_later_issue() {
+	setup_test_env
+	create_gh_stub_function_complexity_duplicate
+
+	local rc=0
+	"$HELPER_SCRIPT" validate "25778" "marcusquinn/aidevops" >/dev/null 2>&1 || rc=$?
+
+	if [[ "$rc" -eq 10 ]]; then
+		print_result "function_complexity_sweep duplicate later issue exits 10" 0
+	else
+		print_result "function_complexity_sweep duplicate later issue exits 10" 1 "Expected exit 10, got ${rc}"
+	fi
+
+	if grep -q "close 25778" "${TEST_ROOT}/gh-actions.log" 2>/dev/null; then
+		print_result "function_complexity_sweep duplicate closes current issue" 0
+	else
+		print_result "function_complexity_sweep duplicate closes current issue" 1 "Expected close action for #25778"
+	fi
+
+	teardown_test_env
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -630,6 +687,7 @@ main() {
 	test_review_feedback_preserves_version_directory_paths
 	test_review_followup_label_enters_supersession_scope
 	test_source_review_scanner_label_enters_supersession_scope
+	test_function_complexity_sweep_duplicate_closes_later_issue
 
 	printf '\n%d test(s) run, %d failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 
