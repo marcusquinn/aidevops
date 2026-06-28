@@ -19,6 +19,7 @@ export function AppsSurface({ status }: { status: GuiStatusData }): ReactElement
   const [appCollection, setAppCollection] = useState<AppCollectionId>("aidevops");
   const [managedCategory, setManagedCategory] = useState<ManagedCategoryId>("core");
   const [recommendedPlatform, setRecommendedPlatform] = useState<RecommendedPlatformFilterId>("all");
+  const [recommendedOs, setRecommendedOs] = useState<RecommendedOsId>("all");
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [expandedAppId, setExpandedAppId] = useState<string | null>(() => sortedManagedApps(status.managed_apps).find((app) => managedCategoryForApp(app) === "core")?.id ?? null);
   const [jobs, setJobs] = useState<Record<string, GuiAppActionJobSummary>>({});
@@ -27,7 +28,7 @@ export function AppsSurface({ status }: { status: GuiStatusData }): ReactElement
   const selectedJob = selectedJobId === null ? null : jobs[selectedJobId] ?? null;
   const managedApps = sortedManagedApps(status.managed_apps).map((app) => applyManagedPolicyToggles(app, policyToggles[app.id]));
   const visibleManagedApps = managedApps.filter((app) => managedCategoryForApp(app) === managedCategory);
-  const visibleRecommendedApps = recommendedApps.filter((app) => recommendedPlatform === "all" || app.platforms.includes(recommendedPlatform));
+  const visibleRecommendedApps = recommendedApps.filter((app) => recommendedAppMatchesFilters(app, recommendedPlatform, recommendedOs));
 
   useEffect(() => {
     setExpandedAppId(visibleManagedApps[0]?.id ?? null);
@@ -84,7 +85,7 @@ export function AppsSurface({ status }: { status: GuiStatusData }): ReactElement
           ))}
         </div>
         <p className="empty-state compact-notice">Install/update actions run as allowlisted background jobs and stream inside each app panel. xterm.js with a node-pty bridge is the right next step for full TUI apps such as OpenCode; this view starts with non-interactive command logs.</p>
-      </> : <RecommendedAppsSurface apps={visibleRecommendedApps} platform={recommendedPlatform} setPlatform={setRecommendedPlatform} />}
+      </> : <RecommendedAppsSurface apps={visibleRecommendedApps} os={recommendedOs} platform={recommendedPlatform} setOs={setRecommendedOs} setPlatform={setRecommendedPlatform} />}
     </section>
   );
 }
@@ -310,6 +311,15 @@ const recommendedPlatformTabs: TabOption<RecommendedPlatformFilterId>[] = [
   { id: "api", label: "API" },
 ];
 
+const recommendedOsTabs: TabOption<RecommendedOsId>[] = [
+  { id: "all", label: "All OS" },
+  { id: "macos", label: "macOS" },
+  { id: "linux", label: "Linux" },
+  { id: "windows", label: "Windows" },
+  { id: "ios", label: "iOS" },
+  { id: "android", label: "Android" },
+];
+
 const recommendedApps = ([
   { name: "Affinity Studio", description: "Creative design suite.", websiteUrl: "https://www.affinity.studio/", alternativeToUrl: "https://alternativeto.net/software/affinity-1/", os: ["macos", "windows", "ios"], platforms: [] },
   { name: "Bitwarden", description: "Open source password manager.", websiteUrl: "https://bitwarden.com", alternativeToUrl: "https://alternativeto.net/software/bitwarden--free-password-manager/", repoUrl: "https://github.com/bitwarden", os: ["macos", "linux", "windows", "ios", "android"], platforms: ["webapp", "saas", "cli", "api"] },
@@ -366,16 +376,19 @@ function TabNav<T extends string>({ label, onChange, tabs, value }: { label: str
   return <div aria-label={label} className="pill-tabs app-subnav" role="tablist">{tabs.map((tab) => <button aria-selected={value === tab.id} className={value === tab.id ? "active" : ""} key={tab.id} onClick={() => onChange(tab.id)} role="tab" type="button">{tab.label}</button>)}</div>;
 }
 
-function RecommendedAppsSurface({ apps, platform, setPlatform }: { apps: RecommendedApp[]; platform: RecommendedPlatformFilterId; setPlatform: (platform: RecommendedPlatformFilterId) => void }): ReactElement {
+function RecommendedAppsSurface({ apps, os, platform, setOs, setPlatform }: { apps: RecommendedApp[]; os: RecommendedOsId; platform: RecommendedPlatformFilterId; setOs: (os: RecommendedOsId) => void; setPlatform: (platform: RecommendedPlatformFilterId) => void }): ReactElement {
   return <>
-    <TabNav label="Recommended app platform filters" tabs={recommendedPlatformTabs} value={platform} onChange={setPlatform} />
+    <div className="recommended-filter-tabs">
+      <TabNav label="Recommended app platform filters" tabs={recommendedPlatformTabs} value={platform} onChange={setPlatform} />
+      <TabNav label="Recommended app operating system filters" tabs={recommendedOsTabs} value={os} onChange={setOs} />
+    </div>
     <div className="recommended-app-grid">
-      {apps.map((app) => <RecommendedAppCard app={app} key={app.name} setPlatform={setPlatform} />)}
+      {apps.map((app) => <RecommendedAppCard app={app} key={app.name} setOs={setOs} setPlatform={setPlatform} />)}
     </div>
   </>;
 }
 
-function RecommendedAppCard({ app, setPlatform }: { app: RecommendedApp; setPlatform: (platform: RecommendedPlatformFilterId) => void }): ReactElement {
+function RecommendedAppCard({ app, setOs, setPlatform }: { app: RecommendedApp; setOs: (os: RecommendedOsId) => void; setPlatform: (platform: RecommendedPlatformFilterId) => void }): ReactElement {
   return <article className="recommended-app-card">
     <div>
       <strong>{app.name}</strong>
@@ -383,7 +396,7 @@ function RecommendedAppCard({ app, setPlatform }: { app: RecommendedApp; setPlat
     </div>
     <div className="app-icon-groups">
       <PlatformIconList platforms={app.platforms} setPlatform={setPlatform} />
-      <OsIconList os={app.os} />
+      <OsIconList os={app.os} setOs={setOs} />
     </div>
     <div className="managed-app-links plain-links">
       <OriginLink href={app.websiteUrl} label={text.website} />
@@ -417,15 +430,15 @@ function PlatformIcon({ id, setPlatform }: { id: RecommendedPlatformId; setPlatf
   return <button aria-label={`Filter by ${label}`} data-tooltip={`Filter by ${label}`} onClick={() => setPlatform(id)} title={`Filter by ${label}`} type="button"><Icon aria-hidden="true" focusable="false" /></button>;
 }
 
-function OsIconList({ os }: { os: RecommendedOsId[] }): ReactElement | null {
+function OsIconList({ os, setOs }: { os: RecommendedOsId[]; setOs: (os: RecommendedOsId) => void }): ReactElement | null {
   if (os.length === 0) {
     return null;
   }
 
-  return <span className="os-icon-list">{os.map((item) => <OsIcon id={item} key={item} />)}</span>;
+  return <span className="os-icon-list">{os.map((item) => <OsIcon id={item} key={item} setOs={setOs} />)}</span>;
 }
 
-function OsIcon({ id }: { id: RecommendedOsId }): ReactElement {
+function OsIcon({ id, setOs }: { id: RecommendedOsId; setOs: (os: RecommendedOsId) => void }): ReactElement {
   const iconMap: Record<RecommendedOsId, { Icon: IconType; label: string }> = {
     all: { Icon: FiGlobe, label: "Web app" },
     macos: { Icon: FaApple, label: "macOS" },
@@ -436,7 +449,14 @@ function OsIcon({ id }: { id: RecommendedOsId }): ReactElement {
   };
   const { Icon, label } = iconMap[id];
 
-  return <span aria-label={label} data-tooltip={label} role="img" title={label}><Icon aria-hidden="true" focusable="false" /></span>;
+  return <button aria-label={`Filter by ${label}`} data-tooltip={`Filter by ${label}`} onClick={() => setOs(id)} title={`Filter by ${label}`} type="button"><Icon aria-hidden="true" focusable="false" /></button>;
+}
+
+function recommendedAppMatchesFilters(app: RecommendedApp, platform: RecommendedPlatformFilterId, os: RecommendedOsId): boolean {
+  const platformMatches = platform === "all" || app.platforms.includes(platform);
+  const osMatches = os === "all" || app.os.includes(os);
+
+  return platformMatches && osMatches;
 }
 
 function applyManagedPolicyToggles(app: GuiManagedAppSummary, policy: Partial<Record<ManagedPolicyId, boolean>> | undefined): GuiManagedAppSummary {

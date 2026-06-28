@@ -2523,6 +2523,12 @@ button.managed-toggle:focus-visible {
   justify-self: start;
 }
 
+.recommended-filter-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
 .recommended-app-grid {
   display: grid;
   gap: 12px;
