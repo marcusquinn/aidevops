@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.18] - 2026-06-28
+
+### Fixed
+
+- dedupe quality sweep worker targets (#25794)
+
 ## [3.29.17] - 2026-06-28
 
 ### Fixed
