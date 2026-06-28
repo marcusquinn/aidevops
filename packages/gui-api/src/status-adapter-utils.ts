@@ -152,7 +152,6 @@ function binaryPathCandidates(binary: string): string[] {
 }
 
 function expandedPath(): string {
-  const home = process.env.HOME ?? "";
   const extraPaths = [
     "/opt/homebrew/bin",
     "/usr/local/bin",
@@ -160,11 +159,16 @@ function expandedPath(): string {
     "/bin",
     "/usr/sbin",
     "/sbin",
-    join(home, ".bun/bin"),
-    join(home, ".local/bin"),
-    join(home, ".cursor/bin"),
-    join(home, ".qlty/bin"),
   ];
+  const home = process.env.HOME;
+  if (home) {
+    extraPaths.push(
+      join(home, ".bun/bin"),
+      join(home, ".local/bin"),
+      join(home, ".cursor/bin"),
+      join(home, ".qlty/bin"),
+    );
+  }
   return [...new Set([...(process.env.PATH ?? "").split(":"), ...extraPaths].filter(Boolean))].join(":");
 }
 

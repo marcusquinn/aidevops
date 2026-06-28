@@ -3,6 +3,7 @@ import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readStatus, readVaultStatus, readVaultSummary, STATUS_ADAPTER_COMMAND } from "../src/status-adapter";
+import { resolveBinary } from "../src/status-adapter-utils";
 
 describe("status adapter", () => {
   test("uses an exact helper command pattern", () => {
@@ -78,5 +79,37 @@ describe("status adapter", () => {
     expect(vault.status).toBe("unlocked");
     expect(vault.setup_state).toBe("migration-ready");
     expect(vault.readiness.migration_allowed).toBe(true);
+  });
+
+  test("does not search relative home tool paths when HOME is unset", () => {
+    const originalCwd = process.cwd();
+    const originalHome = process.env.HOME;
+    const originalPath = process.env.PATH;
+    const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-relative-path-"));
+    const fakeBinDir = join(repoRoot, ".bun", "bin");
+    const fakeBinary = join(fakeBinDir, "aidevops-relative-path-sentinel");
+    mkdirSync(fakeBinDir, { recursive: true });
+    writeFileSync(fakeBinary, "#!/bin/sh\nexit 0\n");
+    chmodSync(fakeBinary, 0o700);
+
+    try {
+      process.chdir(repoRoot);
+      delete process.env.HOME;
+      process.env.PATH = "";
+
+      expect(resolveBinary("aidevops-relative-path-sentinel")).toBeNull();
+    } finally {
+      process.chdir(originalCwd);
+      if (originalHome === undefined) {
+        delete process.env.HOME;
+      } else {
+        process.env.HOME = originalHome;
+      }
+      if (originalPath === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = originalPath;
+      }
+    }
   });
 });
