@@ -396,6 +396,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
     }
 
+    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard let url = navigationAction.request.url else {
+            decisionHandler(.allow)
+            return
+        }
+
+        if isLocalAppURL(url) {
+            decisionHandler(.allow)
+            return
+        }
+
+        if url.scheme == "http" || url.scheme == "https" {
+            NSWorkspace.shared.open(url)
+            decisionHandler(.cancel)
+            return
+        }
+
+        decisionHandler(.allow)
+    }
+
+    private func isLocalAppURL(_ url: URL) -> Bool {
+        let host = url.host ?? ""
+        return (host == "127.0.0.1" || host == "localhost") && url.port == Int(webPort)
+    }
+
     private func configureMenu() {
         let appName = "aidevops"
         let mainMenu = NSMenu(title: "Main Menu")

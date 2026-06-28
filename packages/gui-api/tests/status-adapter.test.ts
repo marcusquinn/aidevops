@@ -33,6 +33,8 @@ describe("status adapter", () => {
     expect(JSON.stringify(response.data.oauth_pool)).not.toContain("\"refresh\"");
     expect(response.data.setup_targets.map((target) => target.path_ref)).toContain("~/.aidevops/agents/VERSION");
     expect(response.data.setup_targets.every((target) => typeof target.needs_update === "boolean")).toBe(true);
+    expect(response.data.managed_apps.map((app) => app.id)).toContain("pulse");
+    expect(response.data.managed_apps.find((app) => app.id === "ollama")?.install_path_ref).not.toBe("not found");
     expect(response.data.ai_apps.map((app) => app.name)).toEqual(["OpenCode", "Claude Code", "Codex CLI", "Cursor"]);
     expect(JSON.stringify(response.data.ai_apps)).not.toContain("token");
     expect(response.data.notifications.every((notification) => notification.source_ref.length > 0)).toBe(true);

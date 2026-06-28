@@ -1,8 +1,8 @@
 import type { GuiAppActionId, GuiAppActionJobSummary, GuiManagedAppSummary, GuiResponseEnvelope, GuiStatusData } from "@aidevops/gui-shared";
-import { type Dispatch, type MouseEvent as ReactMouseEvent, type ReactElement, type SetStateAction, useEffect, useRef, useState } from "react";
+import { type Dispatch, type MouseEvent as ReactMouseEvent, type ReactElement, type ReactNode, type SetStateAction, useEffect, useRef, useState } from "react";
 import type { IconType } from "react-icons";
 import { FaApple, FaLinux, FaWindows } from "react-icons/fa";
-import { FiChevronDown, FiCode, FiDownload, FiExternalLink, FiGlobe, FiMonitor, FiRefreshCw, FiRepeat, FiTerminal, FiTrash2 } from "react-icons/fi";
+import { FiChevronDown, FiCode, FiDownload, FiExternalLink, FiGlobe, FiMonitor, FiRefreshCw, FiRepeat, FiTerminal, FiTrash2, FiX } from "react-icons/fi";
 import { IoLogoAndroid } from "react-icons/io";
 import { SiIos } from "react-icons/si";
 import type { InventoryColumn } from "./app-model";
@@ -23,6 +23,7 @@ export function AppsSurface({ status }: { status: GuiStatusData }): ReactElement
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [expandedAppId, setExpandedAppId] = useState<string | null>(() => sortedManagedApps(status.managed_apps).find((app) => managedCategoryForApp(app) === "core")?.id ?? null);
   const [jobs, setJobs] = useState<Record<string, GuiAppActionJobSummary>>({});
+  const [dismissedJobIds, setDismissedJobIds] = useState<Set<string>>(() => new Set());
   const [policyJobs, setPolicyJobs] = useState<Record<string, GuiAppActionJobSummary[]>>({});
   const [policyToggles, setPolicyToggles] = useState<ManagedPolicyToggleState>(() => readManagedPolicyToggles());
   const selectedJob = selectedJobId === null ? null : jobs[selectedJobId] ?? null;
@@ -36,17 +37,24 @@ export function AppsSurface({ status }: { status: GuiStatusData }): ReactElement
     setExpandedAppId(visibleManagedApps[0]?.id ?? null);
   }, [managedCategory, status.managed_apps]);
 
+  const runningJobIdsKey = Object.values(jobs).filter((job) => job.status === "running").map((job) => job.id).sort().join("|");
+
   useEffect(() => {
-    if (selectedJob === null || selectedJob.status !== "running") {
+    const runningJobIds = runningJobIdsKey.split("|").filter(Boolean);
+    if (runningJobIds.length === 0) {
       return undefined;
     }
 
-    const timer = window.setInterval(() => {
-      void refreshJob(selectedJob.id, setJobs);
-    }, 1_500);
+    const refreshRunningJobs = () => {
+      for (const jobId of runningJobIds) {
+        void refreshJob(jobId, setJobs);
+      }
+    };
+    refreshRunningJobs();
+    const timer = window.setInterval(refreshRunningJobs, 1_500);
 
     return () => window.clearInterval(timer);
-  }, [selectedJob]);
+  }, [runningJobIdsKey]);
 
   return (
     <section className="apps-surface" aria-label={text.apps}>
@@ -65,8 +73,15 @@ export function AppsSurface({ status }: { status: GuiStatusData }): ReactElement
               expanded={expandedAppId === app.id}
               job={jobForApp(app.id, jobs, selectedJob)}
               key={app.id}
+              dismissedJobIds={dismissedJobIds}
               policyJobs={policyJobs[app.id] ?? []}
+              onDismissJob={(jobId) => setDismissedJobIds((current) => new Set([...current, jobId]))}
               onJob={(job) => {
+                setDismissedJobIds((current) => {
+                  const next = new Set(current);
+                  next.delete(job.id);
+                  return next;
+                });
                 setJobs((current) => ({ ...current, [job.id]: job }));
                 setSelectedJobId(job.id);
                 setExpandedAppId(app.id);
@@ -92,8 +107,10 @@ export function AppsSurface({ status }: { status: GuiStatusData }): ReactElement
   );
 }
 
-function ManagedAppPanel({ app, expanded, job, onJob, onPolicyToggle, onToggle, policyJobs }: { app: GuiManagedAppSummary; expanded: boolean; job: GuiAppActionJobSummary | null; onJob: (job: GuiAppActionJobSummary) => void; onPolicyToggle: (policy: ManagedPolicyId, value: boolean) => void; onToggle: () => void; policyJobs: GuiAppActionJobSummary[] }): ReactElement {
+function ManagedAppPanel({ app, dismissedJobIds, expanded, job, onDismissJob, onJob, onPolicyToggle, onToggle, policyJobs }: { app: GuiManagedAppSummary; dismissedJobIds: Set<string>; expanded: boolean; job: GuiAppActionJobSummary | null; onDismissJob: (jobId: string) => void; onJob: (job: GuiAppActionJobSummary) => void; onPolicyToggle: (policy: ManagedPolicyId, value: boolean) => void; onToggle: () => void; policyJobs: GuiAppActionJobSummary[] }): ReactElement {
   const lockedPolicy = isEssentialManagedApp(app);
+  const visibleJob = job === null || dismissedJobIds.has(job.id) ? null : job;
+  const visiblePolicyJobs = policyJobs.filter((policyJob) => !dismissedJobIds.has(policyJob.id));
 
   return (
     <article className={expanded ? "managed-app-card expanded" : "managed-app-card"}>
@@ -122,12 +139,12 @@ function ManagedAppPanel({ app, expanded, job, onJob, onPolicyToggle, onToggle, 
       <div className="managed-app-details">
         <ToggleSwitch checked={app.aidevops_install} disabled={lockedPolicy} label="setup installs" onChange={(value) => onPolicyToggle("setup", value)} />
         <ToggleSwitch checked={app.aidevops_update} disabled={lockedPolicy} label="update maintains" onChange={(value) => onPolicyToggle("update", value)} />
-        {job ? <AppLogLink job={job} /> : null}
+        {visibleJob ? <AppLogLink job={visibleJob} /> : null}
       </div>
       <AppMeta className="managed-app-path" label={text.path} value={app.install_path_ref} />
-      {job ? <AppActionTerminal job={job} /> : null}
-      {policyJobs.map((policyJob) => <AppActionTerminal job={policyJob} key={policyJob.id} />)}
-      {job === null && policyJobs.length === 0 ? <p className="empty-state compact-notice">No recent command output for this app. Run an action or change a policy toggle to open this app's terminal log.</p> : null}
+      {visibleJob ? <AppActionTerminal job={visibleJob} onDismiss={onDismissJob} /> : null}
+      {visiblePolicyJobs.map((policyJob) => <AppActionTerminal job={policyJob} key={policyJob.id} onDismiss={onDismissJob} />)}
+      {visibleJob === null && visiblePolicyJobs.length === 0 ? <p className="empty-state compact-notice">No recent command output for this app. Run an action or change a policy toggle to open this app's terminal log.</p> : null}
       </div> : null}
     </article>
   );
@@ -194,7 +211,7 @@ function ConfirmActionModal({ action, app, close, commandPreview, confirm }: { a
   );
 }
 
-function AppActionTerminal({ job }: { job: GuiAppActionJobSummary }): ReactElement {
+function AppActionTerminal({ job, onDismiss }: { job: GuiAppActionJobSummary; onDismiss: (jobId: string) => void }): ReactElement {
   const outputRef = useRef<HTMLPreElement | null>(null);
 
   useEffect(() => {
@@ -205,10 +222,69 @@ function AppActionTerminal({ job }: { job: GuiAppActionJobSummary }): ReactEleme
 
   return (
     <section className="app-terminal" id={`app-job-${job.id}`} aria-label="App action terminal output">
-      <header><strong>{job.app_id} {job.action}</strong><span>{job.status}{job.exit_code === null ? "" : ` (${job.exit_code})`}</span></header>
-      <pre ref={outputRef}>{job.output.join("\n")}</pre>
+      <header><strong>{job.app_id} {job.action}</strong><span>{terminalStatusLabel(job)}</span><button aria-label={`Dismiss ${job.app_id} ${job.action} terminal output`} className="terminal-close-button" onClick={() => onDismiss(job.id)} title="Dismiss terminal output" type="button"><FiX aria-hidden="true" /></button></header>
+      <pre ref={outputRef}>{renderTerminalOutput(job.output)}</pre>
     </section>
   );
+}
+
+function terminalStatusLabel(job: GuiAppActionJobSummary): string {
+  if (job.status === "running") {
+    return "running";
+  }
+  if (job.exit_code === null) {
+    return job.status;
+  }
+  return `${job.status} · exit ${job.exit_code}`;
+}
+
+function renderTerminalOutput(lines: string[]): ReactNode[] {
+  return lines.flatMap((line, index) => [
+    ...renderAnsiLine(line, `line-${index}`),
+    index === lines.length - 1 ? null : "\n",
+  ]).filter((node): node is ReactNode => node !== null);
+}
+
+function renderAnsiLine(line: string, keyPrefix: string): ReactNode[] {
+  const nodes: ReactNode[] = [];
+  const ansiPattern = new RegExp("\\x1b\\[([0-9;]*)m", "g");
+  let activeClass = "";
+  let lastIndex = 0;
+  let match = ansiPattern.exec(line);
+
+  while (match !== null) {
+    if (match.index > lastIndex) {
+      nodes.push(terminalSpan(line.slice(lastIndex, match.index), activeClass, `${keyPrefix}-${nodes.length}`));
+    }
+    activeClass = ansiClassForCodes(match[1]);
+    lastIndex = ansiPattern.lastIndex;
+    match = ansiPattern.exec(line);
+  }
+
+  if (lastIndex < line.length) {
+    nodes.push(terminalSpan(line.slice(lastIndex), activeClass, `${keyPrefix}-${nodes.length}`));
+  }
+
+  if (nodes.length === 0) {
+    nodes.push(terminalSpan(line, activeClass, `${keyPrefix}-0`));
+  }
+
+  return nodes;
+}
+
+function terminalSpan(textValue: string, className: string, key: string): ReactNode {
+  const promptClass = textValue.startsWith("$ ") ? "ansi-prompt" : "";
+  const combinedClass = [className, promptClass].filter(Boolean).join(" ");
+  return combinedClass.length > 0 ? <span className={combinedClass} key={key}>{textValue}</span> : textValue;
+}
+
+function ansiClassForCodes(rawCodes: string): string {
+  const codes = rawCodes.length === 0 ? [0] : rawCodes.split(";").map((code) => Number.parseInt(code, 10));
+  const colorCode = [...codes].reverse().find((code) => (code >= 30 && code <= 37) || (code >= 90 && code <= 97));
+  if (colorCode === undefined) {
+    return "";
+  }
+  return `ansi-fg-${colorCode}`;
 }
 
 async function refreshJob(jobId: string, setJobs: Dispatch<SetStateAction<Record<string, GuiAppActionJobSummary>>>): Promise<void> {
@@ -321,16 +397,16 @@ const recommendedOsTabs: TabOption<RecommendedOsId>[] = [
 ];
 
 const recommendedApps = ([
-  { name: "Affinity Studio", description: "Creative design suite.", websiteUrl: "https://www.affinity.studio/", alternativeToUrl: "https://alternativeto.net/software/affinity-1/", os: ["macos", "windows", "ios"], platforms: [] },
-  { name: "Bitwarden", description: "Open source password manager.", websiteUrl: "https://bitwarden.com", alternativeToUrl: "https://alternativeto.net/software/bitwarden--free-password-manager/", repoUrl: "https://github.com/bitwarden", os: ["macos", "linux", "windows", "ios", "android"], platforms: ["webapp", "saas", "cli", "api"] },
-  { name: "Brave Browser", description: "Privacy-focused web browser.", websiteUrl: "https://brave.com/", alternativeToUrl: "https://alternativeto.net/software/brave/", os: ["macos", "linux", "windows", "ios", "android"], platforms: [] },
+  { name: "Affinity Studio", description: "Creative design suite.", websiteUrl: "https://www.affinity.studio/", alternativeToUrl: "https://alternativeto.net/software/affinity-1/", os: ["macos", "windows"], platforms: [] },
+  { name: "Bitwarden", description: "Open source password manager.", websiteUrl: "https://bitwarden.com", alternativeToUrl: "https://alternativeto.net/software/bitwarden--free-password-manager/", repoUrl: "https://github.com/bitwarden", iosUrl: "https://itunes.apple.com/app/bitwarden-free-password-manager/id1137397744?mt=8", androidUrl: "https://play.google.com/store/apps/details?id=com.x8bit.bitwarden", fdroidUrl: "https://mobileapp.bitwarden.com/fdroid/repo", os: ["macos", "linux", "windows", "ios", "android"], platforms: ["webapp", "saas", "cli", "api"] },
+  { name: "Brave Browser", description: "Privacy-focused web browser.", websiteUrl: "https://brave.com/", alternativeToUrl: "https://alternativeto.net/software/brave/", iosUrl: "https://apps.apple.com/app/brave-private-web-browser-vpn/id1052879175?mt=8", androidUrl: "https://play.google.com/store/apps/details?id=com.brave.browser", os: ["macos", "linux", "windows", "ios", "android"], platforms: [] },
   { name: "Cloudron", description: "Self-hosted app platform.", websiteUrl: "https://www.cloudron.io/", alternativeToUrl: "https://alternativeto.net/software/cloudron/", os: ["linux"], platforms: ["webapp", "cli", "api"] },
   { name: "Collabora Online", description: "Online office collaboration.", websiteUrl: "https://www.collaboraonline.com/collabora-online/", alternativeToUrl: "https://alternativeto.net/software/collabora-online/", os: ["linux"], platforms: ["webapp", "api"] },
   { name: "Cometly", description: "Marketing attribution analytics.", websiteUrl: "https://www.cometly.com/", os: [], platforms: ["saas", "api"] },
   { name: "DaVinci Resolve", description: "Professional video editing, color, VFX, and audio post-production.", websiteUrl: "https://www.blackmagicdesign.com/products/davinciresolve/", alternativeToUrl: "https://alternativeto.net/software/davinci-resolve/", os: ["macos", "linux", "windows"], platforms: [] },
   { name: "DocuSeal", description: "Open source document signing.", websiteUrl: "https://www.docuseal.com/", alternativeToUrl: "https://alternativeto.net/software/docuseal/", os: ["linux"], platforms: ["webapp", "saas", "api"] },
-  { name: "Element", description: "Matrix messaging client.", websiteUrl: "https://element.io/", alternativeToUrl: "https://alternativeto.net/software/element-app/", os: ["macos", "linux", "windows", "ios", "android"], platforms: ["webapp"] },
-  { name: "Enpass", description: "Offline-first password manager.", websiteUrl: "https://www.enpass.io/", alternativeToUrl: "https://alternativeto.net/software/enpass/", os: ["macos", "linux", "windows", "ios", "android"], platforms: [] },
+  { name: "Element", description: "Matrix messaging client.", websiteUrl: "https://element.io/", alternativeToUrl: "https://alternativeto.net/software/element-app/", iosUrl: "https://apps.apple.com/app/id1631335820", androidUrl: "https://play.google.com/store/apps/details?id=io.element.android.x", fdroidUrl: "https://f-droid.org/en/packages/io.element.android.x/", os: ["macos", "linux", "windows", "ios", "android"], platforms: ["webapp"] },
+  { name: "Enpass", description: "Offline-first password manager.", websiteUrl: "https://www.enpass.io/", alternativeToUrl: "https://alternativeto.net/software/enpass/", iosUrl: "https://apps.apple.com/app/apple-store/id455566716?pt=637991", androidUrl: "https://play.google.com/store/apps/details?id=io.enpass.app", os: ["macos", "linux", "windows", "ios", "android"], platforms: [] },
   { name: "EspoCRM", description: "Open source CRM.", websiteUrl: "https://www.espocrm.com/", alternativeToUrl: "https://alternativeto.net/software/espocrm/", os: ["linux"], platforms: ["webapp", "saas", "api"] },
   { name: "Fathom Analytics", description: "Privacy-first analytics.", websiteUrl: "https://usefathom.com/", alternativeToUrl: "https://alternativeto.net/software/fathom-analytics/", os: [], platforms: ["saas", "api"] },
   { name: "FontBase", description: "Font management and reference tool.", websiteUrl: "https://fontba.se/", alternativeToUrl: "https://alternativeto.net/software/fontbase/", os: ["macos"], platforms: [] },
@@ -341,10 +417,10 @@ const recommendedApps = ([
   { name: "LibreOffice", description: "Open source office suite.", websiteUrl: "https://www.libreoffice.org/", alternativeToUrl: "https://alternativeto.net/software/libreoffice/", os: ["macos", "linux", "windows"], platforms: [] },
   { name: "LocalWP", description: "Local WordPress development.", websiteUrl: "https://localwp.com/", alternativeToUrl: "https://alternativeto.net/software/local-by-flywheel/", os: ["macos", "linux", "windows"], platforms: [] },
   { name: "Matomo", description: "Open analytics platform.", websiteUrl: "https://matomo.org/", alternativeToUrl: "https://alternativeto.net/software/piwik/", os: ["linux"], platforms: ["webapp", "saas", "api"] },
-  { name: "Nextcloud", description: "Open source content collaboration platform.", websiteUrl: "https://nextcloud.com/", alternativeToUrl: "https://alternativeto.net/software/nextcloud/", repoUrl: "https://github.com/nextcloud", os: ["macos", "linux", "windows", "ios", "android"], platforms: ["webapp", "saas", "api"] },
+  { name: "Nextcloud", description: "Open source content collaboration platform.", websiteUrl: "https://nextcloud.com/", alternativeToUrl: "https://alternativeto.net/software/nextcloud/", repoUrl: "https://github.com/nextcloud", iosUrl: "https://itunes.apple.com/us/app/nextcloud/id1125420102?mt=8", androidUrl: "https://play.google.com/store/apps/details?id=com.nextcloud.client", fdroidUrl: "https://f-droid.org/packages/com.nextcloud.client/", os: ["macos", "linux", "windows", "ios", "android"], platforms: ["webapp", "saas", "api"] },
   { name: "Nextcloud Talk", description: "Open source video calls, chat, and collaboration for Nextcloud.", websiteUrl: "https://nextcloud.com/talk/", repoUrl: "https://github.com/nextcloud/spreed", iosUrl: "https://apps.apple.com/us/app/nextcloud-talk/id1296825574", androidUrl: "https://play.google.com/store/apps/details?id=com.nextcloud.talk2&hl=en", os: ["ios", "android"], platforms: ["webapp"] },
   { name: "OBS Studio", description: "Open source video recording and live streaming.", websiteUrl: "https://obsproject.com/", alternativeToUrl: "https://alternativeto.net/software/open-broadcaster-software/", repoUrl: "https://github.com/obsproject/obs-studio", os: ["macos", "linux", "windows"], platforms: [] },
-  { name: "ONLYOFFICE", description: "Office and document collaboration.", websiteUrl: "https://www.onlyoffice.com/", alternativeToUrl: "https://alternativeto.net/software/onlyoffice/", repoUrl: "https://github.com/ONLYOFFICE/", os: ["macos", "linux", "windows", "ios", "android"], platforms: ["webapp", "saas", "api"] },
+  { name: "ONLYOFFICE", description: "Office and document collaboration.", websiteUrl: "https://www.onlyoffice.com/", alternativeToUrl: "https://alternativeto.net/software/onlyoffice/", repoUrl: "https://github.com/ONLYOFFICE/", iosUrl: "https://apps.apple.com/us/app/onlyoffice-documents/id944896972", androidUrl: "https://play.google.com/store/apps/details?id=com.onlyoffice.documents", os: ["macos", "linux", "windows", "ios", "android"], platforms: ["webapp", "saas", "api"] },
   { name: "OpenScreen", description: "Open screen-sharing project.", websiteUrl: "https://github.com/getopenscreen/openscreen/releases", alternativeToUrl: "https://alternativeto.net/software/openscreen/", repoUrl: "https://github.com/getopenscreen/openscreen", os: ["macos", "linux", "windows"], platforms: [] },
   { name: "Osaurus", description: "AI app workspace.", websiteUrl: "https://osaurus.ai/", alternativeToUrl: "https://alternativeto.net/software/osaurus/", os: ["macos"], platforms: [] },
   { name: "Parallels Desktop", description: "Run Windows, Linux, and virtual machines on macOS.", websiteUrl: "https://www.parallels.com/products/desktop/", alternativeToUrl: "https://alternativeto.net/software/parallels-desktop/about/", os: ["macos"], platforms: [] },
@@ -357,13 +433,13 @@ const recommendedApps = ([
   { name: "QuickFile", description: "Accounting platform.", websiteUrl: "https://www.quickfile.co.uk/", os: [], platforms: ["saas", "api"] },
   { name: "Reframed", description: "Creative framing utility.", websiteUrl: "https://www.reframed.dev/", alternativeToUrl: "https://alternativeto.net/software/reframed/", os: ["macos"], platforms: [] },
   { name: "Rybbit", description: "Web analytics.", websiteUrl: "https://rybbit.com/", alternativeToUrl: "https://alternativeto.net/software/rybbit/", os: ["linux"], platforms: ["webapp", "saas", "api"] },
-  { name: "SchildiChat", description: "Matrix messaging client.", websiteUrl: "https://schildi.chat/", alternativeToUrl: "https://alternativeto.net/software/schildichat/", os: ["macos", "linux", "windows", "android"], platforms: ["webapp"] },
-  { name: "ScreenFlow", description: "Screen recording and editing.", websiteUrl: "https://www.telestream.net/screenflow/", alternativeToUrl: "https://alternativeto.net/software/screenflow/", os: ["macos", "ios"], platforms: [] },
+  { name: "SchildiChat", description: "Matrix messaging client.", websiteUrl: "https://schildi.chat/", alternativeToUrl: "https://alternativeto.net/software/schildichat/", androidUrl: "https://play.google.com/store/apps/details?id=chat.schildi.android", fdroidUrl: "https://schildi.chat/next/install-from-sc-fdroid", os: ["macos", "linux", "windows", "android"], platforms: ["webapp"] },
+  { name: "ScreenFlow", description: "Screen recording and editing.", websiteUrl: "https://www.telestream.net/screenflow/", alternativeToUrl: "https://alternativeto.net/software/screenflow/", os: ["macos"], platforms: [] },
   { name: "SEO Utils", description: "Desktop SEO tools.", websiteUrl: "https://seoutils.app/", os: ["macos", "linux", "windows"], platforms: [] },
   { name: "Shottr", description: "macOS screenshot utility.", websiteUrl: "https://shottr.cc/", alternativeToUrl: "https://alternativeto.net/software/shottr/", os: ["macos"], platforms: [] },
-  { name: "Signal", description: "Private messenger.", websiteUrl: "https://signal.org/", alternativeToUrl: "https://alternativeto.net/software/signal-private-messenger/", os: ["macos", "linux", "windows", "ios", "android"], platforms: [] },
-  { name: "SimpleX Chat", description: "Private messenger with no user IDs.", websiteUrl: "https://simplex.chat/", alternativeToUrl: "https://alternativeto.net/software/simplex-chat/about/", repoUrl: "https://github.com/simplex-chat", os: ["macos", "linux", "windows", "ios", "android"], platforms: ["cli"] },
-  { name: "Telegram", description: "Cloud-based mobile and desktop messaging app.", websiteUrl: "https://telegram.org/", iosUrl: "https://telegram.org/dl/ios", androidUrl: "https://telegram.org/android", os: ["macos", "linux", "windows", "ios", "android"], platforms: ["webapp", "api"] },
+  { name: "Signal", description: "Private messenger.", websiteUrl: "https://signal.org/", alternativeToUrl: "https://alternativeto.net/software/signal-private-messenger/", iosUrl: "https://apps.apple.com/us/app/signal-private-messenger/id874139669", androidUrl: "https://play.google.com/store/apps/details?id=org.thoughtcrime.securesms", os: ["macos", "linux", "windows", "ios", "android"], platforms: [] },
+  { name: "SimpleX Chat", description: "Private messenger with no user IDs.", websiteUrl: "https://simplex.chat/", alternativeToUrl: "https://alternativeto.net/software/simplex-chat/about/", repoUrl: "https://github.com/simplex-chat", iosUrl: "https://apps.apple.com/us/app/simplex-chat/id1605771084", androidUrl: "https://play.google.com/store/apps/details?id=chat.simplex.app", fdroidUrl: "https://simplex.chat/fdroid", os: ["macos", "linux", "windows", "ios", "android"], platforms: ["cli"] },
+  { name: "Telegram", description: "Cloud-based mobile and desktop messaging app.", websiteUrl: "https://telegram.org/", iosUrl: "https://apps.apple.com/us/app/telegram-messenger/id686449807", androidUrl: "https://play.google.com/store/apps/details?id=org.telegram.messenger", os: ["macos", "linux", "windows", "ios", "android"], platforms: ["webapp", "api"] },
   { name: "Thunderbird", description: "Email and calendar app.", websiteUrl: "https://www.thunderbird.net/", alternativeToUrl: "https://alternativeto.net/software/mozilla-thunderbird/about/", os: ["macos", "linux", "windows"], platforms: [] },
   { name: "Ubicloud", description: "Open cloud platform.", websiteUrl: "https://www.ubicloud.com/", alternativeToUrl: "https://alternativeto.net/software/ubicloud/about/", repoUrl: "https://github.com/ubicloud/ubicloud", os: ["linux"], platforms: ["webapp", "saas", "cli", "api"] },
   { name: "Vaultwarden", description: "Alternative Bitwarden server implementation.", websiteUrl: "https://github.com/dani-garcia/vaultwarden", alternativeToUrl: "https://alternativeto.net/software/vaultwarden/", repoUrl: "https://github.com/dani-garcia/vaultwarden", os: ["linux"], platforms: ["webapp", "api"] },
