@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.29.11] - 2026-06-28
 
+### Changed
+
+- Documentation: update changelog for apps filters
+
+### Fixed
+
+- refine apps platform filters
+
+## [3.29.11] - 2026-06-28
+
 ### Fixed
 
 - refine apps platform filters and link controls
