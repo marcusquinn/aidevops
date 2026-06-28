@@ -6,7 +6,7 @@ import { conversationThreads } from "./conversation-fixtures";
 export function CommsConversationSurface({ mode, threads = conversationThreads }: { mode: "channels" | "directMessages" | "people"; threads?: GuiConversationThread[] }) {
   const availableThreads = threads ?? [];
   const conversations = mode === "directMessages" ? availableThreads.filter((thread) => thread.conversation.type === "dm" || thread.conversation.type === "group_dm") : availableThreads.filter((thread) => thread.conversation.type === "channel");
-  const selectedThread = conversations[0] ?? availableThreads[0];
+  const selectedThread = conversations[0];
   const partsByMessage = new Map<string, GuiConversationMessagePart[]>();
 
   if (!selectedThread) {
@@ -104,7 +104,7 @@ function participantSummary(thread: GuiConversationThread): string {
 }
 
 function unreadCount(thread: GuiConversationThread): number {
-  const lastSequence = Math.max(0, ...conversationMessages(thread).map((message) => message.sequence));
+  const lastSequence = conversationMessages(thread).reduce((max, message) => Math.max(max, message.sequence), 0);
   const localRead = conversationReadStates(thread)[0]?.last_read_sequence ?? 0;
   return Math.max(0, lastSequence - localRead);
 }
