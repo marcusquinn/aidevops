@@ -97,6 +97,7 @@ function buildGuiStateNotifications(input: BuildNotificationInput): GuiNotificat
   const appNeedsUpdate = (input.aiApps ?? []).filter((app) => app.needs_update);
   const authErrors = (input.oauthPool?.providers ?? []).filter((provider) => provider.auth_errors > 0);
   const rateLimited = (input.oauthPool?.providers ?? []).filter((provider) => provider.rate_limited > 0);
+  const oauthPoolSourceRef = input.oauthPool?.path_ref ?? "oauth_pool";
   const notifications: GuiNotificationSummary[] = [];
 
   if (input.restartRequired) {
@@ -135,7 +136,7 @@ function buildGuiStateNotifications(input: BuildNotificationInput): GuiNotificat
       severity: "error",
       category: "runtime",
       source: "gui-status",
-      source_ref: input.oauthPool.path_ref,
+      source_ref: oauthPoolSourceRef,
       status: "active",
       actions: [surfaceAction("open-ai-providers", "Open AI providers", "aiProviders"), commandAction("check-oauth-pool", "Check provider pool", `aidevops oauth-pool check ${provider.provider}`)],
     }));
@@ -149,7 +150,7 @@ function buildGuiStateNotifications(input: BuildNotificationInput): GuiNotificat
       severity: "warning",
       category: "runtime",
       source: "gui-status",
-      source_ref: input.oauthPool.path_ref,
+      source_ref: oauthPoolSourceRef,
       status: "active",
       actions: [surfaceAction("open-ai-providers", "Open AI providers", "aiProviders")],
     }));
