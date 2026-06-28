@@ -424,6 +424,8 @@ _pmp_prepare_merge_checkpoint_resume() {
 	[[ "$resumed_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
 
 	if [[ -n "$checkpoint_file" && -f "$checkpoint_file" ]]; then
+		# Preserve a final unterminated line: read returns non-zero at EOF after
+		# assigning the checkpoint value, so treat non-empty content as success.
 		IFS= read -r checkpoint <"$checkpoint_file" || [[ -n "$checkpoint" ]]
 		if [[ -n "$checkpoint" ]]; then
 			if _pmp_repo_rows_contain_slug "$repo_rows" "$checkpoint"; then
