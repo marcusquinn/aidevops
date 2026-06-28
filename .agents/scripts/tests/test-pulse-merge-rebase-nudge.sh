@@ -51,9 +51,15 @@ setup_test_env() {
 	export LOGFILE="${TEST_ROOT}/pulse.log"
 	: >"$LOGFILE"
 
-	# Stub `gh pr view --json headRefName` to return a fixed branch name.
+	# Stub `gh pr view --json headRefName,baseRefName` to return fixed
+	# branch names. The base branch intentionally is not `main` so the
+	# regression test catches hardcoded default-branch wording.
 	cat >"${TEST_ROOT}/bin/gh" <<'EOF'
 #!/usr/bin/env bash
+if [[ "${1:-}" == "pr" && "${2:-}" == "view" && "$*" == *"headRefName,baseRefName"* ]]; then
+	printf 'fix/example-branch\tdevelop\n'
+	exit 0
+fi
 if [[ "${1:-}" == "pr" && "${2:-}" == "view" && "$*" == *"headRefName"* ]]; then
 	printf 'fix/example-branch\n'
 	exit 0
@@ -85,7 +91,19 @@ define_helper_under_test() {
 		printf 'ERROR: could not extract _post_rebase_nudge_on_interactive_conflicting from %s\n' "$MERGE_SCRIPT" >&2
 		return 1
 	fi
-	# shellcheck disable=SC1090  # dynamic source from extracted helper
+	helper_src=$(awk '
+		/^_get_pr_branch_refs_for_conflict_comment\(\) \{/ { capture=1 }
+		/^_post_rebase_nudge_on_interactive_conflicting\(\) \{/ { capture=1 }
+		/^_post_rebase_nudge_on_contributor_conflicting\(\) \{/ { capture=1 }
+		/^_post_rebase_nudge_on_worker_conflicting\(\) \{/ { capture=1 }
+		capture { print }
+		capture && /^}$/ { capture=0 }
+	' "$MERGE_SCRIPT")
+	if [[ -z "$helper_src" ]]; then
+		printf 'ERROR: could not extract rebase nudge helpers from %s\n' "$MERGE_SCRIPT" >&2
+		return 1
+	fi
+	# shellcheck disable=SC1090  # dynamic source from extracted helpers
 	eval "$helper_src"
 	return 0
 }
@@ -123,12 +141,77 @@ test_nudge_body_contains_marker_and_branch() {
 			"Expected 'wt switch fix/example-branch' in body (branch interpolation)"
 		return 0
 	fi
+	if [[ "$LAST_NUDGE_BODY" != *"branch has diverged from \`develop\`"* ]]; then
+		print_result "nudge body contains the idempotency marker" 1 \
+			"Expected base branch 'develop' in heading"
+		return 0
+	fi
+	if [[ "$LAST_NUDGE_BODY" != *"git pull --rebase origin develop"* ]]; then
+		print_result "nudge body contains the idempotency marker" 1 \
+			"Expected 'git pull --rebase origin develop' in body"
+		return 0
+	fi
+	if [[ "$LAST_NUDGE_BODY" == *"origin main"* || "$LAST_NUDGE_BODY" == *"origin/main"* ]]; then
+		print_result "nudge body contains the idempotency marker" 1 \
+			"Expected no hardcoded origin/main or origin main command"
+		return 0
+	fi
 	if [[ "$LAST_NUDGE_BODY" != *"git push --force-with-lease"* ]]; then
 		print_result "nudge body contains the idempotency marker" 1 \
 			"Expected 'git push --force-with-lease' in body"
 		return 0
 	fi
 	print_result "nudge body contains the idempotency marker" 0
+	return 0
+}
+
+test_contributor_nudge_uses_base_branch() {
+	define_mock_idempotent_comment
+	LAST_NUDGE_BODY=""
+
+	_post_rebase_nudge_on_contributor_conflicting "18604" "marcusquinn/aidevops"
+
+	if [[ "$LAST_NUDGE_BODY" != *"merge conflicts against \`develop\`"* ]]; then
+		print_result "contributor nudge uses PR base branch" 1 \
+			"Expected contributor nudge to mention develop"
+		return 0
+	fi
+	if [[ "$LAST_NUDGE_BODY" != *"git rebase origin/develop"* ]]; then
+		print_result "contributor nudge uses PR base branch" 1 \
+			"Expected 'git rebase origin/develop' in contributor nudge"
+		return 0
+	fi
+	if [[ "$LAST_NUDGE_BODY" == *"origin/main"* || "$LAST_NUDGE_BODY" == *"origin main"* ]]; then
+		print_result "contributor nudge uses PR base branch" 1 \
+			"Expected no hardcoded main rebase command"
+		return 0
+	fi
+	print_result "contributor nudge uses PR base branch" 0
+	return 0
+}
+
+test_worker_nudge_uses_base_branch() {
+	define_mock_idempotent_comment
+	LAST_NUDGE_BODY=""
+
+	_post_rebase_nudge_on_worker_conflicting "18604" "marcusquinn/aidevops" "t18025" "25780"
+
+	if [[ "$LAST_NUDGE_BODY" != *"merge conflicts against \`develop\`"* ]]; then
+		print_result "worker nudge uses PR base branch" 1 \
+			"Expected worker nudge to mention develop"
+		return 0
+	fi
+	if [[ "$LAST_NUDGE_BODY" != *"git pull --rebase origin develop"* ]]; then
+		print_result "worker nudge uses PR base branch" 1 \
+			"Expected 'git pull --rebase origin develop' in worker nudge"
+		return 0
+	fi
+	if [[ "$LAST_NUDGE_BODY" == *"origin/main"* || "$LAST_NUDGE_BODY" == *"origin main"* ]]; then
+		print_result "worker nudge uses PR base branch" 1 \
+			"Expected no hardcoded main rebase command"
+		return 0
+	fi
+	print_result "worker nudge uses PR base branch" 0
 	return 0
 }
 
@@ -233,6 +316,8 @@ main() {
 	fi
 
 	test_nudge_body_contains_marker_and_branch
+	test_contributor_nudge_uses_base_branch
+	test_worker_nudge_uses_base_branch
 	test_nudge_posts_as_pr_entity
 	test_nudge_passes_pr_number_and_repo
 	test_noops_when_idempotent_helper_undefined
