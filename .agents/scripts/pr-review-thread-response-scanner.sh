@@ -658,7 +658,8 @@ _prrts_write_prompt_file() {
 	local pr_number="$3"
 	local title="$4"
 	local thread_count="$5"
-	local preview="$6"
+	local fingerprint="$6"
+	local preview="$7"
 	local prompt_file="" safe_slug=""
 	_prrts_ensure_dirs
 	safe_slug="$(_prrts_safe_slug "$repo_slug")"
@@ -670,6 +671,7 @@ Target: PR #${pr_number} in ${repo_slug}
 Local repo path: ${repo_path}
 PR title: ${title}
 Detected unresolved bot review threads: ${thread_count}
+Unresolved thread IDs: ${fingerprint}
 Thread preview: ${preview}
 
 ## Required workflow
@@ -712,7 +714,8 @@ _prrts_dispatch_worker() {
 	local pr_number="$3"
 	local title="$4"
 	local thread_count="$5"
-	local preview="$6"
+	local fingerprint="$6"
+	local preview="$7"
 	local prompt_file="" session_key="" model=""
 	local -a cmd
 
@@ -720,7 +723,7 @@ _prrts_dispatch_worker() {
 		_prrts_log "dispatch: headless-runtime-helper missing or not executable: ${HEADLESS_RUNTIME_HELPER}"
 		return 1
 	fi
-	prompt_file="$(_prrts_write_prompt_file "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$preview")"
+	prompt_file="$(_prrts_write_prompt_file "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview")"
 	session_key="$(_prrts_session_key "$repo_slug" "$pr_number")"
 	cmd=("$HEADLESS_RUNTIME_HELPER" run
 		--role worker
@@ -768,7 +771,7 @@ _prrts_dispatch_guarded() {
 		_prrts_remove_lock_dir "$lock_dir"
 		return 0
 	fi
-	if ! _prrts_dispatch_worker "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$preview"; then
+	if ! _prrts_dispatch_worker "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview"; then
 		_prrts_remove_lock_dir "$lock_dir"
 		return 1
 	fi

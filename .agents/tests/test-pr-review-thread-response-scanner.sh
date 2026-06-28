@@ -169,10 +169,48 @@ test_reply_prepends_author_when_first_content_is_not_mention() {
 	return 0
 }
 
+test_dispatch_prompt_includes_thread_fingerprint() {
+	printf '==> dispatch prompt includes unresolved thread IDs\n'
+	_setup
+	local fake_bin="${TEST_TMPDIR}/bin"
+	local capture="${TEST_TMPDIR}/gh-args.log"
+	local fake_headless="${TEST_TMPDIR}/headless-runtime-helper.sh"
+	local state_dir="${TEST_TMPDIR}/state"
+	local prompt_file="${state_dir}/marcusquinn-aidevops-123-prompt.md"
+	_write_fake_gh "$fake_bin"
+	mkdir -p "$(dirname "$fake_headless")"
+	cat >"$fake_headless" <<'FAKE_HEADLESS'
+#!/usr/bin/env bash
+set -euo pipefail
+exit 0
+FAKE_HEADLESS
+	chmod +x "$fake_headless"
+
+	if FAKE_GH_CAPTURE="$capture" \
+		AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR="$state_dir" \
+		HEADLESS_RUNTIME_HELPER="$fake_headless" \
+		PATH="${fake_bin}:$PATH" \
+		"$SCANNER" dispatch-pr "marcusquinn/aidevops" "$TEST_TMPDIR" "123"; then
+		_pass "dispatch-pr succeeds"
+	else
+		_fail "dispatch-pr succeeds"
+	fi
+
+	if [[ -f "$prompt_file" ]] && grep -q -- 'Unresolved thread IDs: THREAD_1:' "$prompt_file"; then
+		_pass "prompt exposes GraphQL thread ID fingerprint"
+	else
+		_fail "prompt exposes GraphQL thread ID fingerprint" "prompt: ${prompt_file}"
+	fi
+
+	_teardown
+	return 0
+}
+
 main() {
 	test_scan_passes_nonempty_owner_and_name_to_graphql
 	test_reply_recognises_existing_mention_after_whitespace_and_comment
 	test_reply_prepends_author_when_first_content_is_not_mention
+	test_dispatch_prompt_includes_thread_fingerprint
 	printf 'Results: %d passed, %d failed\n' "$TESTS_PASSED" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
 		return 1
