@@ -507,7 +507,8 @@ function SidebarFooter({ accentHue, fontPreference, fontSizePreference, setAccen
               type="range"
               value={fontSizeIndex}
             />
-            <div className="range-labels" aria-label="Font size shortcuts">
+            <fieldset className="range-labels">
+              <legend className="sr-only">Font size shortcuts</legend>
               {fontSizeOptions.map((option) => (
                 <button
                   aria-pressed={option.value === fontSizePreference}
@@ -519,7 +520,7 @@ function SidebarFooter({ accentHue, fontPreference, fontSizePreference, setAccen
                   {option.label}
                 </button>
               ))}
-            </div>
+            </fieldset>
           </div>
           <div className="font-control">
             <span id="appearance-font-selector-label">{text.font}</span>
