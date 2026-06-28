@@ -1,6 +1,7 @@
 :root {
   --accent-hue: 123;
   --accent: hsl(var(--accent-hue) 50% 36%);
+  --accent-aaa-bg: hsl(var(--accent-hue) 58% 24%);
   --accent-strong: hsl(var(--accent-hue) 56% 28%);
   --bg-primary: #ffffff;
   --bg-secondary: #f8f8f8;
@@ -33,6 +34,7 @@
 
 :root[data-theme="dark"] {
   --accent: hsl(var(--accent-hue) 74% 66%);
+  --accent-aaa-bg: hsl(var(--accent-hue) 64% 24%);
   --accent-strong: hsl(var(--accent-hue) 75% 72%);
   --bg-primary: #0a0a0a;
   --bg-secondary: #111111;
@@ -916,9 +918,18 @@ code {
 
 .header-actions {
   flex: 1 1 auto;
-  gap: 8px;
+  gap: 10px;
   justify-content: flex-end;
   min-width: 0;
+}
+
+.header-actions > .header-icon-button,
+.header-actions > .header-action-menu {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 38px;
+  justify-content: center;
+  width: 38px;
 }
 
 .workspace-search {
@@ -2131,7 +2142,7 @@ code {
   align-items: center;
   color: var(--text-secondary);
   display: inline-flex;
-  font-size: 0.78rem;
+  font-size: 0.95em;
   font-weight: 800;
   gap: 4px;
   max-width: 100%;
@@ -2383,7 +2394,7 @@ button.managed-toggle:focus-visible {
   content: attr(data-tooltip);
   font-size: 0.72rem;
   font-weight: 700;
-  left: 50%;
+  left: clamp(10px, 50%, calc(100vw - 330px));
   line-height: 1.35;
   max-width: min(320px, 72vw);
   opacity: 0;
@@ -2394,7 +2405,7 @@ button.managed-toggle:focus-visible {
   transform: translate(-50%, 4px);
   transition: opacity 140ms ease, transform 140ms ease;
   width: max-content;
-  z-index: 40;
+  z-index: 400;
 }
 
 [data-tooltip]:hover::after,
@@ -2517,7 +2528,14 @@ button.managed-toggle:focus-visible {
   gap: 6px;
 }
 
-.os-icon-list span {
+.app-icon-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.os-icon-list span,
+.os-icon-list button {
   align-items: center;
   background: transparent;
   border: 0;
@@ -2532,9 +2550,16 @@ button.managed-toggle:focus-visible {
   padding: 0;
 }
 
+.platform-icon-list button {
+  cursor: pointer;
+}
+
 .os-icon-list span:hover,
-.os-icon-list span:focus-visible {
+.os-icon-list span:focus-visible,
+.os-icon-list button:hover,
+.os-icon-list button:focus-visible {
   color: var(--accent);
+  outline: none;
 }
 
 .pill-tabs button {
@@ -2549,7 +2574,7 @@ button.managed-toggle:focus-visible {
 }
 
 .pill-tabs button.active {
-  background: var(--accent);
+  background: var(--accent-aaa-bg);
   color: #ffffff;
 }
 
@@ -2562,7 +2587,7 @@ button.managed-toggle:focus-visible {
 
 .pill-tabs button.active:hover,
 .pill-tabs button.active:focus-visible {
-  background: var(--accent);
+  background: var(--accent-aaa-bg);
   color: #ffffff;
 }
 
