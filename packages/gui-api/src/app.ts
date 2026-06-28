@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import * as readline from "node:readline";
 import { Hono } from "hono";
 import { APP_ACTION_ROUTE_MANIFEST, APP_ACTION_STATUS_ROUTE_MANIFEST, BANNED_ROUTE_PATTERNS, createEnvelope, FILE_EXPLORER_ROUTE_MANIFEST, type GuiAppActionId, type GuiAppActionJobSummary, STATUS_ROUTE_MANIFEST, VAULT_STATUS_ROUTE_MANIFEST } from "../../gui-shared/src";
 import { readFileExplorer } from "./file-adapter";
@@ -150,10 +151,16 @@ function startAppActionJob(appId: string, action: GuiAppActionId, command: strin
     env: { ...process.env, AIDEVOPS_NON_INTERACTIVE: "true" },
     stdio: ["ignore", "pipe", "pipe"],
   });
-  child.stdout.on("data", (chunk) => appendJobOutput(job, chunk.toString()));
-  child.stderr.on("data", (chunk) => appendJobOutput(job, chunk.toString()));
+  if (child.stdout !== null) {
+    const stdoutLines = readline.createInterface({ input: child.stdout, terminal: false });
+    stdoutLines.on("line", (line) => appendJobLine(job, line));
+  }
+  if (child.stderr !== null) {
+    const stderrLines = readline.createInterface({ input: child.stderr, terminal: false });
+    stderrLines.on("line", (line) => appendJobLine(job, line));
+  }
   child.on("error", (error) => {
-    appendJobOutput(job, error.message);
+    appendJobLine(job, error.message);
     job.status = "failed";
     job.finished_at = new Date().toISOString();
     job.exit_code = 127;
@@ -167,8 +174,11 @@ function startAppActionJob(appId: string, action: GuiAppActionId, command: strin
   return job;
 }
 
-function appendJobOutput(job: GuiAppActionJobSummary, output: string): void {
-  job.output.push(...output.split(/\r?\n/).filter((line) => line.length > 0).map(redactOutputLine));
+function appendJobLine(job: GuiAppActionJobSummary, line: string): void {
+  if (line.length === 0) {
+    return;
+  }
+  job.output.push(redactOutputLine(line));
   if (job.output.length > 400) {
     job.output.splice(1, job.output.length - 400);
   }
