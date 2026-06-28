@@ -87,9 +87,34 @@ function AppActionButton({ action, app, commandPreview, disabled, onJob }: { act
       return;
     }
 
-    const response = await fetch(`/api/apps/${encodeURIComponent(app.id)}/actions/${action}`, { method: "POST" });
-    const envelope = await response.json() as GuiResponseEnvelope<GuiAppActionJobSummary>;
-    onJob(envelope.data);
+    try {
+      const response = await fetch(`/api/apps/${encodeURIComponent(app.id)}/actions/${action}`, { method: "POST" });
+      if (!response.ok) {
+        console.error(`Failed to run ${action} for ${app.id}: ${response.status} ${response.statusText}`);
+        return;
+      }
+
+      const envelope = await response.json() as Partial<GuiResponseEnvelope<GuiAppActionJobSummary>> | null;
+      if (envelope === null || typeof envelope !== "object") {
+        console.error(`Action ${action} for ${app.id} returned an invalid response envelope`);
+        return;
+      }
+
+      if (envelope.ok !== true) {
+        const errors = Array.isArray(envelope.errors) && envelope.errors.length > 0 ? envelope.errors.join("; ") : "unknown error";
+        console.error(`Action ${action} for ${app.id} returned an error envelope: ${errors}`);
+        return;
+      }
+
+      if (!("data" in envelope)) {
+        console.error(`Action ${action} for ${app.id} returned a response envelope without job data`);
+        return;
+      }
+
+      onJob(envelope.data as GuiAppActionJobSummary);
+    } catch (error) {
+      console.error(`Network error running ${action} for ${app.id}:`, error);
+    }
   }
 
   return <>
