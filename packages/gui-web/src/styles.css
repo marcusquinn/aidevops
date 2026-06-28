@@ -828,11 +828,14 @@ code {
 }
 
 .range-labels {
+  border: 0;
   color: var(--text-muted);
   display: grid;
   font-size: 0.7rem;
   font-weight: 900;
   grid-template-columns: repeat(5, 1fr);
+  margin: 0;
+  padding: 0;
   text-transform: uppercase;
 }
 
