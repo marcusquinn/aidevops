@@ -323,9 +323,9 @@ parser_output=$(ROUTINE_FILE="$ROUTINE_FILE" bash "$PARSER_HARNESS" 2>&1)
 parser_rc=$?
 
 if [[ "$parser_rc" -eq 0 ]]; then
-	pass "11: leading --repo defaults to run subcommand"
+	pass "12: leading --repo defaults to run subcommand"
 else
-	fail "11: leading --repo defaults to run subcommand" \
+	fail "12: leading --repo defaults to run subcommand" \
 		"harness rc=${parser_rc}, output=${parser_output}"
 fi
 
