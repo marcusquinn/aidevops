@@ -87,9 +87,19 @@ function AppActionButton({ action, app, commandPreview, disabled, onJob }: { act
       return;
     }
 
-    const response = await fetch(`/api/apps/${encodeURIComponent(app.id)}/actions/${action}`, { method: "POST" });
-    const envelope = await response.json() as GuiResponseEnvelope<GuiAppActionJobSummary>;
-    onJob(envelope.data);
+    try {
+      const response = await fetch(`/api/apps/${encodeURIComponent(app.id)}/actions/${action}`, { method: "POST" });
+      if (!response.ok) {
+        return;
+      }
+
+      const envelope = await response.json() as GuiResponseEnvelope<GuiAppActionJobSummary>;
+      if (envelope.ok && envelope.data !== undefined) {
+        onJob(envelope.data);
+      }
+    } catch {
+      return;
+    }
   }
 
   return <>

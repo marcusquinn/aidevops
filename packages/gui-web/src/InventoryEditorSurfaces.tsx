@@ -7,8 +7,6 @@ interface DraftInventoryRow {
   values: Record<string, string>;
 }
 
-let draftRowCounter = 0;
-
 export function InstallationSurface(): ReactElement {
   return (
     <section className="panel" aria-label={text.installation}>
@@ -85,8 +83,15 @@ function TogglePill({ checked, label }: { checked: boolean; label: string }): Re
 }
 
 function createDraftRow(values: Record<string, string>): DraftInventoryRow {
-  draftRowCounter += 1;
-  return { id: `draft-row-${draftRowCounter}`, values };
+  return { id: `draft-row-${createDraftRowId()}`, values };
+}
+
+function createDraftRowId(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
+
+  return Math.random().toString(36).slice(2, 11);
 }
 
 function emptyRow(columns: InventoryColumn[]): Record<string, string> {

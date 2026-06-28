@@ -2,6 +2,8 @@ import type { GuiAppActionJobSummary } from "@aidevops/gui-shared";
 import { type ReactElement, type ReactNode, useEffect, useRef } from "react";
 import { FiX } from "react-icons/fi";
 
+const ANSI_PATTERN = /\x1b\[([0-9;]*)m/g;
+
 export function AppActionTerminal({ job, onDismiss }: { job: GuiAppActionJobSummary; onDismiss: (jobId: string) => void }): ReactElement {
   const outputRef = useRef<HTMLPreElement | null>(null);
 
@@ -38,18 +40,18 @@ function renderTerminalOutput(lines: string[]): ReactNode[] {
 
 function renderAnsiLine(line: string, keyPrefix: string): ReactNode[] {
   const nodes: ReactNode[] = [];
-  const ansiPattern = new RegExp("\\x1b\\[([0-9;]*)m", "g");
+  ANSI_PATTERN.lastIndex = 0;
   let activeClass = "";
   let lastIndex = 0;
-  let match = ansiPattern.exec(line);
+  let match = ANSI_PATTERN.exec(line);
 
   while (match !== null) {
     if (match.index > lastIndex) {
       nodes.push(terminalSpan(line.slice(lastIndex, match.index), activeClass, `${keyPrefix}-${nodes.length}`));
     }
     activeClass = ansiClassForCodes(match[1]);
-    lastIndex = ansiPattern.lastIndex;
-    match = ansiPattern.exec(line);
+    lastIndex = ANSI_PATTERN.lastIndex;
+    match = ANSI_PATTERN.exec(line);
   }
 
   if (lastIndex < line.length) {
