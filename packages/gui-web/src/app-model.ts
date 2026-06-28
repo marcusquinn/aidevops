@@ -1,6 +1,7 @@
 import type { GuiFileRootId, GuiStatusData } from "@aidevops/gui-shared";
 
 export type ThemePreference = "system" | "light" | "dark";
+export type ContrastPreference = "low" | "medium" | "high";
 export type SidebarMode = "devops" | "comms";
 export type ShellMode = "devices" | "sessions";
 export type ConversationMode = "ai" | "people";
@@ -129,6 +130,11 @@ export interface FontSizeOption {
   cssSize: string;
 }
 
+export interface ContrastOption {
+  label: string;
+  value: ContrastPreference;
+}
+
 export interface InventoryColumn {
   key: string;
   label: string;
@@ -153,6 +159,7 @@ export const text = {
   brandsIntro: "Draft brand inventory for names and website references.",
   codeView: "Code",
   config: "Config",
+  contrast: "Contrast",
   configIntro: "Read-only file explorer for ~/.config/aidevops. Contents stay hidden until redaction rules land.",
   copyPath: "Copy path",
   dashboard: "Dashboard",
@@ -303,8 +310,15 @@ export const text = {
 } as const;
 
 export const DEFAULT_ACCENT_HUE = 123;
+export const DEFAULT_CONTRAST: ContrastPreference = "low";
 export const DEFAULT_FONT: FontPreference = "Inter";
 export const DEFAULT_FONT_SIZE: FontSizePreference = "xs";
+
+export const contrastOptions: ContrastOption[] = [
+  { value: "low", label: "Low" },
+  { value: "medium", label: "Medium" },
+  { value: "high", label: "High" },
+];
 
 export const fontOptions: FontOption[] = [
   { value: "IBM Plex Mono", label: "IBM Plex Mono", fontFamily: '"IBM Plex Mono", Menlo, Monaco, Consolas, monospace' },
@@ -556,6 +570,10 @@ export function isFontPreference(value: string | null): value is FontPreference 
 
 export function isFontSizePreference(value: string | null): value is FontSizePreference {
   return fontSizeOptions.some((option) => option.value === value);
+}
+
+export function isContrastPreference(value: string | null): value is ContrastPreference {
+  return contrastOptions.some((option) => option.value === value);
 }
 
 export function sidebarModeForSurface(id: SurfaceId): SidebarMode {

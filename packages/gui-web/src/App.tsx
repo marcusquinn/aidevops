@@ -2,8 +2,8 @@ import type { GuiResponseEnvelope, GuiStatusData } from "@aidevops/gui-shared";
 import { type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactElement, useEffect, useState } from "react";
 import { MachineRail, Sidebar } from "./AppNavigation";
 import { Workspace } from "./AppWorkspace";
-import type { ConversationMode, FontPreference, FontSizePreference, ShellMode, SurfaceId, ThemePreference } from "./app-model";
-import { DEFAULT_ACCENT_HUE, DEFAULT_FONT, DEFAULT_FONT_SIZE, fileRootBySurface, findSurface, findSurfaceSectionLabel, fontFamilyForPreference, fontSizeForPreference, getSystemTheme, isFontPreference, isFontSizePreference } from "./app-model";
+import type { ContrastPreference, ConversationMode, FontPreference, FontSizePreference, ShellMode, SurfaceId, ThemePreference } from "./app-model";
+import { DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, fileRootBySurface, findSurface, findSurfaceSectionLabel, fontFamilyForPreference, fontSizeForPreference, getSystemTheme, isContrastPreference, isFontPreference, isFontSizePreference } from "./app-model";
 import { type NavigationHistory, nextHistoryIndex, useNavigationHistoryKeyboard } from "./navigation-history";
 import { fetchStatus, mockedStatus } from "./status-client";
 
@@ -23,6 +23,7 @@ type AppearanceStorageKey = (typeof appearanceStorageKeys)[keyof typeof appearan
 
 export const appearanceStorageKeys = {
   accentHue: "aidevops-gui-accent-hue",
+  contrast: "aidevops-gui-contrast",
   font: "aidevops-gui-font",
   fontSize: "aidevops-gui-font-size",
   machineRail: "aidevops-gui-show-machine-rail",
@@ -37,9 +38,27 @@ const minSidebarWidth = 300;
 const maxSidebarWidth = 520;
 export const loadingSkeletonPanelLabels = ["machine rail", "sidebar", "workspace", "status bar"] as const;
 export const loadingBrandGlyph = ">_";
+const loadingMachineOrbKeys = ["machine-orb-a", "machine-orb-b", "machine-orb-c", "machine-orb-d", "machine-orb-e", "machine-orb-f"] as const;
+const loadingListRows = [
+  { key: "loading-list-a", variant: "short" },
+  { key: "loading-list-b", variant: "line" },
+  { key: "loading-list-c", variant: "line" },
+  { key: "loading-list-d", variant: "short" },
+  { key: "loading-list-e", variant: "line" },
+  { key: "loading-list-f", variant: "line" },
+  { key: "loading-list-g", variant: "short" },
+  { key: "loading-list-h", variant: "line" },
+  { key: "loading-list-i", variant: "line" },
+  { key: "loading-list-j", variant: "short" },
+  { key: "loading-list-k", variant: "line" },
+  { key: "loading-list-l", variant: "line" },
+] as const;
+const loadingCardKeys = ["loading-card-a", "loading-card-b", "loading-card-c", "loading-card-d", "loading-card-e", "loading-card-f"] as const;
+const loadingStatusRows = ["dot", "line-a", "line-b", "line-c", "line-d", "line-e", "line-f", "line-g"] as const;
 
 export interface StoredAppearancePreferences {
   accentHue: number;
+  contrastPreference: ContrastPreference;
   fontPreference: FontPreference;
   fontSizePreference: FontSizePreference;
   machineRailVisible: boolean;
@@ -51,11 +70,13 @@ export interface StoredAppearancePreferences {
 export function readStoredAppearancePreferences(storage: ReadableAppearanceStorage | undefined = browserLocalStorage(), isDesktopShell = isMacosDesktopBrowser()): StoredAppearancePreferences {
   const savedTheme = storage?.getItem(appearanceStorageKeys.theme);
   const savedAccentHue = Number.parseInt(storage?.getItem(appearanceStorageKeys.accentHue) ?? "", 10);
+  const savedContrast = storage?.getItem(appearanceStorageKeys.contrast) ?? null;
   const savedFont = storage?.getItem(appearanceStorageKeys.font) ?? null;
   const savedFontSize = storage?.getItem(appearanceStorageKeys.fontSize) ?? null;
 
   return {
     accentHue: Number.isFinite(savedAccentHue) && savedAccentHue >= 0 && savedAccentHue <= 359 ? savedAccentHue : DEFAULT_ACCENT_HUE,
+    contrastPreference: isContrastPreference(savedContrast) ? savedContrast : DEFAULT_CONTRAST,
     fontPreference: isFontPreference(savedFont) ? savedFont : DEFAULT_FONT,
     fontSizePreference: isFontSizePreference(savedFontSize) ? savedFontSize : DEFAULT_FONT_SIZE,
     machineRailVisible: isDesktopShell ? readStoredBoolean(storage, appearanceStorageKeys.machineRail, true) : true,
@@ -72,6 +93,7 @@ export function App(): ReactElement {
   const [navigation, setNavigation] = useState<NavigationHistory>({ entries: ["overview"], index: 0 });
   const [themePreference, setThemePreference] = useState<ThemePreference>(storedAppearancePreferences.themePreference);
   const [accentHue, setAccentHue] = useState(storedAppearancePreferences.accentHue);
+  const [contrastPreference, setContrastPreference] = useState<ContrastPreference>(storedAppearancePreferences.contrastPreference);
   const [fontPreference, setFontPreference] = useState<FontPreference>(storedAppearancePreferences.fontPreference);
   const [fontSizePreference, setFontSizePreference] = useState<FontSizePreference>(storedAppearancePreferences.fontSizePreference);
   const [machineRailVisible, setMachineRailVisible] = useState(storedAppearancePreferences.machineRailVisible);
@@ -147,6 +169,11 @@ export function App(): ReactElement {
   }, [accentHue]);
 
   useEffect(() => {
+    document.documentElement.dataset.contrast = contrastPreference;
+    persistAppearancePreference(appearanceStorageKeys.contrast, contrastPreference);
+  }, [contrastPreference]);
+
+  useEffect(() => {
     document.documentElement.style.setProperty("--font-family-app", fontFamilyForPreference(fontPreference));
     persistAppearancePreference(appearanceStorageKeys.font, fontPreference);
   }, [fontPreference]);
@@ -191,12 +218,14 @@ export function App(): ReactElement {
       <Sidebar
         activeSurface={activeSurface}
         accentHue={accentHue}
+        contrastPreference={contrastPreference}
         conversationMode={conversationMode}
         fontSizePreference={fontSizePreference}
         fontPreference={fontPreference}
         selectedLocalRepoIndex={selectedLocalRepoIndex}
         selectedSessionId={selectedSessionId}
         setAccentHue={setAccentHue}
+        setContrastPreference={setContrastPreference}
         setActiveSurface={setActiveSurface}
         setConversationMode={setConversationMode}
         setFontSizePreference={setFontSizePreference}
@@ -246,7 +275,7 @@ export function AppLoadingSkeleton({ machineRailVisible }: { machineRailVisible:
       <LoadingBrandOverlay />
       {machineRailVisible ? (
         <section className="machine-rail loading-panel" aria-label={loadingSkeletonPanelLabels[0]}>
-          {Array.from({ length: 6 }, (_, index) => <span className="loading-orb" key={index} />)}
+          {loadingMachineOrbKeys.map((key) => <span className="loading-orb" key={key} />)}
         </section>
       ) : null}
       <section className="app-sidebar loading-panel" aria-label={loadingSkeletonPanelLabels[1]}>
@@ -256,7 +285,7 @@ export function AppLoadingSkeleton({ machineRailVisible }: { machineRailVisible:
         </div>
         <span className="loading-pill" />
         <div className="loading-list">
-          {Array.from({ length: 12 }, (_, index) => <span className={index % 3 === 0 ? "loading-line loading-line-short" : "loading-line"} key={index} />)}
+          {loadingListRows.map((row) => <span className={row.variant === "short" ? "loading-line loading-line-short" : "loading-line"} key={row.key} />)}
         </div>
         <div className="loading-sidebar-footer">
           <span className="loading-pill" />
@@ -275,13 +304,13 @@ export function AppLoadingSkeleton({ machineRailVisible }: { machineRailVisible:
         <div className="loading-workspace-body">
           <span className="loading-line loading-line-hero" />
           <div className="loading-card-grid">
-            {Array.from({ length: 6 }, (_, index) => <span className="loading-card" key={index} />)}
+            {loadingCardKeys.map((key) => <span className="loading-card" key={key} />)}
           </div>
           <span className="loading-panel-block" />
         </div>
       </section>
-      <div className="desktop-status-bar loading-status-bar" aria-label={loadingSkeletonPanelLabels[3]}>
-        {Array.from({ length: 8 }, (_, index) => <span className={index === 0 ? "loading-dot" : "loading-line"} key={index} />)}
+      <div className="desktop-status-bar loading-status-bar" aria-label={loadingSkeletonPanelLabels[3]} role="status">
+        {loadingStatusRows.map((row) => <span className={row === "dot" ? "loading-dot" : "loading-line"} key={row} />)}
       </div>
     </main>
   );
@@ -289,7 +318,7 @@ export function AppLoadingSkeleton({ machineRailVisible }: { machineRailVisible:
 
 function LoadingBrandOverlay(): ReactElement {
   return (
-    <div className="loading-brand-overlay" aria-label="Starting aidevops">
+    <div className="loading-brand-overlay" aria-label="Starting aidevops" role="status">
       <span className="loading-brand-mark" aria-hidden="true">
         <span className="loading-brand-word">aidevops</span>
         <span className="loading-brand-chevron">&gt;</span>

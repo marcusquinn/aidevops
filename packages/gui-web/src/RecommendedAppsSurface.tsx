@@ -1,10 +1,11 @@
-import type { MouseEvent as ReactMouseEvent, ReactElement } from "react";
+import type { ReactElement } from "react";
 import type { IconType } from "react-icons";
 import { FaApple, FaLinux, FaWindows } from "react-icons/fa";
 import { FiCode, FiExternalLink, FiGlobe, FiMonitor, FiTerminal } from "react-icons/fi";
 import { IoLogoAndroid } from "react-icons/io";
 import { SiIos } from "react-icons/si";
 import { text } from "./app-model";
+import { openExternalLink } from "./external-links";
 
 export type RecommendedOsId = "all" | "macos" | "linux" | "windows" | "ios" | "android";
 export type RecommendedPlatformId = "webapp" | "saas" | "cli" | "api";
@@ -117,7 +118,7 @@ export function RecommendedAppsSurface({ apps, os, platform, setOs, setPlatform 
 function RecommendedAppCard({ app, setOs, setPlatform }: { app: RecommendedApp; setOs: (os: RecommendedOsId) => void; setPlatform: (platform: RecommendedPlatformFilterId) => void }): ReactElement {
   return <article className="recommended-app-card">
     <div>
-      <strong>{app.name}</strong>
+      <a aria-label={`${app.name}: ${app.websiteUrl}`} className="recommended-app-title-link" data-tooltip={app.websiteUrl} href={app.websiteUrl} onClick={(event) => openExternalLink(event, app.websiteUrl)} rel="noreferrer" target="_blank"><strong>{app.name}</strong></a>
       <p>{app.description}</p>
     </div>
     <div className="app-icon-groups">
@@ -141,7 +142,7 @@ function OriginLink({ href, label }: { href: string; label: string }): ReactElem
     return <span className="origin-missing">{label}: source pending</span>;
   }
 
-  return <a data-tooltip={href} href={href} onClick={(event) => openExternalLink(event, href)} rel="noreferrer" target="_blank" title={href}>{label} <FiExternalLink aria-hidden="true" /></a>;
+  return <a aria-label={`${label}: ${href}`} data-tooltip={href} href={href} onClick={(event) => openExternalLink(event, href)} rel="noreferrer" target="_blank">{label} <FiExternalLink aria-hidden="true" /></a>;
 }
 
 function PlatformIconList({ platforms, setPlatform }: { platforms: RecommendedPlatformId[]; setPlatform: (platform: RecommendedPlatformFilterId) => void }): ReactElement | null {
@@ -161,7 +162,7 @@ function PlatformIcon({ id, setPlatform }: { id: RecommendedPlatformId; setPlatf
   };
   const { Icon, label } = iconMap[id];
 
-  return <button aria-label={`Filter by ${label}`} data-tooltip={`Filter by ${label}`} onClick={() => setPlatform(id)} title={`Filter by ${label}`} type="button"><Icon aria-hidden="true" focusable="false" /></button>;
+  return <button aria-label={`Filter by ${label}`} data-tooltip={`Filter by ${label}`} onClick={() => setPlatform(id)} type="button"><Icon aria-hidden="true" focusable="false" /></button>;
 }
 
 function OsIconList({ os, setOs }: { os: RecommendedOsId[]; setOs: (os: RecommendedOsId) => void }): ReactElement | null {
@@ -183,7 +184,7 @@ function OsIcon({ id, setOs }: { id: RecommendedOsId; setOs: (os: RecommendedOsI
   };
   const { Icon, label } = iconMap[id];
 
-  return <button aria-label={`Filter by ${label}`} data-tooltip={`Filter by ${label}`} onClick={() => setOs(id)} title={`Filter by ${label}`} type="button"><Icon aria-hidden="true" focusable="false" /></button>;
+  return <button aria-label={`Filter by ${label}`} data-tooltip={`Filter by ${label}`} onClick={() => setOs(id)} type="button"><Icon aria-hidden="true" focusable="false" /></button>;
 }
 
 export function recommendedAppMatchesFilters(app: RecommendedApp, platform: RecommendedPlatformFilterId, os: RecommendedOsId): boolean {
@@ -195,29 +196,4 @@ export function recommendedAppMatchesFilters(app: RecommendedApp, platform: Reco
 
 export function nextRecommendedFilterValue<T extends string>(current: T, next: T, defaultValue: T): T {
   return current === next && next !== defaultValue ? defaultValue : next;
-}
-
-function openExternalLink(event: ReactMouseEvent<HTMLAnchorElement>, href: string): void {
-  event.stopPropagation();
-  if (!shouldUseBrowserDefault(event)) {
-    event.preventDefault();
-    openExternalDestination(href);
-  }
-}
-
-function shouldUseBrowserDefault(event: ReactMouseEvent<HTMLAnchorElement>): boolean {
-  return [event.defaultPrevented, event.metaKey, event.ctrlKey, event.shiftKey, event.altKey].some(Boolean);
-}
-
-function openExternalDestination(href: string): void {
-  if (document.documentElement.dataset.desktopShell === "macos") {
-    window.location.assign(href);
-  } else {
-    const opened = window.open(href, "_blank", "noopener,noreferrer");
-    if (opened === null) {
-      window.location.assign(href);
-    } else {
-      opened.opener = null;
-    }
-  }
 }

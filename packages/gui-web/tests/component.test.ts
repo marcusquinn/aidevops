@@ -8,7 +8,7 @@ import { Workspace } from "../src/AppWorkspace";
 import { commandPaletteMatches, commandPaletteShortcutEntries, commandPaletteShortcutQuery, orderCommandItemsByRecency, rememberCommandPaletteItemId } from "../src/CommandPalette";
 import { CommsConversationSurface } from "../src/CommsConversationSurface";
 import { AppsSurface, nextRecommendedFilterValue } from "../src/InventorySurfaces";
-import { DEFAULT_ACCENT_HUE, DEFAULT_FONT, DEFAULT_FONT_SIZE, surfaceRecordCounts, type SurfaceNavItem } from "../src/app-model";
+import { DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, surfaceRecordCounts, type SurfaceNavItem } from "../src/app-model";
 import { renderDashboardHtml } from "../src/dashboard";
 import { fetchStatus, mockedStatus } from "../src/status-client";
 import type { GuiConversationThread, GuiManagedAppSummary } from "../../gui-shared/src";
@@ -66,6 +66,7 @@ describe("dashboard shell", () => {
     expect(html).toContain("Notifications");
     expect(html).toContain("Admin");
     expect(html).toContain("editable Hue");
+    expect(html).toContain("Contrast");
     expect(html).toContain("Show borders toggle");
     expect(html).toContain("Show counts toggle");
     expect(html).toContain("desktop status bar");
@@ -185,6 +186,7 @@ describe("dashboard shell", () => {
       readFileSync(`${guiWebRoot}/src/InventorySurfaces.tsx`, "utf8"),
       readFileSync(`${guiWebRoot}/src/ManagedAppPanel.tsx`, "utf8"),
       readFileSync(`${guiWebRoot}/src/RecommendedAppsSurface.tsx`, "utf8"),
+      readFileSync(`${guiWebRoot}/src/external-links.ts`, "utf8"),
     ].join("\n");
 
     expect(html).toContain("AIDevOps");
@@ -197,7 +199,12 @@ describe("dashboard shell", () => {
     expect(sectionBetween(html, "managed-app-details", "app-meta managed-app-path")).not.toContain("Installed");
     expect(sectionBetween(html, "managed-app-details", "app-meta managed-app-path")).not.toContain("Latest");
     expect(source).toContain("data-tooltip={href}");
+    expect(source).toContain("externalLink");
+    expect(source).toContain("recommended-app-title-link");
     expect(source).toContain("app-global-tooltip");
+    expect(source).toContain("tooltip.align");
+    expect(source).not.toContain("title={href}");
+    expect(source).not.toContain("title={`Filter by $" + "{label}`}");
     expect(source).toContain("terminalStatusLabel(job)");
     expect(source).toContain("if (!response.ok)");
     expect(source).toContain("envelope === null");
@@ -215,6 +222,7 @@ describe("dashboard shell", () => {
   test("loads saved appearance preferences before persistence effects run", () => {
     const preferences = readStoredAppearancePreferences(storageFrom({
       [appearanceStorageKeys.accentHue]: "210",
+      [appearanceStorageKeys.contrast]: "high",
       [appearanceStorageKeys.font]: "Poppins",
       [appearanceStorageKeys.fontSize]: "xl",
       [appearanceStorageKeys.machineRail]: "false",
@@ -224,6 +232,7 @@ describe("dashboard shell", () => {
     }), true);
 
     expect(preferences.accentHue).toBe(210);
+    expect(preferences.contrastPreference).toBe("high");
     expect(preferences.fontPreference).toBe("Poppins");
     expect(preferences.fontSizePreference).toBe("xl");
     expect(preferences.machineRailVisible).toBe(false);
@@ -235,6 +244,7 @@ describe("dashboard shell", () => {
   test("falls back safely for invalid saved appearance preferences", () => {
     const preferences = readStoredAppearancePreferences(storageFrom({
       [appearanceStorageKeys.accentHue]: "999",
+      [appearanceStorageKeys.contrast]: "extreme",
       [appearanceStorageKeys.font]: "Papyrus",
       [appearanceStorageKeys.fontSize]: "huge",
       [appearanceStorageKeys.machineRail]: "false",
@@ -244,6 +254,7 @@ describe("dashboard shell", () => {
     }), false);
 
     expect(preferences.accentHue).toBe(DEFAULT_ACCENT_HUE);
+    expect(preferences.contrastPreference).toBe(DEFAULT_CONTRAST);
     expect(preferences.fontPreference).toBe(DEFAULT_FONT);
     expect(preferences.fontSizePreference).toBe(DEFAULT_FONT_SIZE);
     expect(preferences.machineRailVisible).toBe(true);

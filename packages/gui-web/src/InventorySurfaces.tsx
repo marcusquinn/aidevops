@@ -238,6 +238,7 @@ function writeManagedPolicyToggles(policy: ManagedPolicyToggleState): void {
 }
 
 interface AppTooltipState {
+  align: "start" | "center" | "end";
   text: string;
   x: number;
   y: number;
@@ -270,7 +271,16 @@ function tooltipForElement(element: HTMLElement): AppTooltipState | null {
   }
 
   const rect = element.getBoundingClientRect();
-  return { text: textValue, x: rect.left + (rect.width / 2), y: rect.top };
+  const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
+  const edgeSafeWidth = 240;
+  if (rect.left < edgeSafeWidth) {
+    return { align: "start", text: textValue, x: rect.left, y: rect.top };
+  }
+  if (viewportWidth - rect.right < edgeSafeWidth) {
+    return { align: "end", text: textValue, x: rect.right, y: rect.top };
+  }
+
+  return { align: "center", text: textValue, x: rect.left + (rect.width / 2), y: rect.top };
 }
 
 function AppTooltip({ tooltip }: { tooltip: AppTooltipState }): ReactElement {
@@ -279,5 +289,5 @@ function AppTooltip({ tooltip }: { tooltip: AppTooltipState }): ReactElement {
     "--tooltip-y": `${tooltip.y}px`,
   } as CSSProperties;
 
-  return <div className="app-global-tooltip" role="tooltip" style={style}>{tooltip.text}</div>;
+  return <div className={`app-global-tooltip ${tooltip.align}`} role="tooltip" style={style}>{tooltip.text}</div>;
 }
