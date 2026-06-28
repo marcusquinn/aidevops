@@ -200,6 +200,7 @@ describe("dashboard shell", () => {
     expect(source).toContain("app-global-tooltip");
     expect(source).toContain("terminalStatusLabel(job)");
     expect(source).toContain("if (!response.ok)");
+    expect(source).toContain("envelope === null");
     expect(source).toContain("Network error running");
     expect(source).toContain("https://apps.apple.com/us/app/telegram-messenger/id686449807");
     expect(source).toContain("https://play.google.com/store/apps/details?id=org.telegram.messenger");

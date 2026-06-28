@@ -94,13 +94,24 @@ function AppActionButton({ action, app, commandPreview, disabled, onJob }: { act
         return;
       }
 
-      const envelope = await response.json() as GuiResponseEnvelope<GuiAppActionJobSummary>;
-      if (!envelope.ok) {
-        console.error(`Action ${action} for ${app.id} returned an error envelope: ${envelope.errors.join("; ")}`);
+      const envelope = await response.json() as Partial<GuiResponseEnvelope<GuiAppActionJobSummary>> | null;
+      if (envelope === null || typeof envelope !== "object") {
+        console.error(`Action ${action} for ${app.id} returned an invalid response envelope`);
         return;
       }
 
-      onJob(envelope.data);
+      if (envelope.ok !== true) {
+        const errors = Array.isArray(envelope.errors) && envelope.errors.length > 0 ? envelope.errors.join("; ") : "unknown error";
+        console.error(`Action ${action} for ${app.id} returned an error envelope: ${errors}`);
+        return;
+      }
+
+      if (!("data" in envelope)) {
+        console.error(`Action ${action} for ${app.id} returned a response envelope without job data`);
+        return;
+      }
+
+      onJob(envelope.data as GuiAppActionJobSummary);
     } catch (error) {
       console.error(`Network error running ${action} for ${app.id}:`, error);
     }
