@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.22] - 2026-06-28
+
+### Changed
+
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 50→47 (-3) [skip ci]
+
+### Fixed
+
+- clarify review thread GraphQL resolution (#25821)
+- vacuum seeded worker opencode db (#25818)
+- split apps inventory surfaces (#25801)
+
 ## [3.29.21] - 2026-06-28
 
 ### Fixed
