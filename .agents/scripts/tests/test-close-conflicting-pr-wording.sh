@@ -7,7 +7,7 @@
 #
 # Verifies that when the deterministic merge pass detects "work already
 # on main", the close comment:
-#   1. Says "landed on main" — NOT "committed directly to main"
+#   1. Says "landed on <base branch>" — NOT "committed directly to main"
 #   2. Includes "(via PR #NNN)" when the matching commit has a
 #      squash-merge suffix
 #   3. Omits the parenthetical when no PR number is parseable
@@ -59,7 +59,8 @@ print_result() {
 #   $TEST_ROOT/commit-files.txt — output for `gh api repos/.../commits/SHA` (lines)
 #   $TEST_ROOT/pr-files.txt     — output for `gh pr view N --json files` (lines)
 #   $TEST_ROOT/pr-labels.txt    — output for `gh pr view N --json labels` (lines)
-#   $TEST_ROOT/pr-branch.txt    — output for `gh pr view N --json headRefName`
+#   $TEST_ROOT/pr-branch.txt    — head branch for `gh pr view N --json headRefName`
+#   $TEST_ROOT/pr-base-branch.txt — base branch for `gh pr view N --json baseRefName`
 #
 # A missing or empty response file makes the stub exit 1, simulating a gh
 # API failure for the relevant call.
@@ -105,7 +106,6 @@ if [[ "\$1" == "pr" && "\$2" == "close" ]]; then
 fi
 
 	if [[ "\$1" == "pr" && "\$2" == "view" ]]; then
-	# Find the --json field name to know which response to emit.
 	field=""
 	args=("\$@")
 	i=2
@@ -118,6 +118,13 @@ fi
 		i=\$((i + 1))
 	done
 	case "\$field" in
+		"headRefName,baseRefName")
+			head_branch="feature/test"; base_branch="main"
+			[[ -f "\${TEST_ROOT}/pr-branch.txt" ]] && head_branch=\$(cat "\${TEST_ROOT}/pr-branch.txt")
+			[[ -f "\${TEST_ROOT}/pr-base-branch.txt" ]] && base_branch=\$(cat "\${TEST_ROOT}/pr-base-branch.txt")
+			printf '%s\t%s\n' "\$head_branch" "\$base_branch"
+			exit 0
+			;;
 		labels)
 			response="\${TEST_ROOT}/pr-labels.txt"
 			if [[ -f "\$response" ]]; then cat "\$response"; fi
@@ -195,6 +202,7 @@ load_functions_under_test() {
 	local tmp_fn="${TEST_ROOT}/pulse-merge-funcs.sh"
 
 	# Extract these functions in order:
+	#   _get_pr_branch_refs_for_conflict_comment      (GH#25780)
 	#   _post_rebase_nudge_on_interactive_conflicting (label-fetch fail path)
 	#   _post_rebase_nudge_on_contributor_conflicting (GH#20485)
 	#   _is_planning_path_for_overlap
@@ -209,6 +217,7 @@ load_functions_under_test() {
 	#   _close_conflicting_pr                          (orchestrator)
 	# Each definition uses tab-indented bodies with a column-0 "}" closer.
 	awk '
+		/^_get_pr_branch_refs_for_conflict_comment\(\) \{$/       { fn=1 }
 		/^_post_rebase_nudge_on_interactive_conflicting\(\) \{$/ { fn=1 }
 		/^_post_rebase_nudge_on_contributor_conflicting\(\) \{$/  { fn=1 }
 		/^_is_planning_path_for_overlap\(\) \{$/                  { fn=1 }
@@ -232,6 +241,7 @@ load_functions_under_test() {
 	cat >>"$tmp_fn" <<'STUB_EOF'
 _carry_forward_pr_diff() { return 0; }
 _extract_linked_issue() { return 0; }
+_close_superseded_duplicate_issue_if_verified() { return 0; }
 STUB_EOF
 
 	# shellcheck source=/dev/null
@@ -254,6 +264,7 @@ set_responses() {
 	# Default empty labels (no origin:interactive)
 	: >"${TEST_ROOT}/pr-labels.txt"
 	echo "feature/test" >"${TEST_ROOT}/pr-branch.txt"
+	echo "develop" >"${TEST_ROOT}/pr-base-branch.txt"
 	# GH#20485: ownership guard metadata. Default = worker-origin bot PR
 	# so existing close-path tests still proceed to the close logic.
 	if [[ -n "$pr_meta_json" ]]; then
@@ -285,7 +296,7 @@ test_wording_with_squash_merge_pr_number() {
 	body=$(cat "$CAPTURED_COMMENT_FILE")
 
 	local result=0
-	if ! printf '%s' "$body" | grep -q "has already landed on main (via PR #18480)"; then
+	if ! printf '%s' "$body" | grep -q "has already landed on develop (via PR #18480)"; then
 		result=1
 	fi
 	if printf '%s' "$body" | grep -q "committed directly to main"; then
@@ -317,7 +328,7 @@ test_wording_without_pr_number_fallback() {
 	body=$(cat "$CAPTURED_COMMENT_FILE")
 
 	local result=0
-	if ! printf '%s' "$body" | grep -q "has already landed on main,"; then
+	if ! printf '%s' "$body" | grep -q "has already landed on develop,"; then
 		result=1
 	fi
 	if printf '%s' "$body" | grep -q "(via PR #"; then
@@ -337,7 +348,7 @@ test_wording_without_pr_number_fallback() {
 test_no_match_uses_fallback_message() {
 	setup_sandbox
 	# No commit on main matches the task ID → falls through to the
-	# "work NOT on main" branch; comment must NOT claim "landed on main".
+	# "work NOT on main" branch; comment must NOT claim it landed.
 	set_responses \
 		'[{"sha":"abc1234567890abcdef","subject":"chore: totally unrelated commit"},{"sha":"def4567890abcdef","subject":"feat: still unrelated"}]' \
 		'.agents/workflows/review-issue-pr.md' \
@@ -352,7 +363,7 @@ test_no_match_uses_fallback_message() {
 	body=$(cat "$CAPTURED_COMMENT_FILE")
 
 	local result=0
-	if printf '%s' "$body" | grep -q "landed on main"; then
+	if printf '%s' "$body" | grep -q "landed on develop"; then
 		result=1
 	fi
 	if printf '%s' "$body" | grep -q "committed directly to main"; then
@@ -362,7 +373,7 @@ test_no_match_uses_fallback_message() {
 		result=1
 	fi
 
-	print_result "no-match uses 're-attempt' fallback, not 'landed on main'" \
+	print_result "no-match uses 're-attempt' fallback, not 'landed on base branch'" \
 		"$result" \
 		"got: $(printf '%s' "$body" | head -c 200)"
 	teardown_sandbox
@@ -428,7 +439,7 @@ test_close_when_matching_commit_overlaps_implementation_files() {
 	if [[ ! -s "$CAPTURED_COMMENT_FILE" ]]; then
 		result=1
 	fi
-	if ! printf '%s' "$body" | grep -q "has already landed on main (via PR #18999)"; then
+	if ! printf '%s' "$body" | grep -q "has already landed on develop (via PR #18999)"; then
 		result=1
 	fi
 
