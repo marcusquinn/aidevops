@@ -224,7 +224,14 @@ function jobForApp(appId: string, jobs: Record<string, GuiAppActionJobSummary>, 
     return selectedJob;
   }
 
-  return Object.values(jobs).reverse().find((job) => job.app_id === appId) ?? null;
+  let latestJob: GuiAppActionJobSummary | null = null;
+  for (const job of Object.values(jobs)) {
+    if (job.app_id === appId && (latestJob === null || job.started_at > latestJob.started_at)) {
+      latestJob = job;
+    }
+  }
+
+  return latestJob;
 }
 
 function sortedManagedApps(apps: GuiManagedAppSummary[]): GuiManagedAppSummary[] {
