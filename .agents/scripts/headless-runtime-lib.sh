@@ -1242,14 +1242,13 @@ _seed_worker_db_session_context() {
 	[[ -f "$shared_db" ]] || return 0
 	mkdir -p "${isolated_dir}/opencode" 2>/dev/null || return 0
 
-	# Fresh isolated auth dirs may not have a migrated DB yet. Copy the schema from
-	# the shared DB so the targeted row copy has compatible tables without importing
-	# unrelated session/message data. Immediately copy OpenCode migration metadata
-	# too: a schema-only DB has tables but an empty migration ledger, which makes
-	# OpenCode/Drizzle replay CREATE TABLE migrations and fail before continuation
-	# can start.
+	# Fresh isolated auth dirs may not have a migrated DB yet. Copy the shared DB
+	# with SQLite backup, then prune unrelated rows below. A schema-only copy can
+	# still miss SQLite/OpenCode migration state and make Drizzle replay CREATE
+	# TABLE migrations against existing user tables ("table project already
+	# exists") during continuation retries.
 	if [[ ! -f "$worker_db" ]]; then
-		sqlite3 -cmd ".timeout 5000" "$shared_db" .schema 2>/dev/null | sqlite3 "$worker_db" >/dev/null 2>&1 || return 0
+		sqlite3 -cmd ".timeout 5000" "$shared_db" ".backup '${worker_db}'" >/dev/null 2>&1 || return 0
 	fi
 
 	_sync_worker_db_migration_ledgers "$worker_db" "$shared_db"
@@ -1264,6 +1263,9 @@ _seed_worker_db_session_context() {
 			WHERE id IN (SELECT project_id FROM shared.session WHERE id = '${session_id_sql}');
 		INSERT OR IGNORE INTO session SELECT * FROM shared.session WHERE id = '${session_id_sql}';
 		INSERT OR IGNORE INTO message SELECT * FROM shared.message WHERE session_id = '${session_id_sql}';
+		DELETE FROM main.message WHERE session_id != '${session_id_sql}';
+		DELETE FROM main.session WHERE id != '${session_id_sql}';
+		DELETE FROM main.project WHERE id NOT IN (SELECT project_id FROM main.session);
 		DETACH DATABASE shared;
 	SQL
 	return 0

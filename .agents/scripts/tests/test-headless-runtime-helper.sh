@@ -1296,6 +1296,55 @@ SQL
 	return 0
 }
 
+test_seed_worker_db_session_context_uses_backup_for_fresh_db() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/isolated-opencode-backup-seed"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+	rm -f "$shared_db" "$worker_db"
+
+	sqlite3 "$shared_db" <<'SQL'
+PRAGMA user_version = 42;
+CREATE TABLE __drizzle_migrations (id INTEGER PRIMARY KEY, hash TEXT NOT NULL, created_at INTEGER);
+CREATE TABLE data_migration (id TEXT PRIMARY KEY, updated_at INTEGER NOT NULL);
+CREATE TABLE migration (id TEXT PRIMARY KEY, time_completed INTEGER NOT NULL);
+CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
+CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);
+INSERT INTO __drizzle_migrations VALUES (1, 'schema-ready', 12345);
+INSERT INTO data_migration VALUES ('data-ready', 67890);
+INSERT INTO migration VALUES ('opencode-v17-ready', 1700000000);
+INSERT INTO project VALUES ('project-keep', 'Keep Project');
+INSERT INTO project VALUES ('project-other', 'Other Project');
+INSERT INTO session VALUES ('session-keep', 'project-keep', 'Keep');
+INSERT INTO session VALUES ('session-other', 'project-other', 'Other');
+INSERT INTO message VALUES ('message-keep', 'session-keep', 'one');
+INSERT INTO message VALUES ('message-other', 'session-other', 'other');
+SQL
+
+	_seed_worker_db_session_context "$isolated_dir" "session-keep"
+
+	local user_version schema_migrations sessions other_sessions messages other_messages projects other_projects
+	user_version=$(sqlite3 "$worker_db" "PRAGMA user_version;")
+	schema_migrations=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM __drizzle_migrations WHERE hash = 'schema-ready';")
+	sessions=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM session WHERE id = 'session-keep';")
+	other_sessions=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM session WHERE id = 'session-other';")
+	messages=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM message WHERE session_id = 'session-keep';")
+	other_messages=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM message WHERE session_id = 'session-other';")
+	projects=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM project WHERE id = 'project-keep';")
+	other_projects=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM project WHERE id = 'project-other';")
+
+	if [[ "$user_version" == "42" && "$schema_migrations" == "1" && "$sessions" == "1" && "$other_sessions" == "0" && "$messages" == "1" && "$other_messages" == "0" && "$projects" == "1" && "$other_projects" == "0" ]]; then
+		print_result "seed worker DB uses shared backup for fresh continuation DB" 0
+		return 0
+	fi
+
+	print_result "seed worker DB uses shared backup for fresh continuation DB" 1 \
+		"user_version=$user_version schema_migrations=$schema_migrations sessions=$sessions other_sessions=$other_sessions messages=$messages other_messages=$other_messages projects=$projects other_projects=$other_projects"
+	return 0
+}
+
 test_sync_worker_db_migration_metadata_repairs_prewarmed_project_table() {
 	local shared_dir="${HOME}/.local/share/opencode"
 	local isolated_dir="${TEST_ROOT}/isolated-opencode-prewarm"
@@ -2516,6 +2565,7 @@ main() {
 	test_copy_scoped_opencode_auth_keeps_selected_provider_only
 	test_seed_worker_db_session_context_copies_only_selected_session
 	test_seed_worker_db_session_context_copies_migration_metadata
+	test_seed_worker_db_session_context_uses_backup_for_fresh_db
 	test_sync_worker_db_migration_metadata_repairs_prewarmed_project_table
 	test_sync_worker_db_migration_metadata_replaces_stale_ledgers
 	test_copy_worker_db_migration_ledger_preserves_rows_when_attach_fails
