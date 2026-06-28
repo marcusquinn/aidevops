@@ -686,6 +686,9 @@ Thread preview: ${preview}
    '${SCRIPT_DIR}/pr-review-thread-response-scanner.sh reply'; resolve with
    '${SCRIPT_DIR}/pr-review-thread-response-scanner.sh resolve' only after
    you have verified the finding is addressed or no longer applies.
+   Review-thread read/reply/resolve operations are GraphQL-only in this helper;
+   use the scanner commands above or 'gh api graphql'. The resolveReviewThread
+   mutation has no REST endpoint, so do not try 'gh api repos/...' for resolve.
 4. For each unresolved bot finding:
    - Verify the premise by reading the cited file and surrounding context.
    - If it is a correctness/security defect in PR-owned code, hand-apply the fix,
@@ -703,6 +706,8 @@ Verification context:
 - Prefer focused tests/lint for changed files.
 - Preserve existing PR scope and provenance labels.
 - Keep comments concise and cite files/commands as evidence.
+- Completion requires each verified-addressed thread to be resolved with
+  resolveReviewThread via '${SCRIPT_DIR}/pr-review-thread-response-scanner.sh resolve'.
 PROMPT_EOF
 	printf '%s\n' "$prompt_file"
 	return 0

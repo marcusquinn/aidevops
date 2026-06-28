@@ -256,6 +256,22 @@ test_dispatch_prompt_uses_framework_script_path() {
 	return 0
 }
 
+test_dispatch_prompt_mentions_graphql_only_thread_operations() {
+	setup_test_env
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	wait_for_headless_log || true
+	if grep -q 'Review-thread read/reply/resolve operations are GraphQL-only' "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null && \
+		grep -q 'resolveReviewThread' "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null && \
+		grep -q 'has no REST endpoint' "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null && \
+		grep -q 'Completion requires each verified-addressed thread to be resolved' "$HEADLESS_PROMPT_CAPTURE" 2>/dev/null; then
+		print_result "dispatch prompt explains GraphQL-only thread resolution" 0
+	else
+		print_result "dispatch prompt explains GraphQL-only thread resolution" 1 "prompt=$(tr '\n' ' ' <"$HEADLESS_PROMPT_CAPTURE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_dispatch_pr_launches_targeted_worker_with_human_opt_in() {
 	setup_test_env
 	export STUB_THREADS_MODE="human"
@@ -478,6 +494,7 @@ main() {
 	test_scan_pr_can_include_human_threads_with_opt_in
 	test_dispatch_launches_worker_and_writes_state
 	test_dispatch_prompt_uses_framework_script_path
+	test_dispatch_prompt_mentions_graphql_only_thread_operations
 	test_dispatch_pr_launches_targeted_worker_with_human_opt_in
 	test_dispatch_is_idempotent_for_same_fingerprint
 	test_dispatch_skips_mixed_fingerprint_during_inflight_window
