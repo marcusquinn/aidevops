@@ -74,7 +74,7 @@ export function isEditableKeyboardTarget(target: EventTarget | null): boolean {
     return false;
   }
 
-  return target.isContentEditable || target.closest("input, textarea, select, [contenteditable]") !== null;
+  return target.isContentEditable || target.closest("input, textarea, select, [contenteditable], [role='textbox']") !== null;
 }
 
 export function App(): ReactElement {
