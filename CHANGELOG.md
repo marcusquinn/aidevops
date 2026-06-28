@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.11] - 2026-06-28
+
+### Fixed
+
+- refine apps platform filters and link controls
+
 ## [3.29.10] - 2026-06-28
 
 ### Changed
