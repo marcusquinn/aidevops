@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.20] - 2026-06-28
+
+### Changed
+
+- Maintenance: mark t18026 complete (pr:#25797 completed:2026-06-28) [skip ci]
+- fix Apps tooltips and version detection (#25797)
+- Maintenance: sync ref:GH#25798 to TODO.md [skip ci]
+
 ## [3.29.19] - 2026-06-28
 
 ### Changed
