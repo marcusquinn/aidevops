@@ -66,6 +66,7 @@ Model on the existing Apps surface custom-tooltip approach in `packages/gui-web/
 - `packages/gui-web/src/styles.css` — tooltip placement, app icon hit-area alignment, recommended tile hover/focus states, and contrast CSS variables.
 - `packages/gui-web/src/dashboard.ts` — static dashboard copy for Appearance controls.
 - `packages/gui-web/tests/component.test.ts` — regression coverage for custom tooltip/link source and contrast preferences.
+- `packages/gui-api/tests/security.test.ts` — targeted timeout stabilization for the full local status redaction route test.
 
 ### Implementation Steps
 
@@ -77,6 +78,7 @@ Model on the existing Apps surface custom-tooltip approach in `packages/gui-web/
 6. Ensure header menus close each other, close on click-away/Escape, and close after hover-away delay.
 7. Make the logo return to Dashboard and restore the devices rail mode.
 8. Add persisted low/medium/high Appearance contrast preferences with CSS theme variants.
+9. Allow the full local `/api/status` redaction test up to 10 seconds because it exercises local status probes and can exceed Bun's 5-second default on loaded developer machines.
 
 ### Verification
 
