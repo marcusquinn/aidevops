@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.23] - 2026-06-28
+
+### Changed
+
+- Refactor: reduce GUI header complexity (#25825)
+- Maintenance: mark t18027 complete (pr:#25823 completed:2026-06-28) [skip ci]
+- polish GUI app interactions and contrast controls (#25823)
+- Maintenance: sync ref:GH#25822 to TODO.md [skip ci]
+
+### Fixed
+
+- harden OAuth notification source refs (#25824)
+- handle app action request failures (#25820)
+
 ## [3.29.22] - 2026-06-28
 
 ### Changed
