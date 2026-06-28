@@ -1,15 +1,11 @@
 import type { GuiResponseEnvelope, GuiStatusData } from "@aidevops/gui-shared";
-import { type Dispatch, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactElement, type SetStateAction, useEffect, useState } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactElement, useEffect, useState } from "react";
 import { MachineRail, Sidebar } from "./AppNavigation";
 import { Workspace } from "./AppWorkspace";
 import type { ConversationMode, FontPreference, FontSizePreference, ShellMode, SurfaceId, ThemePreference } from "./app-model";
 import { DEFAULT_ACCENT_HUE, DEFAULT_FONT, DEFAULT_FONT_SIZE, fileRootBySurface, findSurface, findSurfaceSectionLabel, fontFamilyForPreference, fontSizeForPreference, getSystemTheme, isFontPreference, isFontSizePreference } from "./app-model";
+import { type NavigationHistory, nextHistoryIndex, useNavigationHistoryKeyboard } from "./navigation-history";
 import { fetchStatus, mockedStatus } from "./status-client";
-
-interface NavigationHistory {
-  entries: SurfaceId[];
-  index: number;
-}
 
 interface WebKitBridgeWindow extends Window {
   webkit?: {
@@ -67,40 +63,6 @@ export function readStoredAppearancePreferences(storage: ReadableAppearanceStora
     showNavCounts: readStoredBoolean(storage, appearanceStorageKeys.showNavCounts, true),
     themePreference: savedTheme === "system" || savedTheme === "light" || savedTheme === "dark" ? savedTheme : "system",
   };
-}
-
-export function isEditableKeyboardTarget(target: EventTarget | null): boolean {
-  if (typeof HTMLElement === "undefined" || !(target instanceof HTMLElement)) {
-    return false;
-  }
-
-  return target.isContentEditable || target.closest("input, textarea, select, [contenteditable], [role='textbox']") !== null;
-}
-
-function nextHistoryIndex(current: NavigationHistory, direction: -1 | 1): number {
-  return Math.min(Math.max(0, current.entries.length - 1), Math.max(0, current.index + direction));
-}
-
-function useNavigationHistoryKeyboard(setNavigation: Dispatch<SetStateAction<NavigationHistory>>): void {
-  useEffect(() => {
-    const navigateHistoryWithKeyboard = (event: globalThis.KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || isEditableKeyboardTarget(event.target) || isEditableKeyboardTarget(document.activeElement)) {
-        return;
-      }
-
-      const direction: -1 | 1 | null = event.key === "[" ? -1 : event.key === "]" ? 1 : null;
-      if (direction === null) {
-        return;
-      }
-
-      event.preventDefault();
-      setNavigation((current) => ({ ...current, index: nextHistoryIndex(current, direction) }));
-    };
-
-    window.addEventListener("keydown", navigateHistoryWithKeyboard);
-
-    return () => window.removeEventListener("keydown", navigateHistoryWithKeyboard);
-  }, [setNavigation]);
 }
 
 export function App(): ReactElement {
