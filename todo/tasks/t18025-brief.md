@@ -85,23 +85,23 @@ Leaf task: implementation PR should use `Resolves #25780`.
 
    ```bash
    _get_pr_branch_refs_for_conflict_comment() {
-    	local pr_number="$1"
-    	local repo_slug="$2"
-    	local branch_refs=""
-    	local head_branch=""
-    	local base_branch=""
+     local pr_number="$1"
+     local repo_slug="$2"
+     local branch_refs=""
+     local head_branch=""
+     local base_branch=""
 
-    	branch_refs=$(gh pr view "$pr_number" --repo "$repo_slug" \
-    		--json headRefName,baseRefName \
-    		--jq '[.headRefName // "<branch>", .baseRefName // "main"] | @tsv' 2>/dev/null) || branch_refs=""
-    	if [[ -n "$branch_refs" ]]; then
-    		IFS=$'\t' read -r head_branch base_branch <<<"$branch_refs"
-    	fi
-    	[[ -n "$head_branch" ]] || head_branch="<branch>"
-    	[[ -n "$base_branch" ]] || base_branch="main"
+     branch_refs=$(gh pr view "$pr_number" --repo "$repo_slug" \
+       --json headRefName,baseRefName \
+       --jq '[.headRefName // "<branch>", .baseRefName // "main"] | @tsv' 2>/dev/null) || branch_refs=""
+     if [[ -n "$branch_refs" ]]; then
+       IFS=$'\t' read -r head_branch base_branch <<<"$branch_refs"
+     fi
+     [[ -n "$head_branch" ]] || head_branch="<branch>"
+     [[ -n "$base_branch" ]] || base_branch="main"
 
-    	printf '%s\t%s\n' "$head_branch" "$base_branch"
-    	return 0
+     printf '%s\t%s\n' "$head_branch" "$base_branch"
+     return 0
    }
    ```
 
