@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.24] - 2026-06-28
+
+### Changed
+
+- Maintenance: mark t18028 complete (pr:#25828 completed:2026-06-28) [skip ci]
+- fix vault remote-control CI test isolation (#25828)
+- Maintenance: sync ref:GH#25827 to TODO.md [skip ci]
+
 ## [3.29.23] - 2026-06-28
 
 ### Changed
