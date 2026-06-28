@@ -222,6 +222,11 @@ function ConversationSidebar({ conversationMode, selectedLocalRepoIndex, selecte
     ? []
     : status.opencode_sessions.sessions.filter((session) => session.repo_path_ref === selectedRepo.path_ref);
   const activeSessionId = sessions.some((session) => session.id_ref === selectedSessionId) ? selectedSessionId : sessions[0]?.id_ref;
+  useEffect(() => {
+    if (activeSessionId !== selectedSessionId) {
+      setSelectedSessionId(activeSessionId);
+    }
+  }, [activeSessionId, selectedSessionId, setSelectedSessionId]);
   const canSelectPreviousRepo = selectedLocalRepoIndex > 0;
   const canSelectNextRepo = selectedLocalRepoIndex < repos.length - 1;
 
