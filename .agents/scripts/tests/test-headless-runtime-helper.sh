@@ -1345,6 +1345,42 @@ SQL
 	return 0
 }
 
+test_seed_worker_db_session_context_vacuums_pruned_backup() {
+	local shared_dir="${HOME}/.local/share/opencode"
+	local isolated_dir="${TEST_ROOT}/isolated-opencode-vacuum-seed"
+	local shared_db="${shared_dir}/opencode.db"
+	local worker_db="${isolated_dir}/opencode/opencode.db"
+	mkdir -p "$shared_dir" "${isolated_dir}/opencode"
+	rm -f "$shared_db" "$worker_db"
+
+	sqlite3 "$shared_db" <<'SQL'
+CREATE TABLE project (id TEXT PRIMARY KEY, name TEXT);
+CREATE TABLE session (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, title TEXT NOT NULL);
+CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data BLOB NOT NULL);
+INSERT INTO project VALUES ('project-keep', 'Keep Project');
+INSERT INTO project VALUES ('project-other', 'Other Project');
+INSERT INTO session VALUES ('session-keep', 'project-keep', 'Keep');
+INSERT INTO session VALUES ('session-other', 'project-other', 'Other');
+INSERT INTO message VALUES ('message-keep', 'session-keep', zeroblob(1024));
+INSERT INTO message VALUES ('message-other', 'session-other', zeroblob(1048576));
+SQL
+
+	_seed_worker_db_session_context "$isolated_dir" "session-keep"
+
+	local other_messages freelist_count
+	other_messages=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM message WHERE session_id = 'session-other';")
+	freelist_count=$(sqlite3 "$worker_db" "PRAGMA freelist_count;")
+
+	if [[ "$other_messages" == "0" && "$freelist_count" == "0" ]]; then
+		print_result "seed worker DB vacuums pruned backup pages" 0
+		return 0
+	fi
+
+	print_result "seed worker DB vacuums pruned backup pages" 1 \
+		"other_messages=$other_messages freelist_count=$freelist_count"
+	return 0
+}
+
 test_sync_worker_db_migration_metadata_repairs_prewarmed_project_table() {
 	local shared_dir="${HOME}/.local/share/opencode"
 	local isolated_dir="${TEST_ROOT}/isolated-opencode-prewarm"
@@ -2566,6 +2602,7 @@ main() {
 	test_seed_worker_db_session_context_copies_only_selected_session
 	test_seed_worker_db_session_context_copies_migration_metadata
 	test_seed_worker_db_session_context_uses_backup_for_fresh_db
+	test_seed_worker_db_session_context_vacuums_pruned_backup
 	test_sync_worker_db_migration_metadata_repairs_prewarmed_project_table
 	test_sync_worker_db_migration_metadata_replaces_stale_ledgers
 	test_copy_worker_db_migration_ledger_preserves_rows_when_attach_fails
