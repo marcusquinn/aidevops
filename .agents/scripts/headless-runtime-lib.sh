@@ -1257,8 +1257,10 @@ _seed_worker_db_session_context() {
 	shared_db_sql=$(sql_escape "$shared_db")
 	session_id_sql=$(sql_escape "$session_id")
 	sqlite3 "$worker_db" <<-SQL >/dev/null 2>&1 || true
+		.bail on
 		.timeout 5000
 		ATTACH DATABASE '${shared_db_sql}' AS shared;
+		BEGIN IMMEDIATE;
 		INSERT OR IGNORE INTO project SELECT * FROM shared.project
 			WHERE id IN (SELECT project_id FROM shared.session WHERE id = '${session_id_sql}');
 		INSERT OR IGNORE INTO session SELECT * FROM shared.session WHERE id = '${session_id_sql}';
@@ -1266,7 +1268,9 @@ _seed_worker_db_session_context() {
 		DELETE FROM main.message WHERE session_id != '${session_id_sql}';
 		DELETE FROM main.session WHERE id != '${session_id_sql}';
 		DELETE FROM main.project WHERE id NOT IN (SELECT project_id FROM main.session);
+		COMMIT;
 		DETACH DATABASE shared;
+		VACUUM;
 	SQL
 	return 0
 }
