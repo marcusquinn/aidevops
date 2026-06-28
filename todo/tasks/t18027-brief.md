@@ -61,6 +61,8 @@ Model on the existing Apps surface custom-tooltip approach in `packages/gui-web/
 - `packages/gui-web/src/InventorySurfaces.tsx` — global tooltip alignment state and viewport-edge placement.
 - `packages/gui-web/src/AppWorkspace.tsx` — header popover mutual exclusion, click-away/Escape close, and delayed hover-away close.
 - `packages/gui-web/src/AppNavigation.tsx` — logo dashboard navigation and Appearance contrast controls.
+- `packages/gui-web/src/AppearanceControls.tsx` — extracted Appearance footer controls and hue parsing helper.
+- `packages/gui-web/src/workspace-header-state.ts` — extracted header menu state and command palette selection helpers.
 - `packages/gui-web/src/App.tsx` — contrast persistence and document dataset wiring.
 - `packages/gui-web/src/app-model.ts` — contrast preference type, options, default, validator, and label copy.
 - `packages/gui-web/src/styles.css` — tooltip placement, app icon hit-area alignment, recommended tile hover/focus states, and contrast CSS variables.
@@ -79,6 +81,7 @@ Model on the existing Apps surface custom-tooltip approach in `packages/gui-web/
 7. Make the logo return to Dashboard and restore the devices rail mode.
 8. Add persisted low/medium/high Appearance contrast preferences with CSS theme variants.
 9. Allow the full local `/api/status` redaction test up to 10 seconds because it exercises local status probes and can exceed Bun's 5-second default on loaded developer machines.
+10. Extract Appearance controls and header menu state into smaller modules to keep the Qlty smell threshold/regression gates clean.
 
 ### Verification
 
@@ -89,6 +92,7 @@ Model on the existing Apps surface custom-tooltip approach in `packages/gui-web/
 - `shellcheck packages/gui-desktop/scripts/install-macos-app.sh`
 - `bun run gui:desktop:check`
 - `git diff --check`
+- `qlty smells --all --sarif --no-snippets --quiet` / `.agents/scripts/qlty-regression-helper.sh --base origin/main --head HEAD`
 
 ## Acceptance
 

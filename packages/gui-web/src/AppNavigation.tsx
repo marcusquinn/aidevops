@@ -7,10 +7,8 @@ import {
   FiBox,
   FiBriefcase,
   FiCalendar,
-  FiChevronDown,
   FiChevronLeft,
   FiChevronRight,
-  FiChevronUp,
   FiClock,
   FiDownloadCloud,
   FiFileText,
@@ -29,7 +27,6 @@ import {
   FiMessageSquare,
   FiMonitor,
   FiPackage,
-  FiRotateCcw,
   FiServer,
   FiSettings,
   FiShield,
@@ -37,8 +34,11 @@ import {
   FiUsers,
 } from "react-icons/fi";
 import type { ContrastPreference, ConversationMode, FontPreference, FontSizePreference, ShellMode, SidebarMode, SurfaceIconName, SurfaceId, SurfaceNavGroup, SurfaceNavItem, ThemePreference } from "./app-model";
-import { DEFAULT_ACCENT_HUE, contrastOptions, dashboardNavItem, fontFamilyForPreference, fontOptions, fontSizeOptions, navGroups, sidebarModeForSurface, surfaceRecordCounts, text } from "./app-model";
+import { dashboardNavItem, navGroups, sidebarModeForSurface, surfaceRecordCounts, text } from "./app-model";
+import { SidebarFooter } from "./AppearanceControls";
 import { VaultPadlock, vaultCollectionForSurface } from "./VaultBadges";
+
+export { hueFromInputValue } from "./AppearanceControls";
 
 const surfaceIcons: Record<SurfaceIconName, IconType> = {
   apps: FiBox,
@@ -70,22 +70,6 @@ const surfaceIcons: Record<SurfaceIconName, IconType> = {
   terminal: FiTerminal,
   users: FiUsers,
 };
-
-export function hueFromInputValue(value: string): number | null {
-  const trimmedValue = value.trim();
-
-  if (trimmedValue.length === 0) {
-    return null;
-  }
-
-  const hue = Number(trimmedValue);
-
-  if (!Number.isInteger(hue)) {
-    return null;
-  }
-
-  return Math.min(359, Math.max(0, hue));
-}
 
 export function SurfaceGlyph({ icon }: { icon: SurfaceIconName }) {
   const Icon = surfaceIcons[icon];
@@ -383,189 +367,5 @@ function SidebarHeader({ setActiveSurface, setShellMode, shellMode }: {
         />
       </div>
     </header>
-  );
-}
-
-function SidebarFooter({ accentHue, contrastPreference, fontPreference, fontSizePreference, setAccentHue, setContrastPreference, setFontPreference, setFontSizePreference, setShowBorders, setShowNavCounts, setThemePreference, showBorders, showNavCounts, themePreference }: {
-  accentHue: number;
-  contrastPreference: ContrastPreference;
-  fontPreference: FontPreference;
-  fontSizePreference: FontSizePreference;
-  setAccentHue: (hue: number) => void;
-  setContrastPreference: (contrast: ContrastPreference) => void;
-  setFontPreference: (font: FontPreference) => void;
-  setFontSizePreference: (size: FontSizePreference) => void;
-  setShowBorders: (show: boolean) => void;
-  setShowNavCounts: (show: boolean) => void;
-  setThemePreference: (theme: ThemePreference) => void;
-  showBorders: boolean;
-  showNavCounts: boolean;
-  themePreference: ThemePreference;
-}) {
-  const [appearanceOpen, setAppearanceOpen] = useState(true);
-  const AppearanceChevron = appearanceOpen ? FiChevronDown : FiChevronUp;
-  const selectedFontFamily = fontFamilyForPreference(fontPreference);
-  const fontIndex = Math.max(0, fontOptions.findIndex((option) => option.value === fontPreference));
-  const fontSizeIndex = Math.max(0, fontSizeOptions.findIndex((option) => option.value === fontSizePreference));
-  const canSelectPreviousFont = fontIndex > 0;
-  const canSelectNextFont = fontIndex < fontOptions.length - 1;
-  const [hueInput, setHueInput] = useState(() => String(accentHue));
-  const setFontByIndex = (index: number) => {
-    const nextFont = fontOptions[index]?.value;
-
-    if (nextFont === undefined) {
-      return;
-    }
-
-    setFontPreference(nextFont);
-  };
-  const updateAccentHue = (value: number) => {
-    if (!Number.isFinite(value)) {
-      return;
-    }
-    setAccentHue(Math.min(359, Math.max(0, value)));
-  };
-  const updateHueInput = (value: string) => {
-    setHueInput(value);
-
-    const nextHue = hueFromInputValue(value);
-
-    if (nextHue === null) {
-      return;
-    }
-
-    updateAccentHue(nextHue);
-  };
-
-  useEffect(() => {
-    setHueInput(String(accentHue));
-  }, [accentHue]);
-
-  return (
-    <footer className="sidebar-footer">
-      <section className={appearanceOpen ? "appearance-panel open" : "appearance-panel collapsed"}>
-        <button
-          aria-expanded={appearanceOpen}
-          className="appearance-panel-tab"
-          onClick={() => setAppearanceOpen((current) => !current)}
-          type="button"
-        >
-          {text.appearance}
-          <AppearanceChevron aria-hidden="true" className="appearance-chevron" />
-        </button>
-        {appearanceOpen ? <div className="appearance-panel-body">
-          <fieldset className="theme-control compact" aria-label={text.theme}>
-            {(["system", "light", "dark"] as const).map((theme) => (
-              <button
-                aria-pressed={themePreference === theme}
-                className={themePreference === theme ? "theme-option active" : "theme-option"}
-                key={theme}
-                onClick={() => setThemePreference(theme)}
-                type="button"
-              >
-                {theme}
-              </button>
-            ))}
-          </fieldset>
-          <div className="theme-hue-control">
-            <div className="theme-control-heading">
-              <div className="hue-label-row">
-                <label htmlFor="theme-hue-slider">{text.hue}</label>
-                <input
-                  aria-label="Hue value"
-                  className="hue-number-input"
-                  max="359"
-                  min="0"
-                  onChange={(event) => updateHueInput(event.currentTarget.value)}
-                  type="number"
-                  value={hueInput}
-                />
-              </div>
-              <button aria-label="Reset hue to default" className="icon-reset-button" onClick={() => setAccentHue(DEFAULT_ACCENT_HUE)} title={text.reset} type="button"><FiRotateCcw aria-hidden="true" /></button>
-            </div>
-            <input
-              id="theme-hue-slider"
-              max="359"
-              min="0"
-              onChange={(event) => updateAccentHue(Number.parseInt(event.currentTarget.value, 10))}
-              type="range"
-              value={accentHue}
-            />
-          </div>
-          <fieldset className="contrast-control" aria-label={text.contrast}>
-            <legend>{text.contrast}</legend>
-            <div className="contrast-options">
-              {contrastOptions.map((option) => (
-                <button
-                  aria-pressed={contrastPreference === option.value}
-                  className={contrastPreference === option.value ? "active" : ""}
-                  key={option.value}
-                  onClick={() => setContrastPreference(option.value)}
-                  type="button"
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </fieldset>
-          <label className="switch-control appearance-switch">
-            <strong>{text.showBorders}</strong>
-            <input checked={showBorders} onChange={(event) => setShowBorders(event.currentTarget.checked)} type="checkbox" />
-            <span aria-hidden="true" />
-          </label>
-          <label className="switch-control appearance-switch">
-            <strong>{text.showCounts}</strong>
-            <input checked={showNavCounts} onChange={(event) => setShowNavCounts(event.currentTarget.checked)} type="checkbox" />
-            <span aria-hidden="true" />
-          </label>
-          <div className="font-size-control">
-            <label htmlFor="font-size-slider">{text.fontSize}</label>
-            <input
-              id="font-size-slider"
-              max={fontSizeOptions.length - 1}
-              min="0"
-              onChange={(event) => setFontSizePreference(fontSizeOptions[Number.parseInt(event.currentTarget.value, 10)]?.value ?? "xs")}
-              step="1"
-              type="range"
-              value={fontSizeIndex}
-            />
-            <fieldset className="range-labels">
-              <legend className="sr-only">Font size shortcuts</legend>
-              {fontSizeOptions.map((option) => (
-                <button
-                  aria-pressed={option.value === fontSizePreference}
-                  className={option.value === fontSizePreference ? "active" : ""}
-                  key={option.value}
-                  onClick={() => setFontSizePreference(option.value)}
-                  type="button"
-                >
-                  {option.label}
-                </button>
-              ))}
-            </fieldset>
-          </div>
-          <div className="font-control">
-            <span id="appearance-font-selector-label">{text.font}</span>
-            <div className="selector-with-stepper font-selector-row">
-              <button aria-label="Previous font" className="selector-step-button" disabled={!canSelectPreviousFont} onClick={() => setFontByIndex(fontIndex - 1)} type="button"><FiChevronLeft aria-hidden="true" /></button>
-              <select
-                aria-labelledby="appearance-font-selector-label"
-                onChange={(event) => setFontPreference(event.currentTarget.value as FontPreference)}
-                style={{ fontFamily: selectedFontFamily }}
-                value={fontPreference}
-              >
-                {fontOptions.map((option) => (
-                  <option key={option.value} style={{ fontFamily: option.fontFamily }} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <button aria-label="Next font" className="selector-step-button" disabled={!canSelectNextFont} onClick={() => setFontByIndex(fontIndex + 1)} type="button"><FiChevronRight aria-hidden="true" /></button>
-            </div>
-          </div>
-        </div>
-        : null}
-      </section>
-    </footer>
   );
 }
