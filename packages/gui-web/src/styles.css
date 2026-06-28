@@ -830,6 +830,14 @@ code {
   text-align: center;
 }
 
+.range-labels button:first-child {
+  text-align: left;
+}
+
+.range-labels button:last-child {
+  text-align: right;
+}
+
 .range-labels button:hover,
 .range-labels button:focus-visible,
 .range-labels .active {

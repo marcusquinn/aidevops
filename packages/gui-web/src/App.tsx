@@ -69,6 +69,14 @@ export function readStoredAppearancePreferences(storage: ReadableAppearanceStora
   };
 }
 
+export function isEditableKeyboardTarget(target: EventTarget | null): boolean {
+  if (typeof HTMLElement === "undefined" || !(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  return target.isContentEditable || target.closest("input, textarea, select, [contenteditable]") !== null;
+}
+
 export function App(): ReactElement {
   const [storedAppearancePreferences] = useState<StoredAppearancePreferences>(() => readStoredAppearancePreferences());
   const [status, setStatus] = useState<GuiResponseEnvelope<GuiStatusData>>(mockedStatus());
@@ -185,7 +193,7 @@ export function App(): ReactElement {
 
   useEffect(() => {
     const navigateHistoryWithKeyboard = (event: globalThis.KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) {
+      if (!(event.metaKey || event.ctrlKey) || isEditableKeyboardTarget(event.target) || isEditableKeyboardTarget(document.activeElement)) {
         return;
       }
 
