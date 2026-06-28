@@ -63,6 +63,7 @@ stale_repo="$tmp_root/stale-transport"
 mkdir -p "$stale_repo"
 "$REMOTE_HELPER" send-lock --vault-dir "$controller_dir" --recipient "$target_public" --repo "$stale_repo" --target-device "$target_device" --reason "stale lock" --ttl 1 >/dev/null
 sleep 2
+rm -rf "$target_dir/message-encrypted-inbox"
 rm -f "$target_dir/message-replay-cache.json" "$target_dir/message-inbox.json"
 set +e
 "$REMOTE_HELPER" receive --vault-dir "$target_dir" --repo "$stale_repo" >/dev/null 2>"$tmp_root/stale.err"
@@ -104,6 +105,7 @@ PY
 revoked_repo="$tmp_root/revoked-transport"
 mkdir -p "$revoked_repo"
 "$REMOTE_HELPER" send-lock --vault-dir "$controller_dir" --recipient "$target_public" --repo "$revoked_repo" --target-device "$target_device" --reason "revoked lock" >/dev/null
+rm -rf "$target_dir/message-encrypted-inbox"
 rm -f "$target_dir/message-replay-cache.json" "$target_dir/message-inbox.json"
 set +e
 "$REMOTE_HELPER" receive --vault-dir "$target_dir" --repo "$revoked_repo" --revoked-devices "$revoked_file" >/dev/null 2>"$tmp_root/revoked.err"
