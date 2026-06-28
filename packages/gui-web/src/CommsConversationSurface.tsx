@@ -3,12 +3,29 @@ import { sortConversationMessageParts, sortConversationMessages, type GuiConvers
 import { text } from "./app-model";
 import { conversationThreads } from "./conversation-fixtures";
 
-export function CommsConversationSurface({ mode }: { mode: "channels" | "directMessages" | "people" }) {
-  const conversations = mode === "directMessages" ? conversationThreads.filter((thread) => thread.conversation.type === "dm" || thread.conversation.type === "group_dm") : conversationThreads.filter((thread) => thread.conversation.type === "channel");
-  const selectedThread = conversations[0] ?? conversationThreads[0];
+export function CommsConversationSurface({ mode, threads = conversationThreads }: { mode: "channels" | "directMessages" | "people"; threads?: GuiConversationThread[] }) {
+  const availableThreads = threads ?? [];
+  const conversations = mode === "directMessages" ? availableThreads.filter((thread) => thread.conversation.type === "dm" || thread.conversation.type === "group_dm") : availableThreads.filter((thread) => thread.conversation.type === "channel");
+  const selectedThread = conversations[0] ?? availableThreads[0];
   const partsByMessage = new Map<string, GuiConversationMessagePart[]>();
 
-  for (const part of sortConversationMessageParts(selectedThread.parts)) {
+  if (!selectedThread) {
+    return (
+      <section className="chat-surface comms-surface" aria-label={mode === "directMessages" ? text.directMessages : text.channels} data-tour="comms-conversations">
+        <aside className="chat-thread-panel conversation-list-panel" aria-label="Conversation list">
+          <header className="chat-thread-header">
+            <div>
+              <p className="eyebrow">Unified conversation model</p>
+              <h2>{mode === "directMessages" ? <FiAtSign aria-hidden="true" /> : <FiHash aria-hidden="true" />} {mode === "directMessages" ? text.directMessages : text.channels}</h2>
+            </div>
+          </header>
+          <div className="notice compact-notice">No conversations yet</div>
+        </aside>
+      </section>
+    );
+  }
+
+  for (const part of sortConversationMessageParts(conversationParts(selectedThread))) {
     partsByMessage.set(part.message_id, [...(partsByMessage.get(part.message_id) ?? []), part]);
   }
 
@@ -37,10 +54,10 @@ export function CommsConversationSurface({ mode }: { mode: "channels" | "directM
           <span className="count-pill">{participantSummary(selectedThread)}</span>
         </header>
         <div className="participant-strip">
-          {selectedThread.participants.map((participant) => <span key={participant.id}>{participant.display_name}<small>{participant.kind}</small></span>)}
+          {conversationParticipants(selectedThread).map((participant) => <span key={participant.id}>{participant.display_name}<small>{participant.kind}</small></span>)}
         </div>
         <div className="chat-message-list" data-tour="comms-message-timeline">
-          {sortConversationMessages(selectedThread.messages).map((message) => <ConversationMessageRow key={message.id} message={message} parts={partsByMessage.get(message.id) ?? []} thread={selectedThread} />)}
+          {sortConversationMessages(conversationMessages(selectedThread)).map((message) => <ConversationMessageRow key={message.id} message={message} parts={partsByMessage.get(message.id) ?? []} thread={selectedThread} />)}
         </div>
         <form className="chat-composer" aria-label="Conversation composer">
           <textarea disabled placeholder={text.chatInputPlaceholder} />
@@ -52,7 +69,7 @@ export function CommsConversationSurface({ mode }: { mode: "channels" | "directM
 }
 
 function ConversationListItem({ thread }: { thread: GuiConversationThread }) {
-  const latestMessage = sortConversationMessages(thread.messages).at(-1);
+  const latestMessage = sortConversationMessages(conversationMessages(thread)).at(-1);
   const unread = unreadCount(thread);
 
   return (
@@ -67,8 +84,8 @@ function ConversationListItem({ thread }: { thread: GuiConversationThread }) {
 }
 
 function ConversationMessageRow({ message, parts, thread }: { message: GuiConversationMessage; parts: GuiConversationMessagePart[]; thread: GuiConversationThread }) {
-  const sender = thread.participants.find((participant) => participant.id === message.sender_participant_id);
-  const reactions = thread.reactions.filter((reaction) => reaction.message_id === message.id);
+  const sender = conversationParticipants(thread).find((participant) => participant.id === message.sender_participant_id);
+  const reactions = conversationReactions(thread).filter((reaction) => reaction.message_id === message.id);
   const speaker = message.sender_kind === "human" ? "user" : "assistant";
 
   return (
@@ -82,12 +99,32 @@ function ConversationMessageRow({ message, parts, thread }: { message: GuiConver
 }
 
 function participantSummary(thread: GuiConversationThread): string {
-  const active = thread.participants.filter((participant) => participant.membership_state === "active").length;
+  const active = conversationParticipants(thread).filter((participant) => participant.membership_state === "active").length;
   return `${active} members`;
 }
 
 function unreadCount(thread: GuiConversationThread): number {
-  const lastSequence = Math.max(0, ...thread.messages.map((message) => message.sequence));
-  const localRead = thread.read_states[0]?.last_read_sequence ?? 0;
+  const lastSequence = Math.max(0, ...conversationMessages(thread).map((message) => message.sequence));
+  const localRead = conversationReadStates(thread)[0]?.last_read_sequence ?? 0;
   return Math.max(0, lastSequence - localRead);
+}
+
+function conversationMessages(thread: GuiConversationThread): GuiConversationMessage[] {
+  return thread.messages ?? [];
+}
+
+function conversationParts(thread: GuiConversationThread): GuiConversationMessagePart[] {
+  return thread.parts ?? [];
+}
+
+function conversationParticipants(thread: GuiConversationThread): GuiConversationThread["participants"] {
+  return thread.participants ?? [];
+}
+
+function conversationReactions(thread: GuiConversationThread): GuiConversationThread["reactions"] {
+  return thread.reactions ?? [];
+}
+
+function conversationReadStates(thread: GuiConversationThread): GuiConversationThread["read_states"] {
+  return thread.read_states ?? [];
 }
