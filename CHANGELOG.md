@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.13] - 2026-06-28
+
+### Changed
+
+- fix: document checkpoint EOF resume handling (#25781)
+
+### Fixed
+
+- refine Apps surface layout and filters (#25783)
+- harden conversation surface collections (#25782)
+
 ## [3.29.12] - 2026-06-28
 
 ### Changed
