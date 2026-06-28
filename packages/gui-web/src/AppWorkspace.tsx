@@ -189,21 +189,30 @@ function NotificationsMenu({ notifications, openSurface }: { notifications: GuiN
         <span>{active.length} active</span>
       </div>
       {preview.length === 0 ? <p>No current aidevops notifications.</p> : null}
-      {preview.map((notification) => <NotificationPreview key={notification.id} notification={notification} />)}
+      {preview.map((notification) => (
+        <NotificationPreview
+          key={notification.id}
+          notification={notification}
+          onClick={() => {
+            const action = notification.actions.find((candidate) => candidate.enabled && candidate.kind === "surface" && isSurfaceId(candidate.surface_id));
+            openSurface(action?.kind === "surface" && isSurfaceId(action.surface_id) ? action.surface_id : "notifications");
+          }}
+        />
+      ))}
       <button onClick={() => openSurface("notifications")} role="menuitem" type="button">Open notifications</button>
     </div>
   );
 }
 
-function NotificationPreview({ notification }: { notification: GuiNotificationSummary }): ReactElement {
+function NotificationPreview({ notification, onClick }: { notification: GuiNotificationSummary; onClick: () => void }): ReactElement {
   return (
-    <article className={`notification-preview ${notification.severity}`}>
+    <button className={`notification-preview ${notification.severity}`} onClick={onClick} role="menuitem" type="button">
       <span aria-hidden="true"><NotificationIcon notification={notification} /></span>
       <div>
         <strong>{notification.title}</strong>
         <small>{notification.category} · {notification.status}</small>
       </div>
-    </article>
+    </button>
   );
 }
 
@@ -528,7 +537,7 @@ function NotificationCard({ notification, openSurface }: { notification: GuiNoti
               return <button className="secondary-action" disabled={!action.enabled} key={action.id} onClick={() => openSurface(surfaceId)} type="button">{action.label}</button>;
             }
 
-            return <button className="secondary-action" disabled key={action.id} title={action.command_preview} type="button">{action.label}</button>;
+            return <button className="secondary-action" disabled={!action.enabled} key={action.id} title={action.command_preview} type="button">{action.label}</button>;
           })}
         </div>
       </div>
