@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.19] - 2026-06-28
+
+### Changed
+
+- Maintenance: mark t18024 complete (pr:#25793 completed:2026-06-28) [skip ci]
+
+### Fixed
+
+- clear GUI followup quality regressions
+- resolve gui sidebar and font followups (#25793)
+
 ## [3.29.18] - 2026-06-28
 
 ### Fixed
