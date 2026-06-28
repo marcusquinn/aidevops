@@ -42,4 +42,30 @@ describe("notification logic", () => {
     expect(notifications).toHaveLength(1);
     expect(notifications[0]?.severity).toBe("success");
   });
+
+  test("keeps provider notifications safe when the OAuth pool source path is absent", () => {
+    const notifications = buildStatusNotifications({
+      aiApps: [],
+      greetingOutput: "",
+      oauthPool: {
+        health: "present",
+        providers: [{
+          accounts: [],
+          active_or_idle: 0,
+          auth_errors: 1,
+          available: 0,
+          configured: true,
+          pending_token: false,
+          provider: "openai",
+          rate_limited: 1,
+          total: 1,
+        }],
+        value_policy: "metadata_only_no_tokens",
+      },
+      restartRequired: false,
+      setupTargets: [],
+    } as Parameters<typeof buildStatusNotifications>[0]);
+
+    expect(notifications.filter((notification) => notification.source_ref === "oauth_pool")).toHaveLength(2);
+  });
 });
