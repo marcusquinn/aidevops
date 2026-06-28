@@ -4,6 +4,7 @@
 # vault-device-helper.sh -- non-secret Vault device identity and fleet status
 
 set -euo pipefail
+umask 077
 
 VAULT_DEVICE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit 1
 # shellcheck source=./shared-constants.sh
@@ -130,15 +131,19 @@ valid_grant() {
 validate_grants() {
 	local csv_text="$1"
 	local grant=""
+	local -a _vault_grants
+	local old_ifs="$IFS"
 	IFS=',' read -r -a _vault_grants <<<"$csv_text"
 	for grant in "${_vault_grants[@]}"; do
 		grant="${grant//[[:space:]]/}"
 		[[ -n "$grant" ]] || continue
 		if ! valid_grant "$grant"; then
 			print_error "Unknown trust grant: $grant"
+			IFS="$old_ifs"
 			return 2
 		fi
 	done
+	IFS="$old_ifs"
 	return 0
 }
 
@@ -162,7 +167,7 @@ load_local_device_id() {
 	fi
 	python3 - "$VAULT_DEVICE_LOCAL_STATE" "$VAULT_DEVICE_FIELD_ID" <<'PY'
 import json, os, sys
-with open(sys.argv[1]) as handle:
+with open(sys.argv[1], encoding="utf-8") as handle:
     print(json.load(handle).get(sys.argv[2], ""))
 PY
 	return $?
@@ -443,7 +448,7 @@ cmd_status() {
 	fi
 	python3 - "$VAULT_DEVICE_LOCAL_STATE" <<'PY'
 import json, os, sys
-with open(sys.argv[1]) as handle:
+with open(sys.argv[1], encoding="utf-8") as handle:
     print(json.load(handle).get("unlock_status", os.environ["VAULT_DEVICE_STATE_LOCKED"]))
 PY
 	return $?
