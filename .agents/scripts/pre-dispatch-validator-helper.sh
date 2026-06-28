@@ -194,7 +194,7 @@ _extract_function_complexity_sweep_cited_file() {
 	generator_line=$(printf '%s' "$issue_body" | grep -oE '<!-- aidevops:generator=function-complexity-sweep[^>]*-->' | head -1) || generator_line=""
 	[[ -n "$generator_line" ]] || return 1
 
-	printf '%s' "$generator_line" | grep -oE 'cited_file=[^ >]+' | sed 's/cited_file=//' 2>/dev/null
+	printf '%s' "$generator_line" | grep -oE 'cited_file=[^ >]+' | sed 's/cited_file=//' || return 1
 	return 0
 }
 

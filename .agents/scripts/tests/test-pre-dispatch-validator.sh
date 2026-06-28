@@ -393,6 +393,26 @@ GHEOF
 	return 0
 }
 
+create_gh_stub_function_complexity_missing_cited_file() {
+	local body_file="${TEST_ROOT}/issue_body.txt"
+	printf '<!-- aidevops:generator=function-complexity-sweep smell_count=3 -->\n## Qlty Maintainability\n' >"$body_file"
+
+	cat >"${TEST_ROOT}/bin/gh" <<GHEOF
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "\${1:-}" == "api" ]] && printf '%s' "\${2:-}" | grep -qE '/issues/[0-9]+\$'; then
+	python3 -c "import sys; sys.stdout.write(open('${body_file}').read())" 2>/dev/null
+	exit 0
+fi
+
+printf 'unexpected gh invocation for missing cited_file test: %s\n' "\$*" >&2
+exit 1
+GHEOF
+	chmod +x "${TEST_ROOT}/bin/gh"
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -662,6 +682,23 @@ test_function_complexity_sweep_duplicate_closes_later_issue() {
 	return 0
 }
 
+test_function_complexity_sweep_missing_cited_file_allows_dispatch() {
+	setup_test_env
+	create_gh_stub_function_complexity_missing_cited_file
+
+	local rc=0
+	"$HELPER_SCRIPT" validate "25778" "marcusquinn/aidevops" >/dev/null 2>&1 || rc=$?
+
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "function_complexity_sweep missing cited_file allows dispatch" 0
+	else
+		print_result "function_complexity_sweep missing cited_file allows dispatch" 1 "Expected exit 0, got ${rc}"
+	fi
+
+	teardown_test_env
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -688,6 +725,7 @@ main() {
 	test_review_followup_label_enters_supersession_scope
 	test_source_review_scanner_label_enters_supersession_scope
 	test_function_complexity_sweep_duplicate_closes_later_issue
+	test_function_complexity_sweep_missing_cited_file_allows_dispatch
 
 	printf '\n%d test(s) run, %d failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 
