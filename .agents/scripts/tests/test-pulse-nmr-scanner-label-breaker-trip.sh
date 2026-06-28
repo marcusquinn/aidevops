@@ -177,7 +177,7 @@ define_helpers_under_test() {
 # --- AC1: scanner-label + breaker trip → preserve NMR ---
 
 test_ac1_scanner_label_with_stale_recovery_breaker_preserves_nmr() {
-	# The canonical GH#20758 scenario: awardsapp#2717.
+	# The canonical GH#20758 scenario: example-repo#2717.
 	# Issue created with source:review-feedback label. Workers crash,
 	# stale-recovery escalates, NMR applied +60s after creation.
 	# The breaker trip must be detected regardless of the scanner label.
@@ -185,7 +185,7 @@ test_ac1_scanner_label_with_stale_recovery_breaker_preserves_nmr() {
 	set_comments '[{"created_at":"2026-04-24T05:07:32Z","body":"<!-- stale-recovery-tick:escalated (threshold=2) -->\n**Stale recovery threshold reached** (t2008)"}]'
 	set_issue_meta '{"labels":[{"name":"source:review-feedback"},{"name":"needs-maintainer-review"},{"name":"auto-dispatch"}],"created_at":"2026-04-24T04:06:53Z"}'
 
-	if _nmr_applied_by_maintainer 2717 awardsapp/awardsapp marcusquinn; then
+	if _nmr_applied_by_maintainer 2717 exampleorg/examplerepo marcusquinn; then
 		print_result "AC1: scanner-label + stale-recovery breaker → PRESERVE NMR" 0
 		return 0
 	fi
@@ -220,7 +220,7 @@ test_ac2_scanner_label_nmr_at_creation_auto_approves() {
 	set_comments '[]'
 	set_issue_meta '{"labels":[{"name":"source:review-feedback"},{"name":"needs-maintainer-review"},{"name":"auto-dispatch"}],"created_at":"2026-04-24T04:06:53Z"}'
 
-	if _nmr_applied_by_maintainer 2718 awardsapp/awardsapp marcusquinn; then
+	if _nmr_applied_by_maintainer 2718 exampleorg/examplerepo marcusquinn; then
 		print_result "AC2: scanner-label + NMR at creation → auto-approve OK" 1 \
 			"Expected exit 1 — creation default should allow auto-approve"
 		return 0
@@ -254,7 +254,7 @@ test_ac3_scanner_label_late_nmr_no_breaker_preserves() {
 	set_comments '[{"created_at":"2026-04-24T05:06:55Z","body":"Holding for architecture review — the proposed fix changes the scanner API."}]'
 	set_issue_meta '{"labels":[{"name":"source:review-feedback"},{"name":"needs-maintainer-review"}],"created_at":"2026-04-24T04:06:53Z"}'
 
-	if _nmr_applied_by_maintainer 2719 awardsapp/awardsapp marcusquinn; then
+	if _nmr_applied_by_maintainer 2719 exampleorg/examplerepo marcusquinn; then
 		print_result "AC3: scanner-label + late NMR (no breaker) → PRESERVE" 0
 		return 0
 	fi
@@ -270,7 +270,7 @@ test_ac3_label_only_check_rejects_late_nmr() {
 	set_comments '[]'
 	set_issue_meta '{"labels":[{"name":"source:review-feedback"}],"created_at":"2026-04-24T04:06:53Z"}'
 
-	if _nmr_application_has_automation_signature 2719 awardsapp/awardsapp "2026-04-24T05:06:53Z"; then
+	if _nmr_application_has_automation_signature 2719 exampleorg/examplerepo "2026-04-24T05:06:53Z"; then
 		print_result "AC3: signature rejects scanner-label when NMR >300s from creation" 1 \
 			"Expected exit 1 — NMR applied 3600s after creation is not a creation default"
 		return 0
@@ -284,10 +284,10 @@ test_ac3_label_only_check_rejects_late_nmr() {
 test_ac5_no_work_loop_breaker_with_scanner_label_preserves() {
 	# t2769 no_work_loop breaker on a source:review-feedback issue.
 	set_timeline '[{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"marcusquinn"},"created_at":"2026-04-24T06:30:00Z"}]'
-	set_comments '[{"created_at":"2026-04-24T06:30:05Z","body":"<!-- cost-circuit-breaker:no_work_loop issue=2720 repo=awardsapp/awardsapp -->\nPer-issue no_work loop breaker fired"}]'
+	set_comments '[{"created_at":"2026-04-24T06:30:05Z","body":"<!-- cost-circuit-breaker:no_work_loop issue=2720 repo=exampleorg/examplerepo -->\nPer-issue no_work loop breaker fired"}]'
 	set_issue_meta '{"labels":[{"name":"source:review-feedback"},{"name":"needs-maintainer-review"}],"created_at":"2026-04-24T04:06:53Z"}'
 
-	if _nmr_applied_by_maintainer 2720 awardsapp/awardsapp marcusquinn; then
+	if _nmr_applied_by_maintainer 2720 exampleorg/examplerepo marcusquinn; then
 		print_result "AC5: no_work_loop breaker + scanner-label → PRESERVE NMR" 0
 		return 0
 	fi
@@ -306,7 +306,7 @@ test_order_inversion_breaker_wins_over_scanner_comment_marker() {
 	set_comments '[{"created_at":"2026-04-24T05:07:26Z","body":"<!-- source:review-feedback -->\nQuality-debt batch from merged PR."},{"created_at":"2026-04-24T05:07:32Z","body":"<!-- stale-recovery-tick:escalated (threshold=2) -->\nStale recovery threshold reached"}]'
 	set_issue_meta '{"labels":[{"name":"source:review-feedback"},{"name":"needs-maintainer-review"}],"created_at":"2026-04-24T04:06:53Z"}'
 
-	if _nmr_applied_by_maintainer 2721 awardsapp/awardsapp marcusquinn; then
+	if _nmr_applied_by_maintainer 2721 exampleorg/examplerepo marcusquinn; then
 		print_result "Order inversion: breaker wins over scanner marker in same window" 0
 		return 0
 	fi

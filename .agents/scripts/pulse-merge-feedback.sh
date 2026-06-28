@@ -948,7 +948,7 @@ _emit_ci_failure_guidance_blocks() {
 # focused fix should, that's a signal the BRANCH BASE was wrong, not that
 # the semantic conflict is real. Rebuilding from the issue body is then
 # cheaper than cherry-picking a scope-leaked branch. Canonical failure:
-# awardsapp#2716 / PR #2733 (100 files for a 2-line fix). Successive
+# example-repo#2716 / PR #2733 (100 files for a 2-line fix). Successive
 # workers burned opus tokens trying to cherry-pick the monster.
 #
 # Extracted from _dispatch_conflict_fix_worker to keep that function under

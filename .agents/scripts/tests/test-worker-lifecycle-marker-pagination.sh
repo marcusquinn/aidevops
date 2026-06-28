@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# Regression guard for awardsapp/awardsapp#4007 / t2769 no_work loops.
+# Regression guard for exampleorg/examplerepo#4007 / t2769 no_work loops.
 # Long issue threads push breaker markers onto later GitHub comment pages;
 # worker-lifecycle marker idempotency must slurp all pages before counting.
 

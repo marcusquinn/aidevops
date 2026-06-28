@@ -2,7 +2,7 @@
 
 ## Session Origin
 
-Interactive (marcusquinn). Discovered while investigating awardsapp/awardsapp#3046, which showed alex-solovyev's runner posting `CLAIM_RELEASED reason=launch_recovery:no_worker_process` 468 times in 48h. The worker log tail showed `Canary test FAILED ... opencode=2.1.119 (Claude Code) ... error: unknown option '-m'`. anomalyco/opencode is at v1.14.x — the `2.1.119 (Claude Code)` version string is Anthropic's `claude` CLI (`@anthropic-ai/claude-code`). On alex's runner, `$OPENCODE_BIN_DEFAULT` is resolving to the wrong binary, the canary feeds it `-m` (an opencode flag claude doesn't accept), and every dispatch attempt fails identically. The current 90s negative-cache backoff (t2814 `CANARY_NEGATIVE_TTL_SECONDS=90`) means each issue accumulates ~40 dispatch-claim comment pairs per hour while the runner stays broken.
+Interactive (marcusquinn). Discovered while investigating exampleorg/examplerepo#3046, which showed alex-solovyev's runner posting `CLAIM_RELEASED reason=launch_recovery:no_worker_process` 468 times in 48h. The worker log tail showed `Canary test FAILED ... opencode=2.1.119 (Claude Code) ... error: unknown option '-m'`. anomalyco/opencode is at v1.14.x — the `2.1.119 (Claude Code)` version string is Anthropic's `claude` CLI (`@anthropic-ai/claude-code`). On alex's runner, `$OPENCODE_BIN_DEFAULT` is resolving to the wrong binary, the canary feeds it `-m` (an opencode flag claude doesn't accept), and every dispatch attempt fails identically. The current 90s negative-cache backoff (t2814 `CANARY_NEGATIVE_TTL_SECONDS=90`) means each issue accumulates ~40 dispatch-claim comment pairs per hour while the runner stays broken.
 
 ## What
 

@@ -2,7 +2,7 @@
 
 ## Session Origin
 
-Interactive session 2026-04-26. User reported sustained 100% CPU during pulse worker activity on awardsapp. Investigation traced to `_dlw_restore_worktree_deps` (deployed at `pulse-dispatch-worker-launch.sh:236-262`, mirrored at `worktree-helper.sh:694` as `_restore_worktree_node_modules`) doing `cp -a` of `node_modules` per worktree. With 15 concurrent awardsapp worktrees on disk (~30 GB of duplicated `node_modules`), the dominant cost wasn't the cp itself — it was the cascade triggered by the file events:
+Interactive session 2026-04-26. User reported sustained 100% CPU during pulse worker activity on example-repo. Investigation traced to `_dlw_restore_worktree_deps` (deployed at `pulse-dispatch-worker-launch.sh:236-262`, mirrored at `worktree-helper.sh:694` as `_restore_worktree_node_modules`) doing `cp -a` of `node_modules` per worktree. With 15 concurrent example-repo worktrees on disk (~30 GB of duplicated `node_modules`), the dominant cost wasn't the cp itself — it was the cascade triggered by the file events:
 
 - fseventsd 131.8% CPU (file events from every cp'd file)
 - bztransmit 73.5% + 51.3% (Backblaze re-uploading every duplicate)

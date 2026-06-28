@@ -26,7 +26,7 @@
 # COMMANDS:
 #   summary [--format=human|toast|json]
 #       Aggregate count + summary line across both debt classes.
-#       human (default): 3 SYNC_PAT advisories (awardsapp/awardsapp, ...)
+#       human (default): 3 SYNC_PAT advisories (exampleorg/examplerepo, ...)
 #                        1 cross-account-inherit advisory (org/repo, ...)
 #       toast:           [WARN] 3 repos need SYNC_PAT setup — run /setup-git ...
 #                        [WARN] 1 repo needs workflow re-sync — run /setup-git ...
@@ -57,7 +57,7 @@
 #   setup-debt-helper.sh summary
 #   setup-debt-helper.sh summary --format=toast
 #   setup-debt-helper.sh list-sync-pat-missing | xargs -I{} echo "Setup: {}"
-#   setup-debt-helper.sh verify-secret awardsapp/awardsapp SYNC_PAT
+#   setup-debt-helper.sh verify-secret exampleorg/examplerepo SYNC_PAT
 #
 # DEPENDENCIES:
 #   - jq (for --format=json)
@@ -87,7 +87,7 @@ readonly CROSS_ACCOUNT_PREFIX="cross-account-inherit-"
 # -----------------------------------------------------------------------------
 
 # _is_dismissed: check whether an advisory ID appears in dismissed.txt.
-# Args: $1 = advisory id (e.g., sync-pat-awardsapp-awardsapp)
+# Args: $1 = advisory id (e.g., sync-pat-exampleorg-examplerepo)
 # Returns: 0 if dismissed, 1 otherwise
 _is_dismissed() {
 	local adv_id="$1"
@@ -99,7 +99,7 @@ _is_dismissed() {
 # Files are named sync-pat-OWNER-REPO.advisory; the slash is replaced with
 # a hyphen at write time. We split on the LAST hyphen so OWNER may itself
 # contain hyphens (e.g., essentials-com/essentials.com → essentials-com-essentials.com → split → essentials-com/essentials.com).
-# Args: $1 = filename without prefix or extension (e.g., awardsapp-awardsapp)
+# Args: $1 = filename without prefix or extension (e.g., exampleorg-examplerepo)
 # Returns: slug on stdout, or empty string if the filename has no separator
 _slug_from_filename() {
 	local stem="$1"
@@ -390,7 +390,7 @@ Examples:
   setup-debt-helper.sh summary --format=toast
   setup-debt-helper.sh list-sync-pat-missing
   setup-debt-helper.sh list-cross-account-inherit
-  setup-debt-helper.sh verify-secret awardsapp/awardsapp SYNC_PAT
+  setup-debt-helper.sh verify-secret exampleorg/examplerepo SYNC_PAT
 
 Emits no output and returns 0 when there is no setup debt; this is the
 intended quiet-on-clean signal for toast suppression.

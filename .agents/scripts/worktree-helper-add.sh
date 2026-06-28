@@ -601,7 +601,7 @@ _parse_cmd_add_args() {
 # repo's cwd. If the canonical's HEAD is stale (long-lived feature branch,
 # unsynced main, post-checkout leftover), `git worktree add -b` inherits that
 # state and the resulting PR shows a diff proportional to the canonical's drift.
-# Canonical failure: awardsapp#2716 (PR #2733, 100 files for a 2-line fix)
+# Canonical failure: example-repo#2716 (PR #2733, 100 files for a 2-line fix)
 # caused by canonical being on stale `main` while PR target was `develop`.
 #
 # Args:
@@ -668,7 +668,7 @@ _cmd_add_create_worktree() {
 
 	# t2802: explicitly base new branches on origin/<default> (or --base REF)
 	# to prevent scope-leak PRs when canonical HEAD is stale. Canonical
-	# failure: awardsapp#2716 (PR #2733, 100-file diff for a 2-line fix).
+	# failure: example-repo#2716 (PR #2733, 100-file diff for a 2-line fix).
 	local _base_ref
 	_base_ref=$(_resolve_worktree_base_ref "$_explicit_base")
 	if [[ -n "$_base_ref" ]]; then

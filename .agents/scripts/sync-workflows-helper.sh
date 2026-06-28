@@ -186,7 +186,7 @@ Examples:
   sync-workflows-helper.sh
 
   # Migrate review-bot-gate only for one repo:
-  sync-workflows-helper.sh --apply --repo wpallstars/awardsapp --workflow review-bot-gate
+  sync-workflows-helper.sh --apply --repo exampleorg/examplerepo --workflow review-bot-gate
 
   # Migrate all drifted/needs-migration repos, pin to v3.9.0:
   sync-workflows-helper.sh --apply --ref @v3.9.0

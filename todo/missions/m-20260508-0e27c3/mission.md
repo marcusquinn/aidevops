@@ -1,6 +1,6 @@
 ---
 id: "m-20260508-0e27c3"
-title: "Make awardsapp issue solving converge to green merged PRs"
+title: "Make example-repo issue solving converge to green merged PRs"
 status: active
 mode: full
 repo: "/Users/marcusquinn/Git/aidevops"
@@ -22,38 +22,38 @@ model_routing:
 
 preferences:
   tech_stack: [bash, github-actions, typescript, turbo, pnpm]
-  deploy_target: "aidevops local deployment plus awardsapp GitHub CI"
-  test_framework: "ShellCheck, aidevops script tests, awardsapp CI"
+  deploy_target: "aidevops local deployment plus example-repo GitHub CI"
+  test_framework: "ShellCheck, aidevops script tests, example-repo CI"
   ci_provider: "GitHub Actions"
-  coding_style: "Follow aidevops AGENTS.md and awardsapp AGENTS.md per repo"
+  coding_style: "Follow aidevops AGENTS.md and example-repo AGENTS.md per repo"
 ---
 
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Make awardsapp issue solving converge to green merged PRs
+# Make example-repo issue solving converge to green merged PRs
 
-> Keep improving aidevops and awardsapp until open awardsapp issues can be solved by workers as green PRs that merge, with duplicate/red PR churn systematically reduced.
+> Keep improving aidevops and example-repo until open example-repo issues can be solved by workers as green PRs that merge, with duplicate/red PR churn systematically reduced.
 
 ## Origin
 
 - **Created:** 2026-05-08
 - **Created by:** Marcus Quinn
 - **Session:** OpenCode interactive session
-- **Context:** After aidevops v3.14.97 restored breaker-held issue retries, awardsapp workers produced useful PRs but many issues still had multiple sibling PRs and red CI. The observed blockers are a mix of aidevops orchestration gaps and awardsapp CI/repo policy gaps.
+- **Context:** After aidevops v3.14.97 restored breaker-held issue retries, example-repo workers produced useful PRs but many issues still had multiple sibling PRs and red CI. The observed blockers are a mix of aidevops orchestration gaps and example-repo CI/repo policy gaps.
 
 ## Scope
 
-**Goal:** awardsapp open issues should steadily converge to one healthy candidate PR per issue, required checks should distinguish code failures from infrastructure/advisory failures, aidevops should avoid duplicate worker churn, and green approved PRs should merge and close issues with evidence.
+**Goal:** example-repo open issues should steadily converge to one healthy candidate PR per issue, required checks should distinguish code failures from infrastructure/advisory failures, aidevops should avoid duplicate worker churn, and green approved PRs should merge and close issues with evidence.
 
 **Success criteria:**
 
 - Aidevops classifies CI timeouts/kills and advisory E2E failures distinctly from PR-specific code failures.
 - Aidevops suppresses duplicate dispatch when an approved or healthiest PR already exists for the same issue.
 - Aidevops can consolidate/supersede sibling PRs against the verified newest/healthiest candidate.
-- awardsapp CI exposes required vs advisory outcomes clearly enough for workers and merge automation.
-- awardsapp affected lint/typecheck no longer routinely dies by timeout/kill without actionable error output.
-- Open awardsapp worker issues trend toward green merged PRs, verified by PR/issue metrics and sampled check evidence.
+- example-repo CI exposes required vs advisory outcomes clearly enough for workers and merge automation.
+- example-repo affected lint/typecheck no longer routinely dies by timeout/kill without actionable error output.
+- Open example-repo worker issues trend toward green merged PRs, verified by PR/issue metrics and sampled check evidence.
 
 **Mode:** full
 
@@ -66,7 +66,7 @@ preferences:
 
 **Constraints:**
 
-- Use worktree + PR flow for aidevops and awardsapp code changes.
+- Use worktree + PR flow for aidevops and example-repo code changes.
 - Release/deploy aidevops changes after merge before relying on them operationally.
 - Confirm terminal failed checks before repair feedback; pending CI is not failure.
 - Budget: 2 weeks / $500 cap, pause new dispatch if budget reaches 80%.
@@ -77,11 +77,11 @@ preferences:
 
 **Status:** active
 **Estimate:** ~6h
-**Validation:** A repeatable report groups awardsapp open PRs/issues by blocker class: duplicate PR, pending CI, code failure, timeout/kill, advisory E2E, approved merge candidate, needs maintainer/security gate.
+**Validation:** A repeatable report groups example-repo open PRs/issues by blocker class: duplicate PR, pending CI, code failure, timeout/kill, advisory E2E, approved merge candidate, needs maintainer/security gate.
 
 | # | Feature | Task ID | Status | Estimate | Worker | PR |
 |---|---------|---------|--------|----------|--------|----|
-| 1.1 | Capture current awardsapp PR/issue blocker inventory and baseline metrics | pending | active | ~1h | interactive | |
+| 1.1 | Capture current example-repo PR/issue blocker inventory and baseline metrics | pending | active | ~1h | interactive | |
 | 1.2 | Add or improve aidevops reporting for duplicate PR groups and CI blocker classes | pending | active | ~3h | interactive | |
 | 1.3 | Publish mission status summaries with evidence and next recommended action | pending | pending | ~2h | interactive | |
 
@@ -98,20 +98,20 @@ preferences:
 | 2.3 | Deduplicate dispatch against existing approved/mergeable sibling PRs for the same issue | pending | pending | ~5h | worker | |
 | 2.4 | Add safe superseded-PR consolidation against the newest/healthiest verified candidate | pending | pending | ~5h | worker | |
 
-### Milestone 3: awardsapp CI and repo policy fixes
+### Milestone 3: example-repo CI and repo policy fixes
 
 **Status:** pending
 **Estimate:** ~24h
-**Validation:** awardsapp PR checks provide actionable failures, affected lint/typecheck complete reliably, and E2E advisory/required policy is explicit in CI summaries and branch protection behaviour.
+**Validation:** example-repo PR checks provide actionable failures, affected lint/typecheck complete reliably, and E2E advisory/required policy is explicit in CI summaries and branch protection behaviour.
 
 | # | Feature | Task ID | Status | Estimate | Worker | PR |
 |---|---------|---------|--------|----------|--------|----|
-| 3.1 | Split awardsapp required core checks from advisory/quarantined E2E with clear CI summary output | pending | pending | ~8h | worker | |
+| 3.1 | Split example-repo required core checks from advisory/quarantined E2E with clear CI summary output | pending | pending | ~8h | worker | |
 | 3.2 | Reduce affected turbo lint/typecheck timeout deaths with narrower package/path routing or higher targeted timeout | pending | pending | ~8h | worker | |
 | 3.3 | Add CI failure summaries that distinguish code error, timeout, infrastructure, and advisory E2E | pending | pending | ~5h | worker | |
-| 3.4 | Document awardsapp worker merge policy for approved PRs with core gates green and advisory E2E red | pending | pending | ~3h | worker | |
+| 3.4 | Document example-repo worker merge policy for approved PRs with core gates green and advisory E2E red | pending | pending | ~3h | worker | |
 
-### Milestone 4: Consolidate current awardsapp backlog
+### Milestone 4: Consolidate current example-repo backlog
 
 **Status:** pending
 **Estimate:** ~24h
@@ -140,9 +140,9 @@ preferences:
 
 | Name | Type | Purpose | Status | Notes |
 |------|------|---------|--------|-------|
-| GitHub CLI access | credential | Read/write PRs/issues/checks in aidevops and awardsapp | configured | Use gh wrappers/signature discipline for writes |
+| GitHub CLI access | credential | Read/write PRs/issues/checks in aidevops and example-repo | configured | Use gh wrappers/signature discipline for writes |
 | aidevops release pipeline | infrastructure | Ship systemic orchestration fixes | configured | version-manager release patch/hotfix after merge |
-| awardsapp CI | infrastructure | Validate worker PRs and classify blockers | active | GitHub Actions |
+| example-repo CI | infrastructure | Validate worker PRs and classify blockers | active | GitHub Actions |
 
 ## Budget Tracking
 
@@ -154,16 +154,16 @@ preferences:
 
 | Date | Category | Amount | Description | Milestone |
 |------|----------|--------|-------------|-----------|
-| 2026-05-08 | time | initial | Mission created and scoped from current awardsapp/aidevops evidence | 1 |
+| 2026-05-08 | time | initial | Mission created and scoped from current example-repo/aidevops evidence | 1 |
 
 ## Decision Log
 
 | # | Date | Decision | Rationale | Alternatives Considered |
 |---|------|----------|-----------|------------------------|
-| 1 | 2026-05-08 | Treat this as a mixed aidevops + awardsapp mission | Evidence shows both orchestration duplicate/red-PR churn and awardsapp CI timeout/advisory ambiguity | Only fix aidevops; only fix awardsapp |
+| 1 | 2026-05-08 | Treat this as a mixed aidevops + example-repo mission | Evidence shows both orchestration duplicate/red-PR churn and example-repo CI timeout/advisory ambiguity | Only fix aidevops; only fix example-repo |
 | 2 | 2026-05-08 | Prioritize required/advisory CI clarity before broad worker redispatch | Duplicate workers burn tokens when the existing PR is approved but blocked by CI semantics | Continue redispatching until one PR happens to pass |
-| 3 | 2026-05-08 | First aidevops change should stop CI repair redispatch for infra/advisory failures | `pulse-merge-feedback.sh` routed advisory/non-required and timed-out/cancelled checks as CI repair feedback, which closes PRs and requeues duplicate workers | Start with awardsapp CI changes only |
-| 4 | 2026-05-08 | Add failed-log inspection for required-check failures | awardsapp PR #4595 reported Lint/Typecheck as `failure`, but failed logs show `Process completed with exit code 143` and `Killed timeout --kill-after`, so check conclusion alone is insufficient | Treat all `failure` conclusions as code-fix redispatch |
+| 3 | 2026-05-08 | First aidevops change should stop CI repair redispatch for infra/advisory failures | `pulse-merge-feedback.sh` routed advisory/non-required and timed-out/cancelled checks as CI repair feedback, which closes PRs and requeues duplicate workers | Start with example-repo CI changes only |
+| 4 | 2026-05-08 | Add failed-log inspection for required-check failures | example-repo PR #4595 reported Lint/Typecheck as `failure`, but failed logs show `Process completed with exit code 143` and `Killed timeout --kill-after`, so check conclusion alone is insufficient | Treat all `failure` conclusions as code-fix redispatch |
 
 ## Mission Agents
 
@@ -175,15 +175,15 @@ preferences:
 
 | Topic | Summary | Source | Date |
 |-------|---------|--------|------|
-| awardsapp PR blocker sample | Multiple issues have sibling PRs; many failures are E2E shard or timeout/kill rather than code errors. Examples include PRs #4594/#4595 timeout/kill and #4596 merging after core gates passed. | gh PR/check queries in current session | 2026-05-08 |
+| example-repo PR blocker sample | Multiple issues have sibling PRs; many failures are E2E shard or timeout/kill rather than code errors. Examples include PRs #4594/#4595 timeout/kill and #4596 merging after core gates passed. | gh PR/check queries in current session | 2026-05-08 |
 | current open PR sample | Open approved/mergeable PRs include #4594, #4595, #4599, #4584 and others; several have Lint/Typecheck pending while prior logs showed timeout/kill symptoms. | `gh pr view/list` in current session | 2026-05-08 |
-| required-check timeout sample | awardsapp PR #4595 Lint failed after 22m45s and log ended with `Killed timeout --kill-after` plus exit `143`; this is CI budget/infra timeout evidence, not an actionable source lint error. | `gh run view 25530590843 --job 74936343694 --log-failed` | 2026-05-08 |
+| required-check timeout sample | example-repo PR #4595 Lint failed after 22m45s and log ended with `Killed timeout --kill-after` plus exit `143`; this is CI budget/infra timeout evidence, not an actionable source lint error. | `gh run view 25530590843 --job 74936343694 --log-failed` | 2026-05-08 |
 
 ## Progress Log
 
 | Timestamp | Event | Details |
 |-----------|-------|---------|
-| 2026-05-08T00:00:00Z | Mission created | Goal: keep improving aidevops and awardsapp until open issues converge to green merged PRs. |
+| 2026-05-08T00:00:00Z | Mission created | Goal: keep improving aidevops and example-repo until open issues converge to green merged PRs. |
 | 2026-05-08T01:10:00Z | First systemic fix implemented locally | Updated `pulse-merge-feedback.sh` so CI repair feedback only re-dispatches actionable failed required checks; timed_out/cancelled/advisory-only failures now skip CI repair routing. Verified with `test-pulse-merge-ci-repair-routing.sh` and ShellCheck. |
 | 2026-05-08T01:45:00Z | Second systemic fix implemented locally | Added GitHub Actions failed-log inspection so required checks with failure conclusions but timeout/kill signatures such as exit 143 are classified as infra-timeout and skipped for code redispatch. Verified with `test-pulse-merge-ci-repair-routing.sh` and ShellCheck. |
 

@@ -269,7 +269,7 @@ test_protected_precheck_skips_draft_interactive_without_metadata_fetch() {
 	reset_case
 	local pr_obj
 	pr_obj='{"number":4265,"isDraft":true,"labels":[{"name":"origin:interactive"},{"name":"no-auto-dispatch"}]}'
-	if _close_conflicting_pr_skip_protected_precheck "4265" "awardsapp/awardsapp" "$pr_obj"; then
+	if _close_conflicting_pr_skip_protected_precheck "4265" "exampleorg/examplerepo" "$pr_obj"; then
 		pass "protected draft interactive PR precheck skips close"
 	else
 		fail "protected draft interactive PR precheck skips close" "Expected precheck to return 0 for draft origin:interactive no-auto-dispatch PR"
@@ -281,7 +281,7 @@ test_protected_precheck_skips_draft_interactive_without_metadata_fetch() {
 
 test_merge_ready_duplicate_pr_closed_before_merge() {
 	reset_case
-	_pm_close_superseded_duplicate_pr_if_issue_solved "6131" "awardsapp/awardsapp" "6125" "origin:worker"
+	_pm_close_superseded_duplicate_pr_if_issue_solved "6131" "exampleorg/examplerepo" "6125" "origin:worker"
 	assert_log_contains "$GH_CALL_LOG" "pr close 6131" "merge-ready duplicate closes current PR"
 	assert_log_contains "$GH_CALL_LOG" "issue view 6125" "merge-ready duplicate checks linked issue closer"
 	assert_log_contains "$GH_CALL_LOG" "merged PR #6130" "merge-ready duplicate comment cites merged PR"
@@ -290,7 +290,7 @@ test_merge_ready_duplicate_pr_closed_before_merge() {
 
 test_followup_label_preserves_duplicate_guard() {
 	reset_case
-	if _pm_close_superseded_duplicate_pr_if_issue_solved "6132" "awardsapp/awardsapp" "6125" "origin:worker,follow-up"; then
+	if _pm_close_superseded_duplicate_pr_if_issue_solved "6132" "exampleorg/examplerepo" "6125" "origin:worker,follow-up"; then
 		fail "follow-up label is not auto-closed" "Expected guard to skip explicit follow-up"
 	else
 		pass "follow-up label is not auto-closed"

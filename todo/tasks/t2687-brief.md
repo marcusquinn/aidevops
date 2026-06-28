@@ -19,7 +19,7 @@ mode: subagent
 - **Session:** opencode:interactive
 - **Created by:** ai-interactive (marcusquinn directed investigation)
 - **Parent task:** none
-- **Conversation context:** User noticed duplicate `[Supervisor:*]` issues on `marcusquinn/aidevops` (and later `awardsapp/awardsapp`). Investigation traced the incident to a GraphQL rate-limit window on 2026-04-21 04:00-13:30 UTC during which `_find_health_issue` silently treated query failures as "not found" and created duplicates.
+- **Conversation context:** User noticed duplicate `[Supervisor:*]` issues on `marcusquinn/aidevops` (and later `exampleorg/examplerepo`). Investigation traced the incident to a GraphQL rate-limit window on 2026-04-21 04:00-13:30 UTC during which `_find_health_issue` silently treated query failures as "not found" and created duplicates.
 
 ## What
 

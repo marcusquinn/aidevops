@@ -617,7 +617,7 @@ _create_or_append_file_issue() {
 #
 # Args:
 #   $1 - pr_author : GitHub login of the PR author (may be empty)
-#   $2 - repo_slug : owner/repo (e.g. awardsapp/awardsapp)
+#   $2 - repo_slug : owner/repo (e.g. exampleorg/examplerepo)
 #
 # Returns:
 #   0 if author is maintainer-equivalent (skip NMR gate)

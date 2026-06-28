@@ -35,7 +35,7 @@
 #   2  — configuration or IO error (repos.json missing, jq unavailable)
 #
 # Owned-orgs allowlist (used for informational EXTERNAL classification):
-#   marcusquinn, awardsapp, essentials-com, wpallstars
+#   marcusquinn, essentials-com, wpallstars
 #   Override by creating ~/.config/aidevops/badge-orgs.conf with one org per line.
 
 set -uo pipefail
@@ -65,7 +65,7 @@ _resolve_badges_helper() {
 # ─── Owned-orgs allowlist ───────────────────────────────────────────────────
 
 # Default owned orgs — expanded via ~/.config/aidevops/badge-orgs.conf if present.
-readonly _DEFAULT_OWNED_ORGS=("marcusquinn" "awardsapp" "essentials-com" "wpallstars")
+readonly _DEFAULT_OWNED_ORGS=("marcusquinn" "essentials-com" "wpallstars")
 
 _load_owned_orgs() {
 	local _conf="$HOME/.config/aidevops/badge-orgs.conf"

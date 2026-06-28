@@ -183,9 +183,9 @@ test_disabled_guardrail_still_updates_available_slots_gauge() {
 
 test_interactive_hold_reason_is_classified() {
 	reset_guardrail_env
-	printf '%s\n' '[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=interactive_review_hold signal=interactive_review_hold issue=#4772 repo=awardsapp/awardsapp' >>"$LOGFILE"
+	printf '%s\n' '[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=interactive_review_hold signal=interactive_review_hold issue=#4772 repo=exampleorg/examplerepo' >>"$LOGFILE"
 	local reason
-	reason=$(_dispatch_candidate_failure_reason 4772 awardsapp/awardsapp 3)
+	reason=$(_dispatch_candidate_failure_reason 4772 exampleorg/examplerepo 3)
 	if [[ "$reason" == "interactive_review_hold" ]]; then
 		print_result "guardrail: interactive review hold classifies as benign block" 0
 	else
@@ -196,9 +196,9 @@ test_interactive_hold_reason_is_classified() {
 
 test_pr_target_reason_is_classified_as_benign_block() {
 	reset_guardrail_env
-	printf '%s\n' '[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=pr_target_not_dispatchable signal=pr_target_not_dispatchable issue=#4849 repo=awardsapp/awardsapp' >>"$LOGFILE"
+	printf '%s\n' '[dispatch_with_dedup] DISPATCH_BLOCK_REASON reason=pr_target_not_dispatchable signal=pr_target_not_dispatchable issue=#4849 repo=exampleorg/examplerepo' >>"$LOGFILE"
 	local reason
-	reason=$(_dispatch_candidate_failure_reason 4849 awardsapp/awardsapp 3)
+	reason=$(_dispatch_candidate_failure_reason 4849 exampleorg/examplerepo 3)
 	if [[ "$reason" == "pr_target_not_dispatchable" ]] && _dispatch_candidate_benign_block_reason "$reason"; then
 		print_result "guardrail: PR target classifies as benign block" 0
 	else
