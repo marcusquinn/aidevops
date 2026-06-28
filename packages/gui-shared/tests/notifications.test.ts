@@ -5,6 +5,9 @@ describe("notification logic", () => {
   test("classifies OpenCode toast lines with the same severity ordering", () => {
     expect(classifyToastLine("[SECURITY ADVISORY] rotate token")).toBe("error");
     expect(classifyToastLine("[WARN] GitHub CLI prerequisite requires gh >= 2.51.0")).toBe("warning");
+    expect(classifyToastLine("1 contribution need maintainer review")).toBe("warning");
+    expect(classifyToastLine("2 contributions need maintainer review")).toBe("warning");
+    expect(classifyToastLine("Contribution(s) needs maintainer review")).toBe("warning");
     expect(classifyToastLine("Security: all protections active")).toBe("success");
     expect(classifyToastLine("aidevops v3.29.0 running in OpenCode v1.17.11")).toBe("info");
     expect(classifyToastLine("UPDATE_AVAILABLE|3.30.0")).toBeNull();
@@ -28,5 +31,15 @@ describe("notification logic", () => {
     expect(notifications.map((notification) => notification.severity)).toContain("success");
     expect(notifications.some((notification) => notification.actions.some((action) => action.kind === "surface" && action.enabled))).toBe(true);
     expect(notifications.find((notification) => notification.id === "gui-restart-required")?.status).toBe("active");
+  });
+
+  test("tolerates partially loaded GUI status payloads", () => {
+    const notifications = buildStatusNotifications({
+      greetingOutput: "Security: all protections active",
+      restartRequired: false,
+    } as Parameters<typeof buildStatusNotifications>[0]);
+
+    expect(notifications).toHaveLength(1);
+    expect(notifications[0]?.severity).toBe("success");
   });
 });

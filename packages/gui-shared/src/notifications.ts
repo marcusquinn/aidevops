@@ -17,7 +17,7 @@ const toastSeverityRank: Record<GuiNotificationSeverity, number> = {
 
 const warningLineMatchers: Array<(line: string) => boolean> = [
   (line) => line.startsWith("Pulse stalled"),
-  (line) => /contribution\(s\) need/i.test(line),
+  (line) => /contribution(\(s\)|s)?\s+needs?/i.test(line),
   (line) => line.startsWith("[OPENCODE MAINTENANCE]"),
   (line) => line.startsWith("[WARNING]"),
   (line) => line.startsWith("[WARN]"),
@@ -28,7 +28,7 @@ const toastTitleRules: Array<{ matches: (line: string) => boolean; title: string
   { matches: (line) => line.startsWith("[ERROR]"), title: "Startup error" },
   { matches: (line) => line.startsWith("[OPENCODE MAINTENANCE]"), title: "OpenCode maintenance" },
   { matches: (line) => line.startsWith("Pulse stalled"), title: "Pulse stalled" },
-  { matches: (line) => /contribution\(s\) need/i.test(line), title: "External contribution review" },
+  { matches: (line) => /contribution(\(s\)|s)?\s+needs?/i.test(line), title: "External contribution review" },
   { matches: (line) => line.startsWith("[WARNING]") || line.startsWith("[WARN]"), title: "Startup warning" },
   { matches: (line) => line.startsWith("Security: all protections active"), title: "Security protections active" },
 ];
@@ -93,10 +93,10 @@ function buildToastNotifications(greetingOutput: string): GuiNotificationSummary
 }
 
 function buildGuiStateNotifications(input: BuildNotificationInput): GuiNotificationSummary[] {
-  const setupNeedsUpdate = input.setupTargets.filter((target) => target.needs_update);
-  const appNeedsUpdate = input.aiApps.filter((app) => app.needs_update);
-  const authErrors = input.oauthPool.providers.filter((provider) => provider.auth_errors > 0);
-  const rateLimited = input.oauthPool.providers.filter((provider) => provider.rate_limited > 0);
+  const setupNeedsUpdate = (input.setupTargets ?? []).filter((target) => target.needs_update);
+  const appNeedsUpdate = (input.aiApps ?? []).filter((app) => app.needs_update);
+  const authErrors = (input.oauthPool?.providers ?? []).filter((provider) => provider.auth_errors > 0);
+  const rateLimited = (input.oauthPool?.providers ?? []).filter((provider) => provider.rate_limited > 0);
   const notifications: GuiNotificationSummary[] = [];
 
   if (input.restartRequired) {
