@@ -1325,7 +1325,7 @@ SQL
 
 	_seed_worker_db_session_context "$isolated_dir" "session-keep"
 
-	local user_version schema_migrations sessions other_sessions messages other_messages projects other_projects leaked_other_payload
+	local user_version schema_migrations sessions other_sessions messages other_messages projects other_projects freelist_count leaked_other_payload
 	user_version=$(sqlite3 "$worker_db" "PRAGMA user_version;")
 	schema_migrations=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM __drizzle_migrations WHERE hash = 'schema-ready';")
 	sessions=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM session WHERE id = 'session-keep';")
@@ -1334,6 +1334,7 @@ SQL
 	other_messages=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM message WHERE session_id = 'session-other';")
 	projects=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM project WHERE id = 'project-keep';")
 	other_projects=$(sqlite3 "$worker_db" "SELECT COUNT(*) FROM project WHERE id = 'project-other';")
+	freelist_count=$(sqlite3 "$worker_db" "PRAGMA freelist_count;")
 	leaked_other_payload=$(python3 - "$worker_db" <<'PY'
 import pathlib
 import sys
@@ -1343,13 +1344,13 @@ print("yes" if b"other-secret-payload-for-vacuum-check" in data else "no")
 PY
 )
 
-	if [[ "$user_version" == "42" && "$schema_migrations" == "1" && "$sessions" == "1" && "$other_sessions" == "0" && "$messages" == "1" && "$other_messages" == "0" && "$projects" == "1" && "$other_projects" == "0" && "$leaked_other_payload" == "no" ]]; then
+	if [[ "$user_version" == "42" && "$schema_migrations" == "1" && "$sessions" == "1" && "$other_sessions" == "0" && "$messages" == "1" && "$other_messages" == "0" && "$projects" == "1" && "$other_projects" == "0" && "$freelist_count" == "0" && "$leaked_other_payload" == "no" ]]; then
 		print_result "seed worker DB uses shared backup for fresh continuation DB" 0
 		return 0
 	fi
 
 	print_result "seed worker DB uses shared backup for fresh continuation DB" 1 \
-		"user_version=$user_version schema_migrations=$schema_migrations sessions=$sessions other_sessions=$other_sessions messages=$messages other_messages=$other_messages projects=$projects other_projects=$other_projects leaked_other_payload=$leaked_other_payload"
+		"user_version=$user_version schema_migrations=$schema_migrations sessions=$sessions other_sessions=$other_sessions messages=$messages other_messages=$other_messages projects=$projects other_projects=$other_projects freelist_count=$freelist_count leaked_other_payload=$leaked_other_payload"
 	return 0
 }
 
