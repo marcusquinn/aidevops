@@ -183,6 +183,7 @@ describe("dashboard shell", () => {
     const source = [
       readFileSync(`${guiWebRoot}/src/AppActionTerminal.tsx`, "utf8"),
       readFileSync(`${guiWebRoot}/src/InventorySurfaces.tsx`, "utf8"),
+      readFileSync(`${guiWebRoot}/src/ManagedAppPanel.tsx`, "utf8"),
       readFileSync(`${guiWebRoot}/src/RecommendedAppsSurface.tsx`, "utf8"),
     ].join("\n");
 
@@ -198,6 +199,8 @@ describe("dashboard shell", () => {
     expect(source).toContain("data-tooltip={href}");
     expect(source).toContain("app-global-tooltip");
     expect(source).toContain("terminalStatusLabel(job)");
+    expect(source).toContain("if (!response.ok)");
+    expect(source).toContain("Network error running");
     expect(source).toContain("https://apps.apple.com/us/app/telegram-messenger/id686449807");
     expect(source).toContain("https://play.google.com/store/apps/details?id=org.telegram.messenger");
   });

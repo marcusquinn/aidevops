@@ -87,9 +87,23 @@ function AppActionButton({ action, app, commandPreview, disabled, onJob }: { act
       return;
     }
 
-    const response = await fetch(`/api/apps/${encodeURIComponent(app.id)}/actions/${action}`, { method: "POST" });
-    const envelope = await response.json() as GuiResponseEnvelope<GuiAppActionJobSummary>;
-    onJob(envelope.data);
+    try {
+      const response = await fetch(`/api/apps/${encodeURIComponent(app.id)}/actions/${action}`, { method: "POST" });
+      if (!response.ok) {
+        console.error(`Failed to run ${action} for ${app.id}: ${response.status} ${response.statusText}`);
+        return;
+      }
+
+      const envelope = await response.json() as GuiResponseEnvelope<GuiAppActionJobSummary>;
+      if (!envelope.ok) {
+        console.error(`Action ${action} for ${app.id} returned an error envelope: ${envelope.errors.join("; ")}`);
+        return;
+      }
+
+      onJob(envelope.data);
+    } catch (error) {
+      console.error(`Network error running ${action} for ${app.id}:`, error);
+    }
   }
 
   return <>
