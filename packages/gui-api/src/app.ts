@@ -148,7 +148,7 @@ function startAppActionJob(appId: string, action: GuiAppActionId, command: strin
 
   const child = spawn(command[0], command.slice(1), {
     cwd: process.cwd(),
-    env: { ...process.env, AIDEVOPS_NON_INTERACTIVE: "true" },
+    env: { ...process.env, AIDEVOPS_NON_INTERACTIVE: "true", CLICOLOR_FORCE: "1", FORCE_COLOR: "1", TERM: process.env.TERM ?? "xterm-256color" },
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (child.stdout !== null) {

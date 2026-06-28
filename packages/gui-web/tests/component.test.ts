@@ -181,12 +181,15 @@ describe("dashboard shell", () => {
     const source = readFileSync("packages/gui-web/src/InventorySurfaces.tsx", "utf8");
 
     expect(html).toContain("AIDevOps");
-    expect(html).toContain("The app toolkit we use and recommend to enable all the things we can do with AI");
+    expect(html).toContain("These are the apps we use and recommend from our tried &amp; tested toolkit — enabling all the things we can do with AI");
     expect(html).not.toContain("App and CLI inventory for tools installed or updated by aidevops");
     expect(source.indexOf("Recommended app operating system filters")).toBeLessThan(source.indexOf("Recommended app platform filters"));
     expect(html).toContain("app-meta managed-app-path");
     expect(sectionBetween(html, "managed-app-details", "app-meta managed-app-path")).not.toContain("Installed");
     expect(sectionBetween(html, "managed-app-details", "app-meta managed-app-path")).not.toContain("Latest");
+    expect(source).toContain("terminalStatusLabel(job)");
+    expect(source).toContain("https://apps.apple.com/us/app/telegram-messenger/id686449807");
+    expect(source).toContain("https://play.google.com/store/apps/details?id=org.telegram.messenger");
   });
 
   test("returns recommended filters to all when the active non-all option is selected again", () => {

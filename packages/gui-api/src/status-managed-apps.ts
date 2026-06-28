@@ -119,7 +119,7 @@ const MANAGED_APP_DEFINITIONS: ManagedAppDefinition[] = [
     category: "automation",
     binary: null,
     version_args: [],
-    install_path_refs: ["~/Library/LaunchAgents/sh.aidevops.pulse.plist", "~/.aidevops/.agent-workspace/pulse"],
+    install_path_refs: ["~/Library/LaunchAgents/sh.aidevops.pulse.plist", "~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.plist", "~/Library/LaunchAgents/sh.aidevops.supervisor-pulse.plist", "~/.aidevops/.agent-workspace/pulse"],
     origin_website_url: "https://aidevops.sh",
     origin_repo_url: "https://github.com/marcusquinn/aidevops.git",
     aidevops_install: true,
@@ -143,7 +143,7 @@ const MANAGED_APP_DEFINITIONS: ManagedAppDefinition[] = [
   binaryApp({ id: "cursor", name: "Cursor CLI", description: "Cursor command-line integration and config targets.", category: "cli", binary: "cursor", version_args: ["--version"], install_path_refs: ["~/.cursor/bin/cursor", "/Applications/Cursor.app"], origin_website_url: "https://cursor.com/install", origin_repo_url: "" }),
   binaryApp({ id: "zed", name: "Zed", description: "Optional editor installed by setup when selected.", category: "editor", binary: "zed", version_args: ["--version"], install_path_refs: ["/Applications/Zed.app", "/opt/homebrew/bin/zed", "/usr/local/bin/zed"], origin_website_url: "https://zed.dev/download", origin_repo_url: "", aidevops_install: false, aidevops_update: false }),
   binaryApp({ id: "orbstack", name: "OrbStack", description: "Optional local container/VM runtime for macOS development.", category: "runtime", binary: "orb", version_args: ["version"], install_path_refs: ["/Applications/OrbStack.app", "/opt/homebrew/bin/orb"], origin_website_url: "https://orbstack.dev/", origin_repo_url: "", aidevops_install: false, aidevops_update: false }),
-  binaryApp({ id: "ollama", name: "Ollama", description: "Optional local model runtime for local AI workflows.", category: "ai runtime", binary: "ollama", version_args: ["--version"], install_path_refs: ["/Applications/Ollama.app", "/opt/homebrew/bin/ollama", "/usr/local/bin/ollama"], origin_website_url: "https://ollama.com", origin_repo_url: "" }),
+  binaryApp({ id: "ollama", name: "Ollama", description: "Optional local model runtime for local AI workflows.", category: "ai runtime", binary: "ollama", version_args: ["--version"], install_path_refs: ["~/Applications/Ollama.app", "/Applications/Ollama.app", "/opt/homebrew/bin/ollama", "/usr/local/bin/ollama"], origin_website_url: "https://ollama.com", origin_repo_url: "" }),
 ];
 
 export function readManagedApps(latestVersion: string, installedVersion: string): GuiManagedAppSummary[] {
@@ -200,7 +200,7 @@ function managedAppSummary(definition: ManagedAppDefinition, latestVersion: stri
     aidevops_update: definition.aidevops_update,
     installed_version: installedVersionText,
     latest_version: latestVersionText,
-    install_path_ref: binaryPath === null ? installPathRef : collapseHome(binaryPath),
+    install_path_ref: collapseHome(binaryPath ?? expandHome(installPathRef)),
     status: binaryPath !== null || definition.install_path_refs.some((pathRef) => existsSync(expandHome(pathRef))) ? "found" : "missing",
     actions: (["install", "update", "reinstall", "remove"] as const).map((action) => managedAppAction(definition.action_commands, action)),
   };
