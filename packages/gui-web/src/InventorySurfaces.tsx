@@ -293,6 +293,7 @@ const recommendedApps = ([
   { name: "ONLYOFFICE", description: "Office and document collaboration.", websiteUrl: "https://www.onlyoffice.com/", alternativeToUrl: "https://alternativeto.net/software/onlyoffice/", os: ["macos", "linux", "windows", "ios", "android"] },
   { name: "OpenScreen", description: "Open screen-sharing project.", websiteUrl: "https://github.com/getopenscreen/openscreen", alternativeToUrl: "https://alternativeto.net/software/openscreen/", repoUrl: "https://github.com/getopenscreen/openscreen", os: ["linux"] },
   { name: "Osaurus", description: "AI app workspace.", websiteUrl: "https://osaurus.ai/", alternativeToUrl: "https://alternativeto.net/software/osaurus/", os: ["macos"] },
+  { name: "Parallels Desktop", description: "Run Windows, Linux, and virtual machines on macOS.", websiteUrl: "https://www.parallels.com/products/desktop/", alternativeToUrl: "https://alternativeto.net/software/parallels-desktop/about/", os: ["macos"] },
   { name: "PDF Studio", description: "PDF editor.", websiteUrl: "https://www.qoppa.com/pdfstudio/", alternativeToUrl: "https://alternativeto.net/software/qoppa-pdf-studio/", os: ["macos", "linux", "windows"] },
   { name: "PostHog", description: "Product analytics platform.", websiteUrl: "https://posthog.com/", alternativeToUrl: "https://alternativeto.net/software/posthog/", os: ["linux"] },
   { name: "Postiz", description: "Social media scheduling.", websiteUrl: "https://postiz.com/", alternativeToUrl: "https://alternativeto.net/software/postiz/", os: ["linux"] },
@@ -306,13 +307,13 @@ const recommendedApps = ([
   { name: "SEO Utils", description: "Desktop SEO tools.", websiteUrl: "https://seoutils.app/", os: ["macos", "linux", "windows"] },
   { name: "Shottr", description: "macOS screenshot utility.", websiteUrl: "https://shottr.cc/", alternativeToUrl: "https://alternativeto.net/software/shottr/", os: ["macos"] },
   { name: "Signal", description: "Private messenger.", websiteUrl: "https://signal.org/", alternativeToUrl: "https://alternativeto.net/software/signal-private-messenger/", os: ["macos", "linux", "windows", "ios", "android"] },
-  { name: "SimpleX Chat", description: "Private messenger with no user IDs.", websiteUrl: "https://simplex.chat/", repoUrl: "https://github.com/simplex-chat", os: ["macos", "linux", "windows", "ios", "android"] },
-  { name: "Thunderbird", description: "Email and calendar app.", websiteUrl: "https://www.thunderbird.net/", os: ["macos", "linux", "windows"] },
-  { name: "Ubicloud", description: "Open cloud platform.", websiteUrl: "https://www.ubicloud.com/", os: ["linux"] },
+  { name: "SimpleX Chat", description: "Private messenger with no user IDs.", websiteUrl: "https://simplex.chat/", alternativeToUrl: "https://alternativeto.net/software/simplex-chat/about/", repoUrl: "https://github.com/simplex-chat", os: ["macos", "linux", "windows", "ios", "android"] },
+  { name: "Thunderbird", description: "Email and calendar app.", websiteUrl: "https://www.thunderbird.net/", alternativeToUrl: "https://alternativeto.net/software/mozilla-thunderbird/about/", os: ["macos", "linux", "windows"] },
+  { name: "Ubicloud", description: "Open cloud platform.", websiteUrl: "https://www.ubicloud.com/", alternativeToUrl: "https://alternativeto.net/software/ubicloud/about/", os: ["linux"] },
   { name: "Vaultwarden", description: "Alternative Bitwarden server implementation.", websiteUrl: "https://github.com/dani-garcia/vaultwarden", alternativeToUrl: "https://alternativeto.net/software/vaultwarden/", repoUrl: "https://github.com/dani-garcia/vaultwarden", os: ["linux"] },
-  { name: "VideoProc", description: "Video processing toolkit.", websiteUrl: "https://www.videoproc.com/", os: ["macos", "windows"] },
-  { name: "VirtualBox", description: "Virtualization app.", websiteUrl: "https://www.virtualbox.org/", os: ["macos", "linux", "windows"] },
-  { name: "WordPress", description: "Open source publishing platform.", websiteUrl: "https://wordpress.org/", os: ["linux"] },
+  { name: "VideoProc", description: "Video processing toolkit.", websiteUrl: "https://www.videoproc.com/", alternativeToUrl: "https://alternativeto.net/software/videoproc/about/", os: ["macos", "windows"] },
+  { name: "VirtualBox", description: "Virtualization app.", websiteUrl: "https://www.virtualbox.org/", alternativeToUrl: "https://alternativeto.net/software/virtualbox/about/", os: ["macos", "linux", "windows"] },
+  { name: "WordPress", description: "Open source publishing platform.", websiteUrl: "https://wordpress.org/", alternativeToUrl: "https://alternativeto.net/software/wordpress/about/", os: ["linux"] },
 ] satisfies RecommendedApp[]).sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
 
 function TabNav<T extends string>({ label, onChange, tabs, value }: { label: string; onChange: (value: T) => void; tabs: TabOption<T>[]; value: T }): ReactElement {
