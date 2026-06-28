@@ -4336,3 +4336,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18023 Fix gh_pr_view mergeable REST exclusion so `gh_pr_view --json mergeable` stay... #auto-dispatch #bug #framework #pulse ref:GH#25695 pr:#25726 completed:2026-06-27
 
 - [x] t18024 Refine app sidebar and font controls #enhancement ref:GH#25753 pr:#25793 completed:2026-06-28
+
+- [ ] t18026 Fix Apps tooltips links and version detection #bug ref:GH#25798
