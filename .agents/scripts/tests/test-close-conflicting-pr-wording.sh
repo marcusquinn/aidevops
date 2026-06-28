@@ -124,14 +124,6 @@ fi
 			if [[ -f "\$response" ]]; then cat "\$response"; fi
 			exit 0
 			;;
-		headRefName,baseRefName)
-			branch_response="\${TEST_ROOT}/pr-branch.txt"
-			base_response="\${TEST_ROOT}/pr-base.txt"
-			if [[ -f "\$branch_response" ]]; then head_ref=\$(cat "\$branch_response"); else head_ref="feature/test"; fi
-			if [[ -f "\$base_response" ]]; then base_ref=\$(cat "\$base_response"); else base_ref="develop"; fi
-			printf '%s\t%s\n' "\$head_ref" "\$base_ref"
-			exit 0
-			;;
 		baseRefName)
 			response="\${TEST_ROOT}/pr-base.txt"
 			if [[ -f "\$response" ]]; then cat "\$response"; else echo "develop"; fi
@@ -184,6 +176,7 @@ setup_sandbox() {
 
 	export PATH="${STUB_DIR}:${PATH}"
 	export LOGFILE="${TEST_ROOT}/pulse.log"
+	export PULSE_PR_BASE_BRANCH_FALLBACK="<base-branch>"
 	: >"$LOGFILE"
 	return 0
 }
