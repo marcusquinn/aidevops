@@ -17,7 +17,7 @@ tools:
 
 ## Decision Tree
 
-Prefer: fastest tool → ARIA snapshots over screenshots (50-200 tokens vs ~1K) → headless over headed → CLI for AI agents. Playwriter is always headed (attaches to your browser).
+Prefer: fastest tool → ARIA snapshots over screenshots (50-200 tokens vs ~1K) → headless over headed → CLI for AI agents. Playwriter is always headed (attaches to your browser). If bundled Chromium hits bot protection or launch instability, retry with Brave via Playwright/CDP before declaring browser automation unavailable.
 
 For repeatable browser operations or web data mining that should learn, optimize,
 persist profile state, or graduate into reusable private workflows, start with
@@ -122,7 +122,7 @@ const context = await chromium.launchPersistentContext('/tmp/browser-profile', {
 
 ## Custom Browsers
 
-Brave/Edge/Chrome/Mullvad: Playwright, Playwriter, Crawl4AI, Stagehand. Bundled Chromium only: playwright-cli, agent-browser, WaterCrawl. macOS: `/Applications/{Brave Browser,Microsoft Edge,Google Chrome}.app/Contents/MacOS/{name}` · Mullvad: `/Applications/Mullvad Browser.app/Contents/MacOS/mullvadbrowser`. Config: `~/.config/aidevops/browser-prefs.json`.
+Brave/Edge/Chrome/Mullvad: Playwright, Playwriter, Crawl4AI, Stagehand. Bundled Chromium only: playwright-cli, agent-browser, WaterCrawl. macOS: `/Applications/{Brave Browser,Microsoft Edge,Google Chrome}.app/Contents/MacOS/{name}` · Mullvad: `/Applications/Mullvad Browser.app/Contents/MacOS/mullvadbrowser`. Browser QA prefers Brave when installed; set `AIDEVOPS_PLAYWRIGHT_BROWSER=chromium` to force bundled Chromium or `AIDEVOPS_PLAYWRIGHT_EXECUTABLE=/path/to/browser` for a specific engine. Config: `~/.config/aidevops/browser-prefs.json`.
 
 ## Debugging
 

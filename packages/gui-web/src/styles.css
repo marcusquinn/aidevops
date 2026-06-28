@@ -1964,6 +1964,11 @@ code {
   margin-bottom: 12px;
 }
 
+.apps-surface {
+  display: grid;
+  gap: 14px;
+}
+
 .data-table,
 .editable-table,
 .installation-list,
@@ -2039,13 +2044,16 @@ code {
 }
 
 .managed-summary-chip {
+  align-items: center;
   background: color-mix(in srgb, var(--surface-elevated) 92%, transparent);
   border: 1px solid var(--border);
   border-radius: 999px;
   display: inline-grid;
   gap: 1px;
+  justify-items: center;
   min-width: 118px;
   padding: 7px 11px;
+  text-align: center;
 }
 
 .managed-summary-chip small {
@@ -2106,25 +2114,22 @@ code {
 .managed-app-links a,
 .origin-missing {
   align-items: center;
-  border: 1px solid var(--border);
-  border-radius: 999px;
   color: var(--text-secondary);
   display: inline-flex;
   font-size: 0.78rem;
   font-weight: 800;
   gap: 4px;
   max-width: 100%;
-  padding: 6px 9px;
+  padding: 4px 0;
   position: relative;
   text-decoration: none;
 }
 
 .managed-app-links a:hover,
 .managed-app-links a:focus-visible {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
   color: var(--accent);
   outline: none;
+  text-decoration: underline;
 }
 
 .origin-missing {
@@ -2157,9 +2162,20 @@ code {
   text-transform: uppercase;
 }
 
+button.managed-toggle {
+  cursor: pointer;
+  text-align: left;
+}
+
+button.managed-toggle:hover,
+button.managed-toggle:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  outline: none;
+}
+
 .switch-track {
-  background: var(--surface-muted);
-  border: 1px solid var(--border);
+  background: color-mix(in srgb, #ef4444 18%, var(--surface-muted));
+  border: 1px solid color-mix(in srgb, #ef4444 44%, var(--border));
   border-radius: 999px;
   display: inline-flex;
   padding: 2px;
@@ -2167,7 +2183,7 @@ code {
 }
 
 .switch-track span {
-  background: var(--text-muted);
+  background: #ef4444;
   border-radius: 50%;
   height: 14px;
   transform: translateX(0);
@@ -2176,8 +2192,13 @@ code {
 }
 
 .switch-track.checked span {
-  background: var(--accent);
+  background: #22c55e;
   transform: translateX(14px);
+}
+
+.switch-track.checked {
+  background: color-mix(in srgb, #22c55e 18%, var(--surface-muted));
+  border-color: color-mix(in srgb, #22c55e 48%, var(--border));
 }
 
 .app-meta small {
@@ -2193,6 +2214,17 @@ code {
   line-height: 1.35;
   overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.app-log-link {
+  color: var(--text-primary);
+  text-decoration: none;
+}
+
+.app-log-link:hover,
+.app-log-link:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  outline: none;
 }
 
 .app-action-button {
@@ -2276,6 +2308,45 @@ code {
   padding: 12px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.modal-backdrop {
+  align-items: center;
+  background: rgb(0 0 0 / 62%);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 18px;
+  position: fixed;
+  z-index: 100;
+}
+
+.confirm-modal {
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-hover);
+  border-radius: 18px;
+  box-shadow: 0 24px 90px rgb(0 0 0 / 48%);
+  display: grid;
+  gap: 12px;
+  max-width: 520px;
+  padding: 22px;
+  width: min(100%, 520px);
+}
+
+.confirm-modal h3,
+.confirm-modal p {
+  margin: 0;
+}
+
+.confirm-modal code {
+  overflow-wrap: anywhere;
+}
+
+.confirm-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
 }
 
 [data-tooltip] {
@@ -2386,6 +2457,57 @@ code {
   gap: 4px;
   padding: 5px;
   width: min(100%, 520px);
+}
+
+.app-subnav {
+  width: fit-content;
+}
+
+.recommended-app-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.recommended-app-card {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 6%, transparent), transparent 40%),
+    var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.recommended-app-card strong {
+  font-size: 1.05rem;
+}
+
+.recommended-app-card p {
+  color: var(--text-secondary);
+  margin: 4px 0 0;
+}
+
+.os-icon-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.os-icon-list span {
+  align-items: center;
+  background: var(--surface-elevated);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  display: inline-flex;
+  font-size: 0.72rem;
+  font-weight: 900;
+  justify-content: center;
+  min-height: 28px;
+  min-width: 28px;
+  padding: 4px 7px;
 }
 
 .pill-tabs button {

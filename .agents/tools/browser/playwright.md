@@ -30,7 +30,7 @@ mcp:
 - **Install**: `npm install playwright && npx playwright install` (lib + browsers) | `npx @playwright/mcp@latest` (MCP server)
 - **Setup**: `./setup.sh --interactive` → "Setup browser automation tools"
 - **MCP config**: `{ "playwright": { "command": "npx", "args": ["@playwright/mcp@latest"] } }`
-- **Browsers**: chromium, firefox, webkit + custom (Brave, Edge, Chrome via `executablePath`)
+- **Browsers**: chromium, firefox, webkit + custom (Brave, Edge, Chrome via `executablePath`); Browser QA defaults to Brave when installed and falls back to bundled Chromium
 - **Headless**: Yes (default) | **Proxy**: HTTP/SOCKS5 | **Session**: `storageState` / `userDataDir`
 - **Extensions**: `launchPersistentContext` (requires `headless: false`; `--headless=new` on newer Chromium)
 - **Ad blocking**: Brave Shields or uBlock Origin | **AI page understanding**: `page.locator('body').ariaSnapshot()` ~0.01s, 50-200 tokens
@@ -43,7 +43,7 @@ mcp:
 
 ## Custom Browser Engines
 
-Use `executablePath` for Brave, Edge, or Chrome instead of bundled Chromium. Brave Shields may make uBlock Origin redundant.
+Use `executablePath` for Brave, Edge, or Chrome instead of bundled Chromium. Brave Shields may make uBlock Origin redundant and can be more reliable for pages that challenge bare automation contexts.
 
 | Browser | macOS | Linux | Windows |
 |---------|-------|-------|---------|
@@ -65,6 +65,8 @@ const context = await chromium.launchPersistentContext('/tmp/brave-profile', {
   args: ['--load-extension=/path/to/ext', '--disable-extensions-except=/path/to/ext'],
 });
 ```
+
+Browser QA honours `AIDEVOPS_PLAYWRIGHT_EXECUTABLE=/path/to/browser`; set `AIDEVOPS_PLAYWRIGHT_BROWSER=chromium` when CI needs bundled Chromium exactly.
 
 ## Testing Patterns
 

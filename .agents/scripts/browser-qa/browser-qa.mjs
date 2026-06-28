@@ -41,6 +41,28 @@ const DEFAULT_OPTIONS = {
   format: 'summary',
 };
 
+const BRAVE_EXECUTABLES = [
+  '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+  '/usr/bin/brave-browser',
+  '/usr/bin/brave',
+  'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
+];
+
+function browserExecutablePath() {
+  if (process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE) return process.env.AIDEVOPS_PLAYWRIGHT_EXECUTABLE;
+  if (process.env.AIDEVOPS_PLAYWRIGHT_BROWSER === 'chromium') return undefined;
+  return BRAVE_EXECUTABLES.find((path) => existsSync(path));
+}
+
+function launchOptions() {
+  const executablePath = browserExecutablePath();
+  return {
+    headless: true,
+    ...(executablePath ? { executablePath } : {}),
+    args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'],
+  };
+}
+
 /**
  * Declarative map of CLI flags to option setters.
  * Each entry is [flag, (options, args, i) => newIndex].
@@ -299,7 +321,7 @@ async function main() {
   const flows = parseFlows(options.baseUrl, options.flows);
   let browser;
   try {
-    browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage'] });
+    browser = await chromium.launch(launchOptions());
     const context = await browser.newContext({ viewport: { width: options.viewportWidth, height: options.viewportHeight }, ignoreHTTPSErrors: true });
     const page = await context.newPage();
     const report = { baseUrl: options.baseUrl, timestamp: new Date().toISOString(), viewport: `${options.viewportWidth}x${options.viewportHeight}`, outputDir: options.outputDir, pages: [], passed: true };

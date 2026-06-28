@@ -1,5 +1,5 @@
 import type { GuiAppActionId, GuiAppActionJobSummary, GuiManagedAppSummary, GuiResponseEnvelope, GuiStatusData } from "@aidevops/gui-shared";
-import { type Dispatch, type ReactElement, type SetStateAction, useEffect, useState } from "react";
+import { type Dispatch, type ReactElement, type SetStateAction, useEffect, useRef, useState } from "react";
 import { FiChevronDown, FiDownload, FiExternalLink, FiRefreshCw, FiRepeat, FiTrash2 } from "react-icons/fi";
 import type { InventoryColumn } from "./app-model";
 import { installationRows, text } from "./app-model";
@@ -12,17 +12,19 @@ interface DraftInventoryRow {
 let draftRowCounter = 0;
 
 export function AppsSurface({ status }: { status: GuiStatusData }): ReactElement {
+  const [appCollection, setAppCollection] = useState<AppCollectionId>("aidevops");
+  const [managedCategory, setManagedCategory] = useState<ManagedCategoryId>("core");
+  const [recommendedOs, setRecommendedOs] = useState<RecommendedOsId>("all");
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
-  const [expandedAppIds, setExpandedAppIds] = useState<Set<string>>(() => new Set(status.managed_apps.length > 0 ? [status.managed_apps[0].id] : []));
+  const [expandedAppId, setExpandedAppId] = useState<string | null>(() => sortedManagedApps(status.managed_apps).find((app) => managedCategoryForApp(app) === "core")?.id ?? null);
   const [jobs, setJobs] = useState<Record<string, GuiAppActionJobSummary>>({});
   const selectedJob = selectedJobId === null ? null : jobs[selectedJobId] ?? null;
+  const visibleManagedApps = sortedManagedApps(status.managed_apps).filter((app) => managedCategoryForApp(app) === managedCategory);
+  const visibleRecommendedApps = recommendedApps.filter((app) => recommendedOs === "all" || (app.os as readonly RecommendedOsId[]).includes(recommendedOs));
 
   useEffect(() => {
-    if (status.managed_apps.length === 0) {
-      return;
-    }
-    setExpandedAppIds((current) => current.size === 0 ? new Set([status.managed_apps[0].id]) : current);
-  }, [status.managed_apps]);
+    setExpandedAppId(visibleManagedApps[0]?.id ?? null);
+  }, [managedCategory, status.managed_apps]);
 
   useEffect(() => {
     if (selectedJob === null || selectedJob.status !== "running") {
@@ -37,29 +39,33 @@ export function AppsSurface({ status }: { status: GuiStatusData }): ReactElement
   }, [selectedJob]);
 
   return (
-    <section className="panel" aria-label={text.apps}>
+    <section className="apps-surface" aria-label={text.apps}>
       <div className="section-heading">
         <p className="eyebrow">{text.infrastructure}</p>
         <h2>{text.apps}</h2>
         <p>{text.appsIntro}</p>
       </div>
-      <div className="managed-app-list">
-        {status.managed_apps.map((app) => (
-          <ManagedAppPanel
-            app={app}
-            expanded={expandedAppIds.has(app.id)}
-            job={jobForApp(app.id, jobs, selectedJob)}
-            key={app.id}
-            onJob={(job) => {
-              setJobs((current) => ({ ...current, [job.id]: job }));
-              setSelectedJobId(job.id);
-              setExpandedAppIds((current) => toggledAppIds(current, app.id, true));
-            }}
-            onToggle={() => setExpandedAppIds((current) => toggledAppIds(current, app.id))}
-          />
-        ))}
-      </div>
-      <p className="empty-state compact-notice">Install/update actions run as allowlisted background jobs and stream inside each app panel. xterm.js with a node-pty bridge is the right next step for full TUI apps such as OpenCode; this view starts with non-interactive command logs.</p>
+      <TabNav label="Apps collections" tabs={appCollectionTabs} value={appCollection} onChange={(value) => setAppCollection(value)} />
+      {appCollection === "aidevops" ? <>
+        <TabNav label="aidevops app groups" tabs={managedCategoryTabs} value={managedCategory} onChange={(value) => setManagedCategory(value)} />
+        <div className="managed-app-list">
+          {visibleManagedApps.map((app) => (
+            <ManagedAppPanel
+              app={app}
+              expanded={expandedAppId === app.id}
+              job={jobForApp(app.id, jobs, selectedJob)}
+              key={app.id}
+              onJob={(job) => {
+                setJobs((current) => ({ ...current, [job.id]: job }));
+                setSelectedJobId(job.id);
+                setExpandedAppId(app.id);
+              }}
+              onToggle={() => setExpandedAppId((current) => current === app.id ? null : app.id)}
+            />
+          ))}
+        </div>
+        <p className="empty-state compact-notice">Install/update actions run as allowlisted background jobs and stream inside each app panel. xterm.js with a node-pty bridge is the right next step for full TUI apps such as OpenCode; this view starts with non-interactive command logs.</p>
+      </> : <RecommendedAppsSurface apps={visibleRecommendedApps} os={recommendedOs} setOs={setRecommendedOs} />}
     </section>
   );
 }
@@ -74,7 +80,6 @@ function ManagedAppPanel({ app, expanded, job, onJob, onToggle }: { app: GuiMana
           <span>{app.description}</span>
         </span>
         <span className="managed-app-summary-meta">
-          <SummaryChip label="Status" value={app.status} />
           <SummaryChip label="Installed" value={app.installed_version} />
           <SummaryChip label="Latest" value={app.latest_version} />
           <FiChevronDown aria-hidden="true" className="managed-app-chevron" />
@@ -96,7 +101,7 @@ function ManagedAppPanel({ app, expanded, job, onJob, onToggle }: { app: GuiMana
         <AppMeta label="Installed" value={app.installed_version} />
         <AppMeta label="Latest" value={app.latest_version} />
         <AppMeta label={text.path} value={app.install_path_ref} />
-        <AppMeta label="Status" value={app.status} />
+        {job ? <AppLogLink job={job} /> : null}
       </div>
       {job ? <AppActionTerminal job={job} /> : <p className="empty-state compact-notice">No recent command output for this app. Run an action to open this app's terminal log.</p>}
       </div> : null}
@@ -113,25 +118,29 @@ function OriginLink({ href, label }: { href: string; label: string }): ReactElem
     return <span className="origin-missing">{label}: source pending</span>;
   }
 
-  return <a data-tooltip={`Open ${label.toLowerCase()} destination`} href={href} rel="noreferrer" target="_blank">{label} <FiExternalLink aria-hidden="true" /></a>;
+  return <a data-tooltip={href} href={href} rel="noreferrer" target="_blank">{label} <FiExternalLink aria-hidden="true" /></a>;
 }
 
 function ToggleSwitch({ checked, label }: { checked: boolean; label: string }): ReactElement {
-  return <span className="managed-toggle"><span aria-hidden="true" className={checked ? "switch-track checked" : "switch-track"}><span /></span>{label}</span>;
+  const [isChecked, setIsChecked] = useState(checked);
+
+  return <button aria-pressed={isChecked} className={isChecked ? "managed-toggle checked" : "managed-toggle"} onClick={() => setIsChecked((current) => !current)} type="button"><span aria-hidden="true" className={isChecked ? "switch-track checked" : "switch-track"}><span /></span>{label}</button>;
 }
 
 function AppMeta({ label, value }: { label: string; value: string }): ReactElement {
   return <span className="app-meta"><small>{label}</small><strong>{value}</strong></span>;
 }
 
+function AppLogLink({ job }: { job: GuiAppActionJobSummary }): ReactElement {
+  return <a className="app-meta app-log-link" href={`#app-job-${job.id}`}><small>Logs</small><strong>{job.action} · {job.status}</strong></a>;
+}
+
 function AppActionButton({ action, app, commandPreview, disabled, onJob }: { action: GuiAppActionId; app: GuiManagedAppSummary; commandPreview: string; disabled: boolean; onJob: (job: GuiAppActionJobSummary) => void }): ReactElement {
   const icon = action === "install" ? <FiDownload /> : action === "update" ? <FiRefreshCw /> : action === "reinstall" ? <FiRepeat /> : <FiTrash2 />;
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   async function runAction(): Promise<void> {
     if (disabled) {
-      return;
-    }
-    if ((action === "remove" || action === "reinstall") && !window.confirm(`${action} ${app.name}?`)) {
       return;
     }
 
@@ -140,14 +149,42 @@ function AppActionButton({ action, app, commandPreview, disabled, onJob }: { act
     onJob(envelope.data);
   }
 
-  return <button aria-label={`${action} ${app.name}`} className={action === "remove" ? "app-action-button remove" : "app-action-button"} data-tooltip={commandPreview} disabled={disabled} onClick={() => void runAction()} type="button">{icon}<span>{action}</span></button>;
+  return <>
+    <button aria-label={`${action} ${app.name}`} className={action === "remove" ? "app-action-button remove" : "app-action-button"} data-tooltip={commandPreview} disabled={disabled} onClick={() => setConfirmOpen(true)} type="button">{icon}<span>{action}</span></button>
+    {confirmOpen ? <ConfirmActionModal action={action} app={app} commandPreview={commandPreview} close={() => setConfirmOpen(false)} confirm={() => { setConfirmOpen(false); void runAction(); }} /> : null}
+  </>;
+}
+
+function ConfirmActionModal({ action, app, close, commandPreview, confirm }: { action: GuiAppActionId; app: GuiManagedAppSummary; close: () => void; commandPreview: string; confirm: () => void }): ReactElement {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section aria-modal="true" className="confirm-modal" role="dialog" aria-labelledby={`confirm-${app.id}-${action}`}>
+        <p className="eyebrow">Confirm action</p>
+        <h3 id={`confirm-${app.id}-${action}`}>{action} {app.name}?</h3>
+        <p>This will start the allowlisted background command for this app.</p>
+        <code>{commandPreview}</code>
+        <div className="confirm-modal-actions">
+          <button className="secondary-action" onClick={close} type="button">Cancel</button>
+          <button className={action === "remove" ? "app-action-button remove" : "app-action-button"} onClick={confirm} type="button">Confirm</button>
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function AppActionTerminal({ job }: { job: GuiAppActionJobSummary }): ReactElement {
+  const outputRef = useRef<HTMLPreElement | null>(null);
+
+  useEffect(() => {
+    if (outputRef.current !== null) {
+      outputRef.current.scrollTop = outputRef.current.scrollHeight;
+    }
+  }, [job.output]);
+
   return (
-    <section className="app-terminal" aria-label="App action terminal output">
+    <section className="app-terminal" id={`app-job-${job.id}`} aria-label="App action terminal output">
       <header><strong>{job.app_id} {job.action}</strong><span>{job.status}{job.exit_code === null ? "" : ` (${job.exit_code})`}</span></header>
-      <pre>{job.output.join("\n")}</pre>
+      <pre ref={outputRef}>{job.output.join("\n")}</pre>
     </section>
   );
 }
@@ -169,15 +206,150 @@ function jobForApp(appId: string, jobs: Record<string, GuiAppActionJobSummary>, 
   return Object.values(jobs).reverse().find((job) => job.app_id === appId) ?? null;
 }
 
-function toggledAppIds(current: Set<string>, appId: string, forceOpen = false): Set<string> {
-  const next = new Set(current);
-  if (forceOpen || !next.has(appId)) {
-    next.add(appId);
-  } else {
-    next.delete(appId);
+function sortedManagedApps(apps: GuiManagedAppSummary[]): GuiManagedAppSummary[] {
+  return [...apps].sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
+}
+
+function managedCategoryForApp(app: GuiManagedAppSummary): ManagedCategoryId {
+  if (["core", "safety", "automation"].includes(app.category)) {
+    return "core";
+  }
+  if (app.category.includes("ai")) {
+    return "ai";
+  }
+  if (["desktop", "editor"].includes(app.category)) {
+    return "desktop";
+  }
+  if (["terminal"].includes(app.category) || app.name.toLowerCase().includes("terminal")) {
+    return "terminal";
   }
 
-  return next;
+  return "cli";
+}
+
+type AppCollectionId = "aidevops" | "recommended";
+type ManagedCategoryId = "core" | "ai" | "cli" | "desktop" | "terminal";
+type RecommendedOsId = "all" | "macos" | "linux" | "windows" | "ios" | "android";
+
+interface TabOption<T extends string> {
+  id: T;
+  label: string;
+}
+
+interface RecommendedApp {
+  name: string;
+  description: string;
+  websiteUrl: string;
+  alternativeToUrl?: string;
+  repoUrl?: string;
+  os: RecommendedOsId[];
+}
+
+const appCollectionTabs: TabOption<AppCollectionId>[] = [
+  { id: "aidevops", label: "aidevops" },
+  { id: "recommended", label: "Recommended" },
+];
+
+const managedCategoryTabs: TabOption<ManagedCategoryId>[] = [
+  { id: "core", label: "Core" },
+  { id: "ai", label: "AI" },
+  { id: "cli", label: "CLI" },
+  { id: "desktop", label: "Desktop" },
+  { id: "terminal", label: "Terminal" },
+];
+
+const recommendedOsTabs: TabOption<RecommendedOsId>[] = [
+  { id: "all", label: "All" },
+  { id: "macos", label: "macOS" },
+  { id: "linux", label: "Linux" },
+  { id: "windows", label: "Windows" },
+  { id: "ios", label: "iOS" },
+  { id: "android", label: "Android" },
+];
+
+const recommendedApps = ([
+  { name: "Affinity Studio", description: "Creative design suite.", websiteUrl: "https://www.affinity.studio/", alternativeToUrl: "https://alternativeto.net/software/affinity-1/", os: ["macos", "windows", "ios"] },
+  { name: "Bitwarden", description: "Open source password manager.", websiteUrl: "https://bitwarden.com", alternativeToUrl: "https://alternativeto.net/software/bitwarden--free-password-manager/", repoUrl: "https://github.com/bitwarden", os: ["macos", "linux", "windows", "ios", "android"] },
+  { name: "Brave Browser", description: "Privacy-focused web browser.", websiteUrl: "https://brave.com/", alternativeToUrl: "https://alternativeto.net/software/brave/", os: ["macos", "linux", "windows", "ios", "android"] },
+  { name: "Cloudron", description: "Self-hosted app platform.", websiteUrl: "https://www.cloudron.io/", alternativeToUrl: "https://alternativeto.net/software/cloudron/", os: ["linux"] },
+  { name: "Collabora Online", description: "Online office collaboration.", websiteUrl: "https://www.collaboraonline.com/collabora-online/", alternativeToUrl: "https://alternativeto.net/software/collabora-online/", os: ["linux"] },
+  { name: "Cometly", description: "Marketing attribution analytics.", websiteUrl: "https://www.cometly.com/", os: [] },
+  { name: "DaVinci Resolve", description: "Professional video editing, color, VFX, and audio post-production.", websiteUrl: "https://www.blackmagicdesign.com/products/davinciresolve/", alternativeToUrl: "https://alternativeto.net/software/davinci-resolve/", os: ["macos", "linux", "windows"] },
+  { name: "DocuSeal", description: "Open source document signing.", websiteUrl: "https://www.docuseal.com/", alternativeToUrl: "https://alternativeto.net/software/docuseal/", os: ["linux"] },
+  { name: "Element", description: "Matrix messaging client.", websiteUrl: "https://element.io/", alternativeToUrl: "https://alternativeto.net/software/element-app/", os: ["macos", "linux", "windows", "ios", "android"] },
+  { name: "Enpass", description: "Offline-first password manager.", websiteUrl: "https://www.enpass.io/", alternativeToUrl: "https://alternativeto.net/software/enpass/", os: ["macos", "linux", "windows", "ios", "android"] },
+  { name: "EspoCRM", description: "Open source CRM.", websiteUrl: "https://www.espocrm.com/", alternativeToUrl: "https://alternativeto.net/software/espocrm/", os: ["linux"] },
+  { name: "Fathom Analytics", description: "Privacy-first analytics.", websiteUrl: "https://usefathom.com/", alternativeToUrl: "https://alternativeto.net/software/fathom-analytics/", os: [] },
+  { name: "FonrBase", description: "Font management and reference tool.", websiteUrl: "https://fontba.se/", alternativeToUrl: "https://alternativeto.net/software/fontbase/", os: ["macos"] },
+  { name: "Forgejo", description: "Self-hosted Git forge.", websiteUrl: "https://forgejo.org/", alternativeToUrl: "https://alternativeto.net/software/forgejo/", os: ["linux"] },
+  { name: "Ghost", description: "Publishing platform.", websiteUrl: "https://ghost.org/", alternativeToUrl: "https://alternativeto.net/software/ghost/", os: ["linux"] },
+  { name: "Gitea", description: "Self-hosted Git service.", websiteUrl: "https://about.gitea.com/", alternativeToUrl: "https://alternativeto.net/software/gitea/", os: ["linux", "windows"] },
+  { name: "GitLab", description: "DevSecOps and Git hosting platform.", websiteUrl: "https://gitlab.com/", alternativeToUrl: "https://alternativeto.net/software/gitlab/", os: ["linux"] },
+  { name: "LibreOffice", description: "Open source office suite.", websiteUrl: "https://www.libreoffice.org/", alternativeToUrl: "https://alternativeto.net/software/libreoffice/", os: ["macos", "linux", "windows"] },
+  { name: "LocalWP", description: "Local WordPress development.", websiteUrl: "https://localwp.com/", alternativeToUrl: "https://alternativeto.net/software/local-by-flywheel/", os: ["macos", "linux", "windows"] },
+  { name: "Matomo", description: "Open analytics platform.", websiteUrl: "https://matomo.org/", alternativeToUrl: "https://alternativeto.net/software/piwik/", os: ["linux"] },
+  { name: "Nextcloud", description: "Open source content collaboration platform.", websiteUrl: "https://nextcloud.com/", alternativeToUrl: "https://alternativeto.net/software/nextcloud/", repoUrl: "https://github.com/nextcloud", os: ["macos", "linux", "windows", "ios", "android"] },
+  { name: "OBS Studio", description: "Open source video recording and live streaming.", websiteUrl: "https://obsproject.com/", alternativeToUrl: "https://alternativeto.net/software/open-broadcaster-software/", repoUrl: "https://github.com/obsproject/obs-studio", os: ["macos", "linux", "windows"] },
+  { name: "ONLYOFFICE", description: "Office and document collaboration.", websiteUrl: "https://www.onlyoffice.com/", alternativeToUrl: "https://alternativeto.net/software/onlyoffice/", os: ["macos", "linux", "windows", "ios", "android"] },
+  { name: "OpenScreen", description: "Open screen-sharing project.", websiteUrl: "https://github.com/getopenscreen/openscreen", alternativeToUrl: "https://alternativeto.net/software/openscreen/", repoUrl: "https://github.com/getopenscreen/openscreen", os: ["linux"] },
+  { name: "Osaurus", description: "AI app workspace.", websiteUrl: "https://osaurus.ai/", alternativeToUrl: "https://alternativeto.net/software/osaurus/", os: ["macos"] },
+  { name: "PDF Studio", description: "PDF editor.", websiteUrl: "https://www.qoppa.com/pdfstudio/", alternativeToUrl: "https://alternativeto.net/software/qoppa-pdf-studio/", os: ["macos", "linux", "windows"] },
+  { name: "PostHog", description: "Product analytics platform.", websiteUrl: "https://posthog.com/", alternativeToUrl: "https://alternativeto.net/software/posthog/", os: ["linux"] },
+  { name: "Postiz", description: "Social media scheduling.", websiteUrl: "https://postiz.com/", alternativeToUrl: "https://alternativeto.net/software/postiz/", os: ["linux"] },
+  { name: "PrivateBin", description: "Zero-knowledge pastebin.", websiteUrl: "https://privatebin.info/", alternativeToUrl: "https://alternativeto.net/software/privatebin/", repoUrl: "https://github.com/PrivateBin/PrivateBin", os: ["linux"] },
+  { name: "Proxmox", description: "Virtualization platform.", websiteUrl: "https://www.proxmox.com/", alternativeToUrl: "https://alternativeto.net/software/proxmox-virtual-environment/", os: ["linux"] },
+  { name: "QuickFile", description: "Accounting platform.", websiteUrl: "https://www.quickfile.co.uk/", os: [] },
+  { name: "Reframed", description: "Creative framing utility.", websiteUrl: "https://www.reframed.dev/", alternativeToUrl: "https://alternativeto.net/software/reframed/", os: ["macos"] },
+  { name: "Rybbit", description: "Web analytics.", websiteUrl: "https://rybbit.com/", alternativeToUrl: "https://alternativeto.net/software/rybbit/", os: ["linux"] },
+  { name: "SchildiChat", description: "Matrix messaging client.", websiteUrl: "https://schildi.chat/", alternativeToUrl: "https://alternativeto.net/software/schildichat/", os: ["macos", "linux", "windows", "android"] },
+  { name: "ScreenFlow", description: "Screen recording and editing.", websiteUrl: "https://www.telestream.net/screenflow/", alternativeToUrl: "https://alternativeto.net/software/screenflow/", os: ["macos", "ios"] },
+  { name: "SEO Utils", description: "Desktop SEO tools.", websiteUrl: "https://seoutils.app/", os: ["macos", "linux", "windows"] },
+  { name: "Shottr", description: "macOS screenshot utility.", websiteUrl: "https://shottr.cc/", alternativeToUrl: "https://alternativeto.net/software/shottr/", os: ["macos"] },
+  { name: "Signal", description: "Private messenger.", websiteUrl: "https://signal.org/", alternativeToUrl: "https://alternativeto.net/software/signal-private-messenger/", os: ["macos", "linux", "windows", "ios", "android"] },
+  { name: "SimpleX Chat", description: "Private messenger with no user IDs.", websiteUrl: "https://simplex.chat/", repoUrl: "https://github.com/simplex-chat", os: ["macos", "linux", "windows", "ios", "android"] },
+  { name: "Thunderbird", description: "Email and calendar app.", websiteUrl: "https://www.thunderbird.net/", os: ["macos", "linux", "windows"] },
+  { name: "Ubicloud", description: "Open cloud platform.", websiteUrl: "https://www.ubicloud.com/", os: ["linux"] },
+  { name: "Vaultwarden", description: "Alternative Bitwarden server implementation.", websiteUrl: "https://github.com/dani-garcia/vaultwarden", alternativeToUrl: "https://alternativeto.net/software/vaultwarden/", repoUrl: "https://github.com/dani-garcia/vaultwarden", os: ["linux"] },
+  { name: "VideoProc", description: "Video processing toolkit.", websiteUrl: "https://www.videoproc.com/", os: ["macos", "windows"] },
+  { name: "VirtualBox", description: "Virtualization app.", websiteUrl: "https://www.virtualbox.org/", os: ["macos", "linux", "windows"] },
+  { name: "WordPress", description: "Open source publishing platform.", websiteUrl: "https://wordpress.org/", os: ["linux"] },
+] satisfies RecommendedApp[]).sort((left, right) => left.name.localeCompare(right.name, undefined, { sensitivity: "base" }));
+
+function TabNav<T extends string>({ label, onChange, tabs, value }: { label: string; onChange: (value: T) => void; tabs: TabOption<T>[]; value: T }): ReactElement {
+  return <div aria-label={label} className="pill-tabs app-subnav" role="tablist">{tabs.map((tab) => <button aria-selected={value === tab.id} className={value === tab.id ? "active" : ""} key={tab.id} onClick={() => onChange(tab.id)} role="tab" type="button">{tab.label}</button>)}</div>;
+}
+
+function RecommendedAppsSurface({ apps, os, setOs }: { apps: RecommendedApp[]; os: RecommendedOsId; setOs: (os: RecommendedOsId) => void }): ReactElement {
+  return <>
+    <TabNav label="Recommended app OS filters" tabs={recommendedOsTabs} value={os} onChange={setOs} />
+    <div className="recommended-app-grid">
+      {apps.map((app) => <RecommendedAppCard app={app} key={app.name} />)}
+    </div>
+  </>;
+}
+
+function RecommendedAppCard({ app }: { app: RecommendedApp }): ReactElement {
+  return <article className="recommended-app-card">
+    <div>
+      <strong>{app.name}</strong>
+      <p>{app.description}</p>
+    </div>
+    <OsIconList os={app.os} />
+    <div className="managed-app-links plain-links">
+      <OriginLink href={app.websiteUrl} label={text.website} />
+      {app.alternativeToUrl ? <OriginLink href={app.alternativeToUrl} label="AlternativeTo" /> : null}
+      {app.repoUrl ? <OriginLink href={app.repoUrl} label="Repo" /> : null}
+    </div>
+  </article>;
+}
+
+function OsIconList({ os }: { os: RecommendedOsId[] }): ReactElement {
+  const icons: Record<RecommendedOsId, string> = { all: "*", macos: "⌘", linux: "🐧", windows: "⊞", ios: "iOS", android: "🤖" };
+  if (os.length === 0) {
+    return <span className="os-icon-list"><span title="Web app">Web</span></span>;
+  }
+
+  return <span className="os-icon-list">{os.map((item) => <span key={item} title={recommendedOsTabs.find((tab) => tab.id === item)?.label}>{icons[item]}</span>)}</span>;
 }
 
 export function InstallationSurface(): ReactElement {
