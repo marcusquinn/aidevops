@@ -247,17 +247,18 @@ function renderTerminalOutput(lines: string[]): ReactNode[] {
 
 function renderAnsiLine(line: string, keyPrefix: string): ReactNode[] {
   const nodes: ReactNode[] = [];
-  const ansiPattern = /\u001b\[([0-9;]*)m/g;
+  const ansiPattern = new RegExp("\\x1b\\[([0-9;]*)m", "g");
   let activeClass = "";
   let lastIndex = 0;
-  let match: RegExpExecArray | null;
+  let match = ansiPattern.exec(line);
 
-  while ((match = ansiPattern.exec(line)) !== null) {
+  while (match !== null) {
     if (match.index > lastIndex) {
       nodes.push(terminalSpan(line.slice(lastIndex, match.index), activeClass, `${keyPrefix}-${nodes.length}`));
     }
     activeClass = ansiClassForCodes(match[1]);
     lastIndex = ansiPattern.lastIndex;
+    match = ansiPattern.exec(line);
   }
 
   if (lastIndex < line.length) {
