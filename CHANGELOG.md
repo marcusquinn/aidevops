@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.16] - 2026-06-28
+
+### Changed
+
+- Maintenance: mark t18025 complete (pr:#25788 completed:2026-06-28) [skip ci]
+
+### Fixed
+
+- use PR base branch in conflict nudges
+
 ## [3.29.15] - 2026-06-28
 
 ### Changed
