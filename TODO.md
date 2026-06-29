@@ -4349,3 +4349,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18030 Require completed-session summaries to list implemented changes #bug ref:GH#25838
 
+
+- [ ] t18032 Hide GUI stroke effects when borders are disabled #bug #dashboard #design ref:GH#25855
