@@ -16,7 +16,8 @@
 #   Phase 1 (fast, 0-30s): Any output at all. Zero bytes = dead runtime.
 #   Phase 2 (continuous):   File growth. No growth for stall_timeout triggers
 #                            classification (provider failure, CI wait,
-#                            CPU-active, or no-progress) before any kill.
+#                            network-active, CPU-active, or no-progress) before
+#                            any kill.
 #
 # On stall:
 #   - Writes WATCHDOG_KILL marker to output file
@@ -300,6 +301,101 @@ _watchdog_tree_cpu() {
 	# cpu_seconds_in_window / window_duration * 100 = recent CPU percentage
 	echo $(( total_delta * 100 / sample_interval ))
 	return 0
+}
+
+#######################################
+# Return whether lsof sees an established HTTPS/API socket for the process tree.
+#
+# Fail-closed: if lsof is missing, lacks visibility, or returns no matching
+# outbound remote port, this function returns 1 so the watchdog falls through to
+# the CPU/no-progress logic. Matching only established TCP sockets whose remote
+# endpoint is a common HTTPS/API port limits false positives from listeners or
+# unrelated local sockets; the hard-kill threshold remains the absolute cap.
+#
+# Arguments:
+#   $@ - PID list to inspect
+# Returns: 0 when active network evidence exists, 1 otherwise
+#######################################
+_watchdog_lsof_network_active() {
+	local pid_list=("$@")
+	command -v lsof >/dev/null 2>&1 || return 1
+
+	local pid="" pid_csv=""
+	for pid in "${pid_list[@]}"; do
+		[[ "$pid" =~ ^[0-9]+$ ]] || continue
+		pid_csv="${pid_csv:+${pid_csv},}${pid}"
+	done
+	[[ -n "$pid_csv" ]] || return 1
+
+	local lsof_output=""
+	lsof_output=$(lsof -nP -a -p "$pid_csv" -iTCP -sTCP:ESTABLISHED 2>/dev/null || true)
+	[[ -n "$lsof_output" ]] || return 1
+
+	if printf '%s\n' "$lsof_output" | grep -Eq -- '->[^[:space:]]+:(443|8443)([[:space:]]|$)'; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Return whether ss sees an established HTTPS/API socket for the process tree.
+#
+# Linux fallback for environments without lsof. `ss -p` may hide process
+# metadata on restricted systems; that is treated as no evidence (fail-closed),
+# not as a reason to keep a quiet worker alive indefinitely.
+#
+# Arguments:
+#   $@ - PID list to inspect
+# Returns: 0 when active network evidence exists, 1 otherwise
+#######################################
+_watchdog_ss_network_active() {
+	local pid_list=("$@")
+	command -v ss >/dev/null 2>&1 || return 1
+
+	local ss_output=""
+	ss_output=$(ss -Htanp state established 2>/dev/null || true)
+	[[ -n "$ss_output" ]] || return 1
+
+	local pid=""
+	for pid in "${pid_list[@]}"; do
+		[[ "$pid" =~ ^[0-9]+$ ]] || continue
+		if printf '%s\n' "$ss_output" | grep -Eq -- "[[:space:]][^[:space:]]+:(443|8443)([[:space:]]|$).*pid=${pid},"; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+#######################################
+# Return whether the worker process tree has active HTTPS/API network evidence.
+#
+# This is deliberately semantic liveness, not a stderr heartbeat: it never writes
+# to the monitored output file, it only defers no-output kills when a real
+# process-tree socket is established, and the cumulative hard-kill backstop still
+# frees slots for runaway/dead processes.
+#
+# Arguments:
+#   $1 - root PID to inspect
+# Returns: 0 when active network evidence exists, 1 otherwise
+#######################################
+_watchdog_tree_network_active() {
+	local root_pid="${1:-}"
+	[[ "$root_pid" =~ ^[0-9]+$ ]] || return 1
+
+	local pid_list=("$root_pid")
+	local pid=""
+	while IFS= read -r pid; do
+		[[ "$pid" =~ ^[0-9]+$ ]] || continue
+		pid_list+=("$pid")
+	done < <(_get_descendant_pids "$root_pid")
+
+	if _watchdog_lsof_network_active "${pid_list[@]}"; then
+		return 0
+	fi
+	if _watchdog_ss_network_active "${pid_list[@]}"; then
+		return 0
+	fi
+	return 1
 }
 
 #######################################
@@ -621,6 +717,22 @@ _monitor() {
 			if _output_has_ci_wait; then
 				deferred_stall_seconds=$((deferred_stall_seconds + stall_seconds))
 				printf '[lifecycle] worker_stall_deferred pid=%s reason=ci_wait stall_seconds=%ss deferred_total=%ss ts=%s\n' \
+					"$WORKER_PID" "$stall_seconds" "$deferred_stall_seconds" \
+					"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+					>>"$LIFECYCLE_LOG" 2>/dev/null || true
+				stall_seconds=0
+				sleep "$POLL_INTERVAL"
+				continue
+			fi
+
+			# GH#25878: An AI/API call can be live while producing no stderr and
+			# little recent CPU. Treat an established HTTPS/API socket in the worker
+			# process tree as semantic liveness, but log only to LIFECYCLE_LOG so the
+			# monitored output file does not self-reset the stall counter. Missing or
+			# restricted network tooling fails closed and falls through to CPU/no-progress.
+			if _watchdog_tree_network_active "$WORKER_PID"; then
+				deferred_stall_seconds=$((deferred_stall_seconds + stall_seconds))
+				printf '[lifecycle] worker_stall_deferred pid=%s reason=network_active signal=established_https stall_seconds=%ss deferred_total=%ss ts=%s\n' \
 					"$WORKER_PID" "$stall_seconds" "$deferred_stall_seconds" \
 					"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 					>>"$LIFECYCLE_LOG" 2>/dev/null || true
