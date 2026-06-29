@@ -284,8 +284,16 @@ describe("dashboard shell", () => {
 
     expect(css).toContain(':root[data-borders="hidden"]');
     expect(css).toContain("--border-accent: transparent");
+    expect(css).toContain("--glass-panel-shadow: none");
     expect(css).toContain(':root[data-borders="hidden"] :where(');
     expect(css).toContain("border-color: transparent !important");
+    expect(css).toContain("box-shadow: none !important");
+    expect(css).toContain("outline-color: transparent !important");
+    expect(css).toContain(":root[data-borders=\"hidden\"] *,\n:root[data-borders=\"hidden\"] *::before,\n:root[data-borders=\"hidden\"] *::after");
+    expect(css).toContain(":root[data-borders=\"hidden\"] [data-tooltip]::after");
+    expect(css).toContain(":root[data-borders=\"hidden\"] .desktop-status-bar span:not(.status-dot)::before");
+    expect(css).toContain("[class*=\"tooltip\"]");
+    expect(css).toContain("[class*=\"loading\"]");
     expect(css).toContain(".appearance-segmented-control");
     expect(css).toContain(".appearance-panel {\n  background: transparent");
     expect(css).toContain("font-size: 0.86em");

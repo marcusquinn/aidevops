@@ -134,7 +134,7 @@
   --border-danger: transparent;
   --border-hover: transparent;
   --border-warning: transparent;
-  --glass-panel-shadow: var(--shadow-soft);
+  --glass-panel-shadow: none;
 }
 
 :root[data-borders="hidden"] :where(
@@ -142,6 +142,10 @@
   .app-sidebar,
   .app-inset,
   .desktop-status-bar,
+  .app-global-tooltip,
+  .confirm-modal,
+  .loading-brand-overlay,
+  .popover-menu,
   .workspace-header,
   button,
   input,
@@ -151,30 +155,44 @@
   [class*="button"],
   [class*="card"],
   [class*="control"],
+  [class*="dot"],
   [class*="entry"],
   [class*="item"],
+  [class*="loading"],
+  [class*="mark"],
   [class*="menu"],
+  [class*="modal"],
   [class*="orb"],
   [class*="panel"],
   [class*="pill"],
+  [class*="popover"],
   [class*="preview"],
   [class*="row"],
   [class*="selector"],
   [class*="surface"],
   [class*="switch"],
-  [class*="tag"]
+  [class*="tag"],
+  [class*="tooltip"]
 ) {
   border-color: transparent !important;
+  box-shadow: none !important;
+  outline-color: transparent !important;
 }
 
-:root[data-borders="hidden"] :where(
-  .github-notification-card,
-  .managed-app-card,
-  .notification-preview,
-  .status-dot,
-  .terminal-mark
-) {
-  box-shadow: none;
+:root[data-borders="hidden"] *,
+:root[data-borders="hidden"] *::before,
+:root[data-borders="hidden"] *::after {
+  border-color: transparent !important;
+  outline-color: transparent !important;
+}
+
+:root[data-borders="hidden"] [data-tooltip]::after {
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+:root[data-borders="hidden"] .desktop-status-bar span:not(.status-dot)::before {
+  color: transparent !important;
 }
 
 *,
