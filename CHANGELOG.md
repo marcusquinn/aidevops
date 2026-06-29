@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.29] - 2026-06-29
+
+### Fixed
+
+- enforce border toggle globally (#25840)
+
 ## [3.29.28] - 2026-06-29
 
 ### Changed
