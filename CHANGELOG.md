@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.27] - 2026-06-29
+
+### Fixed
+
+- consolidate appearance ui borders (#25833)
+
 ## [3.29.26] - 2026-06-29
 
 ### Fixed
