@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.35] - 2026-06-29
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- strip agent intent from tool args (#25900)
+
 ## [3.29.34] - 2026-06-29
 
 ### Fixed
