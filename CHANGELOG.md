@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.30] - 2026-06-29
+
+### Changed
+
+- Maintenance: mark t18031 complete (pr:#25844 completed:2026-06-29) [skip ci]
+- reduce app action qlty smells (#25844)
+- Maintenance: sync ref:GH#25842 to TODO.md [skip ci]
+
+### Fixed
+
+- share pulse start epoch bootstrap (#25841)
+
 ## [3.29.29] - 2026-06-29
 
 ### Fixed

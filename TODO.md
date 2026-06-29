@@ -4349,4 +4349,3 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18030 Require completed-session summaries to list implemented changes #bug ref:GH#25838
 
-- [x] t18031 fix(gui): reduce AppActionButton qlty smells after v3.29.28 release failure #bug ref:GH#25842 pr:#25844 completed:2026-06-29
