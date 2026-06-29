@@ -4,6 +4,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { appearanceStorageKeys, clampSidebarWidth, loadingBrandGlyph, loadingSkeletonPanelLabels, readStoredAppearancePreferences } from "../src/App";
 import { hueFromInputValue } from "../src/AppNavigation";
+import { wrappedOptionIndex } from "../src/AppearanceControls";
 import { Workspace } from "../src/AppWorkspace";
 import { commandPaletteMatches, commandPaletteShortcutEntries, commandPaletteShortcutQuery, orderCommandItemsByRecency, rememberCommandPaletteItemId } from "../src/CommandPalette";
 import { CommsConversationSurface } from "../src/CommsConversationSurface";
@@ -269,6 +270,24 @@ describe("dashboard shell", () => {
     expect(hueFromInputValue("210")).toBe(210);
     expect(hueFromInputValue("999")).toBe(359);
     expect(hueFromInputValue("1e")).toBeNull();
+  });
+
+  test("wraps dropdown stepper buttons at option boundaries", () => {
+    expect(wrappedOptionIndex(0, 3, -1)).toBe(2);
+    expect(wrappedOptionIndex(2, 3, 1)).toBe(0);
+    expect(wrappedOptionIndex(1, 3, 1)).toBe(2);
+    expect(wrappedOptionIndex(0, 0, 1)).toBe(0);
+  });
+
+  test("keeps appearance borders and sizing behind shared tokens", () => {
+    const css = readFileSync(`${guiWebRoot}/src/styles.css`, "utf8");
+
+    expect(css).toContain(':root[data-borders="hidden"]');
+    expect(css).toContain("--border-accent: transparent");
+    expect(css).toContain(".appearance-segmented-control");
+    expect(css).toContain(".appearance-panel {\n  background: transparent");
+    expect(css).toContain("font-size: 0.86em");
+    expect(css).not.toContain("border-color: color-mix(in srgb, var(--accent) 52%, transparent)");
   });
 
   test("clamps sidebar width to compact and wide bounds", () => {

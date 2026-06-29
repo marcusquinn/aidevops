@@ -35,7 +35,7 @@ import {
 } from "react-icons/fi";
 import type { ContrastPreference, ConversationMode, FontPreference, FontSizePreference, ShellMode, SidebarMode, SurfaceIconName, SurfaceId, SurfaceNavGroup, SurfaceNavItem, ThemePreference } from "./app-model";
 import { dashboardNavItem, navGroups, sidebarModeForSurface, surfaceRecordCounts, text } from "./app-model";
-import { SidebarFooter } from "./AppearanceControls";
+import { SidebarFooter, wrappedOptionIndex } from "./AppearanceControls";
 import { VaultPadlock, vaultCollectionForSurface } from "./VaultBadges";
 
 export { hueFromInputValue } from "./AppearanceControls";
@@ -215,8 +215,14 @@ function ConversationSidebar({ conversationMode, selectedLocalRepoIndex, selecte
       setSelectedSessionId(activeSessionId);
     }
   }, [activeSessionId, selectedSessionId, setSelectedSessionId]);
-  const canSelectPreviousRepo = selectedLocalRepoIndex > 0;
-  const canSelectNextRepo = selectedLocalRepoIndex < repos.length - 1;
+  const selectRepoByIndex = (index: number) => {
+    if (repos.length === 0) {
+      return;
+    }
+
+    setSelectedLocalRepoIndex(index);
+    setSelectedSessionId(undefined);
+  };
 
   return (
     <section className="conversation-panel" aria-label={text.opencodeSessions}>
@@ -226,11 +232,11 @@ function ConversationSidebar({ conversationMode, selectedLocalRepoIndex, selecte
       <section className="repo-session-selector" aria-label={text.localRepoSelector}>
         <span className="repo-selector-heading" id="local-repo-selector-label">{text.localRepos}</span>
         <div className="selector-with-stepper repo-selector-row">
-          <button aria-label="Previous local repo" className="selector-step-button" disabled={!canSelectPreviousRepo} onClick={() => { setSelectedLocalRepoIndex(Math.max(0, selectedLocalRepoIndex - 1)); setSelectedSessionId(undefined); }} type="button"><FiChevronLeft aria-hidden="true" /></button>
+          <button aria-label="Previous local repo" className="selector-step-button" disabled={repos.length === 0} onClick={() => selectRepoByIndex(wrappedOptionIndex(selectedLocalRepoIndex, repos.length, -1))} type="button"><FiChevronLeft aria-hidden="true" /></button>
           <select aria-labelledby="local-repo-selector-label" onChange={(event) => { setSelectedLocalRepoIndex(Number.parseInt(event.currentTarget.value, 10)); setSelectedSessionId(undefined); }} value={Math.min(selectedLocalRepoIndex, Math.max(0, repos.length - 1))}>
             {repos.length === 0 ? <option value={0}>No local repos</option> : repos.map((repo, index) => <option key={repo.path_ref} value={index}>{repo.name}</option>)}
           </select>
-          <button aria-label="Next local repo" className="selector-step-button" disabled={!canSelectNextRepo} onClick={() => { setSelectedLocalRepoIndex(Math.min(repos.length - 1, selectedLocalRepoIndex + 1)); setSelectedSessionId(undefined); }} type="button"><FiChevronRight aria-hidden="true" /></button>
+          <button aria-label="Next local repo" className="selector-step-button" disabled={repos.length === 0} onClick={() => selectRepoByIndex(wrappedOptionIndex(selectedLocalRepoIndex, repos.length, 1))} type="button"><FiChevronRight aria-hidden="true" /></button>
         </div>
       </section>
       <section className="sidebar-group session-history-list">

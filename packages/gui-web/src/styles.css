@@ -7,7 +7,10 @@
   --bg-secondary: #f8f8f8;
   --bg-tertiary: #f0f0f0;
   --border: color-mix(in srgb, rgb(0 0 0 / 13%) 62%, rgb(255 255 255 / 54%));
+  --border-accent: color-mix(in srgb, var(--accent) 38%, var(--border));
+  --border-danger: color-mix(in srgb, #ef4444 44%, var(--border));
   --border-hover: color-mix(in srgb, rgb(0 0 0 / 24%) 64%, rgb(255 255 255 / 48%));
+  --border-warning: color-mix(in srgb, #d97706 38%, var(--border));
   --code-bg: hsl(var(--accent-hue) 55% 91%);
   --desktop-titlebar-height: 0px;
   --font-family-app: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -127,7 +130,10 @@
 
 :root[data-borders="hidden"] {
   --border: transparent;
+  --border-accent: transparent;
+  --border-danger: transparent;
   --border-hover: transparent;
+  --border-warning: transparent;
   --glass-panel-shadow: var(--shadow-soft);
 }
 
@@ -304,7 +310,7 @@ code {
 
 .machine-orb.active {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 42%, transparent);
+  border-color: var(--border-accent);
   color: var(--accent);
 }
 
@@ -380,7 +386,7 @@ code {
 .terminal-mark {
   align-items: center;
   background: color-mix(in srgb, var(--accent) 15%, #0a0a0a);
-  border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
+  border: 1px solid var(--border-accent);
   border-radius: 11px;
   box-shadow: inset 0 1px 0 color-mix(in srgb, var(--accent) 28%, transparent);
   color: var(--accent);
@@ -504,7 +510,7 @@ code {
 
 .new-session-button {
   background: color-mix(in srgb, var(--accent) 15%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 34%, transparent);
+  border: 1px solid var(--border-accent);
   border-radius: 12px;
   color: var(--accent);
   font-weight: 900;
@@ -542,7 +548,7 @@ code {
 
 .selector-step-button:hover:not(:disabled),
 .selector-step-button:focus-visible {
-  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  border-color: var(--border-accent);
   color: var(--accent);
   outline: none;
 }
@@ -692,7 +698,7 @@ code {
 .vault-padlock {
   align-items: center;
   background: color-mix(in srgb, #d97706 13%, transparent);
-  border: 1px solid color-mix(in srgb, #d97706 38%, transparent);
+  border: 1px solid var(--border-warning);
   border-radius: 999px;
   color: #b45309;
   display: inline-flex;
@@ -718,7 +724,7 @@ code {
 
 .vault-padlock[data-vault-state="unlocked"] {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 38%, transparent);
+  border-color: var(--border-accent);
   color: var(--accent);
 }
 
@@ -742,43 +748,27 @@ code {
 
 .sidebar-footer {
   border-top: 1px solid var(--border);
-  padding-top: 12px;
+  padding: 0;
 }
 
-.theme-control.compact {
+.appearance-segmented-control {
   background: var(--surface-muted);
   border: 0;
   border-radius: 12px;
   display: grid;
   gap: 4px;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   margin: 0;
   min-inline-size: 0;
   padding: 4px;
 }
 
-.theme-option {
+.appearance-panel {
   background: transparent;
   border: 0;
-  border-radius: 9px;
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  font-weight: 900;
-  padding: 7px 6px;
-  text-transform: uppercase;
-}
-
-.theme-option:hover,
-.theme-option.active {
-  background: var(--surface-elevated);
-  color: var(--accent);
-}
-
-.appearance-panel {
-  background: var(--surface-muted);
-  border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 0;
   display: grid;
+  font-size: 1em;
   overflow: hidden;
 }
 
@@ -786,9 +776,10 @@ code {
   background: transparent;
   border: 0;
   color: var(--text-secondary);
+  font-size: 1em;
   gap: 8px;
   justify-content: center;
-  padding: 8px 10px;
+  padding: 0.8em 1em;
   text-transform: uppercase;
   width: 100%;
 }
@@ -809,12 +800,12 @@ code {
 .appearance-panel-body {
   border-top: 1px solid var(--border);
   display: grid;
-  gap: 12px;
-  padding: 12px;
+  gap: 0.9em;
+  padding: 1em;
 }
 
 .appearance-panel.collapsed .appearance-panel-tab {
-  border-radius: 14px;
+  border-radius: 0;
 }
 
 .theme-hue-control,
@@ -827,7 +818,7 @@ code {
 
 .theme-control-heading {
   gap: 8px;
-  justify-content: space-between;
+  justify-content: flex-start;
 }
 
 .hue-label-row {
@@ -842,7 +833,7 @@ code {
 .font-size-control label,
 .font-control span {
   color: var(--text-muted);
-  font-size: 0.74rem;
+  font-size: 0.86em;
   font-weight: 900;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -854,28 +845,27 @@ code {
   padding: 0;
 }
 
-.contrast-options {
-  display: grid;
-  gap: 6px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
+.theme-option,
 .contrast-options button {
   background: var(--surface-elevated);
   border: 1px solid var(--border);
   border-radius: 10px;
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: 0.86em;
   font-weight: 900;
-  padding: 7px 6px;
+  min-height: 2.75em;
+  padding: 0.55em 0.5em;
   text-transform: uppercase;
 }
 
+.theme-option:hover,
+.theme-option:focus-visible,
+.theme-option.active,
 .contrast-options button:hover,
 .contrast-options button:focus-visible,
 .contrast-options button.active {
   background: color-mix(in srgb, var(--accent) 18%, var(--surface-elevated));
-  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+  border-color: var(--border-accent);
   color: var(--accent);
   outline: none;
 }
@@ -885,7 +875,7 @@ code {
   border: 1px solid var(--border);
   border-radius: 9px;
   color: var(--text-primary);
-  font-size: 0.78rem;
+  font-size: 0.95em;
   font-weight: 800;
   min-width: 0;
   padding: 5px 6px;
@@ -920,7 +910,7 @@ code {
   border: 0;
   color: var(--text-muted);
   display: grid;
-  font-size: 0.7rem;
+  font-size: 0.82em;
   font-weight: 900;
   grid-template-columns: repeat(5, 1fr);
   margin: 0;
@@ -1128,7 +1118,7 @@ code {
 .profile-avatar-button:focus-visible,
 .command-trigger:hover,
 .command-trigger:focus-visible {
-  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  border-color: var(--border-accent);
   color: var(--accent);
   outline: none;
 }
@@ -2162,7 +2152,7 @@ code {
 }
 
 .managed-app-card.expanded {
-  border-color: color-mix(in srgb, var(--accent) 32%, var(--border));
+  border-color: var(--border-accent);
 }
 
 .managed-app-card:hover,
@@ -2376,13 +2366,13 @@ button.managed-toggle:disabled {
 
 button.managed-toggle:hover,
 button.managed-toggle:focus-visible {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  border-color: var(--border-accent);
   outline: none;
 }
 
 .switch-track {
   background: color-mix(in srgb, #ef4444 18%, var(--surface-muted));
-  border: 1px solid color-mix(in srgb, #ef4444 44%, var(--border));
+  border: 1px solid var(--border-danger);
   border-radius: 999px;
   display: inline-flex;
   flex: 0 0 auto;
@@ -2431,14 +2421,14 @@ button.managed-toggle:focus-visible {
 
 .app-log-link:hover,
 .app-log-link:focus-visible {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  border-color: var(--border-accent);
   outline: none;
 }
 
 .app-action-button {
   align-items: center;
   background: color-mix(in srgb, var(--accent) 16%, var(--surface-elevated));
-  border: 1px solid color-mix(in srgb, var(--accent) 48%, var(--border));
+  border: 1px solid var(--border-accent);
   border-radius: 999px;
   color: var(--accent);
   display: inline-flex;
@@ -2542,7 +2532,7 @@ button.managed-toggle:focus-visible {
 
 .terminal-close-button:hover,
 .terminal-close-button:focus-visible {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  border-color: var(--border-accent);
   color: var(--accent);
   outline: none;
 }
@@ -2746,7 +2736,7 @@ button.managed-toggle:focus-visible {
 
 .toggle-pill.checked {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 50%, transparent);
+  border-color: var(--border-accent);
   color: var(--accent);
 }
 
@@ -2796,7 +2786,7 @@ button.managed-toggle:focus-visible {
   background:
     linear-gradient(135deg, color-mix(in srgb, var(--accent) 16%, transparent), transparent 46%),
     color-mix(in srgb, var(--accent) 7%, var(--surface-muted));
-  border-color: color-mix(in srgb, var(--accent) 38%, var(--border));
+  border-color: var(--border-accent);
   box-shadow: 0 18px 46px color-mix(in srgb, var(--accent) 10%, transparent);
   transform: translateY(-1px);
 }
@@ -3114,7 +3104,7 @@ button.managed-toggle:focus-visible {
 
 .appearance-switch strong {
   color: var(--text-muted);
-  font-size: 0.74rem;
+  font-size: 0.86em;
   font-weight: 900;
   letter-spacing: 0.08em;
   margin-right: auto;
@@ -3130,7 +3120,7 @@ button.managed-toggle:focus-visible {
   align-items: center;
   backdrop-filter: blur(18px);
   background: color-mix(in srgb, var(--surface) 78%, transparent);
-  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--border));
+  border: 1px solid var(--border-accent);
   border-radius: 24px;
   box-shadow: 0 24px 90px color-mix(in srgb, var(--accent) 14%, transparent), var(--shadow-soft);
   display: grid;
@@ -3422,7 +3412,7 @@ button.managed-toggle:focus-visible {
 
 .switch-control input:checked + span {
   background: color-mix(in srgb, var(--accent) 22%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 52%, transparent);
+  border-color: var(--border-accent);
 }
 
 .switch-control input:checked + span::after {
