@@ -20,7 +20,7 @@
  *   - provider-auth-request.mjs: request/response transformation
  */
 
-import { ensureValidToken, getAccounts, patchAccount, normalizeExpiredCooldowns } from "./oauth-pool.mjs";
+import { ensureValidToken, getAccounts, patchAccount, normalizeExpiredCooldowns, markAuthRefreshFailure } from "./oauth-pool.mjs";
 import {
   injectAccountToken, activateAccount, tokenResult,
   getSessionAccountToken, resolveSessionEmailFromToken,
@@ -28,7 +28,7 @@ import {
   resolveCurrentAccount,
 } from "./provider-auth-pool.mjs";
 import {
-  parseRetryAfterMs, AUTH_FAILURE_COOLDOWN_MS,
+  parseRetryAfterMs,
   recoverFromExhaustion, refreshSessionOwnAccount,
 } from "./provider-auth-pool-recovery.mjs";
 import { buildRequestHeaders, transformRequestBody, addBetaQueryParam, transformResponseStream } from "./provider-auth-request.mjs";
@@ -65,10 +65,7 @@ async function forceRefreshCurrentAccount(client, currentAccount, currentEmail) 
 async function markAndRotateAccount(client, accounts, currentAccount, currentEmail) {
   console.error(`[aidevops] provider-auth: refresh failed for ${currentEmail} — rotating to next account`);
   if (currentAccount) {
-    patchAccount("anthropic", currentEmail, {
-      status: "auth-error",
-      cooldownUntil: Date.now() + AUTH_FAILURE_COOLDOWN_MS,
-    });
+    markAuthRefreshFailure("anthropic", currentAccount);
   }
   const alternates = getAvailableAlternates(accounts, currentEmail);
   return rotateToAlternateAccount(client, alternates, true);
@@ -201,7 +198,7 @@ async function handle400ThirdPartyRecovery(client, response, accessToken, sessio
   if (currentAccount) {
     patchAccount("anthropic", currentEmail, {
       status: "billing-error",
-      cooldownUntil: Date.now() + AUTH_FAILURE_COOLDOWN_MS,
+      cooldownUntil: Date.now() + 300_000,
     });
   }
   const alternates = getAvailableAlternates(accounts, currentEmail);

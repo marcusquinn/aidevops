@@ -733,6 +733,66 @@ class RefreshTests(PoolOpsTestCase):
         self.assertEqual(label, "a@example.com(http_401)")
         self.assertNotIn("secret-refresh", label)
 
+    def test_refresh_failure_sets_exponential_retry_backoff(self) -> None:
+        now_ms = int(time.time() * 1000)
+        account = {"email": "a@example.com", "access": "old", "refresh": "secret-refresh", "expires": 1}
+        ctx = pool_ops_refresh._RefreshContext("https://auth.example.invalid/token", "client", "ua", "all")
+
+        with mock.patch.object(pool_ops_refresh, "call_token_endpoint", return_value={_common.TOKEN_REFRESH_ERROR_KEY: "http_401"}):
+            ok, _label = pool_ops_refresh._refresh_one_account(account, ctx, now_ms)
+
+        self.assertFalse(ok)
+        self.assertEqual(account["status"], "auth-error")
+        self.assertEqual(account["authRefreshFailures"], 1)
+        self.assertEqual(account["authRefreshLastFailureAt"], now_ms)
+        self.assertEqual(account["cooldownUntil"], now_ms + 60_000)
+
+        with mock.patch.object(pool_ops_refresh, "call_token_endpoint", return_value={_common.TOKEN_REFRESH_ERROR_KEY: "http_401"}):
+            ok, _label = pool_ops_refresh._refresh_one_account(account, ctx, now_ms + 60_001)
+
+        self.assertFalse(ok)
+        self.assertEqual(account["authRefreshFailures"], 2)
+        self.assertEqual(account["cooldownUntil"], now_ms + 60_001 + 120_000)
+
+    def test_refresh_skips_auth_error_until_retry_backoff_expires(self) -> None:
+        now_ms = int(time.time() * 1000)
+        account = {
+            "email": "a@example.com",
+            "access": "old",
+            "refresh": "secret-refresh",
+            "expires": 1,
+            "status": "auth-error",
+            "cooldownUntil": now_ms + 60_000,
+        }
+
+        self.assertFalse(pool_ops_refresh._should_refresh_account(account, "all", now_ms))
+        self.assertTrue(pool_ops_refresh._should_refresh_account(account, "all", now_ms + 60_001))
+
+    def test_successful_refresh_clears_retry_backoff_state(self) -> None:
+        now_ms = int(time.time() * 1000)
+        account = {
+            "email": "a@example.com",
+            "access": "old",
+            "refresh": "old-refresh",
+            "expires": 1,
+            "status": "auth-error",
+            "cooldownUntil": now_ms,
+            "authRefreshFailures": 3,
+            "authRefreshLastFailureAt": now_ms - 1,
+        }
+
+        updated = pool_ops_refresh._apply_refresh_response(
+            account,
+            {"access_token": "new-access", "refresh_token": "new-refresh", "expires_in": 3600},
+            now_ms,
+        )
+
+        self.assertTrue(updated)
+        self.assertEqual(account["status"], "active")
+        self.assertIsNone(account["cooldownUntil"])
+        self.assertEqual(account["authRefreshFailures"], 0)
+        self.assertIsNone(account["authRefreshLastFailureAt"])
+
 
 # ---------------------------------------------------------------------------
 # Smoke tests for non-high-complexity commands (one per module after split)

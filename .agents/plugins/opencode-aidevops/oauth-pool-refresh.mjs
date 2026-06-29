@@ -13,7 +13,7 @@ import { execSync, execFileSync } from "child_process";
 import { platform } from "os";
 import {
   ANTHROPIC_CLIENT_ID, OPENAI_CLIENT_ID, GOOGLE_CLIENT_ID,
-  AUTH_FAILURE_COOLDOWN_MS,
+  AUTH_FAILURE_INITIAL_COOLDOWN_MS, AUTH_FAILURE_MAX_COOLDOWN_MS,
   getCursorAgentAuthPath, getCursorStateDbPath,
 } from "./oauth-pool-constants.mjs";
 import {
@@ -191,6 +191,33 @@ async function refreshGoogleAccessToken(account) {
   ), "Google");
 }
 
+export function authFailureBackoffMs(failures) {
+  const count = Math.max(1, Number(failures) || 1);
+  return Math.min(AUTH_FAILURE_MAX_COOLDOWN_MS, AUTH_FAILURE_INITIAL_COOLDOWN_MS * (2 ** (count - 1)));
+}
+
+export function markAuthRefreshFailure(provider, account) {
+  const now = Date.now();
+  const failures = (Number(account.authRefreshFailures) || 0) + 1;
+  const cooldownMs = authFailureBackoffMs(failures);
+  const cooldownUntil = now + cooldownMs;
+  patchAccount(provider, account.email, {
+    status: "auth-error",
+    cooldownUntil,
+    authRefreshFailures: failures,
+    authRefreshLastFailureAt: now,
+  });
+  account.status = "auth-error";
+  account.cooldownUntil = cooldownUntil;
+  account.authRefreshFailures = failures;
+  account.authRefreshLastFailureAt = now;
+  console.error(
+    `[aidevops] OAuth pool: ${provider} token refresh failed for ${account.email}; ` +
+    `retry in ${Math.ceil(cooldownMs / 1000)}s (failure ${failures})`,
+  );
+  return cooldownMs;
+}
+
 // ---------------------------------------------------------------------------
 // ensureValidToken
 // ---------------------------------------------------------------------------
@@ -215,10 +242,7 @@ export async function ensureValidToken(provider, account) {
   }
   const tokens = await (REFRESH_FN[provider] || refreshAccessToken)(account);
   if (!tokens) {
-    patchAccount(provider, account.email, {
-      status: "auth-error",
-      cooldownUntil: Date.now() + AUTH_FAILURE_COOLDOWN_MS,
-    });
+    markAuthRefreshFailure(provider, account);
     return null;
   }
   patchAccount(provider, account.email, {
@@ -227,6 +251,8 @@ export async function ensureValidToken(provider, account) {
     expires: tokens.expires,
     status: "active",
     cooldownUntil: null,
+    authRefreshFailures: 0,
+    authRefreshLastFailureAt: null,
   });
   account.access = tokens.access;
   account.refresh = tokens.refresh;

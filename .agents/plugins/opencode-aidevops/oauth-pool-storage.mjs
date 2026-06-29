@@ -30,6 +30,8 @@ import { POOL_FILE, POOL_LOCK_FILE } from "./oauth-pool-constants.mjs";
  * @property {number|null} cooldownUntil
  * @property {string} [accountId]
  * @property {number} [priority]
+ * @property {number} [authRefreshFailures]
+ * @property {number} [authRefreshLastFailureAt]
  */
 
 /**

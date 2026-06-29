@@ -35,6 +35,14 @@ from ._common import (
 
 # Window before expiry that still triggers a refresh (1 hour).
 _EXPIRY_REFRESH_WINDOW_MS = 3_600_000
+_AUTH_FAILURE_INITIAL_COOLDOWN_MS = 60_000
+_AUTH_FAILURE_MAX_COOLDOWN_MS = 600_000
+
+
+def _auth_failure_backoff_ms(failures: int) -> int:
+    """Return exponential auth-refresh retry backoff, capped at 10 minutes."""
+    count = max(1, int(failures or 1))
+    return min(_AUTH_FAILURE_MAX_COOLDOWN_MS, _AUTH_FAILURE_INITIAL_COOLDOWN_MS * (2 ** (count - 1)))
 
 
 class _RefreshContext(NamedTuple):
@@ -57,6 +65,9 @@ def _should_refresh_account(account: dict, target_email: str, now_ms: int) -> bo
         return False
     if not account.get("refresh", ""):
         return False
+    cooldown_until = int(account.get("cooldownUntil") or 0)
+    if account.get("status") == "auth-error" and cooldown_until > now_ms:
+        return False
     expires = account.get("expires", 0)
     if expires and expires > now_ms + _EXPIRY_REFRESH_WINDOW_MS:
         return False
@@ -76,7 +87,20 @@ def _apply_refresh_response(account: dict, rdata: dict, now_ms: int) -> bool:
     new_expires_in = int(rdata.get("expires_in", 3600))
     account["expires"] = now_ms + new_expires_in * 1000
     account["status"] = "active"
+    account["cooldownUntil"] = None
+    account["authRefreshFailures"] = 0
+    account["authRefreshLastFailureAt"] = None
     return True
+
+
+def _mark_refresh_failure(account: dict, now_ms: int) -> None:
+    """Persist exponential retry state for a failed OAuth refresh."""
+    failures = int(account.get("authRefreshFailures") or 0) + 1
+    cooldown_ms = _auth_failure_backoff_ms(failures)
+    account["status"] = "auth-error"
+    account["cooldownUntil"] = now_ms + cooldown_ms
+    account["authRefreshFailures"] = failures
+    account["authRefreshLastFailureAt"] = now_ms
 
 
 def _refresh_one_account(
@@ -95,11 +119,14 @@ def _refresh_one_account(
     rdata = call_token_endpoint(ctx.token_url, ctx.client_id, refresh_tok, ctx.ua_header)
     error_label = token_refresh_error_label(rdata)
     if error_label:
+        _mark_refresh_failure(account, now_ms)
         return False, f"{email}({error_label})"
     if rdata is None:
+        _mark_refresh_failure(account, now_ms)
         return False, f"{email}(network)"
     if _apply_refresh_response(account, rdata, now_ms):
         return True, ""
+    _mark_refresh_failure(account, now_ms)
     return False, email
 
 
@@ -214,8 +241,9 @@ def cmd_refresh() -> None:
 
         refreshed, failed = _refresh_all_eligible(accounts, ctx, now_ms)
 
-        if refreshed:
+        if refreshed or failed:
             atomic_write_json(pool_path, pool)
+        if refreshed:
             _self_heal_auth_file(auth_path, provider, accounts, refreshed, now_ms)
     finally:
         release_lock(lock_fd)

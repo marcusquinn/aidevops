@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.26] - 2026-06-29
+
+### Fixed
+
+- Back off repeated OAuth token refresh 401 failures exponentially up to 10 minutes across OpenCode pool refresh and scheduled refresh paths.
+
 ## [3.29.25] - 2026-06-29
 
 ### Changed

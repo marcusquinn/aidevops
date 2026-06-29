@@ -97,8 +97,14 @@ export function getCursorStateDbPath() { return CURSOR_PATHS.db; }
 // Shared cooldown / timing constants
 // ---------------------------------------------------------------------------
 
-/** Default cooldown on auth failure (ms) */
-export const AUTH_FAILURE_COOLDOWN_MS = 300_000;
+/** Initial cooldown after an OAuth refresh/auth failure (ms) */
+export const AUTH_FAILURE_INITIAL_COOLDOWN_MS = 60_000;
+
+/** Maximum cooldown after repeated OAuth refresh/auth failures (ms) */
+export const AUTH_FAILURE_MAX_COOLDOWN_MS = 600_000;
+
+/** Backward-compatible default cooldown on auth failure (ms) */
+export const AUTH_FAILURE_COOLDOWN_MS = AUTH_FAILURE_INITIAL_COOLDOWN_MS;
 
 /** Cooldown after a 429 on the token endpoint (ms) — 5 minutes */
 export const TOKEN_ENDPOINT_COOLDOWN_MS = 300_000;
