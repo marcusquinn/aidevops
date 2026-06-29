@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import * as readline from "node:readline";
 import { Hono } from "hono";
-import { APP_ACTION_ROUTE_MANIFEST, APP_ACTION_STATUS_ROUTE_MANIFEST, BANNED_ROUTE_PATTERNS, createEnvelope, FILE_EXPLORER_ROUTE_MANIFEST, type GuiAppActionId, type GuiAppActionJobSummary, STATUS_ROUTE_MANIFEST, VAULT_STATUS_ROUTE_MANIFEST } from "../../gui-shared/src";
+import { APP_ACTION_ROUTE_MANIFEST, APP_ACTION_STATUS_ROUTE_MANIFEST, BANNED_ROUTE_PATTERNS, createEnvelope, FILE_EXPLORER_ROUTE_MANIFEST, type GuiAppActionId, type GuiAppActionJobSummary, STATUS_ROUTE_MANIFEST, TAMBO_PROVIDER_CONFIG, TAMBO_PROXY_ROUTE_MANIFEST, VAULT_STATUS_ROUTE_MANIFEST } from "../../gui-shared/src";
 import { readFileExplorer } from "./file-adapter";
 import { readStatus, readVaultStatus } from "./status-adapter";
 
@@ -51,6 +51,22 @@ export function createGuiApiApp() {
 
   app.get(VAULT_STATUS_ROUTE_MANIFEST.route, (context) => {
     return context.json(readVaultStatus());
+  });
+
+  app.get(TAMBO_PROXY_ROUTE_MANIFEST.route, (context) => {
+    const tenantRef = context.req.query("tenant_ref") ?? "local";
+    const workspaceRef = context.req.query("workspace_ref") ?? "aidevops";
+    const sessionRef = context.req.query("session_ref") ?? "conversation:local";
+
+    return context.json(createEnvelope({
+      operation_id: TAMBO_PROXY_ROUTE_MANIFEST.operation_id,
+      source: { surface: "conversations", authority: "server-side Tambo proxy metadata", path_refs: ["packages/gui-shared/src/tambo.ts"] },
+      data: {
+        ...TAMBO_PROVIDER_CONFIG,
+        thread_key_ref: `${tenantRef}:${workspaceRef}:${sessionRef}`,
+      },
+      warnings: ["Tambo provider secrets stay server-side; this route exposes component metadata and scoped thread keys only."],
+    }));
   });
 
   app.post(APP_ACTION_ROUTE_MANIFEST.route, (context) => {

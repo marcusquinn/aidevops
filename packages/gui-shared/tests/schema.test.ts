@@ -9,7 +9,10 @@ import {
   sortConversationMessageParts,
   sortConversationMessages,
   STATUS_ROUTE_MANIFEST,
+  TAMBO_COMPONENT_SCHEMAS,
+  TAMBO_PROXY_ROUTE_MANIFEST,
   statusFixture,
+  validateTamboComponentPayload,
   VAULT_STATUS_ROUTE_MANIFEST,
   type GuiConversationThread,
 } from "../src";
@@ -30,6 +33,26 @@ describe("GUI shared schema contracts", () => {
     expect(isReadOnlyManifest(VAULT_STATUS_ROUTE_MANIFEST)).toBe(true);
     expect(VAULT_STATUS_ROUTE_MANIFEST.operation_id).toBe("vault.status.read");
     expect(VAULT_STATUS_ROUTE_MANIFEST.redactions).toContain("vault_passphrases");
+  });
+
+  test("Tambo route and registered component schemas are strict and read-safe", () => {
+    expect(isReadOnlyManifest(TAMBO_PROXY_ROUTE_MANIFEST)).toBe(true);
+    expect(TAMBO_PROXY_ROUTE_MANIFEST.redactions).toContain("tambo_api_keys");
+    expect(TAMBO_COMPONENT_SCHEMAS.map((schema) => schema.name)).toEqual(["TaskCard", "PullRequestCard", "CICheckSummary", "WorkerStatusCard", "DeploymentStatusCard", "RepoHealthCard", "ApprovalPromptCard"]);
+    expect(TAMBO_COMPONENT_SCHEMAS.every((schema) => schema.additionalProperties === false)).toBe(true);
+  });
+
+  test("Tambo payload validation enforces tenant scope and strict props", () => {
+    const scope = { tenant_ref: "tenant:local-owner", workspace_ref: "workspace:aidevops", repo_ref: "repo:marcusquinn/aidevops" };
+    const valid = validateTamboComponentPayload({ component: "TaskCard", tenant_ref: "tenant:local-owner", session_ref: "conversation:ai-session-1", read_only: true, props: { title: "Implement Tambo", status: "in review", reference: "#25713" } }, scope);
+    const wrongTenant = validateTamboComponentPayload({ component: "TaskCard", tenant_ref: "tenant:other", session_ref: "conversation:ai-session-1", read_only: true, props: { title: "Implement Tambo", status: "in review" } }, scope);
+    const extraProp = validateTamboComponentPayload({ component: "TaskCard", tenant_ref: "tenant:local-owner", session_ref: "conversation:ai-session-1", read_only: true, props: { title: "Implement Tambo", status: "in review", href: "not-allowed" } }, scope);
+    const activeApproval = validateTamboComponentPayload({ component: "ApprovalPromptCard", tenant_ref: "tenant:local-owner", session_ref: "conversation:ai-session-1", read_only: true, props: { action: "Merge", reason: "Checks passed", risk: "high", disabled: false } }, scope);
+
+    expect(valid.ok).toBe(true);
+    expect(wrongTenant.errors).toContain("tenant_scope_mismatch");
+    expect(extraProp.errors).toContain("unexpected_prop:href");
+    expect(activeApproval.errors).toContain("approval_prompt_must_be_disabled");
   });
 
   test("status envelope preserves source and redaction metadata", () => {

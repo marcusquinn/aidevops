@@ -1562,6 +1562,48 @@ code {
   border-style: dashed;
 }
 
+.genui-card {
+  background: var(--surface-elevated);
+  border: 1px solid var(--border-accent);
+  border-radius: 14px;
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+  padding: 12px;
+}
+
+.genui-card-invalid {
+  border-color: var(--border-warning);
+}
+
+.genui-card h3 {
+  margin: 0;
+}
+
+.genui-card dl {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  margin: 0;
+}
+
+.genui-card dt {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  text-transform: uppercase;
+}
+
+.genui-card dd {
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.genui-deferred {
+  border-top: 1px dashed var(--border);
+  color: var(--text-muted);
+  padding-top: 8px;
+}
+
 .conversation-list-panel {
   grid-template-rows: auto auto auto minmax(0, 1fr);
 }

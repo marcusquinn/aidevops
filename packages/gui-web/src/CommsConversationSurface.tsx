@@ -1,5 +1,6 @@
 import { FiAtSign, FiHash, FiMessageSquare, FiSearch } from "react-icons/fi";
 import { sortConversationMessageParts, sortConversationMessages, type GuiConversationMessage, type GuiConversationMessagePart, type GuiConversationThread } from "../../gui-shared/src";
+import { TamboConversationPart } from "./GenUiCards";
 import { text } from "./app-model";
 import { conversationThreads } from "./conversation-fixtures";
 
@@ -91,11 +92,18 @@ function ConversationMessageRow({ message, parts, thread }: { message: GuiConver
   return (
     <article className={`chat-bubble ${speaker}`} data-sender-kind={message.sender_kind}>
       <strong>{sender?.display_name ?? message.sender_kind}</strong>
-      {parts.map((part) => <p key={part.id}>{part.text ?? part.kind}</p>)}
+      {parts.map((part) => <ConversationPart key={part.id} part={part} thread={thread} />)}
       <small>{message.status} · {message.created_at}</small>
       {reactions.length > 0 ? <div className="reaction-row">{reactions.map((reaction) => <span key={reaction.id}>{reaction.reaction}</span>)}</div> : null}
     </article>
   );
+}
+
+function ConversationPart({ part, thread }: { part: GuiConversationMessagePart; thread: GuiConversationThread }) {
+  if (part.kind === "tambo_component" || part.kind === "approval_prompt") {
+    return <TamboConversationPart part={part} scope={thread.conversation.scope} />;
+  }
+  return <p>{part.text ?? part.kind}</p>;
 }
 
 function participantSummary(thread: GuiConversationThread): string {

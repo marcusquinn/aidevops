@@ -1,6 +1,6 @@
 export type GuiRouteClassification = "read" | "write" | "destructive";
 
-export type GuiOperationId = "setup.status.read" | "capabilities.read" | "filesystem.read" | "vault.status.read" | "apps.action.run" | "apps.action.status";
+export type GuiOperationId = "setup.status.read" | "capabilities.read" | "filesystem.read" | "vault.status.read" | "apps.action.run" | "apps.action.status" | "tambo.session.read";
 
 export type GuiFileRootId = "agents" | "config" | "localSetup" | "git";
 
