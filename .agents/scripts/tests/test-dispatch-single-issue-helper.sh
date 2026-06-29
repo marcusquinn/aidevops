@@ -541,13 +541,13 @@ test_pr_target_guard_fails_closed_on_api_error() {
 	return 0
 }
 
-test_interactive_hold_guard_blocks_review_label() {
+test_interactive_hold_guard_blocks_review_label_without_handoff() {
 	local rc=0
-	_dsi_guard_no_interactive_hold "bug,status:in-review,auto-dispatch" >/dev/null 2>&1 || rc=$?
+	_dsi_guard_no_interactive_hold "bug,status:in-review" >/dev/null 2>&1 || rc=$?
 
 	local check=1
 	[[ "$rc" -eq 1 ]] && check=0
-	print_result "interactive hold guard blocks status:in-review" "$check" "rc=$rc"
+	print_result "interactive hold guard blocks status:in-review without handoff" "$check" "rc=$rc"
 	return 0
 }
 
@@ -568,6 +568,16 @@ test_interactive_hold_guard_allows_auto_dispatch_handoff() {
 	local check=1
 	[[ "$rc" -eq 0 ]] && check=0
 	print_result "interactive hold guard allows auto-dispatch handoff" "$check" "rc=$rc"
+	return 0
+}
+
+test_interactive_hold_guard_allows_auto_dispatch_review_handoff() {
+	local rc=0
+	_dsi_guard_no_interactive_hold "bug,status:in-review,auto-dispatch" >/dev/null 2>&1 || rc=$?
+
+	local check=1
+	[[ "$rc" -eq 0 ]] && check=0
+	print_result "interactive hold guard allows auto-dispatch review handoff" "$check" "rc=$rc"
 	return 0
 }
 
@@ -898,9 +908,10 @@ _run_tests() {
 	test_pr_target_guard_detects_pull_request
 	test_pr_target_guard_allows_plain_issue
 	test_pr_target_guard_fails_closed_on_api_error
-	test_interactive_hold_guard_blocks_review_label
+	test_interactive_hold_guard_blocks_review_label_without_handoff
 	test_interactive_hold_guard_blocks_origin_interactive_without_handoff
 	test_interactive_hold_guard_allows_auto_dispatch_handoff
+	test_interactive_hold_guard_allows_auto_dispatch_review_handoff
 	test_maintainer_review_guard_blocks_manual_dispatch
 	test_cmd_dispatch_blocks_needs_maintainer_review_before_dedup
 	test_agent_flag_parses_with_default

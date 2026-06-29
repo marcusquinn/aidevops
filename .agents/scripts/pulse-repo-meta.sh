@@ -211,8 +211,9 @@ repo_allows_pulse_write_actions() {
 #   - supervisor/persistent/routine-tracking/infrastructure (non-work telemetry/advisories)
 #   - parent-task (decomposition tracker, never directly dispatchable; t2924)
 #   - no-auto-dispatch (explicit dispatch opt-out; t2924)
-#   - status:in-progress, status:in-review, status:claimed, status:done
-#     (active or completed claims that the dispatcher would always block; t2924)
+#   - status:in-progress, status:in-review, status:claimed without auto-dispatch
+#     (active claims that the dispatcher would otherwise block; t2924)
+#   - status:done (completed work, never dispatchable)
 # Everything else passes through for the downstream dedup layers to decide.
 #
 # t2924 rationale: filtering these at candidate-build time (instead of dispatch
@@ -222,6 +223,10 @@ repo_allows_pulse_write_actions() {
 # per cycle. The dispatch-time check (dispatch-dedup-helper.sh::is-assigned)
 # remains as defense-in-depth for the race window between candidate build and
 # dispatch.
+#
+# Auto-dispatch is an explicit worker handoff, so active status labels must not
+# hide those issues from stale-assignment recovery. They stay in the candidate
+# stream and Layer 6 decides whether the claim is live, stale, or safe to take.
 #
 # Arguments:
 #   $1 - repo slug (owner/repo)
@@ -256,7 +261,7 @@ list_dispatchable_issue_candidates_json() {
 	fi
 	rm -f "$issue_dispatch_err"
 
-	printf '%s' "$issue_json" | jq -c '
+	printf '%s' "$issue_json" | jq -c --arg auto_dispatch_label 'auto-dispatch' '
 		[
 			.[] |
 			(.labels | map(.name)) as $labels |
@@ -284,9 +289,9 @@ list_dispatchable_issue_candidates_json() {
 			# candidate build and dispatch.
 			select(($labels | index("parent-task")) == null) |
 			select(($labels | index("no-auto-dispatch")) == null) |
-			select(($labels | index("status:in-progress")) == null) |
-			select(($labels | index("status:in-review")) == null) |
-			select(($labels | index("status:claimed")) == null) |
+			select((($labels | index("status:in-progress")) == null) or (($labels | index($auto_dispatch_label)) != null)) |
+			select((($labels | index("status:in-review")) == null) or (($labels | index($auto_dispatch_label)) != null)) |
+			select((($labels | index("status:claimed")) == null) or (($labels | index($auto_dispatch_label)) != null)) |
 			select(($labels | index("status:done")) == null) |
 			{
 				number,
