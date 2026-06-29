@@ -22,9 +22,11 @@ export const INTENT_FIELD = "agent__intent";
 const intentByCallId = new Map();
 
 /**
- * Extract and store the intent field from tool call args.
+ * Extract, store, and strip the intent field from tool call args.
  * Called from toolExecuteBefore — stores intent keyed by callID for
  * retrieval in toolExecuteAfter when the tool call is recorded to the DB.
+ * The metadata is consumed by aidevops observability and must not remain in
+ * executable tool arguments passed onward to OpenCode or host tools.
  *
  * @param {string} callID - Unique tool call identifier
  * @param {object} args - Tool call arguments (may contain agent__intent)
@@ -33,7 +35,12 @@ const intentByCallId = new Map();
 export function extractAndStoreIntent(callID, args) {
   if (!args || typeof args !== "object") return undefined;
 
+  const hasIntent = Object.prototype.hasOwnProperty.call(args, INTENT_FIELD);
   const raw = args[INTENT_FIELD];
+  if (hasIntent) {
+    delete args[INTENT_FIELD];
+  }
+
   if (typeof raw !== "string") return undefined;
 
   const intent = raw.trim();
