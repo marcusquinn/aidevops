@@ -1047,7 +1047,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18029 Scope session checkpoints to active repository #type:bug ref:GH#25835 pr:#25837 completed:2026-06-29
 
-- [ ] t18031 fix(gui): reduce AppActionButton qlty smells after v3.29.28 release failure #bug #interactive ~1h ref:GH#25842 logged:2026-06-29
+- [x] t18031 fix(gui): reduce AppActionButton qlty smells after v3.29.28 release failure #bug #interactive ~1h ref:GH#25842 logged:2026-06-29 pr:#25844 completed:2026-06-29
 
 ## In Progress
 
@@ -4349,4 +4349,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18030 Require completed-session summaries to list implemented changes #bug ref:GH#25838
 
-- [ ] t18031 fix(gui): reduce AppActionButton qlty smells after v3.29.28 release failure #bug ref:GH#25842
+- [x] t18031 fix(gui): reduce AppActionButton qlty smells after v3.29.28 release failure #bug ref:GH#25842 pr:#25844 completed:2026-06-29
