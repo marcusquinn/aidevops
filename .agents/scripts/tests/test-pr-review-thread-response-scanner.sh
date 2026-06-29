@@ -386,6 +386,67 @@ test_dispatch_reports_fetch_errors_when_scan_blind() {
 	return 0
 }
 
+test_dispatch_rotates_candidates_with_repo_cursor() {
+	setup_test_env
+	export PR_REVIEW_THREAD_RESPONSE_MAX_PER_REPO=2
+	export STUB_PR_LIST=$'1	One	false	origin:worker	feature/one	worker-bot
+2	Two	false	origin:worker	feature/two	worker-bot
+3	Three	false	origin:worker	feature/three	worker-bot
+4	Four	false	origin:worker	feature/four	worker-bot
+5	Five	false	origin:worker	feature/five	worker-bot'
+	local state_dir="$AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR"
+	local cursor_file="${state_dir}/owner-repo-cursor.state"
+
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	local first_window=""
+	first_window="$(for pr_number in 1 2 3 4 5; do if [[ -f "${state_dir}/owner-repo-${pr_number}.state" ]]; then printf '%s' "$pr_number"; fi; done)"
+	rm -f "${state_dir}"/owner-repo-[0-9]*.state
+
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	local second_window=""
+	second_window="$(for pr_number in 1 2 3 4 5; do if [[ -f "${state_dir}/owner-repo-${pr_number}.state" ]]; then printf '%s' "$pr_number"; fi; done)"
+	rm -f "${state_dir}"/owner-repo-[0-9]*.state
+
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	local third_window=""
+	third_window="$(for pr_number in 1 2 3 4 5; do if [[ -f "${state_dir}/owner-repo-${pr_number}.state" ]]; then printf '%s' "$pr_number"; fi; done)"
+	local cursor_value=""
+	cursor_value="$(grep '^pr_number=' "$cursor_file" 2>/dev/null || true)"
+
+	if [[ "$first_window" == "12" && "$second_window" == "34" && "$third_window" == "15" && "$cursor_value" == "pr_number=1" ]]; then
+		print_result "dispatch rotates candidate windows with repo cursor" 0
+	else
+		print_result "dispatch rotates candidate windows with repo cursor" 1 "first=${first_window}, second=${second_window}, third=${third_window}, cursor=${cursor_value}, log=$(tr '\n' ';' <"$LOGFILE" 2>/dev/null || printf '')"
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_dispatch_stale_cursor_falls_back_to_original_order() {
+	setup_test_env
+	export PR_REVIEW_THREAD_RESPONSE_MAX_PER_REPO=2
+	export STUB_PR_LIST=$'1	One	false	origin:worker	feature/one	worker-bot
+2	Two	false	origin:worker	feature/two	worker-bot
+3	Three	false	origin:worker	feature/three	worker-bot'
+	local state_dir="$AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR"
+	local cursor_file="${state_dir}/owner-repo-cursor.state"
+	printf 'pr_number=999\n' >"$cursor_file"
+
+	$SCANNER dispatch owner/repo "${TEST_ROOT}/repo"
+	local dispatched_window=""
+	dispatched_window="$(for pr_number in 1 2 3; do if [[ -f "${state_dir}/owner-repo-${pr_number}.state" ]]; then printf '%s' "$pr_number"; fi; done)"
+	local cursor_value=""
+	cursor_value="$(grep '^pr_number=' "$cursor_file" 2>/dev/null || true)"
+
+	if [[ "$dispatched_window" == "12" && "$cursor_value" == "pr_number=2" ]]; then
+		print_result "dispatch stale cursor falls back to original order" 0
+	else
+		print_result "dispatch stale cursor falls back to original order" 1 "window=${dispatched_window}, cursor=${cursor_value}"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_reply_and_resolve_use_graphql_mutations() {
 	setup_test_env
 	local body_file="${TEST_ROOT}/reply.md"
@@ -502,6 +563,8 @@ main() {
 	test_dispatch_pr_reclaims_stale_lock
 	test_dispatch_reports_graphql_budget_exhaustion_when_scan_blind
 	test_dispatch_reports_fetch_errors_when_scan_blind
+	test_dispatch_rotates_candidates_with_repo_cursor
+	test_dispatch_stale_cursor_falls_back_to_original_order
 	test_reply_and_resolve_use_graphql_mutations
 	test_reply_auto_prepends_thread_author
 	test_reply_does_not_double_prepend_thread_author

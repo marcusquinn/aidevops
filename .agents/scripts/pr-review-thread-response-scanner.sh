@@ -500,6 +500,73 @@ _prrts_lock_dir() {
 	return 0
 }
 
+_prrts_cursor_file() {
+	local repo_slug="$1"
+	local safe_slug=""
+	safe_slug="$(_prrts_safe_slug "$repo_slug")"
+	printf '%s/%s-cursor.state\n' "$STATE_DIR" "$safe_slug"
+	return 0
+}
+
+_prrts_read_cursor() {
+	local repo_slug="$1"
+	local cursor_var="$2"
+	local cursor_file="" cursor_key="" cursor_line_value="" cursor_value=""
+	cursor_file="$(_prrts_cursor_file "$repo_slug")"
+	if [[ -f "$cursor_file" ]]; then
+		while IFS='=' read -r cursor_key cursor_line_value; do
+			case "$cursor_key" in
+			pr_number) cursor_value="$cursor_line_value" ;;
+			esac
+		done <"$cursor_file"
+	fi
+	[[ "$cursor_value" =~ ^[0-9]+$ ]] || cursor_value=""
+	printf -v "$cursor_var" '%s' "$cursor_value"
+	return 0
+}
+
+_prrts_write_cursor() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local cursor_file="" cursor_tmp=""
+	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 0
+	_prrts_ensure_dirs
+	cursor_file="$(_prrts_cursor_file "$repo_slug")"
+	cursor_tmp="${cursor_file}.$$"
+	{
+		printf 'pr_number=%s\n' "$pr_number"
+		printf 'updated_at=%s\n' "$(date +%s)"
+	} >"$cursor_tmp"
+	mv "$cursor_tmp" "$cursor_file"
+	return 0
+}
+
+_prrts_rotate_candidates_after_cursor() {
+	local candidates="$1"
+	local cursor="$2"
+	if [[ -z "$cursor" || ! "$cursor" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$candidates"
+		return 0
+	fi
+	printf '%s\n' "$candidates" | awk -F '\t' -v cursor="$cursor" '
+		{
+			rows[++count] = $0
+			if ($1 == cursor) {
+				cursor_index = count
+			}
+		}
+		END {
+			if (cursor_index > 0 && cursor_index < count) {
+				for (i = cursor_index + 1; i <= count; i++) print rows[i]
+				for (i = 1; i <= cursor_index; i++) print rows[i]
+			} else {
+				for (i = 1; i <= count; i++) print rows[i]
+			}
+		}
+	'
+	return 0
+}
+
 _prrts_write_lock_metadata() {
 	local lock_dir="$1"
 	local now_epoch="$2"
@@ -793,6 +860,7 @@ _prrts_dispatch_repo() {
 	local pr_number="" thread_count="" fingerprint="" title="" head_ref="" author="" preview=""
 	local checked_count=0 fetch_error_count=0 graphql_exhausted_count=0 list_failed=0
 	local status_key="" status_value=""
+	local cursor="" last_considered=""
 
 	if [[ -z "$repo_path" || ! -d "${repo_path/#\~/$HOME}" ]]; then
 		_prrts_log "dispatch: ${repo_slug} skipped — repo path missing or not a directory (${repo_path})"
@@ -834,13 +902,27 @@ _prrts_dispatch_repo() {
 	}
 	now_epoch="$(date +%s)"
 	max_per_repo="$(_prrts_normalise_int "$PR_REVIEW_THREAD_RESPONSE_MAX_PER_REPO" "2" "1")"
+	_prrts_read_cursor "$repo_slug" cursor
+	candidates="$(_prrts_rotate_candidates_after_cursor "$candidates" "$cursor")"
+	if [[ -n "$cursor" ]]; then
+		_prrts_log "dispatch: ${repo_slug} rotated candidates after cursor PR #${cursor}"
+	fi
 	while IFS=$'\t' read -r pr_number thread_count fingerprint title head_ref author preview; do
 		[[ -n "$pr_number" ]] || continue
-		[[ "$dispatched" -lt "$max_per_repo" ]] || break
+		last_considered="$pr_number"
 		if _prrts_dispatch_guarded "$repo_slug" "$repo_path" "$pr_number" "$title" "$thread_count" "$fingerprint" "$preview" "$now_epoch" "$dry_run" "dispatch" "$head_ref" "$author"; then
 			dispatched=$((dispatched + 1))
 		fi
+		[[ "$dispatched" -lt "$max_per_repo" ]] || break
 	done <<<"$candidates"
+	if [[ -n "$last_considered" ]]; then
+		if [[ "$dry_run" == "$PRRTS_BOOL_TRUE" ]]; then
+			_prrts_log "dry-run: would update ${repo_slug} dispatch cursor to PR #${last_considered}"
+		else
+			_prrts_write_cursor "$repo_slug" "$last_considered"
+			_prrts_log "dispatch: ${repo_slug} updated cursor to PR #${last_considered}"
+		fi
+	fi
 	_prrts_log "dispatch: ${repo_slug} completed, dispatched=${dispatched}, dry_run=${dry_run}"
 	return 0
 }
