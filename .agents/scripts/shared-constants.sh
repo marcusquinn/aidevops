@@ -101,6 +101,25 @@ if [[ "${BASH_VERSINFO[0]:-0}" -ge 4 ]]; then
 	unset AIDEVOPS_BASH_REEXECED
 fi
 
+# Ensure standalone pulse-adjacent runners have the elapsed-time baseline that
+# pulse-wrapper.sh normally exports. Helpers that create GitHub comments/issues
+# use PULSE_START_EPOCH for signature footers; launchd/cron runners that source
+# pulse libraries directly need the same safe default under `set -u`.
+aidevops_ensure_pulse_start_epoch() {
+	local fallback_epoch=""
+
+	if [[ "${PULSE_START_EPOCH:-}" =~ ^[0-9]+$ ]]; then
+		export PULSE_START_EPOCH
+		return 0
+	fi
+
+	fallback_epoch=$(date +%s 2>/dev/null || printf '0')
+	[[ "$fallback_epoch" =~ ^[0-9]+$ ]] || fallback_epoch=0
+	PULSE_START_EPOCH="$fallback_epoch"
+	export PULSE_START_EPOCH
+	return 0
+}
+
 # =============================================================================
 # Tool Version Pins
 # =============================================================================

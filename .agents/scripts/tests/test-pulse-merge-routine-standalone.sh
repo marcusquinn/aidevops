@@ -33,7 +33,7 @@
 #   1. --help completes with exit 0 and no stderr noise
 #   2. --help emits no 'command not found' errors
 #   3. --help emits no 'unbound variable' errors
-#   4. The routine file initialises PULSE_START_EPOCH (grep guard)
+#   4. The routine file calls shared PULSE_START_EPOCH bootstrap (grep guard)
 #   5. The routine file sources pulse-dispatch-core.sh (grep guard)
 #   6. The routine file sources pulse-fast-fail.sh (grep guard)
 #   7. runtime helpers define _should_setup_noninteractive_pulse_merge_routine
@@ -145,15 +145,15 @@ else
 fi
 
 # =============================================================================
-# Test 4: PULSE_START_EPOCH is initialised in the env-var defaults block
+# Test 4: PULSE_START_EPOCH is initialised via shared bootstrap
 # =============================================================================
 printf '\n=== Source-content guards ===\n'
 
-if grep -qE '^PULSE_START_EPOCH="\$\{PULSE_START_EPOCH:-' "$ROUTINE_FILE"; then
-	pass "4: PULSE_START_EPOCH initialised with default in routine"
+if grep -qE '^aidevops_ensure_pulse_start_epoch$' "$ROUTINE_FILE"; then
+	pass "4: PULSE_START_EPOCH initialised via shared bootstrap"
 else
-	fail "4: PULSE_START_EPOCH initialised with default in routine" \
-		"missing 'PULSE_START_EPOCH=\"\${PULSE_START_EPOCH:-...}' line"
+	fail "4: PULSE_START_EPOCH initialised via shared bootstrap" \
+		"missing aidevops_ensure_pulse_start_epoch call"
 fi
 
 # =============================================================================
