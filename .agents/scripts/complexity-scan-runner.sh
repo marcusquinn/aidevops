@@ -74,6 +74,13 @@ fi
 source "${SCRIPT_DIR}/pulse-wrapper-config.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-repo-meta.sh"
+
+# Standalone launchd/cron runs do not enter through pulse-wrapper.sh, but the
+# simplification issue builders use PULSE_START_EPOCH for signature footers.
+# Centralise the bootstrap with pulse-merge-routine.sh so new standalone pulse
+# runners do not need to duplicate the same set-u guard.
+aidevops_ensure_pulse_start_epoch
+
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-simplification.sh"
 # shellcheck source=/dev/null

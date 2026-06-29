@@ -133,16 +133,10 @@ source "${SCRIPT_DIR}/pulse-merge-stuck.sh"
 # safe default here so standalone invocation doesn't hit an unbound variable.
 PULSE_MERGE_BATCH_LIMIT="${PULSE_MERGE_BATCH_LIMIT:-50}"
 
-# PULSE_START_EPOCH is normally set by pulse-wrapper.sh:180 (the canonical
-# bootstrap path). It's referenced by pulse-merge.sh:326 inside
-# _handle_post_merge_actions and by pulse-simplification-*.sh. Under
-# `set -euo pipefail` (line 42 of this file), an unset reference is a hard
-# fail — every launchd invocation would crash before doing anything useful
-# (t3036, GH#21616). Initialise to current epoch so elapsed-time math works
-# even when no pulse cycle preceded this invocation. Export so subprocesses
-# (gh-signature-helper.sh, etc.) inherit the value consistently.
-PULSE_START_EPOCH="${PULSE_START_EPOCH:-$(date +%s)}"
-export PULSE_START_EPOCH
+# PULSE_START_EPOCH is normally set by pulse-wrapper.sh. Shared bootstrap keeps
+# standalone runners safe under `set -u` and exports the value for helpers that
+# append GitHub signature footers (t3036/GH#21616, complexity runner parity).
+aidevops_ensure_pulse_start_epoch
 
 # STOP_FLAG / REPOS_JSON: normally set by pulse-wrapper-config.sh; the
 # ${VAR:-default} guards below are defence-in-depth for edge-case sourcing
