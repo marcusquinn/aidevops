@@ -19,6 +19,14 @@ export function hueFromInputValue(value: string): number | null {
   return Math.min(359, Math.max(0, hue));
 }
 
+export function wrappedOptionIndex(currentIndex: number, optionCount: number, direction: -1 | 1): number {
+  if (optionCount <= 0) {
+    return 0;
+  }
+
+  return (currentIndex + direction + optionCount) % optionCount;
+}
+
 export function SidebarFooter(props: SidebarFooterProps): ReactElement {
   const [appearanceOpen, setAppearanceOpen] = useState(true);
   const AppearanceChevron = appearanceOpen ? FiChevronDown : FiChevronUp;
@@ -73,7 +81,7 @@ function AppearancePanelBody({ accentHue, contrastPreference, fontPreference, fo
 
 function ThemeControl({ setThemePreference, themePreference }: { setThemePreference: (theme: ThemePreference) => void; themePreference: ThemePreference }): ReactElement {
   return (
-    <fieldset className="theme-control compact" aria-label={text.theme}>
+    <fieldset className="theme-control compact appearance-segmented-control" aria-label={text.theme}>
       {(["system", "light", "dark"] as const).map((theme) => (
         <button
           aria-pressed={themePreference === theme}
@@ -141,7 +149,7 @@ function ContrastControl({ contrastPreference, setContrastPreference }: { contra
   return (
     <fieldset className="contrast-control" aria-label={text.contrast}>
       <legend>{text.contrast}</legend>
-      <div className="contrast-options">
+      <div className="contrast-options appearance-segmented-control">
         {contrastOptions.map((option) => (
           <button
             aria-pressed={contrastPreference === option.value}
@@ -211,8 +219,6 @@ function FontSizeControl({ fontSizePreference, setFontSizePreference }: { fontSi
 function FontControl({ fontPreference, setFontPreference }: { fontPreference: FontPreference; setFontPreference: (font: FontPreference) => void }): ReactElement {
   const selectedFontFamily = fontFamilyForPreference(fontPreference);
   const fontIndex = Math.max(0, fontOptions.findIndex((option) => option.value === fontPreference));
-  const canSelectPreviousFont = fontIndex > 0;
-  const canSelectNextFont = fontIndex < fontOptions.length - 1;
   const setFontByIndex = (index: number) => {
     const nextFont = fontOptions[index]?.value;
     if (nextFont !== undefined) {
@@ -224,7 +230,7 @@ function FontControl({ fontPreference, setFontPreference }: { fontPreference: Fo
     <div className="font-control">
       <span id="appearance-font-selector-label">{text.font}</span>
       <div className="selector-with-stepper font-selector-row">
-        <button aria-label="Previous font" className="selector-step-button" disabled={!canSelectPreviousFont} onClick={() => setFontByIndex(fontIndex - 1)} type="button"><FiChevronLeft aria-hidden="true" /></button>
+        <button aria-label="Previous font" className="selector-step-button" onClick={() => setFontByIndex(wrappedOptionIndex(fontIndex, fontOptions.length, -1))} type="button"><FiChevronLeft aria-hidden="true" /></button>
         <select
           aria-labelledby="appearance-font-selector-label"
           onChange={(event) => setFontPreference(event.currentTarget.value as FontPreference)}
@@ -237,7 +243,7 @@ function FontControl({ fontPreference, setFontPreference }: { fontPreference: Fo
             </option>
           ))}
         </select>
-        <button aria-label="Next font" className="selector-step-button" disabled={!canSelectNextFont} onClick={() => setFontByIndex(fontIndex + 1)} type="button"><FiChevronRight aria-hidden="true" /></button>
+        <button aria-label="Next font" className="selector-step-button" onClick={() => setFontByIndex(wrappedOptionIndex(fontIndex, fontOptions.length, 1))} type="button"><FiChevronRight aria-hidden="true" /></button>
       </div>
     </div>
   );
