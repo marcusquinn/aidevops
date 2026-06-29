@@ -21,6 +21,7 @@ fi
 
 TESTS_RUN=0
 TESTS_FAILED=0
+FAIL_DETAIL=""
 
 pass() {
 	local name="$1"
@@ -31,12 +32,12 @@ pass() {
 
 fail() {
 	local name="$1"
-	local detail="${2:-}"
 	TESTS_RUN=$((TESTS_RUN + 1))
 	TESTS_FAILED=$((TESTS_FAILED + 1))
 	printf '  %sFAIL%s %s\n' "$TEST_RED" "$TEST_NC" "$name"
-	if [[ -n "$detail" ]]; then
-		printf '       %s\n' "$detail"
+	if [[ -n "$FAIL_DETAIL" ]]; then
+		printf '       %s\n' "$FAIL_DETAIL"
+		FAIL_DETAIL=""
 	fi
 	return 0
 }
@@ -61,13 +62,13 @@ help_exit=$(HOME="$test_home" LC_ALL=C timeout 30 "$RUNNER_FILE" help >/dev/null
 if [[ "$help_exit" == "0" ]]; then
 	pass "1: help exits 0 with PULSE_START_EPOCH unset"
 else
-	fail "1: help exits 0 with PULSE_START_EPOCH unset" \
-		"exit=$help_exit, stderr=$help_stderr"
+	FAIL_DETAIL="exit=$help_exit, stderr=$help_stderr"
+	fail "1: help exits 0 with PULSE_START_EPOCH unset"
 fi
 
 if printf '%s\n' "$help_stderr" | grep -q 'unbound variable'; then
-	fail "2: no unbound variable during standalone bootstrap" \
-		"stderr=$help_stderr"
+	FAIL_DETAIL="stderr=$help_stderr"
+	fail "2: no unbound variable during standalone bootstrap"
 else
 	pass "2: no unbound variable during standalone bootstrap"
 fi
@@ -75,15 +76,15 @@ fi
 if grep -qE '^aidevops_ensure_pulse_start_epoch\(\) \{' "$SHARED_CONSTANTS_FILE"; then
 	pass "3: shared PULSE_START_EPOCH bootstrap helper exists"
 else
-	fail "3: shared PULSE_START_EPOCH bootstrap helper exists" \
-		"missing aidevops_ensure_pulse_start_epoch definition"
+	FAIL_DETAIL="missing aidevops_ensure_pulse_start_epoch definition"
+	fail "3: shared PULSE_START_EPOCH bootstrap helper exists"
 fi
 
 if grep -qE '^aidevops_ensure_pulse_start_epoch$' "$RUNNER_FILE"; then
 	pass "4: complexity runner calls shared PULSE_START_EPOCH bootstrap"
 else
-	fail "4: complexity runner calls shared PULSE_START_EPOCH bootstrap" \
-		"missing aidevops_ensure_pulse_start_epoch call"
+	FAIL_DETAIL="missing aidevops_ensure_pulse_start_epoch call"
+	fail "4: complexity runner calls shared PULSE_START_EPOCH bootstrap"
 fi
 
 rm -rf "$test_home"
