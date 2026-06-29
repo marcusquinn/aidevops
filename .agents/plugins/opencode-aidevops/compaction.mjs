@@ -5,6 +5,7 @@
 
 import { existsSync, readFileSync } from "fs";
 import { execSync } from "child_process";
+import { createHash } from "crypto";
 import { join } from "path";
 
 /**
@@ -143,16 +144,44 @@ function getGitContext(directory) {
 }
 
 /**
- * Get session checkpoint state if it exists.
- * @param {string} workspaceDir
+ * Resolve the git repository root for a directory.
+ * @param {string} directory
  * @returns {string}
  */
-function getCheckpointState(workspaceDir) {
-  const checkpointFile = join(
-    workspaceDir,
-    "tmp",
-    "session-checkpoint.md",
-  );
+function getGitRoot(directory) {
+  return run(`git -C "${directory}" rev-parse --show-toplevel 2>/dev/null`);
+}
+
+/**
+ * Return the repo-scoped checkpoint path for the active directory.
+ *
+ * Checkpoints used to be a singleton under tmp/session-checkpoint.md. That
+ * allowed a compaction in one repository to replay the previous repository's
+ * operational state. Use a hash of the local git root instead so filenames do
+ * not disclose private repo names and foreign checkpoints are not considered.
+ *
+ * @param {string} workspaceDir
+ * @param {string} directory
+ * @returns {string}
+ */
+function getScopedCheckpointPath(workspaceDir, directory) {
+  const gitRoot = getGitRoot(directory);
+  if (!gitRoot) return "";
+
+  const key = createHash("sha256").update(gitRoot).digest("hex").slice(0, 16);
+  return join(workspaceDir, "tmp", "session-checkpoints", `repo-${key}.md`);
+}
+
+/**
+ * Get session checkpoint state if it exists.
+ * @param {string} workspaceDir
+ * @param {string} directory - Current working directory
+ * @returns {string}
+ */
+function getCheckpointState(workspaceDir, directory) {
+  const checkpointFile = getScopedCheckpointPath(workspaceDir, directory);
+  if (!checkpointFile) return "";
+
   const content = readIfExists(checkpointFile);
   if (!content) return "";
 
@@ -196,7 +225,7 @@ export async function compactingHook(deps, _input, output, directory) {
   const sections = [
     getAgentState(workspaceDir),
     getLoopGuardrails(directory),
-    getCheckpointState(workspaceDir),
+    getCheckpointState(workspaceDir, directory),
     getRelevantMemories(scriptsDir, directory),
     getGitContext(directory),
     getMailboxState(scriptsDir),
