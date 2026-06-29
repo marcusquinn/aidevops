@@ -375,6 +375,81 @@ printf '\n\n${SIG_MARKER}\n---\n[aidevops.sh](https://aidevops.sh) v9.9.9 stub\n
     assert.match(readFileSync(argvLog, "utf-8"), /footer --no-session --body/);
   });
 
+  test("does not invent a model when no signature model env is available", () => {
+    const priorSigModel = process.env.AIDEVOPS_SIG_MODEL;
+    const priorOpenCodeModel = process.env.OPENCODE_MODEL;
+    delete process.env.AIDEVOPS_SIG_MODEL;
+    delete process.env.OPENCODE_MODEL;
+
+    try {
+      const dir = mkdtempSync(join(tmpdir(), "t25903-no-model-fallback-"));
+      const helper = join(dir, "gh-signature-helper.sh");
+      const envLog = join(dir, "helper-env.log");
+      writeFileSync(
+        helper,
+        `#!/usr/bin/env bash
+printf '%s' "\${AIDEVOPS_SIG_MODEL-}" >"${envLog}"
+printf '\n\n${SIG_MARKER}\n---\n[aidevops.sh](https://aidevops.sh) v9.9.9 stub\n'
+`,
+      );
+      chmodSync(helper, 0o755);
+      const { log } = makeLogger();
+      const cmd = 'gh issue comment 1 --repo o/r --body "hello"';
+      const out = tryRepairSignature(cmd, dir, log);
+      assert.equal(out.status, "ok");
+      assert.equal(readFileSync(envLog, "utf-8"), "");
+      assert.doesNotMatch(out.cmd, /openai\/gpt-5\.5/);
+    } finally {
+      if (priorSigModel === undefined) {
+        delete process.env.AIDEVOPS_SIG_MODEL;
+      } else {
+        process.env.AIDEVOPS_SIG_MODEL = priorSigModel;
+      }
+      if (priorOpenCodeModel === undefined) {
+        delete process.env.OPENCODE_MODEL;
+      } else {
+        process.env.OPENCODE_MODEL = priorOpenCodeModel;
+      }
+    }
+  });
+
+  test("forwards OPENCODE_MODEL to the no-session signature helper", () => {
+    const priorSigModel = process.env.AIDEVOPS_SIG_MODEL;
+    const priorOpenCodeModel = process.env.OPENCODE_MODEL;
+    delete process.env.AIDEVOPS_SIG_MODEL;
+    process.env.OPENCODE_MODEL = "openai/example-model";
+
+    try {
+      const dir = mkdtempSync(join(tmpdir(), "t25903-opencode-model-"));
+      const helper = join(dir, "gh-signature-helper.sh");
+      const envLog = join(dir, "helper-env.log");
+      writeFileSync(
+        helper,
+        `#!/usr/bin/env bash
+printf '%s' "\${AIDEVOPS_SIG_MODEL-}" >"${envLog}"
+printf '\n\n${SIG_MARKER}\n---\n[aidevops.sh](https://aidevops.sh) v9.9.9 stub\n'
+`,
+      );
+      chmodSync(helper, 0o755);
+      const { log } = makeLogger();
+      const cmd = 'gh issue comment 1 --repo o/r --body "hello"';
+      const out = tryRepairSignature(cmd, dir, log);
+      assert.equal(out.status, "ok");
+      assert.equal(readFileSync(envLog, "utf-8"), "openai/example-model");
+    } finally {
+      if (priorSigModel === undefined) {
+        delete process.env.AIDEVOPS_SIG_MODEL;
+      } else {
+        process.env.AIDEVOPS_SIG_MODEL = priorSigModel;
+      }
+      if (priorOpenCodeModel === undefined) {
+        delete process.env.OPENCODE_MODEL;
+      } else {
+        process.env.OPENCODE_MODEL = priorOpenCodeModel;
+      }
+    }
+  });
+
   test("allows same-command body-file creation for exec-time shim repair", () => {
     const dir = setupStubHelper();
     const bodyFile = join(dir, "created-later.md");
