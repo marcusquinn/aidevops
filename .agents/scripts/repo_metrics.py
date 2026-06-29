@@ -28,7 +28,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 try:  # Python 3.11+
     import tomllib  # type: ignore[attr-defined]
@@ -301,23 +301,39 @@ def matches_prefix(rel: str, prefixes: list[str]) -> bool:
     return False
 
 
+def git_repo_relpaths(root: Path) -> list[str]:
+    proc = run_command(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], root)
+    if proc and proc.returncode == 0:
+        return [part for part in proc.stdout.split("\0") if part]
+    return []
+
+
+def walk_repo_relpaths(root: Path, excludes: Iterable[str]) -> list[str]:
+    rels: list[str] = []
+    for walk_root, dirnames, filenames in os.walk(root):
+        walk_path = Path(walk_root)
+        rel_dir = walk_path.relative_to(root).as_posix() if walk_path != root else ""
+        dirnames[:] = [
+            item
+            for item in dirnames
+            if not should_exclude(f"{rel_dir}/{item}".strip("/"), excludes)
+        ]
+        rels.extend((walk_path / filename).relative_to(root).as_posix() for filename in filenames)
+    return rels
+
+
+def repo_relpaths(root: Path, excludes: Iterable[str]) -> list[str]:
+    rels = git_repo_relpaths(root)
+    return rels if rels else walk_repo_relpaths(root, excludes)
+
+
+def is_countable_file(path: Path) -> bool:
+    return path.is_file() and not path.is_symlink() and not is_binary(path)
+
+
 def list_repo_files(root: Path, paths: list[Path], excludes: Iterable[str]) -> list[Path]:
     prefixes = scan_prefixes(root, paths)
-    proc = run_command(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard"], root)
-    rels: list[str] = []
-    if proc and proc.returncode == 0:
-        rels = [part for part in proc.stdout.split("\0") if part]
-    else:
-        for walk_root, dirnames, filenames in os.walk(root):
-            walk_path = Path(walk_root)
-            rel_dir = walk_path.relative_to(root).as_posix() if walk_path != root else ""
-            dirnames[:] = [
-                item
-                for item in dirnames
-                if not should_exclude(f"{rel_dir}/{item}".strip("/"), excludes)
-            ]
-            for filename in filenames:
-                rels.append((walk_path / filename).relative_to(root).as_posix())
+    rels = repo_relpaths(root, excludes)
 
     files: list[Path] = []
     seen: set[str] = set()
@@ -326,7 +342,7 @@ def list_repo_files(root: Path, paths: list[Path], excludes: Iterable[str]) -> l
             continue
         seen.add(rel)
         path = root / rel
-        if path.is_file() and not path.is_symlink() and not is_binary(path):
+        if is_countable_file(path):
             files.append(path)
     return files
 
@@ -442,7 +458,21 @@ def manifest_record(path: Path, root: Path, ecosystem: str, direct: set[str], lo
     }
 
 
-def parse_package_json(path: Path, root: Path) -> tuple[dict[str, Any] | None, set[str], set[str]]:
+ManifestParseResult = tuple[dict[str, Any] | None, set[str], set[str]]
+ManifestParser = Callable[[Path, Path], ManifestParseResult]
+LockParser = Callable[[Path], tuple[int, set[str]]]
+
+
+def normalised_names(values: Iterable[Any]) -> set[str]:
+    names: set[str] = set()
+    for value in values:
+        name = normalise_dep_name(str(value))
+        if name:
+            names.add(name)
+    return names
+
+
+def parse_package_json(path: Path, root: Path) -> ManifestParseResult:
     data = load_json(path)
     if not isinstance(data, dict):
         return None, set(), set()
@@ -464,7 +494,7 @@ def parse_package_lock(path: Path) -> tuple[int, set[str]]:
     return len(locked), {f"npm:{name}" for name in locked}
 
 
-def parse_requirements(path: Path, root: Path) -> tuple[dict[str, Any] | None, set[str], set[str]]:
+def parse_requirements(path: Path, root: Path) -> ManifestParseResult:
     direct: set[str] = set()
     try:
         lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
@@ -477,34 +507,61 @@ def parse_requirements(path: Path, root: Path) -> tuple[dict[str, Any] | None, s
     return manifest_record(path, root, "python", direct), {f"python:{name}" for name in direct}, set()
 
 
-def parse_pyproject(path: Path, root: Path) -> tuple[dict[str, Any] | None, set[str], set[str]]:
-    data = load_toml(path)
+def pyproject_project_dependencies(project: Any) -> set[str]:
     direct: set[str] = set()
-    project = data.get("project", {}) if isinstance(data, dict) else {}
-    deps = project.get("dependencies", []) if isinstance(project, dict) else []
+    if not isinstance(project, dict):
+        return direct
+
+    deps = project.get("dependencies", [])
     if isinstance(deps, list):
-        for dep in deps:
-            name = normalise_dep_name(str(dep))
-            if name:
-                direct.add(name)
-    optional = project.get("optional-dependencies", {}) if isinstance(project, dict) else {}
+        direct.update(normalised_names(deps))
+
+    optional = project.get("optional-dependencies", {})
     if isinstance(optional, dict):
         for group in optional.values():
             if isinstance(group, list):
-                for dep in group:
-                    name = normalise_dep_name(str(dep))
-                    if name:
-                        direct.add(name)
-    poetry = data.get("tool", {}).get("poetry", {}) if isinstance(data.get("tool"), dict) else {}
+                direct.update(normalised_names(group))
+    return direct
+
+
+def pyproject_poetry_dependencies(data: dict[str, Any]) -> set[str]:
+    tool = data.get("tool", {})
+    poetry = tool.get("poetry", {}) if isinstance(tool, dict) else {}
     poetry_deps = poetry.get("dependencies", {}) if isinstance(poetry, dict) else {}
     if isinstance(poetry_deps, dict):
-        for name in poetry_deps.keys():
-            if str(name).lower() != "python":
-                direct.add(str(name))
+        return {str(name) for name in poetry_deps.keys() if str(name).lower() != "python"}
+    return set()
+
+
+def parse_pyproject(path: Path, root: Path) -> ManifestParseResult:
+    data = load_toml(path)
+    project = data.get("project", {}) if isinstance(data, dict) else {}
+    direct = pyproject_project_dependencies(project)
+    direct.update(pyproject_poetry_dependencies(data))
     return manifest_record(path, root, "python", direct), {f"python:{name}" for name in direct}, set()
 
 
-def parse_go_mod(path: Path, root: Path) -> tuple[dict[str, Any] | None, set[str], set[str]]:
+def go_require_block_state(line: str, in_block: bool) -> tuple[bool, bool]:
+    if line == "require (":
+        return True, True
+    if in_block and line == ")":
+        return False, True
+    return in_block, False
+
+
+def go_require_name_from_line(line: str, in_block: bool) -> str:
+    if line.startswith("require "):
+        source = line.removeprefix("require ")
+    elif in_block and line and not line.startswith("//"):
+        source = line
+    else:
+        source = ""
+
+    parts = source.split()
+    return parts[0] if parts else ""
+
+
+def parse_go_mod(path: Path, root: Path) -> ManifestParseResult:
     direct: set[str] = set()
     in_block = False
     try:
@@ -513,24 +570,16 @@ def parse_go_mod(path: Path, root: Path) -> tuple[dict[str, Any] | None, set[str
         return None, set(), set()
     for raw in lines:
         line = raw.strip()
-        if line == "require (":
-            in_block = True
+        in_block, handled = go_require_block_state(line, in_block)
+        if handled:
             continue
-        if in_block and line == ")":
-            in_block = False
-            continue
-        if line.startswith("require "):
-            parts = line.split()
-            if len(parts) >= 2:
-                direct.add(parts[1])
-        elif in_block and line and not line.startswith("//"):
-            parts = line.split()
-            if parts:
-                direct.add(parts[0])
+        name = go_require_name_from_line(line, in_block)
+        if name:
+            direct.add(name)
     return manifest_record(path, root, "go", direct), {f"go:{name}" for name in direct}, set()
 
 
-def parse_cargo_toml(path: Path, root: Path) -> tuple[dict[str, Any] | None, set[str], set[str]]:
+def parse_cargo_toml(path: Path, root: Path) -> ManifestParseResult:
     data = load_toml(path)
     direct: set[str] = set()
     for key in ("dependencies", "dev-dependencies", "build-dependencies"):
@@ -553,7 +602,7 @@ def parse_cargo_lock(path: Path) -> tuple[int, set[str]]:
     return len(names), {f"cargo:{name}" for name in names}
 
 
-def parse_composer_json(path: Path, root: Path) -> tuple[dict[str, Any] | None, set[str], set[str]]:
+def parse_composer_json(path: Path, root: Path) -> ManifestParseResult:
     data = load_json(path)
     direct: set[str] = set()
     if isinstance(data, dict):
@@ -564,20 +613,35 @@ def parse_composer_json(path: Path, root: Path) -> tuple[dict[str, Any] | None, 
     return manifest_record(path, root, "composer", direct), {f"composer:{name}" for name in direct}, set()
 
 
+def composer_lock_packages(data: Any) -> list[Any]:
+    if not isinstance(data, dict):
+        return []
+
+    packages: list[Any] = []
+    for key in ("packages", "packages-dev"):
+        value = data.get(key)
+        if isinstance(value, list):
+            packages.extend(value)
+    return packages
+
+
+def composer_package_name(package: Any) -> str:
+    if isinstance(package, dict) and package.get("name"):
+        return str(package["name"])
+    return ""
+
+
 def parse_composer_lock(path: Path) -> tuple[int, set[str]]:
     data = load_json(path)
     names: set[str] = set()
-    if isinstance(data, dict):
-        for key in ("packages", "packages-dev"):
-            packages = data.get(key)
-            if isinstance(packages, list):
-                for package in packages:
-                    if isinstance(package, dict) and package.get("name"):
-                        names.add(str(package["name"]))
+    for package in composer_lock_packages(data):
+        name = composer_package_name(package)
+        if name:
+            names.add(name)
     return len(names), {f"composer:{name}" for name in names}
 
 
-def parse_gemfile(path: Path, root: Path) -> tuple[dict[str, Any] | None, set[str], set[str]]:
+def parse_gemfile(path: Path, root: Path) -> ManifestParseResult:
     direct: set[str] = set()
     try:
         lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
@@ -608,61 +672,66 @@ def parse_gemfile_lock(path: Path) -> tuple[int, set[str]]:
     return len(names), {f"bundler:{name}" for name in names}
 
 
-def collect_dependencies(root: Path, files: list[Path]) -> dict[str, Any]:
-    manifests: list[dict[str, Any]] = []
-    direct_names: set[str] = set()
-    locked_names: set[str] = set()
-    lock_counts_by_dir: dict[tuple[str, str], int] = {}
-    file_by_rel = {path.relative_to(root).as_posix(): path for path in files}
+MANIFEST_PARSERS: dict[str, ManifestParser] = {
+    "package.json": parse_package_json,
+    "pyproject.toml": parse_pyproject,
+    "go.mod": parse_go_mod,
+    "Cargo.toml": parse_cargo_toml,
+    "composer.json": parse_composer_json,
+    "Gemfile": parse_gemfile,
+}
 
-    for rel, path in sorted(file_by_rel.items()):
-        name = path.name
-        record: dict[str, Any] | None = None
-        direct: set[str] = set()
-        locked: set[str] = set()
-        if name == "package.json":
-            record, direct, locked = parse_package_json(path, root)
-        elif name.startswith("requirements") and name.endswith(".txt"):
-            record, direct, locked = parse_requirements(path, root)
-        elif name == "pyproject.toml":
-            record, direct, locked = parse_pyproject(path, root)
-        elif name == "go.mod":
-            record, direct, locked = parse_go_mod(path, root)
-        elif name == "Cargo.toml":
-            record, direct, locked = parse_cargo_toml(path, root)
-        elif name == "composer.json":
-            record, direct, locked = parse_composer_json(path, root)
-        elif name == "Gemfile":
-            record, direct, locked = parse_gemfile(path, root)
+LOCK_PARSERS: dict[str, tuple[str, LockParser]] = {
+    "package-lock.json": ("npm", parse_package_lock),
+    "Cargo.lock": ("cargo", parse_cargo_lock),
+    "composer.lock": ("composer", parse_composer_lock),
+    "Gemfile.lock": ("bundler", parse_gemfile_lock),
+}
 
-        if record is not None:
-            manifests.append(record)
-            direct_names.update(direct)
-            locked_names.update(locked)
 
-        if name == "package-lock.json":
-            locked_count, locked = parse_package_lock(path)
-            lock_counts_by_dir[(str(path.parent), "npm")] = locked_count
-            locked_names.update(locked)
-        elif name == "Cargo.lock":
-            locked_count, locked = parse_cargo_lock(path)
-            lock_counts_by_dir[(str(path.parent), "cargo")] = locked_count
-            locked_names.update(locked)
-        elif name == "composer.lock":
-            locked_count, locked = parse_composer_lock(path)
-            lock_counts_by_dir[(str(path.parent), "composer")] = locked_count
-            locked_names.update(locked)
-        elif name == "Gemfile.lock":
-            locked_count, locked = parse_gemfile_lock(path)
-            lock_counts_by_dir[(str(path.parent), "bundler")] = locked_count
-            locked_names.update(locked)
+def manifest_parser_for(name: str) -> ManifestParser | None:
+    if name.startswith("requirements") and name.endswith(".txt"):
+        return parse_requirements
+    return MANIFEST_PARSERS.get(name)
 
+
+def parse_manifest_file(path: Path, root: Path) -> ManifestParseResult:
+    parser = manifest_parser_for(path.name)
+    if parser is None:
+        return None, set(), set()
+    return parser(path, root)
+
+
+def parse_lock_file(path: Path) -> tuple[str, int, set[str]] | None:
+    lock_parser = LOCK_PARSERS.get(path.name)
+    if lock_parser is None:
+        return None
+    ecosystem, parser = lock_parser
+    locked_count, locked = parser(path)
+    return ecosystem, locked_count, locked
+
+
+def dependency_file_order(root: Path, files: list[Path]) -> list[Path]:
+    return sorted(files, key=lambda path: path.relative_to(root).as_posix())
+
+
+def apply_manifest_lock_counts(
+    root: Path,
+    manifests: list[dict[str, Any]],
+    lock_counts_by_dir: dict[tuple[str, str], int],
+) -> None:
     for record in manifests:
         manifest_path = root / record["path"]
         key = (str(manifest_path.parent), str(record["ecosystem"]))
         if key in lock_counts_by_dir:
             record["locked"] = max(int(record.get("locked", 0)), lock_counts_by_dir[key])
 
+
+def dependency_summary(
+    manifests: list[dict[str, Any]],
+    direct_names: set[str],
+    locked_names: set[str],
+) -> dict[str, Any]:
     ecosystems = sorted({str(record["ecosystem"]) for record in manifests})
     direct_count = len(direct_names)
     locked_count = len(locked_names)
@@ -673,6 +742,29 @@ def collect_dependencies(root: Path, files: list[Path]) -> dict[str, Any]:
         "ecosystems": ecosystems,
         "manifests": manifests,
     }
+
+
+def collect_dependencies(root: Path, files: list[Path]) -> dict[str, Any]:
+    manifests: list[dict[str, Any]] = []
+    direct_names: set[str] = set()
+    locked_names: set[str] = set()
+    lock_counts_by_dir: dict[tuple[str, str], int] = {}
+
+    for path in dependency_file_order(root, files):
+        record, direct, locked = parse_manifest_file(path, root)
+        if record is not None:
+            manifests.append(record)
+            direct_names.update(direct)
+            locked_names.update(locked)
+
+        lock_result = parse_lock_file(path)
+        if lock_result is not None:
+            ecosystem, locked_count, locked = lock_result
+            lock_counts_by_dir[(str(path.parent), ecosystem)] = locked_count
+            locked_names.update(locked)
+
+    apply_manifest_lock_counts(root, manifests, lock_counts_by_dir)
+    return dependency_summary(manifests, direct_names, locked_names)
 
 
 def human_count(value: int) -> str:
