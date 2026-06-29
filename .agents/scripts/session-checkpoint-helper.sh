@@ -26,8 +26,11 @@
 #   --elapsed <mins>  Minutes elapsed in session
 #   --target <mins>   Target session duration in minutes
 #
-# The checkpoint file is written to:
-#   ~/.aidevops/.agent-workspace/tmp/session-checkpoint.md
+# Checkpoints are repo-scoped and written to:
+#   ~/.aidevops/.agent-workspace/tmp/session-checkpoints/repo-<hash>.md
+# Legacy singleton checkpoints at tmp/session-checkpoint.md are ignored by
+# load/continuation paths so one repository cannot replay another repository's
+# operational state during compaction.
 #
 # Design: AI agent writes checkpoint after each task completion and reads it
 # before starting the next task. Survives context compaction because state
@@ -39,13 +42,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 readonly CHECKPOINT_DIR="${HOME}/.aidevops/.agent-workspace/tmp"
-readonly CHECKPOINT_FILE="${CHECKPOINT_DIR}/session-checkpoint.md"
+readonly CHECKPOINT_SCOPED_DIR="${CHECKPOINT_DIR}/session-checkpoints"
+readonly LEGACY_CHECKPOINT_FILE="${CHECKPOINT_DIR}/session-checkpoint.md"
 
 [[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
 
 # Credential patterns to redact from checkpoint content.
 # Focused on secrets (API keys, tokens, passwords, connection strings).
-# Does NOT include emails/IPs/home paths — those are fine in checkpoints.
+# Does NOT include emails/IPs/home paths; repo-scoped checkpoint isolation is
+# the privacy boundary that prevents cross-project replay of those details.
 # Patterns sourced from privacy-filter-helper.sh DEFAULT_PATTERNS (credential subset).
 #
 # Note on false positives: sk-/pk- prefixes with 20+ alphanumeric chars may match
@@ -107,10 +112,12 @@ readonly -a CREDENTIAL_PATTERNS=(
 # CREDENTIAL_PATTERNS contain metacharacters and URL slashes that conflict
 # with any fixed sed delimiter (/, #, etc.).
 # Arguments:
-#   $1 - file path to sanitize (defaults to CHECKPOINT_FILE)
+#   $1 - file path to sanitize (defaults to current repo-scoped checkpoint)
 # Returns: 0 always (redaction failure is non-fatal)
 sanitize_checkpoint() {
-	local target_file="${1:-$CHECKPOINT_FILE}"
+	local default_file=""
+	default_file="$(checkpoint_file_for_current_scope)"
+	local target_file="${1:-$default_file}"
 
 	if [[ ! -f "$target_file" ]]; then
 		return 0
@@ -155,6 +162,51 @@ ensure_dir() {
 	if [[ ! -d "$CHECKPOINT_DIR" ]]; then
 		mkdir -p "$CHECKPOINT_DIR"
 	fi
+	if [[ ! -d "$CHECKPOINT_SCOPED_DIR" ]]; then
+		mkdir -p "$CHECKPOINT_SCOPED_DIR"
+	fi
+	return 0
+}
+
+# Resolve the repository scope used for checkpoint isolation.
+# Returns the git root when available, otherwise the physical current directory.
+checkpoint_scope_root() {
+	local root=""
+	root="$(git rev-parse --show-toplevel 2>/dev/null || pwd -P 2>/dev/null || printf '%s' "$PWD")"
+	printf '%s\n' "$root"
+	return 0
+}
+
+# Derive a stable, non-disclosing filename key from a repository scope.
+checkpoint_scope_key() {
+	local scope_root="$1"
+	local digest=""
+	digest="$(printf '%s' "$scope_root" | shasum -a 256 | cut -d ' ' -f 1)"
+	printf '%s\n' "${digest:0:16}"
+	return 0
+}
+
+# Return the checkpoint file for the current repository scope.
+checkpoint_file_for_current_scope() {
+	local scope_root=""
+	local scope_key=""
+	scope_root="$(checkpoint_scope_root)"
+	scope_key="$(checkpoint_scope_key "$scope_root")"
+	printf '%s/repo-%s.md\n' "$CHECKPOINT_SCOPED_DIR" "$scope_key"
+	return 0
+}
+
+# Return a single-line git branch label without leaking stderr from unborn repos.
+current_branch_label() {
+	local branch=""
+	branch="$(git branch --show-current 2>/dev/null || true)"
+	if [[ -z "$branch" ]]; then
+		branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
+	fi
+	if [[ -z "$branch" ]]; then
+		branch="unknown"
+	fi
+	printf '%s\n' "$branch"
 	return 0
 }
 
@@ -248,9 +300,11 @@ _parse_save_args() {
 # Write the checkpoint markdown file using current _save_* variables.
 # Expects _save_branch and _save_timestamp to be set by caller.
 # Arguments:
-#   $1 - output file path (defaults to CHECKPOINT_FILE)
+#   $1 - output file path (defaults to current repo-scoped checkpoint)
 _write_checkpoint_file() {
-	local output_file="${1:-$CHECKPOINT_FILE}"
+	local default_file=""
+	default_file="$(checkpoint_file_for_current_scope)"
+	local output_file="${1:-$default_file}"
 	cat >"$output_file" <<EOF
 # Session Checkpoint
 
@@ -261,6 +315,7 @@ Updated: ${_save_timestamp}
 | Field | Value |
 |-------|-------|
 | Current Task | ${_save_task:-none} |
+| Repository Scope | ${_save_repo_scope:-unknown} |
 | Branch | ${_save_branch} |
 | Worktree | ${_save_worktree:-not set} |
 | Batch/PR | ${_save_batch:-not set} |
@@ -296,10 +351,13 @@ cmd_save() {
 	ensure_dir
 
 	_save_timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	_save_repo_scope="$(checkpoint_scope_root)"
+	local checkpoint_file=""
+	checkpoint_file="$(checkpoint_file_for_current_scope)"
 
 	# Auto-detect git state if not provided
 	if [[ -z "$_save_branch" ]]; then
-		_save_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
+		_save_branch="$(current_branch_label)"
 	fi
 
 	# Atomic write: write to temp file, sanitize, then mv to final location.
@@ -316,36 +374,48 @@ cmd_save() {
 	# Write checkpoint to temp file, sanitize it, then atomically move
 	_write_checkpoint_file "$temp_file"
 	sanitize_checkpoint "$temp_file"
-	if ! mv "$temp_file" "$CHECKPOINT_FILE"; then
+	if ! mv "$temp_file" "$checkpoint_file"; then
 		rm -f "$temp_file"
-		print_error "Failed to write checkpoint to ${CHECKPOINT_FILE}"
+		print_error "Failed to write checkpoint to ${checkpoint_file}"
 		return 1
 	fi
 
-	print_success "Checkpoint saved: ${CHECKPOINT_FILE}"
+	print_success "Checkpoint saved: ${checkpoint_file}"
 	print_info "Task: ${_save_task:-none} | Branch: ${_save_branch} | ${_save_timestamp}"
 	return 0
 }
 
 cmd_load() {
-	if [[ ! -f "$CHECKPOINT_FILE" ]]; then
-		print_warning "No checkpoint found at ${CHECKPOINT_FILE}"
+	local checkpoint_file=""
+	checkpoint_file="$(checkpoint_file_for_current_scope)"
+
+	if [[ ! -f "$checkpoint_file" ]]; then
+		print_warning "No checkpoint found at ${checkpoint_file}"
+		if [[ -f "$LEGACY_CHECKPOINT_FILE" ]]; then
+			print_warning "Legacy global checkpoint ignored for repo privacy isolation"
+		fi
 		print_info "Run: session-checkpoint-helper.sh save --task <id> --next <ids>"
 		return 1
 	fi
 
-	cat "$CHECKPOINT_FILE"
+	cat "$checkpoint_file"
 
 	# Auto-recall relevant memories after loading checkpoint
 	local memory_helper="${SCRIPT_DIR}/memory-helper.sh"
 	if [[ -x "$memory_helper" ]]; then
 		echo ""
-		echo "## Relevant Memories (from prior sessions)"
+		echo "## Relevant Memories (repo-scoped)"
 		echo ""
 
-		# Recall recent memories to provide context for resumed session
+		# Recall only memories attached to the current repository scope. Global
+		# --recent recall can replay unrelated private project details in a public
+		# repo session.
+		local repo_scope=""
+		local repo_name=""
 		local memories
-		memories=$("$memory_helper" recall --recent --limit 5 --format text 2>/dev/null || echo "")
+		repo_scope="$(checkpoint_scope_root)"
+		repo_name="$(basename "$repo_scope")"
+		memories=$("$memory_helper" recall --query "$repo_name" --project "$repo_scope" --limit 5 --format text 2>/dev/null || echo "")
 
 		if [[ -n "$memories" && "$memories" != *"No memories found"* ]]; then
 			echo "$memories"
@@ -358,8 +428,11 @@ cmd_load() {
 }
 
 cmd_clear() {
-	if [[ -f "$CHECKPOINT_FILE" ]]; then
-		rm "$CHECKPOINT_FILE"
+	local checkpoint_file=""
+	checkpoint_file="$(checkpoint_file_for_current_scope)"
+
+	if [[ -f "$checkpoint_file" ]]; then
+		rm "$checkpoint_file"
 		print_success "Checkpoint cleared"
 	else
 		print_info "No checkpoint to clear"
@@ -368,7 +441,10 @@ cmd_clear() {
 }
 
 cmd_status() {
-	if [[ ! -f "$CHECKPOINT_FILE" ]]; then
+	local checkpoint_file=""
+	checkpoint_file="$(checkpoint_file_for_current_scope)"
+
+	if [[ ! -f "$checkpoint_file" ]]; then
 		print_warning "No active checkpoint"
 		return 1
 	fi
@@ -378,7 +454,7 @@ cmd_status() {
 	local file_mtime
 
 	now="$(date +%s)"
-	file_mtime="$(_file_mtime_epoch "$CHECKPOINT_FILE")"
+	file_mtime="$(_file_mtime_epoch "$checkpoint_file")"
 	file_age_seconds=$((now - file_mtime))
 
 	local age_display
@@ -392,15 +468,15 @@ cmd_status() {
 
 	# Extract key fields
 	local current_task
-	current_task="$(awk -F'|' '/Current Task/ {gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3; exit}' "$CHECKPOINT_FILE" || echo "unknown")"
+	current_task="$(awk -F'|' '/Current Task/ {gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3; exit}' "$checkpoint_file" || echo "unknown")"
 	local branch
-	branch="$(awk -F'|' '/Branch/ {gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3; exit}' "$CHECKPOINT_FILE" || echo "unknown")"
+	branch="$(awk -F'|' '/Branch/ {gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3; exit}' "$checkpoint_file" || echo "unknown")"
 
 	printf '%b\n' "${BOLD}Checkpoint Status${NC}"
 	printf "  Age:    %s\n" "$age_display"
 	printf "  Task:   %s\n" "$current_task"
 	printf "  Branch: %s\n" "$branch"
-	printf "  File:   %s\n" "$CHECKPOINT_FILE"
+	printf "  File:   %s\n" "$checkpoint_file"
 
 	if [[ $file_age_seconds -gt 1800 ]]; then
 		print_warning "  Warning: Checkpoint is stale (>30min). Consider updating."
@@ -412,8 +488,9 @@ cmd_status() {
 # Sets module-scoped _cont_* variables for use by cmd_continuation().
 _gather_continuation_state() {
 	_cont_repo_root="$(git rev-parse --show-toplevel 2>/dev/null || echo "unknown")"
-	_cont_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
+	_cont_branch="$(current_branch_label)"
 	_cont_repo_name="$(basename "$_cont_repo_root")"
+	_cont_checkpoint_file="$(checkpoint_file_for_current_scope)"
 
 	# Git state
 	_cont_uncommitted="$(git status --short 2>/dev/null || echo "")"
@@ -442,15 +519,22 @@ _gather_continuation_state() {
 
 	# Checkpoint note
 	_cont_checkpoint_note="none"
-	if [[ -f "$CHECKPOINT_FILE" ]]; then
-		_cont_checkpoint_note="$(awk '/^## Context Note$/,/^## /' "$CHECKPOINT_FILE" | sed '1d;/^## /d' | sed '/^$/d' || echo "none")"
+	if [[ -f "$_cont_checkpoint_file" ]]; then
+		_cont_checkpoint_note="$(awk '
+			/^## Context Note$/ { capture = 1; next }
+			capture && /^## / { exit }
+			capture && NF { print }
+		' "$_cont_checkpoint_file" || echo "")"
+		if [[ -z "$_cont_checkpoint_note" ]]; then
+			_cont_checkpoint_note="none"
+		fi
 	fi
 
 	# Memory recall
 	_cont_recent_memories="none"
 	local memory_helper="${SCRIPT_DIR}/memory-helper.sh"
 	if [[ -x "$memory_helper" ]]; then
-		_cont_recent_memories="$(bash "$memory_helper" recall --recent --limit 3 2>/dev/null || echo "none")"
+		_cont_recent_memories="$(bash "$memory_helper" recall --query "$_cont_repo_name" --project "$_cont_repo_root" --limit 3 2>/dev/null || echo "none")"
 	fi
 
 	return 0
@@ -505,7 +589,7 @@ ${_cont_worktrees}
 **Last checkpoint note**:
 ${_cont_checkpoint_note}
 
-**Recent memories**:
+**Repo-scoped memories**:
 ${_cont_recent_memories}
 
 ### Instructions
