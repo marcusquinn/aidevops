@@ -46,6 +46,7 @@
 import { existsSync } from "fs";
 import { execFileSync } from "child_process";
 import { join } from "path";
+import { homedir } from "os";
 
 import { FAIL_REASON, formatGateThrowMessage } from "./quality-hooks-signature-failures.mjs";
 import { repairBodyFile } from "./quality-hooks-signature-body-file.mjs";
@@ -62,6 +63,77 @@ import {
 // keep this file under the qlty per-file complexity threshold (t2893).
 export { FAIL_REASON };
 export { SIG_MARKER, hasTrustedSignatureSignal, isGhWriteCommand, isMachineProtocolCommand };
+
+/**
+ * Detect the current model from the OpenCode session DB.
+ * Mirrors gh-signature-helper.sh _detect_session_model logic.
+ * Returns "provider/modelId" (e.g., "opencode/mimo-v2.5-free") or empty string.
+ *
+ * Security: uses execFileSync (no shell interpretation) and SQL-escapes
+ * all interpolated values to prevent SQL injection from directory paths.
+ */
+function _detectSessionModel() {
+  try {
+    const dbPath = join(
+      process.env.XDG_DATA_HOME || join(homedir(), ".local/share"),
+      "opencode",
+      "opencode.db",
+    );
+    if (!existsSync(dbPath)) return "";
+
+    // Use execFileSync to avoid shell interpretation of paths
+    let repoRoot = "";
+    try {
+      repoRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+        encoding: "utf-8",
+        timeout: 2000,
+        stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+    } catch {
+      // git not available or not in a repo
+    }
+
+    const cwd = process.cwd();
+    const root = repoRoot || cwd;
+
+    // Build directory list — filter dangerous paths
+    const dirs = [cwd, root, root.split(".")[0]]
+      .filter((d) => d && d !== "/" && d !== "/tmp" && d !== "/private/tmp");
+
+    if (dirs.length === 0) return "";
+
+    // SQL-escape directory paths (double single quotes per SQL standard)
+    const sqlEscaped = dirs.map((d) => `'${d.replace(/'/g, "''")}'`).join(", ");
+    const sql = `SELECT id FROM session WHERE directory IN (${sqlEscaped}) ORDER BY time_created DESC LIMIT 1`;
+
+    const sessionId = execFileSync("sqlite3", [dbPath, sql], {
+      encoding: "utf-8",
+      timeout: 2000,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+
+    if (!sessionId) return "";
+
+    // SQL-escape session ID
+    const safeSessionId = sessionId.replace(/'/g, "''");
+    const modelSql = `SELECT json_extract(data, '$.model.providerID'), json_extract(data, '$.model.modelID') FROM message WHERE session_id = '${safeSessionId}' AND json_extract(data, '$.model.modelID') IS NOT NULL LIMIT 1`;
+
+    const modelRow = execFileSync("sqlite3", [dbPath, "-separator", "|", modelSql], {
+      encoding: "utf-8",
+      timeout: 2000,
+      stdio: ["pipe", "pipe", "pipe"],
+    }).trim();
+
+    if (!modelRow) return "";
+
+    const [providerId, modelId] = modelRow.split("|");
+    if (providerId && modelId) return `${providerId}/${modelId}`;
+    if (modelId) return modelId;
+    return "";
+  } catch {
+    return "";
+  }
+}
 
 /**
  * Generate a signature footer by invoking gh-signature-helper.sh synchronously.
@@ -83,7 +155,7 @@ function _generateSignature(helperPath, bodyValue, log) {
         ...process.env,
         AIDEVOPS_SIG_CLI: process.env.AIDEVOPS_SIG_CLI || "OpenCode",
         AIDEVOPS_SIG_MODEL:
-          process.env.AIDEVOPS_SIG_MODEL || process.env.OPENCODE_MODEL || "openai/gpt-5.5",
+          process.env.AIDEVOPS_SIG_MODEL || process.env.OPENCODE_MODEL || _detectSessionModel() || "unknown",
         AIDEVOPS_SIG_TOKENS: process.env.AIDEVOPS_SIG_TOKENS || "0",
       },
     });
