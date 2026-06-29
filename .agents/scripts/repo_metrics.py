@@ -272,7 +272,12 @@ def should_exclude(rel: str, excludes: Iterable[str]) -> bool:
             return True
         if rel_posix == clean or rel_posix.startswith(f"{clean}/"):
             return True
-        if fnmatch.fnmatch(rel_posix, clean) or fnmatch.fnmatch(rel_posix, pattern):
+        if (
+            fnmatch.fnmatch(rel_posix, clean)
+            or fnmatch.fnmatch(rel_posix, pattern)
+            or fnmatch.fnmatch(parts[-1], clean)
+            or fnmatch.fnmatch(parts[-1], pattern)
+        ):
             return True
     return False
 
@@ -444,7 +449,7 @@ def normalise_dep_name(value: str) -> str:
         parts = value.split("/")
         if len(parts) >= 2:
             return f"{parts[0]}/{re.split(r'[\s@<>=~!;]', parts[1], maxsplit=1)[0]}"
-    match = re.match(r"([A-Za-z0-9_.-]+)", value)
+    match = re.match(r"([A-Za-z0-9_][A-Za-z0-9_.-]*)", value)
     return match.group(1) if match else ""
 
 
@@ -662,6 +667,8 @@ def parse_gemfile_lock(path: Path) -> tuple[int, set[str]]:
     except OSError:
         return 0, set()
     for line in lines:
+        if line.strip() and not line.startswith(" "):
+            in_specs = False
         if line.strip() == "specs:":
             in_specs = True
             continue
