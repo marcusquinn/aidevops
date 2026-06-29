@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.31] - 2026-06-29
+
+### Changed
+
+- Maintenance: mark t18032 complete (pr:#25856 completed:2026-06-29) [skip ci]
+- Maintenance: sync ref:GH#25855 to TODO.md [skip ci]
+
 ## [3.29.30] - 2026-06-29
 
 ### Changed
