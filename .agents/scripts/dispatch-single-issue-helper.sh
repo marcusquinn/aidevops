@@ -167,7 +167,7 @@ _dsi_target_is_pull_request() {
 _dsi_guard_no_interactive_hold() {
 	local labels_csv="$1"
 	local labels_with_commas=",${labels_csv},"
-	if [[ "$labels_with_commas" == *",status:in-review,"* ]]; then
+	if [[ "$labels_with_commas" == *",status:in-review,"* && "$labels_with_commas" != *",auto-dispatch,"* ]]; then
 		_dsi_err "Target carries an interactive review hold label; refusing worker dispatch (GH#22948)"
 		return 1
 	fi

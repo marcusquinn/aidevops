@@ -105,13 +105,13 @@ test_pr_guard_allows_plain_issue() {
 	return 0
 }
 
-test_interactive_hold_blocks_in_review() {
-	local meta='{"labels":[{"name":"auto-dispatch"},{"name":"status:in-review"}]}'
+test_interactive_hold_blocks_in_review_without_handoff() {
+	local meta='{"labels":[{"name":"status:in-review"}]}'
 	if _dispatch_has_interactive_hold "$meta"; then
-		print_result "interactive hold blocks status:in-review" 0
+		print_result "interactive hold blocks status:in-review without handoff" 0
 		return 0
 	fi
-	print_result "interactive hold blocks status:in-review" 1 "expected status:in-review to block"
+	print_result "interactive hold blocks status:in-review without handoff" 1 "expected status:in-review to block"
 	return 0
 }
 
@@ -132,6 +132,16 @@ test_interactive_hold_allows_auto_dispatch_handoff() {
 		return 0
 	fi
 	print_result "interactive hold allows auto-dispatch handoff" 0
+	return 0
+}
+
+test_interactive_hold_allows_auto_dispatch_review_handoff() {
+	local meta='{"labels":[{"name":"status:in-review"},{"name":"auto-dispatch"},{"name":"bug"}]}'
+	if _dispatch_has_interactive_hold "$meta"; then
+		print_result "interactive hold allows auto-dispatch review handoff" 1 "auto-dispatch should route status:in-review to stale-claim dedup"
+		return 0
+	fi
+	print_result "interactive hold allows auto-dispatch review handoff" 0
 	return 0
 }
 
@@ -181,9 +191,10 @@ main() {
 
 	test_pr_guard_uses_rest_issue_object
 	test_pr_guard_allows_plain_issue
-	test_interactive_hold_blocks_in_review
+	test_interactive_hold_blocks_in_review_without_handoff
 	test_interactive_hold_blocks_origin_interactive
 	test_interactive_hold_allows_auto_dispatch_handoff
+	test_interactive_hold_allows_auto_dispatch_review_handoff
 	test_interactive_hold_allows_worker_issue
 	test_interactive_hold_emits_structured_block_reason
 	test_pr_guard_emits_structured_block_reason
