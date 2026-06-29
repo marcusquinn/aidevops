@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.25] - 2026-06-29
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- rotate review thread scanner candidates (#25832)
+- recover sudo gh auth for approvals (#25831)
+
 ## [3.29.24] - 2026-06-28
 
 ### Changed
