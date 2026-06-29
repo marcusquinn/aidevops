@@ -10,9 +10,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.36] - 2026-06-29
+
 ### Added
 
-- add local repository metrics generation for README badges and app about pages
+- add local repository metrics (#25905)
 
 ## [3.29.35] - 2026-06-29
 
