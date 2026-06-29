@@ -288,9 +288,9 @@
       "pr": 11812
     },
     ".agents/commands/AGENTS.md": {
-      "at": "2026-06-28T21:17:21Z",
-      "hash": "7d56ab4df6e8025fef0436cf9f54a7ee60068e33",
-      "passes": 90,
+      "at": "2026-06-29T06:01:23Z",
+      "hash": "b4e2c892e8e48a40fd94d8bc4c9a0598561860e2",
+      "passes": 91,
       "pr": 18117
     },
     ".agents/commands/aidevops-automate.md": {
@@ -1820,9 +1820,9 @@
       "pr": 16548
     },
     ".agents/scripts/approval-helper.sh": {
-      "at": "2026-05-28T02:14:22Z",
-      "hash": "05211ad47df4d47642db42e844d3d7ff0b289ca3",
-      "passes": 12,
+      "at": "2026-06-29T06:08:37Z",
+      "hash": "4482fdd934e238a0f3c070407c8b533af9b422de",
+      "passes": 13,
       "pr": 17454
     },
     ".agents/scripts/attribution-detection-helper.sh": {
@@ -2526,9 +2526,9 @@
       "pr": 16536
     },
     ".agents/scripts/session-checkpoint-helper.sh": {
-      "at": "2026-04-30T07:50:35Z",
-      "hash": "c5b59c3b71bfc673cad1f3b1387aad4ab0400c14",
-      "passes": 4,
+      "at": "2026-06-29T06:09:13Z",
+      "hash": "09b6c16f7a0de6a56a94278bda6123c3f006b1f2",
+      "passes": 5,
       "pr": 15917
     },
     ".agents/scripts/session-miner-pulse.sh": {
@@ -2544,9 +2544,9 @@
       "pr": 15916
     },
     ".agents/scripts/shared-constants.sh": {
-      "at": "2026-06-17T09:56:49Z",
-      "hash": "3540ec4768449a81b52e03b5eaf6f716a9844a03",
-      "passes": 34,
+      "at": "2026-06-29T06:09:17Z",
+      "hash": "f5aa0cf8d3943b47bf11054b4ca25be5ce5beedb",
+      "passes": 35,
       "pr": 18847
     },
     ".agents/scripts/stats-functions.sh": {
@@ -7480,21 +7480,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-06-28T21:58:43Z",
-      "hash": "cea0f458feefce0a894b7b2861b8ae9b7fc3966e",
-      "passes": 160,
+      "at": "2026-06-29T07:40:37Z",
+      "hash": "0e52f7a1e24bc231884cb6d678b8fd1a0e6050a5",
+      "passes": 161,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-06-28T21:58:44Z",
-      "hash": "ad6ae57c948c71089741cb2de67538cf6e457f2d",
-      "passes": 244,
+      "at": "2026-06-29T07:40:41Z",
+      "hash": "59b1c65519a3347b60b31ec26a7b4524680c2ff4",
+      "passes": 245,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-06-28T21:58:45Z",
-      "hash": "7bb8185a02e9ff11f18a246f3db5062efc87f3c6",
-      "passes": 240,
+      "at": "2026-06-29T07:40:44Z",
+      "hash": "982bb80b40def1905248c6ce7ef93c1169e4e293",
+      "passes": 241,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
