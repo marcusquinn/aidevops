@@ -19,17 +19,23 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 # Paths
-# When running under sudo on Linux, env_reset rewrites HOME to /root/; SUDO_USER
-# holds the original username. getent passwd is the canonical resolver on Linux.
-# On macOS, sudo preserves HOME by default (env_keep+="HOME MAIL" in /etc/sudoers)
-# and getent is not available, so the fallback to $HOME is correct.
+# When running under sudo, env_reset may rewrite HOME to root's home; SUDO_USER
+# holds the original username. getent passwd is canonical on Linux; dscl is
+# canonical on macOS. Fall back to $HOME only when those resolvers are absent.
 # The command -v getent guard MUST be present — omitting it crashes aidevops.sh
 # under `set -euo pipefail` on any BSD system and breaks sudo aidevops approve.
 # Mirrors the pattern in .agents/scripts/approval-helper.sh:_resolve_real_home().
 # Security: no escalation — root already has full filesystem access.
 _AIDEVOPS_REAL_HOME="$HOME"
-if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]] && command -v getent &>/dev/null; then
-	_tmp_real_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]]; then
+	_tmp_real_home=""
+	if command -v getent &>/dev/null; then
+		_tmp_real_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+	elif command -v dscl &>/dev/null; then
+		_tmp_real_home=$(dscl . -read "/Users/${SUDO_USER}" NFSHomeDirectory 2>/dev/null | awk '{print $2; exit}' || true)
+	elif [[ -d "/Users/${SUDO_USER}" ]]; then
+		_tmp_real_home="/Users/${SUDO_USER}"
+	fi
 	if [[ -n "$_tmp_real_home" ]]; then
 		_AIDEVOPS_REAL_HOME="$_tmp_real_home"
 	fi
