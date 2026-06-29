@@ -90,6 +90,40 @@ source "${SCRIPTS_DIR}/shared-constants.sh" 2>/dev/null || {
 
 # ── Tests ──
 
+section "0. shared-gh-wrappers-safe-edit standalone dependency loading"
+
+SAFE_EDIT_FILE="${SCRIPTS_DIR}/shared-gh-wrappers-safe-edit.sh"
+standalone_output=$(bash -c '
+set -u
+safe_edit_file="$1"
+calls_file="$(mktemp)"
+export calls_file
+gh() {
+	local arg1="${1:-}"
+	local arg2="${2:-}"
+	printf "%s\n" "$*" >>"$calls_file"
+	if [[ "$arg1 $arg2" == "issue view" || "$arg1 $arg2" == "pr view" ]]; then
+		printf "%s\n" "{\"title\":\"Existing\",\"body\":\"Existing\",\"labels\":[]}"
+	fi
+	return 0
+}
+export -f gh
+source "$safe_edit_file"
+gh_issue_edit_safe 123 --repo "test/repo" --body "body"
+rc=$?
+calls=$(wc -l <"$calls_file" | tr -d "[:space:]")
+rm -f "$calls_file"
+printf "rc=%s calls=%s\n" "$rc" "$calls"
+exit "$rc"
+' -- "$SAFE_EDIT_FILE" 2>&1)
+standalone_rc=$?
+if [[ $standalone_rc -eq 0 && "$standalone_output" == *"rc=0"* ]]; then
+	pass "standalone safe-edit source loads validation dependencies"
+else
+	fail "standalone safe-edit source should edit with valid args" \
+		"rc=${standalone_rc}; output: ${standalone_output}"
+fi
+
 section "1. _gh_validate_edit_args — empty title rejection"
 
 _gh_validate_edit_args --title "" --repo "test/repo" 2>/dev/null
