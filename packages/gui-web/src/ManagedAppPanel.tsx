@@ -79,8 +79,52 @@ function AppLogLink({ job }: { job: GuiAppActionJobSummary }): ReactElement {
   return <a className="app-meta app-log-link" href={`#app-job-${job.id}`}><small>Logs</small><strong>{job.action} · {job.status}</strong></a>;
 }
 
+function appActionIcon(action: GuiAppActionId): ReactElement {
+  const icons: Record<GuiAppActionId, ReactElement> = {
+    install: <FiDownload />,
+    reinstall: <FiRepeat />,
+    remove: <FiTrash2 />,
+    update: <FiRefreshCw />,
+  };
+
+  return icons[action];
+}
+
+function appActionButtonClass(action: GuiAppActionId): string {
+  return action === "remove" ? "app-action-button remove" : "app-action-button";
+}
+
+function envelopeErrorSummary(envelope: Partial<GuiResponseEnvelope<GuiAppActionJobSummary>>): string {
+  return Array.isArray(envelope.errors) && envelope.errors.length > 0 ? envelope.errors.join("; ") : "unknown error";
+}
+
+async function requestAppActionJob(app: GuiManagedAppSummary, action: GuiAppActionId): Promise<GuiAppActionJobSummary | null> {
+  let job: GuiAppActionJobSummary | null = null;
+
+  try {
+    const response = await fetch(`/api/apps/${encodeURIComponent(app.id)}/actions/${action}`, { method: "POST" });
+    if (!response.ok) {
+      console.error(`Failed to run ${action} for ${app.id}: ${response.status} ${response.statusText}`);
+    } else {
+      const envelope = await response.json() as Partial<GuiResponseEnvelope<GuiAppActionJobSummary>> | null;
+      if (envelope === null || typeof envelope !== "object") {
+        console.error(`Action ${action} for ${app.id} returned an invalid response envelope`);
+      } else if (envelope.ok !== true) {
+        console.error(`Action ${action} for ${app.id} returned an error envelope: ${envelopeErrorSummary(envelope)}`);
+      } else if (!("data" in envelope)) {
+        console.error(`Action ${action} for ${app.id} returned a response envelope without job data`);
+      } else {
+        job = envelope.data as GuiAppActionJobSummary;
+      }
+    }
+  } catch (error) {
+    console.error(`Network error running ${action} for ${app.id}:`, error);
+  }
+
+  return job;
+}
+
 function AppActionButton({ action, app, commandPreview, disabled, onJob }: { action: GuiAppActionId; app: GuiManagedAppSummary; commandPreview: string; disabled: boolean; onJob: (job: GuiAppActionJobSummary) => void }): ReactElement {
-  const icon = action === "install" ? <FiDownload /> : action === "update" ? <FiRefreshCw /> : action === "reinstall" ? <FiRepeat /> : <FiTrash2 />;
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   async function runAction(): Promise<void> {
@@ -88,38 +132,14 @@ function AppActionButton({ action, app, commandPreview, disabled, onJob }: { act
       return;
     }
 
-    try {
-      const response = await fetch(`/api/apps/${encodeURIComponent(app.id)}/actions/${action}`, { method: "POST" });
-      if (!response.ok) {
-        console.error(`Failed to run ${action} for ${app.id}: ${response.status} ${response.statusText}`);
-        return;
-      }
-
-      const envelope = await response.json() as Partial<GuiResponseEnvelope<GuiAppActionJobSummary>> | null;
-      if (envelope === null || typeof envelope !== "object") {
-        console.error(`Action ${action} for ${app.id} returned an invalid response envelope`);
-        return;
-      }
-
-      if (envelope.ok !== true) {
-        const errors = Array.isArray(envelope.errors) && envelope.errors.length > 0 ? envelope.errors.join("; ") : "unknown error";
-        console.error(`Action ${action} for ${app.id} returned an error envelope: ${errors}`);
-        return;
-      }
-
-      if (!("data" in envelope)) {
-        console.error(`Action ${action} for ${app.id} returned a response envelope without job data`);
-        return;
-      }
-
-      onJob(envelope.data as GuiAppActionJobSummary);
-    } catch (error) {
-      console.error(`Network error running ${action} for ${app.id}:`, error);
+    const job = await requestAppActionJob(app, action);
+    if (job !== null) {
+      onJob(job);
     }
   }
 
   return <>
-    <button aria-label={`${action} ${app.name}`} className={action === "remove" ? "app-action-button remove" : "app-action-button"} data-tooltip={commandPreview} disabled={disabled} onClick={() => setConfirmOpen(true)} type="button">{icon}<span>{action}</span></button>
+    <button aria-label={`${action} ${app.name}`} className={appActionButtonClass(action)} data-tooltip={commandPreview} disabled={disabled} onClick={() => setConfirmOpen(true)} type="button">{appActionIcon(action)}<span>{action}</span></button>
     {confirmOpen ? <ConfirmActionModal action={action} app={app} commandPreview={commandPreview} close={() => setConfirmOpen(false)} confirm={() => { setConfirmOpen(false); void runAction(); }} /> : null}
   </>;
 }
@@ -134,7 +154,7 @@ function ConfirmActionModal({ action, app, close, commandPreview, confirm }: { a
         <code>{commandPreview}</code>
         <div className="confirm-modal-actions">
           <button className="secondary-action" onClick={close} type="button">Cancel</button>
-          <button className={action === "remove" ? "app-action-button remove" : "app-action-button"} onClick={confirm} type="button">Confirm</button>
+          <button className={appActionButtonClass(action)} onClick={confirm} type="button">Confirm</button>
         </div>
       </section>
     </div>
