@@ -289,6 +289,41 @@ else
 	_fail "gh pr create injection" "argv: $argv"
 fi
 
+echo ""
+echo "Test 6a: issue-first repos block PR creation without linked issue"
+_reset_log
+if "$SHIM_RUN" pr create --repo marcusquinn/aidevops --title "fix: missing issue" --body "PR body" 2>"$TMP/pr-linked-issue.err"; then
+	_fail "missing linked issue PR guard" "write unexpectedly passed"
+else
+	argv=$(_read_argv)
+	if [[ -z "$argv" ]] && grep -q "pr-linked-issue" "$TMP/pr-linked-issue.err"; then
+		_pass "missing linked issue is blocked before gh exec"
+	else
+		_fail "missing linked issue PR guard" "argv: $argv err: $(cat "$TMP/pr-linked-issue.err" 2>/dev/null || true)"
+	fi
+fi
+
+_reset_log
+"$SHIM_RUN" pr create --repo marcusquinn/aidevops --title "fix: linked issue" --body "Resolves #25901" 2>/dev/null
+argv=$(_read_argv)
+if [[ "$argv" == *"Resolves #25901"* ]] && [[ "$argv" == *"<!-- aidevops:sig -->"* ]]; then
+	_pass "linked issue PR body passes and remains signed"
+else
+	_fail "linked issue PR body pass-through" "argv: $argv"
+fi
+
+linked_pr_body="$TMP/pr-linked-body.md"
+printf '## Summary\n\nFor #25901\n' >"$linked_pr_body"
+_reset_log
+"$SHIM_RUN" pr create --repo marcusquinn/aidevops --title "fix: linked body-file" --body-file "$linked_pr_body" 2>/dev/null
+argv=$(_read_argv)
+resolved_pr_body_file=$(printf '%s\n' "$argv" | awk 'prev { print; exit } $0 == "--body-file" { prev=1 }')
+if [[ -n "$resolved_pr_body_file" && -f "$resolved_pr_body_file" ]] && grep -q "<!-- aidevops:sig -->" "$resolved_pr_body_file"; then
+	_pass "linked issue PR body-file passes and receives signature"
+else
+	_fail "linked issue PR body-file pass-through" "argv: $argv"
+fi
+
 # =============================================================================
 # Test 7: AIDEVOPS_GH_SHIM_DISABLE=1 bypasses the shim
 # =============================================================================
