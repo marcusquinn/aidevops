@@ -8,6 +8,7 @@ import { inventorySurfaceConfigs, surfaceIds, text } from "./app-model";
 import { CommandPalette, type CommandPaletteSelection, commandPaletteShortcutQuery } from "./CommandPalette";
 import { CommsConversationSurface } from "./CommsConversationSurface";
 import { FileExplorerSurface } from "./FileExplorerSurface";
+import { TamboConversationPart } from "./GenUiCards";
 import { AppsSurface, EditableInventorySurface, InstallationSurface } from "./InventorySurfaces";
 import { AiProvidersSurface, LocalReposSurface, LockedVaultGate, OverviewSurface, PlannedSurface, ProjectsSurface, SecuritySurface, VaultSurface } from "./StatusSurfaces";
 import { isVaultSurfaceLocked, vaultCollectionForSurface } from "./VaultBadges";
@@ -289,6 +290,10 @@ function AiSessionsSurface({ selectedRepoIndex, selectedSessionId, status }: { s
           <AttachmentCard label="Context attachment" detail={selectedRepo ? `Selected repo context: ${selectedRepo.path_ref}` : "No local repos were discovered yet."} />
           <MessageMarker label="Reasoning" detail="Reasoning disclosure, tool status, sources, retries, errors, and token usage render here when the AI transport supplies those parts." />
           <ToolStatusCard />
+          <TamboConversationPart
+            part={{ id: "ai-session-tambo-preview", message_id: "ai-session-preview", kind: "tambo_component", ordinal: 1, text: null, payload_json: { component: "RepoHealthCard", tenant_ref: "local", session_ref: selectedSession?.id_ref ?? "ai-session-preview", read_only: true, props: { repo: selectedRepo?.name ?? "local workspace", status: "ready for Tambo cards", open_prs: 0, failing_checks: 0, notes: ["Server-proxied provider metadata", "Read-only schemas first"] } }, file_ref: null, source_ref: "tambo:ai-session-preview" }}
+            scope={{ tenant_ref: "local", workspace_ref: "aidevops", repo_ref: selectedRepo?.slug ?? null }}
+          />
         </div>
         <form className="chat-composer ai-composer" aria-label="AI prompt composer" data-tour="ai-composer">
           <button disabled title="Attachments need the audited upload/context adapter" type="button"><FiPaperclip aria-hidden="true" /> Attach</button>

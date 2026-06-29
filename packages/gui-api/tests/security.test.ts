@@ -24,6 +24,17 @@ describe("API trust boundary", () => {
     expect(containsSecretSentinel(body)).toBe(false);
   });
 
+  test("Tambo provider route exposes metadata without browser secrets", async () => {
+    const response = await app.request("/api/tambo/session?tenant_ref=local&workspace_ref=aidevops&session_ref=channel-general");
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.secret_policy).toBe("server_only_no_browser_tokens");
+    expect(body.data).not.toHaveProperty("api_key");
+    expect(body.data).not.toHaveProperty("authorization");
+    expect(containsSecretSentinel(body)).toBe(false);
+  });
+
   test("file explorer rejects path traversal outside allowlisted roots", async () => {
     const response = await app.request("/api/files/agents?path=../../.ssh");
     const body = await response.json();

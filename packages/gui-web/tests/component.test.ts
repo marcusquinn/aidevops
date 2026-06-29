@@ -126,6 +126,8 @@ describe("dashboard shell", () => {
     expect(html).toContain("Create worker task");
     expect(html).toContain("Context attachment");
     expect(html).toContain("Tool status");
+    expect(html).toContain("data-genui-component=\"RepoHealthCard\"");
+    expect(html).toContain("ready for Tambo cards");
     expect(html).toContain("MessageScroller-compatible transcript");
     expect(html).toContain("New, rename, pin, archive, delete, share, and export");
   });
@@ -138,12 +140,33 @@ describe("dashboard shell", () => {
     expect(channelHtml).toContain("general");
     expect(channelHtml).toContain("worker-feed");
     expect(channelHtml).toContain("data-sender-kind=\"system\"");
+    expect(channelHtml).toContain("data-genui-component=\"TaskCard\"");
+    expect(channelHtml).toContain("Integrate Tambo GenUI cards");
     expect(channelHtml).toContain("ack");
     expect(channelHtml).toContain("3 members");
     expect(dmHtml).toContain("Direct Messages");
     expect(dmHtml).toContain("AI DevOps");
     expect(dmHtml).toContain("Direct support threads share the same message parts");
+    expect(dmHtml).toContain("data-genui-component=\"ApprovalPromptCard\"");
+    expect(dmHtml).toContain("Approval execution is deferred until audited approval tooling exists.");
     expect(dmHtml).toContain("Search channels, DMs, mentions");
+  });
+
+  test("rejects unsafe Tambo component payloads during conversation rendering", () => {
+    const html = renderToStaticMarkup(createElement(CommsConversationSurface, {
+      mode: "channels",
+      threads: [{
+        conversation: { id: "channel-unsafe", type: "channel", title: "unsafe", scope: { tenant_ref: "local", workspace_ref: "aidevops", repo_ref: null }, source_ref: "test", status: "read_only", created_at: "2026-06-27T00:00:00Z", updated_at: "2026-06-27T00:00:00Z" },
+        participants: [{ id: "participant-ai", conversation_id: "channel-unsafe", kind: "ai_assistant", display_name: "AI DevOps", identity_ref: null, agent_ref: "aidevops", worker_ref: null, membership_state: "active", joined_at: "2026-06-27T00:00:00Z" }],
+        messages: [{ id: "message-unsafe", conversation_id: "channel-unsafe", sender_participant_id: "participant-ai", sender_kind: "ai_assistant", sequence: 1, status: "delivered", usage: null, created_at: "2026-06-27T00:00:00Z", edited_at: null }],
+        parts: [{ id: "part-unsafe", message_id: "message-unsafe", kind: "tambo_component", ordinal: 1, text: null, payload_json: { component: "TaskCard", tenant_ref: "other", session_ref: "channel-unsafe", read_only: true, props: { title: "Unsafe", status: "blocked", href: "not allowed" } }, file_ref: null, source_ref: "test" }],
+        reactions: [],
+        read_states: [],
+      } satisfies GuiConversationThread],
+    }));
+
+    expect(html).toContain("Unsupported DevOps card");
+    expect(html).toContain("tenant_scope_mismatch");
   });
 
   test("renders conversation threads when optional collections are absent", () => {
