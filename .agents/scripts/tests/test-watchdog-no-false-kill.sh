@@ -9,7 +9,7 @@
 #   1. _watchdog_tree_cpu function exists in worker-activity-watchdog.sh
 #   2. STALL_TIMEOUT default is 600s (raised from 300s)
 #   3. Structured [lifecycle] worker_killed lines are emitted by _kill_worker
-#   4. CPU semantic check defers kill when tree_cpu >= STALL_CPU_THRESHOLD
+#   4. Semantic checks defer kill for network-active or CPU-active workers
 #   5. Hard-kill fires regardless of CPU (safety net)
 #   6. pulse-watchdog.sh kill sites emit [lifecycle] lines
 #   7. pulse-dispatch-engine.sh timeout handler emits [lifecycle] line
@@ -133,21 +133,52 @@ assert_contains \
 	"4b. CPU check defers kill (worker_stall_deferred lifecycle marker)" \
 	"worker_stall_deferred" \
 	"$watchdog_source"
+assert_contains \
+	"4c. Network semantic helper exists" \
+	"_watchdog_tree_network_active()" \
+	"$watchdog_source"
+assert_contains \
+	"4d. Network-active defers are labeled distinctly" \
+	"reason=network_active" \
+	"$watchdog_source"
+assert_contains \
+	"4e. Network helper probes established HTTPS/API sockets" \
+	"established_https" \
+	"$watchdog_source"
 
 #######################################
-# Test 5: Hard-kill fires regardless of CPU
-# (The hard-kill block must come BEFORE the CPU check in the code)
+# Test 5: Hard-kill fires regardless of semantic liveness checks
+# (The hard-kill block must come BEFORE network/CPU checks in the code)
 #######################################
 # Verify hard-kill check comes before CPU check by checking line order
 hard_kill_line=$(grep -n "HARD_KILL_SECONDS.*elapsed_total.*HARD_KILL_SECONDS" "${SCRIPT_DIR}/worker-activity-watchdog.sh" | head -1 | cut -d: -f1)
+network_check_line=$(grep -n "_watchdog_tree_network_active.*WORKER_PID" "${SCRIPT_DIR}/worker-activity-watchdog.sh" | head -1 | cut -d: -f1)
 cpu_check_line=$(grep -n "_watchdog_tree_cpu.*WORKER_PID" "${SCRIPT_DIR}/worker-activity-watchdog.sh" | head -1 | cut -d: -f1)
-if [[ -n "$hard_kill_line" && -n "$cpu_check_line" && "$hard_kill_line" -lt "$cpu_check_line" ]]; then
+if [[ -n "$hard_kill_line" && -n "$network_check_line" && "$hard_kill_line" -lt "$network_check_line" ]]; then
 	TESTS_RUN=$((TESTS_RUN + 1))
-	echo "${TEST_GREEN}PASS${TEST_NC}: 5. Hard-kill check precedes CPU check (line $hard_kill_line < $cpu_check_line)"
+	echo "${TEST_GREEN}PASS${TEST_NC}: 5a. Hard-kill check precedes network-active check (line $hard_kill_line < $network_check_line)"
 else
 	TESTS_RUN=$((TESTS_RUN + 1))
 	TESTS_FAILED=$((TESTS_FAILED + 1))
-	echo "${TEST_RED}FAIL${TEST_NC}: 5. Hard-kill check must precede CPU check (hard_kill=$hard_kill_line, cpu=$cpu_check_line)"
+	echo "${TEST_RED}FAIL${TEST_NC}: 5a. Hard-kill check must precede network-active check (hard_kill=$hard_kill_line, network=$network_check_line)"
+fi
+if [[ -n "$hard_kill_line" && -n "$cpu_check_line" && "$hard_kill_line" -lt "$cpu_check_line" ]]; then
+	TESTS_RUN=$((TESTS_RUN + 1))
+	echo "${TEST_GREEN}PASS${TEST_NC}: 5b. Hard-kill check precedes CPU check (line $hard_kill_line < $cpu_check_line)"
+else
+	TESTS_RUN=$((TESTS_RUN + 1))
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 5b. Hard-kill check must precede CPU check (hard_kill=$hard_kill_line, cpu=$cpu_check_line)"
+fi
+
+provider_check_line=$(grep -n "if _output_has_provider_rate_limit" "${SCRIPT_DIR}/worker-activity-watchdog.sh" | head -1 | cut -d: -f1)
+if [[ -n "$provider_check_line" && -n "$network_check_line" && "$provider_check_line" -lt "$network_check_line" ]]; then
+	TESTS_RUN=$((TESTS_RUN + 1))
+	echo "${TEST_GREEN}PASS${TEST_NC}: 5c. Provider-failure check precedes network-active defer (line $provider_check_line < $network_check_line)"
+else
+	TESTS_RUN=$((TESTS_RUN + 1))
+	TESTS_FAILED=$((TESTS_FAILED + 1))
+	echo "${TEST_RED}FAIL${TEST_NC}: 5c. Provider-failure check must precede network-active defer (provider=$provider_check_line, network=$network_check_line)"
 fi
 
 #######################################
@@ -296,11 +327,15 @@ assert_contains \
 	"reason=cpu_active" \
 	"$watchdog_source"
 assert_contains \
-	"12c. CI-wait defers are labeled distinctly" \
+	"12c. Network-active defers are labeled distinctly" \
+	"reason=network_active" \
+	"$watchdog_source"
+assert_contains \
+	"12d. CI-wait defers are labeled distinctly" \
 	"reason=ci_wait" \
 	"$watchdog_source"
 assert_contains \
-	"12d. Output-active path is documented as live work" \
+	"12e. Output-active path is documented as live work" \
 	"output-active" \
 	"$watchdog_source"
 
@@ -534,6 +569,95 @@ kill "$live_worker_pid" "$live_watchdog_pid" 2>/dev/null || true
 wait "$live_worker_pid" 2>/dev/null || true
 wait "$live_watchdog_pid" 2>/dev/null || true
 rm -rf "$tmp_dir"
+
+#######################################
+# Test 24: Runtime — network-active quiet worker survives beyond stall timeout
+#######################################
+if command -v python3 >/dev/null 2>&1 && { command -v lsof >/dev/null 2>&1 || command -v ss >/dev/null 2>&1; }; then
+	network_tmp_dir=$(mktemp -d 2>/dev/null || mktemp -d -t watchdog-network-live)
+	network_output="${network_tmp_dir}/worker.out"
+	network_exit="${network_tmp_dir}/worker.exit"
+	network_log="${network_tmp_dir}/lifecycle.log"
+	network_ready="${network_tmp_dir}/ready"
+	network_script="${network_tmp_dir}/network_worker.py"
+	printf 'model API request started\n' >"$network_output"
+	network_initial_size=$(wc -c <"$network_output" 2>/dev/null || printf '0')
+	network_initial_size="${network_initial_size##* }"
+
+	cat >"$network_script" <<'PY'
+import socket
+import sys
+import time
+
+ready_path = sys.argv[1]
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(("127.0.0.1", 8443))
+server.listen(1)
+client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+client.connect(("127.0.0.1", 8443))
+connection, _address = server.accept()
+with open(ready_path, "w", encoding="utf-8") as ready_file:
+    ready_file.write("ready\n")
+try:
+    time.sleep(30)
+finally:
+    connection.close()
+    client.close()
+    server.close()
+PY
+
+	python3 "$network_script" "$network_ready" >/dev/null 2>&1 &
+	network_worker_pid=$!
+	for _network_wait in 1 2 3 4 5; do
+		[[ -f "$network_ready" ]] && break
+		sleep 1
+	done
+
+	if kill -0 "$network_worker_pid" 2>/dev/null && [[ -f "$network_ready" ]]; then
+		WORKER_LIFECYCLE_LOG="$network_log" \
+			"${SCRIPT_DIR}/worker-activity-watchdog.sh" \
+			--output-file "$network_output" \
+			--worker-pid "$network_worker_pid" \
+			--exit-code-file "$network_exit" \
+			--stall-timeout 1 \
+			--poll-interval 1 \
+			--hard-kill-seconds 0 >/dev/null 2>&1 &
+		network_watchdog_pid=$!
+
+		sleep 8
+		network_after_size=$(wc -c <"$network_output" 2>/dev/null || printf '0')
+		network_after_size="${network_after_size##* }"
+		if kill -0 "$network_worker_pid" 2>/dev/null && [[ ! -f "${network_exit}.watchdog_killed" ]] && grep -q 'reason=network_active' "$network_log" 2>/dev/null; then
+			TESTS_RUN=$((TESTS_RUN + 1))
+			echo "${TEST_GREEN}PASS${TEST_NC}: 24a. Network-active quiet worker survives beyond stall timeout (API-wait path)"
+		else
+			TESTS_RUN=$((TESTS_RUN + 1))
+			TESTS_FAILED=$((TESTS_FAILED + 1))
+			echo "${TEST_RED}FAIL${TEST_NC}: 24a. Network-active quiet worker was killed or not audited as network_active"
+		fi
+		if [[ "$network_initial_size" == "$network_after_size" ]]; then
+			TESTS_RUN=$((TESTS_RUN + 1))
+			echo "${TEST_GREEN}PASS${TEST_NC}: 24b. Network-active defer does not grow monitored output file"
+		else
+			TESTS_RUN=$((TESTS_RUN + 1))
+			TESTS_FAILED=$((TESTS_FAILED + 1))
+			echo "${TEST_RED}FAIL${TEST_NC}: 24b. Network-active defer changed monitored output size (${network_initial_size} -> ${network_after_size})"
+		fi
+
+		kill "$network_watchdog_pid" 2>/dev/null || true
+		wait "$network_watchdog_pid" 2>/dev/null || true
+	else
+		TESTS_RUN=$((TESTS_RUN + 1))
+		echo "${TEST_GREEN}PASS${TEST_NC}: 24. Network-active runtime test skipped — local 127.0.0.1:8443 unavailable"
+	fi
+	kill "$network_worker_pid" 2>/dev/null || true
+	wait "$network_worker_pid" 2>/dev/null || true
+	rm -rf "$network_tmp_dir"
+else
+	TESTS_RUN=$((TESTS_RUN + 1))
+	echo "${TEST_GREEN}PASS${TEST_NC}: 24. Network-active runtime test skipped — python3 plus lsof/ss required"
+fi
 
 #######################################
 # Summary
