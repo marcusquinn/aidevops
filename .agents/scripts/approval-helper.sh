@@ -35,18 +35,29 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=shared-constants.sh
 [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
 
-# Resolve the real user's home directory, handling sudo env_reset on Linux.
-# Under sudo on Linux, HOME is reset to /root/ by env_reset; SUDO_USER holds
-# the original username. getent passwd is the canonical resolver on Linux.
-# On macOS, sudo does not reset HOME (and getent is not available), so the
-# fallback to $HOME is correct for both platforms.
+# Resolve the real user's home directory, handling sudo env_reset.
+# Under sudo, HOME may point at root's home while SUDO_USER holds the invoking
+# username. getent passwd is canonical on Linux; dscl is canonical on macOS.
 # Security: no escalation — root already has full filesystem access.
 _resolve_real_home() {
-	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]] && command -v getent &>/dev/null; then
-		local real_home
-		real_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
-		if [[ -n "$real_home" ]]; then
-			printf '%s' "$real_home"
+	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]]; then
+		local real_home=""
+		if command -v getent &>/dev/null; then
+			real_home=$(getent passwd "$SUDO_USER" | cut -d: -f6)
+			if [[ -n "$real_home" ]]; then
+				printf '%s' "$real_home"
+				return 0
+			fi
+		fi
+		if command -v dscl &>/dev/null; then
+			real_home=$(dscl . -read "/Users/${SUDO_USER}" NFSHomeDirectory 2>/dev/null | awk '{print $2; exit}' || true)
+			if [[ -n "$real_home" ]]; then
+				printf '%s' "$real_home"
+				return 0
+			fi
+		fi
+		if [[ -d "/Users/${SUDO_USER}" ]]; then
+			printf '/Users/%s' "$SUDO_USER"
 			return 0
 		fi
 	fi
@@ -112,47 +123,103 @@ _print_error() {
 	return 0
 }
 
+_approval_use_gh_token() {
+	local token="${1:-}"
+	local previous_token="${GH_TOKEN:-}"
+	local token_was_set="${GH_TOKEN+x}"
+
+	if [[ -z "$token" ]]; then
+		return 1
+	fi
+
+	export GH_TOKEN="$token"
+	if gh auth status >/dev/null 2>&1; then
+		return 0
+	fi
+
+	if [[ -n "$token_was_set" ]]; then
+		export GH_TOKEN="$previous_token"
+	else
+		unset GH_TOKEN
+	fi
+	return 1
+}
+
+_approval_user_gh_token() {
+	if [[ -z "${SUDO_USER:-}" || "$(id -u)" -ne 0 ]]; then
+		return 1
+	fi
+
+	local real_uid=""
+	real_uid=$(id -u "$SUDO_USER" 2>/dev/null || true)
+	local real_home=""
+	real_home=$(_resolve_real_home)
+	local gh_home_env="HOME=${real_home}"
+	local token=""
+
+	# Linux: reconnect to the user's D-Bus session so gh can reach keyring-backed auth.
+	if [[ -n "$real_uid" && -S "/run/user/${real_uid}/bus" ]] && command -v runuser &>/dev/null; then
+		token=$(runuser -u "$SUDO_USER" -- env \
+			"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${real_uid}/bus" \
+			"XDG_RUNTIME_DIR=/run/user/${real_uid}" \
+			"$gh_home_env" \
+			gh auth token 2>/dev/null || true)
+		if [[ -n "$token" ]]; then
+			printf '%s' "$token"
+			return 0
+		fi
+	fi
+
+	# macOS: run in the invoking user's launchd session so gh can reach Keychain.
+	if [[ -n "$real_uid" ]] && command -v launchctl &>/dev/null && command -v sudo &>/dev/null; then
+		token=$(launchctl asuser "$real_uid" sudo -u "$SUDO_USER" -H env \
+			"$gh_home_env" gh auth token 2>/dev/null || true)
+		if [[ -n "$token" ]]; then
+			printf '%s' "$token"
+			return 0
+		fi
+	fi
+
+	# Portable fallback for non-keyring gh storage and sudo configurations that
+	# permit root to switch back to the invoking user without another password.
+	if command -v sudo &>/dev/null; then
+		token=$(sudo -u "$SUDO_USER" -H env "$gh_home_env" gh auth token 2>/dev/null || true)
+		if [[ -n "$token" ]]; then
+			printf '%s' "$token"
+			return 0
+		fi
+	fi
+
+	return 1
+}
+
 _require_gh_auth() {
 	if gh auth status >/dev/null 2>&1; then
 		return 0
 	fi
-	# Under sudo on Linux, gnome-keyring is inaccessible because env_reset strips
-	# DBUS_SESSION_BUS_ADDRESS. Attempt automatic token resolution via two methods
-	# before falling back to a descriptive error.
+	# Under sudo, gh may be unable to access the invoking user's keyring/keychain.
+	# Attempt automatic token recovery before falling back to a descriptive error.
 	if [[ -n "${SUDO_USER:-}" && "$(id -u)" -eq 0 ]]; then
-		local real_uid=""
-		real_uid=$(id -u "$SUDO_USER" 2>/dev/null || echo "")
-		# Method 1: reconnect to user's D-Bus session socket via runuser
-		if [[ -n "$real_uid" && -S "/run/user/${real_uid}/bus" ]] && command -v runuser &>/dev/null; then
-			local token=""
-			token=$(runuser -u "$SUDO_USER" -- env \
-				"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${real_uid}/bus" \
-				"XDG_RUNTIME_DIR=/run/user/${real_uid}" \
-				gh auth token 2>/dev/null || echo "")
-			if [[ -n "$token" ]]; then
-				export GH_TOKEN="$token"
-				if gh auth status >/dev/null 2>&1; then
-					return 0
-				fi
-			fi
+		local user_token=""
+		user_token=$(_approval_user_gh_token || true)
+		if _approval_use_gh_token "$user_token"; then
+			return 0
 		fi
-		# Method 2: read token directly from gh config file (non-keyring storage)
+
+		# Read token directly from gh config file for non-keyring storage.
 		local real_home
 		real_home=$(_resolve_real_home)
 		local gh_hosts="${real_home}/.config/gh/hosts.yml"
 		if [[ -f "$gh_hosts" ]]; then
 			local file_token=""
-			file_token=$(awk '/oauth_token:/{print $2; exit}' "$gh_hosts" 2>/dev/null || echo "")
-			if [[ -n "$file_token" ]]; then
-				export GH_TOKEN="$file_token"
-				if gh auth status >/dev/null 2>&1; then
-					return 0
-				fi
+			file_token=$(awk '/oauth_token:/{print $2; exit}' "$gh_hosts" 2>/dev/null || true)
+			if _approval_use_gh_token "$file_token"; then
+				return 0
 			fi
 		fi
 	fi
-	_print_error "gh authentication failed (common under sudo on Linux — gnome-keyring is inaccessible)"
-	_print_info "Workaround: export GH_TOKEN=\$(gh auth token) && sudo --preserve-env=GH_TOKEN aidevops approve ..."
+	_print_error "gh authentication failed under sudo; automatic recovery from the invoking user's gh auth failed"
+	_print_info "Check 'gh auth status' as your user, then retry sudo aidevops approve. If sudo strips auth, pass GH_TOKEN via sudo --preserve-env=GH_TOKEN."
 	return 1
 }
 
