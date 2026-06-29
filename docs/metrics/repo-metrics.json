@@ -1,7 +1,7 @@
 {
   "schema": "aidevops.repo-metrics.v1",
   "schema_version": 1,
-  "generated_at": "2026-06-29T21:16:06Z",
+  "generated_at": "2026-06-29T21:45:37Z",
   "tool": {
     "name": "aidevops repo-metrics",
     "version": "1.0.0"
@@ -11,10 +11,10 @@
     "slug": "marcusquinn/aidevops"
   },
   "summary": {
-    "source_files": 5194,
-    "code": 1008329,
-    "comments": 147360,
-    "blanks": 206559,
+    "source_files": 5204,
+    "code": 1008411,
+    "comments": 147390,
+    "blanks": 206584,
     "languages": 15,
     "dependencies": 116
   },
@@ -25,7 +25,7 @@
       "code": 550502,
       "comments": 134050,
       "blanks": 98605,
-      "percentage": 54.6,
+      "percentage": 54.59,
       "color": "#89e051"
     },
     {
@@ -48,11 +48,11 @@
     },
     {
       "name": "Python",
-      "files": 138,
-      "code": 24727,
-      "comments": 1447,
-      "blanks": 5419,
-      "percentage": 2.45,
+      "files": 148,
+      "code": 24809,
+      "comments": 1477,
+      "blanks": 5444,
+      "percentage": 2.46,
       "color": "#3572A5"
     },
     {
