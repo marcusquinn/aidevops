@@ -1,45 +1,51 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-# Badges — README badge template + LOC reusable workflow
+# Badges — README badge template + local repository metrics
 
 aidevops ships a consistent badge block for every managed repo: a native
 GitHub Actions badge when a concrete workflow file is known, static shields.io
-badges for values that do not require GitHub API access, and self-hosted SVGs
-for lines of code. The template deliberately avoids `img.shields.io/github/...`
+badges for values that do not require GitHub API access, and committed local
+SVGs for lines of code, language mix, and dependency counts. The template
+deliberately avoids `img.shields.io/github/...`
 endpoints because those can render upstream service text such as "Unable to
 select next GitHub token from pool" in public READMEs.
 
-Use `aidevops badges render|check|sync|install` to manage README badge blocks
-and LOC badge workflows for repos listed in `repos.json`.
+Use `aidevops metrics generate` for the current repo, or `aidevops badges
+render|check|sync|install` to manage README badge blocks and refresh workflows
+for repos listed in `repos.json`.
 
 Subcommands:
 
 - `render` — print the badge block that would be inserted.
 - `check` — fail on README badge drift.
-- `sync` — update the README badge block and managed LOC workflow caller.
-- `install` — install managed badge assets for a repo.
+- `sync` — update the README badge block, generate local metrics, and install the managed refresh workflow caller.
+- `install` — install the managed repo metrics refresh workflow for a repo.
 
 ## What you get
 
 Three artifacts deployed by `setup.sh`:
 
-1. **`.agents/scripts/loc-badge-helper.sh`** — runs `tokei`, emits two SVGs:
-   - `.github/badges/loc-total.svg` — shields.io-style "lines of code: 482k"
-   - `.github/badges/loc-languages.svg` — GitHub-style horizontal stacked
-     bar of the top-N languages with a percentage legend
+1. **`.agents/scripts/repo-metrics-helper.sh`** — runs a dependency-light local scanner and emits:
+   - `docs/metrics/repo-metrics.json` — machine-readable app/about-page data
+   - `docs/metrics/repo-metrics.md` — human-readable summary tables
+   - `docs/metrics/badges/loc.svg` — lines-of-code badge
+   - `docs/metrics/badges/languages.svg` — top-N language breakdown badge
+   - `docs/metrics/badges/dependencies.svg` — dependency count badge
+   - `.github/badges/loc-total.svg` and `.github/badges/loc-languages.svg` for legacy README compatibility
 2. **`.agents/scripts/readme-badges-helper.sh`** — renders the badges
    markdown for a slug, injects/checks an idempotent block in a README, and
    only emits an Actions badge after resolving an actual workflow file
 3. **`.agents/templates/readme/badges.md.tmpl`** — the canonical badges
-   block, with conditional sections for native Actions, licence, and LOC badges
+   block, with conditional sections for native Actions, licence, and local metrics badges
 
 Plus the GitHub Actions wiring:
 
 4. **`.github/workflows/loc-badge-reusable.yml`** — reusable workflow
-   that downstream repos call from a tiny caller YAML
-5. **`.agents/templates/workflows/loc-badge-caller.yml`** — the caller
-   template (~30 lines)
+   that downstream repos call from a tiny caller YAML; it runs weekly and on
+   default-branch pushes, skips outputs fresher than 24h by default, and never
+   runs on pull_request events
+5. **`.agents/templates/workflows/loc-badge-caller.yml`** — the caller template
 
 ## Add badges to a repo (manual flow)
 
@@ -47,32 +53,35 @@ This is the manual flow that works today. Phase 2 wraps it in
 `aidevops badges sync`.
 
 ```bash
-# 1. Drop in the LOC workflow caller
+# 1. Generate local metrics immediately
+~/.aidevops/agents/scripts/repo-metrics-helper.sh generate \
+   --legacy-badge-dir .github/badges
+
+# 2. Drop in the repo metrics refresh workflow caller
 cp ~/.aidevops/agents/templates/workflows/loc-badge-caller.yml \
    .github/workflows/loc-badge.yml
-git add .github/workflows/loc-badge.yml
-git commit -m "chore(ci): add LOC badge workflow"
+git add docs/metrics .github/badges .github/workflows/loc-badge.yml
+git commit -m "chore(metrics): add repository metrics"
 git push
 
-# 2. Inject the README badge block
+# 3. Inject the README badge block
 ~/.aidevops/agents/scripts/readme-badges-helper.sh inject README.md owner/repo
 git add README.md
 git commit -m "chore(docs): add managed badges block"
 git push
 ```
 
-The first push of `loc-badge.yml` triggers the reusable workflow, which
-generates and commits the SVGs into `.github/badges/`. The README block
-references those SVGs via raw.githubusercontent.com, so they update
-automatically on every push.
+The README block references relative `docs/metrics/badges/*.svg` assets, so it
+renders as soon as the files are committed. The workflow refreshes the metrics
+periodically without delaying PR checks.
 
 Do not add GitHub-backed Shields badges such as repository size, stars,
 watchers, language count, release date, or issue counts to the canonical block.
 Those badges depend on Shields' GitHub token pool and can intermittently render
 the provider error string instead of the intended value. Prefer GitHub-native
-badges for Actions, self-hosted generated SVGs for repository metrics, static
-Shields badges for local/static facts, and direct Markdown links for GitHub
-pages that do not need a badge.
+badges for Actions, local generated SVGs for repository metrics, static Shields
+badges for local/static facts, and direct Markdown links for GitHub pages that
+do not need a badge.
 
 ## How the marker block works
 
@@ -84,7 +93,9 @@ in rendered Markdown:
 <!-- managed by aidevops badges; edit the template, not this block -->
 [![GitHub Actions](...)](...)
 [![License](...)](...)
-[![Lines of code](...)](...)
+[![Lines of code](docs/metrics/badges/loc.svg)](docs/metrics/repo-metrics.md)
+[![Languages by lines of code](docs/metrics/badges/languages.svg)](docs/metrics/repo-metrics.md)
+[![Dependencies](docs/metrics/badges/dependencies.svg)](docs/metrics/repo-metrics.md)
 ...
 <!-- aidevops:badges:end -->
 ```
@@ -115,7 +126,8 @@ Available variables (computed from `repos.json` + live `gh` probes):
 | `DEFAULT_BRANCH` | `gh api repos/{slug}` | falls back to `main` |
 | `HAS_ACTIONS_WORKFLOW` | local workflow-file detection | enables the native Actions badge |
 | `ACTIONS_WORKFLOW_FILE` | local workflow-file detection or `--workflow-file` | exact `.github/workflows/*.yml` basename |
-| `HAS_LOC_BADGE` | `--no-loc-badge` flag | default `1`; empty if disabled |
+| `HAS_REPO_METRICS` | `--no-repo-metrics` flag | default `1`; empty if disabled |
+| `HAS_LOC_BADGE` | compatibility alias | mirrors `HAS_REPO_METRICS` |
 | `HAS_RELEASES` | `gh api releases?per_page=1` | empty for `local_only` repos |
 | `IS_FOSS` | `repos.json[].foss` | retained for compatibility; unused by the resilient template |
 | `HAS_LICENSE` | (Phase 2: filesystem probe) | currently always `1` |
@@ -131,18 +143,17 @@ or explicitly classified instead of hidden.
 
 ## Local development
 
-Test the LOC helper against this repo:
+Test the repo metrics helper against this repo:
 
 ```bash
-brew install tokei jq    # macOS
-# cargo install tokei --version 14.0.0 --locked && sudo apt install jq   # Linux
-
-.agents/scripts/loc-badge-helper.sh --output-dir /tmp/badge-test
-ls /tmp/badge-test/      # loc-total.svg + loc-languages.svg
-open /tmp/badge-test/loc-languages.svg
+.agents/scripts/repo-metrics-helper.sh generate \
+  --output-dir /tmp/aidevops-metrics \
+  --badge-dir /tmp/aidevops-metrics/badges
+ls /tmp/aidevops-metrics/      # repo-metrics.json + repo-metrics.md + badges/
+open /tmp/aidevops-metrics/badges/languages.svg
 
 # Print parsed summary without writing SVGs
-.agents/scripts/loc-badge-helper.sh --json-only | jq .total
+.agents/scripts/repo-metrics-helper.sh json | jq .summary
 ```
 
 Test the README helper:

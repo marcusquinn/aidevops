@@ -107,6 +107,22 @@ _test_native_actions_badge_uses_workflow_file() {
 		"Rendered canonical block avoids Shields GitHub API endpoints" \
 		"img.shields.io/github/" \
 		"$_out"
+	_assert_contains_text \
+		"Rendered block uses local LOC badge" \
+		"docs/metrics/badges/loc.svg" \
+		"$_out"
+	_assert_contains_text \
+		"Rendered block uses local language badge" \
+		"docs/metrics/badges/languages.svg" \
+		"$_out"
+	_assert_contains_text \
+		"Rendered block uses local dependency badge" \
+		"docs/metrics/badges/dependencies.svg" \
+		"$_out"
+	_assert_not_contains_text \
+		"Rendered canonical block avoids raw GitHub metric URLs" \
+		"raw.githubusercontent.com" \
+		"$_out"
 	rm -rf "$_tmp"
 	return 0
 }
@@ -138,6 +154,10 @@ _test_source_badge_blocks_avoid_github_shields() {
 		"Top-level README avoids Shields GitHub API endpoints" \
 		"img.shields.io/github/" \
 		"$README"
+	_assert_file_not_contains \
+		"Canonical badge template avoids raw GitHub metric URLs" \
+		"raw.githubusercontent.com" \
+		"$TEMPLATE"
 	return 0
 }
 

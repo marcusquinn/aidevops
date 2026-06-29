@@ -11,6 +11,7 @@
 #
 #   CURRENT     — badge block is present and matches what would be rendered
 #   DRIFTED     — badge block is present but has drifted from the canonical render
+#   METRICS-MISSING — badge block is current but local metrics artifacts are absent
 #   NO-README   — no README.md found in the repo directory
 #   NO-BLOCK    — README exists but no aidevops:badges:start/end markers
 #   LOCAL-ONLY  — repo has `local_only: true`, skip
@@ -31,7 +32,7 @@
 #
 # Exit codes:
 #   0  — all checked repos are CURRENT, NO-README, NO-BLOCK, or LOCAL-ONLY
-#   1  — one or more repos are DRIFTED
+#   1  — one or more repos are DRIFTED or METRICS-MISSING
 #   2  — configuration or IO error (repos.json missing, jq unavailable)
 #
 # Owned-orgs allowlist (used for informational EXTERNAL classification):
@@ -96,6 +97,27 @@ _is_owned_org() {
 		[[ "$_o" == "$_org" ]] && return 0
 	done <<<"$_owned_orgs"
 	return 1
+}
+
+_repo_metrics_missing_note() {
+	local _path="$1"
+	local _missing=()
+	local _rel
+	for _rel in \
+		"docs/metrics/repo-metrics.json" \
+		"docs/metrics/repo-metrics.md" \
+		"docs/metrics/badges/loc.svg" \
+		"docs/metrics/badges/languages.svg" \
+		"docs/metrics/badges/dependencies.svg"; do
+		if [[ ! -f "$_path/$_rel" ]]; then
+			_missing+=("$_rel")
+		fi
+	done
+	if [[ ${#_missing[@]} -eq 0 ]]; then
+		return 1
+	fi
+	printf 'missing metrics artifacts: %s' "${_missing[*]}"
+	return 0
 }
 
 # ─── Logging ────────────────────────────────────────────────────────────────
@@ -209,7 +231,12 @@ _classify_badges_repo() {
 	_check_rc=$?
 
 	if [[ "$_check_rc" -eq 0 ]]; then
-		printf 'CURRENT\t\n'
+		local _metrics_note
+		if _metrics_note=$(_repo_metrics_missing_note "$_path"); then
+			printf 'METRICS-MISSING\trun: aidevops badges sync --repo %s --apply (%s)\n' "$_slug" "$_metrics_note"
+		else
+			printf 'CURRENT\t\n'
+		fi
 	elif [[ "$_check_rc" -eq 3 ]]; then
 		printf 'DRIFTED\trun: aidevops badges sync --repo %s --apply\n' "$_slug"
 	else
@@ -233,7 +260,7 @@ _render_row_human() {
 		_colour_reset=$'\e[0m'
 		case "$_class" in
 		CURRENT) _colour=$'\e[32m' ;;          # green
-		DRIFTED) _colour=$'\e[33m' ;;          # yellow
+		DRIFTED | METRICS-MISSING) _colour=$'\e[33m' ;; # yellow
 		NO-README | NO-BLOCK) _colour=$'\e[31m' ;; # red
 		LOCAL-ONLY | EXTERNAL) _colour=$'\e[90m' ;; # grey
 		esac
@@ -311,7 +338,7 @@ _process_repos() {
 	fi
 
 	local _any_failure=0
-	local _total=0 _current=0 _drifted=0 _no_readme=0 _no_block=0 _local_only=0 _external=0
+	local _total=0 _current=0 _drifted=0 _metrics_missing=0 _no_readme=0 _no_block=0 _local_only=0 _external=0
 
 	if [[ "$_mode" == "$_MODE_HUMAN" ]]; then
 		printf '\n  %-50s %-12s %s\n' "REPO" "STATUS" "NOTE"
@@ -344,6 +371,10 @@ _process_repos() {
 			_drifted=$((_drifted + 1))
 			_any_failure=1
 			;;
+		METRICS-MISSING)
+			_metrics_missing=$((_metrics_missing + 1))
+			_any_failure=1
+			;;
 		esac
 
 		if [[ "$_mode" == "$_MODE_JSON" ]]; then
@@ -370,9 +401,9 @@ _process_repos() {
 	done <<<"$_rows"
 
 	if [[ "$_mode" == "$_MODE_HUMAN" ]]; then
-		printf '\n  Summary: %d entries — %d current, %d drifted, %d no-block, %d no-readme, %d external, %d local-only\n\n' \
-			"$_total" "$_current" "$_drifted" "$_no_block" "$_no_readme" "$_external" "$_local_only"
-		((_any_failure == 1)) && printf '  Exit code 1 — see DRIFTED entries above.\n\n'
+		printf '\n  Summary: %d entries — %d current, %d drifted, %d metrics-missing, %d no-block, %d no-readme, %d external, %d local-only\n\n' \
+			"$_total" "$_current" "$_drifted" "$_metrics_missing" "$_no_block" "$_no_readme" "$_external" "$_local_only"
+		((_any_failure == 1)) && printf '  Exit code 1 — see DRIFTED or METRICS-MISSING entries above.\n\n'
 	fi
 
 	return "$_any_failure"

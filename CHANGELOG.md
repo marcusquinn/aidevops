@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- add local repository metrics generation for README badges and app about pages
+
 ## [3.29.35] - 2026-06-29
 
 ### Changed
@@ -194,13 +198,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.29.14] - 2026-06-28
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.29.13] - 2026-06-28
 
