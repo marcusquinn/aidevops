@@ -35,6 +35,25 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 	unset _lib_path
 fi
 
+# Load dependencies when this focused module is sourced directly instead of via
+# shared-gh-wrappers.sh. Set our include guard before this block so the
+# orchestrator can safely source this file without recursive redefinition.
+if ! command -v _gh_validate_edit_args >/dev/null 2>&1; then
+	if [[ -f "${SCRIPT_DIR}/shared-gh-wrappers.sh" ]]; then
+		# shellcheck source=shared-gh-wrappers.sh
+		# shellcheck disable=SC1091  # resolved from SCRIPT_DIR at runtime
+		source "${SCRIPT_DIR}/shared-gh-wrappers.sh"
+	fi
+fi
+if ! command -v _rest_should_fallback >/dev/null 2>&1 ||
+	! command -v _rest_issue_edit >/dev/null 2>&1; then
+	if [[ -f "${SCRIPT_DIR}/shared-gh-wrappers-rest-fallback.sh" ]]; then
+		# shellcheck source=shared-gh-wrappers-rest-fallback.sh
+		# shellcheck disable=SC1091  # resolved from SCRIPT_DIR at runtime
+		source "${SCRIPT_DIR}/shared-gh-wrappers-rest-fallback.sh"
+	fi
+fi
+
 #######################################
 # Internal: audit-log a safety rejection.
 # Non-fatal — if audit-log-helper.sh is unavailable, the stderr message
