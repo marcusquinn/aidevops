@@ -4344,6 +4344,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18024 Refine app sidebar and font controls #enhancement ref:GH#25753 pr:#25793 completed:2026-06-28
 
-- [x] t18029 Scope session checkpoints to active repository #bug #type:bug ref:GH#25835 pr:#25837 completed:2026-06-29
 
 - [ ] t18030 Require completed-session summaries to list implemented changes #bug ref:GH#25838

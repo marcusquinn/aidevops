@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.28] - 2026-06-29
+
+### Changed
+
+- Maintenance: mark t18029 complete (pr:#25837 completed:2026-06-29) [skip ci]
+- scope session checkpoints by repo (#25837)
+- Maintenance: sync ref:GH#25838 to TODO.md [skip ci]
+- Documentation: require completion summary bullets (#25836)
+- Maintenance: sync ref:GH#25835 to TODO.md [skip ci]
+
 ## [3.29.27] - 2026-06-29
 
 ### Fixed
