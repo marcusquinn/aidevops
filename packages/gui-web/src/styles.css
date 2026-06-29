@@ -137,6 +137,46 @@
   --glass-panel-shadow: var(--shadow-soft);
 }
 
+:root[data-borders="hidden"] :where(
+  .machine-rail,
+  .app-sidebar,
+  .app-inset,
+  .desktop-status-bar,
+  .workspace-header,
+  button,
+  input,
+  select,
+  textarea,
+  [class*="badge"],
+  [class*="button"],
+  [class*="card"],
+  [class*="control"],
+  [class*="entry"],
+  [class*="item"],
+  [class*="menu"],
+  [class*="orb"],
+  [class*="panel"],
+  [class*="pill"],
+  [class*="preview"],
+  [class*="row"],
+  [class*="selector"],
+  [class*="surface"],
+  [class*="switch"],
+  [class*="tag"]
+) {
+  border-color: transparent !important;
+}
+
+:root[data-borders="hidden"] :where(
+  .github-notification-card,
+  .managed-app-card,
+  .notification-preview,
+  .status-dot,
+  .terminal-mark
+) {
+  box-shadow: none;
+}
+
 *,
 *::before,
 *::after {
@@ -1136,7 +1176,7 @@ code {
 
 .notification-dot {
   background: var(--accent);
-  border: 2px solid var(--surface-elevated);
+  border: 2px solid var(--border-accent);
   border-radius: 999px;
   height: 10px;
   position: absolute;
@@ -1192,7 +1232,7 @@ code {
 .notification-preview {
   background: var(--notification-bg, transparent);
   border: 1px solid var(--border);
-  border-left: 4px solid var(--notification-color, var(--accent));
+  border-left: 4px solid var(--border-accent);
   border-radius: 12px;
   color: var(--text-secondary);
   cursor: pointer;
@@ -1204,7 +1244,7 @@ code {
 
 .notification-preview:hover,
 .notification-preview:focus-visible {
-  border-color: var(--notification-color, var(--accent));
+  border-color: var(--border-accent);
   outline: none;
 }
 
@@ -1786,7 +1826,7 @@ code {
 .github-notification-card {
   background: var(--surface-elevated);
   border: 1px solid var(--border);
-  border-left: 5px solid var(--notification-color, var(--accent));
+  border-left: 5px solid var(--border-accent);
   border-radius: 18px;
   box-shadow: var(--glass-panel-shadow);
   display: grid;
@@ -2457,7 +2497,7 @@ button.managed-toggle:focus-visible {
 .app-action-button:hover,
 .app-action-button:focus-visible {
   background: var(--accent);
-  border-color: var(--accent);
+  border-color: var(--border-accent);
   color: var(--bg-primary);
   outline: none;
   transform: translateY(-1px);
@@ -2465,14 +2505,14 @@ button.managed-toggle:focus-visible {
 
 .app-action-button.remove {
   background: color-mix(in srgb, #ef4444 12%, var(--surface-elevated));
-  border-color: color-mix(in srgb, #ef4444 45%, var(--border));
+  border-color: var(--border-danger);
   color: #ff8a8a;
 }
 
 .app-action-button.remove:hover,
 .app-action-button.remove:focus-visible {
   background: #ef4444;
-  border-color: #ef4444;
+  border-color: var(--border-danger);
   color: white;
 }
 

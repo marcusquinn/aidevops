@@ -284,9 +284,15 @@ describe("dashboard shell", () => {
 
     expect(css).toContain(':root[data-borders="hidden"]');
     expect(css).toContain("--border-accent: transparent");
+    expect(css).toContain(':root[data-borders="hidden"] :where(');
+    expect(css).toContain("border-color: transparent !important");
     expect(css).toContain(".appearance-segmented-control");
     expect(css).toContain(".appearance-panel {\n  background: transparent");
     expect(css).toContain("font-size: 0.86em");
+    expect(css).toContain("border-left: 4px solid var(--border-accent)");
+    expect(css).toContain("border-left: 5px solid var(--border-accent)");
+    expect(css).not.toContain("border-color: var(--accent)");
+    expect(css).not.toContain("border-color: #ef4444");
     expect(css).not.toContain("border-color: color-mix(in srgb, var(--accent) 52%, transparent)");
   });
 
