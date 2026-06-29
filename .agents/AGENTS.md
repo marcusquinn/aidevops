@@ -126,7 +126,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 
 ## Quick Reference
 
-- CLI: `aidevops [init|update|status|repos|skills|features|check-workflows|sync-workflows|badges|knowledge|circuit-breaker]`.
+- CLI: `aidevops [init|update|status|repos|skills|features|check-workflows|sync-workflows|badges|metrics|knowledge|circuit-breaker]`.
 - Scripts: `~/.aidevops/agents/scripts/[service]-helper.sh [command] [account] [target]`.
 - Editing framework scripts: edit repo `.agents/scripts/<name>.sh`, not deployed `~/.aidevops/agents/scripts/`; deploy with `setup.sh --non-interactive`. Personal scripts go in `custom/`.
 - Working dirs: `~/.aidevops/.agent-workspace/{work,tmp,mail,memory}`. Agent tiers: `custom/` survives updates, `draft/` is experimental, root shared agents are overwritten.

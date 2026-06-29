@@ -1350,11 +1350,13 @@ GITATTRSEOF
 
 	_init_configure_coderabbit_abort_on_close "$project_root" "$enable_code_quality"
 
-	# ─── Badge initialization (t2975) ────────────────────────────────────────
-	# Install the loc-badge caller workflow and seed the canonical README badge
-	# block in fresh repos. Both operations are idempotent. Skip for local_only
-	# repos (no remote to host SVGs or run GitHub Actions).
+	# ─── Badge + local repo metrics initialization (t2975) ───────────────────
+	# Seed the canonical README badge block, generate local metrics artifacts,
+	# and install the weekly refresh workflow for repos with a remote. The README
+	# references relative docs/metrics assets, so freshly initialised READMEs do
+	# not depend on remote badge services or a delayed GitHub Actions commit.
 	local _badges_helper="$AGENTS_DIR/scripts/readme-badges-helper.sh"
+	local _metrics_helper="$AGENTS_DIR/scripts/repo-metrics-helper.sh"
 	local _label_sync_helper="$AGENTS_DIR/scripts/label-sync-helper.sh"
 	local _wf_template="$AGENTS_DIR/templates/workflows/loc-badge-caller.yml"
 	local _wf_dest="$project_root/.github/workflows/loc-badge.yml"
@@ -1365,13 +1367,15 @@ GITATTRSEOF
 			'.initialized_repos // [] | map(select(.slug == $s)) | if length > 0 then .[0].local_only // false else false end' \
 			"$HOME/.config/aidevops/repos.json" 2>/dev/null || echo "false")
 
-		# Install loc-badge caller workflow if template is available and file is absent
-		if [[ -f "$_wf_template" && ! -f "$_wf_dest" ]]; then
+		# Install repo metrics refresh workflow for repos that can run GitHub Actions.
+		if [[ "$_is_local_only" != "true" && -f "$_wf_template" && ! -f "$_wf_dest" ]]; then
 			mkdir -p "$project_root/.github/workflows"
 			cp "$_wf_template" "$_wf_dest"
-			print_success "Installed .github/workflows/loc-badge.yml (LOC badge workflow)"
+			print_success "Installed .github/workflows/loc-badge.yml (repo metrics refresh workflow)"
 		elif [[ -f "$_wf_dest" ]]; then
 			print_info ".github/workflows/loc-badge.yml already present"
+		elif [[ "$_is_local_only" == "true" ]]; then
+			print_info "Skipping GitHub repo metrics refresh workflow for local-only repo"
 		fi
 
 		# Seed the canonical badge block in README.md
@@ -1384,6 +1388,20 @@ GITATTRSEOF
 			fi
 		elif [[ ! -f "$_readme_path" ]]; then
 			print_info "No README.md found — skipping badge block injection (create README.md first)"
+		fi
+
+		# Generate committed local metrics after README injection so LOC/language
+		# numbers include the final README badge block.
+		if [[ -f "$_metrics_helper" ]]; then
+			if bash "$_metrics_helper" generate \
+				--output-dir "$project_root/docs/metrics" \
+				--badge-dir "$project_root/docs/metrics/badges" \
+				--legacy-badge-dir "$project_root/.github/badges" \
+				"$project_root" >/dev/null; then
+				print_success "Generated local repo metrics in docs/metrics"
+			else
+				print_warning "Repo metrics generation failed — run manually: aidevops metrics generate"
+			fi
 		fi
 
 		# Sync the canonical GitHub label palette for this repo. This is a
@@ -1401,7 +1419,7 @@ GITATTRSEOF
 
 		# Remind about SYNC_PAT if the repo has a remote and isn't local_only
 		if [[ "$_is_local_only" != "true" ]]; then
-			print_info "Reminder: set SYNC_PAT secret so GitHub Actions can push badge SVGs — see: aidevops --help sync-pat"
+			print_info "Reminder: set SYNC_PAT secret so GitHub Actions can refresh repo metrics — see: aidevops --help sync-pat"
 		fi
 	fi
 
@@ -1462,6 +1480,7 @@ GITATTRSEOF
 	[[ -f "$project_root/LICENCE" ]] && init_files+=("LICENCE")
 	[[ -f "$project_root/CHANGELOG.md" ]] && init_files+=("CHANGELOG.md")
 	[[ -f "$project_root/README.md" ]] && init_files+=("README.md")
+	[[ -d "$project_root/docs/metrics" ]] && init_files+=("docs/metrics/")
 	[[ -f "$project_root/.cursorrules" ]] && init_files+=(".cursorrules")
 	[[ -f "$project_root/.windsurfrules" ]] && init_files+=(".windsurfrules")
 	[[ -f "$project_root/.clinerules" ]] && init_files+=(".clinerules")

@@ -1,47 +1,40 @@
-name: LOC Badge — generate lines-of-code SVGs
+name: Repository Metrics — generate local README data and badges
 
 # Managed by aidevops framework.
 # Upstream logic lives in: marcusquinn/aidevops/.github/workflows/loc-badge-reusable.yml
-# This caller is tiny on purpose — all the logic is centralised upstream.
-# Update this caller only to change the trigger filters or input overrides below.
-# For logic fixes, run `aidevops update` to get the latest framework version;
-# your caller will pick up the change automatically (if pinned to @main).
+# This caller is tiny on purpose — all logic is centralised upstream.
 #
-# Pinning options:
-#   @main           ← auto-update; what this template uses by default
-#   @v3.9.0         ← pin to a specific aidevops version for stability
-#   @<sha>          ← pin to an exact commit
+# What it does: generates committed local metrics in docs/metrics/:
+#   repo-metrics.json                 machine-readable app/about-page data
+#   repo-metrics.md                   human-readable table
+#   badges/loc.svg                    lines-of-code README badge
+#   badges/languages.svg              language mix README badge
+#   badges/dependencies.svg           dependency count README badge
 #
-# What it does: runs `tokei` on the repo, generates two SVGs in
-# .github/badges/ (loc-total.svg + loc-languages.svg), commits them back
-# to the default branch with [skip ci]. Reference these SVGs from your
-# README via the badges template (see .agents/templates/readme/badges.md.tmpl).
+# It runs weekly and after default-branch pushes, but skips if metrics are
+# already fresh (24h by default). It does not run on pull_request events.
 
 on:
   push:
     branches: [main]
-    # Skip retriggers from the badge commit itself and from doc-only edits
-    # that don't change LOC counts.
     paths-ignore:
+      - 'docs/metrics/**'
       - '.github/badges/**'
-      - '**/*.md'
-      - 'docs/**'
   schedule:
-    # Weekly refresh in case paths-ignore'd content actually shifts the count.
     - cron: '17 4 * * 1'
   workflow_dispatch:
 
 jobs:
-  badges:
+  metrics:
     uses: marcusquinn/aidevops/.github/workflows/loc-badge-reusable.yml@main
     # GH#20976: `secrets: inherit` only works within the same GitHub account/org.
-    # Cross-account consumers (every downstream user) must pass secrets explicitly.
-    # If a new secret is added to loc-badge-reusable.yml, add it here too.
+    # Cross-account consumers must pass secrets explicitly.
     secrets:
       SYNC_PAT: ${{ secrets.SYNC_PAT }}
     # Optional input overrides — uncomment and edit as needed:
     # with:
     #   top_n: 8
+    #   skip_if_fresh_hours: 24
     #   extra_excludes: |
     #     fixtures/
     #     test-data/

@@ -1,0 +1,414 @@
+{
+  "schema": "aidevops.repo-metrics.v1",
+  "schema_version": 1,
+  "generated_at": "2026-06-29T21:59:52Z",
+  "tool": {
+    "name": "aidevops repo-metrics",
+    "version": "1.0.0"
+  },
+  "repo": {
+    "name": "aidevops",
+    "slug": "marcusquinn/aidevops"
+  },
+  "summary": {
+    "source_files": 5204,
+    "code": 1008420,
+    "comments": 147390,
+    "blanks": 206584,
+    "languages": 15,
+    "dependencies": 116
+  },
+  "languages": [
+    {
+      "name": "Shell",
+      "files": 1675,
+      "code": 550502,
+      "comments": 134050,
+      "blanks": 98605,
+      "percentage": 54.59,
+      "color": "#89e051"
+    },
+    {
+      "name": "Markdown",
+      "files": 2891,
+      "code": 239682,
+      "comments": 0,
+      "blanks": 80011,
+      "percentage": 23.77,
+      "color": "#083fa1"
+    },
+    {
+      "name": "HTML",
+      "files": 54,
+      "code": 126974,
+      "comments": 0,
+      "blanks": 14712,
+      "percentage": 12.59,
+      "color": "#e34c26"
+    },
+    {
+      "name": "Python",
+      "files": 148,
+      "code": 24818,
+      "comments": 1477,
+      "blanks": 5444,
+      "percentage": 2.46,
+      "color": "#3572A5"
+    },
+    {
+      "name": "JavaScript",
+      "files": 129,
+      "code": 20884,
+      "comments": 7441,
+      "blanks": 3180,
+      "percentage": 2.07,
+      "color": "#f1e05a"
+    },
+    {
+      "name": "JSON",
+      "files": 110,
+      "code": 14560,
+      "comments": 0,
+      "blanks": 203,
+      "percentage": 1.44,
+      "color": "#292929"
+    },
+    {
+      "name": "TypeScript",
+      "files": 77,
+      "code": 10704,
+      "comments": 1771,
+      "blanks": 1540,
+      "percentage": 1.06,
+      "color": "#3178c6"
+    },
+    {
+      "name": "YAML",
+      "files": 83,
+      "code": 9616,
+      "comments": 2392,
+      "blanks": 1520,
+      "percentage": 0.95,
+      "color": "#cb171e"
+    },
+    {
+      "name": "CSS",
+      "files": 2,
+      "code": 5662,
+      "comments": 11,
+      "blanks": 823,
+      "percentage": 0.56,
+      "color": "#563d7c"
+    },
+    {
+      "name": "TSX",
+      "files": 28,
+      "code": 4540,
+      "comments": 169,
+      "blanks": 486,
+      "percentage": 0.45,
+      "color": "#3178c6"
+    },
+    {
+      "name": "AWK",
+      "files": 3,
+      "code": 262,
+      "comments": 0,
+      "blanks": 14,
+      "percentage": 0.03,
+      "color": "#c30e9b"
+    },
+    {
+      "name": "SQL",
+      "files": 1,
+      "code": 99,
+      "comments": 52,
+      "blanks": 20,
+      "percentage": 0.01,
+      "color": "#e38c00"
+    },
+    {
+      "name": "TOML",
+      "files": 1,
+      "code": 61,
+      "comments": 13,
+      "blanks": 11,
+      "percentage": 0.01,
+      "color": "#9c4221"
+    },
+    {
+      "name": "Ruby",
+      "files": 1,
+      "code": 47,
+      "comments": 13,
+      "blanks": 12,
+      "percentage": 0.0,
+      "color": "#701516"
+    },
+    {
+      "name": "Dockerfile",
+      "files": 1,
+      "code": 9,
+      "comments": 1,
+      "blanks": 3,
+      "percentage": 0.0,
+      "color": "#384d54"
+    }
+  ],
+  "dependencies": {
+    "direct": 116,
+    "locked": 0,
+    "total": 116,
+    "ecosystems": [
+      "npm",
+      "python"
+    ],
+    "manifests": [
+      {
+        "path": ".agents/plugins/opencode-aidevops/package.json",
+        "ecosystem": "npm",
+        "direct": 3,
+        "locked": 0,
+        "dependencies": [
+          "@bufbuild/protobuf",
+          "@opencode-ai/plugin",
+          "opencode-ai"
+        ]
+      },
+      {
+        "path": ".agents/scripts/accessibility/package.json",
+        "ecosystem": "npm",
+        "direct": 1,
+        "locked": 0,
+        "dependencies": [
+          "playwright"
+        ]
+      },
+      {
+        "path": ".agents/scripts/higgsfield/package.json",
+        "ecosystem": "npm",
+        "direct": 1,
+        "locked": 0,
+        "dependencies": [
+          "playwright"
+        ]
+      },
+      {
+        "path": ".agents/scripts/higgsfield/remotion/package.json",
+        "ecosystem": "npm",
+        "direct": 10,
+        "locked": 0,
+        "dependencies": [
+          "@remotion/captions",
+          "@remotion/cli",
+          "@remotion/google-fonts",
+          "@remotion/media",
+          "@remotion/transitions",
+          "@types/react",
+          "react",
+          "react-dom",
+          "remotion",
+          "typescript"
+        ]
+      },
+      {
+        "path": ".agents/scripts/package.json",
+        "ecosystem": "npm",
+        "direct": 1,
+        "locked": 0,
+        "dependencies": [
+          "@ryntab/wappalyzer-node"
+        ]
+      },
+      {
+        "path": ".agents/scripts/simplex-bot/package.json",
+        "ecosystem": "npm",
+        "direct": 2,
+        "locked": 0,
+        "dependencies": [
+          "@types/bun",
+          "typescript"
+        ]
+      },
+      {
+        "path": "package.json",
+        "ecosystem": "npm",
+        "direct": 12,
+        "locked": 0,
+        "dependencies": [
+          "@secretlint/secretlint-rule-preset-recommend",
+          "@types/bun",
+          "@types/react",
+          "@types/react-dom",
+          "@vitejs/plugin-react",
+          "elysia",
+          "hono",
+          "react",
+          "react-dom",
+          "secretlint",
+          "typescript",
+          "vite"
+        ]
+      },
+      {
+        "path": "packages/gui-api/package.json",
+        "ecosystem": "npm",
+        "direct": 0,
+        "locked": 0,
+        "dependencies": []
+      },
+      {
+        "path": "packages/gui-desktop/package.json",
+        "ecosystem": "npm",
+        "direct": 0,
+        "locked": 0,
+        "dependencies": []
+      },
+      {
+        "path": "packages/gui-shared/package.json",
+        "ecosystem": "npm",
+        "direct": 0,
+        "locked": 0,
+        "dependencies": []
+      },
+      {
+        "path": "packages/gui-web/package.json",
+        "ecosystem": "npm",
+        "direct": 14,
+        "locked": 0,
+        "dependencies": [
+          "@aidevops/gui-shared",
+          "@fontsource/ibm-plex-mono",
+          "@fontsource/ibm-plex-sans",
+          "@fontsource/ibm-plex-serif",
+          "@fontsource/inter",
+          "@fontsource/playpen-sans",
+          "@fontsource/poppins",
+          "@fontsource/source-sans-3",
+          "@fontsource/source-serif-4",
+          "@fontsource/tilt-neon",
+          "@fontsource/ubuntu-mono",
+          "react",
+          "react-dom",
+          "react-icons"
+        ]
+      },
+      {
+        "path": "requirements-lock.txt",
+        "ecosystem": "python",
+        "direct": 81,
+        "locked": 0,
+        "dependencies": [
+          "Jinja2",
+          "Mako",
+          "MarkupSafe",
+          "PyYAML",
+          "Pygments",
+          "SQLAlchemy",
+          "aiohappyeyeballs",
+          "aiohttp",
+          "aiosignal",
+          "alembic",
+          "annotated-doc",
+          "annotated-types",
+          "anyio",
+          "asyncer",
+          "attrs",
+          "cachetools",
+          "certifi",
+          "charset-normalizer",
+          "click",
+          "cloudpickle",
+          "colorlog",
+          "datasets",
+          "dill",
+          "diskcache",
+          "distro",
+          "dspy",
+          "fastuuid",
+          "filelock",
+          "frozenlist",
+          "fsspec",
+          "gepa",
+          "h11",
+          "hf-xet",
+          "httpcore",
+          "httpx",
+          "huggingface_hub",
+          "idna",
+          "importlib_metadata",
+          "jiter",
+          "joblib",
+          "json_repair",
+          "jsonschema",
+          "jsonschema-specifications",
+          "litellm",
+          "markdown-it-py",
+          "mdurl",
+          "multidict",
+          "multiprocess",
+          "numpy",
+          "openai",
+          "optuna",
+          "orjson",
+          "packaging",
+          "pandas",
+          "propcache",
+          "pyarrow",
+          "pydantic",
+          "pydantic_core",
+          "python-dateutil",
+          "python-dotenv",
+          "pytz",
+          "referencing",
+          "regex",
+          "requests",
+          "rich",
+          "rpds-py",
+          "shellingham",
+          "six",
+          "sniffio",
+          "tenacity",
+          "tiktoken",
+          "tokenizers",
+          "tqdm",
+          "typer",
+          "typing-inspection",
+          "typing_extensions",
+          "tzdata",
+          "urllib3",
+          "xxhash",
+          "yarl",
+          "zipp"
+        ]
+      },
+      {
+        "path": "requirements.txt",
+        "ecosystem": "python",
+        "direct": 14,
+        "locked": 0,
+        "dependencies": [
+          "datasets",
+          "dspy",
+          "joblib",
+          "litellm",
+          "numpy",
+          "openai",
+          "optuna",
+          "pandas",
+          "pydantic",
+          "python-dotenv",
+          "requests",
+          "rich",
+          "tenacity",
+          "tqdm"
+        ]
+      }
+    ]
+  },
+  "refresh": {
+    "default_policy": "weekly scheduled refresh plus manual runs; skip generated outputs younger than 24h in managed workflows",
+    "cost_profile": "fast local git/unignored-file scan; no network by default",
+    "top_languages": 6
+  }
+}

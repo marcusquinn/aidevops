@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# test-loc-badge-reusable-install.sh — regression test for GH#24541
+# test-loc-badge-reusable-install.sh — regression test for local repo metrics workflow
 
 set -euo pipefail
 
@@ -58,12 +58,15 @@ main() {
 		return 1
 	fi
 
-	_assert_contains "pins tokei version" "TOKEI_VERSION: '14.0.0'"
-	_assert_contains "uses locked cargo install" "cargo install tokei --version \"\$TOKEI_VERSION\" --locked"
-	_assert_contains "bounds cargo install time" "timeout 600 cargo install"
-	_assert_contains "prints tokei version" "tokei --version"
-	_assert_contains "prints jq version" "jq --version"
+	_assert_contains "uses repo metrics helper" "repo-metrics-helper.sh generate"
+	_assert_contains "writes JSON metrics" "docs/metrics"
+	_assert_contains "uses freshness skip" "skip_if_fresh_hours"
+	_assert_contains "keeps runtime bounded" "timeout-minutes: 5"
+	_assert_contains "detects untracked generated metrics" "git status --porcelain"
 	_assert_not_regex "does not apt-install tokei" 'apt(-get)? install.*tokei'
+	_assert_not_regex "does not install jq" 'apt(-get)? install.*jq'
+	_assert_not_regex "does not cargo-install tokei" 'cargo install.*tokei'
+	_assert_not_regex "does not invoke tokei" 'tokei --version|\btokei\b'
 	_assert_not_regex "does not pipe remote Rust installer" "$_installer_pipe_pattern"
 
 	printf 'Tests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
