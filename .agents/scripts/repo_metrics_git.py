@@ -11,8 +11,10 @@ from pathlib import Path
 
 
 def run_command(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str] | None:
+    if not args or args[0] != "git":
+        return None
     try:
-        return subprocess.run(
+        return subprocess.run(  # nosec B603 - fixed git argv, shell=False
             args,
             cwd=str(cwd),
             check=False,
