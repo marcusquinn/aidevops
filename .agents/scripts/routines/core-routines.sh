@@ -36,12 +36,24 @@ ENTRIES
 }
 
 # ---------------------------------------------------------------------------
+# _is_darwin_os <os>
+# Returns 0 when the routine description target is macOS.
+# ---------------------------------------------------------------------------
+_is_darwin_os() {
+	local os="$1"
+	if [[ "$os" == "darwin" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+# ---------------------------------------------------------------------------
 # _platform_footnote <os>
 # Outputs a cross-platform reference footnote for the other OS.
 # ---------------------------------------------------------------------------
 _platform_footnote() {
 	local os="$1"
-	if [[ "$os" == "darwin" ]]; then
+	if _is_darwin_os "$os"; then
 		cat <<'FOOT'
 
 ---
@@ -74,7 +86,7 @@ _scheduler_row() {
 	local interval_sec="$2"
 	local plist_label="$3"
 	local systemd_unit="$4"
-	if [[ "$os" == "darwin" ]]; then
+	if _is_darwin_os "$os"; then
 		echo "| Scheduler | launchd \`${plist_label}\` (StartInterval: ${interval_sec}) |"
 	else
 		echo "| Scheduler | systemd \`${systemd_unit}.timer\` (OnUnitActiveSec=${interval_sec}s) |"
@@ -91,7 +103,7 @@ _scheduler_row_calendar() {
 	local calendar_desc="$2"
 	local plist_label="$3"
 	local systemd_unit="$4"
-	if [[ "$os" == "darwin" ]]; then
+	if _is_darwin_os "$os"; then
 		echo "| Scheduler | launchd \`${plist_label}\` (${calendar_desc}) |"
 	else
 		echo "| Scheduler | systemd \`${systemd_unit}.timer\` (OnCalendar=${calendar_desc}) |"
@@ -107,7 +119,7 @@ _diag_commands() {
 	local os="$1"
 	local plist_label="$2"
 	local systemd_unit="$3"
-	if [[ "$os" == "darwin" ]]; then
+	if _is_darwin_os "$os"; then
 		cat <<EOF
 - \`launchctl list | grep ${plist_label##*.}\` — PID and exit status
 - \`log show --predicate 'subsystem == "com.apple.launchd"' --last 5m | grep ${plist_label##*.}\` — recent launches
@@ -328,7 +340,7 @@ EOF
 describe_r905() {
 	local os="${1:-darwin}"
 	local mem_check_cmd mem_monitor
-	if [[ "$os" == "darwin" ]]; then
+	if _is_darwin_os "$os"; then
 		mem_check_cmd="\`memory_pressure\` command — current system pressure"
 		mem_monitor="Activity Monitor → Memory tab — pressure graph"
 	else
@@ -492,7 +504,7 @@ EOF
 describe_r909() {
 	local os="${1:-darwin}"
 	local screen_time_check
-	if [[ "$os" == "darwin" ]]; then
+	if _is_darwin_os "$os"; then
 		screen_time_check="System Settings → Screen Time — raw data"
 	else
 		screen_time_check="\`~/.aidevops/.agent-workspace/cron/screen-time/\` — snapshot data (no native Screen Time on Linux)"
@@ -612,7 +624,7 @@ EOF
 describe_r912() {
 	local os="${1:-darwin}"
 	local status_cmd
-	if [[ "$os" == "darwin" ]]; then
+	if _is_darwin_os "$os"; then
 		status_cmd="\`launchctl list | grep dashboard\` — process status"
 	else
 		status_cmd="\`systemctl --user status sh.aidevops.dashboard\` — service status"
@@ -815,7 +827,10 @@ EOF
 }
 
 describe_r915() {
-	local os="${1:-darwin}"
+	local os="${1:-}"
+	if [[ -z "$os" ]]; then
+		os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+	fi
 	cat <<EOF
 # r915: Pulse check
 
