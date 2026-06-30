@@ -1128,14 +1128,14 @@ _is_task_committed_to_main() {
 # moved on, so it must not strand work forever (GH#22964/GH#22965).
 #
 # Args:
-#   $1 - issue metadata JSON with .labels[].name
+#   $1 - issue metadata JSON with optional .labels[].name
 # Returns: 0 when an interactive hold label is present, 1 otherwise
 #######################################
 _dispatch_has_interactive_hold() {
 	local issue_meta_json="$1"
 	[[ -n "$issue_meta_json" ]] || return 1
 	printf '%s' "$issue_meta_json" |
-		jq -e '.labels | map(.name) | ((index("auto-dispatch") | not) and (index("status:in-review") or index("origin:interactive")))' >/dev/null 2>&1
+		jq -e '(.labels // []) | map(.name) | ((index("auto-dispatch") | not) and (index("status:in-review") or index("origin:interactive")))' >/dev/null 2>&1
 	return $?
 }
 
