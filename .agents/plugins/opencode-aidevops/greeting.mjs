@@ -67,6 +67,7 @@ const execAsync = promisify(exec);
 
 const CACHE_DIR = join(homedir(), ".aidevops", "cache");
 const CACHE_FILE = join(CACHE_DIR, "session-greeting.txt");
+const WARNING_LINE_PREFIXES = ["Pulse stalled", "[OPENCODE MAINTENANCE]", "[WARNING]", "[WARN]"];
 
 // Fallback window: accept the first session.updated as a trigger if no
 // session.created arrived within this many ms of plugin init. Keeps the
@@ -199,13 +200,7 @@ export function classifyLines(output) {
     // success, then info (catch-all for version/env lines).
     if (line.startsWith("[SECURITY ADVISORY]") || line.startsWith("[ERROR]")) {
       error.push(line);
-    } else if (
-      line.startsWith("Pulse stalled") ||
-      /contribution\(s\) need/i.test(line) ||
-      line.startsWith("[OPENCODE MAINTENANCE]") ||
-      line.startsWith("[WARNING]") ||
-      line.startsWith("[WARN]")
-    ) {
+    } else if (isWarningLine(line)) {
       warning.push(line);
     } else if (line.startsWith("Security: all protections active")) {
       success.push(line);
@@ -215,6 +210,10 @@ export function classifyLines(output) {
   }
 
   return { info, success, warning, error };
+}
+
+function isWarningLine(line) {
+  return WARNING_LINE_PREFIXES.some((prefix) => line.startsWith(prefix)) || /contribution\(s\) need/i.test(line);
 }
 
 /**

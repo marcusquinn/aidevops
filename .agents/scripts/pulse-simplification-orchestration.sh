@@ -415,12 +415,12 @@ _complexity_scan_sweep_check() {
 			sweep_reason=$(echo "$sweep_result" | cut -d'|' -f2)
 			gh_create_issue --repo "$aidevops_slug" \
 				--title "LLM complexity sweep: review stalled function-complexity debt" \
-				--label "function-complexity-debt" --label "auto-dispatch" --label "tier:thinking" \
+				--label "function-complexity-debt" --label "auto-dispatch" --label "tier:thinking" --label "worker-ready" \
 				--body "## Daily LLM sweep (automated, GH#15285)
 
 **Trigger:** ${sweep_reason}
 
-The deterministic complexity scan detected that function-complexity debt has not decreased in the configured stall window. An LLM-powered deep review is needed to:
+The deterministic complexity scan detected that function-complexity debt has not decreased in the configured stall window and recent-closure throughput is zero. An LLM-powered deep review is needed to:
 
 1. Identify why existing function-complexity-debt issues are not being resolved
 2. Re-prioritize the backlog based on actual impact
@@ -429,7 +429,14 @@ The deterministic complexity scan detected that function-complexity debt has not
 
 ### Scope
 
-Review all open \`function-complexity-debt\` issues and the current \`simplification-state.json\`. Focus on the top 10 largest files first." >/dev/null 2>&1 || true
+Review all open \`function-complexity-debt\` issues and the current \`simplification-state.json\`. Focus on the top 10 largest files first.
+
+### Worker Guidance
+
+- Target files: \`.agents/scripts/pulse-simplification-scan.sh\`, \`.agents/scripts/complexity-scan-helper.sh\`, \`.agents/scripts/pulse-dispatch-engine.sh\`, and matching tests under \`.agents/scripts/tests/\`.
+- Reference pattern: keep sweep creation aligned with \`complexity-scan-helper.sh sweep-check\`, including the recent-closure throughput guard before declaring a stall.
+- Do not close debt issues solely because they are old. Close only when current repo evidence shows the file is deleted, already simplified, or duplicated.
+- Verification: run \`.agents/scripts/tests/test-pulse-wrapper-complexity-scan.sh\` plus ShellCheck on changed shell scripts." >/dev/null 2>&1 || true
 			"$scan_helper" sweep-done 2>>"$LOGFILE" || true
 		fi
 	fi
