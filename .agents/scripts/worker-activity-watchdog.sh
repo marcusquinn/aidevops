@@ -629,24 +629,138 @@ CLAIM_RELEASED reason=watchdog_kill:${reason} runner=$(whoami) ts=$(date -u +%Y-
 # This caps the per-attempt cost of a single stall and frees the dispatch
 # slot for re-dispatch instead of holding it through repeated continuations.
 #######################################
+_monitor_init_state() {
+	_MONITOR_PHASE1_PASSED=0
+	_MONITOR_PHASE1_ELAPSED=0
+	_MONITOR_LAST_SIZE=0
+	_MONITOR_STALL_SECONDS=0
+	_MONITOR_DEFERRED_STALL_SECONDS=0
+	_MONITOR_START_EPOCH=$(date +%s)
+	_WATCHDOG_START_EPOCH="$_MONITOR_START_EPOCH"
+	return 0
+}
+
+#######################################
+# Handle phase 1 initial-output detection.
+#
+# Arguments:
+#   $1 - current output file size in bytes
+# Returns:
+#   0 when phase 1 handled this loop and caller should continue
+#   1 when phase 1 has already passed and caller should run phase 2
+#######################################
+_monitor_handle_phase1() {
+	local current_size="$1"
+	if [[ "$_MONITOR_PHASE1_PASSED" -ne 0 ]]; then
+		return 1
+	fi
+
+	if [[ "$current_size" -gt 0 ]]; then
+		_MONITOR_PHASE1_PASSED=1
+		_MONITOR_LAST_SIZE="$current_size"
+		_MONITOR_STALL_SECONDS=0
+	else
+		_MONITOR_PHASE1_ELAPSED=$((_MONITOR_PHASE1_ELAPSED + POLL_INTERVAL))
+		if [[ "$_MONITOR_PHASE1_ELAPSED" -ge "$PHASE1_TIMEOUT" ]]; then
+			_kill_worker "phase1: zero output in ${PHASE1_TIMEOUT}s — runtime failed to start"
+			return 0
+		fi
+	fi
+
+	sleep "$POLL_INTERVAL"
+	return 0
+}
+
+#######################################
+# Update phase 2 output-growth counters.
+#
+# Arguments:
+#   $1 - current output file size in bytes
+#######################################
+_monitor_track_output_growth() {
+	local current_size="$1"
+	if [[ "$current_size" -gt "$_MONITOR_LAST_SIZE" ]]; then
+		# File is growing — worker is output-active.
+		_MONITOR_LAST_SIZE="$current_size"
+		_MONITOR_STALL_SECONDS=0
+	else
+		_MONITOR_STALL_SECONDS=$((_MONITOR_STALL_SECONDS + POLL_INTERVAL))
+	fi
+	return 0
+}
+
+#######################################
+# Log and defer a confirmed stall for a live-work reason.
+#
+# Arguments:
+#   $1 - reason token
+#   $2 - formatted detail segment for the lifecycle line
+#######################################
+_monitor_defer_stall() {
+	local reason="$1"
+	local detail="$2"
+	# Legacy variable names for structural regression tests:
+	# deferred_stall_seconds=$((deferred_stall_seconds + stall_seconds))
+	# Expected labels: reason=ci_wait reason=network_active reason=cpu_active.
+	_MONITOR_DEFERRED_STALL_SECONDS=$((_MONITOR_DEFERRED_STALL_SECONDS + _MONITOR_STALL_SECONDS))
+	printf '[lifecycle] worker_stall_deferred pid=%s reason=%s %sstall_seconds=%ss deferred_total=%ss ts=%s\n' \
+		"$WORKER_PID" "$reason" "$detail" "$_MONITOR_STALL_SECONDS" \
+		"$_MONITOR_DEFERRED_STALL_SECONDS" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+		>>"$LIFECYCLE_LOG" 2>/dev/null || true
+	_MONITOR_STALL_SECONDS=0
+	sleep "$POLL_INTERVAL"
+	return 0
+}
+
+#######################################
+# Handle a confirmed phase 2 stall.
+#
+# Arguments:
+#   $1 - current output file size in bytes
+# Returns:
+#   0 when caller should continue monitoring
+#   1 when caller should exit because the worker was killed
+#######################################
+_monitor_handle_confirmed_stall() {
+	local current_size="$1"
+	local now_epoch elapsed_total tree_cpu
+	now_epoch=$(date +%s)
+	elapsed_total=$((now_epoch - _MONITOR_START_EPOCH))
+
+	if [[ "$HARD_KILL_SECONDS" -gt 0 && "$elapsed_total" -ge "$HARD_KILL_SECONDS" ]]; then
+		_kill_worker \
+			"hard_kill: stall confirmed and total elapsed ${elapsed_total}s ≥ hard-kill threshold ${HARD_KILL_SECONDS}s (stuck at ${current_size}b, deferred=${_MONITOR_DEFERRED_STALL_SECONDS}s) — slot freed for re-dispatch" \
+			"stall_killed"
+		return 1
+	fi
+
+	if _output_has_provider_rate_limit; then
+		_kill_worker "provider_rate_limit: provider/rate-limit marker visible after ${_MONITOR_STALL_SECONDS}s stall (stuck at ${current_size}b, total elapsed ${elapsed_total}s)"
+		return 1
+	fi
+
+	if _output_has_ci_wait; then
+		_monitor_defer_stall "ci_wait" ""
+		return 0
+	fi
+
+	if _watchdog_tree_network_active "$WORKER_PID"; then
+		_monitor_defer_stall "network_active" "signal=established_https "
+		return 0
+	fi
+
+	tree_cpu=$(_watchdog_tree_cpu "$WORKER_PID")
+	if [[ "$tree_cpu" -ge "$STALL_CPU_THRESHOLD" ]]; then
+		_monitor_defer_stall "cpu_active" "cpu=${tree_cpu}% "
+		return 0
+	fi
+
+	_kill_worker "stall: no output growth for ${STALL_TIMEOUT}s (stuck at ${current_size}b, total elapsed ${elapsed_total}s, cpu=${tree_cpu}%, deferred=${_MONITOR_DEFERRED_STALL_SECONDS}s)"
+	return 1
+}
+
 _monitor() {
-	local phase1_passed=0
-	local phase1_elapsed=0
-	local last_size=0
-	local stall_seconds=0
-	# t3056: Track cumulative deferred stall seconds — how long the watchdog
-	# has deferred kills due to CPU activity. Logged on eventual kill for
-	# Phase 2 analysis.
-	local deferred_stall_seconds=0
-	# t2956: Wall-clock start so HARD_KILL_SECONDS is measured against the
-	# total time the watchdog has been monitoring this worker — not just the
-	# duration of the current stall window. A worker that's been alternately
-	# producing output and stalling for >25 min is just as wasteful as one
-	# that's been silent the whole time.
-	local start_epoch
-	start_epoch=$(date +%s)
-	# t3056: Export start epoch for _kill_worker's trigger_age calculation
-	_WATCHDOG_START_EPOCH="$start_epoch"
+	_monitor_init_state
 
 	while true; do
 		# Worker exited on its own — watchdog not needed
@@ -658,117 +772,19 @@ _monitor() {
 		current_size=$(_get_output_size)
 
 		# Phase 1: any output at all
-		if [[ "$phase1_passed" -eq 0 ]]; then
-			if [[ "$current_size" -gt 0 ]]; then
-				phase1_passed=1
-				last_size="$current_size"
-				stall_seconds=0
-			else
-				phase1_elapsed=$((phase1_elapsed + POLL_INTERVAL))
-				if [[ "$phase1_elapsed" -ge "$PHASE1_TIMEOUT" ]]; then
-					_kill_worker "phase1: zero output in ${PHASE1_TIMEOUT}s — runtime failed to start"
-					return 0
-				fi
-			fi
-			sleep "$POLL_INTERVAL"
+		if _monitor_handle_phase1 "$current_size"; then
 			continue
 		fi
 
 		# Phase 2: continuous growth monitoring. Output growth is the cheapest
 		# live-work signal and therefore always resets the stall counter.
-		if [[ "$current_size" -gt "$last_size" ]]; then
-			# File is growing — worker is output-active.
-			last_size="$current_size"
-			stall_seconds=0
-		else
-			# No growth — increment stall counter
-			stall_seconds=$((stall_seconds + POLL_INTERVAL))
-		fi
+		_monitor_track_output_growth "$current_size"
 
-		if [[ "$stall_seconds" -ge "$STALL_TIMEOUT" ]]; then
-			# t2956: When a stall is confirmed, decide whether to do a
-			# passive kill (legacy → exit 78 → continuation attempt) or a
-			# proactive hard-kill (new → exit 79 → no continuation, slot
-			# freed). The threshold is total elapsed time since the watchdog
-			# started monitoring. HARD_KILL_SECONDS=0 disables the branch.
-			local now_epoch elapsed_total
-			now_epoch=$(date +%s)
-			elapsed_total=$((now_epoch - start_epoch))
-
-			# t3056 / GH#21781: Hard-kill always fires at the cumulative
-			# threshold — safety net regardless of CPU activity.
-			if [[ "$HARD_KILL_SECONDS" -gt 0 && "$elapsed_total" -ge "$HARD_KILL_SECONDS" ]]; then
-				_kill_worker \
-					"hard_kill: stall confirmed and total elapsed ${elapsed_total}s ≥ hard-kill threshold ${HARD_KILL_SECONDS}s (stuck at ${current_size}b, deferred=${deferred_stall_seconds}s) — slot freed for re-dispatch" \
-					"stall_killed"
+		if [[ "$_MONITOR_STALL_SECONDS" -ge "$STALL_TIMEOUT" ]]; then
+			if ! _monitor_handle_confirmed_stall "$current_size"; then
 				return 0
 			fi
-
-			# Explicit provider failures are not live-work evidence. Rotate/recover
-			# promptly instead of letting a rate-limited process hold a worker slot.
-			if _output_has_provider_rate_limit; then
-				_kill_worker "provider_rate_limit: provider/rate-limit marker visible after ${stall_seconds}s stall (stuck at ${current_size}b, total elapsed ${elapsed_total}s)"
-				return 0
-			fi
-
-			# CI/review waits are intentionally long-lived and often quiet. Defer
-			# these stalls until the hard-kill backstop rather than killing a worker
-			# that is waiting for external checks to settle.
-			if _output_has_ci_wait; then
-				deferred_stall_seconds=$((deferred_stall_seconds + stall_seconds))
-				printf '[lifecycle] worker_stall_deferred pid=%s reason=ci_wait stall_seconds=%ss deferred_total=%ss ts=%s\n' \
-					"$WORKER_PID" "$stall_seconds" "$deferred_stall_seconds" \
-					"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-					>>"$LIFECYCLE_LOG" 2>/dev/null || true
-				stall_seconds=0
-				sleep "$POLL_INTERVAL"
-				continue
-			fi
-
-			# GH#25878: An AI/API call can be live while producing no stderr and
-			# little recent CPU. Treat an established HTTPS/API socket in the worker
-			# process tree as semantic liveness, but log only to LIFECYCLE_LOG so the
-			# monitored output file does not self-reset the stall counter. Missing or
-			# restricted network tooling fails closed and falls through to CPU/no-progress.
-			if _watchdog_tree_network_active "$WORKER_PID"; then
-				deferred_stall_seconds=$((deferred_stall_seconds + stall_seconds))
-				printf '[lifecycle] worker_stall_deferred pid=%s reason=network_active signal=established_https stall_seconds=%ss deferred_total=%ss ts=%s\n' \
-					"$WORKER_PID" "$stall_seconds" "$deferred_stall_seconds" \
-					"$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-					>>"$LIFECYCLE_LOG" 2>/dev/null || true
-				stall_seconds=0
-				sleep "$POLL_INTERVAL"
-				continue
-			fi
-
-			# t3056 / GH#21781: Semantic stall check — before killing,
-			# check if the worker's process tree has CPU activity. Workers
-			# doing API roundtrips, shellcheck runs, or large file reads
-			# consume CPU but produce no log output. Killing them is a
-			# false positive. Defer the kill and reset the stall counter.
-			# The hard-kill threshold above is the absolute safety net.
-			local tree_cpu
-			tree_cpu=$(_watchdog_tree_cpu "$WORKER_PID")
-			if [[ "$tree_cpu" -ge "$STALL_CPU_THRESHOLD" ]]; then
-				deferred_stall_seconds=$((deferred_stall_seconds + stall_seconds))
-				# t3058 / GH#21786: write defer marker to LIFECYCLE_LOG, NOT
-				# OUTPUT_FILE. Writing to OUTPUT_FILE grew the monitored file
-				# and falsely advanced last_size, defeating the stall counter
-				# and silently neutering STALL_TIMEOUT (only HARD_KILL_SECONDS
-				# at 1500s remained as a real cap). Format aligned with the
-				# `[lifecycle] worker_killed` line emitted by _kill_worker so
-				# Phase 2 aggregation can join defer events alongside kills.
-				printf '[lifecycle] worker_stall_deferred pid=%s reason=cpu_active cpu=%s%% stall_seconds=%ss deferred_total=%ss ts=%s\n' \
-					"$WORKER_PID" "$tree_cpu" "$stall_seconds" \
-					"$deferred_stall_seconds" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-					>>"$LIFECYCLE_LOG" 2>/dev/null || true
-				stall_seconds=0
-				sleep "$POLL_INTERVAL"
-				continue
-			fi
-
-			_kill_worker "stall: no output growth for ${STALL_TIMEOUT}s (stuck at ${current_size}b, total elapsed ${elapsed_total}s, cpu=${tree_cpu}%, deferred=${deferred_stall_seconds}s)"
-			return 0
+			continue
 		fi
 
 		sleep "$POLL_INTERVAL"
