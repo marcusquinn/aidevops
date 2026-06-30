@@ -38,7 +38,12 @@ export function extractAndStoreIntent(callID, args) {
   const hasIntent = Object.prototype.hasOwnProperty.call(args, INTENT_FIELD);
   const raw = args[INTENT_FIELD];
   if (hasIntent) {
-    delete args[INTENT_FIELD];
+    try {
+      delete args[INTENT_FIELD];
+    } catch {
+      // Tool args can come from host/runtime objects with frozen or
+      // non-configurable properties; extraction must not crash execution.
+    }
   }
 
   if (typeof raw !== "string") return undefined;
