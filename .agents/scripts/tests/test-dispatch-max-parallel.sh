@@ -579,6 +579,34 @@ test_serial_loop_budget_cap() {
 	return 0
 }
 
+test_serial_loop_allows_unset_stop_flag() {
+	# Stub: every candidate succeeds. The serial loop must treat an unset
+	# STOP_FLAG as "no stop flag" under set -u, matching the parallel loop and
+	# capacity pre-check guards.
+	# shellcheck disable=SC2317  # called via name resolution from loop
+	_dispatch_process_candidate() {
+		return 0
+	}
+
+	local candidate_file old_stop_flag result
+	candidate_file=$(mktemp)
+	printf '%s\n' '{"number":700,"repo_slug":"o/r","repo_path":"/t","url":"u","title":"t","labels":[]}' >"$candidate_file"
+
+	old_stop_flag="$STOP_FLAG"
+	unset STOP_FLAG || true
+	_DISPATCH_THROTTLE_CLEARED=0
+	result=$(_dispatch_floor_loop "$candidate_file" 10 10 "test_user")
+	export STOP_FLAG="$old_stop_flag"
+	rm -f "$candidate_file"
+
+	if [[ "$result" == "1 1" ]]; then
+		print_result "serial_loop: unset STOP_FLAG defaults to no stop flag" 0
+	else
+		print_result "serial_loop: unset STOP_FLAG defaults to no stop flag" 1 "got=${result}"
+	fi
+	return 0
+}
+
 # =============================================================================
 # Run all tests
 # =============================================================================
@@ -600,6 +628,7 @@ test_dispatch_with_timeout_noop_outcome
 test_serial_loop_basic
 test_serial_loop_isolates_candidate_stdout
 test_serial_loop_budget_cap
+test_serial_loop_allows_unset_stop_flag
 
 # Final summary
 echo ""
