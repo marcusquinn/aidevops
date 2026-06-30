@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readStatus, readVaultStatus, readVaultSummary, STATUS_ADAPTER_COMMAND } from "../src/status-adapter";
 import { resolveBinary } from "../src/status-adapter-utils";
+import { readPulseWorkersSummary } from "../src/status-pulse-workers";
 
 describe("status adapter", () => {
   test("uses an exact helper command pattern", () => {
@@ -40,10 +41,55 @@ describe("status adapter", () => {
     expect(JSON.stringify(response.data.ai_apps)).not.toContain("token");
     expect(response.data.notifications.every((notification) => notification.source_ref.length > 0)).toBe(true);
     expect(response.data.vault.value_policy).toBe("metadata_only_no_secret_material");
+    expect(response.data.pulse_workers.value_policy).toBe("metadata_only_no_prompt_payloads_no_secrets");
+    expect(response.source.path_refs).toContain("~/.aidevops/logs/headless-runtime-metrics.jsonl");
     expect(response.data.vault.readiness.remote_unlock_enabled).toBe(false);
     expect(JSON.stringify(response.data.vault)).not.toContain("SECRET_SENTINEL_DO_NOT_RENDER");
     expect(response.data.capabilities.length).toBeGreaterThan(0);
     expect(response.data.secrets[0]).toEqual({ name: "GITHUB_TOKEN", status: "unchecked" });
+  });
+
+  test("populates Pulse and Workers status from local telemetry files", () => {
+    const root = mkdtempSync(join(tmpdir(), "aidevops-gui-pulse-workers-"));
+    const metricsPath = join(root, "headless-runtime-metrics.jsonl");
+    const pulseStatsPath = join(root, "pulse-stats.json");
+    const resourcesPath = join(root, "resource-metrics.jsonl");
+    const tokenReportsRoot = join(root, "token-reports");
+    const reportDir = join(tokenReportsRoot, "20260630T094500Z");
+    const oauthPoolPath = join(root, "oauth-pool.json");
+    mkdirSync(reportDir, { recursive: true });
+    writeFileSync(metricsPath, [
+      JSON.stringify({ ts: 1782810000, result: "success", issue: 25914, pr: 25999, repo: "marcusquinn/aidevops", provider: "openai", model: "gpt-5.5", input_tokens: 1200, output_tokens: 300, cached_tokens: 100, estimated_cost_usd: 0.42, duration_ms: 60000, issue_origin: "origin_interactive", author_association: "MEMBER" }),
+      JSON.stringify({ ts: 1782806400, result: "blocked", issue: 25910, repo: "marcusquinn/aidevops", provider: "anthropic", model: "sonnet", total_tokens: 900, issue_origin: "third_party", author_association: "CONTRIBUTOR" }),
+    ].join("\n"));
+    writeFileSync(pulseStatsPath, JSON.stringify({ counters: { pre_dispatch_aborts: [1782810000], retry_queue: [1782806400, 1000] } }));
+    writeFileSync(resourcesPath, JSON.stringify({ ts: 1782810000, role: "worker", rss_kb: 900000, peak_rss_kb: 900000, result: "success" }));
+    writeFileSync(join(reportDir, "report.json"), JSON.stringify({ provider: "openai", model: "gpt-5.5", input_tokens: 500, output_tokens: 150, total_tokens: 650, estimated_cost_ref: "$0.08 estimated" }));
+    writeFileSync(oauthPoolPath, JSON.stringify({ providers: [{ provider: "openai", available: 2 }] }));
+
+    const result = readPulseWorkersSummary({ metricsPath, pulseStatsPath, resourceMetricsPath: resourcesPath, tokenReportsRoot, oauthPoolPath, observedAt: "2026-06-30T09:45:00.000Z", nowMs: 1782812700000 });
+
+    expect(result.summary.kpis.find((kpi) => kpi.id === "worker-outcomes-24h")?.sample_size).toBe(2);
+    expect(result.summary.events[0].issue_ref).toBe("#25914");
+    expect(result.summary.events[0].usage?.provider).toBe("openai");
+    expect(result.summary.events[0].usage?.estimated_cost_ref).toBe("$0.42 estimated");
+    expect(result.summary.events[0].resources[0].pressure).toBe("medium");
+    expect(result.summary.attention.map((item) => item.id)).toContain("pulse-counter-pre-dispatch-aborts");
+    expect(result.summary.filters.providers.map((item) => item.label)).toContain("openai:gpt-5.5");
+    expect(JSON.stringify(result.summary)).not.toContain(root);
+  });
+
+  test("returns safe Pulse and Workers warnings for missing or malformed telemetry", () => {
+    const root = mkdtempSync(join(tmpdir(), "aidevops-gui-pulse-workers-missing-"));
+    const invalidPulseStatsPath = join(root, "pulse-stats.json");
+    writeFileSync(invalidPulseStatsPath, "not-json");
+
+    const result = readPulseWorkersSummary({ metricsPath: join(root, "missing.jsonl"), pulseStatsPath: invalidPulseStatsPath, resourceMetricsPath: join(root, "missing-resources.jsonl"), tokenReportsRoot: join(root, "reports"), oauthPoolPath: join(root, "oauth-pool.json"), observedAt: "2026-06-30T09:45:00.000Z" });
+
+    expect(result.summary.events).toEqual([]);
+    expect(result.summary.kpis.find((kpi) => kpi.id === "worker-outcomes-24h")?.value).toBe("unknown");
+    expect(result.summary.attention.some((item) => item.title === "Telemetry source invalid")).toBe(true);
+    expect(result.summary.attention.some((item) => item.id === "provider-availability-unknown")).toBe(true);
   });
 
   test("returns a metadata-only Vault envelope", () => {
