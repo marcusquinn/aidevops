@@ -16,7 +16,7 @@ function DevOpsCard({ validation }: { validation: GuiTamboValidationResult }) {
   const entries = Object.entries(props).filter(([key]) => key !== "title" && key !== "disabled");
 
   return (
-    <section className="genui-card" data-genui-component={validation.component ?? "unknown"} aria-label={`${validation.component} ${text.devOpsCard}`}>
+    <section className="genui-card" data-genui-component={validation.component ?? "unknown"} aria-label={`${validation.component ?? "unknown"} ${text.devOpsCard}`}>
       <header>
         <p className="eyebrow">{text.tamboGenUiReadOnly}</p>
         <h3>{stringProp(props.title) ?? validation.component}</h3>
