@@ -182,7 +182,7 @@ _pulse_worker_log_prelaunch_failure_reason() {
 #   $3 - optional grace timeout in seconds
 #
 # Exit codes:
-#   0 - worker launch appears valid (process observed, no CLI usage output marker)
+#   0 - worker launch appears valid (process remains alive after stability check)
 #   1 - launch invalid (no process within grace window or usage output detected)
 #######################################
 check_worker_launch() {
@@ -207,8 +207,13 @@ check_worker_launch() {
 
 	local elapsed=0
 	local poll_seconds=2
+	local stability_seconds="${PULSE_LAUNCH_STABILITY_SECONDS:-3}"
 	local candidate=""
 	local prelaunch_failure_reason=""
+	[[ "$stability_seconds" =~ ^[0-9]+$ ]] || stability_seconds=3
+	if [[ "$stability_seconds" -lt 1 ]]; then
+		stability_seconds=1
+	fi
 	while [[ "$elapsed" -lt "$grace_seconds" ]]; do
 		for candidate in "${log_candidates[@]}"; do
 			prelaunch_failure_reason=$(_pulse_worker_log_prelaunch_failure_reason "$candidate")
@@ -234,7 +239,12 @@ check_worker_launch() {
 			# is confirmed. Resetting on launch defeated the counter
 			# entirely — workers that launched but died during execution
 			# were invisible. (GH#2076, GH#17378)
-			return 0
+			sleep "$stability_seconds"
+			elapsed=$((elapsed + stability_seconds))
+			if has_worker_for_repo_issue "$issue_number" "$repo_slug"; then
+				return 0
+			fi
+			echo "[pulse-wrapper] Launch validation transient for issue #${issue_number} (${repo_slug}) — process disappeared during ${stability_seconds}s stability check" >>"$LOGFILE"
 		fi
 		sleep "$poll_seconds"
 		elapsed=$((elapsed + poll_seconds))
