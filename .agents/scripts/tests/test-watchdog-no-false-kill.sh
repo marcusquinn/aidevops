@@ -130,19 +130,23 @@ assert_contains \
 	'STALL_CPU_THRESHOLD="${WORKER_STALL_CPU_THRESHOLD:-2}"' \
 	"$watchdog_source"
 assert_contains \
-	"4b. CPU check defers kill (worker_stall_deferred lifecycle marker)" \
+	"4b. STALL_CPU_THRESHOLD falls back when non-numeric" \
+	'[[ "$stall_cpu_threshold" =~ ^[0-9]+$ ]] || stall_cpu_threshold=2' \
+	"$watchdog_source"
+assert_contains \
+	"4c. CPU check defers kill (worker_stall_deferred lifecycle marker)" \
 	"worker_stall_deferred" \
 	"$watchdog_source"
 assert_contains \
-	"4c. Network semantic helper exists" \
+	"4d. Network semantic helper exists" \
 	"_watchdog_tree_network_active()" \
 	"$watchdog_source"
 assert_contains \
-	"4d. Network-active defers are labeled distinctly" \
+	"4e. Network-active defers are labeled distinctly" \
 	"reason=network_active" \
 	"$watchdog_source"
 assert_contains \
-	"4e. Network helper probes established HTTPS/API sockets" \
+	"4f. Network helper probes established HTTPS/API sockets" \
 	"established_https" \
 	"$watchdog_source"
 
