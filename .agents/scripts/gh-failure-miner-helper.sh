@@ -161,6 +161,30 @@ normalize_signature_line() {
 	return 0
 }
 
+filter_signature_noise_lines() {
+	local logs="$1"
+	printf '%s\n' "$logs" | awk '
+		{
+			raw = $0
+			payload = $0
+			n = split(raw, fields, "\t")
+			if (n >= 4) {
+				payload = fields[4]
+				for (i = 5; i <= n; i++) {
+					payload = payload "\t" fields[i]
+				}
+			}
+			gsub(/\033\[[0-9;]*[A-Za-z]/, "", payload)
+			gsub(/^[[:space:]]+/, "", payload)
+			if (payload ~ /^#[[:space:]]/) {
+				next
+			}
+			print raw
+		}
+	'
+	return 0
+}
+
 select_failed_job_json() {
 	local repo_slug="$1"
 	local run_id="$2"
@@ -237,6 +261,7 @@ extract_failure_signature() {
 	local failed_job_json
 	local zero_step_signature
 	local logs
+	local filtered_logs
 	local failed_job_id
 
 	failed_job_json=$(select_failed_job_json "$repo_slug" "$run_id" "$check_run_id")
@@ -260,25 +285,26 @@ extract_failure_signature() {
 		printf '%s' "no_failed_log_output"
 		return 0
 	fi
+	filtered_logs=$(filter_signature_noise_lines "$logs")
 
 	# Check for known infrastructure error patterns before extracting a generic signature.
 	# These patterns indicate billing/runner issues, not code defects. (GH#18093)
 	local infra_line
-	infra_line=$(printf '%s\n' "$logs" | grep -iE "recent account payments have failed|spending limit needs to be increased" | head -1 || true)
+	infra_line=$(printf '%s\n' "$filtered_logs" | grep -iE "recent account payments have failed|spending limit needs to be increased" | head -1 || true)
 	if [[ -n "$infra_line" ]]; then
 		printf '%s' "infra:billing_exhausted"
 		return 0
 	fi
-	infra_line=$(printf '%s\n' "$logs" | grep -iE "Runner.*unavailable|no matching runner|runner.*not found" | head -1 || true)
+	infra_line=$(printf '%s\n' "$filtered_logs" | grep -iE "Runner.*unavailable|no matching runner|runner.*not found" | head -1 || true)
 	if [[ -n "$infra_line" ]]; then
 		printf '%s' "infra:runner_unavailable"
 		return 0
 	fi
 
 	local candidate
-	candidate=$(printf '%s\n' "$logs" | awk 'BEGIN{IGNORECASE=1} /error|exception|traceback|failed|denied|timeout|cannot|invalid|forbidden|unauthorized/ {print; exit}')
+	candidate=$(printf '%s\n' "$filtered_logs" | awk 'BEGIN{IGNORECASE=1} /error|exception|traceback|failed|denied|timeout|cannot|invalid|forbidden|unauthorized/ {print; exit}')
 	if [[ -z "$candidate" ]]; then
-		candidate=$(printf '%s\n' "$logs" | awk 'NF {print; exit}')
+		candidate=$(printf '%s\n' "$filtered_logs" | awk 'NF {print; exit}')
 	fi
 
 	normalize_signature_line "$candidate"
