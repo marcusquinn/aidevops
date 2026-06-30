@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.3] - 2026-07-01
+
+### Changed
+
+- fix: feed startup stalls into provider availability (#26128)
+- Tests: guard failure miner comment-only signatures (#26129)
+- Maintenance: sync ref:GH#26133 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#26118 to TODO.md [skip ci]
+
 ## [3.31.2] - 2026-07-01
 
 ### Changed
