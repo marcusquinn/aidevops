@@ -12,14 +12,19 @@ You are the strategic reviewer. Run every 4 hours at opus tier. The sonnet pulse
 
 ## Step 1: Gather State
 
-Gather state for ALL pulse-enabled repos — not just aidevops.
+Start with the bounded pulse-check evidence. It is the canonical entry point for
+utilisation claims because it combines current-state worker evidence,
+repos.json auto-dispatch queue counts, provider/API budget, and deduplicated
+self-improvement recommendations without leaking private repo names.
 
 ```bash
-# Pulse-enabled repos
-jq '[.initialized_repos[] | select(.pulse == true and .local_only != true)]' ~/.config/aidevops/repos.json
+~/.aidevops/agents/scripts/pulse-check-helper.sh report
+~/.aidevops/agents/scripts/pulse-check-helper.sh json
 ```
 
-Per repo (run all, skip none):
+Only run per-repo GitHub reads when the pulse-check report identifies a
+specific unresolved queue, PR, or state-consistency question. Keep output
+private unless publishing to a private channel.
 
 ```bash
 # Per-repo: open PRs
@@ -37,17 +42,6 @@ gh issue list --repo <owner/repo> --state open --json number,title,labels,update
 # Per-repo: TODO.md tasks
 # rg '^\- \[ \] t\d+' ~/Git/<repo>/TODO.md
 # rg -c '^\- \[x\] t\d+' ~/Git/<repo>/TODO.md
-```
-
-```bash
-# Active worktrees — iterate all managed repos
-jq -r '[.initialized_repos[] | select(.pulse == true and .local_only != true)] | .[].path' ~/.config/aidevops/repos.json | while read -r repo_path; do
-  echo "=== $repo_path ==="
-  git -C "$repo_path" worktree list 2>/dev/null || echo "(not a git repo or path missing)"
-done
-
-# Running workers
-pgrep -f '/full-loop' 2>/dev/null | wc -l | tr -d ' '
 ```
 
 **Product repos have higher priority than tooling repos.** Check `priority` field in repos.json.
