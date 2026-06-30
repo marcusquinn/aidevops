@@ -9,7 +9,7 @@ import { Workspace } from "../src/AppWorkspace";
 import { commandPaletteMatches, commandPaletteShortcutEntries, commandPaletteShortcutQuery, orderCommandItemsByRecency, rememberCommandPaletteItemId } from "../src/CommandPalette";
 import { CommsConversationSurface } from "../src/CommsConversationSurface";
 import { AppsSurface, nextRecommendedFilterValue } from "../src/InventorySurfaces";
-import { DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, surfaceRecordCounts, type SurfaceNavItem } from "../src/app-model";
+import { DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, chatPrimitiveStackDecision, surfaceRecordCounts, type SurfaceNavItem } from "../src/app-model";
 import { renderDashboardHtml } from "../src/dashboard";
 import { fetchStatus, mockedStatus } from "../src/status-client";
 import type { GuiConversationThread, GuiManagedAppSummary } from "../../gui-shared/src";
@@ -130,6 +130,14 @@ describe("dashboard shell", () => {
     expect(html).toContain("ready for Tambo cards");
     expect(html).toContain("MessageScroller-compatible transcript");
     expect(html).toContain("New, rename, pin, archive, delete, share, and export");
+  });
+
+  test("records the audited chat primitive stack decision", () => {
+    expect(chatPrimitiveStackDecision.owner).toBe("local_vite_shell");
+    expect(chatPrimitiveStackDecision.foundation).toContain("Turbostarter AI patterns");
+    expect(chatPrimitiveStackDecision.adopt).toEqual(["MessageScroller", "Message", "Bubble", "Attachment", "Marker"]);
+    expect(chatPrimitiveStackDecision.defer).toContain("Tambo ordinary chat persistence");
+    expect(chatPrimitiveStackDecision.defer).toContain("Next.js route ownership");
   });
 
   test("renders Pulse and Workers data-driven dashboard with filters and drilldown", () => {

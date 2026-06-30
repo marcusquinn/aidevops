@@ -120,6 +120,36 @@ Use a hybrid architecture:
 This keeps the current local-first Vite/Hono architecture, avoids adopting a
 second persistence owner, and gives each child issue a clear boundary.
 
+### Phase 1 audit outcome for #26003
+
+The current app shell already has the navigation seams needed for the remaining
+phases, so Phase 1 should not introduce a second router or app shell:
+
+- `packages/gui-web/src/App.tsx` owns `ShellMode`, `ConversationMode`, local
+  navigation history, selected repo, and selected session state.
+- `packages/gui-web/src/AppNavigation.tsx` owns the machine rail, DevOps/Comms
+  groups, and the AI/People conversation sidebar switch.
+- `packages/gui-web/src/AppWorkspace.tsx` owns the header action placement,
+  assistant panel, `ConversationWorkspace`, and current AI/channel/DM surfaces.
+- `packages/gui-web/src/app-model.ts` owns the typed surface registry and now
+  exports `chatPrimitiveStackDecision` so tests and later workers share one
+  source of truth for the selected chat primitives.
+
+The exact stack decision for implementation phases is:
+
+| Layer | Decision | Why |
+|-------|----------|-----|
+| App shell owner | Keep the local Vite shell and typed surface registry | Existing state/history/sidebar seams already cover AI sessions, channels, DMs, workers, repos, deployments, and settings. |
+| AI session foundation | Follow Turbostarter AI product patterns | It covers persistence, AI SDK transport, models, attachments, tool/reasoning panels, sharing, history, archive/delete/pin, and usage metadata. |
+| Chat UI primitives | Adopt local shadcn-style `MessageScroller`, `Message`, `Bubble`, `Attachment`, and `Marker` equivalents | They map directly to the existing transcript placeholders and can be introduced without changing persistence ownership. |
+| Generative UI | Use Tambo only for embedded DevOps cards/interactables | Cards should render as conversation parts; Tambo must not own channel storage, DM transport, or ordinary chat persistence. |
+| Tours | Keep signposts/tours in the header help slot | Tours are onboarding infrastructure and remain separate from chat primitives. |
+
+Do not adopt Next.js route ownership or Tambo ordinary-chat persistence in these
+phases. Later workers should extract the repeated local chat markup in
+`AppWorkspace.tsx` and `CommsConversationSurface.tsx` into reusable local
+components that match the selected primitive names.
+
 ## Implementation map for child issues
 
 ### Issue #25709: unified conversations model
