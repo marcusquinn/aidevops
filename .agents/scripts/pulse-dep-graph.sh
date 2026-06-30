@@ -97,8 +97,8 @@ _dep_graph_process_issue_json() {
 	label_names=$(printf '%s' "$issue_json" | jq -r '.labels[]?.name // empty' 2>/dev/null) || label_names=""
 	label_blocker_tids=$(printf '%s' "$label_names" | grep -oE '^blocked-by:t[0-9]+(\.[0-9a-z]+)*$' | sed 's/^blocked-by:t//' || true)
 	label_blocker_nums=$(printf '%s' "$label_names" | grep -oE '^blocked-by:#[0-9]+$' | grep -oE '[0-9]+' || true)
-	blocker_tids=$(printf '%s\n%s\n' "$body_blocker_tids" "$label_blocker_tids" | grep -v '^$' | sort -u || true)
-	blocker_nums=$(printf '%s\n%s\n' "$body_blocker_nums" "$label_blocker_nums" | grep -v '^$' | sort -u || true)
+	blocker_tids=$(printf '%s\n%s\n' "$body_blocker_tids" "$label_blocker_tids" | sed '/^$/d' | sort -u)
+	blocker_nums=$(printf '%s\n%s\n' "$body_blocker_nums" "$label_blocker_nums" | sed '/^$/d' | sort -u)
 
 	local tid_arr="" num_arr=""
 	tid_arr=$(printf '%s' "$blocker_tids" | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null) || tid_arr='[]'
@@ -430,7 +430,7 @@ _refresh_all_blockers_resolved() {
 
 	# Issue number blockers
 	local blocker_nums="" bnum=""
-	blocker_nums=$(printf '%s' "$entry_json" | jq -r '.issue_nums[]' 2>/dev/null) || blocker_nums=""
+	blocker_nums=$(printf '%s' "$entry_json" | jq -r '.issue_nums[]?' || true)
 	while IFS= read -r bnum; do
 		[[ "$bnum" =~ ^[0-9]+$ ]] || continue
 		is_open=$(printf '%s' "$open_issues_json" | jq --argjson n "$bnum" 'index($n) != null' 2>/dev/null) || is_open="false"
