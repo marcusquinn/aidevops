@@ -1049,6 +1049,20 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18031 fix(gui): reduce AppActionButton qlty smells after v3.29.28 release failure #bug #interactive ~1h ref:GH#25842 logged:2026-06-29 pr:#25844 completed:2026-06-29
 
+- [ ] t18033 Build Pulse & Workers observability console for aidevops.app #dashboard #feat #observability #parent-task #product #pulse ~1h ref:GH#25911 logged:2026-06-30 -> [todo/tasks/t18033-brief.md]
+
+- [ ] t18034 Rename Workers to Pulse & Workers and add observability UI shell #auto-dispatch #dashboard #feat #observability #pulse ~2h ref:GH#25912 logged:2026-06-30 -> [todo/tasks/t18034-brief.md]
+
+- [ ] t18035 Add Pulse & Workers observability contracts and fixtures #auto-dispatch #dashboard #feat #observability #pulse ~3h blocked-by:t18034 ref:GH#25913 logged:2026-06-30 -> [todo/tasks/t18035-brief.md]
+
+- [ ] t18036 Populate Pulse & Workers status from read-only local telemetry #api #auto-dispatch #dashboard #feat #observability #pulse ~4h blocked-by:t18035 ref:GH#25914 logged:2026-06-30 -> [todo/tasks/t18036-brief.md]
+
+- [ ] t18037 Build data-driven Pulse & Workers dashboard filters charts and drilldown #auto-dispatch #dashboard #design #feat #observability #pulse ~4h blocked-by:t18036 ref:GH#25915 logged:2026-06-30 -> [todo/tasks/t18037-brief.md]
+
+- [ ] t18038 Add safe Pulse & Workers action buttons with terminal output #api #auto-dispatch #dashboard #feat #observability #pulse ~4h blocked-by:t18037 ref:GH#25916 logged:2026-06-30 -> [todo/tasks/t18038-brief.md]
+
+- [ ] t18039 Add productivity insights and systemic fix feedback to Pulse & Workers #auto-dispatch #dashboard #feat #observability #pulse #self-improvement ~4h blocked-by:t18038 ref:GH#25917 logged:2026-06-30 -> [todo/tasks/t18039-brief.md]
+
 ## In Progress
 
 - [x] t2744 raise GraphQL throttle defaults and reduce pulse/stats cycle pressure — circuit breaker default `0.05`→`0.30` (trips at 1500 remaining instead of 250), REST fallback default `10`→`1000` (REST takes over earlier, GraphQL kept in reserve), pulse interval default `120s`→`180s`, stats-wrapper interval `900s`→`3600s`. Also fixes macOS launchd path that ignored `supervisor.pulse_interval_seconds` from settings. Evidence: GraphQL=0/5000 vs REST=4044/5000 with 21 EXHAUSTED events in current pulse log; per-cycle cost (~400-700 pts) × 30 cycles/hr × 14 repos exceeds 5000/hr ceiling by 2-4×. All env-overridable, fully backwards-compatible. See `todo/tasks/t2744-brief.md`. #framework #pulse #interactive ~1h ref:GH#20482 started:2026-04-22 pr:#20483 completed:2026-04-22
