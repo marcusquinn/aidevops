@@ -289,9 +289,10 @@ list_dispatchable_issue_candidates_json() {
 			# candidate build and dispatch.
 			select(($labels | index("parent-task")) == null) |
 			select(($labels | index("no-auto-dispatch")) == null) |
-			select((($labels | index("status:in-progress")) == null) or (($labels | index($auto_dispatch_label)) != null)) |
-			select((($labels | index("status:in-review")) == null) or (($labels | index($auto_dispatch_label)) != null)) |
-			select((($labels | index("status:claimed")) == null) or (($labels | index($auto_dispatch_label)) != null)) |
+			(($labels | index($auto_dispatch_label)) != null) as $has_auto_dispatch |
+			select((($labels | index("status:in-progress")) == null) or $has_auto_dispatch) |
+			select((($labels | index("status:in-review")) == null) or $has_auto_dispatch) |
+			select((($labels | index("status:claimed")) == null) or $has_auto_dispatch) |
 			select(($labels | index("status:done")) == null) |
 			{
 				number,
