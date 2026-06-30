@@ -4384,4 +4384,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18041 Polish local GUI gradient background and panel contrast #design #enhancement ref:GH#25944 pr:#25947 completed:2026-06-30
 
-- [ ] t18042 Add pulse-check diagnostics routine #enhancement #framework #pulse ref:GH#26099
+- [x] t18042 Add pulse-check diagnostics routine #enhancement #framework #pulse ref:GH#26099 pr:#26100 completed:2026-06-30
