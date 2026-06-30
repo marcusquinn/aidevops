@@ -5,6 +5,7 @@ import { Workspace } from "./AppWorkspace";
 import type { ContrastPreference, ConversationMode, FontPreference, FontSizePreference, ShellMode, SurfaceId, ThemePreference } from "./app-model";
 import { DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, fileRootBySurface, findSurface, findSurfaceSectionLabel, fontFamilyForPreference, fontSizeForPreference, getSystemTheme, isContrastPreference, isFontPreference, isFontSizePreference } from "./app-model";
 import { type NavigationHistory, nextHistoryIndex, useNavigationHistoryKeyboard } from "./navigation-history";
+import { ScreenshotCaptureNotification, type ScreenshotCapturedDetail } from "./ScreenshotCaptureNotification";
 import { fetchStatus, mockedStatus } from "./status-client";
 
 interface WebKitBridgeWindow extends Window {
@@ -13,16 +14,8 @@ interface WebKitBridgeWindow extends Window {
       accentHue?: {
         postMessage: (hue: number) => void;
       };
-      externalLink?: {
-        postMessage: (href: string) => void;
-      };
     };
   };
-}
-
-interface ScreenshotCapturedDetail {
-  path: string;
-  url: string;
 }
 
 type AppearanceStorage = Pick<Storage, "getItem" | "setItem">;
@@ -219,11 +212,9 @@ export function App(): ReactElement {
   useEffect(() => {
     const showScreenshotNotification = (event: Event) => {
       const detail = (event as CustomEvent<Partial<ScreenshotCapturedDetail>>).detail;
-      if (detail === undefined || typeof detail.path !== "string" || typeof detail.url !== "string") {
-        return;
+      if (detail !== undefined && typeof detail.path === "string" && typeof detail.url === "string") {
+        setScreenshotNotification({ path: detail.path, url: detail.url });
       }
-
-      setScreenshotNotification({ path: detail.path, url: detail.url });
     };
 
     window.addEventListener("aidevops:screenshot-captured", showScreenshotNotification);
@@ -289,23 +280,6 @@ export function App(): ReactElement {
       />
       <DesktopStatusBar status={status.data} />
     </main>
-  );
-}
-
-function ScreenshotCaptureNotification({ notification, onDismiss }: { notification: ScreenshotCapturedDetail; onDismiss: () => void }): ReactElement {
-  const revealScreenshot = () => {
-    const webkit = (window as WebKitBridgeWindow).webkit;
-    webkit?.messageHandlers?.externalLink?.postMessage(notification.url);
-  };
-
-  return (
-    <div className="screenshot-capture-notification" role="status">
-      <div>
-        <strong>Screenshot captured</strong>
-        <span>Saved to <button onClick={revealScreenshot} type="button">{notification.path}</button>; path copied to clipboard.</span>
-      </div>
-      <button aria-label="Dismiss screenshot notification" onClick={onDismiss} type="button">×</button>
-    </div>
   );
 }
 

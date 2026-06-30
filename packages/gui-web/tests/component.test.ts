@@ -414,11 +414,12 @@ describe("dashboard shell", () => {
 
   test("wires desktop screenshot capture controls to native save notifications", () => {
     const appSource = readFileSync(`${guiWebRoot}/src/App.tsx`, "utf8");
+    const screenshotSource = readFileSync(`${guiWebRoot}/src/ScreenshotCaptureNotification.tsx`, "utf8");
     const css = readFileSync(`${guiWebRoot}/src/styles.css`, "utf8");
     const desktopInstaller = readFileSync(`${guiWebRoot}/../gui-desktop/scripts/install-macos-app.sh`, "utf8");
 
     expect(appSource).toContain("aidevops:screenshot-captured");
-    expect(appSource).toContain("screenshot-capture-notification");
+    expect(screenshotSource).toContain("screenshot-capture-notification");
     expect(css).toContain(".screenshot-capture-notification");
     expect(desktopInstaller).toContain("Screenshot App");
     expect(desktopInstaller).toContain("Screenshot Page");
