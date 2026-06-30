@@ -1071,6 +1071,22 @@ create_or_preview_issue() {
 	return 0
 }
 
+should_skip_code_defect_cluster() {
+	local repo_slug="$1"
+	local check_name="$2"
+	local signature="$3"
+	local signal_tag="$4"
+	if is_obsolete_qlty_empty_sarif_cluster "$check_name" "$signature"; then
+		echo "Skipping cluster for ${check_name} - empty SARIF failure signature is already handled by qlty-smell-threshold-helper.sh"
+		return 0
+	fi
+	if issue_already_exists "$repo_slug" "$signal_tag"; then
+		echo "Skipping cluster for ${check_name} - existing open issue with ${signal_tag}"
+		return 0
+	fi
+	return 1
+}
+
 create_systemic_issues() {
 	local events_json="$1"
 	local systemic_threshold="$2"
@@ -1152,14 +1168,7 @@ create_systemic_issues() {
 		pattern_id=$(compute_pattern_id "${repo_slug}|${check_name}|${signature}")
 		local signal_tag="gh-failure-miner:${pattern_id}"
 
-		if is_obsolete_qlty_empty_sarif_cluster "$check_name" "$signature"; then
-			echo "Skipping cluster for ${check_name} - empty SARIF failure signature is already handled by qlty-smell-threshold-helper.sh"
-			idx=$((idx + 1))
-			continue
-		fi
-
-		if issue_already_exists "$repo_slug" "$signal_tag"; then
-			echo "Skipping cluster for ${check_name} - existing open issue with ${signal_tag}"
+		if should_skip_code_defect_cluster "$repo_slug" "$check_name" "$signature" "$signal_tag"; then
 			idx=$((idx + 1))
 			continue
 		fi
