@@ -41,6 +41,7 @@ import {
 } from "./status-adapter-utils";
 import { readLocalReposSetupSummary } from "./status-local-repos";
 import { readManagedApps } from "./status-managed-apps";
+import { readPulseWorkersSummary } from "./status-pulse-workers";
 import { readVaultSummary } from "./status-vault";
 
 export { readVaultSummary } from "./status-vault";
@@ -48,6 +49,7 @@ export { readVaultSummary } from "./status-vault";
 export interface StatusAdapterOptions {
   repoRoot?: string;
   observedAt?: string;
+  pulseWorkers?: Parameters<typeof readPulseWorkersSummary>[0];
 }
 
 export const STATUS_ADAPTER_COMMAND = ["aidevops", "status"] as const;
@@ -80,6 +82,7 @@ export function readStatus(
   const opencodeSessions = readOpenCodeSessions(opencodeDbPath, opencodeDbPathRef, localRepos.repos);
   const oauthPool = readOAuthPoolSummary(oauthPoolPath, oauthPoolPathRef);
   const vault = readVaultSummary(repoRoot);
+  const pulseWorkers = readPulseWorkersSummary({ observedAt: options.observedAt, oauthPoolPath, ...options.pulseWorkers });
   const notifications = buildStatusNotifications({
     aiApps,
     greetingOutput: readOptionalText(expandHome(greetingCachePathRef)) ?? "",
@@ -99,6 +102,7 @@ export function readStatus(
     ...setupTargets.map((target) => target.path_ref),
     ...aiApps.flatMap((app) => [app.app_path_ref, app.binary_path_ref, app.config_path_ref, app.aidevops_target_path_ref]),
     ...managedApps.map((app) => app.install_path_ref),
+    ...pulseWorkers.source_path_refs,
   ].filter(isSourcePathRef);
 
   const data: GuiStatusData = {
@@ -148,6 +152,7 @@ export function readStatus(
     managed_apps: managedApps,
     notifications,
     vault,
+    pulse_workers: pulseWorkers.summary,
   };
 
   const envelope = createEnvelope({
