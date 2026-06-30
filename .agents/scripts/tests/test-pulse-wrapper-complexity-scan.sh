@@ -228,7 +228,7 @@ test_llm_sweep_skips_when_recent_closures_exist() {
 	install_fake_gh_for_sweep
 	local now_epoch
 	now_epoch=$(date +%s)
-	local old_epoch=$((now_epoch - COMPLEXITY_LLM_SWEEP_INTERVAL - 60))
+	local old_epoch=$((now_epoch - ${COMPLEXITY_LLM_SWEEP_INTERVAL:-0} - 60))
 	printf '%s\n' "$old_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
 	printf '10\n' >"$COMPLEXITY_DEBT_COUNT_FILE"
 	export GH_OPEN_DEBT_COUNT=10
@@ -248,7 +248,7 @@ test_llm_sweep_due_when_zero_recent_closures() {
 	install_fake_gh_for_sweep
 	local now_epoch
 	now_epoch=$(date +%s)
-	local old_epoch=$((now_epoch - COMPLEXITY_LLM_SWEEP_INTERVAL - 60))
+	local old_epoch=$((now_epoch - ${COMPLEXITY_LLM_SWEEP_INTERVAL:-0} - 60))
 	printf '%s\n' "$old_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
 	printf '10\n' >"$COMPLEXITY_DEBT_COUNT_FILE"
 	export GH_OPEN_DEBT_COUNT=10
