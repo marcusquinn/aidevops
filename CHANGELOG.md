@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.1] - 2026-06-30
+
+### Fixed
+
+- guard worktree cleanup skip globals (#26111)
+
 ## [3.31.0] - 2026-06-30
 
 ### Fixed
