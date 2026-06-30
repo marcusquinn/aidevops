@@ -64,6 +64,9 @@ assert_equals "runner-echoed shell comment is skipped" "gate / review-bot-gate G
 filtered=$(filter_signature_noise_lines $'job\tUNKNOWN STEP\ttime\t\033[36;1m# comment cannot merge\033[0m\njob\tStep\ttime\treal error')
 assert_equals "comment-only log lines are filtered" $'job\tStep\ttime\treal error' "$filtered"
 
+filtered=$(filter_signature_noise_lines $'job\tUNKNOWN STEP\ttime\t+ # rate-limit grace is disabled — they cannot merge on rate-limit-only.\njob\tStep\ttime\treal error')
+assert_equals "xtrace-prefixed shell comments are filtered" $'job\tStep\ttime\treal error' "$filtered"
+
 printf '\nTests run: %s, failures: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -ne 0 ]]; then
 	exit 1

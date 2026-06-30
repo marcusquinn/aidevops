@@ -176,7 +176,10 @@ filter_signature_noise_lines() {
 			}
 			gsub(/\033\[[0-9;]*[A-Za-z]/, "", payload)
 			gsub(/^[[:space:]]+/, "", payload)
-			if (payload ~ /^#[[:space:]]/) {
+			# GitHub Actions sometimes echoes shell comments from multi-line run blocks
+			# as UNKNOWN STEP log rows. Treat plain comments and xtrace-prefixed
+			# comments as noise so they cannot become systemic failure signatures.
+			if (payload ~ /^([+][[:space:]]*)*#[[:space:]]*/) {
 				next
 			}
 			print raw
