@@ -62,7 +62,7 @@ EOF
 	echo 'Original issue body.' >"${TEST_ROOT}/issue-body.txt"
 }
 
-setup_test_env() {
+setup_test_paths() {
 	TEST_ROOT=$(mktemp -d)
 	mkdir -p "${TEST_ROOT}/bin"
 	export PATH="${TEST_ROOT}/bin:${PATH}"
@@ -71,10 +71,10 @@ setup_test_env() {
 	GH_LOG="${TEST_ROOT}/gh-calls.log"
 	: >"$GH_LOG"
 	export TEST_ROOT GH_LOG
+	return 0
+}
 
-	# Mock gh: logs every call and returns canned data based on the
-	# subcommand. Reads/writes to files under TEST_ROOT so tests can
-	# inspect/alter state between runs.
+write_gh_mock_command_cases() {
 	cat >"${TEST_ROOT}/bin/gh" <<'GHEOF'
 #!/usr/bin/env bash
 printf '%s\n' "gh $*" >>"${GH_LOG:-/dev/null}"
@@ -140,7 +140,12 @@ case "$_subcmd" in
 	exit 0
 	;;
 esac
+GHEOF
+	return 0
+}
 
+append_gh_mock_api_cases() {
+	cat >>"${TEST_ROOT}/bin/gh" <<'GHEOF'
 # `gh api repos/...` uses the URL as $2, so the simple `case "$1 $2"`
 # pattern above can't match it. Handle api separately.
 if [[ "${1:-}" == "api" ]]; then
@@ -172,6 +177,17 @@ fi
 
 exit 0
 GHEOF
+	return 0
+}
+
+setup_test_env() {
+	setup_test_paths
+
+	# Mock gh: logs every call and returns canned data based on the
+	# subcommand. Reads/writes to files under TEST_ROOT so tests can
+	# inspect/alter state between runs.
+	write_gh_mock_command_cases
+	append_gh_mock_api_cases
 	chmod +x "${TEST_ROOT}/bin/gh"
 	return 0
 }
