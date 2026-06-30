@@ -10,9 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.39] - 2026-06-30
+
+### Changed
+
+- Maintenance: mark t18040 complete (pr:#25941 completed:2026-06-30) [skip ci]
+
 ### Fixed
 
-- restore 500-line Markdown simplification dispatch validation (#25926)
+- restore Markdown simplification gate (#25941)
 
 ## [3.29.38] - 2026-06-30
 
