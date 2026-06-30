@@ -115,9 +115,9 @@ _complexity_scan_tree_changed() {
 # Arguments: $1 - now_epoch, $2 - aidevops_slug, $3 - window_seconds
 # Outputs: integer closure count
 _complexity_recent_debt_closures() {
-	local now_epoch="$1"
-	local aidevops_slug="$2"
-	local window_seconds="$3"
+	local now_epoch="${1:-0}"
+	local aidevops_slug="${2:-}"
+	local window_seconds="${3:-0}"
 	local since_epoch=$((now_epoch - window_seconds))
 	local since_date=""
 	local recent_closures=""
@@ -146,8 +146,9 @@ _complexity_recent_debt_closures() {
 # Arguments: $1 - now_epoch, $2 - aidevops_slug
 # Returns: 0 if sweep is due, 1 if not due
 _complexity_llm_sweep_due() {
-	local now_epoch="$1"
-	local aidevops_slug="$2"
+	local now_epoch="${1:-0}"
+	local aidevops_slug="${2:-}"
+	local sweep_interval="${COMPLEXITY_LLM_SWEEP_INTERVAL:-0}"
 
 	# Interval guard
 	if [[ -f "$COMPLEXITY_LLM_SWEEP_LAST_RUN" ]]; then
@@ -155,7 +156,7 @@ _complexity_llm_sweep_due() {
 		last_sweep=$(cat "$COMPLEXITY_LLM_SWEEP_LAST_RUN" 2>/dev/null || echo "0")
 		[[ "$last_sweep" =~ ^[0-9]+$ ]] || last_sweep=0
 		local elapsed=$((now_epoch - last_sweep))
-		if [[ "$elapsed" -lt "$COMPLEXITY_LLM_SWEEP_INTERVAL" ]]; then
+		if [[ "$elapsed" -lt "$sweep_interval" ]]; then
 			return 1
 		fi
 	fi
@@ -196,10 +197,10 @@ _complexity_llm_sweep_due() {
 	# workers are closing debt and the scanner is replenishing the backlog at a
 	# similar rate. Only create an LLM sweep when recent throughput is zero.
 	local recent_closures
-	recent_closures=$(_complexity_recent_debt_closures "$now_epoch" "$aidevops_slug" "$COMPLEXITY_LLM_SWEEP_INTERVAL")
+	recent_closures=$(_complexity_recent_debt_closures "$now_epoch" "$aidevops_slug" "$sweep_interval")
 	[[ "$recent_closures" =~ ^[0-9]+$ ]] || recent_closures="0"
 	if [[ "$recent_closures" -gt 0 ]]; then
-		echo "[pulse-wrapper] Complexity LLM sweep: debt at ${current_count} but ${recent_closures} issue(s) closed in the last $((COMPLEXITY_LLM_SWEEP_INTERVAL / 3600))h — active throughput, sweep not needed" >>"$LOGFILE"
+		echo "[pulse-wrapper] Complexity LLM sweep: debt at ${current_count} but ${recent_closures} issue(s) closed in the last $((sweep_interval / 3600))h — active throughput, sweep not needed" >>"$LOGFILE"
 		printf '%s\n' "$now_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
 		return 1
 	fi
@@ -262,7 +263,7 @@ _complexity_run_llm_sweep() {
 
 **Open function-complexity-debt issues:** ${current_count:-unknown}
 
-The simplification debt count has not decreased in the last $((COMPLEXITY_LLM_SWEEP_INTERVAL / 3600))h, and the throughput guard found no recent function-complexity-debt closures. This issue is a worker-ready prompt for the LLM to review the current state and ship a small self-healing improvement when the cause is clear.
+The simplification debt count has not decreased in the last $((${COMPLEXITY_LLM_SWEEP_INTERVAL:-0} / 3600))h, and the throughput guard found no recent function-complexity-debt closures. This issue is a worker-ready prompt for the LLM to review the current state and ship a small self-healing improvement when the cause is clear.
 
 ### Questions to investigate
 

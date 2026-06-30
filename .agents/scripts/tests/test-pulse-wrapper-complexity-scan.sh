@@ -10,6 +10,8 @@
 #   - _complexity_llm_sweep_due: returns 1 when interval not elapsed
 #   - _complexity_llm_sweep_due: returns 1 when debt count decreased
 #   - _complexity_llm_sweep_due: returns 0 when interval elapsed and debt stalled
+#   - _complexity_llm_sweep_due: tolerates an unset sweep interval under set -u
+#   - _complexity_recent_debt_closures: tolerates empty arithmetic inputs under set -u
 #   - _complexity_scan_check_interval: returns 0 when no last-run file
 #   - _complexity_scan_check_interval: returns 1 when interval not elapsed
 
@@ -264,6 +266,42 @@ test_llm_sweep_due_when_zero_recent_closures() {
 	return 0
 }
 
+test_recent_closures_defaults_empty_arithmetic_inputs() {
+	install_fake_gh_for_sweep
+	export GH_RECENT_CLOSURES=0
+	local recent_closures
+	recent_closures=$(_complexity_recent_debt_closures "" "test/repo" "")
+	if [[ "$recent_closures" == "0" ]]; then
+		print_result "_complexity_recent_debt_closures: defaults empty arithmetic inputs" 0
+	else
+		print_result "_complexity_recent_debt_closures: defaults empty arithmetic inputs" 1 "expected 0, got '$recent_closures'"
+	fi
+	unset GH_RECENT_CLOSURES
+	return 0
+}
+
+test_llm_sweep_unset_interval_does_not_trip_strict_mode() {
+	install_fake_gh_for_sweep
+	local previous_interval="${COMPLEXITY_LLM_SWEEP_INTERVAL:-}"
+	local now_epoch
+	now_epoch=$(date +%s)
+	printf '%s\n' "$now_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
+	export GH_OPEN_DEBT_COUNT=10
+	export GH_RECENT_CLOSURES=1
+	export GH_ISSUE_LIST_JSON='[]'
+	unset COMPLEXITY_LLM_SWEEP_INTERVAL
+
+	if _complexity_llm_sweep_due "$now_epoch" "test/repo" >/dev/null 2>&1 || [[ $? -eq 1 ]]; then
+		print_result "_complexity_llm_sweep_due: unset interval is strict-mode safe" 0
+	else
+		print_result "_complexity_llm_sweep_due: unset interval is strict-mode safe" 1 "function errored with interval unset"
+	fi
+
+	COMPLEXITY_LLM_SWEEP_INTERVAL="$previous_interval"
+	unset GH_OPEN_DEBT_COUNT GH_RECENT_CLOSURES GH_ISSUE_LIST_JSON
+	return 0
+}
+
 # =============================================================================
 # Tests: _complexity_scan_check_interval
 # =============================================================================
@@ -325,6 +363,8 @@ main() {
 	test_llm_sweep_check_interval_guard
 	test_llm_sweep_skips_when_recent_closures_exist
 	test_llm_sweep_due_when_zero_recent_closures
+	test_recent_closures_defaults_empty_arithmetic_inputs
+	test_llm_sweep_unset_interval_does_not_trip_strict_mode
 	test_check_interval_due_when_no_last_run
 	test_check_interval_not_due_when_recent
 	test_check_interval_due_when_elapsed
