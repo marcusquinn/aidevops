@@ -26,7 +26,8 @@
 #  16. TEST_FAILURE guidance includes pnpm/Vitest hermeticity triage
 #  17. TIMEOUT_NO_OUTPUT guidance includes heartbeat and exit-code triage
 #  18. CodeFactor external failures receive source-quality guidance
-#  19. Qlty smell threshold failures receive shared-workflow guidance
+#  19. Qlty smell threshold failures receive shared-workflow guidance,
+#      including the lowercase step-name signature seen in GH#26022
 #  20. pulse-merge-feedback.sh passes shellcheck after t3225 changes
 #
 # Tests are structural — no live GitHub API calls.
@@ -194,6 +195,11 @@ assert_contains "2h2: CodeFactor → EXTERNAL_STATIC_ANALYSIS" \
 qlty_out=$(_classify_ci_failures_by_pattern "Qlty Smell Threshold" "$CONF_FILE")
 assert_contains "2h3: Qlty Smell Threshold → EXTERNAL_STATIC_ANALYSIS" \
 	"EXTERNAL_STATIC_ANALYSIS" "$qlty_out"
+
+# 2h4: Qlty smell threshold step name uses lowercase "smell threshold" in logs
+qlty_step_out=$(_classify_ci_failures_by_pattern "Qlty smell threshold check" "$CONF_FILE")
+assert_contains "2h4: Qlty smell threshold step → EXTERNAL_STATIC_ANALYSIS" \
+	"EXTERNAL_STATIC_ANALYSIS" "$qlty_step_out"
 
 # 2i: Clippy
 clippy_out=$(_classify_ci_failures_by_pattern "Clippy" "$CONF_FILE")
@@ -382,6 +388,15 @@ codefactor_class_input=$(_classify_ci_failures_by_pattern "CodeFactor" "$CONF_FI
 codefactor_section=$(_build_ci_feedback_section "12345" "$sample_codefactor_failing" "$codefactor_class_input")
 assert_contains "5d6: CodeFactor section includes source-quality guidance" \
 	"source-quality pattern" "$codefactor_section"
+
+# 5d7: GH#26022 exact step-name signature gets shared-workflow guidance.
+sample_qlty_failing="- **Qlty smell threshold check**: failure — empty SARIF output"
+qlty_step_class_input=$(_classify_ci_failures_by_pattern "Qlty smell threshold check" "$CONF_FILE")
+qlty_step_section=$(_build_ci_feedback_section "12345" "$sample_qlty_failing" "$qlty_step_class_input")
+assert_contains "5d7: qlty step section includes shared workflow guidance" \
+	"shared workflow/helper" "$qlty_step_section"
+assert_contains "5d8: qlty step section includes local reproduction command" \
+	".agents/scripts/qlty-smell-threshold-helper.sh .agents/configs/complexity-thresholds.conf" "$qlty_step_section"
 
 # 5e: Without classification arg, section omits pattern guidance (back-compat)
 section_no_classification=$(_build_ci_feedback_section "12345" "$sample_failing")

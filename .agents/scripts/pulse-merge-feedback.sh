@@ -907,18 +907,37 @@ _emit_ci_failure_guidance_blocks() {
 		[[ "$class" == "OTHER" ]] && continue
 
 		local resolution_cmd="" guidance=""
+		local fallback_resolution_cmd="" fallback_guidance=""
 		if [[ -f "$conf_file" ]]; then
-			while IFS='|' read -r cr _gr rr guide_raw; do
+			while IFS='|' read -r cr gr rr guide_raw; do
 				local cn="${cr#"${cr%%[![:space:]]*}"}"
 				cn="${cn%"${cn##*[![:space:]]}"}"
 				[[ "$cn" == "$class" ]] || continue
+				local glob="${gr#"${gr%%[![:space:]]*}"}"
+				glob="${glob%"${glob##*[![:space:]]}"}"
 				rr="${rr#"${rr%%[![:space:]]*}"}"; rr="${rr%"${rr##*[![:space:]]}"}"
 				guide_raw="${guide_raw#"${guide_raw%%[![:space:]]*}"}"
 				guide_raw="${guide_raw%"${guide_raw##*[![:space:]]}"}"
-				resolution_cmd="$rr"; guidance="$guide_raw"
-				break
+				if [[ -z "$fallback_resolution_cmd" && -z "$fallback_guidance" ]]; then
+					fallback_resolution_cmd="$rr"; fallback_guidance="$guide_raw"
+				fi
+
+				local name=""
+				while IFS= read -r name; do
+					[[ -n "$name" ]] || continue
+					# shellcheck disable=SC2254  # dynamic glob is intentional
+					case "$name" in
+						$glob)
+							resolution_cmd="$rr"; guidance="$guide_raw"
+							break 2
+							;;
+					esac
+				done < <(printf '%s\n' "${names//|/$'\n'}")
 			done < <(grep -v '^[[:space:]]*#' "$conf_file" \
 				| grep -v '^[[:space:]]*$')
+		fi
+		if [[ -z "$resolution_cmd" && -n "$fallback_resolution_cmd" ]]; then
+			resolution_cmd="$fallback_resolution_cmd"; guidance="$fallback_guidance"
 		fi
 
 		printf '#### Pattern: %s\n\n' "$class"
