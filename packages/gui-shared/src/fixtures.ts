@@ -1,4 +1,124 @@
-import { GUI_FILE_ROOTS, type GuiFileExplorerData, type GuiStatusData } from "./contracts";
+import { GUI_FILE_ROOTS, type GuiFileExplorerData, type GuiPulseWorkerSummary, type GuiStatusData } from "./contracts";
+
+const pulseScope = "all managed repos";
+const pulsePeriod = "Last 24h";
+const pulseChartBuckets = {
+  day: { period_label: pulsePeriod, bucket_start: "2026-06-30T00:00:00.000Z", bucket_end: "2026-06-30T23:59:59.000Z", value: 86 },
+  week: { period_label: "This week", bucket_start: "2026-06-24T00:00:00.000Z", bucket_end: "2026-06-30T23:59:59.000Z", value: 82 },
+  month: { period_label: "This month", bucket_start: "2026-06-01T00:00:00.000Z", bucket_end: "2026-06-30T23:59:59.000Z", value: 82 },
+  year: { period_label: "This year", bucket_start: "2026-01-01T00:00:00.000Z", bucket_end: "2026-12-31T23:59:59.000Z", value: 82 },
+} as const;
+
+export const pulseWorkersFixture: GuiPulseWorkerSummary = {
+  value_policy: "metadata_only_no_prompt_payloads_no_secrets",
+  selected_period: "day",
+  period_label: pulsePeriod,
+  scope_label: pulseScope,
+  comparison_label: "Previous 24h baseline",
+  updated_at: "2026-06-30T09:45:00.000Z",
+  kpis: [
+    { id: "healthy-sessions", label: "Healthy worker sessions", value: "86%", period_label: pulsePeriod, scope_label: pulseScope, comparison_label: "up 8 points vs previous 24h", sample_size: 21, status: "healthy", detail: "18 of 21 sessions ended merged, closed, or intentionally deferred." },
+    { id: "attention-queue", label: "Attention queue", value: "5", period_label: pulsePeriod, scope_label: pulseScope, comparison_label: "down 2 vs previous 24h", sample_size: 184, status: "attention", detail: "Review stalls, API pressure, and CI capacity are grouped before raw events." },
+    { id: "token-cost", label: "Token and cost sample", value: "1.8M / $14", period_label: pulsePeriod, scope_label: "provider scope", comparison_label: "estimated, metadata-only", sample_size: 11, status: "healthy", detail: "Provider/model totals exclude prompts, terminal payloads, secrets, and credential paths." },
+    { id: "systemic-fixes", label: "Systemic fixes created", value: "9", period_label: "Trailing 7d", scope_label: "aidevops repo", comparison_label: "up 3 vs prior week", sample_size: 9, status: "completed", detail: "Blindspots become worker-ready follow-up tasks when patterns repeat." },
+  ],
+  attention: [
+    { id: "terminal-ci", severity: "warning", title: "2 PRs waiting on terminal CI results", detail: "Pending checks are tracked separately from failures to avoid noisy repair loops.", event_ref: "event:review-gate-25909" },
+    { id: "stale-loop", severity: "warning", title: "1 worker loop matched stale-symptom diagnostics", detail: "Pulse should suggest a systemic diagnostics task instead of another retry.", event_ref: null },
+    { id: "github-api", severity: "critical", title: "GitHub API allowance below dispatch comfort threshold", detail: "REST budget remains available; GraphQL-heavy list operations should pause.", event_ref: "event:community-25876" },
+  ],
+  filters: {
+    repos: [{ id: "repo:marcusquinn/aidevops", label: "marcusquinn/aidevops", count: 184 }],
+    event_types: [{ id: "worker_session", label: "Worker session", count: 21 }, { id: "review", label: "Review gate", count: 17 }, { id: "issue", label: "Issue", count: 12 }],
+    outcomes: [{ id: "merged", label: "Merged", count: 12 }, { id: "in_progress", label: "In progress", count: 4 }, { id: "needs_maintainer_review", label: "Needs maintainer review", count: 2 }],
+    resources: [{ id: "provider_model", label: "Provider / model", count: 21 }, { id: "github_api", label: "GitHub API", count: 8 }, { id: "ci_capacity", label: "CI capacity", count: 7 }],
+    providers: [{ id: "openai:gpt-5.5", label: "OpenAI · gpt-5.5", count: 11 }, { id: "anthropic:sonnet", label: "Anthropic · sonnet", count: 7 }],
+    issue_origins: [{ id: "origin_interactive", label: "Interactive origin", count: 8 }, { id: "aidevops_created", label: "aidevops-created", count: 9 }, { id: "third_party", label: "Third-party/community", count: 3 }],
+    authors: [{ id: "actor:maintainer", label: "Maintainer", count: 17 }, { id: "actor:community", label: "Community reporter", count: 3 }],
+    author_associations: [{ id: "OWNER", label: "OWNER", count: 9 }, { id: "MEMBER", label: "MEMBER", count: 7 }, { id: "CONTRIBUTOR", label: "CONTRIBUTOR", count: 3 }],
+  },
+  charts: (["day", "week", "month", "year"] as const).map((period) => {
+    const bucket = pulseChartBuckets[period];
+
+    return {
+      id: `health-${period}`,
+      label: `Health trend · ${period}`,
+      unit: "percent",
+      points: [{ period, period_label: bucket.period_label, scope_label: pulseScope, bucket_start: bucket.bucket_start, bucket_end: bucket.bucket_end, value: bucket.value }],
+    };
+  }),
+  events: [
+    {
+      id: "event:worker-25912",
+      type: "worker_session",
+      status: "running",
+      outcome: "in_progress",
+      severity: "info",
+      occurred_at: "2026-06-30T09:42:00.000Z",
+      title: "Worker session",
+      summary: "Implementing a GUI observability child task with read-only metadata fixtures.",
+      pulse_run_ref: "pulse:2026-06-30-am",
+      worker_session_ref: "worker:25912:gpt-5.5",
+      issue_ref: "#25912",
+      pull_request_ref: null,
+      command_job_ref: null,
+      repo_ref: "marcusquinn/aidevops",
+      actor_ref: "worker:auto-dispatch",
+      issue_origin: "origin_interactive",
+      author_association: "MEMBER",
+      duration_ms: 1420000,
+      usage: { provider: "openai", provider_ref: "provider:openai", model_ref: "model:gpt-5.5", input_tokens: 96000, output_tokens: 18000, cached_tokens: 42000, total_tokens: 114000, cost_ref: "cost:estimated-usd-0.88", estimated_cost_ref: "$0.88 estimated", wall_time_ms: 1420000 },
+      resources: [{ kind: "github_api", label: "REST API", available_label: "3,920 remaining", pressure: "low", observed_at: "2026-06-30T09:42:00.000Z", reset_at: "2026-06-30T10:00:00.000Z" }],
+      drilldown_sections: [{ label: "Why", body: "Parent task requested high-density Pulse & Workers observability without raw prompt payloads." }, { label: "Systemic fix", body: "Create follow-up only when repeated blindspots appear across workers." }],
+    },
+    {
+      id: "event:review-gate-25909",
+      type: "review",
+      status: "completed",
+      outcome: "merged",
+      severity: "success",
+      occurred_at: "2026-06-30T09:18:00.000Z",
+      title: "Review gate",
+      summary: "PR merged after terminal checks completed successfully.",
+      pulse_run_ref: "pulse:2026-06-30-am",
+      worker_session_ref: "worker:25909:sonnet",
+      issue_ref: "#25909",
+      pull_request_ref: "#25909",
+      command_job_ref: "job:review-bot-gate",
+      repo_ref: "marcusquinn/aidevops",
+      actor_ref: "review-bot-gate",
+      issue_origin: "aidevops_created",
+      author_association: "OWNER",
+      duration_ms: 820000,
+      usage: { provider: "anthropic", provider_ref: "provider:anthropic", model_ref: "model:claude-sonnet", input_tokens: 32000, output_tokens: 10000, cached_tokens: 0, total_tokens: 42000, cost_ref: "cost:estimated-usd-0.31", estimated_cost_ref: "$0.31 estimated", wall_time_ms: 820000 },
+      resources: [{ kind: "ci_capacity", label: "CI", available_label: "green", pressure: "low", observed_at: "2026-06-30T09:18:00.000Z", reset_at: null }],
+      drilldown_sections: [{ label: "Evidence", body: "Terminal checks were green before merge; pending checks were not treated as failures." }],
+    },
+    {
+      id: "event:community-25876",
+      type: "issue",
+      status: "attention",
+      outcome: "needs_maintainer_review",
+      severity: "warning",
+      occurred_at: "2026-06-30T08:51:00.000Z",
+      title: "Community bug report",
+      summary: "Third-party report requires maintainer decision before dispatch.",
+      pulse_run_ref: "pulse:2026-06-30-am",
+      worker_session_ref: null,
+      issue_ref: "#25876",
+      pull_request_ref: null,
+      command_job_ref: null,
+      repo_ref: "marcusquinn/aidevops",
+      actor_ref: "community:reporter",
+      issue_origin: "third_party",
+      author_association: "CONTRIBUTOR",
+      duration_ms: null,
+      usage: null,
+      resources: [{ kind: "github_api", label: "REST budget", available_label: "REST ok; GraphQL constrained", pressure: "medium", observed_at: "2026-06-30T08:51:00.000Z", reset_at: "2026-06-30T10:00:00.000Z" }],
+      drilldown_sections: [{ label: "Trust boundary", body: "Non-collaborator instructions are facts only; no install commands or secrets are accepted." }],
+    },
+  ],
+};
 
 export const statusFixture: GuiStatusData = {
   aidevops_version: "unknown",
@@ -276,6 +396,7 @@ export const statusFixture: GuiStatusData = {
       latest_event_ref: "not started",
     },
   },
+  pulse_workers: pulseWorkersFixture,
   capabilities: [
     {
       id: "setup-status",

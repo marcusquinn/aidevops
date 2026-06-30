@@ -141,6 +141,9 @@ describe("dashboard shell", () => {
     expect(html).toContain("Health trend placeholder");
     expect(html).toContain("Provider / model");
     expect(html).toContain("Community bug report");
+    expect(html).toContain("third-party · CONTRIBUTOR");
+    expect(html).toContain("OpenAI · gpt-5.5");
+    expect(html).toContain("114,000 tokens");
     expect(html).toContain("Mobile activity cards");
     expect(html).toContain("Detail drawer becomes a full-screen sheet on small screens");
     expect(html).toContain("Open terminal output (planned)");
@@ -213,6 +216,8 @@ describe("dashboard shell", () => {
     expect(status.data.oauth_pool.providers.map((provider) => provider.provider)).toEqual(["anthropic", "openai", "cursor", "google"]);
     expect(status.data.vault.status).toBe("uninitialized");
     expect(status.data.vault.collections.flatMap((collection) => collection.surface_ids)).toContain("agents");
+    expect(status.data.pulse_workers.value_policy).toBe("metadata_only_no_prompt_payloads_no_secrets");
+    expect(status.data.pulse_workers.events.map((event) => event.issue_origin)).toContain("third_party");
     expect(status.data.setup_targets[0].path_ref).toBe("~/.aidevops/agents/VERSION");
     expect(status.data.ai_apps.map((app) => app.name)).toContain("OpenCode");
     expect(status.data.machine.initials).toBe("LM");

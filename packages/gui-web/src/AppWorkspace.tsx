@@ -385,7 +385,7 @@ function SurfaceContent({ activeItem, activeSurface, fileRoot, openSurface, stat
     aiSessions: <AiSessionsSurface selectedRepoIndex={0} status={status} />,
     channels: <CommsConversationSurface mode="channels" />,
     directMessages: <CommsConversationSurface mode="directMessages" />,
-    workers: <PulseWorkersSurface />,
+    workers: <PulseWorkersSurface status={status} />,
     repos: <PlannedSurface label={text.repos} detail={text.reposIntro} />,
     deployments: <PlannedSurface label={text.deployments} detail={text.deploymentsIntro} />,
     routines: <PlannedSurface label={text.routines} detail={text.routineDetail} />,
@@ -437,28 +437,11 @@ function SurfaceContent({ activeItem, activeSurface, fileRoot, openSurface, stat
   return staticSurfaces[activeSurface] ?? null;
 }
 
-const pulseKpis = [
-  { label: "Healthy worker sessions · last 24h · all managed repos", value: "86%", detail: "18 of 21 sessions ended merged, closed, or intentionally deferred." },
-  { label: "Attention queue · last 24h · all managed repos", value: "5", detail: "Review stalls, API pressure, and CI capacity are grouped before raw events." },
-  { label: "Token and cost sample · last 24h · provider scope", value: "1.8M / $14", detail: "Provider/model totals stay metadata-only and exclude prompt or secret payloads." },
-  { label: "Systemic fixes created · trailing 7d · aidevops repo", value: "9", detail: "Blindspots become worker-ready follow-up tasks when patterns repeat." },
-] as const;
-
-const pulseAttentionItems = [
-  "2 PRs waiting on terminal CI results, not failures",
-  "1 worker loop matched stale-symptom diagnostics",
-  "GitHub API allowance below dispatch comfort threshold",
-] as const;
-
 const pulseFilters = ["Repo", "Event type", "Outcome", "Resource", "Provider / model", "Issue origin", "Author", "Author association"] as const;
 
-const pulseActivityRows = [
-  { time: "09:42", event: "Worker session", scope: "marcusquinn/aidevops #25912", outcome: "In progress", resource: "OpenCode · gpt-5.5", origin: "origin:interactive", actor: "MEMBER" },
-  { time: "09:18", event: "Review gate", scope: "PR #25909", outcome: "Merged", resource: "CI green · 42k tokens", origin: "aidevops-created", actor: "OWNER" },
-  { time: "08:51", event: "Community bug report", scope: "Issue #25876", outcome: "Needs maintainer review", resource: "REST budget ok", origin: "third-party", actor: "CONTRIBUTOR" },
-] as const;
+function PulseWorkersSurface({ status }: { status: GuiStatusData }): ReactElement {
+  const pulse = status.pulse_workers;
 
-function PulseWorkersSurface(): ReactElement {
   return (
     <section className="pulse-workers-surface" aria-label={text.workers}>
       <div className="planned-card pulse-hero">
@@ -466,18 +449,18 @@ function PulseWorkersSurface(): ReactElement {
         <h2>{text.workers}</h2>
         <p>{text.workersIntro}</p>
         <section className="pulse-scope-strip" aria-label="Pulse scope and time range">
-          <span><strong>Period</strong> Last 24h · all managed repos</span>
-          <span><strong>Comparison</strong> Previous 24h baseline</span>
-          <span><strong>Sample</strong> 21 worker sessions · 184 events</span>
+          <span><strong>Period</strong> {pulse.period_label} · {pulse.scope_label}</span>
+          <span><strong>Comparison</strong> {pulse.comparison_label}</span>
+          <span><strong>Sample</strong> {pulse.events.length} canonical events · {pulse.kpis.reduce((total, kpi) => total + (kpi.sample_size ?? 0), 0)} samples</span>
           <span><strong>Trust boundary</strong> Metadata/status only; protected payloads excluded</span>
         </section>
       </div>
       <section className="pulse-kpi-grid" aria-label="Pulse health summary">
-        {pulseKpis.map((kpi) => (
-          <article className="metric-card pulse-kpi-card" key={kpi.label}>
-            <span>{kpi.label}</span>
+        {pulse.kpis.map((kpi) => (
+          <article className="metric-card pulse-kpi-card" key={kpi.id}>
+            <span>{kpi.label} · {kpi.period_label} · {kpi.scope_label}</span>
             <strong>{kpi.value}</strong>
-            <p>{kpi.detail}</p>
+            <p>{kpi.detail} {kpi.comparison_label}</p>
           </article>
         ))}
       </section>
@@ -491,7 +474,7 @@ function PulseWorkersSurface(): ReactElement {
             <span className="count-pill">planned actions disabled</span>
           </div>
           <ul>
-            {pulseAttentionItems.map((item) => <li key={item}>{item}</li>)}
+            {pulse.attention.map((item) => <li key={item.id}>{item.title}: {item.detail}</li>)}
           </ul>
           <button disabled title="Action routes need audited worker control APIs" type="button">Create systemic fix (planned)</button>
         </article>
@@ -501,7 +484,7 @@ function PulseWorkersSurface(): ReactElement {
           <div className="pulse-chart-placeholder" aria-label="Chart placeholder showing health, queue, token, cost, API, and CI capacity trends" role="img">
             <span>health</span><span>queue</span><span>tokens</span><span>cost</span><span>api</span><span>ci</span>
           </div>
-          <p>Charts will derive from the canonical event stream: Pulse, workers, commands, CI, issues, PRs, reviews, and outcomes.</p>
+          <p>Charts derive from {pulse.charts.map((chart) => chart.points[0]?.period).filter(Boolean).join("/")} fixture buckets across the canonical event stream: Pulse, workers, commands, CI, issues, PRs, reviews, and outcomes.</p>
         </article>
       </section>
       <section className="planned-card pulse-activity-panel" aria-label="Unified activity stream">
@@ -521,14 +504,14 @@ function PulseWorkersSurface(): ReactElement {
             </tr>
           </thead>
           <tbody>
-            {pulseActivityRows.map((row) => (
-              <tr className="pulse-activity-row" key={`${row.time}-${row.scope}`}>
-                <td data-label="When">{row.time}</td>
-                <td data-label="Event">{row.event}</td>
-                <td data-label="Scope">{row.scope}</td>
-                <td data-label="Outcome">{row.outcome}</td>
-                <td data-label="Resource">{row.resource}</td>
-                <td data-label="Origin / actor">{row.origin} · {row.actor}</td>
+            {pulse.events.map((row) => (
+              <tr className="pulse-activity-row" key={row.id}>
+                <td data-label="When">{row.occurred_at.slice(11, 16)}</td>
+                <td data-label="Event">{row.title}</td>
+                <td data-label="Scope">{[row.repo_ref, row.issue_ref ?? row.pull_request_ref].filter(Boolean).join(" ")}</td>
+                <td data-label="Outcome">{row.outcome.replaceAll("_", " ")}</td>
+                <td data-label="Resource">{resourceSummary(row)}</td>
+                <td data-label="Origin / actor">{row.issue_origin.replaceAll("_", "-")} · {row.author_association}</td>
               </tr>
             ))}
           </tbody>
@@ -551,6 +534,15 @@ function PulseWorkersSurface(): ReactElement {
       </section>
     </section>
   );
+}
+
+function resourceSummary(row: GuiStatusData["pulse_workers"]["events"][number]): string {
+  const model = row.usage?.model_ref?.replace("model:", "");
+  const providerLabel = row.usage?.provider === "openai" ? "OpenAI" : row.usage?.provider === "anthropic" ? "Anthropic" : row.usage?.provider;
+  const provider = row.usage === null ? row.resources[0]?.available_label ?? "metadata only" : `${providerLabel ?? "Provider"} · ${model ?? "model metadata pending"}`;
+  const tokens = row.usage === null ? "" : ` · ${row.usage.total_tokens.toLocaleString()} tokens`;
+
+  return `${provider}${tokens}`;
 }
 
 function HelpSurface(): ReactElement {
