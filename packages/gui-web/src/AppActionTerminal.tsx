@@ -28,7 +28,7 @@ function terminalTitle(job: TerminalJob): string {
   return "app_id" in job ? `${job.app_id} ${job.action}` : `Pulse & Workers ${job.action}`;
 }
 
-function terminalStatusLabel(job: GuiAppActionJobSummary): string {
+function terminalStatusLabel(job: TerminalJob): string {
   if (job.status === "running") {
     return "running";
   }

@@ -386,7 +386,7 @@ export const navGroups: SurfaceNavGroup[] = [
     mode: "devops",
     items: [
       plannedNavItem("aiSessions", text.aiSessions, "AI chat and OpenCode sessions", "terminal"),
-      plannedNavItem("workers", text.workers, "Pulse, worker sessions, outcomes, and resources", "activity"),
+      { id: "workers", label: text.workers, description: "Pulse, worker sessions, outcomes, and resources", icon: "activity" },
       { id: "git", label: text.localRepos, description: "~/Git explorer", icon: "folder" },
       plannedNavItem("repos", text.repos, "Unified local and remote repo context", "git"),
       { id: "projects", label: text.projects, description: "repos.json summary", icon: "git" },
