@@ -179,10 +179,10 @@ _skip_cleanup_emit() {
 	local reason_message="$3"
 	local audit_reason="$4"
 
-	echo -e "  ${RED}$wt_branch${NC} (${reason_message} - skipping)"
+	echo -e "  ${RED:-}$wt_branch${NC:-} (${reason_message} - skipping)"
 	echo "    $wt_path"
 	printf '\n'
-	log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "$audit_reason" "$_WT_CLEAN_MODE_SKIPPED"
+	log_worktree_removal_event "${_WTAR_SKIPPED:-}" "${_WTAR_WH_CALLER:-}" "$wt_path" "$audit_reason" "${_WT_CLEAN_MODE_SKIPPED:-}"
 	return 0
 }
 

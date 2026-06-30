@@ -350,6 +350,36 @@ test_branch_list_exact_matching() {
 }
 test_branch_list_exact_matching
 
+test_skip_cleanup_emit_handles_unset_globals() {
+	local rc=""
+	rc=$(
+		set -u
+		log_worktree_removal_event() {
+			local event_type="$1"
+			local caller="$2"
+			local wt_path="$3"
+			local reason="$4"
+			local mode="$5"
+			[[ -z "$event_type" && -z "$caller" && "$wt_path" == "$FAKE_REPO" && "$reason" == "unset-globals" && -z "$mode" ]]
+			return $?
+		}
+
+		# shellcheck source=/dev/null
+		source "$CLEAN_LIB_PATH" >/dev/null 2>&1 || exit 9
+
+		unset RED NC _WTAR_SKIPPED _WTAR_WH_CALLER _WT_CLEAN_MODE_SKIPPED 2>/dev/null || true
+		_skip_cleanup_emit "feature/unset-globals" "$FAKE_REPO" "unset globals" "unset-globals" >/dev/null 2>&1
+		echo "$?"
+	)
+	if [[ "$rc" == "0" ]]; then
+		print_result "_skip_cleanup_emit tolerates unset globals under set -u" 0
+	else
+		print_result "_skip_cleanup_emit tolerates unset globals under set -u" 1 "(rc=$rc)"
+	fi
+	return 0
+}
+test_skip_cleanup_emit_handles_unset_globals
+
 # =============================================================================
 # Summary
 # =============================================================================
