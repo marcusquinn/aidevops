@@ -54,7 +54,7 @@ emit_empty_sarif_warning() {
 }
 
 is_blank_output() {
-	local _value="$1"
+	local _value="${1:-}"
 	[[ -z "${_value//[[:space:]]/}" ]]
 	return $?
 }

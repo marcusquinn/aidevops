@@ -88,6 +88,9 @@ HELPER="$SCRIPT_DIR/qlty-smell-threshold-helper.sh"
 TMP_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/qlty-threshold-test.XXXXXX")
 trap 'rm -rf "$TMP_ROOT"' EXIT
 
+# shellcheck source=.agents/scripts/qlty-smell-threshold-helper.sh
+source "$HELPER"
+
 CONF="$TMP_ROOT/complexity-thresholds.conf"
 printf 'QLTY_SMELL_THRESHOLD=2\n' >"$CONF"
 BIN_DIR="$TMP_ROOT/bin"
@@ -96,6 +99,10 @@ export PATH
 
 echo "${TEST_BLUE}=== GH#26017: qlty smell threshold helper tests ===${TEST_NC}"
 echo ""
+
+is_blank_output
+no_arg_blank_rc=$?
+assert_rc "blank helper tolerates missing argument" "0" "$no_arg_blank_rc"
 
 write_stub_qlty empty "$BIN_DIR"
 empty_output=$("$HELPER" "$CONF" 2>&1)
