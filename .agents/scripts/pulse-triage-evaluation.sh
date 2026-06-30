@@ -258,6 +258,59 @@ _reevaluate_stale_continuations() {
 }
 
 #######################################
+# Backfill auto-dispatch metadata onto open simplification-debt issues that are
+# already available and not explicitly blocked. Simplification scanners can
+# create maintainer-review-shaped issues; after approval/normalization they may
+# retain status:available + function-complexity-debt without auto-dispatch,
+# leaving real work visible but unreachable by the pulse queue scanner.
+#
+# Arguments:
+#   $1 - repo slug
+# Outputs: number of issues updated
+# Returns: 0 always (best-effort; label repair must not break pulse)
+#######################################
+_backfill_simplification_auto_dispatch_labels() {
+	local slug="$1"
+	local issues_json="[]"
+	local updated=0
+
+	[[ -n "$slug" ]] || {
+		printf '0\n'
+		return 0
+	}
+
+	issues_json=$(gh_issue_list --repo "$slug" --state open \
+		--label "function-complexity-debt" --label "status:available" \
+		--json number,labels --limit 100 2>/dev/null) || issues_json="[]"
+
+	local num="" labels_to_add=""
+	while IFS=$'\t' read -r num labels_to_add; do
+		[[ "$num" =~ ^[0-9]+$ ]] || continue
+		[[ -n "$labels_to_add" ]] || labels_to_add="auto-dispatch"
+		if gh issue edit "$num" --repo "$slug" \
+			--add-label "$labels_to_add" >/dev/null 2>&1; then
+			updated=$((updated + 1))
+		fi
+	done < <(printf '%s' "$issues_json" | jq -r '
+		.[]?
+		| (.labels | map(.name)) as $labels
+		| select(($labels | index("auto-dispatch")) == null)
+		| select(($labels | index("no-auto-dispatch")) == null)
+		| select(($labels | index("needs-maintainer-review")) == null)
+		| select(($labels | index("parent-task")) == null)
+		| select(($labels | index("status:blocked")) == null)
+		| select(($labels | index("status:queued")) == null)
+		| select(($labels | index("status:in-progress")) == null)
+		| select(($labels | index("status:in-review")) == null)
+		| [(.number // empty), (if any($labels[]; startswith("tier:")) then "auto-dispatch" else "auto-dispatch,tier:standard" end)]
+		| @tsv
+	' 2>/dev/null)
+
+	printf '%s\n' "$updated"
+	return 0
+}
+
+#######################################
 # Re-evaluate needs-simplification labeled issues across pulse repos.
 # Same pattern as _reevaluate_consolidation_labels: issues filtered out
 # by the needs-* exclusion never reach dispatch_with_dedup, so the
@@ -275,6 +328,7 @@ _reevaluate_simplification_labels() {
 	[[ -f "$repos_json" ]] || return 0
 
 	local total_cleared=0
+	local total_backfilled=0
 	while IFS='|' read -r slug rpath; do
 		[[ -n "$slug" && -n "$rpath" ]] || continue
 
@@ -285,6 +339,11 @@ _reevaluate_simplification_labels() {
 		# Sentinel in _pulse_refresh_repo prevents redundant pulls if both
 		# the dispatch loop and triage loop hit the same repo in one cycle.
 		_pulse_refresh_repo "$rpath"
+
+		local backfilled_count=0
+		backfilled_count=$(_backfill_simplification_auto_dispatch_labels "$slug") || backfilled_count=0
+		[[ "$backfilled_count" =~ ^[0-9]+$ ]] || backfilled_count=0
+		total_backfilled=$((total_backfilled + backfilled_count))
 
 		local issues_json
 		issues_json=$(gh_issue_list --repo "$slug" --state open \
@@ -323,6 +382,9 @@ _reevaluate_simplification_labels() {
 
 	if [[ "$total_cleared" -gt 0 ]]; then
 		echo "[pulse-wrapper] Simplification re-evaluation: cleared ${total_cleared} stale needs-simplification label(s)" >>"$LOGFILE"
+	fi
+	if [[ "$total_backfilled" -gt 0 ]]; then
+		echo "[pulse-wrapper] Simplification re-evaluation: backfilled auto-dispatch on ${total_backfilled} function-complexity-debt issue(s)" >>"$LOGFILE"
 	fi
 	return 0
 }
