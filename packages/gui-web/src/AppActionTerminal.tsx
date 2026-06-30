@@ -1,11 +1,14 @@
-import type { GuiAppActionJobSummary } from "@aidevops/gui-shared";
+import type { GuiAppActionJobSummary, GuiPulseWorkerActionJobSummary } from "@aidevops/gui-shared";
 import { type ReactElement, type ReactNode, useEffect, useRef } from "react";
 import { FiX } from "react-icons/fi";
 
 const ANSI_PATTERN = /\x1b\[([0-9;]*)m/g;
 
-export function AppActionTerminal({ job, onDismiss }: { job: GuiAppActionJobSummary; onDismiss: (jobId: string) => void }): ReactElement {
+type TerminalJob = GuiAppActionJobSummary | GuiPulseWorkerActionJobSummary;
+
+export function AppActionTerminal({ job, label, onDismiss }: { job: TerminalJob; label?: string; onDismiss: (jobId: string) => void }): ReactElement {
   const outputRef = useRef<HTMLPreElement | null>(null);
+  const title = label ?? terminalTitle(job);
 
   useEffect(() => {
     if (outputRef.current !== null) {
@@ -14,11 +17,15 @@ export function AppActionTerminal({ job, onDismiss }: { job: GuiAppActionJobSumm
   }, [job.output.length]);
 
   return (
-    <section className="app-terminal" id={`app-job-${job.id}`} aria-label="App action terminal output">
-      <header><strong>{job.app_id} {job.action}</strong><span>{terminalStatusLabel(job)}</span><button aria-label={`Dismiss ${job.app_id} ${job.action} terminal output`} className="terminal-close-button" onClick={() => onDismiss(job.id)} title="Dismiss terminal output" type="button"><FiX aria-hidden="true" /></button></header>
+    <section className="app-terminal" id={`app-job-${job.id}`} aria-label={`${title} terminal output`}>
+      <header><strong>{title}</strong><span>{terminalStatusLabel(job)}</span><button aria-label={`Dismiss ${title} terminal output`} className="terminal-close-button" onClick={() => onDismiss(job.id)} title="Dismiss terminal output" type="button"><FiX aria-hidden="true" /></button></header>
       <pre ref={outputRef}>{renderTerminalOutput(job.output)}</pre>
     </section>
   );
+}
+
+function terminalTitle(job: TerminalJob): string {
+  return "app_id" in job ? `${job.app_id} ${job.action}` : `Pulse & Workers ${job.action}`;
 }
 
 function terminalStatusLabel(job: GuiAppActionJobSummary): string {

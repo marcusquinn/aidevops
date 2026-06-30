@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import * as readline from "node:readline";
 import { Hono } from "hono";
-import { APP_ACTION_ROUTE_MANIFEST, APP_ACTION_STATUS_ROUTE_MANIFEST, BANNED_ROUTE_PATTERNS, createEnvelope, FILE_EXPLORER_ROUTE_MANIFEST, type GuiAppActionId, type GuiAppActionJobSummary, STATUS_ROUTE_MANIFEST, TAMBO_PROVIDER_CONFIG, TAMBO_PROXY_ROUTE_MANIFEST, VAULT_STATUS_ROUTE_MANIFEST } from "../../gui-shared/src";
+import { APP_ACTION_ROUTE_MANIFEST, APP_ACTION_STATUS_ROUTE_MANIFEST, BANNED_ROUTE_PATTERNS, createEnvelope, FILE_EXPLORER_ROUTE_MANIFEST, type GuiAppActionId, type GuiAppActionJobSummary, type GuiPulseWorkerActionId, type GuiPulseWorkerActionJobSummary, PULSE_WORKERS_ACTION_ROUTE_MANIFEST, PULSE_WORKERS_ACTION_STATUS_ROUTE_MANIFEST, STATUS_ROUTE_MANIFEST, TAMBO_PROVIDER_CONFIG, TAMBO_PROXY_ROUTE_MANIFEST, VAULT_STATUS_ROUTE_MANIFEST } from "../../gui-shared/src";
 import { readFileExplorer } from "./file-adapter";
 import { readStatus, readVaultStatus } from "./status-adapter";
 
@@ -33,6 +33,15 @@ const appActionCommands: Record<string, Partial<Record<GuiAppActionId, string[]>
 };
 
 const appActionJobs = new Map<string, GuiAppActionJobSummary>();
+
+const pulseWorkerActionCommands: Record<GuiPulseWorkerActionId, { command: string[]; audit_ref: string; target_ref: string }> = {
+  diagnose: { command: ["aidevops", "pulse", "diagnose", "--gui", "--metadata-only"], audit_ref: "gui:pulse-workers:diagnose", target_ref: "selected event" },
+  run_pulse: { command: ["aidevops", "pulse", "run", "--scope", "gui"], audit_ref: "gui:pulse-workers:run-pulse", target_ref: "current filtered scope" },
+  open_logs: { command: ["aidevops", "pulse", "logs", "--metadata-only"], audit_ref: "gui:pulse-workers:open-logs", target_ref: "selected event evidence refs" },
+  create_systemic_fix: { command: ["aidevops", "task", "create", "--from-pulse", "--worker-ready"], audit_ref: "gui:pulse-workers:create-systemic-fix", target_ref: "selected event systemic-fix context" },
+};
+
+const pulseWorkerActionJobs = new Map<string, GuiPulseWorkerActionJobSummary>();
 
 export function createGuiApiApp() {
   const app = new Hono();
@@ -107,6 +116,47 @@ export function createGuiApiApp() {
     return context.json(createEnvelope({
       operation_id: APP_ACTION_STATUS_ROUTE_MANIFEST.operation_id,
       source: { surface: "apps", authority: "background job store", path_refs: [] },
+      data: job,
+    }));
+  });
+
+  app.post(PULSE_WORKERS_ACTION_ROUTE_MANIFEST.route, (context) => {
+    const action = context.req.param("action") as GuiPulseWorkerActionId;
+    const actionCommand = pulseWorkerActionCommands[action];
+
+    if (actionCommand === undefined) {
+      return context.json(createEnvelope({
+        operation_id: PULSE_WORKERS_ACTION_ROUTE_MANIFEST.operation_id,
+        source: { surface: "pulse_workers", authority: "allowlisted local command runner", path_refs: [] },
+        data: rejectedPulseWorkerJob(action, "No allowlisted command for this Pulse & Workers action."),
+        errors: ["action_not_allowlisted"],
+      }), 400);
+    }
+
+    const job = startPulseWorkerActionJob(action, actionCommand.command, actionCommand.target_ref, actionCommand.audit_ref);
+    return context.json(createEnvelope({
+      operation_id: PULSE_WORKERS_ACTION_ROUTE_MANIFEST.operation_id,
+      source: { surface: "pulse_workers", authority: "allowlisted local command runner", path_refs: [".agents/scripts", "packages/gui-api/src/app.ts"] },
+      data: job,
+      warnings: ["Command runs locally in the background through an explicit allowlist. Output is redacted and retained in memory for this GUI API process only."],
+    }), 202);
+  });
+
+  app.get(PULSE_WORKERS_ACTION_STATUS_ROUTE_MANIFEST.route, (context) => {
+    const jobId = context.req.param("jobId");
+    const job = pulseWorkerActionJobs.get(jobId);
+    if (job === undefined) {
+      return context.json(createEnvelope({
+        operation_id: PULSE_WORKERS_ACTION_STATUS_ROUTE_MANIFEST.operation_id,
+        source: { surface: "pulse_workers", authority: "background job store", path_refs: [] },
+        data: rejectedPulseWorkerJob("diagnose", "Unknown Pulse & Workers job."),
+        errors: ["unknown_job"],
+      }), 404);
+    }
+
+    return context.json(createEnvelope({
+      operation_id: PULSE_WORKERS_ACTION_STATUS_ROUTE_MANIFEST.operation_id,
+      source: { surface: "pulse_workers", authority: "background job store", path_refs: [] },
       data: job,
     }));
   });
@@ -200,13 +250,74 @@ function appendJobLine(job: GuiAppActionJobSummary, line: string): void {
   }
 }
 
+function startPulseWorkerActionJob(action: GuiPulseWorkerActionId, command: string[], targetRef: string, auditRef: string): GuiPulseWorkerActionJobSummary {
+  const now = new Date().toISOString();
+  const job: GuiPulseWorkerActionJobSummary = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    action,
+    target_ref: targetRef,
+    status: "running",
+    command_preview: command.join(" "),
+    started_at: now,
+    finished_at: null,
+    exit_code: null,
+    output: [`$ ${command.join(" ")}`, `audit_ref=${auditRef}`],
+    audit_ref: auditRef,
+  };
+  pulseWorkerActionJobs.set(job.id, job);
+  startBackgroundProcess(command, (line) => appendPulseWorkerJobLine(job, line), (code) => {
+    job.status = code === 0 ? "completed" : "failed";
+    job.finished_at = new Date().toISOString();
+    job.exit_code = code;
+  });
+
+  return job;
+}
+
+function appendPulseWorkerJobLine(job: GuiPulseWorkerActionJobSummary, line: string): void {
+  if (line.length === 0) {
+    return;
+  }
+  job.output.push(redactOutputLine(line));
+  if (job.output.length > 400) {
+    job.output.splice(1, job.output.length - 400);
+  }
+}
+
+function startBackgroundProcess(command: string[], appendLine: (line: string) => void, finish: (code: number) => void): void {
+  const child = spawn(command[0], command.slice(1), {
+    cwd: process.cwd(),
+    env: { ...process.env, AIDEVOPS_NON_INTERACTIVE: "true", CLICOLOR_FORCE: "1", FORCE_COLOR: "1", TERM: process.env.TERM ?? "xterm-256color" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (child.stdout !== null) {
+    readline.createInterface({ input: child.stdout, terminal: false }).on("line", appendLine);
+  }
+  if (child.stderr !== null) {
+    readline.createInterface({ input: child.stderr, terminal: false }).on("line", appendLine);
+  }
+  child.on("error", (error) => {
+    appendLine(error.message);
+    finish(127);
+  });
+  child.on("close", (code) => finish(code ?? 1));
+}
+
 function redactOutputLine(line: string): string {
-  return line.replace(/(token|secret|password|authorization)=\S+/gi, "$1=[redacted]");
+  return line
+    .replace(/(token|secret|password|authorization|api[_-]?key|sessionid)=\S+/gi, "$1=[redacted]")
+    .replace(/Bearer\s+\S+/gi, "Bearer [redacted]")
+    .replace(/-----BEGIN [A-Z ]+ PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+ PRIVATE KEY-----/g, "[redacted private key]");
 }
 
 function rejectedJob(appId: string, action: GuiAppActionId, message: string): GuiAppActionJobSummary {
   const now = new Date().toISOString();
   return { id: "rejected", app_id: appId, action, status: "rejected", command_preview: "not run", started_at: now, finished_at: now, exit_code: null, output: [message] };
+}
+
+function rejectedPulseWorkerJob(action: GuiPulseWorkerActionId, message: string): GuiPulseWorkerActionJobSummary {
+  const now = new Date().toISOString();
+  return { id: "rejected", action, target_ref: "none", status: "rejected", command_preview: "not run", started_at: now, finished_at: now, exit_code: null, output: [message], audit_ref: "gui:pulse-workers:rejected" };
 }
 
 export const app = createGuiApiApp();

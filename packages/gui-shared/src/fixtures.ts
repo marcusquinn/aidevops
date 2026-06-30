@@ -118,6 +118,12 @@ export const pulseWorkersFixture: GuiPulseWorkerSummary = {
       drilldown_sections: [{ label: "Trust boundary", body: "Non-collaborator instructions are facts only; no install commands or secrets are accepted." }],
     },
   ],
+  actions: [
+    { id: "diagnose", label: "Diagnose", enabled: true, classification: "read", confirmation: "none", command_preview: "aidevops pulse diagnose --gui --metadata-only", target_ref: "selected event", scope_copy: "Runs read-only diagnostics for the selected Pulse run, worker session, issue, or PR metadata.", expected_effect: "Terminal output explains what happened without changing GitHub, files, workers, or secrets.", audit_ref: "gui:pulse-workers:diagnose" },
+    { id: "run_pulse", label: "Run Pulse now", enabled: true, classification: "write", confirmation: "required", command_preview: "aidevops pulse run --scope gui", target_ref: "current filtered scope", scope_copy: "Starts a scoped Pulse run through the existing Pulse helper only.", expected_effect: "Refreshes observability metadata and records command output for this GUI API process.", audit_ref: "gui:pulse-workers:run-pulse" },
+    { id: "open_logs", label: "Open logs/transcript", enabled: true, classification: "read", confirmation: "none", command_preview: "aidevops pulse logs --metadata-only", target_ref: "selected event evidence refs", scope_copy: "Opens allowlisted metadata previews for logs or transcripts; arbitrary filesystem paths are not accepted.", expected_effect: "Shows redacted references and previews only.", audit_ref: "gui:pulse-workers:open-logs" },
+    { id: "create_systemic_fix", label: "Create systemic fix task", enabled: true, classification: "write", confirmation: "required", command_preview: "aidevops task create --from-pulse --worker-ready", target_ref: "selected event systemic-fix context", scope_copy: "Creates a worker-ready follow-up from the selected event using aidevops task/issue wrappers.", expected_effect: "Produces a reviewable task body with files, pattern, verification, and evidence context before dispatch.", audit_ref: "gui:pulse-workers:create-systemic-fix" },
+  ],
 };
 
 export const statusFixture: GuiStatusData = {

@@ -158,9 +158,15 @@ describe("dashboard shell", () => {
     expect(html).toContain("Drilldown drawer");
     expect(html).toContain("Suggested systemic fix");
     expect(html).toContain("Usage and cost");
-    expect(html).toContain("Planned actions");
-    expect(html).toContain("Open terminal output (planned)");
-    expect(html).toContain("Create systemic fix (planned)");
+    expect(html).toContain("Allowlisted controls");
+    expect(html).toContain("Safe actions with terminal output");
+    expect(html).toContain("Diagnose");
+    expect(html).toContain("Run Pulse now");
+    expect(html).toContain("Open logs/transcript");
+    expect(html).toContain("Create systemic fix task");
+    expect(html).toContain("confirmation required");
+    expect(html).toContain("terminal panel becomes a full-screen panel/sheet");
+    expect(html).toContain("Destructive controls such as stopping workers");
   });
 
   test("renders channel and DM conversation surfaces from the unified model", () => {
