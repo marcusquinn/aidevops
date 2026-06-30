@@ -47,7 +47,7 @@ _complexity_scan_should_open_md_issue() {
 	local line_count="$2"
 
 	# Skip files below the minimum actionable size
-	if [[ "$line_count" -lt "$COMPLEXITY_MD_MIN_LINES" ]]; then
+	if [[ "$line_count" -lt "${COMPLEXITY_MD_MIN_LINES:-500}" ]]; then
 		return 1
 	fi
 
@@ -120,7 +120,7 @@ _complexity_scan_collect_md_violations() {
 	# Sort longest-first (descending by line count after the pipe)
 	scan_results=$(printf '%s' "$scan_results" | sort -t'|' -k2 -rn)
 
-	echo "[pulse-wrapper] Complexity scan (.md): ${file_count} agent docs qualified, ${skipped_count} skipped (below ${COMPLEXITY_MD_MIN_LINES}-line threshold or stub)" >>"$LOGFILE"
+	echo "[pulse-wrapper] Complexity scan (.md): ${file_count} agent docs qualified, ${skipped_count} skipped (below ${COMPLEXITY_MD_MIN_LINES:-500}-line threshold or stub)" >>"$LOGFILE"
 	printf '%s' "$scan_results"
 	return 0
 }
@@ -237,7 +237,7 @@ _complexity_scan_md_repeat_due() {
 	local file_path="$2"
 	local line_count="$3"
 
-	if [[ "$line_count" -lt "$COMPLEXITY_MD_MIN_LINES" ]]; then
+	if [[ "$line_count" -lt "${COMPLEXITY_MD_MIN_LINES:-500}" ]]; then
 		return 1
 	fi
 
@@ -315,7 +315,7 @@ _complexity_scan_md_build_full_body() {
 
 ### Next-pass note
 
-This file was previously simplified (PR #${prev_pr}) and its content hash is unchanged, but it still meets the ${COMPLEXITY_MD_MIN_LINES}-line simplification threshold. Please run the next simplification pass unless the file is intentionally converged."
+This file was previously simplified (PR #${prev_pr}) and its content hash is unchanged, but it still meets the ${COMPLEXITY_MD_MIN_LINES:-500}-line simplification threshold. Please run the next simplification pass unless the file is intentionally converged."
 		else
 			issue_body="${issue_body}
 
