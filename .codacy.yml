@@ -119,6 +119,14 @@ exclude_paths:
   # false-positive class as the GUI adapters above; covered by tsc, Biome,
   # GUI API tests, Qlty gates, and SonarCloud.
   - "packages/gui-api/src/status-managed-apps.ts"
+  # GUI Pulse/Workers status helper split (GH#25944): same legacy parser/
+  # spellcheck false-positive class as the GUI adapters above, e.g. ES2015
+  # modules/Array.map forbidden, unresolved workspace imports, and shared
+  # `Gui*` identifiers flagged as misspellings. Coverage is preserved by GUI
+  # API tests, tsc, Qlty gates, and SonarCloud.
+  - "packages/gui-api/src/status-pulse-workers-attention.ts"
+  - "packages/gui-api/src/status-pulse-workers-classifiers.ts"
+  - "packages/gui-api/src/status-pulse-workers-values.ts"
   # GUI shared TypeScript notification helpers (GH#25722): same Codacy legacy
   # parser/spellcheck false-positive class as the GUI exclusions above, e.g.
   # ES2015 modules/let/const/Array.map forbidden and shared `Gui*` identifiers
