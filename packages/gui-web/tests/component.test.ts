@@ -9,7 +9,7 @@ import { Workspace } from "../src/AppWorkspace";
 import { commandPaletteMatches, commandPaletteShortcutEntries, commandPaletteShortcutQuery, orderCommandItemsByRecency, rememberCommandPaletteItemId } from "../src/CommandPalette";
 import { CommsConversationSurface } from "../src/CommsConversationSurface";
 import { AppsSurface, nextRecommendedFilterValue } from "../src/InventorySurfaces";
-import { DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, chatPrimitiveStackDecision, surfaceRecordCounts, type SurfaceNavItem } from "../src/app-model";
+import { DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, chatPrimitiveStackDecision, navGroups, surfaceRecordCounts, type SurfaceNavItem } from "../src/app-model";
 import { renderDashboardHtml } from "../src/dashboard";
 import { fetchStatus, mockedStatus } from "../src/status-client";
 import type { GuiConversationThread, GuiManagedAppSummary } from "../../gui-shared/src";
@@ -142,8 +142,10 @@ describe("dashboard shell", () => {
 
   test("renders Pulse and Workers data-driven dashboard with filters and drilldown", () => {
     const html = renderWorkspaceSurface(workersItem, "workers");
+    const workersNavItem = navGroups.flatMap((group) => group.items).find((item) => item.id === "workers");
 
     expect(html).toContain("Pulse &amp; Workers");
+    expect(workersNavItem).toMatchObject({ badge: undefined, label: "Pulse & Workers" });
     expect(html).toContain("Data-driven observability");
     expect(html).toContain("Repo scope");
     expect(html).toContain("Issue origin");
