@@ -218,7 +218,7 @@ body {
 }
 
 :root[data-theme="dark"] body {
-  background:
+  background-image:
     radial-gradient(ellipse 78% 64% at top left,
       hsl(var(--accent-hue) 96% 22% / 62%) 0%,
       hsl(var(--accent-hue) 92% 18% / 34%) 34%,
