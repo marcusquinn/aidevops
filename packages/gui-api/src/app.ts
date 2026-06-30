@@ -54,8 +54,8 @@ export function createGuiApiApp() {
   });
 
   app.get(TAMBO_PROXY_ROUTE_MANIFEST.route, (context) => {
-    const tenantRef = context.req.query("tenant_ref") ?? "local";
-    const workspaceRef = context.req.query("workspace_ref") ?? "aidevops";
+    const tenantRef = threadScopeRef(context.req.query("tenant_ref") ?? "local");
+    const workspaceRef = threadScopeRef(context.req.query("workspace_ref") ?? "aidevops");
     const sessionRef = context.req.query("session_ref") ?? "conversation:local";
 
     return context.json(createEnvelope({
@@ -210,3 +210,7 @@ function rejectedJob(appId: string, action: GuiAppActionId, message: string): Gu
 }
 
 export const app = createGuiApiApp();
+
+function threadScopeRef(value: string): string {
+  return value.replace(/:/g, "");
+}
