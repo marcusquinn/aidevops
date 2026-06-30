@@ -205,6 +205,20 @@
 
 body {
   background:
+    radial-gradient(ellipse at top left, color-mix(in srgb, var(--accent) 16%, transparent) 0%, transparent 36%),
+    var(--bg-secondary);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+  color: var(--text-primary);
+  font-family: var(--font-family-app);
+  line-height: 1.6;
+  margin: 0;
+  min-height: 100vh;
+  font-size: var(--font-size-app);
+}
+
+:root[data-theme="dark"] body {
+  background:
     radial-gradient(ellipse 78% 64% at top left,
       hsl(var(--accent-hue) 96% 22% / 62%) 0%,
       hsl(var(--accent-hue) 92% 18% / 34%) 34%,
@@ -221,14 +235,6 @@ body {
       color-mix(in srgb, hsl(var(--accent-hue) 92% 16%) 44%, var(--bg-secondary)) 0%,
       color-mix(in srgb, hsl(var(--accent-hue) 80% 12%) 14%, var(--bg-secondary)) 48%,
       color-mix(in srgb, var(--accent) 6%, var(--bg-primary)) 100%);
-  background-attachment: fixed;
-  background-repeat: no-repeat;
-  color: var(--text-primary);
-  font-family: var(--font-family-app);
-  line-height: 1.6;
-  margin: 0;
-  min-height: 100vh;
-  font-size: var(--font-size-app);
 }
 
 button,
