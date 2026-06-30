@@ -166,19 +166,12 @@ EOF
 }
 
 #######################################
-# Build a mock gh executable for stale-worker takeover claim tests.
-# Uses env vars:
-#   MOCK_GH_STATE_DIR, MOCK_DISPATCH_CREATED_AT, MOCK_CLAIM_CREATED_AT
-# Returns: path to mock gh directory via stdout
+# Write the header and argument parser for the stale-worker mock gh executable.
+# Args: $1 = mock gh executable path
 #######################################
-create_stale_worker_mock_gh() {
-	local state_dir="$1"
-	local terminal_body="${2:-}"
-	local mock_bin_dir
-	mock_bin_dir="${state_dir}/bin"
-	mkdir -p "$mock_bin_dir"
-
-	cat >"${mock_bin_dir}/gh" <<'EOF'
+write_stale_worker_mock_header() {
+	local mock_gh_path="$1"
+	cat >"$mock_gh_path" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -225,6 +218,18 @@ if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
 		esac
 	done
 
+EOF
+	return 0
+}
+
+#######################################
+# Write the POST handling branch for the stale-worker mock gh executable.
+# Args: $1 = mock gh executable path
+#######################################
+write_stale_worker_mock_post_handler() {
+	local mock_gh_path="$1"
+	cat >>"$mock_gh_path" <<'EOF'
+
 	if [[ "$method" == "POST" ]]; then
 		printf '%s' "$body" >"$post_body_file"
 		printf '999\n'
@@ -236,6 +241,18 @@ if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
 	else
 		new_body=""
 	fi
+
+EOF
+	return 0
+}
+
+#######################################
+# Write terminal-comment response branches for the stale-worker mock gh executable.
+# Args: $1 = mock gh executable path
+#######################################
+write_stale_worker_mock_terminal_responses() {
+	local mock_gh_path="$1"
+	cat >>"$mock_gh_path" <<'EOF'
 
 	if [[ -n "$terminal_body" ]]; then
 		if [[ "$paginated_comments" == "true" ]]; then
@@ -271,6 +288,18 @@ if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
 		exit 0
 	fi
 
+EOF
+	return 0
+}
+
+#######################################
+# Write non-terminal response branches for the stale-worker mock gh executable.
+# Args: $1 = mock gh executable path
+#######################################
+write_stale_worker_mock_active_responses() {
+	local mock_gh_path="$1"
+	cat >>"$mock_gh_path" <<'EOF'
+
 	if [[ "$paginated_comments" == "true" ]]; then
 		jq -n \
 			--arg dispatch_body "$dispatch_body" \
@@ -295,12 +324,35 @@ if [[ "$endpoint" == repos/*/issues/*/comments* ]]; then
 		'[
 			{id: 10, body_start: $dispatch_body, body: $dispatch_body, created_at: $dispatch_ts},
 			{id: 999, body_start: $new_body, body: $new_body, created_at: $claim_ts}
-		]'
+	]'
 	exit 0
 fi
 
 exit 1
 EOF
+	return 0
+}
+
+#######################################
+# Build a mock gh executable for stale-worker takeover claim tests.
+# Uses env vars:
+#   MOCK_GH_STATE_DIR, MOCK_DISPATCH_CREATED_AT, MOCK_CLAIM_CREATED_AT
+# Returns: path to mock gh directory via stdout
+#######################################
+create_stale_worker_mock_gh() {
+	local state_dir="$1"
+	local terminal_body="${2:-}"
+	local mock_bin_dir
+	local mock_gh_path
+	mock_bin_dir="${state_dir}/bin"
+	mock_gh_path="${mock_bin_dir}/gh"
+	mkdir -p "$mock_bin_dir"
+
+	write_stale_worker_mock_header "$mock_gh_path"
+	write_stale_worker_mock_post_handler "$mock_gh_path"
+	write_stale_worker_mock_terminal_responses "$mock_gh_path"
+	write_stale_worker_mock_active_responses "$mock_gh_path"
+
 	chmod +x "${mock_bin_dir}/gh"
 	MOCK_TERMINAL_BODY="$terminal_body" printf '%s' "$mock_bin_dir"
 	return 0
