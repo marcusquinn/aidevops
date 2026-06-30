@@ -340,7 +340,7 @@ EOF
 # Returns: path to mock gh directory via stdout
 #######################################
 create_stale_worker_mock_gh() {
-	local state_dir="$1"
+	local state_dir="${1:?state_dir is required}"
 	local terminal_body="${2:-}"
 	local mock_bin_dir
 	local mock_gh_path
