@@ -754,15 +754,8 @@ _warn_deployed_script_drift() {
 	return 0
 }
 
-deploy_aidevops_agents() {
-	print_info "Deploying aidevops agents to ~/.aidevops/agents/..."
-
-	# Use INSTALL_DIR (set by setup.sh) — BASH_SOURCE[0] points to .agents/scripts/setup/modules/
-	# which is not the repo root, so we can't derive .agents/ from it
-	local repo_dir="${INSTALL_DIR:?INSTALL_DIR must be set by setup.sh}"
-	local source_dir="$repo_dir/.agents"
-	local target_dir="$HOME/.aidevops/agents"
-	local plugins_file="$HOME/.config/aidevops/plugins.json"
+_validate_agent_source_dir() {
+	local source_dir="$1"
 
 	# Validate source directory exists (catches curl install from wrong directory)
 	if [[ ! -d "$source_dir" ]]; then
@@ -775,8 +768,15 @@ deploy_aidevops_agents() {
 		return 1
 	fi
 
-	# Collect plugin namespace directories to preserve during deployment
-	local -a plugin_namespaces=()
+	return 0
+}
+
+_deploy_agent_plugin_namespaces=()
+
+_collect_deploy_agent_plugin_namespaces() {
+	local plugins_file="$1"
+
+	_deploy_agent_plugin_namespaces=()
 	if [[ -f "$plugins_file" ]] && command -v jq &>/dev/null; then
 		local ns safe_ns
 		while IFS= read -r ns; do
@@ -785,10 +785,18 @@ deploy_aidevops_agents() {
 					print_warning "Skipping plugin namespace that collides with core agents directory: $safe_ns"
 					continue
 				fi
-				plugin_namespaces+=("$safe_ns")
+				_deploy_agent_plugin_namespaces+=("$safe_ns")
 			fi
 		done < <(jq -r '.plugins[].namespace // empty' "$plugins_file" 2>/dev/null)
 	fi
+
+	return 0
+}
+
+_prepare_agents_deploy_target() {
+	local repo_dir="$1"
+	local source_dir="$2"
+	local target_dir="$3"
 
 	# Warn if deployed scripts have been locally modified (GH#17414).
 	# These edits will be overwritten — users must edit the canonical source.
@@ -800,24 +808,38 @@ deploy_aidevops_agents() {
 	# Skip when the deployed SHA matches the current HEAD — nothing changed on
 	# disk, so there is nothing worth backing up (t3221: steady-state perf).
 	if [[ -d "$target_dir" ]]; then
-		local _cur_sha _dep_sha
-		_cur_sha=$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || echo "")
-		_dep_sha=$(cat "${HOME}/.aidevops/.deployed-sha" 2>/dev/null || echo "")
-		if [[ -n "$_cur_sha" && -n "$_dep_sha" && "$_cur_sha" == "$_dep_sha" ]]; then
-			print_info "No changes since last deploy (${_cur_sha:0:8}) — skipping backup"
+		local cur_sha dep_sha
+		cur_sha=$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || echo "")
+		dep_sha=$(cat "${HOME}/.aidevops/.deployed-sha" 2>/dev/null || echo "")
+		if [[ -n "$cur_sha" && -n "$dep_sha" && "$cur_sha" == "$dep_sha" ]]; then
+			print_info "No changes since last deploy (${cur_sha:0:8}) — skipping backup"
 		else
 			create_backup_with_rotation "$target_dir" "agents"
 		fi
 	fi
 
 	mkdir -p "$target_dir"
+	return 0
+}
+
+_run_atomic_agents_deploy() {
+	local source_dir="$1"
+	local target_dir="$2"
+	shift 2
 
 	# Atomically copy source to staging, carry over user dirs, then swap.
-	if [[ ${#plugin_namespaces[@]} -gt 0 ]]; then
-		_atomic_stage_and_deploy_agents "$source_dir" "$target_dir" "${plugin_namespaces[@]}" || return 1
+	if [[ $# -gt 0 ]]; then
+		_atomic_stage_and_deploy_agents "$source_dir" "$target_dir" "$@" || return 1
 	else
 		_atomic_stage_and_deploy_agents "$source_dir" "$target_dir" || return 1
 	fi
+
+	return 0
+}
+
+_verify_agents_deploy_or_restore() {
+	local source_dir="$1"
+	local target_dir="$2"
 
 	# Postcondition: verify the swap actually produced a functional agents dir.
 	# _atomic_stage_and_deploy_agents returns 0 on success, but this belt-and-
@@ -836,8 +858,11 @@ deploy_aidevops_agents() {
 		return 1
 	fi
 
-	print_success "Deployed agents to $target_dir"
-	_deploy_agents_post_copy "$target_dir" "$repo_dir" "$source_dir" "$plugins_file"
+	return 0
+}
+
+_write_deployed_agents_sha() {
+	local repo_dir="$1"
 
 	# Write deployed-SHA stamp BEFORE the pulse restart so the stamp is
 	# available immediately for subsequent setup steps and the next run's
@@ -853,6 +878,10 @@ deploy_aidevops_agents() {
 		printf '%s\n' "$deployed_sha" >"${aidevops_dir}/.deployed-sha"
 	fi
 
+	return 0
+}
+
+_restart_pulse_after_agents_deploy() {
 	# Restart pulse in the background — bash processes load source files at
 	# startup and don't re-read them when files change on disk. Without a
 	# restart, fixes to pulse-*.sh, dispatch-dedup-*.sh, and other sourced
@@ -866,6 +895,30 @@ deploy_aidevops_agents() {
 	# interactively; in script mode the orphan survives the exit anyway.
 	_restart_pulse_if_running &
 	disown
+	return 0
+}
+
+deploy_aidevops_agents() {
+	print_info "Deploying aidevops agents to ~/.aidevops/agents/..."
+
+	# Use INSTALL_DIR (set by setup.sh) — BASH_SOURCE[0] points to .agents/scripts/setup/modules/
+	# which is not the repo root, so we can't derive .agents/ from it
+	local repo_dir="${INSTALL_DIR:?INSTALL_DIR must be set by setup.sh}"
+	local source_dir="$repo_dir/.agents"
+	local target_dir="$HOME/.aidevops/agents"
+	local plugins_file="$HOME/.config/aidevops/plugins.json"
+
+	_validate_agent_source_dir "$source_dir" || return 1
+	_collect_deploy_agent_plugin_namespaces "$plugins_file"
+	_prepare_agents_deploy_target "$repo_dir" "$source_dir" "$target_dir"
+	_run_atomic_agents_deploy "$source_dir" "$target_dir" "${_deploy_agent_plugin_namespaces[@]}" || return 1
+	_verify_agents_deploy_or_restore "$source_dir" "$target_dir" || return 1
+
+	print_success "Deployed agents to $target_dir"
+	_deploy_agents_post_copy "$target_dir" "$repo_dir" "$source_dir" "$plugins_file"
+
+	_write_deployed_agents_sha "$repo_dir"
+	_restart_pulse_after_agents_deploy
 
 	return 0
 }
