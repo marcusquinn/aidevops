@@ -78,6 +78,13 @@ describe("GUI shared schema contracts", () => {
     expect(envelope.data.local_repos.path_ref).toBe("~/Git");
     expect(envelope.data.oauth_pool.value_policy).toBe("metadata_only_no_tokens");
     expect(envelope.data.vault.value_policy).toBe("metadata_only_no_secret_material");
+    expect(envelope.data.pulse_workers.value_policy).toBe("metadata_only_no_prompt_payloads_no_secrets");
+    expect(envelope.data.pulse_workers.kpis.every((kpi) => kpi.period_label.length > 0 && kpi.scope_label.length > 0 && kpi.comparison_label.length > 0)).toBe(true);
+    expect(envelope.data.pulse_workers.events[0].usage?.provider).toBe("openai");
+    expect(envelope.data.pulse_workers.events[0].usage?.cached_tokens).toBeGreaterThan(0);
+    expect(envelope.data.pulse_workers.events[2].issue_origin).toBe("third_party");
+    expect(envelope.data.pulse_workers.events[2].author_association).toBe("CONTRIBUTOR");
+    expect(envelope.data.pulse_workers.charts.map((chart) => chart.points[0]?.period)).toEqual(["day", "week", "month", "year"]);
     expect(envelope.data.vault.collections.map((collection) => collection.surface_ids).flat()).toContain("agents");
     expect(envelope.data.setup_targets[0].path_ref).toBe("~/.aidevops/agents/VERSION");
     expect(envelope.data.ai_apps.map((app) => app.name)).toContain("OpenCode");
