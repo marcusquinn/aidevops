@@ -298,6 +298,18 @@ code {
   z-index: 20;
 }
 
+.screenshot-capture-notification-stack {
+  display: grid;
+  gap: 8px;
+  left: 50%;
+  max-width: min(840px, calc(100vw - 48px));
+  position: fixed;
+  top: calc(var(--desktop-titlebar-height) + 10px);
+  transform: translateX(-50%);
+  width: max-content;
+  z-index: 40;
+}
+
 .screenshot-capture-notification {
   align-items: center;
   background: color-mix(in srgb, var(--surface-elevated) 94%, transparent);
@@ -307,13 +319,9 @@ code {
   color: var(--text-secondary);
   display: flex;
   gap: 12px;
-  left: 50%;
   max-width: min(720px, calc(100vw - 48px));
   padding: 8px 10px 8px 14px;
-  position: fixed;
-  top: calc(var(--desktop-titlebar-height) + 10px);
-  transform: translateX(-50%);
-  z-index: 40;
+  width: 100%;
 }
 
 .screenshot-capture-notification > div {
@@ -333,31 +341,42 @@ code {
   line-height: 1.25;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.screenshot-capture-notification button {
+.screenshot-capture-notification .screenshot-path-button {
   background: transparent;
   border: 0;
   color: var(--accent);
   font: inherit;
   padding: 0;
   text-decoration: underline;
+  overflow-wrap: anywhere;
+  text-align: left;
 }
 
-.screenshot-capture-notification > button {
+.screenshot-capture-notification .screenshot-dismiss-button {
   align-items: center;
   background: var(--surface-muted);
-  border: 1px solid transparent;
+  border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--text-secondary);
   display: inline-flex;
   flex: 0 0 auto;
-  font-size: 1rem;
-  height: 24px;
+  font: inherit;
+  font-size: 1.1rem;
+  height: 38px;
   justify-content: center;
   line-height: 1;
-  width: 24px;
+  padding: 0;
+  text-decoration: none;
+  width: 38px;
+}
+
+.screenshot-capture-notification .screenshot-dismiss-button:hover,
+.screenshot-capture-notification .screenshot-dismiss-button:focus-visible {
+  border-color: var(--border-accent);
+  color: var(--accent);
+  outline: none;
 }
 
 .machine-rail,

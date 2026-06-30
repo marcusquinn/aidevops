@@ -813,7 +813,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             toggleButton.centerYAnchor.constraint(equalTo: overlay.centerYAnchor, constant: 3.5),
             toggleButton.heightAnchor.constraint(equalToConstant: 22),
             toggleButton.widthAnchor.constraint(equalToConstant: 22),
-            cameraButton.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -92),
+            cameraButton.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -24),
             cameraButton.centerYAnchor.constraint(equalTo: overlay.centerYAnchor, constant: 3.5),
             cameraButton.heightAnchor.constraint(equalToConstant: 22),
             cameraButton.widthAnchor.constraint(equalToConstant: 22)
@@ -1010,8 +1010,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             let offsetKey = Int(actualOffset.rounded())
             var nextCapturedOffsets = capturedOffsets
             if capturedOffsets.contains(offsetKey) {
-                self.restoreWorkspaceScroll(originalScrollTop)
-                self.saveScreenshot(image: composite, nameComponent: pageName)
+                self.savePageScreenshotAfterRestoringScroll(image: composite, nameComponent: pageName, scrollTop: originalScrollTop)
                 return
             }
             nextCapturedOffsets.insert(offsetKey)
@@ -1027,8 +1026,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
                     }
 
                     if actualOffset + viewportHeight >= contentHeight - 1 {
-                        self.restoreWorkspaceScroll(originalScrollTop)
-                        self.saveScreenshot(image: composite, nameComponent: pageName)
+                        self.savePageScreenshotAfterRestoringScroll(image: composite, nameComponent: pageName, scrollTop: originalScrollTop)
                     } else {
                         let nextOffset = min(contentHeight - viewportHeight, actualOffset + viewportHeight)
                         self.captureWorkspaceChunk(rect: rect, contentHeight: contentHeight, viewportHeight: viewportHeight, originalScrollTop: originalScrollTop, targetOffset: nextOffset, pageName: pageName, composite: composite, capturedOffsets: nextCapturedOffsets)
@@ -1040,6 +1038,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     private func restoreWorkspaceScroll(_ scrollTop: CGFloat) {
         webView.evaluateJavaScript("document.querySelector('.workspace-scroll')?.scrollTo({ top: \(Int(scrollTop)), behavior: 'instant' }); true;", completionHandler: nil)
+    }
+
+    private func savePageScreenshotAfterRestoringScroll(image: NSImage, nameComponent: String, scrollTop: CGFloat) {
+        webView.evaluateJavaScript("document.querySelector('.workspace-scroll')?.scrollTo({ top: \(Int(scrollTop)), behavior: 'instant' }); true;") { [weak self] _, _ in
+            DispatchQueue.main.async {
+                self?.saveScreenshot(image: image, nameComponent: nameComponent)
+            }
+        }
     }
 
     private func saveScreenshot(image: NSImage, nameComponent: String) {
