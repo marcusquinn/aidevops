@@ -163,13 +163,18 @@ check_toon_cardinality() {
 	local header_pattern="$3"
 	local regenerate_hint="$4"
 	local declared_rows actual_rows
+	local index_file="${INDEX_FILE:-}"
 
-	declared_rows=$(sed -n "$header_pattern" "$INDEX_FILE")
+	if [[ ! -f "$index_file" ]]; then
+		return 0
+	fi
+
+	declared_rows=$(sed -n "$header_pattern" "$index_file")
 	if [[ -z "$declared_rows" ]]; then
 		return 0
 	fi
 
-	actual_rows=$(count_toon_block_rows "$block_name" "$INDEX_FILE")
+	actual_rows=$(count_toon_block_rows "$block_name" "$index_file")
 	echo "Declared ${display_name} rows: ${declared_rows}"
 	echo "Actual ${display_name} rows: ${actual_rows}"
 	if [[ "$declared_rows" != "$actual_rows" ]]; then
@@ -183,9 +188,15 @@ check_toon_cardinality() {
 
 count_subagent_markdown_files() {
 	local actual_count=0
+	local agents_dir="${AGENTS_DIR:-}"
 
-	for subdir in $SUBAGENT_DIRS; do
-		local dir_path="${AGENTS_DIR}/${subdir}"
+	if [[ -z "$agents_dir" ]]; then
+		echo "0"
+		return 0
+	fi
+
+	for subdir in ${SUBAGENT_DIRS:-}; do
+		local dir_path="${agents_dir}/${subdir}"
 		[[ -d "$dir_path" ]] || continue
 		local dir_count
 		dir_count=$(find "$dir_path" -name "*.md" -type f \
@@ -199,7 +210,12 @@ count_subagent_markdown_files() {
 }
 
 count_index_leaf_entries() {
-	local index_file="$1"
+	local index_file="${1:-}"
+
+	if [[ ! -f "$index_file" ]]; then
+		echo "0"
+		return 0
+	fi
 
 	awk '
 		BEGIN { in_block = 0; count = 0 }
