@@ -97,6 +97,8 @@ empty_output=$("$HELPER" "$CONF" 2>&1)
 empty_rc=$?
 assert_rc "empty SARIF output is warning-only" "0" "$empty_rc"
 assert_contains "empty SARIF warning emitted" "empty SARIF output" "$empty_output"
+assert_contains "empty SARIF includes qlty version" "Qlty version: qlty test-stub" "$empty_output"
+assert_contains "empty SARIF includes stderr diagnostics" "simulated qlty empty output" "$empty_output"
 
 write_stub_qlty pass "$BIN_DIR"
 pass_output=$("$HELPER" "$CONF" 2>&1)
