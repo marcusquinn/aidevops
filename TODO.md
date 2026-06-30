@@ -4379,3 +4379,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18039 Add productivity insights and systemic fix feedback to Pulse & Workers #auto-dispatch #dashboard #enhancement #observability #pulse #self-improvement ref:GH#25917
 
 - [ ] t18038 Add safe Pulse & Workers action buttons with terminal output #api #auto-dispatch #dashboard #enhancement #observability #pulse ref:GH#25916
+
+- [ ] t18040 fix: restore 500-line Markdown simplification gate #bug #framework ref:GH#25926
