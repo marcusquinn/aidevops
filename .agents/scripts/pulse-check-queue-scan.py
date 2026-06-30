@@ -9,6 +9,7 @@ import datetime as dt
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import sys
@@ -17,6 +18,7 @@ from typing import Any
 AGGREGATE_KEY = "aggregate"
 ERROR_KEY = "error"
 GH_ERRORS_KEY = "gh_errors"
+REPO_SLUG_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
 def _int_from_env(name: str, default: int) -> int:
@@ -60,6 +62,10 @@ def _issue_labels(issue: dict[str, Any]) -> set[str]:
     if not isinstance(labels, list):
         return set()
     return {str(label.get("name") or "") for label in labels if isinstance(label, dict)}
+
+
+def _valid_repo_slug(slug: str) -> bool:
+    return bool(REPO_SLUG_RE.fullmatch(slug))
 
 
 def _issue_age_minutes(issue: dict[str, Any], now: dt.datetime) -> int:
@@ -109,6 +115,9 @@ def main() -> int:
 
     for repo in repos:
         slug = str(repo.get("slug") or "")
+        if not _valid_repo_slug(slug):
+            aggregate[GH_ERRORS_KEY] += 1
+            continue
         cmd = [
             "gh", "issue", "list",
             "--repo", slug,
@@ -118,7 +127,14 @@ def main() -> int:
             "--json", "number,title,labels,assignees,updatedAt",
         ]
         try:
-            completed = subprocess.run(cmd, text=True, capture_output=True, timeout=30, check=False)
+            # Fixed argv, shell=False, validated owner/repo slug.
+            completed = subprocess.run(  # nosec B603
+                cmd,
+                text=True,
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
         except (OSError, subprocess.SubprocessError):
             aggregate[GH_ERRORS_KEY] += 1
             continue
