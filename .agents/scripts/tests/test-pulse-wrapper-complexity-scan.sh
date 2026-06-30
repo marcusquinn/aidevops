@@ -26,6 +26,7 @@ TESTS_RUN=0
 TESTS_FAILED=0
 TEST_ROOT=""
 ORIGINAL_HOME="${HOME}"
+ORIGINAL_PATH="${PATH}"
 
 print_result() {
 	local test_name="$1"
@@ -59,6 +60,7 @@ setup_test_env() {
 
 teardown_test_env() {
 	export HOME="$ORIGINAL_HOME"
+	export PATH="$ORIGINAL_PATH"
 	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
 		rm -rf "$TEST_ROOT"
 	fi
@@ -74,6 +76,39 @@ make_test_repo() {
 	printf '#!/usr/bin/env bash\n# test file\necho hello\n' >"${repo_path}/.agents/scripts/test.sh"
 	git -C "$repo_path" add . 2>/dev/null
 	git -C "$repo_path" commit -q -m "init" 2>/dev/null
+	return 0
+}
+
+install_fake_gh_for_sweep() {
+	local stub_dir="${TEST_ROOT}/stub-bin"
+	mkdir -p "$stub_dir"
+	cat >"${stub_dir}/gh" <<'EOF'
+#!/usr/bin/env bash
+cmd="$1"
+subcmd="${2:-}"
+args="$*"
+case "$cmd" in
+	api)
+		if [[ "$subcmd" == "graphql" ]]; then
+			if [[ "$args" == *"search(query"* ]]; then
+				printf '%s\n' "${GH_RECENT_CLOSURES:-0}"
+			else
+				printf '%s\n' "${GH_OPEN_DEBT_COUNT:-0}"
+			fi
+			exit 0
+		fi
+		;;
+	issue)
+		if [[ "$subcmd" == "list" ]]; then
+			printf '%s\n' "${GH_ISSUE_LIST_JSON:-[]}"
+			exit 0
+		fi
+		;;
+esac
+exit 0
+EOF
+	chmod +x "${stub_dir}/gh"
+	export PATH="${stub_dir}:${ORIGINAL_PATH}"
 	return 0
 }
 
@@ -189,6 +224,46 @@ test_llm_sweep_check_interval_guard() {
 	return 0
 }
 
+test_llm_sweep_skips_when_recent_closures_exist() {
+	install_fake_gh_for_sweep
+	local now_epoch
+	now_epoch=$(date +%s)
+	local old_epoch=$((now_epoch - COMPLEXITY_LLM_SWEEP_INTERVAL - 60))
+	printf '%s\n' "$old_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
+	printf '10\n' >"$COMPLEXITY_DEBT_COUNT_FILE"
+	export GH_OPEN_DEBT_COUNT=10
+	export GH_RECENT_CLOSURES=2
+	export GH_ISSUE_LIST_JSON='[]'
+
+	if ! _complexity_llm_sweep_due "$now_epoch" "test/repo" 2>/dev/null; then
+		print_result "_complexity_llm_sweep_due: active throughput suppresses stall sweep" 0
+	else
+		print_result "_complexity_llm_sweep_due: active throughput suppresses stall sweep" 1 "expected 1 (not due)"
+	fi
+	unset GH_OPEN_DEBT_COUNT GH_RECENT_CLOSURES GH_ISSUE_LIST_JSON
+	return 0
+}
+
+test_llm_sweep_due_when_zero_recent_closures() {
+	install_fake_gh_for_sweep
+	local now_epoch
+	now_epoch=$(date +%s)
+	local old_epoch=$((now_epoch - COMPLEXITY_LLM_SWEEP_INTERVAL - 60))
+	printf '%s\n' "$old_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
+	printf '10\n' >"$COMPLEXITY_DEBT_COUNT_FILE"
+	export GH_OPEN_DEBT_COUNT=10
+	export GH_RECENT_CLOSURES=0
+	export GH_ISSUE_LIST_JSON='[]'
+
+	if _complexity_llm_sweep_due "$now_epoch" "test/repo" 2>/dev/null; then
+		print_result "_complexity_llm_sweep_due: zero recent closures allows stall sweep" 0
+	else
+		print_result "_complexity_llm_sweep_due: zero recent closures allows stall sweep" 1 "expected 0 (due)"
+	fi
+	unset GH_OPEN_DEBT_COUNT GH_RECENT_CLOSURES GH_ISSUE_LIST_JSON
+	return 0
+}
+
 # =============================================================================
 # Tests: _complexity_scan_check_interval
 # =============================================================================
@@ -248,6 +323,8 @@ main() {
 	test_tree_changed_after_commit_returns_changed
 	test_llm_sweep_not_due_when_interval_not_elapsed
 	test_llm_sweep_check_interval_guard
+	test_llm_sweep_skips_when_recent_closures_exist
+	test_llm_sweep_due_when_zero_recent_closures
 	test_check_interval_due_when_no_last_run
 	test_check_interval_not_due_when_recent
 	test_check_interval_due_when_elapsed

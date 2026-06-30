@@ -111,10 +111,38 @@ _complexity_scan_tree_changed() {
 	return 0
 }
 
+# Count recently closed function-complexity-debt issues for throughput-aware stall checks.
+# Arguments: $1 - now_epoch, $2 - aidevops_slug, $3 - window_seconds
+# Outputs: integer closure count
+_complexity_recent_debt_closures() {
+	local now_epoch="$1"
+	local aidevops_slug="$2"
+	local window_seconds="$3"
+	local since_epoch=$((now_epoch - window_seconds))
+	local since_date=""
+	local recent_closures=""
+
+	since_date=$(date -u -d "@${since_epoch}" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null) ||
+		since_date=$(date -u -r "$since_epoch" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null) ||
+		since_date=""
+	if [[ -z "$since_date" ]]; then
+		printf '0\n'
+		return 0
+	fi
+
+	recent_closures=$(gh api graphql \
+		-f query="query { search(query:\"repo:${aidevops_slug} label:function-complexity-debt is:issue is:closed closed:>${since_date}\", type:ISSUE) { issueCount } }" \
+		--jq '.data.search.issueCount' 2>/dev/null) || recent_closures="0"
+	[[ "$recent_closures" =~ ^[0-9]+$ ]] || recent_closures="0"
+	printf '%s\n' "$recent_closures"
+	return 0
+}
+
 # Check if the daily LLM sweep is due and debt is stalled.
 # The LLM sweep fires when:
 #   1. COMPLEXITY_LLM_SWEEP_INTERVAL has elapsed since last sweep, AND
-#   2. The open function-complexity-debt count has not decreased since last check
+#   2. The open function-complexity-debt count has not decreased since last check, AND
+#   3. Zero function-complexity-debt issues closed during the stall window
 # Arguments: $1 - now_epoch, $2 - aidevops_slug
 # Returns: 0 if sweep is due, 1 if not due
 _complexity_llm_sweep_due() {
@@ -162,6 +190,18 @@ _complexity_llm_sweep_due() {
 			printf '%s\n' "$now_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
 			return 1
 		fi
+	fi
+
+	# GH#18286/GH#25890: A flat or growing open count is not a stall when
+	# workers are closing debt and the scanner is replenishing the backlog at a
+	# similar rate. Only create an LLM sweep when recent throughput is zero.
+	local recent_closures
+	recent_closures=$(_complexity_recent_debt_closures "$now_epoch" "$aidevops_slug" "$COMPLEXITY_LLM_SWEEP_INTERVAL")
+	[[ "$recent_closures" =~ ^[0-9]+$ ]] || recent_closures="0"
+	if [[ "$recent_closures" -gt 0 ]]; then
+		echo "[pulse-wrapper] Complexity LLM sweep: debt at ${current_count} but ${recent_closures} issue(s) closed in the last $((COMPLEXITY_LLM_SWEEP_INTERVAL / 3600))h — active throughput, sweep not needed" >>"$LOGFILE"
+		printf '%s\n' "$now_epoch" >"$COMPLEXITY_LLM_SWEEP_LAST_RUN"
+		return 1
 	fi
 
 	# GH#17536: Skip sweep when all remaining debt issues are already dispatched.
@@ -222,7 +262,7 @@ _complexity_run_llm_sweep() {
 
 **Open function-complexity-debt issues:** ${current_count:-unknown}
 
-The simplification debt count has not decreased in the last $((COMPLEXITY_LLM_SWEEP_INTERVAL / 3600))h. This issue is a prompt for the LLM to review the current state and suggest approach adjustments.
+The simplification debt count has not decreased in the last $((COMPLEXITY_LLM_SWEEP_INTERVAL / 3600))h, and the throughput guard found no recent function-complexity-debt closures. This issue is a worker-ready prompt for the LLM to review the current state and ship a small self-healing improvement when the cause is clear.
 
 ### Questions to investigate
 
@@ -236,6 +276,13 @@ The simplification debt count has not decreased in the last $((COMPLEXITY_LLM_SW
 - Review the oldest 10 open function-complexity-debt issues and close any that are no longer relevant.
 - Check if \`tier:simple\` and \`tier:standard\` issues are being dispatched — if not, verify the pulse is routing them correctly.
 - If debt is growing, consider lowering \`COMPLEXITY_MD_MIN_LINES\` or \`COMPLEXITY_FILE_VIOLATION_THRESHOLD\` to catch more candidates.
+
+### Worker Guidance
+
+- Target files: \`.agents/scripts/pulse-simplification-scan.sh\`, \`.agents/scripts/complexity-scan-helper.sh\`, \`.agents/scripts/pulse-dispatch-engine.sh\`, and matching tests under \`.agents/scripts/tests/\`.
+- Reference pattern: keep the inline sweep guard consistent with \`complexity-scan-helper.sh sweep-check\`, especially the recent-closure throughput check before filing a stall issue.
+- Do not close debt issues solely because they are old. Close only when current repo evidence shows the file is deleted, already simplified, or duplicated.
+- Verification: run \`.agents/scripts/tests/test-pulse-wrapper-complexity-scan.sh\` plus ShellCheck on changed shell scripts.
 
 ### Confidence: low
 
@@ -263,7 +310,7 @@ This is an automated stall-detection sweep. The LLM should review the actual iss
 	# on other runners, producing audit trail gaps.
 	if gh_create_issue --repo "$aidevops_slug" \
 		--title "perf: simplification debt stalled — LLM sweep needed ($(date -u +%Y-%m-%d))" \
-		--label "function-complexity-debt" $sweep_review_label --label "tier:thinking" \
+		--label "function-complexity-debt" $sweep_review_label --label "tier:thinking" --label "worker-ready" \
 		--body "$sweep_body" >/dev/null 2>&1; then
 		echo "[pulse-wrapper] Complexity LLM sweep: created stall-review issue" >>"$LOGFILE"
 	else
