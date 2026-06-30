@@ -1139,6 +1139,170 @@ _shim_normalize_interactive_tracking_issue_create() {
 
 _shim_normalize_interactive_tracking_issue_create
 
+_shim_pr_create_get_title() {
+	local idx=0
+	local arg=""
+	local title=""
+	while [[ $idx -lt ${#_modified_args[@]} ]]; do
+		arg="${_modified_args[$idx]}"
+		case "$arg" in
+		--title | -t)
+			title="${_modified_args[idx + 1]:-}"
+			idx=$((idx + 2))
+			continue
+			;;
+		--title=*) title="${arg#--title=}" ;;
+		-t*) title="${arg#-t}" ;;
+		esac
+		idx=$((idx + 1))
+	done
+	if [[ -n "$title" ]]; then
+		printf '%s\n' "$title"
+		return 0
+	fi
+	return 1
+}
+
+_shim_pr_create_get_body() {
+	local idx=0
+	local arg=""
+	local body=""
+	local body_file=""
+	while [[ $idx -lt ${#_modified_args[@]} ]]; do
+		arg="${_modified_args[$idx]}"
+		case "$arg" in
+		--body)
+			body="${_modified_args[idx + 1]:-}"
+			idx=$((idx + 2))
+			continue
+			;;
+		--body=*) body="${arg#--body=}" ;;
+		--body-file)
+			body_file="${_modified_args[idx + 1]:-}"
+			if [[ -n "$body_file" && -f "$body_file" ]]; then
+				body="$(<"$body_file")"
+			fi
+			idx=$((idx + 2))
+			continue
+			;;
+		--body-file=*)
+			body_file="${arg#--body-file=}"
+			if [[ -n "$body_file" && -f "$body_file" ]]; then
+				body="$(<"$body_file")"
+			fi
+			;;
+		esac
+		idx=$((idx + 1))
+	done
+	if [[ -n "$body" ]]; then
+		printf '%s\n' "$body"
+		return 0
+	fi
+	return 1
+}
+
+_shim_text_has_linked_issue_ref() {
+	local text="$1"
+	local normalized=""
+	normalized=$(printf '%s\n' "$text" | tr '[:upper:]' '[:lower:]')
+	if [[ "$normalized" =~ (^|[[:space:][:punct:]])(closes?|fixes?|resolves?|for|ref)[[:space:]:]+#[0-9]+ ]]; then
+		return 0
+	fi
+	if [[ "$normalized" =~ ^(t[0-9]+([.][0-9]+)*|gh#[0-9]+)(:|[[:space:]]) ]]; then
+		return 0
+	fi
+	return 1
+}
+
+_shim_local_repo_slug() {
+	local repo_slug=""
+	repo_slug=$(_shim_repo_from_git_remote 2>/dev/null || true)
+	if [[ -n "$repo_slug" ]]; then
+		printf '%s\n' "$repo_slug"
+		return 0
+	fi
+	return 1
+}
+
+_shim_target_matches_local_checkout() {
+	local repo_slug="$1"
+	local local_slug=""
+	local local_name=""
+	local target_name=""
+	[[ -n "$repo_slug" && "$repo_slug" == */* ]] || return 1
+	local_slug=$(_shim_local_repo_slug 2>/dev/null || true)
+	if [[ -n "$local_slug" && "$local_slug" == */* ]]; then
+		local_name="${local_slug##*/}"
+	else
+		local_name="${PWD##*/}"
+	fi
+	target_name="${repo_slug##*/}"
+	[[ -n "$local_name" && "$target_name" == "$local_name" ]]
+	return $?
+}
+
+_shim_file_mentions_issue_first_policy() {
+	local file_path="$1"
+	[[ -f "$file_path" ]] || return 1
+	if grep -Eiq 'issue-first|linked issue|Every human-authored PR' "$file_path" &&
+		grep -Eiq 'Closes #|Fixes #|Resolves #|For #|Ref #' "$file_path"; then
+		return 0
+	fi
+	return 1
+}
+
+_shim_local_policy_requires_linked_issue() {
+	local root=""
+	local tmpl=""
+	root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+	_shim_file_mentions_issue_first_policy "$root/CONTRIBUTING.md" && return 0
+	_shim_file_mentions_issue_first_policy "$root/.github/PULL_REQUEST_TEMPLATE.md" && return 0
+	_shim_file_mentions_issue_first_policy "$root/.github/pull_request_template.md" && return 0
+	for tmpl in "$root"/.github/PULL_REQUEST_TEMPLATE/*.md "$root"/.github/pull_request_template/*.md; do
+		[[ -f "$tmpl" ]] || continue
+		_shim_file_mentions_issue_first_policy "$tmpl" && return 0
+	done
+	return 1
+}
+
+_shim_repo_requires_linked_issue_prs() {
+	local repo_slug="$1"
+	[[ "$repo_slug" == "marcusquinn/aidevops" ]] && return 0
+	_shim_target_matches_local_checkout "$repo_slug" || return 1
+	_shim_local_policy_requires_linked_issue && return 0
+	return 1
+}
+
+_shim_block_pr_create_without_linked_issue_if_needed() {
+	[[ "${_modified_args[0]:-}:${_modified_args[1]:-}" == "pr:create" ]] || return 0
+	if [[ "${AIDEVOPS_PR_LINKED_ISSUE_BYPASS:-0}" == "1" ]]; then
+		printf '[aidevops][pr-linked-issue][BYPASS] AIDEVOPS_PR_LINKED_ISSUE_BYPASS=1 set; allowing PR create without local linked-issue enforcement.\n' >&2
+		return 0
+	fi
+
+	local repo_slug=""
+	local title=""
+	local body=""
+	repo_slug=$(_shim_target_repo_slug "${_modified_args[@]}" 2>/dev/null || true)
+	[[ -n "$repo_slug" ]] || return 0
+	_shim_repo_requires_linked_issue_prs "$repo_slug" || return 0
+
+	title=$(_shim_pr_create_get_title 2>/dev/null || true)
+	body=$(_shim_pr_create_get_body 2>/dev/null || true)
+	if _shim_text_has_linked_issue_ref "${title}"$'\n'"${body}"; then
+		return 0
+	fi
+
+	printf '[aidevops][pr-linked-issue][BLOCK] PR creation for %s is missing a linked issue reference.\n' "$repo_slug" >&2
+	printf '  Target policy requires issue-first PRs. Create or find the issue first, then include one of: Closes #NNN, Fixes #NNN, Resolves #NNN, For #NNN, or Ref #NNN.\n' >&2
+	printf '  Task-prefixed titles such as GH#NNN: or tNNN: are also accepted when they map to the project task system.\n' >&2
+	return 1
+}
+
+if ! _shim_block_pr_create_without_linked_issue_if_needed; then
+	exit 1
+fi
+
 if _shim_is_content_write_command "${_modified_args[@]}"; then
 	if ! _shim_block_headless_external_write_if_needed "${_modified_args[@]}"; then
 		exit 1
