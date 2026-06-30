@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.43] - 2026-06-30
+
+### Fixed
+
+- harden gui pulse worker actions (#26095)
+- recover oauth pool when getAuth refresh fails (#26094)
+- reuse gh shim policy content (#26093)
+
 ## [3.29.42] - 2026-06-30
 
 ### Added
