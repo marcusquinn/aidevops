@@ -201,6 +201,13 @@ qlty_step_out=$(_classify_ci_failures_by_pattern "Qlty smell threshold check" "$
 assert_contains "2h4: Qlty smell threshold step → EXTERNAL_STATIC_ANALYSIS" \
 	"EXTERNAL_STATIC_ANALYSIS" "$qlty_step_out"
 
+# 2h5: GH#26046 legacy empty-SARIF error signature still routes to shared-tooling guidance
+qlty_empty_sarif_out=$(_classify_ci_failures_by_pattern \
+	"Qlty Smell Threshold Qlty smell threshold check echo ::error::Failed to run qlty smells (empty SARIF output)" \
+	"$CONF_FILE")
+assert_contains "2h5: Qlty empty SARIF signature → EXTERNAL_STATIC_ANALYSIS" \
+	"EXTERNAL_STATIC_ANALYSIS" "$qlty_empty_sarif_out"
+
 # 2i: Clippy
 clippy_out=$(_classify_ci_failures_by_pattern "Clippy" "$CONF_FILE")
 assert_contains "2i: Clippy → LINT_FAILURE" "LINT_FAILURE" "$clippy_out"
@@ -397,6 +404,17 @@ assert_contains "5d7: qlty step section includes shared workflow guidance" \
 	"shared workflow/helper" "$qlty_step_section"
 assert_contains "5d8: qlty step section includes local reproduction command" \
 	".agents/scripts/qlty-smell-threshold-helper.sh .agents/configs/complexity-thresholds.conf" "$qlty_step_section"
+
+# 5d9: GH#26046 exact miner signature keeps worker feedback on the shared helper.
+sample_qlty_signature_failing="- **Qlty Smell Threshold**: failure — Failed to run qlty smells (empty SARIF output)"
+qlty_signature_class_input=$(_classify_ci_failures_by_pattern \
+	"Qlty Smell Threshold Qlty smell threshold check echo ::error::Failed to run qlty smells (empty SARIF output)" \
+	"$CONF_FILE")
+qlty_signature_section=$(_build_ci_feedback_section "12345" "$sample_qlty_signature_failing" "$qlty_signature_class_input")
+assert_contains "5d9: qlty empty SARIF signature keeps shared helper guidance" \
+	"empty SARIF output" "$qlty_signature_section"
+assert_contains "5d10: qlty empty SARIF signature preserves delta-gate caveat" \
+	"delta-based qlty regression gate" "$qlty_signature_section"
 
 # 5e: Without classification arg, section omits pattern guidance (back-compat)
 section_no_classification=$(_build_ci_feedback_section "12345" "$sample_failing")
