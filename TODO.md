@@ -4357,3 +4357,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18034 Rename Workers to Pulse & Workers and add observability UI shell #auto-dispatch #dashboard #enhancement #observability #pulse ref:GH#25912
 
 - [ ] t18035 Add Pulse & Workers observability contracts and fixtures #auto-dispatch #dashboard #enhancement #observability #pulse ref:GH#25913
+
+- [ ] t18037 Build data-driven Pulse & Workers dashboard filters charts and drilldown #auto-dispatch #dashboard #design #enhancement #observability #pulse ref:GH#25915
+
+- [ ] t18036 Populate Pulse & Workers status from read-only local telemetry #api #auto-dispatch #dashboard #enhancement #observability #pulse ref:GH#25914
