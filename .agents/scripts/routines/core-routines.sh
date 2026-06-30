@@ -30,6 +30,7 @@ r911|x|OAuth token refresh|repeat:cron(*/30 * * * *)|~10s|scripts/oauth-pool-hel
 r912| |Dashboard server|repeat:persistent|~0s|server/index.ts|service
 r913|x|Weekly opencode DB maintenance|repeat:weekly(sun@04:00)|~2m|scripts/opencode-db-maintenance-helper.sh auto|script
 r914|x|Repo aidevops health — bump stale .aidevops.json, detect drift|repeat:daily(@03:30)|~2m|scripts/repo-aidevops-health-helper.sh run|script
+r915|x|Pulse check — worker utilisation and self-improvement recommendations|repeat:daily(@06:20)|~5m|scripts/pulse-check-helper.sh apply|script
 ENTRIES
 	return 0
 }
@@ -808,6 +809,59 @@ $(_diag_commands "$os" "sh.aidevops.repo-aidevops-health" "sh.aidevops.repo-aide
 - \`~/.aidevops/cache/repo-aidevops-health-state.json\` — last run summary.
 - \`.aidevops/agents/VERSION\` — current framework version (bump target).
 - Drift issues on \`marcusquinn/aidevops\` labelled \`repos-drift\` or \`no-init\`.
+$(_platform_footnote "$os")
+EOF
+	return 0
+}
+
+describe_r915() {
+	local os="${1:-darwin}"
+	cat <<EOF
+# r915: Pulse check
+
+## Overview
+
+Daily bounded diagnostics for pulse and worker productivity. It compares
+current worker capacity, recent terminal worker metrics, provider/API budget,
+and repos.json auto-dispatch queue depth, then files deduplicated
+self-improvement issues only for high-confidence productivity gaps.
+
+## Schedule
+
+| Field | Value |
+|-------|-------|
+| Frequency | Daily at 06:20 |
+| Type | script |
+| Expected duration | ~5 minutes |
+| Script | \`scripts/pulse-check-helper.sh apply\` |
+$(_scheduler_row_calendar "$os" "StartCalendarInterval: Hour=6, Minute=20" "sh.aidevops.pulse-check" "sh.aidevops.pulse-check")
+
+## What it does
+
+1. Runs \`pulse-current-state-helper.sh --window 15m --json\` for live
+   dispatch, worker launch, guardrail, and API-budget evidence.
+2. Runs \`worker-activity-helper.sh summary --since 1h/24h --json --no-pr-check\`
+   for canonical recent and historical worker outcomes.
+3. Scans pulse-enabled repos in \`repos.json\` for open \`auto-dispatch\`
+   issues using aggregate counts only; repo names, local paths, and issue titles
+   are intentionally omitted from output and filed issues.
+4. Files or reuses self-improvement issues marked with
+   \`<!-- aidevops:generator=pulse-check finding=... -->\` when a finding is
+   high-confidence and worker-dispatchable.
+
+## Safety rails
+
+- Uses aggregate queue metrics to preserve private repo/path confidentiality.
+- Uses wrapper-created issues with \`--body-file\` and dedupe markers.
+- Does not increase concurrency by itself; recommendations must cite evidence.
+- JSON output removes raw worker examples that may contain repo slugs or paths.
+
+## What to check
+
+$(_diag_commands "$os" "sh.aidevops.pulse-check" "sh.aidevops.pulse-check")
+- \`pulse-check-helper.sh report\` — ad-hoc interactive report.
+- \`pulse-check-helper.sh json\` — machine-readable evidence.
+- Open issues carrying \`source:pulse-check\` — deduplicated improvements.
 $(_platform_footnote "$os")
 EOF
 	return 0
