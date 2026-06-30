@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# Regression guard for GH#26113: gh-failure-miner must not cluster GitHub
+# Regression guard for GH#26113/GH#26127: gh-failure-miner must not cluster GitHub
 # runner-echoed shell comments as failure signatures.
 
 set -u
@@ -66,6 +66,10 @@ assert_equals "comment-only log lines are filtered" $'job\tStep\ttime\treal erro
 
 filtered=$(filter_signature_noise_lines $'job\tUNKNOWN STEP\ttime\t+ # rate-limit grace is disabled — they cannot merge on rate-limit-only.\njob\tStep\ttime\treal error')
 assert_equals "xtrace-prefixed shell comments are filtered" $'job\tStep\ttime\treal error' "$filtered"
+
+filtered=$(filter_signature_noise_lines $'gate / review-bot-gate\tUNKNOWN STEP\t2026-06-30T20:14:24.8559907Z\t\033[36;1m# rate-limit grace is disabled — they cannot merge on rate-limit-only.\033[0m')
+signature=$(normalize_signature_line "$filtered")
+assert_equals "GH#26127 comment-only systemic signature normalizes empty" "no_error_signature_detected" "$signature"
 
 printf '\nTests run: %s, failures: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -ne 0 ]]; then
