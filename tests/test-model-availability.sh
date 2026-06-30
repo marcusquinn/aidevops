@@ -249,6 +249,22 @@ else
 	fail "invalidate specific provider cache" "Exit code: $invalidate_prov_exit"
 fi
 
+run_with_timeout 5 bash "$HELPER" mark-unavailable anthropic startup_no_model_activity 120 --quiet >/dev/null 2>&1
+mark_unavailable_exit=$?
+if [[ $mark_unavailable_exit -eq 0 ]]; then
+	check_marked_exit=0
+	run_with_timeout 5 bash "$HELPER" check anthropic --quiet >/dev/null 2>&1 || check_marked_exit=$?
+	if [[ "$check_marked_exit" -eq 1 ]]; then
+		pass "runtime feedback marks provider unavailable"
+	else
+		fail "runtime feedback marks provider unavailable" "check exit: $check_marked_exit"
+	fi
+else
+	fail "mark-unavailable command" "Exit code: $mark_unavailable_exit"
+fi
+
+run_with_timeout 5 bash "$HELPER" invalidate anthropic >/dev/null 2>&1 || true
+
 # ============================================================
 # SECTION 6: Supervisor integration (removed)
 # ============================================================

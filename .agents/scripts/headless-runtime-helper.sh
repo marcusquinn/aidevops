@@ -1861,6 +1861,7 @@ cmd_run() {
 		fi
 
 		if [[ "$attempt_exit" -eq 0 ]]; then
+			clear_startup_no_model_feedback "$selected_model"
 			# GH#20721: Pass work_dir so _cmd_run_finish can detect no-op exits.
 			_cmd_run_finish "$session_key" "complete" "$work_dir"
 			return 0
@@ -1984,6 +1985,9 @@ cmd_run() {
 		# Track cumulative stall events per session and apply hard-kill caps
 		# before retrying — unbounded stall-continue burns tokens indefinitely.
 		if [[ "$attempt_exit" -eq 78 ]]; then
+			if [[ "${_run_failure_reason:-}" == "startup_no_model_activity" ]]; then
+				record_startup_no_model_feedback "$selected_model"
+			fi
 			# Accumulate per-session stall metrics (one stall = one STALL_TIMEOUT).
 			_session_stall_count=$((_session_stall_count + 1))
 			_session_stall_cumulative_s=$((_session_stall_cumulative_s + _stall_timeout_s))

@@ -16,6 +16,8 @@
 #   rate-limits             Show current rate limit status from cache
 #   resolve <tier>          Resolve best available model for a tier (with fallback)
 #   invalidate [provider]   Clear cache for a provider (or all)
+#   mark-unavailable <provider> [reason] [seconds]
+#                         Record a short negative provider health entry
 #   help                    Show this help
 #
 # Options:
@@ -591,6 +593,9 @@ main() {
 		;;
 	resolve-chain | resolve_chain)
 		cmd_resolve_chain "$@"
+		;;
+	mark-unavailable | mark_unavailable)
+		cmd_mark_unavailable "$@"
 		;;
 	invalidate | clear | flush)
 		cmd_invalidate "$@"

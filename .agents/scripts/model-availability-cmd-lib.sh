@@ -5,7 +5,8 @@
 # Model Availability Commands Library -- CLI command implementations
 # =============================================================================
 # Command handler functions (cmd_check, cmd_probe, cmd_status, cmd_rate_limits,
-# cmd_resolve, cmd_invalidate, cmd_resolve_chain, cmd_help) extracted from
+# cmd_resolve, cmd_invalidate, cmd_resolve_chain, cmd_mark_unavailable,
+# cmd_help) extracted from
 # model-availability-helper.sh.
 #
 # Usage: source "${SCRIPT_DIR}/model-availability-cmd-lib.sh"
@@ -455,6 +456,80 @@ cmd_invalidate() {
 	return 0
 }
 
+mark_provider_unavailable() {
+	local provider="$1"
+	local reason="${2:-runtime_negative_feedback}"
+	local ttl_seconds="${3:-300}"
+
+	[[ "$ttl_seconds" =~ ^[0-9]+$ ]] || ttl_seconds=300
+	[[ "$ttl_seconds" -gt 0 ]] || ttl_seconds=300
+
+	db_query "
+        INSERT INTO provider_health (provider, status, http_code, response_ms, error_message, models_count, checked_at, ttl_seconds)
+        VALUES (
+            '$(sql_escape "$provider")',
+            'unavailable',
+            0,
+            0,
+            '$(sql_escape "$reason")',
+            0,
+            strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+            $ttl_seconds
+        )
+        ON CONFLICT(provider) DO UPDATE SET
+            status = excluded.status,
+            http_code = excluded.http_code,
+            response_ms = excluded.response_ms,
+            error_message = excluded.error_message,
+            models_count = excluded.models_count,
+            checked_at = excluded.checked_at,
+            ttl_seconds = excluded.ttl_seconds;
+    " || return 1
+	db_query "DELETE FROM model_availability WHERE provider = '$(sql_escape "$provider")';" || true
+	db_query "
+        INSERT INTO probe_log (provider, action, result, duration_ms, details)
+        VALUES (
+            '$(sql_escape "$provider")',
+            'runtime_feedback',
+            'unavailable',
+            0,
+            '$(sql_escape "$reason")'
+        );
+    " || true
+	return 0
+}
+
+cmd_mark_unavailable() {
+	local provider="${1:-}"
+	local reason="${2:-runtime_negative_feedback}"
+	local ttl_seconds="${3:-300}"
+	local quiet=false
+
+	shift || true
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--quiet)
+			quiet=true
+			shift
+			;;
+		*) shift ;;
+		esac
+	done
+
+	if [[ -z "$provider" ]]; then
+		print_error "Usage: model-availability-helper.sh mark-unavailable <provider> [reason] [seconds]"
+		return 1
+	fi
+	if ! is_known_provider "$provider"; then
+		print_error "Unknown provider: $provider"
+		return 1
+	fi
+
+	mark_provider_unavailable "$provider" "$reason" "$ttl_seconds" || return 1
+	[[ "$quiet" == "true" ]] || print_warning "Marked provider unavailable: $provider ($reason, ${ttl_seconds}s)"
+	return 0
+}
+
 # Resolve using the full fallback chain (t132.4).
 # Delegates to fallback-chain-helper.sh for extended chain resolution
 # including gateway providers and per-agent overrides.
@@ -530,6 +605,8 @@ cmd_help() {
 	echo "  rate-limits                  Show rate limit data from cache"
 	echo "  resolve <tier>               Resolve best available model for tier (primary + fallback)"
 	echo "  resolve-chain <tier>         Resolve via full fallback chain (t132.4, includes gateways)"
+	echo "  mark-unavailable <provider> [reason] [seconds]"
+	echo "                                Record bounded runtime feedback against provider health"
 	echo "  invalidate [provider]        Clear cache (all or specific provider)"
 	echo "  help                         Show this help"
 	echo ""
