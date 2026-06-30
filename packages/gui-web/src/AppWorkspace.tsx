@@ -465,12 +465,12 @@ function PulseWorkersSurface(): ReactElement {
         <p className="eyebrow">Observability shell · fixture-backed · read-only</p>
         <h2>{text.workers}</h2>
         <p>{text.workersIntro}</p>
-        <div className="pulse-scope-strip" aria-label="Pulse scope and time range">
+        <section className="pulse-scope-strip" aria-label="Pulse scope and time range">
           <span><strong>Period</strong> Last 24h · all managed repos</span>
           <span><strong>Comparison</strong> Previous 24h baseline</span>
           <span><strong>Sample</strong> 21 worker sessions · 184 events</span>
           <span><strong>Trust boundary</strong> Metadata/status only; protected payloads excluded</span>
-        </div>
+        </section>
       </div>
       <section className="pulse-kpi-grid" aria-label="Pulse health summary">
         {pulseKpis.map((kpi) => (
@@ -498,7 +498,7 @@ function PulseWorkersSurface(): ReactElement {
         <article className="planned-card pulse-chart-panel">
           <p className="eyebrow">Trends</p>
           <h3>Health trend placeholder</h3>
-          <div className="pulse-chart-placeholder" aria-label="Chart placeholder showing health, queue, token, cost, API, and CI capacity trends">
+          <div className="pulse-chart-placeholder" aria-label="Chart placeholder showing health, queue, token, cost, API, and CI capacity trends" role="img">
             <span>health</span><span>queue</span><span>tokens</span><span>cost</span><span>api</span><span>ci</span>
           </div>
           <p>Charts will derive from the canonical event stream: Pulse, workers, commands, CI, issues, PRs, reviews, and outcomes.</p>
@@ -510,25 +510,29 @@ function PulseWorkersSurface(): ReactElement {
             <p className="eyebrow">Canonical stream</p>
             <h3>Unified activity</h3>
           </div>
-          <div className="pulse-filter-row" aria-label="Quick filters">
+          <section className="pulse-filter-row" aria-label="Quick filters">
             {pulseFilters.map((filter) => <button disabled key={filter} title={`${filter} filter is planned`} type="button">{filter}</button>)}
-          </div>
+          </section>
         </div>
-        <div className="pulse-activity-table" role="table" aria-label="Pulse and worker events">
-          <div className="pulse-activity-row pulse-activity-header" role="row">
-            <span>When</span><span>Event</span><span>Scope</span><span>Outcome</span><span>Resource</span><span>Origin / actor</span>
-          </div>
-          {pulseActivityRows.map((row) => (
-            <article className="pulse-activity-row" role="row" key={`${row.time}-${row.scope}`}>
-              <span data-label="When">{row.time}</span>
-              <span data-label="Event">{row.event}</span>
-              <span data-label="Scope">{row.scope}</span>
-              <span data-label="Outcome">{row.outcome}</span>
-              <span data-label="Resource">{row.resource}</span>
-              <span data-label="Origin / actor">{row.origin} · {row.actor}</span>
-            </article>
-          ))}
-        </div>
+        <table className="pulse-activity-table" aria-label="Pulse and worker events">
+          <thead>
+            <tr className="pulse-activity-row pulse-activity-header">
+              <th scope="col">When</th><th scope="col">Event</th><th scope="col">Scope</th><th scope="col">Outcome</th><th scope="col">Resource</th><th scope="col">Origin / actor</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pulseActivityRows.map((row) => (
+              <tr className="pulse-activity-row" key={`${row.time}-${row.scope}`}>
+                <td data-label="When">{row.time}</td>
+                <td data-label="Event">{row.event}</td>
+                <td data-label="Scope">{row.scope}</td>
+                <td data-label="Outcome">{row.outcome}</td>
+                <td data-label="Resource">{row.resource}</td>
+                <td data-label="Origin / actor">{row.origin} · {row.actor}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
         <p className="notice compact-notice">Mobile activity cards replace the dense table on small screens. Detail drawer becomes a full-screen sheet on small screens, and terminal panel becomes full-screen later.</p>
       </section>
       <section className="pulse-layout" aria-label="Drilldown and planned actions">

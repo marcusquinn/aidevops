@@ -2337,6 +2337,11 @@ code {
   overflow: hidden;
 }
 
+.pulse-activity-table thead,
+.pulse-activity-table tbody {
+  display: grid;
+}
+
 .pulse-activity-row {
   display: grid;
   gap: 10px;
@@ -2346,6 +2351,12 @@ code {
 
 .pulse-activity-row + .pulse-activity-row {
   border-top: 1px solid var(--border);
+}
+
+.pulse-activity-row th,
+.pulse-activity-row td {
+  font-weight: inherit;
+  text-align: left;
 }
 
 .pulse-activity-header {
@@ -3819,7 +3830,7 @@ button.managed-toggle:focus-visible {
     background: var(--surface-elevated);
   }
 
-  .pulse-activity-row span::before {
+  .pulse-activity-row td::before {
     color: var(--text-muted);
     content: attr(data-label) ": ";
     font-weight: 900;
