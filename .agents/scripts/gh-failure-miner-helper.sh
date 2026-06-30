@@ -896,10 +896,19 @@ build_issue_body() {
 					"- CodeFactor is an external advisory/static-analysis check. GitHub Actions logs usually only show `failure:codefactor.io`; read the CodeFactor details URL in Evidence for the file, line, and rule.\n" +
 					"- If the details URL is inaccessible, use the `affected files` evidence from the failing PRs to identify the nearest local linter/static-analysis guard before editing.\n" +
 					"- Reproduce the provider finding locally with the nearest repo linter/style/static-analysis command, fix the source issue rather than suppressing CodeFactor, and add a focused regression guard for the reported rule/file.\n" +
-					"\n## Worker Guidance\n" +
+					"\n" +
+					"## Worker Guidance\n" +
 					"1. Open the CodeFactor details URL from Evidence first; do not infer the reported file/rule from the GitHub run alone.\n" +
 					"2. If CodeFactor details are unavailable, inspect the affected files listed in Evidence and the closest existing lint/test guard for those file types. If no focused guard exists, add one under `.agents/scripts/tests/` or the target package tests.\n" +
 					"3. Run the focused guard plus the nearest local linter before opening a PR.\n"
+				elif $check_name == "Qlty Smell Threshold" and $signature == "Failed to run qlty smells (empty SARIF output)" then
+					"- Qlty Smell Threshold empty-SARIF failures are shared tooling failures, not PR-specific smell regressions.\n" +
+					"- Harden the absolute threshold workflow/helper so empty `qlty smells --all --sarif` output emits diagnostic warning context and does not block unrelated PRs.\n" +
+					"- Keep valid SARIF output blocking when the count exceeds `QLTY_SMELL_THRESHOLD`, and keep the delta-based qlty regression gate as the PR-specific smell guard.\n" +
+					"\n## Worker Guidance\n" +
+					"1. Edit `.agents/scripts/qlty-smell-threshold-helper.sh` and `.github/workflows/code-quality.yml`; do not change application files to satisfy an empty-SARIF signature.\n" +
+					"2. Add or update `.agents/scripts/tests/test-qlty-smell-threshold-helper.sh` to cover empty, valid-pass, and valid-fail SARIF paths.\n" +
+					"3. Run `shellcheck .agents/scripts/qlty-smell-threshold-helper.sh .agents/scripts/tests/test-qlty-smell-threshold-helper.sh` plus the focused qlty threshold helper test before opening a PR.\n"
 				else
 					"- Fix the workflow/check at the source, then rerun failed checks on affected PRs.\n" +
 					"- Add a regression guard for this signature in pulse routine outputs.\n"

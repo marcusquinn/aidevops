@@ -101,6 +101,27 @@ cluster_json=$(cat <<'JSON'
 JSON
 )
 
+qlty_empty_sarif_cluster_json='{
+  "repo": "marcusquinn/aidevops",
+  "check_name": "Qlty Smell Threshold",
+  "signature": "Failed to run qlty smells (empty SARIF output)",
+  "count": 2,
+  "is_infra": false,
+  "sources": ["pr:#26016", "pr:#26015"],
+  "examples": [
+    {
+      "source_kind": "pr",
+      "source_ref": "#26016",
+      "source_url": "https://github.com/marcusquinn/aidevops/pull/26016",
+      "run_url": "https://github.com/marcusquinn/aidevops/actions/runs/28436868573/job/84264809560",
+      "details_url": "https://github.com/marcusquinn/aidevops/actions/runs/28436868573/job/84264809560",
+      "affected_paths": [],
+      "annotations": [],
+      "conclusion": "failure"
+    }
+  ]
+}'
+
 empty_evidence_cluster_json=$(cat <<'JSON'
 {
   "repo": "marcusquinn/aidevops",
@@ -134,6 +155,7 @@ JSON
 )
 
 body=$(build_issue_body "$cluster_json" "46250abc5695" "2" "false")
+qlty_body=$(build_issue_body "$qlty_empty_sarif_cluster_json" "d627959fbedf" "2" "false")
 legacy_body=$(render_issue_body_markdown "$events_json" "2")
 if empty_evidence_output=$(create_or_preview_issue "$empty_evidence_cluster_json" "abc123" "2" "true" "false" 2>&1); then
 	empty_evidence_status=0
@@ -189,6 +211,10 @@ assert_contains "build_issue_body includes CodeFactor annotations" "reported fin
 assert_contains "build_issue_body handles unavailable details" "If CodeFactor details are unavailable" "$body"
 assert_contains "build_issue_body preserves failure signature context" "failure:codefactor.io" "$body"
 assert_contains "build_issue_body asks for focused regression guard" "focused regression guard" "$body"
+assert_contains "build_issue_body includes Qlty Worker Guidance" "## Worker Guidance" "$qlty_body"
+assert_contains "build_issue_body classifies qlty empty SARIF as shared tooling" "empty-SARIF failures are shared tooling failures" "$qlty_body"
+assert_contains "build_issue_body points qlty workers at helper" ".agents/scripts/qlty-smell-threshold-helper.sh" "$qlty_body"
+assert_contains "build_issue_body preserves qlty ratchet semantics" "Keep valid SARIF output blocking" "$qlty_body"
 assert_equals "create_or_preview_issue rejects no-evidence clusters" "1" "$empty_evidence_status"
 assert_contains "create_or_preview_issue explains no-evidence skip" "no evidence examples" "$empty_evidence_output"
 assert_contains "render_issue_body_markdown includes Worker Guidance" "## Worker Guidance" "$legacy_body"
