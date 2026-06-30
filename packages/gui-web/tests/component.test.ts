@@ -146,7 +146,8 @@ describe("dashboard shell", () => {
     const workersNavItem = navGroups.flatMap((group) => group.items).find((item) => item.id === "workers");
 
     expect(html).toContain("Pulse &amp; Workers");
-    expect(workersNavItem).toMatchObject({ badge: undefined, label: "Pulse & Workers" });
+    expect(workersNavItem).toMatchObject({ label: "Pulse & Workers" });
+    expect(workersNavItem?.badge).toBeUndefined();
     expect(html).toContain("Data-driven observability");
     expect(html).toContain("Repo scope");
     expect(html).toContain("Issue origin");
@@ -409,6 +410,21 @@ describe("dashboard shell", () => {
   test("keeps the loading skeleton aligned to the shell landmarks", () => {
     expect(loadingSkeletonPanelLabels).toEqual(["machine rail", "sidebar", "workspace", "status bar"]);
     expect(loadingBrandGlyph).toBe(">_");
+  });
+
+  test("wires desktop screenshot capture controls to native save notifications", () => {
+    const appSource = readFileSync(`${guiWebRoot}/src/App.tsx`, "utf8");
+    const css = readFileSync(`${guiWebRoot}/src/styles.css`, "utf8");
+    const desktopInstaller = readFileSync(`${guiWebRoot}/../gui-desktop/scripts/install-macos-app.sh`, "utf8");
+
+    expect(appSource).toContain("aidevops:screenshot-captured");
+    expect(appSource).toContain("screenshot-capture-notification");
+    expect(css).toContain(".screenshot-capture-notification");
+    expect(desktopInstaller).toContain("Screenshot App");
+    expect(desktopInstaller).toContain("Screenshot Page");
+    expect(desktopInstaller).toContain("homeDirectoryForCurrentUser.appendingPathComponent(\"Screenshots\"");
+    expect(desktopInstaller).toContain("aidevops-app-screenshot-");
+    expect(desktopInstaller).toContain("NSPasteboard.general.setString(fileURL.path");
   });
 
   test("ships critical loading styles before React hydrates", () => {

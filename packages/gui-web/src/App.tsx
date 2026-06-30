@@ -13,8 +13,16 @@ interface WebKitBridgeWindow extends Window {
       accentHue?: {
         postMessage: (hue: number) => void;
       };
+      externalLink?: {
+        postMessage: (href: string) => void;
+      };
     };
   };
+}
+
+interface ScreenshotCapturedDetail {
+  path: string;
+  url: string;
 }
 
 type AppearanceStorage = Pick<Storage, "getItem" | "setItem">;
@@ -103,6 +111,7 @@ export function App(): ReactElement {
   const [conversationMode, setConversationMode] = useState<ConversationMode>("ai");
   const [selectedLocalRepoIndex, setSelectedLocalRepoIndex] = useState(0);
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>();
+  const [screenshotNotification, setScreenshotNotification] = useState<ScreenshotCapturedDetail | undefined>();
   const [systemTheme, setSystemTheme] = useState<"light" | "dark">("light");
   const resolvedTheme = themePreference === "system" ? systemTheme : themePreference;
   const activeSurface: SurfaceId = navigation.entries[navigation.index] ?? "overview";
@@ -207,6 +216,20 @@ export function App(): ReactElement {
     setSelectedLocalRepoIndex((current) => Math.min(current, Math.max(0, status.data.local_repos.repos.length - 1)));
   }, [status.data.local_repos.repos.length]);
 
+  useEffect(() => {
+    const showScreenshotNotification = (event: Event) => {
+      const detail = (event as CustomEvent<Partial<ScreenshotCapturedDetail>>).detail;
+      if (detail === undefined || typeof detail.path !== "string" || typeof detail.url !== "string") {
+        return;
+      }
+
+      setScreenshotNotification({ path: detail.path, url: detail.url });
+    };
+
+    window.addEventListener("aidevops:screenshot-captured", showScreenshotNotification);
+    return () => window.removeEventListener("aidevops:screenshot-captured", showScreenshotNotification);
+  }, []);
+
   if (statusLoading) {
     return <AppLoadingSkeleton machineRailVisible={machineRailVisible} />;
   }
@@ -214,6 +237,7 @@ export function App(): ReactElement {
   return (
     <main className={machineRailVisible ? "app-shell" : "app-shell machine-rail-collapsed"}>
       <div className="desktop-titlebar-tagline" aria-hidden="true">Your data protected. Your systems managed. Your creations published.</div>
+      {screenshotNotification ? <ScreenshotCaptureNotification notification={screenshotNotification} onDismiss={() => setScreenshotNotification(undefined)} /> : null}
       {machineRailVisible ? <MachineRail machine={status.data.machine} /> : null}
       <Sidebar
         activeSurface={activeSurface}
@@ -265,6 +289,23 @@ export function App(): ReactElement {
       />
       <DesktopStatusBar status={status.data} />
     </main>
+  );
+}
+
+function ScreenshotCaptureNotification({ notification, onDismiss }: { notification: ScreenshotCapturedDetail; onDismiss: () => void }): ReactElement {
+  const revealScreenshot = () => {
+    const webkit = (window as WebKitBridgeWindow).webkit;
+    webkit?.messageHandlers?.externalLink?.postMessage(notification.url);
+  };
+
+  return (
+    <div className="screenshot-capture-notification" role="status">
+      <div>
+        <strong>Screenshot captured</strong>
+        <span>Saved to <button onClick={revealScreenshot} type="button">{notification.path}</button>; path copied to clipboard.</span>
+      </div>
+      <button aria-label="Dismiss screenshot notification" onClick={onDismiss} type="button">×</button>
+    </div>
   );
 }
 
