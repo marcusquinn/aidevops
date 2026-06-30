@@ -461,7 +461,7 @@ _refresh_cleanup_resolved_blocker_labels() {
 
 	local removed_count=0
 	local blocker_nums="" blocker_num="" stale_label=""
-	blocker_nums=$(printf '%s' "$entry_json" | jq -r '.issue_nums[]' 2>/dev/null) || blocker_nums=""
+	blocker_nums=$(printf '%s' "$entry_json" | jq -r '.issue_nums[]?' || true)
 	while IFS= read -r blocker_num; do
 		[[ "$blocker_num" =~ ^[0-9]+$ ]] || continue
 		stale_label="blocked-by:#${blocker_num}"
