@@ -18,10 +18,12 @@ const OUTCOME_MATCHERS: Array<{ pattern: RegExp; outcome: GuiPulseWorkerOutcome 
   { pattern: /block/, outcome: "blocked" },
   { pattern: /fail|kill/, outcome: "failed" },
 ];
-const KNOWN_ISSUE_ORIGINS = new Set<GuiPulseIssueOrigin>(["aidevops_created", "maintainer_created", "origin_interactive", "third_party", "unknown"]);
+const KNOWN_ISSUE_ORIGINS = new Set<GuiPulseIssueOrigin>(["aidevops_created", "self_created", "maintainer_created", "origin_interactive", "third_party", "imported", "unknown"]);
 const ISSUE_ORIGIN_MATCHERS: Array<{ pattern: RegExp; origin: GuiPulseIssueOrigin }> = [
   { pattern: /interactive/, origin: "origin_interactive" },
   { pattern: /third|community/, origin: "third_party" },
+  { pattern: /import/, origin: "imported" },
+  { pattern: /self|user/, origin: "self_created" },
   { pattern: /maintainer/, origin: "maintainer_created" },
   { pattern: /aidevops/, origin: "aidevops_created" },
 ];
@@ -40,7 +42,7 @@ const SEVERITY_BY_STATUS: Partial<Record<GuiPulseWorkerStatus, GuiPulseWorkerSev
   completed: "success",
   healthy: "success",
 };
-const KNOWN_AUTHOR_ASSOCIATIONS = new Set<GuiPulseAuthorAssociation>(["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "NONE", "UNKNOWN"]);
+const KNOWN_AUTHOR_ASSOCIATIONS = new Set<GuiPulseAuthorAssociation>(["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "NONE", "UNKNOWN"]);
 const KNOWN_PROVIDER_IDS = new Set<GuiPulseProviderId>(["anthropic", "openai", "cursor", "google", "local"]);
 
 export function outcomeFromRecord(record: MetricRecord): GuiPulseWorkerOutcome {

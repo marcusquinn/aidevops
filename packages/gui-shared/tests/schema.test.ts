@@ -103,6 +103,8 @@ describe("GUI shared schema contracts", () => {
     expect(envelope.data.pulse_workers.events[0].usage?.cached_tokens).toBeGreaterThan(0);
     expect(envelope.data.pulse_workers.events[2].issue_origin).toBe("third_party");
     expect(envelope.data.pulse_workers.events[2].author_association).toBe("CONTRIBUTOR");
+    expect(envelope.data.pulse_workers.insights.map((finding) => finding.kind)).toEqual(["third_party_waiting", "weak_verification", "resource_pressure"]);
+    expect(envelope.data.pulse_workers.insights.every((finding) => finding.primary_action === "create_systemic_fix" && finding.period_label.length > 0 && finding.scope_label.length > 0)).toBe(true);
     expect(envelope.data.pulse_workers.charts.map((chart) => chart.points[0]?.period)).toEqual(["day", "week", "month", "year"]);
     expect(envelope.data.pulse_workers.actions.map((action) => action.id)).toEqual(["diagnose", "run_pulse", "open_logs", "create_systemic_fix"]);
     expect(envelope.data.pulse_workers.actions.filter((action) => action.classification === "write").every((action) => action.confirmation === "required")).toBe(true);

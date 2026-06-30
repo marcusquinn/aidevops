@@ -3,6 +3,8 @@ import { join } from "node:path";
 import {
   type GuiPulseResourceKind,
   type GuiPulseResourceSnapshot,
+  type GuiPulseSystemicFinding,
+  type GuiPulseWorkerActionSummary,
   type GuiPulseWorkerActivityEvent,
   type GuiPulseWorkerChartSeries,
   type GuiPulseWorkerKpiCard,
@@ -39,6 +41,7 @@ const DEFAULT_METRICS_PATH_REF = "~/.aidevops/logs/headless-runtime-metrics.json
 const DEFAULT_PULSE_STATS_PATH_REF = "~/.aidevops/logs/pulse-stats.json";
 const DEFAULT_RESOURCE_METRICS_PATH_REF = "~/.aidevops/logs/resource-metrics.jsonl";
 const DEFAULT_TOKEN_REPORTS_ROOT_REF = "~/.aidevops/_reports/token-use";
+const PULSE_WORKER_ACTIONS: GuiPulseWorkerActionSummary[] = pulseWorkersFixture.actions;
 
 export function readPulseWorkersSummary(options: PulseWorkersAdapterOptions = {}): { summary: GuiPulseWorkerSummary; source_path_refs: string[] } {
   const nowMs = options.nowMs ?? Date.parse(options.observedAt ?? new Date().toISOString());
@@ -63,12 +66,14 @@ export function readPulseWorkersSummary(options: PulseWorkersAdapterOptions = {}
   ];
 
   const dayMetrics = filterWindow(metrics.records, nowMs, DAY_MS);
+  const previousDayMetrics = filterWindowBetween(metrics.records, nowMs - (2 * DAY_MS), nowMs - DAY_MS);
   const weekMetrics = filterWindow(metrics.records, nowMs, WEEK_MS);
   const pulseCounters = extractPulseCounters(pulseStats.value, nowMs);
   const resourceSnapshots = resourceMetricsToSnapshots(resources.records, observedAt);
   const usageSamples = collectUsageSamples([...dayMetrics, ...tokenReports.records]);
   const events = buildEvents(dayMetrics, resourceSnapshots, usageSamples, observedAt);
-  const warnings = buildAttention(sourceStates, pulseCounters, resourceSnapshots, oauthPool.value);
+  const insights = buildInsights(events, dayMetrics, previousDayMetrics, resourceSnapshots);
+  const warnings = [...buildAttention(sourceStates, pulseCounters, resourceSnapshots, oauthPool.value), ...insights.map((finding) => ({ id: finding.id, severity: finding.severity, title: finding.title, detail: `${finding.detail} Recommended fix: ${finding.recommendation}`, event_ref: finding.event_refs[0] ?? null }))].slice(0, 12);
 
   const summary: GuiPulseWorkerSummary = {
     value_policy: "metadata_only_no_prompt_payloads_no_secrets",
@@ -79,9 +84,11 @@ export function readPulseWorkersSummary(options: PulseWorkersAdapterOptions = {}
     updated_at: observedAt,
     kpis: buildKpis(dayMetrics, weekMetrics, pulseCounters, usageSamples, resourceSnapshots),
     attention: warnings,
+    insights,
     filters: buildFilters(events),
     charts: buildCharts(metrics.records, pulseCounters, nowMs),
     events,
+    actions: PULSE_WORKER_ACTIONS,
   };
 
   return { summary, source_path_refs: sourceStates.map((source) => source.path_ref) };
@@ -131,6 +138,13 @@ function filterWindow(records: MetricRecord[], nowMs: number, windowMs: number):
   return records.filter((record) => {
     const time = recordTimeMs(record);
     return time !== null && time >= cutoff && time <= nowMs;
+  });
+}
+
+function filterWindowBetween(records: MetricRecord[], startMs: number, endMs: number): MetricRecord[] {
+  return records.filter((record) => {
+    const time = recordTimeMs(record);
+    return time !== null && time >= startMs && time < endMs;
   });
 }
 
@@ -197,9 +211,85 @@ function buildEvents(records: MetricRecord[], resources: GuiPulseResourceSnapsho
       drilldown_sections: [
         { label: "Evidence", body: "Derived from local worker outcome/resource metadata; prompt text and command payloads are not exposed." },
         { label: "Outcome", body: outcome },
+        { label: "Verification", body: verificationSummary(record) },
+        { label: "Systemic fix", body: systemicFixRecommendation(record, outcome) },
       ],
     };
   });
+}
+
+function buildInsights(events: GuiPulseWorkerActivityEvent[], dayMetrics: MetricRecord[], previousDayMetrics: MetricRecord[], resources: GuiPulseResourceSnapshot[]): GuiPulseSystemicFinding[] {
+  const findings: GuiPulseSystemicFinding[] = [];
+  const thirdPartyWaiting = events.filter((event) => event.issue_origin === "third_party" && (event.outcome === "needs_maintainer_review" || event.outcome === "blocked" || event.outcome === "in_progress"));
+  if (thirdPartyWaiting.length > 0) {
+    findings.push(finding("third-party-waiting", "third_party_waiting", "warning", "Third-party issues waiting", `${thirdPartyWaiting.length} community-origin issue events need triage or resolution in the selected period.`, "Community reports are separated from aidevops-created task handling and may need a maintainer decision before dispatch.", thirdPartyWaiting, "Create a systemic triage task that preserves non-collaborator trust boundaries and adds first-response thresholds.", "community waiting count", thirdPartyWaiting.length, "high"));
+  }
+
+  const failedOrBlocked = events.filter((event) => event.outcome === "failed" || event.outcome === "blocked");
+  for (const [key, group] of groupEvents(failedOrBlocked, (event) => [event.repo_ref ?? "repo:unknown", event.usage?.provider ?? "provider:unknown", event.resources[0]?.kind ?? "resource:unknown"].join("|"))) {
+    if (group.length > 1) {
+      findings.push(finding(`repeated-${key}`, "repeated_failure", "critical", "Repeated failure pattern", `${group.length} failed or blocked runs share repo/provider/resource context.`, "A repeated worker blindspot is likely being retried as individual failures instead of being converted into a shared guardrail or helper fix.", group, "Create a systemic fix task with grouped evidence, affected repo/provider/resource, and a focused verification command.", key.replaceAll("|", " · "), group.length, "medium"));
+    }
+  }
+
+  const weakVerification = events.filter((event) => event.drilldown_sections.some((section) => section.label === "Verification" && /missing|weak|not recorded/i.test(section.body)));
+  if (weakVerification.length > 0) {
+    findings.push(finding("weak-verification", "weak_verification", "warning", "No-verification outcomes", `${weakVerification.length} events lack strong verification metadata.`, "Workers may be completing or blocking without durable command evidence in the telemetry stream.", weakVerification, "Create a systemic fix task to require verification command capture in worker outcome records.", "verification coverage", weakVerification.length, "medium"));
+  }
+
+  const pressureEvents = events.filter((event) => event.resources.some((resource) => resource.pressure === "medium" || resource.pressure === "high"));
+  if (pressureEvents.length > 0 || resources.some((resource) => resource.pressure === "medium" || resource.pressure === "high")) {
+    findings.push(finding("resource-pressure", "resource_pressure", resources.some((resource) => resource.pressure === "high") ? "critical" : "warning", "Resource allowance pressure", `${pressureEvents.length} events overlapped medium/high resource pressure; ${resources.length} resource samples are in scope.`, "Provider quota, GitHub API, queue, CI, or local resource pressure can inflate retry cost and slow dispatch-to-merge cycles.", pressureEvents, "Create a systemic capacity task that records allowance snapshots before redispatching failed workers.", "resource pressure", Math.max(pressureEvents.length, resources.length), "medium"));
+  }
+
+  const currentCost = sumCost(dayMetrics);
+  const previousCost = sumCost(previousDayMetrics);
+  const failedCostEvents = events.filter((event) => (event.outcome === "failed" || event.outcome === "blocked") && event.usage?.estimated_cost_ref !== null && event.usage !== null);
+  if (currentCost > 0 && previousCost > 0 && currentCost >= previousCost * 1.5) {
+    findings.push(finding("cost-spike", "cost_spike", "warning", "Cost spike versus previous period", `Estimated selected-period cost is ${currentCost.toFixed(2)} versus ${previousCost.toFixed(2)} in the previous equivalent window.`, "Retry loops or expensive models may be consuming allowance faster than successful outcomes justify.", events, "Create a systemic cost-control task that ties model/provider selection to outcome quality and retry count.", "estimated USD", dayMetrics.length, "medium", `previous equivalent period: ${previousCost.toFixed(2)}`));
+  } else if (failedCostEvents.length > 0) {
+    findings.push(finding("failed-run-cost", "high_retry_cost", "warning", "Failed-run cost attached to outcomes", `${failedCostEvents.length} failed or blocked events include token/cost metadata.`, "Cost is being spent on outcomes that did not merge, close, defer, or create follow-up work.", failedCostEvents, "Create a systemic retry-budget task that escalates or changes strategy before another costly rerun.", "failed-run cost samples", failedCostEvents.length, "medium"));
+  }
+
+  const slowEvents = events.filter((event) => (event.duration_ms ?? 0) >= 1_800_000);
+  if (slowEvents.length > 0) {
+    findings.push(finding("slow-bottlenecks", "slow_bottleneck", "warning", "Slow dispatch-to-outcome bottlenecks", `${slowEvents.length} events exceeded 30 minutes.`, "Long-running dispatch, review, or merge gates can hide queue/concurrency or CI runner bottlenecks.", slowEvents, "Create a systemic bottleneck task that separates dispatch-to-PR and PR-to-merge timing evidence.", "duration >=30m", slowEvents.length, "medium"));
+  }
+
+  return findings.slice(0, 8);
+}
+
+function finding(id: string, kind: GuiPulseSystemicFinding["kind"], severity: GuiPulseSystemicFinding["severity"], title: string, detail: string, likelyCause: string, events: GuiPulseWorkerActivityEvent[], recommendation: string, metricLabel: string, sampleSize: number, confidence: GuiPulseSystemicFinding["confidence"], comparisonLabel = "selected period scoped to active filters"): GuiPulseSystemicFinding {
+  return { id: `insight-${id.replace(/[^a-z0-9-]+/gi, "-").toLowerCase()}`, kind, severity, title, detail, likely_cause: likelyCause, evidence_refs: evidenceRefs(events), event_refs: events.map((event) => event.id).slice(0, 6), confidence, recommendation, metric_label: metricLabel, period_label: "Last 24h", scope_label: DEFAULT_SCOPE, comparison_label: comparisonLabel, sample_size: sampleSize, primary_action: "create_systemic_fix" };
+}
+
+function groupEvents(events: GuiPulseWorkerActivityEvent[], keyFor: (event: GuiPulseWorkerActivityEvent) => string): Map<string, GuiPulseWorkerActivityEvent[]> {
+  const groups = new Map<string, GuiPulseWorkerActivityEvent[]>();
+  for (const event of events) {
+    const key = keyFor(event);
+    groups.set(key, [...(groups.get(key) ?? []), event]);
+  }
+  return groups;
+}
+
+function evidenceRefs(events: GuiPulseWorkerActivityEvent[]): string[] {
+  return events.flatMap((event) => [event.repo_ref, event.issue_ref, event.pull_request_ref, event.worker_session_ref, event.command_job_ref].filter(Boolean) as string[]).slice(0, 8);
+}
+
+function verificationSummary(record: MetricRecord): string {
+  const value = stringField(record, "verification") ?? stringField(record, "testing") ?? stringField(record, "verification_status");
+  if (value !== undefined && value.length > 0) return value;
+  return "Verification missing or weak in local telemetry; outcome should carry command evidence before completion claims.";
+}
+
+function systemicFixRecommendation(record: MetricRecord, outcome: string): string {
+  if (/missing|weak|none/i.test(verificationSummary(record))) return "Require worker outcome telemetry to include verification commands and results.";
+  if (outcome === "failed" || outcome === "blocked") return "Group repeated failure evidence and create a worker-ready helper or validator fix.";
+  return "Create follow-up only when the same blindspot repeats across events in the selected period.";
+}
+
+function sumCost(records: MetricRecord[]): number {
+  return records.reduce((sum, record) => sum + (numberValue(record.estimated_cost_usd ?? record.cost_usd) ?? 0), 0);
 }
 
 function buildFilters(events: GuiPulseWorkerActivityEvent[]): GuiPulseWorkerSummary["filters"] {
