@@ -771,7 +771,7 @@ _dispatch_apply_startup_capacity_ramp() {
 #######################################
 _dispatch_compute_capacity() {
 	_DISPATCH_MIN_WORKER_FLOOR_ACTIVE=0
-	if [[ -f "$STOP_FLAG" ]]; then
+	if [[ -f "${STOP_FLAG:-}" ]]; then
 		echo "[pulse-wrapper] Dispatch_max skipped: stop flag present" >>"$LOGFILE"
 		return 1
 	fi
@@ -1834,7 +1834,7 @@ _dispatch_max_should_stop() {
 		echo "[pulse-wrapper] Dispatch_max: parallel iter=${processed_count} — stopping (successes=${successes_so_far} + in_flight=${in_flight_count} >= effective_slots=${effective_slots})" >>"$LOGFILE"
 		return 0
 	fi
-	if [[ -f "$STOP_FLAG" ]]; then
+	if [[ -f "${STOP_FLAG:-}" ]]; then
 		echo "[pulse-wrapper] Dispatch_max stopping early: stop flag appeared" >>"$LOGFILE"
 		return 0
 	fi
