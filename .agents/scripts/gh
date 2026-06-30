@@ -1243,9 +1243,11 @@ _shim_target_matches_local_checkout() {
 
 _shim_file_mentions_issue_first_policy() {
 	local file_path="$1"
+	local policy_pattern='issue-first|linked issue|every human-authored pr'
+	local reference_pattern='closes #|fixes #|resolves #|for #|ref #'
 	[[ -f "$file_path" ]] || return 1
-	if grep -Eiq 'issue-first|linked issue|Every human-authored PR' "$file_path" &&
-		grep -Eiq 'Closes #|Fixes #|Resolves #|For #|Ref #' "$file_path"; then
+	if grep -Eiq "$policy_pattern" "$file_path" &&
+		grep -Eiq "$reference_pattern" "$file_path"; then
 		return 0
 	fi
 	return 1
