@@ -30,8 +30,21 @@ r911|x|OAuth token refresh|repeat:cron(*/30 * * * *)|~10s|scripts/oauth-pool-hel
 r912| |Dashboard server|repeat:persistent|~0s|server/index.ts|service
 r913|x|Weekly opencode DB maintenance|repeat:weekly(sun@04:00)|~2m|scripts/opencode-db-maintenance-helper.sh auto|script
 r914|x|Repo aidevops health — bump stale .aidevops.json, detect drift|repeat:daily(@03:30)|~2m|scripts/repo-aidevops-health-helper.sh run|script
+r915|x|Pulse check — worker utilisation and self-improvement recommendations|repeat:daily(@06:20)|~5m|scripts/pulse-check-helper.sh apply|script
 ENTRIES
 	return 0
+}
+
+# ---------------------------------------------------------------------------
+# _is_darwin_os <os>
+# Returns 0 when the routine description target is macOS.
+# ---------------------------------------------------------------------------
+_is_darwin_os() {
+	local os="$1"
+	if [[ "$os" == "darwin" ]]; then
+		return 0
+	fi
+	return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -40,7 +53,7 @@ ENTRIES
 # ---------------------------------------------------------------------------
 _platform_footnote() {
 	local os="$1"
-	if [[ "$os" == "darwin" ]]; then
+	if _is_darwin_os "$os"; then
 		cat <<'FOOT'
 
 ---
@@ -73,7 +86,7 @@ _scheduler_row() {
 	local interval_sec="$2"
 	local plist_label="$3"
 	local systemd_unit="$4"
-	if [[ "$os" == "darwin" ]]; then
+	if _is_darwin_os "$os"; then
 		echo "| Scheduler | launchd \`${plist_label}\` (StartInterval: ${interval_sec}) |"
 	else
 		echo "| Scheduler | systemd \`${systemd_unit}.timer\` (OnUnitActiveSec=${interval_sec}s) |"
@@ -90,7 +103,7 @@ _scheduler_row_calendar() {
 	local calendar_desc="$2"
 	local plist_label="$3"
 	local systemd_unit="$4"
-	if [[ "$os" == "darwin" ]]; then
+	if _is_darwin_os "$os"; then
 		echo "| Scheduler | launchd \`${plist_label}\` (${calendar_desc}) |"
 	else
 		echo "| Scheduler | systemd \`${systemd_unit}.timer\` (OnCalendar=${calendar_desc}) |"
@@ -106,7 +119,7 @@ _diag_commands() {
 	local os="$1"
 	local plist_label="$2"
 	local systemd_unit="$3"
-	if [[ "$os" == "darwin" ]]; then
+	if _is_darwin_os "$os"; then
 		cat <<EOF
 - \`launchctl list | grep ${plist_label##*.}\` — PID and exit status
 - \`log show --predicate 'subsystem == "com.apple.launchd"' --last 5m | grep ${plist_label##*.}\` — recent launches
@@ -327,7 +340,7 @@ EOF
 describe_r905() {
 	local os="${1:-darwin}"
 	local mem_check_cmd mem_monitor
-	if [[ "$os" == "darwin" ]]; then
+	if _is_darwin_os "$os"; then
 		mem_check_cmd="\`memory_pressure\` command — current system pressure"
 		mem_monitor="Activity Monitor → Memory tab — pressure graph"
 	else
@@ -491,7 +504,7 @@ EOF
 describe_r909() {
 	local os="${1:-darwin}"
 	local screen_time_check
-	if [[ "$os" == "darwin" ]]; then
+	if _is_darwin_os "$os"; then
 		screen_time_check="System Settings → Screen Time — raw data"
 	else
 		screen_time_check="\`~/.aidevops/.agent-workspace/cron/screen-time/\` — snapshot data (no native Screen Time on Linux)"
@@ -611,7 +624,7 @@ EOF
 describe_r912() {
 	local os="${1:-darwin}"
 	local status_cmd
-	if [[ "$os" == "darwin" ]]; then
+	if _is_darwin_os "$os"; then
 		status_cmd="\`launchctl list | grep dashboard\` — process status"
 	else
 		status_cmd="\`systemctl --user status sh.aidevops.dashboard\` — service status"
@@ -808,6 +821,62 @@ $(_diag_commands "$os" "sh.aidevops.repo-aidevops-health" "sh.aidevops.repo-aide
 - \`~/.aidevops/cache/repo-aidevops-health-state.json\` — last run summary.
 - \`.aidevops/agents/VERSION\` — current framework version (bump target).
 - Drift issues on \`marcusquinn/aidevops\` labelled \`repos-drift\` or \`no-init\`.
+$(_platform_footnote "$os")
+EOF
+	return 0
+}
+
+describe_r915() {
+	local os="${1:-}"
+	if [[ -z "$os" ]]; then
+		os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+	fi
+	cat <<EOF
+# r915: Pulse check
+
+## Overview
+
+Daily bounded diagnostics for pulse and worker productivity. It compares
+current worker capacity, recent terminal worker metrics, provider/API budget,
+and repos.json auto-dispatch queue depth, then files deduplicated
+self-improvement issues only for high-confidence productivity gaps.
+
+## Schedule
+
+| Field | Value |
+|-------|-------|
+| Frequency | Daily at 06:20 |
+| Type | script |
+| Expected duration | ~5 minutes |
+| Script | \`scripts/pulse-check-helper.sh apply\` |
+$(_scheduler_row_calendar "$os" "StartCalendarInterval: Hour=6, Minute=20" "sh.aidevops.pulse-check" "sh.aidevops.pulse-check")
+
+## What it does
+
+1. Runs \`pulse-current-state-helper.sh --window 15m --json\` for live
+   dispatch, worker launch, guardrail, and API-budget evidence.
+2. Runs \`worker-activity-helper.sh summary --since 1h/24h --json --no-pr-check\`
+   for canonical recent and historical worker outcomes.
+3. Scans pulse-enabled repos in \`repos.json\` for open \`auto-dispatch\`
+   issues using aggregate counts only; repo names, local paths, and issue titles
+   are intentionally omitted from output and filed issues.
+4. Files or reuses self-improvement issues marked with
+   \`<!-- aidevops:generator=pulse-check finding=... -->\` when a finding is
+   high-confidence and worker-dispatchable.
+
+## Safety rails
+
+- Uses aggregate queue metrics to preserve private repo/path confidentiality.
+- Uses wrapper-created issues with \`--body-file\` and dedupe markers.
+- Does not increase concurrency by itself; recommendations must cite evidence.
+- JSON output removes raw worker examples that may contain repo slugs or paths.
+
+## What to check
+
+$(_diag_commands "$os" "sh.aidevops.pulse-check" "sh.aidevops.pulse-check")
+- \`pulse-check-helper.sh report\` — ad-hoc interactive report.
+- \`pulse-check-helper.sh json\` — machine-readable evidence.
+- Open issues carrying \`source:pulse-check\` — deduplicated improvements.
 $(_platform_footnote "$os")
 EOF
 	return 0

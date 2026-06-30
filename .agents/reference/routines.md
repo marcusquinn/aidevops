@@ -83,3 +83,32 @@ Each detector lives in `.agents/scripts/runtime-audit-rules/<id>.sh` as a self-c
 - **Adding a detector that calls `gh`, `curl`, or any network API.** The whole point is local-only inspection — network calls amplify the very blind spot we're closing.
 - **Filing a finding without a marker.** The marker is what the pre-dispatch validator uses to re-check before dispatch. Without it, stale findings consume worker time.
 - **Lowering thresholds to surface "everything".** Every false positive trains the operator to ignore the routine. Tune for high precision; the supervisor's task triage is the lower-precision layer.
+
+## Pulse Check (r915)
+
+`r915` runs `pulse-check-helper.sh apply` once daily. Unlike
+`r-runtime-audit`, it is intentionally allowed to make bounded GitHub reads: its
+job is to compare **current worker utilisation** with the **repos.json
+auto-dispatch queue** and provider/API budget signals.
+
+The helper is also the backing command for `/pulse-check` in interactive chats:
+
+```bash
+pulse-check-helper.sh report
+pulse-check-helper.sh json
+pulse-check-helper.sh apply --repo owner/repo
+```
+
+It gathers evidence from:
+
+- `pulse-current-state-helper.sh --window 15m --json` for live dispatch,
+  launch, guardrail, and API-budget state.
+- `worker-activity-helper.sh summary --since 1h/24h --json --no-pr-check` for
+  canonical recent and historical worker outcomes.
+- A privacy-preserving aggregate scan of open `auto-dispatch` issues across
+  pulse-enabled `repos.json` entries.
+
+`apply` mode files only deduplicated self-improvement issues with the marker
+`<!-- aidevops:generator=pulse-check finding=... -->`; issue bodies must stay
+aggregate-only and must not include private repo names, local paths, issue
+titles, or raw worker examples.
