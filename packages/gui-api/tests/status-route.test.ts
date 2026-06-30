@@ -32,6 +32,25 @@ describe("status API route", () => {
     expect(body.errors).toContain("action_not_allowlisted");
   });
 
+  test("Pulse and Workers actions reject commands outside the allowlist", async () => {
+    const response = await app.request("/api/pulse-workers/actions/not-real", { method: "POST" });
+    const body = await response.json();
+
+    expect(response.status).toBe(400);
+    expect(body.operation_id).toBe("pulse_workers.action.run");
+    expect(body.errors).toContain("action_not_allowlisted");
+    expect(body.data.command_preview).toBe("not run");
+  });
+
+  test("Pulse and Workers job status fails closed for unknown jobs", async () => {
+    const response = await app.request("/api/pulse-workers/jobs/not-real");
+    const body = await response.json();
+
+    expect(response.status).toBe(404);
+    expect(body.operation_id).toBe("pulse_workers.action.status");
+    expect(body.errors).toContain("unknown_job");
+  });
+
   test("unknown routes fail closed", async () => {
     const response = await app.request("/api/unknown");
     const body = await response.json();

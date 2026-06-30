@@ -6,6 +6,8 @@ import {
   conversationHasScope,
   isReadOnlyManifest,
   participantCanReadConversation,
+  PULSE_WORKERS_ACTION_ROUTE_MANIFEST,
+  PULSE_WORKERS_ACTION_STATUS_ROUTE_MANIFEST,
   sortConversationMessageParts,
   sortConversationMessages,
   STATUS_ROUTE_MANIFEST,
@@ -40,6 +42,14 @@ describe("GUI shared schema contracts", () => {
     expect(TAMBO_PROXY_ROUTE_MANIFEST.redactions).toContain("tambo_api_keys");
     expect(TAMBO_COMPONENT_SCHEMAS.map((schema) => schema.name)).toEqual(["TaskCard", "PullRequestCard", "CICheckSummary", "WorkerStatusCard", "DeploymentStatusCard", "RepoHealthCard", "ApprovalPromptCard"]);
     expect(TAMBO_COMPONENT_SCHEMAS.every((schema) => schema.additionalProperties === false)).toBe(true);
+  });
+
+  test("Pulse and Workers action routes declare allowlisted command boundaries", () => {
+    expect(PULSE_WORKERS_ACTION_ROUTE_MANIFEST.operation_id).toBe("pulse_workers.action.run");
+    expect(PULSE_WORKERS_ACTION_ROUTE_MANIFEST.classification).toBe("write");
+    expect(PULSE_WORKERS_ACTION_ROUTE_MANIFEST.command_pattern).toContain("allowlisted");
+    expect(PULSE_WORKERS_ACTION_ROUTE_MANIFEST.redactions).toContain("authorization_headers");
+    expect(isReadOnlyManifest(PULSE_WORKERS_ACTION_STATUS_ROUTE_MANIFEST)).toBe(true);
   });
 
   test("Tambo payload validation enforces tenant scope and strict props", () => {
@@ -94,6 +104,8 @@ describe("GUI shared schema contracts", () => {
     expect(envelope.data.pulse_workers.events[2].issue_origin).toBe("third_party");
     expect(envelope.data.pulse_workers.events[2].author_association).toBe("CONTRIBUTOR");
     expect(envelope.data.pulse_workers.charts.map((chart) => chart.points[0]?.period)).toEqual(["day", "week", "month", "year"]);
+    expect(envelope.data.pulse_workers.actions.map((action) => action.id)).toEqual(["diagnose", "run_pulse", "open_logs", "create_systemic_fix"]);
+    expect(envelope.data.pulse_workers.actions.filter((action) => action.classification === "write").every((action) => action.confirmation === "required")).toBe(true);
     expect(envelope.data.vault.collections.map((collection) => collection.surface_ids).flat()).toContain("agents");
     expect(envelope.data.setup_targets[0].path_ref).toBe("~/.aidevops/agents/VERSION");
     expect(envelope.data.ai_apps.map((app) => app.name)).toContain("OpenCode");
