@@ -53,4 +53,20 @@ describe("extractAndStoreIntent", () => {
     assert.equal(consumeIntent(callID), undefined);
     assert.deepEqual(args, { target: "custom-tool" });
   });
+
+  test("stores intent without throwing for non-configurable args", () => {
+    const callID = "call-gh-25992-nonconfigurable";
+    const args = { target: "custom-tool" };
+    Object.defineProperty(args, "agent__intent", {
+      value: "Recording intent from immutable host args",
+      configurable: false,
+      enumerable: true,
+    });
+
+    const intent = extractAndStoreIntent(callID, args);
+
+    assert.equal(intent, "Recording intent from immutable host args");
+    assert.equal(consumeIntent(callID), "Recording intent from immutable host args");
+    assert.equal(args.agent__intent, "Recording intent from immutable host args");
+  });
 });
