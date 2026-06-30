@@ -74,16 +74,7 @@ teardown_test_env() {
 	return 0
 }
 
-# Create a gh stub that simulates merge behavior.
-# Args:
-#   $1 = "fallback" — first merge fails with branch-protection error, --admin succeeds
-#   $2 = "explicit-admin" — merge with --admin succeeds immediately (no fallback)
-#   $3 = "other-error" — merge fails with non-branch-protection error
-#   $4 = "graphql-rate-limit" — gh pr merge fails with GraphQL quota, REST succeeds
-#   $5 = "graphql-rate-limit-rest-fail" — gh pr merge fails with GraphQL quota, REST fails
-#   $6 = "fallback-nmr" — branch protection fails, but linked issue still needs maintainer review
-#   $7 = "stale-cache-401" — first gh pr merge returns cached 401, live auth succeeds, retry succeeds
-create_gh_stub() {
+write_gh_stub_header() {
 	local mode="$1"
 
 	cat >"${TEST_ROOT}/bin/gh" <<GHSTUB
@@ -138,6 +129,14 @@ if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "merge" ]]; then
 		exit 1
 	fi
 fi
+GHSTUB
+	return 0
+}
+
+write_gh_stub_pr_issue_views() {
+	local mode="$1"
+
+	cat >>"${TEST_ROOT}/bin/gh" <<GHSTUB
 
 if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "view" ]]; then
 	if [[ "\$*" == *"--json closingIssuesReferences,body"* ]]; then
@@ -172,6 +171,14 @@ if [[ "\$_gh_cmd" == "issue" && "\$_gh_sub" == "view" ]]; then
 	fi
 	exit 0
 fi
+GHSTUB
+	return 0
+}
+
+write_gh_stub_api() {
+	local mode="$1"
+
+	cat >>"${TEST_ROOT}/bin/gh" <<GHSTUB
 
 if [[ "\$_gh_cmd" == "api" ]]; then
 	echo "gh api \$*" >> "${TEST_ROOT}/logs/gh-api-calls.txt"
@@ -194,6 +201,12 @@ if [[ "\$_gh_cmd" == "api" ]]; then
 	echo '{}'
 	exit 0
 fi
+GHSTUB
+	return 0
+}
+
+write_gh_stub_pr_mutations() {
+	cat >>"${TEST_ROOT}/bin/gh" <<GHSTUB
 
 if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "comment" ]]; then
 	echo "pr comment \$*" >> "${TEST_ROOT}/logs/pr-comments.txt"
@@ -208,6 +221,25 @@ fi
 # Default: succeed silently
 exit 0
 GHSTUB
+	return 0
+}
+
+# Create a gh stub that simulates merge behavior.
+# Args:
+#   $1 = "fallback" — first merge fails with branch-protection error, --admin succeeds
+#   $2 = "explicit-admin" — merge with --admin succeeds immediately (no fallback)
+#   $3 = "other-error" — merge fails with non-branch-protection error
+#   $4 = "graphql-rate-limit" — gh pr merge fails with GraphQL quota, REST succeeds
+#   $5 = "graphql-rate-limit-rest-fail" — gh pr merge fails with GraphQL quota, REST fails
+#   $6 = "fallback-nmr" — branch protection fails, but linked issue still needs maintainer review
+#   $7 = "stale-cache-401" — first gh pr merge returns cached 401, live auth succeeds, retry succeeds
+create_gh_stub() {
+	local mode="$1"
+
+	write_gh_stub_header "$mode"
+	write_gh_stub_pr_issue_views "$mode"
+	write_gh_stub_api "$mode"
+	write_gh_stub_pr_mutations
 	chmod +x "${TEST_ROOT}/bin/gh"
 	return 0
 }
