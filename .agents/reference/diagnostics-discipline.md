@@ -37,7 +37,7 @@ When an incident appears to match a bug in TODO.md or recent commits, READ the c
 
 When verifying whether workers are actually running, dispatching, or producing PRs — i.e. answering "is the pulse alive and productive?" — use the canonical outcome ledger, not file timestamps. File mtime tells you when something was *touched*; the canonical sources tell you the *outcome*. Confusing the two is a recurring misdiagnosis class (canonical failure: t3215, where a session reported "0 workers in 48h" from `worker-NNN.log` mtimes while canonical sources showed 28 successful workers and 49 PRs in the same window).
 
-Start with `worker-activity-helper.sh summary [--since 1h|6h|24h|48h|7d] [--json] [--no-pr-check] [--repo OWNER/REPO]` for historical productivity. For “right now” questions, use `pulse-current-state-helper.sh --window 15m`.
+Start with `worker-activity-helper.sh summary [--since 1h|6h|24h|48h|7d] [--json] [--no-pr-check] [--repo OWNER/REPO]` for historical productivity. For “right now” questions, use `pulse-current-state-helper.sh --window 15m`. For a combined utilisation/queue/API recommendation, use `pulse-check-helper.sh report` (interactive) or `pulse-check-helper.sh apply` (deduplicated self-improvement routine).
 
 NOT canonical sources:
 
@@ -51,7 +51,7 @@ Scope: applies before publishing any productivity-level claim ("workers aren't r
 
 When the user asks any variant of "is the pulse working?" / "are workers running?" / "is real work happening now?" / "why so many failed-looking comments?" — answer from a **5-15 minute window of current-state evidence**, never from 24h/48h historical aggregates. The act of the user asking is itself signal that real-time progress notifications are missing; presenting historical totals to defend a degraded present is misdirect.
 
-Run `pulse-current-state-helper.sh --window 15m` before answering. It summarizes dispatch stages, worker terminal events, pulse counters, wrapper activity, and worker worktrees from a current evidence window.
+Run `pulse-current-state-helper.sh --window 15m` before answering. It summarizes dispatch stages, worker terminal events, pulse counters, wrapper activity, and worker worktrees from a current evidence window. `/pulse-check` wraps that current-state evidence with repos.json auto-dispatch queue counts and worker outcome aggregates when the question is about utilisation or self-improvement recommendations.
 
 For provider/model/account questions, use `worker-activity-helper.sh providers --since 1h` before reading raw logs. Do not run broad recursive searches over `~/.aidevops/logs` or OpenCode storage for routine diagnostics; use bounded helpers first, then inspect a named log only if the helper identifies a specific timeframe or failure class.
 
