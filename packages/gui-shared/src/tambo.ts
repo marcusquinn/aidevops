@@ -160,7 +160,7 @@ export const TAMBO_PROVIDER_CONFIG: GuiTamboProviderConfig = {
 
 export function validateTamboComponentPayload(payload: unknown, scope: GuiConversationScope): GuiTamboValidationResult {
   const envelope = validateTamboPayloadEnvelope(payload, scope);
-  if (!envelope.ok) {
+  if (envelope.ok === false) {
     return envelope.result;
   }
 

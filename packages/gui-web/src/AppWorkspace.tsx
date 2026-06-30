@@ -293,7 +293,7 @@ function AiSessionsSurface({ selectedRepoIndex, selectedSessionId, status }: { s
           <ToolStatusCard />
           <TamboConversationPart
             part={{ id: "ai-session-tambo-preview", message_id: "ai-session-preview", kind: "tambo_component", ordinal: 1, text: null, payload_json: { component: "RepoHealthCard", tenant_ref: "local", session_ref: selectedSession?.id_ref ?? "ai-session-preview", read_only: true, props: { repo: selectedRepo?.name ?? "local workspace", status: "ready for Tambo cards", open_prs: 0, failing_checks: 0, notes: ["Server-proxied provider metadata", "Read-only schemas first"] } }, file_ref: null, source_ref: "tambo:ai-session-preview" }}
-            scope={{ tenant_ref: "local", workspace_ref: "aidevops", repo_ref: selectedRepo?.slug ?? null }}
+            scope={{ tenant_ref: "local", workspace_ref: "aidevops", repo_ref: selectedRepo?.path_ref ?? null }}
           />
         </div>
         <form className="chat-composer ai-composer" aria-label="AI prompt composer" data-tour="ai-composer">
