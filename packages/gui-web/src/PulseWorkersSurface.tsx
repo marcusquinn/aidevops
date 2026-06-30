@@ -266,7 +266,7 @@ function PulseDrilldownPanel({ event }: { event: PulseEvent | undefined }): Reac
 }
 
 function relatedFindings(event: PulseEvent): string[] {
-  return event.drilldown_sections.filter((section) => section.label.toLowerCase().includes("systemic") || section.label.toLowerCase().includes("verification")).map((section) => `${section.label}: ${section.body}`);
+  return event.drilldown_sections?.filter((section) => section.label.toLowerCase().includes("systemic") || section.label.toLowerCase().includes("verification")).map((section) => `${section.label}: ${section.body}`) ?? [];
 }
 
 function buildFilterGroups(pulse: GuiStatusData["pulse_workers"]): PulseFilterGroup[] {

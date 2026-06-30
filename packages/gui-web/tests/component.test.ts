@@ -9,10 +9,11 @@ import { Workspace } from "../src/AppWorkspace";
 import { commandPaletteMatches, commandPaletteShortcutEntries, commandPaletteShortcutQuery, orderCommandItemsByRecency, rememberCommandPaletteItemId } from "../src/CommandPalette";
 import { CommsConversationSurface } from "../src/CommsConversationSurface";
 import { AppsSurface, nextRecommendedFilterValue } from "../src/InventorySurfaces";
+import { PulseWorkersSurface } from "../src/PulseWorkersSurface";
 import { DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, chatPrimitiveStackDecision, navGroups, surfaceRecordCounts, type SurfaceNavItem } from "../src/app-model";
 import { renderDashboardHtml } from "../src/dashboard";
 import { fetchStatus, mockedStatus } from "../src/status-client";
-import type { GuiConversationThread, GuiManagedAppSummary } from "../../gui-shared/src";
+import type { GuiConversationThread, GuiManagedAppSummary, GuiStatusData } from "../../gui-shared/src";
 
 const guiWebRoot = `${import.meta.dir}/..`;
 
@@ -182,6 +183,24 @@ describe("dashboard shell", () => {
     expect(html).toContain("confirmation required");
     expect(html).toContain("terminal panel becomes a full-screen panel/sheet");
     expect(html).toContain("Destructive controls such as stopping workers");
+  });
+
+  test("renders Pulse and Workers detail drawer when drilldown sections are absent", () => {
+    const status = mockedStatus().data;
+    const [firstEvent, ...remainingEvents] = status.pulse_workers.events;
+    const eventWithoutDrilldownSections = { ...firstEvent, drilldown_sections: undefined } as unknown as typeof firstEvent;
+    const html = renderToStaticMarkup(createElement(PulseWorkersSurface, {
+      status: {
+        ...status,
+        pulse_workers: {
+          ...status.pulse_workers,
+          events: [eventWithoutDrilldownSections, ...remainingEvents],
+        },
+      } satisfies GuiStatusData,
+    }));
+
+    expect(html).toContain("No failure analysis recorded.");
+    expect(html).toContain("No grouped finding attached to this event.");
   });
 
   test("renders channel and DM conversation surfaces from the unified model", () => {
