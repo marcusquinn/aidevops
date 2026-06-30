@@ -750,7 +750,9 @@ _monitor_handle_confirmed_stall() {
 	fi
 
 	tree_cpu=$(_watchdog_tree_cpu "$WORKER_PID")
-	if [[ "$tree_cpu" -ge "$STALL_CPU_THRESHOLD" ]]; then
+	local stall_cpu_threshold="$STALL_CPU_THRESHOLD"
+	[[ "$stall_cpu_threshold" =~ ^[0-9]+$ ]] || stall_cpu_threshold=2
+	if [[ "$tree_cpu" -ge "$stall_cpu_threshold" ]]; then
 		_monitor_defer_stall "cpu_active" "cpu=${tree_cpu}% "
 		return 0
 	fi
