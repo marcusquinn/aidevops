@@ -2,6 +2,12 @@ import { GUI_FILE_ROOTS, type GuiFileExplorerData, type GuiPulseWorkerSummary, t
 
 const pulseScope = "all managed repos";
 const pulsePeriod = "Last 24h";
+const pulseChartBuckets = {
+  day: { period_label: pulsePeriod, bucket_start: "2026-06-30T00:00:00.000Z", bucket_end: "2026-06-30T23:59:59.000Z", value: 86 },
+  week: { period_label: "This week", bucket_start: "2026-06-24T00:00:00.000Z", bucket_end: "2026-06-30T23:59:59.000Z", value: 82 },
+  month: { period_label: "This month", bucket_start: "2026-06-01T00:00:00.000Z", bucket_end: "2026-06-30T23:59:59.000Z", value: 82 },
+  year: { period_label: "This year", bucket_start: "2026-01-01T00:00:00.000Z", bucket_end: "2026-12-31T23:59:59.000Z", value: 82 },
+} as const;
 
 export const pulseWorkersFixture: GuiPulseWorkerSummary = {
   value_policy: "metadata_only_no_prompt_payloads_no_secrets",
@@ -31,12 +37,16 @@ export const pulseWorkersFixture: GuiPulseWorkerSummary = {
     authors: [{ id: "actor:maintainer", label: "Maintainer", count: 17 }, { id: "actor:community", label: "Community reporter", count: 3 }],
     author_associations: [{ id: "OWNER", label: "OWNER", count: 9 }, { id: "MEMBER", label: "MEMBER", count: 7 }, { id: "CONTRIBUTOR", label: "CONTRIBUTOR", count: 3 }],
   },
-  charts: ["day", "week", "month", "year"].map((period) => ({
-    id: `health-${period}`,
-    label: `Health trend · ${period}`,
-    unit: "percent",
-    points: [{ period: period as "day" | "week" | "month" | "year", period_label: period === "day" ? pulsePeriod : `This ${period}`, scope_label: pulseScope, bucket_start: "2026-06-30T00:00:00.000Z", bucket_end: "2026-06-30T23:59:59.000Z", value: period === "day" ? 86 : 82 }],
-  })),
+  charts: (["day", "week", "month", "year"] as const).map((period) => {
+    const bucket = pulseChartBuckets[period];
+
+    return {
+      id: `health-${period}`,
+      label: `Health trend · ${period}`,
+      unit: "percent",
+      points: [{ period, period_label: bucket.period_label, scope_label: pulseScope, bucket_start: bucket.bucket_start, bucket_end: bucket.bucket_end, value: bucket.value }],
+    };
+  }),
   events: [
     {
       id: "event:worker-25912",

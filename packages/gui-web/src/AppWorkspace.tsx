@@ -457,7 +457,7 @@ function PulseWorkersSurface({ status }: { status: GuiStatusData }): ReactElemen
       </div>
       <section className="pulse-kpi-grid" aria-label="Pulse health summary">
         {pulse.kpis.map((kpi) => (
-          <article className="metric-card pulse-kpi-card" key={kpi.label}>
+          <article className="metric-card pulse-kpi-card" key={kpi.id}>
             <span>{kpi.label} · {kpi.period_label} · {kpi.scope_label}</span>
             <strong>{kpi.value}</strong>
             <p>{kpi.detail} {kpi.comparison_label}</p>
