@@ -320,7 +320,7 @@ code {
   display: flex;
   gap: 12px;
   max-width: min(720px, calc(100vw - 48px));
-  padding: 8px 10px 8px 14px;
+  padding: 8px 10px 8px 20px;
   width: 100%;
 }
 
@@ -343,11 +343,26 @@ code {
   text-overflow: ellipsis;
 }
 
+.screenshot-capture-notification .screenshot-file-path-line {
+  align-items: baseline;
+  display: flex;
+  gap: 6px;
+}
+
+.screenshot-capture-notification .screenshot-file-path-label {
+  color: var(--text-primary);
+  flex: 0 0 auto;
+  font-weight: 800;
+  overflow: visible;
+}
+
 .screenshot-capture-notification .screenshot-path-button {
   background: transparent;
   border: 0;
   color: var(--accent);
+  flex: 1 1 auto;
   font: inherit;
+  min-width: 0;
   padding: 0;
   text-decoration: underline;
   overflow-wrap: anywhere;

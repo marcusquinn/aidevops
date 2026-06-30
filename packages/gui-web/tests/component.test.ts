@@ -422,13 +422,17 @@ describe("dashboard shell", () => {
     expect(screenshotSource).toContain("aidevops:screenshot-captured");
     expect(screenshotSource).toContain("screenshotNotifications.map");
     expect(screenshotSource).toContain("screenshot-capture-notification");
+    expect(screenshotSource).toContain("File path");
+    expect(screenshotSource).toContain("File path copied to clipboard.");
     expect(screenshotSource).toContain("screenshot-path-button");
     expect(screenshotSource).toContain("screenshot-dismiss-button");
     expect(css).toContain(".screenshot-capture-notification-stack");
+    expect(css).toContain("padding: 8px 10px 8px 20px");
     expect(css).toContain(".screenshot-capture-notification");
     expect(desktopInstaller).toContain("Screenshot App");
     expect(desktopInstaller).toContain("Screenshot Page");
-    expect(desktopInstaller).toContain("cameraButton.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -24)");
+    expect(desktopInstaller).toContain("cameraButton.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -9)");
+    expect(desktopInstaller).toContain("cameraButton.centerYAnchor.constraint(equalTo: overlay.centerYAnchor, constant: 5.5)");
     expect(desktopInstaller).toContain("savePageScreenshotAfterRestoringScroll");
     expect(desktopInstaller).toContain("homeDirectoryForCurrentUser.appendingPathComponent(\"Screenshots\"");
     expect(desktopInstaller).toContain("aidevops-app-screenshot-");
