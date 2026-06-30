@@ -159,53 +159,89 @@ export const TAMBO_PROVIDER_CONFIG: GuiTamboProviderConfig = {
 };
 
 export function validateTamboComponentPayload(payload: unknown, scope: GuiConversationScope): GuiTamboValidationResult {
+  const envelope = validateTamboPayloadEnvelope(payload, scope);
+  if (!envelope.ok) {
+    return envelope.result;
+  }
+
+  const errors = validateTamboComponentProps(envelope.schema, envelope.props);
+  return { ok: errors.length === 0, component: envelope.schema.name, props: envelope.props, errors };
+}
+
+type TamboPayloadEnvelopeValidation =
+  | { ok: true; schema: GuiTamboComponentSchema; props: Record<string, unknown> }
+  | { ok: false; result: GuiTamboValidationResult };
+
+function validateTamboPayloadEnvelope(payload: unknown, scope: GuiConversationScope): TamboPayloadEnvelopeValidation {
   if (!isRecord(payload)) {
-    return invalid(null, {}, "payload_not_object");
+    return { ok: false, result: invalid(null, {}, "payload_not_object") };
   }
   if (typeof payload.component !== "string") {
-    return invalid(null, {}, "component_missing");
+    return { ok: false, result: invalid(null, {}, "component_missing") };
   }
-  const schema = TAMBO_COMPONENT_SCHEMAS.find((candidate) => candidate.name === payload.component);
+
+  const schema = findTamboComponentSchema(payload.component);
   if (schema === undefined) {
-    return invalid(null, {}, "component_not_registered");
+    return { ok: false, result: invalid(null, {}, "component_not_registered") };
   }
-  if (payload.tenant_ref !== scope.tenant_ref) {
-    return invalid(schema.name, {}, "tenant_scope_mismatch");
-  }
-  if (typeof payload.session_ref !== "string" || payload.session_ref.length === 0) {
-    return invalid(schema.name, {}, "session_ref_missing");
-  }
-  if (payload.read_only !== true) {
-    return invalid(schema.name, {}, "component_not_read_only");
+
+  const envelopeError = validateScopedTamboEnvelope(payload, scope);
+  if (envelopeError !== null) {
+    return { ok: false, result: invalid(schema.name, {}, envelopeError) };
   }
   if (!isRecord(payload.props)) {
-    return invalid(schema.name, {}, "props_not_object");
+    return { ok: false, result: invalid(schema.name, {}, "props_not_object") };
   }
 
-  const errors: string[] = [];
-  const props = payload.props;
-  for (const key of Object.keys(props)) {
-    if (schema.properties[key] === undefined) {
-      errors.push(`unexpected_prop:${key}`);
-    }
+  return { ok: true, schema, props: payload.props };
+}
+
+function findTamboComponentSchema(component: string): GuiTamboComponentSchema | undefined {
+  return TAMBO_COMPONENT_SCHEMAS.find((candidate) => candidate.name === component);
+}
+
+function validateScopedTamboEnvelope(payload: Record<string, unknown>, scope: GuiConversationScope): string | null {
+  if (payload.tenant_ref !== scope.tenant_ref) {
+    return "tenant_scope_mismatch";
   }
-  for (const [key, propSchema] of Object.entries(schema.properties)) {
+  if (typeof payload.session_ref !== "string" || payload.session_ref.length === 0) {
+    return "session_ref_missing";
+  }
+  if (payload.read_only !== true) {
+    return "component_not_read_only";
+  }
+  return null;
+}
+
+function validateTamboComponentProps(schema: GuiTamboComponentSchema, props: Record<string, unknown>): string[] {
+  return [
+    ...findUnexpectedTamboProps(schema, props),
+    ...findInvalidTamboProps(schema, props),
+    ...findTamboComponentSpecificErrors(schema, props),
+  ];
+}
+
+function findUnexpectedTamboProps(schema: GuiTamboComponentSchema, props: Record<string, unknown>): string[] {
+  return Object.keys(props)
+    .filter((key) => schema.properties[key] === undefined)
+    .map((key) => `unexpected_prop:${key}`);
+}
+
+function findInvalidTamboProps(schema: GuiTamboComponentSchema, props: Record<string, unknown>): string[] {
+  return Object.entries(schema.properties).flatMap(([key, propSchema]) => {
     const value = props[key];
     if (value === undefined) {
-      if (propSchema.required) {
-        errors.push(`missing_prop:${key}`);
-      }
-      continue;
+      return propSchema.required ? [`missing_prop:${key}`] : [];
     }
-    if (!valueMatchesType(value, propSchema.type)) {
-      errors.push(`invalid_prop:${key}`);
-    }
-  }
-  if (schema.name === "ApprovalPromptCard" && props.disabled !== true) {
-    errors.push("approval_prompt_must_be_disabled");
-  }
+    return valueMatchesType(value, propSchema.type) ? [] : [`invalid_prop:${key}`];
+  });
+}
 
-  return { ok: errors.length === 0, component: schema.name, props, errors };
+function findTamboComponentSpecificErrors(schema: GuiTamboComponentSchema, props: Record<string, unknown>): string[] {
+  if (schema.name === "ApprovalPromptCard" && props.disabled !== true) {
+    return ["approval_prompt_must_be_disabled"];
+  }
+  return [];
 }
 
 function invalid(component: GuiTamboComponentName | null, props: Record<string, unknown>, error: string): GuiTamboValidationResult {
