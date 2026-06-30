@@ -110,6 +110,7 @@ _load_self_hosting_patterns
 _register_validators() {
 	_VALIDATOR_REGISTRY["ratchet-down"]="_validator_ratchet_down"
 	_VALIDATOR_REGISTRY["large-file-simplification-gate"]="_validator_large_file_simplification_gate"
+	_VALIDATOR_REGISTRY["agent-doc-simplification-gate"]="_validator_agent_doc_simplification_gate"
 	_VALIDATOR_REGISTRY["function-complexity-gate"]="_validator_function_complexity_gate"
 	_VALIDATOR_REGISTRY["upstream-watch"]="_validator_upstream_watch"
 	_VALIDATOR_REGISTRY["runtime-audit"]="_validator_runtime_audit"
@@ -368,29 +369,31 @@ _validator_ratchet_down() {
 # Expects CITED_FILE and CITED_THRESHOLD to be set by cmd_validate() after
 # parsing the marker attributes.
 # ---------------------------------------------------------------------------
-_validator_large_file_simplification_gate() {
+_validator_file_line_threshold_gate() {
 	local slug="$1"
+	local generator_name="$2"
+	local subject_label="$3"
 
 	if [[ -z "${CITED_FILE:-}" || -z "${CITED_THRESHOLD:-}" ]]; then
-		_log "WARN" "large-file-simplification-gate validator: missing cited_file or threshold in marker"
+		_log "WARN" "${generator_name} validator: missing cited_file or threshold in marker"
 		return 20
 	fi
 
-	_log "INFO" "large-file-simplification-gate validator: re-measuring ${CITED_FILE} (threshold=${CITED_THRESHOLD})"
+	_log "INFO" "${generator_name} validator: re-measuring ${CITED_FILE} (threshold=${CITED_THRESHOLD})"
 
 	# Clone repo into scratch dir for a fresh read against HEAD
 	local clone_url
 	clone_url="https://github.com/${slug}.git"
 
 	if ! git clone --depth 1 --quiet "$clone_url" "${SCRATCH_DIR}/repo" 2>/dev/null; then
-		_log "WARN" "large-file-simplification-gate validator: git clone failed for ${slug}"
+		_log "WARN" "${generator_name} validator: git clone failed for ${slug}"
 		return 20
 	fi
 
 	local target_file="${SCRATCH_DIR}/repo/${CITED_FILE}"
 	if [[ ! -f "$target_file" ]]; then
-		_log "INFO" "large-file-simplification-gate validator: file ${CITED_FILE} no longer exists — premise falsified"
-		VALIDATOR_RATIONALE="File \`${CITED_FILE}\` no longer exists on HEAD. Premise falsified. Not dispatching."
+		_log "INFO" "${generator_name} validator: file ${CITED_FILE} no longer exists — premise falsified"
+		VALIDATOR_RATIONALE="${subject_label} \`${CITED_FILE}\` no longer exists on HEAD. Premise falsified. Not dispatching."
 		return 10
 	fi
 
@@ -398,13 +401,25 @@ _validator_large_file_simplification_gate() {
 	line_count=$(wc -l < "$target_file" 2>/dev/null | tr -d ' ') || line_count=0
 
 	if [[ "$line_count" -lt "$CITED_THRESHOLD" ]]; then
-		_log "INFO" "large-file-simplification-gate validator: ${CITED_FILE} is now ${line_count} lines (threshold ${CITED_THRESHOLD}) — premise falsified"
-		VALIDATOR_RATIONALE="File \`${CITED_FILE}\` is now ${line_count} lines, below the ${CITED_THRESHOLD}-line threshold. Premise falsified. Not dispatching."
+		_log "INFO" "${generator_name} validator: ${CITED_FILE} is now ${line_count} lines (threshold ${CITED_THRESHOLD}) — premise falsified"
+		VALIDATOR_RATIONALE="${subject_label} \`${CITED_FILE}\` is now ${line_count} lines, below the ${CITED_THRESHOLD}-line threshold. Premise falsified. Not dispatching."
 		return 10
 	fi
 
-	_log "INFO" "large-file-simplification-gate validator: ${CITED_FILE} is still ${line_count} lines (threshold ${CITED_THRESHOLD}) — premise holds"
+	_log "INFO" "${generator_name} validator: ${CITED_FILE} is still ${line_count} lines (threshold ${CITED_THRESHOLD}) — premise holds"
 	return 0
+}
+
+_validator_large_file_simplification_gate() {
+	local slug="$1"
+	_validator_file_line_threshold_gate "$slug" "large-file-simplification-gate" "File"
+	return $?
+}
+
+_validator_agent_doc_simplification_gate() {
+	local slug="$1"
+	_validator_file_line_threshold_gate "$slug" "agent-doc-simplification-gate" "Agent doc"
+	return $?
 }
 
 # ---------------------------------------------------------------------------

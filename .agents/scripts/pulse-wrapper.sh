@@ -613,7 +613,8 @@ check_session_gate() {
 #
 # Scans both shell scripts (.sh) and agent docs (.md) for complexity:
 # - .sh files: functions exceeding COMPLEXITY_FUNC_LINE_THRESHOLD lines
-# - .md files: all agent docs (no size gate — classification determines action, t1679)
+# - .md files: agent docs at/above COMPLEXITY_MD_MIN_LINES (default 500);
+#   classification determines compress-vs-split action.
 #
 # Protected files (build.txt, AGENTS.md, pulse.md, pulse-sweep.md) are excluded.
 # Results processed longest-first. .md issues get tier:standard by default.

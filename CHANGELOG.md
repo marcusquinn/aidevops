@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- restore 500-line Markdown simplification dispatch validation (#25926)
+
 ## [3.29.38] - 2026-06-30
 
 ### Changed

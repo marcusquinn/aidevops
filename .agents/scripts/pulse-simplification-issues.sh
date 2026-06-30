@@ -25,6 +25,8 @@
 [[ -n "${_PULSE_SIMPLIFICATION_ISSUES_LIB_LOADED:-}" ]] && return 0
 _PULSE_SIMPLIFICATION_ISSUES_LIB_LOADED=1
 
+SIMPLIFICATION_DEBT_LABEL=function-complexity-debt
+
 # Defensive SCRIPT_DIR fallback
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
     _lib_path="${BASH_SOURCE[0]%/*}"
@@ -34,9 +36,10 @@ if [[ -z "${SCRIPT_DIR:-}" ]]; then
 fi
 
 # Determine whether an agent doc qualifies for a simplification issue.
-# Not every .agents/*.md file is actionable — very short files, empty stubs,
-# and YAML-only frontmatter files are not candidates. This gate prevents
-# flooding the issue tracker with non-actionable entries (CodeRabbit GH#6879).
+# Not every .agents/*.md file is actionable — files below the 500-line default,
+# empty stubs, and YAML-only frontmatter files are not candidates. This gate
+# prevents flooding the issue tracker with non-actionable entries (CodeRabbit
+# GH#6879, GH#25926).
 # Arguments: $1 - full_path, $2 - line_count
 # Returns: 0 if the file should get an issue, 1 if it should be skipped
 _complexity_scan_should_open_md_issue() {
@@ -68,8 +71,9 @@ _complexity_scan_should_open_md_issue() {
 }
 
 # Collect agent docs (.md files in .agents/) for simplification analysis.
-# No hard file size gate — classification (instruction doc vs reference corpus)
-# determines the action, not line count (t1679, code-simplifier.md).
+# The default 500-line gate keeps the scan focused on files large enough to
+# justify simplification work. Classification (instruction doc vs reference
+# corpus) still determines whether to compress prose or split into chapters.
 # Files must pass _complexity_scan_should_open_md_issue to be included —
 # this filters out stubs, short files, and frontmatter-only definitions.
 # Protected files (build.txt, AGENTS.md, pulse.md, pulse-sweep.md) are excluded — these are
@@ -165,7 +169,7 @@ _complexity_scan_build_md_issue_body() {
 	local topic_label="$3"
 
 	cat <<ISSUE_BODY_EOF
-<!-- aidevops:generator=function-complexity-gate cited_file=${file_path} threshold=${COMPLEXITY_MD_LINE_THRESHOLD:-500} -->
+<!-- aidevops:generator=agent-doc-simplification-gate cited_file=${file_path} threshold=${COMPLEXITY_MD_MIN_LINES:-500} -->
 
 ## Agent doc simplification (automated scan)
 
@@ -224,25 +228,59 @@ ISSUE_BODY_EOF
 	return 0
 }
 
+# Determine whether an unchanged agent doc should get another pass.
+# Arguments: $1 - state_file, $2 - file_path, $3 - line_count
+# Returns: 0 if another pass is allowed, 1 if the state has converged or the
+#          file is below threshold.
+_complexity_scan_md_repeat_due() {
+	local state_file="$1"
+	local file_path="$2"
+	local line_count="$3"
+
+	if [[ "$line_count" -lt "$COMPLEXITY_MD_MIN_LINES" ]]; then
+		return 1
+	fi
+
+	local max_passes="${SIMPLIFICATION_MAX_PASSES:-3}"
+	local passes
+	passes=$(jq -r --arg fp "$file_path" '.files[$fp].passes // 0' "$state_file" 2>/dev/null) || passes=0
+	[[ "$passes" =~ ^[0-9]+$ ]] || passes=0
+
+	if [[ "$passes" -ge "$max_passes" ]]; then
+		return 1
+	fi
+
+	return 0
+}
+
 # Determine early-exit status for a single agent doc file.
 # Checks simplification state (unchanged/converged) and open-issue dedup.
-# Arguments: $1 - aidevops_slug, $2 - file_path, $3 - state_file, $4 - aidevops_path
-# Output: "unchanged"|"converged"|"existing"|"new"|"recheck" via stdout
+# Arguments: $1 - aidevops_slug, $2 - file_path, $3 - state_file, $4 - aidevops_path, $5 - line_count
+# Output: unchanged|converged|existing|new|recheck|repeat via stdout
 # Returns: 0 always
 _complexity_scan_md_file_status() {
 	local aidevops_slug="$1"
 	local file_path="$2"
 	local state_file="$3"
 	local aidevops_path="$4"
+	local line_count="${5:-0}"
 
 	local file_status="new"
 	if [[ -n "$state_file" && -n "$aidevops_path" ]]; then
 		file_status=$(_simplification_state_check "$aidevops_path" "$file_path" "$state_file")
-		if [[ "$file_status" == "unchanged" || "$file_status" == "converged" ]]; then
+		if [[ "$file_status" == "converged" ]]; then
 			printf '%s' "$file_status"
 			return 0
 		fi
-		# "recheck" falls through — gets a new issue with recheck label
+		if [[ "$file_status" == "unchanged" ]]; then
+			if _complexity_scan_md_repeat_due "$state_file" "$file_path" "$line_count"; then
+				file_status=repeat
+			else
+				printf '%s' "$file_status"
+				return 0
+			fi
+		fi
+		# Recheck falls through to get a new issue with the recheck label.
 	fi
 
 	if _complexity_scan_has_existing_issue "$aidevops_slug" "$file_path"; then
@@ -256,27 +294,35 @@ _complexity_scan_md_file_status() {
 
 # Build the full issue body for an agent doc: base body + optional recheck note + sig footer.
 # Arguments: $1 - file_path, $2 - line_count, $3 - topic_label,
-#            $4 - needs_recheck (true/false), $5 - state_file
+#            $4 - recheck_mode (none, recheck, repeat), $5 - state_file
 # Output: full issue body to stdout
 # Returns: 0 always
 _complexity_scan_md_build_full_body() {
 	local file_path="$1"
 	local line_count="$2"
 	local topic_label="$3"
-	local needs_recheck="$4"
+	local recheck_mode="$4"
 	local state_file="$5"
 
 	local issue_body
 	issue_body=$(_complexity_scan_build_md_issue_body "$file_path" "$line_count" "$topic_label")
 
-	if [[ "$needs_recheck" == true ]]; then
+	if [[ "$recheck_mode" == recheck || "$recheck_mode" == repeat ]]; then
 		local prev_pr
 		prev_pr=$(jq -r --arg fp "$file_path" '.files[$fp].pr // 0' "$state_file" 2>/dev/null) || prev_pr="0"
-		issue_body="${issue_body}
+		if [[ "$recheck_mode" == repeat ]]; then
+			issue_body="${issue_body}
+
+### Next-pass note
+
+This file was previously simplified (PR #${prev_pr}) and its content hash is unchanged, but it still meets the ${COMPLEXITY_MD_MIN_LINES}-line simplification threshold. Please run the next simplification pass unless the file is intentionally converged."
+		else
+			issue_body="${issue_body}
 
 ### Recheck note
 
 This file was previously simplified (PR #${prev_pr}) but has since been modified. The content hash no longer matches the post-simplification state. Please re-evaluate."
+		fi
 	fi
 
 	# Append signature footer. The pulse-wrapper runs as standalone bash via
@@ -312,7 +358,7 @@ _complexity_scan_process_single_md_file() {
 	local maintainer="$6"
 
 	local file_status
-	file_status=$(_complexity_scan_md_file_status "$aidevops_slug" "$file_path" "$state_file" "$aidevops_path")
+	file_status=$(_complexity_scan_md_file_status "$aidevops_slug" "$file_path" "$state_file" "$aidevops_path" "$line_count")
 	case "$file_status" in
 	unchanged)
 		echo "[pulse-wrapper] Complexity scan (.md): skipping ${file_path} — already simplified (hash unchanged)" >>"$LOGFILE"
@@ -330,24 +376,25 @@ _complexity_scan_process_single_md_file() {
 		return 0
 		;;
 	esac
-	# file_status is "new" or "recheck" at this point
+	# file_status is new, recheck, or repeat at this point.
 
 	local topic_label=""
 	if [[ -n "$aidevops_path" ]]; then
 		topic_label=$(_complexity_scan_extract_md_topic_label "$aidevops_path" "$file_path" 2>/dev/null || true)
 	fi
 
-	local needs_recheck=false
-	[[ "$file_status" == "recheck" ]] && needs_recheck=true
+	local recheck_mode=none
+	[[ "$file_status" == recheck || "$file_status" == repeat ]] && recheck_mode="$file_status"
 
 	local issue_title="simplification: tighten agent doc ${file_path} (${line_count} lines)"
 	if [[ -n "$topic_label" ]]; then
 		issue_title="simplification: tighten agent doc ${topic_label} (${file_path}, ${line_count} lines)"
 	fi
-	[[ "$needs_recheck" == true ]] && issue_title="recheck: ${issue_title}"
+	[[ "$file_status" == recheck ]] && issue_title="recheck: ${issue_title}"
+	[[ "$file_status" == repeat ]] && issue_title="next-pass: ${issue_title}"
 
 	local issue_body
-	issue_body=$(_complexity_scan_md_build_full_body "$file_path" "$line_count" "$topic_label" "$needs_recheck" "$state_file")
+	issue_body=$(_complexity_scan_md_build_full_body "$file_path" "$line_count" "$topic_label" "$recheck_mode" "$state_file")
 
 	# Build label list — skip needs-maintainer-review when user is maintainer (GH#16786)
 	local review_label=""
@@ -358,24 +405,25 @@ _complexity_scan_process_single_md_file() {
 	local create_ok=false
 	# t1955: Don't self-assign on issue creation — let dispatch_with_dedup handle
 	# assignment. Self-assigning creates a phantom claim that triggers stale recovery.
-	if [[ "$needs_recheck" == true ]]; then
+	if [[ "$recheck_mode" != none ]]; then
 		# shellcheck disable=SC2086
 		gh_create_issue --repo "$aidevops_slug" \
 			--title "$issue_title" \
-			--label "function-complexity-debt" $review_label --label "tier:standard" --label "recheck-simplicity" \
+			--label "$SIMPLIFICATION_DEBT_LABEL" $review_label --label "tier:standard" --label "recheck-simplicity" \
 			--body "$issue_body" >/dev/null 2>&1 && create_ok=true
 	else
 		# shellcheck disable=SC2086
 		gh_create_issue --repo "$aidevops_slug" \
 			--title "$issue_title" \
-			--label "function-complexity-debt" $review_label --label "tier:standard" \
+			--label "$SIMPLIFICATION_DEBT_LABEL" $review_label --label "tier:standard" \
 			--body "$issue_body" >/dev/null 2>&1 && create_ok=true
 	fi
 
 	if [[ "$create_ok" == true ]]; then
 		_complexity_scan_close_duplicate_issues_by_title "$aidevops_slug" "$issue_title"
 		local log_suffix=""
-		[[ "$needs_recheck" == true ]] && log_suffix=" [RECHECK]"
+		[[ "$file_status" == recheck ]] && log_suffix=" [RECHECK]"
+		[[ "$file_status" == repeat ]] && log_suffix=" [NEXT-PASS]"
 		echo "[pulse-wrapper] Complexity scan (.md): created issue for ${file_path} (${line_count} lines)${log_suffix}" >>"$LOGFILE"
 		echo "created"
 	else
@@ -537,7 +585,7 @@ _complexity_scan_sh_create_issue() {
 	# shellcheck disable=SC2086
 	if gh_create_issue --repo "$aidevops_slug" \
 		--title "$issue_title" \
-		--label "function-complexity-debt" $review_label_sh \
+		--label "$SIMPLIFICATION_DEBT_LABEL" $review_label_sh \
 		--body "$issue_body" >/dev/null 2>&1; then
 		_complexity_scan_close_duplicate_issues_by_title "$aidevops_slug" "$issue_title"
 		echo "[pulse-wrapper] Complexity scan: created issue for ${file_path} (${violation_count} violations)" >>"$LOGFILE"
