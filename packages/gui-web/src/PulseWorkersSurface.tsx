@@ -170,13 +170,13 @@ function PulseDrilldownPanel({ event }: { event: PulseEvent | undefined }): Reac
       <dl className="pulse-detail-grid">
         <div><dt>What</dt><dd>{event.summary}</dd></div>
         <div><dt>When</dt><dd>{event.occurred_at} · {durationLabel(event.duration_ms)}</dd></div>
-        <div><dt>Why</dt><dd>{event.drilldown_sections.find((section) => section.label.toLowerCase().includes("failure"))?.body ?? event.drilldown_sections[0]?.body ?? "No failure analysis recorded."}</dd></div>
+        <div><dt>Why</dt><dd>{event.drilldown_sections?.find((section) => section.label.toLowerCase().includes("failure"))?.body ?? event.drilldown_sections?.[0]?.body ?? "No failure analysis recorded."}</dd></div>
         <div><dt>How</dt><dd>{[event.type, event.status, event.outcome].map((value) => humanize(value)).join(" · ")}</dd></div>
         <div><dt>Who</dt><dd>{event.actor_ref ?? "actor pending"} · {humanize(event.issue_origin, "-")} · {event.author_association}</dd></div>
         <div><dt>Issue / PR / session refs</dt><dd>{[event.repo_ref, event.issue_ref, event.pull_request_ref, event.worker_session_ref, event.command_job_ref, event.pulse_run_ref].filter(Boolean).join(" · ")}</dd></div>
         <div><dt>Usage and cost</dt><dd>{usageSummary(event)}</dd></div>
-        <div><dt>Resources</dt><dd>{event.resources.map((resource) => `${resource.label}: ${resource.available_label} (${resource.pressure})`).join(" · ") || "Resource metadata pending"}</dd></div>
-        <div><dt>Suggested systemic fix</dt><dd>{event.drilldown_sections.find((section) => section.label.toLowerCase().includes("fix"))?.body ?? "Create a worker-ready follow-up when repeated blindspots appear."}</dd></div>
+        <div><dt>Resources</dt><dd>{event.resources?.map((resource) => `${resource.label}: ${resource.available_label} (${resource.pressure})`).join(" · ") || "Resource metadata pending"}</dd></div>
+        <div><dt>Suggested systemic fix</dt><dd>{event.drilldown_sections?.find((section) => section.label.toLowerCase().includes("fix"))?.body ?? "Create a worker-ready follow-up when repeated blindspots appear."}</dd></div>
         <div><dt>Planned actions</dt><dd>Open terminal output, redispatch worker, save systemic fix, and attach timeline evidence remain disabled until Phase 5 action routes land.</dd></div>
       </dl>
     </article>
@@ -201,8 +201,8 @@ function buildFilterGroups(pulse: GuiStatusData["pulse_workers"]): PulseFilterGr
   ];
 }
 
-function optionLabels(options: Array<{ label: string; count: number }>): string[] {
-  return options.map((option) => `${option.label} (${option.count})`);
+function optionLabels(options: Array<{ label: string; count: number }> | null | undefined): string[] {
+  return options?.map((option) => `${option.label} (${option.count})`) ?? [];
 }
 
 function unique(values: string[]): string[] {
@@ -220,23 +220,23 @@ function periodChoices(selected: string): string {
 function resourceSummary(row: PulseEvent): string {
   const model = row.usage?.model_ref?.replace("model:", "");
   const providerLabel = row.usage?.provider === "openai" ? "OpenAI" : row.usage?.provider === "anthropic" ? "Anthropic" : row.usage?.provider;
-  const provider = row.usage === null ? row.resources[0]?.available_label ?? "metadata only" : `${providerLabel ?? "Provider"} · ${model ?? "model metadata pending"}`;
-  const tokens = row.usage === null ? "" : ` · ${row.usage.total_tokens.toLocaleString()} tokens`;
+  const provider = row.usage == null ? row.resources?.[0]?.available_label ?? "metadata only" : `${providerLabel ?? "Provider"} · ${model ?? "model metadata pending"}`;
+  const tokens = row.usage == null ? "" : ` · ${row.usage.total_tokens.toLocaleString()} tokens`;
   const cost = row.usage?.estimated_cost_ref === null || row.usage?.estimated_cost_ref === undefined ? "" : ` · ${row.usage.estimated_cost_ref}`;
 
   return `${provider}${tokens}${cost}`;
 }
 
 function usageSummary(event: PulseEvent): string {
-  if (event.usage === null) {
+  if (event.usage == null) {
     return "Usage metadata pending or not applicable.";
   }
 
   return `${event.usage.provider} · ${event.usage.model_ref ?? "model pending"} · ${event.usage.total_tokens.toLocaleString()} tokens · ${event.usage.estimated_cost_ref ?? "cost pending"} · ${durationLabel(event.usage.wall_time_ms)}`;
 }
 
-function durationBucket(durationMs: number | null): string {
-  if (durationMs === null) {
+function durationBucket(durationMs: number | null | undefined): string {
+  if (durationMs == null) {
     return "duration pending";
   }
   if (durationMs < 300000) {
@@ -249,14 +249,18 @@ function durationBucket(durationMs: number | null): string {
   return "30m+";
 }
 
-function durationLabel(durationMs: number | null): string {
-  if (durationMs === null) {
+function durationLabel(durationMs: number | null | undefined): string {
+  if (durationMs == null) {
     return "duration pending";
   }
 
   return `${Math.round(durationMs / 60000)}m`;
 }
 
-function humanize(value: string, replacement = " "): string {
+function humanize(value: string | null | undefined, replacement = " "): string {
+  if (value === null || value === undefined || value === "") {
+    return "";
+  }
+
   return value.replaceAll("_", replacement);
 }
