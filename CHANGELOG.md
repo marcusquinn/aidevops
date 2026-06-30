@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.41] - 2026-06-30
+
+### Changed
+
+- Maintenance: mark t18041 complete (pr:#25947 completed:2026-06-30) [skip ci]
+- Polish GUI gradient background and panel contrast (#25947)
+
 ## [3.29.40] - 2026-06-30
 
 ### Changed
