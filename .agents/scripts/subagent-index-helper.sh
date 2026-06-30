@@ -143,6 +143,80 @@ generate_subagents_block() {
 # Commands
 # ---------------------------------------------------------------------------
 
+count_toon_block_rows() {
+	local block_name="$1"
+	local index_file="$2"
+
+	sed -n "/^<!--TOON:${block_name}\\[/,/^-->/p" "$index_file" |
+		awk -v block_name="$block_name" '
+			BEGIN { in_block = 0; count = 0 }
+			$0 ~ "^<!--TOON:" block_name "\\[" { in_block = 1; next }
+			/^-->/ { if (in_block) { in_block = 0 }; next }
+			{ if (in_block && NF > 0) { count++ } }
+			END { print count }'
+	return 0
+}
+
+check_toon_cardinality() {
+	local block_name="$1"
+	local display_name="$2"
+	local header_pattern="$3"
+	local regenerate_hint="$4"
+	local declared_rows actual_rows
+
+	declared_rows=$(sed -n "$header_pattern" "$INDEX_FILE")
+	if [[ -z "$declared_rows" ]]; then
+		return 0
+	fi
+
+	actual_rows=$(count_toon_block_rows "$block_name" "$INDEX_FILE")
+	echo "Declared ${display_name} rows: ${declared_rows}"
+	echo "Actual ${display_name} rows: ${actual_rows}"
+	if [[ "$declared_rows" != "$actual_rows" ]]; then
+		echo ""
+		echo "Error: ${block_name} TOON header cardinality mismatch (declared ${declared_rows}, actual ${actual_rows})."
+		echo "$regenerate_hint"
+		return 1
+	fi
+	return 0
+}
+
+count_subagent_markdown_files() {
+	local actual_count=0
+
+	for subdir in $SUBAGENT_DIRS; do
+		local dir_path="${AGENTS_DIR}/${subdir}"
+		[[ -d "$dir_path" ]] || continue
+		local dir_count
+		dir_count=$(find "$dir_path" -name "*.md" -type f \
+			-not -name "README.md" -not -name "AGENTS.md" \
+			-not -name "*-skill.md" 2>/dev/null | wc -l | tr -d ' ')
+		actual_count=$((actual_count + dir_count))
+	done
+
+	echo "$actual_count"
+	return 0
+}
+
+count_index_leaf_entries() {
+	local index_file="$1"
+
+	awk '
+		BEGIN { in_block = 0; count = 0 }
+		/^<!--TOON:(subagents|plugin_agents)\[/ { in_block = 1; next }
+		/^-->/ { if (in_block) { in_block = 0 }; next }
+		{
+			if (in_block && NF > 0) {
+				split($0, cols, ",")
+				if (cols[3] != "") {
+					count += split(cols[3], files, "|")
+				}
+			}
+		}
+		END { print count }' "$index_file"
+	return 0
+}
+
 cmd_generate() {
 	if [[ ! -d "$AGENTS_DIR" ]]; then
 		echo "Error: ${AGENTS_DIR} not found. Run setup.sh first." >&2
@@ -222,25 +296,9 @@ cmd_check() {
 		return 1
 	fi
 
-	local declared_agent_rows
-	declared_agent_rows=$(sed -n 's/^<!--TOON:agents\[\([0-9][0-9]*\)\]{name,file,purpose,model_tier,triggers}:$/\1/p' "$INDEX_FILE")
-	if [[ -n "$declared_agent_rows" ]]; then
-		local actual_agent_rows
-		actual_agent_rows=$(sed -n '/^<!--TOON:agents\[/,/^-->/p' "$INDEX_FILE" |
-			awk 'BEGIN { in_block = 0; count = 0 }
-				/^<!--TOON:agents\[/ { in_block = 1; next }
-				/^-->/ { if (in_block) { in_block = 0 }; next }
-				{ if (in_block && NF > 0) { count++ } }
-				END { print count }')
-		echo "Declared primary agent rows: ${declared_agent_rows}"
-		echo "Actual primary agent rows: ${actual_agent_rows}"
-		if [[ "$declared_agent_rows" != "$actual_agent_rows" ]]; then
-			echo ""
-			echo "Error: agents TOON header cardinality mismatch (declared ${declared_agent_rows}, actual ${actual_agent_rows})."
-			echo "$regenerate_hint"
-			return 1
-		fi
-	fi
+	check_toon_cardinality "agents" "primary agent" \
+		's/^<!--TOON:agents\[\([0-9][0-9]*\)\]{name,file,purpose,model_tier,triggers}:$/\1/p' \
+		"$regenerate_hint" || return 1
 
 	local declared_rows
 	declared_rows=$(sed -n 's/^<!--TOON:subagents\[\([0-9][0-9]*\)\]{folder,purpose,key_files}:$/\1/p' "$INDEX_FILE")
@@ -250,61 +308,25 @@ cmd_check() {
 	fi
 
 	local actual_block_rows
-	actual_block_rows=$(sed -n '/^<!--TOON:subagents\[/,/^-->/p' "$INDEX_FILE" |
-		awk 'BEGIN { in_block = 0; count = 0 }
-			/^<!--TOON:subagents\[/ { in_block = 1; next }
-			/^-->/ { if (in_block) { in_block = 0 }; next }
-			{ if (in_block && NF > 0) { count++ } }
-			END { print count }')
+	actual_block_rows=$(count_toon_block_rows "subagents" "$INDEX_FILE")
 
 	local index_mtime
 	index_mtime=$(_file_mtime_epoch "$INDEX_FILE")
-	local index_age=$(($(date +%s) - index_mtime))
+	local index_age
+	index_age=$(($(date +%s) - index_mtime))
 
 	echo "Index: ${INDEX_FILE}"
 	echo "Age: $((index_age / 3600))h $((index_age % 3600 / 60))m"
 	echo "Declared subagent rows: ${declared_rows}"
 	echo "Actual TOON rows: ${actual_block_rows}"
 
-	local declared_plugin_rows
-	declared_plugin_rows=$(sed -n 's/^<!--TOON:plugin_agents\[\([0-9][0-9]*\)\]{folder,purpose,key_files}:$/\1/p' "$INDEX_FILE")
-	if [[ -n "$declared_plugin_rows" ]]; then
-		local actual_plugin_rows
-		actual_plugin_rows=$(sed -n '/^<!--TOON:plugin_agents\[/,/^-->/p' "$INDEX_FILE" |
-			awk 'BEGIN { in_block = 0; count = 0 }
-				/^<!--TOON:plugin_agents\[/ { in_block = 1; next }
-				/^-->/ { if (in_block) { in_block = 0 }; next }
-				{ if (in_block && NF > 0) { count++ } }
-				END { print count }')
-		echo "Declared plugin rows: ${declared_plugin_rows}"
-		echo "Actual plugin rows: ${actual_plugin_rows}"
-		if [[ "$declared_plugin_rows" != "$actual_plugin_rows" ]]; then
-			echo ""
-			echo "Error: plugin_agents TOON header cardinality mismatch (declared ${declared_plugin_rows}, actual ${actual_plugin_rows})."
-			echo "$regenerate_hint"
-			return 1
-		fi
-	fi
+	check_toon_cardinality "plugin_agents" "plugin" \
+		's/^<!--TOON:plugin_agents\[\([0-9][0-9]*\)\]{folder,purpose,key_files}:$/\1/p' \
+		"$regenerate_hint" || return 1
 
-	local declared_capability_rows
-	declared_capability_rows=$(sed -n 's/^<!--TOON:agent_source_capabilities\[\([0-9][0-9]*\)\]{source,pack,version,domains,triggers,agents,subagents,commands,helpers,secrets,artifacts,sensitivity,upstream_candidate,status}:$/\1/p' "$INDEX_FILE")
-	if [[ -n "$declared_capability_rows" ]]; then
-		local actual_capability_rows
-		actual_capability_rows=$(sed -n '/^<!--TOON:agent_source_capabilities\[/,/^-->/p' "$INDEX_FILE" |
-			awk 'BEGIN { in_block = 0; count = 0 }
-				/^<!--TOON:agent_source_capabilities\[/ { in_block = 1; next }
-				/^-->/ { if (in_block) { in_block = 0 }; next }
-				{ if (in_block && NF > 0) { count++ } }
-				END { print count }')
-		echo "Declared agent source capability rows: ${declared_capability_rows}"
-		echo "Actual agent source capability rows: ${actual_capability_rows}"
-		if [[ "$declared_capability_rows" != "$actual_capability_rows" ]]; then
-			echo ""
-			echo "Error: agent_source_capabilities TOON header cardinality mismatch (declared ${declared_capability_rows}, actual ${actual_capability_rows})."
-			echo "$regenerate_hint"
-			return 1
-		fi
-	fi
+	check_toon_cardinality "agent_source_capabilities" "agent source capability" \
+		's/^<!--TOON:agent_source_capabilities\[\([0-9][0-9]*\)\]{source,pack,version,domains,triggers,agents,subagents,commands,helpers,secrets,artifacts,sensitivity,upstream_candidate,status}:$/\1/p' \
+		"$regenerate_hint" || return 1
 
 	if [[ "$declared_rows" != "$actual_block_rows" ]]; then
 		echo ""
@@ -313,33 +335,11 @@ cmd_check() {
 		return 1
 	fi
 
-	# Count actual .md files
-	local actual_count=0
-	for subdir in $SUBAGENT_DIRS; do
-		local dir_path="${AGENTS_DIR}/${subdir}"
-		[[ -d "$dir_path" ]] || continue
-		local c
-		c=$(find "$dir_path" -name "*.md" -type f \
-			-not -name "README.md" -not -name "AGENTS.md" \
-			-not -name "*-skill.md" 2>/dev/null | wc -l | tr -d ' ')
-		actual_count=$((actual_count + c))
-	done
+	local actual_count
+	actual_count=$(count_subagent_markdown_files)
 
-	# Count index leaf entries (pipe-separated names)
 	local index_leaves
-	index_leaves=$(awk '
-		BEGIN { in_block = 0; count = 0 }
-		/^<!--TOON:(subagents|plugin_agents)\[/ { in_block = 1; next }
-		/^-->/ { if (in_block) { in_block = 0 }; next }
-		{
-			if (in_block && NF > 0) {
-				split($0, cols, ",")
-				if (cols[3] != "") {
-					count += split(cols[3], files, "|")
-				}
-			}
-		}
-		END { print count }' "$INDEX_FILE")
+	index_leaves=$(count_index_leaf_entries "$INDEX_FILE")
 
 	echo "Actual .md files: ${actual_count}"
 	echo "Index leaf entries: ${index_leaves}"
