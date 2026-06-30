@@ -19,6 +19,7 @@ if [[ ! -f "$TAMBO_FILE" ]]; then
 fi
 
 python3 - "$TAMBO_FILE" <<'PY'
+import re
 import sys
 
 tambo_path = sys.argv[1]
@@ -58,7 +59,7 @@ if missing:
 for name, body_lines in functions.items():
     body = "\n".join(body_lines)
     line_count = len(body_lines)
-    branch_count = sum(body.count(token) for token in ("if (", "for (", "while (", "switch ("))
+    branch_count = len(re.findall(r"\b(if|for|while|switch)\b", body))
     if line_count > limits[name]["lines"]:
         print(f"FAIL: {name} is {line_count} lines; keep <= {limits[name]['lines']}", file=sys.stderr)
         sys.exit(1)
