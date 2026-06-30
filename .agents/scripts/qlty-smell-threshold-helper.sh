@@ -47,6 +47,8 @@ emit_sarif_warning() {
 	local _stdout_preview="${4:-}"
 	local _qlty_rc="${5:-}"
 	printf '::warning::qlty smells produced %s SARIF output — skipping absolute smell threshold check\n' "$_reason"
+	printf 'Absolute threshold status: diagnostic-only for this run; PR-specific qlty delta gate remains authoritative.\n'
+	printf 'Command: %s smells --all --sarif --no-snippets --quiet\n' "$_qlty_bin"
 	if [ -n "$_qlty_rc" ]; then
 		printf 'qlty smells exit code: %s\n' "$_qlty_rc"
 	fi

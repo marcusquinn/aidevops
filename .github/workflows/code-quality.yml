@@ -843,6 +843,9 @@ jobs:
         # GH#26043: keep empty-SARIF handling in the helper so transient qlty
         # output failures stay diagnostic-only while valid threshold
         # regressions remain blocking.
+        # GH#26055: the helper must emit command/version/stderr context for
+        # empty SARIF and return success; do not reintroduce inline
+        # "Failed to run qlty smells (empty SARIF output)" errors here.
         .agents/scripts/qlty-smell-threshold-helper.sh \
           .agents/configs/complexity-thresholds.conf
 
