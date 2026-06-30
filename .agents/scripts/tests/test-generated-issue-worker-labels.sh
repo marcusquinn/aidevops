@@ -166,7 +166,7 @@ test_quality_feedback_labels() {
 
 test_failure_miner_labels() {
 	local cluster_json
-	cluster_json='{"repo":"marcusquinn/aidevops","check_name":"ShellCheck","check_names":["ShellCheck"],"signature":"failure:shellcheck","count":2,"sources":["pr:#1"],"examples":[]}'
+	cluster_json='{"repo":"marcusquinn/aidevops","check_name":"ShellCheck","check_names":["ShellCheck"],"signature":"failure:shellcheck","count":2,"sources":["pr:#1"],"examples":[{"source_ref":"pr:#1"}]}'
 	reset_create_log
 	create_or_preview_issue "$cluster_json" "abc123" "2" "false" "false" >/dev/null
 	assert_create_contains "failure miner has auto-dispatch" "--label auto-dispatch"
@@ -177,6 +177,12 @@ test_failure_miner_labels() {
 	reset_create_log
 	create_or_preview_issue "$cluster_json" "abc123" "2" "false" "false" "auto-dispatch" >/dev/null
 	[[ "$(count_create_occurrences "--label auto-dispatch")" == "1" ]] && print_result "failure miner dedupes scheduler auto-dispatch label" 0 || print_result "failure miner dedupes scheduler auto-dispatch label" 1 "$(create_log_text)"
+
+	reset_create_log
+	create_or_preview_issue "$cluster_json" "abc123" "2" "false" "false" "custom:one, custom:two, auto-dispatch" >/dev/null
+	assert_create_contains "failure miner trims comma-separated labels" "--label custom:two"
+	assert_create_not_contains "failure miner omits whitespace-padded labels" "--label  custom:two"
+	[[ "$(count_create_occurrences "--label auto-dispatch")" == "1" ]] && print_result "failure miner dedupes trimmed scheduler label" 0 || print_result "failure miner dedupes trimmed scheduler label" 1 "$(create_log_text)"
 
 	reset_create_log
 	create_or_preview_issue "$cluster_json" "abc123" "2" "false" "true" >/dev/null
