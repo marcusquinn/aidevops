@@ -187,9 +187,9 @@ function buildKpis(dayMetrics: MetricRecord[], weekMetrics: MetricRecord[], coun
   ];
 }
 
-function buildAttention(sources: SourceState[], counters: Record<string, number>, resources: GuiPulseResourceSnapshot[], oauthPool: Record<string, unknown>) {
+function buildAttention(sources: SourceState[], counters: Record<string, number>, resources: GuiPulseResourceSnapshot[], oauthPool: Record<string, unknown>): GuiPulseWorkerSummary["attention"] {
   const missing = sources.filter((source) => source.health !== "present");
-  const attention = missing.map((source) => ({ id: `source-${source.health}-${slug(source.path_ref)}`, severity: source.health === "invalid" ? "warning" as const : "info" as const, title: `Telemetry source ${source.health}`, detail: `${source.path_ref} was ${source.health}; the GUI used safe empty summaries for that source.`, event_ref: null }));
+  const attention: GuiPulseWorkerSummary["attention"] = missing.map((source) => ({ id: `source-${source.health}-${slug(source.path_ref)}`, severity: source.health === "invalid" ? "warning" : "info", title: `Telemetry source ${source.health}`, detail: `${source.path_ref} was ${source.health}; the GUI used safe empty summaries for that source.`, event_ref: null }));
   for (const [name, count] of Object.entries(counters).filter(([, count]) => count > 0)) {
     attention.push({ id: `pulse-counter-${slug(name)}`, severity: "warning", title: `Pulse counter active: ${name}`, detail: `${count} events observed in the selected local period.`, event_ref: null });
   }
