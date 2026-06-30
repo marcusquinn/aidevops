@@ -964,6 +964,32 @@ test_service_interruption_candidate_uses_separate_path() {
 		print_result "rate limits do not consume service interruption budget" 1
 	fi
 
+	if service_interruption_continue_candidate "auth_error" "1" "1" "" "auth_error"; then
+		print_result "auth errors with activity consume service interruption budget" 0
+	else
+		print_result "auth errors with activity consume service interruption budget" 1
+	fi
+
+	if ! service_interruption_continue_candidate "auth_error" "1" "0" "" "auth_error"; then
+		print_result "startup auth errors do not consume service interruption budget" 0
+	else
+		print_result "startup auth errors do not consume service interruption budget" 1
+	fi
+
+	local auth_refresh_output_file="${TEST_ROOT}/service-interruption-auth-refresh.out"
+	printf '%s\n' '{"type":"text","sessionID":"ses_auth","text":"editing files"}' 'Token refresh failed: 401' >"$auth_refresh_output_file"
+	_run_result_label=""
+	_run_failure_reason=""
+	status=0
+	_handle_run_result 1 "$auth_refresh_output_file" "worker" "anthropic" "issue-23037" "anthropic/claude-sonnet-4-6" || status=$?
+
+	if [[ "$status" -eq 81 && "$_run_result_label" == "service_interruption_continue" && "$_run_failure_reason" == "auth_error" && -f "$auth_refresh_output_file" ]]; then
+		print_result "token refresh 401 with session evidence resumes as service interruption" 0
+	else
+		print_result "token refresh 401 with session evidence resumes as service interruption" 1 \
+			"status=$status label=${_run_result_label:-<empty>} reason=${_run_failure_reason:-<empty>} output_exists=$([[ -f "$auth_refresh_output_file" ]] && printf yes || printf no)"
+	fi
+
 	if service_interruption_continue_candidate "local_error" "137" "1" "" ""; then
 		print_result "SIGKILL with activity can resume as interruption" 0
 	else
