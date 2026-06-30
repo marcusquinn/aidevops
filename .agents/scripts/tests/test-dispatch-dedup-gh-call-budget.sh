@@ -279,12 +279,12 @@ test_t2996_markers_present() {
 # ---------------------------------------------------------------------------
 test_dispatch_skip_candidate_body_uses_rest() {
 	local body
-	body=$(_extract_function_body "$DISPATCH_LIB_SH" "_dispatch_should_skip_candidate")
+	body=$(_extract_function_body "$DISPATCH_LIB_SH" "_dispatch_skip_for_issue_body")
 	if printf '%s' "$body" | grep -qE 'gh api "repos/\$\{repo_slug\}/issues/\$\{issue_number\}"' \
 		&& ! printf '%s' "$body" | grep -vE '^[[:space:]]*#' | grep -qE 'gh issue view .*body'; then
-		_print_result "_dispatch_should_skip_candidate fetches body via REST" 1
+		_print_result "_dispatch_skip_for_issue_body fetches body via REST" 1
 	else
-		_print_result "_dispatch_should_skip_candidate fetches body via REST" 0 \
+		_print_result "_dispatch_skip_for_issue_body fetches body via REST" 0 \
 			"expected gh api repos/\${repo_slug}/issues/\${issue_number} and no active gh issue view --json body"
 	fi
 	return 0
