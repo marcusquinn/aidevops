@@ -61,6 +61,8 @@ describe("status adapter", () => {
     writeFileSync(metricsPath, [
       JSON.stringify({ ts: 1782810000, result: "success", issue: 25914, pr: 25999, repo: "marcusquinn/aidevops", provider: "openai", model: "gpt-5.5", input_tokens: 1200, output_tokens: 300, cached_tokens: 100, estimated_cost_usd: 0.42, duration_ms: 60000, issue_origin: "origin_interactive", author_association: "MEMBER" }),
       JSON.stringify({ ts: 1782806400, result: "blocked", issue: 25910, repo: "marcusquinn/aidevops", provider: "anthropic", model: "sonnet", total_tokens: 900, issue_origin: "third_party", author_association: "CONTRIBUTOR" }),
+      JSON.stringify({ ts: 1782806300, result: "failed", issue: 25911, repo: "marcusquinn/aidevops", provider: "anthropic", model: "sonnet", total_tokens: 700, estimated_cost_usd: 0.28, duration_ms: 1900000, issue_origin: "aidevops_created", author_association: "OWNER", failure_category: "review_gate" }),
+      JSON.stringify({ ts: 1782720000, result: "success", issue: 25800, repo: "marcusquinn/aidevops", provider: "openai", model: "gpt-5.5", total_tokens: 300, estimated_cost_usd: 0.10, issue_origin: "self_created", author_association: "MEMBER", verification: "bun test passed" }),
     ].join("\n"));
     writeFileSync(pulseStatsPath, JSON.stringify({ counters: { pre_dispatch_aborts: [1782810000], retry_queue: [1782806400, 1000] } }));
     writeFileSync(resourcesPath, JSON.stringify({ ts: 1782810000, role: "worker", rss_kb: 900000, peak_rss_kb: 900000, result: "success" }));
@@ -69,11 +71,15 @@ describe("status adapter", () => {
 
     const result = readPulseWorkersSummary({ metricsPath, pulseStatsPath, resourceMetricsPath: resourcesPath, tokenReportsRoot, oauthPoolPath, observedAt: "2026-06-30T09:45:00.000Z", nowMs: 1782812700000 });
 
-    expect(result.summary.kpis.find((kpi) => kpi.id === "worker-outcomes-24h")?.sample_size).toBe(2);
+    expect(result.summary.kpis.find((kpi) => kpi.id === "worker-outcomes-24h")?.sample_size).toBe(3);
     expect(result.summary.events[0].issue_ref).toBe("#25914");
     expect(result.summary.events[0].usage?.provider).toBe("openai");
     expect(result.summary.events[0].usage?.estimated_cost_ref).toBe("$0.42 estimated");
     expect(result.summary.events[0].resources[0].pressure).toBe("medium");
+    expect(result.summary.insights.map((finding) => finding.kind)).toEqual(expect.arrayContaining(["third_party_waiting", "repeated_failure", "weak_verification", "resource_pressure", "cost_spike", "slow_bottleneck"]));
+    expect(result.summary.insights.find((finding) => finding.kind === "cost_spike")?.comparison_label).toContain("previous equivalent period");
+    expect(result.summary.insights.find((finding) => finding.kind === "weak_verification")?.recommendation).toContain("verification command");
+    expect(result.summary.insights.find((finding) => finding.kind === "repeated_failure")?.evidence_refs).toContain("#25910");
     expect(result.summary.attention.map((item) => item.id)).toContain("pulse-counter-pre-dispatch-aborts");
     expect(result.summary.filters.providers.map((item) => item.label)).toContain("openai:gpt-5.5");
     expect(JSON.stringify(result.summary)).not.toContain(root);

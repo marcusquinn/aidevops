@@ -141,6 +141,10 @@ describe("dashboard shell", () => {
     expect(html).toContain("Issue origin");
     expect(html).toContain("Provider/model scope");
     expect(html).toContain("Needs attention");
+    expect(html).toContain("Grouped systemic findings");
+    expect(html).toContain("Third-party issues waiting");
+    expect(html).toContain("No-verification outcomes");
+    expect(html).toContain("Likely cause");
     expect(html).toContain("Trends · day/week/month/year");
     expect(html).toContain("Filter controls");
     expect(html).toContain("Status");
@@ -157,6 +161,7 @@ describe("dashboard shell", () => {
     expect(html).toContain("Detail drawer becomes a full-screen sheet on small screens");
     expect(html).toContain("Drilldown drawer");
     expect(html).toContain("Suggested systemic fix");
+    expect(html).toContain("Related systemic findings");
     expect(html).toContain("Usage and cost");
     expect(html).toContain("Allowlisted controls");
     expect(html).toContain("Safe actions with terminal output");

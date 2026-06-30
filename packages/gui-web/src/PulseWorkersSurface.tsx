@@ -77,6 +77,21 @@ export function PulseWorkersSurface({ status }: { status: GuiStatusData }): Reac
           <ul>
             {pulse.attention.map((item) => <li className={`pulse-attention-${item.severity}`} key={item.id}><strong>{item.title}</strong>: {item.detail}</li>)}
           </ul>
+          <div className="pulse-insight-list" aria-label="Grouped systemic findings">
+            {pulse.insights.map((finding) => (
+              <article className={`pulse-insight-card pulse-attention-${finding.severity}`} key={finding.id}>
+                <p className="eyebrow">{humanize(finding.kind)} · {finding.confidence} confidence · n={finding.sample_size}</p>
+                <h4>{finding.title}</h4>
+                <p>{finding.detail}</p>
+                <dl className="pulse-detail-grid compact-detail-grid">
+                  <div><dt>Likely cause</dt><dd>{finding.likely_cause}</dd></div>
+                  <div><dt>Evidence</dt><dd>{finding.evidence_refs.join(" · ") || "metadata evidence pending"}</dd></div>
+                  <div><dt>Comparison</dt><dd>{finding.period_label} · {finding.scope_label} · {finding.comparison_label}</dd></div>
+                  <div><dt>Systemic fix</dt><dd>{finding.recommendation}</dd></div>
+                </dl>
+              </article>
+            ))}
+          </div>
           <button disabled={!actionById(pulse.actions, "create_systemic_fix")?.enabled} onClick={() => void runPulseWorkerAction(actionById(pulse.actions, "create_systemic_fix"), setJobs, setSelectedJobId, setDismissedJobIds)} title="Create a worker-ready systemic-fix task from selected evidence" type="button">Create systemic fix task</button>
         </article>
 
@@ -243,10 +258,15 @@ function PulseDrilldownPanel({ event }: { event: PulseEvent | undefined }): Reac
         <div><dt>Usage and cost</dt><dd>{usageSummary(event)}</dd></div>
         <div><dt>Resources</dt><dd>{event.resources?.map((resource) => `${resource.label}: ${resource.available_label} (${resource.pressure})`).join(" · ") || "Resource metadata pending"}</dd></div>
         <div><dt>Suggested systemic fix</dt><dd>{event.drilldown_sections?.find((section) => section.label.toLowerCase().includes("fix"))?.body ?? "Create a worker-ready follow-up when repeated blindspots appear."}</dd></div>
+        <div><dt>Related systemic findings</dt><dd>{relatedFindings(event).join(" · ") || "No grouped finding attached to this event."}</dd></div>
         <div><dt>Planned actions</dt><dd>Open terminal output, redispatch worker, save systemic fix, and attach timeline evidence remain disabled until Phase 5 action routes land.</dd></div>
       </dl>
     </article>
   );
+}
+
+function relatedFindings(event: PulseEvent): string[] {
+  return event.drilldown_sections.filter((section) => section.label.toLowerCase().includes("systemic") || section.label.toLowerCase().includes("verification")).map((section) => `${section.label}: ${section.body}`);
 }
 
 function buildFilterGroups(pulse: GuiStatusData["pulse_workers"]): PulseFilterGroup[] {

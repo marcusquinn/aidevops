@@ -267,9 +267,9 @@ export type GuiPulseWorkerOutcome = "merged" | "closed" | "in_progress" | "needs
 
 export type GuiPulseWorkerSeverity = "info" | "success" | "warning" | "critical";
 
-export type GuiPulseIssueOrigin = "aidevops_created" | "maintainer_created" | "origin_interactive" | "third_party" | "unknown";
+export type GuiPulseIssueOrigin = "aidevops_created" | "self_created" | "maintainer_created" | "origin_interactive" | "third_party" | "imported" | "unknown";
 
-export type GuiPulseAuthorAssociation = "OWNER" | "MEMBER" | "COLLABORATOR" | "CONTRIBUTOR" | "FIRST_TIME_CONTRIBUTOR" | "NONE" | "UNKNOWN";
+export type GuiPulseAuthorAssociation = "OWNER" | "MEMBER" | "COLLABORATOR" | "CONTRIBUTOR" | "FIRST_TIMER" | "FIRST_TIME_CONTRIBUTOR" | "NONE" | "UNKNOWN";
 
 export type GuiPulseResourceKind = "provider_model" | "github_api" | "ci_capacity" | "queue" | "cpu" | "memory" | "disk" | "network";
 
@@ -322,6 +322,27 @@ export interface GuiPulseWorkerChartSeries {
   points: GuiPulseWorkerChartPoint[];
 }
 
+export type GuiPulseInsightKind = "third_party_waiting" | "high_retry_cost" | "repeated_failure" | "cost_spike" | "weak_verification" | "resource_pressure" | "slow_bottleneck";
+
+export interface GuiPulseSystemicFinding {
+  id: string;
+  kind: GuiPulseInsightKind;
+  severity: GuiPulseWorkerSeverity;
+  title: string;
+  detail: string;
+  likely_cause: string;
+  evidence_refs: string[];
+  event_refs: string[];
+  confidence: "low" | "medium" | "high";
+  recommendation: string;
+  metric_label: string;
+  period_label: string;
+  scope_label: string;
+  comparison_label: string;
+  sample_size: number;
+  primary_action: GuiPulseWorkerActionId;
+}
+
 export interface GuiPulseWorkerActivityEvent {
   id: string;
   type: GuiPulseWorkerEventType;
@@ -361,6 +382,7 @@ export interface GuiPulseWorkerSummary {
   updated_at: string;
   kpis: GuiPulseWorkerKpiCard[];
   attention: Array<{ id: string; severity: GuiPulseWorkerSeverity; title: string; detail: string; event_ref: string | null }>;
+  insights: GuiPulseSystemicFinding[];
   filters: {
     repos: GuiPulseWorkerFilterOption[];
     event_types: GuiPulseWorkerFilterOption[];
