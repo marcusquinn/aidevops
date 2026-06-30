@@ -478,3 +478,67 @@ provider_backoff_active() {
 	backoff_active_for_key "$provider" "$provider"
 	return $?
 }
+
+clear_startup_no_model_feedback() {
+	local model="$1"
+	local provider=""
+	provider=$(extract_provider "$model" 2>/dev/null || printf '%s' "")
+	[[ -n "$provider" ]] || return 0
+	db_query "DELETE FROM provider_startup_failures WHERE provider = '$(sql_escape "$provider")';" >/dev/null || true
+	return 0
+}
+
+record_startup_no_model_feedback() {
+	local model="$1"
+	local provider=""
+	provider=$(extract_provider "$model" 2>/dev/null || printf '%s' "")
+	[[ -n "$provider" ]] || return 0
+
+	local threshold="${AIDEVOPS_STARTUP_NO_MODEL_FEEDBACK_THRESHOLD:-2}"
+	local window_seconds="${AIDEVOPS_STARTUP_NO_MODEL_FEEDBACK_WINDOW_SECONDS:-900}"
+	local cooldown_seconds="${AIDEVOPS_STARTUP_NO_MODEL_FEEDBACK_COOLDOWN_SECONDS:-300}"
+	[[ "$threshold" =~ ^[0-9]+$ ]] || threshold=2
+	[[ "$window_seconds" =~ ^[0-9]+$ ]] || window_seconds=900
+	[[ "$cooldown_seconds" =~ ^[0-9]+$ ]] || cooldown_seconds=300
+	[[ "$threshold" -gt 0 ]] || threshold=2
+	[[ "$window_seconds" -gt 0 ]] || window_seconds=900
+	[[ "$cooldown_seconds" -gt 0 ]] || cooldown_seconds=300
+
+	local existing_count="0"
+	existing_count=$(db_query "
+SELECT CASE
+    WHEN (strftime('%s','now') - strftime('%s', updated_at)) <= $window_seconds THEN count
+    ELSE 0
+END
+FROM provider_startup_failures
+WHERE provider = '$(sql_escape "$provider")' AND model = '$(sql_escape "$model")';
+" 2>/dev/null || printf '%s' "0")
+	[[ "$existing_count" =~ ^[0-9]+$ ]] || existing_count=0
+	local new_count=$((existing_count + 1))
+
+	db_query "
+INSERT INTO provider_startup_failures (provider, model, count, first_seen, updated_at)
+VALUES (
+    '$(sql_escape "$provider")',
+    '$(sql_escape "$model")',
+    $new_count,
+    strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+)
+ON CONFLICT(provider, model) DO UPDATE SET
+    count = $new_count,
+    first_seen = CASE WHEN $existing_count = 0 THEN excluded.first_seen ELSE provider_startup_failures.first_seen END,
+    updated_at = excluded.updated_at;
+" >/dev/null || true
+
+	if [[ "$new_count" -lt "$threshold" ]]; then
+		return 0
+	fi
+
+	local availability_helper="${MODEL_AVAILABILITY_HELPER:-${SCRIPT_DIR}/model-availability-helper.sh}"
+	if [[ -x "$availability_helper" ]]; then
+		"$availability_helper" mark-unavailable "$provider" "startup_no_model_activity" "$cooldown_seconds" --quiet >/dev/null 2>&1 || true
+		print_warning "$provider startup_no_model_activity repeated ${new_count}x — marked provider unavailable for ${cooldown_seconds}s"
+	fi
+	return 0
+}
