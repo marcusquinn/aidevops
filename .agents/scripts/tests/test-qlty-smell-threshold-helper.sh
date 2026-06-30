@@ -66,6 +66,11 @@ case "${QLTY_STUB_MODE:-empty}" in
 		printf 'simulated qlty blank output\n' >&2
 		exit 0
 		;;
+	invalid)
+		printf 'simulated non-sarif stdout\n'
+		printf 'simulated qlty invalid output diagnostics\n' >&2
+		exit 0
+		;;
 	pass)
 		printf '{"runs":[{"results":[{"ruleId":"file-complexity","locations":[{"physicalLocation":{"artifactLocation":{"uri":"ok.py"}}}]}]}]}'
 		exit 0
@@ -110,6 +115,14 @@ blank_output=$("$HELPER" "$CONF" 2>&1)
 blank_rc=$?
 assert_rc "blank SARIF output is warning-only" "0" "$blank_rc"
 assert_contains "blank SARIF warning emitted" "empty SARIF output" "$blank_output"
+
+write_stub_qlty invalid "$BIN_DIR"
+invalid_output=$("$HELPER" "$CONF" 2>&1)
+invalid_rc=$?
+assert_rc "invalid SARIF output is warning-only" "0" "$invalid_rc"
+assert_contains "invalid SARIF warning emitted" "invalid SARIF output" "$invalid_output"
+assert_contains "invalid SARIF includes stdout preview" "simulated non-sarif stdout" "$invalid_output"
+assert_contains "invalid SARIF includes stderr diagnostics" "simulated qlty invalid output diagnostics" "$invalid_output"
 
 write_stub_qlty pass "$BIN_DIR"
 pass_output=$("$HELPER" "$CONF" 2>&1)
