@@ -595,12 +595,13 @@ test_failure_classification_distinct() {
 	# These are wired in pulse-dispatch-engine.sh check_worker_launch.
 	if grep -q '"no_worker_process"' "$PULSE_ENGINE" \
 		&& grep -q '"cli_usage_output"' "$PULSE_ENGINE" \
-		&& grep -q 'worker_worktree_live_owner' "$PULSE_ENGINE"; then
+		&& grep -q 'worker_worktree_live_owner' "$PULSE_ENGINE" \
+		&& grep -q 'PULSE_LAUNCH_STABILITY_SECONDS' "$PULSE_ENGINE"; then
 		print_result "invariant: launch failures classified distinctly (no_worker_process vs cli_usage_output)" 0
 		return 0
 	fi
 	print_result "invariant: launch failures classified distinctly (no_worker_process vs cli_usage_output)" 1 \
-		"Expected 'no_worker_process', 'cli_usage_output', and 'worker_worktree_live_owner' classifications in $PULSE_ENGINE"
+		"Expected launch classifications and PULSE_LAUNCH_STABILITY_SECONDS guard in $PULSE_ENGINE"
 	return 0
 }
 

@@ -231,6 +231,7 @@ readonly -a EXPECTED_FUNCTIONS=(
 	"_gh_idempotent_comment"
 	"_issue_needs_consolidation"
 	"_reevaluate_consolidation_labels"
+	"_backfill_simplification_auto_dispatch_labels"
 	"_reevaluate_simplification_labels"
 	"_consolidation_child_exists"
 	"_consolidation_substantive_comments"
