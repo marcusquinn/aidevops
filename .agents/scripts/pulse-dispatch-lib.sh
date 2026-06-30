@@ -1118,6 +1118,8 @@ _dispatch_issue_body_missing_worker_context() {
 		*"Needs implementation context before dispatch"* | \
 		*"no implementation details provided"* | \
 		*"No implementation details provided"* | \
+		*"no implementation details for a worker"* | \
+		*"No implementation details for a worker"* | \
 		*"no worker guidance provided"* | *"No worker guidance provided"*)
 		return 0
 		;;
