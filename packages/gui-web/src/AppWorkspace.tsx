@@ -10,6 +10,7 @@ import { CommsConversationSurface } from "./CommsConversationSurface";
 import { FileExplorerSurface } from "./FileExplorerSurface";
 import { TamboConversationPart } from "./GenUiCards";
 import { AppsSurface, EditableInventorySurface, InstallationSurface } from "./InventorySurfaces";
+import { PulseWorkersSurface } from "./PulseWorkersSurface";
 import { AiProvidersSurface, LocalReposSurface, LockedVaultGate, OverviewSurface, PlannedSurface, ProjectsSurface, SecuritySurface, VaultSurface } from "./StatusSurfaces";
 import { isVaultSurfaceLocked, vaultCollectionForSurface } from "./VaultBadges";
 import { applyCommandPaletteSelection, useHeaderMenuState } from "./workspace-header-state";
@@ -435,114 +436,6 @@ function SurfaceContent({ activeItem, activeSurface, fileRoot, openSurface, stat
   }
 
   return staticSurfaces[activeSurface] ?? null;
-}
-
-const pulseFilters = ["Repo", "Event type", "Outcome", "Resource", "Provider / model", "Issue origin", "Author", "Author association"] as const;
-
-function PulseWorkersSurface({ status }: { status: GuiStatusData }): ReactElement {
-  const pulse = status.pulse_workers;
-
-  return (
-    <section className="pulse-workers-surface" aria-label={text.workers}>
-      <div className="planned-card pulse-hero">
-        <p className="eyebrow">Observability shell · fixture-backed · read-only</p>
-        <h2>{text.workers}</h2>
-        <p>{text.workersIntro}</p>
-        <section className="pulse-scope-strip" aria-label="Pulse scope and time range">
-          <span><strong>Period</strong> {pulse.period_label} · {pulse.scope_label}</span>
-          <span><strong>Comparison</strong> {pulse.comparison_label}</span>
-          <span><strong>Sample</strong> {pulse.events.length} canonical events · {pulse.kpis.reduce((total, kpi) => total + (kpi.sample_size ?? 0), 0)} samples</span>
-          <span><strong>Trust boundary</strong> Metadata/status only; protected payloads excluded</span>
-        </section>
-      </div>
-      <section className="pulse-kpi-grid" aria-label="Pulse health summary">
-        {pulse.kpis.map((kpi) => (
-          <article className="metric-card pulse-kpi-card" key={kpi.id}>
-            <span>{kpi.label} · {kpi.period_label} · {kpi.scope_label}</span>
-            <strong>{kpi.value}</strong>
-            <p>{kpi.detail} {kpi.comparison_label}</p>
-          </article>
-        ))}
-      </section>
-      <section className="pulse-layout" aria-label="Pulse observability hierarchy">
-        <article className="planned-card pulse-attention-panel">
-          <div className="split-heading">
-            <div>
-              <p className="eyebrow">Exceptions first</p>
-              <h3>Needs attention</h3>
-            </div>
-            <span className="count-pill">planned actions disabled</span>
-          </div>
-          <ul>
-            {pulse.attention.map((item) => <li key={item.id}>{item.title}: {item.detail}</li>)}
-          </ul>
-          <button disabled title="Action routes need audited worker control APIs" type="button">Create systemic fix (planned)</button>
-        </article>
-        <article className="planned-card pulse-chart-panel">
-          <p className="eyebrow">Trends</p>
-          <h3>Health trend placeholder</h3>
-          <div className="pulse-chart-placeholder" aria-label="Chart placeholder showing health, queue, token, cost, API, and CI capacity trends" role="img">
-            <span>health</span><span>queue</span><span>tokens</span><span>cost</span><span>api</span><span>ci</span>
-          </div>
-          <p>Charts derive from {pulse.charts.map((chart) => chart.points[0]?.period).filter(Boolean).join("/")} fixture buckets across the canonical event stream: Pulse, workers, commands, CI, issues, PRs, reviews, and outcomes.</p>
-        </article>
-      </section>
-      <section className="planned-card pulse-activity-panel" aria-label="Unified activity stream">
-        <div className="split-heading">
-          <div>
-            <p className="eyebrow">Canonical stream</p>
-            <h3>Unified activity</h3>
-          </div>
-          <section className="pulse-filter-row" aria-label="Quick filters">
-            {pulseFilters.map((filter) => <button disabled key={filter} title={`${filter} filter is planned`} type="button">{filter}</button>)}
-          </section>
-        </div>
-        <table className="pulse-activity-table" aria-label="Pulse and worker events">
-          <thead>
-            <tr className="pulse-activity-row pulse-activity-header">
-              <th scope="col">When</th><th scope="col">Event</th><th scope="col">Scope</th><th scope="col">Outcome</th><th scope="col">Resource</th><th scope="col">Origin / actor</th>
-            </tr>
-          </thead>
-          <tbody>
-            {pulse.events.map((row) => (
-              <tr className="pulse-activity-row" key={row.id}>
-                <td data-label="When">{row.occurred_at.slice(11, 16)}</td>
-                <td data-label="Event">{row.title}</td>
-                <td data-label="Scope">{[row.repo_ref, row.issue_ref ?? row.pull_request_ref].filter(Boolean).join(" ")}</td>
-                <td data-label="Outcome">{row.outcome.replaceAll("_", " ")}</td>
-                <td data-label="Resource">{resourceSummary(row)}</td>
-                <td data-label="Origin / actor">{row.issue_origin.replaceAll("_", "-")} · {row.author_association}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <p className="notice compact-notice">Mobile activity cards replace the dense table on small screens. Detail drawer becomes a full-screen sheet on small screens, and terminal panel becomes full-screen later.</p>
-      </section>
-      <section className="pulse-layout" aria-label="Drilldown and planned actions">
-        <article className="planned-card pulse-drilldown-panel">
-          <p className="eyebrow">Drilldown placeholder</p>
-          <h3>What happened, when, why, how, who acted, and what resources were available</h3>
-          <p>Selected event details will connect timeline evidence, issue/PR/review context, provider/model/tokens/time/cost metadata, GitHub/API allowance, queue/concurrency, CI capacity, and local resource snapshots without exposing secrets.</p>
-        </article>
-        <article className="planned-card pulse-actions-panel">
-          <p className="eyebrow">Planned controls</p>
-          <h3>Actions stay disabled until audited routes land</h3>
-          <button disabled title="Terminal output needs a read-only command-output adapter" type="button">Open terminal output (planned)</button>
-          <button disabled title="Dispatch needs worker control and trust-boundary APIs" type="button">Redispatch worker (planned)</button>
-          <button disabled title="Persistence needs a write-action manifest and audit trail" type="button">Save systemic fix (planned)</button>
-        </article>
-      </section>
-    </section>
-  );
-}
-
-function resourceSummary(row: GuiStatusData["pulse_workers"]["events"][number]): string {
-  const model = row.usage?.model_ref?.replace("model:", "");
-  const providerLabel = row.usage?.provider === "openai" ? "OpenAI" : row.usage?.provider === "anthropic" ? "Anthropic" : row.usage?.provider;
-  const provider = row.usage === null ? row.resources[0]?.available_label ?? "metadata only" : `${providerLabel ?? "Provider"} · ${model ?? "model metadata pending"}`;
-  const tokens = row.usage === null ? "" : ` · ${row.usage.total_tokens.toLocaleString()} tokens`;
-
-  return `${provider}${tokens}`;
 }
 
 function HelpSurface(): ReactElement {

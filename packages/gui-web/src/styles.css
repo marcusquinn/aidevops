@@ -2261,6 +2261,10 @@ code {
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 }
 
+.pulse-overview-layout {
+  grid-template-columns: minmax(280px, 0.8fr) minmax(320px, 1.2fr);
+}
+
 .pulse-kpi-card {
   display: grid;
   gap: 8px;
@@ -2284,9 +2288,21 @@ code {
 .pulse-chart-panel,
 .pulse-activity-panel,
 .pulse-drilldown-panel,
-.pulse-actions-panel {
+.pulse-actions-panel,
+.pulse-filter-panel {
   display: grid;
   gap: 12px;
+}
+
+.pulse-attention-critical,
+.pulse-status-blocked strong,
+.pulse-status-failed strong {
+  color: var(--notification-error-fg);
+}
+
+.pulse-attention-warning,
+.pulse-status-needs_attention strong {
+  color: var(--notification-warning-fg);
 }
 
 .pulse-attention-panel ul {
@@ -2318,9 +2334,35 @@ code {
   font-size: 0.75rem;
   font-weight: 900;
   justify-content: center;
-  min-height: calc(40px + var(--bar-index, 1) * 18px);
+  min-height: max(40px, var(--bar-height, calc(40px + var(--bar-index, 1) * 18px)));
   padding: 8px 4px;
   text-transform: uppercase;
+}
+
+.pulse-chart-grid,
+.pulse-filter-groups {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.pulse-filter-group {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  margin: 0;
+  padding: 10px;
+}
+
+.pulse-filter-group legend {
+  color: var(--accent);
+  font-size: 0.76rem;
+  font-weight: 900;
+  padding: 0 6px;
+  text-transform: uppercase;
+}
+
+.pulse-quick-filter-row {
+  justify-content: flex-end;
 }
 
 .pulse-chart-placeholder span:nth-child(2) { --bar-index: 3; }
@@ -2349,6 +2391,25 @@ code {
   padding: 12px 14px;
 }
 
+.pulse-activity-row.selected {
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
+.pulse-activity-row td {
+  display: grid;
+  gap: 3px;
+}
+
+.pulse-activity-row td span {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.pulse-row-select {
+  justify-self: start;
+  padding: 4px 8px;
+}
+
 .pulse-activity-row + .pulse-activity-row {
   border-top: 1px solid var(--border);
 }
@@ -2370,6 +2431,59 @@ code {
 .pulse-actions-panel button,
 .pulse-attention-panel button {
   justify-self: start;
+}
+
+.pulse-card-stream {
+  display: none;
+}
+
+.pulse-event-card {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  color: var(--text-primary);
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  text-align: left;
+}
+
+.pulse-event-card.selected {
+  border-color: var(--border-accent);
+}
+
+.pulse-event-card span,
+.pulse-event-card small {
+  color: var(--text-secondary);
+}
+
+.pulse-detail-drawer {
+  border-left: 4px solid var(--border-accent);
+}
+
+.pulse-detail-grid {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.pulse-detail-grid div {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+}
+
+.pulse-detail-grid dt {
+  color: var(--accent);
+  font-size: 0.74rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.pulse-detail-grid dd {
+  color: var(--text-secondary);
+  margin: 3px 0 0;
 }
 
 .apps-surface .compact-notice {
@@ -3817,9 +3931,24 @@ button.managed-toggle:focus-visible {
   .data-row,
   .editable-row,
   .managed-app-details,
+  .pulse-overview-layout,
   .pulse-activity-row,
   .provider-account-list li {
     grid-template-columns: 1fr;
+  }
+
+  .pulse-chart-grid,
+  .pulse-filter-groups {
+    grid-template-columns: 1fr;
+  }
+
+  .pulse-activity-table {
+    display: none;
+  }
+
+  .pulse-card-stream {
+    display: grid;
+    gap: 10px;
   }
 
   .pulse-activity-header {
@@ -3834,6 +3963,20 @@ button.managed-toggle:focus-visible {
     color: var(--text-muted);
     content: attr(data-label) ": ";
     font-weight: 900;
+  }
+
+  .pulse-detail-drawer {
+    border-left: 0;
+    border-radius: 0;
+    margin-inline: -16px;
+  }
+
+  .pulse-detail-drawer::before {
+    color: var(--text-muted);
+    content: "Full-screen sheet layout on small screens";
+    font-size: 0.78rem;
+    font-weight: 900;
+    text-transform: uppercase;
   }
 
   .pill-tabs {

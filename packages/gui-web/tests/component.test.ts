@@ -132,20 +132,33 @@ describe("dashboard shell", () => {
     expect(html).toContain("New, rename, pin, archive, delete, share, and export");
   });
 
-  test("renders Pulse and Workers observability shell with read-only fixture hierarchy", () => {
+  test("renders Pulse and Workers data-driven dashboard with filters and drilldown", () => {
     const html = renderWorkspaceSurface(workersItem, "workers");
 
     expect(html).toContain("Pulse &amp; Workers");
-    expect(html).toContain("Last 24h · all managed repos");
+    expect(html).toContain("Data-driven observability");
+    expect(html).toContain("Repo scope");
+    expect(html).toContain("Issue origin");
+    expect(html).toContain("Provider/model scope");
     expect(html).toContain("Needs attention");
-    expect(html).toContain("Health trend placeholder");
+    expect(html).toContain("Trends · day/week/month/year");
+    expect(html).toContain("Filter controls");
+    expect(html).toContain("Status");
+    expect(html).toContain("Severity");
     expect(html).toContain("Provider / model");
+    expect(html).toContain("Cost range");
+    expect(html).toContain("Duration range");
+    expect(html).toContain("Expensive runs");
     expect(html).toContain("Community bug report");
     expect(html).toContain("third-party · CONTRIBUTOR");
     expect(html).toContain("OpenAI · gpt-5.5");
     expect(html).toContain("114,000 tokens");
     expect(html).toContain("Mobile activity cards");
     expect(html).toContain("Detail drawer becomes a full-screen sheet on small screens");
+    expect(html).toContain("Drilldown drawer");
+    expect(html).toContain("Suggested systemic fix");
+    expect(html).toContain("Usage and cost");
+    expect(html).toContain("Planned actions");
     expect(html).toContain("Open terminal output (planned)");
     expect(html).toContain("Create systemic fix (planned)");
   });
