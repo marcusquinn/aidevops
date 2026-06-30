@@ -106,10 +106,35 @@ test_check_validates_plugin_cardinality() {
 	return 0
 }
 
+test_unset_globals_do_not_read_stdin() {
+	local helper="$TEST_HOME/.aidevops/agents/scripts/subagent-index-helper.sh"
+	local output=""
+	local status=0
+
+	output=$(bash -c '
+		helper_path="$2"
+		set -- help
+		source "$helper_path" >/dev/null
+		unset AGENTS_DIR SUBAGENT_DIRS INDEX_FILE
+		count_subagent_markdown_files
+		count_index_leaf_entries
+		check_toon_cardinality "plugin_agents" "plugin" "s/^x$/x/p" "regenerate"
+	' bash help "$helper" 2>&1)
+	status=$?
+
+	if [[ "$status" -eq 0 && "$output" == $'0\n0' ]]; then
+		print_result "unset globals do not read stdin" 0
+	else
+		print_result "unset globals do not read stdin" 1 "$output"
+	fi
+	return 0
+}
+
 main() {
 	setup
 	test_plugin_namespace_indexed
 	test_check_validates_plugin_cardinality
+	test_unset_globals_do_not_read_stdin
 
 	echo ""
 	echo "Tests run: $TESTS_RUN"
