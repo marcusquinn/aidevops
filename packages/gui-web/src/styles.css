@@ -298,6 +298,68 @@ code {
   z-index: 20;
 }
 
+.screenshot-capture-notification {
+  align-items: center;
+  background: color-mix(in srgb, var(--surface-elevated) 94%, transparent);
+  border: 1px solid var(--border-accent);
+  border-radius: 999px;
+  box-shadow: var(--glass-panel-shadow);
+  color: var(--text-secondary);
+  display: flex;
+  gap: 12px;
+  left: 50%;
+  max-width: min(720px, calc(100vw - 48px));
+  padding: 8px 10px 8px 14px;
+  position: fixed;
+  top: calc(var(--desktop-titlebar-height) + 10px);
+  transform: translateX(-50%);
+  z-index: 40;
+}
+
+.screenshot-capture-notification > div {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.screenshot-capture-notification strong {
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  line-height: 1.2;
+}
+
+.screenshot-capture-notification span {
+  font-size: 0.74rem;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.screenshot-capture-notification button {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  font: inherit;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.screenshot-capture-notification > button {
+  align-items: center;
+  background: var(--surface-muted);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  display: inline-flex;
+  flex: 0 0 auto;
+  font-size: 1rem;
+  height: 24px;
+  justify-content: center;
+  line-height: 1;
+  width: 24px;
+}
+
 .machine-rail,
 .app-sidebar,
 .app-inset {

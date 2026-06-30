@@ -4,7 +4,9 @@ import { MachineRail, Sidebar } from "./AppNavigation";
 import { Workspace } from "./AppWorkspace";
 import type { ContrastPreference, ConversationMode, FontPreference, FontSizePreference, ShellMode, SurfaceId, ThemePreference } from "./app-model";
 import { DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, fileRootBySurface, findSurface, findSurfaceSectionLabel, fontFamilyForPreference, fontSizeForPreference, getSystemTheme, isContrastPreference, isFontPreference, isFontSizePreference } from "./app-model";
+import { DesktopStatusBar } from "./DesktopStatusBar";
 import { type NavigationHistory, nextHistoryIndex, useNavigationHistoryKeyboard } from "./navigation-history";
+import { ScreenshotCaptureNotificationHost } from "./ScreenshotCaptureNotification";
 import { fetchStatus, mockedStatus } from "./status-client";
 
 interface WebKitBridgeWindow extends Window {
@@ -214,6 +216,7 @@ export function App(): ReactElement {
   return (
     <main className={machineRailVisible ? "app-shell" : "app-shell machine-rail-collapsed"}>
       <div className="desktop-titlebar-tagline" aria-hidden="true">Your data protected. Your systems managed. Your creations published.</div>
+      <ScreenshotCaptureNotificationHost />
       {machineRailVisible ? <MachineRail machine={status.data.machine} /> : null}
       <Sidebar
         activeSurface={activeSurface}
@@ -422,30 +425,4 @@ function readStoredBoolean(storage: ReadableAppearanceStorage | undefined, key: 
   }
 
   return fallback;
-}
-
-function DesktopStatusBar({ status }: { status: GuiStatusData }): ReactElement {
-  const version = status.update.installed_version !== "unknown" ? status.update.installed_version : status.aidevops_version;
-  const versionLabel = version === "unknown" || version.startsWith("v") ? version : `v${version}`;
-  const needsUpdate = status.setup_targets.filter((target) => target.needs_update).length + status.ai_apps.filter((app) => app.needs_update).length;
-  const oauthAccounts = status.oauth_pool.providers.reduce((total, provider) => total + provider.total, 0);
-  const localRepoCount = status.local_repos.total || status.local_repos.repos.length;
-  const remoteRepoCount = status.repos.total || status.repos.repos.length;
-  const statusLabel = status.update.restart_required ? "Restart required" : "Ready";
-  const vaultLabel = status.vault?.unlocked ? "Vault unlocked" : `Vault ${status.vault?.status ?? "unknown"}`;
-
-  return (
-    <div className="desktop-status-bar" role="status">
-      <span className={status.update.restart_required ? "status-dot warn" : "status-dot"} aria-hidden="true" />
-      <strong>{statusLabel}</strong>
-      <span>Read-only local GUI</span>
-      <span>{versionLabel}</span>
-      <span>{localRepoCount} local repos</span>
-      <span>{remoteRepoCount} remote repos</span>
-      <span>{status.secrets.length} secrets</span>
-      <span>{vaultLabel}</span>
-      <span>{oauthAccounts} provider accounts</span>
-      <span>{needsUpdate} need update</span>
-    </div>
-  );
 }
