@@ -244,7 +244,7 @@ function buildInsights(events: GuiPulseWorkerActivityEvent[], dayMetrics: Metric
 
   const currentCost = sumCost(dayMetrics);
   const previousCost = sumCost(previousDayMetrics);
-  const failedCostEvents = events.filter((event) => (event.outcome === "failed" || event.outcome === "blocked") && event.usage?.estimated_cost_ref !== null && event.usage !== null);
+  const failedCostEvents = events.filter((event) => (event.outcome === "failed" || event.outcome === "blocked") && event.usage?.estimated_cost_ref != null);
   if (currentCost > 0 && previousCost > 0 && currentCost >= previousCost * 1.5) {
     findings.push(finding("cost-spike", "cost_spike", "warning", "Cost spike versus previous period", `Estimated selected-period cost is ${currentCost.toFixed(2)} versus ${previousCost.toFixed(2)} in the previous equivalent window.`, "Retry loops or expensive models may be consuming allowance faster than successful outcomes justify.", events, "Create a systemic cost-control task that ties model/provider selection to outcome quality and retry count.", "estimated USD", dayMetrics.length, "medium", `previous equivalent period: ${previousCost.toFixed(2)}`));
   } else if (failedCostEvents.length > 0) {
@@ -278,7 +278,7 @@ function evidenceRefs(events: GuiPulseWorkerActivityEvent[]): string[] {
 
 function verificationSummary(record: MetricRecord): string {
   const value = stringField(record, "verification") ?? stringField(record, "testing") ?? stringField(record, "verification_status");
-  if (value !== undefined && value.length > 0) return value;
+  if (typeof value === "string" && value.length > 0) return value;
   return "Verification missing or weak in local telemetry; outcome should carry command evidence before completion claims.";
 }
 
