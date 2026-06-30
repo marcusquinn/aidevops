@@ -341,6 +341,7 @@ final class DraggableTitlebarView: NSView {
 final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, NSMenuItemValidation, NSWindowDelegate {
     private var window: NSWindow!
     private var aboutWindow: NSWindow?
+    private var titlebarCameraButton: NSButton?
     private var titlebarToggleButton: NSButton?
     private var webView: WKWebView!
     private let apiPort = ProcessInfo.processInfo.environment["AIDEVOPS_GUI_API_PORT"] ?? "8787"
@@ -408,7 +409,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             return
         }
 
+        if revealFileURL(url) {
+            return
+        }
+
         _ = openExternalURL(url)
+    }
+
+    private func revealFileURL(_ url: URL) -> Bool {
+        guard url.isFileURL else {
+            return false
+        }
+
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+        return true
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
@@ -552,7 +566,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             return webView?.canGoBack ?? false
         case #selector(goForward(_:)):
             return webView?.canGoForward ?? false
-        case #selector(reloadPage(_:)), #selector(stopLoading(_:)), #selector(resetZoom(_:)), #selector(zoomIn(_:)), #selector(zoomOut(_:)):
+        case #selector(reloadPage(_:)), #selector(stopLoading(_:)), #selector(resetZoom(_:)), #selector(zoomIn(_:)), #selector(zoomOut(_:)), #selector(captureAppScreenshot(_:)), #selector(capturePageScreenshot(_:)):
             return webView != nil
         default:
             return true
@@ -779,11 +793,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         overlay.addSubview(toggleButton)
         titlebarToggleButton = toggleButton
+
+        let cameraButton = NSButton(frame: .zero)
+        cameraButton.action = #selector(showScreenshotMenu(_:))
+        cameraButton.bezelStyle = .regularSquare
+        cameraButton.contentTintColor = defaultButtonAccent
+        cameraButton.image = cameraImage()
+        cameraButton.imagePosition = .imageOnly
+        cameraButton.isBordered = false
+        cameraButton.setButtonType(.momentaryChange)
+        cameraButton.target = self
+        cameraButton.toolTip = "Capture an aidevops screenshot"
+        cameraButton.translatesAutoresizingMaskIntoConstraints = false
+
+        overlay.addSubview(cameraButton)
+        titlebarCameraButton = cameraButton
         NSLayoutConstraint.activate([
             toggleButton.leadingAnchor.constraint(equalTo: overlay.leadingAnchor, constant: 92),
             toggleButton.centerYAnchor.constraint(equalTo: overlay.centerYAnchor, constant: 3.5),
             toggleButton.heightAnchor.constraint(equalToConstant: 22),
-            toggleButton.widthAnchor.constraint(equalToConstant: 22)
+            toggleButton.widthAnchor.constraint(equalToConstant: 22),
+            cameraButton.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -92),
+            cameraButton.centerYAnchor.constraint(equalTo: overlay.centerYAnchor, constant: 3.5),
+            cameraButton.heightAnchor.constraint(equalToConstant: 22),
+            cameraButton.widthAnchor.constraint(equalToConstant: 22)
         ])
 
         return overlay
@@ -791,6 +824,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     private func updateTitlebarAccent(hue: CGFloat) {
         let normalizedHue = min(359, max(0, hue))
+        titlebarCameraButton?.contentTintColor = accentColor(hueDegrees: normalizedHue, alpha: 0.9)
         titlebarToggleButton?.contentTintColor = accentColor(hueDegrees: normalizedHue, alpha: 0.9)
     }
 
@@ -866,8 +900,189 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         return image
     }
 
+    private func cameraImage() -> NSImage {
+        let image = NSImage(size: NSSize(width: 20, height: 20), flipped: false) { _ in
+            let body = NSBezierPath(roundedRect: NSRect(x: 3, y: 6, width: 14, height: 10), xRadius: 2.7, yRadius: 2.7)
+            body.lineWidth = 2
+            NSColor.labelColor.setStroke()
+            body.stroke()
+
+            let prism = NSBezierPath(roundedRect: NSRect(x: 6, y: 14, width: 5, height: 2.3), xRadius: 1, yRadius: 1)
+            prism.lineWidth = 1.8
+            prism.stroke()
+
+            let lens = NSBezierPath(ovalIn: NSRect(x: 7.1, y: 8.1, width: 5.8, height: 5.8))
+            lens.lineWidth = 1.8
+            lens.stroke()
+
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
+
     @objc private func toggleMachineRail(_ sender: Any?) {
         webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('aidevops:toggle-machine-rail')); true;", completionHandler: nil)
+    }
+
+    @objc private func showScreenshotMenu(_ sender: Any?) {
+        guard let button = sender as? NSButton else {
+            return
+        }
+
+        let menu = NSMenu(title: "Screenshots")
+        menu.addItem(menuItem("Screenshot App", action: #selector(captureAppScreenshot(_:)), target: self))
+        menu.addItem(menuItem("Screenshot Page", action: #selector(capturePageScreenshot(_:)), target: self))
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: button.bounds.height + 3), in: button)
+    }
+
+    @objc private func captureAppScreenshot(_ sender: Any?) {
+        guard let contentView = window.contentView else {
+            return
+        }
+
+        let bounds = contentView.bounds
+        guard let representation = contentView.bitmapImageRepForCachingDisplay(in: bounds) else {
+            return
+        }
+
+        contentView.cacheDisplay(in: bounds, to: representation)
+        let image = NSImage(size: bounds.size)
+        image.addRepresentation(representation)
+        saveScreenshot(image: image, nameComponent: "window")
+    }
+
+    @objc private func capturePageScreenshot(_ sender: Any?) {
+        let script = """
+        (() => {
+          const el = document.querySelector('.workspace-scroll');
+          const title = document.querySelector('.header-title h1')?.textContent || document.title || 'page';
+          if (!el) return null;
+          const rect = el.getBoundingClientRect();
+          return { x: rect.left, y: rect.top, width: rect.width, height: rect.height, scrollHeight: el.scrollHeight, title, originalScrollTop: el.scrollTop };
+        })();
+        """
+
+        webView.evaluateJavaScript(script) { [weak self] result, _ in
+            guard let self = self, let info = result as? [String: Any] else {
+                return
+            }
+
+            self.captureScrollableWorkspace(info: info)
+        }
+    }
+
+    private func captureScrollableWorkspace(info: [String: Any]) {
+        guard let x = info["x"] as? NSNumber,
+              let y = info["y"] as? NSNumber,
+              let width = info["width"] as? NSNumber,
+              let height = info["height"] as? NSNumber,
+              let scrollHeight = info["scrollHeight"] as? NSNumber else {
+            return
+        }
+
+        let viewportHeight = max(1, CGFloat(height.doubleValue))
+        let contentHeight = max(viewportHeight, CGFloat(scrollHeight.doubleValue))
+        let contentWidth = max(1, CGFloat(width.doubleValue))
+        let captureRect = CGRect(x: CGFloat(x.doubleValue), y: CGFloat(y.doubleValue), width: contentWidth, height: viewportHeight)
+        let pageName = sanitizeFilenameComponent((info["title"] as? String) ?? "page")
+        let originalScrollTop = CGFloat((info["originalScrollTop"] as? NSNumber)?.doubleValue ?? 0)
+        let composite = NSImage(size: NSSize(width: contentWidth, height: contentHeight))
+        captureWorkspaceChunk(rect: captureRect, contentHeight: contentHeight, viewportHeight: viewportHeight, originalScrollTop: originalScrollTop, targetOffset: 0, pageName: pageName, composite: composite, capturedOffsets: Set<Int>())
+    }
+
+    private func captureWorkspaceChunk(rect: CGRect, contentHeight: CGFloat, viewportHeight: CGFloat, originalScrollTop: CGFloat, targetOffset: CGFloat, pageName: String, composite: NSImage, capturedOffsets: Set<Int>) {
+        let scrollScript = """
+        (() => {
+          const el = document.querySelector('.workspace-scroll');
+          if (!el) return null;
+          el.scrollTop = \(Int(targetOffset));
+          return el.scrollTop;
+        })();
+        """
+
+        webView.evaluateJavaScript(scrollScript) { [weak self] result, _ in
+            guard let self = self else {
+                return
+            }
+
+            let actualOffset = CGFloat((result as? NSNumber)?.doubleValue ?? Double(targetOffset))
+            let offsetKey = Int(actualOffset.rounded())
+            var nextCapturedOffsets = capturedOffsets
+            if capturedOffsets.contains(offsetKey) {
+                self.restoreWorkspaceScroll(originalScrollTop)
+                self.saveScreenshot(image: composite, nameComponent: pageName)
+                return
+            }
+            nextCapturedOffsets.insert(offsetKey)
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                let configuration = WKSnapshotConfiguration()
+                configuration.rect = rect
+                self.webView.takeSnapshot(with: configuration) { snapshot, _ in
+                    if let snapshot = snapshot {
+                        composite.lockFocus()
+                        snapshot.draw(in: NSRect(x: 0, y: contentHeight - actualOffset - viewportHeight, width: rect.width, height: viewportHeight), from: .zero, operation: .copy, fraction: 1)
+                        composite.unlockFocus()
+                    }
+
+                    if actualOffset + viewportHeight >= contentHeight - 1 {
+                        self.restoreWorkspaceScroll(originalScrollTop)
+                        self.saveScreenshot(image: composite, nameComponent: pageName)
+                    } else {
+                        let nextOffset = min(contentHeight - viewportHeight, actualOffset + viewportHeight)
+                        self.captureWorkspaceChunk(rect: rect, contentHeight: contentHeight, viewportHeight: viewportHeight, originalScrollTop: originalScrollTop, targetOffset: nextOffset, pageName: pageName, composite: composite, capturedOffsets: nextCapturedOffsets)
+                    }
+                }
+            }
+        }
+    }
+
+    private func restoreWorkspaceScroll(_ scrollTop: CGFloat) {
+        webView.evaluateJavaScript("document.querySelector('.workspace-scroll')?.scrollTo({ top: \(Int(scrollTop)), behavior: 'instant' }); true;", completionHandler: nil)
+    }
+
+    private func saveScreenshot(image: NSImage, nameComponent: String) {
+        guard let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let data = bitmap.representation(using: .png, properties: [:]) else {
+            return
+        }
+
+        let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Screenshots", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let fileURL = directory.appendingPathComponent("aidevops-app-screenshot-\(sanitizeFilenameComponent(nameComponent))-\(screenshotTimestamp()).png")
+            try data.write(to: fileURL, options: .atomic)
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(fileURL.path, forType: .string)
+            notifyScreenshotCaptured(fileURL: fileURL)
+        } catch {
+            NSSound.beep()
+        }
+    }
+
+    private func screenshotTimestamp() -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyMMdd-HHmmss"
+        return formatter.string(from: Date())
+    }
+
+    private func sanitizeFilenameComponent(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let mapped = value.lowercased().unicodeScalars.map { allowed.contains($0) ? String($0) : "-" }.joined()
+        let collapsed = mapped.split(separator: "-").joined(separator: "-")
+        return collapsed.isEmpty ? "page" : collapsed
+    }
+
+    private func notifyScreenshotCaptured(fileURL: URL) {
+        guard let payloadData = try? JSONSerialization.data(withJSONObject: ["path": fileURL.path, "url": fileURL.absoluteString], options: []),
+              let payload = String(data: payloadData, encoding: .utf8) else {
+            return
+        }
+
+        let script = "window.dispatchEvent(new CustomEvent('aidevops:screenshot-captured', { detail: \(payload) })); true;"
+        webView.evaluateJavaScript(script, completionHandler: nil)
     }
 
     private func saveMainWindowFrame() {

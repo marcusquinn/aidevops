@@ -5,6 +5,7 @@ import { Workspace } from "./AppWorkspace";
 import type { ContrastPreference, ConversationMode, FontPreference, FontSizePreference, ShellMode, SurfaceId, ThemePreference } from "./app-model";
 import { DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, fileRootBySurface, findSurface, findSurfaceSectionLabel, fontFamilyForPreference, fontSizeForPreference, getSystemTheme, isContrastPreference, isFontPreference, isFontSizePreference } from "./app-model";
 import { type NavigationHistory, nextHistoryIndex, useNavigationHistoryKeyboard } from "./navigation-history";
+import { ScreenshotCaptureNotification, type ScreenshotCapturedDetail } from "./ScreenshotCaptureNotification";
 import { fetchStatus, mockedStatus } from "./status-client";
 
 interface WebKitBridgeWindow extends Window {
@@ -103,6 +104,7 @@ export function App(): ReactElement {
   const [conversationMode, setConversationMode] = useState<ConversationMode>("ai");
   const [selectedLocalRepoIndex, setSelectedLocalRepoIndex] = useState(0);
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>();
+  const [screenshotNotification, setScreenshotNotification] = useState<ScreenshotCapturedDetail | undefined>();
   const [systemTheme, setSystemTheme] = useState<"light" | "dark">("light");
   const resolvedTheme = themePreference === "system" ? systemTheme : themePreference;
   const activeSurface: SurfaceId = navigation.entries[navigation.index] ?? "overview";
@@ -207,6 +209,18 @@ export function App(): ReactElement {
     setSelectedLocalRepoIndex((current) => Math.min(current, Math.max(0, status.data.local_repos.repos.length - 1)));
   }, [status.data.local_repos.repos.length]);
 
+  useEffect(() => {
+    const showScreenshotNotification = (event: Event) => {
+      const detail = (event as CustomEvent<Partial<ScreenshotCapturedDetail>>).detail;
+      if (detail !== undefined && typeof detail.path === "string" && typeof detail.url === "string") {
+        setScreenshotNotification({ path: detail.path, url: detail.url });
+      }
+    };
+
+    window.addEventListener("aidevops:screenshot-captured", showScreenshotNotification);
+    return () => window.removeEventListener("aidevops:screenshot-captured", showScreenshotNotification);
+  }, []);
+
   if (statusLoading) {
     return <AppLoadingSkeleton machineRailVisible={machineRailVisible} />;
   }
@@ -214,6 +228,7 @@ export function App(): ReactElement {
   return (
     <main className={machineRailVisible ? "app-shell" : "app-shell machine-rail-collapsed"}>
       <div className="desktop-titlebar-tagline" aria-hidden="true">Your data protected. Your systems managed. Your creations published.</div>
+      {screenshotNotification ? <ScreenshotCaptureNotification notification={screenshotNotification} onDismiss={() => setScreenshotNotification(undefined)} /> : null}
       {machineRailVisible ? <MachineRail machine={status.data.machine} /> : null}
       <Sidebar
         activeSurface={activeSurface}
