@@ -44,6 +44,11 @@ const DEFAULT_METRICS_PATH_REF = "~/.aidevops/logs/headless-runtime-metrics.json
 const DEFAULT_PULSE_STATS_PATH_REF = "~/.aidevops/logs/pulse-stats.json";
 const DEFAULT_RESOURCE_METRICS_PATH_REF = "~/.aidevops/logs/resource-metrics.jsonl";
 const DEFAULT_TOKEN_REPORTS_ROOT_REF = "~/.aidevops/_reports/token-use";
+const DIRECT_WORKER_OUTCOMES = new Set<string>(["merged", "closed", "in_progress", "needs_maintainer_review", "blocked", "failed", "deferred", "created_followup"]);
+const WORKER_OUTCOME_KEYWORDS: Array<[string, GuiPulseWorkerOutcome]> = [["success", "merged"], ["complete", "merged"], ["follow", "created_followup"], ["defer", "deferred"], ["block", "blocked"], ["fail", "failed"], ["kill", "failed"]];
+const DIRECT_ISSUE_ORIGINS = new Set<string>(["aidevops_created", "maintainer_created", "origin_interactive", "third_party", "unknown"]);
+const ISSUE_ORIGIN_KEYWORDS: Array<[string, GuiPulseIssueOrigin]> = [["interactive", "origin_interactive"], ["third", "third_party"], ["community", "third_party"], ["maintainer", "maintainer_created"], ["aidevops", "aidevops_created"]];
+const KNOWN_PROVIDER_IDS: readonly GuiPulseProviderId[] = ["anthropic", "openai", "cursor", "google", "local"];
 
 export function readPulseWorkersSummary(options: PulseWorkersAdapterOptions = {}): { summary: GuiPulseWorkerSummary; source_path_refs: string[] } {
   const nowMs = options.nowMs ?? Date.parse(options.observedAt ?? new Date().toISOString());
@@ -282,15 +287,11 @@ function usageFromRecord(record: MetricRecord): GuiPulseWorkerUsageSnapshot | nu
 
 function outcomeFromRecord(record: MetricRecord): GuiPulseWorkerOutcome {
   const raw = String(record.outcome ?? record.result ?? record.status ?? "in_progress").toLowerCase();
-  if (["merged", "closed", "in_progress", "needs_maintainer_review", "blocked", "failed", "deferred", "created_followup"].includes(raw)) {
+  if (DIRECT_WORKER_OUTCOMES.has(raw)) {
     return raw as GuiPulseWorkerOutcome;
   }
-  if (raw.includes("success") || raw.includes("complete")) return "merged";
-  if (raw.includes("follow")) return "created_followup";
-  if (raw.includes("defer")) return "deferred";
-  if (raw.includes("block")) return "blocked";
-  if (raw.includes("fail") || raw.includes("kill")) return "failed";
-  return "in_progress";
+  const match = WORKER_OUTCOME_KEYWORDS.find(([keyword]) => raw.includes(keyword));
+  return match?.[1] ?? "in_progress";
 }
 
 function statusFromOutcome(outcome: GuiPulseWorkerOutcome): GuiPulseWorkerStatus {
@@ -314,12 +315,9 @@ function isHealthyOutcome(outcome: GuiPulseWorkerOutcome): boolean {
 
 function issueOriginFromRecord(record: MetricRecord): GuiPulseIssueOrigin {
   const raw = String(record.issue_origin ?? record.origin ?? "unknown").toLowerCase();
-  if (["aidevops_created", "maintainer_created", "origin_interactive", "third_party", "unknown"].includes(raw)) return raw as GuiPulseIssueOrigin;
-  if (raw.includes("interactive")) return "origin_interactive";
-  if (raw.includes("third") || raw.includes("community")) return "third_party";
-  if (raw.includes("maintainer")) return "maintainer_created";
-  if (raw.includes("aidevops")) return "aidevops_created";
-  return "unknown";
+  if (DIRECT_ISSUE_ORIGINS.has(raw)) return raw as GuiPulseIssueOrigin;
+  const match = ISSUE_ORIGIN_KEYWORDS.find(([keyword]) => raw.includes(keyword));
+  return match?.[1] ?? "unknown";
 }
 
 function authorAssociationFromRecord(record: MetricRecord): GuiPulseAuthorAssociation {
@@ -359,7 +357,7 @@ function costRef(record: MetricRecord): string | null {
 }
 
 function providerFromString(value: string | undefined): GuiPulseProviderId {
-  if (value === "anthropic" || value === "openai" || value === "cursor" || value === "google" || value === "local") return value;
+  if (KNOWN_PROVIDER_IDS.includes(value as GuiPulseProviderId)) return value as GuiPulseProviderId;
   return "unknown";
 }
 
