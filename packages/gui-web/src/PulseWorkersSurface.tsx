@@ -133,18 +133,18 @@ export function PulseWorkersSurface({ status }: { status: GuiStatusData }): Reac
         <table className="pulse-activity-table" aria-label="Pulse and worker events">
           <thead>
             <tr className="pulse-activity-row pulse-activity-header">
-              <th scope="col">When</th><th scope="col">Event</th><th scope="col">Scope</th><th scope="col">Outcome</th><th scope="col">Resource</th><th scope="col">Origin / actor</th>
+              <th role="columnheader" scope="col">When</th><th role="columnheader" scope="col">Event</th><th role="columnheader" scope="col">Scope</th><th role="columnheader" scope="col">Outcome</th><th role="columnheader" scope="col">Resource</th><th role="columnheader" scope="col">Origin / actor</th>
             </tr>
           </thead>
           <tbody>
             {pulse.events.map((row) => (
               <tr className={row.id === selectedEvent?.id ? "pulse-activity-row selected" : "pulse-activity-row"} key={row.id}>
-                <td data-label="When"><button className="pulse-row-select" onClick={() => setSelectedEventId(row.id)} type="button">{row.occurred_at.slice(11, 16)}</button></td>
-                <td data-label="Event"><strong>{row.title}</strong><span>{row.summary}</span></td>
-                <td data-label="Scope">{[row.repo_ref, row.issue_ref ?? row.pull_request_ref, row.worker_session_ref].filter(Boolean).join(" · ")}</td>
-                <td data-label="Outcome">{humanize(row.outcome)} · {humanize(row.status)}</td>
-                <td data-label="Resource">{resourceSummary(row)}</td>
-                <td data-label="Origin / actor">{humanize(row.issue_origin, "-")} · {row.author_association} · {row.actor_ref ?? "actor pending"}</td>
+                <td data-label="When" role="cell"><button className="pulse-row-select" onClick={() => setSelectedEventId(row.id)} type="button">{row.occurred_at.slice(11, 16)}</button></td>
+                <td data-label="Event" role="cell"><strong>{row.title}</strong><span>{row.summary}</span></td>
+                <td data-label="Scope" role="cell">{[row.repo_ref, row.issue_ref ?? row.pull_request_ref, row.worker_session_ref].filter(Boolean).join(" · ")}</td>
+                <td data-label="Outcome" role="cell">{humanize(row.outcome)} · {humanize(row.status)}</td>
+                <td data-label="Resource" role="cell">{resourceSummary(row)}</td>
+                <td data-label="Origin / actor" role="cell">{humanize(row.issue_origin, "-")} · {row.author_association} · {row.actor_ref ?? "actor pending"}</td>
               </tr>
             ))}
           </tbody>

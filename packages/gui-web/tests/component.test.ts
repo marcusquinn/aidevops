@@ -165,6 +165,8 @@ describe("dashboard shell", () => {
     expect(html).toContain("Expensive runs");
     expect(html).toContain("Community bug report");
     expect(html).toContain("third-party · CONTRIBUTOR");
+    expect(html).toContain("role=\"columnheader\"");
+    expect(html).toContain("role=\"cell\"");
     expect(html).toContain("OpenAI · gpt-5.5");
     expect(html).toContain("114,000 tokens");
     expect(html).toContain("Mobile activity cards");
