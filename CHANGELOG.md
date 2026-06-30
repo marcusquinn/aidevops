@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.30.0] - 2026-06-30
+
+### Changed
+
+- Maintenance: mark t18042 complete (pr:#26100 completed:2026-06-30) [skip ci]
+- Add pulse-check diagnostics routine (#26100)
+- Maintenance: sync ref:GH#26099 to TODO.md [skip ci]
+
+### Fixed
+
+- harden tambo complexity branch counting (#26105)
+- align GenUI aria label fallback (#26103)
+- harden gui pulse worker actions (#26097)
+
 ## [3.29.43] - 2026-06-30
 
 ### Fixed
