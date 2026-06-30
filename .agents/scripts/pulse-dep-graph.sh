@@ -430,7 +430,7 @@ _refresh_all_blockers_resolved() {
 
 	# Issue number blockers
 	local blocker_nums="" bnum=""
-	blocker_nums=$(printf '%s' "$entry_json" | jq -r '.issue_nums[]?' || true)
+	blocker_nums=$(printf '%s' "$entry_json" | jq -r '.issue_nums[]?' 2>/dev/null || true)
 	while IFS= read -r bnum; do
 		[[ "$bnum" =~ ^[0-9]+$ ]] || continue
 		is_open=$(printf '%s' "$open_issues_json" | jq --argjson n "$bnum" 'index($n) != null' 2>/dev/null) || is_open="false"
@@ -461,7 +461,7 @@ _refresh_cleanup_resolved_blocker_labels() {
 
 	local removed_count=0
 	local blocker_nums="" blocker_num="" stale_label=""
-	blocker_nums=$(printf '%s' "$entry_json" | jq -r '.issue_nums[]?' || true)
+	blocker_nums=$(printf '%s' "$entry_json" | jq -r '.issue_nums[]?' 2>/dev/null || true)
 	while IFS= read -r blocker_num; do
 		[[ "$blocker_num" =~ ^[0-9]+$ ]] || continue
 		stale_label="blocked-by:#${blocker_num}"
