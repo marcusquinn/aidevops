@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.40] - 2026-06-30
+
+### Changed
+
+- feat: build pulse workers dashboard (#25946)
+- Maintenance: sync ref:GH#25944 to TODO.md [skip ci]
+- Populate Pulse & Workers status from telemetry (#25942)
+
+### Fixed
+
+- repair generated dispatch labels (#25943)
+- suppress false simplification stall sweeps (#25960)
+- skip no-evidence failure miner clusters (#25959)
+
 ## [3.29.39] - 2026-06-30
 
 ### Changed
