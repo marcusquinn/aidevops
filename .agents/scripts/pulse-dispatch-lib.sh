@@ -894,12 +894,62 @@ _dispatch_should_skip_candidate() {
 
 	pulse_dispatch_debug_log "evaluating skip checks for #${issue_number} (${repo_slug})"
 
+	if _dispatch_skip_for_benign_block "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+	if _dispatch_skip_for_terminal_blocker "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+	if _dispatch_skip_for_fast_fail "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+	if _dispatch_skip_for_backoff "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+	if _dispatch_skip_for_issue_body "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+
+	pulse_dispatch_debug_log "#${issue_number}: passed all skip checks — proceeding to dispatch"
+	return 1
+}
+
+#######################################
+# Skip candidates that are benignly blocked by current assignment/block state.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+# Returns:
+#   0 - candidate is skippable
+#   1 - candidate should continue through skip checks
+#######################################
+_dispatch_skip_for_benign_block() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
 	local benign_block_reason=""
 	if benign_block_reason=$(_dispatch_benign_blocked_candidate_reason "$issue_number" "$repo_slug"); then
 		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — skip:already_assigned blocked:${benign_block_reason} from current pulse cycle" >>"$LOGFILE"
 		_dispatch_stats_increment "dispatch_candidate_blocked_${benign_block_reason}"
 		return 0
 	fi
+	return 1
+}
+
+#######################################
+# Skip candidates with terminal blockers.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+# Returns:
+#   0 - candidate is skippable
+#   1 - candidate should continue through skip checks
+#######################################
+_dispatch_skip_for_terminal_blocker() {
+	local issue_number="$1"
+	local repo_slug="$2"
 
 	# GH#18804: previously this call used `>/dev/null 2>&1` which suppressed
 	# the helper's own log lines AND, more dangerously, masked silent
@@ -925,6 +975,22 @@ _dispatch_should_skip_candidate() {
 		_dispatch_stats_increment "dispatch_candidate_skipped_terminal_blocker"
 		return 0
 	fi
+	return 1
+}
+
+#######################################
+# Skip candidates at the fast-fail threshold after applying age-out repair.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+# Returns:
+#   0 - candidate is skippable
+#   1 - candidate should continue through skip checks
+#######################################
+_dispatch_skip_for_fast_fail() {
+	local issue_number="$1"
+	local repo_slug="$2"
 
 	# t2397: Age-out HARD STOP'd issues that have been quiet for >=24h so
 	# transient failures (model availability, CI flakes, stale framework bugs)
@@ -937,6 +1003,22 @@ _dispatch_should_skip_candidate() {
 		_dispatch_stats_increment "dispatch_candidate_skipped_fast_fail"
 		return 0
 	fi
+	return 1
+}
+
+#######################################
+# Skip candidates that are under per-issue dispatch backoff.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+# Returns:
+#   0 - candidate is skippable
+#   1 - candidate should continue through skip checks
+#######################################
+_dispatch_skip_for_backoff() {
+	local issue_number="$1"
+	local repo_slug="$2"
 
 	# t2781: Per-issue rate_limit backoff — graduated cooldown based on recent
 	# rate_limit exits in headless-runtime-metrics.jsonl. Prevents repeated dispatch
@@ -964,6 +1046,23 @@ _dispatch_should_skip_candidate() {
 			echo "[pulse-wrapper] Dispatch_max: backoff check error for #${issue_number} — proceeding (fail-open)" >>"$LOGFILE"
 		fi
 	fi
+	return 1
+}
+
+#######################################
+# Skip candidates whose issue body is empty, placeholder, or explicitly lacks
+# worker-ready implementation context.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+# Returns:
+#   0 - candidate is skippable
+#   1 - candidate should continue through dispatch
+#######################################
+_dispatch_skip_for_issue_body() {
+	local issue_number="$1"
+	local repo_slug="$2"
 
 	# t1899/t1937: Skip issues with placeholder/empty bodies — dispatching a
 	# worker to an undescribed issue wastes a session. Use REST here instead of
@@ -989,8 +1088,6 @@ _dispatch_should_skip_candidate() {
 		_dispatch_stats_increment "dispatch_candidate_skipped_missing_worker_context"
 		return 0
 	fi
-
-	pulse_dispatch_debug_log "#${issue_number}: passed all skip checks — proceeding to dispatch"
 	return 1
 }
 
@@ -1630,94 +1727,24 @@ _dispatch_max_loop() {
 	local max_parallel="$5"
 	local outcomes_file="$6"
 
-	local processed_count=0 candidate_json pid
+	local processed_count=0 candidate_json
 	local _pids=()
-	local _alive_pids=()
 	while IFS= read -r candidate_json; do
 		[[ -n "$candidate_json" ]] || continue
 		processed_count=$((processed_count + 1))
 		echo "[pulse-wrapper] Dispatch_max: parallel iter=${processed_count} — entering body" >>"$LOGFILE"
 
-		# Reap finished pids so the array reflects current in-flight count.
-		# Bash 3.2-safe: while-read via process substitution avoids SC2207
-		# (no array splitting) and handles empty input cleanly.
-		_alive_pids=()
-		while IFS= read -r pid; do
-			[[ -n "$pid" ]] && _alive_pids+=("$pid")
-		done < <(_dispatch_max_reap_pids "${_pids[@]+${_pids[@]}}")
-		_pids=("${_alive_pids[@]+${_alive_pids[@]}}")
+		_dispatch_max_refresh_pids _pids
+		_dispatch_max_wait_for_capacity _pids "$max_parallel"
 
-		# Wait for one to finish if we're at the concurrency cap.
-		# GH#21729: reap dead PIDs BEFORE calling wait -n, and handle the
-		# PID-reuse scenario where kill -0 succeeds (PID recycled by OS for
-		# a different process) but wait -n fails ("not a child of this shell").
-		# Without this guard, the loop spins millions of times per minute,
-		# growing pulse-wrapper.log to hundreds of GB.
-		while ((${#_pids[@]} >= max_parallel)); do
-			# Reap finished PIDs first — may drop below cap without blocking.
-			_alive_pids=()
-			while IFS= read -r pid; do
-				[[ -n "$pid" ]] && _alive_pids+=("$pid")
-			done < <(_dispatch_max_reap_pids "${_pids[@]+${_pids[@]}}")
-			_pids=("${_alive_pids[@]+${_alive_pids[@]}}")
-
-			# Re-check after reaping — may have dropped below cap.
-			((${#_pids[@]} >= max_parallel)) || break
-
-			# Block until the next child exits. If wait -n fails, all
-			# remaining PIDs in _pids are stale (PID reuse: kill -0 succeeds
-			# because the OS recycled the PID for a different process, but
-			# it's not a child of this shell). Purge them to break the loop.
-			if ! wait -n 2>/dev/null; then
-				echo "[pulse-wrapper] Dispatch_max: wait -n found no children, purging ${#_pids[@]} stale PIDs from _pids (GH#21729)" >>"$LOGFILE"
-				_pids=()
-				sleep 1
-			fi
-		done
-
-		# Budget check: successes already recorded + currently in flight
-		# must stay below effective_slots. Reading the file is cheap (<1KB).
-		local successes_so_far
+		local successes_so_far=0
 		successes_so_far=$(_dispatch_max_count_outcomes "$outcomes_file")
-		if ((successes_so_far + ${#_pids[@]} >= effective_slots)); then
-			echo "[pulse-wrapper] Dispatch_max: parallel iter=${processed_count} — stopping (successes=${successes_so_far} + in_flight=${#_pids[@]} >= effective_slots=${effective_slots})" >>"$LOGFILE"
-			break
-		fi
-		if [[ -f "$STOP_FLAG" ]]; then
-			echo "[pulse-wrapper] Dispatch_max stopping early: stop flag appeared" >>"$LOGFILE"
-			break
-		fi
-		if ! _dispatch_graphql_budget_allows_next; then
-			echo "[pulse-wrapper] Dispatch_max stopping early: GraphQL circuit breaker tripped during parallel loop" >>"$LOGFILE"
+		if _dispatch_max_should_stop "$processed_count" "$successes_so_far" "$effective_slots" "${#_pids[@]}"; then
 			break
 		fi
 
-		local inter_launch_delay
-		inter_launch_delay=$(_dispatch_inter_launch_delay "$((successes_so_far + ${#_pids[@]}))" "$processed_count" "$candidate_json" "$max_parallel")
-		[[ "$inter_launch_delay" =~ ^[0-9]+$ ]] || inter_launch_delay=0
-		if ((inter_launch_delay > 0)); then
-			local issue_num_for_delay
-			issue_num_for_delay=$(printf '%s' "$candidate_json" | jq -r '.number // 0' 2>/dev/null)
-			_dispatch_stats_increment "dispatch_inter_launch_staggered"
-			echo "[pulse-wrapper] Dispatch_max: adaptive inter-launch stagger issue=#${issue_num_for_delay} delay=${inter_launch_delay}s launched_so_far=$((successes_so_far + ${#_pids[@]})) max_parallel=${max_parallel}" >>"$LOGFILE"
-			sleep "$inter_launch_delay"
-		fi
-
-		# Background dispatch with outcomes-file write.
-		# The subshell isolates _dispatch_process_candidate's module-global
-		# mutations; only the file system mutations (throttle removal,
-		# canary cache) and the outcomes file write propagate.
-		(
-			local _rc=0
-			_dispatch_process_candidate "$candidate_json" "$self_login" "$available_slots" >>"$LOGFILE" 2>&1 || _rc=$?
-			local issue_num
-			issue_num=$(printf '%s' "$candidate_json" | jq -r '.number // 0' 2>/dev/null)
-			if [[ "$_rc" -eq 0 ]]; then
-				printf 'success|%s\n' "$issue_num" >>"$outcomes_file"
-			else
-				printf 'fail|%s|rc=%d|reason=%s\n' "$issue_num" "$_rc" "${_PULSE_LAST_LAUNCH_FAILURE:-none}" >>"$outcomes_file"
-			fi
-		) &
+		_dispatch_max_apply_inter_launch_delay "$successes_so_far" "${#_pids[@]}" "$processed_count" "$candidate_json" "$max_parallel"
+		_dispatch_max_spawn_candidate "$candidate_json" "$self_login" "$available_slots" "$outcomes_file" &
 		_pids+=($!)
 	done <"$candidate_file"
 
@@ -1729,6 +1756,149 @@ _dispatch_max_loop() {
 	local dispatched_count
 	dispatched_count=$(_dispatch_max_count_outcomes "$outcomes_file")
 	printf '%d %d\n' "$dispatched_count" "$processed_count"
+	return 0
+}
+
+#######################################
+# Refresh an array variable of tracked PIDs by removing children that already
+# finished.
+#
+# Arguments:
+#   $1 - nameref-style array variable name
+#######################################
+_dispatch_max_refresh_pids() {
+	local target_array_name="$1"
+	local pid
+	local _alive_pids=()
+	local _current_pids=()
+	eval "_current_pids=(\"\${${target_array_name}[@]+\${${target_array_name}[@]}}\")"
+	while IFS= read -r pid; do
+		[[ -n "$pid" ]] && _alive_pids+=("$pid")
+	done < <(_dispatch_max_reap_pids "${_current_pids[@]+${_current_pids[@]}}")
+	eval "${target_array_name}=(\"\${_alive_pids[@]+\${_alive_pids[@]}}\")"
+	return 0
+}
+
+#######################################
+# Wait until tracked PIDs fall below the parallel dispatch concurrency cap.
+#
+# Arguments:
+#   $1 - nameref-style array variable name
+#   $2 - max parallel workers
+#######################################
+_dispatch_max_wait_for_capacity() {
+	local target_array_name="$1"
+	local max_parallel="$2"
+	local current_count=0
+
+	eval "current_count=\${#${target_array_name}[@]}"
+	while ((current_count >= max_parallel)); do
+		_dispatch_max_refresh_pids "$target_array_name"
+		eval "current_count=\${#${target_array_name}[@]}"
+		((current_count >= max_parallel)) || break
+
+		# GH#21729: if wait -n fails, remaining PIDs are stale (PID reuse: kill
+		# -0 succeeds for another process, but it is not this shell's child).
+		if ! wait -n 2>/dev/null; then
+			echo "[pulse-wrapper] Dispatch_max: wait -n found no children, purging ${current_count} stale PIDs from _pids (GH#21729)" >>"$LOGFILE"
+			eval "${target_array_name}=()"
+			sleep 1
+		fi
+		eval "current_count=\${#${target_array_name}[@]}"
+	done
+	return 0
+}
+
+#######################################
+# Check whether the parallel dispatch loop should stop before launching another
+# candidate.
+#
+# Arguments:
+#   $1 - processed count
+#   $2 - successes so far
+#   $3 - effective slot budget
+#   $4 - in-flight dispatch count
+# Returns:
+#   0 - stop the loop
+#   1 - continue dispatching
+#######################################
+_dispatch_max_should_stop() {
+	local processed_count="$1"
+	local successes_so_far="$2"
+	local effective_slots="$3"
+	local in_flight_count="$4"
+
+	if ((successes_so_far + in_flight_count >= effective_slots)); then
+		echo "[pulse-wrapper] Dispatch_max: parallel iter=${processed_count} — stopping (successes=${successes_so_far} + in_flight=${in_flight_count} >= effective_slots=${effective_slots})" >>"$LOGFILE"
+		return 0
+	fi
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Dispatch_max stopping early: stop flag appeared" >>"$LOGFILE"
+		return 0
+	fi
+	if ! _dispatch_graphql_budget_allows_next; then
+		echo "[pulse-wrapper] Dispatch_max stopping early: GraphQL circuit breaker tripped during parallel loop" >>"$LOGFILE"
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Apply adaptive inter-launch delay before spawning another dispatch worker.
+#
+# Arguments:
+#   $1 - successes so far
+#   $2 - in-flight dispatch count
+#   $3 - processed count
+#   $4 - candidate JSON
+#   $5 - max parallel workers
+#######################################
+_dispatch_max_apply_inter_launch_delay() {
+	local successes_so_far="$1"
+	local in_flight_count="$2"
+	local processed_count="$3"
+	local candidate_json="$4"
+	local max_parallel="$5"
+
+	local launched_so_far=$((successes_so_far + in_flight_count))
+	local inter_launch_delay
+	inter_launch_delay=$(_dispatch_inter_launch_delay "$launched_so_far" "$processed_count" "$candidate_json" "$max_parallel")
+	[[ "$inter_launch_delay" =~ ^[0-9]+$ ]] || inter_launch_delay=0
+	if ((inter_launch_delay > 0)); then
+		local issue_num_for_delay
+		issue_num_for_delay=$(printf '%s' "$candidate_json" | jq -r '.number // 0' 2>/dev/null)
+		_dispatch_stats_increment "dispatch_inter_launch_staggered"
+		echo "[pulse-wrapper] Dispatch_max: adaptive inter-launch stagger issue=#${issue_num_for_delay} delay=${inter_launch_delay}s launched_so_far=${launched_so_far} max_parallel=${max_parallel}" >>"$LOGFILE"
+		sleep "$inter_launch_delay"
+	fi
+	return 0
+}
+
+#######################################
+# Dispatch one candidate and append its outcome to the parallel loop outcomes
+# file. Intended to be backgrounded by _dispatch_max_loop.
+#
+# Arguments:
+#   $1 - candidate JSON
+#   $2 - self login
+#   $3 - available slot budget
+#   $4 - outcomes file
+#######################################
+_dispatch_max_spawn_candidate() {
+	local candidate_json="$1"
+	local self_login="$2"
+	local available_slots="$3"
+	local outcomes_file="$4"
+	local _rc=0
+
+	_dispatch_process_candidate "$candidate_json" "$self_login" "$available_slots" >>"$LOGFILE" 2>&1 || _rc=$?
+	local issue_num
+	issue_num=$(printf '%s' "$candidate_json" | jq -r '.number // 0' 2>/dev/null)
+	if [[ "$_rc" -eq 0 ]]; then
+		printf 'success|%s\n' "$issue_num" >>"$outcomes_file"
+	else
+		printf 'fail|%s|rc=%d|reason=%s\n' "$issue_num" "$_rc" "${_PULSE_LAST_LAUNCH_FAILURE:-none}" >>"$outcomes_file"
+	fi
 	return 0
 }
 
