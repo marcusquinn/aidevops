@@ -35,6 +35,14 @@ describe("API trust boundary", () => {
     expect(containsSecretSentinel(body)).toBe(false);
   });
 
+  test("Tambo provider route strips scope delimiters from thread key scope refs", async () => {
+    const response = await app.request("/api/tambo/session?tenant_ref=team:alpha&workspace_ref=ops:prod&session_ref=conversation:local");
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body.data.thread_key_ref).toBe("teamalpha:opsprod:conversation:local");
+  });
+
   test("file explorer rejects path traversal outside allowlisted roots", async () => {
     const response = await app.request("/api/files/agents?path=../../.ssh");
     const body = await response.json();
