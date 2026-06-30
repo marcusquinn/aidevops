@@ -418,7 +418,8 @@ describe("dashboard shell", () => {
     const css = readFileSync(`${guiWebRoot}/src/styles.css`, "utf8");
     const desktopInstaller = readFileSync(`${guiWebRoot}/../gui-desktop/scripts/install-macos-app.sh`, "utf8");
 
-    expect(appSource).toContain("aidevops:screenshot-captured");
+    expect(appSource).toContain("ScreenshotCaptureNotificationHost");
+    expect(screenshotSource).toContain("aidevops:screenshot-captured");
     expect(screenshotSource).toContain("screenshot-capture-notification");
     expect(css).toContain(".screenshot-capture-notification");
     expect(desktopInstaller).toContain("Screenshot App");
