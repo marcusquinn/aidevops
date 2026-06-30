@@ -26,7 +26,8 @@
 #  16. TEST_FAILURE guidance includes pnpm/Vitest hermeticity triage
 #  17. TIMEOUT_NO_OUTPUT guidance includes heartbeat and exit-code triage
 #  18. CodeFactor external failures receive source-quality guidance
-#  19. pulse-merge-feedback.sh passes shellcheck after t3225 changes
+#  19. Qlty smell threshold failures receive shared-workflow guidance
+#  20. pulse-merge-feedback.sh passes shellcheck after t3225 changes
 #
 # Tests are structural — no live GitHub API calls.
 
@@ -188,6 +189,11 @@ assert_contains "2h: 'Markdown Lint' → LINT_FAILURE" "LINT_FAILURE" "$md_lint_
 codefactor_out=$(_classify_ci_failures_by_pattern "CodeFactor" "$CONF_FILE")
 assert_contains "2h2: CodeFactor → EXTERNAL_STATIC_ANALYSIS" \
 	"EXTERNAL_STATIC_ANALYSIS" "$codefactor_out"
+
+# 2h3: Qlty smell threshold check
+qlty_out=$(_classify_ci_failures_by_pattern "Qlty Smell Threshold" "$CONF_FILE")
+assert_contains "2h3: Qlty Smell Threshold → EXTERNAL_STATIC_ANALYSIS" \
+	"EXTERNAL_STATIC_ANALYSIS" "$qlty_out"
 
 # 2i: Clippy
 clippy_out=$(_classify_ci_failures_by_pattern "Clippy" "$CONF_FILE")
