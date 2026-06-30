@@ -453,7 +453,7 @@ _tool_latest_version() {
 _classify_tool_status() {
 	local cmd="$1"
 	local installed="$2"
-	local latest="$3"
+	local latest_val="$3"
 	local update_cmd="$4"
 	local status_ref="$5"
 	local icon_ref="$6"
@@ -463,7 +463,7 @@ _classify_tool_status() {
 	local class_status="up_to_date"
 	local class_icon="✓"
 	local class_color="$GREEN"
-	local effective_latest="$latest"
+	local effective_latest="$latest_val"
 
 	if [[ "$cmd" == "gh" && "$installed" != "not installed" ]] && ! aidevops_gh_slurp_supported; then
 		class_status="minimum_required"
@@ -482,12 +482,12 @@ _classify_tool_status() {
 		class_icon="⏱"
 		class_color="$RED"
 		((++TIMEOUT_COUNT))
-	elif [[ "$installed" == "unknown" || "$latest" == "unknown" ]]; then
+	elif [[ "$installed" == "unknown" || "$latest_val" == "unknown" ]]; then
 		class_status="unknown"
 		class_icon="?"
 		class_color="$YELLOW"
 		((++UNKNOWN_COUNT))
-	elif [[ "$installed" != "$latest" ]] && version_lt "$installed" "$latest"; then
+	elif [[ "$installed" != "$latest_val" ]] && version_lt "$installed" "$latest_val"; then
 		class_status="outdated"
 		class_icon="⬆"
 		class_color="$RED"
