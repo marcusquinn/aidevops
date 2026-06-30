@@ -978,6 +978,30 @@ issue_already_exists() {
 	[[ "$existing_count" -gt 0 ]]
 }
 
+is_qlty_empty_sarif_signature() {
+	local check_name="$1"
+	local signature="$2"
+	[[ "$check_name" =~ [Qq]lty[[:space:]]+Smell[[:space:]]+Threshold ]] && [[ "$signature" =~ [Ee]mpty[[:space:]-]*SARIF ]]
+	return $?
+}
+
+is_obsolete_qlty_empty_sarif_cluster() {
+	local check_name="$1"
+	local signature="$2"
+	local helper_path="${SCRIPT_DIR}/qlty-smell-threshold-helper.sh"
+	if ! is_qlty_empty_sarif_signature "$check_name" "$signature"; then
+		return 1
+	fi
+	if [[ ! -f "$helper_path" ]]; then
+		return 1
+	fi
+	if grep -qF 'Failed to run qlty smells (empty SARIF output)' "$helper_path"; then
+		return 1
+	fi
+	grep -qF 'skipping absolute smell threshold check' "$helper_path"
+	return $?
+}
+
 create_or_preview_issue() {
 	local cluster_json="$1"
 	local pattern_id="$2"
@@ -1127,6 +1151,12 @@ create_systemic_issues() {
 		local pattern_id
 		pattern_id=$(compute_pattern_id "${repo_slug}|${check_name}|${signature}")
 		local signal_tag="gh-failure-miner:${pattern_id}"
+
+		if is_obsolete_qlty_empty_sarif_cluster "$check_name" "$signature"; then
+			echo "Skipping cluster for ${check_name} - empty SARIF failure signature is already handled by qlty-smell-threshold-helper.sh"
+			idx=$((idx + 1))
+			continue
+		fi
 
 		if issue_already_exists "$repo_slug" "$signal_tag"; then
 			echo "Skipping cluster for ${check_name} - existing open issue with ${signal_tag}"
