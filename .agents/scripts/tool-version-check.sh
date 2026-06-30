@@ -412,6 +412,157 @@ version_lt() {
 	[[ "$lowest" == "$v1" ]]
 }
 
+# Detect the installed version for a tool specification.
+_tool_installed_version() {
+	local category="$1"
+	local cmd="$2"
+	local ver_flag="$3"
+	local pkg="$4"
+
+	case "$category" in
+	pip)
+		get_python_installed_version "$pkg"
+		;;
+	npm)
+		get_installed_version "$cmd" "$ver_flag" "$pkg"
+		;;
+	*)
+		get_installed_version "$cmd" "$ver_flag"
+		;;
+	esac
+	return 0
+}
+
+# Detect the latest available version for a tool category.
+_tool_latest_version() {
+	local category="$1"
+	local pkg="$2"
+	local installed="$3"
+
+	case "$category" in
+	npm) get_npm_latest "$pkg" ;;
+	brew) get_brew_latest "$pkg" ;;
+	pip) get_pip_latest "$pkg" ;;
+	self) printf '%s\n' "$installed" ;; # Self-updating tools — no registry to check
+	*) printf '%s\n' "unknown" ;;
+	esac
+	return 0
+}
+
+# Classify a detected tool and update aggregate counters.
+_classify_tool_status() {
+	local cmd="$1"
+	local installed="$2"
+	local latest="$3"
+	local update_cmd="$4"
+	local status_ref="$5"
+	local icon_ref="$6"
+	local color_ref="$7"
+	local latest_ref="$8"
+
+	local class_status="up_to_date"
+	local class_icon="✓"
+	local class_color="$GREEN"
+	local effective_latest="$latest"
+
+	if [[ "$cmd" == "gh" && "$installed" != "not installed" ]] && ! aidevops_gh_slurp_supported; then
+		class_status="minimum_required"
+		class_icon="!"
+		class_color="$RED"
+		effective_latest=">=${AIDEVOPS_GH_MIN_SLURP_VERSION}"
+		((++OUTDATED_COUNT))
+		OUTDATED_PACKAGES+=("$update_cmd")
+	elif [[ "$installed" == "not installed" ]]; then
+		class_status="not_installed"
+		class_icon="○"
+		class_color="$YELLOW"
+		((++NOT_INSTALLED_COUNT))
+	elif [[ "$installed" == "timeout" ]]; then
+		class_status="timeout"
+		class_icon="⏱"
+		class_color="$RED"
+		((++TIMEOUT_COUNT))
+	elif [[ "$installed" == "unknown" || "$latest" == "unknown" ]]; then
+		class_status="unknown"
+		class_icon="?"
+		class_color="$YELLOW"
+		((++UNKNOWN_COUNT))
+	elif [[ "$installed" != "$latest" ]] && version_lt "$installed" "$latest"; then
+		class_status="outdated"
+		class_icon="⬆"
+		class_color="$RED"
+		((++OUTDATED_COUNT))
+		OUTDATED_PACKAGES+=("$update_cmd")
+	else
+		((++INSTALLED_COUNT))
+	fi
+
+	printf -v "$status_ref" '%s' "$class_status"
+	printf -v "$icon_ref" '%s' "$class_icon"
+	printf -v "$color_ref" '%s' "$class_color"
+	printf -v "$latest_ref" '%s' "$effective_latest"
+	return 0
+}
+
+# Append a JSON result for a checked tool.
+_append_tool_json_result() {
+	local category="$1"
+	local name="$2"
+	local installed="$3"
+	local latest="$4"
+	local status="$5"
+	local update_cmd="$6"
+
+	local json_name="${name//\\/\\\\}"
+	json_name="${json_name//\"/\\\"}"
+	local json_update="${update_cmd//\\/\\\\}"
+	json_update="${json_update//\"/\\\"}"
+	JSON_RESULTS+=("{\"name\": \"$json_name\", \"category\": \"$category\", \"installed\": \"$installed\", \"latest\": \"$latest\", \"status\": \"$status\", \"update_cmd\": \"$json_update\"}")
+	return 0
+}
+
+# Print console output for a checked tool.
+_print_tool_status() {
+	local name="$1"
+	local installed="$2"
+	local latest="$3"
+	local status="$4"
+	local icon="$5"
+	local color="$6"
+
+	if [[ "$QUIET" == "true" && "$status" != "outdated" && "$status" != "timeout" ]]; then
+		return 0
+	fi
+
+	case "$status" in
+	not_installed)
+		echo -e "${color}${icon}  $name: not installed${NC}"
+		if [[ "$QUIET" != "true" ]]; then
+			echo "   Latest: $latest"
+		fi
+		;;
+	outdated)
+		echo -e "${color}${icon}  $name: $installed → $latest (UPDATE AVAILABLE)${NC}"
+		;;
+	timeout)
+		echo -e "${color}${icon}  $name: --version hung (killed after ${VERSION_TIMEOUT}s)${NC}"
+		;;
+	unknown)
+		echo -e "${color}${icon}  $name: $installed (could not check latest)${NC}"
+		;;
+	minimum_required)
+		echo -e "${color}${icon}  $name: $installed (requires >= ${AIDEVOPS_GH_MIN_SLURP_VERSION} for gh api --paginate --slurp)${NC}"
+		;;
+	up_to_date)
+		echo -e "${color}${icon}  $name: $installed${NC}"
+		;;
+	*)
+		echo -e "${color}${icon}  $name: $installed (status: $status)${NC}"
+		;;
+	esac
+	return 0
+}
+
 # Check a single tool
 check_tool() {
 	local category="$1"
@@ -426,100 +577,23 @@ check_tool() {
 	# crawl4ai, dspy) have no CLI binary so command -v always fails.
 	# npm tools: pass package name so fallback to package.json works.
 	# All other categories: standard CLI binary detection.
-	if [[ "$category" == "pip" ]]; then
-		installed=$(get_python_installed_version "$pkg")
-	elif [[ "$category" == "npm" ]]; then
-		installed=$(get_installed_version "$cmd" "$ver_flag" "$pkg")
-	else
-		installed=$(get_installed_version "$cmd" "$ver_flag")
-	fi
+	installed=$(_tool_installed_version "$category" "$cmd" "$ver_flag" "$pkg")
 
 	local latest="unknown"
-	case "$category" in
-	npm) latest=$(get_npm_latest "$pkg") ;;
-	brew) latest=$(get_brew_latest "$pkg") ;;
-	pip) latest=$(get_pip_latest "$pkg") ;;
-	self) latest="$installed" ;; # Self-updating tools — no registry to check
-	*) latest="unknown" ;;
-	esac
+	latest=$(_tool_latest_version "$category" "$pkg" "$installed")
 
 	local status="up_to_date"
 	local icon="✓"
 	local color="$GREEN"
-
-	if [[ "$cmd" == "gh" && "$installed" != "not installed" ]] && ! aidevops_gh_slurp_supported; then
-		status="minimum_required"
-		icon="!"
-		color="$RED"
-		latest=">=${AIDEVOPS_GH_MIN_SLURP_VERSION}"
-		((++OUTDATED_COUNT))
-		OUTDATED_PACKAGES+=("$update_cmd")
-	elif [[ "$installed" == "not installed" ]]; then
-		status="not_installed"
-		icon="○"
-		color="$YELLOW"
-		((++NOT_INSTALLED_COUNT))
-	elif [[ "$installed" == "timeout" ]]; then
-		status="timeout"
-		icon="⏱"
-		color="$RED"
-		((++TIMEOUT_COUNT))
-	elif [[ "$installed" == "unknown" || "$latest" == "unknown" ]]; then
-		status="unknown"
-		icon="?"
-		color="$YELLOW"
-		((++UNKNOWN_COUNT))
-	elif [[ "$installed" != "$latest" ]] && version_lt "$installed" "$latest"; then
-		status="outdated"
-		icon="⬆"
-		color="$RED"
-		((++OUTDATED_COUNT))
-		OUTDATED_PACKAGES+=("$update_cmd")
-	else
-		((++INSTALLED_COUNT))
-	fi
+	_classify_tool_status "$cmd" "$installed" "$latest" "$update_cmd" status icon color latest
 
 	# JSON output (escape special characters for valid JSON)
 	if [[ "$JSON_OUTPUT" == "true" ]]; then
-		# Escape backslashes and double quotes for JSON safety
-		local json_name="${name//\\/\\\\}"
-		json_name="${json_name//\"/\\\"}"
-		local json_update="${update_cmd//\\/\\\\}"
-		json_update="${json_update//\"/\\\"}"
-		JSON_RESULTS+=("{\"name\": \"$json_name\", \"category\": \"$category\", \"installed\": \"$installed\", \"latest\": \"$latest\", \"status\": \"$status\", \"update_cmd\": \"$json_update\"}")
+		_append_tool_json_result "$category" "$name" "$installed" "$latest" "$status" "$update_cmd"
 	else
-		# Console output
-		if [[ "$QUIET" == "true" && "$status" != "outdated" && "$status" != "timeout" ]]; then
-			return
-		fi
-
-		case "$status" in
-		not_installed)
-			echo -e "${color}${icon}  $name: not installed${NC}"
-			if [[ "$QUIET" != "true" ]]; then
-				echo "   Latest: $latest"
-			fi
-			;;
-		outdated)
-			echo -e "${color}${icon}  $name: $installed → $latest (UPDATE AVAILABLE)${NC}"
-			;;
-		timeout)
-			echo -e "${color}${icon}  $name: --version hung (killed after ${VERSION_TIMEOUT}s)${NC}"
-			;;
-		unknown)
-			echo -e "${color}${icon}  $name: $installed (could not check latest)${NC}"
-			;;
-		minimum_required)
-			echo -e "${color}${icon}  $name: $installed (requires >= ${AIDEVOPS_GH_MIN_SLURP_VERSION} for gh api --paginate --slurp)${NC}"
-			;;
-		up_to_date)
-			echo -e "${color}${icon}  $name: $installed${NC}"
-			;;
-		*)
-			echo -e "${color}${icon}  $name: $installed (status: $status)${NC}"
-			;;
-		esac
+		_print_tool_status "$name" "$installed" "$latest" "$status" "$icon" "$color"
 	fi
+	return 0
 }
 
 # Check tools by category
