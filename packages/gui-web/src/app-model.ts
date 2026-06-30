@@ -148,6 +148,13 @@ export interface InventorySurfaceConfig {
   title: string;
 }
 
+export interface ChatPrimitiveStackDecision {
+  adopt: string[];
+  defer: string[];
+  foundation: string;
+  owner: "local_vite_shell";
+}
+
 export type SurfaceRecordCounts = Partial<Record<SurfaceId, number>>;
 
 export const text = {
@@ -318,6 +325,13 @@ export const DEFAULT_ACCENT_HUE = 123;
 export const DEFAULT_CONTRAST: ContrastPreference = "low";
 export const DEFAULT_FONT: FontPreference = "Inter";
 export const DEFAULT_FONT_SIZE: FontSizePreference = "xs";
+
+export const chatPrimitiveStackDecision: ChatPrimitiveStackDecision = {
+  owner: "local_vite_shell",
+  foundation: "Turbostarter AI patterns supply persistence, AI SDK transport, model selection, attachments, tool/reasoning panels, sharing, and session actions behind audited routes.",
+  adopt: ["MessageScroller", "Message", "Bubble", "Attachment", "Marker"],
+  defer: ["Tambo ordinary chat persistence", "Tambo channel transport", "React Joyride as chat infrastructure", "Next.js route ownership"],
+};
 
 export const contrastOptions: ContrastOption[] = [
   { value: "low", label: "Low" },
