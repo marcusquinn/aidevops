@@ -203,7 +203,7 @@ function buildAttention(sources: SourceState[], counters: Record<string, number>
 }
 
 function buildEvents(records: MetricRecord[], resources: GuiPulseResourceSnapshot[], usage: GuiPulseWorkerUsageSnapshot[], observedAt: string): GuiPulseWorkerActivityEvent[] {
-  return records.slice(-25).reverse().map((record, index) => {
+  return records.slice(-25).sort((left, right) => (recordTimeMs(right) ?? 0) - (recordTimeMs(left) ?? 0)).map((record, index) => {
     const outcome = outcomeFromRecord(record);
     const status = statusFromOutcome(outcome);
     const issue = stringOrNumber(record.issue ?? record.issue_number);
