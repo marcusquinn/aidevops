@@ -1,5 +1,6 @@
-import { type CSSProperties, type ReactElement, useState } from "react";
-import type { GuiPulseWorkerActivityEvent, GuiPulseWorkerChartSeries, GuiStatusData } from "../../gui-shared/src";
+import { type CSSProperties, type Dispatch, type ReactElement, type SetStateAction, useEffect, useState } from "react";
+import type { GuiPulseWorkerActionJobSummary, GuiPulseWorkerActionSummary, GuiPulseWorkerActivityEvent, GuiPulseWorkerChartSeries, GuiResponseEnvelope, GuiStatusData } from "../../gui-shared/src";
+import { AppActionTerminal } from "./AppActionTerminal";
 import { text } from "./app-model";
 
 type PulseEvent = GuiPulseWorkerActivityEvent;
@@ -10,10 +11,32 @@ const quickFilters = ["Needs attention", "Stalled workers", "Failed terminal che
 export function PulseWorkersSurface({ status }: { status: GuiStatusData }): ReactElement {
   const pulse = status.pulse_workers;
   const [selectedEventId, setSelectedEventId] = useState(pulse.events[0]?.id ?? "");
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+  const [jobs, setJobs] = useState<Record<string, GuiPulseWorkerActionJobSummary>>({});
+  const [dismissedJobIds, setDismissedJobIds] = useState<Set<string>>(() => new Set());
   const selectedEvent = pulse.events.find((event) => event.id === selectedEventId) ?? pulse.events[0];
+  const selectedJob = selectedJobId === null ? null : jobs[selectedJobId] ?? null;
   const filterGroups = buildFilterGroups(pulse);
   const chartSeries = pulse.charts.slice(0, 4);
   const sampleSize = pulse.kpis.reduce((total, kpi) => total + (kpi.sample_size ?? 0), 0);
+  const runningJobIdsKey = Object.values(jobs).filter((job) => job.status === "running").map((job) => job.id).sort().join("|");
+
+  useEffect(() => {
+    const runningJobIds = runningJobIdsKey.split("|").filter(Boolean);
+    if (runningJobIds.length === 0) {
+      return undefined;
+    }
+
+    const refreshRunningJobs = () => {
+      for (const jobId of runningJobIds) {
+        void refreshPulseWorkerJob(jobId, setJobs);
+      }
+    };
+    refreshRunningJobs();
+    const timer = window.setInterval(refreshRunningJobs, 1_500);
+
+    return () => window.clearInterval(timer);
+  }, [runningJobIdsKey]);
 
   return (
     <section className="pulse-workers-surface" aria-label={text.workers}>
@@ -49,12 +72,12 @@ export function PulseWorkersSurface({ status }: { status: GuiStatusData }): Reac
               <p className="eyebrow">Exceptions first</p>
               <h3>Needs attention</h3>
             </div>
-            <span className="count-pill">{pulse.attention.length} findings · planned actions disabled</span>
+            <span className="count-pill">{pulse.attention.length} findings · allowlisted actions only</span>
           </div>
           <ul>
             {pulse.attention.map((item) => <li className={`pulse-attention-${item.severity}`} key={item.id}><strong>{item.title}</strong>: {item.detail}</li>)}
           </ul>
-          <button disabled title="Action routes need audited worker control APIs" type="button">Create systemic fix (planned)</button>
+          <button disabled={!actionById(pulse.actions, "create_systemic_fix")?.enabled} onClick={() => void runPulseWorkerAction(actionById(pulse.actions, "create_systemic_fix"), setJobs, setSelectedJobId, setDismissedJobIds)} title="Create a worker-ready systemic-fix task from selected evidence" type="button">Create systemic fix task</button>
         </article>
 
         <section className="pulse-chart-grid" aria-label="Pulse trend charts">
@@ -120,21 +143,64 @@ export function PulseWorkersSurface({ status }: { status: GuiStatusData }): Reac
             </button>
           ))}
         </div>
-        <p className="notice compact-notice">Mobile activity cards replace the dense table on small screens. Detail drawer becomes a full-screen sheet on small screens, and terminal panel becomes full-screen later.</p>
+        <p className="notice compact-notice">Mobile activity cards replace the dense table on small screens. Detail drawer becomes a full-screen sheet on small screens, and terminal panel becomes a full-screen panel/sheet for command output.</p>
       </section>
 
       <section className="pulse-layout" aria-label="Drilldown and planned actions">
         <PulseDrilldownPanel event={selectedEvent} />
-        <article className="planned-card pulse-actions-panel">
-          <p className="eyebrow">Planned controls</p>
-          <h3>Actions stay disabled until audited routes land</h3>
-          <button disabled title="Terminal output needs a read-only command-output adapter" type="button">Open terminal output (planned)</button>
-          <button disabled title="Dispatch needs worker control and trust-boundary APIs" type="button">Redispatch worker (planned)</button>
-          <button disabled title="Persistence needs a write-action manifest and audit trail" type="button">Save systemic fix (planned)</button>
+        <article className="planned-card pulse-actions-panel" aria-label="Pulse and Workers action buttons">
+          <p className="eyebrow">Allowlisted controls</p>
+          <h3>Safe actions with terminal output</h3>
+          <p className="notice compact-notice">Read-only diagnostics are separated from write actions. Destructive controls such as stopping workers, closing PRs, cleanup, and rebase/update branch remain deferred.</p>
+          <div className="pulse-action-list">
+            {pulse.actions.map((action) => (
+              <button disabled={!action.enabled} key={action.id} onClick={() => void runPulseWorkerAction(action, setJobs, setSelectedJobId, setDismissedJobIds)} title={action.scope_copy} type="button">
+                <strong>{action.label}</strong>
+                <span>{action.classification} · confirmation {action.confirmation} · {action.target_ref}</span>
+              </button>
+            ))}
+          </div>
+          <dl className="pulse-detail-grid pulse-action-confirmations">
+            {pulse.actions.map((action) => <div key={`${action.id}-copy`}><dt>{action.label}</dt><dd>{action.scope_copy} {action.expected_effect} Command preview: {action.command_preview}. Audit/source ref: {action.audit_ref}.</dd></div>)}
+          </dl>
+          <p className="notice compact-notice">Create systemic fix task generates worker-ready context from the selected event: files/patterns when known, evidence refs, verification commands, and protected-data notes before wrapper dispatch.</p>
+          {selectedJob === null || dismissedJobIds.has(selectedJob.id) ? null : <AppActionTerminal job={selectedJob} label={`Pulse & Workers ${selectedJob.action}`} onDismiss={(jobId) => setDismissedJobIds((current) => new Set([...current, jobId]))} />}
         </article>
       </section>
     </section>
   );
+}
+
+async function refreshPulseWorkerJob(jobId: string, setJobs: Dispatch<SetStateAction<Record<string, GuiPulseWorkerActionJobSummary>>>): Promise<void> {
+  const response = await fetch(`/api/pulse-workers/jobs/${encodeURIComponent(jobId)}`);
+  if (!response.ok) {
+    return;
+  }
+  const envelope = await response.json() as GuiResponseEnvelope<GuiPulseWorkerActionJobSummary>;
+  setJobs((current) => ({ ...current, [envelope.data.id]: envelope.data }));
+}
+
+async function runPulseWorkerAction(action: GuiPulseWorkerActionSummary | undefined, setJobs: Dispatch<SetStateAction<Record<string, GuiPulseWorkerActionJobSummary>>>, setSelectedJobId: Dispatch<SetStateAction<string | null>>, setDismissedJobIds: Dispatch<SetStateAction<Set<string>>>): Promise<void> {
+  if (action === undefined || !action.enabled) {
+    return;
+  }
+  if (action.confirmation === "required" && typeof window !== "undefined" && !window.confirm(`${action.label}\n\nScope: ${action.scope_copy}\nExpected effect: ${action.expected_effect}\nCommand: ${action.command_preview}`)) {
+    return;
+  }
+
+  const response = await fetch(`/api/pulse-workers/actions/${encodeURIComponent(action.id)}`, { method: "POST" });
+  const envelope = await response.json() as GuiResponseEnvelope<GuiPulseWorkerActionJobSummary>;
+  setDismissedJobIds((current) => {
+    const next = new Set(current);
+    next.delete(envelope.data.id);
+    return next;
+  });
+  setJobs((current) => ({ ...current, [envelope.data.id]: envelope.data }));
+  setSelectedJobId(envelope.data.id);
+}
+
+function actionById(actions: GuiPulseWorkerActionSummary[], id: GuiPulseWorkerActionSummary["id"]): GuiPulseWorkerActionSummary | undefined {
+  return actions.find((action) => action.id === id);
 }
 
 function PulseChartPanel({ chart }: { chart: GuiPulseWorkerChartSeries }): ReactElement {

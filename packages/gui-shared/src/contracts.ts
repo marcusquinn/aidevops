@@ -1,6 +1,6 @@
 export type GuiRouteClassification = "read" | "write" | "destructive";
 
-export type GuiOperationId = "setup.status.read" | "capabilities.read" | "filesystem.read" | "vault.status.read" | "apps.action.run" | "apps.action.status" | "tambo.session.read";
+export type GuiOperationId = "setup.status.read" | "capabilities.read" | "filesystem.read" | "vault.status.read" | "apps.action.run" | "apps.action.status" | "pulse_workers.action.run" | "pulse_workers.action.status" | "tambo.session.read";
 
 export type GuiFileRootId = "agents" | "config" | "localSetup" | "git";
 
@@ -104,6 +104,34 @@ export interface GuiAppActionJobSummary {
   finished_at: string | null;
   exit_code: number | null;
   output: string[];
+}
+
+export type GuiPulseWorkerActionId = "diagnose" | "run_pulse" | "open_logs" | "create_systemic_fix";
+
+export interface GuiPulseWorkerActionSummary {
+  id: GuiPulseWorkerActionId;
+  label: string;
+  enabled: boolean;
+  classification: GuiRouteClassification;
+  confirmation: "none" | "recommended" | "required";
+  command_preview: string;
+  target_ref: string;
+  scope_copy: string;
+  expected_effect: string;
+  audit_ref: string;
+}
+
+export interface GuiPulseWorkerActionJobSummary {
+  id: string;
+  action: GuiPulseWorkerActionId;
+  target_ref: string;
+  status: "running" | "completed" | "failed" | "rejected";
+  command_preview: string;
+  started_at: string;
+  finished_at: string | null;
+  exit_code: number | null;
+  output: string[];
+  audit_ref: string;
 }
 
 export interface GuiSecretReference {
@@ -345,6 +373,7 @@ export interface GuiPulseWorkerSummary {
   };
   charts: GuiPulseWorkerChartSeries[];
   events: GuiPulseWorkerActivityEvent[];
+  actions: GuiPulseWorkerActionSummary[];
 }
 
 export interface GuiConversationMessage {
@@ -653,6 +682,28 @@ export const APP_ACTION_STATUS_ROUTE_MANIFEST: GuiRouteManifest = {
   adapter: "appActions.readAppActionJob",
   command_pattern: ["background-job", "metadata-and-output-only"],
   redactions: ["secret_values", "credential_paths", "private_key_material"],
+};
+
+export const PULSE_WORKERS_ACTION_ROUTE_MANIFEST: GuiRouteManifest = {
+  route: "/api/pulse-workers/actions/:action",
+  method: "POST",
+  operation_id: "pulse_workers.action.run",
+  classification: "write",
+  source_surface: "pulse_workers",
+  adapter: "pulseWorkerActions.startPulseWorkerAction",
+  command_pattern: ["allowlisted", "aidevops", "pulse/worker-diagnostics", "background-job"],
+  redactions: ["secret_values", "credential_paths", "private_key_material", "github_tokens", "authorization_headers", "session_cookies"],
+};
+
+export const PULSE_WORKERS_ACTION_STATUS_ROUTE_MANIFEST: GuiRouteManifest = {
+  route: "/api/pulse-workers/jobs/:jobId",
+  method: "GET",
+  operation_id: "pulse_workers.action.status",
+  classification: "read",
+  source_surface: "pulse_workers",
+  adapter: "pulseWorkerActions.readPulseWorkerActionJob",
+  command_pattern: ["background-job", "metadata-and-redacted-output-only"],
+  redactions: ["secret_values", "credential_paths", "private_key_material", "github_tokens", "authorization_headers", "session_cookies"],
 };
 
 export const GUI_FILE_ROOTS: readonly GuiFileRootDefinition[] = [
