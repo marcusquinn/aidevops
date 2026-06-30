@@ -172,28 +172,58 @@ type TamboPayloadEnvelopeValidation =
   | { ok: true; schema: GuiTamboComponentSchema; props: Record<string, unknown> }
   | { ok: false; result: GuiTamboValidationResult };
 
+type TamboComponentLookup =
+  | { ok: true; payload: Record<string, unknown>; schema: GuiTamboComponentSchema }
+  | { ok: false; result: GuiTamboValidationResult };
+
 function validateTamboPayloadEnvelope(payload: unknown, scope: GuiConversationScope): TamboPayloadEnvelopeValidation {
+  const lookup = resolveTamboComponentLookup(payload);
+  if (lookup.ok === false) {
+    return lookup;
+  }
+
+  const envelopeError = validateScopedTamboEnvelope(lookup.payload, scope);
+  if (envelopeError !== null) {
+    return { ok: false, result: invalid(lookup.schema.name, {}, envelopeError) };
+  }
+
+  const props = resolveTamboComponentProps(lookup.schema, lookup.payload.props);
+  if (props.ok === false) {
+    return props;
+  }
+
+  return { ok: true, schema: lookup.schema, props: props.value };
+}
+
+function resolveTamboComponentLookup(payload: unknown): TamboComponentLookup {
   if (!isRecord(payload)) {
     return { ok: false, result: invalid(null, {}, "payload_not_object") };
   }
-  if (typeof payload.component !== "string") {
-    return { ok: false, result: invalid(null, {}, "component_missing") };
-  }
 
-  const schema = findTamboComponentSchema(payload.component);
+  const schema = resolveTamboComponentSchema(payload.component);
   if (schema === undefined) {
-    return { ok: false, result: invalid(null, {}, "component_not_registered") };
+    return { ok: false, result: invalid(null, {}, componentLookupError(payload.component)) };
   }
 
-  const envelopeError = validateScopedTamboEnvelope(payload, scope);
-  if (envelopeError !== null) {
-    return { ok: false, result: invalid(schema.name, {}, envelopeError) };
-  }
-  if (!isRecord(payload.props)) {
+  return { ok: true, payload, schema };
+}
+
+function resolveTamboComponentSchema(component: unknown): GuiTamboComponentSchema | undefined {
+  return typeof component === "string" ? findTamboComponentSchema(component) : undefined;
+}
+
+function componentLookupError(component: unknown): string {
+  return typeof component === "string" ? "component_not_registered" : "component_missing";
+}
+
+function resolveTamboComponentProps(
+  schema: GuiTamboComponentSchema,
+  props: unknown,
+): { ok: true; value: Record<string, unknown> } | { ok: false; result: GuiTamboValidationResult } {
+  if (!isRecord(props)) {
     return { ok: false, result: invalid(schema.name, {}, "props_not_object") };
   }
-
-  return { ok: true, schema, props: payload.props };
+  return { ok: true, value: props };
 }
 
 function findTamboComponentSchema(component: string): GuiTamboComponentSchema | undefined {

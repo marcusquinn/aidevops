@@ -55,6 +55,15 @@ describe("GUI shared schema contracts", () => {
     expect(activeApproval.errors).toContain("approval_prompt_must_be_disabled");
   });
 
+  test("Tambo payload validation reports malformed envelopes before props", () => {
+    const scope = { tenant_ref: "tenant:local-owner", workspace_ref: "workspace:aidevops", repo_ref: "repo:marcusquinn/aidevops" };
+
+    expect(validateTamboComponentPayload(null, scope).errors).toEqual(["payload_not_object"]);
+    expect(validateTamboComponentPayload({ props: {} }, scope).errors).toEqual(["component_missing"]);
+    expect(validateTamboComponentPayload({ component: "UnknownCard", props: {} }, scope).errors).toEqual(["component_not_registered"]);
+    expect(validateTamboComponentPayload({ component: "TaskCard", tenant_ref: "tenant:local-owner", session_ref: "conversation:ai-session-1", read_only: true, props: [] }, scope).errors).toEqual(["props_not_object"]);
+  });
+
   test("status envelope preserves source and redaction metadata", () => {
     const envelope = createEnvelope({
       operation_id: "setup.status.read",
