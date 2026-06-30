@@ -10,6 +10,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.42] - 2026-06-30
+
+### Added
+
+- activate Pulse Workers navigation shell (#26021)
+- activate Pulse Workers navigation shell (#26020)
+- add pulse worker productivity insights (#26013)
+
+### Changed
+
+- fix: suppress stale qlty empty sarif issues (#26059)
+- refactor: reduce pulse dispatch function complexity (#26040)
+- test: split report render fixture assertions (#26038)
+- fix qlty threshold CI guidance (#26024)
+- fix: harden qlty smell threshold gate (#26019)
+- feat: add pulse worker action controls (#26008)
+- Tests: cover repo metrics review feedback (#26005)
+- block issue-less aidevops PR creation (#25902)
+
+### Fixed
+
+- reconcile PR origin labels after creation (#26086)
+- harden subagent index checks (#26085)
+- treat blank qlty sarif as empty (#26029)
+- trim failure miner extra labels (#26018)
+- scope GUI body gradient to dark theme (#26012)
+- harden dep graph blocker parsing (#26010)
+- harden intent extraction for immutable args (#26007)
+- harden pulse interactive hold labels (#25996)
+- harden pulse worker nullable rendering (#25981)
+- harden pulse worker nullable rendering (#25980)
+
 ## [3.29.41] - 2026-06-30
 
 ### Changed
