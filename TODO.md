@@ -4353,3 +4353,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18032 Hide GUI stroke effects when borders are disabled #bug #dashboard #design ref:GH#25855 pr:#25856 completed:2026-06-29
 
 - [ ] t18033 Build Pulse & Workers observability console for aidevops.app #dashboard #enhancement #observability #parent #product #pulse ref:GH#25911
+
+- [ ] t18034 Rename Workers to Pulse & Workers and add observability UI shell #auto-dispatch #dashboard #enhancement #observability #pulse ref:GH#25912
