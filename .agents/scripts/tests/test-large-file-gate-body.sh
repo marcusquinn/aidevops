@@ -14,9 +14,9 @@
 #
 # Tests all five scanner body templates:
 #   Part 1: `pulse-dispatch-large-file-gate.sh` (file-size-debt bodies)
-#   Part 2: `stats-quality-sweep.sh` (_build_simplification_issue_body)
-#   Part 3: `pulse-simplification.sh` SH body (_complexity_scan_sh_build_issue_body_with_sig)
-#   Part 4: `pulse-simplification.sh` MD body (_complexity_scan_build_md_issue_body)
+#   Part 2: `stats-quality-sweep-issues.sh` (_build_simplification_issue_body)
+#   Part 3: `pulse-simplification-issues.sh` SH body (_complexity_scan_sh_build_issue_body_with_sig)
+#   Part 4: `pulse-simplification-issues.sh` MD body (_complexity_scan_build_md_issue_body)
 #   Part 5: `pulse-simplification-state.sh` requeue body (_create_requeue_issue)
 #
 # Cross-references: GH#19828 / t2371, GH#19699 (the too-thin body),
@@ -26,8 +26,8 @@ set -uo pipefail
 
 SCRIPT_DIR_TEST="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 GATE_SCRIPT="${SCRIPT_DIR_TEST}/../pulse-dispatch-large-file-gate.sh"
-SWEEP_SCRIPT="${SCRIPT_DIR_TEST}/../stats-quality-sweep.sh"
-SIMPLIFICATION_SCRIPT="${SCRIPT_DIR_TEST}/../pulse-simplification.sh"
+SWEEP_SCRIPT="${SCRIPT_DIR_TEST}/../stats-quality-sweep-issues.sh"
+SIMPLIFICATION_SCRIPT="${SCRIPT_DIR_TEST}/../pulse-simplification-issues.sh"
 REQUEUE_SCRIPT="${SCRIPT_DIR_TEST}/../pulse-simplification-state.sh"
 
 if [[ -t 1 ]]; then
@@ -239,7 +239,7 @@ md_body_section=$(sed -n '/_complexity_scan_build_md_issue_body()/,/^}$/p' "$SIM
 assert_contains \
 	"md-simplification: generator marker present" \
 	"$md_body_section" \
-	"aidevops:generator=function-complexity-gate"
+	"aidevops:generator=agent-doc-simplification-gate"
 
 # Test 4.2: Playbook link
 assert_contains \

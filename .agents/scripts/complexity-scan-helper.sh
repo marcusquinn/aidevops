@@ -29,7 +29,7 @@ set -euo pipefail
 #######################################
 COMPLEXITY_FUNC_LINE_THRESHOLD="${COMPLEXITY_FUNC_LINE_THRESHOLD:-100}"
 COMPLEXITY_FILE_VIOLATION_THRESHOLD="${COMPLEXITY_FILE_VIOLATION_THRESHOLD:-1}"
-COMPLEXITY_MD_MIN_LINES="${COMPLEXITY_MD_MIN_LINES:-50}"
+COMPLEXITY_MD_MIN_LINES="${COMPLEXITY_MD_MIN_LINES:-500}"
 COMPLEXITY_NESTING_DEPTH_THRESHOLD="${COMPLEXITY_NESTING_DEPTH_THRESHOLD:-8}"
 SWEEP_STALL_HOURS="${SWEEP_STALL_HOURS:-6}"
 SWEEP_LAST_RUN_FILE="${HOME}/.aidevops/logs/complexity-llm-sweep-last-run"
@@ -436,8 +436,6 @@ _scan_md_files() {
 		[[ -n "$file_path" ]] || continue
 		echo "$file_path" | grep -q '^\.agents/' || continue
 		echo "$file_path" | grep -qE "$_EXCLUDED_DIRS|$_EXCLUDED_FILES|$_PROTECTED_PATTERN" && continue
-		[[ "$status" == "unchanged" ]] && continue
-
 		local full_path="${repo_path}/${file_path}"
 		local line_count=0
 		line_count=$(wc -l <"$full_path" 2>/dev/null | tr -d ' ') || line_count=0
@@ -1029,7 +1027,7 @@ OUTPUT FORMAT (pipe)
 ENVIRONMENT
   COMPLEXITY_FUNC_LINE_THRESHOLD     Function length threshold (default: 100)
   COMPLEXITY_FILE_VIOLATION_THRESHOLD Min violations per file (default: 1)
-  COMPLEXITY_MD_MIN_LINES            Min lines for .md files (default: 50)
+  COMPLEXITY_MD_MIN_LINES            Min lines for .md files (default: 500)
   COMPLEXITY_NESTING_DEPTH_THRESHOLD Max nesting depth (default: 8)
   SWEEP_STALL_HOURS                  Hours before LLM sweep triggers (default: 6)
 HELP
