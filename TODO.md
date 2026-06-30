@@ -4390,4 +4390,3 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18043 Simplify pulse-check queue scanner #enhancement ref:GH#26118
 
-- [x] t18044 Fix pulse productivity dispatch gaps #bug ref:GH#26133 pr:#26135 completed:2026-06-30

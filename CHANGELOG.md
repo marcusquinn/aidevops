@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.4] - 2026-07-01
+
+### Changed
+
+- Maintenance: mark t18044 complete (pr:#26135 completed:2026-06-30) [skip ci]
+- fix pulse productivity dispatch gaps (#26135)
+
 ## [3.31.3] - 2026-07-01
 
 ### Changed
