@@ -296,7 +296,7 @@ _apply_finding() {
 	source "$GH_WRAPPERS"
 
 	local body_file=""
-	body_file=$(mktemp "${TMPDIR:-/tmp}/pulse-check-issue.XXXXXX.md") || return 1
+	body_file=$(mktemp "${TMPDIR:-/tmp}/pulse-check-issue.XXXXXX") || return 1
 	_finding_issue_body "$finding_id" "$title" "$severity" "$evidence_markdown" "$recommendation" >"$body_file"
 
 	local labels="auto-dispatch,tier:standard,bug,framework,pulse,self-improvement,source:pulse-check"
