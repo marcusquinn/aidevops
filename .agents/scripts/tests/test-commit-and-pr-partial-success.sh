@@ -213,6 +213,23 @@ gh_pr_comment() {
 }
 export -f gh_pr_comment
 
+# Control variable: set to 1 to simulate post-create origin reconciliation failure.
+SET_ORIGIN_LABEL_FAIL=0
+
+set_origin_label() {
+	local issue_num="${1:-}"
+	local repo_slug="${2:-}"
+	local new_origin="${3:-}"
+	shift 3 || return 1
+	printf 'set_origin_label num=%s repo=%s origin=%s flags=%s\n' \
+		"$issue_num" "$repo_slug" "$new_origin" "$*" >>"$STUB_LOG"
+	if [[ "$SET_ORIGIN_LABEL_FAIL" -eq 1 ]]; then
+		return 1
+	fi
+	return 0
+}
+export -f set_origin_label
+
 # =============================================================================
 # Test 1: _create_pr partial-success recovery
 # gh_create_pr returns non-zero, but _gh_recover_pr_if_exists finds the PR.
@@ -245,6 +262,13 @@ if grep -q "recovering (t2767)" "$STUB_LOG" 2>/dev/null; then
 else
 	fail "partial-success recovery: recovery log message emitted" \
 		"expected '[INFO] ... recovering (t2767)' in log; got: $(cat "$STUB_LOG" 2>/dev/null)"
+fi
+
+if grep -q "set_origin_label num=999 repo=owner/repo origin=worker flags=--pr" "$STUB_LOG" 2>/dev/null; then
+	pass "partial-success recovery: origin label reconciled on recovered PR"
+else
+	fail "partial-success recovery: origin label reconciled on recovered PR" \
+		"expected set_origin_label for PR 999; got: $(cat "$STUB_LOG" 2>/dev/null)"
 fi
 
 # =============================================================================
@@ -300,6 +324,43 @@ else
 	fail "normal success: _create_pr outputs correct PR number (888)" \
 		"got '${success_pr_number}'"
 fi
+
+if grep -q "set_origin_label num=888 repo=owner/repo origin=worker flags=--pr" "$STUB_LOG" 2>/dev/null; then
+	pass "normal success: origin label reconciled on created PR"
+else
+	fail "normal success: origin label reconciled on created PR" \
+		"expected set_origin_label for PR 888; got: $(cat "$STUB_LOG" 2>/dev/null)"
+fi
+
+# =============================================================================
+# Test 3a: _create_pr fails closed when origin label reconciliation fails
+# Expected: PR creation does not report success when provenance cannot be verified.
+# =============================================================================
+: >"$STUB_LOG"
+GH_CREATE_PR_FAIL=0
+GH_RECOVER_PR_URL=""
+GH_CREATE_PR_URL="https://github.com/owner/repo/pull/889"
+GH_CREATE_PR_STDERR_LOG=""
+SET_ORIGIN_LABEL_FAIL=1
+
+label_fail_rc=0
+_create_pr "owner/repo" "t2767: test" "body text" "origin:worker" >/dev/null 2>&1 || label_fail_rc=$?
+
+if [[ "$label_fail_rc" -ne 0 ]]; then
+	pass "origin reconciliation failure: _create_pr fails closed"
+else
+	fail "origin reconciliation failure: _create_pr fails closed" \
+		"expected non-zero exit; stub log: $(cat "$STUB_LOG" 2>/dev/null)"
+fi
+
+if grep -q "Could not verify origin:worker on PR #889" "$STUB_LOG" 2>/dev/null; then
+	pass "origin reconciliation failure: error message emitted"
+else
+	fail "origin reconciliation failure: error message emitted" \
+		"expected verification failure in log; got: $(cat "$STUB_LOG" 2>/dev/null)"
+fi
+
+SET_ORIGIN_LABEL_FAIL=0
 
 # =============================================================================
 # Test 3b: _create_pr REST fallback logs do not pollute machine stdout

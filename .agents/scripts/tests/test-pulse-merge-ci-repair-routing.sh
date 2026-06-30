@@ -172,6 +172,7 @@ define_process_helper() {
 	ROUTE_LABELS=""
 	DISMISS_CALLS=0
 	PR_REQUIRED_CHECKS_RC=1
+	REBASE_RETRY_RC=1
 	REFRESHED_MERGEABLE="UNKNOWN"
 
 	_resolve_pr_mergeable_status() { local pr_number="$1" repo_slug="$2" mergeable="$3"; [[ -n "$pr_number$repo_slug$mergeable" ]]; RESOLVE_CALLS=$((RESOLVE_CALLS + 1)); return 0; }
@@ -182,7 +183,7 @@ define_process_helper() {
 	_check_required_checks_passing() { local repo_slug="$1" pr_number="$2"; [[ -n "$repo_slug$pr_number" ]]; return 1; }
 	_is_trusted_dependabot_update_pr() { local pr_number="$1" repo_slug="$2" pr_author="$3"; [[ -n "$pr_number$repo_slug$pr_author" ]]; return 1; }
 	_trusted_dependabot_non_review_checks_green() { local pr_number="$1" repo_slug="$2" pr_obj="$3"; [[ -n "$pr_number$repo_slug$pr_obj" ]]; return 1; }
-	_attempt_pr_ci_rebase_retry() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; return 1; }
+	_attempt_pr_ci_rebase_retry() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; return "$REBASE_RETRY_RC"; }
 	_route_pr_to_fix_worker() { local pr_number="$1" repo_slug="$2" linked_issue="$3" mode="$4" pr_labels="${5:-}"; ROUTE_CALLS=$((ROUTE_CALLS + 1)); ROUTE_ARGS="${pr_number}|${repo_slug}|${linked_issue}|${mode}"; ROUTE_LABELS="$pr_labels"; return 0; }
 	_pulse_merge_dismiss_coderabbit_nits() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; DISMISS_CALLS=$((DISMISS_CALLS + 1)); if [[ "${DISMISS_NITS_RC:-0}" -eq 0 ]]; then return 0; fi; return 1; }
 	_attempt_pr_update_branch() { return 1; }
@@ -233,6 +234,27 @@ test_red_pr_passes_gates_before_repair_route() {
 		print_result "red PR routes one CI repair after gates pass" 1 "route_calls=${ROUTE_CALLS}, route_args=${ROUTE_ARGS}"
 	else
 		print_result "red PR passes gates then routes exactly one CI repair" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_rebase_success_defers_ci_repair_route() {
+	setup_test_env
+	define_process_helper || { print_result "defines process helper for rebase deferral" 1 "could not extract _process_single_ready_pr"; teardown_test_env; return 0; }
+
+	local rc=0
+	REBASE_RETRY_RC=0
+	_process_single_ready_pr "owner/repo" "$PR_OBJECT" || rc=$?
+
+	if [[ "$rc" -ne 1 ]]; then
+		print_result "successful CI-drift rebase defers CI repair routing" 1 "Expected skip return 1, got ${rc}"
+	elif [[ "$GATE_CALLS" -ne 1 ]]; then
+		print_result "successful CI-drift rebase defers CI repair routing" 1 "gate_calls=${GATE_CALLS}"
+	elif [[ "$ROUTE_CALLS" -ne 0 ]]; then
+		print_result "successful CI-drift rebase defers CI repair routing" 1 "route_calls=${ROUTE_CALLS}, route_args=${ROUTE_ARGS}"
+	else
+		print_result "successful CI-drift rebase defers CI repair routing" 0
 	fi
 	teardown_test_env
 	return 0
@@ -431,6 +453,7 @@ test_ci_feedback_emits_advisory_failure_when_required_clean() {
 
 main() {
 	test_red_pr_passes_gates_before_repair_route
+	test_rebase_success_defers_ci_repair_route
 	test_changes_requested_unknown_routes_before_mergeable_skip
 	test_coderabbit_nits_ok_dismissed_once_before_late_gate
 	test_changes_requested_explicit_empty_labels_skip_refetch
