@@ -68,7 +68,7 @@ def is_markdown_table_separator_row(cells: list[str]) -> bool:
     if not cells:
         return False
     separator_cells = [html.unescape(cell) for cell in cells]
-    return all(re.fullmatch(r":?-{3,}:?", cell) for cell in separator_cells)
+    return all(re.fullmatch(r":?-+:?", cell) for cell in separator_cells)
 
 
 def split_markdown_table_row(line: str) -> list[str]:
