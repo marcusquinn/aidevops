@@ -173,6 +173,147 @@ _branch_has_active_interactive_claim() {
 	return 1
 }
 
+_skip_cleanup_emit() {
+	local wt_branch="$1"
+	local wt_path="$2"
+	local reason_message="$3"
+	local audit_reason="$4"
+
+	echo -e "  ${RED}$wt_branch${NC} (${reason_message} - skipping)"
+	echo "    $wt_path"
+	printf '\n'
+	log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "$audit_reason" "$_WT_CLEAN_MODE_SKIPPED"
+	return 0
+}
+
+_skip_cleanup_for_current_worktree() {
+	local wt_path="$1"
+	local wt_branch="$2"
+	local current_dir=""
+
+	# GH#22154: Never remove the worktree that is executing cleanup.
+	# A caller may run `worktree-helper.sh clean --auto` from a linked worktree
+	# whose branch is already merged. Without this guard, the cleanup pass can
+	# trash the caller's current directory mid-command, producing getcwd failures
+	# and cascading "script not found" errors in the next gate.
+	current_dir=$(pwd -P 2>/dev/null || true)
+	if [[ -n "$current_dir" ]]; then
+		case "$current_dir" in
+		"$wt_path" | "$wt_path"/*)
+			_skip_cleanup_emit "$wt_branch" "$wt_path" "current working tree" "current-worktree"
+			return 0
+			;;
+		esac
+	fi
+	return 1
+}
+
+_skip_cleanup_for_active_claim() {
+	local wt_path="$1"
+	local wt_branch="$2"
+
+	# t2916/GH#21074: Active interactive-session claim check.
+	# Consults the same canonical claim-stamp directory the dispatch-dedup
+	# gate uses. Placed BEFORE the 4h grace cliff so claim-stamp wins on
+	# stale work too — a >4h interactive session is still legitimately
+	# owned, but the grace cliff would otherwise let cleanup through.
+	if _branch_has_active_interactive_claim "$wt_path" "$wt_branch"; then
+		_skip_cleanup_emit "$wt_branch" "$wt_path" "active interactive claim" "active-claim"
+		return 0
+	fi
+	return 1
+}
+
+_skip_cleanup_for_owner() {
+	local wt_path="$1"
+	local wt_branch="$2"
+	local owner_info=""
+	local owner_pid=""
+	local owner_dead_seen_at=""
+
+	# Ownership check (t189): skip if owned by another active session
+	if ! is_worktree_owned_by_others "$wt_path"; then
+		return 1
+	fi
+
+	owner_info=$(check_worktree_owner "$wt_path")
+	owner_pid="${owner_info%%|*}"
+	if declare -F worktree_owner_dead_seen_at >/dev/null 2>&1; then
+		owner_dead_seen_at=$(worktree_owner_dead_seen_at "$wt_path")
+	fi
+	if [[ -n "$owner_dead_seen_at" ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
+		_skip_cleanup_emit "$wt_branch" "$wt_path" "dead owner PID $owner_pid in cooldown since $owner_dead_seen_at" "owner-pid-dead"
+		return 0
+	fi
+	_skip_cleanup_emit "$wt_branch" "$wt_path" "owned by active session PID $owner_pid" "owned-skip"
+	return 0
+}
+
+_skip_cleanup_for_grace_period() {
+	local wt_path="$1"
+	local wt_branch="$2"
+	local grace_hours=""
+
+	# GH#5694 Safety check A: Grace period
+	# Skip worktrees younger than WORKTREE_CLEAN_GRACE_HOURS (default 4h).
+	# A freshly created worktree with 0 commits looks "merged" to git branch --merged.
+	# The grace period prevents deletion of in-progress work that hasn't been committed yet.
+	if worktree_is_in_grace_period "$wt_path"; then
+		grace_hours=$(get_validated_grace_hours)
+		_skip_cleanup_emit "$wt_branch" "$wt_path" "within grace period ${grace_hours}h" "grace-period"
+		return 0
+	fi
+	return 1
+}
+
+_skip_cleanup_for_branch_state() {
+	local wt_path="$1"
+	local wt_branch="$2"
+	local default_br="$3"
+	local open_pr_list="$4"
+	local force_merged_flag="$5"
+
+	# GH#5694 Safety check B: Open PR. Applies even with --force-merged.
+	if _clean_branch_list_contains_exact "$wt_branch" "$open_pr_list"; then
+		_skip_cleanup_emit "$wt_branch" "$wt_path" "has open PR" "open-pr"
+		return 0
+	fi
+
+	# t3545/GH#22606 Safety check C-pre: Empty branch (zero commits ahead).
+	# On the non-force-merged path this is pre-work, not merged work, and must
+	# be preserved even when the worktree is clean. With --force-merged, fall
+	# through to the legacy dirty zero-commit guard and later classification.
+	if [[ "$force_merged_flag" != "true" ]] && branch_has_zero_commits_ahead "$wt_branch" "$default_br"; then
+		_skip_cleanup_emit "$wt_branch" "$wt_path" "0 commits ahead = empty/pre-work branch" "empty-branch"
+		return 0
+	fi
+	return 1
+}
+
+_skip_cleanup_for_dirty_state() {
+	local wt_path="$1"
+	local wt_branch="$2"
+	local default_br="$3"
+	local force_merged_flag="$4"
+
+	# GH#5694 Safety check C: Zero-commit + dirty (legacy — kept for the
+	# --force-merged path; the empty-branch check above already covers the
+	# non-force path). Retained so the audit-log reason "zero-commit-dirty"
+	# remains a valid emission and existing diagnostics stay readable.
+	if worktree_has_changes "$wt_path" && branch_has_zero_commits_ahead "$wt_branch" "$default_br"; then
+		_skip_cleanup_emit "$wt_branch" "$wt_path" "0 commits ahead + dirty files = in-progress, not merged" "zero-commit-dirty"
+		return 0
+	fi
+
+	# Dirty check: behaviour depends on --force-merged flag.
+	# force_merged=true: dirty state is abandoned WIP, safe to force-remove.
+	if worktree_has_changes "$wt_path" && [[ "$force_merged_flag" != "true" ]]; then
+		_skip_cleanup_emit "$wt_branch" "$wt_path" "has uncommitted changes" "dirty-skip"
+		return 0
+	fi
+	return 1
+}
+
 # Check if a worktree should be skipped during cleanup due to safety constraints.
 # Returns 0 (true) if worktree should be skipped, 1 (false) if safe to remove.
 # Args: $1=worktree_path, $2=worktree_branch, $3=default_branch, $4=open_pr_branches, $5=force_merged
@@ -184,143 +325,12 @@ should_skip_cleanup() {
 	local open_pr_list="$4"
 	local force_merged_flag="$5"
 
-	# GH#22154: Never remove the worktree that is executing cleanup.
-	# A caller may run `worktree-helper.sh clean --auto` from a linked worktree
-	# whose branch is already merged. Without this guard, the cleanup pass can
-	# trash the caller's current directory mid-command, producing getcwd failures
-	# and cascading "script not found" errors in the next gate.
-	local current_dir=""
-	current_dir=$(pwd -P 2>/dev/null || true)
-	if [[ -n "$current_dir" ]]; then
-		case "$current_dir" in
-		"$wt_path" | "$wt_path"/*)
-			echo -e "  ${RED}$wt_branch${NC} (current working tree - skipping)"
-			echo "    $wt_path"
-			printf '\n'
-			# t2976: audit log — cleanup skipped, caller is inside this worktree
-			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "current-worktree" "$_WT_CLEAN_MODE_SKIPPED"
-			return 0
-			;;
-		esac
-	fi
-
-	# t2916/GH#21074: Active interactive-session claim check.
-	# Consults the same canonical claim-stamp directory the dispatch-dedup
-	# gate uses. Placed BEFORE the 4h grace cliff so claim-stamp wins on
-	# stale work too — a >4h interactive session is still legitimately
-	# owned, but the grace cliff would otherwise let cleanup through.
-	if _branch_has_active_interactive_claim "$wt_path" "$wt_branch"; then
-		echo -e "  ${RED}$wt_branch${NC} (active interactive claim - skipping)"
-		echo "    $wt_path"
-		printf '\n'
-		# t2976: audit log — cleanup skipped, interactive claim active
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "active-claim" "$_WT_CLEAN_MODE_SKIPPED"
-		return 0
-	fi
-
-	# Ownership check (t189): skip if owned by another active session
-	if is_worktree_owned_by_others "$wt_path"; then
-		local owner_info
-		owner_info=$(check_worktree_owner "$wt_path")
-		local owner_pid
-		owner_pid="${owner_info%%|*}"
-		local owner_dead_seen_at=""
-		if declare -F worktree_owner_dead_seen_at >/dev/null 2>&1; then
-			owner_dead_seen_at=$(worktree_owner_dead_seen_at "$wt_path")
-		fi
-		if [[ -n "$owner_dead_seen_at" ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
-			echo -e "  ${RED}$wt_branch${NC} (dead owner PID $owner_pid in cooldown since $owner_dead_seen_at - skipping)"
-			echo "    $wt_path"
-			printf '\n'
-			# GH#23024: audit log — cleanup skipped, stale owner is quarantined
-			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "owner-pid-dead" "$_WT_CLEAN_MODE_SKIPPED"
-			return 0
-		fi
-		echo -e "  ${RED}$wt_branch${NC} (owned by active session PID $owner_pid - skipping)"
-		echo "    $wt_path"
-		printf '\n'
-		# t2976: audit log — cleanup skipped, registry owner is alive
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "owned-skip" "$_WT_CLEAN_MODE_SKIPPED"
-		return 0
-	fi
-
-	# GH#5694 Safety check A: Grace period
-	# Skip worktrees younger than WORKTREE_CLEAN_GRACE_HOURS (default 4h).
-	# A freshly created worktree with 0 commits looks "merged" to git branch --merged.
-	# The grace period prevents deletion of in-progress work that hasn't been committed yet.
-	if worktree_is_in_grace_period "$wt_path"; then
-		local grace_hours
-		grace_hours=$(get_validated_grace_hours)
-		echo -e "  ${RED}$wt_branch${NC} (within grace period ${grace_hours}h - skipping)"
-		echo "    $wt_path"
-		printf '\n'
-		# t2976: audit log — cleanup skipped, within grace period
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "grace-period" "$_WT_CLEAN_MODE_SKIPPED"
-		return 0
-	fi
-
-	# GH#5694 Safety check B: Open PR
-	# Skip worktrees whose branch has an open PR — active work in progress.
-	# This applies even with --force-merged: an open PR means the work is not done.
-	if _clean_branch_list_contains_exact "$wt_branch" "$open_pr_list"; then
-		echo -e "  ${RED}$wt_branch${NC} (has open PR - skipping)"
-		echo "    $wt_path"
-		printf '\n'
-		# t2976: audit log — cleanup skipped, open PR exists
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "open-pr" "$_WT_CLEAN_MODE_SKIPPED"
-		return 0
-	fi
-
-	# t3545/GH#22606 Safety check C-pre: Empty branch (zero commits ahead).
-	# A branch with 0 commits ahead of default IS pre-work, not merged work.
-	# git branch --merged matches 0-commit branches because they share HEAD
-	# with the default branch — semantically wrong: a freshly-created worktree
-	# may be mid-edit but uncommitted, or about to receive its first commit.
-	# Permanent removal of an empty branch can destroy uncommitted edits with
-	# NO recovery path (mode=permanent, branch deleted, no trash backing).
-	#
-	# Skip unconditionally on the non-force-merged path — covers both clean
-	# (model not yet edited) and dirty (model edited but didn't commit). This
-	# is a superset of the legacy zero-commit-dirty check below.
-	#
-	# When --force-merged is set the user has explicitly opted into removing
-	# even questionable worktrees, so we fall through to the existing
-	# dirty-check + per-merge-classification handling rather than blocking.
-	if [[ "$force_merged_flag" != "true" ]] && branch_has_zero_commits_ahead "$wt_branch" "$default_br"; then
-		echo -e "  ${RED}$wt_branch${NC} (0 commits ahead = empty/pre-work branch - skipping)"
-		echo "    $wt_path"
-		printf '\n'
-		# t2976: audit log — cleanup skipped, empty-branch safety check (t3545)
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "empty-branch" "$_WT_CLEAN_MODE_SKIPPED"
-		return 0
-	fi
-
-	# GH#5694 Safety check C: Zero-commit + dirty (legacy — kept for the
-	# --force-merged path; the empty-branch check above already covers the
-	# non-force path). Retained so the audit-log reason "zero-commit-dirty"
-	# remains a valid emission and existing diagnostics stay readable.
-	if worktree_has_changes "$wt_path" && branch_has_zero_commits_ahead "$wt_branch" "$default_br"; then
-		echo -e "  ${RED}$wt_branch${NC} (0 commits ahead + dirty files = in-progress, not merged - skipping)"
-		echo "    $wt_path"
-		printf '\n'
-		# t2976: audit log — cleanup skipped, zero-commit+dirty safety check
-		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "zero-commit-dirty" "$_WT_CLEAN_MODE_SKIPPED"
-		return 0
-	fi
-
-	# Dirty check: behaviour depends on --force-merged flag
-	# Only reached if the three safety checks above did not trigger.
-	if worktree_has_changes "$wt_path"; then
-		if [[ "$force_merged_flag" != "true" ]]; then
-			echo -e "  ${RED}$wt_branch${NC} (has uncommitted changes - skipping)"
-			echo "    $wt_path"
-			printf '\n'
-			# t2976: audit log — cleanup skipped, uncommitted changes present
-			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "dirty-skip" "$_WT_CLEAN_MODE_SKIPPED"
-			return 0
-		fi
-		# force_merged=true: dirty state is abandoned WIP, safe to force-remove
-	fi
+	_skip_cleanup_for_current_worktree "$wt_path" "$wt_branch" && return 0
+	_skip_cleanup_for_active_claim "$wt_path" "$wt_branch" && return 0
+	_skip_cleanup_for_owner "$wt_path" "$wt_branch" && return 0
+	_skip_cleanup_for_grace_period "$wt_path" "$wt_branch" && return 0
+	_skip_cleanup_for_branch_state "$wt_path" "$wt_branch" "$default_br" "$open_pr_list" "$force_merged_flag" && return 0
+	_skip_cleanup_for_dirty_state "$wt_path" "$wt_branch" "$default_br" "$force_merged_flag" && return 0
 
 	# All safety checks passed
 	return 1
