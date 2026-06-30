@@ -356,7 +356,7 @@ _build_quality_debt_labels() {
 	# adds the real assignee at launch time; pre-assigning the repo owner here
 	# collapses backlog ownership and execution claim into the same field,
 	# which makes the pulse skip fresh quality-debt work.
-	local label_args="quality-debt,source:review-feedback,status:available"
+	local label_args="quality-debt,source:review-feedback,auto-dispatch,status:available,origin:worker,tier:standard"
 	[[ -n "$priority_label" ]] && label_args="${label_args},${priority_label}"
 	if _quality_debt_security_related "$finding_details"; then
 		label_args="${label_args},security"

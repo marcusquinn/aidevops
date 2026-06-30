@@ -84,16 +84,21 @@ _dep_graph_process_issue_json() {
 	local task_id_in_title
 	task_id_in_title=$(printf '%s' "$title" | grep -oE '^t[0-9]+(\.[0-9a-z]+)*:' | sed 's/^t//;s/:$//' || true)
 
-	# Extract blocked-by task IDs and issue numbers from body. Two-step
+	# Extract blocked-by task IDs and issue numbers from body and labels. Two-step
 	# parse tolerates both the markdown format emitted by
 	# brief-template.md (`**Blocked by:** ` + backtick-quoted IDs) and
 	# the bare TODO.md format (`blocked-by:tNNN,tMMM`). BSD/GNU portable
 	# via POSIX `[^[:cntrl:]]` (see t1983 / t2015 for history).
 	# Subtask decimal suffixes (t325.1) are preserved (GH#19165).
-	local blocker_lines="" blocker_tids="" blocker_nums=""
+	local blocker_lines="" body_blocker_tids="" body_blocker_nums="" label_names="" label_blocker_tids="" label_blocker_nums="" blocker_tids="" blocker_nums=""
 	blocker_lines=$(printf '%s' "$body" | grep -ioE '[Bb]locked[- ][Bb]y[^[:cntrl:]]*' || true)
-	blocker_tids=$(printf '%s' "$blocker_lines" | grep -oE 't[0-9]+(\.[0-9a-z]+)*' | sed 's/^t//' || true)
-	blocker_nums=$(printf '%s' "$blocker_lines" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' || true)
+	body_blocker_tids=$(printf '%s' "$blocker_lines" | grep -oE 't[0-9]+(\.[0-9a-z]+)*' | sed 's/^t//' || true)
+	body_blocker_nums=$(printf '%s' "$blocker_lines" | grep -oE '#[0-9]+' | grep -oE '[0-9]+' || true)
+	label_names=$(printf '%s' "$issue_json" | jq -r '.labels[]?.name // empty' 2>/dev/null) || label_names=""
+	label_blocker_tids=$(printf '%s' "$label_names" | grep -oE '^blocked-by:t[0-9]+(\.[0-9a-z]+)*$' | sed 's/^blocked-by:t//' || true)
+	label_blocker_nums=$(printf '%s' "$label_names" | grep -oE '^blocked-by:#[0-9]+$' | grep -oE '[0-9]+' || true)
+	blocker_tids=$(printf '%s\n%s\n' "$body_blocker_tids" "$label_blocker_tids" | grep -v '^$' | sort -u || true)
+	blocker_nums=$(printf '%s\n%s\n' "$body_blocker_nums" "$label_blocker_nums" | grep -v '^$' | sort -u || true)
 
 	local tid_arr="" num_arr=""
 	tid_arr=$(printf '%s' "$blocker_tids" | jq -Rsc 'split("\n") | map(select(length > 0))' 2>/dev/null) || tid_arr='[]'
@@ -176,19 +181,26 @@ _dep_graph_build_repo_data() {
 			# Extract tNNN or tNNN.X task IDs from blocked-by text (GH#19165)
 			([$blocker_text | scan("t([0-9]+(\\.[0-9a-z]+)*)") | .[0]] | unique) as $blocker_tids |
 
+
 			# Extract #NNN issue numbers from blocked-by text (capture group -> number only)
-			([$blocker_text | scan("#([0-9]+)") | .[0]] | unique) as $blocker_nums |
+			([$blocker_text | scan("#([0-9]+)") | .[0]] | unique) as $body_blocker_nums |
+
+			# Extract blocked-by labels too so stale label-only blockers can be retired.
+			([$issue.labels[]?.name // "" | select(test("^blocked-by:t[0-9]+(\\.[0-9a-z]+)*$")) | sub("^blocked-by:t"; "")] | unique) as $label_blocker_tids |
+			([$issue.labels[]?.name // "" | select(test("^blocked-by:#[0-9]+$")) | sub("^blocked-by:#"; "")] | unique) as $label_blocker_nums |
+			(($blocker_tids + $label_blocker_tids) | unique) as $all_blocker_tids |
+			(($body_blocker_nums + $label_blocker_nums) | unique) as $blocker_nums |
 
 			# Defer/hold marker detection (mirrors _body_has_defer_marker shell patterns)
 			($body | test("(?i)defer until|do[- ]not[- ]dispatch|on[- ]hold|HUMAN_UNBLOCK_REQUIRED|hold for |paused[[:space:]:]")) as $has_defer |
 
-			(($blocker_tids | length) > 0 or ($blocker_nums | length) > 0) as $has_blockers |
+			(($all_blocker_tids | length) > 0 or ($blocker_nums | length) > 0) as $has_blockers |
 
 			.open_nums += [$num]
 			| (if $tid != "" then .task_to_issue[$tid] = $num else . end)
 			| (if $has_blockers
 			   then .blocked_by_map[($num | tostring)] = {
-			       "task_ids": $blocker_tids,
+			       "task_ids": $all_blocker_tids,
 			       "issue_nums": $blocker_nums,
 			       "has_defer_marker": $has_defer
 			   }
@@ -429,6 +441,42 @@ _refresh_all_blockers_resolved() {
 }
 
 #######################################
+# Remove stale direct issue-number blocked-by labels after all blockers resolve.
+#
+# Arguments:
+#   $1 - slug
+#   $2 - issue_num
+#   $3 - entry_json (blocked_by cache entry)
+#   $4 - current_labels (comma-separated label names)
+#
+# Exit codes:
+#   0 - at least one stale label was removed
+#   1 - no labels removed
+#######################################
+_refresh_cleanup_resolved_blocker_labels() {
+	local slug="$1"
+	local issue_num="$2"
+	local entry_json="$3"
+	local current_labels="$4"
+
+	local removed_count=0
+	local blocker_nums="" blocker_num="" stale_label=""
+	blocker_nums=$(printf '%s' "$entry_json" | jq -r '.issue_nums[]' 2>/dev/null) || blocker_nums=""
+	while IFS= read -r blocker_num; do
+		[[ "$blocker_num" =~ ^[0-9]+$ ]] || continue
+		stale_label="blocked-by:#${blocker_num}"
+		[[ ",${current_labels}," == *",${stale_label},"* ]] || continue
+		if gh issue edit "$issue_num" --repo "$slug" --remove-label "$stale_label" >/dev/null 2>&1; then
+			removed_count=$((removed_count + 1))
+			echo "[pulse-wrapper] dep-graph-cache: removed stale ${stale_label} from #${issue_num} in ${slug} — blocker resolved (GH#25922)" >>"$LOGFILE"
+		fi
+	done <<<"$blocker_nums"
+
+	[[ "$removed_count" -gt 0 ]] && return 0
+	return 1
+}
+
+#######################################
 # Attempt to auto-unblock a single issue (t2031 refactor helper).
 #
 # Consults the non-dep defer gate and only unblocks when both body and
@@ -454,7 +502,8 @@ _refresh_try_unblock_issue() {
 	local current_labels
 	current_labels=$(gh issue view "$issue_num" --repo "$slug" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""
-	[[ ",${current_labels}," == *",status:blocked,"* ]] || return 1
+	local has_blocked_status="false"
+	[[ ",${current_labels}," == *",status:blocked,"* ]] && has_blocked_status="true"
 
 	# Cached defer flag — either inside the blocked_by entry or in the
 	# repo-level defer_flags map. Either "true" triggers defer.
@@ -469,6 +518,16 @@ _refresh_try_unblock_issue() {
 		echo "[pulse-wrapper] dep-graph-cache: NOT unblocking #${issue_num} in ${slug} — non-dep block detected (${skip_reason}) (t2031)" >>"$LOGFILE"
 		return 1
 	fi
+
+	local changed="false"
+	if _refresh_cleanup_resolved_blocker_labels "$slug" "$issue_num" "$entry_json" "$current_labels"; then
+		changed="true"
+	fi
+
+	[[ "$has_blocked_status" == "true" ]] || {
+		[[ "$changed" == "true" ]] && return 0
+		return 1
+	}
 
 	# t2033: atomic transition — clears all sibling status:* labels, not just status:blocked
 	set_issue_status "$issue_num" "$slug" "available" 2>/dev/null || true
