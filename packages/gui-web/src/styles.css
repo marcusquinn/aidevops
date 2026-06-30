@@ -2221,6 +2221,146 @@ code {
   margin-bottom: 16px;
 }
 
+.pulse-workers-surface {
+  display: grid;
+  gap: 16px;
+}
+
+.pulse-hero {
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--accent) 18%, transparent), transparent 64%),
+    var(--surface-elevated);
+}
+
+.pulse-scope-strip,
+.pulse-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pulse-scope-strip span,
+.pulse-filter-row button {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  padding: 7px 10px;
+}
+
+.pulse-scope-strip strong {
+  color: var(--accent);
+  margin-right: 6px;
+  text-transform: uppercase;
+}
+
+.pulse-kpi-grid,
+.pulse-layout {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+
+.pulse-kpi-card {
+  display: grid;
+  gap: 8px;
+}
+
+.pulse-kpi-card span,
+.pulse-chart-panel p,
+.pulse-drilldown-panel p,
+.pulse-actions-panel p {
+  color: var(--text-secondary);
+}
+
+.pulse-kpi-card strong {
+  color: var(--accent);
+  font-size: clamp(2rem, 5vw, 3rem);
+  letter-spacing: -0.08em;
+  line-height: 1;
+}
+
+.pulse-attention-panel,
+.pulse-chart-panel,
+.pulse-activity-panel,
+.pulse-drilldown-panel,
+.pulse-actions-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.pulse-attention-panel ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.pulse-chart-placeholder {
+  align-items: end;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  min-height: 180px;
+  padding: 14px;
+}
+
+.pulse-chart-placeholder span {
+  align-items: end;
+  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  border: 1px solid var(--border-accent);
+  border-radius: 12px 12px 4px 4px;
+  color: var(--accent-strong);
+  display: flex;
+  font-size: 0.75rem;
+  font-weight: 900;
+  justify-content: center;
+  min-height: calc(40px + var(--bar-index, 1) * 18px);
+  padding: 8px 4px;
+  text-transform: uppercase;
+}
+
+.pulse-chart-placeholder span:nth-child(2) { --bar-index: 3; }
+.pulse-chart-placeholder span:nth-child(3) { --bar-index: 5; }
+.pulse-chart-placeholder span:nth-child(4) { --bar-index: 2; }
+.pulse-chart-placeholder span:nth-child(5) { --bar-index: 4; }
+.pulse-chart-placeholder span:nth-child(6) { --bar-index: 3; }
+
+.pulse-activity-table {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  display: grid;
+  overflow: hidden;
+}
+
+.pulse-activity-row {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 0.7fr 1fr 1.4fr 1fr 1.2fr 1.2fr;
+  padding: 12px 14px;
+}
+
+.pulse-activity-row + .pulse-activity-row {
+  border-top: 1px solid var(--border);
+}
+
+.pulse-activity-header {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.pulse-actions-panel button,
+.pulse-attention-panel button {
+  justify-self: start;
+}
+
 .apps-surface .compact-notice {
   margin-bottom: 0;
 }
@@ -3666,8 +3806,23 @@ button.managed-toggle:focus-visible {
   .data-row,
   .editable-row,
   .managed-app-details,
+  .pulse-activity-row,
   .provider-account-list li {
     grid-template-columns: 1fr;
+  }
+
+  .pulse-activity-header {
+    display: none;
+  }
+
+  .pulse-activity-row {
+    background: var(--surface-elevated);
+  }
+
+  .pulse-activity-row span::before {
+    color: var(--text-muted);
+    content: attr(data-label) ": ";
+    font-weight: 900;
   }
 
   .pill-tabs {

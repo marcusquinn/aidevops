@@ -45,7 +45,7 @@ describe("dashboard shell", () => {
     expect(html).toContain("AI Sessions");
     expect(html).toContain("Channels");
     expect(html).toContain("Direct Messages");
-    expect(html).toContain("Workers");
+    expect(html).toContain("Pulse &amp; Workers");
     expect(html).toContain("Deployments");
     expect(html).toContain("Secrets");
     expect(html).toContain("AI Providers");
@@ -130,6 +130,21 @@ describe("dashboard shell", () => {
     expect(html).toContain("ready for Tambo cards");
     expect(html).toContain("MessageScroller-compatible transcript");
     expect(html).toContain("New, rename, pin, archive, delete, share, and export");
+  });
+
+  test("renders Pulse and Workers observability shell with read-only fixture hierarchy", () => {
+    const html = renderWorkspaceSurface(workersItem, "workers");
+
+    expect(html).toContain("Pulse &amp; Workers");
+    expect(html).toContain("Last 24h · all managed repos");
+    expect(html).toContain("Needs attention");
+    expect(html).toContain("Health trend placeholder");
+    expect(html).toContain("Provider / model");
+    expect(html).toContain("Community bug report");
+    expect(html).toContain("Mobile activity cards");
+    expect(html).toContain("Detail drawer becomes a full-screen sheet on small screens");
+    expect(html).toContain("Open terminal output (planned)");
+    expect(html).toContain("Create systemic fix (planned)");
   });
 
   test("renders channel and DM conversation surfaces from the unified model", () => {
@@ -431,6 +446,13 @@ const directMessagesItem: SurfaceNavItem = {
   icon: "message",
   id: "directMessages",
   label: "Direct Messages",
+};
+
+const workersItem: SurfaceNavItem = {
+  description: "Pulse, worker sessions, outcomes, and resources",
+  icon: "activity",
+  id: "workers",
+  label: "Pulse & Workers",
 };
 
 const managedAppFixture: GuiManagedAppSummary = {

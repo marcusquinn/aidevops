@@ -385,7 +385,7 @@ function SurfaceContent({ activeItem, activeSurface, fileRoot, openSurface, stat
     aiSessions: <AiSessionsSurface selectedRepoIndex={0} status={status} />,
     channels: <CommsConversationSurface mode="channels" />,
     directMessages: <CommsConversationSurface mode="directMessages" />,
-    workers: <PlannedSurface label={text.workers} detail={text.workersIntro} />,
+    workers: <PulseWorkersSurface />,
     repos: <PlannedSurface label={text.repos} detail={text.reposIntro} />,
     deployments: <PlannedSurface label={text.deployments} detail={text.deploymentsIntro} />,
     routines: <PlannedSurface label={text.routines} detail={text.routineDetail} />,
@@ -435,6 +435,118 @@ function SurfaceContent({ activeItem, activeSurface, fileRoot, openSurface, stat
   }
 
   return staticSurfaces[activeSurface] ?? null;
+}
+
+const pulseKpis = [
+  { label: "Healthy worker sessions · last 24h · all managed repos", value: "86%", detail: "18 of 21 sessions ended merged, closed, or intentionally deferred." },
+  { label: "Attention queue · last 24h · all managed repos", value: "5", detail: "Review stalls, API pressure, and CI capacity are grouped before raw events." },
+  { label: "Token and cost sample · last 24h · provider scope", value: "1.8M / $14", detail: "Provider/model totals stay metadata-only and exclude prompt or secret payloads." },
+  { label: "Systemic fixes created · trailing 7d · aidevops repo", value: "9", detail: "Blindspots become worker-ready follow-up tasks when patterns repeat." },
+] as const;
+
+const pulseAttentionItems = [
+  "2 PRs waiting on terminal CI results, not failures",
+  "1 worker loop matched stale-symptom diagnostics",
+  "GitHub API allowance below dispatch comfort threshold",
+] as const;
+
+const pulseFilters = ["Repo", "Event type", "Outcome", "Resource", "Provider / model", "Issue origin", "Author", "Author association"] as const;
+
+const pulseActivityRows = [
+  { time: "09:42", event: "Worker session", scope: "marcusquinn/aidevops #25912", outcome: "In progress", resource: "OpenCode · gpt-5.5", origin: "origin:interactive", actor: "MEMBER" },
+  { time: "09:18", event: "Review gate", scope: "PR #25909", outcome: "Merged", resource: "CI green · 42k tokens", origin: "aidevops-created", actor: "OWNER" },
+  { time: "08:51", event: "Community bug report", scope: "Issue #25876", outcome: "Needs maintainer review", resource: "REST budget ok", origin: "third-party", actor: "CONTRIBUTOR" },
+] as const;
+
+function PulseWorkersSurface(): ReactElement {
+  return (
+    <section className="pulse-workers-surface" aria-label={text.workers}>
+      <div className="planned-card pulse-hero">
+        <p className="eyebrow">Observability shell · fixture-backed · read-only</p>
+        <h2>{text.workers}</h2>
+        <p>{text.workersIntro}</p>
+        <div className="pulse-scope-strip" aria-label="Pulse scope and time range">
+          <span><strong>Period</strong> Last 24h · all managed repos</span>
+          <span><strong>Comparison</strong> Previous 24h baseline</span>
+          <span><strong>Sample</strong> 21 worker sessions · 184 events</span>
+          <span><strong>Trust boundary</strong> Metadata/status only; protected payloads excluded</span>
+        </div>
+      </div>
+      <section className="pulse-kpi-grid" aria-label="Pulse health summary">
+        {pulseKpis.map((kpi) => (
+          <article className="metric-card pulse-kpi-card" key={kpi.label}>
+            <span>{kpi.label}</span>
+            <strong>{kpi.value}</strong>
+            <p>{kpi.detail}</p>
+          </article>
+        ))}
+      </section>
+      <section className="pulse-layout" aria-label="Pulse observability hierarchy">
+        <article className="planned-card pulse-attention-panel">
+          <div className="split-heading">
+            <div>
+              <p className="eyebrow">Exceptions first</p>
+              <h3>Needs attention</h3>
+            </div>
+            <span className="count-pill">planned actions disabled</span>
+          </div>
+          <ul>
+            {pulseAttentionItems.map((item) => <li key={item}>{item}</li>)}
+          </ul>
+          <button disabled title="Action routes need audited worker control APIs" type="button">Create systemic fix (planned)</button>
+        </article>
+        <article className="planned-card pulse-chart-panel">
+          <p className="eyebrow">Trends</p>
+          <h3>Health trend placeholder</h3>
+          <div className="pulse-chart-placeholder" aria-label="Chart placeholder showing health, queue, token, cost, API, and CI capacity trends">
+            <span>health</span><span>queue</span><span>tokens</span><span>cost</span><span>api</span><span>ci</span>
+          </div>
+          <p>Charts will derive from the canonical event stream: Pulse, workers, commands, CI, issues, PRs, reviews, and outcomes.</p>
+        </article>
+      </section>
+      <section className="planned-card pulse-activity-panel" aria-label="Unified activity stream">
+        <div className="split-heading">
+          <div>
+            <p className="eyebrow">Canonical stream</p>
+            <h3>Unified activity</h3>
+          </div>
+          <div className="pulse-filter-row" aria-label="Quick filters">
+            {pulseFilters.map((filter) => <button disabled key={filter} title={`${filter} filter is planned`} type="button">{filter}</button>)}
+          </div>
+        </div>
+        <div className="pulse-activity-table" role="table" aria-label="Pulse and worker events">
+          <div className="pulse-activity-row pulse-activity-header" role="row">
+            <span>When</span><span>Event</span><span>Scope</span><span>Outcome</span><span>Resource</span><span>Origin / actor</span>
+          </div>
+          {pulseActivityRows.map((row) => (
+            <article className="pulse-activity-row" role="row" key={`${row.time}-${row.scope}`}>
+              <span data-label="When">{row.time}</span>
+              <span data-label="Event">{row.event}</span>
+              <span data-label="Scope">{row.scope}</span>
+              <span data-label="Outcome">{row.outcome}</span>
+              <span data-label="Resource">{row.resource}</span>
+              <span data-label="Origin / actor">{row.origin} · {row.actor}</span>
+            </article>
+          ))}
+        </div>
+        <p className="notice compact-notice">Mobile activity cards replace the dense table on small screens. Detail drawer becomes a full-screen sheet on small screens, and terminal panel becomes full-screen later.</p>
+      </section>
+      <section className="pulse-layout" aria-label="Drilldown and planned actions">
+        <article className="planned-card pulse-drilldown-panel">
+          <p className="eyebrow">Drilldown placeholder</p>
+          <h3>What happened, when, why, how, who acted, and what resources were available</h3>
+          <p>Selected event details will connect timeline evidence, issue/PR/review context, provider/model/tokens/time/cost metadata, GitHub/API allowance, queue/concurrency, CI capacity, and local resource snapshots without exposing secrets.</p>
+        </article>
+        <article className="planned-card pulse-actions-panel">
+          <p className="eyebrow">Planned controls</p>
+          <h3>Actions stay disabled until audited routes land</h3>
+          <button disabled title="Terminal output needs a read-only command-output adapter" type="button">Open terminal output (planned)</button>
+          <button disabled title="Dispatch needs worker control and trust-boundary APIs" type="button">Redispatch worker (planned)</button>
+          <button disabled title="Persistence needs a write-action manifest and audit trail" type="button">Save systemic fix (planned)</button>
+        </article>
+      </section>
+    </section>
+  );
 }
 
 function HelpSurface(): ReactElement {
