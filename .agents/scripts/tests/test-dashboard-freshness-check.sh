@@ -186,36 +186,11 @@ fi
 #   $3 — extra env (space-separated KEY=VAL)
 # Writes a fresh GH_CALLS log to $TMP/gh-calls.log and runs the scanner.
 # ---------------------------------------------------------------------------
-run_scan_with_stubs() {
-	local body_file="$1"
-	local alert_exists="$2"
-	local extra_env="${3:-}"
-	local alert_kind="${4:-stale}"
-	local gh_calls="${TMP}/gh-calls.log"
-	local alert_body_capture="${TMP}/alert-body.md"
-	: >"$gh_calls"
-	: >"$alert_body_capture"
-
-	# Reset last-scan marker so cadence gate doesn't suppress unless the
-	# test explicitly sets DASHBOARD_FRESHNESS_SCAN_INTERVAL high.
-	rm -f "${HOME_ISO}/.aidevops/cache/dashboard-freshness/last-scan"
-
-	# shellcheck disable=SC2016
-	HOME="$HOME_ISO" \
-		REPOS_JSON="${HOME_ISO}/.config/aidevops/repos.json" \
-		DASHBOARD_FRESHNESS_SCAN_INTERVAL="${SCAN_INTERVAL:-1}" \
-		DASHBOARD_FRESHNESS_THRESHOLD_SECONDS="172800" \
-		GH_CALLS_LOG="$gh_calls" \
-		BODY_FIXTURE="$body_file" \
-		ALERT_EXISTS="$alert_exists" \
-		ALERT_KIND="$alert_kind" \
-		ALERT_BODY_CAPTURE="$alert_body_capture" \
-		EXTRA_ENV="$extra_env" \
-		SCANNER_PATH="$SCANNER" \
-		bash -c '
+run_scan_stub_script() {
+	cat <<'EOF'
 			set +u
 			# Stub gh: records every call and returns canned responses
-			# for the three paths the scanner exercises:
+			# for the paths the scanner exercises:
 			#   gh auth status       → success
 			#   gh api repos/.../issues/N  → dashboard issue JSON (body from fixture)
 			#   gh api --paginate repos/.../issues?state=open... → alert dedup/recovery check
@@ -260,10 +235,7 @@ run_scan_with_stubs() {
 						;;
 					issue)
 						case "$2" in
-							comment)
-								return 0
-								;;
-							close)
+							comment | close)
 								return 0
 								;;
 							create)
@@ -293,7 +265,37 @@ run_scan_with_stubs() {
 			eval "$EXTRA_ENV"
 			# Force force-scan so the scanner does not throttle itself
 			exec bash "$SCANNER_PATH" scan --force
-		' 2>&1
+EOF
+	return 0
+}
+
+run_scan_with_stubs() {
+	local body_file="$1"
+	local alert_exists="$2"
+	local extra_env="${3:-}"
+	local alert_kind="${4:-stale}"
+	local gh_calls="${TMP}/gh-calls.log"
+	local alert_body_capture="${TMP}/alert-body.md"
+	: >"$gh_calls"
+	: >"$alert_body_capture"
+
+	# Reset last-scan marker so cadence gate doesn't suppress unless the
+	# test explicitly sets DASHBOARD_FRESHNESS_SCAN_INTERVAL high.
+	rm -f "${HOME_ISO}/.aidevops/cache/dashboard-freshness/last-scan"
+
+	# shellcheck disable=SC2016
+	HOME="$HOME_ISO" \
+		REPOS_JSON="${HOME_ISO}/.config/aidevops/repos.json" \
+		DASHBOARD_FRESHNESS_SCAN_INTERVAL="${SCAN_INTERVAL:-1}" \
+		DASHBOARD_FRESHNESS_THRESHOLD_SECONDS="172800" \
+		GH_CALLS_LOG="$gh_calls" \
+		BODY_FIXTURE="$body_file" \
+		ALERT_EXISTS="$alert_exists" \
+		ALERT_KIND="$alert_kind" \
+		ALERT_BODY_CAPTURE="$alert_body_capture" \
+		EXTRA_ENV="$extra_env" \
+		SCANNER_PATH="$SCANNER" \
+		bash -c "$(run_scan_stub_script)" 2>&1
 	return $?
 }
 
