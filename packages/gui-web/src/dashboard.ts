@@ -37,7 +37,7 @@ export function renderDashboardHtml(status: GuiResponseEnvelope<GuiStatusData>):
     .map((capability) => `<li>${escapeHtml(capability.label)}: ${escapeHtml(capability.status)}</li>`)
     .join("");
   const navSections = [
-    { heading: "Development", items: ["AI Sessions", "Workers", "Local Repos", "Repos", "Remote Repos", "Deployments", "Secrets", "AI Providers"] },
+    { heading: "Development", items: ["AI Sessions", "Pulse & Workers", "Local Repos", "Repos", "Remote Repos", "Deployments", "Secrets", "AI Providers"] },
     { heading: "Account", items: ["Help", "Settings", "Notifications", "Admin"] },
     { heading: "Operations", items: ["Dashboard", "Vault", "Agents file explorer", "Config", "Local Setup", "Routines"] },
     { heading: "Infrastructure", items: ["Devices", "VPNs & Proxies", "Apps", "Installation", "Registrars", "Hosts", "Servers"] },
