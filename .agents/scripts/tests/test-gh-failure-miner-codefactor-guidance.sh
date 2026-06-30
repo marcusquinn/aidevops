@@ -122,6 +122,35 @@ qlty_empty_sarif_cluster_json='{
   ]
 }'
 
+qlty_empty_sarif_events_json='[
+  {
+    "repo": "marcusquinn/aidevops",
+    "source_kind": "pr",
+    "source_ref": "#26016",
+    "source_url": "https://github.com/marcusquinn/aidevops/pull/26016",
+    "check_name": "Qlty Smell Threshold",
+    "signature": "Failed to run qlty smells (empty SARIF output)",
+    "run_url": "https://github.com/marcusquinn/aidevops/actions/runs/28436868573/job/84264809560",
+    "details_url": "https://github.com/marcusquinn/aidevops/actions/runs/28436868573/job/84264809560",
+    "affected_paths": [],
+    "annotations": [],
+    "conclusion": "failure"
+  },
+  {
+    "repo": "marcusquinn/aidevops",
+    "source_kind": "pr",
+    "source_ref": "#26015",
+    "source_url": "https://github.com/marcusquinn/aidevops/pull/26015",
+    "check_name": "Qlty Smell Threshold",
+    "signature": "Failed to run qlty smells (empty SARIF output)",
+    "run_url": "https://github.com/marcusquinn/aidevops/actions/runs/28436868573/job/84264809560",
+    "details_url": "https://github.com/marcusquinn/aidevops/actions/runs/28436868573/job/84264809560",
+    "affected_paths": [],
+    "annotations": [],
+    "conclusion": "failure"
+  }
+]'
+
 qlty_decorated_empty_sarif_cluster_json='{
   "repo": "marcusquinn/aidevops",
   "check_name": "Qlty Smell Threshold",
@@ -180,6 +209,7 @@ qlty_body=$(build_issue_body "$qlty_empty_sarif_cluster_json" "d627959fbedf" "2"
 qlty_decorated_body=$(build_issue_body "$qlty_decorated_empty_sarif_cluster_json" "595a224919c1" "2" "false")
 legacy_body=$(render_issue_body_markdown "$events_json" "2")
 legacy_qlty_body=$(render_issue_body_markdown "[$qlty_decorated_empty_sarif_cluster_json]" "2")
+qlty_skip_output=$(create_systemic_issues "$qlty_empty_sarif_events_json" "2" "3" "true" "auto-dispatch" 2>&1)
 if empty_evidence_output=$(create_or_preview_issue "$empty_evidence_cluster_json" "abc123" "2" "true" "false" 2>&1); then
 	empty_evidence_status=0
 else
@@ -247,6 +277,8 @@ assert_contains "render_issue_body_markdown directs workers to provider details"
 assert_contains "render_issue_body_markdown includes affected file fallback" "affected files: .agents/scripts/vault-crypto-helper.py, .agents/scripts/vault-helper.sh" "$legacy_body"
 assert_contains "render_issue_body_markdown classifies decorated qlty empty SARIF" "empty-SARIF failures are shared tooling failures" "$legacy_qlty_body"
 assert_contains "render_issue_body_markdown qlty guidance points at helper" ".agents/scripts/qlty-smell-threshold-helper.sh" "$legacy_qlty_body"
+assert_contains "create_systemic_issues skips remediated qlty empty SARIF clusters" "empty SARIF failure signature is already handled" "$qlty_skip_output"
+assert_contains "create_systemic_issues reports zero created for remediated qlty empty SARIF" "Processed 0 systemic cluster(s)" "$qlty_skip_output"
 assert_contains "fetch_pr_changed_paths_json returns unique sorted paths" '[".agents/scripts/vault-crypto-helper.py",".agents/scripts/vault-helper.sh"]' "$paths_json"
 assert_equals "fetch_pr_changed_paths_json emits one JSON array on gh failure" '[]' "$failed_paths_json"
 assert_equals "fetch_check_run_annotations_summary_json returns provider annotations" '[{"path":".agents/scripts/vault-crypto-helper.py","start_line":119,"annotation_level":"warning","title":"Bandit B603","message":"subprocess call: check for execution of untrusted input"}]' "$annotations_json"
