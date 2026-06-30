@@ -1,23 +1,18 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
-  type GuiPulseAuthorAssociation,
-  type GuiPulseIssueOrigin,
-  type GuiPulseProviderId,
   type GuiPulseResourceKind,
   type GuiPulseResourceSnapshot,
   type GuiPulseWorkerActivityEvent,
   type GuiPulseWorkerChartSeries,
   type GuiPulseWorkerKpiCard,
-  type GuiPulseWorkerOutcome,
-  type GuiPulseWorkerSeverity,
-  type GuiPulseWorkerStatus,
   type GuiPulseWorkerSummary,
   type GuiPulseWorkerUsageSnapshot,
   type GuiPulsePeriodBucket,
   pulseWorkersFixture,
 } from "../../gui-shared/src";
 import { collapseHome, expandHome, formatEpochField, isRecord, readJsonObject, stringField } from "./status-adapter-utils";
+import { type MetricRecord, authorAssociationFromRecord, collectUsageSamples, durationMsFromRecord, extractPulseCounters, filterWindow, hasAvailableProvider, isHealthyOutcome, issueOriginFromRecord, numberValue, outcomeFromRecord, recordTimeMs, severityFromStatus, statusFromOutcome, stringOrNumber, summaryFromRecord, usageFromRecord } from "./status-pulse-worker-records";
 
 export interface PulseWorkersAdapterOptions {
   metricsPath?: string;
@@ -34,8 +29,6 @@ interface SourceState {
   health: "present" | "missing" | "invalid";
   observed_at: string;
 }
-
-type MetricRecord = Record<string, unknown>;
 
 const DAY_MS = 86_400_000;
 const WEEK_MS = 7 * DAY_MS;
@@ -69,7 +62,7 @@ export function readPulseWorkersSummary(options: PulseWorkersAdapterOptions = {}
 
   const dayMetrics = filterWindow(metrics.records, nowMs, DAY_MS);
   const weekMetrics = filterWindow(metrics.records, nowMs, WEEK_MS);
-  const pulseCounters = extractPulseCounters(pulseStats.value, nowMs);
+  const pulseCounters = extractPulseCounters(pulseStats.value, nowMs, DAY_MS);
   const resourceSnapshots = resourceMetricsToSnapshots(resources.records, observedAt);
   const usageSamples = collectUsageSamples([...dayMetrics, ...tokenReports.records]);
   const events = buildEvents(dayMetrics, resourceSnapshots, usageSamples, observedAt);
@@ -129,46 +122,6 @@ function readTokenReports(root: string): { health: "present" | "missing" | "inva
 
 function stateFor(pathName: string, health: SourceState["health"], observedAt: string): SourceState {
   return { path_ref: collapseHome(pathName), health, observed_at: observedAt };
-}
-
-function filterWindow(records: MetricRecord[], nowMs: number, windowMs: number): MetricRecord[] {
-  const cutoff = nowMs - windowMs;
-  return records.filter((record) => {
-    const time = recordTimeMs(record);
-    return time !== null && time >= cutoff && time <= nowMs;
-  });
-}
-
-function recordTimeMs(record: MetricRecord): number | null {
-  for (const key of ["ts", "timestamp", "started_at", "finished_at", "created_at", "updated_at"]) {
-    const value = record[key];
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return value > 9_999_999_999 ? value : value * 1000;
-    }
-    if (typeof value === "string" && value.length > 0) {
-      const parsed = Date.parse(value);
-      if (Number.isFinite(parsed)) {
-        return parsed;
-      }
-    }
-  }
-  return null;
-}
-
-function extractPulseCounters(value: Record<string, unknown>, nowMs: number): Record<string, number> {
-  const counters = isRecord(value.counters) ? value.counters : {};
-  return Object.fromEntries(Object.entries(counters).map(([name, entries]) => [name, countRecentTimestamps(entries, nowMs, DAY_MS)]));
-}
-
-function countRecentTimestamps(value: unknown, nowMs: number, windowMs: number): number {
-  if (!Array.isArray(value)) {
-    return 0;
-  }
-  const cutoff = nowMs - windowMs;
-  return value.filter((entry) => {
-    const ms = typeof entry === "number" ? (entry > 9_999_999_999 ? entry : entry * 1000) : Date.parse(String(entry));
-    return Number.isFinite(ms) && ms >= cutoff && ms <= nowMs;
-  }).length;
 }
 
 function buildKpis(dayMetrics: MetricRecord[], weekMetrics: MetricRecord[], counters: Record<string, number>, usage: GuiPulseWorkerUsageSnapshot[], resources: GuiPulseResourceSnapshot[]): GuiPulseWorkerKpiCard[] {
@@ -264,113 +217,10 @@ function resourceMetricsToSnapshots(records: MetricRecord[], observedAt: string)
   });
 }
 
-function collectUsageSamples(records: MetricRecord[]): GuiPulseWorkerUsageSnapshot[] {
-  return records.map(usageFromRecord).filter((usage): usage is GuiPulseWorkerUsageSnapshot => usage !== null);
-}
-
-function usageFromRecord(record: MetricRecord): GuiPulseWorkerUsageSnapshot | null {
-  const input = numberValue(record.input_tokens ?? record.prompt_tokens);
-  const output = numberValue(record.output_tokens ?? record.completion_tokens);
-  const total = numberValue(record.total_tokens) ?? (input ?? 0) + (output ?? 0);
-  if (total <= 0 && input === null && output === null) {
-    return null;
-  }
-  const provider = providerFromString(stringField(record, "provider") ?? stringField(record, "provider_id"));
-  const model = stringField(record, "model") ?? stringField(record, "model_ref") ?? null;
-  return { provider, provider_ref: `provider:${provider}`, model_ref: model, input_tokens: input ?? 0, output_tokens: output ?? 0, cached_tokens: numberValue(record.cached_tokens) ?? 0, total_tokens: total, cost_ref: costRef(record), estimated_cost_ref: costRef(record), wall_time_ms: numberValue(record.wall_time_ms ?? record.duration_ms) ?? 0 };
-}
-
-function outcomeFromRecord(record: MetricRecord): GuiPulseWorkerOutcome {
-  const raw = String(record.outcome ?? record.result ?? record.status ?? "in_progress").toLowerCase();
-  if (["merged", "closed", "in_progress", "needs_maintainer_review", "blocked", "failed", "deferred", "created_followup"].includes(raw)) {
-    return raw as GuiPulseWorkerOutcome;
-  }
-  if (raw.includes("success") || raw.includes("complete")) return "merged";
-  if (raw.includes("follow")) return "created_followup";
-  if (raw.includes("defer")) return "deferred";
-  if (raw.includes("block")) return "blocked";
-  if (raw.includes("fail") || raw.includes("kill")) return "failed";
-  return "in_progress";
-}
-
-function statusFromOutcome(outcome: GuiPulseWorkerOutcome): GuiPulseWorkerStatus {
-  if (outcome === "failed") return "failed";
-  if (outcome === "blocked" || outcome === "needs_maintainer_review") return "blocked";
-  if (outcome === "in_progress") return "running";
-  if (outcome === "deferred") return "deferred";
-  return "completed";
-}
-
-function severityFromStatus(status: GuiPulseWorkerStatus): GuiPulseWorkerSeverity {
-  if (status === "failed" || status === "blocked") return "critical";
-  if (status === "attention" || status === "deferred") return "warning";
-  if (status === "completed" || status === "healthy") return "success";
-  return "info";
-}
-
-function isHealthyOutcome(outcome: GuiPulseWorkerOutcome): boolean {
-  return ["merged", "closed", "deferred", "created_followup"].includes(outcome);
-}
-
-function issueOriginFromRecord(record: MetricRecord): GuiPulseIssueOrigin {
-  const raw = String(record.issue_origin ?? record.origin ?? "unknown").toLowerCase();
-  if (["aidevops_created", "maintainer_created", "origin_interactive", "third_party", "unknown"].includes(raw)) return raw as GuiPulseIssueOrigin;
-  if (raw.includes("interactive")) return "origin_interactive";
-  if (raw.includes("third") || raw.includes("community")) return "third_party";
-  if (raw.includes("maintainer")) return "maintainer_created";
-  if (raw.includes("aidevops")) return "aidevops_created";
-  return "unknown";
-}
-
-function authorAssociationFromRecord(record: MetricRecord): GuiPulseAuthorAssociation {
-  const raw = String(record.author_association ?? "UNKNOWN").toUpperCase();
-  if (["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "NONE", "UNKNOWN"].includes(raw)) return raw as GuiPulseAuthorAssociation;
-  return "UNKNOWN";
-}
-
-function durationMsFromRecord(record: MetricRecord): number | null {
-  const duration = numberValue(record.duration_ms ?? record.wall_time_ms);
-  if (duration !== null) return duration;
-  const elapsed = numberValue(record.elapsed_s);
-  return elapsed === null ? null : elapsed * 1000;
-}
-
-function summaryFromRecord(record: MetricRecord, outcome: GuiPulseWorkerOutcome): string {
-  const issue = stringOrNumber(record.issue ?? record.issue_number);
-  return issue === null ? `Worker outcome: ${outcome}.` : `Worker outcome for #${issue.replace(/^#/, "")}: ${outcome}.`;
-}
-
 function countOptions(values: string[], prefix = ""): Array<{ id: string; label: string; count: number }> {
   const counts = new Map<string, number>();
   for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
   return [...counts.entries()].map(([label, count]) => ({ id: `${prefix}${slug(label)}`, label, count })).sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
-}
-
-function hasAvailableProvider(value: Record<string, unknown>): boolean {
-  const providers = Array.isArray(value.providers) ? value.providers : [];
-  return providers.some((provider) => isRecord(provider) && (numberValue(provider.available) ?? 0) > 0);
-}
-
-function costRef(record: MetricRecord): string | null {
-  const cost = record.estimated_cost_ref ?? record.cost_ref;
-  if (typeof cost === "string" && cost.length > 0 && !cost.includes("/")) return cost;
-  const amount = numberValue(record.estimated_cost_usd ?? record.cost_usd);
-  return amount === null ? null : `$${amount.toFixed(2)} estimated`;
-}
-
-function providerFromString(value: string | undefined): GuiPulseProviderId {
-  if (value === "anthropic" || value === "openai" || value === "cursor" || value === "google" || value === "local") return value;
-  return "unknown";
-}
-
-function stringOrNumber(value: unknown): string | null {
-  if (typeof value === "string" && value.length > 0) return value;
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  return null;
-}
-
-function numberValue(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 function slug(value: string): string {
