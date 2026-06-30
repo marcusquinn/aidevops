@@ -122,6 +122,35 @@ qlty_empty_sarif_cluster_json='{
   ]
 }'
 
+qlty_empty_sarif_events_json='[
+  {
+    "repo": "marcusquinn/aidevops",
+    "source_kind": "pr",
+    "source_ref": "#26016",
+    "source_url": "https://github.com/marcusquinn/aidevops/pull/26016",
+    "check_name": "Qlty Smell Threshold",
+    "signature": "Failed to run qlty smells (empty SARIF output)",
+    "run_url": "https://github.com/marcusquinn/aidevops/actions/runs/28436868573/job/84264809560",
+    "details_url": "https://github.com/marcusquinn/aidevops/actions/runs/28436868573/job/84264809560",
+    "affected_paths": [],
+    "annotations": [],
+    "conclusion": "failure"
+  },
+  {
+    "repo": "marcusquinn/aidevops",
+    "source_kind": "pr",
+    "source_ref": "#26015",
+    "source_url": "https://github.com/marcusquinn/aidevops/pull/26015",
+    "check_name": "Qlty Smell Threshold",
+    "signature": "Failed to run qlty smells (empty SARIF output)",
+    "run_url": "https://github.com/marcusquinn/aidevops/actions/runs/28436868573/job/84264809560",
+    "details_url": "https://github.com/marcusquinn/aidevops/actions/runs/28436868573/job/84264809560",
+    "affected_paths": [],
+    "annotations": [],
+    "conclusion": "failure"
+  }
+]'
+
 qlty_decorated_empty_sarif_cluster_json='{
   "repo": "marcusquinn/aidevops",
   "check_name": "Qlty Smell Threshold",
@@ -180,7 +209,7 @@ qlty_body=$(build_issue_body "$qlty_empty_sarif_cluster_json" "d627959fbedf" "2"
 qlty_decorated_body=$(build_issue_body "$qlty_decorated_empty_sarif_cluster_json" "595a224919c1" "2" "false")
 legacy_body=$(render_issue_body_markdown "$events_json" "2")
 legacy_qlty_body=$(render_issue_body_markdown "[$qlty_decorated_empty_sarif_cluster_json]" "2")
-qlty_skip_output=$(create_systemic_issues "[$qlty_empty_sarif_cluster_json]" "2" "3" "true" "auto-dispatch" 2>&1)
+qlty_skip_output=$(create_systemic_issues "$qlty_empty_sarif_events_json" "2" "3" "true" "auto-dispatch" 2>&1)
 if empty_evidence_output=$(create_or_preview_issue "$empty_evidence_cluster_json" "abc123" "2" "true" "false" 2>&1); then
 	empty_evidence_status=0
 else
