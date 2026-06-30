@@ -122,9 +122,8 @@ export function createGuiApiApp() {
 
   app.post(PULSE_WORKERS_ACTION_ROUTE_MANIFEST.route, (context) => {
     const action = context.req.param("action") as GuiPulseWorkerActionId;
-    const actionCommand = pulseWorkerActionCommands[action];
 
-    if (actionCommand === undefined) {
+    if (!Object.hasOwn(pulseWorkerActionCommands, action)) {
       return context.json(createEnvelope({
         operation_id: PULSE_WORKERS_ACTION_ROUTE_MANIFEST.operation_id,
         source: { surface: "pulse_workers", authority: "allowlisted local command runner", path_refs: [] },
@@ -133,6 +132,7 @@ export function createGuiApiApp() {
       }), 400);
     }
 
+    const actionCommand = pulseWorkerActionCommands[action];
     const job = startPulseWorkerActionJob(action, actionCommand.command, actionCommand.target_ref, actionCommand.audit_ref);
     return context.json(createEnvelope({
       operation_id: PULSE_WORKERS_ACTION_ROUTE_MANIFEST.operation_id,
@@ -199,6 +199,7 @@ export function createGuiApiApp() {
 
 function startAppActionJob(appId: string, action: GuiAppActionId, command: string[]): GuiAppActionJobSummary {
   const now = new Date().toISOString();
+  const redactLine = createOutputLineRedactor();
   const job: GuiAppActionJobSummary = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     app_id: appId,
@@ -219,11 +220,11 @@ function startAppActionJob(appId: string, action: GuiAppActionId, command: strin
   });
   if (child.stdout !== null) {
     const stdoutLines = readline.createInterface({ input: child.stdout, terminal: false });
-    stdoutLines.on("line", (line) => appendJobLine(job, line));
+    stdoutLines.on("line", (line) => appendJobLine(job, line, redactLine));
   }
   if (child.stderr !== null) {
     const stderrLines = readline.createInterface({ input: child.stderr, terminal: false });
-    stderrLines.on("line", (line) => appendJobLine(job, line));
+    stderrLines.on("line", (line) => appendJobLine(job, line, redactLine));
   }
   child.on("error", (error) => {
     appendJobLine(job, error.message);
@@ -240,11 +241,11 @@ function startAppActionJob(appId: string, action: GuiAppActionId, command: strin
   return job;
 }
 
-function appendJobLine(job: GuiAppActionJobSummary, line: string): void {
+function appendJobLine(job: GuiAppActionJobSummary, line: string, redactLine: (line: string) => string = redactOutputLine): void {
   if (line.length === 0) {
     return;
   }
-  job.output.push(redactOutputLine(line));
+  job.output.push(redactLine(line));
   if (job.output.length > 400) {
     job.output.splice(1, job.output.length - 400);
   }
@@ -252,6 +253,7 @@ function appendJobLine(job: GuiAppActionJobSummary, line: string): void {
 
 function startPulseWorkerActionJob(action: GuiPulseWorkerActionId, command: string[], targetRef: string, auditRef: string): GuiPulseWorkerActionJobSummary {
   const now = new Date().toISOString();
+  const redactLine = createOutputLineRedactor();
   const job: GuiPulseWorkerActionJobSummary = {
     id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     action,
@@ -265,7 +267,7 @@ function startPulseWorkerActionJob(action: GuiPulseWorkerActionId, command: stri
     audit_ref: auditRef,
   };
   pulseWorkerActionJobs.set(job.id, job);
-  startBackgroundProcess(command, (line) => appendPulseWorkerJobLine(job, line), (code) => {
+  startBackgroundProcess(command, (line) => appendPulseWorkerJobLine(job, line, redactLine), (code) => {
     job.status = code === 0 ? "completed" : "failed";
     job.finished_at = new Date().toISOString();
     job.exit_code = code;
@@ -274,17 +276,26 @@ function startPulseWorkerActionJob(action: GuiPulseWorkerActionId, command: stri
   return job;
 }
 
-function appendPulseWorkerJobLine(job: GuiPulseWorkerActionJobSummary, line: string): void {
+function appendPulseWorkerJobLine(job: GuiPulseWorkerActionJobSummary, line: string, redactLine: (line: string) => string = redactOutputLine): void {
   if (line.length === 0) {
     return;
   }
-  job.output.push(redactOutputLine(line));
+  job.output.push(redactLine(line));
   if (job.output.length > 400) {
     job.output.splice(1, job.output.length - 400);
   }
 }
 
 function startBackgroundProcess(command: string[], appendLine: (line: string) => void, finish: (code: number) => void): void {
+  let finished = false;
+  const safeFinish = (code: number): void => {
+    if (finished) {
+      return;
+    }
+    finished = true;
+    finish(code);
+  };
+
   const child = spawn(command[0], command.slice(1), {
     cwd: process.cwd(),
     env: { ...process.env, AIDEVOPS_NON_INTERACTIVE: "true", CLICOLOR_FORCE: "1", FORCE_COLOR: "1", TERM: process.env.TERM ?? "xterm-256color" },
@@ -298,9 +309,29 @@ function startBackgroundProcess(command: string[], appendLine: (line: string) =>
   }
   child.on("error", (error) => {
     appendLine(error.message);
-    finish(127);
+    safeFinish(127);
   });
-  child.on("close", (code) => finish(code ?? 1));
+  child.on("close", (code) => safeFinish(code ?? 1));
+}
+
+export function createOutputLineRedactor(): (line: string) => string {
+  let inPrivateKeyBlock = false;
+
+  return (line: string): string => {
+    if (/-----BEGIN [A-Z ]+ PRIVATE KEY-----/.test(line)) {
+      inPrivateKeyBlock = !/-----END [A-Z ]+ PRIVATE KEY-----/.test(line);
+      return "[redacted private key]";
+    }
+
+    if (inPrivateKeyBlock) {
+      if (/-----END [A-Z ]+ PRIVATE KEY-----/.test(line)) {
+        inPrivateKeyBlock = false;
+      }
+      return "[redacted private key]";
+    }
+
+    return redactOutputLine(line);
+  };
 }
 
 function redactOutputLine(line: string): string {
