@@ -1671,7 +1671,7 @@ _dispatch_floor_loop() {
 			echo "[pulse-wrapper] Dispatch_max: loop iter=${processed_count} — stopping (dispatched=${dispatched_count} >= effective_slots=${effective_slots})" >>"$LOGFILE"
 			break
 		fi
-		if [[ -f "$STOP_FLAG" ]]; then
+		if [[ -f "${STOP_FLAG:-}" ]]; then
 			echo "[pulse-wrapper] Dispatch_max stopping early: stop flag appeared" >>"$LOGFILE"
 			break
 		fi
