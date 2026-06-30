@@ -484,7 +484,7 @@ function PulseWorkersSurface({ status }: { status: GuiStatusData }): ReactElemen
           <div className="pulse-chart-placeholder" aria-label="Chart placeholder showing health, queue, token, cost, API, and CI capacity trends" role="img">
             <span>health</span><span>queue</span><span>tokens</span><span>cost</span><span>api</span><span>ci</span>
           </div>
-          <p>Charts derive from {pulse.charts.map((chart) => chart.points[0]?.period).join("/")} fixture buckets across the canonical event stream: Pulse, workers, commands, CI, issues, PRs, reviews, and outcomes.</p>
+          <p>Charts derive from {pulse.charts.map((chart) => chart.points[0]?.period).filter(Boolean).join("/")} fixture buckets across the canonical event stream: Pulse, workers, commands, CI, issues, PRs, reviews, and outcomes.</p>
         </article>
       </section>
       <section className="planned-card pulse-activity-panel" aria-label="Unified activity stream">
@@ -539,7 +539,7 @@ function PulseWorkersSurface({ status }: { status: GuiStatusData }): ReactElemen
 function resourceSummary(row: GuiStatusData["pulse_workers"]["events"][number]): string {
   const model = row.usage?.model_ref?.replace("model:", "");
   const providerLabel = row.usage?.provider === "openai" ? "OpenAI" : row.usage?.provider === "anthropic" ? "Anthropic" : row.usage?.provider;
-  const provider = model === undefined ? row.resources[0]?.available_label ?? "metadata only" : `${providerLabel} · ${model}`;
+  const provider = row.usage === null ? row.resources[0]?.available_label ?? "metadata only" : `${providerLabel ?? "Provider"} · ${model ?? "model metadata pending"}`;
   const tokens = row.usage === null ? "" : ` · ${row.usage.total_tokens.toLocaleString()} tokens`;
 
   return `${provider}${tokens}`;
