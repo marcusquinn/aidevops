@@ -1001,14 +1001,21 @@ create_or_preview_issue() {
 	if [[ "$is_infra" == "true" ]]; then
 		# Infrastructure issues: use "infrastructure" label instead of "bug".
 		# Never add auto-dispatch — infrastructure outages self-resolve; code changes are wrong.
-		create_cmd=(gh_create_issue --repo "$repo_slug" --title "$title" --body "$body" --label infrastructure --label "source:ci-failure-miner")
+		create_cmd=(gh_create_issue --repo "$repo_slug" --title "$title" --body "$body" --label infrastructure --label "source:ci-failure-miner" --label "status:available" --label "origin:worker")
 	else
-		create_cmd=(gh_create_issue --repo "$repo_slug" --title "$title" --body "$body" --label bug --label "source:ci-failure-miner")
-		local label
+		create_cmd=(gh_create_issue --repo "$repo_slug" --title "$title" --body "$body" --label bug --label "source:ci-failure-miner" --label "auto-dispatch" --label "status:available" --label "origin:worker" --label "tier:standard")
+		local label seen_labels=",bug,source:ci-failure-miner,auto-dispatch,status:available,origin:worker,tier:standard,"
+		local -a label_parts=()
 		for label in ${extra_labels[@]+"${extra_labels[@]}"}; do
-			if [[ -n "$label" ]]; then
-				create_cmd+=(--label "$label")
-			fi
+			[[ -n "$label" ]] || continue
+			IFS=',' read -r -a label_parts <<<"$label"
+			local label_part
+			for label_part in "${label_parts[@]}"; do
+				[[ -n "$label_part" ]] || continue
+				[[ "$seen_labels" == *",${label_part},"* ]] && continue
+				create_cmd+=(--label "$label_part")
+				seen_labels="${seen_labels}${label_part},"
+			done
 		done
 	fi
 	"${create_cmd[@]}" >/dev/null

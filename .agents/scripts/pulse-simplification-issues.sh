@@ -26,6 +26,10 @@
 _PULSE_SIMPLIFICATION_ISSUES_LIB_LOADED=1
 
 SIMPLIFICATION_DEBT_LABEL=function-complexity-debt
+SIMPLIFICATION_AUTO_DISPATCH_LABEL=auto-dispatch
+SIMPLIFICATION_STATUS_AVAILABLE_LABEL=status:available
+SIMPLIFICATION_ORIGIN_WORKER_LABEL=origin:worker
+SIMPLIFICATION_TIER_STANDARD_LABEL=tier:standard
 
 # Defensive SCRIPT_DIR fallback
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -409,13 +413,15 @@ _complexity_scan_process_single_md_file() {
 		# shellcheck disable=SC2086
 		gh_create_issue --repo "$aidevops_slug" \
 			--title "$issue_title" \
-			--label "$SIMPLIFICATION_DEBT_LABEL" $review_label --label "tier:standard" --label "recheck-simplicity" \
+			--label "$SIMPLIFICATION_DEBT_LABEL" $review_label --label "$SIMPLIFICATION_AUTO_DISPATCH_LABEL" --label "$SIMPLIFICATION_STATUS_AVAILABLE_LABEL" \
+			--label "$SIMPLIFICATION_ORIGIN_WORKER_LABEL" --label "$SIMPLIFICATION_TIER_STANDARD_LABEL" --label "recheck-simplicity" \
 			--body "$issue_body" >/dev/null 2>&1 && create_ok=true
 	else
 		# shellcheck disable=SC2086
 		gh_create_issue --repo "$aidevops_slug" \
 			--title "$issue_title" \
-			--label "$SIMPLIFICATION_DEBT_LABEL" $review_label --label "tier:standard" \
+			--label "$SIMPLIFICATION_DEBT_LABEL" $review_label --label "$SIMPLIFICATION_AUTO_DISPATCH_LABEL" --label "$SIMPLIFICATION_STATUS_AVAILABLE_LABEL" \
+			--label "$SIMPLIFICATION_ORIGIN_WORKER_LABEL" --label "$SIMPLIFICATION_TIER_STANDARD_LABEL" \
 			--body "$issue_body" >/dev/null 2>&1 && create_ok=true
 	fi
 
@@ -585,7 +591,8 @@ _complexity_scan_sh_create_issue() {
 	# shellcheck disable=SC2086
 	if gh_create_issue --repo "$aidevops_slug" \
 		--title "$issue_title" \
-		--label "$SIMPLIFICATION_DEBT_LABEL" $review_label_sh \
+		--label "$SIMPLIFICATION_DEBT_LABEL" $review_label_sh --label "$SIMPLIFICATION_AUTO_DISPATCH_LABEL" \
+		--label "$SIMPLIFICATION_STATUS_AVAILABLE_LABEL" --label "$SIMPLIFICATION_ORIGIN_WORKER_LABEL" --label "$SIMPLIFICATION_TIER_STANDARD_LABEL" \
 		--body "$issue_body" >/dev/null 2>&1; then
 		_complexity_scan_close_duplicate_issues_by_title "$aidevops_slug" "$issue_title"
 		echo "[pulse-wrapper] Complexity scan: created issue for ${file_path} (${violation_count} violations)" >>"$LOGFILE"
