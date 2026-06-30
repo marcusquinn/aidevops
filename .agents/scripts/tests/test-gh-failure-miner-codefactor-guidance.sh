@@ -122,6 +122,27 @@ qlty_empty_sarif_cluster_json='{
   ]
 }'
 
+qlty_decorated_empty_sarif_cluster_json='{
+  "repo": "marcusquinn/aidevops",
+  "check_name": "Qlty Smell Threshold",
+  "signature": "Qlty Smell Threshold Qlty smell threshold check 2026-06-30T10:13:09.8159029Z echo ::error::Failed to run qlty smells (empty SARIF output)",
+  "count": 2,
+  "is_infra": false,
+  "sources": ["pr:#26016", "pr:#26015"],
+  "examples": [
+    {
+      "source_kind": "pr",
+      "source_ref": "#26016",
+      "source_url": "https://github.com/marcusquinn/aidevops/pull/26016",
+      "run_url": "https://github.com/marcusquinn/aidevops/actions/runs/28436868573/job/84264809560",
+      "details_url": "https://github.com/marcusquinn/aidevops/actions/runs/28436868573/job/84264809560",
+      "affected_paths": [],
+      "annotations": [],
+      "conclusion": "failure"
+    }
+  ]
+}'
+
 empty_evidence_cluster_json=$(cat <<'JSON'
 {
   "repo": "marcusquinn/aidevops",
@@ -156,7 +177,9 @@ JSON
 
 body=$(build_issue_body "$cluster_json" "46250abc5695" "2" "false")
 qlty_body=$(build_issue_body "$qlty_empty_sarif_cluster_json" "d627959fbedf" "2" "false")
+qlty_decorated_body=$(build_issue_body "$qlty_decorated_empty_sarif_cluster_json" "595a224919c1" "2" "false")
 legacy_body=$(render_issue_body_markdown "$events_json" "2")
+legacy_qlty_body=$(render_issue_body_markdown "[$qlty_decorated_empty_sarif_cluster_json]" "2")
 if empty_evidence_output=$(create_or_preview_issue "$empty_evidence_cluster_json" "abc123" "2" "true" "false" 2>&1); then
 	empty_evidence_status=0
 else
@@ -215,11 +238,15 @@ assert_contains "build_issue_body includes Qlty Worker Guidance" "## Worker Guid
 assert_contains "build_issue_body classifies qlty empty SARIF as shared tooling" "empty-SARIF failures are shared tooling failures" "$qlty_body"
 assert_contains "build_issue_body points qlty workers at helper" ".agents/scripts/qlty-smell-threshold-helper.sh" "$qlty_body"
 assert_contains "build_issue_body preserves qlty ratchet semantics" "Keep valid SARIF output blocking" "$qlty_body"
+assert_contains "build_issue_body classifies decorated qlty empty SARIF signature" "empty-SARIF failures are shared tooling failures" "$qlty_decorated_body"
+assert_contains "build_issue_body decorated qlty points at helper" ".agents/scripts/qlty-smell-threshold-helper.sh" "$qlty_decorated_body"
 assert_equals "create_or_preview_issue rejects no-evidence clusters" "1" "$empty_evidence_status"
 assert_contains "create_or_preview_issue explains no-evidence skip" "no evidence examples" "$empty_evidence_output"
 assert_contains "render_issue_body_markdown includes Worker Guidance" "## Worker Guidance" "$legacy_body"
 assert_contains "render_issue_body_markdown directs workers to provider details" "details URL" "$legacy_body"
 assert_contains "render_issue_body_markdown includes affected file fallback" "affected files: .agents/scripts/vault-crypto-helper.py, .agents/scripts/vault-helper.sh" "$legacy_body"
+assert_contains "render_issue_body_markdown classifies decorated qlty empty SARIF" "empty-SARIF failures are shared tooling failures" "$legacy_qlty_body"
+assert_contains "render_issue_body_markdown qlty guidance points at helper" ".agents/scripts/qlty-smell-threshold-helper.sh" "$legacy_qlty_body"
 assert_contains "fetch_pr_changed_paths_json returns unique sorted paths" '[".agents/scripts/vault-crypto-helper.py",".agents/scripts/vault-helper.sh"]' "$paths_json"
 assert_equals "fetch_pr_changed_paths_json emits one JSON array on gh failure" '[]' "$failed_paths_json"
 assert_equals "fetch_check_run_annotations_summary_json returns provider annotations" '[{"path":".agents/scripts/vault-crypto-helper.py","start_line":119,"annotation_level":"warning","title":"Bandit B603","message":"subprocess call: check for execution of untrusted input"}]' "$annotations_json"
