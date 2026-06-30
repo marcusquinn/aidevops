@@ -1011,6 +1011,7 @@ create_or_preview_issue() {
 			IFS=',' read -r -a label_parts <<<"$label"
 			local label_part
 			for label_part in "${label_parts[@]}"; do
+				label_part=$(printf '%s\n' "$label_part" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
 				[[ -n "$label_part" ]] || continue
 				[[ "$seen_labels" == *",${label_part},"* ]] && continue
 				create_cmd+=(--label "$label_part")
