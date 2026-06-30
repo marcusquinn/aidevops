@@ -29,7 +29,7 @@ tools:
 - **Context resolution**: explicit `--app-id` > `.asc/project.json` > prompt user to `asc init` (CI must use `--app-id` or pre-run `asc init`)
 - **GitHub**: https://github.com/tddworks/asc-cli (MIT, Swift, 130+ commands; v0.18.1 adds review-submission item drill-down, sales-report rollups/schema selection, and an app-availability territory-limit fix; checked at `04fde49`, whose post-0.18.1 delta only refreshes homepage app-wall metadata for BetaReels and related app listings)
 - **Website**: https://asccli.app | **Web apps**: [Command Center](https://asccli.app/command-center), [Console](https://asccli.app/console), [Screenshot Studio](https://asccli.app/editor)
-- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (27 command-group skills, checked at `6465c10feb89`) | [Community](https://github.com/rudrankriyam/app-store-connect-cli-skills) (23 workflow skills, checked at `4e7d88b`)
+- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (27 command-group skills, checked at `6465c10feb89`) | [Community](https://github.com/rudrankriyam/app-store-connect-cli-skills) (23 workflow skills, checked at `bd37209`)
 - **Requirements**: macOS 13+, App Store Connect API key, `jq` (workflow scripts use `jq -r`)
 
 **Dependency check**: Before any `asc` command:
@@ -163,7 +163,7 @@ Run `asc web-server` to start the local API bridge (ports 8420 HTTP, 8421 HTTPS)
 
 ## Agent Skills
 
-Install on-demand (not pre-loaded): **Official** `asc skills install --all` (per-command reference) | **Community** `asc install-skills` or `npx skills add rudrankriyam/app-store-connect-cli-skills` (workflow orchestration: releases, ASO, localization, RevenueCat, crash triage, Apple Ads). These upstream skill packs are tracked for review but intentionally remain on-demand until aidevops has a multi-skill import strategy for repositories containing dozens of `SKILL.md` files. Latest reviewed official skill change adds build export-compliance handling; latest community refresh (`4e7d88b`) keeps the Apple Ads auth/org/campaign/reporting/raw-API guidance, safe live-testing guardrails, Apple Ads command-usage notes, and profile-expiration caveat, and updates review item examples to use the nested `asc review items add` form instead of the legacy `asc review items-add` spelling.
+Install on-demand (not pre-loaded): **Official** `asc skills install --all` (per-command reference) | **Community** `asc install-skills` or `npx skills add rudrankriyam/app-store-connect-cli-skills` (workflow orchestration: releases, ASO, localization, RevenueCat, crash triage, Apple Ads). These upstream skill packs are tracked for review but intentionally remain on-demand until aidevops has a multi-skill import strategy for repositories containing dozens of `SKILL.md` files. Latest reviewed official skill change adds build export-compliance handling; latest community refresh (`bd37209`) keeps the Apple Ads auth/org/campaign/reporting/raw-API guidance, safe live-testing guardrails, Apple Ads command-usage notes, profile-expiration caveat, nested `asc review items add` examples, and the ID-resolver correction to use `asc apps list --paginate` instead of the invalid `asc apps --paginate` form.
 
 ## Blitz MCP Server (Optional)
 
