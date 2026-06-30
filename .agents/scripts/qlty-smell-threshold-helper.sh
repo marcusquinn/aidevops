@@ -45,7 +45,11 @@ emit_sarif_warning() {
 	local _diag_file="$2"
 	local _qlty_bin="$3"
 	local _stdout_preview="${4:-}"
+	local _qlty_rc="${5:-}"
 	printf '::warning::qlty smells produced %s SARIF output — skipping absolute smell threshold check\n' "$_reason"
+	if [ -n "$_qlty_rc" ]; then
+		printf 'qlty smells exit code: %s\n' "$_qlty_rc"
+	fi
 	printf 'Qlty version: '
 	"$_qlty_bin" --version 2>/dev/null || printf 'unknown\n'
 	if [ -n "$_stdout_preview" ]; then
@@ -79,6 +83,7 @@ run_threshold_check() {
 	local _sarif=""
 	local _count=""
 	local _headroom=""
+	local _qlty_rc="0"
 
 	_threshold=$(read_threshold "$_conf")
 	if [ "$_threshold" -eq 0 ]; then
@@ -93,14 +98,15 @@ run_threshold_check() {
 
 	printf 'Counting total qlty smells across all files...\n'
 	_diag_file=$(mktemp "${TMPDIR:-/tmp}/qlty-smell-threshold.XXXXXX") || return 1
-	_sarif=$("$_qlty_bin" smells --all --sarif --no-snippets --quiet 2>"$_diag_file" || true)
+	_sarif=$("$_qlty_bin" smells --all --sarif --no-snippets --quiet 2>"$_diag_file")
+	_qlty_rc=$?
 	if is_blank_output "$_sarif"; then
-		emit_sarif_warning "empty" "$_diag_file" "$_qlty_bin" ""
+		emit_sarif_warning "empty" "$_diag_file" "$_qlty_bin" "" "$_qlty_rc"
 		rm -f "$_diag_file"
 		return 0
 	fi
 	if ! is_valid_sarif_results "$_sarif"; then
-		emit_sarif_warning "invalid" "$_diag_file" "$_qlty_bin" "$_sarif"
+		emit_sarif_warning "invalid" "$_diag_file" "$_qlty_bin" "$_sarif" "$_qlty_rc"
 		rm -f "$_diag_file"
 		return 0
 	fi

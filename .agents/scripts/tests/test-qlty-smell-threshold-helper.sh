@@ -61,6 +61,10 @@ case "${QLTY_STUB_MODE:-empty}" in
 		printf 'simulated qlty empty output\n' >&2
 		exit 0
 		;;
+	empty-fail)
+		printf 'simulated qlty empty failure diagnostics\n' >&2
+		exit 2
+		;;
 	blank)
 		printf '  \n\t\n'
 		printf 'simulated qlty blank output\n' >&2
@@ -109,6 +113,13 @@ assert_rc "empty SARIF output is warning-only" "0" "$empty_rc"
 assert_contains "empty SARIF warning emitted" "empty SARIF output" "$empty_output"
 assert_contains "empty SARIF includes qlty version" "Qlty version: qlty test-stub" "$empty_output"
 assert_contains "empty SARIF includes stderr diagnostics" "simulated qlty empty output" "$empty_output"
+
+write_stub_qlty empty-fail "$BIN_DIR"
+empty_fail_output=$("$HELPER" "$CONF" 2>&1)
+empty_fail_rc=$?
+assert_rc "empty SARIF output with qlty failure is warning-only" "0" "$empty_fail_rc"
+assert_contains "empty SARIF failure includes qlty exit code" "qlty smells exit code: 2" "$empty_fail_output"
+assert_contains "empty SARIF failure includes stderr diagnostics" "simulated qlty empty failure diagnostics" "$empty_fail_output"
 
 write_stub_qlty blank "$BIN_DIR"
 blank_output=$("$HELPER" "$CONF" 2>&1)
