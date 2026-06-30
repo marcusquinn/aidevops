@@ -813,8 +813,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             toggleButton.centerYAnchor.constraint(equalTo: overlay.centerYAnchor, constant: 3.5),
             toggleButton.heightAnchor.constraint(equalToConstant: 22),
             toggleButton.widthAnchor.constraint(equalToConstant: 22),
-            cameraButton.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -24),
-            cameraButton.centerYAnchor.constraint(equalTo: overlay.centerYAnchor, constant: 3.5),
+            cameraButton.trailingAnchor.constraint(equalTo: overlay.trailingAnchor, constant: -9),
+            cameraButton.centerYAnchor.constraint(equalTo: overlay.centerYAnchor, constant: 5.5),
             cameraButton.heightAnchor.constraint(equalToConstant: 22),
             cameraButton.widthAnchor.constraint(equalToConstant: 22)
         ])
