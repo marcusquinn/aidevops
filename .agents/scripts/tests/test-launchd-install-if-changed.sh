@@ -67,7 +67,7 @@ setup() {
 # bottom and sources many .agents/scripts/setup/modules at the top level.
 # ---------------------------------------------------------------------------
 
-_define_launchd_install_if_changed() {
+_define_launchd_install_stubs() {
 	# Minimal stubs required by _launchd_install_if_changed
 	print_warning() { echo "[WARN] $*" >&2; return 0; }
 	print_info()    { return 0; }
@@ -79,8 +79,10 @@ _define_launchd_install_if_changed() {
 
 	# launchctl stub — no-op unless overridden by individual tests
 	launchctl() { return 0; }
+	return 0
+}
 
-	# _launchd_install_if_changed — inline from setup.sh (GH#21063 fixes)
+_define_launchd_state_helpers() {
 	_launchd_agent_state() {
 		local label="$1"
 		local state=""
@@ -116,7 +118,10 @@ _define_launchd_install_if_changed() {
 		launchctl bootstrap "$domain" "$plist_path" 2>/dev/null
 		return $?
 	}
+	return 0
+}
 
+_define_launchd_xpcproxy_recovery() {
 	_launchd_recover_xpcproxy_if_stuck() {
 		local label="$1"
 		local plist_path="$2"
@@ -167,7 +172,10 @@ _define_launchd_install_if_changed() {
 		print_warning "LaunchAgent $label still stuck in xpcproxy after recovery (pid=${pid:-none}, args=${process_args:-none})"
 		return 1
 	}
+	return 0
+}
 
+_define_launchd_loader_helpers() {
 	_launchd_load_agent() {
 		local label="$1"
 		local plist_path="$2"
@@ -194,7 +202,10 @@ _define_launchd_install_if_changed() {
 		_launchd_recover_xpcproxy_if_stuck "$label" "$plist_path"
 		return $?
 	}
+	return 0
+}
 
+_define_launchd_installer_helper() {
 	_launchd_install_if_changed() {
 		local label="$1"
 		local plist_path="$2"
@@ -239,6 +250,16 @@ _define_launchd_install_if_changed() {
 		_launchd_load_agent "$label" "$plist_path" || return 1
 		return 0
 	}
+	return 0
+}
+
+_define_launchd_install_if_changed() {
+	_define_launchd_install_stubs
+	# _launchd_install_if_changed — inline from setup.sh (GH#21063 fixes)
+	_define_launchd_state_helpers
+	_define_launchd_xpcproxy_recovery
+	_define_launchd_loader_helpers
+	_define_launchd_installer_helper
 	return 0
 }
 
