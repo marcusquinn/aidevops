@@ -968,6 +968,10 @@ create_or_preview_issue() {
 	repo_slug=$(printf '%s\n' "$cluster_json" | jq -r '.repo')
 	check_name=$(printf '%s\n' "$cluster_json" | jq -r '.check_name // "multiple-checks"')
 	count=$(printf '%s\n' "$cluster_json" | jq -r '.count')
+	if ! printf '%s\n' "$cluster_json" | jq -e 'any((.examples // [])[]?; ([.source_ref, .source_url, .run_url, .details_url] | map(. // "") | any(. != "")))' >/dev/null; then
+		echo "Skipping cluster for ${check_name} - no evidence examples"
+		return 1
+	fi
 
 	local title
 	title=$(build_issue_title "$check_name" "$count" "$is_infra")
@@ -1050,8 +1054,9 @@ create_systemic_issues() {
 			echo "Skipping infra advisory for ${infra_repo} - existing open issue with ${signal_tag}"
 			continue
 		fi
-		create_or_preview_issue "$advisory_cluster" "$pattern_id" "$systemic_threshold" "$dry_run" "true"
-		created=$((created + 1))
+		if create_or_preview_issue "$advisory_cluster" "$pattern_id" "$systemic_threshold" "$dry_run" "true"; then
+			created=$((created + 1))
+		fi
 	done <<<"$infra_repos"
 
 	# --- Code-defect cluster pass ---
@@ -1098,9 +1103,9 @@ create_systemic_issues() {
 			continue
 		fi
 
-		create_or_preview_issue "$cluster_json" "$pattern_id" "$systemic_threshold" "$dry_run" "false" ${extra_labels[@]+"${extra_labels[@]}"}
-
-		created=$((created + 1))
+		if create_or_preview_issue "$cluster_json" "$pattern_id" "$systemic_threshold" "$dry_run" "false" ${extra_labels[@]+"${extra_labels[@]}"}; then
+			created=$((created + 1))
+		fi
 		idx=$((idx + 1))
 	done
 

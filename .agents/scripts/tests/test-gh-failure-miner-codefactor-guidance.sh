@@ -101,6 +101,19 @@ cluster_json=$(cat <<'JSON'
 JSON
 )
 
+empty_evidence_cluster_json=$(cat <<'JSON'
+{
+  "repo": "marcusquinn/aidevops",
+  "check_name": "ShellCheck",
+  "signature": "failure:shellcheck",
+  "count": 2,
+  "is_infra": false,
+  "sources": [],
+  "examples": []
+}
+JSON
+)
+
 events_json=$(cat <<'JSON'
 [
   {
@@ -122,6 +135,11 @@ JSON
 
 body=$(build_issue_body "$cluster_json" "46250abc5695" "2" "false")
 legacy_body=$(render_issue_body_markdown "$events_json" "2")
+if empty_evidence_output=$(create_or_preview_issue "$empty_evidence_cluster_json" "abc123" "2" "true" "false" 2>&1); then
+	empty_evidence_status=0
+else
+	empty_evidence_status=$?
+fi
 paths_json=$(fetch_pr_changed_paths_json "marcusquinn/aidevops" "25324")
 annotations_json=$(fetch_check_run_annotations_summary_json "marcusquinn/aidevops" "123")
 GH_MODE=fail
@@ -171,6 +189,8 @@ assert_contains "build_issue_body includes CodeFactor annotations" "reported fin
 assert_contains "build_issue_body handles unavailable details" "If CodeFactor details are unavailable" "$body"
 assert_contains "build_issue_body preserves failure signature context" "failure:codefactor.io" "$body"
 assert_contains "build_issue_body asks for focused regression guard" "focused regression guard" "$body"
+assert_equals "create_or_preview_issue rejects no-evidence clusters" "1" "$empty_evidence_status"
+assert_contains "create_or_preview_issue explains no-evidence skip" "no evidence examples" "$empty_evidence_output"
 assert_contains "render_issue_body_markdown includes Worker Guidance" "## Worker Guidance" "$legacy_body"
 assert_contains "render_issue_body_markdown directs workers to provider details" "details URL" "$legacy_body"
 assert_contains "render_issue_body_markdown includes affected file fallback" "affected files: .agents/scripts/vault-crypto-helper.py, .agents/scripts/vault-helper.sh" "$legacy_body"
