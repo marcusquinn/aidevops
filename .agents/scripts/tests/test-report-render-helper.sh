@@ -69,9 +69,9 @@ assert_not_contains() {
 	return 0
 }
 
-test_render_markdown_fixture() {
-	local _out="${TEST_ROOT}/report.html"
-	"$HELPER_SH" render "${FIXTURE_DIR}/llm-visibility-report-sample.md" --template editorial-evidence --output "$_out"
+assert_markdown_render_components() {
+	local _out="$1"
+
 	assert_contains "$_out" "sticky-toc" "Markdown render includes sticky TOC"
 	assert_contains "$_out" "list-style: none" "Markdown render removes browser TOC list numbering"
 	assert_contains "$_out" "@media print" "Markdown render includes print CSS"
@@ -107,6 +107,12 @@ test_render_markdown_fixture() {
 	assert_contains "$_out" "class=\"code-copy\"" "Markdown render includes copy buttons for code"
 	assert_contains "$_out" "code-copy.is-copied" "Markdown render includes copy feedback state"
 	assert_contains "$_out" "class=\"accordion action-prompt\"" "Markdown render includes action prompt accordions"
+	return 0
+}
+
+assert_action_prompts_inside_action_sections() {
+	local _out="$1"
+
 	if python3 - "$_out" <<'PYHTML'
 from pathlib import Path
 import sys
@@ -130,6 +136,12 @@ PYHTML
 	else
 		print_result "Markdown render places action prompts inside action sections" 1 "Expected action prompt markup before closing action section"
 	fi
+	return 0
+}
+
+assert_markdown_pdf_and_print_links() {
+	local _out="$1"
+
 	assert_contains "$_out" "<details class=\"accordion\" open" "Markdown render opens accordions for PDF output"
 	assert_contains "$_out" "class=\"toc-pdf-link\"" "Markdown render includes TOC PDF link"
 	assert_contains "$_out" ">A4</a>" "Markdown render labels portrait PDF as A4"
@@ -145,6 +157,12 @@ PYHTML
 	assert_contains "$_out" "text-wrap: pretty" "Markdown render includes smart text wrapping"
 	assert_contains "$_out" "style=\"--bar-value: 64%\"" "Markdown render splits bar chart rows"
 	assert_contains "${TEST_ROOT}/llm-visibility-report-sample-action-prompts.md" "Guide me through the tools" "Render writes companion action prompts file"
+	return 0
+}
+
+assert_markdown_toc_numbering() {
+	local _out="$1"
+
 	assert_contains "$_out" "heading-number\">1.</span> Method" "Markdown render numbers body H2 headings"
 	if grep -qF "Chapter 1 /" "$_out"; then
 		print_result "Markdown TOC omits Chapter prefix" 1 "Found Chapter prefix in rendered TOC labels"
@@ -176,12 +194,29 @@ PYHTML
 	else
 		print_result "Markdown TOC omits badges" 1 "Found badge markup in rendered TOC"
 	fi
+	return 0
+}
+
+assert_markdown_footer_and_source_comments() {
+	local _out="$1"
+
 	assert_contains "$_out" "<footer class=\"report-footer\">" "Markdown render includes copyright footer"
 	if grep -q "&lt;!-- SPDX-License-Identifier" "$_out"; then
 		print_result "Markdown render suppresses source comments" 1 "SPDX comment leaked into rendered HTML"
 	else
 		print_result "Markdown render suppresses source comments" 0
 	fi
+	return 0
+}
+
+test_render_markdown_fixture() {
+	local _out="${TEST_ROOT}/report.html"
+	"$HELPER_SH" render "${FIXTURE_DIR}/llm-visibility-report-sample.md" --template editorial-evidence --output "$_out"
+	assert_markdown_render_components "$_out"
+	assert_action_prompts_inside_action_sections "$_out"
+	assert_markdown_pdf_and_print_links "$_out"
+	assert_markdown_toc_numbering "$_out"
+	assert_markdown_footer_and_source_comments "$_out"
 	return 0
 }
 
