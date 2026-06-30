@@ -855,6 +855,9 @@ _compose_pr_title() {
 # t2767: Implements partial-success recovery — when gh_create_pr exits non-zero but a PR
 # already exists for the current branch (GitHub created it but a follow-up update failed),
 # we recover and continue instead of bailing out.
+# GH#26045: After extracting the PR number, verify/re-apply the current session
+# origin label via set_origin_label so recovered partial-success PRs cannot remain
+# unlabeled and unroutable by pulse CI/review repair workers.
 _create_pr() {
 	local repo="$1" pr_title="$2" pr_body="$3" origin_label="$4"
 	shift 4
@@ -868,13 +871,10 @@ _create_pr() {
 	# this caller's $origin_label disagreed with gh_create_pr's session-detected
 	# label (env-var divergence — see full-loop-helper.sh t3088 fix), GitHub
 	# applied BOTH labels, producing the t2200 mutual-exclusion violation.
-	# Canonical failure: PR #21825. Origin label is now injected exactly once,
-	# inside gh_create_pr, via session_origin_label(). $origin_label is retained
-	# in the function signature for backward compat with existing callers.
+	# Canonical failure: PR #21825. Origin label is now injected at creation by
+	# gh_create_pr, via session_origin_label(), then reconciled below after the
+	# PR number is known to cover partial-success recovery gaps (GH#26045).
 	local -a pr_cmd=(gh_create_pr --repo "$repo" --title "$pr_title" --body "$pr_body")
-	# Reference the parameter to avoid shellcheck SC2034 (unused variable).
-	# Intentionally suppressed: $origin_label is the legacy interface — see comment above.
-	: "${origin_label:-}"
 	for lbl in "${extra_labels[@]+"${extra_labels[@]}"}"; do
 		pr_cmd+=(--label "$lbl")
 	done
@@ -913,6 +913,19 @@ _create_pr() {
 	fi
 	if [[ -z "$pr_number" ]]; then
 		print_error "Could not extract PR number from: ${pr_url}"
+		return 1
+	fi
+
+	local origin_name="${origin_label#origin:}"
+	case "$origin_name" in
+	interactive | worker | worker-takeover) ;;
+	*)
+		print_error "Could not normalize origin label '${origin_label}' for PR #${pr_number}"
+		return 1
+		;;
+	esac
+	if ! set_origin_label "$pr_number" "$repo" "$origin_name" --pr >/dev/null 2>&1; then
+		print_error "Could not verify origin:${origin_name} on PR #${pr_number}; retry commit-and-pr after GitHub writes recover"
 		return 1
 	fi
 
