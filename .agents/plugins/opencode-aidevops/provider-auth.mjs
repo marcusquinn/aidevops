@@ -82,6 +82,61 @@ function resolvePoolState(sessionAccountEmail, accessToken) {
 }
 
 /**
+ * Detect OpenCode's built-in OAuth refresh failure before our fetch wrapper runs.
+ * @param {unknown} err
+ */
+function isRefresh401Failure(err) {
+  const message = String(err?.message || err || "");
+  return /token refresh failed:\s*(401|403)/i.test(message);
+}
+
+/** @param {string} token @param {object|undefined} account */
+function buildRecoveredAuth(token, account) {
+  return {
+    type: "oauth",
+    access: token,
+    refresh: account?.refresh || "",
+    expires: account?.expires || Date.now() + 3600_000,
+  };
+}
+
+/**
+ * Recover when getAuth() itself throws "Token refresh failed: 401/403".
+ * OpenCode refreshes expired built-in OAuth credentials before returning auth,
+ * so provider response recovery cannot run unless we catch that preflight error.
+ */
+async function recoverAuthFromPool(client, sessionAccountEmail) {
+  const accounts = getAccounts("anthropic");
+  normalizeExpiredCooldowns("anthropic", accounts);
+  if (sessionAccountEmail) {
+    const own = await refreshSessionOwnAccount(client, accounts, sessionAccountEmail);
+    if (own) {
+      const account = getAccounts("anthropic").find((a) => a.email === own.email);
+      return { auth: buildRecoveredAuth(own.token, account), sessionAccountEmail: own.email };
+    }
+  }
+  const rotated = await rotatePoolAccounts(client, accounts);
+  if (!rotated) return null;
+  const account = getAccounts("anthropic").find((a) => a.email === rotated.email);
+  return { auth: buildRecoveredAuth(rotated.token, account), sessionAccountEmail: rotated.email };
+}
+
+/** @param {Function} getAuth @param {any} client @param {string|null} sessionAccountEmail */
+async function getAuthWithPoolRecovery(getAuth, client, sessionAccountEmail) {
+  try {
+    return { auth: await getAuth(), sessionAccountEmail };
+  } catch (err) {
+    if (!isRefresh401Failure(err)) throw err;
+    console.error(
+      `[aidevops] provider-auth: built-in token refresh failed before request (${err.message}) — attempting pool recovery`,
+    );
+    const recovered = await recoverAuthFromPool(client, sessionAccountEmail);
+    if (recovered) return recovered;
+    throw err;
+  }
+}
+
+/**
  * Resolve the current session's access token.
  * Handles session affinity, pool rotation, and exhaustion wait.
  */
@@ -218,7 +273,9 @@ async function handle400ThirdPartyRecovery(client, response, accessToken, sessio
  * Execute the authenticated fetch with token resolution, body transform, and error recovery.
  */
 async function executeAuthenticatedFetch(client, getAuth, input, init, sessionAccountEmail) {
-  const auth = await getAuth();
+  const authState = await getAuthWithPoolRecovery(getAuth, client, sessionAccountEmail);
+  const auth = authState.auth;
+  sessionAccountEmail = authState.sessionAccountEmail;
   if (auth.type !== "oauth") return { response: await fetch(input, init), sessionAccountEmail };
   const resolved = await resolveAccessToken(client, auth, sessionAccountEmail);
   const accessToken = resolved.accessToken ?? auth.access;
@@ -254,14 +311,20 @@ export function createProviderAuthHook(client) {
   return {
     provider: "anthropic",
     async loader(getAuth, provider) {
-      const auth = await getAuth();
-      if (auth.type !== "oauth") return {};
+      const initialAuthState = await getAuthWithPoolRecovery(getAuth, client, null);
+      if (initialAuthState.auth.type !== "oauth") return {};
       zeroOutModelCosts(provider);
-      let sessionAccountEmail = null;
+      let sessionAccountEmail = initialAuthState.sessionAccountEmail;
+      let nextAuthOverride = initialAuthState.auth;
       return {
         apiKey: "",
         async fetch(input, init) {
-          const result = await executeAuthenticatedFetch(client, getAuth, input, init, sessionAccountEmail);
+          const result = await executeAuthenticatedFetch(client, async () => {
+            if (!nextAuthOverride) return getAuth();
+            const auth = nextAuthOverride;
+            nextAuthOverride = null;
+            return auth;
+          }, input, init, sessionAccountEmail);
           sessionAccountEmail = result.sessionAccountEmail;
           return result.response;
         },
