@@ -53,6 +53,12 @@ emit_empty_sarif_warning() {
 	return 0
 }
 
+is_blank_output() {
+	local _value="$1"
+	[[ -z "${_value//[[:space:]]/}" ]]
+	return $?
+}
+
 run_threshold_check() {
 	local _conf="${1:-.agents/configs/complexity-thresholds.conf}"
 	local _threshold=""
@@ -76,7 +82,7 @@ run_threshold_check() {
 	printf 'Counting total qlty smells across all files...\n'
 	_diag_file=$(mktemp "${TMPDIR:-/tmp}/qlty-smell-threshold.XXXXXX") || return 1
 	_sarif=$("$_qlty_bin" smells --all --sarif --no-snippets --quiet 2>"$_diag_file" || true)
-	if [ -z "$_sarif" ]; then
+	if is_blank_output "$_sarif"; then
 		emit_empty_sarif_warning "$_diag_file" "$_qlty_bin"
 		rm -f "$_diag_file"
 		return 0
