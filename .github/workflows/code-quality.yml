@@ -840,7 +840,7 @@ jobs:
 
     - name: Qlty smell threshold check
       run: |
-        # GH#26027: keep empty-SARIF handling in the helper so transient qlty
+        # GH#26043: keep empty-SARIF handling in the helper so transient qlty
         # output failures stay diagnostic-only while valid threshold
         # regressions remain blocking.
         .agents/scripts/qlty-smell-threshold-helper.sh \
