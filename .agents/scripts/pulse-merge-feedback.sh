@@ -907,7 +907,7 @@ _emit_ci_failure_guidance_blocks() {
 		[[ "$class" == "OTHER" ]] && continue
 
 		local resolution_cmd="" guidance=""
-		local fallback_resolution_cmd="" fallback_guidance=""
+		local fallback_resolution_cmd="" fallback_guidance="" cr="" gr="" rr="" guide_raw=""
 		if [[ -f "$conf_file" ]]; then
 			while IFS='|' read -r cr gr rr guide_raw; do
 				local cn="${cr#"${cr%%[![:space:]]*}"}"
