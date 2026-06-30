@@ -11,10 +11,12 @@ export const conversationThreads: GuiConversationThread[] = [
     messages: [
       { id: "message-general-1", conversation_id: "channel-general", sender_participant_id: "participant-system", sender_kind: "system", sequence: 1, status: "sent", usage: null, created_at: "2026-06-27T12:00:00Z", edited_at: null },
       { id: "message-general-2", conversation_id: "channel-general", sender_participant_id: "participant-ai", sender_kind: "ai_assistant", sequence: 2, status: "delivered", usage: { provider_ref: "local", model_ref: "workflow-summary", input_tokens: 0, output_tokens: 0, total_tokens: 0, cost_ref: null }, created_at: "2026-06-27T12:15:00Z", edited_at: null },
+      { id: "message-general-3", conversation_id: "channel-general", sender_participant_id: "participant-ai", sender_kind: "ai_assistant", sequence: 3, status: "delivered", usage: { provider_ref: "tambo", model_ref: "devops-card", input_tokens: 0, output_tokens: 0, total_tokens: 0, cost_ref: null }, created_at: "2026-06-27T12:18:00Z", edited_at: null },
     ],
     parts: [
       { id: "part-general-1", message_id: "message-general-1", kind: "event_marker", ordinal: 1, text: "#general is ready for repo, deployment, review, and incident coordination.", payload_json: null, file_ref: null, source_ref: "seed" },
       { id: "part-general-2", message_id: "message-general-2", kind: "text", ordinal: 1, text: "Mention @AI DevOps or a worker to turn a thread into an audited task once write routes land.", payload_json: null, file_ref: null, source_ref: null },
+      { id: "part-general-3", message_id: "message-general-3", kind: "tambo_component", ordinal: 1, text: null, payload_json: { component: "TaskCard", tenant_ref: "local", session_ref: "channel-general", read_only: true, props: { title: "Integrate Tambo GenUI cards", status: "read-only preview", priority: "high", owner: "AI DevOps", repo: "aidevops", reference: "#25713" } }, file_ref: null, source_ref: "tambo:seed" },
     ],
     reactions: [{ id: "reaction-general-1", message_id: "message-general-2", participant_id: "participant-local", reaction: "ack", created_at: "2026-06-27T12:16:00Z" }],
     read_states: [{ conversation_id: "channel-general", participant_id: "participant-local", last_read_message_id: "message-general-1", last_read_sequence: 1, updated_at: "2026-06-27T12:10:00Z" }],
@@ -31,7 +33,10 @@ export const conversationThreads: GuiConversationThread[] = [
     conversation: { id: "dm-ai-devops", type: "dm", title: "AI DevOps", scope: { tenant_ref: "local", workspace_ref: "aidevops", repo_ref: null }, source_ref: "seed:dms/ai-devops", status: "read_only", created_at: "2026-06-27T00:00:00Z", updated_at: "2026-06-27T12:40:00Z" },
     participants: [{ id: "participant-dm-local", conversation_id: "dm-ai-devops", kind: "human", display_name: "Local user", identity_ref: "local:user", agent_ref: null, worker_ref: null, membership_state: "active", joined_at: "2026-06-27T00:00:00Z" }, { id: "participant-dm-ai", conversation_id: "dm-ai-devops", kind: "ai_assistant", display_name: "AI DevOps", identity_ref: null, agent_ref: "aidevops", worker_ref: null, membership_state: "active", joined_at: "2026-06-27T00:00:00Z" }],
     messages: [{ id: "message-dm-1", conversation_id: "dm-ai-devops", sender_participant_id: "participant-dm-ai", sender_kind: "ai_assistant", sequence: 1, status: "delivered", usage: null, created_at: "2026-06-27T12:40:00Z", edited_at: null }],
-    parts: [{ id: "part-dm-1", message_id: "message-dm-1", kind: "text", ordinal: 1, text: "Direct support threads share the same message parts, participants, reactions, and read state as channels.", payload_json: null, file_ref: null, source_ref: null }],
+    parts: [
+      { id: "part-dm-1", message_id: "message-dm-1", kind: "text", ordinal: 1, text: "Direct support threads share the same message parts, participants, reactions, and read state as channels.", payload_json: null, file_ref: null, source_ref: null },
+      { id: "part-dm-2", message_id: "message-dm-1", kind: "approval_prompt", ordinal: 2, text: null, payload_json: { component: "ApprovalPromptCard", tenant_ref: "local", session_ref: "dm-ai-devops", read_only: true, props: { action: "Dispatch worker", reason: "Requires audited approval backend before mutation", risk: "medium", requested_by: "AI DevOps", disabled: true } }, file_ref: null, source_ref: "tambo:seed" },
+    ],
     reactions: [],
     read_states: [{ conversation_id: "dm-ai-devops", participant_id: "participant-dm-local", last_read_message_id: null, last_read_sequence: 0, updated_at: "2026-06-27T12:00:00Z" }],
   },

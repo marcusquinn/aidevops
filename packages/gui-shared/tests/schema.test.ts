@@ -9,7 +9,10 @@ import {
   sortConversationMessageParts,
   sortConversationMessages,
   STATUS_ROUTE_MANIFEST,
+  TAMBO_COMPONENT_SCHEMAS,
+  TAMBO_PROXY_ROUTE_MANIFEST,
   statusFixture,
+  validateTamboComponentPayload,
   VAULT_STATUS_ROUTE_MANIFEST,
   type GuiConversationThread,
 } from "../src";
@@ -30,6 +33,26 @@ describe("GUI shared schema contracts", () => {
     expect(isReadOnlyManifest(VAULT_STATUS_ROUTE_MANIFEST)).toBe(true);
     expect(VAULT_STATUS_ROUTE_MANIFEST.operation_id).toBe("vault.status.read");
     expect(VAULT_STATUS_ROUTE_MANIFEST.redactions).toContain("vault_passphrases");
+  });
+
+  test("Tambo route and registered component schemas are strict and read-safe", () => {
+    expect(isReadOnlyManifest(TAMBO_PROXY_ROUTE_MANIFEST)).toBe(true);
+    expect(TAMBO_PROXY_ROUTE_MANIFEST.redactions).toContain("tambo_api_keys");
+    expect(TAMBO_COMPONENT_SCHEMAS.map((schema) => schema.name)).toEqual(["TaskCard", "PullRequestCard", "CICheckSummary", "WorkerStatusCard", "DeploymentStatusCard", "RepoHealthCard", "ApprovalPromptCard"]);
+    expect(TAMBO_COMPONENT_SCHEMAS.every((schema) => schema.additionalProperties === false)).toBe(true);
+  });
+
+  test("Tambo payload validation enforces tenant scope and strict props", () => {
+    const scope = { tenant_ref: "tenant:local-owner", workspace_ref: "workspace:aidevops", repo_ref: "repo:marcusquinn/aidevops" };
+    const valid = validateTamboComponentPayload({ component: "TaskCard", tenant_ref: "tenant:local-owner", session_ref: "conversation:ai-session-1", read_only: true, props: { title: "Implement Tambo", status: "in review", reference: "#25713" } }, scope);
+    const wrongTenant = validateTamboComponentPayload({ component: "TaskCard", tenant_ref: "tenant:other", session_ref: "conversation:ai-session-1", read_only: true, props: { title: "Implement Tambo", status: "in review" } }, scope);
+    const extraProp = validateTamboComponentPayload({ component: "TaskCard", tenant_ref: "tenant:local-owner", session_ref: "conversation:ai-session-1", read_only: true, props: { title: "Implement Tambo", status: "in review", href: "not-allowed" } }, scope);
+    const activeApproval = validateTamboComponentPayload({ component: "ApprovalPromptCard", tenant_ref: "tenant:local-owner", session_ref: "conversation:ai-session-1", read_only: true, props: { action: "Merge", reason: "Checks passed", risk: "high", disabled: false } }, scope);
+
+    expect(valid.ok).toBe(true);
+    expect(wrongTenant.errors).toContain("tenant_scope_mismatch");
+    expect(extraProp.errors).toContain("unexpected_prop:href");
+    expect(activeApproval.errors).toContain("approval_prompt_must_be_disabled");
   });
 
   test("status envelope preserves source and redaction metadata", () => {
@@ -55,6 +78,13 @@ describe("GUI shared schema contracts", () => {
     expect(envelope.data.local_repos.path_ref).toBe("~/Git");
     expect(envelope.data.oauth_pool.value_policy).toBe("metadata_only_no_tokens");
     expect(envelope.data.vault.value_policy).toBe("metadata_only_no_secret_material");
+    expect(envelope.data.pulse_workers.value_policy).toBe("metadata_only_no_prompt_payloads_no_secrets");
+    expect(envelope.data.pulse_workers.kpis.every((kpi) => kpi.period_label.length > 0 && kpi.scope_label.length > 0 && kpi.comparison_label.length > 0)).toBe(true);
+    expect(envelope.data.pulse_workers.events[0].usage?.provider).toBe("openai");
+    expect(envelope.data.pulse_workers.events[0].usage?.cached_tokens).toBeGreaterThan(0);
+    expect(envelope.data.pulse_workers.events[2].issue_origin).toBe("third_party");
+    expect(envelope.data.pulse_workers.events[2].author_association).toBe("CONTRIBUTOR");
+    expect(envelope.data.pulse_workers.charts.map((chart) => chart.points[0]?.period)).toEqual(["day", "week", "month", "year"]);
     expect(envelope.data.vault.collections.map((collection) => collection.surface_ids).flat()).toContain("agents");
     expect(envelope.data.setup_targets[0].path_ref).toBe("~/.aidevops/agents/VERSION");
     expect(envelope.data.ai_apps.map((app) => app.name)).toContain("OpenCode");

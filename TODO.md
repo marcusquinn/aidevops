@@ -1035,7 +1035,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18019 Implement channels and direct messages for aidevops.app #auto-dispatch #feat #priority:high ref:GH#25712 pr:#25730 completed:2026-06-27
 
-- [ ] t18020 Integrate Tambo generative UI cards into conversations #auto-dispatch #feat #priority:high ref:GH#25713
+- [x] t18020 Integrate Tambo generative UI cards into conversations #auto-dispatch #feat #priority:high ref:GH#25713 pr:#25909 completed:2026-06-29
 
 - [ ] t18021 Add per-page tours with signposts button beside notifications #auto-dispatch #feat #priority:high ref:GH#25714
 
@@ -1048,6 +1048,20 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18029 Scope session checkpoints to active repository #type:bug ref:GH#25835 pr:#25837 completed:2026-06-29
 
 - [x] t18031 fix(gui): reduce AppActionButton qlty smells after v3.29.28 release failure #bug #interactive ~1h ref:GH#25842 logged:2026-06-29 pr:#25844 completed:2026-06-29
+
+- [ ] t18033 Build Pulse & Workers observability console for aidevops.app #dashboard #feat #observability #parent-task #product #pulse ~1h ref:GH#25911 logged:2026-06-30 -> [todo/tasks/t18033-brief.md]
+
+- [x] t18034 Rename Workers to Pulse & Workers and add observability UI shell #auto-dispatch #dashboard #feat #observability #pulse ~2h ref:GH#25912 logged:2026-06-30 -> [todo/tasks/t18034-brief.md] pr:#25923 completed:2026-06-30
+
+- [ ] t18035 Add Pulse & Workers observability contracts and fixtures #auto-dispatch #dashboard #feat #observability #pulse ~3h blocked-by:t18034 ref:GH#25913 logged:2026-06-30 -> [todo/tasks/t18035-brief.md]
+
+- [ ] t18036 Populate Pulse & Workers status from read-only local telemetry #api #auto-dispatch #dashboard #feat #observability #pulse ~4h blocked-by:t18035 ref:GH#25914 logged:2026-06-30 -> [todo/tasks/t18036-brief.md]
+
+- [ ] t18037 Build data-driven Pulse & Workers dashboard filters charts and drilldown #auto-dispatch #dashboard #design #feat #observability #pulse ~4h blocked-by:t18036 ref:GH#25915 logged:2026-06-30 -> [todo/tasks/t18037-brief.md]
+
+- [ ] t18038 Add safe Pulse & Workers action buttons with terminal output #api #auto-dispatch #dashboard #feat #observability #pulse ~4h blocked-by:t18037 ref:GH#25916 logged:2026-06-30 -> [todo/tasks/t18038-brief.md]
+
+- [ ] t18039 Add productivity insights and systemic fix feedback to Pulse & Workers #auto-dispatch #dashboard #feat #observability #pulse #self-improvement ~4h blocked-by:t18038 ref:GH#25917 logged:2026-06-30 -> [todo/tasks/t18039-brief.md]
 
 ## In Progress
 
@@ -4351,3 +4365,20 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 
 - [x] t18032 Hide GUI stroke effects when borders are disabled #bug #dashboard #design ref:GH#25855 pr:#25856 completed:2026-06-29
+
+- [ ] t18033 Build Pulse & Workers observability console for aidevops.app #dashboard #enhancement #observability #parent #product #pulse ref:GH#25911
+
+
+- [ ] t18035 Add Pulse & Workers observability contracts and fixtures #auto-dispatch #dashboard #enhancement #observability #pulse ref:GH#25913
+
+- [ ] t18037 Build data-driven Pulse & Workers dashboard filters charts and drilldown #auto-dispatch #dashboard #design #enhancement #observability #pulse ref:GH#25915
+
+- [ ] t18036 Populate Pulse & Workers status from read-only local telemetry #api #auto-dispatch #dashboard #enhancement #observability #pulse ref:GH#25914
+
+- [ ] t18039 Add productivity insights and systemic fix feedback to Pulse & Workers #auto-dispatch #dashboard #enhancement #observability #pulse #self-improvement ref:GH#25917
+
+- [ ] t18038 Add safe Pulse & Workers action buttons with terminal output #api #auto-dispatch #dashboard #enhancement #observability #pulse ref:GH#25916
+
+- [x] t18040 fix: restore 500-line Markdown simplification gate #bug #framework ref:GH#25926 pr:#25941 completed:2026-06-30
+
+- [ ] t18041 Polish local GUI gradient background and panel contrast #design #enhancement ref:GH#25944

@@ -58,10 +58,15 @@ The result: an AI operations platform that manages projects across every busines
 [![Copyright](https://img.shields.io/badge/Copyright-Marcus%20Quinn%202025--2026-blue.svg)](https://github.com/marcusquinn)
 
 <!-- Release & Version Info -->
-[![Version](https://img.shields.io/badge/Version-3.29.35-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
+[![Version](https://img.shields.io/badge/Version-3.29.39-blue.svg)](https://github.com/marcusquinn/aidevops/releases)
 [![npm version](https://img.shields.io/npm/v/aidevops)](https://www.npmjs.com/package/aidevops)
 [![Homebrew](https://img.shields.io/badge/homebrew-marcusquinn%2Ftap-orange)](https://github.com/marcusquinn/homebrew-tap)
 [![GitHub repository](https://img.shields.io/badge/github-repository-181717.svg?logo=github)](https://github.com/marcusquinn/aidevops)
+
+<!-- Repository Metrics -->
+[![Lines of code](docs/metrics/badges/loc.svg)](docs/metrics/repo-metrics.md)
+[![Languages by lines of code](docs/metrics/badges/languages.svg)](docs/metrics/repo-metrics.md)
+[![Dependencies](docs/metrics/badges/dependencies.svg)](docs/metrics/repo-metrics.md)
 
 <!-- Framework Specific -->
 [![Services Supported](https://img.shields.io/badge/Services%20Supported-30+-brightgreen.svg)](#comprehensive-service-coverage)
@@ -79,7 +84,7 @@ The result: an AI operations platform that manages projects across every busines
 - **Recommended runtime/models**: OpenCode + OpenAI GPT-5.5 / GPT-5.4 mini
 - **Entry**: `aidevops` CLI, `~/.aidevops/agents/AGENTS.md`
 - **Stack**: Bash scripts, TypeScript (Bun), MCP servers
-- **Recent focus**: OpenCode control-plane safety, mobile simulator testing, self-hosted runner operations, and pulse/worker diagnostics
+- **Recent focus**: OpenCode control-plane safety, local repo metrics, mobile simulator testing, self-hosted runner operations, and pulse/worker diagnostics
 
 ### Key Commands
 
@@ -88,6 +93,7 @@ The result: an AI operations platform that manages projects across every busines
 - `aidevops auto-update` - Automatic update polling (enable/disable/status)
 - `aidevops secret` - Manage secrets (gopass encrypted, AI-safe)
 - `aidevops security` - Full security assessment (posture, secrets, supply chain)
+- `aidevops metrics generate` - Generate local LOC, language, and dependency data for README badges or app about pages
 - `/onboarding` - Interactive setup wizard (in AI assistant)
 - `/design-artifact` - Route artifact-first UI, deck, email, poster, and mobile mockup work
 - `/open-design` - Manage the optional Open Design companion studio

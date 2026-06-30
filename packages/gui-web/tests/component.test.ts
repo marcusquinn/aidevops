@@ -45,7 +45,7 @@ describe("dashboard shell", () => {
     expect(html).toContain("AI Sessions");
     expect(html).toContain("Channels");
     expect(html).toContain("Direct Messages");
-    expect(html).toContain("Workers");
+    expect(html).toContain("Pulse &amp; Workers");
     expect(html).toContain("Deployments");
     expect(html).toContain("Secrets");
     expect(html).toContain("AI Providers");
@@ -126,8 +126,41 @@ describe("dashboard shell", () => {
     expect(html).toContain("Create worker task");
     expect(html).toContain("Context attachment");
     expect(html).toContain("Tool status");
+    expect(html).toContain("data-genui-component=\"RepoHealthCard\"");
+    expect(html).toContain("ready for Tambo cards");
     expect(html).toContain("MessageScroller-compatible transcript");
     expect(html).toContain("New, rename, pin, archive, delete, share, and export");
+  });
+
+  test("renders Pulse and Workers data-driven dashboard with filters and drilldown", () => {
+    const html = renderWorkspaceSurface(workersItem, "workers");
+
+    expect(html).toContain("Pulse &amp; Workers");
+    expect(html).toContain("Data-driven observability");
+    expect(html).toContain("Repo scope");
+    expect(html).toContain("Issue origin");
+    expect(html).toContain("Provider/model scope");
+    expect(html).toContain("Needs attention");
+    expect(html).toContain("Trends · day/week/month/year");
+    expect(html).toContain("Filter controls");
+    expect(html).toContain("Status");
+    expect(html).toContain("Severity");
+    expect(html).toContain("Provider / model");
+    expect(html).toContain("Cost range");
+    expect(html).toContain("Duration range");
+    expect(html).toContain("Expensive runs");
+    expect(html).toContain("Community bug report");
+    expect(html).toContain("third-party · CONTRIBUTOR");
+    expect(html).toContain("OpenAI · gpt-5.5");
+    expect(html).toContain("114,000 tokens");
+    expect(html).toContain("Mobile activity cards");
+    expect(html).toContain("Detail drawer becomes a full-screen sheet on small screens");
+    expect(html).toContain("Drilldown drawer");
+    expect(html).toContain("Suggested systemic fix");
+    expect(html).toContain("Usage and cost");
+    expect(html).toContain("Planned actions");
+    expect(html).toContain("Open terminal output (planned)");
+    expect(html).toContain("Create systemic fix (planned)");
   });
 
   test("renders channel and DM conversation surfaces from the unified model", () => {
@@ -138,12 +171,33 @@ describe("dashboard shell", () => {
     expect(channelHtml).toContain("general");
     expect(channelHtml).toContain("worker-feed");
     expect(channelHtml).toContain("data-sender-kind=\"system\"");
+    expect(channelHtml).toContain("data-genui-component=\"TaskCard\"");
+    expect(channelHtml).toContain("Integrate Tambo GenUI cards");
     expect(channelHtml).toContain("ack");
     expect(channelHtml).toContain("3 members");
     expect(dmHtml).toContain("Direct Messages");
     expect(dmHtml).toContain("AI DevOps");
     expect(dmHtml).toContain("Direct support threads share the same message parts");
+    expect(dmHtml).toContain("data-genui-component=\"ApprovalPromptCard\"");
+    expect(dmHtml).toContain("Approval execution is deferred until audited approval tooling exists.");
     expect(dmHtml).toContain("Search channels, DMs, mentions");
+  });
+
+  test("rejects unsafe Tambo component payloads during conversation rendering", () => {
+    const html = renderToStaticMarkup(createElement(CommsConversationSurface, {
+      mode: "channels",
+      threads: [{
+        conversation: { id: "channel-unsafe", type: "channel", title: "unsafe", scope: { tenant_ref: "local", workspace_ref: "aidevops", repo_ref: null }, source_ref: "test", status: "read_only", created_at: "2026-06-27T00:00:00Z", updated_at: "2026-06-27T00:00:00Z" },
+        participants: [{ id: "participant-ai", conversation_id: "channel-unsafe", kind: "ai_assistant", display_name: "AI DevOps", identity_ref: null, agent_ref: "aidevops", worker_ref: null, membership_state: "active", joined_at: "2026-06-27T00:00:00Z" }],
+        messages: [{ id: "message-unsafe", conversation_id: "channel-unsafe", sender_participant_id: "participant-ai", sender_kind: "ai_assistant", sequence: 1, status: "delivered", usage: null, created_at: "2026-06-27T00:00:00Z", edited_at: null }],
+        parts: [{ id: "part-unsafe", message_id: "message-unsafe", kind: "tambo_component", ordinal: 1, text: null, payload_json: { component: "TaskCard", tenant_ref: "other", session_ref: "channel-unsafe", read_only: true, props: { title: "Unsafe", status: "blocked", href: "not allowed" } }, file_ref: null, source_ref: "test" }],
+        reactions: [],
+        read_states: [],
+      } satisfies GuiConversationThread],
+    }));
+
+    expect(html).toContain("Unsupported DevOps card");
+    expect(html).toContain("tenant_scope_mismatch");
   });
 
   test("renders conversation threads when optional collections are absent", () => {
@@ -175,6 +229,8 @@ describe("dashboard shell", () => {
     expect(status.data.oauth_pool.providers.map((provider) => provider.provider)).toEqual(["anthropic", "openai", "cursor", "google"]);
     expect(status.data.vault.status).toBe("uninitialized");
     expect(status.data.vault.collections.flatMap((collection) => collection.surface_ids)).toContain("agents");
+    expect(status.data.pulse_workers.value_policy).toBe("metadata_only_no_prompt_payloads_no_secrets");
+    expect(status.data.pulse_workers.events.map((event) => event.issue_origin)).toContain("third_party");
     expect(status.data.setup_targets[0].path_ref).toBe("~/.aidevops/agents/VERSION");
     expect(status.data.ai_apps.map((app) => app.name)).toContain("OpenCode");
     expect(status.data.machine.initials).toBe("LM");
@@ -408,6 +464,13 @@ const directMessagesItem: SurfaceNavItem = {
   icon: "message",
   id: "directMessages",
   label: "Direct Messages",
+};
+
+const workersItem: SurfaceNavItem = {
+  description: "Pulse, worker sessions, outcomes, and resources",
+  icon: "activity",
+  id: "workers",
+  label: "Pulse & Workers",
 };
 
 const managedAppFixture: GuiManagedAppSummary = {

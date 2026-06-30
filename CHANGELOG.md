@@ -10,6 +10,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.29.39] - 2026-06-30
+
+### Changed
+
+- Maintenance: mark t18040 complete (pr:#25941 completed:2026-06-30) [skip ci]
+
+### Fixed
+
+- restore Markdown simplification gate (#25941)
+
+## [3.29.38] - 2026-06-30
+
+### Changed
+
+- feat: add pulse workers observability contracts (#25934)
+- Maintenance: sync ref:GH#25926 to TODO.md [skip ci]
+- Maintenance: mark t18034 complete (pr:#25923 completed:2026-06-30) [skip ci]
+- feat: add Pulse Workers observability shell (#25923)
+- Maintenance: sync ref:GH#25916 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#25914 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#25913 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#25912 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#25911 to TODO.md [skip ci]
+- Maintenance: mark t18020 complete (pr:#25909 completed:2026-06-29) [skip ci]
+- avoid signature model fallback (#25904)
+
+### Fixed
+
+- reduce tool version check complexity (#25935)
+- reduce tool version check complexity (#25933)
+- reduce Tambo validator complexity (#25920)
+
+## [3.29.37] - 2026-06-29
+
+### Fixed
+
+- unblock auto-dispatch review handoffs (#25907)
+
+## [3.29.36] - 2026-06-29
+
+### Added
+
+- add local repository metrics (#25905)
+
 ## [3.29.35] - 2026-06-29
 
 ### Changed
@@ -194,13 +238,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [3.29.14] - 2026-06-28
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.29.13] - 2026-06-28
 

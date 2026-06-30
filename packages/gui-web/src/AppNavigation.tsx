@@ -3,6 +3,7 @@ import type { GuiMachineSummary, GuiStatusData } from "@aidevops/gui-shared";
 import { useEffect, useState, type ReactNode } from "react";
 import type { IconType } from "react-icons";
 import {
+  FiActivity,
   FiBookmark,
   FiBox,
   FiBriefcase,
@@ -41,6 +42,7 @@ import { VaultPadlock, vaultCollectionForSurface } from "./VaultBadges";
 export { hueFromInputValue } from "./AppearanceControls";
 
 const surfaceIcons: Record<SurfaceIconName, IconType> = {
+  activity: FiActivity,
   apps: FiBox,
   bookmark: FiBookmark,
   brand: FiBriefcase,

@@ -2,13 +2,14 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# badges-sync-helper.sh — opt-in sync of README badge blocks and LOC badge
-# workflow across owned-org repos (t2975).
+# badges-sync-helper.sh — opt-in sync of README badge blocks, local repo
+# metrics, and the managed refresh workflow across owned-org repos (t2975).
 #
 # Partner to badges-check-helper.sh (Phase 1, t2975). Reads classifications
 # from the detector and, per owned-org repo, either:
 #   - inject:  inserts/updates the canonical badge block in README.md
-#   - install: copies the loc-badge-caller.yml workflow into .github/workflows/
+#   - metrics:  generates docs/metrics JSON/Markdown/SVG assets locally
+#   - install: copies the repo metrics caller workflow into .github/workflows/
 #
 # Sync/install operations are restricted to owned-org repos
 # (marcusquinn, essentials-com, wpallstars, or ~/.config/aidevops/badge-orgs.conf).
@@ -88,7 +89,8 @@ _resolve_helper() {
 
 _CHECK_HELPER="$(  _resolve_helper "badges-check-helper.sh"  || printf '%s' "$SELF_DIR/badges-check-helper.sh")"
 _BADGES_HELPER="$( _resolve_helper "readme-badges-helper.sh" || printf '%s' "$SELF_DIR/readme-badges-helper.sh")"
-readonly _CHECK_HELPER _BADGES_HELPER
+_METRICS_HELPER="$( _resolve_helper "repo-metrics-helper.sh" || printf '%s' "$SELF_DIR/repo-metrics-helper.sh")"
+readonly _CHECK_HELPER _BADGES_HELPER _METRICS_HELPER
 
 # ─── Owned-orgs allowlist ───────────────────────────────────────────────────
 
@@ -152,11 +154,12 @@ _info() {
 _usage() {
 	cat <<'EOF'
 
-badges-sync-helper.sh — sync README badge blocks and LOC workflow (t2975)
+badges-sync-helper.sh — sync README badge blocks, repo metrics, and refresh workflow (t2975)
 
 Reads classifications from badges-check-helper.sh and, per owned-org repo,
-injects/updates the canonical badge block in README.md and installs the
-loc-badge-caller.yml workflow. Only operates on owned-org repos.
+injects/updates the canonical badge block in README.md, generates committed
+docs/metrics artifacts, and installs the repo metrics refresh workflow. Only
+operates on owned-org repos.
 
 Default is --dry-run. Pass --apply to write, commit, push, and open PRs.
 
@@ -171,7 +174,7 @@ Options:
   --repo SLUG   Limit to a single repo. Example: --repo owner/repo.
   --json        Emit one JSON object per repo describing outcome.
   --branch NAME Branch name prefix (default: chore/badges-sync-YYYYMMDD).
-  --no-workflow Skip loc-badge workflow installation; only sync README blocks.
+  --no-workflow Skip repo metrics workflow installation; only sync README blocks and local metrics.
   -h, --help    Show this help.
 
 Exit codes:
@@ -280,15 +283,29 @@ _sync_readme() {
 		return 1
 	fi
 
-	if git -C "$_path" diff --quiet "$_readme" 2>/dev/null; then
+	if [[ -f "$_METRICS_HELPER" ]]; then
+		if ! bash "$_METRICS_HELPER" generate \
+			--output-dir "$_path/docs/metrics" \
+			--badge-dir "$_path/docs/metrics/badges" \
+			--legacy-badge-dir "$_path/.github/badges" \
+			"$_path" >/dev/null 2>&1; then
+			printf '%s\t%s\trepo metrics generation failed\n' "$_slug" "$_STATUS_FAILED"
+			git -C "$_path" checkout -q "$_default_branch" || true
+			return 1
+		fi
+	fi
+
+	local _changes
+	_changes=$(git -C "$_path" status --porcelain -- "README.md" "docs/metrics" ".github/badges" 2>/dev/null || true)
+	if [[ -z "$_changes" ]]; then
 		git -C "$_path" checkout -q "$_default_branch" || true
-		printf '%s\t%s\tbadge block already current\n' "$_slug" "$_STATUS_SKIPPED"
+		printf '%s\t%s\tbadge block and repo metrics already current\n' "$_slug" "$_STATUS_SKIPPED"
 		return 0
 	fi
 
-	git -C "$_path" add "$_readme" >/dev/null 2>&1
+	git -C "$_path" add "README.md" "docs/metrics" ".github/badges" >/dev/null 2>&1
 	if ! git -C "$_path" diff --cached --quiet; then
-		local _commit_msg="chore: inject canonical aidevops badge block into README.md"
+		local _commit_msg="chore: refresh aidevops README badges and repo metrics"
 		if ! git -C "$_path" commit -q -m "$_commit_msg"; then
 			printf '%s\t%s\tgit commit failed\n' "$_slug" "$_STATUS_FAILED"
 			git -C "$_path" checkout -q "$_default_branch" || true
@@ -309,7 +326,7 @@ _sync_readme() {
 # ─── Workflow install ────────────────────────────────────────────────────────
 
 # _install_workflow <slug> <path> <apply> <branch_name> <default_branch>
-# Installs loc-badge-caller.yml into .github/workflows/loc-badge.yml.
+# Installs the repo metrics caller into .github/workflows/loc-badge.yml.
 _install_workflow() {
 	local _slug="$1"
 	local _path="$2"
@@ -320,7 +337,7 @@ _install_workflow() {
 
 	local _template
 	if ! _template=$(_resolve_loc_badge_template); then
-		printf '%s\t%s\tloc-badge-caller.yml template not found\n' "$_slug" "$_STATUS_SKIPPED"
+		printf '%s\t%s\trepo metrics workflow template not found\n' "$_slug" "$_STATUS_SKIPPED"
 		return 0
 	fi
 
@@ -331,7 +348,7 @@ _install_workflow() {
 	fi
 
 	if [[ "$_apply" -eq 0 ]]; then
-		printf '%s\t%s\tinstall → .github/workflows/loc-badge.yml\n' "$_slug" "$_STATUS_PLANNED"
+		printf '%s\t%s\tinstall → .github/workflows/loc-badge.yml (repo metrics refresh)\n' "$_slug" "$_STATUS_PLANNED"
 		return 0
 	fi
 
@@ -352,7 +369,7 @@ _install_workflow() {
 
 	git -C "$_path" add ".github/workflows/loc-badge.yml" >/dev/null 2>&1
 	if ! git -C "$_path" diff --cached --quiet; then
-		local _commit_msg="chore: install loc-badge caller workflow (via aidevops badges sync)"
+		local _commit_msg="chore: install repo metrics refresh workflow (via aidevops badges sync)"
 		if ! git -C "$_path" commit -q -m "$_commit_msg"; then
 			printf '%s\t%s\tgit commit failed\n' "$_slug" "$_STATUS_FAILED"
 			git -C "$_path" checkout -q "$_default_branch" || true
@@ -365,7 +382,7 @@ _install_workflow() {
 		return 1
 	fi
 
-	_open_pr "$_slug" "$_path" "$_branch_name" "$_default_branch" "loc-badge workflow install"
+	_open_pr "$_slug" "$_path" "$_branch_name" "$_default_branch" "repo metrics workflow install"
 	return $?
 }
 
@@ -390,20 +407,20 @@ _open_pr() {
 	_pr_body=$(printf '%s\n' \
 		"## Summary" \
 		"" \
-		"Sync README badge block and/or install LOC badge workflow." \
+		"Sync README badge block, local repo metrics, and/or install the refresh workflow." \
 		"" \
 		"**Change:** ${_description}" \
 		"" \
 		"## Why" \
 		"" \
 		"The aidevops framework provides a canonical badge block for README files" \
-		"and a reusable LOC badge workflow. This PR brings this repo in line with" \
+		"and dependency-light local repository metrics. This PR brings this repo in line with" \
 		"the canonical template." \
 		"" \
 		"## How to verify" \
 		"" \
 		"After merge: check README.md contains \`<!-- aidevops:badges:start -->\` block." \
-		"If workflow was installed: trigger a push to see LOC SVGs generated in \`.github/badges/\`." \
+		"Check \`docs/metrics/repo-metrics.json\` and \`docs/metrics/badges/*.svg\` exist." \
 		"" \
 		"Generated by: \`aidevops badges sync --apply\` (canonical badge sync).")
 
@@ -437,9 +454,9 @@ _list_actionable_repos() {
 		return 1
 	fi
 
-	# Filter to DRIFTED and NO-BLOCK (actionable); carry slug, path, status
+		# Filter to DRIFTED, METRICS-MISSING, and NO-BLOCK (actionable); carry slug, path, status
 	printf '%s\n' "$_json" | jq -r \
-		'select((.classification == "DRIFTED") or (.classification == "NO-BLOCK"))
+		'select((.classification == "DRIFTED") or (.classification == "METRICS-MISSING") or (.classification == "NO-BLOCK"))
 		| [.slug, .path, .classification] | @tsv' 2>/dev/null
 	return 0
 }
@@ -507,7 +524,7 @@ _process_rows() {
 			esac
 		fi
 
-		# Install loc-badge workflow if not suppressed
+		# Install repo metrics workflow if not suppressed
 		if [[ "$_no_workflow" -eq 0 ]]; then
 			local _wf_result
 			_wf_result=$(_install_workflow "$_slug" "$_rpath" "$_apply" "$_branch_name" "$_default_branch")

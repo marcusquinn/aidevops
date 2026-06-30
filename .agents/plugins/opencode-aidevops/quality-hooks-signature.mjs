@@ -63,6 +63,21 @@ import {
 export { FAIL_REASON };
 export { SIG_MARKER, hasTrustedSignatureSignal, isGhWriteCommand, isMachineProtocolCommand };
 
+function _signatureHelperEnv() {
+  const helperEnv = {
+    ...process.env,
+    AIDEVOPS_SIG_CLI: process.env.AIDEVOPS_SIG_CLI || "OpenCode",
+    AIDEVOPS_SIG_TOKENS: process.env.AIDEVOPS_SIG_TOKENS || "0",
+  };
+  const model = process.env.AIDEVOPS_SIG_MODEL || process.env.OPENCODE_MODEL || "";
+  if (model) {
+    helperEnv.AIDEVOPS_SIG_MODEL = model;
+  } else {
+    delete helperEnv.AIDEVOPS_SIG_MODEL;
+  }
+  return helperEnv;
+}
+
 /**
  * Generate a signature footer by invoking gh-signature-helper.sh synchronously.
  * Returns `{ status: "ok", sig }` on success or
@@ -79,13 +94,7 @@ function _generateSignature(helperPath, bodyValue, log) {
       encoding: "utf-8",
       timeout: 1500,
       stdio: ["pipe", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        AIDEVOPS_SIG_CLI: process.env.AIDEVOPS_SIG_CLI || "OpenCode",
-        AIDEVOPS_SIG_MODEL:
-          process.env.AIDEVOPS_SIG_MODEL || process.env.OPENCODE_MODEL || "openai/gpt-5.5",
-        AIDEVOPS_SIG_TOKENS: process.env.AIDEVOPS_SIG_TOKENS || "0",
-      },
+      env: _signatureHelperEnv(),
     });
     if (!sig || !sig.includes(SIG_MARKER)) {
       log("WARN", "gh-signature-helper output missing marker; refusing to inject");

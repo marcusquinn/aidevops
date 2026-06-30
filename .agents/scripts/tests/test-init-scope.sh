@@ -444,6 +444,34 @@ test_label_sync_init_hook() {
 	return 0
 }
 
+test_repo_metrics_init_hook() {
+	echo ""
+	echo "=== Testing repo metrics init hook ==="
+
+	local init_tail
+	init_tail=$(sed -n '/local _metrics_helper=/,/Run security posture assessment/p' "$AIDEVOPS_INIT_LIB")
+	local init_files
+	init_files=$(sed -n '/local init_files=()/,/local committed=false/p' "$AIDEVOPS_INIT_LIB")
+	local rc expected_metrics_helper expected_generate expected_output_dir
+	expected_metrics_helper="local _metrics_helper=\"\$AGENTS_DIR/scripts/repo-metrics-helper.sh\""
+	expected_generate="bash \"\$_metrics_helper\" generate"
+	expected_output_dir="--output-dir \"\$project_root/docs/metrics\""
+
+	if [[ "$init_tail" == *"$expected_metrics_helper"* ]]; then rc=0; else rc=1; fi
+	print_result "cmd_init resolves repo-metrics-helper path" "$rc"
+
+	if [[ "$init_tail" == *"$expected_generate"* && "$init_tail" == *"$expected_output_dir"* ]]; then rc=0; else rc=1; fi
+	print_result "cmd_init generates local repo metrics" "$rc"
+
+	if [[ "$init_tail" == *'Skipping GitHub repo metrics refresh workflow for local-only repo'* ]]; then rc=0; else rc=1; fi
+	print_result "cmd_init skips metrics workflow for local-only repos" "$rc"
+
+	if [[ "$init_files" == *'docs/metrics/'* ]]; then rc=0; else rc=1; fi
+	print_result "cmd_init includes docs/metrics in init commit" "$rc"
+
+	return 0
+}
+
 test_coderabbit_abort_on_close_init_hook() {
 	echo ""
 	echo "=== Testing CodeRabbit abort_on_close init hook ==="
@@ -482,6 +510,7 @@ test_scaffold_public_scope
 test_aidevops_json_roundtrip
 test_backward_compat
 test_label_sync_init_hook
+test_repo_metrics_init_hook
 test_coderabbit_abort_on_close_init_hook
 
 echo ""

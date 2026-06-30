@@ -8,6 +8,8 @@
 #   test_large_file_premise_falsified       — file under threshold → exit 10
 #   test_large_file_premise_holds           — file over threshold → exit 0
 #   test_large_file_deleted                 — file no longer exists → exit 10
+#   test_agent_doc_premise_falsified        — markdown file under threshold → exit 10
+#   test_agent_doc_premise_holds            — markdown file at threshold → exit 0
 #   test_function_complexity_falsified      — no violations remain → exit 10
 #   test_function_complexity_holds          — violations still present → exit 0
 #   test_missing_attributes                 — marker without attributes → exit 20
@@ -231,6 +233,64 @@ test_large_file_deleted() {
 	return 0
 }
 
+# test_agent_doc_premise_falsified — markdown file is now under threshold
+# Expected: validator exits 10 (premise falsified)
+test_agent_doc_premise_falsified() {
+	setup_test_env
+
+	local body_file="${TEST_ROOT}/issue_body.txt"
+	printf '<!-- aidevops:generator=agent-doc-simplification-gate cited_file=.agents/reference/guide.md threshold=500 -->\n## Agent doc simplification\n' >"$body_file"
+	create_gh_stub_with_body_file "$body_file"
+
+	local file_content=""
+	local i
+	for i in $(seq 1 499); do
+		file_content="${file_content}line ${i}\n"
+	done
+	create_git_stub_with_file "success" ".agents/reference/guide.md" "$(printf '%b' "$file_content")"
+
+	local rc=0
+	"$HELPER_SCRIPT" validate "106" "marcusquinn/aidevops" >/dev/null 2>&1 || rc=$?
+
+	if [[ "$rc" -eq 10 ]]; then
+		print_result "agent_doc_premise_falsified exits 10" 0
+	else
+		print_result "agent_doc_premise_falsified exits 10" 1 "Expected exit 10, got ${rc}"
+	fi
+
+	teardown_test_env
+	return 0
+}
+
+# test_agent_doc_premise_holds — markdown file is still at threshold
+# Expected: validator exits 0 (dispatch proceeds)
+test_agent_doc_premise_holds() {
+	setup_test_env
+
+	local body_file="${TEST_ROOT}/issue_body.txt"
+	printf '<!-- aidevops:generator=agent-doc-simplification-gate cited_file=.agents/reference/guide.md threshold=500 -->\n## Agent doc simplification\n' >"$body_file"
+	create_gh_stub_with_body_file "$body_file"
+
+	local file_content=""
+	local i
+	for i in $(seq 1 501); do
+		file_content="${file_content}line ${i}\n"
+	done
+	create_git_stub_with_file "success" ".agents/reference/guide.md" "$(printf '%b' "$file_content")"
+
+	local rc=0
+	"$HELPER_SCRIPT" validate "107" "marcusquinn/aidevops" >/dev/null 2>&1 || rc=$?
+
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "agent_doc_premise_holds exits 0" 0
+	else
+		print_result "agent_doc_premise_holds exits 0" 1 "Expected exit 0, got ${rc}"
+	fi
+
+	teardown_test_env
+	return 0
+}
+
 # test_function_complexity_falsified — no functions exceed threshold
 # Expected: validator exits 10 (premise falsified)
 test_function_complexity_falsified() {
@@ -340,6 +400,8 @@ main() {
 	test_large_file_premise_falsified
 	test_large_file_premise_holds
 	test_large_file_deleted
+	test_agent_doc_premise_falsified
+	test_agent_doc_premise_holds
 	test_function_complexity_falsified
 	test_function_complexity_holds
 	test_missing_attributes

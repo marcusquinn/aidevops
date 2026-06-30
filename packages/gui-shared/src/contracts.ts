@@ -1,6 +1,6 @@
 export type GuiRouteClassification = "read" | "write" | "destructive";
 
-export type GuiOperationId = "setup.status.read" | "capabilities.read" | "filesystem.read" | "vault.status.read" | "apps.action.run" | "apps.action.status";
+export type GuiOperationId = "setup.status.read" | "capabilities.read" | "filesystem.read" | "vault.status.read" | "apps.action.run" | "apps.action.status" | "tambo.session.read";
 
 export type GuiFileRootId = "agents" | "config" | "localSetup" | "git";
 
@@ -229,6 +229,122 @@ export interface GuiConversationUsageMetadata {
   output_tokens: number;
   total_tokens: number;
   cost_ref: string | null;
+}
+
+export type GuiPulseWorkerEventType = "pulse_run" | "worker_session" | "command_job" | "ci_check" | "issue" | "pull_request" | "review" | "systemic_fix";
+
+export type GuiPulseWorkerStatus = "healthy" | "attention" | "blocked" | "running" | "completed" | "failed" | "deferred";
+
+export type GuiPulseWorkerOutcome = "merged" | "closed" | "in_progress" | "needs_maintainer_review" | "blocked" | "failed" | "deferred" | "created_followup";
+
+export type GuiPulseWorkerSeverity = "info" | "success" | "warning" | "critical";
+
+export type GuiPulseIssueOrigin = "aidevops_created" | "maintainer_created" | "origin_interactive" | "third_party" | "unknown";
+
+export type GuiPulseAuthorAssociation = "OWNER" | "MEMBER" | "COLLABORATOR" | "CONTRIBUTOR" | "FIRST_TIME_CONTRIBUTOR" | "NONE" | "UNKNOWN";
+
+export type GuiPulseResourceKind = "provider_model" | "github_api" | "ci_capacity" | "queue" | "cpu" | "memory" | "disk" | "network";
+
+export type GuiPulseProviderId = GuiAiProviderId | "local" | "unknown";
+
+export type GuiPulsePeriodBucket = "day" | "week" | "month" | "year";
+
+export interface GuiPulseWorkerKpiCard {
+  id: string;
+  label: string;
+  value: string;
+  period_label: string;
+  scope_label: string;
+  comparison_label: string;
+  sample_size?: number;
+  status: GuiPulseWorkerStatus;
+  detail: string;
+}
+
+export interface GuiPulseWorkerUsageSnapshot extends GuiConversationUsageMetadata {
+  provider: GuiPulseProviderId;
+  model_ref: string | null;
+  cached_tokens: number;
+  wall_time_ms: number;
+  estimated_cost_ref: string | null;
+}
+
+export interface GuiPulseResourceSnapshot {
+  kind: GuiPulseResourceKind;
+  label: string;
+  available_label: string;
+  pressure: "low" | "medium" | "high" | "unknown";
+  observed_at: string;
+  reset_at: string | null;
+}
+
+export interface GuiPulseWorkerChartPoint {
+  period: GuiPulsePeriodBucket;
+  period_label: string;
+  scope_label: string;
+  bucket_start: string;
+  bucket_end: string;
+  value: number;
+}
+
+export interface GuiPulseWorkerChartSeries {
+  id: string;
+  label: string;
+  unit: "percent" | "count" | "tokens" | "cost_ref" | "milliseconds";
+  points: GuiPulseWorkerChartPoint[];
+}
+
+export interface GuiPulseWorkerActivityEvent {
+  id: string;
+  type: GuiPulseWorkerEventType;
+  status: GuiPulseWorkerStatus;
+  outcome: GuiPulseWorkerOutcome;
+  severity: GuiPulseWorkerSeverity;
+  occurred_at: string;
+  title: string;
+  summary: string;
+  pulse_run_ref: string | null;
+  worker_session_ref: string | null;
+  issue_ref: string | null;
+  pull_request_ref: string | null;
+  command_job_ref: string | null;
+  repo_ref: string | null;
+  actor_ref: string | null;
+  issue_origin: GuiPulseIssueOrigin;
+  author_association: GuiPulseAuthorAssociation;
+  duration_ms: number | null;
+  usage: GuiPulseWorkerUsageSnapshot | null;
+  resources: GuiPulseResourceSnapshot[];
+  drilldown_sections: Array<{ label: string; body: string }>;
+}
+
+export interface GuiPulseWorkerFilterOption {
+  id: string;
+  label: string;
+  count: number;
+}
+
+export interface GuiPulseWorkerSummary {
+  value_policy: "metadata_only_no_prompt_payloads_no_secrets";
+  selected_period: GuiPulsePeriodBucket;
+  period_label: string;
+  scope_label: string;
+  comparison_label: string;
+  updated_at: string;
+  kpis: GuiPulseWorkerKpiCard[];
+  attention: Array<{ id: string; severity: GuiPulseWorkerSeverity; title: string; detail: string; event_ref: string | null }>;
+  filters: {
+    repos: GuiPulseWorkerFilterOption[];
+    event_types: GuiPulseWorkerFilterOption[];
+    outcomes: GuiPulseWorkerFilterOption[];
+    resources: GuiPulseWorkerFilterOption[];
+    providers: GuiPulseWorkerFilterOption[];
+    issue_origins: GuiPulseWorkerFilterOption[];
+    authors: GuiPulseWorkerFilterOption[];
+    author_associations: GuiPulseWorkerFilterOption[];
+  };
+  charts: GuiPulseWorkerChartSeries[];
+  events: GuiPulseWorkerActivityEvent[];
 }
 
 export interface GuiConversationMessage {
@@ -478,6 +594,7 @@ export interface GuiStatusData {
   managed_apps: GuiManagedAppSummary[];
   notifications: GuiNotificationSummary[];
   vault: GuiVaultStatusData;
+  pulse_workers: GuiPulseWorkerSummary;
   capabilities: GuiCapabilitySummary[];
   secrets: GuiSecretReference[];
   placeholders: string[];

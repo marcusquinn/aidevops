@@ -5,7 +5,7 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 3.29.35
+# Version: 3.29.39
 
 set -euo pipefail
 
@@ -1538,14 +1538,15 @@ main() {
 	launch-worker | launch_worker) cmd_launch_worker "$@" ;;
 	check-workflows | workflows) _dispatch_helper "check-workflows-helper.sh" "check-workflows-helper.sh" "$@" ;;
 	sync-workflows) _dispatch_helper "sync-workflows-helper.sh" "sync-workflows-helper.sh" "$@" ;;
+	metrics) _dispatch_helper "repo-metrics-helper.sh" "repo-metrics-helper.sh" "$@" ;;
 	badges)
 		# Badge management: render | check | sync | install (t2975)
 		# Bare 'aidevops badges' with no subcommand shows a usage summary.
 		# Subcommands:
 		#   render <slug>               — render canonical badge block for a repo
 		#   check  [--repo SLUG] [--json] [--verbose]  — cross-repo drift check
-		#   sync   [--repo SLUG] [--apply]              — inject badge block + install workflow
-		#   install [--repo SLUG] [--apply]             — install loc-badge caller workflow only
+		#   sync   [--repo SLUG] [--apply]              — inject badge block + generate metrics + install workflow
+		#   install [--repo SLUG] [--apply]             — install repo metrics refresh workflow only
 		local _badges_sub="${1:-help}"
 		local _badges_check_h="badges-check-helper.sh"
 		local _badges_sync_h="badges-sync-helper.sh"
@@ -1579,13 +1580,13 @@ main() {
 			;;
 		help | --help | -h | "")
 			echo ""
-			echo "aidevops badges — README badge block and LOC workflow management (t2975)"
+			echo "aidevops badges — README badge block and repo metrics workflow management (t2975)"
 			echo ""
 			echo "Subcommands:"
 			echo "  render  <slug>                 Print canonical badge block for a repo"
 			echo "  check   [--repo SLUG] [--json]  Detect badge drift across managed repos"
-			echo "  sync    [--repo SLUG] [--apply] Inject badge block + install LOC workflow"
-			echo "  install [--repo SLUG] [--apply] Install loc-badge caller workflow only"
+			echo "  sync    [--repo SLUG] [--apply] Inject badge block + generate metrics + install workflow"
+			echo "  install [--repo SLUG] [--apply] Install repo metrics refresh workflow only"
 			echo ""
 			echo "Options (check/sync/install):"
 			echo "  --repo SLUG    Limit to a single repo"
@@ -1599,6 +1600,7 @@ main() {
 			echo "  aidevops badges render owner/repo           # print badge block"
 			echo "  aidevops badges sync                        # dry-run sync across all repos"
 			echo "  aidevops badges sync --repo owner/r --apply # apply to a single repo"
+			echo "  aidevops metrics generate [PATH]            # generate local docs/metrics artifacts"
 			echo ""
 			;;
 		*)

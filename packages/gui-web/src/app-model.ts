@@ -19,6 +19,7 @@ export type FontPreference =
   | "Ubuntu Mono";
 export type FontSizePreference = "xs" | "s" | "m" | "lg" | "xl";
 export const surfaceIconNames = {
+  activity: true,
   apps: true,
   bookmark: true,
   brand: true,
@@ -273,8 +274,8 @@ export const text = {
   socialMedia: "Social Media",
   socialMediaIntro: "Social profiles, pages, handles, audience notes, and channel ownership are planned.",
   tasks: "Tasks",
-  workers: "Workers",
-  workersIntro: "Worker activity, task handoffs, event threads, and status transitions will render here as conversation events and workflow summaries.",
+  workers: "Pulse & Workers",
+  workersIntro: "Pulse & Workers brings worker sessions, event streams, outcomes, resources, and systemic fixes into one observability console so attention goes to exceptions, bottlenecks, and reusable improvements instead of raw noise.",
   theme: "Theme",
   appearance: "Appearance",
   hue: "Hue",
@@ -367,7 +368,7 @@ export const navGroups: SurfaceNavGroup[] = [
     mode: "devops",
     items: [
       plannedNavItem("aiSessions", text.aiSessions, "AI chat and OpenCode sessions", "terminal"),
-      plannedNavItem("workers", text.workers, "Worker activity and event threads", "users"),
+      plannedNavItem("workers", text.workers, "Pulse, worker sessions, outcomes, and resources", "activity"),
       { id: "git", label: text.localRepos, description: "~/Git explorer", icon: "folder" },
       plannedNavItem("repos", text.repos, "Unified local and remote repo context", "git"),
       { id: "projects", label: text.projects, description: "repos.json summary", icon: "git" },
