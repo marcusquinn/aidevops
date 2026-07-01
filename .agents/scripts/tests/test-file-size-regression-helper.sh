@@ -8,9 +8,10 @@
 #   1. zero-violation baseline  — no files over limit at base or head → exit 0
 #   2. baseline-equals-head     — same set of violations at base and head → exit 0
 #   3. head-greater-than-base   — head adds a new oversized file → exit 1
-#   4. new-file-over-limit      — new file >1500 lines even though net count is
+#   4. new-file-over-limit      — new file >500 lines even though net count is
 #                                 unchanged (one removed, one added) → exit 1
 #   5. docs-only                — --docs-only flag skips gate → exit 0
+#   6. code-and-readme-ignored  — oversized code and README.md do not count
 #
 # Usage: bash .agents/scripts/tests/test-file-size-regression-helper.sh
 # Requires: the helper at .agents/scripts/file-size-regression-helper.sh
@@ -67,17 +68,17 @@ teardown() {
 }
 
 # ---------------------------------------------------------------------------
-# make_sh_file <path> <lines>
-# Create a shell script file with exactly <lines> trivial no-op lines.
+# make_doc_file <path> <lines>
+# Create a Markdown/doc fixture file with exactly <lines> trivial lines.
 # ---------------------------------------------------------------------------
-make_sh_file() {
+make_doc_file() {
 	local _path="$1"
 	local _lines="$2"
 	mkdir -p "$(dirname "$_path")"
-	printf '#!/usr/bin/env bash\n' > "$_path"
-	local _i=1
+	: >"$_path"
+	local _i=0
 	while [ "$_i" -lt "$_lines" ]; do
-		printf ': # pad %d\n' "$_i" >> "$_path"
+		printf 'doc line %d\n' "$_i" >>"$_path"
 		_i=$((_i + 1))
 	done
 	return 0
@@ -118,9 +119,9 @@ test_zero_violation_baseline() {
 	local _head_dir="$TEST_ROOT/head"
 	mkdir -p "$_base_dir" "$_head_dir"
 
-	# Both base and head have a small file (well under 1500 lines)
-	make_sh_file "$_base_dir/small.sh" 100
-	make_sh_file "$_head_dir/small.sh" 100
+	# Both base and head have a small Markdown file (well under 500 lines)
+	make_doc_file "$_base_dir/small.md" 100
+	make_doc_file "$_head_dir/small.md" 100
 
 	local _base_tsv="$TEST_ROOT/base.tsv"
 	local _head_tsv="$TEST_ROOT/head.tsv"
@@ -149,8 +150,8 @@ test_baseline_equals_head() {
 	mkdir -p "$_base_dir" "$_head_dir"
 
 	# Both base and head have the same large file
-	make_sh_file "$_base_dir/big.sh" 1600
-	make_sh_file "$_head_dir/big.sh" 1600
+	make_doc_file "$_base_dir/big.md" 501
+	make_doc_file "$_head_dir/big.md" 501
 
 	local _base_tsv="$TEST_ROOT/base.tsv"
 	local _head_tsv="$TEST_ROOT/head.tsv"
@@ -179,11 +180,11 @@ test_head_greater_than_base() {
 	mkdir -p "$_base_dir" "$_head_dir"
 
 	# Base: one large file
-	make_sh_file "$_base_dir/existing.sh" 1600
+	make_doc_file "$_base_dir/existing.md" 501
 
 	# Head: same file plus a new oversized file
-	make_sh_file "$_head_dir/existing.sh" 1600
-	make_sh_file "$_head_dir/new_giant.sh" 2000
+	make_doc_file "$_head_dir/existing.md" 501
+	make_doc_file "$_head_dir/new_giant.md" 600
 
 	local _base_tsv="$TEST_ROOT/base.tsv"
 	local _head_tsv="$TEST_ROOT/head.tsv"
@@ -205,8 +206,8 @@ test_head_greater_than_base() {
 # ===========================================================================
 # Test 4: new-file-over-limit — net count unchanged but new file added → exit 1
 #
-# Scenario: base has file A (>1500 lines). Head removes A but adds file B
-# (>1500 lines). Net count: same (1). Still a regression because B is a new
+# Scenario: base has file A (>500 lines). Head removes A but adds file B
+# (>500 lines). Net count: same (1). Still a regression because B is a new
 # oversized file that wasn't in base. The ratchet must catch this to prevent
 # gaming the gate by cycling oversized files.
 # ===========================================================================
@@ -216,11 +217,11 @@ test_new_file_over_limit_net_unchanged() {
 	local _head_dir="$TEST_ROOT/head"
 	mkdir -p "$_base_dir" "$_head_dir"
 
-	# Base: one large file (file_a.sh)
-	make_sh_file "$_base_dir/file_a.sh" 1600
+	# Base: one large Markdown file (file_a.md)
+	make_doc_file "$_base_dir/file_a.md" 501
 
-	# Head: file_a.sh removed, file_b.sh added (different path, both >1500 lines)
-	make_sh_file "$_head_dir/file_b.sh" 1600
+	# Head: file_a.md removed, file_b.md added (different path, both >500 lines)
+	make_doc_file "$_head_dir/file_b.md" 501
 
 	local _base_tsv="$TEST_ROOT/base.tsv"
 	local _head_tsv="$TEST_ROOT/head.tsv"
@@ -254,9 +255,9 @@ test_docs_only_skip() {
 	mkdir -p "$_base_dir" "$_head_dir"
 
 	# Head has more violations than base — would normally fail
-	make_sh_file "$_base_dir/existing.sh" 1600
-	make_sh_file "$_head_dir/existing.sh" 1600
-	make_sh_file "$_head_dir/also_big.sh" 1700
+	make_doc_file "$_base_dir/existing.md" 501
+	make_doc_file "$_head_dir/existing.md" 501
+	make_doc_file "$_head_dir/also_big.md" 600
 
 	local _base_tsv="$TEST_ROOT/base.tsv"
 	local _head_tsv="$TEST_ROOT/head.tsv"
@@ -270,6 +271,36 @@ test_docs_only_skip() {
 		print_result "docs-only: --docs-only flag skips gate → exit 0" 0
 	else
 		print_result "docs-only: --docs-only flag skips gate → exit 0" 1 \
+			"got exit $_DIFF_EXIT, expected 0"
+	fi
+	teardown
+	return 0
+}
+
+# ===========================================================================
+# Test 6: code-and-readme-ignored — oversized code and README.md do not count
+# ===========================================================================
+test_code_and_readme_ignored() {
+	setup
+	local _base_dir="$TEST_ROOT/base"
+	local _head_dir="$TEST_ROOT/head"
+	mkdir -p "$_base_dir" "$_head_dir"
+
+	make_doc_file "$_head_dir/README.md" 1000
+	make_doc_file "$_head_dir/script.sh" 1000
+	make_doc_file "$_head_dir/module.py" 1000
+
+	local _base_tsv="$TEST_ROOT/base.tsv"
+	local _head_tsv="$TEST_ROOT/head.tsv"
+	run_scan "$_base_dir" "$_base_tsv"
+	run_scan "$_head_dir" "$_head_tsv"
+
+	run_diff "$_base_tsv" "$_head_tsv"
+
+	if [ "$_DIFF_EXIT" -eq 0 ]; then
+		print_result "code-and-readme-ignored: oversized code and README.md → exit 0" 0
+	else
+		print_result "code-and-readme-ignored: oversized code and README.md → exit 0" 1 \
 			"got exit $_DIFF_EXIT, expected 0"
 	fi
 	teardown
@@ -293,6 +324,7 @@ main() {
 	test_head_greater_than_base
 	test_new_file_over_limit_net_unchanged
 	test_docs_only_skip
+	test_code_and_readme_ignored
 
 	printf '\n%d/%d tests passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
 

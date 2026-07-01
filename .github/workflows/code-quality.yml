@@ -662,7 +662,9 @@ jobs:
 
     - name: File size check
       # t2171 + t2938: ratchet gate — block only when the PR introduces a net
-      # increase in files >1500 lines, or adds a brand-new oversized file.
+      # increase in non-README Markdown files >500 lines, or adds a brand-new
+      # oversized non-README Markdown file. Code file size is not gated here;
+      # function-complexity/nesting-depth gates provide actionable code limits.
       # Pre-existing debt does not block. Matches linters-local.sh (t2228 rule).
       env:
         BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -676,7 +678,7 @@ jobs:
         set -euo pipefail
 
         # --- Informational: total violation count (no threshold gate) ---
-        echo "Scanning file sizes (>1500 lines)..."
+        echo "Scanning non-README Markdown file sizes (>500 lines)..."
         total_out=$(.agents/scripts/complexity-regression-helper.sh check --dry-run \
           --metric file-size 2>/dev/null \
           | grep '^Total violations' || echo "Total violations (file-size): unknown")
@@ -731,11 +733,11 @@ jobs:
         fi
 
         if [ "${HAS_OVERRIDE}" = "true" ]; then
-          echo "::warning::New file size violations detected but 'complexity-bump-ok' label is set — allowing with warning."
+          echo "::warning::New non-README Markdown file size violations detected but 'complexity-bump-ok' label is set — allowing with warning."
           exit 0
         fi
 
-        echo "::error::New file size violations introduced in this PR. Add the 'complexity-bump-ok' label with a '## Complexity Bump Justification' section to override."
+        echo "::error::New non-README Markdown file size violations introduced in this PR. Add the 'complexity-bump-ok' label with a '## Complexity Bump Justification' section to override."
         exit 1
 
     - name: Python cyclomatic complexity (Lizard)

@@ -12,10 +12,11 @@
 #   6.  dry-run:                     --dry-run scans current tree and exits 0 regardless
 #   7.  nesting-depth clean-to-new:  new file with depth 10 → exit 1 (t2171)
 #   8.  nesting-depth stable:        pre-existing deep file unchanged → exit 0 (t2171)
-#   9.  file-size clean-to-new:      new 2000-line .sh → exit 1 (t2171)
-#   10. file-size stable:            pre-existing 2000-line file unchanged → exit 0 (t2171)
-#   11. bash32-compat clean-to-new:  new associative-array declaration → exit 1 (t2171)
-#   12. bash32-compat stable:        pre-existing nameref unchanged → exit 0 (t2171)
+#   9.  file-size clean-to-new:      new 501-line .md → exit 1 (t2171)
+#   10. file-size stable:            pre-existing 501-line .md unchanged → exit 0 (t2171)
+#   11. file-size ignores code/readme: oversized .sh + README.md → exit 0
+#   12. bash32-compat clean-to-new:  new associative-array declaration → exit 1 (t2171)
+#   13. bash32-compat stable:        pre-existing nameref unchanged → exit 0 (t2171)
 
 set -euo pipefail
 
@@ -398,7 +399,7 @@ test_nesting_stable() {
 }
 
 # ---------------------------------------------------------------------------
-# Test 9: file-size — clean-to-new. Head adds a 2000-line .sh file → exit 1.
+# Test 9: file-size — clean-to-new. Head adds a 501-line .md file → exit 1.
 # ---------------------------------------------------------------------------
 test_file_size_clean_to_new() {
 	setup
@@ -406,9 +407,9 @@ test_file_size_clean_to_new() {
 	local _head_dir="$TEST_ROOT/head"
 	mkdir -p "$_base_dir" "$_head_dir"
 
-	make_large_file "$_base_dir/small.sh" 100
-	cp "$_base_dir/small.sh" "$_head_dir/small.sh"
-	make_large_file "$_head_dir/huge.sh" 2000
+	make_large_file "$_base_dir/small.md" 100
+	cp "$_base_dir/small.md" "$_head_dir/small.md"
+	make_large_file "$_head_dir/huge.md" 501
 
 	local _base_scan="$TEST_ROOT/base.tsv"
 	local _head_scan="$TEST_ROOT/head.tsv"
@@ -418,16 +419,16 @@ test_file_size_clean_to_new() {
 	run_diff "$_base_scan" "$_head_scan" file-size
 
 	if [ "$_DIFF_EXIT" -eq 1 ]; then
-		print_result "file-size: new 2000-line .sh → exit 1" 0
+		print_result "file-size: new 501-line .md → exit 1" 0
 	else
-		print_result "file-size: new 2000-line .sh → exit 1" 1 "got exit $_DIFF_EXIT"
+		print_result "file-size: new 501-line .md → exit 1" 1 "got exit $_DIFF_EXIT"
 	fi
 	teardown
 	return 0
 }
 
 # ---------------------------------------------------------------------------
-# Test 10: file-size — stable. Same 2000-line file at both → exit 0.
+# Test 10: file-size — stable. Same 501-line Markdown file at both → exit 0.
 # ---------------------------------------------------------------------------
 test_file_size_stable() {
 	setup
@@ -435,8 +436,8 @@ test_file_size_stable() {
 	local _head_dir="$TEST_ROOT/head"
 	mkdir -p "$_base_dir" "$_head_dir"
 
-	make_large_file "$_base_dir/huge.sh" 2000
-	cp "$_base_dir/huge.sh" "$_head_dir/huge.sh"
+	make_large_file "$_base_dir/huge.md" 501
+	cp "$_base_dir/huge.md" "$_head_dir/huge.md"
 
 	local _base_scan="$TEST_ROOT/base.tsv"
 	local _head_scan="$TEST_ROOT/head.tsv"
@@ -446,16 +447,44 @@ test_file_size_stable() {
 	run_diff "$_base_scan" "$_head_scan" file-size
 
 	if [ "$_DIFF_EXIT" -eq 0 ]; then
-		print_result "file-size: pre-existing 2000-line file unchanged → exit 0" 0
+		print_result "file-size: pre-existing 501-line md unchanged → exit 0" 0
 	else
-		print_result "file-size: pre-existing 2000-line file unchanged → exit 0" 1 "got exit $_DIFF_EXIT"
+		print_result "file-size: pre-existing 501-line md unchanged → exit 0" 1 "got exit $_DIFF_EXIT"
 	fi
 	teardown
 	return 0
 }
 
 # ---------------------------------------------------------------------------
-# Test 11: bash32-compat — clean-to-new. Head adds associative-array
+# Test 11: file-size — oversized code files and README.md are ignored.
+# ---------------------------------------------------------------------------
+test_file_size_ignores_code_and_readme() {
+	setup
+	local _base_dir="$TEST_ROOT/base"
+	local _head_dir="$TEST_ROOT/head"
+	mkdir -p "$_base_dir" "$_head_dir"
+
+	make_large_file "$_head_dir/huge.sh" 2000
+	make_large_file "$_head_dir/README.md" 1000
+
+	local _base_scan="$TEST_ROOT/base.tsv"
+	local _head_scan="$TEST_ROOT/head.tsv"
+	"$HELPER" scan "$_base_dir" --output "$_base_scan" --metric file-size
+	"$HELPER" scan "$_head_dir" --output "$_head_scan" --metric file-size
+
+	run_diff "$_base_scan" "$_head_scan" file-size
+
+	if [ "$_DIFF_EXIT" -eq 0 ]; then
+		print_result "file-size: oversized code and README ignored → exit 0" 0
+	else
+		print_result "file-size: oversized code and README ignored → exit 0" 1 "got exit $_DIFF_EXIT"
+	fi
+	teardown
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Test 12: bash32-compat — clean-to-new. Head adds associative-array
 # declaration (bash 4.0+ only) → exit 1.
 # ---------------------------------------------------------------------------
 test_bash32_clean_to_new() {
@@ -485,7 +514,7 @@ test_bash32_clean_to_new() {
 }
 
 # ---------------------------------------------------------------------------
-# Test 12: bash32-compat — stable. Existing nameref at base and head → exit 0.
+# Test 13: bash32-compat — stable. Existing nameref at base and head → exit 0.
 # ---------------------------------------------------------------------------
 test_bash32_stable() {
 	setup
@@ -513,7 +542,7 @@ test_bash32_stable() {
 }
 
 # ---------------------------------------------------------------------------
-# Test 13: diff-scoped check — 2 changed .sh files detected in <15s (t2827)
+# Test 14: diff-scoped check — 2 changed .sh files detected in <15s (t2827)
 #
 # Creates a real git repo (required for `check` which uses git worktrees),
 # makes a base commit with small functions, a head commit adding a 105-line
@@ -567,7 +596,7 @@ test_diff_scoped_timing() {
 }
 
 # ---------------------------------------------------------------------------
-# Test 14: diff-scoped skip — doc-only diff (no .sh/.py changes) exits 0 (t2827)
+# Test 15: diff-scoped skip — doc-only diff (no .sh/.py changes) exits 0 (t2827)
 #
 # When the diff between base and head contains no .sh or .py files, the check
 # subcommand should exit 0 immediately without creating any worktrees.
@@ -627,6 +656,7 @@ test_nesting_clean_to_new
 test_nesting_stable
 test_file_size_clean_to_new
 test_file_size_stable
+test_file_size_ignores_code_and_readme
 test_bash32_clean_to_new
 test_bash32_stable
 test_diff_scoped_timing
