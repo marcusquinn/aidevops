@@ -32,6 +32,7 @@ const DEFAULT_OBS_DIR = join(HOME, ".aidevops", ".agent-workspace", "observabili
 // importing this module. See tests/test-observability-concurrent-init.sh (t2900).
 const DB_PATH = process.env.AIDEVOPS_OBS_DB_OVERRIDE || join(DEFAULT_OBS_DIR, "llm-requests.db");
 const OBS_DIR = dirname(DB_PATH);
+const COST_BACKFILL_MARKER = `${DB_PATH}.cost-backfill-v1.done`;
 
 // ---------------------------------------------------------------------------
 // Pricing table — loaded from shared JSON (single source of truth).
@@ -169,7 +170,7 @@ function initDatabase() {
   // 100% of worker startups. Read-only check first — no lock contention,
   // skips the slow path entirely once the DB is ready.
   if (existsSync(DB_PATH) && _isSchemaInitialized()) {
-    return _runDataMigrations();
+    return _runDataMigrations({ intentColumnReady: true });
   }
 
   // SLOW PATH (t2900): serialise schema creation across concurrent workers
@@ -180,7 +181,7 @@ function initDatabase() {
     // DOUBLE-CHECKED LOCKING: another worker may have completed init while
     // we waited. If schema is now ready, skip the writer-lock-heavy path.
     if (existsSync(DB_PATH) && _isSchemaInitialized()) {
-      return _runDataMigrations();
+      return _runDataMigrations({ intentColumnReady: true });
     }
     if (!_createSchema()) return false;
     return _runDataMigrations();
@@ -312,30 +313,31 @@ CREATE INDEX IF NOT EXISTS idx_session_summaries_session
 /**
  * Idempotent data migrations that run on every plugin init.
  *
- * Both migrations are no-ops on the second+ run (they check state first /
- * have `WHERE cost=0` filters), so calling this on the fast path is cheap.
- * It still touches the writer lock briefly when the SELECT promotes to a
- * BEGIN IMMEDIATE — but the per-call write is a microsecond, not a 459MB
- * journal flush, so writer-queue contention is no longer the bottleneck.
+ * Schema migrations stay synchronous because later writes depend on them.
+ * Historical data backfills are scheduled after startup so large observability
+ * databases do not block the OpenCode TUI on table scans or writer locks.
  *
+ * @param {{ intentColumnReady?: boolean }} [options]
  * @returns {boolean} true on success (best-effort — never returns false)
  */
-function _runDataMigrations() {
+function _runDataMigrations(options = {}) {
   // Migration: add intent column to tool_calls if it doesn't exist (t1309).
   // Check first to avoid noisy "duplicate column" errors in logs.
   // Fresh DBs already have the column from the CREATE TABLE above.
-  const hasIntentCol = sqliteExecSync(
-    "SELECT COUNT(*) FROM pragma_table_info('tool_calls') WHERE name='intent';",
-    5000,
-  );
+  const hasIntentCol = options.intentColumnReady
+    ? "1"
+    : sqliteExecSync(
+      "SELECT COUNT(*) FROM pragma_table_info('tool_calls') WHERE name='intent';",
+      5000,
+    );
   if (hasIntentCol === "0") {
     sqliteExecSync("ALTER TABLE tool_calls ADD COLUMN intent TEXT;", 5000);
   }
 
   // Migration: backfill cost for rows where cost=0 but tokens exist.
   // OpenCode never provided msg.cost — all historical rows have cost=0.
-  // This runs once (subsequent runs find 0 rows to update) and takes ~1s.
-  backfillCosts();
+  // Non-critical historical cleanup; never block the TUI startup path on it.
+  scheduleCostBackfill();
 
   return true;
 }
@@ -473,12 +475,62 @@ function _releaseInitLock(lockDir, ownerFile) {
 }
 
 /**
+ * Return true when historical rows still need the cost backfill.
+ *
+ * This runs only from the delayed background migration path. On large SQLite
+ * DBs even this read-only probe can take seconds without a completion marker,
+ * so it must not be called from initDatabase().
+ *
+ * @returns {boolean}
+ */
+function hasCostBackfillCandidates() {
+  if (existsSync(COST_BACKFILL_MARKER)) return false;
+
+  const result = sqliteExecSync(
+    "SELECT 1 FROM llm_requests WHERE cost = 0.0 AND tokens_total > 0 LIMIT 1;",
+    5000,
+  );
+  if (result === null) return false;
+
+  const hasCandidates = result === "1";
+  if (!hasCandidates) markCostBackfillComplete();
+  return hasCandidates;
+}
+
+/** Schedule the one-time historical cost backfill outside plugin startup. */
+function scheduleCostBackfill() {
+  if (existsSync(COST_BACKFILL_MARKER)) return;
+
+  const timer = setTimeout(() => {
+    try {
+      backfillCosts();
+    } catch (err) {
+      if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
+        console.error(`[aidevops] Observability: delayed cost backfill failed: ${err.message}`);
+      }
+    }
+  }, 2500);
+  timer.unref?.();
+}
+
+/** Record that the one-time historical cost migration is complete. */
+function markCostBackfillComplete() {
+  try {
+    writeFileSync(COST_BACKFILL_MARKER, `${new Date().toISOString()}\n`, { mode: 0o600 });
+  } catch {
+    // best-effort marker only; migration remains safe without it
+  }
+}
+
+/**
  * Backfill cost for historical rows where cost=0 but tokens exist.
  * Uses SQL CASE expressions matching the JS pricing table to avoid
  * round-tripping each row through JS. Runs in a single UPDATE statement.
  * Idempotent — only updates rows where cost=0 AND tokens_total>0.
  */
 function backfillCosts() {
+  if (!hasCostBackfillCandidates()) return;
+
   // Build SQL CASE expression from the pricing table
   const cases = Object.entries(MODEL_PRICING).map(([key, p]) =>
     `WHEN lower(model_id) LIKE '%${key}%' THEN ` +
@@ -516,9 +568,10 @@ SELECT session_id, MIN(timestamp), MAX(timestamp), COUNT(*),
   MAX(project_path), GROUP_CONCAT(DISTINCT model_id)
 FROM llm_requests
 GROUP BY session_id;
-`, 30000);
+    `, 30000);
     console.error("[aidevops] Observability: rebuilt session_summaries with corrected costs");
   }
+  markCostBackfillComplete();
 }
 
 // ---------------------------------------------------------------------------

@@ -3,27 +3,38 @@
 // Extracted from index.mjs (t1914) — MCP registration logic.
 // ---------------------------------------------------------------------------
 
-import { execSync } from "child_process";
+import { accessSync, constants } from "fs";
 import { platform } from "os";
+import { delimiter, join } from "path";
 
 const IS_MACOS = platform() === "darwin";
 
 /**
- * Run a shell command and return stdout, or empty string on failure.
- * @param {string} cmd
- * @param {number} [timeout=5000]
+ * Resolve an executable from PATH without spawning `which` during startup.
+ * @param {string} name
  * @returns {string}
  */
-function run(cmd, timeout = 5000) {
-  try {
-    return execSync(cmd, {
-      encoding: "utf-8",
-      timeout,
-      stdio: ["pipe", "pipe", "pipe"],
-    }).trim();
-  } catch {
-    return "";
+function findExecutable(name) {
+  if (!name) return "";
+
+  const pathExts = process.platform === "win32"
+    ? (process.env.PATHEXT || ".EXE;.CMD;.BAT;.COM").split(";")
+    : [""];
+  const pathDirs = (process.env.PATH || "").split(delimiter).filter(Boolean);
+  const candidates = name.includes("/") || name.includes("\\")
+    ? [name]
+    : pathDirs.flatMap((dir) => pathExts.map((ext) => join(dir, `${name}${ext}`)));
+
+  for (const candidate of candidates) {
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // keep searching
+    }
   }
+
+  return "";
 }
 
 /**
@@ -34,8 +45,8 @@ function run(cmd, timeout = 5000) {
 let _pkgRunner = null;
 function getPkgRunner() {
   if (_pkgRunner !== null) return _pkgRunner;
-  const bunPath = run("which bun");
-  const npxPath = run("which npx");
+  const bunPath = findExecutable("bun");
+  const npxPath = findExecutable("npx");
   _pkgRunner = bunPath ? `${bunPath} x` : npxPath || "npx";
   return _pkgRunner;
 }
@@ -283,7 +294,7 @@ function shouldSkipMcp(mcp, tools) {
   if (mcp.macOnly && !IS_MACOS) return true;
 
   if (mcp.requiresBinary) {
-    const binaryPath = run(`which ${mcp.requiresBinary}`);
+    const binaryPath = findExecutable(mcp.requiresBinary);
     if (!binaryPath) {
       if (mcp.toolPattern) tools[mcp.toolPattern] = false;
       return true;

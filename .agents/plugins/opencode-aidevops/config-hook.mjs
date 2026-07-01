@@ -11,7 +11,7 @@ import { registerPoolProvider, getAccounts, ensureValidToken } from "./oauth-poo
 import { getCursorProxyPort, registerCursorProvider } from "./cursor-proxy.mjs";
 import { getGoogleProxyPort, registerGoogleProvider } from "./google-proxy.mjs";
 import { getClaudeProxyPort, registerClaudeProvider } from "./claude-proxy.mjs";
-import { checkOpenCodeVersionDrift } from "./version-tracking.mjs";
+import { checkOpenCodeVersionDriftAsync } from "./version-tracking.mjs";
 import { CLAUDE_MODEL_LIMITS } from "./model-limits.mjs";
 
 /**
@@ -250,9 +250,8 @@ function registerClaudeCliModels(config) {
 /**
  * Log a summary of config hook changes (silent when nothing changed).
  * @param {object} counts - { agents, mcps, agentTools, poolCleaned, anthropic, openai, cursor, google, claude }
- * @param {string|null} versionDrift
  */
-function logConfigSummary(counts, versionDrift) {
+function logConfigSummary(counts) {
   const labels = [
     [counts.agents, "agents"],
     [counts.mcps, "MCPs"],
@@ -270,9 +269,16 @@ function logConfigSummary(counts, versionDrift) {
   if (parts.length > 0) {
     console.error(`[aidevops] Config hook: ${parts.join(", ")}`);
   }
-  if (versionDrift) {
+}
+
+/**
+ * Check OpenCode/plugin version drift without blocking startup.
+ * @param {string} pluginDir
+ */
+function logVersionDriftAsync(pluginDir) {
+  checkOpenCodeVersionDriftAsync(pluginDir, (versionDrift) => {
     console.error(`[aidevops] Version drift: ${versionDrift}`);
-  }
+  });
 }
 
 /**
@@ -333,7 +339,7 @@ export function createConfigHook(deps) {
 
     logConfigSummary(
       { agents, mcps, agentTools, poolCleaned, anthropic, cursor, google, claude },
-      checkOpenCodeVersionDrift(pluginDir),
     );
+    logVersionDriftAsync(pluginDir);
   };
 }
