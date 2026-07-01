@@ -187,9 +187,8 @@ Release verification must cover:
 
 ## Scaffold command contract
 
-The first implementation PR that creates GUI packages must add these root-level
-npm scripts and document their package-manager equivalent if the workspace uses
-something other than npm:
+The scaffold now exposes the release-gate commands from the root `package.json`.
+Use these scripts for AI collaboration workspace QA before cutting a release:
 
 ```bash
 npm run gui:lint
@@ -204,11 +203,45 @@ npm run gui:build
 npm run gui:ci
 ```
 
-`npm run gui:ci` is the required local pre-PR contract for GUI code changes. For
-the scaffold phase it expands to lint, typecheck, schema/unit, adapter fixture,
-API route, component, security/redaction, smoke, and production build checks.
+`npm run gui:ci` is the required local pre-PR contract for GUI code changes. It
+expands to typecheck, schema/unit, adapter fixture, API route, component,
+security/redaction, smoke, and production build checks. `npm run gui:lint` is a
+trust-boundary lint surrogate until a dedicated JavaScript/TypeScript lint
+configuration is added; it runs the browser/shared/API security tests that guard
+against secret rendering, arbitrary helper execution, and untrusted HTML.
 Cloudron and desktop commands are added to `gui:ci` only after their paths exist
 and their jobs are stable enough to gate GUI changes.
+
+### AI collaboration workspace release smoke
+
+For the release that introduced AI Sessions, Channels, Direct Messages, Tambo
+cards, shadcn-style chat primitives, and signposts tours, use this release smoke
+set after all implementation child issues have merged:
+
+```bash
+bun install --frozen-lockfile
+npm run gui:lint
+npm run gui:typecheck
+npm run gui:test:schema
+npm run gui:test:adapters
+npm run gui:test:api
+npm run gui:test:components
+npm run gui:test:security
+npm run gui:test:smoke
+npm run gui:build
+```
+
+Coverage focus:
+
+- AI Sessions, Channels, and Direct Messages render through the unified
+  conversation fixtures and component tests.
+- Tambo generative UI card schemas remain strict and read-only by default.
+- shadcn-style transcript primitives preserve message scrolling, attachments,
+  markers, and accessible event rows.
+- Signposts tours stay route scoped and the button remains immediately left of
+  notifications.
+- Security tests continue to prove that browser code never renders secrets,
+  raw helper commands, or untrusted HTML.
 
 Documentation-only changes under `docs/gui/` use the repository markdown checks
 and do not require TypeScript jobs unless they modify runnable examples or test
