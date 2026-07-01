@@ -165,8 +165,11 @@ test_quality_feedback_labels() {
 }
 
 test_failure_miner_labels() {
-	local cluster_json
+	local cluster_json legacy_infra_cluster_json legacy_infra_body
 	cluster_json='{"repo":"marcusquinn/aidevops","check_name":"ShellCheck","check_names":["ShellCheck"],"signature":"failure:shellcheck","count":2,"sources":["pr:#1"],"examples":[{"source_ref":"pr:#1"}]}'
+	legacy_infra_cluster_json='{"repo":"marcusquinn/aidevops","check_name":"ShellCheck","signature":"failure:shellcheck","count":2,"sources":["pr:#1"],"examples":[{"source_ref":"pr:#1"}]}'
+	legacy_infra_body=$(build_issue_body "$legacy_infra_cluster_json" "abc123" "2" "true")
+	[[ "$legacy_infra_body" == *"Affected checks: ShellCheck"* ]] && print_result "infra miner falls back to check_name when check_names is absent" 0 || print_result "infra miner falls back to check_name when check_names is absent" 1 "$legacy_infra_body"
 	reset_create_log
 	create_or_preview_issue "$cluster_json" "abc123" "2" "false" "false" >/dev/null
 	assert_create_contains "failure miner has auto-dispatch" "--label auto-dispatch"

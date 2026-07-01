@@ -175,11 +175,50 @@ assert_missing_body_file_rejected_before_gh() {
 	return 0
 }
 
+assert_signature_only_body_rejected_before_gh() {
+	reset_capture
+	local sig_only_body=$'\n<!-- aidevops:sig -->\n---\n[aidevops.sh](https://aidevops.sh) existing\n'
+	if gh_create_pr --repo o/r --title "Reject signature-only body" --body "$sig_only_body" >/dev/null 2>"${TEST_ROOT}/sig-only-body.err"; then
+		print_result "signature-only --body is rejected before gh" 1 "wrapper returned success"
+		return 0
+	fi
+	local gh_calls rejection_count
+	gh_calls=$(wc -l <"$GH_ARGV_RECORD_FILE" | tr -d '[:space:]')
+	rejection_count=$(grep -c "empty body (after trimming whitespace)" "${TEST_ROOT}/sig-only-body.err" 2>/dev/null || true)
+	if [[ "$gh_calls" == "0" && "$rejection_count" == "1" ]]; then
+		print_result "signature-only --body is rejected before gh" 0
+	else
+		print_result "signature-only --body is rejected before gh" 1 "gh_calls=${gh_calls}, rejection_count=${rejection_count}"
+	fi
+	return 0
+}
+
+assert_signature_only_body_file_rejected_before_gh() {
+	reset_capture
+	local body_file="${TEST_ROOT}/signature-only.md"
+	printf '\n<!-- aidevops:sig -->\n---\n[aidevops.sh](https://aidevops.sh) existing\n' >"$body_file"
+	if gh_create_pr --repo o/r --title "Reject signature-only body-file" --body-file "$body_file" >/dev/null 2>"${TEST_ROOT}/sig-only-file.err"; then
+		print_result "signature-only --body-file is rejected before gh" 1 "wrapper returned success"
+		return 0
+	fi
+	local gh_calls rejection_count
+	gh_calls=$(wc -l <"$GH_ARGV_RECORD_FILE" | tr -d '[:space:]')
+	rejection_count=$(grep -c "has no content before signature footer" "${TEST_ROOT}/sig-only-file.err" 2>/dev/null || true)
+	if [[ "$gh_calls" == "0" && "$rejection_count" == "1" ]]; then
+		print_result "signature-only --body-file is rejected before gh" 0
+	else
+		print_result "signature-only --body-file is rejected before gh" 1 "gh_calls=${gh_calls}, rejection_count=${rejection_count}"
+	fi
+	return 0
+}
+
 assert_body_file_signed "gh_create_pr --body-file signs temp body" "pr-create"
 assert_body_file_signed "gh_pr_comment --body-file signs temp body" "pr-comment"
 assert_existing_signature_not_duplicated
 assert_signed_relative_body_file_normalized
 assert_missing_body_file_rejected_before_gh
+assert_signature_only_body_rejected_before_gh
+assert_signature_only_body_file_rejected_before_gh
 
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 [[ "$TESTS_FAILED" -eq 0 ]]
