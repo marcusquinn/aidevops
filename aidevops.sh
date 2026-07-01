@@ -1126,8 +1126,13 @@ cmd_version() {
 _dispatch_helper() {
 	local script_name="$1" error_name="$2"
 	shift 2
-	local hp="$AGENTS_DIR/scripts/$script_name"
-	[[ ! -f "$hp" ]] && hp="$INSTALL_DIR/.agents/scripts/$script_name"
+	local source_hp="$INSTALL_DIR/.agents/scripts/$script_name"
+	local deployed_hp="$AGENTS_DIR/scripts/$script_name"
+	local hp="$deployed_hp"
+	if [[ -f "$source_hp" && -f "$INSTALL_DIR/.agents/scripts/aidevops-cli/aidevops-repos-lib.sh" ]]; then
+		hp="$source_hp"
+	fi
+	[[ ! -f "$hp" ]] && hp="$source_hp"
 	if [[ -f "$hp" ]]; then
 		bash "$hp" "$@"
 	else
