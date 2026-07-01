@@ -11,6 +11,8 @@ SQLite-backed async messaging between parallel agent sessions.
 
 **Runner integration**: Auto-check inbox before work, send status reports after. Unread messages prepended as context. TOON migration runs on `aidevops update`.
 
+**Coordination caveat:** mailbox is async messaging, not a hard live lock. For dirty canonical worktrees, send a `request`/`broadcast` after creating a local dirty-worktree backup, but do not assume every interactive session will read it immediately. See `reference/dirty-worktree-preservation.md`.
+
 ## Related
 
 - `reference/services.md` — Services & Integrations index

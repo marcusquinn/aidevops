@@ -42,6 +42,7 @@ Context compaction drops operational state unless written to disk. Use `/checkpo
 
 - Before edits: run the pre-edit check from `AGENTS.md`.
 - After branch creation: check `TODO.md` for matching tasks, record `started:`, set the session title as `Issue #123: succinct description` or `PR #456: succinct description` when issue/PR context exists; otherwise call `session-rename_sync_branch`. Then read `workflows/git-workflow.md`.
+- Dirty canonical `main`/`master` that appears unrelated to your task: preserve with `dirty-worktree-backup-helper.sh backup`, notify via mailbox/checkpoint if possible, then continue only from a clean linked worktree or wait for owner cleanup. Details: `reference/dirty-worktree-preservation.md`.
 
 Worktrees are preferred for parallel work:
 
