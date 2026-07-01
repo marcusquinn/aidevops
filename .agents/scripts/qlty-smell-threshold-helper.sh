@@ -26,13 +26,26 @@ find_qlty() {
 	return 1
 }
 
+is_non_negative_integer() {
+	local _value="$1"
+	case "$_value" in
+		'' | *[!0-9]*)
+			return 1
+			;;
+		*)
+			return 0
+			;;
+	esac
+	return 1
+}
+
 read_threshold() {
 	local _conf="$1"
 	local _threshold="0"
 	local _val=""
 	if [ -f "$_conf" ]; then
 		_val=$(grep '^QLTY_SMELL_THRESHOLD=' "$_conf" | cut -d= -f2 || true)
-		if [ -n "$_val" ] && [ "$_val" -eq "$_val" ] 2>/dev/null; then
+		if is_non_negative_integer "$_val"; then
 			_threshold="$_val"
 		fi
 	fi
@@ -115,7 +128,7 @@ run_threshold_check() {
 	rm -f "$_diag_file"
 
 	_count=$(printf '%s\n' "$_sarif" | jq '.runs[0].results | length' 2>/dev/null || true)
-	if ! [ "$_count" -eq "$_count" ] 2>/dev/null; then
+	if ! is_non_negative_integer "$_count"; then
 		printf '::error::Failed to parse smell count from SARIF output\n'
 		return 1
 	fi
