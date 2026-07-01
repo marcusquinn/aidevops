@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.9] - 2026-07-01
+
+### Fixed
+
+- reject signature-only GitHub issue bodies (#26150)
+
 ## [3.31.8] - 2026-07-01
 
 ### Fixed
