@@ -1084,7 +1084,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18053 fix: archive OpenCode isolated DB event rows #bug #database #opencode #performance ref:GH#26220 pr:#26221 completed:2026-07-01
 
-- [ ] t18055 fix(log-issue): validate cache causality and empty exact-output cache semantics #bug #documentation #framework #performance #testing ref:GH#26226
+- [x] t18055 fix(log-issue): validate cache causality and empty exact-output cache semantics #bug #documentation #framework #performance #testing ref:GH#26226 pr:#26228 completed:2026-07-01
 
 - [ ] t18056 perf(pulse): investigate remaining GraphQL budget exhaustion after PR-list cache work #framework #github #investigate #parent-task #performance #pulse ref:GH#26227
 
@@ -4394,6 +4394,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18046 Optimise OpenCode aidevops plugin startup latency #bug #opencode #performance #plugin ref:GH#26157 pr:#26161 completed:2026-07-01
 
-- [ ] t18055 fix(log-issue): validate cache causality and empty exact-output cache semantics #bug #documentation #framework #performance #testing ref:GH#26226
+- [x] t18055 fix(log-issue): validate cache causality and empty exact-output cache semantics #bug #documentation #framework #performance #testing ref:GH#26226 pr:#26228 completed:2026-07-01
 
 - [ ] t18056 perf(pulse): investigate remaining GraphQL budget exhaustion after PR-list cache work #bug #framework #github #investigate #parent #performance #pulse ref:GH#26227
