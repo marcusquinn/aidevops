@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.13] - 2026-07-01
+
+### Changed
+
+- Maintenance: mark t18046 complete (pr:#26161 completed:2026-07-01) [skip ci]
+- Performance: reduce opencode plugin startup latency (#26161)
+
 ## [3.31.12] - 2026-07-01
 
 ### Changed
