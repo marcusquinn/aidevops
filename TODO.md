@@ -113,9 +113,9 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [x] t18048 feat(reach): add profile and cookie broker with private leases, safe session pinning, and route integration. Extend `reach-helper.sh` and reach docs so authenticated captures reuse approved browser profiles/cookie exports without leaking cookies, proxy credentials, private paths, or profile state into logs/issues. #enhancement #framework #browser #security #auto-dispatch ~4h tier:standard blocked-by:t18047 ref:GH#26166 pr:#26216 logged:2026-07-01 -> [todo/tasks/t18048-brief.md] completed:2026-07-01
 
-- [ ] t18049 feat(reach): add proxy/VPN/fingerprint health and failover classification. Extend reach helper/docs/tests with network/fingerprint doctor commands, temporary-vs-permanent failure taxonomy, safe failover recommendations, and route policy that stops on auth/scope blockers. #enhancement #framework #browser #reliability #auto-dispatch ~3.5h tier:standard blocked-by:t18047 ref:GH#26167 logged:2026-07-01 -> [todo/tasks/t18049-brief.md]
+- [x] t18049 feat(reach): add proxy/VPN/fingerprint health and failover classification. Extend reach helper/docs/tests with network/fingerprint doctor commands, temporary-vs-permanent failure taxonomy, safe failover recommendations, and route policy that stops on auth/scope blockers. #enhancement #framework #browser #reliability #auto-dispatch ~3.5h tier:standard blocked-by:t18047 ref:GH#26167 pr:#26209 logged:2026-07-01 -> [todo/tasks/t18049-brief.md] completed:2026-07-01
 
-- [ ] t18050 feat(reach): implement capture workflow into `_inbox/` and `_knowledge/` staging. Add `reach capture` artifacts, sanitized metadata, append-only `_inbox/triage.log` entries, knowledge-inbox staging rules, and local fixture tests so web/app evidence has provenance and review gates. #enhancement #framework #knowledge #browser #auto-dispatch ~4.75h tier:standard blocked-by:t18047,t18048,t18049 ref:GH#26168 logged:2026-07-01 -> [todo/tasks/t18050-brief.md]
+- [x] t18050 feat(reach): implement capture workflow into `_inbox/` and `_knowledge/` staging. Add `reach capture` artifacts, sanitized metadata, append-only `_inbox/triage.log` entries, knowledge-inbox staging rules, and local fixture tests so web/app evidence has provenance and review gates. #enhancement #framework #knowledge #browser #auto-dispatch ~4.75h tier:standard blocked-by:t18047,t18048,t18049 ref:GH#26168 pr:#26219 logged:2026-07-01 -> [todo/tasks/t18050-brief.md] completed:2026-07-01
 
 - [ ] t18051 feat(reach): add performance logging, feedback miner, and dry-run issue generator. Append reach attempt JSONL with backend/profile/proxy/mode/offload/latency/token/failure fields, mine repeated failures into privacy-safe themes, and generate worker-ready issue briefs only when evidence thresholds pass. #enhancement #framework #observability #feedback #auto-dispatch ~5h tier:standard blocked-by:t18050 ref:GH#26169 logged:2026-07-01 -> [todo/tasks/t18051-brief.md]
 
@@ -147,7 +147,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [x] t2987 add pattern-aware conflict resolution guidance to conflict-feedback brief — extend `_dispatch_conflict_fix_worker` (`.agents/scripts/pulse-merge-feedback.sh:360-440`) to detect Drizzle migration meta, i18n JSON, lockfile, and generated-file conflict patterns and embed targeted resolution guidance in the routed brief. Evidence: 3 reroutes on a single managed-private-repo issue (PR sequence each DIRTY with same Drizzle `_journal.json` + `NNNN_snapshot.json` collision). Naive auto-merge of one DIRTY example would have DELETED an existing develop migration. Add `.agents/configs/conflict-patterns.conf` (declarative pattern→guidance registry) + `tests/test-conflict-pattern-detection.sh`. #bug #framework #enhancement #auto-dispatch #worker ~3h tier:standard ref:GH#21379 logged:2026-04-27 pr:#21382 completed:2026-04-27
 
-- [ ] t2878 refactor: consolidate `prompts/build.txt` into `.agents/AGENTS.md` as single source of truth for framework rules — moves universal framework rules from build.txt (currently only loaded by OpenCode + Claude Code) to top of AGENTS.md (loaded by all 11 supported runtimes via prompt-injection-adapter), reconciles duplicate sections (Worker Triage, Memory Recall, Git Workflow, File Discovery, Working Directories), redirects self-improvement automation (session-miner extract.py + compress.py) to AGENTS.md, leaves build.txt as empty placeholder file (preserves OpenCode `{file:...}` channel for future use). 3 phases: content migration → smoke-test priority drop on 5 high-stakes rules (URL guess, secret echo, instruction override, pre-edit check, worker scope) → cleanup remaining cross-references. #framework #parent-task #interactive ~3.5h tier:thinking ref:GH#20975 logged:2026-04-26 -> [todo/tasks/t2878-brief.md]
+- [x] t2878 refactor: consolidate `prompts/build.txt` into `.agents/AGENTS.md` as single source of truth for framework rules — moves universal framework rules from build.txt (currently only loaded by OpenCode + Claude Code) to top of AGENTS.md (loaded by all 11 supported runtimes via prompt-injection-adapter), reconciles duplicate sections (Worker Triage, Memory Recall, Git Workflow, File Discovery, Working Directories), redirects self-improvement automation (session-miner extract.py + compress.py) to AGENTS.md, leaves build.txt as empty placeholder file (preserves OpenCode `{file:...}` channel for future use). 3 phases: content migration → smoke-test priority drop on 5 high-stakes rules (URL guess, secret echo, instruction override, pre-edit check, worker scope) → cleanup remaining cross-references. #framework #parent-task #interactive ~3.5h tier:thinking ref:GH#20975 pr:#20982 logged:2026-04-26 -> [todo/tasks/t2878-brief.md] completed:2026-07-01
 
 - [x] t2742 fix(pre-commit): string-literal ratchet regex false-positive on adjacent quoted shell args — `grep -oE '"[^"]{4,}"'` in `validate_string_literals` (`.agents/scripts/pre-commit-hook.sh:270-293`) captures inter-argument whitespace spans like `" repo="` in `local tid="$1" repo="$2"` as literal repeats. Existing `^"\$` filter only rejects direct var-refs; cannot reject inter-arg spans that start with whitespace. Impact: blocks idiomatic multi-param `local` declarations, forces split-per-line workarounds. Confirmed in t2738 PR #20474 (workaround commit `1c128d3eb`). Fix: sed pre-strip of shell-syntax tokens (`"$var"`, `"${var}"`, `"$@"`, `"$1"` etc.) BEFORE the literal-extraction regex runs — cross-platform portable (POSIX ERE only, works on BSD + GNU + BusyBox). Also audit `:274,287` `grep -v '^\s*#'` — `\s` is a GNU grep extension, may not be honoured by BSD grep on macOS (replace with POSIX `[[:space:]]*`). Follow-up to t2230/#19739 (closed — ratchet-conversion done, regex fix deferred). EDIT: `.agents/scripts/pre-commit-hook.sh`. NEW: `.agents/scripts/tests/test-string-literal-ratchet.sh` (7 fixtures: 4 negative incl. the adjacent-args case, 2 positive, 1 boundary for escaped `\$`). #bugfix #framework #auto-dispatch #worker ~2h tier:standard ref:GH#20478 logged:2026-04-22 -> [todo/tasks/t2742-brief.md] pr:#20479 completed:2026-04-22
 - [x] t2143 refactor(pulse-triage): centralize consolidation gate defaults at module top — move `ISSUE_CONSOLIDATION_COMMENT_THRESHOLD=2` and `MIN_CHARS=500` to a single `: "${VAR:=default}"` block in `pulse-triage.sh`, simplify the Phase 1 inline guards back to bare `$VAR`, align line 499's fallback 200→500. Follow-up to #19343 (Phase 1 minimal defensive fix). Eliminates duplicate-default drift and the 200-vs-500 inconsistency between `_issue_needs_consolidation` and `_consolidation_substantive_comments`. #refactor #interactive ~1.5h tier:standard ref:GH#19346 blocked-by:t2142 logged:2026-04-16 -> [todo/tasks/t2143-brief.md] pr:#19383 completed:2026-04-16
@@ -156,13 +156,13 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t2152 investigate: `needs-consolidation` applied at near-creation time despite single-bot-comment / threshold=2 gate — concrete evidence: #19275 had only 1 `github-actions[bot]` comment when alex's pulse labeled it `needs-consolidation` at 13:45:48Z (2 sec later child #19277 was filed). Current code's `.user.type != "Bot"` filter at `pulse-triage.sh:323` should have excluded that comment. Three competing hypotheses: (1) `.user.type` returns "User" for github-actions, (2) some path counts the issue body as substantive content, (3) race-window self-counting where dispatch posts its comment before final label-add and a second runner sees count=2. Includes the 18:37:32Z→18:37:43Z label ping-pong (`_reevaluate` ↔ `_backfill`) which may be the visible artefact of the same bug. #investigation #interactive ~3h tier:thinking ref:GH#19415 blocked-by:t2144 logged:2026-04-16 -> [todo/tasks/t2152-brief.md] pr:#19618 completed:2026-04-17
 - [x] t2154 chore(opencode-plugin): raise `claude-opus-4-7` context cap from 200K to 250K — aligns OpenCode's 80% auto-compact threshold with the 200K reliability boundary established by Anthropic's MRCR v2 retrieval data. Prior 200K cap (t2140 / PR #19325) compacted at 160K, truncating 20% of the still-functional window. Updates both registration paths (`config-hook.mjs` `CLAUDE_MODEL_LIMITS` map + `claude-proxy.mjs` Claude CLI proxy model list) and `models-opus.md` documentation. #chore #interactive ~15m tier:simple ref:GH#19427 logged:2026-04-17 -> [todo/tasks/t2154-brief.md] pr:#19428 completed:2026-04-17
 - [x] t2162 chore(prompts): adopt seven curated patterns from upstream opencode prompt files (`anthropic-20250930.txt`, `beast.txt`, `codex_header.txt`) into `.agents/prompts/build.txt` — +13 lines, single file, no new top-level sections. Closes recurring failure modes: verbosity drift (preamble/postamble), permission-asking, "I'll run X" → yield without running, restart-on-resume, retry-on-hook-block, conflating `<system-reminder>` with user content. Skipped upstream's defensive-security clause (red-team friction risk; existing §7a/§7b cover real prompt-injection threat). #chore #interactive ~30m tier:standard ref:GH#19478 logged:2026-04-17 -> [todo/tasks/t2162-brief.md] pr:#19479 completed:2026-04-17
-- [ ] t2163 parent: large-file simplification gate — phantom continuation root cause + 5-fix plan — gate surfaced a stale `(recently-closed — continuation)` reference on GH#19415 pointing at #18706, a function-complexity ticket whose merge PR #18715 added net +29 lines to the file. Three compounding bugs: (A) `_large_file_gate_extract_paths` over-matches any backticked path on a `-`-list item regardless of `EDIT:` prefix; (B) `_large_file_gate_create_debt_issue` never verifies the prior PR actually reduced file size before declaring continuation; (C) `simplification-debt` label is overloaded across function-complexity and file-size problems. 5-fix plan: A+B ship as t2164 (leaf child); C split-label migration, D outcome-check workflow, E pulse-triage re-eval follow continuation ref — each to be filed as children when A+B merge. #parent #framework #investigation #interactive ~10h tier:thinking ref:GH#19482 logged:2026-04-17 -> [todo/tasks/t2163-brief.md]
-- [ ] t2165 fix(issue-sync): enrich 10-minute timeout — pre-fetch `title,body,labels` once per task (1 API read instead of 3), skip `gh issue edit` when no drift, bump `sync-on-push` `timeout-minutes` 10→20 as safety net. Concrete evidence: run 24544622121 on chore/t2162 merge hit the cap, cancelled downstream `Commit and push TODO.md updates`. ~145 open tasks × ~5 API calls × 1.5s = ~18 min in a 10-min cap. Defensive fallback in helpers — no behaviour change when args omitted. Pulse/workers unaffected (enrich only runs in GHA). #bugfix #interactive ~2h tier:standard ref:GH#19486 logged:2026-04-17 -> [todo/tasks/t2165-brief.md]
+- [x] t2163 parent: large-file simplification gate — phantom continuation root cause + 5-fix plan — gate surfaced a stale `(recently-closed — continuation)` reference on GH#19415 pointing at #18706, a function-complexity ticket whose merge PR #18715 added net +29 lines to the file. Three compounding bugs: (A) `_large_file_gate_extract_paths` over-matches any backticked path on a `-`-list item regardless of `EDIT:` prefix; (B) `_large_file_gate_create_debt_issue` never verifies the prior PR actually reduced file size before declaring continuation; (C) `simplification-debt` label is overloaded across function-complexity and file-size problems. 5-fix plan: A+B ship as t2164 (leaf child); C split-label migration, D outcome-check workflow, E pulse-triage re-eval follow continuation ref — each to be filed as children when A+B merge. #parent #framework #investigation #interactive ~10h tier:thinking ref:GH#19482 pr:#19501 logged:2026-04-17 -> [todo/tasks/t2163-brief.md] completed:2026-07-01
+- [x] t2165 fix(issue-sync): enrich 10-minute timeout — pre-fetch `title,body,labels` once per task (1 API read instead of 3), skip `gh issue edit` when no drift, bump `sync-on-push` `timeout-minutes` 10→20 as safety net. Concrete evidence: run 24544622121 on chore/t2162 merge hit the cap, cancelled downstream `Commit and push TODO.md updates`. ~145 open tasks × ~5 API calls × 1.5s = ~18 min in a 10-min cap. Defensive fallback in helpers — no behaviour change when args omitted. Pulse/workers unaffected (enrich only runs in GHA). #bugfix #interactive ~2h tier:standard ref:GH#19486 pr:#19487 logged:2026-04-17 -> [todo/tasks/t2165-brief.md] completed:2026-07-01
 - [x] t2166 fix(issue-sync): SYNC_PAT — extend `SYNC_PAT || GITHUB_TOKEN` fallback from `sync-on-pr-merge` (t2048) to the other three push-to-main jobs (`sync-on-push`, `sync-on-issue`, `manual-sync`), promote unset-secret `::notice::` → `::warning::` so operators see the gap on every run, rewrite `TODO.md auto-completion blocked` PR comment to lead with `gh secret set SYNC_PAT ...` root-cause command. Evidence: run 24545428903 on #19486 creation just failed with GH006 — same signature as runs 24545001220 / 24545023322 / 24545424016 from earlier today. #bugfix #interactive ~2h tier:standard ref:GH#19488 logged:2026-04-17 -> [todo/tasks/t2166-brief.md] pr:#19489 completed:2026-04-18
 - [x] t2168 fix(large-file-gate): split overloaded `simplification-debt` label into `file-size-debt` + `function-complexity-debt` — Fix C of t2163. The gate's dedup queries match `simplification-debt` on basename + 30-day window, which conflates function-complexity and file-size producers. Rename the file-size producer label, rename the complexity-scan producer label, update dedup queries in `_large_file_gate_find_existing_debt_issue`, update consumers at `pulse-triage.sh:55-60,79-84,511`, ship `migrate-simplification-debt-labels.sh` one-shot to relabel existing open issues by title-pattern classification. Closes the third root cause behind Fix A+B. #bugfix #framework #auto-dispatch #interactive ~3h tier:standard ref:GH#19497 blocked-by:t2163 logged:2026-04-17 -> [todo/tasks/t2168-brief.md] pr:#19619 completed:2026-04-17
 - [x] t2169 feat(ci): simplification-outcome-check workflow verifying merged PR reduced file below threshold — Fix D of t2163. New `.github/workflows/simplification-outcome-check.yml` runs on merged PRs; if PR body cites a `file-size-debt` issue and the target file is still >=2000 lines post-merge, reopen the issue, apply `simplification-incomplete` label, comment on PR and issue. Also extend `_large_file_gate_verify_prior_reduced_size` to short-circuit on the new label (skip wc-l when the label is already definitive). Evidence: PR #18715 closed #18706 while adding net +29 lines; outcome check would have reopened immediately. #feature #framework #auto-dispatch #interactive ~4h tier:standard ref:GH#19498 blocked-by:t2163,t2168 logged:2026-04-17 -> [todo/tasks/t2169-brief.md] pr:#19520 completed:2026-04-17
 - [x] t2170 fix(pulse-triage): clear stale `needs-simplification` labels when cited continuations are phantom — Fix E of t2163. Extend `_reevaluate_simplification_labels` at `pulse-triage.sh:450-491` to parse the gate's sticky comment, identify cited continuation issues, verify each via `gh issue view` + reused `_large_file_gate_verify_prior_reduced_size`, and clear the label when ALL citations are stale (closed + over-threshold OR closed + `simplification-incomplete`). Breaks the deadlock where already-labeled issues can't self-unblock because dispatch is held by the label that gate re-run would clear. Regression tests cover stale, valid, open, incomplete, and missing-comment cases. #bugfix #framework #auto-dispatch #interactive ~3h tier:standard ref:GH#19499 blocked-by:t2163,t2169 logged:2026-04-17 -> [todo/tasks/t2170-brief.md] pr:#19524 completed:2026-04-17
-- [ ] t2171 fix(ci): extend t2159 per-function regression to nesting/bash32/file-size + retire ratchet treadmill — observed 7h churn: 11 identical "CI nesting threshold proximity 283/285" issues (GH#19526-19582) filed every 45min + BASH32 threshold oscillating 74↔78. Root cause: t2159's per-function regression only covers `FUNCTION_COMPLEXITY_THRESHOLD`; the other 3 metrics still use total-count-vs-threshold gating + pulse ratchet-down PRs, forming a treadmill. Extends `complexity-regression-helper.sh` to support `--metric {nesting-depth,file-size,bash32-compat}` mirroring the function-complexity pattern. Rewrites 3 `code-quality.yml` steps (nesting, file-size, bash32) to non-blocking warning + per-metric regression gate with `complexity-bump-ok` label override. Neutralises `_check_ci_nesting_threshold_proximity` and `_complexity_scan_ratchet_check` in `pulse-simplification.sh`. 12 tests pass (6 new + 6 retained). #bugfix #framework #interactive ~6h tier:standard ref:GH#19585 logged:2026-04-17 -> [todo/tasks/t2171-brief.md]
+- [x] t2171 fix(ci): extend t2159 per-function regression to nesting/bash32/file-size + retire ratchet treadmill — observed 7h churn: 11 identical "CI nesting threshold proximity 283/285" issues (GH#19526-19582) filed every 45min + BASH32 threshold oscillating 74↔78. Root cause: t2159's per-function regression only covers `FUNCTION_COMPLEXITY_THRESHOLD`; the other 3 metrics still use total-count-vs-threshold gating + pulse ratchet-down PRs, forming a treadmill. Extends `complexity-regression-helper.sh` to support `--metric {nesting-depth,file-size,bash32-compat}` mirroring the function-complexity pattern. Rewrites 3 `code-quality.yml` steps (nesting, file-size, bash32) to non-blocking warning + per-metric regression gate with `complexity-bump-ok` label override. Neutralises `_check_ci_nesting_threshold_proximity` and `_complexity_scan_ratchet_check` in `pulse-simplification.sh`. 12 tests pass (6 new + 6 retained). #bugfix #framework #interactive ~6h tier:standard ref:GH#19585 pr:#19592 logged:2026-04-17 -> [todo/tasks/t2171-brief.md] completed:2026-07-01
 - [x] t2173 fix(pulse): rate-limit cache-poisoning false positive defense — gh CLI 2.90.0 can return cached 403 rate-limit errors after the real API budget has reset. `_pulse_mark_rate_limited` unconditionally trusts the stderr classifier, causing multi-hour stalls on stale signals. Add `_pulse_verify_rate_limit_live` helper to probe `/rate_limit` endpoint before writing the flag; reject stale signals when live budget is healthy. EDIT: `.agents/scripts/pulse-prefetch.sh:86-111` — add helper after `_pulse_gh_err_is_rate_limit`, amend `_pulse_mark_rate_limited`. #bugfix #pulse #auto-dispatch ~1h tier:standard ref:GH#19622 logged:2026-04-18 pr:#19626 completed:2026-04-17
 - [x] t2174 feat(opencode): weekly DB maintenance routine (r913) — periodic `wal_checkpoint(TRUNCATE)` + conditional `VACUUM` + `PRAGMA optimize` on `~/.local/share/opencode/opencode.db` to mitigate recurring "database is locked" errors (live log evidence: `+5015ms database is locked` in `session.processor` confirms busy_timeout=5000ms is honored but writers hold the lock longer). Architectural fixes (sharding, retry-with-backoff) live upstream in anomalyco/opencode#21215, #21000, #20935, #21579 — all open. New helper `.agents/scripts/opencode-db-maintenance-helper.sh` with `check`/`report`/`maintain`/`auto` subcommands. Silent no-op on systems without opencode. Registered as `r913` core routine (Sunday 04:00 weekly) so every aidevops user gets it automatically via `aidevops update` — the existing `_create_core_routine_issues` path in `setup_routines` is idempotent and seeds new core routines into existing users' routines repos, so no advisory or manual action is needed. 11/11 tests pass. #feature #framework #interactive ~3h tier:standard ref:GH#19629 logged:2026-04-18 -> [todo/tasks/t2174-brief.md] pr:#19630 completed:2026-04-18
 - [x] t2175 fix(pulse-routines): silence `unrecognised schedule expression` noise — `pulse-routines.sh` grep selector `^\s*-\s*\[x\].*repeat:` matches completed t-prefix tasks whose description text contains the literal `repeat:` (e.g. t2160's narrative quotes `` `repeat:([^[:space:]]+)` ``). Separately, `r912 Dashboard server repeat:persistent` in `aidevops-routines/TODO.md` is a legitimate launchd-supervised daemon but `routine-schedule-helper.sh::parse_schedule` rejects the `persistent` keyword. Observed: 2+ `ERROR: unrecognised schedule expression` lines every pulse cycle in `~/.aidevops/logs/pulse-wrapper.log`. Fix: tighten selector to require `r[0-9]+` prefix + short-circuit `persistent` in both pulse-routines.sh and the parser. Regression test models on `test-compute-counter-seed-octal.sh`. Follow-up to t2160. #bugfix #pulse #auto-dispatch #interactive ~1h tier:standard ref:GH#19631 logged:2026-04-18 -> [todo/tasks/t2175-brief.md] pr:#19652 completed:2026-04-18
@@ -285,7 +285,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [x] t2073 refactor(framework): canonicalise `tier:thinking` as the opus tier label — 92 references to `tier:reasoning` across 15+ active files; both labels currently exist on GitHub and route to opus. User direction 2026-04-14: `tier:thinking` is the canonical name (pairs with `tier:simple`/`tier:standard` as adjectives). Rename all active code/docs/tests, migrate all open AND closed issues from `tier:reasoning` → `tier:thinking`, delete the `tier:reasoning` label. Leave history/changelog/memory entries alone. Blocks silent dispatch bugs from label mismatch. #refactor #framework #auto-dispatch #interactive ~4.5h tier:thinking ref:GH#18781 logged:2026-04-14 -> [todo/tasks/t2073-brief.md] pr:#18918 completed:2026-04-14
 
-- [ ] t2075 fix(interactive-session-helper): `set -e` kills claim flow before `status:in-review` label is applied — same bug class as GH#18770 and GH#18784. `_isc_cmd_claim` at line 266-268 calls `_isc_has_in_review` as a bare function followed by `local has_rc=$?` — under `set -euo pipefail`, a legitimate return 1 (label absent) kills the parent function before the `$?` capture runs. Breaks the t2056 interactive ownership protocol silently on every call; pulse dispatch-dedup guard can never see the `status:in-review` label because it's never applied. Fix: replace with `if _isc_has_in_review; then` idiom (Option B in the brief). Also audit line 355 for the same pattern. Add stub-based test covering the label-absent path end-to-end with set -e enabled. #bug #bash-compat #auto-dispatch ~45m tier:simple ref:GH#18786 logged:2026-04-14
+- [x] t2075 fix(interactive-session-helper): `set -e` kills claim flow before `status:in-review` label is applied — same bug class as GH#18770 and GH#18784. `_isc_cmd_claim` at line 266-268 calls `_isc_has_in_review` as a bare function followed by `local has_rc=$?` — under `set -euo pipefail`, a legitimate return 1 (label absent) kills the parent function before the `$?` capture runs. Breaks the t2056 interactive ownership protocol silently on every call; pulse dispatch-dedup guard can never see the `status:in-review` label because it's never applied. Fix: replace with `if _isc_has_in_review; then` idiom (Option B in the brief). Also audit line 355 for the same pattern. Add stub-based test covering the label-absent path end-to-end with set -e enabled. #bug #bash-compat #auto-dispatch ~45m tier:simple ref:GH#18786 logged:2026-04-14 verified:2026-04-14 completed:2026-07-01
 - [x] t2076 feat(tooling): add static scanner for unguarded Linux/macOS-only command calls in shell scripts — follow-up to GH#18784. PR #18785 expanded `bash-compat.md` with a 13+8 row table of GNU-only and macOS-only commands, but enforcement is documentation-only today. Three production bugs in the same week (GH#18784, GH#18770, GH#18423) would have been caught by a grep-based scanner: enumerate tracked `.sh` files via `git ls-files`, scan for each pattern (`getent passwd`, `readlink -f`, `stat --format`, `dscl`, etc.), verify each hit is within 3-5 lines of a `command -v` guard or `uname == Darwin/Linux` branch, fail CI on unguarded hits. Add `.agents/scripts/lint-shell-portability.sh` + fixture-based test + `.github/workflows/shell-portability.yml` + wire into `linters-local.sh`. Inline suppression marker for rare legitimate cases. #enhancement #bash-compat #auto-dispatch #tooling ~3h tier:standard ref:GH#18787 logged:2026-04-14 pr:#19023 completed:2026-04-15
 - [ ] t2077 research: add macOS runner to CI matrix for shell-script regression tests — follow-up decision task from GH#18784. Three P0 shell-divergence bugs shipped through green CI in the same week (GH#18784, GH#18770, GH#18423) because GitHub Actions only runs Linux for shell tests. The primary user is on macOS; the CI matrix has zero macOS coverage — asymmetric cost-of-failure. Decision questions: full matrix vs targeted jobs, which jobs MUST run on macOS, PR vs main vs nightly frequency, cost envelope (~$120/mo estimate), self-hosted alternative. Deliverable is a documented decision with cost estimate + scope, and if approved a new `.github/workflows/test-suite-macos.yml` (main + nightly only, not every PR). Reasoning tier because cost-vs-safety is a maintainer judgment call. #research #ci #bash-compat #interactive ~2h tier:reasoning ref:GH#18788 logged:2026-04-14
 - [x] t2079 fix: investigate/fix `StandardOutput=` quoting in `_systemd_escape` across 3 service generators — scope-split from GH#18770 review. `_systemd_escape` at `setup-modules/schedulers.sh:545` wraps every value in literal `"..."` quotes. Used in three call sites: `schedulers.sh:663-664` (generic scheduler), `auto-update-helper.sh:1566-1567` (auto-update unit), `repo-sync-helper.sh:657` (repo-sync unit). Need to determine whether systemd strips outer quotes from `StandardOutput=` value at parse time (like Environment= and ExecStart=) or whether they become part of the literal filename — the latter would silently discard service output. Investigation plan: read `man systemd.exec`, reproduce on a real systemd system with a test unit, then either fix all three sites or add inline comments citing the docs. Add `test-systemd-unit-generation.sh` running `systemd-analyze verify` on generated units as a permanent canary. #bug #bash-compat #auto-dispatch ~2h tier:standard ref:GH#18789 logged:2026-04-14 pr:#18803 completed:2026-04-14
@@ -293,8 +293,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t2081 fix: CodeRabbit auto-review silently skipped on all internal PRs due to single-exclusion label config — observed on PR #18785 (the getent fix): CodeRabbit posted "Auto reviews are limited based on label configuration. Review skipped — only excluded labels are configured. (1) no-review". The config at `.coderabbit.yaml:55-56` has only `- "!no-review"` (single exclusion entry) which CodeRabbit now interprets as "empty inclusion list, skip all PRs". Same symptom as GH#17904 which removed an inadvertently-disabling positive label. Impact: review-bot-gate passes via commit-status fallback so merges still work, but we're paying for CodeRabbit Pro and getting zero review value on internal PRs. Investigation: confirm schema semantics via docs, test candidates (remove labels list entirely, add wildcard, add full positive list), apply fix + comment warning next reviewer. #bug #tooling #auto-dispatch #interactive ~45m tier:simple ref:GH#18791 logged:2026-04-14 pr:#18822 completed:2026-04-14
 - [x] t2087 feat(bash-compat): systemic fix — auto-install + auto-update modern bash on macOS via Homebrew + runtime re-exec self-heal in shared-constants.sh. Four-part fix targeting the class of bugs from GH#18770/18784/18786/18804/18830 (all bash 3.2 set-e / parser quirks). Part 1: new `bash-upgrade-helper.sh` with check/status/install/upgrade/path subcommands (detects modern bash in /opt/homebrew/bin, /usr/local/bin, falls back to brew --prefix). Part 2: hook into setup.sh post-platform-detect to prompt or auto-install modern bash (interactive/non-interactive, advisory on Homebrew-missing). Part 3: hook into aidevops-update-check.sh for rate-limited (24h) advisory when `brew outdated bash` reports drift. Part 4: re-exec guard at top of shared-constants.sh that detects BASH_VERSINFO[0]<4 and execs modern bash via BASH_SOURCE[1] (chicken-and-egg-safe for setup.sh and the upgrade helper). Add regression test `test-bash-reexec-guard.sh` covering all re-exec paths, update `reference/bash-compat.md`, add AGENTS.md note. #enhancement #bash-compat #auto-dispatch #interactive ~2.5h tier:standard ref:GH#18950 logged:2026-04-14 pr:#18954 completed:2026-04-14
 - [x] t2094 feat(bash-compat): `ensure` subcommand — actually upgrade bash during setup + update (not just advise). Direct follow-up to GH#18950/v3.8.25. Replaces advisory-only behavior with `brew upgrade bash` on drift. New `ensure` subcommand in `bash-upgrade-helper.sh` combines install/upgrade/no-op; rate-limited `brew update` via separate 24h state file; respects `AIDEVOPS_AUTO_UPGRADE_BASH=0` opt-out. Rewires `setup.sh` and `aidevops-update-check.sh` to call `ensure`. 3 new regression assertions (12→15). Rationale: framework already auto-updates itself, binary replacement doesn't kill running processes, minor bumps have no ABI break. User approved silent upgrades. #enhancement #bash-compat #auto-dispatch #interactive ~1h tier:standard ref:GH#18965 logged:2026-04-14 pr:#18966 completed:2026-04-14
-- [ ] t2097 fix(pulse): fail-loud on GraphQL rate limit exhaustion in pulse prefetch — narrow fix spun off from GH#18976. The five prefetch `gh` call sites currently swallow rate-limit errors and return `"[]"`, causing the pulse to run a full cycle on empty data while holding the instance lock ~3min and dispatching nothing. Add `_pulse_gh_err_is_rate_limit` classifier + `_pulse_mark_rate_limited` flag-file writer in `pulse-prefetch.sh`, wire into all 5 error handlers (`_prefetch_repo_prs`, `_prefetch_repo_daily_cap`, `_prefetch_repo_issues`, `prefetch_triage_review_status`, `prefetch_needs_info_replies`), and check the flag in `_preflight_prefetch_and_scope` (dispatch-engine.sh:1175) to abort the cycle cleanly via the existing return-1 path. Preserves `"[]"` fallback for non-rate-limit errors (network blips). Defers REST fallback and root-cause investigation to GH#18976. #bug #reliability #pulse #interactive ~1h tier:standard ref:GH#18976 logged:2026-04-14 -> [todo/tasks/t2097-brief.md]
-- [ ] t2100 chore(pulse): parent — harden ratchet-down pipeline + pre-dispatch no-op validator — tracker for the #19024 post-mortem. Three children: t2101 widens dedup window, t2102 adds fresh-pull before ratchet-check, t2103 adds a pre-dispatch validator mechanism (defense in depth). Parent-task blocks dispatch unconditionally; implementation happens on children. #parent #interactive tier:thinking ref:GH#19035 logged:2026-04-15 -> [todo/tasks/t2100-brief.md]
+- [x] t2097 fix(pulse): fail-loud on GraphQL rate limit exhaustion in pulse prefetch — narrow fix spun off from GH#18976. The five prefetch `gh` call sites currently swallow rate-limit errors and return `"[]"`, causing the pulse to run a full cycle on empty data while holding the instance lock ~3min and dispatching nothing. Add `_pulse_gh_err_is_rate_limit` classifier + `_pulse_mark_rate_limited` flag-file writer in `pulse-prefetch.sh`, wire into all 5 error handlers (`_prefetch_repo_prs`, `_prefetch_repo_daily_cap`, `_prefetch_repo_issues`, `prefetch_triage_review_status`, `prefetch_needs_info_replies`), and check the flag in `_preflight_prefetch_and_scope` (dispatch-engine.sh:1175) to abort the cycle cleanly via the existing return-1 path. Preserves `"[]"` fallback for non-rate-limit errors (network blips). Defers REST fallback and root-cause investigation to GH#18976. #bug #reliability #pulse #interactive ~1h tier:standard ref:GH#18976 pr:#18983 logged:2026-04-14 -> [todo/tasks/t2097-brief.md] completed:2026-07-01
+- [x] t2100 chore(pulse): parent — harden ratchet-down pipeline + pre-dispatch no-op validator — tracker for the #19024 post-mortem. Three children: t2101 widens dedup window, t2102 adds fresh-pull before ratchet-check, t2103 adds a pre-dispatch validator mechanism (defense in depth). Parent-task blocks dispatch unconditionally; implementation happens on children. #parent #interactive tier:thinking ref:GH#19035 logged:2026-04-15 -> [todo/tasks/t2100-brief.md] verified:2026-04-15 completed:2026-07-01
 - [x] t2101 fix(pulse-simplification): widen ratchet-down dedup to match PRs merged within last 24h — `pulse-simplification.sh:1694-1698` uses `--state open` only, so a PR that merges inside one pulse cycle falls through the dedup and the pulse re-files the same proposal (this exact failure: #19024 filed 2 minutes after #19017 merged). Add `--state all --search "ratchet-down in:title merged:>=<24h ago>"` alongside the existing open check; preserve t2089 keyword search. Single-file ~5-line change; verbatim target code in the issue body. Symmetric completion of t2089/#18959. #bug #pulse #auto-dispatch #interactive ~30m tier:simple ref:GH#19036 logged:2026-04-15 -> [todo/tasks/t2101-brief.md] pr:#19058 completed:2026-04-15
 - [x] t2102 fix(pulse-simplification): pull aidevops worktree fresh before ratchet-check — `_complexity_scan_ratchet_check` runs against whatever state the pulse's simplification workspace has, which may not reflect a just-merged threshold change (secondary cause of #19024 duplicate). Add `git -C "$aidevops_path" pull --ff-only origin main` before the ratchet-check invocation; skip-and-log on pull failure, offline, or non-main HEAD — never crash the pulse. Single-file ~3-line change. #bug #pulse #auto-dispatch #interactive ~20m tier:simple ref:GH#19037 logged:2026-04-15 -> [todo/tasks/t2102-brief.md] pr:#19108 completed:2026-04-15
 - [ ] t2103 feat(pulse): pre-dispatch no-op validator for auto-generated issues — new `pre-dispatch-validator-helper.sh` with a `validate <issue> <slug>` subcommand that runs a registered validator for the issue's generator type in a fresh checkout before spawning a worker. Exit 0=dispatch, 10=falsified+close, 20=validator-error+warn+dispatch. First validator: ratchet-down (runs `complexity-scan-helper.sh ratchet-check . 5`, returns 10 on "No ratchet-down available"). Generator identification via hidden body marker `<!-- aidevops:generator=ratchet-down -->`. Defense-in-depth layer — workers ignored "Worker triage responsibility" prompt rule on #19024, so moving the check before dispatch makes it deterministic. Extensible to quality-debt, review-followup, contribution-watch as follow-ups. Requires research to find the right dispatch hook point. New helper + new test harness + docs in `reference/pre-dispatch-validators.md`. #enhancement #pulse #auto-dispatch #interactive ~3h tier:standard ref:GH#19038 logged:2026-04-15 -> [todo/tasks/t2103-brief.md]
@@ -341,21 +341,21 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [ ] t2004 refactor(pulse): Phase 12 — split _is_task_committed_to_main function (189 lines) into per-signal helpers (_task_id_in_recent_commits, _task_id_in_changed_files, _task_id_in_merged_pr). Lives in pulse-dispatch-core.sh:455. Critical regression test: test-pulse-wrapper-main-commit-check.sh (8 assertions). Enables independent mocking of each signal in unit tests. Plan §6 Phase 12 candidate #6. #simplification #pulse #auto-dispatch #interactive ~1.5h tier:standard ref:GH#19438 logged:2026-04-12 -> [todo/tasks/t2004-brief.md]
 
-- [ ] t2005 refactor(pulse): Phase 12 — split normalize_active_issue_assignments function (189 lines) into per-state-transition helpers (_normalize_unassign_stale, _normalize_clear_status_labels, _normalize_reassign_self). Lives in pulse-issue-reconcile.sh:38. One of the functions implicated in the GH#18356 dispatch race; per-concern split makes future bugs easier to localize. Stretch: add a stub-based test mirroring test-parent-task-guard.sh pattern. Plan §6 Phase 12 candidate #7. #simplification #pulse #auto-dispatch #interactive ~2h tier:standard ref:GH#19440 logged:2026-04-12 -> [todo/tasks/t2005-brief.md]
+- [x] t2005 refactor(pulse): Phase 12 — split normalize_active_issue_assignments function (189 lines) into per-state-transition helpers (_normalize_unassign_stale, _normalize_clear_status_labels, _normalize_reassign_self). Lives in pulse-issue-reconcile.sh:38. One of the functions implicated in the GH#18356 dispatch race; per-concern split makes future bugs easier to localize. Stretch: add a stub-based test mirroring test-parent-task-guard.sh pattern. Plan §6 Phase 12 candidate #7. #simplification #pulse #auto-dispatch #interactive ~2h tier:standard ref:GH#19440 pr:#18467 logged:2026-04-12 -> [todo/tasks/t2005-brief.md] completed:2026-07-01
 
 - [x] t2006 refactor(pulse): Phase 12 — split calculate_priority_allocations function (114 lines) into per-priority-class allocation helpers. Lives in pulse-capacity-alloc.sh:388. Smallest of the Phase 12 candidates and the function whose extraction in Phase 3 caused the first complexity threshold bump (40→43, PR #18377) — reducing it lets us start ratcheting back down. Critical: allocation output must be byte-identical for same input (verified via diff). Plan §6 Phase 12 candidate #8. #simplification #pulse #auto-dispatch #interactive ~45m tier:simple logged:2026-04-12 ref:GH#18454 pr:#18540 verified:2026-04-13 -> [todo/tasks/t2006-brief.md]
 
-- [ ] t2007 feat(pulse): dispatch hardening — cost-per-issue circuit breaker. Tier B systemic fix from the GH#18356 root-cause analysis. Track cumulative token spend per issue across all worker attempts (extract from existing signature footers); when spend exceeds tier-appropriate budget (30K simple / 100K standard / 300K reasoning), apply needs-maintainer-review label and stop dispatching. Phase 1 calibration uses last 30 days of merged PR signature data. Implementation in dispatch-dedup-helper.sh as a new dedup layer. New test: test-cost-circuit-breaker.sh with stubbed gh. Closes the cost runaway hole that t1986 left open for non-parent issues. Requires reasoning tier — multiple design decisions (where to insert, how to aggregate, fail-open vs fail-closed). #enhancement #pulse #cost-control #auto-dispatch #interactive ~5h tier:reasoning ref:GH#19442 logged:2026-04-12 -> [todo/tasks/t2007-brief.md]
+- [x] t2007 feat(pulse): dispatch hardening — cost-per-issue circuit breaker. Tier B systemic fix from the GH#18356 root-cause analysis. Track cumulative token spend per issue across all worker attempts (extract from existing signature footers); when spend exceeds tier-appropriate budget (30K simple / 100K standard / 300K reasoning), apply needs-maintainer-review label and stop dispatching. Phase 1 calibration uses last 30 days of merged PR signature data. Implementation in dispatch-dedup-helper.sh as a new dedup layer. New test: test-cost-circuit-breaker.sh with stubbed gh. Closes the cost runaway hole that t1986 left open for non-parent issues. Requires reasoning tier — multiple design decisions (where to insert, how to aggregate, fail-open vs fail-closed). #enhancement #pulse #cost-control #auto-dispatch #interactive ~5h tier:reasoning ref:GH#19442 pr:#18558 logged:2026-04-12 -> [todo/tasks/t2007-brief.md] completed:2026-07-01
 
 - [x] t2008 feat(pulse): dispatch hardening — stale-recovery escalation after N consecutive cycles. Tier C systemic fix from the GH#18356 root-cause analysis. After STALE_RECOVERY_THRESHOLD (default 2) consecutive stale recoveries without producing a PR, stop resetting to status:available and apply needs-maintainer-review instead. Counter stored as structured comment marker (<!-- stale-recovery-tick:N -->) for cross-runner correctness. Counter resets when a PR is detected. New config file dispatch-stale-recovery.conf. New test: test-stale-recovery-escalation.sh. Forms the "no-progress fail-safe" complement to t2007's "cost cap" and t1986's "parent-task block". #enhancement #pulse #dispatch #auto-dispatch #interactive ~3h tier:standard ref:GH#19443 logged:2026-04-12 -> [todo/tasks/t2008-brief.md] pr:#19449 completed:2026-04-17
 
 - [x] t2009 docs: cross-runner coordination reference doc. Tier C systemic fix from the GH#18356 root-cause analysis. Create .agents/reference/cross-runner-coordination.md documenting the multi-runner mental model: coordination signals (assignees, labels, comments, locks), the 7-layer dedup chain, race scenarios observed in this session (GH#18356 parent-task, GH#18367 interactive-claim, stale-recovery loop, token cost runaway), per-runner setup, and a failure-mode catalogue. The runner contract is currently tribal knowledge scattered across PR bodies, AGENTS.md paragraphs, and source comments. Cross-references AGENTS.md and worker-diagnostics.md. No code changes. #docs #pulse #auto-dispatch #interactive ~2.5h tier:standard ref:GH#19444 logged:2026-04-12 -> [todo/tasks/t2009-brief.md] pr:#19447 completed:2026-04-17
 
 - [ ] t2010 refactor(stats): stats-functions.sh phased decomposition (parent) — 3,164 lines, 48 functions, plan landed in this PR. PARENT-ONLY: no code moved; tracks Phases 0-3 filed as children. Phase 0 child filed as t2044. Tagged #parent so the t1986 dispatch guard prevents direct dispatch. Methodology proven by t1962. #refactor #simplification #stats #parent #interactive ~4h tier:reasoning ref:GH#18458 logged:2026-04-12 assignee:marcusquinn started:2026-04-13T03:46Z -> [todo/tasks/t2010-brief.md] -> [todo/plans/stats-functions-decomposition.md]
-- [ ] t2044 stats-functions decomposition Phase 0 — characterization safety net (test harness, --self-check, --dry-run, CI step). Plan §5 + §6 Phase 0. Modeled on t1963. Blocks Phases 1-3. #refactor #simplification #stats #auto-dispatch ~2.5h tier:standard ref:GH#18579 logged:2026-04-13 blocked-by:t2010 -> [todo/tasks/t2044-brief.md]
+- [x] t2044 stats-functions decomposition Phase 0 — characterization safety net (test harness, --self-check, --dry-run, CI step). Plan §5 + §6 Phase 0. Modeled on t1963. Blocks Phases 1-3. #refactor #simplification #stats #auto-dispatch ~2.5h tier:standard ref:GH#18579 pr:#18611 logged:2026-04-13 blocked-by:t2010 -> [todo/tasks/t2044-brief.md] completed:2026-07-01
 - [x] t2061 complete t2046 Deliverable A audit — fail-closed mode for remaining guards in dispatch-dedup-helper.sh. Two parts: (1) close internal-jq gap in is_assigned() — t2046 only hardened the gh-api-failure case; jq calls inside the function still use 2>/dev/null swallowing patterns. (2) audit + classify + comment _check_db_entry, is_duplicate, _is_stale_assignment, _check_cost_budget, _is_dispatch_comment_active per the t2046 brief acceptance criteria that did not actually ship. Apply GUARD_UNCERTAIN pattern to any function classified as inappropriately fail-open; document rationale for the rest as code comments so the audit is part of the codebase. #bug #pulse #refactor #auto-dispatch ~3.5h tier:standard ref:GH#18751 logged:2026-04-13 -> [todo/tasks/t2061-brief.md] verified:2026-04-14
-- [ ] t2053 consolidate shell helper initialization pattern — parent roadmap. Follow-up to PR #18728 (GH#18702/18693). One canonical pattern for color/constant initialization across all .agents/scripts/**/*.sh, plus CI lint enforcement, plus migration of the 18 remaining unguarded helpers (15 plain + 3 readonly) identified by audit. Defines Pattern A (source shared-constants), Pattern B (granular ${VAR+x} guard), Pattern C (prefixed vars for tests/internal). Phases: (1) style guide + build.txt rule, (2) shell-init-pattern-check.sh + CI workflow + test, (3) Tier 1/2 migrate (setup-chain adjacent), (4) Tier 3 migrate (pulse/worker adjacent), (5) Tier 4 migrate (standalone), (6) eliminate banned readonly triplet + final zero-violation audit, (7) optional prefixed-var normalisation, (8) optional extend to other shared-variable categories. Each phase ≤5 files per PR (t1422 cap). Full rationale, audit data, and canonical patterns in the brief. #parent #refactor #tooling #interactive ~6h tier:standard ref:GH#18735 logged:2026-04-13 -> [todo/tasks/t2053-brief.md]
-- [ ] t2055 parent: interactive session auto-claim of status:in-review for issues — parent roadmap. When an interactive session engages with a GitHub issue (new or existing), it must self-assign and apply status:in-review immediately so the pulse's dispatch-dedup guard blocks parallel worker dispatch. Reuses the existing status:in-review label (already in _has_active_claim, already skipped by stale-recovery, already cleared on PR close) rather than inventing a new label. Driven AI-first from conversation intent via a prompts/build.txt rule; code-level wiring in Phase 2 is belt-and-braces. Two phases: (1) interactive-session-helper.sh foundation + prompt rule + AGENTS.md doc (t2056), (2) wire helper into worktree-helper, claim-task-id, approval-helper (t2057). No new label, no pre-edit-check fallback, no branch-name regex — drop all the layered fragility from the first design pass. Offline gh → warn and continue (collision is harmless). Release is AI's responsibility via conversation signal, not a user command. Crypto approval for NMR contributor issues gets an idempotent passive release as a side effect — no new friction. Full design log in the brief. #parent #feature #auto-dispatch #interactive ~2h tier:standard ref:GH#18738 logged:2026-04-13 -> [todo/tasks/t2055-brief.md]
+- [x] t2053 consolidate shell helper initialization pattern — parent roadmap. Follow-up to PR #18728 (GH#18702/18693). One canonical pattern for color/constant initialization across all .agents/scripts/**/*.sh, plus CI lint enforcement, plus migration of the 18 remaining unguarded helpers (15 plain + 3 readonly) identified by audit. Defines Pattern A (source shared-constants), Pattern B (granular ${VAR+x} guard), Pattern C (prefixed vars for tests/internal). Phases: (1) style guide + build.txt rule, (2) shell-init-pattern-check.sh + CI workflow + test, (3) Tier 1/2 migrate (setup-chain adjacent), (4) Tier 3 migrate (pulse/worker adjacent), (5) Tier 4 migrate (standalone), (6) eliminate banned readonly triplet + final zero-violation audit, (7) optional prefixed-var normalisation, (8) optional extend to other shared-variable categories. Each phase ≤5 files per PR (t1422 cap). Full rationale, audit data, and canonical patterns in the brief. #parent #refactor #tooling #interactive ~6h tier:standard ref:GH#18735 pr:#19180 logged:2026-04-13 -> [todo/tasks/t2053-brief.md] completed:2026-07-01
+- [x] t2055 parent: interactive session auto-claim of status:in-review for issues — parent roadmap. When an interactive session engages with a GitHub issue (new or existing), it must self-assign and apply status:in-review immediately so the pulse's dispatch-dedup guard blocks parallel worker dispatch. Reuses the existing status:in-review label (already in _has_active_claim, already skipped by stale-recovery, already cleared on PR close) rather than inventing a new label. Driven AI-first from conversation intent via a prompts/build.txt rule; code-level wiring in Phase 2 is belt-and-braces. Two phases: (1) interactive-session-helper.sh foundation + prompt rule + AGENTS.md doc (t2056), (2) wire helper into worktree-helper, claim-task-id, approval-helper (t2057). No new label, no pre-edit-check fallback, no branch-name regex — drop all the layered fragility from the first design pass. Offline gh → warn and continue (collision is harmless). Release is AI's responsibility via conversation signal, not a user command. Crypto approval for NMR contributor issues gets an idempotent passive release as a side effect — no new friction. Full design log in the brief. #parent #feature #auto-dispatch #interactive ~2h tier:standard ref:GH#18738 logged:2026-04-13 -> [todo/tasks/t2055-brief.md] verified:2026-04-13 completed:2026-07-01
 - [x] t2056 Phase 1: interactive-session-helper.sh foundation + AI-guidance prompt rule — ships new .agents/scripts/interactive-session-helper.sh with claim/release/status/scan-stale/help subcommands (wraps set_issue_status for in-review transition, writes crash-recovery stamp to ~/.aidevops/.agent-workspace/interactive-claims/), adds "Interactive issue ownership (MANDATORY — AI-driven)" rule to prompts/build.txt Git Workflow section, and documents the AI-driven claim/release contract in .agents/AGENTS.md. Test harness .agents/scripts/tests/test-interactive-session-claim.sh covers claim idempotency, release idempotency, stamp create/delete, offline warn-and-continue, scan-stale dead-PID detection. Nothing becomes code-mandatory in this phase — the rule makes the agent call the helper from conversation intent; Phase 2 wires the sanctioned paths. Reversible on its own. #feature #auto-dispatch #interactive ~45m tier:standard ref:GH#18739 blocked-by:t2055 logged:2026-04-13 -> [todo/tasks/t2056-brief.md] pr:#18744 completed:2026-04-13
 - [x] t2057 Phase 2: wire interactive-session-helper into worktree-helper, claim-task-id, approval-helper — flips the mandatory bit. EDIT worktree-helper.sh on add to call claim when branch name matches /(gh|t)([0-9]+)[-_] and session is interactive; EDIT claim-task-id.sh to transition interactive new-task to in-review after _auto_assign_issue; EDIT approval-helper.sh _post_issue_approval_updates to idempotently clear status:in-review when present (no new command, passive side effect of sudo aidevops approve issue); EDIT test-dispatch-dedup-multi-operator.sh to add +1 assertion for origin:worker + in-review + non-self assignee block case. Belt-and-braces for the Phase 1 AI-guidance rule so sanctioned paths do the right thing even if the agent misses the conversation signal. #feature #auto-dispatch #interactive ~40m tier:standard ref:GH#18740 blocked-by:t2056 logged:2026-04-13 -> [todo/tasks/t2057-brief.md] pr:#18747 completed:2026-04-13
 
@@ -395,7 +395,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [x] t1878 feat: ratchet pattern for code quality regression prevention — track anti-pattern counts in .agents/configs/ratchets.json, fail if any count increases. Patterns: bare $1 usage, missing return, hardcoded paths, broad catches, SC2086. --update-baseline to lock in improvements. Advisory by default, --strict for CI. Inspired by imbue-ai/mngr test_ratchets.py. #enhancement #auto-dispatch ~4h (ai:3h test:40m read:20m) ref:GH#16898 logged:2026-04-03 -> [todo/tasks/t1878-brief.md] pr:#16920 completed:2026-04-03
 
-- [ ] t1909 feat: add install-systemd subcommand to routine-helper.sh — add cmd_install_systemd() with cron-to-OnCalendar conversion, Persistent=true, and platform-auto-detecting install subcommand. Single-file edit. #enhancement #auto-dispatch ~20m ref:GH#17692 logged:2026-04-07 -> [todo/tasks/t1909-brief.md]
+- [x] t1909 feat: add install-systemd subcommand to routine-helper.sh — add cmd_install_systemd() with cron-to-OnCalendar conversion, Persistent=true, and platform-auto-detecting install subcommand. Single-file edit. #enhancement #auto-dispatch ~20m ref:GH#17692 pr:#17739 logged:2026-04-07 -> [todo/tasks/t1909-brief.md] completed:2026-07-01
 
 - [x] t1916 fix: remove approval gate from pulse triage dispatch — restore pre-approval triage comments on needs-maintainer-review issues. Triage (read + comment) should run before cryptographic approval to help maintainer decide. Gate stays on implementation dispatch. #bug #pulse #auto-dispatch ~25m (ai:15m test:10m) ref:GH#17705 logged:2026-04-07 -> [todo/tasks/t1916-brief.md] pr:#17709 completed:2026-04-07
 
@@ -403,15 +403,15 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [x] t1917 fix: Linux scheduler dual-execution and systemd migration completion — fix cron/systemd dual-execution bug in schedulers.sh, fix uninstall elif chain, update 3 helper scripts to use platform-detect.sh, extend non-interactive scheduler setup, add cron-to-systemd migration. Linux-only, macOS (launchd) unaffected. Upstream: GH#17695. #bug #enhancement #auto-dispatch ~3h (ai:2.5h test:30m) ref:GH#17706 logged:2026-04-07 -> [todo/tasks/t1917-brief.md] pr:#17730 completed:2026-04-07
 
-- [ ] t1918 fix: silent gh auth failure in approval-helper.sh under sudo on Linux — `_approve_target()` swallows `gh` auth errors via `>/dev/null 2>&1`, prints false `[OK]` when no approval comment is posted. Add `_require_gh_auth()` pre-check with `GH_TOKEN` workaround message, check `gh comment` exit codes, document `[owner/repo]` positional arg in AGENTS.md. Linux-only (gnome-keyring inaccessible under sudo), macOS unaffected. #bug #security #auto-dispatch ~1h (ai:30m test:15m read:10m) ref:GH#17754 logged:2026-04-07 -> [todo/tasks/t1918-brief.md]
+- [x] t1918 fix: silent gh auth failure in approval-helper.sh under sudo on Linux — `_approve_target()` swallows `gh` auth errors via `>/dev/null 2>&1`, prints false `[OK]` when no approval comment is posted. Add `_require_gh_auth()` pre-check with `GH_TOKEN` workaround message, check `gh comment` exit codes, document `[owner/repo]` positional arg in AGENTS.md. Linux-only (gnome-keyring inaccessible under sudo), macOS unaffected. #bug #security #auto-dispatch ~1h (ai:30m test:15m read:10m) ref:GH#17754 pr:#17766 logged:2026-04-07 -> [todo/tasks/t1918-brief.md] completed:2026-07-01
 
-- [ ] t1919 fix: resolve_api_key subshell export bug in model-availability-helper.sh — export inside $() subshell never reaches parent shell, breaking headless dispatch in clean environments. Change resolve_api_key to echo key value directly, simplify probe_provider to single call. #bug #auto-dispatch ~1.5h (ai:1h test:30m) ref:GH#17755 logged:2026-04-07 -> [todo/tasks/t1919-brief.md]
+- [x] t1919 fix: resolve_api_key subshell export bug in model-availability-helper.sh — export inside $() subshell never reaches parent shell, breaking headless dispatch in clean environments. Change resolve_api_key to echo key value directly, simplify probe_provider to single call. #bug #auto-dispatch ~1.5h (ai:1h test:30m) ref:GH#17755 pr:#17767 logged:2026-04-07 -> [todo/tasks/t1919-brief.md] completed:2026-07-01
 
-- [ ] t1920 fix: planning filter false positive — p002: prefix and docs/ paths escape \_is_task_committed_to_main filter, blocking dispatch for planning-only commits. Expand subject regex to match p[0-9]+: and add docs/\* to path whitelist. Regression of #17707. #bug #auto-dispatch ~20m (ai:15m test:5m) ref:GH#17761 logged:2026-04-07 -> [todo/tasks/t1920-brief.md]
+- [x] t1920 fix: planning filter false positive — p002: prefix and docs/ paths escape \_is_task_committed_to_main filter, blocking dispatch for planning-only commits. Expand subject regex to match p[0-9]+: and add docs/\* to path whitelist. Regression of #17707. #bug #auto-dispatch ~20m (ai:15m test:5m) ref:GH#17761 pr:#17770 logged:2026-04-07 -> [todo/tasks/t1920-brief.md] completed:2026-07-01
 
 - [x] t1879 research: mngr tmux/provider architecture for SaaS agent hosting — design research doc evaluating imbue-ai/mngr's tmux-based process management, provider abstraction (Docker/Modal/SSH/VPS), idle detection, and convention-based state discovery for aidevops SaaS agent hosting. Covers multi-tenant security gaps, snapshot/restore lifecycle, build-vs-adopt-vs-fork analysis. Output: todo/research/saas-agent-hosting.md. #research #auto-dispatch ~8h (ai:5h research:3h) model:opus ref:GH#16899 logged:2026-04-03 -> [todo/tasks/t1879-brief.md] pr:#17070 completed:2026-04-04
 - [x] t1892 docs: add pulse default-on guidance when supervisor_pulse is first enabled — print info message after `aidevops config set orchestration.supervisor_pulse true` and during onboarding, explaining 24/7 default and `pulse stop` persistent flag #docs #auto-dispatch ~1h (ai:45m test:15m) ref:GH#17433 logged:2026-04-05 -> [todo/tasks/t1892-brief.md] pr:#17453 completed:2026-04-05
-- [ ] t1893 feat: failure-loop circuit breaker with tiered model escalation before user reassignment — track dispatch attempts per task; after N failures at current model tier, escalate to highest tier available to assigned user; if still failing, release assignment for another user; if all users exhaust, assign to maintainer with needs:maintainer label. No separate stats DB — repo issues/PRs are the audit trail. Builds on t1331 (global circuit breaker) and t1263 (stale claim detection). #feature #pulse #dispatch #auto-dispatch ~4h (ai:3h test:45m read:15m) ref:GH#17440 logged:2026-04-05 -> [todo/tasks/t1893-brief.md]
+- [x] t1893 feat: failure-loop circuit breaker with tiered model escalation before user reassignment — track dispatch attempts per task; after N failures at current model tier, escalate to highest tier available to assigned user; if still failing, release assignment for another user; if all users exhaust, assign to maintainer with needs:maintainer label. No separate stats DB — repo issues/PRs are the audit trail. Builds on t1331 (global circuit breaker) and t1263 (stale claim detection). #feature #pulse #dispatch #auto-dispatch ~4h (ai:3h test:45m read:15m) ref:GH#17440 logged:2026-04-05 -> [todo/tasks/t1893-brief.md] verified:2026-04-05 completed:2026-07-01
 
 - [x] t1884 cleanup: remove 0-commit orphan worktrees from crashed workers — add cleanup pass to pulse-wrapper that removes worktrees with 0 commits ahead and no open PR (30-min grace). #enhancement #auto-dispatch ~2h (ai:1.5h test:30m) ref:GH#17344 logged:2026-04-04 pr:#17360 completed:2026-04-04
 - [x] t1885 perf: throttle underfill recycler when limited candidates exist — time-based throttle (5 min) on worker-watchdog when runnable <= 3, bypassed for severe underfill (>= 75% deficit). #enhancement #auto-dispatch ~1.5h (ai:1h test:30m) ref:GH#17345 logged:2026-04-04 pr:#17358 completed:2026-04-04
@@ -436,14 +436,14 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t1915 add Qlty verification to simplification brief template and code-simplifier — mandatory qlty smells check in acceptance criteria for #simplification tasks. #code-quality #auto-dispatch ~40m ref:GH#17704 logged:2026-04-07 -> [todo/tasks/t1915-brief.md] pr:#17741 completed:2026-04-07
 - [x] t1950 simplification: reduce returns in git_safety_guard.py (7+6 returns) + extract-urls.py (7 returns) — consolidate return paths with early-exit pattern. #simplification #code-quality #auto-dispatch ~45m ref:GH#18040 logged:2026-04-10 -> [todo/tasks/t1950-brief.md] pr:#18048 completed:2026-04-10
 - [x] t1948 simplification: deduplicate linkedin-automation.py + local-browser-automation.py (27 similar lines, mass=149) — extract shared code to lib/browser_automation_utils.py. #simplification #code-quality #auto-dispatch ~30m ref:GH#18038 logged:2026-04-10 -> [todo/tasks/t1948-brief.md] pr:#18044 completed:2026-04-10
-- [ ] t1941 simplification: reduce complexity in chromium-debug-use.mjs (211) — decompose runDaemon (46), main (28, 6 returns), handleCommand (18). Target: total under 60. #simplification #code-quality #auto-dispatch ~2h ref:GH#18031 logged:2026-04-10 -> [todo/tasks/t1941-brief.md]
+- [x] t1941 simplification: reduce complexity in chromium-debug-use.mjs (211) — decompose runDaemon (46), main (28, 6 returns), handleCommand (18). Target: total under 60. #simplification #code-quality #auto-dispatch ~2h ref:GH#18031 logged:2026-04-10 -> [todo/tasks/t1941-brief.md] verified:2026-04-10 completed:2026-07-01
 - [x] t1942 simplification: reduce complexity in agent-discovery.py (183) + deduplicate with opencode-agent-discovery.py (146) — extract shared discovery_utils.py, eliminate 18-line duplication. Target: both under 60. #simplification #code-quality #auto-dispatch ~2.5h ref:GH#18032 logged:2026-04-10 -> [todo/tasks/t1942-brief.md] pr:#18045 completed:2026-04-10
 - [x] t1943 simplification: reduce complexity in email stack — imap_adapter (135), voice-miner (156), normaliser (87), thread-reconstruction (70), parser (54), to-markdown (9 params). Combined ~502 complexity. #simplification #code-quality #auto-dispatch ~4h ref:GH#18033 logged:2026-04-10 -> [todo/tasks/t1943-brief.md] pr:#18047 completed:2026-04-10
 - [x] t1944 simplification: reduce complexity in session-miner extract.py (156) + compress.py (69) — decompose extract_instruction_candidates (22), replace build_chunks 6 params with dataclass. #simplification #code-quality #auto-dispatch ~2h ref:GH#18034 logged:2026-04-10 -> [todo/tasks/t1944-brief.md] pr:#18049 completed:2026-04-10
 - [x] t1945 simplification: reduce complexity in playwright-contrast.mjs (132) + browser-qa.mjs (85) — extractContrastData at 95 complexity is worst single function. Lift nested functions to module scope. #simplification #code-quality #auto-dispatch ~2.5h ref:GH#18035 logged:2026-04-10 -> [todo/tasks/t1945-brief.md] pr:#18063 completed:2026-04-10
 - [x] t1946 simplification: reduce complexity in cross-document-linking.py (130), extraction_pipeline.py (103), voice-bridge.py (102) — decompose into phase/stage functions. Combined 335 complexity. #simplification #code-quality #auto-dispatch ~3h ref:GH#18036 logged:2026-04-10 -> [todo/tasks/t1946-brief.md] pr:#18059 completed:2026-04-10
 - [x] t1947 simplification: reduce complexity in tabby-profile-sync.py (84), add-related-docs.py (89), generate-manifest.py (88), pageindex-generator.py (66) — decompose hot functions, flatten nesting, replace multi-param signatures. Combined 327 complexity. #simplification #code-quality #auto-dispatch ~3h ref:GH#18037 logged:2026-04-10 -> [todo/tasks/t1947-brief.md] pr:#18060 completed:2026-04-10
-- [ ] t1949 simplification: reduce complexity in .opencode/ files — toon.ts (62), api-gateway.ts (65), ai-research.ts (18 func) — replace multi-return functions with lookup maps. Combined ~145 complexity. #simplification #code-quality #auto-dispatch ~1.5h ref:GH#18039 logged:2026-04-10 -> [todo/tasks/t1949-brief.md]
+- [x] t1949 simplification: reduce complexity in .opencode/ files — toon.ts (62), api-gateway.ts (65), ai-research.ts (18 func) — replace multi-return functions with lookup maps. Combined ~145 complexity. #simplification #code-quality #auto-dispatch ~1.5h ref:GH#18039 pr:#18066 logged:2026-04-10 -> [todo/tasks/t1949-brief.md] completed:2026-07-01
 - [x] t1956 simplification: reduce complexity in simplex-bot commands.ts (61) + index.ts (58) — extract per-command handlers into registry. Combined 119 complexity. #simplification #code-quality #auto-dispatch ~1.5h ref:GH#18041 logged:2026-04-10 -> [todo/tasks/t1956-brief.md] pr:#18072 completed:2026-04-10
 - [x] t1952 simplification: reduce remaining higgsfield complexity — commands (334), video (322), common (289), api (72). Follow-up to t1862. Combined 1017 complexity (~25% of all findings). #simplification #code-quality #auto-dispatch ~5h ref:GH#18042 logged:2026-04-10 -> [todo/tasks/t1952-brief.md] pr:#18068 completed:2026-04-10
 - [x] t1959 feat(pulse): wire global circuit breaker to launch failures + canary cache invalidation + adaptive batch throttling — preserve per-issue retry semantics while detecting systemic runtime breakage within ~3 dispatch attempts. Alternative to GH#18347 proposal that avoids auto-reset-on-launch regression (GH#2076). #feature #pulse #dispatch #auto-dispatch ~2.5h ref:GH#18348 logged:2026-04-12 tier:standard -> [todo/tasks/t1959-brief.md] pr:#18527 completed:2026-04-13
@@ -482,17 +482,17 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t2449 feat(pulse-merge): symmetric auto-merge for maintainer-briefed origin:worker PRs — extends `pulse-merge.sh` auto-merge (currently `origin:interactive` only, t2411) to cover `origin:worker` PRs when all of: linked issue authored by OWNER/MEMBER, issue never carried `needs-maintainer-review` OR NMR cleared via **cryptographic** approval (NOT `auto_approve_maintainer_issues`), all required checks PASS, no human `CHANGES_REQUESTED`, not draft, no `hold-for-review`, passes review-bot-gate, not `origin:worker-takeover`. Trust-chain equivalence: maintainer-briefed + worker-implemented + green CI + no objection = same cumulative scrutiny as maintainer-typed. The critical security gate is crypto-vs-auto NMR distinction (`auto_approve_maintainer_issues` uses same token as pulse — using it would close the loop with no human). Motivated by t2443/#20158 requiring manual click despite 29/29 CI green. NEW: `_attempt_worker_briefed_auto_merge` in pulse-merge.sh, `tests/test-pulse-merge-worker-briefed.sh` (10-case matrix), feature flag `AIDEVOPS_WORKER_BRIEFED_AUTO_MERGE`. EDIT: `.agents/AGENTS.md` auto-merge section, `reference/review-bot-gate.md` composition. **Deferred/conditional — do NOT dispatch.** Brief is the deliverable; implementation awaits maintainer review of the trust-chain argument and test-matrix completeness. #enhancement #pulse #framework #deferred #interactive ~4h tier:thinking ref:GH#20164 logged:2026-04-20 -> [todo/tasks/t2449-brief.md] pr:#20283 completed:2026-04-21
 
 - [ ] t2432 feat(pulse-dispatch): add recent-commit sweep to pre-dispatch eligibility gate — deferred follow-up to t2424 (merged in PR #20064). Adds a 4th check to `is_issue_eligible_for_dispatch()` in `.agents/scripts/pre-dispatch-eligibility-helper.sh` that scans the default branch for commits within the last ~10min containing closing keywords referencing the candidate issue, new exit code `5`. Regex must match `pulse-merge.sh::_extract_linked_issue` exactly (`Ref`/`For` planning references must NOT trigger). **Deferred/conditional — do NOT dispatch.** Trigger: observed ≥1 `no_work skip-escalation` events in `~/.aidevops/logs/pulse-wrapper.log` since the 3-check gate (PR #20064) deployed. Measured whenever convenient — no deadline, no auto-close. Issue stays open in backlog indefinitely until either the trigger fires (→ add `#auto-dispatch`) or the maintainer explicitly decides the need is gone. No `#auto-dispatch` until the maintainer confirms the trigger. #enhancement #pulse #framework #deferred #interactive ~45m tier:standard ref:GH#20072 logged:2026-04-20 -> [todo/tasks/t2432-brief.md]
-- [ ] t2394 fix(pulse-dedup): post CLAIM_VOID comment on worker fast-fail to unblock cross-runner dispatch — `pulse-cleanup.sh` unassigns self + sets status:available when workers fast-fail, but never invalidates the DISPATCH_CLAIM comment, so its 30-min TTL poisons cross-runner dispatch. Confirmed live 2026-04-19 on issue #19924: alex-solovyev's pulse dispatches, worker dies in ~1 min (pre-t2392 model-availability), cleanup resets local state but stale claim blocks marcusquinn's healthy runner for the full 1800s. Fix: emit CLAIM_VOID nonce=<same> comment on cleanup; extend `dispatch-claim-helper.sh` to treat same-runner same-nonce voids as overriding claims. #bug #pulse #framework #multi-runner #auto-dispatch ~2h tier:thinking ref:GH#19955 logged:2026-04-19 -> [todo/tasks/t2394-brief.md]
+- [x] t2394 fix(pulse-dedup): post CLAIM_VOID comment on worker fast-fail to unblock cross-runner dispatch — `pulse-cleanup.sh` unassigns self + sets status:available when workers fast-fail, but never invalidates the DISPATCH_CLAIM comment, so its 30-min TTL poisons cross-runner dispatch. Confirmed live 2026-04-19 on issue #19924: alex-solovyev's pulse dispatches, worker dies in ~1 min (pre-t2392 model-availability), cleanup resets local state but stale claim blocks marcusquinn's healthy runner for the full 1800s. Fix: emit CLAIM_VOID nonce=<same> comment on cleanup; extend `dispatch-claim-helper.sh` to treat same-runner same-nonce voids as overriding claims. #bug #pulse #framework #multi-runner #auto-dispatch ~2h tier:thinking ref:GH#19955 pr:#19960 logged:2026-04-19 -> [todo/tasks/t2394-brief.md] completed:2026-07-01
 - [x] t2395 fix(maintainer-gate): extend assignee-exemption to cover `source:*` automation-authored issues — Check 2 in `.github/workflows/maintainer-gate.yml:279-301` hardcodes `ISSUE_AUTHOR == "github-actions[bot]"` but pulse scanners run as the repo owner's gh identity, so review-followup / ci-feedback / quality-debt issues never qualify for the exemption. Result: 9+ worker PRs closed-unmerged today with identical "Issue has no assignee" gate failure. Broaden exemption to match on `source:review-scanner|source:ci-feedback|source:review-feedback|source:ci-failure-miner|source:conflict-feedback|source:quality-debt` automation labels (non-spoofable — only pulse-as-owner can apply them), still requiring PR_AUTHOR_IS_MAINTAINER. Precedent: #18197 added the same exemption for simplification-debt. #bug #ci #framework #auto-dispatch ~1h tier:standard ref:GH#19956 logged:2026-04-19 -> [todo/tasks/t2395-brief.md] pr:#19989 completed:2026-04-19
 - [x] t2396 fix(pulse-issue-reconcile): extend `_normalize_reassign_self` to cover status:available worker issues with feedback-routed markers — after ci-feedback-routing sets an issue back to status:available for re-dispatch, the existing normalisation filter (status:queued|in-progress only) skips the issue, so the race between next-cycle dispatch and PR-creation can leave assignees=[] at gate-check time. Add status:available to the filter, gated by `origin:worker` + feedback-routed marker (`<!-- ci-feedback:PR*-->` or `source:*-feedback` label) + empty assignees. Belt-and-braces — t2395 is the authoritative gate fix; this reduces the race window. #bug #pulse #framework #auto-dispatch ~1.5h tier:standard ref:GH#19957 logged:2026-04-19 -> [todo/tasks/t2396-brief.md] pr:#19994 completed:2026-04-19
 - [x] t2397 feat(fast-fail): age-out HARD STOP counter to auto-recover permanently-blocked issues — `FAST_FAIL_HARD_STOP_THRESHOLD` (>=5) monotonically blocks dispatch forever. Issues #19864 and #19740 have been HARD STOP'd for >24h and will never dispatch again. Many failures that accumulated the counter were transient (pre-t2392 model-availability, cross-runner claim starvation, CI flakes) and have since been fixed upstream — counter can't distinguish genuine-broken from transiently-broken. Add `fast_fail_age_out`: reset count to 0 after 24h quiet with current state status:available. Safeguards: quiet-period check (no reset if failure in last hour), only for issues at/above HARD STOP, max 3 auto-resets before `needs-maintainer-review`. Parallel to circuit-breaker-helper.sh recovery-on-quiet. #enhancement #pulse #framework #auto-dispatch ~2h tier:standard ref:GH#19958 logged:2026-04-19 -> [todo/tasks/t2397-brief.md] pr:#19995 completed:2026-04-19
 - [x] t2398 feat(deploy): post-release hot-deploy trigger for framework-critical script fixes — `aidevops update` is rate-limited to ~24h auto-check cycles and only pulls released versions. When a critical fix merges (e.g., t2392 OAuth model-availability today), remote runners continue running old code for hours, poisoning cross-runner coordination. Add `--hotfix` flag to `version-manager.sh release` that publishes a `hotfix-v{version}` tag; remote runners poll for this tag every 5 min and (when opted in via `~/.aidevops/configs/auto-hotfix.conf`) apply immediately + restart pulse. Opt-out default for safety; non-opted runners see a session-greeting banner. Complements t2394 (CLAIM_VOID absorbs runner-level damage) by reducing runner-level version-skew window. #enhancement #framework #multi-runner #auto-dispatch ~4h tier:standard ref:GH#19959 logged:2026-04-19 -> [todo/tasks/t2398-brief.md] pr:#19998 completed:2026-04-19
 - [x] t2400 feat(pulse-dedup): tactical config-gated override to ignore DISPATCH_CLAIMs from degraded peer runners — shipped as tactical circuit breaker for cross-runner starvation incident 2026-04-19 on marcusquinn/aidevops (0/24 capacity for 24h+ because alex-solovyev's pre-t2392 runner left stale claims within TTL). Config `~/.config/aidevops/dispatch-override.conf` with `DISPATCH_CLAIM_IGNORE_RUNNERS` space/comma list + `DISPATCH_OVERRIDE_ENABLED` gate. Loader + `_apply_ignore_filter` in `dispatch-claim-helper.sh`; test harness at `tests/test-dispatch-override.sh` (7/7 pass); complexity+shellcheck clean. Default install = no-op. Live verification: filter fired on 3 issues, 4 workers dispatched in the cycle after deploy. Sunset once peer recovers OR t2402 stats-dashboard auto-override lands. #feature #pulse #framework #multi-runner #interactive ~2h tier:standard ref:GH#19967 logged:2026-04-19 pr:#19965 completed:2026-04-19
 - [x] t2401 feat(dispatch-claim): add version=X.Y.Z to DISPATCH_CLAIM body for version-gated override filter — extend protocol emit (`_post_claim`) + parse (`_fetch_claims`) + filter (`_apply_ignore_filter`) to include framework version. New config field `DISPATCH_CLAIM_MIN_VERSION` enables version-gated filtering (robust than login-gated — peer identity bleeds across versions). Backward-compat: legacy claims without field parse as `"unknown"` and are treated as below-floor. Semver comparison via `sort -V`. Complements t2400. #feature #pulse #framework #multi-runner #auto-dispatch ~2h tier:standard ref:GH#19968 logged:2026-04-19 -> [todo/tasks/t2401-brief.md] pr:#19993 completed:2026-04-19
-- [ ] t2402 parent: fleet-health-based auto-override for DISPATCH_CLAIM_IGNORE_RUNNERS via supervisor dashboards — retires the manual t2400 config for the common case. Extend supervisor dashboards (#10944/#14335/#2632) with 24h/7d worker success-rate; new `fleet-health-helper.sh` polls dashboards, computes fleet average, auto-populates ignore list when peer is >N% below average. Safety floors: minimum sample size (≥5 runs), single-runner disable, manual entries preserved (AUTO appends not replaces), opt-out env var. Wire into `pulse-wrapper.sh` cycle start. Also fixes the 11-day-stale dashboard refresh issue spotted on #10944. Parent — decomposes into (a) dashboard stat fields, (b) `fleet-health-helper.sh` implementation, (c) wire into pulse, (d) reference/cross-runner-coordination.md doc update. #parent #feature #pulse #framework #multi-runner ~6h tier:thinking ref:GH#19969 logged:2026-04-19 -> [todo/tasks/t2402-brief.md]
+- [x] t2402 parent: fleet-health-based auto-override for DISPATCH_CLAIM_IGNORE_RUNNERS via supervisor dashboards — retires the manual t2400 config for the common case. Extend supervisor dashboards (#10944/#14335/#2632) with 24h/7d worker success-rate; new `fleet-health-helper.sh` polls dashboards, computes fleet average, auto-populates ignore list when peer is >N% below average. Safety floors: minimum sample size (≥5 runs), single-runner disable, manual entries preserved (AUTO appends not replaces), opt-out env var. Wire into `pulse-wrapper.sh` cycle start. Also fixes the 11-day-stale dashboard refresh issue spotted on #10944. Parent — decomposes into (a) dashboard stat fields, (b) `fleet-health-helper.sh` implementation, (c) wire into pulse, (d) reference/cross-runner-coordination.md doc update. #parent #feature #pulse #framework #multi-runner ~6h tier:thinking ref:GH#19969 pr:#19971 logged:2026-04-19 -> [todo/tasks/t2402-brief.md] completed:2026-07-01
 
 - [x] t2187 investigate(otel): opencode v1.4.11 `run` mode does not emit per-tool-call `Tool.execute`/`Bash` spans — empirical finding from t2186 verification session (2026-04-18). Headless-spawned worker produced 471 spans / 108 unique ops (Config, FileSystem, Agent, Auth, Session, ToolRegistry, SessionPrompt, Git, Npm, Bus) — but zero `Tool.execute.*`/`Bash.*`/`Read.*`/`Edit.*`/`Write.*`/`Grep.*` spans. Strings exist in the darwin-arm64 binary, so the gap is code-path specific (run vs TUI vs server), not missing instrumentation. Consequence: the plugin's `enrichActiveSpan` finds no active span on every tool call in headless run mode and silently no-ops — `aidevops.task_id` join key from OTEL to TODO.md is invisible. Plugin-side SQLite (`tool_calls` table) unaffected. Research plan: (1) survey opencode v1.4.11 source to locate Tool.execute instrumentation; determine whether gap is (a) deliberate / (b) bug / (c) config-gated; (2) decide plugin-owned span fallback vs accept gap; (3) contingency — check server mode. Files TBD until step 1 resolves. #investigate #observability #framework #interactive tier:standard ref:GH#19660 logged:2026-04-18 -> [todo/tasks/t2187-brief.md] pr:#19662 completed:2026-04-18
-- [ ] t2126 parent: qlty maintainability A-grade — file-complexity decomposition campaign (5 children: t2127-t2131). Tracks 20 remaining `qlty:file-complexity` smells across higgsfield, oauth-pool, email pipeline, doc-indexing, and misc Python clusters. Goal: total smell count ≤10, `QLTY_SMELL_THRESHOLD` ratcheted from 22 to ≤12. #parent #quality-debt #refactor ref:GH#19222 logged:2026-04-16 -> [todo/tasks/t2126-brief.md]
+- [x] t2126 parent: qlty maintainability A-grade — file-complexity decomposition campaign (5 children: t2127-t2131). Tracks 20 remaining `qlty:file-complexity` smells across higgsfield, oauth-pool, email pipeline, doc-indexing, and misc Python clusters. Goal: total smell count ≤10, `QLTY_SMELL_THRESHOLD` ratcheted from 22 to ≤12. #parent #quality-debt #refactor ref:GH#19222 pr:#19228 logged:2026-04-16 -> [todo/tasks/t2126-brief.md] completed:2026-07-01
 - [x] t2127 refactor(higgsfield): clear residual file-complexity smells — decompose 4 higgsfield .mjs files still flagged after PR #18948: commands.mjs (334), video.mjs (297), common.mjs (283), image.mjs (102). Split into per-concern sibling modules; verify-cluster.sh must continue to pass. Completing the deferral from GH#18780. #refactor #quality-debt #simplification #auto-dispatch ~3.5h tier:thinking ref:GH#19223 logged:2026-04-16 -> [todo/tasks/t2127-brief.md] pr:#19232 completed:2026-04-16
 - [x] t2128 refactor(opencode-aidevops): decompose oauth-pool plugin cluster — clear 3 `qlty:file-complexity` smells: oauth-pool-auth.mjs (121), oauth-pool.mjs (117), oauth-pool-tool.mjs (72). Extract constants (circular dep fix), storage, rotation, per-provider auth, and action handlers into sibling modules. Barrel re-export preserves backward compat. #refactor #quality-debt #simplification #auto-dispatch ~2.5h tier:thinking ref:GH#19224 logged:2026-04-16 -> [todo/tasks/t2128-brief.md] pr:#19229 completed:2026-04-16
 - [x] t2129 refactor(email-pipeline): decompose email python cluster — clear 5 `qlty:file-complexity` smells: email_jmap_adapter.py (169), email-voice-miner.py (140), extraction_pipeline.py (105), email-summary.py (98), email_normaliser.py (78). Split by JMAP concern, pipeline stage, and extraction method. Prior art: email_frontmatter_utils.py extraction in PR #19013. #refactor #quality-debt #simplification #auto-dispatch ~3h tier:thinking ref:GH#19225 logged:2026-04-16 -> [todo/tasks/t2129-brief.md] pr:#19230 completed:2026-04-16
@@ -523,7 +523,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [x] t1903 fix: suppress per-file log_success output in generate-skills.sh during normal mode — gate "Generated: $skill_file" calls behind DRY_RUN==true in all three generation loops and clean mode; summary line already exists #bugfix #skills #ux #auto-dispatch ~20m ref:GH#17682 logged:2026-04-07 pr:#17684 completed:2026-04-07
 
-- [ ] t1902 feat: compressed context notation for chat app memory — token-budgeted tiered context injection for conversation-helper.sh and entity-helper.sh, reducing per-message context from ~400-800 to ~180-260 tokens #enhancement #memory #chat-integrations #auto-dispatch ~6h ref:GH#17672 logged:2026-04-07
+- [x] t1902 feat: compressed context notation for chat app memory — token-budgeted tiered context injection for conversation-helper.sh and entity-helper.sh, reducing per-message context from ~400-800 to ~180-260 tokens #enhancement #memory #chat-integrations #auto-dispatch ~6h ref:GH#17672 logged:2026-04-07 verified:2026-04-07 completed:2026-07-01
 
 
 
@@ -837,13 +837,13 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t2702 disable r912 dashboard routine — server/index.ts never shipped. Follow-up to GH#20315 after t2700 fixed r902/r906/r910. r912 points at `server/index.ts` which does not exist anywhere in the repo or deployed tree; every pulse cycle logs "script not found or not executable". Fix: flip enabled flag from `x` to ` ` (space) on `.agents/scripts/routines/core-routines.sh:30`. `describe_r912` kept as forward-compat placeholder — future work shipping an actual dashboard can flip it back. See `todo/tasks/t2702-brief.md`. #auto-dispatch #bug #framework ~5m ref:GH#20339 pr:#20344 completed:2026-04-21
 
-- [ ] t2703 evaluate extending pulse-routines.sh to tokenize run: fields — parent research task. t2700 shipped wrappers to work around single-token `run:` dispatch; each new routine needing args adds another wrapper. Three options: (1) keep wrappers (status quo, linear cost), (2) tokenize `run:` field (framework-wide change, breaking for space-in-path user routines), (3) hybrid with new `args:` sibling field (additive, preserves compat). Phase A=decide, Phase B=implement (if 2 or 3), Phase C=migrate (if 2). See `todo/tasks/t2703-brief.md`. #parent #feat #framework ~30m ref:GH#20340
+- [x] t2703 evaluate extending pulse-routines.sh to tokenize run: fields — parent research task. t2700 shipped wrappers to work around single-token `run:` dispatch; each new routine needing args adds another wrapper. Three options: (1) keep wrappers (status quo, linear cost), (2) tokenize `run:` field (framework-wide change, breaking for space-in-path user routines), (3) hybrid with new `args:` sibling field (additive, preserves compat). Phase A=decide, Phase B=implement (if 2 or 3), Phase C=migrate (if 2). See `todo/tasks/t2703-brief.md`. #parent #feat #framework ~30m ref:GH#20340 verified:2026-04-24 completed:2026-07-01
 
 - [x] t2706 fix `aidevops update` to self-heal deployed-script drift on every merge, not just VERSION bumps — `cmd_update` in `aidevops.sh` (line 550-560) only compares VERSION when git reports already-up-to-date; `_cmd_check_stale_agent_redeploy` in `auto-update-helper.sh` (line 1326-1340) compared SHA-256 of one sentinel file (`gh-failure-miner-helper.sh`). Both missed inter-release merges that advanced HEAD without bumping VERSION, leaving `~/.aidevops/.deployed-sha` staler than canonical HEAD for hours (observed: 6 commits / ~14h on 2026-04-21, including the t2695 pulse crash fix). Fix: inline `.deployed-sha` + `git diff --name-only` check filtered to framework code paths (`.agents/`, `setup.sh`, `setup-modules/`, `aidevops.sh`) in both redeploy entry points; docs-only drift skipped. Completes t2156 (PR #19462 detector); full brief at todo/tasks/t2706-brief.md. #bugfix #framework #interactive tier:standard ~1h ref:GH#20341 started:2026-04-21 pr:#20342 completed:2026-04-21
 
 - [x] t2724 ## What Render the session-start framework status as an OpenCode TUI toast via `client.tui.showToast()` instead of (or in addition to) injecting it as the first message in context. Phase 1 is additive — the toast appears alongside the existing message-context greeting so we can A/B the visual result. Phase 2 trims the human-only parts from the context version. ## Why The current session greeting — version string, security advisories, pulse status, contribution count — is rendered by the model as the first message in every interactive session. This consumes 100-200 tokens of context per session (more when advisories are active), even though most of the content is status information the human needs but the model rarely acts on. OpenCode 1.14 exposes `client.tui.showToast()` (SDK method `TuiShowToastData`, URL `/tui/show-toast`) with `variant: info|success|warning|error` and optional `duration`. Routing the banner through toasts frees that context entirely while keeping the human-visible information at session start. ## How Phase 1 — additive plugin hook: - NEW: `.agents/plugins/opencode-aidevops/greeting.mjs` — module exporting `createGreetingHook({ scriptsDir, client })`. Handler fires on `event.type === "session.created"`, guarded by a `fired` flag so it runs once per plugin init. Runs `${scriptsDir}/aidevops-update-check.sh --interactive`, parses the output into up to 3 toasts (info for version/env, warning for pulse/contribution, error for security advisories), emits via `await client.tui.showToast({ body: { title, message, variant, duration } })`. - EDIT: `.agents/plugins/opencode-aidevops/index.mjs` — import `createGreetingHook`, compose the greeting handler into the existing `event:` hook alongside the observability handler so both run on every event. - Model pattern to follow: `.agents/plugins/opencode-aidevops/observability.mjs` (same event-subscription style; see `handleEvent` signature). - Defaults: 3 toasts max, 10s duration (30s for errors), fire-once per plugin init. Phase 2 — trim redundant human-only lines from model-rendered greeting (separate commit in same PR once Phase 1 is visually confirmed): - EDIT: `.agents/scripts/generate-opencode-agents.sh:47-…` — the "On interactive conversation start" instruction block. Reduce to: "If the user asks about version/advisories/status, Read `~/.aidevops/cache/session-greeting.txt`." Remove the "greet with: Hi!..." scripted response entirely (toast handles it). ### Files Scope - `.agents/plugins/opencode-aidevops/greeting.mjs` - `.agents/plugins/opencode-aidevops/index.mjs` - `.agents/scripts/generate-opencode-agents.sh` - `todo/tasks/*-brief.md` - `TODO.md` ## Acceptance - Launching a fresh OpenCode session displays an info toast within 2s of first prompt render showing the aidevops version and runtime. - When security advisories are present, a separate error-variant toast appears with the advisory summary. - When the pulse is stalled or contributions need reply, a warning-variant toast appears. - Message-context consumption from the greeting drops by ≥50 tokens (measured via `opencode stats` before/after a clean session start with no advisories). - No regression: the existing observability `event:` handler still receives all events (verified via `~/.aidevops/logs/observability.sqlite` new rows on tool calls). - Plugin init completes without errors in `~/.aidevops/logs/pulse-wrapper.log` or OpenCode's own log. ## Session Origin Interactive session, OpenCode v1.14.20, aidevops v3.8.91. Request from maintainer — "shall we add to toast first, see how that looks, then remove bit by bit that's for humans only?" ref:GH#20412 pr:#20420 completed:2026-04-22
 
-- [ ] t2737 feat(framework): multi-runtime version freshness for framework status greeting — parent task generalising the t2736 cache-read pattern across runtimes (OpenCode, Claude Code, Codex, Droid, Aider, Cursor, Continue). Phase A (foundation): `rt_version`/`rt_display_name` helpers in runtime-registry.sh + new `greeting-cache-helper.sh` + parameterise `_generate_agents_opencode` → `_generate_agents`. Phase B: Claude Code wire. Phase C: remaining runtimes, one child issue each as demand surfaces. Children get own task IDs; parent stays open until all phases merge. #parent-task #framework #interactive ref:GH#20471 -> [todo/tasks/t2737-brief.md]
+- [x] t2737 feat(framework): multi-runtime version freshness for framework status greeting — parent task generalising the t2736 cache-read pattern across runtimes (OpenCode, Claude Code, Codex, Droid, Aider, Cursor, Continue). Phase A (foundation): `rt_version`/`rt_display_name` helpers in runtime-registry.sh + new `greeting-cache-helper.sh` + parameterise `_generate_agents_opencode` → `_generate_agents`. Phase B: Claude Code wire. Phase C: remaining runtimes, one child issue each as demand surfaces. Children get own task IDs; parent stays open until all phases merge. #parent-task #framework #interactive ref:GH#20471 -> [todo/tasks/t2737-brief.md] pr:#20472 completed:2026-07-01
 
 - [x] t2768 ## What Consolidate the GraphQL circuit-breaker threshold into a single source-of-truth config file. Currently the value is defined in 4 places that disagree: | File | Line | Value | Role | |---|---|---|---| | `.agents/scripts/pulse-wrapper.sh` | :345 | `0.05` | default when env unset | | `.agents/scripts/pulse-rate-limit-circuit-breaker.sh` | :92, :195 | `0.30` | default when env unset | | `.agents/configs/plist-env-overrides.json.txt` | :8 | `0.30` | launchd override | | `.agents/AGENTS.md` | :274 | `0.30` | docs | Live effective value differs by launch path: 0.30 via launchd (override set before wrapper default), 0.05 via manual pulse start. The 17 `pulse_dispatch_circuit_broken` fires in `~/.aidevops/logs/pulse-stats.json` happen at 0.05, not 0.30 — evidence that manual starts are hitting the 5% threshold before the breaker trips. ## Why Behaviour silently changes based on how the pulse was started. Docs and code disagree. One place to edit, one place to read, one place for docs to point at. Follow the existing `.agents/configs/complexity-thresholds.conf` pattern — one KEY=VALUE file, inline change history, all consumers source from it, docs reference it. ## How ### Files to modify - NEW: `.agents/configs/pulse-rate-limit.conf` — single source of truth. `CIRCUIT_BREAKER_THRESHOLD=0.30` with comment explaining rationale (reserve GraphQL budget for in-flight worker reads). - EDIT: `.agents/scripts/pulse-wrapper.sh:345` — replace hardcoded `0.05` default with sourcing the new conf; fall back to `0.30` if conf file missing (graceful degradation). - EDIT: `.agents/scripts/pulse-rate-limit-circuit-breaker.sh:92, :195` — replace hardcoded `0.30` defaults with same sourcing pattern. - EDIT: `.agents/configs/plist-env-overrides.json.txt:8` — keep the override line (launchd plists can't source conf files at plist-parse time) but add a comment pointing to `.agents/configs/pulse-rate-limit.conf` as the canonical default. If the two ever drift, the conf is authoritative. - EDIT: `.agents/AGENTS.md:274` — replace the literal `(default 0.30; previously 0.05 — ...)` prose with a reference to `.agents/configs/pulse-rate-limit.conf` as the canonical default. ### Reference pattern `.agents/configs/complexity-thresholds.conf` — KEY=VALUE format, inline comment/history, read by `.github/workflows/code-quality.yml`. Mirror that exactly: sourceable by bash (`source .agents/configs/pulse-rate-limit.conf`), human-readable comments above each key, no quotes needed around values. ### Files Scope - .agents/configs/pulse-rate-limit.conf - .agents/scripts/pulse-wrapper.sh - .agents/scripts/pulse-rate-limit-circuit-breaker.sh - .agents/configs/plist-env-overrides.json.txt - .agents/AGENTS.md ## Verification ``` shellcheck .agents/scripts/pulse-wrapper.sh .agents/scripts/pulse-rate-limit-circuit-breaker.sh bash -n .agents/configs/pulse-rate-limit.conf # should parse as bash # After fix, the only 0.05 in .agents/scripts/ and .agents/configs/ should be in test files: rg -n "0.05|0.30" .agents/scripts/pulse-wrapper.sh .agents/scripts/pulse-rate-limit-circuit-breaker.sh .agents/configs/ # Unit tests still pass: bash .agents/scripts/tests/test-rate-limit-circuit-breaker.sh ``` ## Acceptance Criteria 1. All three scripts reference `.agents/configs/pulse-rate-limit.conf` as canonical; no hardcoded `0.05` or `0.30` fallback except in the conf file itself and the graceful-degradation fallback literal 2. Docs at `.agents/AGENTS.md:274` point to the conf file; literal threshold removed from docs 3. Manual pulse start and launchd-started pulse both use the same threshold value (0.30) 4. Existing tests in `.agents/scripts/tests/test-rate-limit-circuit-breaker.sh` still pass ## Session Origin Filed interactively from a review of the pulse concurrency ceiling. Discovered the 4-place inconsistency while explaining why the breaker fires at 5% when docs say 30%. #auto-dispatch #framework #pulse ref:GH#20638 pr:#20659 completed:2026-04-24
 
@@ -865,7 +865,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t2925 ## What Auto-detect and close PRs from "automated bounty hunter" spam authors. Pattern observed across multiple repos: PRs with body matching `## 💰 Paid Bounty Contribution`, `Reward: $1`, `Source: GitHub-Paid`, `🤖 Generated via automated bounty hunter`, or similar templated headers. Author posts identical bodies to 20+ unrelated repos (Expensify, NVIDIA-NeMo, anthropics/claude-code, up-for-grabs, etc.). ## Why These PRs block dispatch on the issue they "address" because the dedup system sees an open PR. Two such PRs (#21077 and #21094 from a drive-by bounty-bot account) blocked dispatch on issues #21061 and #20918 today until I manually closed them. Auto-detection saves manual triage. ## How NEW: `.agents/scripts/bounty-spam-detector.sh` - Function `is_bounty_spam_pr <slug> <pr_num>` — fetches body, returns 0 if matches: - Heading patterns: `## 💰`, `### 💰 (Paid )?Bounty`, `Paid Bounty Contribution` - Field patterns: `Reward: $d+`, `Source: GitHub-Paid`, `automated bounty hunter` - Author-pattern flag: known spam usernames list (configurable) - Action: close PR with comment `> Detected as automated bounty-hunter spam (matches templated pattern). Auto-closed.` EDIT: `.agents/scripts/pulse-merge.sh` (or new pulse pre-pass) - Run `is_bounty_spam_pr` on every open external-author PR (authorAssociation != OWNER/MEMBER/COLLABORATOR) - Auto-close detected spam NEW: `.github/workflows/bounty-spam-auto-close.yml` - Triggered on `pull_request: opened` - Runs the detector, auto-closes if positive - Posts the standardised dismissal comment ## Verification ```bash shellcheck .agents/scripts/bounty-spam-detector.sh # Test with PR #21077 (closed, but body still readable) .agents/scripts/bounty-spam-detector.sh check marcusquinn/aidevops 21077 # should return 0 ``` ## Acceptance Criteria - [ ] `bounty-spam-detector.sh` with `check`, `close`, `is-spam` subcommands - [ ] Matches all 3 known patterns from the bounty-bot PR set - [ ] Workflow auto-closes within 1 minute of PR open - [ ] False-positive guard: if PR body has substantive code changes (not just template), human-review label applied instead - [ ] Test fixtures with positive (bounty-bot template) and negative (legitimate) examples #auto-dispatch #framework #security ref:GH#21100 pr:#21139 completed:2026-04-27
 
-- [ ] t2930 Currently dispatch-override.conf 'ignore' filters CLAIM COMMENTS but not GitHub assignees. When a peer raw-assigns themselves, is_assigned() blocks unconditionally, creating dispatch starvation. Patch _is_assigned_compute_blocking to honor the override at assignee level for competitive dispatch (winner-takes-merge model). ref:GH#21119
+- [x] t2930 Currently dispatch-override.conf 'ignore' filters CLAIM COMMENTS but not GitHub assignees. When a peer raw-assigns themselves, is_assigned() blocks unconditionally, creating dispatch starvation. Patch _is_assigned_compute_blocking to honor the override at assignee level for competitive dispatch (winner-takes-merge model). ref:GH#21119 pr:#21120 completed:2026-07-01
 
 - [x] t2962 Establishes the _campaigns/ directory contract as a peer-level user-data plane. Creates lib/, intel/, active/, launched/ sub-folder structure. Defines the CAMPAIGNS.md contract file, per-repo provisioning script extension, and aidevops campaign ls/status commands for directory introspection. Blocked by t2840 (knowledge/cases MVP must land first to establish directory contract pattern). Part of _campaigns/ plane (parent: #20929). #feat #framework ref:GH#21250 pr:#21396 completed:2026-04-27
 
@@ -912,15 +912,15 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t3362 fix OAuth pool rotation for canary preflight #bug ref:GH#22065 pr:#22067 completed:2026-05-01
 
-- [ ] t3364 Fix task-complete helper merged PR detection for closed PRs #auto-dispatch #bug ref:GH#22075
+- [x] t3364 Fix task-complete helper merged PR detection for closed PRs #auto-dispatch #bug ref:GH#22075 pr:#22090 completed:2026-07-01
 
-- [ ] t3367 fix setup hang in generate_agent_skills stage #auto-dispatch #bug #framework ref:GH#22077
+- [x] t3367 fix setup hang in generate_agent_skills stage #auto-dispatch #bug #framework ref:GH#22077 pr:#4798 completed:2026-07-01
 
 - [x] t3370 fix setup noninteractive lock/stall recovery #auto-dispatch #bug ref:GH#22086 pr:#22189 completed:2026-05-01
 
 - [x] t3372 Fix pulse dry-run hang during repeated pulse-stats sourcing #auto-dispatch #bug ref:GH#22091 pr:#22101 completed:2026-05-01
 
-- [ ] t3382 Fix pre-edit worktree auto-create failure leaving registered worktrees #auto-dispatch #bug ref:GH#22136
+- [x] t3382 Fix pre-edit worktree auto-create failure leaving registered worktrees #auto-dispatch #bug ref:GH#22136 pr:#4515 completed:2026-07-01
 
 - [x] t3383 fix verify-issue-close-helper PR file parsing for merged PRs #auto-dispatch #bug #framework ref:GH#22138 pr:#22144 completed:2026-05-01
 
@@ -934,11 +934,11 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t3392 Update README recommended OpenCode OpenAI setup ref:GH#22168 pr:#22169 completed:2026-05-01
 
-- [ ] t3394 fix setup non-interactive slow post-skill stages and timeout cleanup #auto-dispatch #bug #framework ref:GH#22174
+- [x] t3394 fix setup non-interactive slow post-skill stages and timeout cleanup #auto-dispatch #bug #framework ref:GH#22174 verified:2026-05-01 completed:2026-07-01
 
 - [x] t3395 Fix setup deploy no-change missing scripts postflight failure #auto-dispatch #bug #framework ref:GH#22175 pr:#22182 completed:2026-05-01
 
-- [ ] t3396 Prevent setup.sh from removing active implementation worktrees #auto-dispatch #bug #framework ref:GH#22176
+- [x] t3396 Prevent setup.sh from removing active implementation worktrees #auto-dispatch #bug #framework ref:GH#22176 verified:2026-05-01 completed:2026-07-01
 
 - [x] t3397 Fix task-complete-helper merged PR detection #auto-dispatch #bug #framework ref:GH#22178 pr:#22181 completed:2026-05-01
 
@@ -946,39 +946,39 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t3457 Normalize escaped newlines in issue bodies #auto-dispatch #bug ref:GH#22316 pr:#22319 completed:2026-05-02
 
-- [ ] t3476 _projects plane parent — structured project lifecycle and TODO/full-loop integration #feat #framework #parent ref:GH#22371 -> [todo/tasks/t3476-brief.md]
+- [x] t3476 _projects plane parent — structured project lifecycle and TODO/full-loop integration #feat #framework #parent ref:GH#22371 -> [todo/tasks/t3476-brief.md] pr:#22516 completed:2026-07-01
 
-- [ ] t3477 _performance plane parent — KPI schemas dashboards and result ingest #feat #framework #parent ref:GH#22372 -> [todo/tasks/t3477-brief.md]
+- [x] t3477 _performance plane parent — KPI schemas dashboards and result ingest #feat #framework #parent ref:GH#22372 -> [todo/tasks/t3477-brief.md] pr:#22514 completed:2026-07-01
 
-- [ ] t3478 _feedback plane parent — capture retention mining and promotion paths #feat #framework #parent ref:GH#22373 -> [todo/tasks/t3478-brief.md]
+- [x] t3478 _feedback plane parent — capture retention mining and promotion paths #feat #framework #parent ref:GH#22373 -> [todo/tasks/t3478-brief.md] pr:#22520 completed:2026-07-01
 
-- [ ] t3503 Remove volatile Sonar quality gate README badge and suppress validated S8541 noise #bug ref:GH#22445
+- [x] t3503 Remove volatile Sonar quality gate README badge and suppress validated S8541 noise #bug ref:GH#22445 pr:#22447 completed:2026-07-01
 
-- [ ] t3516 Respect all priority labels in dispatch scoring #auto-dispatch #bug ref:GH#22482
+- [x] t3516 Respect all priority labels in dispatch scoring #auto-dispatch #bug ref:GH#22482 pr:#22484 completed:2026-07-01
 
-- [ ] t3518 Investigate setup postflight degraded stages #auto-dispatch #bug ref:GH#22499
+- [x] t3518 Investigate setup postflight degraded stages #auto-dispatch #bug ref:GH#22499 pr:#22505 completed:2026-07-01
 
-- [ ] t3519 Investigate setup launchd xpcproxy recovery warnings #auto-dispatch #bug ref:GH#22500
+- [x] t3519 Investigate setup launchd xpcproxy recovery warnings #auto-dispatch #bug ref:GH#22500 pr:#22504 completed:2026-07-01
 
-- [ ] t3517 Gate OpenCode compaction advisory ref:GH#22496
+- [x] t3517 Gate OpenCode compaction advisory ref:GH#22496 pr:#22497 completed:2026-07-01
 
-- [ ] t3525 feedback plane Phase 3 mining workflow and evidence thresholds #auto-dispatch #feat #framework ref:GH#22515
+- [x] t3525 feedback plane Phase 3 mining workflow and evidence thresholds #auto-dispatch #feat #framework ref:GH#22515 pr:#22532 completed:2026-07-01
 
-- [ ] t3527 feedback plane Phase 4 promotion paths #auto-dispatch #feat #framework ref:GH#22518
+- [x] t3527 feedback plane Phase 4 promotion paths #auto-dispatch #feat #framework ref:GH#22518 verified:2026-05-03 completed:2026-07-01
 
-- [ ] t3528 feedback plane Phase 5 CLI and routines design #auto-dispatch #feat #framework ref:GH#22519
+- [x] t3528 feedback plane Phase 5 CLI and routines design #auto-dispatch #feat #framework ref:GH#22519 pr:#22529 completed:2026-07-01
 
-- [ ] t3548 fix: initialise multi-var locals in _compose_unfiled_phases_note (t3547 regression) #bug ref:GH#22610
+- [x] t3548 fix: initialise multi-var locals in _compose_unfiled_phases_note (t3547 regression) #bug ref:GH#22610 pr:#22611 completed:2026-07-01
 
-- [ ] t3550 AGENTS.md progressive disclosure — slim ~26.5K tokens to ~5K via 8-phase extraction #parent #docs #self-improvement #aidevops #interactive ref:GH#22616
+- [x] t3550 AGENTS.md progressive disclosure — slim ~26.5K tokens to ~5K via 8-phase extraction #parent #docs #self-improvement #aidevops #interactive ref:GH#22616 pr:#22618 completed:2026-07-01
 
-- [ ] t3552 Clamp OAuth pool Retry-After cooldowns #auto-dispatch #bug ref:GH#22622
+- [x] t3552 Clamp OAuth pool Retry-After cooldowns #auto-dispatch #bug ref:GH#22622 verified:2026-05-03 completed:2026-07-01
 
-- [ ] t3553 Add interactive OpenAI OAuth pool failure rotation #auto-dispatch #bug ref:GH#22623
+- [x] t3553 Add interactive OpenAI OAuth pool failure rotation #auto-dispatch #bug ref:GH#22623 verified:2026-05-03 completed:2026-07-01
 
 - [x] t3554 Add gpt-5.4-mini session rename model ref:GH#22624 pr:#22628 completed:2026-05-03
 
-- [ ] t3556 REST merge fallback should trigger sequential phase autofile #auto-dispatch #bug #self-improvement ref:GH#22629
+- [x] t3556 REST merge fallback should trigger sequential phase autofile #auto-dispatch #bug #self-improvement ref:GH#22629 verified:2026-05-03 completed:2026-07-01
 
 - [x] t3557 Reset pulse blockers when eligible work exists #auto-dispatch #bug ref:GH#22631 pr:#22641 completed:2026-05-03
 
@@ -1004,7 +1004,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t3603 Fix profile AI hours missing wrapper DBs #bug #no-auto-dispatch ref:GH#24870 pr:#24871 completed:2026-06-15
 
-- [ ] t17996 Vault: encrypted aidevops data, fleet sync, remote control, messaging, and audit #architecture #parent-task #plan #security tier:thinking ~20h ref:GH#25533 logged:2026-06-26 -> [todo/tasks/t17996-brief.md]
+- [x] t17996 Vault: encrypted aidevops data, fleet sync, remote control, messaging, and audit #architecture #parent-task #plan #security tier:thinking ~20h ref:GH#25533 pr:#25586 logged:2026-06-26 -> [todo/tasks/t17996-brief.md] completed:2026-07-01
 
 - [x] t17997 vault: define threat model, data classification, and security architecture RFC #architecture #auto-dispatch #documentation #feat #local-models #opsec #security tier:thinking ~6h ref:GH#25534 logged:2026-06-26 -> [todo/tasks/t17997-brief.md] pr:#25548 completed:2026-06-26
 
@@ -1020,23 +1020,23 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18003 vault: implement device identity, trust, revocation, and fleet unlock status model #architecture #auto-dispatch #feat #orchestration #security blocked-by:t17998 tier:thinking ~6h ref:GH#25540 logged:2026-06-26 -> [todo/tasks/t18003-brief.md] pr:#25557 completed:2026-06-26
 
-- [ ] t18004 vault: add encrypted sync, export, import, rekey, and public-Git-safe replication #architecture #auto-dispatch #communications #database #feat #git #security blocked-by:t18001,t18003 tier:thinking ~8h ref:GH#25541 logged:2026-06-26 -> [todo/tasks/t18004-brief.md]
+- [x] t18004 vault: add encrypted sync, export, import, rekey, and public-Git-safe replication #architecture #auto-dispatch #communications #database #feat #git #security blocked-by:t18001,t18003 tier:thinking ~8h ref:GH#25541 pr:#25596 logged:2026-06-26 -> [todo/tasks/t18004-brief.md] completed:2026-07-01
 
-- [ ] t18005 vault: implement secure device messaging over Git transport with SimpleX adapter option #architecture #auto-dispatch #communications #feat #git #security blocked-by:t18003,t18004 tier:thinking ~6h ref:GH#25542 logged:2026-06-26 -> [todo/tasks/t18005-brief.md]
+- [x] t18005 vault: implement secure device messaging over Git transport with SimpleX adapter option #architecture #auto-dispatch #communications #feat #git #security blocked-by:t18003,t18004 tier:thinking ~6h ref:GH#25542 pr:#25597 logged:2026-06-26 -> [todo/tasks/t18005-brief.md] completed:2026-07-01
 
-- [ ] t18006 vault: add remote lock, unlock-request, and sudo plus passphrase remote unlock policy #architecture #auth #auto-dispatch #feat #opsec #security blocked-by:t18003,t18005 tier:thinking ~6h ref:GH#25543 logged:2026-06-26 -> [todo/tasks/t18006-brief.md]
+- [x] t18006 vault: add remote lock, unlock-request, and sudo plus passphrase remote unlock policy #architecture #auth #auto-dispatch #feat #opsec #security blocked-by:t18003,t18005 tier:thinking ~6h ref:GH#25543 pr:#25630 logged:2026-06-26 -> [todo/tasks/t18006-brief.md] completed:2026-07-01
 
-- [ ] t18007 vault: build tamper-evident access logs with peer replication and public-safe anchors #architecture #audit #auto-dispatch #feat #monitoring #security #security-review blocked-by:t17998,t18003,t18004 tier:thinking ~6h ref:GH#25544 logged:2026-06-26 -> [todo/tasks/t18007-brief.md]
+- [x] t18007 vault: build tamper-evident access logs with peer replication and public-safe anchors #architecture #audit #auto-dispatch #feat #monitoring #security #security-review blocked-by:t17998,t18003,t18004 tier:thinking ~6h ref:GH#25544 pr:#25599 logged:2026-06-26 -> [todo/tasks/t18007-brief.md] completed:2026-07-01
 
 - [x] t18008 vault: enforce confidential data policy for provider AI, local LLM, and task dispatch routing #architecture #auto-dispatch #feat #local-models #model-routing #routing #security blocked-by:t17997,t17998 tier:thinking ~5h ref:GH#25545 logged:2026-06-26 -> [todo/tasks/t18008-brief.md] pr:#25553 completed:2026-06-26
 
-- [ ] t18009 vault: create Vault agent guidance, user workflows, command docs, and dispatch gates #agents #architecture #auto-dispatch #brief #documentation #feat #security blocked-by:t18002,t18004,t18006,t18007,t18008 tier:thinking ~5h ref:GH#25546 logged:2026-06-26 -> [todo/tasks/t18009-brief.md]
+- [x] t18009 vault: create Vault agent guidance, user workflows, command docs, and dispatch gates #agents #architecture #auto-dispatch #brief #documentation #feat #security blocked-by:t18002,t18004,t18006,t18007,t18008 tier:thinking ~5h ref:GH#25546 logged:2026-06-26 -> [todo/tasks/t18009-brief.md] verified:2026-06-27 completed:2026-07-01
 
-- [ ] t18010 vault: add security validation suite, crash drills, destructive-migration gates, and release criteria #architecture #auto-dispatch #ci #feat #security #security-review #testing blocked-by:t17999,t18001,t18004,t18006,t18007,t18009 tier:thinking ~6h ref:GH#25547 logged:2026-06-26 -> [todo/tasks/t18010-brief.md]
+- [x] t18010 vault: add security validation suite, crash drills, destructive-migration gates, and release criteria #architecture #auto-dispatch #ci #feat #security #security-review #testing blocked-by:t17999,t18001,t18004,t18006,t18007,t18009 tier:thinking ~6h ref:GH#25547 pr:#25653 logged:2026-06-26 -> [todo/tasks/t18010-brief.md] completed:2026-07-01
 
 - [x] t18012 Add aidevops app chat session navigation ref:GH#25636 pr:#25637 completed:2026-06-27
 
-- [ ] t18014 aidevops.app AI collaboration workspace roadmap #feat #parent-task #priority:high ref:GH#25707
+- [x] t18014 aidevops.app AI collaboration workspace roadmap #feat #parent-task #priority:high ref:GH#25707 pr:#25716 completed:2026-07-01
 
 - [x] t18015 Audit aidevops.app navigation and choose chat primitive stack #auto-dispatch #feat #priority:high ref:GH#25708 pr:#25717 completed:2026-06-27
 
@@ -1052,7 +1052,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18021 Add per-page tours with signposts button beside notifications #auto-dispatch #feat #priority:high ref:GH#25714 pr:#26162 completed:2026-07-01
 
-- [ ] t18022 QA and release aidevops.app AI collaboration workspace #auto-dispatch #feat #priority:high ref:GH#25715
+- [x] t18022 QA and release aidevops.app AI collaboration workspace #auto-dispatch #feat #priority:high ref:GH#25715 pr:#26177 completed:2026-07-01
 
 - [x] t18026 Fix Apps tooltips links and version detection ref:GH#25798 pr:#25797 completed:2026-06-28
 
@@ -1062,19 +1062,19 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18031 fix(gui): reduce AppActionButton qlty smells after v3.29.28 release failure #bug #interactive ~1h ref:GH#25842 logged:2026-06-29 pr:#25844 completed:2026-06-29
 
-- [ ] t18033 Build Pulse & Workers observability console for aidevops.app #dashboard #feat #observability #parent-task #product #pulse ~1h ref:GH#25911 logged:2026-06-30 -> [todo/tasks/t18033-brief.md]
+- [x] t18033 Build Pulse & Workers observability console for aidevops.app #dashboard #feat #observability #parent-task #product #pulse ~1h ref:GH#25911 logged:2026-06-30 -> [todo/tasks/t18033-brief.md] verified:2026-06-30 completed:2026-07-01
 
 - [x] t18034 Rename Workers to Pulse & Workers and add observability UI shell #auto-dispatch #dashboard #feat #observability #pulse ~2h ref:GH#25912 logged:2026-06-30 -> [todo/tasks/t18034-brief.md] pr:#25923 completed:2026-06-30
 
-- [ ] t18035 Add Pulse & Workers observability contracts and fixtures #auto-dispatch #dashboard #feat #observability #pulse ~3h blocked-by:t18034 ref:GH#25913 logged:2026-06-30 -> [todo/tasks/t18035-brief.md]
+- [x] t18035 Add Pulse & Workers observability contracts and fixtures #auto-dispatch #dashboard #feat #observability #pulse ~3h blocked-by:t18034 ref:GH#25913 pr:#25934 logged:2026-06-30 -> [todo/tasks/t18035-brief.md] completed:2026-07-01
 
-- [ ] t18036 Populate Pulse & Workers status from read-only local telemetry #api #auto-dispatch #dashboard #feat #observability #pulse ~4h blocked-by:t18035 ref:GH#25914 logged:2026-06-30 -> [todo/tasks/t18036-brief.md]
+- [x] t18036 Populate Pulse & Workers status from read-only local telemetry #api #auto-dispatch #dashboard #feat #observability #pulse ~4h blocked-by:t18035 ref:GH#25914 pr:#25942 logged:2026-06-30 -> [todo/tasks/t18036-brief.md] completed:2026-07-01
 
-- [ ] t18037 Build data-driven Pulse & Workers dashboard filters charts and drilldown #auto-dispatch #dashboard #design #feat #observability #pulse ~4h blocked-by:t18036 ref:GH#25915 logged:2026-06-30 -> [todo/tasks/t18037-brief.md]
+- [x] t18037 Build data-driven Pulse & Workers dashboard filters charts and drilldown #auto-dispatch #dashboard #design #feat #observability #pulse ~4h blocked-by:t18036 ref:GH#25915 pr:#25946 logged:2026-06-30 -> [todo/tasks/t18037-brief.md] completed:2026-07-01
 
-- [ ] t18038 Add safe Pulse & Workers action buttons with terminal output #api #auto-dispatch #dashboard #feat #observability #pulse ~4h blocked-by:t18037 ref:GH#25916 logged:2026-06-30 -> [todo/tasks/t18038-brief.md]
+- [x] t18038 Add safe Pulse & Workers action buttons with terminal output #api #auto-dispatch #dashboard #feat #observability #pulse ~4h blocked-by:t18037 ref:GH#25916 pr:#26008 logged:2026-06-30 -> [todo/tasks/t18038-brief.md] completed:2026-07-01
 
-- [ ] t18039 Add productivity insights and systemic fix feedback to Pulse & Workers #auto-dispatch #dashboard #feat #observability #pulse #self-improvement ~4h blocked-by:t18038 ref:GH#25917 logged:2026-06-30 -> [todo/tasks/t18039-brief.md]
+- [x] t18039 Add productivity insights and systemic fix feedback to Pulse & Workers #auto-dispatch #dashboard #feat #observability #pulse #self-improvement ~4h blocked-by:t18038 ref:GH#25917 logged:2026-06-30 -> [todo/tasks/t18039-brief.md] verified:2026-06-30 completed:2026-07-01
 
 - [x] t18044 Fix pulse productivity dispatch gaps #bug ref:GH#26133 pr:#26135 completed:2026-06-30
 
@@ -2658,17 +2658,17 @@ t165,Provider-agnostic task claiming via TODO.md,marcusquinn,orchestration archi
 - [x] t1752 simplification: tighten agent doc Gotchas & Best Practices (.agents/services/hosting/cloudflare-platform-skill/agents-sdk-gotchas.md, 114 lines) #simplification #auto-dispatch ~1h model:sonnet ref:GH#15053 logged:2026-04-02 -> [todo/tasks/t1752-brief.md] completed:2026-04-03
 - [x] t1753 simplification: tighten agent doc Self-Improvement #simplification #auto-dispatch ~1h model:sonnet ref:GH#15056 logged:2026-04-02 -> [todo/tasks/t1753-brief.md] pr:#15616 completed:2026-04-02
 - [x] t1873 feat: add Ollama as opt-in local model backend with Gemma 4 documentation — Ollama supported as alternative to llama.cpp (not recommended, not default). Haiku remains preferred; local is opt-in only. Includes num_ctx validation probe and Gemma 4 26B MoE as recommended local model. #feature #local-models #auto-dispatch ~5h (ai:4h test:45m read:15m) ref:GH#16810 logged:2026-04-03 -> [todo/tasks/t1873-brief.md] completed:2026-04-03
-  - [ ] t1873.1 model-routing-table.json: add `ollama` provider entry (endpoint localhost:11434, probe /api/tags, min_context_length 16384) ~15m #auto-dispatch ref:GH#16832
-  - [ ] t1873.2 model-availability-helper.sh: add `local` and `ollama` to get_provider_endpoint, get_provider_key_vars, is_known_provider; add \_probe_ollama_context_length() with num_ctx validation via /api/show ~1.5h #auto-dispatch ref:GH#16833 blocked-by:t1873.1
+  - [x] t1873.1 model-routing-table.json: add `ollama` provider entry (endpoint localhost:11434, probe /api/tags, min_context_length 16384) ~15m #auto-dispatch ref:GH#16832 pr:#16949 completed:2026-07-01
+  - [x] t1873.2 model-availability-helper.sh: add `local` and `ollama` to get_provider_endpoint, get_provider_key_vars, is_known_provider; add \_probe_ollama_context_length() with num_ctx validation via /api/show ~1.5h #auto-dispatch ref:GH#16833 blocked-by:t1873.1 pr:#16895 completed:2026-07-01
   - [x] t1873.3 ollama-helper.sh: new thin wrapper script (~200 lines) with status/serve/stop/models/pull/recommend/validate subcommands. ShellCheck clean, bash 3.2 compatible. Detect ollama binary, validate num_ctx on pull/status ~1.5h #auto-dispatch ref:GH#16834 completed:2026-04-03
-  - [ ] t1873.4 headless-runtime-helper.sh: add `ollama` to provider_auth_available() alongside existing `local` case (one-line change) ~10m #auto-dispatch ref:GH#16835 blocked-by:t1873.2
+  - [x] t1873.4 headless-runtime-helper.sh: add `ollama` to provider_auth_available() alongside existing `local` case (one-line change) ~10m #auto-dispatch ref:GH#16835 blocked-by:t1873.2 pr:#16948 completed:2026-07-01
   - [x] t1873.5 local-models.md: add "Alternative: Ollama" section with setup, security caveats, num_ctx warning; add "Recommended Local Models (2026)" section with Gemma 4 26B MoE benchmarks (77.1% LiveCodeBench, 3.8B active, 256K ctx), E4B for laptops, 31B Dense for max quality ~45m #auto-dispatch ref:GH#16836 completed:2026-04-03
-  - [ ] t1873.6 model-routing.md: update local tier description to mention Ollama as alternative, clarify opt-in-only semantics ~15m #auto-dispatch ref:GH#16837 blocked-by:t1873.5
-  - [ ] t1873.7 tests: add local tier to test-model-availability.sh tier resolution loop and provider check loop; add local/ollama probe tests (graceful failure when not running); new tests/test-ollama-helper.sh (~100 lines) with shellcheck, subcommand, and help tests ~45m #auto-dispatch ref:GH#16838 blocked-by:t1873.2,t1873.3
+  - [x] t1873.6 model-routing.md: update local tier description to mention Ollama as alternative, clarify opt-in-only semantics ~15m #auto-dispatch ref:GH#16837 blocked-by:t1873.5 pr:#16860 completed:2026-07-01
+  - [x] t1873.7 tests: add local tier to test-model-availability.sh tier resolution loop and provider check loop; add local/ollama probe tests (graceful failure when not running); new tests/test-ollama-helper.sh (~100 lines) with shellcheck, subcommand, and help tests ~45m #auto-dispatch ref:GH#16838 blocked-by:t1873.2,t1873.3 pr:#17006 completed:2026-07-01
 - [x] t1741 feat: autoresearch — autonomous experiment loop for code, agent, and standalone research — `/autoresearch` command and subagent inspired by karpathy/autoresearch and hyperspaceai/agi. Three modes: in-repo (worktree optimization), cross-repo (target another managed repo), standalone (scaffold new `autoresearch-{name}` repo with `aidevops init`). Autonomous loop: modify → test → measure metric → keep if improved, discard if not → repeat within budget. Three concurrency modes: sequential, population-based (N hypotheses per iteration), multi-dimension (concurrent agents with mailbox discovery sharing via convoy-grouped messages). Interactive setup when invoked without args (context-aware defaults and suggestions). #feature #research #auto-dispatch ~25h (ai:18h test:3h read:4h) model:opus ref:GH#15340 logged:2026-04-01 -> [todo/tasks/t1741-brief.md] completed:2026-04-03
   - [x] t1741.1 Research program schema and template — define `todo/research/{name}.md` format with YAML frontmatter (mode, target_repo) and sections (Target, Metric, Constraints, Models, Budget, Hints). Create `.agents/templates/research-program-template.md` with 2-3 example programs. #auto-dispatch ~2h model:sonnet ref:GH#15341 -> [todo/tasks/t1742-brief.md] completed:2026-04-03
   - [x] t1741.2 `/autoresearch` command doc with interactive setup — `.agents/scripts/commands/autoresearch.md` handling 4 invocation patterns (full program, one-liner, bare interview, init) plus concurrency selection (sequential/population/multi-dimension). Context-aware defaults based on repo type. Concurrency question with file-overlap validation for multi-dimension mode. #auto-dispatch ~4h model:sonnet ref:GH#15342 blocked-by:t1741.1 -> [todo/tasks/t1743-brief.md] completed:2026-04-03
-  - [ ] t1741.3 Autoresearch subagent — autonomous experiment loop runner — `.agents/tools/autoresearch/autoresearch.md` implementing: setup → mailbox register → hypothesis generation (with peer discovery check) → code modification → constraint check → metric measurement → binary keep/discard → discovery broadcast → memory storage → repeat. Three concurrency modes: sequential, population-based (N temp worktrees, parallel measurement), multi-dimension (independent agents, mailbox coordination). Crash recovery via worktree + results.tsv state. PR creation on completion. #auto-dispatch ~8h model:opus ref:GH#15343 blocked-by:t1741.1,t1741.2 -> [todo/tasks/t1744-brief.md]
+  - [x] t1741.3 Autoresearch subagent — autonomous experiment loop runner — `.agents/tools/autoresearch/autoresearch.md` implementing: setup → mailbox register → hypothesis generation (with peer discovery check) → code modification → constraint check → metric measurement → binary keep/discard → discovery broadcast → memory storage → repeat. Three concurrency modes: sequential, population-based (N temp worktrees, parallel measurement), multi-dimension (independent agents, mailbox coordination). Crash recovery via worktree + results.tsv state. PR creation on completion. #auto-dispatch ~8h model:opus ref:GH#15343 blocked-by:t1741.1,t1741.2 -> [todo/tasks/t1744-brief.md] verified:2026-04-03 completed:2026-07-01
   - [x] t1741.4 Agent optimization integration — autoresearch + agent-test-helper.sh — predefined research program for agent instruction optimization. Composite metric: pass_rate _ (1 - 0.3 _ token_ratio). Multi-metric handling, simplification-state.json integration, security instruction exemptions. #auto-dispatch ~3h model:sonnet ref:GH#15344 blocked-by:t1741.3 -> [todo/tasks/t1745-brief.md] completed:2026-04-03
   - [x] t1741.5 Standalone research repo init — `/autoresearch init "name"` — scaffold `~/Git/autoresearch-{name}/` with git init, `aidevops init`, repos.json registration (local_only:true default), program.md, baseline/. Optional GitHub remote and pulse dispatch. #auto-dispatch ~2h model:sonnet ref:GH#15345 blocked-by:t1741.2 -> [todo/tasks/t1746-brief.md] completed:2026-04-03
   - [x] t1741.6 Results tracking, cross-session memory, and inter-agent discoveries — structured results.tsv (iteration, commit, metric, status, hypothesis, timestamp, tokens). Memory store per experiment, memory recall at session start. Mailbox discovery messages with convoy grouping for concurrent agents. Cross-dimension campaign summary. Completion summary for PR body. #auto-dispatch ~3h model:sonnet ref:GH#15346 blocked-by:t1741.3 -> [todo/tasks/t1747-brief.md] completed:2026-04-03
@@ -3176,15 +3176,15 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2707 extend signature-footer enforcement to gh api POST/PATCH on issues|pulls|comments endpoints #auto-dispatch #bug #framework ref:GH#20350 pr:#20352 completed:2026-04-21
 
-- [ ] t2705 diagnose pulse-merge.sh auto-merge gap for origin:interactive PRs #parent ref:GH#20338
+- [x] t2705 diagnose pulse-merge.sh auto-merge gap for origin:interactive PRs #parent ref:GH#20338 verified:2026-04-22 completed:2026-07-01
 
 - [x] t2708 pulse-dirty-pr-sweep: narrow origin-interactive-no-close rule to true orphans #auto-dispatch ref:GH#20355 pr:#20356 completed:2026-04-21
 
 - [x] t2709 shared-gh-wrappers.sh: make REST-fallback source path resolution cross-shell (bash + zsh) #auto-dispatch ref:GH#20357 pr:#20396 completed:2026-04-21
 
-- [ ] t2710 t2705 child: analyse _dps_consider_rebase gating that blocks otherwise-rebaseable DIRTY PRs #parent ref:GH#20361
+- [x] t2710 t2705 child: analyse _dps_consider_rebase gating that blocks otherwise-rebaseable DIRTY PRs #parent ref:GH#20361 verified:2026-04-22 completed:2026-07-01
 
-- [ ] t2711 t2705 child: analyse pulse-merge auto-merge + dirty-pr-sweep timing interactions #parent ref:GH#20368
+- [x] t2711 t2705 child: analyse pulse-merge auto-merge + dirty-pr-sweep timing interactions #parent ref:GH#20368 verified:2026-04-22 completed:2026-07-01
 
 - [x] t2712 t2705 child: rename 'escalate' action to 'notify' (or add docstring clarification) #auto-dispatch ref:GH#20370 pr:#20389 completed:2026-04-21
 
@@ -3198,13 +3198,13 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2717 fix: replace misleading 'high/critical' aggregate label in quality-sweep dashboard with per-severity breakdown #framework #quality-debt ref:GH#20384 pr:#20387 completed:2026-04-21
 
-- [ ] t2718 Audit local -n nameref reachability for 6 files (zsh-source compatibility) #auto-dispatch #bug ref:GH#20303 ref:GH#20392
+- [x] t2718 Audit local -n nameref reachability for 6 files (zsh-source compatibility) #auto-dispatch #bug ref:GH#20303 ref:GH#20392 pr:#2720 completed:2026-07-01
 
-- [ ] t2719 Fix setup/_tools.sh local -n nameref usages for zsh-source compatibility #auto-dispatch #bug ref:GH#20303 ref:GH#20393
+- [x] t2719 Fix setup/_tools.sh local -n nameref usages for zsh-source compatibility #auto-dispatch #bug ref:GH#20303 ref:GH#20393 pr:#20403 completed:2026-07-01
 
 - [x] t2720 commit-and-pr: prefer tNNN over GH#N in auto-derived PR title so issue-sync auto-completion fires #auto-dispatch #bug #framework ref:GH#20395 pr:#20400 completed:2026-04-22
 
-- [ ] t2721 remove auto-dispatch label and make dispatch the default behaviour #parent ref:GH#20402
+- [x] t2721 remove auto-dispatch label and make dispatch the default behaviour #parent ref:GH#20402 pr:#2728 completed:2026-07-01
 
 - [x] t2722 Phase 1 inventory of auto-dispatch references (child of t2721) #interactive #docs ref:GH#20410 pr:#20415 completed:2026-04-22
 
@@ -3232,7 +3232,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2736 trim OpenCode first-response greeting to concise one-line #bug #framework #interactive ref:GH#20469 pr:#20470 completed:2026-04-22
 
-- [ ] t2737 multi-runtime version freshness for framework status greeting #parent ref:GH#20471
 
 - [x] t2738 extend _gh_auto_link_sub_issue to honour 'Parent:' line at create-time ref:GH#20473 pr:#20474 completed:2026-04-22
 
@@ -3252,9 +3251,9 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2762 systemic sweep — grep -c counter-stacking bug + recurrence guard #parent ref:GH#20581 pr:#20719 completed:2026-04-24
 
-- [ ] t2756 investigate systemic no_work worker stall cluster (201 issues, 4 repos) #parent ref:GH#20560
+- [x] t2756 investigate systemic no_work worker stall cluster (201 issues, 4 repos) #parent ref:GH#20560 verified:2026-04-25 completed:2026-07-01
 
-- [ ] t2755 robust parent-task phase-lifecycle automation (B/C/D of t2751 systemic fix) #parent ref:GH#20559
+- [x] t2755 robust parent-task phase-lifecycle automation (B/C/D of t2751 systemic fix) #parent ref:GH#20559 verified:2026-04-25 completed:2026-07-01
 
 - [x] t2767 commit-and-pr: partial-success recovery — PR created but post-create steps skipped on transient GraphQL error ref:GH#20634 pr:#20643 completed:2026-04-23
 
@@ -3332,7 +3331,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2808 migrate tools/design/library examples to DESIGN.md spec v0.1.0 format ref:GH#20750 pr:#20783 completed:2026-04-24
 
-- [ ] t2809 Update t1305 plan file — #14740 now closed-stale, PR #14741 is sole live upstream ref #chore #cleanup #plan ref:GH#20753
+- [x] t2809 Update t1305 plan file — #14740 now closed-stale, PR #14741 is sole live upstream ref #chore #cleanup #plan ref:GH#20753 pr:#20754 completed:2026-07-01
 
 - [x] t2810 upstream-watch: file GitHub issues on detected updates ref:GH#20755 pr:#20784 completed:2026-04-24
 
@@ -3362,7 +3361,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2825 idempotent task-ID prefix in commit-and-pr (PR title double-prefix fix) #bug ref:GH#20836 pr:#20837 completed:2026-04-25
 
-- [ ] t2824 diagnose pre-push hook 60s timeout that forces --skip-hooks bypass #auto-dispatch #bug ref:GH#20835
+- [x] t2824 diagnose pre-push hook 60s timeout that forces --skip-hooks bypass #auto-dispatch #bug ref:GH#20835 verified:2026-04-25 completed:2026-07-01
 
 - [x] t2826 test-label-invariants: retarget WORKFLOW_FILE to issue-sync-reusable.yml after t2770 migration #auto-dispatch #bug #framework ref:GH#20840 pr:#20841 completed:2026-04-25
 
@@ -3464,13 +3463,12 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2877 parse parent-task body cross-phase dependency declarations into blocked-by markers #enhancement #framework #tooling ref:GH#20972 pr:#21141 completed:2026-04-26
 
-- [ ] t2878 refactor: consolidate `prompts/build.txt` into `.agents/AGENTS.md` as single source of truth for framework rules #framework #parent ref:GH#20975
 
 - [x] t2879 docs(README): add per-repo platform setup section pointing to /setup-git #auto-dispatch #documentation #framework ref:GH#20980 pr:#21244 completed:2026-04-27
 
 - [x] t2880 feat(setup-debt): detect cross-account secrets:inherit pattern in issue-sync.yml #auto-dispatch #enhancement #framework ref:GH#20981 pr:#21664 completed:2026-04-29
 
-- [ ] t2881 Harden against external scanner-spam reports filed as 'responsible disclosure' #framework #parent #security ref:GH#20983
+- [x] t2881 Harden against external scanner-spam reports filed as 'responsible disclosure' #framework #parent #security ref:GH#20983 verified:2026-04-26 completed:2026-07-01
 
 - [x] t2882 Add unsolicited_disclosure_marketing pattern category to prompt-injection-patterns.yaml #auto-dispatch #framework #security ref:GH#20984 pr:#21014 completed:2026-04-26
 
@@ -3486,7 +3484,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2888 restore setup_opencode_cli install logic; add to non-interactive path ref:GH#21016 pr:#21018 completed:2026-04-26
 
-- [ ] t2889 apply opencode binary validation to active setup-modules/tool-install.sh:1517 (t2888 followup — wrong file) #critical #reliability ref:GH#21025
+- [x] t2889 apply opencode binary validation to active setup-modules/tool-install.sh:1517 (t2888 followup — wrong file) #critical #reliability ref:GH#21025 pr:#21019 completed:2026-07-01
 
 - [x] t2891 apply opencode binary validation to active setup-modules/tool-install.sh:1517 (t2888 followup — wrong file) #critical #reliability ref:GH#21025 pr:#21028 completed:2026-04-26
 
@@ -3500,15 +3498,15 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2893 harness gh signature-gate JS hook errors with misleading message when --body-file is created in same bash call #bug #enhancement #framework ref:GH#21030 pr:#21032 completed:2026-04-26
 
-- [ ] t2892 credential-scrub regex lacks word-boundary anchor — corrupts identifiers like ta[redacted-credential] / task-decompose / task-runner when worker output writes to disk; actively damaging code in example-repo/develop #bug #framework #priority:high #security ref:GH#21026
+- [x] t2892 credential-scrub regex lacks word-boundary anchor — corrupts identifiers like ta[redacted-credential] / task-decompose / task-runner when worker output writes to disk; actively damaging code in example-repo/develop #bug #framework #priority:high #security ref:GH#21026 pr:#21031 completed:2026-07-01
 
 - [x] t2897 pulse: per-runner zero-attempt failure circuit breaker triggers update check — adds a new `pulse-runner-health-helper.sh` and three `pulse-wrapper.sh` integration points that track consecutive zero-attempt worker dispatches (`launch_recovery:no_worker_process`, no branch created, near-zero token usage, watchdog-killed before first commit). After 10 consecutive zero-attempts in a 6h window the runner pauses dispatch, runs `aidevops update` synchronously, auto-resumes if the update changed VERSION (t2579 hook handles restart), or stays paused with an advisory if the runner is on latest (real local problem). Closes the §4.4 cross-runner-coordination gap where a stale/broken runner keeps burning workers without anyone noticing. Brief: `todo/tasks/t2897-brief.md`. #bug #pulse #framework #multi-runner #interactive ~5h tier:thinking no-auto-dispatch logged:2026-04-26 pr:#21039 completed:2026-04-26 ref:GH#21047 -> [todo/tasks/t2897-brief.md]
 
 - [x] t2898 aidevops update + setup.sh: verify auto-update daemon is enabled and warn if not — adds `auto-update-helper.sh health-check` (returns 0/1/2 per platform-specific launchd / systemd / cron detection plus state-file freshness), `--idempotent` flag on the existing `enable` subcommand, and two integration points: `setup.sh` end-of-run idempotently re-installs the daemon so every release self-heals broken installs, and `aidevops update` (when interactive) prints a yellow warning + writes a session-greeting advisory if the daemon is unhealthy. Closes the asymmetry where the user with the broken daemon is the user not seeing greetings. Brief: `todo/tasks/t2898-brief.md`. #enhancement #framework #reliability #auto-dispatch ~2h tier:standard logged:2026-04-26 pr:#21039 completed:2026-04-26 ref:GH#21048 -> [todo/tasks/t2898-brief.md]
 
-- [ ] t2900 Eliminate SQLite database lock errors during concurrent worker startup #bug ref:GH#21041
+- [x] t2900 Eliminate SQLite database lock errors during concurrent worker startup #bug ref:GH#21041 verified:2026-04-26 completed:2026-07-01
 
-- [ ] t2901 Reduce pulse cycle duration below launchd interval to stop cascading skips and force-kills #bug #parent ref:GH#21042
+- [x] t2901 Reduce pulse cycle duration below launchd interval to stop cascading skips and force-kills #bug #parent ref:GH#21042 verified:2026-04-27 completed:2026-07-01
 
 - [x] t2902 Stop recurring GraphQL budget exhaustion despite REST fallback (t2574, t2689) #bug ref:GH#21043 pr:#21053 completed:2026-04-26
 
@@ -3522,15 +3520,15 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2907 Audit and instrument all worktree-removal code paths after silent destruction of an actively-claimed worktree #bug #parent ref:GH#21055 pr:#21278 completed:2026-04-27
 
-- [ ] t2973 t2907 Phase 1: Audit all worktree-removal call sites and classify each path #auto-dispatch #bug #framework ref:GH#21272
+- [x] t2973 t2907 Phase 1: Audit all worktree-removal call sites and classify each path #auto-dispatch #bug #framework ref:GH#21272 verified:2026-04-27 completed:2026-07-01
 
 - [x] t2974 t2907 Phase 2: Fix missing registry checks and path-shape assertions at worktree-removal call sites #auto-dispatch #bug #framework ref:GH#21274 pr:#21343 completed:2026-04-27
 
 - [x] t2976 t2907 Phase 3: Add canonical audit logging at every worktree-removal event and regression test #auto-dispatch #bug #framework ref:GH#21275 pr:#21521 completed:2026-04-28
 
-- [ ] t2908 setup.sh non-interactive resilience: caching, instrumentation, lock recovery #bug #framework #parent #setup ref:GH#21056
+- [x] t2908 setup.sh non-interactive resilience: caching, instrumentation, lock recovery #bug #framework #parent #setup ref:GH#21056 verified:2026-04-27 completed:2026-07-01
 
-- [ ] t2909 Auto-release path leaves status:in-review and self-assignment on GitHub, poisoning footprint cache and blocking dispatch #bug #framework #pulse #interactive ref:GH#21057
+- [x] t2909 Auto-release path leaves status:in-review and self-assignment on GitHub, poisoning footprint cache and blocking dispatch #bug #framework #pulse #interactive ref:GH#21057 pr:#21058 completed:2026-07-01
 
 - [x] t2910 Cache generate-runtime-config.sh on input hash (saves 135s/cycle) #auto-dispatch #bug #framework #performance #setup ref:GH#21059 pr:#21064 completed:2026-04-26
 
@@ -3582,7 +3580,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2938 convert file-size pre-commit gate from absolute count to ratchet-based #auto-dispatch #refactor ref:GH#21147 pr:#21346 completed:2026-04-27
 
-- [ ] t2936 split files exceeding 1500 lines into focused sub-modules #parent #refactor ref:GH#21146
+- [x] t2936 split files exceeding 1500 lines into focused sub-modules #parent #refactor ref:GH#21146 pr:#21341 completed:2026-07-01
   - Decomposed into 53 child issues (#21283–#21290, #21294–#21339) via #21156
   - Children: one per file, ordered by descending line count, all tagged auto-dispatch+tier:thinking
   - Pulse-path files (pulse-merge, pulse-wrapper, pulse-issue-reconcile, headless-runtime, etc.) auto-elevated to opus-4-7
@@ -3701,13 +3699,13 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3015 t3015: Architectural rename — split dispatch_floor + dispatch_max (Option B sweep, follows t3014) #refactor ref:GH#21555 pr:#21871 completed:2026-04-30
 
-- [ ] t3016 test-pulse-wrapper-canary.sh fails 2/4 after #21553 split (Code Quality Analysis red on main) #auto-dispatch #bug ref:GH#21557
+- [x] t3016 test-pulse-wrapper-canary.sh fails 2/4 after #21553 split (Code Quality Analysis red on main) #auto-dispatch #bug ref:GH#21557 verified:2026-04-28 completed:2026-07-01
 
 - [x] t3017 Add 'aidevops circuit-breaker' CLI subcommand for one-line copy/paste reset #auto-dispatch #enhancement ref:GH#21567 pr:#21569 completed:2026-04-28
 
 - [x] t3018 Self-heal stale rate-limit stamp when no live pulse lock holder (post-#21557 defense in depth) #auto-dispatch #bug #enhancement ref:GH#21570 pr:#21572 completed:2026-04-28
 
-- [ ] t3019 Auto-install commit-msg task-id guard during setup.sh #auto-dispatch #bug ref:GH#21575
+- [x] t3019 Auto-install commit-msg task-id guard during setup.sh #auto-dispatch #bug ref:GH#21575 verified:2026-04-29 completed:2026-07-01
 
 - [x] t3020 Add brief-filename guard to block unclaimed t-IDs in todo/tasks/tNNN-brief.md #auto-dispatch #bug ref:GH#21576 pr:#21613 completed:2026-04-29
 
@@ -3719,13 +3717,13 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3025 fix jq null-input flood in dispatch-dedup-helper.sh tier extraction #auto-dispatch #bug ref:GH#21582 pr:#21587 completed:2026-04-28
 
-- [ ] t3024 reconcile pulse lock-file paths between status helper and pulse-wrapper.sh #auto-dispatch #bug ref:GH#21581
+- [x] t3024 reconcile pulse lock-file paths between status helper and pulse-wrapper.sh #auto-dispatch #bug ref:GH#21581 verified:2026-04-29 completed:2026-07-01
 
 - [x] t3027 P0 — pulse burns GraphQL budget on idle cycles (1456/2065 today, 70%) — add orchestration-level idle backoff + budget-aware throttle #auto-dispatch #bug ref:GH#21584 pr:#21596 completed:2026-04-29
 
 - [x] t3028 fix: setup.sh fails when caller exports SCRIPT_DIR (schedulers.sh module path bug) #auto-dispatch #bug ref:GH#21586 pr:#21588 completed:2026-04-28
 
-- [ ] t3035 orphan worker reaper for workers whose parent pulse died #auto-dispatch #enhancement #pulse ref:GH#21604
+- [x] t3035 orphan worker reaper for workers whose parent pulse died #auto-dispatch #enhancement #pulse ref:GH#21604 verified:2026-04-29 completed:2026-07-01
 
 - [x] t3034 360s ceiling timeout investigation — per-stage ceremony instrumentation #auto-dispatch #enhancement #pulse ref:GH#21603 pr:#21620 completed:2026-04-29
 
@@ -3737,9 +3735,9 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3030 pulse singleton invariant regression — 4-37 instances despite GH#21433 closed #auto-dispatch #bug #model:opus-4-7 #pulse ref:GH#21599 pr:#21663 completed:2026-04-29
 
-- [ ] t3029 parent: pulse observability + pipeline hygiene initiative #enhancement #parent #pulse ref:GH#21598
+- [x] t3029 parent: pulse observability + pipeline hygiene initiative #enhancement #parent #pulse ref:GH#21598 verified:2026-04-29 completed:2026-07-01
 
-- [ ] t3036 fix: pulse-merge-routine never installs and crashes when invoked — green PRs sit unmerged for 30+ hours #auto-dispatch #bug #parent ref:GH#21616
+- [x] t3036 fix: pulse-merge-routine never installs and crashes when invoked — green PRs sit unmerged for 30+ hours #auto-dispatch #bug #parent ref:GH#21616 pr:#21643 completed:2026-07-01
 
 - [x] t3040 dispatch_with_dedup: drop t2955 already-committed cache, trust worker t2046 discovery ref:GH#21629 pr:#21638 completed:2026-04-29
 
@@ -3757,7 +3755,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3044 bug(log-issue): client-side fingerprint dedup bypassed by direct gh issue create — server-side guard needed #auto-dispatch #bug ref:GH#21744 pr:#21775 completed:2026-04-29
 
-- [ ] t3045 Migrate auto-update-helper-check.sh stat -f calls to _file_mtime_epoch (Linux crash regression missed by #21689) #auto-dispatch #bug ref:GH#21745
+- [x] t3045 Migrate auto-update-helper-check.sh stat -f calls to _file_mtime_epoch (Linux crash regression missed by #21689) #auto-dispatch #bug ref:GH#21745 pr:#3046 completed:2026-07-01
 
 - [x] t3046 CI gate: block stat -f %m (BSD-only) outside _file_mtime_epoch helper and platform-guarded branches #auto-dispatch #enhancement ref:GH#21746 pr:#21777 completed:2026-04-29
 
@@ -3773,13 +3771,13 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3052 extend t2449 worker-briefed auto-merge gate to honour cryptographic approval as OWNER/MEMBER bypass #auto-dispatch #bug ref:GH#21755 pr:#21767 completed:2026-04-29
 
-- [ ] t3053 bug(pulse): pulse.log polluted with OpenCode tool_use JSON blobs from parallel interactive sessions #auto-dispatch #bug #framework #pulse ref:GH#21761
+- [x] t3053 bug(pulse): pulse.log polluted with OpenCode tool_use JSON blobs from parallel interactive sessions #auto-dispatch #bug #framework #pulse ref:GH#21761 verified:2026-04-29 completed:2026-07-01
 
 - [ ] t3055 bug(pulse): worker dispatched but no [lifecycle] worker_exited line emitted on detach-path termination #auto-dispatch #bug #framework #pulse ref:GH#21762
 
 - [x] t3054 bug(pulse): preflight_early_dispatch stage timeout (600s SIGTERM rc=143) on managed private webapp issue #auto-dispatch #bug #framework #pulse ref:GH#21763 pr:#21769 completed:2026-04-29
 
-- [ ] t3056 investigate 94% headless worker kill rate (vs 100% interactive success rate) #auto-dispatch #bug #framework #pulse ref:GH#21781
+- [x] t3056 investigate 94% headless worker kill rate (vs 100% interactive success rate) #auto-dispatch #bug #framework #pulse ref:GH#21781 verified:2026-04-29 completed:2026-07-01
 
 - [x] t3057 add interval-sampled CPU to _watchdog_tree_cpu (lifetime-avg false-defer fix) #auto-dispatch #bug #framework ref:GH#21785 pr:#21792 completed:2026-04-29
 
@@ -3795,7 +3793,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3065 worktree-helper.sh remove emits BSD sed regex error after cleanup #auto-dispatch #bug #framework ref:GH#21801 pr:#21802 completed:2026-04-29
 
-- [ ] t3066 extend approve_collaborator_pr to honour crypto-approval as CONTRIBUTOR-author bypass (sibling of t3052) #auto-dispatch #bug ref:GH#21803
+- [x] t3066 extend approve_collaborator_pr to honour crypto-approval as CONTRIBUTOR-author bypass (sibling of t3052) #auto-dispatch #bug ref:GH#21803 pr:#21808 completed:2026-07-01
 
 - [x] t3068 kick pulse-merge cycle when sudo aidevops approve posts a verified signature (eliminate up-to-120s latency) #auto-dispatch #enhancement ref:GH#21806 pr:#21854 completed:2026-04-30
 
@@ -3825,7 +3823,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3080 Cross-link meta-ads-tooling-cli.md from strategy docs #auto-dispatch #documentation ref:GH#21847 pr:#21859 completed:2026-04-30
 
-- [ ] t3079 Add multi-account gopass secret template for Meta Ads CLI #auto-dispatch #documentation #enhancement ref:GH#21846
+- [x] t3079 Add multi-account gopass secret template for Meta Ads CLI #auto-dispatch #documentation #enhancement ref:GH#21846 verified:2026-04-30 completed:2026-07-01
 
 - [x] t3078 add Meta Ads CLI tooling doc to meta-ads agent #documentation #enhancement ref:GH#21844 pr:#21845 completed:2026-04-30
 
@@ -3837,7 +3835,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3088 fix dual origin label on worker-dispatched PRs (env-var divergence + redundant --label) #bug ref:GH#21862 pr:#21914 completed:2026-04-30
 
-- [ ] t3087 ci: make ShellCheck (macos-latest) a required branch protection check on main #ci #enhancement ref:GH#21861
+- [x] t3087 ci: make ShellCheck (macos-latest) a required branch protection check on main #ci #enhancement ref:GH#21861 verified:2026-04-30 completed:2026-07-01
 
 - [x] t3086 doc(bash-compat): bash 3.2 apostrophe-in-unquoted-heredoc gotcha #auto-dispatch #documentation ref:GH#21860 pr:#21898 completed:2026-04-30
 
@@ -3868,7 +3866,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3204 issue-sync close path drops signature footer + summary on auto-close #auto-dispatch #bug ref:GH#21910 pr:#21918 completed:2026-04-30
 
-- [ ] t3205 scan-stale: auto-release defaults OFF in AI agent sessions (TTY-only detection misses OpenCode/Claude Code interactive) #auto-dispatch #bug #framework ref:GH#21913
+- [x] t3205 scan-stale: auto-release defaults OFF in AI agent sessions (TTY-only detection misses OpenCode/Claude Code interactive) #auto-dispatch #bug #framework ref:GH#21913 pr:#3879 completed:2026-07-01
 
 - [x] t3207 test-scan-stale: Test 2 fails on origin/main due to t2421 worker-pattern PID liveness check #auto-dispatch #bug ref:GH#21922 pr:#21932 completed:2026-04-30
 
@@ -3882,11 +3880,11 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3211 pulse: detect & escalate GitHub Actions runner queue saturation #auto-dispatch #bug ref:GH#21942 pr:#21959 completed:2026-04-30
 
-- [ ] t3212 claude-proxy adopt-on-EADDRINUSE so multi-instance startup stops printing scary error #auto-dispatch #bug ref:GH#21944
+- [x] t3212 claude-proxy adopt-on-EADDRINUSE so multi-instance startup stops printing scary error #auto-dispatch #bug ref:GH#21944 pr:#4852 completed:2026-07-01
 
 - [x] t3213 maintainer-gate: switch check-pr concurrency to cancel-in-progress: true #auto-dispatch #bug ref:GH#21947 pr:#21950 completed:2026-04-30
 
-- [ ] t3214 proxy-lifecycle: shared lazy-start helper for cursor + google + claude proxies #auto-dispatch #refactor ref:GH#21948
+- [x] t3214 proxy-lifecycle: shared lazy-start helper for cursor + google + claude proxies #auto-dispatch #refactor ref:GH#21948 pr:#4854 completed:2026-07-01
 
 - [x] t3215 diagnostic reliability — worker-activity-helper.sh summary + canonical-sources rule #bug ref:GH#21949 pr:#21956 completed:2026-04-30
 
@@ -3903,11 +3901,11 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3222 harness rule: productivity questions answer current state, not historical aggregates #auto-dispatch #documentation #framework ref:GH#21965 pr:#21969 completed:2026-04-30
 
-- [ ] t3223 RCA: pulse fix-the-fixer-detector silently fails 100% — six layers of fail-safe-hides-failure #auto-dispatch #bug #framework #parent ref:GH#21966
+- [x] t3223 RCA: pulse fix-the-fixer-detector silently fails 100% — six layers of fail-safe-hides-failure #auto-dispatch #bug #framework #parent ref:GH#21966 pr:#21970 completed:2026-07-01
 
-- [ ] t3224 repo-aware pre-push verify hook auto-runs project format/lint/typecheck before push #auto-dispatch #bug #framework ref:GH#21967
+- [x] t3224 repo-aware pre-push verify hook auto-runs project format/lint/typecheck before push #auto-dispatch #bug #framework ref:GH#21967 pr:#4860 completed:2026-07-01
 
-- [ ] t3225 ci-feedback workers prioritize format/lint auto-fix before generic re-implementation #auto-dispatch #bug #framework ref:GH#21968
+- [x] t3225 ci-feedback workers prioritize format/lint auto-fix before generic re-implementation #auto-dispatch #bug #framework ref:GH#21968 verified:2026-04-30 completed:2026-07-01
 
 - [x] t3226 pulse-wrapper credentials sourcing: fail-noisy when ANTHROPIC_API_KEY does not resolve post-source #bug #observability ref:GH#21972 pr:#22046 completed:2026-05-01
 
@@ -3927,9 +3925,9 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3233 make model override labels availability-aware #auto-dispatch #bug #models ref:GH#21988 pr:#22005 completed:2026-05-01
 
-- [ ] t3235 exclude unsupported OpenAI pro models from ChatGPT OAuth routing #auto-dispatch #bug #models ref:GH#21990
+- [x] t3235 exclude unsupported OpenAI pro models from ChatGPT OAuth routing #auto-dispatch #bug #models ref:GH#21990 verified:2026-05-01 completed:2026-07-01
 
-- [ ] t3236 add issue-body formatting lint for AI-composed task descriptions #auto-dispatch #enhancement #quality ref:GH#21991
+- [x] t3236 add issue-body formatting lint for AI-composed task descriptions #auto-dispatch #enhancement #quality ref:GH#21991 verified:2026-05-01 completed:2026-07-01
 
 - [x] t3237 Standardize session title issue and PR prefix guidance ref:GH#21994 pr:#22000 completed:2026-05-01
 
@@ -3945,7 +3943,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3243 Add count-based OpenCode DB archive retention target #auto-dispatch #enhancement ref:GH#22001 pr:#22048 completed:2026-05-01
 
-- [ ] t3244 Add disruptive OpenCode DB maintenance window mode #auto-dispatch #enhancement ref:GH#22004
+- [x] t3244 Add disruptive OpenCode DB maintenance window mode #auto-dispatch #enhancement ref:GH#22004 pr:#4857 completed:2026-07-01
 
 - [x] t3245 Enforce brief workflow in issue creation harness ref:GH#22008 pr:#22010 completed:2026-05-01
 
@@ -3973,16 +3971,15 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3362 fix OAuth pool rotation for canary preflight #bug ref:GH#22065 pr:#22067 completed:2026-05-01
 
-- [ ] t3360 Bound OpenCode CLI setup validation timeout #auto-dispatch #bug ref:GH#22064
+- [x] t3360 Bound OpenCode CLI setup validation timeout #auto-dispatch #bug ref:GH#22064 verified:2026-05-01 completed:2026-07-01
 
 - [x] t3361 Make setup agent deploy rsync staging resilient to disappearing files #auto-dispatch #bug ref:GH#22063 pr:#22080 completed:2026-05-01
 
 
-- [ ] t3368 Harden setup OpenCode version check timeout #auto-dispatch #bug ref:GH#22079
+- [x] t3368 Harden setup OpenCode version check timeout #auto-dispatch #bug ref:GH#22079 pr:#4804 completed:2026-07-01
 
-- [ ] t3367 fix setup hang in generate_agent_skills stage #auto-dispatch #bug #framework ref:GH#22077
 
-- [ ] t3366 Fix REST fallback wrapper test hang after PR fallback cases #auto-dispatch #bug ref:GH#22076
+- [x] t3366 Fix REST fallback wrapper test hang after PR fallback cases #auto-dispatch #bug ref:GH#22076 pr:#4800 completed:2026-07-01
 
 - [x] t3371 Bound setup deploy_agents_to_runtimes stage #auto-dispatch #bug #framework ref:GH#22087 pr:#22109 completed:2026-05-01
 
@@ -3990,7 +3987,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3376 Track solved-by actor separately from origin labels #auto-dispatch #bug #diagnostics #framework ref:GH#22117 pr:#22130 completed:2026-05-01
 
-- [ ] t3377 Fix release auto-mark task ID extraction for 4-digit IDs #auto-dispatch #bug ref:GH#22119
+- [x] t3377 Fix release auto-mark task ID extraction for 4-digit IDs #auto-dispatch #bug ref:GH#22119 pr:#4564 completed:2026-07-01
 
 - [x] t3378 fix pulse merge dry-run and sidecar liveness gaps #bug ref:GH#22121 pr:#22122 completed:2026-05-01
 
@@ -4007,21 +4004,19 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3391 Treat non-critical runtime deployment timeout as setup warning #auto-dispatch #bug #framework ref:GH#22164 pr:#22172 completed:2026-05-01
 
-- [ ] t3396 Prevent setup.sh from removing active implementation worktrees #auto-dispatch #bug #framework ref:GH#22176
 
 - [x] t3395 Fix setup deploy no-change missing scripts postflight failure #auto-dispatch #bug #framework ref:GH#22175 pr:#22182 completed:2026-05-01
 
-- [ ] t3394 fix setup non-interactive slow post-skill stages and timeout cleanup #auto-dispatch #bug #framework ref:GH#22174
 
-- [ ] t3398 Avoid Linuxbrew PATH entries on macOS autofs /home #auto-dispatch #bug ref:GH#22180
+- [x] t3398 Avoid Linuxbrew PATH entries on macOS autofs /home #auto-dispatch #bug ref:GH#22180 verified:2026-05-01 completed:2026-07-01
 
-- [ ] t3399 prevent setup verification from deleting active worktree #auto-dispatch #bug #framework ref:GH#22183
+- [x] t3399 prevent setup verification from deleting active worktree #auto-dispatch #bug #framework ref:GH#22183 pr:#4561 completed:2026-07-01
 
 - [x] t3400 Add helper scripts for AGENTS token efficiency ref:GH#22186 pr:#22193 completed:2026-05-01
 
 - [x] t3402 Sanitize inherited PATH when generating launchd plists #auto-dispatch #bug ref:GH#22192 pr:#22201 completed:2026-05-01
 
-- [ ] t3401 Guard Snap runtime candidate on non-Linux platforms #auto-dispatch #bug ref:GH#22191
+- [x] t3401 Guard Snap runtime candidate on non-Linux platforms #auto-dispatch #bug ref:GH#22191 pr:#4783 completed:2026-07-01
 
 - [x] t3405 Suppress stale agent path find errors during setup config generation #auto-dispatch #bug ref:GH#22197 pr:#22204 completed:2026-05-01
 
@@ -4039,7 +4034,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3411 Fix routine setup push retry when HEAD ref is detached or stale #auto-dispatch #bug #framework ref:GH#22235 pr:#22239 completed:2026-05-01
 
-- [ ] t3412 Fix runaway dispatch timing and worktree precreation CPU spikes #auto-dispatch #bug ref:GH#22238
+- [x] t3412 Fix runaway dispatch timing and worktree precreation CPU spikes #auto-dispatch #bug ref:GH#22238 pr:#4780 completed:2026-07-01
 
 - [x] t3414 Fix pulse dispatch success accounting and GraphQL budget drain #auto-dispatch #bug ref:GH#22243 pr:#22244 completed:2026-05-01
 
@@ -4053,9 +4048,9 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3427 Integrate plugin namespaces into subagent discovery #auto-dispatch #bug ref:GH#22270 pr:#22275 completed:2026-05-02
 
-- [ ] t3426 Fix attribution-check-helper printf option crash #auto-dispatch #bug #framework ref:GH#22268
+- [x] t3426 Fix attribution-check-helper printf option crash #auto-dispatch #bug #framework ref:GH#22268 verified:2026-05-02 completed:2026-07-01
 
-- [ ] t3425 Fix feedback redispatch preserving interactive claim blockers #auto-dispatch #bug #framework ref:GH#22267
+- [x] t3425 Fix feedback redispatch preserving interactive claim blockers #auto-dispatch #bug #framework ref:GH#22267 verified:2026-05-02 completed:2026-07-01
 
 - [x] t3421 Improve worker resource and failure telemetry for throughput tuning #auto-dispatch #enhancement #framework #observability ref:GH#22256 pr:#22278 completed:2026-05-02
 
@@ -4063,13 +4058,13 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3429 Support core-style layout in private agent source repos #auto-dispatch #enhancement ref:GH#22274 pr:#22382 completed:2026-05-02
 
-- [ ] t3433 define data-plane registry and routing map #auto-dispatch #enhancement #framework ref:GH#22284
+- [x] t3433 define data-plane registry and routing map #auto-dispatch #enhancement #framework ref:GH#22284 pr:#4802 completed:2026-07-01
 
 - [x] t3432 Seed and update private agent source repo structure #auto-dispatch #enhancement ref:GH#22282 pr:#22343 completed:2026-05-02
 
-- [ ] t3431 add seed user-data plane directories to aidevops repo #auto-dispatch #enhancement #framework ref:GH#22281
+- [x] t3431 add seed user-data plane directories to aidevops repo #auto-dispatch #enhancement #framework ref:GH#22281 pr:#4775 completed:2026-07-01
 
-- [ ] t3430 repair stale TODO status for completed data-plane tasks #auto-dispatch #bug #framework ref:GH#22280
+- [x] t3430 repair stale TODO status for completed data-plane tasks #auto-dispatch #bug #framework ref:GH#22280 verified:2026-05-02 completed:2026-07-01
 
 - [x] t3434 file future-plane parent tasks for projects performance feedback #auto-dispatch #enhancement #framework ref:GH#22285 pr:#22385 completed:2026-05-02
 
@@ -4077,7 +4072,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3436 Investigate lingering dispatch timing record processes #auto-dispatch #bug ref:GH#22287 pr:#22315 completed:2026-05-02
 
-- [ ] t3439 Audit shell hot paths for compute-efficient tools #auto-dispatch #enhancement ref:GH#22289
+- [x] t3439 Audit shell hot paths for compute-efficient tools #auto-dispatch #enhancement ref:GH#22289 pr:#4483 completed:2026-07-01
 
 
 - [x] t3440 Review headless prompt delivery for duplication and cleanup #auto-dispatch #enhancement ref:GH#22290 pr:#22341 completed:2026-05-02
@@ -4088,31 +4083,31 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t3443 Investigate repeated dispatch claim comments without worker spawn #auto-dispatch #bug ref:GH#22293
 
-- [ ] t3444 Clean up stale dispatch timing recorder processes #auto-dispatch #bug ref:GH#22296
+- [x] t3444 Clean up stale dispatch timing recorder processes #auto-dispatch #bug ref:GH#22296 verified:2026-05-02 completed:2026-07-01
 
 - [x] t3445 Ignore generated Beads export state #auto-dispatch #bug ref:GH#22297 pr:#22298 completed:2026-05-02
 
-- [ ] t3446 Document implementation seeded draft PR workflow #auto-dispatch #documentation ref:GH#22299
+- [x] t3446 Document implementation seeded draft PR workflow #auto-dispatch #documentation ref:GH#22299 verified:2026-05-02 completed:2026-07-01
 
-- [ ] t3447 enforce minimum worker concurrency floor as active-worker floor #auto-dispatch #bug ref:GH#22300
+- [x] t3447 enforce minimum worker concurrency floor as active-worker floor #auto-dispatch #bug ref:GH#22300 verified:2026-05-02 completed:2026-07-01
 
-- [ ] t3449 harden pulse worker canary without lowering safety #auto-dispatch #bug ref:GH#22302
+- [x] t3449 harden pulse worker canary without lowering safety #auto-dispatch #bug ref:GH#22302 pr:#4552 completed:2026-07-01
 
 - [x] t3448 reduce pulse GraphQL budget drain without weakening gates #auto-dispatch #bug ref:GH#22301 pr:#22353 completed:2026-05-02
 
-- [ ] t3450 prioritize near-merge open PRs before new dispatch #auto-dispatch #enhancement ref:GH#22303
+- [x] t3450 prioritize near-merge open PRs before new dispatch #auto-dispatch #enhancement ref:GH#22303 verified:2026-05-02 completed:2026-07-01
 
 - [ ] t3451 Reconcile dispatch claims when worker spawn does not occur #auto-dispatch #bug ref:GH#22304
 
-- [ ] t3452 Harden profile README stats against missing period data #auto-dispatch #bug ref:GH#22305
+- [x] t3452 Harden profile README stats against missing period data #auto-dispatch #bug ref:GH#22305 verified:2026-05-02 completed:2026-07-01
 
-- [ ] t3453 Diagnose profile README launchd job stuck in xpcproxy #auto-dispatch #bug ref:GH#22306
+- [x] t3453 Diagnose profile README launchd job stuck in xpcproxy #auto-dispatch #bug ref:GH#22306 verified:2026-05-02 completed:2026-07-01
 
-- [ ] t3454 Use app usage fallback when macOS backlit screen-time stream is sparse #auto-dispatch #bug ref:GH#22308
+- [x] t3454 Use app usage fallback when macOS backlit screen-time stream is sparse #auto-dispatch #bug ref:GH#22308 verified:2026-05-02 completed:2026-07-01
 
 - [x] t3455 Make shared-constants source cleanly from zsh #auto-dispatch #bug ref:GH#22311 pr:#22323 completed:2026-05-02
 
-- [ ] t3456 Fix dispatch timing stale lock CPU runaway #auto-dispatch #bug ref:GH#22314
+- [x] t3456 Fix dispatch timing stale lock CPU runaway #auto-dispatch #bug ref:GH#22314 pr:#4765 completed:2026-07-01
 
 - [x] t3457 Normalize escaped newlines in issue bodies #auto-dispatch #bug ref:GH#22316 pr:#22319 completed:2026-05-02
 
@@ -4122,15 +4117,15 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3460 Audit raw gh list/view call sites that bypass REST fallback wrappers #auto-dispatch #enhancement ref:GH#22321 pr:#22335 completed:2026-05-02
 
-- [ ] t3459 Route eligible GitHub list/view reads to REST before GraphQL exhaustion #auto-dispatch #enhancement ref:GH#22320
+- [x] t3459 Route eligible GitHub list/view reads to REST before GraphQL exhaustion #auto-dispatch #enhancement ref:GH#22320 pr:#4766 completed:2026-07-01
 
 - [x] t3467 Make memory audit opportunities actionable #auto-dispatch #enhancement ref:GH#22351 pr:#22383 completed:2026-05-02
 
-- [ ] t3466 Harden launchd jobs still stuck in xpcproxy after setup recovery #auto-dispatch #bug ref:GH#22350
+- [x] t3466 Harden launchd jobs still stuck in xpcproxy after setup recovery #auto-dispatch #bug ref:GH#22350 verified:2026-05-02 completed:2026-07-01
 
-- [ ] t3465 Close the worker failure feedback loop #auto-dispatch #bug ref:GH#22349
+- [x] t3465 Close the worker failure feedback loop #auto-dispatch #bug ref:GH#22349 pr:#4570 completed:2026-07-01
 
-- [ ] t3464 Fix gh-thread-clean-helper crash on PR comment shapes #auto-dispatch #bug ref:GH#22347
+- [x] t3464 Fix gh-thread-clean-helper crash on PR comment shapes #auto-dispatch #bug ref:GH#22347 pr:#4557 completed:2026-07-01
 
 - [x] t3463 Fix gh pr list REST fallback head filtering #auto-dispatch #bug ref:GH#22344 pr:#22389 completed:2026-05-02
 
@@ -4138,7 +4133,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3474 Align research command names and add deep-research workflow #auto-dispatch #enhancement ref:GH#22369 pr:#22423 completed:2026-05-02
 
-- [ ] t3473 Block secret/private-key reads before model context #auto-dispatch #framework #security ref:GH#22368
+- [x] t3473 Block secret/private-key reads before model context #auto-dispatch #framework #security ref:GH#22368 verified:2026-05-02 completed:2026-07-01
 
 - [x] t3472 Add repository layout policy and drift audit #auto-dispatch #enhancement #framework ref:GH#22367 pr:#22388 completed:2026-05-02
 
@@ -4146,29 +4141,28 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3470 Make manual worker origin-label ceremony REST-backed and fail-closed #auto-dispatch #bug ref:GH#22365 pr:#22391 completed:2026-05-02
 
-- [ ] t3469 Roll out productive headless OpenAI-first defaults and runner diagnostics #auto-dispatch #enhancement ref:GH#22363
+- [x] t3469 Roll out productive headless OpenAI-first defaults and runner diagnostics #auto-dispatch #enhancement ref:GH#22363 verified:2026-05-02 completed:2026-07-01
 
 - [x] t3468 Enforce private reference guard across all public surfaces #auto-dispatch #security ref:GH#22355 pr:#22410 completed:2026-05-02
 
 - [x] t3475 Fix worker activity future timestamp examples #auto-dispatch #bug #framework ref:GH#22370 pr:#22377 completed:2026-05-02
 
-- [ ] t3478 _feedback plane parent — capture retention mining and promotion paths #enhancement #framework #parent ref:GH#22373
 
 - [x] t3482 Add adaptive worker launch staggering #auto-dispatch #enhancement #framework ref:GH#22387 pr:#22412 completed:2026-05-02
 
 - [x] t3481 Preserve TODO refs after fallback issue creation #auto-dispatch #bug #framework ref:GH#22381 pr:#22409 completed:2026-05-02
 
-- [ ] t3480 Add auto-reason agent and slash command #auto-dispatch #enhancement ref:GH#22380
+- [x] t3480 Add auto-reason agent and slash command #auto-dispatch #enhancement ref:GH#22380 pr:#22470 completed:2026-07-01
 
-- [ ] t3479 Classify provider and runtime worker failures precisely #auto-dispatch #bug #framework ref:GH#22379
+- [x] t3479 Classify provider and runtime worker failures precisely #auto-dispatch #bug #framework ref:GH#22379 verified:2026-05-02 completed:2026-07-01
 
-- [ ] t3487 Fix approval lock REST fallback false errors #auto-dispatch #bug #framework #security ref:GH#22400
+- [x] t3487 Fix approval lock REST fallback false errors #auto-dispatch #bug #framework #security ref:GH#22400 pr:#4758 completed:2026-07-01
 
-- [ ] t3486 Block external issue dispatch while issue-triage gate is queued #auto-dispatch #bug #security ref:GH#22399
+- [x] t3486 Block external issue dispatch while issue-triage gate is queued #auto-dispatch #bug #security ref:GH#22399 pr:#4757 completed:2026-07-01
 
 - [x] t3484 Repair broken Tabby OpenCode launch profiles #auto-dispatch #bug #framework ref:GH#22397 pr:#22404 completed:2026-05-02
 
-- [ ] t3490 Make worktree cleanup safe without system Trash growth #auto-dispatch #enhancement ref:GH#22417
+- [x] t3490 Make worktree cleanup safe without system Trash growth #auto-dispatch #enhancement ref:GH#22417 pr:#4744 completed:2026-07-01
 
 - [x] t3489 automate safe remote branch cleanup #auto-dispatch #enhancement ref:GH#22415 pr:#22421 completed:2026-05-02
 
@@ -4178,142 +4172,132 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3492 Remove misleading Anthropic API key warning when OAuth pool is configured #auto-dispatch #bug ref:GH#22428 pr:#22431 completed:2026-05-02
 
-- [ ] t3495 Make code review auto-fix pushes safe under concurrent main updates #auto-dispatch #bug ref:GH#22432
+- [x] t3495 Make code review auto-fix pushes safe under concurrent main updates #auto-dispatch #bug ref:GH#22432 pr:#22443 completed:2026-07-01
 
-- [ ] t3494 Reduce GraphQL list-call pressure that starves pulse dispatch #auto-dispatch #bug ref:GH#22430
+- [x] t3494 Reduce GraphQL list-call pressure that starves pulse dispatch #auto-dispatch #bug ref:GH#22430 verified:2026-05-02 completed:2026-07-01
 
-- [ ] t3493 Prioritize security-related quality-debt issues in dispatch #auto-dispatch #dispatch #enhancement #quality-debt #security ref:GH#22429
+- [x] t3493 Prioritize security-related quality-debt issues in dispatch #auto-dispatch #dispatch #enhancement #quality-debt #security ref:GH#22429 verified:2026-05-02 completed:2026-07-01
 
-- [ ] t3496 Make issue-sync TODO updates conflict-safe under concurrent task creation #auto-dispatch #bug ref:GH#22433
+- [x] t3496 Make issue-sync TODO updates conflict-safe under concurrent task creation #auto-dispatch #bug ref:GH#22433 pr:#22446 completed:2026-07-01
 
-- [ ] t3497 Make release workflow idempotent when tag release already exists #auto-dispatch #bug ref:GH#22434
+- [x] t3497 Make release workflow idempotent when tag release already exists #auto-dispatch #bug ref:GH#22434 verified:2026-05-02 completed:2026-07-01
 
-- [ ] t3500 Ensure headless workers never enter chat without worktree env #auto-dispatch #bug ref:GH#22438
+- [x] t3500 Ensure headless workers never enter chat without worktree env #auto-dispatch #bug ref:GH#22438 verified:2026-05-02 completed:2026-07-01
 
-- [ ] t3499 Suppress intentional secretlint fixture false positive in postflight #auto-dispatch #bug ref:GH#22437
+- [x] t3499 Suppress intentional secretlint fixture false positive in postflight #auto-dispatch #bug ref:GH#22437 verified:2026-05-02 completed:2026-07-01
 
-- [ ] t3498 Reduce benign cancellation noise from high-churn GitHub workflows #auto-dispatch #enhancement ref:GH#22436
+- [x] t3498 Reduce benign cancellation noise from high-churn GitHub workflows #auto-dispatch #enhancement ref:GH#22436 pr:#22466 completed:2026-07-01
 
-- [ ] t3501 Fix setup worktree preservation test deleting caller worktree #auto-dispatch #bug #framework ref:GH#22441
+- [x] t3501 Fix setup worktree preservation test deleting caller worktree #auto-dispatch #bug #framework ref:GH#22441 pr:#3542 completed:2026-07-01
 
-- [ ] t3502 Sync canonical label colors during repo init #auto-dispatch #bug ref:GH#22442
+- [x] t3502 Sync canonical label colors during repo init #auto-dispatch #bug ref:GH#22442 pr:#22469 completed:2026-07-01
 
-- [ ] t3506 Fix commit-and-pr REST fallback PR-number stdout and merge summary targeting #auto-dispatch #bug ref:GH#22463
+- [x] t3506 Fix commit-and-pr REST fallback PR-number stdout and merge summary targeting #auto-dispatch #bug ref:GH#22463 pr:#22468 completed:2026-07-01
 
 - [ ] t3505 Prevent non-maintainer upstream-watch issue spam #auto-dispatch #bug ref:GH#22462
 
-- [ ] t3507 Clarify launch-worker current repo default #documentation ref:GH#22471
+- [x] t3507 Clarify launch-worker current repo default #documentation ref:GH#22471 pr:#22491 completed:2026-07-01
 
-- [ ] t3508 Add PR repair loop for greenable unmerged worker PRs #auto-dispatch #bug ref:GH#22472
+- [x] t3508 Add PR repair loop for greenable unmerged worker PRs #auto-dispatch #bug ref:GH#22472 pr:#22477 completed:2026-07-01
 
-- [ ] t3509 Suppress assignment notifications for available worker feedback issues #auto-dispatch #bug ref:GH#22473
+- [x] t3509 Suppress assignment notifications for available worker feedback issues #auto-dispatch #bug ref:GH#22473 pr:#22483 completed:2026-07-01
 
-- [ ] t3510 Prevent duplicate manual workers on the same issue worktree #auto-dispatch #bug ref:GH#22474
+- [x] t3510 Prevent duplicate manual workers on the same issue worktree #auto-dispatch #bug ref:GH#22474 pr:#22486 completed:2026-07-01
 
-- [ ] t3511 Reason-code dispatch candidate pre-launch failures #auto-dispatch #bug ref:GH#22476
+- [x] t3511 Reason-code dispatch candidate pre-launch failures #auto-dispatch #bug ref:GH#22476 verified:2026-05-02 completed:2026-07-01
 
-- [ ] t3513 Prioritize GraphQL budget for issue-solving dispatch #auto-dispatch #enhancement ref:GH#22479
+- [x] t3513 Prioritize GraphQL budget for issue-solving dispatch #auto-dispatch #enhancement ref:GH#22479 verified:2026-05-02 completed:2026-07-01
 
-- [ ] t3512 Reduce GraphQL read pressure blocking pulse dispatch #auto-dispatch #bug ref:GH#22478
+- [x] t3512 Reduce GraphQL read pressure blocking pulse dispatch #auto-dispatch #bug ref:GH#22478 pr:#22493 completed:2026-07-01
 
-- [ ] t3514 Use REST-first PR readiness checks in pulse merge #auto-dispatch #enhancement ref:GH#22480
+- [x] t3514 Use REST-first PR readiness checks in pulse merge #auto-dispatch #enhancement ref:GH#22480 pr:#22488 completed:2026-07-01
 
-- [ ] t3515 Add conditional delta caching for pulse issue and PR prefetch #auto-dispatch #enhancement ref:GH#22481
+- [x] t3515 Add conditional delta caching for pulse issue and PR prefetch #auto-dispatch #enhancement ref:GH#22481 pr:#22494 completed:2026-07-01
 
-- [ ] t3516 Respect all priority labels in dispatch scoring #auto-dispatch #bug ref:GH#22482
 
-- [ ] t3518 Investigate setup postflight degraded stages #auto-dispatch #bug ref:GH#22499
-- [ ] t3520 Fix GPT-5.5 auto-compaction limit input override #auto-dispatch #bug ref:GH#22503
+- [x] t3520 Fix GPT-5.5 auto-compaction limit input override #auto-dispatch #bug ref:GH#22503 pr:#22508 completed:2026-07-01
 
-- [ ] t3521 Detect stale OpenCode plugin deploy after setup #auto-dispatch #bug ref:GH#22506
+- [x] t3521 Detect stale OpenCode plugin deploy after setup #auto-dispatch #bug ref:GH#22506 pr:#22522 completed:2026-07-01
 
-- [ ] t3522 Optimize high-volume GitHub reader paths for pulse throughput #auto-dispatch #bug ref:GH#22507
+- [x] t3522 Optimize high-volume GitHub reader paths for pulse throughput #auto-dispatch #bug ref:GH#22507 pr:#4735 completed:2026-07-01
 
-- [ ] t3524 feedback plane Phase 2 retention and sensitivity policy #auto-dispatch #enhancement #framework ref:GH#22512
+- [x] t3524 feedback plane Phase 2 retention and sensitivity policy #auto-dispatch #enhancement #framework ref:GH#22512 pr:#22573 completed:2026-07-01
 
-- [ ] t3523 feedback plane Phase 1 capture contract #auto-dispatch #enhancement #framework ref:GH#22510
+- [x] t3523 feedback plane Phase 1 capture contract #auto-dispatch #enhancement #framework ref:GH#22510 verified:2026-05-03 completed:2026-07-01
 
-- [ ] t3529 setup postflight still reports non-fatal degraded stages after v3.14.6 deploy #auto-dispatch #bug #framework ref:GH#22521
+- [x] t3529 setup postflight still reports non-fatal degraded stages after v3.14.6 deploy #auto-dispatch #bug #framework ref:GH#22521 pr:#4726 completed:2026-07-01
 
-- [ ] t3528 feedback plane Phase 5 CLI and routines design #auto-dispatch #enhancement #framework ref:GH#22519
 
-- [ ] t3527 feedback plane Phase 4 promotion paths #auto-dispatch #enhancement #framework ref:GH#22518
 
-- [ ] t3526 Fix setup noninteractive stale-lock false reclaim #auto-dispatch #bug ref:GH#22517
+- [x] t3526 Fix setup noninteractive stale-lock false reclaim #auto-dispatch #bug ref:GH#22517 pr:#22540 completed:2026-07-01
 
-- [ ] t3525 feedback plane Phase 3 mining workflow and evidence thresholds #auto-dispatch #enhancement #framework ref:GH#22515
 
-- [ ] t3532 Reduce GraphQL call pressure blocking pulse dispatch #auto-dispatch #bug ref:GH#22525
+- [x] t3532 Reduce GraphQL call pressure blocking pulse dispatch #auto-dispatch #bug ref:GH#22525 pr:#4710 completed:2026-07-01
 
-- [ ] t3531 Limit broad log searches in interactive diagnostics #auto-dispatch #bug ref:GH#22524
+- [x] t3531 Limit broad log searches in interactive diagnostics #auto-dispatch #bug ref:GH#22524 verified:2026-05-03 completed:2026-07-01
 
-- [ ] t3530 fix setup noninteractive simplification-state registry rewrite #auto-dispatch #bug #framework ref:GH#22523
+- [x] t3530 fix setup noninteractive simplification-state registry rewrite #auto-dispatch #bug #framework ref:GH#22523 pr:#22547 completed:2026-07-01
 
-- [ ] t3533 Fix headless worker launch from deleted current directory #auto-dispatch #bug ref:GH#22527
+- [x] t3533 Fix headless worker launch from deleted current directory #auto-dispatch #bug ref:GH#22527 verified:2026-05-03 completed:2026-07-01
 
-- [ ] t3535 Fix phase-only parent tasks not auto-filing children #auto-dispatch #bug #framework ref:GH#22534
+- [x] t3535 Fix phase-only parent tasks not auto-filing children #auto-dispatch #bug #framework ref:GH#22534 pr:#22555 completed:2026-07-01
 
-- [ ] t3537 Define _performance KPI result schema #auto-dispatch #enhancement #framework ref:GH#22538
+- [x] t3537 Define _performance KPI result schema #auto-dispatch #enhancement #framework ref:GH#22538 pr:#22553 completed:2026-07-01
 
-- [ ] t3536 Define _projects directory contract #auto-dispatch #enhancement #framework ref:GH#22537
+- [x] t3536 Define _projects directory contract #auto-dispatch #enhancement #framework ref:GH#22537 pr:#22554 completed:2026-07-01
 
-- [ ] t3538 Fix interactive issue origin label detection #bug #framework ref:GH#22539
+- [x] t3538 Fix interactive issue origin label detection #bug #framework ref:GH#22539 pr:#22548 completed:2026-07-01
 
-- [ ] t3540 Recover pulse wrapper when launched from removed worktree path #auto-dispatch #bug ref:GH#22545
+- [x] t3540 Recover pulse wrapper when launched from removed worktree path #auto-dispatch #bug ref:GH#22545 verified:2026-05-03 completed:2026-07-01
 
-- [ ] t3539 Prevent active interactive worktree cleanup during verification #auto-dispatch #bug #framework ref:GH#22544
+- [x] t3539 Prevent active interactive worktree cleanup during verification #auto-dispatch #bug #framework ref:GH#22544 pr:#4518 completed:2026-07-01
 
-- [ ] t3542 Add REST fallback for GraphQL-limited full-loop merges #auto-dispatch #bug #framework ref:GH#22557
+- [x] t3542 Add REST fallback for GraphQL-limited full-loop merges #auto-dispatch #bug #framework ref:GH#22557 verified:2026-05-03 completed:2026-07-01
 
-- [ ] t3541 Add REST fallback for full-loop merge when GraphQL rate-limited #auto-dispatch #bug #framework ref:GH#22556
+- [x] t3541 Add REST fallback for full-loop merge when GraphQL rate-limited #auto-dispatch #bug #framework ref:GH#22556 pr:#22568 completed:2026-07-01
 
-- [ ] t3543 Make full-loop self-modifying merge guidance use worktree helper #auto-dispatch #bug #framework ref:GH#22571
+- [x] t3543 Make full-loop self-modifying merge guidance use worktree helper #auto-dispatch #bug #framework ref:GH#22571 verified:2026-05-03 completed:2026-07-01
 
-- [ ] t3544 fix parent-task auto-close: remove >=2 child heuristic and close on last filed child #bug #framework ref:GH#22604
+- [x] t3544 fix parent-task auto-close: remove >=2 child heuristic and close on last filed child #bug #framework ref:GH#22604 pr:#22605 completed:2026-07-01
 
-- [ ] t3545 worktree cleanup destroys uncommitted work on freshly-created branch (zero commits past base classified as branch-merged) #auto-dispatch #bug #framework ref:GH#22606
+- [x] t3545 worktree cleanup destroys uncommitted work on freshly-created branch (zero commits past base classified as branch-merged) #auto-dispatch #bug #framework ref:GH#22606 pr:#22612 completed:2026-07-01
 
 - [ ] t3546 issue-sync workflow marks task complete on PR open/sync events #auto-dispatch #bug #framework ref:GH#22607
 
-- [ ] t3548 fix: initialise multi-var locals in _compose_unfiled_phases_note (t3547 regression) #bug ref:GH#22610
 
-- [ ] t3549 Dispatch claim-without-spawn loop: canary timeout under moderate load mis-classified as transient #auto-dispatch #bug ref:GH#22615
+- [x] t3549 Dispatch claim-without-spawn loop: canary timeout under moderate load mis-classified as transient #auto-dispatch #bug ref:GH#22615 verified:2026-05-03 completed:2026-07-01
 
-- [ ] t3551 Phase 1 of #22616 - extract Diagnostics Discipline block to reference/diagnostics-discipline.md #aidevops #auto-dispatch #docs #self-improvement ref:GH#22619
+- [x] t3551 Phase 1 of #22616 - extract Diagnostics Discipline block to reference/diagnostics-discipline.md #aidevops #auto-dispatch #docs #self-improvement ref:GH#22619 verified:2026-05-03 completed:2026-07-01
 
-- [ ] t3550 AGENTS.md progressive disclosure - slim ~26.5K tokens to ~5K via phased extraction #aidevops #docs #parent #self-improvement ref:GH#22616
 
-- [ ] t3555 Make OpenAI availability checks match OpenCode provider auth precedence #auto-dispatch #bug ref:GH#22627
+- [x] t3555 Make OpenAI availability checks match OpenCode provider auth precedence #auto-dispatch #bug ref:GH#22627 verified:2026-05-03 completed:2026-07-01
 
 - [x] t3554 Add gpt-5.4-mini session rename model ref:GH#22624 pr:#22628 completed:2026-05-03
 
-- [ ] t3553 Add interactive OpenAI OAuth pool failure rotation #auto-dispatch #bug ref:GH#22623
 
-- [ ] t3552 Clamp OAuth pool Retry-After cooldowns #auto-dispatch #bug ref:GH#22622
 
-- [ ] t3556 REST merge fallback should trigger sequential phase autofile #auto-dispatch #bug #self-improvement ref:GH#22629
 
 - [x] t3557 Reset pulse blockers when eligible work exists #auto-dispatch #bug ref:GH#22631 pr:#22641 completed:2026-05-03
 
-- [ ] t3559 Preserve current OpenAI OAuth pool account on startup #auto-dispatch #bug ref:GH#22640
+- [x] t3559 Preserve current OpenAI OAuth pool account on startup #auto-dispatch #bug ref:GH#22640 pr:#4548 completed:2026-07-01
 
 - [x] t3558 Remove CPU-based canary throttling #auto-dispatch #bug ref:GH#22634 pr:#22639 completed:2026-05-03
 
-- [ ] t3562 Audit ops markers for machine-generated GitHub comments #auto-dispatch #bug ref:GH#22660
+- [x] t3562 Audit ops markers for machine-generated GitHub comments #auto-dispatch #bug ref:GH#22660 pr:#4546 completed:2026-07-01
 
-- [ ] t3561 Fix duplicate TODO entry after release auto-mark #auto-dispatch #bug ref:GH#22655
+- [x] t3561 Fix duplicate TODO entry after release auto-mark #auto-dispatch #bug ref:GH#22655 pr:#4545 completed:2026-07-01
 
-- [ ] t3563 Fix recurring TODO sync stashes during cleanup #auto-dispatch #bug ref:GH#22664
+- [x] t3563 Fix recurring TODO sync stashes during cleanup #auto-dispatch #bug ref:GH#22664 verified:2026-05-03 completed:2026-07-01
 
 - [x] t3565 Harden interactive issue creation labels #bug ref:GH#23018 pr:#23020 completed:2026-05-06
 
-- [ ] t3567 fix: treat pending required checks as non-terminal #auto-dispatch #bug #framework #pulse ref:GH#23099
+- [x] t3567 fix: treat pending required checks as non-terminal #auto-dispatch #bug #framework #pulse ref:GH#23099 pr:#4547 completed:2026-07-01
 
 - [x] t3568 fix: require terminal CI failures for repair feedback #auto-dispatch #bug #framework #pulse ref:GH#23100 pr:#23112 completed:2026-05-07
 
 - [x] t3570 fix: pause repeated transient rate-limit releases #auto-dispatch #bug #framework #pulse ref:GH#23102 pr:#23111 completed:2026-05-07
 
-- [ ] t3569 feat: dedupe review-feedback issues before worker launch #auto-dispatch #feature #framework #worker ref:GH#23101
+- [x] t3569 feat: dedupe review-feedback issues before worker launch #auto-dispatch #feature #framework #worker ref:GH#23101 verified:2026-05-07 completed:2026-07-01
 
 - [x] t3571 feat: close superseded duplicate PRs against merged fixes #auto-dispatch #feature #framework #pulse ref:GH#23105 pr:#23117 completed:2026-05-07
 
@@ -4326,27 +4310,27 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t3574 design `/auto-browse` agent factory for browser operations and web data mining #enhancement #framework ref:GH#23132 pr:#23131 completed:2026-05-08
 
 
-- [ ] t3575 Avoid redispatch for CI infra-only blockers #auto-dispatch #bug #framework #mission #pulse ref:GH#23134
+- [x] t3575 Avoid redispatch for CI infra-only blockers #auto-dispatch #bug #framework #mission #pulse ref:GH#23134 pr:#4721 completed:2026-07-01
 
 - [x] t3578 SQLite output sandbox for token-efficient noisy tool output #enhancement #framework ref:GH#23137 pr:#23143 completed:2026-05-08
 
 - [x] t3577 Default RTK token optimization in setup #enhancement #framework ref:GH#23136 pr:#23138 completed:2026-05-08
 
 
-- [ ] t3580 Handle RTK no-hook warning in explicit token-optimized commands #enhancement #framework ref:GH#23142
+- [x] t3580 Handle RTK no-hook warning in explicit token-optimized commands #enhancement #framework ref:GH#23142 verified:2026-05-08 completed:2026-07-01
 
 - [x] t3581 Document pragmatic CI gate policy ref:GH#23211 pr:#23214 completed:2026-05-08
 
 
 
 
-- [ ] t3585 Capture session learning guidance in aidevops harness #documentation #self-improvement ref:GH#23285
+- [x] t3585 Capture session learning guidance in aidevops harness #documentation #self-improvement ref:GH#23285 verified:2026-05-09 completed:2026-07-01
 
-- [ ] t3587 fix gh CLI slurp prerequisite diagnostics #auto-dispatch #bug #framework ref:GH#23428
+- [x] t3587 fix gh CLI slurp prerequisite diagnostics #auto-dispatch #bug #framework ref:GH#23428 verified:2026-05-12 completed:2026-07-01
 
 - [x] t3591 Bound person-stats GitHub calls with portable timeouts #auto-dispatch #bug #reliability #shell ref:GH#23761 pr:#23764 completed:2026-05-18
 
-- [ ] t3592 Add report-token-use session token reporting #bug ref:GH#24221
+- [x] t3592 Add report-token-use session token reporting #bug ref:GH#24221 pr:#24223 completed:2026-07-01
 
 - [x] t3596 Constrain pulse write sweeps to maintainer repos #bug ref:GH#24567 pr:#24569 completed:2026-06-08
 
@@ -4354,21 +4338,21 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t3599 Document app-stack guidance #documentation ref:GH#24768 pr:#24767 completed:2026-06-14
 
 
-- [ ] t3605 OneTrade leadership material ref:GH#24931
+- [x] t3605 OneTrade leadership material ref:GH#24931 verified:2026-06-16 completed:2026-07-01
 
-- [ ] t3606 Show AIDevOps version in OpenCode session titles #bug #type:enhancement ref:GH#25227
+- [x] t3606 Show AIDevOps version in OpenCode session titles #bug #type:enhancement ref:GH#25227 pr:#4677 completed:2026-07-01
 
-- [ ] t3607 Build aidevops GUI control plane for setup, infrastructure, routines, and safe multi-machine AI-agent operations #dashboard #enhancement #infrastructure #parent #product ref:GH#25229
+- [x] t3607 Build aidevops GUI control plane for setup, infrastructure, routines, and safe multi-machine AI-agent operations #dashboard #enhancement #infrastructure #parent #product ref:GH#25229 pr:#25240 completed:2026-07-01
 
 - [x] t3608 GUI ADR: product scope, stack, and repo layout #architecture #auto-dispatch #dashboard #documentation #product ref:GH#25230 pr:#25236 completed:2026-06-20
 
-- [ ] t3611 GUI contract: helper/API boundary for existing aidevops surfaces #api #auto-dispatch #dashboard #setup blocked-by:t3608,t3609,t3610 ref:GH#25233
+- [x] t3611 GUI contract: helper/API boundary for existing aidevops surfaces #api #auto-dispatch #dashboard #setup blocked-by:t3608,t3609,t3610 ref:GH#25233 pr:#25300 completed:2026-07-01
 
 - [x] t3610 GUI ADR: data model and infrastructure graph #architecture #auto-dispatch #dashboard #database #infrastructure ref:GH#25232 pr:#25299 completed:2026-06-20
 
 - [x] t3609 GUI ADR: security threat model and trust boundaries #architecture #auto-dispatch #dashboard #security ref:GH#25231 pr:#25237 completed:2026-06-20
 
-- [ ] t17995 GUI testing and CI/CD strategy #architecture #auto-dispatch #ci #dashboard #testing blocked-by:t3608,t3609 ref:GH#25234
+- [x] t17995 GUI testing and CI/CD strategy #architecture #auto-dispatch #ci #dashboard #testing blocked-by:t3608,t3609 ref:GH#25234 pr:#25298 completed:2026-07-01
 
 
 - [x] t18011 Update setup/update to refresh the macOS aidevops GUI app bundle after releases #auto-dispatch ref:GH#25590 pr:#25591 completed:2026-06-26
@@ -4380,23 +4364,17 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18024 Refine app sidebar and font controls #enhancement ref:GH#25753 pr:#25793 completed:2026-06-28
 
 
-- [ ] t18030 Require completed-session summaries to list implemented changes #bug ref:GH#25838
+- [x] t18030 Require completed-session summaries to list implemented changes #bug ref:GH#25838 verified:2026-06-29 completed:2026-07-01
 
 
 - [x] t18032 Hide GUI stroke effects when borders are disabled #bug #dashboard #design ref:GH#25855 pr:#25856 completed:2026-06-29
 
-- [ ] t18033 Build Pulse & Workers observability console for aidevops.app #dashboard #enhancement #observability #parent #product #pulse ref:GH#25911
 
 
-- [ ] t18035 Add Pulse & Workers observability contracts and fixtures #auto-dispatch #dashboard #enhancement #observability #pulse ref:GH#25913
 
-- [ ] t18037 Build data-driven Pulse & Workers dashboard filters charts and drilldown #auto-dispatch #dashboard #design #enhancement #observability #pulse ref:GH#25915
 
-- [ ] t18036 Populate Pulse & Workers status from read-only local telemetry #api #auto-dispatch #dashboard #enhancement #observability #pulse ref:GH#25914
 
-- [ ] t18039 Add productivity insights and systemic fix feedback to Pulse & Workers #auto-dispatch #dashboard #enhancement #observability #pulse #self-improvement ref:GH#25917
 
-- [ ] t18038 Add safe Pulse & Workers action buttons with terminal output #api #auto-dispatch #dashboard #enhancement #observability #pulse ref:GH#25916
 
 - [x] t18040 fix: restore 500-line Markdown simplification gate #bug #framework ref:GH#25926 pr:#25941 completed:2026-06-30
 
@@ -4412,9 +4390,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 
 
-- [ ] t18049 feat(reach): add proxy/VPN/fingerprint health and failover classification. Ex... #auto-dispatch #browser #enhancement #framework #reliability ref:GH#26167
 
-- [ ] t18050 feat(reach): implement capture workflow into `_inbox/` and `_knowledge/` stag... #auto-dispatch #browser #enhancement #framework #knowledge ref:GH#26168
 
 - [ ] t18051 feat(reach): add performance logging, feedback miner, and dry-run issue gener... #auto-dispatch #enhancement #feedback #framework #observability ref:GH#26169
 
