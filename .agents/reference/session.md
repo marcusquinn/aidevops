@@ -16,6 +16,18 @@ Full PTY access: run any CLI (`vim`, `psql`, `ssh`, `htop`, dev servers). Long-r
 - Cleanup: commit or stash changes, then run `wt merge` to clean merged worktrees.
 - Full docs: `workflows/session-manager.md`.
 
+## New Topic Hygiene
+
+Use only in interactive sessions; headless workers stay on their assigned task.
+
+Trigger only when meaningful prior task context exists and the user starts a clearly unrelated objective where context isolation would materially improve quality, safety, or efficiency. Do not trigger for short one-off questions, follow-ups, clarifications, corrections, implementation phases, active-task dependencies, planned task queues, or related discoveries.
+
+Before doing the new work, respond briefly:
+
+> This looks like a separate topic. For cleaner context, it’s usually better to start fresh: use `/new` or open a new tab/session, then paste this request there. Would you like to start fresh, or should I continue here?
+
+If the user chooses to continue, proceed without repeating the warning for that topic.
+
 ## Context Compaction Resilience
 
 Context compaction drops operational state unless written to disk. Use `/checkpoint` to persist and restore.
