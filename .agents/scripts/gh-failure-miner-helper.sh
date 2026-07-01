@@ -902,14 +902,14 @@ build_issue_body() {
 	if [[ "$is_infra" == "true" ]]; then
 		printf '%s\n' "$cluster_json" | jq -r '
 			"## Summary\n" +
-			"- Affected checks: " + (.check_names | join(", ")) + "\n" +
+			"- Affected checks: " + ((.check_names // [(.check_name // "multiple-checks")]) | join(", ")) + "\n" +
 			"- Events observed: " + (.count|tostring) + "\n" +
-			"- Sources affected: " + ((.sources | length)|tostring) + "\n\n" +
+			"- Sources affected: " + (((.sources // []) | length)|tostring) + "\n\n" +
 			"## Why this looks like an infrastructure outage\n" +
 			"- All checks failed simultaneously across multiple PRs/commits.\n" +
 			"- This pattern indicates a billing or runner infrastructure issue, not a code defect.\n\n" +
 			"## Evidence\n" +
-			(.examples | map("- " + .source_kind + ":" + .source_ref + " (" + .conclusion + ")" +
+			((.examples // []) | map("- " + (.source_kind // "source") + ":" + (.source_ref // "unknown") + " (" + (.conclusion // "unknown") + ")" +
 			  (if .source_url != null then " - " + .source_url else "" end) +
 			  (if .run_url != null then " - " + .run_url else "" end) +
 			  (if .details_url != null then " - " + .details_url else "" end)
@@ -920,6 +920,7 @@ build_issue_body() {
 			"- Do NOT make code changes to fix this — the root cause is external.\n\n" +
 			"Signal tag: `gh-failure-miner:" + $pattern_id + "`\n"
 		' --arg pattern_id "$pattern_id" --argjson threshold "$threshold"
+		return $?
 	else
 		printf '%s\n' "$cluster_json" | jq -r '
 			def affected_paths_line($example):
@@ -984,7 +985,7 @@ build_issue_body() {
 			"Signal tag: `gh-failure-miner:" + $pattern_id + "`\n"
 		' --arg pattern_id "$pattern_id" --argjson threshold "$threshold"
 	fi
-	return 0
+	return $?
 }
 
 ensure_repo_labels() {
@@ -1056,7 +1057,14 @@ create_or_preview_issue() {
 	local title
 	title=$(build_issue_title "$check_name" "$count" "$is_infra")
 	local body
-	body=$(build_issue_body "$cluster_json" "$pattern_id" "$systemic_threshold" "$is_infra")
+	if ! body=$(build_issue_body "$cluster_json" "$pattern_id" "$systemic_threshold" "$is_infra"); then
+		echo "Skipping cluster for ${check_name} - issue body generation failed"
+		return 1
+	fi
+	if [[ -z "${body//[[:space:]]/}" ]]; then
+		echo "Skipping cluster for ${check_name} - generated issue body was empty"
+		return 1
+	fi
 
 	if [[ "$dry_run" == "true" ]]; then
 		if [[ "$is_infra" == "true" ]]; then

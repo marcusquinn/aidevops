@@ -433,6 +433,36 @@ $(cat "$err_file" 2>/dev/null || true)"
 # Internal: rejection reason for the most recent _gh_validate_edit_args call.
 _GH_EDIT_REJECTION_REASON=""
 
+_gh_body_has_substantive_content() {
+	local body_value="$1"
+	local unsigned_body
+	unsigned_body="${body_value%%<!-- aidevops:sig -->*}"
+	unsigned_body="${unsigned_body#"${unsigned_body%%[![:space:]]*}"}"
+	unsigned_body="${unsigned_body%"${unsigned_body##*[![:space:]]}"}"
+	[[ -n "$unsigned_body" ]]
+	return $?
+}
+
+_gh_validate_body_file_content() {
+	local body_file_val="$1"
+	local file_size
+	file_size=$(wc -c <"$body_file_val" 2>/dev/null || echo "0")
+	file_size=$(echo "$file_size" | tr -d '[:space:]')
+	if [[ "$file_size" -eq 0 ]]; then
+		_GH_EDIT_REJECTION_REASON="body-file '${body_file_val}' is empty"
+		printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+		return 1
+	fi
+	local body_file_body
+	body_file_body=$(<"$body_file_val")
+	if ! _gh_body_has_substantive_content "$body_file_body"; then
+		_GH_EDIT_REJECTION_REASON="body-file '${body_file_val}' has no content before signature footer"
+		printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
+		return 1
+	fi
+	return 0
+}
+
 #######################################
 # Internal: validate --title and --body/--body-file args.
 # Returns 0 if valid, 1 if rejected (with stderr message + _GH_EDIT_REJECTION_REASON).
@@ -502,10 +532,7 @@ _gh_validate_edit_args() {
 
 	# Validate body if present
 	if [[ "$has_body" -eq 1 ]]; then
-		local trimmed_body
-		trimmed_body="${body_val#"${body_val%%[![:space:]]*}"}"
-		trimmed_body="${trimmed_body%"${trimmed_body##*[![:space:]]}"}"
-		if [[ -z "$trimmed_body" ]]; then
+		if ! _gh_body_has_substantive_content "$body_val"; then
 			_GH_EDIT_REJECTION_REASON="empty body (after trimming whitespace)"
 			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
 			return 1
@@ -529,16 +556,7 @@ _gh_validate_edit_args() {
 			printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
 			return 1
 		fi
-		if [[ -f "$body_file_val" ]]; then
-			local file_size
-			file_size=$(wc -c <"$body_file_val" 2>/dev/null || echo "0")
-			file_size=$(echo "$file_size" | tr -d '[:space:]')
-			if [[ "$file_size" -eq 0 ]]; then
-				_GH_EDIT_REJECTION_REASON="body-file '${body_file_val}' is empty"
-				printf '[SAFETY] gh edit rejected: %s\n' "$_GH_EDIT_REJECTION_REASON" >&2
-				return 1
-			fi
-		fi
+		_gh_validate_body_file_content "$body_file_val" || return 1
 	fi
 
 	return 0
