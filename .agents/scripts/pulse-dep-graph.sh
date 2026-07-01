@@ -257,13 +257,16 @@ build_dependency_graph_cache() {
 	local ttl_secs="$DEP_GRAPH_CACHE_TTL_SECS"
 
 	# Skip rebuild if cache is fresh
-	if [[ -f "$cache_file" ]]; then
+	if [[ -f "$cache_file" && "${PULSE_DEP_GRAPH_FORCE_REBUILD:-0}" != "1" ]]; then
 		local cache_age
 		cache_age=$(($(date +%s) - $(date -r "$cache_file" +%s 2>/dev/null || echo 0)))
 		if [[ "$cache_age" -lt "$ttl_secs" ]]; then
 			echo "[pulse-wrapper] dep-graph-cache: cache fresh (${cache_age}s < ${ttl_secs}s TTL), skipping rebuild" >>"$LOGFILE"
 			return 0
 		fi
+	fi
+	if [[ "${PULSE_DEP_GRAPH_FORCE_REBUILD:-0}" == "1" ]]; then
+		echo "[pulse-wrapper] dep-graph-cache: force rebuild requested after issue-state sync" >>"$LOGFILE"
 	fi
 
 	echo "[pulse-wrapper] dep-graph-cache: building dependency graph cache (t1935)" >>"$LOGFILE"
@@ -878,14 +881,13 @@ _blocked_by_check_task_id() {
 #######################################
 # Check whether local TODO.md still marks a task blocker incomplete.
 #
-# GitHub closure usually proves a blocker resolved, but stale TODO state means
-# post-merge task sync drift can mislead workers about dependency readiness.
-# When dispatch supplied PULSE_DEP_GRAPH_REPO_PATH and TODO.md still has an
-# unchecked canonical tNNN entry, hold dispatch so the next maintenance pass can
-# reconcile the task ledger instead of launching against contradictory context.
+# GitHub closure proves the blocker resolved. When dispatch supplied
+# PULSE_DEP_GRAPH_REPO_PATH and TODO.md still has an unchecked canonical tNNN
+# entry, log the stale local ledger but do not re-block dispatch; the pulse
+# issue-state sync stage reconciles TODO.md before cache rebuilds.
 #
 # Args: $1=task_id digits, $2=repo_slug, $3=issue_number
-# Returns: 0 when local TODO says incomplete, 1 otherwise.
+# Returns: 1 always so stale TODO never overrides closed GitHub state.
 #######################################
 _blocked_by_todo_marks_incomplete() {
 	local task_id="$1"
@@ -896,8 +898,8 @@ _blocked_by_todo_marks_incomplete() {
 	[[ -n "$repo_path" ]] || return 1
 	[[ -f "${repo_path}/TODO.md" ]] || return 1
 	if grep -Eq "^- \[ \] t${task_id}([:.[:space:]]|$)" "${repo_path}/TODO.md" 2>/dev/null; then
-		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} blocked-by-todo-drift t${task_id} in ${repo_slug} — GitHub blocker is closed but local TODO.md still marks it incomplete; skipping dispatch" >>"$LOGFILE"
-		return 0
+		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} stale-todo-after-closed-blocker t${task_id} in ${repo_slug} — GitHub blocker is closed; ignoring stale TODO.md and relying on issue-state sync" >>"$LOGFILE"
+		return 1
 	fi
 	return 1
 }

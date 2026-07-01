@@ -39,7 +39,18 @@ gh_find_merged_pr() {
 	printf '%s\n' "42|https://github.com/${repo}/pull/42"
 	return 0
 }
-export -f print_warning print_info print_error print_success log_verbose gh_find_merged_pr
+gh() {
+	if [[ "$*" == *"issue view 123"* ]]; then
+		printf '%s\n' '{"state":"CLOSED","stateReason":"COMPLETED","closedAt":"2026-06-30T01:53:39Z","body":"Completed interactively.\n<!-- aidevops:sig -->","comments":[]}'
+		return 0
+	fi
+	if [[ "$*" == *"issue view 124"* ]]; then
+		printf '%s\n' '{"state":"CLOSED","stateReason":"COMPLETED","closedAt":"2026-06-30T01:53:39Z","body":"Closed without aidevops evidence.","comments":[]}'
+		return 0
+	fi
+	return 1
+}
+export -f print_warning print_info print_error print_success log_verbose gh_find_merged_pr gh
 
 # shellcheck source=../issue-sync-helper-close.sh
 source "$HELPER_PATH"
@@ -117,6 +128,22 @@ if _has_unresolved_blocker "- [ ] t9009 fixed implementation pr:#82 tier:standar
 	pass "precomputed blocked task line still vetoes completion"
 else
 	fail "precomputed blocked task line should veto completion"
+fi
+
+if completed_date=$(_closed_issue_aidevops_complete_date "owner/repo" "123"); then
+	if [[ "$completed_date" == "2026-06-30" ]]; then
+		pass "closed aidevops-signed issue is completion evidence for TODO refresh"
+	else
+		fail "closed aidevops-signed issue returned wrong completion date"
+	fi
+else
+	fail "closed aidevops-signed issue should be completion evidence"
+fi
+
+if _closed_issue_aidevops_complete_date "owner/repo" "124" >/dev/null; then
+	fail "closed issue without aidevops evidence is not completion evidence"
+else
+	pass "closed issue without aidevops evidence is not completion evidence"
 fi
 
 if [[ "$FAIL" -eq 0 ]]; then
