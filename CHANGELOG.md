@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.14] - 2026-07-01
+
+### Changed
+
+- Maintenance: sync ref:GH#26170 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#26169 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#26168 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#26167 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#26166 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#26165 to TODO.md [skip ci]
+- fix OpenAI token refresh recovery
+- Maintenance: mark t18021 complete (pr:#26162 completed:2026-07-01) [skip ci]
+
 ## [3.31.13] - 2026-07-01
 
 ### Changed
