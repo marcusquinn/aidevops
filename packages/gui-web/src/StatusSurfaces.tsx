@@ -532,9 +532,9 @@ function isActionablePathRef(pathRef: string): boolean {
   return pathRef.startsWith("~/") || pathRef.startsWith("/");
 }
 
-export function PlannedSurface({ detail, label }: { detail: string; label: string }) {
+export function PlannedSurface({ detail, label, tourId }: { detail: string; label: string; tourId?: string }) {
   return (
-    <section className="panel" aria-label={label}>
+    <section className="panel" aria-label={label} data-tour={tourId}>
       <div className="section-heading">
         <p className="eyebrow">{text.planned}</p>
         <h2>{label}</h2>

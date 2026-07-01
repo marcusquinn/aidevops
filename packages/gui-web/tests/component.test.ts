@@ -13,6 +13,7 @@ import { PulseWorkersSurface } from "../src/PulseWorkersSurface";
 import { DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, chatPrimitiveStackDecision, navGroups, surfaceRecordCounts, type SurfaceNavItem } from "../src/app-model";
 import { renderDashboardHtml } from "../src/dashboard";
 import { fetchStatus, mockedStatus } from "../src/status-client";
+import { workspaceTourRegistry } from "../src/WorkspaceTour";
 import type { GuiConversationThread, GuiManagedAppSummary, GuiStatusData } from "../../gui-shared/src";
 
 const guiWebRoot = `${import.meta.dir}/..`;
@@ -131,6 +132,27 @@ describe("dashboard shell", () => {
     expect(html).toContain("ready for Tambo cards");
     expect(html).toContain("MessageScroller-compatible transcript");
     expect(html).toContain("New, rename, pin, archive, delete, share, and export");
+  });
+
+  test("renders signposts button immediately before notifications with page tours", () => {
+    const html = renderWorkspaceSurface(aiSessionsItem, "aiSessions");
+    const signpostsIndex = html.indexOf("Start AI Sessions tour");
+    const notificationsIndex = html.indexOf("Open notifications");
+
+    expect(signpostsIndex).toBeGreaterThanOrEqual(0);
+    expect(notificationsIndex).toBeGreaterThan(signpostsIndex);
+    expect(html).toContain("data-tour=\"ai-sessions-surface\"");
+    expect(workspaceTourRegistry.aiSessions?.map((step) => step.target)).toContain('[data-tour="ai-session-transcript"]');
+  });
+
+  test("registers route-specific tours for workspace destinations", () => {
+    expect(Object.keys(workspaceTourRegistry).sort()).toEqual(["aiSessions", "channels", "deployments", "directMessages", "repos", "settings", "workers"]);
+    expect(workspaceTourRegistry.channels?.[0]?.target).toBe('[data-tour="comms-conversations"]');
+    expect(workspaceTourRegistry.directMessages?.[0]?.target).toBe('[data-tour="comms-conversations"]');
+    expect(workspaceTourRegistry.workers?.[0]?.target).toBe('[data-tour="workers-surface"]');
+    expect(workspaceTourRegistry.repos?.[0]?.target).toBe('[data-tour="repos-surface"]');
+    expect(workspaceTourRegistry.deployments?.[0]?.target).toBe('[data-tour="deployments-surface"]');
+    expect(workspaceTourRegistry.settings?.[0]?.target).toBe('[data-tour="settings-surface"]');
   });
 
   test("records the audited chat primitive stack decision", () => {

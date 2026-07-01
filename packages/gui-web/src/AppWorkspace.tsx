@@ -1,6 +1,6 @@
 /* jshint esversion: 11 */
 import { type ReactElement, type ReactNode, useEffect, useState } from "react";
-import { FiAlertTriangle, FiBell, FiCheckCircle, FiChevronLeft, FiChevronRight, FiCommand, FiFileText, FiGlobe, FiHash, FiHelpCircle, FiInfo, FiLogOut, FiMessageSquare, FiPaperclip, FiSearch, FiSettings, FiShield, FiTerminal, FiTool, FiUser } from "react-icons/fi";
+import { FiAlertTriangle, FiBell, FiCheckCircle, FiChevronLeft, FiChevronRight, FiCommand, FiFileText, FiGlobe, FiHash, FiInfo, FiLogOut, FiMap, FiMessageSquare, FiPaperclip, FiSearch, FiSettings, FiShield, FiTerminal, FiTool, FiUser } from "react-icons/fi";
 import type { GuiFileRootId, GuiNotificationSummary, GuiStatusData } from "../../gui-shared/src";
 import { SurfaceGlyph } from "./AppNavigation";
 import type { ConversationMode, ShellMode, SurfaceId, SurfaceNavItem } from "./app-model";
@@ -14,6 +14,7 @@ import { PulseWorkersSurface } from "./PulseWorkersSurface";
 import { AiProvidersSurface, LocalReposSurface, LockedVaultGate, OverviewSurface, PlannedSurface, ProjectsSurface, SecuritySurface, VaultSurface } from "./StatusSurfaces";
 import { isVaultSurfaceLocked, vaultCollectionForSurface } from "./VaultBadges";
 import { applyCommandPaletteSelection, useHeaderMenuState } from "./workspace-header-state";
+import { useWorkspaceTour, WorkspaceTourProvider } from "./WorkspaceTour";
 
 const communityLinks = {
   github: "https://github.com/marcusquinn/aidevops",
@@ -42,12 +43,14 @@ export function Workspace({ activeItem, activeSectionLabel, activeSurface, canGo
 }) {
   return (
     <section className="app-inset" aria-label={text.workspaceLabel}>
-      <WorkspaceHeader activeItem={activeItem} activeSectionLabel={activeSectionLabel} activeSurface={activeSurface} canGoBack={canGoBack} canGoForward={canGoForward} goBack={goBack} goForward={goForward} setActiveSurface={setActiveSurface} setConversationMode={setConversationMode} setSelectedLocalRepoIndex={setSelectedLocalRepoIndex} setSelectedSessionId={setSelectedSessionId} setShellMode={setShellMode} status={status} />
-      <div className="workspace-scroll">
-        {shellMode === "sessions"
-          ? <ConversationWorkspace conversationMode={conversationMode} selectedLocalRepoIndex={selectedLocalRepoIndex} selectedSessionId={selectedSessionId} status={status} />
-          : <SurfaceContent activeItem={activeItem} activeSurface={activeSurface} fileRoot={fileRoot} openSurface={setActiveSurface} status={status} />}
-      </div>
+      <WorkspaceTourProvider activeSurface={activeSurface}>
+        <WorkspaceHeader activeItem={activeItem} activeSectionLabel={activeSectionLabel} activeSurface={activeSurface} canGoBack={canGoBack} canGoForward={canGoForward} goBack={goBack} goForward={goForward} setActiveSurface={setActiveSurface} setConversationMode={setConversationMode} setSelectedLocalRepoIndex={setSelectedLocalRepoIndex} setSelectedSessionId={setSelectedSessionId} setShellMode={setShellMode} status={status} />
+        <div className="workspace-scroll">
+          {shellMode === "sessions"
+            ? <ConversationWorkspace conversationMode={conversationMode} selectedLocalRepoIndex={selectedLocalRepoIndex} selectedSessionId={selectedSessionId} status={status} />
+            : <SurfaceContent activeItem={activeItem} activeSurface={activeSurface} fileRoot={fileRoot} openSurface={setActiveSurface} status={status} />}
+        </div>
+      </WorkspaceTourProvider>
     </section>
   );
 }
@@ -73,6 +76,7 @@ function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoB
   const userInitials = status.machine.initials || "AI";
   const userName = status.machine.username || "Local user";
   const activeNotifications = status.notifications.filter((notification) => notification.status === "active");
+  const tour = useWorkspaceTour();
 
   useEffect(() => {
     const openCommandPalette = (event: KeyboardEvent) => {
@@ -125,13 +129,14 @@ function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoB
       </div>
       <div className="header-actions" onPointerEnter={headerMenus.clearScheduledHeaderClose} onPointerLeave={headerMenus.scheduleHeaderMenusClose} ref={headerMenus.headerActionsRef}>
         <div className="header-action-menu">
-          <button aria-label="Open signposts and help" className="header-icon-button" onClick={() => { headerMenus.closeHeaderMenus(); openItem({ surface: "help" }); }} title="Signposts and help (?)" type="button">
-            <FiHelpCircle aria-hidden="true" />
+          <button aria-disabled={!tour.hasTour} aria-label={tour.hasTour ? `Start ${activeItem.label} tour` : `No tour available for ${activeItem.label}`} className={tour.activeStep ? "header-icon-button active" : "header-icon-button"} disabled={!tour.hasTour} onClick={() => { headerMenus.closeHeaderMenus(); tour.startTour(); }} title={tour.hasTour ? `Start ${activeItem.label} tour` : `No tour available for ${activeItem.label}`} type="button">
+            <FiMap aria-hidden="true" />
           </button>
           <button aria-expanded={headerMenus.notificationsOpen} aria-label="Open notifications" className="header-icon-button" onClick={headerMenus.toggleNotifications} type="button">
             <FiBell aria-hidden="true" />
             {activeNotifications.length > 0 ? <span className="notification-dot" aria-hidden="true" /> : null}
           </button>
+          {tour.activeStep ? <WorkspaceSignposts label={activeItem.label} /> : null}
           {headerMenus.notificationsOpen ? <NotificationsMenu notifications={status.notifications} openSurface={(surface) => openItem({ surface })} /> : null}
         </div>
         <button aria-pressed={headerMenus.assistantOpen} aria-label="Toggle AI Assistant" className={headerMenus.assistantOpen ? "header-icon-button active" : "header-icon-button"} onClick={headerMenus.toggleAssistant} title="AI sessions (_)" type="button">
@@ -147,6 +152,31 @@ function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoB
       {headerMenus.assistantOpen ? <AssistantPanel activeSurface={activeSurface} userName={userName} /> : null}
       {commandOpen ? <CommandPalette activeSurface={activeSurface} close={() => setCommandOpen(false)} initialQuery={commandInitialQuery} openItem={openItem} status={status} /> : null}
     </header>
+  );
+}
+
+function WorkspaceSignposts({ label }: { label: string }): ReactElement {
+  const tour = useWorkspaceTour();
+  const step = tour.activeStep;
+
+  if (!step) {
+    return <></>;
+  }
+
+  return (
+    <div className="popover-menu signposts-tour" role="dialog" aria-label={`${label} tour`}>
+      <div className="signposts-heading">
+        <strong>{step.title}</strong>
+        <span>{tour.activeStepIndex + 1}/{tour.stepCount}</span>
+      </div>
+      <p>{step.body}</p>
+      <code>{step.target}</code>
+      {tour.missingTarget ? <p className="tour-missing-target">Target is not visible on this page; continuing safely.</p> : null}
+      <div className="signposts-actions">
+        <button onClick={tour.nextStep} type="button">Next</button>
+        <button onClick={tour.closeTour} type="button">Close</button>
+      </div>
+    </div>
   );
 }
 
@@ -386,9 +416,9 @@ function SurfaceContent({ activeItem, activeSurface, fileRoot, openSurface, stat
     aiSessions: <AiSessionsSurface selectedRepoIndex={0} status={status} />,
     channels: <CommsConversationSurface mode="channels" />,
     directMessages: <CommsConversationSurface mode="directMessages" />,
-    workers: <PulseWorkersSurface status={status} />,
-    repos: <PlannedSurface label={text.repos} detail={text.reposIntro} />,
-    deployments: <PlannedSurface label={text.deployments} detail={text.deploymentsIntro} />,
+    workers: <div data-tour="workers-surface"><PulseWorkersSurface status={status} /></div>,
+    repos: <PlannedSurface label={text.repos} detail={text.reposIntro} tourId="repos-surface" />,
+    deployments: <PlannedSurface label={text.deployments} detail={text.deploymentsIntro} tourId="deployments-surface" />,
     routines: <PlannedSurface label={text.routines} detail={text.routineDetail} />,
     devices: <PlannedSurface label={text.devices} detail={text.devicesIntro} />,
     vpnsProxies: <PlannedSurface label={text.vpnsProxies} detail={text.vpnsProxiesIntro} />,
@@ -474,7 +504,7 @@ function HelpSurface(): ReactElement {
 
 function SettingsSurface({ status }: { status: GuiStatusData }): ReactElement {
   return (
-    <section className="settings-surface">
+    <section className="settings-surface" data-tour="settings-surface">
       <div className="planned-card">
         <h2>General settings</h2>
         <p>{text.settingsAccountIntro}</p>
