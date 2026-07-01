@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.17] - 2026-07-01
+
+### Changed
+
+- Maintenance: mark t18055 complete (pr:#26228 completed:2026-07-01) [skip ci]
+- Maintenance: sync ref:GH#26227 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#26226 to TODO.md [skip ci]
+- Maintenance: remove duplicate TODO reach entries [skip ci]
+- Maintenance: mark t18054 complete (pr:#26222 completed:2026-07-01) [skip ci]
+- preserve reviewDecision under REST fallback (#26222)
+- Maintenance: sync GitHub issue refs to TODO.md [skip ci]
+
+### Fixed
+
+- validate cache causality (#26228)
+- bound routine enrich (#26224)
+
 ## [3.31.16] - 2026-07-01
 
 ### Changed
