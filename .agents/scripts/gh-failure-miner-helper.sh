@@ -175,6 +175,10 @@ filter_signature_noise_lines() {
 				}
 			}
 			gsub(/\033\[[0-9;]*[A-Za-z]/, "", payload)
+			# gh may return raw log rows with the ISO timestamp still prefixed
+			# instead of tab-separated job/step/time columns; remove it before
+			# classifying shell comments as signature noise.
+			sub(/^20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9:.]+Z[[:space:]]+/, "", payload)
 			gsub(/^[[:space:]]+/, "", payload)
 			# GitHub Actions sometimes echoes shell comments from multi-line run blocks
 			# as UNKNOWN STEP log rows. Treat plain comments and xtrace-prefixed
