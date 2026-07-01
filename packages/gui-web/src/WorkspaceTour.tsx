@@ -59,6 +59,8 @@ export function WorkspaceTourProvider({ activeSurface, children, registry = work
   const activeStep = isOpen ? steps[activeStepIndex] : undefined;
 
   useEffect(() => {
+    const nextSurface = activeSurface;
+    if (!nextSurface) return;
     setIsOpen(false);
     setActiveStepIndex(0);
     setMissingTarget(false);

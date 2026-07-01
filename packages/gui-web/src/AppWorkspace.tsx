@@ -155,12 +155,12 @@ function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoB
   );
 }
 
-function WorkspaceSignposts({ label }: { label: string }): ReactElement {
+function WorkspaceSignposts({ label }: { label: string }): ReactElement | null {
   const tour = useWorkspaceTour();
   const step = tour.activeStep;
 
   if (!step) {
-    return <></>;
+    return null;
   }
 
   return (
