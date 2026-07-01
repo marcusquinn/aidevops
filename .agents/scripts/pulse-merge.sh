@@ -869,9 +869,10 @@ _process_single_ready_pr() {
 	local _RS=$'\x1e'
 	IFS="$_RS" read -r pr_number pr_mergeable pr_review pr_author pr_title pr_updated_at pr_head_ref_oid pr_head_ref_name pr_base_ref_name pr_labels pr_is_draft < <(
 		printf '%s' "$pr_obj" | jq -r \
-			'"\(.number // "")\u001e\(.mergeable // "UNKNOWN")\u001e\(if (.reviewDecision | length) == 0 then "NONE" else .reviewDecision end)\u001e\(.author.login // "unknown")\u001e\(.title // "")\u001e\(.updatedAt // "")\u001e\(.headRefOid // "")\u001e\(.headRefName // "")\u001e\(.baseRefName // "")\u001e\([(.labels // [])[].name] | join(","))\u001e\(.isDraft // false | tostring)"'
+			'"\(.number // "")\u001e\(.mergeable // "UNKNOWN")\u001e\(if ((has("reviewDecision") | not) or .reviewDecision == null or (.reviewDecision | tostring | length) == 0) then "UNKNOWN" else .reviewDecision end)\u001e\(.author.login // "unknown")\u001e\(.title // "")\u001e\(.updatedAt // "")\u001e\(.headRefOid // "")\u001e\(.headRefName // "")\u001e\(.baseRefName // "")\u001e\([(.labels // [])[].name] | join(","))\u001e\(.isDraft // false | tostring)"'
 	)
 	_pmp_normalize_mergeable_state_into pr_mergeable "$pr_mergeable"
+	_pmp_normalize_review_decision_into pr_review "$pr_review"
 	[[ -n "$timing_prefix" ]] && _mergeability_start=$(_pmp_now_epoch)
 
 	[[ "$pr_number" =~ ^[0-9]+$ ]] || return 1
@@ -886,6 +887,9 @@ _process_single_ready_pr() {
 	# skip makes conflict remediation unreachable (GH#24634).
 	if [[ "$pr_mergeable" == UNKNOWN || -z "$pr_mergeable" ]]; then
 		_pmp_refresh_unknown_mergeable_state_into pr_mergeable "$pr_number" "$repo_slug" "$pr_mergeable"
+	fi
+	if _pmp_review_decision_is_unknown "$pr_review"; then
+		_pmp_refresh_unknown_review_decision_into pr_review "$pr_number" "$repo_slug" "$pr_review"
 	fi
 
 	# CONFLICTING handling (t2116): before closing, attempt to salvage the
@@ -982,6 +986,10 @@ _process_single_ready_pr() {
 		if [[ "$_early_review_dismissed" == "1" ]]; then
 			pr_review="NONE"
 		fi
+	fi
+	if _pmp_review_decision_is_unknown "$pr_review"; then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — reviewDecision unavailable after refresh (GH#26218)" >>"$LOGFILE"
+		return 1
 	fi
 
 	# Resolve UNKNOWN mergeable state with one retry; skip if not MERGEABLE

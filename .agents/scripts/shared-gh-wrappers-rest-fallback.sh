@@ -1134,7 +1134,7 @@ _rest_pr_object_json_jq() {
 		mergeCommit) projection="${projection}${projection:+,}mergeCommit: (if (.merge_commit_sha // \"\") != \"\" then {oid: .merge_commit_sha} else null end)" ;;
 		mergedBy) projection="${projection}${projection:+,}mergedBy: .merged_by" ;;
 		mergeable) projection="${projection}${projection:+,}mergeable: (.mergeable | if . == true then \"MERGEABLE\" elif . == false then \"CONFLICTING\" else (. // \"UNKNOWN\") end)" ;;
-		reviewDecision) projection="${projection}${projection:+,}reviewDecision: (.reviewDecision // \"\")" ;;
+		reviewDecision) projection="${projection}${projection:+,}reviewDecision: null" ;;
 		isDraft) projection="${projection}${projection:+,}isDraft: (.draft // false)" ;;
 		labels) projection="${projection}${projection:+,}labels: (.labels // [])" ;;
 		author) projection="${projection}${projection:+,}author: (.user // {})" ;;
@@ -1180,7 +1180,7 @@ _rest_pr_list_json_jq() {
 		number) projection="${projection}${projection:+,}number: .number" ;;
 		state) projection="${projection}${projection:+,}state: (if .merged_at != null then \"MERGED\" else .state end)" ;;
 		mergeable) projection="${projection}${projection:+,}mergeable: (.mergeable | if . == true then \"MERGEABLE\" elif . == false then \"CONFLICTING\" else (. // \"UNKNOWN\") end)" ;;
-		reviewDecision) projection="${projection}${projection:+,}reviewDecision: (.reviewDecision // \"\")" ;;
+		reviewDecision) projection="${projection}${projection:+,}reviewDecision: null" ;;
 		isDraft) projection="${projection}${projection:+,}isDraft: (.draft // false)" ;;
 		labels) projection="${projection}${projection:+,}labels: (.labels // [])" ;;
 		mergedAt) projection="${projection}${projection:+,}mergedAt: .merged_at" ;;

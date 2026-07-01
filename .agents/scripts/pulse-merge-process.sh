@@ -212,6 +212,81 @@ _pmp_refresh_unknown_mergeable_state_into() {
 	return 0
 }
 
+# Normalize mixed-path reviewDecision values. REST PR payloads omit this
+# GraphQL-only field, so null/empty means UNKNOWN, not NONE (GH#26218).
+_pmp_normalize_review_decision_into() {
+	local dest_var="$1"
+	local raw_decision="$2"
+	local normalized_decision=""
+
+	[[ "$dest_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	case "$raw_decision" in
+	CHANGES_REQUESTED|APPROVED|REVIEW_REQUIRED|NONE) normalized_decision="$raw_decision" ;;
+	changes_requested) normalized_decision="CHANGES_REQUESTED" ;;
+	approved) normalized_decision="APPROVED" ;;
+	review_required) normalized_decision="REVIEW_REQUIRED" ;;
+	none) normalized_decision="NONE" ;;
+	''|null|NULL|UNKNOWN|unknown) normalized_decision="UNKNOWN" ;;
+	*) normalized_decision="$raw_decision" ;;
+	esac
+	printf -v "$dest_var" '%s' "$normalized_decision"
+	return 0
+}
+
+_pmp_review_decision_is_unknown() {
+	local raw_decision="$1"
+	local _pmp_normalized_decision=""
+	_pmp_normalize_review_decision_into _pmp_normalized_decision "$raw_decision"
+	[[ "$_pmp_normalized_decision" == "UNKNOWN" ]]
+	return $?
+}
+
+# Conservative REST fallback for GraphQL reviewDecision refresh failures.
+# Groups by reviewer and keeps each latest state.
+_pmp_rest_review_decision_from_reviews() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local reviews_json=""
+
+	reviews_json=$(gh api --paginate "repos/${repo_slug}/pulls/${pr_number}/reviews" 2>/dev/null) || return 1
+	printf '%s' "$reviews_json" | jq -rs '
+		flatten
+		| map(select((.user.login // "") != ""))
+		| group_by(.user.login)
+		| map(max_by(.submitted_at // .submittedAt // ""))
+		| if any(.state == "CHANGES_REQUESTED") then "CHANGES_REQUESTED" else "NONE" end
+	' 2>/dev/null || return 1
+	return 0
+}
+
+# Refresh unknown PR reviewDecision state into a caller variable.
+# Args: $1=dest var, $2=PR number, $3=repo slug, $4=current state
+_pmp_refresh_unknown_review_decision_into() {
+	local _pmp_dest_var="$1"
+	local _pmp_pr_number="$2"
+	local _pmp_repo_slug="$3"
+	local _pmp_current_review="$4"
+	local _pmp_refreshed_review=""
+	local _pmp_refresh_exit=0
+
+	[[ "$_pmp_dest_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	_pmp_normalize_review_decision_into _pmp_refreshed_review "$_pmp_current_review"
+
+	if [[ "$_pmp_refreshed_review" == "UNKNOWN" ]]; then
+		_pmp_refreshed_review=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$_pmp_pr_number" --repo "$_pmp_repo_slug" \
+			--json reviewDecision --jq '.reviewDecision // ""' 2>/dev/null)
+		_pmp_refresh_exit=$?
+		_pmp_normalize_review_decision_into _pmp_refreshed_review "$_pmp_refreshed_review"
+		if [[ $_pmp_refresh_exit -ne 0 || "$_pmp_refreshed_review" == "UNKNOWN" ]]; then
+			_pmp_refreshed_review=$(_pmp_rest_review_decision_from_reviews "$_pmp_pr_number" "$_pmp_repo_slug" 2>/dev/null) || _pmp_refreshed_review="UNKNOWN"
+			_pmp_normalize_review_decision_into _pmp_refreshed_review "$_pmp_refreshed_review"
+		fi
+	fi
+
+	printf -v "$_pmp_dest_var" '%s' "$_pmp_refreshed_review"
+	return 0
+}
+
 #######################################
 # Classify one PR object into a scheduling/observability backlog bucket.
 # This is intentionally advisory: it never decides merge eligibility. The
@@ -223,19 +298,24 @@ _pmp_refresh_unknown_mergeable_state_into() {
 #######################################
 _pmp_classify_pr_backlog_state() {
 	local pr_obj="$1"
+	local repo_slug="${2:-}"
 	local _RS=$'\x1e'
-	local mergeable="" review_decision="" is_draft="" labels="" failed_count="" pending_count=""
-	IFS="$_RS" read -r mergeable review_decision is_draft labels failed_count pending_count < <(
+	local number="" mergeable="" review_decision="" is_draft="" labels="" failed_count="" pending_count=""
+	IFS="$_RS" read -r number mergeable review_decision is_draft labels failed_count pending_count < <(
 		printf '%s' "$pr_obj" | jq -r '
 			def up(v): (v // "" | ascii_upcase);
 			def failed: [.statusCheckRollup[]? | select(up(.conclusion) == "FAILURE" or up(.state) == "FAILURE")] | length;
 			def pending: [.statusCheckRollup[]? | select(up(.status) == "QUEUED" or up(.status) == "IN_PROGRESS" or up(.state) == "PENDING" or up(.state) == "EXPECTED" or ((up(.conclusion) == "") and (up(.state) != "SUCCESS") and (up(.status) != "COMPLETED")))] | length;
-			"\(.mergeable // "UNKNOWN")\u001e\(if (.reviewDecision | length) == 0 then "NONE" else .reviewDecision end)\u001e\(.isDraft // false)\u001e\([.labels[].name] | join(","))\u001e\(failed)\u001e\(pending)"' 2>/dev/null
+			"\(.number // "")\u001e\(.mergeable // "UNKNOWN")\u001e\(if ((has("reviewDecision") | not) or .reviewDecision == null or (.reviewDecision | tostring | length) == 0) then "UNKNOWN" else .reviewDecision end)\u001e\(.isDraft // false)\u001e\([.labels[].name] | join(","))\u001e\(failed)\u001e\(pending)"' 2>/dev/null
 	)
 	_pmp_normalize_mergeable_state_into mergeable "$mergeable"
+	_pmp_normalize_review_decision_into review_decision "$review_decision"
 
 	[[ "$failed_count" =~ ^[0-9]+$ ]] || failed_count=0
 	[[ "$pending_count" =~ ^[0-9]+$ ]] || pending_count=0
+	if [[ "$failed_count" -gt 0 && -n "$repo_slug" && "$number" =~ ^[0-9]+$ ]] && _pmp_review_decision_is_unknown "$review_decision"; then
+		_pmp_refresh_unknown_review_decision_into review_decision "$number" "$repo_slug" "$review_decision"
+	fi
 
 	if [[ "$is_draft" == "true" || ",${labels}," == *",hold-for-review,"* || "$review_decision" == "CHANGES_REQUESTED" ]]; then
 		printf '%s' "$_PMP_BACKLOG_HUMAN_APPROVAL_NEEDED"
@@ -246,6 +326,10 @@ _pmp_classify_pr_backlog_state() {
 		return 0
 	fi
 	if [[ "$failed_count" -gt 0 ]]; then
+		if _pmp_review_decision_is_unknown "$review_decision"; then
+			printf '%s' "$_PMP_BACKLOG_HUMAN_APPROVAL_NEEDED"
+			return 0
+		fi
 		printf '%s' "$_PMP_BACKLOG_SMALL_FIX_NEEDED"
 		return 0
 	fi
@@ -311,6 +395,7 @@ _pmp_backlog_priority() {
 #######################################
 _pmp_sort_prs_by_backlog_priority() {
 	local pr_json="$1"
+	local repo_slug="${2:-}"
 	local pr_count=""
 	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
 	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
@@ -325,7 +410,7 @@ _pmp_sort_prs_by_backlog_priority() {
 	while [[ "$i" -lt "$pr_count" ]]; do
 		local pr_obj="" category="" priority=""
 		pr_obj=$(printf '%s' "$pr_json" | jq -c ".[$i]" 2>/dev/null)
-		category=$(_pmp_classify_pr_backlog_state "$pr_obj")
+		category=$(_pmp_classify_pr_backlog_state "$pr_obj" "$repo_slug")
 		priority=$(_pmp_backlog_priority "$category")
 		printf '%03d\t%06d\t%s\n' "$priority" "$i" "$pr_obj" >>"$_tmp_lines"
 		i=$((i + 1))
@@ -355,7 +440,7 @@ _pmp_log_pr_backlog_counts() {
 	while [[ "$i" -lt "$pr_count" ]]; do
 		local pr_obj="" category=""
 		pr_obj=$(printf '%s' "$pr_json" | jq -c ".[$i]" 2>/dev/null)
-		category=$(_pmp_classify_pr_backlog_state "$pr_obj")
+		category=$(_pmp_classify_pr_backlog_state "$pr_obj" "$repo_slug")
 		case "$category" in
 		"$_PMP_BACKLOG_MERGE_READY") merge_ready=$((merge_ready + 1)) ;;
 		"$_PMP_BACKLOG_CHECKS_IN_PROGRESS") checks_in_progress=$((checks_in_progress + 1)) ;;
@@ -676,7 +761,7 @@ _merge_ready_prs_for_repo() {
 	pr_json=$(_pmp_enrich_prs_with_rest_check_status "$repo_slug" "$pr_json")
 
 	_pmp_log_pr_backlog_counts "$repo_slug" "$pr_json"
-	pr_json=$(_pmp_sort_prs_by_backlog_priority "$pr_json")
+	pr_json=$(_pmp_sort_prs_by_backlog_priority "$pr_json" "$repo_slug")
 	_pmp_consolidate_duplicate_pr_groups "$repo_slug" "$pr_json" || true
 	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
 	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
