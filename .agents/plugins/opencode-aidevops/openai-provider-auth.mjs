@@ -8,8 +8,10 @@
 
 import { getAccounts, patchAccount, rotateOpenAIPoolToken } from "./oauth-pool.mjs";
 import { annotateOpenAIOverloadResponse, formatRetryDelay, isOpenAIOverloadText, overloadRetryDelaysMs, sleep, wrapOpenAIOverloadStream } from "./openai-overload-retry.mjs";
+import { handleOpenAITokenRefreshFailure, isOpenAITokenRefreshRequest, readOpenAITokenRefreshBody } from "./openai-auth-refresh-recovery.mjs";
 
 export { isOpenAIOverloadText } from "./openai-overload-retry.mjs";
+export { isOpenAITokenRefreshRequest } from "./openai-auth-refresh-recovery.mjs";
 
 const OPENAI_API_HOST = "api.openai.com";
 const OPENAI_API_PREFIX = "/v1/";
@@ -179,19 +181,25 @@ async function maybeRotateBeforeOpenAIFetch(client, input, init) {
 async function handleOpenAIFetchRequest(ctx) {
   const { client, originalFetch, input, init } = ctx;
   const openaiRequest = isOpenAIProviderRequest(input);
+  const tokenRefreshRequest = isOpenAITokenRefreshRequest(input);
+  const tokenRefreshBody = tokenRefreshRequest ? await readOpenAITokenRefreshBody(input, init) : "";
   const retryInput = openaiRequest ? buildRetryRequest(input) : input;
   const firstInit = openaiRequest ? await maybeRotateBeforeOpenAIFetch(client, input, init) : init;
   const response = await originalFetch(input, firstInit);
+  let result = response;
 
-  if (!openaiRequest) return response;
-  if (await isOpenAIUsageLimitResponse(response)) {
-    return handleOpenAIUsageLimit({ client, originalFetch, input, init: firstInit, response, retryInput });
-  }
-  if (await isOpenAIOverloadResponse(response)) {
-    return handleOpenAIOverload({ client, originalFetch, init: firstInit, response, retryInput });
-  }
-  if (response.ok) {
-    return wrapOpenAIOverloadStream({
+  if (tokenRefreshRequest) {
+    result = await handleOpenAITokenRefreshFailure({
+      client,
+      response,
+      bodyText: tokenRefreshBody,
+    });
+  } else if (openaiRequest && await isOpenAIUsageLimitResponse(response)) {
+    result = await handleOpenAIUsageLimit({ client, originalFetch, input, init: firstInit, response, retryInput });
+  } else if (openaiRequest && await isOpenAIOverloadResponse(response)) {
+    result = await handleOpenAIOverload({ client, originalFetch, init: firstInit, response, retryInput });
+  } else if (openaiRequest && response.ok) {
+    result = wrapOpenAIOverloadStream({
       originalFetch,
       response,
       retryInput,
@@ -200,7 +208,7 @@ async function handleOpenAIFetchRequest(ctx) {
       onRetry: (retry) => notifyOpenAIOverloadRetry(client, retry),
     });
   }
-  return response;
+  return result;
 }
 
 export function installOpenAIProviderFetchRotation(client) {
