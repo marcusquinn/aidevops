@@ -1712,6 +1712,7 @@ main() {
 			;;
 		esac
 		;;
+	reach) _dispatch_helper "reach-helper.sh" "reach-helper.sh" "$@" ;;
 	config | configure) _dispatch_config "$@" ;;
 	uninstall | remove) cmd_uninstall ;;
 	version | v | -v | --version) cmd_version ;;
