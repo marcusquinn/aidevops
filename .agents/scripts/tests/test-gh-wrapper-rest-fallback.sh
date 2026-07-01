@@ -101,13 +101,8 @@ export -f print_info print_warning print_error print_success log_verbose
 export AIDEVOPS_SESSION_ORIGIN=interactive
 export AIDEVOPS_SESSION_USER=testuser
 
-# Lock REST fallback threshold to 10 for the boundary tests below.
-# The default value (1000 since t2744) is intentionally high to enable
-# proactive REST routing under load, but these tests verify the
-# function's *logic* (fallback-when-remaining-≤-threshold) — not the
-# default value itself. Setting the env var BEFORE the source bakes
-# the value into _GH_REST_FALLBACK_THRESHOLD inside
-# shared-gh-wrappers-rest-fallback.sh.
+# Lock fallback threshold to 10 before source so boundary tests verify
+# fallback-when-remaining-≤-threshold logic, not the production default.
 export AIDEVOPS_GH_REST_FALLBACK_THRESHOLD=10
 export AIDEVOPS_GH_REST_FALLBACK_DISABLE_CACHE=1
 
@@ -145,7 +140,6 @@ _stub_jq_filter_arg() {
 	printf '\n'
 	return 0
 }
-
 _stub_gh_api_collaborator_permission() {
 	local status="${STUB_COLLAB_STATUS:-200}"
 	if [[ "${STUB_COLLAB_FAIL:-0}" == "1" ]]; then
@@ -170,7 +164,6 @@ _stub_gh_api_collaborator_permission() {
 	printf 'HTTP/2.0 %s OK\n\n{"permission":"%s"}\n' "$status" "${STUB_COLLAB_PERMISSION:-write}"
 	return 0
 }
-
 _stub_print_fixture_with_jq() {
 	local fixture="$1"
 	local jq_filter="$2"
@@ -182,7 +175,6 @@ _stub_print_fixture_with_jq() {
 	printf '%s\n' "$fixture"
 	return 0
 }
-
 _stub_gh_api_issues_list() {
 	local jq_filter=""
 	local fixture='[{"number":22430,"state":"open","title":"Reduce GraphQL list-call pressure","html_url":"https://github.com/owner/repo/issues/22430","updated_at":"2026-05-02T17:52:48Z","labels":[{"name":"auto-dispatch"}],"assignees":[{"login":"worker"}],"user":{"login":"maintainer"}}]'
@@ -190,7 +182,6 @@ _stub_gh_api_issues_list() {
 	_stub_print_fixture_with_jq "$fixture" "$jq_filter" -c
 	return $?
 }
-
 _stub_gh_api_pr_view() {
 	local jq_filter=""
 	local fixture='{"number":123,"title":"stub PR"}'
@@ -199,7 +190,6 @@ _stub_gh_api_pr_view() {
 	_stub_print_fixture_with_jq "$fixture" "$jq_filter" -r
 	return $?
 }
-
 _stub_gh_api_pr_list() {
 	local path="${1:-}"
 	shift
@@ -213,7 +203,6 @@ _stub_gh_api_pr_list() {
 	_stub_print_fixture_with_jq "$fixture" "$jq_filter" -c
 	return $?
 }
-
 _stub_gh_api_search_issues() {
 	local option="$1"
 	local fixture='{"items":[{"number":22430,"state":"open","title":"Reduce GraphQL list-call pressure"}]}'
@@ -229,7 +218,6 @@ _stub_gh_api_search_issues() {
 	printf '%s\n' "$fixture"
 	return 0
 }
-
 _stub_gh_api() {
 	local subcommand="${1:-}"
 	local path="${2:-}"
@@ -280,7 +268,6 @@ _stub_gh_api() {
 	fi
 	return 1
 }
-
 _stub_gh_issue() {
 	local subcommand="${1:-}"
 	if [[ "$subcommand" != "create" && "$subcommand" != "comment" && "$subcommand" != "edit" && "$subcommand" != "view" && "$subcommand" != "list" ]]; then
@@ -295,7 +282,6 @@ _stub_gh_issue() {
 	fi
 	return 0
 }
-
 _stub_gh_pr() {
 	local subcommand="${1:-}"
 	if [[ "$subcommand" != "create" && "$subcommand" != "comment" && "$subcommand" != "view" && "$subcommand" != "list" ]]; then
@@ -314,7 +300,6 @@ _stub_gh_pr() {
 	fi
 	return 0
 }
-
 gh() {
 	local command="${1:-}"
 	shift || true
