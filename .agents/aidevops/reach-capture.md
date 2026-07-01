@@ -4,10 +4,10 @@
 # Reach and Capture
 
 Use this registry when an agent needs to choose the lowest-agency way to reach,
-capture, stage, or mine web content. The first implementation is intentionally
-advisory: it reports available local primitives and emits a route decision; it
-does not mutate browser profiles, cookies, proxies, inboxes, knowledge stores,
-performance logs, or feedback artifacts.
+capture, stage, or mine web content. Route and doctor commands are advisory:
+they report available local primitives and emit a route decision without
+contacting arbitrary targets. Profile and cookie broker commands mutate only
+private reach metadata under the aidevops agent workspace.
 
 ## Capability Registry
 
@@ -55,6 +55,44 @@ isolation needs. Private/manual authentication without an approved reusable
 session returns `manual_review` with `blocked_reason` set instead of attempting
 capture.
 
+`route --auth cookie|profile` consults the private broker metadata before it
+sets `cookie_policy` or `profile_policy`. Missing or expired broker state keeps
+the policy at `required`; an unexpired cookie registration or profile lease
+allows `reuse_approved_session` or `use_existing_approved_profile`.
+
+## Profile and Cookie Broker
+
+`reach-helper.sh profile lease|release|status --format json` and
+`reach-helper.sh cookie status|register|clear --format json` manage private
+lease metadata only. The broker does not import cookies, launch browsers, or
+touch the underlying profile directory.
+
+Private state is stored under:
+
+```text
+~/.aidevops/.agent-workspace/reach/
+├── leases/           # profile lease metadata, mode 600 JSON files
+└── cookie-sessions/  # cookie source metadata, mode 600 JSON files
+```
+
+Profile lease files contain these fields: `schema_version`, `target_key`,
+`profile_name`, `profile_type`, `auth_mode`, `cookie_source`, `owner`,
+`created_at`, `expires_at`, `sensitivity`, and sanitized `notes`. Cookie session
+metadata stores the private source path locally plus a safe label/hash for
+output. `profile lease` refuses to overwrite an unexpired lease unless `--force`
+is present, so parallel workers do not silently reuse or mutate the same approved
+session state.
+
+Safe logging rules:
+
+- Command output may include target hashes, profile names, profile types, safe
+  labels, expiry timestamps, and boolean status fields.
+- Command output must not include cookie values, bearer tokens, proxy
+  credentials, private paths, raw private target strings, or browser profile
+  state paths.
+- Cookie source paths may exist only inside private metadata files in the reach
+  workspace; issue, PR, and transcript output uses the safe label/hash instead.
+
 ## Health Doctors
 
 `reach-helper.sh network doctor --format json` reports sanitized proxy/VPN
@@ -97,5 +135,6 @@ authorization for that scope.
   raw private target strings in route output.
 - Do not use proxy, VPN, fingerprint, profile, or cookie changes to bypass
   authentication, authorization, robots, rate-limit, or terms boundaries.
-- Treat profile, cookie, proxy, inbox, knowledge, performance, and feedback
-  mutation as follow-up work with separate task briefs and verification.
+- Treat proxy, inbox, knowledge, performance, and feedback mutation as follow-up
+  work with separate task briefs and verification. Profile and cookie broker
+  mutation is limited to private metadata leases and registrations.
