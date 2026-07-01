@@ -175,8 +175,13 @@ _dep_graph_build_repo_data() {
 			 else ""
 			 end) as $tid |
 
-			# Extract all lines matching the blocked-by pattern (case-insensitive)
-			([$body | split("\n") | .[] | select(test("(?i)blocked[- ]by"))] | join(" ")) as $blocker_text |
+			# Extract only the blocked-by clause, not the whole containing line.
+			# Parent roadmap briefs often include prose such as
+			# "Parent: #25707. Blocked by #25710" on one line; scanning the full
+			# line incorrectly turns the parent into a blocker and deadlocks the
+			# child chain. This mirrors the shell fallback grep pattern, which
+			# starts at the blocked-by marker.
+			([$body | scan("(?i)blocked[- ]by[^\n\r]*")] | join(" ")) as $blocker_text |
 
 			# Extract tNNN or tNNN.X task IDs from blocked-by text (GH#19165)
 			([$blocker_text | scan("t([0-9]+(\\.[0-9a-z]+)*)") | .[0]] | unique) as $blocker_tids |
