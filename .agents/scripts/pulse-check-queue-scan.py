@@ -13,12 +13,21 @@ import re
 import shutil
 import subprocess
 import sys
-from typing import Any
+from typing import Any, Optional
 
 AGGREGATE_KEY = "aggregate"
 ERROR_KEY = "error"
 GH_ERRORS_KEY = "gh_errors"
 REPO_SLUG_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+BLOCKING_LABELS = frozenset({
+    "parent-task",
+    "needs-maintainer-review",
+    "no-auto-dispatch",
+    "hold-for-review",
+    "blocked",
+    "status:blocked",
+    "status:in-review",
+})
 
 
 def _int_from_env(name: str, default: int) -> int:
@@ -77,55 +86,36 @@ def _issue_age_minutes(issue: dict[str, Any], now: dt.datetime) -> int:
     return int((now - updated).total_seconds() // 60)
 
 
-def main() -> int:
-    repos_json = pathlib.Path(os.environ.get("PULSE_CHECK_REPOS_JSON", ""))
-    skip_gh = os.environ.get("PULSE_CHECK_SKIP_GH", "") in {"1", "true", "TRUE", "yes", "YES"}
-    max_issues = _int_from_env("PULSE_CHECK_MAX_ISSUES_PER_REPO", 100)
-    old_minutes = _int_from_env("PULSE_CHECK_OLD_AVAILABLE_MINUTES", 30)
-    aggregate = _empty_aggregate()
-
+def _load_repos(repos_json: pathlib.Path) -> tuple[list[dict[str, Any]], str]:
     try:
         data = json.loads(repos_json.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        _emit(aggregate, f"repos_json_unreadable:{exc.__class__.__name__}")
-        return 0
-
-    repos = [
-        repo for repo in data.get("initialized_repos", [])
-        if repo.get("pulse") is True and not repo.get("local_only") and repo.get("slug")
-    ]
-    aggregate["repos"] = len(repos)
-    if skip_gh:
-        _emit(aggregate, "api_cooldown_active")
-        return 0
-    if shutil.which("gh") is None:
-        _emit(aggregate, "gh_missing")
-        return 0
-
-    now = dt.datetime.now(dt.timezone.utc)
-    blocking_labels = {
-        "parent-task",
-        "needs-maintainer-review",
-        "no-auto-dispatch",
-        "hold-for-review",
-        "blocked",
-        "status:blocked",
-        "status:in-review",
-    }
-
-    for repo in repos:
-        slug = str(repo.get("slug") or "")
-        if not _valid_repo_slug(slug):
-            aggregate[GH_ERRORS_KEY] += 1
+        return [], f"repos_json_unreadable:{exc.__class__.__name__}"
+    if not isinstance(data, dict):
+        return [], "repos_json_unreadable:TypeError"
+    initialized = data.get("initialized_repos", [])
+    if not isinstance(initialized, list):
+        return [], ""
+    repos = []
+    for repo in initialized:
+        if not isinstance(repo, dict):
             continue
-        cmd = [
-            "gh", "issue", "list",
-            "--repo", slug,
-            "--state", "open",
-            "--label", "auto-dispatch",
-            "--limit", str(max_issues),
-            "--json", "number,title,labels,assignees,updatedAt",
-        ]
+        if repo.get("pulse") is True and not repo.get("local_only") and repo.get("slug"):
+            repos.append(repo)
+    return repos, ""
+
+
+def _fetch_repo_issues(slug: str, max_issues: int) -> Optional[list[dict[str, Any]]]:
+    issues: Optional[list[dict[str, Any]]] = None
+    cmd = [
+        "gh", "issue", "list",
+        "--repo", slug,
+        "--state", "open",
+        "--label", "auto-dispatch",
+        "--limit", str(max_issues),
+        "--json", "number,title,labels,assignees,updatedAt",
+    ]
+    if _valid_repo_slug(slug):
         try:
             # Fixed argv, shell=False, validated owner/repo slug.
             completed = subprocess.run(  # nosec B603
@@ -136,38 +126,82 @@ def main() -> int:
                 check=False,
             )
         except (OSError, subprocess.SubprocessError):
-            aggregate[GH_ERRORS_KEY] += 1
-            continue
-        if completed.returncode != 0:
-            aggregate[GH_ERRORS_KEY] += 1
-            continue
-        try:
-            issues = json.loads(completed.stdout or "[]")
-        except json.JSONDecodeError:
-            aggregate[GH_ERRORS_KEY] += 1
-            continue
+            completed = None
+        if completed is not None and completed.returncode == 0:
+            try:
+                parsed = json.loads(completed.stdout or "[]")
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, list):
+                issues = [issue for issue in parsed if isinstance(issue, dict)]
+    return issues
 
-        repo_available = 0
-        for issue in issues:
-            labels = _issue_labels(issue)
-            assigned = bool(issue.get("assignees"))
-            blocked = bool(labels & blocking_labels)
-            aggregate["auto_dispatch_open"] += 1
-            aggregate["assigned"] += int(assigned)
-            aggregate["queued"] += int("status:queued" in labels)
-            aggregate["needs_tier"] += int(not any(label.startswith("tier:") for label in labels))
-            aggregate["needs_status"] += int(not any(label.startswith("status:") for label in labels))
-            aggregate["blocked_labels"] += int(blocked)
-            aggregate["parent_task"] += int("parent-task" in labels)
-            aggregate["nmr"] += int("needs-maintainer-review" in labels)
-            aggregate["no_auto_dispatch"] += int("no-auto-dispatch" in labels)
-            if "status:available" in labels and not assigned and not blocked:
-                repo_available += 1
-                aggregate["available_unassigned"] += 1
-                age_min = _issue_age_minutes(issue, now)
-                aggregate["available_old"] += int(age_min >= old_minutes)
-                aggregate["oldest_available_age_min"] = max(aggregate["oldest_available_age_min"], age_min)
-        aggregate["repos_with_available"] += int(repo_available > 0)
+
+def _count_issue(
+    aggregate: dict[str, int],
+    issue: dict[str, Any],
+    now: dt.datetime,
+    old_minutes: int,
+) -> bool:
+    labels = _issue_labels(issue)
+    assigned = bool(issue.get("assignees"))
+    blocked = bool(labels & BLOCKING_LABELS)
+    aggregate["auto_dispatch_open"] += 1
+    aggregate["assigned"] += int(assigned)
+    aggregate["queued"] += int("status:queued" in labels)
+    aggregate["needs_tier"] += int(not any(label.startswith("tier:") for label in labels))
+    aggregate["needs_status"] += int(not any(label.startswith("status:") for label in labels))
+    aggregate["blocked_labels"] += int(blocked)
+    aggregate["parent_task"] += int("parent-task" in labels)
+    aggregate["nmr"] += int("needs-maintainer-review" in labels)
+    aggregate["no_auto_dispatch"] += int("no-auto-dispatch" in labels)
+    available = "status:available" in labels and not assigned and not blocked
+    if available:
+        aggregate["available_unassigned"] += 1
+        age_min = _issue_age_minutes(issue, now)
+        aggregate["available_old"] += int(age_min >= old_minutes)
+        aggregate["oldest_available_age_min"] = max(aggregate["oldest_available_age_min"], age_min)
+    return available
+
+
+def _scan_repo(
+    aggregate: dict[str, int],
+    repo: dict[str, Any],
+    max_issues: int,
+    now: dt.datetime,
+    old_minutes: int,
+) -> None:
+    slug = str(repo.get("slug") or "")
+    issues = _fetch_repo_issues(slug, max_issues)
+    if issues is None:
+        aggregate[GH_ERRORS_KEY] += 1
+        return
+    repo_available = sum(int(_count_issue(aggregate, issue, now, old_minutes)) for issue in issues)
+    aggregate["repos_with_available"] += int(repo_available > 0)
+
+
+def main() -> int:
+    repos_json = pathlib.Path(os.environ.get("PULSE_CHECK_REPOS_JSON", ""))
+    skip_gh = os.environ.get("PULSE_CHECK_SKIP_GH", "") in {"1", "true", "TRUE", "yes", "YES"}
+    max_issues = _int_from_env("PULSE_CHECK_MAX_ISSUES_PER_REPO", 100)
+    old_minutes = _int_from_env("PULSE_CHECK_OLD_AVAILABLE_MINUTES", 30)
+    aggregate = _empty_aggregate()
+
+    repos, load_error = _load_repos(repos_json)
+    if load_error:
+        _emit(aggregate, load_error)
+        return 0
+    aggregate["repos"] = len(repos)
+    if skip_gh:
+        _emit(aggregate, "api_cooldown_active")
+        return 0
+    if shutil.which("gh") is None:
+        _emit(aggregate, "gh_missing")
+        return 0
+
+    now = dt.datetime.now(dt.timezone.utc)
+    for repo in repos:
+        _scan_repo(aggregate, repo, max_issues, now, old_minutes)
 
     _emit(aggregate, scanned_at=now.isoformat())
     return 0
