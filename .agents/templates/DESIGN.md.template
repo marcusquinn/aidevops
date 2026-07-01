@@ -221,6 +221,16 @@ The shape language is defined by **{Architectural Sharpness | Soft Modernism | P
 <!-- Style guidance for component atoms. Use YAML `components:` in front matter for token references. -->
 <!-- Prose below documents interactive states, behaviour, and anti-patterns for each component. -->
 
+### Cross-cutting component rules
+
+<!-- Broad rules apply across many elements. Keep these durable and reusable. -->
+
+- Branding/theming: {how brand tokens, theme modes, and platform variants stay consistent}
+- Accessibility: {keyboard, screen-reader, contrast, text scaling, and reduced-motion conventions}
+- Sizing/spacing: {padding, density, alignment, hierarchy, and touch-target rules}
+- Navigation/orientation: {consistent placement, direction, breadcrumbs, tabs, or flow rules}
+- Interaction feedback: {hover, focus, active, loading, success, error, and disabled conventions}
+
 ### Buttons
 
 **Primary** (`{components.button-primary}`)
@@ -264,6 +274,34 @@ The shape language is defined by **{Architectural Sharpness | Soft Modernism | P
 
 {nav style description — fixed/sticky, transparent/opaque, backdrop-filter usage if glass style}
 
+### Canonical examples
+
+<!-- Specific examples apply to a component type or use case. Reference approved implementations instead of pasting transcripts. -->
+
+#### {Element type}: {variant or use case}
+
+Reference: `{path/to/refined/component-or-page}`
+
+Use when:
+
+- {conditions}
+
+Follow:
+
+- {specific standards from the reference}
+
+Allowed variations:
+
+- {theme, brand, density, platform, or content variations}
+
+Avoid:
+
+- {known anti-patterns}
+
+Responsive/accessibility notes:
+
+- {mobile, touch, keyboard, contrast, text scaling, reduced motion}
+
 ## 8. Do's and Don'ts
 
 <!-- Practical guidelines and common pitfalls. These act as guardrails when creating designs. -->
@@ -272,12 +310,14 @@ The shape language is defined by **{Architectural Sharpness | Soft Modernism | P
 
 - Use `{colors.primary}` only for the single most important action per screen
 - Maintain WCAG AA contrast ratios (4.5:1 for normal text, 3:1 for large text)
+- Keep broad rules reusable and component examples specific to referenced implementations
 - {project-specific guideline}
 
 **Don't:**
 
 - Mix sharp (`{rounded.none}`) and rounded (`{rounded.lg}`) corners in the same view
 - Use more than two font weights on a single screen
+- Paste session transcripts or one-off implementation history into design standards
 - {project-specific anti-pattern}
 
 ---
@@ -306,6 +346,10 @@ The shape language is defined by **{Architectural Sharpness | Soft Modernism | P
 ### Mobile Rules
 
 - {mobile-specific behaviour}
+
+### Canonical Example Variants
+
+- For each canonical example that changes by viewport, note the expected mobile, tablet, desktop, and wide behaviours.
 
 ## 10. Agent Prompt Guide
 
