@@ -4403,3 +4403,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18049 feat(reach): add proxy/VPN/fingerprint health and failover classification. Ex... #auto-dispatch #browser #enhancement #framework #reliability ref:GH#26167
 
 - [ ] t18050 feat(reach): implement capture workflow into `_inbox/` and `_knowledge/` stag... #auto-dispatch #browser #enhancement #framework #knowledge ref:GH#26168
+
+- [ ] t18051 feat(reach): add performance logging, feedback miner, and dry-run issue gener... #auto-dispatch #enhancement #feedback #framework #observability ref:GH#26169
