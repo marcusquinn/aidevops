@@ -12,6 +12,7 @@
 #   test_agent_doc_premise_holds            — markdown file at threshold → exit 0
 #   test_function_complexity_falsified      — no violations remain → exit 10
 #   test_function_complexity_holds          — violations still present → exit 0
+#   test_function_marker_markdown_uses_file_lines — legacy marker on docs → file-line rationale
 #   test_missing_attributes                 — marker without attributes → exit 20
 
 set -euo pipefail
@@ -86,7 +87,22 @@ sys.stdout.write(body)
 	exit 0
 fi
 
-# gh issue comment / gh issue close / gh label create — succeed silently
+# gh issue comment / gh issue close / gh label create — succeed silently.
+# When GH_STUB_COMMENT_CAPTURE is set, record comment bodies for assertions.
+if [[ "\${1:-}" == "issue" && "\${2:-}" == "comment" && -n "\${GH_STUB_COMMENT_CAPTURE:-}" ]]; then
+	_body=""
+	while [[ \$# -gt 0 ]]; do
+		case "\$1" in
+		--body)
+			shift
+			_body="\${1:-}"
+			;;
+		esac
+		shift || true
+	done
+	printf '%s' "\$_body" >"\$GH_STUB_COMMENT_CAPTURE"
+	exit 0
+fi
 if [[ "\${1:-}" == "issue" || "\${1:-}" == "label" ]]; then
 	exit 0
 fi
@@ -363,6 +379,49 @@ big_func() {
 	return 0
 }
 
+# test_function_marker_markdown_uses_file_lines — legacy issues created before
+# the agent-doc marker fix may still use function-complexity-gate for Markdown.
+# Expected: validator exits 10 and rationale uses whole-file line counts.
+test_function_marker_markdown_uses_file_lines() {
+	setup_test_env
+
+	local body_file="${TEST_ROOT}/issue_body.txt"
+	printf '<!-- aidevops:generator=function-complexity-gate cited_file=.agents/aidevops/knowledge-plane.md threshold=500 -->\n## Agent doc simplification\n**Current size:** 1029 lines\n' >"$body_file"
+	create_gh_stub_with_body_file "$body_file"
+
+	local file_content=""
+	local i
+	for i in $(seq 1 120); do
+		file_content="${file_content}doc line ${i}\n"
+	done
+	create_git_stub_with_file "success" ".agents/aidevops/knowledge-plane.md" "$(printf '%b' "$file_content")"
+
+	local comment_capture="${TEST_ROOT}/comment.txt"
+	export GH_STUB_COMMENT_CAPTURE="$comment_capture"
+	local rc=0
+	"$HELPER_SCRIPT" validate "108" "marcusquinn/aidevops" >/dev/null 2>&1 || rc=$?
+	unset GH_STUB_COMMENT_CAPTURE
+
+	if [[ "$rc" -eq 10 ]]; then
+		print_result "function_marker_markdown_uses_file_lines exits 10" 0
+	else
+		print_result "function_marker_markdown_uses_file_lines exits 10" 1 "Expected exit 10, got ${rc}"
+	fi
+
+	local comment_body=""
+	if [[ -f "$comment_capture" ]]; then
+		comment_body=$(<"$comment_capture")
+	fi
+	if printf '%s' "$comment_body" | grep -Eq 'is now 1(19|20) lines, below the 500-line threshold' && ! printf '%s' "$comment_body" | grep -q 'functions exceeding'; then
+		print_result "function_marker_markdown_uses_file_line_rationale" 0
+	else
+		print_result "function_marker_markdown_uses_file_line_rationale" 1 "Expected file-line rationale without function wording"
+	fi
+
+	teardown_test_env
+	return 0
+}
+
 # test_missing_attributes — marker present but without cited_file/threshold
 # Expected: validator exits 20 (validator error — missing attributes)
 test_missing_attributes() {
@@ -404,6 +463,7 @@ main() {
 	test_agent_doc_premise_holds
 	test_function_complexity_falsified
 	test_function_complexity_holds
+	test_function_marker_markdown_uses_file_lines
 	test_missing_attributes
 
 	printf '\n%d test(s) run, %d failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
