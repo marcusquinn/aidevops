@@ -4419,3 +4419,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18051 feat(reach): add performance logging, feedback miner, and dry-run issue gener... #auto-dispatch #enhancement #feedback #framework #observability ref:GH#26169
 
 - [ ] t18052 feat(reach): add token/discovery efficiency, headed/headless/offload routing,... #auto-dispatch #automation #efficiency #enhancement #framework ref:GH#26170
+
+- [ ] t18053 fix: archive OpenCode isolated DB event rows #bug #database #opencode #performance ref:GH#26220
