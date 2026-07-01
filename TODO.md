@@ -4393,3 +4393,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18043 Simplify pulse-check queue scanner #enhancement ref:GH#26118 pr:#26120 completed:2026-07-01
 
 
+
+- [ ] t18046 Optimise OpenCode aidevops plugin startup latency #bug #opencode #performance #plugin ref:GH#26157
