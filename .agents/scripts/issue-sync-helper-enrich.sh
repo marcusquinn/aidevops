@@ -43,6 +43,83 @@ fi
 # Enrich Helpers
 # =============================================================================
 
+_enrich_print_gh_error() {
+	local context="$1" err_file="$2" status="${3:-}"
+	local detail=""
+	if [[ -n "$err_file" && -f "$err_file" ]]; then
+		detail=$(tr '\n' ' ' <"$err_file" | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//' | cut -c1-500)
+	fi
+	if [[ -n "$detail" ]]; then
+		print_error "${context} failed (rc=${status:-unknown}): ${detail}"
+	else
+		print_error "${context} failed (rc=${status:-unknown}); gh produced no stderr"
+	fi
+	return 0
+}
+
+_enrich_run_issue_edit_safe() {
+	local err_file="$1"
+	shift
+	if [[ -n "$err_file" ]]; then
+		gh_issue_edit_safe "$@" 2>"$err_file"
+		return $?
+	fi
+	gh_issue_edit_safe "$@" 2>/dev/null
+	return $?
+}
+
+_enrich_is_nonnegative_int() {
+	local value="$1"
+	[[ "$value" =~ ^[0-9]+$ ]]
+	return $?
+}
+
+_enrich_resolve_bounds() {
+	local target_task="$1"
+	ENRICH_MAX_ISSUES_RESOLVED="${AIDEVOPS_ENRICH_MAX_ISSUES:-${ENRICH_MAX_ISSUES:-0}}"
+	ENRICH_MAX_SECONDS_RESOLVED="${AIDEVOPS_ENRICH_MAX_SECONDS:-${ENRICH_MAX_SECONDS:-0}}"
+	if ! _enrich_is_nonnegative_int "$ENRICH_MAX_ISSUES_RESOLVED"; then
+		print_warning "Ignoring invalid enrich issue bound: $ENRICH_MAX_ISSUES_RESOLVED"
+		ENRICH_MAX_ISSUES_RESOLVED="0"
+	fi
+	if ! _enrich_is_nonnegative_int "$ENRICH_MAX_SECONDS_RESOLVED"; then
+		print_warning "Ignoring invalid enrich seconds bound: $ENRICH_MAX_SECONDS_RESOLVED"
+		ENRICH_MAX_SECONDS_RESOLVED="0"
+	fi
+	if [[ -n "$target_task" ]]; then
+		ENRICH_MAX_ISSUES_RESOLVED="0"
+		ENRICH_MAX_SECONDS_RESOLVED="0"
+	fi
+	export ENRICH_MAX_ISSUES_RESOLVED ENRICH_MAX_SECONDS_RESOLVED
+	return 0
+}
+
+_enrich_log_bounds_if_active() {
+	local max_issues="$1" max_seconds="$2"
+	if [[ "$max_issues" -gt 0 || "$max_seconds" -gt 0 ]]; then
+		print_info "Bounded enrich active: max_issues=${max_issues}, max_seconds=${max_seconds}"
+	fi
+	return 0
+}
+
+_enrich_should_stop_for_bounds() {
+	local max_issues="$1" max_seconds="$2" processed="$3" total="$4" started_at="$5"
+	if [[ "$max_issues" -gt 0 && "$processed" -ge "$max_issues" ]]; then
+		print_warning "Stopping bounded enrich after ${processed} issue(s); ${total} were eligible"
+		return 0
+	fi
+	if [[ "$max_seconds" -gt 0 ]]; then
+		local now elapsed
+		now=$(date +%s)
+		elapsed=$((now - started_at))
+		if [[ "$elapsed" -ge "$max_seconds" ]]; then
+			print_warning "Stopping bounded enrich after ${elapsed}s and ${processed} issue(s); ${total} were eligible"
+			return 0
+		fi
+	fi
+	return 1
+}
+
 # _enrich_build_task_list: collect task IDs to enrich — single target or all
 # TODO tasks that already have a ref:GH# number. Outputs one task ID per line.
 _enrich_build_task_list() {
@@ -107,7 +184,18 @@ _enrich_apply_labels() {
 			for _lbl in $labels; do [[ -n "$_lbl" ]] && add_args+=("--add-label" "$_lbl"); done
 			IFS="$_saved_ifs_add"
 			if [[ ${#add_args[@]} -gt 0 ]]; then
-				gh issue edit "$num" --repo "$repo" "${add_args[@]}" 2>/dev/null || add_ok=false
+				local _labels_err _labels_rc=0
+				_labels_err=$(mktemp /tmp/enrich-labels-XXXXXX 2>/dev/null || echo "")
+				if [[ -n "$_labels_err" ]]; then
+					gh issue edit "$num" --repo "$repo" "${add_args[@]}" 2>"$_labels_err" || _labels_rc=$?
+					if [[ $_labels_rc -ne 0 ]]; then
+						add_ok=false
+						_enrich_print_gh_error "Failed to add labels on #$num" "$_labels_err" "$_labels_rc"
+					fi
+					rm -f "$_labels_err" 2>/dev/null || true
+				else
+					gh issue edit "$num" --repo "$repo" "${add_args[@]}" 2>/dev/null || add_ok=false
+				fi
 			fi
 		fi
 	fi
@@ -201,10 +289,15 @@ _enrich_update_issue() {
 	fi
 
 	if [[ "$do_body_update" == "true" ]]; then
-		if gh_issue_edit_safe "$num" --repo "$repo" --title "$title" --body "$body" 2>/dev/null; then
+		local _body_err _body_rc=0
+		_body_err=$(mktemp /tmp/enrich-body-XXXXXX 2>/dev/null || echo "")
+		_enrich_run_issue_edit_safe "$_body_err" "$num" --repo "$repo" --title "$title" --body "$body" || _body_rc=$?
+		if [[ $_body_rc -eq 0 ]]; then
+			[[ -n "$_body_err" ]] && rm -f "$_body_err" 2>/dev/null || true
 			return 0
 		fi
-		print_error "Failed to enrich body on #$num ($task_id)"
+		_enrich_print_gh_error "Failed to enrich body on #$num ($task_id)" "$_body_err" "$_body_rc"
+		[[ -n "$_body_err" ]] && rm -f "$_body_err" 2>/dev/null || true
 		return 1
 	fi
 	# t2165: when the title also already matches, skip the title-only API
@@ -216,10 +309,15 @@ _enrich_update_issue() {
 		return 0
 	fi
 	# Still update title even when body is preserved/skipped (GH#18411).
-	if gh_issue_edit_safe "$num" --repo "$repo" --title "$title" 2>/dev/null; then
+	local _title_err _title_rc=0
+	_title_err=$(mktemp /tmp/enrich-title-XXXXXX 2>/dev/null || echo "")
+	_enrich_run_issue_edit_safe "$_title_err" "$num" --repo "$repo" --title "$title" || _title_rc=$?
+	if [[ $_title_rc -eq 0 ]]; then
+		[[ -n "$_title_err" ]] && rm -f "$_title_err" 2>/dev/null || true
 		return 0
 	fi
-	print_error "Failed to enrich title on #$num ($task_id)"
+	_enrich_print_gh_error "Failed to enrich title on #$num ($task_id)" "$_title_err" "$_title_rc"
+	[[ -n "$_title_err" ]] && rm -f "$_title_err" 2>/dev/null || true
 	return 1
 }
 
@@ -333,6 +431,10 @@ cmd_enrich() {
 	}
 	print_info "Enriching ${#tasks[@]} issue(s) in $repo"
 
+	_enrich_resolve_bounds "$target_task"
+	local max_issues="$ENRICH_MAX_ISSUES_RESOLVED" max_seconds="$ENRICH_MAX_SECONDS_RESOLVED"
+	_enrich_log_bounds_if_active "$max_issues" "$max_seconds"
+
 	# GH#20129 Approach B: rate-limit probe — skip the entire enrich step if the
 	# GraphQL bucket is below threshold (default 250). Avoids 162 GUARD_UNCERTAIN
 	# warnings when the rate limit was exhausted before the loop started.
@@ -356,12 +458,19 @@ cmd_enrich() {
 	fi
 
 	local enriched=0
+	local processed=0
+	local started_at
+	started_at=$(date +%s)
 	for task_id in "${tasks[@]}"; do
+		if _enrich_should_stop_for_bounds "$max_issues" "$max_seconds" "$processed" "${#tasks[@]}" "$started_at"; then
+			break
+		fi
 		local result
 		result=$(_enrich_process_task "$task_id" "$repo" "$todo_file" "$project_root")
+		processed=$((processed + 1))
 		[[ "$result" == *"ENRICHED"* ]] && enriched=$((enriched + 1))
 	done
-	print_info "Enrich complete: $enriched updated"
+	print_info "Enrich complete: $enriched updated (${processed}/${#tasks[@]} processed)"
 
 	# Clean up prefetch temp file
 	if [[ "$_prefetch_ok" == "true" && -n "${ENRICH_PREFETCH_FILE:-}" && -f "$ENRICH_PREFETCH_FILE" ]]; then
