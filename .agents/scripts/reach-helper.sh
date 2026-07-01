@@ -1644,30 +1644,29 @@ PY
 	return $?
 }
 
-handle_capture() {
-	local input_ref=""
-	local dest="inbox"
-	local method="$REACH_VAL_AUTO"
-	local format="json"
-
+capture_parse_args() {
+	REACH_CAPTURE_INPUT_REF=""
+	REACH_CAPTURE_DEST="inbox"
+	REACH_CAPTURE_METHOD="$REACH_VAL_AUTO"
+	REACH_CAPTURE_FORMAT="json"
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
 		case "$arg" in
 			--input)
 				shift
-				input_ref="${1:-}"
+				REACH_CAPTURE_INPUT_REF="${1:-}"
 				;;
 			--dest)
 				shift
-				dest="${1:-}"
+				REACH_CAPTURE_DEST="${1:-}"
 				;;
 			--method)
 				shift
-				method="${1:-}"
+				REACH_CAPTURE_METHOD="${1:-}"
 				;;
 			--format)
 				shift
-				format="${1:-}"
+				REACH_CAPTURE_FORMAT="${1:-}"
 				;;
 			*)
 				log_error "Unknown capture option: $arg"
@@ -1676,7 +1675,14 @@ handle_capture() {
 		esac
 		shift || true
 	done
+	return 0
+}
 
+capture_validate_request() {
+	local input_ref="$1"
+	local dest="$2"
+	local method="$3"
+	local format="$4"
 	require_json_format "$format" || return 1
 	if [[ -z "$input_ref" ]]; then
 		log_error "capture requires --input"
@@ -1701,14 +1707,66 @@ handle_capture() {
 		log_error "capture --method file requires a local file input"
 		return 1
 	fi
+	return 0
+}
 
+capture_resolve_method() {
+	local input_ref="$1"
+	local method="$2"
+	if [[ "$method" == "$REACH_VAL_AUTO" ]]; then
+		if [[ -f "$input_ref" ]]; then
+			method="$REACH_VAL_FILE"
+		else
+			method="$REACH_VAL_FETCH"
+		fi
+	fi
+	printf '%s' "$method"
+	return 0
+}
+
+capture_base_dir() {
+	local dest="$1"
+	if [[ "$dest" == "knowledge-inbox" ]]; then
+		printf '%s' '_knowledge/inbox/web'
+		return 0
+	fi
+	printf '%s' '_inbox/web'
+	return 0
+}
+
+capture_sub_folder() {
+	local dest="$1"
+	if [[ "$dest" == "knowledge-inbox" ]]; then
+		printf '%s' 'knowledge-inbox'
+		return 0
+	fi
+	printf '%s' 'web'
+	return 0
+}
+
+capture_materialize_artifact() {
+	local input_ref="$1"
+	local method="$2"
+	local artifact_path="$3"
+	if [[ "$method" == "$REACH_VAL_FILE" ]]; then
+		capture_copy_file "$input_ref" "$artifact_path" || return 1
+	else
+		capture_fetch_url "$input_ref" "$artifact_path" || return 1
+	fi
+	return 0
+}
+
+capture_execute() {
+	local input_ref="$1"
+	local dest="$2"
+	local method="$3"
 	local epoch_value=""
 	local captured_at=""
 	local stamp=""
 	local slug=""
 	local extension=""
 	local base_dir=""
-	local sub_folder="web"
+	local sub_folder=""
 	local artifact_path=""
 	local meta_path=""
 	local artifact_rel=""
@@ -1724,20 +1782,12 @@ handle_capture() {
 	stamp="$(epoch_to_stamp "$epoch_value")"
 	slug="$(capture_slug "$input_ref" "$method")"
 	extension="$(capture_extension_for_input "$input_ref")"
-	if [[ "$dest" == "knowledge-inbox" ]]; then
-		base_dir="_knowledge/inbox/web"
-		sub_folder="knowledge-inbox"
-	else
-		base_dir="_inbox/web"
-	fi
+	base_dir="$(capture_base_dir "$dest")"
+	sub_folder="$(capture_sub_folder "$dest")"
 	mkdir -p "$base_dir" "_inbox"
 	artifact_path="${base_dir}/${slug}_${stamp}.${extension}"
 	meta_path="${base_dir}/${slug}_${stamp}.meta.json"
-	if [[ "$method" == "$REACH_VAL_FILE" ]]; then
-		capture_copy_file "$input_ref" "$artifact_path" || return 1
-	else
-		capture_fetch_url "$input_ref" "$artifact_path" || return 1
-	fi
+	capture_materialize_artifact "$input_ref" "$method" "$artifact_path" || return 1
 	artifact_rel="$(relative_path "$artifact_path")"
 	meta_rel="$(relative_path "$meta_path")"
 	route_json="$(capture_route_json "$input_ref" "$method")"
@@ -1761,6 +1811,14 @@ handle_capture() {
 		"$(json_escape "$REACH_KEY_TRUST")" \
 		"$(json_escape "$REACH_VAL_UNVERIFIED")"
 	return 0
+}
+
+handle_capture() {
+	capture_parse_args "$@" || return 1
+	capture_validate_request "$REACH_CAPTURE_INPUT_REF" "$REACH_CAPTURE_DEST" "$REACH_CAPTURE_METHOD" "$REACH_CAPTURE_FORMAT" || return 1
+	REACH_CAPTURE_METHOD="$(capture_resolve_method "$REACH_CAPTURE_INPUT_REF" "$REACH_CAPTURE_METHOD")"
+	capture_execute "$REACH_CAPTURE_INPUT_REF" "$REACH_CAPTURE_DEST" "$REACH_CAPTURE_METHOD"
+	return $?
 }
 
 main() {
