@@ -285,8 +285,7 @@ test_should_predicates() {
 test_pr_merged_at_prefers_wrapper() {
 	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
 	local helper_defs
-	helper_defs=$(sed -n '/^_pir_pr_merged_at()/,/^_should_ciw()/p' "${actions_sh}" | \
-		grep -v '^_should_ciw()' || true)
+	helper_defs=$(sed -n '/^_pir_pr_merged_at()/,/^}/p' "${actions_sh}")
 
 	local result
 	result=$(bash -c "
