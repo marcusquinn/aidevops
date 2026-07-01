@@ -164,6 +164,7 @@ A dispatch comment that says "implement issue #42" teaches nothing. One that say
 - **Routing**: See `brief/routing.md` for when to use this agent (work item creation, comments, PR descriptions)
 - **Headless resilience**: Anticipate empty results, wrong paths, ambiguous states in headless briefs. Every step should answer "what if this returns nothing?" Details: `brief/tier-standard.md`
 - **Progressive context**: For tasks with 3+ workflow/reference docs or >2,000 reference lines, include `### Progressive Context Plan` from `templates/brief-template.md` so workers know what to load, when, why, and when to stop.
+- **UI/UX briefs**: Include repo `DESIGN.md` status/path, the relevant rule or canonical example, similar-but-different alternatives considered, and a responsive/accessibility verification plan. Point to `tools/design/design-md.md` and `workflows/ui-verification.md`; do not inline a full design template.
 - **Tier-specific formats**:
   - `tier:simple` → `brief/tier-simple.md` (prescriptive, exact code blocks)
   - `tier:standard` → `brief/tier-standard.md` (skeletons, judgment required)

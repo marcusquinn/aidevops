@@ -232,7 +232,15 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
       keep the startup file to a short rule/pointer, move long rationale/examples to
       a reference or workflow doc, and verify `.agents/AGENTS.md` stays under the
       agents-md-size-check CI ratchet unless the PR explicitly justifies a baseline
-      bump. -->
+      bump.
+
+      UI/UX CONTEXT PROMPT:
+      For layout, styling, component, or UX tasks, add compact design context where
+      it helps the worker choose the right pattern: repo `DESIGN.md` status/path;
+      relevant rule or canonical example; similar-but-different alternatives that
+      were considered and why they do/do not apply; and responsive/accessibility
+      evidence expected. Reference `tools/design/design-md.md` and
+      `workflows/ui-verification.md` instead of expanding a mandatory design essay. -->
 
 ### Progressive Context Plan
 
@@ -247,6 +255,7 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
 - **Load only if:** `{path or doc}` — {trigger condition; e.g., conflict, CI failure, shell complexity gate}
 - **Why:** {the implementation choice or safety constraint this context informs}
 - **Stop when:** {evidence gathered; e.g., target function, reference pattern, constraints, and verification command are clear}
+- **For UI/UX tasks:** {DESIGN.md path/status, rule/example to follow, close alternatives to avoid, and responsive/accessibility evidence needed}
 
 ### Worker Quick-Start
 
@@ -344,11 +353,16 @@ from `_parse_phases_section` — then add new logic to the slimmed parent functi
      critical tested path. Advisory failures should become follow-up issues with
      evidence, not hidden blockers. See `.agents/reference/ci-gate-policy.md`.
 
-     Generated-type lint trap: when changed files depend on generated Content
-     Collections or route/content types, include the CI changed-file lint path
-     when available: `node .github/scripts/lint-changed-files.mjs --base-ref <base>`.
-     Prefer runtime validation, local schemas, or typed wrappers that lint before
-     generation; avoid unused blanket eslint disables. -->
+      Generated-type lint trap: when changed files depend on generated Content
+      Collections or route/content types, include the CI changed-file lint path
+      when available: `node .github/scripts/lint-changed-files.mjs --base-ref <base>`.
+      Prefer runtime validation, local schemas, or typed wrappers that lint before
+      generation; avoid unused blanket eslint disables.
+
+      UI/UX verification prompt: for layout-affecting changes, require evidence at
+      mobile/tablet/desktop widths when practical, name accessibility checks, and
+      state whether repo DESIGN.md was checked, updated, or intentionally left for
+      a follow-up. -->
 
 ```bash
 {Command(s) to confirm the implementation works — e.g., shellcheck, grep, test run}
@@ -429,6 +443,7 @@ that defines how to machine-check the criterion. See `.agents/scripts/verify-bri
 
 - [ ] Tests pass (`npm test` / `bun test` / project-specific)
 - [ ] Lint clean (`eslint` / `shellcheck` / project-specific; React/TypeScript ESLint warnings such as `react-hooks/exhaustive-deps` count as actionable even when lint exits `0`)
+- [ ] UI changes cite the checked/updated DESIGN.md source or a follow-up issue; layout changes include mobile/tablet/desktop responsive evidence and named accessibility checks.
 - [ ] Qlty smells resolved (for `#simplification` tasks): `~/.qlty/bin/qlty smells --all 2>&1 | grep '<target_file>' | grep -c . | grep -q '^0$'`
 
   ```yaml
