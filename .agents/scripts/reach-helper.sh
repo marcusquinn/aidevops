@@ -1540,7 +1540,18 @@ capture_route_backend() {
 	local route_json="$1"
 	local backend_value="$REACH_VAL_FETCH"
 	if command_available python3; then
-		backend_value="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read()).get(sys.argv[1], sys.argv[2]))' "$REACH_KEY_BACKEND" "$REACH_VAL_FETCH" <<<"$route_json")"
+		backend_value="$(python3 - "$REACH_KEY_BACKEND" "$REACH_VAL_FETCH" "$route_json" <<'PY'
+import json
+import sys
+
+backend_key, default_backend, route_json = sys.argv[1:]
+try:
+    route_decision = json.loads(route_json)
+except Exception:
+    route_decision = {}
+print(route_decision.get(backend_key, default_backend))
+PY
+)"
 	fi
 	printf '%s' "$backend_value"
 	return 0
@@ -1603,7 +1614,7 @@ metadata = {
     "artifact_paths": [artifact_rel, meta_rel],
     "review_required": True,
 }
-with open(meta_path, "w") as handle:
+with open(meta_path, "w", encoding="utf-8") as handle:
     json.dump(metadata, handle, indent=2, sort_keys=True)
     handle.write("\n")
 PY
@@ -1638,7 +1649,7 @@ entry = {
     sensitivity_key: unverified_value,
     trust_key: unverified_value,
 }
-with open(triage_path, "a") as handle:
+with open(triage_path, "a", encoding="utf-8") as handle:
     handle.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
 PY
 	return $?
@@ -1751,7 +1762,10 @@ capture_materialize_artifact() {
 	if [[ "$method" == "$REACH_VAL_FILE" ]]; then
 		capture_copy_file "$input_ref" "$artifact_path" || return 1
 	else
-		capture_fetch_url "$input_ref" "$artifact_path" || return 1
+		if ! capture_fetch_url "$input_ref" "$artifact_path"; then
+			rm -f "$artifact_path"
+			return 1
+		fi
 	fi
 	return 0
 }
