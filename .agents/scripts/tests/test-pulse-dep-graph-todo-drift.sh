@@ -34,13 +34,14 @@ EOF
 
 issue_body="**Blocked by:** \`t18005\`"
 if PULSE_DEP_GRAPH_REPO_PATH="$repo_path" is_blocked_by_unresolved "$issue_body" 'owner/repo' '25543'; then
-	if grep -q 'blocked-by-todo-drift t18005' "$LOGFILE"; then
-		printf 'PASS todo drift blocks dispatch\n'
-		exit 0
-	fi
-	printf 'FAIL dispatch blocked but drift log missing\n' >&2
+	printf 'FAIL closed GitHub blocker with incomplete TODO still blocked dispatch\n' >&2
 	exit 1
 fi
 
-printf 'FAIL closed GitHub blocker with incomplete TODO did not block dispatch\n' >&2
+if grep -q 'stale-todo-after-closed-blocker t18005' "$LOGFILE"; then
+	printf 'PASS closed GitHub blocker overrides stale TODO drift\n'
+	exit 0
+fi
+
+printf 'FAIL stale TODO drift was not logged\n' >&2
 exit 1

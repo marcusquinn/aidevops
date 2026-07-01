@@ -48,6 +48,21 @@ fi
 # Ref Management — TODO.md ref:GH# and pr:# fields
 # =============================================================================
 
+_todo_task_line_num() {
+	local task_id="$1"
+	local todo_file="$2"
+	local task_id_ere
+	task_id_ere=$(_escape_ere "$task_id")
+
+	awk -v pat="^[[:space:]]*- \\\\[.\\\\] ${task_id_ere} " '
+		/^[[:space:]]*```/ {f=!f; next}
+		/<!--[[:space:]]*/ {h=1}
+		h && /-->/ {h=0; next}
+		!f && !h && $0 ~ pat {print NR; exit}
+	' "$todo_file"
+	return 0
+}
+
 # Fix a mismatched ref:GH# in TODO.md (t179.1).
 # Replaces old_number with new_number for the given task.
 # Arguments:
@@ -71,15 +86,16 @@ fix_gh_ref_in_todo() {
 	# rather than a single literal `[`, causing the match to silently miss. The
 	# `\\[` / `\\]` form is correct on both BSD awk and gawk: awk's dynamic regex
 	# compiler reads `\\` as `\` and `\[` as literal `[`.
-	local task_id_ere
-	task_id_ere=$(_escape_ere "$task_id")
 	local line_num
-	line_num=$(awk -v pat="^[[:space:]]*- \\\\[.\\\\] ${task_id_ere} .*ref:GH#${old_number}" \
-		'/^[[:space:]]*```/{f=!f; next} !f && $0 ~ pat {print NR; exit}' "$todo_file")
+	line_num=$(_todo_task_line_num "$task_id" "$todo_file")
 	[[ -z "$line_num" ]] && {
-		log_verbose "$task_id with ref:GH#$old_number not found outside code fences"
+		log_verbose "$task_id not found outside code fences/comments"
 		return 0
 	}
+	if ! sed -n "${line_num}p" "$todo_file" | grep -qE "ref:GH#${old_number}([[:space:]]|$)"; then
+		log_verbose "$task_id with ref:GH#$old_number not found on real task line"
+		return 0
+	fi
 	sed_inplace "${line_num}s|ref:GH#${old_number}|ref:GH#${new_number}|" "$todo_file"
 	log_verbose "Fixed ref:GH#$old_number -> ref:GH#$new_number for $task_id"
 	return 0
@@ -95,36 +111,27 @@ add_gh_ref_to_todo() {
 	local task_id="$1"
 	local issue_number="$2"
 	local todo_file="$3"
-	local task_id_ere
-	task_id_ere=$(_escape_ere "$task_id")
-
-	# Check if ref already exists outside code fences
-	if strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${task_id_ere} .*ref:GH#${issue_number}"; then
-		return 0
-	fi
-
-	# Check if any GH ref exists outside code fences (might be different number)
-	if strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${task_id_ere} .*ref:GH#"; then
-		log_verbose "$task_id already has a GH ref, skipping"
-		return 0
-	fi
-
-	# Find the line number of the task OUTSIDE code fences, then apply sed to that specific line.
-	# This prevents modifying format examples inside code-fenced blocks.
-	# NOTE: double-backslash escapes in the dynamic `pat` string — required for
-	# BSD awk dynamic-regex semantics (t1983). See _fix_gh_ref_in_todo for
-	# the detailed explanation.
 	local line_num
-	line_num=$(awk -v pat="^[[:space:]]*- \\\\[.\\\\] ${task_id_ere} " \
-		'/^[[:space:]]*```/{f=!f; next} !f && $0 ~ pat {print NR; exit}' "$todo_file")
+	line_num=$(_todo_task_line_num "$task_id" "$todo_file")
 	[[ -z "$line_num" ]] && {
-		log_verbose "$task_id not found outside code fences"
+		log_verbose "$task_id not found outside code fences/comments"
 		return 0
 	}
 
 	# Read the target line and insert ref
 	local target_line
 	target_line=$(sed -n "${line_num}p" "$todo_file")
+	# Check if ref already exists on the real task line.
+	if printf '%s\n' "$target_line" | grep -qE "ref:GH#${issue_number}([[:space:]]|$)"; then
+		return 0
+	fi
+
+	# Check if any GH ref exists on the real task line (might be different number).
+	if printf '%s\n' "$target_line" | grep -qE 'ref:GH#[0-9]+'; then
+		log_verbose "$task_id already has a GH ref, skipping"
+		return 0
+	fi
+
 	local new_line
 	if echo "$target_line" | grep -qE 'logged:'; then
 		new_line=$(echo "$target_line" | sed -E "s/( logged:)/ ref:GH#${issue_number}\1/")
@@ -238,6 +245,7 @@ resolve_gh_node_id() {
 	local name="${repo##*/}"
 
 	local node_id
+	# shellcheck disable=SC2016  # GraphQL variables are expanded by GitHub, not shell.
 	node_id=$(gh api graphql \
 		-f query='query($owner:String!,$name:String!,$num:Int!){repository(owner:$owner,name:$name){issue(number:$num){id}}}' \
 		-f owner="$owner" -f name="$name" -F num="$issue_number" \

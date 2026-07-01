@@ -189,6 +189,24 @@ _closed_issue_worker_complete_date() {
 	return 0
 }
 
+_closed_issue_aidevops_complete_date() {
+	local repo="$1" issue_number="$2"
+	local issue_json="" state_reason="" closed_at="" evidence=""
+
+	issue_json=$(gh issue view "$issue_number" --repo "$repo" \
+		--json state,stateReason,closedAt,body,comments 2>/dev/null) || return 1
+	state_reason=$(printf '%s' "$issue_json" | jq -r '.stateReason // ""' 2>/dev/null) || state_reason=""
+	closed_at=$(printf '%s' "$issue_json" | jq -r '.closedAt // ""' 2>/dev/null) || closed_at=""
+	evidence=$(printf '%s' "$issue_json" | jq -r '[.body // "", (.comments[]?.body // "")] | join("\n---\n")' 2>/dev/null) || evidence=""
+
+	[[ "$state_reason" == "COMPLETED" ]] || return 1
+	if printf '%s' "$evidence" | grep -qE 'aidevops:sig|CLAIM_RELEASED reason=worker_complete|Task t[0-9]+(\.[0-9]+)* done in TODO\.md|Completed via (\[)?PR #[0-9]+'; then
+		printf '%s\n' "${closed_at%%T*}"
+		return 0
+	fi
+	return 1
+}
+
 _do_close() {
 	local task_id="$1" issue_number="$2" todo_file="$3" repo="$4"
 	local task_id_ere
@@ -411,6 +429,19 @@ cmd_reopen() {
 			else
 				_mark_todo_done "$tid" "$todo_file" "verified:${worker_completed_date}"
 				log_verbose "#$ref_num ($tid) has worker_complete evidence — marked TODO [x]"
+			fi
+			has_pr=$((has_pr + 1))
+			continue
+		fi
+
+		local aidevops_completed_date
+		aidevops_completed_date=$(_closed_issue_aidevops_complete_date "$repo" "$ref_num" || true)
+		if [[ -n "$aidevops_completed_date" ]]; then
+			if [[ "$DRY_RUN" == "true" ]]; then
+				print_info "[DRY-RUN] Would mark $tid [x] (aidevops close evidence on #$ref_num)"
+			else
+				_mark_todo_done "$tid" "$todo_file" "verified:${aidevops_completed_date}"
+				log_verbose "#$ref_num ($tid) has aidevops close evidence — marked TODO [x]"
 			fi
 			has_pr=$((has_pr + 1))
 			continue
