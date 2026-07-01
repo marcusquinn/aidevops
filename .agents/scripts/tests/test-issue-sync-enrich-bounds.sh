@@ -125,11 +125,49 @@ test_invalid_bounds_are_ignored() {
 	return 0
 }
 
+test_bounds_helpers_tolerate_missing_values() {
+	local output
+	output=$(_enrich_log_bounds_if_active 2>&1)
+	if _enrich_should_stop_for_bounds 2>/dev/null; then
+		printf '%s\n' "$output"
+		print_result "bounds helpers default missing values safely" 1
+		return 0
+	fi
+	if [[ -z "$output" ]]; then
+		print_result "bounds helpers default missing values safely" 0
+	else
+		printf '%s\n' "$output"
+		print_result "bounds helpers default missing values safely" 1
+	fi
+	return 0
+}
+
+test_elapsed_bound_tolerates_date_failure() {
+	date() {
+		return 1
+	}
+	local output
+	set +e
+	output=$(_enrich_should_stop_for_bounds 0 1 0 1 "" 2>&1)
+	local status=$?
+	set -e
+	unset -f date
+	if [[ "$status" -eq 1 && -z "$output" ]]; then
+		print_result "elapsed bound uses safe date and started_at defaults" 0
+	else
+		printf '%s\n' "$output"
+		print_result "elapsed bound uses safe date and started_at defaults" 1
+	fi
+	return 0
+}
+
 main() {
 	test_workflow_push_sets_bounded_enrich
 	test_max_issues_bounds_enrich_loop
 	test_target_task_ignores_routine_bounds
 	test_invalid_bounds_are_ignored
+	test_bounds_helpers_tolerate_missing_values
+	test_elapsed_bound_tolerates_date_failure
 	printf 'Tests run: %s\n' "$TESTS_RUN"
 	printf 'Tests failed: %s\n' "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
