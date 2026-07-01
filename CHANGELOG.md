@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.5] - 2026-07-01
+
+### Fixed
+
+- avoid self-comparison smell checks (#26141)
+- avoid self-comparison smell checks (#26137)
+
 ## [3.31.4] - 2026-07-01
 
 ### Changed
