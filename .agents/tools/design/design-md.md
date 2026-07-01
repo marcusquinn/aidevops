@@ -71,7 +71,7 @@ Upstream `@google/design.md` v0.2.0 and follow-up commit `18508f2` were reviewed
 - Read the repo-root `DESIGN.md` before UI/UX implementation when present; apply its cross-cutting rules and canonical examples before inventing new patterns.
 - When implementation reveals a durable repo-specific preference, update `DESIGN.md` in the same PR with a short rationale and concrete reference paths where known.
 - If the preference is uncertain, too broad, or outside the PR scope, create a worker-ready follow-up issue instead; if the learning is generic across repos, route it as an aidevops self-improvement issue with anonymised, repo-safe evidence.
-- Before standardising a close pattern, record the similar-but-different reasoning: which nearby patterns were considered, why the chosen pattern fits, and what differs.
+- Before standardising a closely related pattern, record the similar-but-different reasoning: which nearby patterns were considered, why the chosen pattern fits, and what differs.
 - If no repo convention exists for responsive behaviour, use responsive best-practice defaults or present explicit options; do not let desktop-only output silently become the standard.
 - Keep updates concise and durable: stable patterns only, no session transcripts, example-led guidance, and no rule expansion without evidence.
 
