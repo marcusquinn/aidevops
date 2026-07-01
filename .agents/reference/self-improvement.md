@@ -51,6 +51,7 @@ Treat valuable session learning as system input, not disposable transcript conte
 - **Apply now** when the lesson directly improves the user's requested aim without widening risk.
 - **Brief for workers** when the lesson exposes a fixable bug, missing validator, missing doc, recurring failure mode, or automation gap. Use worker-ready context: files, pattern, evidence, verification, and an explicit note when paths are unknown.
 - **Store memory/reference** when the lesson is reusable but not immediately dispatchable, especially diagnostics, edge cases, duplicate patterns, and "similar but different" hazards.
+- **Route design learning by scope:** durable repo-specific UI patterns belong in that repo's `DESIGN.md`; generic aidevops briefing/verification patterns become aidevops issues with anonymised evidence; uncertain or broad design lessons become worker-ready follow-ups instead of bloating global docs.
 - **Avoid speculative bloat:** capture observed examples and evidence; do not add global guidance for hypothetical failures.
 
 ### Similar-but-different hazards
