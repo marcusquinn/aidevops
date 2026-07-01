@@ -71,6 +71,9 @@ filtered=$(filter_signature_noise_lines $'gate / review-bot-gate\tUNKNOWN STEP\t
 signature=$(normalize_signature_line "$filtered")
 assert_equals "GH#26127 comment-only systemic signature normalizes empty" "no_error_signature_detected" "$signature"
 
+filtered=$(filter_signature_noise_lines $'2026-06-30T20:14:24.8559907Z \033[36;1m# rate-limit grace is disabled — they cannot merge on rate-limit-only.\033[0m\n2026-06-30T20:14:25.0000000Z ::error::No AI review bots have posted a real, settled review on this PR yet.')
+assert_equals "GH#26144 timestamp-prefixed shell comments are filtered" $'2026-06-30T20:14:25.0000000Z ::error::No AI review bots have posted a real, settled review on this PR yet.' "$filtered"
+
 printf '\nTests run: %s, failures: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -ne 0 ]]; then
 	exit 1
