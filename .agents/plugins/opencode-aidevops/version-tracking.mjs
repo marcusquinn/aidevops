@@ -4,7 +4,7 @@
 // ---------------------------------------------------------------------------
 
 import { readFileSync, existsSync } from "fs";
-import { execSync } from "child_process";
+import { execSync, execFile } from "child_process";
 import { join } from "path";
 
 /**
@@ -83,6 +83,24 @@ export function compareSemver(a, b) {
 }
 
 /**
+ * Build a version drift notice from tracked metadata and running version text.
+ * @param {{ tracked: string, repo: string }} meta
+ * @param {string} running
+ * @returns {string | null}
+ */
+function buildVersionDriftNotice(meta, running) {
+  const runningClean = String(running || "").replace(/^v/, "").trim();
+  if (!runningClean) return null;
+
+  const cmp = compareSemver(meta.tracked, runningClean);
+  if (cmp < 0) {
+    return `opencode ${runningClean} running, plugin tested against ${meta.tracked} — review ${meta.repo} changelog`;
+  }
+
+  return null;
+}
+
+/**
  * Check if the running opencode version is ahead of the tracked version.
  * Logs a notice if an update to the plugin's tracked_version is needed.
  * @param {string} pluginDir - Path to the plugin directory
@@ -93,15 +111,24 @@ export function checkOpenCodeVersionDrift(pluginDir) {
   if (!meta) return null;
 
   const running = run("opencode --version 2>/dev/null");
-  if (!running) return null;
+  return buildVersionDriftNotice(meta, running);
+}
 
-  // Strip any leading 'v' and whitespace
-  const runningClean = running.replace(/^v/, "").trim();
-  const cmp = compareSemver(meta.tracked, runningClean);
+/**
+ * Check the running opencode version without blocking the config hook.
+ * @param {string} pluginDir
+ * @param {(notice: string) => void} onNotice
+ * @returns {boolean} true when the async check was scheduled
+ */
+export function checkOpenCodeVersionDriftAsync(pluginDir, onNotice) {
+  const meta = getTrackedOpenCodeVersion(pluginDir);
+  if (!meta) return false;
 
-  if (cmp < 0) {
-    return `opencode ${runningClean} running, plugin tested against ${meta.tracked} — review ${meta.repo} changelog`;
-  }
+  execFile("opencode", ["--version"], { timeout: 5000 }, (err, stdout) => {
+    if (err) return;
+    const notice = buildVersionDriftNotice(meta, stdout);
+    if (notice) onNotice?.(notice);
+  });
 
-  return null;
+  return true;
 }

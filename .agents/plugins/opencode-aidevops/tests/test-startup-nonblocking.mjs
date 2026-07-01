@@ -56,6 +56,66 @@ test("config-hook.mjs skips optional provider discovery until proxy ports are ac
   );
 });
 
+test("config-hook.mjs does not run opencode --version synchronously during startup", () => {
+  const src = readFileSync(resolve(pluginDir, "config-hook.mjs"), "utf8");
+
+  assert.match(
+    src,
+    /checkOpenCodeVersionDriftAsync\(pluginDir/,
+    "Version drift checks should be scheduled asynchronously.",
+  );
+  assert.doesNotMatch(
+    src,
+    /checkOpenCodeVersionDrift\(pluginDir\)/,
+    "Config hook must not block startup on the opencode CLI version probe.",
+  );
+});
+
+test("mcp-registry.mjs resolves binaries without spawning which", () => {
+  const src = readFileSync(resolve(pluginDir, "mcp-registry.mjs"), "utf8");
+
+  assert.match(
+    src,
+    /function findExecutable\(name\)/,
+    "MCP registry should use an in-process PATH lookup.",
+  );
+  assert.doesNotMatch(
+    src,
+    /execSync|which /,
+    "MCP registration must not spawn `which` during the config hook.",
+  );
+});
+
+test("observability.mjs skips heavy cost backfill when no rows need migration", () => {
+  const src = readFileSync(resolve(pluginDir, "observability.mjs"), "utf8");
+
+  assert.match(
+    src,
+    /scheduleCostBackfill\(\);/,
+    "Historical cost backfills should be scheduled outside synchronous startup.",
+  );
+  assert.match(
+    src,
+    /function hasCostBackfillCandidates\(\)/,
+    "Observability should still probe before running the expensive backfill.",
+  );
+  assert.match(
+    src,
+    /COST_BACKFILL_MARKER/,
+    "Completed one-time backfills should be memoized outside the hot startup path.",
+  );
+  assert.match(
+    src,
+    /if \(!hasCostBackfillCandidates\(\)\) return;/,
+    "The expensive cost UPDATE must be skipped once the backfill is complete.",
+  );
+  assert.match(
+    src,
+    /_runDataMigrations\(\{ intentColumnReady: true \}\)/,
+    "Known-good schemas should skip redundant intent-column migration probes.",
+  );
+});
+
 test("initPoolAuth does not seed unsupported pending auth entries", async () => {
   const tempHome = mkdtempSync(resolve(tmpdir(), "aidevops-oauth-pool-"));
   const previousHome = process.env.HOME;
