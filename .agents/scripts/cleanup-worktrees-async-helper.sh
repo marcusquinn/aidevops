@@ -24,6 +24,7 @@
 #
 # Environment:
 #   CLEANUP_WORKTREES_ASYNC_CADENCE_MIN — min minutes between runs (default 10)
+#   DIRTY_WORKTREE_BACKUP_RETENTION_DAYS — stale dirty-backup retention (default 30)
 #
 # Observability (for pulse-diagnose-helper.sh):
 #   ~/.aidevops/logs/cleanup_worktrees.log      — progress log
@@ -176,6 +177,22 @@ _update_last_run() {
 	return 0
 }
 
+_prune_dirty_worktree_backups() {
+	local helper_path="${SCRIPT_DIR}/dirty-worktree-backup-helper.sh"
+	local retention_days="${DIRTY_WORKTREE_BACKUP_RETENTION_DAYS:-30}"
+
+	if [[ ! -x "$helper_path" ]]; then
+		echo "[cleanup-worktrees-async] dirty backup helper unavailable; skipping backup prune" >>"$LOGFILE"
+		return 0
+	fi
+
+	"$helper_path" prune --force --retention-days "$retention_days" >>"$LOGFILE" 2>&1 || {
+		echo "[cleanup-worktrees-async] dirty backup prune failed; continuing" >>"$LOGFILE"
+		return 0
+	}
+	return 0
+}
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -196,6 +213,7 @@ main() {
 
 	local rc=0
 	cleanup_worktrees || rc=$?
+	_prune_dirty_worktree_backups
 
 	if [[ "$rc" -eq 0 ]]; then
 		_update_last_run
