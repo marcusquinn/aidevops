@@ -12,7 +12,7 @@ WORKFLOW_FILE="${REPO_ROOT}/.github/workflows/issue-sync-reusable.yml"
 TESTS_RUN=0
 TESTS_FAILED=0
 TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+trap '[[ -z "${TMP:-}" ]] || rm -rf "$TMP"' EXIT
 
 print_result() {
 	local name="$1" passed="$2"
