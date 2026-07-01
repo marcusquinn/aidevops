@@ -27,7 +27,13 @@ tools:
 
 ## Workflow
 
-### 1. Screenshots + Error Check
+### 1. Responsive Decision Pass
+
+Before choosing layout behaviour, check the repo's `DESIGN.md` `Responsive Behaviour` section and nearby component examples. If conventions are clear, follow them. If absent or inconsistent, use responsive best practices by default; when multiple patterns are viable, report 2-3 options with trade-offs and choose the one that best fits the repo brand, theme, content density, and accessibility constraints.
+
+Record the decision before screenshots: breakpoints covered, navigation orientation, wrapping/overflow strategy, touch target expectations, readability/text scaling, theme variants, and reduced-motion handling where relevant. This is a decision pass, not a broad E2E mandate.
+
+### 2. Screenshots + Error Check
 
 > **NEVER `fullPage: true`** for AI vision review — exceeds 8000px, hard-crashes session. Viewport-sized only. See `reference/screenshot-limits.md` and AGENTS.md "Screenshot Size Limits".
 
@@ -36,8 +42,11 @@ Capture `before-` baseline before changes, `after-` after. **Responsive-critical
 ```typescript
 import { chromium, devices } from 'playwright';
 const standardDevices = [
+  { name: 'mobile-sm',  config: { viewport: { width: 320, height: 568 }, isMobile: true, hasTouch: true } },
   { name: 'mobile',     config: devices['iPhone 14'] },           // 390x844
+  { name: 'mobile-landscape', config: { viewport: { width: 844, height: 390 }, isMobile: true, hasTouch: true } },
   { name: 'tablet',     config: devices['iPad Pro 11'] },         // 834x1194
+  { name: 'tablet-landscape', config: { viewport: { width: 1194, height: 834 }, hasTouch: true } },
   { name: 'desktop',    config: { viewport: { width: 1280, height: 800 } } },
   { name: 'desktop-lg', config: { viewport: { width: 1920, height: 1080 } } },
 ];
@@ -60,9 +69,9 @@ await browser.close();
 
 **With Chrome DevTools MCP:** `captureConsole({logLevel:'error'})`, `analyzeCSSCoverage({reportUnused:true})`, `monitorNetwork({filters:[...]})`.
 
-**Check for**: JS errors, failed requests (404s, CORS), CSS warnings, mixed content, deprecation warnings, layout shift (CLS).
+**Check for**: JS errors, failed requests (404s, CORS), CSS warnings, mixed content, deprecation warnings, layout shift (CLS), horizontal overflow, unintended wrapping/truncation, navigation orientation changes, touch target size/spacing, text scaling/readability, light/dark theme regressions, and reduced-motion behaviour when animations are present.
 
-### 2. Accessibility Verification
+### 3. Accessibility Verification
 
 Not optional for UI changes.
 
@@ -83,11 +92,12 @@ Not optional for UI changes.
 
 **Dark mode / reduced motion:** Test `colorScheme: 'light'` and `'dark'` (screenshot each); test `reducedMotion: 'reduce'` (verify animations disabled).
 
-### 3. Report
+### 4. Report
 
 ```markdown
 ## UI Verification Report
-### Screenshots — mobile/tablet/desktop/desktop-lg: [before] [after] -- <what changed>
+### Screenshots — mobile-sm/mobile/mobile-landscape/tablet/tablet-landscape/desktop/desktop-lg: [before] [after] -- <what changed>
+### Responsive Behaviour — conventions checked, devices tested, key layout/navigation/wrapping decisions, follow-up issues
 ### Browser Errors — <none or list>
 ### Accessibility — contrast pass/fail, keyboard pass/fail, axe violations
 ### Issues Found — [device] <description> [S1/S2/S3]
@@ -97,7 +107,7 @@ Not optional for UI changes.
 
 ## Design Principles Checklist
 
-Quality gates — not suggestions. Check during step 3; report violations as `[S1/S2/S3] <principle> -- <description>`.
+Quality gates — not suggestions. Check during verification; report violations as `[S1/S2/S3] <principle> -- <description>`.
 
 ### Severity
 
@@ -129,6 +139,8 @@ Quality gates — not suggestions. Check during step 3; report violations as `[S
 | Similar elements (cards, buttons, icons) same size | Verify repeated elements uniform |
 | Brand logos have adequate clear space | Screenshot; verify breathing room |
 | Smooth adaptation across breakpoints; works for varying content lengths | Test short/long content |
+| Desktop-first layouts still work on narrow mobile, mobile landscape, tablet, desktop, and desktop-lg | Screenshot named breakpoints; inspect overflow and stacking |
+| If repo responsive conventions are unclear, document best-practice fallback or 2-3 options with trade-offs | Report Responsive Behaviour decision |
 
 ### Interaction and Accessibility
 
@@ -159,7 +171,7 @@ Evaluate against `seo/mom-test-ux.md` after technical checks: Clarity (goal clea
 
 ## Quick Verification (Minimal)
 
-For small CSS tweaks: screenshot at 3 sizes, console errors, contrast check, spot-check paragraph width/text size/touch targets. Full workflow for significant layout changes, new components, or responsive redesigns.
+For small CSS tweaks: screenshot at desktop plus at least one mobile viewport when layout, spacing, typography, wrapping, or navigation can change; check console errors, contrast, paragraph width/text size/touch targets, and overflow. Full workflow for significant layout changes, new components, or responsive redesigns.
 
 ## Build Workflow Integration
 
