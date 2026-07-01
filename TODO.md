@@ -4389,12 +4389,3 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 
 - [x] t18046 Optimise OpenCode aidevops plugin startup latency #bug #opencode #performance #plugin ref:GH#26157 pr:#26161 completed:2026-07-01
-
-
-
-
-
-- [ ] t18051 feat(reach): add performance logging, feedback miner, and dry-run issue gener... #auto-dispatch #enhancement #feedback #framework #observability ref:GH#26169
-
-- [ ] t18052 feat(reach): add token/discovery efficiency, headed/headless/offload routing,... #auto-dispatch #automation #efficiency #enhancement #framework ref:GH#26170
-
