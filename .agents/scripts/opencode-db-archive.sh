@@ -31,7 +31,13 @@ _oda_dir="${BASH_SOURCE[0]%/*}"
 # --- Configuration -----------------------------------------------------------
 
 readonly SCRIPT_NAME="opencode-db-archive"
-readonly DEFAULT_DATA_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/opencode"
+if [[ -n "${XDG_DATA_HOME:-}" ]]; then
+	readonly DEFAULT_DATA_DIR="${XDG_DATA_HOME}/opencode"
+elif [[ -n "${HOME:-}" ]]; then
+	readonly DEFAULT_DATA_DIR="${HOME}/.local/share/opencode"
+else
+	readonly DEFAULT_DATA_DIR="opencode"
+fi
 readonly DEFAULT_DB="${DEFAULT_DATA_DIR}/opencode.db"
 readonly DEFAULT_RETENTION_DAYS=30
 readonly DEFAULT_BATCH_SIZE=500
@@ -332,7 +338,16 @@ _sqlite_has_table() {
 
 _archive_event_count_sql() {
 	local candidate_filter="$1"
-	if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
+	local has_event_table="${2:-}"
+	if (($# < 2)); then
+		if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
+			has_event_table=1
+		else
+			has_event_table=0
+		fi
+	fi
+
+	if ((has_event_table)); then
 		printf 'SELECT COUNT(*) FROM event WHERE aggregate_id IN (SELECT id FROM session WHERE %s);\n' "$candidate_filter"
 	else
 		printf 'SELECT 0;\n'
@@ -342,7 +357,16 @@ _archive_event_count_sql() {
 
 _archive_event_bytes_sql() {
 	local candidate_filter="$1"
-	if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
+	local has_event_table="${2:-}"
+	if (($# < 2)); then
+		if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
+			has_event_table=1
+		else
+			has_event_table=0
+		fi
+	fi
+
+	if ((has_event_table)); then
 		printf 'SELECT COALESCE(SUM(LENGTH(data)), 0) FROM event WHERE aggregate_id IN (SELECT id FROM session WHERE %s);\n' "$candidate_filter"
 	else
 		printf 'SELECT 0;\n'
@@ -564,12 +588,16 @@ cmd_archive() {
 	if ((dry_run)); then
 		# Show what would be archived
 		local msg_count part_count todo_count share_count event_count event_bytes
+		local has_event_table=0
+		if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
+			has_event_table=1
+		fi
 		msg_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM message WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
 		part_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM part WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
 		todo_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM todo WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
 		share_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session_share WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
-		event_count=$(sqlite3 "$ACTIVE_DB" "$(_archive_event_count_sql "$candidate_filter")")
-		event_bytes=$(sqlite3 "$ACTIVE_DB" "$(_archive_event_bytes_sql "$candidate_filter")")
+		event_count=$(sqlite3 "$ACTIVE_DB" "$(_archive_event_count_sql "$candidate_filter" "$has_event_table")")
+		event_bytes=$(sqlite3 "$ACTIVE_DB" "$(_archive_event_bytes_sql "$candidate_filter" "$has_event_table")")
 
 		echo ""
 		echo "=== DRY RUN — would archive: ==="

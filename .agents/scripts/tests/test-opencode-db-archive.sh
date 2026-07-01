@@ -437,6 +437,38 @@ else
 	_fail "OPENCODE_DB_PATH event archive mismatch: ${path_override_event_count}"
 fi
 
+home_unset_dir="${SANDBOX}/home-unset"
+mkdir -p "${home_unset_dir}/opencode"
+saved_active_db="$ACTIVE_DB"
+saved_archive_db="$ARCHIVE_DB"
+ACTIVE_DB="${home_unset_dir}/opencode/opencode.db"
+ARCHIVE_DB="${home_unset_dir}/opencode/opencode-archive.db"
+_make_active_db_with_session_path
+ACTIVE_DB="$saved_active_db"
+ARCHIVE_DB="$saved_archive_db"
+
+set +e
+out=$(env -u HOME XDG_DATA_HOME="$home_unset_dir" "$HELPER" archive --dry-run --retention-days 0 --max-duration-seconds 30 2>&1)
+rc=$?
+set -e
+
+if [[ "$rc" -eq 0 ]]; then
+	_pass "archive dry run is safe when HOME is unset and XDG_DATA_HOME is set"
+else
+	_fail "HOME-unset dry run failed with rc=$rc — output: $out"
+fi
+
+set +e
+out=$(env -u HOME -u XDG_DATA_HOME "$HELPER" stats 2>&1)
+rc=$?
+set -e
+
+if [[ "$rc" -ne 0 && "$out" == *"Active DB not found: opencode/opencode.db"* ]]; then
+	_pass "archive default path avoids root directory when HOME and XDG_DATA_HOME are unset"
+else
+	_fail "HOME/XDG unset default path mismatch with rc=$rc — output: $out"
+fi
+
 printf '\nResults: %d passed, %d failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then
 	exit 1
