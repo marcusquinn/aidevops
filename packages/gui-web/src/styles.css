@@ -1364,6 +1364,34 @@ code {
   min-width: 320px;
 }
 
+.signposts-tour {
+  min-width: min(360px, 88vw);
+}
+
+.signposts-heading,
+.signposts-actions {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.signposts-heading span {
+  background: var(--surface-muted);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 900;
+  padding: 4px 8px;
+}
+
+.signposts-tour code {
+  overflow-wrap: anywhere;
+}
+
+.tour-missing-target {
+  color: var(--notification-warning-fg) !important;
+}
+
 .notifications-menu-heading,
 .notification-preview {
   align-items: center;
