@@ -407,20 +407,21 @@ classify_failure() {
 		failure_class="auth_required"
 		next_action="stop and obtain explicit authorization or an approved reusable session"
 		requires_authorization="true"
-	elif [[ "$http_status" == "403" ]]; then
-		failure_class="scope_forbidden"
-		next_action="stop; do not fail over without new authorization for the protected scope"
-		requires_authorization="true"
 	elif [[ "$has_captcha" == "true" ]]; then
 		failure_class="captcha_required"
 		temporary="true"
 		next_action="pause for authorized CAPTCHA handling; do not bypass policy"
+		safe_to_failover="true"
 	elif [[ "$bot_block" == "true" || "$http_status" == "418" ]]; then
 		failure_class="bot_block"
 		temporary="true"
 		retry_after_seconds="300"
 		next_action="stop current identity and use only an authorized fresh profile or proxy"
 		safe_to_failover="true"
+	elif [[ "$http_status" == "403" ]]; then
+		failure_class="scope_forbidden"
+		next_action="stop; do not fail over without new authorization for the protected scope"
+		requires_authorization="true"
 	elif [[ "$http_status" == "407" || "$http_status" == "502" || "$http_status" == "503" ]]; then
 		failure_class="proxy_unhealthy"
 		temporary="true"

@@ -89,6 +89,7 @@ assert_contains "$timeout_output" '"safe_to_failover":true' "timeout can fail ov
 captcha_output="$(run_classifier --has-captcha true)"
 assert_contains "$captcha_output" '"failure_class":"captcha_required"' "CAPTCHA maps to captcha_required"
 assert_contains "$captcha_output" '"temporary":true' "CAPTCHA is temporary"
+assert_contains "$captcha_output" '"safe_to_failover":true' "CAPTCHA can use authorized failover"
 
 login_output="$(run_classifier --has-login-wall true)"
 assert_contains "$login_output" '"failure_class":"auth_required"' "login wall maps to auth_required"
