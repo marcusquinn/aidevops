@@ -38,6 +38,14 @@ _knowledge/          ← root (or ~/.aidevops/.agent-workspace/knowledge/)
 **Provision:** `aidevops knowledge init repo` or `aidevops knowledge init personal`.
 **Repair:** `aidevops knowledge provision` is idempotent — safe to re-run.
 
+Reach-captured web/app evidence enters knowledge only through `_knowledge/inbox/`
+or `_knowledge/staging/`. `reach capture --dest knowledge-inbox` writes raw
+artifacts under `_knowledge/inbox/web/` with `sensitivity:"unverified"`,
+`trust:"unverified"`, and `review_required:true`; promotion into `sources/` or
+`collections/` requires a separate review path. The capture command also appends
+an `_inbox/triage.log` audit row with `source:"reach-capture"` so provenance is
+visible before durable knowledge-plane ingestion.
+
 ## .gitignore Rules
 
 The provisioner writes two sets of `.gitignore` rules:
