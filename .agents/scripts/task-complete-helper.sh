@@ -68,6 +68,7 @@ SKIP_MERGE_CHECK=false
 
 # Valid testing levels (t1660.5)
 VALID_TESTING_LEVELS="runtime-verified self-assessed untested"
+TASK_COMPLETE_ID_BOUNDARY="([[:space:]]|$)"
 
 # Logging: uses shared log_* from shared-constants.sh
 
@@ -371,53 +372,53 @@ annotate_solved_label_for_pr() {
 	return 0
 }
 
-# Mark task complete in TODO.md
-complete_task() {
+_complete_task_require_open_task() {
 	local task_id="$1"
-	local proof_log="$2"
-	local repo_path="$3"
+	local todo_file="$2"
 
-	local todo_file="$repo_path/TODO.md"
-	if [[ ! -f "$todo_file" ]]; then
-		log_error "TODO.md not found at $todo_file"
-		return 1
+	if grep -qE "^[[:space:]]*- \[ \] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file"; then
+		return 0
 	fi
 
-	# Check if task exists and is open
-	if ! grep -qE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file"; then
-		if grep -qE "^[[:space:]]*- \[x\] ${task_id}( |$)" "$todo_file"; then
-			log_warn "Task $task_id is already marked complete"
-			return 0
-		else
-			log_error "Task $task_id not found in $todo_file"
-			return 1
-		fi
+	if grep -qE "^[[:space:]]*- \[x\] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file"; then
+		log_warn "Task $task_id is already marked complete"
+		return 2
 	fi
 
-	# t1003: Guard against marking parent tasks complete when subtasks are still open
-	# Check for explicit subtask IDs (e.g., t123.1, t123.2 are children of t123)
-	local explicit_subtasks
+	log_error "Task $task_id not found in $todo_file"
+	return 1
+}
+
+_complete_task_guard_explicit_subtasks() {
+	local task_id="$1"
+	local todo_file="$2"
+	local explicit_subtasks=""
+
 	explicit_subtasks=$(grep -E "^[[:space:]]*- \[ \] ${task_id}\.[0-9]+( |$)" "$todo_file" || true)
-
-	if [[ -n "$explicit_subtasks" ]]; then
-		local open_count
-		open_count=$(echo "$explicit_subtasks" | wc -l | tr -d ' ')
-		log_error "Task $task_id has $open_count open subtask(s) by ID — cannot mark complete"
-		log_error "  Complete all subtasks first: $(echo "$explicit_subtasks" | grep -oE "t[0-9]+\.[0-9]+" | tr '\n' ' ')"
-		return 1
+	if [[ -z "$explicit_subtasks" ]]; then
+		return 0
 	fi
 
-	# Check for indentation-based subtasks
-	local task_line
-	task_line=$(grep -E "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1)
-	local task_indent
-	task_indent=$(echo "$task_line" | sed -E 's/^([[:space:]]*).*/\1/' | wc -c)
+	local open_count=""
+	open_count=$(printf '%s\n' "$explicit_subtasks" | wc -l | tr -d ' ')
+	log_error "Task $task_id has $open_count open subtask(s) by ID — cannot mark complete"
+	log_error "  Complete all subtasks first: $(printf '%s\n' "$explicit_subtasks" | grep -oE "t[0-9]+\.[0-9]+" | tr '\n' ' ')"
+	return 1
+}
+
+_complete_task_guard_indented_subtasks() {
+	local task_id="$1"
+	local todo_file="$2"
+	local task_line=""
+	task_line=$(grep -E "^[[:space:]]*- \[ \] ${task_id}${TASK_COMPLETE_ID_BOUNDARY}" "$todo_file" | head -1)
+	local task_indent=""
+	task_indent=$(printf '%s\n' "$task_line" | sed -E 's/^([[:space:]]*).*/\1/' | wc -c)
 	task_indent=$((task_indent - 1)) # wc -c counts newline
 
-	local open_subtasks
-	open_subtasks=$(awk -v tid="$task_id" -v tindent="$task_indent" '
+	local open_subtasks=""
+	open_subtasks=$(awk -v tid="$task_id" -v boundary="$TASK_COMPLETE_ID_BOUNDARY" -v tindent="$task_indent" '
 		BEGIN { found=0 }
-		/- \[ \] '"$task_id"'( |$)/ { found=1; next }
+		$0 ~ ("^[[:space:]]*- \\[ \\] " tid boundary) { found=1; next }
 		found && /^[[:space:]]*- \[/ {
 			match($0, /^[[:space:]]*/);
 			line_indent = RLENGTH;
@@ -429,52 +430,53 @@ complete_task() {
 		found && !/^[[:space:]]*- / && !/^[[:space:]]*$/ { found=0 }
 	' "$todo_file")
 
-	if [[ -n "$open_subtasks" ]]; then
-		local open_count
-		open_count=$(echo "$open_subtasks" | wc -l | tr -d ' ')
-		log_error "Task $task_id has $open_count open subtask(s) by indentation — cannot mark complete"
-		log_error "  Complete all indented subtasks first"
-		return 1
+	if [[ -z "$open_subtasks" ]]; then
+		return 0
 	fi
 
-	local today
-	today=$(date +%Y-%m-%d)
+	local open_count=""
+	open_count=$(printf '%s\n' "$open_subtasks" | wc -l | tr -d ' ')
+	log_error "Task $task_id has $open_count open subtask(s) by indentation — cannot mark complete"
+	log_error "  Complete all indented subtasks first"
+	return 1
+}
 
-	# Ensure a completion section exists (accept multiple heading variants)
-	# Supported: ## Done, ## Completed, ## Complete, ## Finished (case-insensitive)
-	local done_heading=""
+_complete_task_set_done_heading() {
+	local todo_file="$1"
+
 	if grep -qi "^## Done$" "$todo_file"; then
-		done_heading="## Done"
+		COMPLETE_TASK_DONE_HEADING="## Done"
 	elif grep -qi "^## Completed$" "$todo_file"; then
-		done_heading="## Completed"
 		log_warn "Using '## Completed' heading (consider migrating to canonical '## Done' for consistency)"
+		COMPLETE_TASK_DONE_HEADING="## Completed"
 	elif grep -qi "^## Complete$" "$todo_file"; then
-		done_heading="## Complete"
 		log_warn "Using '## Complete' heading (consider migrating to canonical '## Done' for consistency)"
+		COMPLETE_TASK_DONE_HEADING="## Complete"
 	elif grep -qi "^## Finished$" "$todo_file"; then
-		done_heading="## Finished"
 		log_warn "Using '## Finished' heading (consider migrating to canonical '## Done' for consistency)"
+		COMPLETE_TASK_DONE_HEADING="## Finished"
 	else
 		log_error "No completion section found in $todo_file"
 		log_error "Expected one of: ## Done, ## Completed, ## Complete, ## Finished"
 		return 1
 	fi
 
-	# Create backup
-	cp "$todo_file" "${todo_file}.bak"
+	return 0
+}
 
-	# Temp files for the two-pass awk operation
-	local tmp_no_block="${todo_file}.no_block"
-	local tmp_block="${todo_file}.extracted_block"
+_complete_task_extract_block() {
+	local task_id="$1"
+	local proof_log="$2"
+	local today="$3"
+	local todo_file="$4"
+	local tmp_no_block="$5"
+	local tmp_block="$6"
 
-	# Pass 1: Extract the task block (parent + indented children) with transformation;
-	# produce the file-without-block in tmp_no_block.
-	# Block ends at: blank line OR next top-level "- [" entry (col 0).
 	# shellcheck disable=SC2016
-	awk -v tid="$task_id" -v proof="$proof_log" -v today="$today" -v bf="$tmp_block" '
+	awk -v tid="$task_id" -v boundary="$TASK_COMPLETE_ID_BOUNDARY" -v proof="$proof_log" -v today="$today" -v bf="$tmp_block" '
 BEGIN { in_block=0; block_done=0; block="" }
 
-!in_block && !block_done && $0 ~ ("^[[:space:]]*- \\[ \\] " tid "([[:space:]]|$)") {
+!in_block && !block_done && $0 ~ ("^[[:space:]]*- \\[ \\] " tid boundary) {
     in_block=1
     line=$0
     sub(/\[ \]/, "[x]", line)
@@ -501,17 +503,14 @@ END {
     }
 }
 ' "$todo_file" >"$tmp_no_block"
+	return $?
+}
 
-	if [[ ! -s "$tmp_block" ]]; then
-		log_error "Failed to extract task block for $task_id — awk pass 1 produced empty output"
-		mv "${todo_file}.bak" "$todo_file"
-		rm -f "$tmp_no_block" "$tmp_block"
-		return 1
-	fi
+_complete_task_insert_block() {
+	local todo_file="$1"
+	local tmp_no_block="$2"
+	local tmp_block="$3"
 
-	# Pass 2: Insert the transformed block at the top of the completion section
-	# (after the blank line that follows the header per markdown convention).
-	# The heading is case-insensitive, so we match it with a regex.
 	# shellcheck disable=SC2016
 	awk -v bf="$tmp_block" '
 BEGIN { seen_done=0; inserted=0 }
@@ -543,40 +542,103 @@ END {
     }
 }
 ' "$tmp_no_block" >"$todo_file"
+	return $?
+}
 
-	rm -f "$tmp_no_block" "$tmp_block"
+_complete_task_verify_update() {
+	local task_id="$1"
+	local todo_file="$2"
 
-	# Verify the change was made
 	if ! grep -qE "^[[:space:]]*- \[x\] ${task_id} " "$todo_file"; then
 		log_error "Failed to update TODO.md for $task_id"
-		mv "${todo_file}.bak" "$todo_file"
 		return 1
 	fi
 
-	# Verify proof-log was added
 	if ! grep -E "^[[:space:]]*- \[x\] ${task_id} " "$todo_file" | grep -qE "(pr:#[0-9]+|verified:[0-9]{4}-[0-9]{2}-[0-9]{2})"; then
 		log_error "Failed to add proof-log to $task_id"
-		mv "${todo_file}.bak" "$todo_file"
 		return 1
 	fi
 
-	# Verify the task now lives in the completion section
-	local in_done_section
-	in_done_section=$(awk -v tid="$task_id" '
+	local in_done_section=""
+	in_done_section=$(awk -v tid="$task_id" -v boundary="$TASK_COMPLETE_ID_BOUNDARY" '
 		/^## (Done|Completed|Complete|Finished)$/ { in_done=1; next }
 		/^## /      { in_done=0; next }
-		in_done && $0 ~ ("^[[:space:]]*- \\[x\\] " tid "([[:space:]]|$)") { found=1 }
+		in_done && $0 ~ ("^[[:space:]]*- \\[x\\] " tid boundary) { found=1 }
 		END { print found+0 }
 	' "$todo_file")
 
 	if [[ "$in_done_section" != "1" ]]; then
 		log_error "Task $task_id was not placed in completion section"
+		return 1
+	fi
+
+	return 0
+}
+
+_complete_task_restore_backup() {
+	local todo_file="$1"
+	local tmp_no_block="$2"
+	local tmp_block="$3"
+
+	mv "${todo_file}.bak" "$todo_file"
+	rm -f "$tmp_no_block" "$tmp_block"
+	return 0
+}
+
+# Mark task complete in TODO.md
+complete_task() {
+	local task_id="$1"
+	local proof_log="$2"
+	local repo_path="$3"
+	local todo_file="$repo_path/TODO.md"
+
+	if [[ ! -f "$todo_file" ]]; then
+		log_error "TODO.md not found at $todo_file"
+		return 1
+	fi
+
+	local open_status=0
+	_complete_task_require_open_task "$task_id" "$todo_file" || open_status=$?
+	if [[ "$open_status" -eq 2 ]]; then
+		return 0
+	elif [[ "$open_status" -ne 0 ]]; then
+		return 1
+	fi
+	_complete_task_guard_explicit_subtasks "$task_id" "$todo_file" || return 1
+	_complete_task_guard_indented_subtasks "$task_id" "$todo_file" || return 1
+
+	local today=""
+	today=$(date +%Y-%m-%d)
+	COMPLETE_TASK_DONE_HEADING=""
+	_complete_task_set_done_heading "$todo_file" || return 1
+
+	cp "$todo_file" "${todo_file}.bak"
+	local tmp_no_block="${todo_file}.no_block"
+	local tmp_block="${todo_file}.extracted_block"
+
+	_complete_task_extract_block "$task_id" "$proof_log" "$today" "$todo_file" "$tmp_no_block" "$tmp_block" || {
+		_complete_task_restore_backup "$todo_file" "$tmp_no_block" "$tmp_block"
+		return 1
+	}
+	if [[ ! -s "$tmp_block" ]]; then
+		log_error "Failed to extract task block for $task_id — awk pass 1 produced empty output"
+		_complete_task_restore_backup "$todo_file" "$tmp_no_block" "$tmp_block"
+		return 1
+	fi
+
+	_complete_task_insert_block "$todo_file" "$tmp_no_block" "$tmp_block" || {
+		_complete_task_restore_backup "$todo_file" "$tmp_no_block" "$tmp_block"
+		return 1
+	}
+	rm -f "$tmp_no_block" "$tmp_block"
+
+	if ! _complete_task_verify_update "$task_id" "$todo_file"; then
 		mv "${todo_file}.bak" "$todo_file"
 		return 1
 	fi
 
 	rm -f "${todo_file}.bak"
-	log_success "Marked $task_id complete and moved to $done_heading with proof-log: $proof_log"
+	log_success "Marked $task_id complete and moved to $COMPLETE_TASK_DONE_HEADING with proof-log: $proof_log"
 	return 0
 }
 
