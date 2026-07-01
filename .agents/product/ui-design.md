@@ -87,7 +87,7 @@ tools:
 
 ## DESIGN.md (AI-Readable Design System)
 
-For any project with UI, create a `DESIGN.md` in the project root. This gives coding agents exact hex values, font specs, component styles, and layout rules to produce consistent, on-brand UI. See `tools/design/design-md.md` for the format specification and creation workflows.
+For any project with UI, read the repo's existing `DESIGN.md` before making UI decisions. When absent, create `DESIGN.md` in the project root so coding agents have exact hex values, font specs, component styles, and layout rules for consistent, on-brand UI. See `tools/design/design-md.md` for the format specification and creation workflows.
 
 - **Library**: `tools/design/library/` -- 54 brand examples + 12 style archetypes
 - **Palette**: `tools/design/colour-palette.md` -- generate and spin colour palettes
@@ -145,4 +145,3 @@ See `tools/accessibility/accessibility-audit.md` for comprehensive auditing.
 - `tools/browser/remotion-best-practices-skill.md` — Animated previews
 - `tools/ui/tailwind-css.md` — Tailwind CSS
 - `tools/ui/shadcn.md` — shadcn/ui component library
-
