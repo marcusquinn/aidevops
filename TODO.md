@@ -4399,3 +4399,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18047 feat(reach): add aidevops-native reach/capture capability registry, doctor, a... #auto-dispatch #automation #browser #enhancement #framework ref:GH#26165
 
 - [ ] t18048 feat(reach): add profile and cookie broker with private leases, safe session ... #auto-dispatch #browser #enhancement #framework #security ref:GH#26166
+
+- [ ] t18049 feat(reach): add proxy/VPN/fingerprint health and failover classification. Ex... #auto-dispatch #browser #enhancement #framework #reliability ref:GH#26167
