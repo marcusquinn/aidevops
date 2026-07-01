@@ -11,6 +11,8 @@
 #   pr-review-thread-response-scanner.sh dry-run <repo_slug> [repo_path]
 #   pr-review-thread-response-scanner.sh reply <repo_slug> <thread_id> <body_file> [marker]
 #   pr-review-thread-response-scanner.sh resolve <repo_slug> <thread_id>
+#   pr-review-thread-response-scanner.sh mark-complete <repo_slug> <pr_number> [reason] [details_file]
+#   pr-review-thread-response-scanner.sh mark-blocked <repo_slug> <pr_number> <blocked_by> <reason> [details_file]
 #
 # This helper is intentionally conservative: it never resolves review threads
 # itself. It only detects unresolved bot review threads on open non-draft PRs by
@@ -57,7 +59,7 @@ _prrts_log() {
 }
 
 _prrts_usage() {
-	printf 'Usage: %s {scan|scan-pr|dispatch|dispatch-pr|dry-run|reply|resolve} <repo_slug> ...\n' "$(basename "$0")"
+	printf 'Usage: %s {scan|scan-pr|dispatch|dispatch-pr|dry-run|reply|resolve|mark-complete|mark-blocked} <repo_slug> ...\n' "$(basename "$0")"
 	return 0
 }
 
@@ -124,6 +126,27 @@ _prrts_prompt_metadata_line() {
 		value="${value:0:$max_len}..."
 	fi
 	printf '%s\n' "$value"
+	return 0
+}
+
+_prrts_state_value_line() {
+	local value="$1"
+	local max_len="${2:-500}"
+	[[ "$max_len" =~ ^[0-9]+$ ]] || max_len=500
+	value="$(printf '%s' "$value" | tr '\r\n\t`=' '     ')"
+	if [[ "${#value}" -gt "$max_len" ]]; then
+		value="${value:0:$max_len}..."
+	fi
+	printf '%s\n' "$value"
+	return 0
+}
+
+_prrts_normalise_blocked_by() {
+	local blocked_by="$1"
+	case "$blocked_by" in
+		maintainer|infrastructure|decision|code|none) printf '%s\n' "$blocked_by" ;;
+		*) printf 'decision\n' ;;
+	esac
 	return 0
 }
 
@@ -698,24 +721,42 @@ _prrts_read_state() {
 	local fingerprint_var="$2"
 	local dispatched_var="$3"
 	local attempt_var="${4:-}"
+	local analysis_complete_var="${5:-}"
+	local blocked_by_var="${6:-}"
+	local maintainer_attention_var="${7:-}"
 	local key="" value=""
 	local state_fingerprint="" state_dispatched_at="0"
 	local state_attempt_count="0"
+	local state_analysis_complete="$PRRTS_BOOL_FALSE" state_blocked_by="" state_maintainer_attention="$PRRTS_BOOL_FALSE"
 	if [[ -f "$state_file" ]]; then
 		while IFS='=' read -r key value; do
 			case "$key" in
 			fingerprint) state_fingerprint="$value" ;;
 			dispatched_at) state_dispatched_at="$value" ;;
 			attempt_count) state_attempt_count="$value" ;;
+			analysis_complete) state_analysis_complete="$value" ;;
+			blocked_by) state_blocked_by="$value" ;;
+			maintainer_attention) state_maintainer_attention="$value" ;;
 			esac
 		done <"$state_file"
 	fi
 	[[ "$state_dispatched_at" =~ ^[0-9]+$ ]] || state_dispatched_at=0
 	[[ "$state_attempt_count" =~ ^[0-9]+$ ]] || state_attempt_count=0
+	[[ "$state_analysis_complete" == "$PRRTS_BOOL_TRUE" ]] || state_analysis_complete="$PRRTS_BOOL_FALSE"
+	[[ "$state_maintainer_attention" == "$PRRTS_BOOL_TRUE" ]] || state_maintainer_attention="$PRRTS_BOOL_FALSE"
 	printf -v "$fingerprint_var" '%s' "$state_fingerprint"
 	printf -v "$dispatched_var" '%s' "$state_dispatched_at"
 	if [[ -n "$attempt_var" ]]; then
 		printf -v "$attempt_var" '%s' "$state_attempt_count"
+	fi
+	if [[ -n "$analysis_complete_var" ]]; then
+		printf -v "$analysis_complete_var" '%s' "$state_analysis_complete"
+	fi
+	if [[ -n "$blocked_by_var" ]]; then
+		printf -v "$blocked_by_var" '%s' "$state_blocked_by"
+	fi
+	if [[ -n "$maintainer_attention_var" ]]; then
+		printf -v "$maintainer_attention_var" '%s' "$state_maintainer_attention"
 	fi
 	return 0
 }
@@ -729,10 +770,11 @@ _prrts_should_dispatch() {
 	local repeated_var="${6:-}"
 	local state_file="" last_fingerprint="" dispatched_at="0" cooldown="" inflight_ttl="" age_seconds="0"
 	local last_attempt_count="0" next_attempt_count="1" state_repeated_same_fingerprint="$PRRTS_BOOL_FALSE"
+	local analysis_complete="$PRRTS_BOOL_FALSE" blocked_by="" maintainer_attention="$PRRTS_BOOL_FALSE"
 	state_file="$(_prrts_state_file "$repo_slug" "$pr_number")"
 	cooldown="$(_prrts_normalise_int "$PR_REVIEW_THREAD_RESPONSE_COOLDOWN" "3600" "60")"
 	inflight_ttl="$(_prrts_normalise_int "$PR_REVIEW_THREAD_RESPONSE_INFLIGHT_TTL" "300" "1")"
-	_prrts_read_state "$state_file" last_fingerprint dispatched_at last_attempt_count
+	_prrts_read_state "$state_file" last_fingerprint dispatched_at last_attempt_count analysis_complete blocked_by maintainer_attention
 	if [[ -n "$last_fingerprint" && "$fingerprint" == "$last_fingerprint" ]]; then
 		state_repeated_same_fingerprint="$PRRTS_BOOL_TRUE"
 		next_attempt_count=$((last_attempt_count + 1))
@@ -746,6 +788,10 @@ _prrts_should_dispatch() {
 
 	if _prrts_worker_active "$repo_slug" "$pr_number"; then
 		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — response worker already active"
+		return 1
+	fi
+	if [[ "$state_repeated_same_fingerprint" == "$PRRTS_BOOL_TRUE" && "$analysis_complete" == "$PRRTS_BOOL_TRUE" && "$maintainer_attention" == "$PRRTS_BOOL_TRUE" ]]; then
+		_prrts_log "dispatch: ${repo_slug}#${pr_number} skipped — analysis complete and blocked by ${blocked_by:-decision}; maintainer attention pending"
 		return 1
 	fi
 	age_seconds=$((now_epoch - dispatched_at))
@@ -785,6 +831,92 @@ _prrts_write_state() {
 	return 0
 }
 
+_prrts_write_analysis_state() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local analysis_complete="$3"
+	local blocked_by="$4"
+	local maintainer_attention="$5"
+	local reason="$6"
+	local details_file="${7:-}"
+	local state_file=""
+	local tmp_file=""
+	local key=""
+	local value=""
+	local now_epoch=""
+	local details=""
+	local fingerprint="" dispatched_at="0" thread_count="0" attempt_count="0"
+	_prrts_ensure_dirs
+	state_file="$(_prrts_state_file "$repo_slug" "$pr_number")"
+	if [[ -f "$state_file" ]]; then
+		while IFS='=' read -r key value; do
+			case "$key" in
+			fingerprint) fingerprint="$value" ;;
+			dispatched_at) dispatched_at="$value" ;;
+			thread_count) thread_count="$value" ;;
+			attempt_count) attempt_count="$value" ;;
+			esac
+		done <"$state_file"
+	fi
+	[[ "$dispatched_at" =~ ^[0-9]+$ ]] || dispatched_at=0
+	[[ "$thread_count" =~ ^[0-9]+$ ]] || thread_count=0
+	[[ "$attempt_count" =~ ^[0-9]+$ ]] || attempt_count=0
+	blocked_by="$(_prrts_normalise_blocked_by "$blocked_by")"
+	reason="$(_prrts_state_value_line "$reason" 240)"
+	if [[ -n "$details_file" && -f "$details_file" ]]; then
+		details="$(_prrts_state_value_line "$(<"$details_file")" 700)"
+	else
+		details=""
+	fi
+	now_epoch="$(date +%s)"
+	tmp_file="${state_file}.tmp.$$"
+	{
+		printf 'fingerprint=%s\n' "$fingerprint"
+		printf 'dispatched_at=%s\n' "$dispatched_at"
+		printf 'thread_count=%s\n' "$thread_count"
+		printf 'attempt_count=%s\n' "$attempt_count"
+		printf 'analysis_complete=%s\n' "$analysis_complete"
+		printf 'blocked_by=%s\n' "$blocked_by"
+		printf 'maintainer_attention=%s\n' "$maintainer_attention"
+		printf 'attention_reason=%s\n' "$reason"
+		printf 'blocker_reason=%s\n' "$reason"
+		if [[ -n "$details" ]]; then
+			printf 'blocker_details=%s\n' "$details"
+		fi
+		printf 'completed_at=%s\n' "$now_epoch"
+	} >"$tmp_file"
+	mv "$tmp_file" "$state_file"
+	_prrts_log "state: ${repo_slug}#${pr_number} analysis_complete=${analysis_complete} blocked_by=${blocked_by} maintainer_attention=${maintainer_attention}"
+	return 0
+}
+
+cmd_mark_complete() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local reason="${3:-analysis_complete}"
+	local details_file="${4:-}"
+	if [[ -z "$repo_slug" || ! "$pr_number" =~ ^[0-9]+$ ]]; then
+		_prrts_usage >&2
+		return 2
+	fi
+	_prrts_write_analysis_state "$repo_slug" "$pr_number" "$PRRTS_BOOL_TRUE" "none" "$PRRTS_BOOL_FALSE" "$reason" "$details_file"
+	return 0
+}
+
+cmd_mark_blocked() {
+	local repo_slug="$1"
+	local pr_number="$2"
+	local blocked_by="${3:-}"
+	local reason="${4:-blocked_after_analysis}"
+	local details_file="${5:-}"
+	if [[ -z "$repo_slug" || ! "$pr_number" =~ ^[0-9]+$ || -z "$blocked_by" ]]; then
+		_prrts_usage >&2
+		return 2
+	fi
+	_prrts_write_analysis_state "$repo_slug" "$pr_number" "$PRRTS_BOOL_TRUE" "$blocked_by" "$PRRTS_BOOL_TRUE" "$reason" "$details_file"
+	return 0
+}
+
 _prrts_write_prompt_file() {
 	local repo_slug="$1"
 	local repo_path="$2"
@@ -793,11 +925,12 @@ _prrts_write_prompt_file() {
 	local thread_count="$5"
 	local fingerprint="$6"
 	local preview="$7"
-	local prompt_file="" safe_slug="" safe_title="" safe_preview=""
+	local prompt_file="" safe_slug="" safe_title="" safe_preview="" scanner_path=""
 	_prrts_ensure_dirs
 	safe_slug="$(_prrts_safe_slug "$repo_slug")"
 	safe_title="$(_prrts_prompt_metadata_line "$title" 300)"
 	safe_preview="$(_prrts_prompt_metadata_line "$preview" 500)"
+	scanner_path="${SCRIPT_DIR}/pr-review-thread-response-scanner.sh"
 	prompt_file="${STATE_DIR}/${safe_slug}-${pr_number}-prompt.md"
 	cat >"$prompt_file" <<PROMPT_EOF
 # PR REVIEW THREAD RESPONSE — BOUNDED WORKER
@@ -824,8 +957,8 @@ Thread preview: ${safe_preview}
    PR, do not mark a draft PR ready, and do not bypass review-bot-gate.
 3. Do not use blanket auto-resolution scripts. For active review threads, respond
    in the same GitHub review thread with
-   '${SCRIPT_DIR}/pr-review-thread-response-scanner.sh reply'; resolve with
-   '${SCRIPT_DIR}/pr-review-thread-response-scanner.sh resolve' only after
+   '${scanner_path} reply'; resolve with
+   '${scanner_path} resolve' only after
    you have verified the finding is addressed or no longer applies.
    Review-thread read/reply/resolve operations are GraphQL-only in this helper;
    use the scanner commands above or 'gh api graphql'. The resolveReviewThread
@@ -841,14 +974,22 @@ Thread preview: ${safe_preview}
    - If the premise is false, leave a concise in-thread reply with file:line evidence.
    - Include an idempotency marker such as '<!-- aidevops:review-thread-response:<thread_id> -->' in each in-thread reply.
 5. Stop after one bounded pass and report what changed, what was verified, and
-   which threads still need human attention.
+   which threads still need human attention. Before reporting, record machine-
+   readable scanner state:
+   - If all verified-addressed threads are resolved and no unresolved action is
+     pending, run '${scanner_path} mark-complete ${repo_slug} ${pr_number} analysis_complete'.
+   - If you intentionally leave any thread unresolved because maintainer,
+     infrastructure, decision, or code action is required, write a concise
+     details file and run '${scanner_path} mark-blocked ${repo_slug} ${pr_number} <maintainer|infrastructure|decision|code> <short_reason> <details_file>'.
+   The reason and details are sanitized into local state; do not include secrets
+   or untrusted review text verbatim.
 
 Verification context:
 - Prefer focused tests/lint for changed files.
 - Preserve existing PR scope and provenance labels.
 - Keep comments concise and cite files/commands as evidence.
 - Completion requires each verified-addressed thread to be resolved with
-  resolveReviewThread via '${SCRIPT_DIR}/pr-review-thread-response-scanner.sh resolve'.
+  resolveReviewThread via '${scanner_path} resolve'.
 PROMPT_EOF
 	printf '%s\n' "$prompt_file"
 	return 0
@@ -1089,6 +1230,12 @@ main() {
 		;;
 	resolve)
 		cmd_resolve "$repo_slug" "${3:-}"
+		;;
+	mark-complete)
+		cmd_mark_complete "$repo_slug" "${3:-}" "${4:-}" "${5:-}"
+		;;
+	mark-blocked)
+		cmd_mark_blocked "$repo_slug" "${3:-}" "${4:-}" "${5:-}" "${6:-}"
 		;;
 	-h | --help | help)
 		_prrts_usage

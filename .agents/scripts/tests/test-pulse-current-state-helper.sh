@@ -59,10 +59,24 @@ json.dump({
     'prefetch_conditional_misses': 1,
 }, open(os.path.join(root, 'pulse-health.json'), 'w'))
 open(os.path.join(root, 'pulse-wrapper.log'), 'w').write('[pulse] useful activity\nPR opened #2\nPR merged #2\nissue closed #1\nInstance lock acquired\n')
+state_dir = os.path.join(root, 'review-thread-state')
+os.makedirs(state_dir, exist_ok=True)
+open(os.path.join(state_dir, 'owner-repo-12.state'), 'w').write(
+    'fingerprint=THREAD1\n'
+    'thread_count=1\n'
+    'attempt_count=2\n'
+    'analysis_complete=true\n'
+    'maintainer_attention=true\n'
+    'blocked_by=maintainer\n'
+    'blocker_reason=needs_decision\n'
+    'blocker_details=choose follow-up scope\n'
+    f'completed_at={int(now)}\n'
+)
 PY
 
 output="$TMP_DIR/out.txt"
 export AIDEVOPS_PULSE_RATE_LIMIT_CACHE="$TMP_DIR/rate-limit-cache.json"
+export AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR="$TMP_DIR/review-thread-state"
 python3 - "$AIDEVOPS_PULSE_RATE_LIMIT_CACHE" <<'PY'
 import json, sys, time
 json.dump({
@@ -80,6 +94,8 @@ grep -q 'Top pre-launch blockers:' "$output"
 grep -q 'Dispatch API blocked by GraphQL: false' "$output"
 grep -q 'API call pressure:' "$output"
 grep -q 'Prefetch cache:' "$output"
+grep -q 'Review-thread maintainer attention:' "$output"
+grep -q 'needs_decision' "$output"
 grep -q 'worker_launch_total' "$output"
 grep -q 'watchdog_killed' "$output"
 grep -q 'rate_limited' "$output"
@@ -112,6 +128,9 @@ jq -e '.api_call_pressure.read_rest_ratio == 0.4706' "$json_output" >/dev/null
 jq -e '.prefetch_cache.conditional_304 == 3' "$json_output" >/dev/null
 jq -e '.prefetch_cache.conditional_refreshes == 2' "$json_output" >/dev/null
 jq -e '.prefetch_cache.conditional_misses == 1' "$json_output" >/dev/null
+jq -e '.review_thread_attention[0].blocked_by == "maintainer"' "$json_output" >/dev/null
+jq -e '.review_thread_attention[0].pr_number == 12' "$json_output" >/dev/null
+jq -e '.review_thread_attention[0].reason == "needs_decision"' "$json_output" >/dev/null
 python3 - "$HELPER" <<'PY'
 import pathlib
 import sys
