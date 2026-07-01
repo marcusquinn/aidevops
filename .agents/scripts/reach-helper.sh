@@ -19,6 +19,17 @@ if ! type log_error &>/dev/null; then
 	}
 fi
 
+readonly REACH_KEY_SCHEMA_VERSION="schema_version"
+readonly REACH_KEY_BACKEND="backend"
+readonly REACH_KEY_SENSITIVITY="sensitivity"
+readonly REACH_KEY_TRUST="trust"
+readonly REACH_VAL_UNVERIFIED="unverified"
+readonly REACH_VAL_NONE="none"
+readonly REACH_VAL_FETCH="fetch"
+readonly REACH_VAL_AUTO="auto"
+readonly REACH_VAL_FILE="file"
+readonly REACH_VAL_UNAVAILABLE="unavailable"
+
 usage() {
 	cat <<'EOF'
 Usage: reach-helper.sh <command> [options]
@@ -32,6 +43,7 @@ Commands:
   cookie status|register|clear [options] --format json
   classify-failure [--http-status <code>] [--has-login-wall true|false] [--has-captcha true|false] [--timeout true|false] [--selector-drift true|false] [--content-empty true|false] [--bot-block true|false] --format json
   route --objective <text> [--auth none|cookie|profile|manual] [--scope public|private] --format json
+  capture --input <url-or-file> [--dest inbox|knowledge-inbox] [--method auto|file|fetch|crawl|browser] --format json
   help
 
 The helper does not contact arbitrary targets. Profile/cookie broker commands
@@ -133,9 +145,62 @@ safe_hash() {
 	elif command_available python3; then
 		hash_value="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())' <<<"$input")"
 	else
-		hash_value="unavailable"
+		hash_value="$REACH_VAL_UNAVAILABLE"
 	fi
 	printf '%s' "${hash_value:0:16}"
+	return 0
+}
+
+safe_sha256() {
+	local input="$1"
+	local hash_value=""
+	if command_available sha256sum; then
+		# shell-portability: ignore next -- guarded by command_available; shasum/python3 fallbacks cover macOS.
+		hash_value="$(printf '%s' "$input" | sha256sum | cut -d' ' -f1)"
+	elif command_available shasum; then
+		hash_value="$(printf '%s' "$input" | shasum -a 256 | cut -d' ' -f1)"
+	elif command_available python3; then
+		hash_value="$(python3 -c 'import hashlib,sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())' <<<"$input")"
+	else
+		hash_value="$REACH_VAL_UNAVAILABLE"
+	fi
+	printf '%s' "$hash_value"
+	return 0
+}
+
+file_sha256() {
+	local file_path="$1"
+	local hash_value=""
+	if command_available sha256sum; then
+		# shell-portability: ignore next -- guarded by command_available; shasum/python3 fallbacks cover macOS.
+		hash_value="$(sha256sum "$file_path" | cut -d' ' -f1)"
+	elif command_available shasum; then
+		hash_value="$(shasum -a 256 "$file_path" | cut -d' ' -f1)"
+	elif command_available python3; then
+		hash_value="$(python3 - "$file_path" <<'PY'
+import hashlib
+import sys
+
+with open(sys.argv[1], "rb") as handle:
+    print(hashlib.sha256(handle.read()).hexdigest())
+PY
+)"
+	else
+		hash_value="$REACH_VAL_UNAVAILABLE"
+	fi
+	printf '%s' "$hash_value"
+	return 0
+}
+
+file_bytes() {
+	local file_path="$1"
+	local byte_count=""
+	if byte_count="$(wc -c <"$file_path")"; then
+		byte_count="${byte_count//[[:space:]]/}"
+		printf '%s' "$byte_count"
+		return 0
+	fi
+	printf '0'
 	return 0
 }
 
@@ -165,6 +230,65 @@ PY
 		return 0
 	fi
 	date -u -r "$epoch_value" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d "@$epoch_value" '+%Y-%m-%dT%H:%M:%SZ'
+	return 0
+}
+
+epoch_to_stamp() {
+	local epoch_value="$1"
+	if command_available python3; then
+		python3 - "$epoch_value" <<'PY'
+import datetime
+import sys
+
+timestamp = int(sys.argv[1])
+if hasattr(datetime, "UTC"):
+    dt = datetime.datetime.fromtimestamp(timestamp, datetime.UTC)
+else:
+    dt = datetime.datetime.utcfromtimestamp(timestamp)
+print(dt.strftime("%Y%m%dT%H%M%SZ"))
+PY
+		return 0
+	fi
+	date -u -r "$epoch_value" '+%Y%m%dT%H%M%SZ' 2>/dev/null || date -u -d "@$epoch_value" '+%Y%m%dT%H%M%SZ'
+	return 0
+}
+
+relative_path() {
+	local file_path="$1"
+	local root_path="${2:-$PWD}"
+	if [[ "$file_path" == "$root_path"/* ]]; then
+		printf '%s' "${file_path#"$root_path"/}"
+		return 0
+	fi
+	printf '%s' "$file_path"
+	return 0
+}
+
+capture_source_label() {
+	local input_ref="$1"
+	local method_value="$2"
+	local label=""
+	if [[ "$method_value" == "$REACH_VAL_FILE" && -f "$input_ref" ]]; then
+		label="local-file:$(basename "$input_ref")"
+	elif [[ "$input_ref" =~ ^https?:// ]]; then
+		label="url:$(safe_hash "$input_ref")"
+	else
+		label="input:$(safe_hash "$input_ref")"
+	fi
+	printf '%s' "$(sanitize_text "$label")"
+	return 0
+}
+
+capture_slug() {
+	local input_ref="$1"
+	local method_value="$2"
+	local slug_source=""
+	if [[ "$method_value" == "$REACH_VAL_FILE" && -f "$input_ref" ]]; then
+		slug_source="$(basename "$input_ref")"
+	else
+		slug_source="capture-$(safe_hash "$input_ref")"
+	fi
+	safe_key "$slug_source"
 	return 0
 }
 
@@ -200,6 +324,8 @@ json_field_value() {
 	python3 - "$file_path" "$field_name" <<'PY'
 import json
 import sys
+
+ENCODING = "utf-8"
 
 with open(sys.argv[1], "r", encoding="utf-8") as handle:
     data = json.load(handle)
@@ -1365,6 +1491,278 @@ handle_route() {
 	return 0
 }
 
+capture_extension_for_input() {
+	local input_ref="$1"
+	local extension="md"
+	case "${input_ref##*.}" in
+		html | htm) extension="html" ;;
+		md | markdown) extension="md" ;;
+		txt | text) extension="txt" ;;
+		json) extension="json" ;;
+		*) extension="md" ;;
+	esac
+	printf '%s' "$extension"
+	return 0
+}
+
+capture_copy_file() {
+	local input_ref="$1"
+	local artifact_path="$2"
+	if [[ ! -f "$input_ref" ]]; then
+		log_error "capture file input not found"
+		return 1
+	fi
+	cp "$input_ref" "$artifact_path"
+	return 0
+}
+
+capture_fetch_url() {
+	local input_ref="$1"
+	local artifact_path="$2"
+	if ! command_available curl; then
+		log_error "curl is required for URL capture"
+		return 1
+	fi
+	curl --fail --location --silent --show-error --max-time 30 --output "$artifact_path" "$input_ref"
+	return $?
+}
+
+capture_route_json() {
+	local input_ref="$1"
+	local method_value="$2"
+	local objective=""
+	objective="capture $method_value $(capture_source_label "$input_ref" "$method_value")"
+	handle_route --objective "$objective" --scope public --format json
+	return $?
+}
+
+capture_route_backend() {
+	local route_json="$1"
+	local backend_value="$REACH_VAL_FETCH"
+	if command_available python3; then
+		backend_value="$(python3 -c 'import json,sys; print(json.loads(sys.stdin.read()).get(sys.argv[1], sys.argv[2]))' "$REACH_KEY_BACKEND" "$REACH_VAL_FETCH" <<<"$route_json")"
+	fi
+	printf '%s' "$backend_value"
+	return 0
+}
+
+capture_write_metadata() {
+	local meta_path="$1"
+	local captured_at="$2"
+	local source_ref="$3"
+	local source_hash="$4"
+	local method_value="$5"
+	local backend_value="$6"
+	local route_json="$7"
+	local sha256_value="$8"
+	local byte_count="$9"
+	local artifact_rel="${10}"
+	local meta_rel="${11}"
+	python3 - "$meta_path" "$captured_at" "$source_ref" "$source_hash" "$method_value" "$backend_value" "$route_json" "$sha256_value" "$byte_count" "$artifact_rel" "$meta_rel" "$REACH_KEY_SCHEMA_VERSION" "$REACH_KEY_BACKEND" "$REACH_KEY_SENSITIVITY" "$REACH_KEY_TRUST" "$REACH_VAL_UNVERIFIED" "$REACH_VAL_NONE" <<'PY'
+import json
+import sys
+
+(
+    meta_path,
+    captured_at,
+    source_ref,
+    source_hash,
+    method,
+    backend,
+    route_json,
+    sha256,
+    byte_count,
+    artifact_rel,
+    meta_rel,
+    schema_key,
+    backend_key,
+    sensitivity_key,
+    trust_key,
+    unverified_value,
+    none_value,
+) = sys.argv[1:]
+try:
+    route_decision = json.loads(route_json)
+except json.JSONDecodeError:
+    route_decision = {schema_key: 1, backend_key: backend, "blocked_reason": "route_parse_failed"}
+metadata = {
+    schema_key: 1,
+    "captured_at": captured_at,
+    "source_ref": source_ref,
+    "source_hash": source_hash,
+    "method": method,
+    backend_key: backend,
+    "route_decision": route_decision,
+    "profile_label": none_value,
+    "proxy_class": none_value,
+    "failure_class": none_value,
+    sensitivity_key: unverified_value,
+    trust_key: unverified_value,
+    "sha256": sha256,
+    "bytes": int(byte_count),
+    "artifact_paths": [artifact_rel, meta_rel],
+    "review_required": True,
+}
+with open(meta_path, "w") as handle:
+    json.dump(metadata, handle, indent=2, sort_keys=True)
+    handle.write("\n")
+PY
+	return $?
+}
+
+capture_append_triage() {
+	local triage_path="$1"
+	local captured_at="$2"
+	local sub_folder="$3"
+	local source_ref="$4"
+	local meta_rel="$5"
+	local method_value="$6"
+	local backend_value="$7"
+	local source_hash="$8"
+	mkdir -p "$(dirname "$triage_path")"
+	python3 - "$triage_path" "$captured_at" "$sub_folder" "$source_ref" "$meta_rel" "$method_value" "$backend_value" "$source_hash" "$REACH_KEY_BACKEND" "$REACH_KEY_SENSITIVITY" "$REACH_KEY_TRUST" "$REACH_VAL_UNVERIFIED" <<'PY'
+import json
+import sys
+
+triage_path, captured_at, sub_folder, source_ref, meta_rel, method, backend, source_hash, backend_key, sensitivity_key, trust_key, unverified_value = sys.argv[1:]
+entry = {
+    "ts": captured_at,
+    "source": "reach-capture",
+    "sub": sub_folder,
+    "orig": source_ref,
+    "path": meta_rel,
+    "method": method,
+    backend_key: backend,
+    "provenance_hash": source_hash,
+    "status": "pending",
+    sensitivity_key: unverified_value,
+    trust_key: unverified_value,
+}
+with open(triage_path, "a") as handle:
+    handle.write(json.dumps(entry, sort_keys=True, separators=(",", ":")) + "\n")
+PY
+	return $?
+}
+
+handle_capture() {
+	local input_ref=""
+	local dest="inbox"
+	local method="$REACH_VAL_AUTO"
+	local format="json"
+
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+			--input)
+				shift
+				input_ref="${1:-}"
+				;;
+			--dest)
+				shift
+				dest="${1:-}"
+				;;
+			--method)
+				shift
+				method="${1:-}"
+				;;
+			--format)
+				shift
+				format="${1:-}"
+				;;
+			*)
+				log_error "Unknown capture option: $arg"
+				return 1
+				;;
+		esac
+		shift || true
+	done
+
+	require_json_format "$format" || return 1
+	if [[ -z "$input_ref" ]]; then
+		log_error "capture requires --input"
+		return 1
+	fi
+	case "$dest" in
+		inbox | knowledge-inbox) ;;
+		*) log_error "Invalid --dest: $dest"; return 1 ;;
+	esac
+	case "$method" in
+		auto | file | fetch | crawl | browser) ;;
+		*) log_error "Invalid --method: $method"; return 1 ;;
+	esac
+	if [[ "$method" == "auto" ]]; then
+		if [[ -f "$input_ref" ]]; then
+			method="$REACH_VAL_FILE"
+		else
+			method="$REACH_VAL_FETCH"
+		fi
+	fi
+	if [[ "$method" == "$REACH_VAL_FILE" && ! -f "$input_ref" ]]; then
+		log_error "capture --method file requires a local file input"
+		return 1
+	fi
+
+	local epoch_value=""
+	local captured_at=""
+	local stamp=""
+	local slug=""
+	local extension=""
+	local base_dir=""
+	local sub_folder="web"
+	local artifact_path=""
+	local meta_path=""
+	local artifact_rel=""
+	local meta_rel=""
+	local route_json=""
+	local backend=""
+	local source_ref=""
+	local source_hash=""
+	local sha256_value=""
+	local byte_count=""
+	epoch_value="$(now_epoch)"
+	captured_at="$(epoch_to_iso "$epoch_value")"
+	stamp="$(epoch_to_stamp "$epoch_value")"
+	slug="$(capture_slug "$input_ref" "$method")"
+	extension="$(capture_extension_for_input "$input_ref")"
+	if [[ "$dest" == "knowledge-inbox" ]]; then
+		base_dir="_knowledge/inbox/web"
+		sub_folder="knowledge-inbox"
+	else
+		base_dir="_inbox/web"
+	fi
+	mkdir -p "$base_dir" "_inbox"
+	artifact_path="${base_dir}/${slug}_${stamp}.${extension}"
+	meta_path="${base_dir}/${slug}_${stamp}.meta.json"
+	if [[ "$method" == "$REACH_VAL_FILE" ]]; then
+		capture_copy_file "$input_ref" "$artifact_path" || return 1
+	else
+		capture_fetch_url "$input_ref" "$artifact_path" || return 1
+	fi
+	artifact_rel="$(relative_path "$artifact_path")"
+	meta_rel="$(relative_path "$meta_path")"
+	route_json="$(capture_route_json "$input_ref" "$method")"
+	backend="$(capture_route_backend "$route_json")"
+	if [[ "$method" != "$REACH_VAL_AUTO" && "$method" != "$REACH_VAL_FILE" && "$method" != "$REACH_VAL_FETCH" ]]; then
+		backend="$method"
+	fi
+	source_ref="$(capture_source_label "$input_ref" "$method")"
+	source_hash="$(safe_sha256 "$input_ref")"
+	sha256_value="$(file_sha256 "$artifact_path")"
+	byte_count="$(file_bytes "$artifact_path")"
+	capture_write_metadata "$meta_path" "$captured_at" "$source_ref" "$source_hash" "$method" "$backend" "$route_json" "$sha256_value" "$byte_count" "$artifact_rel" "$meta_rel" || return 1
+	capture_append_triage "_inbox/triage.log" "$captured_at" "$sub_folder" "$source_ref" "$meta_rel" "$method" "$backend" "$source_hash" || return 1
+	printf '{"%s":1,"dest":"%s","artifact_path":"%s","meta_path":"%s","triage_log":"_inbox/triage.log","%s":"%s","%s":"%s","review_required":true}\n' \
+		"$(json_escape "$REACH_KEY_SCHEMA_VERSION")" \
+		"$(json_escape "$dest")" \
+		"$(json_escape "$artifact_rel")" \
+		"$(json_escape "$meta_rel")" \
+		"$(json_escape "$REACH_KEY_SENSITIVITY")" \
+		"$(json_escape "$REACH_VAL_UNVERIFIED")" \
+		"$(json_escape "$REACH_KEY_TRUST")" \
+		"$(json_escape "$REACH_VAL_UNVERIFIED")"
+	return 0
+}
+
 main() {
 	local command="${1:-help}"
 	if [[ $# -gt 0 ]]; then
@@ -1402,6 +1800,10 @@ main() {
 			;;
 		classify-failure)
 			handle_classify_failure "$@"
+			return $?
+			;;
+		capture)
+			handle_capture "$@"
 			return $?
 			;;
 		route)

@@ -27,6 +27,7 @@ authoritative.
 
 ```json
 {"ts":"2026-04-25T19:00:00Z","source":"cli-add","sub":"email","orig":"/tmp/foo.eml","path":"_inbox/email/foo_20260425T190000.eml","status":"pending","sensitivity":"unverified"}
+{"ts":"2026-07-01T12:00:00Z","source":"reach-capture","sub":"web","orig":"local-file:example.html","path":"_inbox/web/example_20260701T120000Z.meta.json","method":"file","backend":"fetch","provenance_hash":"...","status":"pending","sensitivity":"unverified","trust":"unverified"}
 ```
 
 Fields:
@@ -37,6 +38,16 @@ Fields:
 - `path` — current path within `_inbox/`
 - `status` — `pending` (awaiting triage), `triaged` (routed), `rejected` (discarded)
 - `sensitivity` — `unverified` until P2c triage classifies the item
+- `trust` — `unverified` until review promotes or rejects the capture
+- `method` / `backend` — reach capture method and selected route backend when `source:"reach-capture"`
+- `provenance_hash` — hash of the sanitized source reference for reach-captured artifacts
+
+`reach capture` writes web evidence into `_inbox/web/` by default and stores a
+sidecar `.meta.json` with `schema_version`, `captured_at`, `source_ref`,
+`source_hash`, `method`, `backend`, `route_decision`, `profile_label`,
+`proxy_class`, `failure_class`, `sensitivity`, `trust`, `sha256`, `bytes`,
+`artifact_paths`, and `review_required`. Source refs are sanitized labels, not
+raw private paths, cookies, authorization headers, or proxy credentials.
 
 **Never modify `triage.log` after write.** Use `aidevops inbox find <query>` to search it.
 
