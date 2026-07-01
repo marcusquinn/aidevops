@@ -126,6 +126,7 @@ safe_hash() {
 	local input="$1"
 	local hash_value=""
 	if command_available sha256sum; then
+		# shell-portability: ignore next -- guarded by command_available; shasum/python3 fallbacks cover macOS.
 		hash_value="$(printf '%s' "$input" | sha256sum | cut -d' ' -f1)"
 	elif command_available shasum; then
 		hash_value="$(printf '%s' "$input" | shasum -a 256 | cut -d' ' -f1)"
