@@ -36,6 +36,9 @@ unset PULSE_PR_LIST_PROVIDER_CACHE_DISABLE
 
 gh_pr_list() {
 	printf '%s\n' "$*" >>"$GH_CALLS"
+	if [[ "${PULSE_TEST_EMPTY_OUTPUT:-0}" == "1" ]]; then
+		return 0
+	fi
 	printf '[{"number":1,"reviewDecision":"APPROVED","headRefOid":"abc123"}]'
 	return 0
 }
@@ -54,6 +57,19 @@ if [[ "$first_output" == "$second_output" && "$backend_calls" == "1" ]]; then
 else
 	fail "provider cache coalesces identical GraphQL-field PR list calls" \
 		"first=${first_output} second=${second_output} backend_calls=${backend_calls} calls=$(<"$GH_CALLS")"
+fi
+
+: >"$GH_CALLS"
+export PULSE_TEST_EMPTY_OUTPUT=1
+empty_first=$(pulse_pr_list_get --repo owner/repo --state open --json number --jq '.[].number // empty' --limit 200)
+empty_second=$(pulse_pr_list_get --repo owner/repo --state open --json number --jq '.[].number // empty' --limit 200)
+unset PULSE_TEST_EMPTY_OUTPUT
+empty_backend_calls=$(grep -cF -- '--jq .[].number // empty' "$GH_CALLS" 2>/dev/null || true)
+if [[ -z "${empty_first}${empty_second}" && "$empty_backend_calls" == "1" ]]; then
+	pass "provider cache treats successful empty stdout as a valid exact-output hit"
+else
+	fail "provider cache treats successful empty stdout as a valid exact-output hit" \
+		"first=${empty_first} second=${empty_second} backend_calls=${empty_backend_calls} calls=$(<"$GH_CALLS")"
 fi
 
 third_output=$(pulse_pr_list_get --repo owner/repo --state open --json number,title --limit 200)

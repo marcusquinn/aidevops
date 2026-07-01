@@ -177,6 +177,10 @@ _gh_pr_list_snapshot_get() {
 
 #######################################
 # Store a successful gh_pr_list snapshot for a short freshness window.
+# This is an exact-output cache: successful empty stdout is a valid value
+# for jq filters that intentionally emit nothing on empty result sets. Do not
+# reject 0-byte bodies unless the cache format grows explicit corruption
+# metadata/sentinels that can distinguish invalid files from valid empty output.
 # Args: $1 = command output, $2.. = gh-style argv
 #######################################
 _gh_pr_list_snapshot_put() {

@@ -296,6 +296,10 @@ _stub_gh_pr() {
 	elif [[ "$subcommand" == "view" ]]; then
 		printf '{"number":9101}\n'
 	elif [[ "$subcommand" == "list" ]]; then
+		if [[ -n "${STUB_PR_LIST_STDOUT+x}" ]]; then
+			printf '%s' "$STUB_PR_LIST_STDOUT"
+			return 0
+		fi
 		printf '[]\n'
 	fi
 	return 0
@@ -1241,6 +1245,27 @@ else
 		"pull_calls=${pr_pull_calls} GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
 fi
 unset AIDEVOPS_GH_PR_LIST_CACHE_DIR AIDEVOPS_GH_PR_LIST_CACHE_TTL
+
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+: >"$AIDEVOPS_GH_API_LOG"
+unset AIDEVOPS_GH_REST_FIRST_READS
+export AIDEVOPS_GH_PR_LIST_CACHE_DIR="$TMP/pr-list-empty-cache"
+export AIDEVOPS_GH_PR_LIST_CACHE_TTL=30
+export STUB_PR_LIST_STDOUT=""
+empty_list_first=$(gh_pr_list --repo "owner/repo" --state open --json number --jq '.[].number // empty' --limit 200 2>/dev/null || true)
+empty_list_second=$(gh_pr_list --repo "owner/repo" --state open --json number --jq '.[].number // empty' --limit 200 2>/dev/null || true)
+empty_pr_list_calls=$(grep -cE '^pr list --repo owner/repo --state open --json number --jq' "$GH_CALLS" 2>/dev/null || true)
+empty_cache_hits=$(grep -c $'gh_pr_list_cache\tother\tunknown\tother\thit' "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)
+empty_cache_stores=$(grep -c $'gh_pr_list_cache\tother\tunknown\tother\tstore' "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)
+if [[ -z "${empty_list_first}${empty_list_second}" && "$empty_pr_list_calls" == "1" && "$empty_cache_hits" == "1" && "$empty_cache_stores" == "1" ]]; then
+	pass "gh_pr_list snapshot cache treats successful empty stdout as a valid hit"
+else
+	fail "gh_pr_list snapshot cache treats successful empty stdout as a valid hit" \
+		"first=${empty_list_first} second=${empty_list_second} calls=${empty_pr_list_calls} hits=${empty_cache_hits} stores=${empty_cache_stores} GH_CALLS=$(cat "$GH_CALLS") API_LOG=$(cat "$AIDEVOPS_GH_API_LOG")"
+fi
+unset AIDEVOPS_GH_PR_LIST_CACHE_DIR AIDEVOPS_GH_PR_LIST_CACHE_TTL STUB_PR_LIST_STDOUT
+export AIDEVOPS_GH_REST_FIRST_READS=1
 
 : >"$GH_CALLS"
 : >"$GH_INFO_OUTPUT"
