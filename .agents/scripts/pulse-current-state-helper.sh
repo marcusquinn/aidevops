@@ -32,6 +32,7 @@ main() {
 	local window="15m"
 	local repo_path="${AIDEVOPS_REPO_PATH:-$HOME/Git/aidevops}"
 	local log_dir="${AIDEVOPS_LOG_DIR:-$HOME/.aidevops/logs}"
+	local review_thread_state_dir="${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR:-$HOME/.aidevops/.agent-workspace/pr-review-thread-response}"
 	local as_json=0
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
@@ -47,7 +48,7 @@ main() {
 	done
 	local window_s
 	window_s="$(_seconds "$window")"
-	python3 - "$log_dir" "$repo_path" "$window_s" "$as_json" "$SCRIPT_DIR" <<'PY'
+	python3 - "$log_dir" "$repo_path" "$window_s" "$as_json" "$SCRIPT_DIR" "$review_thread_state_dir" <<'PY'
 import datetime
 import json
 import os
@@ -56,7 +57,7 @@ import sys
 import time
 from collections import Counter, defaultdict, deque
 
-log_dir, repo_path, window_s, as_json, script_dir = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4] == '1', sys.argv[5]
+log_dir, repo_path, window_s, as_json, script_dir, review_thread_state_dir = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4] == '1', sys.argv[5], sys.argv[6]
 now = time.time()
 since = now - window_s
 
@@ -124,6 +125,21 @@ def line_count(patterns, lines):
             if len(examples) < 3:
                 examples.append(line[-180:])
     return count, examples
+
+
+def read_state_file(path):
+    state = {}
+    try:
+        with open(path, encoding='utf-8', errors='replace') as handle:
+            for raw_line in handle:
+                line = raw_line.rstrip('\n')
+                if '=' not in line:
+                    continue
+                key, value = line.split('=', 1)
+                state[key] = value
+    except OSError:
+        return {}
+    return state
 
 
 stage_records = []
@@ -356,6 +372,31 @@ if os.path.exists(health_path):
     except (OSError, json.JSONDecodeError, TypeError, ValueError):
         pass
 
+review_thread_attention = []
+if os.path.isdir(review_thread_state_dir):
+    try:
+        for name in sorted(os.listdir(review_thread_state_dir)):
+            if not name.endswith('.state') or name.endswith('-cursor.state'):
+                continue
+            state = read_state_file(os.path.join(review_thread_state_dir, name))
+            if state.get('analysis_complete') == 'true' and state.get('maintainer_attention') == 'true':
+                stem = name[:-len('.state')]
+                repo_key, _, pr_text = stem.rpartition('-')
+                pr_number = int(pr_text) if pr_text.isdigit() else None
+                review_thread_attention.append({
+                    'state_file': name,
+                    'repo_key': repo_key,
+                    'pr_number': pr_number,
+                    'blocked_by': state.get('blocked_by') or 'decision',
+                    'reason': state.get('blocker_reason') or state.get('attention_reason') or '',
+                    'details': state.get('blocker_details') or '',
+                    'thread_count': int(state.get('thread_count') or 0) if str(state.get('thread_count') or '').isdigit() else 0,
+                    'attempt_count': int(state.get('attempt_count') or 0) if str(state.get('attempt_count') or '').isdigit() else 0,
+                    'completed_at': int(state.get('completed_at') or 0) if str(state.get('completed_at') or '').isdigit() else 0,
+                })
+    except OSError:
+        review_thread_attention = []
+
 result = {
     'window_seconds': window_s,
     'dispatch_stage_events': len(stage_records),
@@ -400,6 +441,7 @@ result = {
     'top_graphql_consumers': api_consumers,
     'api_call_pressure': api_pressure,
     'prefetch_cache': prefetch_cache,
+    'review_thread_attention': review_thread_attention,
 }
 
 if as_json:
@@ -424,6 +466,7 @@ else:
     if api_consumers:
         print(f'- Top GraphQL consumers: {json.dumps(api_consumers)}')
     print(f'- API call pressure: {json.dumps(api_pressure, sort_keys=True)}')
+    print(f'- Review-thread maintainer attention: {json.dumps(review_thread_attention, sort_keys=True)}')
     print(f'- Worker worktrees: {result["worker_worktrees"]}')
     if wrapper_activity:
         print('- Recent wrapper activity:')
