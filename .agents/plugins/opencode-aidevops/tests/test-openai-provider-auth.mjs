@@ -10,10 +10,12 @@ function loadModule() {
 }
 
 test("detects OpenAI provider requests only", async () => {
-  const { isOpenAIProviderRequest } = await loadModule();
+  const { isOpenAIProviderRequest, isOpenAITokenRefreshRequest } = await loadModule();
   assert.equal(isOpenAIProviderRequest("https://api.openai.com/v1/chat/completions"), true);
   assert.equal(isOpenAIProviderRequest("https://api.openai.com/dashboard"), false);
   assert.equal(isOpenAIProviderRequest("https://example.com/v1/chat/completions"), false);
+  assert.equal(isOpenAITokenRefreshRequest("https://auth.openai.com/oauth/token"), true);
+  assert.equal(isOpenAITokenRefreshRequest("https://api.openai.com/v1/responses"), false);
 });
 
 test("detects OpenAI usage-limit responses", async () => {
@@ -89,6 +91,36 @@ test("installed fetch guard rotates on response failures and pre-request cooldow
     assert.equal(responseRotation.pool.openai[1].status, "active");
     assert.equal(responseRotation.authWrites[0].path.id, "openai");
     assert.equal(responseRotation.authWrites[0].body.accountId, "acct_healthy");
+
+    const tokenRefreshRecovery = await withInstalledGuard({
+      openai: [
+        { email: "expired@example.com", access: "expired-token", refresh: "expired-refresh", expires: 1, status: "active", cooldownUntil: 0, lastUsed: "2026-01-02T00:00:00Z" },
+        { email: "fallback@example.com", access: "fallback-token", refresh: "fallback-refresh", expires: Date.now() + 3600_000, status: "idle", cooldownUntil: 0, lastUsed: "2026-01-01T00:00:00Z", accountId: "acct_fallback" },
+      ],
+    }, async (input, init, calls) => {
+      calls.push({ url: String(input), body: String(init?.body || "") });
+      return new Response(JSON.stringify({ error: "invalid_grant" }), {
+        status: 401,
+        headers: { "content-type": "application/json" },
+      });
+    }, {
+      url: "https://auth.openai.com/oauth/token",
+      init: {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: "expired-refresh", client_id: "app_test" }).toString(),
+      },
+    });
+
+    const recoveredTokenPayload = await tokenRefreshRecovery.response.json();
+    assert.equal(tokenRefreshRecovery.response.status, 200);
+    assert.equal(recoveredTokenPayload.access_token, "fallback-token");
+    assert.equal(recoveredTokenPayload.refresh_token, "fallback-refresh");
+    assert.equal(tokenRefreshRecovery.pool.openai[0].status, "auth-error");
+    assert.equal(tokenRefreshRecovery.pool.openai[1].status, "active");
+    assert.equal(tokenRefreshRecovery.authWrites[0].path.id, "openai");
+    assert.equal(tokenRefreshRecovery.authWrites[0].body.access, "fallback-token");
+    assert.equal(tokenRefreshRecovery.authWrites[0].body.accountId, "acct_fallback");
 
     const cooldownPreflight = await withInstalledGuard({
       openai: [

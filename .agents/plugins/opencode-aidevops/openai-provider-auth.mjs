@@ -6,7 +6,8 @@
  * usage-limited accounts and retries once with another pooled account.
  */
 
-import { getAccounts, patchAccount, rotateOpenAIPoolToken } from "./oauth-pool.mjs";
+import { getAccounts, markAuthRefreshFailure, patchAccount, rotateOpenAIPoolToken } from "./oauth-pool.mjs";
+import { OPENAI_TOKEN_ENDPOINT } from "./oauth-pool-constants.mjs";
 import { annotateOpenAIOverloadResponse, formatRetryDelay, isOpenAIOverloadText, overloadRetryDelaysMs, sleep, wrapOpenAIOverloadStream } from "./openai-overload-retry.mjs";
 
 export { isOpenAIOverloadText } from "./openai-overload-retry.mjs";
@@ -14,6 +15,7 @@ export { isOpenAIOverloadText } from "./openai-overload-retry.mjs";
 const OPENAI_API_HOST = "api.openai.com";
 const OPENAI_API_PREFIX = "/v1/";
 const DEFAULT_OPENAI_COOLDOWN_MS = 300_000;
+const TOKEN_REFRESH_FAILURE_STATUSES = new Set([401, 403]);
 const USAGE_LIMIT_MARKERS = [
   "usage limit",
   "rate limit",
@@ -45,6 +47,14 @@ export function isOpenAIProviderRequest(input) {
   try {
     const url = new URL(requestUrl(input));
     return url.hostname === OPENAI_API_HOST && url.pathname.startsWith(OPENAI_API_PREFIX);
+  } catch { return false; }
+}
+
+export function isOpenAITokenRefreshRequest(input) {
+  try {
+    const url = new URL(requestUrl(input));
+    const endpoint = new URL(OPENAI_TOKEN_ENDPOINT);
+    return url.origin === endpoint.origin && url.pathname === endpoint.pathname;
   } catch { return false; }
 }
 
@@ -114,6 +124,54 @@ function buildRetryInit(input, init, accessToken) {
   return retryInit;
 }
 
+async function readRequestBodyText(input, init) {
+  try {
+    if (typeof init?.body === "string") return init.body;
+    if (init?.body instanceof URLSearchParams) return init.body.toString();
+    if (typeof Request !== "undefined" && input instanceof Request) return await input.clone().text();
+  } catch { /* best-effort: request body may be a non-cloneable stream */ }
+  return "";
+}
+
+function extractOpenAIRefreshToken(bodyText) {
+  try {
+    const params = new URLSearchParams(bodyText);
+    if (params.get("grant_type") !== "refresh_token") return "";
+    return params.get("refresh_token") || "";
+  } catch { return ""; }
+}
+
+function resolveOpenAIRefreshAccount(refreshToken) {
+  if (!refreshToken) return null;
+  return getAccounts("openai").find((account) => account.refresh === refreshToken) || null;
+}
+
+function buildOpenAITokenRefreshResponse(account) {
+  const expiresAt = Number(account.expires) || Date.now() + 3600_000;
+  const expiresIn = Math.max(1, Math.floor((expiresAt - Date.now()) / 1000));
+  return new Response(JSON.stringify({
+    access_token: account.access,
+    refresh_token: account.refresh,
+    expires_in: expiresIn,
+    token_type: "Bearer",
+  }), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+async function handleOpenAITokenRefreshFailure(ctx) {
+  const { client, response, refreshToken } = ctx;
+  if (!TOKEN_REFRESH_FAILURE_STATUSES.has(response.status)) return response;
+  const current = resolveOpenAIRefreshAccount(refreshToken);
+  const currentEmail = current?.email || "unknown";
+  if (current) markAuthRefreshFailure("openai", current);
+  console.error(`[aidevops] OpenAI provider: token refresh failed (${response.status}) for ${currentEmail} — rotating pool account`);
+  const rotated = await rotateOpenAIPoolToken(client, current?.email);
+  if (!rotated?.access) return response;
+  return buildOpenAITokenRefreshResponse(rotated);
+}
+
 async function handleOpenAIUsageLimit(ctx) {
   const { client, originalFetch, input, init, response, retryInput } = ctx;
   const current = resolveOpenAIAccount(extractBearerToken(input, init));
@@ -179,10 +237,19 @@ async function maybeRotateBeforeOpenAIFetch(client, input, init) {
 async function handleOpenAIFetchRequest(ctx) {
   const { client, originalFetch, input, init } = ctx;
   const openaiRequest = isOpenAIProviderRequest(input);
+  const tokenRefreshRequest = isOpenAITokenRefreshRequest(input);
+  const tokenRefreshBody = tokenRefreshRequest ? await readRequestBodyText(input, init) : "";
   const retryInput = openaiRequest ? buildRetryRequest(input) : input;
   const firstInit = openaiRequest ? await maybeRotateBeforeOpenAIFetch(client, input, init) : init;
   const response = await originalFetch(input, firstInit);
 
+  if (tokenRefreshRequest) {
+    return handleOpenAITokenRefreshFailure({
+      client,
+      response,
+      refreshToken: extractOpenAIRefreshToken(tokenRefreshBody),
+    });
+  }
   if (!openaiRequest) return response;
   if (await isOpenAIUsageLimitResponse(response)) {
     return handleOpenAIUsageLimit({ client, originalFetch, input, init: firstInit, response, retryInput });
