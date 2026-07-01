@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.12] - 2026-07-01
+
+### Changed
+
+- Documentation: guide new-topic session hygiene (#26160)
+- Maintenance: sync ref:GH#26157 to TODO.md [skip ci]
+
 ## [3.31.11] - 2026-07-01
 
 ### Changed
