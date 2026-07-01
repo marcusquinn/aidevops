@@ -150,6 +150,18 @@ FORCE_VACUUM_SIZE_MB=0 VACUUM_FREELIST_THRESHOLD=0.0 \
   for example keeping roughly the 500 most recently active sessions in the
   active database.
 
+The archive helper follows OpenCode's active DB resolution: `OPENCODE_DB_PATH`
+or `OPENCODE_DB` overrides win first, then `XDG_DATA_HOME/opencode/opencode.db`,
+then `~/.local/share/opencode/opencode.db`. The archive DB defaults next to the
+active DB. This matters for aidevops-managed isolated project shards under
+`~/.aidevops/.agent-workspace/work/opencode-interactive/`.
+
+Archiving moves the normalized session rows (`session`, `message`, `part`,
+`todo`, `session_share`) and matching `event` rows where
+`event.aggregate_id = session.id`. On recent OpenCode releases the `event` table
+can dominate DB size because it stores repeated message update payloads; leaving
+those rows behind prevents archiving from reducing startup cost.
+
 Examples:
 
 ```bash
