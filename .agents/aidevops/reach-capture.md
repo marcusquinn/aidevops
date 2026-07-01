@@ -40,6 +40,8 @@ performance logs, or feedback artifacts.
   "proxy_policy": "none|avoid|authorized_only|required|blocked",
   "offload": "local|worker|manual",
   "capture_destination": "caller_selected|_inbox|_knowledge|_performance|_feedback",
+  "failure_policy": "sanitized retry and stop policy",
+  "failover_order": ["fetch", "crawler", "browser"],
   "safety_notes": ["sanitized notes only"],
   "expected_artifacts": ["sanitized artifact kinds only"],
   "blocked_reason": ""
@@ -53,10 +55,47 @@ isolation needs. Private/manual authentication without an approved reusable
 session returns `manual_review` with `blocked_reason` set instead of attempting
 capture.
 
+## Health Doctors
+
+`reach-helper.sh network doctor --format json` reports sanitized proxy/VPN
+readiness. It may expose provider class, check keys, boolean availability, and
+generic status values. It must not print IP addresses, proxy credentials,
+session IDs, cookies, private target strings, or local private paths.
+
+`reach-helper.sh fingerprint doctor --format json` reports sanitized browser and
+fingerprint/profile readiness. Profile types follow the anti-detect browser
+decision tree: persistent, clean, warm, or disposable. Doctor output is local
+readiness only and does not contact arbitrary targets.
+
+## Failure Classes and Failover
+
+`reach-helper.sh classify-failure --format json` emits:
+
+- `failure_class`: one of `success`, `network_timeout`, `proxy_unhealthy`,
+  `rate_limited`, `captcha_required`, `bot_block`, `auth_required`,
+  `scope_forbidden`, `selector_drift`, `content_empty`, or `unknown`.
+- `temporary`: whether backoff or a route change may plausibly succeed.
+- `retry_after_seconds`: conservative minimum wait before retrying.
+- `next_action`: sanitized action guidance.
+- `safe_to_failover`: whether an authorized alternate route may be used.
+- `requires_authorization`: whether new approval/session/scope is required.
+- `notes`: sanitized operational constraints.
+
+Failover is safe only for temporary classes such as `network_timeout`,
+`proxy_unhealthy`, `rate_limited`, `captcha_required`, `bot_block`, and
+`content_empty`, and only within the existing authorization boundary. Do not
+retry the same blocked identity after `bot_block`; switch only to a healthy,
+authorized profile/proxy or stop. `selector_drift` requires extraction repair,
+not identity failover. `auth_required` and `scope_forbidden` are hard stops:
+never recommend proxy, VPN, fingerprint, cookie, or profile failover without new
+authorization for that scope.
+
 ## Safety Boundaries
 
 - Do not contact arbitrary targets during `doctor` or `capabilities` checks.
 - Do not print credentials, cookie values, proxy auth, local private paths, or
   raw private target strings in route output.
+- Do not use proxy, VPN, fingerprint, profile, or cookie changes to bypass
+  authentication, authorization, robots, rate-limit, or terms boundaries.
 - Treat profile, cookie, proxy, inbox, knowledge, performance, and feedback
   mutation as follow-up work with separate task briefs and verification.
