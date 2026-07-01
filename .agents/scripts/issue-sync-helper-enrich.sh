@@ -95,7 +95,7 @@ _enrich_resolve_bounds() {
 }
 
 _enrich_log_bounds_if_active() {
-	local max_issues="$1" max_seconds="$2"
+	local max_issues="${1:-0}" max_seconds="${2:-0}"
 	if [[ "$max_issues" -gt 0 || "$max_seconds" -gt 0 ]]; then
 		print_info "Bounded enrich active: max_issues=${max_issues}, max_seconds=${max_seconds}"
 	fi
@@ -103,15 +103,15 @@ _enrich_log_bounds_if_active() {
 }
 
 _enrich_should_stop_for_bounds() {
-	local max_issues="$1" max_seconds="$2" processed="$3" total="$4" started_at="$5"
+	local max_issues="${1:-0}" max_seconds="${2:-0}" processed="${3:-0}" total="${4:-0}" started_at="${5:-0}"
 	if [[ "$max_issues" -gt 0 && "$processed" -ge "$max_issues" ]]; then
 		print_warning "Stopping bounded enrich after ${processed} issue(s); ${total} were eligible"
 		return 0
 	fi
 	if [[ "$max_seconds" -gt 0 ]]; then
 		local now elapsed
-		now=$(date +%s)
-		elapsed=$((now - started_at))
+		now=$(date +%s || echo "0")
+		elapsed=$((${now:-0} - ${started_at:-0}))
 		if [[ "$elapsed" -ge "$max_seconds" ]]; then
 			print_warning "Stopping bounded enrich after ${elapsed}s and ${processed} issue(s); ${total} were eligible"
 			return 0
@@ -460,7 +460,7 @@ cmd_enrich() {
 	local enriched=0
 	local processed=0
 	local started_at
-	started_at=$(date +%s)
+	started_at=$(date +%s || echo "0")
 	for task_id in "${tasks[@]}"; do
 		if _enrich_should_stop_for_bounds "$max_issues" "$max_seconds" "$processed" "${#tasks[@]}" "$started_at"; then
 			break
