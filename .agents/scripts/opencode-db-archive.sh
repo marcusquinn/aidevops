@@ -15,8 +15,10 @@
 #   opencode-db-archive.sh help
 #
 # Environment:
-#   OPENCODE_DB          — active DB path (default: ~/.local/share/opencode/opencode.db)
-#   OPENCODE_ARCHIVE_DB  — archive DB path (default: ~/.local/share/opencode/opencode-archive.db)
+#   OPENCODE_DB_PATH     — active DB path override used by aidevops/OpenCode helpers
+#   OPENCODE_DB          — active DB path override (fallback)
+#   XDG_DATA_HOME        — default data root (default: ~/.local/share)
+#   OPENCODE_ARCHIVE_DB  — archive DB path (default: next to active opencode.db)
 # -----------------------------------------------------------------------------
 
 set -Eeuo pipefail
@@ -29,14 +31,20 @@ _oda_dir="${BASH_SOURCE[0]%/*}"
 # --- Configuration -----------------------------------------------------------
 
 readonly SCRIPT_NAME="opencode-db-archive"
-readonly DEFAULT_DB="$HOME/.local/share/opencode/opencode.db"
-readonly DEFAULT_ARCHIVE_DB="$HOME/.local/share/opencode/opencode-archive.db"
+readonly DEFAULT_DATA_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/opencode"
+readonly DEFAULT_DB="${DEFAULT_DATA_DIR}/opencode.db"
 readonly DEFAULT_RETENTION_DAYS=30
 readonly DEFAULT_BATCH_SIZE=500
 readonly DEFAULT_MAX_DURATION=60
+readonly EVENT_TABLE_NAME="event"
 
-ACTIVE_DB="${OPENCODE_DB:-$DEFAULT_DB}"
-ARCHIVE_DB="${OPENCODE_ARCHIVE_DB:-$DEFAULT_ARCHIVE_DB}"
+ACTIVE_DB="${OPENCODE_DB_PATH:-${OPENCODE_DB:-$DEFAULT_DB}}"
+_archive_default_dir="${ACTIVE_DB%/*}"
+if [[ "$_archive_default_dir" == "$ACTIVE_DB" ]]; then
+	_archive_default_dir="."
+fi
+ARCHIVE_DB="${OPENCODE_ARCHIVE_DB:-${_archive_default_dir}/opencode-archive.db}"
+unset _archive_default_dir
 
 # --- Output helpers -----------------------------------------------------------
 
@@ -260,6 +268,16 @@ CREATE TABLE IF NOT EXISTS `session_share` (
 	CONSTRAINT `fk_session_share_session_id_session_id_fk` FOREIGN KEY (`session_id`) REFERENCES `session`(`id`) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS `event` (
+	`id` text PRIMARY KEY,
+	`aggregate_id` text NOT NULL,
+	`seq` integer NOT NULL,
+	`type` text NOT NULL,
+	`data` text NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS `event_aggregate_seq_idx` ON `event` (`aggregate_id`,`seq`);
+CREATE INDEX IF NOT EXISTS `event_aggregate_type_seq_idx` ON `event` (`aggregate_id`,`type`,`seq`);
+
 -- WAL mode for the archive too (better read concurrency)
 PRAGMA journal_mode=WAL;
 SCHEMA_SQL
@@ -299,6 +317,37 @@ _sqlite_has_column() {
 		"SELECT COUNT(*) FROM pragma_table_info('${table_name}') WHERE name='${column_name}';" 2>/dev/null || true)
 	[[ "$count" == "1" ]]
 	return $?
+}
+
+_sqlite_has_table() {
+	local db="$1"
+	local table_name="$2"
+	local count
+
+	count=$(sqlite3 "$db" \
+		"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='${table_name}';" 2>/dev/null || true)
+	[[ "$count" == "1" ]]
+	return $?
+}
+
+_archive_event_count_sql() {
+	local candidate_filter="$1"
+	if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
+		printf 'SELECT COUNT(*) FROM event WHERE aggregate_id IN (SELECT id FROM session WHERE %s);\n' "$candidate_filter"
+	else
+		printf 'SELECT 0;\n'
+	fi
+	return 0
+}
+
+_archive_event_bytes_sql() {
+	local candidate_filter="$1"
+	if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
+		printf 'SELECT COALESCE(SUM(LENGTH(data)), 0) FROM event WHERE aggregate_id IN (SELECT id FROM session WHERE %s);\n' "$candidate_filter"
+	else
+		printf 'SELECT 0;\n'
+	fi
+	return 0
 }
 
 _archive_project_insert_columns() {
@@ -514,11 +563,13 @@ cmd_archive() {
 
 	if ((dry_run)); then
 		# Show what would be archived
-		local msg_count part_count todo_count share_count
+		local msg_count part_count todo_count share_count event_count event_bytes
 		msg_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM message WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
 		part_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM part WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
 		todo_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM todo WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
 		share_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session_share WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
+		event_count=$(sqlite3 "$ACTIVE_DB" "$(_archive_event_count_sql "$candidate_filter")")
+		event_bytes=$(sqlite3 "$ACTIVE_DB" "$(_archive_event_bytes_sql "$candidate_filter")")
 
 		echo ""
 		echo "=== DRY RUN — would archive: ==="
@@ -527,6 +578,7 @@ cmd_archive() {
 		echo "  Parts:          $part_count"
 		echo "  Todos:          $todo_count"
 		echo "  Session shares: $share_count"
+		echo "  Events:         $event_count ($(format_bytes "$event_bytes"))"
 		echo ""
 		print_info "Run without --dry-run to proceed."
 		return 0
@@ -537,10 +589,14 @@ cmd_archive() {
 
 	local project_insert_columns project_select_columns
 	local session_insert_columns session_select_columns
+	local has_event_table=0
 	project_insert_columns=$(_archive_project_insert_columns)
 	project_select_columns=$(_archive_project_select_columns)
 	session_insert_columns=$(_archive_session_insert_columns)
 	session_select_columns=$(_archive_session_select_columns)
+	if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
+		has_event_table=1
+	fi
 
 	local size_before
 	size_before=$(file_size_bytes "$ACTIVE_DB")
@@ -593,6 +649,12 @@ cmd_archive() {
 		local in_clause=""
 		in_clause=$(printf '%s\n' "$session_ids" | sed "s/.*/'&'/" | tr '\n' ',' | sed 's/,$//')
 
+		local event_copy_sql="" event_delete_sql=""
+		if ((has_event_table)); then
+			event_copy_sql="INSERT OR IGNORE INTO archive.event SELECT * FROM event WHERE aggregate_id IN ($in_clause);"
+			event_delete_sql="DELETE FROM event WHERE aggregate_id IN ($in_clause);"
+		fi
+
 		# Single transaction: copy to archive then delete from active.
 		# ATTACH and DETACH are within the same sqlite3 invocation — the attachment
 		# is released automatically when the process exits. The trap above ensures
@@ -628,11 +690,18 @@ SELECT * FROM todo WHERE session_id IN ($in_clause);
 INSERT OR IGNORE INTO archive.session_share
 SELECT * FROM session_share WHERE session_id IN ($in_clause);
 
+-- Copy event stream rows when the active DB has OpenCode's event table.
+-- OpenCode stores session-scoped event history with aggregate_id=session.id.
+-- This table is often the largest object in opencode.db, so leaving it behind
+-- defeats archiving.
+${event_copy_sql}
+
 -- Delete from active (child tables first since FK CASCADE is not enforced)
 DELETE FROM part WHERE session_id IN ($in_clause);
 DELETE FROM todo WHERE session_id IN ($in_clause);
 DELETE FROM session_share WHERE session_id IN ($in_clause);
 DELETE FROM message WHERE session_id IN ($in_clause);
+${event_delete_sql}
 DELETE FROM session WHERE id IN ($in_clause);
 
 COMMIT;
@@ -706,18 +775,21 @@ cmd_stats() {
 	echo "=== Active DB: $ACTIVE_DB ==="
 	echo "  Size: $(format_bytes "$(file_size_bytes "$ACTIVE_DB")")"
 
-	local session_count msg_count part_count todo_count share_count
+	local session_count msg_count part_count todo_count share_count event_count event_bytes
 	session_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session;")
 	msg_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM message;")
 	part_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM part;")
 	todo_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM todo;")
 	share_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session_share;")
+	event_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM event;" 2>/dev/null || echo "0")
+	event_bytes=$(sqlite3 "$ACTIVE_DB" "SELECT COALESCE(SUM(LENGTH(data)), 0) FROM event;" 2>/dev/null || echo "0")
 
 	echo "  Sessions:       $session_count"
 	echo "  Messages:       $msg_count"
 	echo "  Parts:          $part_count"
 	echo "  Todos:          $todo_count"
 	echo "  Session shares: $share_count"
+	echo "  Events:         $event_count ($(format_bytes "$event_bytes"))"
 
 	# Last-update distribution
 	local last_7d last_30d older
@@ -736,18 +808,21 @@ cmd_stats() {
 		echo "=== Archive DB: $ARCHIVE_DB ==="
 		echo "  Size: $(format_bytes "$(file_size_bytes "$ARCHIVE_DB")")"
 
-		local arch_session arch_msg arch_part arch_todo arch_share
+		local arch_session arch_msg arch_part arch_todo arch_share arch_event arch_event_bytes
 		arch_session=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM session;" 2>/dev/null || echo "0")
 		arch_msg=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM message;" 2>/dev/null || echo "0")
 		arch_part=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM part;" 2>/dev/null || echo "0")
 		arch_todo=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM todo;" 2>/dev/null || echo "0")
 		arch_share=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM session_share;" 2>/dev/null || echo "0")
+		arch_event=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM event;" 2>/dev/null || echo "0")
+		arch_event_bytes=$(sqlite3 "$ARCHIVE_DB" "SELECT COALESCE(SUM(LENGTH(data)), 0) FROM event;" 2>/dev/null || echo "0")
 
 		echo "  Sessions:       $arch_session"
 		echo "  Messages:       $arch_msg"
 		echo "  Parts:          $arch_part"
 		echo "  Todos:          $arch_todo"
 		echo "  Session shares: $arch_share"
+		echo "  Events:         $arch_event ($(format_bytes "$arch_event_bytes"))"
 
 		# Last-update distribution in archive
 		local arch_7d arch_30d arch_older
@@ -787,8 +862,10 @@ ARCHIVE OPTIONS:
   --max-duration-seconds N  Stop after N seconds even when not done (default: 60)
 
 ENVIRONMENT:
-  OPENCODE_DB               Active DB path (default: ~/.local/share/opencode/opencode.db)
-  OPENCODE_ARCHIVE_DB       Archive DB path (default: ~/.local/share/opencode/opencode-archive.db)
+  XDG_DATA_HOME             Data root for default DB path (default: ~/.local/share)
+  OPENCODE_DB_PATH          Active DB path override used by aidevops/OpenCode helpers
+  OPENCODE_DB               Active DB path override (fallback)
+  OPENCODE_ARCHIVE_DB       Archive DB path (default: next to active opencode.db)
 
 EXAMPLES:
   # Show current stats

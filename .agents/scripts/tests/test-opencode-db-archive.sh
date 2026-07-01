@@ -90,9 +90,13 @@ CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, time_create
 CREATE TABLE part (id text PRIMARY KEY, message_id text NOT NULL, session_id text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);
 CREATE TABLE todo (session_id text NOT NULL, content text NOT NULL, status text NOT NULL, priority text NOT NULL, position integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, PRIMARY KEY(session_id, position));
 CREATE TABLE session_share (session_id text PRIMARY KEY, id text NOT NULL, secret text NOT NULL, url text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL);
+CREATE TABLE event (id text PRIMARY KEY, aggregate_id text NOT NULL, seq integer NOT NULL, type text NOT NULL, data text NOT NULL);
+CREATE UNIQUE INDEX event_aggregate_seq_idx ON event (aggregate_id, seq);
+CREATE INDEX event_aggregate_type_seq_idx ON event (aggregate_id, type, seq);
 INSERT INTO project VALUES ('proj1', '/tmp/worktree', 'git', 'project', NULL, NULL, 1, 1, NULL, '{}', NULL, NULL);
 INSERT INTO session VALUES ('ses1', 'proj1', NULL, 'slug', '/tmp/dir', 'title', '1.0.0', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 1, 1, NULL, NULL, 'workspace1', '/tmp/session-path');
 INSERT INTO message VALUES ('msg1', 'ses1', 1, 1, '{}');
+INSERT INTO event VALUES ('evt1', 'ses1', 1, 'session.updated.1', '{"ok":true}');
 SQL
 	return 0
 }
@@ -187,6 +191,9 @@ CREATE TABLE message (id text PRIMARY KEY, session_id text NOT NULL, time_create
 CREATE TABLE part (id text PRIMARY KEY, message_id text NOT NULL, session_id text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, data text NOT NULL);
 CREATE TABLE todo (session_id text NOT NULL, content text NOT NULL, status text NOT NULL, priority text NOT NULL, position integer NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL, PRIMARY KEY(session_id, position));
 CREATE TABLE session_share (session_id text PRIMARY KEY, id text NOT NULL, secret text NOT NULL, url text NOT NULL, time_created integer NOT NULL, time_updated integer NOT NULL);
+CREATE TABLE event (id text PRIMARY KEY, aggregate_id text NOT NULL, seq integer NOT NULL, type text NOT NULL, data text NOT NULL);
+CREATE UNIQUE INDEX event_aggregate_seq_idx ON event (aggregate_id, seq);
+CREATE INDEX event_aggregate_type_seq_idx ON event (aggregate_id, type, seq);
 INSERT INTO project VALUES ('proj1', '/tmp/worktree', 'git', 'project', NULL, NULL, 1, 1, NULL, '{}', NULL, NULL);
 SQL
 
@@ -198,6 +205,8 @@ SQL
 			"INSERT INTO session VALUES ('${session_id}', 'proj1', NULL, '${session_id}', '/tmp/dir', '${session_id}', '1.0.0', NULL, NULL, NULL, NULL, NULL, NULL, NULL, ${created_ms}, ${updated_ms}, NULL, NULL, 'workspace1', '/tmp/${session_id}');"
 		sqlite3 "$ACTIVE_DB" \
 			"INSERT INTO message VALUES ('msg-${session_id}', '${session_id}', ${created_ms}, ${updated_ms}, '{}');"
+		sqlite3 "$ACTIVE_DB" \
+			"INSERT INTO event VALUES ('evt-${session_id}', '${session_id}', 1, 'session.updated.1', '{\"session\":\"${session_id}\"}');"
 	done <<<"$sessions_csv"
 	return 0
 }
@@ -238,6 +247,21 @@ else
 	_fail "archived session still present in active DB"
 fi
 
+event_table_count=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM pragma_table_info('event') WHERE name='aggregate_id';")
+if [[ "$event_table_count" == "1" ]]; then
+	_pass "legacy archive schema gains event table"
+else
+	_fail "archive.event table missing after migration"
+fi
+
+archived_event_count=$(sqlite3 "$ARCHIVE_DB" "SELECT COUNT(*) FROM event WHERE aggregate_id='ses1';")
+active_event_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM event WHERE aggregate_id='ses1';")
+if [[ "$archived_event_count" == "1" && "$active_event_count" == "0" ]]; then
+	_pass "session event rows moved from active DB to archive DB"
+else
+	_fail "event archive mismatch: archived=${archived_event_count}, active=${active_event_count}"
+fi
+
 _reset_dbs
 _make_active_db_with_sessions $'s1,1000,5000\ns2,2000,1000\ns3,3000,4000\ns4,4000,2000\ns5,5000,3000'
 
@@ -264,6 +288,13 @@ if [[ "$archived_count_sessions" == "s2,s4,s5" ]]; then
 	_pass "count-based retention archives sessions outside update-time keep target"
 else
 	_fail "count-based retention archived unexpected sessions: ${archived_count_sessions}"
+fi
+
+archived_count_events=$(sqlite3 "$ARCHIVE_DB" "SELECT GROUP_CONCAT(aggregate_id, ',') FROM (SELECT aggregate_id FROM event ORDER BY aggregate_id);")
+if [[ "$archived_count_events" == "s2,s4,s5" ]]; then
+	_pass "count-based retention archives matching event stream rows"
+else
+	_fail "count-based retention archived unexpected events: ${archived_count_events}"
 fi
 
 _reset_dbs
@@ -348,6 +379,62 @@ if [[ "$combined_active" == "old2,mid,new" ]]; then
 	_pass "combined retention uses conservative update-time intersection"
 else
 	_fail "combined retention kept unexpected active sessions: ${combined_active}"
+fi
+
+xdg_data_home="${SANDBOX}/xdg-data"
+mkdir -p "${xdg_data_home}/opencode"
+saved_active_db="$ACTIVE_DB"
+saved_archive_db="$ARCHIVE_DB"
+ACTIVE_DB="${xdg_data_home}/opencode/opencode.db"
+ARCHIVE_DB="${xdg_data_home}/opencode/opencode-archive.db"
+_make_active_db_with_session_path
+ACTIVE_DB="$saved_active_db"
+ARCHIVE_DB="$saved_archive_db"
+
+set +e
+out=$(XDG_DATA_HOME="$xdg_data_home" "$HELPER" archive --retention-days 0 --max-duration-seconds 30 2>&1)
+rc=$?
+set -e
+
+if [[ "$rc" -eq 0 ]]; then
+	_pass "archive honors XDG_DATA_HOME default DB path"
+else
+	_fail "XDG_DATA_HOME archive failed with rc=$rc — output: $out"
+fi
+
+xdg_archived_event_count=$(sqlite3 "${xdg_data_home}/opencode/opencode-archive.db" "SELECT COUNT(*) FROM event WHERE aggregate_id='ses1';")
+if [[ "$xdg_archived_event_count" == "1" ]]; then
+	_pass "XDG_DATA_HOME archive stores events next to isolated DB"
+else
+	_fail "XDG_DATA_HOME event archive mismatch: ${xdg_archived_event_count}"
+fi
+
+path_override_dir="${SANDBOX}/path-override"
+mkdir -p "$path_override_dir"
+saved_active_db="$ACTIVE_DB"
+saved_archive_db="$ARCHIVE_DB"
+ACTIVE_DB="${path_override_dir}/custom-opencode.db"
+ARCHIVE_DB="${path_override_dir}/opencode-archive.db"
+_make_active_db_with_session_path
+ACTIVE_DB="$saved_active_db"
+ARCHIVE_DB="$saved_archive_db"
+
+set +e
+out=$(OPENCODE_DB_PATH="${path_override_dir}/custom-opencode.db" "$HELPER" archive --retention-days 0 --max-duration-seconds 30 2>&1)
+rc=$?
+set -e
+
+if [[ "$rc" -eq 0 ]]; then
+	_pass "archive honors OPENCODE_DB_PATH override"
+else
+	_fail "OPENCODE_DB_PATH archive failed with rc=$rc — output: $out"
+fi
+
+path_override_event_count=$(sqlite3 "${path_override_dir}/opencode-archive.db" "SELECT COUNT(*) FROM event WHERE aggregate_id='ses1';")
+if [[ "$path_override_event_count" == "1" ]]; then
+	_pass "OPENCODE_DB_PATH archive defaults archive DB next to active DB"
+else
+	_fail "OPENCODE_DB_PATH event archive mismatch: ${path_override_event_count}"
 fi
 
 printf '\nResults: %d passed, %d failed\n' "$PASS" "$FAIL"
