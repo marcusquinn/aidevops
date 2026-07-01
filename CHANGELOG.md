@@ -10,12 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
+## [3.31.15] - 2026-07-01
 
-- Release-gate GUI commands for the AI collaboration workspace: `gui:lint`,
-  `gui:typecheck`, `gui:build`, and `gui:ci`.
-- Documented final QA coverage for AI Sessions, Channels, Direct Messages,
-  Tambo generative UI cards, shadcn-style chat primitives, and signposts tours.
+### Changed
+
+- Maintenance: sync ref:GH#26220 to TODO.md [skip ci]
+- preserve dirty canonical worktree state (#26180)
+- feat(reach): add capture inbox workflow (#26219)
+- feat(reach): add profile and cookie broker (#26216)
+- Documentation: evolve DESIGN.md workflow (#26215)
+- feat(reach): add failover health classification (#26209)
+- Maintenance: mark t18047 complete (pr:#26207 completed:2026-07-01) [skip ci]
+- feat: add reach capability registry and router (#26207)
+- Documentation: surface design md in ui routing (#26193)
+- Documentation: surface design md in ui routing (#26192)
 
 ## [3.31.14] - 2026-07-01
 
