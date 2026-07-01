@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# file-size-regression-helper.sh — ratchet gate for shell/Python file line count (t2938)
+# file-size-regression-helper.sh — ratchet gate for non-code Markdown line count (t2938)
 #
 # Converts the absolute file-size gate from linters-local.sh into a net-increase
 # (ratchet) gate. Block only when the PR adds files over the limit, not for
@@ -11,7 +11,7 @@
 #
 # Subcommands:
 #   scan      <dir>  [--output <file>] [--limit <N>]
-#                    Scan a directory for .sh/.py files over <limit> lines.
+#                    Scan a directory for non-README .md files over <limit> lines.
 #                    Outputs TSV: relative-path TAB line-count.
 #   scan-ref  <ref>  [--output <file>] [--limit <N>]
 #                    Same as scan but reads content from a git ref (no checkout).
@@ -48,7 +48,7 @@
 set -uo pipefail
 
 SCRIPT_NAME=$(basename "$0")
-readonly FILE_SIZE_DEFAULT_LIMIT=1500
+readonly FILE_SIZE_DEFAULT_LIMIT=500
 
 # ---------------------------------------------------------------------------
 # Logging helpers
@@ -68,7 +68,7 @@ die() {
 
 # ---------------------------------------------------------------------------
 # scan_violations_dir <dir> <limit>
-# Scan a plain directory for .sh/.py files with more than <limit> lines.
+# Scan a plain directory for non-README .md files with more than <limit> lines.
 # Outputs TSV: path-relative-to-dir TAB line-count  (sorted by path).
 # ---------------------------------------------------------------------------
 scan_violations_dir() {
@@ -81,7 +81,7 @@ scan_violations_dir() {
 	# shellcheck disable=SC2064
 	trap "rm -f '$_tmp'" RETURN
 
-	find "$_dir_abs" -type f \( -name "*.sh" -o -name "*.py" \) | sort | while IFS= read -r _f; do
+	find "$_dir_abs" -type f -name "*.md" ! -name "README.md" | sort | while IFS= read -r _f; do
 		local _lc
 		_lc=$(wc -l < "$_f") || _lc=0
 		_lc=${_lc//[^0-9]/}
@@ -97,7 +97,7 @@ scan_violations_dir() {
 
 # ---------------------------------------------------------------------------
 # scan_violations_ref <ref> <limit>
-# Scan a git ref for .sh/.py files with more than <limit> lines.
+# Scan a git ref for non-README .md files with more than <limit> lines.
 # Uses a temporary git worktree so wc -l runs on local files (fast for
 # repos with 1000+ scripts). Worktree is always removed via trap.
 # Outputs TSV: git-path TAB line-count  (sorted by path).
@@ -200,7 +200,7 @@ write_report() {
 		printf '| Metric | Base (`%s`) | Head (`%s`) | Delta |\n' \
 			"${_base_sha:0:7}" "${_head_sha:0:7}"
 		printf '|---|---:|---:|---:|\n'
-		printf '| Files >%d lines | %d | %d | %+d |\n\n' \
+		printf '| Non-README Markdown files >%d lines | %d | %d | %+d |\n\n' \
 			"$FILE_SIZE_DEFAULT_LIMIT" "$_base_count" "$_head_count" "$_net_delta"
 		if [ "$_is_regression" -eq 1 ] && [ -n "$_new_paths" ]; then
 			printf '### New oversized files\n\n'

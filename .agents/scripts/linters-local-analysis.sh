@@ -721,14 +721,16 @@ append_file_size_result() {
 # =============================================================================
 # File Size Check — ratchet-based gate (t2938)
 # =============================================================================
-# Block only when this commit introduces a net increase in files >1500 lines,
-# or adds a brand-new file >1500 lines. Pre-existing debt does not block.
+# Block only when this commit introduces a net increase in non-README Markdown
+# files >500 lines, or adds a brand-new non-README Markdown file >500 lines.
+# Code file size is not gated here; function-complexity/nesting-depth gates
+# provide more actionable code limits. Pre-existing debt does not block.
 # Framework rule: t2228 — "Any gate MUST be ratchet-based: block only on regressions."
 #
 # Parity: matches the per-file regression check in code-quality.yml "File size check"
 # step, which already uses complexity-regression-helper.sh with the same semantics.
 #
-# The WARN advisory (files >800 lines) is unchanged — informational only.
+# The local display mirrors the ratchet scope: non-README Markdown only.
 
 check_file_size() {
 	echo -e "${BLUE}Checking File Size (ratchet gate — t2938)...${NC}"
@@ -741,15 +743,12 @@ check_file_size() {
 	trap '_run_cleanups' RETURN
 	push_cleanup "rm -f '${tmp_file}'"
 
-	for file in "${ALL_SH_FILES[@]}"; do
+	local md_files=""
+	md_files=$(git ls-files '*.md' 2>/dev/null | grep -Ev '(^|/)README\.md$|_archive/' || true)
+	while IFS= read -r file; do
+		[[ -n "$file" ]] || continue
 		append_file_size_result "$file" "$tmp_file" "$MAX_FILE_LINES_WARN" "$MAX_FILE_LINES_BLOCK"
-	done
-
-	# Also check Python files in the scripts directory (shared discovery)
-	lint_python_files_local
-	for file in "${LINT_PY_FILES_LOCAL[@]}"; do
-		append_file_size_result "$file" "$tmp_file" "$MAX_FILE_LINES_WARN" "$MAX_FILE_LINES_BLOCK"
-	done
+	done <<<"$md_files"
 
 	if [[ -s "$tmp_file" ]]; then
 		block_violations=$(safe_grep_count '^BLOCK' "$tmp_file")
@@ -759,10 +758,10 @@ check_file_size() {
 		block_violations=${block_violations:-0}
 		warn_violations=${warn_violations:-0}
 
-		# Advisory display — show WARN and BLOCK files for developer awareness.
+		# Advisory display — show non-README Markdown files for developer awareness.
 		# These are informational; the ratchet gate below decides whether to block.
 		if [[ "$block_violations" -gt 0 ]]; then
-			print_warning "File size: $block_violations files exceed ${MAX_FILE_LINES_BLOCK} lines (should be split)"
+			print_warning "File size: $block_violations non-README Markdown files exceed ${MAX_FILE_LINES_BLOCK} lines (should be split or indexed)"
 			grep '^BLOCK' "$tmp_file" | sed 's/^BLOCK /  /' | head -10
 		fi
 
@@ -781,35 +780,16 @@ check_file_size() {
 		return 0
 	fi
 
-	# Detect docs-only changes: if no .sh or .py files are staged/modified, skip.
-	local changed_code_files
-	changed_code_files=$(git diff --name-only HEAD 2>/dev/null | grep -cE '\.(sh|py)$' || true)
-	changed_code_files=${changed_code_files//[^0-9]/}
-	changed_code_files=${changed_code_files:-0}
-	if [[ "$changed_code_files" -eq 0 ]]; then
-		local staged_code
-		staged_code=$(git diff --cached --name-only 2>/dev/null | grep -cE '\.(sh|py)$' || true)
-		staged_code=${staged_code//[^0-9]/}
-		staged_code=${staged_code:-0}
-		changed_code_files=$((changed_code_files + staged_code))
-	fi
-
-	if [[ "$changed_code_files" -eq 0 ]]; then
-		local total=$((block_violations + warn_violations))
-		print_info "File size: docs-only commit detected — ratchet gate skipped. $total oversized files (advisory)."
-		return 0
-	fi
-
 	local ratchet_exit=0
 	"$helper_script" check || ratchet_exit=$?
 
 	if [[ "$ratchet_exit" -eq 0 ]]; then
 		local total=$((block_violations + warn_violations))
-		print_success "File size: no regression. $total oversized files ($block_violations over ${MAX_FILE_LINES_BLOCK}, $warn_violations advisory). Tracked by #21146."
+		print_success "File size: no regression. $total oversized non-README Markdown files ($block_violations over ${MAX_FILE_LINES_BLOCK}, $warn_violations advisory). Tracked by #21146."
 		return 0
 	fi
 
-	print_error "File size: regression — new file(s) added over ${MAX_FILE_LINES_BLOCK} lines. Split before committing, or add the 'complexity-bump-ok' label in the PR."
+	print_error "File size: regression — new non-README Markdown file(s) added over ${MAX_FILE_LINES_BLOCK} lines. Split/index before committing, or add the 'complexity-bump-ok' label in the PR."
 	return 1
 }
 

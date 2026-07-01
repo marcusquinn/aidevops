@@ -113,8 +113,8 @@ source_linter_analysis() {
 	MAX_NESTING_DEPTH_WARN=5
 	MAX_NESTING_DEPTH_BLOCK=8
 	MAX_NESTING_VIOLATIONS=1
-	MAX_FILE_LINES_WARN=800
-	MAX_FILE_LINES_BLOCK=1500
+	MAX_FILE_LINES_WARN=500
+	MAX_FILE_LINES_BLOCK=500
 	# shellcheck source=../linters-local-analysis.sh
 	source "${REPO_ROOT}/.agents/scripts/linters-local-analysis.sh"
 	return 0

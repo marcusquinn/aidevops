@@ -376,8 +376,11 @@ scan_dir_nesting_depth() {
 # ---------------------------------------------------------------------------
 # scan_dir_file_size <dir> [<out-file>] [<files-filter>]
 #
-# .sh and .py files over 1500 lines. Output: <file>\tSIZE\t<lines>.
-# Identity key: (file, 'SIZE'). (t2171)
+# Non-code Markdown files over 500 lines, excluding README.md. Code file
+# length is intentionally not gated here; code scalability is covered by
+# function-complexity and nesting-depth gates, which produce more actionable
+# work than whole-file line counts for cohesive helper modules. Output:
+# <file>\tSIZE\t<lines>. Identity key: (file, 'SIZE'). (t2171, GH#25993)
 #
 # Optional <files-filter>: newline-separated relative paths from
 # `git diff --name-only`; when non-empty, only those files are scanned
@@ -390,9 +393,9 @@ scan_dir_file_size() {
 
 	local _files
 	if [ -n "$_files_filter" ]; then
-		_files=$(_filter_to_abs_paths "$_dir" "$_files_filter" "sh py")
+		_files=$(_filter_to_abs_paths "$_dir" "$_files_filter" "md")
 	else
-		_files=$(_collect_files "$_dir" "sh py")
+		_files=$(_collect_files "$_dir" "md")
 	fi
 	if [ -z "$_files" ]; then
 		[ -n "$_out" ] && : >"$_out"
@@ -407,8 +410,11 @@ scan_dir_file_size() {
 		[ -n "$_file" ] || continue
 		[ -f "$_file" ] || continue
 		_rel_file="${_file#"${_dir}/"}"
+		case "$_rel_file" in
+		README.md | */README.md) continue ;;
+		esac
 		_lc=$(wc -l <"$_file" 2>/dev/null | tr -d ' ')
-		if [ "${_lc:-0}" -gt 1500 ] 2>/dev/null; then
+		if [ "${_lc:-0}" -gt 500 ] 2>/dev/null; then
 			printf '%s\tSIZE\t%s\n' "$_rel_file" "$_lc" >>"$_result_file"
 		fi
 	done <<<"$_files"
@@ -564,7 +570,7 @@ metric_unit() {
 	case "$_metric" in
 	function-complexity) printf 'function(s) >100 lines' ;;
 	nesting-depth) printf 'file(s) with nesting depth >8' ;;
-	file-size) printf 'file(s) >1500 lines' ;;
+	file-size) printf 'non-README Markdown file(s) >500 lines' ;;
 	bash32-compat) printf 'bash 3.2-incompatible construct(s)' ;;
 	*) printf 'violation(s)' ;;
 	esac
