@@ -145,6 +145,11 @@ jobs:
           bash __aidevops/.agents/scripts/issue-sync-helper.sh enrich --verbose || true
         env:
           GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
+          # Push/release runs share a 20-minute budget with close/push/pull and
+          # TODO.md push. Keep routine enrichment bounded; manual dispatch still
+          # runs full `enrich` because these env vars are not set there.
+          AIDEVOPS_ENRICH_MAX_ISSUES: '75'
+          AIDEVOPS_ENRICH_MAX_SECONDS: '300'
 
       - name: Pull any missing refs back to TODO.md
         if: steps.check-author.outputs.skip != 'true'
