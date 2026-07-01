@@ -122,8 +122,8 @@ Build+: keep going until fully resolved. Make announced tool calls. Solve autono
 | Audio/voice | `content/production-audio.md` + `tools/voice/speech-to-speech.md` |
 | SEO/blog posts | `seo/` + `content/distribution-*.md` |
 | WordPress | `tools/wordpress/wp-dev.md` |
-| UI/layout/design/CSS | `workflows/ui-verification.md` + `tools/browser/playwright-emulation.md` + `tools/browser/chrome-devtools.md` |
-| Design system/brand/style | `tools/design/design-inspiration.md` + `tools/design/ui-ux-inspiration.md` + `tools/design/ui-ux-catalogue.toon` + `tools/design/brand-identity.md` |
+| UI/layout/design/CSS | `tools/design/design-md.md` + `workflows/ui-verification.md` + `tools/browser/playwright-emulation.md` + `tools/browser/chrome-devtools.md` |
+| Design system/brand/style | `tools/design/design-md.md` + `tools/design/design-inspiration.md` + `tools/design/ui-ux-inspiration.md` + `tools/design/ui-ux-catalogue.toon` + `tools/design/brand-identity.md` |
 | Browser automation | `tools/browser/browser-automation.md` |
 | Accessibility | `tools/accessibility/accessibility-audit.md` |
 | Local dev / .local / ports / proxy / HTTPS / LocalWP | `services/hosting/local-hosting.md` |
