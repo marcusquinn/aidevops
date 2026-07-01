@@ -280,23 +280,24 @@ handle_doctor() {
 emit_network_doctor_json() {
 	local proxy_available="false"
 	local vpn_available="false"
-	local check_status="missing_helper"
+	local proxy_status="missing_helper"
+	local vpn_status="missing_helper"
 
 	if capability_available "proxy_vpn"; then
 		proxy_available="true"
-		check_status="ready"
+		proxy_status="ready"
 	fi
 	if helper_available nostr-vpn-helper.sh || command_available wg || command_available tailscale; then
 		vpn_available="true"
-		check_status="ready"
+		vpn_status="ready"
 	fi
 
 	printf '{"schema_version":1,"contacted_targets":false,"doctor":"network","provider_class":"proxy_or_vpn","checks":[{"key":"proxy_vpn","available":%s,"status":"%s"},{"key":"vpn","available":%s,"status":"%s"}],"notes":["sanitized readiness only","no IP addresses, proxy credentials, session IDs, cookies, or private paths are printed"]}\n' \
 		"$(json_bool "$proxy_available")" \
-		"$(json_escape "$check_status")" \
+		"$(json_escape "$proxy_status")" \
 		"$(json_bool "$vpn_available")" \
-		"$(json_escape "$check_status")"
-	return 0
+		"$(json_escape "$vpn_status")"
+	return $?
 }
 
 emit_fingerprint_doctor_json() {
