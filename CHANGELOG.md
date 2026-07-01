@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.10] - 2026-07-01
+
+### Changed
+
+- Maintenance: mark t18045 complete (pr:#26153 completed:2026-07-01) [skip ci]
+- refresh issue dependency state before dispatch (#26153)
+- Refactor: reduce task completion complexity (#26154)
+- Maintenance: sync ref:GH#26152 to TODO.md [skip ci]
+
 ## [3.31.9] - 2026-07-01
 
 ### Fixed
