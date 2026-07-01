@@ -138,6 +138,7 @@ from pathlib import Path
 trusted_chunks = []
 provider_line = re.compile(r"\b(openai|anthropic|claude|provider|api)\b", re.I)
 runtime_line = re.compile(r"\[(worker_exit_diagnostics|provider_error|runtime_error)\]", re.I)
+auth_runtime_line = re.compile(r"\b(token refresh failed|invalid_grant|invalid refresh token)\b", re.I)
 
 for raw_line in Path(sys.argv[1]).read_text(errors='ignore').splitlines():
     line = raw_line.strip()
@@ -154,7 +155,7 @@ for raw_line in Path(sys.argv[1]).read_text(errors='ignore').splitlines():
             has_error_record = any(key in obj for key in ('error', 'status', 'provider_error_type', 'provider_status'))
             if has_provider and has_error_record:
                 trusted = True
-    elif provider_line.search(line) or runtime_line.search(line):
+    elif provider_line.search(line) or runtime_line.search(line) or auth_runtime_line.search(line):
         trusted = True
     if trusted:
         trusted_chunks.append(line)
@@ -252,7 +253,7 @@ service_interruption_continue_candidate() {
 	local session_id="$4"
 	: "${5:-}"
 
-	if [[ "$failure_reason" == "provider_error" ]]; then
+	if [[ "$failure_reason" == "provider_error" || "$failure_reason" == "auth_error" ]]; then
 		if [[ "$activity_detected" == "1" || -n "$session_id" ]]; then
 			return 0
 		fi
