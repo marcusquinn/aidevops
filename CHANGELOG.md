@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.8] - 2026-07-01
+
+### Fixed
+
+- stop review-thread redispatch after blocked analysis (#26149)
+
 ## [3.31.7] - 2026-07-01
 
 ### Changed
