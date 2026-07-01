@@ -66,6 +66,15 @@ Upstream `@google/design.md` v0.2.0 and follow-up commit `18508f2` were reviewed
 7. **Iterate** — spin palettes, adjust tokens, regenerate preview/guide until satisfied.
 8. **Build** — hand DESIGN.md to coding agents for consistent, on-brand UI output.
 
+### Evolving an existing DESIGN.md during UI work
+
+- Read the repo-root `DESIGN.md` before UI/UX implementation when present; apply its cross-cutting rules and canonical examples before inventing new patterns.
+- When implementation reveals a durable repo-specific preference, update `DESIGN.md` in the same PR with a short rationale and concrete reference paths where known.
+- If the preference is uncertain, too broad, or outside the PR scope, create a worker-ready follow-up issue instead; if the learning is generic across repos, route it as an aidevops self-improvement issue with anonymised, repo-safe evidence.
+- Before standardising a close pattern, record the similar-but-different reasoning: which nearby patterns were considered, why the chosen pattern fits, and what differs.
+- If no repo convention exists for responsive behaviour, use responsive best-practice defaults or present explicit options; do not let desktop-only output silently become the standard.
+- Keep updates concise and durable: stable patterns only, no session transcripts, example-led guidance, and no rule expansion without evidence.
+
 <!-- AI-CONTEXT-END -->
 
 ## The DESIGN.md Format
@@ -241,7 +250,9 @@ Choose method based on what exists:
 
 ## Using a DESIGN.md
 
-**For coding agents:** Drop `DESIGN.md` in project root. Tell the agent: `"Build a landing page following DESIGN.md"`. The agent reads YAML tokens for exact values and prose for rationale — specific, reproducible output.
+**For coding agents:** Drop `DESIGN.md` in project root. Tell the agent: `"Build a landing page following DESIGN.md"`. The agent reads YAML tokens for exact values and prose for rationale — specific, reproducible output. During UI work, agents should treat existing DESIGN.md rules as constraints, cite the canonical examples they followed, and update DESIGN.md only when the session proves a durable repo-wide preference.
+
+**For evolving guidance:** Add concise entries that explain the stable rule, the canonical implementation path, and any similar-but-different or responsive-design decision that prevents future drift. File a follow-up issue instead of editing DESIGN.md when the preference needs more product/design input or applies beyond the current repo.
 
 **For Tailwind projects:** Export tokens with `npx @google/design.md export --format json-tailwind DESIGN.md > tailwind.theme.json` for Tailwind v3 `theme.extend` JSON, or `npx @google/design.md export --format css-tailwind DESIGN.md > theme.css` for a Tailwind v4 `@theme { ... }` block. Design updates in DESIGN.md propagate automatically on next build.
 
@@ -302,6 +313,8 @@ The spec format is `alpha` — expect changes. aidevops mitigations:
 - `tools/ui/ui-skills.md` -- Opinionated UI build constraints
 - `tools/ui/nothing-design-skill.md` -- Example: complete design system as agent
 - `templates/DESIGN.md.template` -- Skeleton for `aidevops init`
+- `reference/self-improvement.md` -- Route generic, cross-repo learning into durable framework improvements
+- `workflows/brief.md` -- Worker-ready follow-up issue structure for uncertain or out-of-scope design preferences
 - `workflows/ui-verification.md` -- Visual regression testing
 - **External**: [google-labs-code/design.md](https://github.com/google-labs-code/design.md) — normative spec, CLI, examples
 - **External**: [W3C Design Tokens Format Module](https://tr.designtokens.org/format/) — underlying token schema inspiration
