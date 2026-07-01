@@ -428,6 +428,11 @@ _validator_agent_doc_simplification_gate() {
 # Re-measures function complexity in the cited file. If no functions exceed
 # the threshold, the premise is falsified.
 #
+# Historical issues may carry this generator marker for Markdown agent-doc
+# findings. Those issues are file-size findings, not shell-function findings;
+# validate them against whole-file line count so closure comments do not claim
+# "0 functions" for documentation files (GH#25993).
+#
 # Expects CITED_FILE and CITED_THRESHOLD to be set by cmd_validate().
 # ---------------------------------------------------------------------------
 _validator_function_complexity_gate() {
@@ -456,6 +461,21 @@ _validator_function_complexity_gate() {
 		return 10
 	fi
 
+	case "$CITED_FILE" in
+	*.sh) ;;
+	*)
+		local line_count
+		line_count=$(wc -l <"$target_file" 2>/dev/null | tr -d ' ') || line_count=0
+		if [[ "$line_count" -lt "$CITED_THRESHOLD" ]]; then
+			_log "INFO" "function-complexity-gate validator: ${CITED_FILE} is now ${line_count} lines (threshold ${CITED_THRESHOLD}) — premise falsified"
+			VALIDATOR_RATIONALE="File \`${CITED_FILE}\` is now ${line_count} lines, below the ${CITED_THRESHOLD}-line threshold. Premise falsified. Not dispatching."
+			return 10
+		fi
+		_log "INFO" "function-complexity-gate validator: ${CITED_FILE} is still ${line_count} lines (threshold ${CITED_THRESHOLD}) — premise holds"
+		return 0
+		;;
+	esac
+
 	# Count functions exceeding the threshold (same awk as complexity-scan-helper.sh)
 	local violation_count
 	violation_count=$(awk -v threshold="$CITED_THRESHOLD" '
@@ -469,6 +489,10 @@ _validator_function_complexity_gate() {
 		VALIDATOR_RATIONALE="File \`${CITED_FILE}\` has 0 functions exceeding ${CITED_THRESHOLD} lines on HEAD. Premise falsified. Not dispatching."
 		return 10
 	fi
+
+	_log "INFO" "function-complexity-gate validator: ${violation_count} function(s) still exceed ${CITED_THRESHOLD} lines in ${CITED_FILE} — premise holds"
+	return 0
+}
 
 # ---------------------------------------------------------------------------
 # Runtime-audit validator (t3072)
@@ -524,10 +548,6 @@ _validator_runtime_audit() {
 
 	_log "WARN" "runtime-audit validator: detector=${DETECTOR_ID} returned rc=${detector_rc} (unexpected) — validator error"
 	return 20
-}
-
-	_log "INFO" "function-complexity-gate validator: ${violation_count} function(s) still exceed ${CITED_THRESHOLD} lines in ${CITED_FILE} — premise holds"
-	return 0
 }
 
 # ---------------------------------------------------------------------------
