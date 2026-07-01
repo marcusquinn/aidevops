@@ -207,6 +207,54 @@ _closed_issue_aidevops_complete_date() {
 	return 1
 }
 
+_mark_reopen_completed_task() {
+	local tid="$1" todo_file="$2" ref_num="$3" proof_date="$4" reason="$5"
+	if [[ "$DRY_RUN" == "true" ]]; then
+		print_info "[DRY-RUN] Would mark $tid [x] ($reason on #$ref_num)"
+		return 0
+	fi
+	_mark_todo_done "$tid" "$todo_file" "verified:${proof_date}"
+	log_verbose "#$ref_num ($tid) has $reason — marked TODO [x]"
+	return 0
+}
+
+_mark_reopen_merged_pr_task() {
+	local tid="$1" todo_file="$2" ref_num="$3" pr_num="$4"
+	if [[ "$DRY_RUN" == "true" ]]; then
+		print_info "[DRY-RUN] Would mark $tid [x] (merged PR #$pr_num)"
+		return 0
+	fi
+	add_pr_ref_to_todo "$tid" "$pr_num" "$todo_file" 2>/dev/null || true
+	_mark_todo_done "$tid" "$todo_file"
+	log_verbose "#$ref_num ($tid) has merged PR #$pr_num — marked TODO [x]"
+	return 0
+}
+
+_reopen_mark_if_completed() {
+	local repo="$1" tid="$2" ref_num="$3" todo_file="$4"
+	local pr_info
+	pr_info=$(gh_find_merged_pr "$repo" "$tid" 2>/dev/null || echo "")
+	if [[ -n "$pr_info" ]]; then
+		local pr_num="${pr_info%%|*}"
+		_mark_reopen_merged_pr_task "$tid" "$todo_file" "$ref_num" "$pr_num"
+		return 0
+	fi
+
+	local completed_date
+	completed_date=$(_closed_issue_worker_complete_date "$repo" "$ref_num" || true)
+	if [[ -n "$completed_date" ]]; then
+		_mark_reopen_completed_task "$tid" "$todo_file" "$ref_num" "$completed_date" "worker_complete evidence"
+		return 0
+	fi
+
+	completed_date=$(_closed_issue_aidevops_complete_date "$repo" "$ref_num" || true)
+	if [[ -n "$completed_date" ]]; then
+		_mark_reopen_completed_task "$tid" "$todo_file" "$ref_num" "$completed_date" "aidevops close evidence"
+		return 0
+	fi
+	return 1
+}
+
 _do_close() {
 	local task_id="$1" issue_number="$2" todo_file="$3" repo="$4"
 	local task_id_ere
@@ -404,45 +452,8 @@ cmd_reopen() {
 			continue
 		fi
 
-		# Check if a merged PR exists for this task — if so, the closure is
-		# legitimate (work done). Mark TODO [x] with pr:# instead of reopening.
-		local pr_info
-		pr_info=$(gh_find_merged_pr "$repo" "$tid" 2>/dev/null || echo "")
-		if [[ -n "$pr_info" ]]; then
-			local pr_num="${pr_info%%|*}"
-			if [[ "$DRY_RUN" == "true" ]]; then
-				print_info "[DRY-RUN] Would mark $tid [x] (merged PR #$pr_num)"
-			else
-				add_pr_ref_to_todo "$tid" "$pr_num" "$todo_file" 2>/dev/null || true
-				_mark_todo_done "$tid" "$todo_file"
-				log_verbose "#$ref_num ($tid) has merged PR #$pr_num — marked TODO [x]"
-			fi
-			has_pr=$((has_pr + 1))
-			continue
-		fi
-
-		local worker_completed_date
-		worker_completed_date=$(_closed_issue_worker_complete_date "$repo" "$ref_num" || true)
-		if [[ -n "$worker_completed_date" ]]; then
-			if [[ "$DRY_RUN" == "true" ]]; then
-				print_info "[DRY-RUN] Would mark $tid [x] (worker_complete evidence on #$ref_num)"
-			else
-				_mark_todo_done "$tid" "$todo_file" "verified:${worker_completed_date}"
-				log_verbose "#$ref_num ($tid) has worker_complete evidence — marked TODO [x]"
-			fi
-			has_pr=$((has_pr + 1))
-			continue
-		fi
-
-		local aidevops_completed_date
-		aidevops_completed_date=$(_closed_issue_aidevops_complete_date "$repo" "$ref_num" || true)
-		if [[ -n "$aidevops_completed_date" ]]; then
-			if [[ "$DRY_RUN" == "true" ]]; then
-				print_info "[DRY-RUN] Would mark $tid [x] (aidevops close evidence on #$ref_num)"
-			else
-				_mark_todo_done "$tid" "$todo_file" "verified:${aidevops_completed_date}"
-				log_verbose "#$ref_num ($tid) has aidevops close evidence — marked TODO [x]"
-			fi
+		# If closure evidence exists, mark TODO done instead of reopening.
+		if _reopen_mark_if_completed "$repo" "$tid" "$ref_num" "$todo_file"; then
 			has_pr=$((has_pr + 1))
 			continue
 		fi
