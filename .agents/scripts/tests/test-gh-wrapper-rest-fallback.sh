@@ -101,13 +101,8 @@ export -f print_info print_warning print_error print_success log_verbose
 export AIDEVOPS_SESSION_ORIGIN=interactive
 export AIDEVOPS_SESSION_USER=testuser
 
-# Lock REST fallback threshold to 10 for the boundary tests below.
-# The default value (1000 since t2744) is intentionally high to enable
-# proactive REST routing under load, but these tests verify the
-# function's *logic* (fallback-when-remaining-≤-threshold) — not the
-# default value itself. Setting the env var BEFORE the source bakes
-# the value into _GH_REST_FALLBACK_THRESHOLD inside
-# shared-gh-wrappers-rest-fallback.sh.
+# Lock fallback threshold to 10 before source so boundary tests verify
+# fallback-when-remaining-≤-threshold logic, not the production default.
 export AIDEVOPS_GH_REST_FALLBACK_THRESHOLD=10
 export AIDEVOPS_GH_REST_FALLBACK_DISABLE_CACHE=1
 
@@ -128,138 +123,142 @@ _gh_with_timeout() { shift; "$@"; return $?; }
 export -f _gh_with_timeout
 
 # Post-source stubs. Shell functions beat PATH binaries.
-gh() {
-	printf '%s\n' "$*" >>"${GH_CALLS}"
-	[[ -n "${GH_TOKEN:-}" ]] && printf '%s\n' "$GH_TOKEN" >>"${GH_APP_TOKEN_CALLS}"
-
-	# gh api rate_limit - always succeeds, returns configurable value
-	if [[ "$1" == "api" && "$2" == "rate_limit" ]]; then
-		local remaining="${STUB_RATE_LIMIT_REMAINING:-5000}"
+_stub_jq_filter_arg() {
+	local start_index="${1:-}"
+	shift
+	local args=("$@")
+	local i="$start_index"
+	local next=0
+	while [[ $i -le ${#args[@]} ]]; do
+		if [[ "${args[$((i - 1))]}" == "--jq" ]]; then
+			next=$((i + 1))
+			printf '%s\n' "${args[$((next - 1))]:-}"
+			return 0
+		fi
+		i=$((i + 1))
+	done
+	printf '\n'
+	return 0
+}
+_stub_gh_api_collaborator_permission() {
+	local status="${STUB_COLLAB_STATUS:-200}"
+	if [[ "${STUB_COLLAB_FAIL:-0}" == "1" ]]; then
+		printf 'HTTP/2.0 %s Forbidden\n\n{"message":"Forbidden"}\n' "$status"
+		return 1
+	fi
+	if [[ "$status" == "404" ]]; then
+		printf 'HTTP/2.0 404 Not Found\n\n{"message":"Not Found"}\n'
+		return 1
+	fi
+	if [[ -n "${STUB_COLLAB_RAW_RESPONSE:-}" ]]; then
+		printf '%s\n' "$STUB_COLLAB_RAW_RESPONSE"
+		return 0
+	fi
+	if [[ -n "${STUB_COLLAB_RAW_RESPONSE_FILE:-}" ]]; then
+		local raw_response_line=""
+		while IFS= read -r raw_response_line || [[ -n "$raw_response_line" ]]; do
+			printf '%s\n' "$raw_response_line"
+		done <"$STUB_COLLAB_RAW_RESPONSE_FILE"
+		return 0
+	fi
+	printf 'HTTP/2.0 %s OK\n\n{"permission":"%s"}\n' "$status" "${STUB_COLLAB_PERMISSION:-write}"
+	return 0
+}
+_stub_print_fixture_with_jq() {
+	local fixture="$1"
+	local jq_filter="$2"
+	local jq_mode="$3"
+	if [[ -n "$jq_filter" ]]; then
+		printf '%s\n' "$fixture" | jq "$jq_mode" "$jq_filter"
+		return $?
+	fi
+	printf '%s\n' "$fixture"
+	return 0
+}
+_stub_gh_api_issues_list() {
+	local jq_filter=""
+	local fixture='[{"number":22430,"state":"open","title":"Reduce GraphQL list-call pressure","html_url":"https://github.com/owner/repo/issues/22430","updated_at":"2026-05-02T17:52:48Z","labels":[{"name":"auto-dispatch"}],"assignees":[{"login":"worker"}],"user":{"login":"maintainer"}}]'
+	jq_filter="$(_stub_jq_filter_arg 3 "$@")"
+	_stub_print_fixture_with_jq "$fixture" "$jq_filter" -c
+	return $?
+}
+_stub_gh_api_pr_view() {
+	local jq_filter=""
+	local fixture='{"number":123,"title":"stub PR"}'
+	fixture="${STUB_PR_VIEW_FIXTURE:-$fixture}"
+	jq_filter="$(_stub_jq_filter_arg 3 "$@")"
+	_stub_print_fixture_with_jq "$fixture" "$jq_filter" -r
+	return $?
+}
+_stub_gh_api_pr_list() {
+	local path="${1:-}"
+	shift
+	local jq_filter=""
+	local fixture='[{"number":22337,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22337","head":{"ref":"feature/auto-20260502-135611-gh22289"},"base":{"ref":"main"}},{"number":22343,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22343","head":{"ref":"other"},"base":{"ref":"main"}}]'
+	jq_filter="$(_stub_jq_filter_arg 3 api "$path" "$@")"
+	fixture="${STUB_PR_LIST_FIXTURE:-$fixture}"
+	if [[ "$path" == *"head=owner%3Afeature%2Fauto-20260502-135611-gh22289"* ]]; then
+		fixture='[{"number":22337,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22337","head":{"ref":"feature/auto-20260502-135611-gh22289"},"base":{"ref":"main"}}]'
+	fi
+	_stub_print_fixture_with_jq "$fixture" "$jq_filter" -c
+	return $?
+}
+_stub_gh_api_search_issues() {
+	local option="$1"
+	local fixture='{"items":[{"number":22430,"state":"open","title":"Reduce GraphQL list-call pressure"}]}'
+	if [[ -n "${STUB_SEARCH_RAW_RESPONSE:-}" ]]; then
+		printf '%s' "$STUB_SEARCH_RAW_RESPONSE"
+		return 0
+	fi
+	fixture="${STUB_SEARCH_FIXTURE:-$fixture}"
+	if [[ "$option" == "-i" ]]; then
+		printf 'HTTP/2 200\r\nX-RateLimit-Remaining: 29\r\nX-RateLimit-Resource: search\r\nX-GitHub-Request-Id: SEARCH-REQ\r\n\r\n%s\n' "$fixture"
+		return 0
+	fi
+	printf '%s\n' "$fixture"
+	return 0
+}
+_stub_gh_api() {
+	local subcommand="${1:-}"
+	local path="${2:-}"
+	local remaining="${STUB_RATE_LIMIT_REMAINING:-5000}"
+	if [[ "$subcommand" == "rate_limit" ]]; then
 		printf '%s\n' "$remaining"
 		return 0
 	fi
-
-	# gh api user - always returns testuser (for _gh_wrapper_auto_assignee)
-	if [[ "$1" == "api" && "$2" == "user" ]]; then
+	if [[ "$subcommand" == "user" ]]; then
 		printf '"testuser"\n'
 		return 0
 	fi
-	if [[ "$1" == "api" && "$2" == "-i" && "${3:-}" =~ ^/repos/[^/]+/[^/]+/collaborators/[^/]+/permission$ ]]; then
-		local status="${STUB_COLLAB_STATUS:-200}"
-		if [[ "${STUB_COLLAB_FAIL:-0}" == "1" ]]; then
-			printf 'HTTP/2.0 %s Forbidden\n\n{"message":"Forbidden"}\n' "$status"
-			return 1
-		fi
-		if [[ "$status" == "404" ]]; then
-			printf 'HTTP/2.0 404 Not Found\n\n{"message":"Not Found"}\n'
-			return 1
-		fi
-		if [[ -n "${STUB_COLLAB_RAW_RESPONSE:-}" ]]; then
-			printf '%s\n' "$STUB_COLLAB_RAW_RESPONSE"
-			return 0
-		fi
-		if [[ -n "${STUB_COLLAB_RAW_RESPONSE_FILE:-}" ]]; then
-			while IFS= read -r raw_response_line || [[ -n "$raw_response_line" ]]; do
-				printf '%s\n' "$raw_response_line"
-			done <"$STUB_COLLAB_RAW_RESPONSE_FILE"
-			return 0
-		fi
-		printf 'HTTP/2.0 %s OK\n\n{"permission":"%s"}\n' "$status" "${STUB_COLLAB_PERMISSION:-write}"
-		return 0
+	if [[ "$subcommand" == "-i" && "$path" =~ ^/repos/[^/]+/[^/]+/collaborators/[^/]+/permission$ ]]; then
+		_stub_gh_api_collaborator_permission
+		return $?
 	fi
-
-	# gh api /repos/.../issues/N (state fetch for label/assignee deltas)
-	if [[ "$1" == "api" && "$2" =~ ^/repos/.+/issues/[0-9]+$ ]]; then
-		# Return pre-canned labels/assignees from env for label delta tests
+	if [[ "$subcommand" =~ ^/repos/.+/issues/[0-9]+$ ]]; then
 		printf '%s\n' "${STUB_CURRENT_LABELS:-bug}"
 		return 0
 	fi
-	if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+/issues\? ]]; then
-		local jq_filter=""
-		local i=3
-		while [[ $i -le $# ]]; do
-			if [[ "${!i}" == "--jq" ]]; then
-				local next=$((i + 1))
-				jq_filter="${!next:-}"
-				break
-			fi
-			i=$((i + 1))
-		done
-		local fixture='[{"number":22430,"state":"open","title":"Reduce GraphQL list-call pressure","html_url":"https://github.com/owner/repo/issues/22430","updated_at":"2026-05-02T17:52:48Z","labels":[{"name":"auto-dispatch"}],"assignees":[{"login":"worker"}],"user":{"login":"maintainer"}}]'
-		if [[ -n "$jq_filter" ]]; then
-			printf '%s\n' "$fixture" | jq -c "$jq_filter"
-		else
-			printf '%s\n' "$fixture"
-		fi
+	if [[ "$subcommand" =~ ^/repos/[^/]+/[^/]+/issues\? ]]; then
+		_stub_gh_api_issues_list api "$@"
+		return $?
+	fi
+	if [[ "$subcommand" =~ ^/repos/[^/]+/[^/]+/pulls/[0-9]+$ ]]; then
+		_stub_gh_api_pr_view api "$@"
+		return $?
+	fi
+	if [[ "$subcommand" =~ ^/repos/[^/]+/[^/]+/pulls\? ]]; then
+		_stub_gh_api_pr_list "$subcommand" "${@:2}"
+		return $?
+	fi
+	if [[ "$subcommand" =~ ^/search/issues || ( "$subcommand" == "-i" && "$path" =~ ^/search/issues ) ]]; then
+		_stub_gh_api_search_issues "$subcommand"
 		return 0
 	fi
-
-	# gh api /repos/{owner}/{repo} (GET, no -X, no /issues suffix) — default branch lookup
-	# STUB_REPO_DEFAULT_BRANCH controls the returned value (default: main).
-	if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+/pulls/[0-9]+$ ]]; then
-		local jq_filter=""
-		local i=3
-		while [[ $i -le $# ]]; do
-			if [[ "${!i}" == "--jq" ]]; then
-				local next=$((i + 1))
-				jq_filter="${!next:-}"
-				break
-			fi
-			i=$((i + 1))
-		done
-		local fixture='{"number":123,"title":"stub PR"}'
-		fixture="${STUB_PR_VIEW_FIXTURE:-$fixture}"
-		if [[ -n "$jq_filter" ]]; then
-			printf '%s\n' "$fixture" | jq -r "$jq_filter"
-		else
-			printf '%s\n' "$fixture"
-		fi
-		return 0
-	fi
-	if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+/pulls\? ]]; then
-		local jq_filter=""
-		local i=3
-		while [[ $i -le $# ]]; do
-			if [[ "${!i}" == "--jq" ]]; then
-				local next=$((i + 1))
-				jq_filter="${!next:-}"
-				break
-			fi
-			i=$((i + 1))
-		done
-		local fixture='[{"number":22337,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22337","head":{"ref":"feature/auto-20260502-135611-gh22289"},"base":{"ref":"main"}},{"number":22343,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22343","head":{"ref":"other"},"base":{"ref":"main"}}]'
-		fixture="${STUB_PR_LIST_FIXTURE:-$fixture}"
-		if [[ "$2" == *"head=owner%3Afeature%2Fauto-20260502-135611-gh22289"* ]]; then
-			fixture='[{"number":22337,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22337","head":{"ref":"feature/auto-20260502-135611-gh22289"},"base":{"ref":"main"}}]'
-		fi
-		if [[ -n "$jq_filter" ]]; then
-			printf '%s\n' "$fixture" | jq -c "$jq_filter"
-		else
-			printf '%s\n' "$fixture"
-		fi
-		return 0
-	fi
-	if [[ "$1" == "api" && ( "$2" =~ ^/search/issues || ( "$2" == "-i" && "${3:-}" =~ ^/search/issues ) ) ]]; then
-		if [[ -n "${STUB_SEARCH_RAW_RESPONSE:-}" ]]; then
-			printf '%s' "$STUB_SEARCH_RAW_RESPONSE"
-			return 0
-		fi
-		local fixture='{"items":[{"number":22430,"state":"open","title":"Reduce GraphQL list-call pressure"}]}'
-		fixture="${STUB_SEARCH_FIXTURE:-$fixture}"
-		if [[ "$2" == "-i" ]]; then
-			printf 'HTTP/2 200\r\nX-RateLimit-Remaining: 29\r\nX-RateLimit-Resource: search\r\nX-GitHub-Request-Id: SEARCH-REQ\r\n\r\n%s\n' "$fixture"
-		else
-			printf '%s\n' "$fixture"
-		fi
-		return 0
-	fi
-	if [[ "$1" == "api" && "$2" =~ ^/repos/[^/]+/[^/]+$ ]]; then
+	if [[ "$subcommand" =~ ^/repos/[^/]+/[^/]+$ ]]; then
 		printf '%s\n' "${STUB_REPO_DEFAULT_BRANCH:-main}"
 		return 0
 	fi
-
-	# gh api -X POST|PATCH - REST calls. Succeed unless STUB_REST_FAIL=1
-	if [[ "$1" == "api" && ("$2" == "-X" || "$2" =~ ^-X ) ]]; then
+	if [[ "$subcommand" == "-X" || "$subcommand" =~ ^-X ]]; then
 		if [[ "${STUB_REST_FAIL:-0}" == "1" ]]; then
 			printf 'REST stub forced failure\n' >&2
 			return 1
@@ -267,33 +266,57 @@ gh() {
 		printf 'https://github.com/owner/repo/issues/9999\n'
 		return 0
 	fi
-
-	# gh issue create|comment|edit - the primary path
-	if [[ "$1" == "issue" && ( "$2" == "create" || "$2" == "comment" || "$2" == "edit" || "$2" == "view" || "$2" == "list" ) ]]; then
-		if [[ "${STUB_PRIMARY_FAIL:-0}" == "1" ]]; then
-			printf 'primary stub forced failure (rate limit)\n' >&2
-			return 1
-		fi
-		if [[ "$2" == "create" ]]; then
-			printf 'https://github.com/owner/repo/issues/9000\n'
-		fi
-		return 0
+	return 1
+}
+_stub_gh_issue() {
+	local subcommand="${1:-}"
+	if [[ "$subcommand" != "create" && "$subcommand" != "comment" && "$subcommand" != "edit" && "$subcommand" != "view" && "$subcommand" != "list" ]]; then
+		return 1
 	fi
+	if [[ "${STUB_PRIMARY_FAIL:-0}" == "1" ]]; then
+		printf 'primary stub forced failure (rate limit)\n' >&2
+		return 1
+	fi
+	if [[ "$subcommand" == "create" ]]; then
+		printf 'https://github.com/owner/repo/issues/9000\n'
+	fi
+	return 0
+}
+_stub_gh_pr() {
+	local subcommand="${1:-}"
+	if [[ "$subcommand" != "create" && "$subcommand" != "comment" && "$subcommand" != "view" && "$subcommand" != "list" ]]; then
+		return 1
+	fi
+	if [[ "${STUB_PRIMARY_FAIL:-0}" == "1" ]]; then
+		printf 'primary stub forced failure (rate limit)\n' >&2
+		return 1
+	fi
+	if [[ "$subcommand" == "create" ]]; then
+		printf 'https://github.com/owner/repo/pull/9100\n'
+	elif [[ "$subcommand" == "view" ]]; then
+		printf '{"number":9101}\n'
+	elif [[ "$subcommand" == "list" ]]; then
+		printf '[]\n'
+	fi
+	return 0
+}
+gh() {
+	local command="${1:-}"
+	shift || true
+	printf '%s\n' "$command${*:+ $*}" >>"${GH_CALLS}"
+	[[ -n "${GH_TOKEN:-}" ]] && printf '%s\n' "$GH_TOKEN" >>"${GH_APP_TOKEN_CALLS}"
 
-	# gh pr create|comment|view|list - primary PR paths
-	if [[ "$1" == "pr" && ( "$2" == "create" || "$2" == "comment" || "$2" == "view" || "$2" == "list" ) ]]; then
-		if [[ "${STUB_PRIMARY_FAIL:-0}" == "1" ]]; then
-			printf 'primary stub forced failure (rate limit)\n' >&2
-			return 1
-		fi
-		if [[ "$2" == "create" ]]; then
-			printf 'https://github.com/owner/repo/pull/9100\n'
-		elif [[ "$2" == "view" ]]; then
-			printf '{"number":9101}\n'
-		elif [[ "$2" == "list" ]]; then
-			printf '[]\n'
-		fi
-		return 0
+	if [[ "$command" == "api" ]]; then
+		_stub_gh_api "$@"
+		return $?
+	fi
+	if [[ "$command" == "issue" ]]; then
+		_stub_gh_issue "$@"
+		return $?
+	fi
+	if [[ "$command" == "pr" ]]; then
+		_stub_gh_pr "$@"
+		return $?
 	fi
 
 	# gh label create / gh pr ready / other - silent success
