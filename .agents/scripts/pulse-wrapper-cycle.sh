@@ -419,6 +419,29 @@ sync_todo_refs_for_repo() {
 	return 0
 }
 
+#######################################
+# sync_todo_refs_all_repos
+#
+# Refresh local TODO.md state for every pulse-enabled repo before dependency
+# graph construction. This keeps closed GitHub blockers from being interpreted
+# through stale local task ledgers during the same pulse cycle.
+#######################################
+sync_todo_refs_all_repos() {
+	local repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+	local repo_slug="" repo_path=""
+
+	[[ -f "$repos_json" ]] || return 0
+	while IFS='|' read -r repo_slug repo_path; do
+		[[ -n "$repo_slug" && -n "$repo_path" ]] || continue
+		repo_path="${repo_path/#\~/$HOME}"
+		[[ -d "$repo_path" ]] || continue
+		[[ -f "${repo_path}/TODO.md" ]] || continue
+		_pulse_refresh_repo "$repo_path" || true
+		sync_todo_refs_for_repo "$repo_slug" "$repo_path" || true
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "" and .path != "") | [.slug, .path] | join("|")' "$repos_json" 2>/dev/null || true)
+	return 0
+}
+
 # Only run main when executed directly, not when sourced.
 # The pulse agent sources this file to access helper functions
 # (check_external_contributor_pr, check_permission_failure_pr)

@@ -900,6 +900,7 @@ _pulse_execute_self_check() {
 		dispatch_enrichment_workers
 		dispatch_triage_reviews
 		sync_todo_refs_for_repo
+		sync_todo_refs_all_repos
 		_pulse_execute_self_check
 		_pulse_handle_self_check
 		_pulse_setup_dry_run_mode
@@ -1257,13 +1258,26 @@ _pulse_run_deterministic_pipeline() {
 		rm -f "$_merge_health_file" || true
 	fi
 
+	# GitHub issue-state sync: reconcile local TODO.md refs and
+	# closed/reopened issue state before constructing the dependency graph.
+	# Without this, a closed blocker can leave stale TODO.md/cache state that
+	# keeps child issues permanently dispatch-blocked.
+	if [[ -f "$STOP_FLAG" ]]; then
+		echo "[pulse-wrapper] Stop flag appeared — skipping GitHub issue-state sync" >>"$LOGFILE"
+	else
+		run_stage_with_timeout "sync_todo_refs_all_repos" "$PRE_RUN_STAGE_TIMEOUT" \
+			sync_todo_refs_all_repos || true
+	fi
+
 	# Dependency graph cache (t1935): build once per cycle so that
 	# is_blocked_by_unresolved() can resolve blocker state without API calls.
 	# Runs before the dispatch so the cache is warm when dispatch checks run.
+	# Force the post-sync build so closed/open issue changes are reflected in
+	# the same pulse cycle rather than waiting for TTL expiry.
 	if [[ -f "$STOP_FLAG" ]]; then
 		echo "[pulse-wrapper] Stop flag appeared — skipping dependency graph cache build" >>"$LOGFILE"
 	else
-		run_stage_with_timeout "build_dependency_graph_cache" "$PRE_RUN_STAGE_TIMEOUT" \
+		PULSE_DEP_GRAPH_FORCE_REBUILD=1 run_stage_with_timeout "build_dependency_graph_cache" "$PRE_RUN_STAGE_TIMEOUT" \
 			build_dependency_graph_cache || true
 	fi
 

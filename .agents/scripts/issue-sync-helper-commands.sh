@@ -40,9 +40,7 @@ cmd_pull() {
 	_init_cmd || return 1
 	local repo="$_CMD_REPO" todo_file="$_CMD_TODO"
 	print_info "Pulling issue refs from GitHub ($repo) to TODO.md..."
-
-	local synced=0 orphan_open=0 orphan_closed=0 assignee_synced=0 orphan_list=""
-	local orphan_seeded=0 orphan_skipped=0
+	local synced=0 orphan_open=0 orphan_closed=0 assignee_synced=0 orphan_list="" orphan_seeded=0 orphan_skipped=0
 	local state
 	for state in open closed; do
 		local json
@@ -55,10 +53,14 @@ cmd_pull() {
 			[[ -z "$tid" ]] && continue
 			local tid_ere
 			tid_ere=$(_escape_ere "$tid")
-
-			# Ref sync
-			if ! grep -qE "^\s*- \[.\] ${tid_ere} .*ref:GH#${num}" "$todo_file" 2>/dev/null; then
-				if ! grep -qE "^\s*- \[.\] ${tid_ere} " "$todo_file" 2>/dev/null; then
+			# Resolve real task lines; TODO.md may contain examples in HTML comments.
+			local task_line_num="" existing_ref=""
+			task_line_num=$(_todo_task_line_num "$tid" "$todo_file")
+			if [[ -n "$task_line_num" ]]; then
+				existing_ref=$(sed -n "${task_line_num}p" "$todo_file" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
+			fi
+			if [[ "$existing_ref" != "$num" ]]; then
+				if [[ -z "$task_line_num" ]]; then
 					if [[ "$state" == "open" ]]; then
 						# t2698: seed a TODO.md entry for the open orphan
 						local labels_json
@@ -75,17 +77,21 @@ cmd_pull() {
 					continue
 				fi
 				if [[ "$DRY_RUN" == "true" ]]; then
-					print_info "[DRY-RUN] Would add ref:GH#$num to $tid"
+					if [[ -n "$existing_ref" ]]; then
+						print_info "[DRY-RUN] Would fix ref:GH#$existing_ref -> ref:GH#$num on $tid"
+					else
+						print_info "[DRY-RUN] Would add ref:GH#$num to $tid"
+					fi
 					synced=$((synced + 1))
 				else
-					# GH#15234 Fix 4: check file modification to avoid misleading success
-					# messages when add_gh_ref_to_todo silently skips (ref already exists)
-					local tid_ere_pull
-					tid_ere_pull=$(_escape_ere "$tid")
-					local had_ref=false
-					strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${tid_ere_pull} .*ref:GH#${num}" && had_ref=true
-					add_gh_ref_to_todo "$tid" "$num" "$todo_file"
-					if [[ "$had_ref" == "false" ]] && strip_code_fences <"$todo_file" | grep -qE "^\s*- \[.\] ${tid_ere_pull} .*ref:GH#${num}"; then
+					if [[ -n "$existing_ref" ]]; then
+						fix_gh_ref_in_todo "$tid" "$existing_ref" "$num" "$todo_file"
+					else
+						add_gh_ref_to_todo "$tid" "$num" "$todo_file"
+					fi
+					local updated_ref=""
+					updated_ref=$(resolve_task_gh_number "$tid" "$todo_file")
+					if [[ "$updated_ref" == "$num" ]]; then
 						print_success "Added ref:GH#$num to $tid"
 						synced=$((synced + 1))
 					else
@@ -93,8 +99,7 @@ cmd_pull() {
 					fi
 				fi
 			fi
-
-			# Assignee sync (open issues only, in same pass)
+			# Assignee sync (open issues only).
 			[[ "$state" != "open" ]] && continue
 			login=$(echo "$issue_line" | jq -r '.assignees[0].login // empty' 2>/dev/null || echo "")
 			[[ -z "$login" ]] && continue
@@ -108,7 +113,6 @@ cmd_pull() {
 				continue
 			fi
 			local ln
-			# Use awk to get line number while skipping code-fenced blocks
 			ln=$(awk -v pat="^[[:space:]]*- \\[.\\] ${tid_ere} " '/^[[:space:]]*```/{f=!f; next} !f && $0 ~ pat {print NR; exit}' "$todo_file")
 			if [[ -n "$ln" ]]; then
 				local cl
@@ -124,12 +128,12 @@ cmd_pull() {
 			fi
 		done < <(echo "$json" | jq -c '.[]' 2>/dev/null || true)
 	done
-
 	printf "\n=== Pull Summary ===\nRefs synced: %d | Assignees: %d | Orphans seeded: %d | Orphans skipped: %d\n" \
 		"$synced" "$assignee_synced" "$orphan_seeded" "$orphan_skipped"
 	printf "Orphans open: %d closed: %d\n" "$orphan_open" "$orphan_closed"
 	[[ $orphan_open -gt 0 ]] && print_warning "Open orphans: $orphan_list"
 	[[ $synced -eq 0 && $assignee_synced -eq 0 && $orphan_open -eq 0 ]] && print_success "TODO.md refs up to date"
+	return 0
 }
 
 # =============================================================================
