@@ -75,6 +75,26 @@ assert_contains "$network_output" '"contacted_targets":false' "network doctor do
 assert_not_contains "$network_output" "user:pass" "network doctor omits proxy credentials"
 assert_not_contains "$network_output" "$ROOT_DIR" "network doctor omits private paths"
 
+isolated_network_doctor() {
+	local temp_dir=""
+	local temp_bin=""
+	temp_dir="$(mktemp -d)"
+	temp_bin="${temp_dir}/bin"
+	mkdir -p "$temp_bin"
+	cp "$HELPER" "${temp_dir}/reach-helper.sh"
+	printf '#!/usr/bin/env bash\nexit 0\n' >"${temp_dir}/anti-detect-helper.sh"
+	chmod +x "${temp_dir}/anti-detect-helper.sh"
+	ln -s /usr/bin/dirname "${temp_bin}/dirname"
+	PATH="$temp_bin" /bin/bash "${temp_dir}/reach-helper.sh" network doctor --format json
+	rm -rf "$temp_dir"
+	return 0
+}
+
+mixed_network_output="$(isolated_network_doctor)"
+assert_json_valid "$mixed_network_output" "network doctor emits valid JSON with mixed readiness"
+assert_contains "$mixed_network_output" '{"key":"proxy_vpn","available":true,"status":"ready"}' "network doctor reports proxy readiness independently"
+assert_contains "$mixed_network_output" '{"key":"vpn","available":false,"status":"missing_helper"}' "network doctor preserves missing VPN status independently"
+
 fingerprint_output="$(AIDEVOPS_REACH_TEST_FORCE_MISSING=1 "$HELPER" fingerprint doctor --format json)"
 assert_json_valid "$fingerprint_output" "fingerprint doctor emits valid JSON"
 assert_contains "$fingerprint_output" '"doctor":"fingerprint"' "fingerprint doctor identifies itself"
