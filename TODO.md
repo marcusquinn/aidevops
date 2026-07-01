@@ -4401,3 +4401,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18048 feat(reach): add profile and cookie broker with private leases, safe session ... #auto-dispatch #browser #enhancement #framework #security ref:GH#26166
 
 - [ ] t18049 feat(reach): add proxy/VPN/fingerprint health and failover classification. Ex... #auto-dispatch #browser #enhancement #framework #reliability ref:GH#26167
+
+- [ ] t18050 feat(reach): implement capture workflow into `_inbox/` and `_knowledge/` stag... #auto-dispatch #browser #enhancement #framework #knowledge ref:GH#26168
