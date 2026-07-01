@@ -27,10 +27,10 @@ export function ScreenshotCaptureNotification({ notification, onDismiss }: { not
 
   return (
     <div className="screenshot-capture-notification" role="status">
+      <span aria-hidden="true" className="screenshot-info-icon">i</span>
       <div>
         <strong>Screenshot captured</strong>
-        <span>Saved to</span>
-        <span className="screenshot-file-path-line"><span className="screenshot-file-path-label">File path</span> <button className="screenshot-path-button" onClick={revealScreenshot} title={notification.path} type="button">{notification.path}</button></span>
+        <span className="screenshot-file-path-line"><span className="screenshot-file-path-label">Saved to:</span> <button className="screenshot-path-button" onClick={revealScreenshot} title={notification.path} type="button">{notification.path}</button></span>
         <span>File path copied to clipboard.</span>
       </div>
       <button aria-label="Dismiss screenshot notification" className="screenshot-dismiss-button" onClick={onDismiss} type="button">×</button>

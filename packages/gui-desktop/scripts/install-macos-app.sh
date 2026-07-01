@@ -1058,7 +1058,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Screenshots", isDirectory: true)
         do {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            let fileURL = directory.appendingPathComponent("aidevops-app-screenshot-\(sanitizeFilenameComponent(nameComponent))-\(screenshotTimestamp()).png")
+            let fileURL = directory.appendingPathComponent("aidevops-app-screenshot-\(screenshotTimestamp())-\(sanitizeFilenameComponent(nameComponent)).png")
             try data.write(to: fileURL, options: .atomic)
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(fileURL.path, forType: .string)
