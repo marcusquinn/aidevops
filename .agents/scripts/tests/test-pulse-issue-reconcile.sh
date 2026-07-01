@@ -280,6 +280,45 @@ test_should_predicates() {
 }
 
 # ---------------------------------------------------------------------------
+# Test 8b: mergedAt helper prefers gh_pr_view wrapper when available
+# ---------------------------------------------------------------------------
+test_pr_merged_at_prefers_wrapper() {
+	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local helper_defs
+	helper_defs=$(sed -n '/^_pir_pr_merged_at()/,/^_should_ciw()/p' "${actions_sh}" | \
+		grep -v '^_should_ciw()' || true)
+
+	local result
+	result=$(bash -c "
+		${helper_defs}
+		gh_pr_view() {
+			printf 'wrapper:%s:%s:%s\n' \"\${1:-}\" \"\${3:-}\" \"\${5:-}\"
+			return 0
+		}
+		gh() {
+			printf 'raw:%s\n' \"\$*\"
+			return 0
+		}
+		_pir_pr_merged_at 123 owner/repo
+		unset -f gh_pr_view
+		_pir_pr_merged_at 456 owner/repo
+	" 2>/dev/null)
+
+	local all_ok=1
+	if ! printf '%s\n' "$result" | grep -qx 'wrapper:123:owner/repo:mergedAt'; then
+		_fail "_pir_pr_merged_at should prefer gh_pr_view wrapper"
+		all_ok=0
+	fi
+	if ! printf '%s\n' "$result" | grep -qx 'raw:pr view 456 --repo owner/repo --json mergedAt -q .mergedAt // empty'; then
+		_fail "_pir_pr_merged_at should fall back to raw gh pr view"
+		all_ok=0
+	fi
+
+	[[ "$all_ok" == "1" ]] && _pass "_pir_pr_merged_at prefers wrapper and preserves raw fallback"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Test 9: reconcile_issues_single_pass wired in pulse-dispatch-engine.sh
 # ---------------------------------------------------------------------------
 test_single_pass_wired_in_engine() {
@@ -831,6 +870,7 @@ test_no_raw_gh_issue_list_outside_fallback
 test_single_pass_cache_consolidation
 test_body_in_prefetch_fetch
 test_should_predicates
+test_pr_merged_at_prefers_wrapper
 test_single_pass_wired_in_engine
 test_batched_field_extraction_parity
 test_t2984_time_budget_present

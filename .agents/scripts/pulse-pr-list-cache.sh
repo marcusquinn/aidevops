@@ -88,6 +88,9 @@ _pulse_pr_list_cache_get() {
 
 #######################################
 # Store a successful exact-output PR list response.
+# Empty stdout is a valid successful exact-output value for no-result jq
+# projections. Keep 0-byte entries cacheable so repeated no-result shapes do
+# not re-hit GitHub; use explicit metadata if corruption ever needs detection.
 # Arguments:
 #   $1 - command output
 #   $@ - original gh_pr_list argv after shifting output

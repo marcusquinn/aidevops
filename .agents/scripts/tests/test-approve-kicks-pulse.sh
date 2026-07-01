@@ -391,6 +391,40 @@ assert_eq "issue 12345 resolved to PR 99999 by stub" \
 
 echo ""
 
+# -----------------------------------------------------------------------------
+# Test 8: issue→PR fallback resolver uses gh_pr_list wrapper when available.
+# -----------------------------------------------------------------------------
+echo "Test 8: resolver fallback uses gh_pr_list"
+echo "=========================================="
+
+resolver_result=$(
+(
+	# shellcheck disable=SC1091
+	source "${PARENT_DIR}/pulse-wrapper-bootstrap.sh" >/dev/null 2>&1
+
+	gh() {
+		if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
+			return 1
+		fi
+		if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
+			printf '[{"number":99999,"body":"Resolves #12345"}]'
+			return 0
+		fi
+		return 1
+	}
+
+	gh_pr_list() {
+		printf '[{"number":77777,"body":"Fixes #12345"}]'
+		return 0
+	}
+
+	_resolve_linked_pr_for_issue "marcusquinn/aidevops" "12345"
+)
+)
+assert_eq "resolver fallback prefers gh_pr_list wrapper over raw gh" "77777" "$resolver_result"
+
+echo ""
+
 # =============================================================================
 echo "=================================================="
 echo "Results: ${PASS} pass, ${FAIL} fail"

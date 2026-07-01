@@ -423,13 +423,23 @@ _resolve_linked_pr_for_issue() {
 	if [[ -z "$pr_num" ]]; then
 		# Fallback: list recent open PRs in the repo and grep for the
 		# closing keyword. Bounded to 30 PRs to avoid runaway lookups.
+		# Prefer gh_pr_list when available so this fallback gets the shared
+		# telemetry/cache/REST-routing behaviour during GraphQL budget pressure;
+		# keep raw gh as a standalone-library fallback for isolated tests.
 		# `gh` only forwards a `--jq` filter; `--arg` is a jq flag that gh
 		# does NOT pass through. Pipe to jq directly so `--arg n` works
 		# and the issue number stays as data, not interpolated regex.
+		local pr_list_json=""
+		if declare -F gh_pr_list >/dev/null 2>&1; then
+			pr_list_json=$(gh_pr_list --repo "$slug" --state open --limit 30 \
+				--json number,body 2>/dev/null) || pr_list_json="[]"
+		else
+			pr_list_json=$(gh pr list --repo "$slug" --state open --limit 30 \
+				--json number,body 2>/dev/null) || pr_list_json="[]"
+		fi
+		[[ -n "$pr_list_json" ]] || pr_list_json="[]"
 		# shellcheck disable=SC2016 disable=SC2034
-		pr_num=$(gh pr list --repo "$slug" --state open --limit 30 \
-			--json number,body 2>/dev/null \
-			| jq -r --arg n "$issue_num" \
+		pr_num=$(printf '%s' "$pr_list_json" | jq -r --arg n "$issue_num" \
 				'.[] | select(.body | test("(?i)(close[ds]?|fix(es|ed)?|resolve[ds]?)\\s+#" + $n + "\\b")) | .number' \
 				2>/dev/null | head -1) || pr_num=""
 	fi

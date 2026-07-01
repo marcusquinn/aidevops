@@ -48,6 +48,25 @@
 _PULSE_ISSUE_RECONCILE_ACTIONS_LOADED=1
 
 #######################################
+# Fetch mergedAt for a PR using the shared wrapper when available.
+# The wrapper adds REST fallback, telemetry, and exact-output caching under
+# GraphQL budget pressure. Raw gh remains as a fallback because this file is
+# also sourced by isolated tests and partial deployments.
+# Args: $1 = PR number, $2 = slug (owner/name)
+# Stdout: mergedAt timestamp or empty
+#######################################
+_pir_pr_merged_at() {
+	local pr_num="$1" slug="$2"
+	[[ -n "$pr_num" && -n "$slug" ]] || return 1
+	if declare -F gh_pr_view >/dev/null 2>&1; then
+		gh_pr_view "$pr_num" --repo "$slug" --json mergedAt -q '.mergedAt // empty' 2>/dev/null
+		return $?
+	fi
+	gh pr view "$pr_num" --repo "$slug" --json mergedAt -q '.mergedAt // empty' 2>/dev/null
+	return $?
+}
+
+#######################################
 # Fetch sub-issue numbers via GitHub GraphQL (t2138).
 #
 # Uses the native `subIssues` relationship on the issue node. Returns
@@ -502,7 +521,7 @@ _action_ciw_single() {
 	merged_at=""
 
 	if [[ -n "$pr_num" ]]; then
-		merged_at=$(gh pr view "$pr_num" --repo "$slug" --json mergedAt -q '.mergedAt // empty' 2>/dev/null) || merged_at=""
+		merged_at=$(_pir_pr_merged_at "$pr_num" "$slug") || merged_at=""
 		if [[ -z "$merged_at" ]]; then
 			echo "[pulse-wrapper] Skipped auto-close #${issue_num} in ${slug} — PR #${pr_num} is NOT merged (GH#17871 guard)" >>"$LOGFILE"
 			return 1
@@ -545,7 +564,7 @@ _action_rsd_single() {
 		merged_at=""
 
 		if [[ -n "$pr_num" ]]; then
-			merged_at=$(gh pr view "$pr_num" --repo "$slug" --json mergedAt -q '.mergedAt // empty' 2>/dev/null) || merged_at=""
+			merged_at=$(_pir_pr_merged_at "$pr_num" "$slug") || merged_at=""
 			if [[ -z "$merged_at" ]]; then
 				echo "[pulse-wrapper] Reconcile done: skipped close #${issue_num} in ${slug} — PR #${pr_num} is NOT merged (GH#17871 guard)" >>"$LOGFILE"
 				set_issue_status "$issue_num" "$slug" "available" >/dev/null 2>&1 || return 1
