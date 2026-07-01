@@ -32,6 +32,10 @@
     "gui:test:components": "bun test packages/gui-web/tests",
     "gui:test:security": "bun test packages/gui-shared/tests/security.test.ts packages/gui-api/tests/security.test.ts packages/gui-web/tests/security.test.ts",
     "gui:test:smoke": "bun test packages/gui-api/tests/smoke.test.ts",
+    "gui:lint": "bun test packages/gui-web/tests/security.test.ts packages/gui-shared/tests/security.test.ts packages/gui-api/tests/security.test.ts",
+    "gui:typecheck": "tsc --noEmit",
+    "gui:build": "bun ./node_modules/vite/bin/vite.js build --config packages/gui-web/vite.config.ts",
+    "gui:ci": "npm run gui:lint && npm run gui:typecheck && npm run gui:test:schema && npm run gui:test:adapters && npm run gui:test:api && npm run gui:test:components && npm run gui:test:security && npm run gui:test:smoke && npm run gui:build",
     "gui:desktop:check": "bash packages/gui-desktop/scripts/install-macos-app.sh --check",
     "gui:desktop:install:macos": "bash packages/gui-desktop/scripts/install-macos-app.sh",
     "postinstall": "node scripts/npm-postinstall.cjs || true"
