@@ -1038,7 +1038,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18020 Integrate Tambo generative UI cards into conversations #auto-dispatch #feat #priority:high ref:GH#25713 pr:#25909 completed:2026-06-29
 
-- [ ] t18021 Add per-page tours with signposts button beside notifications #auto-dispatch #feat #priority:high ref:GH#25714
+- [x] t18021 Add per-page tours with signposts button beside notifications #auto-dispatch #feat #priority:high ref:GH#25714 pr:#26162 completed:2026-07-01
 
 - [ ] t18022 QA and release aidevops.app AI collaboration workspace #auto-dispatch #feat #priority:high ref:GH#25715
 
