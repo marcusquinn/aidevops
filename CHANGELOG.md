@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.16] - 2026-07-01
+
+### Changed
+
+- Maintenance: mark t18053 complete (pr:#26221 completed:2026-07-01) [skip ci]
+
+### Fixed
+
+- archive opencode event rows for isolated dbs (#26221)
+
 ## [3.31.15] - 2026-07-01
 
 ### Changed

@@ -111,7 +111,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [x] t18047 feat(reach): add aidevops-native reach/capture capability registry, doctor, and router. Create `.agents/aidevops/reach-capture.md`, `.agents/scripts/reach-helper.sh`, `aidevops reach ...` dispatch, and focused tests so workers can choose the minimum-agency backend before capture/profile/proxy/logging extensions. #enhancement #framework #browser #automation #auto-dispatch ~4h tier:standard ref:GH#26165 logged:2026-07-01 -> [todo/tasks/t18047-brief.md] pr:#26207 completed:2026-07-01
 
-- [ ] t18048 feat(reach): add profile and cookie broker with private leases, safe session pinning, and route integration. Extend `reach-helper.sh` and reach docs so authenticated captures reuse approved browser profiles/cookie exports without leaking cookies, proxy credentials, private paths, or profile state into logs/issues. #enhancement #framework #browser #security #auto-dispatch ~4h tier:standard blocked-by:t18047 ref:GH#26166 logged:2026-07-01 -> [todo/tasks/t18048-brief.md]
+- [x] t18048 feat(reach): add profile and cookie broker with private leases, safe session pinning, and route integration. Extend `reach-helper.sh` and reach docs so authenticated captures reuse approved browser profiles/cookie exports without leaking cookies, proxy credentials, private paths, or profile state into logs/issues. #enhancement #framework #browser #security #auto-dispatch ~4h tier:standard blocked-by:t18047 ref:GH#26166 pr:#26216 logged:2026-07-01 -> [todo/tasks/t18048-brief.md] completed:2026-07-01
 
 - [ ] t18049 feat(reach): add proxy/VPN/fingerprint health and failover classification. Extend reach helper/docs/tests with network/fingerprint doctor commands, temporary-vs-permanent failure taxonomy, safe failover recommendations, and route policy that stops on auth/scope blockers. #enhancement #framework #browser #reliability #auto-dispatch ~3.5h tier:standard blocked-by:t18047 ref:GH#26167 logged:2026-07-01 -> [todo/tasks/t18049-brief.md]
 
@@ -4411,7 +4411,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t18046 Optimise OpenCode aidevops plugin startup latency #bug #opencode #performance #plugin ref:GH#26157 pr:#26161 completed:2026-07-01
 
 
-- [ ] t18048 feat(reach): add profile and cookie broker with private leases, safe session ... #auto-dispatch #browser #enhancement #framework #security ref:GH#26166
 
 - [ ] t18049 feat(reach): add proxy/VPN/fingerprint health and failover classification. Ex... #auto-dispatch #browser #enhancement #framework #reliability ref:GH#26167
 
@@ -4421,4 +4420,3 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18052 feat(reach): add token/discovery efficiency, headed/headless/offload routing,... #auto-dispatch #automation #efficiency #enhancement #framework ref:GH#26170
 
-- [x] t18053 fix: archive OpenCode isolated DB event rows #bug #database #opencode #performance ref:GH#26220 pr:#26221 completed:2026-07-01
