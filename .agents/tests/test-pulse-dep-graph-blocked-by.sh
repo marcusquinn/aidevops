@@ -102,6 +102,10 @@ gh_issue_list() {
 			printf '[{"number":2000,"title":"Review follow-up with copied t1000 context","state":"OPEN"},{"number":1000,"title":"t1000: canonical blocker","state":"CLOSED"}]\n'
 			return 0
 			;;
+		parent-same-line)
+			printf '%s\n' '[{"number":25714,"title":"t18021: Add per-page tours","body":"blocked-by:#25710\nParent: #25707\n\n## Session Origin\nCreated from an interactive planning session. Parent: #25707. Blocked by #25710.","labels":[]}]'
+			return 0
+			;;
 		incidental-open-then-canonical-closed)
 			printf '[{"number":3000,"title":"Review follow-up with copied t1000 context","state":"OPEN"},{"number":1000,"title":"t1000: canonical blocker","state":"CLOSED"}]\n'
 			return 0
@@ -173,6 +177,19 @@ test_native_relationship_open_blocks_empty_body() {
 	else
 		_fail "native relationship block logs distinct reason" "missing native relationship log"
 	fi
+	_cleanup_blocked_by_resolution_test
+	return 0
+}
+
+test_dep_graph_ignores_parent_reference_on_blocked_by_line() {
+	printf '\n=== dep graph blocked-by clause parsing ===\n'
+	_setup_blocked_by_resolution_test
+	TEST_GH_ISSUE_LIST_MODE="parent-same-line"
+
+	local repo_data="" blockers=""
+	repo_data=$(_dep_graph_build_repo_data 'owner/repo')
+	blockers=$(printf '%s' "$repo_data" | jq -r '.blocked_by["25714"].issue_nums | join(",")')
+	_assert_lines_equal "dep graph ignores parent refs before blocked-by clause" "25710" "$blockers"
 	_cleanup_blocked_by_resolution_test
 	return 0
 }
@@ -437,6 +454,7 @@ test_cache_rebuild_preserves_previous_repo_data_on_fetch_failure() {
 main() {
 	test_task_id_blocker_parsing
 	test_issue_number_blocker_parsing
+	test_dep_graph_ignores_parent_reference_on_blocked_by_line
 	test_native_relationship_open_blocks_empty_body
 	test_native_relationship_clear_allows_empty_body
 	test_native_relationship_clear_ignores_duplicate_text_marker
