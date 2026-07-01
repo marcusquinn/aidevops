@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Release-gate GUI commands for the AI collaboration workspace: `gui:lint`,
+  `gui:typecheck`, `gui:build`, and `gui:ci`.
+- Documented final QA coverage for AI Sessions, Channels, Direct Messages,
+  Tambo generative UI cards, shadcn-style chat primitives, and signposts tours.
+
 ## [3.31.14] - 2026-07-01
 
 ### Changed
