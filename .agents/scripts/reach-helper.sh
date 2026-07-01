@@ -280,6 +280,142 @@ lower_text() {
 	return 0
 }
 
+route_set_defaults() {
+	backend="fetch"
+	agency_level="1"
+	mode="static"
+	headed="false"
+	profile_policy="none"
+	cookie_policy="none"
+	proxy_policy="none"
+	offload="local"
+	capture_destination="caller_selected"
+	safety_notes='"start with public/static retrieval before browser automation","route output is sanitized and advisory only"'
+	expected_artifacts='"static response or parsed text"'
+	blocked_reason=""
+	return 0
+}
+
+route_set_private_block() {
+	backend="manual_review"
+	agency_level="0"
+	mode="manual"
+	headed="false"
+	profile_policy="blocked"
+	cookie_policy="blocked"
+	proxy_policy="blocked"
+	offload="manual"
+	capture_destination="caller_selected"
+	safety_notes='"private scope requires explicit authorization or approved reusable session","no target details are echoed"'
+	expected_artifacts='"authorization decision"'
+	blocked_reason="private scope requires auth cookie, profile, or manual approval"
+	return 0
+}
+
+route_set_manual_auth() {
+	backend="manual_review"
+	agency_level="0"
+	mode="manual"
+	headed="true"
+	profile_policy="required"
+	cookie_policy="blocked"
+	proxy_policy="authorized_only"
+	offload="manual"
+	safety_notes='"manual authentication must stay user-controlled","no credential or target details are echoed"'
+	expected_artifacts='"manual auth handoff notes"'
+	blocked_reason="manual authentication required"
+	return 0
+}
+
+route_set_cookie_session() {
+	backend="cookie_session"
+	agency_level="4"
+	mode="cookie_session"
+	cookie_policy="reuse_approved_session"
+	profile_policy="avoid"
+	proxy_policy="authorized_only"
+	expected_artifacts='"storage state or authenticated API response"'
+	safety_notes='"reuse only approved cookie sessions","never print cookie values"'
+	return 0
+}
+
+route_set_persistent_profile() {
+	backend="persistent_profile"
+	agency_level="4"
+	mode="profile"
+	headed="true"
+	profile_policy="use_existing_approved_profile"
+	cookie_policy="reuse_approved_session"
+	proxy_policy="authorized_only"
+	expected_artifacts='"profile-backed trace or download"'
+	safety_notes='"use only approved persistent profiles","do not mutate profiles from this helper"'
+	return 0
+}
+
+route_set_stealth() {
+	backend="anti_detect_profile"
+	agency_level="6"
+	mode="authorized_stealth"
+	headed="true"
+	profile_policy="required"
+	cookie_policy="avoid"
+	proxy_policy="authorized_only"
+	expected_artifacts='"authorized isolated browser trace"'
+	safety_notes='"anti-detect and proxy use require explicit authorization","do not print proxy credentials"'
+	return 0
+}
+
+route_set_browser() {
+	backend="browser"
+	agency_level="3"
+	mode="deterministic_browser"
+	headed="false"
+	profile_policy="avoid"
+	cookie_policy="avoid"
+	proxy_policy="none"
+	expected_artifacts='"DOM text, trace, screenshot only when needed, or download"'
+	safety_notes='"prefer ARIA and DOM extraction over screenshots","use deterministic selectors before high-agency tools"'
+	return 0
+}
+
+route_set_crawler() {
+	backend="crawler"
+	agency_level="2"
+	mode="crawl"
+	profile_policy="none"
+	cookie_policy="none"
+	proxy_policy="none"
+	expected_artifacts='"crawl manifest and extracted records"'
+	safety_notes='"crawl only public or authorized content","respect robots and rate limits"'
+	return 0
+}
+
+route_apply_capture_destination() {
+	local objective_text="$1"
+	if [[ "$objective_text" == *inbox* || "$objective_text" == *capture* ]]; then
+		capture_destination="_inbox"
+	elif [[ "$objective_text" == *knowledge* || "$objective_text" == *research* ]]; then
+		capture_destination="_knowledge"
+	elif [[ "$objective_text" == *performance* || "$objective_text" == *metric* ]]; then
+		capture_destination="_performance"
+	elif [[ "$objective_text" == *feedback* || "$objective_text" == *review* ]]; then
+		capture_destination="_feedback"
+	fi
+	return 0
+}
+
+route_apply_objective() {
+	local objective_text="$1"
+	if [[ "$objective_text" == *proxy* || "$objective_text" == *vpn* || "$objective_text" == *geo* || "$objective_text" == *anti-detect* || "$objective_text" == *stealth* ]]; then
+		route_set_stealth
+	elif [[ "$objective_text" == *form* || "$objective_text" == *login* || "$objective_text" == *download* || "$objective_text" == *click* || "$objective_text" == *dashboard* || "$objective_text" == *browser* ]]; then
+		route_set_browser
+	elif [[ "$objective_text" == *crawl* || "$objective_text" == *sitemap* || "$objective_text" == *"many pages"* || "$objective_text" == *docs* || "$objective_text" == *documentation* ]]; then
+		route_set_crawler
+	fi
+	return 0
+}
+
 handle_route() {
 	local objective=""
 	local auth="none"
@@ -329,103 +465,32 @@ handle_route() {
 
 	local objective_lower
 	objective_lower="$(lower_text "$objective")"
-	local backend="fetch"
-	local agency_level="1"
-	local mode="static"
-	local headed="false"
-	local profile_policy="none"
-	local cookie_policy="none"
-	local proxy_policy="none"
-	local offload="local"
-	local capture_destination="caller_selected"
-	local safety_notes='"start with public/static retrieval before browser automation","route output is sanitized and advisory only"'
-	local expected_artifacts='"static response or parsed text"'
+	local backend=""
+	local agency_level=""
+	local mode=""
+	local headed=""
+	local profile_policy=""
+	local cookie_policy=""
+	local proxy_policy=""
+	local offload=""
+	local capture_destination=""
+	local safety_notes=""
+	local expected_artifacts=""
 	local blocked_reason=""
+	route_set_defaults
 
 	if [[ "$scope" == "private" && "$auth" == "none" ]]; then
-		backend="manual_review"
-		agency_level="0"
-		mode="manual"
-		headed="false"
-		profile_policy="blocked"
-		cookie_policy="blocked"
-		proxy_policy="blocked"
-		offload="manual"
-		capture_destination="caller_selected"
-		safety_notes='"private scope requires explicit authorization or approved reusable session","no target details are echoed"'
-		expected_artifacts='"authorization decision"'
-		blocked_reason="private scope requires auth cookie, profile, or manual approval"
+		route_set_private_block
 	elif [[ "$auth" == "manual" ]]; then
-		backend="manual_review"
-		agency_level="0"
-		mode="manual"
-		headed="true"
-		profile_policy="required"
-		cookie_policy="blocked"
-		proxy_policy="authorized_only"
-		offload="manual"
-		safety_notes='"manual authentication must stay user-controlled","no credential or target details are echoed"'
-		expected_artifacts='"manual auth handoff notes"'
-		blocked_reason="manual authentication required"
+		route_set_manual_auth
 	elif [[ "$auth" == "cookie" ]]; then
-		backend="cookie_session"
-		agency_level="4"
-		mode="cookie_session"
-		cookie_policy="reuse_approved_session"
-		profile_policy="avoid"
-		proxy_policy="authorized_only"
-		expected_artifacts='"storage state or authenticated API response"'
-		safety_notes='"reuse only approved cookie sessions","never print cookie values"'
+		route_set_cookie_session
 	elif [[ "$auth" == "profile" ]]; then
-		backend="persistent_profile"
-		agency_level="4"
-		mode="profile"
-		headed="true"
-		profile_policy="use_existing_approved_profile"
-		cookie_policy="reuse_approved_session"
-		proxy_policy="authorized_only"
-		expected_artifacts='"profile-backed trace or download"'
-		safety_notes='"use only approved persistent profiles","do not mutate profiles from this helper"'
-	elif [[ "$objective_lower" == *proxy* || "$objective_lower" == *vpn* || "$objective_lower" == *geo* || "$objective_lower" == *anti-detect* || "$objective_lower" == *stealth* ]]; then
-		backend="anti_detect_profile"
-		agency_level="6"
-		mode="authorized_stealth"
-		headed="true"
-		profile_policy="required"
-		cookie_policy="avoid"
-		proxy_policy="authorized_only"
-		expected_artifacts='"authorized isolated browser trace"'
-		safety_notes='"anti-detect and proxy use require explicit authorization","do not print proxy credentials"'
-	elif [[ "$objective_lower" == *form* || "$objective_lower" == *login* || "$objective_lower" == *download* || "$objective_lower" == *click* || "$objective_lower" == *dashboard* || "$objective_lower" == *browser* ]]; then
-		backend="browser"
-		agency_level="3"
-		mode="deterministic_browser"
-		headed="false"
-		profile_policy="avoid"
-		cookie_policy="avoid"
-		proxy_policy="none"
-		expected_artifacts='"DOM text, trace, screenshot only when needed, or download"'
-		safety_notes='"prefer ARIA and DOM extraction over screenshots","use deterministic selectors before high-agency tools"'
-	elif [[ "$objective_lower" == *crawl* || "$objective_lower" == *sitemap* || "$objective_lower" == *"many pages"* || "$objective_lower" == *docs* || "$objective_lower" == *documentation* ]]; then
-		backend="crawler"
-		agency_level="2"
-		mode="crawl"
-		profile_policy="none"
-		cookie_policy="none"
-		proxy_policy="none"
-		expected_artifacts='"crawl manifest and extracted records"'
-		safety_notes='"crawl only public or authorized content","respect robots and rate limits"'
+		route_set_persistent_profile
+	else
+		route_apply_objective "$objective_lower"
 	fi
-
-	if [[ "$objective_lower" == *inbox* || "$objective_lower" == *capture* ]]; then
-		capture_destination="_inbox"
-	elif [[ "$objective_lower" == *knowledge* || "$objective_lower" == *research* ]]; then
-		capture_destination="_knowledge"
-	elif [[ "$objective_lower" == *performance* || "$objective_lower" == *metric* ]]; then
-		capture_destination="_performance"
-	elif [[ "$objective_lower" == *feedback* || "$objective_lower" == *review* ]]; then
-		capture_destination="_feedback"
-	fi
+	route_apply_capture_destination "$objective_lower"
 
 	local safe_blocked_reason
 	safe_blocked_reason="$(sanitize_text "$blocked_reason")"
