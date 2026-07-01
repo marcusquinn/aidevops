@@ -1080,7 +1080,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18045 Refresh issue dependency state before dispatch #auto-dispatch #bug #priority:high ref:GH#26152 pr:#26153 completed:2026-07-01
 
-- [ ] t18053 fix: archive OpenCode isolated DB event rows #bug #database #opencode #performance ref:GH#26220
+- [x] t18053 fix: archive OpenCode isolated DB event rows #bug #database #opencode #performance ref:GH#26220 pr:#26221 completed:2026-07-01
 
 ## In Progress
 
@@ -4421,4 +4421,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18052 feat(reach): add token/discovery efficiency, headed/headless/offload routing,... #auto-dispatch #automation #efficiency #enhancement #framework ref:GH#26170
 
-- [ ] t18053 fix: archive OpenCode isolated DB event rows #bug #database #opencode #performance ref:GH#26220
+- [x] t18053 fix: archive OpenCode isolated DB event rows #bug #database #opencode #performance ref:GH#26220 pr:#26221 completed:2026-07-01
