@@ -174,9 +174,14 @@ define_process_helper() {
 	PR_REQUIRED_CHECKS_RC=1
 	REBASE_RETRY_RC=1
 	REFRESHED_MERGEABLE="UNKNOWN"
+	REFRESHED_REVIEW_DECISION="NONE"
+	REVIEW_REFRESH_CALLS=0
 
 	_resolve_pr_mergeable_status() { local pr_number="$1" repo_slug="$2" mergeable="$3"; [[ -n "$pr_number$repo_slug$mergeable" ]]; RESOLVE_CALLS=$((RESOLVE_CALLS + 1)); return 0; }
 	_pmp_refresh_unknown_mergeable_state_into() { local dest_var="$1" pr_number="$2" repo_slug="$3" mergeable="$4"; [[ -n "$pr_number$repo_slug$mergeable" ]]; printf -v "$dest_var" '%s' "$REFRESHED_MERGEABLE"; return 0; }
+	_pmp_normalize_review_decision_into() { local dest_var="$1" raw_decision="$2" normalized_decision=""; case "$raw_decision" in CHANGES_REQUESTED|APPROVED|REVIEW_REQUIRED|NONE) normalized_decision="$raw_decision" ;; ''|null|NULL|UNKNOWN|unknown) normalized_decision="UNKNOWN" ;; *) normalized_decision="$raw_decision" ;; esac; printf -v "$dest_var" '%s' "$normalized_decision"; return 0; }
+	_pmp_review_decision_is_unknown() { local raw_decision="$1" _test_normalized_decision=""; _pmp_normalize_review_decision_into _test_normalized_decision "$raw_decision"; [[ "$_test_normalized_decision" == "UNKNOWN" ]]; return $?; }
+	_pmp_refresh_unknown_review_decision_into() { local dest_var="$1" pr_number="$2" repo_slug="$3" review_decision="$4"; [[ -n "$pr_number$repo_slug$review_decision" ]]; REVIEW_REFRESH_CALLS=$((REVIEW_REFRESH_CALLS + 1)); printf -v "$dest_var" '%s' "$REFRESHED_REVIEW_DECISION"; return 0; }
 	_extract_linked_issue() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; printf '42\n'; return 0; }
 	_check_pr_merge_gates() { local pr_number="$1" repo_slug="$2" pr_author="$3" pr_review="$4" linked_issue="$5"; [[ -n "$pr_number$repo_slug$pr_author$pr_review$linked_issue" ]]; GATE_CALLS=$((GATE_CALLS + 1)); GATE_REVIEW_ARG="$pr_review"; return 0; }
 	_pr_required_checks_pass() { local pr_number="$1" repo_slug="$2"; [[ -n "$pr_number$repo_slug" ]]; if [[ "$PR_REQUIRED_CHECKS_RC" -eq 0 ]]; then return 0; fi; return 1; }
@@ -276,6 +281,30 @@ test_changes_requested_unknown_routes_before_mergeable_skip() {
 		print_result "CHANGES_REQUESTED+UNKNOWN routes before mergeability skip" 1 "resolve_calls=${RESOLVE_CALLS}, gate_calls=${GATE_CALLS}"
 	else
 		print_result "CHANGES_REQUESTED+UNKNOWN routes before mergeability skip" 0
+	fi
+	teardown_test_env
+	return 0
+}
+
+test_rest_missing_review_decision_refreshes_before_ci_route() {
+	setup_test_env
+	define_process_helper || { print_result "defines process helper for REST review refresh" 1 "could not extract _process_single_ready_pr"; teardown_test_env; return 0; }
+
+	local pr_object rc=0
+	REFRESHED_REVIEW_DECISION="CHANGES_REQUESTED"
+	printf -v pr_object '%s' '{"number":557,"mergeable":"MERGEABLE","reviewDecision":null,"author":{"login":"worker-bot"},"title":"GH#502: fix","updatedAt":"2026-06-21T00:00:00Z","headRefOid":"sha557","headRefName":"fix/rest-review","baseRefName":"main","labels":[{"name":"origin:worker"},{"name":"status:in-review"}],"isDraft":false}'
+	_process_single_ready_pr "owner/repo" "$pr_object" || rc=$?
+
+	if [[ "$rc" -ne 1 ]]; then
+		print_result "REST-missing reviewDecision refreshes before CI route" 1 "Expected skip return 1, got ${rc}"
+	elif [[ "$REVIEW_REFRESH_CALLS" -ne 1 ]]; then
+		print_result "REST-missing reviewDecision refreshes before CI route" 1 "review_refresh_calls=${REVIEW_REFRESH_CALLS}"
+	elif [[ "$ROUTE_CALLS" -ne 1 || "$ROUTE_ARGS" != "557|owner/repo|42|review" ]]; then
+		print_result "REST-missing reviewDecision refreshes before CI route" 1 "route_calls=${ROUTE_CALLS}, route_args=${ROUTE_ARGS}"
+	elif [[ "$GATE_CALLS" -ne 0 ]]; then
+		print_result "REST-missing reviewDecision refreshes before CI route" 1 "gate_calls=${GATE_CALLS}"
+	else
+		print_result "REST-missing reviewDecision refreshes before CI route" 0
 	fi
 	teardown_test_env
 	return 0
@@ -455,6 +484,7 @@ main() {
 	test_red_pr_passes_gates_before_repair_route
 	test_rebase_success_defers_ci_repair_route
 	test_changes_requested_unknown_routes_before_mergeable_skip
+	test_rest_missing_review_decision_refreshes_before_ci_route
 	test_coderabbit_nits_ok_dismissed_once_before_late_gate
 	test_changes_requested_explicit_empty_labels_skip_refetch
 	test_ci_feedback_dedupes_by_pr_head_sha

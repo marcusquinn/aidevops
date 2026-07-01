@@ -1100,6 +1100,26 @@ unset AIDEVOPS_GH_PR_VIEW_CACHE
 unset AIDEVOPS_GH_PR_VIEW_CACHE_DIR
 
 # =============================================================================
+# Test 25f: REST PR view marks unavailable reviewDecision as null, not empty
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+export STUB_PR_VIEW_FIXTURE='{"number":123,"title":"review state unavailable from REST"}'
+export STUB_PRIMARY_FAIL=1
+
+pr_view_review_decision=$(gh_pr_view 123 --repo "owner/repo" --json reviewDecision --jq '.reviewDecision == null' 2>/dev/null || true)
+unset STUB_PRIMARY_FAIL
+
+if [[ "$pr_view_review_decision" == "true" ]]; then
+	pass "gh_pr_view REST fallback leaves GraphQL-only reviewDecision null"
+else
+	fail "gh_pr_view REST fallback leaves GraphQL-only reviewDecision null" \
+		"output=${pr_view_review_decision} GH_CALLS=$(cat "$GH_CALLS")"
+fi
+unset STUB_PR_VIEW_FIXTURE
+
+# =============================================================================
 # Test 25c: REST PR list normalizes REST boolean mergeable to gh GraphQL enum
 # =============================================================================
 : >"$GH_CALLS"
@@ -1132,6 +1152,24 @@ if [[ "$pr_list_mergeable" == "UNKNOWN" || "$pr_list_mergeable" == '"UNKNOWN"' ]
 else
 	fail "gh_pr_list REST fallback normalizes missing mergeable to UNKNOWN" \
 		"output=${pr_list_mergeable} GH_CALLS=$(cat "$GH_CALLS")"
+fi
+unset STUB_PR_LIST_FIXTURE
+
+# =============================================================================
+# Test 25g: REST PR list marks unavailable reviewDecision as null, not empty
+# =============================================================================
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+export STUB_RATE_LIMIT_REMAINING=0
+export STUB_PR_LIST_FIXTURE='[{"number":22337,"state":"open","merged_at":null,"html_url":"https://github.com/owner/repo/pull/22337","head":{"ref":"feature/rest-review"},"base":{"ref":"main"}}]'
+
+pr_list_review_decision=$(gh_pr_list --repo "owner/repo" --state open --json number,reviewDecision --jq '.[0].reviewDecision == null' 2>/dev/null || true)
+
+if [[ "$pr_list_review_decision" == "true" ]]; then
+	pass "gh_pr_list REST fallback leaves GraphQL-only reviewDecision null"
+else
+	fail "gh_pr_list REST fallback leaves GraphQL-only reviewDecision null" \
+		"output=${pr_list_review_decision} GH_CALLS=$(cat "$GH_CALLS")"
 fi
 unset STUB_PR_LIST_FIXTURE
 

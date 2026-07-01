@@ -48,12 +48,23 @@ source "$MODULE"
 set +e
 set +o pipefail 2>/dev/null || true
 
+REFRESHED_REVIEW_DECISION="CHANGES_REQUESTED"
+: >"${TEST_TMPDIR}/review-refresh.log"
+gh_pr_view() {
+	local pr_number="$1" repo_flag="$2" repo_slug="$3"
+	[[ -n "$pr_number$repo_flag$repo_slug" ]]
+	printf '%s|%s|%s\n' "$pr_number" "$repo_flag" "$repo_slug" >>"${TEST_TMPDIR}/review-refresh.log"
+	printf '%s\n' "$REFRESHED_REVIEW_DECISION"
+	return 0
+}
+
 printf '%s=== GH#22303: PR backlog priority tests ===%s\n' "$TEST_BLUE" "$TEST_NC"
 
 merge_ready_pr='{"number":1,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}'
 legacy_success_pr='{"number":6,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"statusCheckRollup":[{"state":"SUCCESS"}]}'
 checks_in_progress_pr='{"number":2,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"statusCheckRollup":[{"status":"IN_PROGRESS","conclusion":null}]}'
 small_fix_pr='{"number":3,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"status":"COMPLETED","conclusion":"FAILURE"}]}'
+unknown_review_failed_pr='{"number":7,"mergeable":"MERGEABLE","reviewDecision":null,"isDraft":false,"labels":[{"name":"origin:worker"}],"statusCheckRollup":[{"status":"COMPLETED","conclusion":"FAILURE"}]}'
 dirty_pr='{"number":4,"mergeable":"CONFLICTING","reviewDecision":"APPROVED","isDraft":false,"labels":[],"statusCheckRollup":[]}'
 human_pr='{"number":5,"mergeable":"MERGEABLE","reviewDecision":"CHANGES_REQUESTED","isDraft":false,"labels":[],"statusCheckRollup":[{"status":"COMPLETED","conclusion":"SUCCESS"}]}'
 
@@ -65,6 +76,16 @@ assert_eq "1b: pending checks classify as checks-in-progress" \
 	"checks-in-progress" "$(_pmp_classify_pr_backlog_state "$checks_in_progress_pr")"
 assert_eq "1c: failed checks classify as small-fix-needed" \
 	"small-fix-needed" "$(_pmp_classify_pr_backlog_state "$small_fix_pr")"
+: >"${TEST_TMPDIR}/review-refresh.log"
+REFRESHED_REVIEW_DECISION="CHANGES_REQUESTED"
+assert_eq "1c.1: failed checks with unknown reviewDecision refresh to human-approval-needed" \
+	"human-approval-needed" "$(_pmp_classify_pr_backlog_state "$unknown_review_failed_pr" "owner/repo")"
+assert_eq "1c.2: unknown reviewDecision classification performs one authoritative refresh" \
+	"1" "$(wc -l <"${TEST_TMPDIR}/review-refresh.log" | tr -d '[:space:]')"
+: >"${TEST_TMPDIR}/review-refresh.log"
+REFRESHED_REVIEW_DECISION="NONE"
+assert_eq "1c.3: failed checks with refreshed NONE stay small-fix-needed" \
+	"small-fix-needed" "$(_pmp_classify_pr_backlog_state "$unknown_review_failed_pr" "owner/repo")"
 assert_eq "1d: conflicting PR classifies as dirty-conflicted" \
 	"dirty-conflicted" "$(_pmp_classify_pr_backlog_state "$dirty_pr")"
 assert_eq "1e: changes requested classifies as human-approval-needed" \
