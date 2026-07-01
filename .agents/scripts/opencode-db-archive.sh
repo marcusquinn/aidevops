@@ -31,7 +31,16 @@ _oda_dir="${BASH_SOURCE[0]%/*}"
 # --- Configuration -----------------------------------------------------------
 
 readonly SCRIPT_NAME="opencode-db-archive"
-readonly DEFAULT_DATA_DIR="${XDG_DATA_HOME:-${HOME}/.local/share}/opencode"
+if [[ -n "${XDG_DATA_HOME:-}" ]]; then
+	_oda_data_root="$XDG_DATA_HOME"
+elif [[ -n "${HOME:-}" ]]; then
+	_oda_data_root="${HOME}/.local/share"
+else
+	printf '[ERROR] HOME must be set when XDG_DATA_HOME is unset.\n' >&2
+	exit 1
+fi
+readonly DEFAULT_DATA_DIR="${_oda_data_root}/opencode"
+unset _oda_data_root
 readonly DEFAULT_DB="${DEFAULT_DATA_DIR}/opencode.db"
 readonly DEFAULT_RETENTION_DAYS=30
 readonly DEFAULT_BATCH_SIZE=500
@@ -332,7 +341,15 @@ _sqlite_has_table() {
 
 _archive_event_count_sql() {
 	local candidate_filter="$1"
-	if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
+	local arg_count="$#"
+	local has_event_table="${2:-}"
+	if ((arg_count < 2)); then
+		has_event_table=0
+		if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
+			has_event_table=1
+		fi
+	fi
+	if [[ "$has_event_table" == "1" ]]; then
 		printf 'SELECT COUNT(*) FROM event WHERE aggregate_id IN (SELECT id FROM session WHERE %s);\n' "$candidate_filter"
 	else
 		printf 'SELECT 0;\n'
@@ -342,7 +359,15 @@ _archive_event_count_sql() {
 
 _archive_event_bytes_sql() {
 	local candidate_filter="$1"
-	if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
+	local arg_count="$#"
+	local has_event_table="${2:-}"
+	if ((arg_count < 2)); then
+		has_event_table=0
+		if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
+			has_event_table=1
+		fi
+	fi
+	if [[ "$has_event_table" == "1" ]]; then
 		printf 'SELECT COALESCE(SUM(LENGTH(data)), 0) FROM event WHERE aggregate_id IN (SELECT id FROM session WHERE %s);\n' "$candidate_filter"
 	else
 		printf 'SELECT 0;\n'
@@ -549,6 +574,10 @@ cmd_archive() {
 
 	local candidate_filter
 	candidate_filter=$(_archive_candidate_filter "$retention_enabled" "$cutoff_ms" "$keep_enabled" "$keep_sessions" "$exclude_clause")
+	local has_event_table=0
+	if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
+		has_event_table=1
+	fi
 
 	# Count eligible sessions
 	local total_eligible
@@ -568,8 +597,8 @@ cmd_archive() {
 		part_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM part WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
 		todo_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM todo WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
 		share_count=$(sqlite3 "$ACTIVE_DB" "SELECT COUNT(*) FROM session_share WHERE session_id IN (SELECT id FROM session WHERE $candidate_filter);")
-		event_count=$(sqlite3 "$ACTIVE_DB" "$(_archive_event_count_sql "$candidate_filter")")
-		event_bytes=$(sqlite3 "$ACTIVE_DB" "$(_archive_event_bytes_sql "$candidate_filter")")
+		event_count=$(sqlite3 "$ACTIVE_DB" "$(_archive_event_count_sql "$candidate_filter" "$has_event_table")")
+		event_bytes=$(sqlite3 "$ACTIVE_DB" "$(_archive_event_bytes_sql "$candidate_filter" "$has_event_table")")
 
 		echo ""
 		echo "=== DRY RUN — would archive: ==="
@@ -589,14 +618,10 @@ cmd_archive() {
 
 	local project_insert_columns project_select_columns
 	local session_insert_columns session_select_columns
-	local has_event_table=0
 	project_insert_columns=$(_archive_project_insert_columns)
 	project_select_columns=$(_archive_project_select_columns)
 	session_insert_columns=$(_archive_session_insert_columns)
 	session_select_columns=$(_archive_session_select_columns)
-	if _sqlite_has_table "$ACTIVE_DB" "$EVENT_TABLE_NAME"; then
-		has_event_table=1
-	fi
 
 	local size_before
 	size_before=$(file_size_bytes "$ACTIVE_DB")
