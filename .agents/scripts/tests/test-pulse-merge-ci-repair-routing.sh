@@ -88,28 +88,32 @@ fi
 	if [[ "${1:-} ${2:-}" == "pr checks" ]]; then
 		_is_required=0
 		[[ "$*" == *" --required "* || "$*" == *" --required"* ]] && _is_required=1
-	if [[ "$*" == *"name,bucket,conclusion,link"* ]]; then
-		case "${TEST_CHECK_SCENARIO:-terminal_failure}:${_is_required}" in
-			terminal_failure:1 | log_exit_143:1)
-				printf '%s\n' '[{"name":"Lint","bucket":"fail","conclusion":"failure","link":"https://github.com/owner/repo/actions/runs/123/job/456"}]'
-				;;
-			pending_only:*|mixed_pending_pass:*)
-				printf '[]\n'
-				;;
-			infra_timeout:1)
-				printf '%s\n' '[{"name":"Lint","bucket":"fail","conclusion":"failure","link":"https://github.com/owner/repo/actions/runs/123/job/456"}]'
-				;;
-			advisory_failure:0)
-				printf '%s\n' '[{"name":"Docs","bucket":"fail","conclusion":"failure","link":"https://github.com/owner/repo/actions/runs/123/job/789"}]'
-				;;
-			advisory_failure:1)
-				printf '[]\n'
-				;;
+		if [[ "$*" == *"conclusion"* ]]; then
+			printf '%s\n' 'Unknown JSON field: "conclusion"' >&2
+			exit 1
+		fi
+		if [[ "$*" == *"name,bucket,state,link"* ]]; then
+			case "${TEST_CHECK_SCENARIO:-terminal_failure}:${_is_required}" in
+				terminal_failure:1 | log_exit_143:1)
+					printf '%s\n' '[{"name":"Lint","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/123/job/456"}]'
+					;;
+				pending_only:*|mixed_pending_pass:*)
+					printf '[]\n'
+					;;
+				infra_timeout:1)
+					printf '%s\n' '[{"name":"Lint","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/123/job/456"}]'
+					;;
+				advisory_failure:0)
+					printf '%s\n' '[{"name":"Docs","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/123/job/789"}]'
+					;;
+				advisory_failure:1)
+					printf '[]\n'
+					;;
 			esac
+			exit 0
+		fi
 		exit 0
 	fi
-	exit 0
-fi
 
 if [[ "${1:-} ${2:-}" == "issue view" ]]; then
 	if [[ "$*" == *"--json body"* ]]; then
