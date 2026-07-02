@@ -140,6 +140,10 @@ assert 'pulse-current-state.py' in helper_source
 assert 'from collections import Counter, defaultdict, deque' in implementation_source
 assert 'readlines()[-limit:]' not in implementation_source
 assert 'deque(handle, maxlen=limit)' in implementation_source
+assert 'AIDEVOPS_ACTIVE_WORKER_PROCESSES' in helper_source
+assert 'AIDEVOPS_ACTIVE_WORKER_PROCESSES' in implementation_source
+assert 'import subprocess' not in implementation_source
+assert 'subprocess.check_output' not in implementation_source
 PY
 
 printf 'PASS pulse-current-state-helper\n'
