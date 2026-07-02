@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.31.29] - 2026-07-03
 
+### Changed
+
+- Documentation: prepare changelog for 3.31.29
+
+### Fixed
+
+- skip same auth copy in launcher (#26399)
+
+## [3.31.29] - 2026-07-03
+
 ### Fixed
 
 - skip redundant OpenCode launcher auth copy when already in the target isolated data dir (#26399)
