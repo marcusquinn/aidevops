@@ -97,6 +97,7 @@ copy_auth_json() {
     local target_auth="${target_data_dir}/opencode/auth.json"
 
     [[ -f "${source_auth}" ]] || return 0
+    [[ "${source_auth}" == "${target_auth}" ]] && return 0
     mkdir -p "$(dirname "${target_auth}")" || return 1
     cp "${source_auth}" "${target_auth}" || return 1
     chmod 600 "${target_auth}" 2>/dev/null || true

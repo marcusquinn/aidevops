@@ -101,6 +101,15 @@ else
     _fail "explicit session-id output unexpected: ${output}"
 fi
 
+output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" XDG_DATA_HOME="${work_dir}/opencode-interactive/test-session" \
+    "${HELPER}" --dir "${launch_dir}" --session-id test-session --dry-run 2>&1)
+if [[ "${output}" == *"XDG_DATA_HOME=${work_dir}/opencode-interactive/test-session"* ]] \
+    && [[ "${output}" != *"identical"* ]]; then
+    _pass "launcher skips auth copy when source and target match"
+else
+    _fail "same auth copy guard output unexpected: ${output}"
+fi
+
 output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" \
     "${HELPER}" --shared-db --dir "${launch_dir}" -- --version 2>&1)
 if [[ "${output}" == *"AIDEVOPS_OPENCODE_ISOLATED_DB="* ]] \
