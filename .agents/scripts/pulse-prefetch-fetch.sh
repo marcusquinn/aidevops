@@ -739,7 +739,7 @@ _prefetch_single_repo() {
 	# Open PRs / Queued Issues sections (so the LLM has recent state if it
 	# decides to read deeper) but the LLM-facing summary leads with the
 	# cache-hit signal so cheap cycles stay cheap.
-	local cache_decision cache_hit
+	local cache_decision="" cache_hit=""
 	cache_decision=$(_prefetch_single_repo_cache_decision "$slug" "$cache_entry" "$sweep_mode")
 	cache_hit="${cache_decision%%$'\t'*}"
 	sweep_mode="${cache_decision#*$'\t'}"
