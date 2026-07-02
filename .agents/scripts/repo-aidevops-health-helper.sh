@@ -636,7 +636,11 @@ _rewrite_repo_aidevops_version() {
 		rm -f "$tmp_adj"
 		return 1
 	fi
-	mv "$tmp_adj" "$adj_file"
+	if ! mv "$tmp_adj" "$adj_file"; then
+		log_warn "bump failed ($slug): mv error for $adj_file"
+		rm -f "$tmp_adj"
+		return 1
+	fi
 	return 0
 }
 
@@ -657,7 +661,7 @@ _commit_repo_aidevops_version() {
 	if ! git -C "$repo_path" add .aidevops.json >/dev/null 2>&1 ||
 		! git -C "$repo_path" commit -m "chore: bump .aidevops.json to v${target_version} (r914)" >/dev/null 2>&1; then
 		log_warn "bump failed ($slug): commit error"
-		git -C "$repo_path" checkout -q "$default_branch" >/dev/null 2>&1 || true
+		git -C "$repo_path" checkout -f -q "$default_branch" || true
 		return 1
 	fi
 	return 0
