@@ -135,6 +135,82 @@ _check_health_issue_activity_guard() {
 }
 
 #######################################
+# Persist only the trailing issue number for subsequent dashboard updates.
+# Arguments:
+#   $1 - resolver output or issue number
+#   $2 - health issue cache file path
+#######################################
+_cache_health_issue_number() {
+	local health_issue_number="$1"
+	local health_issue_file="$2"
+	local cache_issue_number
+
+	cache_issue_number=$(printf '%s\n' "$health_issue_number" | awk '/^[0-9]+$/ { value=$0 } match($0, /\/[0-9]+$/) { value=substr($0, RSTART + 1, RLENGTH - 1) } END { if (value != "") print value }')
+	printf '%s\n' "$cache_issue_number" >"$health_issue_file"
+	return 0
+}
+
+#######################################
+# Update the dashboard issue body, preserving failure propagation.
+# Arguments:
+#   $1 - health issue number
+#   $2 - repo slug
+#   $3 - rendered issue body
+# Returns: 0 on success, 1 when the body edit fails
+#######################################
+_update_health_issue_body_or_fail() {
+	local health_issue_number="$1"
+	local repo_slug="$2"
+	local body="$3"
+	local body_edit_stderr
+
+	# Use gh_issue_edit_safe (not bare `gh issue edit`) so the REST fallback
+	# in shared-gh-wrappers-safe-edit.sh fires when GraphQL is rate-limited.
+	# Bare `gh issue edit` always uses GraphQL and silently fails the body
+	# update when the 5000/hr GraphQL budget is exhausted, leaving the
+	# dashboard stale until the budget resets (up to 1h). GH#33.
+	body_edit_stderr=$(_gh_with_timeout write gh_issue_edit_safe "$health_issue_number" --repo "$repo_slug" \
+		--body "$body" 2>&1 >/dev/null) || {
+		echo "[stats] Health issue: failed to update body for #${health_issue_number}: ${body_edit_stderr}" \
+			>>"$LOGFILE"
+		return 1
+	}
+	return 0
+}
+
+#######################################
+# Refresh the dashboard issue title from the rendered body counts.
+# Arguments:
+#   $1 - health issue number
+#   $2 - repo slug
+#   $3 - runner title prefix
+#   $4 - rendered issue body
+#######################################
+_refresh_health_issue_title_from_body() {
+	local health_issue_number="$1"
+	local repo_slug="$2"
+	local runner_prefix="$3"
+	local body="$4"
+	local counts_raw pr_count assigned_issue_count worker_count
+
+	# Re-extract headline counts from the rendered body to build the title.
+	# Avoids relying on function-local variables from _assemble_health_issue_body.
+	counts_raw=$(_extract_body_counts "$body")
+	IFS='|' read -r pr_count assigned_issue_count worker_count <<<"$counts_raw"
+
+	local pr_label="PRs"
+	[[ "$pr_count" -eq 1 ]] && pr_label="PR"
+	local worker_label="workers"
+	[[ "$worker_count" -eq 1 ]] && worker_label="worker"
+
+	_update_health_issue_title \
+		"$health_issue_number" "$repo_slug" "$runner_prefix" \
+		"$pr_count" "$pr_label" "$assigned_issue_count" \
+		"$worker_count" "$worker_label"
+	return 0
+}
+
+#######################################
 # Update pinned health issue for a single repo
 #
 # Creates or updates a pinned GitHub issue with live status:
@@ -204,6 +280,7 @@ _update_health_issue_for_repo() {
 		"$role_display" "$health_issue_file" \
 		"$canonical_identity" "$identity_aliases")
 	[[ -z "$health_issue_number" ]] && return 0
+	[[ "$health_issue_number" == "$_HEALTH_QUERY_FAILED_SENTINEL" ]] && return 0
 
 	# t2687: periodic dedup scan (at most once per HEALTH_DEDUP_INTERVAL
 	# seconds per repo+runner+role, default 1h). Closes duplicates that
@@ -218,11 +295,7 @@ _update_health_issue_for_repo() {
 		_ensure_health_issue_pinned "$health_issue_number" "$repo_slug" "$runner_user"
 	fi
 
-	# Cache only the trailing issue number. The resolver may emit warnings before
-	# the value, and a multi-line cache makes later dashboard updates stale.
-	local cache_issue_number
-	cache_issue_number=$(printf '%s\n' "$health_issue_number" | awk '/^[0-9]+$/ { value=$0 } match($0, /\/[0-9]+$/) { value=substr($0, RSTART + 1, RLENGTH - 1) } END { if (value != "") print value }')
-	echo "$cache_issue_number" >"$health_issue_file"
+	_cache_health_issue_number "$health_issue_number" "$health_issue_file"
 
 	local now_iso
 	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -234,34 +307,8 @@ _update_health_issue_for_repo() {
 		"$cross_repo_md" "$cross_repo_session_time_md" "$cross_repo_person_stats_md" \
 		"$canonical_identity" "$identity_aliases")
 
-	local body_edit_stderr
-	# Use gh_issue_edit_safe (not bare `gh issue edit`) so the REST fallback
-	# in shared-gh-wrappers-safe-edit.sh fires when GraphQL is rate-limited.
-	# Bare `gh issue edit` always uses GraphQL and silently fails the body
-	# update when the 5000/hr GraphQL budget is exhausted, leaving the
-	# dashboard stale until the budget resets (up to 1h). GH#33.
-	body_edit_stderr=$(_gh_with_timeout write gh_issue_edit_safe "$health_issue_number" --repo "$repo_slug" \
-		--body "$body" 2>&1 >/dev/null) || {
-		echo "[stats] Health issue: failed to update body for #${health_issue_number}: ${body_edit_stderr}" \
-			>>"$LOGFILE"
-		return 1
-	}
-
-	# Re-extract headline counts from the rendered body to build the title.
-	# Avoids relying on function-local variables from _assemble_health_issue_body.
-	local counts_raw pr_count assigned_issue_count worker_count
-	counts_raw=$(_extract_body_counts "$body")
-	IFS='|' read -r pr_count assigned_issue_count worker_count <<<"$counts_raw"
-
-	local pr_label="PRs"
-	[[ "$pr_count" -eq 1 ]] && pr_label="PR"
-	local worker_label="workers"
-	[[ "$worker_count" -eq 1 ]] && worker_label="worker"
-
-	_update_health_issue_title \
-		"$health_issue_number" "$repo_slug" "$runner_prefix" \
-		"$pr_count" "$pr_label" "$assigned_issue_count" \
-		"$worker_count" "$worker_label"
+	_update_health_issue_body_or_fail "$health_issue_number" "$repo_slug" "$body" || return 1
+	_refresh_health_issue_title_from_body "$health_issue_number" "$repo_slug" "$runner_prefix" "$body"
 
 	return 0
 }
