@@ -414,15 +414,37 @@ fi
 # reserves GraphQL for merge readiness, dispatch capacity checks, and worker
 # launch safety gates; optional enrichment/dashboard/routine/cache stages defer.
 # ---------------------------------------------------------------------------
+_pulse_gh_rate_limit_json() {
+	local _rate_json=""
+	local _rc=0
+	local _secs="${AIDEVOPS_GH_READ_TIMEOUT:-15}"
+	[[ "$_secs" =~ ^[0-9]+$ ]] || _secs=15
+
+	if declare -F _cb_rate_limit_json >/dev/null 2>&1; then
+		_rate_json=$(_cb_rate_limit_json normal 2>/dev/null) || _rc=$?
+	elif declare -F _gh_with_timeout >/dev/null 2>&1; then
+		_rate_json=$(_gh_with_timeout read gh api rate_limit 2>/dev/null) || _rc=$?
+	elif declare -F timeout_sec >/dev/null 2>&1; then
+		_rate_json=$(timeout_sec "$_secs" gh api rate_limit 2>/dev/null) || _rc=$?
+	elif command -v timeout >/dev/null 2>&1; then
+		_rate_json=$(timeout "$_secs" gh api rate_limit 2>/dev/null) || _rc=$?
+	elif command -v gtimeout >/dev/null 2>&1; then
+		_rate_json=$(gtimeout "$_secs" gh api rate_limit 2>/dev/null) || _rc=$?
+	else
+		return 1
+	fi
+
+	[[ "$_rc" -eq 0 ]] || return "$_rc"
+	[[ -n "$_rate_json" ]] || return 1
+	printf '%s\n' "$_rate_json"
+	return 0
+}
+
 _pulse_graphql_budget_priority_decision() {
 	local _threshold="${AIDEVOPS_PULSE_OPTIONAL_BUDGET_THRESHOLD:-${AIDEVOPS_PULSE_PREFETCH_BUDGET_THRESHOLD:-1250}}"
 	[[ "$_threshold" =~ ^[0-9]+$ ]] || _threshold=1250
 	local _rate_json=""
-	if declare -F _cb_rate_limit_json >/dev/null 2>&1; then
-		_rate_json=$(_cb_rate_limit_json normal 2>/dev/null) || _rate_json=""
-	else
-		_rate_json=$(gh api rate_limit 2>/dev/null) || _rate_json=""
-	fi
+	_rate_json=$(_pulse_gh_rate_limit_json) || _rate_json=""
 	if [[ -z "$_rate_json" ]]; then
 		printf 'unknown ? ? %s\n' "$_threshold"
 		return 0

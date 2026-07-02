@@ -77,4 +77,26 @@ if _pulse_should_defer_budget_priority_stage "dashboard_freshness_check"; then
 	exit 1
 fi
 
+unset -f _cb_rate_limit_json
+TIMEOUT_CALL_LOG="${TMP_DIR}/timeout-calls.log"
+_gh_with_timeout() {
+	local op_class="$1"
+	shift
+	printf '_gh_with_timeout %s %s\n' "$op_class" "$*" >>"$TIMEOUT_CALL_LOG"
+	if [[ "$op_class" == "read" && "$*" == "gh api rate_limit" ]]; then
+		printf '{"resources":{"graphql":{"remaining":4000,"limit":5000}}}\n'
+		return 0
+	fi
+	return 1
+}
+decision="$(_pulse_graphql_budget_priority_decision)"
+if [[ "$decision" != "normal 4000 5000 1250" ]]; then
+	printf 'FAIL: fallback budget decision did not use bounded gh read: %s\n' "$decision" >&2
+	exit 1
+fi
+if ! grep -q '_gh_with_timeout read gh api rate_limit' "$TIMEOUT_CALL_LOG"; then
+	printf 'FAIL: pulse-wrapper fallback did not call _gh_with_timeout read gh api rate_limit\n' >&2
+	exit 1
+fi
+
 printf 'PASS pulse-graphql-budget-priority\n'
