@@ -80,6 +80,130 @@ _is_routine_ops_comment() {
 	return 1
 }
 
+_fetch_comment_body() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	local comment_id="$3"
+	local responded_file="$4"
+	local comment_body lookup_error lookup_summary
+
+	lookup_error=""
+	comment_body=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments/${comment_id}" \
+		--jq '.body' 2>&1) || {
+		lookup_error="$comment_body"
+		comment_body=""
+	}
+	if [[ -z "$comment_body" ]]; then
+		lookup_summary="empty response"
+		if [[ -n "$lookup_error" ]]; then
+			lookup_summary="${lookup_error%%$'\n'*}"
+		fi
+		_log "dispatch: comment ${comment_id} on #${issue_number} lookup failed — skipping (${lookup_summary})"
+		_mark_comment_skipped "$responded_file" "$comment_id" "lookup failed"
+		return 1
+	fi
+
+	printf '%s\n' "$comment_body"
+	return 0
+}
+
+_fetch_comment_author() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	local comment_id="$3"
+	local comment_author
+
+	comment_author=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments/${comment_id}" \
+		--jq '.user.login' 2>/dev/null) || comment_author="unknown"
+	printf '%s\n' "$comment_author"
+	return 0
+}
+
+_fetch_issue_context() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	local issue_body
+
+	issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body,title \
+		--jq '"\(.title)\n\n\(.body)"' 2>/dev/null) || issue_body=""
+	printf '%s\n' "$issue_body"
+	return 0
+}
+
+_build_dispatch_prompt() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	local comment_author="$3"
+	local issue_body="$4"
+	local comment_body="$5"
+
+	cat <<PROMPT
+Respond to a user comment on routine tracking issue #${issue_number} in ${repo_slug}.
+
+IMPORTANT: This is a routine-tracking issue — a dashboard for execution metrics.
+You are NOT implementing anything. You are responding to a user's comment.
+
+## Issue context (read-only — do not edit the issue body)
+
+${issue_body}
+
+## User comment from @${comment_author}
+
+${comment_body}
+
+## Instructions
+
+Read the AGENTS.md in this repo for full guidance on handling comments.
+
+Summary:
+1. If it's a QUESTION about the routine: answer using the issue body description,
+   routine logs at ~/.aidevops/.agent-workspace/cron/<routine-id>/, and
+   routine-log-helper.sh status. Post your answer as a comment on issue #${issue_number}.
+
+2. If it's a CHANGE REQUEST (e.g. change schedule, disable, enable):
+   - Edit TODO.md in this repo to apply the change (direct to main, no PR needed)
+   - Post a comment on issue #${issue_number} confirming the change with before/after values
+   - If the change requires modifying framework code, explain that and suggest filing
+     an issue on the main aidevops repo instead
+
+3. If it's a BUG REPORT about the routine itself:
+   - Post a comment acknowledging the report
+   - Create an issue on the main aidevops repo with the bug details
+
+4. Post your response as a comment on issue #${issue_number} using:
+   gh issue comment ${issue_number} --repo ${repo_slug} --body "your response"
+
+5. Keep responses concise and helpful. No signature footers needed for comment responses.
+PROMPT
+	return 0
+}
+
+_dispatch_comment_worker() {
+	local repo_slug="$1"
+	local repo_path="$2"
+	local issue_number="$3"
+	local comment_id="$4"
+	local comment_author="$5"
+	local prompt="$6"
+	local session_key="routine-comment-${issue_number}-${comment_id}"
+
+	_log "dispatch: responding to comment ${comment_id} by @${comment_author} on #${issue_number} in ${repo_slug}"
+
+	if [[ -f "${SCRIPT_DIR}/headless-runtime-helper.sh" ]]; then
+		"${SCRIPT_DIR}/headless-runtime-helper.sh" run \
+			--role worker \
+			--session-key "$session_key" \
+			--dir "$repo_path" \
+			--title "Routine comment response #${issue_number}" \
+			--prompt "$prompt" \
+			--model "anthropic/claude-haiku-4-5" &
+		return 0
+	fi
+
+	_log "dispatch: headless-runtime-helper.sh not found — cannot dispatch"
+	return 1
+}
+
 # ---------------------------------------------------------------------------
 # scan <repo_slug> <repo_path>
 # Finds routine-tracking issues with unanswered user comments.
@@ -177,21 +301,8 @@ cmd_dispatch() {
 		return 0
 	fi
 
-	# Get the comment body
-	local comment_body lookup_error
-	lookup_error=""
-	comment_body=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments/${comment_id}" \
-		--jq '.body' 2>&1) || {
-		lookup_error="$comment_body"
-		comment_body=""
-	}
-	if [[ -z "$comment_body" ]]; then
-		local lookup_summary="empty response"
-		if [[ -n "$lookup_error" ]]; then
-			lookup_summary="${lookup_error%%$'\n'*}"
-		fi
-		_log "dispatch: comment ${comment_id} on #${issue_number} lookup failed — skipping (${lookup_summary})"
-		_mark_comment_skipped "$responded_file" "$comment_id" "lookup failed"
+	local comment_body
+	if ! comment_body=$(_fetch_comment_body "$repo_slug" "$issue_number" "$comment_id" "$responded_file"); then
 		return 0
 	fi
 
@@ -202,75 +313,21 @@ cmd_dispatch() {
 	fi
 
 	local comment_author
-	comment_author=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments/${comment_id}" \
-		--jq '.user.login' 2>/dev/null) || comment_author="unknown"
+	comment_author=$(_fetch_comment_author "$repo_slug" "$issue_number" "$comment_id")
 
-	# Get the issue body for context
 	local issue_body
-	issue_body=$(gh issue view "$issue_number" --repo "$repo_slug" --json body,title \
-		--jq '"\(.title)\n\n\(.body)"' 2>/dev/null) || issue_body=""
+	issue_body=$(_fetch_issue_context "$repo_slug" "$issue_number")
 
-	# Build the focused prompt
 	local prompt
-	prompt="Respond to a user comment on routine tracking issue #${issue_number} in ${repo_slug}.
+	prompt=$(_build_dispatch_prompt "$repo_slug" "$issue_number" "$comment_author" "$issue_body" "$comment_body")
 
-IMPORTANT: This is a routine-tracking issue — a dashboard for execution metrics.
-You are NOT implementing anything. You are responding to a user's comment.
-
-## Issue context (read-only — do not edit the issue body)
-
-${issue_body}
-
-## User comment from @${comment_author}
-
-${comment_body}
-
-## Instructions
-
-Read the AGENTS.md in this repo for full guidance on handling comments.
-
-Summary:
-1. If it's a QUESTION about the routine: answer using the issue body description,
-   routine logs at ~/.aidevops/.agent-workspace/cron/<routine-id>/, and
-   routine-log-helper.sh status. Post your answer as a comment on issue #${issue_number}.
-
-2. If it's a CHANGE REQUEST (e.g. change schedule, disable, enable):
-   - Edit TODO.md in this repo to apply the change (direct to main, no PR needed)
-   - Post a comment on issue #${issue_number} confirming the change with before/after values
-   - If the change requires modifying framework code, explain that and suggest filing
-     an issue on the main aidevops repo instead
-
-3. If it's a BUG REPORT about the routine itself:
-   - Post a comment acknowledging the report
-   - Create an issue on the main aidevops repo with the bug details
-
-4. Post your response as a comment on issue #${issue_number} using:
-   gh issue comment ${issue_number} --repo ${repo_slug} --body \"your response\"
-
-5. Keep responses concise and helpful. No signature footers needed for comment responses."
-
-	# Dispatch via headless-runtime-helper
-	local session_key="routine-comment-${issue_number}-${comment_id}"
-
-	_log "dispatch: responding to comment ${comment_id} by @${comment_author} on #${issue_number} in ${repo_slug}"
-
-	if [[ -f "${SCRIPT_DIR}/headless-runtime-helper.sh" ]]; then
-		"${SCRIPT_DIR}/headless-runtime-helper.sh" run \
-			--role worker \
-			--session-key "$session_key" \
-			--dir "$repo_path" \
-			--title "Routine comment response #${issue_number}" \
-			--prompt "$prompt" \
-			--model "anthropic/claude-haiku-4-5" &
-
-		# Mark as responded immediately (the worker will handle the actual response)
-		echo "$comment_id" >>"$responded_file"
-		_log "dispatch: worker dispatched for comment ${comment_id} on #${issue_number}"
-	else
-		_log "dispatch: headless-runtime-helper.sh not found — cannot dispatch"
+	if ! _dispatch_comment_worker "$repo_slug" "$repo_path" "$issue_number" "$comment_id" "$comment_author" "$prompt"; then
 		return 1
 	fi
 
+	# Mark as responded immediately (the worker will handle the actual response)
+	printf '%s\n' "$comment_id" >>"$responded_file"
+	_log "dispatch: worker dispatched for comment ${comment_id} on #${issue_number}"
 	return 0
 }
 
