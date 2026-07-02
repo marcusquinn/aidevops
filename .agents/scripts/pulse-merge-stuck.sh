@@ -66,6 +66,15 @@ _PULSE_MERGE_STUCK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "${_PULSE_MERGE_STUCK_DIR}/pulse-stats-helper.sh"
 
+# Load the exact-output PR-list provider cache for the stuck-merge hot paths.
+# pulse-wrapper.sh sources this earlier in normal operation; the include guard
+# keeps direct module tests and wrapper sourcing idempotent.
+if [[ -f "${_PULSE_MERGE_STUCK_DIR}/pulse-pr-list-cache.sh" ]]; then
+	# shellcheck source=./pulse-pr-list-cache.sh
+	# shellcheck disable=SC1091
+	source "${_PULSE_MERGE_STUCK_DIR}/pulse-pr-list-cache.sh"
+fi
+
 # Source the rate-limit / Actions-queue helper for _check_actions_queue_saturation
 # (t3211, GH#21942). Defined alongside the GraphQL circuit breaker because both
 # concern GitHub-side resource exhaustion. The source is best-effort — if the
@@ -118,6 +127,19 @@ readonly _PMS_COUNTER_QUEUE_SATURATION_EVENTS="pulse_actions_queue_saturation_ev
 readonly _PMS_GAUGE_ZERO_PROGRESS_CYCLES='pulse_merge_zero_progress_cycles'
 readonly _PMS_GAUGE_ZERO_PROGRESS_RECOVERY_CHECK_TS='pulse_merge_zero_progress_recovery_check_ts'
 readonly _PMS_JQ_NULL_GUARD="null"
+
+#######################################
+# Shared open-PR field shape for stuck-merge list scans.
+#
+# Keeps the zero-progress counter and stuck detector on one exact-output
+# provider-cache key while preserving both consumers' fields: author is needed
+# by _pms_count_eligible_unmerged_for_repo, updatedAt by
+# pulse_merge_stuck_run_pass, and the remaining fields gate eligibility.
+#######################################
+_pms_pr_list_json_fields() {
+	printf '%s' 'number,mergeable,reviewDecision,isDraft,labels,author,updatedAt'
+	return 0
+}
 readonly _PMS_RUNNER_SATURATION_MARKER_TEXT="merge-stuck:runner-queue-saturation"
 # jq filter snippet that selects normalized REST check entries with a failing
 # conclusion/state. Extracted so the upcase predicate is defined exactly once
@@ -1204,8 +1226,8 @@ _pms_count_eligible_unmerged_for_repo() {
 	[[ -n "$repo_slug" ]] || { printf '0'; return 0; }
 
 	local pr_json
-	pr_json=$(gh pr list --repo "$repo_slug" --state open \
-		--json number,mergeable,reviewDecision,isDraft,labels,author \
+	pr_json=$(pulse_pr_list_get --repo "$repo_slug" --state open \
+		--json "$(_pms_pr_list_json_fields)" \
 		--limit 50 2>/dev/null) || pr_json="[]"
 	[[ -n "$pr_json" && "$pr_json" != "$_PMS_JQ_NULL_GUARD" ]] || pr_json="[]"
 
@@ -1353,8 +1375,8 @@ pulse_merge_stuck_run_pass() {
 
 	# Fetch open PRs with the fields the detector needs.
 	local pr_json
-	pr_json=$(gh pr list --repo "$repo_slug" --state open \
-		--json number,mergeable,reviewDecision,isDraft,labels,updatedAt \
+	pr_json=$(pulse_pr_list_get --repo "$repo_slug" --state open \
+		--json "$(_pms_pr_list_json_fields)" \
 		--limit 50 2>/dev/null) || pr_json="[]"
 	[[ -n "$pr_json" && "$pr_json" != "$_PMS_JQ_NULL_GUARD" ]] || pr_json="[]"
 

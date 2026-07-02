@@ -424,29 +424,31 @@ echo ""
 # ---------------------------------------------------------------------------
 echo "--- Section 6: zero-progress count gate parity ---"
 
-gh() {
-	local command_name="${1:-}"
-	local subcommand="${2:-}"
-	if [[ "$command_name" == "pr" && "$subcommand" == "list" ]]; then
-		printf '%s\n' '[
-{"number":101,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"trusted"}},
-{"number":102,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:worker"}],"author":{"login":"trusted"}},
-{"number":103,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:worker"}],"author":{"login":"trusted"}},
-{"number":104,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"hold-for-review"}],"author":{"login":"trusted"}},
-{"number":105,"mergeable":"MERGEABLE","reviewDecision":"CHANGES_REQUESTED","isDraft":false,"labels":[],"author":{"login":"trusted"}},
-{"number":106,"mergeable":"CONFLICTING","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"trusted"}},
-{"number":107,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"external"}},
-{"number":108,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"trusted"}},
-{"number":109,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":null},
-{"number":110,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":null,"author":{"login":"external"}},
-{"number":111,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:interactive"}],"author":{"login":"trusted"}},
-{"number":112,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:interactive"},{"name":"allow-auto-merge"}],"author":{"login":"trusted"}},
-{"number":113,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"external-contributor"}],"author":{"login":"trusted"}},
-{"number":114,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"external-contributor"}],"author":{"login":"trusted"}}
+export PULSE_PR_LIST_PROVIDER_CACHE_DIR="$TEST_TMPDIR/pr-list-cache"
+export PULSE_PR_LIST_PROVIDER_CACHE_TTL=3600
+unset PULSE_PR_LIST_PROVIDER_CACHE_DISABLE
+PMS_TEST_PR_LIST_CALLS="$TEST_TMPDIR/pr-list-calls.log"
+: >"$PMS_TEST_PR_LIST_CALLS"
+
+gh_pr_list() {
+	printf '%s\n' "$*" >>"$PMS_TEST_PR_LIST_CALLS"
+	printf '%s\n' '[
+{"number":101,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"trusted"},"updatedAt":"2026-01-01T00:00:00Z"},
+{"number":102,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:worker"}],"author":{"login":"trusted"},"updatedAt":"2026-01-01T00:00:00Z"},
+{"number":103,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:worker"}],"author":{"login":"trusted"},"updatedAt":"2026-01-01T00:00:00Z"},
+{"number":104,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"hold-for-review"}],"author":{"login":"trusted"},"updatedAt":"2026-01-01T00:00:00Z"},
+{"number":105,"mergeable":"MERGEABLE","reviewDecision":"CHANGES_REQUESTED","isDraft":false,"labels":[],"author":{"login":"trusted"},"updatedAt":"2026-01-01T00:00:00Z"},
+{"number":106,"mergeable":"CONFLICTING","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"trusted"},"updatedAt":"2026-01-01T00:00:00Z"},
+{"number":107,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"external"},"updatedAt":"2026-01-01T00:00:00Z"},
+{"number":108,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":{"login":"trusted"},"updatedAt":"2026-01-01T00:00:00Z"},
+{"number":109,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":null,"updatedAt":"2026-01-01T00:00:00Z"},
+{"number":110,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":null,"author":{"login":"external"},"updatedAt":"2026-01-01T00:00:00Z"},
+{"number":111,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:interactive"}],"author":{"login":"trusted"},"updatedAt":"2026-01-01T00:00:00Z"},
+{"number":112,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"origin:interactive"},{"name":"allow-auto-merge"}],"author":{"login":"trusted"},"updatedAt":"2026-01-01T00:00:00Z"},
+{"number":113,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"external-contributor"}],"author":{"login":"trusted"},"updatedAt":"2026-01-01T00:00:00Z"},
+{"number":114,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[{"name":"external-contributor"}],"author":{"login":"trusted"},"updatedAt":"2026-01-01T00:00:00Z"}
 ]'
-		return 0
-	fi
-	return 1
+	return 0
 }
 
 _check_required_checks_passing() {
@@ -503,6 +505,27 @@ _interactive_pr_auto_merge_allowed() {
 got=$(_pms_count_eligible_unmerged_for_repo "example/repo")
 assert_eq "6a: zero-progress count excludes read-only merge-gate blockers" "4" "$got"
 
+_pms_compute_saturation_state() {
+	printf 'queued=0\nin_progress=0\nratio=0\nsaturated=0\n'
+	return 0
+}
+
+_pms_handle_classified_pr() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local is_saturated="$3"
+	[[ -n "$pr_number" && -n "$repo_slug" && -n "$is_saturated" ]] || return 1
+	printf 'HANDLED'
+	return 0
+}
+
+AIDEVOPS_MERGE_STUCK_AGE_MINUTES=1
+AIDEVOPS_MERGE_PATTERN_MIN_PRS=99
+pulse_merge_stuck_run_pass "example/repo" >/dev/null 2>&1
+shape_calls=$(grep -cF -- '--json number,mergeable,reviewDecision,isDraft,labels,author,updatedAt --limit 50' "$PMS_TEST_PR_LIST_CALLS" 2>/dev/null || true)
+assert_eq "6a.1: stuck scans share one provider-cache PR-list shape" "1" "$shape_calls"
+AIDEVOPS_MERGE_PATTERN_MIN_PRS=3
+
 PMS_TEST_COUNT_AUTHORS_FILE="$TEST_TMPDIR/count-authors.log"
 : >"$PMS_TEST_COUNT_AUTHORS_FILE"
 _pms_pr_counts_for_zero_progress() {
@@ -516,16 +539,12 @@ _pms_pr_counts_for_zero_progress() {
 	return 0
 }
 
-gh() {
-	local command_name="${1:-}"
-	local subcommand="${2:-}"
-	if [[ "$command_name" == "pr" && "$subcommand" == "list" ]]; then
-		printf '%s\n' '[
-{"number":109,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":null}
+export PULSE_PR_LIST_PROVIDER_CACHE_DIR="$TEST_TMPDIR/pr-list-cache-null-author"
+gh_pr_list() {
+	printf '%s\n' '[
+{"number":109,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","isDraft":false,"labels":[],"author":null,"updatedAt":"2026-01-01T00:00:00Z"}
 ]'
-		return 0
-	fi
-	return 1
+	return 0
 }
 
 got=$(_pms_count_eligible_unmerged_for_repo "example/repo")
