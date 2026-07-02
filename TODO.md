@@ -4398,7 +4398,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 
 
-- [x] t18057 feat: add tiled image mosaic agent capability #agents #auto-dispatch #enhancement ref:GH#26259 pr:#26305 completed:2026-07-02
 
 - [ ] t682 ci: test self-hosted runners safely #auto-dispatch #ci #testing ref:GH#4264
 

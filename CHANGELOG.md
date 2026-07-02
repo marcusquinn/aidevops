@@ -10,6 +10,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.20] - 2026-07-02
+
+### Changed
+
+- Maintenance: mark t1368 complete (#26356)
+- Refactor: split pulse current state snapshot (#26354)
+- Refactor: reduce memory init complexity (#26352)
+- feat: add reach efficiency routing (#26344)
+- Maintenance: mark t18058 complete (pr:#26343 completed:2026-07-02) [skip ci]
+- Performance: coalesce pulse merge PR list scans (#26343)
+- Maintenance: sync ref:GH#2560 to TODO.md [skip ci]
+- Tests: guard portable email code extraction patterns (#26335)
+- Maintenance: update simplification state registry
+- Maintenance: sync ref:GH#26330 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#26329 to TODO.md [skip ci]
+- Refactor: split reach helper modules (#26328)
+- Documentation: escape mosaic SVG tag text (#26325)
+- Documentation: align luxury premium design tokens (#26324)
+- fix: reduce pulse prefetch repo complexity (#26320)
+- Maintenance: mark t18057 complete (pr:#26305 completed:2026-07-02) [skip ci]
+- Documentation: adopt serve-sim upstream updates (#26286)
+- Documentation: split luxury premium design reference (#26270)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- bound pulse rate-limit probe (#26357)
+- wait for contrast font readiness (#26338)
+- reduce large-file gate function complexity (#26326)
+- localize review gate bot state (#26311)
+- include recovery hold version metadata (#26303)
+- harden mixed pr view splitting (#26290)
+- restore repo health branch on rewrite failure (#26289)
+- harden repo health bump cleanup (#26269)
+- harden repo health bump cleanup (#26268)
+
 ## [3.31.19] - 2026-07-02
 
 ### Changed
