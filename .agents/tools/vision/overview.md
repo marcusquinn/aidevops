@@ -21,7 +21,7 @@ tools:
 
 ## Quick Reference
 
-- **Route by task**: generate → `image-generation.md`; analyze → `image-understanding.md`; edit → `image-editing.md`
+- **Route by task**: generate → `image-generation.md`; analyze → `image-understanding.md`; edit → `image-editing.md`; tiled image mosaic / photo mosaic / collage wallpaper / image grid background / mozaic → `image-mosaic-skill.md`
 - **Create**: DALL-E 3, Midjourney, FLUX, Stable Diffusion
 - **Analyze**: GPT-4o vision, Claude vision, Gemini, LLaVA, Qwen-VL
 - **Edit**: DALL-E 3 edit, Stable Diffusion inpaint, FLUX fill
@@ -35,6 +35,7 @@ tools:
 | Need | Route | Best Options | Deployment Notes |
 |------|-------|--------------|------------------|
 | Text-to-image, concept art, marketing assets | `image-generation.md` | DALL-E 3, Midjourney, FLUX, Stable Diffusion | Cloud APIs are fastest to integrate; ComfyUI gives local control |
+| Tiled image mosaic, photo mosaic, collage wallpaper, image grid background, mozaic | `image-mosaic-skill.md` | Approved source photos, square cover-crops, deterministic raster tiles | Use 200px square tiles for recognisable photos; smaller tiles only for texture grids |
 | Image analysis, captioning, visual Q&A | `image-understanding.md` | GPT-4o vision, Claude vision, Gemini, LLaVA, Qwen-VL | Ollama fits privacy-sensitive local analysis; cloud models fit large-context reasoning |
 | Inpainting, outpainting, style transfer | `image-editing.md` | DALL-E 3 edit, Stable Diffusion inpaint, FLUX fill | ComfyUI is the main local editing stack |
 | Product photos / marketing visuals | `image-generation.md` | DALL-E 3 (cloud), FLUX (local) | Choose cloud for speed, local for cost/control |
@@ -55,6 +56,7 @@ tools:
 
 - `tools/ocr/glm-ocr.md` — dedicated OCR for text extraction
 - `tools/browser/peekaboo.md` — screen capture plus vision analysis for GUI automation
+- `tools/vision/image-mosaic-skill.md` — reusable real-image tiled mosaic and collage wallpaper pipeline
 - `tools/video/` — image-to-video pipelines (Kling, Seedance via Higgsfield)
 - `tools/infrastructure/cloud-gpu.md` — GPU deployment for local vision models
 - `content/` — AI-generated images for content workflows
