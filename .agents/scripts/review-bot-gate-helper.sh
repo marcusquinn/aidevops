@@ -829,6 +829,105 @@ match_known_bots() {
 	echo "missing:${missing_bots}"
 }
 
+_collect_review_gate_bot_states() {
+	local pr_number="$1"
+	local repo="$2"
+	local all_commenters="$3"
+	local prepared_status_contexts="$4"
+
+	REVIEW_GATE_FOUND_BOTS=""
+	REVIEW_GATE_RATE_LIMITED_BOTS=""
+	REVIEW_GATE_NON_REVIEW_BOTS=""
+
+	local bot notice_category notice_rc
+	for bot in "${KNOWN_BOTS[@]}"; do
+		if echo "$all_commenters" | grep -qi "$bot"; then
+			# Bot commented — but is it a real review or a non-review notice?
+			if bot_has_real_review "$pr_number" "$repo" "$bot" "$prepared_status_contexts" true; then
+				REVIEW_GATE_FOUND_BOTS="${REVIEW_GATE_FOUND_BOTS}${bot} "
+			else
+				if notice_category=$(bot_get_notice_category "$pr_number" "$repo" "$bot"); then
+					:
+				else
+					notice_rc=$?
+					return "$notice_rc"
+				fi
+				case "$notice_category" in
+					rate-limit)
+						REVIEW_GATE_RATE_LIMITED_BOTS="${REVIEW_GATE_RATE_LIMITED_BOTS}${bot} "
+						echo "rate-limit notice (not a real review): ${bot}" >&2
+						;;
+					non-rate-limit | none | *)
+						REVIEW_GATE_NON_REVIEW_BOTS="${REVIEW_GATE_NON_REVIEW_BOTS}${bot} "
+						echo "non-review state (not rate-limited, not a real review): ${bot}" >&2
+						;;
+				esac
+			fi
+		fi
+	done
+	return 0
+}
+
+_emit_review_gate_check_result() {
+	local pr_number="$1"
+	local repo="$2"
+	local prepared_status_contexts="$3"
+	local pass_result="$REVIEW_GATE_STATUS_PASS"
+
+	if [[ -n "$REVIEW_GATE_FOUND_BOTS" ]]; then
+		echo "$pass_result" # nice — at least one bot posted a real review
+		echo "found: ${REVIEW_GATE_FOUND_BOTS}" >&2
+		return 0
+	elif [[ -n "$REVIEW_GATE_NON_REVIEW_BOTS" ]] && any_bot_has_success_status "$pr_number" "$repo" "$prepared_status_contexts" true; then
+		# GH#22884: Some bots expose review completion only through a SUCCESS
+		# commit status after leaving a placeholder/non-review issue comment. Do
+		# not bridge to a raw skip; require the bot-authored success status before
+		# treating the gate as reviewed.
+		echo "$pass_result"
+		echo "Status check fallback: bots posted non-review states but have SUCCESS status checks" >&2
+		return 0
+	elif [[ -n "$REVIEW_GATE_NON_REVIEW_BOTS" ]]; then
+		# GH#22802: Failed/skipped/placeholder bot states are not capacity
+		# constraints and must not inherit the user preference for true rate
+		# limits. Keep waiting so a follow-up issue or human decision can happen
+		# from the actual non-review state instead of silently merging.
+		echo "WAITING"
+		echo "Bots posted non-review states that are not rate limits: ${REVIEW_GATE_NON_REVIEW_BOTS}" >&2
+		echo "Gate will keep polling; review_gate.rate_limit_behavior only applies to true rate-limit notices." >&2
+		return 1
+	elif [[ -n "$REVIEW_GATE_RATE_LIMITED_BOTS" ]] && any_bot_has_success_status "$pr_number" "$repo" "$prepared_status_contexts" true; then
+		# GH#3005: All bots are rate-limited in comments, but at least one
+		# posted a SUCCESS commit status check. Treat as reviewed.
+		echo "$pass_result"
+		echo "Status check fallback: bots rate-limited but have SUCCESS status checks" >&2
+		return 0
+	elif [[ -n "$REVIEW_GATE_RATE_LIMITED_BOTS" ]]; then
+		# GH#17549 + t2123: Bot posted a rate-limit notice — it's configured, it
+		# tried, but capacity is out of our control. Behavior is configurable:
+		# "pass" (default) exits 0 immediately; "wait" returns WAITING so the
+		# gate retry loop keeps polling. Note: bots do NOT review post-merge
+		# (CodeRabbit posts "Review failed — The pull request is closed" and
+		# stops). The daily quality sweep provides codebase-level coverage.
+		# Configure per-tool or per-repo via repos.json review_gate, or globally
+		# via REVIEW_GATE_RATE_LIMIT_BEHAVIOR env var.
+		if _should_pass_rate_limited "$repo" "$REVIEW_GATE_RATE_LIMITED_BOTS"; then
+			echo "PASS_RATE_LIMITED"
+			echo "Bots are rate-limited (tried but capacity-constrained): ${REVIEW_GATE_RATE_LIMITED_BOTS}" >&2
+			echo "Passing gate — configured to pass on rate limit (review_gate.rate_limit_behavior=pass)." >&2
+			return 0
+		else
+			echo "WAITING"
+			echo "Bots are rate-limited but configured to wait: ${REVIEW_GATE_RATE_LIMITED_BOTS}" >&2
+			echo "Gate will keep polling — set review_gate.rate_limit_behavior=pass to skip." >&2
+			return 1
+		fi
+	else
+		echo "WAITING"
+		echo "No review bots found yet. Known bots: ${KNOWN_BOTS[*]}" >&2
+		return 1
+	fi
+}
+
 do_check() {
 	local pr_number="$1"
 	local repo="$2"
@@ -849,89 +948,9 @@ do_check() {
 		prepared_status_contexts=$(_prepare_success_status_contexts "$status_contexts" || true)
 	fi
 
-	local found_bots=""
-	local rate_limited_bots=""
-	local non_review_bots=""
-	local pass_result="$REVIEW_GATE_STATUS_PASS"
-	local notice_category notice_rc
-	for bot in "${KNOWN_BOTS[@]}"; do
-		if echo "$all_commenters" | grep -qi "$bot"; then
-			# Bot commented — but is it a real review or a non-review notice?
-			if bot_has_real_review "$pr_number" "$repo" "$bot" "$prepared_status_contexts" true; then
-				found_bots="${found_bots}${bot} "
-			else
-				if notice_category=$(bot_get_notice_category "$pr_number" "$repo" "$bot"); then
-					:
-				else
-					notice_rc=$?
-					return "$notice_rc"
-				fi
-				case "$notice_category" in
-					rate-limit)
-						rate_limited_bots="${rate_limited_bots}${bot} "
-						echo "rate-limit notice (not a real review): ${bot}" >&2
-						;;
-					non-rate-limit | none | *)
-						non_review_bots="${non_review_bots}${bot} "
-						echo "non-review state (not rate-limited, not a real review): ${bot}" >&2
-						;;
-				esac
-			fi
-		fi
-	done
-
-	if [[ -n "$found_bots" ]]; then
-		echo "$pass_result" # nice — at least one bot posted a real review
-		echo "found: ${found_bots}" >&2
-		return 0
-	elif [[ -n "$non_review_bots" ]] && any_bot_has_success_status "$pr_number" "$repo" "$prepared_status_contexts" true; then
-		# GH#22884: Some bots expose review completion only through a SUCCESS
-		# commit status after leaving a placeholder/non-review issue comment. Do
-		# not bridge to a raw skip; require the bot-authored success status before
-		# treating the gate as reviewed.
-		echo "$pass_result"
-		echo "Status check fallback: bots posted non-review states but have SUCCESS status checks" >&2
-		return 0
-	elif [[ -n "$non_review_bots" ]]; then
-		# GH#22802: Failed/skipped/placeholder bot states are not capacity
-		# constraints and must not inherit the user preference for true rate
-		# limits. Keep waiting so a follow-up issue or human decision can happen
-		# from the actual non-review state instead of silently merging.
-		echo "WAITING"
-		echo "Bots posted non-review states that are not rate limits: ${non_review_bots}" >&2
-		echo "Gate will keep polling; review_gate.rate_limit_behavior only applies to true rate-limit notices." >&2
-		return 1
-	elif [[ -n "$rate_limited_bots" ]] && any_bot_has_success_status "$pr_number" "$repo" "$prepared_status_contexts" true; then
-		# GH#3005: All bots are rate-limited in comments, but at least one
-		# posted a SUCCESS commit status check. Treat as reviewed.
-		echo "$pass_result"
-		echo "Status check fallback: bots rate-limited but have SUCCESS status checks" >&2
-		return 0
-	elif [[ -n "$rate_limited_bots" ]]; then
-		# GH#17549 + t2123: Bot posted a rate-limit notice — it's configured, it
-		# tried, but capacity is out of our control. Behavior is configurable:
-		# "pass" (default) exits 0 immediately; "wait" returns WAITING so the
-		# gate retry loop keeps polling. Note: bots do NOT review post-merge
-		# (CodeRabbit posts "Review failed — The pull request is closed" and
-		# stops). The daily quality sweep provides codebase-level coverage.
-		# Configure per-tool or per-repo via repos.json review_gate, or globally
-		# via REVIEW_GATE_RATE_LIMIT_BEHAVIOR env var.
-		if _should_pass_rate_limited "$repo" "$rate_limited_bots"; then
-			echo "PASS_RATE_LIMITED"
-			echo "Bots are rate-limited (tried but capacity-constrained): ${rate_limited_bots}" >&2
-			echo "Passing gate — configured to pass on rate limit (review_gate.rate_limit_behavior=pass)." >&2
-			return 0
-		else
-			echo "WAITING"
-			echo "Bots are rate-limited but configured to wait: ${rate_limited_bots}" >&2
-			echo "Gate will keep polling — set review_gate.rate_limit_behavior=pass to skip." >&2
-			return 1
-		fi
-	else
-		echo "WAITING"
-		echo "No review bots found yet. Known bots: ${KNOWN_BOTS[*]}" >&2
-		return 1
-	fi
+	_collect_review_gate_bot_states "$pr_number" "$repo" "$all_commenters" "$prepared_status_contexts" || return $?
+	_emit_review_gate_check_result "$pr_number" "$repo" "$prepared_status_contexts"
+	return $?
 }
 
 do_wait() {
