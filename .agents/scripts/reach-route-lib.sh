@@ -273,6 +273,43 @@ route_decision_id_for() {
 	return 0
 }
 
+route_emit_decision_json() {
+	printf '{"schema_version":1,"route_decision_id":"%s","backend":"%s","agency_level":%s,"mode":"%s","headed":%s,"profile_policy":"%s","cookie_policy":"%s","proxy_policy":"%s","budgets":{"max_iterations":%s,"max_tool_calls":%s,"max_token_estimate":%s,"stop_after_repeated_success":%s,"stop_on_permanent_failure":%s,"route_decision_ttl_seconds":%s},"efficiency_policy":[%s],"offload":"%s","offload_reason":"%s","routine_candidate":%s,"compute_notes":[%s],"capture_destination":"%s","audit_refs":{"todo_id":"%s","issue_ref":"%s","pr_ref":"%s","capture_ref":"%s","performance_ref":"%s","feedback_ref":"%s","route_decision_id":"%s"},"failure_policy":"%s","failover_order":[%s],"safety_notes":[%s],"expected_artifacts":[%s],"blocked_reason":"%s"}\n' \
+		"$(json_escape "$route_decision_id")" \
+		"$(json_escape "$backend")" \
+		"$agency_level" \
+		"$(json_escape "$mode")" \
+		"$(json_bool "$headed")" \
+		"$(json_escape "$profile_policy")" \
+		"$(json_escape "$cookie_policy")" \
+		"$(json_escape "$proxy_policy")" \
+		"$max_iterations" \
+		"$max_tool_calls" \
+		"$max_token_estimate" \
+		"$stop_after_repeated_success" \
+		"$(json_bool "$stop_on_permanent_failure")" \
+		"$route_decision_ttl_seconds" \
+		"$efficiency_policy" \
+		"$(json_escape "$offload")" \
+		"$(json_escape "$offload_reason")" \
+		"$(json_bool "$routine_candidate")" \
+		"$compute_notes" \
+		"$(json_escape "$capture_destination")" \
+		"$(json_escape "$todo_id")" \
+		"$(json_escape "$issue_ref")" \
+		"$(json_escape "$pr_ref")" \
+		"$(json_escape "$capture_ref")" \
+		"$(json_escape "$performance_ref")" \
+		"$(json_escape "$feedback_ref")" \
+		"$(json_escape "$route_decision_id")" \
+		"$(json_escape "$failure_policy")" \
+		"$failover_order" \
+		"$safety_notes" \
+		"$expected_artifacts" \
+		"$(json_escape "$safe_blocked_reason")"
+	return 0
+}
+
 route_apply_capture_destination() {
 	local objective_text="$1"
 	if [[ "$objective_text" == *inbox* || "$objective_text" == *capture* ]]; then
@@ -398,39 +435,7 @@ handle_route() {
 	safe_blocked_reason="$(sanitize_text "$blocked_reason")"
 	local route_decision_id=""
 	route_decision_id="$(route_decision_id_for "$objective_lower" "$auth" "$scope" "$backend")"
-	printf '{"schema_version":1,"route_decision_id":"%s","backend":"%s","agency_level":%s,"mode":"%s","headed":%s,"profile_policy":"%s","cookie_policy":"%s","proxy_policy":"%s","budgets":{"max_iterations":%s,"max_tool_calls":%s,"max_token_estimate":%s,"stop_after_repeated_success":%s,"stop_on_permanent_failure":%s,"route_decision_ttl_seconds":%s},"efficiency_policy":[%s],"offload":"%s","offload_reason":"%s","routine_candidate":%s,"compute_notes":[%s],"capture_destination":"%s","audit_refs":{"todo_id":"%s","issue_ref":"%s","pr_ref":"%s","capture_ref":"%s","performance_ref":"%s","feedback_ref":"%s","route_decision_id":"%s"},"failure_policy":"%s","failover_order":[%s],"safety_notes":[%s],"expected_artifacts":[%s],"blocked_reason":"%s"}\n' \
-		"$(json_escape "$route_decision_id")" \
-		"$(json_escape "$backend")" \
-		"$agency_level" \
-		"$(json_escape "$mode")" \
-		"$(json_bool "$headed")" \
-		"$(json_escape "$profile_policy")" \
-		"$(json_escape "$cookie_policy")" \
-		"$(json_escape "$proxy_policy")" \
-		"$max_iterations" \
-		"$max_tool_calls" \
-		"$max_token_estimate" \
-		"$stop_after_repeated_success" \
-		"$(json_bool "$stop_on_permanent_failure")" \
-		"$route_decision_ttl_seconds" \
-		"$efficiency_policy" \
-		"$(json_escape "$offload")" \
-		"$(json_escape "$offload_reason")" \
-		"$(json_bool "$routine_candidate")" \
-		"$compute_notes" \
-		"$(json_escape "$capture_destination")" \
-		"$(json_escape "$todo_id")" \
-		"$(json_escape "$issue_ref")" \
-		"$(json_escape "$pr_ref")" \
-		"$(json_escape "$capture_ref")" \
-		"$(json_escape "$performance_ref")" \
-		"$(json_escape "$feedback_ref")" \
-		"$(json_escape "$route_decision_id")" \
-		"$(json_escape "$failure_policy")" \
-		"$failover_order" \
-		"$safety_notes" \
-		"$expected_artifacts" \
-		"$(json_escape "$safe_blocked_reason")"
+	route_emit_decision_json
 	return 0
 }
 
