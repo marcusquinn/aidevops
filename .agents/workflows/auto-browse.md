@@ -123,12 +123,16 @@ todo/auto-browse/<slug>/
 Each iteration:
 
 1. Read `strategy.md` and the current safety policy.
-2. Pick the minimum-agency tool for this attempt.
-3. Run the attempt with rate limits and scoped authorization.
-4. Capture evidence: command/tool, runtime, result, failures, screenshots/traces/download paths where safe.
-5. Inspect network/DOM/output for cheaper deterministic paths.
-6. Append `runs.tsv` with success, runtime, browser steps, tool calls, token/cost estimate, fragility, and discovered path.
-7. Update `strategy.md` with what to keep, stop doing, or try next.
+2. For repeatable capture/data-mining work, run `aidevops reach doctor` and
+   `aidevops reach route --objective "<sanitized objective>" --format json` as a
+   reusable preflight before high-agency browser discovery.
+3. Pick the minimum-agency tool for this attempt, respecting route budgets,
+   headed/headless mode, offload guidance, and audit refs.
+4. Run the attempt with rate limits and scoped authorization.
+5. Capture evidence: command/tool, runtime, result, failures, screenshots/traces/download paths where safe.
+6. Inspect network/DOM/output for cheaper deterministic paths.
+7. Append `runs.tsv` with success, runtime, browser steps, tool calls, token/cost estimate, fragility, and discovered path.
+8. Update `strategy.md` with what to keep, stop doing, or try next.
 
 Stop after 3–5 iterations, when the task succeeds twice without material improvement, or when blocked by a safety gate or missing credential/authorization.
 
