@@ -1726,6 +1726,45 @@ _is_assigned_filter_override_assignees() {
 	return 0
 }
 
+#######################################
+# Run assignment guard checks that block before assignee interpretation.
+#
+# Args: $1 = issue metadata JSON, $2 = issue number, $3 = repo slug
+# Returns: 0 when a guard blocked and emitted its signal, 1 otherwise
+#######################################
+_is_assigned_pre_assignee_guard_blocks() {
+	local issue_meta_json="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+
+	# t1986/t2832: parent-task and no-auto-dispatch are unconditional blocks.
+	if _is_assigned_check_parent_task "$issue_meta_json" "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+	if _is_assigned_check_no_auto_dispatch "$issue_meta_json" "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+
+	# Advisory/review/cooldown/cost/hydration gates short-circuit before assignees.
+	if _is_assigned_check_infrastructure "$issue_meta_json" "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+	if _is_assigned_check_hold_for_review "$issue_meta_json" "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+	if _is_assigned_check_dispatch_cooldown "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+	if _is_assigned_check_cost_budget "$issue_number" "$repo_slug" "$issue_meta_json"; then
+		return 0
+	fi
+	if _is_assigned_check_hydration_window "$issue_meta_json" "$issue_number" "$repo_slug"; then
+		return 0
+	fi
+
+	return 1
+}
+
 is_assigned() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -1754,52 +1793,7 @@ is_assigned() {
 		return 0
 	fi
 
-	# t1986: parent-task / meta is an unconditional dispatch block.
-	# t2061: pass issue_number + repo_slug so GUARD_UNCERTAIN output is traceable.
-	if _is_assigned_check_parent_task "$issue_meta_json" "$issue_number" "$repo_slug"; then
-		return 0
-	fi
-
-	# t2832: no-auto-dispatch is an unconditional dispatch block. Mirrors
-	# parent-task semantics; closes the enforcement gap observed on GH#20827
-	# where the label was honoured by enrichment/decomposition but not the
-	# dispatch path. Placed immediately after parent-task so both unconditional
-	# blocks short-circuit before the cost-budget and assignee checks.
-	if _is_assigned_check_no_auto_dispatch "$issue_meta_json" "$issue_number" "$repo_slug"; then
-		return 0
-	fi
-
-	# Infrastructure/billing/runner advisories are dispatch-time hard blocks too;
-	# candidate filtering alone is insufficient when labels change mid-cycle.
-	if _is_assigned_check_infrastructure "$issue_meta_json" "$issue_number" "$repo_slug"; then
-		return 0
-	fi
-
-	# Maintainer-requested review hold. This is intentionally separate from
-	# needs-maintainer-review, whose trust-boundary semantics are reserved for
-	# non-maintainer content and circuit-breaker review.
-	if _is_assigned_check_hold_for_review "$issue_meta_json" "$issue_number" "$repo_slug"; then
-		return 0
-	fi
-
-	# t3197: per-issue dispatch cooldown after no_worker_process launch failures.
-	# Short-circuits with DISPATCH_COOLDOWN_ACTIVE while the marker is unexpired.
-	# Fail-open: feature-gated by DISPATCH_COOLDOWN_AFTER_LAUNCH_FAILURE_SECONDS,
-	# returns 1 (allow) on API/jq/date error so it never permanently blocks.
-	if _is_assigned_check_dispatch_cooldown "$issue_number" "$repo_slug"; then
-		return 0
-	fi
-
-	# t2007: cost-per-issue circuit breaker.
-	if _is_assigned_check_cost_budget "$issue_number" "$repo_slug" "$issue_meta_json"; then
-		return 0
-	fi
-
-	# t2436: Hydration window — skip dispatch for recently-created issues.
-	# Secondary safety net for the label-sync race window. Primary fix is
-	# synchronous label application at creation (claim-task-id.sh / gh_create_issue).
-	# Env: DISPATCH_HYDRATION_WINDOW_S (default 30, 0=disabled).
-	if _is_assigned_check_hydration_window "$issue_meta_json" "$issue_number" "$repo_slug"; then
+	if _is_assigned_pre_assignee_guard_blocks "$issue_meta_json" "$issue_number" "$repo_slug"; then
 		return 0
 	fi
 
