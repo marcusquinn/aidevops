@@ -615,7 +615,7 @@ _should_run_llm_supervisor() {
 	# last_llm_run_epoch remains as the legacy success timestamp for older installs;
 	# last_llm_attempt_epoch is separate so failed runs do not suppress retries for
 	# a full daily interval.
-	local last_llm_success_epoch last_llm_attempt_epoch
+	local last_llm_success_epoch="" last_llm_attempt_epoch=""
 	last_llm_success_epoch=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_success_epoch")
 	if [[ "$last_llm_success_epoch" -eq 0 ]]; then
 		last_llm_success_epoch=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_run_epoch")

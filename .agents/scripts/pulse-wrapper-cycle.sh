@@ -316,11 +316,11 @@ _pulse_maybe_run_llm_supervisor() {
 
 			local underfill_output
 			underfill_output=$(_compute_initial_underfill)
-			local initial_underfilled_mode initial_underfill_pct
+			local initial_underfilled_mode="" initial_underfill_pct=""
 			initial_underfilled_mode=$(echo "$underfill_output" | sed -n '1p')
 			initial_underfill_pct=$(echo "$underfill_output" | sed -n '2p')
 
-			local pulse_start_epoch pulse_rc
+			local pulse_start_epoch="" pulse_rc=""
 			pulse_start_epoch=$(date +%s)
 			_pulse_record_llm_attempt "$llm_trigger_mode" || true
 			pulse_rc=0
