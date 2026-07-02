@@ -127,6 +127,15 @@ else
 fi
 
 output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" \
+    "${HELPER}" desktop launch --from-app --source-binary "${desktop_source}" --dry-run 2>&1)
+if [[ "${output}" == *"XDG_DATA_HOME=${work_dir}/opencode-interactive/test-session"* ]] \
+    && [[ "${output}" == *"AIDEVOPS_OPENCODE_ISOLATED_DB=1"* ]]; then
+    _pass "desktop app launch resumes last isolated data dir"
+else
+    _fail "desktop app launch did not reuse last data dir: ${output}"
+fi
+
+output=$(PATH="${fake_bin}:$PATH" HOME="${home_dir}" AIDEVOPS_WORK_DIR="${work_dir}" \
     "${HELPER}" desktop launch --source-binary "${desktop_source}" --dir "${launch_dir}" --dry-run 2>&1)
 if [[ "${output}" == *"XDG_DATA_HOME=${work_dir}/opencode-desktop/desktop-project-repo-"* ]] \
     && [[ "${output}" == *"AIDEVOPS_OPENCODE_ISOLATED_DB=1"* ]] \
