@@ -89,6 +89,7 @@ fi
 : "${PULSE_LAUNCH_GRACE_SECONDS:=35}"
 : "${PULSE_LAUNCH_SETTLE_BATCH_MAX:=5}"
 : "${PULSE_LLM_DAILY_INTERVAL:=86400}"
+: "${PULSE_LLM_FAILURE_RETRY_INTERVAL:=1800}"
 : "${PULSE_LLM_STALL_THRESHOLD:=3600}"
 : "${PULSE_RATE_LIMIT_FLAG:=${HOME}/.aidevops/logs/pulse-graphql-rate-limited.flag}"
 : "${PULSE_RUNNABLE_ISSUE_LIMIT:=1000}"
@@ -572,21 +573,62 @@ dispatch_floor() {
 	_DISPATCH_FORCE_FLOOR=1 dispatch_max "$@"
 }
 
+_pulse_read_epoch_file() {
+	local file_path="$1"
+	local epoch="0"
+	if [[ -f "$file_path" ]]; then
+		epoch=$(cat "$file_path" 2>/dev/null) || epoch="0"
+	fi
+	[[ "$epoch" =~ ^[0-9]+$ ]] || epoch="0"
+	printf '%s\n' "$epoch"
+	return 0
+}
+
+_pulse_write_trigger_mode() {
+	local trigger_mode="$1"
+	printf '%s\n' "$trigger_mode" >"${PULSE_DIR}/llm_trigger_mode" 2>/dev/null || return 1
+	return 0
+}
+
+_pulse_llm_failure_cooldown_active() {
+	local now_epoch="$1"
+	local last_success_epoch="$2"
+	local last_attempt_epoch="$3"
+	local retry_interval="${PULSE_LLM_FAILURE_RETRY_INTERVAL:-1800}"
+	[[ "$retry_interval" =~ ^[0-9]+$ ]] || retry_interval=1800
+
+	if [[ "$last_attempt_epoch" -gt "$last_success_epoch" ]]; then
+		local attempt_age=$((now_epoch - last_attempt_epoch))
+		if [[ "$attempt_age" -lt "$retry_interval" ]]; then
+			echo "[pulse-wrapper] LLM supervisor: previous attempt failed ${attempt_age}s ago; retry cooldown ${retry_interval}s" >>"$LOGFILE"
+			return 0
+		fi
+	fi
+	return 1
+}
+
 _should_run_llm_supervisor() {
 	local now_epoch
 	now_epoch=$(date +%s)
 
-	# 1. Daily sweep: always run if last LLM was >24h ago
-	local last_llm_epoch=0
-	if [[ -f "${PULSE_DIR}/last_llm_run_epoch" ]]; then
-		last_llm_epoch=$(cat "${PULSE_DIR}/last_llm_run_epoch" 2>/dev/null) || last_llm_epoch=0
+	# 1. Daily sweep: run when the last successful LLM completion is stale.
+	# last_llm_run_epoch remains as the legacy success timestamp for older installs;
+	# last_llm_attempt_epoch is separate so failed runs do not suppress retries for
+	# a full daily interval.
+	local last_llm_success_epoch="" last_llm_attempt_epoch=""
+	last_llm_success_epoch=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_success_epoch")
+	if [[ "$last_llm_success_epoch" -eq 0 ]]; then
+		last_llm_success_epoch=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_run_epoch")
 	fi
-	[[ "$last_llm_epoch" =~ ^[0-9]+$ ]] || last_llm_epoch=0
+	last_llm_attempt_epoch=$(_pulse_read_epoch_file "${PULSE_DIR}/last_llm_attempt_epoch")
 
-	local llm_age=$((now_epoch - last_llm_epoch))
+	local llm_age=$((now_epoch - last_llm_success_epoch))
 	if [[ "$llm_age" -ge "$PULSE_LLM_DAILY_INTERVAL" ]]; then
+		if _pulse_llm_failure_cooldown_active "$now_epoch" "$last_llm_success_epoch" "$last_llm_attempt_epoch"; then
+			return 1
+		fi
 		echo "[pulse-wrapper] LLM supervisor: daily sweep due (last run ${llm_age}s ago)" >>"$LOGFILE"
-		printf 'daily_sweep\n' >"${PULSE_DIR}/llm_trigger_mode"
+		_pulse_write_trigger_mode "daily_sweep" || return 1
 		return 0
 	fi
 
@@ -596,7 +638,7 @@ _should_run_llm_supervisor() {
 		# First run — take snapshot and run LLM
 		_update_backlog_snapshot "$now_epoch"
 		echo "[pulse-wrapper] LLM supervisor: first run (no snapshot)" >>"$LOGFILE"
-		printf 'first_run\n' >"${PULSE_DIR}/llm_trigger_mode"
+		_pulse_write_trigger_mode "first_run" || return 1
 		return 0
 	fi
 
@@ -637,7 +679,7 @@ _should_run_llm_supervisor() {
 	if [[ "$snap_age" -ge "$PULSE_LLM_STALL_THRESHOLD" ]]; then
 		echo "[pulse-wrapper] LLM supervisor: backlog stalled for ${snap_age}s (issues=${current_issues} prs=${current_prs}, unchanged from ${snap_issues}+${snap_prs})" >>"$LOGFILE"
 		_update_backlog_snapshot "$now_epoch" "$current_issues" "$current_prs"
-		printf 'stall\n' >"${PULSE_DIR}/llm_trigger_mode"
+		_pulse_write_trigger_mode "stall" || return 1
 		return 0
 	fi
 
@@ -1347,8 +1389,7 @@ _compute_initial_underfill() {
 		underfill_pct=0
 	fi
 
-	echo "$underfilled_mode"
-	echo "$underfill_pct"
+	printf '%s\n%s\n' "$underfilled_mode" "$underfill_pct" 2>/dev/null || return 0
 	return 0
 }
 

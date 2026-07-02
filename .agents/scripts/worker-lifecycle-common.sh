@@ -1467,13 +1467,25 @@ _Automated by \`escalate_issue_tier()\` cascade dispatch in worker-lifecycle-com
 }
 
 #######################################
+# Emit one stdout line where an early-closing consumer is expected.
+# Arguments:
+#   value - line content to emit
+# Returns: always 0 for EPIPE-safe data-return helpers
+#######################################
+_emit_stdout_line_safely() {
+	local value="$1"
+	printf '%s\n' "$value" 2>/dev/null || return 0
+	return 0
+}
+
+#######################################
 # Count active worker processes
 # Returns: count via stdout
 #######################################
 count_active_workers() {
 	local count
 	count=$(list_active_worker_processes | wc -l | tr -d ' ') || count=0
-	echo "$count"
+	_emit_stdout_line_safely "$count"
 	return 0
 }
 
@@ -1497,7 +1509,7 @@ check_session_count() {
 		END { print count + 0 }
 	') || interactive_count=0
 
-	echo "$interactive_count"
+	_emit_stdout_line_safely "$interactive_count"
 	return 0
 }
 
