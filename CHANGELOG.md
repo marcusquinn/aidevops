@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Remove Cal Sans from aidevops.app font options and set the default hue to 191.
+
 ## [3.31.24] - 2026-07-02
 
 ### Changed
