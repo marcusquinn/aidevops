@@ -941,6 +941,10 @@ do_check() {
 	local all_commenters
 	all_commenters=$(get_all_bot_commenters "$pr_number" "$repo")
 
+	local REVIEW_GATE_FOUND_BOTS=""
+	local REVIEW_GATE_RATE_LIMITED_BOTS=""
+	local REVIEW_GATE_NON_REVIEW_BOTS=""
+
 	local status_contexts
 	status_contexts=$(_get_success_status_contexts "$pr_number" "$repo" || true)
 	local prepared_status_contexts=""
