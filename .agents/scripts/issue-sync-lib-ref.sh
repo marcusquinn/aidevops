@@ -131,9 +131,10 @@ add_gh_ref_to_todo() {
 		log_verbose "$task_id already has a GH ref, skipping"
 		return 0
 	fi
-
 	local new_line
-	if echo "$target_line" | grep -qE 'logged:'; then
+	if printf '%s\n' "$target_line" | grep -qE '(^|[[:space:]])ref:none([[:space:]]|$)'; then
+		new_line=$(printf '%s\n' "$target_line" | sed -E "s/(^|[[:space:]])ref:none([[:space:]]|$)/\\1ref:GH#${issue_number}\\2/")
+	elif echo "$target_line" | grep -qE 'logged:'; then
 		new_line=$(echo "$target_line" | sed -E "s/( logged:)/ ref:GH#${issue_number}\1/")
 	else
 		new_line="${target_line} ref:GH#${issue_number}"
@@ -143,7 +144,6 @@ add_gh_ref_to_todo() {
 	local new_line_escaped
 	new_line_escaped=$(printf '%s' "$new_line" | sed 's/[|&\\]/\\&/g')
 	sed_inplace "${line_num}s|.*|${new_line_escaped}|" "$todo_file"
-
 	log_verbose "Added ref:GH#$issue_number to $task_id"
 	return 0
 }
