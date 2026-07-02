@@ -554,6 +554,127 @@ _pcr_file_advisory() {
 	return 0
 }
 
+_pcr_escalate_if_hot_loop() {
+	local repo_path="$1"
+	local state="$2"
+	local attempts
+	attempts=$(_pcr_attempts_in_window "$repo_path")
+	if [[ "$attempts" -lt "$PULSE_CANONICAL_RECOVERY_MAX_ATTEMPTS" ]]; then
+		return 1
+	fi
+
+	_pcr_log "exceeded ${PULSE_CANONICAL_RECOVERY_MAX_ATTEMPTS} attempts/${PULSE_CANONICAL_RECOVERY_HOT_WINDOW}s for $repo_path (state=$state) — escalating"
+	_pcr_audit "escalate" "$repo_path" "advisory:${state}"
+	_pcr_file_advisory "$repo_path" "$state"
+	return 0
+}
+
+_pcr_try_generated_todo_recovery() {
+	local repo_path="$1"
+	local state="$2"
+	local todo_recovery_rc=0
+
+	if [[ "$state" != "uncommitted" ]]; then
+		return 1
+	fi
+
+	_pcr_recover_todo_sync_dirty_state "$repo_path"
+	todo_recovery_rc=$?
+	case "$todo_recovery_rc" in
+		0)
+			return 0
+			;;
+		2)
+			return 2
+			;;
+	esac
+	return 1
+}
+
+_pcr_abort_or_reset_unmerged_state() {
+	local repo_path="$1"
+	local state="$2"
+	local is_stale_uu=0
+
+	if [[ "$state" != "unmerged" ]]; then
+		return 1
+	fi
+
+	# Detect stale-UU: unmerged index entries with no active merge operation.
+	# This occurs when git crashes mid-merge-resolve, leaving UU entries in
+	# the index but no .git/MERGE_HEAD / CHERRY_PICK_HEAD / REBASE_HEAD
+	# sentinel file. In that case `git merge --abort` fails with "no merge
+	# to abort" (exit 1) — the fallback `git reset --merge HEAD` clears the
+	# stale conflict entries while preserving unrelated working-tree edits.
+	if [[ ! -e "${repo_path}/.git/MERGE_HEAD" \
+	   && ! -e "${repo_path}/.git/CHERRY_PICK_HEAD" \
+	   && ! -e "${repo_path}/.git/REBASE_HEAD" ]]; then
+		is_stale_uu=1
+		_pcr_log "stale-UU detected (no active merge/cherry-pick/rebase) for $repo_path"
+		_pcr_audit "stale-uu-detect" "$repo_path" "attempting"
+		git -C "$repo_path" merge --abort 2>/dev/null \
+			|| git -C "$repo_path" reset --merge HEAD 2>/dev/null \
+			|| true
+	else
+		git -C "$repo_path" merge --abort 2>/dev/null || true
+	fi
+
+	state=$(_pcr_detect_state "$repo_path")
+	if [[ "$state" != "clean" ]]; then
+		return 1
+	fi
+	if [[ "$is_stale_uu" -eq 1 ]]; then
+		_pcr_audit "stale-uu-recover" "$repo_path" "ok:index-reset"
+		_pcr_log "stale-UU cleared via index reset for $repo_path"
+	else
+		_pcr_audit "merge-abort" "$repo_path" "success"
+		_pcr_log "merge --abort cleaned working tree for $repo_path"
+	fi
+	return 0
+}
+
+_pcr_stash_current_changes() {
+	local repo_path="$1"
+	local stash_message="$2"
+	if git -C "$repo_path" stash push -u -m "$stash_message" >>"${LOGFILE:-/dev/null}" 2>&1; then
+		_pcr_log "stashed: ${stash_message}"
+		_pcr_audit "stash-push" "$repo_path" "ok:${stash_message}"
+		return 0
+	fi
+
+	_pcr_audit "stash-push-failed" "$repo_path" "advisory"
+	_pcr_log "git stash push failed; filing advisory"
+	_pcr_file_advisory "$repo_path" "stash-push-failed"
+	return 1
+}
+
+_pcr_fetch_and_pull_after_stash() {
+	local repo_path="$1"
+	local stash_message="$2"
+	if git -C "$repo_path" fetch --quiet origin >>"${LOGFILE:-/dev/null}" 2>&1 \
+		&& git -C "$repo_path" pull --ff-only --no-rebase >>"${LOGFILE:-/dev/null}" 2>&1; then
+		return 0
+	fi
+
+	_pcr_audit "pull-failed-after-stash" "$repo_path" "advisory:stash-retained:${stash_message}"
+	_pcr_log "pull --ff-only failed after stash — stash retained, filing advisory"
+	_pcr_file_advisory "$repo_path" "pull-failed-after-stash"
+	return 1
+}
+
+_pcr_pop_stash_after_pull() {
+	local repo_path="$1"
+	local stash_message="$2"
+	if git -C "$repo_path" stash pop --quiet >>"${LOGFILE:-/dev/null}" 2>&1; then
+		return 0
+	fi
+
+	_pcr_audit "stash-pop-conflict" "$repo_path" "advisory:stash-retained:${stash_message}"
+	_pcr_log "git stash pop conflict — stash retained, filing advisory"
+	_pcr_file_advisory "$repo_path" "stash-pop-conflict"
+	return 1
+}
+
 # -----------------------------------------------------------------------------
 # Public entry point
 # -----------------------------------------------------------------------------
@@ -577,12 +698,7 @@ pulse_canonical_recover() {
 	fi
 
 	# Hot-loop guard — escalate to advisory after repeated failures.
-	local attempts
-	attempts=$(_pcr_attempts_in_window "$repo_path")
-	if [[ "$attempts" -ge "$PULSE_CANONICAL_RECOVERY_MAX_ATTEMPTS" ]]; then
-		_pcr_log "exceeded ${PULSE_CANONICAL_RECOVERY_MAX_ATTEMPTS} attempts/${PULSE_CANONICAL_RECOVERY_HOT_WINDOW}s for $repo_path (state=$state) — escalating"
-		_pcr_audit "escalate" "$repo_path" "advisory:${state}"
-		_pcr_file_advisory "$repo_path" "$state"
+	if _pcr_escalate_if_hot_loop "$repo_path" "$state"; then
 		return 1
 	fi
 
@@ -600,95 +716,35 @@ pulse_canonical_recover() {
 	# stash for that bookkeeping diff: either reset metadata-only generated state
 	# and refresh, or fail closed with a local advisory when TODO.md looks
 	# human-authored/unknown (GH#22664).
-	if [[ "$state" == "uncommitted" ]]; then
-		local todo_recovery_rc=0
-		_pcr_recover_todo_sync_dirty_state "$repo_path"
+	local todo_recovery_rc=0
+	if _pcr_try_generated_todo_recovery "$repo_path" "$state"; then
+		return 0
+	else
 		todo_recovery_rc=$?
-		case "$todo_recovery_rc" in
-			0)
-				return 0
-				;;
-			2)
-				return 1
-				;;
-		esac
+	fi
+	if [[ "$todo_recovery_rc" -eq 2 ]]; then
+		return 1
 	fi
 
 	# Step 1: clear unmerged state if present.
-	if [[ "$state" == "unmerged" ]]; then
-		# Detect stale-UU: unmerged index entries with no active merge operation.
-		# This occurs when git crashes mid-merge-resolve, leaving UU entries in
-		# the index but no .git/MERGE_HEAD / CHERRY_PICK_HEAD / REBASE_HEAD
-		# sentinel file.  In that case `git merge --abort` fails with "no merge
-		# to abort" (exit 1) — the fallback `git reset --merge HEAD` clears the
-		# stale conflict entries while preserving unrelated working-tree edits.
-		# Without this path the code falls through to `stash push` which also
-		# fails on unresolved conflicts, escalating unnecessarily to an advisory
-		# (GH#20935).
-		local is_stale_uu=0
-		if [[ ! -e "${repo_path}/.git/MERGE_HEAD" \
-		   && ! -e "${repo_path}/.git/CHERRY_PICK_HEAD" \
-		   && ! -e "${repo_path}/.git/REBASE_HEAD" ]]; then
-			is_stale_uu=1
-			_pcr_log "stale-UU detected (no active merge/cherry-pick/rebase) for $repo_path"
-			_pcr_audit "stale-uu-detect" "$repo_path" "attempting"
-			# merge --abort is a no-op without an active merge but is safe to
-			# try — it may succeed in edge cases where the HEAD file was
-			# manually removed.  If it fails, reset --merge HEAD is the
-			# definitive fix for stale index conflict entries.
-			git -C "$repo_path" merge --abort 2>/dev/null \
-				|| git -C "$repo_path" reset --merge HEAD 2>/dev/null \
-				|| true
-		else
-			# Active merge / cherry-pick / rebase — abort it cleanly.
-			git -C "$repo_path" merge --abort 2>/dev/null || true
-		fi
-
-		state=$(_pcr_detect_state "$repo_path")
-		if [[ "$state" == "clean" ]]; then
-			if [[ "$is_stale_uu" -eq 1 ]]; then
-				_pcr_audit "stale-uu-recover" "$repo_path" "ok:index-reset"
-				_pcr_log "stale-UU cleared via index reset for $repo_path"
-			else
-				_pcr_audit "merge-abort" "$repo_path" "success"
-				_pcr_log "merge --abort cleaned working tree for $repo_path"
-			fi
-			return 0
-		fi
+	if _pcr_abort_or_reset_unmerged_state "$repo_path" "$state"; then
+		return 0
 	fi
 
 	# Step 2: stash uncommitted changes (-u includes untracked).
 	local stash_message
 	stash_message="pulse-auto-stash-$(date +%s)"
-	if ! git -C "$repo_path" stash push -u -m "$stash_message" >>"${LOGFILE:-/dev/null}" 2>&1; then
-		_pcr_audit "stash-push-failed" "$repo_path" "advisory"
-		_pcr_log "git stash push failed; filing advisory"
-		_pcr_file_advisory "$repo_path" "stash-push-failed"
+	if ! _pcr_stash_current_changes "$repo_path" "$stash_message"; then
 		return 1
 	fi
-	_pcr_log "stashed: ${stash_message}"
-	_pcr_audit "stash-push" "$repo_path" "ok:${stash_message}"
 
 	# Step 3: re-fetch + retry pull.
-	local pull_ok=0
-	if git -C "$repo_path" fetch --quiet origin >>"${LOGFILE:-/dev/null}" 2>&1 \
-		&& git -C "$repo_path" pull --ff-only --no-rebase >>"${LOGFILE:-/dev/null}" 2>&1; then
-		pull_ok=1
-	fi
-
-	if [[ "$pull_ok" -ne 1 ]]; then
-		# Pull still failed after stashing — leave stash for content safety.
-		_pcr_audit "pull-failed-after-stash" "$repo_path" "advisory:stash-retained:${stash_message}"
-		_pcr_log "pull --ff-only failed after stash — stash retained, filing advisory"
-		_pcr_file_advisory "$repo_path" "pull-failed-after-stash"
+	if ! _pcr_fetch_and_pull_after_stash "$repo_path" "$stash_message"; then
 		return 1
 	fi
 
 	# Step 4: pop the stash. Conflict on pop → leave stash + advise.
-	if ! git -C "$repo_path" stash pop --quiet >>"${LOGFILE:-/dev/null}" 2>&1; then
-		_pcr_audit "stash-pop-conflict" "$repo_path" "advisory:stash-retained:${stash_message}"
-		_pcr_log "git stash pop conflict — stash retained, filing advisory"
-		_pcr_file_advisory "$repo_path" "stash-pop-conflict"
+	if ! _pcr_pop_stash_after_pull "$repo_path" "$stash_message"; then
 		return 1
 	fi
 
