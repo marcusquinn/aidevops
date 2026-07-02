@@ -151,7 +151,7 @@ parse_commit_sha_from_subject_url() {
 normalize_signature_line() {
 	local raw_line="$1"
 	local stripped
-	stripped=$(printf '%s' "$raw_line" | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g')
+	stripped=$(printf '%s' "$raw_line" | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g; s/\^\[\[[0-9;]*[A-Za-z]//g')
 	stripped=$(printf '%s' "$stripped" | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
 	if [[ -z "$stripped" ]]; then
 		printf '%s' "no_error_signature_detected"
@@ -175,6 +175,7 @@ filter_signature_noise_lines() {
 				}
 			}
 			gsub(/\033\[[0-9;]*[A-Za-z]/, "", payload)
+			gsub(/\^\[\[[0-9;]*[A-Za-z]/, "", payload)
 			# gh may return raw log rows with the ISO timestamp still prefixed
 			# instead of tab-separated job/step/time columns; remove it before
 			# classifying shell comments as signature noise.
