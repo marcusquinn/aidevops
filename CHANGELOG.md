@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.22] - 2026-07-02
+
+### Changed
+
+- normalize ref:none when adding GH refs (#26362)
+
 ## [3.31.21] - 2026-07-02
 
 ### Changed
