@@ -87,6 +87,52 @@ PY
 	return 0
 }
 
+_sample_resource_metrics_loop() {
+	local pid="$1"
+	local stop_file="$2"
+	local interval="$3"
+	local start_ts end_ts elapsed_s sample_count peak_rss_kb rss_sum_kb cpu_seconds
+	start_ts=$(date -u +%s)
+	end_ts="$start_ts"
+	elapsed_s=0
+	sample_count=0
+	peak_rss_kb=0
+	rss_sum_kb=0
+	cpu_seconds="0.000"
+
+	while kill -0 "$pid" 2>/dev/null; do
+		local snapshot cpu_pct rss_kb proc_count
+		snapshot=$(_process_tree_snapshot "$pid" 2>/dev/null || printf '0.000 0 0')
+		read -r cpu_pct rss_kb proc_count <<<"$snapshot"
+		[[ "$rss_kb" =~ ^[0-9]+$ ]] || rss_kb=0
+		sample_count=$((sample_count + 1))
+		rss_sum_kb=$((rss_sum_kb + rss_kb))
+		if [[ "$rss_kb" -gt "$peak_rss_kb" ]]; then
+			peak_rss_kb="$rss_kb"
+		fi
+		cpu_seconds=$(awk -v total="$cpu_seconds" -v pct="$cpu_pct" -v interval_s="$interval" 'BEGIN { printf "%.3f", total + ((pct / 100.0) * interval_s) }')
+		if [[ -f "$stop_file" ]]; then
+			break
+		fi
+		sleep "$interval" &
+		local sleep_pid="$!"
+		while kill -0 "$sleep_pid" 2>/dev/null; do
+			if [[ -f "$stop_file" ]]; then
+				kill "$sleep_pid" 2>/dev/null || true
+				wait "$sleep_pid" 2>/dev/null || true
+				break
+			fi
+			sleep 1
+		done
+	done
+
+	end_ts=$(date -u +%s)
+	elapsed_s=$((end_ts - start_ts))
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		"$start_ts" "$end_ts" "$elapsed_s" "$sample_count" "$peak_rss_kb" "$rss_sum_kb" "$cpu_seconds"
+	return 0
+}
+
 sample_resource_metrics() {
 	local pid=""
 	local role=""
@@ -131,42 +177,9 @@ sample_resource_metrics() {
 
 	mkdir -p "$(dirname "$out_file")" 2>/dev/null || true
 	local start_ts end_ts elapsed_s sample_count peak_rss_kb rss_sum_kb cpu_seconds
-	start_ts=$(date -u +%s)
-	end_ts="$start_ts"
-	elapsed_s=0
-	sample_count=0
-	peak_rss_kb=0
-	rss_sum_kb=0
-	cpu_seconds="0.000"
-
-	while kill -0 "$pid" 2>/dev/null; do
-		local snapshot cpu_pct rss_kb proc_count
-		snapshot=$(_process_tree_snapshot "$pid" 2>/dev/null || printf '0.000 0 0')
-		read -r cpu_pct rss_kb proc_count <<<"$snapshot"
-		[[ "$rss_kb" =~ ^[0-9]+$ ]] || rss_kb=0
-		sample_count=$((sample_count + 1))
-		rss_sum_kb=$((rss_sum_kb + rss_kb))
-		if [[ "$rss_kb" -gt "$peak_rss_kb" ]]; then
-			peak_rss_kb="$rss_kb"
-		fi
-		cpu_seconds=$(awk -v total="$cpu_seconds" -v pct="$cpu_pct" -v int="$interval" 'BEGIN { printf "%.3f", total + ((pct / 100.0) * int) }')
-		if [[ -f "$stop_file" ]]; then
-			break
-		fi
-		sleep "$interval" &
-		local sleep_pid="$!"
-		while kill -0 "$sleep_pid" 2>/dev/null; do
-			if [[ -f "$stop_file" ]]; then
-				kill "$sleep_pid" 2>/dev/null || true
-				wait "$sleep_pid" 2>/dev/null || true
-				break
-			fi
-			sleep 1
-		done
-	done
-
-	end_ts=$(date -u +%s)
-	elapsed_s=$((end_ts - start_ts))
+	local metrics
+	metrics=$(_sample_resource_metrics_loop "$pid" "$stop_file" "$interval")
+	IFS=$'\t' read -r start_ts end_ts elapsed_s sample_count peak_rss_kb rss_sum_kb cpu_seconds <<<"$metrics"
 	local avg_rss_kb=0
 	if [[ "$sample_count" -gt 0 ]]; then
 		avg_rss_kb=$((rss_sum_kb / sample_count))
