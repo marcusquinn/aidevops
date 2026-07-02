@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.18] - 2026-07-02
+
+### Changed
+
+- fix: reduce stats dashboard function complexity (#26256)
+- Documentation: clarify design pattern wording (#26243)
+
+### Fixed
+
+- persist pulse pr view cache (#26258)
+- harden enrich bound defaults (#26247)
+- guard issue sync test trap cleanup (#26245)
+- harden opencode archive defaults (#26240)
+
 ## [3.31.17] - 2026-07-01
 
 ### Changed
