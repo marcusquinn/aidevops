@@ -80,20 +80,22 @@ _is_routine_ops_comment() {
 	return 1
 }
 
-_fetch_comment_body() {
+_fetch_comment() {
 	local repo_slug="$1"
 	local issue_number="$2"
 	local comment_id="$3"
 	local responded_file="$4"
-	local comment_body lookup_error lookup_summary
+	local comment_json lookup_error lookup_summary err_file
 
 	lookup_error=""
-	comment_body=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments/${comment_id}" \
-		--jq '.body' 2>&1) || {
-		lookup_error="$comment_body"
-		comment_body=""
+	err_file=$(mktemp)
+	comment_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments/${comment_id}" \
+		2>"$err_file") || {
+		lookup_error=$(<"$err_file")
+		comment_json=""
 	}
-	if [[ -z "$comment_body" ]]; then
+	rm -f "$err_file"
+	if [[ -z "$comment_json" ]]; then
 		lookup_summary="empty response"
 		if [[ -n "$lookup_error" ]]; then
 			lookup_summary="${lookup_error%%$'\n'*}"
@@ -103,19 +105,7 @@ _fetch_comment_body() {
 		return 1
 	fi
 
-	printf '%s\n' "$comment_body"
-	return 0
-}
-
-_fetch_comment_author() {
-	local repo_slug="$1"
-	local issue_number="$2"
-	local comment_id="$3"
-	local comment_author
-
-	comment_author=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments/${comment_id}" \
-		--jq '.user.login' 2>/dev/null) || comment_author="unknown"
-	printf '%s\n' "$comment_author"
+	printf '%s\n' "$comment_json"
 	return 0
 }
 
@@ -189,8 +179,8 @@ _dispatch_comment_worker() {
 
 	_log "dispatch: responding to comment ${comment_id} by @${comment_author} on #${issue_number} in ${repo_slug}"
 
-	if [[ -f "${SCRIPT_DIR}/headless-runtime-helper.sh" ]]; then
-		"${SCRIPT_DIR}/headless-runtime-helper.sh" run \
+	if [[ -x "${SCRIPT_DIR:-}/headless-runtime-helper.sh" ]]; then
+		"${SCRIPT_DIR:-}/headless-runtime-helper.sh" run \
 			--role worker \
 			--session-key "$session_key" \
 			--dir "$repo_path" \
@@ -301,10 +291,11 @@ cmd_dispatch() {
 		return 0
 	fi
 
-	local comment_body
-	if ! comment_body=$(_fetch_comment_body "$repo_slug" "$issue_number" "$comment_id" "$responded_file"); then
+	local comment_json comment_body
+	if ! comment_json=$(_fetch_comment "$repo_slug" "$issue_number" "$comment_id" "$responded_file"); then
 		return 0
 	fi
+	comment_body=$(printf '%s\n' "$comment_json" | jq -r '.body // ""')
 
 	if _is_routine_ops_comment "$comment_body"; then
 		_log "dispatch: comment ${comment_id} on #${issue_number} is routine ops/audit content — skipping"
@@ -313,7 +304,7 @@ cmd_dispatch() {
 	fi
 
 	local comment_author
-	comment_author=$(_fetch_comment_author "$repo_slug" "$issue_number" "$comment_id")
+	comment_author=$(printf '%s\n' "$comment_json" | jq -r '.user.login // "unknown"')
 
 	local issue_body
 	issue_body=$(_fetch_issue_context "$repo_slug" "$issue_number")
