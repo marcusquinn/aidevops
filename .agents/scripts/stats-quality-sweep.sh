@@ -720,66 +720,21 @@ _create_simplification_issues() {
 	local total_open_cap=30
 	local issues_created=0
 
-	# Ensure required labels exist (gh issue create fails if labels are missing)
-	gh label create "function-complexity-debt" --repo "$repo_slug" \
-		--description "Functions exceed complexity threshold — needs refactoring before implementation can proceed" \
-		--color "E05D44" 2>/dev/null || true
-	gh label create "needs-maintainer-review" --repo "$repo_slug" \
-		--description "Requires maintainer approval before automated dispatch" \
-		--color "FBCA04" 2>/dev/null || true
-	gh label create "source:quality-sweep" --repo "$repo_slug" \
-		--description "Auto-created by stats-functions.sh quality sweep" \
-		--color "C2E0C6" --force 2>/dev/null || true
-	# t2066: ensure the tier:thinking label exists. Simplification refactors
-	# typically involve decomposing functions at cyclomatic 25+ — Sonnet handles
-	# them poorly and Haiku cannot handle them at all. Default to the opus
-	# tier so the first dispatch attempt succeeds.
-	gh label create "tier:thinking" --repo "$repo_slug" \
-		--description "Opus-tier: architecture, deep reasoning, high-complexity refactors" \
-		--color "5319E7" 2>/dev/null || true
+	_ensure_simplification_issue_labels "$repo_slug"
 
-	# Extract files with smell count > threshold, sorted by count descending
 	local high_smell_files
-	high_smell_files=$(echo "$sarif_json" | jq -r --argjson threshold "$min_smells_threshold" '
-		[.runs[0].results[] | .locations[0].physicalLocation.artifactLocation.uri] |
-		group_by(.) | map({file: .[0], count: length}) |
-		[.[] | select(.count >= $threshold)] | sort_by(-.count)[:15] |
-		.[] | "\(.count)\t\(.file)"
-	' 2>/dev/null) || high_smell_files=""
-
+	high_smell_files=$(_high_smell_files_from_sarif "$sarif_json" "$min_smells_threshold")
 	if [[ -z "$high_smell_files" ]]; then
 		return 0
 	fi
 
-	# Resolve maintainer for issue assignment
-	local maintainer=""
-	maintainer=$(jq -r --arg slug "$repo_slug" \
-		'.initialized_repos[]? | select(.slug == $slug) | .maintainer // empty' \
-		"${HOME}/.config/aidevops/repos.json" 2>/dev/null) || maintainer=""
-	if [[ -z "$maintainer" ]]; then
-		maintainer="${repo_slug%%/*}"
-	fi
+	local maintainer
+	maintainer=$(_simplification_issue_maintainer "$repo_slug")
 
-	local simplification_labels=("function-complexity-debt" "source:quality-sweep" "tier:thinking")
-	# #aidevops:trust-boundary — NMR is an external-origin approval gate. When
-	# the authenticated sweep identity has repo write authority, the issue author
-	# is already trusted and should not be parked behind maintainer review. If the
-	# permission helper is unavailable or the lookup fails, fail closed and keep
-	# needs-maintainer-review.
-	if declare -F _gh_current_user_allows_repo_write >/dev/null 2>&1 \
-		&& _gh_current_user_allows_repo_write "$repo_slug"; then
-		echo "[stats] Function-complexity-debt issues: trusted current user ${AIDEVOPS_GH_WRITE_PERMISSION_USER:-unknown} (${AIDEVOPS_GH_WRITE_PERMISSION_LEVEL:-unknown}) — skipping needs-maintainer-review" >>"$LOGFILE"
-	else
-		simplification_labels+=("needs-maintainer-review")
-		echo "[stats] Function-complexity-debt issues: current user not verified as repo writer (${AIDEVOPS_GH_WRITE_PERMISSION_REASON:-helper-unavailable}) — keeping needs-maintainer-review" >>"$LOGFILE"
-	fi
+	local simplification_labels
+	simplification_labels=$(_simplification_issue_label_csv "$repo_slug")
 
-	# Total-open cap: stop creating when backlog is already large
-	local total_open
-	total_open=$(gh api graphql -f query="query { repository(owner:\"${repo_slug%%/*}\", name:\"${repo_slug##*/}\") { issues(labels:[\"function-complexity-debt\"], states:OPEN) { totalCount } } }" \
-		--jq '.data.repository.issues.totalCount' 2>/dev/null) || total_open="0"
-	if [[ "${total_open:-0}" -ge "$total_open_cap" ]]; then
-		echo "[stats] Function-complexity-debt issues: skipping — ${total_open} open (cap: ${total_open_cap})" >>"$LOGFILE"
+	if ! _simplification_issue_open_cap_allows "$repo_slug" "$total_open_cap"; then
 		return 0
 	fi
 
@@ -787,57 +742,8 @@ _create_simplification_issues() {
 		[[ -z "$file_path" ]] && continue
 		[[ "$issues_created" -ge "$max_issues_per_sweep" ]] && break
 
-		# Deduplicate via the generator marker in the issue body. The title only
-		# contains the basename, so title+full-path search misses existing issues
-		# and creates duplicate worker targets for the same file.
-		local existing_count
-		existing_count=$(gh issue list --repo "$repo_slug" \
-			--label "function-complexity-debt" --state open \
-			--search "\"cited_file=${file_path}\" in:body" \
-			--json number --jq 'length' 2>/dev/null) || {
-			echo "[stats] Function-complexity-debt issue search failed for ${file_path}; skipping create to avoid duplicates" >>"$LOGFILE"
-			continue
-		}
-		if [[ ! "$existing_count" =~ ^[0-9]+$ ]]; then
-			existing_count="0"
-		fi
-		if [[ "${existing_count:-0}" -gt 0 ]]; then
-			continue
-		fi
-
-		# Build per-rule breakdown for this file. Already computed in the sweep
-		# body above — we re-extract it here to feed it to the issue body
-		# template (t2066: surface the per-rule counts in the body, not just
-		# the aggregate smell count).
-		local rule_breakdown
-		rule_breakdown=$(echo "$sarif_json" | jq -r --arg fp "$file_path" '
-			[.runs[0].results[] |
-			 select(.locations[0].physicalLocation.artifactLocation.uri == $fp) |
-			 .ruleId] | group_by(.) | map("\(.[0]): \(length)") | join(", ")
-		' 2>/dev/null) || rule_breakdown="(could not parse)"
-
-		# Create the issue with code-simplifier label convention
-		local file_basename="${file_path##*/}"
-		local issue_title="simplification: reduce ${smell_count} Qlty smells in ${file_basename}"
-		local issue_body
-		issue_body=$(_build_simplification_issue_body "$file_path" "$smell_count" "$rule_breakdown")
-
-		# Append signature footer
-		local qlty_sig=""
-		qlty_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$issue_body" 2>/dev/null || true)
-		issue_body="${issue_body}${qlty_sig}"
-
-		local label_args=()
-		local label_name
-		for label_name in "${simplification_labels[@]}"; do
-			label_args+=(--label "$label_name")
-		done
-
-		if gh_create_issue --repo "$repo_slug" \
-			--title "$issue_title" \
-			"${label_args[@]}" \
-			--assignee "$maintainer" \
-			--body "$issue_body" >/dev/null 2>&1; then
+		if _create_single_simplification_issue "$repo_slug" "$sarif_json" "$maintainer" \
+			"$smell_count" "$file_path" "$simplification_labels"; then
 			issues_created=$((issues_created + 1))
 		fi
 	done <<<"$high_smell_files"
@@ -849,6 +755,153 @@ _Created ${issues_created} function-complexity-debt issue(s) for high-smell file
 	fi
 
 	return 0
+}
+
+_ensure_simplification_issue_labels() {
+	local repo_slug="$1"
+
+	gh label create "function-complexity-debt" --repo "$repo_slug" \
+		--description "Functions exceed complexity threshold — needs refactoring before implementation can proceed" \
+		--color "E05D44" 2>/dev/null || true
+	gh label create "needs-maintainer-review" --repo "$repo_slug" \
+		--description "Requires maintainer approval before automated dispatch" \
+		--color "FBCA04" 2>/dev/null || true
+	gh label create "source:quality-sweep" --repo "$repo_slug" \
+		--description "Auto-created by stats-functions.sh quality sweep" \
+		--color "C2E0C6" --force 2>/dev/null || true
+	gh label create "tier:thinking" --repo "$repo_slug" \
+		--description "Opus-tier: architecture, deep reasoning, high-complexity refactors" \
+		--color "5319E7" 2>/dev/null || true
+	return 0
+}
+
+_high_smell_files_from_sarif() {
+	local sarif_json="$1"
+	local min_smells_threshold="$2"
+
+	echo "$sarif_json" | jq -r --argjson threshold "$min_smells_threshold" '
+		[.runs[0].results[] | .locations[0].physicalLocation.artifactLocation.uri] |
+		group_by(.) | map({file: .[0], count: length}) |
+		[.[] | select(.count >= $threshold)] | sort_by(-.count)[:15] |
+		.[] | "\(.count)\t\(.file)"
+	' 2>/dev/null || true
+	return 0
+}
+
+_simplification_issue_maintainer() {
+	local repo_slug="$1"
+	local maintainer=""
+
+	maintainer=$(jq -r --arg slug "$repo_slug" \
+		'.initialized_repos[]? | select(.slug == $slug) | .maintainer // empty' \
+		"${HOME}/.config/aidevops/repos.json" 2>/dev/null) || maintainer=""
+	[[ -n "$maintainer" ]] || maintainer="${repo_slug%%/*}"
+	printf '%s' "$maintainer"
+	return 0
+}
+
+_simplification_issue_label_csv() {
+	local repo_slug="$1"
+	local simplification_labels="function-complexity-debt,source:quality-sweep,tier:thinking"
+
+	# #aidevops:trust-boundary — NMR is an external-origin approval gate. When
+	# the authenticated sweep identity has repo write authority, the issue author
+	# is already trusted and should not be parked behind maintainer review.
+	if declare -F _gh_current_user_allows_repo_write >/dev/null 2>&1 \
+		&& _gh_current_user_allows_repo_write "$repo_slug"; then
+		echo "[stats] Function-complexity-debt issues: trusted current user ${AIDEVOPS_GH_WRITE_PERMISSION_USER:-unknown} (${AIDEVOPS_GH_WRITE_PERMISSION_LEVEL:-unknown}) — skipping needs-maintainer-review" >>"$LOGFILE"
+	else
+		simplification_labels="${simplification_labels},needs-maintainer-review"
+		echo "[stats] Function-complexity-debt issues: current user not verified as repo writer (${AIDEVOPS_GH_WRITE_PERMISSION_REASON:-helper-unavailable}) — keeping needs-maintainer-review" >>"$LOGFILE"
+	fi
+	printf '%s' "$simplification_labels"
+	return 0
+}
+
+_simplification_issue_open_cap_allows() {
+	local repo_slug="$1"
+	local total_open_cap="$2"
+	local total_open
+
+	total_open=$(gh api graphql -f query="query { repository(owner:\"${repo_slug%%/*}\", name:\"${repo_slug##*/}\") { issues(labels:[\"function-complexity-debt\"], states:OPEN) { totalCount } } }" \
+		--jq '.data.repository.issues.totalCount' 2>/dev/null) || total_open="0"
+	if [[ "${total_open:-0}" -ge "$total_open_cap" ]]; then
+		echo "[stats] Function-complexity-debt issues: skipping — ${total_open} open (cap: ${total_open_cap})" >>"$LOGFILE"
+		return 1
+	fi
+	return 0
+}
+
+_create_single_simplification_issue() {
+	local repo_slug="$1"
+	local sarif_json="$2"
+	local maintainer="$3"
+	local smell_count="$4"
+	local file_path="$5"
+	local label_csv="$6"
+	local rule_breakdown file_basename issue_title issue_body qlty_sig
+
+	_simplification_issue_exists "$repo_slug" "$file_path" && return 1
+	rule_breakdown=$(_simplification_rule_breakdown "$sarif_json" "$file_path")
+	file_basename="${file_path##*/}"
+	issue_title="simplification: reduce ${smell_count} Qlty smells in ${file_basename}"
+	issue_body=$(_build_simplification_issue_body "$file_path" "$smell_count" "$rule_breakdown")
+	qlty_sig=$("${HOME}/.aidevops/agents/scripts/gh-signature-helper.sh" footer --body "$issue_body" 2>/dev/null || true)
+	issue_body="${issue_body}${qlty_sig}"
+
+	_simplification_gh_create_issue "$repo_slug" "$issue_title" "$maintainer" "$issue_body" "$label_csv"
+	return $?
+}
+
+_simplification_issue_exists() {
+	local repo_slug="$1"
+	local file_path="$2"
+	local existing_count
+
+	existing_count=$(gh issue list --repo "$repo_slug" \
+		--label "function-complexity-debt" --state open \
+		--search "\"cited_file=${file_path}\" in:body" \
+		--json number --jq 'length' 2>/dev/null) || {
+		echo "[stats] Function-complexity-debt issue search failed for ${file_path}; skipping create to avoid duplicates" >>"$LOGFILE"
+		return 0
+	}
+	[[ "$existing_count" =~ ^[0-9]+$ ]] || existing_count="0"
+	[[ "${existing_count:-0}" -gt 0 ]] && return 0
+	return 1
+}
+
+_simplification_rule_breakdown() {
+	local sarif_json="$1"
+	local file_path="$2"
+
+	echo "$sarif_json" | jq -r --arg fp "$file_path" '
+		[.runs[0].results[] |
+		 select(.locations[0].physicalLocation.artifactLocation.uri == $fp) |
+		 .ruleId] | group_by(.) | map("\(.[0]): \(length)") | join(", ")
+	' 2>/dev/null || printf '%s' "(could not parse)"
+	return 0
+}
+
+_simplification_gh_create_issue() {
+	local repo_slug="$1"
+	local issue_title="$2"
+	local maintainer="$3"
+	local issue_body="$4"
+	local label_csv="$5"
+	local label_args=()
+	local label_name
+
+	IFS=',' read -r -a label_args_raw <<<"$label_csv"
+	for label_name in "${label_args_raw[@]}"; do
+		label_args+=(--label "$label_name")
+	done
+
+	gh_create_issue --repo "$repo_slug" \
+		--title "$issue_title" \
+		"${label_args[@]}" \
+		--assignee "$maintainer" \
+		--body "$issue_body" >/dev/null 2>&1
+	return $?
 }
 
 #######################################
