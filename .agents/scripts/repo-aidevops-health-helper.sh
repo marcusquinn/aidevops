@@ -497,6 +497,173 @@ _push_version_bump_pr() {
 }
 
 #######################################
+# Read the configured aidevops version for one managed repo.
+# Args:
+#   $1 — .aidevops.json path
+# Outputs: version string, or empty when unreadable/missing.
+#######################################
+_repo_aidevops_entry_version() {
+	local adj_file="$1"
+	jq -r '.aidevops_version // empty' "$adj_file" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Check whether a managed repo is clean enough for an automatic bump.
+# Args:
+#   $1 — slug
+#   $2 — repo_path
+# Returns: 0 when clean, 1 when dirty/unreadable.
+#######################################
+_repo_bump_worktree_is_clean() {
+	local slug="$1"
+	local repo_path="$2"
+	if [[ -n "$(git -C "$repo_path" status --porcelain 2>/dev/null)" ]]; then
+		log_warn "bump skipped ($slug): uncommitted changes present"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Resolve the default and current branch for a managed repo.
+# Args:
+#   $1 — repo_path
+# Outputs: default_branch<TAB>current_branch
+#######################################
+_repo_bump_branch_state() {
+	local repo_path="$1"
+	local default_branch current_branch
+	default_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|^refs/remotes/origin/||' || true)
+	[[ -z "$default_branch" ]] && default_branch="main"
+	current_branch=$(git -C "$repo_path" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+	printf '%s\t%s\n' "$default_branch" "$current_branch"
+	return 0
+}
+
+#######################################
+# Publish a preserved default-branch-only .aidevops.json bump through a PR.
+# Args:
+#   $1 — slug
+#   $2 — repo_path
+#   $3 — local_only flag
+#   $4 — target_version
+#   $5 — entry_version
+#   $6 — default_branch
+# Outputs: one of "bumped", "skipped", "failed".
+#######################################
+_publish_preserved_default_branch_bump() {
+	local slug="$1"
+	local repo_path="$2"
+	local local_only="$3"
+	local target_version="$4"
+	local entry_version="$5"
+	local default_branch="$6"
+
+	if [[ "$local_only" == "true" ]] || ! git -C "$repo_path" rev-parse --verify "origin/${default_branch}" >/dev/null 2>&1; then
+		echo skipped
+		return 0
+	fi
+
+	local ahead_count ahead_files branch_name
+	ahead_count=$(git -C "$repo_path" rev-list --count "origin/${default_branch}..HEAD" 2>/dev/null || echo 0)
+	ahead_files=$(git -C "$repo_path" diff --name-only "origin/${default_branch}..HEAD" 2>/dev/null || true)
+	if [[ "$ahead_count" == "0" || "$ahead_files" != ".aidevops.json" ]]; then
+		echo skipped
+		return 0
+	fi
+
+	branch_name=$(_version_bump_branch_name "$slug" "$target_version")
+	if git -C "$repo_path" checkout -q -B "$branch_name" HEAD >/dev/null 2>&1 &&
+		_push_version_bump_pr "$slug" "$repo_path" "$branch_name" "$default_branch" "$entry_version" "$target_version"; then
+		git -C "$repo_path" checkout -q "$default_branch" >/dev/null 2>&1 || true
+		git -C "$repo_path" reset --hard "origin/${default_branch}" >/dev/null 2>&1 || true
+		echo bumped
+		return 0
+	fi
+
+	log_warn "bump failed ($slug): could not convert unpushed default-branch bump to PR"
+	echo failed
+	return 0
+}
+
+#######################################
+# Prepare the version-bump branch when the target repo is not local-only.
+# Args:
+#   $1 — slug
+#   $2 — repo_path
+#   $3 — local_only flag
+#   $4 — branch_name
+#   $5 — default_branch
+# Returns: 0 when ready, 1 on pull/branch failure.
+#######################################
+_prepare_version_bump_branch() {
+	local slug="$1"
+	local repo_path="$2"
+	local local_only="$3"
+	local branch_name="$4"
+	local default_branch="$5"
+	if [[ "$local_only" == "true" ]]; then
+		return 0
+	fi
+	if ! git -C "$repo_path" pull --ff-only origin "$default_branch" >/dev/null 2>&1; then
+		log_warn "bump failed ($slug): pull --ff-only failed"
+		return 1
+	fi
+	if ! git -C "$repo_path" checkout -q -B "$branch_name" "$default_branch" >/dev/null 2>&1; then
+		log_warn "bump failed ($slug): branch create/reset failed"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Atomically rewrite .aidevops.json with the target framework version.
+# Args:
+#   $1 — slug
+#   $2 — adj_file
+#   $3 — target_version
+# Returns: 0 on success, 1 on jq/mktemp failure.
+#######################################
+_rewrite_repo_aidevops_version() {
+	local slug="$1"
+	local adj_file="$2"
+	local target_version="$3"
+	local tmp_adj
+	tmp_adj=$(mktemp) || return 1
+	if ! jq --arg v "$target_version" '.aidevops_version = $v' "$adj_file" >"$tmp_adj" 2>/dev/null; then
+		log_warn "bump failed ($slug): jq rewrite error"
+		rm -f "$tmp_adj"
+		return 1
+	fi
+	mv "$tmp_adj" "$adj_file"
+	return 0
+}
+
+#######################################
+# Commit the rewritten .aidevops.json in a managed repo.
+# Args:
+#   $1 — slug
+#   $2 — repo_path
+#   $3 — target_version
+#   $4 — default_branch
+# Returns: 0 on success, 1 on git add/commit failure.
+#######################################
+_commit_repo_aidevops_version() {
+	local slug="$1"
+	local repo_path="$2"
+	local target_version="$3"
+	local default_branch="$4"
+	if ! git -C "$repo_path" add .aidevops.json >/dev/null 2>&1 ||
+		! git -C "$repo_path" commit -m "chore: bump .aidevops.json to v${target_version} (r914)" >/dev/null 2>&1; then
+		log_warn "bump failed ($slug): commit error"
+		git -C "$repo_path" checkout -q "$default_branch" >/dev/null 2>&1 || true
+		return 1
+	fi
+	return 0
+}
+
+#######################################
 # Bump one repo's .aidevops.json to the current framework version.
 # Globals: CONFIG_FILE (implicit via callers), AIDEVOPS_* env vars
 # Args:
@@ -517,24 +684,21 @@ _bump_single_repo() {
 
 	local adj_file="$repo_path/.aidevops.json"
 	local entry_version
-	entry_version=$(jq -r '.aidevops_version // empty' "$adj_file" 2>/dev/null || true)
+	entry_version=$(_repo_aidevops_entry_version "$adj_file")
 	if [[ -z "$entry_version" ]]; then
 		echo skipped
 		return 0
 	fi
 
 	# Safety: skip if uncommitted changes
-	if [[ -n "$(git -C "$repo_path" status --porcelain 2>/dev/null)" ]]; then
-		log_warn "bump skipped ($slug): uncommitted changes present"
+	if ! _repo_bump_worktree_is_clean "$slug" "$repo_path"; then
 		echo skipped
 		return 0
 	fi
 
 	# Ensure on default branch
 	local default_branch current_branch
-	default_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|^refs/remotes/origin/||' || true)
-	[[ -z "$default_branch" ]] && default_branch="main"
-	current_branch=$(git -C "$repo_path" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+	IFS=$'\t' read -r default_branch current_branch <<<"$(_repo_bump_branch_state "$repo_path")"
 	if [[ "$current_branch" != "$default_branch" ]]; then
 		log_warn "bump skipped ($slug): not on default branch ($current_branch != $default_branch)"
 		echo skipped
@@ -545,25 +709,7 @@ _bump_single_repo() {
 	# direct-push attempt left the default branch ahead with the version bump,
 	# publish that preserved commit through a PR so future runs stop looping.
 	if [[ "$(printf '%s\n%s\n' "$entry_version" "$target_version" | sort -V | tail -1)" == "$entry_version" ]]; then
-		if [[ "$local_only" != "true" ]] && git -C "$repo_path" rev-parse --verify "origin/${default_branch}" >/dev/null 2>&1; then
-			local ahead_count ahead_files branch_name
-			ahead_count=$(git -C "$repo_path" rev-list --count "origin/${default_branch}..HEAD" 2>/dev/null || echo 0)
-			ahead_files=$(git -C "$repo_path" diff --name-only "origin/${default_branch}..HEAD" 2>/dev/null || true)
-			if [[ "$ahead_count" != "0" && "$ahead_files" == ".aidevops.json" ]]; then
-				branch_name=$(_version_bump_branch_name "$slug" "$target_version")
-				if git -C "$repo_path" checkout -q -B "$branch_name" HEAD >/dev/null 2>&1 &&
-					_push_version_bump_pr "$slug" "$repo_path" "$branch_name" "$default_branch" "$entry_version" "$target_version"; then
-					git -C "$repo_path" checkout -q "$default_branch" >/dev/null 2>&1 || true
-					git -C "$repo_path" reset --hard "origin/${default_branch}" >/dev/null 2>&1 || true
-					echo bumped
-					return 0
-				fi
-				log_warn "bump failed ($slug): could not convert unpushed default-branch bump to PR"
-				echo failed
-				return 0
-			fi
-		fi
-		echo skipped
+		_publish_preserved_default_branch_bump "$slug" "$repo_path" "$local_only" "$target_version" "$entry_version" "$default_branch"
 		return 0
 	fi
 
@@ -575,37 +721,18 @@ _bump_single_repo() {
 
 	local branch_name
 	branch_name=$(_version_bump_branch_name "$slug" "$target_version")
-	if [[ "$local_only" != "true" ]]; then
-		if ! git -C "$repo_path" pull --ff-only origin "$default_branch" >/dev/null 2>&1; then
-			log_warn "bump failed ($slug): pull --ff-only failed"
-			echo failed
-			return 0
-		fi
-		if ! git -C "$repo_path" checkout -q -B "$branch_name" "$default_branch" >/dev/null 2>&1; then
-			log_warn "bump failed ($slug): branch create/reset failed"
-			echo failed
-			return 0
-		fi
+	if ! _prepare_version_bump_branch "$slug" "$repo_path" "$local_only" "$branch_name" "$default_branch"; then
+		echo failed
+		return 0
 	fi
 
 	# Atomic jq rewrite — NEVER sed (session lesson mem_20260419012142_0aa16fa7)
-	local tmp_adj
-	tmp_adj=$(mktemp) || {
-		echo failed
-		return 0
-	}
-	if ! jq --arg v "$target_version" '.aidevops_version = $v' "$adj_file" >"$tmp_adj" 2>/dev/null; then
-		log_warn "bump failed ($slug): jq rewrite error"
-		rm -f "$tmp_adj"
+	if ! _rewrite_repo_aidevops_version "$slug" "$adj_file" "$target_version"; then
 		echo failed
 		return 0
 	fi
-	mv "$tmp_adj" "$adj_file"
 
-	if ! git -C "$repo_path" add .aidevops.json >/dev/null 2>&1 ||
-		! git -C "$repo_path" commit -m "chore: bump .aidevops.json to v${target_version} (r914)" >/dev/null 2>&1; then
-		log_warn "bump failed ($slug): commit error"
-		git -C "$repo_path" checkout -q "$default_branch" >/dev/null 2>&1 || true
+	if ! _commit_repo_aidevops_version "$slug" "$repo_path" "$target_version" "$default_branch"; then
 		echo failed
 		return 0
 	fi
