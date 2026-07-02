@@ -2238,9 +2238,9 @@
       "pr": 16879
     },
     ".agents/scripts/dispatch-dedup-helper.sh": {
-      "at": "2026-06-22T16:13:59Z",
-      "hash": "a7893db472684a3895289023030168a35c6a1d7e",
-      "passes": 44,
+      "at": "2026-07-02T10:01:15Z",
+      "hash": "a9dae3cc785fb4332fe50f06565cd454291ae8f5",
+      "passes": 45,
       "pr": 18917
     },
     ".agents/scripts/email-agent-helper.sh": {
@@ -2556,9 +2556,9 @@
       "pr": 18808
     },
     ".agents/scripts/stats-quality-sweep.sh": {
-      "at": "2026-06-28T21:32:22Z",
-      "hash": "2cbcfc39e4f1c10e2c86d9d7ade1020a3c81d851",
-      "passes": 13,
+      "at": "2026-07-02T10:01:30Z",
+      "hash": "91f9909ea36386c61a6466c6a9a78bdee1a2b90f",
+      "passes": 14,
       "pr": 18810
     },
     ".agents/scripts/tabby-helper.sh": {
@@ -5874,9 +5874,9 @@
       "pr": 16882
     },
     ".agents/tools/design/library/styles/luxury-premium/DESIGN.md": {
-      "at": "2026-04-25T14:54:35Z",
-      "hash": "38d134d224cac74777a5ebb6ac976fe1843ef951",
-      "passes": 2,
+      "at": "2026-07-02T10:19:58Z",
+      "hash": "8de81ebb76c85c1dd6e64e8e2133d0326b771730",
+      "passes": 3,
       "pr": 16883
     },
     ".agents/tools/design/library/styles/playful-vibrant/02-colour-palette.md": {
@@ -6917,9 +6917,9 @@
       "pr": 13458
     },
     ".agents/tools/vision/overview.md": {
-      "at": "2026-04-01T20:59:38Z",
-      "hash": "e81b419a1b0d6ec94e7fc6ce1646e6a010eb0c15",
-      "passes": 1,
+      "at": "2026-07-02T10:33:14Z",
+      "hash": "d177f2cc9e2ec6a7827798105f9b94c8b1236498",
+      "passes": 2,
       "pr": 14932
     },
     ".agents/tools/voice/buzz.md": {
@@ -7480,9 +7480,9 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-07-02T04:27:48Z",
-      "hash": "702f435e1f14ccdf036dd213672cf1f2df90a5ee",
-      "passes": 163,
+      "at": "2026-07-02T10:44:38Z",
+      "hash": "e9dec64c1196171a6ebd2538b6c2359905dc4aa0",
+      "passes": 164,
       "pr": 15490
     },
     "aidevops.sh": {
@@ -7756,10 +7756,10 @@
       "passes": 4
     },
     ".agents/scripts/shared-gh-wrappers-rest-fallback.sh": {
-      "hash": "e24c387929a355fb4367abe62b3802782a60f75e",
-      "at": "2026-07-02T02:58:25Z",
+      "hash": "9d97932e520b0274f924f140549df7106b863eba",
+      "at": "2026-07-02T10:01:29Z",
       "pr": 20552,
-      "passes": 23
+      "passes": 24
     },
     ".agents/scripts/pulse-dirty-pr-sweep.sh": {
       "hash": "a3f40cdfc58015d591dd777432181ffb260ddc39",
@@ -7768,10 +7768,10 @@
       "passes": 7
     },
     ".agents/scripts/pulse-dispatch-worker-launch.sh": {
-      "hash": "87af1c1471e1660e7d173c711a6211b6e80ba0ec",
-      "at": "2026-07-02T02:57:57Z",
+      "hash": "461b44f8d8520e6511f1b8184f3e4bf4f74a85c7",
+      "at": "2026-07-02T10:01:23Z",
       "pr": 20617,
-      "passes": 34
+      "passes": 35
     },
     ".agents/reference/dispatch-blockers.md": {
       "hash": "f851df78931bea90695c3a46e9c95f98a6c03d9a",
@@ -7894,10 +7894,10 @@
       "passes": 1
     },
     ".agents/aidevops/feedback.md": {
-      "hash": "e27e83d6859f48ea03030853a90dfe044657d44f",
-      "at": "2026-06-30T21:44:46Z",
+      "hash": "afea0205190424420fd4250caa3f2e87935b18e1",
+      "at": "2026-07-02T09:59:22Z",
       "pr": 25884,
-      "passes": 1
+      "passes": 2
     },
     ".agents/scripts/tests/test-report-render-helper.sh": {
       "hash": "aa2e2e193c999c53dc7ece926f7413eef9b8e434",
@@ -7918,16 +7918,16 @@
       "passes": 1
     },
     ".agents/scripts/repo-aidevops-health-helper.sh": {
-      "hash": "a1993614be64a4989aebae7513b5393e9ffd5314",
-      "at": "2026-07-02T04:27:55Z",
+      "hash": "afda63f703eb1aad4225fbaeb3ff6b71e9c5810d",
+      "at": "2026-07-02T10:01:27Z",
       "pr": 26253,
-      "passes": 1
+      "passes": 2
     },
     ".agents/scripts/resource-metrics-helper.sh": {
-      "hash": "71a09cb5bb75f65eb9e4081169b5ac86ea53872f",
-      "at": "2026-07-02T04:27:55Z",
+      "hash": "eaf653771f6ac94e9746b2838fe90867cb9e1edd",
+      "at": "2026-07-02T10:01:28Z",
       "pr": 26252,
-      "passes": 1
+      "passes": 2
     },
     ".agents/scripts/routine-comment-responder.sh": {
       "hash": "32785e21f97c1fb8c6bf714a94fed0890ffeef92",
@@ -7936,10 +7936,10 @@
       "passes": 1
     },
     ".agents/scripts/stats-health-dashboard.sh": {
-      "hash": "08f9a0586f850b98480a2823edc3cdb7395d35ec",
-      "at": "2026-07-02T04:27:55Z",
+      "hash": "65f487c487c0e2af0f276c0f2e01b16f32304a15",
+      "at": "2026-07-02T10:01:30Z",
       "pr": 26248,
-      "passes": 1
+      "passes": 2
     },
     ".agents/aidevops/knowledge-plane.md": {
       "hash": "9b2e2fa56ed61d463c53bb62c4319ef460a58e8f",
@@ -7966,10 +7966,10 @@
       "passes": 1
     },
     ".agents/scripts/tests/test-gh-wrapper-rest-fallback.sh": {
-      "hash": "41227521ab7e7c072975ad6c39e4bfad4e4fced6",
-      "at": "2026-07-02T04:27:55Z",
+      "hash": "0729bdbaaf86678d28aa33e6303a1e7235a230ed",
+      "at": "2026-07-02T10:01:32Z",
       "pr": 25929,
-      "passes": 1
+      "passes": 2
     },
     ".agents/scripts/tests/test-launchd-install-if-changed.sh": {
       "hash": "8736463760a1b3f1e36ad37ec566c7530077e794",
