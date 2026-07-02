@@ -661,7 +661,7 @@ _commit_repo_aidevops_version() {
 	if ! git -C "$repo_path" add .aidevops.json >/dev/null 2>&1 ||
 		! git -C "$repo_path" commit -m "chore: bump .aidevops.json to v${target_version} (r914)" >/dev/null 2>&1; then
 		log_warn "bump failed ($slug): commit error"
-		git -C "$repo_path" checkout -f -q "$default_branch" || true
+		git -C "$repo_path" checkout -f -q "$default_branch" >/dev/null 2>&1 || true
 		return 1
 	fi
 	return 0
@@ -732,6 +732,9 @@ _bump_single_repo() {
 
 	# Atomic jq rewrite — NEVER sed (session lesson mem_20260419012142_0aa16fa7)
 	if ! _rewrite_repo_aidevops_version "$slug" "$adj_file" "$target_version"; then
+		if [[ "$local_only" != "true" ]]; then
+			git -C "$repo_path" checkout -f -q "$default_branch" >/dev/null 2>&1 || true
+		fi
 		echo failed
 		return 0
 	fi
