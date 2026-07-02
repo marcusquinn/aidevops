@@ -87,10 +87,20 @@ test_merge_ready_pr_list_failure_logs_error() {
 	return 0
 }
 
+test_merge_ready_pr_list_uses_provider_cache() {
+	if ! file_contains "$MERGE_PROCESS" 'pulse_pr_list_get --repo "$repo_slug" --state open'; then
+		print_result "merge-ready PR list uses provider cache" 1 "_merge_ready_prs_for_repo must route through pulse_pr_list_get for per-cycle coalescing"
+		return 0
+	fi
+	print_result "merge-ready PR list uses provider cache" 0
+	return 0
+}
+
 main() {
 	test_ready_pr_fields_include_process_metadata
 	test_callers_use_shared_field_helper
 	test_merge_ready_pr_list_failure_logs_error
+	test_merge_ready_pr_list_uses_provider_cache
 
 	printf '\nTests run: %d, failed: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -ne 0 ]]; then

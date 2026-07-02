@@ -54,6 +54,16 @@ _PULSE_MERGE_PROCESS_LOADED=1
 : "${PULSE_MERGE_BATCH_LIMIT:=50}"
 : "${PULSE_MERGE_CHECKPOINT_FILE:=${HOME}/.aidevops/logs/pulse-merge-checkpoint}"
 
+# Load the exact-output PR-list provider cache for standalone module tests and
+# direct routine sourcing. pulse-wrapper.sh also sources this before the merge
+# modules, so the include guard in pulse-pr-list-cache.sh keeps this idempotent.
+_PULSE_MERGE_PROCESS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "${_PULSE_MERGE_PROCESS_DIR}/pulse-pr-list-cache.sh" ]]; then
+	# shellcheck source=./pulse-pr-list-cache.sh
+	# shellcheck disable=SC1091
+	source "${_PULSE_MERGE_PROCESS_DIR}/pulse-pr-list-cache.sh"
+fi
+
 #######################################
 # Low-overhead timing helpers for per-repo merge summaries.
 #
@@ -718,20 +728,26 @@ _merge_ready_prs_for_repo() {
 	local closed=0
 	local failed=0
 
-	# Fetch open PRs without GraphQL statusCheckRollup. Backlog scheduling is
-	# enriched below from REST check-suites so merge polling preserves GraphQL
-	# budget for dispatch.
+	# Fetch open PRs through the exact-output provider cache. Backlog scheduling
+	# is enriched below from REST check-suites so repeated merge/stuck scans can
+	# share a per-cycle PR-list snapshot without changing jq consumer semantics.
 	local pr_json pr_merge_err
 	local _list_start
 	_list_start=$(_pmp_now_epoch)
 	pr_merge_err=$(mktemp)
-	pr_json=$(gh_pr_list --repo "$repo_slug" --state open \
-		--json "$(_pulse_merge_ready_pr_json_fields)" \
-		--limit "$PULSE_MERGE_BATCH_LIMIT" 2>"$pr_merge_err") || pr_json=""
+	if declare -F pulse_pr_list_get >/dev/null 2>&1; then
+		pr_json=$(pulse_pr_list_get --repo "$repo_slug" --state open \
+			--json "$(_pulse_merge_ready_pr_json_fields)" \
+			--limit "$PULSE_MERGE_BATCH_LIMIT" 2>"$pr_merge_err") || pr_json=""
+	else
+		pr_json=$(gh_pr_list --repo "$repo_slug" --state open \
+			--json "$(_pulse_merge_ready_pr_json_fields)" \
+			--limit "$PULSE_MERGE_BATCH_LIMIT" 2>"$pr_merge_err") || pr_json=""
+	fi
 	if [[ -z "$pr_json" || "$pr_json" == "null" ]]; then
 		local _pr_merge_err_msg
 		_pr_merge_err_msg=$(cat "$pr_merge_err" 2>/dev/null || echo "unknown error")
-		echo "[pulse-wrapper] _process_merge_batch: gh_pr_list FAILED for ${repo_slug}: ${_pr_merge_err_msg}" >>"$LOGFILE"
+		echo "[pulse-wrapper] _process_merge_batch: pulse_pr_list_get FAILED for ${repo_slug}: ${_pr_merge_err_msg}" >>"$LOGFILE"
 		pr_json="[]"
 	fi
 	rm -f "$pr_merge_err"
