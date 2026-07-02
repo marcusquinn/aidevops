@@ -44,6 +44,8 @@ Commands:
   classify-failure [--http-status <code>] [--has-login-wall true|false] [--has-captcha true|false] [--timeout true|false] [--selector-drift true|false] [--content-empty true|false] [--bot-block true|false] --format json
   route --objective <text> [--auth none|cookie|profile|manual] [--scope public|private] --format json
   capture --input <url-or-file> [--dest inbox|knowledge-inbox] [--method auto|file|fetch|crawl|browser] --format json
+  feedback mine [--window 7d] [--format json|markdown]
+  feedback issue [--dry-run] [--window 7d] [--format markdown|json]
   help
 
 The helper does not contact arbitrary targets. Profile/cookie broker commands
@@ -210,6 +212,58 @@ now_epoch() {
 		return 0
 	fi
 	date +%s
+	return 0
+}
+
+reach_session_ref() {
+	local session_source="${AIDEVOPS_SESSION_ID:-${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-}}}"
+	if [[ -n "$session_source" ]]; then
+		printf 'session:%s' "$(safe_hash "$session_source")"
+		return 0
+	fi
+	printf '%s' 'session:unavailable'
+	return 0
+}
+
+reach_performance_log_path() {
+	if [[ -n "${AIDEVOPS_REACH_PERFORMANCE_LOG:-}" ]]; then
+		printf '%s' "$AIDEVOPS_REACH_PERFORMANCE_LOG"
+		return 0
+	fi
+	if [[ -d ".git" || -f ".git" || -d "_inbox" || -d "_knowledge" || -d "_performance" ]]; then
+		mkdir -p "_performance"
+		printf '%s' '_performance/reach-capture.jsonl'
+		return 0
+	fi
+	local workspace_dir="${AIDEVOPS_WORKSPACE:-${HOME}/.aidevops/.agent-workspace}"
+	mkdir -p "${workspace_dir}/performance"
+	printf '%s' "${workspace_dir}/performance/reach-capture.jsonl"
+	return 0
+}
+
+json_field_default() {
+	local json_text="$1"
+	local field_name="$2"
+	local default_value="$3"
+	if ! command_available python3; then
+		printf '%s' "$default_value"
+		return 0
+	fi
+	python3 - "$json_text" "$field_name" "$default_value" <<'PY'
+import json
+import sys
+
+json_text, field_name, default = sys.argv[1:]
+try:
+    data = json.loads(json_text)
+except Exception:
+    data = {}
+value = data.get(field_name, default)
+if isinstance(value, bool):
+    print("true" if value else "false")
+else:
+    print(value)
+PY
 	return 0
 }
 
@@ -1770,6 +1824,114 @@ capture_materialize_artifact() {
 	return 0
 }
 
+capture_append_performance() {
+	local captured_at="$1"
+	local input_ref="$2"
+	local operation="$3"
+	local method="$4"
+	local route_json="$5"
+	local latency_ms="$6"
+	local bytes_in="$7"
+	local bytes_out="$8"
+	local status_value="$9"
+	local failure_value="${10}"
+	local temporary_value="${11}"
+	local next_action_value="${12}"
+	local log_path=""
+	local source_ref=""
+	local target_hash=""
+	local backend_value=""
+	local agency_level=""
+	local headed_value=""
+	local mode_value=""
+	local profile_policy=""
+	local proxy_policy=""
+	local offload_value=""
+	local token_estimate="0"
+	local session_ref=""
+	local discovery_steps="1"
+
+	log_path="$(reach_performance_log_path)"
+	mkdir -p "$(dirname "$log_path")"
+	source_ref="$(capture_source_label "$input_ref" "$method")"
+	target_hash="$(safe_sha256 "$input_ref")"
+	backend_value="$(json_field_default "$route_json" "backend" "$method")"
+	agency_level="$(json_field_default "$route_json" "agency_level" "0")"
+	headed_value="$(json_field_default "$route_json" "headed" "false")"
+	mode_value="$(json_field_default "$route_json" "mode" "$method")"
+	profile_policy="$(json_field_default "$route_json" "profile_policy" "$REACH_VAL_NONE")"
+	proxy_policy="$(json_field_default "$route_json" "proxy_policy" "$REACH_VAL_NONE")"
+	offload_value="$(json_field_default "$route_json" "offload" "local")"
+	session_ref="$(reach_session_ref)"
+	if [[ "$bytes_in" =~ ^[0-9]+$ && "$bytes_out" =~ ^[0-9]+$ ]]; then
+		token_estimate="$(((bytes_in + bytes_out + 3) / 4))"
+	fi
+
+	python3 - "$log_path" "$captured_at" "$session_ref" "$source_ref" "$target_hash" "$operation" "$backend_value" "$agency_level" "$headed_value" "$mode_value" "$profile_policy" "$proxy_policy" "$offload_value" "$latency_ms" "$discovery_steps" "$token_estimate" "$bytes_in" "$bytes_out" "$status_value" "$failure_value" "$temporary_value" "$next_action_value" <<'PY'
+import json
+import sys
+
+(
+    log_path,
+    captured_at,
+    session_ref,
+    target_key,
+    target_hash,
+    operation,
+    backend,
+    agency_level,
+    headed,
+    mode,
+    profile_class,
+    proxy_class,
+    offload,
+    latency_ms,
+    discovery_steps,
+    token_estimate,
+    bytes_in,
+    bytes_out,
+    status,
+    failure_class,
+    temporary,
+    next_best_action,
+) = sys.argv[1:]
+
+def int_value(value, default=0):
+    try:
+        return int(value)
+    except ValueError:
+        return default
+
+record = {
+    "schema_version": 1,
+    "timestamp": captured_at,
+    "session_ref": session_ref,
+    "target_key": target_key,
+    "target_hash": target_hash,
+    "operation": operation,
+    "backend": backend,
+    "agency_level": int_value(agency_level),
+    "headed": headed == "true",
+    "mode": mode,
+    "profile_class": profile_class,
+    "proxy_class": proxy_class,
+    "offload": offload,
+    "latency_ms": int_value(latency_ms),
+    "discovery_steps": int_value(discovery_steps, 1),
+    "token_estimate": int_value(token_estimate),
+    "bytes_in": int_value(bytes_in),
+    "bytes_out": int_value(bytes_out),
+    "status": status,
+    "failure_class": failure_class,
+    "temporary": temporary == "true",
+    "next_best_action": next_best_action,
+}
+with open(log_path, "a", encoding="utf-8") as handle:
+    handle.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+PY
+	return $?
+}
+
 capture_execute() {
 	local input_ref="$1"
 	local dest="$2"
@@ -1791,7 +1953,12 @@ capture_execute() {
 	local source_hash=""
 	local sha256_value=""
 	local byte_count=""
+	local started_epoch=""
+	local ended_epoch=""
+	local latency_ms="0"
+	local input_bytes="0"
 	epoch_value="$(now_epoch)"
+	started_epoch="$epoch_value"
 	captured_at="$(epoch_to_iso "$epoch_value")"
 	stamp="$(epoch_to_stamp "$epoch_value")"
 	slug="$(capture_slug "$input_ref" "$method")"
@@ -1801,20 +1968,33 @@ capture_execute() {
 	mkdir -p "$base_dir" "_inbox"
 	artifact_path="${base_dir}/${slug}_${stamp}.${extension}"
 	meta_path="${base_dir}/${slug}_${stamp}.meta.json"
-	capture_materialize_artifact "$input_ref" "$method" "$artifact_path" || return 1
-	artifact_rel="$(relative_path "$artifact_path")"
-	meta_rel="$(relative_path "$meta_path")"
+	if [[ -f "$input_ref" ]]; then
+		input_bytes="$(file_bytes "$input_ref")"
+	else
+		input_bytes="${#input_ref}"
+	fi
 	route_json="$(capture_route_json "$input_ref" "$method")"
 	backend="$(capture_route_backend "$route_json")"
 	if [[ "$method" != "$REACH_VAL_AUTO" && "$method" != "$REACH_VAL_FILE" && "$method" != "$REACH_VAL_FETCH" ]]; then
 		backend="$method"
 	fi
+	if ! capture_materialize_artifact "$input_ref" "$method" "$artifact_path"; then
+		ended_epoch="$(now_epoch)"
+		latency_ms="$(((ended_epoch - started_epoch) * 1000))"
+		capture_append_performance "$captured_at" "$input_ref" "capture" "$method" "$route_json" "$latency_ms" "$input_bytes" "0" "failure" "capture_failed" "true" "inspect sanitized capture failure and retry only when authorized" || true
+		return 1
+	fi
+	artifact_rel="$(relative_path "$artifact_path")"
+	meta_rel="$(relative_path "$meta_path")"
 	source_ref="$(capture_source_label "$input_ref" "$method")"
 	source_hash="$(safe_sha256 "$input_ref")"
 	sha256_value="$(file_sha256 "$artifact_path")"
 	byte_count="$(file_bytes "$artifact_path")"
 	capture_write_metadata "$meta_path" "$captured_at" "$source_ref" "$source_hash" "$method" "$backend" "$route_json" "$sha256_value" "$byte_count" "$artifact_rel" "$meta_rel" || return 1
 	capture_append_triage "_inbox/triage.log" "$captured_at" "$sub_folder" "$source_ref" "$meta_rel" "$method" "$backend" "$source_hash" || return 1
+	ended_epoch="$(now_epoch)"
+	latency_ms="$(((ended_epoch - started_epoch) * 1000))"
+	capture_append_performance "$captured_at" "$input_ref" "capture" "$method" "$route_json" "$latency_ms" "$input_bytes" "$byte_count" "success" "$REACH_VAL_NONE" "false" "review staged capture metadata before promotion" || true
 	printf '{"%s":1,"dest":"%s","artifact_path":"%s","meta_path":"%s","triage_log":"_inbox/triage.log","%s":"%s","%s":"%s","review_required":true}\n' \
 		"$(json_escape "$REACH_KEY_SCHEMA_VERSION")" \
 		"$(json_escape "$dest")" \
@@ -1833,6 +2013,287 @@ handle_capture() {
 	REACH_CAPTURE_METHOD="$(capture_resolve_method "$REACH_CAPTURE_INPUT_REF" "$REACH_CAPTURE_METHOD")"
 	capture_execute "$REACH_CAPTURE_INPUT_REF" "$REACH_CAPTURE_DEST" "$REACH_CAPTURE_METHOD"
 	return $?
+}
+
+feedback_window_seconds() {
+	local window_value="$1"
+	parse_ttl_seconds "$window_value"
+	return $?
+}
+
+feedback_emit_mine() {
+	local window_value="$1"
+	local format_value="$2"
+	local log_path=""
+	local window_seconds=""
+	log_path="$(reach_performance_log_path)"
+	window_seconds="$(feedback_window_seconds "$window_value")" || return 1
+	python3 - "$log_path" "$window_value" "$window_seconds" "$format_value" <<'PY'
+import collections
+import datetime
+import json
+import os
+import sys
+
+log_path, window_label, window_seconds, output_format = sys.argv[1:]
+now = datetime.datetime.now(datetime.timezone.utc)
+cutoff = now - datetime.timedelta(seconds=int(window_seconds))
+
+def parse_ts(value):
+    try:
+        return datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+records = []
+if os.path.exists(log_path):
+    with open(log_path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            ts = parse_ts(record.get("timestamp", ""))
+            if ts is None or ts >= cutoff:
+                records.append(record)
+
+groups = collections.defaultdict(list)
+for record in records:
+    key = (
+        str(record.get("failure_class", "none")),
+        str(record.get("backend", "unknown")),
+        str(record.get("agency_level", 0)),
+        str(record.get("target_key", "target:unknown")),
+    )
+    groups[key].append(record)
+
+themes = []
+for (failure_class, backend, agency_level, target_key), grouped in sorted(groups.items()):
+    sessions = {str(item.get("session_ref", "session:unavailable")) for item in grouped}
+    failure_records = [item for item in grouped if item.get("status") == "failure"]
+    temporary_failures = [item for item in failure_records if item.get("temporary") is True]
+    permanent_failures = [item for item in failure_records if item.get("temporary") is False]
+    slow_records = [item for item in grouped if int(item.get("latency_ms") or 0) >= 5000]
+    discovery_heavy = [item for item in grouped if int(item.get("discovery_steps") or 0) >= 5]
+    token_heavy = [item for item in grouped if int(item.get("token_estimate") or 0) >= 8000]
+    manual_review = [item for item in grouped if backend == "manual_review" or failure_class in {"auth_required", "scope_forbidden"}]
+    reasons = []
+    if len(temporary_failures) >= 3 and len(sessions) >= 2:
+        reasons.append("repeated temporary failures")
+    if permanent_failures:
+        reasons.append("permanent blocker")
+    if len(slow_records) >= 3:
+        reasons.append("slow backend choice")
+    if len(discovery_heavy) >= 3:
+        reasons.append("high discovery count")
+    if len(token_heavy) >= 3:
+        reasons.append("high token estimate")
+    if len(manual_review) >= 3:
+        reasons.append("repeated manual-review outcome")
+    if not reasons:
+        continue
+    next_actions = collections.Counter(str(item.get("next_best_action", "inspect sanitized evidence")) for item in grouped)
+    themes.append({
+        "theme_id": f"reach-{failure_class}-{backend}-{abs(hash((failure_class, backend, agency_level, target_key))) % 100000}",
+        "summary": f"Reach {backend} attempts for {target_key} show {', '.join(reasons)}.",
+        "failure_class": failure_class,
+        "backend": backend,
+        "agency_level": int(agency_level) if str(agency_level).isdigit() else 0,
+        "target_key": target_key,
+        "evidence_count": len(grouped),
+        "failure_count": len(failure_records),
+        "independent_sessions": len(sessions),
+        "reasons": reasons,
+        "privacy": "target details are hashed or sanitized; no raw URLs, cookies, credentials, proxy values, or private paths are included",
+        "suggested_next_best_action": next_actions.most_common(1)[0][0] if next_actions else "inspect sanitized evidence",
+        "eligible_for_issue": (len(temporary_failures) >= 3 and len(sessions) >= 2) or bool(permanent_failures),
+    })
+
+result = {
+    "schema_version": 1,
+    "source": "reach-performance-jsonl",
+    "source_log": os.path.basename(log_path),
+    "window": window_label,
+    "records_considered": len(records),
+    "themes": themes,
+}
+if output_format == "json":
+    print(json.dumps(result, sort_keys=True))
+else:
+    print(f"# Reach feedback themes ({window_label})")
+    print("")
+    print(f"Records considered: {len(records)}")
+    if not themes:
+        print("No threshold-backed themes found.")
+    for theme in themes:
+        print(f"- {theme['theme_id']}: {theme['summary']} Evidence: {theme['evidence_count']} records across {theme['independent_sessions']} sessions.")
+PY
+	return $?
+}
+
+feedback_emit_issue() {
+	local window_value="$1"
+	local format_value="$2"
+	local dry_run="$3"
+	local create_with_wrapper="$4"
+	local log_path=""
+	local window_seconds=""
+	log_path="$(reach_performance_log_path)"
+	window_seconds="$(feedback_window_seconds "$window_value")" || return 1
+	if [[ "$dry_run" != "true" && "$create_with_wrapper" != "true" ]]; then
+		log_error "reach feedback issue creates public tasks only with --create-with-wrapper; use --dry-run to preview"
+		return 1
+	fi
+	python3 - "$log_path" "$window_value" "$window_seconds" "$format_value" "$dry_run" <<'PY'
+import collections
+import datetime
+import json
+import os
+import sys
+
+log_path, window_label, window_seconds, output_format, dry_run = sys.argv[1:]
+now = datetime.datetime.now(datetime.timezone.utc)
+cutoff = now - datetime.timedelta(seconds=int(window_seconds))
+
+def parse_ts(value):
+    try:
+        return datetime.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+records = []
+if os.path.exists(log_path):
+    with open(log_path, "r", encoding="utf-8") as handle:
+        for line in handle:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            ts = parse_ts(record.get("timestamp", ""))
+            if ts is None or ts >= cutoff:
+                records.append(record)
+
+groups = collections.defaultdict(list)
+for record in records:
+    key = (str(record.get("failure_class", "none")), str(record.get("backend", "unknown")), str(record.get("agency_level", 0)), str(record.get("target_key", "target:unknown")))
+    groups[key].append(record)
+
+eligible = []
+for (failure_class, backend, agency_level, target_key), grouped in sorted(groups.items()):
+    sessions = {str(item.get("session_ref", "session:unavailable")) for item in grouped}
+    failures = [item for item in grouped if item.get("status") == "failure"]
+    temporary = [item for item in failures if item.get("temporary") is True]
+    permanent = [item for item in failures if item.get("temporary") is False]
+    if (len(temporary) >= 3 and len(sessions) >= 2) or permanent:
+        next_action = collections.Counter(str(item.get("next_best_action", "inspect sanitized evidence")) for item in grouped).most_common(1)[0][0]
+        eligible.append({
+            "failure_class": failure_class,
+            "backend": backend,
+            "agency_level": agency_level,
+            "target_key": target_key,
+            "records": len(grouped),
+            "sessions": len(sessions),
+            "next_action": next_action,
+        })
+
+brief = {
+    "schema_version": 1,
+    "dry_run": dry_run == "true",
+    "eligible_theme_count": len(eligible),
+    "issues": eligible,
+}
+if output_format == "json":
+    print(json.dumps(brief, sort_keys=True))
+else:
+    print("# tbd: Reach feedback follow-up")
+    print("")
+    print("## What")
+    if eligible:
+        theme = eligible[0]
+        print(f"Investigate repeated reach `{theme['failure_class']}` outcomes on `{theme['backend']}` for sanitized target `{theme['target_key']}`.")
+    else:
+        print("No issue is eligible: evidence thresholds were not met.")
+    print("")
+    print("## Evidence")
+    print(f"- Window: {window_label}")
+    print(f"- Records considered: {len(records)}")
+    print(f"- Eligible themes: {len(eligible)}")
+    for theme in eligible:
+        print(f"- `{theme['failure_class']}` via `{theme['backend']}`: {theme['records']} records across {theme['sessions']} sessions; next action: {theme['next_action']}")
+    print("")
+    print("## Files to Modify")
+    print("- `EDIT: .agents/scripts/reach-helper.sh` — adjust reach route/capture handling for the verified theme.")
+    print("- `EDIT: .agents/aidevops/feedback.md` — document any threshold or review-gate change.")
+    print("")
+    print("## Verification")
+    print("```bash")
+    print("shellcheck .agents/scripts/reach-helper.sh")
+    print(".agents/scripts/tests/test-reach-feedback.sh")
+    print("./aidevops.sh reach feedback mine --window 7d --format json")
+    print("```")
+    print("")
+    print("Privacy: target details are sanitized or hashed; do not paste raw URLs, cookies, credentials, proxy values, or private paths into public issues.")
+PY
+	return $?
+}
+
+handle_feedback() {
+	local subcommand="${1:-mine}"
+	if [[ $# -gt 0 ]]; then
+		shift
+	fi
+	local window_value="7d"
+	local format_value="json"
+	local dry_run="false"
+	local create_with_wrapper="false"
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+			--window)
+				shift
+				window_value="${1:-7d}"
+				;;
+			--format)
+				shift
+				format_value="${1:-json}"
+				;;
+			--dry-run)
+				dry_run="true"
+				;;
+			--create-with-wrapper)
+				create_with_wrapper="true"
+				;;
+			*)
+				log_error "Unknown feedback option: $arg"
+				return 1
+				;;
+		esac
+		shift || true
+	done
+	case "$format_value" in
+		json | markdown) ;;
+		*) log_error "feedback --format must be json or markdown"; return 1 ;;
+	esac
+	case "$subcommand" in
+		mine)
+			feedback_emit_mine "$window_value" "$format_value"
+			return $?
+			;;
+		issue)
+			if [[ "$dry_run" != "true" && "$create_with_wrapper" != "true" ]]; then
+				dry_run="true"
+			fi
+			feedback_emit_issue "$window_value" "$format_value" "$dry_run" "$create_with_wrapper"
+			return $?
+			;;
+		*)
+			log_error "feedback requires mine or issue"
+			return 1
+			;;
+	esac
 }
 
 main() {
@@ -1876,6 +2337,10 @@ main() {
 			;;
 		capture)
 			handle_capture "$@"
+			return $?
+			;;
+		feedback)
+			handle_feedback "$@"
 			return $?
 			;;
 		route)

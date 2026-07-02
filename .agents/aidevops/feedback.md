@@ -49,6 +49,13 @@ such as `<client>`, `<user-segment>`, `<private-repo>`, and `<case-id>`. If
 redaction would remove implementation context, keep the item private or leave it
 in `_feedback/` until a maintainer can route it.
 
+## Reach Feedback
+
+Reach/capture telemetry uses the same promotion gates as qualitative feedback.
+Thresholds and dry-run issue rules live in
+`.agents/aidevops/feedback/mining-promotion.md` under "Reach Feedback
+Thresholds".
+
 ## Implementation Boundary
 
 This is design-only. Do not wire `aidevops feedback` into
