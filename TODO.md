@@ -4403,3 +4403,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t682 ci: test self-hosted runners safely #auto-dispatch #ci #testing ref:GH#4264
 
 - [ ] t18058 perf(pulse): coalesce merge/stuck PR-list scans through pulse_pr_list_get #auto-dispatch #framework #github #performance #pulse ref:GH#26329
+
+- [ ] t18059 test(pulse): cover linked-PR fallback gh_pr_list routing #auto-dispatch #framework #github #performance #pulse #testing ref:GH#26330
