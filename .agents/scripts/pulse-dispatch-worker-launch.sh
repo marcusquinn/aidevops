@@ -972,10 +972,15 @@ _dlw_exec_detached() {
 	local -a worker_command=(
 		env
 		AIDEVOPS_GH_PR_LIST_CACHE_DISABLE=1
-		AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1
 		PULSE_PR_LIST_PROVIDER_CACHE_DISABLE=1
 		"$@"
 	)
+	# GH#26241: do not blanket-disable AIDEVOPS_GH_PR_VIEW_CACHE for workers.
+	# Pulse now uses a stable TTL-scoped PR view cache, and mutation-sensitive
+	# merge/update paths set AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 at the individual
+	# read site. Keeping worker PR-view reads cacheable avoids a cold-cache burst
+	# from every detached worker while preserving fresh reads where correctness
+	# requires bypassing cache.
 
 	# t2814 (Phase 3, fix #3): Close inherited file descriptors >2 before
 	# exec to prevent FD leak from the pulse parent into the worker. The

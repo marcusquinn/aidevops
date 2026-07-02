@@ -219,6 +219,12 @@ test_pr_cache_ttls_are_per_cycle() {
 	if ! grep -q 'AIDEVOPS_GH_PR_VIEW_CACHE_TTL=.*AIDEVOPS_PULSE_PR_VIEW_CACHE_TTL:-3600' "$WRAPPER_SCRIPT"; then
 		missing="${missing} view-ttl"
 	fi
+	if grep -Eq "AIDEVOPS_GH_PR_VIEW_CACHE_DIR=.*\\$\\$|AIDEVOPS_GH_PR_VIEW_CACHE_DIR=.*\\$\\{\\$\\}" "$WRAPPER_SCRIPT"; then
+		missing="${missing} pid-scoped-view-cache-dir"
+	fi
+	if ! grep -q 'AIDEVOPS_GH_PR_VIEW_CACHE_DIR=.*\.aidevops/cache/pulse-pr-view-cache' "$WRAPPER_SCRIPT"; then
+		missing="${missing} stable-view-cache-dir"
+	fi
 	if ! grep -q 'AIDEVOPS_GH_PR_LIST_CACHE_TTL=.*AIDEVOPS_PULSE_PR_LIST_CACHE_TTL:-3600' "$WRAPPER_SCRIPT"; then
 		missing="${missing} list-ttl"
 	fi
@@ -233,10 +239,10 @@ test_pr_cache_ttls_are_per_cycle() {
 	fi
 
 	if [[ -z "$missing" ]]; then
-		print_result "pulse configures per-cycle PR list/view cache TTLs and EXIT cleanup" 0
+		print_result "pulse configures persistent PR view cache plus per-cycle PR list cache TTLs and EXIT cleanup" 0
 		return 0
 	fi
-	print_result "pulse configures per-cycle PR list/view cache TTLs and EXIT cleanup" 1 \
+	print_result "pulse configures persistent PR view cache plus per-cycle PR list cache TTLs and EXIT cleanup" 1 \
 		"Missing pulse cache wiring:${missing}"
 	return 0
 }

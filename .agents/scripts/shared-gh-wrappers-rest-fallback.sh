@@ -66,14 +66,16 @@ _GH_LAST_GRAPHQL_REMAINING=""
 _GH_REST_PR_VIEW_CACHE_DIR=""
 
 #######################################
-# Return 0 when REST PR view responses may be reused within this shell.
-# Process-scoped: later pulse cycles start fresh. Mutation-sensitive callers
-# MUST bypass with AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1.
+# Return 0 when REST PR view responses may be reused within the configured TTL.
+# Pulse may point this at a stable cross-cycle directory; mutation-sensitive
+# callers MUST bypass with AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1.
 # Returns: 0 when enabled, 1 otherwise.
 #######################################
 _rest_pr_view_cache_enabled() {
 	[[ "${AIDEVOPS_GH_PR_VIEW_CACHE:-0}" == "1" ]] || return 1
 	[[ "${AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE:-0}" == "1" ]] && return 1
+	local ttl="${AIDEVOPS_GH_PR_VIEW_CACHE_TTL:-15}"
+	[[ "$ttl" =~ ^[0-9]+$ && "$ttl" -gt 0 ]] || return 1
 	command -v jq >/dev/null 2>&1 || return 1
 	jq -n 'true' >/dev/null 2>&1 || return 1
 	return 0
@@ -131,6 +133,42 @@ _rest_pr_view_emit_json() {
 	fi
 	printf '%s\n' "$raw_json"
 	return 0
+}
+
+#######################################
+# Try to emit a fresh cached REST PR object.
+# Args: $1=cache_path $2=cache_ttl $3=cache_name $4=json_fields $5=jq_expr
+# Returns: 0 when cache emitted, 1 when caller should fetch fresh data.
+#######################################
+_rest_pr_view_cache_emit_if_fresh() {
+	local cache_path="$1"
+	local cache_ttl="$2"
+	local cache_name="$3"
+	local json_fields="$4"
+	local jq_expr="$5"
+	local cache_now=""
+	local cache_mtime=""
+	local cache_age=0
+	local raw_json=""
+	cache_now=$(date +%s 2>/dev/null || printf '0')
+	cache_mtime=$(perl -e 'print((stat($ARGV[0]))[9] || 0)' "$cache_path" 2>/dev/null || printf '0')
+	if [[ "$cache_now" =~ ^[0-9]+$ && "$cache_mtime" =~ ^[0-9]+$ ]]; then
+		cache_age=$(( cache_now - cache_mtime ))
+	else
+		cache_age=$(( cache_ttl + 1 ))
+	fi
+	if [[ "$cache_age" -lt 0 || "$cache_age" -gt "$cache_ttl" ]]; then
+		gh_record_call other "$cache_name" unknown other stale 2>/dev/null || true
+		return 1
+	fi
+	raw_json="$(jq -c '.' "$cache_path" 2>/dev/null)" || raw_json=""
+	if [[ -z "$raw_json" ]]; then
+		gh_record_call other "$cache_name" unknown other invalid-json 2>/dev/null || true
+		return 1
+	fi
+	gh_record_call other "$cache_name" unknown other hit 2>/dev/null || true
+	_rest_pr_view_emit_json "$raw_json" "$json_fields" "$jq_expr"
+	return $?
 }
 
 #######################################
@@ -1062,16 +1100,11 @@ _rest_pr_view() {
 	local cache_path=""
 	local raw_json=""
 	local cache_name="rest_pr_view_cache"
+	local cache_ttl="${AIDEVOPS_GH_PR_VIEW_CACHE_TTL:-15}"
 	if _rest_pr_view_cache_enabled; then
 		cache_path="$(_rest_pr_view_cache_path "$repo" "$num")" || { cache_path=""; gh_record_call other "$cache_name" unknown other bypass 2>/dev/null || true; }
 		if [[ -n "$cache_path" && -s "$cache_path" ]]; then
-			raw_json="$(jq -c '.' "$cache_path" 2>/dev/null)" || raw_json=""
-			if [[ -n "$raw_json" ]]; then
-				gh_record_call other "$cache_name" unknown other hit 2>/dev/null || true
-				_rest_pr_view_emit_json "$raw_json" "$json_fields" "$jq_expr"
-				return $?
-			fi
-			gh_record_call other "$cache_name" unknown other invalid-json 2>/dev/null || true
+			_rest_pr_view_cache_emit_if_fresh "$cache_path" "$cache_ttl" "$cache_name" "$json_fields" "$jq_expr" && return $?
 		elif [[ -n "$cache_path" ]]; then
 			gh_record_call other "$cache_name" unknown other miss 2>/dev/null || true
 		fi
