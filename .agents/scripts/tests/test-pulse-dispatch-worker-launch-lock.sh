@@ -140,6 +140,65 @@ else
 	fail "native blockedBy lookup failure should emit blocked_by_native_lookup_unavailable"
 fi
 
+cat >"${TEST_TMP}/bin/headless-runtime-helper.sh" <<'EOF'
+#!/usr/bin/env bash
+tier=""
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--tier)
+		tier="${2:-}"
+		shift 2
+		;;
+	*)
+		shift
+		;;
+	esac
+done
+printf 'selected-%s\n' "$tier"
+EOF
+chmod +x "${TEST_TMP}/bin/headless-runtime-helper.sh" || fail "failed to make headless runtime stub executable"
+
+_resolve_worker_tier() {
+	local labels_csv="$1"
+	local labels_lower
+	labels_lower=$(printf '%s' "$labels_csv" | tr '[:upper:]' '[:lower:]')
+	local labels_with_commas=",${labels_lower},"
+
+	if [[ "$labels_with_commas" == *",tier:thinking,"* ]]; then
+		printf 'tier:thinking'
+	elif [[ "$labels_with_commas" == *",tier:standard,"* ]]; then
+		printf 'tier:standard'
+	elif [[ "$labels_with_commas" == *",tier:simple,"* ]]; then
+		printf 'tier:simple'
+	else
+		printf 'tier:standard'
+	fi
+	return 0
+}
+
+bundle_repo="${TEST_TMP}/content-site"
+mkdir -p "$bundle_repo" || fail "failed to create bundle repo fixture"
+printf '{"bundle":"content-site"}\n' >"${bundle_repo}/.aidevops.json" || fail "failed to create bundle config fixture"
+
+HEADLESS_RUNTIME_HELPER="${TEST_TMP}/bin/headless-runtime-helper.sh" \
+	_dlw_resolve_tier_and_model '{"labels":[]}' "" "$bundle_repo"
+
+if [[ "$_DLW_DISPATCH_TIER" != "bundle" || "$_DLW_DISPATCH_MODEL_TIER" != "haiku" || "$_DLW_SELECTED_MODEL" != "selected-haiku" ]]; then
+	fail "bundle model default was not applied to unlabeled worker dispatch"
+fi
+
+HEADLESS_RUNTIME_HELPER="${TEST_TMP}/bin/headless-runtime-helper.sh" \
+	_dlw_resolve_tier_and_model '{"labels":[{"name":"tier:thinking"}]}' "" "$bundle_repo"
+
+if [[ "$_DLW_DISPATCH_TIER" != "thinking" || "$_DLW_DISPATCH_MODEL_TIER" != "opus" || "$_DLW_SELECTED_MODEL" != "selected-opus" ]]; then
+	fail "explicit tier label did not override bundle model default"
+fi
+
+seo_agent=$(_dlw_bundle_agent_name "$bundle_repo" "Improve SEO metadata" "Update sitemap and schema") || fail "bundle agent routing lookup failed"
+if [[ "$seo_agent" != "SEO" ]]; then
+	fail "bundle agent routing did not select SEO for SEO task"
+fi
+
 printf 'PASS: stale non-empty node_modules restore lock is reclaimed\n'
 printf 'PASS: root node_modules payload is skipped by default\n'
 printf 'PASS: root node_modules .bin tooling is linked by default\n'
@@ -148,4 +207,7 @@ printf 'PASS: pulse worker launch forwards dispatching GitHub login\n'
 printf 'PASS: systemd PID resolver handles final unterminated property\n'
 printf 'PASS: worker launch hard-stops unresolved blocked-by dependencies\n'
 printf 'PASS: native blockedBy lookup failure remains fail-closed with classified reason\n'
+printf 'PASS: bundle defaults route unlabeled worker model selection\n'
+printf 'PASS: explicit tier labels override bundle model defaults\n'
+printf 'PASS: bundle agent_routing selects task-specific worker agents\n'
 exit 0

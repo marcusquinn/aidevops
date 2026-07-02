@@ -189,6 +189,10 @@ _dlw_resolve_tier_and_model() {
 	_DLW_DISPATCH_MODEL_TIER="sonnet"
 	local issue_labels_csv
 	issue_labels_csv=$(printf '%s' "$issue_meta_json" | jq -r '[.labels[].name] | join(",")' 2>/dev/null) || issue_labels_csv=""
+	local explicit_tier_label=0
+	if _dlw_has_explicit_tier_label "$issue_labels_csv"; then
+		explicit_tier_label=1
+	fi
 
 	# Resolve tier from labels, preferring highest rank when multiple present (t1997)
 	local resolved_tier
@@ -211,7 +215,7 @@ _dlw_resolve_tier_and_model() {
 	# t1364.6: when issue labels do not force a tier, let project bundles
 	# right-size worker model selection for implementation work. Explicit model
 	# overrides and tier:* labels still win.
-	if [[ -z "$model_override" && -z "$resolved_tier" && -n "$repo_path" ]]; then
+	if [[ -z "$model_override" && "$explicit_tier_label" -eq 0 && -n "$repo_path" ]]; then
 		local bundle_tier
 		bundle_tier=$(_dlw_bundle_model_tier "$repo_path") || bundle_tier=""
 		if [[ -n "$bundle_tier" ]]; then
@@ -227,6 +231,26 @@ _dlw_resolve_tier_and_model() {
 		_DLW_SELECTED_MODEL=$("$HEADLESS_RUNTIME_HELPER" select --role worker --tier "$_DLW_DISPATCH_MODEL_TIER" 2>/dev/null) || _DLW_SELECTED_MODEL=""
 	fi
 	return 0
+}
+
+#######################################
+# Check whether labels include an explicit worker tier.
+# _resolve_worker_tier defaults unlabeled issues to tier:standard, so callers
+# need this helper to distinguish an authored tier label from the fallback.
+# Arguments:
+#   $1 - comma-separated label list
+# Returns: 0 when a tier:* label is present, 1 otherwise
+#######################################
+_dlw_has_explicit_tier_label() {
+	local labels_csv="$1"
+	local labels_lower
+	labels_lower=$(printf '%s' "$labels_csv" | tr '[:upper:]' '[:lower:]')
+	local labels_with_commas=",${labels_lower},"
+
+	case "$labels_with_commas" in
+	*,tier:thinking,* | *,tier:standard,* | *,tier:simple,*) return 0 ;;
+	*) return 1 ;;
+	esac
 }
 
 #######################################
