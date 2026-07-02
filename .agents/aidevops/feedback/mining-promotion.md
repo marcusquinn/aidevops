@@ -55,6 +55,28 @@ Severity can lower the count threshold, but it does not remove review. A single
 severe report can justify escalation; it should not become an autonomous code or
 policy change without the relevant gate.
 
+### Reach Feedback Thresholds
+
+Reach/capture telemetry is mined from append-only JSONL, not from raw target
+content. `reach feedback mine --window 7d --format json` groups records by
+failure class, backend, agency level, and sanitized target key. Themes are
+reportable when they show one of these patterns:
+
+- **Repeated temporary failure:** at least 3 similar failures across 2 sessions.
+- **Permanent blocker:** one non-temporary blocker that affects a documented
+  routine or capture path.
+- **Inefficient route:** repeated slow choices, high discovery counts, or high
+  token estimates for the same sanitized group.
+- **Manual-review loop:** repeated manual-review/auth/scope outcomes that need a
+  clearer decision surface.
+
+`reach feedback issue --dry-run` must remain the default. Real issue creation
+requires an explicit wrapper-safe creation path and enough evidence to satisfy
+the task-creation gate below. Public issue bodies may include counts, sanitized
+target keys, failure classes, files to inspect, and verification commands; they
+must not include raw URLs, cookies, credentials, proxy values, private paths, or
+unreviewed artifacts.
+
 ## Review Gates
 
 Mining gates protect users from noisy automation and protect private feedback

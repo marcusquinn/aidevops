@@ -27,6 +27,31 @@ The schema is representation-neutral: later phases may store records as Markdown
 front matter, JSONL, or generated dashboard input. Field names and semantics below
 are the contract those representations must preserve.
 
+## Reach Attempt JSONL
+
+`reach-helper.sh` appends privacy-safe reach/capture attempt records to
+`_performance/reach-capture.jsonl` when the current repository workspace is
+available. Outside a repository, records fall back to
+`~/.aidevops/.agent-workspace/performance/reach-capture.jsonl` (or
+`AIDEVOPS_REACH_PERFORMANCE_LOG` in tests). Each line is one JSON object so
+workers and routines can mine failures without reading private artifacts.
+
+Reach records preserve these fields:
+
+- `timestamp`, `session_ref` — observation time and hashed/safe session ref.
+- `target_key`, `target_hash` — sanitized label or hash; never raw private URLs.
+- `operation`, `backend`, `agency_level`, `headed`, `mode`, `offload` — route and
+  execution choice used for the attempt.
+- `profile_class`, `proxy_class` — policy/class labels only; never profile paths,
+  cookie values, proxy hosts, credentials, or IP addresses.
+- `latency_ms`, `discovery_steps`, `token_estimate`, `bytes_in`, `bytes_out` — cost
+  and efficiency dimensions for feedback mining.
+- `status`, `failure_class`, `temporary`, `next_best_action` — outcome and the
+  safest follow-up action.
+
+The log is append-only. Promotion to public issues must go through feedback
+thresholds and use sanitized summaries instead of raw target evidence.
+
 ## Result Record
 
 ```json
