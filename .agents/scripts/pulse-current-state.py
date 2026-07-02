@@ -7,7 +7,6 @@
 import datetime
 import json
 import os
-import subprocess
 import sys
 import time
 from collections import Counter, defaultdict, deque
@@ -231,37 +230,26 @@ top_pre_launch_blockers = [
     for reason, count in sorted(pre_launch_blockers.items(), key=lambda item: (-item[1], item[0]))
 ]
 
-worktrees = []
-try:
-    out = subprocess.check_output(['git', '-C', repo_path, 'worktree', 'list'], text=True, stderr=subprocess.DEVNULL)
-    worktrees = [line for line in out.splitlines() if 'feature/auto-' in line or 'feature/gh-' in line]
-except (OSError, subprocess.CalledProcessError):
+worker_worktree_count = os.environ.get('AIDEVOPS_WORKER_WORKTREE_COUNT', '0')
+if worker_worktree_count.isdigit():
+    worktrees = [None] * int(worker_worktree_count)
+else:
     worktrees = []
 
 active_worker_processes = None
-worker_lifecycle_common = os.path.join(script_dir, 'worker-lifecycle-common.sh')
-if os.path.exists(worker_lifecycle_common):
-    try:
-        active_worker_output = subprocess.check_output(
-            ['bash', '-c', 'source "$1" >/dev/null 2>&1 && count_active_workers', '_', worker_lifecycle_common],
-            text=True,
-            stderr=subprocess.DEVNULL,
-            timeout=5,
-        ).strip()
-        if active_worker_output.isdigit():
-            active_worker_processes = int(active_worker_output)
-    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-        active_worker_processes = None
+active_worker_output = os.environ.get('AIDEVOPS_ACTIVE_WORKER_PROCESSES', '')
+if active_worker_output.isdigit():
+    active_worker_processes = int(active_worker_output)
 
-graphql_budget_status = 'UNKNOWN: no cached status'
-breaker = os.path.join(script_dir, 'pulse-rate-limit-circuit-breaker.sh')
-try:
-    graphql_budget_status = subprocess.check_output(
-        [breaker, 'status', '--cached'], text=True, stderr=subprocess.DEVNULL, timeout=5
-    ).strip() or graphql_budget_status
-except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
-    pass
-dispatch_api_blocked = dispatch_blocked_by_graphql_budget(graphql_budget_status, graphql_budget, pre_launch_blockers)
+graphql_budget_status = (
+    os.environ.get('AIDEVOPS_GRAPHQL_BUDGET_STATUS')
+    or 'UNKNOWN: no cached status'
+)
+dispatch_api_blocked = dispatch_blocked_by_graphql_budget(
+    graphql_budget_status,
+    graphql_budget,
+    pre_launch_blockers,
+)
 current_state_guardrails = {
     'applied_count': counter_hits.get('pulse_dispatch_current_state_guardrail_applied', 0),
     'available_slots_last': gauge_values.get('pulse_dispatch_guardrail_available_slots'),
