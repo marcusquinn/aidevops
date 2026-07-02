@@ -182,6 +182,7 @@ load_blocked_count = counter_hits.get('dispatch_load_blocked', 0) + sum(
 rate_limit_count = metric_class_counts.get('rate_limit', 0)
 watchdog_kill_count = metric_class_counts.get('watchdog_stall_killed', 0)
 noop_count = metric_class_counts.get('worker_noop', 0)
+launch_validation_failure_count = counter_hits.get('dispatch_worker_launch_failed', 0)
 pr_opened_count, pr_opened_examples = line_count(['pr opened', 'opened pr', 'pull request'], wrapper_activity)
 pr_merged_count, pr_merged_examples = line_count(['pr merged', 'merged pr', 'squash merged'], wrapper_activity)
 issue_closed_count, issue_closed_examples = line_count(['issue closed', 'closed issue', 'status:done'], wrapper_activity)
@@ -373,6 +374,7 @@ result = {
         'watchdog_killed': watchdog_kill_count,
         'rate_limited': rate_limit_count,
         'no_op': noop_count,
+        'launch_validation_failed': launch_validation_failure_count,
         'pr_opened': pr_opened_count,
         'pr_merged': pr_merged_count,
         'issue_closed': issue_closed_count,
