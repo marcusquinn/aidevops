@@ -480,6 +480,57 @@ _Issues labelled \`quality-debt\` — capped at 30% of dispatch concurrency._
 }
 
 #######################################
+# Upsert the rolling quality-sweep summary comment.
+#
+# Older versions appended one comment per sweep to the persistent quality issue.
+# This helper edits the latest generated sweep comment instead, falling back to
+# one new comment when no generated comment exists yet.
+#
+# Args: $1 = issue number, $2 = repo slug, $3 = comment body
+# Returns: gh edit/comment status
+#######################################
+_upsert_quality_sweep_comment() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local comment_body="$3"
+	local comments_api="" comments_json="" latest_comment_id=""
+
+	printf -v comments_api 'repos/%s/issues/%s/comments' "$repo_slug" "$issue_number"
+	comments_json=$(gh api "${comments_api}?per_page=100" --paginate --slurp 2>/dev/null) || comments_json=""
+
+	if [[ -n "$comments_json" && "$comments_json" != "null" ]]; then
+		latest_comment_id=$(printf '%s' "$comments_json" | jq -r \
+			--arg array_type 'array' \
+			--arg latest_marker '<!-- quality-sweep-latest -->' \
+			--arg sweep_heading '## Daily Code Quality Sweep' \
+			--arg sweep_footer 'daily quality sweep' '
+			(if type == $array_type and (.[0]? | type) == $array_type then [.[][]]
+			elif type == $array_type then .
+			else [] end)
+			| [ .[]
+				| select(
+					(.body // "") as $body
+					| ($body | contains($latest_marker)) or
+						(($body | contains($sweep_heading)) and ($body | contains($sweep_footer)))
+				)
+				| {id: .id, created_at: .created_at} ]
+			| sort_by(.created_at // "")
+			| last
+			| .id // empty
+		' 2>/dev/null) || latest_comment_id=""
+	fi
+
+	if [[ -n "$latest_comment_id" ]]; then
+		gh api "repos/${repo_slug}/issues/comments/${latest_comment_id}" \
+			--method PATCH --field body="$comment_body" >/dev/null
+		return $?
+	fi
+
+	gh_issue_comment "$issue_number" --repo "$repo_slug" --body "$comment_body" >/dev/null
+	return $?
+}
+
+#######################################
 # Build the daily quality sweep comment body.
 #
 # Arguments:
@@ -504,12 +555,14 @@ _build_sweep_comment() {
 	local codacy_section="$7"
 	local coderabbit_section="$8"
 	local review_scan_section="$9"
+	: "$repo_slug" # Repository context is implicit in the issue; keep slugs out of generated comments.
 
 	cat <<COMMENT
+<!-- quality-sweep-latest -->
 ## Daily Code Quality Sweep
 
 **Date**: ${now_iso}
-**Repo**: \`${repo_slug}\`
+**Repository**: current repository
 **Tools run**: ${tool_count}
 
 ---

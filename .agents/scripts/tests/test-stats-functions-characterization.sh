@@ -13,7 +13,7 @@
 #   1. Source stats-functions.sh in a sandboxed $HOME. The include guard
 #      ([[ -n "${_STATS_FUNCTIONS_LOADED:-}" ]] && return 0) is cleared by
 #      the sandbox so the file can be re-sourced.
-#   2. Assert every currently-defined function (48 entries) is present
+#   2. Assert every currently-defined function (51 entries) is present
 #      via `declare -F`. Any extraction PR that drops a function name
 #      without re-sourcing it from a new module fails this check.
 #   3. Exercise a focused set of PURE / deterministic functions with
@@ -88,7 +88,7 @@ teardown_sandbox() {
 }
 
 #######################################
-# The authoritative 48-function list for stats-functions.sh as of the
+# The authoritative 51-function list for stats-functions.sh as of the
 # Phase 0 safety net. Regenerate with:
 #   awk '/^[a-zA-Z_][a-zA-Z0-9_]*\(\)/ {gsub(/\(\)/,""); print "\t\"" $1 "\""}' \
 #       .agents/scripts/stats-functions.sh
@@ -127,8 +127,9 @@ readonly -a EXPECTED_FUNCTIONS=(
 	"_read_person_stats_cache"
 	"_resolve_runner_role_config"
 	"_extract_body_counts"
-	# Cluster C: stats-quality-sweep.sh (23 fns)
+	# Cluster C: stats-quality-sweep.sh (24 fns)
 	"run_daily_quality_sweep"
+	"_upsert_quality_sweep_comment"
 	"_quality_sweep_for_repo"
 	"_ensure_quality_issue"
 	"_load_sweep_state"
