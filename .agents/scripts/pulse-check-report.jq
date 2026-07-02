@@ -18,6 +18,8 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
 ($queue.aggregate.gh_errors // 0 | number_or_zero) as $gh_errors |
 ($queue.error // "") as $queue_error |
 ($current.worker_outcomes.spawned // 0 | number_or_zero) as $spawned |
+($current.worker_outcomes.launch_validation_failed // $current.pulse_counter_hits.dispatch_worker_launch_failed // 0 | number_or_zero) as $launch_validation_failed |
+($current.worker_terminal_events // 0 | number_or_zero) as $current_terminal_events |
 ($recent_summary.metrics.total // 0 | number_or_zero) as $recent_total |
 ($summary.metrics.total // 0 | number_or_zero) as $hist_total |
 ($summary.metrics.succeeded // 0 | number_or_zero) as $hist_success |
@@ -32,7 +34,8 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
     dispatch_alive: ($current.dispatch_alive // false),
     dispatch_stage_events: ($current.dispatch_stage_events // 0),
     worker_launches_in_window: $spawned,
-    worker_terminal_events_in_window: ($current.worker_terminal_events // 0),
+    worker_terminal_events_in_window: $current_terminal_events,
+    worker_launch_validation_failures_in_window: $launch_validation_failed,
     recent_worker_events: $recent_total,
     historical_worker_events: $hist_total,
     historical_worker_successes: $hist_success,
@@ -93,7 +96,7 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
         true
       )
     else empty end,
-    if ($spawned >= 3 and $active_workers == 0 and $recent_total == 0) then
+    if (($spawned - ([($recent_total), ($current_terminal_events)] | max) - $launch_validation_failed) >= 3 and $active_workers == 0) then
       finding(
         "pulse-launch-accounting-gap";
         "high";
@@ -101,6 +104,8 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
         [
           ("worker_launches_in_current_window=" + ($spawned | tostring)),
           ("recent_worker_metric_events=" + ($recent_total | tostring)),
+          ("worker_terminal_events_in_current_window=" + ($current_terminal_events | tostring)),
+          ("worker_launch_validation_failures_in_current_window=" + ($launch_validation_failed | tostring)),
           ("active_workers=" + ($active_workers | tostring)),
           ("available_slots=" + ($available_slots | tostring))
         ];

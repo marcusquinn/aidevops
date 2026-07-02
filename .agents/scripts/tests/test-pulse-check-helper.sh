@@ -234,6 +234,25 @@ assert_eq "json finding IDs" "auto-dispatch-missing-tier-labels,pulse-launch-acc
 JSON_PRIVATE_COUNT=$(printf '%s' "$JSON_OUT" | grep -c "private/repo-one" 2>/dev/null || true)
 assert_eq "json output removes raw worker examples" "0" "$JSON_PRIVATE_COUNT"
 
+cat >"${TEST_ROOT}/current-state.sh" <<'SH'
+#!/usr/bin/env bash
+cat <<'JSON'
+{
+  "dispatch_alive": true,
+  "dispatch_stage_events": 12,
+  "current_state_guardrails": {"available_slots_last": 6},
+  "pulse_gauges": {"dispatch_capacity_final_max_workers": 6},
+  "worker_outcomes": {"spawned": 4, "launch_validation_failed": 4},
+  "worker_terminal_events": 0,
+  "graphql_budget_status": "OK fixture"
+}
+JSON
+SH
+chmod +x "${TEST_ROOT}/current-state.sh"
+CLASSIFIED_JSON_OUT=$(env "${COMMON_ENV[@]}" "$HELPER" json 2>&1)
+CLASSIFIED_IDS=$(printf '%s' "$CLASSIFIED_JSON_OUT" | jq -r '[.findings[].id] | sort | join(",")')
+assert_eq "classified launch failures suppress launch accounting gap" "auto-dispatch-missing-tier-labels,pulse-underfilled-auto-dispatch-queue" "$CLASSIFIED_IDS"
+
 APPLY_OUT=$(env "${COMMON_ENV[@]}" "$HELPER" apply --repo owner/aidevops 2>&1)
 assert_contains "apply reports issue filing" "pulse-check: filed" "$APPLY_OUT"
 BODY=$(cat "${TEST_ROOT}/capture.txt.body")
