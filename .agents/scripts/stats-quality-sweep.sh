@@ -476,32 +476,21 @@ _run_sweep_tools() {
 	local sweep_high_critical=0
 	local sweep_sev_inline=""
 
-	# t2066: capture previous smell count BEFORE running the sweep so we can
-	# render a delta (trend indicator) in the dashboard. The state file is
-	# written later by _save_sweep_state — we need to read it beforehand so
-	# the delta reflects the change since the previous sweep, not the change
-	# since a moment ago.
-	local prev_state prev_qlty_smells
-	prev_state=$(_load_sweep_state "$repo_slug")
-	# 4th field is the previous qlty_smells (added in t2066). Missing / first
-	# run returns "0" from _load_sweep_state's default.
-	prev_qlty_smells=$(awk -F'|' '{print $4}' <<<"$prev_state")
-	[[ "$prev_qlty_smells" =~ ^[0-9]+$ ]] || prev_qlty_smells=0
+	local prev_qlty_smells
+	prev_qlty_smells=$(_previous_qlty_smell_count "$repo_slug")
 
 	local shellcheck_section=""
 	shellcheck_section=$(_sweep_shellcheck "$repo_slug" "$repo_path")
 	[[ -n "$shellcheck_section" ]] && tool_count=$((tool_count + 1))
 
 	local qlty_section="" qlty_smell_count=0 qlty_grade="UNKNOWN"
-	local qlty_raw
-	qlty_raw=$(_sweep_qlty "$repo_slug" "$repo_path")
-	if [[ -n "$qlty_raw" ]]; then
-		qlty_section="${qlty_raw%%|*}"
-		local qlty_remainder="${qlty_raw#*|}"
-		qlty_smell_count="${qlty_remainder%%|*}"
-		qlty_grade="${qlty_remainder#*|}"
-		[[ -n "$qlty_section" ]] && tool_count=$((tool_count + 1))
-	fi
+	local qlty_result
+	qlty_result=$(_run_qlty_sweep_tool "$repo_slug" "$repo_path")
+	qlty_section="${qlty_result%%|*}"
+	local qlty_remainder="${qlty_result#*|}"
+	qlty_smell_count="${qlty_remainder%%|*}"
+	qlty_grade="${qlty_remainder#*|}"
+	[[ -n "$qlty_section" ]] && tool_count=$((tool_count + 1))
 
 	# t2066: compute smell delta vs previous sweep. Signed integer — positive
 	# means regression (more smells), negative means improvement. The caller
@@ -538,34 +527,80 @@ _run_sweep_tools() {
 	review_scan_section=$(_sweep_review_scanner "$repo_slug")
 	[[ -n "$review_scan_section" ]] && tool_count=$((tool_count + 1))
 
-	# t1992: write each section to its own file. printf '%s' (no trailing
-	# newline) preserves byte-for-byte content; multi-line strings round-trip
-	# intact because each file owns exactly one variable.
 	local sections_dir
+	sections_dir=$(_write_sweep_sections_dir \
+		"$tool_count" "$shellcheck_section" "$qlty_section" "$qlty_smell_count" \
+		"$qlty_grade" "$qlty_smell_delta" "$prev_qlty_smells" "$sonar_section" \
+		"$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical" \
+		"$sweep_sev_inline" "$codacy_section" "$coderabbit_section" "$review_scan_section") || return 1
+
+	# Single-line handshake: just the directory path. The caller reads each
+	# section by `cat`ing one file at a time.
+	printf '%s\n' "$sections_dir"
+	return 0
+}
+
+_previous_qlty_smell_count() {
+	local repo_slug="$1"
+	local prev_state prev_qlty_smells
+
+	prev_state=$(_load_sweep_state "$repo_slug")
+	prev_qlty_smells=$(awk -F'|' '{print $4}' <<<"$prev_state")
+	[[ "$prev_qlty_smells" =~ ^[0-9]+$ ]] || prev_qlty_smells=0
+	printf '%s' "$prev_qlty_smells"
+	return 0
+}
+
+_run_qlty_sweep_tool() {
+	local repo_slug="$1"
+	local repo_path="$2"
+	local qlty_raw
+
+	qlty_raw=$(_sweep_qlty "$repo_slug" "$repo_path")
+	if [[ -z "$qlty_raw" ]]; then
+		printf '%s|%s|%s' "" "0" "UNKNOWN"
+		return 0
+	fi
+
+	printf '%s' "$qlty_raw"
+	return 0
+}
+
+_write_sweep_sections_dir() {
+	local tool_count="$1"
+	local shellcheck_section="$2"
+	local qlty_section="$3"
+	local qlty_smell_count="$4"
+	local qlty_grade="$5"
+	local qlty_smell_delta="$6"
+	local prev_qlty_smells="$7"
+	local sonar_section="$8"
+	local sweep_gate_status="$9"
+	local sweep_total_issues="${10}"
+	local sweep_high_critical="${11}"
+	local sweep_sev_inline="${12}"
+	local codacy_section="${13}"
+	local coderabbit_section="${14}"
+	local review_scan_section="${15}"
+	local sections_dir
+
 	sections_dir=$(mktemp -d 2>/dev/null) || return 1
 	printf '%s' "$tool_count" >"${sections_dir}/tool_count"
 	printf '%s' "$shellcheck_section" >"${sections_dir}/shellcheck"
 	printf '%s' "$qlty_section" >"${sections_dir}/qlty"
 	printf '%s' "$qlty_smell_count" >"${sections_dir}/qlty_smell_count"
 	printf '%s' "$qlty_grade" >"${sections_dir}/qlty_grade"
-	# t2066: smell delta and previous count — the dashboard reads these to
-	# render a trend indicator ("↓ -3", "↑ +7", "→ 0") next to the smell count.
 	printf '%s' "$qlty_smell_delta" >"${sections_dir}/qlty_smell_delta"
 	printf '%s' "$prev_qlty_smells" >"${sections_dir}/qlty_smell_count_prev"
 	printf '%s' "$sonar_section" >"${sections_dir}/sonar"
 	printf '%s' "$sweep_gate_status" >"${sections_dir}/sweep_gate_status"
 	printf '%s' "$sweep_total_issues" >"${sections_dir}/sweep_total_issues"
 	printf '%s' "$sweep_high_critical" >"${sections_dir}/sweep_high_critical"
-	# t2717: per-severity inline summary for the dashboard (replaces the
-	# misleading '(N high/critical)' aggregate on line rendering).
 	printf '%s' "$sweep_sev_inline" >"${sections_dir}/sweep_sev_inline"
 	printf '%s' "$codacy_section" >"${sections_dir}/codacy"
 	printf '%s' "$coderabbit_section" >"${sections_dir}/coderabbit"
 	printf '%s' "$review_scan_section" >"${sections_dir}/review_scan"
-
-	# Single-line handshake: just the directory path. The caller reads each
-	# section by `cat`ing one file at a time.
-	printf '%s\n' "$sections_dir"
+	printf '%s' "$sections_dir"
 	return 0
 }
 
