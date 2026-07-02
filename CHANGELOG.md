@@ -10,9 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.25] - 2026-07-02
+
+### Changed
+
+- Documentation: prepare changelog for 3.31.25
+- Maintenance: update simplification state
+- Maintenance: sync GitHub issue refs to TODO.md [skip ci]
+
 ### Fixed
 
-- Remove Cal Sans from aidevops.app font options and set the default hue to 191.
+- remove Cal Sans default styling
 
 ## [3.31.24] - 2026-07-02
 
