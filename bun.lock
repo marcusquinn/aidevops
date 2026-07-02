@@ -41,16 +41,24 @@
       "version": "0.0.0",
       "dependencies": {
         "@aidevops/gui-shared": "workspace:*",
+        "@fontsource/cal-sans": "^5.2.3",
+        "@fontsource/courier-prime": "^5.2.8",
+        "@fontsource/dm-mono": "^5.2.7",
+        "@fontsource/dm-sans": "^5.2.8",
+        "@fontsource/fredoka": "^5.2.10",
         "@fontsource/ibm-plex-mono": "^5.2.7",
         "@fontsource/ibm-plex-sans": "^5.2.8",
         "@fontsource/ibm-plex-serif": "^5.2.7",
         "@fontsource/inter": "^5.2.8",
+        "@fontsource/mohave": "^5.2.10",
         "@fontsource/playpen-sans": "^5.2.8",
         "@fontsource/poppins": "^5.2.7",
         "@fontsource/source-sans-3": "^5.2.9",
         "@fontsource/source-serif-4": "^5.2.9",
         "@fontsource/tilt-neon": "^5.2.10",
+        "@fontsource/ubuntu": "^5.2.8",
         "@fontsource/ubuntu-mono": "^5.2.8",
+        "@fontsource/zilla-slab": "^5.2.8",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
         "react-icons": "^5.5.0",
@@ -162,6 +170,16 @@
 
     "@esbuild/win32-x64": ["@esbuild/win32-x64@0.27.7", "", { "os": "win32", "cpu": "x64" }, "sha512-56hiAJPhwQ1R4i+21FVF7V8kSD5zZTdHcVuRFMW0hn753vVfQN8xlx4uOPT4xoGH0Z/oVATuR82AiqSTDIpaHg=="],
 
+    "@fontsource/cal-sans": ["@fontsource/cal-sans@5.2.3", "", {}, "sha512-cY9d2LWfzzge3jSgh2IJmNEJdubuPnjfct/5Q/L/4Q5W9LlXRRZO403P0c3i1iPH4Y+IQ0gHgnJroPzL3KuxQQ=="],
+
+    "@fontsource/courier-prime": ["@fontsource/courier-prime@5.2.8", "", {}, "sha512-M3xOCcXnGuFi9TcGCrz4hm5yeWg4Sn35MALRLPnqNoHhawTFvhyi2KSI2+5RyFtDNJrb58bPh8LLipgiI9KA0w=="],
+
+    "@fontsource/dm-mono": ["@fontsource/dm-mono@5.2.7", "", {}, "sha512-Ma1az2atTVgQWuOWwjuxx26p/6A6CU9HBNKq1CFV6YKpKhpswnf9ry9Ql4+T6bTZzkdtSfS6tjJvqZOljVzIFQ=="],
+
+    "@fontsource/dm-sans": ["@fontsource/dm-sans@5.2.8", "", {}, "sha512-tlovG42m9ESG28WiHpLq3F5umAlm64rv0RkqTbYowRn70e9OlRr5a3yTJhrhrY+k5lftR/OFJjPzOLQzk8EfCA=="],
+
+    "@fontsource/fredoka": ["@fontsource/fredoka@5.2.10", "", {}, "sha512-DyzPCmTf0PkBbAu+gNvnPzfD/dYIXlyp+Zcb76jEQyt/vmRKGZgkH8FFF9W2sICDaA5p+GLk1XGFjWh5PPX+lg=="],
+
     "@fontsource/ibm-plex-mono": ["@fontsource/ibm-plex-mono@5.2.7", "", {}, "sha512-MKAb8qV+CaiMQn2B0dIi1OV3565NYzp3WN5b4oT6LTkk+F0jR6j0ZN+5BKJiIhffDC3rtBULsYZE65+0018z9w=="],
 
     "@fontsource/ibm-plex-sans": ["@fontsource/ibm-plex-sans@5.2.8", "", {}, "sha512-eztSXjDhPhcpxNIiGTgMebdLP9qS4rWkysuE1V7c+DjOR0qiezaiDaTwQE7bTnG5HxAY/8M43XKDvs3cYq6ZYQ=="],
@@ -169,6 +187,8 @@
     "@fontsource/ibm-plex-serif": ["@fontsource/ibm-plex-serif@5.2.7", "", {}, "sha512-04owmc2OQQ/DAMjXjEMJc+7V4dBVmR01aIFOg4cuqS8pQ4HbvtlYs/u6+O0vCt21EMx5M/azIbgx43iKyisEOA=="],
 
     "@fontsource/inter": ["@fontsource/inter@5.2.8", "", {}, "sha512-P6r5WnJoKiNVV+zvW2xM13gNdFhAEpQ9dQJHt3naLvfg+LkF2ldgSLiF4T41lf1SQCM9QmkqPTn4TH568IRagg=="],
+
+    "@fontsource/mohave": ["@fontsource/mohave@5.2.10", "", {}, "sha512-YyK9N7xedYTpFRPo5lpTeNhBOqzapv/WdRv6YtyOHiux/JA5C/sPa6+wL92nNq4sYN7acSFyQQaSFzIoK8VLGw=="],
 
     "@fontsource/playpen-sans": ["@fontsource/playpen-sans@5.2.8", "", {}, "sha512-lT8GrhQunGZgTiGIBhFjQQ3kcWEPNDCUQQdXwOI236lw6CnQTVKo5xqxukPaxlGUgn21P59g6jrq6+AuQdqNIQ=="],
 
@@ -180,7 +200,11 @@
 
     "@fontsource/tilt-neon": ["@fontsource/tilt-neon@5.2.10", "", {}, "sha512-qBointHhyP7K/avRTmfYkHUrGoCOLt3EG0dpXKJdHua/2OjU74YrCUeVIFO9agSX6A0dM2dUUsrE2ZuxYwC1Eg=="],
 
+    "@fontsource/ubuntu": ["@fontsource/ubuntu@5.2.8", "", {}, "sha512-esSJCpgigwWOm4Ug9f7AMozUyBq5Iobea5C9QYsl2OlCb62wZABBUbXahHLdFv5Ru4lJCD9tUX6xEAeLwUTNBg=="],
+
     "@fontsource/ubuntu-mono": ["@fontsource/ubuntu-mono@5.2.8", "", {}, "sha512-N4nT8+GYWWcDODVSBLU4f3PycZQH9YIF6SypDI0rti3HrLqcXFS9u6wMvAd9vx1FmjAQkYv7Ld9CZ8XYTEOD0A=="],
+
+    "@fontsource/zilla-slab": ["@fontsource/zilla-slab@5.2.8", "", {}, "sha512-S4wZ1IpJNMFd+FEcS6lwci3Ine/JivSRaMb0SzhE43b/gOmDKnylNfXjIxc7GmAiqAJlz0jOauxiuy085DQdNw=="],
 
     "@jridgewell/gen-mapping": ["@jridgewell/gen-mapping@0.3.13", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.0", "@jridgewell/trace-mapping": "^0.3.24" } }, "sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA=="],
 

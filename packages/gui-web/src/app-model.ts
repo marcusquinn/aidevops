@@ -6,17 +6,25 @@ export type SidebarMode = "devops" | "comms";
 export type ShellMode = "devices" | "sessions";
 export type ConversationMode = "ai" | "people";
 export type FontPreference =
+  | "Cal Sans"
+  | "Courier Prime"
+  | "DM Mono"
+  | "DM Sans"
+  | "Fredoka"
   | "IBM Plex Mono"
   | "IBM Plex Sans"
   | "IBM Plex Serif"
   | "Inter"
   | "Menlo"
+  | "Mohave"
   | "Playpen Sans"
   | "Poppins"
   | "Source Sans"
   | "Source Serif"
   | "Tilt Neon"
-  | "Ubuntu Mono";
+  | "Ubuntu"
+  | "Ubuntu Mono"
+  | "Zilla Slab";
 export type FontSizePreference = "xs" | "s" | "m" | "lg" | "xl";
 export const surfaceIconNames = {
   activity: true,
@@ -340,17 +348,25 @@ export const contrastOptions: ContrastOption[] = [
 ];
 
 export const fontOptions: FontOption[] = [
+  { value: "Cal Sans", label: "Cal Sans", fontFamily: '"Cal Sans", Inter, system-ui, sans-serif' },
+  { value: "Courier Prime", label: "Courier Prime", fontFamily: '"Courier Prime", "Courier New", Courier, monospace' },
+  { value: "DM Mono", label: "DM Mono", fontFamily: '"DM Mono", Menlo, Monaco, Consolas, monospace' },
+  { value: "DM Sans", label: "DM Sans", fontFamily: '"DM Sans", Inter, system-ui, sans-serif' },
+  { value: "Fredoka", label: "Fredoka", fontFamily: 'Fredoka, "Arial Rounded MT Bold", Inter, system-ui, sans-serif' },
   { value: "IBM Plex Mono", label: "IBM Plex Mono", fontFamily: '"IBM Plex Mono", Menlo, Monaco, Consolas, monospace' },
   { value: "IBM Plex Sans", label: "IBM Plex Sans", fontFamily: '"IBM Plex Sans", Inter, system-ui, sans-serif' },
   { value: "IBM Plex Serif", label: "IBM Plex Serif", fontFamily: '"IBM Plex Serif", Georgia, serif' },
   { value: "Inter", label: "Inter (default)", fontFamily: 'Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' },
   { value: "Menlo", label: "Menlo", fontFamily: 'Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace' },
+  { value: "Mohave", label: "Mohave", fontFamily: 'Mohave, Inter, system-ui, sans-serif' },
   { value: "Playpen Sans", label: "Playpen Sans", fontFamily: '"Playpen Sans", "Comic Sans MS", Inter, system-ui, sans-serif' },
   { value: "Poppins", label: "Poppins", fontFamily: 'Poppins, Inter, system-ui, sans-serif' },
   { value: "Source Sans", label: "Source Sans", fontFamily: '"Source Sans 3", "Source Sans Pro", "Source Sans", Inter, system-ui, sans-serif' },
   { value: "Source Serif", label: "Source Serif", fontFamily: '"Source Serif 4", "Source Serif Pro", "Source Serif", Georgia, serif' },
   { value: "Tilt Neon", label: "Tilt Neon", fontFamily: '"Tilt Neon", Poppins, Inter, system-ui, sans-serif' },
+  { value: "Ubuntu", label: "Ubuntu", fontFamily: 'Ubuntu, Inter, system-ui, sans-serif' },
   { value: "Ubuntu Mono", label: "Ubuntu Mono", fontFamily: '"Ubuntu Mono", Menlo, Monaco, Consolas, monospace' },
+  { value: "Zilla Slab", label: "Zilla Slab", fontFamily: '"Zilla Slab", Georgia, serif' },
 ];
 
 export const fontSizeOptions: FontSizeOption[] = (["xs", "s", "m", "lg", "xl"] as const).map((size, index) => ({
