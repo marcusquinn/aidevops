@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.28] - 2026-07-03
+
+### Fixed
+
+- validate approval target kind before signing and show corrective issue/PR commands (#26397)
+
 ## [3.31.27] - 2026-07-03
 
 ### Changed
