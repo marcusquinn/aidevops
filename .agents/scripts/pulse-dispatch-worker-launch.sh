@@ -161,7 +161,7 @@ _dlw_setup_worker_log() {
 # without the complexity of multi-value stdout parsing (bash 3.2 has no
 # namerefs — pattern from GH#18705 decomposition memory lesson):
 #   _DLW_DISPATCH_TIER        — cascade tier name: simple|standard|thinking
-#   _DLW_DISPATCH_MODEL_TIER  — runtime tier: haiku|sonnet|opus
+#   _DLW_DISPATCH_MODEL_TIER  — runtime tier: haiku|sonnet|opus|bundle tier
 #   _DLW_SELECTED_MODEL       — concrete model name, or empty for auto-select
 #
 # ROUND-ROBIN MODEL SELECTION (owned by this helper, NOT the caller).
@@ -178,11 +178,12 @@ _dlw_setup_worker_log() {
 # arbitrary model here bypasses the round-robin and causes provider
 # imbalance. History: GH#17503 moved model resolution here from the worker.
 #
-# Arguments: issue_meta_json, model_override
+# Arguments: issue_meta_json, model_override, repo_path
 #######################################
 _dlw_resolve_tier_and_model() {
 	local issue_meta_json="$1"
 	local model_override="$2"
+	local repo_path="${3:-}"
 
 	_DLW_DISPATCH_TIER="standard"
 	_DLW_DISPATCH_MODEL_TIER="sonnet"
@@ -207,12 +208,108 @@ _dlw_resolve_tier_and_model() {
 		;;
 	esac
 
+	# t1364.6: when issue labels do not force a tier, let project bundles
+	# right-size worker model selection for implementation work. Explicit model
+	# overrides and tier:* labels still win.
+	if [[ -z "$model_override" && -z "$resolved_tier" && -n "$repo_path" ]]; then
+		local bundle_tier
+		bundle_tier=$(_dlw_bundle_model_tier "$repo_path") || bundle_tier=""
+		if [[ -n "$bundle_tier" ]]; then
+			_DLW_DISPATCH_TIER="bundle"
+			_DLW_DISPATCH_MODEL_TIER="$bundle_tier"
+		fi
+	fi
+
 	_DLW_SELECTED_MODEL=""
 	if [[ -n "$model_override" ]]; then
 		_DLW_SELECTED_MODEL="$model_override"
 	else
 		_DLW_SELECTED_MODEL=$("$HEADLESS_RUNTIME_HELPER" select --role worker --tier "$_DLW_DISPATCH_MODEL_TIER" 2>/dev/null) || _DLW_SELECTED_MODEL=""
 	fi
+	return 0
+}
+
+#######################################
+# Resolve implementation model tier from the project bundle, if configured.
+# Arguments:
+#   $1 - repo_path
+# Stdout: tier name (empty if unavailable)
+#######################################
+_dlw_bundle_model_tier() {
+	local repo_path="$1"
+	local bundle_helper="${_DLW_SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/bundle-helper.sh"
+
+	if [[ -z "$repo_path" || ! -x "$bundle_helper" ]]; then
+		return 0
+	fi
+
+	"$bundle_helper" get model_defaults.implementation "$repo_path" 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Classify a task into a coarse bundle agent_routing domain.
+# Arguments:
+#   $1 - issue_title
+#   $2 - prompt
+# Stdout: routing domain key
+#######################################
+_dlw_bundle_routing_domain() {
+	local issue_title="$1"
+	local prompt="$2"
+	local text
+	text=$(printf '%s %s' "$issue_title" "$prompt" | tr '[:upper:]' '[:lower:]')
+
+	case "$text" in
+	*seo* | *sitemap* | *schema* | *ranking* | *metadata* | *meta\ tag*)
+		printf 'seo\n'
+		return 0
+		;;
+	*content* | *blog* | *newsletter* | *social* | *video* | *copywriting*)
+		printf 'content\n'
+		return 0
+		;;
+	*accessibility* | *a11y* | *wcag*)
+		printf 'accessibility\n'
+		return 0
+		;;
+	*deploy* | *docker* | *terraform* | *infrastructure* | *cloudflare*)
+		printf 'infrastructure\n'
+		return 0
+		;;
+	*document* | *readme* | *docs*)
+		printf 'documentation\n'
+		return 0
+		;;
+	*)
+		printf 'code\n'
+		return 0
+		;;
+	esac
+}
+
+#######################################
+# Resolve preferred worker agent from bundle agent_routing.
+# Arguments:
+#   $1 - repo_path
+#   $2 - issue_title
+#   $3 - prompt
+# Stdout: agent name (empty if unavailable)
+#######################################
+_dlw_bundle_agent_name() {
+	local repo_path="$1"
+	local issue_title="$2"
+	local prompt="$3"
+	local bundle_helper="${_DLW_SCRIPT_DIR:-${BASH_SOURCE[0]%/*}}/bundle-helper.sh"
+
+	if [[ -z "$repo_path" || ! -x "$bundle_helper" ]]; then
+		return 0
+	fi
+
+	local domain
+	domain=$(_dlw_bundle_routing_domain "$issue_title" "$prompt")
+	"$bundle_helper" resolve "$repo_path" 2>/dev/null | jq -r --arg domain "$domain" \
+		'.agent_routing[$domain] // .agent_routing.code // empty' 2>/dev/null || true
 	return 0
 }
 
@@ -1375,6 +1472,11 @@ _dlw_nohup_launch() {
 		# no-activity/provider failures while preserving explicit --model pins.
 		worker_cmd+=(--initial-model "$selected_model")
 	fi
+	local bundle_agent
+	bundle_agent=$(_dlw_bundle_agent_name "$repo_path" "$issue_title" "$prompt") || bundle_agent=""
+	if [[ -n "$bundle_agent" ]]; then
+		worker_cmd+=(--agent "$bundle_agent")
+	fi
 
 	# t2757: Detach worker via setsid (extracted to helper)
 	_dlw_exec_detached "$worker_log" "$issue_number" "${worker_cmd[@]}"
@@ -1846,7 +1948,7 @@ _dispatch_launch_worker() {
 	fi
 
 	_ds_t0=$(_ds_now_ns)
-	_dlw_resolve_tier_and_model "$issue_meta_json" "$model_override"
+	_dlw_resolve_tier_and_model "$issue_meta_json" "$model_override" "$repo_path"
 	_ds_record "$issue_number" "$repo_slug" "resolve_tier_model" "$_ds_t0"
 	local dispatch_tier="$_DLW_DISPATCH_TIER" dispatch_model_tier="$_DLW_DISPATCH_MODEL_TIER" selected_model="$_DLW_SELECTED_MODEL"
 
