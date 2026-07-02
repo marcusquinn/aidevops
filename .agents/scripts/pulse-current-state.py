@@ -229,16 +229,16 @@ try:
     ).strip() or graphql_budget_status
 except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
     pass
+has_graphql_pressure = any(
+    (
+        graphql_budget['skipped_low_count'] > 0,
+        graphql_budget['circuit_broken_count'] > 0,
+        pre_launch_blockers.get('graphql_circuit_breaker', 0) > 0,
+    )
+)
 dispatch_api_blocked = (
     graphql_budget_status.startswith('TRIPPED:')
-    or (
-        not graphql_budget_status.startswith('OK:')
-        and (
-            graphql_budget['skipped_low_count'] > 0
-            or graphql_budget['circuit_broken_count'] > 0
-            or pre_launch_blockers.get('graphql_circuit_breaker', 0) > 0
-        )
-    )
+    or (not graphql_budget_status.startswith('OK:') and has_graphql_pressure)
 )
 current_state_guardrails = {
     'applied_count': counter_hits.get('pulse_dispatch_current_state_guardrail_applied', 0),
