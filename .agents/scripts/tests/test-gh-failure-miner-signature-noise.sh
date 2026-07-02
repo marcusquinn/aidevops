@@ -74,6 +74,13 @@ assert_equals "GH#26127 comment-only systemic signature normalizes empty" "no_er
 filtered=$(filter_signature_noise_lines $'2026-06-30T20:14:24.8559907Z \033[36;1m# rate-limit grace is disabled — they cannot merge on rate-limit-only.\033[0m\n2026-06-30T20:14:25.0000000Z ::error::No AI review bots have posted a real, settled review on this PR yet.')
 assert_equals "GH#26144 timestamp-prefixed shell comments are filtered" $'2026-06-30T20:14:25.0000000Z ::error::No AI review bots have posted a real, settled review on this PR yet.' "$filtered"
 
+filtered=$(filter_signature_noise_lines $'gate / review-bot-gate\tUNKNOWN STEP\t2026-07-02T07:13:54.3733546Z\t^[[36;1m# rate-limit grace is disabled — they cannot merge on rate-limit-only.^[[0m')
+signature=$(normalize_signature_line "$filtered")
+assert_equals "GH#26308 caret-escaped ANSI comment-only signature normalizes empty" "no_error_signature_detected" "$signature"
+
+signature=$(normalize_signature_line $'^[[36;1m# rate-limit grace is disabled — they cannot merge on rate-limit-only.^[[0m')
+assert_equals "GH#26308 caret-escaped ANSI is stripped during normalization" "# rate-limit grace is disabled — they cannot merge on rate-limit-only." "$signature"
+
 printf '\nTests run: %s, failures: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -ne 0 ]]; then
 	exit 1
