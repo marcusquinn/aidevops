@@ -32,6 +32,13 @@ _LFG_SKIP_PATTERN='(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|composer\.lock
 # exemption fires; reset to "" at the start of each call.
 _LFG_SURGICAL_EXEMPTED_FILES=""
 
+# Module-level return variables for _large_file_gate_collect_large_files.
+# These avoid fragile delimiter parsing for path lists while keeping
+# _issue_targets_large_files() as a thin orchestrator.
+_LFG_FOUND_LARGE=false
+_LFG_LARGE_FILES=""
+_LFG_LARGE_FILE_PATHS=""
+
 #######################################
 # Label-based early-exit precheck for the large-file gate.
 # Handles GH#18042 self-simplification auto-clear, force_recheck bypass,
@@ -766,6 +773,68 @@ _large_file_gate_check_surgical_brief() {
 }
 
 #######################################
+# Return the issue title from an optional pre-fetched bundle, falling back to gh.
+#
+# Arguments:
+#   $1 - issue_number
+#   $2 - repo_slug
+#   $3 - pre_fetched_json (optional)
+# Stdout: issue title, or empty string on failure
+#######################################
+_large_file_gate_issue_title() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local pre_fetched_json="$3"
+
+	if [[ -n "$pre_fetched_json" ]] \
+		&& printf '%s' "$pre_fetched_json" | jq -e '.title' >/dev/null 2>&1; then
+		printf '%s' "$pre_fetched_json" | jq -r '.title // ""' 2>/dev/null || true
+		return 0
+	fi
+
+	gh_issue_view "$issue_number" --repo "$repo_slug" \
+		--json title --jq '.title // ""' 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Evaluate extracted issue targets and collect any large files.
+#
+# Sets module-level globals:
+#   _LFG_FOUND_LARGE, _LFG_LARGE_FILES, _LFG_LARGE_FILE_PATHS
+#
+# Arguments:
+#   $1 - all_paths (newline-separated, from _large_file_gate_extract_paths)
+#   $2 - repo_path
+#   $3 - issue_number
+#######################################
+_large_file_gate_collect_large_files() {
+	local all_paths="$1"
+	local repo_path="$2"
+	local issue_number="$3"
+
+	_LFG_FOUND_LARGE=false
+	_LFG_LARGE_FILES=""
+	_LFG_LARGE_FILE_PATHS=""
+
+	local raw_target eval_output eval_rc
+	while IFS= read -r raw_target; do
+		[[ -z "$raw_target" ]] && continue
+		eval_rc=0
+		eval_output=$(_large_file_gate_evaluate_target "$raw_target" "$repo_path" "$issue_number") || eval_rc=$?
+		if [[ "$eval_rc" -eq 0 && -n "$eval_output" ]]; then
+			local _f="${eval_output%|*}" _c="${eval_output##*|}"
+			_LFG_FOUND_LARGE=true
+			_LFG_LARGE_FILES="${_LFG_LARGE_FILES}${_f} (${_c} lines), "
+			# shellcheck disable=SC2129  # two appends to _LFG_LARGE_FILE_PATHS is clearer as separate statements
+			_LFG_LARGE_FILE_PATHS="${_LFG_LARGE_FILE_PATHS}${_f}\n"
+		fi
+	done <<<"$all_paths"
+
+	return 0
+}
+
+#######################################
 # Thin orchestrator for the large-file gate. Delegates label precheck,
 # path extraction, per-target evaluation, gate application, and stale-label
 # cleanup to the `_large_file_gate_*` helpers above. Byte-for-byte
@@ -844,41 +913,20 @@ _issue_targets_large_files() {
 	# t2996: title travels in pre_fetched_json when dispatch_with_dedup is
 	# the caller; only fall back to a fresh fetch when the bundle is absent
 	# (re-evaluation paths from pulse-triage.sh).
-	local _surgical_title=""
-	if [[ -n "$pre_fetched_json" ]] \
-		&& printf '%s' "$pre_fetched_json" | jq -e '.title' >/dev/null 2>&1; then
-		_surgical_title=$(printf '%s' "$pre_fetched_json" | jq -r '.title // ""' 2>/dev/null) || _surgical_title=""
-	else
-		_surgical_title=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
-			--json title --jq '.title // ""' 2>/dev/null) || _surgical_title=""
-	fi
+	local _surgical_title
+	_surgical_title=$(_large_file_gate_issue_title "$issue_number" "$repo_slug" "$pre_fetched_json") || _surgical_title=""
 	if _large_file_gate_check_surgical_brief \
 		"$_surgical_title" "$all_paths" "$repo_path"; then
 		echo "[pulse-wrapper] Large-file gate EXEMPTED for #${issue_number} (${repo_slug}): surgical brief with line ranges for ${_LFG_SURGICAL_EXEMPTED_FILES}" >>"$LOGFILE"
 		return 1
 	fi
 
-	local found_large=false
-	local large_files=""
-	local large_file_paths=""
-	local raw_target eval_output eval_rc
-	while IFS= read -r raw_target; do
-		[[ -z "$raw_target" ]] && continue
-		eval_rc=0
-		eval_output=$(_large_file_gate_evaluate_target "$raw_target" "$repo_path" "$issue_number") || eval_rc=$?
-		if [[ "$eval_rc" -eq 0 && -n "$eval_output" ]]; then
-			local _f="${eval_output%|*}" _c="${eval_output##*|}"
-			found_large=true
-			large_files="${large_files}${_f} (${_c} lines), "
-			# shellcheck disable=SC2129  # two appends to large_file_paths is clearer as separate statements
-			large_file_paths="${large_file_paths}${_f}\n"
-		fi
-	done <<<"$all_paths"
+	_large_file_gate_collect_large_files "$all_paths" "$repo_path" "$issue_number"
 
-	if [[ "$found_large" == "true" ]]; then
+	if [[ "$_LFG_FOUND_LARGE" == "true" ]]; then
 		# t2164: thread repo_path through so _large_file_gate_create_debt_issue
 		# can verify recently-closed continuations actually reduced the file size.
-		_large_file_gate_apply "$issue_number" "$repo_slug" "$large_files" "$large_file_paths" "$repo_path"
+		_large_file_gate_apply "$issue_number" "$repo_slug" "$_LFG_LARGE_FILES" "$_LFG_LARGE_FILE_PATHS" "$repo_path"
 		return 0
 	fi
 
