@@ -608,7 +608,7 @@ PROMPT_EOF
 	wrapper_content=$(
 		cat <<WRAPPER_EOF
 #!/usr/bin/env bash
-echo "WRAPPER_STARTED task_id=${task_id} wrapper_pid=\$\$ host=${host} timestamp=\$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${remote_log_file}" 2>/dev/null || true
+echo "WRAPPER_STARTED task_id=${task_id} wrapper_pid=\$\$ host=${host} timestamp=\$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${remote_log_file}" || true
 
 # Cleanup handler
 cleanup_children() {
