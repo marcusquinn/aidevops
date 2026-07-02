@@ -235,7 +235,25 @@ CURRENT_BRANCH=$(git -C "$WORK_REPO" rev-parse --abbrev-ref HEAD)
 assert "PR creation failure restores default branch" "$CURRENT_BRANCH" "main"
 
 # ---------------------------------------------------------------------------
-# Test 9 — rerunning a machine branch force-pushes replacement commits
+# Test 9 — rewrite failures restore the default branch
+# ---------------------------------------------------------------------------
+REWRITE_FAIL_RESULT=$( (
+	_rewrite_repo_aidevops_version() {
+		local slug="$1"
+		local adj_file="$2"
+		local target_version="$3"
+		return 1
+	}
+	BUMP_OUT=$(_bump_single_repo "test/pr-bump-repo" "$WORK_REPO" "false" "8.8.8" "0")
+	CURRENT_BRANCH=$(git -C "$WORK_REPO" rev-parse --abbrev-ref HEAD)
+	printf '%s\t%s\n' "$BUMP_OUT" "$CURRENT_BRANCH"
+) )
+IFS=$'\t' read -r REWRITE_FAIL_OUT REWRITE_FAIL_BRANCH <<<"$REWRITE_FAIL_RESULT"
+assert "rewrite failure reports failed" "$REWRITE_FAIL_OUT" "failed"
+assert "rewrite failure restores default branch" "$REWRITE_FAIL_BRANCH" "main"
+
+# ---------------------------------------------------------------------------
+# Test 10 — rerunning a machine branch force-pushes replacement commits
 # ---------------------------------------------------------------------------
 gh_create_pr() {
 	printf '%s\n' "$*" >"$GH_CREATE_PR_ARGS"
@@ -249,7 +267,7 @@ REMOTE_BRANCH_VERSION=$(git -C "$WORK_REPO" show "origin/chore/aidevops-version-
 assert "non-local bump rerun replaces remote version branch" "$REMOTE_BRANCH_VERSION" "9.9.9"
 
 # ---------------------------------------------------------------------------
-# Test 10 — recovery reset only runs when .aidevops.json is the sole ahead file
+# Test 11 — recovery reset only runs when .aidevops.json is the sole ahead file
 # ---------------------------------------------------------------------------
 MULTI_REMOTE_DIR="$FIXTURE_DIR/multi-remote"
 MULTI_REPO="$FIXTURE_DIR/multi-ahead-repo"
