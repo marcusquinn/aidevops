@@ -144,6 +144,8 @@ test_gui_desktop_installer_contract() {
 
 	assert_contains "installer honours configured app dir env" "$text" 'AIDEVOPS_GUI_DESKTOP_APP_DIR'
 	assert_contains "installer keeps explicit app-dir override" "$text" '--app-dir'
+	assert_contains "installer dependency check includes new Cal Sans font package" "$text" 'node_modules/@fontsource/cal-sans'
+	assert_contains "installer dependency check includes new Zilla Slab font package" "$text" 'node_modules/@fontsource/zilla-slab'
 	return 0
 }
 

@@ -51,9 +51,40 @@ validate_environment() {
 
 gui_dependencies_present() {
   local root="$1"
+  local dependency_path=""
 
-  [[ -f "${root}/node_modules/vite/bin/vite.js" && -d "${root}/node_modules/react" && -d "${root}/node_modules/react-icons" ]]
-  return $?
+  while IFS= read -r dependency_path; do
+    if [[ -z "$dependency_path" ]]; then
+      continue
+    fi
+    if [[ ! -e "${root}/${dependency_path}" ]]; then
+      return 1
+    fi
+  done <<'DEPENDENCIES'
+node_modules/vite/bin/vite.js
+node_modules/react
+node_modules/react-icons
+node_modules/@fontsource/cal-sans
+node_modules/@fontsource/courier-prime
+node_modules/@fontsource/dm-mono
+node_modules/@fontsource/dm-sans
+node_modules/@fontsource/fredoka
+node_modules/@fontsource/ibm-plex-mono
+node_modules/@fontsource/ibm-plex-sans
+node_modules/@fontsource/ibm-plex-serif
+node_modules/@fontsource/inter
+node_modules/@fontsource/mohave
+node_modules/@fontsource/playpen-sans
+node_modules/@fontsource/poppins
+node_modules/@fontsource/source-sans-3
+node_modules/@fontsource/source-serif-4
+node_modules/@fontsource/tilt-neon
+node_modules/@fontsource/ubuntu
+node_modules/@fontsource/ubuntu-mono
+node_modules/@fontsource/zilla-slab
+DEPENDENCIES
+
+  return 0
 }
 
 ensure_gui_dependencies() {
@@ -189,6 +220,68 @@ require_bun() {
   return 0
 }
 
+gui_dependencies_present() {
+  local dependency_path=""
+
+  while IFS= read -r dependency_path; do
+    if [[ -z "\${dependency_path}" ]]; then
+      continue
+    fi
+    if [[ ! -e "\${dependency_path}" ]]; then
+      return 1
+    fi
+  done <<'DEPENDENCIES'
+node_modules/vite/bin/vite.js
+node_modules/react
+node_modules/react-icons
+node_modules/@fontsource/cal-sans
+node_modules/@fontsource/courier-prime
+node_modules/@fontsource/dm-mono
+node_modules/@fontsource/dm-sans
+node_modules/@fontsource/fredoka
+node_modules/@fontsource/ibm-plex-mono
+node_modules/@fontsource/ibm-plex-sans
+node_modules/@fontsource/ibm-plex-serif
+node_modules/@fontsource/inter
+node_modules/@fontsource/mohave
+node_modules/@fontsource/playpen-sans
+node_modules/@fontsource/poppins
+node_modules/@fontsource/source-sans-3
+node_modules/@fontsource/source-serif-4
+node_modules/@fontsource/tilt-neon
+node_modules/@fontsource/ubuntu
+node_modules/@fontsource/ubuntu-mono
+node_modules/@fontsource/zilla-slab
+DEPENDENCIES
+
+  return 0
+}
+
+ensure_gui_dependencies() {
+  if gui_dependencies_present; then
+    return 0
+  fi
+
+  require_bun
+  if [[ ! -f "bun.lock" ]]; then
+    printf 'GUI dependencies are missing and bun.lock was not found in %s\n' "\${REPO_ROOT}" >"\${LAUNCHER_LOG}"
+    notify "aidevops GUI dependencies are missing and bun.lock was not found."
+    return 1
+  fi
+  printf 'Installing GUI dependencies with bun install --frozen-lockfile in %s\n' "\${REPO_ROOT}" >"\${LAUNCHER_LOG}"
+  if ! "\${BUN_BIN}" install --frozen-lockfile >>"\${LAUNCHER_LOG}" 2>&1; then
+    notify "aidevops GUI dependency install failed. Check \${LAUNCHER_LOG}."
+    return 1
+  fi
+  if ! gui_dependencies_present; then
+    printf 'GUI dependencies are still missing after bun install in %s\n' "\${REPO_ROOT}" >>"\${LAUNCHER_LOG}"
+    notify "aidevops GUI dependencies are still missing after install."
+    return 1
+  fi
+
+  return 0
+}
+
 port_pids() {
   local port="\$1"
 
@@ -293,6 +386,10 @@ sleep 1
 
 if ! url_ready "\${API_HEALTH_URL}" || ! url_ready "\${WEB_HEALTH_URL}"; then
   require_bun
+fi
+
+if ! url_ready "\${WEB_HEALTH_URL}"; then
+  ensure_gui_dependencies
 fi
 
 if ! url_ready "\${API_HEALTH_URL}"; then
