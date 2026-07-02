@@ -107,8 +107,12 @@ case "$_subcmd" in
 		printf '%s\n' 'Lint'
 		exit 0
 	fi
-	if [[ "$*" == *"--json name,bucket,conclusion,link"* ]]; then
-		printf '%s\n' '[{"name":"Lint","bucket":"fail","conclusion":"failure","link":"https://github.com/owner/repo/actions/runs/123/job/456"}]'
+	if [[ "$*" == *"conclusion"* ]]; then
+		printf '%s\n' 'Unknown JSON field: "conclusion"' >&2
+		exit 1
+	fi
+	if [[ "$*" == *"--json name,bucket,state,link"* ]]; then
+		printf '%s\n' '[{"name":"Lint","bucket":"fail","state":"FAILURE","link":"https://github.com/owner/repo/actions/runs/123/job/456"}]'
 		exit 0
 	fi
 	exit 0

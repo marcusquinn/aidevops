@@ -379,7 +379,7 @@ _ci_actionable_failed_checks_markdown() {
 # Return terminal failed check details and names from one jq pass.
 #
 # Args:
-#   $1 - checks_json (array from gh pr checks --json name,bucket,conclusion,link)
+#   $1 - checks_json (array from gh pr checks --json name,bucket,state,link)
 #   $2 - terminal_failed_check_filter (jq select expression)
 #
 # Output: first line is filtered checks JSON, followed by a marker and one
@@ -391,7 +391,7 @@ _ci_terminal_failed_check_results() {
 	local terminal_failed_check_filter="$2"
 
 	[[ -n "$checks_json" ]] || checks_json="[]"
-	printf '%s' "$checks_json" | jq -r "([.[] | select(${terminal_failed_check_filter}) | {name, conclusion, link}] | tojson), \"__AIDEVOPS_CHECK_NAMES__\", (.[] | select(${terminal_failed_check_filter}) | .name)" 2>/dev/null || {
+	printf '%s' "$checks_json" | jq -r "([.[] | select(${terminal_failed_check_filter}) | {name, conclusion: ((.conclusion // .state // \"\") | ascii_downcase), link}] | tojson), \"__AIDEVOPS_CHECK_NAMES__\", (.[] | select(${terminal_failed_check_filter}) | .name)" 2>/dev/null || {
 		printf '[]\n__AIDEVOPS_CHECK_NAMES__\n'
 		return 0
 	}
@@ -441,12 +441,12 @@ _dispatch_ci_fix_worker() {
 	# full check set so advisory-only terminal failures can still carry
 	# pattern-specific repair guidance.
 	local terminal_failed_check_filter
-	terminal_failed_check_filter='(.bucket == "fail" or .bucket == "cancel") and ((.conclusion // "") | test("^(failure|action_required)$")) and ((.link // "") != "")'
+	terminal_failed_check_filter='(.bucket == "fail" or .bucket == "cancel") and (((.conclusion // .state // "") | ascii_downcase) | test("^(failure|action_required)$")) and ((.link // "") != "")'
 	local checks_json="$supplied_checks_json" result_marker=$'\n__AIDEVOPS_CHECK_NAMES__'
 	local check_results="" failing_checks_json="" failing_checks="" failing_names="" classification_output=""
 	if [[ -z "$checks_json" ]]; then
 		checks_json=$(gh pr checks "$pr_number" --repo "$repo_slug" --required \
-			--json name,bucket,conclusion,link \
+			--json name,bucket,state,link \
 			2>/dev/null) || checks_json="[]"
 	fi
 	check_results=$(_ci_terminal_failed_check_results "$checks_json" "$terminal_failed_check_filter")
@@ -458,7 +458,7 @@ _dispatch_ci_fix_worker() {
 
 	if [[ -z "$failing_checks" && -z "$supplied_checks_json" ]]; then
 		checks_json=$(gh pr checks "$pr_number" --repo "$repo_slug" \
-			--json name,bucket,conclusion,link \
+			--json name,bucket,state,link \
 			2>/dev/null) || checks_json="[]"
 		check_results=$(_ci_terminal_failed_check_results "$checks_json" "$terminal_failed_check_filter")
 		failing_checks_json="${check_results%%"$result_marker"*}"

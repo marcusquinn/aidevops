@@ -97,6 +97,22 @@ def read_state_file(path):
     return state
 
 
+def graphql_pressure_seen(graphql_budget, pre_launch_blockers):
+    if graphql_budget['skipped_low_count'] > 0:
+        return True
+    if graphql_budget['circuit_broken_count'] > 0:
+        return True
+    return pre_launch_blockers.get('graphql_circuit_breaker', 0) > 0
+
+
+def dispatch_blocked_by_graphql_budget(graphql_budget_status, graphql_budget, pre_launch_blockers):
+    if graphql_budget_status.startswith('TRIPPED:'):
+        return True
+    if graphql_budget_status.startswith('OK:'):
+        return False
+    return graphql_pressure_seen(graphql_budget, pre_launch_blockers)
+
+
 stage_records = []
 for line in recent_lines(os.path.join(log_dir, 'dispatch-stages.tsv')):
     record = parse_stage(line)
@@ -229,17 +245,7 @@ try:
     ).strip() or graphql_budget_status
 except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
     pass
-dispatch_api_blocked = (
-    graphql_budget_status.startswith('TRIPPED:')
-    or (
-        not graphql_budget_status.startswith('OK:')
-        and (
-            graphql_budget['skipped_low_count'] > 0
-            or graphql_budget['circuit_broken_count'] > 0
-            or pre_launch_blockers.get('graphql_circuit_breaker', 0) > 0
-        )
-    )
-)
+dispatch_api_blocked = dispatch_blocked_by_graphql_budget(graphql_budget_status, graphql_budget, pre_launch_blockers)
 current_state_guardrails = {
     'applied_count': counter_hits.get('pulse_dispatch_current_state_guardrail_applied', 0),
     'available_slots_last': gauge_values.get('pulse_dispatch_guardrail_available_slots'),
