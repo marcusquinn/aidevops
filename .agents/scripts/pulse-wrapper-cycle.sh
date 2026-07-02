@@ -252,6 +252,35 @@ gathered by pulse-wrapper.sh BEFORE this session started."
 # run_pulse() with the appropriate trigger_mode. Records the run epoch and
 # kicks off the early-exit recycle loop on completion.
 # ---------------------------------------------------------------------------
+_pulse_record_llm_attempt() {
+	local trigger_mode="$1"
+	local attempt_epoch
+	attempt_epoch=$(date +%s)
+	printf '%s\n' "$attempt_epoch" >"${PULSE_DIR}/last_llm_attempt_epoch" 2>/dev/null || return 1
+	printf '%s\n' "$trigger_mode" >"${PULSE_DIR}/last_llm_attempt_mode" 2>/dev/null || true
+	echo "[pulse-wrapper] LLM supervisor attempt started (trigger=${trigger_mode}, epoch=${attempt_epoch})" >>"$LOGFILE"
+	return 0
+}
+
+_pulse_record_llm_success() {
+	local trigger_mode="$1"
+	local success_epoch
+	success_epoch=$(date +%s)
+	printf '%s\n' "$success_epoch" >"${PULSE_DIR}/last_llm_success_epoch" 2>/dev/null || return 1
+	# Keep the legacy file as successful-completion state for older helpers.
+	printf '%s\n' "$success_epoch" >"${PULSE_DIR}/last_llm_run_epoch" 2>/dev/null || return 1
+	printf '%s\n' "$trigger_mode" >"${PULSE_DIR}/last_llm_success_mode" 2>/dev/null || true
+	echo "[pulse-wrapper] LLM supervisor completed successfully (trigger=${trigger_mode}, epoch=${success_epoch})" >>"$LOGFILE"
+	return 0
+}
+
+_pulse_record_llm_failure() {
+	local trigger_mode="$1"
+	local exit_code="$2"
+	echo "[pulse-wrapper] LLM supervisor failed (trigger=${trigger_mode}, rc=${exit_code}); success timestamp unchanged" >>"$LOGFILE"
+	return 0
+}
+
 _pulse_maybe_run_llm_supervisor() {
 	local skip_llm=false
 	local llm_trigger_mode="stall"
@@ -291,15 +320,21 @@ _pulse_maybe_run_llm_supervisor() {
 			initial_underfilled_mode=$(echo "$underfill_output" | sed -n '1p')
 			initial_underfill_pct=$(echo "$underfill_output" | sed -n '2p')
 
-			local pulse_start_epoch
+			local pulse_start_epoch pulse_rc
 			pulse_start_epoch=$(date +%s)
-			run_pulse "$initial_underfilled_mode" "$initial_underfill_pct" "$llm_trigger_mode"
+			_pulse_record_llm_attempt "$llm_trigger_mode" || true
+			pulse_rc=0
+			run_pulse "$initial_underfilled_mode" "$initial_underfill_pct" "$llm_trigger_mode" || pulse_rc=$?
 			local pulse_end_epoch
 			pulse_end_epoch=$(date +%s)
 			local pulse_duration=$((pulse_end_epoch - pulse_start_epoch))
 
-			date +%s >"${PULSE_DIR}/last_llm_run_epoch"
-			_run_early_exit_recycle_loop "$pulse_duration"
+			if [[ "$pulse_rc" -eq 0 ]]; then
+				_pulse_record_llm_success "$llm_trigger_mode" || true
+				_run_early_exit_recycle_loop "$pulse_duration"
+			else
+				_pulse_record_llm_failure "$llm_trigger_mode" "$pulse_rc"
+			fi
 			rm -rf "$llm_lockdir" 2>/dev/null || true
 		fi
 	fi
