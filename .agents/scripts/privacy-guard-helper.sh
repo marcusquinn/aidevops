@@ -242,6 +242,120 @@ privacy_enumerate_private_slugs() {
 PRIVACY_BARE_BASENAME_MIN_LEN="${PRIVACY_BARE_BASENAME_MIN_LEN:-6}"
 
 #######################################
+# Scan text for full private slug matches.
+# Arguments:
+#   $1 - text content to scan
+#   $2 - file containing newline-separated private slugs
+# Output:
+#   One matching owner/basename slug per line.
+# Returns:
+#   0 if no hits, 1 if at least one hit, 2 on setup error.
+#######################################
+privacy_scan_full_slugs() {
+	local text="$1"
+	local slugs_file="$2"
+	local full_slugs_tmp
+	local matched_full_slugs
+	local match
+	local hits=0
+
+	full_slugs_tmp=$(mktemp) || return 2
+	grep '/' "$slugs_file" 2>/dev/null >"$full_slugs_tmp" || true
+	if [[ -s "$full_slugs_tmp" ]]; then
+		matched_full_slugs=$(printf '%s' "$text" | grep -oF -f "$full_slugs_tmp" 2>/dev/null | sort -u || true)
+		if [[ -n "$matched_full_slugs" ]]; then
+			while IFS= read -r match; do
+				[[ -z "$match" ]] && continue
+				printf '%s\n' "$match"
+				hits=$((hits + 1))
+			done <<< "$matched_full_slugs"
+		fi
+	fi
+	rm -f "$full_slugs_tmp"
+
+	if [[ "$hits" -gt 0 ]]; then
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Check whether a slug was already emitted as a full-slug match.
+# Arguments:
+#   $1 - owner/basename slug
+#   $2 - newline-separated full slug matches
+# Returns:
+#   0 if already matched, 1 otherwise.
+#######################################
+privacy_slug_already_matched() {
+	local slug="$1"
+	local matched_full_slugs="$2"
+
+	if [[ -n "$matched_full_slugs" && $'\n'"${matched_full_slugs}"$'\n' == *$'\n'"${slug}"$'\n'* ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Scan text for bare private basename matches.
+# Arguments:
+#   $1 - text content to scan
+#   $2 - file containing newline-separated private slugs
+#   $3 - newline-separated full slug matches to skip
+# Output:
+#   One matching basename line per hit.
+# Returns:
+#   0 if no hits, 1 if at least one hit.
+#######################################
+privacy_scan_bare_basenames() {
+	local text="$1"
+	local slugs_file="$2"
+	local matched_full_slugs="$3"
+	local slug owner basename escaped_basename
+	local hits=0
+
+	while IFS= read -r slug || [[ -n "$slug" ]]; do
+		# Skip blanks and comment lines.
+		[[ -z "$slug" || "$slug" == \#* ]] && continue
+		# Trim leading/trailing whitespace.
+		slug="${slug#"${slug%%[![:space:]]*}"}"
+		slug="${slug%"${slug##*[![:space:]]}"}"
+		[[ -z "$slug" ]] && continue
+
+		if [[ "$slug" == */* ]]; then
+			owner="${slug%/*}"
+			basename="${slug##*/}"
+		else
+			owner=""
+			basename="$slug"
+		fi
+		[[ -z "$basename" ]] && continue
+
+		if [[ -n "$owner" ]] && privacy_slug_already_matched "$slug" "$matched_full_slugs"; then
+			continue
+		fi
+
+		if [[ ${#basename} -ge "$PRIVACY_BARE_BASENAME_MIN_LEN" ]]; then
+			escaped_basename=$(printf '%s' "$basename" | sed -E 's/[][(){}.^$*+?|\\]/\\&/g')
+			if printf '%s' "$text" | grep -qE "(^|[^a-zA-Z0-9_-])${escaped_basename}([^a-zA-Z0-9_-]|$)" 2>/dev/null; then
+				if [[ -n "$owner" ]]; then
+					printf '%s (basename of %s)\n' "$basename" "$slug"
+				else
+					printf '%s\n' "$basename"
+				fi
+				hits=$((hits + 1))
+			fi
+		fi
+	done <"$slugs_file"
+
+	if [[ "$hits" -gt 0 ]]; then
+		return 1
+	fi
+	return 0
+}
+
+#######################################
 # Scan free-form text content (issue/PR body, title, gh api -f body=value)
 # for private repo references and local/private path leaks. Used by
 # .agents/scripts/gh PATH shim before letting a write reach a public repo.
@@ -267,6 +381,11 @@ PRIVACY_BARE_BASENAME_MIN_LEN="${PRIVACY_BARE_BASENAME_MIN_LEN:-6}"
 privacy_scan_text() {
 	local text="$1"
 	local slugs_file="$2"
+	local hits=0
+	local matched_full_slugs=""
+	local full_slug_rc=0
+	local basename_hits=""
+	local basename_rc=0
 
 	if [[ -z "$slugs_file" || ! -f "$slugs_file" ]]; then
 		return 2
@@ -275,9 +394,6 @@ privacy_scan_text() {
 	if [[ -z "$text" ]]; then
 		return 0
 	fi
-
-	local hits=0
-	local matched_full_slugs=""
 
 	# Phase 0: local/private path matching. Keep output generic to avoid
 	# re-printing the path in stderr or GitHub comments.
@@ -303,69 +419,25 @@ privacy_scan_text() {
 	# owner/repo entries at once. Reduces O(N) grep forks (one per slug) to one
 	# call regardless of slug count. Only lines with '/' are full slugs; single-
 	# token (legacy) entries are handled exclusively in Phase 2 below.
-	local full_slugs_tmp
-	full_slugs_tmp=$(mktemp) || return 2
-	grep '/' "$slugs_file" 2>/dev/null >"$full_slugs_tmp" || true
-	if [[ -s "$full_slugs_tmp" ]]; then
-		matched_full_slugs=$(printf '%s' "$text" | grep -oF -f "$full_slugs_tmp" 2>/dev/null | sort -u || true)
-		if [[ -n "$matched_full_slugs" ]]; then
-			local match
-			while IFS= read -r match; do
-				[[ -z "$match" ]] && continue
-				printf '%s\n' "$match"
-				hits=$((hits + 1))
-			done <<< "$matched_full_slugs"
-		fi
+	matched_full_slugs=$(privacy_scan_full_slugs "$text" "$slugs_file")
+	full_slug_rc=$?
+	if [[ "$full_slug_rc" -eq 1 ]]; then
+		printf '%s\n' "$matched_full_slugs"
+		hits=$((hits + 1))
+	elif [[ "$full_slug_rc" -eq 2 ]]; then
+		return 2
 	fi
-	rm -f "$full_slugs_tmp"
 
 	# Phase 2: Bare-basename word-boundary matching — per-slug loop.
 	# Word-boundary patterns are slug-specific (variable basename length guard,
 	# per-slug output format) and require per-slug ERE calls. Full slugs already
 	# emitted in Phase 1 are skipped to prevent duplicate hits.
-	local slug owner basename escaped_basename
-	while IFS= read -r slug || [[ -n "$slug" ]]; do
-		# Skip blanks and comment lines.
-		[[ -z "$slug" || "$slug" == \#* ]] && continue
-		# Trim leading/trailing whitespace.
-		slug="${slug#"${slug%%[![:space:]]*}"}"
-		slug="${slug%"${slug##*[![:space:]]}"}"
-		[[ -z "$slug" ]] && continue
-		# Slug must be owner/basename — single-token entries (legacy) treated as basename only.
-		if [[ "$slug" == */* ]]; then
-			owner="${slug%/*}"
-			basename="${slug##*/}"
-		else
-			owner=""
-			basename="$slug"
-		fi
-		[[ -z "$basename" ]] && continue
-
-		# If the full slug was already matched in Phase 1, skip to avoid duplicate output.
-		# Use native Bash pattern match with newline padding for exact line matching —
-		# grep -qF would substring-match (e.g. "org/repo" matches "myorg/repo").
-		if [[ -n "$owner" && -n "$matched_full_slugs" ]]; then
-			if [[ $'\n'"${matched_full_slugs}"$'\n' == *$'\n'"${slug}"$'\n'* ]]; then
-				continue
-			fi
-		fi
-
-		# Form 2: bare basename with word boundaries — only for distinctive lengths.
-		if [[ ${#basename} -ge "$PRIVACY_BARE_BASENAME_MIN_LEN" ]]; then
-			# Escape regex metacharacters in basename for ERE.
-			escaped_basename=$(printf '%s' "$basename" | sed -E 's/[][(){}.^$*+?|\\]/\\&/g')
-			# Word boundary regex: must NOT be flanked by [a-zA-Z0-9_-].
-			# Note: we use grep -E (POSIX ERE), not PCRE, so \b is unreliable.
-			if printf '%s' "$text" | grep -qE "(^|[^a-zA-Z0-9_-])${escaped_basename}([^a-zA-Z0-9_-]|$)" 2>/dev/null; then
-				if [[ -n "$owner" ]]; then
-					printf '%s (basename of %s)\n' "$basename" "$slug"
-				else
-					printf '%s\n' "$basename"
-				fi
-				hits=$((hits + 1))
-			fi
-		fi
-	done <"$slugs_file"
+	basename_hits=$(privacy_scan_bare_basenames "$text" "$slugs_file" "$matched_full_slugs")
+	basename_rc=$?
+	if [[ "$basename_rc" -eq 1 ]]; then
+		printf '%s\n' "$basename_hits"
+		hits=$((hits + 1))
+	fi
 
 	if [[ "$hits" -gt 0 ]]; then
 		return 1
