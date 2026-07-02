@@ -397,16 +397,20 @@ echo ""
 echo "Test 8: resolver fallback uses gh_pr_list"
 echo "=========================================="
 
+raw_gh_log="${TMPROOT}/test8-raw-gh.log"
 resolver_result=$(
 (
 	# shellcheck disable=SC1091
 	source "${PARENT_DIR}/pulse-wrapper-bootstrap.sh" >/dev/null 2>&1
 
 	gh() {
-		if [[ "${1:-}" == "issue" && "${2:-}" == "view" ]]; then
+		local cmd="${1:-}"
+		local subcmd="${2:-}"
+		if [[ "$cmd" == "issue" && "$subcmd" == "view" ]]; then
 			return 1
 		fi
-		if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
+		if [[ "$cmd" == "pr" && "$subcmd" == "list" ]]; then
+			printf 'raw gh pr list called\n' >>"$raw_gh_log"
 			printf '[{"number":99999,"body":"Resolves #12345"}]'
 			return 0
 		fi
@@ -414,6 +418,7 @@ resolver_result=$(
 	}
 
 	gh_pr_list() {
+		local _unused_first="${1:-}"
 		printf '[{"number":77777,"body":"Fixes #12345"}]'
 		return 0
 	}
@@ -422,6 +427,52 @@ resolver_result=$(
 )
 )
 assert_eq "resolver fallback prefers gh_pr_list wrapper over raw gh" "77777" "$resolver_result"
+
+if [[ ! -s "$raw_gh_log" ]]; then
+	assert_pass "resolver fallback does not call raw gh when wrapper exists"
+else
+	assert_fail "resolver fallback does not call raw gh when wrapper exists" \
+		"raw gh log contained: $(cat "$raw_gh_log")"
+fi
+
+echo ""
+
+# -----------------------------------------------------------------------------
+# Test 9: issue→PR fallback resolver keeps raw gh fallback when wrapper absent.
+# -----------------------------------------------------------------------------
+echo "Test 9: resolver fallback keeps raw gh without wrapper"
+echo "======================================================"
+
+raw_fallback_log="${TMPROOT}/test9-raw-gh.log"
+resolver_result=$(
+(
+	# shellcheck disable=SC1091
+	source "${PARENT_DIR}/pulse-wrapper-bootstrap.sh" >/dev/null 2>&1
+
+	gh() {
+		local cmd="${1:-}"
+		local subcmd="${2:-}"
+		if [[ "$cmd" == "issue" && "$subcmd" == "view" ]]; then
+			return 1
+		fi
+		if [[ "$cmd" == "pr" && "$subcmd" == "list" ]]; then
+			printf 'raw gh pr list called\n' >>"$raw_fallback_log"
+			printf '[{"number":88888,"body":"Closes #12345"}]'
+			return 0
+		fi
+		return 1
+	}
+
+	_resolve_linked_pr_for_issue "marcusquinn/aidevops" "12345"
+)
+)
+assert_eq "resolver fallback uses raw gh when wrapper is absent" "88888" "$resolver_result"
+
+if [[ -s "$raw_fallback_log" ]]; then
+	assert_pass "resolver fallback called raw gh without wrapper"
+else
+	assert_fail "resolver fallback called raw gh without wrapper" "raw gh log empty"
+fi
 
 echo ""
 
