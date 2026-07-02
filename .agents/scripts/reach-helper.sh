@@ -1824,48 +1824,40 @@ capture_materialize_artifact() {
 	return 0
 }
 
-capture_append_performance() {
-	local captured_at="$1"
-	local input_ref="$2"
-	local operation="$3"
-	local method="$4"
-	local route_json="$5"
-	local latency_ms="$6"
-	local bytes_in="$7"
-	local bytes_out="$8"
-	local status_value="$9"
-	local failure_value="${10}"
-	local temporary_value="${11}"
-	local next_action_value="${12}"
-	local log_path=""
-	local source_ref=""
-	local target_hash=""
-	local backend_value=""
-	local agency_level=""
-	local headed_value=""
-	local mode_value=""
-	local profile_policy=""
-	local proxy_policy=""
-	local offload_value=""
-	local token_estimate="0"
-	local session_ref=""
-	local discovery_steps="1"
-
-	log_path="$(reach_performance_log_path)"
-	mkdir -p "$(dirname "$log_path")"
-	source_ref="$(capture_source_label "$input_ref" "$method")"
-	target_hash="$(safe_sha256 "$input_ref")"
-	backend_value="$(json_field_default "$route_json" "backend" "$method")"
-	agency_level="$(json_field_default "$route_json" "agency_level" "0")"
-	headed_value="$(json_field_default "$route_json" "headed" "false")"
-	mode_value="$(json_field_default "$route_json" "mode" "$method")"
-	profile_policy="$(json_field_default "$route_json" "profile_policy" "$REACH_VAL_NONE")"
-	proxy_policy="$(json_field_default "$route_json" "proxy_policy" "$REACH_VAL_NONE")"
-	offload_value="$(json_field_default "$route_json" "offload" "local")"
-	session_ref="$(reach_session_ref)"
+capture_token_estimate() {
+	local bytes_in="$1"
+	local bytes_out="$2"
 	if [[ "$bytes_in" =~ ^[0-9]+$ && "$bytes_out" =~ ^[0-9]+$ ]]; then
-		token_estimate="$(((bytes_in + bytes_out + 3) / 4))"
+		printf '%s' "$(((bytes_in + bytes_out + 3) / 4))"
+		return 0
 	fi
+	printf '%s' '0'
+	return 0
+}
+
+capture_write_performance_record() {
+	local log_path="$1"
+	local captured_at="$2"
+	local session_ref="$3"
+	local source_ref="$4"
+	local target_hash="$5"
+	local operation="$6"
+	local backend_value="$7"
+	local agency_level="$8"
+	local headed_value="$9"
+	local mode_value="${10}"
+	local profile_policy="${11}"
+	local proxy_policy="${12}"
+	local offload_value="${13}"
+	local latency_ms="${14}"
+	local discovery_steps="${15}"
+	local token_estimate="${16}"
+	local bytes_in="${17}"
+	local bytes_out="${18}"
+	local status_value="${19}"
+	local failure_value="${20}"
+	local temporary_value="${21}"
+	local next_action_value="${22}"
 
 	python3 - "$log_path" "$captured_at" "$session_ref" "$source_ref" "$target_hash" "$operation" "$backend_value" "$agency_level" "$headed_value" "$mode_value" "$profile_policy" "$proxy_policy" "$offload_value" "$latency_ms" "$discovery_steps" "$token_estimate" "$bytes_in" "$bytes_out" "$status_value" "$failure_value" "$temporary_value" "$next_action_value" <<'PY'
 import json
@@ -1929,6 +1921,50 @@ record = {
 with open(log_path, "a", encoding="utf-8") as handle:
     handle.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
 PY
+	return $?
+}
+
+capture_append_performance() {
+	local captured_at="$1"
+	local input_ref="$2"
+	local operation="$3"
+	local method="$4"
+	local route_json="$5"
+	local latency_ms="$6"
+	local bytes_in="$7"
+	local bytes_out="$8"
+	local status_value="$9"
+	local failure_value="${10}"
+	local temporary_value="${11}"
+	local next_action_value="${12}"
+	local log_path=""
+	local source_ref=""
+	local target_hash=""
+	local backend_value=""
+	local agency_level=""
+	local headed_value=""
+	local mode_value=""
+	local profile_policy=""
+	local proxy_policy=""
+	local offload_value=""
+	local token_estimate="0"
+	local session_ref=""
+	local discovery_steps="1"
+
+	log_path="$(reach_performance_log_path)"
+	mkdir -p "$(dirname "$log_path")"
+	source_ref="$(capture_source_label "$input_ref" "$method")"
+	target_hash="$(safe_sha256 "$input_ref")"
+	backend_value="$(json_field_default "$route_json" "backend" "$method")"
+	agency_level="$(json_field_default "$route_json" "agency_level" "0")"
+	headed_value="$(json_field_default "$route_json" "headed" "false")"
+	mode_value="$(json_field_default "$route_json" "mode" "$method")"
+	profile_policy="$(json_field_default "$route_json" "profile_policy" "$REACH_VAL_NONE")"
+	proxy_policy="$(json_field_default "$route_json" "proxy_policy" "$REACH_VAL_NONE")"
+	offload_value="$(json_field_default "$route_json" "offload" "local")"
+	session_ref="$(reach_session_ref)"
+	token_estimate="$(capture_token_estimate "$bytes_in" "$bytes_out")"
+	capture_write_performance_record "$log_path" "$captured_at" "$session_ref" "$source_ref" "$target_hash" "$operation" "$backend_value" "$agency_level" "$headed_value" "$mode_value" "$profile_policy" "$proxy_policy" "$offload_value" "$latency_ms" "$discovery_steps" "$token_estimate" "$bytes_in" "$bytes_out" "$status_value" "$failure_value" "$temporary_value" "$next_action_value"
 	return $?
 }
 
