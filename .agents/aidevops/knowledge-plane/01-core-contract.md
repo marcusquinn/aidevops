@@ -2,7 +2,6 @@
 
 Parent index: `../knowledge-plane.md`.
 
-
 The knowledge plane is an opt-in file staging area for AI-assisted ingestion of
 external documents, data exports, and reference material into aidevops-managed
 repos. Each repo can independently enable or disable the plane.
@@ -11,7 +10,6 @@ For cross-plane routing metadata, use `.agents/configs/data-planes.json` as the
 canonical registry. This document owns the `_knowledge/` directory contract; the
 registry owns shared facts such as default sensitivity, ingress/egress, helper,
 and retrieval surfaces.
-
 
 ## Modes (`repos.json` field: `knowledge`)
 
@@ -26,10 +24,9 @@ and retrieval surfaces.
 `"personal"` mode is useful when knowledge doesn't belong to any single repo yet
 (early-stage work, cross-project research, or when no target repo exists).
 
-
 ## Directory Layout
 
-```
+```text
 _knowledge/          ← root (or ~/.aidevops/.agent-workspace/knowledge/)
   inbox/             ← raw drops — gitignored, pre-review zone
   staging/           ← curated before commit — gitignored
@@ -51,7 +48,6 @@ artifacts under `_knowledge/inbox/web/` with `sensitivity:"unverified"`,
 an `_inbox/triage.log` audit row with `source:"reach-capture"` so provenance is
 visible before durable knowledge-plane ingestion.
 
-
 ## .gitignore Rules
 
 The provisioner writes two sets of `.gitignore` rules:
@@ -63,7 +59,6 @@ The provisioner writes two sets of `.gitignore` rules:
 2. **Repo root `.gitignore`** — appends a `# knowledge-plane-rules` block with
    `_knowledge/inbox/`, `_knowledge/staging/`, `_knowledge/index/` for belt-and-
    suspenders coverage.
-
 
 ## Source `meta.json` Schema
 
@@ -89,7 +84,6 @@ Fields: `id` (unique within repo), `kind` (broad category), `source_uri` (origin
 location for re-verification), `sha256` (integrity check), `sensitivity`/`trust` (policy
 enforcement), `blob_path` (set when file ≥30MB — see below), `size_bytes` (raw byte count).
 
-
 ## 30MB Blob Threshold
 
 Files ≥30MB are NOT stored in-repo. Instead:
@@ -102,7 +96,6 @@ Files ≥30MB are NOT stored in-repo. Instead:
 complicates cloning; the agent-workspace path is local and survives repo clones.
 30MB is the threshold where git's pack performance starts to noticeably degrade
 for typical document files (PDFs, exports, dumps).
-
 
 ## `_config/knowledge.json` Defaults
 
@@ -125,7 +118,6 @@ Written at provision time from `.agents/templates/knowledge-config.json`:
 
 Override per-repo by editing `_knowledge/_config/knowledge.json` after provisioning.
 
-
 ## Personal vs Repo Plane
 
 | Aspect | `repo` | `personal` |
@@ -135,7 +127,6 @@ Override per-repo by editing `_knowledge/_config/knowledge.json` after provision
 | Scope | Single repo | All repos on this machine |
 | Use case | Project-specific docs | Early-stage, cross-project |
 | Gitignore | Patched in repo | Not applicable |
-
 
 ## CLI
 

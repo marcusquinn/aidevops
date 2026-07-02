@@ -98,7 +98,6 @@ by the sensitivity detector (t2846). A benign email body at `tier:internal` can 
 a contract attachment at `tier:privileged` — the child's tier is independent of the
 parent's.
 
-
 ## IMAP Polling (t2855)
 
 The pulse-driven `r044` routine polls configured IMAP mailboxes every 10 minutes,
@@ -187,7 +186,6 @@ Field reference:
 
 `password_ref` supports two forms:
 
-
 ## Email Thread Reconstruction (t2856)
 
 Email sources with `"kind": "email"` support JWZ-style thread reconstruction.
@@ -222,7 +220,6 @@ aidevops email thread  <message-id> [knowledge-root]     # Look up thread by mes
 
 Helper: `.agents/scripts/email-thread-helper.sh`.
 Python module: `.agents/scripts/email_thread.py`.
-
 
 ## Email Filter → Case-Attach (t2856)
 

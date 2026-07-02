@@ -56,7 +56,6 @@ The helper: `.agents/scripts/platform-helper.sh`.
 
 ---
 
-
 ## Sensitivity Classification (t2846)
 
 Every ingested source is automatically stamped with a sensitivity tier. Detection runs
@@ -118,7 +117,6 @@ knowledge-helper.sh sensitivity show <source-id>
 
 ---
 
-
 ## LLM Routing
 
 All LLM calls in the framework are centralised behind `llm-routing-helper.sh`. Direct invocations of `claude`, `ollama`, or any other LLM CLI are prohibited in new helpers — route through this layer instead.
@@ -139,7 +137,7 @@ Every LLM call is assigned a sensitivity tier that controls which providers are 
 
 ### Routing Decision Tree
 
-```
+```text
 route --tier <t> --prompt-file <p>
   │
   ├─ tier = public/internal?
@@ -219,7 +217,6 @@ llm-routing-helper.sh status
 ```
 
 ---
-
 
 ## Ollama Integration (t2848)
 

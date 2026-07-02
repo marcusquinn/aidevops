@@ -72,7 +72,7 @@ Tracks a 12-char schema hash in `extracted.json::schema_hash`. Same hash → ski
 
 ### Routine r041
 
-```
+```text
 - [x] r041 Knowledge enrichment — extract structured fields from freshly-promoted sources repeat:cron(*/30 * * * *) ~2m run:scripts/document-enrich-helper.sh tick
 ```
 
@@ -83,7 +83,6 @@ in `10-classification.md §Extraction Schemas`. The helper auto-discovers schema
 filename — no registration step needed.
 
 ---
-
 
 ## Corpus Index (t2850)
 
@@ -121,7 +120,7 @@ corpus tree exists; falls back to grep over `text.txt` files otherwise.
 
 ### Routine r042
 
-```
+```text
 - [x] r042 Knowledge index build — incremental PageIndex tree across corpus repeat:cron(*/60 * * * *) ~2m run:scripts/knowledge-index-helper.sh build
 ```
 
@@ -155,7 +154,6 @@ To disable: change `[x]` to `[ ]` in `TODO.md` and commit.
 | `_knowledge/index/llm-audit.log` | LLM routing audit (JSONL) |
 
 ---
-
 
 ## Review Gate (t2845)
 
@@ -233,7 +231,7 @@ Every action is appended to `_knowledge/index/audit.log` (JSONL):
 
 ### Routine r040
 
-```
+```text
 - [x] r040 Knowledge review gate — classify inbox items by trust, auto-promote or NMR-file repeat:cron(*/15 * * * *) ~1m run:scripts/knowledge-review-helper.sh tick
 ```
 
