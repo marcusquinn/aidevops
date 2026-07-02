@@ -336,9 +336,9 @@ _gh_pr_view_args_for_json_fields() {
 	while [[ $# -gt 0 ]]; do
 		_arg="$1"
 		case "$_arg" in
-		--json) printf '%s\0%s\0' --json "$_json_fields"; _saw_json=1; shift 2 ;;
+		--json) printf '%s\0%s\0' --json "$_json_fields"; _saw_json=1; shift $(( $# >= 2 ? 2 : 1 )) ;;
 		--json=*) printf '%s\0%s\0' --json "$_json_fields"; _saw_json=1; shift ;;
-		--jq | -q) shift 2 ;;
+		--jq | -q) shift $(( $# >= 2 ? 2 : 1 )) ;;
 		--jq=* | -q=*) shift ;;
 		*) printf '%s\0' "$_arg"; shift ;;
 		esac
@@ -396,7 +396,7 @@ _gh_pr_view_try_mixed_split() {
 	_rest_out="$(_rest_pr_view "${_rest_args[@]}")" || return 1
 	gh_record_call graphql gh_pr_view_split 2>/dev/null || true
 	_gql_out="$(_gh_with_timeout read gh pr view "${_gql_args[@]}")" || return 1
-	_merged="$(jq -c -s '.[0] * .[1]' < <(printf '%s\n%s\n' "$_rest_out" "$_gql_out"))" || return 1
+	_merged="$(jq -c -s '(.[0] // {}) * (.[1] // {})' < <(printf '%s\n%s\n' "$_rest_out" "$_gql_out"))" || return 1
 	if [[ -n "$_jq_expr" ]]; then
 		printf '%s\n' "$_merged" | jq -r "$_jq_expr"
 		return $?
