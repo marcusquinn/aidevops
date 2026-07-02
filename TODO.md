@@ -4396,3 +4396,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 
 - [ ] t18056 perf(pulse): investigate remaining GraphQL budget exhaustion after PR-list cache work #bug #framework #github #investigate #parent #performance #pulse ref:GH#26227
+
+- [ ] t18057 feat: add tiled image mosaic agent capability #agents #auto-dispatch #enhancement ref:GH#26259
