@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.19] - 2026-07-02
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md [skip ci]
+- Documentation: brief image mosaic agent task (#26261)
+- Maintenance: sync ref:GH#26259 to TODO.md [skip ci]
+
+### Fixed
+
+- split mixed pr view fields (#26266)
+- pause repeated worker recovery loops (#26263)
+
 ## [3.31.18] - 2026-07-02
 
 ### Changed
