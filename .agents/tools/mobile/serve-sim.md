@@ -39,7 +39,7 @@ serve-sim type "hello"            # Type into focused field
 serve-sim --kill                  # Stop stream(s)
 ```
 
-Use `serve-sim` when the user needs a visible, browser-shareable simulator surface. Pair it with `agent-device`, `ios-simulator-mcp`, or `maestro` when the task needs accessibility refs, MCP tool calls, or repeatable E2E flows. Current upstream builds serve capture, accessibility, and HID input through an in-process native addon instead of a separate `serve-sim-bin` helper, so malformed browser input should be ignored rather than crash the preview server. Native builds now use SwiftPM's `swiftbuild` build system for the Node addon, so source installs need a current Xcode/Swift toolchain rather than only simulator runtime access. The preview defaults to H.264 when available and can switch or auto-downgrade to MJPEG when hardware decoding is unstable during screen recording; use `--codec <auto|mjpeg>` when the host must pin stream compatibility. Recent upstream versions also use incremental MJPEG and AVCC buffering plus paged simulator-grid loading, which keeps large multi-device catalogs and long recording sessions responsive. Upstream simulator-backed test suites now serialize Bun test execution (`bun test --max-concurrency=1`) against the shared booted simulator and retry once after rebooting the simulator when transport-style failures indicate a simulator wedge.
+Use `serve-sim` when the user needs a visible, browser-shareable simulator surface. Pair it with `agent-device`, `ios-simulator-mcp`, or `maestro` when the task needs accessibility refs, MCP tool calls, or repeatable E2E flows. Current upstream builds serve capture, accessibility, and HID input through an in-process native addon instead of a separate `serve-sim-bin` helper, so malformed browser input should be ignored rather than crash the preview server. Native builds now use SwiftPM's `swiftbuild` build system for the Node addon, so source installs need a current Xcode/Swift toolchain rather than only simulator runtime access. The preview defaults to H.264 when available and can switch or auto-downgrade to MJPEG when hardware decoding is unstable during screen recording; use `--codec <auto|mjpeg>` when the host must pin stream compatibility. Recent upstream versions also use incremental MJPEG and AVCC buffering, async native capture/HID paths with per-connection backpressure, and paged simulator-grid loading, which keeps large multi-device catalogs and long recording sessions responsive. Upstream simulator-backed test suites now serialize Bun test execution (`bun test --max-concurrency=1`) against the shared booted simulator and retry once after rebooting the simulator when transport-style failures indicate a simulator wedge.
 
 <!-- AI-CONTEXT-END -->
 
@@ -105,6 +105,8 @@ Do **not** use it for Android emulators, real iOS hardware, building/installing 
 
 `serve-sim/middleware` can mount the preview under an existing Connect-style server, including Expo Metro. This is useful when a mobile dev server should expose the simulator at a stable path such as `/.sim`. Recent upstream versions route the preview, same-origin helper endpoints, and WebKit DevTools proxying through the in-process server when the host wires HTTP upgrade handling, so remote viewers only need the preview server port. The device grid is paged by default and exposes total/loaded counts; searching intentionally loads the full catalog, then clearing search resets to the paged window.
 
+The middleware/runtime path is now async-aware: `next()` may be awaited, stream subscriptions are codec-specific, and failed asset/path lookups should return consistent not-found responses instead of leaking through the host server. When embedding in a custom server, preserve WebSocket upgrade handling and test both MJPEG and H.264/AVCC clients because each stream has its own subscription and backpressure path.
+
 ## Upstream Agent Skill
 
 The upstream repository ships an Agent Skill under `skills/serve-sim`. For runtimes that support the Agent Skills standard, install it with the host's native skill/plugin installer:
@@ -130,6 +132,8 @@ aidevops keeps this native guide so mobile-testing tasks route to `serve-sim` ev
 - **Node too old**: Upgrade to a maintained Node.js LTS release (Node.js 20+) before running the CLI.
 - **Port collision**: Stop stale streams with `serve-sim --kill`.
 - **H.264/WebCodecs instability**: Use `serve-sim --codec mjpeg`, the Stream → Codec picker, or append `?codec=mjpeg` to the preview URL; recent versions auto-downgrade fatal AVCC decoder failures to MJPEG.
+- **Preview hangs or resizes repeatedly on load**: Upgrade to a build with the screen-config feedback-loop fix. Current upstream separates externally supplied screen config from stream-reported dimensions so the parent preview does not echo startup dimensions back into an infinite resize/update loop.
+- **Closing one simulator stops the whole server**: Upgrade to a build with the stale-state self-pid guard. Current upstream closes only that device's in-process session and avoids signalling its own `process.pid`; separate detached helpers are still reaped.
 - **Camera injection**: Requires macOS 14+ and a simulator app bundle ID.
 
 ## Related
