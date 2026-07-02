@@ -13,7 +13,7 @@ Near-black backgrounds create a cinematic stage for photography. Palette: black,
 - **Mood:** Exclusive, cinematic, restrained, aspirational
 - **Background:** Black `#000000` or near-black `#0a0a0a`
 - **Accent colour:** Champagne gold `#c9a96e`
-- **Text colour:** White `#FFFFFF` with `rgba(255,255,255,0.7)` for secondary
+- **Text colour:** White `#FFFFFF` with `rgba(255,255,255,0.75)` for body and `rgba(255,255,255,0.5)` for secondary
 - **Border treatment:** 1px `rgba(255,255,255,0.1)` — barely visible
 - **Animation:** Slow, cinematic — 400-600ms ease, fade-ins, parallax
 - **Imagery style:** Full-bleed, art-directed, high-contrast, minimal post-processing
