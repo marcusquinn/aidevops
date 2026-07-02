@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - clarify circuit breaker meta blocker wording (#26393)
+- preserve aidevops-managed OpenCode Desktop session history after restart
 
 ## [3.31.25] - 2026-07-02
 
