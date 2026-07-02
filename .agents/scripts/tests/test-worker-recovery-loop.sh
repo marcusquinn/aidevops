@@ -120,11 +120,12 @@ GHEOF
 test_cross_branch_recovery_failures_block() {
 	local output=""
 	if output=$("$HELPER_SCRIPT" check-recovery-loop 100 owner/repo 2>/dev/null); then
-		if [[ "$output" == *"WORKER_RECOVERY_LOOP_BLOCKED"* && -f "${TEST_ROOT}/posts/100.argv" && -f "${TEST_ROOT}/edits/100.argv" ]]; then
+		if [[ "$output" == *"WORKER_RECOVERY_LOOP_BLOCKED"* && -f "${TEST_ROOT}/posts/100.argv" ]] &&
+			grep -q 'worker-recovery-loop:blocked .* version=[0-9]' "${TEST_ROOT}/posts/100.argv"; then
 			print_result "cross-branch recovery failures trip issue-level hold" 0
 			return 0
 		fi
-		print_result "cross-branch recovery failures trip issue-level hold" 1 "Unexpected output or missing side effects: ${output}"
+		print_result "cross-branch recovery failures trip issue-level hold" 1 "Unexpected output, missing diagnostic post, or missing version metadata: ${output}"
 		return 0
 	fi
 	print_result "cross-branch recovery failures trip issue-level hold" 1 "Expected dispatch hold"

@@ -3,6 +3,12 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # dispatch-dedup-recovery-loop.sh — issue-level worker recovery loop fuse.
 
+_DDH_RECOVERY_LOOP_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)" || _DDH_RECOVERY_LOOP_SCRIPT_DIR=""
+if [[ -n "$_DDH_RECOVERY_LOOP_SCRIPT_DIR" && -r "${_DDH_RECOVERY_LOOP_SCRIPT_DIR}/lib/version.sh" ]]; then
+	# shellcheck source=lib/version.sh
+	source "${_DDH_RECOVERY_LOOP_SCRIPT_DIR}/lib/version.sh"
+fi
+
 #######################################
 # Count recent worker recovery failures across branches.
 #
@@ -101,10 +107,16 @@ _ddh_apply_recovery_loop_hold() {
 
 	existing_block=$(_ddh_count_recovery_loop_blocks "$comments_json")
 	if [[ "$existing_block" -eq 0 ]]; then
+		local version=""
+		version=$(aidevops_find_version 2>/dev/null || true)
+		if [[ -z "$version" && -r "${AGENTS_DIR:-$HOME/.aidevops/agents}/VERSION" ]]; then
+			version=$(tr -d '[:space:]' <"${AGENTS_DIR:-$HOME/.aidevops/agents}/VERSION" 2>/dev/null || true)
+		fi
+		version="${version:-unknown}"
 		local diag=""
 		# shellcheck disable=SC2016 # Backticks are literal Markdown, not command substitution.
-		diag=$(printf '<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\n<!-- worker-recovery-loop:blocked count=%s threshold=%s window_s=%s latest=%s -->\n<!-- dispatch-circuit-breaker:worker_recovery_loop -->\n## Dispatch paused: repeated worker recovery failures\n\nThis issue has produced %s worker recovery-failure outcome(s) within the last %s seconds. Those outcomes mean workers produced branch evidence but the automation could not confirm a PR, so another redispatch would likely add more audit comments without solving the issue.\n\n**Action:** applied `needs-maintainer-review` and cleared active status labels. Automated dispatch is suspended until a human reviews the runner worktrees/logs, recovers any branch output, or lands a setup-side fix.\n\n**Verification before re-enabling:** confirm a PR exists for the work or confirm there is no unrecovered worker branch output left to preserve, then remove `needs-maintainer-review`.\n<!-- ops:end -->' \
-			"$count" "$threshold" "$window_s" "${latest_iso:-unknown}" "$count" "$window_s")
+		diag=$(printf '<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->\n<!-- worker-recovery-loop:blocked count=%s threshold=%s window_s=%s latest=%s version=%s -->\n<!-- dispatch-circuit-breaker:worker_recovery_loop -->\n## Dispatch paused: repeated worker recovery failures\n\nThis issue has produced %s worker recovery-failure outcome(s) within the last %s seconds. Those outcomes mean workers produced branch evidence but the automation could not confirm a PR, so another redispatch would likely add more audit comments without solving the issue.\n\n**Action:** applied `needs-maintainer-review` and cleared active status labels. Automated dispatch is suspended until a human reviews the runner worktrees/logs, recovers any branch output, or lands a setup-side fix.\n\n**Verification before re-enabling:** confirm a PR exists for the work or confirm there is no unrecovered worker branch output left to preserve, then remove `needs-maintainer-review`.\n<!-- ops:end -->' \
+			"$count" "$threshold" "$window_s" "${latest_iso:-unknown}" "$version" "$count" "$window_s")
 		gh api "$comments_post_endpoint" --method POST --field body="$diag" >/dev/null 2>&1 || true
 	fi
 
