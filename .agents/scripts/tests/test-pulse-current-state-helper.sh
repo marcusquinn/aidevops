@@ -142,6 +142,10 @@ assert 'readlines()[-limit:]' not in implementation_source
 assert 'deque(handle, maxlen=limit)' in implementation_source
 assert 'AIDEVOPS_ACTIVE_WORKER_PROCESSES' in helper_source
 assert 'AIDEVOPS_ACTIVE_WORKER_PROCESSES' in implementation_source
+assert 'def build_pre_launch_blockers' in implementation_source
+assert 'def build_graphql_budget' in implementation_source
+assert 'def build_current_state_guardrails' in implementation_source
+assert "graphql_budget_status = (" not in implementation_source
 assert 'import subprocess' not in implementation_source
 assert 'subprocess.check_output' not in implementation_source
 PY

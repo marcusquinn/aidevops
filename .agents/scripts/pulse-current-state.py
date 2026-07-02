@@ -112,6 +112,108 @@ def dispatch_blocked_by_graphql_budget(graphql_budget_status, graphql_budget, pr
     return graphql_pressure_seen(graphql_budget, pre_launch_blockers)
 
 
+def build_pre_launch_blockers(counter_hits):
+    blockers = {}
+    prefix = 'dispatch_candidate_failed_reason_'
+    for key, count in counter_hits.items():
+        if key.startswith(prefix):
+            reason = key[len(prefix):]
+            blockers[reason] = blockers.get(reason, 0) + count
+    breaker_counters = {
+        'graphql_circuit_breaker': 'dispatch_graphql_circuit_blocked',
+        'runner_health_circuit_breaker': 'pulse_dispatch_runner_health_breaker_tripped',
+    }
+    for reason, counter_name in breaker_counters.items():
+        count = counter_hits.get(counter_name, 0)
+        if count:
+            blockers[reason] = max(blockers.get(reason, 0), count)
+    guardrail_reasons = (
+        'provider_rate_limit_pressure',
+        'repeated_failure_pressure',
+        'healthy_pr_backlog',
+        'no_dispatchable_evidence',
+    )
+    for guardrail_reason in guardrail_reasons:
+        counter_name = f'dispatch_candidate_failed_reason_{guardrail_reason}'
+        count = counter_hits.get(counter_name, 0)
+        if count:
+            blockers[guardrail_reason] = max(blockers.get(guardrail_reason, 0), count)
+    return blockers
+
+
+def top_blockers(blockers):
+    return [
+        {'reason': reason, 'count': count}
+        for reason, count in sorted(blockers.items(), key=lambda item: (-item[1], item[0]))
+    ]
+
+
+def worker_worktree_placeholders():
+    worker_worktree_count = os.environ.get('AIDEVOPS_WORKER_WORKTREE_COUNT', '0')
+    if worker_worktree_count.isdigit():
+        return [None] * int(worker_worktree_count)
+    return []
+
+
+def active_worker_process_count():
+    active_worker_output = os.environ.get('AIDEVOPS_ACTIVE_WORKER_PROCESSES', '')
+    if active_worker_output.isdigit():
+        return int(active_worker_output)
+    return None
+
+
+def graphql_budget_status_from_env():
+    return os.environ.get('AIDEVOPS_GRAPHQL_BUDGET_STATUS') or 'UNKNOWN: no cached status'
+
+
+def graphql_deferred_stages(counter_hits):
+    prefix = 'pulse_graphql_budget_stage_deferred_'
+    return {
+        key[len(prefix):]: count
+        for key, count in sorted(counter_hits.items())
+        if key.startswith(prefix)
+    }
+
+
+def graphql_related_gauges(gauge_values):
+    return {
+        key: value
+        for key, value in gauge_values.items()
+        if any(token in key.lower() for token in ('graphql', 'budget', 'rate'))
+    }
+
+
+def build_graphql_budget(counter_hits, gauge_values):
+    return {
+        'skipped_low_count': counter_hits.get('pulse_cycle_skipped_graphql_low', 0),
+        'circuit_broken_count': counter_hits.get('pulse_dispatch_circuit_broken', 0),
+        'prefetch_throttled_count': counter_hits.get('pulse_prefetch_budget_throttled', 0),
+        'force_rest_reads_count': counter_hits.get('pulse_graphql_low_force_rest_reads', 0),
+        'reserve_mode_count': counter_hits.get('pulse_graphql_budget_reserve_mode', 0),
+        'deferred_stage_count': counter_hits.get('pulse_graphql_budget_stage_deferred', 0),
+        'deferred_stages': graphql_deferred_stages(counter_hits),
+        'gauges': graphql_related_gauges(gauge_values),
+    }
+
+
+def build_current_state_guardrails(counter_hits, pre_launch_blockers, gauge_values):
+    reasons = (
+        'provider_rate_limit_pressure',
+        'repeated_failure_pressure',
+        'healthy_pr_backlog',
+        'no_dispatchable_evidence',
+    )
+    return {
+        'applied_count': counter_hits.get('pulse_dispatch_current_state_guardrail_applied', 0),
+        'available_slots_last': gauge_values.get('pulse_dispatch_guardrail_available_slots'),
+        'reasons': {
+            reason: pre_launch_blockers.get(reason, 0)
+            for reason in reasons
+            if pre_launch_blockers.get(reason, 0)
+        },
+    }
+
+
 stage_records = []
 for line in recent_lines(os.path.join(log_dir, 'dispatch-stages.tsv')):
     record = parse_stage(line)
@@ -185,80 +287,22 @@ launch_validation_failure_count = counter_hits.get('dispatch_worker_launch_faile
 pr_opened_count, pr_opened_examples = line_count(['pr opened', 'opened pr', 'pull request'], wrapper_activity)
 pr_merged_count, pr_merged_examples = line_count(['pr merged', 'merged pr', 'squash merged'], wrapper_activity)
 issue_closed_count, issue_closed_examples = line_count(['issue closed', 'closed issue', 'status:done'], wrapper_activity)
-graphql_budget = {
-    'skipped_low_count': counter_hits.get('pulse_cycle_skipped_graphql_low', 0),
-    'circuit_broken_count': counter_hits.get('pulse_dispatch_circuit_broken', 0),
-    'prefetch_throttled_count': counter_hits.get('pulse_prefetch_budget_throttled', 0),
-    'force_rest_reads_count': counter_hits.get('pulse_graphql_low_force_rest_reads', 0),
-    'reserve_mode_count': counter_hits.get('pulse_graphql_budget_reserve_mode', 0),
-    'deferred_stage_count': counter_hits.get('pulse_graphql_budget_stage_deferred', 0),
-    'deferred_stages': {
-        key[len('pulse_graphql_budget_stage_deferred_'):]: count
-        for key, count in sorted(counter_hits.items())
-        if key.startswith('pulse_graphql_budget_stage_deferred_')
-    },
-    'gauges': {k: v for k, v in gauge_values.items() if 'graphql' in k.lower() or 'budget' in k.lower() or 'rate' in k.lower()},
-}
+graphql_budget = build_graphql_budget(counter_hits, gauge_values)
 dispatch_pacing = {
     'inter_launch_staggered_count': counter_hits.get('dispatch_inter_launch_staggered', 0),
     'last_inter_launch_delay_seconds': gauge_values.get('dispatch_inter_launch_delay_seconds'),
 }
-pre_launch_blockers = {}
-for key, count in counter_hits.items():
-    prefix = 'dispatch_candidate_failed_reason_'
-    if key.startswith(prefix):
-        pre_launch_blockers[key[len(prefix):]] = pre_launch_blockers.get(key[len(prefix):], 0) + count
-if counter_hits.get('dispatch_graphql_circuit_blocked', 0):
-    pre_launch_blockers['graphql_circuit_breaker'] = max(
-        pre_launch_blockers.get('graphql_circuit_breaker', 0),
-        counter_hits.get('dispatch_graphql_circuit_blocked', 0),
-    )
-if counter_hits.get('pulse_dispatch_runner_health_breaker_tripped', 0):
-    pre_launch_blockers['runner_health_circuit_breaker'] = max(
-        pre_launch_blockers.get('runner_health_circuit_breaker', 0),
-        counter_hits.get('pulse_dispatch_runner_health_breaker_tripped', 0),
-    )
-for guardrail_reason in ('provider_rate_limit_pressure', 'repeated_failure_pressure', 'healthy_pr_backlog', 'no_dispatchable_evidence'):
-    counter_name = f'dispatch_candidate_failed_reason_{guardrail_reason}'
-    if counter_hits.get(counter_name, 0):
-        pre_launch_blockers[guardrail_reason] = max(
-            pre_launch_blockers.get(guardrail_reason, 0),
-            counter_hits.get(counter_name, 0),
-        )
-top_pre_launch_blockers = [
-    {'reason': reason, 'count': count}
-    for reason, count in sorted(pre_launch_blockers.items(), key=lambda item: (-item[1], item[0]))
-]
-
-worker_worktree_count = os.environ.get('AIDEVOPS_WORKER_WORKTREE_COUNT', '0')
-if worker_worktree_count.isdigit():
-    worktrees = [None] * int(worker_worktree_count)
-else:
-    worktrees = []
-
-active_worker_processes = None
-active_worker_output = os.environ.get('AIDEVOPS_ACTIVE_WORKER_PROCESSES', '')
-if active_worker_output.isdigit():
-    active_worker_processes = int(active_worker_output)
-
-graphql_budget_status = (
-    os.environ.get('AIDEVOPS_GRAPHQL_BUDGET_STATUS')
-    or 'UNKNOWN: no cached status'
-)
+pre_launch_blockers = build_pre_launch_blockers(counter_hits)
+top_pre_launch_blockers = top_blockers(pre_launch_blockers)
+worktrees = worker_worktree_placeholders()
+active_worker_processes = active_worker_process_count()
+graphql_budget_status = graphql_budget_status_from_env()
 dispatch_api_blocked = dispatch_blocked_by_graphql_budget(
     graphql_budget_status,
     graphql_budget,
     pre_launch_blockers,
 )
-current_state_guardrails = {
-    'applied_count': counter_hits.get('pulse_dispatch_current_state_guardrail_applied', 0),
-    'available_slots_last': gauge_values.get('pulse_dispatch_guardrail_available_slots'),
-    'reasons': {
-        reason: pre_launch_blockers.get(reason, 0)
-        for reason in ('provider_rate_limit_pressure', 'repeated_failure_pressure', 'healthy_pr_backlog', 'no_dispatchable_evidence')
-        if pre_launch_blockers.get(reason, 0)
-    },
-}
+current_state_guardrails = build_current_state_guardrails(counter_hits, pre_launch_blockers, gauge_values)
 
 api_consumers = []
 api_pressure = {
