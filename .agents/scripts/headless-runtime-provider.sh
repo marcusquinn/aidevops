@@ -167,6 +167,63 @@ provider_auth_available() {
 	esac
 }
 
+provider_static_auth_available() {
+	local provider="$1"
+	case "$provider" in
+	anthropic)
+		[[ -n "${ANTHROPIC_API_KEY:-}" ]]
+		return $?
+		;;
+	openai)
+		[[ -n "${OPENAI_API_KEY:-}" ]]
+		return $?
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
+# provider_oauth_pool_available: true when the OAuth pool has at least one
+# immediately usable account for the provider. Static API keys bypass this gate;
+# a missing provider pool also stays non-blocking for legacy auth-only setups.
+provider_oauth_pool_available() {
+	local provider="$1"
+	local pool_file="${HOME}/.aidevops/oauth-pool.json"
+
+	if provider_static_auth_available "$provider"; then
+		return 0
+	fi
+	[[ -f "$pool_file" ]] || return 0
+
+	POOL_FILE="$pool_file" PROVIDER="$provider" python3 <<'PY' >/dev/null 2>&1
+import json
+import os
+import sys
+import time
+
+try:
+    with open(os.environ["POOL_FILE"], encoding="utf-8") as fh:
+        pool = json.load(fh)
+except Exception:
+    sys.exit(0)
+
+accounts = pool.get(os.environ["PROVIDER"], [])
+if not accounts:
+    sys.exit(0)
+
+now_ms = int(time.time() * 1000)
+for account in accounts:
+    status = account.get("status", "active")
+    cooldown_until = int(account.get("cooldownUntil") or 0)
+    if status in ("active", "idle") and cooldown_until <= now_ms:
+        sys.exit(0)
+
+sys.exit(1)
+PY
+	return $?
+}
+
 opencode_auth_has_provider() {
 	local provider="$1"
 	local auth_file="${OPENCODE_AUTH_FILE:-${HOME}/.local/share/opencode/auth.json}"

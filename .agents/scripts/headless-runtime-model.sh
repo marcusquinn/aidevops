@@ -20,7 +20,7 @@
 #   - shared-constants.sh (print_error, print_info, print_warning)
 #   - headless-runtime-lib.sh Section 1 functions (db_query, sql_escape, trim_spaces)
 #   - headless-runtime-provider.sh (extract_provider, provider_auth_available,
-#     model_backoff_active)
+#     provider_oauth_pool_available, model_backoff_active)
 #   - worker-lifecycle-common.sh (resolve_model_tier)
 #   - Constants from headless-runtime-helper.sh (OPENCODE_BIN_DEFAULT,
 #     DEFAULT_HEADLESS_MODELS, SCRIPT_DIR)
@@ -301,6 +301,11 @@ _choose_model_auto() {
 		# This keeps Codex in the default list for users with OpenAI OAuth while
 		# being invisible to users who have no OpenAI auth at all.
 		if ! provider_auth_available "$current_provider"; then
+			continue
+		fi
+		# Skip OAuth-backed providers when every pool account is cooling down.
+		# Static API keys bypass this provider-level OAuth pool gate.
+		if ! provider_oauth_pool_available "$current_provider"; then
 			continue
 		fi
 		# Check model-level backoff (rate limits) and provider-level (auth errors)
