@@ -283,6 +283,128 @@ _gh_pr_view_snapshot_put() {
 	return 0
 }
 
+#######################################
+# Classify a gh pr view --json field for mixed REST/GQL split routing.
+# Args: $1 = field name
+# Stdout: rest, gql, or unsupported
+#######################################
+_gh_pr_view_field_route_class() {
+	local _field="$1"
+	case "$_field" in
+	number|state|merged|mergedAt|closedAt|mergeCommit|mergedBy|isDraft|labels|author|title|body|url|createdAt|updatedAt|baseRefName|headRefName|headRefOid) printf 'rest' ;;
+	mergeable|statusCheckRollup|reviews|latestReviews|reviewThreads|commits|files|reviewDecision|autoMergeRequest|mergeStateStatus) printf 'gql' ;;
+	*) printf 'unsupported' ;;
+	esac
+	return 0
+}
+
+#######################################
+# Partition gh pr view fields into REST-safe and GraphQL-only subsets.
+# Args: $1 = comma-separated field list
+# Stdout: rest fields, gql fields, unsupported count (one line each)
+#######################################
+_gh_pr_view_partition_fields() {
+	local _fields="$1"
+	local _rest_fields=""
+	local _gql_fields=""
+	local _unsupported_count=0
+	local _field=""
+	local _class=""
+	while IFS= read -r _field; do
+		[[ -z "$_field" ]] && continue
+		_class="$(_gh_pr_view_field_route_class "$_field")"
+		case "$_class" in
+		rest) _rest_fields="${_rest_fields}${_rest_fields:+,}${_field}" ;;
+		gql) _gql_fields="${_gql_fields}${_gql_fields:+,}${_field}" ;;
+		*) _unsupported_count=$(( _unsupported_count + 1 )) ;;
+		esac
+	done < <(_rest_split_csv "$_fields")
+	printf '%s\n%s\n%s\n' "$_rest_fields" "$_gql_fields" "$_unsupported_count"
+	return 0
+}
+
+#######################################
+# Build gh-style pr view argv with --json replaced and --jq/-q removed.
+# Args: $1 = replacement --json fields, $2.. = original gh pr view argv
+# Stdout: NUL-delimited argv for mapfile/readarray-free Bash 3.2 consumers.
+#######################################
+_gh_pr_view_args_for_json_fields() {
+	local _json_fields="$1"
+	shift
+	local _arg=""
+	local _saw_json=0
+	while [[ $# -gt 0 ]]; do
+		_arg="$1"
+		case "$_arg" in
+		--json) printf '%s\0%s\0' --json "$_json_fields"; _saw_json=1; shift 2 ;;
+		--json=*) printf '%s\0%s\0' --json "$_json_fields"; _saw_json=1; shift ;;
+		--jq | -q) shift 2 ;;
+		--jq=* | -q=*) shift ;;
+		*) printf '%s\0' "$_arg"; shift ;;
+		esac
+	done
+	[[ $_saw_json -eq 0 ]] && printf '%s\0%s\0' --json "$_json_fields"
+	return 0
+}
+
+#######################################
+# Read NUL-delimited argv from stdin into the named array (Bash 3.2 safe).
+# Args: $1 = destination array variable name
+#######################################
+_gh_pr_view_read_nul_argv_into() {
+	local _dest_var="$1"
+	local _item=""
+	eval "$_dest_var=()"
+	while IFS= read -r -d '' _item; do
+		local _quoted_item=""
+		printf -v _quoted_item '%q' "$_item"
+		eval "$_dest_var+=(\$_quoted_item)"
+	done
+	return 0
+}
+
+#######################################
+# Serve mixed REST/GQL gh_pr_view field sets by fetching REST-equivalent fields
+# through the REST translator and only GraphQL-only fields through gh pr view.
+# Args: gh-style argv
+# Stdout: merged gh-compatible output, with original --jq/-q applied if present.
+# Returns: 0 when split handled; 1 when caller should use the legacy path.
+#######################################
+_gh_pr_view_try_mixed_split() {
+	local -a _orig_args=("$@")
+	local _fields=""
+	_fields="$(_rest_args_json_fields "${_orig_args[@]}")"
+	[[ -n "$_fields" ]] || return 1
+	local _rest_fields="" _gql_fields="" _unsupported_count="0"
+	{ read -r _rest_fields; read -r _gql_fields; read -r _unsupported_count; } < <(_gh_pr_view_partition_fields "$_fields")
+	[[ -n "$_rest_fields" && -n "$_gql_fields" && "$_unsupported_count" == "0" ]] || return 1
+	local _jq_expr=""
+	local _i=0
+	while [[ $_i -lt ${#_orig_args[@]} ]]; do
+		case "${_orig_args[$_i]}" in
+		--jq | -q) _i=$(( _i + 1 )); _jq_expr="${_orig_args[$_i]:-}" ;;
+		--jq=* | -q=*) _jq_expr="${_orig_args[$_i]#*=}" ;;
+		*) ;;
+		esac
+		_i=$(( _i + 1 ))
+	done
+	local -a _rest_args=()
+	local -a _gql_args=()
+	_gh_pr_view_read_nul_argv_into _rest_args < <(_gh_pr_view_args_for_json_fields "$_rest_fields" "${_orig_args[@]}")
+	_gh_pr_view_read_nul_argv_into _gql_args < <(_gh_pr_view_args_for_json_fields "$_gql_fields" "${_orig_args[@]}")
+	local _rest_out="" _gql_out="" _merged=""
+	_rest_out="$(_rest_pr_view "${_rest_args[@]}")" || return 1
+	gh_record_call graphql gh_pr_view_split 2>/dev/null || true
+	_gql_out="$(_gh_with_timeout read gh pr view "${_gql_args[@]}")" || return 1
+	_merged="$(jq -c -s '.[0] * .[1]' < <(printf '%s\n%s\n' "$_rest_out" "$_gql_out"))" || return 1
+	if [[ -n "$_jq_expr" ]]; then
+		printf '%s\n' "$_merged" | jq -r "$_jq_expr"
+		return $?
+	fi
+	printf '%s' "$_merged"
+	return 0
+}
+
 # Ensure all core status:* labels exist on a repo (idempotent, cached per-process).
 # The helper relies on --remove-label being idempotent for *unset* labels (gh
 # returns exit 0 when a label exists in the repo but isn't applied to the issue),
@@ -525,6 +647,11 @@ gh_pr_view() {
 		return 0
 	fi
 	local _out="" _rc=0
+	if _out=$(_gh_pr_view_try_mixed_split "$@" 2>/dev/null); then
+		_gh_pr_view_snapshot_put "$_out" "$@"
+		printf '%s' "$_out"
+		return 0
+	fi
 	if _rest_read_first_enabled && _rest_pr_view_can_preserve_args "$@"; then
 		print_info "[INFO] gh-wrapper: REST-first read mode, routing pr view #${_first_num} to REST"
 		_out=$(_rest_pr_view "$@")

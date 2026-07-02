@@ -294,6 +294,10 @@ _stub_gh_pr() {
 	if [[ "$subcommand" == "create" ]]; then
 		printf 'https://github.com/owner/repo/pull/9100\n'
 	elif [[ "$subcommand" == "view" ]]; then
+		if [[ -n "${STUB_PR_VIEW_STDOUT+x}" ]]; then
+			printf '%s' "$STUB_PR_VIEW_STDOUT"
+			return 0
+		fi
 		printf '{"number":9101}\n'
 	elif [[ "$subcommand" == "list" ]]; then
 		if [[ -n "${STUB_PR_LIST_STDOUT+x}" ]]; then
@@ -1229,6 +1233,24 @@ else
 	fail "AIDEVOPS_GH_REST_FIRST_READS leaves GraphQL-only pr list fields on GraphQL" \
 		"GH_CALLS=$(cat "$GH_CALLS") | INFO=$(cat "$GH_INFO_OUTPUT")"
 fi
+
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+: >"$AIDEVOPS_GH_API_LOG"
+export STUB_PR_VIEW_FIXTURE='{"number":123,"title":"rest title","state":"open"}'
+export STUB_PR_VIEW_STDOUT='{"statusCheckRollup":[{"conclusion":"SUCCESS"}]}'
+mixed_split_value=$(gh_pr_view 123 --repo "owner/repo" --json title,statusCheckRollup --jq '.title + ":" + (.statusCheckRollup[0].conclusion // "")' 2>/dev/null || true)
+mixed_split_rest_calls=$(grep -cE '^api /repos/owner/repo/pulls/123( |$)' "$GH_CALLS" 2>/dev/null || true)
+mixed_split_gql_subset_calls=$(grep -cE '^pr view 123 --repo owner/repo --json statusCheckRollup$' "$GH_CALLS" 2>/dev/null || true)
+mixed_split_full_gql_calls=$(grep -cE '^pr view 123 --repo owner/repo --json title,statusCheckRollup' "$GH_CALLS" 2>/dev/null || true)
+mixed_split_records=$(grep -c $'gh_pr_view_split\tgraphql' "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)
+if [[ "$mixed_split_value" == "rest title:SUCCESS" && "$mixed_split_rest_calls" == "1" && "$mixed_split_gql_subset_calls" == "1" && "$mixed_split_full_gql_calls" == "0" && "$mixed_split_records" == "1" ]]; then
+	pass "gh_pr_view mixed REST/GQL field set fetches REST fields separately and applies jq"
+else
+	fail "gh_pr_view mixed REST/GQL field set fetches REST fields separately and applies jq" \
+		"value=${mixed_split_value} rest=${mixed_split_rest_calls} gql_subset=${mixed_split_gql_subset_calls} gql_full=${mixed_split_full_gql_calls} split_records=${mixed_split_records} GH_CALLS=$(cat "$GH_CALLS") API_LOG=$(cat "$AIDEVOPS_GH_API_LOG")"
+fi
+unset STUB_PR_VIEW_FIXTURE STUB_PR_VIEW_STDOUT
 
 : >"$GH_CALLS"
 : >"$GH_INFO_OUTPUT"

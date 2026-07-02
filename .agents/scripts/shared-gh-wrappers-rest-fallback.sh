@@ -1173,6 +1173,9 @@ _rest_pr_object_json_jq() {
 		author) projection="${projection}${projection:+,}author: (.user // {})" ;;
 		title) projection="${projection}${projection:+,}title: (.title // \"\")" ;;
 		body) projection="${projection}${projection:+,}body: (.body // \"\")" ;;
+		url) projection="${projection}${projection:+,}url: .html_url" ;;
+		createdAt) projection="${projection}${projection:+,}createdAt: .created_at" ;;
+		updatedAt) projection="${projection}${projection:+,}updatedAt: .updated_at" ;;
 		baseRefName) projection="${projection}${projection:+,}baseRefName: (.base.ref // \"\")" ;;
 		headRefName) projection="${projection}${projection:+,}headRefName: (.head.ref // \"\")" ;;
 		headRefOid) projection="${projection}${projection:+,}headRefOid: (.head.sha // \"\")" ;;
