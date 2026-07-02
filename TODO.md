@@ -1092,7 +1092,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18056 perf(pulse): investigate remaining GraphQL budget exhaustion after PR-list cache work #framework #github #investigate #parent-task #performance #pulse ref:GH#26227 verified:2026-07-02 completed:2026-07-02
 
-- [ ] t18061 fix(opencode): preserve desktop session history after restart #bug #framework #opencode ref:GH#26394
+- [x] t18061 fix(opencode): preserve desktop session history after restart #bug #framework #opencode ref:GH#26394 pr:#26396 completed:2026-07-02
 
 ## In Progress
 
@@ -4413,4 +4413,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t8231 Add role account license billing panels #type:fix ref:GH#8231
 
-- [ ] t18061 fix(opencode): preserve desktop session history after restart #bug #framework #opencode ref:GH#26394
+- [x] t18061 fix(opencode): preserve desktop session history after restart #bug #framework #opencode ref:GH#26394 pr:#26396 completed:2026-07-02
