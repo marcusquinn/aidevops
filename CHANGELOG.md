@@ -12,6 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.31.27] - 2026-07-03
 
+### Changed
+
+- Maintenance: mark t18061 complete (pr:#26396 completed:2026-07-02) [skip ci]
+- fix(opencode): preserve desktop session history after restart (#26396)
+- Maintenance: sync ref:GH#26394 to TODO.md [skip ci]
+
+### Fixed
+
+- skip cooling OAuth providers (#26398)
+
+## [3.31.27] - 2026-07-03
+
 ### Fixed
 
 - preserve aidevops-managed OpenCode Desktop session history after restart

@@ -4413,4 +4413,3 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t8231 Add role account license billing panels #type:fix ref:GH#8231
 
-- [x] t18061 fix(opencode): preserve desktop session history after restart #bug #framework #opencode ref:GH#26394 pr:#26396 completed:2026-07-02
