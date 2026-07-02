@@ -1730,6 +1730,20 @@ _dlw_blocked_by_hard_stop() {
 	return 1
 }
 
+_dlw_hold_repeated_recovery_failures() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
+	local recovery_loop_out=""
+
+	[[ -x "$dedup_helper" ]] || return 1
+	if recovery_loop_out=$("$dedup_helper" check-recovery-loop "$issue_number" "$repo_slug" 2>/dev/null); then
+		echo "[dispatch_with_dedup] Dispatch held for #${issue_number} in ${repo_slug}: ${recovery_loop_out}" >>"$LOGFILE"
+		return 0
+	fi
+	return 1
+}
+
 _dlw_prebootstrap_gates() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -1743,6 +1757,9 @@ _dlw_prebootstrap_gates() {
 		return 1
 	fi
 	if ! _dlw_load_preflight "$issue_number" "$repo_slug"; then
+		return 1
+	fi
+	if _dlw_hold_repeated_recovery_failures "$issue_number" "$repo_slug"; then
 		return 1
 	fi
 	return 0

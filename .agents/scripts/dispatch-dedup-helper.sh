@@ -36,6 +36,11 @@
 #     and branch should hold dispatch before launching another worker.
 #     Exit 0 = threshold reached (do NOT dispatch), exit 1 = no hold.
 #
+#   dispatch-dedup-helper.sh check-recovery-loop <issue> <slug>
+#     Check whether repeated worker recovery failures across branches should
+#     pause dispatch before another claim/comment is posted.
+#     Exit 0 = threshold reached (do NOT dispatch), exit 1 = no hold.
+#
 #   dispatch-dedup-helper.sh is-assigned <issue> <slug> [self-login]
 #     Check if issue is assigned to another runner (not self, owner, or maintainer).
 #     GH#10521: Ignores repo owner (from slug) and maintainer (from repos.json).
@@ -74,6 +79,10 @@ source "${SCRIPT_DIR}/dispatch-dedup-stale.sh"
 # GH#18916: PR evidence dedup checks extracted.
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/dispatch-dedup-pr.sh"
+
+# Issue-level worker recovery loop fuse.
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/dispatch-dedup-recovery-loop.sh"
 
 _DDH_ORPHAN_PR_HINT_NONE="none found"
 
@@ -2369,6 +2378,8 @@ Usage:
                                                        t2007: aggregate token spend (returns "spent|attempts")
   dispatch-dedup-helper.sh check-orphan-loop <issue> <slug> <branch> [todo-file] [worktree-path]
                                                        Hold repeated worker_branch_orphan loops or unreconciled remote children
+  dispatch-dedup-helper.sh check-recovery-loop <issue> <slug>
+                                                       Hold repeated worker recovery failures across branches before posting a new claim
   dispatch-dedup-helper.sh has-fix-the-fixer-label <issue> <slug>
                                                        t3077: detect the fix-the-fixer label (exit 0=labeled, 1=unlabeled).
                                                        Used by headless-runtime-helper.sh to enable verbose lifecycle,
@@ -2419,6 +2430,11 @@ Examples:
     echo "Repeated worker_branch_orphan on this branch — hold dispatch"
   else
     echo "No branch-orphan loop — safe to dispatch"
+  fi
+
+  # Check before claim/comment creation for repeated recovery failures across branches
+  if dispatch-dedup-helper.sh check-recovery-loop 2300 owner/repo; then
+    echo "Repeated worker recovery failures — hold dispatch"
   fi
 
   # Report ALL structural label blockers in one pass (t2894)
@@ -2492,6 +2508,11 @@ main() {
 		_require_args check-orphan-loop 3 "$#" "<issue-number> <repo-slug> <branch> [todo-file] [worktree-path]" || return 1
 		local _ol_issue="$1" _ol_repo="$2" _ol_branch="$3" _ol_todo="${4:-}" _ol_worktree="${5:-}"
 		check_worker_branch_orphan_loop "$_ol_issue" "$_ol_repo" "$_ol_branch" "$_ol_todo" "$_ol_worktree"
+		;;
+	check-recovery-loop)
+		_require_args check-recovery-loop 2 "$#" "issue-number repo-slug" || return 1
+		local _rl_issue="$1" _rl_repo="$2"
+		check_worker_recovery_failure_loop "$_rl_issue" "$_rl_repo"
 		;;
 	claim)
 		_require_args claim 2 "$#" "<issue-number> <repo-slug> [runner-login]" || return 1

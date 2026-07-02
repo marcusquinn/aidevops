@@ -398,6 +398,7 @@ _nmr_application_has_automation_signature() {
 #   - <!-- cost-circuit-breaker:no_work_loop — t2769 per-issue no_work breaker
 #   - <!-- dispatch-backoff:rate_limit_nmr — t2781 per-issue rate-limit breaker
 #   - <!-- dispatch-infrastructure-failure — t3050 setup/zero-session breaker
+#   - <!-- dispatch-circuit-breaker:worker_recovery_loop — issue-level recovery fuse
 #   - <!-- circuit-breaker-escalated       — legacy fast-fail alias
 #   - <!-- circuit-breaker-meta-filed      — t3076 root-cause meta-issue marker
 #
@@ -438,7 +439,7 @@ _nmr_application_is_circuit_breaker_trip() {
 		comments_json="[]"
 	fi
 
-	local breaker_pattern='stale-recovery-tick:escalated|cost-circuit-breaker:fired|cost-circuit-breaker:no_work_loop|dispatch-backoff:rate_limit_nmr|dispatch-infrastructure-failure|circuit-breaker-escalated|circuit-breaker-meta-filed'
+	local breaker_pattern='stale-recovery-tick:escalated|cost-circuit-breaker:fired|cost-circuit-breaker:no_work_loop|dispatch-backoff:rate_limit_nmr|dispatch-infrastructure-failure|dispatch-circuit-breaker:worker_recovery_loop|circuit-breaker-escalated|circuit-breaker-meta-filed'
 	local has_breaker_trip
 	has_breaker_trip=$(printf '%s' "$comments_json" | jq -r \
 		--arg label_at "$label_at" \
@@ -591,7 +592,7 @@ _nmr_breaker_release_retry_reason() {
 	comments_json=$(gh api "repos/${slug}/issues/${issue_num}/comments" --paginate --slurp 2>/dev/null) || comments_json="[]"
 	[[ -n "$comments_json" && "$comments_json" != "null" ]] || comments_json="[]"
 
-	local retry_pattern='dispatch-backoff:rate_limit_nmr|cost-circuit-breaker:no_work_loop|dispatch-infrastructure-failure'
+	local retry_pattern='dispatch-backoff:rate_limit_nmr|cost-circuit-breaker:no_work_loop|dispatch-infrastructure-failure|dispatch-circuit-breaker:worker_recovery_loop'
 	local array_type='array'
 	local breaker_body=""
 	breaker_body=$(printf '%s' "$comments_json" | jq -r \

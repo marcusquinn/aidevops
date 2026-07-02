@@ -72,7 +72,7 @@ fi
 #
 # Runs once per 24h (guarded by timestamp file). For each pulse-enabled
 # repo, ensures a persistent "Daily Code Quality Review" issue exists,
-# then runs available quality tools and posts a summary comment.
+# then runs available quality tools and upserts a rolling summary comment.
 #
 # Tools checked (in order):
 #   1. ShellCheck — local, always available for repos with .sh files
@@ -592,7 +592,7 @@ _quality_sweep_for_repo() {
 		"$now_iso" "$tool_count" "$qlty_smell_count" "$qlty_grade" \
 		"$qlty_smell_delta" "$qlty_smell_count_prev" "$sweep_sev_inline"
 
-	# Post daily comment with full findings
+	# Upsert rolling comment with full findings
 	local comment_body
 	comment_body=$(_build_sweep_comment \
 		"$now_iso" "$repo_slug" "$tool_count" \
@@ -601,12 +601,12 @@ _quality_sweep_for_repo() {
 
 	local comment_stderr=""
 	local comment_posted=false
-	comment_stderr=$(gh_issue_comment "$issue_number" --repo "$repo_slug" --body "$comment_body" 2>&1 >/dev/null) && comment_posted=true || {
-		echo "[stats] Quality sweep: failed to post comment on #${issue_number} in ${repo_slug}: ${comment_stderr}" >>"$LOGFILE"
+	comment_stderr=$(_upsert_quality_sweep_comment "$issue_number" "$repo_slug" "$comment_body" 2>&1 >/dev/null) && comment_posted=true || {
+		echo "[stats] Quality sweep: failed to upsert comment on #${issue_number} in ${repo_slug}: ${comment_stderr}" >>"$LOGFILE"
 	}
 
 	if [[ "$comment_posted" == true ]]; then
-		echo "[stats] Quality sweep: posted findings on #${issue_number} in ${repo_slug} (${tool_count} tools)" >>"$LOGFILE"
+		echo "[stats] Quality sweep: upserted findings on #${issue_number} in ${repo_slug} (${tool_count} tools)" >>"$LOGFILE"
 	fi
 	return 0
 }
