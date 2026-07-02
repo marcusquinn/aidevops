@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.26] - 2026-07-03
+
+### Fixed
+
+- clarify circuit breaker meta blocker wording (#26393)
+
 ## [3.31.25] - 2026-07-02
 
 ### Changed
