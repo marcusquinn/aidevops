@@ -376,7 +376,7 @@ ${stages_slice:-(no matching stage records)}
 
 1. Root cause identified and named explicitly in the PR description (which file/function/race).
 2. Fix lands as a normal PR with \`Resolves #<this>\` (NOT \`Resolves #${issue_number}\` — this meta-issue is the unit of work, the original is downstream).
-3. PR merge automatically removes the meta \`blocked-by\` label from #${issue_number} via \`_unblock_circuit_breaker_meta_original\`.
+3. PR merge automatically removes the meta blocker label that points from the original issue to this meta-issue via \`_unblock_circuit_breaker_meta_original\`.
 4. If no other circuit-breaker markers remain on #${issue_number}, NMR is also cleared automatically.
 5. A regression test exists for the specific failure mode identified (test in \`.agents/scripts/tests/\`).
 
