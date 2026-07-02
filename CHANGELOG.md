@@ -14,6 +14,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- add more font options (#26367)
+
+### Changed
+
+- Documentation: prepare changelog for 3.31.23
+- Maintenance: sync GitHub issue refs to TODO.md [skip ci]
+
+### Fixed
+
+- account pulse launch validation failures (#26365)
+
+## [3.31.23] - 2026-07-02
+
+### Added
+
 - Add more GUI font options for the aidevops app appearance selector (#26367)
 
 ## [3.31.22] - 2026-07-02
