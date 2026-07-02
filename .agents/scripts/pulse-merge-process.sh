@@ -242,7 +242,7 @@ _pmp_review_decision_is_unknown() {
 }
 
 # Conservative REST fallback for GraphQL reviewDecision refresh failures.
-# Groups by reviewer and keeps each latest state.
+# Groups state-changing reviews by reviewer and keeps each latest state.
 _pmp_rest_review_decision_from_reviews() {
 	local pr_number="$1"
 	local repo_slug="$2"
@@ -251,7 +251,7 @@ _pmp_rest_review_decision_from_reviews() {
 	reviews_json=$(gh api --paginate "repos/${repo_slug}/pulls/${pr_number}/reviews" 2>/dev/null) || return 1
 	printf '%s' "$reviews_json" | jq -rs '
 		flatten
-		| map(select((.user.login // "") != ""))
+		| map(select((.user.login // "") != "" and (.state == "APPROVED" or .state == "CHANGES_REQUESTED" or .state == "DISMISSED")))
 		| group_by(.user.login)
 		| map(max_by(.submitted_at // .submittedAt // ""))
 		| if any(.state == "CHANGES_REQUESTED") then "CHANGES_REQUESTED" else "NONE" end
