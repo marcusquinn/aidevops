@@ -156,7 +156,7 @@ Nav links:
   font-weight: 400
   letter-spacing: 0.15em
   text-transform: uppercase
-  color: rgba(255, 255, 255, 0.6)
+  color: rgba(255, 255, 255, 0.5)
   :hover  -> color: #FFFFFF
   :active -> color: #c9a96e
 ```
