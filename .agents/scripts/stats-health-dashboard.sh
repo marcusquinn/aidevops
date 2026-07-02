@@ -172,7 +172,7 @@ _update_health_issue_body_or_fail() {
 	body_edit_stderr=$(_gh_with_timeout write gh_issue_edit_safe "$health_issue_number" --repo "$repo_slug" \
 		--body "$body" 2>&1 >/dev/null) || {
 		echo "[stats] Health issue: failed to update body for #${health_issue_number}: ${body_edit_stderr}" \
-			>>"$LOGFILE"
+			>>"${LOGFILE:-/dev/null}"
 		return 1
 	}
 	return 0
@@ -199,9 +199,9 @@ _refresh_health_issue_title_from_body() {
 	IFS='|' read -r pr_count assigned_issue_count worker_count <<<"$counts_raw"
 
 	local pr_label="PRs"
-	[[ "$pr_count" -eq 1 ]] && pr_label="PR"
+	[[ "${pr_count:-0}" -eq 1 ]] && pr_label="PR"
 	local worker_label="workers"
-	[[ "$worker_count" -eq 1 ]] && worker_label="worker"
+	[[ "${worker_count:-0}" -eq 1 ]] && worker_label="worker"
 
 	_update_health_issue_title \
 		"$health_issue_number" "$repo_slug" "$runner_prefix" \
