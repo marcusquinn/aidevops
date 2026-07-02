@@ -98,6 +98,7 @@ cat <<'JSON'
 {
   "dispatch_alive": true,
   "dispatch_stage_events": 12,
+  "active_worker_processes": 0,
   "current_state_guardrails": {"available_slots_last": 6},
   "pulse_gauges": {"dispatch_capacity_final_max_workers": 6},
   "worker_outcomes": {"spawned": 4},
@@ -233,6 +234,32 @@ IDS=$(printf '%s' "$JSON_OUT" | jq -r '[.findings[].id] | sort | join(",")')
 assert_eq "json finding IDs" "auto-dispatch-missing-tier-labels,pulse-launch-accounting-gap,pulse-underfilled-auto-dispatch-queue" "$IDS"
 JSON_PRIVATE_COUNT=$(printf '%s' "$JSON_OUT" | grep -c "private/repo-one" 2>/dev/null || true)
 assert_eq "json output removes raw worker examples" "0" "$JSON_PRIVATE_COUNT"
+ACTIVE_SOURCE=$(printf '%s' "$JSON_OUT" | jq -r '.summary.active_workers_source')
+assert_eq "json uses process scan when available" "process_scan" "$ACTIVE_SOURCE"
+
+cat >"${TEST_ROOT}/current-state-active.sh" <<'SH'
+#!/usr/bin/env bash
+cat <<'JSON'
+{
+  "dispatch_alive": true,
+  "dispatch_stage_events": 12,
+  "active_worker_processes": 2,
+  "current_state_guardrails": {"available_slots_last": 6},
+  "pulse_gauges": {"dispatch_capacity_final_max_workers": 6},
+  "worker_outcomes": {"spawned": 0},
+  "worker_terminal_events": 0,
+  "graphql_budget_status": "OK fixture"
+}
+JSON
+SH
+chmod +x "${TEST_ROOT}/current-state-active.sh"
+JSON_ACTIVE_OUT=$(env "${COMMON_ENV[@]}" "PULSE_CHECK_CURRENT_STATE_HELPER=${TEST_ROOT}/current-state-active.sh" "$HELPER" json 2>&1)
+ACTIVE_COUNT=$(printf '%s' "$JSON_ACTIVE_OUT" | jq -r '.summary.active_workers')
+ACTIVE_AVAILABLE=$(printf '%s' "$JSON_ACTIVE_OUT" | jq -r '.summary.available_slots')
+ACTIVE_IDS=$(printf '%s' "$JSON_ACTIVE_OUT" | jq -r '[.findings[].id] | sort | join(",")')
+assert_eq "json reports process-scan active workers" "2" "$ACTIVE_COUNT"
+assert_eq "json recomputes available slots from process count" "4" "$ACTIVE_AVAILABLE"
+assert_eq "process-scan active workers suppress underfill finding" "auto-dispatch-missing-tier-labels" "$ACTIVE_IDS"
 
 cat >"${TEST_ROOT}/current-state.sh" <<'SH'
 #!/usr/bin/env bash

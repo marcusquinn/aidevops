@@ -238,6 +238,21 @@ try:
 except (OSError, subprocess.CalledProcessError):
     worktrees = []
 
+active_worker_processes = None
+worker_lifecycle_common = os.path.join(script_dir, 'worker-lifecycle-common.sh')
+if os.path.exists(worker_lifecycle_common):
+    try:
+        active_worker_output = subprocess.check_output(
+            ['bash', '-c', 'source "$1" >/dev/null 2>&1 && count_active_workers', '_', worker_lifecycle_common],
+            text=True,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        ).strip()
+        if active_worker_output.isdigit():
+            active_worker_processes = int(active_worker_output)
+    except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        active_worker_processes = None
+
 graphql_budget_status = 'UNKNOWN: no cached status'
 breaker = os.path.join(script_dir, 'pulse-rate-limit-circuit-breaker.sh')
 try:
@@ -397,6 +412,7 @@ result = {
     'pulse_counter_hits': counter_hits,
     'pulse_gauges': gauge_values,
     'wrapper_activity_lines': len(wrapper_activity),
+    'active_worker_processes': active_worker_processes,
     'worker_worktrees': len(worktrees),
     'dispatch_alive': bool(stage_records or metrics or counter_hits or worktrees),
     'graphql_budget_status': graphql_budget_status,
@@ -426,6 +442,7 @@ else:
     print(f'- GraphQL budget: {graphql_budget_status}')
     print(f'- Prefetch cache: {json.dumps(prefetch_cache, sort_keys=True)}')
     print(f'- Dispatch API blocked by GraphQL: {str(dispatch_api_blocked).lower()}')
+    print(f'- Active worker processes: {active_worker_processes if active_worker_processes is not None else "unknown"}')
     if api_consumers:
         print(f'- Top GraphQL consumers: {json.dumps(api_consumers)}')
     print(f'- API call pressure: {json.dumps(api_pressure, sort_keys=True)}')

@@ -11,7 +11,10 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
 
 ($current.pulse_gauges.dispatch_capacity_final_max_workers // 0 | number_or_zero) as $max_workers |
 ($current.current_state_guardrails.available_slots_last // $current.pulse_gauges.pulse_dispatch_guardrail_available_slots // 0 | number_or_zero) as $available_slots |
-([$max_workers - $available_slots, 0] | max) as $active_workers |
+([$max_workers - $available_slots, 0] | max) as $inferred_active_workers |
+(if ($current.active_worker_processes // null) == null then null else ($current.active_worker_processes | number_or_zero) end) as $active_worker_processes |
+(if $active_worker_processes == null then $inferred_active_workers else $active_worker_processes end) as $active_workers |
+(if $active_worker_processes == null then $available_slots else ([$max_workers - $active_worker_processes, 0] | max) end) as $effective_available_slots |
 ($queue.aggregate.available_unassigned // 0 | number_or_zero) as $available_issues |
 ($queue.aggregate.available_old // 0 | number_or_zero) as $old_available |
 ($queue.aggregate.needs_tier // 0 | number_or_zero) as $needs_tier |
@@ -30,7 +33,9 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
   summary: {
     max_workers: $max_workers,
     active_workers: $active_workers,
-    available_slots: $available_slots,
+    active_workers_source: (if $active_worker_processes == null then "capacity_gauge" else "process_scan" end),
+    inferred_active_workers: $inferred_active_workers,
+    available_slots: $effective_available_slots,
     dispatch_alive: ($current.dispatch_alive // false),
     dispatch_stage_events: ($current.dispatch_stage_events // 0),
     worker_launches_in_window: $spawned,
@@ -57,6 +62,7 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
     pulse_gauges: ($current.pulse_gauges // {}),
     current_state_guardrails: ($current.current_state_guardrails // {}),
     dispatch_pacing: ($current.dispatch_pacing // {}),
+    active_worker_processes: ($current.active_worker_processes // null),
     top_pre_launch_blockers: ($current.top_pre_launch_blockers // [])
   },
   worker_activity: {
