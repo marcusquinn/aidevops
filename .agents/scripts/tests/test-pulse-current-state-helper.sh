@@ -131,13 +131,15 @@ jq -e '.prefetch_cache.conditional_misses == 1' "$json_output" >/dev/null
 jq -e '.review_thread_attention[0].blocked_by == "maintainer"' "$json_output" >/dev/null
 jq -e '.review_thread_attention[0].pr_number == 12' "$json_output" >/dev/null
 jq -e '.review_thread_attention[0].reason == "needs_decision"' "$json_output" >/dev/null
-python3 - "$HELPER" <<'PY'
+python3 - "$HELPER" "${SCRIPT_DIR}/../pulse-current-state.py" <<'PY'
 import pathlib
 import sys
-source = pathlib.Path(sys.argv[1]).read_text()
-assert 'from collections import Counter, defaultdict, deque' in source
-assert 'readlines()[-limit:]' not in source
-assert 'deque(handle, maxlen=limit)' in source
+helper_source = pathlib.Path(sys.argv[1]).read_text()
+implementation_source = pathlib.Path(sys.argv[2]).read_text()
+assert 'pulse-current-state.py' in helper_source
+assert 'from collections import Counter, defaultdict, deque' in implementation_source
+assert 'readlines()[-limit:]' not in implementation_source
+assert 'deque(handle, maxlen=limit)' in implementation_source
 PY
 
 printf 'PASS pulse-current-state-helper\n'
