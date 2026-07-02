@@ -249,6 +249,7 @@ run_case "post-approval protection failure blocks final success" '
 	_require_approval_key() { return 0; }
 	_require_gh_auth() { return 0; }
 	_resolve_slug_or_fail() { local slug="${1:-}"; printf "%s" "$slug"; return 0; }
+	_validate_approval_target_kind() { return 0; }
 	_fetch_target_title() { printf "Mock issue"; return 0; }
 	_confirm_approval() { return 0; }
 	_sign_approval_payload() { local payload="$1"; local actual_key="$2"; local sig_file="$3"; : "$payload" "$actual_key"; printf "mock-signature" >"$sig_file"; return 0; }

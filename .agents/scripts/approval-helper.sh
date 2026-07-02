@@ -329,6 +329,40 @@ _fetch_target_title() {
 	return 0
 }
 
+_validate_approval_target_kind() {
+	local target_type="$1"
+	local target_number="$2"
+	local slug="$3"
+	local issue_json=""
+
+	issue_json=$(_approval_fetch_issue_json "$target_number" "$slug") || {
+		_print_error "Could not resolve ${target_type} #${target_number} in ${slug}. Check the number, repo, and whether this is an issue or PR."
+		if [[ "$target_type" == "pr" ]]; then
+			_print_info "If this is an issue, use: sudo aidevops approve issue ${target_number} ${slug}"
+		else
+			_print_info "If this is a PR, use: sudo aidevops approve pr ${target_number} ${slug}"
+		fi
+		return 1
+	}
+
+	if [[ "$target_type" == "pr" ]]; then
+		if ! printf '%s' "$issue_json" | jq -e 'has("pull_request")' >/dev/null 2>&1; then
+			_print_error "#${target_number} in ${slug} is an issue, not a PR."
+			_print_info "Use: sudo aidevops approve issue ${target_number} ${slug}"
+			return 1
+		fi
+		return 0
+	fi
+
+	if printf '%s' "$issue_json" | jq -e 'has("pull_request")' >/dev/null 2>&1; then
+		_print_error "#${target_number} in ${slug} is a PR, not an issue."
+		_print_info "Use: sudo aidevops approve pr ${target_number} ${slug}"
+		return 1
+	fi
+
+	return 0
+}
+
 _confirm_approval() {
 	local target_type="$1"
 	local target_number="$2"
@@ -733,6 +767,7 @@ _approve_target() {
 	_require_gh_auth || return 1
 
 	slug=$(_resolve_slug_or_fail "$slug" "$slug_error") || return 1
+	_validate_approval_target_kind "$target_type" "$target_number" "$slug" || return 1
 
 	local title
 	title=$(_fetch_target_title "$target_type" "$target_number" "$slug")
