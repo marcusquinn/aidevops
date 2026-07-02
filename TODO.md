@@ -109,7 +109,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 <!--TOON:ready[0]{id,desc,owner,tags,est,logged}:
 -->
 
-- [ ] t18057 feat(agents): add a reusable tiled image mosaic agent capability. Teach an agent or skill to produce recognisable tiled photo mosaics, collage wallpapers, and image grids from real source imagery using a privacy-safe, repeatable pipeline: source-image filtering, square cover-crop tile generation, explicit tile dimensions, SVG/HTML assembly, and proof-image verification. Include the common misspelling `mozaic` in discovery triggers, document the 200px recognisable-photo baseline versus smaller texture-only grids, and add fixture-driven tests or dry-run examples for tile sizing, source exclusion, and generated output integrity. #enhancement #framework #agents #image-generation #auto-dispatch ~4h tier:standard ref:GH#26259 logged:2026-07-02 -> [todo/tasks/t18057-brief.md]
+- [x] t18057 feat(agents): add a reusable tiled image mosaic agent capability. Teach an agent or skill to produce recognisable tiled photo mosaics, collage wallpapers, and image grids from real source imagery using a privacy-safe, repeatable pipeline: source-image filtering, square cover-crop tile generation, explicit tile dimensions, SVG/HTML assembly, and proof-image verification. Include the common misspelling `mozaic` in discovery triggers, document the 200px recognisable-photo baseline versus smaller texture-only grids, and add fixture-driven tests or dry-run examples for tile sizing, source exclusion, and generated output integrity. #enhancement #framework #agents #image-generation #auto-dispatch ~4h tier:standard ref:GH#26259 logged:2026-07-02 -> [todo/tasks/t18057-brief.md] pr:#26305 completed:2026-07-02
 
 - [x] t18047 feat(reach): add aidevops-native reach/capture capability registry, doctor, and router. Create `.agents/aidevops/reach-capture.md`, `.agents/scripts/reach-helper.sh`, `aidevops reach ...` dispatch, and focused tests so workers can choose the minimum-agency backend before capture/profile/proxy/logging extensions. #enhancement #framework #browser #automation #auto-dispatch ~4h tier:standard ref:GH#26165 logged:2026-07-01 -> [todo/tasks/t18047-brief.md] pr:#26207 completed:2026-07-01
 
@@ -4398,6 +4398,6 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 
 
-- [ ] t18057 feat: add tiled image mosaic agent capability #agents #auto-dispatch #enhancement ref:GH#26259
+- [x] t18057 feat: add tiled image mosaic agent capability #agents #auto-dispatch #enhancement ref:GH#26259 pr:#26305 completed:2026-07-02
 
 - [ ] t682 ci: test self-hosted runners safely #auto-dispatch #ci #testing ref:GH#4264
