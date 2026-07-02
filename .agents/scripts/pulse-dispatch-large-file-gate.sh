@@ -477,7 +477,7 @@ _large_file_gate_file_new_debt_issue() {
 		--color "D93F0B" \
 		--force 2>/dev/null || true
 
-	local _new_num _create_body _create_combined
+	local _new_num="" _create_body="" _create_combined=""
 	_create_body="<!-- aidevops:generator=large-file-simplification-gate cited_file=${lf_path} threshold=${LARGE_FILE_LINE_THRESHOLD} -->
 
 ## What
@@ -637,7 +637,7 @@ _large_file_gate_apply() {
 	# (don't wait for the daily complexity scan). Dedup: skip if an open
 	# file-size-debt issue already mentions this file.
 	local _created_issues=""
-	local _lf_path _debt_ref
+	local _lf_path="" _debt_ref=""
 	while IFS= read -r _lf_path; do
 		[[ -z "$_lf_path" ]] && continue
 		_debt_ref=$(_large_file_gate_create_debt_issue "$_lf_path" "$issue_number" "$repo_slug" "$repo_path")
@@ -817,7 +817,7 @@ _large_file_gate_collect_large_files() {
 	_LFG_LARGE_FILES=""
 	_LFG_LARGE_FILE_PATHS=""
 
-	local raw_target eval_output eval_rc
+	local raw_target="" eval_output="" eval_rc=0
 	while IFS= read -r raw_target; do
 		[[ -z "$raw_target" ]] && continue
 		eval_rc=0
