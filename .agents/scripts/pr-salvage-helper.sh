@@ -255,66 +255,100 @@ build_salvage_entry() {
 }
 
 #######################################
-# Scan a single repo for salvageable closed-unmerged PRs
+# Collect explicitly requested PR records for a repo
 #
 # Arguments:
 #   $1 - repo slug (owner/repo)
-#   $2 - lookback days (default: 7)
-#   $3 - optional space-separated explicit PR numbers
-# Output: JSON array of salvageable PRs
+#   $2 - space-separated PR numbers
+# Output: JSON array of PR records
 #######################################
-scan_repo() {
+collect_explicit_pr_records() {
 	local slug="$1"
-	local lookback_days="${2:-$DEFAULT_LOOKBACK_DAYS}"
-	local pr_numbers="${3:-}"
+	local pr_numbers="$2"
+	local pr_records=()
+	local pr_number
+	local pr_record
 
-	local unmerged
-	if [[ -n "$pr_numbers" ]]; then
-		local pr_records=()
-		local pr_number pr_record
-		for pr_number in $pr_numbers; do
-			pr_record=$(gh pr view "$pr_number" --repo "$slug" \
-				--json number,title,headRefName,closedAt,mergedAt,additions,deletions,author,labels,state \
-				2>/dev/null) || continue
-			[[ -n "$pr_record" ]] && pr_records+=("$pr_record")
-		done
-		unmerged="[]"
-		if [[ "${#pr_records[@]}" -gt 0 ]]; then
-			unmerged=$(printf '%s\n' "${pr_records[@]}" | jq -s '.') || unmerged="[]"
-		fi
-	else
-		# Fetch closed-unmerged PRs using GitHub search API (gh pr list --state closed
-		# returns both merged and unmerged interleaved, so a small --limit misses most
-		# unmerged PRs). The search query filters server-side for is:unmerged.
-		local cutoff_date
-		cutoff_date=$(date -u -v-"${lookback_days}"d +%Y-%m-%d 2>/dev/null) ||
-			cutoff_date=$(date -u -d "${lookback_days} days ago" +%Y-%m-%d 2>/dev/null) ||
-			cutoff_date="1970-01-01"
-
-		unmerged=$(gh pr list --repo "$slug" --state closed \
-			--search "is:unmerged closed:>=${cutoff_date}" \
+	for pr_number in $pr_numbers; do
+		pr_record=$(gh pr view "$pr_number" --repo "$slug" \
 			--json number,title,headRefName,closedAt,mergedAt,additions,deletions,author,labels,state \
-			--limit 100 2>/dev/null) || unmerged="[]"
-	fi
+			2>/dev/null) || continue
+		[[ -n "$pr_record" ]] && pr_records+=("$pr_record")
+	done
 
-	# Safety filter: remove any that slipped through with mergedAt set or 0 additions
-	unmerged=$(echo "$unmerged" | jq '[.[] | select((.mergedAt == null) and (.additions > 0) and ((.state // "CLOSED") == "CLOSED"))]') || unmerged="[]"
-
-	local count
-	count=$(echo "$unmerged" | jq 'length')
-
-	if [[ "$count" -eq 0 ]]; then
+	if [[ "${#pr_records[@]}" -eq 0 ]]; then
 		echo "[]"
 		return 0
 	fi
 
-	# For each unmerged PR, check recoverability and build salvage entries
+	printf '%s\n' "${pr_records[@]}" | jq -s '.' || echo "[]"
+	return 0
+}
+
+#######################################
+# Fetch recently closed-unmerged PR records for a repo
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - lookback days
+# Output: JSON array of PR records
+#######################################
+fetch_unmerged_pr_records() {
+	local slug="$1"
+	local lookback_days="$2"
+	local cutoff_date
+
+	# Fetch closed-unmerged PRs using GitHub search API (gh pr list --state closed
+	# returns both merged and unmerged interleaved, so a small --limit misses most
+	# unmerged PRs). The search query filters server-side for is:unmerged.
+	cutoff_date=$(date -u -v-"${lookback_days}"d +%Y-%m-%d 2>/dev/null) ||
+		cutoff_date=$(date -u -d "${lookback_days} days ago" +%Y-%m-%d 2>/dev/null) ||
+		cutoff_date="1970-01-01"
+
+	gh pr list --repo "$slug" --state closed \
+		--search "is:unmerged closed:>=${cutoff_date}" \
+		--json number,title,headRefName,closedAt,mergedAt,additions,deletions,author,labels,state \
+		--limit 100 2>/dev/null || echo "[]"
+	return 0
+}
+
+#######################################
+# Keep only closed-unmerged PRs that contain recoverable additions
+#
+# Arguments:
+#   $1 - PR records JSON array
+# Output: JSON array of filtered PR records
+#######################################
+filter_salvage_candidate_records() {
+	local candidate_records="$1"
+
+	echo "$candidate_records" | jq '[.[] | select((.mergedAt == null) and (.additions > 0) and ((.state // "CLOSED") == "CLOSED"))]' || echo "[]"
+	return 0
+}
+
+#######################################
+# Build salvage entries from filtered PR records
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - filtered PR records JSON array
+# Output: JSON array of salvage entries
+#######################################
+build_salvage_entries() {
+	local slug="$1"
+	local unmerged="$2"
 	local salvageable="[]"
 	local completed_recovery_issues
-	completed_recovery_issues=$(fetch_completed_recovery_issues "$slug")
 	local pr_json
+
+	completed_recovery_issues=$(fetch_completed_recovery_issues "$slug")
 	while IFS= read -r pr_json; do
-		local pr_number branch additions branch_exists risk entry
+		local pr_number
+		local branch
+		local additions
+		local branch_exists
+		local risk
+		local entry
 		read -r pr_number branch additions < <(echo "$pr_json" | jq -r '[.number, .headRefName, .additions] | @tsv')
 
 		# Skip PRs whose salvage has already been completed and documented in a closed issue.
@@ -330,11 +364,44 @@ scan_repo() {
 		branch_exists=$(check_branch_exists "$slug" "$branch")
 		risk=$(assess_risk_level "$branch_exists" "$additions")
 		entry=$(build_salvage_entry "$pr_json" "$branch_exists" "$risk")
-
 		salvageable=$(echo "$salvageable" | jq --argjson entry "$entry" '. + [$entry]')
 	done < <(echo "$unmerged" | jq -c '.[]')
 
 	echo "$salvageable"
+	return 0
+}
+
+#######################################
+# Scan a single repo for salvageable closed-unmerged PRs
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - lookback days (default: 7)
+#   $3 - optional space-separated explicit PR numbers
+# Output: JSON array of salvageable PRs
+#######################################
+scan_repo() {
+	local slug="$1"
+	local lookback_days="${2:-$DEFAULT_LOOKBACK_DAYS}"
+	local pr_numbers="${3:-}"
+	local unmerged
+	local count
+
+	if [[ -n "$pr_numbers" ]]; then
+		unmerged=$(collect_explicit_pr_records "$slug" "$pr_numbers")
+	else
+		unmerged=$(fetch_unmerged_pr_records "$slug" "$lookback_days")
+	fi
+
+	# Safety filter: remove any that slipped through with mergedAt set or 0 additions
+	unmerged=$(filter_salvage_candidate_records "$unmerged")
+	count=$(echo "$unmerged" | jq 'length')
+	if [[ "$count" -eq 0 ]]; then
+		echo "[]"
+		return 0
+	fi
+
+	build_salvage_entries "$slug" "$unmerged"
 	return 0
 }
 
