@@ -212,90 +212,14 @@ _sweep_qlty() {
 	local qlty_sarif
 	qlty_sarif=$(CDPATH='' cd -- "$repo_path" && "$qlty_bin" smells --all --sarif --no-snippets --quiet) || qlty_sarif=""
 
-	local qlty_smell_count=0
-	local qlty_grade="UNKNOWN"
-	local qlty_section=""
+	local qlty_result
+	qlty_result=$(_build_qlty_section_from_sarif "$qlty_sarif")
+	local qlty_section="${qlty_result%%|*}"
+	local qlty_remainder="${qlty_result#*|}"
+	local qlty_smell_count="${qlty_remainder%%|*}"
+	local qlty_grade="${qlty_remainder#*|}"
 
-	if [[ -n "$qlty_sarif" ]] && echo "$qlty_sarif" | jq -e '.runs' &>/dev/null; then
-		# Single jq pass: extract total count, per-rule breakdown, and top files
-		local qlty_data
-		qlty_data=$(echo "$qlty_sarif" | jq -r '
-			(.runs[0].results | length) as $total |
-			([.runs[0].results[] | .ruleId] | group_by(.) | map({rule: .[0], count: length}) | sort_by(-.count)[:8] |
-				map("  - \(.rule): \(.count)") | join("\n")) as $rules |
-			([.runs[0].results[] | .locations[0].physicalLocation.artifactLocation.uri] |
-				group_by(.) | map({file: .[0], count: length}) | sort_by(-.count)[:10] |
-				map("  - `\(.file)`: \(.count) smells") | join("\n")) as $files |
-			"\($total)|\($rules)|\($files)"
-		') || qlty_data="0||"
-		qlty_smell_count="${qlty_data%%|*}"
-		local qlty_remainder="${qlty_data#*|}"
-		local qlty_rules_breakdown="${qlty_remainder%%|*}"
-		local qlty_files_breakdown="${qlty_remainder#*|}"
-		[[ "$qlty_smell_count" =~ ^[0-9]+$ ]] || qlty_smell_count=0
-		qlty_rules_breakdown=$(_sanitize_markdown "$qlty_rules_breakdown")
-		qlty_files_breakdown=$(_sanitize_markdown "$qlty_files_breakdown")
-
-		# t2066: compute grade from local count BEFORE building the section so
-		# we can put the authoritative grade into the markdown.
-		qlty_grade=$(_compute_qlty_grade_from_count "$qlty_smell_count")
-
-		qlty_section="### Qlty Maintainability
-
-- **Total smells**: ${qlty_smell_count}
-- **Grade (local, from count)**: ${qlty_grade}
-- **By rule (fix these for maximum grade improvement)**:
-${qlty_rules_breakdown}
-- **Top files (highest smell density)**:
-${qlty_files_breakdown}
-"
-		if [[ "$qlty_smell_count" -eq 0 ]]; then
-			qlty_section="### Qlty Maintainability
-
-- **Total smells**: 0
-- **Grade (local, from count)**: ${qlty_grade}
-
-_No smells detected — clean codebase._
-"
-		fi
-	else
-		qlty_section="### Qlty Maintainability
-
-_Qlty analysis returned empty or failed to parse._
-"
-	fi
-
-	# Fetch the Qlty Cloud badge grade (best-effort secondary telemetry).
-	# Short timeout so a slow/unreachable badge doesn't stall the sweep.
-	# t2066: this is NO LONGER the primary grade source — it is only reported
-	# below if the badge is reachable AND disagrees with the local grade.
-	local cloud_grade="UNKNOWN"
-	local badge_svg
-	badge_svg=$(curl -sS --fail --connect-timeout 5 --max-time 10 \
-		"https://qlty.sh/gh/${repo_slug}/maintainability.svg" 2>/dev/null) || badge_svg=""
-	if [[ -n "$badge_svg" ]]; then
-		# Grade colour mapping from Qlty's badge palette.
-		cloud_grade=$(python3 -c "
-import sys, re
-svg = sys.stdin.read()
-colors = {'#22C55E':'A','#84CC16':'B','#EAB308':'C','#F97316':'D','#EF4444':'F'}
-for c in re.findall(r'fill=\"(#[A-F0-9]+)\"', svg):
-    if c in colors:
-        print(colors[c])
-        sys.exit(0)
-print('UNKNOWN')
-" <<<"$badge_svg" 2>/dev/null) || cloud_grade="UNKNOWN"
-	fi
-
-	# Only surface the cloud grade when it disagrees with the local grade.
-	# When they agree (the common case), omit the line to keep the section
-	# short. When they diverge, the line flags it as telemetry — not used
-	# as the primary grade.
-	if [[ "$cloud_grade" != "UNKNOWN" && "$cloud_grade" != "$qlty_grade" ]]; then
-		qlty_section="${qlty_section}
-- **Qlty Cloud grade (telemetry, diverges from local)**: ${cloud_grade}
-"
-	fi
+	qlty_section=$(_append_qlty_cloud_grade_if_divergent "$repo_slug" "$qlty_grade" "$qlty_section")
 
 	# --- 2b. Function-complexity-debt bridge (code-simplifier pipeline) ---
 	# For files with high smell density, auto-create function-complexity-debt issues
@@ -308,6 +232,119 @@ print('UNKNOWN')
 	fi
 
 	printf '%s|%s|%s' "$qlty_section" "$qlty_smell_count" "$qlty_grade"
+	return 0
+}
+
+_build_qlty_section_from_sarif() {
+	local qlty_sarif="$1"
+
+	if [[ -z "$qlty_sarif" ]] || ! echo "$qlty_sarif" | jq -e '.runs' &>/dev/null; then
+		printf '%s|%s|%s' "### Qlty Maintainability
+
+_Qlty analysis returned empty or failed to parse._
+" "0" "UNKNOWN"
+		return 0
+	fi
+
+	local qlty_data
+	qlty_data=$(_extract_qlty_sarif_summary "$qlty_sarif")
+	local qlty_smell_count="${qlty_data%%|*}"
+	local qlty_remainder="${qlty_data#*|}"
+	local qlty_rules_breakdown="${qlty_remainder%%|*}"
+	local qlty_files_breakdown="${qlty_remainder#*|}"
+	[[ "$qlty_smell_count" =~ ^[0-9]+$ ]] || qlty_smell_count=0
+	qlty_rules_breakdown=$(_sanitize_markdown "$qlty_rules_breakdown")
+	qlty_files_breakdown=$(_sanitize_markdown "$qlty_files_breakdown")
+
+	local qlty_grade
+	qlty_grade=$(_compute_qlty_grade_from_count "$qlty_smell_count")
+	local qlty_section
+	qlty_section=$(_format_qlty_section "$qlty_smell_count" "$qlty_grade" "$qlty_rules_breakdown" "$qlty_files_breakdown")
+	printf '%s|%s|%s' "$qlty_section" "$qlty_smell_count" "$qlty_grade"
+	return 0
+}
+
+_extract_qlty_sarif_summary() {
+	local qlty_sarif="$1"
+
+	echo "$qlty_sarif" | jq -r '
+		(.runs[0].results | length) as $total |
+		([.runs[0].results[] | .ruleId] | group_by(.) | map({rule: .[0], count: length}) | sort_by(-.count)[:8] |
+			map("  - \(.rule): \(.count)") | join("\n")) as $rules |
+		([.runs[0].results[] | .locations[0].physicalLocation.artifactLocation.uri] |
+			group_by(.) | map({file: .[0], count: length}) | sort_by(-.count)[:10] |
+			map("  - `\(.file)`: \(.count) smells") | join("\n")) as $files |
+		"\($total)|\($rules)|\($files)"
+	' || printf '%s' "0||"
+	return 0
+}
+
+_format_qlty_section() {
+	local qlty_smell_count="$1"
+	local qlty_grade="$2"
+	local qlty_rules_breakdown="$3"
+	local qlty_files_breakdown="$4"
+
+	if [[ "$qlty_smell_count" -eq 0 ]]; then
+		printf '%s' "### Qlty Maintainability
+
+- **Total smells**: 0
+- **Grade (local, from count)**: ${qlty_grade}
+
+_No smells detected — clean codebase._
+"
+		return 0
+	fi
+
+	printf '%s' "### Qlty Maintainability
+
+- **Total smells**: ${qlty_smell_count}
+- **Grade (local, from count)**: ${qlty_grade}
+- **By rule (fix these for maximum grade improvement)**:
+${qlty_rules_breakdown}
+- **Top files (highest smell density)**:
+${qlty_files_breakdown}
+"
+	return 0
+}
+
+_append_qlty_cloud_grade_if_divergent() {
+	local repo_slug="$1"
+	local qlty_grade="$2"
+	local qlty_section="$3"
+	local cloud_grade
+
+	cloud_grade=$(_fetch_qlty_cloud_grade "$repo_slug")
+	if [[ "$cloud_grade" != "UNKNOWN" && "$cloud_grade" != "$qlty_grade" ]]; then
+		qlty_section="${qlty_section}
+- **Qlty Cloud grade (telemetry, diverges from local)**: ${cloud_grade}
+"
+	fi
+	printf '%s' "$qlty_section"
+	return 0
+}
+
+_fetch_qlty_cloud_grade() {
+	local repo_slug="$1"
+	local badge_svg
+
+	badge_svg=$(curl -sS --fail --connect-timeout 5 --max-time 10 \
+		"https://qlty.sh/gh/${repo_slug}/maintainability.svg" 2>/dev/null) || badge_svg=""
+	if [[ -z "$badge_svg" ]]; then
+		printf '%s' "UNKNOWN"
+		return 0
+	fi
+
+	python3 -c "
+import sys, re
+svg = sys.stdin.read()
+colors = {'#22C55E':'A','#84CC16':'B','#EAB308':'C','#F97316':'D','#EF4444':'F'}
+for c in re.findall(r'fill=\"(#[A-F0-9]+)\"', svg):
+    if c in colors:
+        print(colors[c])
+        sys.exit(0)
+print('UNKNOWN')
+" <<<"$badge_svg" 2>/dev/null || printf '%s' "UNKNOWN"
 	return 0
 }
 
