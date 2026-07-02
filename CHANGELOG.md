@@ -12,6 +12,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.31.28] - 2026-07-03
 
+### Changed
+
+- Documentation: prepare changelog for 3.31.28
+
+### Fixed
+
+- validate approval target kind (#26397)
+
+## [3.31.28] - 2026-07-03
+
 ### Fixed
 
 - validate approval target kind before signing and show corrective issue/PR commands (#26397)
