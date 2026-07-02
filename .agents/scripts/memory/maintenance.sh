@@ -127,14 +127,7 @@ EOF
 #######################################
 # Validate and warn about stale entries
 #######################################
-cmd_validate() {
-	init_db
-
-	echo ""
-	echo "=== Memory Validation ==="
-	echo ""
-
-	# Check for stale entries (old + never accessed)
+_validate_stale_entries() {
 	local stale_count
 	stale_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$STALE_WARNING_DAYS days') AND a.id IS NULL;")
 
@@ -155,10 +148,13 @@ EOF
 	else
 		log_success "No stale entries found"
 	fi
+	return 0
+}
 
-	# Check for exact duplicate content
+_validate_exact_duplicates() {
 	local dup_count
 	dup_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM (SELECT content, COUNT(*) as cnt FROM learnings GROUP BY content HAVING cnt > 1);" 2>/dev/null || echo "0")
+	VALIDATE_DUP_COUNT="$dup_count"
 
 	if [[ "$dup_count" -gt 0 ]]; then
 		log_warn "Found $dup_count groups of exact duplicate entries"
@@ -181,8 +177,11 @@ EOF
 	else
 		log_success "No exact duplicate entries found"
 	fi
+	return 0
+}
 
-	# Check for near-duplicate content (normalized comparison)
+_validate_near_duplicates() {
+	local dup_count="$1"
 	local near_dup_count
 	near_dup_count=$(
 		db "$MEMORY_DB" <<'EOF'
@@ -203,8 +202,10 @@ EOF
 		log_warn "Found $near_only additional near-duplicate groups (differ only in case/punctuation)"
 		echo "  Run 'memory-helper.sh dedup' to consolidate"
 	fi
+	return 0
+}
 
-	# Check for superseded entries that may be obsolete
+_validate_truth_maintenance() {
 	local superseded_count
 	superseded_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learning_relations WHERE relation_type = 'updates';") || log_warn "Failed to query superseded count"
 	if [[ "${superseded_count:-0}" -gt 0 ]]; then
@@ -237,11 +238,29 @@ ORDER BY lr.created_at DESC
 LIMIT 10;
 EOF
 	fi
+	return 0
+}
 
-	# Check database size
+_validate_database_size() {
 	local db_size
 	db_size=$(du -h "$MEMORY_DB" | cut -f1)
 	log_info "Database size: $db_size"
+	return 0
+}
+
+cmd_validate() {
+	init_db
+
+	echo ""
+	echo "=== Memory Validation ==="
+	echo ""
+
+	_validate_stale_entries
+	local VALIDATE_DUP_COUNT="0"
+	_validate_exact_duplicates
+	_validate_near_duplicates "$VALIDATE_DUP_COUNT"
+	_validate_truth_maintenance
+	_validate_database_size
 	return 0
 }
 
