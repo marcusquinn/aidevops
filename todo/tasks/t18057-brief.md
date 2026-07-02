@@ -85,7 +85,7 @@ Keep the capability generic. Do not mention private projects, client names, loca
    - use 200px square tiles as the default recognisable-photo baseline;
    - allow smaller tiles only when the user wants abstract texture rather than recognisable photos;
    - assemble the output with explicit width/height attributes or CSS dimensions for every tile;
-   - avoid SVG `<symbol>/<use>` indirection for raster-heavy mosaics unless the renderer is proven to preserve embedded image rendering;
+   - avoid SVG &lt;symbol&gt;/&lt;use&gt; indirection for raster-heavy mosaics unless the renderer is proven to preserve embedded image rendering;
    - generate at least one proof artifact that compares the final mosaic with representative source images and tile assets.
 3. Include quality heuristics:
    - enough source-image variety to avoid obvious repetition;
