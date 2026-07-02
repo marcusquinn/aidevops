@@ -93,6 +93,34 @@ _CB_RL_LOG_PREFIX="[circuit-breaker-rl]"
 _CB_RL_UNKNOWN="?"
 
 #######################################
+# Run a GitHub CLI read with a bounded wall-clock.
+#
+# Args:
+#   Remaining arguments form the command to execute.
+#
+# Stdout: command stdout.
+#######################################
+_cb_gh_read() {
+	local rc=0
+	local secs="${AIDEVOPS_GH_READ_TIMEOUT:-15}"
+	[[ "$secs" =~ ^[0-9]+$ ]] || secs=15
+
+	if declare -F _gh_with_timeout >/dev/null 2>&1; then
+		_gh_with_timeout read "$@" || rc=$?
+	elif declare -F timeout_sec >/dev/null 2>&1; then
+		timeout_sec "$secs" "$@" || rc=$?
+	elif command -v timeout >/dev/null 2>&1; then
+		timeout "$secs" "$@" || rc=$?
+	elif command -v gtimeout >/dev/null 2>&1; then
+		gtimeout "$secs" "$@" || rc=$?
+	else
+		return 1
+	fi
+
+	return "$rc"
+}
+
+#######################################
 # Read GitHub rate-limit state with a short TTL cache.
 #
 # Args:
@@ -120,7 +148,7 @@ _cb_rate_limit_json() {
 
 	[[ "$mode" == "$_CB_RL_MODE_CACHED_ONLY" ]] && return 1
 
-	rate_json=$(gh api rate_limit 2>/dev/null) || return 1
+	rate_json=$(_cb_gh_read gh api rate_limit 2>/dev/null) || return 1
 	[[ -n "$rate_json" ]] || return 1
 	mkdir -p "${_CB_RL_CACHE_FILE%/*}" 2>/dev/null || true
 	tmp=$(mktemp "${_CB_RL_CACHE_FILE}.XXXXXX" 2>/dev/null) || tmp=""
