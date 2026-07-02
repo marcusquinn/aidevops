@@ -603,15 +603,10 @@ extract_ids_from_json() {
 }
 
 #######################################
-# Initialize database with FTS5 schema
+# Create the core memory schema for fresh databases
 #######################################
-init_db() {
-	mkdir -p "$MEMORY_DIR"
-
-	if [[ ! -f "$MEMORY_DB" ]]; then
-		log_info "Creating memory database at $MEMORY_DB"
-
-		db "$MEMORY_DB" <<'EOF'
+_create_memory_core_schema() {
+	db "$MEMORY_DB" <<'EOF'
 PRAGMA journal_mode=WAL;
 PRAGMA busy_timeout=5000;
 
@@ -692,22 +687,49 @@ CREATE TABLE IF NOT EXISTS memory_consolidations (
 );
 CREATE INDEX IF NOT EXISTS idx_consolidations_created ON memory_consolidations(created_at DESC);
 EOF
-		# Extended pattern metadata (t1095, t1114) — companion table for pattern records.
-		# DDL is in _create_pattern_metadata_table() (single source of truth, also used by migrate_db).
-		_create_pattern_metadata_table
-		log_success "Database initialized with relational versioning support"
-	else
-		# Migrate existing database if needed
-		migrate_db
-	fi
+	return 0
+}
 
-	# Ensure WAL mode for existing databases created before t135.3
+#######################################
+# Create a fresh memory database and companion tables
+#######################################
+_create_memory_db() {
+	log_info "Creating memory database at $MEMORY_DB"
+	_create_memory_core_schema
+	# Extended pattern metadata (t1095, t1114) — companion table for pattern records.
+	# DDL is in _create_pattern_metadata_table() (single source of truth, also used by migrate_db).
+	_create_pattern_metadata_table
+	log_success "Database initialized with relational versioning support"
+	return 0
+}
+
+#######################################
+# Ensure WAL mode for existing databases created before t135.3
+#######################################
+_ensure_memory_wal_mode() {
 	# WAL is persistent but may not be set on pre-existing DBs
 	local current_mode
 	current_mode=$(db "$MEMORY_DB" "PRAGMA journal_mode;" 2>/dev/null || echo "")
 	if [[ "$current_mode" != "wal" ]]; then
 		db "$MEMORY_DB" "PRAGMA journal_mode=WAL;" 2>/dev/null || echo "[WARN] Failed to enable WAL mode for memory DB" >&2
 	fi
+	return 0
+}
+
+#######################################
+# Initialize database with FTS5 schema
+#######################################
+init_db() {
+	mkdir -p "$MEMORY_DIR"
+
+	if [[ ! -f "$MEMORY_DB" ]]; then
+		_create_memory_db
+	else
+		# Migrate existing database if needed
+		migrate_db
+	fi
+
+	_ensure_memory_wal_mode
 
 	return 0
 }
