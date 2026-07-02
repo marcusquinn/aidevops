@@ -300,6 +300,18 @@ test_code_extraction_no_false_positives() {
 	assert_eq "No false link in normal email" "" "$link_match"
 }
 
+test_code_extraction_patterns_are_portable() {
+	echo "Test: Code extraction patterns avoid GNU-only grep"
+
+	local pcre_flag="grep -o""P"
+	local whitespace_escape='\\['"s"']'
+	local matches
+	matches=$(grep -nE "${pcre_flag}|${whitespace_escape}" "${BASH_SOURCE[0]}" || true)
+
+	assert_eq "No GNU-only grep PCRE flag or PCRE whitespace escapes" "" "$matches"
+	return 0
+}
+
 test_code_storage() {
 	echo "Test: Code storage in database"
 
@@ -649,6 +661,8 @@ main() {
 	test_code_extraction_multiple
 	echo ""
 	test_code_extraction_no_false_positives
+	echo ""
+	test_code_extraction_patterns_are_portable
 	echo ""
 	test_code_storage
 	echo ""
