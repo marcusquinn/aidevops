@@ -931,6 +931,9 @@ _emit_review_gate_check_result() {
 do_check() {
 	local pr_number="$1"
 	local repo="$2"
+	local REVIEW_GATE_FOUND_BOTS=""
+	local REVIEW_GATE_RATE_LIMITED_BOTS=""
+	local REVIEW_GATE_NON_REVIEW_BOTS=""
 
 	# Check skip label first
 	if check_for_skip_label "$pr_number" "$repo"; then
