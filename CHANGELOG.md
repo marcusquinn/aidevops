@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.21] - 2026-07-02
+
+### Changed
+
+- Maintenance: mark t18060 complete (pr:#26359 completed:2026-07-02) [skip ci]
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 54→53 (-1) [skip ci]
+- fix pulse SIGPIPE handling and LLM retry state (#26359)
+- fix CI repair check routing
+
 ## [3.31.20] - 2026-07-02
 
 ### Changed
