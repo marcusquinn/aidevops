@@ -10,7 +10,7 @@ import { commandPaletteMatches, commandPaletteShortcutEntries, commandPaletteSho
 import { CommsConversationSurface } from "../src/CommsConversationSurface";
 import { AppsSurface, nextRecommendedFilterValue } from "../src/InventorySurfaces";
 import { PulseWorkersSurface } from "../src/PulseWorkersSurface";
-import { DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, chatPrimitiveStackDecision, navGroups, surfaceRecordCounts, type SurfaceNavItem } from "../src/app-model";
+import { DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, chatPrimitiveStackDecision, fontOptions, navGroups, surfaceRecordCounts, type SurfaceNavItem } from "../src/app-model";
 import { renderDashboardHtml } from "../src/dashboard";
 import { fetchStatus, mockedStatus } from "../src/status-client";
 import { workspaceTourRegistry } from "../src/WorkspaceTour";
@@ -381,6 +381,11 @@ describe("dashboard shell", () => {
     expect(preferences.showBorders).toBe(true);
     expect(preferences.showNavCounts).toBe(true);
     expect(preferences.themePreference).toBe("system");
+  });
+
+  test("uses the updated default appearance without Cal Sans", () => {
+    expect(DEFAULT_ACCENT_HUE).toBe(191);
+    expect(fontOptions.map((option) => option.value)).not.toContain("Cal Sans");
   });
 
   test("allows clearing the editable hue input without resetting to the default", () => {

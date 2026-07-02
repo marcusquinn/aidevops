@@ -1,7 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
-import "@fontsource/cal-sans";
 import "@fontsource/courier-prime";
 import "@fontsource/dm-mono";
 import "@fontsource/dm-sans";

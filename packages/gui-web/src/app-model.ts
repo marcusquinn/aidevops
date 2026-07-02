@@ -6,7 +6,6 @@ export type SidebarMode = "devops" | "comms";
 export type ShellMode = "devices" | "sessions";
 export type ConversationMode = "ai" | "people";
 export type FontPreference =
-  | "Cal Sans"
   | "Courier Prime"
   | "DM Mono"
   | "DM Sans"
@@ -329,7 +328,7 @@ export const text = {
   navigationLabel: "aidevops navigation",
 } as const;
 
-export const DEFAULT_ACCENT_HUE = 123;
+export const DEFAULT_ACCENT_HUE = 191;
 export const DEFAULT_CONTRAST: ContrastPreference = "low";
 export const DEFAULT_FONT: FontPreference = "Inter";
 export const DEFAULT_FONT_SIZE: FontSizePreference = "xs";
@@ -348,7 +347,6 @@ export const contrastOptions: ContrastOption[] = [
 ];
 
 export const fontOptions: FontOption[] = [
-  { value: "Cal Sans", label: "Cal Sans", fontFamily: '"Cal Sans", Inter, system-ui, sans-serif' },
   { value: "Courier Prime", label: "Courier Prime", fontFamily: '"Courier Prime", "Courier New", Courier, monospace' },
   { value: "DM Mono", label: "DM Mono", fontFamily: '"DM Mono", Menlo, Monaco, Consolas, monospace' },
   { value: "DM Sans", label: "DM Sans", fontFamily: '"DM Sans", Inter, system-ui, sans-serif' },

@@ -1,5 +1,5 @@
 :root {
-  --accent-hue: 123;
+  --accent-hue: 191;
   --accent: hsl(var(--accent-hue) 50% 36%);
   --accent-aaa-bg: hsl(var(--accent-hue) 58% 24%);
   --accent-strong: hsl(var(--accent-hue) 56% 28%);
