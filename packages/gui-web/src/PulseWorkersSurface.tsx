@@ -220,17 +220,66 @@ function actionById(actions: GuiPulseWorkerActionSummary[], id: GuiPulseWorkerAc
 
 function PulseChartPanel({ chart }: { chart: GuiPulseWorkerChartSeries }): ReactElement {
   const maxValue = Math.max(...chart.points.map((point) => point.value), 1);
+  const values = chart.points.map((point) => point.value);
+  const latestValue = values.at(-1) ?? 0;
+  const firstValue = values[0] ?? latestValue;
+  const trend = latestValue - firstValue;
+  const svgPaths = chartSvgPaths(values);
 
   return (
     <article className="planned-card pulse-chart-panel">
-      <p className="eyebrow">Trends · day/week/month/year</p>
+      <p className="eyebrow">Trends · compact bars · day/week/month/year</p>
       <h3>{chart.label}</h3>
+      <div className="pulse-chart-meta">
+        <span><strong>{formatChartValue(latestValue, chart.unit)}</strong><small>Latest</small></span>
+        <span><strong>{trendSummary(trend, chart.unit)}</strong><small>Δ period</small></span>
+      </div>
       <div className="pulse-chart-placeholder" aria-label={`${chart.label} chart for day week month year buckets`} role="img">
-        {chart.points.map((point) => <span key={`${chart.id}-${point.period}`} style={{ "--bar-height": `${Math.max(18, Math.round((point.value / maxValue) * 100))}%` } as CSSProperties}>{point.period}</span>)}
+        <svg aria-hidden="true" className="pulse-chart-sparkline" focusable="false" preserveAspectRatio="none" viewBox="0 0 100 48">
+          <path className="pulse-chart-area" d={svgPaths.area} />
+          <path className="pulse-chart-line" d={svgPaths.line} />
+          {svgPaths.points.map((point) => <circle className="pulse-chart-dot" cx={point.x} cy={point.y} key={`${chart.id}-dot-${point.x}`} r="1.6" />)}
+        </svg>
+        {chart.points.map((point) => <span data-value={formatChartValue(point.value, chart.unit)} key={`${chart.id}-${point.period}`} style={{ "--bar-height": `${Math.max(18, Math.round((point.value / maxValue) * 100))}%` } as CSSProperties} title={`${point.period_label}: ${formatChartValue(point.value, chart.unit)}`}>{point.period}</span>)}
       </div>
       <p>{chart.unit} · {chart.points.map((point) => `${point.period_label}: ${point.value}`).join(" · ")}</p>
     </article>
   );
+}
+
+function chartSvgPaths(values: number[]): { line: string; area: string; points: Array<{ x: number; y: number }> } {
+  if (values.length === 0) {
+    return { line: "M0 24 L100 24", area: "M0 24 L100 24 L100 48 L0 48 Z", points: [] };
+  }
+
+  const max = Math.max(...values, 1);
+  const min = Math.min(...values, 0);
+  const height = 48;
+  const padding = 5;
+  const span = Math.max(max - min, 1);
+  const points = values.map((value, index) => {
+    const x = values.length <= 1 ? 50 : (index / (values.length - 1)) * 100;
+    const y = max === min ? height / 2 : padding + ((max - value) / span) * (height - padding * 2);
+    return { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 };
+  });
+  const line = points.map((point, index) => `${index === 0 ? "M" : "L"}${point.x} ${point.y}`).join(" ");
+  const first = points[0] ?? { x: 0, y: height / 2 };
+  const last = points.at(-1) ?? first;
+
+  return { line, area: `${line} L${last.x} ${height} L${first.x} ${height} Z`, points };
+}
+
+function formatChartValue(value: number, unit: GuiPulseWorkerChartSeries["unit"]): string {
+  if (unit === "percent") return `${value}%`;
+  if (unit === "cost_ref") return `$${value.toFixed(2)}`;
+  if (unit === "milliseconds") return `${Math.round(value)}ms`;
+  if (unit === "tokens") return `${new Intl.NumberFormat("en", { notation: "compact" }).format(value)} tokens`;
+  return new Intl.NumberFormat("en").format(value);
+}
+
+function trendSummary(delta: number, unit: GuiPulseWorkerChartSeries["unit"]): string {
+  const sign = delta > 0 ? "+" : "";
+  return `${sign}${formatChartValue(delta, unit)}`;
 }
 
 function PulseDrilldownPanel({ event }: { event: PulseEvent | undefined }): ReactElement {
