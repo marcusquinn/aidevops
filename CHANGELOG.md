@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.19] - 2026-07-02
+
+### Changed
+
+- Documentation: brief image mosaic agent task (#26261)
+
+### Fixed
+
+- pause repeated worker recovery loops (#26263)
+
 ## [3.31.18] - 2026-07-02
 
 ### Changed
@@ -98,7 +108,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [3.31.10] - 2026-07-01
 
