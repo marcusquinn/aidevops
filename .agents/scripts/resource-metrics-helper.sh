@@ -177,9 +177,19 @@ sample_resource_metrics() {
 
 	mkdir -p "$(dirname "$out_file")" 2>/dev/null || true
 	local start_ts end_ts elapsed_s sample_count peak_rss_kb rss_sum_kb cpu_seconds
+	start_ts=$(date -u +%s)
+	end_ts="$start_ts"
+	elapsed_s=0
+	sample_count=0
+	peak_rss_kb=0
+	rss_sum_kb=0
+	cpu_seconds="0.000"
+
 	local metrics
 	metrics=$(_sample_resource_metrics_loop "$pid" "$stop_file" "$interval")
-	IFS=$'\t' read -r start_ts end_ts elapsed_s sample_count peak_rss_kb rss_sum_kb cpu_seconds <<<"$metrics"
+	if [[ -n "$metrics" ]]; then
+		IFS=$'\t' read -r start_ts end_ts elapsed_s sample_count peak_rss_kb rss_sum_kb cpu_seconds <<<"$metrics"
+	fi
 	local avg_rss_kb=0
 	if [[ "$sample_count" -gt 0 ]]; then
 		avg_rss_kb=$((rss_sum_kb / sample_count))
