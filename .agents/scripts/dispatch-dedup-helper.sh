@@ -1555,6 +1555,177 @@ _is_assigned_compute_blocking() {
 	return 0
 }
 
+#######################################
+# Load issue metadata for assignment checks.
+#
+# Args: $1 = issue number, $2 = repo slug, $3 = gh rc output variable name
+# Outputs: issue metadata JSON on stdout when available
+# Returns: 0 always; caller inspects the named rc variable
+#######################################
+_is_assigned_load_issue_meta() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local rc_var="$3"
+	local issue_meta_json=""
+	local gh_rc=0
+
+	if [[ -n "${ISSUE_META_JSON:-}" ]] \
+		&& printf '%s' "$ISSUE_META_JSON" | jq -e '.assignees and .labels' >/dev/null 2>&1; then
+		issue_meta_json="$ISSUE_META_JSON"
+	else
+		# t2436: include createdAt for the hydration window check (Approach B safety net).
+		# Existing callers that pass ISSUE_META_JSON without createdAt will skip that
+		# check (fail-open), which is correct — the primary fix is label sync at creation.
+		issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
+			--json state,assignees,labels,createdAt 2>/dev/null) || gh_rc=$?
+	fi
+
+	printf -v "$rc_var" '%s' "$gh_rc"
+	printf '%s' "$issue_meta_json"
+	return 0
+}
+
+#######################################
+# Extract assignees from issue metadata with explicit jq failure handling.
+#
+# Args: $1 = issue metadata JSON, $2 = issue number, $3 = repo slug
+# Outputs: comma-separated assignee logins, or GUARD_UNCERTAIN on jq failure
+# Returns: 0 on extracted assignees, 2 on jq failure
+#######################################
+_is_assigned_extract_assignees() {
+	local issue_meta_json="$1"
+	local issue_number="$2"
+	local repo_slug="$3"
+	local jq_rc=0
+	local assignees=""
+
+	assignees=$(printf '%s' "$issue_meta_json" | jq -r '[.assignees[].login] | join(",")' 2>/dev/null) || jq_rc=$?
+	if [[ "$jq_rc" -ne 0 ]]; then
+		printf 'GUARD_UNCERTAIN (reason=jq-failure call=assignees-extract issue=%s repo=%s)\n' \
+			"$issue_number" "$repo_slug"
+		return 2
+	fi
+
+	printf '%s' "$assignees"
+	return 0
+}
+
+#######################################
+# Read a peer override/quarantine value for an assignee.
+#
+# Args: $1 = override config path, $2 = assignee login
+# Outputs: override value, if configured
+# Returns: 0 always
+#######################################
+_is_assigned_peer_override_value() {
+	local override_conf="$1"
+	local assignee="$2"
+	local upper=""
+	local override_val=""
+
+	# Slug normalisation matches pulse-peer-quarantine-helper.sh's
+	# _pq_login_to_var: dash/dot/@ → underscore, uppercase.
+	upper="$(printf '%s' "$assignee" | tr 'a-z\-.@' 'A-Z___')"
+	override_val=$(grep -E "^DISPATCH_OVERRIDE_${upper}=" "$override_conf" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '"' | tr -d "'")
+	printf '%s' "$override_val"
+	return 0
+}
+
+#######################################
+# Check whether a peer quarantine override is still active.
+#
+# Args: $1 = override value, $2 = current epoch seconds
+# Returns: 0 when quarantine is active, 1 otherwise
+#######################################
+_is_assigned_peer_quarantine_active() {
+	local override_val="$1"
+	local now_epoch="$2"
+	local q_until=""
+	local q_until_epoch=""
+
+	if [[ "$override_val" != peer-quarantine-until=* ]]; then
+		return 1
+	fi
+
+	q_until="${override_val#peer-quarantine-until=}"
+	# BSD date (macOS) first, then GNU date (Linux). Both variants succeed;
+	# one returns empty, and the OR keeps going.
+	q_until_epoch=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$q_until" '+%s' 2>/dev/null || true)
+	[[ -z "$q_until_epoch" ]] && q_until_epoch=$(date -u -d "$q_until" '+%s' 2>/dev/null || true)
+	[[ -z "$q_until_epoch" ]] && q_until_epoch=0
+
+	if [[ "$q_until_epoch" -gt "$now_epoch" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Append an assignee to a comma-separated list.
+#
+# Args: $1 = current list, $2 = assignee login
+# Outputs: updated comma-separated list
+# Returns: 0 always
+#######################################
+_is_assigned_append_assignee() {
+	local current_list="$1"
+	local assignee="$2"
+
+	if [[ -n "$current_list" ]]; then
+		printf '%s,%s' "$current_list" "$assignee"
+	else
+		printf '%s' "$assignee"
+	fi
+	return 0
+}
+
+#######################################
+# Filter ignored/quarantined peer assignees from the blocking set.
+#
+# Args: $1 = assignees, $2 = self login
+# Outputs: filtered comma-separated assignee logins
+# Returns: 0 always
+#######################################
+_is_assigned_filter_override_assignees() {
+	local assignees="$1"
+	local self_login="$2"
+	local override_conf="${HOME}/.config/aidevops/dispatch-override.conf"
+	local filtered_assignees=""
+	local saved_ifs="${IFS:-}"
+	local -a override_array=()
+	local assignee=""
+	local override_val=""
+	local now_epoch=""
+
+	if [[ ! -f "$override_conf" ]]; then
+		printf '%s' "$assignees"
+		return 0
+	fi
+
+	now_epoch=$(date -u '+%s')
+	IFS=',' read -ra override_array <<<"$assignees"
+	IFS="$saved_ifs"
+	for assignee in "${override_array[@]}"; do
+		# Overrides and quarantine are peer-only. The current runner's own
+		# assignment remains authoritative so a worker never ignores its own
+		# in-flight claim state because its login appears in local override config.
+		if [[ -n "$self_login" && "$assignee" == "$self_login" ]]; then
+			filtered_assignees=$(_is_assigned_append_assignee "$filtered_assignees" "$assignee")
+			continue
+		fi
+
+		override_val=$(_is_assigned_peer_override_value "$override_conf" "$assignee")
+		[[ "$override_val" == "ignore" ]] && continue
+		if _is_assigned_peer_quarantine_active "$override_val" "$now_epoch"; then
+			continue
+		fi
+		filtered_assignees=$(_is_assigned_append_assignee "$filtered_assignees" "$assignee")
+	done
+
+	printf '%s' "$filtered_assignees"
+	return 0
+}
+
 is_assigned() {
 	local issue_number="$1"
 	local repo_slug="$2"
@@ -1570,22 +1741,8 @@ is_assigned() {
 		return 1
 	fi
 
-	# GH#19922: accept pre-fetched JSON via ISSUE_META_JSON env var to avoid
-	# a redundant gh issue view call when the caller already has the metadata
-	# (e.g. the enrich path in issue-sync-helper.sh which fetches state in
-	# _enrich_process_task and forwards it through _enrich_check_active_claim).
-	# The pre-fetched JSON must contain at least assignees and labels fields.
 	local issue_meta_json gh_rc=0
-	if [[ -n "${ISSUE_META_JSON:-}" ]] \
-		&& printf '%s' "$ISSUE_META_JSON" | jq -e '.assignees and .labels' >/dev/null 2>&1; then
-		issue_meta_json="$ISSUE_META_JSON"
-	else
-		# t2436: include createdAt for the hydration window check (Approach B safety net).
-		# Existing callers that pass ISSUE_META_JSON without createdAt will skip that
-		# check (fail-open), which is correct — the primary fix is label sync at creation.
-		issue_meta_json=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
-			--json state,assignees,labels,createdAt 2>/dev/null) || gh_rc=$?
-	fi
+	issue_meta_json=$(_is_assigned_load_issue_meta "$issue_number" "$repo_slug" gh_rc)
 
 	# t2046: fail-closed on gh API failure. When we cannot fetch issue metadata
 	# (network error, auth failure, rate limit, issue not found), we cannot
@@ -1646,17 +1803,9 @@ is_assigned() {
 		return 0
 	fi
 
-	# Query GitHub for current assignees.
-	# t2061: explicit jq rc capture — fail-closed.
-	# A jq failure here (e.g. assignees field has unexpected type) would previously
-	# set assignees="" → "No assignees — safe to dispatch", bypassing the assignee
-	# guard entirely. GUARD_UNCERTAIN instead.
-	local _jq_assignees_rc=0
-	local assignees
-	assignees=$(printf '%s' "$issue_meta_json" | jq -r '[.assignees[].login] | join(",")' 2>/dev/null) || _jq_assignees_rc=$?
-	if [[ "$_jq_assignees_rc" -ne 0 ]]; then
-		printf 'GUARD_UNCERTAIN (reason=jq-failure call=assignees-extract issue=%s repo=%s)\n' \
-			"$issue_number" "$repo_slug"
+	local assignees=""
+	if ! assignees=$(_is_assigned_extract_assignees "$issue_meta_json" "$issue_number" "$repo_slug"); then
+		printf '%s\n' "$assignees"
 		return 0
 	fi
 
@@ -1665,75 +1814,9 @@ is_assigned() {
 		return 1
 	fi
 
-	# t2930: Honor dispatch-override.conf "ignore" entries at the ASSIGNEE level.
-	# t3194: Also honor "peer-quarantine-until=<ISO>" entries (auto-managed by
-	# pulse-peer-quarantine-helper.sh). When a peer has been quarantined for
-	# emitting too many launch_recovery:no_worker_process events, treat its
-	# claim as if it were on the legacy `ignore` list — strip from blocking
-	# set so this runner can take over instead of backing off behind a known-
-	# broken peer.
-	#
-	# The dispatch-claim-helper filters claim COMMENTS by override config, but
-	# ignored peers can still raw-assign themselves via gh issue edit
-	# --add-assignee — and is_assigned previously honored that unconditionally,
-	# creating a permanent dispatch block. With this filter, an "ignore"-listed
-	# or quarantined peer is treated as if not assigned, allowing competitive
-	# dispatch (winner's PR closes the issue; loser wastes tokens but doesn't
-	# block throughput). Self-runner and parent-task / no-auto-dispatch / cost
-	# circuit-breaker / hydration window guards above remain in effect.
-	local override_conf="${HOME}/.config/aidevops/dispatch-override.conf"
-	if [[ -f "$override_conf" ]]; then
-		local _filtered_assignees=""
-		local _saved_ifs="${IFS:-}"
-		local -a _override_array=()
-		IFS=',' read -ra _override_array <<<"$assignees"
-		IFS="$_saved_ifs"
-		local _a _upper _override_val _now_epoch _q_until _q_until_epoch
-		_now_epoch=$(date -u '+%s')
-		for _a in "${_override_array[@]}"; do
-			# Overrides and quarantine are peer-only. The current runner's own
-			# assignment remains authoritative so a worker never ignores its own
-			# in-flight claim state because its login appears in local override
-			# config.
-			if [[ -n "$self_login" && "$_a" == "$self_login" ]]; then
-				if [[ -n "$_filtered_assignees" ]]; then
-					_filtered_assignees="${_filtered_assignees},${_a}"
-				else
-					_filtered_assignees="$_a"
-				fi
-				continue
-			fi
-			# Slug normalisation matches pulse-peer-quarantine-helper.sh's
-			# _pq_login_to_var: dash/dot/@ → underscore, uppercase.
-			_upper="$(printf '%s' "$_a" | tr 'a-z\-.@' 'A-Z___')"
-			_override_val=$(grep -E "^DISPATCH_OVERRIDE_${_upper}=" "$override_conf" 2>/dev/null | tail -n1 | cut -d= -f2- | tr -d '"' | tr -d "'")
-			# Legacy: t2930 unconditional ignore.
-			if [[ "$_override_val" == "ignore" ]]; then
-				continue
-			fi
-			# t3194: peer-quarantine-until=<ISO>. Honour as ignore while
-			# the timestamp is in the future; auto-expire silently after.
-			if [[ "$_override_val" == peer-quarantine-until=* ]]; then
-				_q_until="${_override_val#peer-quarantine-until=}"
-				# BSD date (macOS) first, then GNU date (Linux). Both
-				# variants succeed; one returns empty, the OR keeps going.
-				_q_until_epoch=$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$_q_until" '+%s' 2>/dev/null || true)
-				[[ -z "$_q_until_epoch" ]] && _q_until_epoch=$(date -u -d "$_q_until" '+%s' 2>/dev/null || true)
-				[[ -z "$_q_until_epoch" ]] && _q_until_epoch=0
-				if [[ "$_q_until_epoch" -gt "$_now_epoch" ]]; then
-					continue
-				fi
-			fi
-			if [[ -n "$_filtered_assignees" ]]; then
-				_filtered_assignees="${_filtered_assignees},${_a}"
-			else
-				_filtered_assignees="$_a"
-			fi
-		done
-		assignees="$_filtered_assignees"
-		if [[ -z "$assignees" ]]; then
-			return 1
-		fi
+	assignees=$(_is_assigned_filter_override_assignees "$assignees" "$self_login")
+	if [[ -z "$assignees" ]]; then
+		return 1
 	fi
 
 	local repo_owner repo_maintainer
@@ -2454,6 +2537,169 @@ HELP
 	return 0
 }
 
+_ddh_main_simple_command() {
+	local command_name="$1"
+	shift || true
+	case "$command_name" in
+	extract-keys)
+		_require_args extract-keys 1 "$#" "a title argument" || return 1
+		local title="$1"
+		extract_keys "$title"
+		return $?
+		;;
+	is-duplicate)
+		_require_args is-duplicate 1 "$#" "a title argument" || return 1
+		local duplicate_title="$1"
+		is_duplicate "$duplicate_title"
+		return $?
+		;;
+	classify-blocker)
+		_require_args classify-blocker 1 "$#" "a blocker signal" || return 1
+		local blocker_signal="$1"
+		classify_dispatch_blocker_reason "$blocker_signal"
+		return $?
+		;;
+	list-running-keys)
+		list_running_keys
+		return $?
+		;;
+	normalize)
+		_require_args normalize 1 "$#" "a title argument" || return 1
+		local normalized_title="$1"
+		normalize_title "$normalized_title"
+		return $?
+		;;
+	*)
+		return 2
+		;;
+	esac
+}
+
+_ddh_main_issue_command() {
+	local command_name="$1"
+	shift || true
+	case "$command_name" in
+	is-assigned)
+		_require_args is-assigned 2 "$#" "<issue-number> <repo-slug> [self-login]" || return 1
+		local assigned_issue="$1" assigned_repo="$2" assigned_runner="${3:-}"
+		is_assigned "$assigned_issue" "$assigned_repo" "$assigned_runner"
+		return $?
+		;;
+	enumerate-blockers)
+		_require_args enumerate-blockers 2 "$#" "<issue-number> <repo-slug> [runner]" || return 1
+		local blocker_issue="$1" blocker_repo="$2" blocker_runner="${3:-}"
+		enumerate_blockers "$blocker_issue" "$blocker_repo" "$blocker_runner"
+		return $?
+		;;
+	check-cost-budget)
+		_require_args check-cost-budget 2 "$#" "<issue-number> <repo-slug> [tier]" || return 1
+		local cost_issue="$1" cost_repo="$2" cost_tier="${3:-standard}"
+		_check_cost_budget "$cost_issue" "$cost_repo" "$cost_tier"
+		return $?
+		;;
+	sum-issue-token-spend)
+		_require_args sum-issue-token-spend 2 "$#" "<issue-number> <repo-slug>" || return 1
+		local spend_issue="$1" spend_repo="$2"
+		_sum_issue_token_spend "$spend_issue" "$spend_repo"
+		return $?
+		;;
+	has-dispatch-comment)
+		_require_args has-dispatch-comment 2 "$#" "<issue-number> <repo-slug> [self-login]" || return 1
+		local comment_issue="$1" comment_repo="$2" comment_runner="${3:-}"
+		has_dispatch_comment "$comment_issue" "$comment_repo" "$comment_runner"
+		return $?
+		;;
+	has-open-pr)
+		_require_args has-open-pr 2 "$#" "<issue-number> <repo-slug> [issue-title]" || return 1
+		local pr_issue="$1" pr_repo="$2" pr_title="${3:-}"
+		has_open_pr "$pr_issue" "$pr_repo" "$pr_title"
+		return $?
+		;;
+	*)
+		return 2
+		;;
+	esac
+}
+
+_ddh_main_loop_command() {
+	local command_name="$1"
+	shift || true
+	case "$command_name" in
+	check-orphan-loop)
+		_require_args check-orphan-loop 3 "$#" "<issue-number> <repo-slug> <branch> [todo-file] [worktree-path]" || return 1
+		local orphan_issue="$1" orphan_repo="$2" orphan_branch="$3" orphan_todo="${4:-}" orphan_worktree="${5:-}"
+		check_worker_branch_orphan_loop "$orphan_issue" "$orphan_repo" "$orphan_branch" "$orphan_todo" "$orphan_worktree"
+		return $?
+		;;
+	check-recovery-loop)
+		_require_args check-recovery-loop 2 "$#" "issue-number repo-slug" || return 1
+		local recovery_issue="$1" recovery_repo="$2"
+		check_worker_recovery_failure_loop "$recovery_issue" "$recovery_repo"
+		return $?
+		;;
+	test-recover)
+		_require_args test-recover 4 "$#" "<issue> <repo> <assignees> <reason>" || return 1
+		local recover_issue="$1" recover_repo="$2" recover_assignees="$3" recover_reason="$4"
+		_recover_stale_assignment "$recover_issue" "$recover_repo" "$recover_assignees" "$recover_reason"
+		return $?
+		;;
+	has-fix-the-fixer-label)
+		_require_args has-fix-the-fixer-label 2 "$#" "<issue> <slug>" || return 1
+		local fixer_issue="$1" fixer_repo="$2"
+		has_fix_the_fixer_label "$fixer_issue" "$fixer_repo"
+		return $?
+		;;
+	*)
+		return 2
+		;;
+	esac
+}
+
+_ddh_main_claim_command() {
+	local command_name="$1"
+	shift || true
+	case "$command_name" in
+	claim)
+		_require_args claim 2 "$#" "<issue-number> <repo-slug> [runner-login]" || return 1
+		if [[ ! -x "$CLAIM_HELPER" ]]; then
+			printf 'Error: dispatch-claim-helper.sh not found at %s\n' "$CLAIM_HELPER" >&2
+			return 2
+		fi
+		local claim_issue="$1" claim_repo="$2" claim_runner="${3:-}"
+		local claim_guard_output="" claim_guard_rc=0
+		claim_guard_output=$(is_assigned "$claim_issue" "$claim_repo" "$claim_runner" 2>&1) || claim_guard_rc=$?
+		case "$claim_guard_rc" in
+		0)
+			printf 'CLAIM_BLOCKED: active_assignment issue=#%s repo=%s runner=%s signal=%s\n' \
+				"$claim_issue" "$claim_repo" "$claim_runner" "$claim_guard_output"
+			return 1
+			;;
+		1) ;;
+		*)
+			printf 'CLAIM_BLOCKED: assignment_guard_error issue=#%s repo=%s runner=%s rc=%s signal=%s\n' \
+				"$claim_issue" "$claim_repo" "$claim_runner" "$claim_guard_rc" "$claim_guard_output"
+			return 1
+			;;
+		esac
+		DISPATCH_CLAIM_ASSIGNMENT_GUARD=false "$CLAIM_HELPER" claim "$claim_issue" "$claim_repo" "$claim_runner"
+		return $?
+		;;
+	check-claim)
+		_require_args check-claim 2 "$#" "<issue-number> <repo-slug>" || return 1
+		if [[ ! -x "$CLAIM_HELPER" ]]; then
+			printf 'Error: dispatch-claim-helper.sh not found at %s\n' "$CLAIM_HELPER" >&2
+			return 2
+		fi
+		local check_issue="$1" check_repo="$2"
+		"$CLAIM_HELPER" check "$check_issue" "$check_repo"
+		return $?
+		;;
+	*)
+		return 2
+		;;
+	esac
+}
+
 #######################################
 # Main
 #######################################
@@ -2462,119 +2708,28 @@ main() {
 	shift || true
 
 	case "$command" in
-	extract-keys)
-		_require_args extract-keys 1 "$#" "a title argument" || return 1
-		extract_keys "$1"
+	extract-keys | is-duplicate | classify-blocker | list-running-keys | normalize)
+		_ddh_main_simple_command "$command" "$@"
+		return $?
 		;;
-	is-duplicate)
-		_require_args is-duplicate 1 "$#" "a title argument" || return 1
-		is_duplicate "$1"
+	is-assigned | enumerate-blockers | check-cost-budget | sum-issue-token-spend | has-dispatch-comment | has-open-pr)
+		_ddh_main_issue_command "$command" "$@"
+		return $?
 		;;
-	is-assigned)
-		_require_args is-assigned 2 "$#" "<issue-number> <repo-slug> [self-login]" || return 1
-		is_assigned "$1" "$2" "${3:-}"
+	check-orphan-loop | check-recovery-loop | test-recover | has-fix-the-fixer-label)
+		_ddh_main_loop_command "$command" "$@"
+		return $?
 		;;
-	enumerate-blockers)
-		# t2894: report ALL structural label blockers in a single pass.
-		# local capture avoids positional-param ratchet violation in main().
-		_require_args enumerate-blockers 2 "$#" "<issue-number> <repo-slug> [runner]" || return 1
-		local _eb_issue="$1" _eb_repo="$2" _eb_runner="${3:-}"
-		enumerate_blockers "$_eb_issue" "$_eb_repo" "$_eb_runner"
-		;;
-	classify-blocker)
-		_require_args classify-blocker 1 "$#" "a blocker signal" || return 1
-		classify_dispatch_blocker_reason "$1"
-		;;
-	check-cost-budget)
-		# t2007: cost-per-issue circuit breaker. Direct entry point for tests
-		# and ad-hoc inspection. The same check fires inline from is-assigned.
-		_require_args check-cost-budget 2 "$#" "<issue-number> <repo-slug> [tier]" || return 1
-		_check_cost_budget "$1" "$2" "${3:-standard}"
-		;;
-	sum-issue-token-spend)
-		# t2007: read-only aggregator (no side effects). Useful for calibration.
-		_require_args sum-issue-token-spend 2 "$#" "<issue-number> <repo-slug>" || return 1
-		_sum_issue_token_spend "$1" "$2"
-		;;
-	has-dispatch-comment)
-		_require_args has-dispatch-comment 2 "$#" "<issue-number> <repo-slug> [self-login]" || return 1
-		has_dispatch_comment "$1" "$2" "${3:-}"
-		;;
-	has-open-pr)
-		_require_args has-open-pr 2 "$#" "<issue-number> <repo-slug> [issue-title]" || return 1
-		has_open_pr "$1" "$2" "${3:-}"
-		;;
-	check-orphan-loop)
-		_require_args check-orphan-loop 3 "$#" "<issue-number> <repo-slug> <branch> [todo-file] [worktree-path]" || return 1
-		local _ol_issue="$1" _ol_repo="$2" _ol_branch="$3" _ol_todo="${4:-}" _ol_worktree="${5:-}"
-		check_worker_branch_orphan_loop "$_ol_issue" "$_ol_repo" "$_ol_branch" "$_ol_todo" "$_ol_worktree"
-		;;
-	check-recovery-loop)
-		_require_args check-recovery-loop 2 "$#" "issue-number repo-slug" || return 1
-		local _rl_issue="$1" _rl_repo="$2"
-		check_worker_recovery_failure_loop "$_rl_issue" "$_rl_repo"
-		;;
-	claim)
-		_require_args claim 2 "$#" "<issue-number> <repo-slug> [runner-login]" || return 1
-		if [[ ! -x "$CLAIM_HELPER" ]]; then
-			echo "Error: dispatch-claim-helper.sh not found at ${CLAIM_HELPER}" >&2
-			return 2
-		fi
-		local _claim_issue="$1" _claim_repo="$2" _claim_runner="${3:-}"
-		local _claim_guard_output="" _claim_guard_rc=0
-		_claim_guard_output=$(is_assigned "$_claim_issue" "$_claim_repo" "$_claim_runner" 2>&1) || _claim_guard_rc=$?
-		case "$_claim_guard_rc" in
-		0)
-			printf 'CLAIM_BLOCKED: active_assignment issue=#%s repo=%s runner=%s signal=%s\n' \
-				"$_claim_issue" "$_claim_repo" "$_claim_runner" "$_claim_guard_output"
-			return 1
-			;;
-		1) ;;
-		*)
-			printf 'CLAIM_BLOCKED: assignment_guard_error issue=#%s repo=%s runner=%s rc=%s signal=%s\n' \
-				"$_claim_issue" "$_claim_repo" "$_claim_runner" "$_claim_guard_rc" "$_claim_guard_output"
-			return 1
-			;;
-		esac
-		DISPATCH_CLAIM_ASSIGNMENT_GUARD=false "$CLAIM_HELPER" claim "$_claim_issue" "$_claim_repo" "$_claim_runner"
-		;;
-	check-claim)
-		# GH#17590: Pre-check for active claims (read-only, no comment posted).
-		_require_args check-claim 2 "$#" "<issue-number> <repo-slug>" || return 1
-		if [[ ! -x "$CLAIM_HELPER" ]]; then
-			echo "Error: dispatch-claim-helper.sh not found at ${CLAIM_HELPER}" >&2
-			return 2
-		fi
-		"$CLAIM_HELPER" check "$1" "$2"
-		;;
-	list-running-keys)
-		list_running_keys
-		;;
-	normalize)
-		_require_args normalize 1 "$#" "a title argument" || return 1
-		normalize_title "$1"
-		;;
-	test-recover)
-		# Test shim for t2008: expose _recover_stale_assignment for test harness.
-		# Usage: dispatch-dedup-helper.sh test-recover <issue> <repo> <assignees> <reason>
-		# Not for production use — test files only.
-		_require_args test-recover 4 "$#" "<issue> <repo> <assignees> <reason>" || return 1
-		_recover_stale_assignment "$1" "$2" "$3" "$4"
-		;;
-	has-fix-the-fixer-label)
-		# t3077: read-only check used by headless-runtime-helper.sh to
-		# decide whether to enable verbose lifecycle, tighter watchdog,
-		# and the preflight sentinel write for this worker.
-		_require_args has-fix-the-fixer-label 2 "$#" "<issue> <slug>" || return 1
-		local _hftf_issue="$1"
-		local _hftf_repo="$2"
-		has_fix_the_fixer_label "$_hftf_issue" "$_hftf_repo"
+	claim | check-claim)
+		_ddh_main_claim_command "$command" "$@"
+		return $?
 		;;
 	help | --help | -h)
 		show_help
+		return 0
 		;;
 	*)
-		echo "Error: Unknown command: $command" >&2
+		printf 'Error: Unknown command: %s\n' "$command" >&2
 		show_help
 		return 1
 		;;
