@@ -26,6 +26,7 @@
 #   12. strip_code_fences: strips HTML comment regions (GH#17804 regression)
 #   13. strip_code_fences: strips multi-line HTML comments and example tasks
 #   14. strip_html_comments: standalone helper strips comments only
+#   15. add_gh_ref_to_todo: replaces placeholder ref:none instead of appending
 #
 # Exit 0 = all tests pass, 1 = at least one failure.
 
@@ -138,6 +139,24 @@ if [[ "$count" -eq 1 ]]; then
 	pass "add_gh_ref_to_todo: idempotent on re-run (count=1)"
 else
 	fail "add_gh_ref_to_todo: re-run duplicated ref (count=$count)"
+fi
+
+# -----------------------------------------------------------------------------
+# Test 3b: add_gh_ref_to_todo replaces ref:none placeholders (GH#26355)
+# -----------------------------------------------------------------------------
+cat >"$TMP/todo3b.md" <<'EOF'
+## Ready
+
+- [ ] t9003b task with placeholder ref tier:simple ref:none logged:2026-07-02
+EOF
+
+add_gh_ref_to_todo "t9003b" "1003" "$TMP/todo3b.md"
+if grep -q 'ref:GH#1003' "$TMP/todo3b.md" &&
+	! grep -q 'ref:none' "$TMP/todo3b.md"; then
+	pass "add_gh_ref_to_todo: replaces ref:none placeholder (GH#26355)"
+else
+	fail "add_gh_ref_to_todo: left ref:none placeholder or missed GH ref"
+	cat "$TMP/todo3b.md" | sed 's/^/     /'
 fi
 
 # -----------------------------------------------------------------------------

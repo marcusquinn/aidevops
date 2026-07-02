@@ -133,7 +133,9 @@ add_gh_ref_to_todo() {
 	fi
 
 	local new_line
-	if echo "$target_line" | grep -qE 'logged:'; then
+	if printf '%s\n' "$target_line" | grep -qE '(^|[[:space:]])ref:none([[:space:]]|$)'; then
+		new_line=$(printf '%s\n' "$target_line" | sed -E "s/(^|[[:space:]])ref:none([[:space:]]|$)/\\1ref:GH#${issue_number}\\2/")
+	elif echo "$target_line" | grep -qE 'logged:'; then
 		new_line=$(echo "$target_line" | sed -E "s/( logged:)/ ref:GH#${issue_number}\1/")
 	else
 		new_line="${target_line} ref:GH#${issue_number}"
