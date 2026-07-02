@@ -1254,6 +1254,43 @@ unset STUB_PR_VIEW_FIXTURE STUB_PR_VIEW_STDOUT
 
 : >"$GH_CALLS"
 : >"$GH_INFO_OUTPUT"
+trailing_json_args=""
+trailing_json_args="$(_gh_pr_view_args_for_json_fields "number" 123 --repo "owner/repo" --json 2>"$TMP/trailing-json.err" | tr '\0' ' ')"
+if [[ "$trailing_json_args" == "123 --repo owner/repo --json number " && ! -s "$TMP/trailing-json.err" ]]; then
+	pass "gh_pr_view arg splitter handles trailing --json without shift error"
+else
+	fail "gh_pr_view arg splitter handles trailing --json without shift error" \
+		"args=${trailing_json_args} stderr=$(cat "$TMP/trailing-json.err")"
+fi
+
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+trailing_jq_args=""
+trailing_jq_args="$(_gh_pr_view_args_for_json_fields "number" 123 --repo "owner/repo" --jq 2>"$TMP/trailing-jq.err" | tr '\0' ' ')"
+if [[ "$trailing_jq_args" == "123 --repo owner/repo --json number " && ! -s "$TMP/trailing-jq.err" ]]; then
+	pass "gh_pr_view arg splitter handles trailing --jq without shift error"
+else
+	fail "gh_pr_view arg splitter handles trailing --jq without shift error" \
+		"args=${trailing_jq_args} stderr=$(cat "$TMP/trailing-jq.err")"
+fi
+
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+: >"$AIDEVOPS_GH_API_LOG"
+export STUB_PR_VIEW_FIXTURE='{"number":123,"title":"rest title","state":"open"}'
+export STUB_PR_VIEW_STDOUT=''
+mixed_split_empty_gql_value=$(gh_pr_view 123 --repo "owner/repo" --json title,statusCheckRollup --jq '.title // empty' 2>/dev/null || true)
+mixed_split_empty_gql_calls=$(grep -cE '^pr view 123 --repo owner/repo --json statusCheckRollup$' "$GH_CALLS" 2>/dev/null || true)
+if [[ "$mixed_split_empty_gql_value" == "rest title" && "$mixed_split_empty_gql_calls" == "1" ]]; then
+	pass "gh_pr_view mixed split tolerates successful empty GraphQL stdout"
+else
+	fail "gh_pr_view mixed split tolerates successful empty GraphQL stdout" \
+		"value=${mixed_split_empty_gql_value} gql_calls=${mixed_split_empty_gql_calls} GH_CALLS=$(cat "$GH_CALLS") API_LOG=$(cat "$AIDEVOPS_GH_API_LOG")"
+fi
+unset STUB_PR_VIEW_FIXTURE STUB_PR_VIEW_STDOUT
+
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
 export AIDEVOPS_GH_PR_LIST_CACHE_DIR="$TMP/pr-list-cache"
 export AIDEVOPS_GH_PR_LIST_CACHE_TTL=30
 gh_pr_list --repo "owner/repo" --state open --json number --jq length --limit 200 >/dev/null 2>&1 || true
