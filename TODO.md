@@ -4406,4 +4406,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18059 test(pulse): cover linked-PR fallback gh_pr_list routing #auto-dispatch #framework #github #performance #pulse #testing ref:GH#26330
 
-- [ ] t1368 Write-time quality enforcement rules #enhancement ref:GH#2660
+- [x] t1368 Write-time quality enforcement rules #enhancement ref:GH#2660 pr:#2659 completed:2026-03-01
