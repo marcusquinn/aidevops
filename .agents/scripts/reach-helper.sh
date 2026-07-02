@@ -54,6 +54,7 @@ Commands:
   cookie status|register|clear [options] --format json
   classify-failure [--http-status <code>] [--has-login-wall true|false] [--has-captcha true|false] [--timeout true|false] [--selector-drift true|false] [--content-empty true|false] [--bot-block true|false] --format json
   route --objective <text> [--auth none|cookie|profile|manual] [--scope public|private] --format json
+  watch --once --dry-run --format json
   capture --input <url-or-file> [--dest inbox|knowledge-inbox] [--method auto|file|fetch|crawl|browser] --format json
   feedback mine [--window 7d] [--format json|markdown]
   feedback issue [--dry-run] [--window 7d] [--format markdown|json]
@@ -135,6 +136,10 @@ main() {
 			;;
 		route)
 			handle_route "$@"
+			return $?
+			;;
+		watch)
+			handle_watch "$@"
 			return $?
 			;;
 		*)

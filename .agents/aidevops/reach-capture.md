@@ -38,8 +38,29 @@ private reach metadata under the aidevops agent workspace.
   "profile_policy": "none|avoid|use_existing_approved_profile|required|blocked",
   "cookie_policy": "none|avoid|reuse_approved_session|required|blocked",
   "proxy_policy": "none|avoid|authorized_only|required|blocked",
+  "budgets": {
+    "max_iterations": 3,
+    "max_tool_calls": 12,
+    "max_token_estimate": 6000,
+    "stop_after_repeated_success": 2,
+    "stop_on_permanent_failure": true,
+    "route_decision_ttl_seconds": 86400
+  },
+  "efficiency_policy": ["prefer API/fetch", "prefer DOM/text over screenshots", "reuse leases", "reuse route decisions within TTL"],
   "offload": "local|worker|manual",
+  "offload_reason": "sanitized reason",
+  "routine_candidate": false,
+  "compute_notes": ["sanitized compute constraints"],
   "capture_destination": "caller_selected|_inbox|_knowledge|_performance|_feedback",
+  "audit_refs": {
+    "todo_id": "",
+    "issue_ref": "",
+    "pr_ref": "",
+    "capture_ref": "",
+    "performance_ref": "",
+    "feedback_ref": "",
+    "route_decision_id": "reach-route-..."
+  },
   "failure_policy": "sanitized retry and stop policy",
   "failover_order": ["fetch", "crawler", "browser"],
   "safety_notes": ["sanitized notes only"],
@@ -54,6 +75,34 @@ approved authenticated work, and anti-detect/proxy only for explicit authorized
 isolation needs. Private/manual authentication without an approved reusable
 session returns `manual_review` with `blocked_reason` set instead of attempting
 capture.
+
+Route budgets are hard discovery defaults for repeatable work: stop after the
+configured iteration/tool/token estimate, after repeated success without material
+improvement, or immediately on permanent failures such as authorization, scope,
+payment, posting, destructive action, or missing manual consent gates. Efficiency
+policy is explicit in every route: prefer API/fetch before browser, prefer text
+and DOM extraction over screenshots, reuse approved profile/cookie leases, and
+reuse a prior route decision within the TTL when objective, auth, and scope still
+match.
+
+Headed/headless selection is conservative. Public static fetches and public
+crawls are headless. Login, MFA, manual consent, CAPTCHA, payment, posting,
+form-submit, and destructive actions are headed/manual-gated. Stable recurring
+public captures can graduate to a headless worker/routine after the route is
+sanitized and repeated success is recorded.
+
+Offload decisions distinguish compute cost from trust boundary. Short public
+fetches stay local; long crawls and recurring public captures may offload to a
+worker/routine. Sensitive profile, cookie, credential, or private-scope work does
+not offload unless a private workspace and credential references are explicitly
+available. Audit refs link TODO tasks, GitHub issues/PRs, capture artifacts,
+performance records, feedback themes, and the deterministic `route_decision_id`.
+
+`reach-helper.sh watch --once --dry-run --format json` and
+`reach-routine.sh --format json` are report-only by default. They do not create
+issues, write comments, mutate cookies/profiles, contact targets, or promote
+captures; use them as safe periodic preflight hooks before scheduling recurring
+reach/capture work.
 
 `route --auth cookie|profile` consults the private broker metadata before it
 sets `cookie_policy` or `profile_policy`. Missing or expired broker state keeps
