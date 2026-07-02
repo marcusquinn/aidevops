@@ -121,9 +121,9 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [x] t18050 feat(reach): implement capture workflow into `_inbox/` and `_knowledge/` staging. Add `reach capture` artifacts, sanitized metadata, append-only `_inbox/triage.log` entries, knowledge-inbox staging rules, and local fixture tests so web/app evidence has provenance and review gates. #enhancement #framework #knowledge #browser #auto-dispatch ~4.75h tier:standard blocked-by:t18047,t18048,t18049 ref:GH#26168 pr:#26219 logged:2026-07-01 -> [todo/tasks/t18050-brief.md] completed:2026-07-01
 
-- [ ] t18051 feat(reach): add performance logging, feedback miner, and dry-run issue generator. Append reach attempt JSONL with backend/profile/proxy/mode/offload/latency/token/failure fields, mine repeated failures into privacy-safe themes, and generate worker-ready issue briefs only when evidence thresholds pass. #enhancement #framework #observability #feedback #auto-dispatch ~5h tier:standard blocked-by:t18050 ref:GH#26169 logged:2026-07-01 -> [todo/tasks/t18051-brief.md]
+- [x] t18051 feat(reach): add performance logging, feedback miner, and dry-run issue generator. Append reach attempt JSONL with backend/profile/proxy/mode/offload/latency/token/failure fields, mine repeated failures into privacy-safe themes, and generate worker-ready issue briefs only when evidence thresholds pass. #enhancement #framework #observability #feedback #auto-dispatch ~5h tier:standard blocked-by:t18050 ref:GH#26169 pr:#26287 logged:2026-07-01 -> [todo/tasks/t18051-brief.md] completed:2026-07-02
 
-- [ ] t18052 feat(reach): add token/discovery efficiency, headed/headless/offload routing, routine hooks, and audit refs. Extend reach routing and `/auto-browse` docs with budgets, mode selection, offload safety, report-only watch/routine defaults, and audit links across TODO, GitHub, capture, performance, and feedback records. #enhancement #framework #efficiency #automation #auto-dispatch ~4h tier:standard blocked-by:t18047,t18051 ref:GH#26170 logged:2026-07-01 -> [todo/tasks/t18052-brief.md]
+- [x] t18052 feat(reach): add token/discovery efficiency, headed/headless/offload routing, routine hooks, and audit refs. Extend reach routing and `/auto-browse` docs with budgets, mode selection, offload safety, report-only watch/routine defaults, and audit links across TODO, GitHub, capture, performance, and feedback records. #enhancement #framework #efficiency #automation #auto-dispatch ~4h tier:standard blocked-by:t18047,t18051 ref:GH#26170 pr:#26344 logged:2026-07-01 -> [todo/tasks/t18052-brief.md] completed:2026-07-02
 
 - [x] t18054 fix(pulse): preserve CHANGES_REQUESTED review state when forced REST PR-list fallback cannot provide GraphQL-only `reviewDecision`. Treat REST-missing review decisions as unknown, refresh authoritative review state before backlog/merge routing classifies failed PRs as `small-fix-needed`, and cover REST list/view projection plus pulse backlog/merge gates with regression tests. #bug #framework #pulse #github-api #auto-dispatch ~3h tier:standard ref:GH#26218 logged:2026-07-01 -> [todo/tasks/t18054-brief.md] pr:#26222 pr:#26222 completed:2026-07-01
 
@@ -1090,7 +1090,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18055 fix(log-issue): validate cache causality and empty exact-output cache semantics #bug #documentation #framework #performance #testing ref:GH#26226 pr:#26228 completed:2026-07-01
 
-- [ ] t18056 perf(pulse): investigate remaining GraphQL budget exhaustion after PR-list cache work #framework #github #investigate #parent-task #performance #pulse ref:GH#26227
+- [x] t18056 perf(pulse): investigate remaining GraphQL budget exhaustion after PR-list cache work #framework #github #investigate #parent-task #performance #pulse ref:GH#26227 verified:2026-07-02 completed:2026-07-02
 
 ## In Progress
 
@@ -4401,10 +4401,10 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 
 
-- [ ] t682 ci: test self-hosted runners safely #auto-dispatch #ci #testing ref:GH#4264
+- [x] t682 ci: test self-hosted runners safely #auto-dispatch #ci #testing ref:GH#4264 verified:2026-03-13 completed:2026-07-02
 
 - [x] t18058 perf(pulse): coalesce merge/stuck PR-list scans through pulse_pr_list_get #auto-dispatch #framework #github #performance #pulse ref:GH#26329 pr:#26343 completed:2026-07-02
 
-- [ ] t18059 test(pulse): cover linked-PR fallback gh_pr_list routing #auto-dispatch #framework #github #performance #pulse #testing ref:GH#26330
+- [x] t18059 test(pulse): cover linked-PR fallback gh_pr_list routing #auto-dispatch #framework #github #performance #pulse #testing ref:GH#26330 verified:2026-07-02 completed:2026-07-02
 
 - [x] t1368 Write-time quality enforcement rules #enhancement ref:GH#2660 pr:#2659 completed:2026-03-01
