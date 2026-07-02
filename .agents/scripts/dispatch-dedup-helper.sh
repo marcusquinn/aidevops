@@ -180,6 +180,68 @@ _ddh_probe_orphan_branch_state() {
 }
 
 #######################################
+# Auto-recover an orphan branch that has no useful content.
+#
+# When a branch exists on the remote but has zero commits beyond the base
+# (or the remote branch is missing), AND no open PR references the branch,
+# there is nothing to recover. Auto-cleanup breaks the permanent dispatch
+# loop that otherwise causes stale_timeout/no_work fast-fail accumulation
+# and eventually trips the t2769 circuit breaker (Majowka/mesh-manager#1214).
+#
+# Args: $1 issue, $2 repo, $3 branch, $4 reason (zero_commits|remote_branch_missing),
+#       $5 worktree path, $6 comments endpoint
+# Returns: 0 on successful recovery, 1 if recovery not possible
+#######################################
+_ddh_auto_recover_orphan_branch() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local branch_name="$3"
+	local hold_reason="$4"
+	local worktree_path="$5"
+	local comments_post_endpoint="$6"
+
+	# Guard: do not auto-recover if an open PR references this branch.
+	local pr_for_branch=""
+	pr_for_branch=$(gh pr list --repo "$repo_slug" --head "$branch_name" --state open \
+		--json number --jq '.[0].number // empty' 2>/dev/null || true)
+	if [[ -n "$pr_for_branch" ]]; then
+		return 1
+	fi
+
+	# Delete the remote orphan branch (zero commits = nothing to lose).
+	local remote_deleted="no"
+	if [[ "$hold_reason" == "zero_commits" ]]; then
+		if gh api -X DELETE "repos/${repo_slug}/git/refs/heads/${branch_name}" >/dev/null 2>&1; then
+			remote_deleted="yes"
+		elif [[ -n "$worktree_path" && ( -d "$worktree_path/.git" || -f "$worktree_path/.git" ) ]]; then
+			# Fallback: try git push --delete from the worktree.
+			if GIT_TERMINAL_PROMPT=0 git -C "$worktree_path" push origin --delete "$branch_name" 2>/dev/null; then
+				remote_deleted="yes"
+			fi
+		fi
+	else
+		# remote_branch_missing — nothing to delete on remote, but local cleanup is still needed.
+		remote_deleted="n/a"
+	fi
+
+	# Post a recovery comment so there is an audit trail.
+	local diag=""
+	# shellcheck disable=SC2016 # Backticks are literal Markdown in this printf template.
+	diag=$(printf '<!-- ops:start -->\n<!-- worker-branch-orphan-auto-recovered:cleanup branch=%s issue=%s reason=%s remote_deleted=%s -->\n## Auto-recovered: orphan branch cleanup\n\nThe dispatch path found `WORKER_BRANCH_ORPHAN` telemetry for issue #%s on branch `%s` with reason `%s`. No open PR references this branch, so the orphan was auto-cleaned to prevent dispatch loops (Majowka/mesh-manager#1214).\n\n- Branch: `%s`\n- Remote branch deleted: `%s`\n- Next action: dispatch will create a fresh worktree and branch on the next cycle.\n<!-- ops:end -->' \
+		"$branch_name" "$issue_number" "$hold_reason" "$remote_deleted" \
+		"$issue_number" "$branch_name" "$hold_reason" \
+		"$branch_name" "$remote_deleted")
+	gh api "$comments_post_endpoint" \
+		--method POST \
+		--field body="$diag" \
+		>/dev/null 2>&1 || true
+
+	printf 'WORKER_BRANCH_ORPHAN_AUTO_RECOVERED (issue=%s repo=%s branch=%s reason=%s remote_deleted=%s)\n' \
+		"$issue_number" "$repo_slug" "$branch_name" "$hold_reason" "$remote_deleted"
+	return 0
+}
+
+#######################################
 # Post a diagnostic and hold dispatch for unrecoverable orphan evidence.
 #
 # Args: $1 issue, $2 repo, $3 branch, $4 reason, $5 remote probe,
@@ -1089,14 +1151,32 @@ _ddh_hold_unrecoverable_orphan_branch_if_needed() {
 	: "${state_repo}"
 
 	if [[ "$remote_exists" == "no" ]]; then
+		# t3076/GH#1214: try auto-recovery before holding. If no open PR
+		# references this branch, clean up and let the next cycle dispatch
+		# with a fresh worktree instead of looping until the circuit breaker
+		# fires.
+		if _ddh_auto_recover_orphan_branch "$issue_number" "$repo_slug" "$branch_name" \
+			"remote_branch_missing" "$worktree_path" "$comments_post_endpoint"; then
+			return 0
+		fi
 		_ddh_hold_unrecoverable_orphan_branch "$issue_number" "$repo_slug" "$branch_name" \
 			"remote_branch_missing" "$remote_probe" "$remote_exists" "$commit_count" \
 			"$comments_post_endpoint" "$comments_json"
 		return 0
 	fi
 	if [[ "$commit_count" == "0" ]]; then
+		# t3076/GH#1214: try auto-recovery before holding. Zero commits
+		# means the branch has nothing to PR. If no open PR references
+		# this branch, delete the remote orphan and let the next dispatch
+		# create a fresh worktree+branch.
+		# the codebase ratchet flags repeated boolean-token literals.
+		local _reason_zero="zero_commits"
+		if _ddh_auto_recover_orphan_branch "$issue_number" "$repo_slug" "$branch_name" \
+			"$_reason_zero" "$worktree_path" "$comments_post_endpoint"; then
+			return 0
+		fi
 		_ddh_hold_unrecoverable_orphan_branch "$issue_number" "$repo_slug" "$branch_name" \
-			"zero_commits" "$remote_probe" "$remote_exists" "$commit_count" \
+			"$_reason_zero" "$remote_probe" "$remote_exists" "$commit_count" \
 			"$comments_post_endpoint" "$comments_json"
 		return 0
 	fi

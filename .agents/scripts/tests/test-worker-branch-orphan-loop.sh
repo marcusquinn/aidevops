@@ -101,11 +101,31 @@ EOF
 ]
 EOF
 
+	# t3076/GH#1214: comments for issue 400 in owner/develop-repo (no PR exists for this repo).
+	cat >"${TEST_ROOT}/comments-400.json" <<EOF
+[
+  [
+    {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/empty session=issue-400 ts=${now_iso}\n<!-- ops:end -->"},
+    {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/missing session=issue-400 ts=${now_iso}\n<!-- ops:end -->"}
+  ]
+]
+EOF
+
 	cat >"${TEST_ROOT}/bin/gh" <<'GHEOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
 if [[ "${1:-}" == "api" ]]; then
+	# Handle DELETE requests (e.g., remote branch deletion in auto-recovery)
+	if [[ " $* " == *" -X DELETE "* || " $* " == *" --method DELETE "* ]]; then
+		for arg in "$@"; do
+			if [[ "$arg" =~ git/refs/heads/ ]]; then
+				printf '%s\n' "$*" >>"${TEST_ROOT}/api-deletes.log"
+				exit 0
+			fi
+		done
+		exit 0
+	fi
 	issue=""
 	for arg in "$@"; do
 		if [[ "$arg" =~ /issues/([0-9]+)/comments ]]; then
@@ -129,8 +149,10 @@ fi
 
 if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
 	if [[ "$*" == *"owner/develop-repo"* ]]; then
+		# t3076: owner/develop-repo has no PRs → auto-recovery proceeds
 		exit 0
 	fi
+	# Default: return a PR so auto-recovery is skipped
 	printf '#123 (OPEN) https://example.invalid/pr/123\n'
 	exit 0
 fi
@@ -177,13 +199,19 @@ fi
 
 if [[ "${1:-}" == "rev-list" && "${2:-}" == "--count" ]]; then
 	case "${3:-}" in
-		origin/main..origin/feature/empty|origin/feature/empty)
+		origin/main..origin/feature/empty|origin/develop..origin/feature/empty|origin/feature/empty)
 			printf '0\n'
 			;;
 		*)
 			printf '2\n'
 			;;
 	esac
+	exit 0
+fi
+
+# t3076: handle push --delete for orphan auto-recovery
+if [[ "${1:-}" == "push" && " $* " == *" --delete "* ]]; then
+	printf '%s\n' "$*" >>"${TEST_ROOT}/git-push-deletes.log"
 	exit 0
 fi
 
@@ -265,6 +293,8 @@ test_orphan_comment_without_remote_branch_blocks_immediately() {
 
 test_orphan_comment_with_zero_commits_blocks_immediately() {
 	local output=""
+	# owner/repo returns an open PR from the stub, so auto-recovery is skipped
+	# and the hold behavior is preserved.
 	if output=$("$HELPER_SCRIPT" check-orphan-loop 100 owner/repo feature/empty "" "${TEST_ROOT}/wt-zero-commits" 2>/dev/null); then
 		if [[ "$output" == *"WORKER_BRANCH_ORPHAN_UNRECOVERABLE_BLOCKED"* && "$output" == *"reason=zero_commits"* ]] && grep -q -- "Branch commit count: \`0\`" "${TEST_ROOT}/posts/100.argv"; then
 			print_result "orphan marker with zero remote branch commits holds dispatch" 0
@@ -277,6 +307,61 @@ test_orphan_comment_with_zero_commits_blocks_immediately() {
 	return 0
 }
 
+# t3076/GH#1214: zero-commit orphan with no open PR triggers auto-recovery.
+# Auto-recovery deletes the remote branch and posts a recovery comment so the
+# next dispatch cycle creates a fresh worktree instead of looping until the
+# t2769 no_work circuit breaker fires.
+test_zero_commits_no_pr_triggers_auto_recovery() {
+	local output=""
+	# owner/develop-repo returns no PRs from the stub → auto-recovery proceeds.
+	if output=$("$HELPER_SCRIPT" check-orphan-loop 400 owner/develop-repo feature/empty "" "${TEST_ROOT}/wt-zero-commits" 2>/dev/null); then
+		if [[ "$output" == *"WORKER_BRANCH_ORPHAN_AUTO_RECOVERED"* && "$output" == *"reason=zero_commits"* ]]; then
+			if [[ -f "${TEST_ROOT}/posts/400.argv" ]] && grep -q "worker-branch-orphan-auto-recovered:cleanup" "${TEST_ROOT}/posts/400.argv"; then
+				print_result "t3076: zero commits + no PR → auto-recovery with comment" 0
+				return 0
+			fi
+			print_result "t3076: zero commits + no PR → auto-recovery with comment" 1 "Missing recovery comment post"
+			return 0
+		fi
+		print_result "t3076: zero commits + no PR → auto-recovery with comment" 1 "Expected AUTO_RECOVERED output, got: ${output}"
+		return 0
+	fi
+	print_result "t3076: zero commits + no PR → auto-recovery with comment" 1 "Expected exit 0 (dispatch hold after auto-recovery)"
+	return 0
+}
+
+# t3076/GH#1214: missing remote branch with no open PR also triggers auto-recovery.
+test_missing_remote_no_pr_triggers_auto_recovery() {
+	local output=""
+	# owner/develop-repo returns no PRs from the stub → auto-recovery proceeds.
+	if output=$("$HELPER_SCRIPT" check-orphan-loop 400 owner/develop-repo feature/missing "" "${TEST_ROOT}/wt-with-commits" 2>/dev/null); then
+		if [[ "$output" == *"WORKER_BRANCH_ORPHAN_AUTO_RECOVERED"* && "$output" == *"reason=remote_branch_missing"* ]]; then
+			print_result "t3076: missing remote + no PR → auto-recovery" 0
+			return 0
+		fi
+		print_result "t3076: missing remote + no PR → auto-recovery" 1 "Expected AUTO_RECOVERED output, got: ${output}"
+		return 0
+	fi
+	print_result "t3076: missing remote + no PR → auto-recovery" 1 "Expected exit 0 (dispatch hold after auto-recovery)"
+	return 0
+}
+
+# t3076/GH#1214: zero-commit orphan WITH an open PR falls back to hold.
+test_zero_commits_with_pr_still_holds() {
+	local output=""
+	# owner/repo returns an open PR from the stub → auto-recovery is skipped.
+	if output=$("$HELPER_SCRIPT" check-orphan-loop 100 owner/repo feature/empty "" "${TEST_ROOT}/wt-zero-commits" 2>/dev/null); then
+		if [[ "$output" == *"WORKER_BRANCH_ORPHAN_UNRECOVERABLE_BLOCKED"* ]]; then
+			print_result "t3076: zero commits + open PR → hold (no auto-recovery)" 0
+			return 0
+		fi
+		print_result "t3076: zero commits + open PR → hold (no auto-recovery)" 1 "Expected UNRECOVERABLE_BLOCKED, got: ${output}"
+		return 0
+	fi
+	print_result "t3076: zero commits + open PR → hold (no auto-recovery)" 1 "Expected dispatch hold"
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_same_issue_branch_blocks_and_posts_diagnostic
@@ -286,6 +371,9 @@ main() {
 	test_orphan_loop_next_action_uses_configured_base
 	test_orphan_comment_without_remote_branch_blocks_immediately
 	test_orphan_comment_with_zero_commits_blocks_immediately
+	test_zero_commits_no_pr_triggers_auto_recovery
+	test_missing_remote_no_pr_triggers_auto_recovery
+	test_zero_commits_with_pr_still_holds
 	teardown_test_env
 
 	printf '\nTests run: %d\n' "$TESTS_RUN"

@@ -1627,10 +1627,66 @@ _dlw_check_worker_branch_orphan_loop() {
 	local orphan_loop_out=""
 	if orphan_loop_out=$("$dedup_helper" check-orphan-loop "$issue_number" "$repo_slug" "$worker_worktree_branch" "$todo_file" "$worker_worktree_path" 2>/dev/null); then
 		echo "[dispatch_with_dedup] Dispatch held for #${issue_number} in ${repo_slug}: ${orphan_loop_out}" >>"$LOGFILE"
+		# t3076/GH#1214: when the orphan check auto-recovered a zero-commit
+		# or missing-remote branch, clean up the local worktree so the next
+		# dispatch cycle creates a fresh one instead of re-entering this
+		# loop and eventually tripping the no_work circuit breaker.
+		if [[ "$orphan_loop_out" == *"WORKER_BRANCH_ORPHAN_AUTO_RECOVERED"* && -n "$worker_worktree_path" ]]; then
+			_dlw_cleanup_auto_recovered_worktree "$issue_number" "$repo_slug" "$worker_worktree_path" "$worker_worktree_branch"
+		fi
 		return 0
 	fi
 
 	return 1
+}
+
+#######################################
+# Clean up a local worktree after orphan branch auto-recovery.
+#
+# After dispatch-dedup-helper.sh auto-deletes a zero-commit remote branch,
+# the local worktree must also be removed so the next dispatch cycle does
+# not reuse it and re-enter the orphan detection loop.
+#
+# Args: $1 issue, $2 repo, $3 worktree path, $4 branch name
+# Returns: 0 always (best-effort cleanup)
+#######################################
+_dlw_cleanup_auto_recovered_worktree() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local worktree_path="$3"
+	local branch_name="$4"
+
+	[[ -n "$worktree_path" ]] || return 0
+
+	# Find the parent repo path for git worktree prune.
+	local repo_path=""
+	repo_path=$(git -C "$worktree_path" rev-parse --git-common-dir 2>/dev/null | sed 's|/\.git$||') || repo_path=""
+
+	# Remove the worktree directory.
+	if [[ -d "$worktree_path" ]]; then
+		git worktree remove --force "$worktree_path" 2>/dev/null ||
+			rm -rf "$worktree_path" 2>/dev/null || true
+	fi
+
+	# Prune stale worktree entries.
+	if [[ -n "$repo_path" && -d "$repo_path" ]]; then
+		git -C "$repo_path" worktree prune 2>/dev/null || true
+	fi
+
+	# Unregister from the worktree registry if available.
+	if declare -F unregister_worktree >/dev/null 2>&1; then
+		unregister_worktree "$worktree_path" 2>/dev/null || true
+	fi
+
+	# Log the audit trail for the worktree removal.
+	if declare -F log_worktree_removal_event >/dev/null 2>&1; then
+		log_worktree_removal_event "${_WTAR_REMOVED:-removed}" \
+			"dispatch-orphan-recovery" "$worktree_path" \
+			"auto-recovered-orphan" "permanent" 2>/dev/null || true
+	fi
+
+	echo "[dispatch_with_dedup] Auto-recovered orphan worktree for #${issue_number} in ${repo_slug}: removed ${worktree_path} (branch: ${branch_name})" >>"$LOGFILE"
+	return 0
 }
 
 _dlw_min_worker_floor_active() {

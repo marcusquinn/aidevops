@@ -85,6 +85,23 @@ _classify_stale_recovery_crash_type() {
 		return 0
 	fi
 
+	# t3076/GH#1214: check for orphan auto-recovery or unrecoverable-blocked
+	# diagnostic comments. If the most recent lifecycle event is an orphan
+	# cleanup, the stale assignment resulted from a pre-launch abort at the
+	# orphan detection stage, not a real worker failure. Classify as
+	# "orphan_blocked" instead of "no_work" to prevent the fast-fail entry
+	# from feeding the t2769 per-issue no_work circuit breaker.
+	local _orphan_marker_count
+	_orphan_marker_count=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--paginate --jq '[.[] | (.body // "") | select(
+			test("worker-branch-orphan-auto-recovered|worker-branch-orphan-unrecoverable:blocked")
+		)] | length' 2>/dev/null) || _orphan_marker_count=0
+	[[ "$_orphan_marker_count" =~ ^[0-9]+$ ]] || _orphan_marker_count=0
+	if [[ "$_orphan_marker_count" -gt 0 ]]; then
+		printf 'orphan_blocked'
+		return 0
+	fi
+
 	# No PR, no branch — the worker died before producing any durable
 	# artifact. Classify as no_work so the cascade tier escalation
 	# comment renders the "Likely infrastructure/transient failure" line.
