@@ -230,6 +230,13 @@ else
 	print_result "first-trip: no_work verification includes stale pagination test" 1 "stub log: $(cat "$STUB_LOG")"
 fi
 
+if grep -q 'meta blocker label that points from the original issue to this meta-issue' "$STUB_LOG" \
+	&& ! grep -Fq "meta \`blocked-by\` label from #21840" "$STUB_LOG"; then
+	print_result "first-trip: acceptance describes meta blocker unambiguously" 0
+else
+	print_result "first-trip: acceptance describes meta blocker unambiguously" 1 "stub log: $(cat "$STUB_LOG")"
+fi
+
 # =============================================================================
 # Test 1b: Public app repos without framework sources route metas to aidevops
 # =============================================================================
