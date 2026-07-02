@@ -1324,6 +1324,30 @@ else
 	fail "pulse-diagnose api-budget reports sanitized PR view cache counters" \
 		"diag=${diag_output}"
 fi
+
+: >"$GH_CALLS"
+: >"$GH_INFO_OUTPUT"
+: >"$AIDEVOPS_GH_API_LOG"
+export STUB_RATE_LIMIT_REMAINING=0
+export AIDEVOPS_GH_PR_VIEW_CACHE=1
+export AIDEVOPS_GH_PR_VIEW_CACHE_DIR="$TMP/rest-pr-view-stale-cache"
+export AIDEVOPS_GH_PR_VIEW_CACHE_TTL=1
+rm -rf "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR"
+export STUB_PR_VIEW_FIXTURE='{"number":123,"title":"stale first"}'
+_rest_pr_view 123 --repo "owner/repo" --json title --jq '.title' >/dev/null 2>&1 || true
+cache_file="$AIDEVOPS_GH_PR_VIEW_CACHE_DIR/owner_repo__123.json"
+perl -e 'utime(time - 5, time - 5, @ARGV)' "$cache_file" 2>/dev/null || true
+export STUB_PR_VIEW_FIXTURE='{"number":123,"title":"fresh second"}'
+rest_stale_title=$(_rest_pr_view 123 --repo "owner/repo" --json title --jq '.title' 2>/dev/null || true)
+rest_stale_calls=$(grep -cE '^api /repos/owner/repo/pulls/123( |$)' "$GH_CALLS" 2>/dev/null || true)
+rest_cache_stales=$(grep -c $'rest_pr_view_cache\tother\tunknown\tother\tstale' "$AIDEVOPS_GH_API_LOG" 2>/dev/null || true)
+if [[ "$rest_stale_title" == "fresh second" && "$rest_stale_calls" == "2" && "$rest_cache_stales" == "1" ]]; then
+	pass "_rest_pr_view repo#PR cache refetches stale persistent entries"
+else
+	fail "_rest_pr_view repo#PR cache refetches stale persistent entries" \
+		"title=${rest_stale_title} calls=${rest_stale_calls} stale=${rest_cache_stales} GH_CALLS=$(cat "$GH_CALLS") API_LOG=$(cat "$AIDEVOPS_GH_API_LOG")"
+fi
+unset STUB_PR_VIEW_FIXTURE
 unset AIDEVOPS_GH_PR_VIEW_CACHE AIDEVOPS_GH_PR_VIEW_CACHE_DIR AIDEVOPS_GH_PR_VIEW_CACHE_TTL
 
 : >"$GH_CALLS"

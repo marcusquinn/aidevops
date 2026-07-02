@@ -1626,9 +1626,11 @@ main() {
 		echo "[pulse-wrapper] REST-first read routing enabled for REST-equivalent gh issue/pr list/view calls (GH#22525)" >>"$LOGFILE"
 	fi
 
-	# GH#23433/GH#23604: reuse PR metadata within this pulse cycle. The wrapper
-	# caches are opt-in so standalone tests/debugging keep exact read semantics,
-	# but pulse can avoid re-fetching the same PR list/view data across gates.
+	# GH#23433/GH#23604/GH#26241: reuse PR metadata within and across pulse
+	# cycles. The wrapper caches are opt-in so standalone tests/debugging keep
+	# exact read semantics, but pulse can avoid re-fetching the same PR list/view
+	# data across gates. PR view caches use TTL-based freshness and a stable cache
+	# directory so repeated daemon restarts do not create cold PID-scoped caches.
 	local _pulse_pr_cache_cleanup_scope=0
 	local _pulse_rm_rf="rm -rf"
 	unset AIDEVOPS_GH_PR_VIEW_CACHE
@@ -1641,7 +1643,7 @@ main() {
 	unset PULSE_PR_LIST_PROVIDER_CACHE_TTL
 	if [[ "${AIDEVOPS_PULSE_PR_VIEW_CACHE:-1}" == "1" ]]; then
 		export AIDEVOPS_GH_PR_VIEW_CACHE=1
-		export AIDEVOPS_GH_PR_VIEW_CACHE_DIR="${TMPDIR:-/tmp}/aidevops-pulse-pr-view-cache-${$}"
+		export AIDEVOPS_GH_PR_VIEW_CACHE_DIR="${AIDEVOPS_PULSE_PR_VIEW_CACHE_DIR:-${HOME}/.aidevops/cache/pulse-pr-view-cache}"
 		export AIDEVOPS_GH_PR_VIEW_CACHE_TTL="${AIDEVOPS_PULSE_PR_VIEW_CACHE_TTL:-3600}"
 		_save_cleanup_scope
 		push_cleanup 'release_instance_lock'
@@ -1649,14 +1651,10 @@ main() {
 		# register release_instance_lock before replacing the direct EXIT trap.
 		trap '_run_cleanups' EXIT
 		_pulse_pr_cache_cleanup_scope=1
-		push_cleanup "${_pulse_rm_rf} \"${AIDEVOPS_GH_PR_VIEW_CACHE_DIR}\""
-		if ! rm -rf "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR"; then
-			printf '[pulse-wrapper] Failed to reset REST PR view cache directory: %s\n' "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR" >&2
-		fi
 		if ! mkdir -p "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR"; then
 			printf '[pulse-wrapper] Failed to create REST PR view cache directory: %s\n' "$AIDEVOPS_GH_PR_VIEW_CACHE_DIR" >&2
 		fi
-		echo "[pulse-wrapper] Per-cycle PR view cache enabled for duplicate repo#PR reads ttl=${AIDEVOPS_GH_PR_VIEW_CACHE_TTL}s (GH#23433/GH#23604)" >>"$LOGFILE"
+		echo "[pulse-wrapper] Persistent PR view cache enabled for duplicate repo#PR reads dir=${AIDEVOPS_GH_PR_VIEW_CACHE_DIR} ttl=${AIDEVOPS_GH_PR_VIEW_CACHE_TTL}s (GH#23433/GH#23604/GH#26241)" >>"$LOGFILE"
 	fi
 
 	if [[ "${AIDEVOPS_PULSE_PR_LIST_CACHE:-1}" == "1" ]]; then

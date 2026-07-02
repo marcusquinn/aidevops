@@ -327,13 +327,14 @@ test_fd_closure_fallback_path() {
 
 test_worker_launch_disables_pulse_pr_caches() {
 	if grep -q 'AIDEVOPS_GH_PR_LIST_CACHE_DISABLE=1' "$WORKER_LAUNCH" \
-		&& grep -q 'AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1' "$WORKER_LAUNCH" \
+		&& ! grep -q '^[[:space:]]*AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1' "$WORKER_LAUNCH" \
+		&& grep -q 'mutation-sensitive' "$WORKER_LAUNCH" \
 		&& grep -q 'PULSE_PR_LIST_PROVIDER_CACHE_DISABLE=1' "$WORKER_LAUNCH"; then
-		print_result "fix #3: worker launch disables pulse-scoped PR caches" 0
+		print_result "fix #3: worker launch keeps TTL-scoped PR view cache available" 0
 		return 0
 	fi
-	print_result "fix #3: worker launch disables pulse-scoped PR caches" 1 \
-		"Expected worker launch to disable inherited pulse PR caches in $WORKER_LAUNCH"
+	print_result "fix #3: worker launch keeps TTL-scoped PR view cache available" 1 \
+		"Expected worker launch to disable list/provider caches but not blanket-disable PR view cache in $WORKER_LAUNCH"
 	return 0
 }
 
