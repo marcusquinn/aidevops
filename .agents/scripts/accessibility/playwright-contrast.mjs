@@ -227,6 +227,14 @@ function formatMarkdown(results, level) {
   return lines.join('\n');
 }
 
+async function waitForPageReady(page, timeout) {
+  await page.waitForLoadState('load', { timeout });
+  await page.evaluate(async () => {
+    if (document.fonts?.ready) await document.fonts.ready;
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+  });
+}
+
 // ============================================================================
 // Main
 // ============================================================================
@@ -240,7 +248,7 @@ async function main() {
     await context.addInitScript(BROWSER_SCRIPT);
     const page = await context.newPage();
     await page.goto(options.url, { waitUntil: 'load', timeout: options.timeout });
-    await page.evaluate(() => document.fonts.ready);
+    await waitForPageReady(page, options.timeout);
     const results = await page.evaluate('extractContrastData()');
     let filtered = options.failOnly ? results.filter((r) => isFailingAtLevel(r, options.level)) : results;
     if (options.limit > 0) filtered = filtered.slice(0, options.limit);
