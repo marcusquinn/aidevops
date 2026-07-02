@@ -10,9 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.24] - 2026-07-02
+
+### Changed
+
+- Documentation: prepare changelog for 3.31.24
+
 ### Fixed
 
-- refresh GUI font dependencies before starting aidevops.app (#26370)
+- refresh font dependencies for desktop app (#26370)
 
 ## [3.31.23] - 2026-07-02
 
