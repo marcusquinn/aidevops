@@ -11,8 +11,13 @@ THRESHOLD="${COMPLEXITY_FUNC_LINE_THRESHOLD:-100}"
 
 measure_function_lines() {
 	local function_name="$1"
-	awk -v target="${function_name}() {" '
-		index($0, target) == 1 {
+	awk -v target="${function_name}" '
+		{
+			line = $0
+			sub(/^[[:space:]]*/, "", line)
+			sub(/^function[[:space:]]+/, "", line)
+		}
+		line ~ "^" target "[[:space:]]*\\([[:space:]]*\\)[[:space:]]*\\{" {
 			in_func = 1
 			next
 		}
