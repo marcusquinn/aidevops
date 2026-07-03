@@ -35,11 +35,24 @@ export const appearanceStorageKeys = {
   theme: "aidevops-gui-theme",
 } as const;
 
+function AidevopsLoadingIcon(): ReactElement {
+  return (
+    <svg className="loading-brand-icon" viewBox="0 0 1024 1024" role="img" aria-label="AI DevOps prompt icon">
+      <rect x="88" y="88" width="848" height="848" rx="188" fill="#000000" />
+      <rect x="88" y="88" width="848" height="848" rx="188" fill="#66d9f2" opacity="0.22" />
+      <rect x="116" y="116" width="792" height="792" rx="160" fill="none" stroke="#66d9f2" strokeOpacity="0.36" strokeWidth="18" />
+      <g transform="translate(512 522) scale(0.94) translate(-288 -256)">
+        <path fill="#8ce8ff" d="M9.4 86.6C-3.1 74.1-3.1 53.9 9.4 41.4s32.8-12.5 45.3 0l192 192c12.5 12.5 12.5 32.8 0 45.3l-192 192c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L178.7 256 9.4 86.6zM256 416H544c17.7 0 32 14.3 32 32s-14.3 32-32 32H256c-17.7 0-32-14.3-32-32s14.3-32 32-32z" />
+      </g>
+    </svg>
+  );
+}
+
 const defaultSidebarWidth = 302;
 const minSidebarWidth = 300;
 const maxSidebarWidth = 520;
 export const loadingSkeletonPanelLabels = ["machine rail", "sidebar", "workspace", "status bar"] as const;
-export const loadingBrandGlyph = ">_";
+export const loadingBrandGlyph = "AI DevOps prompt icon";
 const loadingMachineOrbKeys = ["machine-orb-a", "machine-orb-b", "machine-orb-c", "machine-orb-d", "machine-orb-e", "machine-orb-f"] as const;
 const loadingListRows = [
   { key: "loading-list-a", variant: "short" },
@@ -323,6 +336,7 @@ function LoadingBrandOverlay(): ReactElement {
   return (
     <div className="loading-brand-overlay" aria-label="Starting aidevops" role="status">
       <span className="loading-brand-mark" aria-hidden="true">
+        <AidevopsLoadingIcon />
         <span className="loading-brand-word">aidevops</span>
         <span className="loading-brand-chevron">&gt;</span>
         <span className="loading-brand-cursor">_</span>
