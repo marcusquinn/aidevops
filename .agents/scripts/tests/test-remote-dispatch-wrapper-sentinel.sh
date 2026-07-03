@@ -27,13 +27,7 @@ if [[ ! -f "$HELPER" ]]; then
 fi
 
 helper_content=$(<"$HELPER")
-wrapper_started_line=""
-while IFS= read -r line; do
-	if [[ "$line" == *"WRAPPER_STARTED"* ]]; then
-		wrapper_started_line="$line"
-		break
-	fi
-done <"$HELPER"
+wrapper_started_line=$(grep -F "WRAPPER_STARTED" "$HELPER" | tail -n 1 || true)
 
 # shellcheck disable=SC2016 # literal generated wrapper line; variables expand in the generated wrapper, not in this test.
 sentinel_line='echo "WRAPPER_STARTED task_id=${task_id} wrapper_pid=\$\$ host=${host} timestamp=\$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "${remote_log_file}" || true'
