@@ -2428,7 +2428,7 @@ code {
 }
 
 .pulse-overview-layout {
-  grid-template-columns: minmax(280px, 0.8fr) minmax(320px, 1.2fr);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .pulse-kpi-card {
@@ -2450,24 +2450,36 @@ code {
   line-height: 1;
 }
 
+.pulse-chart-heading {
+  align-items: start;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 0.7fr);
+}
+
+.pulse-chart-heading h4 {
+  font-size: 1rem;
+  margin: 0;
+}
+
 .pulse-chart-meta {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .pulse-chart-meta span {
   background: color-mix(in srgb, var(--accent) 9%, var(--surface-muted));
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 10px;
   display: grid;
   gap: 2px;
-  padding: 10px;
+  padding: 8px;
 }
 
 .pulse-chart-meta strong {
   color: var(--accent);
-  font-size: 1.08rem;
+  font-size: 0.98rem;
   letter-spacing: -0.04em;
   line-height: 1;
 }
@@ -2485,9 +2497,17 @@ code {
 .pulse-activity-panel,
 .pulse-drilldown-panel,
 .pulse-actions-panel,
-.pulse-filter-panel {
+.pulse-filter-panel,
+.pulse-trends-panel {
   display: grid;
   gap: 12px;
+}
+
+.pulse-chart-panel {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 14px;
 }
 
 .pulse-attention-critical,
@@ -2512,16 +2532,15 @@ code {
   align-items: end;
   background:
     linear-gradient(180deg, transparent 24%, color-mix(in srgb, var(--border) 42%, transparent) 24% 25%, transparent 25% 49%, color-mix(in srgb, var(--border) 34%, transparent) 49% 50%, transparent 50% 74%, color-mix(in srgb, var(--border) 28%, transparent) 74% 75%, transparent 75%),
-    radial-gradient(circle at 12% 18%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 34%),
-    var(--surface-muted);
+    var(--surface-elevated);
   border: 1px solid var(--border);
-  border-radius: 16px;
+  border-radius: 12px;
   display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(auto-fit, minmax(46px, 1fr));
-  min-height: 180px;
+  gap: 10px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  min-height: 148px;
   overflow: hidden;
-  padding: 14px;
+  padding: 28px 14px 12px;
   position: relative;
 }
 
@@ -2536,32 +2555,20 @@ code {
   font-size: 0.75rem;
   font-weight: 900;
   justify-content: center;
-  min-height: max(40px, var(--bar-height, calc(40px + var(--bar-index, 1) * 18px)));
+  min-height: max(32px, var(--bar-height, calc(40px + var(--bar-index, 1) * 18px)));
   padding: 8px 4px;
   position: relative;
   text-transform: uppercase;
   z-index: 1;
 }
 
-.pulse-chart-placeholder span::before {
-  color: var(--text-secondary);
-  content: attr(data-value);
-  font-size: 0.68rem;
-  font-weight: 800;
-  left: 50%;
-  position: absolute;
-  top: -20px;
-  transform: translateX(-50%);
-  white-space: nowrap;
-}
-
 .pulse-chart-sparkline {
-  height: 48%;
-  inset: 16px 12px auto;
-  opacity: 0.88;
+  height: 44%;
+  inset: 16px 14px auto;
+  opacity: 0.72;
   pointer-events: none;
   position: absolute;
-  width: calc(100% - 24px);
+  width: calc(100% - 28px);
   z-index: 2;
 }
 
@@ -2589,6 +2596,10 @@ code {
   display: grid;
   gap: 12px;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.pulse-chart-stack {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .pulse-filter-group {
@@ -4185,6 +4196,15 @@ button.managed-toggle:focus-visible {
   .pulse-chart-grid,
   .pulse-filter-groups {
     grid-template-columns: 1fr;
+  }
+
+  .pulse-chart-heading,
+  .pulse-chart-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .pulse-chart-placeholder {
+    min-height: 128px;
   }
 
   .pulse-activity-table {
