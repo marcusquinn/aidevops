@@ -10,6 +10,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.41] - 2026-07-03
+
+### Fixed
+
+- dedupe superseded consolidated issues (#26483)
+
+## [3.31.40] - 2026-07-03
+
+### Fixed
+
+- include README metric badges in package (#26486)
+
+## [3.31.39] - 2026-07-03
+
+### Fixed
+
+- reconcile consolidated issues fixed by merged PRs (#26485)
+
+## [3.31.38] - 2026-07-03
+
+### Fixed
+
+- paginate maintainer gate comment scans (#26481)
+
+## [3.31.37] - 2026-07-03
+
+### Fixed
+
+- guard wrapper sentinel lookup (#26480)
+
 ## [3.31.36] - 2026-07-03
 
 ### Fixed
