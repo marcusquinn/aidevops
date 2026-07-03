@@ -230,8 +230,22 @@ function formatMarkdown(results, level) {
 async function waitForPageReady(page, timeout) {
   await page.waitForLoadState('load', { timeout });
   await page.evaluate(async () => {
-    if (document.fonts?.ready) await document.fonts.ready;
-    await new Promise((resolve) => requestAnimationFrame(resolve));
+    if (document.fonts?.ready) {
+      await Promise.race([
+        document.fonts.ready,
+        new Promise((resolve) => setTimeout(resolve, 2000)),
+      ]);
+    }
+    await new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      requestAnimationFrame(finish);
+      setTimeout(finish, 100);
+    });
   });
 }
 
