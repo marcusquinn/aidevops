@@ -223,6 +223,7 @@ jobs:
           if echo "$PR_LABELS" | grep -q 'needs-maintainer-review'; then
             # Check for signed approval comment on the PR itself
             SIGNED_APPROVAL=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+              --paginate \
               --jq '[.[] | select(.body | contains("<!-- aidevops-signed-approval -->"))] | length' \
               2>/dev/null || echo "0")
 
@@ -443,6 +444,7 @@ jobs:
                   # applied by the pulse itself (not user comments), and bot-
                   # authored issues have a narrower attack surface.
                   NON_MAINT_COMMENTS=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}/comments" \
+                    --paginate \
                     --jq '[.[] | select(.author_association == "NONE" or .author_association == "CONTRIBUTOR")] | length' \
                     2>/dev/null || echo "0")
                   if [[ "$NON_MAINT_COMMENTS" == "0" ]]; then
@@ -568,6 +570,7 @@ jobs:
           # manual label removal alone is insufficient because it leaves
           # no auditable cryptographic proof of approval.
           SIGNED_APPROVAL=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+            --paginate \
             --jq '[.[] | select(.body | contains("<!-- aidevops-signed-approval -->"))] | length' \
             2>/dev/null || echo "0")
 
@@ -583,6 +586,7 @@ jobs:
 
           # Post a comment explaining why
           EXISTING=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+            --paginate \
             --jq "[.[] | select(.body | test(\"label-protection-notice\"))] | length" 2>/dev/null || echo "0")
 
           if [[ "$EXISTING" == "0" ]]; then
@@ -784,6 +788,7 @@ jobs:
                 if [[ "$ISSUE_AUTHOR_J3" == "github-actions[bot]" ]] || \
                    { [[ -n "$REPO_OWNER" ]] && [[ "$ISSUE_AUTHOR_J3" == "$REPO_OWNER" ]]; }; then
                   NON_MAINT_COMMENTS_J3=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+                    --paginate \
                     --jq '[.[] | select(.author_association == "NONE" or .author_association == "CONTRIBUTOR")] | length' \
                     2>/dev/null || echo "0")
                   if [[ "$NON_MAINT_COMMENTS_J3" == "0" ]]; then
@@ -898,6 +903,7 @@ jobs:
           # Check for a cryptographic signed approval comment on the PR.
           # PRs use the same issues API endpoint for comments.
           SIGNED_APPROVAL=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --paginate \
             --jq '[.[] | select(.body | contains("<!-- aidevops-signed-approval -->"))] | length' \
             2>/dev/null || echo "0")
 
@@ -913,6 +919,7 @@ jobs:
 
           # Post a comment explaining why (only once)
           EXISTING=$(gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --paginate \
             --jq "[.[] | select(.body | test(\"pr-label-protection-notice\"))] | length" 2>/dev/null || echo "0")
 
           if [[ "$EXISTING" == "0" ]]; then
@@ -1073,6 +1080,7 @@ jobs:
 
           # Post a one-time notice
           EXISTING=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+            --paginate \
             --jq "[.[] | select(.body | test(\"origin-worker-protection-notice\"))] | length" 2>/dev/null || echo "0")
 
           if [[ "$EXISTING" == "0" ]]; then
