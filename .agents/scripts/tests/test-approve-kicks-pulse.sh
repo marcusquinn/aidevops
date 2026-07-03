@@ -448,6 +448,7 @@ resolver_result=$(
 (
 	# shellcheck disable=SC1091
 	source "${PARENT_DIR}/pulse-wrapper-bootstrap.sh" >/dev/null 2>&1
+	unset -f gh_pr_list
 
 	gh() {
 		local cmd="${1:-}"
