@@ -407,7 +407,7 @@ _dps_labels_has() {
 # `AGENTS.md` ("Parent-task PR keyword rule") and the closing-keyword
 # regex used by `_extract_linked_issue` in pulse-merge.sh:
 #
-#   - Closing keywords: `(close[ds]?|fix(es|ed)?|resolve[ds]?)\s+#NNN` (case-
+#   - Closing keywords: `(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#NNN` (case-
 #     insensitive). These auto-close the linked issue when the PR merges.
 #   - `For #NNN` (case-insensitive) — canonical planning-PR non-closing marker.
 #   - `Ref #NNN` (case-insensitive) — alternate non-closing reference.
@@ -418,7 +418,7 @@ _dps_pr_body_has_issue_reference() {
 	local body="$1"
 	[[ -n "$body" ]] || return 1
 	# Closing keywords — same regex pulse-merge.sh:_extract_linked_issue uses.
-	if printf '%s' "$body" | grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)\s+#[0-9]+' >/dev/null 2>&1; then
+	if printf '%s' "$body" | grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?)[[:space:]]+#[0-9]+' >/dev/null 2>&1; then
 		return 0
 	fi
 	# Non-closing references: "For #NNN" or "Ref #NNN" (word boundary on the
@@ -1364,7 +1364,7 @@ _dps_main() {
 		# Single-PR spot mode.
 		local pr_obj
 		pr_obj=$(gh pr view "$pr_filter" --repo "$repo_filter" \
-			--json number,mergeStateStatus,createdAt,updatedAt,author,labels,headRefName,baseRefName 2>/dev/null) || pr_obj=""
+			--json number,mergeStateStatus,createdAt,updatedAt,author,labels,headRefName,baseRefName,body 2>/dev/null) || pr_obj=""
 		if [[ -z "$pr_obj" ]]; then
 			_dps_log "gh pr view failed (target: $repo_filter#$pr_filter)"
 			return 1
