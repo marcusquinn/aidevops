@@ -453,7 +453,7 @@ describe("dashboard shell", () => {
 
   test("keeps the loading skeleton aligned to the shell landmarks", () => {
     expect(loadingSkeletonPanelLabels).toEqual(["machine rail", "sidebar", "workspace", "status bar"]);
-    expect(loadingBrandGlyph).toBe(">_");
+    expect(loadingBrandGlyph).toBe("AI DevOps prompt icon");
   });
 
   test("wires desktop screenshot capture controls to native save notifications", () => {
@@ -489,10 +489,22 @@ describe("dashboard shell", () => {
     const css = readFileSync(`${guiWebRoot}/src/styles.css`, "utf8");
 
     expect(html).toContain("loading-brand-overlay");
+    expect(html).toContain("loading-brand-icon");
+    expect(html).toContain("#8ce8ff");
     expect(html).toContain("loading-cursor-blink");
     expect(html).toContain("aidevops-gui-theme");
     expect(html).toContain("app-loading-shell");
     expect(css).toMatch(/font-family:\s*var\(--font-family-app\);/);
+  });
+
+  test("desktop wrapper defers to the web loading shell and refreshes app icon metadata", () => {
+    const desktopInstaller = readFileSync(`${guiWebRoot}/../gui-desktop/scripts/install-macos-app.sh`, "utf8");
+
+    expect(desktopInstaller).not.toContain('loadStatusHTML(title: "Starting aidevops"');
+    expect(desktopInstaller).toContain('viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc"');
+    expect(desktopInstaller).toContain('rm -f "${resources_dir}/aidevops.icns" "${resources_dir}/aidevops.svg"');
+    expect(desktopInstaller).toContain('touch "${resources_dir}/aidevops.icns" "${contents_dir}/Info.plist" "$app_path"');
+    expect(desktopInstaller).toContain("qlmanage -r cache");
   });
 
   test("maps command palette single-key shortcuts", () => {

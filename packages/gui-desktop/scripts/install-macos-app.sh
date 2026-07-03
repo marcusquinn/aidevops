@@ -457,7 +457,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     private var webView: WKWebView!
     private let apiPort = ProcessInfo.processInfo.environment["AIDEVOPS_GUI_API_PORT"] ?? "8787"
     private let webPort = ProcessInfo.processInfo.environment["AIDEVOPS_GUI_WEB_PORT"] ?? "5173"
-    private let defaultAccentHue: CGFloat = 123
+    private let defaultAccentHue: CGFloat = 191
     private let mainWindowFrameAutosaveName = "aidevops-main-window"
     private let titlebarHeight: CGFloat = 24
     private let serviceQueue = DispatchQueue(label: "sh.aidevops.gui.services")
@@ -467,7 +467,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
     func applicationDidFinishLaunching(_ notification: Notification) {
         configureMenu()
         configureWindow()
-        loadStatusHTML(title: "Starting aidevops", detail: "Preparing the local read-only GUI services…")
         startServicesAndLoadApp()
     }
 
@@ -1342,7 +1341,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             .status { align-items: center; display: flex; gap: 10px; grid-column: 1 / -1; justify-content: center; padding: 0 12px; }
             .status i { border-radius: 999px; height: 8px; width: 8px; }
             .status span { height: 10px; width: 96px; }
-            .rail i, .sidebar b, .sidebar span, .sidebar i, .workspace b, .workspace span, .workspace i, .cards i, .block, .status i, .status span { animation: pulse 1.35s ease-in-out infinite; background: linear-gradient(90deg, #202020, hsl(123 74% 66% / 16%), #202020); background-size: 220% 100%; border: 1px solid var(--border); border-radius: 999px; display: block; }
+            .rail i, .sidebar b, .sidebar span, .sidebar i, .workspace b, .workspace span, .workspace i, .cards i, .block, .status i, .status span { animation: pulse 1.35s ease-in-out infinite; background: linear-gradient(90deg, #202020, rgb(102 217 242 / 16%), #202020); background-size: 220% 100%; border: 1px solid var(--border); border-radius: 999px; display: block; }
             .block, .cards i { border-radius: 18px; }
             @keyframes pulse { 0% { background-position: 120% 0; opacity: .52; } 50% { opacity: .95; } 100% { background-position: -120% 0; opacity: .52; } }
             @keyframes cursor { 0%, 48% { opacity: 1; } 49%, 100% { opacity: 0; } }
@@ -1396,6 +1395,7 @@ write_app_bundle() {
   version="$(app_version "$root")"
 
   mkdir -p "$macos_dir" "$resources_dir"
+  rm -f "${resources_dir}/aidevops.icns" "${resources_dir}/aidevops.svg"
   cat > "${contents_dir}/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <plist version="1.0">
@@ -1420,6 +1420,8 @@ PLIST
   write_service_helper "$root" "$resources_dir"
   write_webview_source "$resources_dir"
   compile_webview_app "$resources_dir" "$macos_dir"
+  touch "${resources_dir}/aidevops.icns" "${contents_dir}/Info.plist" "$app_path"
+  qlmanage -r cache >/dev/null 2>&1 || true
   printf 'Installed %s\n' "$app_path"
   return 0
 }
