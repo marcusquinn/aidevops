@@ -301,6 +301,12 @@ case "$decision" in
 	*) print_result "t2711: origin:interactive + Resolves #NNN + 10d → notify (within 14d window)" 1 "got: $decision" ;;
 esac
 
+if _dps_pr_body_has_issue_reference "This PR fixes the problem. Resolves #26346."; then
+	print_result "t2711: closing keyword reference parser recognises Resolves #NNN" 0
+else
+	print_result "t2711: closing keyword reference parser recognises Resolves #NNN" 1 "Resolves #NNN was not detected"
+fi
+
 # =============================================================================
 # Test 6a-worker-backed: origin:interactive PR against an origin:worker issue
 #                       routes semantic conflicts for worker redispatch.
