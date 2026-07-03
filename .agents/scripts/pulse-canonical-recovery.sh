@@ -712,7 +712,10 @@ pulse_canonical_recover() {
 	# and refresh, or fail closed with a local advisory when TODO.md looks
 	# human-authored/unknown (GH#22664).
 	if [[ "$state" == "uncommitted" ]]; then
-		case "$(_pcr_try_todo_sync_recovery "$repo_path"; printf '%s' "$?")" in
+		local todo_recovery_rc=0
+		_pcr_try_todo_sync_recovery "$repo_path"
+		todo_recovery_rc=$?
+		case "$todo_recovery_rc" in
 			0)
 				return 0
 				;;
