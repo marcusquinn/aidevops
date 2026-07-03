@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.34] - 2026-07-03
+
+### Fixed
+
+- allow interactive admin full-loop merge fallback after branch-policy self-review blocks (#26467)
+
 ## [3.31.33] - 2026-07-03
 
 ### Changed
