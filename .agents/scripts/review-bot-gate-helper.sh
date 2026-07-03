@@ -931,8 +931,13 @@ _emit_review_gate_check_result() {
 do_check() {
 	local pr_number="$1"
 	local repo="$2"
+	# These caller-local accumulators are populated/read by helpers through Bash
+	# dynamic scoping; keep targeted ShellCheck suppressions beside each local.
+	# shellcheck disable=SC2034
 	local REVIEW_GATE_FOUND_BOTS=""
+	# shellcheck disable=SC2034
 	local REVIEW_GATE_RATE_LIMITED_BOTS=""
+	# shellcheck disable=SC2034
 	local REVIEW_GATE_NON_REVIEW_BOTS=""
 
 	# Check skip label first
