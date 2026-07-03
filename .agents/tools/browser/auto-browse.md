@@ -53,7 +53,7 @@ Auto-browse is not a new browser engine. It is a controller that decides when to
 | Known form/navigation flow | Playwright/playwright-cli/agent-browser | Login persistence or extensions needed |
 | Recurring logged-in workflow | dev-browser or persistent Playwright profile | User's live browser is required |
 | Existing user session | chromium-debug-use or Playwriter | Flow must become CI-friendly/repeatable |
-| Unknown/dynamic UI | Stagehand or browser-use | Vision-only/canvas/CAPTCHA-heavy path requires Skyvern |
+| Unknown/dynamic UI | Stagehand or browser-use CLI 3.0 | Vision-only/canvas/CAPTCHA-heavy path requires Skyvern or Browser Use Cloud |
 | Profile/proxy/geo isolation | browser-profiles/proxy-integration | Only after explicit authorization |
 
 ## Artifact Rules

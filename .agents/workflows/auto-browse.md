@@ -82,7 +82,7 @@ Use the cheapest viable level first, escalating only when evidence shows the che
 | Deterministic browser | Known flow, forms, downloads, repeatable UI | `playwright.md`, `playwright-cli.md`, `agent-browser.md` |
 | Persistent profile | Recurring logged-in workflows | `dev-browser.md`, `browser-profiles.md` |
 | Existing browser | User already has a live session and approves inspection | `chromium-debug-use.md`, `playwriter.md` |
-| High-agency discovery | Dynamic/fuzzy/visual flows where selectors fail | `stagehand.md`, `browser-use.md`, `skyvern.md` |
+| High-agency discovery | Dynamic/fuzzy/visual flows where selectors fail | `stagehand.md`, `browser-use.md` (CLI 3.0), `skyvern.md` |
 | Authorized stealth/profile stack | Legitimate profile/proxy/geo isolation need | `anti-detect-browser.md`, `proxy-integration.md` |
 
 Prefer ARIA snapshots and DOM/text extraction over screenshots. Use screenshots for visual evidence only and obey screenshot size limits.
@@ -146,7 +146,7 @@ Graduate the lowest-agency reliable artifact:
 | Static or crawlable content | Crawl4AI/WaterCrawl/site-crawler schema |
 | Stable UI selectors | Playwright/agent-browser script |
 | Recurring logged-in workflow | Private custom agent + profile policy |
-| Fuzzy UI only | Stagehand/browser-use/Skyvern-backed private agent with fallback notes |
+| Fuzzy UI only | Stagehand/browser-use CLI 3.0/Skyvern-backed private agent with fallback notes |
 | Framework-generalizable pattern | Sanitized `todo/auto-browse/...` plan or task brief |
 
 Promoted private workflow agents should be written for user review before hot-loading:

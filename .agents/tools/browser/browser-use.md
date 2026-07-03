@@ -20,10 +20,10 @@ tools:
 
 - **Purpose**: AI-native browser automation that combines vision + DOM for reliable web interaction
 - **Install**: `uv add browser-use` (Python >= 3.11, [uv](https://docs.astral.sh/uv/) recommended)
-- **Repo**: https://github.com/browser-use/browser-use (80k+ stars, Python, MIT)
+- **Repo**: https://github.com/browser-use/browser-use (102k+ stars, Python, MIT)
 - **Docs**: https://docs.browser-use.com/
 - **Cloud**: https://cloud.browser-use.com/ (managed stealth browsers, CAPTCHA handling)
-- **Version**: 0.12.x (March 2026)
+- **Version**: 0.13.x package; Browser Use CLI 3.0 (July 2026)
 
 **When to use**: Complex multi-step web tasks where traditional selectors break. browser-use understands pages visually and semantically, handling dynamic content, popups, and CAPTCHAs better than pure DOM automation.
 
@@ -56,16 +56,22 @@ BROWSER_USE_API_KEY=your-key        # Browser Use Cloud (optimised for browser t
 ## Basic Usage
 
 ```python
-from browser_use import Agent, Browser, ChatBrowserUse
 import asyncio
+
+from browser_use import Agent, BrowserProfile, ChatBrowserUse
 
 async def main():
     agent = Agent(
         task="Find the number of stars of the browser-use repo",
-        llm=ChatBrowserUse(),  # Optimised for browser automation
-        browser=Browser(),
+        llm=ChatBrowserUse(model="openai/gpt-5.5"),
+        # llm=ChatBrowserUse(model="bu-2-0"),  # Browser Use's optimized model
+        browser_profile=BrowserProfile(
+            headless=False,
+            allowed_domains=["*.github.com"],
+        ),
     )
-    await agent.run()
+    history = await agent.run()
+    print(history.final_result())
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -74,7 +80,10 @@ if __name__ == "__main__":
 **Alternative LLM providers:**
 
 ```python
-from browser_use import ChatGoogle, ChatAnthropic
+from browser_use import Agent, ChatAnthropic, ChatBrowserUse, ChatGoogle
+
+# Browser Use API key can route provider-prefixed model IDs.
+agent = Agent(task="...", llm=ChatBrowserUse(model="anthropic/claude-sonnet-4-6"))
 
 # Google Gemini
 agent = Agent(task="...", llm=ChatGoogle(model="gemini-3-flash-preview"))
@@ -83,18 +92,22 @@ agent = Agent(task="...", llm=ChatGoogle(model="gemini-3-flash-preview"))
 agent = Agent(task="...", llm=ChatAnthropic(model="claude-sonnet-4-6"))
 ```
 
-## CLI
+## CLI 3.0
 
-Persistent browser session from the command line:
+Browser Use CLI 3.0 is powered by Browser Harness and gives coding agents a
+direct Python command surface while the CLI manages the browser in the
+background:
 
 ```bash
-browser-use open https://example.com    # Navigate to URL
-browser-use state                       # See clickable elements
-browser-use click 5                     # Click element by index
-browser-use type "Hello"                # Type text
-browser-use screenshot page.png         # Take screenshot
-browser-use close                       # Close browser
+browser-use <<'PY'
+new_tab("https://example.com")
+print(page_info())
+PY
 ```
+
+Use `browser-use skill` to print/install the packaged agent skill for Claude
+Code, Codex, Cursor, Gemini, OpenCode, and similar coding-agent skill
+directories.
 
 ## Templates
 
@@ -108,7 +121,7 @@ uvx browser-use init --template default --output my_agent.py  # Custom path
 ## Custom Tools
 
 ```python
-from browser_use import Agent, Browser, Tools, ChatBrowserUse
+from browser_use import Agent, BrowserProfile, ChatBrowserUse, Tools
 
 tools = Tools()
 
@@ -119,12 +132,12 @@ def custom_tool(param: str) -> str:
 agent = Agent(
     task="Your task",
     llm=ChatBrowserUse(),
-    browser=Browser(),
+    browser_profile=BrowserProfile(headless=False),
     tools=tools,
 )
 ```
 
-## Cloud Mode
+## Cloud and Hosted Agent
 
 ```python
 from browser_use import Agent, Browser, ChatBrowserUse
@@ -138,18 +151,29 @@ agent = Agent(
 )
 ```
 
+Use Browser Use Cloud when you need managed browser infrastructure, proxy
+rotation, stealth, CAPTCHA handling, parallel execution, persistent filesystem,
+or hosted-agent integrations. Use the open-source agent when you need custom
+tools, code-level integration, or self-hosting.
+
 ## Authentication
 
 ```python
-from browser_use import Browser, BrowserConfig
+from browser_use import Agent, Browser, ChatGoogle
 
 # Reuse existing Chrome profile (preserves logins)
-browser = Browser(
-    config=BrowserConfig(
-        chrome_instance_path="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    )
+profile = Browser.list_chrome_profiles()[0]["directory"]
+browser = Browser.from_system_chrome(profile_directory=profile)
+
+agent = Agent(
+    task="Search with an existing logged-in browser profile",
+    llm=ChatGoogle(model="gemini-3-flash-preview"),
+    browser=browser,
 )
 ```
+
+For remote profile sync, prefer documented Browser Use Cloud profile tooling and
+store API keys with `aidevops secret` or `~/.config/aidevops/credentials.sh`.
 
 ## Comparison with Other Tools
 
@@ -161,10 +185,12 @@ browser = Browser(
 | Multi-step planning | Yes | Manual | Limited |
 | Error recovery | Automatic | Manual | Limited |
 | Custom tools | Yes (`Tools`) | N/A | No |
-| CLI | Yes | Yes (playwright-cli) | No |
-| Cloud/stealth | Yes (Browser Use Cloud) | No | Yes (Browserbase) |
-| Speed | Slower (LLM calls) | Fast | Medium |
-| Own model | Yes (`ChatBrowserUse`) | N/A | No |
+| Agent skill install | Yes (`browser-use skill`) | No | No |
+| CLI/control loop | CLI 3.0 + Browser Harness | Playwright API/CLI | SDK/API |
+| Cloud/stealth | Cloud agent, proxies, CAPTCHA | No | Browserbase |
+| Speed | Faster with `ChatBrowserUse`; slower than deterministic scripts | Fastest for known flows | Medium |
+| Benchmarking | Upstream 100-task BU Bench | Local deterministic benchmarks | Local deterministic benchmarks |
+| Own model | Yes (`ChatBrowserUse`, `bu-*`) | N/A | No |
 
 ## When to Prefer Other Tools
 
@@ -172,7 +198,8 @@ browser = Browser(
 - **Persistent browser sessions**: Use dev-browser
 - **Bulk scraping**: Use Crawl4AI
 - **Testing your app**: Use Playwright with ARIA snapshots
-- **Natural language on unknown pages**: Use Stagehand
+- **Natural language selectors in JS/Browserbase stacks**: Use Stagehand
+- **Vision-only/canvas-heavy or CAPTCHA-heavy tasks**: Use Skyvern or Browser Use Cloud
 
 ## Related
 

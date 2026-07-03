@@ -1437,7 +1437,7 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 - [OpenAPI Search](https://openapi-mcp.openapisearch.com/mcp) - Search and explore any OpenAPI specification (zero install, Cloudflare Worker)
 - [MCPorter](https://github.com/steipete/mcporter) - Discover, call, compose, and generate CLIs/typed clients for MCP servers
 
-**Browser Automation** (8 tools + anti-detect stack, [benchmarked](#browser-automation)):
+**Browser Automation** (browser tool suite + anti-detect stack, [benchmarked](#browser-automation)):
 
 - **Auto-browse workflow** - `/auto-browse` orchestrates the tools below to learn messy browser tasks, choose the cheapest reliable path, preserve private profile/session state under `~/.aidevops/`, and graduate reusable private agents or sanitized `todo/` plans
 - [Playwright](https://playwright.dev/) - Fastest engine (0.9s form fill), parallel contexts, extensions, proxy (auto-installed)
@@ -1448,6 +1448,7 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 - [WaterCrawl](https://github.com/watercrawl/watercrawl) - Self-hosted crawling with web search, sitemap generation, JS rendering, proxy support
 - [Playwriter](https://github.com/nicholasgriffintn/playwriter) - Your browser's extensions/passwords/proxy, already unlocked
 - [Stagehand](https://github.com/browserbase/stagehand) - Natural language automation, self-healing selectors
+- [browser-use](https://github.com/browser-use/browser-use) - AI-native browser automation, CLI 3.0 Browser Harness, packaged agent skill, Browser Use Cloud, 100-task upstream benchmark
 - [Chrome DevTools MCP](https://github.com/nicholasgriffintn/chrome-devtools-mcp) - Companion: Lighthouse, network throttling, CSS coverage (pairs with any tool)
 - [Cloudflare Browser Rendering](https://developers.cloudflare.com/browser-rendering/) - Server-side web scraping
 - [Peekaboo](https://github.com/steipete/Peekaboo) - macOS screen capture and GUI automation (pixel-accurate captures, AI vision analysis)
@@ -1553,7 +1554,7 @@ These catch formatting and syntax issues during editing, reducing preflight/post
 
 ## **Browser Automation**
 
-8 browser tools + anti-detect stack + device emulation, benchmarked and integrated for AI-assisted web automation, dev testing, mobile/responsive testing, data extraction, and bot detection evasion. Agents automatically select the optimal tool based on task requirements.
+Browser tool suite + anti-detect stack + device emulation, benchmarked and integrated for AI-assisted web automation, dev testing, mobile/responsive testing, data extraction, and bot detection evasion. Agents automatically select the optimal tool based on task requirements.
 
 For repeatable browser operations and web data mining, use `/auto-browse`. It runs an intake and learning loop that starts with cheap fetch/API/crawler options, escalates to deterministic or high-agency browser tools only when needed, and then graduates the workflow into a private custom agent, helper, schema, or sanitized `todo/` plan. Account-specific workflows, cookies, profile state, downloads, and traces stay in private aidevops user data; only generalized plans should be committed to the repo.
 
@@ -1561,30 +1562,31 @@ For repeatable browser operations and web data mining, use `/auto-browse`. It ru
 
 Tested on macOS ARM64, all headless, warm daemon:
 
-| Test | Playwright | playwright-cli | dev-browser | agent-browser | Crawl4AI | Playwriter | Stagehand |
-|------|-----------|----------------|-------------|---------------|----------|------------|-----------|
-| **Navigate + Screenshot** | **1.43s** | ~1.9s | 1.39s | 1.90s | 2.78s | 2.95s | 7.72s |
-| **Form Fill** (4 fields) | **0.90s** | ~1.4s | 1.34s | 1.37s | N/A | 2.24s | 2.58s |
-| **Data Extraction** (5 items) | 1.33s | ~1.5s | **1.08s** | 1.53s | 2.53s | 2.68s | 3.48s |
-| **Multi-step** (click + nav) | **1.49s** | ~2.0s | 1.49s | 3.06s | N/A | 4.37s | 4.48s |
-| **Parallel** (3 sessions) | **1.6s** | ~2.0s | N/A | 2.0s | 3.0s | N/A | Slow |
+| Test | Playwright | playwright-cli | dev-browser | agent-browser | Crawl4AI | Playwriter | Stagehand | browser-use |
+|------|-----------|----------------|-------------|---------------|----------|------------|-----------|-------------|
+| **Navigate + Screenshot** | **1.43s** | ~1.9s | 1.39s | 1.90s | 2.78s | 2.95s | 7.72s | Agentic; not in local deterministic suite |
+| **Form Fill** (4 fields) | **0.90s** | ~1.4s | 1.34s | 1.37s | N/A | 2.24s | 2.58s | Agentic; use for fuzzy forms |
+| **Data Extraction** (5 items) | 1.33s | ~1.5s | **1.08s** | 1.53s | 2.53s | 2.68s | 3.48s | Agentic; compress to deterministic when stable |
+| **Multi-step** (click + nav) | **1.49s** | ~2.0s | 1.49s | 3.06s | N/A | 4.37s | 4.48s | Upstream BU Bench covers 100 real-world tasks |
+| **Parallel** (3 sessions) | **1.6s** | ~2.0s | N/A | 2.0s | 3.0s | N/A | Slow | Prefer Browser Use Cloud for scale |
 
 ### Feature Matrix
 
-| Feature | Playwright | playwright-cli | dev-browser | agent-browser | Crawl4AI | Playwriter | Stagehand |
-|---------|-----------|----------------|-------------|---------------|----------|------------|-----------|
-| **Headless** | Yes | Yes (default) | Yes | Yes (default) | Yes | No (your browser) | Yes |
-| **Proxy/VPN** | Full | No | Via args | No | Full | Your browser | Via args |
-| **Extensions** | Yes (persistent) | No | Yes (profile) | No | No | Yes (yours) | Possible |
-| **Password managers** | Partial (needs unlock) | No | Partial | No | No | **Yes** (unlocked) | No |
-| **Device emulation** | **Full** (100+ devices) | No | No | No | No | No | Via Playwright |
-| **Parallel sessions** | 5 ctx/2.1s | --session | Shared | 3 sess/2.0s | arun_many 1.7x | Shared | Per-instance |
-| **Session persistence** | storageState | Profile dir | Profile dir | state save/load | user_data_dir | Your browser | Per-instance |
-| **Tracing** | Full API | Built-in CLI | Via Playwright | Via Playwright | No | Via CDP | Via Playwright |
-| **Natural language** | No | No | No | No | LLM extraction | No | Yes |
-| **Self-healing** | No | No | No | No | No | No | Yes |
-| **iOS Simulator** | No | No | No | **Yes** (macOS) | No | No | No |
-| **Maintainer** | Microsoft | Microsoft | Community | Vercel | Community | Community | Browserbase |
+| Feature | Playwright | playwright-cli | dev-browser | agent-browser | Crawl4AI | Playwriter | Stagehand | browser-use |
+|---------|-----------|----------------|-------------|---------------|----------|------------|-----------|-------------|
+| **Headless** | Yes | Yes (default) | Yes | Yes (default) | Yes | No (your browser) | Yes | Yes |
+| **Proxy/VPN** | Full | No | Via args | No | Full | Your browser | Via args | Cloud/profiles |
+| **Extensions** | Yes (persistent) | No | Yes (profile) | No | No | Yes (yours) | Possible | Profile/browser dependent |
+| **Password managers** | Partial (needs unlock) | No | Partial | No | No | **Yes** (unlocked) | No | Profile/browser dependent |
+| **Device emulation** | **Full** (100+ devices) | No | No | No | No | No | Via Playwright | Profile/browser dependent |
+| **Parallel sessions** | 5 ctx/2.1s | --session | Shared | 3 sess/2.0s | arun_many 1.7x | Shared | Per-instance | Cloud for scale |
+| **Session persistence** | storageState | Profile dir | Profile dir | state save/load | user_data_dir | Your browser | Per-instance | BrowserProfile / Cloud |
+| **Tracing** | Full API | Built-in CLI | Via Playwright | Via Playwright | No | Via CDP | Via Playwright | History + Browser Harness CLI |
+| **Natural language** | No | No | No | No | LLM extraction | No | Yes | Yes |
+| **Self-healing** | No | No | No | No | No | No | Yes | Yes |
+| **Agent skill** | No | No | No | No | No | No | No | `browser-use skill` |
+| **iOS Simulator** | No | No | No | **Yes** (macOS) | No | No | No | No |
+| **Maintainer** | Microsoft | Microsoft | Community | Vercel | Community | Community | Browserbase | Browser Use |
 
 ### Tool Selection
 
@@ -1601,6 +1603,7 @@ Tested on macOS ARM64, all headless, warm daemon:
 | **iOS mobile testing** | agent-browser | Real Safari in iOS Simulator (macOS only) |
 | **Apple Simulator streaming** | serve-sim | Browser-visible iOS/iPad/watch simulator stream and control (macOS Apple Silicon) |
 | **Unknown pages** | Stagehand | Natural language, self-healing |
+| **High-agency browser tasks** | browser-use | AI-native browser agent, CLI 3.0, Browser Harness, cloud/stealth/CAPTCHA options |
 | **Performance debugging** | Chrome DevTools MCP | Companion tool, pairs with any browser |
 | **Mobile/tablet emulation** | Playwright | 100+ device presets, viewport, touch, geolocation, locale |
 | **Authenticated one-off scrape** | curl-copy | DevTools "Copy as cURL" → paste to terminal/AI |
@@ -1618,7 +1621,7 @@ Agents use lightweight methods instead of expensive vision API calls:
 | Element scan | ~0.002s | ~20/element | Form filling, clicking |
 | Screenshot | ~0.05s | ~1K tokens (vision) | Visual debugging only |
 
-See [`.agents/tools/browser/browser-automation.md`](.agents/tools/browser/browser-automation.md) for the full decision tree and [`browser-benchmark.md`](.agents/tools/browser/browser-benchmark.md) for reproducible benchmark scripts.
+See [`.agents/tools/browser/browser-automation.md`](.agents/tools/browser/browser-automation.md) for the full decision tree, [`browser-use.md`](.agents/tools/browser/browser-use.md) for Browser Use CLI 3.0 guidance, and [`browser-benchmark.md`](.agents/tools/browser/browser-benchmark.md) for reproducible benchmark scripts.
 
 ### Device Emulation
 
