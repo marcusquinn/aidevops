@@ -231,20 +231,28 @@ async function waitForPageReady(page, timeout) {
   await page.waitForLoadState('load', { timeout });
   await page.evaluate(async () => {
     if (document.fonts?.ready) {
+      let timeoutId;
       await Promise.race([
         document.fonts.ready,
-        new Promise((resolve) => setTimeout(resolve, 2000)),
+        new Promise((resolve) => {
+          timeoutId = setTimeout(resolve, 2000);
+        }),
       ]);
+      if (timeoutId) clearTimeout(timeoutId);
     }
     await new Promise((resolve) => {
       let settled = false;
+      let frameId;
+      let timeoutId;
       const finish = () => {
         if (settled) return;
         settled = true;
+        if (frameId) cancelAnimationFrame(frameId);
+        if (timeoutId) clearTimeout(timeoutId);
         resolve();
       };
-      requestAnimationFrame(finish);
-      setTimeout(finish, 100);
+      frameId = requestAnimationFrame(finish);
+      timeoutId = setTimeout(finish, 100);
     });
   });
 }
