@@ -173,6 +173,30 @@ _merge_pr_ready_for_interactive_admin_bypass() {
 	return $?
 }
 
+_merge_try_interactive_admin_auto_fallback() {
+	local pr_number="$1"
+	local repo="$2"
+	local merge_method="$3"
+	local merge_output="$4"
+
+	[[ "$pr_number" =~ ^[0-9]+$ && -n "$repo" ]] || return 1
+	! _merge_is_headless_session || return 1
+	_merge_output_is_review_policy_block "$merge_output" || return 1
+	_merge_pr_ready_for_interactive_admin_bypass "$pr_number" "$repo" || return 1
+
+	#aidevops:trust-boundary -- interactive admin fallback still enforces linked NMR crypto gate before bypassing review-count protection.
+	_merge_guard_admin_merge_maintainer_review "$pr_number" "$repo" || return 2
+	print_info "Auto-merge is blocked only by review-required branch policy/self-approval; interactive maintainer session is using --admin merge after gates passed."
+	if gh pr merge "$pr_number" --repo "$repo" "$merge_method" --admin 2>&1; then
+		print_success "PR #${pr_number} merged with interactive --admin fallback"
+		_signal_admin_merge_fallback "$pr_number" "$repo" "$merge_method" "$merge_output"
+		return 0
+	fi
+
+	print_error "Merge failed for PR #${pr_number} (even with --admin — maintainer gate or admin rights missing)"
+	return 2
+}
+
 _merge_linked_issue_numbers() {
 	local pr_number="$1"
 	local repo="$2"
@@ -379,21 +403,13 @@ ${_merge_retry_out}"
 		if [[ $has_auto -eq 0 ]] && _merge_output_is_graphql_rate_limit "$_merge_out"; then
 			_merge_rest_fallback "$pr_number" "$repo" "$merge_method" "$pre_merge_head_sha" && return 0
 			return 1
-		elif [[ $has_admin -eq 0 && $has_auto -eq 1 ]] &&
-			! _merge_is_headless_session &&
-			_merge_output_is_review_policy_block "$_merge_out" &&
-			_merge_pr_ready_for_interactive_admin_bypass "$pr_number" "$repo"; then
-			#aidevops:trust-boundary -- interactive admin fallback still enforces linked NMR crypto gate before bypassing review-count protection.
-			_merge_guard_admin_merge_maintainer_review "$pr_number" "$repo" || return 1
-			print_info "Auto-merge is blocked only by review-required branch policy/self-approval; interactive maintainer session is using --admin merge after gates passed."
-			if gh pr merge "$pr_number" --repo "$repo" "$merge_method" --admin 2>&1; then
-				print_success "PR #${pr_number} merged with interactive --admin fallback"
-				_signal_admin_merge_fallback "$pr_number" "$repo" "$merge_method" "$_merge_out"
-				return 0
-			else
-				print_error "Merge failed for PR #${pr_number} (even with --admin — maintainer gate or admin rights missing)"
-				return 1
-			fi
+		elif [[ $has_admin -eq 0 && $has_auto -eq 1 ]]; then
+			local auto_admin_rc=0
+			_merge_try_interactive_admin_auto_fallback "$pr_number" "$repo" "$merge_method" "$_merge_out" || auto_admin_rc=$?
+			[[ "$auto_admin_rc" -eq 0 ]] && return 0
+			[[ "$auto_admin_rc" -eq 2 ]] && return 1
+			print_error "Merge failed for PR #${pr_number}"
+			return 1
 		# Only fall back to --admin when caller passed neither --admin nor --auto.
 		elif [[ $has_admin -eq 0 && $has_auto -eq 0 ]] &&
 			printf '%s' "$_merge_out" | grep -qE 'base branch policy prohibits|Required status checks? (is|are) expected|At least [0-9]+ approving review'; then
