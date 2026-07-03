@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.32] - 2026-07-03
+
+### Fixed
+
+- recover zero-commit orphan branches (#26407)
+
 ## [3.31.31] - 2026-07-03
 
 ### Fixed
