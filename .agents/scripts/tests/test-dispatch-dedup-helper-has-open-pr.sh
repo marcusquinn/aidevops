@@ -503,6 +503,45 @@ test_has_open_pr_allows_dispatch_on_task_id_collision() {
 	return 0
 }
 
+test_has_open_pr_blocks_superseded_consolidated_issue() {
+	set_gh_fixtures 'marcusquinn/aidevops|merged|#26241|[{"number":26266,"title":"For #26241: split mixed PR view fields","body":"## Summary\n\n- Split mixed gh_pr_view requests into REST and GraphQL subsets.\n\nFor #26241\n\n## Testing\n\n- .agents/scripts/tests/test-gh-wrapper-rest-fallback.sh"}]'
+	export ISSUE_META_JSON='{"body":"_Supersedes #26241 — this issue is the consolidated spec._\n\nImplement the remaining mixed REST/GQL field-split phase."}'
+
+	local output=""
+	if output=$("$HELPER_SCRIPT" has-open-pr 26274 marcusquinn/aidevops 'consolidated: split mixed gh_pr_view REST/GQL fields'); then
+		unset ISSUE_META_JSON
+		case "$output" in
+		*'merged PR #26266 references superseded issue #26241 for consolidated issue #26274'*)
+			print_result "has-open-pr blocks superseded consolidated issue satisfied by merged PR" 0
+			return 0
+			;;
+		esac
+		print_result "has-open-pr blocks superseded consolidated issue satisfied by merged PR" 1 "Unexpected output: ${output}"
+		return 0
+	fi
+
+	unset ISSUE_META_JSON
+	print_result "has-open-pr blocks superseded consolidated issue satisfied by merged PR" 1 \
+		"Expected merged PR evidence via superseded issue reference"
+	return 0
+}
+
+test_has_open_pr_ignores_planning_only_superseded_reference() {
+	set_gh_fixtures 'marcusquinn/aidevops|merged|#26241|[{"number":26260,"title":"For #26241: planning brief","body":"Files the brief for the follow-up. Pure planning, no code changes.\n\nFor #26241"}]'
+	export ISSUE_META_JSON='{"body":"_Supersedes #26241 — this issue is the consolidated spec._"}'
+
+	if "$HELPER_SCRIPT" has-open-pr 26274 marcusquinn/aidevops 'consolidated: split mixed gh_pr_view REST/GQL fields'; then
+		unset ISSUE_META_JSON
+		print_result "has-open-pr ignores planning-only superseded references" 1 \
+			"Expected planning-only merged PR to allow dispatch"
+		return 0
+	fi
+
+	unset ISSUE_META_JSON
+	print_result "has-open-pr ignores planning-only superseded references" 0
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -525,6 +564,8 @@ main() {
 	test_has_open_pr_allows_when_no_healthy_sibling
 	test_has_open_pr_ignores_embedded_bare_sibling_reference
 	test_has_open_pr_ignores_adjacent_issue_number_sibling_reference
+	test_has_open_pr_blocks_superseded_consolidated_issue
+	test_has_open_pr_ignores_planning_only_superseded_reference
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

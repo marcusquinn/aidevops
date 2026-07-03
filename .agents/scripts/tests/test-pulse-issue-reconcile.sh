@@ -678,24 +678,71 @@ test_t2985_action_oimp_single_signature() {
 		all_ok=0
 	fi
 
-	# 3. The single-pass call site in RECONCILE_SH passes 4 args (slug, issue,
-	#    verify, lookup). Use grep -E to match the multi-arg form and require
-	#    oimp_lookup at end.
+	# 3. The single-pass call site in RECONCILE_SH passes the lookup and issue
+	#    body. Use grep -E to match the multi-arg form and require both values.
 	# SC2016: single-quoted pattern intentionally contains literal $slug etc. —
 	# grepping for the literal source string, no expansion wanted.
 	local call_count
 	# shellcheck disable=SC2016
-	call_count=$(grep -cE '_action_oimp_single "\$slug" "\$issue_num" "\$verify_helper" "\$oimp_lookup"' \
+	call_count=$(grep -cE '_action_oimp_single "\$slug" "\$issue_num" "\$verify_helper" "\$oimp_lookup" "\$issue_body"' \
 		"${RECONCILE_SH}" 2>/dev/null || true)
 	[[ "$call_count" =~ ^[0-9]+$ ]] || call_count=0
 	if [[ "$call_count" -ge 1 ]]; then
-		_pass "t2985: ${call_count} call site(s) pass oimp_lookup to _action_oimp_single"
+		_pass "t2985: ${call_count} call site(s) pass oimp_lookup and issue_body to _action_oimp_single"
 	else
-		_fail "t2985: expected ≥1 call site passing oimp_lookup, got ${call_count}"
+		_fail "t2985: expected ≥1 call site passing oimp_lookup and issue_body, got ${call_count}"
 		all_ok=0
 	fi
 
 	[[ "$all_ok" == "1" ]] && _pass "t2985: _action_oimp_single signature contract enforced"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Test 15b (GH#25896): consolidated successor closes when superseded issue was fixed
+# ---------------------------------------------------------------------------
+test_gh25896_oimp_closes_consolidated_successor() {
+	local actions_sh="${SCRIPT_DIR}/../pulse-issue-reconcile-actions.sh"
+	local tmp_dir out_file log_file result
+	tmp_dir=$(mktemp -d)
+	out_file="${tmp_dir}/gh.out"
+	log_file="${tmp_dir}/pulse.log"
+
+	result=$(bash -c '
+		actions_sh="$1"
+		out_file="$2"
+		log_file="$3"
+		LOGFILE="$log_file"
+		export LOGFILE out_file
+		gh() {
+			printf "%s\n" "$*" >>"$out_file"
+			return 0
+		}
+		fast_fail_reset() { return 0; }
+		unlock_issue_after_worker() { return 0; }
+		export -f gh fast_fail_reset unlock_issue_after_worker
+		# shellcheck disable=SC1090
+		source "$actions_sh"
+		_action_oimp_single "test/repo" "25896" "/bin/true" "|25877=25894|" "_Supersedes #25877 — this issue is the consolidated spec._"
+		printf "rc=%s\n" "$?"
+	' -- "$actions_sh" "$out_file" "$log_file" 2>&1)
+
+	local all_ok=1
+	if [[ "$result" != *"rc=0"* ]]; then
+		_fail "GH#25896: consolidated successor action returned unexpected result: ${result}"
+		all_ok=0
+	fi
+	if ! grep -q 'issue close 25896 --repo test/repo' "$out_file" 2>/dev/null; then
+		_fail "GH#25896: expected close of consolidated successor #25896"
+		all_ok=0
+	fi
+	if ! grep -q 'supersedes #25877, and merged PR #25894 already fixed' "$out_file" 2>/dev/null; then
+		_fail "GH#25896: close comment did not cite superseded issue and merged PR evidence"
+		all_ok=0
+	fi
+
+	rm -rf "$tmp_dir"
+	[[ "$all_ok" == "1" ]] && _pass "GH#25896: OIMP closes consolidated successor using Supersedes #N merged-PR evidence"
 	return 0
 }
 
@@ -878,6 +925,7 @@ test_t2985_oimp_lookup_builder
 test_gh22802_oimp_lookup_requires_merged_at
 test_t2985_oimp_lookup_no_prefix_collision
 test_t2985_action_oimp_single_signature
+test_gh25896_oimp_closes_consolidated_successor
 test_available_feedback_worker_issue_not_assigned
 test_feedback_backfill_uses_label_constants
 

@@ -1,6 +1,6 @@
 {
   "name": "aidevops",
-  "version": "3.31.38",
+  "version": "3.31.40",
   "description": "AI DevOps Framework - AI-assisted development workflows, code quality, and deployment automation",
   "type": "module",
   "workspaces": [
@@ -87,6 +87,7 @@
     "aidevops-*-lib.sh",
     "setup.sh",
     "setup-modules/",
+    "docs/metrics/",
     "bun.lock",
     "packages/gui-shared/package.json",
     "packages/gui-shared/src/",

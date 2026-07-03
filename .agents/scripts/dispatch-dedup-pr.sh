@@ -14,6 +14,45 @@
 #     Exit 0 = PR evidence exists (do NOT dispatch), exit 1 = no evidence.
 
 #######################################
+# Read the current issue body from the canonical dispatch metadata bundle.
+#
+# Args: none
+# Outputs: issue body when ISSUE_META_JSON is available
+# Returns: 0 always
+#######################################
+_ddpr_issue_body_from_meta() {
+	local issue_body=""
+	if [[ -n "${ISSUE_META_JSON:-}" ]]; then
+		issue_body=$(printf '%s' "$ISSUE_META_JSON" | jq -r '.body // empty' 2>/dev/null) || issue_body=""
+	fi
+	printf '%s' "$issue_body"
+	return 0
+}
+
+#######################################
+# Extract related issue refs from consolidation/supersession lines.
+#
+# Args: $1 = issue body
+# Outputs: one issue number per line
+# Returns: 0 always
+#######################################
+_ddpr_superseded_issue_refs() {
+	local issue_body="$1"
+	local line="" lower_line="" refs=""
+	while IFS= read -r line; do
+		lower_line=$(printf '%s' "$line" | tr '[:upper:]' '[:lower:]')
+		case "$lower_line" in
+		*supersedes* | *superseded* | *consolidated*)
+			refs=$(printf '%s\n' "$line" | grep -oE '#[0-9]+' | tr -d '#' || true)
+			[[ -n "$refs" ]] && printf '%s\n' "$refs"
+			;;
+		*) ;;
+		esac
+	done <<<"$issue_body"
+	return 0
+}
+
+#######################################
 # has_open_pr Check 0: healthy open sibling PRs for this issue.
 #
 # Redispatch should not create another worker when an existing sibling PR for
@@ -273,6 +312,58 @@ _has_open_pr_check_task_id_title() {
 }
 
 #######################################
+# has_open_pr Check 4: merged implementation PR for superseded/consolidated issue.
+#
+# Consolidated worker specs can supersede an older issue after implementation
+# already landed against that older issue using `For #NNN` (parent/phase style),
+# leaving the new consolidated issue open and dispatchable. When the current
+# issue body explicitly says it supersedes/consolidates another issue, treat a
+# merged, non-planning PR referencing that related issue as dispatch-blocking
+# evidence. This is intentionally a dispatch dedup signal only; issue closers
+# must still run their own verification before closing anything.
+#
+# Args: $1 = issue number, $2 = repo slug
+# Returns: exit 0 if merged related-issue PR evidence exists, exit 1 otherwise
+#######################################
+_has_open_pr_check_superseded_issue_pr() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_body=""
+	issue_body=$(_ddpr_issue_body_from_meta)
+	[[ -n "$issue_body" ]] || return 1
+
+	local related_issue="" pr_json="" match_pr=""
+	while IFS= read -r related_issue; do
+		[[ "$related_issue" =~ ^[0-9]+$ ]] || continue
+		[[ "$related_issue" != "$issue_number" ]] || continue
+
+		pr_json=$(gh pr list --repo "$repo_slug" --state merged \
+			--search "#${related_issue}" --limit 20 \
+			--json number,title,body 2>/dev/null) || pr_json="[]"
+
+		local ref_pattern="(^|[^0-9])#${related_issue}([^0-9]|$)|GH#${related_issue}([^0-9]|$)"
+		local planning_pattern="planning-only|pure planning|brief-only|brief for|files the brief|no code changes"
+		match_pr=$(printf '%s' "$pr_json" | jq -r \
+			--arg ref_pattern "$ref_pattern" \
+			--arg planning_pattern "$planning_pattern" '
+			[
+				.[] | select(
+					(((.title // "") | test($ref_pattern; "i")) or ((.body // "") | test($ref_pattern; "i"))) and
+					((((.title // "") + "\n" + (.body // "")) | test($planning_pattern; "i")) | not)
+				)
+			] | .[0].number // empty' 2>/dev/null) || match_pr=""
+
+		if [[ -n "$match_pr" ]]; then
+			printf 'merged PR #%s references superseded issue #%s for consolidated issue #%s\n' \
+				"$match_pr" "$related_issue" "$issue_number"
+			return 0
+		fi
+	done < <(_ddpr_superseded_issue_refs "$issue_body")
+
+	return 1
+}
+
+#######################################
 # Check whether an issue already has merged PR evidence.
 #
 # IMPORTANT: This function returns exit 0 for BOTH open and merged PRs
@@ -342,17 +433,24 @@ has_open_pr() {
 	) &
 	local _pr_pid4=$!
 
+	(
+		_result=$(_has_open_pr_check_superseded_issue_pr "$issue_number" "$repo_slug" 2>/dev/null) && \
+			printf '%s' "$_result" >"${_pr_tmpdir}/check4.out" || true
+	) &
+	local _pr_pid5=$!
+
 	# Wait for all to complete
 	wait "$_pr_pid0" 2>/dev/null || true
 	wait "$_pr_pid1" 2>/dev/null || true
 	wait "$_pr_pid2" 2>/dev/null || true
 	wait "$_pr_pid3" 2>/dev/null || true
 	wait "$_pr_pid4" 2>/dev/null || true
+	wait "$_pr_pid5" 2>/dev/null || true
 
 	# Check results — any hit means PR evidence exists
 	local _check_file _check_output
 	for _check_file in "${_pr_tmpdir}/check0.out" "${_pr_tmpdir}/check1.out" "${_pr_tmpdir}/check1b.out" \
-		"${_pr_tmpdir}/check2.out" "${_pr_tmpdir}/check3.out"; do
+		"${_pr_tmpdir}/check2.out" "${_pr_tmpdir}/check3.out" "${_pr_tmpdir}/check4.out"; do
 		if [[ -f "$_check_file" ]]; then
 			_check_output=$(cat "$_check_file" 2>/dev/null) || _check_output=""
 			if [[ -n "$_check_output" ]]; then
