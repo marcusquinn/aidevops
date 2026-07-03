@@ -81,9 +81,20 @@ sse.listen({
     fetch(channelUrl, { method: "PUT", headers: { "Content-Type": "application/json", Cookie: cookie },
       body: JSON.stringify([{ id: Date.now(), action: "ack", "event-id": data.id }]) })
     const nodes = data.json?.["add-nodes"]?.nodes ?? {}
-    for (const node of Object.values(nodes) as any[]) {
-      const author = node?.post?.author
-      const text = (node?.post?.contents ?? []).filter((c: any) => c.text).map((c: any) => c.text).join(" ")
+    for (const node of Object.values(nodes) as unknown[]) {
+      if (!node || typeof node !== "object") continue
+      const post = (node as Record<string, unknown>).post
+      if (!post || typeof post !== "object") continue
+      const postObj = post as Record<string, unknown>
+      if (typeof postObj.author !== "string") continue
+      if (!Array.isArray(postObj.contents)) continue
+      const author = postObj.author
+      const text = postObj.contents
+        .filter((c): c is { text: string } => {
+          return !!c && typeof c === "object" && typeof (c as { text?: unknown }).text === "string"
+        })
+        .map((c) => c.text)
+        .join(" ")
       if (author && author !== SHIP_NAME) console.log(`~${author}: ${text}`)
     }
   },
