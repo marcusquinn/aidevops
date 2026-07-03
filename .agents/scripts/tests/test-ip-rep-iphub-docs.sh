@@ -10,6 +10,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
 PROVIDER_PATH="${SCRIPT_DIR}/../providers/ip-rep-iphub.sh"
 
+if [[ ! -f "$PROVIDER_PATH" ]]; then
+	printf 'Error: Provider script not found at %s\n' "$PROVIDER_PATH" >&2
+	exit 1
+fi
+
 PASS=0
 FAIL=0
 
