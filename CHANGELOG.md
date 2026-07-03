@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.42] - 2026-07-03
+
+### Changed
+
+- Reconcile consolidated issues fixed by merged PRs (#26488)
+
+### Fixed
+
+- enforce watchdog hard runtime cap (#26482)
+
 ## [3.31.41] - 2026-07-03
 
 ### Fixed
