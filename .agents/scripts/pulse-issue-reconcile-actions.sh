@@ -489,6 +489,44 @@ _should_lia() {
 	return 0
 }
 
+#######################################
+# Extract issue numbers from explicit "Supersedes #N" prose.
+#
+# Kept narrow on purpose: the reconciler should only close a consolidated
+# successor when the successor itself declares that it supersedes an issue
+# already fixed by a merged PR. Generic "see #N"/"related #N" prose is not
+# sufficient terminal evidence.
+#
+# Args: $1 = issue body
+# Stdout: newline-delimited issue numbers, deduplicated
+#######################################
+_pir_extract_superseded_issue_nums() {
+	local issue_body="$1"
+	[[ -n "$issue_body" ]] || return 0
+
+	printf '%s' "$issue_body" | \
+		grep -oiE 'supersedes[[:space:]]+#[0-9]+' 2>/dev/null | \
+		grep -oE '[0-9]+' | sort -un
+	return 0
+}
+
+#######################################
+# Lookup the merged PR number for an issue in the OIMP lookup string.
+# Args: $1 = issue number, $2 = oimp lookup string
+# Stdout: first matching PR number or empty
+#######################################
+_pir_lookup_oimp_pr_for_issue() {
+	local issue_num="$1"
+	local oimp_lookup="$2"
+	[[ "$issue_num" =~ ^[0-9]+$ && -n "$oimp_lookup" ]] || return 0
+
+	printf '%s' "$oimp_lookup" \
+		| grep -oE "\|${issue_num}=[0-9]+" 2>/dev/null \
+		| head -1 \
+		| cut -d= -f2
+	return 0
+}
+
 ##############################################
 # t2776: Per-issue action helpers for reconcile_issues_single_pass.
 # Each helper encapsulates the action logic for one reconcile sub-stage.
@@ -614,20 +652,32 @@ _action_rsd_single() {
 #   $3 = verify_helper (path to verify-issue-close-helper.sh)
 #   $4 = oimp_lookup (pipe-delimited |num=pr|...| string from
 #        _build_oimp_lookup_for_slug; may be empty if prefetch failed)
+#   $5 = issue_body (optional; used to close consolidated successors whose
+#        body declares `Supersedes #N` and PR lookup shows #N was fixed)
 # Returns: 0 if closed, 1 otherwise
 #######################################
 _action_oimp_single() {
 	local slug="$1" issue_num="$2" verify_helper="$3"
 	local oimp_lookup="${4:-}"
+	local issue_body="${5:-}"
 
 	# t2985: lookup PR number locally instead of `gh pr list --search`.
 	# Empty lookup → no merged PR found → return 1 (next-cycle retry).
 	local merged_pr_num=""
-	if [[ -n "$oimp_lookup" ]]; then
-		merged_pr_num=$(printf '%s' "$oimp_lookup" \
-			| grep -oE "\|${issue_num}=[0-9]+" 2>/dev/null \
-			| head -1 \
-			| cut -d= -f2) || merged_pr_num=""
+	local close_comment=""
+	merged_pr_num=$(_pir_lookup_oimp_pr_for_issue "$issue_num" "$oimp_lookup") || merged_pr_num=""
+	if [[ -n "$merged_pr_num" && "$merged_pr_num" =~ ^[0-9]+$ ]]; then
+		close_comment="Closing: linked PR #${merged_pr_num} was already merged. Detected by reconcile pass."
+	else
+		local superseded_num=""
+		while IFS= read -r superseded_num; do
+			[[ "$superseded_num" =~ ^[0-9]+$ ]] || continue
+			merged_pr_num=$(_pir_lookup_oimp_pr_for_issue "$superseded_num" "$oimp_lookup") || merged_pr_num=""
+			if [[ -n "$merged_pr_num" && "$merged_pr_num" =~ ^[0-9]+$ ]]; then
+				close_comment="Closing: this consolidated issue supersedes #${superseded_num}, and merged PR #${merged_pr_num} already fixed that superseded issue. Detected by reconcile pass."
+				break
+			fi
+		done < <(_pir_extract_superseded_issue_nums "$issue_body")
 	fi
 	[[ -n "$merged_pr_num" && "$merged_pr_num" =~ ^[0-9]+$ ]] || return 1
 
@@ -644,7 +694,7 @@ _action_oimp_single() {
 	fi
 
 	gh issue close "$issue_num" --repo "$slug" \
-		--comment "Closing: linked PR #${merged_pr_num} was already merged. Detected by reconcile pass." \
+		--comment "$close_comment" \
 		>/dev/null 2>&1 || return 1
 
 	if declare -F fast_fail_reset >/dev/null 2>&1; then

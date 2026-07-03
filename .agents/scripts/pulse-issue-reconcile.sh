@@ -1405,7 +1405,7 @@ reconcile_issues_single_pass() {
 			# Stage 3: close open issues whose linked PR already merged (global cap)
 			if [[ "$oimp_total_closed" -lt "$oimp_max" ]] && \
 				_should_oimp "$issue_num" "$parent_task_nums"; then
-				if _action_oimp_single "$slug" "$issue_num" "$verify_helper" "$oimp_lookup"; then
+				if _action_oimp_single "$slug" "$issue_num" "$verify_helper" "$oimp_lookup" "$issue_body"; then
 					oimp_total_closed=$((oimp_total_closed + 1))
 					continue
 				fi
