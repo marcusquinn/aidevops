@@ -228,7 +228,13 @@ _sweep_qlty() {
 	# Deduplicates against existing issues. Caps are tuned for throughput:
 	# see _create_simplification_issues for the numbers.
 	if [[ -n "$qlty_sarif" && "$qlty_smell_count" -gt 0 ]]; then
-		_create_simplification_issues "$repo_slug" "$qlty_sarif"
+		local issues_created
+		issues_created=$(_create_simplification_issues "$repo_slug" "$qlty_sarif")
+		if [[ -n "$issues_created" && "$issues_created" -gt 0 ]]; then
+			qlty_section="${qlty_section}
+_Created ${issues_created} function-complexity-debt issue(s) for high-smell files (tier:thinking)._
+"
+		fi
 	fi
 
 	printf '%s|%s|%s' "$qlty_section" "$qlty_smell_count" "$qlty_grade"
@@ -725,6 +731,7 @@ _create_simplification_issues() {
 	local high_smell_files
 	high_smell_files=$(_high_smell_files_from_sarif "$sarif_json" "$min_smells_threshold")
 	if [[ -z "$high_smell_files" ]]; then
+		printf '%s' "$issues_created"
 		return 0
 	fi
 
@@ -735,6 +742,7 @@ _create_simplification_issues() {
 	simplification_labels=$(_simplification_issue_label_csv "$repo_slug")
 
 	if ! _simplification_issue_open_cap_allows "$repo_slug" "$total_open_cap"; then
+		printf '%s' "$issues_created"
 		return 0
 	fi
 
@@ -748,12 +756,7 @@ _create_simplification_issues() {
 		fi
 	done <<<"$high_smell_files"
 
-	if [[ "$issues_created" -gt 0 ]]; then
-		qlty_section="${qlty_section}
-_Created ${issues_created} function-complexity-debt issue(s) for high-smell files (tier:thinking)._
-"
-	fi
-
+	printf '%s' "$issues_created"
 	return 0
 }
 
@@ -762,16 +765,16 @@ _ensure_simplification_issue_labels() {
 
 	gh label create "function-complexity-debt" --repo "$repo_slug" \
 		--description "Functions exceed complexity threshold — needs refactoring before implementation can proceed" \
-		--color "E05D44" 2>/dev/null || true
+		--color "E05D44" >/dev/null 2>&1 || true
 	gh label create "needs-maintainer-review" --repo "$repo_slug" \
 		--description "Requires maintainer approval before automated dispatch" \
-		--color "FBCA04" 2>/dev/null || true
+		--color "FBCA04" >/dev/null 2>&1 || true
 	gh label create "source:quality-sweep" --repo "$repo_slug" \
 		--description "Auto-created by stats-functions.sh quality sweep" \
-		--color "C2E0C6" --force 2>/dev/null || true
+		--color "C2E0C6" --force >/dev/null 2>&1 || true
 	gh label create "tier:thinking" --repo "$repo_slug" \
 		--description "Opus-tier: architecture, deep reasoning, high-complexity refactors" \
-		--color "5319E7" 2>/dev/null || true
+		--color "5319E7" >/dev/null 2>&1 || true
 	return 0
 }
 
@@ -824,7 +827,8 @@ _simplification_issue_open_cap_allows() {
 	local total_open
 
 	total_open=$(gh api graphql -f query="query { repository(owner:\"${repo_slug%%/*}\", name:\"${repo_slug##*/}\") { issues(labels:[\"function-complexity-debt\"], states:OPEN) { totalCount } } }" \
-		--jq '.data.repository.issues.totalCount' 2>/dev/null) || total_open="0"
+		--jq '.data.repository.issues.totalCount // ""') || total_open=""
+	[[ "$total_open" =~ ^[0-9]+$ ]] || total_open="0"
 	if [[ "${total_open:-0}" -ge "$total_open_cap" ]]; then
 		echo "[stats] Function-complexity-debt issues: skipping — ${total_open} open (cap: ${total_open_cap})" >>"$LOGFILE"
 		return 1
