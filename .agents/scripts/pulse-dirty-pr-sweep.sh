@@ -11,6 +11,9 @@
 #                 strategy, force-push, post documentation comment.
 #   Auto-close  : PR > 7d old AND no human commits in 3d AND no
 #                 `do-not-close` label → close with a "superseded" comment.
+#   Route       : worker-backed PR has semantic conflicts that cannot be
+#                 safely auto-rebased → append conflict feedback to the linked
+#                 worker issue and close the stale PR for redispatch.
 #   Notify      : PR has non-TODO.md conflicts and doesn't meet auto-close
 #                 criteria → post a one-time informational comment
 #                 (no label applied, no dispatch, no merge block).
@@ -133,8 +136,12 @@ readonly _DIRTY_PR_AUDIT_EVENT="operation.verify"
 # (pre-commit "repeated string literals" ratchet).
 readonly _DIRTY_ACTION_REBASE="rebase"
 readonly _DIRTY_ACTION_CLOSE="close"
+readonly _DIRTY_ACTION_CONFLICT="conflict"
 readonly _DIRTY_ACTION_NOTIFY="notify"
 readonly _DIRTY_ACTION_SKIP="skip"
+
+readonly _DIRTY_LABEL_ORIGIN_WORKER="origin:worker"
+readonly _DIRTY_LABEL_ORIGIN_WORKER_TAKEOVER="origin:worker-takeover"
 
 # Comment markers for idempotency when scanning PR comment history.
 readonly _DIRTY_PR_NOTIFY_MARKER="<!-- pulse-dirty-pr-escalate -->"  # string preserved for comment-history dedup continuity
@@ -422,6 +429,77 @@ _dps_pr_body_has_issue_reference() {
 	return 1
 }
 
+_dps_extract_linked_issue_from_body() {
+	local body="$1"
+	local match=""
+	[[ -n "$body" ]] || return 1
+	match=$(printf '%s' "$body" | grep -ioE '(close[ds]?|fix(es|ed)?|resolve[ds]?|for|ref)[[:space:]]+#[0-9]+' | head -n 1) || match=""
+	[[ -n "$match" ]] || return 1
+	printf '%s' "$match" | grep -oE '[0-9]+' | head -n 1
+	return 0
+}
+
+_dps_issue_labels() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local labels=""
+	labels=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json labels --jq '[.labels[].name] | .[]' 2>/dev/null \
+		| tr '[:upper:]' '[:lower:]') || return 1
+	printf '%s\n' "$labels"
+	return 0
+}
+
+_dps_linked_issue_is_worker_backed() {
+	local body="$1"
+	local repo_slug="$2"
+	local linked_issue="" labels=""
+
+	# Unit tests can disable the network-backed provenance check; production
+	# defaults to enabled so worker-origin issues are repaired without manual
+	# conflict babysitting even when the PR was accidentally labelled interactive.
+	[[ "${AIDEVOPS_DIRTY_PR_WORKER_BACKED_CHECK:-1}" == "1" ]] || return 1
+
+	linked_issue=$(_dps_extract_linked_issue_from_body "$body") || linked_issue=""
+	[[ "$linked_issue" =~ ^[0-9]+$ ]] || return 1
+	labels=$(_dps_issue_labels "$linked_issue" "$repo_slug") || labels=""
+	[[ -n "$labels" ]] || return 1
+
+	if _dps_labels_has "$labels" "$_DIRTY_LABEL_ORIGIN_WORKER" || _dps_labels_has "$labels" "$_DIRTY_LABEL_ORIGIN_WORKER_TAKEOVER"; then
+		printf '%s' "$linked_issue"
+		return 0
+	fi
+	if _dps_labels_has "$labels" "auto-dispatch" && {
+		_dps_labels_has "$labels" "function-complexity-debt" || \
+			_dps_labels_has "$labels" "file-size-debt" || \
+			_dps_labels_has "$labels" "source:conflict-feedback" || \
+			_dps_labels_has "$labels" "source:ci-feedback" || \
+			_dps_labels_has "$labels" "source:review-feedback"
+	}; then
+		printf '%s' "$linked_issue"
+		return 0
+	fi
+	return 1
+}
+
+_dps_effective_worker_origin() {
+	local labels="$1"
+	local has_interactive="$2"
+	local body="$3"
+	local repo_slug="$4"
+	local pr_number="$5"
+	local linked_worker_issue=""
+
+	if _dps_labels_has "$labels" "$_DIRTY_LABEL_ORIGIN_WORKER" || _dps_labels_has "$labels" "$_DIRTY_LABEL_ORIGIN_WORKER_TAKEOVER"; then
+		return 0
+	fi
+	[[ "$has_interactive" -eq 1 ]] || return 1
+	linked_worker_issue=$(_dps_linked_issue_is_worker_backed "$body" "$repo_slug") || linked_worker_issue=""
+	[[ -n "$linked_worker_issue" ]] || return 1
+	_dps_log "PR #${pr_number} ${repo_slug}: origin:interactive but linked issue #${linked_worker_issue} is worker-backed — treating as worker PR"
+	return 0
+}
+
 # Determine whether the interactive session that opened a PR is likely
 # abandoned, using only server-visible signals (cross-runner safe — local
 # claim stamps at ~/.aidevops/.agent-workspace/interactive-claims/ are not
@@ -560,7 +638,7 @@ _dps_closed_by_other_merged_pr_reason() {
 	local pr_number="$3"
 	local labels="$4"
 
-	_dps_labels_has "$labels" "origin:worker" || _dps_labels_has "$labels" "origin:worker-takeover" || return 1
+	_dps_labels_has "$labels" "$_DIRTY_LABEL_ORIGIN_WORKER" || _dps_labels_has "$labels" "$_DIRTY_LABEL_ORIGIN_WORKER_TAKEOVER" || return 1
 	_dps_labels_has "$labels" "do-not-close" && return 1
 	_dps_labels_has "$labels" "hold-for-review" && return 1
 
@@ -576,7 +654,7 @@ _dps_closed_by_other_merged_pr_reason() {
 
 #
 # Given a PR JSON object (from `gh pr list`), classify the action:
-#   rebase | close | notify | skip
+#   rebase | conflict | close | notify | skip
 #
 # The JSON must include: number, mergeStateStatus, createdAt, updatedAt,
 # author.login, labels[].name, headRefName, baseRefName.
@@ -588,7 +666,7 @@ _dps_closed_by_other_merged_pr_reason() {
 #   $4 - self_login (the runner's GitHub login — maintainers)
 #
 # Output (stdout): one line of the form "ACTION|REASON"
-#   ACTION in {rebase, close, notify, skip}
+#   ACTION in {rebase, conflict, close, notify, skip}
 #   REASON is a short human-readable phrase.
 _dirty_pr_classify() {
 	local pr_json="$1"
@@ -626,8 +704,7 @@ _dirty_pr_classify() {
 	_dps_labels_has "$labels" "parent-task" && has_parent_task=1
 	_dps_labels_has "$labels" "hold-for-review" && has_hold_for_review=1
 	_dps_labels_has "$labels" "origin:interactive" && has_interactive=1
-	_dps_labels_has "$labels" "origin:worker" && has_worker_origin=1
-	_dps_labels_has "$labels" "origin:worker-takeover" && has_worker_origin=1
+	_dps_effective_worker_origin "$labels" "$has_interactive" "$body" "$_repo_slug" "$pr_number" && has_worker_origin=1
 
 	local closed_issue_reason
 	if closed_issue_reason=$(_dps_closed_by_other_merged_pr_reason "$pr_json" "$_repo_slug" "$pr_number" "$labels"); then
@@ -664,6 +741,10 @@ _dirty_pr_classify() {
 	fi
 	if [[ "$has_hold_for_review" -eq 1 ]]; then
 		printf '%s|hold-for-review-label' "$_DIRTY_ACTION_NOTIFY"
+		return 0
+	fi
+	if [[ "$has_worker_origin" -eq 1 && "$age" -le "$DIRTY_PR_CLOSE_MIN_AGE" ]]; then
+		printf '%s|worker-backed-semantic-conflict' "$_DIRTY_ACTION_CONFLICT"
 		return 0
 	fi
 	if [[ "$has_interactive" -eq 1 ]]; then
@@ -878,6 +959,58 @@ _dirty_pr_action_rebase() {
 	return 0
 }
 
+_dirty_pr_action_conflict() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local body="$3"
+	local pr_title="$4"
+	local reason="${5:-worker-backed-semantic-conflict}"
+
+	local key="${repo_slug}#${pr_number}"
+	if _dps_recently_actioned "$key"; then
+		_dps_log "PR #$pr_number ($repo_slug): conflict routing skipped — cooldown active"
+		return 0
+	fi
+
+	local linked_issue=""
+	linked_issue=$(_dps_extract_linked_issue_from_body "$body") || linked_issue=""
+	if [[ ! "$linked_issue" =~ ^[0-9]+$ ]]; then
+		_dps_log "PR #$pr_number ($repo_slug): conflict routing skipped — no linked issue in PR body"
+		_dirty_pr_action_notify "$pr_number" "$repo_slug" "${reason}-no-linked-issue"
+		return 0
+	fi
+
+	if ! declare -F _dispatch_conflict_fix_worker >/dev/null 2>&1; then
+		if [[ -f "${SCRIPT_DIR}/pulse-merge-feedback.sh" ]]; then
+			# shellcheck source=pulse-merge-feedback.sh
+			# shellcheck disable=SC1091
+			source "${SCRIPT_DIR}/pulse-merge-feedback.sh" 2>/dev/null || true
+		fi
+	fi
+	if ! declare -F _dispatch_conflict_fix_worker >/dev/null 2>&1; then
+		_dps_log "PR #$pr_number ($repo_slug): conflict routing helper unavailable — notifying"
+		_dirty_pr_action_notify "$pr_number" "$repo_slug" "${reason}-helper-unavailable"
+		return 0
+	fi
+
+	if [[ -z "$pr_title" ]]; then
+		pr_title=$(gh pr view "$pr_number" --repo "$repo_slug" --json title --jq '.title // empty' 2>/dev/null) || pr_title=""
+	fi
+	[[ -n "$pr_title" ]] || pr_title="DIRTY worker PR #${pr_number}"
+
+	if _dps_is_dry_run; then
+		_dps_log "DRY-RUN: would route conflict feedback from PR #$pr_number ($repo_slug) to issue #$linked_issue"
+		_dps_record_audit "$_DIRTY_ACTION_CONFLICT" "$repo_slug" "$pr_number" "dry-run:$reason"
+		return 0
+	fi
+
+	_dispatch_conflict_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "$pr_title" || true
+	_dps_state_record_action "$key" "$_DIRTY_ACTION_CONFLICT"
+	_dps_record_audit "$_DIRTY_ACTION_CONFLICT" "$repo_slug" "$pr_number" "ok:$reason"
+	_dps_log "PR #$pr_number ($repo_slug): conflict feedback routed to issue #$linked_issue ($reason)"
+	return 0
+}
+
 # Close action: post a comment, then close the PR with --delete-branch.
 _dirty_pr_action_close() {
 	local pr_number="$1"
@@ -1021,7 +1154,7 @@ _dirty_pr_sweep_for_repo() {
 	local list_json err_file
 	err_file=$(mktemp) || err_file=/dev/null
 	list_json=$(gh_pr_list --repo "$repo_slug" --state open \
-		--json number,mergeStateStatus,createdAt,updatedAt,author,labels,headRefName,baseRefName,body \
+		--json number,title,mergeStateStatus,createdAt,updatedAt,author,labels,headRefName,baseRefName,body \
 		--limit "$DIRTY_PR_SWEEP_BATCH_LIMIT" 2>"$err_file") || list_json="[]"
 	[[ -z "$list_json" || "$list_json" == "null" ]] && list_json="[]"
 	rm -f "$err_file" 2>/dev/null || true
@@ -1066,12 +1199,18 @@ _dirty_pr_sweep_for_repo() {
 				head_ref=$(printf '%s' "$pr_obj" | jq -r '.headRefName // empty')
 				_dirty_pr_action_rebase "$pr_number" "$repo_slug" "$repo_path" "$head_ref" || true
 				;;
+			"$_DIRTY_ACTION_CONFLICT")
+				local pr_body="" pr_title=""
+				pr_body=$(printf '%s' "$pr_obj" | jq -r '.body // empty')
+				pr_title=$(printf '%s' "$pr_obj" | jq -r '.title // empty')
+				_dirty_pr_action_conflict "$pr_number" "$repo_slug" "$pr_body" "$pr_title" "$reason" || true
+				;;
 			"$_DIRTY_ACTION_CLOSE")
 				_dirty_pr_action_close "$pr_number" "$repo_slug" "$reason" || true
 				;;
-		"$_DIRTY_ACTION_NOTIFY")
-			_dirty_pr_action_notify "$pr_number" "$repo_slug" "$reason" || true
-			;;
+			"$_DIRTY_ACTION_NOTIFY")
+				_dirty_pr_action_notify "$pr_number" "$repo_slug" "$reason" || true
+				;;
 			"$_DIRTY_ACTION_SKIP")
 				:
 				;;
