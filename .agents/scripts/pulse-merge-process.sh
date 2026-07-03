@@ -1006,6 +1006,25 @@ _attempt_pr_ci_rebase_retry() {
 		fi
 	fi
 
+	# GH#26406: branch updates restart the current head's check suite. Only use
+	# update-branch as a CI-drift repair when the current head has a terminal
+	# required-check failure. Pending/in-progress required checks are not failures,
+	# and stale failures from older head SHAs must not trigger a branch refresh.
+	local _terminal_check_rc=0
+	_check_required_checks_has_terminal_failure "$repo_slug" "$pr_number"
+	_terminal_check_rc=$?
+	if [[ $_terminal_check_rc -eq 1 ]]; then
+		if _check_required_checks_have_pending_or_in_progress "$repo_slug" "$pr_number" >/dev/null 2>&1; then
+			echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: skipping CI-drift update-branch because required checks are active on the current head; wait for current CI or rely on native auto-merge to avoid restarting checks (GH#26406)" >>"$LOGFILE"
+			return 1
+		fi
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: skipping CI-drift update-branch because no terminal required-check failure belongs to the current head; stale/non-required failure ignored (GH#26406)" >>"$LOGFILE"
+		return 1
+	fi
+	if [[ $_terminal_check_rc -ne 0 ]]; then
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: required-check head-state unavailable before CI-drift update-branch; fail-open to existing update-branch behaviour (GH#26406)" >>"$LOGFILE"
+	fi
+
 	echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: attempting CI-drift rebase via update-branch (t2805)" >>"$LOGFILE"
 
 	local _ub_output _ub_exit

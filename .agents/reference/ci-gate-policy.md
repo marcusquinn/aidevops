@@ -40,6 +40,13 @@ feedback loops when they find defects.
    PRs. Broad reboot, fleet, migration-recovery, and manual crypto-review drills
    are staging/release advisory until stable enough for every PR. See
    `reference/vault-security-review.md`.
+9. Before refreshing a PR branch from its base branch, check required checks on
+   the current head SHA. If required checks are queued or in progress and the PR
+   is not conflicted or explicitly blocked by an up-to-date ruleset, keep the
+   head stable: wait for the current run or enable platform-native auto-merge.
+10. Repositories that require testing the exact merge result should use merge
+   queue or platform-native queued merge behaviour instead of repeatedly mutating
+   PR branches while CI is active.
 
 ## Ruleset checklist
 
@@ -77,6 +84,10 @@ work; only defects in the PR's own code block the PR.
 - Full E2E on every develop PR when most failures are unrelated flakes.
 - Parallel update/rerun of many PRs when each merge invalidates the next one's
   strict up-to-date checks.
+- Updating a PR branch during active required CI just to "refresh" it; this
+  starts a new check suite for the new head and can discard nearly-finished work.
+- Diagnosing or redispatching from a failed check without first verifying that
+  the failure belongs to the current PR head SHA.
 - Redispatching new workers for advisory E2E failures instead of filing focused
   follow-up tasks.
 - Treating delayed, pending, cancelled, or infrastructure-timed-out checks as

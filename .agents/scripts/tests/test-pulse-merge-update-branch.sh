@@ -478,6 +478,70 @@ test_unknown_mergeable_refreshed_before_conflict_handler() {
 	return 0
 }
 
+test_ci_rebase_update_branch_has_active_check_guard() {
+	local helper_src guard_pos update_pos terminal_pos
+	helper_src=$(awk '
+		/^_attempt_pr_ci_rebase_retry\(\) \{/ { in_fn=1 }
+		in_fn { print }
+		in_fn && /^}$/ { exit }
+	' "$PROCESS_SCRIPT")
+
+	terminal_pos=$(printf '%s\n' "$helper_src" | awk '/_check_required_checks_has_terminal_failure/ { print NR; exit }')
+	guard_pos=$(printf '%s\n' "$helper_src" | awk '/_check_required_checks_have_pending_or_in_progress/ { print NR; exit }')
+	update_pos=$(printf '%s\n' "$helper_src" | awk '/_ub_output=\$\(gh pr update-branch/ { print NR; exit }')
+
+	if [[ -z "$terminal_pos" || -z "$guard_pos" || -z "$update_pos" ]]; then
+		print_result "CI-drift update-branch checks current-head required state first" 1 \
+			"Expected terminal check, active-check guard, and update-branch call (terminal=${terminal_pos}, guard=${guard_pos}, update=${update_pos})"
+		return 0
+	fi
+
+	if [[ "$terminal_pos" -ge "$guard_pos" || "$guard_pos" -ge "$update_pos" ]]; then
+		print_result "CI-drift update-branch checks current-head required state first" 1 \
+			"Expected terminal check before active guard before update-branch (terminal=${terminal_pos}, guard=${guard_pos}, update=${update_pos})"
+		return 0
+	fi
+
+	if [[ "$helper_src" != *"required checks are active on the current head"* || "$helper_src" != *"stale/non-required failure ignored"* ]]; then
+		print_result "CI-drift update-branch checks current-head required state first" 1 \
+			"Expected audit logs for active checks and stale/non-current failures"
+		return 0
+	fi
+
+	print_result "CI-drift update-branch checks current-head required state first" 0
+	return 0
+}
+
+test_required_check_pending_classifier_exists() {
+	local helper_src
+	helper_src=$(awk '
+		/^_check_required_checks_have_pending_or_in_progress\(\) \{/ { in_fn=1 }
+		in_fn { print }
+		in_fn && /^}$/ { exit }
+	' "${SCRIPT_DIR}/../pulse-merge-required-checks.sh")
+
+	if [[ -z "$helper_src" ]]; then
+		print_result "required-check pending classifier is available" 1 \
+			"Could not extract _check_required_checks_have_pending_or_in_progress"
+		return 0
+	fi
+
+	if [[ "$helper_src" != *"headRefOid"* || "$helper_src" != *"gh_pr_check_runs_rest"* ]]; then
+		print_result "required-check pending classifier is available" 1 \
+			"Classifier must use current headRefOid and REST check-runs"
+		return 0
+	fi
+
+	if [[ "$helper_src" != *"queued"* || "$helper_src" != *"in_progress"* || "$helper_src" != *"waiting"* ]]; then
+		print_result "required-check pending classifier is available" 1 \
+			"Classifier must recognise queued/in_progress/waiting active states"
+		return 0
+	fi
+
+	print_result "required-check pending classifier is available" 0
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -499,6 +563,8 @@ main() {
 	test_stale_route_runs_before_protected_precheck
 	test_mergeable_refetch_after_update_branch
 	test_unknown_mergeable_refreshed_before_conflict_handler
+	test_ci_rebase_update_branch_has_active_check_guard
+	test_required_check_pending_classifier_exists
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
