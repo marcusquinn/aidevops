@@ -102,7 +102,15 @@ _fetch_comment() {
 		fi
 		_log "dispatch: comment ${comment_id} on #${issue_number} lookup failed — skipping (${lookup_summary})"
 		_mark_comment_skipped "$responded_file" "$comment_id" "lookup failed"
-		return 1
+		printf '{}\n'
+		return 0
+	fi
+
+	if ! printf '%s\n' "$comment_json" | jq . >/dev/null; then
+		_log "dispatch: comment ${comment_id} on #${issue_number} returned invalid JSON — skipping"
+		_mark_comment_skipped "$responded_file" "$comment_id" "invalid JSON"
+		printf '{}\n'
+		return 0
 	fi
 
 	printf '%s\n' "$comment_json"
@@ -293,6 +301,9 @@ cmd_dispatch() {
 
 	local comment_json comment_body
 	if ! comment_json=$(_fetch_comment "$repo_slug" "$issue_number" "$comment_id" "$responded_file"); then
+		return 0
+	fi
+	if [[ "$comment_json" == "{}" ]]; then
 		return 0
 	fi
 	comment_body=$(printf '%s\n' "$comment_json" | jq -r '.body // ""')
