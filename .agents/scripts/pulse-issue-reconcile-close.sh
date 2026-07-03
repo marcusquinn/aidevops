@@ -230,7 +230,7 @@ reconcile_open_issues_with_merged_prs() {
 			issues_json=$(printf '%s' "$_cache_issues_oimp" | jq -c '.[0:30]' 2>/dev/null) || issues_json="[]"
 		else
 			issues_json=$(gh_issue_list --repo "$slug" --state open \
-				--json number,title,labels --limit 30 2>/dev/null) || issues_json="[]"
+				--json number,title,labels,body --limit 30 2>/dev/null) || issues_json="[]"
 		fi
 		[[ -n "$issues_json" && "$issues_json" != "$_PIR_NULL" ]] || continue
 
@@ -253,8 +253,9 @@ reconcile_open_issues_with_merged_prs() {
 
 		local i=0
 		while [[ "$i" -lt "$issue_count" ]] && [[ "$total_closed" -lt "$max_closes" ]]; do
-			local issue_num
+			local issue_num issue_body
 			issue_num=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].number // ""') || true
+			issue_body=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].body // ""' 2>/dev/null) || issue_body=""
 			i=$((i + 1))
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 
@@ -264,7 +265,7 @@ reconcile_open_issues_with_merged_prs() {
 
 			# t2776: delegate per-issue action to shared helper (_action_oimp_single).
 			# t2985: pass oimp_lookup as 4th arg.
-			if _action_oimp_single "$slug" "$issue_num" "$verify_helper" "$oimp_lookup"; then
+			if _action_oimp_single "$slug" "$issue_num" "$verify_helper" "$oimp_lookup" "$issue_body"; then
 				total_closed=$((total_closed + 1))
 			fi
 		done
