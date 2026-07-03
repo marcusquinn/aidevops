@@ -225,6 +225,55 @@ _ddh_hold_unrecoverable_orphan_branch() {
 }
 
 #######################################
+# Auto-recover a provably disposable zero-commit orphan branch.
+#
+# Args: $1 issue, $2 repo, $3 branch, $4 remote probe, $5 commit count,
+#       $6 comments endpoint, $7 comments json
+# Returns: 0 if recovered, 1 if caller should keep normal hold/block logic
+#######################################
+_ddh_auto_recover_zero_commit_orphan_branch() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local branch_name="$3"
+	local remote_probe="$4"
+	local commit_count="$5"
+	local comments_post_endpoint="$6"
+	local comments_json="$7"
+	local pr_hint="$_DDH_ORPHAN_PR_HINT_NONE"
+	local existing_recovery="0"
+
+	[[ "$commit_count" == "0" ]] || return 1
+	pr_hint=$(_ddh_orphan_branch_pr_hint "$repo_slug" "$branch_name")
+	[[ "$pr_hint" == "$_DDH_ORPHAN_PR_HINT_NONE" ]] || return 1
+
+	existing_recovery=$(printf '%s' "$comments_json" |
+		jq -r --arg branch "$branch_name" '
+			[.[][] | (.body // empty)
+			| select(contains("worker-branch-orphan-auto-recovered branch=" + $branch + " "))] | length
+		' 2>/dev/null) || existing_recovery="0"
+	[[ "$existing_recovery" =~ ^[0-9]+$ ]] || existing_recovery=0
+
+	if gh api -X DELETE "repos/${repo_slug}/git/refs/heads/${branch_name}" >/dev/null 2>&1; then
+		if [[ "$existing_recovery" -eq 0 ]]; then
+			local diag=""
+			# shellcheck disable=SC2016 # Backticks are literal Markdown in this printf template.
+			diag=$(printf '<!-- ops:start -->\n<!-- worker-branch-orphan-auto-recovered branch=%s issue=%s reason=zero_commits commit_count=%s -->\n## Dispatch recovered: zero-commit worker_branch_orphan\n\nThe dispatch path found `WORKER_BRANCH_ORPHAN` telemetry for issue #%s on branch `%s`, but the remote branch has zero commits and no open or closed PR references it. The remote branch was deleted so dispatch can create or reuse a clean worker branch instead of feeding the no-work circuit breaker.\n\n- Branch: `%s`\n- Remote-branch probe: `%s`\n- Branch commit count: `%s`\n- PR for branch: none\n- Local worktree cleanup: not forced; any local state remains available for normal safety checks.\n<!-- ops:end -->' \
+				"$branch_name" "$issue_number" "$commit_count" \
+				"$issue_number" "$branch_name" "$branch_name" "$remote_probe" "$commit_count")
+			gh api "$comments_post_endpoint" \
+				--method POST \
+				--field body="$diag" \
+				>/dev/null 2>&1 || true
+		fi
+		printf 'WORKER_BRANCH_ORPHAN_AUTO_RECOVERED (issue=%s repo=%s branch=%s reason=zero_commits remote_probe=%s commit_count=%s)\n' \
+			"$issue_number" "$repo_slug" "$branch_name" "$remote_probe" "$commit_count"
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
 # Extract canonical dedup keys from a title string.
 # Looks for patterns: issue #NNN, PR #NNN, tNNN (task IDs), issue-NNN, pr-NNN.
 # Args: $1 = title string
@@ -1095,6 +1144,10 @@ _ddh_hold_unrecoverable_orphan_branch_if_needed() {
 		return 0
 	fi
 	if [[ "$commit_count" == "0" ]]; then
+		if _ddh_auto_recover_zero_commit_orphan_branch "$issue_number" "$repo_slug" "$branch_name" \
+			"$remote_probe" "$commit_count" "$comments_post_endpoint" "$comments_json"; then
+			return 0
+		fi
 		_ddh_hold_unrecoverable_orphan_branch "$issue_number" "$repo_slug" "$branch_name" \
 			"zero_commits" "$remote_probe" "$remote_exists" "$commit_count" \
 			"$comments_post_endpoint" "$comments_json"
