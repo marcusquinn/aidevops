@@ -65,6 +65,13 @@ command-substitution `--body` patterns are blocked by the signature gate.
 
 Interactive aidevops PRs default to draft until the user explicitly asks to finalise/ready the PR or invokes `/pr-loop`. To permit pulse merge throughput after finalisation, also opt in with `allow-auto-merge`, `AIDEVOPS_INTERACTIVE_PR_AUTO_MERGE=1`, global `orchestration.interactive_pr_auto_merge=true`, or per-repo `repos.json` `interactive_pr_auto_merge=true`.
 
+When a PR is approved, mergeable, non-draft, and not blocked by review/security/
+maintainer labels, prefer `gh pr merge --auto` or the host platform's merge queue
+over refreshing the PR branch while required checks are queued or running.
+Updating the branch creates a new head SHA and restarts checks; only do it when
+the PR is conflicted, a ruleset requires an up-to-date branch, or the current
+head has a terminal required-check failure that a base refresh can plausibly fix.
+
 ## Merging Pull Requests
 
 | Strategy | Flag | When |

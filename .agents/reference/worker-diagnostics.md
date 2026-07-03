@@ -87,8 +87,9 @@ issue for dispatch.
 Repair triggers:
 
 - Required checks in `fail` or `cancel` buckets.
-- Native auto-merge already set, but at least one required check remains
-  `pending` longer than `AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS` (default 300s).
+- Native auto-merge already set and the current head has a terminal required
+  check failure. Pending/in-progress required checks are non-terminal and should
+  continue running instead of being restarted by a branch refresh.
 
 Safety boundaries:
 
@@ -99,6 +100,11 @@ Safety boundaries:
 - Repair feedback is deduplicated by linked issue + PR + head SHA marker
   (`<!-- ci-feedback:PR...:SHA... -->`) so each stuck head queues at most one
   repair action.
+- Failed checks from older head SHAs are stale symptoms. Ignore them for repair
+  routing and continue monitoring the latest head SHA.
+- Superseded active runs may be cancelled only when the operator/helper can
+  prove the run belongs to the same PR/branch, its head SHA is not the latest PR
+  head SHA, and the run is still queued or in progress; otherwise leave it alone.
 
 Diagnosis commands:
 

@@ -212,7 +212,7 @@ _check_required_checks_has_terminal_failure() {
 
 	local rollup_json=""
 	rollup_json=$(gh_pr_check_runs_rest "$repo_slug" "$pr_sha" 2>/dev/null) || rollup_json=""
-	if [[ -z "$rollup_json" || "$rollup_json" == "null" ]]; then
+	if [[ -z "$rollup_json" || "$rollup_json" == null ]]; then
 		echo "[pulse-merge] _check_required_checks_has_terminal_failure: REST check-runs fetch failed for PR #${pr_number} in ${repo_slug} — failing closed (t3567)" >>"$LOGFILE"
 		return 2
 	fi
@@ -247,5 +247,75 @@ _check_required_checks_has_terminal_failure() {
 	fi
 
 	echo "[pulse-merge] _check_required_checks_has_terminal_failure: no terminal failed required contexts for PR #${pr_number} in ${repo_slug} (t3567)" >>"$LOGFILE"
+	return 1
+}
+
+#######################################
+# Return whether any branch-protection-required check on the current PR head is
+# queued, pending, in progress, waiting, or absent from the current head rollup.
+# This is the pre-update guard for branch refresh paths: mutating a PR branch
+# while required checks are still active restarts CI and wastes runner time.
+#
+# Args: $1=repo_slug, $2=pr_number
+# Returns: 0=pending/in-progress required check found, 1=no active required
+#          checks, 2=API/parse error
+#######################################
+_check_required_checks_have_pending_or_in_progress() {
+	local repo_slug="$1"
+	local pr_number="$2"
+
+	local required_contexts=""
+	required_contexts=$(_required_contexts_for_default_branch "$repo_slug") || return 2
+	if [[ -z "$required_contexts" ]]; then
+		echo "[pulse-merge] _check_required_checks_have_pending_or_in_progress: no required contexts for ${repo_slug} — no active required checks (GH#26406)" >>"$LOGFILE"
+		return 1
+	fi
+
+	local pr_sha=""
+	pr_sha=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+		--json headRefOid --jq '.headRefOid // ""') || true
+	if [[ -z "$pr_sha" ]]; then
+		echo "[pulse-merge] _check_required_checks_have_pending_or_in_progress: headRefOid fetch failed for PR #${pr_number} in ${repo_slug} — failing open for branch-update caller (GH#26406)" >>"$LOGFILE"
+		return 2
+	fi
+
+	local rollup_json=""
+	rollup_json=$(gh_pr_check_runs_rest "$repo_slug" "$pr_sha" 2>/dev/null) || rollup_json=""
+	if [[ -z "$rollup_json" || "$rollup_json" == null ]]; then
+		echo "[pulse-merge] _check_required_checks_have_pending_or_in_progress: REST check-runs fetch failed for PR #${pr_number} in ${repo_slug} — failing open for branch-update caller (GH#26406)" >>"$LOGFILE"
+		return 2
+	fi
+
+	local req_json
+	req_json=$(printf '%s' "$required_contexts" \
+		| jq -Rsc '[split("\n")[] | select(length > 0)]' 2>/dev/null) || req_json="[]"
+
+	local pending_count="" _pc_exit=0
+	pending_count=$(jq -n \
+		--argjson req "$req_json" \
+		--argjson checks "$rollup_json" \
+		'$req | map(
+			. as $ctx |
+			($checks | map(select((.name // "") == $ctx)) | last) as $c |
+			if $c == null then true
+			elif (($c.conclusion // "") | length) == 0 then true
+			elif (($c.status // "" | ascii_downcase)
+				| . == "queued" or . == "pending" or . == "in_progress" or . == "waiting" or . == "requested") then true
+			else false
+			end
+		) | map(select(.)) | length' 2>/dev/null)
+	_pc_exit=$?
+
+	if [[ $_pc_exit -ne 0 || -z "$pending_count" ]]; then
+		echo "[pulse-merge] _check_required_checks_have_pending_or_in_progress: jq evaluation failed for PR #${pr_number} in ${repo_slug} — failing open for branch-update caller (GH#26406)" >>"$LOGFILE"
+		return 2
+	fi
+
+	if [[ "$pending_count" -gt 0 ]]; then
+		echo "[pulse-merge] _check_required_checks_have_pending_or_in_progress: ${pending_count} active required check(s) on current head for PR #${pr_number} in ${repo_slug} (GH#26406)" >>"$LOGFILE"
+		return 0
+	fi
+
+	echo "[pulse-merge] _check_required_checks_have_pending_or_in_progress: no active required checks on current head for PR #${pr_number} in ${repo_slug} (GH#26406)" >>"$LOGFILE"
 	return 1
 }
