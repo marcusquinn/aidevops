@@ -306,7 +306,7 @@ test_code_extraction_patterns_are_portable() {
 	local pcre_flag="grep -o""P"
 	local whitespace_escape='\\['"s"']'
 	local matches
-	matches=$(grep -nE "${pcre_flag}|${whitespace_escape}" "${BASH_SOURCE[0]}" || true)
+	matches=$(grep -nE "${pcre_flag}|${whitespace_escape}" "${BASH_SOURCE[0]}" "$HELPER" || true)
 
 	assert_eq "No GNU-only grep PCRE flag or PCRE whitespace escapes" "" "$matches"
 	return 0
