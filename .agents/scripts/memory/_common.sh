@@ -36,6 +36,28 @@ db() {
 }
 
 #######################################
+# Require MEMORY_DB to be resolved before database operations
+#######################################
+_require_memory_db() {
+	if [[ -z "${MEMORY_DB:-}" ]]; then
+		log_error "MEMORY_DB is not set"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Require MEMORY_DIR to be resolved before directory operations
+#######################################
+_require_memory_dir() {
+	if [[ -z "${MEMORY_DIR:-}" ]]; then
+		log_error "MEMORY_DIR is not set"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
 # Resolve namespace to memory directory and DB path
 # Sets MEMORY_DIR and MEMORY_DB globals
 #######################################
@@ -72,6 +94,8 @@ resolve_namespace() {
 # Extracted to eliminate DDL duplication flagged in PR #1629 review.
 #######################################
 _create_pattern_metadata_table() {
+	_require_memory_db || return 1
+
 	db "$MEMORY_DB" <<'EOF'
 CREATE TABLE IF NOT EXISTS pattern_metadata (
     id TEXT PRIMARY KEY,
@@ -83,7 +107,8 @@ CREATE TABLE IF NOT EXISTS pattern_metadata (
     estimated_cost REAL DEFAULT NULL
 );
 EOF
-	return 0
+	local rc=$?
+	return "$rc"
 }
 
 #######################################
@@ -207,7 +232,7 @@ _migrate_pattern_metadata() {
 	has_pattern_metadata=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='pattern_metadata';" 2>/dev/null || echo "0")
 	if [[ "$has_pattern_metadata" == "0" ]]; then
 		log_info "Creating pattern_metadata table (t1095)..."
-		_create_pattern_metadata_table
+		_create_pattern_metadata_table || return 1
 		# Backfill existing pattern records with default strategy='normal'
 		local pattern_types="$PATTERN_TYPES_SQL"
 		local backfill_count
@@ -606,6 +631,8 @@ extract_ids_from_json() {
 # Create the core memory schema for fresh databases
 #######################################
 _create_memory_core_schema() {
+	_require_memory_db || return 1
+
 	db "$MEMORY_DB" <<'EOF'
 PRAGMA journal_mode=WAL;
 PRAGMA busy_timeout=5000;
@@ -687,18 +714,21 @@ CREATE TABLE IF NOT EXISTS memory_consolidations (
 );
 CREATE INDEX IF NOT EXISTS idx_consolidations_created ON memory_consolidations(created_at DESC);
 EOF
-	return 0
+	local rc=$?
+	return "$rc"
 }
 
 #######################################
 # Create a fresh memory database and companion tables
 #######################################
 _create_memory_db() {
+	_require_memory_db || return 1
+
 	log_info "Creating memory database at $MEMORY_DB"
-	_create_memory_core_schema
+	_create_memory_core_schema || return 1
 	# Extended pattern metadata (t1095, t1114) — companion table for pattern records.
 	# DDL is in _create_pattern_metadata_table() (single source of truth, also used by migrate_db).
-	_create_pattern_metadata_table
+	_create_pattern_metadata_table || return 1
 	log_success "Database initialized with relational versioning support"
 	return 0
 }
@@ -707,11 +737,13 @@ _create_memory_db() {
 # Ensure WAL mode for existing databases created before t135.3
 #######################################
 _ensure_memory_wal_mode() {
+	_require_memory_db || return 1
+
 	# WAL is persistent but may not be set on pre-existing DBs
 	local current_mode
-	current_mode=$(db "$MEMORY_DB" "PRAGMA journal_mode;" 2>/dev/null || echo "")
+	current_mode=$(db "$MEMORY_DB" "PRAGMA journal_mode;" || echo "")
 	if [[ "$current_mode" != "wal" ]]; then
-		db "$MEMORY_DB" "PRAGMA journal_mode=WAL;" 2>/dev/null || echo "[WARN] Failed to enable WAL mode for memory DB" >&2
+		db "$MEMORY_DB" "PRAGMA journal_mode=WAL;" 2>/dev/null || true
 	fi
 	return 0
 }
@@ -720,16 +752,19 @@ _ensure_memory_wal_mode() {
 # Initialize database with FTS5 schema
 #######################################
 init_db() {
-	mkdir -p "$MEMORY_DIR"
+	_require_memory_dir || return 1
+	_require_memory_db || return 1
+
+	mkdir -p "$MEMORY_DIR" || return 1
 
 	if [[ ! -f "$MEMORY_DB" ]]; then
-		_create_memory_db
+		_create_memory_db || return 1
 	else
 		# Migrate existing database if needed
-		migrate_db
+		migrate_db || return 1
 	fi
 
-	_ensure_memory_wal_mode
+	_ensure_memory_wal_mode || return 1
 
 	return 0
 }
