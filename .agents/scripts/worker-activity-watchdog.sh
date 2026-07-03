@@ -40,9 +40,9 @@
 #                             defer the kill until the hard backstop.
 #   --phase1-timeout SECS     Seconds for initial output (default: 30)
 #   --poll-interval SECS      Seconds between checks (default: 10)
-#   --hard-kill-seconds SECS  Total elapsed seconds before forced hard-kill on
-#                             stall (default: 1500 = 25 min). When stall is
-#                             detected AND total elapsed > this threshold, the
+#   --hard-kill-seconds SECS  Total elapsed seconds before forced hard-kill
+#                             (default: 1500 = 25 min). When total elapsed time
+#                             crosses this threshold, even with output growth, the
 #                             watchdog writes the .watchdog_stall_killed
 #                             sentinel (in addition to .watchdog_killed) so the
 #                             helper can classify the result as exit code 79
@@ -621,13 +621,13 @@ CLAIM_RELEASED reason=watchdog_kill:${reason} runner=$(whoami) ts=$(date -u +%Y-
 # Phase 1: Wait for any output (dead runtime detection)
 # Phase 2: Monitor continuous growth (stall detection)
 #
-# t2956 / Issue #21231: Total elapsed time is also tracked. When a stall is
-# detected AND HARD_KILL_SECONDS is non-zero AND total elapsed has crossed
-# that threshold, the watchdog escalates to a hard-kill that emits the
-# `.watchdog_stall_killed` sentinel — telling the helper to classify as
-# exit 79 (watchdog_stall_killed) instead of 78 (watchdog_stall_continue).
-# This caps the per-attempt cost of a single stall and frees the dispatch
-# slot for re-dispatch instead of holding it through repeated continuations.
+# t2956 / Issue #21231 and GH#26469: Total elapsed time is also tracked.
+# When HARD_KILL_SECONDS is non-zero and total elapsed has crossed that
+# threshold, the watchdog escalates to a hard-kill that emits the
+# `.watchdog_stall_killed` sentinel — telling the helper to classify as exit 79
+# (watchdog_stall_killed) instead of 78 (watchdog_stall_continue). This caps
+# the per-attempt cost even when output keeps growing and frees the dispatch slot
+# for re-dispatch instead of holding it through repeated continuations.
 #######################################
 _monitor_init_state() {
 	_MONITOR_PHASE1_PASSED=0
@@ -713,6 +713,31 @@ _monitor_defer_stall() {
 }
 
 #######################################
+# Enforce the total elapsed hard-kill cap.
+#
+# Arguments:
+#   $1 - current output file size in bytes
+# Returns:
+#   0 when caller should continue monitoring
+#   1 when caller should exit because the worker was killed
+#######################################
+_monitor_enforce_hard_kill() {
+	local current_size="$1"
+	local now_epoch elapsed_total
+	now_epoch=$(date +%s)
+	elapsed_total=$((now_epoch - _MONITOR_START_EPOCH))
+
+	if [[ "$HARD_KILL_SECONDS" -le 0 || "$elapsed_total" -lt "$HARD_KILL_SECONDS" ]]; then
+		return 0
+	fi
+
+	_kill_worker \
+		"hard_kill: total elapsed ${elapsed_total}s ≥ hard-kill threshold ${HARD_KILL_SECONDS}s (current output ${current_size}b, stall=${_MONITOR_STALL_SECONDS}s, deferred=${_MONITOR_DEFERRED_STALL_SECONDS}s) — slot freed for re-dispatch" \
+		"stall_killed"
+	return 1
+}
+
+#######################################
 # Handle a confirmed phase 2 stall.
 #
 # Arguments:
@@ -727,10 +752,7 @@ _monitor_handle_confirmed_stall() {
 	now_epoch=$(date +%s)
 	elapsed_total=$((now_epoch - _MONITOR_START_EPOCH))
 
-	if [[ "$HARD_KILL_SECONDS" -gt 0 && "$elapsed_total" -ge "$HARD_KILL_SECONDS" ]]; then
-		_kill_worker \
-			"hard_kill: stall confirmed and total elapsed ${elapsed_total}s ≥ hard-kill threshold ${HARD_KILL_SECONDS}s (stuck at ${current_size}b, deferred=${_MONITOR_DEFERRED_STALL_SECONDS}s) — slot freed for re-dispatch" \
-			"stall_killed"
+	if ! _monitor_enforce_hard_kill "$current_size"; then
 		return 1
 	fi
 
@@ -776,6 +798,13 @@ _monitor() {
 		# Phase 1: any output at all
 		if _monitor_handle_phase1 "$current_size"; then
 			continue
+		fi
+
+		# GH#26469: Enforce the absolute runtime cap before output-growth tracking.
+		# Otherwise a worker that continuously writes output can keep resetting the
+		# stall counter and bypass HARD_KILL_SECONDS indefinitely.
+		if ! _monitor_enforce_hard_kill "$current_size"; then
+			return 0
 		fi
 
 		# Phase 2: continuous growth monitoring. Output growth is the cheapest
