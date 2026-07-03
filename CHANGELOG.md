@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.35] - 2026-07-03
+
+### Added
+
+- refresh GUI app branding (#26470)
+
 ## [3.31.34] - 2026-07-03
 
 ### Changed
