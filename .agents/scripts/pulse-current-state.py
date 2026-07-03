@@ -233,7 +233,8 @@ gauge_values = {}
 stats_path = os.path.join(log_dir, 'pulse-stats.json')
 if os.path.exists(stats_path):
     try:
-        stats = json.load(open(stats_path, encoding='utf-8'))
+        with open(stats_path, encoding='utf-8') as stats_file:
+            stats = json.load(stats_file)
         for key, values in (stats.get('counters') or {}).items():
             if isinstance(values, list):
                 hits = [v for v in values if isinstance(v, (int, float)) and v >= since]
@@ -318,7 +319,8 @@ api_pressure = {
 api_report = os.path.join(log_dir, 'gh-api-calls-by-stage.json')
 if os.path.exists(api_report):
     try:
-        report = json.load(open(api_report, encoding='utf-8'))
+        with open(api_report, encoding='utf-8') as api_report_file:
+            report = json.load(api_report_file)
         read_graphql_callers = []
         read_caller_names = {'gh_issue_list', 'gh_pr_list', 'gh_issue_view', 'gh_pr_view'}
         rest_read_caller_names = {'_rest_issue_list', '_rest_pr_list', '_rest_issue_view', '_rest_pr_view'}
@@ -371,7 +373,8 @@ prefetch_cache = {
 health_path = os.path.join(log_dir, 'pulse-health.json')
 if os.path.exists(health_path):
     try:
-        health = json.load(open(health_path, encoding='utf-8'))
+        with open(health_path, encoding='utf-8') as health_file:
+            health = json.load(health_file)
         prefetch_cache = {
             'batch_cache_hits': int(health.get('batch_cache_hits') or 0),
             'conditional_304': int(health.get('prefetch_conditional_304') or 0),
