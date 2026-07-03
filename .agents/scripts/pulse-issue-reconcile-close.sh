@@ -253,7 +253,7 @@ reconcile_open_issues_with_merged_prs() {
 
 		local i=0
 		while [[ "$i" -lt "$issue_count" ]] && [[ "$total_closed" -lt "$max_closes" ]]; do
-			local issue_num issue_body
+			local issue_num="" issue_body=""
 			issue_num=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].number // ""') || true
 			issue_body=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].body // ""' 2>/dev/null) || issue_body=""
 			i=$((i + 1))
