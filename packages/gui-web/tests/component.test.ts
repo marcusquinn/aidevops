@@ -10,6 +10,7 @@ import { commandPaletteMatches, commandPaletteShortcutEntries, commandPaletteSho
 import { CommsConversationSurface } from "../src/CommsConversationSurface";
 import { AppsSurface, nextRecommendedFilterValue } from "../src/InventorySurfaces";
 import { PulseWorkersSurface } from "../src/PulseWorkersSurface";
+import { recommendedApps } from "../src/RecommendedAppsSurface";
 import { DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, chatPrimitiveStackDecision, fontOptions, navGroups, surfaceRecordCounts, type SurfaceNavItem } from "../src/app-model";
 import { renderDashboardHtml } from "../src/dashboard";
 import { fetchStatus, mockedStatus } from "../src/status-client";
@@ -179,7 +180,9 @@ describe("dashboard shell", () => {
     expect(html).toContain("Third-party issues waiting");
     expect(html).toContain("No-verification outcomes");
     expect(html).toContain("Likely cause");
-    expect(html).toContain("Trends · day/week/month/year");
+    expect(html).toContain("Trends · compact bars · day/week/month/year");
+    expect(html).toContain("Latest");
+    expect(html).toContain("Δ period");
     expect(html).toContain("Filter controls");
     expect(html).toContain("Status");
     expect(html).toContain("Severity");
@@ -206,6 +209,17 @@ describe("dashboard shell", () => {
     expect(html).toContain("confirmation required");
     expect(html).toContain("terminal panel becomes a full-screen panel/sheet");
     expect(html).toContain("Destructive controls such as stopping workers");
+  });
+
+  test("includes OpenPanel in recommended apps for analytics dashboards", () => {
+    const openPanel = recommendedApps.find((app) => app.name === "OpenPanel");
+
+    expect(openPanel).toMatchObject({
+      websiteUrl: "https://openpanel.dev/",
+      repoUrl: "https://github.com/Openpanel-dev/openpanel",
+      platforms: ["webapp", "saas", "api"],
+    });
+    expect(openPanel?.description).toContain("privacy-first dashboards");
   });
 
   test("renders Pulse and Workers detail drawer when drilldown sections are absent", () => {

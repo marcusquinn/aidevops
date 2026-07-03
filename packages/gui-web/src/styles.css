@@ -2450,6 +2450,36 @@ code {
   line-height: 1;
 }
 
+.pulse-chart-meta {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.pulse-chart-meta span {
+  background: color-mix(in srgb, var(--accent) 9%, var(--surface-muted));
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  display: grid;
+  gap: 2px;
+  padding: 10px;
+}
+
+.pulse-chart-meta strong {
+  color: var(--accent);
+  font-size: 1.08rem;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+
+.pulse-chart-meta small {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .pulse-attention-panel,
 .pulse-chart-panel,
 .pulse-activity-panel,
@@ -2480,19 +2510,25 @@ code {
 
 .pulse-chart-placeholder {
   align-items: end;
-  background: var(--surface-muted);
+  background:
+    linear-gradient(180deg, transparent 24%, color-mix(in srgb, var(--border) 42%, transparent) 24% 25%, transparent 25% 49%, color-mix(in srgb, var(--border) 34%, transparent) 49% 50%, transparent 50% 74%, color-mix(in srgb, var(--border) 28%, transparent) 74% 75%, transparent 75%),
+    radial-gradient(circle at 12% 18%, color-mix(in srgb, var(--accent) 20%, transparent), transparent 34%),
+    var(--surface-muted);
   border: 1px solid var(--border);
   border-radius: 16px;
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(46px, 1fr));
   min-height: 180px;
+  overflow: hidden;
   padding: 14px;
+  position: relative;
 }
 
 .pulse-chart-placeholder span {
   align-items: end;
-  background: color-mix(in srgb, var(--accent) 26%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--accent) 52%, transparent), color-mix(in srgb, var(--accent) 18%, transparent));
   border: 1px solid var(--border-accent);
   border-radius: 12px 12px 4px 4px;
   color: var(--accent-strong);
@@ -2502,7 +2538,50 @@ code {
   justify-content: center;
   min-height: max(40px, var(--bar-height, calc(40px + var(--bar-index, 1) * 18px)));
   padding: 8px 4px;
+  position: relative;
   text-transform: uppercase;
+  z-index: 1;
+}
+
+.pulse-chart-placeholder span::before {
+  color: var(--text-secondary);
+  content: attr(data-value);
+  font-size: 0.68rem;
+  font-weight: 800;
+  left: 50%;
+  position: absolute;
+  top: -20px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.pulse-chart-sparkline {
+  height: 48%;
+  inset: 16px 12px auto;
+  opacity: 0.88;
+  pointer-events: none;
+  position: absolute;
+  width: calc(100% - 24px);
+  z-index: 2;
+}
+
+.pulse-chart-area {
+  fill: color-mix(in srgb, var(--accent) 18%, transparent);
+  stroke: none;
+}
+
+.pulse-chart-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.6;
+}
+
+.pulse-chart-dot {
+  fill: var(--surface-elevated);
+  stroke: var(--accent);
+  stroke-width: 1.4;
 }
 
 .pulse-chart-grid,
