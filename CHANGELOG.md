@@ -12,6 +12,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.31.34] - 2026-07-03
 
+### Changed
+
+- Documentation: prepare changelog for 3.31.34
+- allow interactive admin merge fallback (#26467)
+- Tests: harden email helper portability scan (#26456)
+- Documentation: qualify UI brief reference paths (#26449)
+- Documentation: qualify UI brief reference paths (#26448)
+
+### Fixed
+
+- guard contrast readiness waits (#26453)
+- return simplification issue count (#26451)
+- simplify ANSI signature normalization (#26446)
+- reduce pulse prefetch subshells (#26443)
+- validate routine comment JSON (#26442)
+
+## [3.31.34] - 2026-07-03
+
 ### Fixed
 
 - allow interactive admin full-loop merge fallback after branch-policy self-review blocks (#26467)
