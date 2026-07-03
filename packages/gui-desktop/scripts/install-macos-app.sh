@@ -64,7 +64,6 @@ gui_dependencies_present() {
 node_modules/vite/bin/vite.js
 node_modules/react
 node_modules/react-icons
-node_modules/@fontsource/cal-sans
 node_modules/@fontsource/courier-prime
 node_modules/@fontsource/dm-mono
 node_modules/@fontsource/dm-sans
@@ -127,10 +126,25 @@ write_icon_assets() {
   local iconset_dir="${resources_dir}/aidevops.iconset"
 
   cat > "$svg_path" <<'SVG'
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="64" fill="#0a0a0a"/>
-  <g transform="translate(36 36) scale(0.86)">
-    <path fill="#B2E969" d="M73.4 150.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 288 73.4 150.6zM240 400h192c17.7 0 32 14.3 32 32s-14.3 32-32 32H240c-17.7 0-32-14.3-32-32s14.3-32 32-32z"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">AI DevOps prompt icon</title>
+  <desc id="desc">A rounded black app icon with the cyan terminal prompt mark used in the website logo.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#000000"/>
+      <stop offset="1" stop-color="#030707"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="50%" r="62%">
+      <stop offset="0" stop-color="#66d9f2" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#66d9f2" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="none"/>
+  <rect x="88" y="88" width="848" height="848" rx="188" fill="url(#bg)"/>
+  <rect x="88" y="88" width="848" height="848" rx="188" fill="url(#glow)"/>
+  <rect x="116" y="116" width="792" height="792" rx="160" fill="none" stroke="#66d9f2" stroke-opacity="0.36" stroke-width="18"/>
+  <g transform="translate(512 522) scale(0.94) translate(-288 -256)">
+    <path fill="#8ce8ff" d="M9.4 86.6C-3.1 74.1-3.1 53.9 9.4 41.4s32.8-12.5 45.3 0l192 192c12.5 12.5 12.5 32.8 0 45.3l-192 192c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L178.7 256 9.4 86.6zM256 416H544c17.7 0 32 14.3 32 32s-14.3 32-32 32H256c-17.7 0-32-14.3-32-32s14.3-32 32-32z"/>
   </g>
 </svg>
 SVG
@@ -1276,7 +1290,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         if title == "Starting aidevops" {
             contentHTML = """
             <main class="shell" aria-busy="true" aria-label="Loading aidevops interface">
-              <section class="brand" aria-label="Starting aidevops"><strong><span>aidevops</span><b>&gt;</b><em>_</em></strong><small>Preparing local GUI</small></section>
+              <section class="brand" aria-label="Starting aidevops"><strong><svg viewBox="0 0 1024 1024" aria-hidden="true"><rect x="88" y="88" width="848" height="848" rx="188" fill="#000000"/><rect x="88" y="88" width="848" height="848" rx="188" fill="#66d9f2" opacity="0.22"/><rect x="116" y="116" width="792" height="792" rx="160" fill="none" stroke="#66d9f2" stroke-opacity="0.36" stroke-width="18"/><g transform="translate(512 522) scale(0.94) translate(-288 -256)"><path fill="#8ce8ff" d="M9.4 86.6C-3.1 74.1-3.1 53.9 9.4 41.4s32.8-12.5 45.3 0l192 192c12.5 12.5 12.5 32.8 0 45.3l-192 192c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L178.7 256 9.4 86.6zM256 416H544c17.7 0 32 14.3 32 32s-14.3 32-32 32H256c-17.7 0-32-14.3-32-32s14.3-32 32-32z"/></g></svg><span>aidevops</span><b>&gt;</b><em>_</em></strong><small>Preparing local GUI</small></section>
               <aside class="rail panel"><i></i><i></i><i></i><i></i><i></i><i></i></aside>
               <aside class="sidebar panel"><header><b></b><span></span></header><nav><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></nav><footer><i></i><i></i></footer></aside>
               <section class="workspace panel"><header><b></b><span></span><i></i><i></i></header><article><h1>\(escapedTitle)</h1><p>\(escapedDetail)</p><div class="cards"><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="block"></div></article></section>
@@ -1293,16 +1307,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
           <style>
-            :root { --accent: hsl(123 74% 66%); --border: rgb(255 255 255 / 11%); --panel: #151515; --muted: rgb(255 255 255 / 70%); }
+            :root { --accent: #66d9f2; --border: rgb(255 255 255 / 11%); --panel: #151515; --muted: rgb(255 255 255 / 70%); }
             * { box-sizing: border-box; }
-            body { background: radial-gradient(ellipse at top left, hsl(123 74% 66% / 16%), transparent 36%), #111; color: #fff; font: 15px -apple-system, BlinkMacSystemFont, sans-serif; height: 100vh; margin: 0; }
+            body { background: radial-gradient(ellipse at top left, rgb(102 217 242 / 16%), transparent 36%), #111; color: #fff; font: 15px -apple-system, BlinkMacSystemFont, sans-serif; height: 100vh; margin: 0; }
             .message { background: var(--panel); border: 1px solid var(--border); border-radius: 18px; left: 50%; max-width: 560px; padding: 28px; position: fixed; top: 50%; transform: translate(-50%, -50%); }
             h1 { font-size: 22px; margin: 0 0 10px; }
             p { color: #b9c3b0; line-height: 1.5; margin: 0; }
             code { color: var(--accent); }
             .shell { display: grid; gap: 8px; grid-template-columns: 72px 302px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) 30px; height: 100vh; padding: 30px 8px 8px; }
-            .brand { align-items: center; backdrop-filter: blur(18px); background: rgb(10 10 10 / 78%); border: 1px solid hsl(123 74% 66% / 34%); border-radius: 24px; box-shadow: 0 24px 90px hsl(123 74% 66% / 14%), 0 24px 80px rgb(0 0 0 / 40%); display: grid; gap: 10px; justify-items: center; left: 50%; padding: 26px 30px; position: fixed; top: 50%; transform: translate(-50%, -50%); width: min(360px, calc(100vw - 48px)); z-index: 20; }
-            .brand strong { align-items: baseline; display: inline-flex; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: clamp(34px, 7vw, 64px); font-weight: 900; letter-spacing: -0.08em; line-height: .9; }
+            .brand { align-items: center; backdrop-filter: blur(18px); background: rgb(10 10 10 / 78%); border: 1px solid rgb(102 217 242 / 34%); border-radius: 24px; box-shadow: 0 24px 90px rgb(102 217 242 / 14%), 0 24px 80px rgb(0 0 0 / 40%); display: grid; gap: 10px; justify-items: center; left: 50%; padding: 26px 30px; position: fixed; top: 50%; transform: translate(-50%, -50%); width: min(360px, calc(100vw - 48px)); z-index: 20; }
+            .brand strong { align-items: center; display: inline-flex; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: clamp(34px, 7vw, 64px); font-weight: 900; gap: .18em; letter-spacing: -0.08em; line-height: .9; }
+            .brand svg { display: block; height: .96em; width: .96em; }
             .brand span { color: #f6f7f2; font-size: .48em; letter-spacing: -0.04em; margin-right: .18em; }
             .brand b, .brand em { color: var(--accent); font-style: normal; }
             .brand em { animation: cursor 0.95s steps(1, end) infinite; }

@@ -1,19 +1,20 @@
 ---
 version: alpha
 name: AI DevOps Framework
-description: Developer-first automation interface using GitHub-dark surfaces, blue focus, green operational success, compact cards, and system typography.
+description: Developer-first automation interface using terminal-native black surfaces, cyan prompt branding, compact cards, and system typography.
 colors:
-  primary: "#58a6ff"
+  primary: "#66d9f2"
   secondary: "#8b949e"
   tertiary: "#238636"
-  neutral: "#0d1117"
-  background: "#0d1117"
+  neutral: "#000000"
+  background: "#030707"
   surface: "#161b22"
   surface-raised: "#21262d"
   on-surface: "#c9d1d9"
   on-primary: "#0d1117"
   on-tertiary: "#ffffff"
   outline: "#30363d"
+  accent-hover: "#8ce8ff"
   muted: "#6e7681"
   success: "#3fb950"
   warning: "#fbbf24"
@@ -259,6 +260,21 @@ Core component rules:
 - **Metadata:** use `#8b949e` at 12px; use `#6e7681` only for lowest-emphasis timestamps.
 - **Focus:** keyboard focus should use blue `#58a6ff` outline or border with at least 2px visible affordance.
 
+## Logo and icon rules
+
+- The approved AI DevOps app mark is the cyan terminal prompt glyph used by the `aidevops.sh` navigation logo and favicon.
+- Do not reintroduce the old `AI` letter mark for dock icons, launch/loading states, sidebar/header marks, favicons, or social previews.
+- Use a rounded black square with subtle cyan glow, a cyan ring at low opacity, and `#8ce8ff` prompt glyph fill.
+- Prompt glyph placement follows the current website asset: `translate(512 522) scale(0.94) translate(-288 -256)` inside a `1024x1024` SVG viewBox.
+- Icon SVGs should include accessible names when they are content-bearing; decorative duplicates should be hidden from assistive technology.
+
+## Design capture during harness sessions
+
+- Treat `DESIGN.md` as the source of truth for visual direction, branding, UI/UX preferences, iconography, and generated brand handoffs.
+- When a harness session receives, discovers, or implements design preferences, update `DESIGN.md` in the same PR as the UI/branding change.
+- If `DESIGN.md` is missing, create one or add a worker-ready task with the known files, observed preferences, and verification checklist.
+- PR summaries for branding/UI/UX work should call out the `DESIGN.md` update or explicitly explain why no design-system change was needed.
+
 ## Do's and Don'ts
 
 Do:
@@ -292,6 +308,7 @@ When implementing AI DevOps UI:
 
 1. Read `DESIGN.md` before changing any dashboard, sidebar, generated report, or browser-facing interface.
 2. Reuse the token names and values in the YAML front matter. If a new state is needed, add a semantic token and explain the evidence source.
-3. Match the GitHub-dark operational console style: dark background, raised dark cards, blue focus/highlight, green safe action, red danger/error.
+3. Match the terminal-native operational console style: black/near-black background, raised dark cards, cyan brand/focus highlights, green safe action, red danger/error.
 4. Verify contrast for new text/background pairs and keep focus indicators visible.
-5. Regenerate brand guideline artifacts after changing this file with `aidevops design guidelines . --pdf`.
+5. Update this file whenever branding/UI/UX preferences change during a harness session, then include the DESIGN.md update in the same PR.
+6. Regenerate brand guideline artifacts after changing this file with `aidevops design guidelines . --pdf`.

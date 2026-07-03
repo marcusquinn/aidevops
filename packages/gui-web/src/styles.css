@@ -579,6 +579,7 @@ code {
   letter-spacing: -0.05em;
 }
 
+.brand-icon,
 .terminal-mark {
   align-items: center;
   background: color-mix(in srgb, var(--accent) 15%, #0a0a0a);
@@ -592,6 +593,33 @@ code {
   height: 44px;
   justify-content: center;
   width: 44px;
+}
+
+.brand-icon {
+  background: transparent;
+  border: 0;
+  display: block;
+  flex: 0 0 auto;
+  filter: drop-shadow(0 8px 18px rgb(0 0 0 / 24%));
+}
+
+.brand-icon-bg {
+  fill: #000000;
+}
+
+.brand-icon-glow {
+  fill: color-mix(in srgb, #66d9f2 22%, transparent);
+}
+
+.brand-icon-ring {
+  fill: none;
+  stroke: #66d9f2;
+  stroke-opacity: 0.36;
+  stroke-width: 18;
+}
+
+.brand-icon-glyph {
+  fill: #8ce8ff;
 }
 
 .sidebar-history-controls {
