@@ -1626,6 +1626,10 @@ _dlw_check_worker_branch_orphan_loop() {
 
 	local orphan_loop_out=""
 	if orphan_loop_out=$("$dedup_helper" check-orphan-loop "$issue_number" "$repo_slug" "$worker_worktree_branch" "$todo_file" "$worker_worktree_path" 2>/dev/null); then
+		if [[ "$orphan_loop_out" == *"WORKER_BRANCH_ORPHAN_AUTO_RECOVERED"* ]]; then
+			echo "[dispatch_with_dedup] Auto-recovered orphan branch for #${issue_number} in ${repo_slug}: ${orphan_loop_out}" >>"$LOGFILE"
+			return 1
+		fi
 		echo "[dispatch_with_dedup] Dispatch held for #${issue_number} in ${repo_slug}: ${orphan_loop_out}" >>"$LOGFILE"
 		return 0
 	fi

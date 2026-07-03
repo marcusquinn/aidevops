@@ -79,7 +79,8 @@ create_gh_stub() {
     {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/reused session=issue-100 ts=${now_iso}\n<!-- ops:end -->"},
     {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/other session=issue-100 ts=${now_iso}\n<!-- ops:end -->"},
     {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/missing session=issue-100 ts=${now_iso}\n<!-- ops:end -->"},
-    {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/empty session=issue-100 ts=${now_iso}\n<!-- ops:end -->"}
+    {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/empty session=issue-100 ts=${now_iso}\n<!-- ops:end -->"},
+    {"body":"<!-- ops:start -->\nWORKER_BRANCH_ORPHAN branch=feature/empty-pr session=issue-100 ts=${now_iso}\n<!-- ops:end -->"}
   ]
 ]
 EOF
@@ -106,6 +107,10 @@ EOF
 set -euo pipefail
 
 if [[ "${1:-}" == "api" ]]; then
+	if [[ "$*" == *" -X DELETE "* ]]; then
+		printf '%s\n' "$*" >>"${TEST_ROOT}/deleted-refs.log"
+		exit 0
+	fi
 	issue=""
 	for arg in "$@"; do
 		if [[ "$arg" =~ /issues/([0-9]+)/comments ]]; then
@@ -128,6 +133,9 @@ if [[ "${1:-}" == "api" ]]; then
 fi
 
 if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
+	if [[ "$*" == *"--head feature/empty "* ]]; then
+		exit 0
+	fi
 	if [[ "$*" == *"owner/develop-repo"* ]]; then
 		exit 0
 	fi
@@ -177,7 +185,7 @@ fi
 
 if [[ "${1:-}" == "rev-list" && "${2:-}" == "--count" ]]; then
 	case "${3:-}" in
-		origin/main..origin/feature/empty|origin/feature/empty)
+		origin/main..origin/feature/empty|origin/feature/empty|origin/main..origin/feature/empty-pr|origin/feature/empty-pr)
 			printf '0\n'
 			;;
 		*)
@@ -263,17 +271,31 @@ test_orphan_comment_without_remote_branch_blocks_immediately() {
 	return 0
 }
 
-test_orphan_comment_with_zero_commits_blocks_immediately() {
+test_orphan_comment_with_zero_commits_auto_recovers() {
 	local output=""
 	if output=$("$HELPER_SCRIPT" check-orphan-loop 100 owner/repo feature/empty "" "${TEST_ROOT}/wt-zero-commits" 2>/dev/null); then
-		if [[ "$output" == *"WORKER_BRANCH_ORPHAN_UNRECOVERABLE_BLOCKED"* && "$output" == *"reason=zero_commits"* ]] && grep -q -- "Branch commit count: \`0\`" "${TEST_ROOT}/posts/100.argv"; then
-			print_result "orphan marker with zero remote branch commits holds dispatch" 0
+		if [[ "$output" == *"WORKER_BRANCH_ORPHAN_AUTO_RECOVERED"* ]] && grep -q -- "feature/empty" "${TEST_ROOT}/deleted-refs.log" && grep -q -- "worker-branch-orphan-auto-recovered" "${TEST_ROOT}/posts/100.argv"; then
+			print_result "orphan marker with zero remote branch commits auto-recovers" 0
 			return 0
 		fi
-		print_result "orphan marker with zero remote branch commits holds dispatch" 1 "Output/post missing zero-commit evidence: ${output}"
+		print_result "orphan marker with zero remote branch commits auto-recovers" 1 "Output/post missing auto-recovery evidence: ${output}"
 		return 0
 	fi
-	print_result "orphan marker with zero remote branch commits holds dispatch" 1 "Expected dispatch hold"
+	print_result "orphan marker with zero remote branch commits auto-recovers" 1 "Expected auto-recovery result"
+	return 0
+}
+
+test_zero_commit_branch_with_pr_still_holds() {
+	local output=""
+	if output=$("$HELPER_SCRIPT" check-orphan-loop 100 owner/repo feature/empty-pr "" "${TEST_ROOT}/wt-zero-commits" 2>/dev/null); then
+		if [[ "$output" == *"WORKER_BRANCH_ORPHAN_UNRECOVERABLE_BLOCKED"* && "$output" == *"reason=zero_commits"* ]]; then
+			print_result "zero-commit orphan with PR keeps recovery hold" 0
+			return 0
+		fi
+		print_result "zero-commit orphan with PR keeps recovery hold" 1 "Unexpected output: ${output}"
+		return 0
+	fi
+	print_result "zero-commit orphan with PR keeps recovery hold" 1 "Expected dispatch hold"
 	return 0
 }
 
@@ -285,7 +307,8 @@ main() {
 	test_unrelated_failure_class_does_not_block
 	test_orphan_loop_next_action_uses_configured_base
 	test_orphan_comment_without_remote_branch_blocks_immediately
-	test_orphan_comment_with_zero_commits_blocks_immediately
+	test_orphan_comment_with_zero_commits_auto_recovers
+	test_zero_commit_branch_with_pr_still_holds
 	teardown_test_env
 
 	printf '\nTests run: %d\n' "$TESTS_RUN"
