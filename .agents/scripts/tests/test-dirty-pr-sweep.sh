@@ -11,8 +11,8 @@
 #                      conflicts → classify returns "rebase|todo-only-conflict".
 #   2. Close path    — old PR (> 7d), idle (> 3d), no opt-out label
 #                      → classify returns "close|stale-and-idle".
-#   3. Notify path   — young PR with non-TODO conflicts → classify returns
-#                      "notify|..." (never rebase or close).
+#   3. Conflict path — young worker PR with non-TODO conflicts → classify
+#                      returns "conflict|..." (never rebase or close).
 #   4. Opt-out       — `do-not-close` label forces notify, never close.
 #   5. Opt-out       — `parent-task` label forces notify, never close.
 #   6. Opt-out       — `origin:interactive` label forces notify, never close.
@@ -23,8 +23,9 @@
 #   9. Interval gate — sweep returns early when DIRTY_PR_SWEEP_LAST_RUN is
 #                      within DIRTY_PR_SWEEP_INTERVAL.
 #
-# The sweep classifier is pure given its JSON input — no network calls. For
-# action tests we stub `gh` so no real PRs are touched.
+# Most classifier paths are pure given their JSON input. The worker-backed
+# origin:interactive path fetches the linked issue labels, so tests stub `gh`
+# or disable that check by env. No real PRs are touched.
 
 set -uo pipefail
 
@@ -62,6 +63,7 @@ printf '%s' '{"initialized_repos":[]}' >"${HOME}/.config/aidevops/repos.json"
 # touch real state.
 export DIRTY_PR_SWEEP_LAST_RUN="${HOME}/.aidevops/logs/dirty-pr-sweep-last-run"
 export DIRTY_PR_SWEEP_STATE_FILE="${HOME}/.aidevops/.agent-workspace/supervisor/dirty-pr-sweep-state.json"
+export AIDEVOPS_DIRTY_PR_WORKER_BACKED_CHECK=0
 
 # Source the module. shellcheck disable=SC1091
 # shellcheck source=../pulse-dirty-pr-sweep.sh
@@ -215,8 +217,9 @@ PR_CODE_CONFLICT=$(mkpr 300 "DIRTY" \
 
 decision=$(_dirty_pr_classify "$PR_CODE_CONFLICT" "test/repo" "$REPO_ROOT" "marcusquinn")
 case "$decision" in
-	notify\|*) print_result "notify path: non-TODO conflicts → notify (no rebase)" 0 ;;
-	*) print_result "notify path: non-TODO conflicts → notify (no rebase)" 1 "got: $decision" ;;
+	conflict\|worker-backed-semantic-conflict) print_result "worker path: non-TODO conflicts → route conflict feedback" 0 ;;
+	rebase\|*) print_result "worker path: non-TODO conflicts → route conflict feedback" 1 "got: $decision (must NOT auto-rebase)" ;;
+	*) print_result "worker path: non-TODO conflicts → route conflict feedback" 1 "got: $decision" ;;
 esac
 
 # =============================================================================
@@ -297,6 +300,46 @@ case "$decision" in
 	close\|*) print_result "t2711: origin:interactive + Resolves #NNN + 10d → notify (within 14d window)" 1 "got: $decision (must NOT close within 14d window)" ;;
 	*) print_result "t2711: origin:interactive + Resolves #NNN + 10d → notify (within 14d window)" 1 "got: $decision" ;;
 esac
+
+# =============================================================================
+# Test 6a-worker-backed: origin:interactive PR against an origin:worker issue
+#                       routes semantic conflicts for worker redispatch.
+# =============================================================================
+
+STUB_DIR_WORKER_BACKED="${TEST_ROOT}/stubs-worker-backed"
+mkdir -p "$STUB_DIR_WORKER_BACKED"
+cat >"${STUB_DIR_WORKER_BACKED}/gh" <<'STUB'
+#!/usr/bin/env bash
+if [[ "$1" == "issue" && "$2" == "view" ]]; then
+	printf '%s\n' 'origin:worker'
+	printf '%s\n' 'auto-dispatch'
+	printf '%s\n' 'function-complexity-debt'
+	exit 0
+fi
+exit 1
+STUB
+chmod +x "${STUB_DIR_WORKER_BACKED}/gh"
+PATH_BEFORE_WORKER_BACKED="$PATH"
+export PATH="${STUB_DIR_WORKER_BACKED}:${PATH}"
+export AIDEVOPS_DIRTY_PR_WORKER_BACKED_CHECK=1
+
+PR_INTERACTIVE_WORKER_BACKED=$(mkpr 611 "DIRTY" \
+	"$(iso_n_seconds_ago 3600)" \
+	"$(iso_n_seconds_ago 1800)" \
+	"marcusquinn" \
+	"feature/baz-worker-backed" \
+	'["origin:interactive"]' \
+	"This PR implements the fix. Resolves #26346.")
+
+decision=$(_dirty_pr_classify "$PR_INTERACTIVE_WORKER_BACKED" "test/repo" "" "other-runner")
+case "$decision" in
+	conflict\|worker-backed-semantic-conflict) print_result "GH#26346: origin:interactive PR linked to worker issue → conflict routing" 0 ;;
+	notify\|origin-interactive-referenced-within-extended-window) print_result "GH#26346: origin:interactive PR linked to worker issue → conflict routing" 1 "got: $decision (must route for redispatch, not only notify)" ;;
+	*) print_result "GH#26346: origin:interactive PR linked to worker issue → conflict routing" 1 "got: $decision" ;;
+esac
+
+export AIDEVOPS_DIRTY_PR_WORKER_BACKED_CHECK=0
+export PATH="$PATH_BEFORE_WORKER_BACKED"
 
 # =============================================================================
 # Test 6b: origin:interactive WITH `For #NNN` + 10d old → notify
