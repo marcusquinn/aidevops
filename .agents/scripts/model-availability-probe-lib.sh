@@ -79,6 +79,105 @@ _probe_return_cached() {
 	esac
 }
 
+_probe_has_static_auth_for_provider() {
+	local provider="$1"
+	local key_vars
+	key_vars=$(get_provider_key_vars "$provider" 2>/dev/null) || key_vars=""
+	[[ -n "$key_vars" ]] || return 1
+
+	local -a var_names
+	local var_name
+	IFS=',' read -r -a var_names <<<"$key_vars"
+	for var_name in "${var_names[@]}"; do
+		if [[ -n "${!var_name:-}" ]]; then
+			return 0
+		fi
+	done
+
+	if command -v gopass >/dev/null 2>&1; then
+		for var_name in "${var_names[@]}"; do
+			if gopass show "aidevops/${var_name}" >/dev/null 2>&1; then
+				return 0
+			fi
+		done
+	fi
+
+	local creds_file="${HOME}/.config/aidevops/credentials.sh"
+	if [[ -f "$creds_file" ]]; then
+		# shellcheck disable=SC1090
+		source "$creds_file"
+		for var_name in "${var_names[@]}"; do
+			if [[ -n "${!var_name:-}" ]]; then
+				return 0
+			fi
+		done
+	fi
+
+	return 1
+}
+
+_probe_format_cooldown_until() {
+	local cooldown_ms="$1"
+	local cooldown_s=$((cooldown_ms / 1000))
+	local formatted=""
+
+	formatted=$(date -u -r "$cooldown_s" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)
+	if [[ -z "$formatted" ]]; then
+		formatted=$(date -u -d "@${cooldown_s}" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)
+	fi
+	if [[ -z "$formatted" ]]; then
+		formatted="${cooldown_ms}ms"
+	fi
+
+	printf '%s\n' "$formatted"
+	return 0
+}
+
+# Check OAuth pool cooldowns before cached health can mask them.
+# Returns: 0=no blocking cooldown, 2=all usable OAuth pool accounts cooling.
+_probe_oauth_pool_cooldown_gate() {
+	local provider="$1"
+	local quiet="${2:-false}"
+	local pool_file="${MODEL_AVAILABILITY_OAUTH_POOL_FILE:-${HOME}/.aidevops/oauth-pool.json}"
+
+	# Static API key paths are independent of OpenCode OAuth pool cooldowns.
+	if _probe_has_static_auth_for_provider "$provider"; then
+		return 0
+	fi
+	[[ -f "$pool_file" ]] || return 0
+	command -v jq >/dev/null 2>&1 || return 0
+
+	local now_ms counts total available limited _auth_errors min_cooldown
+	now_ms=$(($(date +%s) * 1000))
+	counts=$(jq -r --arg provider "$provider" --argjson now "$now_ms" '
+		def n: tonumber? // 0;
+		(.[$provider] // []) as $accounts
+		| ($accounts | length) as $total
+		| if $total == 0 then
+			[0, -1, 0, 0, 0]
+		else
+			($accounts | map(select((.status // "") == "auth-error")) | length) as $auth
+			| ($accounts | map(select((.status // "") == "rate-limited" and (((.cooldownUntil // 0) | n) > $now)))) as $limited_accounts
+			| ($limited_accounts | length) as $limited
+			| ($accounts | map(select(((.status // "") != "auth-error") and (((.status // "") != "rate-limited") or (((.cooldownUntil // 0) | n) <= $now)))) | length) as $available
+			| ($limited_accounts | map((.cooldownUntil // 0) | n) | min // 0) as $min_cooldown
+			| [$total, $available, $limited, $auth, $min_cooldown]
+		end
+		| @tsv
+	' "$pool_file" 2>/dev/null) || counts="0 -1 0 0 0"
+	read -r total available limited _auth_errors min_cooldown <<<"$counts"
+
+	if [[ "${total:-0}" -gt 0 && "${available:--1}" -eq 0 && "${limited:-0}" -gt 0 ]]; then
+		local until_text
+		until_text=$(_probe_format_cooldown_until "${min_cooldown:-0}")
+		[[ "$quiet" != "true" ]] && print_warning "$provider: rate-limited until $until_text"
+		_record_health "$provider" "rate_limited" 429 0 "OAuth pool cooldown active until $until_text" 0
+		return 2
+	fi
+
+	return 0
+}
+
 # Probe the OpenCode meta-provider via its local models cache (no API key needed).
 # Returns: 0=healthy, 1=unhealthy
 _probe_opencode() {
@@ -610,6 +709,12 @@ probe_provider() {
 	local force="${2:-false}"
 	local custom_ttl="${3:-}"
 	local quiet="${4:-false}"
+
+	local oauth_pool_exit=0
+	_probe_oauth_pool_cooldown_gate "$provider" "$quiet" || oauth_pool_exit=$?
+	if [[ "$oauth_pool_exit" -eq 2 ]]; then
+		return 2
+	fi
 
 	# Return cached result when still valid (unless forced)
 	if [[ "$force" != "true" ]]; then

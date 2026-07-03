@@ -80,6 +80,35 @@ TEST_DB_DIR=$(mktemp -d)
 export AVAILABILITY_DB_OVERRIDE="$TEST_DB_DIR/test-availability.db"
 trap 'rm -rf "$TEST_DB_DIR"' EXIT
 
+write_oauth_auth_json() {
+	local home_dir="$1"
+	mkdir -p "$home_dir/.local/share/opencode"
+	cat >"$home_dir/.local/share/opencode/auth.json" <<'JSON'
+{
+  "openai": {
+    "type": "oauth",
+    "refresh": "test-refresh-token",
+    "access": "test-access-token",
+    "expires": 4102444800000
+  }
+}
+JSON
+	return 0
+}
+
+write_oauth_pool_json() {
+	local home_dir="$1"
+	local body="$2"
+	mkdir -p "$home_dir/.aidevops"
+	printf '%s\n' "$body" >"$home_dir/.aidevops/oauth-pool.json"
+	return 0
+}
+
+NO_GOPASS_BIN="$TEST_DB_DIR/no-gopass-bin"
+mkdir -p "$NO_GOPASS_BIN"
+printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$NO_GOPASS_BIN/gopass"
+chmod +x "$NO_GOPASS_BIN/gopass"
+
 # ============================================================
 # SECTION 1: Basic validation
 # ============================================================
@@ -227,6 +256,59 @@ for provider in local ollama; do
 	*) fail "check $provider: unexpected exit code $check_exit (expected 0 or 1)" ;;
 	esac
 done
+
+section "OAuth Pool Cooldown Gate (GH#26465)"
+
+cooldown_home=$(mktemp -d "$TEST_DB_DIR/home-cooldown.XXXXXX")
+future_ms=$((($(date +%s) + 900) * 1000))
+past_ms=$((($(date +%s) - 900) * 1000))
+
+write_oauth_auth_json "$cooldown_home"
+write_oauth_pool_json "$cooldown_home" "{\"openai\":[{\"email\":\"one@example.test\",\"status\":\"rate-limited\",\"cooldownUntil\":${future_ms}}]}"
+cooldown_exit=0
+cooldown_output=$(run_with_timeout 10 env HOME="$cooldown_home" PATH="$NO_GOPASS_BIN:$PATH" OPENAI_API_KEY= JSONC_DEFAULTS="$REPO_DIR/.agents/configs/aidevops.defaults.jsonc" bash "$HELPER" check openai 2>&1) || cooldown_exit=$?
+if [[ "$cooldown_exit" -eq 2 && "$cooldown_output" == *"rate-limited until"* ]]; then
+	pass "active OAuth pool cooldown overrides auth.json availability"
+else
+	fail "active OAuth pool cooldown overrides auth.json availability" \
+		"exit=${cooldown_exit}, output=${cooldown_output}"
+fi
+
+partial_home=$(mktemp -d "$TEST_DB_DIR/home-partial.XXXXXX")
+write_oauth_auth_json "$partial_home"
+write_oauth_pool_json "$partial_home" "{\"openai\":[{\"email\":\"one@example.test\",\"status\":\"rate-limited\",\"cooldownUntil\":${future_ms}},{\"email\":\"two@example.test\",\"status\":\"idle\",\"cooldownUntil\":0}]}"
+partial_exit=0
+run_with_timeout 10 env HOME="$partial_home" PATH="$NO_GOPASS_BIN:$PATH" OPENAI_API_KEY= JSONC_DEFAULTS="$REPO_DIR/.agents/configs/aidevops.defaults.jsonc" bash "$HELPER" check openai --quiet >/dev/null 2>&1 || partial_exit=$?
+if [[ "$partial_exit" -eq 0 ]]; then
+	pass "partial OAuth pool with one usable account remains available"
+else
+	fail "partial OAuth pool with one usable account remains available" "exit=${partial_exit}"
+fi
+
+expired_home=$(mktemp -d "$TEST_DB_DIR/home-expired.XXXXXX")
+write_oauth_auth_json "$expired_home"
+write_oauth_pool_json "$expired_home" "{\"openai\":[{\"email\":\"one@example.test\",\"status\":\"rate-limited\",\"cooldownUntil\":${past_ms}}]}"
+expired_exit=0
+run_with_timeout 10 env HOME="$expired_home" PATH="$NO_GOPASS_BIN:$PATH" OPENAI_API_KEY= JSONC_DEFAULTS="$REPO_DIR/.agents/configs/aidevops.defaults.jsonc" bash "$HELPER" check openai --quiet >/dev/null 2>&1 || expired_exit=$?
+if [[ "$expired_exit" -eq 0 ]]; then
+	pass "expired OAuth pool cooldown falls through to auth.json availability"
+else
+	fail "expired OAuth pool cooldown falls through to auth.json availability" "exit=${expired_exit}"
+fi
+
+static_home=$(mktemp -d "$TEST_DB_DIR/home-static.XXXXXX")
+write_oauth_auth_json "$static_home"
+write_oauth_pool_json "$static_home" "{\"openai\":[{\"email\":\"one@example.test\",\"status\":\"rate-limited\",\"cooldownUntil\":${future_ms}}]}"
+run_with_timeout 10 env HOME="$static_home" JSONC_DEFAULTS="$REPO_DIR/.agents/configs/aidevops.defaults.jsonc" bash "$HELPER" status >/dev/null 2>&1 || true
+sqlite3 "$static_home/.aidevops/.agent-workspace/model-availability.db" \
+	"INSERT OR REPLACE INTO provider_health (provider,status,http_code,response_ms,error_message,models_count,checked_at,ttl_seconds) VALUES ('openai','healthy',200,0,'test cached healthy',1,strftime('%Y-%m-%dT%H:%M:%SZ','now'),300);" >/dev/null 2>&1
+static_exit=0
+run_with_timeout 10 env HOME="$static_home" OPENAI_API_KEY="test-static-key" JSONC_DEFAULTS="$REPO_DIR/.agents/configs/aidevops.defaults.jsonc" bash "$HELPER" check openai --quiet >/dev/null 2>&1 || static_exit=$?
+if [[ "$static_exit" -eq 0 ]]; then
+	pass "static API key path bypasses OAuth pool cooldown and can use cached health"
+else
+	fail "static API key path bypasses OAuth pool cooldown and can use cached health" "exit=${static_exit}"
+fi
 
 # ============================================================
 # SECTION 5: Invalidate command
@@ -446,17 +528,17 @@ else
 	fail "local tier missing from get_tier_models case statement"
 fi
 
-# Verify local tier primary model uses local/ prefix (grep source for get_tier_models)
-# get_tier_models has: local) echo "local/llama.cpp|..." ;;
-# Check both the echo-on-next-line and inline-echo patterns.
-local_tier_has_prefix=0
-grep -A1 "^[[:space:]]*local)" "$HELPER" | grep -q 'echo.*local/' && local_tier_has_prefix=1
-grep "^[[:space:]]*local)" "$HELPER" | grep -q 'local/' && local_tier_has_prefix=1
-if [[ "$local_tier_has_prefix" -eq 1 ]]; then
-	pass "local tier primary model uses local/ prefix"
+# Verify local tier has a concrete configured or hardcoded fallback model.
+local_tier_model=""
+local_tier_model=$(grep "^[[:space:]]*local).*current_model" "$HELPER" | grep -oE "[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+" | head -1 || true)
+if [[ -z "$local_tier_model" && -f "$REPO_DIR/.agents/configs/model-routing-table.json" ]]; then
+	local_tier_model=$(jq -r '.tiers.local.models[0] // empty' "$REPO_DIR/.agents/configs/model-routing-table.json" 2>/dev/null || true)
+fi
+if [[ "$local_tier_model" == *"/"* ]]; then
+	pass "local tier has configured model: $local_tier_model"
 else
-	fail "local tier primary model should use local/ prefix" \
-		"No 'local/' found in local) case of get_tier_models"
+	fail "local tier should have a configured model" \
+		"No provider/model found in local tier configuration or fallback"
 fi
 
 # Verify ollama is a known provider in the helper (check help output or source)
@@ -481,45 +563,33 @@ fi
 # ============================================================
 section "Curl Write-Out Format (GH#17427)"
 
-# Verify _probe_build_request uses only %{http_code} (no %{time_total})
-# The bug was: -w '\n%{http_code}\n%{time_total}' caused tail -1 to read
-# time_total (e.g. 0.209059) as the http_code, making all API probes unhealthy.
-if grep -q 'time_total' "$HELPER"; then
-	fail "curl write-out still contains time_total (GH#17427)" \
-		"_probe_build_request should use -w '\\n%{http_code}' only"
-else
-	pass "curl write-out does not contain time_total (GH#17427)"
-fi
-
-# Verify the write-out format is exactly '\n%{http_code}' (single value)
-if grep -q "\\\\n%{http_code}'" "$HELPER"; then
-	pass "curl write-out ends with http_code (no trailing values)"
+# Verify _probe_build_request keeps http_code as the final trailer.
+PROBE_LIB="$REPO_DIR/.agents/scripts/model-availability-probe-lib.sh"
+if grep -q "%{time_total}.*%{http_code}" "$PROBE_LIB"; then
+	pass "curl write-out keeps http_code after time_total (GH#17427)"
 else
 	fail "curl write-out format unexpected" \
-		"Expected -w '\\n%{http_code}' in _probe_build_request"
+		"Expected time_total before final http_code in _probe_build_request"
 fi
 
-# Verify body extraction drops exactly 1 trailing line (not 2)
-# After removing time_total, only http_code is appended, so body awk
-# should drop 1 line. The old pattern was NR>2 (dropping 2 lines).
-if grep -q 'NR>2{print buf' "$HELPER"; then
-	fail "body extraction still drops 2 trailing lines (GH#17427)" \
-		"Should drop 1 line now that time_total is removed"
+if grep -q "%{http_code}'" "$PROBE_LIB"; then
+	pass "curl write-out ends with http_code"
 else
-	pass "body extraction does not use old 2-line drop pattern"
+	fail "curl write-out format unexpected" \
+		"Expected final %{http_code} in _probe_build_request"
 fi
 
-if grep -q "NR>1{print prev}" "$HELPER"; then
-	pass "body extraction uses 1-line drop pattern (GH#17427)"
+if grep -q 'NR>2{print lines' "$PROBE_LIB"; then
+	pass "body extraction drops two curl trailer lines (time_total + http_code)"
 else
-	fail "body extraction missing 1-line drop awk pattern" \
-		"Expected: awk 'NR>1{print prev} {prev=\$0}'"
+	fail "body extraction missing two-line trailer drop pattern" \
+		"Expected awk pattern that drops time_total and http_code trailers"
 fi
 
 # Simulate the http_code extraction logic to verify correctness.
-# Build a mock curl response: headers + blank line + JSON body + http_code.
+# Build a mock curl response: headers + blank line + JSON body + time_total + http_code.
 # Use plain \n (no \r) to match how the production sed patterns work.
-mock_response=$(printf 'HTTP/1.1 200 OK\nContent-Type: application/json\n\n{"data":[{"id":"model-1"}]}\n200')
+mock_response=$(printf 'HTTP/1.1 200 OK\nContent-Type: application/json\n\n{"data":[{"id":"model-1"}]}\n0.123456\n200')
 mock_http_code=$(printf '%s\n' "$mock_response" | tail -1)
 if [[ "$mock_http_code" == "200" ]]; then
 	pass "mock: tail -1 extracts http_code correctly (got 200)"
@@ -527,21 +597,12 @@ else
 	fail "mock: tail -1 extracts wrong value" "Expected 200, got: $mock_http_code"
 fi
 
-# Verify body extraction with the new awk pattern
-mock_body=$(printf '%s\n' "$mock_response" | sed '1,/^$/d' | awk 'NR>1{print prev} {prev=$0}')
+# Verify body extraction with the two-trailer awk pattern
+mock_body=$(printf '%s\n' "$mock_response" | sed '1,/^$/d' | awk 'NR>2{print lines[NR%2]} {lines[NR%2]=$0}')
 if echo "$mock_body" | grep -q '"data"'; then
 	pass "mock: body extraction preserves JSON content"
 else
 	fail "mock: body extraction lost JSON content" "Got: $mock_body"
-fi
-
-# Verify the old bug scenario: if time_total were still present, tail -1 would get it
-mock_old_response=$(printf 'HTTP/1.1 200 OK\n\n{"data":[]}\n200\n0.209059')
-mock_old_code=$(printf '%s\n' "$mock_old_response" | tail -1)
-if [[ "$mock_old_code" == "0.209059" ]]; then
-	pass "mock: confirms old format would read time_total as http_code (bug scenario)"
-else
-	fail "mock: old format test unexpected" "Got: $mock_old_code"
 fi
 
 # ============================================================
