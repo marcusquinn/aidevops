@@ -186,6 +186,11 @@ Field reference:
 
 `password_ref` supports two forms:
 
+1. A `gopass:<path>` reference, which resolves the password from gopass. This is
+   strongly preferred because the secret stays in the encrypted password store.
+2. An environment variable name containing the password. This is permitted for
+   constrained automation, but is less secure and discouraged for production use.
+
 ## Email Thread Reconstruction (t2856)
 
 Email sources with `"kind": "email"` support JWZ-style thread reconstruction.

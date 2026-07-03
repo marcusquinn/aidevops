@@ -73,7 +73,7 @@ Each ingested source should have a `meta.json` alongside its content in `sources
   "sha256": "hex-hash-of-original-file",
   "ingested_at": "2026-04-25T00:00:00Z",
   "ingested_by": "agent-or-username",
-  "sensitivity": "public|internal|confidential|restricted",
+  "sensitivity": "public|internal|pii|sensitive|privileged",
   "trust": "unverified|reviewed|trusted|authoritative",
   "blob_path": null,
   "size_bytes": 12345
@@ -108,7 +108,7 @@ Written at provision time from `.agents/templates/knowledge-config.json`:
   "trust_default": "unverified",
   "blob_threshold_bytes": 31457280,
   "trust_ladder": ["unverified", "reviewed", "trusted", "authoritative"],
-  "sensitivity_levels": ["public", "internal", "confidential", "restricted"],
+  "sensitivity_levels": ["public", "internal", "pii", "sensitive", "privileged"],
   "ingest_policy": {
     "auto_sha256": true,
     "require_meta": true
