@@ -126,6 +126,7 @@ test_gui_desktop_package_contract() {
 	}
 
 	assert_contains "npm package includes Bun lockfile" "$text" '"bun.lock"'
+	assert_contains "npm package includes README metric badges" "$text" '"docs/metrics/"'
 	assert_contains "npm package includes GUI shared sources" "$text" '"packages/gui-shared/src/"'
 	assert_contains "npm package includes GUI API sources" "$text" '"packages/gui-api/src/"'
 	assert_contains "npm package includes GUI web sources" "$text" '"packages/gui-web/src/"'
