@@ -605,7 +605,7 @@ bot_has_real_review() {
 	# and emits a TSV record of created_at \t updated_at \t base64(body).
 	# Reviews lack updated_at on some endpoints; default to created_at via //.
 	local jq_filter
-	jq_filter=".[] | select(.user.login | ascii_downcase | test(\"${bot_login}\")) | [(.created_at // \"\"), (.updated_at // .submitted_at // .created_at // \"\"), (.body // \"\" | @base64)] | @tsv"
+	jq_filter=".[] | select(.user.login | ascii_downcase | test(\"${bot_login}\")) | [(.created_at // .submitted_at // \"\"), (.updated_at // .submitted_at // .created_at // \"\"), (.body // \"\" | @base64)] | @tsv"
 
 	local api_endpoints=(
 		"repos/${repo}/pulls/${pr_number}/reviews"
@@ -1058,7 +1058,7 @@ _classify_bot_state() {
 	min_lag=$(_get_min_edit_lag "$repo" "$bot_login")
 
 	local jq_filter
-	jq_filter=".[] | select(.user.login | ascii_downcase | test(\"${bot_login}\")) | [(.created_at // \"\"), (.updated_at // .submitted_at // .created_at // \"\"), (.body // \"\" | @base64)] | @tsv"
+	jq_filter=".[] | select(.user.login | ascii_downcase | test(\"${bot_login}\")) | [(.created_at // .submitted_at // \"\"), (.updated_at // .submitted_at // .created_at // \"\"), (.body // \"\" | @base64)] | @tsv"
 
 	local api_endpoints=(
 		"repos/${repo}/pulls/${pr_number}/reviews"
