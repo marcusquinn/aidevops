@@ -572,6 +572,88 @@ test_any_bot_success_status_reuses_prepared_contexts() {
 	return 0
 }
 
+# ---------- Integration tests: reviews endpoint submitted_at-only TSV (GH#26473) ----------
+
+install_submitted_at_only_review_gh_stub() {
+	local gh_stub="${TEST_ROOT}/bin/gh"
+
+	cat >"$gh_stub" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${1:-}" != "api" ]]; then
+	exit 2
+fi
+
+endpoint="${2:-}"
+jq_filter=""
+shift 2
+while [[ "$#" -gt 0 ]]; do
+	case "${1:-}" in
+		--jq)
+			jq_filter="${2:-}"
+			shift 2
+			;;
+		*)
+			shift
+			;;
+	esac
+done
+
+case "$endpoint" in
+	repos/testorg/otherrepo/pulls/123/reviews)
+		jq -r "$jq_filter" <<'JSON'
+[
+  {
+    "user": {"login": "reviewbot"},
+    "submitted_at": "2020-01-01T00:00:00Z",
+    "body": "## Review\n\nLooks good. This is a real review body."
+  }
+]
+JSON
+		;;
+	repos/testorg/otherrepo/issues/123/comments|repos/testorg/otherrepo/pulls/123/comments)
+		jq -r "$jq_filter" <<'JSON'
+[]
+JSON
+		;;
+	*)
+		jq -r "$jq_filter" <<'JSON'
+[]
+JSON
+		;;
+esac
+EOF
+	chmod +x "$gh_stub"
+	return 0
+}
+
+test_bot_has_real_review_accepts_submitted_at_only_review() {
+	install_submitted_at_only_review_gh_stub
+
+	if bot_has_real_review 123 'testorg/otherrepo' 'reviewbot' 2>/dev/null; then
+		print_result "bot_has_real_review accepts reviews endpoint submitted_at-only record" 0
+	else
+		print_result "bot_has_real_review accepts reviews endpoint submitted_at-only record" 1 \
+			"expected submitted_at fallback to avoid leading TSV tab field shift"
+	fi
+	return 0
+}
+
+test_classify_bot_state_accepts_submitted_at_only_review() {
+	install_submitted_at_only_review_gh_stub
+
+	local state
+	state=$(_classify_bot_state 123 'testorg/otherrepo' 'reviewbot')
+	if [[ "$state" == "real-review" ]]; then
+		print_result "_classify_bot_state accepts reviews endpoint submitted_at-only record" 0
+	else
+		print_result "_classify_bot_state accepts reviews endpoint submitted_at-only record" 1 \
+			"state=${state}; expected real-review"
+	fi
+	return 0
+}
+
 # ---------- Unit tests: notice category classification (GH#22855) ----------
 
 install_notice_category_gh_stub() {
@@ -851,6 +933,11 @@ main() {
 	test_strict_coderabbit_success_status_passes_edited_comment
 	test_any_bot_success_status_reuses_provided_contexts
 	test_any_bot_success_status_reuses_prepared_contexts
+
+	echo ""
+	echo "=== Reviews endpoint submitted_at fallback (GH#26473) ==="
+	test_bot_has_real_review_accepts_submitted_at_only_review
+	test_classify_bot_state_accepts_submitted_at_only_review
 
 	echo ""
 	echo "=== Notice category classification (GH#22855) ==="
