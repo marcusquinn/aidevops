@@ -239,8 +239,8 @@ or "Single-file config edit with exact code block provided -> tier:simple"}
       it helps the worker choose the right pattern: repo `DESIGN.md` status/path;
       relevant rule or canonical example; similar-but-different alternatives that
       were considered and why they do/do not apply; and responsive/accessibility
-      evidence expected. Reference `tools/design/design-md.md` and
-      `workflows/ui-verification.md` instead of expanding a mandatory design essay. -->
+      evidence expected. Reference `.agents/tools/design/design-md.md` and
+      `.agents/workflows/ui-verification.md` instead of expanding a mandatory design essay. -->
 
 ### Progressive Context Plan
 
