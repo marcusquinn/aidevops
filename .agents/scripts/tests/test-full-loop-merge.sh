@@ -9,6 +9,8 @@
 #   3. Non-branch-protection errors do NOT trigger fallback
 #   4. GraphQL rate-limit errors fall back to REST pull merge after the gate
 #   5. Review-gate failures prevent both CLI merge and REST fallback
+#   6. Interactive --auto review-policy blocks fall through to --admin only
+#      after PR readiness and maintainer-review gates pass
 #
 # Strategy: stub gh, audit-log-helper.sh, and gh-signature-helper.sh in a temp
 # directory prepended to PATH, then source the merge sub-library.
@@ -110,10 +112,13 @@ if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "merge" ]]; then
 		fi
 	done
 
-	if [[ "$mode" == "fallback" || "$mode" == "fallback-nmr" ]]; then
+	if [[ "$mode" == "fallback" || "$mode" == "fallback-nmr" || "$mode" == "auto-review-required" ]]; then
 		if [[ "\$_gh_has_admin" -eq 1 ]]; then
 			echo "Merged PR"
 			exit 0
+		elif [[ "$mode" == "auto-review-required" ]]; then
+			echo "At least 1 approving review is required; cannot approve your own pull request" >&2
+			exit 1
 		else
 			echo "At least 1 approving review is required" >&2
 			exit 1
@@ -138,7 +143,15 @@ write_gh_stub_pr_issue_views() {
 
 	cat >>"${TEST_ROOT}/bin/gh" <<GHSTUB
 
-if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "view" ]]; then
+	if [[ "\$_gh_cmd" == "pr" && "\$_gh_sub" == "view" ]]; then
+	if [[ "\$*" == *"--json isDraft,reviewDecision,statusCheckRollup"* ]]; then
+		if [[ "$mode" == "auto-review-required" ]]; then
+			echo '{"isDraft":false,"reviewDecision":"","statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}]}'
+		else
+			echo '{"isDraft":false,"reviewDecision":"","statusCheckRollup":[]}'
+		fi
+		exit 0
+	fi
 	if [[ "\$*" == *"--json closingIssuesReferences,body"* ]]; then
 		if [[ "$mode" == "fallback-nmr" ]]; then
 			echo '{"closingIssuesReferences":[{"number":24354}],"body":"Resolves #22621"}'
@@ -233,6 +246,7 @@ GHSTUB
 #   $5 = "graphql-rate-limit-rest-fail" — gh pr merge fails with GraphQL quota, REST fails
 #   $6 = "fallback-nmr" — branch protection fails, but linked issue still needs maintainer review
 #   $7 = "stale-cache-401" — first gh pr merge returns cached 401, live auth succeeds, retry succeeds
+#   $8 = "auto-review-required" — --auto is blocked only by self-review policy; --admin succeeds
 create_gh_stub() {
 	local mode="$1"
 
@@ -275,6 +289,7 @@ RUNNER_EOF
 	local rc=0
 	env PATH="${TEST_ROOT}/bin:${scripts_dir}:${PATH}" \
 		HOME="${TEST_ROOT}/home" \
+		FULL_LOOP_HEADLESS="${FULL_LOOP_HEADLESS:-}" \
 		AIDEVOPS_MODEL="test-model" \
 		bash "$tmp_runner" 2>&1 || rc=$?
 	rm -f "$tmp_runner"
@@ -307,6 +322,7 @@ RUNNER_EOF
 	local rc=0
 	env PATH="${TEST_ROOT}/bin:${scripts_dir}:${PATH}" \
 		HOME="${TEST_ROOT}/home" \
+		FULL_LOOP_HEADLESS="${FULL_LOOP_HEADLESS:-}" \
 		AIDEVOPS_MODEL="test-model" \
 		bash "$tmp_runner" 2>&1 || rc=$?
 	rm -f "$tmp_runner"
@@ -526,6 +542,47 @@ test_review_gate_failure_blocks_rest_fallback() {
 	return 0
 }
 
+# Test 7b: Interactive --auto review-required block uses admin fallback when safe.
+test_auto_review_required_interactive_admin_fallback() {
+	rm -f "${TEST_ROOT}/logs/"*.txt
+
+	create_gh_stub "auto-review-required"
+
+	local exit_code=0
+	run_merge_execute "42" "testorg/testrepo" "--squash" "0" "1" >/dev/null 2>&1 || exit_code=$?
+	print_result "auto review-required: interactive admin fallback succeeds" "$exit_code"
+
+	local auto_called=0
+	local admin_called=0
+	if [[ -f "${TEST_ROOT}/logs/gh-calls.txt" ]]; then
+		grep -q -- '--auto' "${TEST_ROOT}/logs/gh-calls.txt" && auto_called=1
+		grep -q -- '--admin' "${TEST_ROOT}/logs/gh-calls.txt" && admin_called=1
+	fi
+	print_result "auto review-required: --auto attempted first" "$((1 - auto_called))"
+	print_result "auto review-required: --admin fallback attempted" "$((1 - admin_called))"
+
+	return 0
+}
+
+# Test 7c: Headless --auto review-required block does not admin-bypass.
+test_auto_review_required_headless_no_admin_fallback() {
+	rm -f "${TEST_ROOT}/logs/"*.txt
+
+	create_gh_stub "auto-review-required"
+
+	local exit_code=0
+	FULL_LOOP_HEADLESS=true run_merge_execute "42" "testorg/testrepo" "--squash" "0" "1" >/dev/null 2>&1 || exit_code=$?
+	print_result "auto review-required headless: merge remains blocked" "$((exit_code == 0 ? 1 : 0))"
+
+	local admin_called=0
+	if [[ -f "${TEST_ROOT}/logs/gh-calls.txt" ]] && grep -q -- '--admin' "${TEST_ROOT}/logs/gh-calls.txt"; then
+		admin_called=1
+	fi
+	print_result "auto review-required headless: --admin not attempted" "$admin_called"
+
+	return 0
+}
+
 # Test 8: cached gh HTTP 401 is quarantined and gh pr merge is retried once.
 test_stale_cache_401_retry() {
 	rm -f "${TEST_ROOT}/logs/"*.txt
@@ -618,6 +675,8 @@ main() {
 	test_graphql_rate_limit_cmd_merge_phase_autofile
 	test_graphql_rate_limit_auto_no_rest_fallback
 	test_review_gate_failure_blocks_rest_fallback
+	test_auto_review_required_interactive_admin_fallback
+	test_auto_review_required_headless_no_admin_fallback
 	test_stale_cache_401_retry
 	test_auth_401_detection_avoids_numeric_false_positives
 

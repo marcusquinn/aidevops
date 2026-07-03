@@ -139,6 +139,40 @@ _merge_output_is_graphql_rate_limit() {
 	return $?
 }
 
+_merge_output_is_review_policy_block() {
+	local merge_output="$1"
+
+	printf '%s' "$merge_output" | grep -qiE 'At least [0-9]+ approving review|approving review is required|review required|cannot approve your own pull request|can not approve your own pull request|self-approval'
+	return $?
+}
+
+_merge_is_headless_session() {
+	case "${FULL_LOOP_HEADLESS:-}${AIDEVOPS_HEADLESS:-}${Claude_HEADLESS:-}${GITHUB_ACTIONS:-}" in
+	*true* | *1*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
+_merge_pr_ready_for_interactive_admin_bypass() {
+	local pr_number="$1"
+	local repo="$2"
+	local pr_json=""
+
+	pr_json=$(gh pr view "$pr_number" --repo "$repo" \
+		--json isDraft,reviewDecision,statusCheckRollup 2>/dev/null) || return 1
+
+	printf '%s' "$pr_json" | jq -e '
+		def up(v): (v // "" | ascii_upcase);
+		def passish: (up(.conclusion) == "SUCCESS" or up(.conclusion) == "NEUTRAL" or up(.conclusion) == "SKIPPED" or up(.state) == "SUCCESS");
+		def terminal_failure: (up(.conclusion) == "FAILURE" or up(.conclusion) == "ERROR" or up(.conclusion) == "CANCELLED" or up(.state) == "FAILURE" or up(.state) == "ERROR");
+		def pendingish: (up(.status) == "QUEUED" or up(.status) == "IN_PROGRESS" or up(.state) == "PENDING" or up(.state) == "EXPECTED" or ((up(.conclusion) == "") and (up(.state) != "SUCCESS") and (up(.status) != "COMPLETED")));
+		(.isDraft != true)
+		and ((.reviewDecision // "") != "CHANGES_REQUESTED")
+		and ([.statusCheckRollup[]? | select(terminal_failure or pendingish or (passish | not))] | length) == 0
+	' >/dev/null
+	return $?
+}
+
 _merge_linked_issue_numbers() {
 	local pr_number="$1"
 	local repo="$2"
@@ -345,6 +379,21 @@ ${_merge_retry_out}"
 		if [[ $has_auto -eq 0 ]] && _merge_output_is_graphql_rate_limit "$_merge_out"; then
 			_merge_rest_fallback "$pr_number" "$repo" "$merge_method" "$pre_merge_head_sha" && return 0
 			return 1
+		elif [[ $has_admin -eq 0 && $has_auto -eq 1 ]] &&
+			! _merge_is_headless_session &&
+			_merge_output_is_review_policy_block "$_merge_out" &&
+			_merge_pr_ready_for_interactive_admin_bypass "$pr_number" "$repo"; then
+			#aidevops:trust-boundary -- interactive admin fallback still enforces linked NMR crypto gate before bypassing review-count protection.
+			_merge_guard_admin_merge_maintainer_review "$pr_number" "$repo" || return 1
+			print_info "Auto-merge is blocked only by review-required branch policy/self-approval; interactive maintainer session is using --admin merge after gates passed."
+			if gh pr merge "$pr_number" --repo "$repo" "$merge_method" --admin 2>&1; then
+				print_success "PR #${pr_number} merged with interactive --admin fallback"
+				_signal_admin_merge_fallback "$pr_number" "$repo" "$merge_method" "$_merge_out"
+				return 0
+			else
+				print_error "Merge failed for PR #${pr_number} (even with --admin — maintainer gate or admin rights missing)"
+				return 1
+			fi
 		# Only fall back to --admin when caller passed neither --admin nor --auto.
 		elif [[ $has_admin -eq 0 && $has_auto -eq 0 ]] &&
 			printf '%s' "$_merge_out" | grep -qE 'base branch policy prohibits|Required status checks? (is|are) expected|At least [0-9]+ approving review'; then
