@@ -308,8 +308,8 @@ test_code_extraction_patterns_are_portable() {
 	local files=("${BASH_SOURCE[0]}")
 	local matches
 
-	if [[ -n "${HELPER:-}" && -f "$HELPER" ]]; then
-		files+=("$HELPER")
+	if [[ -f "${HELPER:-}" ]]; then
+		files+=("${HELPER:-}")
 	fi
 	matches=$(grep -nE "${pcre_flag}|${whitespace_escape}" "${files[@]}" || true)
 
