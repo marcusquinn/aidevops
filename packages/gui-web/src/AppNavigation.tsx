@@ -39,6 +39,19 @@ import { dashboardNavItem, navGroups, sidebarModeForSurface, surfaceRecordCounts
 import { SidebarFooter, wrappedOptionIndex } from "./AppearanceControls";
 import { VaultPadlock, vaultCollectionForSurface } from "./VaultBadges";
 
+function AidevopsPromptIcon() {
+  return (
+    <svg className="brand-icon" viewBox="0 0 1024 1024" role="img" aria-label="AI DevOps prompt icon">
+      <rect className="brand-icon-bg" x="88" y="88" width="848" height="848" rx="188" />
+      <rect className="brand-icon-glow" x="88" y="88" width="848" height="848" rx="188" />
+      <rect className="brand-icon-ring" x="116" y="116" width="792" height="792" rx="160" />
+      <g transform="translate(512 522) scale(0.94) translate(-288 -256)">
+        <path className="brand-icon-glyph" d="M9.4 86.6C-3.1 74.1-3.1 53.9 9.4 41.4s32.8-12.5 45.3 0l192 192c12.5 12.5 12.5 32.8 0 45.3l-192 192c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L178.7 256 9.4 86.6zM256 416H544c17.7 0 32 14.3 32 32s-14.3 32-32 32H256c-17.7 0-32-14.3-32-32s14.3-32 32-32z" />
+      </g>
+    </svg>
+  );
+}
+
 export { hueFromInputValue } from "./AppearanceControls";
 
 const surfaceIcons: Record<SurfaceIconName, IconType> = {
@@ -362,7 +375,7 @@ function SidebarHeader({ setActiveSurface, setShellMode, shellMode }: {
     <header className="sidebar-header">
       <div className="sidebar-titlebar">
         <button className="brand-lockup" onClick={() => { setShellMode("devices"); setActiveSurface(dashboardNavItem.id); }} title="Return to dashboard" type="button">
-          <span className="terminal-mark" aria-hidden="true">›_</span>
+          <AidevopsPromptIcon />
           <strong>{text.aidevops}</strong>
         </button>
         <IconSwitch
