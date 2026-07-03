@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.38] - 2026-07-03
+
+### Fixed
+
+- paginate maintainer gate comment scans (#26481)
+
 ## [3.31.37] - 2026-07-03
 
 ### Fixed
