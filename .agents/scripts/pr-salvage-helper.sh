@@ -322,7 +322,12 @@ fetch_unmerged_pr_records() {
 filter_salvage_candidate_records() {
 	local candidate_records="$1"
 
-	echo "$candidate_records" | jq '[.[] | select((.mergedAt == null) and (.additions > 0) and ((.state // "CLOSED") == "CLOSED"))]' || echo "[]"
+	if [[ -z "$candidate_records" || "$candidate_records" == "[]" ]]; then
+		printf '%s\n' "[]"
+		return 0
+	fi
+
+	printf '%s\n' "$candidate_records" | jq '[.[] | select((.mergedAt == null) and (.additions > 0) and ((.state // "CLOSED") == "CLOSED"))]' || printf '%s\n' "[]"
 	return 0
 }
 
@@ -385,7 +390,6 @@ scan_repo() {
 	local lookback_days="${2:-$DEFAULT_LOOKBACK_DAYS}"
 	local pr_numbers="${3:-}"
 	local unmerged
-	local count
 
 	if [[ -n "$pr_numbers" ]]; then
 		unmerged=$(collect_explicit_pr_records "$slug" "$pr_numbers")
@@ -395,9 +399,8 @@ scan_repo() {
 
 	# Safety filter: remove any that slipped through with mergedAt set or 0 additions
 	unmerged=$(filter_salvage_candidate_records "$unmerged")
-	count=$(echo "$unmerged" | jq 'length')
-	if [[ "$count" -eq 0 ]]; then
-		echo "[]"
+	if [[ -z "$unmerged" || "$unmerged" == "[]" ]]; then
+		printf '%s\n' "[]"
 		return 0
 	fi
 
