@@ -150,6 +150,23 @@ test_cmd_scan_accepts_hash_prefixed_pr_numbers() {
 	return 0
 }
 
+test_filter_returns_empty_array_for_empty_inputs() {
+	# shellcheck source=/dev/null
+	source "${TEST_SCRIPT_DIR}/pr-salvage-helper.sh"
+
+	local empty_result
+	local blank_result
+	empty_result=$(filter_salvage_candidate_records "[]")
+	blank_result=$(filter_salvage_candidate_records "")
+
+	if [[ "$empty_result" == "[]" && "$blank_result" == "[]" ]]; then
+		print_result "filter returns [] for empty candidate inputs" 0
+	else
+		print_result "filter returns [] for empty candidate inputs" 1 "expected both empty outputs to be [], got '${empty_result}' and '${blank_result}'"
+	fi
+	return 0
+}
+
 run_tests() {
 	_save_cleanup_scope
 	trap '_run_cleanups' RETURN
@@ -160,6 +177,7 @@ run_tests() {
 	test_closed_pr_list_requests_state_field
 	test_explicit_pr_numbers_fetch_exact_records
 	test_cmd_scan_accepts_hash_prefixed_pr_numbers
+	test_filter_returns_empty_array_for_empty_inputs
 
 	printf '\nResults: %s run, %s failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 	rm -f "$GH_CLOSED_LIST_ARGS_FILE"
