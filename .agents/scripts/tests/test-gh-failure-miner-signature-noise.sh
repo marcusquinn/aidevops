@@ -81,6 +81,9 @@ assert_equals "GH#26308 caret-escaped ANSI comment-only signature normalizes emp
 signature=$(normalize_signature_line $'^[[36;1m# rate-limit grace is disabled — they cannot merge on rate-limit-only.^[[0m')
 assert_equals "GH#26308 caret-escaped ANSI is stripped during normalization" "# rate-limit grace is disabled — they cannot merge on rate-limit-only." "$signature"
 
+signature=$(normalize_signature_line $'\033[36;1m# rate-limit grace is disabled — they cannot merge on rate-limit-only.\033[0m')
+assert_equals "GH#26308 raw ANSI is stripped during normalization" "# rate-limit grace is disabled — they cannot merge on rate-limit-only." "$signature"
+
 printf '\nTests run: %s, failures: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -ne 0 ]]; then
 	exit 1

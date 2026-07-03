@@ -151,8 +151,7 @@ parse_commit_sha_from_subject_url() {
 normalize_signature_line() {
 	local raw_line="$1"
 	local stripped
-	stripped=$(printf '%s' "$raw_line" | sed -E 's/(\x1B|\^\[)\[[0-9;]*[A-Za-z]//g')
-	stripped=$(printf '%s' "$stripped" | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//')
+	stripped=$(printf '%s' "$raw_line" | sed -E $'s/(\x1b|\\^\\[)\\[[0-9;]*[A-Za-z]//g; s/[[:space:]]+/ /g; s/^ //; s/ $//')
 	if [[ -z "$stripped" ]]; then
 		printf '%s' "no_error_signature_detected"
 		return 0
