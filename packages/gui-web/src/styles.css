@@ -579,7 +579,6 @@ code {
   letter-spacing: -0.05em;
 }
 
-.brand-icon,
 .terminal-mark {
   align-items: center;
   background: color-mix(in srgb, var(--accent) 15%, #0a0a0a);
@@ -601,6 +600,8 @@ code {
   display: block;
   flex: 0 0 auto;
   filter: drop-shadow(0 8px 18px rgb(0 0 0 / 24%));
+  height: 44px;
+  width: 44px;
 }
 
 .brand-icon-bg {
