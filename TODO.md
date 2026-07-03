@@ -1094,7 +1094,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18061 fix(opencode): preserve desktop session history after restart #bug #framework #opencode ref:GH#26394 pr:#26396 completed:2026-07-02
 
-- [ ] t18062 Add attribution guidance and provenance monitoring docs #auto-dispatch #documentation ref:GH#26495
+- [x] t18062 Add attribution guidance and provenance monitoring docs #auto-dispatch #documentation ref:GH#26495 pr:#26496 completed:2026-07-03
 
 ## In Progress
 
@@ -4416,4 +4416,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t8231 Add role account license billing panels #type:fix ref:GH#8231 pr:#8232 completed:2026-07-03
 
 
-- [ ] t18062 Add attribution guidance and provenance monitoring docs #auto-dispatch #documentation ref:GH#26495
+- [x] t18062 Add attribution guidance and provenance monitoring docs #auto-dispatch #documentation ref:GH#26495 pr:#26496 completed:2026-07-03
