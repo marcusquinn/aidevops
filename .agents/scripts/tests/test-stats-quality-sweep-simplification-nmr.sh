@@ -116,10 +116,10 @@ if [[ "$(<"$COUNT_FILE")" == "1" ]]; then
 else
 	fail "simplification-count-stdout" "expected count 1, got: $(<"$COUNT_FILE")"
 fi
-if [[ "$qlty_section" == "caller-owned-section" ]]; then
+if [[ "${qlty_section:-}" == "caller-owned-section" ]]; then
 	pass "simplification-no-caller-qlty-section-mutation"
 else
-	fail "simplification-no-caller-qlty-section-mutation" "caller qlty_section mutated to: $qlty_section"
+	fail "simplification-no-caller-qlty-section-mutation" "caller qlty_section mutated to: ${qlty_section:-<unset>}"
 fi
 
 printf '\n[b] unverified identity keeps NMR\n'
@@ -143,10 +143,10 @@ if [[ "$(<"$COUNT_FILE")" == "1" ]]; then
 else
 	fail "unverified-count-stdout" "expected count 1, got: $(<"$COUNT_FILE")"
 fi
-if [[ "$qlty_section" == "caller-owned-section" ]]; then
+if [[ "${qlty_section:-}" == "caller-owned-section" ]]; then
 	pass "unverified-no-caller-qlty-section-mutation"
 else
-	fail "unverified-no-caller-qlty-section-mutation" "caller qlty_section mutated to: $qlty_section"
+	fail "unverified-no-caller-qlty-section-mutation" "caller qlty_section mutated to: ${qlty_section:-<unset>}"
 fi
 
 export HOME="$ORIGINAL_HOME"
