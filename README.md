@@ -63,17 +63,18 @@ The result: an AI operations platform that manages projects across every busines
 [![Homebrew](https://img.shields.io/badge/homebrew-marcusquinn%2Ftap-orange)](https://github.com/marcusquinn/homebrew-tap)
 [![GitHub repository](https://img.shields.io/badge/github-repository-181717.svg?logo=github)](https://github.com/marcusquinn/aidevops)
 
-<!-- Repository Metrics -->
-[![Lines of code](docs/metrics/badges/loc.svg)](docs/metrics/repo-metrics.md)
-[![Languages by lines of code](docs/metrics/badges/languages.svg)](docs/metrics/repo-metrics.md)
-[![Dependencies](docs/metrics/badges/dependencies.svg)](docs/metrics/repo-metrics.md)
-
 <!-- Framework Specific -->
 [![Services Supported](https://img.shields.io/badge/Services%20Supported-30+-brightgreen.svg)](#comprehensive-service-coverage)
 [![AGENTS.md](https://img.shields.io/badge/AGENTS.md-Compliant-blue.svg)](https://agents.md/)
 [![AI Optimized](https://img.shields.io/badge/AI%20Optimized-Yes-brightgreen.svg)](https://github.com/marcusquinn/aidevops/blob/main/AGENTS.md)
 [![MCP Servers](https://img.shields.io/badge/MCP%20Servers-20-orange.svg)](#mcp-integrations)
 [![API Integrations](https://img.shields.io/badge/API%20Integrations-30+-blue.svg)](#comprehensive-service-coverage)
+
+<!-- Repository Metrics -->
+[![Lines of code](docs/metrics/badges/loc.svg)](docs/metrics/repo-metrics.md)
+[![Dependencies](docs/metrics/badges/dependencies.svg)](docs/metrics/repo-metrics.md)
+
+[![Languages by lines of code](docs/metrics/badges/languages.svg)](docs/metrics/repo-metrics.md)
 
 <!-- AI-CONTEXT-START -->
 
