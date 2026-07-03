@@ -94,10 +94,19 @@ export function PulseWorkersSurface({ status }: { status: GuiStatusData }): Reac
           </div>
           <button disabled={!actionById(pulse.actions, "create_systemic_fix")?.enabled} onClick={() => void runPulseWorkerAction(actionById(pulse.actions, "create_systemic_fix"), setJobs, setSelectedJobId, setDismissedJobIds)} title="Create a worker-ready systemic-fix task from selected evidence" type="button">Create systemic fix task</button>
         </article>
+      </section>
 
-        <section className="pulse-chart-grid" aria-label="Pulse trend charts">
+      <section className="planned-card pulse-trends-panel" aria-label="Pulse trend charts">
+        <div className="split-heading">
+          <div>
+            <p className="eyebrow">Operational trends</p>
+            <h3>Key indicators</h3>
+          </div>
+          <span className="count-pill">single-column chart stack</span>
+        </div>
+        <div className="pulse-chart-grid pulse-chart-stack">
           {chartSeries.map((chart) => <PulseChartPanel chart={chart} key={chart.id} />)}
-        </section>
+        </div>
       </section>
 
       <section className="planned-card pulse-filter-panel" aria-label="Pulse filters">
@@ -227,12 +236,14 @@ function PulseChartPanel({ chart }: { chart: GuiPulseWorkerChartSeries }): React
   const svgPaths = chartSvgPaths(values);
 
   return (
-    <article className="planned-card pulse-chart-panel">
+    <article className="pulse-chart-panel">
       <p className="eyebrow">Trends · compact bars · day/week/month/year</p>
-      <h3>{chart.label}</h3>
-      <div className="pulse-chart-meta">
-        <span><strong>{formatChartValue(latestValue, chart.unit)}</strong><small>Latest</small></span>
-        <span><strong>{trendSummary(trend, chart.unit)}</strong><small>Δ period</small></span>
+      <div className="pulse-chart-heading">
+        <h4>{chart.label}</h4>
+        <div className="pulse-chart-meta">
+          <span><strong>{formatChartValue(latestValue, chart.unit)}</strong><small>Latest</small></span>
+          <span><strong>{trendSummary(trend, chart.unit)}</strong><small>Δ period</small></span>
+        </div>
       </div>
       <div className="pulse-chart-placeholder" aria-label={`${chart.label} chart for day week month year buckets`} role="img">
         <svg aria-hidden="true" className="pulse-chart-sparkline" focusable="false" preserveAspectRatio="none" viewBox="0 0 100 48">

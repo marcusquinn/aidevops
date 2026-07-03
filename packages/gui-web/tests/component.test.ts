@@ -180,6 +180,9 @@ describe("dashboard shell", () => {
     expect(html).toContain("Third-party issues waiting");
     expect(html).toContain("No-verification outcomes");
     expect(html).toContain("Likely cause");
+    expect(html).toContain("Operational trends");
+    expect(html).toContain("Key indicators");
+    expect(html).toContain("single-column chart stack");
     expect(html).toContain("Trends · compact bars · day/week/month/year");
     expect(html).toContain("Latest");
     expect(html).toContain("Δ period");
