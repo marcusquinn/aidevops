@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation: refresh browser-use guidance for CLI 3.0, Browser Harness, and 0.13.x package releases.
+
 ## [3.31.32] - 2026-07-03
 
 ### Fixed
