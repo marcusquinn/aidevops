@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.30] - 2026-07-03
+
+### Added
+
+- refine pulse chart dashboard (#26401)
+
 ## [3.31.29] - 2026-07-03
 
 ### Changed
