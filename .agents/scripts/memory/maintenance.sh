@@ -128,23 +128,24 @@ EOF
 # Validate and warn about stale entries
 #######################################
 _validate_stale_entries() {
+	local stale_warning_days="${STALE_WARNING_DAYS:-30}"
 	local stale_count
-	stale_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$STALE_WARNING_DAYS days') AND a.id IS NULL;")
+	stale_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$stale_warning_days days') AND a.id IS NULL;")
 
 	if [[ "$stale_count" -gt 0 ]]; then
-		log_warn "Found $stale_count potentially stale entries (>$STALE_WARNING_DAYS days old, never accessed)"
+		log_warn "Found $stale_count potentially stale entries (>$stale_warning_days days old, never accessed)"
 		echo ""
 		echo "Stale entries:"
 		db "$MEMORY_DB" <<EOF
 SELECT l.id, l.type, substr(l.content, 1, 60) || '...' as content_preview, l.created_at
 FROM learnings l
 LEFT JOIN learning_access a ON l.id = a.id
-WHERE l.created_at < datetime('now', '-$STALE_WARNING_DAYS days') 
+WHERE l.created_at < datetime('now', '-$stale_warning_days days') 
 AND a.id IS NULL
 LIMIT 10;
 EOF
 		echo ""
-		echo "Run 'memory-helper.sh prune --older-than-days $STALE_WARNING_DAYS' to clean up"
+		echo "Run 'memory-helper.sh prune --older-than-days $stale_warning_days' to clean up"
 	else
 		log_success "No stale entries found"
 	fi
@@ -154,10 +155,10 @@ EOF
 _validate_exact_duplicates() {
 	local dup_count
 	dup_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM (SELECT content, COUNT(*) as cnt FROM learnings GROUP BY content HAVING cnt > 1);" 2>/dev/null || echo "0")
-	VALIDATE_DUP_COUNT="$dup_count"
+	VALIDATE_DUP_COUNT="${dup_count:-0}"
 
-	if [[ "$dup_count" -gt 0 ]]; then
-		log_warn "Found $dup_count groups of exact duplicate entries"
+	if [[ "$VALIDATE_DUP_COUNT" -gt 0 ]]; then
+		log_warn "Found $VALIDATE_DUP_COUNT groups of exact duplicate entries"
 		echo ""
 		echo "Exact duplicates:"
 		db "$MEMORY_DB" <<'EOF'
@@ -181,7 +182,7 @@ EOF
 }
 
 _validate_near_duplicates() {
-	local dup_count="$1"
+	local dup_count="${1:-0}"
 	local near_dup_count
 	near_dup_count=$(
 		db "$MEMORY_DB" <<'EOF'
