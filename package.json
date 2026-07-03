@@ -87,6 +87,7 @@
     "aidevops-*-lib.sh",
     "setup.sh",
     "setup-modules/",
+    "docs/metrics/",
     "bun.lock",
     "packages/gui-shared/package.json",
     "packages/gui-shared/src/",

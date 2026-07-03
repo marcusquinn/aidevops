@@ -1,7 +1,7 @@
 {
   "schema": "aidevops.repo-metrics.v1",
   "schema_version": 1,
-  "generated_at": "2026-06-29T21:59:52Z",
+  "generated_at": "2026-07-03T19:02:38Z",
   "tool": {
     "name": "aidevops repo-metrics",
     "version": "1.0.0"
@@ -11,63 +11,63 @@
     "slug": "marcusquinn/aidevops"
   },
   "summary": {
-    "source_files": 5204,
-    "code": 1008420,
-    "comments": 147390,
-    "blanks": 206584,
+    "source_files": 5298,
+    "code": 1025070,
+    "comments": 148493,
+    "blanks": 209430,
     "languages": 15,
-    "dependencies": 116
+    "dependencies": 123
   },
   "languages": [
     {
       "name": "Shell",
-      "files": 1675,
-      "code": 550502,
-      "comments": 134050,
-      "blanks": 98605,
-      "percentage": 54.59,
+      "files": 1722,
+      "code": 561171,
+      "comments": 135081,
+      "blanks": 100128,
+      "percentage": 54.74,
       "color": "#89e051"
     },
     {
       "name": "Markdown",
-      "files": 2891,
-      "code": 239682,
+      "files": 2923,
+      "code": 241678,
       "comments": 0,
-      "blanks": 80011,
-      "percentage": 23.77,
+      "blanks": 80839,
+      "percentage": 23.58,
       "color": "#083fa1"
     },
     {
       "name": "HTML",
       "files": 54,
-      "code": 126974,
+      "code": 126975,
       "comments": 0,
       "blanks": 14712,
-      "percentage": 12.59,
+      "percentage": 12.39,
       "color": "#e34c26"
     },
     {
       "name": "Python",
-      "files": 148,
-      "code": 24818,
-      "comments": 1477,
-      "blanks": 5444,
-      "percentage": 2.46,
+      "files": 151,
+      "code": 25472,
+      "comments": 1487,
+      "blanks": 5535,
+      "percentage": 2.48,
       "color": "#3572A5"
     },
     {
       "name": "JavaScript",
-      "files": 129,
-      "code": 20884,
-      "comments": 7441,
-      "blanks": 3180,
-      "percentage": 2.07,
+      "files": 131,
+      "code": 21312,
+      "comments": 7488,
+      "blanks": 3230,
+      "percentage": 2.08,
       "color": "#f1e05a"
     },
     {
       "name": "JSON",
       "files": 110,
-      "code": 14560,
+      "code": 14764,
       "comments": 0,
       "blanks": 203,
       "percentage": 1.44,
@@ -75,38 +75,38 @@
     },
     {
       "name": "TypeScript",
-      "files": 77,
-      "code": 10704,
+      "files": 82,
+      "code": 12227,
       "comments": 1771,
-      "blanks": 1540,
-      "percentage": 1.06,
+      "blanks": 1727,
+      "percentage": 1.19,
       "color": "#3178c6"
     },
     {
       "name": "YAML",
       "files": 83,
-      "code": 9616,
-      "comments": 2392,
-      "blanks": 1520,
-      "percentage": 0.95,
+      "code": 9580,
+      "comments": 2407,
+      "blanks": 1515,
+      "percentage": 0.93,
       "color": "#cb171e"
     },
     {
       "name": "CSS",
       "files": 2,
-      "code": 5662,
+      "code": 6215,
       "comments": 11,
-      "blanks": 823,
-      "percentage": 0.56,
+      "blanks": 915,
+      "percentage": 0.61,
       "color": "#563d7c"
     },
     {
       "name": "TSX",
-      "files": 28,
-      "code": 4540,
+      "files": 33,
+      "code": 5198,
       "comments": 169,
-      "blanks": 486,
-      "percentage": 0.45,
+      "blanks": 566,
+      "percentage": 0.51,
       "color": "#3178c6"
     },
     {
@@ -156,9 +156,9 @@
     }
   ],
   "dependencies": {
-    "direct": 116,
+    "direct": 123,
     "locked": 0,
-    "total": 116,
+    "total": 123,
     "ecosystems": [
       "npm",
       "python"
@@ -274,20 +274,27 @@
       {
         "path": "packages/gui-web/package.json",
         "ecosystem": "npm",
-        "direct": 14,
+        "direct": 21,
         "locked": 0,
         "dependencies": [
           "@aidevops/gui-shared",
+          "@fontsource/courier-prime",
+          "@fontsource/dm-mono",
+          "@fontsource/dm-sans",
+          "@fontsource/fredoka",
           "@fontsource/ibm-plex-mono",
           "@fontsource/ibm-plex-sans",
           "@fontsource/ibm-plex-serif",
           "@fontsource/inter",
+          "@fontsource/mohave",
           "@fontsource/playpen-sans",
           "@fontsource/poppins",
           "@fontsource/source-sans-3",
           "@fontsource/source-serif-4",
           "@fontsource/tilt-neon",
+          "@fontsource/ubuntu",
           "@fontsource/ubuntu-mono",
+          "@fontsource/zilla-slab",
           "react",
           "react-dom",
           "react-icons"
