@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.47] - 2026-07-04
+
+### Changed
+
+- Maintenance: mark t18062 complete (pr:#26496 completed:2026-07-03) [skip ci]
+- Add attribution guidance and provenance monitoring docs (#26496)
+- Maintenance: sync ref:GH#26495 to TODO.md [skip ci]
+
+### Fixed
+
+- simplify pulse canonical recovery (#26494)
+
 ## [3.31.46] - 2026-07-03
 
 ### Fixed
