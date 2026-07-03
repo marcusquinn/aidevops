@@ -161,7 +161,7 @@ Verify it posted: `gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '[.[
 full-loop-helper.sh merge "$PR_NUMBER" "$REPO"
 ```
 
-Calls `review-bot-gate-helper.sh wait` (polls every 60s, up to 10 min) then `gh pr merge --squash`. Gate failure blocks merge. Do NOT call `gh pr merge` directly — the wrapper is the only sanctioned merge path. For self-modifying full-loop helper fixes, call the committed worktree path instead: `"$PWD/.agents/scripts/full-loop-helper.sh" merge "$PR_NUMBER" "$REPO"`.
+Calls `review-bot-gate-helper.sh wait` (polls every 60s, up to 10 min) then `gh pr merge --squash`. Gate failure blocks merge. Do NOT call `gh pr merge` directly — the wrapper is the only sanctioned merge path. In interactive admin/maintainer sessions, the wrapper may use `--admin` automatically when branch policy only blocks self-review/review count after checks and NMR gates pass; do not ask the user to approve their own PR. For self-modifying full-loop helper fixes, call the committed worktree path instead: `"$PWD/.agents/scripts/full-loop-helper.sh" merge "$PR_NUMBER" "$REPO"`.
 
 Check gate without merging: `full-loop-helper.sh pre-merge-gate "$PR_NUMBER" "$REPO"`.
 

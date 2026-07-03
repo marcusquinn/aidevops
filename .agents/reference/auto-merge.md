@@ -63,6 +63,8 @@ Interactive sessions operate with the repo admin/owner account. When the trust s
 
 This is bypassing stale/redundant automation state, not bypassing maintainer policy. Keep the merge gated when the issue/PR originates from a non-maintainer and there is no valid cryptographic approval.
 
+`full-loop-helper.sh merge --auto` applies the same rule for interactive sessions: if native auto-merge is already blocked only by review-required branch policy or GitHub self-approval rules, the helper verifies the PR is non-draft, has no `CHANGES_REQUESTED`, has no pending/failing checks, and has no linked issue still carrying `needs-maintainer-review`; then it falls through to `--admin` automatically. Headless workers do not take this fallback.
+
 ### Interactive PR-Drain Mode
 
 Use `pr-drain-helper.sh <owner/repo>` when the goal is maintainer-directed backlog clearing rather than broad baseline cleanup. The helper is read-only by default: it lists open PRs, checks same-repo/non-draft metadata, asks `review-bot-gate-helper.sh status-json` for a machine-readable bot-gate result, inspects merge/conflict state, separates configured baseline-red checks from PR-specific failures, and prints the next command for each PR.
