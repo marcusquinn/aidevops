@@ -9,6 +9,10 @@ MIT-licensed copying is legal; attribution is expected. This system detects dist
 
 **Tool:** `attribution-detection-helper.sh` — see `scripts/attribution-detection-helper.sh`
 
+**Public attribution guide:** see repository `ATTRIBUTION.md` for the required
+MIT notice, preferred derivative credit text, and public list of
+provenance-sensitive innovation areas.
+
 ## Quick Start
 
 ```bash
@@ -46,6 +50,19 @@ attribution-detection-helper.sh canary add my-comment "# aidevops: my-unique-com
 2. **Stable** — won't change frequently (avoid version numbers)
 3. **Searchable** — short enough for GitHub code search (< 256 chars)
 4. **Non-sensitive** — safe to search for publicly
+
+### Behavioural fingerprint areas
+
+Keep exact search strings private, but monitor for distinctive aidevops
+behaviour clusters as well as literal source strings:
+
+- prompt-injection scanning for issue, PR, web, MCP, and tool-output content;
+- `needs-maintainer-review` gates, NMR automation, and cryptographic approvals;
+- interactive issue/PR locking through origin labels, active statuses, and claim stamps;
+- linked-worktree safety and pre-edit gates;
+- review-bot settlement gates before merge;
+- parent-task dispatch blockers and decomposition lifecycle controls;
+- provenance checks, origin pings, and attribution canaries.
 
 ## Private Detection Repo
 

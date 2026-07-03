@@ -76,6 +76,14 @@ The result: an AI operations platform that manages projects across every busines
 
 [![Languages by lines of code](docs/metrics/badges/languages.svg)](docs/metrics/repo-metrics.md)
 
+## Attribution
+
+aidevops is MIT licensed. Reuse is welcome, including commercial use, provided
+the copyright and license notices are retained. If you build a derivative
+framework, automation bot, workflow library, or commercial product from aidevops
+code or distinctive operating patterns, see [ATTRIBUTION.md](ATTRIBUTION.md) for
+the required notices and preferred credit text.
+
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
