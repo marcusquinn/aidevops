@@ -576,9 +576,7 @@ _prefetch_single_repo_tier_skip() {
 		echo "> **Tier skip** — this repo is below hot tier and was checked recently."
 		echo "> Using cached state from last full prefetch."
 		echo ""
-		if [[ -n "$_tier_cache" && "$_tier_cache" != "null" ]]; then
-			PREFETCH_UPDATED_PRS="[]"
-			PREFETCH_UPDATED_ISSUES="[]"
+		if [[ -n "$_tier_cache" ]]; then
 			_prefetch_single_repo_idle_skip "$slug" "$_tier_cache"
 		else
 			echo "### Open PRs [tier-skipped, no cache]"
@@ -597,44 +595,43 @@ _prefetch_single_repo_tier_skip() {
 #######################################
 # Determine delta/full sweep mode for one repo.
 # Arguments: $1=slug, $2=cache_entry
-# Output: sweep mode string
+# Sets: PREFETCH_SWEEP_MODE
 #######################################
 _prefetch_single_repo_sweep_mode() {
 	local slug="$1"
 	local cache_entry="$2"
 
-	local sweep_mode="delta"
+	PREFETCH_SWEEP_MODE="delta"
 	if _prefetch_needs_full_sweep "$cache_entry"; then
-		sweep_mode="$_PREFETCH_ISSUE_SWEEP_FULL"
+		PREFETCH_SWEEP_MODE="$_PREFETCH_ISSUE_SWEEP_FULL"
 		echo "[pulse-wrapper] _prefetch_single_repo: full sweep for ${slug}" >>"$LOGFILE"
 	else
 		echo "[pulse-wrapper] _prefetch_single_repo: delta prefetch for ${slug}" >>"$LOGFILE"
 	fi
-	printf '%s' "$sweep_mode"
 	return 0
 }
 
 #######################################
 # Detect whether cached repo state can be replayed.
 # Arguments: $1=slug, $2=cache_entry, $3=sweep_mode
-# Output: cache_hit and possibly-updated sweep_mode separated by a tab
+# Sets: PREFETCH_CACHE_HIT, PREFETCH_SWEEP_MODE
 #######################################
 _prefetch_single_repo_cache_decision() {
 	local slug="$1"
 	local cache_entry="$2"
 	local sweep_mode="$3"
+	PREFETCH_SWEEP_MODE="$sweep_mode"
 
-	local cache_hit="false"
+	PREFETCH_CACHE_HIT="false"
 	if _prefetch_detect_cache_hit "$slug" "$cache_entry"; then
-		cache_hit="true"
+		PREFETCH_CACHE_HIT="true"
 		echo "[pulse-wrapper] _prefetch_single_repo: STATE CACHE HIT for ${slug} (fingerprint=${PREFETCH_CURRENT_FINGERPRINT})" >>"$LOGFILE"
 	fi
-	if [[ "$cache_hit" == "true" ]] && echo "$cache_entry" | _prefetch_cache_entry_issues_lack_state; then
-		cache_hit="false"
-		sweep_mode="$_PREFETCH_ISSUE_SWEEP_FULL"
+	if [[ "$PREFETCH_CACHE_HIT" == "true" ]] && echo "$cache_entry" | _prefetch_cache_entry_issues_lack_state; then
+		PREFETCH_CACHE_HIT="false"
+		PREFETCH_SWEEP_MODE="$_PREFETCH_ISSUE_SWEEP_FULL"
 		echo "[pulse-wrapper] _prefetch_single_repo: ignoring issue cache hit for ${slug} because cached issue schema lacks state" >>"$LOGFILE"
 	fi
-	printf '%s\t%s\n' "$cache_hit" "$sweep_mode"
 	return 0
 }
 
@@ -725,8 +722,8 @@ _prefetch_single_repo() {
 	# GH#15286: Determine sweep mode from cache
 	local cache_entry
 	cache_entry=$(_prefetch_cache_get "$slug")
-	local sweep_mode
-	sweep_mode=$(_prefetch_single_repo_sweep_mode "$slug" "$cache_entry")
+	_prefetch_single_repo_sweep_mode "$slug" "$cache_entry"
+	local sweep_mode="$PREFETCH_SWEEP_MODE"
 
 	# Reset shared output vars (subshell-safe: each repo runs in its own subshell)
 	PREFETCH_UPDATED_PRS="[]"
@@ -739,10 +736,9 @@ _prefetch_single_repo() {
 	# Open PRs / Queued Issues sections (so the LLM has recent state if it
 	# decides to read deeper) but the LLM-facing summary leads with the
 	# cache-hit signal so cheap cycles stay cheap.
-	local cache_decision="" cache_hit=""
-	cache_decision=$(_prefetch_single_repo_cache_decision "$slug" "$cache_entry" "$sweep_mode")
-	cache_hit="${cache_decision%%$'\t'*}"
-	sweep_mode="${cache_decision#*$'\t'}"
+	_prefetch_single_repo_cache_decision "$slug" "$cache_entry" "$sweep_mode"
+	local cache_hit="$PREFETCH_CACHE_HIT"
+	sweep_mode="$PREFETCH_SWEEP_MODE"
 
 	_prefetch_single_repo_write_output "$slug" "$path" "$outfile" "$cache_entry" "$sweep_mode" "$cache_hit"
 	_prefetch_single_repo_update_cache "$slug" "$cache_entry" "$sweep_mode"
