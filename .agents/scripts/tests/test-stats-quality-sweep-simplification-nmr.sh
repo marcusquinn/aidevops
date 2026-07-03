@@ -16,6 +16,7 @@ TMP=$(mktemp -d "${TMPDIR:-/tmp}/t-sweep-nmr.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT
 
 CREATE_CALLS="${TMP}/create-calls.log"
+COUNT_FILE="${TMP}/created-count.txt"
 LOGFILE="${TMP}/pulse.log"
 export LOGFILE
 
@@ -95,7 +96,8 @@ JSON
 
 printf '\n[a] trusted repo writer skips NMR\n'
 true >"$CREATE_CALLS"
-qlty_section=""
+true >"$COUNT_FILE"
+qlty_section="caller-owned-section"
 _gh_current_user_allows_repo_write() {
 	AIDEVOPS_GH_WRITE_PERMISSION_USER="maintainer"
 	AIDEVOPS_GH_WRITE_PERMISSION_LEVEL="admin"
@@ -103,27 +105,48 @@ _gh_current_user_allows_repo_write() {
 	export AIDEVOPS_GH_WRITE_PERMISSION_USER AIDEVOPS_GH_WRITE_PERMISSION_LEVEL AIDEVOPS_GH_WRITE_PERMISSION_REASON
 	return 0
 }
-_create_simplification_issues "test/repo" "$(make_sarif)"
+_create_simplification_issues "test/repo" "$(make_sarif)" >"$COUNT_FILE"
 if grep -q -- '--label needs-maintainer-review' "$CREATE_CALLS" 2>/dev/null; then
 	fail "trusted-writer-no-nmr-label" "unexpected NMR label: $(cat "$CREATE_CALLS")"
 else
 	pass "trusted-writer-no-nmr-label"
 fi
+if [[ "$(<"$COUNT_FILE")" == "1" ]]; then
+	pass "simplification-count-stdout"
+else
+	fail "simplification-count-stdout" "expected count 1, got: $(<"$COUNT_FILE")"
+fi
+if [[ "$qlty_section" == "caller-owned-section" ]]; then
+	pass "simplification-no-caller-qlty-section-mutation"
+else
+	fail "simplification-no-caller-qlty-section-mutation" "caller qlty_section mutated to: $qlty_section"
+fi
 
 printf '\n[b] unverified identity keeps NMR\n'
 true >"$CREATE_CALLS"
-qlty_section=""
+true >"$COUNT_FILE"
+qlty_section="caller-owned-section"
 unset AIDEVOPS_GH_WRITE_PERMISSION_USER AIDEVOPS_GH_WRITE_PERMISSION_LEVEL AIDEVOPS_GH_WRITE_PERMISSION_REASON
 _gh_current_user_allows_repo_write() {
 	AIDEVOPS_GH_WRITE_PERMISSION_REASON="permission-lookup-failed:api-failure"
 	export AIDEVOPS_GH_WRITE_PERMISSION_REASON
 	return 1
 }
-_create_simplification_issues "test/repo" "$(make_sarif)"
+_create_simplification_issues "test/repo" "$(make_sarif)" >"$COUNT_FILE"
 if grep -q -- '--label needs-maintainer-review' "$CREATE_CALLS" 2>/dev/null; then
 	pass "unverified-keeps-nmr-label"
 else
 	fail "unverified-keeps-nmr-label" "missing NMR label: $(cat "$CREATE_CALLS")"
+fi
+if [[ "$(<"$COUNT_FILE")" == "1" ]]; then
+	pass "unverified-count-stdout"
+else
+	fail "unverified-count-stdout" "expected count 1, got: $(<"$COUNT_FILE")"
+fi
+if [[ "$qlty_section" == "caller-owned-section" ]]; then
+	pass "unverified-no-caller-qlty-section-mutation"
+else
+	fail "unverified-no-caller-qlty-section-mutation" "caller qlty_section mutated to: $qlty_section"
 fi
 
 export HOME="$ORIGINAL_HOME"
