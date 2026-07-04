@@ -111,7 +111,7 @@ _pulse_merge_dispatch_review_thread_remediation() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local reason="$3"
-	local repo_path="" scanner="${_PULSE_MERGE_DIR}/pr-review-thread-response-scanner.sh"
+	local repo_path="" scanner="${_PULSE_MERGE_DIR:-}/pr-review-thread-response-scanner.sh"
 
 	if [[ ! -x "$scanner" ]]; then
 		echo "[pulse-merge] review-thread remediation skipped for PR #${pr_number} in ${repo_slug}: scanner missing or not executable (${scanner})" >>"$LOGFILE"
@@ -265,7 +265,7 @@ _handle_changes_requested_review_gate() {
 	# PRs keep the historical fast-routing behaviour below. Operators who prefer
 	# preserving the PR/review context can opt in to a remediation-first cycle.
 	if _pulse_merge_changes_requested_thread_remediation_first_enabled \
-		&& [[ "$_cr_label_list" == *"${_OW_LABEL_PAT}"* \
+		&& [[ "$_cr_label_list" == *"${_OW_LABEL_PAT:-}"* \
 			|| "$_cr_label_list" == *",origin:worker-takeover,"* ]] \
 		&& [[ "$_cr_label_list" != *",external-contributor,"* ]] \
 		&& [[ "$_cr_label_list" != *",no-takeover,"* ]] \
