@@ -157,7 +157,7 @@ _validate_commit_and_pr_inputs() {
 	local issue_number="$1" commit_message="$2"
 
 	if [[ -z "$issue_number" || -z "$commit_message" ]]; then
-		print_error "Usage: full-loop-helper.sh commit-and-pr --issue <N> --message <msg>"
+		print_error "Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg>"
 		return 1
 	fi
 
