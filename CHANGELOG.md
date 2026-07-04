@@ -14,6 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Maintenance: prepare changelog for 3.31.51
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- add opt-in review-thread remediation before routing (#26546)
+- validate dispatch ledger expire ttl (#26541)
+
+## [3.31.51] - 2026-07-04
+
+### Changed
+
 - Maintenance: update simplification state registry
 
 ### Fixed
