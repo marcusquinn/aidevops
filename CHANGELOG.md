@@ -20,17 +20,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - add opt-in review-thread remediation before routing (#26546)
-- validate dispatch ledger expire ttl (#26541)
-
-## [3.31.51] - 2026-07-04
-
-### Changed
-
-- Maintenance: update simplification state registry
-
-### Fixed
-
-- add opt-in review-thread remediation before routing (#26546)
 - optimize markdoc tag offsets (#26545)
 - harden file-size check args (#26543)
 - guard markdoc tags helper (#26542)
