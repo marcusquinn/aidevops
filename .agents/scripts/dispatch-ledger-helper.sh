@@ -745,6 +745,120 @@ _update_status() {
 
 #######################################
 # Expire old in-flight entries
+# Parse expire command options and print a validated TTL.
+# Args: expire command args
+#######################################
+_cmd_expire_parse_ttl() {
+	local ttl="$DEFAULT_TTL"
+	local option=""
+	local ttl_arg=""
+
+	while [[ $# -gt 0 ]]; do
+		option="${1:-}"
+		case "$option" in
+		--ttl)
+			ttl_arg="${2:-$DEFAULT_TTL}"
+			ttl="$ttl_arg"
+			shift 2
+			;;
+		*)
+			echo "Error: Unknown option for expire: $option" >&2
+			return 1
+			;;
+		esac
+	done
+
+	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl="$DEFAULT_TTL"
+	printf '%s\n' "$ttl"
+	return 0
+}
+
+#######################################
+# Collect ledger line indices that should be expired.
+# Args: $1 = ttl seconds, $2 = current epoch seconds
+# Output: newline-separated zero-based ledger indices
+#######################################
+_cmd_expire_collect_indices() {
+	local ttl="$1"
+	local now_epoch="$2"
+	local tsv_data=""
+	local idx=""
+	local status=""
+	local dispatched_at=""
+	local entry_pid=""
+	local dispatch_epoch=""
+	local age=""
+	local -i should_expire=0
+
+	# GH#21105: single-pass jq extraction. The previous loop forked jq up to
+	# 3x per line (status, dispatched_at, pid) — for 600+ ledger entries this
+	# was ~10s per cycle. One jq invocation produces all needed metadata as TSV;
+	# bash then performs the kill -0 liveness checks (which jq cannot do) and
+	# decides which entries to expire. Final rewrite uses a single jq pass too.
+	tsv_data=$(jq -nr '
+		[inputs] | to_entries[]
+		| .key as $idx | .value as $v
+		| "\($idx)\t\($v.status // "")\t\($v.dispatched_at // "")\t\($v.pid // 0)"
+	' "$LEDGER_FILE" 2>/dev/null) || tsv_data=""
+
+	while IFS=$'\t' read -r idx status dispatched_at entry_pid; do
+		[[ -z "$idx" ]] && continue
+		[[ "$status" != "in-flight" ]] && continue
+
+		should_expire=0
+		if [[ -n "$dispatched_at" ]]; then
+			dispatch_epoch=$(_iso_to_epoch "$dispatched_at")
+			if [[ "$dispatch_epoch" =~ ^[0-9]+$ ]] && [[ "$dispatch_epoch" -gt 0 ]]; then
+				age=$((now_epoch - dispatch_epoch))
+				[[ "$age" -gt "$ttl" ]] && should_expire=1
+			fi
+		fi
+		if ((!should_expire)) && [[ "$entry_pid" =~ ^[0-9]+$ ]] && [[ "$entry_pid" -gt 0 ]]; then
+			if ! kill -0 "$entry_pid" 2>/dev/null; then
+				should_expire=1
+			fi
+		fi
+
+		if ((should_expire)); then
+			printf '%s\n' "$idx"
+		fi
+	done <<<"$tsv_data"
+
+	return 0
+}
+
+#######################################
+# Rewrite the ledger, marking selected indices failed.
+# Args: $1 = comma-separated indices, $2 = updated_at timestamp, $3 = tmp file
+#######################################
+_cmd_expire_rewrite_failed() {
+	local indices_csv="$1"
+	local now_ts="$2"
+	local tmp_file="$3"
+
+	# Two subtleties learned the hard way during GH#21105:
+	#   1. -n is REQUIRED: without it, jq consumes the first JSON line as
+	#      its initial input, then `[inputs]` collects only entries 2..N.
+	#      Indices in $exp (assigned by the matching -n TSV pass above)
+	#      become off-by-one, and the first ledger entry is silently
+	#      dropped from the rewritten file.
+	#   2. .key MUST be bound to $k BEFORE the pipe into $exp. Writing
+	#      `$exp | index(.key)` evaluates `.key` against $exp (an array)
+	#      and jq raises "Cannot index array with string 'key'", which
+	#      `2>/dev/null` would swallow into the cp fallback path.
+	jq -nc --arg ts "$now_ts" --argjson exp "[${indices_csv}]" '
+		[inputs] | to_entries[]
+		| .key as $k
+		| if (($exp | index($k)) != null)
+		  then .value | .status = "failed" | .updated_at = $ts
+		  else .value
+		  end
+	' "$LEDGER_FILE" >"$tmp_file" 2>/dev/null
+	return $?
+}
+
+#######################################
+# Expire old in-flight entries
 #
 # Entries older than TTL seconds are marked "failed" (assumed dead).
 # Entries with dead PIDs are also marked "failed" regardless of age.
@@ -757,22 +871,8 @@ _update_status() {
 # Output: count of expired entries
 #######################################
 cmd_expire() {
-	local ttl="$DEFAULT_TTL"
-
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--ttl)
-			ttl="${2:-$DEFAULT_TTL}"
-			shift 2
-			;;
-		*)
-			echo "Error: Unknown option for expire: $1" >&2
-			return 1
-			;;
-		esac
-	done
-
-	[[ "$ttl" =~ ^[0-9]+$ ]] || ttl="$DEFAULT_TTL"
+	local ttl=""
+	ttl=$(_cmd_expire_parse_ttl "$@") || return 1
 
 	_ensure_ledger
 	if ! _acquire_lock; then
@@ -793,75 +893,24 @@ cmd_expire() {
 	local expired_count=0
 	local tmp_file
 	tmp_file=$(mktemp "${LEDGER_DIR}/dispatch-ledger.XXXXXX")
+	local expire_indices=""
+	expire_indices=$(_cmd_expire_collect_indices "$ttl" "$now_epoch")
 
-	# GH#21105: single-pass jq extraction. The previous loop forked jq up to
-	# 3x per line (status, dispatched_at, pid) — for 600+ ledger entries this
-	# was ~10s per cycle. One jq invocation produces all needed metadata as TSV;
-	# bash then performs the kill -0 liveness checks (which jq cannot do) and
-	# decides which entries to expire. Final rewrite uses a single jq pass too.
-	local tsv_data
-	tsv_data=$(jq -nr '
-		[inputs] | to_entries[]
-		| .key as $idx | .value as $v
-		| "\($idx)\t\($v.status // "")\t\($v.dispatched_at // "")\t\($v.pid // 0)"
-	' "$LEDGER_FILE" 2>/dev/null) || tsv_data=""
-
-	# Walk the TSV and collect ledger line indices that need to be expired.
-	# should_expire is an integer (0/1) rather than a "true"/"false" string
-	# to avoid tripping the repeated-string-literal ratchet on the value.
-	local -a expire_indices=()
-	local idx status dispatched_at entry_pid dispatch_epoch age
-	local -i should_expire
-	while IFS=$'\t' read -r idx status dispatched_at entry_pid; do
-		[[ -z "$idx" ]] && continue
-		[[ "$status" != "in-flight" ]] && continue
-
-		should_expire=0
-		if [[ -n "$dispatched_at" ]]; then
-			dispatch_epoch=$(_iso_to_epoch "$dispatched_at")
-			if [[ "$dispatch_epoch" =~ ^[0-9]+$ ]] && [[ "$dispatch_epoch" -gt 0 ]]; then
-				age=$((now_epoch - dispatch_epoch))
-				if [[ "$age" -gt "$ttl" ]]; then
-					should_expire=1
-				fi
+	if [[ -n "$expire_indices" ]]; then
+		local indices_csv=""
+		local expire_index=""
+		while IFS= read -r expire_index; do
+			[[ -z "$expire_index" ]] && continue
+			expired_count=$((expired_count + 1))
+			if [[ -z "$indices_csv" ]]; then
+				indices_csv="$expire_index"
+			else
+				indices_csv="${indices_csv},${expire_index}"
 			fi
-		fi
-		if ((!should_expire)) && [[ "$entry_pid" =~ ^[0-9]+$ ]] && [[ "$entry_pid" -gt 0 ]]; then
-			if ! kill -0 "$entry_pid" 2>/dev/null; then
-				should_expire=1
-			fi
-		fi
-
-		if ((should_expire)); then
-			expire_indices+=("$idx")
-		fi
-	done <<<"$tsv_data"
-
-	expired_count=${#expire_indices[@]}
-
-	if [[ "$expired_count" -gt 0 ]]; then
+		done <<<"$expire_indices"
 		# Single jq pass rewrites the file: entries at the listed indices have
 		# their status flipped to "failed" with a fresh updated_at timestamp.
-		local indices_csv
-		indices_csv=$(IFS=,; printf '%s' "${expire_indices[*]}")
-		# Two subtleties learned the hard way during GH#21105:
-		#   1. -n is REQUIRED: without it, jq consumes the first JSON line as
-		#      its initial input, then `[inputs]` collects only entries 2..N.
-		#      Indices in $exp (assigned by the matching -n TSV pass above)
-		#      become off-by-one, and the first ledger entry is silently
-		#      dropped from the rewritten file.
-		#   2. .key MUST be bound to $k BEFORE the pipe into $exp. Writing
-		#      `$exp | index(.key)` evaluates `.key` against $exp (an array)
-		#      and jq raises "Cannot index array with string 'key'", which
-		#      `2>/dev/null` would swallow into the cp fallback path.
-		if ! jq -nc --arg ts "$now_ts" --argjson exp "[${indices_csv}]" '
-			[inputs] | to_entries[]
-			| .key as $k
-			| if (($exp | index($k)) != null)
-			  then .value | .status = "failed" | .updated_at = $ts
-			  else .value
-			  end
-		' "$LEDGER_FILE" >"$tmp_file" 2>/dev/null; then
+		if ! _cmd_expire_rewrite_failed "$indices_csv" "$now_ts" "$tmp_file"; then
 			# jq failure: preserve original file rather than risk corruption.
 			cp "$LEDGER_FILE" "$tmp_file"
 			expired_count=0
