@@ -504,15 +504,15 @@ cmd_check_scan_head() {
 # cmd_check_run_diff <base-tsv> <head-tsv> <base-sha> <head-sha> <output-md> <allow>
 # ---------------------------------------------------------------------------
 cmd_check_run_diff() {
-	local _base_tsv="$1"
-	local _head_tsv="$2"
-	local _base_sha="$3"
-	local _head_sha="$4"
-	local _output_md="$5"
-	local _allow_increase="$6"
+	local _base_tsv="${1:-}"
+	local _head_tsv="${2:-}"
+	local _base_sha="${3:-}"
+	local _head_sha="${4:-}"
+	local _output_md="${5:-}"
+	local _allow_increase="${6:-0}"
 	local _diff_exit=0
 
-	if [ -n "$_output_md" ] && [ "$_allow_increase" -eq 1 ]; then
+	if [ -n "$_output_md" ] && [ "$_allow_increase" = "1" ]; then
 		cmd_diff --base-file "$_base_tsv" --head-file "$_head_tsv" \
 			--base-sha "$_base_sha" --head-sha "$_head_sha" \
 			--output-md "$_output_md" --allow-increase || _diff_exit=$?
@@ -520,7 +520,7 @@ cmd_check_run_diff() {
 		cmd_diff --base-file "$_base_tsv" --head-file "$_head_tsv" \
 			--base-sha "$_base_sha" --head-sha "$_head_sha" \
 			--output-md "$_output_md" || _diff_exit=$?
-	elif [ "$_allow_increase" -eq 1 ]; then
+	elif [ "$_allow_increase" = "1" ]; then
 		cmd_diff --base-file "$_base_tsv" --head-file "$_head_tsv" \
 			--base-sha "$_base_sha" --head-sha "$_head_sha" \
 			--allow-increase || _diff_exit=$?
