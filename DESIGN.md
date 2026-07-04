@@ -267,7 +267,7 @@ Core component rules:
 - Use a rounded black square with subtle cyan glow, a cyan ring at low opacity, and `#8ce8ff` prompt glyph fill.
 - Prompt glyph placement follows the current website asset: `translate(512 522) scale(0.94) translate(-288 -256)` inside a `1024x1024` SVG viewBox.
 - Icon SVGs should include accessible names when they are content-bearing; decorative duplicates should be hidden from assistive technology.
-- The desktop app launch path should show one branded loading treatment: defer native WebKit startup to the web loading shell and keep the React loading skeleton visually identical so users do not see multiple distinct loading screens.
+- The desktop app launch path should show one branded loading treatment: defer native WebKit startup to the web loading shell, avoid replacing it with a second React-only loader during hydration, and use a compact cyan `>_` prompt followed by `Preparing local GUI` in Inter for any startup status chip.
 
 ## Design capture during harness sessions
 

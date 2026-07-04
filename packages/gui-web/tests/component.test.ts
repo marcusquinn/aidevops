@@ -453,7 +453,14 @@ describe("dashboard shell", () => {
 
   test("keeps the loading skeleton aligned to the shell landmarks", () => {
     expect(loadingSkeletonPanelLabels).toEqual(["machine rail", "sidebar", "workspace", "status bar"]);
-    expect(loadingBrandGlyph).toBe("AI DevOps prompt icon");
+    expect(loadingBrandGlyph).toBe("compact prompt status");
+  });
+
+  test("renders the hydrated app immediately with status refresh in progress", () => {
+    const appSource = readFileSync(`${guiWebRoot}/src/App.tsx`, "utf8");
+
+    expect(appSource).not.toContain("if (statusLoading)");
+    expect(appSource).toContain("aria-busy={statusLoading}");
   });
 
   test("wires desktop screenshot capture controls to native save notifications", () => {
@@ -489,11 +496,14 @@ describe("dashboard shell", () => {
     const css = readFileSync(`${guiWebRoot}/src/styles.css`, "utf8");
 
     expect(html).toContain("loading-brand-overlay");
-    expect(html).toContain("loading-brand-icon");
-    expect(html).toContain("#8ce8ff");
+    expect(html).toContain("loading-brand-chevron");
+    expect(html).toContain("Preparing local GUI");
     expect(html).toContain("loading-cursor-blink");
     expect(html).toContain("aidevops-gui-theme");
     expect(html).toContain("app-loading-shell");
+    expect(html).not.toContain("loading-brand-word");
+    expect(html).not.toContain("loading-brand-icon");
+    expect(css).not.toContain(".loading-brand-word");
     expect(css).toMatch(/font-family:\s*var\(--font-family-app\);/);
   });
 
