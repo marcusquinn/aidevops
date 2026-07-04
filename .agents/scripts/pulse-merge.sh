@@ -107,23 +107,40 @@ _pulse_merge_repo_path_for_slug() {
 	return 0
 }
 
+_pulse_merge_dispatch_review_thread_remediation() {
+	local pr_number="$1"
+	local repo_slug="$2"
+	local reason="$3"
+	local repo_path="" scanner="${_PULSE_MERGE_DIR}/pr-review-thread-response-scanner.sh"
+
+	if [[ ! -x "$scanner" ]]; then
+		echo "[pulse-merge] review-thread remediation skipped for PR #${pr_number} in ${repo_slug}: scanner missing or not executable (${scanner})" >>"$LOGFILE"
+		return 1
+	fi
+	if ! repo_path="$(_pulse_merge_repo_path_for_slug "$repo_slug")"; then
+		echo "[pulse-merge] review-thread remediation skipped for PR #${pr_number} in ${repo_slug}: repo path not found in configured repos" >>"$LOGFILE"
+		return 1
+	fi
+	if ! PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN=true "$scanner" dispatch-pr "$repo_slug" "$repo_path" "$pr_number" >>"$LOGFILE" 2>&1; then
+		echo "[pulse-merge] review-thread remediation dispatch failed for PR #${pr_number} in ${repo_slug} ${reason}" >>"$LOGFILE"
+		return 1
+	fi
+	echo "[pulse-merge] review-thread remediation queued for PR #${pr_number} in ${repo_slug} ${reason}" >>"$LOGFILE"
+	return 0
+}
+
 _pulse_merge_maybe_dispatch_review_thread_remediation() {
 	local pr_number="$1"
 	local repo_slug="$2"
 	local merge_output="$3"
-	local repo_path="" scanner="${_PULSE_MERGE_DIR}/pr-review-thread-response-scanner.sh"
 
 	[[ "$merge_output" == *"A conversation must be resolved"* ]] || return 0
-	if [[ ! -x "$scanner" ]]; then
-		echo "[pulse-merge] review-thread remediation skipped for PR #${pr_number} in ${repo_slug}: scanner missing or not executable (${scanner})" >>"$LOGFILE"
-		return 0
-	fi
-	if ! repo_path="$(_pulse_merge_repo_path_for_slug "$repo_slug")"; then
-		echo "[pulse-merge] review-thread remediation skipped for PR #${pr_number} in ${repo_slug}: repo path not found in configured repos" >>"$LOGFILE"
-		return 0
-	fi
-	PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN=true "$scanner" dispatch-pr "$repo_slug" "$repo_path" "$pr_number" >>"$LOGFILE" 2>&1 || true
-	echo "[pulse-merge] review-thread remediation queued for PR #${pr_number} in ${repo_slug} after unresolved conversation merge blocker" >>"$LOGFILE"
+	_pulse_merge_dispatch_review_thread_remediation "$pr_number" "$repo_slug" "after unresolved conversation merge blocker" || true
+	return 0
+}
+
+_pulse_merge_changes_requested_thread_remediation_first_enabled() {
+	[[ "${AIDEVOPS_CHANGES_REQUESTED_THREAD_REMEDIATION_FIRST:-0}" == "1" ]] || return 1
 	return 0
 }
 
@@ -243,8 +260,23 @@ _handle_changes_requested_review_gate() {
 		return 1
 	fi
 
-	# No coderabbit-nits-ok label — route worker-authored PRs for fix
-	# dispatch and skip the merge (t2203: consolidated in helper).
+	local _cr_label_list=",${_cr_pr_labels},"
+	# Optional policy override (GH#26535): by default CHANGES_REQUESTED worker
+	# PRs keep the historical fast-routing behaviour below. Operators who prefer
+	# preserving the PR/review context can opt in to a remediation-first cycle.
+	if _pulse_merge_changes_requested_thread_remediation_first_enabled \
+		&& [[ "$_cr_label_list" == *"${_OW_LABEL_PAT}"* \
+			|| "$_cr_label_list" == *",origin:worker-takeover,"* ]] \
+		&& [[ "$_cr_label_list" != *",external-contributor,"* ]] \
+		&& [[ "$_cr_label_list" != *",no-takeover,"* ]] \
+		&& [[ "$_cr_label_list" != *",review-routed-to-issue,"* ]] \
+		&& _pulse_merge_dispatch_review_thread_remediation "$pr_number" "$repo_slug" "after CHANGES_REQUESTED review gate"; then
+		echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — reviewDecision=CHANGES_REQUESTED; review-thread remediation queued" >>"$LOGFILE"
+		return 1
+	fi
+
+	# If remediation is unavailable or fails to dispatch, route worker-authored
+	# PRs for fix dispatch and skip the merge (t2203: consolidated in helper).
 	_route_pr_to_fix_worker "$pr_number" "$repo_slug" "$linked_issue" "review" "$_cr_pr_labels" || true
 	echo "[pulse-wrapper] Merge pass: skipping PR #${pr_number} in ${repo_slug} — reviewDecision=CHANGES_REQUESTED" >>"$LOGFILE"
 	return 1
