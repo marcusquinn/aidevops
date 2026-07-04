@@ -290,6 +290,9 @@ RUNNER_EOF
 	env PATH="${TEST_ROOT}/bin:${scripts_dir}:${PATH}" \
 		HOME="${TEST_ROOT}/home" \
 		FULL_LOOP_HEADLESS="${FULL_LOOP_HEADLESS:-}" \
+		AIDEVOPS_HEADLESS= \
+		Claude_HEADLESS= \
+		GITHUB_ACTIONS= \
 		AIDEVOPS_MODEL="test-model" \
 		bash "$tmp_runner" 2>&1 || rc=$?
 	rm -f "$tmp_runner"
@@ -660,6 +663,69 @@ test_auth_401_detection_avoids_numeric_false_positives() {
 	return 0
 }
 
+# Test 10: PR readiness accepts pre-fetched JSON and does not call gh again.
+test_pr_ready_accepts_prefetched_json() {
+	rm -f "${TEST_ROOT}/logs/"*.txt
+
+	cat >"${TEST_ROOT}/bin/gh" <<GHSTUB
+#!/usr/bin/env bash
+echo "gh \$*" >> "${TEST_ROOT}/logs/gh-calls.txt"
+exit 90
+GHSTUB
+	chmod +x "${TEST_ROOT}/bin/gh"
+
+	local scripts_dir="${SCRIPT_DIR}/.."
+	local tmp_runner=""
+	tmp_runner=$(mktemp)
+	cat >"$tmp_runner" <<RUNNER_EOF
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR='${scripts_dir}'
+source '${scripts_dir}/shared-constants.sh'
+source '${scripts_dir}/full-loop-helper-merge.sh'
+_merge_pr_ready_for_interactive_admin_bypass '42' 'testorg/testrepo' '{"isDraft":false,"reviewDecision":"","statusCheckRollup":[{"name":"ci","conclusion":"SUCCESS","status":"COMPLETED"}]}'
+RUNNER_EOF
+	chmod +x "$tmp_runner"
+
+	local rc=0
+	env PATH="${TEST_ROOT}/bin:${scripts_dir}:${PATH}" bash "$tmp_runner" >/dev/null 2>&1 || rc=$?
+	rm -f "$tmp_runner"
+
+	print_result "PR readiness: prefetched passing JSON is accepted" "$rc"
+
+	local gh_called=0
+	[[ -f "${TEST_ROOT}/logs/gh-calls.txt" ]] && gh_called=1
+	print_result "PR readiness: prefetched JSON skips gh pr view" "$gh_called"
+
+	return 0
+}
+
+# Test 11: simplified passish check still blocks non-passing rollup entries.
+test_pr_ready_blocks_nonpassing_rollup() {
+	rm -f "${TEST_ROOT}/logs/"*.txt
+
+	local scripts_dir="${SCRIPT_DIR}/.."
+	local tmp_runner=""
+	tmp_runner=$(mktemp)
+	cat >"$tmp_runner" <<RUNNER_EOF
+#!/usr/bin/env bash
+set -euo pipefail
+SCRIPT_DIR='${scripts_dir}'
+source '${scripts_dir}/shared-constants.sh'
+source '${scripts_dir}/full-loop-helper-merge.sh'
+_merge_pr_ready_for_interactive_admin_bypass '42' 'testorg/testrepo' '{"isDraft":false,"reviewDecision":"","statusCheckRollup":[{"name":"ci","conclusion":"","status":"IN_PROGRESS"}]}'
+RUNNER_EOF
+	chmod +x "$tmp_runner"
+
+	local rc=0
+	env PATH="${TEST_ROOT}/bin:${scripts_dir}:${PATH}" bash "$tmp_runner" >/dev/null 2>&1 || rc=$?
+	rm -f "$tmp_runner"
+
+	print_result "PR readiness: non-passing rollup remains blocked" "$((rc == 0 ? 1 : 0))"
+
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -679,6 +745,8 @@ main() {
 	test_auto_review_required_headless_no_admin_fallback
 	test_stale_cache_401_retry
 	test_auth_401_detection_avoids_numeric_false_positives
+	test_pr_ready_accepts_prefetched_json
+	test_pr_ready_blocks_nonpassing_rollup
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

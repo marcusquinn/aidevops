@@ -156,19 +156,19 @@ _merge_is_headless_session() {
 _merge_pr_ready_for_interactive_admin_bypass() {
 	local pr_number="$1"
 	local repo="$2"
-	local pr_json=""
+	local pr_json="${3:-}"
 
-	pr_json=$(gh pr view "$pr_number" --repo "$repo" \
-		--json isDraft,reviewDecision,statusCheckRollup 2>/dev/null) || return 1
+	if [[ -z "$pr_json" ]]; then
+		pr_json=$(gh pr view "$pr_number" --repo "$repo" \
+			--json isDraft,reviewDecision,statusCheckRollup 2>/dev/null) || return 1
+	fi
 
 	printf '%s' "$pr_json" | jq -e '
 		def up(v): (v // "" | ascii_upcase);
 		def passish: (up(.conclusion) == "SUCCESS" or up(.conclusion) == "NEUTRAL" or up(.conclusion) == "SKIPPED" or up(.state) == "SUCCESS");
-		def terminal_failure: (up(.conclusion) == "FAILURE" or up(.conclusion) == "ERROR" or up(.conclusion) == "CANCELLED" or up(.state) == "FAILURE" or up(.state) == "ERROR");
-		def pendingish: (up(.status) == "QUEUED" or up(.status) == "IN_PROGRESS" or up(.state) == "PENDING" or up(.state) == "EXPECTED" or ((up(.conclusion) == "") and (up(.state) != "SUCCESS") and (up(.status) != "COMPLETED")));
 		(.isDraft != true)
 		and ((.reviewDecision // "") != "CHANGES_REQUESTED")
-		and ([.statusCheckRollup[]? | select(terminal_failure or pendingish or (passish | not))] | length) == 0
+		and ([.statusCheckRollup[]? | select(passish | not)] | length) == 0
 	' >/dev/null
 	return $?
 }
