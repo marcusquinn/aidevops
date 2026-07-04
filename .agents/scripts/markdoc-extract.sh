@@ -201,7 +201,8 @@ _build_tags_json() {
 
 	local _py_exit=0
 	if [[ ! -f "${TAGS_JSON_PY:-}" ]]; then
-		printf 'ERROR: Python helper script not found: %s\n' "${TAGS_JSON_PY:-}" >&2
+		printf '%b[%s] ERROR: Python helper script not found: %s%b\n' \
+			"$RED" "$SCRIPT_NAME" "${TAGS_JSON_PY:-}" "$NC" >&2
 		_py_exit=2
 	else
 		python3 "${TAGS_JSON_PY:-}" "$_file" "$_tsv_file" || _py_exit=$?
