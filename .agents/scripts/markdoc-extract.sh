@@ -200,7 +200,12 @@ _build_tags_json() {
 	_parse_tags "$_file" >"$_tsv_file"
 
 	local _py_exit=0
-	python3 "$TAGS_JSON_PY" "$_file" "$_tsv_file" || _py_exit=$?
+	if [[ ! -f "${TAGS_JSON_PY:-}" ]]; then
+		printf 'ERROR: Python helper script not found: %s\n' "${TAGS_JSON_PY:-}" >&2
+		_py_exit=2
+	else
+		python3 "${TAGS_JSON_PY:-}" "$_file" "$_tsv_file" || _py_exit=$?
+	fi
 
 	rm -f "$_tsv_file"
 	if [[ "$_py_exit" -ne 0 ]]; then
