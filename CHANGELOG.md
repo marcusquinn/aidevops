@@ -12,6 +12,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.31.50] - 2026-07-04
 
+### Changed
+
+- Maintenance: prepare changelog for 3.31.50
+- Maintenance: sync GitHub issue refs to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- add full-loop create-pr alias (#26536)
+- reduce dispatch ledger expire complexity (#26530)
+- reduce markdoc extract function complexity (#26527)
+- reduce headless run finish complexity (#26523)
+- refactor admin merge readiness check (#26522)
+
+## [3.31.50] - 2026-07-04
+
 ### Fixed
 
 - add full-loop `create-pr` alias for `commit-and-pr` (#26536)
