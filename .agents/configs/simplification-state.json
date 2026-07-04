@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-04T02:16:42Z",
-      "hash": "23a7916809ec081e4342cd39e159433b416d6961",
-      "passes": 250,
+      "at": "2026-07-04T13:18:16Z",
+      "hash": "bd266e7a8c980eab013a4e31642482421973c2bd",
+      "passes": 251,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-04T02:16:43Z",
-      "hash": "ee128a9cdf9cf0bb80b6268c248e2838934d1f18",
-      "passes": 246,
+      "at": "2026-07-04T13:18:17Z",
+      "hash": "896c12a60bb20e3c8c91af7103014b12176d8b61",
+      "passes": 247,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7960,10 +7960,10 @@
       "passes": 1
     },
     ".agents/scripts/tests/test-full-loop-merge.sh": {
-      "hash": "151f8328cd05d914c96331fd36f674d02b6f3940",
-      "at": "2026-07-04T01:56:07Z",
+      "hash": "109ef99528824d13dd087dd829d0ee3ef120e85b",
+      "at": "2026-07-04T11:06:41Z",
       "pr": 25930,
-      "passes": 2
+      "passes": 3
     },
     ".agents/scripts/tests/test-gh-wrapper-rest-fallback.sh": {
       "hash": "0729bdbaaf86678d28aa33e6303a1e7235a230ed",
@@ -8035,6 +8035,36 @@
       "hash": "5f0c76b92c2e9d2bee476ff48dc07a983855337d",
       "at": "2026-07-04T02:16:46Z",
       "pr": 26346,
+      "passes": 1
+    },
+    ".agents/scripts/dispatch-ledger-helper.sh": {
+      "hash": "78ac43b0ef434eec12d8ff8090191d894acae9a4",
+      "at": "2026-07-04T13:18:21Z",
+      "pr": 26526,
+      "passes": 1
+    },
+    ".agents/scripts/file-size-regression-helper.sh": {
+      "hash": "ef75c8eec2ac2769da3d0b9062334adb9ba631d2",
+      "at": "2026-07-04T13:18:21Z",
+      "pr": 26524,
+      "passes": 1
+    },
+    ".agents/scripts/headless-runtime-worker.sh": {
+      "hash": "3575da0e91868c8a5e456e43a024183141ee43a6",
+      "at": "2026-07-04T13:18:21Z",
+      "pr": 26521,
+      "passes": 1
+    },
+    ".agents/scripts/install-hooks-helper.sh": {
+      "hash": "3b76a651506f69b5d691b930d307e1e8e38342bb",
+      "at": "2026-07-04T13:18:21Z",
+      "pr": 26520,
+      "passes": 1
+    },
+    ".agents/scripts/markdoc-extract.sh": {
+      "hash": "23bb9568f897d3887c629d4175a72cbb103e2e9a",
+      "at": "2026-07-04T13:18:21Z",
+      "pr": 26513,
       "passes": 1
     }
   },
