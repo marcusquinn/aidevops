@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.48] - 2026-07-04
+
+### Changed
+
+- Maintenance: mark t18063 complete (pr:#26498 completed:2026-07-04) [skip ci]
+- add social graph preview to README (#26498)
+- Maintenance: sync ref:GH#26497 to TODO.md [skip ci]
+
 ## [3.31.47] - 2026-07-04
 
 ### Changed
