@@ -93,13 +93,14 @@ def close_tag(
 
 
 def append_self_closing_tag(
-    results: list[dict[str, Any]], tag: str, attrs_str: str, char_pos: int, end_pos: int, line_num: int
+    results: list[dict[str, Any]], row: dict[str, Any], char_pos: int, end_pos: int
 ) -> None:
     """Append an inline self-closing tag result."""
+    line_num = row["line"]
     results.append(
         {
-            "tag": tag,
-            "attrs": parse_attrs(attrs_str),
+            "tag": row["tag"],
+            "attrs": parse_attrs(row["attrs_str"]),
             "scope": "inline",
             "char_start": char_pos,
             "char_end": end_pos,
@@ -110,15 +111,17 @@ def append_self_closing_tag(
 
 
 def append_open_tag(
-    results: list[dict[str, Any]], open_stack: list[dict[str, Any]], tag: str, attrs_str: str, char_pos: int, end_pos: int, line_num: int
+    results: list[dict[str, Any]], open_stack: list[dict[str, Any]], row: dict[str, Any], char_pos: int, end_pos: int
 ) -> None:
     """Append an opening tag result and push it on the open-tag stack."""
+    tag = row["tag"]
+    line_num = row["line"]
     scope = "section" if open_stack else "file"
     result_idx = len(results)
     results.append(
         {
             "tag": tag,
-            "attrs": parse_attrs(attrs_str),
+            "attrs": parse_attrs(row["attrs_str"]),
             "scope": scope,
             "char_start": char_pos,
             "char_end": end_pos,
@@ -151,9 +154,9 @@ def build_tags(content: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]
         if row["is_close"]:
             close_tag(results, open_stack, tag, line_num, end_pos)
         elif row["is_self"]:
-            append_self_closing_tag(results, tag, row["attrs_str"], char_pos, end_pos, line_num)
+            append_self_closing_tag(results, row, char_pos, end_pos)
         else:
-            append_open_tag(results, open_stack, tag, row["attrs_str"], char_pos, end_pos, line_num)
+            append_open_tag(results, open_stack, row, char_pos, end_pos)
 
     return results
 
