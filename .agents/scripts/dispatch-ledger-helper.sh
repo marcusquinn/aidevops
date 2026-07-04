@@ -757,6 +757,10 @@ _cmd_expire_parse_ttl() {
 		option="${1:-}"
 		case "$option" in
 		--ttl)
+			if [[ $# -lt 2 ]]; then
+				echo "Error: --ttl requires a value" >&2
+				return 1
+			fi
 			ttl_arg="${2:-$DEFAULT_TTL}"
 			ttl="$ttl_arg"
 			shift 2
