@@ -56,7 +56,7 @@ source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
 # Collapses full-loop steps 4.1-4.2.1 into a single deterministic call.
 # Workers and interactive sessions both use this — no parallel logic.
 #
-# Usage: full-loop-helper.sh commit-and-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--decisions <notes>] [--label <label>...] [--allow-parent-close] [--skip-hooks]
+# Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--decisions <notes>] [--label <label>...] [--allow-parent-close] [--skip-hooks]
 # Exit codes: 0 = PR created (prints PR number to stdout), 1 = failure
 # --allow-parent-close: skip the parent-task keyword guard (final-phase PR only)
 # --skip-hooks: pass --no-verify to git push (bypasses pre-push hooks). Use for doc-only PRs
@@ -196,7 +196,8 @@ Commands:
   status                        Show current loop state
   cancel                        Cancel active loop
   logs [N]                      Show last N log lines (default: 50)
-  commit-and-pr --issue N --message "msg"  Stage, commit, rebase, push, create PR, post merge summary
+  commit-and-pr|create-pr --issue N --message "msg"
+                                 Stage, commit, rebase, push, create PR, post merge summary
                 [--skip-hooks]             Pass --no-verify to git push (doc-only PRs, GH#20138)
   pre-merge-gate <PR> [REPO]    Check review bot gate before merge (GH#17541)
   merge <PR> [REPO] [--squash|--merge|--rebase] [--admin] [--auto]
@@ -232,7 +233,7 @@ main() {
 	case "$command" in
 	start) cmd_start "$@" ;; resume) cmd_resume ;; status) cmd_status ;;
 	cancel) cmd_cancel ;; logs) cmd_logs "$@" ;; _run_foreground) _run_foreground "$@" ;;
-	commit-and-pr) cmd_commit_and_pr "$@" ;;
+	commit-and-pr | create-pr) cmd_commit_and_pr "$@" ;;
 	pre-merge-gate) cmd_pre_merge_gate "$@" ;;
 	merge) cmd_merge "$@" ;;
 	help | --help | -h) show_help ;;
