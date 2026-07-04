@@ -1096,7 +1096,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18062 Add attribution guidance and provenance monitoring docs #auto-dispatch #documentation ref:GH#26495 pr:#26496 completed:2026-07-03
 
-- [ ] t18063 Add social graph preview to README ref:GH#26497
+- [x] t18063 Add social graph preview to README ref:GH#26497 pr:#26498 completed:2026-07-04
 
 ## In Progress
 
@@ -4419,4 +4419,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 
 
-- [ ] t18063 Add social graph preview to README #bug ref:GH#26497
+- [x] t18063 Add social graph preview to README #bug ref:GH#26497 pr:#26498 completed:2026-07-04
