@@ -512,15 +512,15 @@ cmd_check_run_diff() {
 	local _allow_increase="${6:-0}"
 	local _diff_exit=0
 
-	if [ -n "$_output_md" ] && [ "$_allow_increase" = "1" ]; then
+	if [[ -n "$_output_md" && "$_allow_increase" == "1" ]]; then
 		cmd_diff --base-file "$_base_tsv" --head-file "$_head_tsv" \
 			--base-sha "$_base_sha" --head-sha "$_head_sha" \
 			--output-md "$_output_md" --allow-increase || _diff_exit=$?
-	elif [ -n "$_output_md" ]; then
+	elif [[ -n "$_output_md" ]]; then
 		cmd_diff --base-file "$_base_tsv" --head-file "$_head_tsv" \
 			--base-sha "$_base_sha" --head-sha "$_head_sha" \
 			--output-md "$_output_md" || _diff_exit=$?
-	elif [ "$_allow_increase" = "1" ]; then
+	elif [[ "$_allow_increase" == "1" ]]; then
 		cmd_diff --base-file "$_base_tsv" --head-file "$_head_tsv" \
 			--base-sha "$_base_sha" --head-sha "$_head_sha" \
 			--allow-increase || _diff_exit=$?
