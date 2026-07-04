@@ -9,6 +9,7 @@
 #   2. File with unknown tag → validator stops it, exit 1, no output files written.
 #   3. --tree flag → -tree.json written, valid JSON.
 #   4. --output-dir option → artefacts written to specified directory.
+#   5. Missing companion Python helper → controlled error, exit 2, no tags JSON written.
 #
 # These tests exercise the extractor in isolation using real fixture files
 # and a real (deployed) validator. No network calls, no gh operations.
@@ -301,6 +302,38 @@ test_output_dir_option() {
 	return 0
 }
 
+# Case 5: Missing companion Python helper → controlled error, exit 2, no tags JSON written
+test_missing_python_helper_rejected() {
+	local _fixture="${TEST_ROOT}/missing-helper.md"
+	local _stderr="${TEST_ROOT}/missing-helper.err"
+	local _missing_helper="${TEST_ROOT}/missing-markdoc-tags-json.py"
+	write_good_fixture "$_fixture"
+
+	local _result=0
+	MARKDOC_TAGS_JSON_PY="$_missing_helper" "$EXTRACT_SH" extract "$_fixture" 2>"$_stderr" || _result=$?
+
+	if [[ "$_result" -ne 2 ]]; then
+		print_result "Case 5: missing Python helper — exits 2" 1 \
+			"Expected exit 2, got ${_result}"
+		return 0
+	fi
+
+	if ! grep -qF 'ERROR: Python helper script not found:' "$_stderr" 2>/dev/null; then
+		print_result "Case 5: missing Python helper — reports controlled error" 1 \
+			"Expected controlled missing-helper error in ${_stderr}"
+		return 0
+	fi
+
+	if [[ -f "${TEST_ROOT}/missing-helper-tags.json" ]]; then
+		print_result "Case 5: missing Python helper — no -tags.json written" 1 \
+			"Expected ${TEST_ROOT}/missing-helper-tags.json to not exist"
+		return 0
+	fi
+
+	print_result "Case 5: missing Python helper — exits 2 with controlled error" 0
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -318,6 +351,7 @@ main() {
 	test_invalid_tag_rejected
 	test_tree_flag_writes_tree_json
 	test_output_dir_option
+	test_missing_python_helper_rejected
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
