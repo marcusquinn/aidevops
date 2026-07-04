@@ -1260,20 +1260,18 @@ check_status() {
 	return 0
 }
 
-test_hook() {
-	print_info "Running hook self-test..."
-
+_test_hook_script_path() {
 	local test_script="$HOOK_SCRIPT"
 	if [[ ! -f "$test_script" ]]; then
 		# Fall back to source
 		test_script=$(find_source_hook) || return 1
 	fi
+	printf '%s\n' "$test_script"
+	return 0
+}
 
-	local pass=0
-	local fail=0
-	local test_root=""
-	test_root=$(mktemp -d) || return 1
-	test_root=$(cd "$test_root" && pwd -P) || return 1
+_test_hook_create_repo() {
+	local test_root="$1"
 	git -C "$test_root" init -b main >/dev/null 2>&1 || {
 		git -C "$test_root" init >/dev/null 2>&1
 		git -C "$test_root" checkout -b main >/dev/null 2>&1
@@ -1284,11 +1282,50 @@ test_hook() {
 	printf 'seed\n' >"${test_root}/README.md"
 	git -C "$test_root" add README.md >/dev/null 2>&1
 	git -C "$test_root" commit -m "test: seed hook self-test" >/dev/null 2>&1
+	return 0
+}
 
-	local linked_worktree="${test_root}/linked-wt"
-	git -C "$test_root" worktree add "$linked_worktree" -b feature/hook-linked-test >/dev/null 2>&1
+_test_hook_run() {
+	local cwd="$1"
+	local test_script="$2"
+	local cmd="$3"
+	local result
+	result=$(cd "$cwd" && printf '%s\n' "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"$cmd\"}}" | python3 "$test_script" 2>/dev/null)
+	printf '%s\n' "$result"
+	return 0
+}
 
-	# Test blocked commands
+_test_hook_expect_blocked() {
+	local test_root="$1"
+	local test_script="$2"
+	local cmd="$3"
+	local result
+	result=$(_test_hook_run "$test_root" "$test_script" "$cmd")
+	if echo "$result" | grep -q "permissionDecision.*deny" 2>/dev/null; then
+		return 0
+	fi
+	print_error "  FAIL: should block: $cmd"
+	return 1
+}
+
+_test_hook_expect_allowed() {
+	local cwd="$1"
+	local test_script="$2"
+	local cmd="$3"
+	local message="$4"
+	local result
+	result=$(_test_hook_run "$cwd" "$test_script" "$cmd")
+	if [[ -z "$result" ]]; then
+		return 0
+	fi
+	print_error "  FAIL: $message: $cmd"
+	return 1
+}
+
+_test_hook_run_blocked_cases() {
+	local test_root="$1"
+	local test_script="$2"
+	local cmd
 	local -a blocked_cmds=(
 		"git checkout -- test.txt"
 		"git reset --hard"
@@ -1306,17 +1343,19 @@ test_hook() {
 	)
 
 	for cmd in "${blocked_cmds[@]}"; do
-		local result
-		result=$(cd "$test_root" && printf '%s\n' "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"$cmd\"}}" | python3 "$test_script" 2>/dev/null)
-		if echo "$result" | grep -q "permissionDecision.*deny" 2>/dev/null; then
-			pass=$((pass + 1))
+		if _test_hook_expect_blocked "$test_root" "$test_script" "$cmd"; then
+			HOOK_TEST_PASS=$((HOOK_TEST_PASS + 1))
 		else
-			print_error "  FAIL: should block: $cmd"
-			fail=$((fail + 1))
+			HOOK_TEST_FAIL=$((HOOK_TEST_FAIL + 1))
 		fi
 	done
+	return 0
+}
 
-	# Test allowed commands
+_test_hook_run_allowed_cases() {
+	local test_root="$1"
+	local test_script="$2"
+	local cmd
 	local -a allowed_cmds=(
 		"git status"
 		"git restore --staged file.txt"
@@ -1329,40 +1368,62 @@ test_hook() {
 	)
 
 	for cmd in "${allowed_cmds[@]}"; do
-		local result
-		result=$(cd "$test_root" && printf '%s\n' "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"$cmd\"}}" | python3 "$test_script" 2>/dev/null)
-		if [[ -z "$result" ]]; then
-			pass=$((pass + 1))
+		if _test_hook_expect_allowed "$test_root" "$test_script" "$cmd" "should allow"; then
+			HOOK_TEST_PASS=$((HOOK_TEST_PASS + 1))
 		else
-			print_error "  FAIL: should allow: $cmd"
-			fail=$((fail + 1))
+			HOOK_TEST_FAIL=$((HOOK_TEST_FAIL + 1))
 		fi
 	done
+	return 0
+}
 
+_test_hook_run_linked_worktree_cases() {
+	local linked_worktree="$1"
+	local test_script="$2"
+	local cmd
 	local -a linked_allowed_cmds=(
 		"git checkout -b linked-branch"
 		"git checkout --orphan linked-pages"
 	)
 
 	for cmd in "${linked_allowed_cmds[@]}"; do
-		local result
-		result=$(cd "$linked_worktree" && printf '%s\n' "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"$cmd\"}}" | python3 "$test_script" 2>/dev/null)
-		if [[ -z "$result" ]]; then
-			pass=$((pass + 1))
+		if _test_hook_expect_allowed "$linked_worktree" "$test_script" "$cmd" "should allow in linked worktree"; then
+			HOOK_TEST_PASS=$((HOOK_TEST_PASS + 1))
 		else
-			print_error "  FAIL: should allow in linked worktree: $cmd"
-			fail=$((fail + 1))
+			HOOK_TEST_FAIL=$((HOOK_TEST_FAIL + 1))
 		fi
 	done
+	return 0
+}
+
+test_hook() {
+	print_info "Running hook self-test..."
+
+	local test_script
+	test_script=$(_test_hook_script_path) || return 1
+
+	local test_root=""
+	test_root=$(mktemp -d) || return 1
+	test_root=$(cd "$test_root" && pwd -P) || return 1
+	_test_hook_create_repo "$test_root"
+
+	local linked_worktree="${test_root}/linked-wt"
+	git -C "$test_root" worktree add "$linked_worktree" -b feature/hook-linked-test >/dev/null 2>&1
+
+	HOOK_TEST_PASS=0
+	HOOK_TEST_FAIL=0
+	_test_hook_run_blocked_cases "$test_root" "$test_script"
+	_test_hook_run_allowed_cases "$test_root" "$test_script"
+	_test_hook_run_linked_worktree_cases "$linked_worktree" "$test_script"
 
 	git -C "$test_root" worktree remove "$linked_worktree" >/dev/null 2>&1 || rm -rf "$linked_worktree"
 	rm -rf "$test_root"
 
-	if [[ "$fail" -eq 0 ]]; then
-		print_success "All $pass tests passed"
+	if [[ "$HOOK_TEST_FAIL" -eq 0 ]]; then
+		print_success "All $HOOK_TEST_PASS tests passed"
 		return 0
 	else
-		print_error "$fail tests failed, $pass passed"
+		print_error "$HOOK_TEST_FAIL tests failed, $HOOK_TEST_PASS passed"
 		return 1
 	fi
 }
