@@ -49,6 +49,7 @@ set -uo pipefail
 
 SCRIPT_NAME=$(basename "$0")
 readonly FILE_SIZE_DEFAULT_LIMIT=500
+readonly FILE_SIZE_DEFAULT_HEAD_REF="HEAD"
 
 # ---------------------------------------------------------------------------
 # Logging helpers
@@ -407,15 +408,15 @@ cmd_diff() {
 }
 
 # ---------------------------------------------------------------------------
-# cmd_check — subcommand: check [--base <ref>] [--head <ref>] [options]
+# cmd_check_parse_args — parse check options into FILE_SIZE_CHECK_* globals.
 # ---------------------------------------------------------------------------
-cmd_check() {
-	local _base_ref=""
-	local _head_ref="HEAD"
-	local _limit="$FILE_SIZE_DEFAULT_LIMIT"
-	local _output_md=""
-	local _allow_increase=0
-	local _dry_run=0
+cmd_check_parse_args() {
+	FILE_SIZE_CHECK_BASE_REF=""
+	FILE_SIZE_CHECK_HEAD_REF="$FILE_SIZE_DEFAULT_HEAD_REF"
+	FILE_SIZE_CHECK_LIMIT="$FILE_SIZE_DEFAULT_LIMIT"
+	FILE_SIZE_CHECK_OUTPUT_MD=""
+	FILE_SIZE_CHECK_ALLOW_INCREASE=0
+	FILE_SIZE_CHECK_DRY_RUN=0
 
 	while [ $# -gt 0 ]; do
 		local _cur_opt="$1"
@@ -424,64 +425,129 @@ cmd_check() {
 		--base)
 			[ $# -ge 1 ] || die "check: missing value for --base"
 			local _bref="$1"
-			_base_ref="$_bref"
+			FILE_SIZE_CHECK_BASE_REF="$_bref"
 			shift
 			;;
 		--head)
 			[ $# -ge 1 ] || die "check: missing value for --head"
 			local _href="$1"
-			_head_ref="$_href"
+			FILE_SIZE_CHECK_HEAD_REF="$_href"
 			shift
 			;;
 		--limit)
 			[ $# -ge 1 ] || die "check: missing value for --limit"
 			local _lim="$1"
-			_limit="$_lim"
+			FILE_SIZE_CHECK_LIMIT="$_lim"
 			shift
 			;;
 		--output-md)
 			[ $# -ge 1 ] || die "check: missing value for --output-md"
 			local _omd="$1"
-			_output_md="$_omd"
+			FILE_SIZE_CHECK_OUTPUT_MD="$_omd"
 			shift
 			;;
 		--allow-increase)
-			_allow_increase=1
+			FILE_SIZE_CHECK_ALLOW_INCREASE=1
 			;;
 		--dry-run)
-			_dry_run=1
+			FILE_SIZE_CHECK_DRY_RUN=1
 			;;
 		*) die "check: unknown argument: $_cur_opt" ;;
 		esac
 	done
+	return 0
+}
 
-	# Auto-detect base ref if not provided
-	if [ -z "$_base_ref" ]; then
-		local _default_branch
-		_default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
-			| sed 's|refs/remotes/origin/||') || _default_branch=""
-		if [ -n "$_default_branch" ] \
-			&& git rev-parse --verify --quiet "origin/${_default_branch}" > /dev/null 2>&1; then
-			_base_ref="origin/${_default_branch}"
-		elif git rev-parse --verify --quiet "origin/main" > /dev/null 2>&1; then
-			_base_ref="origin/main"
-		elif git rev-parse --verify --quiet "origin/master" > /dev/null 2>&1; then
-			_base_ref="origin/master"
-		fi
+# ---------------------------------------------------------------------------
+# cmd_check_detect_base_ref <configured-base-ref>
+# ---------------------------------------------------------------------------
+cmd_check_detect_base_ref() {
+	local _base_ref="$1"
+	if [ -n "$_base_ref" ]; then
+		printf '%s\n' "$_base_ref"
+		return 0
 	fi
 
+	local _default_branch
+	_default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null \
+		| sed 's|refs/remotes/origin/||') || _default_branch=""
+	if [ -n "$_default_branch" ] \
+		&& git rev-parse --verify --quiet "origin/${_default_branch}" > /dev/null 2>&1; then
+		printf 'origin/%s\n' "$_default_branch"
+	elif git rev-parse --verify --quiet "origin/main" > /dev/null 2>&1; then
+		printf 'origin/main\n'
+	elif git rev-parse --verify --quiet "origin/master" > /dev/null 2>&1; then
+		printf 'origin/master\n'
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# cmd_check_scan_head <head-ref> <limit> <head-tsv>
+# ---------------------------------------------------------------------------
+cmd_check_scan_head() {
+	local _head_ref="$1"
+	local _limit="$2"
+	local _head_tsv="$3"
+	# For HEAD, scan the working tree directly (avoids creating a worktree for HEAD).
+	if [ "$_head_ref" = "$FILE_SIZE_DEFAULT_HEAD_REF" ]; then
+		local _repo_root
+		_repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || _repo_root="."
+		scan_violations_dir "$_repo_root" "$_limit" > "$_head_tsv" 2>/dev/null || true
+	else
+		scan_violations_ref "$_head_ref" "$_limit" > "$_head_tsv" 2>/dev/null || true
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# cmd_check_run_diff <base-tsv> <head-tsv> <base-sha> <head-sha> <output-md> <allow>
+# ---------------------------------------------------------------------------
+cmd_check_run_diff() {
+	local _base_tsv="$1"
+	local _head_tsv="$2"
+	local _base_sha="$3"
+	local _head_sha="$4"
+	local _output_md="$5"
+	local _allow_increase="$6"
+	local _diff_exit=0
+
+	if [ -n "$_output_md" ] && [ "$_allow_increase" -eq 1 ]; then
+		cmd_diff --base-file "$_base_tsv" --head-file "$_head_tsv" \
+			--base-sha "$_base_sha" --head-sha "$_head_sha" \
+			--output-md "$_output_md" --allow-increase || _diff_exit=$?
+	elif [ -n "$_output_md" ]; then
+		cmd_diff --base-file "$_base_tsv" --head-file "$_head_tsv" \
+			--base-sha "$_base_sha" --head-sha "$_head_sha" \
+			--output-md "$_output_md" || _diff_exit=$?
+	elif [ "$_allow_increase" -eq 1 ]; then
+		cmd_diff --base-file "$_base_tsv" --head-file "$_head_tsv" \
+			--base-sha "$_base_sha" --head-sha "$_head_sha" \
+			--allow-increase || _diff_exit=$?
+	else
+		cmd_diff --base-file "$_base_tsv" --head-file "$_head_tsv" \
+			--base-sha "$_base_sha" --head-sha "$_head_sha" || _diff_exit=$?
+	fi
+	return "$_diff_exit"
+}
+
+# ---------------------------------------------------------------------------
+# cmd_check — subcommand: check [--base <ref>] [--head <ref>] [options]
+# ---------------------------------------------------------------------------
+cmd_check() {
+	cmd_check_parse_args "$@"
+
+	local _base_ref
+	_base_ref=$(cmd_check_detect_base_ref "$FILE_SIZE_CHECK_BASE_REF")
 	local _tmp_dir
 	_tmp_dir=$(mktemp -d)
 	# shellcheck disable=SC2064
 	trap "rm -rf '$_tmp_dir'" EXIT
 
 	local _head_tsv="$_tmp_dir/head.tsv"
-
-	if [ "$_dry_run" -eq 1 ]; then
+	if [ "$FILE_SIZE_CHECK_DRY_RUN" -eq 1 ]; then
 		log "dry-run: scanning current working tree"
-		local _repo_root
-		_repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || _repo_root="."
-		scan_violations_dir "$_repo_root" "$_limit" > "$_head_tsv" 2>/dev/null || true
+		cmd_check_scan_head "$FILE_SIZE_DEFAULT_HEAD_REF" "$FILE_SIZE_CHECK_LIMIT" "$_head_tsv"
 		local _count
 		_count=$(count_tsv_lines "$_head_tsv")
 		printf 'Total violations (file-size): %d\n' "$_count"
@@ -492,7 +558,6 @@ cmd_check() {
 		log "WARN: no origin ref found — file-size ratchet skipped (fail-open)"
 		return 0
 	fi
-
 	if ! git rev-parse --verify --quiet "${_base_ref}^{commit}" > /dev/null 2>&1; then
 		log "WARN: base ref not available: $_base_ref — ratchet skipped (fail-open)"
 		return 0
@@ -501,53 +566,14 @@ cmd_check() {
 	local _base_tsv="$_tmp_dir/base.tsv"
 	local _base_sha _head_sha
 	_base_sha=$(git rev-parse --short "$_base_ref" 2>/dev/null) || _base_sha="$_base_ref"
-	_head_sha=$(git rev-parse --short "$_head_ref" 2>/dev/null) || _head_sha="$_head_ref"
-
+	_head_sha=$(git rev-parse --short "$FILE_SIZE_CHECK_HEAD_REF" 2>/dev/null) || _head_sha="$FILE_SIZE_CHECK_HEAD_REF"
 	log "scanning base ($_base_sha)"
-	scan_violations_ref "$_base_ref" "$_limit" > "$_base_tsv" 2>/dev/null || true
-
+	scan_violations_ref "$_base_ref" "$FILE_SIZE_CHECK_LIMIT" > "$_base_tsv" 2>/dev/null || true
 	log "scanning head ($_head_sha)"
-	# For HEAD, scan the working tree directly (avoids creating a worktree for HEAD).
-	if [ "$_head_ref" = "HEAD" ]; then
-		local _repo_root
-		_repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || _repo_root="."
-		scan_violations_dir "$_repo_root" "$_limit" > "$_head_tsv" 2>/dev/null || true
-	else
-		scan_violations_ref "$_head_ref" "$_limit" > "$_head_tsv" 2>/dev/null || true
-	fi
-
-	# Build optional args without arrays (bash 3.2: empty arrays + set -u = unbound error).
-	local _diff_exit=0
-	local _output_md_flag="" _allow_increase_flag=""
-	[ -n "$_output_md" ] && _output_md_flag="$_output_md"
-	[ "$_allow_increase" -eq 1 ] && _allow_increase_flag="1"
-
-	if [ -n "$_output_md_flag" ] && [ -n "$_allow_increase_flag" ]; then
-		cmd_diff \
-			--base-file "$_base_tsv" --head-file "$_head_tsv" \
-			--base-sha "$_base_sha" --head-sha "$_head_sha" \
-			--output-md "$_output_md_flag" --allow-increase \
-			|| _diff_exit=$?
-	elif [ -n "$_output_md_flag" ]; then
-		cmd_diff \
-			--base-file "$_base_tsv" --head-file "$_head_tsv" \
-			--base-sha "$_base_sha" --head-sha "$_head_sha" \
-			--output-md "$_output_md_flag" \
-			|| _diff_exit=$?
-	elif [ -n "$_allow_increase_flag" ]; then
-		cmd_diff \
-			--base-file "$_base_tsv" --head-file "$_head_tsv" \
-			--base-sha "$_base_sha" --head-sha "$_head_sha" \
-			--allow-increase \
-			|| _diff_exit=$?
-	else
-		cmd_diff \
-			--base-file "$_base_tsv" --head-file "$_head_tsv" \
-			--base-sha "$_base_sha" --head-sha "$_head_sha" \
-			|| _diff_exit=$?
-	fi
-
-	return "$_diff_exit"
+	cmd_check_scan_head "$FILE_SIZE_CHECK_HEAD_REF" "$FILE_SIZE_CHECK_LIMIT" "$_head_tsv"
+	cmd_check_run_diff "$_base_tsv" "$_head_tsv" "$_base_sha" "$_head_sha" \
+		"$FILE_SIZE_CHECK_OUTPUT_MD" "$FILE_SIZE_CHECK_ALLOW_INCREASE"
+	return $?
 }
 
 # ---------------------------------------------------------------------------
