@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.50] - 2026-07-04
+
+### Fixed
+
+- add full-loop `create-pr` alias for `commit-and-pr` (#26536)
+
 ## [3.31.49] - 2026-07-04
 
 ### Fixed
