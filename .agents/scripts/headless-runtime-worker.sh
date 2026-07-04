@@ -1061,6 +1061,141 @@ _hrw_release_worker_worktree() {
 	return 0
 }
 
+_hrw_run_finish_crash_type() {
+	case "${_run_result_label:-}" in
+	premature_exit | watchdog_stall_continue | watchdog_stall_killed)
+		# Model attempted real work (read files, created worktree) but couldn't
+		# produce commits/PR. This is "overwhelmed" — the model tried and failed
+		# due to task complexity, not infra issues.
+		printf '%s\n' "overwhelmed"
+		;;
+	no_activity)
+		# No LLM output at all — infra/setup failure.
+		printf '%s\n' "no_work"
+		;;
+	*)
+		# Provider errors, rate limits, auth failures — not a model capability
+		# issue, don't classify for escalation purposes.
+		printf '\n'
+		;;
+	esac
+	return 0
+}
+
+_hrw_finish_failed_run() {
+	local session_key="$1"
+	local work_dir="$2"
+	local failure_recovered=0
+
+	if _worker_external_terminal_complete "$session_key" "$work_dir"; then
+		_release_dispatch_claim "$session_key" "worker_complete"
+		failure_recovered=1
+	elif _recover_worker_output_on_failure "$session_key" "$work_dir"; then
+		failure_recovered=1
+	else
+		_release_dispatch_claim "$session_key" "worker_failed"
+	fi
+
+	# Classify crash type from worker session state.
+	# _run_result_label is set by _handle_run_result:
+	#   "premature_exit" = model had activity but no completion signal
+	#   "no_activity"    = no LLM output at all
+	#   "watchdog_stall_continue" = stall with prior activity (passive kill)
+	#   "watchdog_stall_killed"   = stall + elapsed ≥ hard-kill cap (proactive)
+	#   other            = provider/infra failures
+	local crash_type=""
+	crash_type=$(_hrw_run_finish_crash_type)
+
+	# Self-report to the fast-fail counter so tier escalation fires immediately
+	# instead of waiting 30+ min for the pulse to discover the orphaned assignment.
+	# Uses the failure reason from the retry loop if available, otherwise defaults
+	# to "worker_failed".
+	if [[ "$failure_recovered" -eq 0 ]]; then
+		_report_failure_to_fast_fail "$session_key" "${_run_failure_reason:-worker_failed}" "$crash_type"
+	fi
+
+	return 0
+}
+
+_hrw_finish_rate_limit_fast_run() {
+	local session_key="$1"
+
+	# GH#21578 / t3021: Transient API rate limit detected within first 30s.
+	# Release the dispatch claim so the issue re-queues on the next pulse cycle.
+	# Do NOT call _report_failure_to_fast_fail — this is a transient API condition
+	# (Anthropic 429/overload), not a model capability failure. NMR backoff would
+	# incorrectly penalise the issue for an infrastructure blip. Metric already
+	# recorded by _execute_run_attempt with result=rate_limit_fast.
+	_release_dispatch_claim "$session_key" "rate_limit_transient"
+	return 0
+}
+
+_hrw_finish_success_run() {
+	local session_key="$1"
+	local work_dir="$2"
+	local release_needed=1
+
+	# GH#20721 + GH#20819: Classify worker output quality.
+	# _worker_produced_output echoes one of five classifications:
+	#   noop                  — no commits, no branch, no PR → fast-fail
+	#   branch_orphan         — branch pushed but no PR → auto-recover
+	#   local_branch_unpushed — local commits but no remote branch/PR → push+recover
+	#   dirty_worktree        — local edits exist but no commit/PR → preserve marker
+	#   pr_exists             — PR confirmed, or fail-open → worker_complete
+	#
+	# Fail-open semantics are preserved: when signals cannot be evaluated (no git
+	# repo, no gh, no remote) the classification is "pr_exists", so false-negatives
+	# (legit work misclassified) are impossible.
+	if [[ -n "$work_dir" ]]; then
+		local output_class="pr_exists"
+		output_class=$(_worker_produced_output "$session_key" "$work_dir")
+		case "$output_class" in
+		noop)
+			print_info "[lifecycle] worker_noop session=$session_key — zero commits, no pushed branch, no PR"
+			_release_dispatch_claim "$session_key" "worker_noop"
+			_report_failure_to_fast_fail "$session_key" "worker_noop_zero_output" "no_work"
+			release_needed=0
+			;;
+		branch_orphan)
+			_handle_worker_branch_orphan "$session_key" "$work_dir"
+			release_needed=0
+			;;
+		local_branch_unpushed)
+			_handle_worker_local_branch_unpushed "$session_key" "$work_dir"
+			release_needed=0
+			;;
+		dirty_worktree)
+			_handle_worker_dirty_worktree "$session_key" "$work_dir"
+			release_needed=0
+			;;
+		esac
+	fi
+
+	if [[ "$release_needed" -eq 1 ]]; then
+		# pr_exists or fail-open: normal success path. Post CLAIM_RELEASED with
+		# reason=worker_complete so the audit trail shows the full lifecycle even
+		# when no PR was created.
+		_release_dispatch_claim "$session_key" "worker_complete"
+	fi
+
+	return 0
+}
+
+_hrw_finish_cleanup() {
+	local session_key="$1"
+	local ledger_status="$2"
+	local work_dir="$3"
+
+	_update_dispatch_ledger "$session_key" "$ledger_status"
+	_release_session_lock "$session_key"
+	_hrw_release_worker_worktree "$work_dir"
+	if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
+		_cleanup_headless_runtime_temp_paths
+	fi
+	trap - EXIT
+	return 0
+}
+
 _cmd_run_finish() {
 	local session_key="$1"
 	local ledger_status="$2"
@@ -1084,115 +1219,14 @@ _cmd_run_finish() {
 	# create a PR with Closes, the PR-based dedup signal still wins and the
 	# CLAIM_RELEASED comment is redundant operational metadata.
 	if [[ "$ledger_status" == "$_HRW_STATUS_FAIL" ]]; then
-		local _failure_recovered=0
-		if _worker_external_terminal_complete "$session_key" "$work_dir"; then
-			_release_dispatch_claim "$session_key" "worker_complete"
-			_failure_recovered=1
-		elif _recover_worker_output_on_failure "$session_key" "$work_dir"; then
-			_failure_recovered=1
-		else
-			_release_dispatch_claim "$session_key" "worker_failed"
-		fi
-
-		# Classify crash type from worker session state.
-		# _run_result_label is set by _handle_run_result:
-		#   "premature_exit" = model had activity but no completion signal
-		#   "no_activity"    = no LLM output at all
-		#   "watchdog_stall_continue" = stall with prior activity (passive kill)
-		#   "watchdog_stall_killed"   = stall + elapsed ≥ hard-kill cap (proactive)
-		#   other            = provider/infra failures
-		local crash_type=""
-		case "${_run_result_label:-}" in
-		premature_exit | watchdog_stall_continue | watchdog_stall_killed)
-			# Model attempted real work (read files, created worktree) but
-			# couldn't produce commits/PR. This is "overwhelmed" — the model
-			# tried and failed due to task complexity, not infra issues.
-			crash_type="overwhelmed"
-			;;
-		no_activity)
-			# No LLM output at all — infra/setup failure
-			crash_type="no_work"
-			;;
-		*)
-			# Provider errors, rate limits, auth failures — not a model
-			# capability issue, don't classify for escalation purposes
-			crash_type=""
-			;;
-		esac
-
-		# Self-report to the fast-fail counter so tier escalation fires
-		# immediately instead of waiting 30+ min for the pulse to discover
-		# the orphaned assignment. Uses the failure reason from the retry
-		# loop if available, otherwise defaults to "worker_failed".
-		if [[ "$_failure_recovered" -eq 0 ]]; then
-			_report_failure_to_fast_fail "$session_key" "${_run_failure_reason:-worker_failed}" "$crash_type"
-		fi
+		_hrw_finish_failed_run "$session_key" "$work_dir"
 	elif [[ "$ledger_status" == "rate_limit_fast" ]]; then
-		# GH#21578 / t3021: Transient API rate limit detected within first 30s.
-		# Release the dispatch claim so the issue re-queues on the next pulse cycle.
-		# Do NOT call _report_failure_to_fast_fail — this is a transient API
-		# condition (Anthropic 429/overload), not a model capability failure.
-		# NMR backoff would incorrectly penalise the issue for an infrastructure blip.
-		# Metric already recorded by _execute_run_attempt with result=rate_limit_fast.
-		_release_dispatch_claim "$session_key" "rate_limit_transient"
+		_hrw_finish_rate_limit_fast_run "$session_key"
 	else
-		# GH#20721 + GH#20819: Classify worker output quality.
-		# _worker_produced_output echoes one of five classifications:
-		#   noop                  — no commits, no branch, no PR → fast-fail
-		#   branch_orphan         — branch pushed but no PR → auto-recover
-		#   local_branch_unpushed — local commits but no remote branch/PR → push+recover
-		#   dirty_worktree        — local edits exist but no commit/PR → preserve marker
-		#   pr_exists             — PR confirmed, or fail-open → worker_complete
-		#
-		# Fail-open semantics are preserved: when signals cannot be evaluated
-		# (no git repo, no gh, no remote) the classification is "pr_exists",
-		# so false-negatives (legit work misclassified) are impossible.
-		# Classify output and route to the appropriate release path.
-		# _release_needed tracks whether the normal success release is still
-		# required; noop and recovery handlers release the claim themselves.
-		local _release_needed=1
-		if [[ -n "$work_dir" ]]; then
-			local _output_class="pr_exists"
-			_output_class=$(_worker_produced_output "$session_key" "$work_dir")
-			case "$_output_class" in
-			noop)
-				print_info "[lifecycle] worker_noop session=$session_key — zero commits, no pushed branch, no PR"
-				_release_dispatch_claim "$session_key" "worker_noop"
-				_report_failure_to_fast_fail "$session_key" "worker_noop_zero_output" "no_work"
-				_release_needed=0
-				;;
-			branch_orphan)
-				# Branch pushed but no PR — attempt auto-recovery (GH#20819)
-				_handle_worker_branch_orphan "$session_key" "$work_dir"
-				_release_needed=0
-				;;
-			local_branch_unpushed)
-				# Local committed branch without remote/PR — push then auto-recover (GH#25374)
-				_handle_worker_local_branch_unpushed "$session_key" "$work_dir"
-				_release_needed=0
-				;;
-			dirty_worktree)
-				# Local uncommitted edits — preserve before cleanup/redispatch.
-				_handle_worker_dirty_worktree "$session_key" "$work_dir"
-				_release_needed=0
-				;;
-			esac
-		fi
-		if [[ "$_release_needed" -eq 1 ]]; then
-			# pr_exists or fail-open: normal success path.
-			# Post CLAIM_RELEASED with reason=worker_complete so the audit
-			# trail shows the full lifecycle even when no PR was created.
-			_release_dispatch_claim "$session_key" "worker_complete"
-		fi
+		_hrw_finish_success_run "$session_key" "$work_dir"
 	fi
 
-	_update_dispatch_ledger "$session_key" "$ledger_status"
-	_release_session_lock "$session_key"
-	_hrw_release_worker_worktree "$work_dir"
-	if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then
-		_cleanup_headless_runtime_temp_paths
-	fi
-	trap - EXIT
+	_hrw_finish_cleanup "$session_key" "$ledger_status" "$work_dir"
 	return 0
 }
 
