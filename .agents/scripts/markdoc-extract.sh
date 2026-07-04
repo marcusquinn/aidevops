@@ -38,6 +38,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Locate companion validator — same directory, or env override.
 VALIDATE_SH="${MARKDOC_VALIDATE_SH:-${SCRIPT_DIR}/markdoc-validate.sh}"
+TAGS_JSON_PY="${MARKDOC_TAGS_JSON_PY:-${SCRIPT_DIR}/markdoc-tags-json.py}"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -199,129 +200,7 @@ _build_tags_json() {
 	_parse_tags "$_file" >"$_tsv_file"
 
 	local _py_exit=0
-	python3 - "$_file" "$_tsv_file" <<'PYEOF' || _py_exit=$?
-import sys, json, re
-
-file_path = sys.argv[1]
-tsv_path  = sys.argv[2]
-
-# Read file content for char offset computation
-with open(file_path, encoding='utf-8') as f:
-    content = f.read()
-
-lines = content.split('\n')
-
-def line_col_to_char(line_num, col_num):
-    """Convert 1-based line/col to 0-based char offset."""
-    offset = sum(len(lines[i]) + 1 for i in range(line_num - 1))
-    return offset + (col_num - 1)
-
-# Read TSV from temp file (safe from quoting issues)
-with open(tsv_path, encoding='utf-8') as f:
-    tsv_data = f.read()
-
-rows = []
-for row in tsv_data.strip().split('\n'):
-    if not row.strip():
-        continue
-    parts = row.split('\t', 5)
-    if len(parts) < 6:
-        parts += [''] * (6 - len(parts))
-    ln, col, tag, is_close, is_self, attrs = parts
-    rows.append({
-        'line': int(ln),
-        'col': int(col),
-        'tag': tag,
-        'is_close': is_close == '1',
-        'is_self': is_self == '1',
-        'attrs_str': attrs
-    })
-
-ATTR_RE = re.compile(
-    r'(?:^|\s)([\w-]+)\s*=\s*(?:"([^"]*)"|\047([^\047]*)\047|([^\s"\']+))'
-)
-
-def parse_attrs(attrs_str):
-    result = {}
-    for m in ATTR_RE.finditer(attrs_str):
-        key = m.group(1)
-        val = (m.group(2) if m.group(2) is not None
-               else m.group(3) if m.group(3) is not None
-               else m.group(4))
-        result[key] = val
-    return result
-
-# Build result array
-results = []
-open_stack = []
-
-for row in rows:
-    tag = row['tag']
-    ln = row['line']
-    col = row['col']
-    attrs_str = row['attrs_str']
-    is_close = row['is_close']
-    is_self = row['is_self']
-
-    char_pos = line_col_to_char(ln, col)
-
-    if is_close:
-        matched_idx = None
-        for i in range(len(open_stack) - 1, -1, -1):
-            if open_stack[i]['tag'] == tag:
-                matched_idx = i
-                break
-        if matched_idx is not None:
-            open_entry = open_stack.pop(matched_idx)
-            result_idx = open_entry['result_idx']
-            close_end = content.find('%}', char_pos)
-            if close_end != -1:
-                close_end += 2
-            else:
-                close_end = char_pos
-            results[result_idx]['char_end'] = close_end
-            results[result_idx]['line_end'] = ln
-    elif is_self:
-        tag_end = content.find('%}', char_pos)
-        if tag_end != -1:
-            tag_end += 2
-        else:
-            tag_end = char_pos
-        results.append({
-            'tag': tag,
-            'attrs': parse_attrs(attrs_str),
-            'scope': 'inline',
-            'char_start': char_pos,
-            'char_end': tag_end,
-            'line_start': ln,
-            'line_end': ln,
-        })
-    else:
-        tag_end = content.find('%}', char_pos)
-        if tag_end != -1:
-            tag_end += 2
-        else:
-            tag_end = char_pos
-        scope = 'section' if open_stack else 'file'
-        result_idx = len(results)
-        results.append({
-            'tag': tag,
-            'attrs': parse_attrs(attrs_str),
-            'scope': scope,
-            'char_start': char_pos,
-            'char_end': tag_end,
-            'line_start': ln,
-            'line_end': ln,
-        })
-        open_stack.append({
-            'tag': tag,
-            'char_start': char_pos,
-            'line_start': ln,
-            'result_idx': result_idx,
-        })
-
-print(json.dumps(results, indent=2))
-PYEOF
+	python3 "$TAGS_JSON_PY" "$_file" "$_tsv_file" || _py_exit=$?
 
 	rm -f "$_tsv_file"
 	if [[ "$_py_exit" -ne 0 ]]; then
