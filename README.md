@@ -1,6 +1,8 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
+![AI DevOps social graph preview](docs/assets/og-image.png)
+
 # AI DevOps Framework
 
 **[aidevops.sh](https://aidevops.sh)** is an [OpenCode](https://opencode.ai/) plugin and AI DevOps framework for people who want AI to do useful work across code, infrastructure, business, marketing, content, and creative projects without turning every job into another long, fragile chat.
