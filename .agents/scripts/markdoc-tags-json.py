@@ -21,10 +21,9 @@ ATTR_RE = re.compile(
 )
 
 
-def line_col_to_char(lines: list[str], line_num: int, col_num: int) -> int:
+def line_col_to_char(line_offsets: list[int], line_num: int, col_num: int) -> int:
     """Convert 1-based line/col to a 0-based character offset."""
-    offset = sum(len(lines[i]) + 1 for i in range(line_num - 1))
-    return offset + (col_num - 1)
+    return line_offsets[line_num - 1] + (col_num - 1)
 
 
 def parse_rows(tsv_data: str) -> list[dict[str, Any]]:
@@ -142,13 +141,17 @@ def append_open_tag(
 def build_tags(content: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Build the tag JSON array from parsed tag rows."""
     lines = content.split("\n")
+    line_offsets = [0]
+    for line in lines:
+        line_offsets.append(line_offsets[-1] + len(line) + 1)
+
     results: list[dict[str, Any]] = []
     open_stack: list[dict[str, Any]] = []
 
     for row in rows:
         tag = row["tag"]
         line_num = row["line"]
-        char_pos = line_col_to_char(lines, line_num, row["col"])
+        char_pos = line_col_to_char(line_offsets, line_num, row["col"])
         end_pos = tag_end(content, char_pos)
 
         if row["is_close"]:
