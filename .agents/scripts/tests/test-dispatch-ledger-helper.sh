@@ -386,6 +386,24 @@ test_expire_dead_pid() {
 }
 
 #######################################
+# Test: expire rejects --ttl without a value
+#######################################
+test_expire_missing_ttl_value() {
+	setup_test_env
+
+	run_helper "$LEDGER_HELPER" expire --ttl
+
+	local result=0
+	if [[ "$LAST_EXIT" -eq 0 ]]; then
+		result=1
+	fi
+
+	print_result "expire rejects --ttl without a value" "$result" "exit=${LAST_EXIT}"
+	teardown_test_env
+	return 0
+}
+
+#######################################
 # Test: check detects dead PID and marks as failed
 #######################################
 test_check_dead_pid_marks_failed() {
@@ -755,6 +773,7 @@ main() {
 	test_count_inflight
 	test_expire_by_ttl
 	test_expire_dead_pid
+	test_expire_missing_ttl_value
 	test_check_dead_pid_marks_failed
 	test_prune_old_entries
 	test_status_runs
