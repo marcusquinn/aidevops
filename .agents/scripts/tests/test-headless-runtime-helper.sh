@@ -2023,6 +2023,35 @@ test_worker_produced_output_branch_with_pr_returns_pr_exists() {
 	return 0
 }
 
+test_release_dispatch_claim_ignores_non_issue_session_key_digits() {
+	local result status gh_called active_called unlock_called output
+	result=$(
+		unset WORKER_ISSUE_NUMBER 2>/dev/null || true
+		DISPATCH_REPO_SLUG="owner/repo"
+		WORKER_GITHUB_LOGIN="test-runner"
+		gh_called=0
+		active_called=0
+		unlock_called=0
+		gh() { gh_called=$((gh_called + 1)); return 0; }
+		clear_active_status_on_release() { active_called=1; return 0; }
+		_unlock_issue_after_dispatch_release() { unlock_called=1; return 0; }
+
+		local release_output="" release_status=0
+		release_output=$(_release_dispatch_claim "validation-gh3343-positive-review-20260705" "worker_complete" 0 1 2>&1) || release_status=$?
+		printf '%s|%s|%s|%s|%s' "$release_status" "$gh_called" "$active_called" "$unlock_called" "$release_output"
+	)
+	IFS='|' read -r status gh_called active_called unlock_called output <<<"$result"
+
+	if [[ "$status" -eq 0 && "$gh_called" -eq 0 && "$active_called" -eq 0 && "$unlock_called" -eq 0 && -z "$output" ]]; then
+		print_result "release claim ignores non-issue session keys ending in digits" 0
+		return 0
+	fi
+
+	print_result "release claim ignores non-issue session keys ending in digits" 1 \
+		"status=$status gh=$gh_called active=$active_called unlock=$unlock_called output=${output:-<empty>}"
+	return 0
+}
+
 test_cmd_run_finish_emits_noop_for_zero_output() {
 	local work_dir="${TEST_ROOT}/repo-finish-noop"
 	_setup_test_git_repo "$work_dir" 0
@@ -2649,6 +2678,7 @@ main() {
 	test_worker_produced_output_branch_no_pr_returns_branch_orphan
 	test_worker_produced_output_local_branch_no_remote_returns_local_branch_unpushed
 	test_worker_produced_output_branch_with_pr_returns_pr_exists
+	test_release_dispatch_claim_ignores_non_issue_session_key_digits
 	test_cmd_run_finish_emits_noop_for_zero_output
 	test_cmd_run_finish_emits_complete_for_real_output
 	test_cmd_run_finish_emits_complete_when_no_workdir
