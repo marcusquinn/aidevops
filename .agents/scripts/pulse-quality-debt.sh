@@ -255,7 +255,7 @@ ${issue_comments}
    - Exact file paths that need modification
    - Reference patterns in similar existing code
    - The verification command to confirm completion
-4. Edit the issue body on GitHub using: gh issue edit ${issue_number} --repo ${repo_slug} --body "\$NEW_BODY"
+4. Edit the issue body on GitHub using the safe wrapper: gh_issue_edit_safe ${issue_number} --repo ${repo_slug} --body "\$NEW_BODY"
    - Preserve the existing body content
    - Append a new section:
 
