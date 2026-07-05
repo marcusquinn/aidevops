@@ -200,6 +200,8 @@ test_cmd_merge_removes_current_linked_worktree() {
 	local worktree_path="${TEST_ROOT}/worktrees/repo-feature-full-loop-cleanup"
 	local active_before=""
 	active_before=$(git -C "$canonical_repo" rev-parse feature/active)
+	local remote_main=""
+	remote_main=$(git -C "${TEST_ROOT}/updater" rev-parse main)
 
 	cmd_merge "123" "example/repo" --squash
 
@@ -217,12 +219,51 @@ test_cmd_merge_removes_current_linked_worktree() {
 	if [[ "$(git -C "$canonical_repo" rev-parse feature/active)" != "$active_before" ]]; then
 		rc=1
 	fi
+	if [[ "$(git -C "$canonical_repo" rev-parse main)" != "$remote_main" ]]; then
+		rc=1
+	fi
 	print_result "cmd_merge removes current linked worktree after immediate merge" "$rc"
+	return 0
+}
+
+test_refresh_canonical_pulls_when_default_checked_out() {
+	local canonical_repo="${TEST_ROOT}/repo-default"
+	local origin_repo="${TEST_ROOT}/origin-default.git"
+	local updater_repo="${TEST_ROOT}/updater-default"
+	mkdir -p "$canonical_repo"
+	git -C "$canonical_repo" init -q -b main
+	git -C "$canonical_repo" config user.email test@example.invalid
+	git -C "$canonical_repo" config user.name 'Aidevops Test'
+	printf 'base\n' >"${canonical_repo}/README.md"
+	git -C "$canonical_repo" add README.md
+	git -C "$canonical_repo" commit -q -m 'init'
+	git clone -q --bare "$canonical_repo" "$origin_repo"
+	git -C "$canonical_repo" remote add origin "$origin_repo"
+	git -C "$canonical_repo" push -q -u origin main
+	git clone -q "$origin_repo" "$updater_repo"
+	git -C "$updater_repo" config user.email test@example.invalid
+	git -C "$updater_repo" config user.name 'Aidevops Test'
+	printf 'remote main advance\n' >>"${updater_repo}/README.md"
+	git -C "$updater_repo" add README.md
+	git -C "$updater_repo" commit -q -m 'advance main'
+	git -C "$updater_repo" push -q origin main
+
+	_merge_refresh_canonical_for_cleanup "$canonical_repo" "main"
+
+	local rc=0
+	if [[ "$(git -C "$canonical_repo" branch --show-current)" != "main" ]]; then
+		rc=1
+	fi
+	if [[ "$(git -C "$canonical_repo" rev-parse main)" != "$(git -C "$updater_repo" rev-parse main)" ]]; then
+		rc=1
+	fi
+	print_result "refresh canonical pulls when default branch checked out" "$rc"
 	return 0
 }
 
 main() {
 	setup_subject
+	test_refresh_canonical_pulls_when_default_checked_out
 	test_cmd_merge_removes_current_linked_worktree
 	printf '\n%d/%d tests passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
 	[[ "$TESTS_FAILED" -eq 0 ]] || return 1
