@@ -6,6 +6,7 @@ subagents:
   # Framework internals
   - setup
   - troubleshooting
+  - routines-health
   - architecture
   - add-new-mcp-to-aidevops
   - mcp-integrations
