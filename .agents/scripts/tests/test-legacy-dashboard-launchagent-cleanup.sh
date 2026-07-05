@@ -46,13 +46,15 @@ test_cleanup_function_is_guarded_by_r912_state() {
 		printf '%s' "$snippet" | grep -qE 'r912' && \
 		printf '%s' "$snippet" | grep -qF 'launchctl bootout' && \
 		printf '%s' "$snippet" | grep -qF 'sh.aidevops.dashboard' && \
+		printf '%s' "$snippet" | grep -qF 'systemctl --user status' && \
+		printf '%s' "$snippet" | grep -qF "[[ -z \"\$unit\" ]] && continue" && \
 		printf '%s' "$snippet" | grep -qF 'systemctl --user disable --now' && \
 		printf '%s' "$snippet" | grep -qF 'daemon-reload'; then
 		print_result "legacy dashboard cleanup is gated by r912 disabled state" 0
 		return 0
 	fi
 	print_result "legacy dashboard cleanup is gated by r912 disabled state" 1 \
-		"Expected launchd + systemd labels, routines TODO guard, r912 check, bootout, disable, and daemon-reload"
+		"Expected launchd + systemd labels, routines TODO guard, r912 check, bootout, active systemd user manager check, empty unit guard, disable, and daemon-reload"
 	return 0
 }
 
