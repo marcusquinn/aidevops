@@ -10,14 +10,19 @@ SCRIPT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 HOME="${ROOT}/home"
 PULSE_DIR="${HOME}/.aidevops/.agent-workspace/supervisor"
 LOGFILE="${HOME}/.aidevops/logs/pulse.log"
+WRAPPER_LOGFILE="${HOME}/.aidevops/logs/pulse-wrapper.log"
+LOCKDIR="${HOME}/.aidevops/logs/pulse-wrapper.lockdir"
 REPOS_JSON="${HOME}/.config/aidevops/repos.json"
 mkdir -p "$PULSE_DIR" "$(dirname "$LOGFILE")" "$(dirname "$REPOS_JSON")"
 printf '{"initialized_repos":[]}\n' >"$REPOS_JSON"
+PULSE_FORCE_LLM=0
 
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/worker-lifecycle-common.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-dispatch-engine.sh"
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/pulse-instance-lock.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-wrapper-cycle.sh"
 
@@ -43,6 +48,17 @@ printf '%s\n' "$((now_epoch - 10))" >"${PULSE_DIR}/last_llm_attempt_epoch"
 if _should_run_llm_supervisor || [[ -f "${PULSE_DIR}/llm_trigger_mode" ]]; then
 	fail "recent failed LLM attempt did not apply retry cooldown"
 fi
+
+llm_lockdir="${LOCKDIR}.llm"
+dead_pid=999987
+while ps -p "$dead_pid" >/dev/null 2>&1; do
+	dead_pid=$((dead_pid + 1))
+done
+mkdir -p "$llm_lockdir"
+printf '%s\n' "$dead_pid" >"${llm_lockdir}/pid"
+_pulse_maybe_run_llm_supervisor || fail "skip-cycle stale LLM lock cleanup returned non-zero"
+[[ ! -d "$llm_lockdir" ]] || fail "skip-cycle stale LLM lock cleanup left a reclaimed lock behind"
+grep -q "Stale LLM lockdir detected (owner PID ${dead_pid} is dead)" "$WRAPPER_LOGFILE" || fail "skip-cycle stale LLM lock cleanup did not log stale owner"
 
 printf '%s\n' "$((now_epoch - 120))" >"${PULSE_DIR}/last_llm_attempt_epoch"
 _should_run_llm_supervisor || fail "old failed LLM attempt did not permit retry"

@@ -284,6 +284,9 @@ _pulse_record_llm_failure() {
 _pulse_maybe_run_llm_supervisor() {
 	local skip_llm=false
 	local llm_trigger_mode="stall"
+	local llm_lockdir="${LOCKDIR}.llm"
+	local _llm_lock_acquired=0
+	local _llm_lock_checked=0
 	if [[ "${PULSE_FORCE_LLM:-0}" != "1" ]] && ! _should_run_llm_supervisor; then
 		skip_llm=true
 		echo "[pulse-wrapper] Skipping LLM supervisor (backlog progressing, daily sweep not due)" >>"$LOGFILE"
@@ -296,47 +299,62 @@ _pulse_maybe_run_llm_supervisor() {
 		fi
 	fi
 
-	if [[ "$skip_llm" == "false" ]]; then
-		# Use a separate LLM lock so only one LLM session runs at a time,
-		# without blocking the deterministic 2-min cycle.
-		local llm_lockdir="${LOCKDIR}.llm"
-		local _llm_lock_acquired=false
-
-		if mkdir "$llm_lockdir" 2>/dev/null; then
-			_llm_lock_acquired=true
-		elif _handle_stale_llm_lock "$llm_lockdir"; then
-			# GH#20613: stale lock reclaimed — we now own it
-			_llm_lock_acquired=true
+	if [[ -d "$llm_lockdir" ]]; then
+		_llm_lock_checked=1
+		if _handle_stale_llm_lock "$llm_lockdir"; then
+			# GH#20613/GH#26550: stale lock reclaimed — we now own it.
+			_llm_lock_acquired=1
 		fi
+	fi
 
-		if [[ "$_llm_lock_acquired" == "true" ]]; then
-			echo "$$" >"${llm_lockdir}/pid" 2>/dev/null || true
-			# shellcheck disable=SC2064
-			trap "rm -rf '$llm_lockdir' 2>/dev/null; release_instance_lock" EXIT
-
-			local underfill_output
-			underfill_output=$(_compute_initial_underfill)
-			local initial_underfilled_mode="" initial_underfill_pct=""
-			initial_underfilled_mode=$(echo "$underfill_output" | sed -n '1p')
-			initial_underfill_pct=$(echo "$underfill_output" | sed -n '2p')
-
-			local pulse_start_epoch="" pulse_rc=""
-			pulse_start_epoch=$(date +%s)
-			_pulse_record_llm_attempt "$llm_trigger_mode" || true
-			pulse_rc=0
-			run_pulse "$initial_underfilled_mode" "$initial_underfill_pct" "$llm_trigger_mode" || pulse_rc=$?
-			local pulse_end_epoch
-			pulse_end_epoch=$(date +%s)
-			local pulse_duration=$((pulse_end_epoch - pulse_start_epoch))
-
-			if [[ "$pulse_rc" -eq 0 ]]; then
-				_pulse_record_llm_success "$llm_trigger_mode" || true
-				_run_early_exit_recycle_loop "$pulse_duration"
-			else
-				_pulse_record_llm_failure "$llm_trigger_mode" "$pulse_rc"
-			fi
+	if [[ "$skip_llm" == "true" ]]; then
+		if [[ "$_llm_lock_acquired" -eq 1 ]]; then
+			# GH#26550: skip cycles only perform cleanup. _handle_stale_llm_lock
+			# re-acquires after clearing, so release the reclaimed LLM lock instead
+			# of leaving a self-created lock behind until the next eligible cycle.
 			rm -rf "$llm_lockdir" 2>/dev/null || true
 		fi
+		return 0
+	fi
+
+	# Use a separate LLM lock so only one LLM session runs at a time,
+	# without blocking the deterministic 2-min cycle.
+	if [[ "$_llm_lock_acquired" -ne 1 ]]; then
+		if mkdir "$llm_lockdir" 2>/dev/null; then
+			_llm_lock_acquired=1
+		elif [[ "$_llm_lock_checked" -ne 1 && -d "$llm_lockdir" ]] && _handle_stale_llm_lock "$llm_lockdir"; then
+			# GH#20613: stale lock reclaimed — we now own it
+			_llm_lock_acquired=1
+		fi
+	fi
+
+	if [[ "$_llm_lock_acquired" -eq 1 ]]; then
+		echo "$$" >"${llm_lockdir}/pid" 2>/dev/null || true
+		# shellcheck disable=SC2064
+		trap "rm -rf '$llm_lockdir' 2>/dev/null; release_instance_lock" EXIT
+
+		local underfill_output
+		underfill_output=$(_compute_initial_underfill)
+		local initial_underfilled_mode="" initial_underfill_pct=""
+		initial_underfilled_mode=$(echo "$underfill_output" | sed -n '1p')
+		initial_underfill_pct=$(echo "$underfill_output" | sed -n '2p')
+
+		local pulse_start_epoch="" pulse_rc=""
+		pulse_start_epoch=$(date +%s)
+		_pulse_record_llm_attempt "$llm_trigger_mode" || true
+		pulse_rc=0
+		run_pulse "$initial_underfilled_mode" "$initial_underfill_pct" "$llm_trigger_mode" || pulse_rc=$?
+		local pulse_end_epoch
+		pulse_end_epoch=$(date +%s)
+		local pulse_duration=$((pulse_end_epoch - pulse_start_epoch))
+
+		if [[ "$pulse_rc" -eq 0 ]]; then
+			_pulse_record_llm_success "$llm_trigger_mode" || true
+			_run_early_exit_recycle_loop "$pulse_duration"
+		else
+			_pulse_record_llm_failure "$llm_trigger_mode" "$pulse_rc"
+		fi
+		rm -rf "$llm_lockdir" 2>/dev/null || true
 	fi
 	return 0
 }

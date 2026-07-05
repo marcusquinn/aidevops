@@ -90,7 +90,10 @@ setup_sandbox() {
 	# Create a fake pulse-wrapper.sh script that tests can launch
 	cat >"${TEST_ROOT}/pulse-wrapper.sh" <<'FAKEOF'
 #!/usr/bin/env bash
-exec sleep 60
+# Keep this shell process alive so ps command output still contains
+# "pulse-wrapper.sh"; exec would replace argv with plain "sleep" and trigger
+# the PID-reuse branch instead of the live pulse-wrapper owner branch.
+sleep 60
 FAKEOF
 	chmod +x "${TEST_ROOT}/pulse-wrapper.sh"
 
