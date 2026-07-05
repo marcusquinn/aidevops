@@ -403,8 +403,8 @@ _hrff_build_claim_released_line() {
 	local runner_name="$2"
 	local exit_code_arg="$3"
 	local session_count_arg="$4"
-	local aidevops_version="$AIDEVOPS_UNKNOWN_VERSION"
-	local opencode_version="$AIDEVOPS_UNKNOWN_VERSION"
+	local aidevops_version="${AIDEVOPS_UNKNOWN_VERSION:-}"
+	local opencode_version="${AIDEVOPS_UNKNOWN_VERSION:-}"
 	local release_ts=""
 	local machine_readable_part=""
 
