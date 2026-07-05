@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.53] - 2026-07-05
+
+### Changed
+
+- Maintenance: mark t18064 complete (pr:#26570 completed:2026-07-05) [skip ci]
+- Refactor: simplify campaign draft command (#26571)
+- fix GUI desktop dependency checks (#26570)
+- Maintenance: sync ref:GH#26569 to TODO.md [skip ci]
+- Refactor: simplify campaign draft command (#26566)
+- Refactor: split counter reconciliation helper (#26564)
+
+### Fixed
+
+- remove stale dashboard systemd units (#26568)
+- guard empty worker label match (#26561)
+- harden launchd routine self-healing (#26559)
+
 ## [3.31.52] - 2026-07-05
 
 ### Changed
