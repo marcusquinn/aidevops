@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.63] - 2026-07-05
+
+### Changed
+
+- Maintenance: sync ref:GH#26635 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#26634 to TODO.md [skip ci]
+
+### Fixed
+
+- honor OAuth pool source in OpenAI gate (#26663)
+- format full-loop changed file list (#26655)
+- teach shared constants deps parser retry sources (#26563)
+
 ## [3.31.62] - 2026-07-05
 
 ### Changed
