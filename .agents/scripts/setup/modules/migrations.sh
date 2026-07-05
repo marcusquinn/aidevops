@@ -1723,7 +1723,7 @@ cleanup_legacy_dashboard_launchagent() {
 	Linux)
 		local user_systemd_dir="$HOME/.config/systemd/user"
 		local has_systemd=0
-		if command -v systemctl >/dev/null && systemctl --user status >/dev/null; then
+		if command -v systemctl >/dev/null && systemctl --user status >/dev/null 2>&1; then
 			has_systemd=1
 		fi
 		local removed=0
