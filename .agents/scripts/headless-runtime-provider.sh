@@ -175,7 +175,7 @@ provider_static_auth_available() {
 		return $?
 		;;
 	openai)
-		[[ -n "${OPENAI_API_KEY:-}" ]]
+		[[ -n "${OPENAI_API_KEY:-}" && "${AIDEVOPS_OPENAI_API_KEY_SOURCE:-}" != "oauth-pool" ]]
 		return $?
 		;;
 	*)
