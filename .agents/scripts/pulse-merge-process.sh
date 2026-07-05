@@ -1154,7 +1154,7 @@ _route_pr_to_fix_worker() {
 	fi
 
 	# Worker-origin PRs: dispatch directly
-	if [[ ",${pr_labels}," == *"${_OW_LABEL_PAT}"* ]] \
+	if [[ ( -n "${_OW_LABEL_PAT:-}" && ",${pr_labels}," == *"${_OW_LABEL_PAT:-}"* ) ]] \
 		|| [[ ",${pr_labels}," == *",origin:worker-takeover,"* ]]; then
 		case "$kind" in
 			review)   _dispatch_pr_fix_worker "$pr_number" "$repo_slug" "$linked_issue" || true ;;

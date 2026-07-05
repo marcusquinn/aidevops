@@ -420,7 +420,7 @@ _check_pr_merge_gates() {
 	#
 	# Uses comma-delimited matching: ",origin:worker," does NOT match
 	# ",origin:worker-takeover," (substring-safe).
-	if [[ ",${_oi_labels_str}," == *"${_OW_LABEL_PAT}"* ]]; then
+	if [[ -n "${_OW_LABEL_PAT:-}" && ",${_oi_labels_str}," == *"${_OW_LABEL_PAT:-}"* ]]; then
 		if ! _attempt_worker_briefed_auto_merge "$pr_number" "$repo_slug" "$_oi_labels_str" "$_oi_is_draft" "$linked_issue" "$_author_collab_permission" "$pr_author"; then
 			return 1
 		fi
@@ -1074,7 +1074,7 @@ _process_single_ready_pr() {
 		if _is_trusted_dependabot_update_pr "$pr_number" "$repo_slug" "$pr_author" \
 			&& _trusted_dependabot_non_review_checks_green "$pr_number" "$repo_slug" "$pr_obj"; then
 			echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: _pr_required_checks_pass bypassed for trusted Dependabot — all non-review-bot checks are green (GH#24477)" >>"$LOGFILE"
-		elif [[ ",${_rcl_labels}," == *"${_OW_LABEL_PAT}"* ]] \
+		elif [[ -n "${_OW_LABEL_PAT:-}" && ",${_rcl_labels}," == *"${_OW_LABEL_PAT:-}"* ]] \
 			&& _check_required_checks_passing "$repo_slug" "$pr_number"; then
 			echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: _pr_required_checks_pass bypassed for origin:worker — branch-protection required contexts all pass (t2922)" >>"$LOGFILE"
 			# Fall through to linked-issue fetch and merge gate checks
@@ -1230,7 +1230,7 @@ ${merge_output}"
 			echo "[pulse-merge] auto-merged origin:interactive PR #${pr_number} (author=${pr_author}, role=${_ipr_role})" >>"$LOGFILE"
 		fi
 		# t2449: emit audit log for origin:worker worker-briefed auto-merges
-		if [[ ",${_ipr_labels}," == *"${_OW_LABEL_PAT}"* ]]; then
+		if [[ -n "${_OW_LABEL_PAT:-}" && ",${_ipr_labels}," == *"${_OW_LABEL_PAT:-}"* ]]; then
 			echo "[pulse-merge] auto-merged origin:worker (worker-briefed) PR #${pr_number} (author=${pr_author}, linked_issue=#${linked_issue:-unknown})" >>"$LOGFILE"
 		fi
 		_handle_post_merge_actions "$pr_number" "$repo_slug" "$linked_issue" "$merge_summary" "$_ipr_labels" "$pr_base_ref_name"
