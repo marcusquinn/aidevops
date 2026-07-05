@@ -209,6 +209,19 @@ test_output_shape_pid_elapsed_command() {
 	return 0
 }
 
+test_worker_watchdog_script_dir_retry_present() {
+	local watchdog_script="${LIB_DIR}/worker-watchdog.sh"
+	if grep -qF '_resolve_script_dir_with_retry' "$watchdog_script" && \
+		grep -qF 'AIDEVOPS_SCRIPT_DIR_ATTEMPTS' "$watchdog_script" && \
+		grep -qF "\${HOME}/.aidevops/agents/scripts" "$watchdog_script"; then
+		print_result "worker-watchdog retries script-dir resolution during deploy races" 0
+		return 0
+	fi
+	print_result "worker-watchdog retries script-dir resolution during deploy races" 1 \
+		"Expected retry helper and deployed-dir fallback in worker-watchdog.sh"
+	return 0
+}
+
 run_all() {
 	setup_test_env
 	test_alternation_pattern_matches_headless_with_model_flag
@@ -219,6 +232,7 @@ run_all() {
 	test_interactive_opencode_excluded
 	test_unrelated_process_excluded
 	test_output_shape_pid_elapsed_command
+	test_worker_watchdog_script_dir_retry_present
 	teardown_test_env
 	return 0
 }

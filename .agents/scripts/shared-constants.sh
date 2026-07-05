@@ -921,8 +921,41 @@ fast_cp() {
 # =============================================================================
 
 _SC_SELF="${BASH_SOURCE[0]:-${0:-}}"
+
+# Source a split-out shared module with a short retry window. During hot deploys
+# or migrated-machine restores, launchd can start a long-lived helper while the
+# agents directory is being replaced. A bare `source path` then fails with
+# "No such file or directory" even though the file appears moments later. The
+# retry keeps scheduled helpers self-healing without masking persistent install
+# corruption.
+_source_shared_module_with_retry() {
+	local module_path="$1"
+	local attempts="${AIDEVOPS_SHARED_SOURCE_ATTEMPTS:-5}"
+	local interval="${AIDEVOPS_SHARED_SOURCE_INTERVAL:-1}"
+	local attempt=1
+
+	[[ "$attempts" =~ ^[0-9]+$ ]] || attempts=5
+	[[ "$interval" =~ ^[0-9]+$ ]] || interval=1
+	[[ "$attempts" -gt 0 ]] || attempts=1
+
+	while [[ "$attempt" -le "$attempts" ]]; do
+		if [[ -f "$module_path" ]]; then
+			# shellcheck source=/dev/null
+			source "$module_path"
+			return $?
+		fi
+		if [[ "$attempt" -lt "$attempts" && "$interval" -gt 0 ]]; then
+			sleep "$interval"
+		fi
+		attempt=$((attempt + 1))
+	done
+
+	printf '[ERROR] shared module missing after %s attempt(s): %s\n' "$attempts" "$module_path" >&2
+	return 1
+}
+
 # shellcheck source=./portable-stat.sh
-source "${_SC_SELF%/*}/portable-stat.sh"
+_source_shared_module_with_retry "${_SC_SELF%/*}/portable-stat.sh"
 # _file_size_bytes, _file_perms, _file_mtime_epoch, _file_owner, _stat_batch,
 # _stat_translate_fmt are now provided by portable-stat.sh (GH#21742).
 
@@ -1129,7 +1162,7 @@ _save_cleanup_scope() {
 _SC_SELF="${BASH_SOURCE[0]:-${0:-}}"
 # shellcheck source=./shared-gh-wrappers.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via _SC_SELF
-source "${_SC_SELF%/*}/shared-gh-wrappers.sh"
+_source_shared_module_with_retry "${_SC_SELF%/*}/shared-gh-wrappers.sh"
 
 
 #######################################
@@ -1294,7 +1327,7 @@ clear_active_status_on_release() {
 _SC_SELF="${BASH_SOURCE[0]:-${0:-}}"
 # shellcheck source=./shared-todo-commit.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via _SC_SELF
-source "${_SC_SELF%/*}/shared-todo-commit.sh"
+_source_shared_module_with_retry "${_SC_SELF%/*}/shared-todo-commit.sh"
 
 # =============================================================================
 # Worktree Ownership Registry (t189) — extracted module
@@ -1428,7 +1461,7 @@ _is_process_alive_and_matches() {
 _SC_SELF="${BASH_SOURCE[0]:-${0:-}}"
 # shellcheck source=./shared-model-tier.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via _SC_SELF
-source "${_SC_SELF%/*}/shared-model-tier.sh"
+_source_shared_module_with_retry "${_SC_SELF%/*}/shared-model-tier.sh"
 
 # =============================================================================
 # Configuration Loader & Feature Toggles -- extracted module
@@ -1446,7 +1479,7 @@ source "${_SC_SELF%/*}/shared-model-tier.sh"
 _SC_SELF="${BASH_SOURCE[0]:-${0:-}}"
 # shellcheck source=./shared-feature-toggles.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via _SC_SELF
-source "${_SC_SELF%/*}/shared-feature-toggles.sh"
+_source_shared_module_with_retry "${_SC_SELF%/*}/shared-feature-toggles.sh"
 
 # This ensures all constants are available when this file is sourced
 export CONTENT_TYPE_JSON CONTENT_TYPE_FORM USER_AGENT

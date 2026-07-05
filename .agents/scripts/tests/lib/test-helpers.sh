@@ -29,7 +29,8 @@
 # Contract
 # --------
 # - `_test_discover_shared_deps <dir>` — echoes one filename per line for every
-#   bare `source "${_SC_SELF%/*}/<file>.sh"` directive in
+#   bare `source "${_SC_SELF%/*}/<file>.sh"` directive or the retrying
+#   `_source_shared_module_with_retry "${_SC_SELF%/*}/<file>.sh"` equivalent in
 #   `<dir>/shared-constants.sh`. Conditional sources (guarded by `[[ -r ... ]]`
 #   or equivalent) are intentionally ignored — they are benign when the file
 #   is absent and do not break sourcing.
@@ -79,7 +80,9 @@ _TEST_HELPERS_LOADED=1
 # _test_discover_shared_deps <dir>
 # -----------------------------------------------------------------------------
 # Parses <dir>/shared-constants.sh and echoes every sibling file it sources
-# via the `source "${_SC_SELF%/*}/<filename>.sh"` pattern, one per line.
+# via the direct `source "${_SC_SELF%/*}/<filename>.sh"` or retry-helper
+# `_source_shared_module_with_retry "${_SC_SELF%/*}/<filename>.sh"` pattern,
+# one per line.
 #
 # Matches only UNCONDITIONAL, file-scope directives. Conditional sources
 # (e.g., `if [[ -r "$path" ]]; then source "$path"; fi` blocks inside
@@ -105,10 +108,10 @@ _test_discover_shared_deps() {
 		return 1
 	fi
 
-	# Match lines that begin with `source "${_SC_SELF%/*}/<filename>.sh"`
-	# (no leading whitespace — file-scope only). Extract the basename.
+	# Match file-scope direct source lines and the retry-helper equivalent.
+	# Extract the basename.
 	awk '
-		/^source[[:space:]]/ && /_SC_SELF/ {
+		/^(source|_source_shared_module_with_retry)[[:space:]]/ && /_SC_SELF/ {
 			line = $0
 			# Strip everything up to and including the last slash
 			sub(/.*\//, "", line)
