@@ -124,9 +124,16 @@ STUB
 	cp "$HELPER" "${stub_dir}/cleanup-worktrees-async-helper.sh"
 	chmod +x "${stub_dir}/cleanup-worktrees-async-helper.sh"
 
-	env HOME="$TEST_DIR" \
-		CLEANUP_WORKTREES_ASYNC_CADENCE_MIN="${CLEANUP_WORKTREES_ASYNC_CADENCE_MIN:-10}" \
-		bash "${stub_dir}/cleanup-worktrees-async-helper.sh" 2>/dev/null || true
+	if [[ "${RUN_HELPER_UNSET_HOME:-0}" -eq 1 ]]; then
+		env -u HOME \
+			AIDEVOPS_LOG_DIR="${AIDEVOPS_LOG_DIR:-${TEST_DIR}/custom-logs}" \
+			CLEANUP_WORKTREES_ASYNC_CADENCE_MIN="${CLEANUP_WORKTREES_ASYNC_CADENCE_MIN:-10}" \
+			bash "${stub_dir}/cleanup-worktrees-async-helper.sh" 2>/dev/null || true
+	else
+		env HOME="$TEST_DIR" \
+			CLEANUP_WORKTREES_ASYNC_CADENCE_MIN="${CLEANUP_WORKTREES_ASYNC_CADENCE_MIN:-10}" \
+			bash "${stub_dir}/cleanup-worktrees-async-helper.sh" 2>/dev/null || true
+	fi
 	return 0
 }
 
@@ -313,6 +320,28 @@ test_lock_released_after_run() {
 }
 
 # ============================================================
+# TEST 9: HOME unset — explicit log dir avoids set -u unbound errors
+# ============================================================
+test_home_unset_uses_explicit_log_dir() {
+	local custom_log_dir="${TEST_DIR}/custom-logs"
+	local last_run_file="${custom_log_dir}/cleanup_worktrees.last-run"
+	local mock_ran="${TEST_DIR}/mock-ran"
+	rm -rf "$custom_log_dir"
+	rm -f "$mock_ran"
+
+	RUN_HELPER_UNSET_HOME=1 AIDEVOPS_LOG_DIR="$custom_log_dir" MOCK_CLEANUP_EXIT=0 \
+		run_helper_in_isolation || true
+
+	if [[ -f "$mock_ran" && -f "$last_run_file" ]]; then
+		print_result "home-unset: explicit log dir avoids unbound HOME" 0
+	else
+		print_result "home-unset: explicit log dir avoids unbound HOME" 1 \
+			"mock or last-run file missing when HOME was unset"
+	fi
+	return 0
+}
+
+# ============================================================
 # MAIN
 # ============================================================
 
@@ -348,6 +377,9 @@ main() {
 
 	teardown; setup
 	test_lock_released_after_run
+
+	teardown; setup
+	test_home_unset_uses_explicit_log_dir
 
 	echo ""
 	echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"

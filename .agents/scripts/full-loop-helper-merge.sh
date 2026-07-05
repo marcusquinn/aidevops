@@ -550,15 +550,18 @@ _merge_default_branch_for_cleanup() {
 	return 0
 }
 
-_merge_pull_canonical_for_cleanup() {
+_merge_refresh_canonical_for_cleanup() {
 	local canonical_dir="$1"
 	local default_branch="$2"
 	[[ -d "$canonical_dir" && -n "$default_branch" ]] || return 1
 
-	if git -C "$canonical_dir" pull --ff-only origin "$default_branch" >/dev/null 2>&1; then
+	# Refresh remote state without changing the canonical worktree's checked-out
+	# branch. A pull from a non-default branch can fast-forward that branch to the
+	# default branch tip, corrupting unrelated active work.
+	if git -C "$canonical_dir" fetch origin "$default_branch" >/dev/null 2>&1; then
 		return 0
 	fi
-	print_warning "Post-merge worktree cleanup: canonical pull skipped/failed for ${canonical_dir}; continuing cleanup"
+	print_warning "Post-merge worktree cleanup: canonical fetch skipped/failed for ${canonical_dir}; continuing cleanup"
 	return 0
 }
 
@@ -567,7 +570,7 @@ _merge_resolve_worktree_helper() {
 		printf '%s\n' "${SCRIPT_DIR}/worktree-helper.sh"
 		return 0
 	fi
-	if [[ -x "${HOME}/.aidevops/agents/scripts/worktree-helper.sh" ]]; then
+	if [[ -n "${HOME:-}" && -x "${HOME}/.aidevops/agents/scripts/worktree-helper.sh" ]]; then
 		printf '%s\n' "${HOME}/.aidevops/agents/scripts/worktree-helper.sh"
 		return 0
 	fi
@@ -604,7 +607,7 @@ _merge_cleanup_linked_worktree() {
 	print_info "Post-merge worktree cleanup: removing linked worktree ${worktree_path} for ${branch_name} in ${repo}"
 	local default_branch=""
 	default_branch=$(_merge_default_branch_for_cleanup "$canonical_dir")
-	_merge_pull_canonical_for_cleanup "$canonical_dir" "$default_branch"
+	_merge_refresh_canonical_for_cleanup "$canonical_dir" "$default_branch"
 
 	if ! cd "$canonical_dir" 2>/dev/null; then
 		print_warning "Post-merge worktree cleanup: could not cd to canonical repo ${canonical_dir}"

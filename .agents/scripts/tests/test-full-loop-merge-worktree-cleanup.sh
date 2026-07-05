@@ -162,6 +162,8 @@ TRASH
 	export PATH="${TEST_ROOT}/bin:${PATH}"
 
 	local canonical_repo="${TEST_ROOT}/repo"
+	local origin_repo="${TEST_ROOT}/origin.git"
+	local updater_repo="${TEST_ROOT}/updater"
 	local worktree_path="${TEST_ROOT}/worktrees/repo-feature-full-loop-cleanup"
 	mkdir -p "$canonical_repo" "${worktree_path%/*}"
 	git -C "$canonical_repo" init -q -b main
@@ -170,7 +172,18 @@ TRASH
 	printf 'base\n' >"${canonical_repo}/README.md"
 	git -C "$canonical_repo" add README.md
 	git -C "$canonical_repo" commit -q -m 'init'
+	git clone -q --bare "$canonical_repo" "$origin_repo"
+	git -C "$canonical_repo" remote add origin "$origin_repo"
+	git -C "$canonical_repo" push -q -u origin main
 	git -C "$canonical_repo" worktree add -q "$worktree_path" -b feature/full-loop-cleanup
+	git -C "$canonical_repo" checkout -q -b feature/active
+	git clone -q "$origin_repo" "$updater_repo"
+	git -C "$updater_repo" config user.email test@example.invalid
+	git -C "$updater_repo" config user.name 'Aidevops Test'
+	printf 'remote main advance\n' >>"${updater_repo}/README.md"
+	git -C "$updater_repo" add README.md
+	git -C "$updater_repo" commit -q -m 'advance main'
+	git -C "$updater_repo" push -q origin main
 
 	cd "$worktree_path"
 	export SCRIPT_DIR="$AGENTS_SCRIPTS_DIR"
@@ -185,6 +198,8 @@ TRASH
 test_cmd_merge_removes_current_linked_worktree() {
 	local canonical_repo="${TEST_ROOT}/repo"
 	local worktree_path="${TEST_ROOT}/worktrees/repo-feature-full-loop-cleanup"
+	local active_before=""
+	active_before=$(git -C "$canonical_repo" rev-parse feature/active)
 
 	cmd_merge "123" "example/repo" --squash
 
@@ -194,6 +209,12 @@ test_cmd_merge_removes_current_linked_worktree() {
 	fi
 	[[ ! -d "$worktree_path" ]] || rc=1
 	if git -C "$canonical_repo" show-ref --verify --quiet refs/heads/feature/full-loop-cleanup; then
+		rc=1
+	fi
+	if [[ "$(git -C "$canonical_repo" branch --show-current)" != "feature/active" ]]; then
+		rc=1
+	fi
+	if [[ "$(git -C "$canonical_repo" rev-parse feature/active)" != "$active_before" ]]; then
 		rc=1
 	fi
 	print_result "cmd_merge removes current linked worktree after immediate merge" "$rc"
