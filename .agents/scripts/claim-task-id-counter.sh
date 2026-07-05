@@ -251,72 +251,80 @@ _task_counter_status() {
 	return 0
 }
 
-# Re-fetch and reconcile a counter branch after CAS contention/desync.
-#
-# Normal CAS failures are retryable, but a non-main counter branch can become
-# desynchronised with the repository's default branch (for example, develop has
-# an older .task-counter than main after release/merge activity).  Before any
-# fallback or fatal outcome, reconcile by pushing a counter-only commit on the
-# configured counter branch with the maximum safe next-ID observed across:
-#   - current counter branch
-#   - default branch (when different and available)
-#   - TODO.md seed (highest tNNN + 1)
-#
-# Returns:
-#   0 — reconciliation pushed or branch already safe
-#   1 — hard/unrecoverable desync (diagnostic emitted)
-#   2 — race/contention while reconciling; caller may retry allocation
-_cas_reconcile_counter_branch() {
+_cas_fetch_counter_branch_for_reconcile() {
 	local repo_path="$1"
-	local default_branch="${2:-main}"
 
 	cd "$repo_path" || return 1
-	_task_counter_status "reconciling" "branch=${REMOTE_NAME}/${COUNTER_BRANCH}"
-
 	_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
 		fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null || {
 		log_error "UNRECOVERABLE_COUNTER_DESYNC: cannot fetch ${REMOTE_NAME}/${COUNTER_BRANCH} for reconciliation"
 		_task_counter_status "unrecoverable_desync" "fetch_failed"
 		return 1
 	}
+	return 0
+}
 
-	local counter_ref="${REMOTE_NAME}/${COUNTER_BRANCH}"
-	local pinned_sha=""
-	pinned_sha=$(git rev-parse "$counter_ref" 2>/dev/null) || {
+_cas_resolve_counter_ref_for_reconcile() {
+	local counter_ref="$1"
+
+	git rev-parse "$counter_ref" 2>/dev/null || {
 		log_error "UNRECOVERABLE_COUNTER_DESYNC: cannot resolve ${counter_ref} after fetch"
 		_task_counter_status "unrecoverable_desync" "resolve_failed"
 		return 1
 	}
+	return 0
+}
 
-	local branch_counter=""
-	branch_counter=$(git show "${pinned_sha}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
-	if [[ -z "$branch_counter" ]] || ! [[ "$branch_counter" =~ ^[0-9]+$ ]]; then
-		branch_counter=$(_compute_counter_seed "$repo_path")
+_cas_read_counter_file_from_ref() {
+	local ref_sha="$1"
+	local repo_path="$2"
+	local counter_value=""
+
+	counter_value=$(git show "${ref_sha}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
+	if [[ -z "$counter_value" ]] || ! [[ "$counter_value" =~ ^[0-9]+$ ]]; then
+		counter_value=$(_compute_counter_seed "$repo_path")
 	fi
+	printf '%s\n' "$counter_value"
+	return 0
+}
 
+_cas_read_default_counter_for_reconcile() {
+	local default_branch="$1"
 	local default_counter="0"
+	local default_ref=""
+
 	if [[ -n "$default_branch" && "$default_branch" != "$COUNTER_BRANCH" ]]; then
 		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
 			fetch -q "$REMOTE_NAME" "$default_branch" >/dev/null || true
-		local default_ref="${REMOTE_NAME}/${default_branch}"
+		default_ref="${REMOTE_NAME}/${default_branch}"
 		default_counter=$(git show "${default_ref}:${COUNTER_FILE}" 2>/dev/null | tr -d '[:space:]' || true)
 		if [[ -z "$default_counter" ]] || ! [[ "$default_counter" =~ ^[0-9]+$ ]]; then
 			default_counter="0"
 		fi
 	fi
+	printf '%s\n' "$default_counter"
+	return 0
+}
 
-	local todo_seed
-	todo_seed=$(_compute_counter_seed "$repo_path")
+_cas_reconciled_counter_value() {
+	local repo_path="$1"
+	local branch_counter="$2"
+	local default_counter="$3"
+	local todo_seed=""
 	local reconciled_counter="$branch_counter"
+
+	todo_seed=$(_compute_counter_seed "$repo_path")
 	((10#$default_counter > 10#$reconciled_counter)) && reconciled_counter="$default_counter"
 	((10#$todo_seed > 10#$reconciled_counter)) && reconciled_counter="$todo_seed"
+	printf '%s\n' "$reconciled_counter"
+	return 0
+}
 
-	if [[ "$reconciled_counter" == "$branch_counter" ]]; then
-		_task_counter_status "recovered_contention" "refetched"
-		return 0
-	fi
+_cas_build_reconciled_counter_tree() {
+	local pinned_sha="$1"
+	local reconciled_counter="$2"
+	local blob_sha existing_tree tree_sha
 
-	local blob_sha existing_tree tree_sha commit_sha
 	blob_sha=$(printf '%s\n' "$reconciled_counter" | git hash-object -w --stdin 2>/dev/null) || {
 		log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to create reconciled counter blob"
 		_task_counter_status "unrecoverable_desync" "blob_failed"
@@ -345,15 +353,30 @@ _cas_reconcile_counter_branch() {
 			return 1
 		}
 	fi
-	commit_sha=$(git commit-tree "$tree_sha" -p "$pinned_sha" -m "chore: reconcile task counter (${branch_counter}->${reconciled_counter})" 2>/dev/null) || {
+	printf '%s\n' "$tree_sha"
+	return 0
+}
+
+_cas_create_reconciliation_commit() {
+	local pinned_sha="$1"
+	local tree_sha="$2"
+	local branch_counter="$3"
+	local reconciled_counter="$4"
+
+	git commit-tree "$tree_sha" -p "$pinned_sha" -m "chore: reconcile task counter (${branch_counter}->${reconciled_counter})" 2>/dev/null || {
 		log_error "UNRECOVERABLE_COUNTER_DESYNC: failed to create reconciliation commit"
 		_task_counter_status "unrecoverable_desync" "commit_failed"
 		return 1
 	}
+	return 0
+}
 
+_cas_push_reconciliation_commit() {
+	local commit_sha="$1"
 	local push_rc=0
 	local push_stderr=""
 	local push_err_file=""
+
 	push_err_file=$(mktemp "${TMPDIR:-/tmp}/claim-task-id-reconcile-push.XXXXXX" 2>/dev/null) || push_err_file=""
 	if [[ -n "$push_err_file" ]]; then
 		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" \
@@ -377,6 +400,56 @@ _cas_reconcile_counter_branch() {
 		_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null || true
 		return 2
 	fi
+	return 0
+}
+
+# Re-fetch and reconcile a counter branch after CAS contention/desync.
+#
+# Normal CAS failures are retryable, but a non-main counter branch can become
+# desynchronised with the repository's default branch (for example, develop has
+# an older .task-counter than main after release/merge activity).  Before any
+# fallback or fatal outcome, reconcile by pushing a counter-only commit on the
+# configured counter branch with the maximum safe next-ID observed across:
+#   - current counter branch
+#   - default branch (when different and available)
+#   - TODO.md seed (highest tNNN + 1)
+#
+# Returns:
+#   0 — reconciliation pushed or branch already safe
+#   1 — hard/unrecoverable desync (diagnostic emitted)
+#   2 — race/contention while reconciling; caller may retry allocation
+_cas_reconcile_counter_branch() {
+	local repo_path="$1"
+	local default_branch="${2:-main}"
+
+	cd "$repo_path" || return 1
+	_task_counter_status "reconciling" "branch=${REMOTE_NAME}/${COUNTER_BRANCH}"
+	_cas_fetch_counter_branch_for_reconcile "$repo_path" || return 1
+
+	local counter_ref="${REMOTE_NAME}/${COUNTER_BRANCH}"
+	local pinned_sha=""
+	pinned_sha=$(_cas_resolve_counter_ref_for_reconcile "$counter_ref") || return 1
+
+	local branch_counter=""
+	branch_counter=$(_cas_read_counter_file_from_ref "$pinned_sha" "$repo_path")
+
+	local default_counter="0"
+	default_counter=$(_cas_read_default_counter_for_reconcile "$default_branch")
+
+	local reconciled_counter=""
+	reconciled_counter=$(_cas_reconciled_counter_value "$repo_path" "$branch_counter" "$default_counter")
+
+	if [[ "$reconciled_counter" == "$branch_counter" ]]; then
+		_task_counter_status "recovered_contention" "refetched"
+		return 0
+	fi
+
+	local tree_sha=""
+	tree_sha=$(_cas_build_reconciled_counter_tree "$pinned_sha" "$reconciled_counter") || return 1
+	local commit_sha=""
+	commit_sha=$(_cas_create_reconciliation_commit "$pinned_sha" "$tree_sha" "$branch_counter" "$reconciled_counter") || return 1
+
+	_cas_push_reconciliation_commit "$commit_sha" || return $?
 
 	_task_counter_status "recovered_contention" "counter=${reconciled_counter}"
 	_run_git_with_ssh_fallback "${CAS_HTTPS_TIMEOUT_S:-30}" fetch -q "$REMOTE_NAME" "$COUNTER_BRANCH" >/dev/null || true
