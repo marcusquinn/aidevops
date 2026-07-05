@@ -939,6 +939,115 @@ EOF
 	return 0
 }
 
+_require_draft_inputs() {
+	local campaign_id="${1:-}" channel="${2:-}"
+	if [[ -z "$campaign_id" ]] || [[ -z "$channel" ]]; then
+		print_error "Usage: campaign draft <id> --channel <channel> [--tone <tone>] [--variant N]"
+		print_error "Channels: ${CAMPAIGNS_VALID_CHANNELS}"
+		return 1
+	fi
+
+	_validate_channel "$channel" || return 1
+	return 0
+}
+
+_require_active_campaign_dir() {
+	local campaigns_dir="${1:-}" campaign_id="${2:-}"
+	local campaign_dir="${campaigns_dir}/${CAMPAIGNS_ACTIVE_DIR}/${campaign_id}"
+	if [[ ! -d "$campaign_dir" ]]; then
+		_err_active_not_found "$campaign_id"
+		print_error "Path checked: ${campaign_dir}"
+		print_error "Draft generation only works on active campaigns."
+		return 1
+	fi
+
+	printf '%s\n' "$campaign_dir"
+	return 0
+}
+
+_read_campaign_brief() {
+	local campaign_dir="${1:-}"
+	local brief_file="${campaign_dir}/${CAMPAIGNS_BRIEF_FILE}"
+	if [[ ! -f "$brief_file" ]]; then
+		print_error "Campaign brief not found: ${brief_file}"
+		print_error "Create a brief first: edit ${brief_file}"
+		return 1
+	fi
+
+	printf '%s\n' "$(<"$brief_file")"
+	return 0
+}
+
+_prepare_draft_file() {
+	local campaign_dir="${1:-}" channel="${2:-}" variant="${3:-}"
+	local drafts_dir="${campaign_dir}/${CAMPAIGNS_DRAFTS_DIR}"
+	mkdir -p "$drafts_dir"
+
+	local draft_file="${drafts_dir}/${channel}-v${variant}.md"
+	printf '%s\n' "$draft_file"
+	return 0
+}
+
+_warn_existing_draft_file() {
+	local draft_file="${1:-}"
+	if [[ -f "$draft_file" ]]; then
+		print_warning "Draft already exists: ${draft_file}"
+		print_warning "Use --variant N to create a different variant."
+	fi
+
+	return 0
+}
+
+_generate_draft_content() {
+	local channel="${1:-}" brief_content="${2:-}" brand_context="${3:-}"
+	local swipe_context="${4:-}" tone="${5:-}" model="${6:-}"
+	local ai_helper="${SCRIPT_DIR}/ai-research-helper.sh"
+	if [[ ! -x "$ai_helper" ]]; then
+		print_error "ai-research-helper.sh not found or not executable."
+		print_error "The draft command requires the AI research helper for content generation."
+		return 1
+	fi
+
+	local prompt max_words max_tokens draft_content
+	prompt="$(_build_draft_prompt "$channel" "$brief_content" "$brand_context" "$swipe_context" "$tone")"
+	max_words="$(_get_channel_spec "$channel" "max_words")"
+	max_tokens=$(( (${max_words:-500} * 2) + 200 ))
+	draft_content=$(printf '%s\n' "$prompt" | "$ai_helper" --stdin --model "$model" --max-tokens "$max_tokens") || {
+		print_error "AI content generation failed. Check API key and model availability."
+		return 1
+	}
+
+	if [[ -z "$draft_content" ]]; then
+		print_error "AI returned empty content. Try a different model or check the brief."
+		return 1
+	fi
+
+	printf '%s\n' "$draft_content"
+	return 0
+}
+
+_print_draft_summary() {
+	local campaign_id="${1:-}" channel="${2:-}" variant="${3:-}" tone="${4:-}"
+	local model="${5:-}" draft_file="${6:-}" campaign_dir="${7:-}"
+	local display_name
+	display_name="$(_get_channel_spec "$channel" "display_name")"
+
+	print_success "Draft created: ${draft_file}"
+	echo "  Campaign:  ${campaign_id}"
+	echo "  Channel:   ${display_name}"
+	echo "  Variant:   ${variant}"
+	echo "  Tone:      ${tone}"
+	echo "  Model:     ${model}"
+	echo "  Status:    draft (requires human review)"
+	echo ""
+	_print_next_steps
+	echo "  1. Review:  cat ${draft_file}"
+	echo "  2. Edit:    refine the draft as needed"
+	echo "  3. Variant: aidevops campaign draft ${campaign_id} --channel ${channel} --variant $((variant + 1))"
+	echo "  4. Promote: copy approved content to ${campaign_dir}/creative/${channel}/"
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # cmd_draft — AI creative agent for campaign content drafting (P5)
 # ---------------------------------------------------------------------------
@@ -959,13 +1068,7 @@ cmd_draft() {
 		esac
 	done
 
-	if [[ -z "$campaign_id" ]] || [[ -z "$channel" ]]; then
-		print_error "Usage: campaign draft <id> --channel <channel> [--tone <tone>] [--variant N]"
-		print_error "Channels: ${CAMPAIGNS_VALID_CHANNELS}"
-		return 1
-	fi
-
-	_validate_channel "$channel" || return 1
+	_require_draft_inputs "$campaign_id" "$channel" || return 1
 
 	[[ -z "$repo_path" ]] && repo_path="$(pwd)"
 
@@ -973,26 +1076,12 @@ cmd_draft() {
 	campaigns_dir="$(_resolve_campaigns_dir "$repo_path")"
 	_require_campaigns_plane "$campaigns_dir" || return 1
 
-	# Locate campaign in active/
-	local campaign_dir="${campaigns_dir}/${CAMPAIGNS_ACTIVE_DIR}/${campaign_id}"
-	if [[ ! -d "$campaign_dir" ]]; then
-		_err_active_not_found "$campaign_id"
-		print_error "Path checked: ${campaign_dir}"
-		print_error "Draft generation only works on active campaigns."
-		return 1
-	fi
+	local campaign_dir
+	campaign_dir="$(_require_active_campaign_dir "$campaigns_dir" "$campaign_id")" || return 1
 
-	# Read campaign brief
-	local brief_file="${campaign_dir}/${CAMPAIGNS_BRIEF_FILE}"
-	if [[ ! -f "$brief_file" ]]; then
-		print_error "Campaign brief not found: ${brief_file}"
-		print_error "Create a brief first: edit ${brief_file}"
-		return 1
-	fi
 	local brief_content
-	brief_content="$(cat "$brief_file")"
+	brief_content="$(_read_campaign_brief "$campaign_dir")" || return 1
 
-	# Gather RAG context
 	print_info "Gathering brand context from lib/brand/..."
 	local brand_context
 	brand_context="$(_gather_brand_context "$campaigns_dir")"
@@ -1001,70 +1090,21 @@ cmd_draft() {
 	local swipe_context
 	swipe_context="$(_gather_swipe_context "$campaigns_dir" "$channel")"
 
-	# Build the prompt
-	local prompt
-	prompt="$(_build_draft_prompt "$channel" "$brief_content" "$brand_context" "$swipe_context" "$tone")"
-
-	# Resolve AI helper
-	local ai_helper="${SCRIPT_DIR}/ai-research-helper.sh"
-	if [[ ! -x "$ai_helper" ]]; then
-		print_error "ai-research-helper.sh not found or not executable."
-		print_error "The draft command requires the AI research helper for content generation."
-		return 1
-	fi
-
-	# API key is resolved internally by ai-research-helper.sh (env / gopass / credentials.sh).
-	# We let it fail naturally with a clear error if unavailable.
-
-	# Determine max tokens based on channel
-	local max_words
-	max_words="$(_get_channel_spec "$channel" "max_words")"
-	# Rough estimate: 1 word ~ 1.5 tokens, plus overhead for formatting
-	local max_tokens=$(( (${max_words:-500} * 2) + 200 ))
-
-	# Create drafts directory
-	local drafts_dir="${campaign_dir}/${CAMPAIGNS_DRAFTS_DIR}"
-	mkdir -p "$drafts_dir"
-
-	local draft_file="${drafts_dir}/${channel}-v${variant}.md"
-	if [[ -f "$draft_file" ]]; then
-		print_warning "Draft already exists: ${draft_file}"
-		print_warning "Use --variant N to create a different variant."
-	fi
+	local draft_file
+	draft_file="$(_prepare_draft_file "$campaign_dir" "$channel" "$variant")"
+	_warn_existing_draft_file "$draft_file"
 
 	local display_name
 	display_name="$(_get_channel_spec "$channel" "display_name")"
 	print_info "Generating ${display_name} draft (variant ${variant}, tone: ${tone}, model: ${model})..."
 
-	# Call AI research helper
 	local draft_content
-	draft_content=$(printf '%s\n' "$prompt" | "$ai_helper" --stdin --model "$model" --max-tokens "$max_tokens") || {
-		print_error "AI content generation failed. Check API key and model availability."
-		return 1
-	}
+	draft_content="$(_generate_draft_content "$channel" "$brief_content" "$brand_context" "$swipe_context" "$tone" "$model")" || return 1
 
-	if [[ -z "$draft_content" ]]; then
-		print_error "AI returned empty content. Try a different model or check the brief."
-		return 1
-	fi
-
-	# Write draft file with provenance metadata
 	_write_draft_file "$draft_file" "$channel" "$variant" "$campaign_id" \
 		"$tone" "$draft_content" "$model"
 
-	print_success "Draft created: ${draft_file}"
-	echo "  Campaign:  ${campaign_id}"
-	echo "  Channel:   ${display_name}"
-	echo "  Variant:   ${variant}"
-	echo "  Tone:      ${tone}"
-	echo "  Model:     ${model}"
-	echo "  Status:    draft (requires human review)"
-	echo ""
-	_print_next_steps
-	echo "  1. Review:  cat ${draft_file}"
-	echo "  2. Edit:    refine the draft as needed"
-	echo "  3. Variant: aidevops campaign draft ${campaign_id} --channel ${channel} --variant $((variant + 1))"
-	echo "  4. Promote: copy approved content to ${campaign_dir}/creative/${channel}/"
+	_print_draft_summary "$campaign_id" "$channel" "$variant" "$tone" "$model" "$draft_file" "$campaign_dir"
 	return 0
 }
 
