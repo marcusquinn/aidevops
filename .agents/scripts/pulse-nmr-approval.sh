@@ -466,6 +466,68 @@ _nmr_application_is_circuit_breaker_trip() {
 }
 
 #######################################
+# Check whether the current NMR label is part of an unresolved breaker episode.
+#
+# Recovery-loop incidents: a recovery/cost/no-work breaker can apply NMR with a
+# marker, then a later automated retry can fail and re-apply NMR without
+# reposting the original marker. Looking only at the latest label event then
+# misclassifies the issue as a safe maintainer-authored automation default and
+# creates repeated approval comments + worker launches.
+#
+# This helper deliberately searches breaker markers at or before the latest NMR
+# label event. Once a breaker marker exists, the NMR remains a real hold until
+# cryptographic approval or a newer aidevops release allows one retry.
+#
+# Args:
+#   $1 - issue_num  : GitHub issue number
+#   $2 - slug       : repo slug (owner/repo)
+#   $3 - label_at   : ISO8601 timestamp when NMR label was applied
+#
+# Exit codes:
+#   0 - prior breaker marker found (preserve NMR unless release retry applies)
+#   1 - no prior breaker marker found
+#######################################
+_nmr_application_has_breaker_history() {
+	local issue_num="$1"
+	local slug="$2"
+	local label_at="$3"
+
+	[[ -n "$issue_num" && -n "$slug" && -n "$label_at" ]] || return 1
+
+	local comments_api
+	printf -v comments_api 'repos/%s/issues/%s/comments' "$slug" "$issue_num"
+	local comments_json
+	comments_json=$(gh api "$comments_api" --paginate --slurp 2>/dev/null) || comments_json="[]"
+	if [[ -z "$comments_json" || "$comments_json" == "null" ]]; then
+		comments_json="[]"
+	fi
+
+	local breaker_pattern='stale-recovery-tick:escalated|cost-circuit-breaker:fired|cost-circuit-breaker:no_work_loop|dispatch-backoff:rate_limit_nmr|dispatch-infrastructure-failure|dispatch-circuit-breaker:worker_recovery_loop|circuit-breaker-escalated|circuit-breaker-meta-filed'
+	local has_breaker_history
+	has_breaker_history=$(printf '%s' "$comments_json" | jq -r \
+		--arg label_at "$label_at" \
+		--arg breaker_pattern "$breaker_pattern" '
+		(if type == "array" and (.[0]? | type) == "array" then [.[][]]
+		elif type == "array" then .
+		else [] end)
+		| [
+			.[]
+			| select(.created_at != null)
+			| select((.created_at | fromdateiso8601) <= (($label_at | fromdateiso8601) + 60))
+			| select((.body // "") | test($breaker_pattern))
+		]
+		| length
+	' 2>/dev/null) || has_breaker_history=0
+	[[ "$has_breaker_history" =~ ^[0-9]+$ ]] || has_breaker_history=0
+
+	if [[ "$has_breaker_history" -gt 0 ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
 # Check whether an NMR issue is security-sensitive.
 #
 # Security-labelled work must not be auto-cleared by the generic
@@ -567,6 +629,109 @@ _nmr_current_aidevops_version() {
 }
 
 #######################################
+# Find the retry-eligible breaker marker for an NMR episode.
+#
+# Args:
+#   $1 - comments_json  : GitHub issue comments JSON, possibly slurped pages
+#   $2 - label_at       : latest NMR label timestamp
+#   $3 - retry_pattern  : regex for retry-eligible breaker markers
+# Stdout: compact JSON object `{at, body}` or empty.
+# Returns: 0 when found, 1 otherwise.
+#######################################
+_nmr_retry_breaker_event_json() {
+	local comments_json="$1"
+	local label_at="$2"
+	local retry_pattern="$3"
+	local array_type='array'
+
+	[[ -n "$comments_json" && -n "$label_at" && -n "$retry_pattern" ]] || return 1
+
+	local breaker_event_json=""
+	breaker_event_json=$(printf '%s' "$comments_json" | jq -c \
+		--arg label_at "$label_at" \
+		--arg array_type "$array_type" \
+		--arg retry_pattern "$retry_pattern" '
+		(if type == $array_type and (.[0]? | type) == $array_type then [.[][]]
+		elif type == $array_type then .
+		else [] end)
+		| [
+			.[]
+			| select(.created_at != null)
+			| select((.created_at | fromdateiso8601) >= (($label_at | fromdateiso8601) - 5)
+				and (.created_at | fromdateiso8601) <= (($label_at | fromdateiso8601) + 60))
+			| select((.body // "") | test($retry_pattern))
+			| {at: .created_at, body: (.body // "")}
+		]
+		| last // empty
+	' 2>/dev/null) || breaker_event_json=""
+
+	if [[ -z "$breaker_event_json" || "$breaker_event_json" == "null" ]]; then
+		breaker_event_json=$(printf '%s' "$comments_json" | jq -c \
+			--arg label_at "$label_at" \
+			--arg array_type "$array_type" \
+			--arg retry_pattern "$retry_pattern" '
+			(if type == $array_type and (.[0]? | type) == $array_type then [.[][]]
+			elif type == $array_type then .
+			else [] end)
+			| [
+				.[]
+				| select(.created_at != null)
+				| select((.created_at | fromdateiso8601) <= (($label_at | fromdateiso8601) + 60))
+				| select((.body // "") | test($retry_pattern))
+				| {at: .created_at, body: (.body // "")}
+			]
+			| last // empty
+		' 2>/dev/null) || breaker_event_json=""
+	fi
+
+	[[ -n "$breaker_event_json" && "$breaker_event_json" != "null" ]] || return 1
+	printf '%s\n' "$breaker_event_json"
+	return 0
+}
+
+#######################################
+# Check if the current aidevops release already auto-retried this breaker.
+#
+# Args:
+#   $1 - comments_json
+#   $2 - breaker_at
+#   $3 - current_version
+# Returns: 0 if an approval comment from current_version exists after breaker.
+#######################################
+_nmr_retry_already_used_for_version() {
+	local comments_json="$1"
+	local breaker_at="$2"
+	local current_version="$3"
+
+	[[ -n "$comments_json" && -n "$breaker_at" && -n "$current_version" ]] || return 1
+
+	local approval_at_current_version_count
+	approval_at_current_version_count=$(printf '%s' "$comments_json" | jq -r \
+		--arg breaker_at "$breaker_at" \
+		--arg current_version "$current_version" \
+		--arg approval_marker "aidevops-signed-approval" '
+		(if type == "array" and (.[0]? | type) == "array" then [.[][]]
+		elif type == "array" then .
+		else [] end)
+		| [
+			.[]
+			| select(.created_at != null)
+			| select((.created_at | fromdateiso8601) > ($breaker_at | fromdateiso8601))
+			| select((.body // "") | contains($approval_marker))
+			| select((.body // "") | contains($current_version))
+		]
+		| length
+	' 2>/dev/null) || approval_at_current_version_count=0
+	[[ "$approval_at_current_version_count" =~ ^[0-9]+$ ]] || approval_at_current_version_count=0
+
+	if [[ "$approval_at_current_version_count" -gt 0 ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
 # Decide if an automated breaker NMR should be allowed to retry because the
 # deployed aidevops release is newer than the release that tripped the breaker.
 #
@@ -593,25 +758,14 @@ _nmr_breaker_release_retry_reason() {
 	[[ -n "$comments_json" && "$comments_json" != "null" ]] || comments_json="[]"
 
 	local retry_pattern='dispatch-backoff:rate_limit_nmr|cost-circuit-breaker:no_work_loop|dispatch-infrastructure-failure|dispatch-circuit-breaker:worker_recovery_loop'
-	local array_type='array'
-	local breaker_body=""
-	breaker_body=$(printf '%s' "$comments_json" | jq -r \
-		--arg label_at "$label_at" \
-		--arg array_type "$array_type" \
-		--arg retry_pattern "$retry_pattern" '
-		(if type == $array_type and (.[0]? | type) == $array_type then [.[][]]
-		elif type == $array_type then .
-		else [] end)
-		| [
-			.[]
-			| select(.created_at != null)
-			| select((.created_at | fromdateiso8601) >= (($label_at | fromdateiso8601) - 5)
-				and (.created_at | fromdateiso8601) <= (($label_at | fromdateiso8601) + 60))
-			| select((.body // "") | test($retry_pattern))
-			| (.body // "")
-		]
-		| last // ""
-	' 2>/dev/null) || breaker_body=""
+	local breaker_event_json=""
+	breaker_event_json=$(_nmr_retry_breaker_event_json "$comments_json" "$label_at" "$retry_pattern") || breaker_event_json=""
+	[[ -n "$breaker_event_json" ]] || return 1
+
+	local breaker_at="" breaker_body=""
+	breaker_at=$(printf '%s' "$breaker_event_json" | jq -r '.at // ""' 2>/dev/null) || breaker_at=""
+	breaker_body=$(printf '%s' "$breaker_event_json" | jq -r '.body // ""' 2>/dev/null) || breaker_body=""
+	[[ -n "$breaker_at" ]] || return 1
 	[[ -n "$breaker_body" ]] || return 1
 
 	if printf '%s' "$breaker_body" | grep -q 'dispatch-backoff:rate_limit_nmr'; then
@@ -635,6 +789,10 @@ _nmr_breaker_release_retry_reason() {
 	local current_version=""
 	current_version=$(_nmr_current_aidevops_version)
 	[[ -n "$current_version" ]] || return 1
+
+	if _nmr_retry_already_used_for_version "$comments_json" "$breaker_at" "$current_version"; then
+		return 1
+	fi
 
 	local breaker_key="" current_key=""
 	breaker_key=$(_nmr_version_sort_key "$breaker_version")
@@ -686,6 +844,7 @@ _nmr_applied_by_maintainer() {
 	local issue_num="$1"
 	local slug="$2"
 	local maintainer="$3"
+	_NMR_AUTO_APPROVAL_REASON_OVERRIDE=""
 
 	[[ -n "$issue_num" && -n "$slug" && -n "$maintainer" ]] || return 1
 
@@ -717,6 +876,7 @@ _nmr_applied_by_maintainer() {
 			local release_retry_reason=""
 			release_retry_reason=$(_nmr_breaker_release_retry_reason "$issue_num" "$slug" "$nmr_at") || release_retry_reason=""
 			if [[ -n "$release_retry_reason" ]]; then
+				_NMR_AUTO_APPROVAL_REASON_OVERRIDE="$release_retry_reason"
 				echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — ${release_retry_reason}; allowing one auto-approval retry" >>"$LOGFILE"
 				return 1
 			fi
@@ -724,6 +884,21 @@ _nmr_applied_by_maintainer() {
 			# t3049: check if a subsequent worker produced a clean approved PR
 			# that resolves the stale-recovery false positive. Posts a one-shot
 			# notification to the maintainer if so. Does NOT clear NMR.
+			_notify_stale_recovery_resolved_by_pr "$issue_num" "$slug" "$nmr_at" || true
+			return 0
+		fi
+	fi
+
+	if [[ -n "$nmr_at" ]]; then
+		if _nmr_application_has_breaker_history "$issue_num" "$slug" "$nmr_at"; then
+			local history_retry_reason=""
+			history_retry_reason=$(_nmr_breaker_release_retry_reason "$issue_num" "$slug" "$nmr_at") || history_retry_reason=""
+			if [[ -n "$history_retry_reason" ]]; then
+				_NMR_AUTO_APPROVAL_REASON_OVERRIDE="$history_retry_reason"
+				echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — prior breaker marker found; ${history_retry_reason}; allowing one auto-approval retry" >>"$LOGFILE"
+				return 1
+			fi
+			echo "[pulse-wrapper] _nmr_applied_by_maintainer: #${issue_num} in ${slug} — prior circuit breaker marker remains active after latest NMR relabel by actor=${nmr_actor:-unknown} — PRESERVING NMR, requires 'sudo aidevops approve issue ${issue_num} ${slug}' (t2386/t3566)" >>"$LOGFILE"
 			_notify_stale_recovery_resolved_by_pr "$issue_num" "$slug" "$nmr_at" || true
 			return 0
 		fi
@@ -1217,6 +1392,7 @@ auto_approve_maintainer_issues() {
 
 			local should_approve=false
 			local approval_reason=""
+			_NMR_AUTO_APPROVAL_REASON_OVERRIDE=""
 
 			# Case 1: maintainer created the issue — auto-approve unless NMR
 			# was manually applied by the maintainer (intentional hold).
@@ -1227,7 +1403,7 @@ auto_approve_maintainer_issues() {
 					echo "[pulse-wrapper] Skipping auto-approve for #${issue_num} in ${slug} — NMR manually applied by maintainer" >>"$LOGFILE"
 				else
 					should_approve=true
-					approval_reason="maintainer is author, NMR applied by automation"
+					approval_reason="${_NMR_AUTO_APPROVAL_REASON_OVERRIDE:-maintainer is author, NMR applied by automation}"
 				fi
 			fi
 

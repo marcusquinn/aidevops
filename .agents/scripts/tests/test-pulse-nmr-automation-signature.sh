@@ -148,12 +148,15 @@ set_timeline() {
 # Extract helpers from the source file. Same awk-extract-and-eval
 # pattern used by the force-dispatch and bot-cleanup test suites.
 define_helpers_under_test() {
-	local sig_src breaker_src security_src sort_src current_src retry_src maint_src
+	local sig_src breaker_src history_src security_src sort_src current_src retry_event_src retry_used_src retry_src maint_src
 	sig_src=$(awk '
 		/^_nmr_application_has_automation_signature\(\) \{/,/^}$/ { print }
 	' "$NMR_SCRIPT")
 	breaker_src=$(awk '
 		/^_nmr_application_is_circuit_breaker_trip\(\) \{/,/^}$/ { print }
+	' "$NMR_SCRIPT")
+	history_src=$(awk '
+		/^_nmr_application_has_breaker_history\(\) \{/,/^}$/ { print }
 	' "$NMR_SCRIPT")
 	security_src=$(awk '
 		/^_nmr_application_is_security_sensitive\(\) \{/,/^}$/ { print }
@@ -164,13 +167,19 @@ define_helpers_under_test() {
 	current_src=$(awk '
 		/^_nmr_current_aidevops_version\(\) \{/,/^}$/ { print }
 	' "$NMR_SCRIPT")
+	retry_event_src=$(awk '
+		/^_nmr_retry_breaker_event_json\(\) \{/,/^}$/ { print }
+	' "$NMR_SCRIPT")
+	retry_used_src=$(awk '
+		/^_nmr_retry_already_used_for_version\(\) \{/,/^}$/ { print }
+	' "$NMR_SCRIPT")
 	retry_src=$(awk '
 		/^_nmr_breaker_release_retry_reason\(\) \{/,/^}$/ { print }
 	' "$NMR_SCRIPT")
 	maint_src=$(awk '
 		/^_nmr_applied_by_maintainer\(\) \{/,/^}$/ { print }
 	' "$NMR_SCRIPT")
-	if [[ -z "$sig_src" || -z "$breaker_src" || -z "$security_src" || -z "$sort_src" || -z "$current_src" || -z "$retry_src" || -z "$maint_src" ]]; then
+	if [[ -z "$sig_src" || -z "$breaker_src" || -z "$history_src" || -z "$security_src" || -z "$sort_src" || -z "$current_src" || -z "$retry_event_src" || -z "$retry_used_src" || -z "$retry_src" || -z "$maint_src" ]]; then
 		printf 'ERROR: could not extract one of the NMR helpers from %s\n' "$NMR_SCRIPT" >&2
 		return 1
 	fi
@@ -179,11 +188,17 @@ define_helpers_under_test() {
 	# shellcheck disable=SC1090
 	eval "$breaker_src"
 	# shellcheck disable=SC1090
+	eval "$history_src"
+	# shellcheck disable=SC1090
 	eval "$security_src"
 	# shellcheck disable=SC1090
 	eval "$sort_src"
 	# shellcheck disable=SC1090
 	eval "$current_src"
+	# shellcheck disable=SC1090
+	eval "$retry_event_src"
+	# shellcheck disable=SC1090
+	eval "$retry_used_src"
 	# shellcheck disable=SC1090
 	eval "$retry_src"
 	# shellcheck disable=SC1090
@@ -492,6 +507,28 @@ test_breaker_trip_empty_args_returns_nonzero() {
 	return 0
 }
 
+test_breaker_history_detects_prior_worker_recovery_marker() {
+	set_comments '[{"created_at":"2026-07-04T05:07:55Z","body":"<!-- dispatch-circuit-breaker:worker_recovery_loop -->\n## Dispatch paused: repeated worker recovery failures\n---\n[aidevops.sh](https://aidevops.sh) v3.31.49 automated scan."},{"created_at":"2026-07-04T13:50:31Z","body":"<!-- aidevops-signed-approval -->\nAuto-approved: maintainer is author, NMR applied by automation.\n---\n[aidevops.sh](https://aidevops.sh) v3.31.50 automated scan."}]'
+	if _nmr_application_has_breaker_history 8337 exampleorg/examplerepo "2026-07-04T13:54:57Z"; then
+		print_result "breaker_history detects prior worker_recovery_loop marker" 0
+		return 0
+	fi
+	print_result "breaker_history detects prior worker_recovery_loop marker" 1 \
+		"Expected exit 0 — marker-less NMR relabel still belongs to the breaker episode"
+	return 0
+}
+
+test_breaker_history_ignores_future_marker() {
+	set_comments '[{"created_at":"2026-07-04T14:00:00Z","body":"<!-- dispatch-circuit-breaker:worker_recovery_loop -->"}]'
+	if _nmr_application_has_breaker_history 8337 exampleorg/examplerepo "2026-07-04T13:00:00Z"; then
+		print_result "breaker_history ignores marker after latest NMR" 1 \
+			"Expected exit 1 — future markers must not classify an earlier NMR event"
+		return 0
+	fi
+	print_result "breaker_history ignores marker after latest NMR" 0
+	return 0
+}
+
 # --- _nmr_application_is_security_sensitive (security review boundary) ---
 
 test_security_sensitive_detects_security_label() {
@@ -720,6 +757,67 @@ test_rate_limit_cooldown_allows_retry() {
 	return 0
 }
 
+test_markerless_relabel_after_recovery_breaker_preserves_same_release() {
+	# Incident class: a recovery-loop breaker posts the marker, an auto-approval
+	# retry relaunches a worker, then the issue is relabeled NMR without reposting
+	# the breaker marker. The latest label actor may be a peer runner, so actor-only
+	# logic would auto-clear NMR again and burn another worker.
+	set_timeline '[{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"runner-a"},"created_at":"2026-07-04T05:07:53Z"},{"event":"unlabeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"runner-b"},"created_at":"2026-07-04T13:50:33Z"},{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"runner-a"},"created_at":"2026-07-04T13:54:57Z"}]'
+	set_comments '[{"created_at":"2026-07-04T05:07:55Z","body":"<!-- dispatch-circuit-breaker:worker_recovery_loop -->\n## Dispatch paused: repeated worker recovery failures\n---\n[aidevops.sh](https://aidevops.sh) v3.31.54 automated scan."}]'
+	set_issue_meta '{"labels":[{"name":"needs-maintainer-review"},{"name":"origin:worker"},{"name":"auto-dispatch"}]}'
+	AIDEVOPS_CURRENT_VERSION_OVERRIDE=3.31.54
+	export AIDEVOPS_CURRENT_VERSION_OVERRIDE
+	if _nmr_applied_by_maintainer 8337 exampleorg/examplerepo maintainer; then
+		unset AIDEVOPS_CURRENT_VERSION_OVERRIDE
+		print_result "marker-less recovery relabel preserves same-release NMR" 0
+		return 0
+	fi
+	unset AIDEVOPS_CURRENT_VERSION_OVERRIDE
+	print_result "marker-less recovery relabel preserves same-release NMR" 1 \
+		"Expected exit 0 — prior recovery breaker must preserve NMR even when latest label lacks a marker"
+	return 0
+}
+
+test_markerless_relabel_after_recovery_breaker_allows_upgrade_retry() {
+	set_timeline '[{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"runner-a"},"created_at":"2026-07-04T05:07:53Z"},{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"runner-a"},"created_at":"2026-07-04T13:54:57Z"}]'
+	set_comments '[{"created_at":"2026-07-04T05:07:55Z","body":"<!-- dispatch-circuit-breaker:worker_recovery_loop -->\n## Dispatch paused: repeated worker recovery failures\n---\n[aidevops.sh](https://aidevops.sh) v3.31.49 automated scan."}]'
+	set_issue_meta '{"labels":[{"name":"needs-maintainer-review"},{"name":"origin:worker"},{"name":"auto-dispatch"}]}'
+	AIDEVOPS_CURRENT_VERSION_OVERRIDE=3.31.54
+	export AIDEVOPS_CURRENT_VERSION_OVERRIDE
+	if _nmr_applied_by_maintainer 8337 exampleorg/examplerepo maintainer; then
+		unset AIDEVOPS_CURRENT_VERSION_OVERRIDE
+		print_result "marker-less recovery relabel allows one upgraded retry" 1 \
+			"Expected exit 1 — newer aidevops release should permit exactly one retry"
+		return 0
+	fi
+	if [[ "${_NMR_AUTO_APPROVAL_REASON_OVERRIDE:-}" != *"3.31.49 -> 3.31.54"* ]]; then
+		unset AIDEVOPS_CURRENT_VERSION_OVERRIDE
+		print_result "marker-less recovery relabel records upgraded retry reason" 1 \
+			"Expected override reason to mention the breaker and current versions"
+		return 0
+	fi
+	unset AIDEVOPS_CURRENT_VERSION_OVERRIDE
+	print_result "marker-less recovery relabel allows one upgraded retry" 0
+	return 0
+}
+
+test_markerless_relabel_after_recovery_breaker_retry_is_once_per_release() {
+	set_timeline '[{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"runner-a"},"created_at":"2026-07-04T05:07:53Z"},{"event":"unlabeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"runner-b"},"created_at":"2026-07-04T13:50:33Z"},{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"runner-a"},"created_at":"2026-07-04T13:54:57Z"}]'
+	set_comments '[{"created_at":"2026-07-04T05:07:55Z","body":"<!-- dispatch-circuit-breaker:worker_recovery_loop -->\n## Dispatch paused: repeated worker recovery failures\n---\n[aidevops.sh](https://aidevops.sh) v3.31.49 automated scan."},{"created_at":"2026-07-04T13:50:31Z","body":"<!-- aidevops-signed-approval -->\nAuto-approved: automated breaker retry allowed after aidevops upgrade 3.31.49 -> 3.31.54.\n---\n[aidevops.sh](https://aidevops.sh) v3.31.54 automated scan."}]'
+	set_issue_meta '{"labels":[{"name":"needs-maintainer-review"},{"name":"origin:worker"},{"name":"auto-dispatch"}]}'
+	AIDEVOPS_CURRENT_VERSION_OVERRIDE=3.31.54
+	export AIDEVOPS_CURRENT_VERSION_OVERRIDE
+	if _nmr_applied_by_maintainer 8337 exampleorg/examplerepo maintainer; then
+		unset AIDEVOPS_CURRENT_VERSION_OVERRIDE
+		print_result "marker-less recovery relabel retry is once per release" 0
+		return 0
+	fi
+	unset AIDEVOPS_CURRENT_VERSION_OVERRIDE
+	print_result "marker-less recovery relabel retry is once per release" 1 \
+		"Expected exit 0 — same release already retried after the breaker marker"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -754,6 +852,8 @@ main() {
 	test_breaker_trip_rejects_source_review_scanner_marker
 	test_breaker_trip_ignores_marker_outside_window
 	test_breaker_trip_empty_args_returns_nonzero
+	test_breaker_history_detects_prior_worker_recovery_marker
+	test_breaker_history_ignores_future_marker
 
 	# _nmr_application_is_security_sensitive (security review boundary)
 	test_security_sensitive_detects_security_label
@@ -772,6 +872,9 @@ main() {
 	test_release_upgrade_allows_rate_limit_breaker_retry
 	test_same_release_preserves_rate_limit_breaker_nmr
 	test_rate_limit_cooldown_allows_retry
+	test_markerless_relabel_after_recovery_breaker_preserves_same_release
+	test_markerless_relabel_after_recovery_breaker_allows_upgrade_retry
+	test_markerless_relabel_after_recovery_breaker_retry_is_once_per_release
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
