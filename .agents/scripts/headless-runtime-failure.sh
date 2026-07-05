@@ -334,19 +334,24 @@ _release_dispatch_claim() {
 	local exit_code_arg="${3:-}"
 	local session_count_arg="${4:-}"
 
-	# Extract issue number and repo slug from the worker contract first, then
-	# fall back to legacy session-key parsing. Manual dispatch session keys include
-	# a timestamp suffix (`manual-cli-<issue>-<epoch>`), so parsing trailing digits
-	# targets a nonexistent issue unless WORKER_ISSUE_NUMBER wins.
+	# Extract issue number and repo slug from the explicit worker contract first,
+	# then fall back only to canonical issue-scoped session keys. Non-task sessions
+	# can legitimately end in digits (for example validation timestamps); treating
+	# arbitrary trailing digits as issue numbers causes fake GitHub cleanup writes.
 	local issue_number=""
 	local repo_slug=""
 	if [[ "${WORKER_ISSUE_NUMBER:-}" =~ ^[0-9]+$ ]]; then
 		issue_number="$WORKER_ISSUE_NUMBER"
+	elif [[ "$session_key" =~ ^issue-([0-9]+)$ ]]; then
+		issue_number="${BASH_REMATCH[1]}"
 	else
-		issue_number=$(printf '%s' "$session_key" | grep -oE '[0-9]+$' || true)
+		issue_number=""
 	fi
 	# Try to get repo slug from the dispatch ledger or env
 	repo_slug="${DISPATCH_REPO_SLUG:-}"
+	if [[ -z "$issue_number" && -z "${WORKER_ISSUE_NUMBER:-}" ]]; then
+		return 0
+	fi
 
 	# Supervisor/pulse cleanup paths can source this module and run the generic
 	# EXIT cleanup without ever having claimed a worker issue. With no issue and
