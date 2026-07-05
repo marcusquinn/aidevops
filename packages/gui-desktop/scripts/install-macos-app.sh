@@ -248,7 +248,6 @@ gui_dependencies_present() {
 node_modules/vite/bin/vite.js
 node_modules/react
 node_modules/react-icons
-node_modules/@fontsource/cal-sans
 node_modules/@fontsource/courier-prime
 node_modules/@fontsource/dm-mono
 node_modules/@fontsource/dm-sans
