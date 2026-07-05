@@ -4433,4 +4433,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18067 Centralize terminal worktree cleanup #bug ref:GH#26634
 
-- [ ] t18068 local-permissions-check: add Linux and Windows diagnostics #auto-dispatch #enhancement #security #tools ref:GH#26635
+- [x] t18068 local-permissions-check: add Linux and Windows diagnostics #auto-dispatch #enhancement #security #tools ref:GH#26635 pr:#26666 completed:2026-07-05
