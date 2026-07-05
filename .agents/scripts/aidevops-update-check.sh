@@ -368,6 +368,26 @@ _check_advisories() {
 		fi
 	fi
 
+	local optimise_helper="$SCRIPT_DIR/optimise-indexing-backups-helper.sh"
+	if [[ -x "$optimise_helper" ]]; then
+		local optimise_platform=""
+		case "$(uname -s 2>/dev/null || true)" in
+			Darwin) optimise_platform="macos" ;;
+			Linux) optimise_platform="linux" ;;
+		esac
+		if [[ -n "$optimise_platform" ]]; then
+			local optimise_line
+			optimise_line=$("$optimise_helper" "$optimise_platform" reminder --format=toast 2>/dev/null) || optimise_line=""
+			if [[ -n "$optimise_line" ]]; then
+				if [[ -n "$advisories_output" ]]; then
+					advisories_output=$(printf '%s\n%s' "$advisories_output" "$optimise_line")
+				else
+					advisories_output="$optimise_line"
+				fi
+			fi
+		fi
+	fi
+
 	local advisory_file
 	for advisory_file in "$advisories_dir"/*.advisory; do
 		[[ -f "$advisory_file" ]] || continue
