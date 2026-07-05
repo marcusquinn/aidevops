@@ -92,6 +92,7 @@ _check_ruleset_required_reviews_passing() { sleep 1; return 0; }
 approve_collaborator_pr() { return 0; }
 _pmp_consolidate_duplicate_pr_groups() { return 0; }
 _attempt_existing_auto_merge_behind_update_branch() { return 1; }
+_attempt_green_behind_update_branch() { return 1; }
 _set_native_auto_merge_or_skip() { return 0; }
 _handle_post_merge_actions() { return 0; }
 pulse_merge_stuck_run_pass() { sleep 1; return 0; }

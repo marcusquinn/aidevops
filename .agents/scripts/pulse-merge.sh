@@ -51,7 +51,7 @@
 #     _pulse_merge_dismiss_coderabbit_nits, _pr_required_checks_pass,
 #     _attempt_pr_ci_rebase_retry, _route_pr_to_fix_worker,
 #     _retarget_stacked_children, _attempt_worker_briefed_auto_merge,
-#     _check_required_checks_passing
+#     _attempt_green_behind_update_branch, _check_required_checks_passing
 #   - pulse-merge-author-checks.sh: _is_collaborator_author,
 #     _is_owner_or_member_author, _check_interactive_pr_gates
 #   Functions kept here (>100 lines — identity-key preservation):
@@ -1111,6 +1111,12 @@ _process_single_ready_pr() {
 	# branch before the t3070 native-auto defer path, otherwise pulse keeps
 	# waiting for GitHub to do work that GitHub requires a branch update for.
 	if _attempt_existing_auto_merge_behind_update_branch "$pr_number" "$repo_slug"; then
+		return 1
+	fi
+	# GH#26659: repos with native auto-merge disabled still need green+BEHIND
+	# branches updated before admin/direct merge attempts, otherwise rulesets and
+	# branch-protection "head branch is not up to date" errors can loop forever.
+	if _attempt_green_behind_update_branch "$pr_number" "$repo_slug"; then
 		return 1
 	fi
 

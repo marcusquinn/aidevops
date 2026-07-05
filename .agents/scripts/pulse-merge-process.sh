@@ -22,6 +22,7 @@
 #   - _route_pr_to_fix_worker             — unified fix-worker dispatch (t2203)
 #   - _retarget_stacked_children          — stacked PR retargeting (t2412)
 #   - _attempt_worker_briefed_auto_merge  — worker-briefed trust chain (t2449)
+#   - _attempt_green_behind_update_branch — green+BEHIND branch refresh (GH#26659)
 #   - _check_required_checks_passing      — branch-protection context check (t2922)
 #
 # Usage: source "${SCRIPT_DIR}/pulse-merge-process.sh"
@@ -1040,6 +1041,23 @@ _attempt_pr_ci_rebase_retry() {
 	return 1
 }
 
+_pmp_extract_update_branch_state() {
+	local __auto_var="$1"
+	local __state_var="$2"
+	local __mergeable_var="$3"
+	local _pr_state="$4"
+	local __existing_auto_val="" __merge_state_val="" __mergeable_val="" _RS=$'\x1e'
+
+	IFS="$_RS" read -r __existing_auto_val __merge_state_val __mergeable_val <<<"$(printf '%s' "$_pr_state" \
+		| jq -r '"\(if .autoMergeRequest then "present" else "" end)\u001e\(.mergeStateStatus // "")\u001e\(.mergeable // "")"' \
+		|| true)"
+	_pmp_normalize_mergeable_state_into __mergeable_val "$__mergeable_val"
+	printf -v "$__auto_var" '%s' "$__existing_auto_val"
+	printf -v "$__state_var" '%s' "$__merge_state_val"
+	printf -v "$__mergeable_var" '%s' "$__mergeable_val"
+	return 0
+}
+
 #######################################
 # Update an already-auto-merge-enabled PR that is otherwise green but behind.
 #
@@ -1065,10 +1083,7 @@ _attempt_existing_auto_merge_behind_update_branch() {
 	[[ -n "$_pr_state" ]] || return 1
 
 	local _existing_auto="" _merge_state="" _mergeable=""
-	IFS=$'\t' read -r _existing_auto _merge_state _mergeable <<<"$(printf '%s' "$_pr_state" \
-		| jq -r '[if .autoMergeRequest then "present" else "" end, .mergeStateStatus // "", .mergeable // ""] | @tsv' \
-		|| true)"
-	_pmp_normalize_mergeable_state_into _mergeable "$_mergeable"
+	_pmp_extract_update_branch_state _existing_auto _merge_state _mergeable "$_pr_state"
 
 	[[ -n "$_existing_auto" ]] || return 1
 	[[ "$_merge_state" == BEHIND ]] || return 1
@@ -1084,6 +1099,50 @@ _attempt_existing_auto_merge_behind_update_branch() {
 	fi
 
 	echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge is green but BEHIND — update-branch failed, falling through: ${_ub_output}" >>"$LOGFILE"
+	return 1
+}
+
+#######################################
+# Update a green PR that is BEHIND when no native auto-merge request exists.
+#
+# Repositories with allow_auto_merge disabled cannot use the native auto-merge
+# fallback. If a protected green PR is behind, admin/direct merge attempts can
+# fail forever with "head branch is not up to date" unless pulse updates the
+# branch before trying those merge paths.
+#
+# Caller must have already passed maintainer/review/security gates and stopped
+# DRY_RUN before invoking because this helper performs a GitHub write.
+#
+# Returns 0 if update-branch succeeded and caller should defer to the next
+# cycle; 1 if no update was needed or update-branch failed.
+# GH#26659
+#######################################
+_attempt_green_behind_update_branch() {
+	local pr_number="$1"
+	local repo_slug="$2"
+
+	local _pr_state=""
+	_pr_state=$(AIDEVOPS_GH_PR_VIEW_CACHE_DISABLE=1 gh_pr_view "$pr_number" --repo "$repo_slug" \
+		--json autoMergeRequest,mergeStateStatus,mergeable 2>/dev/null) || _pr_state=""
+	[[ -n "$_pr_state" ]] || return 1
+
+	local _existing_auto="" _merge_state="" _mergeable=""
+	_pmp_extract_update_branch_state _existing_auto _merge_state _mergeable "$_pr_state"
+
+	[[ -z "$_existing_auto" ]] || return 1
+	[[ "$_merge_state" == BEHIND ]] || return 1
+	[[ "$_mergeable" == MERGEABLE ]] || return 1
+	_check_required_checks_passing "$repo_slug" "$pr_number" >/dev/null 2>&1 || return 1
+
+	local _ub_output="" _ub_exit=0
+	_ub_output=$(gh pr update-branch "$pr_number" --repo "$repo_slug" 2>&1)
+	_ub_exit=$?
+	if [[ $_ub_exit -eq 0 ]]; then
+		echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: green but BEHIND without native auto-merge — update-branch succeeded, deferring to next cycle (GH#26659)" >>"$LOGFILE"
+		return 0
+	fi
+
+	echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: green but BEHIND without native auto-merge — update-branch failed, falling through: ${_ub_output}" >>"$LOGFILE"
 	return 1
 }
 

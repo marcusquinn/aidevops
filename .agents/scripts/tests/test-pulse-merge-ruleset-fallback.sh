@@ -145,6 +145,19 @@ _pmp_normalize_mergeable_state_into() {
 	return 0
 }
 
+_pmp_normalize_review_decision_into() {
+	local __var_name="$1"
+	local __value="$2"
+	printf -v "$__var_name" '%s' "$__value"
+	return 0
+}
+
+_pmp_review_decision_is_unknown() {
+	local __value="$1"
+	[[ -z "$__value" || "$__value" == "UNKNOWN" ]]
+	return $?
+}
+
 _resolve_pr_mergeable_status() { return 0; }
 _extract_linked_issue() { printf '123'; return 0; }
 _check_pr_merge_gates() { return 0; }
@@ -156,6 +169,7 @@ _retarget_stacked_children() { return 0; }
 _pulse_merge_admin_safety_check() { return 0; }
 _set_native_auto_merge_or_skip() { return 1; }
 _attempt_existing_auto_merge_behind_update_branch() { return 1; }
+_attempt_green_behind_update_branch() { return "${GREEN_BEHIND_UPDATE_RC:-1}"; }
 _handle_post_merge_actions() { return 0; }
 gh_pr_view() { printf '{"labels":[]}'; return 0; }
 
@@ -217,6 +231,36 @@ test_ruleset_violation_enables_auto_merge_without_admin() {
 	fi
 	print_result "ruleset violation fallback enables native auto-merge and succeeds" 0
 	teardown_test_env
+	return 0
+}
+
+test_green_behind_update_defers_before_merge_attempts() {
+	unset GH_STUB_MODE
+	GREEN_BEHIND_UPDATE_RC=0
+	setup_test_env
+	define_function_under_test || { teardown_test_env; unset GREEN_BEHIND_UPDATE_RC; return 0; }
+
+	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
+	local result=0
+	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
+
+	if [[ "$result" -ne 1 ]]; then
+		print_result "green BEHIND update defers before merge attempts" 1 \
+			"Expected 1, got ${result}; log: $(cat "$LOGFILE")"
+		teardown_test_env
+		unset GREEN_BEHIND_UPDATE_RC
+		return 0
+	fi
+	if grep -qE 'gh pr merge 77' "$GH_LOG"; then
+		print_result "green BEHIND update avoids admin/native/direct merge writes" 1 \
+			"gh log: $(cat "$GH_LOG")"
+		teardown_test_env
+		unset GREEN_BEHIND_UPDATE_RC
+		return 0
+	fi
+	print_result "green BEHIND update defers before merge attempts" 0
+	teardown_test_env
+	unset GREEN_BEHIND_UPDATE_RC
 	return 0
 }
 
@@ -353,6 +397,7 @@ test_ruleset_fallback_failure_preserves_admin_conversation_context() {
 
 main() {
 	test_ruleset_violation_enables_auto_merge_without_admin
+	test_green_behind_update_defers_before_merge_attempts
 	test_draft_pr_without_origin_labels_skips_merge_write
 	test_stale_cache_401_retries_admin_merge_once
 	test_ruleset_fallback_failure_preserves_admin_conversation_context
