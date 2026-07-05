@@ -318,6 +318,140 @@ _hrff_release_repo_state_is_managed() {
 }
 
 #######################################
+# Resolve the issue number for a dispatch claim release.
+#
+# Args:
+#   $1 = session_key
+# Outputs:
+#   Issue number when available.
+#######################################
+_hrff_release_issue_number() {
+	local session_key="$1"
+
+	# Extract issue number from the explicit worker contract first, then fall back
+	# only to canonical issue-scoped session keys. Non-task sessions can
+	# legitimately end in digits (for example validation timestamps); treating
+	# arbitrary trailing digits as issue numbers causes fake GitHub cleanup writes.
+	if [[ "${WORKER_ISSUE_NUMBER:-}" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$WORKER_ISSUE_NUMBER"
+		return 0
+	fi
+	if [[ "$session_key" =~ ^issue-([0-9]+)$ ]]; then
+		printf '%s\n' "${BASH_REMATCH[1]}"
+		return 0
+	fi
+
+	return 0
+}
+
+#######################################
+# Validate whether claim release has enough context to proceed.
+#
+# Args:
+#   $1 = issue_number
+#   $2 = repo_slug
+#######################################
+_hrff_release_context_is_valid() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	if [[ -z "$issue_number" && -z "$repo_slug" ]]; then
+		return 1
+	fi
+	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
+		print_warning "Cannot release claim: missing issue=$issue_number repo=$repo_slug"
+		return 1
+	fi
+
+	return 0
+}
+
+#######################################
+# Clear active state without posting a duplicate rate-limit release comment.
+#
+# Args:
+#   $1 = issue_number
+#   $2 = repo_slug
+#######################################
+_hrff_release_rate_limit_circuit_cleanup() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local runner_name=""
+
+	runner_name=$(_hrff_resolve_release_runner_login)
+	if declare -F clear_active_status_on_release >/dev/null 2>&1; then
+		clear_active_status_on_release "$issue_number" "$repo_slug" "$runner_name" \
+			|| print_warning "Failed to clear active status on #${issue_number} (non-fatal)"
+	fi
+	_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
+	return 0
+}
+
+#######################################
+# Build the machine-readable claim release audit line.
+#
+# Args:
+#   $1 = reason
+#   $2 = runner_name
+#   $3 = exit_code
+#   $4 = session_count
+# Outputs:
+#   CLAIM_RELEASED line.
+#######################################
+_hrff_build_claim_released_line() {
+	local reason="$1"
+	local runner_name="$2"
+	local exit_code_arg="$3"
+	local session_count_arg="$4"
+	local aidevops_version="$AIDEVOPS_UNKNOWN_VERSION"
+	local opencode_version="$AIDEVOPS_UNKNOWN_VERSION"
+	local release_ts=""
+	local machine_readable_part=""
+
+	if declare -F aidevops_find_version >/dev/null 2>&1; then
+		aidevops_version=$(aidevops_find_version 2>/dev/null || printf '%s' "$AIDEVOPS_UNKNOWN_VERSION")
+	fi
+	if declare -F _detect_opencode_version >/dev/null 2>&1; then
+		opencode_version=$(_detect_opencode_version 2>/dev/null || printf '%s' "")
+		opencode_version="${opencode_version:-$AIDEVOPS_UNKNOWN_VERSION}"
+	fi
+
+	release_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	machine_readable_part="CLAIM_RELEASED reason=${reason} runner=${runner_name} ts=${release_ts} aidevops_version=${aidevops_version} opencode_version=${opencode_version}"
+	if [[ -n "$exit_code_arg" ]]; then
+		machine_readable_part+=" exit=${exit_code_arg}"
+	fi
+	if [[ -n "$session_count_arg" ]]; then
+		machine_readable_part+=" session_count=${session_count_arg}"
+	fi
+
+	printf '%s\n' "$machine_readable_part"
+	return 0
+}
+
+#######################################
+# Post the CLAIM_RELEASED audit comment.
+#
+# Args:
+#   $1 = issue_number
+#   $2 = repo_slug
+#   $3 = comment_body
+#######################################
+_hrff_post_claim_released_comment() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local comment_body="$3"
+
+	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--method POST \
+		--field body="$comment_body" \
+		>/dev/null 2>&1 || {
+		print_warning "Failed to post CLAIM_RELEASED on #${issue_number} (non-fatal)"
+	}
+	return 0
+}
+
+#######################################
 # Release a dispatch claim by posting a CLAIM_RELEASED comment.
 # The dedup guard recognises this and allows immediate re-dispatch
 # instead of waiting for the 30-min TTL to expire.
@@ -333,22 +467,13 @@ _release_dispatch_claim() {
 	local reason="${2:-worker_failed}"
 	local exit_code_arg="${3:-}"
 	local session_count_arg="${4:-}"
-
-	# Extract issue number and repo slug from the explicit worker contract first,
-	# then fall back only to canonical issue-scoped session keys. Non-task sessions
-	# can legitimately end in digits (for example validation timestamps); treating
-	# arbitrary trailing digits as issue numbers causes fake GitHub cleanup writes.
 	local issue_number=""
-	local repo_slug=""
-	if [[ "${WORKER_ISSUE_NUMBER:-}" =~ ^[0-9]+$ ]]; then
-		issue_number="$WORKER_ISSUE_NUMBER"
-	elif [[ "$session_key" =~ ^issue-([0-9]+)$ ]]; then
-		issue_number="${BASH_REMATCH[1]}"
-	else
-		issue_number=""
-	fi
-	# Try to get repo slug from the dispatch ledger or env
-	repo_slug="${DISPATCH_REPO_SLUG:-}"
+	local repo_slug="${DISPATCH_REPO_SLUG:-}"
+	local runner_name=""
+	local machine_readable_part=""
+	local comment_body=""
+
+	issue_number=$(_hrff_release_issue_number "$session_key")
 	if [[ -z "$issue_number" && -z "${WORKER_ISSUE_NUMBER:-}" ]]; then
 		return 0
 	fi
@@ -358,11 +483,7 @@ _release_dispatch_claim() {
 	# no repo there is no real claim to release; treat that exact empty-context
 	# case as a benign caller-boundary no-op. Keep warning on partial context
 	# because issue-without-repo or repo-without-issue can strand a real claim.
-	if [[ -z "$issue_number" && -z "$repo_slug" ]]; then
-		return 0
-	fi
-	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
-		print_warning "Cannot release claim: missing issue=$issue_number repo=$repo_slug"
+	if ! _hrff_release_context_is_valid "$issue_number" "$repo_slug"; then
 		return 0
 	fi
 	_hrff_release_repo_state_is_managed "$issue_number" "$repo_slug" || return 0
@@ -372,48 +493,18 @@ _release_dispatch_claim() {
 			# The per-issue breaker is already active. Keep state cleanup so the
 			# GitHub issue is not stranded in an active lifecycle state, but skip
 			# the duplicate CLAIM_RELEASED audit comment that caused storms.
-			local _rl_runner_name=""
-			_rl_runner_name=$(_hrff_resolve_release_runner_login)
-			if declare -F clear_active_status_on_release >/dev/null 2>&1; then
-				clear_active_status_on_release "$issue_number" "$repo_slug" "$_rl_runner_name" \
-					|| print_warning "Failed to clear active status on #${issue_number} (non-fatal)"
-			fi
-			_unlock_issue_after_dispatch_release "$issue_number" "$repo_slug"
+			_hrff_release_rate_limit_circuit_cleanup "$issue_number" "$repo_slug"
 			return 0
 		fi
 	fi
 
-	local aidevops_version="$AIDEVOPS_UNKNOWN_VERSION" opencode_version="$AIDEVOPS_UNKNOWN_VERSION"
-	if declare -F aidevops_find_version >/dev/null 2>&1; then
-		aidevops_version=$(aidevops_find_version 2>/dev/null || printf '%s' "$AIDEVOPS_UNKNOWN_VERSION")
-	fi
-	if declare -F _detect_opencode_version >/dev/null 2>&1; then
-		opencode_version=$(_detect_opencode_version 2>/dev/null || printf '%s' "")
-		opencode_version="${opencode_version:-$AIDEVOPS_UNKNOWN_VERSION}"
-	fi
-
-	local runner_name=""
 	runner_name=$(_hrff_resolve_release_runner_login)
-	local release_ts=""
-	release_ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	local machine_readable_part="CLAIM_RELEASED reason=${reason} runner=${runner_name} ts=${release_ts} aidevops_version=${aidevops_version} opencode_version=${opencode_version}"
-	if [[ -n "$exit_code_arg" ]]; then
-		machine_readable_part+=" exit=${exit_code_arg}"
-	fi
-	if [[ -n "$session_count_arg" ]]; then
-		machine_readable_part+=" session_count=${session_count_arg}"
-	fi
-
-	local comment_body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+	machine_readable_part=$(_hrff_build_claim_released_line "$reason" "$runner_name" "$exit_code_arg" "$session_count_arg")
+	comment_body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
 ${machine_readable_part}
 <!-- ops:end -->"
 
-	gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-		--method POST \
-		--field body="$comment_body" \
-		>/dev/null 2>&1 || {
-		print_warning "Failed to post CLAIM_RELEASED on #${issue_number} (non-fatal)"
-	}
+	_hrff_post_claim_released_comment "$issue_number" "$repo_slug" "$comment_body"
 	print_info "Released claim on #${issue_number} (reason: ${reason})"
 
 	# t2420: clear active-lifecycle status labels + worker assignment so the
