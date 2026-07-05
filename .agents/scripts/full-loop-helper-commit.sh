@@ -96,7 +96,7 @@ cmd_pre_merge_gate() {
 
 # Parse commit-and-pr arguments into caller-scoped variables.
 # Expects the caller to have declared: issue_number, commit_message, pr_title,
-# summary_what, summary_testing, summary_decisions, extra_labels (array).
+# summary_what, summary_testing, summary_decisions, skip_rebase, extra_labels (array).
 # Returns 1 on unknown argument.
 _parse_commit_and_pr_args() {
 	while [[ $# -gt 0 ]]; do
@@ -139,12 +139,58 @@ _parse_commit_and_pr_args() {
 			skip_hooks=1
 			shift
 			;;
+		--no-rebase)
+			# GH#26627: explicit recovery mode after a failed/aborted rebase.
+			# Pushes only after clean-state and ahead-of-base checks pass.
+			skip_rebase=1
+			shift
+			;;
 		*)
 			print_error "Unknown argument: $1"
 			return 1
 			;;
 		esac
 	done
+	return 0
+}
+
+# Resolve the remote default branch for cross-repo commit-and-pr operations.
+# Returns 0 and prints the branch name, or returns 1 with remediation guidance.
+_resolve_remote_default_branch() {
+	local remote_name="${1:-origin}"
+	local ref=""
+
+	ref=$(git symbolic-ref --short "refs/remotes/${remote_name}/HEAD" 2>/dev/null || true)
+	if [[ -n "$ref" ]]; then
+		printf '%s\n' "${ref#${remote_name}/}"
+		return 0
+	fi
+
+	print_error "Cannot determine ${remote_name} default branch from refs/remotes/${remote_name}/HEAD."
+	print_error "Run: git remote set-head ${remote_name} --auto"
+	print_error "Then retry: full-loop-helper.sh commit-and-pr ..."
+	return 1
+}
+
+# Ensure no rebase/merge state is active before recovery-mode push.
+_ensure_no_in_progress_integration() {
+	local git_dir=""
+	git_dir=$(git rev-parse --git-dir 2>/dev/null) || git_dir=""
+	if [[ -z "$git_dir" ]]; then
+		print_error "Cannot inspect git state for rebase/merge recovery."
+		return 1
+	fi
+
+	local rebase_merge="" rebase_apply="" merge_head=""
+	rebase_merge=$(git rev-parse --git-path rebase-merge 2>/dev/null || printf '%s' "${git_dir}/rebase-merge")
+	rebase_apply=$(git rev-parse --git-path rebase-apply 2>/dev/null || printf '%s' "${git_dir}/rebase-apply")
+	merge_head=$(git rev-parse --git-path MERGE_HEAD 2>/dev/null || printf '%s' "${git_dir}/MERGE_HEAD")
+
+	if [[ -e "$rebase_merge" || -e "$rebase_apply" || -e "$merge_head" ]]; then
+		print_error "Refusing recovery push while a rebase or merge is in progress."
+		print_error "Resolve/abort the operation first, then retry with --no-rebase if appropriate."
+		return 1
+	fi
 	return 0
 }
 
@@ -202,13 +248,15 @@ _stage_and_commit() {
 	fi
 
 	if git diff --cached --quiet 2>/dev/null; then
-		local ahead=""
-		ahead=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo "0")
+		local base_branch="" base_ref="" ahead=""
+		base_branch=$(_resolve_remote_default_branch origin) || return 1
+		base_ref="origin/${base_branch}"
+		ahead=$(git rev-list --count "${base_ref}..HEAD" 2>/dev/null || echo "0")
 		if [[ "$ahead" == "0" ]]; then
-			print_error "No changes to commit and no commits ahead of main."
+			print_error "No changes to commit and no commits ahead of ${base_branch}."
 			return 1
 		fi
-		print_info "No new changes to commit, but ${ahead} commit(s) ahead of main. Proceeding to PR."
+		print_info "No new changes to commit, but ${ahead} commit(s) ahead of ${base_branch}. Proceeding to PR."
 	else
 		if ! git commit -m "$commit_message"; then
 			print_error "git commit failed"
@@ -523,41 +571,59 @@ _check_and_handle_shallow_clone() {
 	fi
 }
 
-# Rebase onto origin/main and force-push the current branch.
-# Args: $1=branch $2=skip_hooks (0|1, optional, default 0)
+# Rebase onto the detected origin default branch and force-push the current branch.
+# Args: $1=branch $2=skip_hooks (0|1, optional, default 0) $3=skip_rebase (0|1, optional, default 0)
 # Returns 1 on rebase conflict or push failure.
 _rebase_and_push() {
 	local branch="$1"
 	local skip_hooks="${2:-0}"
+	local skip_rebase="${3:-0}"
+	local base_branch="" base_ref=""
+	base_branch=$(_resolve_remote_default_branch origin) || return 1
+	base_ref="origin/${base_branch}"
 
-	print_info "Rebasing onto origin/main..."
-	if ! git fetch origin main --quiet 2>/dev/null; then
-		print_warning "git fetch origin main failed — proceeding with current state"
-	fi
-	# GH#21900: detect shallow clone before rebase to avoid add/add conflict cascade.
-	_check_and_handle_shallow_clone || return 1
-	if ! git rebase origin/main 2>/dev/null; then
-		print_error "Rebase conflict. Resolve conflicts, then run: git rebase --continue && full-loop-helper.sh commit-and-pr ..."
-		git rebase --abort 2>/dev/null || true
-		return 1
+	if [[ "$skip_rebase" == "1" ]]; then
+		print_warning "Skipping rebase by explicit request (--no-rebase); validating clean recovery state."
+		_ensure_no_in_progress_integration || return 1
+		local ahead=""
+		ahead=$(git rev-list --count "${base_ref}..HEAD" 2>/dev/null || echo "0")
+		if [[ "$ahead" == "0" ]]; then
+			print_error "Refusing --no-rebase push: HEAD is not ahead of ${base_ref}."
+			return 1
+		fi
+	else
+		print_info "Rebasing onto ${base_ref}..."
+		if ! git fetch origin "$base_branch" --quiet 2>/dev/null; then
+			print_warning "git fetch origin ${base_branch} failed — proceeding with current state"
+		fi
+		# GH#21900: detect shallow clone before rebase to avoid add/add conflict cascade.
+		_check_and_handle_shallow_clone || return 1
+		if ! git rebase "$base_ref" 2>/dev/null; then
+			git rebase --abort 2>/dev/null || true
+			print_error "Rebase conflict/abort while rebasing onto ${base_ref}."
+			print_error "After inspecting the branch and confirming a PR without rebase is safe, retry:"
+			print_error "  full-loop-helper.sh commit-and-pr ... --no-rebase"
+			print_error "Do not fall back to raw inline 'gh pr create --body ...'; keep the wrapper path."
+			return 1
+		fi
 	fi
 
 	# t2229 Layer 3: auto-reset .task-counter if rebase picked up a stale value.
-	# After rebase, the branch may carry a counter lower than origin/main's
-	# current value (race: main advanced between rebase-base and push).
-	# Reset to origin/main's value to prevent silent regression on merge.
+	# After rebase, the branch may carry a counter lower than the base branch's
+	# current value (race: base advanced between rebase-base and push).
+	# Reset to the base branch value to prevent silent regression on merge.
 	if [[ -f .task-counter ]]; then
 		local branch_counter="" base_counter=""
 		branch_counter=$(tr -d '[:space:]' <.task-counter 2>/dev/null) || true
-		base_counter=$(git show origin/main:.task-counter 2>/dev/null | tr -d '[:space:]') || true
+		base_counter=$(git show "${base_ref}:.task-counter" 2>/dev/null | tr -d '[:space:]') || true
 		if [[ -n "$branch_counter" && -n "$base_counter" ]] \
 			&& [[ "$branch_counter" =~ ^[0-9]+$ ]] \
 			&& [[ "$base_counter" =~ ^[0-9]+$ ]] \
 			&& [[ "$((10#$branch_counter))" -lt "$((10#$base_counter))" ]]; then
 			print_info "Auto-resetting .task-counter: ${branch_counter} → ${base_counter} (base drifted during rebase)"
-			echo "$base_counter" > .task-counter
+			printf '%s\n' "$base_counter" >.task-counter
 			git add .task-counter
-			git commit -m "chore: reset .task-counter to origin/main value (t2229 race prevention)" --no-verify
+			git commit -m "chore: reset .task-counter to ${base_ref} value (t2229 race prevention)" --no-verify
 		fi
 	fi
 

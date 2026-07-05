@@ -115,6 +115,13 @@ eval "$(sed -n '/^_create_pr() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_post_merge_summary() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
 
+# Extract default-branch and recovery helpers used by _rebase_and_push
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_resolve_remote_default_branch() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+
+# shellcheck disable=SC2312
+eval "$(sed -n '/^_ensure_no_in_progress_integration() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
+
 # Extract _rebase_and_push
 # shellcheck disable=SC2312
 eval "$(sed -n '/^_rebase_and_push() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-commit.sh")"
@@ -126,8 +133,25 @@ eval "$(sed -n '/^_rebase_and_push() {/,/^}/p' "${SCRIPTS_DIR}/full-loop-helper-
 
 # Stub: git branch --show-current → always returns "feature/t2767-test"
 git() {
+	printf 'git %s\n' "$*" >>"$STUB_LOG"
 	if [[ "${1:-}" == "branch" && "${2:-}" == "--show-current" ]]; then
 		printf 'feature/t2767-test\n'
+		return 0
+	fi
+	if [[ "${1:-}" == "symbolic-ref" && "${2:-}" == "--short" && "${3:-}" == "refs/remotes/origin/HEAD" ]]; then
+		printf '%s\n' "${TEST_REMOTE_HEAD:-origin/main}"
+		return 0
+	fi
+	if [[ "${1:-}" == "rev-list" && "${2:-}" == "--count" ]]; then
+		printf '1\n'
+		return 0
+	fi
+	if [[ "${1:-}" == "rev-parse" && "${2:-}" == "--git-dir" ]]; then
+		printf '%s/.git\n' "$TMP"
+		return 0
+	fi
+	if [[ "${1:-}" == "rev-parse" && "${2:-}" == "--git-path" ]]; then
+		printf '%s/.git/%s\n' "$TMP" "${3:-}"
 		return 0
 	fi
 	if [[ "${1:-}" == "fetch" ]]; then
@@ -139,6 +163,9 @@ git() {
 	if [[ "${1:-}" == "push" ]]; then
 		printf "branch 'feature/t2767-test' set up to track 'origin/feature/t2767-test'.\n"
 		return 0
+	fi
+	if [[ "${1:-}" == "show" ]]; then
+		return 1
 	fi
 	command git "$@"
 	return $?
@@ -438,6 +465,58 @@ else
 	fail "push stdout hygiene: _rebase_and_push emits no stdout" \
 		"got '${rebase_push_output}'"
 fi
+
+# =============================================================================
+# Test 3d: _rebase_and_push uses the detected remote default branch
+# Expected: non-main origin/HEAD causes fetch/rebase/diff safety checks to use develop.
+# =============================================================================
+: >"$STUB_LOG"
+TEST_REMOTE_HEAD="origin/develop"
+default_branch_rc=0
+_rebase_and_push "feature/t2767-test" 0 >/dev/null 2>&1 || default_branch_rc=$?
+
+if [[ "$default_branch_rc" -eq 0 ]]; then
+	pass "default branch: _rebase_and_push succeeds for non-main remote HEAD"
+else
+	fail "default branch: _rebase_and_push succeeds for non-main remote HEAD" \
+		"got exit $default_branch_rc; stub log: $(cat "$STUB_LOG" 2>/dev/null)"
+fi
+
+if grep -q "git fetch origin develop --quiet" "$STUB_LOG" 2>/dev/null &&
+	grep -q "git rebase origin/develop" "$STUB_LOG" 2>/dev/null &&
+	! grep -q "git rebase origin/main" "$STUB_LOG" 2>/dev/null; then
+	pass "default branch: rebase path uses origin/develop rather than origin/main"
+else
+	fail "default branch: rebase path uses origin/develop rather than origin/main" \
+		"stub log: $(cat "$STUB_LOG" 2>/dev/null)"
+fi
+
+# =============================================================================
+# Test 3e: _rebase_and_push --no-rebase recovery keeps wrapper path pushable
+# Expected: explicit recovery mode skips git rebase and still pushes after checks.
+# =============================================================================
+: >"$STUB_LOG"
+TEST_REMOTE_HEAD="origin/develop"
+no_rebase_rc=0
+_rebase_and_push "feature/t2767-test" 0 1 >/dev/null 2>&1 || no_rebase_rc=$?
+
+if [[ "$no_rebase_rc" -eq 0 ]]; then
+	pass "no-rebase recovery: explicit mode succeeds with clean ahead branch"
+else
+	fail "no-rebase recovery: explicit mode succeeds with clean ahead branch" \
+		"got exit $no_rebase_rc; stub log: $(cat "$STUB_LOG" 2>/dev/null)"
+fi
+
+if ! grep -q "git rebase" "$STUB_LOG" 2>/dev/null &&
+	grep -q "git rev-list --count origin/develop..HEAD" "$STUB_LOG" 2>/dev/null &&
+	grep -q "git push -u origin feature/t2767-test --force-with-lease" "$STUB_LOG" 2>/dev/null; then
+	pass "no-rebase recovery: skips rebase and pushes via wrapper path"
+else
+	fail "no-rebase recovery: skips rebase and pushes via wrapper path" \
+		"stub log: $(cat "$STUB_LOG" 2>/dev/null)"
+fi
+
+TEST_REMOTE_HEAD="origin/main"
 
 # =============================================================================
 # Test 4: _post_merge_summary idempotency — skip when canonical comment already exists

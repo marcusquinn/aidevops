@@ -56,11 +56,12 @@ source "${SCRIPT_DIR}/full-loop-helper-merge.sh"
 # Collapses full-loop steps 4.1-4.2.1 into a single deterministic call.
 # Workers and interactive sessions both use this — no parallel logic.
 #
-# Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--decisions <notes>] [--label <label>...] [--allow-parent-close] [--skip-hooks]
+# Usage: full-loop-helper.sh commit-and-pr|create-pr --issue <N> --message <msg> [--title <title>] [--summary <what>] [--testing <how>] [--decisions <notes>] [--label <label>...] [--allow-parent-close] [--skip-hooks] [--no-rebase]
 # Exit codes: 0 = PR created (prints PR number to stdout), 1 = failure
 # --allow-parent-close: skip the parent-task keyword guard (final-phase PR only)
 # --skip-hooks: pass --no-verify to git push (bypasses pre-push hooks). Use for doc-only PRs
 #   after manually verifying no secrets/private-slugs in the diff. See GH#20138.
+# --no-rebase: explicit recovery mode after a failed rebase; requires clean git state and commits ahead of the detected base branch.
 #
 # On rebase conflict: returns 1 with instructions. Caller must resolve and retry.
 # On push failure: returns 1. Caller should check remote state.
@@ -70,7 +71,7 @@ cmd_commit_and_pr() {
 	local issue_number="" commit_message="" pr_title="" summary_what="" summary_testing="" summary_decisions=""
 	local -a extra_labels=()
 	local allow_parent_close=0
-	local skip_hooks=0
+	local skip_hooks=0 skip_rebase=0
 
 	_parse_commit_and_pr_args "$@" || return 1
 
@@ -83,7 +84,7 @@ cmd_commit_and_pr() {
 	# Inserted between commit and push so amends apply to the same commit
 	# the worker just made, and so failures abort BEFORE we push broken code.
 	_run_project_validators "$skip_hooks" || return 1
-	_rebase_and_push "$branch" "$skip_hooks" || return 1
+	_rebase_and_push "$branch" "$skip_hooks" "$skip_rebase" || return 1
 
 	# Build PR metadata (t2720: prefer tNNN from TODO.md so issue-sync's
 	# PR-merge auto-completion regex can extract a task_id and flip [ ] → [x]).
@@ -112,7 +113,10 @@ cmd_commit_and_pr() {
 	fi
 
 	local files_changed=""
-	files_changed=$(git diff --name-only origin/main..HEAD 2>/dev/null | tr '\n' ', ' | sed 's/,$//' || echo "")
+	local base_branch="" base_ref=""
+	base_branch=$(_resolve_remote_default_branch origin) || return 1
+	base_ref="origin/${base_branch}"
+	files_changed=$(git diff --name-only "${base_ref}..HEAD" 2>/dev/null | tr '\n' ', ' | sed 's/,$//' || echo "")
 
 	# t2242: Determine closing keyword — auto-swap Resolves to For when linked
 	# issue has parent-task label, unless --allow-parent-close overrides.
@@ -199,6 +203,7 @@ Commands:
   commit-and-pr|create-pr --issue N --message "msg"
                                  Stage, commit, rebase, push, create PR, post merge summary
                 [--skip-hooks]             Pass --no-verify to git push (doc-only PRs, GH#20138)
+                [--no-rebase]              Explicit recovery mode after a failed/aborted rebase
   pre-merge-gate <PR> [REPO]    Check review bot gate before merge (GH#17541)
   merge <PR> [REPO] [--squash|--merge|--rebase] [--admin] [--auto]
                                 Gate-enforced merge (runs pre-merge-gate first).
