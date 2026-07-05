@@ -374,6 +374,7 @@ _check_advisories() {
 		case "$(uname -s 2>/dev/null || true)" in
 			Darwin) optimise_platform="macos" ;;
 			Linux) optimise_platform="linux" ;;
+			MINGW*|MSYS*|CYGWIN*|Windows_NT) optimise_platform="windows" ;;
 		esac
 		if [[ -n "$optimise_platform" ]]; then
 			local optimise_line
