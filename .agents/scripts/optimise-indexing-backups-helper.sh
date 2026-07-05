@@ -88,7 +88,12 @@ try:
         data = json.load(handle)
 except Exception:
     data = {}
-value = data.get(platform, {}).get(key, 0)
+if not isinstance(data, dict):
+    data = {}
+entry = data.get(platform, {})
+if not isinstance(entry, dict):
+    entry = {}
+value = entry.get(key, 0)
 print(value if value not in (None, "") else 0)
 PY
     return 0
@@ -110,12 +115,19 @@ try:
         data = json.load(handle)
 except Exception:
     data = {}
+if not isinstance(data, dict):
+    data = {}
 entry = data.get(platform, {})
+if not isinstance(entry, dict):
+    entry = {}
 if success != "-":
     entry["last_success_at"] = int(success)
-entry["last_mode"] = mode
-entry["last_applied_count"] = int(applied)
-entry["last_warning_count"] = int(warnings)
+if mode != "-":
+    entry["last_mode"] = mode
+if applied != "-":
+    entry["last_applied_count"] = int(applied)
+if warnings != "-":
+    entry["last_warning_count"] = int(warnings)
 entry["last_version"] = "1.0.0"
 if notified != "-":
     entry["last_notified_at"] = int(notified)
@@ -340,7 +352,7 @@ _cmd_scan() {
             --apply|apply) mode="apply" ;;
             --dry-run) mode="dry-run" ;;
             --json) json="true" ;;
-            --path|--include-backup-client|--skip-backup-client) shift ;;
+            --path|--include-backup-client|--skip-backup-client) [[ "$#" -gt 1 ]] && shift ;;
             --path=*|--include-backup-client=*|--skip-backup-client=*) ;;
             *) ;;
         esac
@@ -421,7 +433,7 @@ _maybe_notify() {
     elif [[ "$platform" == "linux" ]] && command -v notify-send >/dev/null 2>&1 && [[ -z "${AIDEVOPS_HEADLESS:-}" ]]; then
         notify-send "${label} indexing/backup optimisation stale" "Run ${command_name}" >/dev/null 2>&1 || true
     fi
-    _state_update "$platform" "-" "reminder" "0" "0" "$now"
+    _state_update "$platform" "-" "reminder" "-" "-" "$now"
     return 0
 }
 
@@ -436,8 +448,8 @@ _cmd_reminder() {
         case "$arg" in
             --format=*) format="${arg#--format=}" ;;
             --format)
-                shift
-                if [[ "$#" -gt 0 ]]; then
+                if [[ "$#" -gt 1 ]]; then
+                    shift
                     arg="$1"
                     format="$arg"
                 else
