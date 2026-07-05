@@ -77,7 +77,7 @@ _resolve_script_dir_with_retry() {
 	lib_dir="$(dirname "$source_path")"
 	while [[ "$attempt" -le "$attempts" ]]; do
 		if [[ -d "$lib_dir" ]]; then
-			cd "$lib_dir" && pwd
+			CDPATH='' cd "$lib_dir" && pwd
 			return $?
 		fi
 		if [[ "$attempt" -lt "$attempts" && "$interval" -gt 0 ]]; then
@@ -86,8 +86,8 @@ _resolve_script_dir_with_retry() {
 		attempt=$((attempt + 1))
 	done
 
-	if [[ -d "${HOME}/.aidevops/agents/scripts" ]]; then
-		cd "${HOME}/.aidevops/agents/scripts" && pwd
+	if [[ -d "${HOME:+$HOME/.aidevops/agents/scripts}" ]]; then
+		CDPATH='' cd "${HOME:+$HOME/.aidevops/agents/scripts}" && pwd
 		return $?
 	fi
 
