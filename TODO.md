@@ -1098,7 +1098,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18063 Add social graph preview to README ref:GH#26497 pr:#26498 completed:2026-07-04
 
-- [ ] t18064 Fix GUI desktop dependency startup failure #bug ref:GH#26569
+- [x] t18064 Fix GUI desktop dependency startup failure #bug ref:GH#26569 pr:#26570 completed:2026-07-05
 
 ## In Progress
 
@@ -4426,4 +4426,4 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t8179 fix admin users boolean filter all-values state #auto-dispatch #bug ref:GH#8274
 
-- [ ] t18064 Fix GUI desktop dependency startup failure #bug ref:GH#26569
+- [x] t18064 Fix GUI desktop dependency startup failure #bug ref:GH#26569 pr:#26570 completed:2026-07-05
