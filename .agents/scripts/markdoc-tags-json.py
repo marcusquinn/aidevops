@@ -23,6 +23,8 @@ ATTR_RE = re.compile(
 
 def line_col_to_char(line_offsets: list[int], line_num: int, col_num: int) -> int:
     """Convert 1-based line/col to a 0-based character offset."""
+    if not (1 <= line_num < len(line_offsets)):
+        return col_num - 1
     return line_offsets[line_num - 1] + (col_num - 1)
 
 

@@ -10,6 +10,7 @@
 #   3. --tree flag → -tree.json written, valid JSON.
 #   4. --output-dir option → artefacts written to specified directory.
 #   5. Missing companion Python helper → controlled error, exit 2, no tags JSON written.
+#   6. Malformed parser line 0 → Python helper handles offset without negative indexing.
 #
 # These tests exercise the extractor in isolation using real fixture files
 # and a real (deployed) validator. No network calls, no gh operations.
@@ -18,6 +19,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 EXTRACT_SH="${SCRIPT_DIR}/../markdoc-extract.sh"
+TAGS_JSON_PY="${SCRIPT_DIR}/../markdoc-tags-json.py"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -334,6 +336,35 @@ test_missing_python_helper_rejected() {
 	return 0
 }
 
+# Case 6: Malformed parser line 0 → helper handles offset without negative indexing
+test_python_helper_rejects_negative_line_indexing() {
+	local _fixture="${TEST_ROOT}/malformed-line-zero.md"
+	local _tsv="${TEST_ROOT}/malformed-line-zero.tsv"
+	local _json="${TEST_ROOT}/malformed-line-zero.json"
+	printf '%s\n%s\n' 'abc' '{% draft-status status="draft" /%}' >"$_fixture"
+	printf '0\t2\tdraft-status\t0\t1\tstatus="draft"\n' >"$_tsv"
+
+	local _result=0
+	python3 "$TAGS_JSON_PY" "$_fixture" "$_tsv" >"$_json" || _result=$?
+
+	if [[ "$_result" -ne 0 ]]; then
+		print_result "Case 6: malformed line 0 — exits 0" 1 \
+			"Expected exit 0, got ${_result}"
+		return 0
+	fi
+
+	local _char_start
+	_char_start=$(jq -r '.[0].char_start' "$_json" 2>/dev/null || printf 'invalid')
+	if [[ "$_char_start" != "1" ]]; then
+		print_result "Case 6: malformed line 0 — uses column fallback" 1 \
+			"Expected char_start 1, got ${_char_start}"
+		return 0
+	fi
+
+	print_result "Case 6: malformed line 0 — uses column fallback" 0
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -352,6 +383,7 @@ main() {
 	test_tree_flag_writes_tree_json
 	test_output_dir_option
 	test_missing_python_helper_rejected
+	test_python_helper_rejects_negative_line_indexing
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
