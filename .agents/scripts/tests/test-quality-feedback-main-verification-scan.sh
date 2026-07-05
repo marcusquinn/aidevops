@@ -289,6 +289,64 @@ test_scan_single_pr_default_filters_positive_review() {
 	return 0
 }
 
+test_scan_single_pr_filters_issue3515_pr228_approval_reviews() {
+	reset_mock_state
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			while [[ $# -gt 0 ]]; do
+				case "$1" in
+				repos/*/pulls/*/comments)
+					printf '%s\n' '[]'
+					return 0
+					;;
+				repos/*/pulls/*/reviews)
+					cat <<'JSON'
+[
+  {"id":1,"user":{"login":"gemini-code-assist[bot]"},"state":"COMMENTED","body":"## Code Review\n\nThis pull request correctly resolves an issue with incorrect tab completion entries in OpenCode by removing a problematic symlink (`.opencode/agent`). The symlink was causing OpenCode to incorrectly scan subdirectories as agents. The change is simple, effective, and aligns with the clear explanation provided in the pull request description. Based on the provided code, this change is correct and I have no further recommendations.","submitted_at":"2026-01-25T20:35:11Z","html_url":"https://github.com/example/repo/pull/228#pullrequestreview-1"},
+  {"id":2,"user":{"login":"augmentcode[bot]"},"state":"COMMENTED","body":"Review completed. No suggestions at this time.","submitted_at":"2026-01-25T20:35:12Z","html_url":"https://github.com/example/repo/pull/228#pullrequestreview-2"}
+]
+JSON
+					return 0
+					;;
+				repos/*/git/trees/*)
+					printf '%s\n' '{"tree":[]}'
+					return 0
+					;;
+				repos/*)
+					printf '%s\n' 'main'
+					return 0
+					;;
+				esac
+				shift
+			done
+			printf '%s\n' '[]'
+			return 0
+			;;
+		label | pr) return 0 ;;
+		esac
+		printf '%s\n' '[]'
+		return 0
+	}
+
+	local findings
+	findings=$(_scan_single_pr "owner/repo" "228" "medium" "false" 2>/dev/null)
+	local count
+	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
+
+	if [[ "$count" -eq 0 ]]; then
+		print_result "issue #3515 PR #228 approval reviews are filtered as non-actionable" 0
+	else
+		print_result "issue #3515 PR #228 approval reviews are filtered as non-actionable" 1 "expected 0 findings, got ${count}"
+	fi
+
+	_restore_mock_gh
+	return 0
+}
+
 test_scan_single_pr_filters_issue3188_review_body() {
 	# Regression: PR #2887 Gemini approval review — "I approve of this refactoring"
 	# with summary praise (improves, consistent, good improvement) must be filtered

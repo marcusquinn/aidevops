@@ -380,6 +380,7 @@ _check_empty_review_guard() {
 				"nothing to flag|no further|no comments|nothing actionable|" +
 				"i have no (feedback|issues|comments|concerns)|" +
 				"no (issues|problems|concerns|suggestions|recommendations) (found|detected|identified)|" +
+				"no suggestions? (at this time|for now|currently|for improvement)|" +
 				"(found|identified|detected) no (issues|problems|concerns|suggestions)";
 				"i")
 			] | all
