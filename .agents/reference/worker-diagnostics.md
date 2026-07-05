@@ -124,6 +124,72 @@ staging/release boundaries. If advisory E2E finds a real defect, file a focused
 follow-up task with the failing check/artifact evidence instead of closing the
 current PR or redispatching duplicate workers. Full policy: `ci-gate-policy.md`.
 
+### Review-thread remediation
+
+Review-thread remediation is separate from CI repair. It preserves PR/review
+context when unresolved conversations or `CHANGES_REQUESTED` feedback can be
+handled on the active PR, and falls back to linked-issue redispatch only when the
+merge gate cannot safely repair the thread in place.
+
+Paths:
+
+- **Proactive scanner**: post-dispatch housekeeping runs
+  `_run_pr_review_thread_response_scanner()` via the `pr_review_thread_response`
+  optional stage. It scans pulse-enabled maintainer repos only and calls
+  `pr-review-thread-response-scanner.sh dispatch <repo-slug> <repo-path>`.
+- **Unresolved-conversation merge blocker**: when merge output contains
+  `A conversation must be resolved`, `pulse-merge.sh` calls
+  `dispatch-pr` with `PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN=true` for that PR
+  and logs `review-thread remediation queued` if a bounded response worker was
+  queued.
+- **Opt-in `CHANGES_REQUESTED` remediation-first**: setting
+  `AIDEVOPS_CHANGES_REQUESTED_THREAD_REMEDIATION_FIRST=1` lets eligible worker or
+  worker-takeover PRs try review-thread remediation before the historical
+  close-and-redispatch path. PRs labelled `external-contributor`, `no-takeover`,
+  or already `review-routed-to-issue` stay out of this path.
+- **Fallback review-feedback routing**: if remediation is not enabled or cannot
+  dispatch, `_route_pr_to_fix_worker ... review` routes worker-authored PR review
+  feedback to the linked issue. `_dispatch_pr_fix_worker()` appends a `Review
+  Feedback` section, sets `source:review-feedback`, closes/labels the stuck PR
+  with `review-routed-to-issue`, and leaves the issue available for a fresh
+  worker.
+
+Scanner safety boundaries:
+
+- Default scope is unresolved bot review threads on open non-draft PRs. Targeted
+  merge-blocker dispatch is the only normal path that opts into human-authored
+  threads with `PR_REVIEW_THREAD_RESPONSE_INCLUDE_HUMAN=true`.
+- The response worker must read and verify the thread before editing code,
+  commenting, resolving, or marking it complete/blocked. The scanner never
+  resolves threads by itself.
+- Per-repo dispatch is bounded by `PR_REVIEW_THREAD_RESPONSE_MAX_PER_REPO`
+  (default `2`), same-fingerprint cooldown
+  `PR_REVIEW_THREAD_RESPONSE_COOLDOWN` (default `3600` seconds), and inflight TTL
+  `PR_REVIEW_THREAD_RESPONSE_INFLIGHT_TTL` (default `300` seconds).
+- State is stored under
+  `${AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR:-$HOME/.aidevops/.agent-workspace/pr-review-thread-response}`
+  so repeated attempts, cursors, and maintainer-attention blocks are durable.
+- Optional-stage budget protection can defer `pr_review_thread_response` when
+  GraphQL reserve mode is active. Scanner logs also report `GraphQL budget
+  exhausted` or `write: skipped — GraphQL/API rate-limit remaining=<n>`; treat
+  those as budget deferrals, not worker failures.
+
+Diagnosis commands:
+
+```bash
+pulse-diagnose-helper.sh pr <pr-number> --repo <owner/repo>
+pr-review-thread-response-scanner.sh scan-pr <owner/repo> <pr-number>
+pr-review-thread-response-scanner.sh dispatch-pr <owner/repo> <repo-path> <pr-number>
+pr-review-thread-response-scanner.sh dry-run <owner/repo> <repo-path>
+```
+
+Expected evidence after remediation routing: pulse logs contain
+`PR review-thread response:`, `review-thread remediation queued`, or
+`_dispatch_pr_fix_worker: routed review feedback`; active PR workers carry
+thread-response state under the scanner state directory; fallback redispatch adds
+`source:review-feedback` to the issue and `review-routed-to-issue` to the stale
+PR.
+
 ### Failed job inside a still-running workflow
 
 GitHub can expose a terminal failed job before its parent workflow run finishes.
