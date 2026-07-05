@@ -726,7 +726,7 @@ After worktree pre-creation, `pulse-dispatch-worker-launch.sh` calls `dispatch-d
 
 The hold is branch-specific: a different branch or a different issue does not inherit the count. Triage the diagnostic by running the suggested `gh pr list --head <branch>` command; if the branch already has the intended PR, link/merge it, otherwise remove or reset the stale issue-linked worktree/branch so a fresh branch can dispatch.
 
-If the issue later shows repeated `<!-- aidevops-signed-approval -->` comments followed by fresh `needs-maintainer-review` labels but no new breaker comment, treat it as the same unresolved recovery episode. `pulse-nmr-approval.sh` preserves NMR from prior breaker history across marker-less relabels and only allows one automatic retry after a newer aidevops release; repeated same-release retries require `sudo aidevops approve issue <N> <repo>` after inspecting the branch/worktree evidence.
+If the issue later shows repeated `<!-- aidevops-signed-approval -->` comments followed by fresh `needs-maintainer-review` labels but no new breaker comment, treat it as the same unresolved recovery episode. `pulse-nmr-approval.sh` preserves NMR from prior breaker history across marker-less relabels and only allows one automatic retry for the breaker-version lineage after a newer aidevops release; later unrelated patch releases stay held until `sudo aidevops approve issue <N> <repo>` after inspecting the branch/worktree evidence.
 
 ## GitHub API Budget, Instrumentation, and Cache Priming
 
