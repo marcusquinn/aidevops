@@ -293,6 +293,25 @@ This pull request correctly addresses an `unbound variable` error in the `_run_g
 	return 0
 }
 
+test_production_positive_filter_skips_pr26615_praise_patterns() {
+	local prefiltered
+	prefiltered=$(jq -cn '[{
+		body: "The scanner detected nothing to fix. This pull request correctly removes stale suppression, and it is a valuable change for debuggability.",
+		_reviewer: "gemini",
+		_severity: "medium",
+		state: "COMMENTED"
+	}]')
+
+	local filtered_count
+	filtered_count=$(_apply_positive_filter "$prefiltered" "false" | jq 'length')
+	if [[ "$filtered_count" -eq 0 ]]; then
+		print_result "production filter skips PR #26615 praise-only review patterns" 0
+	else
+		print_result "production filter skips PR #26615 praise-only review patterns" 1 "expected 0 findings, got ${filtered_count}"
+	fi
+	return 0
+}
+
 test_keeps_historic_broken_url_with_actionable_critique_review() {
 	local result
 	# shellcheck disable=SC2016  # literal review body includes Markdown backticks
