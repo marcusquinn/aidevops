@@ -555,13 +555,20 @@ _merge_refresh_canonical_for_cleanup() {
 	local default_branch="$2"
 	[[ -d "$canonical_dir" && -n "$default_branch" ]] || return 1
 
-	# Refresh remote state without changing the canonical worktree's checked-out
-	# branch. A pull from a non-default branch can fast-forward that branch to the
-	# default branch tip, corrupting unrelated active work.
-	if git -C "$canonical_dir" fetch origin "$default_branch" >/dev/null 2>&1; then
+	local current_canonical_branch=""
+	current_canonical_branch=$(git -C "$canonical_dir" branch --show-current 2>/dev/null || true)
+
+	# Pull only when the canonical worktree is already on the default branch. If a
+	# user has another active branch checked out there, update the local default
+	# branch ref via fetch instead so cleanup never merges default into that branch.
+	if [[ "$current_canonical_branch" == "$default_branch" ]]; then
+		if git -C "$canonical_dir" pull --ff-only origin "$default_branch" >/dev/null 2>&1; then
+			return 0
+		fi
+	elif git -C "$canonical_dir" fetch origin "$default_branch:$default_branch" >/dev/null 2>&1; then
 		return 0
 	fi
-	print_warning "Post-merge worktree cleanup: canonical fetch skipped/failed for ${canonical_dir}; continuing cleanup"
+	print_warning "Post-merge worktree cleanup: canonical pull/fetch skipped/failed for ${canonical_dir}; continuing cleanup"
 	return 0
 }
 
