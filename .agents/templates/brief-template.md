@@ -368,6 +368,18 @@ from `_parse_phases_section` — then add new logic to the slimmed parent functi
 {Command(s) to confirm the implementation works — e.g., shellcheck, grep, test run}
 ```
 
+### Recoverability Checkpoint
+
+<!-- REQUIRED for long-running shell/framework tasks, dispatch-path changes, or
+     tasks touching 4+ files. After focused tests pass, commit a WIP checkpoint
+     before broad lint/release gates so watchdog/runtime failures leave a
+     recoverable branch instead of only dirty runner-local edits. Delete for
+     small single-pass tasks. -->
+
+- [ ] Focused tests pass: `{command}`
+- [ ] WIP commit created before broad gates: `wip: {short description}`
+- [ ] Broad verification then run: `{command}`
+
 ### Files Scope
 
 <!-- Declares the file paths this task is allowed to modify.

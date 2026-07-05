@@ -72,6 +72,11 @@ Quick disqualifiers for `tier:simple`:
 - Judgment keywords (design, choose, coordinate, graceful, retry, fallback) → `tier:standard`
 - Estimate >1h or >4 acceptance criteria → `tier:standard`
 
+For long-running shell/framework tasks, add a recoverability checkpoint to the
+brief: run the focused test(s), create a WIP commit before broad lint/release
+gates, then continue verification. This prevents runtime/watchdog failures from
+leaving only dirty local edits for pulse recovery.
+
 ### 5. Self-assignment awareness (t2406)
 
 If filing via `gh_create_issue` with `auto-dispatch` label, plan to unassign immediately after:
