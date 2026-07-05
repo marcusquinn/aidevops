@@ -235,11 +235,12 @@ import sys
 
 hold_seconds = int(sys.argv[1])
 now_override = sys.argv[2] if len(sys.argv) > 2 else ""
+clear_state = "clear"
 
 try:
     comments = json.loads(os.environ.get("AIDEVOPS_DIRTY_WORKTREE_COMMENTS_JSON", ""))
 except json.JSONDecodeError:
-    print("clear")
+    print(clear_state)
     sys.exit(0)
 
 def parse_ts(value):
@@ -275,17 +276,17 @@ for comment in comments:
         latest_marker_ts = created
 
 if latest_marker_ts is None:
-    print("clear")
+    print(clear_state)
     sys.exit(0)
 if latest_resolution_ts is not None and latest_resolution_ts >= latest_marker_ts:
-    print("clear")
+    print(clear_state)
     sys.exit(0)
 
 age = max(0, int(now_epoch - latest_marker_ts))
 if age <= hold_seconds:
     print(f"block:age={age}")
 else:
-    print("clear")
+    print(clear_state)
 PY
 ) || marker_state=""
 
