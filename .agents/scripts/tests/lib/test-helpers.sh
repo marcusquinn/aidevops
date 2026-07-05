@@ -29,10 +29,12 @@
 # Contract
 # --------
 # - `_test_discover_shared_deps <dir>` — echoes one filename per line for every
-#   bare `source "${_SC_SELF%/*}/<file>.sh"` directive in
-#   `<dir>/shared-constants.sh`. Conditional sources (guarded by `[[ -r ... ]]`
-#   or equivalent) are intentionally ignored — they are benign when the file
-#   is absent and do not break sourcing.
+#   mandatory shared module load in `<dir>/shared-constants.sh`: either the
+#   historical bare `source "${_SC_SELF%/*}/<file>.sh"` form or the retry-aware
+#   `_source_shared_module_with_retry "${_SC_SELF%/*}/<file>.sh"` form.
+#   Conditional sources (guarded by `[[ -r ... ]]` or equivalent) are
+#   intentionally ignored — they are benign when the file is absent and do not
+#   break sourcing.
 # - `_test_copy_shared_deps <src_dir> <dest_dir>` — copies `shared-constants.sh`
 #   plus every sibling it discovers into `<dest_dir>`. Returns non-zero with a
 #   clear "FAIL:" message if any dep is missing in the source tree. Callers
@@ -78,8 +80,8 @@ _TEST_HELPERS_LOADED=1
 # -----------------------------------------------------------------------------
 # _test_discover_shared_deps <dir>
 # -----------------------------------------------------------------------------
-# Parses <dir>/shared-constants.sh and echoes every sibling file it sources
-# via the `source "${_SC_SELF%/*}/<filename>.sh"` pattern, one per line.
+# Parses <dir>/shared-constants.sh and echoes every mandatory sibling file it
+# sources, one per line.
 #
 # Matches only UNCONDITIONAL, file-scope directives. Conditional sources
 # (e.g., `if [[ -r "$path" ]]; then source "$path"; fi` blocks inside
@@ -105,10 +107,11 @@ _test_discover_shared_deps() {
 		return 1
 	fi
 
-	# Match lines that begin with `source "${_SC_SELF%/*}/<filename>.sh"`
-	# (no leading whitespace — file-scope only). Extract the basename.
+	# Match file-scope mandatory loads and extract the basename. Conditional
+	# source guards use a leading `[[ -r ... ]] && source ...` expression and are
+	# intentionally excluded.
 	awk '
-		/^source[[:space:]]/ && /_SC_SELF/ {
+		(/^(source|_source_shared_module_with_retry)[[:space:]]/ && /_SC_SELF/) {
 			line = $0
 			# Strip everything up to and including the last slash
 			sub(/.*\//, "", line)
