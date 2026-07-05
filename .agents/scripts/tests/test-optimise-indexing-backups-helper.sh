@@ -62,4 +62,22 @@ $HELPER linux scan --dry-run >/dev/null
 fresh_output="$($HELPER linux reminder --format=toast --no-notify)"
 [[ -z "$fresh_output" ]] || fail "fresh state should suppress reminder"
 
+$HELPER linux scan --dry-run --path >/dev/null
+$HELPER linux reminder --format >/dev/null
+
+printf '[]\n' >"$AIDEVOPS_STATE_DIR/optimise-indexing-backups.json"
+$HELPER linux scan --dry-run >/dev/null
+printf '%s\n' "$(<"$AIDEVOPS_STATE_DIR/optimise-indexing-backups.json")" | jq -e '.linux.last_applied_count == 0 and .linux.last_warning_count == 0' >/dev/null
+
+export AIDEVOPS_OPTIMISE_NOW=2000000000
+$HELPER linux apply >/dev/null
+applied_before="$(jq -r '.linux.last_applied_count' "$AIDEVOPS_STATE_DIR/optimise-indexing-backups.json")"
+warnings_before="$(jq -r '.linux.last_warning_count' "$AIDEVOPS_STATE_DIR/optimise-indexing-backups.json")"
+export AIDEVOPS_OPTIMISE_NOW=3000000000
+$HELPER linux reminder --format=toast --no-notify >/dev/null
+applied_after="$(jq -r '.linux.last_applied_count' "$AIDEVOPS_STATE_DIR/optimise-indexing-backups.json")"
+warnings_after="$(jq -r '.linux.last_warning_count' "$AIDEVOPS_STATE_DIR/optimise-indexing-backups.json")"
+[[ "$applied_after" == "$applied_before" ]] || fail "reminder should preserve last applied count"
+[[ "$warnings_after" == "$warnings_before" ]] || fail "reminder should preserve last warning count"
+
 printf 'OK: optimise-indexing-backups-helper tests passed\n'
