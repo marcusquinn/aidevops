@@ -113,6 +113,8 @@ _test_discover_shared_deps() {
 	awk '
 		(/^(source|_source_shared_module_with_retry)[[:space:]]/ && /_SC_SELF/) {
 			line = $0
+			# Strip trailing comments before slash-based basename extraction.
+			sub(/[[:space:]]*#.*/, "", line)
 			# Strip everything up to and including the last slash
 			sub(/.*\//, "", line)
 			# Strip trailing quote and anything after it

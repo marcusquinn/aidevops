@@ -229,6 +229,24 @@ out=$(_test_discover_shared_deps "$cond_src")
 assert_eq "only unconditional source discovered" "real-sibling.sh" "$out"
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Test 8: discover tolerates trailing comments with slashes
+# ─────────────────────────────────────────────────────────────────────────────
+echo ""
+echo "Test 8: trailing comments with slashes do not corrupt basename parsing"
+comment_src=$(mktemp -d 2>/dev/null || mktemp -d -t commentsrc)
+# shellcheck disable=SC2064
+trap "rm -rf '$tmpdir' '$fake_src' '$fake_dest' '$empty_src' '$cond_src' '$comment_src'" EXIT
+cat >"${comment_src}/shared-constants.sh" <<'EOF'
+#!/usr/bin/env bash
+_SC_SELF="${BASH_SOURCE[0]:-${0:-}}"
+source "${_SC_SELF%/*}/real-sibling.sh" # fallback/retry docs/path
+_source_shared_module_with_retry "${_SC_SELF%/*}/retry-sibling.sh" # fallback/retry
+EOF
+
+out=$(_test_discover_shared_deps "$comment_src")
+assert_eq "comments with slashes do not affect discovered basenames" $'real-sibling.sh\nretry-sibling.sh' "$out"
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Summary
 # ─────────────────────────────────────────────────────────────────────────────
 echo ""
