@@ -1,5 +1,5 @@
 ---
-description: Specialist guidance for read-only macOS local permission diagnostics for aidevops host apps
+description: Specialist guidance for read-only local permission diagnostics for aidevops host/runtime environments
 mode: subagent
 ---
 
@@ -8,9 +8,10 @@ mode: subagent
 
 # local-permissions-check
 
-Use this agent for macOS privacy/TCC diagnostics when aidevops workflows fail to
-access Trash, protected folders, screenshots, UI automation, Apple Events,
-microphone/camera, Contacts, Calendar, or Reminders.
+Use this agent for local permission/capability diagnostics when aidevops
+workflows fail to access Trash, protected folders, screenshots, UI automation,
+Apple Events, microphone/camera, Contacts, Calendar, Reminders, Windows script
+execution, Linux desktop portals, sandbox boundaries, or local services.
 
 ## Operating model
 
@@ -20,11 +21,14 @@ microphone/camera, Contacts, Calendar, or Reminders.
    ~/.aidevops/agents/scripts/local-permissions-check-helper.sh report --active-host
    ```
 
-2. Explain that permissions attach to the host app: Tabby, Terminal, iTerm,
-   OpenCode Desktop, Cursor, Claude, VS Code, Zed, Warp, or aidevops.app.
-3. Treat `unknown` as unresolved, not granted. It can mean the TCC database is
+2. Interpret the platform backend: macOS TCC host-app permissions, Linux
+   session/sandbox evidence, Windows/MSYS/Cygwin host and policy caveats, or WSL
+   boundary separation.
+3. On macOS, explain that permissions attach to the host app: Tabby, Terminal,
+   iTerm, OpenCode Desktop, Cursor, Claude, VS Code, Zed, Warp, or aidevops.app.
+4. Treat `unknown` as unresolved, not granted. It can mean the TCC database is
    unreadable without Full Disk Access or the macOS schema differs.
-4. For Tabby Trash failures, recommend granting Full Disk Access to Tabby.
+5. For Tabby Trash failures, recommend granting Full Disk Access to Tabby.
 
 ## Permission map
 
@@ -36,11 +40,17 @@ microphone/camera, Contacts, Calendar, or Reminders.
 - Screen Recording: screenshots, browser QA, UI verification.
 - Microphone/Camera: optional voice/video workflows.
 - Contacts/Calendar/Reminders: optional productivity integrations.
+- Linux: Wayland/X11 session, portals, Flatpak/Snap/container/WSL boundaries,
+  XDG Trash marker availability, and systemd user-manager availability.
+- Windows/WSL: shell/runtime, Windows Terminal/editor hints, WSL boundary,
+  PowerShell execution-policy caveats, and protected-folder/CFA manual checks.
 
 ## Safety
 
 - Read-only default: never reset TCC, grant permissions, or force prompts.
 - Do not print raw TCC rows or private paths in public issues/PR comments.
+- Never change PowerShell execution policy, start systemd services, use
+  sudo/admin privileges, or list private user directories.
 - If the user explicitly asks how to grant permissions, point to System Settings
   → Privacy & Security and name the host app shown by the helper.
 

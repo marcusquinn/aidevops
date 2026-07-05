@@ -109,8 +109,27 @@ assert_contains "json includes granted evidence" '"status":"granted"' "$json_out
 assert_contains "json includes denied evidence" '"status":"denied"' "$json_output"
 assert_not_contains "json omits private app root path" "$apps_root" "$json_output"
 
-unsupported_output="$(LPC_UNAME=Linux "$HELPER" report --active-host)"
-assert_contains "non-macOS degrades cleanly" "unsupported platform (Linux)" "$unsupported_output"
+linux_output="$(LPC_UNAME=Linux XDG_CURRENT_DESKTOP=GNOME XDG_SESSION_TYPE=wayland WAYLAND_DISPLAY=wayland-0 LPC_ACTIVE_HOST=Code "$HELPER" report --active-host)"
+assert_contains "linux report is supported" "linux capability report (Linux)" "$linux_output"
+assert_contains "linux reports desktop session" "desktop session" "$linux_output"
+assert_contains "linux reports Wayland caveat" "Wayland often requires desktop portals" "$linux_output"
+assert_not_contains "linux no longer returns generic unsupported" "unsupported platform" "$linux_output"
+
+linux_json_output="$(LPC_UNAME=Linux XDG_CURRENT_DESKTOP=GNOME XDG_SESSION_TYPE=wayland WAYLAND_DISPLAY=wayland-0 LPC_ACTIVE_HOST=Code "$HELPER" json --active-host)"
+assert_contains "linux json marks supported" '"supported":true' "$linux_json_output"
+assert_contains "linux json includes checks" '"checks":[' "$linux_json_output"
+assert_contains "linux json includes desktop evidence" '"name":"desktop session"' "$linux_json_output"
+assert_not_contains "linux json omits private test root" "$TEST_ROOT" "$linux_json_output"
+
+windows_output="$(LPC_UNAME=MINGW64_NT-10.0 OS=Windows_NT WT_SESSION=fixture LPC_ACTIVE_HOST=WindowsTerminal "$HELPER" report --active-host)"
+assert_contains "windows report is supported" "windows capability report (MINGW64_NT-10.0)" "$windows_output"
+assert_contains "windows reports execution policy caveat" "PowerShell execution policy" "$windows_output"
+assert_contains "windows reports protected folder caveat" "Protected folders / Defender CFA" "$windows_output"
+assert_not_contains "windows no longer returns generic unsupported" "unsupported platform" "$windows_output"
+
+wsl_output="$(LPC_UNAME=Linux WSL_DISTRO_NAME=Ubuntu LPC_ACTIVE_HOST=WindowsTerminal "$HELPER" report --active-host)"
+assert_contains "wsl report uses windows boundary checks" "wsl capability report (Linux)" "$wsl_output"
+assert_contains "wsl explains separate permissions" "Windows app privacy and Linux filesystem permissions are separate" "$wsl_output"
 
 apps_output="$(LPC_UNAME=Darwin LPC_APP_ROOTS="$apps_root" "$HELPER" apps)"
 assert_contains "apps command lists Tabby" "Tabby" "$apps_output"
