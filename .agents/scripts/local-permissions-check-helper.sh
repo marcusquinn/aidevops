@@ -153,7 +153,7 @@ app_is_installed() {
 	local row="$1"
 	local paths roots app_name root
 	paths="$(app_field "$row" paths)"
-	roots="${LPC_APP_ROOTS:-/Applications:/System/Applications:${HOME}/Applications}"
+	roots="${LPC_APP_ROOTS:-/Applications:/System/Applications:${HOME:+$HOME/Applications}}"
 	IFS=',' read -r -a app_names <<<"$paths"
 	IFS=':' read -r -a root_names <<<"$roots"
 	for app_name in "${app_names[@]}"; do
@@ -204,7 +204,7 @@ tcc_db_path() {
 		printf '%s' "$LPC_TCC_DB"
 		return 0
 	fi
-	printf '%s/Library/Application Support/com.apple.TCC/TCC.db' "$HOME"
+	printf '%s' "${HOME:+$HOME/Library/Application Support/com.apple.TCC/TCC.db}"
 	return 0
 }
 
@@ -233,7 +233,7 @@ tcc_sqlite_status() {
 	else
 		return 2
 	fi
-	result="$(sqlite3 "$db" "SELECT ${select_expr} FROM access WHERE service='${escaped_service}' AND client='${escaped_bundle}' ORDER BY last_modified DESC LIMIT 1;" 2>/dev/null || true)"
+	result="$(sqlite3 "$db" "SELECT ${select_expr} FROM access WHERE service='${escaped_service}' AND client='${escaped_bundle}' ORDER BY last_modified DESC LIMIT 1;" 2>/dev/null)" || return 2
 	if [[ -z "$result" ]]; then
 		printf 'missing'
 		return 0

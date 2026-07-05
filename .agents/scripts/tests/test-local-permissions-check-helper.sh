@@ -84,6 +84,25 @@ unknown_output="$(LPC_UNAME=Darwin LPC_ACTIVE_HOST=Tabby LPC_TCC_ROWS="${TEST_RO
 assert_contains "unreadable TCC state is unknown" "unknown" "$unknown_output"
 assert_contains "unknown is not treated as OK" "Check System Settings" "$unknown_output"
 
+fake_bin="${TEST_ROOT}/bin"
+mkdir -p "$fake_bin"
+cat >"${fake_bin}/sqlite3" <<'SQLITE'
+#!/usr/bin/env bash
+set -u
+query="${2:-}"
+if [[ "$query" == "PRAGMA table_info(access);" ]]; then
+	printf '0|auth_value|INTEGER|0||0\n'
+	exit 0
+fi
+exit 1
+SQLITE
+chmod +x "${fake_bin}/sqlite3"
+fake_tcc_db="${TEST_ROOT}/TCC.db"
+touch "$fake_tcc_db"
+sqlite_error_output="$(LPC_UNAME=Darwin LPC_ACTIVE_HOST=Tabby LPC_TCC_ROWS="${TEST_ROOT}/missing.txt" LPC_TCC_DB="$fake_tcc_db" LPC_APP_ROOTS="$apps_root" PATH="${fake_bin}:$PATH" "$HELPER" report --active-host)"
+assert_contains "sqlite read errors are unknown" "unknown" "$sqlite_error_output"
+assert_contains "sqlite read errors are not missing" "Check System Settings" "$sqlite_error_output"
+
 json_output="$(LPC_UNAME=Darwin LPC_ACTIVE_HOST=Tabby LPC_TCC_ROWS="$fixture_rows" LPC_APP_ROOTS="$apps_root" "$HELPER" json --active-host)"
 assert_contains "json names active host" '"active_host":"Tabby"' "$json_output"
 assert_contains "json includes granted evidence" '"status":"granted"' "$json_output"
