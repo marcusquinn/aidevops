@@ -285,14 +285,14 @@ fetch_review_threads_json() {
 					}
 				}
 			}
-		' 2>/dev/null) || rc=$?
+		') || rc=$?
 	if [[ $rc -ne 0 ]]; then
 		log "fetch_review_threads_json: gh graphql failed for ${repo}#${pr} (rc=${rc})"
 		return 2
 	fi
 	# Validate the response is shaped as expected. If the API returned an
 	# error object instead of data, treat it as a fetch failure.
-	if ! printf '%s' "$resp" | jq -e '.data.repository.pullRequest.reviewThreads' >/dev/null 2>&1; then
+	if ! printf '%s' "$resp" | jq -e '.data.repository.pullRequest.reviewThreads' >/dev/null; then
 		log "fetch_review_threads_json: malformed response for ${repo}#${pr}"
 		return 2
 	fi
@@ -351,7 +351,7 @@ fetch_inline_comments_md() {
 					+ "\n"
 				) | join("\n")
 			end
-		' 2>/dev/null) || {
+		') || {
 		log "fetch_inline_comments_md: jq failed on ${repo}#${pr}"
 		return 2
 	}
@@ -386,7 +386,7 @@ fetch_inline_comments_md() {
 fetch_review_summaries_md() {
 	local repo="$1" pr="$2"
 	local resp rc=0
-	resp=$(gh api "repos/${repo}/pulls/${pr}/reviews" --paginate 2>/dev/null) || rc=$?
+	resp=$(gh api "repos/${repo}/pulls/${pr}/reviews" --paginate) || rc=$?
 	if [[ $rc -ne 0 ]]; then
 		log "fetch_review_summaries_md: gh api failed for ${repo}#${pr} (rc=${rc})"
 		return 2
@@ -421,7 +421,7 @@ fetch_review_summaries_md() {
 					+ "\n"
 				) | join("\n")
 			end
-		' 2>/dev/null) || {
+		') || {
 		log "fetch_review_summaries_md: jq failed on ${repo}#${pr}"
 		return 2
 	}
@@ -458,7 +458,7 @@ fetch_file_refs_md() {
 				| select(.path != null)
 				| "- `\(.path):\(.line // "?")`"
 			] | unique | .[]
-		' 2>/dev/null) || {
+		') || {
 		log "fetch_file_refs_md: jq failed on ${repo}#${pr}"
 		return 2
 	}
@@ -841,7 +841,7 @@ _Refreshed by \`post-merge-review-scanner.sh refresh\` (t2054)._"
 		return 1
 	fi
 	if gh issue close "$issue_number" --repo "$repo" \
-		--comment "$close_comment" >/dev/null 2>&1; then
+		--comment "$close_comment" >/dev/null; then
 		log "issue #${issue_number}: closed (no unresolved findings on PR #${pr})"
 		return 1
 	fi
@@ -930,7 +930,7 @@ _refresh_one_issue() {
 	# Bare `gh issue edit` always uses GraphQL and silently fails the body
 	# update when the 5000/hr GraphQL budget is exhausted. PR #21733 model.
 	if gh_issue_edit_safe "$issue_number" --repo "$repo" \
-		--body "$new_body_with_sig" >/dev/null 2>&1; then
+		--body "$new_body_with_sig" >/dev/null; then
 		log "issue #${issue_number}: body updated"
 		return 0
 	fi
@@ -951,7 +951,7 @@ do_refresh() {
 	local issues_json
 	issues_json=$(gh issue list --repo "$repo" --label "$SCANNER_LABEL" \
 		--state open --limit "$SCANNER_REFRESH_LIMIT" \
-		--json number,title,body 2>/dev/null || echo "[]")
+		--json number,title,body || echo "[]")
 
 	if [[ "$issues_json" == "[]" ]]; then
 		log "No open review-followup issues found"
