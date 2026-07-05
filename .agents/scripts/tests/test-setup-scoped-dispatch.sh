@@ -159,10 +159,10 @@ installer_text = installer_path.read_text()
 package_json = json.loads(package_path.read_text())
 expected = sorted(
     f"node_modules/{name}"
-    for name in package_json.get("dependencies", {})
+    for name in (package_json.get("dependencies") or {})
     if name.startswith("@fontsource/")
 )
-actual = sorted(set(re.findall(r"node_modules/@fontsource/[a-z0-9-]+", installer_text)))
+actual = sorted(set(re.findall(r"node_modules/@fontsource/[a-z0-9_.-]+", installer_text)))
 if actual == expected:
     sys.exit(0)
 print("expected font dependencies:", ", ".join(expected), file=sys.stderr)
