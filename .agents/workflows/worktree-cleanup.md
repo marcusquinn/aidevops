@@ -9,10 +9,10 @@ After a PR merges, clean up the linked worktree and return the canonical repo to
 
 ## Automated Cleanup (workers — GH#6740)
 
-Workers dispatched via `/full-loop` MUST self-cleanup after successful merge (Step 4.9). The pulse `cleanup_worktrees()` stage is a safety net — workers must not rely on it; self-cleanup prevents accumulation during batch dispatch.
+Workers dispatched via `/full-loop` self-clean after successful immediate merges through `full-loop-helper.sh merge` (Step 4.9). The pulse `cleanup_worktrees()` stage is a safety net — workers must not rely on it; self-cleanup prevents accumulation during batch dispatch. `--auto` only queues the merge, so scheduled cleanup handles that later after the PR actually merges.
 
 ```bash
-# After gh pr merge --squash succeeds:
+# Fallback/manual sequence after gh pr merge --squash succeeds:
 WORKTREE_PATH="$(pwd)"
 BRANCH_NAME="$(git rev-parse --abbrev-ref HEAD)"
 CANONICAL_DIR="$(git worktree list --porcelain | sed -n '1s/^worktree //p')"

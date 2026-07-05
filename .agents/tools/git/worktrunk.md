@@ -52,9 +52,9 @@ wt commit                   # Commit with LLM-generated message (requires llm pi
 
 | Task | Worktrunk | Plain git |
 |------|-----------|-----------|
-| Switch worktrees | `wt switch feat` | `cd ../repo.feat` |
-| Create + start Claude | `wt switch -c -x claude feat` | `git worktree add -b feat ../repo.feat && cd ../repo.feat && claude` |
-| Clean up | `wt remove` | `cd ../repo && git worktree remove ../repo.feat && git branch -d feat` |
+| Switch worktrees | `wt switch feat` | `cd ~/Git/_worktrees/repo-feat` |
+| Create + start Claude | `wt switch -c -x claude feat` | `git worktree add -b feat ~/Git/_worktrees/repo-feat && cd ~/Git/_worktrees/repo-feat && claude` |
+| Clean up | `wt remove` | `cd ~/Git/repo && git worktree remove ~/Git/_worktrees/repo-feat && git branch -d feat` |
 | List with status | `wt list` | `git worktree list` (paths only) |
 | Shell integration | Built-in (cd support) | Manual |
 | Hooks | Yes (post-create, pre-merge, etc.) | No |
@@ -79,10 +79,12 @@ npm install
 
 ```bash
 wt config show
-wt config set path_template "../{repo}.{branch}"  # default
+wt config set path_template "$HOME/Git/_worktrees/{repo}-{branch}"  # aidevops policy; avoid ~/Git sibling litter
 wt config set merge_strategy squash
 wt config set llm_commits true  # AI-generated commit messages via llm
 ```
+
+Do not use Worktrunk's default sibling path template (`../{repo}.{branch}`) for aidevops-managed work. Keep durable linked worktrees under `${AIDEVOPS_WORKTREE_BASE_DIR:-~/Git/_worktrees}` so cleanup and backup exclusions can find them.
 
 ## Integration with aidevops
 

@@ -456,8 +456,10 @@ _worktree_resolve_abs_path() {
 	return 0
 }
 
-# t2701: Assert that the requested worktree path is not inside the canonical
-# repo working tree. Aborts with a mentoring error on containment.
+# t2701/t3601: Assert that the requested worktree path follows aidevops
+# worktree placement policy: never inside the canonical repo and, by default,
+# under the configured central worktree base (`~/Git/_worktrees`). Aborts with a
+# mentoring error on containment or sibling/custom path litter.
 #
 # The helper's `add <branch> [path]` signature does not mirror git's own
 # `git worktree add -b <branch> <path> [<base>]` — our second positional is a
@@ -466,43 +468,51 @@ _worktree_resolve_abs_path() {
 # canonical repo (state confusion, cleanup-script blast radius, pull/merge
 # inconsistency). This guard rejects that input with a mentoring error.
 #
-# Env override: AIDEVOPS_WORKTREE_ALLOW_NESTED=1 bypasses the check for rare
-# legitimate cases (test fixtures, documented intent).
-_cmd_add_assert_path_outside_repo() {
-	local path="$1"
-	local branch="$2"
-
-	if [[ "${AIDEVOPS_WORKTREE_ALLOW_NESTED:-0}" = "1" ]]; then
-		return 0
-	fi
-
-	local abs_path abs_repo repo_root
-	abs_path="$(_worktree_resolve_abs_path "$path")"
-	repo_root="$(get_repo_root)"
-	if [[ -z "$repo_root" ]]; then
-		# Not in a repo — cmd_add has its own "not in a git repo" check; defer.
-		return 0
-	fi
-	abs_repo="$(cd "$repo_root" && pwd -P)"
-
-	# Containment: abs_path equals repo root OR starts with "$abs_repo/".
-	# The trailing '/' on abs_path handles the "equals" case cleanly.
-	case "$abs_path/" in
-		"$abs_repo"/*) : ;;  # nested
-		*)             return 0 ;;  # outside repo, allowed
-	esac
-
-	# Mentoring error to stderr
-	local suggested_path
+# Env override: AIDEVOPS_WORKTREE_ALLOW_NESTED=1 bypasses all path checks for
+# rare legitimate nested fixtures. AIDEVOPS_WORKTREE_ALLOW_CUSTOM_PATH=1 allows
+# explicit non-central paths while still rejecting paths inside the repo.
+_cmd_add_suggested_central_path() {
+	local branch="$1"
+	local abs_repo="$2"
+	local abs_base="${3:-}"
+	local suggested_path=""
 	suggested_path=$(generate_worktree_path "$branch" 2>/dev/null || true)
-	if [[ -z "$suggested_path" ]]; then
-		local parent_dir repo_name slug
-		parent_dir="$(dirname -- "$abs_repo")"
-		repo_name="$(basename -- "$abs_repo")"
-		slug="$(echo "$branch" | tr '/' '-' | tr '[:upper:]' '[:lower:]')"
-		suggested_path="${parent_dir}/${repo_name}-${slug}"
+	if [[ -n "$suggested_path" ]]; then
+		printf '%s\n' "$suggested_path"
+		return 0
 	fi
 
+	local repo_name slug parent_dir
+	repo_name="$(basename -- "$abs_repo")"
+	slug="$(echo "$branch" | tr '/' '-' | tr '[:upper:]' '[:lower:]')"
+	if [[ -n "$abs_base" ]]; then
+		printf '%s/%s-%s\n' "$abs_base" "$repo_name" "$slug"
+		return 0
+	fi
+	parent_dir="$(dirname -- "$abs_repo")"
+	printf '%s/_worktrees/%s-%s\n' "$parent_dir" "$repo_name" "$slug"
+	return 0
+}
+
+_cmd_add_configured_worktree_base_abs() {
+	local configured_base=""
+	if declare -F aidevops_worktree_base_dir_configured >/dev/null 2>&1; then
+		configured_base=$(aidevops_worktree_base_dir_configured)
+	fi
+	if [[ -z "$configured_base" ]]; then
+		configured_base="${AIDEVOPS_WORKTREE_BASE_DIR:-${HOME:-}/Git/_worktrees}"
+	fi
+	_worktree_resolve_abs_path "$configured_base"
+	return 0
+}
+
+_cmd_add_emit_nested_path_error() {
+	local path="$1"
+	local abs_path="$2"
+	local abs_repo="$3"
+	local branch="$4"
+	local suggested_path=""
+	suggested_path=$(_cmd_add_suggested_central_path "$branch" "$abs_repo")
 	{
 		echo -e "${RED}Error: Worktree path '$path' resolves to '$abs_path',${NC}"
 		echo -e "${RED}which is inside the canonical repo working tree ('$abs_repo').${NC}"
@@ -513,18 +523,76 @@ _cmd_add_assert_path_outside_repo() {
 		echo "If you meant to branch off 'main' (or another base branch), note that"
 		echo "the 'path' argument is a FILESYSTEM PATH, not a base branch. Options:"
 		echo ""
-		echo "  - Omit [path] for auto-generated sibling path:"
+		echo "  - Omit [path] for auto-generated central path:"
 		echo "      worktree-helper.sh add $branch"
 		echo ""
-		echo "  - Pass an explicit path OUTSIDE the repo:"
+		echo "  - Use the configured central worktree base explicitly:"
 		echo "      worktree-helper.sh add $branch $suggested_path"
 		echo ""
-		echo "The created worktree branches from HEAD automatically; you do not"
-		echo "need to specify a base branch."
+		echo "The created worktree branches from origin/<default-branch> automatically;"
+		echo "use --base <ref> only when a different base is required."
 		echo ""
 		echo "(Override: AIDEVOPS_WORKTREE_ALLOW_NESTED=1 — use only with a documented"
 		echo "reason for a nested worktree.)"
 	} >&2
+	return 0
+}
+
+_cmd_add_emit_noncentral_path_error() {
+	local path="$1"
+	local abs_path="$2"
+	local abs_repo="$3"
+	local abs_base="$4"
+	local branch="$5"
+	local suggested_path=""
+	suggested_path=$(_cmd_add_suggested_central_path "$branch" "$abs_repo" "$abs_base")
+	{
+		echo -e "${RED}Error: Worktree path '$path' resolves to '$abs_path',${NC}"
+		echo -e "${RED}which is outside the configured worktree base ('$abs_base').${NC}"
+		echo ""
+		echo "Durable aidevops worktrees must use one central, backup-excludable"
+		echo "directory so cleanup can find them and ~/Git does not accumulate sibling"
+		echo "repo/worktree litter. Options:"
+		echo ""
+		echo "  - Omit [path] for auto-generated central path:"
+		echo "      worktree-helper.sh add $branch"
+		echo ""
+		echo "  - Pass an explicit path under the configured worktree base:"
+		echo "      worktree-helper.sh add $branch $suggested_path"
+		echo ""
+		echo "Configure the base with AIDEVOPS_WORKTREE_BASE_DIR or repos.json"
+		echo "worktree_base_dir when you need a different durable location."
+		echo ""
+		echo "(Override: AIDEVOPS_WORKTREE_ALLOW_CUSTOM_PATH=1 — use only with a"
+		echo "documented cleanup owner and retention plan.)"
+	} >&2
+	return 0
+}
+
+_cmd_add_assert_path_outside_repo() {
+	local path="$1"
+	local branch="$2"
+
+	[[ "${AIDEVOPS_WORKTREE_ALLOW_NESTED:-0}" = "1" ]] && return 0
+
+	local abs_path abs_repo repo_root
+	abs_path="$(_worktree_resolve_abs_path "$path")"
+	repo_root="$(get_repo_root)"
+	[[ -z "$repo_root" ]] && return 0
+	abs_repo="$(cd "$repo_root" && pwd -P)"
+
+	if [[ "$abs_path/" == "$abs_repo"/* ]]; then
+		_cmd_add_emit_nested_path_error "$path" "$abs_path" "$abs_repo" "$branch"
+		return 1
+	fi
+	[[ "${AIDEVOPS_WORKTREE_ALLOW_CUSTOM_PATH:-0}" = "1" ]] && return 0
+
+	local abs_base=""
+	abs_base="$(_cmd_add_configured_worktree_base_abs)"
+	case "$abs_path/" in
+	"$abs_base"/*) return 0 ;;
+	esac
+	_cmd_add_emit_noncentral_path_error "$path" "$abs_path" "$abs_repo" "$abs_base" "$branch"
 	return 1
 }
 

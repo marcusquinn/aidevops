@@ -215,7 +215,9 @@ main() {
 	cleanup_worktrees || rc=$?
 	_prune_dirty_worktree_backups
 
-	if [[ "$rc" -eq 0 ]]; then
+	if [[ "${CLEANUP_WORKTREES_SKIPPED:-0}" == "1" ]]; then
+		echo "[cleanup-worktrees-async] cleanup_worktrees skipped by safety gate — last-run NOT updated" >>"$LOGFILE"
+	elif [[ "$rc" -eq 0 ]]; then
 		_update_last_run
 		echo "[cleanup-worktrees-async] Completed successfully at $(date -u '+%Y-%m-%dT%H:%M:%SZ'). last-run updated." >>"$LOGFILE"
 	else
