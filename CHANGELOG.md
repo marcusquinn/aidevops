@@ -14,6 +14,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- fix: harden dashboard systemd cleanup (#26589)
+
+### Fixed
+
+- require canonical merge summary marker (#26612)
+- avoid redundant stale PR activity lookups (#26590)
+- harden post-merge scanner diagnostics (#26576)
+- filter historic fix praise in review feedback (#26575)
+- filter historic fix praise in review feedback (#26573)
+
+## [3.31.54] - 2026-07-05
+
+### Changed
+
 - harden campaign draft helpers (#26596)
 - preserve actionable historic praise reviews (#26591)
 - keep strong actionable review feedback (#26605)
