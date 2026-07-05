@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.64] - 2026-07-06
+
+### Fixed
+
+- update green behind PR branches without auto-merge (#26664)
+
 ## [3.31.63] - 2026-07-05
 
 ### Changed
