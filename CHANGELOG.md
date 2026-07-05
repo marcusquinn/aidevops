@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.52] - 2026-07-05
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: tidy 3.31.51 changelog
+
+### Fixed
+
+- clean stale LLM lock on skipped cycles (#26554)
+- prefix markdoc helper error (#26553)
+- guard pulse merge optional globals (#26552)
+
 ## [3.31.51] - 2026-07-04
 
 ### Changed
