@@ -73,6 +73,7 @@ gh() {
 	local cmd="${1:-}"
 	shift || true
 	if [[ "$cmd" == "pr" && "${1:-}" == "list" ]]; then
+		printf 'pr_list\n' >>"$GH_CALL_LOG"
 		if [[ -n "$OPEN_PR_ACTIVITY" ]]; then
 			local _number="${OPEN_PR_ACTIVITY%%|*}"
 			local _updated="${OPEN_PR_ACTIVITY#*|}"
@@ -186,6 +187,17 @@ else
 		pass "recent open PR activity prevents stale recovery"
 	else
 		fail "recent open PR activity prevents stale recovery" "recovery hook was called"
+	fi
+fi
+
+: >"$GH_CALL_LOG"
+if _stale_assignment_has_recent_open_pr_activity "123" "owner/repo" "$(date +%s)" "600" ""; then
+	fail "explicit empty open PR activity is treated as no recent PR" "helper returned success for an explicit empty value"
+else
+	if grep -q '^pr_list$' "$GH_CALL_LOG" 2>/dev/null; then
+		fail "explicit empty open PR activity skips lookup" "gh pr list was called despite the fifth argument being present"
+	else
+		pass "explicit empty open PR activity skips lookup"
 	fi
 fi
 
