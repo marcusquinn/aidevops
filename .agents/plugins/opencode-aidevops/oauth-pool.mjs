@@ -178,6 +178,7 @@ export async function injectPoolToken(client, skipEmail) {
 
 export async function applyOpenAIPoolAccount(client, account) {
   process.env.OPENAI_API_KEY = account.access;
+  process.env.AIDEVOPS_OPENAI_API_KEY_SOURCE = "oauth-pool";
   try {
     await client.auth.set({
       path: { id: "openai" },
