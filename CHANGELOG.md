@@ -10,6 +10,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.54] - 2026-07-05
+
+### Changed
+
+- harden campaign draft helpers (#26596)
+- preserve actionable historic praise reviews (#26591)
+- keep strong actionable review feedback (#26605)
+- guard pulse merge worker label pattern (#26607)
+- guard markdoc tag offsets (#26606)
+- suppress systemd status probe noise (#26604)
+
+### Fixed
+
+- require canonical merge summary marker (#26612)
+- avoid redundant stale PR activity lookups (#26590)
+- harden font dependency test parsing (#26588)
+- harden post-merge scanner diagnostics (#26576)
+- filter historic fix praise in review feedback (#26575)
+- filter historic fix praise in review feedback (#26573)
+
 ## [3.31.53] - 2026-07-05
 
 ### Changed
