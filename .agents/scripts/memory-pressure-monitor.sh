@@ -65,12 +65,10 @@
 set -euo pipefail
 
 # --- Bash 3.2 re-exec self-heal (GH#19348, t2146) ----------------------------
-# This script uses `${var,,}` case conversion at lines ~463-466 (bash 4.0+)
-# to avoid `tr` subprocess forks in the pattern-matcher hot path. Running
-# under /bin/bash 3.2 on macOS the script aborts with "bad substitution"
-# before it can do any useful work. The associative-array maps at the old
-# lines 399/508 were already converted to sparse indexed arrays as a first
-# line of defense, but the case-conversion path is the showstopper.
+# Historically this script used Bash 4-only lowercase expansion in the
+# pattern-matcher hot path. Running under /bin/bash 3.2 on macOS made the script
+# abort with "bad substitution" before it could do useful work. The hot path is
+# now portable too, but the re-exec guard remains useful defense-in-depth.
 #
 # Sourcing shared-constants.sh triggers the framework-wide re-exec guard:
 # if this script is invoked under bash < 4 AND a modern bash is available
@@ -471,6 +469,16 @@ _batch_get_process_ages() {
 # Regex patterns (containing ".*") match against the full command line.
 # Arguments: $1=pattern, $2=cmd_name (basename), $3=full_cmd
 # Returns: 0 if match, 1 if no match
+_memory_pressure_lower() {
+	local value="$1"
+	# Bash 3.2 compatible lowercasing. This script is usually launched with a
+	# modern Homebrew bash, but direct/manual invocations and stale launchd plists
+	# can still execute under macOS /bin/bash. Avoiding Bash 4 lowercase expansion
+	# keeps the monitor self-healing instead of failing before it can report.
+	printf '%s' "$value" | tr '[:upper:]' '[:lower:]'
+	return 0
+}
+
 _matches_monitor_pattern() {
 	local pattern="$1"
 	local cmd_name="$2"
@@ -484,9 +492,9 @@ _matches_monitor_pattern() {
 		fi
 	else
 		# Simple pattern — match against basename only
-		# Use bash 4+ ${var,,} lowercasing to avoid tr subprocess forks
-		local cmd_lower="${cmd_name,,}"
-		local pattern_lower="${pattern,,}"
+		local cmd_lower pattern_lower
+		cmd_lower=$(_memory_pressure_lower "$cmd_name")
+		pattern_lower=$(_memory_pressure_lower "$pattern")
 		if [[ "$cmd_lower" == *"$pattern_lower"* ]]; then
 			return 0
 		fi

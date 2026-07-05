@@ -147,6 +147,15 @@ test_critical_service_exit_nonzero_and_logs() {
 	return "$result"
 }
 
+test_no_bash4_lowercase_expansion() {
+	if grep -qE '\$\{[A-Za-z_][A-Za-z0-9_]*,,\}' "$MONITOR_SCRIPT"; then
+		print_result "monitor avoids Bash 4-only lowercase expansion" 1 "Found \${var,,} expansion"
+		return 1
+	fi
+	print_result "monitor avoids Bash 4-only lowercase expansion" 0
+	return 0
+}
+
 main() {
 	if [[ ! -f "$MONITOR_SCRIPT" ]]; then
 		printf '%bFAIL%b monitor script missing: %s\n' "$TEST_RED" "$TEST_RESET" "$MONITOR_SCRIPT"
@@ -154,6 +163,7 @@ main() {
 	fi
 
 	setup_fake_ps
+	test_no_bash4_lowercase_expansion || true
 	test_ok_service_exit_zero || true
 	test_warning_service_exit_zero_and_logs || true
 	test_critical_service_exit_nonzero_and_logs || true

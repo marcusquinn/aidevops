@@ -63,7 +63,39 @@ fi
 export PATH="${_aidevops_path_prefix}:${PATH}"
 unset _aidevops_path_prefix
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+_resolve_script_dir_with_retry() {
+	local source_path="$1"
+	local lib_dir
+	local attempts="${AIDEVOPS_SCRIPT_DIR_ATTEMPTS:-5}"
+	local interval="${AIDEVOPS_SCRIPT_DIR_INTERVAL:-1}"
+	local attempt=1
+
+	[[ "$attempts" =~ ^[0-9]+$ ]] || attempts=5
+	[[ "$interval" =~ ^[0-9]+$ ]] || interval=1
+	[[ "$attempts" -gt 0 ]] || attempts=1
+
+	lib_dir="$(dirname "$source_path")"
+	while [[ "$attempt" -le "$attempts" ]]; do
+		if [[ -d "$lib_dir" ]]; then
+			cd "$lib_dir" && pwd
+			return $?
+		fi
+		if [[ "$attempt" -lt "$attempts" && "$interval" -gt 0 ]]; then
+			sleep "$interval"
+		fi
+		attempt=$((attempt + 1))
+	done
+
+	if [[ -d "${HOME}/.aidevops/agents/scripts" ]]; then
+		cd "${HOME}/.aidevops/agents/scripts" && pwd
+		return $?
+	fi
+
+	printf '[worker-watchdog] script directory unavailable after %s attempt(s): %s\n' "$attempts" "$lib_dir" >&2
+	return 1
+}
+
+SCRIPT_DIR="$(_resolve_script_dir_with_retry "${BASH_SOURCE[0]}")" || exit 1
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/shared-constants.sh"
 # shellcheck source=/dev/null
