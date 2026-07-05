@@ -953,6 +953,11 @@ _require_draft_inputs() {
 
 _require_active_campaign_dir() {
 	local campaigns_dir="${1:-}" campaign_id="${2:-}"
+	if [[ -z "$campaigns_dir" ]] || [[ -z "$campaign_id" ]]; then
+		print_error "Invalid campaigns directory or campaign ID."
+		return 1
+	fi
+
 	local campaign_dir="${campaigns_dir}/${CAMPAIGNS_ACTIVE_DIR}/${campaign_id}"
 	if [[ ! -d "$campaign_dir" ]]; then
 		_err_active_not_found "$campaign_id"
@@ -967,6 +972,11 @@ _require_active_campaign_dir() {
 
 _read_campaign_brief() {
 	local campaign_dir="${1:-}"
+	if [[ -z "$campaign_dir" ]]; then
+		print_error "Campaign directory is required to read brief."
+		return 1
+	fi
+
 	local brief_file="${campaign_dir}/${CAMPAIGNS_BRIEF_FILE}"
 	if [[ ! -f "$brief_file" ]]; then
 		print_error "Campaign brief not found: ${brief_file}"
@@ -980,8 +990,13 @@ _read_campaign_brief() {
 
 _prepare_draft_file() {
 	local campaign_dir="${1:-}" channel="${2:-}" variant="${3:-}"
+	if [[ -z "$campaign_dir" ]] || [[ -z "$channel" ]] || [[ -z "$variant" ]]; then
+		print_error "Invalid inputs for preparing draft file."
+		return 1
+	fi
+
 	local drafts_dir="${campaign_dir}/${CAMPAIGNS_DRAFTS_DIR}"
-	mkdir -p "$drafts_dir"
+	mkdir -p "$drafts_dir" || return 1
 
 	local draft_file="${drafts_dir}/${channel}-v${variant}.md"
 	printf '%s\n' "$draft_file"
@@ -1001,6 +1016,11 @@ _warn_existing_draft_file() {
 _generate_draft_content() {
 	local channel="${1:-}" brief_content="${2:-}" brand_context="${3:-}"
 	local swipe_context="${4:-}" tone="${5:-}" model="${6:-}"
+	if [[ -z "$channel" ]] || [[ -z "$brief_content" ]]; then
+		print_error "Missing channel or brief content for draft generation."
+		return 1
+	fi
+
 	local ai_helper="${SCRIPT_DIR}/ai-research-helper.sh"
 	if [[ ! -x "$ai_helper" ]]; then
 		print_error "ai-research-helper.sh not found or not executable."
@@ -1091,18 +1111,18 @@ cmd_draft() {
 	swipe_context="$(_gather_swipe_context "$campaigns_dir" "$channel")"
 
 	local draft_file
-	draft_file="$(_prepare_draft_file "$campaign_dir" "$channel" "$variant")"
+	draft_file="$(_prepare_draft_file "$campaign_dir" "$channel" "$variant")" || return 1
 	_warn_existing_draft_file "$draft_file"
 
 	local display_name
 	display_name="$(_get_channel_spec "$channel" "display_name")"
-	print_info "Generating ${display_name} draft (variant ${variant}, tone: ${tone}, model: ${model})..."
+	print_info "Generating ${display_name:-${channel}} draft (variant ${variant}, tone: ${tone}, model: ${model})..."
 
 	local draft_content
 	draft_content="$(_generate_draft_content "$channel" "$brief_content" "$brand_context" "$swipe_context" "$tone" "$model")" || return 1
 
 	_write_draft_file "$draft_file" "$channel" "$variant" "$campaign_id" \
-		"$tone" "$draft_content" "$model"
+		"$tone" "$draft_content" "$model" || return 1
 
 	_print_draft_summary "$campaign_id" "$channel" "$variant" "$tone" "$model" "$draft_file" "$campaign_dir"
 	return 0
