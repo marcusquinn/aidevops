@@ -266,6 +266,7 @@ main() {
 	test_scan_single_pr_filters_issue3173_positive_review_body
 	test_scan_single_pr_filters_issue3325_review_body
 	test_scan_single_pr_filters_pr2647_positive_review_body
+	test_scan_single_pr_filters_issue3785_pr164_summary_body
 	test_scan_single_pr_filters_issue3145_pr3077_review_body
 
 	echo ""

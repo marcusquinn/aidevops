@@ -7,7 +7,8 @@
 # =============================================================================
 # Integration tests for _scan_single_pr: include_positive flag, positive review
 # filtering, regression tests for specific issue bodies (GH#3188, GH#3363,
-# GH#3303, GH#3173, GH#4814, GH#3325, GH#3323, GH#3158, GH#3145, GH#5668).
+# GH#3303, GH#3173, GH#3785, GH#4814, GH#3325, GH#3323, GH#3158, GH#3145,
+# GH#5668).
 #
 # Usage: source "${SCRIPT_DIR}/test-quality-feedback-main-verification-scan.sh"
 #
@@ -624,6 +625,59 @@ test_scan_single_pr_filters_pr2647_positive_review_body() {
 		print_result "issue #3323 review body is filtered as non-actionable" 0
 	else
 		print_result "issue #3323 review body is filtered as non-actionable" 1 "expected 0 findings, got ${count}"
+	fi
+
+	_restore_mock_gh
+	return 0
+}
+
+test_scan_single_pr_filters_issue3785_pr164_summary_body() {
+	reset_mock_state
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			while [[ $# -gt 0 ]]; do
+				case "$1" in
+				repos/*/pulls/*/comments)
+					echo "[]"
+					return 0
+					;;
+				repos/*/pulls/*/reviews)
+					printf '%s\n' '[{"id":1,"user":{"login":"gemini-code-assist[bot]"},"state":"COMMENTED","body":"## Code Review\n\nThis pull request correctly fixes a bug in the Python version comparison by replacing a problematic `bc` floating-point comparison with more robust integer arithmetic on the major and minor version numbers. This change effectively resolves the issue where versions like 3.14 were incorrectly evaluated and also has the added benefit of removing an implicit dependency on `bc`. The logic is sound. I'\''ve included one suggestion to enhance the efficiency of how the version components are retrieved.","submitted_at":"2026-01-24T04:00:00Z","html_url":"https://github.com/marcusquinn/aidevops/pull/164#pullrequestreview-3700639945"}]'
+					return 0
+					;;
+				repos/*/git/trees/*)
+					echo '{"tree":[]}'
+					return 0
+					;;
+				repos/*)
+					echo "main"
+					return 0
+					;;
+				esac
+				shift
+			done
+			echo "[]"
+			return 0
+			;;
+		label | pr) return 0 ;;
+		esac
+		echo "[]"
+		return 0
+	}
+
+	local findings
+	findings=$(_scan_single_pr "owner/repo" "164" "medium" "false" 2>/dev/null)
+	local count
+	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
+
+	if [[ "$count" -eq 0 ]]; then
+		print_result "issue #3785 PR #164 summary body is filtered as non-actionable" 0
+	else
+		print_result "issue #3785 PR #164 summary body is filtered as non-actionable" 1 "expected 0 findings, got ${count}"
 	fi
 
 	_restore_mock_gh
