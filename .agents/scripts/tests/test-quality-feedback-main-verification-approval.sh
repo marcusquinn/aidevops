@@ -96,7 +96,7 @@ _test_approval_filter() {
 			"\\bworkaround\\b|\\bhack\\b|" +
 			"```\\s*(suggestion|diff)"; "i")) as $strong_actionable |
 
-		($actionable_raw and ($no_actionable_recommendation | not) and ($no_actionable_suggestions | not) and ($strong_actionable or (($historic_fix_praise and $summary_praise_only) | not))) as $actionable |
+		(($actionable_raw or $strong_actionable) and ($no_actionable_recommendation | not) and ($no_actionable_suggestions | not) and ($strong_actionable or (($historic_fix_praise and $summary_praise_only) | not))) as $actionable |
 
 		# GH#5668: merge/CI-status comments are not actionable review feedback
 		($body | test(
@@ -446,6 +446,19 @@ return nil, fmt.Errorf("invalid input: %w", err)
 		print_result "keep review with suggestion fence" 0
 	else
 		print_result "keep review with suggestion fence" 1 "expected keep, got ${result}"
+	fi
+	return 0
+}
+
+test_keeps_review_with_strong_actionable_keyword_only() {
+	# Strong actionable terms such as "needs" are intentionally outside
+	# actionable_raw; they must still keep an otherwise positive review.
+	local result
+	result=$(_test_approval_filter "Looks good overall, but this needs a regression test.")
+	if [[ "$result" == "keep" ]]; then
+		print_result "keep review with strong actionable keyword only" 0
+	else
+		print_result "keep review with strong actionable keyword only" 1 "expected keep, got ${result}"
 	fi
 	return 0
 }

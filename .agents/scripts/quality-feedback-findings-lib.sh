@@ -232,7 +232,7 @@ _apply_positive_filter() {
 			"\\bworkaround\\b|\\bhack\\b|" +
 			"```\\s*(suggestion|diff)"; "i")) as $strong_actionable |
 
-		($actionable_raw and ($no_actionable_recommendation | not) and ($no_actionable_suggestions | not) and ($strong_actionable or (($historic_fix_praise and $summary_praise_only) | not))) as $actionable |
+		(($actionable_raw or $strong_actionable) and ($no_actionable_recommendation | not) and ($no_actionable_suggestions | not) and ($strong_actionable or (($historic_fix_praise and $summary_praise_only) | not))) as $actionable |
 
 		($body | test(
 			"\\bmerging\\.?$|\\bmerge (this|the) pr\\b|" +
