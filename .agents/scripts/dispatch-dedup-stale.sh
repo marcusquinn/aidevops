@@ -558,12 +558,117 @@ _resolve_stale_threshold() {
 # Returns: 0 if too young to be stale; 1 otherwise (caller continues).
 #######################################
 _issue_too_young_for_staleness() {
-	local issue_created_at="$1" effective_threshold="$2" now_epoch="$3"
+	local issue_created_at="$1"
+	local effective_threshold="$2"
+	local now_epoch="$3"
 	[[ -z "$issue_created_at" ]] && return 1
 	local epoch
 	epoch=$(_ts_to_epoch "$issue_created_at")
 	[[ "$epoch" -le 0 ]] && return 1
-	[[ "$((now_epoch - epoch))" -lt "$effective_threshold" ]]
+	if [[ "$((now_epoch - epoch))" -lt "$effective_threshold" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Fetch and normalize issue comments for stale-assignment checks.
+# Args: $1 = issue number, $2 = repo slug
+# Output: normalized comments JSON sorted newest-first
+# Returns: 0 on success, 1 on API/jq failure
+#######################################
+_stale_assignment_fetch_comments_json() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local comments_pages comments_json
+	comments_pages=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--paginate --slurp 2>/dev/null) || return 1
+	comments_json=$(printf '%s' "$comments_pages" | jq \
+		'[.[] | .[]? | {created_at: .created_at, author: .user.login, body_start: ((.body // "")[:200])}] | sort_by(.created_at) | reverse' \
+		2>/dev/null) || return 1
+	printf '%s' "$comments_json"
+	return 0
+}
+
+#######################################
+# Find the most recent worker dispatch or interactive claim comment.
+# Args: $1 = normalized comments JSON
+# Output: ISO timestamp or empty
+#######################################
+_stale_assignment_latest_dispatch_ts() {
+	local comments_json="$1"
+	printf '%s' "$comments_json" | jq -r '
+		[.[] | select(
+			(.body_start | test("Dispatching worker"; "i")) or
+			(.body_start | test("DISPATCH_CLAIM"; "i")) or
+			(.body_start | test("Worker \\(PID"; "i")) or
+			(.body_start | test("Interactive session claimed"; "i"))
+		)] | first | .created_at // empty
+	' 2>/dev/null || true
+	return 0
+}
+
+#######################################
+# Find the latest GitHub-visible issue activity timestamp.
+# Args: $1 = normalized comments JSON, $2 = issue updatedAt timestamp
+# Output: ISO timestamp or empty
+#######################################
+_stale_assignment_latest_activity_ts() {
+	local comments_json="$1"
+	local issue_updated_at="$2"
+	local last_activity_ts=""
+	last_activity_ts=$(printf '%s' "$comments_json" | jq -r '
+		first | .created_at // empty
+	' 2>/dev/null) || last_activity_ts=""
+	if [[ -n "$issue_updated_at" && ( -z "$last_activity_ts" || "$issue_updated_at" > "$last_activity_ts" ) ]]; then
+		last_activity_ts="$issue_updated_at"
+	fi
+	printf '%s' "$last_activity_ts"
+	return 0
+}
+
+#######################################
+# Determine whether recent issue activity protects an assignment without a claim.
+# Args: $1 = last activity timestamp, $2 = now epoch, $3 = effective threshold
+# Returns: 0 if recent activity should block stale recovery, 1 otherwise
+#######################################
+_stale_assignment_has_recent_activity() {
+	local last_activity_ts="$1"
+	local now_epoch="$2"
+	local effective_threshold="$3"
+	local activity_epoch activity_age
+	[[ -z "$last_activity_ts" ]] && return 1
+	activity_epoch=$(_ts_to_epoch "$last_activity_ts")
+	activity_age=$((now_epoch - activity_epoch))
+	if [[ "$activity_age" -lt "$effective_threshold" ]]; then
+		return 0
+	fi
+	return 1
+}
+
+#######################################
+# Determine whether recent open PR activity protects a stale-looking assignment.
+# Args: $1 = issue number, $2 = repo slug, $3 = now epoch, $4 = threshold seconds
+# Returns: 0 if recent PR activity exists, 1 otherwise
+#######################################
+_stale_assignment_has_recent_open_pr_activity() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local now_epoch="$3"
+	local effective_threshold="$4"
+	local open_pr_activity open_pr_number open_pr_updated_at open_pr_epoch open_pr_age
+	open_pr_activity=$(_stale_recovery_find_open_pr_activity "$issue_number" "$repo_slug")
+	[[ -z "$open_pr_activity" ]] && return 1
+	open_pr_number="${open_pr_activity%%|*}"
+	open_pr_updated_at="${open_pr_activity#*|}"
+	[[ -z "$open_pr_number" || -z "$open_pr_updated_at" ]] && return 1
+	open_pr_epoch=$(_ts_to_epoch "$open_pr_updated_at")
+	[[ "$open_pr_epoch" -le 0 ]] && return 1
+	open_pr_age=$((now_epoch - open_pr_epoch))
+	if [[ "$open_pr_age" -lt "$effective_threshold" ]]; then
+		return 0
+	fi
+	return 1
 }
 
 _is_stale_assignment() {
@@ -587,16 +692,8 @@ _is_stale_assignment() {
 	#
 	# GH#18816: fail-CLOSED on API failure. A transient gh error is NOT evidence
 	# that the assignment is stale — block this pulse cycle and retry next cycle.
-	local comments_json _comments_pages _comments_rc=0
-	_comments_pages=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
-		--paginate --slurp 2>/dev/null) || _comments_rc=$?
-	if [[ "$_comments_rc" -eq 0 ]]; then
-		comments_json=$(printf '%s' "$_comments_pages" | jq \
-			'[.[] | .[]? | {created_at: .created_at, author: .user.login, body_start: ((.body // "")[:200])}] | sort_by(.created_at) | reverse' \
-			2>/dev/null) || _comments_rc=$?
-	fi
-
-	if [[ "$_comments_rc" -ne 0 ]]; then
+	local comments_json
+	if ! comments_json=$(_stale_assignment_fetch_comments_json "$issue_number" "$repo_slug"); then
 		# Cannot fetch comments — cannot determine staleness. Fail-CLOSED:
 		# keep the existing assignment protection for this pulse cycle.
 		return 1
@@ -608,41 +705,25 @@ _is_stale_assignment() {
 	# which missed the interactive claim comment posted by
 	# interactive-session-helper.sh ("Interactive session claimed").
 	local last_dispatch_ts=""
-	last_dispatch_ts=$(printf '%s' "$comments_json" | jq -r '
-		[.[] | select(
-			(.body_start | test("Dispatching worker"; "i")) or
-			(.body_start | test("DISPATCH_CLAIM"; "i")) or
-			(.body_start | test("Worker \\(PID"; "i")) or
-			(.body_start | test("Interactive session claimed"; "i"))
-		)] | first | .created_at // empty
-	' 2>/dev/null) || last_dispatch_ts=""
+	last_dispatch_ts=$(_stale_assignment_latest_dispatch_ts "$comments_json")
 
 	# Find the most recent GitHub-visible activity. Comments are the detailed
 	# event log; issue updatedAt covers lightweight timeline events such as label,
 	# assignee, cross-reference, or state transitions without an extra API call.
 	local last_activity_ts=""
-	last_activity_ts=$(printf '%s' "$comments_json" | jq -r '
-		first | .created_at // empty
-	' 2>/dev/null) || last_activity_ts=""
-	if [[ -n "$issue_updated_at" && ( -z "$last_activity_ts" || "$issue_updated_at" > "$last_activity_ts" ) ]]; then
-		last_activity_ts="$issue_updated_at"
-	fi
+	last_activity_ts=$(_stale_assignment_latest_activity_ts "$comments_json" "$issue_updated_at")
 
 	# If no dispatch comment exists at all, the assignment is from a
 	# non-worker source (e.g., auto-assignment at issue creation). Treat
 	# as stale since there's no worker claim to protect.
 	# (now_epoch already computed above for the t2153 age-floor guard.)
-	local dispatch_epoch activity_epoch
+	local dispatch_epoch
 
 	if [[ -z "$last_dispatch_ts" ]]; then
 		# No dispatch comment — check if the last activity is also old
-		if [[ -n "$last_activity_ts" ]]; then
-			activity_epoch=$(_ts_to_epoch "$last_activity_ts")
-			local activity_age=$((now_epoch - activity_epoch))
-			if [[ "$activity_age" -lt "$effective_threshold" ]]; then
-				# Recent activity but no dispatch comment — could be manual work
-				return 1
-			fi
+		if _stale_assignment_has_recent_activity "$last_activity_ts" "$now_epoch" "$effective_threshold"; then
+			# Recent activity but no dispatch comment — could be manual work
+			return 1
 		fi
 		# No dispatch comment AND no recent activity — stale
 		_recover_stale_assignment "$issue_number" "$repo_slug" "$blocking_assignees" "no dispatch claim comment found, no recent activity (threshold=${effective_threshold}s, interactive=${is_interactive})"
@@ -674,20 +755,8 @@ _is_stale_assignment() {
 	# Issue comments/updatedAt are quiet. Check for an open PR only now so normal
 	# dispatch checks do not burn PR-list API budget; branch pushes and draft PR
 	# updates are better liveness signals than synthetic issue heartbeats.
-	local open_pr_activity open_pr_number open_pr_updated_at open_pr_epoch open_pr_age
-	open_pr_activity=$(_stale_recovery_find_open_pr_activity "$issue_number" "$repo_slug")
-	if [[ -n "$open_pr_activity" ]]; then
-		open_pr_number="${open_pr_activity%%|*}"
-		open_pr_updated_at="${open_pr_activity#*|}"
-		if [[ -n "$open_pr_number" && -n "$open_pr_updated_at" ]]; then
-			open_pr_epoch=$(_ts_to_epoch "$open_pr_updated_at")
-			if [[ "$open_pr_epoch" -gt 0 ]]; then
-				open_pr_age=$((now_epoch - open_pr_epoch))
-				if [[ "$open_pr_age" -lt "$effective_threshold" ]]; then
-					return 1
-				fi
-			fi
-		fi
+	if _stale_assignment_has_recent_open_pr_activity "$issue_number" "$repo_slug" "$now_epoch" "$effective_threshold"; then
+		return 1
 	fi
 
 	# Both dispatch claim and last activity are older than threshold — stale
