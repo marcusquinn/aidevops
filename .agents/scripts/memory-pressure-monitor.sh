@@ -493,8 +493,13 @@ _matches_monitor_pattern() {
 	else
 		# Simple pattern — match against basename only
 		local cmd_lower pattern_lower
-		cmd_lower=$(_memory_pressure_lower "$cmd_name")
-		pattern_lower=$(_memory_pressure_lower "$pattern")
+		if [[ "${BASH_VERSINFO[0]:-0}" -ge 4 ]]; then
+			cmd_lower="${cmd_name,,}"
+			pattern_lower="${pattern,,}"
+		else
+			cmd_lower=$(_memory_pressure_lower "$cmd_name")
+			pattern_lower=$(_memory_pressure_lower "$pattern")
+		fi
 		if [[ "$cmd_lower" == *"$pattern_lower"* ]]; then
 			return 0
 		fi
