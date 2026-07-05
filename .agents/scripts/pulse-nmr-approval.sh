@@ -690,18 +690,20 @@ _nmr_retry_breaker_event_json() {
 }
 
 #######################################
-# Check if the current aidevops release already auto-retried this breaker.
+# Check if this breaker episode already consumed its automatic release retry.
 #
 # Args:
 #   $1 - comments_json
 #   $2 - breaker_at
 #   $3 - current_version
-# Returns: 0 if an approval comment from current_version exists after breaker.
+#   $4 - breaker_version (optional; enables episode-scoped lineage guard)
+# Returns: 0 if an auto-approval comment already consumed this retry.
 #######################################
 _nmr_retry_already_used_for_version() {
 	local comments_json="$1"
 	local breaker_at="$2"
 	local current_version="$3"
+	local breaker_version="${4:-}"
 
 	[[ -n "$comments_json" && -n "$breaker_at" && -n "$current_version" ]] || return 1
 
@@ -726,6 +728,31 @@ _nmr_retry_already_used_for_version() {
 
 	if [[ "$approval_at_current_version_count" -gt 0 ]]; then
 		return 0
+	fi
+
+	if [[ -n "$breaker_version" ]]; then
+		local episode_retry_count
+		episode_retry_count=$(printf '%s' "$comments_json" | jq -r \
+			--arg breaker_at "$breaker_at" \
+			--arg approval_marker "aidevops-signed-approval" \
+			--arg retry_prefix "automated breaker retry allowed after aidevops upgrade ${breaker_version} ->" '
+			(if type == "array" and (.[0]? | type) == "array" then [.[][]]
+			elif type == "array" then .
+			else [] end)
+			| [
+				.[]
+				| select(.created_at != null)
+				| select((.created_at | fromdateiso8601) > ($breaker_at | fromdateiso8601))
+				| select((.body // "") | contains($approval_marker))
+				| select((.body // "") | contains($retry_prefix))
+			]
+			| length
+		' 2>/dev/null) || episode_retry_count=0
+		[[ "$episode_retry_count" =~ ^[0-9]+$ ]] || episode_retry_count=0
+
+		if [[ "$episode_retry_count" -gt 0 ]]; then
+			return 0
+		fi
 	fi
 
 	return 1
@@ -790,7 +817,7 @@ _nmr_breaker_release_retry_reason() {
 	current_version=$(_nmr_current_aidevops_version)
 	[[ -n "$current_version" ]] || return 1
 
-	if _nmr_retry_already_used_for_version "$comments_json" "$breaker_at" "$current_version"; then
+	if _nmr_retry_already_used_for_version "$comments_json" "$breaker_at" "$current_version" "$breaker_version"; then
 		return 1
 	fi
 

@@ -818,6 +818,23 @@ test_markerless_relabel_after_recovery_breaker_retry_is_once_per_release() {
 	return 0
 }
 
+test_markerless_relabel_after_recovery_breaker_retry_is_once_per_episode() {
+	set_timeline '[{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"runner-a"},"created_at":"2026-07-04T05:07:53Z"},{"event":"unlabeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"runner-b"},"created_at":"2026-07-04T13:50:33Z"},{"event":"labeled","label":{"name":"needs-maintainer-review"},"actor":{"login":"runner-a"},"created_at":"2026-07-04T13:54:57Z"}]'
+	set_comments '[{"created_at":"2026-07-04T05:07:55Z","body":"<!-- dispatch-circuit-breaker:worker_recovery_loop -->\n## Dispatch paused: repeated worker recovery failures\n---\n[aidevops.sh](https://aidevops.sh) v3.31.49 automated scan."},{"created_at":"2026-07-04T13:50:31Z","body":"<!-- aidevops-signed-approval -->\nAuto-approved: automated breaker retry allowed after aidevops upgrade 3.31.49 -> 3.31.54.\n---\n[aidevops.sh](https://aidevops.sh) v3.31.54 automated scan."}]'
+	set_issue_meta '{"labels":[{"name":"needs-maintainer-review"},{"name":"origin:worker"},{"name":"auto-dispatch"}]}'
+	AIDEVOPS_CURRENT_VERSION_OVERRIDE=3.31.62
+	export AIDEVOPS_CURRENT_VERSION_OVERRIDE
+	if _nmr_applied_by_maintainer 8337 exampleorg/examplerepo maintainer; then
+		unset AIDEVOPS_CURRENT_VERSION_OVERRIDE
+		print_result "marker-less recovery relabel retry is once per breaker episode" 0
+		return 0
+	fi
+	unset AIDEVOPS_CURRENT_VERSION_OVERRIDE
+	print_result "marker-less recovery relabel retry is once per breaker episode" 1 \
+		"Expected exit 0 — a later unrelated patch release must not retry the same unresolved breaker episode"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -875,6 +892,7 @@ main() {
 	test_markerless_relabel_after_recovery_breaker_preserves_same_release
 	test_markerless_relabel_after_recovery_breaker_allows_upgrade_retry
 	test_markerless_relabel_after_recovery_breaker_retry_is_once_per_release
+	test_markerless_relabel_after_recovery_breaker_retry_is_once_per_episode
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
