@@ -162,7 +162,7 @@ _resolve_remote_default_branch() {
 
 	ref=$(git symbolic-ref --short "refs/remotes/${remote_name}/HEAD" 2>/dev/null || true)
 	if [[ -n "$ref" ]]; then
-		printf '%s\n' "${ref#${remote_name}/}"
+		printf '%s\n' "${ref#"${remote_name}"/}"
 		return 0
 	fi
 
@@ -236,7 +236,7 @@ _validate_commit_and_pr_inputs() {
 # --- Staging & Commit ---
 
 # Stage all changes and commit with the given message.
-# Skips commit if nothing staged but commits exist ahead of main.
+# Skips commit if nothing staged but commits exist ahead of the remote default branch.
 # Returns 1 on failure.
 _stage_and_commit() {
 	local commit_message="$1"
@@ -253,10 +253,10 @@ _stage_and_commit() {
 		base_ref="origin/${base_branch}"
 		ahead=$(git rev-list --count "${base_ref}..HEAD" 2>/dev/null || echo "0")
 		if [[ "$ahead" == "0" ]]; then
-			print_error "No changes to commit and no commits ahead of ${base_branch}."
+			print_error "No changes to commit and no commits ahead of ${base_ref}."
 			return 1
 		fi
-		print_info "No new changes to commit, but ${ahead} commit(s) ahead of ${base_branch}. Proceeding to PR."
+		print_info "No new changes to commit, but ${ahead} commit(s) ahead of ${base_ref}. Proceeding to PR."
 	else
 		if ! git commit -m "$commit_message"; then
 			print_error "git commit failed"
@@ -532,7 +532,7 @@ _run_project_validators() {
 
 # Detect a shallow git clone and optionally auto-unshallow.
 # A shallow clone lacks intermediate commit objects between the clone-depth
-# boundary and origin/main tip.  Rebasing on a shallow clone fails with
+# boundary and the remote base tip. Rebasing on a shallow clone fails with
 # hundreds of 'add/add' conflicts that masquerade as a force-push to origin.
 # Recovery sequence (manual): git fetch --unshallow origin
 #
