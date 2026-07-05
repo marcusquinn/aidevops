@@ -481,6 +481,22 @@ out=$(do_refresh "stub/repo" "true" 2>&1) || rc=$?
 assert_rc "refresh skips malformed title without erroring" "0" "$rc"
 assert_contains "refresh logs malformed title skip" "cannot extract PR number" "$out"
 
+echo ""
+echo "Test: fetch_review_summaries_md — nullable review body does not abort jq"
+write_graphql_fixture "$FIX_GRAPHQL"
+jq -n '[{user: {login: "gemini-code-assist"}, body: null, html_url: "https://example/review"}]' >"$FIX_REVIEWS"
+rc=0
+out=$(fetch_review_summaries_md "stub/repo" "42" 2>&1) || rc=$?
+assert_rc "nullable review body returns success" "0" "$rc"
+if [[ -z "$out" ]]; then
+	echo "  PASS: nullable review body is ignored without jq error"
+	PASS=$((PASS + 1))
+else
+	echo "  FAIL: nullable review body produced output or error"
+	echo "    actual (first 200): ${out:0:200}"
+	FAIL=$((FAIL + 1))
+fi
+
 # -----------------------------------------------------------------------------
 # Error-propagation tests (CodeRabbit CR on PR #18736)
 #
@@ -553,8 +569,16 @@ echo ""
 echo "Test: fetch_review_threads_json — gh failure returns exit 2"
 install_failing_gh
 rc=0
-fetch_review_threads_json "stub/repo" "42" >/dev/null 2>&1 || rc=$?
+out=$(fetch_review_threads_json "stub/repo" "42" 2>&1) || rc=$?
 assert_rc "fetch_review_threads_json propagates gh failure" "2" "$rc"
+assert_contains "fetch_review_threads_json surfaces gh stderr" "gh stub: simulated failure for api graphql" "$out"
+
+echo ""
+echo "Test: fetch_review_summaries_md — gh failure returns exit 2 and surfaces stderr"
+rc=0
+out=$(fetch_review_summaries_md "stub/repo" "42" 2>&1) || rc=$?
+assert_rc "fetch_review_summaries_md propagates gh failure" "2" "$rc"
+assert_contains "fetch_review_summaries_md surfaces gh stderr" "gh stub: simulated failure for api repos/stub/repo/pulls/42/reviews" "$out"
 
 echo ""
 echo "Test: build_pr_followup_body — fetch error returns exit 2 (NOT 1)"
