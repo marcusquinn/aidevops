@@ -17,10 +17,11 @@ STATE_FILE="${AIDEVOPS_OPTIMISE_STATE_FILE:-${STATE_DIR}/optimise-indexing-backu
 LOG_FILE="${AIDEVOPS_OPTIMISE_LOG_FILE:-${LOG_DIR}/optimise-indexing-backups.log}"
 REMINDER_DAYS="${AIDEVOPS_OPTIMISE_REMINDER_DAYS:-30}"
 NOTIFY_INTERVAL_SECONDS="${AIDEVOPS_OPTIMISE_NOTIFY_INTERVAL_SECONDS:-86400}"
+PLATFORM_WINDOWS="windows"
 
 usage() {
 cat <<'USAGE'
-Usage: optimise-indexing-backups-helper.sh <macos|linux> <scan|apply|status|reminder> [flags]
+Usage: optimise-indexing-backups-helper.sh <macos|linux|windows> <scan|apply|status|reminder> [flags]
 
 Flags:
   --dry-run                 Recommend only (default for scan)
@@ -33,6 +34,7 @@ Flags:
   --no-notify               Do not send desktop notification for stale reminder
 
 Commands default to safe dry-run behaviour and never require sudo.
+Native Windows support is limited and recommendation-first; WSL2 uses linux.
 USAGE
 return 0
 }
@@ -147,6 +149,7 @@ _platform_label() {
     case "$platform" in
         macos) printf 'macOS' ;;
         linux) printf 'Linux' ;;
+        windows) printf 'Windows' ;;
         *) printf '%s' "$platform" ;;
     esac
     return 0
@@ -186,11 +189,53 @@ _candidate_paths() {
                 "${HOME}/.aidevops/logs" \
                 "${HOME}/.aidevops/locks"
             ;;
+        windows)
+            printf '%s\n' \
+                "%LOCALAPPDATA%\\Temp\\" \
+                "%LOCALAPPDATA%\\npm-cache\\" \
+                "%LOCALAPPDATA%\\pnpm\\store\\" \
+                "%LOCALAPPDATA%\\pip\\Cache\\" \
+                "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache\\" \
+                "%USERPROFILE%\\.cache\\" \
+                "%USERPROFILE%\\.npm\\" \
+                "%USERPROFILE%\\.pnpm-store\\" \
+                "%USERPROFILE%\\.cargo\\registry\\" \
+                "%USERPROFILE%\\.cargo\\git\\" \
+                "%USERPROFILE%\\.aidevops\\.agent-workspace\\" \
+                "%USERPROFILE%\\.aidevops\\cache\\" \
+                "%USERPROFILE%\\.aidevops\\logs\\" \
+                "%USERPROFILE%\\.aidevops\\locks\\"
+            ;;
     esac
     return 0
 }
 
 _project_patterns() {
+    local platform="posix"
+    if [[ "$#" -gt 0 ]]; then
+        platform="$1"
+    fi
+    if [[ "$platform" == "$PLATFORM_WINDOWS" ]]; then
+        printf '%s\n' \
+            "<repo-root>\\**\\node_modules\\" \
+            "<repo-root>\\**\\.next\\" \
+            "<repo-root>\\**\\.nuxt\\" \
+            "<repo-root>\\**\\.turbo\\" \
+            "<repo-root>\\**\\.vite\\" \
+            "<repo-root>\\**\\dist\\" \
+            "<repo-root>\\**\\build\\" \
+            "<repo-root>\\**\\coverage\\" \
+            "<repo-root>\\**\\target\\" \
+            "<repo-root>\\**\\__pycache__\\" \
+            "<repo-root>\\**\\.pytest_cache\\" \
+            "<repo-root>\\**\\.mypy_cache\\" \
+            "<repo-root>\\**\\.ruff_cache\\" \
+            "<repo-root>\\**\\.tox\\" \
+            "<repo-root>\\**\\.venv\\" \
+            "<repo-root>\\**\\venv\\" \
+            "<repo-root>\\**\\.git\\worktrees\\"
+        return 0
+    fi
     printf '%s\n' \
         '<repo-root>/**/node_modules/' \
         '<repo-root>/**/.next/' \
@@ -248,6 +293,38 @@ _detected_systems() {
             _tool_status_line rclone rclone
             _tool_status_line timeshift Timeshift
             ;;
+        windows)
+            if command -v powershell.exe >/dev/null 2>&1 || command -v pwsh >/dev/null 2>&1; then
+                printf 'available:PowerShell\n'
+                printf 'available:Windows Search\n'
+            else
+                printf 'missing:PowerShell\n'
+                printf 'missing:Windows Search\n'
+            fi
+            _tool_status_line fhmanagew.exe FileHistory
+            _tool_status_line wbadmin.exe WindowsBackup
+            if [[ -n "${OneDrive:-}${OneDriveConsumer:-}${OneDriveCommercial:-}" ]]; then
+                printf 'available:OneDrive\n'
+            else
+                printf 'missing:OneDrive\n'
+            fi
+            if [[ -n "${ProgramData:-}" && -d "${ProgramData}/Backblaze" ]]; then
+                printf 'available:Backblaze\n'
+            else
+                printf 'missing:Backblaze\n'
+            fi
+            if [[ -n "${LOCALAPPDATA:-}" && -d "${LOCALAPPDATA}/Dropbox" ]]; then
+                printf 'available:Dropbox\n'
+            else
+                printf 'missing:Dropbox\n'
+            fi
+            if [[ -n "${LOCALAPPDATA:-}" && -d "${LOCALAPPDATA}/Google/DriveFS" ]]; then
+                printf 'available:Google Drive\n'
+            else
+                printf 'missing:Google Drive\n'
+            fi
+            _tool_status_line rclone rclone
+            ;;
     esac
     return 0
 }
@@ -270,9 +347,13 @@ _emit_scan_human() {
         printf '%s\n' "- ${path}"
     done
     printf '\nProject patterns:\n'
-    _project_patterns | while IFS= read -r pattern; do
+    _project_patterns "$platform" | while IFS= read -r pattern; do
         printf '%s\n' "- ${pattern}"
     done
+    if [[ "$platform" == "$PLATFORM_WINDOWS" ]]; then
+        printf '\nNative Windows support posture: limited experimental optimisation command only; full aidevops support still recommends WSL2.\n'
+        printf 'Apply mode writes reusable recommendation files only and does not mutate Windows Search, File History, OneDrive, Defender, or backup-client settings.\n'
+    fi
     printf '\nUnsafe exclusions avoided: home directory, source trees, Documents, Desktop, Downloads, .ssh, .gnupg, broad config directories.\n'
     return 0
 }
@@ -287,16 +368,17 @@ _emit_scan_json() {
     local candidates systems patterns
     candidates="$(_candidate_paths "$platform" | jq -R . | jq -s .)"
     systems="$(_detected_systems "$platform" | jq -R 'split(":") | {status: .[0], name: .[1]}' | jq -s .)"
-    patterns="$(_project_patterns | jq -R . | jq -s .)"
+    patterns="$(_project_patterns "$platform" | jq -R . | jq -s .)"
     jq -n \
         --arg platform "$platform" \
         --arg mode "$mode" \
         --arg state_file "$STATE_FILE" \
         --arg log_file "$LOG_FILE" \
+        --arg support_posture "limited experimental optimisation command; WSL2 uses linux" \
         --argjson candidates "$candidates" \
         --argjson systems "$systems" \
         --argjson patterns "$patterns" \
-        '{platform:$platform, mode:$mode, state_file:$state_file, log_file:$log_file, detected_systems:$systems, candidate_paths:$candidates, project_patterns:$patterns, unsafe_exclusions:["home directory","source trees","Documents","Desktop","Downloads",".ssh",".gnupg","broad config directories"]}'
+        '{platform:$platform, mode:$mode, state_file:$state_file, log_file:$log_file, support_posture:$support_posture, detected_systems:$systems, candidate_paths:$candidates, project_patterns:$patterns, unsafe_exclusions:["home directory","source trees","Documents","Desktop","Downloads",".ssh",".gnupg","credential stores","broad config directories"]}'
     return 0
 }
 
@@ -320,7 +402,21 @@ _apply_linux_safe() {
     {
         printf '# aidevops generated indexing/backup excludes\n'
         _candidate_paths linux
-        _project_patterns
+        _project_patterns linux
+    } >"$exclude_file"
+    printf '1\n'
+    return 0
+}
+
+_apply_windows_safe() {
+    local exclude_file="${CONFIG_DIR}/optimise-indexing-backups-windows-excludes.txt"
+    _ensure_dirs
+    {
+        printf '# aidevops generated native Windows indexing/backup recommendations\n'
+        printf '# Safe apply scope: this file only. No Windows Search, File History, OneDrive, Defender, or backup-client settings were changed.\n'
+        printf '# Review these placeholders before adding exclusions in Windows Search, File History/Windows Backup, OneDrive, or backup-client settings.\n'
+        _candidate_paths windows
+        _project_patterns windows
     } >"$exclude_file"
     printf '1\n'
     return 0
@@ -363,6 +459,7 @@ _cmd_scan() {
         case "$platform" in
             macos) applied="$(_apply_macos_safe)" ;;
             linux) applied="$(_apply_linux_safe)" ;;
+            windows) applied="$(_apply_windows_safe)" ;;
         esac
     fi
     _log_run "$platform" "$mode" "$applied" "0"
@@ -495,8 +592,11 @@ main() {
         return 0
     fi
     case "$platform" in
-        macos|linux) ;;
-        *) print_error "platform must be macos or linux"; return 2 ;;
+        windows-native) platform="$PLATFORM_WINDOWS" ;;
+    esac
+    case "$platform" in
+        macos|linux|windows) ;;
+        *) print_error "platform must be macos, linux, or windows"; return 2 ;;
     esac
     case "$command_name" in
         scan) _cmd_scan "$platform" "$@" ;;

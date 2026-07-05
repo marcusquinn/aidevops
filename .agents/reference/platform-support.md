@@ -13,11 +13,17 @@
 | Fedora 38+ | Full | systemd / cron | |
 | Arch Linux | Full | systemd / cron | |
 | WSL2 (Ubuntu) | Full | systemd / cron | Recommended Windows path |
-| Windows (native) | Not supported | — | Use WSL2 instead |
+| Windows (native) | Limited | — | Experimental `/optimise-windows-indexing-backups` only; use WSL2 for full support |
+
+## Native Windows Support Posture
+
+Native Windows remains outside full aidevops platform support. The only native Windows path currently documented is `/optimise-windows-indexing-backups`, a limited experimental local-ops command that audits Windows Search, File History/Windows Backup, OneDrive, and backup-client churn with dry-run recommendations by default.
+
+`/optimise-windows-indexing-backups --apply` writes a user-owned recommendation file only; it does not mutate Windows Search, File History, Windows Backup, OneDrive, Windows Defender, or third-party backup-client settings. WSL2 users should continue to use `/optimise-linux-indexing-backups`.
 
 ## WSL2 Getting Started (Windows)
 
-Native Windows (PowerShell) is not supported — use WSL2.
+Native Windows (PowerShell) is not supported for full aidevops operation — use WSL2.
 
 **1. Install WSL2** (PowerShell as Administrator):
 

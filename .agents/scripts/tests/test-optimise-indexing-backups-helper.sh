@@ -54,9 +54,31 @@ printf '%s\n' "$linux_output" | jq -e '.platform == "linux" and .mode == "apply"
 [[ -f "$AIDEVOPS_CONFIG_DIR/optimise-indexing-backups-excludes.txt" ]] || fail "linux apply did not create exclude file"
 assert_contains "$(<"$AIDEVOPS_CONFIG_DIR/optimise-indexing-backups-excludes.txt")" "<repo-root>/**/.venv/"
 
+windows_json_output="$($HELPER windows scan --dry-run --json)"
+printf '%s\n' "$windows_json_output" | jq -e '.platform == "windows" and .mode == "dry-run" and (.candidate_paths | index("%LOCALAPPDATA%\\Temp\\")) and (.project_patterns | index("<repo-root>\\**\\node_modules\\")) and (.support_posture | contains("limited experimental"))' >/dev/null
+windows_paths="$(printf '%s\n' "$windows_json_output" | jq -r '.candidate_paths[], .project_patterns[]')"
+assert_contains "$windows_paths" "%LOCALAPPDATA%\\Temp\\"
+assert_contains "$windows_paths" "<repo-root>\\**\\.turbo\\"
+assert_not_contains "$windows_paths" "/Users/"
+
+windows_apply_output="$($HELPER windows apply --json)"
+printf '%s\n' "$windows_apply_output" | jq -e '.platform == "windows" and .mode == "apply"' >/dev/null
+windows_exclude_file="$AIDEVOPS_CONFIG_DIR/optimise-indexing-backups-windows-excludes.txt"
+[[ -f "$windows_exclude_file" ]] || fail "windows apply did not create recommendation file"
+windows_excludes="$(<"$windows_exclude_file")"
+assert_contains "$windows_excludes" "Safe apply scope: this file only"
+assert_contains "$windows_excludes" "%LOCALAPPDATA%\\Temp\\"
+assert_contains "$windows_excludes" "<repo-root>\\**\\.next\\"
+assert_not_contains "$windows_excludes" "/Users/"
+
+windows_alias_status="$($HELPER windows-native status --json)"
+printf '%s\n' "$windows_alias_status" | jq -e '.platform == "windows"' >/dev/null
+
 export AIDEVOPS_OPTIMISE_NOW=2000000000
 stale_output="$($HELPER linux reminder --format=toast --no-notify)"
 assert_contains "$stale_output" "[WARN] Linux indexing/backup optimisation is stale"
+windows_stale_output="$($HELPER windows reminder --format=toast --no-notify)"
+assert_contains "$windows_stale_output" "[WARN] Windows indexing/backup optimisation is stale — run /optimise-windows-indexing-backups"
 
 $HELPER linux scan --dry-run >/dev/null
 fresh_output="$($HELPER linux reminder --format=toast --no-notify)"
