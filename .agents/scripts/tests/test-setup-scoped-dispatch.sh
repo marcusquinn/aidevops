@@ -9,6 +9,7 @@ REPO_ROOT="${SCRIPT_DIR}/../../.."
 SETUP_SH="${REPO_ROOT}/setup.sh"
 AIDEVOPS_SH="${REPO_ROOT}/aidevops.sh"
 PACKAGE_JSON="${REPO_ROOT}/package.json"
+GUI_WEB_PACKAGE_JSON="${REPO_ROOT}/packages/gui-web/package.json"
 
 TESTS_RUN=0
 TESTS_FAILED=0
@@ -145,8 +146,35 @@ test_gui_desktop_installer_contract() {
 
 	assert_contains "installer honours configured app dir env" "$text" 'AIDEVOPS_GUI_DESKTOP_APP_DIR'
 	assert_contains "installer keeps explicit app-dir override" "$text" '--app-dir'
-	assert_contains "installer dependency check includes new Cal Sans font package" "$text" 'node_modules/@fontsource/cal-sans'
 	assert_contains "installer dependency check includes new Zilla Slab font package" "$text" 'node_modules/@fontsource/zilla-slab'
+	python3 - "$installer" "$GUI_WEB_PACKAGE_JSON" <<'PY'
+import json
+import pathlib
+import re
+import sys
+
+installer_path = pathlib.Path(sys.argv[1])
+package_path = pathlib.Path(sys.argv[2])
+installer_text = installer_path.read_text()
+package_json = json.loads(package_path.read_text())
+expected = sorted(
+    f"node_modules/{name}"
+    for name in package_json.get("dependencies", {})
+    if name.startswith("@fontsource/")
+)
+actual = sorted(set(re.findall(r"node_modules/@fontsource/[a-z0-9-]+", installer_text)))
+if actual == expected:
+    sys.exit(0)
+print("expected font dependencies:", ", ".join(expected), file=sys.stderr)
+print("installer font dependencies:", ", ".join(actual), file=sys.stderr)
+sys.exit(1)
+PY
+	local rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "installer font dependency checks match GUI web package" 0
+		return 0
+	fi
+	print_result "installer font dependency checks match GUI web package" 1 "packages/gui-desktop/scripts/install-macos-app.sh is out of sync with packages/gui-web/package.json"
 	return 0
 }
 
