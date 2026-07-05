@@ -1722,24 +1722,29 @@ cleanup_legacy_dashboard_launchagent() {
 		;;
 	Linux)
 		local user_systemd_dir="$HOME/.config/systemd/user"
+		local has_systemd=0
+		if command -v systemctl >/dev/null && systemctl --user status >/dev/null; then
+			has_systemd=1
+		fi
 		local removed=0
 		local unit
 		for unit in "$systemd_unit" "$legacy_systemd_unit"; do
-			if command -v systemctl >/dev/null 2>&1; then
-				systemctl --user disable --now "${unit}.service" >/dev/null 2>&1 || true
-				systemctl --user disable --now "${unit}.timer" >/dev/null 2>&1 || true
+			[[ -z "$unit" ]] && continue
+			if [[ "$has_systemd" -eq 1 ]]; then
+				systemctl --user disable --now "${unit}.service" || true
+				systemctl --user disable --now "${unit}.timer" || true
 			fi
 			if [[ -e "${user_systemd_dir}/${unit}.service" ]]; then
-				mv "${user_systemd_dir}/${unit}.service" "${user_systemd_dir}/${unit}.service.disabled-$(date -u +%Y%m%d%H%M%S)" 2>/dev/null || rm -f "${user_systemd_dir}/${unit}.service"
+				mv "${user_systemd_dir}/${unit}.service" "${user_systemd_dir}/${unit}.service.disabled-$(date -u +%Y%m%d%H%M%S)" || rm -f "${user_systemd_dir}/${unit}.service"
 				removed=$((removed + 1))
 			fi
 			if [[ -e "${user_systemd_dir}/${unit}.timer" ]]; then
-				mv "${user_systemd_dir}/${unit}.timer" "${user_systemd_dir}/${unit}.timer.disabled-$(date -u +%Y%m%d%H%M%S)" 2>/dev/null || rm -f "${user_systemd_dir}/${unit}.timer"
+				mv "${user_systemd_dir}/${unit}.timer" "${user_systemd_dir}/${unit}.timer.disabled-$(date -u +%Y%m%d%H%M%S)" || rm -f "${user_systemd_dir}/${unit}.timer"
 				removed=$((removed + 1))
 			fi
 		done
-		if [[ "$removed" -gt 0 ]] && command -v systemctl >/dev/null 2>&1; then
-			systemctl --user daemon-reload >/dev/null 2>&1 || true
+		if [[ "$removed" -gt 0 ]] && [[ "$has_systemd" -eq 1 ]]; then
+			systemctl --user daemon-reload || true
 			print_info "Removed stale dashboard systemd unit(s); r912 is disabled or unmanaged"
 		fi
 		;;
