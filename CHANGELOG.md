@@ -10,6 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.65] - 2026-07-06
+
+### Changed
+
+- Documentation: document review-thread remediation (#26667)
+- Maintenance: update simplification state registry
+- Maintenance: mark t18068 complete (pr:#26666 completed:2026-07-05) [skip ci]
+
 ## [3.31.64] - 2026-07-06
 
 ### Fixed
