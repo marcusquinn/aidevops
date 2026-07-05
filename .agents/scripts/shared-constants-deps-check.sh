@@ -147,8 +147,9 @@ layer3_check() {
 # -----------------------------------------------------------------------------
 # Layer 4: verify parser contract still holds
 # -----------------------------------------------------------------------------
-# The helper's discovery regex is a single simple pattern:
-#   awk '/^source[[:space:]]/ && /_SC_SELF/ { ... }'
+# The helper's discovery regex accepts file-scope mandatory shared-module loads:
+#   `source "${_SC_SELF%/*}/<file>.sh"`
+#   `_source_shared_module_with_retry "${_SC_SELF%/*}/<file>.sh"`
 #
 # If shared-constants.sh *has* sibling source directives (detectable via a
 # cheap grep), the helper MUST return a non-empty list. If the cheap grep
@@ -162,9 +163,9 @@ layer4_check() {
 		return 1
 	fi
 
-	# Cheap grep: count candidate sibling-source lines.
+	# Cheap grep: count candidate mandatory sibling-source lines.
 	local cheap_count
-	cheap_count=$(grep -cE '^source[[:space:]]+"\$\{_SC_SELF%/\*\}/' "$SHARED_CONSTANTS" || true)
+	cheap_count=$(grep -cE '^(source|_source_shared_module_with_retry)[[:space:]]+"\$\{_SC_SELF%/\*\}/' "$SHARED_CONSTANTS" || true)
 	cheap_count=${cheap_count:-0}
 
 	# Call the parser in a subshell so its errors / output don't leak.
@@ -188,7 +189,7 @@ layer4_check() {
 		fail "Layer 4: shared-constants.sh has $cheap_count sibling source lines but parser found 0"
 		warn "The helper's discovery regex no longer matches the source syntax."
 		warn "Grep candidate lines:"
-		grep -nE '^source[[:space:]]+"\$\{_SC_SELF%/\*\}/' "$SHARED_CONSTANTS" | sed 's/^/  /' >&2
+		grep -nE '^(source|_source_shared_module_with_retry)[[:space:]]+"\$\{_SC_SELF%/\*\}/' "$SHARED_CONSTANTS" | sed 's/^/  /' >&2
 		return 1
 	fi
 

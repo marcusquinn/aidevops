@@ -236,6 +236,34 @@ test_changes_requested_skips_remediation_for_external_contributor() {
 	return 0
 }
 
+test_changes_requested_empty_worker_label_pattern_does_not_match_every_label() {
+	setup_test_env
+	export AIDEVOPS_CHANGES_REQUESTED_THREAD_REMEDIATION_FIRST=1
+	_OW_LABEL_PAT=""
+	define_helpers_under_test || { teardown_test_env; return 0; }
+	local route_log="${TEST_ROOT}/route.log"
+	: >"$route_log"
+	_route_pr_to_fix_worker() {
+		local pr_number="$1"
+		local repo_slug="$2"
+		printf 'route %s %s\n' "$pr_number" "$repo_slug" >>"$route_log"
+		return 0
+	}
+	_pulse_merge_dismiss_coderabbit_nits() { return 1; }
+
+	if _handle_changes_requested_review_gate 77 owner/repo CHANGES_REQUESTED 42 "origin:interactive"; then
+		print_result "empty worker label pattern does not match every PR label" 1 \
+			"Expected gate to skip merge after fallback routing"
+	elif [[ ! -s "$SCANNER_LOG" ]] && grep -q 'route 77 owner/repo' "$route_log"; then
+		print_result "empty worker label pattern does not match every PR label" 0
+	else
+		print_result "empty worker label pattern does not match every PR label" 1 \
+			"scanner=$(tr '\n' ';' <"$SCANNER_LOG"), route=$(tr '\n' ';' <"$route_log"), log=$(tr '\n' ';' <"$LOGFILE")"
+	fi
+	teardown_test_env
+	return 0
+}
+
 main() {
 	test_unresolved_conversation_dispatches_targeted_human_thread_remediation
 	test_other_merge_failures_do_not_dispatch_review_thread_remediation
@@ -243,6 +271,7 @@ main() {
 	test_changes_requested_opt_in_dispatches_remediation_without_routing
 	test_changes_requested_routes_when_remediation_unavailable
 	test_changes_requested_skips_remediation_for_external_contributor
+	test_changes_requested_empty_worker_label_pattern_does_not_match_every_label
 	printf '\nTests run: %d\n' "$TESTS_RUN"
 	printf 'Tests failed: %d\n' "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
