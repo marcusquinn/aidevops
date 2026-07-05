@@ -209,7 +209,7 @@ _apply_positive_filter() {
 		# "corrects a broken URL". Do not treat those historic defect words as
 		# new quality-debt findings when the same body is otherwise praise-only.
 		($body | test(
-			"\\b(corrects?|fix(es|ed)?|replaces?|addresses?)\\b[^.\\n]*(\\bbroken\\b|\\bincorrect\\b|\\bwrong\\b|\\bbug\\b|\\bissue\\b)|" +
+			"\\b(corrects?|fix(es|ed)?|replaces?|addresses?)\\b[^.\\n]*(\\bbroken\\b|\\bincorrect\\b|\\bwrong\\b|\\bbug\\b|\\berror\\b|\\bissue\\b)|" +
 			"\\b(change|fix) is correct\\b|\\bcorrect and improves?\\b"; "i")) as $historic_fix_praise |
 
 		($body | test(

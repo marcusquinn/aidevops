@@ -250,11 +250,12 @@ ${issue_comments}
 ## Instructions
 
 1. Read the issue body to understand the task
-2. Search the codebase (use Bash with rg/git ls-files, Read, Grep) to identify:
+2. If the body is an auto-generated "Unactioned Review Feedback" / quality-debt issue, treat Source PR + captured review text as implementation context even when no file path is named. Verify whether the review is actually actionable. Positive-only or already-actioned reviews should produce guidance that resolves the false positive with evidence (for the aidevops repo, prefer a scanner regression in .agents/scripts/quality-feedback-findings-lib.sh and its tests rather than inventing unrelated target files).
+3. Search the codebase (use Bash with rg/git ls-files, Read, Grep) to identify:
    - Exact file paths that need modification
    - Reference patterns in similar existing code
    - The verification command to confirm completion
-3. Edit the issue body on GitHub using: gh issue edit ${issue_number} --repo ${repo_slug} --body "\$NEW_BODY"
+4. Edit the issue body on GitHub using: gh issue edit ${issue_number} --repo ${repo_slug} --body "\$NEW_BODY"
    - Preserve the existing body content
    - Append a new section:
 
@@ -270,8 +271,8 @@ ${issue_comments}
 
 **Verification:** command to verify completion
 
-4. Keep analysis focused — spend at most 5 minutes. If the task is genuinely ambiguous, say so in the guidance rather than guessing.
-5. Do NOT implement the solution. Only analyze and document guidance.
+5. Keep analysis focused — spend at most 5 minutes. If the task is genuinely ambiguous, say so in the guidance rather than guessing.
+6. Do NOT implement the solution. Only analyze and document guidance.
 ENRICHMENT_PROMPT_EOF
 
 	printf '%s\n' "$prompt_file"
