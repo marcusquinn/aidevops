@@ -75,6 +75,7 @@ test_appends_escalation_contract() {
 		[[ "$output" == *'Read the issue body FIRST'* ]] &&
 		[[ "$output" == *'Look for a "Worker Guidance" or "How" section'* ]] &&
 		[[ "$output" == *'do bounded discovery instead of stopping'* ]] &&
+		[[ "$output" == *'Auto-generated "Unactioned Review Feedback" / quality-debt issues are not missing context solely because they lack file paths'* ]] &&
 		[[ "$output" == *'Exit BLOCKED with reason "missing implementation context" only after bounded discovery'* ]] &&
 		[[ "$output" == *'Worktree edit verification (GH#22816)'* ]] &&
 		[[ "$output" == *'Incremental WIP commits (GH#23677)'* ]] &&

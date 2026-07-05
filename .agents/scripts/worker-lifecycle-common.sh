@@ -780,6 +780,37 @@ list_active_worker_processes() {
 }
 
 #######################################
+# Detect auto-generated review-feedback issues that already carry bounded
+# implementation context even when they do not name a concrete file path.
+#
+# Source PR + captured review body is enough context for a worker to verify
+# whether the review is actionable, already fixed, or scanner noise. Treating
+# these as "missing implementation context" strands historical quality-debt
+# false positives such as GH#3343 before a higher-tier worker can inspect the
+# source review.
+#
+# Arguments:
+#   arg1 - issue body text
+# Returns:
+#   0 - body contains quality-feedback review context
+#   1 - not a quality-feedback review-feedback issue body
+#######################################
+_escalate_body_has_review_feedback_context() {
+	local issue_body="$1"
+
+	case "$issue_body" in
+	*"## Unactioned Review Feedback"*) ;;
+	*) return 1 ;;
+	esac
+
+	case "$issue_body" in
+	*"**Source PR**:"*"quality-feedback-helper.sh scan-merged"*) return 0 ;;
+	esac
+
+	return 1
+}
+
+#######################################
 # Body quality gate for escalate_issue_tier (GH#17561)
 # Returns 0 if escalation should proceed, 1 if blocked (posts diagnostic comment).
 # Arguments:
@@ -798,6 +829,12 @@ _escalate_body_quality_gate() {
 
 	# Empty body — no context to check, allow escalation
 	[[ -n "$issue_body" ]] || return 0
+	# Review-feedback issues carry Source PR provenance instead of target file
+	# paths. Let the tier cascade continue so a stronger worker can verify the
+	# source review instead of treating the issue as irreparably under-specified.
+	if _escalate_body_has_review_feedback_context "$issue_body"; then
+		return 0
+	fi
 
 	# Check for file path indicators: paths with extensions, EDIT:/NEW: prefixes,
 	# backtick-quoted paths, or "Files to Modify" section headers.

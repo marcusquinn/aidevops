@@ -65,15 +65,19 @@ _test_approval_filter() {
 		($body | test(
 			"\\blgtm\\b|\\blooks good( to me)?\\b|\\bgood work\\b|" +
 			"\\bno (further |more )?(comments?|issues?|concerns?|feedback)\\b|" +
+			"\\bfound no (issues?|problems?|concerns?)\\b|" +
+			"\\bno (issues?|problems?|concerns?) (found|detected)\\b|" +
+			"\\b(found|detected) nothing (to )?(fix|change|address)\\b|" +
 			"\\beverything (looks?|seems?) (good|fine|correct|great|solid|clean)\\b"; "i")) as $no_actionable_sentiment |
 
 		($body | test(
 			"\\bsuccessfully addresses?\\b|\\beffectively\\b|\\bimproves?\\b|\\benhances?\\b|" +
+			"\\bcorrectly (removes?|implements?|fixes?|handles?|addresses?)\\b|\\bvaluable change\\b|" +
 			"\\bconsistent\\b|\\brobust(ness)?\\b|\\buser experience\\b|" +
 			"\\breduces? (external )?requirements?\\b|\\bwell-implemented\\b"; "i")) as $summary_praise_only |
 
 		($body | test(
-			"\\b(corrects?|fix(es|ed)?|replaces?|addresses?)\\b[^.\\n]*(\\bbroken\\b|\\bincorrect\\b|\\bwrong\\b|\\bbug\\b|\\bissue\\b)|" +
+			"\\b(corrects?|fix(es|ed)?|replaces?|addresses?)\\b[^.\\n]*(\\bbroken\\b|\\bincorrect\\b|\\bwrong\\b|\\bbug\\b|\\berror\\b|\\bissue\\b)|" +
 			"\\b(change|fix) is correct\\b|\\bcorrect and improves?\\b"; "i")) as $historic_fix_praise |
 
 		($body | test(
@@ -271,6 +275,20 @@ This pull request corrects a broken placeholder URL for the `ultimate-multisite`
 		print_result "skip PR #155 historic broken-URL praise review" 0
 	else
 		print_result "skip PR #155 historic broken-URL praise review" 1 "expected skip, got ${result}"
+	fi
+	return 0
+}
+
+test_skips_pr2166_unbound_variable_praise_review() {
+	local result
+	# shellcheck disable=SC2016  # literal review body includes Markdown backticks and array syntax
+	result=$(_test_approval_filter '## Code Review
+
+This pull request correctly addresses an `unbound variable` error in the `_run_generator` function that occurs under `set -u` when no extra arguments are provided. The use of the `${arr[@]+ "${arr[@]}"}` pattern is an effective and idiomatic solution for safe empty array expansion in bash, and it is consistent with other parts of the codebase. Additionally, the explicit `return 0` brings the function into compliance with the repository style guide, which requires all functions to have explicit return statements. The changes are well-implemented and improve the script robustness and quality.' "COMMENTED" "gemini")
+	if [[ "$result" == "skip" ]]; then
+		print_result "skip PR #2166 unbound-variable praise review" 0
+	else
+		print_result "skip PR #2166 unbound-variable praise review" 1 "expected skip, got ${result}"
 	fi
 	return 0
 }
