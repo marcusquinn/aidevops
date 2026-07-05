@@ -205,6 +205,13 @@ _apply_positive_filter() {
 			"\\bconsistent\\b|\\brobust(ness)?\\b|\\buser experience\\b|" +
 			"\\breduces? (external )?requirements?\\b|\\bwell-implemented\\b"; "i")) as $summary_praise_only |
 
+		# Review summaries often describe the bug the PR already fixed, e.g.
+		# "corrects a broken URL". Do not treat those historic defect words as
+		# new quality-debt findings when the same body is otherwise praise-only.
+		($body | test(
+			"\\b(corrects?|fix(es|ed)?|replaces?|addresses?)\\b[^.\\n]*(\\bbroken\\b|\\bincorrect\\b|\\bwrong\\b|\\bbug\\b|\\bissue\\b)|" +
+			"\\b(change|fix) is correct\\b|\\bcorrect and improves?\\b"; "i")) as $historic_fix_praise |
+
 		($body | test(
 			"\\bshould\\b|\\bconsider\\b|\\binstead\\b|\\bsuggest|\\brecommend(ed|ing)?\\b|" +
 			"\\bwarning\\b|\\bcaution\\b|\\bavoid\\b|\\b(don ?'"'"'?t|do not)\\b|" +
@@ -215,7 +222,7 @@ _apply_positive_filter() {
 			"\\bworkaround\\b|\\bhack\\b|" +
 			"```\\s*(suggestion|diff)"; "i")) as $actionable_raw |
 
-		($actionable_raw and ($no_actionable_recommendation | not) and ($no_actionable_suggestions | not)) as $actionable |
+		($actionable_raw and ($no_actionable_recommendation | not) and ($no_actionable_suggestions | not) and (($historic_fix_praise and $summary_praise_only) | not)) as $actionable |
 
 		($body | test(
 			"\\bmerging\\.?$|\\bmerge (this|the) pr\\b|" +

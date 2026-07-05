@@ -73,6 +73,10 @@ _test_approval_filter() {
 			"\\breduces? (external )?requirements?\\b|\\bwell-implemented\\b"; "i")) as $summary_praise_only |
 
 		($body | test(
+			"\\b(corrects?|fix(es|ed)?|replaces?|addresses?)\\b[^.\\n]*(\\bbroken\\b|\\bincorrect\\b|\\bwrong\\b|\\bbug\\b|\\bissue\\b)|" +
+			"\\b(change|fix) is correct\\b|\\bcorrect and improves?\\b"; "i")) as $historic_fix_praise |
+
+		($body | test(
 			"\\bshould\\b|\\bconsider\\b|\\binstead\\b|\\bsuggest|\\brecommend(ed|ing)?\\b|" +
 			"\\bwarning\\b|\\bcaution\\b|\\bavoid\\b|\\b(don ?'"'"'?t|do not)\\b|" +
 			"\\bvulnerab|\\binsecure|\\binjection\\b|\\bxss\\b|\\bcsrf\\b|" +
@@ -82,7 +86,7 @@ _test_approval_filter() {
 			"\\bworkaround\\b|\\bhack\\b|" +
 			"```\\s*(suggestion|diff)"; "i")) as $actionable_raw |
 
-		($actionable_raw and ($no_actionable_recommendation | not) and ($no_actionable_suggestions | not)) as $actionable |
+		($actionable_raw and ($no_actionable_recommendation | not) and ($no_actionable_suggestions | not) and (($historic_fix_praise and $summary_praise_only) | not)) as $actionable |
 
 		# GH#5668: merge/CI-status comments are not actionable review feedback
 		($body | test(
@@ -243,6 +247,20 @@ test_skips_no_suggestions_at_this_time_review() {
 		print_result "skip 'no suggestions at this time' review" 0
 	else
 		print_result "skip 'no suggestions at this time' review" 1 "expected skip, got ${result}"
+	fi
+	return 0
+}
+
+test_skips_pr155_historic_broken_url_praise_review() {
+	local result
+	# shellcheck disable=SC2016  # literal review body includes Markdown backticks
+	result=$(_test_approval_filter '## Code Review
+
+This pull request corrects a broken placeholder URL for the `ultimate-multisite` plugin in the `wp-preferred.md` documentation file. The change is straightforward and accurate, replacing the incorrect link with the proper URL to the plugin page. The change is correct and improves the quality of the documentation.' "COMMENTED" "gemini")
+	if [[ "$result" == "skip" ]]; then
+		print_result "skip PR #155 historic broken-URL praise review" 0
+	else
+		print_result "skip PR #155 historic broken-URL praise review" 1 "expected skip, got ${result}"
 	fi
 	return 0
 }
