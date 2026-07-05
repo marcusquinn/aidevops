@@ -17,6 +17,7 @@ STATE_FILE="${AIDEVOPS_OPTIMISE_STATE_FILE:-${STATE_DIR}/optimise-indexing-backu
 LOG_FILE="${AIDEVOPS_OPTIMISE_LOG_FILE:-${LOG_DIR}/optimise-indexing-backups.log}"
 REMINDER_DAYS="${AIDEVOPS_OPTIMISE_REMINDER_DAYS:-30}"
 NOTIFY_INTERVAL_SECONDS="${AIDEVOPS_OPTIMISE_NOTIFY_INTERVAL_SECONDS:-86400}"
+PLATFORM_WINDOWS="windows"
 
 usage() {
 cat <<'USAGE'
@@ -190,20 +191,20 @@ _candidate_paths() {
             ;;
         windows)
             printf '%s\n' \
-                '%LOCALAPPDATA%\Temp\' \
-                '%LOCALAPPDATA%\npm-cache\' \
-                '%LOCALAPPDATA%\pnpm\store\' \
-                '%LOCALAPPDATA%\pip\Cache\' \
-                '%LOCALAPPDATA%\Microsoft\Windows\INetCache\' \
-                '%USERPROFILE%\.cache\' \
-                '%USERPROFILE%\.npm\' \
-                '%USERPROFILE%\.pnpm-store\' \
-                '%USERPROFILE%\.cargo\registry\' \
-                '%USERPROFILE%\.cargo\git\' \
-                '%USERPROFILE%\.aidevops\.agent-workspace\' \
-                '%USERPROFILE%\.aidevops\cache\' \
-                '%USERPROFILE%\.aidevops\logs\' \
-                '%USERPROFILE%\.aidevops\locks\'
+                "%LOCALAPPDATA%\\Temp\\" \
+                "%LOCALAPPDATA%\\npm-cache\\" \
+                "%LOCALAPPDATA%\\pnpm\\store\\" \
+                "%LOCALAPPDATA%\\pip\\Cache\\" \
+                "%LOCALAPPDATA%\\Microsoft\\Windows\\INetCache\\" \
+                "%USERPROFILE%\\.cache\\" \
+                "%USERPROFILE%\\.npm\\" \
+                "%USERPROFILE%\\.pnpm-store\\" \
+                "%USERPROFILE%\\.cargo\\registry\\" \
+                "%USERPROFILE%\\.cargo\\git\\" \
+                "%USERPROFILE%\\.aidevops\\.agent-workspace\\" \
+                "%USERPROFILE%\\.aidevops\\cache\\" \
+                "%USERPROFILE%\\.aidevops\\logs\\" \
+                "%USERPROFILE%\\.aidevops\\locks\\"
             ;;
     esac
     return 0
@@ -214,25 +215,25 @@ _project_patterns() {
     if [[ "$#" -gt 0 ]]; then
         platform="$1"
     fi
-    if [[ "$platform" == "windows" ]]; then
+    if [[ "$platform" == "$PLATFORM_WINDOWS" ]]; then
         printf '%s\n' \
-            '<repo-root>\**\node_modules\' \
-            '<repo-root>\**\.next\' \
-            '<repo-root>\**\.nuxt\' \
-            '<repo-root>\**\.turbo\' \
-            '<repo-root>\**\.vite\' \
-            '<repo-root>\**\dist\' \
-            '<repo-root>\**\build\' \
-            '<repo-root>\**\coverage\' \
-            '<repo-root>\**\target\' \
-            '<repo-root>\**\__pycache__\' \
-            '<repo-root>\**\.pytest_cache\' \
-            '<repo-root>\**\.mypy_cache\' \
-            '<repo-root>\**\.ruff_cache\' \
-            '<repo-root>\**\.tox\' \
-            '<repo-root>\**\.venv\' \
-            '<repo-root>\**\venv\' \
-            '<repo-root>\**\.git\worktrees\'
+            "<repo-root>\\**\\node_modules\\" \
+            "<repo-root>\\**\\.next\\" \
+            "<repo-root>\\**\\.nuxt\\" \
+            "<repo-root>\\**\\.turbo\\" \
+            "<repo-root>\\**\\.vite\\" \
+            "<repo-root>\\**\\dist\\" \
+            "<repo-root>\\**\\build\\" \
+            "<repo-root>\\**\\coverage\\" \
+            "<repo-root>\\**\\target\\" \
+            "<repo-root>\\**\\__pycache__\\" \
+            "<repo-root>\\**\\.pytest_cache\\" \
+            "<repo-root>\\**\\.mypy_cache\\" \
+            "<repo-root>\\**\\.ruff_cache\\" \
+            "<repo-root>\\**\\.tox\\" \
+            "<repo-root>\\**\\.venv\\" \
+            "<repo-root>\\**\\venv\\" \
+            "<repo-root>\\**\\.git\\worktrees\\"
         return 0
     fi
     printf '%s\n' \
@@ -349,7 +350,7 @@ _emit_scan_human() {
     _project_patterns "$platform" | while IFS= read -r pattern; do
         printf '%s\n' "- ${pattern}"
     done
-    if [[ "$platform" == "windows" ]]; then
+    if [[ "$platform" == "$PLATFORM_WINDOWS" ]]; then
         printf '\nNative Windows support posture: limited experimental optimisation command only; full aidevops support still recommends WSL2.\n'
         printf 'Apply mode writes reusable recommendation files only and does not mutate Windows Search, File History, OneDrive, Defender, or backup-client settings.\n'
     fi
@@ -591,7 +592,7 @@ main() {
         return 0
     fi
     case "$platform" in
-        windows-native) platform="windows" ;;
+        windows-native) platform="$PLATFORM_WINDOWS" ;;
     esac
     case "$platform" in
         macos|linux|windows) ;;
