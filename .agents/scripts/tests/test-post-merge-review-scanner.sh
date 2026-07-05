@@ -528,6 +528,7 @@ echo "gh stub: simulated failure for $cmd $sub" >&2
 exit 1
 FAIL_STUB_EOF
 	chmod +x "${STUB_BIN}/gh"
+	return 0
 }
 
 install_ok_gh() {
@@ -563,7 +564,28 @@ repo) echo 'stub/repo' ;;
 esac
 OK_STUB_EOF
 	chmod +x "${STUB_BIN}/gh"
+	return 0
 }
+
+echo ""
+echo "Test: do_refresh — issue list failure returns rc=2"
+cat >"${STUB_BIN}/gh" <<'ISSUE_LIST_FAIL_STUB_EOF'
+#!/usr/bin/env bash
+cmd="${1:-}"
+sub="${2:-}"
+if [[ "$cmd" == "issue" && "$sub" == "list" ]]; then
+	echo "gh stub: simulated issue list failure" >&2
+	exit 1
+fi
+echo '[]'
+ISSUE_LIST_FAIL_STUB_EOF
+chmod +x "${STUB_BIN}/gh"
+rc=0
+out=$(do_refresh "stub/repo" "true" 2>&1) || rc=$?
+assert_rc "refresh propagates issue list failure" "2" "$rc"
+assert_contains "refresh logs issue list failure" "do_refresh: gh issue list failed (rc=1)" "$out"
+assert_not_contains "refresh does not treat issue list failure as empty" "No open review-followup issues found" "$out"
+install_ok_gh
 
 echo ""
 echo "Test: fetch_review_threads_json — gh failure returns exit 2"

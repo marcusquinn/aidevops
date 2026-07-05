@@ -948,10 +948,14 @@ do_refresh() {
 	local repo="$1" dry_run="$2"
 	log "Refreshing open review-followup issues in ${repo} (dry_run=${dry_run})"
 
-	local issues_json
+	local issues_json rc=0
 	issues_json=$(gh issue list --repo "$repo" --label "$SCANNER_LABEL" \
 		--state open --limit "$SCANNER_REFRESH_LIMIT" \
-		--json number,title,body || echo "[]")
+		--json number,title,body) || rc=$?
+	if [[ "$rc" -ne 0 ]]; then
+		log "do_refresh: gh issue list failed (rc=${rc})"
+		return 2
+	fi
 
 	if [[ "$issues_json" == "[]" ]]; then
 		log "No open review-followup issues found"
