@@ -222,7 +222,17 @@ _apply_positive_filter() {
 			"\\bworkaround\\b|\\bhack\\b|" +
 			"```\\s*(suggestion|diff)"; "i")) as $actionable_raw |
 
-		($actionable_raw and ($no_actionable_recommendation | not) and ($no_actionable_suggestions | not) and (($historic_fix_praise and $summary_praise_only) | not)) as $actionable |
+		($body | test(
+			"\\bshould\\b|\\bconsider\\b|\\binstead\\b|\\bsuggest|\\brecommend(ed|ing)?\\b|" +
+			"\\bwarning\\b|\\bcaution\\b|\\bavoid\\b|\\b(don ?'"'"'?t|do not)\\b|" +
+			"\\bplease\\b|\\bneeds?\\b|\\bmust\\b|" +
+			"\\bvulnerab|\\binsecure|\\binjection\\b|\\bxss\\b|\\bcsrf\\b|" +
+			"\\bnit:|\\btodo:|\\bfixme|\\bhardcoded|\\bdeprecated|" +
+			"\\brace.condition|\\bdeadlock|\\bleak|\\boverflow|" +
+			"\\bworkaround\\b|\\bhack\\b|" +
+			"```\\s*(suggestion|diff)"; "i")) as $strong_actionable |
+
+		($actionable_raw and ($no_actionable_recommendation | not) and ($no_actionable_suggestions | not) and ($strong_actionable or (($historic_fix_praise and $summary_praise_only) | not))) as $actionable |
 
 		($body | test(
 			"\\bmerging\\.?$|\\bmerge (this|the) pr\\b|" +

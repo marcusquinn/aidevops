@@ -86,7 +86,17 @@ _test_approval_filter() {
 			"\\bworkaround\\b|\\bhack\\b|" +
 			"```\\s*(suggestion|diff)"; "i")) as $actionable_raw |
 
-		($actionable_raw and ($no_actionable_recommendation | not) and ($no_actionable_suggestions | not) and (($historic_fix_praise and $summary_praise_only) | not)) as $actionable |
+		($body | test(
+			"\\bshould\\b|\\bconsider\\b|\\binstead\\b|\\bsuggest|\\brecommend(ed|ing)?\\b|" +
+			"\\bwarning\\b|\\bcaution\\b|\\bavoid\\b|\\b(don ?'"'"'?t|do not)\\b|" +
+			"\\bplease\\b|\\bneeds?\\b|\\bmust\\b|" +
+			"\\bvulnerab|\\binsecure|\\binjection\\b|\\bxss\\b|\\bcsrf\\b|" +
+			"\\bnit:|\\btodo:|\\bfixme|\\bhardcoded|\\bdeprecated|" +
+			"\\brace.condition|\\bdeadlock|\\bleak|\\boverflow|" +
+			"\\bworkaround\\b|\\bhack\\b|" +
+			"```\\s*(suggestion|diff)"; "i")) as $strong_actionable |
+
+		($actionable_raw and ($no_actionable_recommendation | not) and ($no_actionable_suggestions | not) and ($strong_actionable or (($historic_fix_praise and $summary_praise_only) | not))) as $actionable |
 
 		# GH#5668: merge/CI-status comments are not actionable review feedback
 		($body | test(
@@ -261,6 +271,20 @@ This pull request corrects a broken placeholder URL for the `ultimate-multisite`
 		print_result "skip PR #155 historic broken-URL praise review" 0
 	else
 		print_result "skip PR #155 historic broken-URL praise review" 1 "expected skip, got ${result}"
+	fi
+	return 0
+}
+
+test_keeps_historic_broken_url_with_actionable_critique_review() {
+	local result
+	# shellcheck disable=SC2016  # literal review body includes Markdown backticks
+	result=$(_test_approval_filter '## Code Review
+
+This pull request corrects a broken placeholder URL for the `ultimate-multisite` plugin in the `wp-preferred.md` documentation file. The change is correct and improves the quality of the documentation. However, you should also verify that the other links in this file are still valid.' "COMMENTED" "gemini")
+	if [[ "$result" == "keep" ]]; then
+		print_result "keep historic broken-URL with actionable critique review" 0
+	else
+		print_result "keep historic broken-URL with actionable critique review" 1 "expected keep, got ${result}"
 	fi
 	return 0
 }
