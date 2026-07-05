@@ -238,6 +238,7 @@ main() {
 	test_skips_no_further_recommendations_review
 	test_skips_gemini_style_positive_summary_review
 	test_skips_no_suggestions_at_this_time_review
+	test_skips_pr155_historic_broken_url_praise_review
 	test_skips_no_suggestions_for_improvement_review
 	test_skips_review_thread_response_inline_comment
 	test_skips_no_further_concerns_inline_ack
