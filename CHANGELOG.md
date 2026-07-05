@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.59] - 2026-07-05
+
+### Changed
+
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- preserve NMR recovery breaker history (#26619)
+
 ## [3.31.58] - 2026-07-05
 
 ### Changed
