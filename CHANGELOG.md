@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.62] - 2026-07-05
+
+### Changed
+
+- Maintenance: mark t18066 complete (pr:#26630 completed:2026-07-05) [skip ci]
+- resolve full-loop rebase base
+- add indexing backup optimisation commands (#26633)
+- Maintenance: update simplification state registry
+
 ## [3.31.61] - 2026-07-05
 
 ### Changed
