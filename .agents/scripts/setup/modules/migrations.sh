@@ -1686,3 +1686,35 @@ aidevops-repo-sync"
 	date -u +%Y-%m-%dT%H:%M:%SZ >"$marker_file"
 	return 0
 }
+
+# Remove stale experimental dashboard LaunchAgent when the framework no longer
+# installs or enables it. Mac migrations can preserve ~/Library/LaunchAgents
+# entries even after aidevops-routines disables r912, creating perpetual
+# EX_CONFIG launchd churn for an unmanaged service.
+cleanup_legacy_dashboard_launchagent() {
+	case "$(uname -s)" in
+	D*) ;;
+	*) return 0 ;;
+	esac
+
+	local label="com.aidevops.dashboard"
+	local plist="$HOME/Library/LaunchAgents/${label}.plist"
+	local routines_todo="$HOME/Git/aidevops-routines/TODO.md"
+	local r912_enabled="false"
+
+	if [[ -f "$routines_todo" ]] && grep -qE '^- \[x\] r912[[:space:]]' "$routines_todo"; then
+		r912_enabled="true"
+	fi
+
+	if [[ "$r912_enabled" == "true" || ! -e "$plist" ]]; then
+		return 0
+	fi
+
+	local domain
+	domain="gui/$(id -u)"
+	launchctl bootout "${domain}/${label}" >/dev/null 2>&1 || true
+	launchctl unload "$plist" >/dev/null 2>&1 || true
+	mv "$plist" "${plist}.disabled-$(date -u +%Y%m%d%H%M%S)" 2>/dev/null || rm -f "$plist"
+	print_info "Removed stale dashboard LaunchAgent (${label}); r912 is disabled or unmanaged"
+	return 0
+}

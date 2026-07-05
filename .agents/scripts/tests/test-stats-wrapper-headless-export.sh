@@ -152,10 +152,10 @@ test_export_before_self_check() {
 	return 0
 }
 
-# Test 5: dashboard refresh failures must not be swallowed by the wrapper.
-# The EXIT trap only emits HEALTH-DASHBOARD-FAIL when main() returns non-zero;
-# keeping `update_health_issues || true` here would recreate the silent-stale
-# dashboard failure mode from GH#24264.
+# Test 5: dashboard refresh failures must not be blindly swallowed by the wrapper.
+# The wrapper may intentionally defer EX_TEMPFAIL/rate-limit exits, but ordinary
+# dashboard failures must still flow through _stats_wrapper_run_health_update so
+# the EXIT trap can emit HEALTH-DASHBOARD-FAIL.
 test_dashboard_update_failure_not_swallowed() {
 	local production_snippet
 	production_snippet=$(awk '
@@ -168,12 +168,30 @@ test_dashboard_update_failure_not_swallowed() {
 			"stats-wrapper.sh still swallows update_health_issues failures with '|| true'"
 		return 0
 	fi
-	if printf '%s' "$production_snippet" | grep -qE '^[[:space:]]*update_health_issues[[:space:]]*$'; then
+	if printf '%s' "$production_snippet" | grep -qE '^[[:space:]]*_stats_wrapper_run_health_update[[:space:]]*$'; then
 		print_result "dashboard update failures propagate to stats-wrapper trap" 0
 		return 0
 	fi
 	print_result "dashboard update failures propagate to stats-wrapper trap" 1 \
-		"Expected a direct update_health_issues call in stats-wrapper.sh"
+		"Expected _stats_wrapper_run_health_update call in stats-wrapper.sh"
+	return 0
+}
+
+test_transient_dashboard_tempfail_is_deferred() {
+	local helper_snippet
+	helper_snippet=$(awk '
+		/^_stats_wrapper_run_health_update\(\) \{/ { in_helper=1 }
+		in_helper { print }
+		in_helper && /^[[:space:]]*}$/ { exit }
+	' "$WRAPPER_SCRIPT")
+	if printf '%s' "$helper_snippet" | grep -qE '^[[:space:]]*75\)' && \
+		printf '%s' "$helper_snippet" | grep -qF 'HEALTH-DASHBOARD-DEFERRED' && \
+		printf '%s' "$helper_snippet" | grep -qE "^[[:space:]]*return \"\\\$update_ec\""; then
+		print_result "stats-wrapper defers EX_TEMPFAIL but propagates other dashboard failures" 0
+		return 0
+	fi
+	print_result "stats-wrapper defers EX_TEMPFAIL but propagates other dashboard failures" 1 \
+		"Expected rc=75 defer path plus default return update_ec in _stats_wrapper_run_health_update"
 	return 0
 }
 
@@ -202,6 +220,7 @@ main_test() {
 	test_export_is_inside_main_not_top_level
 	test_export_before_self_check
 	test_dashboard_update_failure_not_swallowed
+	test_transient_dashboard_tempfail_is_deferred
 	test_dashboard_body_edit_failure_returns_nonzero
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

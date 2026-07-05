@@ -171,6 +171,27 @@ _stats_wrapper_on_exit() {
 	return "$ec"
 }
 
+_stats_wrapper_run_health_update() {
+	local update_ec=0
+	update_health_issues || update_ec=$?
+	case "$update_ec" in
+	0)
+		return 0
+		;;
+	75)
+		# EX_TEMPFAIL is the GitHub cooldown/rate-limit path used by the gh
+		# wrappers. Treat it as a successful scheduler tick: the routine did the
+		# safe thing by preserving cached dashboards and backing off, so launchd
+		# should not mark the job as broken or create failure streak noise.
+		echo "[stats-wrapper] HEALTH-DASHBOARD-DEFERRED transient exit=${update_ec} at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STATS_LOGFILE"
+		return 0
+		;;
+	*)
+		return "$update_ec"
+		;;
+	esac
+}
+
 #######################################
 # Main
 #######################################
@@ -266,7 +287,7 @@ main() {
 		local sweep_ec=$?
 		echo "[stats-wrapper] QUALITY-SWEEP-FAIL exit=${sweep_ec} at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STATS_LOGFILE"
 	}
-	update_health_issues
+	_stats_wrapper_run_health_update
 
 	echo "[stats-wrapper] Finished at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STATS_LOGFILE"
 	return 0
