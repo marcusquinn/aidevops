@@ -17,7 +17,8 @@
 #   2. `layer4` — verify that `_test_discover_shared_deps` (run against the
 #      on-disk `shared-constants.sh`) still succeeds and returns at least one
 #      sibling. This is a lightweight sanity check that the parser contract
-#      (match `source "${_SC_SELF%/*}/<file>.sh"` on a line by itself) still
+#      (match `source "${_SC_SELF%/*}/<file>.sh"` or the retrying helper
+#      equivalent on a line by itself) still
 #      holds after any edit to shared-constants.sh. If shared-constants.sh is
 #      ever rewritten in a way that uses a different sibling-source syntax,
 #      this check will flag it immediately.
@@ -27,7 +28,7 @@
 # Exit 2  = parser returned no siblings from shared-constants.sh — only an
 #           error when shared-constants.sh *does* have `source` directives
 #           for sub-libraries (otherwise legitimate state = exit 0). Best-effort
-#           heuristic: if a grep for `source "${_SC_SELF%/*}/` finds matches
+#           heuristic: if a grep for sibling source/retry-helper lines finds matches
 #           and the parser returns zero, something is wrong.
 # Exit 3  = invalid invocation / missing prerequisite file.
 # =============================================================================
