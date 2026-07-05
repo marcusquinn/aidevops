@@ -106,7 +106,7 @@ _dispatch_stats_increment() {
 _dispatch_stats_increment_candidate_failed() {
 	local reason="$1"
 	case "$reason" in
-		blocked_by_native_lookup_unavailable | blocked_by_unresolved | canary_failed | consolidated | cooldown_no_worker_process | cost_budget_exceeded | dedup_active_claim | ever_nmr_without_approval | footprint_overlap | graphql_circuit_breaker | healthy_pr_backlog | interactive_review_hold | issue_closed | launch_error | local_capacity_gate | missing_worker_context | no_auto_dispatch | no_dispatchable_evidence | no_recent_log_evidence | parent_task | policy_gate | pr_target_not_dispatchable | provider_rate_limit_pressure | renovate_dependency_dashboard | repeated_failure_pressure | runner_health_circuit_breaker | unclassified_signal)
+		blocked_by_native_lookup_unavailable | blocked_by_unresolved | canary_failed | consolidated | cooldown_no_worker_process | cost_budget_exceeded | dedup_active_claim | dirty_worktree_recovery | ever_nmr_without_approval | footprint_overlap | graphql_circuit_breaker | healthy_pr_backlog | interactive_review_hold | issue_closed | launch_error | local_capacity_gate | missing_worker_context | no_auto_dispatch | no_dispatchable_evidence | no_recent_log_evidence | parent_task | policy_gate | pr_target_not_dispatchable | provider_rate_limit_pressure | renovate_dependency_dashboard | repeated_failure_pressure | runner_health_circuit_breaker | unclassified_signal)
 			;;
 		*)
 			reason="unclassified_signal"
@@ -192,11 +192,105 @@ _dispatch_candidate_failure_reason() {
 _dispatch_candidate_benign_block_reason() {
 	local reason="$1"
 	case "$reason" in
-		blocked_by_unresolved | consolidated | dedup_active_claim | footprint_overlap | interactive_review_hold | issue_closed | no_auto_dispatch | parent_task | pr_target_not_dispatchable | renovate_dependency_dashboard)
+		blocked_by_unresolved | consolidated | dedup_active_claim | dirty_worktree_recovery | footprint_overlap | interactive_review_hold | issue_closed | no_auto_dispatch | parent_task | pr_target_not_dispatchable | renovate_dependency_dashboard)
 			return 0
 			;;
 	esac
 	return 1
+}
+
+#######################################
+# Detect unresolved recent worker-dirty-worktree recovery markers on an issue.
+#
+# A dirty marker means a worker edited local files but crashed before it could
+# commit or open a PR. Redispatching another worker before recovery duplicates
+# effort and can overwrite the only useful evidence. Hold briefly unless a later
+# maintainer/worker comment explicitly marks recovery as resolved.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+# Returns:
+#   0 - recent unresolved dirty-worktree marker exists
+#   1 - no active marker, expired marker, disabled, or API unavailable
+#######################################
+_dispatch_recent_dirty_worktree_marker_active() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local hold_seconds="${DISPATCH_DIRTY_WORKTREE_HOLD_SECONDS:-21600}"
+
+	[[ "$hold_seconds" =~ ^[0-9]+$ ]] || hold_seconds="21600"
+	[[ "$hold_seconds" -gt 0 ]] || return 1
+
+	local comments_json=""
+	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments?per_page=100" 2>/dev/null) || return 1
+	[[ -n "$comments_json" ]] || return 1
+
+	local marker_state=""
+	marker_state=$(AIDEVOPS_DIRTY_WORKTREE_COMMENTS_JSON="$comments_json" python3 - "$hold_seconds" "${AIDEVOPS_DIRTY_WORKTREE_NOW_EPOCH:-}" <<'PY'
+import datetime
+import json
+import os
+import sys
+
+hold_seconds = int(sys.argv[1])
+now_override = sys.argv[2] if len(sys.argv) > 2 else ""
+
+try:
+    comments = json.loads(os.environ.get("AIDEVOPS_DIRTY_WORKTREE_COMMENTS_JSON", ""))
+except json.JSONDecodeError:
+    print("clear")
+    sys.exit(0)
+
+def parse_ts(value):
+    if not value:
+        return None
+    try:
+        return datetime.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+try:
+    now_epoch = float(now_override) if now_override else datetime.datetime.now(datetime.timezone.utc).timestamp()
+except ValueError:
+    now_epoch = datetime.datetime.now(datetime.timezone.utc).timestamp()
+
+latest_marker_ts = None
+latest_resolution_ts = None
+resolution_tokens = (
+    "worker-dirty-worktree:resolved",
+    "WORKER_DIRTY_WORKTREE_RESOLVED",
+    "DIRTY_WORKTREE_RECOVERED",
+    "worker_dirty_worktree_recovered",
+)
+
+for comment in comments:
+    body = str(comment.get("body") or "")
+    created = parse_ts(comment.get("created_at") or comment.get("createdAt"))
+    if created is None:
+        continue
+    if any(token in body for token in resolution_tokens):
+        latest_resolution_ts = created
+    elif "WORKER_DIRTY_WORKTREE" in body:
+        latest_marker_ts = created
+
+if latest_marker_ts is None:
+    print("clear")
+    sys.exit(0)
+if latest_resolution_ts is not None and latest_resolution_ts >= latest_marker_ts:
+    print("clear")
+    sys.exit(0)
+
+age = max(0, int(now_epoch - latest_marker_ts))
+if age <= hold_seconds:
+    print(f"block:age={age}")
+else:
+    print("clear")
+PY
+) || marker_state=""
+
+	[[ "$marker_state" == block:* ]] || return 1
+	return 0
 }
 
 #######################################
@@ -900,6 +994,9 @@ _dispatch_should_skip_candidate() {
 	if _dispatch_skip_for_terminal_blocker "$issue_number" "$repo_slug"; then
 		return 0
 	fi
+	if _dispatch_skip_for_dirty_worktree_recovery "$issue_number" "$repo_slug"; then
+		return 0
+	fi
 	if _dispatch_skip_for_fast_fail "$issue_number" "$repo_slug"; then
 		return 0
 	fi
@@ -911,6 +1008,28 @@ _dispatch_should_skip_candidate() {
 	fi
 
 	pulse_dispatch_debug_log "#${issue_number}: passed all skip checks — proceeding to dispatch"
+	return 1
+}
+
+#######################################
+# Skip candidates with a recent unresolved worker-dirty-worktree marker.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+# Returns:
+#   0 - candidate is skippable
+#   1 - candidate should continue through skip checks
+#######################################
+_dispatch_skip_for_dirty_worktree_recovery() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
+	if _dispatch_recent_dirty_worktree_marker_active "$issue_number" "$repo_slug"; then
+		echo "[pulse-wrapper] Dispatch_max: skipping #${issue_number} (${repo_slug}) — recent worker dirty-worktree recovery marker is unresolved" >>"$LOGFILE"
+		_dispatch_stats_increment "dispatch_candidate_skipped_dirty_worktree_recovery"
+		return 0
+	fi
 	return 1
 }
 
