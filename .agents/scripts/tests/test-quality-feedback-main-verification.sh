@@ -253,6 +253,7 @@ main() {
 	test_keeps_changes_requested_review
 	test_keeps_review_with_bug_report
 	test_keeps_review_with_suggestion_fence
+	test_keeps_review_with_strong_actionable_keyword_only
 
 	echo ""
 	echo "Running --include-positive flag tests (GH#4733)"
