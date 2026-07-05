@@ -4430,3 +4430,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 
 - [x] t18065 Fix worktree cleanup lifecycle to prevent worktree litter #bug ref:GH#26622 verified:2026-07-05 completed:2026-07-05
+
+- [ ] t18067 Centralize terminal worktree cleanup #bug ref:GH#26634
