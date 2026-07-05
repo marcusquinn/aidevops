@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.57] - 2026-07-05
+
+### Changed
+
+- handle review-feedback false positives (#26615)
+
+### Fixed
+
+- read deployed routines helper version (#26617)
+
 ## [3.31.56] - 2026-07-05
 
 ### Added
