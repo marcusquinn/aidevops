@@ -1687,18 +1687,14 @@ aidevops-repo-sync"
 	return 0
 }
 
-# Remove stale experimental dashboard LaunchAgent when the framework no longer
-# installs or enables it. Mac migrations can preserve ~/Library/LaunchAgents
+# Remove stale experimental dashboard schedulers when the framework no longer
+# installs or enables them. Machine migrations can preserve launchd/systemd
 # entries even after aidevops-routines disables r912, creating perpetual
-# EX_CONFIG launchd churn for an unmanaged service.
+# restart churn for an unmanaged service.
 cleanup_legacy_dashboard_launchagent() {
-	case "$(uname -s)" in
-	D*) ;;
-	*) return 0 ;;
-	esac
-
 	local label="com.aidevops.dashboard"
-	local plist="$HOME/Library/LaunchAgents/${label}.plist"
+	local systemd_unit="sh.aidevops.dashboard"
+	local legacy_systemd_unit="aidevops-dashboard"
 	local routines_todo="$HOME/Git/aidevops-routines/TODO.md"
 	local r912_enabled="false"
 
@@ -1706,15 +1702,47 @@ cleanup_legacy_dashboard_launchagent() {
 		r912_enabled="true"
 	fi
 
-	if [[ "$r912_enabled" == "true" || ! -e "$plist" ]]; then
+	if [[ "$r912_enabled" == "true" ]]; then
 		return 0
 	fi
 
-	local domain
-	domain="gui/$(id -u)"
-	launchctl bootout "${domain}/${label}" >/dev/null 2>&1 || true
-	launchctl unload "$plist" >/dev/null 2>&1 || true
-	mv "$plist" "${plist}.disabled-$(date -u +%Y%m%d%H%M%S)" 2>/dev/null || rm -f "$plist"
-	print_info "Removed stale dashboard LaunchAgent (${label}); r912 is disabled or unmanaged"
+	case "$(uname -s)" in
+	D*)
+		local plist="$HOME/Library/LaunchAgents/${label}.plist"
+		if [[ ! -e "$plist" ]]; then
+			return 0
+		fi
+
+		local domain
+		domain="gui/$(id -u)"
+		launchctl bootout "${domain}/${label}" >/dev/null 2>&1 || true
+		launchctl unload "$plist" >/dev/null 2>&1 || true
+		mv "$plist" "${plist}.disabled-$(date -u +%Y%m%d%H%M%S)" 2>/dev/null || rm -f "$plist"
+		print_info "Removed stale dashboard LaunchAgent (${label}); r912 is disabled or unmanaged"
+		;;
+	Linux)
+		local user_systemd_dir="$HOME/.config/systemd/user"
+		local removed=0
+		local unit
+		for unit in "$systemd_unit" "$legacy_systemd_unit"; do
+			if command -v systemctl >/dev/null 2>&1; then
+				systemctl --user disable --now "${unit}.service" >/dev/null 2>&1 || true
+				systemctl --user disable --now "${unit}.timer" >/dev/null 2>&1 || true
+			fi
+			if [[ -e "${user_systemd_dir}/${unit}.service" ]]; then
+				mv "${user_systemd_dir}/${unit}.service" "${user_systemd_dir}/${unit}.service.disabled-$(date -u +%Y%m%d%H%M%S)" 2>/dev/null || rm -f "${user_systemd_dir}/${unit}.service"
+				removed=$((removed + 1))
+			fi
+			if [[ -e "${user_systemd_dir}/${unit}.timer" ]]; then
+				mv "${user_systemd_dir}/${unit}.timer" "${user_systemd_dir}/${unit}.timer.disabled-$(date -u +%Y%m%d%H%M%S)" 2>/dev/null || rm -f "${user_systemd_dir}/${unit}.timer"
+				removed=$((removed + 1))
+			fi
+		done
+		if [[ "$removed" -gt 0 ]] && command -v systemctl >/dev/null 2>&1; then
+			systemctl --user daemon-reload >/dev/null 2>&1 || true
+			print_info "Removed stale dashboard systemd unit(s); r912 is disabled or unmanaged"
+		fi
+		;;
+	esac
 	return 0
 }

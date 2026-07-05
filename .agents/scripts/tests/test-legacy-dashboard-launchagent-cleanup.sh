@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
-# Static regression checks for stale dashboard LaunchAgent cleanup.
+# Static regression checks for stale dashboard scheduler cleanup.
 
 set -euo pipefail
 
@@ -44,12 +44,15 @@ test_cleanup_function_is_guarded_by_r912_state() {
 	if printf '%s' "$snippet" | grep -qF 'com.aidevops.dashboard' && \
 		printf '%s' "$snippet" | grep -qF 'aidevops-routines/TODO.md' && \
 		printf '%s' "$snippet" | grep -qE 'r912' && \
-		printf '%s' "$snippet" | grep -qF 'launchctl bootout'; then
+		printf '%s' "$snippet" | grep -qF 'launchctl bootout' && \
+		printf '%s' "$snippet" | grep -qF 'sh.aidevops.dashboard' && \
+		printf '%s' "$snippet" | grep -qF 'systemctl --user disable --now' && \
+		printf '%s' "$snippet" | grep -qF 'daemon-reload'; then
 		print_result "legacy dashboard cleanup is gated by r912 disabled state" 0
 		return 0
 	fi
 	print_result "legacy dashboard cleanup is gated by r912 disabled state" 1 \
-		"Expected label, routines TODO guard, r912 check, and launchctl bootout"
+		"Expected launchd + systemd labels, routines TODO guard, r912 check, bootout, disable, and daemon-reload"
 	return 0
 }
 
