@@ -807,7 +807,7 @@ Pre-exit self-check -- MANDATORY:
 Before ending your session, verify ALL of these:
   - At least one commit with implementation changes exists on your branch.
   - A PR exists for your branch: run gh pr list --head YOUR_BRANCH_NAME
-  - A MERGE_SUMMARY comment exists on the PR (full-loop step 4.2.1). Verify: gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '[.[] | select(.body | test("MERGE_SUMMARY"))] | length' returns 1. If 0, post it now -- the merge pass uses it for closing comments.
+  - A MERGE_SUMMARY comment exists on the PR (full-loop step 4.2.1). Verify: gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '[.[] | select(.body | test("<!-- MERGE_SUMMARY -->"))] | length' returns 1. If 0, post it now -- the merge pass uses it for closing comments.
   - If any check fails, you are NOT done -- continue working.
   - The only valid exit states are FULL_LOOP_COMPLETE or BLOCKED with evidence.
 EOF

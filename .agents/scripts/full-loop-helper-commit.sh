@@ -939,20 +939,20 @@ _create_pr() {
 # Post the MERGE_SUMMARY comment on the PR (full-loop step 4.2.1).
 # Arguments: pr_number, repo, issue_number, summary_what, files_changed,
 #            summary_testing, summary_decisions
-# t2767: Idempotent — skips posting if MERGE_SUMMARY comment already exists.
+# t2767: Idempotent — skips posting if the canonical MERGE_SUMMARY comment already exists.
 # This handles the partial-success recovery case where commit-and-pr was
 # interrupted after posting the comment but before returning the PR number.
 _post_merge_summary() {
 	local pr_number="$1" repo="$2" issue_number="$3" summary_what="$4"
 	local files_changed="$5" summary_testing="$6" summary_decisions="$7"
 
-	# t2767: Check if MERGE_SUMMARY comment already exists before posting.
+	# t2767/GH#26608: Check if the canonical MERGE_SUMMARY comment already exists before posting.
 	# Uses PR timeline comments endpoint (issues endpoint covers PR comments).
 	# Counter safety: validate result is a number before comparing (t2763).
 	local _existing_count=0
 	local _tmp_count=""
 	_tmp_count=$(gh api "repos/${repo}/issues/${pr_number}/comments" \
-		--jq '[.[] | select(.body | test("MERGE_SUMMARY"))] | length' 2>/dev/null || true)
+		--jq '[.[] | select(.body | test("<!-- MERGE_SUMMARY -->"))] | length' 2>/dev/null || true)
 	[[ "$_tmp_count" =~ ^[0-9]+$ ]] && _existing_count="$_tmp_count"
 	if [[ "$_existing_count" -gt 0 ]]; then
 		print_info "Merge summary comment already exists on PR #${pr_number} — skipping duplicate (t2767)"
