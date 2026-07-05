@@ -95,9 +95,14 @@ deployed_version() {
 }
 
 script_version() {
-	local version_file="${SCRIPT_DIR}/../../VERSION"
-	if [[ -r "$version_file" ]]; then
-		tr -d '[:space:]' <"$version_file"
+	local deployed_version_file="${SCRIPT_DIR}/../VERSION"
+	local source_version_file="${SCRIPT_DIR}/../../VERSION"
+	if [[ -r "$deployed_version_file" ]]; then
+		tr -d '[:space:]' <"$deployed_version_file"
+		return 0
+	fi
+	if [[ -r "$source_version_file" ]]; then
+		tr -d '[:space:]' <"$source_version_file"
 		return 0
 	fi
 	printf 'unknown'

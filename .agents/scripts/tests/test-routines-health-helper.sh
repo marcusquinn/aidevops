@@ -54,9 +54,22 @@ test_repair_safe_is_gated_by_r912() {
 	return 0
 }
 
+test_script_version_prefers_deployed_agents_version() {
+	local snippet
+	snippet="$(sed -n '/script_version()/,/^}/p' "$HELPER")"
+	if printf '%s' "$snippet" | grep -qF 'SCRIPT_DIR}/../VERSION' && \
+		printf '%s' "$snippet" | grep -qF 'SCRIPT_DIR}/../../VERSION'; then
+		print_result "script version prefers deployed agents VERSION" 0
+		return 0
+	fi
+	print_result "script version prefers deployed agents VERSION" 1
+	return 0
+}
+
 main() {
 	test_json_check_outputs_expected_keys
 	test_repair_safe_is_gated_by_r912
+	test_script_version_prefers_deployed_agents_version
 	if [[ "$failures" -ne 0 ]]; then
 		printf 'Tests failed: %s\n' "$failures" >&2
 		return 1
