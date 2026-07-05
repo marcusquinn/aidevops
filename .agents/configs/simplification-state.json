@@ -2262,9 +2262,9 @@
       "pr": 12145
     },
     ".agents/scripts/full-loop-helper.sh": {
-      "at": "2026-06-17T09:55:53Z",
-      "hash": "f340916a31ba2a6103b10496ecfb2356aee6e5b7",
-      "passes": 26,
+      "at": "2026-07-05T00:33:22Z",
+      "hash": "eb6f1c95f870fd43bd09e23ff760d6624ec993b3",
+      "passes": 27,
       "pr": 19046
     },
     ".agents/scripts/generate-claude-commands.sh": {
@@ -2442,9 +2442,9 @@
       "pr": 18690
     },
     ".agents/scripts/pulse-merge.sh": {
-      "at": "2026-07-02T02:58:00Z",
-      "hash": "ae4e6bc72671255fe6f1bc0c510162a1eb67a2fd",
-      "passes": 59,
+      "at": "2026-07-05T00:33:27Z",
+      "hash": "85191123454d97b85ea4905f9dabff15533b9d1a",
+      "passes": 60,
       "pr": 18829
     },
     ".agents/scripts/pulse-prefetch.sh": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-04T13:18:16Z",
-      "hash": "bd266e7a8c980eab013a4e31642482421973c2bd",
-      "passes": 251,
+      "at": "2026-07-05T00:46:54Z",
+      "hash": "818580799dcd40dcf3a467c48c224f9dcb7123c0",
+      "passes": 252,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-04T13:18:17Z",
-      "hash": "896c12a60bb20e3c8c91af7103014b12176d8b61",
-      "passes": 247,
+      "at": "2026-07-05T00:46:54Z",
+      "hash": "c13ade475b2055608d16532447471185dd06bb18",
+      "passes": 248,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -8044,10 +8044,10 @@
       "passes": 1
     },
     ".agents/scripts/file-size-regression-helper.sh": {
-      "hash": "ef75c8eec2ac2769da3d0b9062334adb9ba631d2",
-      "at": "2026-07-04T13:18:21Z",
+      "hash": "baa222b4bada01633d2acda941e7f93c5e6d1d8b",
+      "at": "2026-07-05T00:33:22Z",
       "pr": 26524,
-      "passes": 1
+      "passes": 2
     },
     ".agents/scripts/headless-runtime-worker.sh": {
       "hash": "3575da0e91868c8a5e456e43a024183141ee43a6",
@@ -8062,10 +8062,10 @@
       "passes": 1
     },
     ".agents/scripts/markdoc-extract.sh": {
-      "hash": "23bb9568f897d3887c629d4175a72cbb103e2e9a",
-      "at": "2026-07-04T13:18:21Z",
+      "hash": "c9dec7d18d01c8093b686f11429f2d6ce92f8e85",
+      "at": "2026-07-05T00:33:24Z",
       "pr": 26513,
-      "passes": 1
+      "passes": 2
     }
   },
   "setup-modules/agent-deploy.sh": {
