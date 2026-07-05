@@ -648,7 +648,8 @@ _stale_assignment_has_recent_activity() {
 
 #######################################
 # Determine whether recent open PR activity protects a stale-looking assignment.
-# Args: $1 = issue number, $2 = repo slug, $3 = now epoch, $4 = threshold seconds
+# Args: $1 = issue number, $2 = repo slug, $3 = now epoch, $4 = threshold seconds,
+#       $5 = optional precomputed "<number>|<updatedAt>" open PR activity
 # Returns: 0 if recent PR activity exists, 1 otherwise
 #######################################
 _stale_assignment_has_recent_open_pr_activity() {
@@ -656,8 +657,11 @@ _stale_assignment_has_recent_open_pr_activity() {
 	local repo_slug="$2"
 	local now_epoch="$3"
 	local effective_threshold="$4"
-	local open_pr_activity open_pr_number open_pr_updated_at open_pr_epoch open_pr_age
-	open_pr_activity=$(_stale_recovery_find_open_pr_activity "$issue_number" "$repo_slug")
+	local open_pr_activity="${5:-}"
+	local open_pr_number open_pr_updated_at open_pr_epoch open_pr_age
+	if [[ "$#" -lt 5 ]]; then
+		open_pr_activity=$(_stale_recovery_find_open_pr_activity "$issue_number" "$repo_slug")
+	fi
 	[[ -z "$open_pr_activity" ]] && return 1
 	open_pr_number="${open_pr_activity%%|*}"
 	open_pr_updated_at="${open_pr_activity#*|}"
