@@ -87,7 +87,16 @@ STUB
 	# Use literal return 0 / return 1 (not a variable) so the pre-commit
 	# return-statement ratchet doesn't flag the heredoc-embedded function.
 	local mock_ran_file="${TEST_DIR}/mock-ran"
-	if [[ "${MOCK_CLEANUP_EXIT:-0}" -ne 0 ]]; then
+	if [[ "${MOCK_CLEANUP_SKIPPED:-0}" -eq 1 ]]; then
+		cat >"${stub_dir}/pulse-cleanup.sh" <<STUB
+# stub pulse-cleanup.sh
+cleanup_worktrees() {
+	printf 'MOCK_RAN\n' >>"${mock_ran_file}"
+	CLEANUP_WORKTREES_SKIPPED=1
+	return 0
+}
+STUB
+	elif [[ "${MOCK_CLEANUP_EXIT:-0}" -ne 0 ]]; then
 		cat >"${stub_dir}/pulse-cleanup.sh" <<STUB
 # stub pulse-cleanup.sh
 _mock_cleanup_worktrees() {
@@ -266,7 +275,26 @@ test_failed_cleanup_no_last_run_update() {
 }
 
 # ============================================================
-# TEST 7: lock released on exit (no orphaned lock after run)
+# TEST 7: skipped cleanup — last-run NOT updated on safety skip
+# ============================================================
+test_skipped_cleanup_no_last_run_update() {
+	local logs_dir="${TEST_DIR}/.aidevops/logs"
+	local last_run_file="${logs_dir}/cleanup_worktrees.last-run"
+	rm -f "$last_run_file"
+
+	MOCK_CLEANUP_SKIPPED=1 run_helper_in_isolation || true
+
+	if [[ ! -f "$last_run_file" ]]; then
+		print_result "skipped-cleanup: last-run not updated on safety skip" 0
+	else
+		print_result "skipped-cleanup: last-run not updated on safety skip" 1 \
+			"last-run was updated despite cleanup safety skip"
+	fi
+	return 0
+}
+
+# ============================================================
+# TEST 8: lock released on exit (no orphaned lock after run)
 # ============================================================
 test_lock_released_after_run() {
 	local logs_dir="${TEST_DIR}/.aidevops/logs"
@@ -314,6 +342,9 @@ main() {
 
 	teardown; setup
 	test_failed_cleanup_no_last_run_update
+
+	teardown; setup
+	test_skipped_cleanup_no_last_run_update
 
 	teardown; setup
 	test_lock_released_after_run
