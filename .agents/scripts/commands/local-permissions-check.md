@@ -1,5 +1,5 @@
 ---
-description: Audit macOS privacy permissions for aidevops host apps such as Tabby, Terminal, iTerm, OpenCode, Cursor, Claude, VS Code, Zed, and Warp
+description: Audit local host/runtime permissions for aidevops on macOS, Linux, Windows, and WSL
 agent: local-permissions-check
 mode: subagent
 ---
@@ -7,7 +7,9 @@ mode: subagent
 <!-- SPDX-License-Identifier: MIT -->
 <!-- SPDX-FileCopyrightText: 2025-2026 Marcus Quinn -->
 
-Run a read-only local macOS permission diagnostic for aidevops workflows.
+Run a read-only local permission/capability diagnostic for aidevops workflows.
+macOS reports TCC host-app privacy state; Linux, Windows, and WSL report safe
+session, sandbox, filesystem, execution-policy, and UI automation caveats.
 
 Arguments: $ARGUMENTS
 
@@ -34,11 +36,16 @@ Arguments: $ARGUMENTS
 ## Safety
 
 - Read-only by default: do not reset TCC, grant permissions, or intentionally
-  trigger prompts.
+  trigger prompts; do not change Windows execution policy, start services, or use
+  sudo/admin privileges.
 - macOS permissions apply to the host app that launched aidevops, not to child
   `bash`, `zsh`, `opencode`, or `aidevops` processes.
 - For Tabby-launched sessions with Trash cleanup failures, check Full Disk Access
   for Tabby in System Settings → Privacy & Security.
+- Linux Wayland screenshots/UI automation often require desktop portals; X11,
+  Flatpak, Snap, containers, and WSL have separate boundaries.
+- Windows/WSL reports are advisory unless a safe shell signal exists; protected
+  folders and Defender Controlled Folder Access usually require manual checking.
 
 ## Verification references
 
