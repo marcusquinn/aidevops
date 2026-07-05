@@ -265,7 +265,7 @@ _handle_changes_requested_review_gate() {
 	# PRs keep the historical fast-routing behaviour below. Operators who prefer
 	# preserving the PR/review context can opt in to a remediation-first cycle.
 	if _pulse_merge_changes_requested_thread_remediation_first_enabled \
-		&& [[ "$_cr_label_list" == *"${_OW_LABEL_PAT:-}"* \
+		&& [[ ( -n "${_OW_LABEL_PAT:-}" && "$_cr_label_list" == *"${_OW_LABEL_PAT:-}"* ) \
 			|| "$_cr_label_list" == *",origin:worker-takeover,"* ]] \
 		&& [[ "$_cr_label_list" != *",external-contributor,"* ]] \
 		&& [[ "$_cr_label_list" != *",no-takeover,"* ]] \
