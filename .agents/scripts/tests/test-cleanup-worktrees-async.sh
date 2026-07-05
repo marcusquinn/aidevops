@@ -87,7 +87,16 @@ STUB
 	# Use literal return 0 / return 1 (not a variable) so the pre-commit
 	# return-statement ratchet doesn't flag the heredoc-embedded function.
 	local mock_ran_file="${TEST_DIR}/mock-ran"
-	if [[ "${MOCK_CLEANUP_EXIT:-0}" -ne 0 ]]; then
+	if [[ "${MOCK_CLEANUP_SKIPPED:-0}" -eq 1 ]]; then
+		cat >"${stub_dir}/pulse-cleanup.sh" <<STUB
+# stub pulse-cleanup.sh
+cleanup_worktrees() {
+	printf 'MOCK_RAN\n' >>"${mock_ran_file}"
+	CLEANUP_WORKTREES_SKIPPED=1
+	return 0
+}
+STUB
+	elif [[ "${MOCK_CLEANUP_EXIT:-0}" -ne 0 ]]; then
 		cat >"${stub_dir}/pulse-cleanup.sh" <<STUB
 # stub pulse-cleanup.sh
 _mock_cleanup_worktrees() {
@@ -115,9 +124,16 @@ STUB
 	cp "$HELPER" "${stub_dir}/cleanup-worktrees-async-helper.sh"
 	chmod +x "${stub_dir}/cleanup-worktrees-async-helper.sh"
 
-	env HOME="$TEST_DIR" \
-		CLEANUP_WORKTREES_ASYNC_CADENCE_MIN="${CLEANUP_WORKTREES_ASYNC_CADENCE_MIN:-10}" \
-		bash "${stub_dir}/cleanup-worktrees-async-helper.sh" 2>/dev/null || true
+	if [[ "${RUN_HELPER_UNSET_HOME:-0}" -eq 1 ]]; then
+		env -u HOME \
+			AIDEVOPS_LOG_DIR="${AIDEVOPS_LOG_DIR:-${TEST_DIR}/custom-logs}" \
+			CLEANUP_WORKTREES_ASYNC_CADENCE_MIN="${CLEANUP_WORKTREES_ASYNC_CADENCE_MIN:-10}" \
+			bash "${stub_dir}/cleanup-worktrees-async-helper.sh" 2>/dev/null || true
+	else
+		env HOME="$TEST_DIR" \
+			CLEANUP_WORKTREES_ASYNC_CADENCE_MIN="${CLEANUP_WORKTREES_ASYNC_CADENCE_MIN:-10}" \
+			bash "${stub_dir}/cleanup-worktrees-async-helper.sh" 2>/dev/null || true
+	fi
 	return 0
 }
 
@@ -266,7 +282,26 @@ test_failed_cleanup_no_last_run_update() {
 }
 
 # ============================================================
-# TEST 7: lock released on exit (no orphaned lock after run)
+# TEST 7: skipped cleanup — last-run NOT updated on safety skip
+# ============================================================
+test_skipped_cleanup_no_last_run_update() {
+	local logs_dir="${TEST_DIR}/.aidevops/logs"
+	local last_run_file="${logs_dir}/cleanup_worktrees.last-run"
+	rm -f "$last_run_file"
+
+	MOCK_CLEANUP_SKIPPED=1 run_helper_in_isolation || true
+
+	if [[ ! -f "$last_run_file" ]]; then
+		print_result "skipped-cleanup: last-run not updated on safety skip" 0
+	else
+		print_result "skipped-cleanup: last-run not updated on safety skip" 1 \
+			"last-run was updated despite cleanup safety skip"
+	fi
+	return 0
+}
+
+# ============================================================
+# TEST 8: lock released on exit (no orphaned lock after run)
 # ============================================================
 test_lock_released_after_run() {
 	local logs_dir="${TEST_DIR}/.aidevops/logs"
@@ -280,6 +315,28 @@ test_lock_released_after_run() {
 	else
 		print_result "lock-cleanup: lock dir removed after successful run" 1 \
 			"lock dir still exists after run: $lock_dir"
+	fi
+	return 0
+}
+
+# ============================================================
+# TEST 9: HOME unset — explicit log dir avoids set -u unbound errors
+# ============================================================
+test_home_unset_uses_explicit_log_dir() {
+	local custom_log_dir="${TEST_DIR}/custom-logs"
+	local last_run_file="${custom_log_dir}/cleanup_worktrees.last-run"
+	local mock_ran="${TEST_DIR}/mock-ran"
+	rm -rf "$custom_log_dir"
+	rm -f "$mock_ran"
+
+	RUN_HELPER_UNSET_HOME=1 AIDEVOPS_LOG_DIR="$custom_log_dir" MOCK_CLEANUP_EXIT=0 \
+		run_helper_in_isolation || true
+
+	if [[ -f "$mock_ran" && -f "$last_run_file" ]]; then
+		print_result "home-unset: explicit log dir avoids unbound HOME" 0
+	else
+		print_result "home-unset: explicit log dir avoids unbound HOME" 1 \
+			"mock or last-run file missing when HOME was unset"
 	fi
 	return 0
 }
@@ -316,7 +373,13 @@ main() {
 	test_failed_cleanup_no_last_run_update
 
 	teardown; setup
+	test_skipped_cleanup_no_last_run_update
+
+	teardown; setup
 	test_lock_released_after_run
+
+	teardown; setup
+	test_home_unset_uses_explicit_log_dir
 
 	echo ""
 	echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"

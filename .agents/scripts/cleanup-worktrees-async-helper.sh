@@ -25,6 +25,7 @@
 # Environment:
 #   CLEANUP_WORKTREES_ASYNC_CADENCE_MIN — min minutes between runs (default 10)
 #   DIRTY_WORKTREE_BACKUP_RETENTION_DAYS — stale dirty-backup retention (default 30)
+#   AIDEVOPS_LOG_DIR — explicit log directory override (required if HOME unset)
 #
 # Observability (for pulse-diagnose-helper.sh):
 #   ~/.aidevops/logs/cleanup_worktrees.log      — progress log
@@ -38,8 +39,16 @@ set -euo pipefail
 # PATHS
 # ============================================================
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-readonly LOG_DIR="${HOME}/.aidevops/logs"
+_SCRIPT_PATH="${BASH_SOURCE[0]:-$0}"
+SCRIPT_DIR="$(cd "$(dirname "$_SCRIPT_PATH")" && pwd)"
+unset _SCRIPT_PATH
+
+if [[ -z "${AIDEVOPS_LOG_DIR:-}" && -z "${HOME:-}" ]]; then
+	printf '%s\n' "[cleanup-worktrees-async] ERROR: HOME is unset and AIDEVOPS_LOG_DIR is not configured" >&2
+	exit 1
+fi
+
+readonly LOG_DIR="${AIDEVOPS_LOG_DIR:-${HOME:-}/.aidevops/logs}"
 readonly LOGFILE="${LOG_DIR}/cleanup_worktrees.log"
 readonly LOCK_DIR="${LOG_DIR}/cleanup_worktrees.lock"
 readonly PID_FILE="${LOCK_DIR}/pid"
@@ -215,7 +224,9 @@ main() {
 	cleanup_worktrees || rc=$?
 	_prune_dirty_worktree_backups
 
-	if [[ "$rc" -eq 0 ]]; then
+	if [[ "${CLEANUP_WORKTREES_SKIPPED:-0}" == "1" ]]; then
+		echo "[cleanup-worktrees-async] cleanup_worktrees skipped by safety gate — last-run NOT updated" >>"$LOGFILE"
+	elif [[ "$rc" -eq 0 ]]; then
 		_update_last_run
 		echo "[cleanup-worktrees-async] Completed successfully at $(date -u '+%Y-%m-%dT%H:%M:%SZ'). last-run updated." >>"$LOGFILE"
 	else

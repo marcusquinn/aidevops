@@ -510,6 +510,121 @@ _retarget_stacked_children_interactive() {
 	return 0
 }
 
+# --- Post-Merge Worktree Cleanup ---
+
+_merge_current_worktree_cleanup_plan() {
+	local pr_head_ref="$1"
+	[[ -n "$pr_head_ref" ]] || return 1
+
+	local current_branch=""
+	current_branch=$(git branch --show-current 2>/dev/null || true)
+	[[ -n "$current_branch" && "$current_branch" == "$pr_head_ref" ]] || return 1
+
+	local current_root=""
+	current_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+	[[ -n "$current_root" ]] || return 1
+
+	local porcelain=""
+	porcelain=$(git worktree list --porcelain 2>/dev/null || true)
+	[[ -n "$porcelain" ]] || return 1
+
+	local canonical_dir=""
+	canonical_dir="${porcelain%%$'\n'*}"
+	canonical_dir="${canonical_dir#worktree }"
+	[[ -n "$canonical_dir" && "$canonical_dir" != "$current_root" ]] || return 1
+
+	printf '%s\t%s\t%s\n' "$current_root" "$current_branch" "$canonical_dir"
+	return 0
+}
+
+_merge_default_branch_for_cleanup() {
+	local canonical_dir="$1"
+	local default_ref=""
+	default_ref=$(git -C "$canonical_dir" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null || true)
+	default_ref="${default_ref#refs/remotes/origin/}"
+	if [[ -n "$default_ref" && "$default_ref" != refs/* ]]; then
+		printf '%s\n' "$default_ref"
+		return 0
+	fi
+	printf '%s\n' "main"
+	return 0
+}
+
+_merge_refresh_canonical_for_cleanup() {
+	local canonical_dir="$1"
+	local default_branch="$2"
+	[[ -d "$canonical_dir" && -n "$default_branch" ]] || return 1
+
+	# Refresh remote state without changing the canonical worktree's checked-out
+	# branch. A pull from a non-default branch can fast-forward that branch to the
+	# default branch tip, corrupting unrelated active work.
+	if git -C "$canonical_dir" fetch origin "$default_branch" >/dev/null 2>&1; then
+		return 0
+	fi
+	print_warning "Post-merge worktree cleanup: canonical fetch skipped/failed for ${canonical_dir}; continuing cleanup"
+	return 0
+}
+
+_merge_resolve_worktree_helper() {
+	if [[ -x "${SCRIPT_DIR}/worktree-helper.sh" ]]; then
+		printf '%s\n' "${SCRIPT_DIR}/worktree-helper.sh"
+		return 0
+	fi
+	if [[ -n "${HOME:-}" && -x "${HOME}/.aidevops/agents/scripts/worktree-helper.sh" ]]; then
+		printf '%s\n' "${HOME}/.aidevops/agents/scripts/worktree-helper.sh"
+		return 0
+	fi
+	return 1
+}
+
+_merge_remove_worktree_for_cleanup() {
+	local worktree_path="$1"
+	local branch_name="$2"
+	local canonical_dir="$3"
+	local helper_path=""
+
+	helper_path=$(_merge_resolve_worktree_helper 2>/dev/null || true)
+	if [[ -n "$helper_path" ]]; then
+		WORKTREE_FORCE_REMOVE=1 "$helper_path" remove "$branch_name" --force >/dev/null 2>&1 && return 0
+		print_warning "Post-merge worktree cleanup: helper removal failed for ${branch_name}; trying git worktree remove"
+	fi
+
+	git -C "$canonical_dir" worktree remove --force "$worktree_path" >/dev/null 2>&1 || return 1
+	git -C "$canonical_dir" worktree prune >/dev/null 2>&1 || true
+	return 0
+}
+
+_merge_cleanup_linked_worktree() {
+	local cleanup_plan="$1"
+	local repo="$2"
+	[[ -n "$cleanup_plan" ]] || return 0
+
+	local worktree_path="" branch_name="" canonical_dir=""
+	IFS=$'\t' read -r worktree_path branch_name canonical_dir <<<"$cleanup_plan"
+	[[ -n "$worktree_path" && -n "$branch_name" && -n "$canonical_dir" ]] || return 0
+	[[ -d "$canonical_dir" ]] || return 0
+
+	print_info "Post-merge worktree cleanup: removing linked worktree ${worktree_path} for ${branch_name} in ${repo}"
+	local default_branch=""
+	default_branch=$(_merge_default_branch_for_cleanup "$canonical_dir")
+	_merge_refresh_canonical_for_cleanup "$canonical_dir" "$default_branch"
+
+	if ! cd "$canonical_dir" 2>/dev/null; then
+		print_warning "Post-merge worktree cleanup: could not cd to canonical repo ${canonical_dir}"
+		return 0
+	fi
+
+	if _merge_remove_worktree_for_cleanup "$worktree_path" "$branch_name" "$canonical_dir"; then
+		git push origin --delete "$branch_name" >/dev/null 2>&1 || true
+		git branch -D "$branch_name" >/dev/null 2>&1 || true
+		print_success "Post-merge worktree cleanup complete for ${branch_name}"
+		return 0
+	fi
+
+	print_warning "Post-merge worktree cleanup did not remove ${worktree_path}; safety-net cleanup will retry later"
+	return 0
+}
+
 # --- Merge Command ---
 
 # Merge wrapper (GH#17541) — enforces review-bot-gate then merges.
@@ -578,6 +693,13 @@ cmd_merge() {
 
 	repo=$(_merge_resolve_repo "$repo") || return 1
 
+	local _cleanup_plan=""
+	if [[ "$has_auto" -eq 0 ]]; then
+		local _pr_head_ref=""
+		_pr_head_ref=$(gh pr view "$pr_number" --repo "$repo" --json headRefName --jq '.headRefName // empty' 2>/dev/null || true)
+		_cleanup_plan=$(_merge_current_worktree_cleanup_plan "$_pr_head_ref" 2>/dev/null || true)
+	fi
+
 	# Gate: enforce review-bot-gate before merge.
 	cmd_pre_merge_gate "$pr_number" "$repo" || {
 		print_error "Merge blocked by review bot gate. Address bot findings or wait for reviews."
@@ -615,6 +737,9 @@ cmd_merge() {
 	fi
 
 	_merge_unlock_resources "$pr_number" "$repo"
+	if [[ "$has_auto" -eq 0 && -n "$_cleanup_plan" ]]; then
+		_merge_cleanup_linked_worktree "$_cleanup_plan" "$repo" || true
+	fi
 
 	return 0
 }

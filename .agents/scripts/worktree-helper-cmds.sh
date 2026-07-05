@@ -451,11 +451,11 @@ _help_print_examples_and_notes() {
 EXAMPLES
   # Start work on a feature (creates worktree)
   worktree-helper.sh add feature/user-auth
-  cd ~/Git/myrepo-feature-user-auth || exit
+  cd ~/Git/_worktrees/myrepo-feature-user-auth || exit
 
   # Open another terminal for a bugfix
   worktree-helper.sh add bugfix/login-timeout
-  cd ~/Git/myrepo-bugfix-login-timeout || exit
+  cd ~/Git/_worktrees/myrepo-bugfix-login-timeout || exit
 
   # List all worktrees
   worktree-helper.sh list
@@ -467,9 +467,9 @@ EXAMPLES
   worktree-helper.sh registry list
 
 DIRECTORY STRUCTURE
-  ~/Git/myrepo/                      # Main worktree (main branch)
-  ~/Git/myrepo-feature-user-auth/    # Linked worktree (feature/user-auth)
-  ~/Git/myrepo-bugfix-login/         # Linked worktree (bugfix/login)
+  ~/Git/myrepo/                                 # Main worktree (main branch)
+  ~/Git/_worktrees/myrepo-feature-user-auth/    # Linked worktree (feature/user-auth)
+  ~/Git/_worktrees/myrepo-bugfix-login/         # Linked worktree (bugfix/login)
 
 STALE REMOTE DETECTION (t1060, GH#3797)
   When creating a new branch, the script checks for stale remote refs

@@ -33,19 +33,19 @@ tools:
 **Worktrunk** (preferred — shell cd, hooks, CI status, merge workflow):
 
 ```bash
-wt switch -c feature/my-feature        # Create worktree + cd into it
+wt switch -c feature/my-feature        # Create worktree + cd into it (configure path_template to ~/Git/_worktrees)
 wt list                                # List worktrees with CI status
 wt merge                               # Squash/rebase/merge + cleanup
 wt remove                              # Remove current worktree
 wt switch -c hotfix/security-patch     # Hotfix without leaving feature work
-opencode ~/Git/myrepo-feature-auth/    # Multiple AI sessions on separate worktrees
+opencode ~/Git/_worktrees/myrepo-feature-auth/  # Multiple AI sessions on separate worktrees
 ```
 
 **worktree-helper.sh** (fallback — no cd support):
 
 ```bash
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/my-feature          # Auto-path: ~/Git/_worktrees/<repo>-feature-my-feature; cd into printed path
-${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/my-feature ~/custom  # Custom path; cd into that path
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/my-feature "$HOME/Git/_worktrees/<repo>-feature-my-feature"  # Explicit central path
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh list                            # List worktrees
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh status                          # Status overview
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh remove feature/auth             # Removes directory, NOT the branch
@@ -65,7 +65,7 @@ ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-sessions.sh list   # Li
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-sessions.sh open   # Interactive: select + open
 ```
 
-**Worker self-cleanup (GH#6740):** Workers must remove their worktree after PR merge — batch dispatches (50+ workers) accumulate worktrees faster than pulse cleanup. See `full-loop.md` Step 4.8 and `commands/worktree-cleanup.md`.
+**Worker self-cleanup (GH#6740):** `full-loop-helper.sh merge` now removes the current linked worktree after an immediate successful merge when the current branch matches the PR head. The pulse cleanup stage remains a safety net — batch dispatches (50+ workers) can still accumulate abandoned worktrees faster than scheduled cleanup. See `full-loop.md` Step 4.9 and `commands/worktree-cleanup.md`.
 
 ## Ownership Safety (t189)
 
@@ -82,7 +82,7 @@ ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh remove featur
 | Problem | Fix |
 |---------|-----|
 | "Branch is already checked out" | `git worktree list \| grep feature/auth` — use or remove that worktree |
-| "Worktree path already exists" | `rm -rf ~/Git/myrepo-feature-auth` if safe, then re-add |
+| "Worktree path already exists" | `worktree-helper.sh remove feature/auth --force` if safe, then re-add under `~/Git/_worktrees` |
 | Stale worktree references | `git worktree prune` |
 | Detached HEAD | `cd` into worktree, `git checkout feature/auth` |
 | Worktree deleted mid-session | `git branch --list feature/my-feature` → `worktree-helper.sh add feature/my-feature` → `git stash pop` |
