@@ -18,9 +18,9 @@
 #      _create_pr() must return 1 with an error message.
 #
 #   3. Merge-summary idempotency:
-#      When _post_merge_summary() is called a second time and a MERGE_SUMMARY
-#      comment already exists on the PR, it must skip posting and return 0
-#      (no duplicate comment).
+#      When _post_merge_summary() is called a second time and a canonical
+#      <!-- MERGE_SUMMARY --> comment already exists on the PR, it must skip
+#      posting and return 0 (no duplicate comment).
 #
 #   4. Merge-summary first post:
 #      When no MERGE_SUMMARY comment exists, _post_merge_summary() must
@@ -190,14 +190,24 @@ _gh_recover_pr_if_exists() {
 }
 export -f _gh_recover_pr_if_exists
 
-# Control variable: set to non-empty to simulate MERGE_SUMMARY already existing
+# Control variable: set to non-empty to simulate canonical MERGE_SUMMARY already existing
 GH_EXISTING_MERGE_SUMMARY_COUNT=0
+# Control variable: set to 1 to simulate only malformed plain-text MERGE_SUMMARY existing
+GH_MALFORMED_MERGE_SUMMARY_ONLY=0
 
 # Stub: gh — handles the gh api call for MERGE_SUMMARY check, plus pr comment
 gh() {
 	printf 'gh %s\n' "$*" >>"$STUB_LOG"
 	# Handle: gh api repos/.../issues/.../comments --jq '...'
 	if [[ "${1:-}" == "api" ]]; then
+		if [[ "$*" == *'<!-- MERGE_SUMMARY -->'* ]]; then
+			printf '%s\n' "$GH_EXISTING_MERGE_SUMMARY_COUNT"
+			return 0
+		fi
+		if [[ "$GH_MALFORMED_MERGE_SUMMARY_ONLY" -eq 1 ]]; then
+			printf '1\n'
+			return 0
+		fi
 		printf '%s\n' "$GH_EXISTING_MERGE_SUMMARY_COUNT"
 		return 0
 	fi
@@ -430,12 +440,13 @@ else
 fi
 
 # =============================================================================
-# Test 4: _post_merge_summary idempotency — skip when comment already exists
-# GH_EXISTING_MERGE_SUMMARY_COUNT=1 simulates an existing MERGE_SUMMARY comment.
+# Test 4: _post_merge_summary idempotency — skip when canonical comment already exists
+# GH_EXISTING_MERGE_SUMMARY_COUNT=1 simulates an existing <!-- MERGE_SUMMARY --> comment.
 # Expected: gh_pr_comment NOT called, returns 0.
 # =============================================================================
 : >"$STUB_LOG"
 GH_EXISTING_MERGE_SUMMARY_COUNT=1
+GH_MALFORMED_MERGE_SUMMARY_ONLY=0
 
 idem_rc=0
 _post_merge_summary "999" "owner/repo" "42" "impl" "file.sh" "shellcheck" "none" || idem_rc=$?
@@ -462,12 +473,40 @@ else
 fi
 
 # =============================================================================
+# Test 4a: _post_merge_summary ignores malformed plain-text MERGE_SUMMARY comments
+# GH_MALFORMED_MERGE_SUMMARY_ONLY=1 simulates a comment containing the loose
+# MERGE_SUMMARY text but not the canonical <!-- MERGE_SUMMARY --> marker.
+# Expected: gh_pr_comment IS called so a canonical comment is posted.
+# =============================================================================
+: >"$STUB_LOG"
+GH_EXISTING_MERGE_SUMMARY_COUNT=0
+GH_MALFORMED_MERGE_SUMMARY_ONLY=1
+
+malformed_rc=0
+_post_merge_summary "999" "owner/repo" "42" "impl" "file.sh" "shellcheck" "none" || malformed_rc=$?
+
+if [[ "$malformed_rc" -eq 0 ]]; then
+	pass "malformed marker: _post_merge_summary returns 0 when only plain-text MERGE_SUMMARY exists"
+else
+	fail "malformed marker: _post_merge_summary returns 0 when only plain-text MERGE_SUMMARY exists" \
+		"got exit $malformed_rc"
+fi
+
+if grep -q "gh_pr_comment" "$STUB_LOG" 2>/dev/null; then
+	pass "malformed marker: gh_pr_comment IS called to post canonical MERGE_SUMMARY"
+else
+	fail "malformed marker: gh_pr_comment IS called to post canonical MERGE_SUMMARY" \
+		"gh_pr_comment was NOT called; stub log: $(cat "$STUB_LOG" 2>/dev/null)"
+fi
+
+# =============================================================================
 # Test 5: _post_merge_summary first post — no existing comment
 # GH_EXISTING_MERGE_SUMMARY_COUNT=0 simulates no existing MERGE_SUMMARY comment.
 # Expected: gh_pr_comment IS called, returns 0.
 # =============================================================================
 : >"$STUB_LOG"
 GH_EXISTING_MERGE_SUMMARY_COUNT=0
+GH_MALFORMED_MERGE_SUMMARY_ONLY=0
 
 first_post_rc=0
 _post_merge_summary "999" "owner/repo" "42" "impl" "file.sh" "shellcheck" "none" || first_post_rc=$?
