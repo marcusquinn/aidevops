@@ -116,7 +116,7 @@ cmd_commit_and_pr() {
 	local base_branch="" base_ref=""
 	base_branch=$(_resolve_remote_default_branch origin) || return 1
 	base_ref="origin/${base_branch}"
-	files_changed=$(git diff --name-only "${base_ref}..HEAD" 2>/dev/null | tr '\n' ', ' | sed 's/,$//' || echo "")
+	files_changed=$(git diff --name-only "${base_ref}..HEAD" 2>/dev/null | tr '\n' ',' | sed 's/,$//; s/,/, /g' || echo "")
 
 	# t2242: Determine closing keyword — auto-swap Resolves to For when linked
 	# issue has parent-task label, unless --allow-parent-close overrides.
