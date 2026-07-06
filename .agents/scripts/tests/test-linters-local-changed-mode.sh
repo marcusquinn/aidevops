@@ -134,7 +134,7 @@ test_changed_mode_gate_set() {
 	LINTERS_LOCAL_GATES_SKIPPED=""
 	LINTERS_LOCAL_GATES_DELEGATED=""
 
-	_run_gate_checks >/tmp/test-linters-local-changed-mode.out 2>&1
+	_run_gate_checks >/dev/null
 
 	assert_called "git-diff-check"
 	assert_called "secretlint"

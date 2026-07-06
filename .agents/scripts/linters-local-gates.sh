@@ -284,7 +284,7 @@ check_targeted_tests() {
 	local exit_code=0
 	if printf '%s\n' "$changed_files" | grep -Eq '^\.agents/scripts/linters-local(-analysis|-gates|-validators)?\.sh$|^\.agents/scripts/tests/test-linters-local'; then
 		bash .agents/scripts/tests/test-linters-local-complexity-gates.sh || exit_code=1
-		if [[ -x .agents/scripts/tests/test-linters-local-changed-mode.sh ]]; then
+		if [[ -f .agents/scripts/tests/test-linters-local-changed-mode.sh ]]; then
 			bash .agents/scripts/tests/test-linters-local-changed-mode.sh || exit_code=1
 		fi
 	else
