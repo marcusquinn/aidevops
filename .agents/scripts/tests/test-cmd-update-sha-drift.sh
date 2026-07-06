@@ -59,6 +59,7 @@ print_result() {
 
 AIDEVOPS_SH="$WORKTREE_ROOT/aidevops.sh"
 AUTO_UPDATE_SH="$WORKTREE_ROOT/.agents/scripts/auto-update-helper.sh"
+UPDATE_CHECK_SH="$WORKTREE_ROOT/.agents/scripts/aidevops-update-check.sh"
 
 # Test 1: aidevops.sh cmd_update references .deployed-sha in the VERSION-match branch
 if grep -q '\.deployed-sha' "$AIDEVOPS_SH" &&
@@ -76,6 +77,15 @@ if grep -q '\.agents/scripts/' "$AIDEVOPS_SH" &&
 else
 	print_result "aidevops.sh filters for framework code paths" 1 \
 		"(expected .agents/scripts/ case and has_code_drift variable)"
+fi
+
+# Test 2b: aidevops.sh uses the AI-session setup scope for update redeploys.
+if grep -q -- '--stage ai-session' "$AIDEVOPS_SH" &&
+	grep -q '_run_update_setup' "$AIDEVOPS_SH"; then
+	print_result "aidevops.sh update uses incremental setup scope" 0
+else
+	print_result "aidevops.sh update uses incremental setup scope" 1 \
+		"(expected _run_update_setup and --stage ai-session)"
 fi
 
 # Test 3: auto-update-helper.sh no longer uses single-sentinel SHA-256 check
@@ -104,6 +114,24 @@ if grep -q '\.agents/scripts/' "$AUTO_UPDATE_SH" &&
 else
 	print_result "auto-update-helper.sh filters for framework code paths" 1 \
 		"(expected .agents/scripts/ case and drift filter)"
+fi
+
+# Test 5b: session-start update checks use the AI-session incremental setup scope.
+if grep -q -- '--stage ai-session' "$UPDATE_CHECK_SH" &&
+	grep -q -- '--non-interactive' "$UPDATE_CHECK_SH"; then
+	print_result "update-check script drift uses incremental setup with full fallback" 0
+else
+	print_result "update-check script drift uses incremental setup with full fallback" 1 \
+		"(expected --stage ai-session and --non-interactive fallback)"
+fi
+
+# Test 5c: auto-update helper uses the AI-session incremental setup helper.
+if grep -q '_run_setup_ai_session_with_fallback' "$AUTO_UPDATE_SH" &&
+	grep -q -- '--stage ai-session' "$AUTO_UPDATE_SH"; then
+	print_result "auto-update helper uses incremental setup helper" 0
+else
+	print_result "auto-update helper uses incremental setup helper" 1 \
+		"(expected _run_setup_ai_session_with_fallback and --stage ai-session)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -212,7 +240,7 @@ run_cmd_update_stamp_branch() {
 					has_code_drift=1
 				fi
 				if [[ "$has_code_drift" -eq 1 ]]; then
-					bash "$INSTALL_DIR/setup.sh" --non-interactive >/dev/null 2>&1
+					bash "$INSTALL_DIR/setup.sh" --stage ai-session >/dev/null 2>&1
 				fi
 			fi
 		fi

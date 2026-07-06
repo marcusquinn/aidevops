@@ -206,6 +206,16 @@ source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-update-lib.sh"
 # shellcheck disable=SC1091
 source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-upgrade-planning-lib.sh"
 
+_run_update_setup() {
+	local setup_script="${INSTALL_DIR}/setup.sh"
+	if [[ ! -f "$setup_script" ]]; then
+		print_error "setup.sh not found at $setup_script"
+		return 1
+	fi
+	bash "$setup_script" --stage ai-session
+	return $?
+}
+
 # Update/upgrade command
 cmd_update() {
 	local skip_project_sync=false
@@ -243,8 +253,8 @@ cmd_update() {
 			deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
 			if [[ "$repo_version" != "$deployed_version" ]]; then
 				print_warning "Deployed agents ($deployed_version) don't match repo ($repo_version)"
-				print_info "Re-running setup to sync agents..."
-				bash "$INSTALL_DIR/setup.sh" --non-interactive
+				print_info "Re-running incremental setup to sync agents..."
+				_run_update_setup
 			else
 				# t2706: VERSION matches but .deployed-sha may lag HEAD when
 				# fixes land between releases. Detect and redeploy on framework
@@ -267,8 +277,8 @@ cmd_update() {
 						fi
 						if [[ "$has_code_drift" -eq 1 ]]; then
 							print_warning "Deployed scripts drifted (${deployed_sha:0:7}→${local_hash:0:7})"
-							print_info "Re-running setup to deploy latest scripts..."
-							bash "$INSTALL_DIR/setup.sh" --non-interactive
+							print_info "Re-running incremental setup to deploy latest scripts..."
+							_run_update_setup
 						fi
 						# GH#21735: workflow templates can change between
 						# releases without triggering has_code_drift (templates
@@ -313,9 +323,9 @@ cmd_update() {
 			# Verify supply chain integrity before applying changes
 			_update_verify_signature
 			echo ""
-			print_info "Running setup to apply changes..."
+			print_info "Running incremental setup to apply changes (falls back to full setup if needed)..."
 			local setup_exit=0
-			bash "$INSTALL_DIR/setup.sh" --non-interactive || setup_exit=$?
+			_run_update_setup || setup_exit=$?
 			git checkout -- . 2>/dev/null || true
 			local repo_version deployed_version
 			repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
@@ -770,6 +780,7 @@ _cmd_setup_help() {
 	printf '%s\n' "  tabby     Sync Tabby terminal profiles only"
 	printf '%s\n' "  pulse     Install/refresh the pulse scheduler only"
 	printf '%s\n' "  gui-desktop  Install native macOS aidevops.app only"
+	printf '%s\n' "  ai-session  Apply changed deploy stages; fall back to full setup if needed"
 	printf '%s\n' "  full      Run ./setup.sh --non-interactive"
 	return 0
 }
@@ -830,7 +841,7 @@ cmd_setup() {
 _help_commands() {
 	echo "Commands:"
 	echo "  init [features]    Initialize aidevops in current project"
-	echo "  setup --scope <s>  Run scoped setup/deploy (opencode, agents, hooks, tabby, pulse, gui-desktop, full)"
+	echo "  setup --scope <s>  Run scoped setup/deploy (opencode, agents, hooks, tabby, pulse, gui-desktop, ai-session, full)"
 	echo "  init-routines      Scaffold private routines repo (--org <name> | --local)"
 	echo "  upgrade-planning   Upgrade TODO.md/PLANS.md to latest templates"
 	echo "  features           List available features for init"

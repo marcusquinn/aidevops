@@ -598,8 +598,9 @@ _check_hotfix_available() {
 # -----------------------------------------------------------------------------
 # _check_script_drift: detect SHA drift between deployed agents and canonical
 # repo HEAD. Triggers a silent background redeploy when framework code files
-# (scripts/, agents/, workflows/, prompts/, hooks/) have changed since the last
-# deploy. Doc-only drift (reference/, templates/, todo/, *.md) is skipped.
+# (scripts/, agents/, workflows/, prompts/, hooks/, setup.sh, aidevops.sh, VERSION)
+# have changed since the last deploy. Doc-only drift (reference/, templates/,
+# todo/, *.md) is skipped.
 # t2156: automating the manual "cp + restart pulse" workaround that was needed
 # after 3bbe31f36 merged but the production pulse kept using stale code for 90+
 # minutes — see GH#19432–19443 blast radius.
@@ -642,7 +643,7 @@ _check_script_drift() {
 	local has_code_drift=0
 	while IFS= read -r filepath; do
 		case "$filepath" in
-		.agents/scripts/* | .agents/agents/* | .agents/workflows/* | .agents/prompts/* | .agents/hooks/*)
+		.agents/scripts/* | .agents/agents/* | .agents/workflows/* | .agents/prompts/* | .agents/hooks/* | setup.sh | aidevops.sh | VERSION)
 			has_code_drift=1
 			break
 			;;
@@ -655,18 +656,18 @@ _check_script_drift() {
 	fi
 
 	# Framework code drift detected.
-	# setup.sh --non-interactive deploys, writes .deployed-sha, and restarts the
-	# pulse — no manual stamp update or pulse restart needed here.
+	# setup.sh --stage ai-session applies changed deploy stages first; the setup
+	# mode falls back to full non-interactive setup when it cannot prove safety.
 	local setup_script="$framework_repo/setup.sh"
 	if [[ ! -x "$setup_script" ]]; then
-		echo "Script drift detected (${deployed_sha:0:7}→${current_sha:0:7}) but setup.sh not executable — run: cd ~/Git/aidevops && ./setup.sh --non-interactive"
+		echo "Script drift detected (${deployed_sha:0:7}→${current_sha:0:7}) but setup.sh not executable — run: cd ~/Git/aidevops && ./setup.sh --stage ai-session"
 		return 0
 	fi
 
 	echo "Script drift detected (${deployed_sha:0:7}→${current_sha:0:7}). Redeploying in background..."
 	# t2729 (Option B): redirect at subshell level so the background process
 	# never holds the parent's stdout FD open for synchronous callers.
-	(bash "$setup_script" --non-interactive) >/dev/null 2>&1 &
+	(bash "$setup_script" --stage ai-session || bash "$setup_script" --non-interactive) >/dev/null 2>&1 &
 
 	return 0
 }

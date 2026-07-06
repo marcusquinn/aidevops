@@ -248,6 +248,16 @@ update_state() {
 	return 0
 }
 
+_run_setup_ai_session_with_fallback() {
+	local setup_script="${INSTALL_DIR}/setup.sh"
+	if bash "$setup_script" --stage ai-session >>"$LOG_FILE" 2>&1; then
+		return 0
+	fi
+	log_warn "AI-session incremental setup failed or is unavailable; retrying full setup"
+	bash "$setup_script" --non-interactive >>"$LOG_FILE" 2>&1
+	return $?
+}
+
 #######################################
 # Handle stale deployed agents when repo version matches remote.
 # Checks VERSION mismatch and sentinel script hash drift; re-deploys if needed.
@@ -263,7 +273,7 @@ _cmd_check_stale_agent_redeploy() {
 	deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
 	if [[ "$current" != "$deployed_version" ]]; then
 		log_warn "Deployed agents stale ($deployed_version), re-deploying..."
-		if bash "$INSTALL_DIR/setup.sh" --non-interactive >>"$LOG_FILE" 2>&1; then
+		if _run_setup_ai_session_with_fallback; then
 			local redeployed_version
 			redeployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
 			if [[ "$current" == "$redeployed_version" ]]; then
@@ -307,7 +317,7 @@ _cmd_check_stale_agent_redeploy() {
 			fi
 			if [[ "$has_code_drift" -eq 1 ]]; then
 				log_warn "Script drift detected (${deployed_sha:0:7}→${head_sha:0:7} at v$current) — re-deploying agents..."
-				if bash "$INSTALL_DIR/setup.sh" --non-interactive >>"$LOG_FILE" 2>&1; then
+				if _run_setup_ai_session_with_fallback; then
 					log_info "Agents re-deployed after script drift (${deployed_sha:0:7}→${head_sha:0:7})"
 				else
 					log_error "setup.sh failed during script-drift re-deploy (exit code: $?)"
@@ -403,10 +413,11 @@ _cmd_check_perform_update() {
 		return 1
 	fi
 
-	# Run setup.sh non-interactively to deploy agents
-	log_info "Running setup.sh --non-interactive..."
+	# Run setup with an incremental first pass; setup.sh falls back to full setup
+	# when changed setup logic cannot be applied safely.
+	log_info "Running setup.sh --stage ai-session..."
 	local _setup_exit=0
-	bash "$INSTALL_DIR/setup.sh" --non-interactive >>"$LOG_FILE" 2>&1 || _setup_exit=$?
+	_run_setup_ai_session_with_fallback || _setup_exit=$?
 
 	# GH#21060 / t2911: Log slowest 5 stages from this run so that
 	# "tail -50 ~/.aidevops/logs/auto-update.log | grep Slowest" is

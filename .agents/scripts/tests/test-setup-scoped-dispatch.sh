@@ -92,14 +92,17 @@ test_setup_stage_contract() {
 	assert_contains "tabby scope maps to setup_tabby" "$text" "tabby | \"\$SETUP_STAGE_TABBY\") printf '%s' \"\$SETUP_STAGE_TABBY\""
 	assert_contains "pulse scope maps to setup_supervisor_pulse" "$text" "pulse | \"\$SETUP_STAGE_PULSE\") printf '%s' \"\$SETUP_STAGE_PULSE\""
 	assert_contains "gui-desktop scope maps to native app installer" "$text" "gui-desktop | gui | app | \"\$SETUP_STAGE_GUI_DESKTOP\") printf '%s' \"\$SETUP_STAGE_GUI_DESKTOP\""
+	assert_contains "ai-session scope maps to incremental setup" "$text" "ai-session | ai | \"\$SETUP_STAGE_AI_SESSION\") printf '%s' \"\$SETUP_STAGE_AI_SESSION\""
+	assert_contains "ai-session scoped stage falls back to full setup" "$text" "AI-session incremental setup unavailable or failed; falling back to full setup"
+	assert_contains "ai-session verifies deployed sha" "$text" "_setup_ai_session_verify_deploy \"\$current_sha\""
 	assert_contains "gui desktop default path is opt-in gated" "$text" "_time_step \"setup_gui_desktop_app_opt_in\" _setup_offer_gui_desktop_app"
 	assert_contains "gui desktop env flag enables install" "$text" "AIDEVOPS_GUI_DESKTOP_INSTALL"
 	assert_contains "gui desktop app dir can be configured" "$text" "AIDEVOPS_GUI_DESKTOP_APP_DIR"
 	assert_contains "existing gui desktop app refreshes during update" "$text" "Refreshing existing macOS"
 	assert_contains "gui desktop scoped stage runs installer" "$text" "_time_step \"\$SETUP_STAGE_GUI_DESKTOP\" setup_gui_desktop_app"
-	assert_contains "agents scoped stage registers opencode plugin" "$text" "_time_step \"setup_opencode_plugins\" setup_opencode_plugins"
-	assert_occurrence_count "scoped and noninteractive setup register opencode plugin" "$text" \
-		"_time_step \"setup_opencode_plugins\" setup_opencode_plugins" 2
+	assert_contains "agents scoped stage registers opencode plugin" "$text" "_time_step \"\$SETUP_STAGE_OPENCODE_PLUGINS\" setup_opencode_plugins"
+	assert_occurrence_count "scoped, ai-session, and noninteractive setup register opencode plugin" "$text" \
+		"_time_step \"\$SETUP_STAGE_OPENCODE_PLUGINS\" setup_opencode_plugins" 3
 	assert_contains "unknown stages print actionable help" "$text" "Unknown setup stage/scope"
 	return 0
 }
@@ -114,6 +117,7 @@ test_cli_scope_contract() {
 	assert_contains "aidevops exposes setup command" "$text" "setup) cmd_setup \"\$@\" ;;"
 	assert_contains "aidevops setup requires scope" "$text" "Usage: aidevops setup --scope <scope>"
 	assert_contains "aidevops setup lists gui-desktop scope" "$text" "gui-desktop  Install native macOS aidevops.app only"
+	assert_contains "aidevops setup lists ai-session scope" "$text" "ai-session  Apply changed deploy stages; fall back to full setup if needed"
 	assert_contains "aidevops setup passes scope to setup.sh" "$text" "bash \"\$setup_script\" --stage \"\$scope\""
 	assert_contains "aidevops setup full preserves full setup" "$text" "bash \"\$setup_script\" --non-interactive"
 	return 0

@@ -427,7 +427,7 @@ HOW IT WORKS:
     3. If newer version found:
        a. Acquires lock (prevents concurrent updates)
        b. Runs git pull --ff-only
-       c. Runs setup.sh --non-interactive to deploy agents
+       c. Runs setup.sh --stage ai-session (full setup fallback) to deploy agents
     4. Safe to run while AI sessions are active
     5. Skips if another update is already in progress
     6. Runs daily skill freshness check (24h gate):
