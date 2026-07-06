@@ -2314,8 +2314,8 @@ t165,Provider-agnostic task claiming via TODO.md,marcusquinn,orchestration archi
   - [x] t008.2 MCP registration ~2h #auto-dispatch blocked-by:t008.1 ref:GH#1095 assignee:marcusquinn completed:2026-02-12 pr:#1149
   - [x] t008.3 Quality hooks (pre-commit) ~3h #auto-dispatch blocked-by:t008.1 ref:GH#1096 assignee:marcusquinn completed:2026-02-11 pr:#1150
   - [x] t008.4 oh-my-opencode compatibility ~2h #auto-dispatch blocked-by:t008.1,t008.2,t008.3 ref:GH#1097 assignee:marcusquinn completed:2026-02-11 pr:#1157
-- [x] t004 Add Ahrefs MCP server integration #seo ~4h (ai:2h test:1h read:1h) ref:GH#4 logged:2025-12-20 completed:2026-01-25 verified:2026-01-25
-- [x] t005 Implement multi-tenant credential storage #security ~1.5d (ai:8h test:4h read:2h) ref:GH#5 logged:2025-12-20 completed:2026-01-24 pr:#227
+- [x] t004 Add Ahrefs MCP server integration #seo ~4h (ai:2h test:1h read:1h) ref:GH#14 logged:2025-12-20 completed:2026-01-25 verified:2026-01-25
+- [x] t005 Implement multi-tenant credential storage #security ~1.5d (ai:8h test:4h read:2h) ref:GH#15 logged:2025-12-20 completed:2026-01-24 pr:#227
 - [x] t070 Backlink & Expired Domain Checker subagent #seo #domains ~15m (ai:10m test:3m read:2m) logged:2026-01-24 completed:2026-02-07 verified:2026-02-07
   - Notes: seo/backlink-checker.md created (106 lines). Covers Ahrefs/DataForSEO backlink APIs, WHOIS expired domain detection, reclamation workflow, and integration with existing SEO subagents.
 - [x] t071 Voice AI models for speech generation and transcription #tools #voice #ai ~30m (ai:20m test:5m read:5m) ref:GH#502 logged:2026-01-24 related:t027 completed:2026-02-08 verified:2026-02-08 PR #613 merged pr:#613
@@ -2328,7 +2328,7 @@ t165,Provider-agnostic task claiming via TODO.md,marcusquinn,orchestration archi
   - Notes: Created document-extraction-helper.sh (779 lines), extraction-workflow.md, updated document-extraction.md and subagent-index.toon. Privacy-preserving extraction with Docling, ExtractThinker, Presidio. Supports local processing via Ollama.
   - [x] t069 Fix toon-helper.sh validate command - positional args not passed to case statement #bugfix ~15m actual:10m (ai:10m test:5m) logged:2026-01-24 completed:2026-01-25 verified:2026-01-25 verified:2026-01-25
   - Notes: Fixed - validate command now correctly receives input_file via $arg2 from case statement. Verified code at lines 437-442 properly passes arguments.
-- [x] t006 Add Playwright MCP auto-setup to setup.sh #browser ~1d actual:15m (ai:0.5d test:0.5d) ref:GH#6 logged:2025-12-20 started:2026-01-22T01:30Z completed:2026-01-22 verified:2026-01-22 model:sonnet
+- [x] t006 Add Playwright MCP auto-setup to setup.sh #browser ~1d actual:15m (ai:0.5d test:0.5d) ref:GH#16 logged:2025-12-20 started:2026-01-22T01:30Z completed:2026-01-22 verified:2026-01-22 model:sonnet
   - Notes: Added Playwright MCP installation to setup_browser_tools() in setup.sh. Checks for existing installation, prompts user, installs browsers (chromium, firefox, webkit) via `npx playwright install`.
 - [x] t007 Create MCP server for QuickFile accounting API #accounting ~2h (ai:1h test:40m read:20m) ref:GH#7 pr:#585 logged:2025-12-20 completed:2026-02-08 verified:2026-02-08 PR #585 merged
 - [x] t012 OCR Invoice/Receipt Extraction Pipeline #plan → [todo/PLANS.md#ocr-invoicereceipt-extraction-pipeline] ~3h (ai:1.5h test:1h read:30m) ref:GH#506 assignee:marcusquinn pr:#1148 logged:2025-12-21 completed:2026-02-11
@@ -2769,9 +2769,9 @@ t165,Provider-agnostic task claiming via TODO.md,marcusquinn,orchestration archi
   - Notes: All 4 phases complete. 1) Disabled built-in build/plan agents. 2) Set Plan+ as default_agent. 3) Added granular bash permissions for file discovery (git ls-files, fd, rg --files). 4) Updated generate-opencode-agents.sh. PR #123 merged.
 - [x] t065 Fix postflight warnings: SonarCloud critical issues + OpenCode Agent workflow #bugfix #quality ~2h actual:30m logged:2026-01-17 started:2026-01-18T18:00Z completed:2026-01-18 verified:2026-01-18
   - Notes: SonarCloud quality gate was already OK. Fixed OpenCode Agent workflow failing on `pull_request_review_comment` events due to `context.payload.issue` being undefined. Now uses `context.payload.pull_request` as fallback and appropriate API methods for PR review comments. PR #121 merged.
-- [x] t001 Add TODO.md and planning workflow #workflow ~2h actual:1.5h ref:GH#1 logged:2025-12-18 completed:2025-12-20 verified:2026-02-11
-- [x] t002 Add shadcn/ui MCP support #tools ~1h actual:45m ref:GH#2 logged:2025-12-18 completed:2025-12-18 verified:2025-12-18
-- [x] t003 Add oh-my-opencode integration #tools ~30m actual:25m ref:GH#3 logged:2025-12-18 completed:2025-12-18 verified:2025-12-18
+- [x] t001 Add TODO.md and planning workflow #workflow ~2h actual:1.5h ref:GH#10 logged:2025-12-18 completed:2025-12-20 verified:2026-02-11
+- [x] t002 Add shadcn/ui MCP support #tools ~1h actual:45m ref:GH#11 logged:2025-12-18 completed:2025-12-18 verified:2025-12-18
+- [x] t003 Add oh-my-opencode integration #tools ~30m actual:25m ref:GH#12 logged:2025-12-18 completed:2025-12-18 verified:2025-12-18
 - [x] t011 Demote wordpress.md from main agent to subagent #architecture ~1h actual:45m ref:GH#11 logged:2025-12-21 started:2025-12-22T04:10Z completed:2025-12-22 verified:2025-12-22
 - [x] t022 Move wordpress from root to tools/wordpress #refactor ~30m actual:25m logged:2025-12-22 started:2025-12-22T05:15Z completed:2025-12-22 verified:2025-12-22
 - [x] t019 Beads Integration for aidevops #plan #beads ~2d actual:1.5d logged:2025-12-21 started:2025-12-21T16:00Z completed:2025-12-22 verified:2025-12-22
