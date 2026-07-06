@@ -242,6 +242,42 @@ test_closed_issue_dirty_worktree_stashes_and_preserves_branch() {
 	return 0
 }
 
+test_terminal_worktree_bypasses_stale_owner_signal() {
+	local repo_dir="${TEST_ROOT}/repo-terminal-owner"
+	local wt_path="${TEST_ROOT}/worker-wt-terminal-owner"
+	local branch_name="feature/auto-20260507-190808-gh23083"
+	setup_repo_with_worker_worktree "$repo_dir" "$wt_path" "$branch_name" || return 1
+	source_pulse_cleanup_with_stubs || return 1
+	is_worktree_owned_by_others() { return 0; }
+	gh() {
+		local command_name="${1:-}"
+		local subcommand_name="${2:-}"
+		local target_number="${3:-}"
+		if [[ "$command_name" == "issue" && "$subcommand_name" == "view" && "$target_number" == "23083" ]]; then
+			printf '%s\n' "CLOSED"
+			return 0
+		fi
+		return 1
+	}
+
+	local now_epoch
+	now_epoch=$(date +%s)
+	AIDEVOPS_HEADLESS_METRICS_FILE="${TEST_ROOT}/missing-terminal-owner-metrics.jsonl"
+	export AIDEVOPS_HEADLESS_METRICS_FILE
+
+	_cleanup_single_worktree "$repo_dir" "$wt_path" "$branch_name" "$now_epoch" "testowner/testrepo" "main" >/dev/null 2>&1
+	local cleanup_rc=$?
+
+	local rc=0
+	[[ "$cleanup_rc" -eq 0 ]] || rc=1
+	[[ ! -d "$wt_path" ]] || rc=1
+	grep -q 'worktree-removed.*local-commits-branch-preserved.*mode=branch-preserved' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	grep -q 'recovery_path=branch-preserved-closed-issue' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "terminal worktree bypasses stale owner signal" "$rc" \
+		"cleanup_rc=$cleanup_rc log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
+	return 0
+}
+
 test_fix_numeric_closed_issue_worktree_archives() {
 	local repo_dir="${TEST_ROOT}/repo-fix-numeric-closed-issue"
 	local wt_path="${TEST_ROOT}/worker-wt-fix-numeric-closed-issue"
@@ -503,6 +539,7 @@ test_closed_issue_local_commit_no_pr_removes_before_age_threshold
 test_closed_pr_reference_local_commit_no_pr_removes_before_age_threshold
 test_merged_branch_pr_removes_before_age_threshold
 test_closed_issue_dirty_worktree_stashes_and_preserves_branch
+test_terminal_worktree_bypasses_stale_owner_signal
 test_fix_numeric_closed_issue_worktree_archives
 test_stale_local_commit_no_pr_removes_worktree_preserves_branch
 test_no_newline_pr_output_blocks_local_commit_cleanup

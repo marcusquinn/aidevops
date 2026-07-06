@@ -120,6 +120,35 @@ test_protected_pass_set_blocks_branch_merged_removal() {
 	return 0
 }
 
+test_terminal_pr_proof_bypasses_protected_pass_skip() {
+	local repo_path="${TEST_ROOT}/repo-terminal-protected"
+	local wt_path="${TEST_ROOT}/wt-terminal-protected"
+	local log_file="${TEST_ROOT}/terminal-protected-cleanup.log"
+	local branch="feature/gh-99032-terminal-protected"
+	local rc=0
+	export AIDEVOPS_CLEANUP_LOG="$log_file"
+	setup_repo "$repo_path" || rc=1
+	git -C "$repo_path" checkout -q -b "$branch" || rc=1
+	printf 'terminal\n' >"$repo_path/terminal.txt" || rc=1
+	git -C "$repo_path" add terminal.txt || rc=1
+	git -C "$repo_path" commit -q -m "terminal branch" || rc=1
+	git -C "$repo_path" checkout -q main || rc=1
+	git -C "$repo_path" worktree add -q "$wt_path" "$branch" || rc=1
+
+	(
+		cd "$repo_path" || exit 1
+		source_clean_lib_with_stubs || exit 1
+		_clean_protected_mark "$wt_path"
+		_clean_remove_merged "main" "$repo_path" "false" "$branch" "" "true" "" >/dev/null
+	) || rc=1
+
+	[[ ! -d "$wt_path" ]] || rc=1
+	assert_file_contains "$log_file" "worktree-removed.*branch-merged.*mode=permanent.*merge_proof_result=github-merged-pr" || rc=1
+	print_result "terminal PR proof bypasses protected pass skip" "$rc" \
+		"Expected terminal PR proof to remove protected-pass worktree. Log: $(cat "$log_file" 2>/dev/null)"
+	return 0
+}
+
 test_squash_merged_pr_without_ancestor_proof_classifies() {
 	local repo_path="${TEST_ROOT}/repo-unproven"
 	local wt_path="${TEST_ROOT}/wt-unproven"
@@ -521,6 +550,7 @@ test_closed_issue_dirty_unproven_branch_stashes_and_preserves_branch() {
 
 echo "=== test-worktree-cleanup-branch-merged-owned-skip.sh ==="
 test_protected_pass_set_blocks_branch_merged_removal
+test_terminal_pr_proof_bypasses_protected_pass_skip
 test_squash_merged_pr_without_ancestor_proof_classifies
 test_prefetched_merged_pr_metadata_skips_exact_head_lookup
 test_merged_pr_list_passes_explicit_repo_slug

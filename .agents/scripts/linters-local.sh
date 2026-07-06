@@ -30,6 +30,11 @@
 # For remote auditing (CodeRabbit, Codacy, SonarCloud), use:
 #   /code-audit-remote or code-audit-helper.sh
 #
+# Execution flags:
+#   --changed           Prefer changed-file scope where supported (safety gates still run)
+#   --no-cache          Do not reuse broad/advisory gate cache entries
+#   --full              Release-boundary path: run every gate without cache/time-budget downgrade
+#   --strict            Make ratchet failures and broad-gate timeouts blocking
 # Ratchet flags:
 #   --update-baseline   Re-count all patterns and write new ratchets.json baseline
 #   --init-baseline     Same as --update-baseline (alias for first-time setup)
@@ -171,13 +176,28 @@ _collect_changed_shell_files() {
 main() {
 	# Parse ratchet flags before running checks
 	local arg
+	export LINTERS_LOCAL_CACHE_ENABLED=true
+	export LINTERS_LOCAL_FULL=false
+	export LINTERS_LOCAL_CHANGED=false
 	for arg in "$@"; do
 		case "$arg" in
+		--changed)
+			export LINTERS_LOCAL_CHANGED=true
+			;;
+		--no-cache)
+			export LINTERS_LOCAL_CACHE_ENABLED=false
+			;;
+		--full)
+			export LINTERS_LOCAL_FULL=true
+			export LINTERS_LOCAL_CACHE_ENABLED=false
+			export LINTERS_LOCAL_STRICT_BROAD_GATES=true
+			;;
 		--update-baseline | --init-baseline)
 			export RATCHET_UPDATE_BASELINE=true
 			;;
 		--strict)
 			export RATCHET_STRICT=true
+			export LINTERS_LOCAL_STRICT_BROAD_GATES=true
 			;;
 		--dry-run)
 			export RATCHET_DRY_RUN=true

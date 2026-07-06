@@ -1802,9 +1802,9 @@
       "pr": "pending"
     },
     ".agents/reference/worker-diagnostics.md": {
-      "at": "2026-07-05T23:12:23Z",
-      "hash": "4315fdd8beabd7e4adbe133b846a3c8fba47a5c3",
-      "passes": 24,
+      "at": "2026-07-06T01:40:33Z",
+      "hash": "f21d722f5efd34459a427f69d3ef8a46cce6a60f",
+      "passes": 25,
       "pr": 17659
     },
     ".agents/research.md": {
@@ -2298,9 +2298,9 @@
       "pr": 13021
     },
     ".agents/scripts/headless-runtime-helper.sh": {
-      "at": "2026-07-02T02:57:38Z",
-      "hash": "754b5faf78974602ef7984bdc73f095da79f787f",
-      "passes": 61,
+      "at": "2026-07-06T01:40:50Z",
+      "hash": "faad97f56e1f6b2384a04ce59b43a2133c43aa3b",
+      "passes": 62,
       "pr": 15086
     },
     ".agents/scripts/headless-runtime-lib.sh": {
@@ -2328,9 +2328,9 @@
       "pr": 16471
     },
     ".agents/scripts/linters-local.sh": {
-      "at": "2026-07-02T02:57:42Z",
-      "hash": "2d876cd83d403c02690b845afe34b7f0074c55bd",
-      "passes": 12,
+      "at": "2026-07-06T01:40:52Z",
+      "hash": "90a18f10456f943f8d718b4378c3989e825b8133",
+      "passes": 13,
       "pr": 17036
     },
     ".agents/scripts/matrix-dispatch-helper.sh": {
@@ -2400,9 +2400,9 @@
       "pr": 18657
     },
     ".agents/scripts/pulse-cleanup.sh": {
-      "at": "2026-07-05T18:35:29Z",
-      "hash": "5772f77126f6a733fdbda3a4d949ea889eb4d60b",
-      "passes": 34,
+      "at": "2026-07-06T01:40:55Z",
+      "hash": "1c7fb8b18dc6bed0dd74d8dab3d72a95c32621f8",
+      "passes": 35,
       "pr": 18704
     },
     ".agents/scripts/pulse-dep-graph.sh": {
@@ -7109,9 +7109,9 @@
       "pr": 16675
     },
     ".agents/workflows/brief.md": {
-      "at": "2026-07-02T04:20:21Z",
-      "hash": "c6f89b0c6139d5a98f8ce69da72d5d029f8c45ed",
-      "passes": 11,
+      "at": "2026-07-06T01:52:50Z",
+      "hash": "c4b2a649999a268271a5b064ba67b3933ea767bb",
+      "passes": 12,
       "pr": 18927
     },
     ".agents/workflows/brief/templates.md": {
@@ -7480,21 +7480,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-07-05T23:30:54Z",
-      "hash": "ebd57bee03ea871c8af0d942a25f0e6f7d84e293",
-      "passes": 169,
+      "at": "2026-07-06T01:53:07Z",
+      "hash": "5d6bc2b295fd22b9663f427fdc6a5611d7a77f8c",
+      "passes": 170,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-05T23:30:55Z",
-      "hash": "b49219d0a1454989618421098590c2f16b3b2afa",
-      "passes": 255,
+      "at": "2026-07-06T01:53:08Z",
+      "hash": "362b83eaa6081a22df04dad9cb840773336851c8",
+      "passes": 256,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-05T23:30:55Z",
-      "hash": "13f6db91b4b3ff125f60f6ea94c2e4d262484e4a",
-      "passes": 251,
+      "at": "2026-07-06T01:53:09Z",
+      "hash": "4446f5eacdde82f7e85badc83e8182ae3070c7fa",
+      "passes": 252,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -7858,16 +7858,16 @@
       "passes": 1
     },
     ".agents/scripts/worktree-clean-lib.sh": {
-      "hash": "5edc25ca50050e3314d1204aa999acfb67ce89bb",
-      "at": "2026-06-30T21:44:46Z",
+      "hash": "9648bd514d8ac0b74bf0178b74ff8619a8829008",
+      "at": "2026-07-06T01:41:08Z",
       "pr": 26042,
-      "passes": 1
+      "passes": 2
     },
     ".agents/scripts/pulse-dispatch-lib.sh": {
-      "hash": "a5163d6713152f0dd59bec5ac6f22b0feda7e5ef",
-      "at": "2026-06-30T21:44:46Z",
+      "hash": "88acdb467cb9618889fab9268eb00cf9fd7c9abe",
+      "at": "2026-07-06T01:40:56Z",
       "pr": 26041,
-      "passes": 1
+      "passes": 2
     },
     ".agents/aidevops/cases-plane.md": {
       "hash": "c04dd9d087d38be91374d25310943c94ae664f63",

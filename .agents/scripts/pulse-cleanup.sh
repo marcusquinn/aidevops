@@ -1352,16 +1352,16 @@ _cleanup_single_worktree() {
 		return 1
 	fi
 
-	if _worktree_owner_alive "$wt_path_age" "$wt_branch_age"; then
-		return 1
-	fi
-
 	local repo_name_age
 	repo_name_age=$(basename "$rp_age")
 	local orphan_issue_num=""
 	orphan_issue_num=$(_pc_issue_from_branch "$wt_branch_age" 2>/dev/null || true)
 	if _pc_handle_terminal_worktree_archive "$rp_age" "$wt_path_age" "$wt_branch_age" "$orphan_issue_num" "$commits_ahead" "$dirty_count" "$wt_age_secs" "$repo_name_age" "$repo_slug_age"; then
 		return 0
+	fi
+
+	if _worktree_owner_alive "$wt_path_age" "$wt_branch_age"; then
+		return 1
 	fi
 
 	local reason
@@ -1641,6 +1641,134 @@ _pc_cleanup_orphan_sibling_dirs() {
 }
 
 #######################################
+# Determine whether a worktree path is under a parent directory.
+#
+# Args:
+#   $1 - child path
+#   $2 - parent directory
+# Returns: 0 when child is inside parent, 1 otherwise
+#######################################
+_pc_path_inside_dir() {
+	local child_path="$1"
+	local parent_dir="$2"
+	[[ -n "$child_path" && -n "$parent_dir" ]] || return 1
+	case "$child_path" in
+	"$parent_dir"/*) return 0 ;;
+	esac
+	return 1
+}
+
+#######################################
+# Relocate one registered linked worktree into the central worktree base.
+#
+# Args:
+#   $1 - canonical repo path
+#   $2 - main worktree path
+#   $3 - worktree path to move
+#   $4 - branch name
+#   $5 - central worktree base directory
+# Returns: 0 when moved, 1 when skipped or failed
+#######################################
+_pc_relocate_registered_worktree() {
+	local rp_move="$1"
+	local main_wt_move="$2"
+	local wt_path_move="$3"
+	local wt_branch_move="$4"
+	local central_base="$5"
+
+	[[ -n "$rp_move" && -n "$main_wt_move" && -n "$wt_path_move" && -n "$wt_branch_move" && -n "$central_base" ]] || return 1
+	[[ "$wt_path_move" != "$main_wt_move" ]] || return 1
+	_pc_path_inside_dir "$wt_path_move" "$central_base" && return 1
+
+	local repo_parent_move
+	repo_parent_move=$(dirname "$main_wt_move")
+	_pc_path_inside_dir "$wt_path_move" "$repo_parent_move" || return 1
+	worktree_removal_guard "$wt_path_move" "$_WTAR_PC_CALLER" "centralize-worktree" || return 1
+
+	local target_path=""
+	if declare -F aidevops_generate_worktree_path >/dev/null 2>&1; then
+		target_path=$(aidevops_generate_worktree_path "$main_wt_move" "$wt_branch_move" 2>/dev/null || true)
+	fi
+	if [[ -z "$target_path" ]]; then
+		local repo_name_move="" branch_slug_move=""
+		repo_name_move=$(basename "$main_wt_move")
+		branch_slug_move=$(printf '%s\n' "$wt_branch_move" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+		target_path="${central_base}/${repo_name_move}-${branch_slug_move}"
+	fi
+	[[ -n "$target_path" && "$target_path" != "$wt_path_move" ]] || return 1
+	[[ ! -e "$target_path" ]] || {
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path_move" "centralize-target-exists" "skipped"
+		return 1
+	}
+	mkdir -p "$(dirname "$target_path")" 2>/dev/null || return 1
+
+	if git -C "$rp_move" worktree move "$wt_path_move" "$target_path" >/dev/null 2>&1; then
+		unregister_worktree "$wt_path_move" 2>/dev/null || true
+		log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_PC_CALLER" "$wt_path_move" "centralized-worktree" "moved" "target=central-worktree-base branch=$wt_branch_move"
+		return 0
+	fi
+	log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_PC_CALLER" "$wt_path_move" "centralize-move-failed" "skipped"
+	return 1
+}
+
+#######################################
+# Relocate registered linked worktrees from repo parents into central base.
+#
+# Args:
+#   $1 - repos_json: managed repo registry
+# Outputs: number of worktrees relocated
+# Returns: 0 always
+#######################################
+_pc_relocate_registered_worktrees() {
+	local repos_json="$1"
+	local moved_count=0
+	[[ -f "$repos_json" ]] && command -v jq >/dev/null 2>&1 || { echo 0; return 0; }
+
+	local central_base=""
+	if declare -F aidevops_worktree_base_dir >/dev/null 2>&1; then
+		central_base=$(aidevops_worktree_base_dir 2>/dev/null || true)
+	elif declare -F aidevops_worktree_base_dir_configured >/dev/null 2>&1; then
+		central_base=$(aidevops_worktree_base_dir_configured 2>/dev/null || true)
+		[[ -n "$central_base" ]] && mkdir -p "$central_base" 2>/dev/null || true
+	fi
+	[[ -n "$central_base" && -d "$central_base" ]] || { echo 0; return 0; }
+
+	local repo_paths_move
+	repo_paths_move=$(jq -r '.initialized_repos[] | select((.local_only // false) == false) | .path // ""' "$repos_json" 2>/dev/null || printf '')
+
+	local rp_move
+	while IFS= read -r rp_move; do
+		[[ -z "$rp_move" ]] && continue
+		[[ -d "$rp_move/.git" || -f "$rp_move/.git" ]] || continue
+		local porcelain_move="" main_wt_move="" wt_path_move="" wt_branch_move="" line_move=""
+		porcelain_move=$(git -C "$rp_move" worktree list --porcelain 2>/dev/null || true)
+		[[ -n "$porcelain_move" ]] || continue
+		main_wt_move="${porcelain_move%%$'\n'*}"
+		main_wt_move="${main_wt_move#worktree }"
+		[[ -n "$main_wt_move" ]] || continue
+		wt_path_move=""
+		wt_branch_move=""
+		while IFS= read -r line_move; do
+			if [[ "$line_move" =~ ^worktree\ (.+)$ ]]; then
+				wt_path_move="${BASH_REMATCH[1]}"
+				wt_branch_move=""
+			elif [[ "$line_move" =~ ^branch\ refs/heads/(.+)$ ]]; then
+				wt_branch_move="${BASH_REMATCH[1]}"
+			elif [[ -z "$line_move" ]]; then
+				if _pc_relocate_registered_worktree "$rp_move" "$main_wt_move" "$wt_path_move" "$wt_branch_move" "$central_base"; then
+					moved_count=$((moved_count + 1))
+				fi
+				wt_path_move=""
+				wt_branch_move=""
+			fi
+		done <<<"${porcelain_move}"$'\n'
+	done <<<"$repo_paths_move"
+
+	echo "$moved_count"
+	return 0
+}
+
+#######################################
 # Clean up worktrees for merged/closed PRs and orphaned workers
 # across ALL managed repos.
 #
@@ -1719,7 +1847,16 @@ cleanup_worktrees() {
 		done < <(git -C "$rp_age" worktree list 2>/dev/null)
 	done <<<"$repo_paths_age"
 
-	# Pass 3: filesystem outliers that are no longer present in git worktree
+	# Pass 3: registered linked worktrees accidentally created beside canonical
+	# repos are moved into the central worktree base instead of cluttering the
+	# canonical repo parent.
+	local registered_moved
+	registered_moved=$(_pc_relocate_registered_worktrees "$repos_json")
+	if [[ "$registered_moved" -gt 0 ]]; then
+		echo "[pulse-wrapper] Worktree relocation total: $registered_moved worktree(s) moved to central base" >>"$LOGFILE"
+	fi
+
+	# Pass 4: filesystem outliers that are no longer present in git worktree
 	# metadata. These are moved to a recoverable trash bucket only; standalone
 	# git repos and valid gitfile worktrees are skipped.
 	local orphan_dirs_moved
