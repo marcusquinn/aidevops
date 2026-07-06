@@ -134,6 +134,48 @@ run_case "sudo gh auth recovers token from invoking macOS user session" '
 assert_not_contains "recovered token is not printed" "$LAST_OUTPUT" "mac-user-token"
 
 # shellcheck disable=SC2016  # literal script is evaluated in the child bash.
+run_case "sudo gh auth recovery uses absolute gh binary when sudo path is restricted" '
+	set -uo pipefail
+	export SUDO_USER=alice
+	export HOME=/var/root
+	tmpdir=$(mktemp -d)
+	trap '\''rm -rf "$tmpdir"'\'' EXIT
+	printf '\''#!/usr/bin/env bash\nif [[ "$1 $2" == "auth token" ]]; then printf path-token; exit 0; fi\nexit 1\n'\'' >"$tmpdir/gh"
+	chmod +x "$tmpdir/gh"
+	export PATH="$tmpdir:$PATH"
+	id() {
+		local arg1="${1:-}"
+		local arg2="${2:-}"
+		if [[ "$arg1" == "-u" && -z "$arg2" ]]; then printf "0"; return 0; fi
+		if [[ "$arg1" == "-u" && "$arg2" == "alice" ]]; then printf "501"; return 0; fi
+		return 1
+	}
+	getent() { return 1; }
+	dscl() { printf "NFSHomeDirectory: /Users/alice\n"; return 0; }
+	launchctl() {
+		if [[ "$#" -ge 8 ]]; then
+			shift 8
+			if [[ "${1:-}" == "$tmpdir/gh" && "${2:-}" == "auth" && "${3:-}" == "token" ]]; then
+				"$@"
+				return $?
+			fi
+		fi
+		return 1
+	}
+	sudo() { return 1; }
+	gh() {
+		local arg1="${1:-}"
+		local arg2="${2:-}"
+		if [[ "$arg1" == "auth" && "$arg2" == "status" && "${GH_TOKEN:-}" == "path-token" ]]; then return 0; fi
+		return 1
+	}
+	# shellcheck disable=SC1090
+	source "$APPROVAL_HELPER_UNDER_TEST" >/dev/null 2>&1
+	_require_gh_auth
+' 0
+assert_not_contains "absolute path recovered token is not printed" "$LAST_OUTPUT" "path-token"
+
+# shellcheck disable=SC2016  # literal script is evaluated in the child bash.
 run_case "sudo gh auth failure reports recovery failure without token leakage" '
 	set -uo pipefail
 	export SUDO_USER=alice
