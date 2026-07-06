@@ -58,7 +58,7 @@ Options:
 
 ```bash
 REPO_SLUG="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)"
-if [[ -n "$task_ref" && "$task_ref" != "none" && "$task_ref" != "offline" && -n "$REPO_SLUG" ]]; then
+if [[ -n "${task_ref:-}" && "${task_ref:-}" != "none" && "${task_ref:-}" != "offline" && -n "$REPO_SLUG" ]]; then
   ISSUE_NUM="${task_ref#GH#}"
   WORKER_USER=$(gh api user --jq '.login' 2>/dev/null || whoami)
   gh issue edit "$ISSUE_NUM" --repo "$REPO_SLUG" \
@@ -148,7 +148,7 @@ For GitHub-backed tracked tasks, `ref:none` is an incomplete intermediate state.
 ```bash
 if [[ "${task_offline:-false}" != "true" && "${task_ref:-}" == "none" ]]; then
   ~/.aidevops/agents/scripts/issue-sync-helper.sh push "$task_id"
-  task_ref=$(grep -E "^[[:space:]]*- \[[ x]\] ${task_id} " TODO.md | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/^ref://')
+  task_ref=$(grep -E "^[[:space:]]*-[[:space:]]+\[[ x]\][[:space:]]+${task_id}[[:space:]]" TODO.md | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/^ref://' || true)
   [[ -n "$task_ref" ]] || { echo "Tracker issue creation failed for $task_id" >&2; exit 1; }
 fi
 ```
