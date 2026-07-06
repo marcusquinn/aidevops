@@ -155,7 +155,13 @@ _approval_user_gh_token() {
 	local real_home=""
 	real_home=$(_resolve_real_home)
 	local gh_home_env="HOME=${real_home}"
+	local gh_bin=""
+	gh_bin=$(type -P gh 2>/dev/null || command -v gh 2>/dev/null || true)
 	local token=""
+
+	if [[ -z "$gh_bin" ]]; then
+		return 1
+	fi
 
 	# Linux: reconnect to the user's D-Bus session so gh can reach keyring-backed auth.
 	if [[ -n "$real_uid" && -S "/run/user/${real_uid}/bus" ]] && command -v runuser &>/dev/null; then
@@ -163,7 +169,7 @@ _approval_user_gh_token() {
 			"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${real_uid}/bus" \
 			"XDG_RUNTIME_DIR=/run/user/${real_uid}" \
 			"$gh_home_env" \
-			gh auth token 2>/dev/null || true)
+			"$gh_bin" auth token 2>/dev/null || true)
 		if [[ -n "$token" ]]; then
 			printf '%s' "$token"
 			return 0
@@ -173,7 +179,7 @@ _approval_user_gh_token() {
 	# macOS: run in the invoking user's launchd session so gh can reach Keychain.
 	if [[ -n "$real_uid" ]] && command -v launchctl &>/dev/null && command -v sudo &>/dev/null; then
 		token=$(launchctl asuser "$real_uid" sudo -u "$SUDO_USER" -H env \
-			"$gh_home_env" gh auth token 2>/dev/null || true)
+			"$gh_home_env" "$gh_bin" auth token 2>/dev/null || true)
 		if [[ -n "$token" ]]; then
 			printf '%s' "$token"
 			return 0
@@ -183,7 +189,7 @@ _approval_user_gh_token() {
 	# Portable fallback for non-keyring gh storage and sudo configurations that
 	# permit root to switch back to the invoking user without another password.
 	if command -v sudo &>/dev/null; then
-		token=$(sudo -u "$SUDO_USER" -H env "$gh_home_env" gh auth token 2>/dev/null || true)
+		token=$(sudo -u "$SUDO_USER" -H env "$gh_home_env" "$gh_bin" auth token 2>/dev/null || true)
 		if [[ -n "$token" ]]; then
 			printf '%s' "$token"
 			return 0
