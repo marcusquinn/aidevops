@@ -30,6 +30,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 AGENT_SCRIPT_DIR="${SCRIPT_DIR}/.."
 HELPER="${AGENT_SCRIPT_DIR}/auto-update-helper.sh"
+CONFIG_DEFAULTS_SOURCE="${SCRIPT_DIR}/../../configs/aidevops.defaults.jsonc"
+CONFIG_SCHEMA_SOURCE="${SCRIPT_DIR}/../../configs/aidevops-config.schema.json"
 
 # Test runtime constants.
 readonly TEST_RED='\033[0;31m'
@@ -75,7 +77,16 @@ _run_in_sandbox() {
 
 	SANDBOX=$(mktemp -d -t aidevops-t2898-XXXXXX)
 	export HOME="$SANDBOX"
-	mkdir -p "$HOME/.aidevops/cache" "$HOME/.aidevops/logs" "$HOME/.aidevops/agents/scripts"
+	# shared-constants.sh resolves the log directory from the deployed JSONC
+	# defaults at source time, before health-check can parse --quiet. Seed the
+	# sandbox like setup.sh does so quiet-mode assertions only cover health-check.
+	local config_dir="$HOME/.aidevops/agents/configs"
+	mkdir -p "$HOME/.aidevops/cache" "$HOME/.aidevops/logs" \
+		"$HOME/.aidevops/agents/scripts" "$config_dir"
+	cp "$CONFIG_DEFAULTS_SOURCE" "$config_dir/aidevops.defaults.jsonc"
+	if [[ -r "$CONFIG_SCHEMA_SOURCE" ]]; then
+		cp "$CONFIG_SCHEMA_SOURCE" "$config_dir/aidevops-config.schema.json"
+	fi
 
 	# Build a fake `launchctl` on PATH so _launchd_is_loaded responds
 	# deterministically. macOS-only path; Linux paths use a different stub.
