@@ -516,6 +516,20 @@ else
 		"status_count=$status_n line: $last"
 fi
 
+# B'8a: explicit queued status wins — this mirrors GH#20715's test fixture.
+reset_recorder
+SESSION_ORIGIN_OVERRIDE="origin:interactive" \
+	gh_create_issue --repo o/r --title "t2792: test-explicit-status-queued" --body "body" \
+	--label "status:queued,origin:worker,auto-dispatch" >/dev/null 2>&1
+status_n=$(count_status_labels_in_log)
+last=$(tail -1 "$GH_RECORD_FILE")
+if [[ "$status_n" == "1" && "$last" == *"status:queued"* && "$last" != *"status:available"* ]]; then
+	print_result "B'8a: gh_create_issue preserves explicit status:queued" 0
+else
+	print_result "B'8a: gh_create_issue preserves explicit status:queued" 1 \
+		"status_count=$status_n line: $last"
+fi
+
 # B'9: TODO-derived status wins — default status must inspect derived labels.
 # Regression for GH#23581: gh_create_issue filtered --todo-task-id from argv,
 # then checked only the filtered caller args for status labels. A status derived
