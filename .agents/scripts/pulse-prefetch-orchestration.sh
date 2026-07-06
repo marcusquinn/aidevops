@@ -279,7 +279,7 @@ check_repo_pulse_interval() {
 		[[ "$val" =~ ^[0-9]+$ ]] && last_polled="$val"
 	fi
 
-	local now elapsed
+	local now=0 elapsed=0
 	now=$(date +%s)
 	elapsed=$((now - last_polled))
 
@@ -384,7 +384,7 @@ check_repo_pulse_schedule() {
 		# (bash treats 08/09 as invalid octal without the 10# prefix)
 		local current_hour
 		current_hour=$(date +%H)
-		local cur ph_s ph_e
+		local cur=0 ph_s=0 ph_e=0
 		cur=$((10#${current_hour}))
 		ph_s=$((10#${ph_start}))
 		ph_e=$((10#${ph_end}))
@@ -505,7 +505,7 @@ check_repo_tier_skip() {
 		[[ "$val" =~ ^[0-9]+$ ]] && last_check="$val"
 	fi
 
-	local now elapsed
+	local now=0 elapsed=0
 	now=$(date +%s)
 	elapsed=$((now - last_check))
 
