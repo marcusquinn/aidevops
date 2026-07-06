@@ -95,7 +95,7 @@ describe("dashboard shell", () => {
     expect(counts.security).toBe(1);
     expect(counts.localSetup).toBe(2);
     expect(counts.agents).toBe(3);
-    expect(counts.vault).toBe(4);
+    expect(counts.vault).toBe(5);
     expect(counts.apps).toBe(2);
     expect(counts.aiSessions).toBe(mockedStatus().data.opencode_sessions.sessions.length);
     expect(counts.repos).toBe(mockedStatus().data.local_repos.total + mockedStatus().data.repos.total);
@@ -346,6 +346,15 @@ describe("dashboard shell", () => {
     expect(html).toContain("openai-pool");
     expect(html).toContain("Add another account");
     expect(html).toContain("metadata-only pool entries");
+  });
+
+  test("renders AI provider metadata while Vault is locked", () => {
+    const html = renderWorkspaceSurface(aiProvidersItem, "aiProviders");
+
+    expect(html).toContain("AI Providers");
+    expect(html).toContain("Recommended OAuth pools");
+    expect(html).toContain("Z.ai");
+    expect(html).not.toContain("AI Providers is locked");
   });
 
   test("renders updated Apps copy, casing, filter order, and compact managed metadata", () => {
@@ -617,6 +626,13 @@ const aiSessionsItem: SurfaceNavItem = {
   icon: "terminal",
   id: "aiSessions",
   label: "AI Sessions",
+};
+
+const aiProvidersItem: SurfaceNavItem = {
+  description: "OAuth pool account metadata by provider",
+  icon: "users",
+  id: "aiProviders",
+  label: "AI Providers",
 };
 
 const channelsItem: SurfaceNavItem = {

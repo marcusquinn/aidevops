@@ -316,6 +316,7 @@ export const text = {
   vaultSetup: "First-use Setup",
   vaultStatus: "Status",
   vaultSync: "Sync",
+  vaultMetadataPreview: "Encrypted by aidevops Vault; metadata previews stay visible while locked, and protected previews plus write actions require a local unlock.",
   vaultTooltip: "Encrypted by aidevops Vault; contents visible only when unlocked through app or authorised vault commands.",
   vaultUnlockCta: "Unlock Vault",
   vaultUnlockHint: "Run `aidevops vault unlock` in a local terminal and enter the passphrase only into the hidden prompt.",
