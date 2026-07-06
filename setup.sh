@@ -1206,6 +1206,8 @@ _setup_ai_session_setup_sh_version_only() {
 	local diff_output=""
 	local line=""
 	local payload=""
+	local version_prefix=""
+	version_prefix="# ""Version:"
 
 	diff_output=$(git -C "$INSTALL_DIR" diff --unified=0 "$deployed_sha" "$current_sha" -- setup.sh 2>/dev/null) || return 1
 	while IFS= read -r line; do
@@ -1215,7 +1217,7 @@ _setup_ai_session_setup_sh_version_only() {
 			;;
 		+* | -*)
 			payload="${line#?}"
-			if [[ "$payload" != "# Version: 3.31.68
+			if [[ "$payload" != "$version_prefix "* ]]; then
 				return 1
 			fi
 			;;
