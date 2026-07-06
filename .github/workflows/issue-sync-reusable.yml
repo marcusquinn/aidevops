@@ -127,7 +127,7 @@ jobs:
         if: steps.check-author.outputs.skip != 'true'
         run: |
           echo "=== Creating issues for new tasks ==="
-          bash __aidevops/.agents/scripts/issue-sync-helper.sh push --verbose || true
+          bash __aidevops/.agents/scripts/issue-sync-helper.sh push --verbose
         env:
           GH_TOKEN: ${{ secrets.SYNC_PAT || secrets.GITHUB_TOKEN }}
           # t1984: override origin detection and assignee target so issues

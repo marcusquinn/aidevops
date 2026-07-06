@@ -205,6 +205,34 @@ _append_todo_entry() {
 	return 0
 }
 
+# Resolve a pending ref:none task after TODO.md and the brief exist. This keeps
+# GitHub-backed /new-task flows from reporting success before the tracker issue
+# is durable. Explicit --offline/--no-issue flows bypass this helper.
+_resolve_pending_task_ref() {
+	local task_id="$1" task_ref="$2" repo_path="$3" todo_file="$4"
+	[[ "$task_ref" != "none" ]] && { printf '%s\n' "$task_ref"; return 0; }
+
+	local sync_helper="$SCRIPT_DIR/issue-sync-helper.sh"
+	if [[ ! -x "$sync_helper" ]]; then
+		log_error "Cannot resolve $task_id ref:none — issue-sync-helper.sh is missing"
+		return 1
+	fi
+	if ! (cd "$repo_path" && "$sync_helper" push "$task_id" >/dev/null); then
+		log_error "Tracker issue creation failed for $task_id"
+		return 1
+	fi
+
+	local refreshed_ref=""
+	refreshed_ref=$(grep -E "^[[:space:]]*-[[:space:]]+\[[ x]\][[:space:]]+${task_id}[[:space:]]" "$todo_file" \
+		| grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/^ref://' || true)
+	if [[ -z "$refreshed_ref" ]]; then
+		log_error "Tracker issue creation left $task_id without ref:GH# in TODO.md"
+		return 1
+	fi
+	printf '%s\n' "$refreshed_ref"
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # cmd_batch decomposition (GH#18705)
 #
@@ -500,6 +528,9 @@ _process_one_batch_title() {
 
 	_append_todo_entry "$task_id" "$title" "$task_ref" "$todo_file" ||
 		log_warn "TODO entry failed for $task_id — continuing"
+	if [[ "$_BATCH_NO_ISSUE" != "true" && "$_BATCH_OFFLINE" != "true" ]]; then
+		task_ref=$(_resolve_pending_task_ref "$task_id" "$task_ref" "$repo_path" "$todo_file") || return 1
+	fi
 
 	_BATCH_RESULT_IDS+=("$task_id")
 	_BATCH_RESULT_TITLES+=("$title")

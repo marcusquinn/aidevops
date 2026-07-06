@@ -246,6 +246,9 @@ _push_process_task() {
 		echo "CREATED"
 	elif [[ $rc -eq 1 ]]; then
 		echo "SKIPPED"
+	else
+		echo "FAILED"
+		return 1
 	fi
 	return 0
 }

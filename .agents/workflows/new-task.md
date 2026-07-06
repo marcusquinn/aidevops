@@ -39,6 +39,7 @@ done <<< "$output"
 ```
 
 Output variables: `TASK_ID=tNNN`, `TASK_REF=GH#NNN`, `TASK_ISSUE_URL=https://...`, `TASK_OFFLINE=false`.
+If `TASK_REF=none` and `TASK_OFFLINE=false`, treat it as a pending tracker issue, not a completed tracked task. Do not present it as filed or run issue-number operations yet; continue only until the brief/TODO entry exists, then run Step 4.5 before presenting success.
 
 ### Step 2: Present to User
 
@@ -57,7 +58,7 @@ Options:
 
 ```bash
 REPO_SLUG="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)"
-if [[ -n "$task_ref" && -n "$REPO_SLUG" ]]; then
+if [[ -n "${task_ref:-}" && "${task_ref:-}" != "none" && "${task_ref:-}" != "offline" && -n "$REPO_SLUG" ]]; then
   ISSUE_NUM="${task_ref#GH#}"
   WORKER_USER=$(gh api user --jq '.login' 2>/dev/null || whoami)
   gh issue edit "$ISSUE_NUM" --repo "$REPO_SLUG" \
@@ -138,6 +139,24 @@ Narrative phases without a per-phase marker are NOT auto-filed unless `<!-- phas
 
 ```markdown
 - [ ] {task_id} {title} #{tag} #{origin} ~{estimate} ref:{task_ref} logged:{YYYY-MM-DD}
+```
+
+### Step 4.5: Resolve Pending Tracker Ref
+
+For GitHub-backed tracked tasks, `ref:none` is an incomplete intermediate state. Unless the user explicitly requested `--offline`, `--no-issue`, or local-only planning, create and verify the tracker after the TODO entry and brief exist:
+
+```bash
+if [[ "${task_offline:-false}" != "true" && "${task_ref:-}" == "none" ]]; then
+  ~/.aidevops/agents/scripts/issue-sync-helper.sh push "$task_id"
+  task_ref=$(grep -E "^[[:space:]]*-[[:space:]]+\[[ x]\][[:space:]]+${task_id}[[:space:]]" TODO.md | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/^ref://' || true)
+  [[ -n "$task_ref" ]] || { echo "Tracker issue creation failed for $task_id" >&2; exit 1; }
+fi
+```
+
+Before reporting the task as filed, verify the issue exists:
+
+```bash
+gh issue view "${task_ref#GH#}" --repo "$(gh repo view --json nameWithOwner -q .nameWithOwner)" >/dev/null
 ```
 
 `#{origin}`: `#interactive` (user present) or `#worker` (headless). Detect via `detect_session_origin` from `shared-constants.sh`. Maps to `origin:interactive` / `origin:worker` GitHub labels on issue sync.
