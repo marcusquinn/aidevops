@@ -96,11 +96,11 @@ function syncSessionWithBranch(
 
 export default tool({
   description:
-    "Rename the current session to a new title. For issue/PR work, start titles with the issue or PR marker (for example, 'Issue #123: concise summary' or 'PR #456: concise summary') so tabs and session search group by the work item.",
+    "Rename the current session to a meaningful new title. For issue/PR work, start with the issue or PR marker and include the issue/PR title or a recognizable shortened form (for example, 'Issue #123: Fix dispatch title prefix' or 'PR #456: Refresh auth workflow tests') so tabs and session search remain distinguishable. The AIDevOps version suffix is appended automatically and should remain present.",
   args: {
     title: tool.schema
       .string()
-      .describe("New title for the session (prefer 'Issue #123: concise summary' or 'PR #456: concise summary' when working on an issue/PR; otherwise use a short branch/task summary)"),
+      .describe("New meaningful title for the session (for issue/PR work, prefer 'Issue #123: <issue title>' or 'PR #456: <PR title>'; add a short action suffix like '— review thread' only when helpful; otherwise use a meaningful branch/task summary; keep the automatically appended AIDevOps version suffix)"),
   },
   async execute(args, context) {
     const { sessionID } = context
@@ -124,7 +124,7 @@ export default tool({
 // repo on main must not clobber meaningful titles (t2252).
 export const sync_branch = tool({
   description:
-    "Rename the current session to match the current git branch name. Call this after creating or switching branches only when no issue/PR-prefixed title is already set; issue/PR work should keep 'Issue #123: ...' or 'PR #456: ...' at the beginning.",
+    "Rename the current session to match the current git branch name. Call this after creating or switching branches only when no issue/PR-prefixed title is already set; issue/PR work should keep 'Issue #123: <issue title>' or 'PR #456: <PR title>' at the beginning.",
   args: {},
   async execute(_args, context) {
     const { sessionID } = context
