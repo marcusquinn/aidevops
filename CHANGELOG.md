@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.73] - 2026-07-06
+
+### Fixed
+
+- clarify session title naming guidance (#26726)
+- suppress positive inline review acknowledgements (#26724)
+
 ## [3.31.72] - 2026-07-06
 
 ### Changed
