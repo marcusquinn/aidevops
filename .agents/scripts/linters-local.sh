@@ -183,8 +183,7 @@ main() {
 		case "$arg" in
 		--changed | --fast-pr)
 			export LINTERS_LOCAL_CHANGED=true
-			LINTERS_LOCAL_MODE="$LINTERS_LOCAL_MODE_CHANGED"
-			export LINTERS_LOCAL_MODE
+			export LINTERS_LOCAL_MODE="$LINTERS_LOCAL_MODE_CHANGED"
 			;;
 		--no-cache)
 			export LINTERS_LOCAL_CACHE_ENABLED=false
@@ -193,8 +192,7 @@ main() {
 			export LINTERS_LOCAL_FULL=true
 			export LINTERS_LOCAL_CACHE_ENABLED=false
 			export LINTERS_LOCAL_STRICT_BROAD_GATES=true
-			LINTERS_LOCAL_MODE=full
-			export LINTERS_LOCAL_MODE
+			export LINTERS_LOCAL_MODE=full
 			;;
 		--update-baseline | --init-baseline)
 			export RATCHET_UPDATE_BASELINE=true
