@@ -1595,6 +1595,13 @@ dispatch_with_dedup() {
 		echo "[dispatch_with_dedup] Dispatch blocked for #${issue_number} in ${repo_slug}: unable to load issue metadata" >>"$LOGFILE"
 		return 1
 	fi
+	local issue_state
+	issue_state=$(printf '%s' "$issue_meta_json" | jq -r '.state // ""' 2>/dev/null | tr '[:lower:]' '[:upper:]') || issue_state=""
+	if [[ "$issue_state" == "CLOSED" ]]; then
+		echo "[dispatch] Skipping #${issue_number}: state=CLOSED" >>"$LOGFILE"
+		pulse-batch-prefetch-helper.sh evict-issue "$repo_slug" "$issue_number" 2>/dev/null || true
+		return 1
+	fi
 
 	# GH#22948: hard PR-target guard before any lifecycle mutation. A pull
 	# request shares the Issues API number space, but it is already an
