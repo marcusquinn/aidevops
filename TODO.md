@@ -3319,7 +3319,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2793 t2789: test-no-duplicates #auto-dispatch ref:GH#20716 pr:#2794 completed:2026-07-06
 
-- [x] t2792 t2789: test-explicit-status-queued #auto-dispatch ref:GH#20715 completed:2026-07-06
+- [x] t2792 t2789: test-explicit-status-queued #auto-dispatch ref:GH#20715 verified:2026-07-06 completed:2026-07-06
 
 - [x] t2795 t2789: final-test #auto-dispatch ref:GH#20718 pr:#2796 completed:2026-07-06
 
