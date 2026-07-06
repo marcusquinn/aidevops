@@ -340,6 +340,7 @@ source "${SCRIPT_DIR}/pulse-simplification.sh"
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-simplification-state.sh"
 # Phase 7 (t1975, GH#18385): prefetch cluster extracted.
+# GH#18400/t1987: pulse-prefetch.sh now sources focused sub-clusters.
 # shellcheck source=/dev/null
 source "${SCRIPT_DIR}/pulse-prefetch.sh"
 # Phase 8 (t1976, GH#18387): triage cluster extracted.
@@ -985,6 +986,12 @@ _pulse_execute_self_check() {
 		_PULSE_SIMPLIFICATION_LOADED
 		_PULSE_SIMPLIFICATION_STATE_LOADED
 		_PULSE_PREFETCH_LOADED
+		_PULSE_PREFETCH_INFRA_LOADED
+		_PULSE_PREFETCH_FETCH_LOADED
+		_PULSE_PREFETCH_REPO_LOADED
+		_PULSE_PREFETCH_ORCHESTRATION_LOADED
+		_PULSE_PREFETCH_SECONDARY_LOADED
+		_PULSE_PREFETCH_WORKERS_LOADED
 		_PULSE_TRIAGE_LOADED
 		_PULSE_DISPATCH_CORE_LOADED
 		_PULSE_DISPATCH_ENGINE_LOADED
