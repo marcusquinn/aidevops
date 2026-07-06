@@ -178,6 +178,14 @@ _has_prior_reopen_comment() {
 	return 1
 }
 
+_is_not_planned_state_reason() {
+	local reason="$1"
+	local normalized
+	normalized=$(printf '%s' "$reason" | tr '[:upper:]' '[:lower:]' | tr '-' '_')
+	[[ "$normalized" == "not_planned" ]] && return 0
+	return 1
+}
+
 # Mark a TODO entry as done: [ ] -> [x] with completed: date.
 # Also handles [-] (cancelled/declined) entries — leaves marker as [-].
 _mark_todo_done() {
@@ -482,11 +490,14 @@ cmd_reopen() {
 		local tid
 		tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
 
-		# Check closure reason — skip NOT_PLANNED (deliberately declined)
+		# Check closure reason — skip not_planned (deliberately declined).
+		# GitHub GraphQL returns NOT_PLANNED while REST returns not_planned;
+		# normalize before comparing so consolidated/not-planned tasks are not
+		# accidentally reopened by the TODO source-of-truth guard.
 		local reason
 		reason=$(printf '%s\n' "$issue_json" | jq -r 'select(type == "object") | .state_reason // .stateReason // ""' 2>/dev/null || printf '')
-		if [[ "$reason" == "NOT_PLANNED" ]]; then
-			log_verbose "#$ref_num ($tid) closed as NOT_PLANNED — skipping"
+		if _is_not_planned_state_reason "$reason"; then
+			log_verbose "#$ref_num ($tid) closed as not_planned — skipping"
 			not_planned=$((not_planned + 1))
 			continue
 		fi

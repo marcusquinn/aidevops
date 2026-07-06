@@ -85,6 +85,10 @@ check_failure "unexpected issue payloads are not treated as PRs" _reopen_ref_is_
 check_success "prior canonical reopen comments are detected" _has_prior_reopen_comment "owner/repo" "202"
 check_failure "unrelated comments do not suppress reopen" _has_prior_reopen_comment "owner/repo" "203"
 check_failure "unexpected comments payloads do not suppress reopen" _has_prior_reopen_comment "owner/repo" "204"
+check_success "GraphQL NOT_PLANNED reason is skipped" _is_not_planned_state_reason "NOT_PLANNED"
+check_success "REST not_planned reason is skipped" _is_not_planned_state_reason "not_planned"
+check_success "hyphenated not-planned reason is skipped" _is_not_planned_state_reason "not-planned"
+check_failure "completed reason is not treated as not planned" _is_not_planned_state_reason "COMPLETED"
 
 printf '\nResults: %s passed, %s failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then
