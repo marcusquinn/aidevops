@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.78] - 2026-07-06
+
+### Changed
+
+- Maintenance: mark t1987 complete (pr:#26743 completed:2026-07-06) [skip ci]
+- split pulse prefetch modules and ratchet thresholds (#26743)
+- Maintenance: update simplification state registry
+- Maintenance: mark t3023 complete (pr:#26738 completed:2026-07-06) [skip ci]
+- Tests: preserve explicit queued status (#26735)
+- Tests: guard claim task status default (#26734)
+- Maintenance: sync GitHub issue refs to TODO.md [skip ci]
+- Maintenance: sync GitHub issue refs to TODO.md [skip ci]
+
+### Fixed
+
+- normalize not-planned reopen guard (#26746)
+- evict closed issues during dispatch (#26738)
+
 ## [3.31.77] - 2026-07-06
 
 ### Changed
