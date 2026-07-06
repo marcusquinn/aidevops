@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.79] - 2026-07-07
+
+### Fixed
+
+- fail new task when tracker creation fails
+
 ## [3.31.78] - 2026-07-06
 
 ### Changed
