@@ -153,10 +153,12 @@ run_case "sudo gh auth recovery uses absolute gh binary when sudo path is restri
 	getent() { return 1; }
 	dscl() { printf "NFSHomeDirectory: /Users/alice\n"; return 0; }
 	launchctl() {
-		shift 8
-		if [[ "${1:-}" == "$tmpdir/gh" && "${2:-}" == "auth" && "${3:-}" == "token" ]]; then
-			"$@"
-			return $?
+		if [[ "$#" -ge 8 ]]; then
+			shift 8
+			if [[ "${1:-}" == "$tmpdir/gh" && "${2:-}" == "auth" && "${3:-}" == "token" ]]; then
+				"$@"
+				return $?
+			fi
 		fi
 		return 1
 	}
