@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.72] - 2026-07-06
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md [skip ci]
+
+### Fixed
+
+- initialise pulse merge locals (#26720)
+- combine linter mode exports (#26719)
+- resume pulse merge within long PR backlogs (#26718)
+
 ## [3.31.71] - 2026-07-06
 
 ### Changed
