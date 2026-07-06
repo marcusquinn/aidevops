@@ -449,6 +449,19 @@ test_skips_pr26721_positive_implementation_ack() {
 	return 0
 }
 
+test_skips_positive_implementation_ack_with_address_variants() {
+	local comments result
+	# shellcheck disable=SC2016  # literal inline-comment JSON includes Markdown backticks
+	comments='[{"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the update. The implementation in `abc1234` correctly addressed the edge case by using explicit validation across a long review body with several clauses. This is a robust validation pattern for shell helpers.","path":".agents/scripts/example-helper.sh","line":42,"html_url":"https://example.invalid/review","created_at":"2026-07-06T00:00:00Z"},{"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the update. The implementation now correctly address the issue by preserving the intended branch behavior across a long review body with several clauses. This is a robust handling pattern for shell helpers.","path":".agents/scripts/example-helper.sh","line":43,"html_url":"https://example.invalid/review","created_at":"2026-07-06T00:00:00Z"}]'
+	result=$(_build_inline_findings "$comments" "26733" "medium" | jq 'length')
+	if [[ "$result" == "0" ]]; then
+		print_result "skip positive implementation acknowledgement address variants" 0
+	else
+		print_result "skip positive implementation acknowledgement address variants" 1 "expected 0 findings, got ${result}"
+	fi
+	return 0
+}
+
 test_keeps_actionable_approved_review() {
 	# APPROVED review that also contains actionable critique — must be kept
 	local result
