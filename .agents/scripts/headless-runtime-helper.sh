@@ -1211,8 +1211,8 @@ _worker_post_pr_handoff_confirmed() {
 	local session_key="$1"
 	local work_dir="$2"
 	local repo_slug="${DISPATCH_REPO_SLUG:-}"
-	local issue_number=""
-	local branch_name=""
+	local issue_number
+	local branch_name
 
 	[[ "$session_key" == issue-* ]] || return 1
 	[[ -n "$repo_slug" ]] || return 1
@@ -1225,19 +1225,19 @@ _worker_post_pr_handoff_confirmed() {
 		[[ "$branch_name" == "HEAD" ]] && branch_name=""
 	fi
 
-	local open_pr_safe_count=""
-	local safe_pr_jq='map(select(([.statusCheckRollup[]? | (.conclusion // .status // "") | ascii_upcase] | any(. == "FAILURE" or . == "ERROR" or . == "CANCELLED" or . == "TIMED_OUT" or . == "ACTION_REQUIRED") | not))) | length'
+	local open_pr_safe_count
+	local safe_pr_jq='map(select(([.statusCheckRollup[]? | (.conclusion // .status // empty) | ascii_upcase] | any(. == "FAILURE" or . == "ERROR" or . == "CANCELLED" or . == "TIMED_OUT" or . == "ACTION_REQUIRED") | not))) | length'
 	if [[ -n "$branch_name" ]]; then
 		open_pr_safe_count=$(gh pr list --repo "$repo_slug" --head "$branch_name" --state open \
 			--json number,statusCheckRollup --jq "$safe_pr_jq" 2>/dev/null || true)
-		[[ "$open_pr_safe_count" =~ ^[0-9]+$ ]] || open_pr_safe_count="0"
+		[[ "$open_pr_safe_count" =~ ^[0-9]+$ ]] || open_pr_safe_count=0
 		[[ "$open_pr_safe_count" -gt 0 ]] && return 0
 	fi
 
 	if [[ -n "$issue_number" ]]; then
 		open_pr_safe_count=$(gh pr list --repo "$repo_slug" --search "$issue_number" --state open \
 			--json number,statusCheckRollup --jq "$safe_pr_jq" 2>/dev/null || true)
-		[[ "$open_pr_safe_count" =~ ^[0-9]+$ ]] || open_pr_safe_count="0"
+		[[ "$open_pr_safe_count" =~ ^[0-9]+$ ]] || open_pr_safe_count=0
 		[[ "$open_pr_safe_count" -gt 0 ]] && return 0
 	fi
 
@@ -1678,23 +1678,24 @@ _execute_run_attempt() {
 		wait "$resource_sampler_pid" 2>/dev/null || true
 		rm -f "$resource_stop_file" "$resource_result_file" 2>/dev/null || true
 	fi
-	if [[ "${_run_result_label:-failed}" == "success" ]]; then
+	local _metric_result_label="${_run_result_label:-failed}"
+	if [[ "$_metric_result_label" == "success" ]]; then
 		_metric_output_file=""
 	fi
 	local _launch_failure_cause="" _next_action=""
 	local _evidence_fields
 	_evidence_fields=$(_derive_worker_failure_evidence \
-		"${_run_result_label:-failed}" "$exit_code" "${_run_activity_detected:-0}" \
+		"$_metric_result_label" "$exit_code" "${_run_activity_detected:-0}" \
 		"${_metric_kill_reason:-}" "${_run_failure_reason:-}")
 	_launch_failure_cause="${_evidence_fields%%$'\t'*}"
 	_next_action="${_evidence_fields#*$'\t'}"
-	if [[ "${_run_result_label:-failed}" == "watchdog_stall_killed" ]] && \
+	if [[ "$_metric_result_label" == "watchdog_stall_killed" ]] && \
 		_worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
 		_launch_failure_cause="post_pr_pending_ci_handoff"
 		_next_action="monitor_open_pr"
 	fi
-	print_info "[lifecycle] worker_failure_evidence session=$session_key result=${_run_result_label:-failed} exit_code=$exit_code kill_reason=${_metric_kill_reason:-unknown} launch_failure_cause=${_launch_failure_cause:-none} next_action=${_next_action:-none}"
-	append_runtime_metric "$role" "$session_key" "$selected_model" "$provider" "${_run_result_label:-failed}" "$handle_exit" "${_run_failure_reason:-}" "${_run_activity_detected:-0}" "$duration_ms" \
+	print_info "[lifecycle] worker_failure_evidence session=$session_key result=$_metric_result_label exit_code=$exit_code kill_reason=${_metric_kill_reason:-unknown} launch_failure_cause=${_launch_failure_cause:-none} next_action=${_next_action:-none}"
+	append_runtime_metric "$role" "$session_key" "$selected_model" "$provider" "$_metric_result_label" "$handle_exit" "${_run_failure_reason:-}" "${_run_activity_detected:-0}" "$duration_ms" \
 		"${WORKER_ISSUE_NUMBER:-}" "${DISPATCH_REPO_SLUG:-}" "$work_dir" "$_metric_output_file" "$_metric_session_id" \
 		"${_run_provider_error_type:-}" "${_run_provider_status:-}" "${_run_runtime_error_type:-}" "${_run_classification_source:-}" "${_run_classification_pattern:-}" \
 		"$_launch_failure_cause" "${_metric_kill_reason:-}" "$_next_action"
