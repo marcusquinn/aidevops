@@ -154,6 +154,26 @@ _reopen_comment() {
 	return 0
 }
 
+_reopen_ref_is_pull_request() {
+	local repo="$1" ref_num="$2"
+	local issue_json
+	issue_json=$(gh api "repos/${repo}/issues/${ref_num}" 2>/dev/null) || return 1
+	printf '%s\n' "$issue_json" | jq -e 'has("pull_request")' >/dev/null 2>&1 && return 0
+	return 1
+}
+
+_has_prior_reopen_comment() {
+	local repo="$1" ref_num="$2"
+	local comments_json found
+	comments_json=$(gh api "repos/${repo}/issues/${ref_num}/comments" 2>/dev/null || printf '[]')
+	found=$(printf '%s\n' "$comments_json" | jq -r '[.[] | select((.body // "") | contains("Reopened: TODO.md still has this as `[ ]`"))] | length' 2>/dev/null || printf '0')
+	[[ "$found" =~ ^[0-9]+$ ]] || found=0
+	if [[ "$found" -gt 0 ]]; then
+		return 0
+	fi
+	return 1
+}
+
 # Mark a TODO entry as done: [ ] -> [x] with completed: date.
 # Also handles [-] (cancelled/declined) entries — leaves marker as [-].
 _mark_todo_done() {
@@ -430,7 +450,7 @@ cmd_reopen() {
 
 	local stripped
 	stripped=$(strip_code_fences <"$todo_file")
-	local reopened=0 skipped=0 not_planned=0 has_pr=0
+	local reopened=0 skipped=0 not_planned=0 has_pr=0 pr_refs=0 duplicate_comments=0
 
 	while IFS= read -r line; do
 		local ref_num
@@ -439,6 +459,18 @@ cmd_reopen() {
 
 		# Skip if already open
 		echo "$open_numbers" | grep -qx "$ref_num" && continue
+
+		# GH#2888: GitHub shares the issue-number namespace with pull requests.
+		# TODO refs occasionally point at PRs (or stale historical lines once did),
+		# and `gh issue reopen --comment` can still append the reopen comment to a
+		# merged PR even though it cannot turn that PR back into an open issue. That
+		# produced repeated notification churn on closed/merged PR threads. Treat PR
+		# refs as terminal artifacts, never reopen targets.
+		if _reopen_ref_is_pull_request "$repo" "$ref_num"; then
+			log_verbose "#$ref_num is a pull request — skipping TODO reopen guard"
+			pr_refs=$((pr_refs + 1))
+			continue
+		fi
 
 		local tid
 		tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
@@ -464,6 +496,15 @@ cmd_reopen() {
 			continue
 		fi
 
+		# If a previous run already emitted the canonical reopen explanation, do
+		# not post another identical notification. Valid issues are open after the
+		# first successful run; still-closed refs are anomalous and should be quiet.
+		if _has_prior_reopen_comment "$repo" "$ref_num"; then
+			log_verbose "#$ref_num ($tid) already has a TODO-source reopen comment — suppressing duplicate notification"
+			duplicate_comments=$((duplicate_comments + 1))
+			continue
+		fi
+
 		# t3204: compose the reopen comment via _reopen_comment so the body
 		# carries a signature footer like every other agent-authored comment.
 		# `gh issue reopen --comment` is NOT intercepted by the gh PATH shim
@@ -482,6 +523,6 @@ cmd_reopen() {
 		}
 	done < <(echo "$stripped" | grep -E '^\s*- \[ \] t[0-9]+.*ref:GH#[0-9]+' || true)
 
-	print_info "Reopen: $reopened reopened, $skipped failed, $not_planned not-planned, $has_pr have-merged-pr"
+	print_info "Reopen: $reopened reopened, $skipped failed, $not_planned not-planned, $has_pr have-merged-pr, $pr_refs pr-refs-skipped, $duplicate_comments duplicate-comments-skipped"
 	return 0
 }
