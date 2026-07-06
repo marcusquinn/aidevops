@@ -4424,9 +4424,9 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 
 
-- [ ] t8182 fix admin users Load more rows repeat clicks #auto-dispatch #bug ref:GH#8287
+- [x] t8182 fix admin users Load more rows repeat clicks #auto-dispatch #bug ref:GH#8287 verified:2026-07-05 completed:2026-07-06
 
-- [ ] t8179 fix admin users boolean filter all-values state #auto-dispatch #bug ref:GH#8274
+- [x] t8179 fix admin users boolean filter all-values state #auto-dispatch #bug ref:GH#8274 pr:#8396 completed:2026-07-06
 
 
 - [x] t18065 Fix worktree cleanup lifecycle to prevent worktree litter #bug ref:GH#26622 verified:2026-07-05 completed:2026-07-05
