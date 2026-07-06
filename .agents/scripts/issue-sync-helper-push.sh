@@ -91,6 +91,17 @@ _push_auto_assign_interactive() {
 	return 0
 }
 
+# _push_create_issue_without_labels: degraded creation path for tokens that can
+# create issues but cannot read/apply repository labels. Labels can be repaired
+# by a later enrich/reconcile pass; the durable tracker issue is the invariant.
+_push_create_issue_without_labels() {
+	local repo="$1" title="$2" body="$3" assignee="$4"
+	local -a fallback_args=("--repo" "$repo" "--title" "$title" "--body" "$body")
+	[[ -n "$assignee" ]] && fallback_args+=("--assignee" "$assignee")
+	gh issue create "${fallback_args[@]}" 2>&1 # aidevops-allow: raw-gh-wrapper
+	return $?
+}
+
 # _push_create_issue: create a GitHub issue for task_id with race-condition guard.
 # Sets _PUSH_CREATED_NUM on success (empty on failure/skip).
 # Returns 0=created, 1=skipped (race), 2=error.
@@ -140,6 +151,13 @@ _push_create_issue() {
 		print_info "[INFO] gh-wrapper: GraphQL exhausted, retrying issue create via REST for $task_id"
 		{
 			combined=$(_rest_issue_create "${args[@]}" 2>&1)
+			gh_exit=$?
+		} || true
+	fi
+	if [[ $gh_exit -ne 0 && "$combined" == *"repository.labels"* ]]; then
+		print_warning "Label lookup failed for $task_id; retrying issue creation without labels"
+		{
+			combined=$(_push_create_issue_without_labels "$repo" "$title" "$body" "$assignee")
 			gh_exit=$?
 		} || true
 	fi
@@ -245,13 +263,19 @@ cmd_push() {
 	print_info "Processing ${#tasks[@]} task(s) for push to $repo"
 	gh_create_label "$repo" "status:available" "0E8A16" "Task is available for claiming"
 
-	local created=0 skipped=0
+	local created=0 skipped=0 failed=0
 	for task_id in "${tasks[@]}"; do
 		local result
-		result=$(_push_process_task "$task_id" "$repo" "$todo_file" "$project_root")
+		if ! result=$(_push_process_task "$task_id" "$repo" "$todo_file" "$project_root"); then
+			failed=$((failed + 1))
+		fi
 		[[ "$result" == *"CREATED"* ]] && created=$((created + 1))
 		[[ "$result" == *"SKIPPED"* ]] && skipped=$((skipped + 1))
 	done
-	print_info "Push complete: $created created, $skipped skipped"
+	print_info "Push complete: $created created, $skipped skipped, $failed failed"
+	if [[ $failed -gt 0 ]]; then
+		print_error "Issue creation failed for $failed task(s); TODO.md still contains active task(s) without GitHub refs"
+		return 1
+	fi
 	return 0
 }
