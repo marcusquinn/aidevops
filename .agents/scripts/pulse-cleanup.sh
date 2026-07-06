@@ -1690,7 +1690,7 @@ _pc_relocate_registered_worktree() {
 		target_path=$(aidevops_generate_worktree_path "$main_wt_move" "$wt_branch_move" 2>/dev/null || true)
 	fi
 	if [[ -z "$target_path" ]]; then
-		local repo_name_move branch_slug_move
+		local repo_name_move="" branch_slug_move=""
 		repo_name_move=$(basename "$main_wt_move")
 		branch_slug_move=$(printf '%s\n' "$wt_branch_move" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
 		target_path="${central_base}/${repo_name_move}-${branch_slug_move}"
@@ -1740,7 +1740,7 @@ _pc_relocate_registered_worktrees() {
 	while IFS= read -r rp_move; do
 		[[ -z "$rp_move" ]] && continue
 		[[ -d "$rp_move/.git" || -f "$rp_move/.git" ]] || continue
-		local porcelain_move main_wt_move wt_path_move wt_branch_move line_move
+		local porcelain_move="" main_wt_move="" wt_path_move="" wt_branch_move="" line_move=""
 		porcelain_move=$(git -C "$rp_move" worktree list --porcelain 2>/dev/null || true)
 		[[ -n "$porcelain_move" ]] || continue
 		main_wt_move="${porcelain_move%%$'\n'*}"
