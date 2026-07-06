@@ -916,7 +916,7 @@ _merge_ready_prs_for_repo() {
 	local _timing_prefix="${6:-}"
 
 	local merged=0 closed=0 failed=0
-	local pr_json pr_merge_err _list_start pr_count
+	local pr_json="" pr_merge_err="" _list_start="" pr_count=""
 	_list_start=$(_pmp_now_epoch)
 	pr_merge_err=$(mktemp)
 	if declare -F pulse_pr_list_get >/dev/null 2>&1; then
