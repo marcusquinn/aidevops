@@ -72,17 +72,17 @@ export AIDEVOPS_BASH_REEXECED=1
 source "$LIB_FILE"
 
 # ---------------------------------------------------------------------------
-# Case 1: Contract marker is V8 (not the contradictory V6)
+# Case 1: Contract marker is V9 (not the contradictory V6)
 # ---------------------------------------------------------------------------
-test_contract_version_is_v8() {
+test_contract_version_is_v9() {
 	local output
 	output=$(append_worker_headless_contract "/full-loop Implement GH#1")
 
-	if [[ "$output" == *"HEADLESS_CONTINUATION_CONTRACT_V8"* ]]; then
-		_pass "contract_version_is_v8"
+	if [[ "$output" == *"HEADLESS_CONTINUATION_CONTRACT_V9"* ]]; then
+		_pass "contract_version_is_v9"
 	else
-		_fail "contract_version_is_v8" \
-			"Expected HEADLESS_CONTINUATION_CONTRACT_V8 in output, not found"
+		_fail "contract_version_is_v9" \
+			"Expected HEADLESS_CONTINUATION_CONTRACT_V9 in output, not found"
 	fi
 	return 0
 }
@@ -235,7 +235,7 @@ test_graphql_rate_limit_fallback_guidance() {
 # ---------------------------------------------------------------------------
 # Run all tests
 # ---------------------------------------------------------------------------
-test_contract_version_is_v8
+test_contract_version_is_v9
 test_no_worktree_creation_fallback
 test_unconditional_do_not_call_worktree_helper
 test_no_simultaneous_prohibit_and_permit

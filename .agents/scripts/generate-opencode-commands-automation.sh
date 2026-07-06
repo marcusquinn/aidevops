@@ -36,7 +36,7 @@ Start a Ralph loop for iterative development.
 
 Arguments: $ARGUMENTS
 
-**Session Title**: Only set a session title if one hasn't been set already (e.g., by `/ralph-task`). If the prompt references issue/PR work, use `session-rename` with the work item first (`"Issue #123: concise summary"` or `"PR #456: concise summary"`). Otherwise use a concise version of the prompt (truncate to ~60 chars if needed).
+**Session Title**: Only set a session title if one hasn't been set already (e.g., by `/ralph-task`). If the prompt references issue/PR work, use `session-rename` with the work item and issue/PR title first (`"Issue #123: Fix dispatch title prefix"` or `"PR #456: Refresh auth workflow tests"`). Otherwise use a meaningful version of the prompt. Do not impose an arbitrary length limit; keep the automatically appended AIDevOps version suffix.
 
 **Usage:**
 ```bash

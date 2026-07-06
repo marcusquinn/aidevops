@@ -717,7 +717,7 @@ test_deleted_launch_cwd_recovers_to_work_dir() {
 test_does_not_double_append() {
 	local prompt='/full-loop Continue issue #14964
 
-[HEADLESS_CONTINUATION_CONTRACT_V8]
+[HEADLESS_CONTINUATION_CONTRACT_V9]
 This worker run is unattended.'
 	local output
 	output=$(append_worker_headless_contract "$prompt")
