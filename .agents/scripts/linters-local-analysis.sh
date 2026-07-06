@@ -213,6 +213,13 @@ _find_markdownlint_cmd() {
 _collect_markdown_files() {
 	local md_files check_mode="changed"
 
+	if [[ "${LINTERS_LOCAL_MODE:-full}" == "changed" ]] && declare -F linters_local_changed_files_matching >/dev/null 2>&1; then
+		md_files=$(linters_local_changed_files_matching '\.md$')
+		echo "$check_mode"
+		echo "$md_files"
+		return 0
+	fi
+
 	if git rev-parse --git-dir >/dev/null 2>&1; then
 		md_files=$(git diff --name-only --diff-filter=ACMR HEAD -- '*.md' 2>/dev/null)
 

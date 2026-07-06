@@ -43,6 +43,33 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 # BUNDLE_SKIP_GATES is populated once in main() and checked per gate.
 
 BUNDLE_SKIP_GATES=""
+LINTERS_LOCAL_GATES_RAN=""
+LINTERS_LOCAL_GATES_SKIPPED=""
+LINTERS_LOCAL_GATES_DELEGATED=""
+LINTERS_LOCAL_MODE_CHANGED="${LINTERS_LOCAL_MODE_CHANGED:-changed}"
+LINTERS_LOCAL_GATE_MARKDOWN=markdownlint
+LINTERS_LOCAL_GATE_FILE_SIZE=file-size
+LINTERS_LOCAL_SKIP_NON_SHELL="non-shell broad repository sweep; use --full"
+
+_record_gate_run() {
+	local gate_name="$1"
+	LINTERS_LOCAL_GATES_RAN="${LINTERS_LOCAL_GATES_RAN}${gate_name}"$'\n'
+	return 0
+}
+
+_record_gate_skipped() {
+	local gate_name="$1"
+	local reason="$2"
+	LINTERS_LOCAL_GATES_SKIPPED="${LINTERS_LOCAL_GATES_SKIPPED}${gate_name}: ${reason}"$'\n'
+	return 0
+}
+
+_record_gate_delegated() {
+	local gate_name="$1"
+	local reason="$2"
+	LINTERS_LOCAL_GATES_DELEGATED="${LINTERS_LOCAL_GATES_DELEGATED}${gate_name}: ${reason}"$'\n'
+	return 0
+}
 
 _linters_local_cache_dir() {
 	if [[ -n "${LINTERS_LOCAL_CACHE_DIR_OVERRIDE:-}" ]]; then
@@ -354,19 +381,60 @@ check_shell_portability() {
 		return 0
 	fi
 
+	local portability_files=("--summary")
+	if [[ "${LINTERS_LOCAL_MODE:-full}" == "$LINTERS_LOCAL_MODE_CHANGED" ]]; then
+		if [[ ${#ALL_SH_FILES[@]} -eq 0 ]]; then
+			print_success "Shell portability: no changed shell files"
+			return 0
+		fi
+		portability_files+=("${ALL_SH_FILES[@]}")
+	fi
+
 	local output violations=0
-	output=$(bash "$scanner_script" --summary 2>&1) || violations=1
+	output=$(bash "$scanner_script" "${portability_files[@]}" 2>&1) || violations=1
 
 	if [[ "$violations" -eq 0 ]]; then
 		print_success "Shell portability: no unguarded platform-specific commands"
 	else
 		print_error "Shell portability: unguarded platform-specific commands found"
 		# Re-run without --summary to show details
-		bash "$scanner_script" 2>&1 || true
+		if [[ "${LINTERS_LOCAL_MODE:-full}" == "$LINTERS_LOCAL_MODE_CHANGED" ]]; then
+			bash "$scanner_script" "${ALL_SH_FILES[@]}" 2>&1 || true
+		else
+			bash "$scanner_script" 2>&1 || true
+		fi
 		return 1
 	fi
 
 	return 0
+}
+
+check_targeted_tests() {
+	echo -e "${BLUE}Checking Targeted Tests for Changed Files...${NC}"
+
+	if [[ "${LINTERS_LOCAL_MODE:-full}" != "$LINTERS_LOCAL_MODE_CHANGED" ]]; then
+		print_info "Targeted tests: full mode uses explicit test commands/CI"
+		return 0
+	fi
+
+	local changed_files=""
+	changed_files=$(linters_local_changed_files_matching '.+')
+	if [[ -z "$changed_files" ]]; then
+		print_success "Targeted tests: no changed files with mapped tests"
+		return 0
+	fi
+
+	local exit_code=0
+	if printf '%s\n' "$changed_files" | grep -Eq '^\.agents/scripts/linters-local(-analysis|-gates|-validators)?\.sh$|^\.agents/scripts/tests/test-linters-local'; then
+		bash .agents/scripts/tests/test-linters-local-complexity-gates.sh || exit_code=1
+		if [[ -f .agents/scripts/tests/test-linters-local-changed-mode.sh ]]; then
+			bash .agents/scripts/tests/test-linters-local-changed-mode.sh || exit_code=1
+		fi
+	else
+		print_success "Targeted tests: no mapped changed files"
+	fi
+
+	return "$exit_code"
 }
 
 # _run_gate_checks_complexity: run complexity and compatibility gates (bash32 through python).
@@ -412,8 +480,101 @@ _run_gate_checks_complexity() {
 _run_gate_checks() {
 	local exit_code=0
 
+	if [[ "${LINTERS_LOCAL_MODE:-full}" == "$LINTERS_LOCAL_MODE_CHANGED" ]]; then
+		_run_gate_checks_changed || exit_code=1
+		return $exit_code
+	fi
+
 	_run_gate_checks_static || exit_code=1
 	_run_gate_checks_complexity || exit_code=1
 
 	return $exit_code
+}
+
+_run_gate_checks_changed() {
+	local exit_code=0
+	local changed_md_files=""
+
+	_record_gate_run "git diff --check"
+	check_git_diff_whitespace || exit_code=1
+	echo ""
+
+	_record_gate_delegated "sonarcloud" "remote/broad status left to CI or --full"
+	_record_gate_delegated "qlty" "remote/broad status left to CI or --full"
+	_record_gate_skipped "return-statements" "broad historical debt gate; use --full"
+	_record_gate_skipped "positional-parameters" "broad historical debt gate; use --full"
+	_record_gate_run "string-literals"
+	check_string_literals || exit_code=1
+	echo ""
+
+	_record_gate_run "forbidden-exec-fd"
+	check_forbidden_exec_fd || exit_code=1
+	echo ""
+
+	_record_gate_run "shfmt"
+	run_shfmt
+	echo ""
+
+	_record_gate_run "shellcheck"
+	run_shellcheck || exit_code=1
+	echo ""
+
+	_record_gate_run "secretlint"
+	check_secrets || exit_code=1
+	echo ""
+
+	changed_md_files=$(linters_local_changed_files_matching '\.md$')
+	if [[ -n "$changed_md_files" ]]; then
+		_record_gate_run "$LINTERS_LOCAL_GATE_MARKDOWN"
+		check_markdown_lint || exit_code=1
+		echo ""
+		_record_gate_run "$LINTERS_LOCAL_GATE_FILE_SIZE"
+		check_file_size || exit_code=1
+		echo ""
+	else
+		_record_gate_skipped "$LINTERS_LOCAL_GATE_MARKDOWN" "no changed Markdown files"
+		_record_gate_skipped "$LINTERS_LOCAL_GATE_FILE_SIZE" "no changed Markdown files"
+	fi
+
+	_record_gate_skipped "toon-syntax" "$LINTERS_LOCAL_SKIP_NON_SHELL"
+	_record_gate_skipped "skill-frontmatter" "$LINTERS_LOCAL_SKIP_NON_SHELL"
+	_record_gate_run "secret-policy"
+	check_secret_policy || exit_code=1
+	echo ""
+
+	_record_gate_skipped "pulse-canary" "broad integration canary; use --full/CI"
+	_record_gate_skipped "ratchets" "broad ratchet summary; use --full/CI"
+	_record_gate_skipped "repo-layout" "broad layout drift audit; use --full/CI"
+
+	_record_gate_run "bash32-compat"
+	check_bash32_compat || exit_code=1
+	echo ""
+
+	_record_gate_run "shell-portability"
+	check_shell_portability || exit_code=1
+	echo ""
+
+	_record_gate_run "function-complexity"
+	check_function_complexity || exit_code=1
+	echo ""
+
+	_record_gate_run "nesting-depth"
+	check_nesting_depth || exit_code=1
+	echo ""
+
+	_record_gate_skipped "python-complexity" "$LINTERS_LOCAL_SKIP_NON_SHELL"
+	_record_gate_run "targeted-tests"
+	check_targeted_tests || exit_code=1
+	echo ""
+
+	return $exit_code
+}
+
+print_linter_gate_summary() {
+	local mode="${LINTERS_LOCAL_MODE:-full}"
+	echo -e "${BLUE}Gate Summary (${mode})${NC}"
+	printf 'Ran:\n%s' "${LINTERS_LOCAL_GATES_RAN:-  (full gate set; see output above)}"
+	printf 'Skipped/advisory:\n%s' "${LINTERS_LOCAL_GATES_SKIPPED:-  (none recorded)}"
+	printf 'Delegated to CI/full mode:\n%s' "${LINTERS_LOCAL_GATES_DELEGATED:-  (none recorded)}"
+	return 0
 }
