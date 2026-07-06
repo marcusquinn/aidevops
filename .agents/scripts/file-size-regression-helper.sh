@@ -222,8 +222,8 @@ log_regression_paths() {
 		return 0
 	fi
 	log "new oversized paths:"
-	printf '%s\n' "$_paths" | while IFS= read -r _path; do
-		[ -n "$_path" ] && log "  $_path"
+	printf '%s' "$_paths" | while IFS= read -r _path || [ -n "$_path" ]; do
+		log "  $_path"
 	done
 	return 0
 }
@@ -243,7 +243,7 @@ cmd_diff_finish() {
 	_base_count=$(count_tsv_lines "$_base_file")
 	_head_count=$(count_tsv_lines "$_head_file")
 	_new_paths=$(find_new_violations "$_base_file" "$_head_file")
-	_new_count=$(printf '%s\n' "$_new_paths" | grep -c '.' 2>/dev/null || true)
+	_new_count=$(printf '%s' "$_new_paths" | grep -c '.' 2>/dev/null || true)
 	_new_count=${_new_count//[^0-9]/}
 	_new_count=${_new_count:-0}
 	_regression_paths="$_new_paths"
@@ -263,7 +263,7 @@ cmd_diff_finish() {
 	fi
 
 	if [ "$_net_delta" -gt 0 ] || [ "$_new_count" -gt 0 ]; then
-		if [ "$_allow_increase" -eq 1 ]; then
+		if [ "$_allow_increase" = "1" ]; then
 			log "REGRESSION detected but --allow-increase set — warning only"
 			return 0
 		fi
