@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.67] - 2026-07-06
+
+### Changed
+
+- Maintenance: mark t18067 complete (pr:#26672 completed:2026-07-06) [skip ci]
+- Centralize terminal worktree cleanup (#26672)
+
 ## [3.31.66] - 2026-07-06
 
 ### Fixed
