@@ -54,6 +54,7 @@ _PULSE_MERGE_PROCESS_LOADED=1
 : "${STOP_FLAG:=${HOME}/.aidevops/logs/pulse-session.stop}"
 : "${PULSE_MERGE_BATCH_LIMIT:=50}"
 : "${PULSE_MERGE_CHECKPOINT_FILE:=${HOME}/.aidevops/logs/pulse-merge-checkpoint}"
+: "${PULSE_MERGE_PR_CURSOR_FILE:=${PULSE_MERGE_CHECKPOINT_FILE}.pr-cursor}"
 
 # Load the exact-output PR-list provider cache for standalone module tests and
 # direct routine sourcing. pulse-wrapper.sh also sources this before the merge
@@ -489,6 +490,185 @@ _pmp_clear_merge_checkpoint() {
 	return 0
 }
 
+_pmp_clear_merge_pr_cursor() {
+	local cursor_file="$1"
+
+	[[ -n "$cursor_file" ]] || return 0
+	rm -f "$cursor_file" 2>/dev/null || true
+	return 0
+}
+
+_pmp_write_merge_pr_cursor() {
+	local cursor_file="$1"
+	local repo_slug="$2"
+	local next_index="$3"
+	local last_pr_number="$4"
+	local next_pr_number="$5"
+
+	[[ -n "$cursor_file" && -n "$repo_slug" ]] || return 0
+	[[ "$next_index" =~ ^[0-9]+$ ]] || next_index=0
+	printf '%s|%s|%s|%s\n' "$repo_slug" "$next_index" "$last_pr_number" "$next_pr_number" >"$cursor_file" 2>/dev/null || true
+	return 0
+}
+
+_pmp_read_merge_pr_cursor_last() {
+	local cursor_file="$1"
+	local repo_slug="$2"
+	local last_pr_var="$3"
+	local cursor_repo="" cursor_next_index="" cursor_last_pr="" cursor_next_pr=""
+
+	[[ "$last_pr_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	if [[ -n "$cursor_file" && -f "$cursor_file" ]]; then
+		IFS='|' read -r cursor_repo cursor_next_index cursor_last_pr cursor_next_pr <"$cursor_file" || true
+		if [[ "$cursor_repo" == "$repo_slug" ]]; then
+			printf -v "$last_pr_var" '%s' "$cursor_last_pr"
+			return 0
+		fi
+	fi
+	printf -v "$last_pr_var" '%s' ''
+	return 0
+}
+
+_pmp_pr_cursor_index_for_number() {
+	local pr_json="$1"
+	local pr_number="$2"
+
+	[[ -n "$pr_number" && "$pr_number" =~ ^[0-9]+$ ]] || return 1
+	printf '%s' "$pr_json" | jq --argjson pr_number "$pr_number" 'map(.number == $pr_number) | index(true) // empty' 2>/dev/null
+	return 0
+}
+
+_pmp_pr_object_at_index() {
+	local pr_json="$1"
+	local pr_index="$2"
+
+	[[ "$pr_index" =~ ^[0-9]+$ ]] || return 1
+	printf '%s' "$pr_json" | jq -c --argjson pr_index "$pr_index" '.[$pr_index]' 2>/dev/null
+	return 0
+}
+
+_pmp_pr_number_at_index() {
+	local pr_json="$1"
+	local pr_index="$2"
+
+	[[ "$pr_index" =~ ^[0-9]+$ ]] || return 1
+	printf '%s' "$pr_json" | jq -r --argjson pr_index "$pr_index" '.[$pr_index].number // empty' 2>/dev/null
+	return 0
+}
+
+_pmp_prepare_merge_pr_cursor_resume() {
+	local repo_slug="$1"
+	local pr_json="$2"
+	local pr_count="$3"
+	local cursor_file="$4"
+	local logfile="$5"
+	local start_index_var="$6"
+	local cursor_repo="" cursor_next_index="" cursor_last_pr="" cursor_next_pr=""
+	local start_index=0 located_index=""
+
+	[[ "$start_index_var" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || return 1
+	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+
+	if [[ -n "$cursor_file" && -f "$cursor_file" ]]; then
+		IFS='|' read -r cursor_repo cursor_next_index cursor_last_pr cursor_next_pr <"$cursor_file" || true
+		if [[ "$cursor_repo" == "$repo_slug" ]]; then
+			located_index=$(_pmp_pr_cursor_index_for_number "$pr_json" "$cursor_next_pr") || located_index=""
+			if [[ "$located_index" =~ ^[0-9]+$ ]]; then
+				start_index="$located_index"
+			else
+				located_index=$(_pmp_pr_cursor_index_for_number "$pr_json" "$cursor_last_pr") || located_index=""
+				if [[ "$located_index" =~ ^[0-9]+$ ]]; then
+					start_index=$((located_index + 1))
+				elif [[ "$cursor_next_index" =~ ^[0-9]+$ ]]; then
+					start_index="$cursor_next_index"
+				fi
+			fi
+			if [[ "$start_index" -ge "$pr_count" ]]; then
+				_pmp_clear_merge_pr_cursor "$cursor_file"
+				start_index=0
+			else
+				echo "[pulse-wrapper] Merge pass: resuming ${repo_slug} at PR cursor index=${start_index} last_pr=${cursor_last_pr:-none} next_pr=${cursor_next_pr:-none}" >>"$logfile"
+			fi
+		elif [[ -n "$cursor_repo" ]]; then
+			echo "[pulse-wrapper] Merge pass: ignoring stale PR cursor repo=${cursor_repo} while processing ${repo_slug}" >>"$logfile"
+			_pmp_clear_merge_pr_cursor "$cursor_file"
+		fi
+	fi
+
+	printf -v "$start_index_var" '%s' "$start_index"
+	return 0
+}
+
+_pmp_merge_pass_budget_deadline() {
+	local pass_start="$1"
+	local budget_seconds="${PULSE_MERGE_GRACEFUL_BUDGET_SECONDS:-}"
+	local ceiling_seconds="${PULSE_MERGE_ROUTINE_TIMEOUT_SECONDS:-${PRE_RUN_STAGE_TIMEOUT:-0}}"
+	local reserve_seconds="${PULSE_MERGE_GRACEFUL_BUDGET_RESERVE_SECONDS:-45}"
+
+	[[ "$pass_start" =~ ^[0-9]+$ ]] || pass_start=0
+	[[ "$reserve_seconds" =~ ^[0-9]+$ ]] || reserve_seconds=45
+	if [[ -z "$budget_seconds" ]]; then
+		[[ "$ceiling_seconds" =~ ^[0-9]+$ ]] || ceiling_seconds=0
+		if [[ "$ceiling_seconds" -gt "$reserve_seconds" ]]; then
+			budget_seconds=$((ceiling_seconds - reserve_seconds))
+		else
+			budget_seconds=0
+		fi
+	fi
+	[[ "$budget_seconds" =~ ^[0-9]+$ ]] || budget_seconds=0
+	if [[ "$budget_seconds" -gt 0 && "$pass_start" -gt 0 ]]; then
+		printf '%s' "$((pass_start + budget_seconds))"
+	else
+		printf '0'
+	fi
+	return 0
+}
+
+_pmp_merge_pass_budget_exhausted() {
+	local deadline_epoch="${_PMP_MERGE_PASS_DEADLINE_EPOCH:-0}"
+	local now_epoch=""
+
+	[[ "$deadline_epoch" =~ ^[0-9]+$ ]] || deadline_epoch=0
+	[[ "$deadline_epoch" -gt 0 ]] || return 1
+	now_epoch=$(_pmp_now_epoch)
+	[[ "$now_epoch" =~ ^[0-9]+$ ]] || now_epoch=0
+	[[ "$now_epoch" -ge "$deadline_epoch" ]] || return 1
+	return 0
+}
+
+_pmp_pause_merge_pr_cursor() {
+	local repo_slug="$1"
+	local pr_json="$2"
+	local cursor_index="$3"
+	local pause_reason="$4"
+	local merged_var="$5"
+	local closed_var="$6"
+	local failed_var="$7"
+	local merged_count="$8"
+	local closed_count="$9"
+	local failed_count="${10}"
+	local required_contexts_cache_dir="${11:-}"
+	local author_permission_cache_dir="${12:-}"
+	local next_pr="" last_pr=""
+
+	next_pr=$(_pmp_pr_number_at_index "$pr_json" "$cursor_index") || next_pr=""
+	_pmp_read_merge_pr_cursor_last "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug" last_pr || last_pr=""
+	_pmp_write_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug" "$cursor_index" "$last_pr" "$next_pr"
+	case "$pause_reason" in
+	budget)
+		echo "[pulse-wrapper] Merge pass: graceful time budget exhausted for ${repo_slug}; pausing at PR cursor index=${cursor_index} next_pr=${next_pr:-none}" >>"$LOGFILE"
+		;;
+	cooldown)
+		echo "[pulse-wrapper] Merge pass: GitHub cooldown active for ${repo_slug}; pausing remaining PR processing" >>"$LOGFILE"
+		;;
+	stop) ;;
+	esac
+	eval "${merged_var}=${merged_count}; ${closed_var}=${closed_count}; ${failed_var}=${failed_count}"
+	[[ -n "$required_contexts_cache_dir" ]] && rm -rf -- "$required_contexts_cache_dir"
+	[[ -n "$author_permission_cache_dir" ]] && rm -rf -- "$author_permission_cache_dir"
+	return 5
+}
+
 _pmp_repo_rows_contain_slug() {
 	local repo_rows="$1"
 	local checkpoint_slug="$2"
@@ -591,10 +771,16 @@ _pmp_process_merge_repo_for_pass() {
 	local _mr_repo_start _mr_repo_stuck_start _mr_repo_total_s=0
 	_mr_repo_start=$(_pmp_now_epoch)
 
-	_merge_ready_prs_for_repo "$repo_slug" repo_merged repo_closed repo_failed _mr_repo_pr_count "_mr_repo_"
+	local _mr_repo_rc=0
+	_merge_ready_prs_for_repo "$repo_slug" repo_merged repo_closed repo_failed _mr_repo_pr_count "_mr_repo_" || _mr_repo_rc=$?
 	_pmp_add_counter_var "$total_merged_var" "$repo_merged"
 	_pmp_add_counter_var "$total_closed_var" "$repo_closed"
 	_pmp_add_counter_var "$total_failed_var" "$repo_failed"
+	if [[ "$_mr_repo_rc" -eq 5 ]]; then
+		echo "[pulse-wrapper] Deterministic merge pass paused mid-repo ${repo_slug}; PR cursor persisted" >>"$logfile"
+		printf -v "$completed_all_var" '%s' '0'
+		return 0
+	fi
 
 	_mr_repo_stuck_start=$(_pmp_now_epoch)
 	if declare -F pulse_merge_stuck_run_pass >/dev/null 2>&1; then
@@ -611,6 +797,7 @@ _pmp_process_merge_repo_for_pass() {
 	_pmp_add_elapsed_seconds _mr_repo_total_s "$_mr_repo_start"
 	_pmp_log_repo_timing_summary "$repo_slug" "$_mr_repo_total_s" "$_mr_repo_list_s" "$_mr_repo_mergeability_s" "$_mr_repo_ruleset_s" "$_mr_repo_branch_protection_s" "$_mr_repo_stuck_detector_s" "$repo_merged" "$repo_closed" "$repo_failed" "$_mr_repo_pr_count"
 	_pmp_write_merge_checkpoint "$checkpoint_file" "$repo_slug"
+	_pmp_clear_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE"
 
 	if [[ -f "$stop_flag" ]]; then
 		echo "[pulse-wrapper] Deterministic merge pass: stop flag appeared mid-run" >>"$logfile"
@@ -628,9 +815,11 @@ merge_ready_prs_all_repos() {
 	local _mr_repos_json="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 	local _mr_logfile="${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}"
 	local _mr_checkpoint_file="${PULSE_MERGE_CHECKPOINT_FILE:-${HOME}/.aidevops/logs/pulse-merge-checkpoint}"
+	PULSE_MERGE_PR_CURSOR_FILE="${PULSE_MERGE_PR_CURSOR_FILE:-${_mr_checkpoint_file}.pr-cursor}"
 	PULSE_MERGE_BATCH_LIMIT="${PULSE_MERGE_BATCH_LIMIT:-50}"
 	local _mr_pass_start
 	_mr_pass_start=$(_pmp_now_epoch)
+	_PMP_MERGE_PASS_DEADLINE_EPOCH=$(_pmp_merge_pass_budget_deadline "$_mr_pass_start")
 
 	if [[ -f "$_mr_stop_flag" ]]; then
 		echo "[pulse-wrapper] Deterministic merge pass skipped: stop flag present" >>"$_mr_logfile"
@@ -672,6 +861,7 @@ merge_ready_prs_all_repos() {
 
 	if [[ "$_mr_completed_all" -eq 1 ]]; then
 		_pmp_clear_merge_checkpoint "$_mr_checkpoint_file"
+		_pmp_clear_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE"
 	fi
 
 	# t3193: record the zero-progress signal AFTER all repos have been processed.
@@ -725,15 +915,8 @@ _merge_ready_prs_for_repo() {
 	local _pr_count_var="${5:-}"
 	local _timing_prefix="${6:-}"
 
-	local merged=0
-	local closed=0
-	local failed=0
-
-	# Fetch open PRs through the exact-output provider cache. Backlog scheduling
-	# is enriched below from REST check-suites so repeated merge/stuck scans can
-	# share a per-cycle PR-list snapshot without changing jq consumer semantics.
-	local pr_json pr_merge_err
-	local _list_start
+	local merged=0 closed=0 failed=0
+	local pr_json pr_merge_err _list_start pr_count
 	_list_start=$(_pmp_now_epoch)
 	pr_merge_err=$(mktemp)
 	if declare -F pulse_pr_list_get >/dev/null 2>&1; then
@@ -754,7 +937,6 @@ _merge_ready_prs_for_repo() {
 	rm -f "$pr_merge_err"
 	[[ -n "$_timing_prefix" ]] && _pmp_add_elapsed_seconds "${_timing_prefix}list_s" "$_list_start"
 
-	local pr_count
 	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
 	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
 	if [[ -n "$_pr_count_var" ]]; then
@@ -767,8 +949,7 @@ _merge_ready_prs_for_repo() {
 		return 0
 	fi
 
-	local AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR=""
-	local AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR=""
+	local AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR="" AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR=""
 	AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-pulse-required-contexts.XXXXXX" 2>/dev/null) || AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR=""
 	AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-pulse-author-perms.XXXXXX" 2>/dev/null) || AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR=""
 	if [[ -z "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" || -z "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR" ]]; then
@@ -784,12 +965,26 @@ _merge_ready_prs_for_repo() {
 	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
 
 	local i=0
+	_pmp_prepare_merge_pr_cursor_resume "$repo_slug" "$pr_json" "$pr_count" "$PULSE_MERGE_PR_CURSOR_FILE" "$LOGFILE" i || i=0
 	while [[ "$i" -lt "$pr_count" ]]; do
-		[[ -f "$STOP_FLAG" ]] && break
-		declare -F _gh_secondary_cooldown_preflight >/dev/null 2>&1 && ! _gh_secondary_cooldown_preflight write >/dev/null 2>&1 && { echo "[pulse-wrapper] Merge pass: GitHub cooldown active for ${repo_slug}; pausing remaining PR processing" >>"$LOGFILE"; break; }
+		if [[ -f "$STOP_FLAG" ]]; then
+			_pmp_pause_merge_pr_cursor "$repo_slug" "$pr_json" "$i" stop "$_merged_var" "$_closed_var" "$_failed_var" "$merged" "$closed" "$failed" "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR"
+			return $?
+		fi
+		if _pmp_merge_pass_budget_exhausted; then
+			_pmp_pause_merge_pr_cursor "$repo_slug" "$pr_json" "$i" budget "$_merged_var" "$_closed_var" "$_failed_var" "$merged" "$closed" "$failed" "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR"
+			return $?
+		fi
+		if declare -F _gh_secondary_cooldown_preflight >/dev/null 2>&1 && ! _gh_secondary_cooldown_preflight write >/dev/null 2>&1; then
+			_pmp_pause_merge_pr_cursor "$repo_slug" "$pr_json" "$i" cooldown "$_merged_var" "$_closed_var" "$_failed_var" "$merged" "$closed" "$failed" "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR"
+			return $?
+		fi
 		local pr_obj
-		pr_obj=$(printf '%s' "$pr_json" | jq -c ".[$i]" 2>/dev/null)
+		pr_obj=$(_pmp_pr_object_at_index "$pr_json" "$i")
+		local _cursor_last_pr="" _cursor_next_pr=""
+		_cursor_last_pr=$(printf '%s' "$pr_obj" | jq -r '.number // empty' 2>/dev/null) || _cursor_last_pr=""
 		i=$((i + 1))
+		_cursor_next_pr=$(_pmp_pr_number_at_index "$pr_json" "$i") || _cursor_next_pr=""
 		[[ -n "$pr_obj" ]] || continue
 
 		_process_single_ready_pr "$repo_slug" "$pr_obj" "$_timing_prefix"
@@ -800,7 +995,9 @@ _merge_ready_prs_for_repo() {
 		3) failed=$((failed + 1)) ;;
 		4) ;;
 		esac
+		_pmp_write_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE" "$repo_slug" "$i" "$_cursor_last_pr" "$_cursor_next_pr"
 	done
+	_pmp_clear_merge_pr_cursor "$PULSE_MERGE_PR_CURSOR_FILE"
 
 	[[ -n "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR" ]] && rm -rf -- "$AIDEVOPS_PULSE_REQUIRED_CONTEXTS_CACHE_DIR"
 	[[ -n "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR" ]] && rm -rf -- "$AIDEVOPS_PULSE_AUTHOR_PERMISSION_CACHE_DIR"
