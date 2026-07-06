@@ -38,6 +38,9 @@ SETUP_STAGE_HOOKS="setup_safety_hooks"
 SETUP_STAGE_TABBY="setup_tabby"
 SETUP_STAGE_PULSE="setup_supervisor_pulse"
 SETUP_STAGE_GUI_DESKTOP="setup_gui_desktop_app"
+SETUP_STAGE_AI_SESSION="setup_ai_session_incremental"
+SETUP_STAGE_OPENCODE_PLUGINS="setup_opencode_plugins"
+SETUP_STAGE_HOTFIX_CONFIG="_deploy_hotfix_config"
 SETUP_GUI_APP_NAME="aidevops.app"
 SETUP_OS_DARWIN="Darwin"
 # Python compatibility floor used by setup checks and skill/tool gating.
@@ -392,8 +395,8 @@ parse_args() {
 			echo "Use --clean after removing or renaming agents to sync deletions."
 			echo "Use --interactive to control each step individually."
 			echo "Use --non-interactive for CI/CD or AI agent shells (no stdin required)."
-			echo "Use --stage for targeted updates: opencode, agents, hooks, tabby, pulse, gui-desktop, full."
-			echo "Stage aliases: ${SETUP_STAGE_OPENCODE}, ${SETUP_STAGE_AGENTS}, ${SETUP_STAGE_HOOKS}, ${SETUP_STAGE_TABBY}, ${SETUP_STAGE_PULSE}, ${SETUP_STAGE_GUI_DESKTOP}."
+			echo "Use --stage for targeted updates: opencode, agents, hooks, tabby, pulse, gui-desktop, ai-session, full."
+			echo "Stage aliases: ${SETUP_STAGE_OPENCODE}, ${SETUP_STAGE_AGENTS}, ${SETUP_STAGE_HOOKS}, ${SETUP_STAGE_TABBY}, ${SETUP_STAGE_PULSE}, ${SETUP_STAGE_GUI_DESKTOP}, ${SETUP_STAGE_AI_SESSION}."
 			echo "Install ${SETUP_GUI_APP_NAME} explicitly with --stage gui-desktop or AIDEVOPS_GUI_DESKTOP_INSTALL=true."
 			echo "Use --update to check for tool updates after setup completes."
 			exit 0
@@ -419,6 +422,7 @@ _setup_print_stage_help() {
 	printf '  tabby    | %s                 Sync Tabby profiles only\n' "$SETUP_STAGE_TABBY"
 	printf '  pulse    | %s      Install/refresh pulse scheduler only\n' "$SETUP_STAGE_PULSE"
 	printf '  gui-desktop | gui | app | %s  Install native macOS %s only\n' "$SETUP_STAGE_GUI_DESKTOP" "$SETUP_GUI_APP_NAME"
+	printf '  ai-session | ai | %s  Run changed deploy stages, then full setup on failure\n' "$SETUP_STAGE_AI_SESSION"
 	printf '%s\n' "  full                                  Run the default full setup path"
 	return 0
 }
@@ -432,6 +436,7 @@ _setup_canonical_stage() {
 	tabby | "$SETUP_STAGE_TABBY") printf '%s' "$SETUP_STAGE_TABBY" ;;
 	pulse | "$SETUP_STAGE_PULSE") printf '%s' "$SETUP_STAGE_PULSE" ;;
 	gui-desktop | gui | app | "$SETUP_STAGE_GUI_DESKTOP") printf '%s' "$SETUP_STAGE_GUI_DESKTOP" ;;
+	ai-session | ai | "$SETUP_STAGE_AI_SESSION") printf '%s' "$SETUP_STAGE_AI_SESSION" ;;
 	full) printf '%s' "full" ;;
 	*) return 1 ;;
 	esac
@@ -1185,6 +1190,185 @@ _setup_init_stage_timing_log() {
 	return 0
 }
 
+_setup_ai_session_reset_plan() {
+	_SETUP_AI_SESSION_NEEDS_AGENTS=0
+	_SETUP_AI_SESSION_NEEDS_CLI=0
+	_SETUP_AI_SESSION_NEEDS_HOOKS=0
+	_SETUP_AI_SESSION_NEEDS_PULSE=0
+	_SETUP_AI_SESSION_NEEDS_GUI=0
+	_SETUP_AI_SESSION_REQUIRES_FULL=0
+	return 0
+}
+
+_setup_ai_session_setup_sh_version_only() {
+	local deployed_sha="$1"
+	local current_sha="$2"
+	local diff_output=""
+	local line=""
+	local payload=""
+
+	diff_output=$(git -C "$INSTALL_DIR" diff --unified=0 "$deployed_sha" "$current_sha" -- setup.sh 2>/dev/null) || return 1
+	while IFS= read -r line; do
+		case "$line" in
+		"diff --git "* | "index "* | "--- "* | "+++ "* | "@@"*)
+			continue
+			;;
+		+* | -*)
+			payload="${line#?}"
+			if [[ "$payload" != "# Version: "* ]]; then
+				return 1
+			fi
+			;;
+		esac
+	done <<<"$diff_output"
+
+	return 0
+}
+
+_setup_ai_session_plan_file() {
+	local filepath="$1"
+	local deployed_sha="$2"
+	local current_sha="$3"
+
+	case "$filepath" in
+	setup.sh)
+		if _setup_ai_session_setup_sh_version_only "$deployed_sha" "$current_sha"; then
+			print_info "setup.sh drift is release-version metadata only; incremental setup can continue"
+		else
+			print_warning "setup.sh changed beyond the release-version header; full setup required"
+			_SETUP_AI_SESSION_REQUIRES_FULL=1
+		fi
+		;;
+	aidevops.sh)
+		_SETUP_AI_SESSION_NEEDS_CLI=1
+		;;
+	.agents/hooks/*)
+		_SETUP_AI_SESSION_NEEDS_HOOKS=1
+		;;
+	.agents/scripts/setup/modules/schedulers*.sh | .agents/scripts/setup/_scheduler_runtime.sh)
+		_SETUP_AI_SESSION_NEEDS_PULSE=1
+		;;
+	.agents/scripts/setup/modules/agent-deploy.sh | .agents/scripts/setup/modules/plugins.sh)
+		:
+		;;
+	.agents/scripts/setup/*)
+		print_warning "Setup implementation changed ($filepath); full setup required"
+		_SETUP_AI_SESSION_REQUIRES_FULL=1
+		;;
+	packages/gui-api/* | packages/gui-desktop/* | packages/gui-shared/* | packages/gui-web/*)
+		_SETUP_AI_SESSION_NEEDS_GUI=1
+		;;
+	esac
+
+	return 0
+}
+
+_setup_ai_session_build_plan() {
+	local changed_files="$1"
+	local deployed_sha="$2"
+	local current_sha="$3"
+	local filepath=""
+
+	_setup_ai_session_reset_plan
+	# Deploying agents is the cheap, atomic baseline: it copies .agents/, writes
+	# VERSION, writes .deployed-sha, and restarts pulse asynchronously.
+	_SETUP_AI_SESSION_NEEDS_AGENTS=1
+	while IFS= read -r filepath; do
+		[[ -n "$filepath" ]] || continue
+		_setup_ai_session_plan_file "$filepath" "$deployed_sha" "$current_sha"
+	done <<<"$changed_files"
+
+	return 0
+}
+
+_setup_ai_session_verify_deploy() {
+	local expected_sha="$1"
+	local repo_version=""
+	local deployed_version=""
+	local deployed_sha=""
+
+	if [[ -f "$INSTALL_DIR/VERSION" ]]; then
+		repo_version=$(tr -d '[:space:]' <"$INSTALL_DIR/VERSION" 2>/dev/null) || repo_version=""
+	fi
+	if [[ -f "$HOME/.aidevops/agents/VERSION" ]]; then
+		deployed_version=$(tr -d '[:space:]' <"$HOME/.aidevops/agents/VERSION" 2>/dev/null) || deployed_version=""
+	fi
+	if [[ -f "$HOME/.aidevops/.deployed-sha" ]]; then
+		deployed_sha=$(tr -d '[:space:]' <"$HOME/.aidevops/.deployed-sha" 2>/dev/null) || deployed_sha=""
+	fi
+
+	if [[ -z "$repo_version" || "$repo_version" != "$deployed_version" ]]; then
+		print_warning "AI-session incremental verification failed: repo version=${repo_version:-unknown}, deployed=${deployed_version:-none}"
+		return 1
+	fi
+	if [[ -z "$deployed_sha" || "$deployed_sha" != "$expected_sha" ]]; then
+		print_warning "AI-session incremental verification failed: deployed SHA=${deployed_sha:-none}, expected=${expected_sha:0:12}"
+		return 1
+	fi
+
+	return 0
+}
+
+_setup_run_ai_session_incremental() {
+	local os="$1"
+	local stamp_file="$HOME/.aidevops/.deployed-sha"
+	local deployed_sha=""
+	local current_sha=""
+	local changed_files=""
+
+	print_info "AI-session setup mode: applying changed deploy stages only"
+	if [[ ! -d "$INSTALL_DIR/.git" || ! -f "$stamp_file" ]]; then
+		print_warning "AI-session incremental setup needs a git checkout and deployed SHA stamp"
+		return 1
+	fi
+
+	deployed_sha=$(tr -d '[:space:]' <"$stamp_file" 2>/dev/null) || deployed_sha=""
+	current_sha=$(git -C "$INSTALL_DIR" rev-parse HEAD 2>/dev/null) || current_sha=""
+	if [[ -z "$deployed_sha" || -z "$current_sha" ]]; then
+		print_warning "AI-session incremental setup could not resolve deployed/current SHAs"
+		return 1
+	fi
+
+	if [[ "$deployed_sha" == "$current_sha" ]]; then
+		print_success "AI-session setup: deployed SHA already matches current checkout"
+		_setup_ai_session_verify_deploy "$current_sha" || return $?
+		return 0
+	fi
+
+	changed_files=$(git -C "$INSTALL_DIR" diff --name-only "$deployed_sha" "$current_sha" 2>/dev/null) || {
+		print_warning "AI-session incremental setup could not diff ${deployed_sha:0:7}..${current_sha:0:7}"
+		return 1
+	}
+
+	_setup_ai_session_build_plan "$changed_files" "$deployed_sha" "$current_sha"
+	if [[ "$_SETUP_AI_SESSION_REQUIRES_FULL" -eq 1 ]]; then
+		return 1
+	fi
+
+	_setup_init_stage_timing_log
+	if [[ "$_SETUP_AI_SESSION_NEEDS_AGENTS" -eq 1 ]]; then
+		_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents || return $?
+		_time_step "$SETUP_STAGE_OPENCODE_PLUGINS" setup_opencode_plugins || return $?
+		_time_step "$SETUP_STAGE_HOTFIX_CONFIG" _deploy_hotfix_config || return $?
+	fi
+	if [[ "$_SETUP_AI_SESSION_NEEDS_CLI" -eq 1 ]]; then
+		_time_step "install_aidevops_cli" install_aidevops_cli || return $?
+	fi
+	if [[ "$_SETUP_AI_SESSION_NEEDS_HOOKS" -eq 1 ]]; then
+		_time_step "$SETUP_STAGE_HOOKS" setup_safety_hooks || return $?
+	fi
+	if [[ "$_SETUP_AI_SESSION_NEEDS_PULSE" -eq 1 ]]; then
+		_time_step "$SETUP_STAGE_PULSE" setup_supervisor_pulse "$os" || return $?
+	fi
+	if [[ "$_SETUP_AI_SESSION_NEEDS_GUI" -eq 1 ]]; then
+		_time_step "setup_gui_desktop_app_opt_in" _setup_offer_gui_desktop_app || return $?
+	fi
+
+	_setup_ai_session_verify_deploy "$current_sha" || return $?
+	print_success "AI-session incremental setup complete (${deployed_sha:0:7}→${current_sha:0:7})"
+	return 0
+}
+
 _setup_run_scoped_stage() {
 	local os="$1"
 	local stage
@@ -1205,8 +1389,8 @@ _setup_run_scoped_stage() {
 		;;
 	"$SETUP_STAGE_AGENTS")
 		_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents
-		_time_step "setup_opencode_plugins" setup_opencode_plugins
-		_time_step "_deploy_hotfix_config" _deploy_hotfix_config
+		_time_step "$SETUP_STAGE_OPENCODE_PLUGINS" setup_opencode_plugins
+		_time_step "$SETUP_STAGE_HOTFIX_CONFIG" _deploy_hotfix_config
 		;;
 	"$SETUP_STAGE_HOOKS")
 		_time_step "$SETUP_STAGE_HOOKS" setup_safety_hooks
@@ -1219,6 +1403,13 @@ _setup_run_scoped_stage() {
 		;;
 	"$SETUP_STAGE_GUI_DESKTOP")
 		_time_step "$SETUP_STAGE_GUI_DESKTOP" setup_gui_desktop_app
+		;;
+	"$SETUP_STAGE_AI_SESSION")
+		if ! _setup_run_ai_session_incremental "$os"; then
+			print_warning "AI-session incremental setup unavailable or failed; falling back to full setup"
+			_setup_run_non_interactive || return $?
+			_setup_post_setup_steps "$os" || return $?
+		fi
 		;;
 	*)
 		print_error "Unsupported canonical setup stage: $stage"
@@ -1266,9 +1457,9 @@ _setup_run_non_interactive() {
 	_time_step "$SETUP_STAGE_OPENCODE" setup_opencode_cli
 	_time_step "validate_opencode_config" validate_opencode_config
 	_time_step "$SETUP_STAGE_AGENTS" deploy_aidevops_agents
-	_time_step "setup_opencode_plugins" setup_opencode_plugins
+	_time_step "$SETUP_STAGE_OPENCODE_PLUGINS" setup_opencode_plugins
 	_time_step "_setup_install_pulse_plist_early" _setup_install_pulse_plist_early
-	_time_step "_deploy_hotfix_config" _deploy_hotfix_config
+	_time_step "$SETUP_STAGE_HOTFIX_CONFIG" _deploy_hotfix_config
 	_time_step "setup_opencode_desktop_launcher" setup_opencode_desktop_launcher
 	_time_step "sync_agent_sources" sync_agent_sources
 	_time_step "install_aidevops_cli" install_aidevops_cli
