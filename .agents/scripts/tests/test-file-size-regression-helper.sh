@@ -14,6 +14,7 @@
 #   6. code-and-readme-ignored  — oversized code and README.md do not count
 #   7. scan-exclusions          — plain scan excludes common vendor dirs
 #   8. check-tracked-only       — check mode ignores ignored/untracked Markdown
+#   9. tracked-oversized-check  — newly tracked oversized Markdown still blocks
 #
 # Usage: bash .agents/scripts/tests/test-file-size-regression-helper.sh
 # Requires: the helper at .agents/scripts/file-size-regression-helper.sh
@@ -117,14 +118,15 @@ run_scan() {
 # Runs check in a git fixture; stores exit code in _CHECK_EXIT.
 # ---------------------------------------------------------------------------
 _CHECK_EXIT=0
+_CHECK_OUTPUT=""
 run_check() {
 	local _repo="$1"
 	local _base_ref="$2"
 	shift 2
 	_CHECK_EXIT=0
-	(
+	_CHECK_OUTPUT=$(
 		cd "$_repo" || exit 2
-		"$HELPER" check --base "$_base_ref" --head HEAD "$@" >/dev/null 2>&1
+		"$HELPER" check --base "$_base_ref" --head HEAD "$@" 2>&1
 	) || _CHECK_EXIT=$?
 	return 0
 }
@@ -396,6 +398,46 @@ test_check_tracked_only() {
 	return 0
 }
 
+# ==========================================================================
+# Test 9: tracked-oversized-check — tracked oversized Markdown still blocks
+# ==========================================================================
+test_tracked_oversized_markdown_blocks_with_path() {
+	setup
+	local _repo="$TEST_ROOT/repo"
+	mkdir -p "$_repo"
+	git -C "$_repo" init -q
+	git -C "$_repo" config user.email "test@example.invalid"
+	git -C "$_repo" config user.name "Aidevops Test"
+	git -C "$_repo" config commit.gpgsign false
+	make_doc_file "$_repo/docs/small.md" 10
+	git -C "$_repo" add docs/small.md
+	if ! git -C "$_repo" commit -q -m "base"; then
+		print_result "tracked-oversized-check: fixture commit succeeds" 1 \
+			"git commit failed in test fixture"
+		teardown
+		return 0
+	fi
+	if ! git -C "$_repo" branch base; then
+		print_result "tracked-oversized-check: fixture base branch exists" 1 \
+			"git branch base failed in test fixture"
+		teardown
+		return 0
+	fi
+
+	make_doc_file "$_repo/docs/new-oversized.md" 600
+	git -C "$_repo" add docs/new-oversized.md
+	run_check "$_repo" base
+
+	if [ "$_CHECK_EXIT" -eq 1 ] && printf '%s\n' "$_CHECK_OUTPUT" | grep -q 'docs/new-oversized.md'; then
+		print_result "tracked-oversized-check: tracked oversized Markdown blocks with path" 0
+	else
+		print_result "tracked-oversized-check: tracked oversized Markdown blocks with path" 1 \
+			"got exit $_CHECK_EXIT without expected path"
+	fi
+	teardown
+	return 0
+}
+
 # ===========================================================================
 # Main
 # ===========================================================================
@@ -416,6 +458,7 @@ main() {
 	test_code_and_readme_ignored
 	test_scan_exclusions
 	test_check_tracked_only
+	test_tracked_oversized_markdown_blocks_with_path
 
 	printf '\n%d/%d tests passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
 

@@ -200,6 +200,83 @@ count_tsv_lines() {
 }
 
 # ---------------------------------------------------------------------------
+# tsv_paths <file>
+# Print non-empty path column values from a scan TSV.
+# ---------------------------------------------------------------------------
+tsv_paths() {
+	local _f="$1"
+	if [ ! -s "$_f" ]; then
+		return 0
+	fi
+	awk -F'\t' 'length($1) > 0 {print $1}' "$_f" | sort
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# log_regression_paths <paths>
+# Print exact oversized paths associated with a regression.
+# ---------------------------------------------------------------------------
+log_regression_paths() {
+	local _paths="$1"
+	if [ -z "$_paths" ]; then
+		return 0
+	fi
+	log "new oversized paths:"
+	printf '%s\n' "$_paths" | while IFS= read -r _path; do
+		[ -n "$_path" ] && log "  $_path"
+	done
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# cmd_diff_finish <base-file> <head-file> <base-sha> <head-sha> <output-md> <allow>
+# Compare prepared scan TSVs and return the diff subcommand exit code.
+# ---------------------------------------------------------------------------
+cmd_diff_finish() {
+	local _base_file="$1"
+	local _head_file="$2"
+	local _base_sha="$3"
+	local _head_sha="$4"
+	local _output_md="$5"
+	local _allow_increase="$6"
+	local _base_count _head_count _new_paths _new_count _regression_paths
+	_base_count=$(count_tsv_lines "$_base_file")
+	_head_count=$(count_tsv_lines "$_head_file")
+	_new_paths=$(find_new_violations "$_base_file" "$_head_file")
+	_new_count=$(printf '%s\n' "$_new_paths" | grep -c '.' 2>/dev/null || true)
+	_new_count=${_new_count//[^0-9]/}
+	_new_count=${_new_count:-0}
+	_regression_paths="$_new_paths"
+
+	log "base: $_base_count  head: $_head_count  new: $_new_count"
+	log "compared refs: base=$_base_sha head=$_head_sha"
+
+	local _net_delta=$((_head_count - _base_count))
+	if [ -z "$_regression_paths" ] && [ "$_net_delta" -gt 0 ]; then
+		_regression_paths=$(tsv_paths "$_head_file")
+	fi
+
+	if [ -n "$_output_md" ]; then
+		write_report "$_base_count" "$_head_count" "$_new_count" \
+			"$_regression_paths" "$_base_sha" "$_head_sha" "$_output_md"
+		log "report written to $_output_md"
+	fi
+
+	if [ "$_net_delta" -gt 0 ] || [ "$_new_count" -gt 0 ]; then
+		if [ "$_allow_increase" -eq 1 ]; then
+			log "REGRESSION detected but --allow-increase set — warning only"
+			return 0
+		fi
+		log "REGRESSION: net_delta=${_net_delta}  new_violations=${_new_count}"
+		log_regression_paths "$_regression_paths"
+		return 1
+	fi
+
+	log "no regression"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # find_new_violations <base_tsv> <head_tsv>
 # Print paths that appear in head_tsv but NOT in base_tsv.
 # Bash 3.2 compatible (no process substitution).
@@ -437,40 +514,9 @@ cmd_diff() {
 		return 0
 	fi
 
-	local _base_count _head_count _new_paths _new_count
-	_base_count=$(count_tsv_lines "$_base_file")
-	_head_count=$(count_tsv_lines "$_head_file")
-	_new_paths=$(find_new_violations "$_base_file" "$_head_file")
-	_new_count=$(printf '%s\n' "$_new_paths" | grep -c '.' 2>/dev/null || true)
-	_new_count=${_new_count//[^0-9]/}
-	_new_count=${_new_count:-0}
-
-	log "base: $_base_count  head: $_head_count  new: $_new_count"
-	if [ "$_new_count" -gt 0 ]; then
-		log "new oversized paths:"
-		printf '%s\n' "$_new_paths" | while IFS= read -r _path; do
-			[ -n "$_path" ] && log "  $_path"
-		done
-	fi
-
-	if [ -n "$_output_md" ]; then
-		write_report "$_base_count" "$_head_count" "$_new_count" \
-			"$_new_paths" "$_base_sha" "$_head_sha" "$_output_md"
-		log "report written to $_output_md"
-	fi
-
-	local _net_delta=$((_head_count - _base_count))
-	if [ "$_net_delta" -gt 0 ] || [ "$_new_count" -gt 0 ]; then
-		if [ "$_allow_increase" -eq 1 ]; then
-			log "REGRESSION detected but --allow-increase set — warning only"
-			return 0
-		fi
-		log "REGRESSION: net_delta=${_net_delta}  new_violations=${_new_count}"
-		return 1
-	fi
-
-	log "no regression"
-	return 0
+	cmd_diff_finish "$_base_file" "$_head_file" "$_base_sha" "$_head_sha" \
+		"$_output_md" "$_allow_increase"
+	return $?
 }
 
 # ---------------------------------------------------------------------------
@@ -630,13 +676,20 @@ cmd_check() {
 		return 0
 	fi
 
+	local _comparison_base_ref="$_base_ref"
+	local _merge_base
+	_merge_base=$(git merge-base "$_base_ref" "$FILE_SIZE_CHECK_HEAD_REF" 2>/dev/null) || _merge_base=""
+	if [ -n "$_merge_base" ]; then
+		_comparison_base_ref="$_merge_base"
+	fi
+
 	local _base_tsv="$_tmp_dir/base.tsv"
 	local _base_sha _head_sha
-	_base_sha=$(git rev-parse --short "$_base_ref" 2>/dev/null) || _base_sha="$_base_ref"
+	_base_sha=$(git rev-parse --short "$_comparison_base_ref" 2>/dev/null) || _base_sha="$_comparison_base_ref"
 	_head_sha=$(git rev-parse --short "$FILE_SIZE_CHECK_HEAD_REF" 2>/dev/null) || _head_sha="$FILE_SIZE_CHECK_HEAD_REF"
 	log "comparing refs: base=${_base_ref} (${_base_sha}) head=${FILE_SIZE_CHECK_HEAD_REF} (${_head_sha})"
 	log "scanning base ($_base_sha)"
-	scan_violations_ref "$_base_ref" "$FILE_SIZE_CHECK_LIMIT" > "$_base_tsv" 2>/dev/null || true
+	scan_violations_ref "$_comparison_base_ref" "$FILE_SIZE_CHECK_LIMIT" > "$_base_tsv" 2>/dev/null || true
 	log "scanning head ($_head_sha)"
 	cmd_check_scan_head "$FILE_SIZE_CHECK_HEAD_REF" "$FILE_SIZE_CHECK_LIMIT" "$_head_tsv"
 	cmd_check_run_diff "$_base_tsv" "$_head_tsv" "$_base_sha" "$_head_sha" \
