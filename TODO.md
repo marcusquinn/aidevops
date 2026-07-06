@@ -3733,7 +3733,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t3022 Cap concurrent opus-4-6 dispatches at N per Anthropic account to prevent rate-limit cascade #auto-dispatch #enhancement ref:GH#21579 pr:#21715 completed:2026-04-29
 
-- [ ] t3023 filter state=CLOSED issues from dispatch candidates before metadata load #auto-dispatch #bug ref:GH#21580
+- [x] t3023 filter state=CLOSED issues from dispatch candidates before metadata load #auto-dispatch #bug ref:GH#21580 pr:#26738 completed:2026-07-06
 
 - [x] t3025 fix jq null-input flood in dispatch-dedup-helper.sh tier extraction #auto-dispatch #bug ref:GH#21582 pr:#21587 completed:2026-04-28
 
