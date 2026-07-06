@@ -11,6 +11,7 @@ import { CommsConversationSurface } from "../src/CommsConversationSurface";
 import { AppsSurface, nextRecommendedFilterValue } from "../src/InventorySurfaces";
 import { PulseWorkersSurface } from "../src/PulseWorkersSurface";
 import { recommendedApps } from "../src/RecommendedAppsSurface";
+import { AiProvidersSurface } from "../src/StatusSurfaces";
 import { DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, chatPrimitiveStackDecision, fontOptions, navGroups, surfaceRecordCounts, type SurfaceNavItem } from "../src/app-model";
 import { renderDashboardHtml } from "../src/dashboard";
 import { fetchStatus, mockedStatus } from "../src/status-client";
@@ -306,7 +307,7 @@ describe("dashboard shell", () => {
     const status = await fetchStatus(legacyFetch);
 
     expect(status.data.local_repos.repos).toEqual([]);
-    expect(status.data.oauth_pool.providers.map((provider) => provider.provider)).toEqual(["anthropic", "openai", "cursor", "google"]);
+    expect(status.data.oauth_pool.providers.map((provider) => provider.provider)).toEqual(["anthropic", "openai", "cursor", "google", "zai"]);
     expect(status.data.vault.status).toBe("uninitialized");
     expect(status.data.vault.collections.flatMap((collection) => collection.surface_ids)).toContain("agents");
     expect(status.data.pulse_workers.value_policy).toBe("metadata_only_no_prompt_payloads_no_secrets");
@@ -314,6 +315,37 @@ describe("dashboard shell", () => {
     expect(status.data.setup_targets[0].path_ref).toBe("~/.aidevops/agents/VERSION");
     expect(status.data.ai_apps.map((app) => app.name)).toContain("OpenCode");
     expect(status.data.machine.initials).toBe("LM");
+  });
+
+  test("renders AI provider recommendations, OpenCode prefixes, and multi-account copy", () => {
+    const baseStatus = mockedStatus().data;
+    const status: GuiStatusData = {
+      ...baseStatus,
+      oauth_pool: {
+        ...baseStatus.oauth_pool,
+        providers: baseStatus.oauth_pool.providers.map((provider) => provider.provider === "openai"
+          ? {
+              ...provider,
+              configured: true,
+              total: 2,
+              available: 1,
+              active_or_idle: 1,
+              accounts: [
+                { email_ref: "account-one@example.test", status: "active", priority: 10, last_used: "2026-07-06T00:00:00.000Z", expires_at: "2026-07-07T00:00:00.000Z", cooldown_until: null },
+                { email_ref: "account-two@example.test", status: "rate-limited", priority: 0, last_used: "2026-07-05T00:00:00.000Z", expires_at: "2026-07-07T00:00:00.000Z", cooldown_until: "2026-07-06T01:00:00.000Z" },
+              ],
+            }
+          : provider),
+      },
+    };
+    const html = renderToStaticMarkup(createElement(AiProvidersSurface, { status }));
+
+    expect(html).toContain("Recommended OAuth pools");
+    expect(html).toContain("Z.ai");
+    expect(html).toContain("Recommended");
+    expect(html).toContain("openai-pool");
+    expect(html).toContain("Add another account");
+    expect(html).toContain("metadata-only pool entries");
   });
 
   test("renders updated Apps copy, casing, filter order, and compact managed metadata", () => {

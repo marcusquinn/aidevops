@@ -254,6 +254,17 @@ export const statusFixture: GuiStatusData = {
         pending_token: false,
         accounts: [],
       },
+      {
+        provider: "zai",
+        configured: false,
+        total: 0,
+        available: 0,
+        active_or_idle: 0,
+        rate_limited: 0,
+        auth_errors: 0,
+        pending_token: false,
+        accounts: [],
+      },
     ],
   },
   setup_targets: [

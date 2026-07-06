@@ -30,7 +30,7 @@ describe("status adapter", () => {
     expect(JSON.stringify(response.data.opencode_sessions)).not.toContain("content");
     expect(JSON.stringify(response.data.opencode_sessions)).not.toContain("parts");
     expect(response.data.oauth_pool.value_policy).toBe("metadata_only_no_tokens");
-    expect(response.data.oauth_pool.providers.map((provider) => provider.provider)).toEqual(["anthropic", "openai", "cursor", "google"]);
+    expect(response.data.oauth_pool.providers.map((provider) => provider.provider)).toEqual(["anthropic", "openai", "cursor", "google", "zai"]);
     expect(JSON.stringify(response.data.oauth_pool)).not.toContain("\"access\"");
     expect(JSON.stringify(response.data.oauth_pool)).not.toContain("\"refresh\"");
     expect(response.data.setup_targets.map((target) => target.path_ref)).toContain("~/.aidevops/agents/VERSION");
