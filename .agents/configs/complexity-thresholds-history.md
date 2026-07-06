@@ -106,6 +106,7 @@ Archives the full change history for `.agents/configs/complexity-thresholds.conf
 | 290 | GH#19588 | proximity guard firing at 283/285 (2 headroom); 283 violations + 7 headroom = 290; proximity guard (warn_at = 290-5 = 285) fires when violations exceed 285 (i.e., at 286), preventing saturation |
 | 285 | GH#19593 | ratcheted down — actual violations 283 + 2 buffer |
 | 290 | GH#19599 | buffer increased to 7 units (283+7=290) to break 285/290 ping-pong cycle; 2-unit buffer (285) triggered proximity guard (warn_at=280) immediately since 283 > 280; 7-unit buffer means proximity guard (warn_at=285) won't fire until violations reach 286, well above current 283 violations |
+| 3 | GH#18400/t1987 Phase 12 follow-up | ratcheted down after the AST scanner reports 1 file above depth 8; 1 actual + 2 buffer = 3 |
 
 ## FUNCTION_COMPLEXITY_THRESHOLD History
 
@@ -123,6 +124,7 @@ Archives the full change history for `.agents/configs/complexity-thresholds.conf
 | 30 | GH#18729 | ratcheted down — actual violations 28 + 2 buffer |
 | 23 | GH#18802 | ratcheted down — actual violations 21 + 2 buffer |
 | 26 | GH#18807 | pre-existing regression on main — 24 violations vs threshold 23; 24 violations + 2 buffer = 26 |
+| 31 | GH#18400/t1987 Phase 12 follow-up | no ratchet possible in this PR: current measured function-complexity actual is 43, above the existing advisory threshold 31. The prefetch split is byte-preserving and does not add new function-regression debt; threshold left unchanged. |
 
 ## FILE_SIZE_THRESHOLD History
 
@@ -130,6 +132,8 @@ Archives the full change history for `.agents/configs/complexity-thresholds.conf
 |-------|----------|--------|
 | 53 | baseline (2026-03-25) | pre-existing on main |
 | 56 | GH#17969 | pre-existing regression on main — 54 violations vs threshold 53; 54 violations + 2 buffer = 56 |
+| 59 | GH#18386/t1975 Phase 7 | pulse-simplification.sh and pulse-prefetch.sh from decomposition exceeded 1500 lines; net violations 57 + 2 buffer = 59 pending Phase 12 split |
+| 34 | GH#18400/t1987 Phase 12 follow-up | ratcheted down after splitting pulse-prefetch.sh and pulse-prefetch-fetch.sh into focused sub-clusters; measured file-size violations 32 + 2 buffer = 34 |
 
 ## BASH32_COMPAT_THRESHOLD History
 
