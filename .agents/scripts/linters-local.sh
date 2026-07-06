@@ -115,28 +115,28 @@ collect_shell_files() {
 main() {
 	# Parse ratchet flags before running checks
 	local arg
-	export LINTERS_LOCAL_CACHE_ENABLED="true"
-	export LINTERS_LOCAL_FULL="false"
-	export LINTERS_LOCAL_CHANGED="false"
+	export LINTERS_LOCAL_CACHE_ENABLED=true
+	export LINTERS_LOCAL_FULL=false
+	export LINTERS_LOCAL_CHANGED=false
 	for arg in "$@"; do
 		case "$arg" in
 		--changed)
-			export LINTERS_LOCAL_CHANGED="true"
+			export LINTERS_LOCAL_CHANGED=true
 			;;
 		--no-cache)
-			export LINTERS_LOCAL_CACHE_ENABLED="false"
+			export LINTERS_LOCAL_CACHE_ENABLED=false
 			;;
 		--full)
-			export LINTERS_LOCAL_FULL="true"
-			export LINTERS_LOCAL_CACHE_ENABLED="false"
-			export LINTERS_LOCAL_STRICT_BROAD_GATES="true"
+			export LINTERS_LOCAL_FULL=true
+			export LINTERS_LOCAL_CACHE_ENABLED=false
+			export LINTERS_LOCAL_STRICT_BROAD_GATES=true
 			;;
 		--update-baseline | --init-baseline)
 			export RATCHET_UPDATE_BASELINE=true
 			;;
 		--strict)
 			export RATCHET_STRICT=true
-			export LINTERS_LOCAL_STRICT_BROAD_GATES="true"
+			export LINTERS_LOCAL_STRICT_BROAD_GATES=true
 			;;
 		--dry-run)
 			export RATCHET_DRY_RUN=true

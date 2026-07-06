@@ -140,7 +140,7 @@ _linters_local_run_cached_gate() {
 	status_file="${cache_dir}/${gate_name}-${cache_key}.status"
 	mkdir -p "$cache_dir" 2>/dev/null || true
 
-	if [[ "$cache_enabled" == "true" && -f "$cache_file" && -f "$status_file" ]]; then
+	if [[ "$cache_enabled" == true && -f "$cache_file" && -f "$status_file" ]]; then
 		print_info "${gate_name}: cache hit (${cache_key})"
 		cat "$cache_file"
 		status=$(cat "$status_file" 2>/dev/null || printf '1')
@@ -173,12 +173,12 @@ _linters_local_run_cached_gate() {
 	cat "$output_file"
 	if [[ "$status" -eq 124 ]]; then
 		print_warning "${gate_name}: timed out after ${timeout_seconds}s; broad/advisory result is partial"
-		if [[ "$strict_broad" != "true" ]]; then
+		if [[ "$strict_broad" != true ]]; then
 			status=0
 		fi
 	fi
 
-	if [[ "$cache_enabled" == "true" && "$status" -ne 124 ]]; then
+	if [[ "$cache_enabled" == true && "$status" -ne 124 ]]; then
 		cp "$output_file" "$cache_file" 2>/dev/null || true
 		printf '%s\n' "$status" >"$status_file" 2>/dev/null || true
 		print_info "${gate_name}: cached result (${cache_key})"
