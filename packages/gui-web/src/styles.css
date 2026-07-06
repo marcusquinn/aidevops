@@ -1930,9 +1930,12 @@ code {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
-.vault-readiness-strip span {
+.vault-readiness-strip li {
   background: var(--surface-elevated);
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -4136,6 +4139,9 @@ button.managed-toggle:focus-visible {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
 .provider-filter-chips button,
