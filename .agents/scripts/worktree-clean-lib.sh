@@ -523,10 +523,33 @@ _clean_branch_list_contains_exact() {
 	return 0
 }
 
+_clean_branch_has_terminal_pr_proof() {
+	local wt_branch="$1"
+	local merged_prs="${2:-}"
+	local closed_prs="${3:-}"
+
+	[[ -n "$wt_branch" ]] || return 1
+	_clean_branch_list_contains_exact "$wt_branch" "$merged_prs" && return 0
+	_clean_branch_list_contains_exact "$wt_branch" "$closed_prs" && return 0
+	_clean_branch_has_exact_merged_pr "$wt_branch" "$merged_prs" && return 0
+	return 1
+}
+
+_clean_merge_type_has_terminal_pr_proof() {
+	local merge_type="$1"
+	case "$merge_type" in
+	"$_WT_CLEAN_TYPE_SQUASH_MERGED_PR" | "$_WT_CLEAN_TYPE_CLOSED_PR" | "$_WT_CLEAN_TYPE_CLOSED_ISSUE_ARCHIVE")
+		return 0
+		;;
+	esac
+	return 1
+}
+
 _WT_CLEAN_PROTECTED_PATHS="${_WT_CLEAN_PROTECTED_PATHS:-}"
 _WT_CLEAN_LAST_MERGE_TYPE="${_WT_CLEAN_LAST_MERGE_TYPE:-}"
 _WT_CLEAN_LAST_AUDIT_CONTEXT="${_WT_CLEAN_LAST_AUDIT_CONTEXT:-}"
 _WT_CLEAN_TYPE_SQUASH_MERGED_PR="squash-merged PR"
+_WT_CLEAN_TYPE_CLOSED_PR="closed PR"
 _WT_CLEAN_PROOF_GH_MERGED_PR="github-merged-pr"
 _WT_CLEAN_PROOF_GH_MERGED_PR_STATE="github-merged-pr-state"
 _WT_CLEAN_REASON_BRANCH_MERGED="branch-merged"
@@ -657,7 +680,7 @@ _clean_branch_requires_ancestor_proof() {
 	local merge_type="$1"
 
 	case "$merge_type" in
-	"$_WT_CLEAN_TYPE_SQUASH_MERGED_PR" | "closed PR")
+	"$_WT_CLEAN_TYPE_SQUASH_MERGED_PR" | "$_WT_CLEAN_TYPE_CLOSED_PR")
 		# GitHub squash merges intentionally create a new target-branch commit,
 		# and abandoned closed PRs are not expected to reach the default branch.
 		# In both cases, GitHub PR state is the proof source rather than ancestry.
@@ -699,6 +722,33 @@ _clean_resolve_merge_proof() {
 	return 1
 }
 
+_clean_select_merge_type() {
+	local wt_branch="$1"
+	local default_br="$2"
+	local remote_unknown="$3"
+	local merged_prs="$4"
+	local closed_prs="$5"
+
+	if git branch --merged "$default_br" 2>/dev/null | grep -q "^\s*$wt_branch$" \
+		&& ! branch_has_zero_commits_ahead "$wt_branch" "$default_br"; then
+		printf '%s\n' "merged"
+		return 0
+	fi
+	if _clean_branch_has_exact_merged_pr "$wt_branch" "$merged_prs"; then
+		printf '%s\n' "$_WT_CLEAN_TYPE_SQUASH_MERGED_PR"
+		return 0
+	fi
+	if _clean_branch_list_contains_exact "$wt_branch" "$closed_prs"; then
+		printf '%s\n' "$_WT_CLEAN_TYPE_CLOSED_PR"
+		return 0
+	fi
+	if [[ "$remote_unknown" == "false" ]] && branch_was_pushed "$wt_branch" && ! _branch_exists_on_any_remote "$wt_branch"; then
+		printf '%s\n' "remote deleted"
+		return 0
+	fi
+	return 1
+}
+
 # Determine if a worktree entry is merged, and print it if so.
 # Args: $1=wt_path, $2=wt_branch, $3=default_branch, $4=remote_state_unknown,
 #       $5=merged_pr_branches, $6=open_pr_branches, $7=force_merged,
@@ -714,7 +764,6 @@ _clean_classify_worktree() {
 	local force_merged="$7"
 	local closed_prs="${8:-}"
 
-	local is_merged=false
 	local merge_type=""
 	local head_sha="unknown"
 	local proof_result="unavailable"
@@ -723,28 +772,14 @@ _clean_classify_worktree() {
 	_WT_CLEAN_LAST_AUDIT_CONTEXT=""
 	_WT_CLEAN_LAST_PRESERVE_BRANCH="$_WT_CLEAN_BOOL_FALSE"
 
-	if _clean_protected_contains "$wt_path"; then
+	if _clean_protected_contains "$wt_path" &&
+		! _clean_branch_has_terminal_pr_proof "$wt_branch" "$merged_prs" "$closed_prs"; then
 		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "$_WT_CLEAN_REASON_PROTECTED_PASS" "$_WT_CLEAN_MODE_SKIPPED" \
 			"branch=$wt_branch target_branch=$default_br owner_guard=protected protected_status=pass-local"
 		return 0
 	fi
 
-	if git branch --merged "$default_br" 2>/dev/null | grep -q "^\s*$wt_branch$" \
-		&& ! branch_has_zero_commits_ahead "$wt_branch" "$default_br"; then
-		is_merged=true
-		merge_type="merged"
-	elif _clean_branch_has_exact_merged_pr "$wt_branch" "$merged_prs"; then
-		is_merged=true
-		merge_type="$_WT_CLEAN_TYPE_SQUASH_MERGED_PR"
-	elif _clean_branch_list_contains_exact "$wt_branch" "$closed_prs"; then
-		is_merged=true
-		merge_type="closed PR"
-	elif [[ "$remote_unknown" == "false" ]] && branch_was_pushed "$wt_branch" && ! _branch_exists_on_any_remote "$wt_branch"; then
-		is_merged=true
-		merge_type="remote deleted"
-	fi
-
-	if [[ "$is_merged" == "false" ]]; then
+	if ! merge_type=$(_clean_select_merge_type "$wt_branch" "$default_br" "$remote_unknown" "$merged_prs" "$closed_prs"); then
 		return 0
 	fi
 
@@ -774,10 +809,18 @@ _clean_classify_worktree() {
 		return 0
 	fi
 
-	# Apply safety checks using shared helper
-	if should_skip_cleanup "$wt_path" "$wt_branch" "$default_br" "$open_prs" "$force_merged"; then
-		_clean_protected_mark "$wt_path"
-		return 0
+	# Terminal PR/closed-issue proof means the worktree is no longer active work.
+	# Keep hard current/canonical/process-cwd guards, but do not let stale owner,
+	# protected-pass, grace, or dirty markers preserve terminal clutter forever.
+	if _clean_merge_type_has_terminal_pr_proof "$merge_type" ||
+		_clean_branch_has_terminal_pr_proof "$wt_branch" "$merged_prs" "$closed_prs"; then
+		_skip_cleanup_for_current_worktree "$wt_path" "$wt_branch" && return 0
+	else
+		# Apply safety checks using shared helper
+		if should_skip_cleanup "$wt_path" "$wt_branch" "$default_br" "$open_prs" "$force_merged"; then
+			_clean_protected_mark "$wt_path"
+			return 0
+		fi
 	fi
 
 	if _clean_branch_requires_ancestor_proof "$merge_type"; then
@@ -917,7 +960,8 @@ _clean_remove_merged() {
 			worktree_branch="${BASH_REMATCH[1]}"
 		elif [[ -z "$line" ]]; then
 			if [[ -n "$worktree_branch" ]] && [[ "$worktree_branch" != "$default_br" ]] && [[ "$worktree_path" != "$main_wt_path" ]]; then
-				if _clean_protected_contains "$worktree_path"; then
+				if _clean_protected_contains "$worktree_path" &&
+					! _clean_branch_has_terminal_pr_proof "$worktree_branch" "$merged_prs" "$closed_prs"; then
 					log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$worktree_path" "$_WT_CLEAN_REASON_PROTECTED_PASS" "$_WT_CLEAN_MODE_SKIPPED" \
 						"branch=$worktree_branch target_branch=$default_br owner_guard=protected protected_status=pass-local"
 					worktree_path=""
@@ -932,7 +976,8 @@ _clean_remove_merged() {
 				local preserve_branch="$_WT_CLEAN_LAST_PRESERVE_BRANCH"
 				if [[ -n "$merge_type" ]]; then
 					echo -e "${BLUE}Removing $worktree_branch...${NC}" >&2
-					if _clean_protected_contains "$worktree_path"; then
+					if _clean_protected_contains "$worktree_path" &&
+						! _clean_branch_has_terminal_pr_proof "$worktree_branch" "$merged_prs" "$closed_prs"; then
 						log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$worktree_path" "$_WT_CLEAN_REASON_PROTECTED_PASS" "$_WT_CLEAN_MODE_SKIPPED" \
 							"branch=$worktree_branch target_branch=$default_br owner_guard=protected protected_status=pass-local"
 						echo -e "${YELLOW}Skipped $worktree_branch - protected earlier in this cleanup pass${NC}" >&2
