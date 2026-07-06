@@ -37,7 +37,7 @@ import {
 import type { ContrastPreference, ConversationMode, FontPreference, FontSizePreference, ShellMode, SidebarMode, SurfaceIconName, SurfaceId, SurfaceNavGroup, SurfaceNavItem, ThemePreference } from "./app-model";
 import { dashboardNavItem, navGroups, sidebarModeForSurface, surfaceRecordCounts, text } from "./app-model";
 import { SidebarFooter, wrappedOptionIndex } from "./AppearanceControls";
-import { VaultPadlock, vaultCollectionForSurface } from "./VaultBadges";
+import { VaultPadlock, vaultCollectionForSurface, vaultCollectionTooltip } from "./VaultBadges";
 
 function AidevopsPromptIcon() {
   return (
@@ -338,7 +338,7 @@ function SidebarItem({ activeSurface, item, recordCount, setActiveSurface, showC
 }) {
   const isActive = activeSurface === item.id;
   const vaultCollection = vaultCollectionForSurface(status.vault, item.id);
-  const vaultTooltip = vaultCollection ? ` ${text.vaultTooltip}` : "";
+  const vaultTooltip = vaultCollection ? ` ${vaultCollectionTooltip(vaultCollection)}` : "";
   const tooltip = `${item.label}: ${item.description}${vaultTooltip}`;
   const shouldShowCount = showCount && recordCount !== undefined && recordCount > 0;
 
