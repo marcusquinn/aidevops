@@ -12,7 +12,7 @@ shopt -s inherit_errexit 2>/dev/null || true
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.31.67
+# Version: 3.31.68
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -1215,7 +1215,7 @@ _setup_ai_session_setup_sh_version_only() {
 			;;
 		+* | -*)
 			payload="${line#?}"
-			if [[ "$payload" != "# Version: "* ]]; then
+			if [[ "$payload" != "# Version: 3.31.68
 				return 1
 			fi
 			;;

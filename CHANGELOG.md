@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- add ai-session incremental setup (#26679)
+
+### Changed
+
+- Documentation: update changelog for 3.31.68
+- Maintenance: update simplification state registry
+
+## [3.31.68] - 2026-07-06
+
+### Added
+
 - AI-session incremental setup mode with full setup fallback (#26679)
 
 ## [3.31.67] - 2026-07-06
