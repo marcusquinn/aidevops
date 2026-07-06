@@ -263,7 +263,7 @@ cmd_diff_finish() {
 	fi
 
 	if [ "$_net_delta" -gt 0 ] || [ "$_new_count" -gt 0 ]; then
-		if [ "$_allow_increase" -eq 1 ]; then
+		if [ "$_allow_increase" = "1" ]; then
 			log "REGRESSION detected but --allow-increase set — warning only"
 			return 0
 		fi
