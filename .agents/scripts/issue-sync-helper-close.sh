@@ -155,10 +155,14 @@ _reopen_comment() {
 }
 
 _reopen_ref_is_pull_request() {
-	local repo="$1" ref_num="$2"
+	local repo="$1" ref_num="$2" argc="$#" prefetched_issue_json="${3-}"
 	local issue_json
-	issue_json=$(gh api "repos/${repo}/issues/${ref_num}" 2>/dev/null) || return 1
-	printf '%s\n' "$issue_json" | jq -e 'has("pull_request")' >/dev/null 2>&1 && return 0
+	if [[ "$argc" -ge 3 ]]; then
+		issue_json="$prefetched_issue_json"
+	else
+		issue_json=$(gh api "repos/${repo}/issues/${ref_num}" 2>/dev/null) || return 1
+	fi
+	printf '%s\n' "$issue_json" | jq -e 'select(type == "object") | has("pull_request")' >/dev/null 2>&1 && return 0
 	return 1
 }
 
@@ -166,7 +170,7 @@ _has_prior_reopen_comment() {
 	local repo="$1" ref_num="$2"
 	local comments_json found
 	comments_json=$(gh api "repos/${repo}/issues/${ref_num}/comments" 2>/dev/null || printf '[]')
-	found=$(printf '%s\n' "$comments_json" | jq -r '[.[] | select((.body // "") | contains("Reopened: TODO.md still has this as `[ ]`"))] | length' 2>/dev/null || printf '0')
+	found=$(printf '%s\n' "$comments_json" | jq -r 'if type == "array" then [.[] | select(.body? | strings | contains("Reopened: TODO.md still has this as `[ ]`"))] | length else 0 end' 2>/dev/null || printf '0')
 	[[ "$found" =~ ^[0-9]+$ ]] || found=0
 	if [[ "$found" -gt 0 ]]; then
 		return 0
@@ -460,13 +464,16 @@ cmd_reopen() {
 		# Skip if already open
 		echo "$open_numbers" | grep -qx "$ref_num" && continue
 
+		local issue_json
+		issue_json=$(gh api "repos/${repo}/issues/${ref_num}" 2>/dev/null || printf '{}')
+
 		# GH#2888: GitHub shares the issue-number namespace with pull requests.
 		# TODO refs occasionally point at PRs (or stale historical lines once did),
 		# and `gh issue reopen --comment` can still append the reopen comment to a
 		# merged PR even though it cannot turn that PR back into an open issue. That
 		# produced repeated notification churn on closed/merged PR threads. Treat PR
 		# refs as terminal artifacts, never reopen targets.
-		if _reopen_ref_is_pull_request "$repo" "$ref_num"; then
+		if _reopen_ref_is_pull_request "$repo" "$ref_num" "$issue_json"; then
 			log_verbose "#$ref_num is a pull request — skipping TODO reopen guard"
 			pr_refs=$((pr_refs + 1))
 			continue
@@ -477,7 +484,7 @@ cmd_reopen() {
 
 		# Check closure reason — skip NOT_PLANNED (deliberately declined)
 		local reason
-		reason=$(gh issue view "$ref_num" --repo "$repo" --json stateReason --jq '.stateReason' 2>/dev/null || echo "")
+		reason=$(printf '%s\n' "$issue_json" | jq -r 'select(type == "object") | .state_reason // .stateReason // ""' 2>/dev/null || printf '')
 		if [[ "$reason" == "NOT_PLANNED" ]]; then
 			log_verbose "#$ref_num ($tid) closed as NOT_PLANNED — skipping"
 			not_planned=$((not_planned + 1))

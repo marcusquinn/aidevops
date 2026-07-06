@@ -29,6 +29,10 @@ if [[ "${1:-}" == "api" && "${2:-}" == "repos/owner/repo/issues/203/comments" ]]
 	printf '[{"body":"Unrelated comment"}]\n'
 	exit 0
 fi
+if [[ "${1:-}" == "api" && "${2:-}" == "repos/owner/repo/issues/204/comments" ]]; then
+	printf '{"message":"server error"}\n'
+	exit 0
+fi
 printf 'unexpected gh call: %s\n' "$*" >&2
 exit 1
 STUB
@@ -76,8 +80,11 @@ check_failure() {
 
 check_success "PR refs are identified before reopen" _reopen_ref_is_pull_request "owner/repo" "200"
 check_failure "plain issue refs are not treated as PRs" _reopen_ref_is_pull_request "owner/repo" "201"
+check_success "prefetched PR refs skip redundant API calls" _reopen_ref_is_pull_request "owner/repo" "999" '{"number":999,"pull_request":{}}'
+check_failure "unexpected issue payloads are not treated as PRs" _reopen_ref_is_pull_request "owner/repo" "999" '{"message":"server error"}'
 check_success "prior canonical reopen comments are detected" _has_prior_reopen_comment "owner/repo" "202"
 check_failure "unrelated comments do not suppress reopen" _has_prior_reopen_comment "owner/repo" "203"
+check_failure "unexpected comments payloads do not suppress reopen" _has_prior_reopen_comment "owner/repo" "204"
 
 printf '\nResults: %s passed, %s failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then
