@@ -1,10 +1,12 @@
 /* jshint esversion: 11 */
 import { useState } from "react";
-import type { GuiAiAppSummary, GuiLocalRepoSetupSummary, GuiOAuthProviderSummary, GuiSetupTargetSummary, GuiStatusData, GuiVaultCollectionSummary, GuiVaultStatusData } from "../../gui-shared/src";
+import type { GuiAiAppSummary, GuiLocalRepoSetupSummary, GuiSetupTargetSummary, GuiStatusData, GuiVaultCollectionSummary, GuiVaultStatusData } from "../../gui-shared/src";
 import { plannedHomes, text } from "./app-model";
 import { FileExplorerSurface } from "./FileExplorerSurface";
 import { PathActions } from "./PathActions";
 import { VaultPadlock } from "./VaultBadges";
+
+export { AiProvidersSurface } from "./AiProvidersSurface";
 
 export function OverviewSurface({ status }: { status: GuiStatusData }) {
   const metrics = [
@@ -150,9 +152,9 @@ export function VaultSurface({ status }: { status: GuiStatusData }) {
           </div>
           {vaultCollection ? <VaultPadlock collection={vaultCollection} vault={vault} /> : null}
         </div>
-        <div className="vault-readiness-strip" aria-label="Vault readiness">
-          {readiness.map((item) => <span key={item.label}><strong>{item.label}</strong>{item.value}</span>)}
-        </div>
+        <ul aria-label="Vault readiness" className="vault-readiness-strip">
+          {readiness.map((item) => <li key={item.label}><strong>{item.label}</strong>{item.value}</li>)}
+        </ul>
       </div>
       {vault.locked ? (
         <div className="notice compact-notice" role="note">
@@ -441,66 +443,6 @@ function AiAppCard({ app }: { app: GuiAiAppSummary }) {
         <PathRow label="config" pathRef={app.config_path_ref} />
         <PathRow label="aidevops" pathRef={app.aidevops_target_path_ref} />
       </div>
-    </article>
-  );
-}
-
-export function AiProvidersSurface({ status }: { status: GuiStatusData }) {
-  return (
-    <section className="panel ai-providers-panel" aria-label={text.aiProviders}>
-      <div className="section-heading split-heading">
-        <div>
-          <p className="eyebrow">{status.oauth_pool.path_ref}</p>
-          <h2>{text.aiProviders}</h2>
-          <p>{text.aiProvidersIntro}</p>
-        </div>
-        <span className="count-pill">{status.oauth_pool.value_policy}</span>
-      </div>
-      <div className="notice compact-notice" role="note">
-        Data-leaves-device warning: provider accounts can process prompts outside this machine. Use `data_classification` and `runtime_policy` metadata to require Local AI or explicit provider approval for confidential work.
-      </div>
-      <div className="provider-grid">
-        {status.oauth_pool.providers.map((provider) => <ProviderCard key={provider.provider} provider={provider} />)}
-      </div>
-    </section>
-  );
-}
-
-function ProviderCard({ provider }: { provider: GuiOAuthProviderSummary }) {
-  return (
-    <article className="provider-card">
-      <header>
-        <div>
-          <p className="eyebrow">{provider.configured ? "configured" : "not configured"}</p>
-          <h3>{provider.provider}</h3>
-        </div>
-        <strong>{provider.available}/{provider.total}</strong>
-      </header>
-      <div className="repo-card-meta provider-metrics">
-        <Detail label="active/idle" value={String(provider.active_or_idle)} />
-        <Detail label="rate limited" value={String(provider.rate_limited)} />
-        <Detail label="auth errors" value={String(provider.auth_errors)} />
-        <Detail label="pending token" value={provider.pending_token ? "yes" : "no"} />
-      </div>
-      <fieldset className="provider-actions" aria-label={`${provider.provider} planned management controls`}>
-        {['Add account', 'Rotate', 'Check', 'Reset cooldowns'].map((action) => <button disabled key={action} type="button">{action}</button>)}
-      </fieldset>
-      {provider.accounts.length === 0 ? (
-        <p className="empty-state compact-empty">No accounts in this pool.</p>
-      ) : (
-        <ul className="provider-account-list">
-          {provider.accounts.map((account) => (
-            <li key={`${provider.provider}:${account.email_ref}`}>
-              <strong>{account.email_ref}</strong>
-              <span>{account.status}</span>
-              <small>priority {account.priority ?? "default"}</small>
-              <small>expires {account.expires_at}</small>
-              {account.cooldown_until ? <small>cooldown {account.cooldown_until}</small> : null}
-              <button disabled type="button">Manage</button>
-            </li>
-          ))}
-        </ul>
-      )}
     </article>
   );
 }

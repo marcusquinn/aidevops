@@ -446,7 +446,7 @@ export interface GuiConversationThread {
   read_states: GuiConversationReadState[];
 }
 
-export type GuiAiProviderId = "anthropic" | "openai" | "cursor" | "google";
+export type GuiAiProviderId = "anthropic" | "openai" | "cursor" | "google" | "zai";
 
 export interface GuiOAuthPoolAccountSummary {
   email_ref: string;
