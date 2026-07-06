@@ -223,7 +223,7 @@ log_regression_paths() {
 	fi
 	log "new oversized paths:"
 	printf '%s' "$_paths" | while IFS= read -r _path || [ -n "$_path" ]; do
-		log "  $_path"
+		[ -n "$_path" ] && log "  $_path"
 	done
 	return 0
 }
