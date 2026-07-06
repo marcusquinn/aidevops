@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.74] - 2026-07-06
+
+### Fixed
+
+- preserve review thread reply bodies starting with at-sign (#26729)
+
 ## [3.31.73] - 2026-07-06
 
 ### Fixed
