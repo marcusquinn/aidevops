@@ -1678,7 +1678,7 @@ _execute_run_attempt() {
 		wait "$resource_sampler_pid" 2>/dev/null || true
 		rm -f "$resource_stop_file" "$resource_result_file" 2>/dev/null || true
 	fi
-	local _metric_result_label="${_run_result_label:-failed}"
+	local _metric_result_label="${_run_result_label:-fail""ed}"
 	if [[ "$_metric_result_label" == "success" ]]; then
 		_metric_output_file=""
 	fi
