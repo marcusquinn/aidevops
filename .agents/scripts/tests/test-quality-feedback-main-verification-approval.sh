@@ -436,6 +436,19 @@ test_skips_pr25504_verification_ack() {
 	return 0
 }
 
+test_skips_pr26721_positive_implementation_ack() {
+	local comments result
+	# shellcheck disable=SC2016  # literal inline-comment JSON includes Markdown backticks
+	comments='[{"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the update, @maintainer. The implementation in `cf2ad85` correctly addresses the issue by preserving the `read` condition to handle files without trailing newlines while explicitly filtering empty lines before logging. This is a robust approach for parsing file paths in shell scripts.","path":".agents/scripts/file-size-regression-helper.sh","line":227,"html_url":"https://example.invalid/review","created_at":"2026-07-06T00:00:00Z"}]'
+	result=$(_build_inline_findings "$comments" "26721" "medium" | jq 'length')
+	if [[ "$result" == "0" ]]; then
+		print_result "skip PR #26721 positive implementation acknowledgement" 0
+	else
+		print_result "skip PR #26721 positive implementation acknowledgement" 1 "expected 0 findings, got ${result}"
+	fi
+	return 0
+}
+
 test_keeps_actionable_approved_review() {
 	# APPROVED review that also contains actionable critique — must be kept
 	local result
