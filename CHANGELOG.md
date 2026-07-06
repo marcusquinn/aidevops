@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.71] - 2026-07-06
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Add changed-file fast mode for local lint gates (#26674)
+- Maintenance: sync GitHub issue refs to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- remove duplicate linter mode cases (#26713)
+- suppress duplicate TODO reopen PR comments (#26712)
+
 ## [3.31.70] - 2026-07-06
 
 ### Fixed
