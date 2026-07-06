@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.69] - 2026-07-06
+
+### Fixed
+
+- protect ai-session version pattern (#26685)
+
 ## [3.31.68] - 2026-07-06
 
 ### Added
