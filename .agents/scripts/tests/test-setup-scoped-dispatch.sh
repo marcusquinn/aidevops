@@ -67,6 +67,18 @@ PY
 	return 0
 }
 
+assert_not_contains() {
+	local test_name="$1"
+	local haystack="$2"
+	local needle="$3"
+	if [[ "$haystack" != *"$needle"* ]]; then
+		print_result "$test_name" 0
+		return 0
+	fi
+	print_result "$test_name" 1 "unexpected: $needle"
+	return 0
+}
+
 file_text() {
 	local path="$1"
 	python3 - "$path" <<'PY'
@@ -95,6 +107,8 @@ test_setup_stage_contract() {
 	assert_contains "ai-session scope maps to incremental setup" "$text" "ai-session | ai | \"\$SETUP_STAGE_AI_SESSION\") printf '%s' \"\$SETUP_STAGE_AI_SESSION\""
 	assert_contains "ai-session scoped stage falls back to full setup" "$text" "AI-session incremental setup unavailable or failed; falling back to full setup"
 	assert_contains "ai-session verifies deployed sha" "$text" "_setup_ai_session_verify_deploy \"\$current_sha\""
+	assert_contains "ai-session version prefix is split for release safety" "$text" 'version_prefix="# ""Version:"'
+	assert_not_contains "ai-session version prefix is not a version-manager target" "$text" '"# Version: "*'
 	assert_contains "gui desktop default path is opt-in gated" "$text" "_time_step \"setup_gui_desktop_app_opt_in\" _setup_offer_gui_desktop_app"
 	assert_contains "gui desktop env flag enables install" "$text" "AIDEVOPS_GUI_DESKTOP_INSTALL"
 	assert_contains "gui desktop app dir can be configured" "$text" "AIDEVOPS_GUI_DESKTOP_APP_DIR"
@@ -104,6 +118,35 @@ test_setup_stage_contract() {
 	assert_occurrence_count "scoped, ai-session, and noninteractive setup register opencode plugin" "$text" \
 		"_time_step \"\$SETUP_STAGE_OPENCODE_PLUGINS\" setup_opencode_plugins" 3
 	assert_contains "unknown stages print actionable help" "$text" "Unknown setup stage/scope"
+	return 0
+}
+
+test_setup_version_substitution_keeps_syntax() {
+	local tmp_dir=""
+	tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-setup-version-test.XXXXXX") || {
+		print_result "version substitution temp dir created" 1
+		return 0
+	}
+	cp "$SETUP_SH" "$tmp_dir/setup.sh" || {
+		print_result "version substitution fixture copied" 1
+		rm -rf "$tmp_dir"
+		return 0
+	}
+	python3 - "$tmp_dir/setup.sh" <<'PY'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+path.write_text(re.sub(r"# Version: .*", "# Version: 9.9.9", text))
+PY
+	if bash -n "$tmp_dir/setup.sh"; then
+		print_result "version substitution keeps setup.sh syntactically valid" 0
+	else
+		print_result "version substitution keeps setup.sh syntactically valid" 1
+	fi
+	rm -rf "$tmp_dir"
 	return 0
 }
 
@@ -184,6 +227,7 @@ PY
 
 main() {
 	test_setup_stage_contract
+	test_setup_version_substitution_keeps_syntax
 	test_cli_scope_contract
 	test_gui_desktop_package_contract
 	test_gui_desktop_installer_contract
