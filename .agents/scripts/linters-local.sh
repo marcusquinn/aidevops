@@ -181,8 +181,10 @@ main() {
 	export LINTERS_LOCAL_CHANGED=false
 	for arg in "$@"; do
 		case "$arg" in
-		--changed)
+		--changed | --fast-pr)
 			export LINTERS_LOCAL_CHANGED=true
+			LINTERS_LOCAL_MODE="$LINTERS_LOCAL_MODE_CHANGED"
+			export LINTERS_LOCAL_MODE
 			;;
 		--no-cache)
 			export LINTERS_LOCAL_CACHE_ENABLED=false
@@ -191,6 +193,8 @@ main() {
 			export LINTERS_LOCAL_FULL=true
 			export LINTERS_LOCAL_CACHE_ENABLED=false
 			export LINTERS_LOCAL_STRICT_BROAD_GATES=true
+			LINTERS_LOCAL_MODE=full
+			export LINTERS_LOCAL_MODE
 			;;
 		--update-baseline | --init-baseline)
 			export RATCHET_UPDATE_BASELINE=true
@@ -201,14 +205,6 @@ main() {
 			;;
 		--dry-run)
 			export RATCHET_DRY_RUN=true
-			;;
-		--changed | --fast-pr)
-			LINTERS_LOCAL_MODE="$LINTERS_LOCAL_MODE_CHANGED"
-			export LINTERS_LOCAL_MODE
-			;;
-		--full)
-			LINTERS_LOCAL_MODE=full
-			export LINTERS_LOCAL_MODE
 			;;
 		esac
 	done
