@@ -366,11 +366,40 @@ _validate_and_normalize_args() {
 		local _normalised_labels=""
 		_normalised_labels=$(map_tags_to_labels "$TASK_LABELS" 2>/dev/null) || true
 		[[ -n "$_normalised_labels" ]] && TASK_LABELS="$_normalised_labels"
+		TASK_LABELS=$(_dedupe_csv_labels "$TASK_LABELS")
 	fi
 
 	# GH#21991: advisory structural check on --description before issue creation.
 	# Non-blocking by default; set AIDEVOPS_BODY_FORMAT_STRICT=1 to hard-fail.
 	_validate_description_format
+	return 0
+}
+
+# _dedupe_csv_labels — preserve first occurrence while removing duplicate labels.
+# GitHub ultimately deduplicates applied labels, but keeping the argv clean avoids
+# duplicate-label warnings/noise in tests and wrapper fallbacks.
+_dedupe_csv_labels() {
+	local labels_csv="$1"
+	local saved_ifs="$IFS"
+	local result=""
+	local label=""
+	local trimmed=""
+	IFS=','
+	for label in $labels_csv; do
+		trimmed="${label#"${label%%[![:space:]]*}"}"
+		trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
+		[[ -z "$trimmed" ]] && continue
+		if [[ ",${result}," == *",${trimmed},"* ]]; then
+			continue
+		fi
+		if [[ -n "$result" ]]; then
+			result="${result},${trimmed}"
+		else
+			result="$trimmed"
+		fi
+	done
+	IFS="$saved_ifs"
+	printf '%s\n' "$result"
 	return 0
 }
 
@@ -578,6 +607,7 @@ create_github_issue() {
 			labels="status:available"
 		fi
 	fi
+	[[ -n "$labels" ]] && labels=$(_dedupe_csv_labels "$labels")
 
 	# Pass labels to gh_create_issue; origin label is appended automatically by
 	# the wrapper (avoids duplicate-label injection, t3039).
