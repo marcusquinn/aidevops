@@ -55,10 +55,11 @@ fi
 
 check_sonarcloud_status() {
 	echo -e "${BLUE}Checking SonarCloud Status (remote API)...${NC}"
+	local remote_timeout="${LINTERS_LOCAL_REMOTE_TIMEOUT_SECONDS:-15}"
 
 	# Check quality gate status first — this drives the badge colour
 	local gate_response
-	if gate_response=$(curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=marcusquinn_aidevops"); then
+	if gate_response=$(curl -sS --connect-timeout 5 --max-time "$remote_timeout" "https://sonarcloud.io/api/qualitygates/project_status?projectKey=marcusquinn_aidevops" 2>/dev/null); then
 		local gate_status
 		gate_status=$(echo "$gate_response" | jq -r '.projectStatus.status // "UNKNOWN"')
 		if [[ "$gate_status" == "OK" ]]; then
@@ -82,7 +83,7 @@ check_sonarcloud_status() {
 	fi
 
 	local response
-	if response=$(curl -s "https://sonarcloud.io/api/issues/search?componentKeys=marcusquinn_aidevops&impactSoftwareQualities=MAINTAINABILITY&resolved=false&ps=1&facets=rules"); then
+	if response=$(curl -sS --connect-timeout 5 --max-time "$remote_timeout" "https://sonarcloud.io/api/issues/search?componentKeys=marcusquinn_aidevops&impactSoftwareQualities=MAINTAINABILITY&resolved=false&ps=1&facets=rules" 2>/dev/null); then
 		local total_issues
 		total_issues=$(echo "$response" | jq -r '.total // 0')
 

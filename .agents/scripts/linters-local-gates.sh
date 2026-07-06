@@ -44,6 +44,149 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 BUNDLE_SKIP_GATES=""
 
+_linters_local_cache_dir() {
+	if [[ -n "${LINTERS_LOCAL_CACHE_DIR_OVERRIDE:-}" ]]; then
+		printf '%s\n' "$LINTERS_LOCAL_CACHE_DIR_OVERRIDE"
+		return 0
+	fi
+	local git_dir=""
+	git_dir=$(git rev-parse --git-dir 2>/dev/null) || git_dir=""
+	if [[ -n "$git_dir" ]]; then
+		printf '%s\n' "${git_dir}/aidevops-linters-cache"
+		return 0
+	fi
+	printf '%s\n' "${TMPDIR:-/tmp}/aidevops-linters-cache"
+	return 0
+}
+
+_linters_local_file_checksum() {
+	local file_path="$1"
+	if [[ -f "$file_path" ]]; then
+		cksum "$file_path" 2>/dev/null || true
+	fi
+	return 0
+}
+
+_linters_local_tool_version() {
+	local gate_name="$1"
+	case "$gate_name" in
+	sonarcloud)
+		curl --version 2>/dev/null | sed -n '1p' || true
+		jq --version 2>/dev/null || true
+		;;
+	qlty)
+		if [[ -x "${HOME}/.qlty/bin/qlty" ]]; then
+			"${HOME}/.qlty/bin/qlty" --version 2>/dev/null || true
+		fi
+		;;
+	ratchets)
+		git --version 2>/dev/null || true
+		;;
+	bash32-compat)
+		bash --version 2>/dev/null | sed -n '1p' || true
+		;;
+	shell-portability | repo-layout | file-size | python-complexity)
+		git --version 2>/dev/null || true
+		;;
+	esac
+	return 0
+}
+
+_linters_local_changed_files_key() {
+	local base_ref=""
+	base_ref=$(git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main 2>/dev/null || git merge-base HEAD master 2>/dev/null || true)
+	if [[ -n "$base_ref" ]]; then
+		git diff --name-only "$base_ref" HEAD 2>/dev/null || true
+	fi
+	git diff --name-only HEAD 2>/dev/null || true
+	git diff --cached --name-only 2>/dev/null || true
+	return 0
+}
+
+_linters_local_gate_key() {
+	local gate_name="$1"
+	local key_source=""
+	key_source=$({
+		printf 'gate=%s\n' "$gate_name"
+		printf 'head=%s\n' "$(git rev-parse HEAD 2>/dev/null || printf 'nogit')"
+		printf 'tree=%s\n' "$(git rev-parse 'HEAD^{tree}' 2>/dev/null || printf 'notree')"
+		printf 'changed=%s\n' "$( _linters_local_changed_files_key | sort -u | tr '\n' ',' )"
+		_linters_local_file_checksum "${SCRIPT_DIR}/linters-local.sh"
+		_linters_local_file_checksum "${SCRIPT_DIR}/linters-local-gates.sh"
+		_linters_local_file_checksum "${SCRIPT_DIR}/linters-local-analysis.sh"
+		_linters_local_file_checksum "${SCRIPT_DIR}/linters-local-ratchet.sh"
+		_linters_local_file_checksum "${SCRIPT_DIR}/linters-local-validators.sh"
+		_linters_local_file_checksum ".shellcheckrc"
+		_linters_local_file_checksum ".markdownlint-cli2.jsonc"
+		_linters_local_file_checksum ".markdownlint.json"
+		_linters_local_file_checksum ".qlty/qlty.toml"
+		_linters_local_tool_version "$gate_name"
+	} | cksum | awk '{print $1}')
+	printf '%s\n' "$key_source"
+	return 0
+}
+
+_linters_local_run_cached_gate() {
+	local gate_name="$1"
+	local gate_function="$2"
+	local cache_enabled="${LINTERS_LOCAL_CACHE_ENABLED:-true}"
+	local strict_broad="${LINTERS_LOCAL_STRICT_BROAD_GATES:-false}"
+	local timeout_seconds="${LINTERS_LOCAL_BROAD_GATE_TIMEOUT_SECONDS:-90}"
+	local cache_dir cache_key cache_file output_file status_file status=0
+
+	cache_dir=$(_linters_local_cache_dir)
+	cache_key=$(_linters_local_gate_key "$gate_name")
+	cache_file="${cache_dir}/${gate_name}-${cache_key}.out"
+	status_file="${cache_dir}/${gate_name}-${cache_key}.status"
+	mkdir -p "$cache_dir" 2>/dev/null || true
+
+	if [[ "$cache_enabled" == "true" && -f "$cache_file" && -f "$status_file" ]]; then
+		print_info "${gate_name}: cache hit (${cache_key})"
+		cat "$cache_file"
+		status=$(cat "$status_file" 2>/dev/null || printf '1')
+		[[ "$status" =~ ^[0-9]+$ ]] || status=1
+		return "$status"
+	fi
+
+	output_file=$(mktemp)
+	(
+		"$gate_function"
+	) >"$output_file" 2>&1 &
+	local gate_pid=$!
+	local seconds_remaining="$timeout_seconds"
+	while kill -0 "$gate_pid" 2>/dev/null; do
+		if [[ "$seconds_remaining" -le 0 ]]; then
+			kill -TERM "$gate_pid" 2>/dev/null || true
+			sleep 0.2
+			kill -KILL "$gate_pid" 2>/dev/null || true
+			wait "$gate_pid" 2>/dev/null || true
+			status=124
+			break
+		fi
+		sleep 1
+		seconds_remaining=$((seconds_remaining - 1))
+	done
+	if [[ "$status" -ne 124 ]]; then
+		wait "$gate_pid" || status=$?
+	fi
+
+	cat "$output_file"
+	if [[ "$status" -eq 124 ]]; then
+		print_warning "${gate_name}: timed out after ${timeout_seconds}s; broad/advisory result is partial"
+		if [[ "$strict_broad" != "true" ]]; then
+			status=0
+		fi
+	fi
+
+	if [[ "$cache_enabled" == "true" && "$status" -ne 124 ]]; then
+		cp "$output_file" "$cache_file" 2>/dev/null || true
+		printf '%s\n' "$status" >"$status_file" 2>/dev/null || true
+		print_info "${gate_name}: cached result (${cache_key})"
+	fi
+	rm -f "$output_file"
+	return "$status"
+}
+
 # Load bundle skip_gates for the current project directory.
 # Populates BUNDLE_SKIP_GATES (newline-separated gate names).
 # Returns: 0 always (bundle is optional — missing bundle is not an error)
@@ -95,12 +238,12 @@ _run_gate_checks_static() {
 	local exit_code=0
 
 	if ! should_skip_gate "sonarcloud"; then
-		check_sonarcloud_status || exit_code=1
+		_linters_local_run_cached_gate "sonarcloud" "check_sonarcloud_status" || exit_code=1
 		echo ""
 	fi
 
 	if ! should_skip_gate "qlty"; then
-		check_qlty_maintainability || exit_code=1
+		_linters_local_run_cached_gate "qlty" "check_qlty_maintainability" || exit_code=1
 		echo ""
 	fi
 
@@ -170,12 +313,12 @@ _run_gate_checks_static() {
 	fi
 
 	if ! should_skip_gate "ratchets"; then
-		check_ratchets || exit_code=1
+		_linters_local_run_cached_gate "ratchets" "check_ratchets" || exit_code=1
 		echo ""
 	fi
 
 	if ! should_skip_gate "repo-layout"; then
-		check_repo_layout || exit_code=1
+		_linters_local_run_cached_gate "repo-layout" "check_repo_layout" || exit_code=1
 		echo ""
 	fi
 
@@ -232,12 +375,12 @@ _run_gate_checks_complexity() {
 	local exit_code=0
 
 	if ! should_skip_gate "bash32-compat"; then
-		check_bash32_compat || exit_code=1
+		_linters_local_run_cached_gate "bash32-compat" "check_bash32_compat" || exit_code=1
 		echo ""
 	fi
 
 	if ! should_skip_gate "shell-portability"; then
-		check_shell_portability || exit_code=1
+		_linters_local_run_cached_gate "shell-portability" "check_shell_portability" || exit_code=1
 		echo ""
 	fi
 
@@ -252,12 +395,12 @@ _run_gate_checks_complexity() {
 	fi
 
 	if ! should_skip_gate "file-size"; then
-		check_file_size || exit_code=1
+		_linters_local_run_cached_gate "file-size" "check_file_size" || exit_code=1
 		echo ""
 	fi
 
 	if ! should_skip_gate "python-complexity"; then
-		check_python_complexity || exit_code=1
+		_linters_local_run_cached_gate "python-complexity" "check_python_complexity" || exit_code=1
 		echo ""
 	fi
 
