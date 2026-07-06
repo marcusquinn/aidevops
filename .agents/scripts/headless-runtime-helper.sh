@@ -1196,6 +1196,55 @@ _derive_worker_failure_evidence() {
 }
 
 #######################################
+# Return success when a hard-killed worker already handed off an open PR.
+#
+# This guards worker-failure metrics before the later claim-release recovery path
+# runs. A watchdog hard-kill after PR creation is a monitoring handoff when the
+# PR has no terminal check failures; it must not advertise redispatch_worker.
+#
+# Args:
+#   $1 - session key
+#   $2 - work dir
+# Returns: 0 when an open PR exists and checks are absent/pending/success-only.
+#######################################
+_worker_post_pr_handoff_confirmed() {
+	local session_key="$1"
+	local work_dir="$2"
+	local repo_slug="${DISPATCH_REPO_SLUG:-}"
+	local issue_number=""
+	local branch_name=""
+
+	[[ "$session_key" == issue-* ]] || return 1
+	[[ -n "$repo_slug" ]] || return 1
+	command -v gh >/dev/null 2>&1 || return 1
+	if [[ "$session_key" =~ ([0-9]+)$ ]]; then
+		issue_number="${BASH_REMATCH[1]}"
+	fi
+	if [[ -n "$work_dir" && -d "$work_dir" ]]; then
+		branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+		[[ "$branch_name" == "HEAD" ]] && branch_name=""
+	fi
+
+	local open_pr_safe_count=""
+	local safe_pr_jq='map(select(([.statusCheckRollup[]? | (.conclusion // .status // "") | ascii_upcase] | any(. == "FAILURE" or . == "ERROR" or . == "CANCELLED" or . == "TIMED_OUT" or . == "ACTION_REQUIRED") | not))) | length'
+	if [[ -n "$branch_name" ]]; then
+		open_pr_safe_count=$(gh pr list --repo "$repo_slug" --head "$branch_name" --state open \
+			--json number,statusCheckRollup --jq "$safe_pr_jq" 2>/dev/null || true)
+		[[ "$open_pr_safe_count" =~ ^[0-9]+$ ]] || open_pr_safe_count="0"
+		[[ "$open_pr_safe_count" -gt 0 ]] && return 0
+	fi
+
+	if [[ -n "$issue_number" ]]; then
+		open_pr_safe_count=$(gh pr list --repo "$repo_slug" --search "$issue_number" --state open \
+			--json number,statusCheckRollup --jq "$safe_pr_jq" 2>/dev/null || true)
+		[[ "$open_pr_safe_count" =~ ^[0-9]+$ ]] || open_pr_safe_count="0"
+		[[ "$open_pr_safe_count" -gt 0 ]] && return 0
+	fi
+
+	return 1
+}
+
+#######################################
 # Append a context-rich metric when service-interruption continuation budget is exhausted.
 #
 # Args:
@@ -1639,6 +1688,11 @@ _execute_run_attempt() {
 		"${_metric_kill_reason:-}" "${_run_failure_reason:-}")
 	_launch_failure_cause="${_evidence_fields%%$'\t'*}"
 	_next_action="${_evidence_fields#*$'\t'}"
+	if [[ "${_run_result_label:-failed}" == "watchdog_stall_killed" ]] && \
+		_worker_post_pr_handoff_confirmed "$session_key" "$work_dir"; then
+		_launch_failure_cause="post_pr_pending_ci_handoff"
+		_next_action="monitor_open_pr"
+	fi
 	print_info "[lifecycle] worker_failure_evidence session=$session_key result=${_run_result_label:-failed} exit_code=$exit_code kill_reason=${_metric_kill_reason:-unknown} launch_failure_cause=${_launch_failure_cause:-none} next_action=${_next_action:-none}"
 	append_runtime_metric "$role" "$session_key" "$selected_model" "$provider" "${_run_result_label:-failed}" "$handle_exit" "${_run_failure_reason:-}" "${_run_activity_detected:-0}" "$duration_ms" \
 		"${WORKER_ISSUE_NUMBER:-}" "${DISPATCH_REPO_SLUG:-}" "$work_dir" "$_metric_output_file" "$_metric_session_id" \

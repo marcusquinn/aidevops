@@ -2611,6 +2611,97 @@ test_cmd_run_finish_fail_confirmed_terminal_state_releases_complete() {
 	return 0
 }
 
+test_post_pr_handoff_detects_open_pending_pr() {
+	local work_dir="${TEST_ROOT}/repo-post-pr-handoff"
+	mkdir -p "$work_dir"
+	init_git_worktree "$work_dir"
+	git -C "$work_dir" checkout -q -b "feature/auto-test-issue-99999"
+	DISPATCH_REPO_SLUG="test-owner/test-repo"
+
+	gh() {
+		local args="$*"
+		if [[ "$args" == *"pr list"* && "$args" == *"--state open"* && "$args" == *"--head feature/auto-test-issue-99999"* ]]; then
+			printf '1'
+			return 0
+		fi
+		printf '0'
+		return 0
+	}
+
+	if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+		print_result "post-PR watchdog handoff detects open pending PR" 0
+	else
+		print_result "post-PR watchdog handoff detects open pending PR" 1 \
+			"Expected open PR on worker branch to classify as handoff"
+	fi
+
+	unset DISPATCH_REPO_SLUG 2>/dev/null || true
+	unset -f gh 2>/dev/null || true
+	return 0
+}
+
+test_post_pr_handoff_rejects_pre_pr_stall() {
+	local work_dir="${TEST_ROOT}/repo-pre-pr-stall"
+	mkdir -p "$work_dir"
+	init_git_worktree "$work_dir"
+	git -C "$work_dir" checkout -q -b "feature/auto-test-issue-99999"
+	DISPATCH_REPO_SLUG="test-owner/test-repo"
+
+	gh() {
+		printf '0'
+		return 0
+	}
+
+	if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+		print_result "post-PR watchdog handoff rejects pre-PR stall" 1 \
+			"Expected no open PR to remain redispatchable"
+	else
+		print_result "post-PR watchdog handoff rejects pre-PR stall" 0
+	fi
+
+	unset DISPATCH_REPO_SLUG 2>/dev/null || true
+	unset -f gh 2>/dev/null || true
+	return 0
+}
+
+test_post_pr_handoff_overrides_watchdog_next_action() {
+	local work_dir="${TEST_ROOT}/repo-watchdog-next-action"
+	mkdir -p "$work_dir"
+	init_git_worktree "$work_dir"
+	git -C "$work_dir" checkout -q -b "feature/auto-test-issue-99999"
+	DISPATCH_REPO_SLUG="test-owner/test-repo"
+
+	gh() {
+		local args="$*"
+		if [[ "$args" == *"pr list"* && "$args" == *"--state open"* ]]; then
+			printf '1'
+			return 0
+		fi
+		printf '0'
+		return 0
+	}
+
+	local evidence_fields="" launch_failure_cause="" next_action=""
+	evidence_fields=$(_derive_worker_failure_evidence "watchdog_stall_killed" "79" "1" "hard_kill_stall" "watchdog_stall_killed")
+	launch_failure_cause="${evidence_fields%%$'\t'*}"
+	next_action="${evidence_fields#*$'\t'}"
+	if _worker_post_pr_handoff_confirmed "issue-99999" "$work_dir"; then
+		launch_failure_cause="post_pr_pending_ci_handoff"
+		next_action="monitor_open_pr"
+	fi
+
+	unset DISPATCH_REPO_SLUG 2>/dev/null || true
+	unset -f gh 2>/dev/null || true
+
+	if [[ "$launch_failure_cause" == "post_pr_pending_ci_handoff" && "$next_action" == "monitor_open_pr" ]]; then
+		print_result "post-PR watchdog handoff suppresses redispatch next_action" 0
+	else
+		print_result "post-PR watchdog handoff suppresses redispatch next_action" 1 \
+			"Expected monitor_open_pr, got cause='${launch_failure_cause}' next='${next_action}'"
+	fi
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_appends_escalation_contract
@@ -2649,6 +2740,9 @@ main() {
 	test_failure_classifier_distinguishes_anthropic_credit_exhaustion
 	test_service_interruption_candidate_uses_separate_path
 	test_service_interruption_exhausted_metric_preserves_context
+	test_post_pr_handoff_detects_open_pending_pr
+	test_post_pr_handoff_rejects_pre_pr_stall
+	test_post_pr_handoff_overrides_watchdog_next_action
 	test_canary_pins_vanilla_agent_with_isolated_plugin_config
 	test_opencode_session_env_wrapper_strips_session_vars_only
 	test_worker_opencode_exec_paths_strip_session_env
