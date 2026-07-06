@@ -158,6 +158,10 @@ args_explicit=$(run_create 'auto-dispatch,status:blocked,tier:standard')
 assert_contains "explicit_status_preserved" "$args_explicit" '--label auto-dispatch,status:blocked,tier:standard'
 assert_not_contains "explicit_status_no_default" "$args_explicit" 'status:available'
 
+args_duplicate=$(run_create 'auto-dispatch,tier:standard,auto-dispatch,status:available,tier:standard')
+assert_contains "duplicate_labels_collapsed" "$args_duplicate" '--label auto-dispatch,tier:standard,status:available'
+assert_not_contains "duplicate_labels_no_repeat" "$args_duplicate" 'auto-dispatch,tier:standard,auto-dispatch'
+
 if [[ $FAIL -eq 0 ]]; then
 	printf '%sAll claim-task-id status default tests passed%s (%d assertions)\n' "$GREEN" "$NC" "$PASS"
 	exit 0
