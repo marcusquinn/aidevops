@@ -11,7 +11,9 @@
 #
 # Subcommands:
 #   scan      <dir>  [--output <file>] [--limit <N>]
-#                    Scan a directory for non-README .md files over <limit> lines.
+#                    Scan a directory for non-README, non-vendor .md files over
+#                    <limit> lines. Plain directory scans include untracked
+#                    fixture files; check mode scans git-tracked paths only.
 #                    Outputs TSV: relative-path TAB line-count.
 #   scan-ref  <ref>  [--output <file>] [--limit <N>]
 #                    Same as scan but reads content from a git ref (no checkout).
@@ -68,8 +70,30 @@ die() {
 }
 
 # ---------------------------------------------------------------------------
+# path_is_scannable_markdown <path>
+# Return 0 when <path> is a Markdown path included by the file-size ratchet.
+# ---------------------------------------------------------------------------
+path_is_scannable_markdown() {
+	local _path="$1"
+	case "$_path" in
+	*.md) ;;
+	*) return 1 ;;
+	esac
+	case "$_path" in
+	README.md | */README.md) return 1 ;;
+	.git/* | */.git/*) return 1 ;;
+	node_modules/* | */node_modules/*) return 1 ;;
+	vendor/* | */vendor/*) return 1 ;;
+	.venv/* | */.venv/*) return 1 ;;
+	dist/* | */dist/*) return 1 ;;
+	build/* | */build/*) return 1 ;;
+	esac
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # scan_violations_dir <dir> <limit>
-# Scan a plain directory for non-README .md files with more than <limit> lines.
+# Scan a plain directory for included .md files with more than <limit> lines.
 # Outputs TSV: path-relative-to-dir TAB line-count  (sorted by path).
 # ---------------------------------------------------------------------------
 scan_violations_dir() {
@@ -82,17 +106,53 @@ scan_violations_dir() {
 	# shellcheck disable=SC2064
 	trap "rm -f '$_tmp'" RETURN
 
-	find "$_dir_abs" -type f -name "*.md" ! -name "README.md" | sort | while IFS= read -r _f; do
+	find "$_dir_abs" -type f -name "*.md" | sort | while IFS= read -r _f; do
+		local _rel="${_f#"${_dir_abs}"/}"
+		if ! path_is_scannable_markdown "$_rel"; then
+			continue
+		fi
 		local _lc
 		_lc=$(wc -l < "$_f") || _lc=0
 		_lc=${_lc//[^0-9]/}
 		_lc=${_lc:-0}
 		if [ "$_lc" -gt "$_limit" ]; then
-			local _rel="${_f#"${_dir_abs}"/}"
 			printf '%s\t%d\n' "$_rel" "$_lc"
 		fi
 	done | sort -k1,1 > "$_tmp"
-	cat "$_tmp"
+	awk '{print}' "$_tmp"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# scan_violations_tracked_worktree <repo-root> <limit>
+# Scan only git-tracked included .md paths from the current working tree.
+# This preserves check-mode visibility of uncommitted tracked edits while
+# excluding ignored/generated/vendor Markdown that is not part of the ref diff.
+# Outputs TSV: git-path TAB line-count  (sorted by path).
+# ---------------------------------------------------------------------------
+scan_violations_tracked_worktree() {
+	local _repo_root="$1"
+	local _limit="$2"
+	local _tmp
+	_tmp=$(mktemp)
+	# shellcheck disable=SC2064
+	trap "rm -f '$_tmp'" RETURN
+
+	git -C "$_repo_root" ls-files -z -- '*.md' | while IFS= read -r -d '' _path; do
+		if ! path_is_scannable_markdown "$_path"; then
+			continue
+		fi
+		local _file="$_repo_root/$_path"
+		[ -f "$_file" ] || continue
+		local _lc
+		_lc=$(wc -l < "$_file") || _lc=0
+		_lc=${_lc//[^0-9]/}
+		_lc=${_lc:-0}
+		if [ "$_lc" -gt "$_limit" ]; then
+			printf '%s\t%d\n' "$_path" "$_lc"
+		fi
+	done | sort -k1,1 > "$_tmp"
+	awk '{print}' "$_tmp"
 	return 0
 }
 
@@ -386,6 +446,12 @@ cmd_diff() {
 	_new_count=${_new_count:-0}
 
 	log "base: $_base_count  head: $_head_count  new: $_new_count"
+	if [ "$_new_count" -gt 0 ]; then
+		log "new oversized paths:"
+		printf '%s\n' "$_new_paths" | while IFS= read -r _path; do
+			[ -n "$_path" ] && log "  $_path"
+		done
+	fi
 
 	if [ -n "$_output_md" ]; then
 		write_report "$_base_count" "$_head_count" "$_new_count" \
@@ -489,11 +555,12 @@ cmd_check_scan_head() {
 	local _head_ref="$1"
 	local _limit="$2"
 	local _head_tsv="$3"
-	# For HEAD, scan the working tree directly (avoids creating a worktree for HEAD).
+	# For HEAD, scan git-tracked working-tree files directly. This avoids creating
+	# a worktree for HEAD while keeping check-mode scope aligned with ref scans.
 	if [ "$_head_ref" = "$FILE_SIZE_DEFAULT_HEAD_REF" ]; then
 		local _repo_root
 		_repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || _repo_root="."
-		scan_violations_dir "$_repo_root" "$_limit" > "$_head_tsv" 2>/dev/null || true
+		scan_violations_tracked_worktree "$_repo_root" "$_limit" > "$_head_tsv" 2>/dev/null || true
 	else
 		scan_violations_ref "$_head_ref" "$_limit" > "$_head_tsv" 2>/dev/null || true
 	fi
@@ -567,6 +634,7 @@ cmd_check() {
 	local _base_sha _head_sha
 	_base_sha=$(git rev-parse --short "$_base_ref" 2>/dev/null) || _base_sha="$_base_ref"
 	_head_sha=$(git rev-parse --short "$FILE_SIZE_CHECK_HEAD_REF" 2>/dev/null) || _head_sha="$FILE_SIZE_CHECK_HEAD_REF"
+	log "comparing refs: base=${_base_ref} (${_base_sha}) head=${FILE_SIZE_CHECK_HEAD_REF} (${_head_sha})"
 	log "scanning base ($_base_sha)"
 	scan_violations_ref "$_base_ref" "$FILE_SIZE_CHECK_LIMIT" > "$_base_tsv" 2>/dev/null || true
 	log "scanning head ($_head_sha)"
