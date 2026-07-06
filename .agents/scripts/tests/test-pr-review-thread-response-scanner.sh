@@ -46,10 +46,17 @@ if [[ "$1" == "api" && "${2:-}" == "graphql" ]]; then
 		fi
 	done
 	if [[ "$*" == *"addPullRequestReviewThreadReply"* ]]; then
+		previous_arg=""
 		for arg in "$@"; do
 			if [[ "$arg" == body=* ]]; then
+				printf '%s' "$previous_arg" >"${GRAPHQL_BODY_FLAG_CAPTURE:-/dev/null}"
+				if [[ "$previous_arg" == "-F" && "${arg#body=}" == @* ]]; then
+					printf 'error parsing "body" value: open %s: no such file or directory\n' "${arg#body=}" >&2
+					exit 1
+				fi
 				printf '%s' "${arg#body=}" >"${GRAPHQL_BODY_CAPTURE:-/dev/null}"
 			fi
+			previous_arg="$arg"
 		done
 		printf 'reply\n' >>"${GRAPHQL_MUTATIONS_LOG:-/dev/null}"
 		printf '{"data":{"addPullRequestReviewThreadReply":{"comment":{"id":"COMMENT1","url":"https://example.invalid/reply"}}}}\n'
@@ -134,9 +141,11 @@ HEADLESS_STUB
 	export HEADLESS_RUNTIME_HELPER="${TEST_ROOT}/headless-runtime-helper.sh"
 	export GRAPHQL_MUTATIONS_LOG="${TEST_ROOT}/graphql-mutations.log"
 	export GRAPHQL_BODY_CAPTURE="${TEST_ROOT}/graphql-body.txt"
+	export GRAPHQL_BODY_FLAG_CAPTURE="${TEST_ROOT}/graphql-body-flag.txt"
 	export PR_REVIEW_THREAD_RESPONSE_COOLDOWN=3600
 	: >"$GRAPHQL_MUTATIONS_LOG"
 	: >"$GRAPHQL_BODY_CAPTURE"
+	: >"$GRAPHQL_BODY_FLAG_CAPTURE"
 	return 0
 }
 
@@ -638,6 +647,23 @@ test_reply_auto_prepends_thread_author() {
 	return 0
 }
 
+test_reply_sends_author_mention_body_as_raw_field() {
+	setup_test_env
+	local body_file="${TEST_ROOT}/reply.md"
+	local captured="" flag=""
+	printf '<!-- aidevops:review-thread-response:THREAD1 -->\nfixed at file.sh:1; verified with test.sh\n' >"$body_file"
+	$SCANNER reply owner/repo THREAD1 "$body_file" 'aidevops:review-thread-response:THREAD1'
+	captured=$(<"$GRAPHQL_BODY_CAPTURE")
+	flag=$(<"$GRAPHQL_BODY_FLAG_CAPTURE")
+	if [[ "$flag" == "-f" && "$captured" == @reviewer\ * ]]; then
+		print_result "reply sends author-mention body as raw GraphQL field" 0
+	else
+		print_result "reply sends author-mention body as raw GraphQL field" 1 "flag=${flag}, body=${captured}"
+	fi
+	teardown_test_env
+	return 0
+}
+
 test_reply_does_not_double_prepend_thread_author() {
 	setup_test_env
 	local body_file="${TEST_ROOT}/reply.md"
@@ -734,6 +760,7 @@ main() {
 	test_dispatch_stale_cursor_falls_back_to_original_order
 	test_reply_and_resolve_use_graphql_mutations
 	test_reply_auto_prepends_thread_author
+	test_reply_sends_author_mention_body_as_raw_field
 	test_reply_does_not_double_prepend_thread_author
 	test_reply_falls_back_when_thread_author_missing
 	test_reply_skips_duplicate_marker

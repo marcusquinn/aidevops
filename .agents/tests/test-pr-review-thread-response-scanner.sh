@@ -52,8 +52,9 @@ if [[ "${1:-}" == "api" && "${2:-}" == "graphql" ]]; then
 	printf '%s\n' "$*" >>"${FAKE_GH_CAPTURE:?}"
 	if [[ "$*" == *"addPullRequestReviewThreadReply"* ]]; then
 		while [[ "$#" -gt 0 ]]; do
-			if [[ "${1:-}" == "-F" && "${2:-}" == body=* ]]; then
+			if [[ ( "${1:-}" == "-F" || "${1:-}" == "-f" ) && "${2:-}" == body=* ]]; then
 				printf '%s' "${2#body=}" >"${FAKE_GH_REPLY_CAPTURE:?}"
+				printf '%s' "${1:-}" >"${FAKE_GH_REPLY_FLAG_CAPTURE:-/dev/null}"
 				break
 			fi
 			shift
