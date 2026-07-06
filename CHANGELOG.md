@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.31.70] - 2026-07-06
+
+### Fixed
+
+- seed auto-update health-check config fixture (#26681)
+
 ## [3.31.69] - 2026-07-06
 
 ### Fixed
