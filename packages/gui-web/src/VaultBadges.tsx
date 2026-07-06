@@ -12,7 +12,7 @@ export function vaultCollectionForSurface(
 
 export function isVaultSurfaceLocked(vault: GuiVaultStatusData, surface: SurfaceId): boolean {
   const collection = vaultCollectionForSurface(vault, surface);
-  return surface !== "vault" && collection?.encrypted === true && collection.preview_policy === "hidden_while_locked" && !vault.unlocked;
+  return surface !== "vault" && collection?.encrypted === true && collection?.preview_policy === "hidden_while_locked" && !vault.unlocked;
 }
 
 export function vaultCollectionTooltip(collection: GuiVaultCollectionSummary): string {
