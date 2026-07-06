@@ -295,7 +295,7 @@ cmd_reply() {
 
 	# shellcheck disable=SC2016
 	gh api graphql \
-		-F thread="$thread_id" -F body="$body" \
+		-F thread="$thread_id" -f body="$body" \
 		-f query='
 			mutation($thread: ID!, $body: String!) {
 				addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $thread, body: $body}) {
