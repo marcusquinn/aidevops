@@ -2328,9 +2328,9 @@
       "pr": 16471
     },
     ".agents/scripts/linters-local.sh": {
-      "at": "2026-07-06T01:40:52Z",
-      "hash": "90a18f10456f943f8d718b4378c3989e825b8133",
-      "passes": 13,
+      "at": "2026-07-06T09:57:25Z",
+      "hash": "ebd251065bf998b973db54241b1139a0836578a1",
+      "passes": 14,
       "pr": 17036
     },
     ".agents/scripts/matrix-dispatch-helper.sh": {
