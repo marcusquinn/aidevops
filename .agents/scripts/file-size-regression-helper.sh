@@ -39,8 +39,8 @@
 # See: reference/large-file-split.md §4.1 for override semantics.
 #
 # Design notes:
-# - scan-ref uses `git show <ref>:<path> | wc -l` per file. No worktrees needed.
-#   Slightly slower than worktrees for large repos but avoids tree disturbance.
+# - check scans base and head through git-tracked file lists so ignored/vendor
+#   directories (for example node_modules/) cannot enter regression math.
 # - All subcommands are Bash 3.2 compatible (macOS default shell).
 # - Paths in TSV output are relative to the dir/ref root for portability.
 # - docs-only detection: caller passes --docs-only; the gate exits 0 immediately.
@@ -68,6 +68,26 @@ die() {
 }
 
 # ---------------------------------------------------------------------------
+# should_scan_markdown_path <path>
+# Return 0 for paths in ratchet scope: tracked non-README Markdown excluding
+# generated/vendor locations.
+# ---------------------------------------------------------------------------
+should_scan_markdown_path() {
+	local _path="$1"
+	case "$_path" in
+	*.md) ;;
+	*) return 1 ;;
+	esac
+	case "$_path" in
+	README.md | */README.md) return 1 ;;
+	_archive/* | */_archive/*) return 1 ;;
+	node_modules/* | */node_modules/*) return 1 ;;
+	vendor/* | */vendor/*) return 1 ;;
+	esac
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # scan_violations_dir <dir> <limit>
 # Scan a plain directory for non-README .md files with more than <limit> lines.
 # Outputs TSV: path-relative-to-dir TAB line-count  (sorted by path).
@@ -83,13 +103,46 @@ scan_violations_dir() {
 	trap "rm -f '$_tmp'" RETURN
 
 	find "$_dir_abs" -type f -name "*.md" ! -name "README.md" | sort | while IFS= read -r _f; do
+		local _rel="${_f#"${_dir_abs}"/}"
+		should_scan_markdown_path "$_rel" || continue
 		local _lc
 		_lc=$(wc -l < "$_f") || _lc=0
 		_lc=${_lc//[^0-9]/}
 		_lc=${_lc:-0}
 		if [ "$_lc" -gt "$_limit" ]; then
-			local _rel="${_f#"${_dir_abs}"/}"
 			printf '%s\t%d\n' "$_rel" "$_lc"
+		fi
+	done | sort -k1,1 > "$_tmp"
+	cat "$_tmp"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# scan_violations_git_worktree <dir> <limit>
+# Scan only git-tracked Markdown paths in <dir>. This intentionally ignores
+# untracked, gitignored, generated, and vendor files in the working tree.
+# Outputs TSV: git-path TAB line-count  (sorted by path).
+# ---------------------------------------------------------------------------
+scan_violations_git_worktree() {
+	local _dir="$1"
+	local _limit="$2"
+	local _dir_abs
+	_dir_abs=$(cd "$_dir" && pwd) || die "directory not found: $_dir"
+	local _tmp
+	_tmp=$(mktemp)
+	# shellcheck disable=SC2064
+	trap "rm -f '$_tmp'" RETURN
+
+	git -C "$_dir_abs" ls-files '*.md' 2>/dev/null | while IFS= read -r _path; do
+		[ -n "$_path" ] || continue
+		should_scan_markdown_path "$_path" || continue
+		[ -f "$_dir_abs/$_path" ] || continue
+		local _lc
+		_lc=$(wc -l < "$_dir_abs/$_path") || _lc=0
+		_lc=${_lc//[^0-9]/}
+		_lc=${_lc:-0}
+		if [ "$_lc" -gt "$_limit" ]; then
+			printf '%s\t%d\n' "$_path" "$_lc"
 		fi
 	done | sort -k1,1 > "$_tmp"
 	cat "$_tmp"
@@ -116,9 +169,9 @@ scan_violations_ref() {
 		return 0
 	fi
 
-	# scan_violations_dir outputs paths relative to the worktree root.
-	# Git paths use the same relative structure, so output is directly usable.
-	scan_violations_dir "$_worktree" "$_limit"
+	# Use git ls-files inside the temporary checkout so ref scans and working-tree
+	# scans have the same tracked-file scope and vendor exclusions.
+	scan_violations_git_worktree "$_worktree" "$_limit"
 	return 0
 }
 
@@ -164,8 +217,10 @@ find_new_violations() {
 		: > "$_head_paths"
 	fi
 
-	# Lines in head_paths not present in base_paths
-	awk 'NR==FNR{a[$0]=1; next} !a[$0]{print}' "$_base_paths" "$_head_paths"
+	# Lines in head_paths not present in base_paths. Use FILENAME instead of
+	# NR==FNR so an empty base file does not make awk treat the head file as base.
+	awk 'FILENAME==ARGV[1]{a[$0]=1; next} FILENAME==ARGV[2] && !($0 in a){print}' \
+		"$_base_paths" "$_head_paths"
 	return 0
 }
 
@@ -386,6 +441,7 @@ cmd_diff() {
 	_new_count=${_new_count:-0}
 
 	log "base: $_base_count  head: $_head_count  new: $_new_count"
+	log "compared refs: base=$_base_sha  head=$_head_sha"
 
 	if [ -n "$_output_md" ]; then
 		write_report "$_base_count" "$_head_count" "$_new_count" \
@@ -400,6 +456,12 @@ cmd_diff() {
 			return 0
 		fi
 		log "REGRESSION: net_delta=${_net_delta}  new_violations=${_new_count}"
+		if [ -n "$_new_paths" ]; then
+			log "new oversized files:"
+			printf '%s\n' "$_new_paths" | while IFS= read -r _path; do
+				[ -n "$_path" ] && log "  $_path"
+			done
+		fi
 		return 1
 	fi
 
@@ -483,17 +545,36 @@ cmd_check_detect_base_ref() {
 }
 
 # ---------------------------------------------------------------------------
+# cmd_check_resolve_compare_ref <base-ref> <head-ref>
+# Prefer the merge-base between base and head so rebases or a moving origin/main
+# do not compare against unrelated newer base commits. Fall back to base ref.
+# ---------------------------------------------------------------------------
+cmd_check_resolve_compare_ref() {
+	local _base_ref="$1"
+	local _head_ref="$2"
+	local _merge_base=""
+	_merge_base=$(git merge-base "$_base_ref" "$_head_ref" 2>/dev/null) || _merge_base=""
+	if [ -n "$_merge_base" ]; then
+		printf '%s\n' "$_merge_base"
+		return 0
+	fi
+	printf '%s\n' "$_base_ref"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # cmd_check_scan_head <head-ref> <limit> <head-tsv>
 # ---------------------------------------------------------------------------
 cmd_check_scan_head() {
 	local _head_ref="$1"
 	local _limit="$2"
 	local _head_tsv="$3"
-	# For HEAD, scan the working tree directly (avoids creating a worktree for HEAD).
+	# For HEAD, scan tracked working-tree files directly (avoids creating a
+	# worktree for HEAD while still excluding untracked/ignored/vendor files).
 	if [ "$_head_ref" = "$FILE_SIZE_DEFAULT_HEAD_REF" ]; then
 		local _repo_root
 		_repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || _repo_root="."
-		scan_violations_dir "$_repo_root" "$_limit" > "$_head_tsv" 2>/dev/null || true
+		scan_violations_git_worktree "$_repo_root" "$_limit" > "$_head_tsv" 2>/dev/null || true
 	else
 		scan_violations_ref "$_head_ref" "$_limit" > "$_head_tsv" 2>/dev/null || true
 	fi
@@ -563,12 +644,14 @@ cmd_check() {
 		return 0
 	fi
 
+	local _base_compare_ref
+	_base_compare_ref=$(cmd_check_resolve_compare_ref "$_base_ref" "$FILE_SIZE_CHECK_HEAD_REF")
 	local _base_tsv="$_tmp_dir/base.tsv"
 	local _base_sha _head_sha
-	_base_sha=$(git rev-parse --short "$_base_ref" 2>/dev/null) || _base_sha="$_base_ref"
+	_base_sha=$(git rev-parse --short "$_base_compare_ref" 2>/dev/null) || _base_sha="$_base_compare_ref"
 	_head_sha=$(git rev-parse --short "$FILE_SIZE_CHECK_HEAD_REF" 2>/dev/null) || _head_sha="$FILE_SIZE_CHECK_HEAD_REF"
-	log "scanning base ($_base_sha)"
-	scan_violations_ref "$_base_ref" "$FILE_SIZE_CHECK_LIMIT" > "$_base_tsv" 2>/dev/null || true
+	log "scanning base ($_base_sha from $_base_ref)"
+	scan_violations_ref "$_base_compare_ref" "$FILE_SIZE_CHECK_LIMIT" > "$_base_tsv" 2>/dev/null || true
 	log "scanning head ($_head_sha)"
 	cmd_check_scan_head "$FILE_SIZE_CHECK_HEAD_REF" "$FILE_SIZE_CHECK_LIMIT" "$_head_tsv"
 	cmd_check_run_diff "$_base_tsv" "$_head_tsv" "$_base_sha" "$_head_sha" \

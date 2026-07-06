@@ -110,6 +110,30 @@ run_scan() {
 	return 0
 }
 
+# ---------------------------------------------------------------------------
+# init_git_repo <repo-dir>
+# Create a minimal git repository with local identity for check-mode tests.
+# ---------------------------------------------------------------------------
+init_git_repo() {
+	local _repo="$1"
+	mkdir -p "$_repo"
+	git -C "$_repo" init -q
+	git -C "$_repo" config user.email "test@example.invalid"
+	git -C "$_repo" config user.name "File Size Test"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# commit_all <repo-dir> <message>
+# ---------------------------------------------------------------------------
+commit_all() {
+	local _repo="$1"
+	local _message="$2"
+	git -C "$_repo" add -A
+	git -C "$_repo" commit -q -m "$_message"
+	return 0
+}
+
 # ===========================================================================
 # Test 1: zero-violation baseline — no files over limit at base or head → 0
 # ===========================================================================
@@ -308,6 +332,62 @@ test_code_and_readme_ignored() {
 }
 
 # ===========================================================================
+# Test 7: ignored-node-modules-not-counted — ignored vendor Markdown ignored
+# ===========================================================================
+test_ignored_node_modules_not_counted() {
+	setup
+	local _repo="$TEST_ROOT/repo"
+	init_git_repo "$_repo"
+	printf 'node_modules/\n' >"$_repo/.gitignore"
+	make_doc_file "$_repo/small.md" 10
+	commit_all "$_repo" "base"
+
+	make_doc_file "$_repo/node_modules/pkg/huge.md" 600
+
+	local _log="$TEST_ROOT/check.log"
+	local _check_exit=0
+	( cd "$_repo" && "$HELPER" check --base HEAD >"$_log" 2>&1 ) || _check_exit=$?
+
+	if [ "$_check_exit" -eq 0 ]; then
+		print_result "ignored-node-modules-not-counted: ignored vendor Markdown → exit 0" 0
+	else
+		print_result "ignored-node-modules-not-counted: ignored vendor Markdown → exit 0" 1 \
+			"got exit $_check_exit, expected 0"
+	fi
+	teardown
+	return 0
+}
+
+# ===========================================================================
+# Test 8: tracked-oversized-fails-with-diagnostics — staged tracked file blocks
+# ===========================================================================
+test_tracked_oversized_fails_with_diagnostics() {
+	setup
+	local _repo="$TEST_ROOT/repo"
+	init_git_repo "$_repo"
+	make_doc_file "$_repo/small.md" 10
+	commit_all "$_repo" "base"
+
+	make_doc_file "$_repo/big.md" 600
+	git -C "$_repo" add "big.md"
+
+	local _log="$TEST_ROOT/check.log"
+	local _check_exit=0
+	( cd "$_repo" && "$HELPER" check --base HEAD >"$_log" 2>&1 ) || _check_exit=$?
+
+	if [ "$_check_exit" -eq 1 ] \
+		&& grep -q 'big.md' "$_log" \
+		&& grep -q 'compared refs:' "$_log"; then
+		print_result "tracked-oversized-fails-with-diagnostics: path and refs printed" 0
+	else
+		print_result "tracked-oversized-fails-with-diagnostics: path and refs printed" 1 \
+			"exit=$_check_exit; expected 1 with big.md and compared refs in log"
+	fi
+	teardown
+	return 0
+}
+
+# ===========================================================================
 # Main
 # ===========================================================================
 main() {
@@ -325,6 +405,8 @@ main() {
 	test_new_file_over_limit_net_unchanged
 	test_docs_only_skip
 	test_code_and_readme_ignored
+	test_ignored_node_modules_not_counted
+	test_tracked_oversized_fails_with_diagnostics
 
 	printf '\n%d/%d tests passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
 
