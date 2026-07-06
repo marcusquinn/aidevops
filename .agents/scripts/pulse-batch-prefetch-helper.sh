@@ -18,6 +18,7 @@
 # Usage:
 #   pulse-batch-prefetch-helper.sh refresh              # Fetch and cache
 #   pulse-batch-prefetch-helper.sh cache-path --kind issues --slug owner/repo
+#   pulse-batch-prefetch-helper.sh evict-issue owner/repo 123
 #   pulse-batch-prefetch-helper.sh clear                # Wipe cache
 #   pulse-batch-prefetch-helper.sh status               # Show cache ages
 #
@@ -845,6 +846,41 @@ _cmd_read_cache() {
 }
 
 # =============================================================================
+# Subcommand: evict-issue
+# Remove a single issue from the normalized owner/repo issues cache.
+# Arguments: owner/repo issue_number
+# =============================================================================
+_cmd_evict_issue() {
+	local slug="$1"
+	local issue_number="$2"
+
+	if [[ -z "$slug" || -z "$issue_number" ]]; then
+		echo "Usage: pulse-batch-prefetch-helper.sh evict-issue owner/repo issue_number" >&2
+		return 1
+	fi
+
+	_check_enabled || return 0
+
+	local cache_file
+	cache_file=$(_cache_file_path "$_KIND_ISSUES" "$slug")
+	if [[ ! -f "$cache_file" ]]; then
+		return 0
+	fi
+
+	local tmp_file
+	tmp_file=$(mktemp)
+	if jq --argjson issue_number "$issue_number" '(.items // []) as $items | .items = [$items[] | select((.number // 0) != $issue_number)]' "$cache_file" >"$tmp_file" 2>/dev/null; then
+		mv "$tmp_file" "$cache_file"
+		_log "evicted issue #${issue_number} from issues cache for ${slug}"
+		return 0
+	fi
+
+	rm -f "$tmp_file"
+	_log "failed to evict issue #${issue_number} from issues cache for ${slug}"
+	return 1
+}
+
+# =============================================================================
 # Subcommand: clear
 # =============================================================================
 _cmd_clear() {
@@ -931,6 +967,9 @@ main() {
 	read-cache)
 		_cmd_read_cache "$@"
 		;;
+	evict-issue)
+		_cmd_evict_issue "$@"
+		;;
 	clear)
 		_cmd_clear
 		;;
@@ -944,6 +983,7 @@ main() {
 		echo "  refresh                          Fetch all repos via org-level search and cache"
 		echo "  cache-path --kind K --slug S     Return cache path if fresh, exit 1 if stale"
 		echo "  read-cache --kind K --slug S     Read cached items as JSON array"
+		echo "  evict-issue owner/repo N         Remove one issue from the issues cache"
 		echo "  clear                            Wipe batch cache directory"
 		echo "  status                           Show cache file ages and counts"
 		echo ""
