@@ -34,6 +34,9 @@
 #   --update-baseline   Re-count all patterns and write new ratchets.json baseline
 #   --init-baseline     Same as --update-baseline (alias for first-time setup)
 #   --strict            Make ratchet failures blocking (default: advisory)
+#   --changed           Fast PR mode: run changed-file safety gates only
+#   --fast-pr           Alias for --changed
+#   --full              Run the broad local sweep (default; explicit for clarity)
 #   RATCHET_STEP_TIMEOUT_SECONDS=N bounds each ratchet counter (default: 120)
 # =============================================================================
 
@@ -92,6 +95,9 @@ readonly MAX_NESTING_VIOLATIONS=260
 readonly MAX_FILE_LINES_WARN=500
 readonly MAX_FILE_LINES_BLOCK=500
 
+LINTERS_LOCAL_MODE=full
+LINTERS_LOCAL_MODE_CHANGED=changed
+
 print_header() {
 	echo -e "${BLUE}Local Linters - Fast Offline Quality Checks${NC}"
 	echo -e "${BLUE}================================================================${NC}"
@@ -102,8 +108,63 @@ print_header() {
 # Exclusion policy is centralised in lint-file-discovery.sh (single source of
 # truth shared with CI). Populates ALL_SH_FILES array for check functions.
 collect_shell_files() {
-	lint_shell_files_local
-	ALL_SH_FILES=("${LINT_SH_FILES_LOCAL[@]}")
+	if [[ "${LINTERS_LOCAL_MODE:-full}" == "$LINTERS_LOCAL_MODE_CHANGED" ]]; then
+		_collect_changed_shell_files
+	else
+		lint_shell_files_local
+		ALL_SH_FILES=("${LINT_SH_FILES_LOCAL[@]}")
+	fi
+	return 0
+}
+
+_linters_local_base_ref() {
+	local base_ref=""
+	base_ref=$(git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main 2>/dev/null || git merge-base HEAD master 2>/dev/null || true)
+	printf '%s\n' "$base_ref"
+	return 0
+}
+
+_linters_local_changed_files() {
+	local base_ref="$1"
+	local changed_files=""
+	local chunk=""
+
+	if [[ -n "$base_ref" ]]; then
+		chunk=$(git diff --name-only --diff-filter=ACMR "$base_ref"...HEAD 2>/dev/null || true)
+		changed_files="$chunk"
+	fi
+	chunk=$(git diff --name-only --diff-filter=ACMR 2>/dev/null || true)
+	[[ -n "$chunk" ]] && changed_files=$(printf '%s\n%s\n' "$changed_files" "$chunk")
+	chunk=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null || true)
+	[[ -n "$chunk" ]] && changed_files=$(printf '%s\n%s\n' "$changed_files" "$chunk")
+
+	printf '%s\n' "$changed_files" | sed '/^[[:space:]]*$/d' | sort -u
+	return 0
+}
+
+linters_local_changed_files_matching() {
+	local pattern="$1"
+	local base_ref changed_files
+	base_ref=$(_linters_local_base_ref)
+	changed_files=$(_linters_local_changed_files "$base_ref")
+	[[ -n "$changed_files" ]] || return 0
+	printf '%s\n' "$changed_files" | grep -E "$pattern" || true
+	return 0
+}
+
+_collect_changed_shell_files() {
+	local changed_files=""
+	changed_files=$(linters_local_changed_files_matching '\.sh$')
+
+	ALL_SH_FILES=()
+	local file
+	while IFS= read -r file; do
+		[[ -n "$file" && -f "$file" ]] || continue
+		case "$file" in
+		*/_archive/*) continue ;;
+		esac
+		ALL_SH_FILES+=("$file")
+	done <<<"$changed_files"
 	return 0
 }
 
@@ -120,6 +181,14 @@ main() {
 			;;
 		--dry-run)
 			export RATCHET_DRY_RUN=true
+			;;
+		--changed | --fast-pr)
+			LINTERS_LOCAL_MODE="$LINTERS_LOCAL_MODE_CHANGED"
+			export LINTERS_LOCAL_MODE
+			;;
+		--full)
+			LINTERS_LOCAL_MODE=full
+			export LINTERS_LOCAL_MODE
 			;;
 		esac
 	done
@@ -142,7 +211,11 @@ main() {
 	local exit_code=0
 	_run_gate_checks || exit_code=1
 
-	check_remote_cli_status
+	if [[ "${LINTERS_LOCAL_MODE:-full}" == "$LINTERS_LOCAL_MODE_CHANGED" ]]; then
+		print_linter_gate_summary
+	else
+		check_remote_cli_status
+	fi
 	echo ""
 
 	# Final summary

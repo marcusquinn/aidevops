@@ -47,6 +47,33 @@ fi
 
 # --- Functions ---
 
+check_git_diff_whitespace() {
+	echo -e "${BLUE}Checking Git Diff Whitespace...${NC}"
+
+	if ! git rev-parse --git-dir >/dev/null 2>&1; then
+		print_warning "git diff --check: not a git repository"
+		return 0
+	fi
+
+	local base_ref=""
+	local exit_code=0
+	base_ref=$(_linters_local_base_ref 2>/dev/null || true)
+
+	if [[ -n "$base_ref" ]]; then
+		git diff --check "$base_ref"...HEAD || exit_code=1
+	fi
+	git diff --check || exit_code=1
+	git diff --cached --check || exit_code=1
+
+	if [[ "$exit_code" -eq 0 ]]; then
+		print_success "git diff --check: no whitespace errors"
+		return 0
+	fi
+
+	print_error "git diff --check: whitespace errors detected"
+	return 1
+}
+
 check_return_statements() {
 	echo -e "${BLUE}Checking Return Statements (S7682)...${NC}"
 
@@ -519,6 +546,22 @@ check_secrets() {
 
 	local secretlint_script=".agents/scripts/secretlint-helper.sh"
 	local violations=0
+	local secretlint_targets=("**/*")
+	if [[ "${LINTERS_LOCAL_MODE:-full}" == "changed" ]] && declare -F linters_local_changed_files_matching >/dev/null 2>&1; then
+		secretlint_targets=()
+		local changed_targets=""
+		changed_targets=$(linters_local_changed_files_matching '.+')
+		local changed_file
+		while IFS= read -r changed_file; do
+			[[ -n "$changed_file" && -f "$changed_file" ]] || continue
+			secretlint_targets+=("$changed_file")
+		done <<<"$changed_targets"
+		if [[ ${#secretlint_targets[@]} -eq 0 ]]; then
+			print_success "Secretlint: no changed files to scan"
+			return 0
+		fi
+		print_info "Secretlint: changed-file mode (${#secretlint_targets[@]} file(s))"
+	fi
 
 	# Check if secretlint is available (global, local, or main repo for worktrees)
 	local secretlint_cmd=""
@@ -539,7 +582,7 @@ check_secrets() {
 
 		if [[ -f ".secretlintrc.json" ]]; then
 			# Run scan and capture exit code
-			if $secretlint_cmd "**/*" --format compact 2>/dev/null; then
+			if "$secretlint_cmd" "${secretlint_targets[@]}" --format compact 2>/dev/null; then
 				print_success "Secretlint: No secrets detected"
 			else
 				violations=1
@@ -551,6 +594,11 @@ check_secrets() {
 			print_info "Run: bash $secretlint_script init"
 		fi
 	elif command -v docker &>/dev/null; then
+		if [[ "${LINTERS_LOCAL_MODE:-full}" == "changed" ]]; then
+			print_warning "Secretlint: native CLI unavailable; Docker broad scan skipped in changed mode"
+			print_info "CI/full mode remains authoritative for full-repo secretlint coverage"
+			return 0
+		fi
 		local sl_timeout=60
 		print_info "Secretlint: Using Docker for scan (${sl_timeout}s timeout)..."
 
