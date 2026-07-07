@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { appearanceStorageKeys, clampSidebarWidth, loadingBrandGlyph, loadingSkeletonPanelLabels, readStoredAppearancePreferences } from "../src/App";
+import { appearanceStorageKeys, clampSidebarWidth, loadingBrandGlyph, loadingSkeletonPanelLabels, readStoredAppearancePreferences, shouldPromptVaultSetup } from "../src/App";
 import { hueFromInputValue } from "../src/AppNavigation";
 import { wrappedOptionIndex } from "../src/AppearanceControls";
 import { Workspace } from "../src/AppWorkspace";
@@ -99,6 +99,13 @@ describe("dashboard shell", () => {
     expect(counts.apps).toBe(2);
     expect(counts.aiSessions).toBe(mockedStatus().data.opencode_sessions.sessions.length);
     expect(counts.repos).toBe(mockedStatus().data.local_repos.total + mockedStatus().data.repos.total);
+  });
+
+  test("prompts for vault setup only once per loaded session", () => {
+    expect(shouldPromptVaultSetup(false, true, false)).toBe(true);
+    expect(shouldPromptVaultSetup(false, true, true)).toBe(false);
+    expect(shouldPromptVaultSetup(true, true, false)).toBe(false);
+    expect(shouldPromptVaultSetup(false, false, false)).toBe(false);
   });
 
   test("renders AI session controls with audited-route placeholders", () => {
