@@ -769,7 +769,10 @@ render_issue_body_markdown() {
 			else "" end;
 		def qlty_empty_sarif_signature($check_name; $signature):
 			(($check_name | test("Qlty[[:space:]]+Smell[[:space:]]+Threshold"; "i"))
-			 and ($signature | test("empty[[:space:]-]*SARIF"; "i")));
+				 and ($signature | test("empty[[:space:]-]*SARIF"; "i")));
+		def pulse_unbound_var_signature($check_name; $signature):
+			(($check_name | test("Pulse[[:space:]]+Unbound-Var[[:space:]]+Lint"; "i"))
+				 or ($signature | test("Pulse unbound-var violations found|multi-var local without init|pulse-unbound-var"; "i")));
 		def systemic_fix_guidance($check_name; $signature):
 			if (($check_name | test("CodeFactor"; "i")) or ($signature == "failure:codefactor.io")) then
 				"- CodeFactor is an external advisory/static-analysis check. GitHub Actions logs usually only show `failure:codefactor.io`; read the CodeFactor details URL in Evidence for the file, line, and rule.\n" +
@@ -787,6 +790,14 @@ render_issue_body_markdown() {
 				"1. Edit `.agents/scripts/qlty-smell-threshold-helper.sh` and `.github/workflows/code-quality.yml`; do not change application files to satisfy an empty-SARIF signature.\n" +
 				"2. Add or update `.agents/scripts/tests/test-qlty-smell-threshold-helper.sh` to cover empty, valid-pass, and valid-fail SARIF paths.\n" +
 				"3. Run `shellcheck .agents/scripts/qlty-smell-threshold-helper.sh .agents/scripts/tests/test-qlty-smell-threshold-helper.sh` plus the focused qlty threshold helper test before opening a PR.\n"
+			elif pulse_unbound_var_signature($check_name; $signature) then
+				"- Pulse Unbound-Var Lint is a PR-specific shell safety gate; repeated failures usually mean multiple PR branches introduced `local foo bar` declarations, not that the workflow itself is broken.\n" +
+				"- Read the `<!-- pulse-unbound-var-check -->` PR comment or failed log report and fix the listed `pulse-*.sh` files by initialising every local variable at declaration time.\n" +
+				"- Only edit `.github/workflows/pulse-unbound-var-check.yml` or `.agents/scripts/pulse-unbound-var-check.sh` when the reported file lines are false positives or the report cannot identify the offending lines.\n" +
+				"\n## Worker Guidance\n" +
+				"1. Open each Evidence PR comment containing `<!-- pulse-unbound-var-check -->`; use the reported file paths and line numbers as the authoritative target list.\n" +
+				"2. Fix each listed declaration with explicit initialisers, e.g. `local now=0 elapsed=0` or `local _cached_prs=\"\" _cached_issues=\"\"`.\n" +
+				"3. Run `.agents/scripts/pulse-unbound-var-check.sh --scan-files <changed pulse scripts>` plus `shellcheck` on the changed shell files before opening a PR.\n"
 			else
 				"- Patch the failing workflow/check once at the source (workflow file, shared action, or toolchain pin), then rerun failed checks on affected PRs.\n" +
 				"- Add a regression guard to detect this signature early in future pulses.\n"
@@ -938,7 +949,10 @@ build_issue_body() {
 				else "" end;
 			def qlty_empty_sarif_signature($check_name; $signature):
 				(($check_name | test("Qlty[[:space:]]+Smell[[:space:]]+Threshold"; "i"))
-				 and ($signature | test("empty[[:space:]-]*SARIF"; "i")));
+					 and ($signature | test("empty[[:space:]-]*SARIF"; "i")));
+			def pulse_unbound_var_signature($check_name; $signature):
+				(($check_name | test("Pulse[[:space:]]+Unbound-Var[[:space:]]+Lint"; "i"))
+					 or ($signature | test("Pulse unbound-var violations found|multi-var local without init|pulse-unbound-var"; "i")));
 			def systemic_fix_guidance($check_name; $signature):
 				if (($check_name | test("CodeFactor"; "i")) or ($signature == "failure:codefactor.io")) then
 					"- CodeFactor is an external advisory/static-analysis check. GitHub Actions logs usually only show `failure:codefactor.io`; read the CodeFactor details URL in Evidence for the file, line, and rule.\n" +
@@ -957,6 +971,14 @@ build_issue_body() {
 					"1. Edit `.agents/scripts/qlty-smell-threshold-helper.sh` and `.github/workflows/code-quality.yml`; do not change application files to satisfy an empty-SARIF signature.\n" +
 					"2. Add or update `.agents/scripts/tests/test-qlty-smell-threshold-helper.sh` to cover empty, valid-pass, and valid-fail SARIF paths.\n" +
 					"3. Run `shellcheck .agents/scripts/qlty-smell-threshold-helper.sh .agents/scripts/tests/test-qlty-smell-threshold-helper.sh` plus the focused qlty threshold helper test before opening a PR.\n"
+				elif pulse_unbound_var_signature($check_name; $signature) then
+					"- Pulse Unbound-Var Lint is a PR-specific shell safety gate; repeated failures usually mean multiple PR branches introduced `local foo bar` declarations, not that the workflow itself is broken.\n" +
+					"- Read the `<!-- pulse-unbound-var-check -->` PR comment or failed log report and fix the listed `pulse-*.sh` files by initialising every local variable at declaration time.\n" +
+					"- Only edit `.github/workflows/pulse-unbound-var-check.yml` or `.agents/scripts/pulse-unbound-var-check.sh` when the reported file lines are false positives or the report cannot identify the offending lines.\n" +
+					"\n## Worker Guidance\n" +
+					"1. Open each Evidence PR comment containing `<!-- pulse-unbound-var-check -->`; use the reported file paths and line numbers as the authoritative target list.\n" +
+					"2. Fix each listed declaration with explicit initialisers, e.g. `local now=0 elapsed=0` or `local _cached_prs=\"\" _cached_issues=\"\"`.\n" +
+					"3. Run `.agents/scripts/pulse-unbound-var-check.sh --scan-files <changed pulse scripts>` plus `shellcheck` on the changed shell files before opening a PR.\n"
 				else
 					"- Fix the workflow/check at the source, then rerun failed checks on affected PRs.\n" +
 					"- Add a regression guard for this signature in pulse routine outputs.\n"
