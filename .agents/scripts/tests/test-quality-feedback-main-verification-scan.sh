@@ -866,6 +866,17 @@ test_scan_single_pr_filters_positive_inline_acknowledgement_reply() {
 		print_result "positive inline acknowledgement reply using addressed is filtered" 1 "expected 0 findings, got ${count}"
 	fi
 
+	acknowledgement_body='Thank you for the update, marcusquinn. Using `${task_ref:-}` consistently for guard checks is the correct approach to prevent unbound variable errors when `set -u` is enabled. The verification steps you'
+	acknowledgement_body+="'ve taken, including the regression test, provide good confidence in this fix."
+	findings=$(_scan_single_pr "owner/repo" "1" "medium" "false" 2>/dev/null)
+	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
+
+	if [[ "$count" -eq 0 ]]; then
+		print_result "issue #26770 positive inline guard-check acknowledgement is filtered" 0
+	else
+		print_result "issue #26770 positive inline guard-check acknowledgement is filtered" 1 "expected 0 findings, got ${count}"
+	fi
+
 	_restore_mock_gh
 	return 0
 }

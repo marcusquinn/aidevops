@@ -49,6 +49,7 @@ _build_inline_findings() {
 			"(?s:\\bthank you for verifying\\b.*\\blooks good\\b)|" +
 			"(?s:\\bthank you for the confirmation\\b.*?\\baddressing the feedback\\b.*?\\bcorrectly handles?\\b.*?\\bimproves?\\b.*?\\brobustness\\b)|" +
 			"(?s:\\bthank you for the update\\b.*?\\bimplementation\\b.*?\\bcorrectly address(es|ed)?\\b.*?\\brobust (approach|validation|handling)\\b)|" +
+			"(?s:\\bthank you for the update\\b.*?\\busing\\b.*?\\bconsistently\\b.*?\\bcorrect approach\\b.*?\\bverification steps\\b.*?\\bconfidence\\b)|" +
 			"\\bno further concerns?\\b|" +
 			"\\bno further feedback\\b|" +
 			"\\bno further recommendations?\\b|" +
