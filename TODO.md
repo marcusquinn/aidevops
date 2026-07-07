@@ -4437,3 +4437,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18068 local-permissions-check: add Linux and Windows diagnostics #auto-dispatch #enhancement #security #tools ref:GH#26635 pr:#26666 completed:2026-07-05
 
+
+- [x] t8177 feat: implement scoped task surface navigation and filters #bug #ui ref:GH#8258 pr:#8484 completed:2026-07-07
