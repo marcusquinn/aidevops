@@ -87,6 +87,15 @@ JSON
 	mkdir -p "$TEST_ROOT/Git/aidevops-cloudron-app"
 	git -C "$TEST_ROOT/Git/aidevops-cloudron-app" init -q
 
+	# Clean generated release clone under the worktree base: recoverable cruft.
+	mkdir -p "$TEST_ROOT/Git/_worktrees/aidevops-release-clone-3.31.57"
+	git -C "$TEST_ROOT/Git/_worktrees/aidevops-release-clone-3.31.57" init -q -b main
+	git -C "$TEST_ROOT/Git/_worktrees/aidevops-release-clone-3.31.57" config user.email test@example.invalid
+	git -C "$TEST_ROOT/Git/_worktrees/aidevops-release-clone-3.31.57" config user.name 'Aidevops Test'
+	printf 'release\n' >"$TEST_ROOT/Git/_worktrees/aidevops-release-clone-3.31.57/README.md"
+	git -C "$TEST_ROOT/Git/_worktrees/aidevops-release-clone-3.31.57" add README.md
+	git -C "$TEST_ROOT/Git/_worktrees/aidevops-release-clone-3.31.57" commit -q -m 'release clone'
+
 	return 0
 }
 
@@ -103,8 +112,8 @@ test_orphan_sibling_dirs_move_to_trash_only() {
 	local moved_count
 	moved_count=$(_pc_cleanup_orphan_sibling_dirs "$repo_json" "$(date +%s)")
 
-	if [[ "$moved_count" -ne 6 ]]; then
-		print_result "orphan sibling cleanup moves eligible sibling and centralized outliers" 1 "expected 6 moved, got $moved_count"
+	if [[ "$moved_count" -ne 7 ]]; then
+		print_result "orphan sibling cleanup moves eligible sibling and centralized outliers" 1 "expected 7 moved, got $moved_count"
 		return 0
 	fi
 
@@ -130,10 +139,10 @@ test_orphan_sibling_dirs_move_to_trash_only() {
 			trashed_count=$((trashed_count + 1))
 		done
 	done
-	if [[ "$trashed_count" -eq 6 ]]; then
+	if [[ "$trashed_count" -eq 7 ]]; then
 		print_result "eligible outliers are recoverable in trash bucket" 0
 	else
-		print_result "eligible outliers are recoverable in trash bucket" 1 "expected 6 trashed dirs, got $trashed_count"
+		print_result "eligible outliers are recoverable in trash bucket" 1 "expected 7 trashed dirs, got $trashed_count"
 	fi
 	return 0
 }

@@ -72,6 +72,35 @@ setup_repo_with_worker_worktree() {
 	return 0
 }
 
+setup_repo_with_detached_review_worktree() {
+	local repo_dir="$1"
+	local wt_path="$2"
+	local age_spec="${3:-2 days ago}"
+	mkdir -p "$repo_dir"
+	(
+		cd "$repo_dir" || exit 1
+		git init -q -b main
+		git config user.email "test@example.invalid"
+		git config user.name "Test Worker"
+		printf 'base\n' >README.md
+		git add README.md
+		git commit -q -m "init"
+		git worktree add -q --detach "$wt_path" main
+	)
+	(
+		cd "$wt_path" || exit 1
+		printf 'review change\n' >review.txt
+		git add review.txt
+		git commit -q -m "review commit"
+	)
+	local old_ts
+	old_ts=$(date -u -v-2d +%Y%m%d%H%M 2>/dev/null \
+		|| date -u -d "$age_spec" +%Y%m%d%H%M 2>/dev/null \
+		|| printf '202601010000\n')
+	touch -t "$old_ts" "$wt_path/.git"
+	return 0
+}
+
 source_pulse_cleanup_with_stubs() {
 	LOGFILE="${TEST_ROOT}/pulse.log"
 	export LOGFILE
@@ -345,7 +374,7 @@ test_recent_metric_blocks_local_commit_no_pr_removal() {
 test_local_commit_no_pr_skips_without_recent_metric() {
 	local repo_dir="${TEST_ROOT}/repo-no-metric"
 	local wt_path="${TEST_ROOT}/worker-wt-no-metric"
-	local branch_name="feature/auto-20260507-190802-gh23075"
+	local branch_name="feature/manual-20260507-190802-gh23075"
 	setup_repo_with_worker_worktree "$repo_dir" "$wt_path" "$branch_name" || return 1
 	source_pulse_cleanup_with_stubs || return 1
 
@@ -450,6 +479,115 @@ test_stale_local_commit_no_pr_removes_worktree_preserves_branch() {
 	return 0
 }
 
+test_stale_detached_review_cruft_removes_without_branch() {
+	local repo_dir="${TEST_ROOT}/repo-detached-review"
+	local wt_path="${TEST_ROOT}/aidevops-pr1234-review-response"
+	setup_repo_with_detached_review_worktree "$repo_dir" "$wt_path" || return 1
+	source_pulse_cleanup_with_stubs || return 1
+
+	local now_epoch
+	now_epoch=$(date +%s)
+	AIDEVOPS_HEADLESS_METRICS_FILE="${TEST_ROOT}/missing-detached-review-metrics.jsonl"
+	export AIDEVOPS_HEADLESS_METRICS_FILE
+
+	_cleanup_single_worktree "$repo_dir" "$wt_path" "" "$now_epoch" "testowner/testrepo" "main" >/dev/null 2>&1
+	local cleanup_rc=$?
+
+	local rc=0
+	[[ "$cleanup_rc" -eq 0 ]] || rc=1
+	[[ ! -d "$wt_path" ]] || rc=1
+	grep -q 'worktree-removed.*detached-review-cruft.*mode=permanent' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "stale clean detached review worktree is removed as cruft" "$rc" \
+		"cleanup_rc=$cleanup_rc log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
+	return 0
+}
+
+test_stale_clean_auto_worktree_removes_folder_preserves_branch() {
+	local repo_dir="${TEST_ROOT}/repo-clean-auto"
+	local wt_path="${TEST_ROOT}/aidevops-feature-auto-20260507-190806-gh23080"
+	local branch_name="feature/auto-20260507-190806-gh23080"
+	setup_repo_with_worker_worktree "$repo_dir" "$wt_path" "$branch_name" "2 days ago" || return 1
+	source_pulse_cleanup_with_stubs || return 1
+
+	local now_epoch
+	now_epoch=$(date +%s)
+	AIDEVOPS_HEADLESS_METRICS_FILE="${TEST_ROOT}/missing-clean-auto-metrics.jsonl"
+	export AIDEVOPS_HEADLESS_METRICS_FILE
+
+	_cleanup_single_worktree "$repo_dir" "$wt_path" "$branch_name" "$now_epoch" "testowner/testrepo" "main" >/dev/null 2>&1
+	local cleanup_rc=$?
+
+	local branch_exists=1
+	git -C "$repo_dir" rev-parse --verify "refs/heads/${branch_name}" >/dev/null 2>&1 && branch_exists=0
+
+	local rc=0
+	[[ "$cleanup_rc" -eq 0 ]] || rc=1
+	[[ ! -d "$wt_path" ]] || rc=1
+	[[ "$branch_exists" -eq 0 ]] || rc=1
+	grep -q 'worktree-removed.*local-commits-branch-preserved.*mode=branch-preserved' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	grep -q 'pr_state=generated-clean-cruft' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "stale clean auto worktree removes folder while preserving branch" "$rc" \
+		"cleanup_rc=$cleanup_rc branch_exists=$branch_exists log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
+	return 0
+}
+
+test_dirty_auto_under_seven_days_is_preserved() {
+	local repo_dir="${TEST_ROOT}/repo-dirty-auto-young"
+	local wt_path="${TEST_ROOT}/aidevops-feature-auto-20260507-190807-gh23081"
+	local branch_name="feature/auto-20260507-190807-gh23081"
+	setup_repo_with_worker_worktree "$repo_dir" "$wt_path" "$branch_name" "2 days ago" || return 1
+	printf 'dirty work\n' >"$wt_path/dirty.txt"
+	source_pulse_cleanup_with_stubs || return 1
+
+	local now_epoch
+	now_epoch=$(date +%s)
+	AIDEVOPS_HEADLESS_METRICS_FILE="${TEST_ROOT}/missing-dirty-auto-young-metrics.jsonl"
+	export AIDEVOPS_HEADLESS_METRICS_FILE
+
+	_cleanup_single_worktree "$repo_dir" "$wt_path" "$branch_name" "$now_epoch" "testowner/testrepo" "main" >/dev/null 2>&1
+	local cleanup_rc=$?
+
+	local rc=0
+	[[ "$cleanup_rc" -eq 1 ]] || rc=1
+	[[ -d "$wt_path" ]] || rc=1
+	grep -q 'worktree-skipped.*local-commits-no-pr.*mode=skipped' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "dirty generated auto worktree under 7 days is preserved" "$rc" \
+		"cleanup_rc=$cleanup_rc log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
+	return 0
+}
+
+test_dirty_auto_over_seven_days_stashes_and_preserves_branch() {
+	local repo_dir="${TEST_ROOT}/repo-dirty-auto-stale"
+	local wt_path="${TEST_ROOT}/aidevops-feature-auto-20260507-190808-gh23082"
+	local branch_name="feature/auto-20260507-190808-gh23082"
+	setup_repo_with_worker_worktree "$repo_dir" "$wt_path" "$branch_name" "8 days ago" || return 1
+	printf 'dirty work\n' >"$wt_path/dirty.txt"
+	source_pulse_cleanup_with_stubs || return 1
+
+	local now_epoch
+	now_epoch=$(date +%s)
+	AIDEVOPS_HEADLESS_METRICS_FILE="${TEST_ROOT}/missing-dirty-auto-stale-metrics.jsonl"
+	export AIDEVOPS_HEADLESS_METRICS_FILE
+
+	_cleanup_single_worktree "$repo_dir" "$wt_path" "$branch_name" "$now_epoch" "testowner/testrepo" "main" >/dev/null 2>&1
+	local cleanup_rc=$?
+
+	local branch_exists=1
+	git -C "$repo_dir" rev-parse --verify "refs/heads/${branch_name}" >/dev/null 2>&1 && branch_exists=0
+	local stash_count=0
+	stash_count=$(git -C "$repo_dir" stash list 2>/dev/null | grep -c 'aidevops worktree cleanup archive' || true)
+
+	local rc=0
+	[[ "$cleanup_rc" -eq 0 ]] || rc=1
+	[[ ! -d "$wt_path" ]] || rc=1
+	[[ "$branch_exists" -eq 0 ]] || rc=1
+	[[ "$stash_count" -gt 0 ]] || rc=1
+	grep -q 'worktree-removed.*local-commits-branch-preserved.*mode=branch-preserved' "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null || rc=1
+	print_result "dirty generated auto worktree over 7 days is stashed and removed" "$rc" \
+		"cleanup_rc=$cleanup_rc branch_exists=$branch_exists stash_count=$stash_count log=$(cat "$AIDEVOPS_CLEANUP_LOG" 2>/dev/null)"
+	return 0
+}
+
 test_no_newline_pr_output_blocks_local_commit_cleanup() {
 	source_pulse_cleanup_with_stubs || return 1
 	gh_pr_list() { printf '42'; return 0; }
@@ -542,6 +680,10 @@ test_closed_issue_dirty_worktree_stashes_and_preserves_branch
 test_terminal_worktree_bypasses_stale_owner_signal
 test_fix_numeric_closed_issue_worktree_archives
 test_stale_local_commit_no_pr_removes_worktree_preserves_branch
+test_stale_detached_review_cruft_removes_without_branch
+test_stale_clean_auto_worktree_removes_folder_preserves_branch
+test_dirty_auto_under_seven_days_is_preserved
+test_dirty_auto_over_seven_days_stashes_and_preserves_branch
 test_no_newline_pr_output_blocks_local_commit_cleanup
 test_no_newline_open_pr_output_blocks_clean_fastpath
 test_branch_pr_lookup_uses_null_safe_jq_filter
