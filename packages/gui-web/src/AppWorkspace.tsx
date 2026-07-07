@@ -1,6 +1,6 @@
 /* jshint esversion: 11 */
 import { type ReactElement, type ReactNode, useEffect, useState } from "react";
-import { FiAlertTriangle, FiBell, FiCheckCircle, FiChevronLeft, FiChevronRight, FiCommand, FiFileText, FiGlobe, FiHash, FiInfo, FiLogOut, FiMap, FiMessageSquare, FiPaperclip, FiSearch, FiSettings, FiShield, FiTerminal, FiTool, FiUser } from "react-icons/fi";
+import { FiAlertTriangle, FiBell, FiCheckCircle, FiChevronLeft, FiChevronRight, FiCommand, FiFileText, FiGlobe, FiHash, FiInfo, FiLock, FiLogOut, FiMap, FiMessageSquare, FiPaperclip, FiSearch, FiSettings, FiShield, FiTerminal, FiTool, FiUnlock, FiUser } from "react-icons/fi";
 import type { GuiFileRootId, GuiNotificationSummary, GuiStatusData } from "../../gui-shared/src";
 import { SurfaceGlyph } from "./AppNavigation";
 import type { ConversationMode, ShellMode, SurfaceId, SurfaceNavItem } from "./app-model";
@@ -12,7 +12,7 @@ import { TamboConversationPart } from "./GenUiCards";
 import { AppsSurface, EditableInventorySurface, InstallationSurface } from "./InventorySurfaces";
 import { PulseWorkersSurface } from "./PulseWorkersSurface";
 import { AiProvidersSurface, LocalReposSurface, LockedVaultGate, OverviewSurface, PlannedSurface, ProjectsSurface, SecuritySurface, VaultSurface } from "./StatusSurfaces";
-import { isVaultSurfaceLocked, vaultCollectionForSurface } from "./VaultBadges";
+import { type VaultDialogIntent, isVaultSurfaceLocked, vaultCollectionForSurface, vaultDialogIntentForStatus } from "./VaultBadges";
 import { applyCommandPaletteSelection, useHeaderMenuState } from "./workspace-header-state";
 import { useWorkspaceTour, WorkspaceTourProvider } from "./WorkspaceTour";
 
@@ -21,7 +21,7 @@ const communityLinks = {
   x: "https://x.com/marcuswquinn",
 } as const;
 
-export function Workspace({ activeItem, activeSectionLabel, activeSurface, canGoBack, canGoForward, conversationMode, fileRoot, goBack, goForward, selectedLocalRepoIndex, selectedSessionId, setActiveSurface, setConversationMode, setSelectedLocalRepoIndex, setSelectedSessionId, setShellMode, shellMode, status }: {
+export function Workspace({ activeItem, activeSectionLabel, activeSurface, canGoBack, canGoForward, conversationMode, fileRoot, goBack, goForward, onVaultRequest, selectedLocalRepoIndex, selectedSessionId, setActiveSurface, setConversationMode, setSelectedLocalRepoIndex, setSelectedSessionId, setShellMode, shellMode, status }: {
   activeItem: SurfaceNavItem;
   activeSectionLabel: string;
   activeSurface: SurfaceId;
@@ -31,6 +31,7 @@ export function Workspace({ activeItem, activeSectionLabel, activeSurface, canGo
   fileRoot: GuiFileRootId | undefined;
   goBack: () => void;
   goForward: () => void;
+  onVaultRequest?: (intent: VaultDialogIntent) => void;
   selectedLocalRepoIndex: number;
   selectedSessionId: string | undefined;
   setActiveSurface: (surface: SurfaceId) => void;
@@ -41,21 +42,23 @@ export function Workspace({ activeItem, activeSectionLabel, activeSurface, canGo
   shellMode: ShellMode;
   status: GuiStatusData;
 }) {
+  const requestVault = onVaultRequest ?? (() => undefined);
+
   return (
     <section className="app-inset" aria-label={text.workspaceLabel}>
       <WorkspaceTourProvider activeSurface={activeSurface}>
-        <WorkspaceHeader activeItem={activeItem} activeSectionLabel={activeSectionLabel} activeSurface={activeSurface} canGoBack={canGoBack} canGoForward={canGoForward} goBack={goBack} goForward={goForward} setActiveSurface={setActiveSurface} setConversationMode={setConversationMode} setSelectedLocalRepoIndex={setSelectedLocalRepoIndex} setSelectedSessionId={setSelectedSessionId} setShellMode={setShellMode} status={status} />
+        <WorkspaceHeader activeItem={activeItem} activeSectionLabel={activeSectionLabel} activeSurface={activeSurface} canGoBack={canGoBack} canGoForward={canGoForward} goBack={goBack} goForward={goForward} onVaultRequest={requestVault} setActiveSurface={setActiveSurface} setConversationMode={setConversationMode} setSelectedLocalRepoIndex={setSelectedLocalRepoIndex} setSelectedSessionId={setSelectedSessionId} setShellMode={setShellMode} status={status} />
         <div className="workspace-scroll">
           {shellMode === "sessions"
             ? <ConversationWorkspace conversationMode={conversationMode} selectedLocalRepoIndex={selectedLocalRepoIndex} selectedSessionId={selectedSessionId} status={status} />
-            : <SurfaceContent activeItem={activeItem} activeSurface={activeSurface} fileRoot={fileRoot} openSurface={setActiveSurface} status={status} />}
+            : <SurfaceContent activeItem={activeItem} activeSurface={activeSurface} fileRoot={fileRoot} onVaultRequest={requestVault} openSurface={setActiveSurface} status={status} />}
         </div>
       </WorkspaceTourProvider>
     </section>
   );
 }
 
-function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoBack, canGoForward, goBack, goForward, setActiveSurface, setConversationMode, setSelectedLocalRepoIndex, setSelectedSessionId, setShellMode, status }: {
+function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoBack, canGoForward, goBack, goForward, onVaultRequest, setActiveSurface, setConversationMode, setSelectedLocalRepoIndex, setSelectedSessionId, setShellMode, status }: {
   activeItem: SurfaceNavItem;
   activeSectionLabel: string;
   activeSurface: SurfaceId;
@@ -63,6 +66,7 @@ function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoB
   canGoForward: boolean;
   goBack: () => void;
   goForward: () => void;
+  onVaultRequest: (intent: VaultDialogIntent) => void;
   setActiveSurface: (surface: SurfaceId) => void;
   setConversationMode: (mode: ConversationMode) => void;
   setSelectedLocalRepoIndex: (index: number) => void;
@@ -146,7 +150,7 @@ function WorkspaceHeader({ activeItem, activeSectionLabel, activeSurface, canGoB
           <button aria-expanded={headerMenus.profileOpen} aria-label={`Open profile menu for ${userName}`} className="profile-avatar-button" onClick={headerMenus.toggleProfile} title={userName} type="button">
             <span>{userInitials}</span>
           </button>
-          {headerMenus.profileOpen ? <ProfileMenu openSurface={(surface) => openItem({ surface })} userName={userName} /> : null}
+          {headerMenus.profileOpen ? <ProfileMenu onVaultRequest={onVaultRequest} openSurface={(surface) => openItem({ surface })} status={status} userName={userName} /> : null}
         </div>
       </div>
       {headerMenus.assistantOpen ? <AssistantPanel activeSurface={activeSurface} userName={userName} /> : null}
@@ -364,7 +368,9 @@ function ChatBubble({ body, speaker, title }: { body: string; speaker: "assistan
   );
 }
 
-function ProfileMenu({ openSurface, userName }: { openSurface: (surface: SurfaceId) => void; userName: string }): ReactElement {
+function ProfileMenu({ onVaultRequest, openSurface, status, userName }: { onVaultRequest: (intent: VaultDialogIntent) => void; openSurface: (surface: SurfaceId) => void; status: GuiStatusData; userName: string }): ReactElement {
+  const vaultIntent = vaultDialogIntentForStatus(status.vault);
+  const VaultIcon = vaultIntent === "lock" ? FiLock : FiUnlock;
   return (
     <div className="popover-menu profile-menu" role="menu">
       <div className="profile-menu-heading">
@@ -374,6 +380,7 @@ function ProfileMenu({ openSurface, userName }: { openSurface: (surface: Surface
       <button onClick={() => openSurface("settings")} role="menuitem" type="button"><FiSettings aria-hidden="true" /> Settings</button>
       <button onClick={() => openSurface("settings")} role="menuitem" type="button"><FiCommand aria-hidden="true" /> Theme</button>
       <button onClick={() => openSurface("settings")} role="menuitem" type="button"><FiGlobe aria-hidden="true" /> Language</button>
+      <button onClick={() => onVaultRequest(vaultIntent)} role="menuitem" type="button"><VaultIcon aria-hidden="true" /> {vaultIntent === "lock" ? "Lock Vault" : "Unlock Vault"}</button>
       <div className="menu-separator" />
       <strong>Community</strong>
       <a href={communityLinks.github} rel="noreferrer" role="menuitem" target="_blank"><FiMessageSquare aria-hidden="true" /> GitHub</a>
@@ -397,10 +404,11 @@ function AssistantPanel({ activeSurface, userName }: { activeSurface: SurfaceId;
   );
 }
 
-function SurfaceContent({ activeItem, activeSurface, fileRoot, openSurface, status }: {
+function SurfaceContent({ activeItem, activeSurface, fileRoot, onVaultRequest, openSurface, status }: {
   activeItem: SurfaceNavItem;
   activeSurface: SurfaceId;
   fileRoot: GuiFileRootId | undefined;
+  onVaultRequest: (intent: VaultDialogIntent) => void;
   openSurface: (surface: SurfaceId) => void;
   status: GuiStatusData;
 }) {
@@ -412,7 +420,7 @@ function SurfaceContent({ activeItem, activeSurface, fileRoot, openSurface, stat
     settings: <SettingsSurface status={status} />,
     notifications: <NotificationsSurface openSurface={openSurface} status={status} />,
     admin: <AdminSurface />,
-    vault: <VaultSurface status={status} />,
+    vault: <VaultSurface onVaultRequest={onVaultRequest} status={status} />,
     aiSessions: <AiSessionsSurface selectedRepoIndex={0} status={status} />,
     channels: <CommsConversationSurface mode="channels" />,
     directMessages: <CommsConversationSurface mode="directMessages" />,
@@ -450,7 +458,7 @@ function SurfaceContent({ activeItem, activeSurface, fileRoot, openSurface, stat
   };
 
   if (isVaultSurfaceLocked(status.vault, activeSurface) && vaultCollection) {
-    return <LockedVaultGate collection={vaultCollection} label={activeItem.label} vault={status.vault} />;
+    return <LockedVaultGate collection={vaultCollection} label={activeItem.label} onVaultRequest={onVaultRequest} vault={status.vault} />;
   }
 
   if (activeSurface === "git") {

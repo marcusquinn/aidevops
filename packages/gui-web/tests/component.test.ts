@@ -95,7 +95,7 @@ describe("dashboard shell", () => {
     expect(counts.security).toBe(1);
     expect(counts.localSetup).toBe(2);
     expect(counts.agents).toBe(3);
-    expect(counts.vault).toBe(5);
+    expect(counts.vault).toBe(9);
     expect(counts.apps).toBe(2);
     expect(counts.aiSessions).toBe(mockedStatus().data.opencode_sessions.sessions.length);
     expect(counts.repos).toBe(mockedStatus().data.local_repos.total + mockedStatus().data.repos.total);

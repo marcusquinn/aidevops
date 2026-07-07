@@ -1,4 +1,5 @@
 import type { GuiVaultCollectionSummary, GuiVaultStatusData } from "@aidevops/gui-shared";
+import type { KeyboardEvent, MouseEvent } from "react";
 import { FiLock, FiUnlock } from "react-icons/fi";
 import type { SurfaceId } from "./app-model";
 import { text } from "./app-model";
@@ -23,20 +24,53 @@ export function vaultCollectionTooltip(collection: GuiVaultCollectionSummary): s
   return text.vaultTooltip;
 }
 
-export function VaultPadlock({ collection, compact = false, vault }: {
+export type VaultDialogIntent = "setup" | "unlock" | "lock";
+
+export function vaultDialogIntentForStatus(vault: GuiVaultStatusData): VaultDialogIntent {
+  if (vault.unlocked) {
+    return "lock";
+  }
+
+  return vault.readiness.setup_required || !vault.initialized ? "setup" : "unlock";
+}
+
+export function VaultPadlock({ collection, compact = false, onActivate, vault }: {
   collection: GuiVaultCollectionSummary;
   compact?: boolean;
+  onActivate?: (intent: VaultDialogIntent) => void;
   vault: GuiVaultStatusData;
 }) {
   const locked = collection.state !== "unlocked" || !vault.unlocked;
   const stateLabel = locked ? "Locked" : "Unlocked";
   const Icon = locked ? FiLock : FiUnlock;
   const tooltip = `${stateLabel}: ${vaultCollectionTooltip(collection)}`;
+  const className = compact ? "vault-padlock compact" : "vault-padlock";
+
+  const activate = (event: MouseEvent<HTMLSpanElement> | KeyboardEvent<HTMLSpanElement>) => {
+    if (onActivate === undefined) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    onActivate(vaultDialogIntentForStatus(vault));
+  };
+
+  const handleKeyDown = (event: KeyboardEvent<HTMLSpanElement>) => {
+    if (event.key === "Enter" || event.key === " ") {
+      activate(event);
+    }
+  };
 
   return (
     <span
-      className={compact ? "vault-padlock compact" : "vault-padlock"}
+      aria-label={tooltip}
+      className={onActivate ? `${className} interactive` : className}
       data-vault-state={locked ? "locked" : "unlocked"}
+      onClick={activate}
+      onKeyDown={handleKeyDown}
+      role={onActivate ? "button" : undefined}
+      tabIndex={onActivate ? 0 : undefined}
       title={tooltip}
     >
       <Icon aria-hidden="true" focusable="false" />
