@@ -88,6 +88,48 @@ aidevops secret set AWS_ACCESS_KEY_ID_STAGING
 
 The bare provider name (`GITHUB_TOKEN`, `OPENAI_API_KEY`) remains the default for the single-account case — only suffix when you actually need to disambiguate. If you instead need one account active **at a time** and want to switch sets between projects, use `multi-tenant.md`.
 
+### Naming provider token labels and token values
+
+`aidevops secret set <NAME>` stores exactly one value under one environment-style
+name. When a provider exposes both a local token label/name and a sensitive token
+value, store or document those as separate names:
+
+- `<PROVIDER>_<ORG>_<PURPOSE>_TOKEN_NAME` — non-sensitive provider token label.
+- `<PROVIDER>_<ORG>_<PURPOSE>_ACCESS_TOKEN` — sensitive token value, stored with
+  `aidevops secret set` and never written in documentation, issues, PRs, logs, or
+  chat.
+
+Use stable, generic organisation and purpose tags that do not reveal private
+repositories, private customers, or local private paths. Agents may record known
+non-sensitive provider token labels when that helps humans identify which token to
+rotate, but must never record the token value.
+
+Examples for two developers working on the same `PRODUCTS_SYNC` purpose with
+different local provider token labels:
+
+```bash
+# Developer A: token label is safe to write down; token value is not.
+aidevops secret set PROVIDER_ORG_PRODUCTS_SYNC_TOKEN_NAME
+aidevops secret set PROVIDER_ORG_PRODUCTS_SYNC_ACCESS_TOKEN
+
+# Developer B on the same purpose, with a different provider-side token label.
+aidevops secret set PROVIDER_ORG_PRODUCTS_SYNC_DEV_B_TOKEN_NAME
+aidevops secret set PROVIDER_ORG_PRODUCTS_SYNC_DEV_B_ACCESS_TOKEN
+```
+
+When one physical device stores tokens for multiple developers, organisations, or
+purposes, add a short developer or device discriminator before the final field:
+
+```bash
+aidevops secret set PROVIDER_ORG_PRODUCTS_SYNC_DEV_A_TOKEN_NAME
+aidevops secret set PROVIDER_ORG_PRODUCTS_SYNC_DEV_A_ACCESS_TOKEN
+aidevops secret set PROVIDER_ORG_PRODUCTS_SYNC_LAPTOP_2_TOKEN_NAME
+aidevops secret set PROVIDER_ORG_PRODUCTS_SYNC_LAPTOP_2_ACCESS_TOKEN
+```
+
+For plaintext fallback exports in `credentials.sh`, use the same SCREAMING_SNAKE_CASE
+names and keep the file at permission `600`.
+
 ### Using Secrets in Commands
 
 ```bash

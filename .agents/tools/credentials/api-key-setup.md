@@ -83,6 +83,8 @@ bash ~/Git/aidevops/.agents/scripts/setup-local-api-keys.sh set <service-name> Y
 
 **Multi-account naming**: When you hold credentials for several accounts on the same provider at once (personal + work GitHub, multiple OpenAI projects, several Hetzner projects), suffix the bare name with `-<account>` / `_<ACCOUNT>` — e.g. `github-token-personal` and `github-token-work`, or `hcloud-token-project-a` and `hcloud-token-project-b`. The bare provider name remains the default for the single-account case. Full convention: `gopass.md` "Naming with multiple accounts".
 
+**Provider token label + value pairs**: `aidevops secret set <NAME>` and the plaintext fallback both store one value per name. If a provider has a non-sensitive local token label and a sensitive access token value, keep them separate: `<PROVIDER>_<ORG>_<PURPOSE>_TOKEN_NAME` for the label and `<PROVIDER>_<ORG>_<PURPOSE>_ACCESS_TOKEN` for the value. Add a developer or device discriminator, such as `_DEV_A` or `_LAPTOP_2`, before `TOKEN_NAME` / `ACCESS_TOKEN` when one workstation stores multiple developers' or devices' tokens. Never document token values; token labels may be documented only when they are non-sensitive.
+
 ### 4. Verify
 
 ```bash
