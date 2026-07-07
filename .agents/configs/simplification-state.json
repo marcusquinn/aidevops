@@ -7480,21 +7480,21 @@
       "pr": 16415
     },
     "TODO.md": {
-      "at": "2026-07-07T19:37:02Z",
-      "hash": "fc4419fd047f1f409d16ec991c7f52cf0a1a9842",
-      "passes": 173,
+      "at": "2026-07-07T21:16:52Z",
+      "hash": "768289d32376b8dc570a12782923cb27e282c5a3",
+      "passes": 174,
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-07T19:37:02Z",
-      "hash": "a1d2d6f86f159db80cadc48eb245352b47df1570",
-      "passes": 259,
+      "at": "2026-07-07T21:16:53Z",
+      "hash": "7b1d8182d22585ce62f01843ffc690ff3d264baf",
+      "passes": 260,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-07T19:37:02Z",
-      "hash": "0bf64ffa7e927b66e97e1838f3106ce01ad60840",
-      "passes": 255,
+      "at": "2026-07-07T21:16:53Z",
+      "hash": "bfdd90f51c39cf33bc266cff256804aeff6832be",
+      "passes": 256,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
@@ -8090,6 +8090,12 @@
       "at": "2026-07-05T23:12:42Z",
       "pr": 26623,
       "passes": 2
+    },
+    ".agents/scripts/gh-failure-miner-helper.sh": {
+      "hash": "226aa9542b709d8088259431f0e208523bf40fa5",
+      "at": "2026-07-07T21:16:57Z",
+      "pr": 26821,
+      "passes": 1
     }
   },
   "setup-modules/agent-deploy.sh": {
