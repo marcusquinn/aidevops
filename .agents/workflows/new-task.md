@@ -148,7 +148,7 @@ For GitHub-backed tracked tasks, `ref:none` is an incomplete intermediate state.
 ```bash
 if [[ "${task_offline:-false}" != "true" && "${task_ref:-}" == "none" ]]; then
   ~/.aidevops/agents/scripts/issue-sync-helper.sh push "$task_id"
-  task_ref=$(grep -E "^[[:space:]]*-[[:space:]]+\[[ x]\][[:space:]]+${task_id}[[:space:]]" TODO.md | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/^ref://' || true)
+  task_ref=$({ grep -E "^[[:space:]]*-[[:space:]]+\[[ x]\][[:space:]]+${task_id}[[:space:]]" TODO.md || true; } | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/^ref://' || true)
   [[ -n "$task_ref" ]] || { echo "Tracker issue creation failed for $task_id" >&2; exit 1; }
 fi
 ```
@@ -156,7 +156,9 @@ fi
 Before reporting the task as filed, verify the issue exists:
 
 ```bash
-gh issue view "${task_ref#GH#}" --repo "$(gh repo view --json nameWithOwner -q .nameWithOwner)" >/dev/null
+if [[ -n "${task_ref:-}" && "${task_ref:-}" != "none" && "${task_ref:-}" != "offline" ]]; then
+  gh issue view "${task_ref#GH#}" --repo "$(gh repo view --json nameWithOwner -q .nameWithOwner)" >/dev/null
+fi
 ```
 
 `#{origin}`: `#interactive` (user present) or `#worker` (headless). Detect via `detect_session_origin` from `shared-constants.sh`. Maps to `origin:interactive` / `origin:worker` GitHub labels on issue sync.
