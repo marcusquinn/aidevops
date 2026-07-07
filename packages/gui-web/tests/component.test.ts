@@ -486,6 +486,17 @@ describe("dashboard shell", () => {
     expect(css).not.toContain("border-color: color-mix(in srgb, var(--accent) 52%, transparent)");
   });
 
+  test("keeps workspace surface grids content-sized instead of vertically stretched", () => {
+    const css = readFileSync(`${guiWebRoot}/src/styles.css`, "utf8");
+
+    expect(css).toMatch(/\.workspace-scroll\s*\{[^}]*align-content:\s*start;[^}]*align-items:\s*start;/s);
+    expect(css).toMatch(/\.surface-page\s*\{[^}]*align-content:\s*start;/s);
+    expect(css).toMatch(/\.settings-surface,\n\.settings-form\s*\{[^}]*align-content:\s*start;/s);
+    expect(css).toMatch(/\.settings-form\s*\{[^}]*align-items:\s*start;[^}]*grid-template-columns:\s*repeat\(auto-fit, minmax\(240px, 1fr\)\);/s);
+    expect(css).toMatch(/\.settings-form label\s*\{[^}]*align-content:\s*start;[^}]*min-height:\s*0;/s);
+    expect(css).toMatch(/\.settings-form input,\n\.settings-form select\s*\{[^}]*min-height:\s*44px;[^}]*width:\s*100%;/s);
+  });
+
   test("clamps sidebar width to compact and wide bounds", () => {
     expect(clampSidebarWidth(120)).toBe(300);
     expect(clampSidebarWidth(360)).toBe(360);

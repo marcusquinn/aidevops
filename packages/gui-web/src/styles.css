@@ -1792,6 +1792,8 @@ code {
 }
 
 .workspace-scroll {
+  align-content: start;
+  align-items: start;
   display: grid;
   gap: 16px;
   overflow-x: hidden;
@@ -1800,6 +1802,7 @@ code {
 }
 
 .surface-page {
+  align-content: start;
   display: grid;
   gap: 16px;
 }
@@ -2106,17 +2109,21 @@ code {
 
 .settings-surface,
 .settings-form {
+  align-content: start;
   display: grid;
   gap: 16px;
 }
 
 .settings-form {
+  align-items: start;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
 }
 
 .settings-form label {
+  align-content: start;
   display: grid;
   gap: 8px;
+  min-height: 0;
 }
 
 .settings-form span {
@@ -2130,7 +2137,9 @@ code {
   border: 1px solid var(--border);
   border-radius: 14px;
   color: var(--text-secondary);
+  min-height: 44px;
   padding: 11px 12px;
+  width: 100%;
 }
 
 .notification-list li {
