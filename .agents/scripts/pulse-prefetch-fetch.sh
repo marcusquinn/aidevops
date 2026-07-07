@@ -347,7 +347,7 @@ _prefetch_repo_issues() {
 			issue_json="$_batch_issues"
 			_used_batch_cache=true
 			echo "[pulse-wrapper] _prefetch_repo_issues: using batch cache for ${slug}" >>"$LOGFILE"
-			_PULSE_HEALTH_BATCH_CACHE_HITS=$((_PULSE_HEALTH_BATCH_CACHE_HITS + 1))
+			_PULSE_HEALTH_BATCH_CACHE_HITS=$(( ${_PULSE_HEALTH_BATCH_CACHE_HITS:-0} + 1 ))
 		fi
 	fi
 
