@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.0] - 2026-07-07
+
+### Added
+
+- Add Vault passphrase setup, unlock, and lock modal UI (#26825)
+
 ## [3.31.81] - 2026-07-07
 
 ### Changed
