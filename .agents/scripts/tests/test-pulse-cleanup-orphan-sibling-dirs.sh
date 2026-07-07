@@ -178,7 +178,7 @@ SH
 	PATH="$fake_bin:$PATH"
 	local reason=""
 	set +e
-	reason=$(_pc_orphan_sibling_cleanup_reason "$candidate_path" "$TEST_ROOT/Git/aidevops" "$(date +%s)")
+	reason=$(_pc_classify_orphan_sibling_dir "$TEST_ROOT/Git/aidevops" "$candidate_path" "$(date +%s)")
 	local rc=$?
 	set -e
 	PATH="$old_path"
