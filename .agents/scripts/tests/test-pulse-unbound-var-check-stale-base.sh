@@ -45,6 +45,9 @@
 
 set -u
 
+TEST_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEST_REPO_ROOT="$(cd "${TEST_SCRIPT_DIR}/../../.." && pwd)"
+
 if [[ -t 1 ]]; then
 	TEST_GREEN=$'\033[0;32m'
 	TEST_RED=$'\033[0;31m'
@@ -534,6 +537,27 @@ test_intra_branch_fix_no_phantom() {
 	return 0
 }
 
+# Test 6: GH#26756 regression — the canonical prefetch scripts reported by
+# the systemic CI issue remain clean when scanned directly. This catches any
+# future reintroduction of multi-var local declarations without explicit
+# initialisers in the exact files that triggered PR #26743/#26744 comments.
+test_current_prefetch_files_scan_clean() {
+	info "test: GH#26756 prefetch files scan clean"
+	local _scanner="${TEST_REPO_ROOT}/.agents/scripts/pulse-unbound-var-check.sh"
+	local _orchestration="${TEST_REPO_ROOT}/.agents/scripts/pulse-prefetch-orchestration.sh"
+	local _repo_prefetch="${TEST_REPO_ROOT}/.agents/scripts/pulse-prefetch-repo.sh"
+	local _scan_output=""
+
+	if _scan_output=$("$_scanner" --scan-files "$_orchestration" "$_repo_prefetch" 2>&1); then
+		pass "GH#26756 prefetch files have no unbound-var violations"
+	else
+		fail "GH#26756 prefetch files reported unbound-var violations"
+		printf '%s\n' "$_scan_output" | sed 's/^/    /'
+	fi
+
+	return 0
+}
+
 # ── main ─────────────────────────────────────────────────────────────
 
 main() {
@@ -542,6 +566,7 @@ main() {
 	test_merge_from_main_no_phantoms
 	test_up_to_date_branch_works
 	test_intra_branch_fix_no_phantom
+	test_current_prefetch_files_scan_clean
 
 	printf '\n'
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
