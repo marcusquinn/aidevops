@@ -33,7 +33,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tests: preserve explicit queued status (#26735)
 - Tests: guard claim task status default (#26734)
 - Maintenance: sync GitHub issue refs to TODO.md [skip ci]
-- Maintenance: sync GitHub issue refs to TODO.md [skip ci]
 
 ### Fixed
 
@@ -46,7 +45,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Tests: preserve explicit queued status (#26735)
 - Tests: guard claim task status default (#26734)
-- Maintenance: sync GitHub issue refs to TODO.md [skip ci]
 - Maintenance: sync GitHub issue refs to TODO.md [skip ci]
 
 ## [3.31.76] - 2026-07-06
