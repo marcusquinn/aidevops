@@ -380,12 +380,12 @@ _validate_and_normalize_args() {
 # duplicate-label warnings/noise in tests and wrapper fallbacks.
 _dedupe_csv_labels() {
 	local labels_csv="$1"
-	local saved_ifs="$IFS"
 	local result=""
 	local label=""
 	local trimmed=""
-	IFS=','
-	for label in $labels_csv; do
+	local -a label_arr=()
+	IFS=',' read -r -a label_arr <<<"$labels_csv"
+	for label in "${label_arr[@]}"; do
 		trimmed="${label#"${label%%[![:space:]]*}"}"
 		trimmed="${trimmed%"${trimmed##*[![:space:]]}"}"
 		[[ -z "$trimmed" ]] && continue
@@ -398,7 +398,6 @@ _dedupe_csv_labels() {
 			result="$trimmed"
 		fi
 	done
-	IFS="$saved_ifs"
 	printf '%s\n' "$result"
 	return 0
 }
