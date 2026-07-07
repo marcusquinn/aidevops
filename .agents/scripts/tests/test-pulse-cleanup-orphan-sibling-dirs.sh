@@ -147,6 +147,50 @@ test_orphan_sibling_dirs_move_to_trash_only() {
 	return 0
 }
 
+test_standalone_clean_check_requires_successful_status() {
+	local candidate_path="$TEST_ROOT/Git/_worktrees/aidevops-release-clone-status-fails"
+	mkdir -p "$candidate_path/.git"
+
+	local fake_bin="$TEST_ROOT/fake-bin"
+	mkdir -p "$fake_bin"
+	cat >"$fake_bin/git" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" == "-C" ]]; then
+	shift 2
+fi
+case "${1:-} ${2:-}" in
+"branch --show-current")
+	printf 'main\n'
+	exit 0
+	;;
+"status --porcelain")
+	exit 128
+	;;
+*)
+	exit 1
+	;;
+esac
+SH
+	chmod +x "$fake_bin/git"
+
+	local old_path="$PATH"
+	PATH="$fake_bin:$PATH"
+	local reason=""
+	set +e
+	reason=$(_pc_orphan_sibling_cleanup_reason "$candidate_path" "$TEST_ROOT/Git/aidevops" "$(date +%s)")
+	local rc=$?
+	set -e
+	PATH="$old_path"
+
+	if [[ "$rc" -eq 1 && -z "$reason" ]]; then
+		print_result "standalone clean check requires successful git status" 0
+	else
+		print_result "standalone clean check requires successful git status" 1 "expected preserve on failed status, got rc=$rc reason=$reason"
+	fi
+	return 0
+}
+
 main() {
 	if ! command -v jq >/dev/null 2>&1; then
 		printf 'SKIP jq unavailable\n'
@@ -155,6 +199,7 @@ main() {
 	setup_fixture
 	load_subject
 	test_orphan_sibling_dirs_move_to_trash_only
+	test_standalone_clean_check_requires_successful_status
 	printf '\n%d/%d tests passed\n' "$TESTS_PASSED" "$TESTS_RUN"
 	[[ "$TESTS_FAILED" -eq 0 ]] || return 1
 	return 0

@@ -1732,7 +1732,8 @@ _pc_classify_orphan_sibling_dir() {
 		standalone_branch=$(git -C "$candidate_path" branch --show-current 2>/dev/null || true)
 		case "$standalone_branch" in
 		main | master)
-			if [[ -z "$(git -C "$candidate_path" status --porcelain 2>/dev/null)" ]]; then
+			local status_out=""
+			if status_out=$(git -C "$candidate_path" status --porcelain 2>/dev/null) && [[ -z "$status_out" ]]; then
 				printf '%s\n' "unregistered-standalone-clean-${standalone_branch}-dir"
 				return 0
 			fi
