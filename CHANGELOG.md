@@ -14,6 +14,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- add vault passphrase modal (#26825)
+
+### Changed
+
+- Documentation: prepare 3.32.0 changelog
+- fix GUI surface row stretching (#26826)
+- Maintenance: sync ref:GH#26823 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Documentation: document provider credential naming (#26820)
+- fix: harden pulse cleanup clean status check (#26817)
+- Documentation: guard new-task tracker grep task id (#26816)
+
+## [3.32.0] - 2026-07-07
+
+### Added
+
 - Add Vault passphrase setup, unlock, and lock modal UI (#26825)
 
 ## [3.31.81] - 2026-07-07
