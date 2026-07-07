@@ -37,7 +37,7 @@ import {
 import type { ContrastPreference, ConversationMode, FontPreference, FontSizePreference, ShellMode, SidebarMode, SurfaceIconName, SurfaceId, SurfaceNavGroup, SurfaceNavItem, ThemePreference } from "./app-model";
 import { dashboardNavItem, navGroups, sidebarModeForSurface, surfaceRecordCounts, text } from "./app-model";
 import { SidebarFooter, wrappedOptionIndex } from "./AppearanceControls";
-import { VaultPadlock, vaultCollectionForSurface, vaultCollectionTooltip } from "./VaultBadges";
+import { type VaultDialogIntent, VaultPadlock, vaultCollectionForSurface, vaultCollectionTooltip, vaultDialogIntentForStatus } from "./VaultBadges";
 
 function AidevopsPromptIcon() {
   return (
@@ -109,13 +109,14 @@ export function MachineRail({ machine }: { machine?: GuiMachineSummary }) {
   );
 }
 
-export function Sidebar({ activeSurface, accentHue, contrastPreference, conversationMode, fontPreference, fontSizePreference, selectedLocalRepoIndex, selectedSessionId, setAccentHue, setActiveSurface, setContrastPreference, setConversationMode, setFontPreference, setFontSizePreference, setSelectedLocalRepoIndex, setSelectedSessionId, setShellMode, setShowBorders, setShowNavCounts, setThemePreference, shellMode, showBorders, showNavCounts, status, themePreference }: {
+export function Sidebar({ activeSurface, accentHue, contrastPreference, conversationMode, fontPreference, fontSizePreference, onVaultRequest, selectedLocalRepoIndex, selectedSessionId, setAccentHue, setActiveSurface, setContrastPreference, setConversationMode, setFontPreference, setFontSizePreference, setSelectedLocalRepoIndex, setSelectedSessionId, setShellMode, setShowBorders, setShowNavCounts, setThemePreference, shellMode, showBorders, showNavCounts, status, themePreference }: {
   activeSurface: SurfaceId;
   accentHue: number;
   contrastPreference: ContrastPreference;
   conversationMode: ConversationMode;
   fontPreference: FontPreference;
   fontSizePreference: FontSizePreference;
+  onVaultRequest: (intent: VaultDialogIntent) => void;
   selectedLocalRepoIndex: number;
   selectedSessionId: string | undefined;
   setAccentHue: (hue: number) => void;
@@ -151,9 +152,9 @@ export function Sidebar({ activeSurface, accentHue, contrastPreference, conversa
         {shellMode === "devices" ? <>
           <SidebarModeTabs mode={sidebarMode} setMode={(mode) => setSidebarMode(mode as SidebarMode)} />
           <ul className="sidebar-top-link">
-            <SidebarItem activeSurface={activeSurface} item={dashboardNavItem} setActiveSurface={setActiveSurface} showCount={false} status={status} />
+            <SidebarItem activeSurface={activeSurface} item={dashboardNavItem} onVaultRequest={onVaultRequest} setActiveSurface={setActiveSurface} showCount={false} status={status} />
           </ul>
-          {visibleGroups.map((group) => <SidebarGroup activeSurface={activeSurface} group={group} key={group.label} recordCounts={recordCounts} setActiveSurface={setActiveSurface} showNavCounts={showNavCounts} status={status} />)}
+          {visibleGroups.map((group) => <SidebarGroup activeSurface={activeSurface} group={group} key={group.label} onVaultRequest={onVaultRequest} recordCounts={recordCounts} setActiveSurface={setActiveSurface} showNavCounts={showNavCounts} status={status} />)}
         </> : <ConversationSidebar
           conversationMode={conversationMode}
           selectedLocalRepoIndex={selectedLocalRepoIndex}
@@ -310,9 +311,10 @@ function SidebarModeTabs<TMode extends SidebarMode | ConversationMode>({ mode, s
   );
 }
 
-function SidebarGroup({ activeSurface, group, recordCounts, setActiveSurface, showNavCounts, status }: {
+function SidebarGroup({ activeSurface, group, onVaultRequest, recordCounts, setActiveSurface, showNavCounts, status }: {
   activeSurface: SurfaceId;
   group: SurfaceNavGroup;
+  onVaultRequest: (intent: VaultDialogIntent) => void;
   recordCounts: Partial<Record<SurfaceId, number>>;
   setActiveSurface: (surface: SurfaceId) => void;
   showNavCounts: boolean;
@@ -322,15 +324,16 @@ function SidebarGroup({ activeSurface, group, recordCounts, setActiveSurface, sh
     <section className="sidebar-group">
       <h2>{group.label}</h2>
       <ul>
-        {group.items.map((item) => <SidebarItem activeSurface={activeSurface} item={item} key={item.id} recordCount={recordCounts[item.id]} setActiveSurface={setActiveSurface} showCount={showNavCounts} status={status} />)}
+        {group.items.map((item) => <SidebarItem activeSurface={activeSurface} item={item} key={item.id} onVaultRequest={onVaultRequest} recordCount={recordCounts[item.id]} setActiveSurface={setActiveSurface} showCount={showNavCounts} status={status} />)}
       </ul>
     </section>
   );
 }
 
-function SidebarItem({ activeSurface, item, recordCount, setActiveSurface, showCount, status }: {
+function SidebarItem({ activeSurface, item, onVaultRequest, recordCount, setActiveSurface, showCount, status }: {
   activeSurface: SurfaceId;
   item: SurfaceNavItem;
+  onVaultRequest: (intent: VaultDialogIntent) => void;
   recordCount?: number;
   setActiveSurface: (surface: SurfaceId) => void;
   showCount: boolean;
@@ -348,7 +351,14 @@ function SidebarItem({ activeSurface, item, recordCount, setActiveSurface, showC
         aria-label={tooltip}
         aria-current={isActive ? "page" : undefined}
         className={isActive ? "surface-link active" : "surface-link"}
-        onClick={() => setActiveSurface(item.id)}
+        onClick={(event) => {
+          if (vaultCollection && event.target instanceof HTMLElement && event.target.closest(".vault-padlock")) {
+            onVaultRequest(vaultDialogIntentForStatus(status.vault));
+            return;
+          }
+
+          setActiveSurface(item.id);
+        }}
         title={tooltip}
         type="button"
       >

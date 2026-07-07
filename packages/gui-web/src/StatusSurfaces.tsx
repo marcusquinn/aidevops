@@ -4,7 +4,7 @@ import type { GuiAiAppSummary, GuiLocalRepoSetupSummary, GuiSetupTargetSummary, 
 import { plannedHomes, text } from "./app-model";
 import { FileExplorerSurface } from "./FileExplorerSurface";
 import { PathActions } from "./PathActions";
-import { VaultPadlock } from "./VaultBadges";
+import { type VaultDialogIntent, VaultPadlock, vaultDialogIntentForStatus } from "./VaultBadges";
 
 export { AiProvidersSurface } from "./AiProvidersSurface";
 
@@ -121,7 +121,7 @@ export function SecuritySurface({ status }: { status: GuiStatusData }) {
   );
 }
 
-export function VaultSurface({ status }: { status: GuiStatusData }) {
+export function VaultSurface({ onVaultRequest, status }: { onVaultRequest: (intent: VaultDialogIntent) => void; status: GuiStatusData }) {
   const vault = status.vault;
   const vaultCollection = vault.collections.find((collection) => collection.surface_ids.includes("vault")) ?? vault.collections[0];
   const readiness = [
@@ -150,7 +150,7 @@ export function VaultSurface({ status }: { status: GuiStatusData }) {
             <h2>{text.vault}</h2>
             <p>{text.vaultIntro}</p>
           </div>
-          {vaultCollection ? <VaultPadlock collection={vaultCollection} vault={vault} /> : null}
+          {vaultCollection ? <VaultPadlock collection={vaultCollection} onActivate={onVaultRequest} vault={vault} /> : null}
         </div>
         <ul aria-label="Vault readiness" className="vault-readiness-strip">
           {readiness.map((item) => <li key={item.label}><strong>{item.label}</strong>{item.value}</li>)}
@@ -175,7 +175,7 @@ export function VaultSurface({ status }: { status: GuiStatusData }) {
             <h2>{vault.readiness.setup_required ? "Setup required" : "Setup metadata"}</h2>
             <p>{vault.setup_hint}</p>
           </div>
-          <button className="secondary-action vault-cta" disabled title={vault.unlock_hint} type="button">{text.vaultUnlockCta}</button>
+          <button className="secondary-action vault-cta" onClick={() => onVaultRequest(vaultDialogIntentForStatus(vault))} title={vault.unlock_hint} type="button">{vault.unlocked ? "Lock Vault" : text.vaultUnlockCta}</button>
         </div>
         <ol className="vault-step-list">
           <li>Initialize locally with the hidden-prompt helper.</li>
@@ -191,7 +191,7 @@ export function VaultSurface({ status }: { status: GuiStatusData }) {
           <p>{text.vaultCollectionIntro}</p>
         </div>
         <ul className="object-list vault-collection-list">
-          {vault.collections.map((collection) => <VaultCollectionRow collection={collection} key={collection.id} vault={vault} />)}
+          {vault.collections.map((collection) => <VaultCollectionRow collection={collection} key={collection.id} onVaultRequest={onVaultRequest} vault={vault} />)}
         </ul>
       </section>
       <section className="panel" aria-label="Vault devices and audit">
@@ -219,9 +219,10 @@ export function VaultSurface({ status }: { status: GuiStatusData }) {
   );
 }
 
-export function LockedVaultGate({ collection, label, vault }: {
+export function LockedVaultGate({ collection, label, onVaultRequest, vault }: {
   collection: GuiVaultCollectionSummary;
   label: string;
+  onVaultRequest: (intent: VaultDialogIntent) => void;
   vault: GuiVaultStatusData;
 }) {
   return (
@@ -232,12 +233,12 @@ export function LockedVaultGate({ collection, label, vault }: {
           <h2>{label} is locked</h2>
           <p>{text.vaultLockedPreview}</p>
         </div>
-        <VaultPadlock collection={collection} vault={vault} />
+        <VaultPadlock collection={collection} onActivate={onVaultRequest} vault={vault} />
       </div>
       <div className="notice compact-notice" role="note">
         {text.vaultTooltip} {vault.unlock_hint}
       </div>
-      <button className="secondary-action vault-cta" disabled title={vault.unlock_hint} type="button">{text.vaultUnlockCta}</button>
+      <button className="secondary-action vault-cta" onClick={() => onVaultRequest(vaultDialogIntentForStatus(vault))} title={vault.unlock_hint} type="button">{text.vaultUnlockCta}</button>
     </section>
   );
 }
@@ -252,11 +253,11 @@ function VaultFeatureCard({ detail, label, value }: { detail: string; label: str
   );
 }
 
-function VaultCollectionRow({ collection, vault }: { collection: GuiVaultCollectionSummary; vault: GuiVaultStatusData }) {
+function VaultCollectionRow({ collection, onVaultRequest, vault }: { collection: GuiVaultCollectionSummary; onVaultRequest: (intent: VaultDialogIntent) => void; vault: GuiVaultStatusData }) {
   return (
     <li>
       <strong>{collection.label}</strong>
-      <VaultPadlock collection={collection} compact vault={vault} />
+      <VaultPadlock collection={collection} compact onActivate={onVaultRequest} vault={vault} />
       <span>{collection.preview_policy}</span>
       <small>{collection.labels.join(", ")}</small>
       <small>{collection.surface_ids.join(", ")}</small>

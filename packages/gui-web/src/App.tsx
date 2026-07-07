@@ -8,6 +8,8 @@ import { DesktopStatusBar } from "./DesktopStatusBar";
 import { type NavigationHistory, nextHistoryIndex, useNavigationHistoryKeyboard } from "./navigation-history";
 import { ScreenshotCaptureNotificationHost } from "./ScreenshotCaptureNotification";
 import { fetchStatus, mockedStatus } from "./status-client";
+import type { VaultDialogIntent } from "./VaultBadges";
+import { VaultPassphraseModal } from "./VaultPassphraseModal";
 
 interface WebKitBridgeWindow extends Window {
   webkit?: {
@@ -105,6 +107,7 @@ export function App(): ReactElement {
   const [conversationMode, setConversationMode] = useState<ConversationMode>("ai");
   const [selectedLocalRepoIndex, setSelectedLocalRepoIndex] = useState(0);
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>();
+  const [vaultDialogIntent, setVaultDialogIntent] = useState<VaultDialogIntent | null>(null);
   const [systemTheme, setSystemTheme] = useState<"light" | "dark">("light");
   const resolvedTheme = themePreference === "system" ? systemTheme : themePreference;
   const activeSurface: SurfaceId = navigation.entries[navigation.index] ?? "overview";
@@ -209,6 +212,12 @@ export function App(): ReactElement {
     setSelectedLocalRepoIndex((current) => Math.min(current, Math.max(0, status.data.local_repos.repos.length - 1)));
   }, [status.data.local_repos.repos.length]);
 
+  useEffect(() => {
+    if (!statusLoading && status.data.vault.readiness.setup_required) {
+      setVaultDialogIntent("setup");
+    }
+  }, [status.data.vault.readiness.setup_required, statusLoading]);
+
   return (
     <main className={machineRailVisible ? "app-shell" : "app-shell machine-rail-collapsed"} aria-busy={statusLoading}>
       <div className="desktop-titlebar-tagline" aria-hidden="true">Your data protected. Your systems managed. Your creations published.</div>
@@ -221,6 +230,7 @@ export function App(): ReactElement {
         conversationMode={conversationMode}
         fontSizePreference={fontSizePreference}
         fontPreference={fontPreference}
+        onVaultRequest={(intent) => setVaultDialogIntent(intent)}
         selectedLocalRepoIndex={selectedLocalRepoIndex}
         selectedSessionId={selectedSessionId}
         setAccentHue={setAccentHue}
@@ -252,6 +262,7 @@ export function App(): ReactElement {
         fileRoot={fileRoot}
         goBack={goBack}
         goForward={goForward}
+        onVaultRequest={(intent) => setVaultDialogIntent(intent)}
         selectedLocalRepoIndex={selectedLocalRepoIndex}
         selectedSessionId={selectedSessionId}
         setActiveSurface={setActiveSurface}
@@ -263,6 +274,7 @@ export function App(): ReactElement {
         status={status.data}
       />
       <DesktopStatusBar status={status.data} />
+      {vaultDialogIntent ? <VaultPassphraseModal intent={vaultDialogIntent} onClose={() => setVaultDialogIntent(null)} vault={status.data.vault} /> : null}
     </main>
   );
 }
