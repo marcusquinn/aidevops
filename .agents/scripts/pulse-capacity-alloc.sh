@@ -57,7 +57,7 @@ _append_priority_allocations() {
 	fi
 
 	# Read allocation values
-	local max_workers=4 product_repos=0 tooling_repos=0 dispatchable_product_repos=0 product_min=0 tooling_max=0 reservation_pct=60 quality_debt_cap_pct=30
+	local max_workers="" product_repos="" tooling_repos="" dispatchable_product_repos="" product_min="" tooling_max="" reservation_pct="" quality_debt_cap_pct=""
 	max_workers=$(grep '^MAX_WORKERS=' "$alloc_file" | cut -d= -f2) || max_workers=4
 	product_repos=$(grep '^PRODUCT_REPOS=' "$alloc_file" | cut -d= -f2) || product_repos=0
 	tooling_repos=$(grep '^TOOLING_REPOS=' "$alloc_file" | cut -d= -f2) || tooling_repos=0
@@ -268,7 +268,7 @@ apply_peak_hours_cap() {
 		return 0
 	fi
 
-	local ph_start=5 ph_end=11 ph_fraction="0.2"
+	local ph_start="" ph_end="" ph_fraction=""
 	ph_start=$("$settings_helper" get supervisor.peak_hours_start 2>/dev/null || echo "5")
 	ph_end=$("$settings_helper" get supervisor.peak_hours_end 2>/dev/null || echo "11")
 	ph_fraction=$("$settings_helper" get supervisor.peak_hours_worker_fraction 2>/dev/null || echo "0.2")
@@ -333,7 +333,7 @@ calculate_max_workers() {
 	local free_mb
 	if [[ "$(uname)" == "Darwin" ]]; then
 		# macOS: use vm_stat for free + inactive (reclaimable) pages
-		local page_size=16384 free_pages=0 inactive_pages=0
+		local page_size="" free_pages="" inactive_pages=""
 		page_size=$(sysctl -n hw.pagesize 2>/dev/null || echo 16384)
 		free_pages=$(vm_stat 2>/dev/null | awk '/Pages free/ {gsub(/\./,"",$3); print $3}')
 		inactive_pages=$(vm_stat 2>/dev/null | awk '/Pages inactive/ {gsub(/\./,"",$3); print $3}')
@@ -421,7 +421,7 @@ _count_dispatchable_product_repos() {
 	if [[ "$product_repos" -gt 0 && "$DAILY_PR_CAP" -gt 0 ]]; then
 		while IFS= read -r slug; do
 			[[ -n "$slug" ]] || continue
-			local pr_json="[]" daily_pr_count=0 pr_alloc_err=""
+			local pr_json="" daily_pr_count="" pr_alloc_err=""
 			# GH#4412: use --state all to count merged/closed PRs too
 			pr_alloc_err=$(mktemp)
 			pr_json=$(pulse_pr_list_get --repo "$slug" --state all --json createdAt --limit 200 2>"$pr_alloc_err") || pr_json="[]"
@@ -581,7 +581,7 @@ count_debt_workers() {
 		queued=$(gh_issue_list --repo "$repo_slug" --label "function-complexity-debt" --label "status:queued" --state open --json number --jq 'length' 2>/dev/null || echo 0)
 		;;
 	all)
-		local qa_active=0 qa_queued=0 fsd_active=0 fsd_queued=0 fcd_active=0 fcd_queued=0
+		local qa_active="" qa_queued="" fsd_active="" fsd_queued="" fcd_active="" fcd_queued=""
 		qa_active=$(gh_issue_list --repo "$repo_slug" --label "quality-debt" --label "status:in-progress" --state open --json number --jq 'length' 2>/dev/null || echo 0)
 		qa_queued=$(gh_issue_list --repo "$repo_slug" --label "quality-debt" --label "status:queued" --state open --json number --jq 'length' 2>/dev/null || echo 0)
 		fsd_active=$(gh_issue_list --repo "$repo_slug" --label "file-size-debt" --label "status:in-progress" --state open --json number --jq 'length' 2>/dev/null || echo 0)
