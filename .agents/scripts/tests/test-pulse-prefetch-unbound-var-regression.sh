@@ -10,33 +10,34 @@
 
 set -u
 
-TEST_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEST_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE:-$0}")" && pwd)"
 TEST_REPO_ROOT="$(cd "${TEST_SCRIPT_DIR}/../../.." && pwd)"
 
 fail() {
-	local message="$1"
+	local message="${1:-}"
 	printf '[FAIL] %s\n' "$message" >&2
 	return 1
 }
 
 pass() {
-	local message="$1"
+	local message="${1:-}"
 	printf '[PASS] %s\n' "$message"
 	return 0
 }
 
 main() {
+	local bash_bin="${BASH:-bash}"
 	local checker="${TEST_REPO_ROOT}/.agents/scripts/pulse-unbound-var-check.sh"
 	local orchestration="${TEST_REPO_ROOT}/.agents/scripts/pulse-prefetch-orchestration.sh"
 	local repo="${TEST_REPO_ROOT}/.agents/scripts/pulse-prefetch-repo.sh"
 	local output=""
 
-	if [[ ! -x "$checker" ]]; then
-		fail "pulse unbound-var checker is not executable: ${checker}"
+	if [[ ! -f "$checker" ]]; then
+		fail "pulse unbound-var checker is missing: ${checker}"
 		return 1
 	fi
 
-	output=$("$checker" --scan-files "$orchestration" "$repo" 2>&1) || {
+	output=$("$bash_bin" "$checker" --scan-files "$orchestration" "$repo" 2>&1) || {
 		printf '%s\n' "$output" >&2
 		fail "pulse prefetch modules contain uninitialised multi-var locals"
 		return 1
