@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 #
-# Regression test for GH#26761 / t2863 pulse prefetch set -u safety.
+# Regression test for GH#26761 and GH#26763 / t2863 pulse prefetch set -u safety.
 # The CI failure miner observed repeated Pulse Unbound-Var Lint failures in
 # pulse-prefetch-orchestration.sh and pulse-prefetch-repo.sh. The concrete
 # declarations were fixed by initialising every variable at declaration time;
