@@ -904,6 +904,115 @@ build_issue_title() {
 	return 0
 }
 
+build_infra_issue_body() {
+	local cluster_json="$1"
+	local pattern_id="$2"
+	local threshold="$3"
+
+	printf '%s\n' "$cluster_json" | jq -r '
+		"## Summary\n" +
+		"- Affected checks: " + ((.check_names // [(.check_name // "multiple-checks")]) | join(", ")) + "\n" +
+		"- Events observed: " + (.count|tostring) + "\n" +
+		"- Sources affected: " + (((.sources // []) | length)|tostring) + "\n\n" +
+		"## Why this looks like an infrastructure outage\n" +
+		"- All checks failed simultaneously across multiple PRs/commits.\n" +
+		"- This pattern indicates a billing or runner infrastructure issue, not a code defect.\n\n" +
+		"## Evidence\n" +
+		((.examples // []) | map("- " + (.source_kind // "source") + ":" + (.source_ref // "unknown") + " (" + (.conclusion // "unknown") + ")" +
+		  (if .source_url != null then " - " + .source_url else "" end) +
+		  (if .run_url != null then " - " + .run_url else "" end) +
+		  (if .details_url != null then " - " + .details_url else "" end)
+		) | join("\n")) + "\n\n" +
+		"## Recommended Action\n" +
+		"- Verify billing status and runner availability.\n" +
+		"- Re-run failed workflows after the infrastructure issue is resolved.\n" +
+		"- Do NOT make code changes to fix this — the root cause is external.\n\n" +
+		"Signal tag: `gh-failure-miner:" + $pattern_id + "`\n"
+	' --arg pattern_id "$pattern_id" --argjson threshold "$threshold"
+	return $?
+}
+
+build_systemic_issue_body() {
+	local cluster_json="$1"
+	local pattern_id="$2"
+	local threshold="$3"
+
+	printf '%s\n' "$cluster_json" | jq -r '
+		def affected_paths_line($example):
+			if (($example.affected_paths // []) | length) > 0 then
+				"\n  affected files: " + (($example.affected_paths // []) | .[0:8] | join(", ")) +
+				(if (($example.affected_paths // []) | length) > 8 then ", ..." else "" end)
+			else "" end;
+		def annotations_line($example):
+			if (($example.annotations // []) | length) > 0 then
+				"\n  reported findings: " + (($example.annotations // []) | .[0:3] | map(
+					((.path // "unreported") + (if (.start_line // null) != null then ":" + ((.start_line // 0) | tostring) else "" end) +
+					(if ((.title // "") | length) > 0 then " — " + .title elif ((.message // "") | length) > 0 then " — " + .message else "" end))
+				) | join("; ")) +
+				(if (($example.annotations // []) | length) > 3 then "; ..." else "" end)
+			else "" end;
+		def qlty_empty_sarif_signature($check_name; $signature):
+			((($check_name // "") | test("Qlty[[:space:]]+Smell[[:space:]]+Threshold"; "i"))
+				 and (($signature // "") | test("empty[[:space:]-]*SARIF"; "i")));
+		def pulse_unbound_var_signature($check_name; $signature):
+			((($check_name // "") | test("Pulse[[:space:]]+Unbound-Var[[:space:]]+Lint"; "i"))
+				 or (($signature // "") | test("Pulse[[:space:]]+unbound-var[[:space:]]+violations[[:space:]]+found|multi-var[[:space:]]+local[[:space:]]+without[[:space:]]+init|pulse-unbound-var"; "i")));
+		def systemic_fix_guidance($check_name; $signature):
+			if ((($check_name // "") | test("CodeFactor"; "i")) or ($signature == "failure:codefactor.io")) then
+				"- CodeFactor is an external advisory/static-analysis check. GitHub Actions logs usually only show `failure:codefactor.io`; read the CodeFactor details URL in Evidence for the file, line, and rule.\n" +
+				"- If the details URL is inaccessible, use the `affected files` evidence from the failing PRs to identify the nearest local linter/static-analysis guard before editing.\n" +
+				"- Reproduce the provider finding locally with the nearest repo linter/style/static-analysis command, fix the source issue rather than suppressing CodeFactor, and add a focused regression guard for the reported rule/file.\n" +
+				"\n" +
+				"## Worker Guidance\n" +
+				"1. Open the CodeFactor details URL from Evidence first; do not infer the reported file/rule from the GitHub run alone.\n" +
+				"2. If CodeFactor details are unavailable, inspect the affected files listed in Evidence and the closest existing lint/test guard for those file types. If no focused guard exists, add one under `.agents/scripts/tests/` or the target package tests.\n" +
+				"3. Run the focused guard plus the nearest local linter before opening a PR.\n"
+			elif qlty_empty_sarif_signature($check_name; $signature) then
+				"- Qlty Smell Threshold empty-SARIF failures are shared tooling failures, not PR-specific smell regressions.\n" +
+				"- Harden the absolute threshold workflow/helper so empty `qlty smells --all --sarif` output emits diagnostic warning context and does not block unrelated PRs.\n" +
+				"- Keep valid SARIF output blocking when the count exceeds `QLTY_SMELL_THRESHOLD`, and keep the delta-based qlty regression gate as the PR-specific smell guard.\n" +
+				"\n## Worker Guidance\n" +
+				"1. Edit `.agents/scripts/qlty-smell-threshold-helper.sh` and `.github/workflows/code-quality.yml`; do not change application files to satisfy an empty-SARIF signature.\n" +
+				"2. Add or update `.agents/scripts/tests/test-qlty-smell-threshold-helper.sh` to cover empty, valid-pass, and valid-fail SARIF paths.\n" +
+				"3. Run `shellcheck .agents/scripts/qlty-smell-threshold-helper.sh .agents/scripts/tests/test-qlty-smell-threshold-helper.sh` plus the focused qlty threshold helper test before opening a PR.\n"
+			elif pulse_unbound_var_signature($check_name; $signature) then
+				"- Pulse Unbound-Var Lint is a PR-specific shell safety gate; repeated failures usually mean multiple PR branches introduced `local foo bar` declarations, not that the workflow itself is broken.\n" +
+				"- Read the `<!-- pulse-unbound-var-check -->` PR comment or failed log report and fix the listed `pulse-*.sh` files by initialising every local variable at declaration time.\n" +
+				"- Only edit `.github/workflows/pulse-unbound-var-check.yml` or `.agents/scripts/pulse-unbound-var-check.sh` when the reported file lines are false positives or the report cannot identify the offending lines.\n" +
+				"\n## Worker Guidance\n" +
+				"1. Open each Evidence PR comment containing `<!-- pulse-unbound-var-check -->`; use the reported file paths and line numbers as the authoritative target list.\n" +
+				"2. Fix each listed declaration with explicit initialisers, e.g. `local now=0 elapsed=0` or `local _cached_prs=\"\" _cached_issues=\"\"`.\n" +
+				"3. Run `.agents/scripts/pulse-unbound-var-check.sh --scan-files <changed pulse scripts>` plus `shellcheck` on the changed shell files before opening a PR.\n"
+			else
+				"- Fix the workflow/check at the source, then rerun failed checks on affected PRs.\n" +
+				"- Add a regression guard for this signature in pulse routine outputs.\n"
+			end;
+		"## Summary\n" +
+		"- Pattern: `" + .check_name + "`\n" +
+		"- Error signature: `" + .signature + "`\n" +
+		"- Scope: this repo\n" +
+		"- Events observed: " + (.count|tostring) + "\n" +
+		"- Systemic threshold: " + ($threshold|tostring) + "\n\n" +
+		"## Why this looks systemic\n" +
+		"- The same check/signature failed repeatedly within the notification window.\n" +
+		"- This suggests a shared workflow/tooling defect rather than a PR-specific code problem.\n\n" +
+		"## Evidence\n" +
+		(.examples | map("- " + .source_kind + ":" + .source_ref + " (" + .conclusion + ")" +
+		  (if .source_url != null then " - " + .source_url else "" end) +
+		  (if .run_url != null then " - " + .run_url else "" end) +
+		  (if .details_url != null then " - " + .details_url else "" end) +
+		  affected_paths_line(.) +
+		  annotations_line(.)
+		) | join("\n")) + "\n\n" +
+		"## Root Cause Hypothesis\n" +
+		"- Regression or external dependency/toolchain break in the shared check path.\n\n" +
+		"## Proposed Systemic Fix\n" +
+		systemic_fix_guidance(.check_name; .signature) + "\n" +
+		"Signal tag: `gh-failure-miner:" + $pattern_id + "`\n"
+	' --arg pattern_id "$pattern_id" --argjson threshold "$threshold"
+	return $?
+}
+
 build_issue_body() {
 	local cluster_json="$1"
 	local pattern_id="$2"
@@ -911,102 +1020,11 @@ build_issue_body() {
 	local is_infra="${4:-false}"
 
 	if [[ "$is_infra" == "true" ]]; then
-		printf '%s\n' "$cluster_json" | jq -r '
-			"## Summary\n" +
-			"- Affected checks: " + ((.check_names // [(.check_name // "multiple-checks")]) | join(", ")) + "\n" +
-			"- Events observed: " + (.count|tostring) + "\n" +
-			"- Sources affected: " + (((.sources // []) | length)|tostring) + "\n\n" +
-			"## Why this looks like an infrastructure outage\n" +
-			"- All checks failed simultaneously across multiple PRs/commits.\n" +
-			"- This pattern indicates a billing or runner infrastructure issue, not a code defect.\n\n" +
-			"## Evidence\n" +
-			((.examples // []) | map("- " + (.source_kind // "source") + ":" + (.source_ref // "unknown") + " (" + (.conclusion // "unknown") + ")" +
-			  (if .source_url != null then " - " + .source_url else "" end) +
-			  (if .run_url != null then " - " + .run_url else "" end) +
-			  (if .details_url != null then " - " + .details_url else "" end)
-			) | join("\n")) + "\n\n" +
-			"## Recommended Action\n" +
-			"- Verify billing status and runner availability.\n" +
-			"- Re-run failed workflows after the infrastructure issue is resolved.\n" +
-			"- Do NOT make code changes to fix this — the root cause is external.\n\n" +
-			"Signal tag: `gh-failure-miner:" + $pattern_id + "`\n"
-		' --arg pattern_id "$pattern_id" --argjson threshold "$threshold"
+		build_infra_issue_body "$cluster_json" "$pattern_id" "$threshold"
 		return $?
-	else
-		printf '%s\n' "$cluster_json" | jq -r '
-			def affected_paths_line($example):
-				if (($example.affected_paths // []) | length) > 0 then
-					"\n  affected files: " + (($example.affected_paths // []) | .[0:8] | join(", ")) +
-					(if (($example.affected_paths // []) | length) > 8 then ", ..." else "" end)
-				else "" end;
-			def annotations_line($example):
-				if (($example.annotations // []) | length) > 0 then
-					"\n  reported findings: " + (($example.annotations // []) | .[0:3] | map(
-						((.path // "unreported") + (if (.start_line // null) != null then ":" + ((.start_line // 0) | tostring) else "" end) +
-						(if ((.title // "") | length) > 0 then " — " + .title elif ((.message // "") | length) > 0 then " — " + .message else "" end))
-					) | join("; ")) +
-					(if (($example.annotations // []) | length) > 3 then "; ..." else "" end)
-				else "" end;
-			def qlty_empty_sarif_signature($check_name; $signature):
-				((($check_name // "") | test("Qlty[[:space:]]+Smell[[:space:]]+Threshold"; "i"))
-					 and (($signature // "") | test("empty[[:space:]-]*SARIF"; "i")));
-			def pulse_unbound_var_signature($check_name; $signature):
-				((($check_name // "") | test("Pulse[[:space:]]+Unbound-Var[[:space:]]+Lint"; "i"))
-					 or (($signature // "") | test("Pulse[[:space:]]+unbound-var[[:space:]]+violations[[:space:]]+found|multi-var[[:space:]]+local[[:space:]]+without[[:space:]]+init|pulse-unbound-var"; "i")));
-			def systemic_fix_guidance($check_name; $signature):
-				if ((($check_name // "") | test("CodeFactor"; "i")) or ($signature == "failure:codefactor.io")) then
-					"- CodeFactor is an external advisory/static-analysis check. GitHub Actions logs usually only show `failure:codefactor.io`; read the CodeFactor details URL in Evidence for the file, line, and rule.\n" +
-					"- If the details URL is inaccessible, use the `affected files` evidence from the failing PRs to identify the nearest local linter/static-analysis guard before editing.\n" +
-					"- Reproduce the provider finding locally with the nearest repo linter/style/static-analysis command, fix the source issue rather than suppressing CodeFactor, and add a focused regression guard for the reported rule/file.\n" +
-					"\n" +
-					"## Worker Guidance\n" +
-					"1. Open the CodeFactor details URL from Evidence first; do not infer the reported file/rule from the GitHub run alone.\n" +
-					"2. If CodeFactor details are unavailable, inspect the affected files listed in Evidence and the closest existing lint/test guard for those file types. If no focused guard exists, add one under `.agents/scripts/tests/` or the target package tests.\n" +
-					"3. Run the focused guard plus the nearest local linter before opening a PR.\n"
-				elif qlty_empty_sarif_signature($check_name; $signature) then
-					"- Qlty Smell Threshold empty-SARIF failures are shared tooling failures, not PR-specific smell regressions.\n" +
-					"- Harden the absolute threshold workflow/helper so empty `qlty smells --all --sarif` output emits diagnostic warning context and does not block unrelated PRs.\n" +
-					"- Keep valid SARIF output blocking when the count exceeds `QLTY_SMELL_THRESHOLD`, and keep the delta-based qlty regression gate as the PR-specific smell guard.\n" +
-					"\n## Worker Guidance\n" +
-					"1. Edit `.agents/scripts/qlty-smell-threshold-helper.sh` and `.github/workflows/code-quality.yml`; do not change application files to satisfy an empty-SARIF signature.\n" +
-					"2. Add or update `.agents/scripts/tests/test-qlty-smell-threshold-helper.sh` to cover empty, valid-pass, and valid-fail SARIF paths.\n" +
-					"3. Run `shellcheck .agents/scripts/qlty-smell-threshold-helper.sh .agents/scripts/tests/test-qlty-smell-threshold-helper.sh` plus the focused qlty threshold helper test before opening a PR.\n"
-				elif pulse_unbound_var_signature($check_name; $signature) then
-					"- Pulse Unbound-Var Lint is a PR-specific shell safety gate; repeated failures usually mean multiple PR branches introduced `local foo bar` declarations, not that the workflow itself is broken.\n" +
-					"- Read the `<!-- pulse-unbound-var-check -->` PR comment or failed log report and fix the listed `pulse-*.sh` files by initialising every local variable at declaration time.\n" +
-					"- Only edit `.github/workflows/pulse-unbound-var-check.yml` or `.agents/scripts/pulse-unbound-var-check.sh` when the reported file lines are false positives or the report cannot identify the offending lines.\n" +
-					"\n## Worker Guidance\n" +
-					"1. Open each Evidence PR comment containing `<!-- pulse-unbound-var-check -->`; use the reported file paths and line numbers as the authoritative target list.\n" +
-					"2. Fix each listed declaration with explicit initialisers, e.g. `local now=0 elapsed=0` or `local _cached_prs=\"\" _cached_issues=\"\"`.\n" +
-					"3. Run `.agents/scripts/pulse-unbound-var-check.sh --scan-files <changed pulse scripts>` plus `shellcheck` on the changed shell files before opening a PR.\n"
-				else
-					"- Fix the workflow/check at the source, then rerun failed checks on affected PRs.\n" +
-					"- Add a regression guard for this signature in pulse routine outputs.\n"
-				end;
-			"## Summary\n" +
-			"- Pattern: `" + .check_name + "`\n" +
-			"- Error signature: `" + .signature + "`\n" +
-			"- Scope: this repo\n" +
-			"- Events observed: " + (.count|tostring) + "\n" +
-			"- Systemic threshold: " + ($threshold|tostring) + "\n\n" +
-			"## Why this looks systemic\n" +
-			"- The same check/signature failed repeatedly within the notification window.\n" +
-			"- This suggests a shared workflow/tooling defect rather than a PR-specific code problem.\n\n" +
-			"## Evidence\n" +
-			(.examples | map("- " + .source_kind + ":" + .source_ref + " (" + .conclusion + ")" +
-			  (if .source_url != null then " - " + .source_url else "" end) +
-			  (if .run_url != null then " - " + .run_url else "" end) +
-			  (if .details_url != null then " - " + .details_url else "" end) +
-			  affected_paths_line(.) +
-			  annotations_line(.)
-			) | join("\n")) + "\n\n" +
-			"## Root Cause Hypothesis\n" +
-			"- Regression or external dependency/toolchain break in the shared check path.\n\n" +
-			"## Proposed Systemic Fix\n" +
-			systemic_fix_guidance(.check_name; .signature) + "\n" +
-			"Signal tag: `gh-failure-miner:" + $pattern_id + "`\n"
-		' --arg pattern_id "$pattern_id" --argjson threshold "$threshold"
 	fi
+
+	build_systemic_issue_body "$cluster_json" "$pattern_id" "$threshold"
 	return $?
 }
 
