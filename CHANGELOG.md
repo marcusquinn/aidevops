@@ -12,6 +12,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [3.31.81] - 2026-07-07
 
+### Changed
+
+- Documentation: prepare 3.31.81 changelog
+- Documentation: remove duplicate changelog entries (#26806)
+- Tests: document pulse unbound-var regression issue (#26789)
+- Tests: harden pulse prefetch regression harness (#26780)
+- Refactor: deduplicate pulse capacity defaults (#26783)
+- Tests: guard pulse prefetch unbound vars (#26762)
+- Tests: cover pulse prefetch unbound-var regression (#26757)
+- Documentation: adopt app store connect skill refresh (#26755)
+
+### Fixed
+
+- relax generated worktree cleanup (#26812)
+- harden pulse prefetch under nounset (#26781)
+
+## [3.31.81] - 2026-07-07
+
 ### Fixed
 
 - relax generated worktree cleanup (#26812)
