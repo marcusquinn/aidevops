@@ -32,6 +32,19 @@ assert_equals() {
 	return 0
 }
 
+assert_contains() {
+	local label="$1" needle="$2" haystack="$3"
+	TESTS_RUN=$((TESTS_RUN + 1))
+	if [[ "$haystack" == *"$needle"* ]]; then
+		printf '%sPASS%s: %s\n' "$TEST_GREEN" "$TEST_NC" "$label"
+	else
+		TESTS_FAILED=$((TESTS_FAILED + 1))
+		printf '%sFAIL%s: %s\n' "$TEST_RED" "$TEST_NC" "$label"
+		printf '  missing: %s\n' "$(printf '%q' "$needle")"
+	fi
+	return 0
+}
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
 HELPER="$SCRIPT_DIR/gh-failure-miner-helper.sh"
 
@@ -83,6 +96,12 @@ assert_equals "GH#26308 caret-escaped ANSI is stripped during normalization" "# 
 
 signature=$(normalize_signature_line $'\033[36;1m# rate-limit grace is disabled — they cannot merge on rate-limit-only.\033[0m')
 assert_equals "GH#26308 raw ANSI is stripped during normalization" "# rate-limit grace is disabled — they cannot merge on rate-limit-only." "$signature"
+
+cluster_json='{"check_name":"Pulse Unbound-Var Lint","signature":"Pulse unbound-var violations found. See PR comment for details.","count":2,"examples":[{"source_kind":"pr","source_ref":"26744","source_url":"https://example.invalid/pull/26744","run_url":"https://example.invalid/actions/runs/1","details_url":"https://example.invalid/actions/runs/1","conclusion":"failure","affected_paths":[],"annotations":[]}]}'
+issue_body=$(build_issue_body "$cluster_json" "testpattern" 2 "false")
+assert_contains "Pulse unbound-var guidance classifies PR-specific lint" "Pulse Unbound-Var Lint is a PR-specific shell safety gate" "$issue_body"
+assert_contains "Pulse unbound-var guidance points workers at PR comment marker" "<!-- pulse-unbound-var-check -->" "$issue_body"
+assert_contains "Pulse unbound-var guidance preserves focused verification" ".agents/scripts/pulse-unbound-var-check.sh --scan-files <changed pulse scripts>" "$issue_body"
 
 printf '\nTests run: %s, failures: %s\n' "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -ne 0 ]]; then
