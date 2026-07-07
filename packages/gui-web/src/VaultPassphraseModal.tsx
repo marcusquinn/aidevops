@@ -51,7 +51,18 @@ export function VaultPassphraseModal({ intent, onClose, vault }: {
 
   return (
     <div className="vault-modal-backdrop" role="presentation">
-      <section aria-label={title} aria-modal="true" className="vault-modal" role="dialog">
+      <form
+        aria-label={title}
+        aria-modal="true"
+        className="vault-modal"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (canContinue) {
+            continueFlow();
+          }
+        }}
+        role="dialog"
+      >
         <header className="vault-modal-header">
           <span className="vault-modal-icon" aria-hidden="true">{intent === "lock" ? <FiLock /> : <FiUnlock />}</span>
           <div>
@@ -62,10 +73,10 @@ export function VaultPassphraseModal({ intent, onClose, vault }: {
         {setupMode ? <SetupStep accepted={savedWarningAccepted} confirm={passphraseConfirm} match={setupPassphrasesMatch} onAcceptChange={setSavedWarningAccepted} onConfirmChange={setPassphraseConfirm} onPassphraseChange={setPassphrase} onUnlockPassphraseChange={setUnlockPassphrase} passphrase={passphrase} step={step} unlockMatch={finalPassphraseMatches} unlockPassphrase={unlockPassphrase} /> : <UnlockStep intent={intent} onUnlockPassphraseChange={setUnlockPassphrase} unlockPassphrase={unlockPassphrase} vault={vault} />}
         <footer className="vault-modal-actions">
           <button className="secondary-action" onClick={onClose} type="button">Cancel</button>
-          <button className="primary-action" disabled={!canContinue} onClick={continueFlow} type="button">{setupMode && step < 2 ? "Continue" : actionLabel}</button>
+          <button className="primary-action" disabled={!canContinue} type="submit">{setupMode && step < 2 ? "Continue" : actionLabel}</button>
         </footer>
         <p className="vault-modal-footnote">Passphrases stay in this local dialog state only and are never shown in logs, issues, command arguments, or AI chat.</p>
-      </section>
+      </form>
     </div>
   );
 }
