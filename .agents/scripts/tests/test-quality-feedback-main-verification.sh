@@ -253,6 +253,7 @@ main() {
 	test_skips_pr25504_verification_ack
 	test_skips_pr26721_positive_implementation_ack
 	test_skips_positive_implementation_ack_with_address_variants
+	test_skips_pr26751_confirmation_feedback_ack
 	test_keeps_actionable_approved_review
 	test_keeps_changes_requested_review
 	test_keeps_review_with_bug_report

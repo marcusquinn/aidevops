@@ -462,6 +462,19 @@ test_skips_positive_implementation_ack_with_address_variants() {
 	return 0
 }
 
+test_skips_pr26751_confirmation_feedback_ack() {
+	local comments result
+	# shellcheck disable=SC2016  # literal inline-comment JSON includes Markdown backticks
+	comments='[{"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the confirmation and for addressing the feedback. The updated mock in `.agents/scripts/tests/test-approval-helper-sudo-gh-auth.sh` now correctly handles the argument count check and safely propagates the exit code, which improves the robustness of the test suite.","path":".agents/scripts/tests/test-approval-helper-sudo-gh-auth.sh","line":164,"html_url":"https://example.invalid/review","created_at":"2026-07-07T00:00:00Z"}]'
+	result=$(_build_inline_findings "$comments" "26751" "medium" | jq 'length')
+	if [[ "$result" == "0" ]]; then
+		print_result "skip PR #26751 confirmation feedback acknowledgement" 0
+	else
+		print_result "skip PR #26751 confirmation feedback acknowledgement" 1 "expected 0 findings, got ${result}"
+	fi
+	return 0
+}
+
 test_keeps_actionable_approved_review() {
 	# APPROVED review that also contains actionable critique — must be kept
 	local result
