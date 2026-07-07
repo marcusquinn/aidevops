@@ -768,13 +768,13 @@ render_issue_body_markdown() {
 				(if (($example.affected_paths // []) | length) > 8 then ", ..." else "" end)
 			else "" end;
 		def qlty_empty_sarif_signature($check_name; $signature):
-			(($check_name | test("Qlty[[:space:]]+Smell[[:space:]]+Threshold"; "i"))
-				 and ($signature | test("empty[[:space:]-]*SARIF"; "i")));
+			((($check_name // "") | test("Qlty[[:space:]]+Smell[[:space:]]+Threshold"; "i"))
+				 and (($signature // "") | test("empty[[:space:]-]*SARIF"; "i")));
 		def pulse_unbound_var_signature($check_name; $signature):
-			(($check_name | test("Pulse[[:space:]]+Unbound-Var[[:space:]]+Lint"; "i"))
-				 or ($signature | test("Pulse unbound-var violations found|multi-var local without init|pulse-unbound-var"; "i")));
+			((($check_name // "") | test("Pulse[[:space:]]+Unbound-Var[[:space:]]+Lint"; "i"))
+				 or (($signature // "") | test("Pulse[[:space:]]+unbound-var[[:space:]]+violations[[:space:]]+found|multi-var[[:space:]]+local[[:space:]]+without[[:space:]]+init|pulse-unbound-var"; "i")));
 		def systemic_fix_guidance($check_name; $signature):
-			if (($check_name | test("CodeFactor"; "i")) or ($signature == "failure:codefactor.io")) then
+			if ((($check_name // "") | test("CodeFactor"; "i")) or ($signature == "failure:codefactor.io")) then
 				"- CodeFactor is an external advisory/static-analysis check. GitHub Actions logs usually only show `failure:codefactor.io`; read the CodeFactor details URL in Evidence for the file, line, and rule.\n" +
 				"- If the details URL is inaccessible, use the `affected files` evidence from the failing PRs to identify the nearest local linter/static-analysis guard before editing.\n" +
 				"- Reproduce the provider finding locally with the nearest repo linter/style/static-analysis command, fix the source issue rather than suppressing CodeFactor, and add a focused regression guard for the reported rule/file.\n" +
@@ -948,13 +948,13 @@ build_issue_body() {
 					(if (($example.annotations // []) | length) > 3 then "; ..." else "" end)
 				else "" end;
 			def qlty_empty_sarif_signature($check_name; $signature):
-				(($check_name | test("Qlty[[:space:]]+Smell[[:space:]]+Threshold"; "i"))
-					 and ($signature | test("empty[[:space:]-]*SARIF"; "i")));
+				((($check_name // "") | test("Qlty[[:space:]]+Smell[[:space:]]+Threshold"; "i"))
+					 and (($signature // "") | test("empty[[:space:]-]*SARIF"; "i")));
 			def pulse_unbound_var_signature($check_name; $signature):
-				(($check_name | test("Pulse[[:space:]]+Unbound-Var[[:space:]]+Lint"; "i"))
-					 or ($signature | test("Pulse unbound-var violations found|multi-var local without init|pulse-unbound-var"; "i")));
+				((($check_name // "") | test("Pulse[[:space:]]+Unbound-Var[[:space:]]+Lint"; "i"))
+					 or (($signature // "") | test("Pulse[[:space:]]+unbound-var[[:space:]]+violations[[:space:]]+found|multi-var[[:space:]]+local[[:space:]]+without[[:space:]]+init|pulse-unbound-var"; "i")));
 			def systemic_fix_guidance($check_name; $signature):
-				if (($check_name | test("CodeFactor"; "i")) or ($signature == "failure:codefactor.io")) then
+				if ((($check_name // "") | test("CodeFactor"; "i")) or ($signature == "failure:codefactor.io")) then
 					"- CodeFactor is an external advisory/static-analysis check. GitHub Actions logs usually only show `failure:codefactor.io`; read the CodeFactor details URL in Evidence for the file, line, and rule.\n" +
 					"- If the details URL is inaccessible, use the `affected files` evidence from the failing PRs to identify the nearest local linter/static-analysis guard before editing.\n" +
 					"- Reproduce the provider finding locally with the nearest repo linter/style/static-analysis command, fix the source issue rather than suppressing CodeFactor, and add a focused regression guard for the reported rule/file.\n" +
