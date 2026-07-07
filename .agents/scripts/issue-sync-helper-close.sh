@@ -179,7 +179,7 @@ _has_prior_reopen_comment() {
 }
 
 _is_not_planned_state_reason() {
-	local reason="$1"
+	local reason="${1:-}"
 	local normalized
 	normalized=$(printf '%s' "$reason" | tr '[:upper:]' '[:lower:]' | tr '-' '_')
 	[[ "$normalized" == "not_planned" ]] && return 0

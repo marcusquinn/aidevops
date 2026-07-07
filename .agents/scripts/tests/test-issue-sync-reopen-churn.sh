@@ -89,6 +89,7 @@ check_success "GraphQL NOT_PLANNED reason is skipped" _is_not_planned_state_reas
 check_success "REST not_planned reason is skipped" _is_not_planned_state_reason "not_planned"
 check_success "hyphenated not-planned reason is skipped" _is_not_planned_state_reason "not-planned"
 check_failure "completed reason is not treated as not planned" _is_not_planned_state_reason "COMPLETED"
+check_failure "missing close reason is not treated as not planned" _is_not_planned_state_reason
 
 printf '\nResults: %s passed, %s failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -gt 0 ]]; then
