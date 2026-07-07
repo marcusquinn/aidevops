@@ -219,6 +219,8 @@ Use a compact 4px base with an 8px rhythm:
 - Grid gap: 16px; dashboard cards use `repeat(auto-fill, minmax(300px, 1fr))`.
 - Panel/card padding: 16px.
 - Form/control horizontal rhythm: 8px or 12px gaps.
+- Workspace scroll containers and page/form grids should use content-sized rows (`align-content: start`, form grid items `align-items: start`) so cards and controls never stretch vertically to fill spare viewport space.
+- Form controls should fill their column width with a 44px minimum height; labels stay attached to their controls with an 8px internal gap.
 - Sidebar width: 420px default, 320px minimum, 640px maximum from `.opencode/ui/chat-sidebar/constants.ts`.
 - Message and panel content should use a readable max width near 600px when not in a dashboard grid.
 
