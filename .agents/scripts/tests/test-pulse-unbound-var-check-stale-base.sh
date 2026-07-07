@@ -45,7 +45,7 @@
 
 set -u
 
-TEST_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEST_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 TEST_REPO_ROOT="$(cd "${TEST_SCRIPT_DIR}/../../.." && pwd)"
 
 if [[ -t 1 ]]; then
@@ -138,6 +138,8 @@ init_test_repo() {
 		git init -q -b main
 		git config user.email "test@example.com"
 		git config user.name "Test User"
+		git config commit.gpgsign false
+		git config tag.gpgsign false
 		mkdir -p .agents/scripts
 		cat >.agents/scripts/pulse-test.sh <<'EOF'
 #!/usr/bin/env bash
