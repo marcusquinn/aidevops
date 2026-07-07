@@ -57,7 +57,7 @@ _append_priority_allocations() {
 	fi
 
 	# Read allocation values
-	local max_workers product_repos tooling_repos dispatchable_product_repos product_min tooling_max reservation_pct quality_debt_cap_pct
+	local max_workers=4 product_repos=0 tooling_repos=0 dispatchable_product_repos=0 product_min=0 tooling_max=0 reservation_pct=60 quality_debt_cap_pct=30
 	max_workers=$(grep '^MAX_WORKERS=' "$alloc_file" | cut -d= -f2) || max_workers=4
 	product_repos=$(grep '^PRODUCT_REPOS=' "$alloc_file" | cut -d= -f2) || product_repos=0
 	tooling_repos=$(grep '^TOOLING_REPOS=' "$alloc_file" | cut -d= -f2) || tooling_repos=0
@@ -120,7 +120,7 @@ _check_repo_hygiene() {
 	default_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || default_branch="main"
 	[[ -z "$default_branch" ]] && default_branch="main"
 
-	local wt_branch wt_path
+	local wt_branch="" wt_path=""
 	while IFS= read -r line; do
 		if [[ "$line" =~ ^worktree\ (.+)$ ]]; then
 			wt_path="${BASH_REMATCH[1]}"
@@ -205,7 +205,7 @@ _scan_pr_salvage() {
 	echo ""
 
 	local salvage_found=false
-	local slug path
+	local slug="" path=""
 	while IFS='|' read -r slug path; do
 		[[ -z "$slug" ]] && continue
 		local salvage_output
@@ -268,7 +268,7 @@ apply_peak_hours_cap() {
 		return 0
 	fi
 
-	local ph_start ph_end ph_fraction
+	local ph_start=5 ph_end=11 ph_fraction="0.2"
 	ph_start=$("$settings_helper" get supervisor.peak_hours_start 2>/dev/null || echo "5")
 	ph_end=$("$settings_helper" get supervisor.peak_hours_end 2>/dev/null || echo "11")
 	ph_fraction=$("$settings_helper" get supervisor.peak_hours_worker_fraction 2>/dev/null || echo "0.2")
@@ -282,7 +282,7 @@ apply_peak_hours_cap() {
 	# Get current local hour (strip leading zero to avoid octal interpretation)
 	local current_hour
 	current_hour=$(date +%H)
-	local cur ph_s ph_e
+	local cur=0 ph_s=0 ph_e=0
 	cur=$((10#${current_hour}))
 	ph_s=$((10#${ph_start}))
 	ph_e=$((10#${ph_end}))
@@ -333,7 +333,7 @@ calculate_max_workers() {
 	local free_mb
 	if [[ "$(uname)" == "Darwin" ]]; then
 		# macOS: use vm_stat for free + inactive (reclaimable) pages
-		local page_size free_pages inactive_pages
+		local page_size=16384 free_pages=0 inactive_pages=0
 		page_size=$(sysctl -n hw.pagesize 2>/dev/null || echo 16384)
 		free_pages=$(vm_stat 2>/dev/null | awk '/Pages free/ {gsub(/\./,"",$3); print $3}')
 		inactive_pages=$(vm_stat 2>/dev/null | awk '/Pages inactive/ {gsub(/\./,"",$3); print $3}')
@@ -382,7 +382,7 @@ calculate_max_workers() {
 #######################################
 _count_priority_repos() {
 	local repos_json="$1"
-	local product_repos tooling_repos
+	local product_repos=0 tooling_repos=0
 
 	read -r product_repos tooling_repos < <(jq -r '
 		.initialized_repos |
@@ -421,7 +421,7 @@ _count_dispatchable_product_repos() {
 	if [[ "$product_repos" -gt 0 && "$DAILY_PR_CAP" -gt 0 ]]; then
 		while IFS= read -r slug; do
 			[[ -n "$slug" ]] || continue
-			local pr_json daily_pr_count pr_alloc_err
+			local pr_json="[]" daily_pr_count=0 pr_alloc_err=""
 			# GH#4412: use --state all to count merged/closed PRs too
 			pr_alloc_err=$(mktemp)
 			pr_json=$(pulse_pr_list_get --repo "$slug" --state all --json createdAt --limit 200 2>"$pr_alloc_err") || pr_json="[]"
@@ -463,7 +463,7 @@ _compute_slot_reservations() {
 	local max_workers="$1"
 	local dispatchable_product_repos="$2"
 	local tooling_repos="$3"
-	local product_min tooling_max
+	local product_min=0 tooling_max=0
 
 	if [[ "$dispatchable_product_repos" -eq 0 ]]; then
 		# No product repos — all slots available for tooling
@@ -535,7 +535,7 @@ calculate_priority_allocations() {
 	max_workers=$(cat "${HOME}/.aidevops/logs/pulse-max-workers" 2>/dev/null || echo 4)
 	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=4
 
-	local product_repos tooling_repos
+	local product_repos=0 tooling_repos=0
 	read -r product_repos tooling_repos < <(_count_priority_repos "$repos_json")
 	local dispatchable_product_repos
 	dispatchable_product_repos=$(_count_dispatchable_product_repos "$repos_json" "$product_repos")
@@ -543,7 +543,7 @@ calculate_priority_allocations() {
 		echo "[pulse-wrapper] Product dispatchability reduced by daily PR caps: ${dispatchable_product_repos}/${product_repos} repos can accept new workers" >>"$LOGFILE"
 	fi
 
-	local product_min tooling_max
+	local product_min=0 tooling_max=0
 	read -r product_min tooling_max < <(_compute_slot_reservations "$max_workers" "$dispatchable_product_repos" "$tooling_repos")
 	_write_priority_alloc_file "$alloc_file" "$max_workers" "$product_repos" "$tooling_repos" "$dispatchable_product_repos" "$product_min" "$tooling_max"
 
@@ -581,7 +581,7 @@ count_debt_workers() {
 		queued=$(gh_issue_list --repo "$repo_slug" --label "function-complexity-debt" --label "status:queued" --state open --json number --jq 'length' 2>/dev/null || echo 0)
 		;;
 	all)
-		local qa_active qa_queued fsd_active fsd_queued fcd_active fcd_queued
+		local qa_active=0 qa_queued=0 fsd_active=0 fsd_queued=0 fcd_active=0 fcd_queued=0
 		qa_active=$(gh_issue_list --repo "$repo_slug" --label "quality-debt" --label "status:in-progress" --state open --json number --jq 'length' 2>/dev/null || echo 0)
 		qa_queued=$(gh_issue_list --repo "$repo_slug" --label "quality-debt" --label "status:queued" --state open --json number --jq 'length' 2>/dev/null || echo 0)
 		fsd_active=$(gh_issue_list --repo "$repo_slug" --label "file-size-debt" --label "status:in-progress" --state open --json number --jq 'length' 2>/dev/null || echo 0)
