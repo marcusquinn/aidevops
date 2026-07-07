@@ -46,13 +46,13 @@ _prefetch_batch_refresh() {
 			esac
 		done <<<"$_batch_output"
 	fi
-	_PULSE_HEALTH_BATCH_SEARCH_CALLS=$((_PULSE_HEALTH_BATCH_SEARCH_CALLS + _batch_search_calls))
-	_PULSE_HEALTH_BATCH_CACHE_HITS=$((_PULSE_HEALTH_BATCH_CACHE_HITS + _batch_cache_writes))
-	_PULSE_HEALTH_EVENTS_TICKLE_FRESH=$((_PULSE_HEALTH_EVENTS_TICKLE_FRESH + _tickle_fresh))
-	_PULSE_HEALTH_EVENTS_TICKLE_STALE=$((_PULSE_HEALTH_EVENTS_TICKLE_STALE + _tickle_stale))
-	_PULSE_HEALTH_CONDITIONAL_304=$((_PULSE_HEALTH_CONDITIONAL_304 + _conditional_304))
-	_PULSE_HEALTH_CONDITIONAL_REFRESHES=$((_PULSE_HEALTH_CONDITIONAL_REFRESHES + _conditional_refreshes))
-	_PULSE_HEALTH_CONDITIONAL_MISSES=$((_PULSE_HEALTH_CONDITIONAL_MISSES + _conditional_misses))
+	_PULSE_HEALTH_BATCH_SEARCH_CALLS=$((${_PULSE_HEALTH_BATCH_SEARCH_CALLS:-0} + _batch_search_calls))
+	_PULSE_HEALTH_BATCH_CACHE_HITS=$((${_PULSE_HEALTH_BATCH_CACHE_HITS:-0} + _batch_cache_writes))
+	_PULSE_HEALTH_EVENTS_TICKLE_FRESH=$((${_PULSE_HEALTH_EVENTS_TICKLE_FRESH:-0} + _tickle_fresh))
+	_PULSE_HEALTH_EVENTS_TICKLE_STALE=$((${_PULSE_HEALTH_EVENTS_TICKLE_STALE:-0} + _tickle_stale))
+	_PULSE_HEALTH_CONDITIONAL_304=$((${_PULSE_HEALTH_CONDITIONAL_304:-0} + _conditional_304))
+	_PULSE_HEALTH_CONDITIONAL_REFRESHES=$((${_PULSE_HEALTH_CONDITIONAL_REFRESHES:-0} + _conditional_refreshes))
+	_PULSE_HEALTH_CONDITIONAL_MISSES=$((${_PULSE_HEALTH_CONDITIONAL_MISSES:-0} + _conditional_misses))
 	echo "[pulse-wrapper] Batch prefetch: search_calls=${_batch_search_calls} cache_writes=${_batch_cache_writes} tickle_fresh=${_tickle_fresh} tickle_stale=${_tickle_stale} conditional_304=${_conditional_304} conditional_refreshes=${_conditional_refreshes} conditional_misses=${_conditional_misses}" >>"$LOGFILE"
 
 	# t3027 (GH#21584): Bridge counters across run_stage_with_timeout subshell.
@@ -167,7 +167,7 @@ prefetch_missions() {
 
 prefetch_foss_scan() {
 	local helper="${SCRIPT_DIR}/foss-contribution-helper.sh"
-	if [[ ! -x "$helper" ]]; then
+	if [[ ! -f "$helper" ]]; then
 		return 0
 	fi
 
@@ -184,8 +184,9 @@ prefetch_foss_scan() {
 
 	# Check if any foss:true repos exist in repos.json
 	local foss_repo_count=0
-	if [[ -f "$REPOS_JSON" ]] && command -v jq &>/dev/null; then
-		foss_repo_count=$(jq '[.initialized_repos[] | select(.foss == true)] | length' "$REPOS_JSON" 2>/dev/null) || foss_repo_count=0
+	local repos_json_path="${REPOS_JSON:-}"
+	if [[ -n "$repos_json_path" && -f "$repos_json_path" ]] && command -v jq &>/dev/null; then
+		foss_repo_count=$(jq '[.initialized_repos[] | select(.foss == true)] | length' "$repos_json_path" || echo 0)
 	fi
 	if [[ "${foss_repo_count:-0}" -eq 0 ]]; then
 		return 0
@@ -214,6 +215,7 @@ prefetch_foss_scan() {
 	local daily_used=0
 	local daily_max=200000
 	local daily_remaining=0
+	local foss_max_dispatch_per_cycle="${FOSS_MAX_DISPATCH_PER_CYCLE:-2}"
 	if [[ "$budget_output" =~ Used\ today:\ +([0-9]+) ]]; then
 		daily_used="${BASH_REMATCH[1]}"
 	fi
@@ -238,7 +240,7 @@ prefetch_foss_scan() {
 		echo "- Eligible repos: **${eligible_count}**"
 		echo "- Skipped repos: ${skipped_count} (blocklisted, budget exceeded, or rate limited)"
 		echo "- Daily token budget: ${daily_used}/${daily_max} used (${daily_remaining} remaining)"
-		echo "- Max FOSS dispatches per cycle: ${FOSS_MAX_DISPATCH_PER_CYCLE}"
+		echo "- Max FOSS dispatches per cycle: ${foss_max_dispatch_per_cycle}"
 		echo ""
 		if [[ -n "$eligible_details" && "$eligible_count" -gt 0 ]]; then
 			echo "### Eligible FOSS Repos"
@@ -248,7 +250,7 @@ prefetch_foss_scan() {
 		fi
 		echo "**Dispatch rule:** When idle worker capacity exists (all managed repo issues dispatched"
 		echo "and worker slots remain), dispatch contribution workers for eligible FOSS repos."
-		echo "Max ${FOSS_MAX_DISPATCH_PER_CYCLE} FOSS dispatches per pulse cycle. Use \`foss-contribution-helper.sh check <slug>\`"
+		echo "Max ${foss_max_dispatch_per_cycle} FOSS dispatches per pulse cycle. Use \`foss-contribution-helper.sh check <slug>\`"
 		echo "before each dispatch. Record token usage after completion with \`foss-contribution-helper.sh record <slug> <tokens>\`."
 		echo ""
 	}
