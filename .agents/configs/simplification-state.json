@@ -288,9 +288,9 @@
       "pr": 11812
     },
     ".agents/commands/AGENTS.md": {
-      "at": "2026-07-04T00:36:58Z",
-      "hash": "6f89de934d03672a8dcf2c2904b12c10877daacf",
-      "passes": 94,
+      "at": "2026-07-08T02:27:44Z",
+      "hash": "7003353de6ffbaf0d79ad8b456dfc59865c14a45",
+      "passes": 95,
       "pr": 18117
     },
     ".agents/commands/aidevops-automate.md": {
@@ -408,9 +408,9 @@
       "pr": 18172
     },
     ".agents/configs/complexity-thresholds-history.md": {
-      "at": "2026-07-07T19:35:28Z",
-      "hash": "758d474b486d4b5499e9650ef6e1feba62aee40c",
-      "passes": 52,
+      "at": "2026-07-08T02:27:46Z",
+      "hash": "9b0b6794794e473b65b52f6ea856812343a7449d",
+      "passes": 53,
       "pr": 17979
     },
     ".agents/content.md": {
@@ -7324,9 +7324,9 @@
       "passes": 5
     },
     ".agents/workflows/preflight.md": {
-      "at": "2026-03-28T03:54:08Z",
-      "hash": "81a7f51d2e0863d7db395809f306cfad572060f4",
-      "passes": 1,
+      "at": "2026-07-08T02:29:05Z",
+      "hash": "0a350254b0a640d238aae23de41c80808dcd7a0d",
+      "passes": 2,
       "pr": 11341
     },
     ".agents/workflows/pulse-sweep.md": {
@@ -7486,15 +7486,15 @@
       "pr": 15490
     },
     "aidevops.sh": {
-      "at": "2026-07-07T21:16:53Z",
-      "hash": "7b1d8182d22585ce62f01843ffc690ff3d264baf",
-      "passes": 260,
+      "at": "2026-07-08T02:29:06Z",
+      "hash": "c66b1171ebc646ecfd2154efb80dedd45f0dc6ac",
+      "passes": 261,
       "pr": 19029
     },
     "setup.sh": {
-      "at": "2026-07-07T21:16:53Z",
-      "hash": "bfdd90f51c39cf33bc266cff256804aeff6832be",
-      "passes": 256,
+      "at": "2026-07-08T02:29:06Z",
+      "hash": "9819e6eecf68b0fd84885eca0a5f3b1fe97982b1",
+      "passes": 257,
       "pr": 15470
     },
     "todo/tasks/GH#15363-brief.md": {
