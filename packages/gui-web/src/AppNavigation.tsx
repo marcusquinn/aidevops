@@ -369,8 +369,8 @@ function SidebarItem({ activeSurface, item, onVaultRequest, recordCount, setActi
             {shouldShowCount ? <span className="surface-count">({recordCount})</span> : null}
           </span>
         </span>
-        {vaultCollection ? <VaultPadlock collection={vaultCollection} compact vault={status.vault} /> : null}
         {item.badge ? <em>{item.badge}</em> : null}
+        {vaultCollection ? <VaultPadlock collection={vaultCollection} compact vault={status.vault} /> : null}
       </button>
     </li>
   );

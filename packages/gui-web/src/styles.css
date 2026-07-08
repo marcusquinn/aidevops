@@ -239,8 +239,63 @@ body {
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
+}
+
+:where(input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="color"]), select, textarea) {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / 12%), rgb(255 255 255 / 0%)),
+    color-mix(in srgb, var(--surface-muted) 88%, var(--surface-elevated));
+  border: 1px solid color-mix(in srgb, var(--border) 86%, var(--surface-elevated));
+  border-radius: 12px;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 18%),
+    inset 0 -1px 0 rgb(0 0 0 / 8%),
+    0 1px 2px rgb(0 0 0 / 8%);
+  color: var(--text-primary);
+  min-height: 38px;
+  padding: 8px 12px;
+  transition: background 140ms ease, border-color 140ms ease, box-shadow 140ms ease, color 140ms ease;
+}
+
+:where(input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="color"]), select, textarea)::placeholder {
+  color: color-mix(in srgb, var(--text-muted) 78%, transparent);
+}
+
+:where(input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="color"]), select, textarea):hover:not(:disabled) {
+  border-color: var(--border-hover);
+}
+
+:where(input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="color"]), select, textarea):focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--border));
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent),
+    inset 0 1px 0 rgb(255 255 255 / 22%),
+    0 1px 2px rgb(0 0 0 / 10%);
+  outline: none;
+}
+
+:where(input:not([type="range"]):not([type="checkbox"]):not([type="radio"]):not([type="color"]), select, textarea):disabled {
+  color: var(--text-secondary);
+  cursor: not-allowed;
+  opacity: 0.9;
+}
+
+select {
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-muted) 50%),
+    linear-gradient(135deg, var(--text-muted) 50%, transparent 50%),
+    linear-gradient(180deg, rgb(255 255 255 / 12%), rgb(255 255 255 / 0%));
+  background-position:
+    calc(100% - 16px) 50%,
+    calc(100% - 11px) 50%,
+    0 0;
+  background-repeat: no-repeat;
+  background-size: 5px 5px, 5px 5px, 100% 100%;
+  padding-right: 32px;
 }
 
 button {
