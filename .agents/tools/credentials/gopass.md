@@ -117,8 +117,9 @@ aidevops secret set PROVIDER_ORG_PRODUCTS_SYNC_DEV_B_TOKEN_NAME
 aidevops secret set PROVIDER_ORG_PRODUCTS_SYNC_DEV_B_ACCESS_TOKEN
 ```
 
-When one physical device stores tokens for multiple developers, organisations, or
-purposes, add a short developer or device discriminator before the final field:
+When a shared store or a single device stores tokens for multiple developers or
+devices under the same organisation and purpose, add a short developer or device
+discriminator before the final field:
 
 ```bash
 aidevops secret set PROVIDER_ORG_PRODUCTS_SYNC_DEV_A_TOKEN_NAME

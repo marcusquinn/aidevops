@@ -1102,7 +1102,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18064 Fix GUI desktop dependency startup failure #bug ref:GH#26569 pr:#26570 completed:2026-07-05
 
-- [ ] t18069 Fix GUI surface row stretching #bug #no-auto-dispatch ref:GH#26823
+- [x] t18069 Fix GUI surface row stretching #bug #no-auto-dispatch ref:GH#26823 verified:2026-07-07 completed:2026-07-07
 
 ## In Progress
 
@@ -3317,7 +3317,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2789 claim-task-id.sh: apply status:available by default so new issues are dispatchable immediately #auto-dispatch #bug #framework ref:GH#20713 pr:#20720 completed:2026-04-24
 
-- [ ] t2791 t2789: test-status-default-with-desc #auto-dispatch ref:GH#20714
+- [x] t2791 t2789: test-status-default-with-desc #auto-dispatch ref:GH#20714 pr:#26736 completed:2026-07-07
 
 - [x] t2793 t2789: test-no-duplicates #auto-dispatch ref:GH#20716 pr:#2794 completed:2026-07-06
 
@@ -3325,7 +3325,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t2795 t2789: final-test #auto-dispatch ref:GH#20718 pr:#2796 completed:2026-07-06
 
-- [ ] t2794 t2789: test-no-duplicates-2 #auto-dispatch ref:GH#20717
+- [x] t2794 t2789: test-no-duplicates-2 #auto-dispatch ref:GH#20717 verified:2026-07-06 completed:2026-07-07
 
 - [x] t2796 worker_complete emitted on zero-output exit — classify as worker_noop to trigger cascade #auto-dispatch #bug #framework ref:GH#20721 pr:#20726 completed:2026-04-24
 
@@ -4437,4 +4437,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t18068 local-permissions-check: add Linux and Windows diagnostics #auto-dispatch #enhancement #security #tools ref:GH#26635 pr:#26666 completed:2026-07-05
 
-- [ ] t18069 Fix GUI surface row stretching #bug ref:GH#26823
+
+- [x] t8177 feat: implement scoped task surface navigation and filters #bug #ui ref:GH#8258 pr:#8484 completed:2026-07-07

@@ -90,11 +90,11 @@ components:
     textColor: "{colors.on-surface}"
     rounded: "{rounded.lg}"
   input-default:
-    backgroundColor: "{colors.background}"
+    backgroundColor: "{colors.surface-raised}"
     textColor: "{colors.on-surface}"
     typography: "{typography.body-md}"
-    rounded: "{rounded.md}"
-    padding: 8px
+    rounded: "{rounded.xl}"
+    padding: 8px 12px
   button-primary:
     backgroundColor: "{colors.tertiary}"
     textColor: "{colors.on-tertiary}"
@@ -254,7 +254,7 @@ Core component rules:
 
 - **Page shell:** `#0d1117` background, `#c9d1d9` text, 20px padding, system font.
 - **Cards:** `#161b22` background, `#30363d` border, 8px radius, 16px padding. Hover changes border to `#58a6ff`.
-- **Inputs:** `#0d1117` background, `#30363d` border, `#c9d1d9` text, 6px radius, 8px 12px padding.
+- **Inputs, selects, and textareas:** use macOS-inspired inset fields: raised dark surface, subtle top highlight, 1px border, 12px radius, 8px 12px padding, native-density 38-44px height, subdued disabled text, and an accent focus ring. Dropdowns should keep the same field shell and use a compact chevron affordance.
 - **Primary buttons:** green `#238636` fill with white text; hover `#2ea043`.
 - **Secondary buttons:** `#21262d` fill, `#30363d` border, `#c9d1d9` text; hover `#30363d`.
 - **Danger buttons:** red `#da3633` fill and border; hover `#f85149`.

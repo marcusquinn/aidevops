@@ -1,5 +1,5 @@
 import type { GuiResponseEnvelope, GuiStatusData } from "@aidevops/gui-shared";
-import { type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactElement, useEffect, useState } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactElement, useEffect, useRef, useState } from "react";
 import { MachineRail, Sidebar } from "./AppNavigation";
 import { Workspace } from "./AppWorkspace";
 import type { ContrastPreference, ConversationMode, FontPreference, FontSizePreference, ShellMode, SurfaceId, ThemePreference } from "./app-model";
@@ -108,6 +108,7 @@ export function App(): ReactElement {
   const [selectedLocalRepoIndex, setSelectedLocalRepoIndex] = useState(0);
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>();
   const [vaultDialogIntent, setVaultDialogIntent] = useState<VaultDialogIntent | null>(null);
+  const hasPromptedVaultSetup = useRef(false);
   const [systemTheme, setSystemTheme] = useState<"light" | "dark">("light");
   const resolvedTheme = themePreference === "system" ? systemTheme : themePreference;
   const activeSurface: SurfaceId = navigation.entries[navigation.index] ?? "overview";
@@ -213,7 +214,8 @@ export function App(): ReactElement {
   }, [status.data.local_repos.repos.length]);
 
   useEffect(() => {
-    if (!statusLoading && status.data.vault.readiness.setup_required) {
+    if (shouldPromptVaultSetup(statusLoading, status.data.vault.readiness.setup_required, hasPromptedVaultSetup.current)) {
+      hasPromptedVaultSetup.current = true;
       setVaultDialogIntent("setup");
     }
   }, [status.data.vault.readiness.setup_required, statusLoading]);
@@ -341,6 +343,10 @@ function LoadingBrandOverlay(): ReactElement {
 
 export function clampSidebarWidth(width: number): number {
   return Math.min(maxSidebarWidth, Math.max(minSidebarWidth, Math.round(width)));
+}
+
+export function shouldPromptVaultSetup(statusLoading: boolean, setupRequired: boolean, hasPromptedVaultSetup: boolean): boolean {
+  return !statusLoading && setupRequired && !hasPromptedVaultSetup;
 }
 
 function SidebarResizeHandle(): ReactElement {

@@ -10,11 +10,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.1] - 2026-07-08
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Maintenance: sync GitHub issue refs to TODO.md [skip ci]
+- Maintenance: sync GitHub issue refs to TODO.md [skip ci]
+- Documentation: deduplicate 3.32.0 changelog (#26828)
+
+### Fixed
+
+- polish gui nav badges and form fields (#26843)
+- guard new-task tracker lookup (#26838)
+- avoid repeated vault setup prompt (#26835)
+- improve vault modal keyboard submit (#26834)
+
 ## [3.32.0] - 2026-07-07
 
 ### Added
 
-- add vault passphrase modal (#26825)
+- Add Vault passphrase setup, unlock, and lock modal UI (#26825)
 
 ### Changed
 
@@ -25,12 +42,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Documentation: document provider credential naming (#26820)
 - fix: harden pulse cleanup clean status check (#26817)
 - Documentation: guard new-task tracker grep task id (#26816)
-
-## [3.32.0] - 2026-07-07
-
-### Added
-
-- Add Vault passphrase setup, unlock, and lock modal UI (#26825)
 
 ## [3.31.81] - 2026-07-07
 
