@@ -10,6 +10,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.1] - 2026-07-08
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Maintenance: sync GitHub issue refs to TODO.md [skip ci]
+- Maintenance: sync GitHub issue refs to TODO.md [skip ci]
+- Documentation: deduplicate 3.32.0 changelog (#26828)
+
+### Fixed
+
+- polish gui nav badges and form fields (#26843)
+- guard new-task tracker lookup (#26838)
+- avoid repeated vault setup prompt (#26835)
+- improve vault modal keyboard submit (#26834)
+
 ## [3.32.0] - 2026-07-07
 
 ### Added
