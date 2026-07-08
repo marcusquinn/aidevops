@@ -2012,9 +2012,9 @@
       "pr": 12588
     },
     ".agents/scripts/commands/new-task.md": {
-      "at": "2026-07-07T19:35:54Z",
-      "hash": "97e5e1c62e1120321e779add319410c6cc95b1a1",
-      "passes": 13,
+      "at": "2026-07-08T00:01:34Z",
+      "hash": "444996c7305f1ccbfe52219fbde87b725de486e7",
+      "passes": 14,
       "pr": 13489
     },
     ".agents/scripts/commands/optimize-tiers.md": {
@@ -5055,9 +5055,9 @@
       "pr": 16751
     },
     ".agents/tools/credentials/api-key-setup.md": {
-      "at": "2026-07-07T19:36:26Z",
-      "hash": "f02e8ec8d51b8aba643f92e56acf7d96fbde1143",
-      "passes": 4,
+      "at": "2026-07-08T00:02:46Z",
+      "hash": "5afef44f150ff57e7e3b7fa48e51bbc86654e678",
+      "passes": 5,
       "pr": 13279
     },
     ".agents/tools/credentials/auth-troubleshooting.md": {
@@ -5103,9 +5103,9 @@
       "pr": 11730
     },
     ".agents/tools/credentials/gopass.md": {
-      "at": "2026-07-07T19:36:27Z",
-      "hash": "6b4a28fcc5b83c9206e2a9126ff800bf4591d811",
-      "passes": 3,
+      "at": "2026-07-08T00:02:47Z",
+      "hash": "06fdd72a724b3240c956da8fe3e4dc998e7e3d6b",
+      "passes": 4,
       "pr": 11021
     },
     ".agents/tools/credentials/list-keys.md": {
@@ -7271,9 +7271,9 @@
       "pr": 11984
     },
     ".agents/workflows/new-task.md": {
-      "at": "2026-07-07T19:36:59Z",
-      "hash": "97e5e1c62e1120321e779add319410c6cc95b1a1",
-      "passes": 10,
+      "at": "2026-07-08T00:03:26Z",
+      "hash": "444996c7305f1ccbfe52219fbde87b725de486e7",
+      "passes": 11,
       "pr": 18169
     },
     ".agents/workflows/optimize-tiers.md": {
