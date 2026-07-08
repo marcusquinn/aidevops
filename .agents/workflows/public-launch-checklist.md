@@ -50,7 +50,7 @@ public website/app/plugin/widget/dashboard/tool is launch-ready.
 - Replace untrusted `innerHTML`, template-string rendering, and HTML concatenation with DOM APIs/text nodes.
 - Validate external URL protocols before rendering links.
 - Add `rel="noopener noreferrer"` to all `target="_blank"` links.
-- Sandbox generated iframes unless broader privileges are required and documented.
+- Sandbox generated iframes unless broader privileges are required and documented; avoid combining `allow-scripts` with `allow-same-origin` to prevent sandbox bypass.
 - Avoid shipping large internal datasets to the browser; lazy-load or split data where practical.
 - Keep third-party analytics/chat/widgets consent-gated where consent applies.
 - Run build/lint/typecheck and page-load checks available for the repo.
@@ -76,7 +76,7 @@ public website/app/plugin/widget/dashboard/tool is launch-ready.
 
 - Verify backups before production changes.
 - Confirm CRM/form/test submissions use fake data until production is approved.
-- Verify analytics, logging, alerts, email notifications, uptime checks, and error monitoring are working without exposing secrets.
+- Verify analytics, logging, alerts, email notifications, uptime checks, and error monitoring are working without exposing secrets or customer PII.
 - Document service costs, accounts, credentials storage location, and dashboard/inbox updates without including passwords/tokens.
 
 ## 8. Evidence and handoff
@@ -91,7 +91,7 @@ public website/app/plugin/widget/dashboard/tool is launch-ready.
 Use project-specific terms plus:
 
 ```text
-LeadCapture|webhook|token|secret|api_key|apikey|auth|password|private|callback|admin|crm|formspree|zapier|make.com|n8n|scrap|crawl|source_url|sourceUrl|competitor|_scripts|_scrapers|docs/|SESSION-STATE|TODO|README|inbox|innerHTML|target="_blank"|iframe|lorem|ipsum|example|placeholder|template|starter|ACME|old domain|old brand|support@|privacy@|terms|cookie|accessibility|data protection|confidentiality|refund|shipping|cancellation|GTM-|GA-|UA-
+LeadCapture|webhook|token|secret|api_key|apikey|auth|password|private|callback|admin|crm|formspree|zapier|make.com|n8n|scrap|crawl|source_url|sourceUrl|competitor|_scripts|_scrapers|docs/|SESSION-STATE|TODO|README|inbox|innerHTML|target="_blank"|iframe|lorem|ipsum|example|placeholder|template|starter|ACME|old domain|old brand|support@|privacy@|terms|cookie|accessibility|data protection|confidentiality|refund|shipping|cancellation|GTM-|GA-|UA-|localhost|127\.0\.0\.1|dev\.|staging\.
 ```
 
 ## Related workflows
