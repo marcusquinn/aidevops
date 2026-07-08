@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.2] - 2026-07-08
+
+### Changed
+
+- Maintenance: bump qlty smell threshold (#26845)
+- Documentation: add public launch checklist (#26844)
+
 ## [3.32.1] - 2026-07-08
 
 ### Changed
