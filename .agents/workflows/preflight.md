@@ -31,6 +31,7 @@ tools:
 2. ShellCheck + Secretlint (~10s, blocking)
 3. Markdown + return statements (~20s, blocking)
 4. SonarCloud status (~5s, advisory)
+5. Website/app/tool launch exposure review (manual blocking before public launch)
 
 <!-- AI-CONTEXT-END -->
 
@@ -65,6 +66,59 @@ tools:
 |-------|------|----------|
 | SonarCloud status | API check | Advisory |
 | Codacy grade | API check | Advisory |
+
+### Phase 5: Public Launch Exposure Review (manual blocking)
+
+Full launch checklist: `workflows/public-launch-checklist.md`.
+
+For any new or changed public website, app, dashboard, widget, form, CRM bridge,
+WordPress plugin, static site, generated embed, or business tool, run this before
+publishing, deploying, merging to the live branch, or telling the user it is
+launch-ready:
+
+1. **Browser-inspect assumption**: assume any visitor can view source, inspect
+   bundled JavaScript, read static build artifacts, and call public endpoints.
+2. **Public artifact scan**: inspect the actual deploy/public build inputs, not
+   only source code. Confirm internal files are excluded from the public build
+   (`README.md`, `TODO.md`, `SESSION-STATE.md`, `docs/`, `prompts/`, `todo/`,
+   `inbox/`, scripts, scrapers, reports, agent metadata, test fixtures, local
+   notes, backups, and generated artifacts that reveal operations).
+3. **Secret and endpoint scan**: search public files and bundles for API keys,
+   tokens, webhooks, CRM lead-capture URLs, Formspree/automation endpoints,
+   admin URLs, private callback URLs, payment/customer identifiers, and internal
+   hostnames. Public static pages must not write directly to privileged backends;
+   use a server-side proxy with rate limits and signature/origin checks.
+4. **Source/research exposure scan**: search public files for scraping/source
+   names, competitor/source URLs, crawler notes, lead lists, report artifacts,
+   prompt libraries, internal SOPs, and strategy notes. Public pages may link to
+   normal show/organizer/dealer websites when intended, but must not expose how
+   private automation discovers or prioritizes sources unless explicitly approved.
+5. **Compliance and clone residue scan**: confirm required public pages and
+   applicable trust/compliance pages exist, then search copy, metadata, legal
+   pages, schema, OG tags, favicons/logos, analytics IDs, contacts, package/app
+   names, screenshots, testimonials, and footer/header text for old-brand,
+   prior-client, template, placeholder, or cloned-stack content.
+6. **Public endpoint hardening**: every public webhook/API/form endpoint must
+   have the narrowest practical permissions, input sanitization, payload size
+   limits, rate limiting/spam protection, and provider signature verification
+   where available. Long private URLs are a backup lock, not the only lock.
+7. **DOM/XSS and new-tab scan**: replace untrusted `innerHTML`/template-string
+   rendering with DOM APIs/text nodes; validate URL protocols; add
+   `rel="noopener noreferrer"` to `target="_blank"`; sandbox generated iframes
+   unless the feature requires broader privileges.
+8. **Performance check**: remove unused client-side code, do not load third-party
+   trackers/chat/widgets before consent where consent applies, avoid shipping
+   large internal datasets to the browser, and run the relevant build/lint/page
+   load checks before approval.
+9. **Evidence**: record the exact searches/checks, files changed, version number,
+   and remaining risks in the repo changelog/session state. If verification is
+   incomplete, say so and do not call the launch secure.
+
+Use project-specific search terms, for example: `LeadCapture`, `webhook`,
+`token`, `secret`, `api_key`, `scrap`, `crawl`, `source_url`, competitor/source
+names, `_scripts`, `_scrapers`, `docs/`, `SESSION-STATE`, `innerHTML`,
+`target="_blank"`, `lorem`, `placeholder`, old domains, old support contacts,
+analytics/tag IDs, and public endpoint paths.
 
 ## Commands
 
