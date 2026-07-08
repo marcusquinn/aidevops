@@ -69,6 +69,8 @@ tools:
 
 ### Phase 5: Public Launch Exposure Review (manual blocking)
 
+Full launch checklist: `workflows/public-launch-checklist.md`.
+
 For any new or changed public website, app, dashboard, widget, form, CRM bridge,
 WordPress plugin, static site, generated embed, or business tool, run this before
 publishing, deploying, merging to the live branch, or telling the user it is
