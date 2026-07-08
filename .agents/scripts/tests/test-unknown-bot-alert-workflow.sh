@@ -7,6 +7,7 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 WORKFLOW_FILE="$REPO_ROOT/.github/workflows/unknown-bot-alert.yml"
+KNOWN_BOTS_FILE="$REPO_ROOT/.agents/configs/known-bots.txt"
 
 pass_count=0
 fail_count=0
@@ -66,6 +67,23 @@ test_missing_unknown_bot_label_does_not_break_workflow() {
 	return 0
 }
 
+test_generated_guidance_targets_current_docs() {
+	assert_contains "workflow points at current rule document" "reference/gh-command-discipline.md rule #8c"
+	assert_contains "workflow points at known bots config" ".agents/configs/known-bots.txt"
+	assert_not_contains "workflow does not tell workers to edit placeholder build prompt" "EDIT: .agents/prompts/build.txt"
+	assert_not_contains "workflow does not cite obsolete build token rules" "build.txt rules #8a-#8d"
+	return 0
+}
+
+test_sonarqubecloud_bot_is_known() {
+	if grep -Fxq 'sonarqubecloud[bot]' "$KNOWN_BOTS_FILE"; then
+		print_result "sonarqubecloud bot is in known bots config" 0
+		return 0
+	fi
+	print_result "sonarqubecloud bot is in known bots config" 1 "missing from $KNOWN_BOTS_FILE"
+	return 1
+}
+
 main() {
 	if [[ ! -f "$WORKFLOW_FILE" ]]; then
 		print_result "workflow exists" 1 "$WORKFLOW_FILE"
@@ -74,6 +92,8 @@ main() {
 
 	test_comment_body_is_data_not_shell_source
 	test_missing_unknown_bot_label_does_not_break_workflow
+	test_generated_guidance_targets_current_docs
+	test_sonarqubecloud_bot_is_known
 
 	printf '\nPassed: %d, Failed: %d\n' "$pass_count" "$fail_count"
 	if [[ "$fail_count" -eq 0 ]]; then
