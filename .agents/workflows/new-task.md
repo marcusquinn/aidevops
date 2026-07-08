@@ -147,8 +147,9 @@ For GitHub-backed tracked tasks, `ref:none` is an incomplete intermediate state.
 
 ```bash
 if [[ "${task_offline:-false}" != "true" && "${task_ref:-}" == "none" ]]; then
+  [[ -n "${task_id:-}" ]] || { echo "Tracker issue creation failed: task_id is empty" >&2; exit 1; }
   ~/.aidevops/agents/scripts/issue-sync-helper.sh push "$task_id"
-  task_ref=$([[ -n "${task_id:-}" ]] && grep -E "^[[:space:]]*-[[:space:]]+\[[ x]\][[:space:]]+${task_id}[[:space:]]" TODO.md | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/^ref://' || true)
+  task_ref=$(grep -E "^[[:space:]]*-[[:space:]]+\[[ x]\][[:space:]]+${task_id}[[:space:]]" TODO.md | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/^ref://' || true)
   [[ -n "$task_ref" ]] || { echo "Tracker issue creation failed for $task_id" >&2; exit 1; }
 fi
 ```
