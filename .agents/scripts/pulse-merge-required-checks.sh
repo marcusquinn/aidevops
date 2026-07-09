@@ -54,6 +54,52 @@ _check_required_pr_checks_passing_fallback() {
 	fi
 
 	if [[ "$nonpassing_count" -gt 0 ]]; then
+		local stale_gate_pending_count="" _sg_exit=0
+		stale_gate_pending_count=$(printf '%s' "$checks_json" | jq '
+			"pass" as $pass | "PENDING" as $pending |
+			"maintainer-gate" as $stable |
+			"Maintainer Review & Assignee Gate" as $legacy |
+			[.[]?
+			| (.name // "") as $name
+			| select((.bucket // "") != $pass)
+			| select(((.state // "") | ascii_upcase) == $pending)
+			| select($name == $stable or $name == $legacy)
+		] | length' 2>/dev/null)
+		_sg_exit=$?
+		if [[ $_sg_exit -ne 0 || -z "$stale_gate_pending_count" ]]; then
+			return 2
+		fi
+
+		if [[ "$stale_gate_pending_count" -eq "$nonpassing_count" ]]; then
+			local pr_sha="" rollup_json="" gate_pass_count="" _gp_exit=0
+			if declare -F gh_pr_view >/dev/null 2>&1; then
+				pr_sha=$(gh_pr_view "$pr_number" --repo "$repo_slug" \
+					--json headRefOid --jq '.headRefOid // ""' 2>/dev/null) || pr_sha=""
+			else
+				pr_sha=$(_pmrc_gh_read gh pr view "$pr_number" --repo "$repo_slug" \
+					--json headRefOid --jq '.headRefOid // ""' 2>/dev/null) || pr_sha=""
+			fi
+			if [[ -n "$pr_sha" ]] && declare -F gh_pr_check_runs_rest >/dev/null 2>&1; then
+				rollup_json=$(gh_pr_check_runs_rest "$repo_slug" "$pr_sha" 2>/dev/null) || rollup_json=""
+				if [[ -n "$rollup_json" && "$rollup_json" != null ]]; then
+					gate_pass_count=$(jq '
+						"gate / Maintainer Review & Assignee Gate" as $gate |
+						"success" as $ok | "neutral" as $neutral |
+						"skipped" as $skipped |
+						[.[]?
+						| select((.name // "") == $gate)
+						| ((.conclusion // "") | ascii_downcase) as $conclusion
+						| select($conclusion == $ok or $conclusion == $neutral
+							or $conclusion == $skipped)
+					] | length' <<<"$rollup_json" 2>/dev/null)
+					_gp_exit=$?
+					if [[ $_gp_exit -eq 0 && "$gate_pass_count" =~ ^[0-9]+$ \
+						&& "$gate_pass_count" -gt 0 ]]; then
+						return 0
+					fi
+				fi
+			fi
+		fi
 		return 1
 	fi
 	return 0

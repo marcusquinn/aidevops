@@ -59,6 +59,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # _check_required_checks_passing was moved to pulse-merge-process.sh
 # (GH#21595, t3030).
 MERGE_SCRIPT="${SCRIPT_DIR}/../pulse-merge-process.sh"
+REQUIRED_CHECKS_SCRIPT="${SCRIPT_DIR}/../pulse-merge-required-checks.sh"
 
 readonly TEST_RED=$'\033[0;31m'
 readonly TEST_GREEN=$'\033[0;32m'
@@ -337,6 +338,8 @@ define_function_under_test() {
 	fi
 	# shellcheck disable=SC1090  # dynamic source from sibling lib
 	source "$checks_lib"
+	# shellcheck disable=SC1090  # dynamic source from sibling lib
+	source "$REQUIRED_CHECKS_SCRIPT"
 	gh_pr_view() {
 		if gh pr view "$@"; then
 			return 0
@@ -367,6 +370,18 @@ define_function_under_test() {
 	fi
 	# shellcheck disable=SC1090  # dynamic source from extracted helper
 	eval "$rulesets_src"
+
+	local uncached_src
+	uncached_src=$(awk '
+		/^_required_contexts_for_default_branch_uncached\(\) \{/,/^}$/ { print }
+	' "$MERGE_SCRIPT")
+	if [[ -z "$uncached_src" ]]; then
+		printf 'ERROR: could not extract _required_contexts_for_default_branch_uncached from %s\n' \
+			"$MERGE_SCRIPT" >&2
+		return 1
+	fi
+	# shellcheck disable=SC1090  # dynamic source from extracted helper
+	eval "$uncached_src"
 
 	local helper_src
 	helper_src=$(awk '
@@ -487,7 +502,7 @@ test_no_required_contexts() {
 	export MOCK_BP_MODE="no_required"
 	export MOCK_ROLLUP_MODE="all_required_pass"
 	assert_returns 0 "no required contexts in branch protection or rulesets → allowed"
-	assert_log_contains "no required contexts" \
+	assert_log_contains "no branch/ruleset contexts" \
 		"no_required: pass message logged"
 	return 0
 }

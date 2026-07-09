@@ -2002,7 +2002,7 @@ _check_required_checks_passing() {
 	# No required contexts → nothing required, treat as passing.
 	if [[ -z "$required_contexts" ]]; then
 		local fallback_rc=0
-		_check_required_pr_checks_passing_fallback "$repo_slug" "$pr_number"
+		_check_required_pr_checks_passing_fallback "$repo_slug" "$pr_number" >/dev/null
 		fallback_rc=$?
 		if [[ $fallback_rc -eq 0 ]]; then
 			echo "[pulse-merge] _check_required_checks_passing: no branch/ruleset contexts and PR required checks are passing or absent for PR #${pr_number} in ${repo_slug} — allowing (t2922)" >>"$LOGFILE"
