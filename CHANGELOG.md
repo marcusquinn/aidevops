@@ -10,6 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.4] - 2026-07-09
+
+### Changed
+
+- Document resource-aware full-loop quality gate guidance (#26877)
+
+### Fixed
+
+- Avoid recursive worktree cleanup process scans by checking cwd descriptors only (#26877)
+- Guard worktree process cwd detection against empty path inputs (#26877)
+
 ## [3.32.3] - 2026-07-09
 
 ### Changed
