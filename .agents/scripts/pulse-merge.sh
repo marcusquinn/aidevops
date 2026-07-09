@@ -1188,13 +1188,14 @@ ${merge_output}"
 		merge_failure_context="[admin merge]
 ${merge_output}"
 	fi
-	if [[ $_merge_exit -ne 0 && "$merge_output" == *"Required status check"* && "$merge_output" == *"is expected"* ]]; then
+	if [[ $_merge_exit -ne 0 && "$merge_output" == *"Required status check"* \
+		&& ( "$merge_output" == *" is expected"* || "$merge_output" == *" is pending"* ) ]]; then
 		local _missing_check_update_output=""
 		local _missing_check_update_exit=0
 		_missing_check_update_output=$(gh pr update-branch "$pr_number" --repo "$repo_slug" 2>&1)
 		_missing_check_update_exit=$?
 		if [[ $_missing_check_update_exit -eq 0 ]]; then
-			echo "[pulse-wrapper] Deterministic merge: admin merge reported an expected required status check for PR #${pr_number} in ${repo_slug}; update-branch requested and merge deferred (GH#26897): ${merge_output}" >>"$LOGFILE"
+			echo "[pulse-wrapper] Deterministic merge: admin merge reported an expected/pending required status check for PR #${pr_number} in ${repo_slug}; update-branch requested and merge deferred (GH#26899): ${merge_output}" >>"$LOGFILE"
 			return 4
 		fi
 		merge_failure_context="${merge_failure_context}

@@ -79,6 +79,27 @@ _check_required_pr_checks_passing_fallback() {
 				pr_sha=$(_pmrc_gh_read gh pr view "$pr_number" --repo "$repo_slug" \
 					--json headRefOid --jq '.headRefOid // ""' 2>/dev/null) || pr_sha=""
 			fi
+			if [[ -n "$pr_sha" ]]; then
+				local status_json="" pending_gate_status_count="" _ps_exit=0
+				status_json=$(_pmrc_gh_read gh api "repos/${repo_slug}/commits/${pr_sha}/status" 2>/dev/null) || status_json=""
+				if [[ -n "$status_json" && "$status_json" != null ]]; then
+					pending_gate_status_count=$(jq '
+						"maintainer-gate" as $stable |
+						"Maintainer Review & Assignee Gate" as $legacy |
+						[.statuses[]?
+						| (.context // "") as $name
+						| select(($name == $stable or $name == $legacy)
+							and (((.state // "") | ascii_downcase) == "pending"))
+						] | length' <<<"$status_json" 2>/dev/null)
+					_ps_exit=$?
+					if [[ $_ps_exit -ne 0 || -z "$pending_gate_status_count" ]]; then
+						return 2
+					fi
+					if [[ "$pending_gate_status_count" -gt 0 ]]; then
+						return 1
+					fi
+				fi
+			fi
 			if [[ -n "$pr_sha" ]] && declare -F gh_pr_check_runs_rest >/dev/null 2>&1; then
 				rollup_json=$(gh_pr_check_runs_rest "$repo_slug" "$pr_sha" 2>/dev/null) || rollup_json=""
 				if [[ -n "$rollup_json" && "$rollup_json" != null ]]; then
