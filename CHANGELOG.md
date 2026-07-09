@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.3] - 2026-07-09
+
+### Changed
+
+- docs: add SonarQube bot skip guidance (#26869)
+- Documentation: fix launch environment regex (#26866)
+- Documentation: tighten launch environment regex (#26864)
+- Documentation: refine launch checklist environment regex (#26861)
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- route PR repairs via linked worker issues (#26875)
+
 ## [3.32.2] - 2026-07-08
 
 ### Changed
