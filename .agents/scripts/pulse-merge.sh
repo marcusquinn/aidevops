@@ -1188,6 +1188,20 @@ ${merge_output}"
 		merge_failure_context="[admin merge]
 ${merge_output}"
 	fi
+	if [[ $_merge_exit -ne 0 && "$merge_output" == *"Required status check"* && "$merge_output" == *"is expected"* ]]; then
+		local _missing_check_update_output=""
+		local _missing_check_update_exit=0
+		_missing_check_update_output=$(gh pr update-branch "$pr_number" --repo "$repo_slug" 2>&1)
+		_missing_check_update_exit=$?
+		if [[ $_missing_check_update_exit -eq 0 ]]; then
+			echo "[pulse-wrapper] Deterministic merge: admin merge reported an expected required status check for PR #${pr_number} in ${repo_slug}; update-branch requested and merge deferred (GH#26897): ${merge_output}" >>"$LOGFILE"
+			return 4
+		fi
+		merge_failure_context="${merge_failure_context}
+
+[missing required-check update-branch fallback]
+${_missing_check_update_output}"
+	fi
 	if [[ $_merge_exit -ne 0 && "$merge_output" == *"Repository rule violations found"* ]]; then
 		echo "[pulse-wrapper] Deterministic merge: admin merge hit repository rulesets for PR #${pr_number} in ${repo_slug}; retrying with native auto-merge without --admin (GH#24438): ${merge_output}" >>"$LOGFILE"
 		_auto_merge_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --auto --squash 2>&1)
