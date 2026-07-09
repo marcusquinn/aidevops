@@ -491,10 +491,10 @@ test_skips_pr26877_regression_test_verification_ack() {
 test_skips_pr26892_nongreedy_quantifier_ack() {
 	local comments result
 	# shellcheck disable=SC2016  # literal inline-comment JSON includes Markdown backticks
-	comments='[{"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the update and for confirming that the non-greedy quantifiers have been applied and verified by the regression suite. This change correctly addresses the potential for false positives in the regex matching logic.","path":".agents/scripts/quality-feedback-findings-lib.sh","line":50,"html_url":"https://example.invalid/review","created_at":"2026-07-09T00:00:00Z"}]'
+	comments='[{"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the update and for confirming that the non-greedy quantifiers have been applied and verified by the regression suite. This change correctly addresses the potential for false positives in the regex matching logic.","path":".agents/scripts/quality-feedback-findings-lib.sh","line":50,"html_url":"https://example.invalid/review","created_at":"2026-07-09T00:00:00Z"},{"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the update and for confirming that the non-greedy quantifier has been applied and verified by the regression suite. This change correctly addresses the potential for false positives in the regex matching logic.","path":".agents/scripts/quality-feedback-findings-lib.sh","line":51,"html_url":"https://example.invalid/review","created_at":"2026-07-09T00:00:00Z"}]'
 	result=$(_build_inline_findings "$comments" "26892" "medium" | jq 'length')
 	if [[ "$result" == "0" ]]; then
-		print_result "skip PR #26892 non-greedy-quantifier acknowledgement" 0
+		print_result "skip PR #26892 non-greedy-quantifier acknowledgements" 0
 	else
 		print_result "skip PR #26892 non-greedy-quantifier acknowledgement" 1 "expected 0 findings, got ${result}"
 	fi
