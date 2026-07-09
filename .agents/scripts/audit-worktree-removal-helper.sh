@@ -130,13 +130,25 @@ _worktree_has_process_cwd() {
 	fi
 
 	if command -v lsof >/dev/null 2>&1; then
-		local lsof_output=""
-		lsof_output=$(lsof -n -F f +D "$wt_path_real" 2>/dev/null || true)
-		case "$lsof_output" in
-			fcwd | fcwd$'\n'* | *$'\n'fcwd | *$'\n'fcwd$'\n'*)
-				return 0
+		local lsof_line=""
+		local lsof_cwd_target=""
+
+		# macOS lacks /proc, but `lsof +D <worktree>` recursively walks the
+		# whole tree (including node_modules) for every removal candidate. Query
+		# only process cwd descriptors instead; this preserves the safety gate
+		# without filesystem-wide scans.
+		while IFS= read -r lsof_line; do
+			case "$lsof_line" in
+			n*)
+				lsof_cwd_target="${lsof_line#n}"
+				case "$lsof_cwd_target" in
+				"$wt_path" | "$wt_path"/* | "$wt_path_real" | "$wt_path_real"/*)
+					return 0
+					;;
+				esac
 				;;
-		esac
+			esac
+		done < <(lsof -n -F n -d cwd 2>/dev/null || true)
 	fi
 
 	return 1

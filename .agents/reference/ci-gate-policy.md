@@ -36,15 +36,22 @@ feedback loops when they find defects.
    a broad filter such as `--filter="...[origin/<base>]"` can include the
    workspace root; if root `lint`/`typecheck` scripts call Turbo, exclude root
    with `--filter="!//"` or run root checks in a separate job.
-8. Vault changes require the fast deterministic security suite on develop/main
+8. Keep local/headless quality gates resource-aware: scoped checks for the
+   active package during the inner loop; affected-package checks before PR;
+   full-repo checks only for shared tooling/contracts or final confidence.
+   Background runs should avoid TUI output and cap concurrency explicitly.
+9. Repositories with broad root scripts should expose safe defaults and override
+   knobs (for example Turbo `--ui=stream --concurrency=${TURBO_LINT_CONCURRENCY:-4}`)
+   so parallel workers do not exhaust local CPU/RAM.
+10. Vault changes require the fast deterministic security suite on develop/main
    PRs. Broad reboot, fleet, migration-recovery, and manual crypto-review drills
    are staging/release advisory until stable enough for every PR. See
    `reference/vault-security-review.md`.
-9. Before refreshing a PR branch from its base branch, check required checks on
+11. Before refreshing a PR branch from its base branch, check required checks on
    the current head SHA. If required checks are queued or in progress and the PR
    is not conflicted or explicitly blocked by an up-to-date ruleset, keep the
    head stable: wait for the current run or enable platform-native auto-merge.
-10. Repositories that require testing the exact merge result should use merge
+12. Repositories that require testing the exact merge result should use merge
    queue or platform-native queued merge behaviour instead of repeatedly mutating
    PR branches while CI is active.
 
@@ -94,3 +101,6 @@ work; only defects in the PR's own code block the PR.
   proof of a source-code defect.
 - Broad affected Turbo lint/typecheck filters that include a recursive root
   script, making CI look hung or quiet instead of testing changed packages.
+- Unbounded local `format:fix && lint:fix && typecheck && test` chains across
+  several active sessions; they preserve quality intent but destroy throughput
+  by oversubscribing CPU/RAM.
