@@ -84,6 +84,15 @@ test_sonarqubecloud_bot_is_known() {
 	return 1
 }
 
+test_codacy_production_bot_is_known() {
+	if grep -Fxq 'codacy-production[bot]' "$KNOWN_BOTS_FILE"; then
+		print_result "codacy-production bot is in known bots config" 0
+		return 0
+	fi
+	print_result "codacy-production bot is in known bots config" 1 "missing from $KNOWN_BOTS_FILE"
+	return 1
+}
+
 main() {
 	if [[ ! -f "$WORKFLOW_FILE" ]]; then
 		print_result "workflow exists" 1 "$WORKFLOW_FILE"
@@ -94,6 +103,7 @@ main() {
 	test_missing_unknown_bot_label_does_not_break_workflow
 	test_generated_guidance_targets_current_docs
 	test_sonarqubecloud_bot_is_known
+	test_codacy_production_bot_is_known
 
 	printf '\nPassed: %d, Failed: %d\n' "$pass_count" "$fail_count"
 	if [[ "$fail_count" -eq 0 ]]; then
