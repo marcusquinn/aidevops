@@ -2243,6 +2243,12 @@ _set_native_auto_merge_or_skip() {
 		if _stuck_seconds=$(_auto_merge_stuck_seconds "$pr_number" "$repo_slug" "$_pr_state"); then
 			local _threshold="${AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS:-300}"
 			echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: auto_merge stuck ${_stuck_seconds}s (>${_threshold}s) in BLOCKED+MERGEABLE with no failing/pending required checks — falling through to immediate merge (t3192)" >>"$LOGFILE"
+			local _disable_auto_output=""
+			if _disable_auto_output=$(gh pr merge "$pr_number" --repo "$repo_slug" --disable-auto 2>&1); then
+				echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: disabled stale native auto-merge before immediate merge (GH#26897)" >>"$LOGFILE"
+			else
+				echo "[pulse-merge] PR #${pr_number} in ${repo_slug}: failed to disable stale native auto-merge before immediate merge (GH#26897): ${_disable_auto_output}" >>"$LOGFILE"
+			fi
 			return 1
 		fi
 
