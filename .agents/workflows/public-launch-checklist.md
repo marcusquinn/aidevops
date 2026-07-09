@@ -91,7 +91,7 @@ public website/app/plugin/widget/dashboard/tool is launch-ready.
 Use project-specific terms plus:
 
 ```text
-LeadCapture|webhook|token|secret|api_key|apikey|auth|password|private|callback|admin|crm|formspree|zapier|make\.com|n8n|scrap|crawl|source_url|sourceUrl|competitor|_scripts|_scrapers|docs/|SESSION-STATE|TODO|README|inbox|innerHTML|target="_blank"|iframe|lorem|ipsum|example|placeholder|template|starter|ACME|old domain|old brand|support@|privacy@|terms|cookie|accessibility|data protection|confidentiality|refund|shipping|cancellation|GTM-|GA-|UA-|localhost|127\.0\.0\.1|0\.0\.0\.0|::1|\b(dev|staging)(\.|-[a-zA-Z0-9-]+\.)(?=[a-zA-Z0-9-]+\.)
+LeadCapture|webhook|token|secret|api_key|apikey|auth|password|private|callback|admin|crm|formspree|zapier|make\.com|n8n|scrap|crawl|source_url|sourceUrl|competitor|_scripts|_scrapers|docs/|SESSION-STATE|TODO|README|inbox|innerHTML|target="_blank"|iframe|lorem|ipsum|example|placeholder|template|starter|ACME|old domain|old brand|support@|privacy@|terms|cookie|accessibility|data protection|confidentiality|refund|shipping|cancellation|GTM-|GA-|UA-|localhost|127\.0\.0\.1|0\.0\.0\.0|::1|[a-zA-Z0-9-]*(dev|staging)(\.|-[a-zA-Z0-9-]+\.)(?=[a-zA-Z0-9-]+\.)
 ```
 
 ## Related workflows
