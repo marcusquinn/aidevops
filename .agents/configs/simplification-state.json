@@ -2484,9 +2484,9 @@
       "pr": 18689
     },
     ".agents/scripts/quality-feedback-findings-lib.sh": {
-      "at": "2026-07-09T09:37:00Z",
-      "hash": "5893cd5b67c6942b9db1e58d26e24e6e0e6ec7ca",
-      "passes": 11,
+      "at": "2026-07-09T17:52:19Z",
+      "hash": "fc8dec623dfff9ecea932b371e4ea36d72338e30",
+      "passes": 12,
       "pr": 19009
     },
     ".agents/scripts/quality-feedback-helper.sh": {
@@ -2580,9 +2580,9 @@
       "pr": 12971
     },
     ".agents/scripts/tests/test-quality-feedback-main-verification.sh": {
-      "at": "2026-07-09T09:37:03Z",
-      "hash": "4f61ade5def6a6ce04f17ab0efa2ef5b012d789e",
-      "passes": 15,
+      "at": "2026-07-09T17:52:21Z",
+      "hash": "8204c6b7e1b95297e6601720abf7026174b2dbf2",
+      "passes": 16,
       "pr": 15931
     },
     ".agents/scripts/thumbnail-helper.sh": {
