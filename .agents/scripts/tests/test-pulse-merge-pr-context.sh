@@ -69,6 +69,10 @@ install_stubs() {
 			printf '%s\n' "${COMPARE_BEHIND:-1}"
 			return 0
 		fi
+		if [[ "$arg1" == "api" && "$args" == *"repos/owner/repo/issues/456"* ]]; then
+			printf '%s\n' "${ISSUE_LABELS:-origin:worker,status:in-review}"
+			return 0
+		fi
 		if [[ "$arg1" == "pr" && "$arg2" == "update-branch" ]]; then
 			return 1
 		fi
@@ -85,12 +89,17 @@ install_stubs() {
 			printf 'origin:worker\n'
 			return 0
 		fi
+		if [[ "$args" == *"author"* ]]; then
+			printf '%s\n' "${PR_AUTHOR:-maintainer}"
+			return 0
+		fi
 		return 0
 	}
 	_dispatch_ci_fix_worker() { local pr_number="$1"; local repo_slug="$2"; local linked_issue="$3"; printf 'dispatch-ci %s %s %s\n' "$pr_number" "$repo_slug" "$linked_issue" >>"$GH_CALL_LOG"; return 0; }
 	_dispatch_pr_fix_worker() { local pr_number="$1"; local repo_slug="$2"; local linked_issue="$3"; printf 'dispatch-review %s %s %s\n' "$pr_number" "$repo_slug" "$linked_issue" >>"$GH_CALL_LOG"; return 0; }
 	_dispatch_conflict_fix_worker() { local pr_number="$1"; local repo_slug="$2"; local linked_issue="$3"; printf 'dispatch-conflict %s %s %s\n' "$pr_number" "$repo_slug" "$linked_issue" >>"$GH_CALL_LOG"; return 0; }
 	_interactive_pr_is_stale() { return 1; }
+	_is_collaborator_author() { local author="$1"; [[ "$author" == "maintainer" ]]; return $?; }
 	return 0
 }
 
@@ -140,6 +149,52 @@ test_route_uses_provided_labels() {
 	return 0
 }
 
+test_route_falls_back_to_linked_worker_issue_for_ci() {
+	: >"$GH_CALL_LOG"
+	export ISSUE_LABELS="origin:worker,status:in-review"
+	export PR_AUTHOR="maintainer"
+	_route_pr_to_fix_worker "8614" "owner/repo" "456" "ci" "status:in-review" || true
+
+	if ! grep -q "dispatch-ci 8614 owner/repo 456" "$GH_CALL_LOG"; then
+		fail "fix-worker route falls back to linked worker issue for CI" "Expected CI dispatch: $(cat "$GH_CALL_LOG")"
+		return 0
+	fi
+	if ! grep -q "repos/owner/repo/issues/456" "$GH_CALL_LOG"; then
+		fail "fix-worker route falls back to linked worker issue for CI" "Expected linked issue label fetch: $(cat "$GH_CALL_LOG")"
+		return 0
+	fi
+	pass "fix-worker route falls back to linked worker issue for CI"
+	return 0
+}
+
+test_route_falls_back_to_linked_worker_issue_for_conflict() {
+	: >"$GH_CALL_LOG"
+	export ISSUE_LABELS="origin:worker,status:in-review"
+	export PR_AUTHOR="maintainer"
+	_route_pr_to_fix_worker "8592" "owner/repo" "456" "conflict" "status:in-review" "dirty PR" || true
+
+	if ! grep -q "dispatch-conflict 8592 owner/repo 456" "$GH_CALL_LOG"; then
+		fail "fix-worker route falls back to linked worker issue for conflict" "Expected conflict dispatch: $(cat "$GH_CALL_LOG")"
+		return 0
+	fi
+	pass "fix-worker route falls back to linked worker issue for conflict"
+	return 0
+}
+
+test_issue_origin_fallback_requires_collaborator_pr_author() {
+	: >"$GH_CALL_LOG"
+	export ISSUE_LABELS="origin:worker,status:in-review"
+	export PR_AUTHOR="external"
+	_route_pr_to_fix_worker "8613" "owner/repo" "456" "conflict" "status:in-review" "dirty PR" || true
+
+	if grep -q "dispatch-conflict" "$GH_CALL_LOG"; then
+		fail "issue-origin fallback requires collaborator PR author" "Unexpected dispatch: $(cat "$GH_CALL_LOG")"
+		return 0
+	fi
+	pass "issue-origin fallback requires collaborator PR author"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -148,6 +203,9 @@ main() {
 	test_ci_rebase_uses_provided_context
 	test_ci_rebase_fetches_when_context_missing
 	test_route_uses_provided_labels
+	test_route_falls_back_to_linked_worker_issue_for_ci
+	test_route_falls_back_to_linked_worker_issue_for_conflict
+	test_issue_origin_fallback_requires_collaborator_pr_author
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
 	return $?
