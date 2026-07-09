@@ -118,11 +118,6 @@ if [[ "$1" == "pr" && "$2" == "checks" && "$*" == *"--required"* ]]; then
 	exit 0
 fi
 
-# `gh pr merge <N> --repo <slug> --disable-auto`
-if [[ "$1" == "pr" && "$2" == "merge" && "$*" == *"--disable-auto"* ]]; then
-	exit 0
-fi
-
 # `gh pr merge <N> --repo <slug> --auto --squash`
 if [[ "$1" == "pr" && "$2" == "merge" && "$*" == *"--auto"* ]]; then
 	exit 0
