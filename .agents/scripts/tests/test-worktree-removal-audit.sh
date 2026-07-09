@@ -378,6 +378,26 @@ test_optional_guard_context_logged() {
 }
 
 # =============================================================================
+# Test 11: process-cwd helper refuses empty paths before glob-like matching
+# =============================================================================
+test_process_cwd_guard_refuses_empty_paths() {
+	unset _AUDIT_WORKTREE_REMOVAL_HELPER_LOADED 2>/dev/null || true
+	# shellcheck source=../audit-worktree-removal-helper.sh
+	source "$AUDIT_HELPER"
+
+	local rc=0
+	if _worktree_has_process_cwd "" "/tmp/example"; then
+		rc=1
+	fi
+	if _worktree_has_process_cwd "/tmp/example" ""; then
+		rc=1
+	fi
+	print_result "process_cwd_guard_refuses_empty_paths" "$rc" \
+		"Expected empty path inputs to return non-match"
+	return 0
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -395,6 +415,7 @@ test_guard_refuses_current_cwd
 test_guard_refuses_other_process_cwd
 test_permanent_helper_removes_and_logs
 test_optional_guard_context_logged
+test_process_cwd_guard_refuses_empty_paths
 
 echo ""
 echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed."

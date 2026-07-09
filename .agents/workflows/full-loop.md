@@ -85,6 +85,16 @@ ANY critical pattern → entire PR requires `runtime-verified`. Critical/high + 
 
 **Key rules:** Parallelism (t217) — use Task tool. CI (t1334) — `gh pr checks`, `gh run view --log`. Blast radius (t1422) — quality-debt PRs ≤5 files.
 
+### Resource-Aware Quality Gates (MANDATORY)
+
+Do not skip linters/type-checkers. Optimise how they run:
+
+1. Inner loop: run the narrowest repo-supported check that covers changed files/packages first (for JS/TS monorepos, package filters such as `pnpm -F <package> lint`, `typecheck`, and targeted tests; otherwise changed-file or affected-package commands).
+2. Preflight/PR readiness: broaden to affected packages, then full repo only when the task changes shared config, root tooling, dependency graph, or cross-package contracts.
+3. Broad root checks must be bounded and non-TUI in background/headless sessions: prefer `--ui=stream` plus explicit concurrency caps or env knobs (for example `TURBO_LINT_CONCURRENCY`, `TURBO_TYPECHECK_CONCURRENCY`).
+4. Avoid launching `format:fix && lint:fix && typecheck && test` unbounded across multiple active sessions. Stagger expensive broad gates or lower concurrency so worker throughput stays reliable without exhausting local CPU/RAM.
+5. If a repo lacks scoped/bounded scripts, use available package-level commands for this loop and create a worker-ready follow-up to add repo-level optimisation.
+
 ### Headless Dispatch Rules (t158/t174 — MANDATORY)
 
 1. **Never prompt:** use uncertainty framework to proceed or exit.
