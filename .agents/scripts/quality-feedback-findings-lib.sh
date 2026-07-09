@@ -48,7 +48,7 @@ _build_inline_findings() {
 			"\\baddressed in [0-9a-f]{7,40}\\b|" +
 			"(?s:\\bthank you for verifying\\b.*\\blooks good\\b)|" +
 			"(?s:\\bthank you for the verification\\b.*?\\badding the regression test\\b.*?\\bcorrectly address(es|ed)?\\b)|" +
-			"(?s:\\bthank you for the update\\b.*?\\bnon-greedy quantifiers\\b.*?\\bregression suite\\b.*?\\bcorrectly address(es|ed)?\\b)|" +
+			"(?s:\\bthank you for the update\\b.*?\\bnon-greedy quantifiers?\\b.*?\\bregression suite\\b.*?\\bcorrectly address(es|ed)?\\b)|" +
 			"(?s:\\bthank you for the confirmation\\b.*?\\baddressing the feedback\\b.*?\\bcorrectly handles?\\b.*?\\bimproves?\\b.*?\\brobustness\\b)|" +
 			"(?s:\\bthank you for the update\\b.*?\\bimplementation\\b.*?\\bcorrectly address(es|ed)?\\b.*?\\brobust (approach|validation|handling)\\b)|" +
 			"(?s:\\bthank you for the update\\b.*?\\busing\\b.*?\\bconsistently\\b.*?\\bcorrect approach\\b.*?\\bverification steps\\b.*?\\bconfidence\\b)|" +
