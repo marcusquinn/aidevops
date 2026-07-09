@@ -78,19 +78,25 @@ test_generated_guidance_targets_current_docs() {
 test_sonarqubecloud_bot_is_known() {
 	if grep -Fxq 'sonarqubecloud[bot]' "$KNOWN_BOTS_FILE"; then
 		print_result "sonarqubecloud bot is in known bots config" 0
-		return 0
+	else
+		print_result "sonarqubecloud bot is in known bots config" 1 "missing from $KNOWN_BOTS_FILE"
+		return 1
 	fi
-	print_result "sonarqubecloud bot is in known bots config" 1 "missing from $KNOWN_BOTS_FILE"
-	return 1
+
+	assert_contains "sonarqubecloud bot is in workflow fallback" '"sonarqubecloud[bot]"'
+	return 0
 }
 
 test_codacy_production_bot_is_known() {
 	if grep -Fxq 'codacy-production[bot]' "$KNOWN_BOTS_FILE"; then
 		print_result "codacy-production bot is in known bots config" 0
-		return 0
+	else
+		print_result "codacy-production bot is in known bots config" 1 "missing from $KNOWN_BOTS_FILE"
+		return 1
 	fi
-	print_result "codacy-production bot is in known bots config" 1 "missing from $KNOWN_BOTS_FILE"
-	return 1
+
+	assert_contains "codacy-production bot is in workflow fallback" '"codacy-production[bot]"'
+	return 0
 }
 
 main() {

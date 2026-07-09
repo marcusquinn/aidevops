@@ -45,8 +45,16 @@ jobs:
               KNOWN_BOTS+=("$line")
             done <<< "$BOTS_FILE"
           else
-            # Fallback: minimal list to avoid false alerts on common bots
-            KNOWN_BOTS=("github-actions[bot]" "dependabot[bot]" "renovate[bot]")
+            # Fallback: minimal list to avoid false alerts on common bots and
+            # known review bots when the single-source config fetch is briefly
+            # unavailable or not yet updated on the default branch.
+            KNOWN_BOTS=(
+              "sonarqubecloud[bot]"
+              "codacy-production[bot]"
+              "github-actions[bot]"
+              "dependabot[bot]"
+              "renovate[bot]"
+            )
           fi
 
           is_known=false
