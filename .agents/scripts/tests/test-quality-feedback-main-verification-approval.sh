@@ -475,6 +475,19 @@ test_skips_pr26751_confirmation_feedback_ack() {
 	return 0
 }
 
+test_skips_pr26877_regression_test_verification_ack() {
+	local comments result
+	# shellcheck disable=SC2016  # literal inline-comment JSON includes Markdown backticks
+	comments='[{"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the verification and for adding the regression test. The inclusion of the guard clause and the updated process detection logic in `.agents/scripts/audit-worktree-removal-helper.sh` correctly addresses the potential false positive identified.","path":".agents/scripts/audit-worktree-removal-helper.sh","line":138,"html_url":"https://example.invalid/review","created_at":"2026-07-09T00:00:00Z"}]'
+	result=$(_build_inline_findings "$comments" "26877" "medium" | jq 'length')
+	if [[ "$result" == "0" ]]; then
+		print_result "skip PR #26877 regression-test verification acknowledgement" 0
+	else
+		print_result "skip PR #26877 regression-test verification acknowledgement" 1 "expected 0 findings, got ${result}"
+	fi
+	return 0
+}
+
 test_keeps_actionable_approved_review() {
 	# APPROVED review that also contains actionable critique — must be kept
 	local result
