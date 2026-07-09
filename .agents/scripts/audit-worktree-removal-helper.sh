@@ -114,6 +114,10 @@ _worktree_has_process_cwd() {
 	local wt_path="$1"
 	local wt_path_real="$2"
 
+	if [[ -z "$wt_path" || -z "$wt_path_real" ]]; then
+		return 1
+	fi
+
 	if [[ -d /proc ]]; then
 		local cwd_link=""
 		local cwd_target=""
