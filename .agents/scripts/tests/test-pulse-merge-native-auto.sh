@@ -123,6 +123,11 @@ if [[ "$1" == "pr" && "$2" == "merge" && "$*" == *"--auto"* ]]; then
 	exit 0
 fi
 
+# `gh pr merge <N> --repo <slug> --disable-auto`
+if [[ "$1" == "pr" && "$2" == "merge" && "$*" == *"--disable-auto"* ]]; then
+	exit 0
+fi
+
 # `gh pr update-branch <N> --repo <slug>`
 if [[ "$1" == "pr" && "$2" == "update-branch" ]]; then
 	exit 0
@@ -411,6 +416,49 @@ test_case_e_stale_pending_defers() {
 }
 
 # =============================================================================
+# Case (H): PR already has autoMergeRequest, is stale, and checks are green
+# =============================================================================
+test_case_h_stuck_green_disables_auto_before_fallthrough() {
+	setup_test_env
+	define_helpers_under_test || { teardown_test_env; return 0; }
+
+	local old_enabled_at
+	old_enabled_at=$(date -u -v-30M '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+		|| date -u -d '30 minutes ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+		|| echo '2026-04-30T16:00:00Z')
+	printf '{"autoMergeRequest":{"enabledAt":"%s"},"mergeStateStatus":"BLOCKED","mergeable":"MERGEABLE","reviewDecision":"APPROVED"}' \
+		"$old_enabled_at" >"${TEST_ROOT}/auto_merge_request.txt"
+	printf '0' >"${TEST_ROOT}/pending_count.txt"
+	export AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS=60
+
+	local result=0
+	_set_native_auto_merge_or_skip "800" "owner/repo" || result=$?
+	unset AIDEVOPS_PULSE_AUTO_MERGE_STUCK_SECONDS
+
+	if [[ "$result" -ne 1 ]]; then
+		print_result "Case (H): stuck green auto_merge → returns 1 (fall-through)" 1 \
+			"Expected exit 1, got ${result}"
+		teardown_test_env
+		return 0
+	fi
+	if ! grep -qE 'gh pr merge 800 --repo owner/repo --disable-auto' "$GH_LOG"; then
+		print_result "Case (H): stuck green auto_merge → disables stale auto-merge" 1 \
+			"gh log: $(cat "$GH_LOG")"
+		teardown_test_env
+		return 0
+	fi
+	if ! grep -qE 'disabled stale native auto-merge.*GH#26897' "$LOGFILE"; then
+		print_result "Case (H): stuck green auto_merge → disable audit log written" 1 \
+			"pulse log: $(cat "$LOGFILE")"
+		teardown_test_env
+		return 0
+	fi
+	print_result "Case (H): stuck green auto_merge → disables stale auto-merge and falls through" 0
+	teardown_test_env
+	return 0
+}
+
+# =============================================================================
 # Case (F): existing auto-merge is green but behind → update branch and defer
 # =============================================================================
 test_case_f_green_behind_updates_branch() {
@@ -521,6 +569,7 @@ main() {
 	test_case_c_already_set_no_op
 	test_case_d_repo_disallows_falls_through
 	test_case_e_stale_pending_defers
+	test_case_h_stuck_green_disables_auto_before_fallthrough
 	test_case_f_green_behind_updates_branch
 	test_case_g_green_behind_without_auto_merge_updates_branch
 	test_native_auto_defer_not_counted_as_completed_merge
