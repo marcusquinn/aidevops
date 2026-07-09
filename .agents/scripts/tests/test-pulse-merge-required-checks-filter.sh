@@ -74,6 +74,9 @@ print_result() {
 #   skipping_only   — required check-run concludes skipped
 #   empty_required_pending_fallback — branch/ruleset APIs expose no contexts,
 #      but `gh pr checks --required` reports a pending required check
+#   empty_required_stale_maintainer_gate_fallback — branch/ruleset APIs expose
+#      no contexts, `gh pr checks --required` has a stale pending maintainer-gate
+#      status, and the current head's maintainer-gate CheckRun is successful
 #   pr_checks_empty_failure — PR-level required checks exits non-zero with no JSON
 #   ruleset_review_malformed_optional — ruleset detail has unexpected shapes
 #   error           — branch-protection API exits non-zero
@@ -155,7 +158,7 @@ fi
 
 if [[ "$1" == "api" && "$*" == *"protection/required_status_checks"* ]]; then
 	case "${MOCK_GH_MODE:-all_pass}" in
-	empty_required | empty_required_pending_fallback)
+	empty_required | empty_required_pending_fallback | empty_required_stale_maintainer_gate_fallback)
 		apply_jq '{"contexts":[]}' "$@"
 		exit 0
 		;;
@@ -196,6 +199,13 @@ if [[ "$1" == "pr" && "$2" == "checks" && "$*" == *"--required"* ]]; then
 		]' "$@"
 		exit 2
 		;;
+	empty_required_stale_maintainer_gate_fallback)
+		apply_jq '[
+			{"name":"Complexity Analysis","state":"SUCCESS","bucket":"pass"},
+			{"name":"maintainer-gate","state":"PENDING","bucket":"pending"}
+		]' "$@"
+		exit 1
+		;;
 	pr_checks_empty_failure)
 		exit 1
 		;;
@@ -214,6 +224,12 @@ if [[ "$1" == "api" && "$*" == *"/check-runs"* ]]; then
 			{"name":"required-a","conclusion":"success","status":"completed"},
 			{"name":"required-b","conclusion":"success","status":"completed"},
 			{"name":"Sync Issue Hygiene on PR Merge","conclusion":"failure","status":"completed"}
+		]}'
+		;;
+	empty_required_stale_maintainer_gate_fallback)
+		local_json='{"check_runs":[
+			{"name":"gate / Maintainer Review & Assignee Gate","conclusion":"success","status":"completed"},
+			{"name":"Complexity Analysis","conclusion":"success","status":"completed"}
 		]}'
 		;;
 	one_fail)
@@ -345,6 +361,7 @@ define_function_under_test() {
 
 	eval_function_from_file _ruleset_ref_matches_default_branch "$MERGE_SCRIPT" || return 1
 	eval_function_from_file _required_contexts_from_rulesets_for_default_branch "$MERGE_SCRIPT" || return 1
+	eval_function_from_file _required_contexts_for_default_branch_uncached "$MERGE_SCRIPT" || return 1
 	eval_function_from_file _required_contexts_for_default_branch "$MERGE_SCRIPT" || return 1
 	eval_function_from_file _check_required_checks_passing "$MERGE_SCRIPT" || return 1
 	eval_function_from_file _pr_required_checks_pass "$MERGE_SCRIPT" || return 1
@@ -562,6 +579,17 @@ test_empty_required_pending_fallback_blocks_ready_merge() {
 	return 0
 }
 
+test_empty_required_stale_maintainer_gate_fallback_allows_merge() {
+	# GH#26894: maintainer-gate can leave a legacy commit status pending after
+	# its current-head CheckRun has completed successfully. That stale alias must
+	# not hold an otherwise ready worker PR in the zero-progress denominator.
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="empty_required_stale_maintainer_gate_fallback"
+	assert_passing_check_returns 0 "empty branch contexts + stale maintainer-gate status with passing CheckRun → allowed"
+	return 0
+}
+
 test_pr_checks_empty_success_outputs_json_array() {
 	: >"$GH_CALL_LOG"
 	: >"$LOGFILE"
@@ -726,6 +754,7 @@ main() {
 	test_ruleset_review_malformed_optional_does_not_fail_parse
 	test_gh_api_error_fails_closed
 	test_required_checks_gh_reads_are_timeout_wrapped
+	test_empty_required_stale_maintainer_gate_fallback_allows_merge
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
