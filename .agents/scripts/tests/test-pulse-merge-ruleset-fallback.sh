@@ -100,7 +100,12 @@ if [[ "$mode" == "expected-check" && "$1" == "pr" && "$2" == "merge" && "$*" == 
 	exit 1
 fi
 
-if [[ "$mode" == "expected-check" && "$1" == "pr" && "$2" == "update-branch" ]]; then
+if [[ "$mode" == "pending-check" && "$1" == "pr" && "$2" == "merge" && "$*" == *"--admin"* ]]; then
+	printf '%s\n' 'GraphQL: Required status check "maintainer-gate" is pending. (mergePullRequest)' >&2
+	exit 1
+fi
+
+if [[ ( "$mode" == "expected-check" || "$mode" == "pending-check" ) && "$1" == "pr" && "$2" == "update-branch" ]]; then
 	exit 0
 fi
 
@@ -325,7 +330,7 @@ test_expected_required_check_updates_branch_and_defers() {
 		unset GH_STUB_MODE
 		return 0
 	fi
-	if ! grep -qE 'expected required status check.*GH#26897' "$LOGFILE"; then
+	if ! grep -qE 'expected/pending required status check.*GH#26899' "$LOGFILE"; then
 		print_result "expected required-check blocker writes defer audit log" 1 \
 			"pulse log: $(cat "$LOGFILE")"
 		teardown_test_env
@@ -333,6 +338,35 @@ test_expected_required_check_updates_branch_and_defers() {
 		return 0
 	fi
 	print_result "expected required-check blocker updates branch and defers" 0
+	teardown_test_env
+	unset GH_STUB_MODE
+	return 0
+}
+
+test_pending_required_check_updates_branch_and_defers() {
+	GH_STUB_MODE="pending-check"
+	setup_test_env
+	define_function_under_test || { teardown_test_env; unset GH_STUB_MODE; return 0; }
+
+	local pr_obj='{"number":77,"mergeable":"MERGEABLE","reviewDecision":"APPROVED","author":{"login":"owner"},"title":"test"}'
+	local result=0
+	_process_single_ready_pr "owner/repo" "$pr_obj" || result=$?
+
+	if [[ "$result" -ne 4 ]]; then
+		print_result "pending required-check blocker defers after update-branch" 1 \
+			"Expected 4, got ${result}; log: $(cat "$LOGFILE")"
+		teardown_test_env
+		unset GH_STUB_MODE
+		return 0
+	fi
+	if ! grep -qE 'gh pr update-branch 77 --repo owner/repo' "$GH_LOG"; then
+		print_result "pending required-check blocker invokes update-branch" 1 \
+			"gh log: $(cat "$GH_LOG")"
+		teardown_test_env
+		unset GH_STUB_MODE
+		return 0
+	fi
+	print_result "pending required-check blocker updates branch and defers" 0
 	teardown_test_env
 	unset GH_STUB_MODE
 	return 0
@@ -445,6 +479,7 @@ main() {
 	test_green_behind_update_defers_before_merge_attempts
 	test_draft_pr_without_origin_labels_skips_merge_write
 	test_expected_required_check_updates_branch_and_defers
+	test_pending_required_check_updates_branch_and_defers
 	test_stale_cache_401_retries_admin_merge_once
 	test_ruleset_fallback_failure_preserves_admin_conversation_context
 

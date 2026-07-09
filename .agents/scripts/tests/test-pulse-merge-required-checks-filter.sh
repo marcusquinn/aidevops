@@ -158,7 +158,7 @@ fi
 
 if [[ "$1" == "api" && "$*" == *"protection/required_status_checks"* ]]; then
 	case "${MOCK_GH_MODE:-all_pass}" in
-	empty_required | empty_required_pending_fallback | empty_required_stale_maintainer_gate_fallback)
+	empty_required | empty_required_pending_fallback | empty_required_stale_maintainer_gate_fallback | empty_required_current_pending_maintainer_gate_fallback)
 		apply_jq '{"contexts":[]}' "$@"
 		exit 0
 		;;
@@ -199,7 +199,7 @@ if [[ "$1" == "pr" && "$2" == "checks" && "$*" == *"--required"* ]]; then
 		]' "$@"
 		exit 2
 		;;
-	empty_required_stale_maintainer_gate_fallback)
+	empty_required_stale_maintainer_gate_fallback | empty_required_current_pending_maintainer_gate_fallback)
 		apply_jq '[
 			{"name":"Complexity Analysis","state":"SUCCESS","bucket":"pass"},
 			{"name":"maintainer-gate","state":"PENDING","bucket":"pending"}
@@ -226,7 +226,7 @@ if [[ "$1" == "api" && "$*" == *"/check-runs"* ]]; then
 			{"name":"Sync Issue Hygiene on PR Merge","conclusion":"failure","status":"completed"}
 		]}'
 		;;
-	empty_required_stale_maintainer_gate_fallback)
+	empty_required_stale_maintainer_gate_fallback | empty_required_current_pending_maintainer_gate_fallback)
 		local_json='{"check_runs":[
 			{"name":"gate / Maintainer Review & Assignee Gate","conclusion":"success","status":"completed"},
 			{"name":"Complexity Analysis","conclusion":"success","status":"completed"}
@@ -282,6 +282,10 @@ if [[ "$1" == "api" && "$*" == *"/check-runs"* ]]; then
 fi
 
 if [[ "$1" == "api" && "$*" == *"/commits/"* && "$*" == *"/status"* ]]; then
+	if [[ "${MOCK_GH_MODE:-all_pass}" == "empty_required_current_pending_maintainer_gate_fallback" ]]; then
+		apply_jq '{"statuses":[{"context":"maintainer-gate","state":"pending"}]}' "$@"
+		exit 0
+	fi
 	apply_jq '{"statuses":[]}' "$@"
 	exit 0
 fi
@@ -590,6 +594,20 @@ test_empty_required_stale_maintainer_gate_fallback_allows_merge() {
 	return 0
 }
 
+test_empty_required_current_pending_maintainer_gate_fallback_blocks_merge() {
+	# GH#26899: if the current head still has a pending maintainer-gate status
+	# context, GitHub can reject admin merge even though the maintainer-gate
+	# CheckRun succeeded. Treat that as active, not stale, so pulse defers instead
+	# of counting repeated failed admin merge attempts as zero-progress cycles.
+	: >"$GH_CALL_LOG"
+	: >"$LOGFILE"
+	export MOCK_GH_MODE="empty_required_current_pending_maintainer_gate_fallback"
+	assert_passing_check_returns 1 "empty branch contexts + current pending maintainer-gate status → strict passing gate blocks"
+	assert_log_contains "PR-level required checks are not passing" \
+		"current pending maintainer-gate: fallback skip reason logged"
+	return 0
+}
+
 test_pr_checks_empty_success_outputs_json_array() {
 	: >"$GH_CALL_LOG"
 	: >"$LOGFILE"
@@ -755,6 +773,7 @@ main() {
 	test_gh_api_error_fails_closed
 	test_required_checks_gh_reads_are_timeout_wrapped
 	test_empty_required_stale_maintainer_gate_fallback_allows_merge
+	test_empty_required_current_pending_maintainer_gate_fallback_blocks_merge
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
