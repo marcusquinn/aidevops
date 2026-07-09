@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Documentation: prepare 3.32.4 changelog
+- make quality gates resource-aware (#26877)
+- Maintenance: update simplification state registry
+
+## [3.32.4] - 2026-07-09
+
+### Changed
+
 - Document resource-aware full-loop quality gate guidance (#26877)
 
 ### Fixed
