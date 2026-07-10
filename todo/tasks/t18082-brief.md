@@ -23,7 +23,7 @@ mode: subagent
 - **Issue:** #26951
 - **Related mission:** m-20260710-11431d
 - **Evidence:**
-  `todo/missions/m-20260710-11431d/research/resource-baseline.md:25-26`
+  `todo/missions/m-20260710-11431d/research/resource-baseline.md:26`
 
 ## What
 
