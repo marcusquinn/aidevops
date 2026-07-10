@@ -39,6 +39,16 @@ the normal TODO-to-GitHub relationship backfill.
 
 Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
+## Safety-Stop Recovery
+
+A resource, security, cost, timeout, or process fuse stops only the current
+execution path. It does not satisfy or cancel the task. Keep the task unchecked
+and in `recovering` or `blocked`, preserve the objective and evidence in a
+durable checkpoint, and create the next safer action before yielding. Never use
+`skipped` or `completed` solely because a fuse fired. Full checkpoint fields,
+recovery ladder, terminal exceptions, and completion review:
+`reference/safety-stop-recovery.md`.
+
 ## Briefs, Tiers, and Dispatchability
 
 - **Task briefs:** Every task must have `todo/tasks/{task_id}-brief.md` (via `/define` or `/new-task`). A task without a brief is undevelopable because it loses the implementation context needed for autonomous execution. See `workflows/plans.md` and `scripts/commands/new-task.md`.

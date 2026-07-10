@@ -63,7 +63,7 @@ Milestones are sequential; features within each milestone are parallelisable. Ea
 
 ### Milestone 1: {Name}
 
-**Status:** pending  <!-- pending | active | validating | passed | failed | skipped -->
+**Status:** pending  <!-- pending | active | recovering | blocked | validating | passed | failed | skipped -->
 **Estimate:** ~{X}h
 **Validation:** {What must be true for this milestone to pass}
 
@@ -124,6 +124,16 @@ Milestones are sequential; features within each milestone are parallelisable. Ea
 | Timestamp | Event | Details |
 |-----------|-------|---------|
 | | Mission created | |
+
+## Recovery Log
+
+<!-- A fuse stops one unsafe route, not the mission objective. For every entry,
+     preserve the original objective and remaining acceptance criteria, then
+     schedule a safer continuation. See reference/safety-stop-recovery.md. -->
+
+| Timestamp | Feature | Trigger | Preserved Evidence | Remaining Criteria | Next Safe Route | Status |
+|-----------|---------|---------|--------------------|--------------------|-----------------|--------|
+| | | | | | | |
 
 ## Retrospective
 
