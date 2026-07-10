@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+
+set -u
+
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "$SCRIPT_SOURCE" ]]; do
+	SCRIPT_LINK_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)" || exit 1
+	SCRIPT_SOURCE=$(readlink "$SCRIPT_SOURCE") || exit 1
+	[[ "$SCRIPT_SOURCE" == /* ]] || SCRIPT_SOURCE="${SCRIPT_LINK_DIR}/${SCRIPT_SOURCE}"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)" || exit 1
+GUARD="${SCRIPT_DIR}/canonical-git-command-guard.py"
+
+resolve_real_git() {
+	local candidate=""
+	while IFS= read -r candidate; do
+		[[ -n "$candidate" ]] || continue
+		[[ "$candidate" -ef "$SCRIPT_SOURCE" ]] && continue
+		printf '%s' "$candidate"
+		return 0
+	done < <(which -a git 2>/dev/null)
+	return 1
+}
+
+REAL_GIT=$(resolve_real_git) || {
+	printf 'FATAL: canonical Git guard could not resolve the real git binary\n' >&2
+	exit 127
+}
+
+if [[ ! -f "$GUARD" ]] || ! command -v python3 >/dev/null 2>&1; then
+	printf 'BLOCKED: canonical Git policy engine is unavailable\n' >&2
+	exit 126
+fi
+ARGV_JSON=$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "$@") || exit 1
+python3 "$GUARD" --cwd "$PWD" --argv-json "$ARGV_JSON" --real-git "$REAL_GIT" || exit $?
+
+exec "$REAL_GIT" "$@"

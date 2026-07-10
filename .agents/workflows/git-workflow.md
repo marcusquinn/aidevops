@@ -21,7 +21,7 @@ tools:
 
 ## Quick Reference
 
-- **Principle**: Every development change happens in a linked worktree, never directly in the canonical `main` checkout. Release/version-manager commands are allowed on `main` only after merged, verified changes and explicit user approval.
+- **Principle**: Every change, including a release, happens in a linked worktree. Never switch, detach, create, rename, or delete branches/refs in the canonical repository.
 - **CRITICAL**: With parallel sessions, ALWAYS verify worktree/ref state before ANY file operation
 
 **Pre-Edit Gate** (MANDATORY before ANY file edit/write/create):
@@ -30,7 +30,7 @@ tools:
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/pre-edit-check.sh  # Verifies branch and canonical-checkout safety
 ```
 
-If the gate reports the canonical `main` checkout: STOP and create a safe linked worktree for the task before editing. This technical gate checks both branch and worktree location; `git status` alone cannot prove the checkout is the canonical repo versus a linked worktree. Exception: proceed for an approved release/version-manager command after verifying the working tree is clean and up to date with `origin/main`.
+If the gate reports the canonical checkout: STOP and create a safe linked worktree for the task before editing. This technical gate checks both branch and worktree location; `git status` alone cannot prove the checkout is canonical versus linked. For releases, create a detached linked worktree at `origin/main`; the version manager refuses canonical execution and atomically pushes detached `HEAD` to `main`.
 
 **First Actions** (before any code changes):
 
@@ -134,7 +134,6 @@ After file changes: run preflight automatically. Pass → auto-commit with sugge
 After postflight, delete merged branches. Keep unmerged unless stale (>30 days) — ask user. Prefer the aidevops cleanup route for remote branch sweeps because it checks merged/open-PR/worktree evidence before deletion.
 
 ```bash
-git checkout main && git pull origin main
 wt prune                                      # Local worktrees
 aidevops cleanup remote-branches             # Dry-run remote audit
 aidevops cleanup remote-branches --apply     # Delete safe remote candidates
@@ -143,7 +142,7 @@ git remote prune origin
 
 ## Override Handling
 
-When user wants to work directly on main, acknowledge and proceed — never block. Note trade-offs (harder rollback, no PR review, harder collaboration) and continue.
+Canonical branch/ref mutation has no conversational override. A user request to work directly there is redirected to a linked worktree because switching canonical state can corrupt parallel sessions. Only the audited canonical recovery helper may restore the default branch after cross-session checks.
 
 ## Database Schema Changes
 

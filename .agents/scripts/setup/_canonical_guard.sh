@@ -8,9 +8,7 @@
 # Sourced by setup.sh — do not execute directly.
 #
 # Idempotent: re-installs managed hooks, skips unmanaged ones with a warning,
-# counts each outcome, never aborts the outer setup flow on per-repo conflict.
-#
-# Opt out: export AIDEVOPS_CANONICAL_GUARD_INSTALL=false before setup.
+# counts each outcome, and fails setup when protection is inactive.
 
 #######################################
 # Resolve the path of install-canonical-guard.sh relative to this module.
@@ -31,31 +29,22 @@ _load_canonical_guard_installer() {
 # local .git present. Prints a per-run summary.
 #######################################
 setup_canonical_guard() {
-	if [[ "${AIDEVOPS_CANONICAL_GUARD_INSTALL:-true}" == "false" ]]; then
-		print_info "Canonical guard install disabled via AIDEVOPS_CANONICAL_GUARD_INSTALL=false"
-		setup_track_skipped "Canonical guard" "opted out via AIDEVOPS_CANONICAL_GUARD_INSTALL=false"
-		return 0
-	fi
-
 	print_info "Installing canonical-on-main guard hook across initialized repos..."
 
 	local installer_path
 	if ! installer_path=$(_load_canonical_guard_installer); then
-		setup_track_skipped "Canonical guard" "installer not available"
-		return 0
+		return 1
 	fi
 
 	local repos_config="${HOME}/.config/aidevops/repos.json"
 	if [[ ! -f "$repos_config" ]]; then
 		print_warning "repos.json not found — skipping canonical guard rollout"
-		setup_track_skipped "Canonical guard" "repos.json not found"
-		return 0
+		return 1
 	fi
 
 	if ! command -v jq >/dev/null 2>&1; then
 		print_warning "jq not installed — skipping canonical guard rollout"
-		setup_track_skipped "Canonical guard" "jq not installed"
-		return 0
+		return 1
 	fi
 
 	local ok=0 already=0 conflict=0 skip=0 err=0
@@ -68,7 +57,10 @@ setup_canonical_guard() {
 			skip=$((skip + 1))
 			continue
 		fi
-		result=$(cd "$path" && bash "$installer_path" install 2>&1 </dev/null || true)
+		if ! result=$(cd "$path" && bash "$installer_path" install 2>&1 </dev/null); then
+			err=$((err + 1))
+			continue
+		fi
 		if [[ "$result" == *"installed canonical-on-main-guard"* ]]; then
 			ok=$((ok + 1))
 		elif [[ "$result" == *"already installed"* ]]; then
@@ -82,6 +74,10 @@ setup_canonical_guard() {
 
 	print_info "Canonical guard: ok=$ok already=$already conflict=$conflict skip=$skip err=$err"
 	local total_covered=$((ok + already))
+	if [[ "$conflict" -gt 0 || "$err" -gt 0 ]]; then
+		print_error "Canonical guard installation incomplete; refusing successful setup"
+		return 1
+	fi
 	setup_track_configured "Canonical guard (${total_covered} repos)"
 	return 0
 }

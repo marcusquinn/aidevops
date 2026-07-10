@@ -38,6 +38,7 @@ import re
 import shlex
 import subprocess
 import sys
+from pathlib import Path
 
 # Destructive patterns to block - tuple of (regex, reason)
 DESTRUCTIVE_PATTERNS = [
@@ -598,6 +599,39 @@ def _check_canonical_branch_switch_command(
     return None
 
 
+def _check_shared_canonical_git_guard(command: str) -> "dict | None":
+    """Delegate canonical Git mutation policy to the shared runtime guard."""
+    candidates = [
+        os.environ.get("AIDEVOPS_CANONICAL_GIT_GUARD", ""),
+        str(Path(__file__).resolve().parent.parent / "scripts" / "canonical-git-command-guard.py"),
+        str(Path.home() / ".aidevops" / "agents" / "scripts" / "canonical-git-command-guard.py"),
+    ]
+    guard = next((path for path in candidates if path and os.path.isfile(path)), "")
+    if not guard:
+        if re.search(r"(^|[;&|()\n]\s*)(?:\S*/)?git(?:\s|$)", command):
+            reason = "canonical Git policy engine is missing; refusing Git command"
+        else:
+            return None
+    else:
+        result = subprocess.run(
+            [sys.executable, guard, "--cwd", os.getcwd(), "--command", command],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if result.returncode == 0:
+            return None
+        reason = result.stderr.strip() or "canonical Git policy check failed closed"
+    return {
+        "hookSpecificOutput": {
+            "hookEventName": "PreToolUse",
+            "permissionDecision": "deny",
+            "permissionDecisionReason": reason,
+        }
+    }
+
+
 def _check_main_branch_allowlist(file_path: str) -> "dict | None":
     """Check if an Edit/Write to file_path is allowed on the current branch.
 
@@ -618,8 +652,8 @@ def _check_main_branch_allowlist(file_path: str) -> "dict | None":
     if not file_path or not repo_root or not branch:
         return None  # Invalid path, not in git, or cannot determine branch — allow
 
-    # Linked worktrees are always allowed; explicit escape valve is for documented exceptions.
-    if _is_linked_worktree(repo_root) or os.environ.get("AIDEVOPS_SKIP_CANONICAL_GUARD"):
+    # Linked worktrees are the only writable branch context.
+    if _is_linked_worktree(repo_root):
         return None
 
     # Detect default branch dynamically (replaces hardcoded "main"/"master" check)
@@ -703,6 +737,10 @@ def main():
     command = _normalize_absolute_paths(command)
 
     current_user_message = _current_user_message(input_data)
+    shared_git_deny = _check_shared_canonical_git_guard(command)
+    if shared_git_deny:
+        print(json.dumps(shared_git_deny))
+        sys.exit(0)
     branch_switch_deny = _check_canonical_branch_switch_command(
         command, current_user_message
     )

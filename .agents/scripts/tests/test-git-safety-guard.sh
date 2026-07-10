@@ -302,14 +302,14 @@ test_bash_destructive_commands_blocked() {
 	# must happen in a linked worktree.
 	json='{"tool_name":"Bash","tool_input":{"command":"git checkout -b feature/new-branch"}}'
 	output=$(run_hook "$TEST_ROOT" "$json") || true
-	if ! hook_is_deny "$output" "Canonical workspace cannot switch"; then
+	if ! hook_is_deny "$output" "canonical worktree mutation"; then
 		print_result "git checkout -b blocked in canonical workspace" 1 "output=${output}"
 		passed=1
 	fi
 
 	json='{"tool_name":"Bash","tool_input":{"command":"git checkout --orphan gh-pages"}}'
 	output=$(run_hook "$TEST_ROOT" "$json") || true
-	if ! hook_is_deny "$output" "Canonical workspace cannot switch"; then
+	if ! hook_is_deny "$output" "canonical worktree mutation"; then
 		print_result "git checkout --orphan blocked in canonical workspace" 1 "output=${output}"
 		passed=1
 	fi
@@ -339,9 +339,9 @@ test_bash_destructive_commands_blocked() {
 }
 
 # =============================================================================
-# Test 7: Canonical branch switches require an exact current-turn user request
+# Test 7: Canonical branch switches are never authorized by prompt text
 # =============================================================================
-test_canonical_branch_switch_requires_current_turn_request() {
+test_canonical_branch_switch_always_blocked() {
 	git -C "$TEST_ROOT" checkout main >/dev/null 2>&1 || true
 	git -C "$TEST_ROOT" branch feature/canonical-switch >/dev/null 2>&1 || true
 
@@ -351,14 +351,14 @@ test_canonical_branch_switch_requires_current_turn_request() {
 
 	json='{"tool_name":"Bash","tool_input":{"command":"git switch feature/canonical-switch"}}'
 	output=$(run_hook "$TEST_ROOT" "$json") || true
-	if ! hook_is_deny "$output" "Canonical workspace cannot switch"; then
+	if ! hook_is_deny "$output" "canonical worktree mutation"; then
 		print_result "canonical git switch feature/foo blocked without user request" 1 "output=${output}"
 		passed=1
 	fi
 
 	json='{"tool_name":"Bash","tool_input":{"command":"git switch main"}}'
 	output=$(run_hook "$TEST_ROOT" "$json") || true
-	if ! hook_is_deny "$output" "current turn"; then
+	if ! hook_is_deny "$output" "canonical worktree mutation"; then
 		print_result "canonical git switch main blocked without current-turn request" 1 "output=${output}"
 		passed=1
 	fi
@@ -367,13 +367,13 @@ test_canonical_branch_switch_requires_current_turn_request() {
 	transcript_path=$(write_user_transcript "Please restore the canonical repo: git switch main")
 	json=$(printf '{"tool_name":"Bash","transcript_path":"%s","tool_input":{"command":"git switch main"}}' "$transcript_path")
 	output=$(run_hook "$TEST_ROOT" "$json") || true
-	if [[ -n "$output" ]]; then
-		print_result "canonical restoration allowed with exact current-turn request" 1 "output=${output}"
+	if ! hook_is_deny "$output" "canonical worktree mutation"; then
+		print_result "canonical restoration remains blocked despite current-turn request" 1 "output=${output}"
 		passed=1
 	fi
 
 	if [[ "$passed" -eq 0 ]]; then
-		print_result "canonical branch switches require exact current-turn user request" 0
+		print_result "canonical branch switches cannot be authorized by prompt text" 0
 	fi
 
 	git -C "$TEST_ROOT" branch -D feature/canonical-switch >/dev/null 2>&1 || true
@@ -448,8 +448,7 @@ test_no_origin_head_falls_back_to_main() {
 }
 
 # =============================================================================
-# Test 10: AIDEVOPS_SKIP_CANONICAL_GUARD=1 bypasses off-default-branch deny;
-#          FULL_LOOP_HEADLESS=1 alone does NOT bypass (workers use worktrees)
+# Test 10: environment variables cannot bypass canonical protection
 # =============================================================================
 test_canonical_guard_skip_env_var() {
 	git -C "$TEST_ROOT" checkout -b feature/guard-skip-test >/dev/null 2>&1
@@ -465,7 +464,7 @@ test_canonical_guard_skip_env_var() {
 	local output_headless=""
 	output_headless=$(run_hook "$TEST_ROOT" "$json" "FULL_LOOP_HEADLESS=1") || true
 
-	# With AIDEVOPS_SKIP_CANONICAL_GUARD=1: allowed (explicit escape valve)
+	# Former escape valve must remain denied.
 	local output_skip=""
 	output_skip=$(run_hook "$TEST_ROOT" "$json" "AIDEVOPS_SKIP_CANONICAL_GUARD=1") || true
 
@@ -479,8 +478,8 @@ test_canonical_guard_skip_env_var() {
 		print_result "canonical guard: FULL_LOOP_HEADLESS=1 alone does NOT bypass deny" 1 "output=${output_headless}"
 		passed=1
 	fi
-	if [[ -n "$output_skip" ]]; then
-		print_result "canonical guard: AIDEVOPS_SKIP_CANONICAL_GUARD=1 bypasses deny (allow)" 1 "output=${output_skip}"
+	if ! hook_is_deny "$output_skip" "t1990"; then
+		print_result "canonical guard: former skip variable does not bypass deny" 1 "output=${output_skip}"
 		passed=1
 	fi
 
@@ -505,7 +504,7 @@ main() {
 	test_default_branch_allowlisted_paths_allowed
 	test_default_branch_non_allowlisted_denied
 	test_bash_destructive_commands_blocked
-	test_canonical_branch_switch_requires_current_turn_request
+	test_canonical_branch_switch_always_blocked
 	test_linked_worktree_branch_switch_allowed
 	test_no_origin_head_falls_back_to_main
 	test_canonical_guard_skip_env_var
