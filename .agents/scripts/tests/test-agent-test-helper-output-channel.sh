@@ -44,6 +44,18 @@ fail() {
 	return 1
 }
 
+direct_stdout="$TEST_ROOT/direct.stdout"
+direct_stderr="$TEST_ROOT/direct.stderr"
+direct_test='{"id":"direct-call","prompt":"direct","expect_contains":["mock response"]}'
+{
+	_cmd_run_capture_test "$direct_test" 0 1 "" "" 1 "[]" false
+	printf '%s\n' "stdout-still-open"
+} >"$direct_stdout" 2>"$direct_stderr"
+grep -q '^stdout-still-open$' "$direct_stdout" ||
+	fail "capture helper leaked its stdout redirection into the caller"
+grep -q '\[1/1\] direct-call' "$direct_stderr" ||
+	fail "direct capture omitted human-readable progress"
+
 pass_suite="$TEST_ROOT/pass-suite.json"
 cat >"$pass_suite" <<'JSON'
 {
@@ -89,6 +101,7 @@ grep -q 'Expected to contain: "missing"' "$human_fail_output" ||
 	fail "human output omitted expectation failure"
 grep -q 'Error/timeout' "$human_fail_output" ||
 	fail "human output omitted timeout failure"
+rm -f "$RESULTS_DIR"/output-channel-fail-*.json
 
 json_stdout="$TEST_ROOT/json.stdout"
 json_stderr="$TEST_ROOT/json.stderr"
