@@ -35,6 +35,7 @@
 _WORKTREE_CLEAN_LIB_LOADED=1
 _WT_CLEAN_DEFERRED_MARKER=".agents/.full-loop-cleanup-deferred"
 _WT_CLEAN_DEFERRED_OWNER_PID=""
+_WT_CLEAN_REASON_OWNED_SKIP="owned-skip"
 
 # SCRIPT_DIR fallback — covers sourcing from test harnesses or direct invocation
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -70,6 +71,32 @@ _clean_acquire_removal_lease() {
 	claim_worktree_ownership "$wt_path" "$wt_branch" \
 		--owner-pid "$$" --session "cleanup:$$" --task "worktree-removal" >/dev/null 2>&1 || return 1
 	return 0
+}
+
+_clean_terminal_owner_blocks_cleanup() {
+	local wt_path="$1"
+	local deferred_parent_state=0
+	_clean_deferred_parent_alive "$wt_path" || deferred_parent_state=$?
+	if [[ "$deferred_parent_state" -eq 0 ]]; then
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "parent-runtime-active" "$_WT_CLEAN_MODE_SKIPPED"
+		return 0
+	fi
+	if [[ "$deferred_parent_state" -eq 2 ]]; then
+		if [[ -n "$_WT_CLEAN_DEFERRED_OWNER_PID" ]] && \
+			unregister_worktree_if_owner_pid "$wt_path" "$_WT_CLEAN_DEFERRED_OWNER_PID" 2>/dev/null; then
+			return 1
+		fi
+		if is_worktree_owned_by_others "$wt_path"; then
+			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "$_WT_CLEAN_REASON_OWNED_SKIP" "$_WT_CLEAN_MODE_SKIPPED"
+			return 0
+		fi
+		return 1
+	fi
+	if is_worktree_owned_by_others "$wt_path"; then
+		log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "$_WT_CLEAN_REASON_OWNED_SKIP" "$_WT_CLEAN_MODE_SKIPPED"
+		return 0
+	fi
+	return 1
 }
 
 get_validated_grace_hours() {
@@ -272,7 +299,7 @@ _skip_cleanup_for_owner() {
 		_skip_cleanup_emit "$wt_branch" "$wt_path" "dead owner PID $owner_pid in cooldown since $owner_dead_seen_at" "owner-pid-dead"
 		return 0
 	fi
-	_skip_cleanup_emit "$wt_branch" "$wt_path" "owned by active session PID $owner_pid" "owned-skip"
+		_skip_cleanup_emit "$wt_branch" "$wt_path" "owned by active session PID $owner_pid" "$_WT_CLEAN_REASON_OWNED_SKIP"
 	return 0
 }
 
@@ -841,26 +868,7 @@ _clean_classify_worktree() {
 	# protected-pass, grace, or dirty markers preserve terminal clutter forever.
 	if _clean_merge_type_has_terminal_pr_proof "$merge_type" ||
 		_clean_branch_has_terminal_pr_proof "$wt_branch" "$merged_prs" "$closed_prs"; then
-		local deferred_parent_state=0
-		_clean_deferred_parent_alive "$wt_path" || deferred_parent_state=$?
-		if [[ "$deferred_parent_state" -eq 0 ]]; then
-			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "parent-runtime-active" "$_WT_CLEAN_MODE_SKIPPED"
-			return 0
-		fi
-		if [[ "$deferred_parent_state" -eq 2 ]]; then
-			# Atomically release only the row owned by the exited marker PID. A
-			# replacement runtime may reclaim the path between cleanup operations.
-			if [[ -n "$_WT_CLEAN_DEFERRED_OWNER_PID" ]] && \
-				unregister_worktree_if_owner_pid "$wt_path" "$_WT_CLEAN_DEFERRED_OWNER_PID" 2>/dev/null; then
-				:
-			elif is_worktree_owned_by_others "$wt_path"; then
-				log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "owned-skip" "$_WT_CLEAN_MODE_SKIPPED"
-				return 0
-			fi
-		elif is_worktree_owned_by_others "$wt_path"; then
-			log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$wt_path" "owned-skip" "$_WT_CLEAN_MODE_SKIPPED"
-			return 0
-		fi
+		_clean_terminal_owner_blocks_cleanup "$wt_path" && return 0
 		_skip_cleanup_for_current_worktree "$wt_path" "$wt_branch" && return 0
 	else
 		# Apply safety checks using shared helper
@@ -1033,7 +1041,7 @@ _clean_remove_merged() {
 						continue
 					fi
 					if is_worktree_owned_by_others "$worktree_path"; then
-						log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$worktree_path" "owned-skip" "$_WT_CLEAN_MODE_SKIPPED"
+						log_worktree_removal_event "$_WTAR_SKIPPED" "$_WTAR_WH_CALLER" "$worktree_path" "$_WT_CLEAN_REASON_OWNED_SKIP" "$_WT_CLEAN_MODE_SKIPPED"
 						echo -e "${YELLOW}Skipped $worktree_branch - worktree was reclaimed before removal${NC}" >&2
 						worktree_path=""
 						worktree_branch=""
