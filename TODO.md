@@ -4457,3 +4457,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18079 Add safe macOS activity cleaner command and subagent #enhancement ref:GH#26917
 
 - [ ] t18080 Guarantee safety-stop recovery without objective loss #documentation #framework #safety ref:GH#26934
+
+- [ ] t18081 Prevent profile contributions corruption on GitHub API failures #bug #framework ref:GH#26937
