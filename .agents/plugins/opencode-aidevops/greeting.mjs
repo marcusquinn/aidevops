@@ -60,7 +60,10 @@
 import { exec } from "child_process";
 import { promisify } from "util";
 import {
+  closeSync,
+  fstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -75,6 +78,7 @@ const execAsync = promisify(exec);
 const CACHE_DIR = join(homedir(), ".aidevops", "cache");
 const CACHE_BASENAME = "session-greeting.txt";
 const LOCK_BASENAME = "session-greeting-refresh.lock";
+const LOCK_OWNER_BASENAME = "owner";
 // Comprehensive checks run at most once per 15-minute window. The subprocess
 // times out after 15 seconds, so a lock older than 30 seconds is safe to reap
 // after an abrupt plugin-process exit.
@@ -104,7 +108,7 @@ const FALLBACK_WINDOW_MS = 30000;
  * @param {{ scriptsDir: string, client: any, cacheFile: string, lockDir: string,
  *   execGreeting: Function, maintenanceNoticeFn: Function }} options
  */
-function runGreetingAsync({ scriptsDir, client, cacheFile, lockDir, execGreeting, maintenanceNoticeFn }) {
+function runGreetingAsync({ scriptsDir, client, cacheFile, lockDir, lockToken, execGreeting, maintenanceNoticeFn }) {
   const script = join(scriptsDir, "aidevops-update-check.sh");
   Promise.resolve()
     .then(() => execGreeting(`bash ${JSON.stringify(script)} --interactive`, {
@@ -145,7 +149,7 @@ function runGreetingAsync({ scriptsDir, client, cacheFile, lockDir, execGreeting
       }
     })
     .finally(() => {
-      releaseRefreshLock(lockDir);
+      releaseRefreshLock(lockDir, lockToken);
     });
   // Returns here — handler can resolve before the subprocess finishes.
 }
@@ -197,12 +201,16 @@ function cacheGreeting(cacheFile, output) {
 }
 
 function readGreetingCache(cacheFile) {
+  let fd;
   try {
-    const output = readFileSync(cacheFile, "utf-8").trim();
+    fd = openSync(cacheFile, "r");
+    const output = readFileSync(fd, "utf-8").trim();
     if (!output) return null;
-    return { output, mtimeMs: statSync(cacheFile).mtimeMs };
+    return { output, mtimeMs: fstatSync(fd).mtimeMs };
   } catch {
     return null;
+  } finally {
+    if (fd !== undefined) closeSync(fd);
   }
 }
 
@@ -216,34 +224,75 @@ function emitCachedGreeting(client, cached) {
   if (toast) emitToast(client, toast);
 }
 
-function acquireRefreshLock(lockDir, staleMs, nowMs) {
+function createOwnedLock(lockDir, lockToken) {
   try {
-    mkdirSync(dirname(lockDir), { recursive: true });
     mkdirSync(lockDir);
-    return true;
+    writeFileSync(join(lockDir, LOCK_OWNER_BASENAME), lockToken, { encoding: "utf-8", mode: 0o600 });
+    return lockToken;
   } catch (err) {
-    if (err.code !== "EEXIST") return false;
-  }
-
-  try {
-    if (nowMs - statSync(lockDir).mtimeMs <= staleMs) return false;
-    rmSync(lockDir, { recursive: true, force: true });
-    mkdirSync(lockDir);
-    return true;
-  } catch {
-    // Another process either recovered or acquired the lock first.
-    return false;
+    if (err.code !== "EEXIST") {
+      rmSync(lockDir, { recursive: true, force: true });
+    }
+    return null;
   }
 }
 
-function releaseRefreshLock(lockDir) {
+function acquireRefreshLock(lockDir, staleMs, nowMs) {
+  const lockToken = `${process.pid}-${Math.random().toString(16).slice(2)}`;
   try {
+    mkdirSync(dirname(lockDir), { recursive: true });
+    const acquired = createOwnedLock(lockDir, lockToken);
+    if (acquired) return acquired;
+  } catch (err) {
+    if (err.code !== "EEXIST") return null;
+  }
+
+  const staleDir = `${lockDir}.stale.${lockToken}`;
+  try {
+    if (nowMs - statSync(lockDir).mtimeMs <= staleMs) return null;
+    // Rename atomically before reaping: only one contender can claim a stale
+    // lock, and no contender can delete a replacement lock by path.
+    renameSync(lockDir, staleDir);
+    return createOwnedLock(lockDir, lockToken);
+  } catch {
+    // Another process either recovered or acquired the lock first.
+    return null;
+  } finally {
+    rmSync(staleDir, { recursive: true, force: true });
+  }
+}
+
+function releaseRefreshLock(lockDir, lockToken) {
+  try {
+    const owner = readFileSync(join(lockDir, LOCK_OWNER_BASENAME), "utf-8");
+    if (owner !== lockToken) return;
     rmSync(lockDir, { recursive: true, force: true });
   } catch (err) {
     if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
       console.error(`[aidevops] greeting: lock release failed: ${err.message}`);
     }
   }
+}
+
+function observeSharedRefresh({ cacheFile, lockDir, lockStaleMs, client, now }) {
+  const deadline = now() + lockStaleMs;
+  const poll = () => {
+    const cached = readGreetingCache(cacheFile);
+    if (cached) {
+      emitCachedGreeting(client, cached);
+      return;
+    }
+
+    try {
+      if (now() >= deadline || now() - statSync(lockDir).mtimeMs > lockStaleMs) return;
+    } catch {
+      return;
+    }
+
+    const timer = setTimeout(poll, 25);
+    timer.unref?.();
+  };
+  poll();
 }
 
 /**
@@ -420,7 +469,8 @@ export function createGreetingHandler({
     emitCachedGreeting(client, cached);
 
     if (!cached || now() - cached.mtimeMs > refreshTtlMs) {
-      if (acquireRefreshLock(lockDir, lockStaleMs, now())) {
+      const lockToken = acquireRefreshLock(lockDir, lockStaleMs, now());
+      if (lockToken) {
         // t2729: fire-and-forget — do NOT await. The handler resolves immediately;
         // the toast arrives whenever the subprocess finishes.
         runGreetingAsync({
@@ -428,11 +478,19 @@ export function createGreetingHandler({
           client,
           cacheFile,
           lockDir,
+          lockToken,
           execGreeting,
           maintenanceNoticeFn,
         });
-      } else if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
-        console.error("[aidevops] greeting: refresh already running in another process");
+      } else {
+        if (!cached) {
+          // A cold-cache follower still gets the owner's completed greeting;
+          // polling is bounded by the same crashed-lock recovery interval.
+          observeSharedRefresh({ cacheFile, lockDir, lockStaleMs, client, now });
+        }
+        if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
+          console.error("[aidevops] greeting: refresh already running in another process");
+        }
       }
     }
 

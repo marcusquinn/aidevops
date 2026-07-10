@@ -3,6 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -56,6 +57,12 @@ function handlerOptions(f, client, execGreeting) {
     execGreeting,
     maintenanceNoticeFn: async () => "",
   };
+}
+
+function runNode(script) {
+  return new Promise((resolve, reject) => {
+    execFile(process.execPath, [script], (error) => error ? reject(error) : resolve());
+  });
 }
 
 test("eight concurrent plugin handlers share one stale-cache refresh", async (t) => {
@@ -117,6 +124,70 @@ test("stale lock is recovered within the configured bound", async (t) => {
 
   await handler({ event: { type: "session.created" } });
   await waitFor(() => spawnCount === 1 && cacheEquals(f, NEW_GREETING));
+});
+
+test("cold-cache plugin processes share one refresh and all receive its greeting", async (t) => {
+  const f = fixture();
+  t.after(() => f.cleanup());
+  const workerFile = join(f.cacheDir, "worker.mjs");
+  const spawnFile = join(f.cacheDir, "spawns");
+  const toastFile = join(f.cacheDir, "toasts");
+  const greetingUrl = new URL("../greeting.mjs", import.meta.url).href;
+  writeFileSync(workerFile, `
+    import { appendFileSync } from "node:fs";
+    import { createGreetingHandler } from ${JSON.stringify(greetingUrl)};
+    const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const handler = createGreetingHandler({
+      scriptsDir: "/unused",
+      cacheDir: ${JSON.stringify(f.cacheDir)},
+      lockStaleMs: 1000,
+      client: { tui: { showToast: async () => appendFileSync(${JSON.stringify(toastFile)}, "1\\n") } },
+      execGreeting: async () => {
+        appendFileSync(${JSON.stringify(spawnFile)}, "1\\n");
+        await delay(75);
+        return { stdout: ${JSON.stringify(NEW_GREETING)} };
+      },
+      maintenanceNoticeFn: async () => "",
+    });
+    await handler({ event: { type: "session.created" } });
+    await delay(250);
+  `);
+
+  await Promise.all(Array.from({ length: 8 }, () => runNode(workerFile)));
+
+  assert.equal(readFileSync(spawnFile, "utf8").trim().split("\n").length, 1);
+  assert.equal(readFileSync(toastFile, "utf8").trim().split("\n").length, 8);
+  assert.equal(readFileSync(f.cacheFile, "utf8").trim(), NEW_GREETING);
+});
+
+test("an expired owner cannot release a replacement owner's lock", async (t) => {
+  const f = fixture();
+  t.after(() => f.cleanup());
+  const lockDir = join(f.cacheDir, "session-greeting-refresh.lock");
+  let resolveFirst;
+  let resolveSecond;
+  const firstRefresh = new Promise((resolve) => { resolveFirst = resolve; });
+  const secondRefresh = new Promise((resolve) => { resolveSecond = resolve; });
+  const first = createGreetingHandler({
+    ...handlerOptions(f, f.client(), () => firstRefresh),
+    lockStaleMs: 1,
+  });
+  await first({ event: { type: "session.created" } });
+  await waitFor(() => readdirSync(f.cacheDir).includes("session-greeting-refresh.lock"));
+  utimesSync(lockDir, new Date(0), new Date(0));
+
+  const second = createGreetingHandler({
+    ...handlerOptions(f, f.client(), () => secondRefresh),
+    lockStaleMs: 1,
+  });
+  await second({ event: { type: "session.created" } });
+  resolveFirst({ stdout: OLD_GREETING });
+  await waitFor(() => cacheEquals(f, OLD_GREETING));
+  assert.ok(readdirSync(f.cacheDir).includes("session-greeting-refresh.lock"));
+
+  resolveSecond({ stdout: NEW_GREETING });
+  await waitFor(() => cacheEquals(f, NEW_GREETING));
+  await waitFor(() => !readdirSync(f.cacheDir).includes("session-greeting-refresh.lock"));
 });
 
 test("failed refresh preserves the last valid cache and releases its lock", async (t) => {

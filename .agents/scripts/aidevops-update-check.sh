@@ -699,6 +699,7 @@ _write_cache() {
 		[[ -n "$secret_hygiene" ]] && echo "$secret_hygiene"
 		[[ -n "$advisories_output" ]] && echo "$advisories_output"
 		[[ -n "$contribution_watch" ]] && echo "$contribution_watch"
+		true
 	} >"$temp_file"; then
 		rm -f "$temp_file"
 		return 1
