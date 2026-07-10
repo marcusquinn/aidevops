@@ -57,6 +57,12 @@ set -e
 assert_eq "dependency-free status reports uninitialized" "uninitialized" "$initial_status"
 assert_eq "uninitialized status preserves documented exit" "2" "$initial_rc"
 [[ ! -e "${AIDEVOPS_VAULT_DIR}/audit.log" ]] && pass "status read creates no audit file" || fail "status read creates no audit file"
+set +e
+unset_home_status="$(env -u HOME "$VAULT_HELPER" status 2>"${TEST_ROOT}/unset-home.err")"
+unset_home_rc=$?
+set -e
+assert_eq "status tolerates an unset HOME" "uninitialized" "$unset_home_status"
+assert_eq "unset HOME preserves documented exit" "2" "$unset_home_rc"
 
 mkdir -p "$AIDEVOPS_VAULT_DIR"
 cat >"${AIDEVOPS_VAULT_DIR}/vault.json" <<'JSON'

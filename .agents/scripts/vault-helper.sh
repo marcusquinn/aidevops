@@ -8,7 +8,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 CRYPTO_HELPER="${SCRIPT_DIR}/vault-crypto-helper.py"
 VAULT_AUDIT_HELPER="${SCRIPT_DIR}/vault-audit-helper.sh"
 VAULT_RUNTIME_CHECK="${SCRIPT_DIR}/vault-runtime-check.py"
-VAULT_RUNTIME_PYTHON="${HOME}/.aidevops/.agent-workspace/python-env/vault/bin/python3"
+VAULT_RUNTIME_PYTHON="${HOME:+$HOME/.aidevops/.agent-workspace/python-env/vault/bin/python3}"
 
 usage() {
 	cat <<'EOF'
@@ -101,13 +101,18 @@ vault_path_permissions_safe() {
 	local os_name=""
 	local group_digit=""
 	local other_digit=""
+	local trusted_path="/usr/bin:/bin"
+	local uname_bin=""
+	local stat_bin=""
 
 	[[ -e "$path" && ! -L "$path" && -O "$path" ]] || return 1
-	os_name="$(/usr/bin/uname -s)"
+	uname_bin="$(PATH="$trusted_path" command -v uname)" || return 1
+	stat_bin="$(PATH="$trusted_path" command -v stat)" || return 1
+	os_name="$("$uname_bin" -s)"
 	if [[ "$os_name" == "Darwin" ]]; then
-		mode="$(/usr/bin/stat -f '%Lp' "$path" 2>/dev/null)" || return 1
+		mode="$("$stat_bin" -f '%Lp' "$path" 2>/dev/null)" || return 1
 	else
-		mode="$(/usr/bin/stat -c '%a' "$path" 2>/dev/null)" || return 1
+		mode="$("$stat_bin" -c '%a' "$path" 2>/dev/null)" || return 1
 	fi
 	[[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
 	mode="${mode:$((${#mode} - 3))}"
