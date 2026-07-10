@@ -88,7 +88,7 @@ function readVaultCommand<T extends VaultProbeValue>(
   const result = spawnSync("/bin/bash", [helperPath, command], {
     encoding: "utf8",
     env: vaultProbeEnvironment(),
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "ignore"],
     timeout: 750,
   });
   if (result.error !== undefined || result.signal !== null || result.status === null) return null;
