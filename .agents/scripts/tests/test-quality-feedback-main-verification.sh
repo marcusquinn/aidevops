@@ -200,6 +200,14 @@ source "${SCRIPT_DIR}/test-quality-feedback-main-verification-scan.sh"
 
 # --- Main ---
 
+run_positive_review_filter_regressions() {
+	test_scan_single_pr_filters_issue4814_pr2166_exact_body
+	test_scan_single_pr_positive_body_with_inline_comments_not_summary_only
+	test_scan_single_pr_filters_positive_inline_acknowledgement_reply
+	test_scan_single_pr_filters_parent_of_resolution_reply
+	return 0
+}
+
 main() {
 	source "$HELPER"
 
@@ -286,9 +294,7 @@ main() {
 
 	echo ""
 	echo "Running positive-review filter regression tests (GH#4814)"
-	test_scan_single_pr_filters_issue4814_pr2166_exact_body
-	test_scan_single_pr_positive_body_with_inline_comments_not_summary_only
-	test_scan_single_pr_filters_positive_inline_acknowledgement_reply
+	run_positive_review_filter_regressions
 
 	echo ""
 	echo "Running merge/CI-status comment filter tests (GH#5668)"
