@@ -19,10 +19,8 @@ Request: $ARGUMENTS
 | `audit --quick` | Pressure, processes, persistence, and listeners only |
 | `audit --deep` | Add applications, architecture, extensions, and legacy inventory |
 | `plan` | Compose itemized actions and verification without changing the host |
-| `apply` | Act only on items explicitly approved in the current conversation |
-| `verify` | Re-audit changed items and retained capabilities |
-| `rollback` | Restore an approved transaction from durable quarantine and verify it |
-| `routine` | Non-interactive read-only audit; never prompt, elevate, apply, or rollback |
+| `verify` | Repeat the read-only audit and compare selected findings |
+| `routine` | Non-interactive read-only audit; never prompt, elevate, plan, or mutate |
 
 ## Required behaviour
 
@@ -33,9 +31,12 @@ Request: $ARGUMENTS
   numbers, usernames, or unredacted home paths.
 - Treat classifications as evidence, never as permission to quit, disable, move,
   uninstall, firewall, or restart anything.
-- Before remediation, show the exact itemized plan, capability impact,
-  administrator requirement, verification, and rollback state; obtain approval
-  for those items.
+- This initial release is audit/plan-only. Never execute remediation, even after
+  approval; provide a reviewed transaction plan for a human or future
+  deterministic helper.
+- A remediation plan must bind exact argv, canonical identities, capability
+  impact, administrator requirements, verification, rollback state, and a digest
+  before asking for approval.
 - Use durable aidevops quarantine, never Trash as the sole rollback store.
 - Do not interrupt active developer services or wildcard listeners merely because
   they are old, large, long-running, or externally bound.

@@ -1989,7 +1989,7 @@ Primary agents live at `.agents/<name>.md`. Each is a domain expert with its own
 | Research | `research.md` | Technical and market research, competitive analysis | gemini/grok |
 | SEO | `seo.md` | SEO audits, keyword research, GSC, schema, technical SEO | opus |
 
-**Specialist subagents** (e.g. `@wordpress`, `@seo`, Build-Agent, Build-MCP, etc.) live under `.agents/tools/` or as `mode: subagent` files and are invoked via `@mention` when domain expertise is needed. See `subagent-index.toon` for the full roster.
+**Specialist subagents** (e.g. `@wordpress`, `@seo`, Build-Agent, Build-MCP, etc.) live under `.agents/tools/` or as `mode: subagent` files and are invoked via `@mention` when domain expertise is needed. See `subagent-index.toon` for the full roster. For read-only macOS Activity Monitor and background-efficiency audits, use `@macos-activity-cleaner` or `/aidevops-macos-activity-cleaner`.
 
 #### How to invoke a main agent
 
@@ -2049,7 +2049,6 @@ These are examples of subagents that have supporting MCPs enabled. See `.agents/
 | `@domain-research` | DNS intelligence: rDNS, subdomains, CNAMEs (THC + Reconeer) | (API-based) |
 | `@serper` | Google Search API (web, images, news, places) | serper |
 | `@list-keys` | List all configured API keys and storage locations | (read-only) |
-| `@macos-activity-cleaner` | Activity Monitor, background persistence, legacy app, and listener audits | (native macOS tools) |
 | `@code-standards` | Quality standards reference, compliance checking | context7 |
 | `@browser-automation` | Testing, scraping, DevTools | chrome-devtools, context7 |
 | `@performance` | Core Web Vitals, network analysis, accessibility | chrome-devtools |

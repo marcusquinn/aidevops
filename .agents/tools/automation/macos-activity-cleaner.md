@@ -31,7 +31,7 @@ still needs.
 - **Default**: bounded, read-only, unprivileged audit; no changes or prompts.
 - **Decision rule**: age, CPU, memory, architecture, listener address, or a failed
   exit alone never proves that an item is unnecessary.
-- **Action rule**: classification is not permission; require itemized approval.
+- **Action rule**: v1 is audit/plan-only and never executes host mutations.
 - **Rollback**: durable aidevops quarantine, never Trash as the sole copy.
 - **Routine**: read-only, non-interactive, non-elevating, and non-mutating.
 
@@ -53,8 +53,9 @@ still needs.
    compression, swap growth, CPU saturation, thermal state, and repeated samples.
 7. Never call an I/O-wait or `stuck` process hung without repeated evidence and
    attribution to the owning workload.
-8. Never quit, kill, disable, unload, move, uninstall, firewall, restart, or edit
-   settings without an approved plan.
+8. Never quit, kill, disable, unload, move, copy for later deletion, uninstall,
+   firewall, restart, or edit settings. This initial release stops at a plan even
+   when the user asks the agent to execute it.
 9. Never promise reversibility until the quarantine and restore path have both
    been verified. Trash is not rollback storage and may be emptied independently.
 10. Preserve active security, backup, VPN, sync, licensing, accessibility,
@@ -71,23 +72,17 @@ adds applications, extensions, and legacy components but remains read-only.
 
 ### Plan
 
-Turn selected finding IDs into an itemized proposal. Include exact identities,
-paths or labels in private chat only, expected benefit, capability impact,
-administrator needs, preconditions, operation-verification tier, post-checks, and
-rollback status. A plan performs no mutation.
+Turn selected finding IDs into an itemized proposal. Include canonical identities,
+sanitized paths or labels, exact argv, expected benefit, capability impact,
+administrator needs, preconditions, operation-verification tier, post-checks,
+rollback limits, and a digest covering the complete plan. A plan performs no
+mutation. Any identity, path, argv, or precondition drift invalidates approval and
+requires a new digest and confirmation.
 
-### Apply
+### Verify
 
-Apply only finding IDs or named items the user explicitly approved in the current
-conversation. A broad request such as "clean everything" is not itemized approval;
-return a plan first. Re-audit preconditions immediately before acting.
-
-### Verify and Rollback
-
-`verify` repeats targeted collection and tests retained capabilities. `rollback`
-requires an approved transaction, restores original metadata and persistence,
-bootstraps it when appropriate, and reruns capability checks. Report rollback as
-`staged-unverified` until restore and verification both pass.
+Repeat targeted read-only collection and compare selected findings. Verification
+does not bootstrap, restore, restart, or otherwise mutate the host.
 
 ### Routine
 
@@ -95,12 +90,34 @@ When invoked with `routine`, by a scheduler, or in headless/non-interactive mode
 
 - run only bounded read-only checks;
 - do not write plans, state, manifests, or quarantine data;
-- do not prompt, elevate, apply, rollback, or intentionally trigger TCC;
+- do not prompt, elevate, plan, mutate, or intentionally trigger TCC;
 - report coverage gaps as `incomplete`, never as a clean result;
 - emit a concise health summary and worker-ready follow-ups for actionable drift.
 
 Schedule recurring audits through `/routine` with
 `agent:macos-activity-cleaner` and a `routine` prompt.
+
+## Read-only Bash Allowlist
+
+Audit Bash may invoke only bounded read forms:
+
+- `sw_vers`, `uname`, `uptime`, read-only `sysctl`, `memory_pressure`, `vm_stat`,
+  and `pmset -g ...`;
+- bounded `top -l ...` samples and `ps` with PID/PPID/CPU/memory/RSS/elapsed/state
+  plus `comm` or `ucomm` fields only;
+- `launchctl list` and targeted `launchctl print <domain/label>`;
+- `systemextensionsctl list`, `kmutil showloaded`, `pluginkit -m`, and bounded
+  `system_profiler` data types;
+- numeric `lsof -nP` listener and targeted connection inspection;
+- bounded `fd` discovery plus read-only `plutil` or Python `plistlib` parsing;
+- an exact read-only System Events Login Items name query in an interactive audit
+  only when Automation access already works.
+
+Never run `sudo`, `osascript ... do shell script`, `launchctl bootout/bootstrap`,
+`kill`, `pkill`, `mv`, `rm`, `cp`, `ditto`, `chmod`, `chown`, `defaults write`,
+`sfltool reset/clear`, extension activation/removal, firewall commands, or any
+unlisted mutating flag. If bounded evidence cannot be collected with the allowlist,
+mark that coverage incomplete.
 
 ## Audit Workflow
 
@@ -119,9 +136,11 @@ Separate sustained pressure from one sample.
 
 Use `ps` fields such as PID, PPID, CPU, memory, RSS, elapsed time, state, and
 `comm`; never request `args`, `command`, `env`, or equivalent full command lines.
-Aggregate browser, Electron, language-server, aidevops, and container children by
-executable before recommending action. Inspect ancestry or working directory only
-for a specific finding and redact private paths in the report.
+Group browser, Electron, language-server, aidevops, and container children by
+stable workload evidence: user/session scope, parent tree, launch label or bundle,
+canonical executable identity, code signature, and container context. Basename-only
+groups remain `conditional` and can never become remediation targets. Inspect a
+working directory only for a specific finding and redact it in the report.
 
 Distinguish:
 
@@ -193,7 +212,7 @@ expected benefit, and verification:
 | Category | Meaning |
 |----------|---------|
 | `keep` | Current system or user capability with expected behaviour |
-| `safe` | High-confidence trial-disable candidate with a known capability test; still requires approval |
+| `trial-disable` | High-confidence candidate with a known capability test; still not authorization |
 | `conditional` | Ownership, dependency, activity, or user need is unclear |
 | `legacy` | Deprecated persistence, unsupported architecture, or superseded component; use does not imply removal |
 | `broken` | Invalid persistence, missing executable, or verified repeated failure; repair may be preferable to removal |
@@ -201,35 +220,43 @@ expected benefit, and verification:
 Unknown third-party items default to `conditional`. Apple/system items default to
 `keep` or repair guidance unless there is authoritative evidence otherwise.
 
-## Remediation Transaction
+## Remediation Planning Contract
 
-After itemized approval:
+This agent never executes the plan. A future deterministic helper or a human
+operator must re-audit before acting and meet every requirement below:
 
-1. Re-audit identity, path, owner, signature, active state, clients, and capability
-   dependencies to prevent time-of-check/time-of-use mistakes.
-2. Run the framework pre-edit git check before filesystem mutation. Never bypass a
-   canonical-repository block; use a clean linked worktree or non-repository
-   workspace for host operations.
-3. Run `verify-operation-helper.sh check` and require `verify` for high/critical
-   operations. Respect a block.
-4. Display the exact commands and use one bounded, visible administrator prompt
-   only when approved system paths require it. Headless mode returns
-   `requires_admin` instead.
-5. Create a mode-0700 transaction directory outside Trash:
+1. Bind approval to canonical identities, exact argv, sanitized operands,
+   elevation, preconditions, capability tests, and a digest. Any change requires
+   renewed approval.
+2. Classify filesystem, launchd, extension, authorization, security, network, and
+   privileged operations as high/critical. Require an exact verifier `PROCEED`;
+   warnings, skips, unavailable verification, unknown types, low confidence, or
+   any other result block mutation.
+3. Never send private paths, service labels, or command operands to another model
+   provider without explicit consent. Verification prompts use sanitized identity
+   summaries; exact local operations remain local.
+4. Use a deterministic allowlisted helper with argv arrays and no `eval`, `sh -c`,
+   AppleScript command strings, or password input before enabling apply/rollback.
+5. Run the framework pre-edit check before filesystem mutation and never bypass a
+   canonical-repository block.
+6. Create a mode-0700 transaction directory outside Trash:
    - user scope: `~/.aidevops/quarantine/macos-activity-cleaner/<transaction-id>/`;
    - system scope: `/Library/Application Support/aidevops/quarantine/macos-activity-cleaner/<transaction-id>/`.
-6. Write a mode-0600 manifest containing original path, owner/group/mode,
+7. Write a mode-0600 manifest containing original path, owner/group/mode, ACLs,
+   extended attributes, flags, symlink targets,
    checksum, launch domain/label, approved operations, and planned checks. Do not
    store raw command lines, secrets, or private content.
-7. For persistence cleanup, unload the exact service first and verify it is
-   inactive. Abort without moving files when unload fails.
-8. Move only approved components while preserving original path structure. Prefer
-   a verified vendor uninstaller for integrated applications; inspect it locally
-   before execution.
-9. Verify each quarantine destination exists before describing the action as
-   reversible. Check for relaunch, listener changes, errors, and retained
-   capabilities.
-10. Log sanitized security/config operations with `audit-log-helper.sh`; report a
+8. Capture prior loaded/running state and use a write-ahead transaction. After an
+   unload, any later failure must restore files, bootstrap the prior service state,
+   and verify capability before returning.
+9. Use an atomic same-volume rename or verified copy-before-delete. Compare
+   recursive content, metadata, symlinks, ACLs, extended attributes, flags, code
+   signatures, and launch state. Destination existence alone is not reversibility.
+10. Mark vendor-uninstaller rollback unavailable unless an independent complete
+    backup and tested restoration path exist.
+11. Keep rollback `staged-unverified` until a real restore, bootstrap, and
+    capability test pass.
+12. Log sanitized security/config operations with `audit-log-helper.sh`; report a
     pre-existing audit-chain failure separately instead of claiming verification.
 
 Treat authorization plug-ins, kernel/system extensions, protected staging areas,
@@ -249,15 +276,13 @@ Return:
 4. **Keep list** — important observed capabilities that should remain.
 5. **Coverage** — complete, incomplete, permission-limited, or unsupported for
    processes, persistence, login items, extensions, applications, and listeners.
-6. **Changes** — exact approved actions actually completed; say "No changes made"
-   for audit/plan/routine.
-7. **Rollback state** — unavailable, staged-unverified, or verified; never imply
-   Trash contents remain available without checking.
+6. **Changes** — always say "No changes made" in this audit/plan-only release.
+7. **Planned rollback state** — unavailable or staged-unverified; never claim a
+   planned transaction is verified.
 8. **Follow-up** — deferred restarts, administrator work, or routine scheduling.
 
 Every completion claim needs command, process, file, service, or metric evidence.
-If post-change verification is incomplete, report partial completion rather than
-intent as fact.
+If a comparison is incomplete, report partial coverage rather than intent as fact.
 
 ## Related
 
