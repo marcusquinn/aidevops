@@ -128,7 +128,7 @@ preferences:
 
 | Category | Budget | Spent | Remaining | % Used |
 |----------|--------|-------|-----------|--------|
-| Time (hours) | 4h | 12h | 0h | 300% |
+| Time (hours) | 4h | 12h | -8h | 300% |
 | Money (USD) | $100 | $0 | $100 | 0% |
 | Tokens | unlimited within cost cap | tracked | n/a | n/a |
 
