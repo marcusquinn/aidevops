@@ -98,14 +98,18 @@ const FALLBACK_WINDOW_MS = 30000;
  * Timeout 15s (t2725) is preserved as a fallback governing the fire-and-forget
  * tail rather than the handler return time.
  *
- * @param {string} scriptsDir
- * @param {any} client
+ * The caller owns a cross-process lock and this promise chain always releases
+ * it, including empty-output and failure paths.
+ *
+ * @param {{ scriptsDir: string, client: any, cacheFile: string, lockDir: string,
+ *   execGreeting: Function, maintenanceNoticeFn: Function }} options
  */
 function runGreetingAsync({ scriptsDir, client, cacheFile, lockDir, execGreeting, maintenanceNoticeFn }) {
   const script = join(scriptsDir, "aidevops-update-check.sh");
-  execGreeting(`bash ${JSON.stringify(script)} --interactive`, {
-    timeout: 15000,
-  })
+  Promise.resolve()
+    .then(() => execGreeting(`bash ${JSON.stringify(script)} --interactive`, {
+      timeout: 15000,
+    }))
     .then(async ({ stdout }) => {
       const output = stdout ? stdout.trim() : "";
       if (!output) {
@@ -213,8 +217,8 @@ function emitCachedGreeting(client, cached) {
 }
 
 function acquireRefreshLock(lockDir, staleMs, nowMs) {
-  mkdirSync(dirname(lockDir), { recursive: true });
   try {
+    mkdirSync(dirname(lockDir), { recursive: true });
     mkdirSync(lockDir);
     return true;
   } catch (err) {
@@ -405,37 +409,32 @@ export function createGreetingHandler({
 
     fired = true;
 
-    // Serve the last complete cache synchronously. This keeps the event hook
-    // independent of refresh latency even when this process becomes lock owner.
-    const cached = readGreetingCache(cacheFile);
-    emitCachedGreeting(client, cached);
-
-    if (cached && now() - cached.mtimeMs <= refreshTtlMs) {
-      return;
-    }
-
-    if (!acquireRefreshLock(lockDir, lockStaleMs, now())) {
-      if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
-        console.error("[aidevops] greeting: refresh already running in another process");
-      }
-      return;
-    }
-
     if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
       const mode = isPrimary ? "primary" : "fallback";
       console.error(`[aidevops] greeting: triggered (mode=${mode}, type=${event.type})`);
     }
 
-    // t2729: fire-and-forget — do NOT await. The handler resolves immediately;
-    // the toast arrives whenever the subprocess finishes (typically 5-15s later).
-    runGreetingAsync({
-      scriptsDir,
-      client,
-      cacheFile,
-      lockDir,
-      execGreeting,
-      maintenanceNoticeFn,
-    });
+    // Serve the last complete cache synchronously. This keeps the event hook
+    // independent of refresh latency even when this process becomes lock owner.
+    const cached = readGreetingCache(cacheFile);
+    emitCachedGreeting(client, cached);
+
+    if (!cached || now() - cached.mtimeMs > refreshTtlMs) {
+      if (acquireRefreshLock(lockDir, lockStaleMs, now())) {
+        // t2729: fire-and-forget — do NOT await. The handler resolves immediately;
+        // the toast arrives whenever the subprocess finishes.
+        runGreetingAsync({
+          scriptsDir,
+          client,
+          cacheFile,
+          lockDir,
+          execGreeting,
+          maintenanceNoticeFn,
+        });
+      } else if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
+        console.error("[aidevops] greeting: refresh already running in another process");
+      }
+    }
 
     if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
       console.error("[aidevops] greeting: handler-completed");

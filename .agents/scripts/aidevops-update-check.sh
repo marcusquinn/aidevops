@@ -194,8 +194,8 @@ _build_version_str() {
 	elif [[ "$current" != "$remote" ]]; then
 		# Special format for update available - parsed by AGENTS.md
 		# Cache the update-available string so no-Bash agents can display it too
-		mkdir -p "$cache_dir"
-		echo "UPDATE_AVAILABLE|$current|$remote|$app_name" >"$cache_dir/session-greeting.txt"
+		_write_cache "$cache_dir" "UPDATE_AVAILABLE|$current|$remote|$app_name" \
+			"" "" "" "" "" "" "" || true
 		echo "UPDATE_AVAILABLE|$current|$remote|$app_name"
 		return 1
 	else
