@@ -153,7 +153,13 @@ Options: `1. Start now (rec) 2. Review file first 3. Queue for pulse 4. Edit bef
 
 ## Mission Lifecycle
 
-`planning → active → paused → completed` / `active → blocked → active` / `→ cancelled`
+`planning → active → paused → active → completed` / `active → recovering → active` / `active → blocked → active` / `→ cancelled`
+
+A mission fuse transitions the affected feature to `recovering`, not `skipped`
+or `done`. Append a durable recovery checkpoint and schedule the next safe route
+before ending the invocation. A mission cannot complete while recovery criteria
+remain open. Full invariant and recovery ladder:
+`reference/safety-stop-recovery.md`.
 
 Mission dirs: `research/` (comparisons, API evals), `agents/` (temp agents, draft tier), `scripts/` (automation), `assets/` (screenshots, PDFs). Promote generally-useful agents/scripts to `~/.aidevops/agents/draft/` and log in decisions log.
 

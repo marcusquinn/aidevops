@@ -77,6 +77,12 @@ brief: run the focused test(s), create a WIP commit before broad lint/release
 gates, then continue verification. This prevents runtime/watchdog failures from
 leaving only dirty local edits for pulse recovery.
 
+If a safety fuse can trip, also include the Safety-Stop Recovery fields from
+`reference/safety-stop-recovery.md`. A fuse never fulfils acceptance criteria:
+the brief must preserve the original objective, remaining criteria, next safer
+route, and resume condition. Keep the task open until completion, explicit user
+cancellation, or demonstrated impossibility.
+
 ### 5. Self-assignment awareness (t2406)
 
 If filing via `gh_create_issue` with `auto-dispatch` label, plan to unassign immediately after:
