@@ -4441,3 +4441,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [x] t8177 feat: implement scoped task surface navigation and filters #bug #ui ref:GH#8258 pr:#8484 completed:2026-07-07
 
 - [ ] t18070 Design Secrets interface and repair Vault unlock readiness #bug #enhancement #security ref:GH#26912
+
+- [ ] t18078 Route OpenAI workers through GPT-5.6 tiers #bug #type:enhancement ref:GH#26913
