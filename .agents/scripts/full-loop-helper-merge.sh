@@ -598,7 +598,6 @@ _merge_remove_worktree_for_cleanup() {
 	print_warning "Post-merge worktree cleanup: guarded worktree helper unavailable for ${branch_name}"
 	return 1
 }
-
 _merge_cleanup_linked_worktree() {
 	local cleanup_plan="$1"
 	local repo="$2"
@@ -608,7 +607,6 @@ _merge_cleanup_linked_worktree() {
 	IFS=$'\t' read -r worktree_path branch_name canonical_dir <<<"$cleanup_plan"
 	[[ -n "$worktree_path" && -n "$branch_name" && -n "$canonical_dir" ]] || return 0
 	[[ -d "$canonical_dir" ]] || return 0
-
 	print_info "Post-merge worktree cleanup: removing linked worktree ${worktree_path} for ${branch_name} in ${repo}"
 	local default_branch=""
 	default_branch=$(_merge_default_branch_for_cleanup "$canonical_dir")
@@ -627,6 +625,35 @@ _merge_cleanup_linked_worktree() {
 	fi
 
 	print_warning "Post-merge worktree cleanup did not remove ${worktree_path}; safety-net cleanup will retry later"
+	return 0
+}
+
+_merge_record_deferred_cleanup_owner() {
+	local cleanup_plan="$1"
+	local worktree_path="" branch_name="" canonical_dir=""
+	IFS=$'\t' read -r worktree_path branch_name canonical_dir <<<"$cleanup_plan"
+	[[ -n "$worktree_path" && -n "$branch_name" ]] || return 1
+	[[ -d "$worktree_path" ]] || return 1
+
+	local owner_pid=""
+	if declare -F _resolve_worktree_owner_pid >/dev/null 2>&1; then
+		owner_pid=$(_resolve_worktree_owner_pid "" 2>/dev/null || true)
+	fi
+	[[ "$owner_pid" =~ ^[0-9]+$ ]] || owner_pid="$PPID"
+	[[ "$owner_pid" =~ ^[0-9]+$ ]] || return 1
+
+	local marker_dir="${worktree_path}/.agents"
+	local marker_path="${marker_dir}/.full-loop-cleanup-deferred"
+	mkdir -p "$marker_dir" || return 1
+	printf '%s\n' "$owner_pid" >"${marker_path}.tmp.$$" || return 1
+	mv "${marker_path}.tmp.$$" "$marker_path" || return 1
+
+	if declare -F claim_worktree_ownership >/dev/null 2>&1; then
+		claim_worktree_ownership "$worktree_path" "$branch_name" \
+			--owner-pid "$owner_pid" \
+			--session "${OPENCODE_SESSION_ID:-${CLAUDE_SESSION_ID:-full-loop-merge}}" \
+			--task "post-merge-cleanup" >/dev/null 2>&1 || true
+	fi
 	return 0
 }
 
@@ -743,7 +770,15 @@ cmd_merge() {
 
 	_merge_unlock_resources "$pr_number" "$repo"
 	if [[ "$has_auto" -eq 0 && -n "$_cleanup_plan" ]]; then
-		_merge_cleanup_linked_worktree "$_cleanup_plan" "$repo" || true
+		# This helper runs inside a tool subprocess while the parent AI runtime may
+		# still use the worktree as its logical --dir even when no process has that
+		# OS cwd. Never remove it synchronously; the pulse safety-net proves the
+		# owner has exited before cleanup.
+		if _merge_record_deferred_cleanup_owner "$_cleanup_plan"; then
+			print_info "Post-merge worktree cleanup deferred until the parent runtime exits"
+		else
+			print_warning "Post-merge worktree cleanup deferred, but parent-runtime marker could not be recorded"
+		fi
 	fi
 
 	return 0

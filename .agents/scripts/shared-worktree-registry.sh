@@ -545,6 +545,25 @@ unregister_worktree() {
 	return 0
 }
 
+unregister_worktree_if_owner_pid() {
+	local wt_path="$1"
+	local expected_owner_pid="$2"
+	[[ "$expected_owner_pid" =~ ^[0-9]+$ ]] || return 1
+	[[ -f "$WORKTREE_REGISTRY_DB" ]] || return 1
+	_init_registry_db
+	wt_path=$(_wt_registry_lookup_path "$wt_path")
+
+	local changed="0"
+	changed=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
+		DELETE FROM worktree_owners
+		WHERE worktree_path = '$(_wt_sql_escape "$wt_path")'
+		  AND owner_pid = ${expected_owner_pid};
+		SELECT changes();
+	" 2>/dev/null || printf '0')
+	[[ "$changed" == "1" ]] || return 1
+	return 0
+}
+
 # Check who owns a worktree
 # Arguments:
 #   $1 - worktree path
