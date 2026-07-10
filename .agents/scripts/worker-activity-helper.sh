@@ -49,6 +49,18 @@ WAH_SERVICE_INTERRUPTION_RESULT="service_interruption_continue"
 WAH_RESULT_WATCHDOG_STALL_KILLED="watchdog_stall_killed"
 WAH_RESULT_LOCAL_KILL="local_kill"
 
+# Shared jq definitions keep terminal-session semantics identical in the scalar
+# and rich aggregators without duplicating a long filter in both functions.
+WAH_SESSION_OUTCOME_JQ='
+	def _wah_nonterminal:
+		((.result // "") | endswith("_continue")) or (.result == "brief_recovery");
+	def _wah_session_outcomes:
+		to_entries
+		| group_by(if ((.value.session_key // "") | length) > 0 then .value.session_key else "__event_\(.key)" end)
+		| map(sort_by([(.value.ts // 0), (if (.value.issue_number // null) != null then 1 else 0 end), .key]) | last.value)
+		| map(select(_wah_nonterminal | not));
+'
+
 #######################################
 # Convert short window spec to seconds. Caller owns the cutoff math.
 # $1 — one of 1h | 6h | 24h | 48h | 7d
@@ -105,14 +117,9 @@ _wah_aggregate_metrics() {
 	local result service_result watchdog_killed_result
 	service_result="$WAH_SERVICE_INTERRUPTION_RESULT"
 	watchdog_killed_result="$WAH_RESULT_WATCHDOG_STALL_KILLED"
-	result=$(jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg service_result "$service_result" --arg watchdog_killed_result "$watchdog_killed_result" '
-		def _wah_nonterminal:
-			((.result // "") | endswith("_continue")) or (.result == "brief_recovery");
-		def _wah_session_outcomes:
-			to_entries
-			| group_by(if ((.value.session_key // "") != "") then .value.session_key else "__event_\(.key)" end)
-			| map(sort_by([(.value.ts // 0), (if (.value.issue_number // null) != null then 1 else 0 end), .key]) | last.value)
-			| map(select(_wah_nonterminal | not));
+	local jq_program
+	# shellcheck disable=SC2016 # jq variables are evaluated by jq, not the shell
+	jq_program=$WAH_SESSION_OUTCOME_JQ'
 		[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $events
 		| ($events | _wah_session_outcomes) as $w | {
 			total:  ($w | length),
@@ -129,7 +136,8 @@ _wah_aggregate_metrics() {
 				and .result != "rate_limit"
 			)] | length)
 		} | "\(.total) \(.succ) \(.wk) \(.wc) \(.sic) \(.rl) \(.of)"
-	' <"$metrics" 2>/dev/null) || result="0 0 0 0 0 0 0"
+	'
+	result=$(jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg service_result "$service_result" --arg watchdog_killed_result "$watchdog_killed_result" "$jq_program" <"$metrics" 2>/dev/null) || result="0 0 0 0 0 0 0"
 
 	[[ -n "$result" ]] || result="0 0 0 0 0 0 0"
 	printf '%s\n' "$result"
@@ -154,15 +162,10 @@ _wah_metric_details_json() {
 	fi
 	now_epoch="${2:-$(date +%s)}"
 
-	jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg watchdog_killed_result "$WAH_RESULT_WATCHDOG_STALL_KILLED" --arg local_kill_result "$WAH_RESULT_LOCAL_KILL" '
+	local jq_program
+	# shellcheck disable=SC2016 # jq variables are evaluated by jq, not the shell
+	jq_program=$WAH_SESSION_OUTCOME_JQ'
 		def _wah_empty_if_null: if . == null then "" else . end;
-		def _wah_nonterminal:
-			((.result // "") | endswith("_continue")) or (.result == "brief_recovery");
-		def _wah_session_outcomes:
-			to_entries
-			| group_by(if ((.value.session_key // "") != "") then .value.session_key else "__event_\(.key)" end)
-			| map(sort_by([(.value.ts // 0), (if (.value.issue_number // null) != null then 1 else 0 end), .key]) | last.value)
-			| map(select(_wah_nonterminal | not));
 		[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $events
 		| ($events | _wah_session_outcomes) as $w
 		| ($w | map(.duration_ms // 0)) as $durations
@@ -243,7 +246,8 @@ _wah_metric_details_json() {
 					examples: (sort_by(.ts // 0) | reverse | .[0:3] | map({ts, session_key, issue_number, repo_slug, result, exit_code, output_file, launch_failure_cause, kill_reason, next_action}))
 				})
 				| sort_by(.count) | reverse | .[0:10])
-		}' <"$metrics" 2>/dev/null || \
+		}'
+	jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg watchdog_killed_result "$WAH_RESULT_WATCHDOG_STALL_KILLED" --arg local_kill_result "$WAH_RESULT_LOCAL_KILL" "$jq_program" <"$metrics" 2>/dev/null || \
 		printf '{"result_counts":{},"diagnostic_focus":{},"timing_ms":{"avg":0,"max":0,"samples":0},"recent_examples":[],"failure_groups":[],"failure_families":[]}'
 	return 0
 }
