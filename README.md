@@ -2049,6 +2049,7 @@ These are examples of subagents that have supporting MCPs enabled. See `.agents/
 | `@domain-research` | DNS intelligence: rDNS, subdomains, CNAMEs (THC + Reconeer) | (API-based) |
 | `@serper` | Google Search API (web, images, news, places) | serper |
 | `@list-keys` | List all configured API keys and storage locations | (read-only) |
+| `@macos-activity-cleaner` | Activity Monitor, background persistence, legacy app, and listener audits | (native macOS tools) |
 | `@code-standards` | Quality standards reference, compliance checking | context7 |
 | `@browser-automation` | Testing, scraping, DevTools | chrome-devtools, context7 |
 | `@performance` | Core Web Vitals, network analysis, accessibility | chrome-devtools |
