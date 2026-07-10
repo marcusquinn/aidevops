@@ -1119,7 +1119,7 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 
 - [x] t18081 Prevent profile contributions corruption on GitHub API failures #bug #framework ref:GH#26937 pr:#26944 completed:2026-07-10
 
-- [ ] t18082 Fix sandbox cleanup for descendants that create new process groups #auto-dispatch #bug #framework #safety tier:standard ref:GH#26951 logged:2026-07-10 -> [todo/tasks/t18082-brief.md]
+- [x] t18082 Fix sandbox cleanup for descendants that create new process groups #auto-dispatch #bug #framework #safety tier:standard ref:GH#26951 logged:2026-07-10 -> [todo/tasks/t18082-brief.md] pr:#27000 completed:2026-07-10
 
 ## In Progress
 
