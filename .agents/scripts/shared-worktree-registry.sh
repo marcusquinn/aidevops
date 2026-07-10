@@ -390,13 +390,43 @@ register_worktree() {
 	return 0
 }
 
+_wt_is_trusted_opencode_session() {
+	local session_id="$1"
+	[[ -n "${OPENCODE_SESSION_ID:-}" ]] || return 1
+	[[ "$session_id" == "$OPENCODE_SESSION_ID" ]] || return 1
+	[[ "$session_id" == ses_* ]] || return 1
+	return 0
+}
+
+_wt_existing_owner_claim_state() {
+	local wt_path="$1"
+	local owner_pid="$2"
+	local existing_owner_info=""
+	existing_owner_info=$(sqlite3 -separator '|' "$WORKTREE_REGISTRY_DB" "
+		SELECT owner_pid, COALESCE(owner_session, '') FROM worktree_owners
+		WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
+	" 2>/dev/null || echo "")
+	local existing_owner_pid=""
+	local existing_owner_session=""
+	IFS='|' read -r existing_owner_pid existing_owner_session <<<"$existing_owner_info"
+	local existing_owner_pid_sql=0
+	[[ "$existing_owner_pid" =~ ^[0-9]+$ ]] && existing_owner_pid_sql="$existing_owner_pid"
+	local existing_owner_dead=0
+	if [[ -n "$existing_owner_pid" ]] && [[ "$existing_owner_pid" != "$owner_pid" ]] && \
+		! kill -0 "$existing_owner_pid" 2>/dev/null; then
+		existing_owner_dead=1
+	fi
+	printf '%s|%s|%s|%s' "$existing_owner_pid" "$existing_owner_session" "$existing_owner_pid_sql" "$existing_owner_dead"
+	return 0
+}
+
 # Claim ownership of a worktree without overwriting another live owner.
 # Arguments:
 #   $1 - worktree path (required)
 #   $2 - branch name (required)
 #   Flags: --task <id>, --batch <id>, --session <id>, --owner-pid <pid>
 # Returns:
-#   0 - ownership acquired or already held by this owner_pid
+#   0 - ownership acquired or already held by this owner_pid or OpenCode session
 #   1 - another live owner currently holds the worktree
 claim_worktree_ownership() {
 	local wt_path="$1"
@@ -434,27 +464,48 @@ claim_worktree_ownership() {
 	owner_pid=$(_resolve_worktree_owner_pid "$owner_pid_override")
 	local owner_comm
 	owner_comm=$(_get_proc_comm "$owner_pid")
+	local trusted_opencode_session=0
+	_wt_is_trusted_opencode_session "$session_id" && trusted_opencode_session=1
 
 	_init_registry_db
 	wt_path=$(_wt_registry_lookup_path "$wt_path")
 
-	local existing_owner_pid
-	existing_owner_pid=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
-        SELECT owner_pid FROM worktree_owners
-        WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
-    " 2>/dev/null || echo "")
+	local existing_owner_pid=""
+	local existing_owner_session=""
+	local existing_owner_pid_sql=0
+	local existing_owner_dead=0
+	local existing_owner_state=""
+	existing_owner_state=$(_wt_existing_owner_claim_state "$wt_path" "$owner_pid")
+	IFS='|' read -r existing_owner_pid existing_owner_session existing_owner_pid_sql existing_owner_dead <<<"$existing_owner_state"
 
-	if [[ -n "$existing_owner_pid" ]] && [[ "$existing_owner_pid" != "$owner_pid" ]]; then
-		if ! kill -0 "$existing_owner_pid" 2>/dev/null; then
-			unregister_worktree "$wt_path"
-		fi
-	fi
-
-	{
+	local final_owner_info=""
+	final_owner_info=$({
 		_wt_sqlite_set_owner_pid_param "$owner_pid"
 		printf '%s\n' "
-        INSERT OR IGNORE INTO worktree_owners
-            (worktree_path, branch, owner_pid, owner_session, owner_batch, task_id, owner_comm, owner_dead_seen_at)
+		BEGIN IMMEDIATE;
+		DELETE FROM worktree_owners
+		WHERE worktree_path = '$(_wt_sql_escape "$wt_path")'
+		  AND owner_pid = ${existing_owner_pid_sql}
+		  AND COALESCE(owner_session, '') = '$(_wt_sql_escape "$existing_owner_session")'
+		  AND ${existing_owner_dead} = 1;
+
+		UPDATE worktree_owners
+		SET branch = '$(_wt_sql_escape "$branch")',
+			owner_pid = :owner_pid,
+			owner_session = '$(_wt_sql_escape "$session_id")',
+			owner_batch = '$(_wt_sql_escape "$batch_id")',
+			task_id = '$(_wt_sql_escape "$task_id")',
+			owner_comm = '$(_wt_sql_escape "$owner_comm")',
+			owner_dead_seen_at = ''
+		WHERE worktree_path = '$(_wt_sql_escape "$wt_path")'
+		  AND (
+			owner_pid = :owner_pid
+			OR (${trusted_opencode_session} = 1
+				AND owner_session = '$(_wt_sql_escape "$session_id")')
+		  );
+
+		INSERT OR IGNORE INTO worktree_owners
+			(worktree_path, branch, owner_pid, owner_session, owner_batch, task_id, owner_comm, owner_dead_seen_at)
         VALUES
             ('$(_wt_sql_escape "$wt_path")',
              '$(_wt_sql_escape "$branch")',
@@ -462,28 +513,16 @@ claim_worktree_ownership() {
              '$(_wt_sql_escape "$session_id")',
              '$(_wt_sql_escape "$batch_id")',
              '$(_wt_sql_escape "$task_id")',
-             '$(_wt_sql_escape "$owner_comm")',
-             '');
-    "
-	} | sqlite3 "$WORKTREE_REGISTRY_DB" 2>/dev/null || true
+			 '$(_wt_sql_escape "$owner_comm")',
+			 '');
+		COMMIT;
+		SELECT owner_pid || '|' || COALESCE(owner_session, '')
+		FROM worktree_owners
+		WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
+	"
+	} | sqlite3 "$WORKTREE_REGISTRY_DB" 2>/dev/null) || return 1
 
-	local final_owner_pid
-	final_owner_pid=$(sqlite3 "$WORKTREE_REGISTRY_DB" "
-        SELECT owner_pid FROM worktree_owners
-        WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
-    " 2>/dev/null || echo "")
-
-	if [[ "$final_owner_pid" == "$owner_pid" ]]; then
-		sqlite3 "$WORKTREE_REGISTRY_DB" "
-            UPDATE worktree_owners
-            SET branch = '$(_wt_sql_escape "$branch")',
-                owner_session = '$(_wt_sql_escape "$session_id")',
-                owner_batch = '$(_wt_sql_escape "$batch_id")',
-                task_id = '$(_wt_sql_escape "$task_id")',
-                owner_comm = '$(_wt_sql_escape "$owner_comm")',
-                owner_dead_seen_at = ''
-            WHERE worktree_path = '$(_wt_sql_escape "$wt_path")';
-        " 2>/dev/null || true
+	if [[ "${final_owner_info%%|*}" == "$owner_pid" ]]; then
 		return 0
 	fi
 
