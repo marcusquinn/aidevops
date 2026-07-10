@@ -29,7 +29,7 @@ tools:
 - **Context resolution**: explicit `--app-id` > `.asc/project.json` > prompt user to `asc init` (CI must use `--app-id` or pre-run `asc init`)
 - **GitHub**: https://github.com/tddworks/asc-cli (MIT, Swift, 130+ commands; v0.18.1 adds review-submission item drill-down, sales-report rollups/schema selection, and an app-availability territory-limit fix; checked at `04fde49`, whose post-0.18.1 delta only refreshes homepage app-wall metadata for BetaReels and related app listings)
 - **Website**: https://asccli.app | **Web apps**: [Command Center](https://asccli.app/command-center), [Console](https://asccli.app/console), [Screenshot Studio](https://asccli.app/editor)
-- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (27 command-group skills, checked at `6465c10feb89`) | [Community](https://github.com/rorkai/app-store-connect-cli-skills) (23 workflow skills, checked at `9f9dd2b`)
+- **Skills**: [Official](https://github.com/tddworks/asc-cli-skills) (27 command-group skills, checked at `6465c10feb89`) | [Community](https://github.com/rudrankriyam/app-store-connect-cli-skills) (23 workflow skills, checked at `0886ecb`)
 - **Requirements**: macOS 13+, App Store Connect API key, `jq` (workflow scripts use `jq -r`)
 
 **Dependency check**: Before any `asc` command:
@@ -121,6 +121,10 @@ asc profiles inspect --path ./profiles/AppStore.mobileprovision --entitlements -
 asc profiles local install --path ./profiles/AppStore.mobileprovision
 # Metadata and AI screenshots
 asc app-info-localizations update --localization-id LOC_ID --name "My App" --subtitle "Do things faster"
+asc metadata plan --app APP_ID --version 1.2.3 --platform IOS --dir ./metadata --review-dir .asc/metadata/review
+asc metadata approve --review-dir .asc/metadata/review --all
+asc metadata status --review-dir .asc/metadata/review --output table
+asc metadata apply --app APP_ID --version 1.2.3 --platform IOS --dir ./metadata --review-dir .asc/metadata/review --confirm
 asc app-shots config --gemini-api-key KEY && asc app-shots generate
 asc app-shots translate --to zh --to ja
 # Reviewed screenshot batches — include existing remote counts before upload
@@ -163,7 +167,7 @@ Run `asc web-server` to start the local API bridge (ports 8420 HTTP, 8421 HTTPS)
 
 ## Agent Skills
 
-Install on-demand (not pre-loaded): **Official** `asc skills install --all` (per-command reference) | **Community** `asc install-skills` or `npx skills add rorkai/app-store-connect-cli-skills` (workflow orchestration: releases, ASO, localization, RevenueCat, crash triage, Apple Ads). These upstream skill packs are tracked for review but intentionally remain on-demand until aidevops has a multi-skill import strategy for repositories containing dozens of `SKILL.md` files. Latest reviewed official skill change adds build export-compliance handling; latest community refresh (`9f9dd2b`) keeps the Apple Ads auth/org/campaign/reporting/raw-API guidance, safe live-testing guardrails, Apple Ads command-usage notes, profile-expiration caveat, nested `asc review items add` examples, and the ID-resolver correction to use `asc apps list --paginate` instead of the invalid `asc apps --paginate` form, while renaming the former experimental web guidance to authenticated web-session fallback guidance for availability, release, and submission-health workflows.
+Install on-demand (not pre-loaded): **Official** `asc skills install --all` (per-command reference) | **Community** `asc install-skills` or `npx skills add rudrankriyam/app-store-connect-cli-skills` (workflow orchestration: releases, ASO, localization, RevenueCat, crash triage, Apple Ads). These upstream skill packs are tracked for review but intentionally remain on-demand until aidevops has a multi-skill import strategy for repositories containing dozens of `SKILL.md` files. Latest reviewed official skill change adds build export-compliance handling; latest community refresh (`0886ecb`) keeps the Apple Ads auth/org/campaign/reporting/raw-API guidance, safe live-testing guardrails, Apple Ads command-usage notes, profile-expiration caveat, nested `asc review items add` examples, and the ID-resolver correction to use `asc apps list --paginate` instead of the invalid `asc apps --paginate` form, while renaming the former experimental web guidance to authenticated web-session fallback guidance for availability, release, and submission-health workflows. It also adopts the `asc` 2.6.1 metadata review-artifact flow: use `asc metadata plan`, `approve`, and `status` before guarded `metadata apply --review-dir ... --confirm`, with `--key` or `--scope` for selective approval.
 
 ## Blitz MCP Server (Optional)
 
