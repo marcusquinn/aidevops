@@ -675,6 +675,20 @@ _check_script_drift() {
 # -----------------------------------------------------------------------------
 # _write_cache: persist session greeting to cache for agents without Bash.
 # -----------------------------------------------------------------------------
+_write_cache_contents() {
+	local line=""
+	local rc=0
+
+	for line in "$@"; do
+		[[ -n "$line" ]] || continue
+		printf '%s\n' "$line"
+		rc=$?
+		[[ "$rc" -eq 0 ]] || return "$rc"
+	done
+
+	return 0
+}
+
 _write_cache() {
 	local cache_dir="$1"
 	local output="$2"
@@ -687,27 +701,22 @@ _write_cache() {
 	local contribution_watch="$9"
 	local cache_file="$cache_dir/session-greeting.txt"
 	local temp_file=""
+	local rc=0
 
 	mkdir -p "$cache_dir"
 	temp_file=$(mktemp "$cache_dir/session-greeting.XXXXXX") || return 1
-	if ! {
-		echo "$output"
-		[[ -n "$runtime_hint" ]] && echo "$runtime_hint"
-		[[ -n "$nudge_output" ]] && echo "$nudge_output"
-		[[ -n "$session_warning" ]] && echo "$session_warning"
-		[[ -n "$security_posture" ]] && echo "$security_posture"
-		[[ -n "$secret_hygiene" ]] && echo "$secret_hygiene"
-		[[ -n "$advisories_output" ]] && echo "$advisories_output"
-		[[ -n "$contribution_watch" ]] && echo "$contribution_watch"
-		true
-	} >"$temp_file"; then
+	_write_cache_contents "$output" "$runtime_hint" "$nudge_output" \
+		"$session_warning" "$security_posture" "$secret_hygiene" \
+		"$advisories_output" "$contribution_watch" >"$temp_file" || {
+		rc=$?
 		rm -f "$temp_file"
-		return 1
-	fi
-	if ! mv -f "$temp_file" "$cache_file"; then
+		return "$rc"
+	}
+	mv -f "$temp_file" "$cache_file" || {
+		rc=$?
 		rm -f "$temp_file"
-		return 1
-	fi
+		return "$rc"
+	}
 	return 0
 }
 
