@@ -77,23 +77,23 @@ preferences:
 
 ### Milestone 1: Safe evidence baseline
 
-**Status:** active
+**Status:** done
 **Estimate:** ~30m
 **Validation:** A privacy-safe evidence matrix and bounded baseline exist; timeout cleanup leaves no descendants; observations are labelled confirmed, correlated, or hypothetical.
 
 | # | Feature | Task ID | Status | Estimate | Worker | PR |
 |---|---------|---------|--------|----------|--------|----|
-| 1.1 | F1 — Establish privacy-safe forensics and bounded measurement controls `[parallel-group:evidence]` | t18071 | in-review | ~30m | interactive | #26918 |
+| 1.1 | F1 — Establish privacy-safe forensics and bounded measurement controls `[parallel-group:evidence]` | t18071 | done | ~30m | interactive | #26918 |
 
 ### Milestone 2: Evidence-backed repository optimisation
 
-**Status:** pending
+**Status:** active
 **Estimate:** ~2h10m
 **Validation:** Every target has comparable before/after evidence, unchanged coverage, and either a threshold-meeting improvement or an explicitly rejected or rolled-back hypothesis. Conceptual analysis may parallelise, but benchmark phases remain serialized.
 
 | # | Feature | Task ID | Status | Estimate | Worker | PR |
 |---|---------|---------|--------|----------|--------|----|
-| 2.1 | F2 — Fix changed-file coverage, deduplicate discovery, and harden timeouts `[depends:F1] [parallel-group:repo-audit]` | t18072 | pending | ~45m | | |
+| 2.1 | F2 — Fix changed-file coverage, deduplicate discovery, and harden timeouts `[depends:F1] [parallel-group:repo-audit]` | t18072 | active | ~45m | interactive | |
 | 2.2 | F3 — Bound Target B lint execution profiles `[depends:F1] [parallel-group:repo-audit]` | t18073 | pending | ~55m | | |
 | 2.3 | F4 — Validate Target C integration without duplicate broad linting `[depends:F1] [parallel-group:repo-audit]` | t18074 | pending | ~30m | | |
 
@@ -128,13 +128,14 @@ preferences:
 
 | Category | Budget | Spent | Remaining | % Used |
 |----------|--------|-------|-----------|--------|
-| Time (hours) | 4h | 0h | 4h | 0% |
+| Time (hours) | 4h | 2.5h | 1.5h | 63% |
 | Money (USD) | $100 | $0 | $100 | 0% |
 | Tokens | unlimited within cost cap | tracked | n/a | 0% |
 
 | Date | Category | Amount | Description | Milestone |
 |------|----------|--------|-------------|-----------|
 | 2026-07-10 | time | planning | Interview, inventory, budget analysis, and decomposition | 1 |
+| 2026-07-10 | time | 2.5h | F1 evidence/profiler and F2 changed-mode implementation | 1-2 |
 
 ## Decision Log
 
@@ -145,6 +146,7 @@ preferences:
 | 3 | 2026-07-10 | Treat crash attribution as unproven until corroborated | Stale logs or high CPU observations alone do not establish causation | Assume lint caused the reboots |
 | 4 | 2026-07-10 | Serialize benchmarks and start concurrency at 1 | Parallel profiling could recreate the resource pressure under investigation | Run repository benchmarks concurrently |
 | 5 | 2026-07-10 | Fall back from Opus decomposition to the local planning specialist | Anthropic authentication was unavailable and the mission forbids adding credentials | Block planning; request credentials |
+| 6 | 2026-07-10 | Accept one prepared changed inventory and fail broad timeouts closed | Repeated per-gate Git discovery fell to zero after preparation, untracked coverage expanded, and status 124 can no longer become success | Keep repeated discovery and advisory timeout success |
 
 ## Mission Agents
 
@@ -160,6 +162,8 @@ preferences:
 | Confirmed changed-file coverage gap | An unstaged changed-mode run scanned 1 tracked file, while the same work represented in a temporary index scanned all 9 intended files. Untracked non-ignored files are omitted before staging, including from secret scanning. | Two bounded local validation runs | 2026-07-10 |
 | Initial Target B inventory | Existing affected mode, explicit concurrency defaults, lint/format caches, and changed-file grouping must be preserved and measured rather than replaced by assumption. | Local static inspection; details redacted | 2026-07-10 |
 | Initial Target C inventory | Overlay integration currently has no broad duplicate lint pipeline; bounded downstream validation is preferred unless evidence shows a gap. | Local static inspection; details redacted | 2026-07-10 |
+| F1 safe baseline | Kernel zone-map exhaustion is confirmed while lint causation remains unproven; serialized profiler and cleanup controls passed. | `research/resource-baseline.md` | 2026-07-10 |
+| F2 framework result | Changed mode includes untracked non-ignored files, removes repeated per-gate discovery, invalidates cache on content, and fails timeouts closed. | `research/framework-changed-mode.md` | 2026-07-10 |
 
 ## Progress Log
 
@@ -168,6 +172,8 @@ preferences:
 | 2026-07-10T00:00:00Z | Mission created | Approved Full-mode, four-hour, privacy-first lint resource optimisation mission. |
 | 2026-07-10T03:55:55Z | Mission launched | Activated F1 as the only unblocked feature and created issue #26914; F2-F4 remain blocked on its safe baseline. |
 | 2026-07-10T04:34:23Z | F1 entered review | Confirmed a kernel zone-map exhaustion panic while keeping lint causation unproven; bounded profiler, cleanup fixtures, and aggregate evidence passed locally in PR #26918. |
+| 2026-07-10T05:15:51Z | F1 completed | PR #26918 merged with all required checks passing and closed issue #26914. |
+| 2026-07-10T05:25:35Z | F2 broad profile passed | Expanded changed coverage completed in 19s with 115.3 MiB peak RSS, zero swap, normal thermal state, and no safety stop. |
 
 ## Retrospective
 

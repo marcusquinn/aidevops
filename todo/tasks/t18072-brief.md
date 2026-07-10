@@ -69,6 +69,7 @@ Omitting new files from secret and quality checks is a confirmed reliability and
 - `NEW: .agents/scripts/tests/test-linters-local-untracked-mode.sh` — prove unstaged non-ignored files receive changed-mode safety checks.
 - `EDIT: .agents/scripts/tests/test-linters-local-ratchet-timeout.sh` — prove timeout cannot pass.
 - `EDIT: .agents/scripts/tests/test-linters-local-changed-mode.sh` — preserve tracked, staged, and full-mode coverage while adding untracked fixtures.
+- `NEW: todo/missions/m-20260710-11431d/research/framework-changed-mode.md` — publish aggregate coverage, traversal, timeout, and profile evidence.
 
 ### Implementation Steps
 
@@ -100,9 +101,9 @@ shellcheck .agents/scripts/lint-file-discovery.sh .agents/scripts/linters-local-
 
 ### Recoverability Checkpoint
 
-- [ ] Focused tests pass: `bash .agents/scripts/tests/test-linters-local-cache.sh`
-- [ ] WIP commit created before broad gates: `wip: deduplicate bounded lint discovery`
-- [ ] Broad verification then run: `.agents/scripts/linters-local.sh --changed`
+- [x] Focused tests pass: `bash .agents/scripts/tests/test-linters-local-cache.sh`
+- [x] WIP commit created before broad gates: `675ed4ff5` (`wip: deduplicate bounded lint discovery`)
+- [x] Broad verification run: `.agents/scripts/linters-local.sh --changed`
 
 ### Files Scope
 
@@ -113,19 +114,22 @@ shellcheck .agents/scripts/lint-file-discovery.sh .agents/scripts/linters-local-
 - `.agents/scripts/tests/test-linters-local-untracked-mode.sh`
 - `.agents/scripts/tests/test-linters-local-ratchet-timeout.sh`
 - `.agents/scripts/tests/test-linters-local-changed-mode.sh`
+- `todo/missions/m-20260710-11431d/research/framework-changed-mode.md`
 
 ## Acceptance Criteria
 
-- [ ] Changed mode covers tracked edits, staged files, and untracked non-ignored files while excluding ignored/generated content; full coverage remains unchanged.
-- [ ] Duplicate inventory entries are zero and measured repeated traversal is reduced.
-- [ ] Timeout fixtures fail closed and cannot print an all-passed summary.
-- [ ] The retained change meets a mission performance threshold or is rolled back.
+- [x] Changed mode covers tracked edits, staged files, and untracked non-ignored files while excluding ignored/generated content; full coverage remains unchanged.
+- [x] Duplicate inventory entries are zero and measured repeated traversal is reduced.
+- [x] Timeout fixtures fail closed and cannot print an all-passed summary.
+- [x] The retained change meets a mission performance threshold or is rolled back.
 
 ## Context & Decisions
 
 - Cross-platform checks are not duplicates merely because they inspect similar files.
 - Security gates remain independent when independence is defence-in-depth.
 - No baseline ratchet may be loosened for performance.
+- Prepared inventory removes all repeated per-gate Git discovery calls; untracked file content is included in cache invalidation.
+- The dependency on t18071 was resolved by PR #26918 before implementation began.
 
 ## Relevant Files
 
