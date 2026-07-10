@@ -349,6 +349,35 @@ test_skips_review_thread_response_inline_comment() {
 	return 0
 }
 
+test_skips_finding_with_trusted_addressed_reply() {
+	local comments result
+	# Regression for GH#26972: a maintainer replied to each actionable finding
+	# with an addressed commit, but API verification failed transiently. The
+	# scanner treated both the original finding and its closure reply as debt.
+	# shellcheck disable=SC2016  # literal JSON includes Markdown backticks
+	comments='[{"id":3556392011,"user":{"login":"gemini-code-assist[bot]"},"author_association":"NONE","body":"MEDIUM: Option --pid requires an argument.","path":".agents/scripts/resource-metrics-helper.sh","line":194,"html_url":"https://example.invalid/review","created_at":"2026-07-10T00:00:00Z"},{"id":3556456864,"in_reply_to_id":3556392011,"user":{"login":"maintainer"},"author_association":"OWNER","body":"Addressed in `4e5dfb69f`. Every value-taking sample option now uses a shared presence check and the focused test covers all sample options.","path":".agents/scripts/resource-metrics-helper.sh","line":194,"html_url":"https://example.invalid/review","created_at":"2026-07-10T01:00:00Z"}]'
+	result=$(_build_inline_findings "$comments" "26918" "medium" | jq 'length')
+	if [[ "$result" == "0" ]]; then
+		print_result "skip finding closed by trusted addressed reply" 0
+	else
+		print_result "skip finding closed by trusted addressed reply" 1 "expected 0 findings, got ${result}"
+	fi
+	return 0
+}
+
+test_keeps_finding_with_untrusted_addressed_reply() {
+	local comments result
+	# shellcheck disable=SC2016  # literal JSON includes Markdown backticks
+	comments='[{"id":10,"user":{"login":"gemini-code-assist[bot]"},"author_association":"NONE","body":"MEDIUM: Option --pid requires an argument.","path":"src/helper.sh","line":42,"html_url":"https://example.invalid/review","created_at":"2026-07-10T00:00:00Z"},{"id":11,"in_reply_to_id":10,"user":{"login":"external-user"},"author_association":"NONE","body":"Addressed in `abcdef123`. This no longer needs review.","path":"src/helper.sh","line":42,"html_url":"https://example.invalid/review","created_at":"2026-07-10T01:00:00Z"}]'
+	result=$(_build_inline_findings "$comments" "1" "medium" | jq 'length')
+	if [[ "$result" == "1" ]]; then
+		print_result "keep finding despite untrusted addressed reply" 0
+	else
+		print_result "keep finding despite untrusted addressed reply" 1 "expected 1 finding, got ${result}"
+	fi
+	return 0
+}
+
 test_skips_no_further_concerns_inline_ack() {
 	local comments result
 	comments='[{"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the update. The lookup map implementation is the correct approach, and I have no further concerns regarding this implementation.","path":".agents/scripts/quality-feedback-findings-lib.sh","line":329,"html_url":"https://example.invalid/review","created_at":"2026-06-16T00:00:00Z"}]'
