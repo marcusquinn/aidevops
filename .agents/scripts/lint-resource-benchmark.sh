@@ -454,18 +454,7 @@ _lint_benchmark_parse_args() {
 	return 0
 }
 
-run_benchmark() {
-	local profile=""
-	local timeout_seconds="$DEFAULT_TIMEOUT_SECONDS"
-	local sample_interval_seconds="$DEFAULT_SAMPLE_INTERVAL_SECONDS"
-	local cache_state="$LINT_BENCHMARK_VALUE_UNKNOWN"
-	local coverage_manifest=""
-	local report_file="$DEFAULT_REPORT_FILE"
-	local memory_free_floor_pct="$DEFAULT_MEMORY_FREE_FLOOR_PCT"
-	local swap_growth_limit_mb="$DEFAULT_SWAP_GROWTH_LIMIT_MB"
-	local -a command_args=()
-
-	_lint_benchmark_parse_args "$@" || return 1
+_lint_benchmark_validate_run_config() {
 	if [[ ! "$profile" =~ ^[A-Za-z0-9._-]{1,64}$ ]]; then
 		print_error "--profile must use 1-64 safe characters"
 		return 1
@@ -485,10 +474,26 @@ run_benchmark() {
 	sample_interval_seconds=$(_lint_benchmark_validate_integer interval "$sample_interval_seconds" 1 30) || return 1
 	memory_free_floor_pct=$(_lint_benchmark_validate_integer memory-free-floor "$memory_free_floor_pct" 1 99) || return 1
 	swap_growth_limit_mb=$(_lint_benchmark_validate_integer swap-growth-limit "$swap_growth_limit_mb" 1 1048576) || return 1
-	[[ -x "$RESOURCE_METRICS_HELPER" && -x "$SANDBOX_EXEC_HELPER" ]] || {
+	if [[ ! -x "$RESOURCE_METRICS_HELPER" || ! -x "$SANDBOX_EXEC_HELPER" ]]; then
 		print_error "Required resource or sandbox helper is unavailable"
 		return 1
-	}
+	fi
+	return 0
+}
+
+run_benchmark() {
+	local profile=""
+	local timeout_seconds="$DEFAULT_TIMEOUT_SECONDS"
+	local sample_interval_seconds="$DEFAULT_SAMPLE_INTERVAL_SECONDS"
+	local cache_state="$LINT_BENCHMARK_VALUE_UNKNOWN"
+	local coverage_manifest=""
+	local report_file="$DEFAULT_REPORT_FILE"
+	local memory_free_floor_pct="$DEFAULT_MEMORY_FREE_FLOOR_PCT"
+	local swap_growth_limit_mb="$DEFAULT_SWAP_GROWTH_LIMIT_MB"
+	local -a command_args=()
+
+	_lint_benchmark_parse_args "$@" || return 1
+	_lint_benchmark_validate_run_config || return 1
 
 	local coverage_digest=""
 	coverage_digest=$(_lint_benchmark_coverage_digest "$coverage_manifest") || return 1
