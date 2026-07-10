@@ -153,6 +153,7 @@ export function readStatus(
     notifications,
     vault,
     pulse_workers: pulseWorkers.summary,
+    secrets: vault.unlocked ? statusFixture.secrets : [],
   };
 
   const envelope = createEnvelope({

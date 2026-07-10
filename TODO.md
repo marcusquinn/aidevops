@@ -109,6 +109,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 <!--TOON:ready[0]{id,desc,owner,tags,est,logged}:
 -->
 
+- [ ] t18070 Design Secrets interface and repair Vault unlock readiness #bug #enhancement #security #interactive #no-auto-dispatch ~6h tier:thinking ref:GH#26912 started:2026-07-10T00:00:00Z logged:2026-07-10 -> [todo/tasks/t18070-brief.md]
+
 - [x] t18066 fix(full-loop): resolve commit-and-pr rebase/counter base from the remote default branch instead of hardcoded `origin/main`. Add a default-branch resolver in `.agents/scripts/full-loop-helper-commit.sh`, use `origin/${base_branch}` for ahead-count, fetch, rebase, operator messages, and `.task-counter` reset, fail actionably when the base cannot be resolved, and cover an `origin/develop` regression path. #bug #framework #full-loop #auto-dispatch ~1h tier:standard ref:GH#26626 logged:2026-07-05 -> [todo/tasks/t18066-brief.md] pr:#26630 completed:2026-07-05
 
 - [x] t18060 fix(pulse): harden SIGPIPE-safe pulse emits and LLM retry state for issue 26333. Implement localized broken-pipe-safe stdout handling for pulse helpers that run under `set -euo pipefail`, separate LLM supervisor attempt/success state so failed daily sweeps do not suppress future attempts, and add focused regression tests for early-closing consumers plus failed-run retry semantics. #bug #reliability #auto-dispatch ~4h tier:thinking ref:GH#26333 logged:2026-07-02 -> [todo/tasks/t18060-brief.md] pr:#26359 completed:2026-07-02

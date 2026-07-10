@@ -1435,6 +1435,7 @@ _setup_run_non_interactive() {
 	# (GH#21102 / t2926: missing setsid kills workers on every pulse restart).
 	_time_step "setup_setsid_advisory" setup_setsid_advisory
 	_time_step "check_python_upgrade_available" check_python_upgrade_available
+	_time_step "setup_vault_python_env" setup_vault_python_env || print_warning "Vault crypto runtime setup encountered issues; Vault status remains metadata-only"
 	_time_step "set_permissions" set_permissions
 	_time_step "migrate_old_backups" migrate_old_backups
 	_time_step "migrate_loop_state_directories" migrate_loop_state_directories
@@ -1544,6 +1545,7 @@ _setup_run_non_interactive() {
 # prompt order around runtime-specific installers and config updates.
 _setup_run_interactive_runtime_tools() {
 	confirm_step "Deploy aidevops agents to runtime agent directories" && deploy_agents_to_runtimes
+	confirm_step "Setup isolated Vault crypto runtime" && setup_vault_python_env
 	confirm_step "Setup Python environment (DSPy, crawl4ai)" && setup_python_env
 	confirm_step "Setup Node.js environment" && setup_nodejs_env
 	confirm_step "Install MCP packages globally (fast startup)" && install_mcp_packages

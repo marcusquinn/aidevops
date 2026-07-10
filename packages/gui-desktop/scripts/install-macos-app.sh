@@ -198,6 +198,21 @@ notify() {
   return 0
 }
 
+run_vault_command() {
+  local action="\$1"
+  local command_name=""
+  case "\$action" in
+    init|unlock|lock|status|lost-passphrase) command_name="\$action" ;;
+    *) printf 'Unsupported Vault action\n' >&2; return 2 ;;
+  esac
+  AIDEVOPS_SESSION_ID="gui-desktop" exec /bin/bash "\${REPO_ROOT}/aidevops.sh" vault "\$command_name"
+  return 1
+}
+
+if [[ "\$MODE" == "vault-command" ]]; then
+  run_vault_command "\${2:-}"
+fi
+
 url_ready() {
   local url="\$1"
   curl --silent --fail --max-time 2 "\${url}" >/dev/null 2>&1
@@ -497,6 +512,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             updateAccentHueFromMessage(message.body)
         case "externalLink":
             openExternalLinkFromMessage(message.body)
+        case "vaultCommand":
+            openVaultCommandFromMessage(message)
         default:
             return
         }
@@ -525,6 +542,68 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         _ = openExternalURL(url)
     }
 
+    private func openVaultCommandFromMessage(_ message: WKScriptMessage) {
+        guard isTrustedVaultMessage(message), let action = message.body as? String else {
+            return
+        }
+
+        // #aidevops:trust-boundary — the main local frame selects only a fixed
+        // action. The bundled launcher independently allowlists it and resolves
+        // the repository CLI without PATH lookup.
+        switch action {
+        case "init", "unlock", "lock", "status", "lost-passphrase": break
+        default: return
+        }
+
+        guard let helperPath = Bundle.main.path(forResource: "aidevops-gui-services", ofType: "sh") else {
+            NSSound.beep()
+            notifyVaultCommandResult("failed")
+            return
+        }
+        guard helperPath.rangeOfCharacter(from: .newlines) == nil else {
+            NSSound.beep()
+            notifyVaultCommandResult("failed")
+            return
+        }
+
+        let command = "/bin/bash \(shellQuote(helperPath)) vault-command \(shellQuote(action))"
+        let source = "tell application \"Terminal\"\nactivate\ndo script \(appleScriptQuote(command))\nend tell"
+        guard let script = NSAppleScript(source: source) else {
+            NSSound.beep()
+            notifyVaultCommandResult("failed")
+            return
+        }
+        var error: NSDictionary?
+        script.executeAndReturnError(&error)
+        if error != nil {
+            NSSound.beep()
+            notifyVaultCommandResult("failed")
+            return
+        }
+        notifyVaultCommandResult("opened")
+    }
+
+    private func isTrustedVaultMessage(_ message: WKScriptMessage) -> Bool {
+        let origin = message.frameInfo.securityOrigin
+        return message.frameInfo.isMainFrame && origin.protocol == "http" && origin.host == "127.0.0.1" && origin.port == Int(webPort)
+    }
+
+    private func shellQuote(_ value: String) -> String {
+        return "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private func appleScriptQuote(_ value: String) -> String {
+        let escaped = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
+    }
+
+    private func notifyVaultCommandResult(_ result: String) {
+        let script = "window.dispatchEvent(new CustomEvent('aidevops:vault-command-result', { detail: '\(result)' }))"
+        webView.evaluateJavaScript(script, completionHandler: nil)
+    }
+
     private func revealFileURL(_ url: URL) -> Bool {
         guard url.isFileURL else {
             return false
@@ -536,7 +615,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         guard let url = navigationAction.request.url else {
-            decisionHandler(.allow)
+            decisionHandler(.cancel)
             return
         }
 
@@ -550,7 +629,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             return
         }
 
-        decisionHandler(.allow)
+        if url.absoluteString == "about:blank" && !hasLoadedDashboard {
+            decisionHandler(.allow)
+            return
+        }
+
+        decisionHandler(.cancel)
     }
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
@@ -575,7 +659,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     private func isLocalAppURL(_ url: URL) -> Bool {
         let host = url.host ?? ""
-        return (host == "127.0.0.1" || host == "localhost") && url.port == Int(webPort)
+        return url.scheme == "http" && host == "127.0.0.1" && url.port == Int(webPort)
     }
 
     private func configureMenu() {
@@ -838,6 +922,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let userContentController = WKUserContentController()
         userContentController.add(self, name: "accentHue")
         userContentController.add(self, name: "externalLink")
+        userContentController.add(self, name: "vaultCommand")
         configuration.userContentController = userContentController
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self

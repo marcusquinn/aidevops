@@ -28,7 +28,6 @@ from vault_crypto_core import (
     STATE_UNLOCKED,
     VaultError,
     append_audit,
-    b64e,
     build_metadata,
     default_vault_dir,
     ensure_private_dir,
@@ -113,16 +112,28 @@ def _verify_setup_test_if_needed(vault_dir: Path, root_key: bytes) -> None:
 
 def _start_broker(vault_dir: Path, root_key: bytes) -> int:
     ensure_private_dir(runtime_dir(vault_dir))
-    # The broker process is this repo-controlled helper invoked via the current
-    # Python interpreter with generated key material; no user input reaches the
-    # executable path. Keep the annotation for external Bandit/CodeFactor B603.
-    subprocess.Popen(  # nosec B603
-        [sys.executable, str(Path(__file__).resolve()), "broker", b64e(root_key)],
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
+    read_fd, write_fd = os.pipe()
+    try:
+        # #aidevops:trust-boundary — only the inherited one-use descriptor
+        # carries key material. Process arguments and environment remain clean.
+        subprocess.Popen(  # nosec B603
+            [sys.executable, str(Path(__file__).resolve()), "broker", "--key-fd", str(read_fd)],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+            pass_fds=(read_fd,),
+        )
+    except OSError as exc:
+        os.close(read_fd)
+        os.close(write_fd)
+        raise VaultError("VAULT_BROKER_ERROR", "Vault broker process could not start", 6) from exc
+    os.close(read_fd)
+    try:
+        with os.fdopen(write_fd, "wb", closefd=True) as key_pipe:
+            key_pipe.write(root_key)
+    except OSError as exc:
+        raise VaultError("VAULT_BROKER_ERROR", "Vault broker key handoff failed", 6) from exc
     deadline = time.time() + 5
     while time.time() < deadline:
         if broker_alive(vault_dir):
@@ -179,8 +190,27 @@ def cmd_setup_state(_args: argparse.Namespace) -> int:
     if not path.exists():
         print(STATE_UNINITIALIZED)
         return 2
-    print(setup_state(load_json(path)))
-    return 0
+    try:
+        metadata = load_json(path)
+        validate_metadata(metadata)
+        print(setup_state(metadata))
+        return 0
+    except VaultError:
+        print("unknown")
+        return 3
+
+
+def cmd_broker(args: argparse.Namespace) -> int:
+    if args.key_fd < 3:
+        raise VaultError("VAULT_BROKER_ERROR", "Vault broker key descriptor is invalid", 6)
+    try:
+        with os.fdopen(args.key_fd, "rb", closefd=True) as key_pipe:
+            root_key = key_pipe.read(KEY_LEN + 1)
+    except OSError as exc:
+        raise VaultError("VAULT_BROKER_ERROR", "Vault broker key handoff failed", 6) from exc
+    if len(root_key) != KEY_LEN:
+        raise VaultError("VAULT_BROKER_ERROR", "Vault broker key handoff was invalid", 6)
+    return run_broker(default_vault_dir(), root_key)
 
 
 def cmd_lost_passphrase(args: argparse.Namespace) -> int:
@@ -250,8 +280,8 @@ def build_parser() -> argparse.ArgumentParser:
     for reserved in ("export", "import", "rekey"):
         sub.add_parser(reserved).set_defaults(func=cmd_placeholder)
     broker_p = sub.add_parser("broker")
-    broker_p.add_argument("root_key_b64")
-    broker_p.set_defaults(func=lambda args: run_broker(default_vault_dir(), args.root_key_b64))
+    broker_p.add_argument("--key-fd", type=int, required=True)
+    broker_p.set_defaults(func=cmd_broker)
     return parser
 
 

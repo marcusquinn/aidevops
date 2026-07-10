@@ -46,7 +46,7 @@ describe("status adapter", () => {
     expect(response.data.vault.readiness.remote_unlock_enabled).toBe(false);
     expect(JSON.stringify(response.data.vault)).not.toContain("SECRET_SENTINEL_DO_NOT_RENDER");
     expect(response.data.capabilities.length).toBeGreaterThan(0);
-    expect(response.data.secrets[0]).toEqual({ name: "GITHUB_TOKEN", status: "unchecked" });
+    expect(response.data.secrets).toEqual([]);
   });
 
   test("populates Pulse and Workers status from local telemetry files", () => {
@@ -108,7 +108,7 @@ describe("status adapter", () => {
     expect(response.redactions).toContain("recovery_material");
   });
 
-  test("reads Vault helper output through sh without requiring an executable bit", () => {
+  test("reads Vault helper output through bash without requiring an executable bit", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-vault-helper-"));
     const scriptsDir = join(repoRoot, ".agents", "scripts");
     const helperPath = join(scriptsDir, "vault-helper.sh");
@@ -116,6 +116,7 @@ describe("status adapter", () => {
     writeFileSync(
       helperPath,
       [
+        "[[ -n \"$1\" ]] || exit 2",
         "case \"$1\" in",
         "  status) printf '%s\\n' unlocked ;;",
         "  setup-state) printf '%s\\n' migration-ready ;;",
@@ -131,6 +132,159 @@ describe("status adapter", () => {
     expect(vault.status).toBe("unlocked");
     expect(vault.setup_state).toBe("migration-ready");
     expect(vault.readiness.migration_allowed).toBe(true);
+  });
+
+  test("preserves documented uninitialized output from nonzero helper exits", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-vault-uninitialized-"));
+    const scriptsDir = join(repoRoot, ".agents", "scripts");
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, "vault-helper.sh"), [
+      "case \"$1\" in",
+      "  status|setup-state) printf '%s\\n' uninitialized; exit 2 ;;",
+      "  *) exit 1 ;;",
+      "esac",
+    ].join("\n"));
+
+    const vault = readVaultSummary(repoRoot);
+
+    expect(vault.helper_status).toBe("available");
+    expect(vault.status).toBe("uninitialized");
+    expect(vault.setup_state).toBe("uninitialized");
+    expect(vault.readiness.setup_required).toBe(true);
+  });
+
+  test("fails closed when only one Vault status probe succeeds", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-vault-partial-"));
+    const scriptsDir = join(repoRoot, ".agents", "scripts");
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, "vault-helper.sh"), [
+      "case \"$1\" in",
+      "  status) printf '%s\\n' locked ;;",
+      "  setup-state) exit 1 ;;",
+      "  *) exit 1 ;;",
+      "esac",
+    ].join("\n"));
+
+    const vault = readVaultSummary(repoRoot);
+
+    expect(vault.helper_status).toBe("error");
+    expect(vault.available).toBe(false);
+    expect(vault.status).toBe("unknown");
+    expect(vault.setup_state).toBe("unknown");
+    expect(vault.readiness.setup_required).toBe(false);
+  });
+
+  test("rejects fail-open Vault output paired with an unexpected exit code", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-vault-bad-exit-"));
+    const scriptsDir = join(repoRoot, ".agents", "scripts");
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, "vault-helper.sh"), [
+      "case \"$1\" in",
+      "  status) printf '%s\\n' unlocked; exit 1 ;;",
+      "  setup-state) printf '%s\\n' migration-ready ;;",
+      "  *) exit 1 ;;",
+      "esac",
+    ].join("\n"));
+
+    const vault = readVaultSummary(repoRoot);
+
+    expect(vault.status).toBe("unknown");
+    expect(vault.unlocked).toBe(false);
+    expect(vault.locked).toBe(true);
+    expect(vault.helper_status).toBe("error");
+  });
+
+  test("rejects incoherent and noisy Vault probe output", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-vault-incoherent-"));
+    const scriptsDir = join(repoRoot, ".agents", "scripts");
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, "vault-helper.sh"), [
+      "case \"$1\" in",
+      "  status) printf '%s\\n' locked extra-output ;;",
+      "  setup-state) printf '%s\\n' uninitialized; exit 2 ;;",
+      "  *) exit 1 ;;",
+      "esac",
+    ].join("\n"));
+
+    const vault = readVaultSummary(repoRoot);
+
+    expect(vault.helper_status).toBe("error");
+    expect(vault.status).toBe("unknown");
+    expect(vault.setup_state).toBe("unknown");
+    expect(vault.readiness.setup_required).toBe(false);
+  });
+
+  test("rejects whitespace around stdout enums", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-vault-whitespace-stdout-"));
+    const scriptsDir = join(repoRoot, ".agents", "scripts");
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, "vault-helper.sh"), [
+      "case \"$1\" in",
+      "  status) printf '\\nlocked\\n' ;;",
+      "  setup-state) printf '%s\\n' migration-ready ;;",
+      "  *) exit 1 ;;",
+      "esac",
+    ].join("\n"));
+
+    expect(readVaultSummary(repoRoot).status).toBe("unknown");
+  });
+
+  test("rejects whitespace-only stderr", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-vault-whitespace-stderr-"));
+    const scriptsDir = join(repoRoot, ".agents", "scripts");
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, "vault-helper.sh"), [
+      "case \"$1\" in",
+      "  status) printf '%s\\n' locked; printf ' ' >&2 ;;",
+      "  setup-state) printf '%s\\n' migration-ready ;;",
+      "  *) exit 1 ;;",
+      "esac",
+    ].join("\n"));
+
+    expect(readVaultSummary(repoRoot).status).toBe("unknown");
+  });
+
+  test("preserves the Linux runtime directory for broker status probes", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-vault-runtime-dir-"));
+    const scriptsDir = join(repoRoot, ".agents", "scripts");
+    const originalRuntimeDir = process.env.XDG_RUNTIME_DIR;
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, "vault-helper.sh"), [
+      "if [[ \"${XDG_RUNTIME_DIR:-}\" != \"/tmp/aidevops-runtime-fixture\" ]]; then exit 1; fi",
+      "case \"$1\" in",
+      "  status) printf '%s\\n' locked ;;",
+      "  setup-state) printf '%s\\n' migration-ready ;;",
+      "  *) exit 1 ;;",
+      "esac",
+    ].join("\n"));
+    process.env.XDG_RUNTIME_DIR = "/tmp/aidevops-runtime-fixture";
+
+    const vault = readVaultSummary(repoRoot);
+    if (originalRuntimeDir === undefined) delete process.env.XDG_RUNTIME_DIR;
+    else process.env.XDG_RUNTIME_DIR = originalRuntimeDir;
+
+    expect(vault.status).toBe("locked");
+    expect(vault.setup_state).toBe("migration-ready");
+  });
+
+  test("preserves corrupted metadata as a conservative recovery state", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-vault-corrupted-"));
+    const scriptsDir = join(repoRoot, ".agents", "scripts");
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, "vault-helper.sh"), [
+      "case \"$1\" in",
+      "  status) printf '%s\\n' corrupted; exit 3 ;;",
+      "  setup-state) printf '%s\\n' unknown; exit 3 ;;",
+      "  *) exit 1 ;;",
+      "esac",
+    ].join("\n"));
+
+    const vault = readVaultSummary(repoRoot);
+
+    expect(vault.status).toBe("corrupted");
+    expect(vault.setup_state).toBe("unknown");
+    expect(vault.helper_status).toBe("available");
+    expect(vault.unlocked).toBe(false);
   });
 
   test("does not search relative home tool paths when HOME is unset", () => {
