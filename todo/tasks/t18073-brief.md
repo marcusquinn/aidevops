@@ -12,7 +12,7 @@ mode: subagent
 - [x] Discovery pass: 0 commits / 0 merged PRs / 0 open PRs surfaced in the public planning pass
 - [x] File refs verified: 4 target patterns checked locally, all present; private paths intentionally omitted
 - [x] Tier: `tier:thinking` — private cross-package graph and resource trade-offs require local judgment
-- [x] Seeded draft PR decision recorded: skipped — target-local evidence and a target-local brief are required first
+- [x] Seeded draft PR decision recorded: skipped — target-local evidence and a target-local brief were created first
 
 ## Origin
 
@@ -53,9 +53,9 @@ Default parallelism can multiply memory-heavy type-aware lint processes, but low
 
 - **Decision:** Skipped
 - **Rationale:** A public seed cannot safely contain the target mapping or private graph details.
-- **Status:** `skipped` — a target-local brief and worktree were created before profiling
+- **Status:** `completed` — the target-local change merged after terminal checks
 - **Freshness evidence:** Existing affected commands, explicit concurrency, cache flags, and changed-file grouping were inspected locally.
-- **Verification run:** The bounded concurrency-1 affected profile exited 137 after 45 seconds; the mission stop contract prevented concurrency 2 or a retry.
+- **Verification run:** The terminated affected route was replaced by 37 serial package checkpoints; every shard passed and the full task-graph digest remained unchanged after lowering the local default.
 - **Stale-assumption warning:** Regenerate the graph if the target revision or package manager lock changes.
 
 ## How (Approach)
@@ -91,7 +91,7 @@ Run the target-native focused lint tests and terminal CI after any retained chan
 
 - [x] Target-local task and file digests match before and after.
 - [x] Local lint concurrency is explicit, starts at 1, and never exceeds 2 during profiling.
-- [x] The retained profile meets the resource threshold or is rejected with evidence.
+- [x] The performance hypothesis is inconclusive; the retained safety guardrail makes no unsupported optimisation claim.
 - [x] No private target name, path, source content, or raw log is committed here.
 
 ## Context & Decisions
@@ -99,8 +99,11 @@ Run the target-native focused lint tests and terminal CI after any retained chan
 - Target B may accept up to 25% more wall time for a material peak-memory reduction.
 - Existing CI concurrency may remain higher only when current CI evidence supports it.
 - Cache contention and recursive traversal are hypotheses, not findings.
-- The valid cold concurrency-1 profile peaked at 5,593,600 KiB across 11 processes and exited 137 after 45 seconds.
-- Concurrency 2 and warm retries were not run; existing target defaults remain unchanged.
+- The valid cold concurrency-1 affected route peaked at 5,593,600 KiB across 11 processes and exited 137 after 45 seconds.
+- That unsafe route was not retried. All 37 package lint shards passed serially through recoverability checkpoints.
+- The complete 102-task dry graph had the same digest before and after the retained change.
+- Local `lint` and `lint:affected` now default to concurrency 1; overrides and the existing required CI profile remain available.
+- The target-local change passed terminal lint, format, typecheck, unit, end-to-end, security, and review checks before merge.
 
 ## Relevant Files
 
