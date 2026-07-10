@@ -7,8 +7,11 @@
 > helper covers local metadata, passphrase wrapping, an in-memory broker,
 > locked-state gates, managed history gates, the first verified data-plane
 > migration helper, an initial encrypted sync/export/import transport, and
-> encrypted device-to-device message envelopes over opaque Git mailboxes;
-> GUI routing is still a future phase.
+> encrypted device-to-device message envelopes over opaque Git mailboxes. The
+> GUI now provides metadata-only locked-state surfaces and a desktop terminal
+> handoff for fixed `aidevops vault` actions; browser/API passphrase entry,
+> plaintext secret values, and direct encrypted-payload editing remain out of
+> scope.
 
 <!-- AI-CONTEXT-START -->
 

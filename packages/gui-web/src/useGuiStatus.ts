@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchStatus, mockedStatus, unavailableStatus } from "./status-client";
 import { type VaultDialogIntent, vaultDialogIntentForStatus } from "./VaultBadges";
 
+const VAULT_TERMINAL_REFRESH_DELAYS_MS = [1200, 3000, 7000] as const;
+
 interface GuiStatusController {
   markVaultTerminalLaunch: () => void;
   refreshStatus: () => Promise<void>;
@@ -18,6 +20,7 @@ export function useGuiStatus(): GuiStatusController {
   const [vaultDialogIntent, setVaultDialogIntent] = useState<VaultDialogIntent | null>(null);
   const hasPromptedVaultSetup = useRef(false);
   const refreshVaultAfterTerminal = useRef(false);
+  const vaultTerminalRefreshTimeouts = useRef<number[]>([]);
   const currentVaultIntent = vaultDialogIntentForStatus(status.data.vault);
   const shouldPromptSetup = shouldPromptVaultSetup(statusLoading, status.data.vault, hasPromptedVaultSetup.current);
 
@@ -36,16 +39,39 @@ export function useGuiStatus(): GuiStatusController {
     void refreshStatus();
   }, [refreshStatus]);
 
+  const clearVaultTerminalRefreshes = useCallback(() => {
+    for (const timeoutId of vaultTerminalRefreshTimeouts.current) {
+      window.clearTimeout(timeoutId);
+    }
+    vaultTerminalRefreshTimeouts.current = [];
+  }, []);
+
+  const runVaultTerminalRefresh = useCallback(() => {
+    if (refreshVaultAfterTerminal.current) {
+      void refreshStatus();
+    }
+  }, [refreshStatus]);
+
+  const scheduleVaultTerminalRefreshes = useCallback(() => {
+    clearVaultTerminalRefreshes();
+    vaultTerminalRefreshTimeouts.current = VAULT_TERMINAL_REFRESH_DELAYS_MS.map((delay) => (
+      window.setTimeout(runVaultTerminalRefresh, delay)
+    ));
+  }, [clearVaultTerminalRefreshes, runVaultTerminalRefresh]);
+
   useEffect(() => {
     const refreshAfterTerminal = () => {
       if (refreshVaultAfterTerminal.current) {
         refreshVaultAfterTerminal.current = false;
+        clearVaultTerminalRefreshes();
         void refreshStatus();
       }
     };
     window.addEventListener("focus", refreshAfterTerminal);
     return () => window.removeEventListener("focus", refreshAfterTerminal);
-  }, [refreshStatus]);
+  }, [clearVaultTerminalRefreshes, refreshStatus]);
+
+  useEffect(() => clearVaultTerminalRefreshes, [clearVaultTerminalRefreshes]);
 
   useEffect(() => {
     setVaultDialogIntent((openIntent) => openIntent !== null && openIntent !== currentVaultIntent ? null : openIntent);
@@ -61,6 +87,7 @@ export function useGuiStatus(): GuiStatusController {
   return {
     markVaultTerminalLaunch: () => {
       refreshVaultAfterTerminal.current = true;
+      scheduleVaultTerminalRefreshes();
     },
     refreshStatus,
     setVaultDialogIntent,
