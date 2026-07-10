@@ -169,12 +169,18 @@ export function VaultSurface({ onVaultRequest, status }: { onVaultRequest: (inte
           </div>
           <button className="secondary-action vault-cta" onClick={() => onVaultRequest(vaultDialogIntentForStatus(vault))} title={vault.unlock_hint} type="button">{vaultActionLabel(vaultDialogIntentForStatus(vault))}</button>
         </div>
-        <ol className="vault-step-list">
-          <li>Initialize locally with the hidden-prompt helper.</li>
-          <li>Verify the harmless restart test before migrating real data.</li>
-          <li>Keep passphrases, recovery material, and private keys out of chat, arguments, environment variables, logs, issues, and fixtures.</li>
-        </ol>
-        <code>{vault.unlock_hint}</code>
+        {readinessUnknown ? (
+          <p className="empty-state">{vault.status === "corrupted" ? "Use recovery guidance only. Preserve the current Vault directory and do not run initialization commands." : "Retry authoritative status before following setup or unlock instructions."}</p>
+        ) : (
+          <>
+            <ol className="vault-step-list">
+              <li>Initialize locally with the hidden-prompt helper.</li>
+              <li>Verify the harmless restart test before migrating real data.</li>
+              <li>Keep passphrases, recovery material, and private keys out of chat, arguments, environment variables, logs, issues, and fixtures.</li>
+            </ol>
+            <code>{vault.unlock_hint}</code>
+          </>
+        )}
       </section>
       <section className="panel" aria-label="Vault encrypted collections">
         <div className="section-heading">

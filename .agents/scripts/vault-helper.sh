@@ -89,19 +89,69 @@ vault_python_ready() {
 	return "$rc"
 }
 
+vault_path_permissions_safe() {
+	local path="$1"
+	local mode=""
+	local os_name=""
+	local group_digit=""
+	local other_digit=""
+
+	[[ -e "$path" && ! -L "$path" && -O "$path" ]] || return 1
+	os_name="$(/usr/bin/uname -s)"
+	if [[ "$os_name" == "Darwin" ]]; then
+		mode="$(/usr/bin/stat -f '%Lp' "$path" 2>/dev/null)" || return 1
+	else
+		mode="$(/usr/bin/stat -c '%a' "$path" 2>/dev/null)" || return 1
+	fi
+	[[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+	mode="${mode:$((${#mode} - 3))}"
+	group_digit="${mode:1:1}"
+	other_digit="${mode:2:1}"
+	case "$group_digit$other_digit" in
+	[0145][0145]) return 0 ;;
+	esac
+	return 1
+}
+
+vault_managed_status_python_safe() {
+	local python_bin="$1"
+	local env_dir="${VAULT_RUNTIME_PYTHON%/bin/python3}"
+	local marker="${env_dir}/.aidevops-managed-runtime"
+	local marker_value=""
+	local path=""
+
+	[[ "$python_bin" == "$VAULT_RUNTIME_PYTHON" && -f "$marker" && ! -L "$marker" ]] || return 1
+	marker_value=$(<"$marker")
+	[[ "$marker_value" == "aidevops-vault-runtime-v1" ]] || return 1
+	for path in \
+		"${HOME}/.aidevops" \
+		"${HOME}/.aidevops/.agent-workspace" \
+		"${HOME}/.aidevops/.agent-workspace/python-env" \
+		"$env_dir" \
+		"${env_dir}/bin" \
+		"$python_bin" \
+		"$marker"; do
+		vault_path_permissions_safe "$path" || return 1
+	done
+	for path in "${env_dir}"/lib/python*/site-packages; do
+		[[ -e "$path" ]] || continue
+		vault_path_permissions_safe "$path" || return 1
+	done
+	return 0
+}
+
 resolve_status_python() {
 	local managed_python="$VAULT_RUNTIME_PYTHON"
 	if [[ "${AIDEVOPS_VAULT_TEST_MODE:-0}" == "1" && -n "${AIDEVOPS_VAULT_PYTHON:-}" ]]; then
-		managed_python="$AIDEVOPS_VAULT_PYTHON"
+		printf '%s\n' "$AIDEVOPS_VAULT_PYTHON"
+		return 0
 	fi
-	if [[ -x "$managed_python" ]]; then
+	if [[ -x "$managed_python" ]] && vault_managed_status_python_safe "$managed_python"; then
 		printf '%s\n' "$managed_python"
 		return 0
 	fi
-	local system_python=""
-	system_python=$(command -v python3 2>/dev/null || true)
-	if [[ -n "$system_python" ]]; then
-		printf '%s\n' "$system_python"
+	if [[ -x "/usr/bin/python3" ]]; then
+		printf '%s\n' "/usr/bin/python3"
 		return 0
 	fi
 	printf '%s\n' "[ERROR] Vault requires Python 3; run aidevops setup" >&2

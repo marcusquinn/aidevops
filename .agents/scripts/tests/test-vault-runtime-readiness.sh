@@ -95,6 +95,27 @@ else
 	fail "setup wires the exact-pinned Vault runtime"
 fi
 
+safe_home="${TEST_ROOT}/safe-home"
+safe_runtime="${safe_home}/.aidevops/.agent-workspace/python-env/vault"
+mkdir -p "$safe_home"
+if (umask 077 && mkdir -p "${safe_runtime%/*}" && python3 -m venv --copies "$safe_runtime"); then
+	chmod 755 "$safe_runtime"
+	printf '%s\n' "aidevops-vault-runtime-v1" >"${safe_runtime}/.aidevops-managed-runtime"
+	chmod 600 "${safe_runtime}/.aidevops-managed-runtime"
+fi
+if python3 "${REPO_ROOT}/.agents/scripts/vault-runtime-check.py" --check-ancestors "$safe_home" "$safe_runtime" &&
+	python3 "${REPO_ROOT}/.agents/scripts/vault-runtime-check.py" --check-path "$safe_runtime" "${safe_runtime}/.aidevops-managed-runtime"; then
+	pass "copied-interpreter managed runtimes pass ownership checks"
+else
+	fail "copied-interpreter managed runtimes pass ownership checks"
+fi
+set +e
+safe_status="$(HOME="$safe_home" AIDEVOPS_VAULT_DIR="${safe_home}/vault" "$VAULT_HELPER" status 2>/dev/null)"
+safe_status_rc=$?
+set -e
+assert_eq "protected managed runtimes support metadata status" "uninitialized" "$safe_status"
+assert_eq "protected managed status preserves documented exit" "2" "$safe_status_rc"
+
 unsafe_home="${TEST_ROOT}/unsafe-home"
 unsafe_runtime="${unsafe_home}/.aidevops/.agent-workspace/python-env/vault"
 mkdir -p "${unsafe_runtime}/bin"
@@ -141,20 +162,10 @@ fi
 
 printf '%s\n' "aidevops-vault-runtime-v1" >"${unsafe_runtime}/.aidevops-managed-runtime"
 chmod 666 "${unsafe_runtime}/.aidevops-managed-runtime"
-if HOME="$unsafe_home" INSTALL_DIR="$REPO_ROOT" bash -c '
-  print_info() { return 0; }
-  print_warning() { return 0; }
-  print_success() { return 0; }
-  source "$1"
-  find_python3() { command -v python3; return 0; }
-  if setup_vault_python_env; then
-    exit 1
-  fi
-  exit 0
-' _ "${REPO_ROOT}/.agents/scripts/setup/modules/tool-install.sh" && [[ -f "${unsafe_runtime}/sentinel" && ! -e "${unsafe_home}/unsafe-runtime-executed" ]]; then
-	pass "setup rejects writable managed-runtime trees before execution"
+if ! python3 "${REPO_ROOT}/.agents/scripts/vault-runtime-check.py" --check-path "$unsafe_runtime" "${unsafe_runtime}/.aidevops-managed-runtime" && [[ ! -e "${unsafe_home}/unsafe-runtime-executed" ]]; then
+	pass "runtime checker rejects writable managed-runtime trees"
 else
-	fail "setup rejects writable managed-runtime trees before execution"
+	fail "runtime checker rejects writable managed-runtime trees"
 fi
 
 final_symlink_home="${TEST_ROOT}/final-symlink-home"

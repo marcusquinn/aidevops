@@ -1678,26 +1678,33 @@ setup_vault_python_env() {
 		return 1
 	fi
 	if [[ -e "$env_dir" ]]; then
-		if ! _vault_runtime_marker_valid "$managed_marker" || ! "$python3_bin" "$runtime_check" --check-path "$env_dir" "$managed_marker"; then
+		if ! _vault_runtime_marker_valid "$managed_marker" || ! "$python3_bin" "$runtime_check" --check-ancestors "$HOME" "$env_dir"; then
 			print_warning "Refusing to execute or replace an unowned Vault runtime: $env_dir"
 			return 1
 		fi
-		if [[ -x "$env_python" ]] && "$env_python" "$runtime_check" 2>/dev/null; then
+		if "$python3_bin" "$runtime_check" --check-path "$env_dir" "$managed_marker" && [[ -x "$env_python" ]] && "$env_python" "$runtime_check" 2>/dev/null; then
 			printf '%s\n' "$marker_value" >"$managed_marker"
 			chmod 600 "$managed_marker"
 			print_success "Vault crypto runtime is ready"
 			return 0
 		fi
 	fi
-	mkdir -p "${env_dir%/*}"
+	if ! (umask 077 && mkdir -p "${env_dir%/*}"); then
+		print_warning "Failed to create the protected Vault runtime parent"
+		return 1
+	fi
 	if ! _vault_runtime_path_safe "$env_dir"; then
 		print_warning "Refusing unsafe Vault runtime path after parent creation: $env_dir"
+		return 1
+	fi
+	if ! "$python3_bin" "$runtime_check" --check-ancestors "$HOME" "$env_dir"; then
+		print_warning "Refusing writable or unowned Vault runtime ancestors"
 		return 1
 	fi
 	if [[ -d "$env_dir" ]]; then
 		rm -rf "$env_dir"
 	fi
-	if ! (umask 077 && "$python3_bin" -m venv "$env_dir"); then
+	if ! (umask 077 && "$python3_bin" -m venv --copies "$env_dir"); then
 		print_warning "Failed to create isolated Vault Python environment"
 		return 1
 	fi

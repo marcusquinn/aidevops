@@ -31,9 +31,30 @@ def check_managed_path(root: Path, marker: Path) -> int:
                     target_stat = protected_path.stat()
                     if target_stat.st_uid not in {0, os.geteuid()} or target_stat.st_mode & 0o022:
                         return 1
+                    if protected_path == root:
+                        break
             elif path_stat.st_mode & 0o022:
                 return 1
     except (OSError, RuntimeError):
+        return 1
+    return 0
+
+
+def check_ancestor_chain(home: Path, root: Path) -> int:
+    try:
+        home = home.absolute()
+        current = root.absolute()
+        if current != home and home not in current.parents:
+            return 1
+        while True:
+            if os.path.lexists(current):
+                current_stat = current.lstat()
+                if stat.S_ISLNK(current_stat.st_mode) or current_stat.st_uid != os.geteuid() or current_stat.st_mode & 0o022:
+                    return 1
+            if current == home:
+                break
+            current = current.parent
+    except OSError:
         return 1
     return 0
 
@@ -67,6 +88,8 @@ def check_crypto_runtime() -> int:
 def main() -> int:
     if len(sys.argv) == 4 and sys.argv[1] == "--check-path":
         return check_managed_path(Path(sys.argv[2]), Path(sys.argv[3]))
+    if len(sys.argv) == 4 and sys.argv[1] == "--check-ancestors":
+        return check_ancestor_chain(Path(sys.argv[2]), Path(sys.argv[3]))
     if len(sys.argv) != 1:
         return 1
     return check_crypto_runtime()
