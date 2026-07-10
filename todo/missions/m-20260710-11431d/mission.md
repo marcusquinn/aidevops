@@ -93,7 +93,7 @@ preferences:
 
 | # | Feature | Task ID | Status | Estimate | Worker | PR |
 |---|---------|---------|--------|----------|--------|----|
-| 2.1 | F2 — Fix changed-file coverage, deduplicate discovery, and harden timeouts `[depends:F1] [parallel-group:repo-audit]` | t18072 | active | ~45m | interactive | |
+| 2.1 | F2 — Fix changed-file coverage, deduplicate discovery, and harden timeouts `[depends:F1] [parallel-group:repo-audit]` | t18072 | in-review | ~45m | interactive | #26925 |
 | 2.2 | F3 — Bound Target B lint execution profiles `[depends:F1] [parallel-group:repo-audit]` | t18073 | pending | ~55m | | |
 | 2.3 | F4 — Validate Target C integration without duplicate broad linting `[depends:F1] [parallel-group:repo-audit]` | t18074 | pending | ~30m | | |
 
@@ -174,6 +174,7 @@ preferences:
 | 2026-07-10T04:34:23Z | F1 entered review | Confirmed a kernel zone-map exhaustion panic while keeping lint causation unproven; bounded profiler, cleanup fixtures, and aggregate evidence passed locally in PR #26918. |
 | 2026-07-10T05:15:51Z | F1 completed | PR #26918 merged with all required checks passing and closed issue #26914. |
 | 2026-07-10T05:25:35Z | F2 broad profile passed | Expanded changed coverage completed in 19s with 115.3 MiB peak RSS, zero swap, normal thermal state, and no safety stop. |
+| 2026-07-10T05:30:33Z | F2 entered review | PR #26925 opened with expanded untracked coverage, zero repeated per-gate discovery scans, and fail-closed timeout semantics. |
 
 ## Retrospective
 
