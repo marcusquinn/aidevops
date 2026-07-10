@@ -65,9 +65,10 @@ grep -q '\[1/2\] first' "$human_stderr" ||
 grep -q '\[2/2\] second' "$human_stderr" ||
 	fail "human output omitted second-case progress"
 
-pass_result=$(ls -1 "$RESULTS_DIR"/output-channel-pass-*.json)
+pass_results=("$RESULTS_DIR"/output-channel-pass-*.json)
+[[ -f "${pass_results[0]:-}" ]] || fail "passing result file was not created"
 jq -e '.summary.passed == 2 and .summary.failed == 0 and (.results | length) == 2' \
-	"$pass_result" >/dev/null || fail "passing result file is invalid or incomplete"
+	"${pass_results[0]}" >/dev/null || fail "passing result file is invalid or incomplete"
 
 fail_suite="$TEST_ROOT/fail-suite.json"
 cat >"$fail_suite" <<'JSON'
@@ -98,8 +99,9 @@ cmd_run "$fail_suite" --json >"$json_stdout" 2>"$json_stderr" || fail_status=$?
 jq -e '.passed == 0 and .failed == 2 and .total == 2' "$json_stdout" >/dev/null ||
 	fail "--json stdout contains non-metric output"
 
-fail_result=$(ls -1 "$RESULTS_DIR"/output-channel-fail-*.json)
+fail_results=("$RESULTS_DIR"/output-channel-fail-*.json)
+[[ -f "${fail_results[0]:-}" ]] || fail "failing result file was not created"
 jq -e '.summary.failed == 2 and (.results | length) == 2 and .results[1].error == "timeout_or_error"' \
-	"$fail_result" >/dev/null || fail "failing result file is invalid or incomplete"
+	"${fail_results[0]}" >/dev/null || fail "failing result file is invalid or incomplete"
 
 printf '%s\n' "PASS: agent test output channels remain parseable across multiple cases"
