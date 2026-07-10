@@ -496,7 +496,7 @@ test_skips_pr26892_nongreedy_quantifier_ack() {
 	if [[ "$result" == "0" ]]; then
 		print_result "skip PR #26892 non-greedy-quantifier acknowledgements" 0
 	else
-		print_result "skip PR #26892 non-greedy-quantifier acknowledgement" 1 "expected 0 findings, got ${result}"
+		print_result "skip PR #26892 non-greedy-quantifier acknowledgements" 1 "expected 0 findings, got ${result}"
 	fi
 	return 0
 }
