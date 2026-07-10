@@ -34,6 +34,9 @@ fi
 # shellcheck source=./shared-constants.sh
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=./lint-file-discovery.sh
+# shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
+source "${SCRIPT_DIR}/lint-file-discovery.sh"
 
 # =============================================================================
 # Bundle-Aware Gate Filtering (t1364.6)
@@ -120,13 +123,14 @@ _linters_local_tool_version() {
 }
 
 _linters_local_changed_files_key() {
+	if [[ "$LINT_CHANGED_FILES_READY" == "true" ]]; then
+		printf '%s\n' "$LINT_CHANGED_FILES"
+		return 0
+	fi
 	local base_ref=""
 	base_ref=$(git merge-base HEAD origin/main 2>/dev/null || git merge-base HEAD main 2>/dev/null || git merge-base HEAD master 2>/dev/null || true)
-	if [[ -n "$base_ref" ]]; then
-		git diff --name-only "$base_ref" HEAD 2>/dev/null || true
-	fi
-	git diff --name-only HEAD 2>/dev/null || true
-	git diff --cached --name-only 2>/dev/null || true
+	lint_changed_files "$base_ref"
+	printf '%s\n' "$LINT_CHANGED_FILES"
 	return 0
 }
 
@@ -137,7 +141,8 @@ _linters_local_gate_key() {
 		printf 'gate=%s\n' "$gate_name"
 		printf 'head=%s\n' "$(git rev-parse HEAD 2>/dev/null || printf 'nogit')"
 		printf 'tree=%s\n' "$(git rev-parse 'HEAD^{tree}' 2>/dev/null || printf 'notree')"
-		printf 'changed=%s\n' "$( _linters_local_changed_files_key | sort -u | tr '\n' ',' )"
+		_linters_local_changed_files_key >/dev/null
+		printf 'changed=%s\n' "$LINT_CHANGED_FILES_FINGERPRINT"
 		_linters_local_file_checksum "${SCRIPT_DIR}/linters-local.sh"
 		_linters_local_file_checksum "${SCRIPT_DIR}/linters-local-gates.sh"
 		_linters_local_file_checksum "${SCRIPT_DIR}/linters-local-analysis.sh"
@@ -199,9 +204,10 @@ _linters_local_run_cached_gate() {
 
 	cat "$output_file"
 	if [[ "$status" -eq 124 ]]; then
-		print_warning "${gate_name}: timed out after ${timeout_seconds}s; broad/advisory result is partial"
-		if [[ "$strict_broad" != true ]]; then
-			status=0
+		if [[ "$strict_broad" == true ]]; then
+			print_error "${gate_name}: timed out after ${timeout_seconds}s; required result is incomplete"
+		else
+			print_warning "${gate_name}: timed out after ${timeout_seconds}s; result is incomplete"
 		fi
 	fi
 

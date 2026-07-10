@@ -129,31 +129,19 @@ _linters_local_base_ref() {
 	return 0
 }
 
-_linters_local_changed_files() {
-	local base_ref="$1"
-	local changed_files=""
-	local chunk=""
-
-	if [[ -n "$base_ref" ]]; then
-		chunk=$(git diff --name-only --diff-filter=ACMR "$base_ref"...HEAD 2>/dev/null || true)
-		changed_files="$chunk"
-	fi
-	chunk=$(git diff --name-only --diff-filter=ACMR 2>/dev/null || true)
-	[[ -n "$chunk" ]] && changed_files=$(printf '%s\n%s\n' "$changed_files" "$chunk")
-	chunk=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null || true)
-	[[ -n "$chunk" ]] && changed_files=$(printf '%s\n%s\n' "$changed_files" "$chunk")
-
-	printf '%s\n' "$changed_files" | sed '/^[[:space:]]*$/d' | sort -u
+linters_local_changed_files_matching() {
+	local pattern="$1"
+	lint_changed_files_matching "$pattern"
 	return 0
 }
 
-linters_local_changed_files_matching() {
-	local pattern="$1"
-	local base_ref changed_files
+_linters_local_prepare_changed_inventory() {
+	if [[ "${LINTERS_LOCAL_MODE:-full}" != "$LINTERS_LOCAL_MODE_CHANGED" ]]; then
+		return 0
+	fi
+	local base_ref=""
 	base_ref=$(_linters_local_base_ref)
-	changed_files=$(_linters_local_changed_files "$base_ref")
-	[[ -n "$changed_files" ]] || return 0
-	printf '%s\n' "$changed_files" | grep -E "$pattern" || true
+	lint_changed_files "$base_ref"
 	return 0
 }
 
@@ -208,6 +196,8 @@ main() {
 	done
 
 	print_header
+
+	_linters_local_prepare_changed_inventory
 
 	# Collect shell files once (includes modularised subdirectories, excludes _archive/)
 	collect_shell_files
