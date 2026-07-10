@@ -104,11 +104,11 @@ test_no_cache_reruns_gate() {
 	return 0
 }
 
-test_timeout_is_advisory_by_default() {
+test_timeout_fails_closed_by_default() {
 	source_gate_helpers
 	local tmp_dir out ret=0
 	tmp_dir=$(mktemp -d)
-	export LINTERS_LOCAL_CACHE_ENABLED="false"
+	export LINTERS_LOCAL_CACHE_ENABLED="true"
 	export LINTERS_LOCAL_CACHE_DIR_OVERRIDE="${tmp_dir}/cache"
 	export LINTERS_LOCAL_BROAD_GATE_TIMEOUT_SECONDS="1"
 	export LINTERS_LOCAL_STRICT_BROAD_GATES="false"
@@ -116,11 +116,68 @@ test_timeout_is_advisory_by_default() {
 
 	out=$(_linters_local_run_cached_gate "unit-timeout" "slow_cache_gate" 2>&1) || ret=$?
 
-	if [ "$ret" -eq 0 ] && grep -q 'timed out after 1s' <<<"$out"; then
-		print_result "linter cache: broad gate timeout is advisory by default" 0
+	local cache_written=false
+	local cache_file=""
+	for cache_file in "${tmp_dir}"/cache/unit-timeout-*.status; do
+		[ -e "$cache_file" ] && cache_written=true
+	done
+	if [ "$ret" -eq 124 ] && grep -q 'result is incomplete' <<<"$out" && [ "$cache_written" = false ]; then
+		print_result "linter cache: broad gate timeout fails closed" 0
 	else
-		print_result "linter cache: broad gate timeout is advisory by default" 1 \
-			"expected advisory timeout, got exit=$ret output=[$out]"
+		print_result "linter cache: broad gate timeout fails closed" 1 \
+			"expected status 124 and incomplete diagnostic, got exit=$ret output=[$out]"
+	fi
+	rm -rf "$tmp_dir"
+	return 0
+}
+
+test_cache_key_invalidates_on_untracked_content_change() {
+	source_gate_helpers
+	local tmp_dir original_dir first_key second_key
+	tmp_dir=$(mktemp -d)
+	original_dir="$PWD"
+	git -C "$tmp_dir" init -q
+	printf 'first\n' >"${tmp_dir}/untracked.sh"
+	cd "$tmp_dir" || return 1
+	LINT_CHANGED_FILES_READY=false
+	lint_changed_files
+	first_key=$(_linters_local_gate_key "unit-content")
+	printf 'second\n' >"${tmp_dir}/untracked.sh"
+	LINT_CHANGED_FILES_READY=false
+	lint_changed_files
+	second_key=$(_linters_local_gate_key "unit-content")
+	cd "$original_dir" || return 1
+
+	if [ -n "$first_key" ] && [ "$first_key" != "$second_key" ]; then
+		print_result "linter cache: untracked content invalidates fingerprint" 0
+	else
+		print_result "linter cache: untracked content invalidates fingerprint" 1 \
+			"first=[$first_key] second=[$second_key]"
+	fi
+	rm -rf "$tmp_dir"
+	return 0
+}
+
+test_changed_inventory_snapshot_avoids_repeat_git_scans() {
+	source_gate_helpers
+	local tmp_dir counter_file output count=0
+	tmp_dir=$(mktemp -d)
+	counter_file="${tmp_dir}/git-calls"
+	LINT_CHANGED_FILES="untracked.sh"
+	LINT_CHANGED_FILES_FINGERPRINT="fixture"
+	LINT_CHANGED_FILES_READY=true
+	git() {
+		printf 'git\n' >>"$counter_file"
+		return 1
+	}
+	output=$(_linters_local_changed_files_key)
+	unset -f git
+	[[ -f "$counter_file" ]] && count=$(wc -l <"$counter_file" | tr -d '[:space:]')
+	if [ "$output" = "untracked.sh" ] && [ "$count" -eq 0 ]; then
+		print_result "linter cache: prepared inventory avoids repeated git scans" 0
+	else
+		print_result "linter cache: prepared inventory avoids repeated git scans" 1 \
+			"output=[$output] git_calls=$count"
 	fi
 	rm -rf "$tmp_dir"
 	return 0
@@ -129,7 +186,9 @@ test_timeout_is_advisory_by_default() {
 main() {
 	test_cache_hit_reuses_gate_output
 	test_no_cache_reruns_gate
-	test_timeout_is_advisory_by_default
+	test_timeout_fails_closed_by_default
+	test_cache_key_invalidates_on_untracked_content_change
+	test_changed_inventory_snapshot_avoids_repeat_git_scans
 
 	printf '\n'
 	if [ "$TESTS_FAILED" -eq 0 ]; then
