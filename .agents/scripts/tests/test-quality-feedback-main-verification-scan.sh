@@ -877,6 +877,51 @@ test_scan_single_pr_filters_positive_inline_acknowledgement_reply() {
 		print_result "issue #26770 positive inline guard-check acknowledgement is filtered" 1 "expected 0 findings, got ${count}"
 	fi
 
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			while [[ $# -gt 0 ]]; do
+				case "$1" in
+				repos/*/pulls/*/comments)
+					jq -n '[
+						{"id":3556392009,"in_reply_to_id":null,"user":{"login":"gemini-code-assist[bot]"},"path":".agents/scripts/lint-resource-benchmark.sh","line":407,"original_line":407,"position":37,"body":"If --profile is passed without a value, shift 2 will fail. Consider validating that an argument is present before shifting.","html_url":"https://github.com/example/repo/pull/1#discussion_r3556392009","created_at":"2026-07-10T04:37:18Z"},
+						{"id":3556456770,"in_reply_to_id":3556392009,"user":{"login":"maintainer"},"path":".agents/scripts/lint-resource-benchmark.sh","line":407,"original_line":407,"position":37,"body":"Addressed in `4e5dfb69f`. All value-taking profiler options now use a shared presence check and return an explicit diagnostic with status 1.","html_url":"https://github.com/example/repo/pull/1#discussion_r3556456770","created_at":"2026-07-10T04:56:24Z"}
+					]'
+					return 0
+					;;
+				repos/*/pulls/*/reviews)
+					echo '[]'
+					return 0
+					;;
+				repos/*/git/trees/*)
+					echo '[".agents/scripts/lint-resource-benchmark.sh"]'
+					return 0
+					;;
+				repos/*)
+					echo "main"
+					return 0
+					;;
+				esac
+				shift
+			done
+			return 0
+			;;
+		label | pr) return 0 ;;
+		esac
+		return 1
+	}
+
+	findings=$(_scan_single_pr "owner/repo" "26918" "medium" "false" 2>/dev/null)
+	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
+
+	if [[ "$count" -eq 0 ]]; then
+		print_result "issue #26971 addressed reply filters its parent finding" 0
+	else
+		print_result "issue #26971 addressed reply filters its parent finding" 1 "expected 0 findings, got ${count}"
+	fi
+
 	_restore_mock_gh
 	return 0
 }

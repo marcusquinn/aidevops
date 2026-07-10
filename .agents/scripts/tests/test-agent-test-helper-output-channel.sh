@@ -44,6 +44,50 @@ fail() {
 	return 1
 }
 
+direct_stdout="$TEST_ROOT/direct.stdout"
+direct_stderr="$TEST_ROOT/direct.stderr"
+direct_test='{"id":"direct-call","prompt":"direct","expect_contains":["mock response"]}'
+{
+	_cmd_run_capture_test "$direct_test" 0 1 "" "" 1 "[]" false
+	printf '%s\n' "stdout-still-open"
+} >"$direct_stdout" 2>"$direct_stderr"
+grep -q '^stdout-still-open$' "$direct_stdout" ||
+	fail "capture helper leaked its stdout redirection into the caller"
+grep -q '\[1/1\] direct-call' "$direct_stderr" ||
+	fail "direct capture omitted human-readable progress"
+
+propagated_status=0
+(
+	_cmd_run_execute_test() {
+		return 7
+	}
+	_cmd_run_capture_test "$direct_test" 0 1 "" "" 1 "[]" true
+) || propagated_status=$?
+[[ $propagated_status -eq 7 ]] ||
+	fail "capture helper did not propagate the execution status"
+
+errexit_stdout="$TEST_ROOT/errexit.stdout"
+errexit_status=0
+set +e
+TEST_AGENT_HELPER="$REPO_ROOT/.agents/scripts/agent-test-helper.sh" bash -c '
+	set -euo pipefail
+	source "$TEST_AGENT_HELPER"
+	_cmd_run_execute_test() {
+		false
+		printf "%s\n" "unexpected-continuation" >&3
+		return 0
+	}
+	_cmd_run_capture_test "{}" 0 1 "" "" 1 "[]" true
+	printf "%s\n" "errexit-survived"
+' >"$errexit_stdout" 2>&1
+errexit_status=$?
+set -e
+[[ $errexit_status -ne 0 ]] ||
+	fail "capture helper suppressed errexit inside its subshell"
+if grep -q 'unexpected-continuation\|errexit-survived' "$errexit_stdout"; then
+	fail "capture helper continued after a command failed under errexit"
+fi
+
 pass_suite="$TEST_ROOT/pass-suite.json"
 cat >"$pass_suite" <<'JSON'
 {
@@ -90,6 +134,7 @@ grep -q 'Expected to contain: "missing"' "$human_fail_output" ||
 	fail "human output omitted expectation failure"
 grep -q 'Error/timeout' "$human_fail_output" ||
 	fail "human output omitted timeout failure"
+rm -f "$RESULTS_DIR"/output-channel-fail-*.json
 
 json_stdout="$TEST_ROOT/json.stdout"
 json_stderr="$TEST_ROOT/json.stderr"
