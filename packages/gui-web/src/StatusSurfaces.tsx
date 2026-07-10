@@ -116,7 +116,7 @@ export function VaultSurface({ onVaultRequest, status }: { onVaultRequest: (inte
   ];
   const featureCards = [
     { label: text.vaultStatus, value: vault.status, detail: "Metadata-only lock state from the local helper." },
-    { label: text.vaultSetup, value: vault.setup_state, detail: vault.setup_hint },
+    { label: text.vaultSetup, value: vault.setup_state, detail: readinessUnknown ? custodyState.detail : vault.setup_hint },
     { label: text.vaultLockUnlock, value: custodyState.value, detail: custodyState.detail },
     { label: text.vaultDevices, value: `${vault.devices.length} device`, detail: "Device trust metadata only; private keys are never exposed." },
     { label: text.vaultSync, value: vault.sync.status, detail: "Encrypted bundles and signed manifests over untrusted transports." },
@@ -167,7 +167,7 @@ export function VaultSurface({ onVaultRequest, status }: { onVaultRequest: (inte
             <h2>{vault.status === "corrupted" ? "Recovery required" : readinessUnknown ? "Setup status unavailable" : vault.readiness.setup_required ? "Setup required" : "Setup metadata"}</h2>
             <p>{readinessUnknown ? custodyState.detail : vault.setup_hint}</p>
           </div>
-          <button className="secondary-action vault-cta" onClick={() => onVaultRequest(vaultDialogIntentForStatus(vault))} title={vault.unlock_hint} type="button">{vaultActionLabel(vaultDialogIntentForStatus(vault))}</button>
+          <button className="secondary-action vault-cta" onClick={() => onVaultRequest(vaultDialogIntentForStatus(vault))} title={readinessUnknown ? custodyState.detail : vault.unlock_hint} type="button">{vaultActionLabel(vaultDialogIntentForStatus(vault))}</button>
         </div>
         {readinessUnknown ? (
           <p className="empty-state">{vault.status === "corrupted" ? "Use recovery guidance only. Preserve the current Vault directory and do not run initialization commands." : "Retry authoritative status before following setup or unlock instructions."}</p>
@@ -223,20 +223,28 @@ export function LockedVaultGate({ collection, label, onVaultRequest, vault }: {
   onVaultRequest: (intent: VaultDialogIntent) => void;
   vault: GuiVaultStatusData;
 }) {
+  const intent = vaultDialogIntentForStatus(vault);
+  const statusUnavailable = intent === "recover" || intent === "unavailable";
+  const heading = intent === "recover" ? `${label} needs Vault recovery` : intent === "unavailable" ? `${label} Vault status is unavailable` : `${label} is locked`;
+  const detail = intent === "recover"
+    ? "Protected content remains hidden while damaged Vault metadata is reviewed."
+    : intent === "unavailable"
+      ? "Protected content remains hidden until the local helper returns authoritative status."
+      : `${text.vaultTooltip} ${vault.unlock_hint}`;
   return (
-    <section className="panel vault-locked-gate" aria-label={`${label} locked by Vault`}>
+    <section className="panel vault-locked-gate" aria-label={heading}>
       <div className="section-heading split-heading">
         <div>
           <p className="eyebrow">{collection.data_class}</p>
-          <h2>{label} is locked</h2>
-          <p>{text.vaultLockedPreview}</p>
+          <h2>{heading}</h2>
+          <p>{statusUnavailable ? detail : text.vaultLockedPreview}</p>
         </div>
         <VaultPadlock collection={collection} onActivate={onVaultRequest} vault={vault} />
       </div>
       <div className="notice compact-notice" role="note">
-        {text.vaultTooltip} {vault.unlock_hint}
+        {detail}
       </div>
-      <button className="secondary-action vault-cta" onClick={() => onVaultRequest(vaultDialogIntentForStatus(vault))} title={vault.unlock_hint} type="button">{vaultActionLabel(vaultDialogIntentForStatus(vault))}</button>
+      <button className="secondary-action vault-cta" onClick={() => onVaultRequest(intent)} title={detail} type="button">{vaultActionLabel(intent)}</button>
     </section>
   );
 }

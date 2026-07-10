@@ -64,9 +64,14 @@ export function VaultPadlock({ collection, compact = false, onActivate, vault }:
   vault: GuiVaultStatusData;
 }) {
   const locked = collection.state !== "unlocked" || !vault.unlocked;
-  const stateLabel = locked ? "Locked" : "Unlocked";
+  const intent = vaultDialogIntentForStatus(vault);
+  const stateLabel = intent === "recover" ? "Recovery required" : intent === "unavailable" ? "Status unavailable" : locked ? "Locked" : "Unlocked";
   const Icon = locked ? FiLock : FiUnlock;
-  const tooltip = `${stateLabel}: ${vaultCollectionTooltip(collection)}`;
+  const tooltip = intent === "recover"
+    ? "Recovery required: Vault metadata is damaged; preserve encrypted data."
+    : intent === "unavailable"
+      ? "Status unavailable: protected content remains hidden until Vault state is authoritative."
+      : `${stateLabel}: ${vaultCollectionTooltip(collection)}`;
   const className = compact ? "vault-padlock compact" : "vault-padlock";
 
   const activate = (event: MouseEvent<HTMLSpanElement> | KeyboardEvent<HTMLSpanElement>) => {
@@ -97,7 +102,7 @@ export function VaultPadlock({ collection, compact = false, onActivate, vault }:
       title={tooltip}
     >
       <Icon aria-hidden="true" focusable="false" />
-      <span>{compact ? stateLabel : `${stateLabel} by Vault`}</span>
+      <span>{compact || intent === "recover" || intent === "unavailable" ? stateLabel : `${stateLabel} by Vault`}</span>
     </span>
   );
 }

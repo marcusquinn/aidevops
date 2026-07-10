@@ -72,8 +72,14 @@ resolve_vault_python() {
 	local managed_python="$VAULT_RUNTIME_PYTHON"
 	if [[ "${AIDEVOPS_VAULT_TEST_MODE:-0}" == "1" && -n "${AIDEVOPS_VAULT_PYTHON:-}" ]]; then
 		managed_python="$AIDEVOPS_VAULT_PYTHON"
+		if vault_python_ready "$managed_python"; then
+			printf '%s\n' "$managed_python"
+			return 0
+		fi
+		printf '%s\n' "[ERROR] Vault test crypto runtime is unavailable" >&2
+		return 1
 	fi
-	if [[ -x "$managed_python" ]] && vault_python_ready "$managed_python"; then
+	if [[ -x "$managed_python" ]] && vault_managed_runtime_safe "$managed_python" && vault_python_ready "$managed_python"; then
 		printf '%s\n' "$managed_python"
 		return 0
 	fi
@@ -113,7 +119,7 @@ vault_path_permissions_safe() {
 	return 1
 }
 
-vault_managed_status_python_safe() {
+vault_managed_runtime_safe() {
 	local python_bin="$1"
 	local env_dir="${VAULT_RUNTIME_PYTHON%/bin/python3}"
 	local marker="${env_dir}/.aidevops-managed-runtime"
@@ -146,7 +152,7 @@ resolve_status_python() {
 		printf '%s\n' "$AIDEVOPS_VAULT_PYTHON"
 		return 0
 	fi
-	if [[ -x "$managed_python" ]] && vault_managed_status_python_safe "$managed_python"; then
+	if [[ -x "$managed_python" ]] && vault_managed_runtime_safe "$managed_python"; then
 		printf '%s\n' "$managed_python"
 		return 0
 	fi

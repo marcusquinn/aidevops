@@ -11,7 +11,7 @@ import { CommsConversationSurface } from "../src/CommsConversationSurface";
 import { AppsSurface, nextRecommendedFilterValue } from "../src/InventorySurfaces";
 import { PulseWorkersSurface } from "../src/PulseWorkersSurface";
 import { recommendedApps } from "../src/RecommendedAppsSurface";
-import { AiProvidersSurface } from "../src/StatusSurfaces";
+import { AiProvidersSurface, VaultSurface } from "../src/StatusSurfaces";
 import { VaultAccessModal } from "../src/VaultAccessModal";
 import { vaultDialogIntentForStatus } from "../src/VaultBadges";
 import { DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, chatPrimitiveStackDecision, fontOptions, navGroups, surfaceRecordCounts, type SurfaceNavItem } from "../src/app-model";
@@ -421,6 +421,22 @@ describe("dashboard shell", () => {
     expect(unlockedHtml).toContain("GITHUB_TOKEN");
     expect(unlockedHtml).toContain("Never displayed");
     expect(unlockedHtml).not.toContain("type=\"password\"");
+  });
+
+  test("keeps unavailable and corrupted Vault surfaces free of setup and unlock commands", () => {
+    const base = mockedStatus().data;
+    const unavailableStatus: GuiStatusData = { ...base, vault: { ...base.vault, helper_status: "error", status: "unknown", setup_state: "unknown", readiness: { ...base.vault.readiness, setup_required: false } } };
+    const corruptedStatus: GuiStatusData = { ...base, vault: { ...base.vault, helper_status: "available", initialized: true, status: "corrupted", setup_state: "unknown", readiness: { ...base.vault.readiness, setup_required: false } } };
+
+    const unavailableHtml = renderToStaticMarkup(createElement(VaultSurface, { onVaultRequest: () => undefined, status: unavailableStatus }));
+    const corruptedHtml = renderToStaticMarkup(createElement(VaultSurface, { onVaultRequest: () => undefined, status: corruptedStatus }));
+
+    expect(unavailableHtml).toContain("Setup status unavailable");
+    expect(unavailableHtml).not.toContain("aidevops vault init");
+    expect(unavailableHtml).not.toContain("aidevops vault unlock");
+    expect(corruptedHtml).toContain("Recovery required");
+    expect(corruptedHtml).not.toContain("aidevops vault init");
+    expect(corruptedHtml).not.toContain("aidevops vault unlock");
   });
 
   test("renders updated Apps copy, casing, filter order, and compact managed metadata", () => {

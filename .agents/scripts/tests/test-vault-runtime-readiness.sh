@@ -141,6 +141,15 @@ if HOME="$unsafe_home" INSTALL_DIR="$REPO_ROOT" bash -c '
 else
 	fail "setup preserves unmarked runtime directories"
 fi
+set +e
+HOME="$unsafe_home" AIDEVOPS_VAULT_DIR="${unsafe_home}/vault" "$VAULT_HELPER" unlock </dev/null >/dev/null 2>&1
+unsafe_unlock_rc=$?
+set -e
+if [[ "$unsafe_unlock_rc" -ne 0 && ! -e "${unsafe_home}/unsafe-runtime-executed" ]]; then
+	pass "crypto commands reject unmarked interpreters before execution"
+else
+	fail "crypto commands reject unmarked interpreters before execution"
+fi
 
 printf '%s\n' "forged-marker" >"${unsafe_runtime}/.aidevops-managed-runtime"
 chmod 600 "${unsafe_runtime}/.aidevops-managed-runtime"
