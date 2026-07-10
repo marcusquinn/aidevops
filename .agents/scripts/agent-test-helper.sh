@@ -823,7 +823,8 @@ _cmd_run_capture_test() {
 			"$test_json" "$test_index" "$test_count" \
 			"$suite_agent" "$suite_model" "$suite_timeout" \
 			"$results"
-	) || capture_status=$?
+	)
+	capture_status=$?
 
 	return "$capture_status"
 }

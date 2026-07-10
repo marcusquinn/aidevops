@@ -66,6 +66,28 @@ propagated_status=0
 [[ $propagated_status -eq 7 ]] ||
 	fail "capture helper did not propagate the execution status"
 
+errexit_stdout="$TEST_ROOT/errexit.stdout"
+errexit_status=0
+set +e
+TEST_AGENT_HELPER="$REPO_ROOT/.agents/scripts/agent-test-helper.sh" bash -c '
+	set -euo pipefail
+	source "$TEST_AGENT_HELPER"
+	_cmd_run_execute_test() {
+		false
+		printf "%s\n" "unexpected-continuation" >&3
+		return 0
+	}
+	_cmd_run_capture_test "{}" 0 1 "" "" 1 "[]" true
+	printf "%s\n" "errexit-survived"
+' >"$errexit_stdout" 2>&1
+errexit_status=$?
+set -e
+[[ $errexit_status -ne 0 ]] ||
+	fail "capture helper suppressed errexit inside its subshell"
+if grep -q 'unexpected-continuation\|errexit-survived' "$errexit_stdout"; then
+	fail "capture helper continued after a command failed under errexit"
+fi
+
 pass_suite="$TEST_ROOT/pass-suite.json"
 cat >"$pass_suite" <<'JSON'
 {
