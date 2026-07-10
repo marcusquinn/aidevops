@@ -27,6 +27,39 @@ _build_inline_findings() {
 	local min_severity="$3"
 
 	echo "$comments" | jq --arg pr "$pr_num" --arg min_sev "$min_severity" '
+		def resolution_or_ack:
+			test(
+				"aidevops:review-thread-response|" +
+				"\\baddressed in [0-9a-f]{7,40}\\b|" +
+				"(?s:\\bthank you for verifying\\b.*\\blooks good\\b)|" +
+				"(?s:\\bthank you for the verification\\b.*?\\badding the regression test\\b.*?\\bcorrectly address(es|ed)?\\b)|" +
+				"(?s:\\bthank you for the update\\b.*?\\bnon-greedy quantifiers?\\b.*?\\bregression suite\\b.*?\\bcorrectly address(es|ed)?\\b)|" +
+				"(?s:\\bthank you for the confirmation\\b.*?\\baddressing the feedback\\b.*?\\bcorrectly handles?\\b.*?\\bimproves?\\b.*?\\brobustness\\b)|" +
+				"(?s:\\bthank you for the update\\b.*?\\bimplementation\\b.*?\\bcorrectly address(es|ed)?\\b.*?\\brobust (approach|validation|handling)\\b)|" +
+				"(?s:\\bthank you for the update\\b.*?\\busing\\b.*?\\bconsistently\\b.*?\\bcorrect approach\\b.*?\\bverification steps\\b.*?\\bconfidence\\b)|" +
+				"(?s:\\bthank you for the clarification\\b.*?\\byou are (absolutely )?correct\\b.*?\\bproperly managed\\b.*?\\bcleanup routines?\\b)|" +
+				"\\bno further concerns?\\b|" +
+				"\\bno further feedback\\b|" +
+				"\\bno further recommendations?\\b|" +
+				"\\bno further action (is )?(needed|required)\\b|" +
+				"\\bthread is resolved\\b|" +
+				"(?s:\\b(already )?incorporate[sd]?\\b.*\\bnecessary synchronization\\b)|" +
+				"\\brace condition\\b.*\\b(is|was) indeed addressed\\b|" +
+				"\\bimplementation[[:space:]]+((is|was|has[[:space:]]+been)[[:space:]]+)?(confirmed|verified)\\b|" +
+				"\\bimplementation looks correct and address(es|ed)?\\b|" +
+				"\\btests are passing\\b";
+				"i"
+			);
+
+		# A positive reviewer reply is closure evidence for its parent finding.
+		# Suppress both the acknowledgement and the resolved root comment so an
+		# unverifiable stale snippet cannot recreate already-addressed debt.
+		([.[] |
+			select(.in_reply_to_id != null) |
+			select((.body // "") | resolution_or_ack) |
+			.in_reply_to_id
+		]) as $resolved_parent_ids |
+
 		[.[] |
 		# Determine reviewer type
 		(.user.login) as $login |
@@ -43,26 +76,10 @@ _build_inline_findings() {
 		# Skip thread-resolution replies and positive acknowledgements that appear
 		# as inline review comments. These are closure evidence from a review-thread
 		# response worker, not new quality debt (GH#24939).
-		($body | test(
-			"aidevops:review-thread-response|" +
-			"\\baddressed in [0-9a-f]{7,40}\\b|" +
-			"(?s:\\bthank you for verifying\\b.*\\blooks good\\b)|" +
-			"(?s:\\bthank you for the verification\\b.*?\\badding the regression test\\b.*?\\bcorrectly address(es|ed)?\\b)|" +
-			"(?s:\\bthank you for the update\\b.*?\\bnon-greedy quantifiers?\\b.*?\\bregression suite\\b.*?\\bcorrectly address(es|ed)?\\b)|" +
-			"(?s:\\bthank you for the confirmation\\b.*?\\baddressing the feedback\\b.*?\\bcorrectly handles?\\b.*?\\bimproves?\\b.*?\\brobustness\\b)|" +
-			"(?s:\\bthank you for the update\\b.*?\\bimplementation\\b.*?\\bcorrectly address(es|ed)?\\b.*?\\brobust (approach|validation|handling)\\b)|" +
-			"(?s:\\bthank you for the update\\b.*?\\busing\\b.*?\\bconsistently\\b.*?\\bcorrect approach\\b.*?\\bverification steps\\b.*?\\bconfidence\\b)|" +
-			"\\bno further concerns?\\b|" +
-			"\\bno further feedback\\b|" +
-			"\\bno further recommendations?\\b|" +
-			"\\bno further action (is )?(needed|required)\\b|" +
-			"\\bthread is resolved\\b|" +
-			"(?s:\\b(already )?incorporate[sd]?\\b.*\\bnecessary synchronization\\b)|" +
-			"\\brace condition\\b.*\\b(is|was) indeed addressed\\b|" +
-			"\\bimplementation[[:space:]]+((is|was|has[[:space:]]+been)[[:space:]]+)?(confirmed|verified)\\b|" +
-			"\\bimplementation looks correct and address(es|ed)?\\b|" +
-			"\\btests are passing\\b"; "i")) as $resolution_or_ack |
+		($body | resolution_or_ack) as $resolution_or_ack |
 		select($resolution_or_ack | not) |
+		(.id // null) as $comment_id |
+		select($comment_id == null or (($resolved_parent_ids | index($comment_id)) == null)) |
 
 		# Extract severity from body
 		(if ($body | test("security-critical\\.svg|🔴.*critical|CRITICAL"; "i")) then "critical"

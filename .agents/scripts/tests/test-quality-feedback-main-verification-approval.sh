@@ -514,6 +514,19 @@ test_skips_pr26892_nongreedy_quantifier_ack() {
 	return 0
 }
 
+test_skips_pr26938_resolved_timeout_thread() {
+	local comments result
+	# shellcheck disable=SC2016  # literal review JSON includes a Markdown code span
+	comments='[{"id":3559925333,"user":{"login":"gemini-code-assist[bot]"},"body":"If the modal is closed or unmounted within 3 seconds of clicking the terminal launch button, the timeout callback will still execute and attempt to call setLaunchStatus, which can cause a React state update on an unmounted component warning. It is best practice to store the timeout ID in a ref and clear it when the component unmounts.","path":"packages/gui-web/src/VaultAccessModal.tsx","original_line":67,"html_url":"https://example.invalid/review-root","created_at":"2026-07-10T15:05:49Z"},{"id":3560321224,"in_reply_to_id":3559925333,"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the clarification, @maintainer. You are absolutely correct; the timeout logic has been moved to `useVaultAccessDialog.ts` and is now properly managed with cleanup routines. I appreciate you pointing out the current implementation details.","path":"packages/gui-web/src/VaultAccessModal.tsx","original_line":67,"html_url":"https://example.invalid/review-reply","created_at":"2026-07-10T16:06:22Z"}]'
+	result=$(_build_inline_findings "$comments" "26938" "medium" | jq 'length')
+	if [[ "$result" == "0" ]]; then
+		print_result "skip PR #26938 resolved timeout thread" 0
+	else
+		print_result "skip PR #26938 resolved timeout thread" 1 "expected 0 findings, got ${result}"
+	fi
+	return 0
+}
+
 test_keeps_actionable_approved_review() {
 	# APPROVED review that also contains actionable critique — must be kept
 	local result
