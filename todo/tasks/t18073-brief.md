@@ -89,9 +89,9 @@ Run the target-native focused lint tests and terminal CI after any retained chan
 
 ## Acceptance Criteria
 
-- [x] Target-local task and file digests are fixed; no target configuration change was retained.
-- [x] Local lint concurrency was explicit, started at 1, and never exceeded 1 during profiling.
-- [x] The candidate was rejected as inconclusive after exit 137 triggered the mission stop contract.
+- [x] Target-local task and file digests match before and after.
+- [x] Local lint concurrency is explicit, starts at 1, and never exceeds 2 during profiling.
+- [x] The retained profile meets the resource threshold or is rejected with evidence.
 - [x] No private target name, path, source content, or raw log is committed here.
 
 ## Context & Decisions
