@@ -39,7 +39,7 @@ _build_inline_findings() {
 		def resolution_or_ack:
 			thread_resolution or test(
 				"aidevops:review-thread-response|" +
-				"\\baddressed in [0-9a-f]{7,40}\\b|" +
+				"\\baddressed in[[:space:]]+`?[0-9a-f]{7,40}\\b`?|" +
 				"(?s:\\bthank you for verifying\\b.*\\blooks good\\b)|" +
 				"(?s:\\bthank you for the verification\\b.*?\\badding the regression test\\b.*?\\bcorrectly address(es|ed)?\\b)|" +
 				"(?s:\\bthank you for the update\\b.*?\\bnon-greedy quantifiers?\\b.*?\\bregression suite\\b.*?\\bcorrectly address(es|ed)?\\b)|" +

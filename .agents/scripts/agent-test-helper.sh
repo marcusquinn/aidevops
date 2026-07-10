@@ -801,26 +801,32 @@ _cmd_run_emit_json_metrics() {
 #   Updated results JSON array followed by outcome on stdout
 #######################################
 _cmd_run_capture_test() {
-	local test_json="$1"
-	local test_index="$2"
-	local test_count="$3"
-	local suite_agent="$4"
-	local suite_model="$5"
-	local suite_timeout="$6"
-	local results="$7"
-	local json_output="$8"
+	local capture_status=0
 
-	exec 3>&1
-	if [[ "$json_output" == "false" ]]; then
-		exec 1>&2
-	else
-		exec 1>/dev/null
-	fi
-	_cmd_run_execute_test \
-		"$test_json" "$test_index" "$test_count" \
-		"$suite_agent" "$suite_model" "$suite_timeout" \
-		"$results"
-	return 0
+	(
+		local test_json="$1"
+		local test_index="$2"
+		local test_count="$3"
+		local suite_agent="$4"
+		local suite_model="$5"
+		local suite_timeout="$6"
+		local results="$7"
+		local json_output="$8"
+
+		exec 3>&1
+		if [[ "$json_output" == "false" ]]; then
+			exec 1>&2
+		else
+			exec 1>/dev/null
+		fi
+		_cmd_run_execute_test \
+			"$test_json" "$test_index" "$test_count" \
+			"$suite_agent" "$suite_model" "$suite_timeout" \
+			"$results"
+	)
+	capture_status=$?
+
+	return "$capture_status"
 }
 
 #######################################

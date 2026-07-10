@@ -10,6 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.8] - 2026-07-10
+
+### Changed
+
+- Isolate agent test capture descriptors (#26985)
+- suppress backticked addressed review threads (#26986)
+- Avoid ls when selecting agent test results (#26983)
+- preserve greeting cache handoff (#26982)
+- tolerate Vault helper warnings (#26979)
+- filter resolved action-required review feedback (#26977)
+- Documentation: correct asc metadata app option (#26981)
+- propagate update cache write failures (#26975)
+- Maintenance: update simplification state registry
+- add worker-ready sandbox cleanup brief (#26952)
+- add Node server administration agent (#26941)
+- Maintenance: sync ref:GH#26951 to TODO.md [skip ci]
+- Maintenance: sync completed lint mission tasks [skip ci] (#26949)
+- Maintenance: mark t18079 complete (pr:#26946 testing:runtime-verified)
+- publish bounded linter mission results (#26947)
+
+### Fixed
+
+- suppress resolved review feedback threads (#26984)
+- allow same-session worktree PID rollover (#26955)
+
 ## [3.32.7] - 2026-07-10
 
 ### Changed
