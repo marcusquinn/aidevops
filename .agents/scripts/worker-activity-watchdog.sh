@@ -5,7 +5,8 @@
 #
 # Monitors a worker's output file for growth. Treats timing thresholds as
 # recovery backstops: kills only when there is no evidence of live work, an
-# explicit provider failure is visible, or the hard elapsed cap is reached.
+# explicit provider failure is visible, or a confirmed stall has crossed the
+# hard elapsed threshold.
 #
 # This script runs as an INDEPENDENT process (launched via nohup) so it
 # survives the worker subshell's lifecycle changes. The previous design
@@ -40,10 +41,11 @@
 #                             defer the kill until the hard backstop.
 #   --phase1-timeout SECS     Seconds for initial output (default: 30)
 #   --poll-interval SECS      Seconds between checks (default: 10)
-#   --hard-kill-seconds SECS  Total elapsed seconds before forced hard-kill
-#                             (default: 1500 = 25 min). When total elapsed time
-#                             crosses this threshold, even with output growth, the
-#                             watchdog writes the .watchdog_stall_killed
+#   --hard-kill-seconds SECS  Total elapsed seconds before a confirmed output
+#                             stall escalates to forced hard-kill (default: 1500
+#                             = 25 min). Output growth resets stall detection and
+#                             is never killed solely for crossing this threshold.
+#                             The watchdog writes the .watchdog_stall_killed
 #                             sentinel (in addition to .watchdog_killed) so the
 #                             helper can classify the result as exit code 79
 #                             (watchdog_stall_killed) instead of 78

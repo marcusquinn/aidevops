@@ -488,7 +488,7 @@ echo "[lifecycle] defer marker" >>"$LIFECYCLE_LOG"
 
 ### Why it's a silent bug
 
-- **No observable failure.** The timeout becomes a no-op; nothing breaks loudly. Hard kill (`HARD_KILL_SECONDS`) becomes the only effective cap, defeating the purpose of the finer-grained stall timeout.
+- **No observable failure.** The stall timeout becomes a no-op; nothing breaks loudly. Because the hard elapsed threshold applies only after a confirmed stall, self-written output can defeat both checks and hide a genuinely stuck worker.
 - **Cross-function variants are subtler.** If function A writes to `$LOGFILE` and function B's polling loop reads `$LOGFILE`, A's writes register as B's "progress" — even when A had nothing to do with the work B was monitoring. (See `pulse-watchdog.sh:426` — idle-resume echo writes affect progress-check stall counter.)
 - **Bug ships unnoticed.** The canonical t3058 case shipped for ~1 year because there was no test that monitored watchdog firing in the marker-write path. Code review caught nothing; runtime behaviour caught nothing.
 

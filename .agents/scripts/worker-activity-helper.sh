@@ -51,12 +51,34 @@ WAH_RESULT_LOCAL_KILL="local_kill"
 
 # Shared jq definitions keep terminal-session semantics identical in the scalar
 # and rich aggregators without duplicating a long filter in both functions.
+# shellcheck disable=SC2016 # jq variables are evaluated by jq, not the shell
 WAH_SESSION_OUTCOME_JQ='
 	def _wah_nonterminal:
 		((.result // "") | endswith("_continue")) or (.result == "brief_recovery");
 	def _wah_session_outcomes:
-		to_entries
-		| group_by(if ((.value.session_key // "") | length) > 0 then .value.session_key else "__event_\(.key)" end)
+		. as $all
+		| to_entries
+		| map(. as $entry | select(
+			(($entry.value.repo_slug // "") | length) > 0
+			or (($entry.value.issue_number // null) != null)
+			or (($entry.value.session_id // "") | length) > 0
+			or (($entry.value.work_dir // "") | length) > 0
+			or (($entry.value.output_file // "") | length) > 0
+			or (($entry.value.launch_failure_cause // "") | length) > 0
+			or (($entry.value.kill_reason // "") | length) > 0
+			or (($entry.value.next_action // "") | length) > 0
+			or ([$all[] | select(
+				((.repo_slug // "") | length) > 0
+				and .session_key == $entry.value.session_key
+				and ([((.ts // 0) - ($entry.value.ts // 0)), (($entry.value.ts // 0) - (.ts // 0))] | max) <= 2
+				and .result == $entry.value.result
+				and .exit_code == $entry.value.exit_code
+			)] | length) == 0
+		))
+		| group_by(
+			(if ((.value.repo_slug // "") | length) > 0 then .value.repo_slug else "legacy" end)
+			+ "|" + (if ((.value.session_key // "") | length) > 0 then .value.session_key else "__event_\(.key)" end)
+		)
 		| map(sort_by([(.value.ts // 0), (if (.value.issue_number // null) != null then 1 else 0 end), .key]) | last.value)
 		| map(select(_wah_nonterminal | not));
 '
@@ -88,8 +110,8 @@ _wah_parse_since() {
 #
 # $1 — cutoff_epoch (entries with ts < cutoff are dropped).
 # $2 — optional now_epoch (entries with ts > now are dropped).
-# stdout — seven space-separated integers:
-#   total succeeded watchdog_killed watchdog_continued service_interrupted rate_limited other_failure
+# stdout — eight space-separated integers:
+#   raw_total terminal_total succeeded watchdog_killed watchdog_continued service_interrupted rate_limited other_failure
 #######################################
 _wah_aggregate_metrics() {
 	local cutoff_epoch="$1"
@@ -97,7 +119,7 @@ _wah_aggregate_metrics() {
 	local now_epoch
 
 	if [[ ! -f "$metrics" ]]; then
-		printf '0 0 0 0 0 0 0\n'
+		printf '0 0 0 0 0 0 0 0\n'
 		return 0
 	fi
 	now_epoch="${2:-$(date +%s)}"
@@ -122,7 +144,8 @@ _wah_aggregate_metrics() {
 	jq_program=$WAH_SESSION_OUTCOME_JQ'
 		[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $events
 		| ($events | _wah_session_outcomes) as $w | {
-			total:  ($w | length),
+			total:  ($events | length),
+			terminal: ($w | length),
 			succ:   ([$w[] | select(.result == "success" and .exit_code == 0)] | length),
 			wk:     ([$w[] | select(.result == $watchdog_killed_result)] | length),
 			wc:     ([$events[] | select(.result == "watchdog_stall_continue")] | length),
@@ -135,11 +158,11 @@ _wah_aggregate_metrics() {
 				and .result != $service_result
 				and .result != "rate_limit"
 			)] | length)
-		} | "\(.total) \(.succ) \(.wk) \(.wc) \(.sic) \(.rl) \(.of)"
+		} | "\(.total) \(.terminal) \(.succ) \(.wk) \(.wc) \(.sic) \(.rl) \(.of)"
 	'
-	result=$(jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg service_result "$service_result" --arg watchdog_killed_result "$watchdog_killed_result" "$jq_program" <"$metrics" 2>/dev/null) || result="0 0 0 0 0 0 0"
+	result=$(jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg service_result "$service_result" --arg watchdog_killed_result "$watchdog_killed_result" "$jq_program" <"$metrics" 2>/dev/null) || result="0 0 0 0 0 0 0 0"
 
-	[[ -n "$result" ]] || result="0 0 0 0 0 0 0"
+	[[ -n "$result" ]] || result="0 0 0 0 0 0 0 0"
 	printf '%s\n' "$result"
 	return 0
 }
@@ -416,10 +439,10 @@ _wah_solved_worker_count() {
 #######################################
 _wah_emit_human() {
 	local since_label="$1" cutoff_iso="$2"
-	local total="$3" succ="$4" wk="$5" wc="$6" sic="$7" rl="$8" of="$9"
-	local cb="${10}" gqlow="${11}" db_skip="${12}" nwbreaker="${13}"
-	local solved_count="${14}" pr_check_state="${15}" repo_label="${16}"
-	local details_json="${17}"
+	local total="$3" terminal_total="$4" succ="$5" wk="$6" wc="$7" sic="$8" rl="$9" of="${10}"
+	local cb="${11}" gqlow="${12}" db_skip="${13}" nwbreaker="${14}"
+	local solved_count="${15}" pr_check_state="${16}" repo_label="${17}"
+	local details_json="${18}"
 
 	local divider="==========================================================="
 
@@ -437,8 +460,8 @@ _wah_emit_human() {
 	printf '%s\n' "$divider"
 	printf '\n'
 	printf 'headless-runtime-metrics.jsonl (canonical worker outcomes):\n'
-	printf '  Terminal session outcomes:   %d\n' "$total"
-	printf '  Raw attempt/events:          %s\n' "$(printf '%s' "$details_json" | jq -r '.event_total // 0' 2>/dev/null || printf '0')"
+	printf '  Raw attempt/events:          %d\n' "$total"
+	printf '  Terminal session outcomes:   %d\n' "$terminal_total"
 	printf '  Succeeded:                   %d  (%s of terminal)\n' "$succ" "$rate_pct"
 	printf '  Watchdog stall-killed:       %d\n' "$wk"
 	printf '  Watchdog stall-continued:    %d  (heartbeat, not terminal)\n' "$wc"
@@ -511,10 +534,10 @@ _wah_emit_providers_human() {
 #######################################
 _wah_emit_json() {
 	local since_label="$1" cutoff_iso="$2" cutoff_epoch="$3"
-	local total="$4" succ="$5" wk="$6" wc="$7" sic="$8" rl="$9" of="${10}"
-	local cb="${11}" gqlow="${12}" db_skip="${13}" nwbreaker="${14}"
-	local solved_count="${15}" pr_check_state="${16}" repo_label="${17}"
-	local details_json="${18}"
+	local total="$4" terminal_total="$5" succ="$6" wk="$7" wc="$8" sic="$9" rl="${10}" of="${11}"
+	local cb="${12}" gqlow="${13}" db_skip="${14}" nwbreaker="${15}"
+	local solved_count="${16}" pr_check_state="${17}" repo_label="${18}"
+	local details_json="${19}"
 
 	# solved_count may be "?" on gh failure — coerce to null in JSON.
 	local solved_json="$solved_count"
@@ -525,6 +548,7 @@ _wah_emit_json() {
 		--arg cutoff_iso "$cutoff_iso" \
 		--argjson cutoff_epoch "$cutoff_epoch" \
 		--argjson total "$total" \
+		--argjson terminal_total "$terminal_total" \
 		--argjson succ "$succ" \
 		--argjson wk "$wk" \
 		--argjson wc "$wc" \
@@ -544,6 +568,7 @@ _wah_emit_json() {
 			repo: (if $repo == "" then null else $repo end),
 			metrics: {
 				total: $total,
+				terminal_session_total: $terminal_total,
 				event_total: ($details.event_total // $total),
 				continuation_events: ($details.continuation_events // 0),
 				succeeded: $succ,
@@ -626,9 +651,9 @@ cmd_summary() {
 		cutoff_iso="(unknown)"
 
 	# Aggregate metrics (single jq+awk pass).
-	local agg total succ wk wc sic rl of details_json
+	local agg total terminal_total succ wk wc sic rl of details_json
 	agg=$(_wah_aggregate_metrics "$cutoff_epoch" "$now_epoch")
-	read -r total succ wk wc sic rl of <<<"$agg"
+	read -r total terminal_total succ wk wc sic rl of <<<"$agg"
 	details_json=$(_wah_metric_details_json "$cutoff_epoch" "$now_epoch")
 
 	# Pulse-stats counters.
@@ -650,12 +675,12 @@ cmd_summary() {
 
 	if [[ $emit_json -eq 1 ]]; then
 		_wah_emit_json "$since_label" "$cutoff_iso" "$cutoff_epoch" \
-			"$total" "$succ" "$wk" "$wc" "$sic" "$rl" "$of" \
+			"$total" "$terminal_total" "$succ" "$wk" "$wc" "$sic" "$rl" "$of" \
 			"$cb" "$gqlow" "$db_skip" "$nwbreaker" \
 			"$pr_count" "$pr_check_state" "$repo_label" "$details_json"
 	else
 		_wah_emit_human "$since_label" "$cutoff_iso" \
-			"$total" "$succ" "$wk" "$wc" "$sic" "$rl" "$of" \
+			"$total" "$terminal_total" "$succ" "$wk" "$wc" "$sic" "$rl" "$of" \
 			"$cb" "$gqlow" "$db_skip" "$nwbreaker" \
 			"$pr_count" "$pr_check_state" "$repo_label" "$details_json"
 	fi

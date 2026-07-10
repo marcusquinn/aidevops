@@ -863,7 +863,11 @@ _worker_external_terminal_complete() {
 
 	local branch_name="${WORKER_TARGET_BRANCH:-}"
 	if [[ -n "$work_dir" && -d "$work_dir" ]]; then
-		branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+		local live_branch_name=""
+		live_branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+		if [[ -n "$live_branch_name" && "$live_branch_name" != "HEAD" ]]; then
+			branch_name="$live_branch_name"
+		fi
 	fi
 	[[ -n "$branch_name" && "$branch_name" != "HEAD" ]] || return 1
 

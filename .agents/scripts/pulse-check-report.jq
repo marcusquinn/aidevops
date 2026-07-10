@@ -25,6 +25,7 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
 ($current.worker_terminal_events // 0 | number_or_zero) as $current_terminal_events |
 ($recent_summary.metrics.total // 0 | number_or_zero) as $recent_total |
 ($summary.metrics.total // 0 | number_or_zero) as $hist_total |
+($summary.metrics.terminal_session_total // $summary.metrics.total // 0 | number_or_zero) as $hist_terminal_total |
 ($summary.metrics.succeeded // 0 | number_or_zero) as $hist_success |
 ($api.graphql_circuit_breaker_trips // 0 | number_or_zero) as $graphql_trips |
 {
@@ -44,7 +45,7 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
     recent_worker_events: $recent_total,
     historical_worker_events: $hist_total,
     historical_worker_successes: $hist_success,
-    historical_success_rate: (if $hist_total > 0 then (($hist_success / $hist_total) * 100 | floor) else null end),
+    historical_success_rate: (if $hist_terminal_total > 0 then (($hist_success / $hist_terminal_total) * 100 | floor) else null end),
     auto_dispatch_open: ($queue.aggregate.auto_dispatch_open // 0),
     auto_dispatch_available_unassigned: $available_issues,
     auto_dispatch_available_old: $old_available,
@@ -159,12 +160,12 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
         true
       )
     else empty end,
-    if ($hist_total >= 10 and (($hist_success * 100) / $hist_total) < 70) then
+    if ($hist_terminal_total >= 10 and (($hist_success * 100) / $hist_terminal_total) < 70) then
       finding(
         "worker-success-rate-regression";
         "medium";
         "Historical worker success rate is below the productivity target";
-        [("success_rate_percent=" + (((($hist_success * 100) / $hist_total) | floor) | tostring)), ("worker_events=" + ($hist_total | tostring))];
+        [("success_rate_percent=" + (((($hist_success * 100) / $hist_terminal_total) | floor) | tostring)), ("terminal_session_outcomes=" + ($hist_terminal_total | tostring)), ("worker_events=" + ($hist_total | tostring))];
         "Cluster failure families with worker-activity-helper summary --json, then file targeted fixes for the dominant cause instead of increasing concurrency.";
         false
       )

@@ -442,8 +442,9 @@ _opencode_project_table_migration_replay_detected() {
 #
 # Includes an activity watchdog. The timeout is a recovery backstop, not a
 # success/failure policy: output-active, CPU-active, and CI-wait states are
-# allowed to continue until the hard elapsed cap, while explicit provider
-# failures still recover promptly. Default is 600s because OpenAI/GPT-5.x
+# allowed to continue; the hard elapsed threshold applies only after a confirmed
+# output stall. Explicit provider failures still recover promptly. Default is
+# 600s because OpenAI/GPT-5.x
 # workers can spend several minutes reasoning before emitting more JSON/log
 # output; 300s caused false no-output kills before implementation/PR creation.
 _invoke_opencode() {

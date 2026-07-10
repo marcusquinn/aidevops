@@ -2587,6 +2587,7 @@ test_cmd_run_finish_fail_confirmed_terminal_state_releases_complete() {
 	WORKER_TARGET_BRANCH=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD)
 	export WORKER_TARGET_BRANCH
 	rm -rf "$work_dir"
+	mkdir -p "$work_dir"
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
 	gh() {
 		if [[ "${*}" == *"issue view"* ]]; then printf 'CLOSED'
@@ -2607,7 +2608,7 @@ test_cmd_run_finish_fail_confirmed_terminal_state_releases_complete() {
 	unset WORKER_TARGET_BRANCH 2>/dev/null || true
 	unset -f gh 2>/dev/null || true
 	if [[ "$released_reason" == "worker_complete" && "$fast_fail_called" -eq 0 ]]; then
-		print_result "_cmd_run_finish fail uses cached branch for confirmed terminal GitHub state" 0
+		print_result "_cmd_run_finish fail uses cached branch when live worktree lookup is invalid" 0
 	else
 		print_result "_cmd_run_finish fail treats confirmed terminal GitHub state as complete" 1 \
 			"Expected worker_complete and no fast-fail, got reason='${released_reason}' fast_fail=${fast_fail_called}"

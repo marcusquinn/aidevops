@@ -585,9 +585,7 @@ _merge_resolve_worktree_helper() {
 }
 
 _merge_remove_worktree_for_cleanup() {
-	local worktree_path="$1"
-	local branch_name="$2"
-	local canonical_dir="$3"
+	local branch_name="$1"
 	local helper_path=""
 
 	helper_path=$(_merge_resolve_worktree_helper 2>/dev/null || true)
@@ -621,7 +619,7 @@ _merge_cleanup_linked_worktree() {
 		return 0
 	fi
 
-	if _merge_remove_worktree_for_cleanup "$worktree_path" "$branch_name" "$canonical_dir"; then
+	if _merge_remove_worktree_for_cleanup "$branch_name"; then
 		git push origin --delete "$branch_name" >/dev/null 2>&1 || true
 		git branch -D "$branch_name" >/dev/null 2>&1 || true
 		print_success "Post-merge worktree cleanup complete for ${branch_name}"
