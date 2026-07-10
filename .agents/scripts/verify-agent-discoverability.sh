@@ -21,6 +21,7 @@
 #   2. AGENTS.md has pointers to extracted reference files
 #   3. AGENTS.md Domain Index section has pointer to reference/domain-index.md
 #   4. reference/domain-index.md exists and has >=30 domain rows with trigger words
+#  4b. Node server admin agent is routed and indexed
 #   5. All 12 primary agent files exist and are non-empty
 #   6. Capabilities section retains key capability entries
 #   7. Self-Improvement section has pointer to reference/self-improvement.md
@@ -36,6 +37,9 @@ set -euo pipefail
 
 AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}"
 PROMPT_HOOK_REGISTRY="configs/prompt-hook-candidates.conf"
+readonly FRAMEWORK_RULES_FILE="AGENTS.md"
+readonly AGENT_ROUTING_FILE="reference/agent-routing.md"
+readonly BUILD_PLUS_FILE="build-plus.md"
 PASS=0
 FAIL=0
 WARNINGS=0
@@ -142,7 +146,7 @@ EXTRACTED_REFS=(
 	"reference/model-verification.md"
 	"reference/review-bot-gate.md"
 	"reference/self-improvement.md"
-	"reference/agent-routing.md"
+	"$AGENT_ROUTING_FILE"
 	"reference/domain-index.md"
 )
 for ref in "${EXTRACTED_REFS[@]}"; do
@@ -153,7 +157,7 @@ done
 echo ""
 echo "=== 1b. Prompt-to-Hook Migration Registry ==="
 check_file_nonempty "$PROMPT_HOOK_REGISTRY" 1000 "Prompt-hook registry"
-check_string_in_file "AGENTS.md" "$PROMPT_HOOK_REGISTRY" "AGENTS.md: pointer to prompt-hook registry"
+check_string_in_file "$FRAMEWORK_RULES_FILE" "$PROMPT_HOOK_REGISTRY" "${FRAMEWORK_RULES_FILE}: pointer to prompt-hook registry"
 check_string_in_file "reference/progressive-disclosure.md" "Prompt-to-Hook Migration" "progressive-disclosure: prompt-to-hook migration rubric"
 check_string_in_file "$PROMPT_HOOK_REGISTRY" "deterministic" "Prompt-hook registry: deterministic rule class present"
 
@@ -162,19 +166,18 @@ check_string_in_file "$PROMPT_HOOK_REGISTRY" "deterministic" "Prompt-hook regist
 # the pointers that used to live in prompts/build.txt now live in AGENTS.md.
 echo ""
 echo "=== 2. AGENTS.md Framework Rules Pointers to Extracted References ==="
-FRAMEWORK_RULES_FILE="AGENTS.md"
 FRAMEWORK_REFS=(
 	"reference/memory-lookup.md"
 	"reference/screenshot-limits.md"
 )
 for ref in "${FRAMEWORK_REFS[@]}"; do
-	check_string_in_file "$FRAMEWORK_RULES_FILE" "$ref" "AGENTS.md pointer: ${ref}"
+	check_string_in_file "$FRAMEWORK_RULES_FILE" "$ref" "${FRAMEWORK_RULES_FILE} pointer: ${ref}"
 done
 
 # ─── Test 3: AGENTS.md Domain Index section has pointer to reference file ─────
 echo ""
 echo "=== 3. AGENTS.md Domain Index Pointer ==="
-check_string_in_file "AGENTS.md" "reference/domain-index.md" "AGENTS.md: Domain Index pointer to reference/domain-index.md"
+check_string_in_file "$FRAMEWORK_RULES_FILE" "reference/domain-index.md" "${FRAMEWORK_RULES_FILE}: Domain Index pointer to reference/domain-index.md"
 
 # ─── Test 4: reference/domain-index.md has >=30 domain rows ──────────────────
 echo ""
@@ -198,13 +201,23 @@ else
 	check_string_in_file "reference/domain-index.md" "Trigger words" "Domain index: trigger-word column present"
 fi
 
+# ─── Test 4b: Node server admin specialist is routed and indexed ─────────────
+echo ""
+echo "=== 4b. Node Server Admin Discoverability ==="
+check_file_nonempty "tools/runtime/node-server-admin.md" 2000 "Node server admin agent"
+check_string_in_file "tools/runtime/node-server-admin.md" "mode: subagent" "Node server admin: subagent mode"
+check_string_in_file "$BUILD_PLUS_FILE" "- node-server-admin" "Build+: node-server-admin allowlist"
+check_string_in_file "$BUILD_PLUS_FILE" "tools/runtime/node-server-admin.md" "Build+: Node runtime domain route"
+check_string_in_file "reference/domain-index.md" "tools/runtime/node-server-admin.md" "Domain index: Node server admin route"
+check_string_in_file "subagent-index.toon" "node-server-admin" "Subagent index: node-server-admin entry"
+
 # ─── Test 5: Primary agent @mention files ─────────────────────────────────────
 echo ""
 echo "=== 5. Primary Agent @Mention Files ==="
 # 12 primary agents: marketing-sales consolidates marketing+sales; content covers video/social; business covers accounts; PR covers earned media.
 AGENT_FILES=(
 	"aidevops.md"
-	"build-plus.md"
+	"$BUILD_PLUS_FILE"
 	"automate.md"
 	"business.md"
 	"content.md"
@@ -235,7 +248,7 @@ KEY_CAPS=(
 	"/routine"
 )
 for cap in "${KEY_CAPS[@]}"; do
-	check_string_in_file "AGENTS.md" "$cap" "Capabilities: ${cap}"
+	check_string_in_file "$FRAMEWORK_RULES_FILE" "$cap" "Capabilities: ${cap}"
 done
 
 # ─── Test 7: Self-Improvement section has pointer to reference file ───────────
@@ -243,7 +256,7 @@ done
 # AGENTS.md retains only the section header + 1-line pointer.
 echo ""
 echo "=== 7. Self-Improvement Section Key References ==="
-check_string_in_file "AGENTS.md" "reference/self-improvement.md" "AGENTS.md Self-Improvement: pointer to reference/self-improvement.md"
+check_string_in_file "$FRAMEWORK_RULES_FILE" "reference/self-improvement.md" "${FRAMEWORK_RULES_FILE} Self-Improvement: pointer to reference/self-improvement.md"
 # Verify the reference file has the full content (canonical source after refactor)
 check_string_in_file "reference/self-improvement.md" "framework-issue-helper.sh" "reference/self-improvement.md: framework-issue-helper.sh reference"
 check_string_in_file "reference/self-improvement.md" "PULSE_SCOPE_REPOS" "reference/self-improvement.md: PULSE_SCOPE_REPOS scope boundary"
@@ -256,20 +269,20 @@ check_file_nonempty "reference/self-improvement.md" 2000 "reference/self-improve
 # (supports both pre- and post-refactor states during the PR merge window).
 echo ""
 echo "=== 8. Agent Routing Section Key References ==="
-check_string_in_file "AGENTS.md" "## Agent Routing" "AGENTS.md: Agent Routing section present"
+check_string_in_file "$FRAMEWORK_RULES_FILE" "## Agent Routing" "${FRAMEWORK_RULES_FILE}: Agent Routing section present"
 # Check that routing content is accessible: either via pointer or inline
-AGENTS_MD="${AGENTS_DIR}/AGENTS.md"
-if grep -qF "reference/agent-routing.md" "$AGENTS_MD" 2>/dev/null; then
-	log_ok "AGENTS.md Agent Routing: pointer to reference/agent-routing.md"
+AGENTS_MD="${AGENTS_DIR}/${FRAMEWORK_RULES_FILE}"
+if grep -qF "$AGENT_ROUTING_FILE" "$AGENTS_MD" 2>/dev/null; then
+	log_ok "${FRAMEWORK_RULES_FILE} Agent Routing: pointer to ${AGENT_ROUTING_FILE}"
 elif grep -qF "headless-runtime-helper.sh" "$AGENTS_MD" 2>/dev/null; then
-	log_ok "AGENTS.md Agent Routing: inline headless dispatch reference (pre-refactor state)"
+	log_ok "${FRAMEWORK_RULES_FILE} Agent Routing: inline headless dispatch reference (pre-refactor state)"
 else
-	log_fail "AGENTS.md Agent Routing: neither pointer nor inline content found"
+	log_fail "${FRAMEWORK_RULES_FILE} Agent Routing: neither pointer nor inline content found"
 fi
 # Verify the reference file has the full content (canonical source after refactor)
-check_string_in_file "reference/agent-routing.md" "headless-runtime-helper.sh" "reference/agent-routing.md: headless dispatch reference"
-check_string_in_file "reference/agent-routing.md" "--agent" "reference/agent-routing.md: --agent flag documented"
-check_file_nonempty "reference/agent-routing.md" 1000 "reference/agent-routing.md: substantial content"
+check_string_in_file "$AGENT_ROUTING_FILE" "headless-runtime-helper.sh" "${AGENT_ROUTING_FILE}: headless dispatch reference"
+check_string_in_file "$AGENT_ROUTING_FILE" "--agent" "${AGENT_ROUTING_FILE}: --agent flag documented"
+check_file_nonempty "$AGENT_ROUTING_FILE" 1000 "${AGENT_ROUTING_FILE}: substantial content"
 
 # ─── Test 9: subagent-index.toon TOON block counts ────────────────────────────
 echo ""
