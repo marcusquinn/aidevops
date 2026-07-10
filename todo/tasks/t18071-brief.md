@@ -62,8 +62,10 @@ The crash trigger is not yet proven. Safe measurements and confidence labels are
 
 ### Files to Modify
 
-- `NEW: .agents/scripts/lint-resource-benchmark.sh` — bounded, serialized aggregate measurement wrapper.
+- `NEW: .agents/scripts/lint-resource-benchmark.sh` — bounded, serialized aggregate measurement wrapper that composes existing sampler and sandbox process-group cleanup.
 - `NEW: .agents/scripts/tests/test-lint-resource-benchmark.sh` — timeout, process-tree cleanup, and redaction fixtures.
+- `EDIT: .agents/scripts/resource-metrics-helper.sh` — expose peak process count from the existing process-tree sampler.
+- `EDIT: .agents/scripts/tests/test-resource-metrics-helper.sh` — validate the extended aggregate schema.
 - `NEW: todo/missions/m-20260710-11431d/research/resource-baseline.md` — redacted evidence matrix only.
 
 ### Implementation Steps
@@ -89,27 +91,30 @@ run_bounded_lint_profile() {
 
 ```bash
 bash .agents/scripts/tests/test-lint-resource-benchmark.sh
+bash .agents/scripts/tests/test-resource-metrics-helper.sh
 shellcheck .agents/scripts/lint-resource-benchmark.sh .agents/scripts/tests/test-lint-resource-benchmark.sh
 ```
 
 ### Recoverability Checkpoint
 
-- [ ] Focused tests pass: `bash .agents/scripts/tests/test-lint-resource-benchmark.sh`
-- [ ] WIP commit created before broad gates: `wip: add bounded lint resource baseline`
-- [ ] Broad verification then run: `.agents/scripts/linters-local.sh --changed`
+- [x] Focused tests pass: `bash .agents/scripts/tests/test-lint-resource-benchmark.sh`
+- [x] Recoverability commit created after focused checks: `104cf651d` (`wip: add bounded lint resource baseline`)
+- [x] Broad verification run: `.agents/scripts/linters-local.sh --changed`
 
 ### Files Scope
 
 - `.agents/scripts/lint-resource-benchmark.sh`
 - `.agents/scripts/tests/test-lint-resource-benchmark.sh`
+- `.agents/scripts/resource-metrics-helper.sh`
+- `.agents/scripts/tests/test-resource-metrics-helper.sh`
 - `todo/missions/m-20260710-11431d/research/resource-baseline.md`
 
 ## Acceptance Criteria
 
-- [ ] Timeout fixtures fail closed and leave no child process running.
-- [ ] Committed evidence contains aggregate metrics and confidence labels but no raw logs, private names, or local paths.
-- [ ] A bounded changed-mode baseline completes without a safety trigger.
-- [ ] Suspected crash causation is labelled unproven unless independent evidence corroborates it.
+- [x] Timeout fixtures fail closed and leave no child process running.
+- [x] Committed evidence contains aggregate metrics and confidence labels but no raw logs, private names, or local paths.
+- [x] A bounded changed-mode baseline completes without a safety trigger.
+- [x] Suspected crash causation is labelled unproven unless independent evidence corroborates it.
 
 ## Context & Decisions
 
@@ -121,6 +126,8 @@ shellcheck .agents/scripts/lint-resource-benchmark.sh .agents/scripts/tests/test
 
 - `.agents/scripts/linters-local.sh:33-45` — current execution modes and timeout controls.
 - `.agents/scripts/tests/test-linters-local-ratchet-timeout.sh` — existing timeout fixture pattern.
+- `.agents/scripts/resource-metrics-helper.sh` — existing low-overhead process-tree sampler.
+- `.agents/scripts/sandbox-exec-helper.sh:413-652` — existing process-group timeout and cleanup implementation.
 - `.agents/reference/diagnostics-discipline.md` — evidence and attribution rules.
 - `.agents/reference/memory-lookup.md` — local session lookup rules.
 - `todo/missions/m-20260710-11431d/mission.md` — safety and privacy contract.

@@ -83,7 +83,7 @@ preferences:
 
 | # | Feature | Task ID | Status | Estimate | Worker | PR |
 |---|---------|---------|--------|----------|--------|----|
-| 1.1 | F1 — Establish privacy-safe forensics and bounded measurement controls `[parallel-group:evidence]` | t18071 | active | ~30m | interactive | |
+| 1.1 | F1 — Establish privacy-safe forensics and bounded measurement controls `[parallel-group:evidence]` | t18071 | in-review | ~30m | interactive | #26918 |
 
 ### Milestone 2: Evidence-backed repository optimisation
 
@@ -167,6 +167,7 @@ preferences:
 |-----------|-------|---------|
 | 2026-07-10T00:00:00Z | Mission created | Approved Full-mode, four-hour, privacy-first lint resource optimisation mission. |
 | 2026-07-10T03:55:55Z | Mission launched | Activated F1 as the only unblocked feature and created issue #26914; F2-F4 remain blocked on its safe baseline. |
+| 2026-07-10T04:34:23Z | F1 entered review | Confirmed a kernel zone-map exhaustion panic while keeping lint causation unproven; bounded profiler, cleanup fixtures, and aggregate evidence passed locally in PR #26918. |
 
 ## Retrospective
 

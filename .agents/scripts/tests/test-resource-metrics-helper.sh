@@ -48,6 +48,7 @@ teardown_test_env() {
 test_sampler_writes_expected_schema() {
 	local out_file="${TEST_ROOT}/resource-metrics.jsonl"
 	local stop_file="${TEST_ROOT}/stop"
+	local process_snapshot_file="${TEST_ROOT}/process-tree.tsv"
 	"$HELPER_SCRIPT" sample \
 		--pid "$$" \
 		--role worker \
@@ -57,13 +58,15 @@ test_sampler_writes_expected_schema() {
 		--result success \
 		--out "$out_file" \
 		--stop-file "$stop_file" \
+		--process-snapshot-file "$process_snapshot_file" \
 		--interval 1 &
 	local sampler_pid="$!"
 	sleep 2
 	printf 'done\n' >"$stop_file"
 	wait "$sampler_pid"
 
-	if jq -e 'select(.pid and .ppid and .role == "worker" and .session_key == "gh-22286" and .repo == "marcusquinn/aidevops" and .issue == "22286" and (.cpu_seconds | type == "number") and (.rss_kb | type == "number") and (.peak_rss_kb | type == "number") and (.elapsed_s | type == "number") and .timestamp)' "$out_file" >/dev/null; then
+	if jq -e 'select(.pid and .ppid and .role == "worker" and .session_key == "gh-22286" and .repo == "marcusquinn/aidevops" and .issue == "22286" and (.cpu_seconds | type == "number") and (.rss_kb | type == "number") and (.peak_rss_kb | type == "number") and (.peak_process_count | type == "number") and .peak_process_count >= 1 and (.elapsed_s | type == "number") and .timestamp)' "$out_file" >/dev/null &&
+		grep -qE "^$$[[:space:]]" "$process_snapshot_file"; then
 		print_result "sampler writes resource metric schema" 0
 		return 0
 	fi
@@ -80,10 +83,42 @@ test_default_interval_documents_bounded_overhead() {
 	return 0
 }
 
+test_missing_option_values_fail_cleanly() {
+	local command_name=""
+	local option=""
+	local output=""
+	local exit_code=0
+	for command_name in sample snapshot; do
+		for option in --pid --process-snapshot-file; do
+			set +e
+			output=$("$HELPER_SCRIPT" "$command_name" "$option" 2>&1)
+			exit_code=$?
+			set -e
+			if [[ "$exit_code" -ne 1 || "$output" != *"requires an argument"* ]]; then
+				print_result "missing resource metric option values fail cleanly" 1 "command=${command_name}, option=${option}"
+				return 0
+			fi
+		done
+	done
+	for option in --role --session-key --ppid --repo --issue --result --result-file --out --stop-file --interval; do
+		set +e
+		output=$("$HELPER_SCRIPT" sample "$option" 2>&1)
+		exit_code=$?
+		set -e
+		if [[ "$exit_code" -ne 1 || "$output" != *"requires an argument"* ]]; then
+			print_result "missing resource metric option values fail cleanly" 1 "command=sample, option=${option}"
+			return 0
+		fi
+	done
+	print_result "missing resource metric option values fail cleanly" 0
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_sampler_writes_expected_schema
 	test_default_interval_documents_bounded_overhead
+	test_missing_option_values_fail_cleanly
 	teardown_test_env
 
 	printf '\nTests run: %d\n' "$TESTS_RUN"
