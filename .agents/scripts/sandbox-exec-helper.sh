@@ -415,8 +415,8 @@ _sandbox_check_dns_exfil() {
 # the next sample. Cleanup revalidates every PID against its start token.
 # Arguments: $1 - root PID, $2 - snapshot file
 _sandbox_snapshot_descendants() {
-	local snapshot_root_pid="$1"
-	local snapshot_file="$2"
+	local snapshot_root_pid="${1:-}"
+	local snapshot_file="${2:-}"
 	local snapshot_rows=""
 	local snapshot_wanted=" ${snapshot_root_pid} "
 	local snapshot_changed=true
@@ -458,9 +458,9 @@ _sandbox_snapshot_descendants() {
 }
 
 _sandbox_snapshot_identity_matches() {
-	local identity_pid="$1"
-	local identity_pgid="$2"
-	local identity_token="$3"
+	local identity_pid="${1:-}"
+	local identity_pgid="${2:-}"
+	local identity_token="${3:-}"
 	local identity_current_pgid=""
 	local identity_current_token=""
 
@@ -532,34 +532,20 @@ _sandbox_pgkill_cleanup() {
 		local cleanup_pid=""
 		local cleanup_pgid=""
 		local cleanup_token=""
-		local cleanup_verified_pids=""
-		local cleanup_verified_pgids=""
 		while IFS=$'\t' read -r cleanup_pid cleanup_pgid cleanup_token; do
 			_sandbox_snapshot_identity_matches "$cleanup_pid" "$cleanup_pgid" "$cleanup_token" || continue
-			case " $cleanup_verified_pids " in
-			*" ${cleanup_pid} "*) ;;
-			*) cleanup_verified_pids="${cleanup_verified_pids} ${cleanup_pid}" ;;
-			esac
 			# A group signal is safe only when its verified leader was descended
 			# from the sandbox. Otherwise terminate the verified PID individually.
-			if [[ "$cleanup_pid" == "$cleanup_pgid" && "$cleanup_pgid" != "$cleanup_self_pgid" ]]; then
-				case " $cleanup_verified_pgids " in
-				*" ${cleanup_pgid} "*) ;;
-				*) cleanup_verified_pgids="${cleanup_verified_pgids} ${cleanup_pgid}" ;;
-				esac
+			if [[ "$cleanup_pid" == "$cleanup_pgid" && -n "$cleanup_self_pgid" && "$cleanup_pgid" != "$cleanup_self_pgid" ]]; then
+				kill -TERM -- "-${cleanup_pgid}" 2>/dev/null || true
+			else
+				kill -TERM "$cleanup_pid" 2>/dev/null || true
 			fi
 		done <"$cleanup_snapshot_file"
-
-		for cleanup_pgid in $cleanup_verified_pgids; do
-			kill -TERM -- "-${cleanup_pgid}" 2>/dev/null || true
-		done
-		for cleanup_pid in $cleanup_verified_pids; do
-			kill -TERM "$cleanup_pid" 2>/dev/null || true
-		done
 		sleep 0.5
 		while IFS=$'\t' read -r cleanup_pid cleanup_pgid cleanup_token; do
 			_sandbox_snapshot_identity_matches "$cleanup_pid" "$cleanup_pgid" "$cleanup_token" || continue
-			if [[ "$cleanup_pid" == "$cleanup_pgid" && "$cleanup_pgid" != "$cleanup_self_pgid" ]]; then
+			if [[ "$cleanup_pid" == "$cleanup_pgid" && -n "$cleanup_self_pgid" && "$cleanup_pgid" != "$cleanup_self_pgid" ]]; then
 				kill -KILL -- "-${cleanup_pgid}" 2>/dev/null || true
 			else
 				kill -KILL "$cleanup_pid" 2>/dev/null || true
