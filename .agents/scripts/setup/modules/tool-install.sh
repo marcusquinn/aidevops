@@ -1627,6 +1627,53 @@ check_python_upgrade_available() {
 	return 0
 }
 
+_vault_runtime_path_safe() {
+	local env_dir="$1"
+	local expected_dir="${HOME}/.aidevops/.agent-workspace/python-env/vault"
+	[[ "$env_dir" == "$expected_dir" ]] || return 1
+	local component=""
+	for component in \
+		"${HOME}/.aidevops" \
+		"${HOME}/.aidevops/.agent-workspace" \
+		"${HOME}/.aidevops/.agent-workspace/python-env" \
+		"$env_dir"; do
+		[[ -L "$component" ]] && return 1
+	done
+	return 0
+}
+
+_vault_runtime_marker_valid() {
+	local marker_path="$1"
+	[[ -f "$marker_path" && ! -L "$marker_path" && -O "$marker_path" ]] || return 1
+	local marker_value=""
+	marker_value=$(<"$marker_path")
+	[[ "$marker_value" == "aidevops-vault-runtime-v1" || "$marker_value" == "managed by aidevops setup" ]]
+	return $?
+}
+
+_vault_runtime_permissions_safe() {
+	local path="$1"
+	local mode=""
+	local group_digit=""
+	local other_digit=""
+
+	[[ -e "$path" && ! -L "$path" && -O "$path" ]] || return 1
+	mode="$(/usr/bin/stat -f '%Lp' "$path" 2>/dev/null || /usr/bin/stat -c '%a' "$path" 2>/dev/null || true)"
+	[[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
+	mode="${mode:$((${#mode} - 3))}"
+	group_digit="${mode:1:1}"
+	other_digit="${mode:2:1}"
+	case "$group_digit" in
+	0 | 1 | 4 | 5) ;;
+	*) return 1 ;;
+	esac
+	case "$other_digit" in
+	0 | 1 | 4 | 5) ;;
+	*) return 1 ;;
+	esac
+	return 0
+}
+
 setup_vault_python_env() {
 	print_info "Setting up isolated Python crypto runtime for Vault..."
 	local python3_bin=""
@@ -1639,46 +1686,56 @@ setup_vault_python_env() {
 	local source_root="${INSTALL_DIR:-}"
 	[[ -z "$source_root" ]] && source_root="$(cd "${module_dir}/../../../.." && pwd)"
 	local requirements_file="${source_root}/.agents/configs/vault-requirements.txt"
+	local runtime_check="${source_root}/.agents/scripts/vault-runtime-check.py"
 	local env_dir="${HOME}/.aidevops/.agent-workspace/python-env/vault"
 	local env_python="${env_dir}/bin/python3"
 	local managed_marker="${env_dir}/.aidevops-managed-runtime"
-	local required_version="49.0.0"
+	local marker_value="aidevops-vault-runtime-v1"
 
-	if [[ -x "$env_python" ]] && "$env_python" -c 'import cryptography, sys; raise SystemExit(0 if cryptography.__version__ == sys.argv[1] else 1)' "$required_version" 2>/dev/null; then
-		printf '%s\n' "managed by aidevops setup" >"$managed_marker"
-		print_success "Vault crypto runtime ${required_version} is ready"
-		return 0
-	fi
-	if [[ ! -f "$requirements_file" ]]; then
-		print_warning "Vault requirements file is missing: $requirements_file"
+	if ! _vault_runtime_path_safe "$env_dir"; then
+		print_warning "Refusing unsafe Vault runtime path: $env_dir"
 		return 1
 	fi
-	mkdir -p "${env_dir%/*}"
-	if [[ -L "$env_dir" ]]; then
-		print_warning "Refusing symlinked Vault runtime directory: $env_dir"
+	if [[ ! -f "$requirements_file" || ! -f "$runtime_check" ]]; then
+		print_warning "Vault runtime requirements or readiness check is missing"
 		return 1
 	fi
-	if [[ -d "$env_dir" && ! -x "$env_python" ]]; then
-		if [[ ! -f "$managed_marker" ]]; then
-			print_warning "Refusing to replace unmarked Vault runtime directory: $env_dir"
+	if [[ -e "$env_dir" ]]; then
+		if ! _vault_runtime_marker_valid "$managed_marker" || ! _vault_runtime_permissions_safe "$env_dir" || ! _vault_runtime_permissions_safe "$managed_marker"; then
+			print_warning "Refusing to execute or replace an unowned Vault runtime: $env_dir"
 			return 1
 		fi
+		if [[ -x "$env_python" ]] && "$env_python" "$runtime_check" 2>/dev/null; then
+			printf '%s\n' "$marker_value" >"$managed_marker"
+			chmod 600 "$managed_marker"
+			print_success "Vault crypto runtime is ready"
+			return 0
+		fi
+	fi
+	mkdir -p "${env_dir%/*}"
+	if ! _vault_runtime_path_safe "$env_dir"; then
+		print_warning "Refusing unsafe Vault runtime path after parent creation: $env_dir"
+		return 1
+	fi
+	if [[ -d "$env_dir" ]]; then
 		rm -rf "$env_dir"
 	fi
-	if [[ ! -x "$env_python" ]] && ! "$python3_bin" -m venv "$env_dir"; then
+	if ! "$python3_bin" -m venv "$env_dir"; then
 		print_warning "Failed to create isolated Vault Python environment"
 		return 1
 	fi
-	printf '%s\n' "managed by aidevops setup" >"$managed_marker"
+	chmod 755 "$env_dir"
+	printf '%s\n' "$marker_value" >"$managed_marker"
+	chmod 600 "$managed_marker"
 	if ! "$env_python" -m pip install --disable-pip-version-check --no-input --only-binary=:all: -r "$requirements_file"; then
 		print_warning "Failed to install the pinned Vault crypto runtime"
 		return 1
 	fi
-	if ! "$env_python" -c 'import cryptography, sys; raise SystemExit(0 if cryptography.__version__ == sys.argv[1] else 1)' "$required_version"; then
+	if ! "$env_python" "$runtime_check"; then
 		print_warning "Vault crypto runtime verification failed"
 		return 1
 	fi
-	print_success "Vault crypto runtime ${required_version} is ready"
+	print_success "Vault crypto runtime is ready"
 	return 0
 }
 

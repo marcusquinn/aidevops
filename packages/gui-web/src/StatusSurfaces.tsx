@@ -14,7 +14,7 @@ export function OverviewSurface({ status }: { status: GuiStatusData }) {
     { label: text.setup, value: status.update.restart_required ? "restart" : "current", detail: status.update.installed_version },
     { label: text.projects, value: String(status.repos.total), detail: status.repos.health },
     { label: text.config, value: String(status.settings.key_count), detail: status.settings.value_policy },
-    { label: text.security, value: String(status.secrets.length), detail: "secret references" },
+    { label: text.security, value: status.vault.unlocked ? String(status.secrets.length) : "hidden", detail: "secret references" },
   ];
 
   return (
@@ -102,10 +102,11 @@ export function ProjectsSurface({ status }: { status: GuiStatusData }) {
 export function VaultSurface({ onVaultRequest, status }: { onVaultRequest: (intent: VaultDialogIntent) => void; status: GuiStatusData }) {
   const vault = status.vault;
   const vaultCollection = vault.collections.find((collection) => collection.surface_ids.includes("vault")) ?? vault.collections[0];
+  const readinessUnknown = vault.helper_status !== "available" || vault.status === "unknown" || vault.status === "corrupted";
   const readiness = [
-    { label: "migration", value: vault.readiness.migration_allowed ? "ready" : "blocked" },
-    { label: "setup", value: vault.readiness.setup_required ? "required" : "done" },
-    { label: "restart test", value: vault.readiness.restart_test_required ? "required" : "verified" },
+    { label: "migration", value: readinessUnknown ? "unknown" : vault.readiness.migration_allowed ? "ready" : "blocked" },
+    { label: "setup", value: readinessUnknown ? "unknown" : vault.readiness.setup_required ? "required" : vault.setup_state === "migration-ready" ? "complete" : "in progress" },
+    { label: "restart test", value: readinessUnknown ? "unknown" : vault.status === "uninitialized" ? "not started" : vault.readiness.restart_test_required ? "required" : vault.setup_state === "migration-ready" ? "verified" : "pending" },
     { label: "remote unlock", value: vault.readiness.remote_unlock_enabled ? "enabled" : "disabled" },
   ];
   const featureCards = [

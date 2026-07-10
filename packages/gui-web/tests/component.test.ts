@@ -94,7 +94,7 @@ describe("dashboard shell", () => {
   test("derives sidebar record counts from status records", () => {
     const counts = surfaceRecordCounts(mockedStatus().data);
 
-    expect(counts.security).toBe(1);
+    expect(counts.security).toBe(0);
     expect(counts.localSetup).toBe(2);
     expect(counts.agents).toBe(3);
     expect(counts.vault).toBe(9);
@@ -349,6 +349,16 @@ describe("dashboard shell", () => {
     expect(status.data.machine.initials).toBe("LM");
   });
 
+  test("drops stale secret references unless the normalized Vault is unlocked", async () => {
+    const staleData = { ...mockedStatus().data, secrets: [{ name: "GITHUB_TOKEN", status: "configured" as const }] };
+    const staleFetch = (async () => new Response(JSON.stringify({ ...mockedStatus(), data: staleData }))) as unknown as typeof fetch;
+
+    const status = await fetchStatus(staleFetch);
+
+    expect(status.data.vault.locked).toBe(true);
+    expect(status.data.secrets).toEqual([]);
+  });
+
   test("renders AI provider recommendations, OpenCode prefixes, and multi-account copy", () => {
     const baseStatus = mockedStatus().data;
     const status: GuiStatusData = {
@@ -397,6 +407,7 @@ describe("dashboard shell", () => {
     };
     const unlockedStatus: GuiStatusData = {
       ...lockedStatus,
+      secrets: [{ name: "GITHUB_TOKEN", status: "configured" }],
       vault: { ...lockedStatus.vault, status: "unlocked", locked: false, unlocked: true, collections: lockedStatus.vault.collections.map((collection) => ({ ...collection, state: collection.state === "planned" ? "planned" : "unlocked" })) },
     };
 

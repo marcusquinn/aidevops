@@ -7,6 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 CRYPTO_HELPER="${SCRIPT_DIR}/vault-crypto-helper.py"
 VAULT_AUDIT_HELPER="${SCRIPT_DIR}/vault-audit-helper.sh"
+VAULT_RUNTIME_CHECK="${SCRIPT_DIR}/vault-runtime-check.py"
 VAULT_RUNTIME_PYTHON="${HOME}/.aidevops/.agent-workspace/python-env/vault/bin/python3"
 
 usage() {
@@ -82,7 +83,8 @@ resolve_vault_python() {
 
 vault_python_ready() {
 	local python_bin="$1"
-	"$python_bin" -c 'import cryptography, sys; from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey; from cryptography.hazmat.primitives.ciphers.aead import AESGCM; from cryptography.hazmat.primitives.kdf.scrypt import Scrypt; AESGCM(bytes(32)); Scrypt(salt=bytes(16), length=32, n=2**14, r=8, p=1); Ed25519PrivateKey.generate(); raise SystemExit(0 if cryptography.__version__ == sys.argv[1] else 1)' "49.0.0" >/dev/null 2>&1
+	[[ -f "$VAULT_RUNTIME_CHECK" ]] || return 1
+	"$python_bin" "$VAULT_RUNTIME_CHECK" >/dev/null 2>&1
 	local rc=$?
 	return "$rc"
 }
@@ -169,8 +171,7 @@ require_crypto_helper() {
 }
 
 main() {
-	local command="help"
-	[[ $# -gt 0 ]] && command="$1"
+	local command="${1:-help}"
 	case "$command" in
 	help | --help | -h)
 		usage

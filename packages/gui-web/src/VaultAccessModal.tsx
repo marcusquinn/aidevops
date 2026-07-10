@@ -11,7 +11,7 @@ export function VaultAccessModal({ intent, onClose, onRefresh, onTerminalLaunch,
   onTerminalLaunch: () => void;
   vault: GuiVaultStatusData;
 }): ReactElement {
-  const [launchStatus, setLaunchStatus] = useState<"idle" | "opened" | "copied" | "failed">("idle");
+  const [launchStatus, setLaunchStatus] = useState<"idle" | "requesting" | "opened" | "copied" | "failed">("idle");
   const primaryActionRef = useRef<HTMLButtonElement | null>(null);
   const dialogRef = useRef<HTMLElement | null>(null);
   const content = dialogContent(intent, vault);
@@ -47,6 +47,15 @@ export function VaultAccessModal({ intent, onClose, onRefresh, onTerminalLaunch,
     return () => window.removeEventListener("keydown", handleDialogKeys);
   }, [onClose]);
 
+  useEffect(() => {
+    const handleNativeResult = (event: Event) => {
+      const result = (event as CustomEvent<unknown>).detail;
+      setLaunchStatus(result === "opened" ? "opened" : "failed");
+    };
+    window.addEventListener("aidevops:vault-command-result", handleNativeResult);
+    return () => window.removeEventListener("aidevops:vault-command-result", handleNativeResult);
+  }, []);
+
   const launchTerminal = async () => {
     if (terminalAction === null) {
       await onRefresh();
@@ -54,7 +63,8 @@ export function VaultAccessModal({ intent, onClose, onRefresh, onTerminalLaunch,
     }
     if (postNativeVaultCommand(terminalAction)) {
       onTerminalLaunch();
-      setLaunchStatus("opened");
+      setLaunchStatus("requesting");
+      window.setTimeout(() => setLaunchStatus((current) => current === "requesting" ? "failed" : current), 3000);
       return;
     }
     if (typeof navigator !== "undefined" && navigator.clipboard !== undefined) {
@@ -92,13 +102,14 @@ export function VaultAccessModal({ intent, onClose, onRefresh, onTerminalLaunch,
           <div className="vault-modal-state-grid" aria-label="Current Vault metadata">
             <span><strong>Vault</strong>{vault.status}</span><span><strong>Setup</strong>{vault.setup_state}</span><span><strong>Helper</strong>{vault.helper_status}</span>
           </div>
+          {launchStatus === "requesting" ? <p className="vault-valid" role="status"><FiTerminal aria-hidden="true" /> Requesting the secure local terminal…</p> : null}
           {launchStatus === "opened" ? <p className="vault-valid" role="status"><FiCheckCircle aria-hidden="true" /> Secure terminal opened. Return here after the command completes; status refreshes on focus.</p> : null}
           {launchStatus === "copied" ? <p className="vault-valid" role="status"><FiClipboard aria-hidden="true" /> Command copied. Run it in your local terminal.</p> : null}
           {launchStatus === "failed" ? <p className="vault-invalid" role="alert"><FiAlertTriangle aria-hidden="true" /> Open a local terminal and run the displayed command.</p> : null}
         </div>
         <footer className="vault-modal-actions">
           <button className="secondary-action" onClick={onClose} type="button">Close</button>
-          {intent === "unavailable" ? <button className="primary-action" onClick={() => void onRefresh()} ref={primaryActionRef} type="button"><FiRefreshCw aria-hidden="true" /> Retry status</button> : <button className={intent === "lock" || intent === "recover" ? "secondary-action" : "primary-action"} onClick={() => void launchTerminal()} ref={primaryActionRef} type="button"><FiTerminal aria-hidden="true" /> {content.action}</button>}
+          {intent === "unavailable" ? <button className="primary-action" onClick={() => void onRefresh()} ref={primaryActionRef} type="button"><FiRefreshCw aria-hidden="true" /> Retry status</button> : <button className={intent === "lock" || intent === "recover" ? "secondary-action" : "primary-action"} disabled={launchStatus === "requesting"} onClick={() => void launchTerminal()} ref={primaryActionRef} type="button"><FiTerminal aria-hidden="true" /> {content.action}</button>}
         </footer>
         <p className="vault-modal-footnote">This dialog never requests or stores a passphrase. Secret input belongs only in the terminal helper's hidden local prompt.</p>
       </section>

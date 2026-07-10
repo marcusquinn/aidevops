@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import getpass
 import json
 import os
@@ -20,6 +21,7 @@ KDF_NAME = "scrypt"
 AEAD_NAME = "AES-256-GCM"
 KEY_LEN = 32
 NONCE_LEN = 12
+ROOT_KEY_ENVELOPE_CIPHERTEXT_LEN = 74
 DEFAULT_SCRYPT = {"n": 2**15, "r": 8, "p": 1, "length": KEY_LEN}
 STATE_UNINITIALIZED = "uninitialized"
 STATE_LOCKED = "locked"
@@ -63,7 +65,7 @@ def b64e(data: bytes) -> str:
 
 def b64d(data: str) -> bytes:
     pad = "=" * (-len(data) % 4)
-    return base64.urlsafe_b64decode((data + pad).encode("ascii"))
+    return base64.b64decode((data + pad).encode("ascii"), altchars=b"-_", validate=True)
 
 
 def default_vault_dir() -> Path:
@@ -211,17 +213,36 @@ def validate_metadata(meta: dict[str, Any]) -> None:
         raise VaultError("VAULT_METADATA_CORRUPTED", "Unsupported Vault metadata schema", 3)
     kdf = meta.get("kdf")
     wrapped = meta.get("wrapped_root_key")
+    state = meta.get("setup_state")
+    allowed_states = {
+        SETUP_STATE_TEST_CREATED,
+        SETUP_STATE_RESTART_REQUIRED,
+        SETUP_STATE_TEST_VERIFIED,
+        SETUP_STATE_MIGRATION_READY,
+    }
+    if not isinstance(state, str) or state not in allowed_states:
+        raise VaultError("VAULT_METADATA_CORRUPTED", "Vault setup state is invalid", 3)
     if not isinstance(kdf, dict) or kdf.get("name") != KDF_NAME:
         raise VaultError("VAULT_METADATA_CORRUPTED", "Unsupported Vault KDF", 3)
     if not isinstance(kdf.get("salt"), str) or not isinstance(kdf.get("params"), dict):
         raise VaultError("VAULT_METADATA_CORRUPTED", "Vault metadata is incomplete", 3)
     params = kdf["params"]
-    if any(not isinstance(params.get(name), int) or int(params[name]) <= 0 for name in ("n", "r", "p", "length")):
+    if any(not isinstance(params.get(name), int) or isinstance(params.get(name), bool) for name in ("n", "r", "p", "length")):
         raise VaultError("VAULT_METADATA_CORRUPTED", "Vault KDF parameters are invalid", 3)
+    if params != DEFAULT_SCRYPT:
+        raise VaultError("VAULT_METADATA_CORRUPTED", "Vault KDF parameters do not match schema policy", 3)
     if not isinstance(wrapped, dict) or wrapped.get("aead") != AEAD_NAME:
         raise VaultError("VAULT_METADATA_CORRUPTED", "Vault root-key envelope is invalid", 3)
     if not isinstance(wrapped.get("nonce"), str) or not isinstance(wrapped.get("ciphertext"), str):
         raise VaultError("VAULT_METADATA_CORRUPTED", "Vault root-key envelope is incomplete", 3)
+    try:
+        salt = b64d(str(kdf["salt"]))
+        nonce = b64d(str(wrapped["nonce"]))
+        ciphertext = b64d(str(wrapped["ciphertext"]))
+    except (binascii.Error, ValueError) as exc:
+        raise VaultError("VAULT_METADATA_CORRUPTED", "Vault metadata encoding is invalid", 3) from exc
+    if len(salt) != 16 or len(nonce) != NONCE_LEN or len(ciphertext) != ROOT_KEY_ENVELOPE_CIPHERTEXT_LEN:
+        raise VaultError("VAULT_METADATA_CORRUPTED", "Vault metadata field lengths are invalid", 3)
 
 
 def unwrap_root_key(meta: dict[str, Any], passphrase: str) -> bytes:
@@ -257,7 +278,8 @@ def build_metadata(root_key: bytes, passphrase: str) -> dict[str, Any]:
 
 
 def setup_state(meta: dict[str, Any]) -> str:
-    state = str(meta.get("setup_state", SETUP_STATE_MIGRATION_READY))
+    validate_metadata(meta)
+    state = str(meta["setup_state"])
     allowed = {
         SETUP_STATE_TEST_CREATED,
         SETUP_STATE_RESTART_REQUIRED,

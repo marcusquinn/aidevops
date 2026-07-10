@@ -557,26 +557,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         guard let helperPath = Bundle.main.path(forResource: "aidevops-gui-services", ofType: "sh") else {
             NSSound.beep()
+            notifyVaultCommandResult("failed")
+            return
+        }
+        guard helperPath.rangeOfCharacter(from: .newlines) == nil else {
+            NSSound.beep()
+            notifyVaultCommandResult("failed")
             return
         }
 
         let command = "/bin/bash \(shellQuote(helperPath)) vault-command \(shellQuote(action))"
-        let source = "tell application \"Terminal\"\nactivate\ndo script \"\(command)\"\nend tell"
+        let source = "tell application \"Terminal\"\nactivate\ndo script \(appleScriptQuote(command))\nend tell"
         var error: NSDictionary?
         NSAppleScript(source: source)?.executeAndReturnError(&error)
         if error != nil {
             NSSound.beep()
+            notifyVaultCommandResult("failed")
+            return
         }
+        notifyVaultCommandResult("opened")
     }
 
     private func isTrustedVaultMessage(_ message: WKScriptMessage) -> Bool {
         let origin = message.frameInfo.securityOrigin
-        let localHost = origin.host == "127.0.0.1" || origin.host == "localhost"
-        return message.frameInfo.isMainFrame && origin.protocol == "http" && localHost && origin.port == Int(webPort)
+        return message.frameInfo.isMainFrame && origin.protocol == "http" && origin.host == "127.0.0.1" && origin.port == Int(webPort)
     }
 
     private func shellQuote(_ value: String) -> String {
         return "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    private func appleScriptQuote(_ value: String) -> String {
+        let escaped = value
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+        return "\"\(escaped)\""
+    }
+
+    private func notifyVaultCommandResult(_ result: String) {
+        let script = "window.dispatchEvent(new CustomEvent('aidevops:vault-command-result', { detail: '\(result)' }))"
+        webView.evaluateJavaScript(script, completionHandler: nil)
     }
 
     private func revealFileURL(_ url: URL) -> Bool {
@@ -634,7 +654,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
     private func isLocalAppURL(_ url: URL) -> Bool {
         let host = url.host ?? ""
-        return url.scheme == "http" && (host == "127.0.0.1" || host == "localhost") && url.port == Int(webPort)
+        return url.scheme == "http" && host == "127.0.0.1" && url.port == Int(webPort)
     }
 
     private func configureMenu() {

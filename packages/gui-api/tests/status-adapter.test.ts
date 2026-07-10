@@ -169,7 +169,7 @@ describe("status adapter", () => {
 
     expect(vault.helper_status).toBe("error");
     expect(vault.available).toBe(false);
-    expect(vault.status).toBe("locked");
+    expect(vault.status).toBe("unknown");
     expect(vault.setup_state).toBe("unknown");
     expect(vault.readiness.setup_required).toBe(false);
   });
@@ -192,6 +192,56 @@ describe("status adapter", () => {
     expect(vault.unlocked).toBe(false);
     expect(vault.locked).toBe(true);
     expect(vault.helper_status).toBe("error");
+  });
+
+  test("rejects incoherent and noisy Vault probe output", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-vault-incoherent-"));
+    const scriptsDir = join(repoRoot, ".agents", "scripts");
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, "vault-helper.sh"), [
+      "case \"$1\" in",
+      "  status) printf '%s\\n' locked extra-output ;;",
+      "  setup-state) printf '%s\\n' uninitialized; exit 2 ;;",
+      "  *) exit 1 ;;",
+      "esac",
+    ].join("\n"));
+
+    const vault = readVaultSummary(repoRoot);
+
+    expect(vault.helper_status).toBe("error");
+    expect(vault.status).toBe("unknown");
+    expect(vault.setup_state).toBe("unknown");
+    expect(vault.readiness.setup_required).toBe(false);
+  });
+
+  test("rejects whitespace around stdout enums", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-vault-whitespace-stdout-"));
+    const scriptsDir = join(repoRoot, ".agents", "scripts");
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, "vault-helper.sh"), [
+      "case \"$1\" in",
+      "  status) printf '\\nlocked\\n' ;;",
+      "  setup-state) printf '%s\\n' migration-ready ;;",
+      "  *) exit 1 ;;",
+      "esac",
+    ].join("\n"));
+
+    expect(readVaultSummary(repoRoot).status).toBe("unknown");
+  });
+
+  test("rejects whitespace-only stderr", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-vault-whitespace-stderr-"));
+    const scriptsDir = join(repoRoot, ".agents", "scripts");
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, "vault-helper.sh"), [
+      "case \"$1\" in",
+      "  status) printf '%s\\n' locked; printf ' ' >&2 ;;",
+      "  setup-state) printf '%s\\n' migration-ready ;;",
+      "  *) exit 1 ;;",
+      "esac",
+    ].join("\n"));
+
+    expect(readVaultSummary(repoRoot).status).toBe("unknown");
   });
 
   test("preserves corrupted metadata as a conservative recovery state", () => {

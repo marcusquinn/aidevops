@@ -63,8 +63,8 @@ cat >"${AIDEVOPS_VAULT_DIR}/vault.json" <<'JSON'
 {
   "schema_version": 1,
   "setup_state": "migration-ready",
-  "kdf": {"name": "scrypt", "salt": "fixture", "params": {"n": 32768, "r": 8, "p": 1, "length": 32}},
-  "wrapped_root_key": {"aead": "AES-256-GCM", "nonce": "fixture", "ciphertext": "fixture"}
+  "kdf": {"name": "scrypt", "salt": "AAAAAAAAAAAAAAAAAAAAAA", "params": {"n": 32768, "r": 8, "p": 1, "length": 32}},
+  "wrapped_root_key": {"aead": "AES-256-GCM", "nonce": "AAAAAAAAAAAAAAAA", "ciphertext": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}
 }
 JSON
 
@@ -97,8 +97,14 @@ fi
 
 unsafe_home="${TEST_ROOT}/unsafe-home"
 unsafe_runtime="${unsafe_home}/.aidevops/.agent-workspace/python-env/vault"
-mkdir -p "$unsafe_runtime"
+mkdir -p "${unsafe_runtime}/bin"
 printf '%s\n' "preserve" >"${unsafe_runtime}/sentinel"
+cat >"${unsafe_runtime}/bin/python3" <<'SH'
+#!/usr/bin/env bash
+touch "${HOME}/unsafe-runtime-executed"
+exit 1
+SH
+chmod 755 "${unsafe_runtime}/bin/python3"
 if HOME="$unsafe_home" INSTALL_DIR="$REPO_ROOT" bash -c '
   print_info() { return 0; }
   print_warning() { return 0; }
@@ -109,10 +115,70 @@ if HOME="$unsafe_home" INSTALL_DIR="$REPO_ROOT" bash -c '
     exit 1
   fi
   exit 0
-' _ "${REPO_ROOT}/.agents/scripts/setup/modules/tool-install.sh" && [[ -f "${unsafe_runtime}/sentinel" ]]; then
+' _ "${REPO_ROOT}/.agents/scripts/setup/modules/tool-install.sh" && [[ -f "${unsafe_runtime}/sentinel" && ! -e "${unsafe_home}/unsafe-runtime-executed" ]]; then
 	pass "setup preserves unmarked runtime directories"
 else
 	fail "setup preserves unmarked runtime directories"
+fi
+
+printf '%s\n' "forged-marker" >"${unsafe_runtime}/.aidevops-managed-runtime"
+chmod 600 "${unsafe_runtime}/.aidevops-managed-runtime"
+if HOME="$unsafe_home" INSTALL_DIR="$REPO_ROOT" bash -c '
+  print_info() { return 0; }
+  print_warning() { return 0; }
+  print_success() { return 0; }
+  source "$1"
+  find_python3() { command -v python3; return 0; }
+  if setup_vault_python_env; then
+    exit 1
+  fi
+  exit 0
+' _ "${REPO_ROOT}/.agents/scripts/setup/modules/tool-install.sh" && [[ -f "${unsafe_runtime}/sentinel" && ! -e "${unsafe_home}/unsafe-runtime-executed" ]]; then
+	pass "setup preserves runtimes with forged ownership markers"
+else
+	fail "setup preserves runtimes with forged ownership markers"
+fi
+
+final_symlink_home="${TEST_ROOT}/final-symlink-home"
+final_symlink_parent="${final_symlink_home}/.aidevops/.agent-workspace/python-env"
+final_symlink_target="${TEST_ROOT}/final-symlink-target"
+mkdir -p "$final_symlink_parent" "$final_symlink_target"
+printf '%s\n' "preserve" >"${final_symlink_target}/sentinel"
+ln -s "$final_symlink_target" "${final_symlink_parent}/vault"
+if HOME="$final_symlink_home" INSTALL_DIR="$REPO_ROOT" bash -c '
+  print_info() { return 0; }
+  print_warning() { return 0; }
+  print_success() { return 0; }
+  source "$1"
+  find_python3() { command -v python3; return 0; }
+  if setup_vault_python_env; then
+    exit 1
+  fi
+  exit 0
+' _ "${REPO_ROOT}/.agents/scripts/setup/modules/tool-install.sh" && [[ -f "${final_symlink_target}/sentinel" ]]; then
+	pass "setup rejects a symlinked runtime directory"
+else
+	fail "setup rejects a symlinked runtime directory"
+fi
+
+symlink_home="${TEST_ROOT}/symlink-home"
+symlink_target="${TEST_ROOT}/symlink-target"
+mkdir -p "$symlink_home" "$symlink_target"
+ln -s "$symlink_target" "${symlink_home}/.aidevops"
+if HOME="$symlink_home" INSTALL_DIR="$REPO_ROOT" bash -c '
+  print_info() { return 0; }
+  print_warning() { return 0; }
+  print_success() { return 0; }
+  source "$1"
+  find_python3() { command -v python3; return 0; }
+  if setup_vault_python_env; then
+    exit 1
+  fi
+  exit 0
+' _ "${REPO_ROOT}/.agents/scripts/setup/modules/tool-install.sh" && [[ ! -e "${symlink_target}/.agent-workspace" ]]; then
+	pass "setup rejects symlinked runtime ancestors"
+else
+	fail "setup rejects symlinked runtime ancestors"
 fi
 
 printf '\nVault runtime readiness summary: %s passed, %s failed\n' "$PASS" "$FAIL"

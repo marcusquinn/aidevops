@@ -19,7 +19,7 @@ export function DesktopStatusBar({ status }: { status: GuiStatusData }): ReactEl
       <span>{versionLabel}</span>
       <span>{localRepoCount} local repos</span>
       <span>{remoteRepoCount} remote repos</span>
-      <span>{status.secrets.length} secrets</span>
+      <span>{status.vault.unlocked ? `${status.secrets.length} secret references` : "Secret references hidden"}</span>
       <span>{vaultLabel}</span>
       <span>{oauthAccounts} provider accounts</span>
       <span>{needsUpdate} need update</span>

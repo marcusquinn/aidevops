@@ -29,7 +29,7 @@ export function mockedStatus(): GuiResponseEnvelope<GuiStatusData> {
       authority: "aidevops helpers",
       path_refs: ["~/.aidevops/agents", "~/.config/aidevops/settings.json"],
     },
-    data: statusFixture,
+    data: { ...statusFixture, secrets: [] },
   });
 }
 
@@ -74,6 +74,7 @@ export function mockedFileExplorer(rootId: GuiFileRootId): GuiResponseEnvelope<G
 function normalizeStatusEnvelope(envelope: GuiResponseEnvelope<Partial<GuiStatusData>>): GuiResponseEnvelope<GuiStatusData> {
   const data = envelope.data ?? {};
 
+  const vault = normalizeVault(data.vault);
   return {
     ...envelope,
     data: {
@@ -94,7 +95,7 @@ function normalizeStatusEnvelope(envelope: GuiResponseEnvelope<Partial<GuiStatus
       ai_apps: data.ai_apps ?? statusFixture.ai_apps,
       managed_apps: data.managed_apps ?? statusFixture.managed_apps,
       notifications: data.notifications ?? statusFixture.notifications,
-      vault: normalizeVault(data.vault),
+      vault,
       pulse_workers: {
         ...statusFixture.pulse_workers,
         ...data.pulse_workers,
@@ -107,7 +108,7 @@ function normalizeStatusEnvelope(envelope: GuiResponseEnvelope<Partial<GuiStatus
         actions: data.pulse_workers?.actions ?? statusFixture.pulse_workers.actions,
       },
       capabilities: data.capabilities ?? statusFixture.capabilities,
-      secrets: data.secrets ?? [],
+      secrets: vault.status === "unlocked" && vault.unlocked ? data.secrets ?? [] : [],
       placeholders: data.placeholders ?? statusFixture.placeholders,
     },
   };
