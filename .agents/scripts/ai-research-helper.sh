@@ -42,8 +42,9 @@ resolve_model_id() {
 resolve_opencode_model_id() {
 	local name="${1:-haiku}"
 	case "$name" in
-	haiku | flash | local | health) echo "openai/gpt-5.4-mini" ;;
-	sonnet | pro | opus | coding | eval) echo "openai/gpt-5.5" ;;
+	haiku | flash | health) echo "openai/gpt-5.6-terra" ;;
+	local) echo "openai/gpt-5.4-mini" ;;
+	sonnet | pro | opus | coding | eval) echo "openai/gpt-5.6-sol" ;;
 	openai/* | anthropic/* | google/*) echo "$name" ;;
 	*) echo "$name" ;;
 	esac

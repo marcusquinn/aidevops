@@ -10,6 +10,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.5] - 2026-07-10
+
+### Added
+
+- route OpenAI workers through GPT-5.6 (#26915)
+
+### Changed
+
+- Maintenance: sync ref:GH#26917 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#26914 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#26913 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#26912 to TODO.md [skip ci]
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- Maintenance: update simplification state registry
+- fix: filter positive review acknowledgement (#26892)
+- Documentation: broaden launch environment regex (#26893)
+- fix: ignore stale maintainer gate pending aliases (#26895)
+- Maintenance: update simplification state registry
+
+### Fixed
+
+- align acknowledgement test label (#26909)
+
 ## [3.32.4] - 2026-07-09
 
 ### Changed

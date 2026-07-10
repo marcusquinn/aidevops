@@ -54,9 +54,8 @@ get_tier_models_from_table() {
 	if [[ -z "$models" || "$models" == "null" ]]; then
 		# Hardcoded minimal fallback for unknown tiers
 		case "$tier" in
-		haiku | flash | health) echo '["openai/gpt-5.4-mini"]' ;;
-		sonnet | pro | eval) echo '["openai/gpt-5.5"]' ;;
-		opus | coding) echo '["openai/gpt-5.5"]' ;;
+		haiku | flash | health) echo '["openai/gpt-5.6-terra"]' ;;
+		sonnet | pro | opus | eval | coding) echo '["openai/gpt-5.6-sol"]' ;;
 		*)
 			print_error "Unknown tier: $tier"
 			return 1

@@ -62,7 +62,7 @@ _resolve_model_override_label() {
  # as normal tier labels.
 	case ",${labels_csv}," in
 	*,model:opus-4-7,*)
-		override_model="${AIDEVOPS_OPUS_ESCALATION_MODEL:-openai/gpt-5.5}"
+		override_model="${AIDEVOPS_OPUS_ESCALATION_MODEL:-openai/gpt-5.6-sol}"
 		fallback_tier="opus"
 		;;
  *)
