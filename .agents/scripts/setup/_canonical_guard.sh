@@ -58,7 +58,11 @@ setup_canonical_guard() {
 			continue
 		fi
 		if ! result=$(cd "$path" && bash "$installer_path" install 2>&1 </dev/null); then
-			err=$((err + 1))
+			if [[ "$result" == *"Refusing to overwrite"* || "$result" == *"NOT managed"* ]]; then
+				conflict=$((conflict + 1))
+			else
+				err=$((err + 1))
+			fi
 			continue
 		fi
 		if [[ "$result" == *"installed canonical-on-main-guard"* ]]; then
@@ -74,9 +78,12 @@ setup_canonical_guard() {
 
 	print_info "Canonical guard: ok=$ok already=$already conflict=$conflict skip=$skip err=$err"
 	local total_covered=$((ok + already))
-	if [[ "$conflict" -gt 0 || "$err" -gt 0 ]]; then
+	if [[ "$err" -gt 0 ]]; then
 		print_error "Canonical guard installation incomplete; refusing successful setup"
 		return 1
+	fi
+	if [[ "$conflict" -gt 0 ]]; then
+		print_warning "Canonical detector hook conflicts remain, but preventive runtime/PATH guards are active"
 	fi
 	setup_track_configured "Canonical guard (${total_covered} repos)"
 	return 0

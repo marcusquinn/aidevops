@@ -18,6 +18,11 @@ resolve_real_git() {
 	while IFS= read -r candidate; do
 		[[ -n "$candidate" ]] || continue
 		[[ "$candidate" -ef "$SCRIPT_SOURCE" ]] && continue
+		local candidate_real=""
+		candidate_real=$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$candidate" 2>/dev/null || true)
+		case "$candidate_real" in
+		*/.aidevops/agents/scripts/git | */.agents/scripts/git) continue ;;
+		esac
 		printf '%s' "$candidate"
 		return 0
 	done < <(which -a git 2>/dev/null)

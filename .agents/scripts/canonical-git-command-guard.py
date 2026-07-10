@@ -99,6 +99,8 @@ def _is_allowed_canonical(subcommand: str, args: list[str]) -> bool:
         return _branch_is_read_only(args)
     if subcommand == "config":
         return _config_is_read_only(args)
+    if subcommand == "clean":
+        return any(arg == "--dry-run" or (arg.startswith("-") and not arg.startswith("--") and "n" in arg[1:]) for arg in args)
     if subcommand == "remote":
         return not args or args[0] in {"-v", "--verbose", "get-url", "show"}
     if subcommand == "worktree":

@@ -14,6 +14,10 @@ LINKED="${TEST_ROOT}/linked"
 TESTS=0
 FAILURES=0
 
+# Fixture setup must bypass the guard under test; policy assertions invoke the
+# shim explicitly below.
+git() { /usr/bin/git "$@"; return $?; }
+
 pass() { TESTS=$((TESTS + 1)); printf 'PASS %s\n' "$1"; return 0; }
 fail() { TESTS=$((TESTS + 1)); FAILURES=$((FAILURES + 1)); printf 'FAIL %s\n' "$1"; return 0; }
 
@@ -75,6 +79,8 @@ assert_blocked "blocks wrapped canonical switch" "env TEST=1 command git switch 
 assert_blocked "blocks nested absolute Git bypass" "bash -c '/usr/bin/git switch --detach main'"
 assert_blocked "blocks chained canonical mutation" "git status && git branch -M renamed"
 assert_blocked "blocks canonical update-ref plumbing" "/usr/bin/git update-ref refs/heads/main HEAD"
+assert_blocked "blocks destructive clean with exclude containing n" "git clean --force --exclude=nope"
+assert_blocked "blocks interactive clean" "git clean --interactive"
 
 if [[ "$(git -C "$REPO" symbolic-ref --short HEAD)" == "main" ]] &&
 	[[ "$(git -C "$REPO" rev-parse HEAD)" == "$INITIAL_HEAD" ]] &&
@@ -106,12 +112,12 @@ fi
 SHIM_BIN="${TEST_ROOT}/bin"
 mkdir -p "$SHIM_BIN"
 ln -s "$SHIM" "${SHIM_BIN}/git"
-if (cd "$REPO" && PATH="${SHIM_BIN}:/usr/bin:/bin" git status --short >/dev/null); then
+if (cd "$REPO" && env PATH="${SHIM_BIN}:/usr/bin:/bin" git status --short >/dev/null); then
 	pass "deployed symlink shim resolves policy engine"
 else
 	fail "deployed symlink shim resolves policy engine"
 fi
-if (cd "$REPO" && PATH="${SHIM_BIN}:/usr/bin:/bin" git switch --detach main >/dev/null 2>&1); then
+if (cd "$REPO" && env PATH="${SHIM_BIN}:/usr/bin:/bin" git switch --detach main >/dev/null 2>&1); then
 	fail "deployed symlink shim blocks canonical mutation"
 else
 	[[ "$(/usr/bin/git -C "$REPO" branch --show-current)" == "main" ]] && pass "deployed symlink shim blocks canonical mutation" || fail "symlink shim changed canonical HEAD"
@@ -120,7 +126,7 @@ fi
 LITERAL_REPO="${TEST_ROOT}/repo[1]"
 mkdir -p "$LITERAL_REPO"
 /usr/bin/git -C "$LITERAL_REPO" init -q -b main
-if (cd "$LITERAL_REPO" && PATH="${SHIM_BIN}:/usr/bin:/bin" git status --short >/dev/null); then
+if (cd "$LITERAL_REPO" && env PATH="${SHIM_BIN}:/usr/bin:/bin" git status --short >/dev/null); then
 	pass "shim accepts already-expanded literal metacharacter path"
 else
 	fail "shim accepts already-expanded literal metacharacter path"
