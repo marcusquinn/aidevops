@@ -244,6 +244,29 @@ describe("status adapter", () => {
     expect(readVaultSummary(repoRoot).status).toBe("unknown");
   });
 
+  test("preserves the Linux runtime directory for broker status probes", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-vault-runtime-dir-"));
+    const scriptsDir = join(repoRoot, ".agents", "scripts");
+    const originalRuntimeDir = process.env.XDG_RUNTIME_DIR;
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, "vault-helper.sh"), [
+      "if [[ \"${XDG_RUNTIME_DIR:-}\" != \"/tmp/aidevops-runtime-fixture\" ]]; then exit 1; fi",
+      "case \"$1\" in",
+      "  status) printf '%s\\n' locked ;;",
+      "  setup-state) printf '%s\\n' migration-ready ;;",
+      "  *) exit 1 ;;",
+      "esac",
+    ].join("\n"));
+    process.env.XDG_RUNTIME_DIR = "/tmp/aidevops-runtime-fixture";
+
+    const vault = readVaultSummary(repoRoot);
+    if (originalRuntimeDir === undefined) delete process.env.XDG_RUNTIME_DIR;
+    else process.env.XDG_RUNTIME_DIR = originalRuntimeDir;
+
+    expect(vault.status).toBe("locked");
+    expect(vault.setup_state).toBe("migration-ready");
+  });
+
   test("preserves corrupted metadata as a conservative recovery state", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-vault-corrupted-"));
     const scriptsDir = join(repoRoot, ".agents", "scripts");

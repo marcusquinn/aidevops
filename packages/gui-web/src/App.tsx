@@ -8,7 +8,7 @@ import { DesktopStatusBar } from "./DesktopStatusBar";
 import { type NavigationHistory, nextHistoryIndex, useNavigationHistoryKeyboard } from "./navigation-history";
 import { ScreenshotCaptureNotificationHost } from "./ScreenshotCaptureNotification";
 import { fetchStatus, mockedStatus, unavailableStatus } from "./status-client";
-import type { VaultDialogIntent } from "./VaultBadges";
+import { type VaultDialogIntent, vaultDialogIntentForStatus } from "./VaultBadges";
 import { VaultAccessModal } from "./VaultAccessModal";
 
 interface WebKitBridgeWindow extends Window {
@@ -224,6 +224,10 @@ export function App(): ReactElement {
     window.addEventListener("focus", refreshAfterTerminal);
     return () => window.removeEventListener("focus", refreshAfterTerminal);
   }, [refreshStatus]);
+
+  useEffect(() => {
+    setVaultDialogIntent((current) => current !== null && current !== vaultDialogIntentForStatus(status.data.vault) ? null : current);
+  }, [status.data.vault.helper_status, status.data.vault.setup_state, status.data.vault.status]);
 
   useEffect(() => {
     persistAppearancePreference(appearanceStorageKeys.showNavCounts, String(showNavCounts));

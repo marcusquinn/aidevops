@@ -103,6 +103,11 @@ export function VaultSurface({ onVaultRequest, status }: { onVaultRequest: (inte
   const vault = status.vault;
   const vaultCollection = vault.collections.find((collection) => collection.surface_ids.includes("vault")) ?? vault.collections[0];
   const readinessUnknown = vault.helper_status !== "available" || vault.status === "unknown" || vault.status === "corrupted";
+  const custodyState = vault.status === "corrupted"
+    ? { detail: "Metadata is damaged. Preserve encrypted data and use the recovery guidance.", value: "recovery" }
+    : readinessUnknown
+      ? { detail: "The local helper did not return authoritative lock metadata.", value: "unavailable" }
+      : { detail: vault.unlock_hint, value: vault.locked ? "locked" : "unlocked" };
   const readiness = [
     { label: "migration", value: readinessUnknown ? "unknown" : vault.readiness.migration_allowed ? "ready" : "blocked" },
     { label: "setup", value: readinessUnknown ? "unknown" : vault.readiness.setup_required ? "required" : vault.setup_state === "migration-ready" ? "complete" : "in progress" },
@@ -112,7 +117,7 @@ export function VaultSurface({ onVaultRequest, status }: { onVaultRequest: (inte
   const featureCards = [
     { label: text.vaultStatus, value: vault.status, detail: "Metadata-only lock state from the local helper." },
     { label: text.vaultSetup, value: vault.setup_state, detail: vault.setup_hint },
-    { label: text.vaultLockUnlock, value: vault.locked ? "locked" : "unlocked", detail: vault.unlock_hint },
+    { label: text.vaultLockUnlock, value: custodyState.value, detail: custodyState.detail },
     { label: text.vaultDevices, value: `${vault.devices.length} device`, detail: "Device trust metadata only; private keys are never exposed." },
     { label: text.vaultSync, value: vault.sync.status, detail: "Encrypted bundles and signed manifests over untrusted transports." },
     { label: text.vaultMessages, value: vault.secure_messages.status, detail: "Secure message placeholders keep payloads hidden while locked." },
@@ -135,7 +140,15 @@ export function VaultSurface({ onVaultRequest, status }: { onVaultRequest: (inte
           {readiness.map((item) => <li key={item.label}><strong>{item.label}</strong>{item.value}</li>)}
         </ul>
       </div>
-      {vault.locked ? (
+      {vault.status === "corrupted" ? (
+        <div className="notice compact-notice warning-notice" role="note">
+          Vault metadata needs recovery. Preserve existing encrypted data and do not initialise over it.
+        </div>
+      ) : readinessUnknown ? (
+        <div className="notice compact-notice warning-notice" role="note">
+          Vault lock state is unavailable. Setup and unlock guidance remains disabled until status is authoritative.
+        </div>
+      ) : vault.locked ? (
         <div className="notice compact-notice" role="note">
           {text.vaultLockedPreview} {vault.unlock_hint}
         </div>
@@ -151,8 +164,8 @@ export function VaultSurface({ onVaultRequest, status }: { onVaultRequest: (inte
         <div className="section-heading split-heading">
           <div>
             <p className="eyebrow">{text.vaultSetup}</p>
-            <h2>{vault.readiness.setup_required ? "Setup required" : "Setup metadata"}</h2>
-            <p>{vault.setup_hint}</p>
+            <h2>{vault.status === "corrupted" ? "Recovery required" : readinessUnknown ? "Setup status unavailable" : vault.readiness.setup_required ? "Setup required" : "Setup metadata"}</h2>
+            <p>{readinessUnknown ? custodyState.detail : vault.setup_hint}</p>
           </div>
           <button className="secondary-action vault-cta" onClick={() => onVaultRequest(vaultDialogIntentForStatus(vault))} title={vault.unlock_hint} type="button">{vaultActionLabel(vaultDialogIntentForStatus(vault))}</button>
         </div>

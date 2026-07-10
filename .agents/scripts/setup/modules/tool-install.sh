@@ -1651,29 +1651,6 @@ _vault_runtime_marker_valid() {
 	return $?
 }
 
-_vault_runtime_permissions_safe() {
-	local path="$1"
-	local mode=""
-	local group_digit=""
-	local other_digit=""
-
-	[[ -e "$path" && ! -L "$path" && -O "$path" ]] || return 1
-	mode="$(/usr/bin/stat -f '%Lp' "$path" 2>/dev/null || /usr/bin/stat -c '%a' "$path" 2>/dev/null || true)"
-	[[ "$mode" =~ ^[0-7]{3,4}$ ]] || return 1
-	mode="${mode:$((${#mode} - 3))}"
-	group_digit="${mode:1:1}"
-	other_digit="${mode:2:1}"
-	case "$group_digit" in
-	0 | 1 | 4 | 5) ;;
-	*) return 1 ;;
-	esac
-	case "$other_digit" in
-	0 | 1 | 4 | 5) ;;
-	*) return 1 ;;
-	esac
-	return 0
-}
-
 setup_vault_python_env() {
 	print_info "Setting up isolated Python crypto runtime for Vault..."
 	local python3_bin=""
@@ -1701,7 +1678,7 @@ setup_vault_python_env() {
 		return 1
 	fi
 	if [[ -e "$env_dir" ]]; then
-		if ! _vault_runtime_marker_valid "$managed_marker" || ! _vault_runtime_permissions_safe "$env_dir" || ! _vault_runtime_permissions_safe "$managed_marker"; then
+		if ! _vault_runtime_marker_valid "$managed_marker" || ! "$python3_bin" "$runtime_check" --check-path "$env_dir" "$managed_marker"; then
 			print_warning "Refusing to execute or replace an unowned Vault runtime: $env_dir"
 			return 1
 		fi
@@ -1720,15 +1697,19 @@ setup_vault_python_env() {
 	if [[ -d "$env_dir" ]]; then
 		rm -rf "$env_dir"
 	fi
-	if ! "$python3_bin" -m venv "$env_dir"; then
+	if ! (umask 077 && "$python3_bin" -m venv "$env_dir"); then
 		print_warning "Failed to create isolated Vault Python environment"
 		return 1
 	fi
 	chmod 755 "$env_dir"
 	printf '%s\n' "$marker_value" >"$managed_marker"
 	chmod 600 "$managed_marker"
-	if ! "$env_python" -m pip install --disable-pip-version-check --no-input --only-binary=:all: -r "$requirements_file"; then
+	if ! (umask 077 && "$env_python" -m pip install --disable-pip-version-check --no-input --only-binary=:all: -r "$requirements_file"); then
 		print_warning "Failed to install the pinned Vault crypto runtime"
+		return 1
+	fi
+	if ! "$python3_bin" "$runtime_check" --check-path "$env_dir" "$managed_marker"; then
+		print_warning "Vault crypto runtime ownership verification failed"
 		return 1
 	fi
 	if ! "$env_python" "$runtime_check"; then

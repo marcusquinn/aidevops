@@ -76,8 +76,8 @@ function readVaultCommand<T extends string>(
 }
 
 function vaultProbeEnvironment(): NodeJS.ProcessEnv {
-  const environment: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" };
-  for (const name of ["HOME", "XDG_CONFIG_HOME", "AIDEVOPS_VAULT_DIR", "AIDEVOPS_VAULT_RUNTIME_DIR", "AIDEVOPS_VAULT_PYTHON"]) {
+  const environment: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/usr/local/bin" };
+  for (const name of ["HOME", "XDG_CONFIG_HOME", "XDG_RUNTIME_DIR", "AIDEVOPS_VAULT_DIR", "AIDEVOPS_VAULT_RUNTIME_DIR", "AIDEVOPS_VAULT_PYTHON"]) {
     const value = process.env[name];
     if (value !== undefined) environment[name] = value;
   }

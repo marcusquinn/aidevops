@@ -139,6 +139,24 @@ else
 	fail "setup preserves runtimes with forged ownership markers"
 fi
 
+printf '%s\n' "aidevops-vault-runtime-v1" >"${unsafe_runtime}/.aidevops-managed-runtime"
+chmod 666 "${unsafe_runtime}/.aidevops-managed-runtime"
+if HOME="$unsafe_home" INSTALL_DIR="$REPO_ROOT" bash -c '
+  print_info() { return 0; }
+  print_warning() { return 0; }
+  print_success() { return 0; }
+  source "$1"
+  find_python3() { command -v python3; return 0; }
+  if setup_vault_python_env; then
+    exit 1
+  fi
+  exit 0
+' _ "${REPO_ROOT}/.agents/scripts/setup/modules/tool-install.sh" && [[ -f "${unsafe_runtime}/sentinel" && ! -e "${unsafe_home}/unsafe-runtime-executed" ]]; then
+	pass "setup rejects writable managed-runtime trees before execution"
+else
+	fail "setup rejects writable managed-runtime trees before execution"
+fi
+
 final_symlink_home="${TEST_ROOT}/final-symlink-home"
 final_symlink_parent="${final_symlink_home}/.aidevops/.agent-workspace/python-env"
 final_symlink_target="${TEST_ROOT}/final-symlink-target"

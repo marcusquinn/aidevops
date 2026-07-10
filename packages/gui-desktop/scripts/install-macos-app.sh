@@ -568,8 +568,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
 
         let command = "/bin/bash \(shellQuote(helperPath)) vault-command \(shellQuote(action))"
         let source = "tell application \"Terminal\"\nactivate\ndo script \(appleScriptQuote(command))\nend tell"
+        guard let script = NSAppleScript(source: source) else {
+            NSSound.beep()
+            notifyVaultCommandResult("failed")
+            return
+        }
         var error: NSDictionary?
-        NSAppleScript(source: source)?.executeAndReturnError(&error)
+        script.executeAndReturnError(&error)
         if error != nil {
             NSSound.beep()
             notifyVaultCommandResult("failed")
