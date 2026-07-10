@@ -30,8 +30,11 @@ fi
 printf 'PASS recovery refuses occupied default branch\n'
 
 /usr/bin/git -C "$REPO" worktree remove "$OCCUPIED"
-if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" restore-default --repo "$REPO" --issue 27014 --confirm RESTORE_CANONICAL_DEFAULT >/dev/null &&
-	[[ "$(/usr/bin/git -C "$REPO" branch --show-current)" == "main" ]]; then
+printf 'invalid global audit chain\n' >"${ROOT}/broken-global-audit.jsonl"
+if AUDIT_LOG_FILE="${ROOT}/broken-global-audit.jsonl" AIDEVOPS_REAL_GIT_BIN=/usr/bin/git \
+	bash "$HELPER" restore-default --repo "$REPO" --issue 27014 --confirm RESTORE_CANONICAL_DEFAULT >/dev/null &&
+	[[ "$(/usr/bin/git -C "$REPO" branch --show-current)" == "main" ]] &&
+	[[ -s "$HOME/.aidevops/logs/canonical-recovery-audit.jsonl" ]]; then
 	printf 'PASS audited recovery restores only default branch\n'
 else
 	printf 'FAIL audited recovery did not restore default branch\n'

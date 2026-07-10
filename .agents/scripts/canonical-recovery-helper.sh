@@ -71,15 +71,16 @@ mkdir "$lock_dir" 2>/dev/null || {
 trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
 
 audit_helper="${SCRIPT_DIR}/audit-log-helper.sh"
+recovery_audit_file="${HOME}/.aidevops/logs/canonical-recovery-audit.jsonl"
 [[ -x "$audit_helper" ]] || {
 	printf 'BLOCKED: tamper-evident audit helper is unavailable\n' >&2
 	exit 1
 }
-"$audit_helper" verify --quiet || {
+AUDIT_LOG_FILE="$recovery_audit_file" "$audit_helper" verify --quiet || {
 	printf 'BLOCKED: audit chain verification failed\n' >&2
 	exit 1
 }
-AUDIT_QUIET=true "$audit_helper" log operation.verify "Canonical default-branch recovery authorized" \
+AUDIT_LOG_FILE="$recovery_audit_file" AUDIT_QUIET=true "$audit_helper" log operation.verify "Canonical default-branch recovery authorized" \
 	--detail "issue=${issue_number}" --detail "repo=${repo_path}" --detail "target=${default_branch}" >/dev/null || {
 	printf 'BLOCKED: recovery audit record could not be written\n' >&2
 	exit 1
