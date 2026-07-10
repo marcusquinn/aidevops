@@ -11,6 +11,9 @@ TESTS_RUN=0
 TESTS_FAILED=0
 SURVIVOR_PIDS=""
 
+# shellcheck source=../sandbox-exec-helper.sh
+source "$HELPER"
+
 cleanup() {
 	local cleanup_pid=""
 	for cleanup_pid in $SURVIVOR_PIDS; do
@@ -150,13 +153,82 @@ test_start_token_mismatch() {
 	SURVIVOR_PIDS="${SURVIVOR_PIDS} ${candidate_pid}"
 	candidate_pgid="$(ps -o pgid= -p "$candidate_pid" | tr -d '[:space:]')"
 	printf '%s\t%s\t%s\n' "$candidate_pid" "$candidate_pgid" "definitely-not-the-start-token" >"$snapshot_file"
-	# shellcheck source=../sandbox-exec-helper.sh
-	source "$HELPER"
 	_sandbox_pgkill_cleanup "" "" "" "$snapshot_file"
 	if process_is_alive "$candidate_pid"; then
 		record_result "start-token mismatch prevents recycled PID signal" 0
 	else
 		record_result "start-token mismatch prevents recycled PID signal" 1 "pid=${candidate_pid} was signalled"
+	fi
+	return 0
+}
+
+test_snapshot_removed_before_grace_period() {
+	local snapshot_file="${TEST_ROOT}/consumed.tsv"
+	local marker_file="${TEST_ROOT}/snapshot-state"
+	local candidate_pid=""
+	local candidate_pgid=""
+	local candidate_token=""
+	command sleep 30 &
+	candidate_pid=$!
+	SURVIVOR_PIDS="${SURVIVOR_PIDS} ${candidate_pid}"
+	candidate_pgid="$(ps -o pgid= -p "$candidate_pid" | tr -d '[:space:]')"
+	candidate_token="$(_sandbox_get_proc_starttime "$candidate_pid")"
+	printf '%s\t%s\t%s\n' "$candidate_pid" "$candidate_pgid" "$candidate_token" >"$snapshot_file"
+	sleep() {
+		local sleep_delay="$1"
+		if [[ "$sleep_delay" == "0.5" ]]; then
+			if [[ -e "$snapshot_file" ]]; then
+				printf 'present\n' >"$marker_file"
+			else
+				printf 'removed\n' >"$marker_file"
+			fi
+		fi
+		command sleep "$sleep_delay"
+		return 0
+	}
+	_sandbox_pgkill_cleanup "" "" "" "$snapshot_file"
+	unset -f sleep
+	if [[ -f "$marker_file" && "$(<"$marker_file")" == "removed" ]]; then
+		record_result "snapshot is removed before TERM grace period" 0
+	else
+		record_result "snapshot is removed before TERM grace period" 1 "snapshot remained visible to terminating process"
+	fi
+	return 0
+}
+
+test_missing_self_pgid_avoids_group_signal() {
+	local snapshot_file="${TEST_ROOT}/missing-self-pgid.tsv"
+	local child_file="${TEST_ROOT}/missing-self-pgid-child.pid"
+	local leader_pid=""
+	local leader_pgid=""
+	local leader_token=""
+	local child_pid=""
+	# shellcheck disable=SC2016 # $! and $1 belong to the child shell.
+	setsid bash --norc --noprofile -c '
+		sleep 30 &
+		printf "%s\n" "$!" >"$1"
+		wait
+	' missing-self-pgid "$child_file" &
+	leader_pid=$!
+	SURVIVOR_PIDS="${SURVIVOR_PIDS} ${leader_pid}"
+	if ! wait_for_pid_file "$child_file"; then
+		record_result "missing self PGID avoids group signal" 1 "child PID file missing"
+		return 0
+	fi
+	child_pid="$(tr -d '[:space:]' <"$child_file")"
+	SURVIVOR_PIDS="${SURVIVOR_PIDS} ${child_pid}"
+	leader_pgid="$(ps -o pgid= -p "$leader_pid" | tr -d '[:space:]')"
+	leader_token="$(_sandbox_get_proc_starttime "$leader_pid")"
+	printf '%s\t%s\t%s\n' "$leader_pid" "$leader_pgid" "$leader_token" >"$snapshot_file"
+	ps() {
+		return 1
+	}
+	_sandbox_pgkill_cleanup "" "" "" "$snapshot_file"
+	unset -f ps
+	if ! process_is_alive "$leader_pid" && process_is_alive "$child_pid"; then
+		record_result "missing self PGID avoids group signal" 0
+	else
+		record_result "missing self PGID avoids group signal" 1 "cleanup signalled the process group"
 	fi
 	return 0
 }
@@ -170,6 +242,8 @@ main() {
 	test_timeout_cleanup
 	test_normal_exit_and_unrelated_process
 	test_start_token_mismatch
+	test_snapshot_removed_before_grace_period
+	test_missing_self_pgid_avoids_group_signal
 	printf 'Tests run: %d\nFailures: %d\n' "$TESTS_RUN" "$TESTS_FAILED"
 	[[ "$TESTS_FAILED" -eq 0 ]]
 }
