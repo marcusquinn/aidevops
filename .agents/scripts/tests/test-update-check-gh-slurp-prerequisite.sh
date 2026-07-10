@@ -13,6 +13,14 @@ TEST_ROOT=""
 ORIGINAL_PATH="$PATH"
 ORIGINAL_HOME="$HOME"
 
+# Load only the cache helpers so failure paths can be exercised without running
+# the update check's main entry point.
+# shellcheck source=/dev/null
+source <(awk '
+	/^_write_cache_contents\(\)/,/^}/ { print }
+	/^_write_cache\(\)/,/^}/ { print }
+' "$UPDATE_CHECK")
+
 cleanup() {
 	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
 		rm -rf "$TEST_ROOT"
@@ -85,8 +93,65 @@ test_supported_gh_has_no_warning() {
 	return 0
 }
 
+test_cache_write_propagates_output_failure() {
+	local cache_dir=""
+	local status=0
+	cache_dir=$(mktemp -d)
+
+	set +e
+	(
+		printf() {
+			local value="${2:-}"
+			local rc=0
+			if [[ "$value" == "fail-write" ]]; then
+				return 17
+			fi
+			builtin printf "$@"
+			rc=$?
+			return "$rc"
+		}
+		_write_cache "$cache_dir" "greeting" "fail-write" "" "" "" "" "" ""
+	)
+	status=$?
+	set -e
+
+	if [[ "$status" -eq 17 ]] && [[ -z "$(compgen -G "$cache_dir/session-greeting.*" || true)" ]]; then
+		print_result "cache output failure preserves status and removes temp file" 0
+	else
+		print_result "cache output failure preserves status and removes temp file" 1 "status=${status}"
+	fi
+	rm -rf "$cache_dir"
+	return 0
+}
+
+test_cache_write_propagates_move_failure() {
+	local cache_dir=""
+	local status=0
+	cache_dir=$(mktemp -d)
+
+	set +e
+	(
+		mv() {
+			return 23
+		}
+		_write_cache "$cache_dir" "greeting" "" "" "" "" "" "" ""
+	)
+	status=$?
+	set -e
+
+	if [[ "$status" -eq 23 ]] && [[ -z "$(compgen -G "$cache_dir/session-greeting.*" || true)" ]]; then
+		print_result "cache move failure preserves status and removes temp file" 0
+	else
+		print_result "cache move failure preserves status and removes temp file" 1 "status=${status}"
+	fi
+	rm -rf "$cache_dir"
+	return 0
+}
+
 test_old_gh_warns_in_update_check
 test_supported_gh_has_no_warning
+test_cache_write_propagates_output_failure
+test_cache_write_propagates_move_failure
 
 printf '\n%d tests run, %d failed\n' "$TESTS_RUN" "$TESTS_FAILED"
 if [[ "$TESTS_FAILED" -gt 0 ]]; then
