@@ -226,6 +226,29 @@ test_cmd_merge_removes_current_linked_worktree() {
 	return 0
 }
 
+test_cmd_merge_defers_cleanup_for_live_process_cwd() {
+	setup_subject
+	local canonical_repo="${TEST_ROOT}/repo"
+	local worktree_path="${TEST_ROOT}/worktrees/repo-feature-full-loop-cleanup"
+	local sleeper_pid=""
+	(
+		cd "$worktree_path" || exit 2
+		sleep 30
+	) &
+	sleeper_pid=$!
+	sleep 1
+
+	cmd_merge "123" "example/repo" --squash
+
+	local rc=0
+	[[ -d "$worktree_path" ]] || rc=1
+	git -C "$canonical_repo" worktree list --porcelain | grep -qF "$worktree_path" || rc=1
+	kill "$sleeper_pid" 2>/dev/null || true
+	wait "$sleeper_pid" 2>/dev/null || true
+	print_result "cmd_merge defers cleanup while another process uses worktree cwd" "$rc"
+	return 0
+}
+
 test_refresh_canonical_pulls_when_default_checked_out() {
 	local canonical_repo="${TEST_ROOT}/repo-default"
 	local origin_repo="${TEST_ROOT}/origin-default.git"
@@ -265,6 +288,7 @@ main() {
 	setup_subject
 	test_refresh_canonical_pulls_when_default_checked_out
 	test_cmd_merge_removes_current_linked_worktree
+	test_cmd_merge_defers_cleanup_for_live_process_cwd
 	printf '\n%d/%d tests passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
 	[[ "$TESTS_FAILED" -eq 0 ]] || return 1
 	return 0

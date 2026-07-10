@@ -131,6 +131,19 @@ T_FUTURE_SENTINEL_MS=$((T_FUTURE_SENTINEL * 1000))
 	printf '{"ts":%d,"role":"worker","session_key":"issue-12","model":"openai/gpt-5.5","provider":"openai","result":"service_interruption_exhausted","failure_reason":"local_error","runtime_error_type":"sigterm","launch_failure_cause":"local_runtime_error","next_action":"inspect_failure_excerpt_and_retry_if_transient","exit_code":81}\n' "$T_2H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-14","model":"openai/gpt-5.5","provider":"openai","result":"local_kill","failure_reason":"no_output_stall","runtime_error_type":"sigterm","classification_source":"worker_kill_reason_sentinel","classification_pattern":"no_output_stall","launch_failure_cause":"local_kill","kill_reason":"no_output_stall","next_action":"inspect_local_kill_source","exit_code":83}\n' "$T_2H_AGO"
 	printf '{"ts":%d,"role":"worker","session_key":"issue-15","model":"openai/gpt-5.5","provider":"openai","result":"provider_error","runtime_error_type":false,"exit_code":82}\n' "$T_2H_AGO"
+	# Historical duplicate sparse hard-kill row: must collapse into issue-3 and
+	# preserve the richer row above rather than counting a second failure.
+	printf '{"ts":%d,"role":"worker","session_key":"issue-3","model":"openai/gpt-5.5","provider":"openai","result":"watchdog_stall_killed","failure_reason":"watchdog_stall_killed","exit_code":79}\n' "$((T_2H_AGO + 1))"
+	# One logical session with a resumable interruption followed by success.
+	printf '{"ts":%d,"role":"worker","session_key":"issue-16","result":"signal_killed_continue","exit_code":78}\n' "$T_5MIN_AGO"
+	printf '{"ts":%d,"role":"worker","session_key":"issue-16","result":"success","exit_code":0}\n' "$T_5MIN_AGO"
+	# Identical session keys in different repositories are independent outcomes.
+	printf '{"ts":%d,"role":"worker","repo_slug":"example/repo-a","session_key":"issue-17","result":"success","exit_code":0}\n' "$T_2H_AGO"
+	printf '{"ts":%d,"role":"worker","repo_slug":"example/repo-b","session_key":"issue-17","result":"provider_error","exit_code":2}\n' "$T_2H_AGO"
+	# A context-rich unscoped legacy event is not a sparse duplicate and must
+	# remain distinct from a scoped event with the same session key.
+	printf '{"ts":%d,"role":"worker","session_key":"issue-18","issue_number":18,"model":"openai/gpt-5.5","result":"success","exit_code":0}\n' "$T_2H_AGO"
+	printf '{"ts":%d,"role":"worker","repo_slug":"example/repo-c","session_key":"issue-18","result":"provider_error","exit_code":2}\n' "$((T_2H_AGO + 1))"
 } >"$METRICS"
 
 cat >"$OAUTH_POOL" <<EOF
@@ -215,22 +228,28 @@ else
 	echo "  output: $(printf '%q' "${JSON:0:300}")"
 fi
 
-# Assert exact counts. 24h window: events 1-6 + 8 + 11 + 12 + 14 + 15, excludes 7 (25h ago).
+# Assert exact terminal-session counts. Raw attempts collapse by session key;
+# continuation-only sessions are reported separately and omitted from outcomes.
 # issue-8 (watchdog_stall_continue with exit_code=124) tests the t3215
 # regression case — must count as wc, not of, despite non-zero exit.
-assert_eq "2c: total = 11" "11" "$(printf '%s' "$JSON" | jq -r '.metrics.total')"
-assert_eq "2d: succeeded = 2" "2" "$(printf '%s' "$JSON" | jq -r '.metrics.succeeded')"
+assert_eq "2c: raw event total remains backward compatible" "18" "$(printf '%s' "$JSON" | jq -r '.metrics.total')"
+assert_eq "2c2: terminal session outcomes = 13" "13" "$(printf '%s' "$JSON" | jq -r '.metrics.terminal_session_total')"
+assert_eq "2c2b: event_total aliases raw total" "18" "$(printf '%s' "$JSON" | jq -r '.metrics.event_total')"
+assert_eq "2c3: continuation events = 4" "4" "$(printf '%s' "$JSON" | jq -r '.metrics.continuation_events')"
+assert_eq "2d: succeeded = 5" "5" "$(printf '%s' "$JSON" | jq -r '.metrics.succeeded')"
 assert_eq "2e: watchdog_killed = 1" "1" "$(printf '%s' "$JSON" | jq -r '.metrics.watchdog_killed')"
 assert_eq "2f: watchdog_continued = 2 (incl. nonzero-exit heartbeat)" "2" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.watchdog_continued')"
 assert_eq "2f2: service_interrupted = 1 (heartbeat)" "1" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.service_interrupted')"
 assert_eq "2g: rate_limited = 1" "1" "$(printf '%s' "$JSON" | jq -r '.metrics.rate_limited')"
-assert_eq "2h: other_failure = 4 (heartbeat excluded, exhausted/local kill counted)" "4" \
+assert_eq "2h: other_failure = 6 (heartbeat excluded, scoped failures counted)" "6" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.other_failure')"
-assert_eq "2h2: rich result_counts includes success bucket" "2" \
+assert_eq "2h2: terminal result_counts includes success bucket" "5" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.result_counts.success')"
-assert_eq "2h3: timing summary includes samples" "11" \
+assert_eq "2h2b: raw result counts retain continuation evidence" "1" \
+	"$(printf '%s' "$JSON" | jq -r '.metrics.event_result_counts.signal_killed_continue')"
+assert_eq "2h3: timing summary includes terminal samples" "13" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.timing_ms.samples')"
 assert_eq "2h4: recent example carries load context" "2.0" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.recent_examples[] | select(.session_key == "issue-1") | .load_1min')"
@@ -248,11 +267,11 @@ assert_eq "2h10: failure groups expose provider status" "500" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_groups[] | select(.session_key == "issue-6") | .provider_status')"
 assert_eq "2h10b: failure groups expose classification pattern" "server_error|5xx|connection_failure|overloaded" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_groups[] | select(.session_key == "issue-6") | .classification_pattern')"
-assert_eq "2h11: failure groups carry provider evidence" "openai/gpt-5.5" \
-	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_groups[] | select(.session_key == "issue-11") | .model')"
+assert_eq "2h11: continuation-only session omitted from terminal failure groups" "0" \
+	"$(printf '%s' "$JSON" | jq -r '[.metrics.failure_groups[] | select(.session_key == "issue-11")] | length')"
 assert_eq "2h12: diagnostic focus counts stall-killed sessions" "1" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.diagnostic_focus.stall_hard_killed')"
-assert_eq "2h13: diagnostic focus counts local runtime errors" "2" \
+assert_eq "2h13: diagnostic focus counts terminal local runtime errors" "1" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.diagnostic_focus.local_runtime_error')"
 assert_eq "2h13b: failure groups preserve false runtime markers" "false" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_groups[] | select(.session_key == "issue-15") | .runtime_error_type')"
@@ -262,7 +281,6 @@ assert_eq "2h15: diagnostic focus groups local kills separately" "2" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.diagnostic_focus.local_kill')"
 assert_eq "2h16: failure families expose local kill next action" "inspect_local_kill_source" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.failure_families[] | select(.launch_failure_cause == "local_kill") | .next_action')"
-
 # Pulse-stats counters (24h window: 25h-ago timestamp must be excluded).
 assert_eq "2i: circuit_broken = 2" "2" \
 	"$(printf '%s' "$JSON" | jq -r '.pulse_stats.pulse_dispatch_circuit_broken')"
@@ -286,10 +304,11 @@ echo
 echo "--- Section 3: 1h window ---"
 
 JSON=$(env "${RUN_ENV[@]}" "$HELPER" summary --since 1h --no-pr-check --json 2>&1)
-# 1h window: only events at 5min ago (issue-1, issue-4) qualify; future
-# sentinel and missing-ts rows are invalid worker evidence.
-assert_eq "3a: 1h total = 2" "2" "$(printf '%s' "$JSON" | jq -r '.metrics.total')"
-assert_eq "3b: 1h succeeded = 1" "1" "$(printf '%s' "$JSON" | jq -r '.metrics.succeeded')"
+# 1h window: issue-1 and resumed issue-16 are terminal successes; issue-4 is
+# continuation-only and therefore excluded from the outcome denominator.
+assert_eq "3a: 1h raw total = 4" "4" "$(printf '%s' "$JSON" | jq -r '.metrics.total')"
+assert_eq "3a2: 1h terminal total = 2" "2" "$(printf '%s' "$JSON" | jq -r '.metrics.terminal_session_total')"
+assert_eq "3b: 1h succeeded = 2" "2" "$(printf '%s' "$JSON" | jq -r '.metrics.succeeded')"
 assert_eq "3c: 1h watchdog_continued = 1" "1" \
 	"$(printf '%s' "$JSON" | jq -r '.metrics.watchdog_continued')"
 assert_eq "3d: 1h watchdog_killed = 0" "0" \
@@ -324,7 +343,7 @@ OUT=$(env "${RUN_ENV[@]}" "$HELPER" summary --since 24h --no-pr-check 2>&1)
 assert_contains "5a: human output names canonical jsonl source" \
 	"headless-runtime-metrics.jsonl" "$OUT"
 assert_contains "5b: human output names pulse-stats" "pulse-stats.json" "$OUT"
-assert_contains "5c: human output shows succeeded count" "Succeeded:                   2" "$OUT"
+assert_contains "5c: human output shows succeeded count" "Succeeded:                   5" "$OUT"
 assert_contains "5d: human output shows watchdog continued is heartbeat" \
 	"heartbeat" "$OUT"
 assert_contains "5d2: human output shows service interruption resumes" \
@@ -350,7 +369,7 @@ assert_eq "6b: openai available accounts exclude auth-error/rate-limited" "2" \
 	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.account_pool[] | select(.provider == "openai") | .available')"
 assert_eq "6c: openai capacity_slots uses redacted multiplier" "48" \
 	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.account_pool[] | select(.provider == "openai") | .capacity_slots')"
-assert_eq "6c2: nonzero-exit success counts as other provider failure" "6" \
+assert_eq "6c2: provider diagnostics retain raw duplicate/attempt evidence" "7" \
 	"$(printf '%s' "$JSON" | jq -r '.provider_diagnostics.provider_model_usage[] | select(.provider == "openai" and .model == "openai/gpt-5.5") | .other_failure')"
 
 JSONC_DEFAULTS="$FIXTURE_DIR/aidevops.defaults.jsonc"

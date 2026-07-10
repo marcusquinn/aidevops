@@ -3,8 +3,9 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # test-watchdog-hard-kill-continuous-output.sh — GH#26469 regression test.
 #
-# Verifies worker-activity-watchdog.sh enforces HARD_KILL_SECONDS even when the
-# worker output file keeps growing and never reaches STALL_TIMEOUT.
+# Verifies HARD_KILL_SECONDS applies only to confirmed stalls. Continuous output
+# remains alive past the threshold, then the same worker is killed after output
+# stops and STALL_TIMEOUT is reached.
 
 set -euo pipefail
 
@@ -12,11 +13,21 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WATCHDOG_SCRIPT="${SCRIPT_DIR}/worker-activity-watchdog.sh"
 TEST_ROOT=""
 WORKER_PID=""
+WRITER_PID=""
+WATCHDOG_PID=""
 
 cleanup() {
 	if [[ -n "$WORKER_PID" ]]; then
 		kill "$WORKER_PID" >/dev/null 2>&1 || true
 		kill -9 "$WORKER_PID" >/dev/null 2>&1 || true
+	fi
+	if [[ -n "$WRITER_PID" ]]; then
+		kill "$WRITER_PID" >/dev/null 2>&1 || true
+		wait "$WRITER_PID" 2>/dev/null || true
+	fi
+	if [[ -n "$WATCHDOG_PID" ]]; then
+		kill "$WATCHDOG_PID" >/dev/null 2>&1 || true
+		wait "$WATCHDOG_PID" 2>/dev/null || true
 	fi
 	if [[ -n "$TEST_ROOT" && -d "$TEST_ROOT" ]]; then
 		rm -rf "$TEST_ROOT"
@@ -60,14 +71,10 @@ main() {
 	local lifecycle_log="${TEST_ROOT}/lifecycle.log"
 
 	: >"$output_file"
-	(
-		trap 'exit 0' TERM
-		while true; do
-			printf 'tick %s\n' "$(date +%s%N)" >>"$output_file"
-			sleep 0.2
-		done
-	) 2>/dev/null &
+	(trap 'exit 0' TERM; while true; do sleep 1; done) 2>/dev/null &
 	WORKER_PID=$!
+	(while true; do printf 'tick %s\n' "$(date +%s%N)" >>"$output_file"; sleep 0.2; done) 2>/dev/null &
+	WRITER_PID=$!
 
 	WORKER_LIFECYCLE_LOG="$lifecycle_log" "$WATCHDOG_SCRIPT" \
 		--output-file "$output_file" \
@@ -75,8 +82,23 @@ main() {
 		--exit-code-file "$exit_code_file" \
 		--phase1-timeout 1 \
 		--poll-interval 1 \
-		--stall-timeout 60 \
-		--hard-kill-seconds 2
+		--stall-timeout 2 \
+		--hard-kill-seconds 2 &
+	WATCHDOG_PID=$!
+
+	# The wall-clock threshold alone must not kill an output-active worker.
+	sleep 3
+	if [[ -e "${exit_code_file}.watchdog_killed" ]] || ! kill -0 "$WORKER_PID" 2>/dev/null; then
+		fail "output-active worker was killed at the wall-clock threshold"
+	fi
+
+	# Stop output while leaving the worker alive. The confirmed stall is already
+	# beyond the threshold, so it should now take the hard-kill path.
+	kill "$WRITER_PID" >/dev/null 2>&1 || true
+	wait "$WRITER_PID" 2>/dev/null || true
+	WRITER_PID=""
+	wait "$WATCHDOG_PID"
+	WATCHDOG_PID=""
 
 	assert_file_exists "${exit_code_file}.watchdog_killed" "watchdog kill sentinel"
 	assert_file_exists "${exit_code_file}.watchdog_stall_killed" "hard-kill sentinel"
@@ -85,7 +107,7 @@ main() {
 	assert_file_contains "$output_file" "hard_kill:" "worker output kill reason"
 	assert_file_contains "$lifecycle_log" "reason=hard_kill_stall" "lifecycle log"
 
-	printf 'PASS: continuous output does not bypass hard-kill cap\n'
+	printf 'PASS: hard-kill cap applies only after confirmed output stall\n'
 	return 0
 }
 

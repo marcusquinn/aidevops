@@ -132,7 +132,7 @@ if [[ "$since" == "1h" ]]; then
 JSON
 else
   cat <<'JSON'
-{"window":{"since":"24h"},"metrics":{"total":10,"succeeded":8,"result_counts":{"success":8,"blocked":2},"diagnostic_focus":{},"timing_ms":{"samples":10,"avg":1000,"max":2000},"recent_examples":[{"repo_slug":"private/repo-one"}],"failure_groups":[],"failure_families":[]},"pulse_stats":{}}
+{"window":{"since":"24h"},"metrics":{"total":20,"terminal_session_total":10,"succeeded":9,"result_counts":{"success":9,"blocked":1},"diagnostic_focus":{},"timing_ms":{"samples":10,"avg":1000,"max":2000},"recent_examples":[{"repo_slug":"private/repo-one"}],"failure_groups":[],"failure_families":[]},"pulse_stats":{}}
 JSON
 fi
 SH
@@ -236,6 +236,8 @@ JSON_PRIVATE_COUNT=$(printf '%s' "$JSON_OUT" | grep -c "private/repo-one" 2>/dev
 assert_eq "json output removes raw worker examples" "0" "$JSON_PRIVATE_COUNT"
 ACTIVE_SOURCE=$(printf '%s' "$JSON_OUT" | jq -r '.summary.active_workers_source')
 assert_eq "json uses process scan when available" "process_scan" "$ACTIVE_SOURCE"
+SUCCESS_RATE=$(printf '%s' "$JSON_OUT" | jq -r '.summary.historical_success_rate')
+assert_eq "json success rate uses terminal session denominator" "90" "$SUCCESS_RATE"
 
 cat >"${TEST_ROOT}/current-state-active.sh" <<'SH'
 #!/usr/bin/env bash

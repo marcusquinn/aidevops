@@ -442,8 +442,9 @@ _opencode_project_table_migration_replay_detected() {
 #
 # Includes an activity watchdog. The timeout is a recovery backstop, not a
 # success/failure policy: output-active, CPU-active, and CI-wait states are
-# allowed to continue until the hard elapsed cap, while explicit provider
-# failures still recover promptly. Default is 600s because OpenAI/GPT-5.x
+# allowed to continue; the hard elapsed threshold applies only after a confirmed
+# output stall. Explicit provider failures still recover promptly. Default is
+# 600s because OpenAI/GPT-5.x
 # workers can spend several minutes reasoning before emitting more JSON/log
 # output; 300s caused false no-output kills before implementation/PR creation.
 _invoke_opencode() {
@@ -2028,9 +2029,8 @@ cmd_run() {
 			# reuse them here instead of re-declaring the literal so the
 			# repeated-string ratchet is not crossed.
 			local _ledger_fail="fail"
-			append_runtime_metric "$role" "$session_key" "$selected_model" \
-				"$(extract_provider "$selected_model")" \
-				"$_run_result_label" "79" "$_run_failure_reason" "1" "0"
+			# _execute_run_attempt already emitted the context-rich terminal metric.
+			# Do not append a second sparse row for the same hard-kill outcome.
 			_cmd_run_finish "$session_key" "$_ledger_fail"
 			return 1
 		fi

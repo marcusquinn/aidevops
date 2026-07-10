@@ -31,6 +31,7 @@
 # Include guard
 [[ -n "${_WORKTREE_CMDS_LIB_LOADED:-}" ]] && return 0
 _WORKTREE_CMDS_LIB_LOADED=1
+_WT_REMOVE_MODE_MANUAL="manual"
 
 # Defensive SCRIPT_DIR fallback
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -101,11 +102,17 @@ cmd_list() {
 # --- cmd_remove helpers ---
 
 # Validate that a resolved worktree path is safe to remove.
-# Checks: not main worktree, not current directory, ownership.
+# Checks: shared non-overridable removal guard, then ownership.
 # Args: $1=path_to_remove
 # Returns 0 if safe to remove, 1 if blocked.
 _remove_validate_path() {
 	local path_to_remove="$1"
+	local guard_caller="${SCRIPT_NAME:-worktree-helper.sh}"
+
+	# The shared guard blocks canonical repos, this shell's cwd, and every live
+	# process whose cwd is inside the target. --force may override ownership or
+	# dirty-state policy, but it must never override a live process cwd.
+	worktree_removal_guard "$path_to_remove" "$guard_caller" "$_WT_REMOVE_MODE_MANUAL" || return 1
 
 	# Don't allow removing main worktree
 	# NOTE: avoid piping git worktree list through head — with set -o pipefail
@@ -158,6 +165,10 @@ _remove_cleanup_and_execute() {
 	# Capture branch name before removal for localdev cleanup (t1224.8)
 	local removed_branch=""
 	removed_branch="$(git -C "$path_to_remove" branch --show-current 2>/dev/null || echo "")"
+	# Close the validation/removal race as tightly as possible. A process may
+	# enter the worktree after cmd_remove validates it; recheck immediately
+	# before the directory is moved or deregistered.
+	worktree_removal_guard "$path_to_remove" "${SCRIPT_NAME:-worktree-helper.sh}" "$_WT_REMOVE_MODE_MANUAL" || return 1
 
 	echo -e "${BLUE}Removing worktree: $path_to_remove${NC}"
 	# Move the worktree directory to trash BEFORE git deregisters it.
@@ -176,7 +187,7 @@ _remove_cleanup_and_execute() {
 	echo -e "${GREEN}Worktree removed successfully${NC}"
 
 	# t2976: audit log — manual removal completed
-	log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_WH_CALLER" "$path_to_remove" "manual" "trash"
+	log_worktree_removal_event "$_WTAR_REMOVED" "$_WTAR_WH_CALLER" "$path_to_remove" "$_WT_REMOVE_MODE_MANUAL" "trash"
 
 	# Localdev integration (t1224.8): auto-remove branch subdomain route
 	if [[ -n "$removed_branch" ]]; then

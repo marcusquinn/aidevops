@@ -2584,6 +2584,10 @@ test_cmd_run_finish_fail_confirmed_terminal_state_releases_complete() {
 	local work_dir="${TEST_ROOT}/repo-fail-terminal-complete"
 	local released_reason="" fast_fail_called=0
 	_setup_test_git_repo "$work_dir" 1
+	WORKER_TARGET_BRANCH=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD)
+	export WORKER_TARGET_BRANCH
+	rm -rf "$work_dir"
+	mkdir -p "$work_dir"
 	DISPATCH_REPO_SLUG="test-owner/test-repo"
 	gh() {
 		if [[ "${*}" == *"issue view"* ]]; then printf 'CLOSED'
@@ -2601,9 +2605,10 @@ test_cmd_run_finish_fail_confirmed_terminal_state_releases_complete() {
 	_cmd_run_finish "issue-99999" "fail" "$work_dir"
 
 	unset DISPATCH_REPO_SLUG 2>/dev/null || true
+	unset WORKER_TARGET_BRANCH 2>/dev/null || true
 	unset -f gh 2>/dev/null || true
 	if [[ "$released_reason" == "worker_complete" && "$fast_fail_called" -eq 0 ]]; then
-		print_result "_cmd_run_finish fail treats confirmed terminal GitHub state as complete" 0
+		print_result "_cmd_run_finish fail uses cached branch when live worktree lookup is invalid" 0
 	else
 		print_result "_cmd_run_finish fail treats confirmed terminal GitHub state as complete" 1 \
 			"Expected worker_complete and no fast-fail, got reason='${released_reason}' fast_fail=${fast_fail_called}"

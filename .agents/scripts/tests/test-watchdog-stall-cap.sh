@@ -220,6 +220,39 @@ test_cmd_run_kills_after_stall_cap() {
 	return 0
 }
 
+test_cmd_run_does_not_duplicate_exit_79_metric() {
+	local metric_calls=0
+	local finish_status=""
+
+	append_runtime_metric() {
+		metric_calls=$((metric_calls + 1))
+		return 0
+	}
+	_execute_run_attempt() {
+		_run_result_label="watchdog_stall_killed"
+		_run_failure_reason="watchdog_stall_killed"
+		_run_activity_detected="1"
+		append_runtime_metric worker test-stall-cap anthropic/claude-sonnet-4-6 anthropic \
+			watchdog_stall_killed 79 watchdog_stall_killed 1 100
+		return 79
+	}
+	_cmd_run_finish() { finish_status="${2:-}"; return 0; }
+
+	local cmd_exit=0
+	cmd_run --role worker --session-key "test-stall-cap" \
+		--dir "/tmp" --title "test" --prompt "test prompt" 2>/dev/null || cmd_exit=$?
+
+	local passed=1
+	local msg=""
+	if [[ "$metric_calls" -eq 1 && "$finish_status" == "fail" && "$cmd_exit" -eq 1 ]]; then
+		passed=0
+	else
+		msg="metric_calls=${metric_calls} finish_status=${finish_status} cmd_exit=${cmd_exit}"
+	fi
+	print_result "cmd_run records one context-rich metric for exit 79" "$passed" "$msg"
+	return 0
+}
+
 main() {
 	setup_test_env
 
@@ -234,6 +267,7 @@ main() {
 
 	# cmd_run integration test
 	test_cmd_run_kills_after_stall_cap
+	test_cmd_run_does_not_duplicate_exit_79_metric
 
 	teardown_test_env
 

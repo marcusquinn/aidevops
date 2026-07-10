@@ -911,8 +911,9 @@ _activity_watchdog_handle_stall() {
 #
 # Runs as a background process alongside the worker. Polls the output file for
 # growth. Timing thresholds are recovery backstops, not strict success/failure
-# policy: output-active and CI-wait states continue until the hard elapsed cap,
-# while explicit provider failures recover promptly.
+# policy: output-active and CI-wait states continue, while the hard elapsed
+# threshold applies only after a confirmed stall. Explicit provider failures
+# recover promptly.
 #
 # The initial output always contains the sandbox startup line (~300 bytes).
 # This is NOT activity -- it's just the executor logging. Real activity

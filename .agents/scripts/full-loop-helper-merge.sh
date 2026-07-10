@@ -585,20 +585,18 @@ _merge_resolve_worktree_helper() {
 }
 
 _merge_remove_worktree_for_cleanup() {
-	local worktree_path="$1"
-	local branch_name="$2"
-	local canonical_dir="$3"
+	local branch_name="$1"
 	local helper_path=""
 
 	helper_path=$(_merge_resolve_worktree_helper 2>/dev/null || true)
 	if [[ -n "$helper_path" ]]; then
 		WORKTREE_FORCE_REMOVE=1 "$helper_path" remove "$branch_name" --force >/dev/null 2>&1 && return 0
-		print_warning "Post-merge worktree cleanup: helper removal failed for ${branch_name}; trying git worktree remove"
+		print_warning "Post-merge worktree cleanup: guarded helper deferred removal for ${branch_name}"
+		return 1
 	fi
 
-	git -C "$canonical_dir" worktree remove --force "$worktree_path" >/dev/null 2>&1 || return 1
-	git -C "$canonical_dir" worktree prune >/dev/null 2>&1 || true
-	return 0
+	print_warning "Post-merge worktree cleanup: guarded worktree helper unavailable for ${branch_name}"
+	return 1
 }
 
 _merge_cleanup_linked_worktree() {
@@ -621,7 +619,7 @@ _merge_cleanup_linked_worktree() {
 		return 0
 	fi
 
-	if _merge_remove_worktree_for_cleanup "$worktree_path" "$branch_name" "$canonical_dir"; then
+	if _merge_remove_worktree_for_cleanup "$branch_name"; then
 		git push origin --delete "$branch_name" >/dev/null 2>&1 || true
 		git branch -D "$branch_name" >/dev/null 2>&1 || true
 		print_success "Post-merge worktree cleanup complete for ${branch_name}"
