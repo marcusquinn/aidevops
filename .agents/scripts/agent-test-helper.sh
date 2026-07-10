@@ -474,8 +474,8 @@ _cmd_run_print_header() {
 #   $6  - suite timeout (default)
 #   $7  - current results JSON array
 # Outputs:
-#   Line 1: updated results JSON array
-#   Line 2: outcome — "pass", "fail", or "skip"
+#   File descriptor 3: updated results JSON array followed by outcome
+#   Standard output: human-readable progress and validation diagnostics
 #######################################
 _cmd_run_execute_test() {
 	local test_json="$1"
@@ -510,8 +510,8 @@ _cmd_run_execute_test() {
 		echo -e "  ${YELLOW}SKIPPED${NC}"
 		results=$(echo "$results" | jq --arg id "$test_id" --arg status "skipped" \
 			'. + [{"id": $id, "status": $status}]')
-		echo "$results"
-		echo "skip"
+		printf '%s\n' "$results" >&3
+		printf '%s\n' "skip" >&3
 		return 0
 	fi
 
@@ -539,8 +539,8 @@ _cmd_run_execute_test() {
 			--arg error "timeout_or_error" \
 			--argjson duration "$test_duration" \
 			'. + [{"id": $id, "status": $status, "error": $error, "duration": $duration}]')
-		echo "$results"
-		echo "fail"
+		printf '%s\n' "$results" >&3
+		printf '%s\n' "fail" >&3
 		return 0
 	fi
 
@@ -564,8 +564,8 @@ _cmd_run_execute_test() {
 		--argjson chars "$response_chars" \
 		'. + [{"id": $id, "status": $status, "response_preview": $response, "duration": $duration, "response_chars": $chars}]')
 
-	echo "$results"
-	echo "$run_status"
+	printf '%s\n' "$results" >&3
+	printf '%s\n' "$run_status" >&3
 	return 0
 }
 
@@ -793,6 +793,37 @@ _cmd_run_emit_json_metrics() {
 }
 
 #######################################
+# Capture one test's machine result while routing human output separately
+# Arguments:
+#   $1-$7 - forwarded to _cmd_run_execute_test
+#   $8    - whether JSON-only output is enabled
+# Outputs:
+#   Updated results JSON array followed by outcome on stdout
+#######################################
+_cmd_run_capture_test() {
+	local test_json="$1"
+	local test_index="$2"
+	local test_count="$3"
+	local suite_agent="$4"
+	local suite_model="$5"
+	local suite_timeout="$6"
+	local results="$7"
+	local json_output="$8"
+
+	exec 3>&1
+	if [[ "$json_output" == "false" ]]; then
+		exec 1>&2
+	else
+		exec 1>/dev/null
+	fi
+	_cmd_run_execute_test \
+		"$test_json" "$test_index" "$test_count" \
+		"$suite_agent" "$suite_model" "$suite_timeout" \
+		"$results"
+	return 0
+}
+
+#######################################
 # RUN command - execute a test suite
 # Arguments:
 #   $1 - test file path or name
@@ -852,10 +883,10 @@ cmd_run() {
 		test_json=$(echo "$suite" | jq -c ".tests[$i]")
 
 		local exec_output outcome
-		exec_output=$(_cmd_run_execute_test \
+		exec_output=$(_cmd_run_capture_test \
 			"$test_json" "$i" "$test_count" \
 			"$suite_agent" "$suite_model" "$suite_timeout" \
-			"$results")
+			"$results" "$json_output")
 		results=$(echo "$exec_output" | sed '$d')
 		outcome=$(echo "$exec_output" | tail -n 1)
 
@@ -1398,4 +1429,6 @@ main() {
 	esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi
