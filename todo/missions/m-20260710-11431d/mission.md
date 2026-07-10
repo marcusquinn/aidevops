@@ -93,8 +93,8 @@ preferences:
 
 | # | Feature | Task ID | Status | Estimate | Worker | PR |
 |---|---------|---------|--------|----------|--------|----|
-| 2.1 | F2 — Fix changed-file coverage, deduplicate discovery, and harden timeouts `[depends:F1] [parallel-group:repo-audit]` | t18072 | in-review | ~45m | interactive | #26925 |
-| 2.2 | F3 — Bound Target B lint execution profiles `[depends:F1] [parallel-group:repo-audit]` | t18073 | pending | ~55m | | |
+| 2.1 | F2 — Fix changed-file coverage, deduplicate discovery, and harden timeouts `[depends:F1] [parallel-group:repo-audit]` | t18072 | done | ~45m | interactive | #26925 |
+| 2.2 | F3 — Bound Target B lint execution profiles `[depends:F1] [parallel-group:repo-audit]` | t18073 | in-review | ~55m | interactive | |
 | 2.3 | F4 — Validate Target C integration without duplicate broad linting `[depends:F1] [parallel-group:repo-audit]` | t18074 | pending | ~30m | | |
 
 ### Milestone 3: Polish, docs, and deploy
@@ -105,7 +105,7 @@ preferences:
 
 | # | Feature | Task ID | Status | Estimate | Worker | PR |
 |---|---------|---------|--------|----------|--------|----|
-| 3.1 | F5 — Apply evidence-gated Target B cache or traversal optimisation `[depends:F3] [parallel-group:conditional-polish]` | t18075 | pending | ~30m | | |
+| 3.1 | F5 — Apply evidence-gated Target B cache or traversal optimisation `[depends:F3] [parallel-group:conditional-polish]` | t18075 | skipped | ~30m | interactive | |
 | 3.2 | F6 — Consolidate proven duplicate framework CI work `[depends:F2] [parallel-group:conditional-polish]` | t18076 | pending | ~30m | | |
 | 3.3 | F7 — Publish evidence, rollback guidance, and staged rollout `[depends:F2] [depends:F3] [depends:F4]` | t18077 | pending | ~20m | | |
 
@@ -147,6 +147,7 @@ preferences:
 | 4 | 2026-07-10 | Serialize benchmarks and start concurrency at 1 | Parallel profiling could recreate the resource pressure under investigation | Run repository benchmarks concurrently |
 | 5 | 2026-07-10 | Fall back from Opus decomposition to the local planning specialist | Anthropic authentication was unavailable and the mission forbids adding credentials | Block planning; request credentials |
 | 6 | 2026-07-10 | Accept one prepared changed inventory and fail broad timeouts closed | Repeated per-gate Git discovery fell to zero after preparation, untracked coverage expanded, and status 124 can no longer become success | Keep repeated discovery and advisory timeout success |
+| 7 | 2026-07-10 | Reject a Target B local-default change after the concurrency-1 profile exited 137 | Signal termination is a mission stop condition; retrying or increasing concurrency would violate the safety contract | Retry warm; increase to concurrency 2; change defaults without evidence |
 
 ## Mission Agents
 
@@ -164,6 +165,7 @@ preferences:
 | Initial Target C inventory | Overlay integration currently has no broad duplicate lint pipeline; bounded downstream validation is preferred unless evidence shows a gap. | Local static inspection; details redacted | 2026-07-10 |
 | F1 safe baseline | Kernel zone-map exhaustion is confirmed while lint causation remains unproven; serialized profiler and cleanup controls passed. | `research/resource-baseline.md` | 2026-07-10 |
 | F2 framework result | Changed mode includes untracked non-ignored files, removes repeated per-gate discovery, invalidates cache on content, and fails timeouts closed. | `research/framework-changed-mode.md` | 2026-07-10 |
+| F3 Target B result | A fixed 37-task graph exited 137 at concurrency 1 after 45 seconds and 5,593,600 KiB aggregate peak RSS; no configuration changed and conditional F5 was skipped. | `research/target-b-resource-evidence.md` | 2026-07-10 |
 
 ## Progress Log
 
@@ -175,6 +177,7 @@ preferences:
 | 2026-07-10T05:15:51Z | F1 completed | PR #26918 merged with all required checks passing and closed issue #26914. |
 | 2026-07-10T05:25:35Z | F2 broad profile passed | Expanded changed coverage completed in 19s with 115.3 MiB peak RSS, zero swap, normal thermal state, and no safety stop. |
 | 2026-07-10T05:30:33Z | F2 entered review | PR #26925 opened with expanded untracked coverage, zero repeated per-gate discovery scans, and fail-closed timeout semantics. |
+| 2026-07-10T10:01:32Z | F3 stopped safely | The valid Target B concurrency-1 profile exited 137 after 45 seconds; concurrency 2 and retries were skipped, and no target configuration changed. |
 
 ## Retrospective
 
