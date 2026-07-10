@@ -48,6 +48,7 @@ teardown_test_env() {
 test_sampler_writes_expected_schema() {
 	local out_file="${TEST_ROOT}/resource-metrics.jsonl"
 	local stop_file="${TEST_ROOT}/stop"
+	local process_snapshot_file="${TEST_ROOT}/process-tree.tsv"
 	"$HELPER_SCRIPT" sample \
 		--pid "$$" \
 		--role worker \
@@ -57,13 +58,15 @@ test_sampler_writes_expected_schema() {
 		--result success \
 		--out "$out_file" \
 		--stop-file "$stop_file" \
+		--process-snapshot-file "$process_snapshot_file" \
 		--interval 1 &
 	local sampler_pid="$!"
 	sleep 2
 	printf 'done\n' >"$stop_file"
 	wait "$sampler_pid"
 
-	if jq -e 'select(.pid and .ppid and .role == "worker" and .session_key == "gh-22286" and .repo == "marcusquinn/aidevops" and .issue == "22286" and (.cpu_seconds | type == "number") and (.rss_kb | type == "number") and (.peak_rss_kb | type == "number") and (.elapsed_s | type == "number") and .timestamp)' "$out_file" >/dev/null; then
+	if jq -e 'select(.pid and .ppid and .role == "worker" and .session_key == "gh-22286" and .repo == "marcusquinn/aidevops" and .issue == "22286" and (.cpu_seconds | type == "number") and (.rss_kb | type == "number") and (.peak_rss_kb | type == "number") and (.peak_process_count | type == "number") and .peak_process_count >= 1 and (.elapsed_s | type == "number") and .timestamp)' "$out_file" >/dev/null &&
+		grep -qE "^$$[[:space:]]" "$process_snapshot_file"; then
 		print_result "sampler writes resource metric schema" 0
 		return 0
 	fi
