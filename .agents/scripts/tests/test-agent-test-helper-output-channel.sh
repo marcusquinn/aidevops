@@ -66,6 +66,7 @@ grep -q '\[2/2\] second' "$human_stderr" ||
 	fail "human output omitted second-case progress"
 
 pass_results=("$RESULTS_DIR"/output-channel-pass-*.json)
+[[ -f "${pass_results[0]:-}" ]] || fail "passing result file was not created"
 jq -e '.summary.passed == 2 and .summary.failed == 0 and (.results | length) == 2' \
 	"${pass_results[0]}" >/dev/null || fail "passing result file is invalid or incomplete"
 
@@ -99,6 +100,7 @@ jq -e '.passed == 0 and .failed == 2 and .total == 2' "$json_stdout" >/dev/null 
 	fail "--json stdout contains non-metric output"
 
 fail_results=("$RESULTS_DIR"/output-channel-fail-*.json)
+[[ -f "${fail_results[0]:-}" ]] || fail "failing result file was not created"
 jq -e '.summary.failed == 2 and (.results | length) == 2 and .results[1].error == "timeout_or_error"' \
 	"${fail_results[0]}" >/dev/null || fail "failing result file is invalid or incomplete"
 
