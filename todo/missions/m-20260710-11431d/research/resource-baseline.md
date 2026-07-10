@@ -39,11 +39,14 @@ The post-fix run was 15.6% faster than the initial run, but this is a single sho
 
 ## Guard Verification
 
-- Resource sampler tests: 2 passed.
-- Lint profiler tests: 7 passed.
+- Resource sampler tests: 3 passed.
+- Lint profiler tests: 10 passed.
 - Normal completion emits only aggregate JSON.
 - Coverage manifests are hashed; paths and command arguments are not emitted.
 - Concurrent benchmark attempts fail before executing the second command.
+- Lock initialization waits for the owner PID instead of deleting a newly created lock.
+- Missing option values fail with explicit diagnostics instead of abrupt shell errors.
+- Snapshot cleanup state is cleared after first use to avoid repeated PID termination.
 - Timeout and simulated memory-pressure stops leave no tested descendant running.
 - ShellCheck, shfmt, Secretlint, Markdown checks, portability checks, and the bounded changed-mode suite passed after refactoring.
 

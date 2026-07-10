@@ -161,6 +161,69 @@ test_concurrent_run_is_rejected() {
 	return 0
 }
 
+test_lock_initialization_race_is_rejected() {
+	local lock_dir="${TEST_ROOT}/lint-resource-benchmark.lock"
+	local out_file="${TEST_ROOT}/lock-race.jsonl"
+	local marker="${TEST_ROOT}/lock-race-ran"
+	mkdir "$lock_dir"
+	(
+		sleep 0.2
+		printf '%s\n' "$$" >"${lock_dir}/pid"
+	) &
+	local owner_writer_pid="$!"
+	local exit_code=0
+	set +e
+	run_helper run --profile lock-race --timeout 5 --out "$out_file" -- \
+		bash -c 'printf ran >"$1"' _ "$marker" >/dev/null 2>&1
+	exit_code=$?
+	set -e
+	wait "$owner_writer_pid"
+	rm -f "${lock_dir}/pid"
+	rmdir "$lock_dir"
+	if [[ "$exit_code" -eq 73 && ! -e "$marker" ]]; then
+		print_result "initializing lock remains exclusive" 0
+		return 0
+	fi
+	print_result "initializing lock remains exclusive" 1 "exit=${exit_code}"
+	return 0
+}
+
+test_missing_option_values_fail_cleanly() {
+	local option=""
+	local output=""
+	local exit_code=0
+	for option in --profile --timeout --interval --cache-state --coverage-manifest --out --memory-free-floor --swap-growth-limit; do
+		set +e
+		output=$(run_helper run "$option" 2>&1)
+		exit_code=$?
+		set -e
+		if [[ "$exit_code" -ne 1 || "$output" != *"requires an argument"* ]]; then
+			print_result "missing benchmark option values fail cleanly" 1 "option=${option}, exit=${exit_code}"
+			return 0
+		fi
+	done
+	print_result "missing benchmark option values fail cleanly" 0
+	return 0
+}
+
+test_snapshot_cleanup_state_is_cleared() {
+	local out_file="${TEST_ROOT}/snapshot-state.jsonl"
+	local exit_code=0
+	set +e
+	HOME="${TEST_ROOT}/home" AIDEVOPS_TEST_MODE=1 \
+		AIDEVOPS_LINT_BENCHMARK_LOCK_DIR="${TEST_ROOT}/lint-resource-benchmark.lock" \
+		bash -c 'source "$1"; run_benchmark --profile state-clear --timeout 5 --out "$2" -- bash -c "sleep 1" >/dev/null; [[ -z "$_LINT_BENCHMARK_PROCESS_SNAPSHOT_FILE" ]]' \
+		_ "$HELPER_SCRIPT" "$out_file"
+	exit_code=$?
+	set -e
+	if [[ "$exit_code" -eq 0 ]]; then
+		print_result "snapshot cleanup state is single-use" 0
+		return 0
+	fi
+	print_result "snapshot cleanup state is single-use" 1 "exit=${exit_code}"
+	return 0
+}
+
 main() {
 	setup_test_env
 	trap teardown_test_env EXIT
@@ -168,6 +231,9 @@ main() {
 	test_timeout_cleans_descendants
 	test_safety_stop_cleans_descendants
 	test_concurrent_run_is_rejected
+	test_lock_initialization_race_is_rejected
+	test_missing_option_values_fail_cleanly
+	test_snapshot_cleanup_state_is_cleared
 
 	printf '\nTests run: %d\n' "$TESTS_RUN"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

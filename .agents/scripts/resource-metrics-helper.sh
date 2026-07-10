@@ -42,6 +42,16 @@ _json_escape() {
 	return 0
 }
 
+_resource_metrics_require_option_value() {
+	local option_name="$1"
+	local argument_count="$2"
+	if [[ "$argument_count" -lt 2 ]]; then
+		printf 'Option %s requires an argument\n' "$option_name" >&2
+		return 1
+	fi
+	return 0
+}
+
 _process_tree_snapshot() {
 	local root_pid="$1"
 	local process_snapshot_file="${2:-}"
@@ -178,50 +188,62 @@ _parse_sample_resource_metrics_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--pid)
+			_resource_metrics_require_option_value "$1" "$#" || return 1
 			pid="$2"
 			shift 2
 			;;
 		--role)
+			_resource_metrics_require_option_value "$1" "$#" || return 1
 			role="$2"
 			shift 2
 			;;
 		--session-key)
+			_resource_metrics_require_option_value "$1" "$#" || return 1
 			session_key="$2"
 			shift 2
 			;;
 		--ppid)
+			_resource_metrics_require_option_value "$1" "$#" || return 1
 			ppid="$2"
 			shift 2
 			;;
 		--repo)
+			_resource_metrics_require_option_value "$1" "$#" || return 1
 			repo="$2"
 			shift 2
 			;;
 		--issue)
+			_resource_metrics_require_option_value "$1" "$#" || return 1
 			issue="$2"
 			shift 2
 			;;
 		--result)
+			_resource_metrics_require_option_value "$1" "$#" || return 1
 			result="$2"
 			shift 2
 			;;
 		--result-file)
+			_resource_metrics_require_option_value "$1" "$#" || return 1
 			result_file="$2"
 			shift 2
 			;;
 		--process-snapshot-file)
+			_resource_metrics_require_option_value "$1" "$#" || return 1
 			process_snapshot_file="$2"
 			shift 2
 			;;
 		--out)
+			_resource_metrics_require_option_value "$1" "$#" || return 1
 			out_file="$2"
 			shift 2
 			;;
 		--stop-file)
+			_resource_metrics_require_option_value "$1" "$#" || return 1
 			stop_file="$2"
 			shift 2
 			;;
 		--interval)
+			_resource_metrics_require_option_value "$1" "$#" || return 1
 			interval="$2"
 			shift 2
 			;;
@@ -313,10 +335,12 @@ snapshot_resource_metrics() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--pid)
+			_resource_metrics_require_option_value "$1" "$#" || return 1
 			pid="$2"
 			shift 2
 			;;
 		--process-snapshot-file)
+			_resource_metrics_require_option_value "$1" "$#" || return 1
 			process_snapshot_file="$2"
 			shift 2
 			;;

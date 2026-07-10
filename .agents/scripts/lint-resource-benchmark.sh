@@ -67,6 +67,16 @@ _lint_benchmark_validate_integer() {
 	return 0
 }
 
+_lint_benchmark_require_option_value() {
+	local option_name="$1"
+	local argument_count="$2"
+	if [[ "$argument_count" -lt 2 ]]; then
+		print_error "Option ${option_name} requires an argument"
+		return 1
+	fi
+	return 0
+}
+
 _lint_benchmark_lock_dir() {
 	printf '%s\n' "${AIDEVOPS_LINT_BENCHMARK_LOCK_DIR:-${TMPDIR:-/tmp}/aidevops-lint-resource-benchmark.lock}"
 	return 0
@@ -82,6 +92,11 @@ _lint_benchmark_acquire_lock() {
 	fi
 
 	local owner_pid=""
+	local attempts=0
+	while [[ ! -f "${lock_dir}/pid" && "$attempts" -lt 10 ]]; do
+		sleep 0.1
+		attempts=$((attempts + 1))
+	done
 	if [[ -f "${lock_dir}/pid" ]]; then
 		owner_pid=$(<"${lock_dir}/pid")
 	fi
@@ -274,9 +289,12 @@ _lint_benchmark_terminate_snapshot_processes() {
 	local pid=""
 	local pgid=""
 	local last_seen=""
+	local current_pgid=""
 	while IFS=$'\t' read -r pid pgid last_seen; do
 		[[ "$pid" =~ ^[0-9]+$ ]] || continue
 		[[ "$pid" == "$runner_pid" || "$pid" == "$$" ]] && continue
+		current_pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d '[:space:]' || true)
+		[[ -n "$current_pgid" && "$current_pgid" == "$pgid" ]] || continue
 		process_ids="${process_ids} ${pid}"
 		if [[ "$pgid" =~ ^[0-9]+$ && "$pgid" != "$self_pgid" ]]; then
 			case " ${process_groups} " in
@@ -383,34 +401,42 @@ _lint_benchmark_parse_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--profile)
+			_lint_benchmark_require_option_value "$1" "$#" || return 1
 			profile="$2"
 			shift 2
 			;;
 		--timeout)
+			_lint_benchmark_require_option_value "$1" "$#" || return 1
 			timeout_seconds="$2"
 			shift 2
 			;;
 		--interval)
+			_lint_benchmark_require_option_value "$1" "$#" || return 1
 			sample_interval_seconds="$2"
 			shift 2
 			;;
 		--cache-state)
+			_lint_benchmark_require_option_value "$1" "$#" || return 1
 			cache_state="$2"
 			shift 2
 			;;
 		--coverage-manifest)
+			_lint_benchmark_require_option_value "$1" "$#" || return 1
 			coverage_manifest="$2"
 			shift 2
 			;;
 		--out)
+			_lint_benchmark_require_option_value "$1" "$#" || return 1
 			report_file="$2"
 			shift 2
 			;;
 		--memory-free-floor)
+			_lint_benchmark_require_option_value "$1" "$#" || return 1
 			memory_free_floor_pct="$2"
 			shift 2
 			;;
 		--swap-growth-limit)
+			_lint_benchmark_require_option_value "$1" "$#" || return 1
 			swap_growth_limit_mb="$2"
 			shift 2
 			;;
@@ -526,6 +552,7 @@ run_benchmark() {
 	_LINT_BENCHMARK_RUNNER_PID=""
 	_lint_benchmark_stop_sampler
 	_lint_benchmark_terminate_snapshot_processes "$_LINT_BENCHMARK_PROCESS_SNAPSHOT_FILE" "$completed_runner_pid"
+	_LINT_BENCHMARK_PROCESS_SNAPSHOT_FILE=""
 
 	local result="failed"
 	if [[ "$exit_code" -eq 0 ]]; then

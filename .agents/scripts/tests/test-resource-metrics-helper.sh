@@ -83,10 +83,42 @@ test_default_interval_documents_bounded_overhead() {
 	return 0
 }
 
+test_missing_option_values_fail_cleanly() {
+	local command_name=""
+	local option=""
+	local output=""
+	local exit_code=0
+	for command_name in sample snapshot; do
+		for option in --pid --process-snapshot-file; do
+			set +e
+			output=$("$HELPER_SCRIPT" "$command_name" "$option" 2>&1)
+			exit_code=$?
+			set -e
+			if [[ "$exit_code" -ne 1 || "$output" != *"requires an argument"* ]]; then
+				print_result "missing resource metric option values fail cleanly" 1 "command=${command_name}, option=${option}"
+				return 0
+			fi
+		done
+	done
+	for option in --role --session-key --ppid --repo --issue --result --result-file --out --stop-file --interval; do
+		set +e
+		output=$("$HELPER_SCRIPT" sample "$option" 2>&1)
+		exit_code=$?
+		set -e
+		if [[ "$exit_code" -ne 1 || "$output" != *"requires an argument"* ]]; then
+			print_result "missing resource metric option values fail cleanly" 1 "command=sample, option=${option}"
+			return 0
+		fi
+	done
+	print_result "missing resource metric option values fail cleanly" 0
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_sampler_writes_expected_schema
 	test_default_interval_documents_bounded_overhead
+	test_missing_option_values_fail_cleanly
 	teardown_test_env
 
 	printf '\nTests run: %d\n' "$TESTS_RUN"
