@@ -98,7 +98,7 @@ shellcheck .agents/scripts/lint-resource-benchmark.sh .agents/scripts/tests/test
 ### Recoverability Checkpoint
 
 - [x] Focused tests pass: `bash .agents/scripts/tests/test-lint-resource-benchmark.sh`
-- [ ] Recoverability commit created after focused checks: `wip: add bounded lint resource baseline`
+- [x] Recoverability commit created after focused checks: `104cf651d` (`wip: add bounded lint resource baseline`)
 - [x] Broad verification run: `.agents/scripts/linters-local.sh --changed`
 
 ### Files Scope
@@ -112,7 +112,7 @@ shellcheck .agents/scripts/lint-resource-benchmark.sh .agents/scripts/tests/test
 ## Acceptance Criteria
 
 - [x] Timeout fixtures fail closed and leave no child process running.
-- [ ] Committed evidence contains aggregate metrics and confidence labels but no raw logs, private names, or local paths.
+- [x] Committed evidence contains aggregate metrics and confidence labels but no raw logs, private names, or local paths.
 - [x] A bounded changed-mode baseline completes without a safety trigger.
 - [x] Suspected crash causation is labelled unproven unless independent evidence corroborates it.
 
