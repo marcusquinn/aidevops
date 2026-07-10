@@ -55,7 +55,7 @@ _build_inline_findings() {
 			"\\bno further concerns?\\b|" +
 			"\\bno further feedback\\b|" +
 			"\\bno further recommendations?\\b|" +
-			"\\bno further action is needed\\b|" +
+			"\\bno further action is (needed|required)\\b|" +
 			"\\bthread is resolved\\b|" +
 			"(?s:\\b(already )?incorporate[sd]?\\b.*\\bnecessary synchronization\\b)|" +
 			"\\brace condition\\b.*\\b(is|was) indeed addressed\\b|" +
