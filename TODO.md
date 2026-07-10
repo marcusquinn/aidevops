@@ -4455,3 +4455,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18078 Route OpenAI workers through GPT-5.6 tiers #bug #type:enhancement ref:GH#26913
 
 - [ ] t18079 Add safe macOS activity cleaner command and subagent #enhancement ref:GH#26917
+
+- [ ] t18080 Guarantee safety-stop recovery without objective loss #documentation #framework #safety ref:GH#26934
