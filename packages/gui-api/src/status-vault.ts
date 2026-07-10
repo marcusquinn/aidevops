@@ -19,6 +19,28 @@ const GUI_VAULT_SETUP_STATES = [
 ] as const satisfies readonly GuiVaultSetupState[];
 const INITIALIZED_VAULT_STATUSES = new Set<GuiVaultStatus>(["locked", "unlocked", "corrupted"]);
 const RESTART_TEST_SETUP_STATES = new Set<GuiVaultSetupState>(["test-created", "restart-required", "test-verified"]);
+type VaultCommand = "status" | "setup-state";
+type VaultProbeValue = GuiVaultStatus | GuiVaultSetupState;
+const COHERENT_VAULT_STATES: Readonly<Record<GuiVaultStatus, ReadonlySet<GuiVaultSetupState>>> = {
+  uninitialized: new Set(["uninitialized"]),
+  locked: new Set(["test-created", "restart-required", "test-verified", "migration-ready"]),
+  unlocked: new Set(["migration-ready"]),
+  corrupted: new Set(["unknown"]),
+  unknown: new Set(),
+};
+const EXPECTED_VAULT_EXIT_CODES: Readonly<
+  Record<VaultCommand, Readonly<Partial<Record<VaultProbeValue, number>>>>
+> = {
+  status: { locked: 0, unlocked: 0, uninitialized: 2, corrupted: 3 },
+  "setup-state": {
+    "test-created": 0,
+    "restart-required": 0,
+    "test-verified": 0,
+    "migration-ready": 0,
+    uninitialized: 2,
+    unknown: 3,
+  },
+};
 
 export function readVaultSummary(repoRoot: string): GuiVaultStatusData {
   const helperPath = join(repoRoot, ".agents", "scripts", "vault-helper.sh");
@@ -58,9 +80,9 @@ export function readVaultSummary(repoRoot: string): GuiVaultStatusData {
   };
 }
 
-function readVaultCommand<T extends string>(
+function readVaultCommand<T extends VaultProbeValue>(
   helperPath: string,
-  command: "status" | "setup-state",
+  command: VaultCommand,
   isAllowed: (value: string) => value is T,
 ): T | null {
   const result = spawnSync("/bin/bash", [helperPath, command], {
@@ -86,22 +108,11 @@ function vaultProbeEnvironment(): NodeJS.ProcessEnv {
 
 function coherentVaultState(status: GuiVaultStatus | null, setupState: GuiVaultSetupState | null): boolean {
   if (status === null || setupState === null) return false;
-  if (status === "uninitialized") return setupState === "uninitialized";
-  if (status === "corrupted") return setupState === "unknown";
-  if (status === "unlocked") return setupState === "migration-ready";
-  if (status === "locked") return ["test-created", "restart-required", "test-verified", "migration-ready"].includes(setupState);
-  return false;
+  return COHERENT_VAULT_STATES[status].has(setupState);
 }
 
-function isExpectedVaultExit(command: "status" | "setup-state", value: string, exitCode: number): boolean {
-  if (command === "status") {
-    return (exitCode === 0 && (value === "locked" || value === "unlocked"))
-      || (exitCode === 2 && value === "uninitialized")
-      || (exitCode === 3 && value === "corrupted");
-  }
-  return (exitCode === 0 && ["test-created", "restart-required", "test-verified", "migration-ready"].includes(value))
-    || (exitCode === 2 && value === "uninitialized")
-    || (exitCode === 3 && value === "unknown");
+function isExpectedVaultExit(command: VaultCommand, value: VaultProbeValue, exitCode: number): boolean {
+  return EXPECTED_VAULT_EXIT_CODES[command][value] === exitCode;
 }
 
 function isGuiVaultStatus(value: string): value is GuiVaultStatus {

@@ -2,23 +2,24 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import type { GuiConversationThread, GuiManagedAppSummary, GuiStatusData } from "../../gui-shared/src";
 import { appearanceStorageKeys, clampSidebarWidth, loadingBrandGlyph, loadingSkeletonPanelLabels, readStoredAppearancePreferences, shouldPromptVaultSetup } from "../src/App";
-import { hueFromInputValue } from "../src/AppNavigation";
 import { wrappedOptionIndex } from "../src/AppearanceControls";
+import { hueFromInputValue } from "../src/AppNavigation";
 import { Workspace } from "../src/AppWorkspace";
+import { chatPrimitiveStackDecision, DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, fontOptions, navGroups, type SurfaceNavItem, surfaceRecordCounts } from "../src/app-model";
 import { commandPaletteMatches, commandPaletteShortcutEntries, commandPaletteShortcutQuery, orderCommandItemsByRecency, rememberCommandPaletteItemId } from "../src/CommandPalette";
 import { CommsConversationSurface } from "../src/CommsConversationSurface";
+import { renderDashboardHtml } from "../src/dashboard";
 import { AppsSurface, nextRecommendedFilterValue } from "../src/InventorySurfaces";
 import { PulseWorkersSurface } from "../src/PulseWorkersSurface";
 import { recommendedApps } from "../src/RecommendedAppsSurface";
 import { AiProvidersSurface, VaultSurface } from "../src/StatusSurfaces";
-import { VaultAccessModal } from "../src/VaultAccessModal";
-import { vaultDialogIntentForStatus } from "../src/VaultBadges";
-import { DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, chatPrimitiveStackDecision, fontOptions, navGroups, surfaceRecordCounts, type SurfaceNavItem } from "../src/app-model";
-import { renderDashboardHtml } from "../src/dashboard";
 import { fetchStatus, mockedStatus } from "../src/status-client";
+import { dialogFocusTargetIndex } from "../src/useVaultAccessDialog";
+import { terminalActionForIntent, VaultAccessModal } from "../src/VaultAccessModal";
+import { vaultDialogIntentForStatus } from "../src/VaultBadges";
 import { workspaceTourRegistry } from "../src/WorkspaceTour";
-import type { GuiConversationThread, GuiManagedAppSummary, GuiStatusData } from "../../gui-shared/src";
 
 const guiWebRoot = `${import.meta.dir}/..`;
 
@@ -126,9 +127,38 @@ describe("dashboard shell", () => {
 
     expect(html).toContain("Unlock existing Vault");
     expect(html).toContain("aidevops vault unlock");
+    expect(html).toContain('aria-label="Current Vault metadata"');
+    expect(html).toContain('role="group"');
     expect(html).not.toContain("type=\"password\"");
     expect(html).not.toContain("New passphrase");
     expect(html).not.toContain("current-password");
+  });
+
+  test("preserves the secure terminal handoff and dialog focus lifecycle", () => {
+    const dialogControllerSource = readFileSync(`${guiWebRoot}/src/useVaultAccessDialog.ts`, "utf8");
+    const statusControllerSource = readFileSync(`${guiWebRoot}/src/useGuiStatus.ts`, "utf8");
+
+    expect(terminalActionForIntent("setup")).toBe("init");
+    expect(terminalActionForIntent("unlock")).toBe("unlock");
+    expect(terminalActionForIntent("lock")).toBe("lock");
+    expect(terminalActionForIntent("recover")).toBe("lost-passphrase");
+    expect(terminalActionForIntent("unavailable")).toBeNull();
+    expect(dialogControllerSource).toContain('aidevops:vault-command-result');
+    expect(dialogControllerSource).toContain('result === "opened"');
+    expect(dialogControllerSource).toContain("navigator.clipboard.writeText");
+    expect(dialogControllerSource).toContain("}, 3000);");
+    expect(dialogControllerSource).toContain('button:not([disabled])');
+    expect(dialogControllerSource).toContain("previousFocus?.focus()");
+    expect(statusControllerSource).toContain('window.addEventListener("focus", refreshAfterTerminal)');
+    expect(statusControllerSource).toContain("openIntent !== null && openIntent !== currentVaultIntent ? null : openIntent");
+  });
+
+  test("keeps Tab focus inside the Vault dialog when focus is outside or disabled", () => {
+    expect(dialogFocusTargetIndex(-1, 2, false)).toBe(0);
+    expect(dialogFocusTargetIndex(-1, 2, true)).toBe(1);
+    expect(dialogFocusTargetIndex(0, 2, true)).toBe(1);
+    expect(dialogFocusTargetIndex(1, 2, false)).toBe(0);
+    expect(dialogFocusTargetIndex(0, 2, false)).toBeNull();
   });
 
   test("renders AI session controls with audited-route placeholders", () => {
@@ -420,6 +450,8 @@ describe("dashboard shell", () => {
     expect(unlockedHtml).toContain("Reference inventory");
     expect(unlockedHtml).toContain("GITHUB_TOKEN");
     expect(unlockedHtml).toContain("Never displayed");
+    expect(lockedHtml).toContain('aria-label="Secrets summary"');
+    expect(lockedHtml).toContain('role="group"');
     expect(unlockedHtml).not.toContain("type=\"password\"");
   });
 
@@ -566,6 +598,8 @@ describe("dashboard shell", () => {
     expect(css).not.toContain("border-color: var(--accent)");
     expect(css).not.toContain("border-color: #ef4444");
     expect(css).not.toContain("border-color: color-mix(in srgb, var(--accent) 52%, transparent)");
+    expect(css).toMatch(/\.vault-modal\s*\{[^}]*max-height:\s*calc\(100vh - 32px\);/s);
+    expect(css).toMatch(/@supports \(height:\s*100dvh\)\s*\{\s*\.vault-modal\s*\{[^}]*max-height:\s*calc\(100dvh - 32px\);/s);
   });
 
   test("keeps workspace surface grids content-sized instead of vertically stretched", () => {
@@ -592,11 +626,13 @@ describe("dashboard shell", () => {
 
   test("renders the hydrated app immediately with status refresh in progress", () => {
     const appSource = readFileSync(`${guiWebRoot}/src/App.tsx`, "utf8");
+    const navigationSource = readFileSync(`${guiWebRoot}/src/useAppNavigation.ts`, "utf8");
 
     expect(appSource).not.toContain("if (statusLoading)");
     expect(appSource).toContain("aria-busy={statusLoading}");
-    expect(appSource).toContain('matchMedia("(max-width: 980px)")');
-    expect(appSource).toContain('scrollIntoView({ block: "start" })');
+    expect(navigationSource).toContain('matchMedia("(max-width: 980px)")');
+    expect(navigationSource).toContain('scrollIntoView({ block: "start" })');
+    expect(navigationSource).toContain("pendingWorkspaceSurface.current !== activeSurface");
   });
 
   test("wires desktop screenshot capture controls to native save notifications", () => {
@@ -644,7 +680,7 @@ describe("dashboard shell", () => {
     expect(desktopInstaller).toContain('notifyVaultCommandResult("failed")');
     expect(desktopInstaller).toContain('notifyVaultCommandResult("opened")');
     expect(desktopInstaller).toContain('init|unlock|lock|status|lost-passphrase)');
-    expect(desktopInstaller).toContain('exec /bin/bash "\\${REPO_ROOT}/aidevops.sh" vault');
+    expect(desktopInstaller).toContain('exec /bin/bash "\\' + "$" + '{REPO_ROOT}/aidevops.sh" vault');
     expect(desktopInstaller).toContain('default: return');
     expect(desktopInstaller).not.toContain('command = "aidevops vault');
   });

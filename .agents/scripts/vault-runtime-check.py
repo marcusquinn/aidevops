@@ -19,25 +19,44 @@ EXPECTED = {
 }
 
 
+def _has_allowed_owner(path_stat: os.stat_result, allowed_uids: set[int]) -> bool:
+    return path_stat.st_uid in allowed_uids
+
+
+def _has_protected_mode(path_stat: os.stat_result) -> bool:
+    return not bool(path_stat.st_mode & 0o022)
+
+
+def _symlink_target_is_trusted(path: Path, root: Path) -> bool:
+    target = path.resolve(strict=True)
+    allowed_uids = {0, os.geteuid()}
+    for protected_path in [target, *target.parents]:
+        target_stat = protected_path.stat()
+        if not _has_allowed_owner(target_stat, allowed_uids):
+            return False
+        if not _has_protected_mode(target_stat):
+            return False
+        if protected_path == root:
+            break
+    return True
+
+
+def _managed_entry_is_trusted(path: Path, root: Path) -> bool:
+    path_stat = path.lstat()
+    if not _has_allowed_owner(path_stat, {os.geteuid()}):
+        return False
+    if stat.S_ISLNK(path_stat.st_mode):
+        return _symlink_target_is_trusted(path, root)
+    return _has_protected_mode(path_stat)
+
+
 def check_managed_path(root: Path, marker: Optional[Path] = None) -> int:
     try:
         paths = [root, *root.rglob("*")]
         if marker is not None:
             paths.append(marker)
-        for path in paths:
-            path_stat = path.lstat()
-            if path_stat.st_uid != os.geteuid():
-                return 1
-            if stat.S_ISLNK(path_stat.st_mode):
-                target = path.resolve(strict=True)
-                for protected_path in [target, *target.parents]:
-                    target_stat = protected_path.stat()
-                    if target_stat.st_uid not in {0, os.geteuid()} or target_stat.st_mode & 0o022:
-                        return 1
-                    if protected_path == root:
-                        break
-            elif path_stat.st_mode & 0o022:
-                return 1
+        if not all(_managed_entry_is_trusted(path, root) for path in paths):
+            return 1
     except (OSError, RuntimeError):
         return 1
     return 0

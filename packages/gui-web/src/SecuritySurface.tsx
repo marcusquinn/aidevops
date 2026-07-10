@@ -1,5 +1,5 @@
 import type { GuiSecretReference, GuiStatusData, GuiVaultStatusData } from "@aidevops/gui-shared";
-import { useMemo, useState, type ReactElement } from "react";
+import { type ReactElement, useMemo, useState } from "react";
 import { FiActivity, FiAlertTriangle, FiCheckCircle, FiKey, FiLink, FiLock, FiSearch, FiShield, FiTerminal } from "react-icons/fi";
 import { type VaultDialogIntent, vaultActionLabel, vaultDialogIntentForStatus } from "./VaultBadges";
 
@@ -41,7 +41,8 @@ export function SecuritySurface({ onVaultRequest, status }: {
         </div>
       </div>
 
-      <div className="secrets-metric-grid" aria-label="Secrets summary">
+      {/* biome-ignore lint/a11y/useSemanticElements: role=group preserves the existing grid element and requested accessible grouping. */}
+      <div className="secrets-metric-grid" aria-label="Secrets summary" role="group">
         <SecretMetric detail={vault.unlocked ? "metadata records" : "visible after local unlock"} icon={<FiKey />} label="References" value={hiddenCount ?? String(status.secrets.length)} />
         <SecretMetric detail={vault.unlocked ? "ready for dependent tools" : "visible after local unlock"} icon={<FiCheckCircle />} label="Configured" value={hiddenCount ?? String(configured)} />
         <SecretMetric detail={vault.unlocked ? "missing or not yet checked" : "visible after local unlock"} icon={<FiAlertTriangle />} label="Needs attention" value={hiddenCount ?? String(needsAttention)} />
@@ -109,7 +110,8 @@ function UnlockedSecrets({ filter, filteredSecrets, onFilterChange, onQueryChang
       </div>
       <div className="secrets-toolbar">
         <label className="secrets-search"><FiSearch aria-hidden="true" /><span className="sr-only">Search references</span><input onChange={(event) => onQueryChange(event.currentTarget.value)} placeholder="Search reference names" type="search" value={query} /></label>
-        <div className="secrets-filters" aria-label="Filter references">
+        {/* biome-ignore lint/a11y/useSemanticElements: role=group preserves the existing toolbar layout and requested accessible grouping. */}
+        <div className="secrets-filters" aria-label="Filter references" role="group">
           {(["all", "configured", "attention"] as const).map((option) => <button aria-pressed={filter === option} key={option} onClick={() => onFilterChange(option)} type="button">{option === "attention" ? "Needs attention" : titleCase(option)}</button>)}
         </div>
       </div>

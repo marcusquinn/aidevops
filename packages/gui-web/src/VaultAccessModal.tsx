@@ -1,85 +1,28 @@
-import { useEffect, useRef, useState, type ReactElement } from "react";
-import { FiAlertTriangle, FiCheckCircle, FiClipboard, FiLock, FiRefreshCw, FiShield, FiTerminal, FiUnlock } from "react-icons/fi";
 import type { GuiVaultStatusData } from "@aidevops/gui-shared";
+import { type ReactElement, type RefObject, useRef } from "react";
+import type { IconType } from "react-icons";
+import { FiAlertTriangle, FiCheckCircle, FiClipboard, FiLock, FiRefreshCw, FiShield, FiTerminal, FiUnlock } from "react-icons/fi";
+import { terminalActionForIntent, useVaultCommandLaunch, useVaultDialogFocus, type VaultLaunchStatus } from "./useVaultAccessDialog";
 import type { VaultDialogIntent } from "./VaultBadges";
-import { type NativeVaultAction, postNativeVaultCommand, vaultCommandText } from "./vault-command-bridge";
+import { vaultCommandText } from "./vault-command-bridge";
 
-export function VaultAccessModal({ intent, onClose, onRefresh, onTerminalLaunch, vault }: {
+export { terminalActionForIntent } from "./useVaultAccessDialog";
+
+interface VaultAccessModalProps {
   intent: VaultDialogIntent;
   onClose: () => void;
   onRefresh: () => Promise<void> | void;
   onTerminalLaunch: () => void;
   vault: GuiVaultStatusData;
-}): ReactElement {
-  const [launchStatus, setLaunchStatus] = useState<"idle" | "requesting" | "opened" | "copied" | "failed">("idle");
+}
+
+export function VaultAccessModal({ intent, onClose, onRefresh, onTerminalLaunch, vault }: VaultAccessModalProps): ReactElement {
   const primaryActionRef = useRef<HTMLButtonElement | null>(null);
   const dialogRef = useRef<HTMLElement | null>(null);
-  const content = dialogContent(intent, vault);
+  const content = dialogContentFactories[intent](vault);
   const terminalAction = terminalActionForIntent(intent);
-
-  useEffect(() => {
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    return () => previousFocus?.focus();
-  }, []);
-
-  useEffect(() => {
-    setLaunchStatus("idle");
-    primaryActionRef.current?.focus();
-  }, [intent]);
-
-  useEffect(() => {
-    const handleDialogKeys = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-      if (event.key !== "Tab" || dialogRef.current === null) return;
-      const focusable = [...dialogRef.current.querySelectorAll<HTMLButtonElement>("button:not([disabled])")];
-      const first = focusable[0];
-      const last = focusable.at(-1);
-      if (focusable.length === 0 || first === undefined || last === undefined) return;
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener("keydown", handleDialogKeys);
-    return () => window.removeEventListener("keydown", handleDialogKeys);
-  }, [onClose]);
-
-  useEffect(() => {
-    const handleNativeResult = (event: Event) => {
-      const result = (event as CustomEvent<unknown>).detail;
-      setLaunchStatus(result === "opened" ? "opened" : "failed");
-    };
-    window.addEventListener("aidevops:vault-command-result", handleNativeResult);
-    return () => window.removeEventListener("aidevops:vault-command-result", handleNativeResult);
-  }, []);
-
-  const launchTerminal = async () => {
-    if (terminalAction === null) {
-      await onRefresh();
-      return;
-    }
-    if (postNativeVaultCommand(terminalAction)) {
-      onTerminalLaunch();
-      setLaunchStatus("requesting");
-      window.setTimeout(() => setLaunchStatus((current) => current === "requesting" ? "failed" : current), 3000);
-      return;
-    }
-    if (typeof navigator !== "undefined" && navigator.clipboard !== undefined) {
-      try {
-        await navigator.clipboard.writeText(vaultCommandText(terminalAction));
-        onTerminalLaunch();
-        setLaunchStatus("copied");
-        return;
-      } catch {
-        setLaunchStatus("failed");
-        return;
-      }
-    }
-    setLaunchStatus("failed");
-  };
+  const { launchStatus, launchTerminal } = useVaultCommandLaunch({ intent, onRefresh, onTerminalLaunch });
+  useVaultDialogFocus({ dialogRef, intent, onClose, primaryActionRef });
 
   return (
     <div className="vault-modal-backdrop">
@@ -99,43 +42,82 @@ export function VaultAccessModal({ intent, onClose, onRefresh, onTerminalLaunch,
           <p id="vault-access-description">{content.detail}</p>
           <div className={`notice compact-notice ${intent === "recover" || intent === "unavailable" ? "warning-notice" : ""}`} role="note">{content.notice}</div>
           {terminalAction === null ? null : <div className="vault-command-preview"><FiTerminal aria-hidden="true" /><code>{vaultCommandText(terminalAction)}</code></div>}
-          <div className="vault-modal-state-grid" aria-label="Current Vault metadata">
+          {/* biome-ignore lint/a11y/useSemanticElements: role=group preserves the existing grid element and requested accessible grouping. */}
+          <div className="vault-modal-state-grid" aria-label="Current Vault metadata" role="group">
             <span><strong>Vault</strong>{vault.status}</span><span><strong>Setup</strong>{vault.setup_state}</span><span><strong>Helper</strong>{vault.helper_status}</span>
           </div>
-          {launchStatus === "requesting" ? <p className="vault-valid" role="status"><FiTerminal aria-hidden="true" /> Requesting the secure local terminal…</p> : null}
-          {launchStatus === "opened" ? <p className="vault-valid" role="status"><FiCheckCircle aria-hidden="true" /> Secure terminal opened. Return here after the command completes; status refreshes on focus.</p> : null}
-          {launchStatus === "copied" ? <p className="vault-valid" role="status"><FiClipboard aria-hidden="true" /> Command copied. Run it in your local terminal.</p> : null}
-          {launchStatus === "failed" ? <p className="vault-invalid" role="alert"><FiAlertTriangle aria-hidden="true" /> Open a local terminal and run the displayed command.</p> : null}
+          <VaultLaunchStatusMessage status={launchStatus} />
         </div>
-        <footer className="vault-modal-actions">
-          <button className="secondary-action" onClick={onClose} type="button">Close</button>
-          {intent === "unavailable" ? <button className="primary-action" onClick={() => void onRefresh()} ref={primaryActionRef} type="button"><FiRefreshCw aria-hidden="true" /> Retry status</button> : <button className={intent === "lock" || intent === "recover" ? "secondary-action" : "primary-action"} disabled={launchStatus === "requesting"} onClick={() => void launchTerminal()} ref={primaryActionRef} type="button"><FiTerminal aria-hidden="true" /> {content.action}</button>}
-        </footer>
+        <VaultModalActions content={content} intent={intent} launchStatus={launchStatus} onClose={onClose} onRefresh={onRefresh} onTerminalLaunch={launchTerminal} primaryActionRef={primaryActionRef} />
         <p className="vault-modal-footnote">This dialog never requests or stores a passphrase. Secret input belongs only in the terminal helper's hidden local prompt.</p>
       </section>
     </div>
   );
 }
 
-export function terminalActionForIntent(intent: VaultDialogIntent): NativeVaultAction | null {
-  if (intent === "setup") return "init";
-  if (intent === "unlock") return "unlock";
-  if (intent === "lock") return "lock";
-  if (intent === "recover") return "lost-passphrase";
-  return null;
+interface DialogContent {
+  action: string;
+  detail: string;
+  notice: string;
+  title: string;
 }
 
-function dialogContent(intent: VaultDialogIntent, vault: GuiVaultStatusData): { action: string; detail: string; notice: string; title: string } {
-  if (intent === "setup") return { action: "Open setup terminal", detail: "Create this device's Vault once through the secure local helper.", notice: "Save the new passphrase in a trusted password manager. aidevops cannot recover it.", title: "Set up Vault" };
-  if (intent === "unlock") return { action: "Open secure terminal", detail: "Unlock the existing Vault with the passphrase you already saved.", notice: vault.unlock_hint, title: "Unlock existing Vault" };
-  if (intent === "lock") return { action: "Open lock terminal", detail: "Locking forgets in-memory keys and hides protected previews again.", notice: "The fixed local command does not receive browser data or secret material.", title: "Lock local Vault" };
-  if (intent === "recover") return { action: "Open recovery guidance", detail: "Vault metadata appears damaged. Preserve existing encrypted data and review conservative recovery options.", notice: "Do not initialise with --force or overwrite the existing Vault.", title: "Review Vault recovery" };
-  return { action: "Retry status", detail: "Vault readiness is not authoritative, so setup and passphrase actions are disabled.", notice: "Check the local helper and crypto runtime, then retry. Existing encrypted data will not be reinitialised.", title: "Vault status unavailable" };
-}
+const dialogContentFactories: Record<VaultDialogIntent, (vault: GuiVaultStatusData) => DialogContent> = {
+  lock: () => ({ action: "Open lock terminal", detail: "Locking forgets in-memory keys and hides protected previews again.", notice: "The fixed local command does not receive browser data or secret material.", title: "Lock local Vault" }),
+  recover: () => ({ action: "Open recovery guidance", detail: "Vault metadata appears damaged. Preserve existing encrypted data and review conservative recovery options.", notice: "Do not initialise with --force or overwrite the existing Vault.", title: "Review Vault recovery" }),
+  setup: () => ({ action: "Open setup terminal", detail: "Create this device's Vault once through the secure local helper.", notice: "Save the new passphrase in a trusted password manager. aidevops cannot recover it.", title: "Set up Vault" }),
+  unavailable: () => ({ action: "Retry status", detail: "Vault readiness is not authoritative, so setup and passphrase actions are disabled.", notice: "Check the local helper and crypto runtime, then retry. Existing encrypted data will not be reinitialised.", title: "Vault status unavailable" }),
+  unlock: (vault) => ({ action: "Open secure terminal", detail: "Unlock the existing Vault with the passphrase you already saved.", notice: vault.unlock_hint, title: "Unlock existing Vault" }),
+};
+
+const dialogIcons: Record<VaultDialogIntent, IconType> = {
+  lock: FiLock,
+  recover: FiAlertTriangle,
+  setup: FiShield,
+  unavailable: FiAlertTriangle,
+  unlock: FiUnlock,
+};
 
 function dialogIcon(intent: VaultDialogIntent): ReactElement {
-  if (intent === "lock") return <FiLock />;
-  if (intent === "recover" || intent === "unavailable") return <FiAlertTriangle />;
-  if (intent === "setup") return <FiShield />;
-  return <FiUnlock />;
+  const Icon = dialogIcons[intent];
+  return <Icon />;
+}
+
+function VaultModalActions({ content, intent, launchStatus, onClose, onRefresh, onTerminalLaunch, primaryActionRef }: {
+  content: DialogContent;
+  intent: VaultDialogIntent;
+  launchStatus: VaultLaunchStatus;
+  onClose: () => void;
+  onRefresh: () => Promise<void> | void;
+  onTerminalLaunch: () => Promise<void>;
+  primaryActionRef: RefObject<HTMLButtonElement | null>;
+}): ReactElement {
+  const retriesStatus = intent === "unavailable";
+  const ActionIcon = retriesStatus ? FiRefreshCw : FiTerminal;
+  const className = intent === "lock" || intent === "recover" ? "secondary-action" : "primary-action";
+  const runAction = retriesStatus ? onRefresh : onTerminalLaunch;
+
+  return (
+    <footer className="vault-modal-actions">
+      <button className="secondary-action" onClick={onClose} type="button">Close</button>
+      <button className={className} data-vault-intent={intent} disabled={!retriesStatus && launchStatus === "requesting"} onClick={() => void runAction()} ref={primaryActionRef} type="button"><ActionIcon aria-hidden="true" /> {content.action}</button>
+    </footer>
+  );
+}
+
+const launchStatusPresentation: Partial<Record<VaultLaunchStatus, { Icon: IconType; className: string; role: "alert" | "status"; text: string }>> = {
+  copied: { Icon: FiClipboard, className: "vault-valid", role: "status", text: "Command copied. Run it in your local terminal." },
+  failed: { Icon: FiAlertTriangle, className: "vault-invalid", role: "alert", text: "Open a local terminal and run the displayed command." },
+  opened: { Icon: FiCheckCircle, className: "vault-valid", role: "status", text: "Secure terminal opened. Return here after the command completes; status refreshes on focus." },
+  requesting: { Icon: FiTerminal, className: "vault-valid", role: "status", text: "Requesting the secure local terminal…" },
+};
+
+function VaultLaunchStatusMessage({ status }: { status: VaultLaunchStatus }): ReactElement | null {
+  const presentation = launchStatusPresentation[status];
+  if (presentation === undefined) {
+    return null;
+  }
+
+  const { Icon, className, role, text } = presentation;
+  return <p className={className} role={role}><Icon aria-hidden="true" /> {text}</p>;
 }

@@ -96,22 +96,35 @@ function normalizeStatusEnvelope(envelope: GuiResponseEnvelope<Partial<GuiStatus
       managed_apps: data.managed_apps ?? statusFixture.managed_apps,
       notifications: data.notifications ?? statusFixture.notifications,
       vault,
-      pulse_workers: {
-        ...statusFixture.pulse_workers,
-        ...data.pulse_workers,
-        kpis: data.pulse_workers?.kpis ?? statusFixture.pulse_workers.kpis,
-        attention: data.pulse_workers?.attention ?? statusFixture.pulse_workers.attention,
-        insights: data.pulse_workers?.insights ?? statusFixture.pulse_workers.insights,
-        filters: { ...statusFixture.pulse_workers.filters, ...data.pulse_workers?.filters },
-        charts: data.pulse_workers?.charts ?? statusFixture.pulse_workers.charts,
-        events: data.pulse_workers?.events ?? statusFixture.pulse_workers.events,
-        actions: data.pulse_workers?.actions ?? statusFixture.pulse_workers.actions,
-      },
+      pulse_workers: normalizePulseWorkers(data.pulse_workers),
       capabilities: data.capabilities ?? statusFixture.capabilities,
-      secrets: vault.status === "unlocked" && vault.unlocked ? data.secrets ?? [] : [],
+      secrets: visibleSecrets(vault, data.secrets),
       placeholders: data.placeholders ?? statusFixture.placeholders,
     },
   };
+}
+
+function normalizePulseWorkers(
+  pulseWorkers: GuiStatusData["pulse_workers"] | undefined,
+): GuiStatusData["pulse_workers"] {
+  return {
+    ...statusFixture.pulse_workers,
+    ...pulseWorkers,
+    kpis: pulseWorkers?.kpis ?? statusFixture.pulse_workers.kpis,
+    attention: pulseWorkers?.attention ?? statusFixture.pulse_workers.attention,
+    insights: pulseWorkers?.insights ?? statusFixture.pulse_workers.insights,
+    filters: { ...statusFixture.pulse_workers.filters, ...pulseWorkers?.filters },
+    charts: pulseWorkers?.charts ?? statusFixture.pulse_workers.charts,
+    events: pulseWorkers?.events ?? statusFixture.pulse_workers.events,
+    actions: pulseWorkers?.actions ?? statusFixture.pulse_workers.actions,
+  };
+}
+
+function visibleSecrets(
+  vault: GuiVaultStatusData,
+  secrets: GuiStatusData["secrets"] | undefined,
+): GuiStatusData["secrets"] {
+  return vault.status === "unlocked" && vault.unlocked ? secrets ?? [] : [];
 }
 
 function normalizeVault(vault: GuiStatusData["vault"] | undefined): GuiVaultStatusData {

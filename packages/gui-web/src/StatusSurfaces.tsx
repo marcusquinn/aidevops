@@ -1,13 +1,13 @@
 /* jshint esversion: 11 */
 import { useState } from "react";
-import type { GuiAiAppSummary, GuiLocalRepoSetupSummary, GuiSetupTargetSummary, GuiStatusData, GuiVaultCollectionSummary, GuiVaultStatusData } from "../../gui-shared/src";
+import type { GuiAiAppSummary, GuiLocalRepoSetupSummary, GuiSetupTargetSummary, GuiStatusData } from "../../gui-shared/src";
 import { plannedHomes, text } from "./app-model";
 import { FileExplorerSurface } from "./FileExplorerSurface";
 import { PathActions } from "./PathActions";
-import { type VaultDialogIntent, VaultPadlock, vaultActionLabel, vaultDialogIntentForStatus } from "./VaultBadges";
 
 export { AiProvidersSurface } from "./AiProvidersSurface";
 export { SecuritySurface } from "./SecuritySurface";
+export { LockedVaultGate, VaultSurface } from "./VaultSurface";
 
 export function OverviewSurface({ status }: { status: GuiStatusData }) {
   const metrics = [
@@ -96,178 +96,6 @@ export function ProjectsSurface({ status }: { status: GuiStatusData }) {
         </ul>
       )}
     </section>
-  );
-}
-
-export function VaultSurface({ onVaultRequest, status }: { onVaultRequest: (intent: VaultDialogIntent) => void; status: GuiStatusData }) {
-  const vault = status.vault;
-  const vaultCollection = vault.collections.find((collection) => collection.surface_ids.includes("vault")) ?? vault.collections[0];
-  const readinessUnknown = vault.helper_status !== "available" || vault.status === "unknown" || vault.status === "corrupted";
-  const custodyState = vault.status === "corrupted"
-    ? { detail: "Metadata is damaged. Preserve encrypted data and use the recovery guidance.", value: "recovery" }
-    : readinessUnknown
-      ? { detail: "The local helper did not return authoritative lock metadata.", value: "unavailable" }
-      : { detail: vault.unlock_hint, value: vault.locked ? "locked" : "unlocked" };
-  const readiness = [
-    { label: "migration", value: readinessUnknown ? "unknown" : vault.readiness.migration_allowed ? "ready" : "blocked" },
-    { label: "setup", value: readinessUnknown ? "unknown" : vault.readiness.setup_required ? "required" : vault.setup_state === "migration-ready" ? "complete" : "in progress" },
-    { label: "restart test", value: readinessUnknown ? "unknown" : vault.status === "uninitialized" ? "not started" : vault.readiness.restart_test_required ? "required" : vault.setup_state === "migration-ready" ? "verified" : "pending" },
-    { label: "remote unlock", value: vault.readiness.remote_unlock_enabled ? "enabled" : "disabled" },
-  ];
-  const featureCards = [
-    { label: text.vaultStatus, value: vault.status, detail: "Metadata-only lock state from the local helper." },
-    { label: text.vaultSetup, value: vault.setup_state, detail: readinessUnknown ? custodyState.detail : vault.setup_hint },
-    { label: text.vaultLockUnlock, value: custodyState.value, detail: custodyState.detail },
-    { label: text.vaultDevices, value: `${vault.devices.length} device`, detail: "Device trust metadata only; private keys are never exposed." },
-    { label: text.vaultSync, value: vault.sync.status, detail: "Encrypted bundles and signed manifests over untrusted transports." },
-    { label: text.vaultMessages, value: vault.secure_messages.status, detail: "Secure message placeholders keep payloads hidden while locked." },
-    { label: text.vaultBackups, value: vault.backups.status, detail: "Encrypted backups and recovery flows are metadata-only here." },
-    { label: text.vaultAudit, value: vault.audit.status, detail: `${vault.audit.event_count} redacted audit events; ${vault.audit.latest_event_ref}.` },
-  ];
-
-  return (
-    <section className="surface-page vault-surface" aria-label={text.vault}>
-      <div className="hero-panel vault-hero">
-        <div className="section-heading split-heading">
-          <div>
-            <p className="eyebrow">{vault.value_policy}</p>
-            <h2>{text.vault}</h2>
-            <p>{text.vaultIntro}</p>
-          </div>
-          {vaultCollection ? <VaultPadlock collection={vaultCollection} onActivate={onVaultRequest} vault={vault} /> : null}
-        </div>
-        <ul aria-label="Vault readiness" className="vault-readiness-strip">
-          {readiness.map((item) => <li key={item.label}><strong>{item.label}</strong>{item.value}</li>)}
-        </ul>
-      </div>
-      {vault.status === "corrupted" ? (
-        <div className="notice compact-notice warning-notice" role="note">
-          Vault metadata needs recovery. Preserve existing encrypted data and do not initialise over it.
-        </div>
-      ) : readinessUnknown ? (
-        <div className="notice compact-notice warning-notice" role="note">
-          Vault lock state is unavailable. Setup and unlock guidance remains disabled until status is authoritative.
-        </div>
-      ) : vault.locked ? (
-        <div className="notice compact-notice" role="note">
-          {text.vaultLockedPreview} {vault.unlock_hint}
-        </div>
-      ) : (
-        <div className="notice compact-notice" role="note">
-          Vault is unlocked for this local session. Protected actions remain read-only until audited write routes are implemented.
-        </div>
-      )}
-      <div className="vault-card-grid">
-        {featureCards.map((card) => <VaultFeatureCard detail={card.detail} key={card.label} label={card.label} value={card.value} />)}
-      </div>
-      <section className="panel vault-setup-panel" aria-label={text.vaultSetup}>
-        <div className="section-heading split-heading">
-          <div>
-            <p className="eyebrow">{text.vaultSetup}</p>
-            <h2>{vault.status === "corrupted" ? "Recovery required" : readinessUnknown ? "Setup status unavailable" : vault.readiness.setup_required ? "Setup required" : "Setup metadata"}</h2>
-            <p>{readinessUnknown ? custodyState.detail : vault.setup_hint}</p>
-          </div>
-          <button className="secondary-action vault-cta" onClick={() => onVaultRequest(vaultDialogIntentForStatus(vault))} title={readinessUnknown ? custodyState.detail : vault.unlock_hint} type="button">{vaultActionLabel(vaultDialogIntentForStatus(vault))}</button>
-        </div>
-        {readinessUnknown ? (
-          <p className="empty-state">{vault.status === "corrupted" ? "Use recovery guidance only. Preserve the current Vault directory and do not run initialization commands." : "Retry authoritative status before following setup or unlock instructions."}</p>
-        ) : (
-          <>
-            <ol className="vault-step-list">
-              <li>Initialize locally with the hidden-prompt helper.</li>
-              <li>Verify the harmless restart test before migrating real data.</li>
-              <li>Keep passphrases, recovery material, and private keys out of chat, arguments, environment variables, logs, issues, and fixtures.</li>
-            </ol>
-            <code>{vault.unlock_hint}</code>
-          </>
-        )}
-      </section>
-      <section className="panel" aria-label="Vault encrypted collections">
-        <div className="section-heading">
-          <p className="eyebrow">{text.vaultStatus}</p>
-          <h2>Encrypted collections</h2>
-          <p>{text.vaultCollectionIntro}</p>
-        </div>
-        <ul className="object-list vault-collection-list">
-          {vault.collections.map((collection) => <VaultCollectionRow collection={collection} key={collection.id} onVaultRequest={onVaultRequest} vault={vault} />)}
-        </ul>
-      </section>
-      <section className="panel" aria-label="Vault devices and audit">
-        <div className="section-heading split-heading">
-          <div>
-            <p className="eyebrow">{text.vaultDevices}</p>
-            <h2>Devices, sync, messages, backups, and audit</h2>
-            <p>These placeholders expose readiness and redacted metadata only. Git, object storage, messaging, SSH, VPNs, and VPS disks remain untrusted transports.</p>
-          </div>
-          <span className="count-pill">{vault.sync.transport_policy}</span>
-        </div>
-        <div className="vault-device-grid">
-          {vault.devices.map((device) => (
-            <article className="vault-device-card" key={device.id_ref}>
-              <p className="eyebrow">{device.trust_state}</p>
-              <h3>{device.label}</h3>
-              <Detail label="device" value={device.id_ref} />
-              <Detail label="last seen" value={device.last_seen} />
-              <Detail label="audit head" value={device.audit_head_ref} />
-            </article>
-          ))}
-        </div>
-      </section>
-    </section>
-  );
-}
-
-export function LockedVaultGate({ collection, label, onVaultRequest, vault }: {
-  collection: GuiVaultCollectionSummary;
-  label: string;
-  onVaultRequest: (intent: VaultDialogIntent) => void;
-  vault: GuiVaultStatusData;
-}) {
-  const intent = vaultDialogIntentForStatus(vault);
-  const statusUnavailable = intent === "recover" || intent === "unavailable";
-  const heading = intent === "recover" ? `${label} needs Vault recovery` : intent === "unavailable" ? `${label} Vault status is unavailable` : `${label} is locked`;
-  const detail = intent === "recover"
-    ? "Protected content remains hidden while damaged Vault metadata is reviewed."
-    : intent === "unavailable"
-      ? "Protected content remains hidden until the local helper returns authoritative status."
-      : `${text.vaultTooltip} ${vault.unlock_hint}`;
-  return (
-    <section className="panel vault-locked-gate" aria-label={heading}>
-      <div className="section-heading split-heading">
-        <div>
-          <p className="eyebrow">{collection.data_class}</p>
-          <h2>{heading}</h2>
-          <p>{statusUnavailable ? detail : text.vaultLockedPreview}</p>
-        </div>
-        <VaultPadlock collection={collection} onActivate={onVaultRequest} vault={vault} />
-      </div>
-      <div className="notice compact-notice" role="note">
-        {detail}
-      </div>
-      <button className="secondary-action vault-cta" onClick={() => onVaultRequest(intent)} title={detail} type="button">{vaultActionLabel(intent)}</button>
-    </section>
-  );
-}
-
-function VaultFeatureCard({ detail, label, value }: { detail: string; label: string; value: string }) {
-  return (
-    <article className="vault-feature-card">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <small>{detail}</small>
-    </article>
-  );
-}
-
-function VaultCollectionRow({ collection, onVaultRequest, vault }: { collection: GuiVaultCollectionSummary; onVaultRequest: (intent: VaultDialogIntent) => void; vault: GuiVaultStatusData }) {
-  return (
-    <li>
-      <strong>{collection.label}</strong>
-      <VaultPadlock collection={collection} compact onActivate={onVaultRequest} vault={vault} />
-      <span>{collection.preview_policy}</span>
-      <small>{collection.labels.join(", ")}</small>
-      <small>{collection.surface_ids.join(", ")}</small>
-    </li>
   );
 }
 
