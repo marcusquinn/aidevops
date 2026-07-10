@@ -373,6 +373,19 @@ test_skips_resolved_thread_inline_ack() {
 	return 0
 }
 
+test_skips_pr26944_no_further_action_required_ack() {
+	local comments result
+	# shellcheck disable=SC2016  # literal inline-comment JSON includes Markdown backticks
+	comments='[{"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the update, marcusquinn. It is great to see that the `grep` option injection vulnerability has been addressed with the `--` separator and that the fix has been verified with the provided test suite. Since the issue is resolved, no further action is required.","path":".agents/scripts/profile-readme-helper.sh","line":329,"html_url":"https://example.invalid/review","created_at":"2026-07-10T00:00:00Z"},{"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the update, marcusquinn. It is excellent to see that the potential option injection vulnerability has been addressed with the `--` separator and that the fix has been verified through your test suite. Given that the issue is resolved, no further action is required on this thread.","path":".agents/scripts/profile-readme-helper.sh","line":357,"html_url":"https://example.invalid/review","created_at":"2026-07-10T00:00:00Z"},{"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the update. No further action required.","path":".agents/scripts/profile-readme-helper.sh","line":380,"html_url":"https://example.invalid/review","created_at":"2026-07-10T00:00:00Z"}]'
+	result=$(_build_inline_findings "$comments" "26944" "medium" | jq 'length')
+	if [[ "$result" == "0" ]]; then
+		print_result "skip PR #26944 no-further-action-required acknowledgements" 0
+	else
+		print_result "skip PR #26944 no-further-action-required acknowledgements" 1 "expected 0 findings, got ${result}"
+	fi
+	return 0
+}
+
 test_skips_multispace_implementation_verified_inline_ack() {
 	local comments result
 	comments='[{"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the update. The implementation\nhas   been verified and the tests are passing.","path":".agents/scripts/pulse-dispatch-engine.sh","line":1406,"html_url":"https://example.invalid/review","created_at":"2026-06-18T00:00:00Z"}]'

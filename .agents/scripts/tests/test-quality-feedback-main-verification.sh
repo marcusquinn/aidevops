@@ -246,6 +246,7 @@ main() {
 	test_skips_review_thread_response_inline_comment
 	test_skips_no_further_concerns_inline_ack
 	test_skips_resolved_thread_inline_ack
+	test_skips_pr26944_no_further_action_required_ack
 	test_skips_multispace_implementation_verified_inline_ack
 	test_skips_verified_tests_passing_inline_ack
 	test_skips_pr25362_race_condition_ack
