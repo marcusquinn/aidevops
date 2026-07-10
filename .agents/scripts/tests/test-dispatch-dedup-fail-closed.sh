@@ -60,6 +60,10 @@ write_stub_gh_success() {
 	cat >"${STUB_DIR}/gh" <<STUB
 #!/usr/bin/env bash
 # Stub for test-dispatch-dedup-fail-closed.sh — exits 0, returns payload
+if [[ "\$1" == "api" && "\$2" == "rate_limit" ]]; then
+	printf '%s\n' '5000'
+	exit 0
+fi
 if [[ "\$1" == "issue" && "\$2" == "view" ]]; then
 	printf '%s\n' '${payload}'
 	exit 0
@@ -104,6 +108,10 @@ write_stub_gh_issue_ok_comments_fail() {
 	cat >"${STUB_DIR}/gh" <<STUB
 #!/usr/bin/env bash
 # Stub: issue view succeeds, comments api fails (GH#18816 test)
+if [[ "\$1" == "api" && "\$2" == "rate_limit" ]]; then
+	printf '%s\n' '5000'
+	exit 0
+fi
 if [[ "\$1" == "issue" && "\$2" == "view" ]]; then
 	printf '%s\n' '${payload}'
 	exit 0

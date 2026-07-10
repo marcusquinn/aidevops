@@ -1109,6 +1109,12 @@ _dsi_run_dedup_check() {
 		retry_delay=$("$_DSI_BACKOFF_HELPER" lookup-retry-delay "$_DSI_DEDUP_RESULT" "$retry_number" 2>/dev/null) || return 0
 		_dsi_warn "Dedup lookup uncertain with transient evidence; retry ${retry_number}/2 after ${retry_delay}s"
 		sleep "$retry_delay"
+		# Change the lookup conditions before retrying: refresh the authoritative
+		# metadata rather than repeating the same prefetched payload immediately.
+		if ! _dsi_load_issue_meta "$issue_number" "$repo_slug"; then
+			_DSI_DEDUP_RESULT="${_DSI_DEDUP_RESULT} metadata-refresh-failed"
+			return 0
+		fi
 	done
 	return 0
 }
