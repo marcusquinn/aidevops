@@ -410,7 +410,69 @@ _sandbox_check_dns_exfil() {
 # Sandbox Execution
 # =============================================================================
 
-# Kill a child process group and its secondary watchdog.
+# Record descendant identities while the original parent still owns them.
+# Entries are append-only because a detached descendant may be reparented before
+# the next sample. Cleanup revalidates every PID against its start token.
+# Arguments: $1 - root PID, $2 - snapshot file
+_sandbox_snapshot_descendants() {
+	local snapshot_root_pid="${1:-}"
+	local snapshot_file="${2:-}"
+	local snapshot_rows=""
+	local snapshot_wanted=" ${snapshot_root_pid} "
+	local snapshot_changed=true
+	local snapshot_pid=""
+	local snapshot_ppid=""
+	local snapshot_pgid=""
+	local snapshot_token=""
+
+	[[ "$snapshot_root_pid" =~ ^[0-9]+$ && -n "$snapshot_file" ]] || return 0
+	snapshot_rows="$(ps -axo pid=,ppid=,pgid= 2>/dev/null)" || return 0
+	while [[ "$snapshot_changed" == true ]]; do
+		snapshot_changed=false
+		while read -r snapshot_pid snapshot_ppid snapshot_pgid; do
+			[[ "$snapshot_pid" =~ ^[0-9]+$ && "$snapshot_ppid" =~ ^[0-9]+$ ]] || continue
+			case "$snapshot_wanted" in
+			*" ${snapshot_ppid} "*)
+				case "$snapshot_wanted" in
+				*" ${snapshot_pid} "*) ;;
+				*)
+					snapshot_wanted="${snapshot_wanted}${snapshot_pid} "
+					snapshot_changed=true
+					;;
+				esac
+				;;
+			esac
+		done <<<"$snapshot_rows"
+	done
+
+	while read -r snapshot_pid snapshot_ppid snapshot_pgid; do
+		[[ "$snapshot_pid" =~ ^[0-9]+$ && "$snapshot_pid" != "$snapshot_root_pid" ]] || continue
+		case "$snapshot_wanted" in
+		*" ${snapshot_pid} "*)
+			snapshot_token="$(_sandbox_get_proc_starttime "$snapshot_pid")"
+			[[ -n "$snapshot_token" ]] && printf '%s\t%s\t%s\n' "$snapshot_pid" "$snapshot_pgid" "$snapshot_token" >>"$snapshot_file"
+			;;
+		esac
+	done <<<"$snapshot_rows"
+	return 0
+}
+
+_sandbox_snapshot_identity_matches() {
+	local identity_pid="${1:-}"
+	local identity_pgid="${2:-}"
+	local identity_token="${3:-}"
+	local identity_current_pgid=""
+	local identity_current_token=""
+
+	[[ "$identity_pid" =~ ^[0-9]+$ && -n "$identity_token" ]] || return 1
+	identity_current_token="$(_sandbox_get_proc_starttime "$identity_pid")"
+	[[ -n "$identity_current_token" && "$identity_current_token" == "$identity_token" ]] || return 1
+	identity_current_pgid="$(ps -o pgid= -p "$identity_pid" 2>/dev/null | tr -d '[:space:]')" || return 1
+	[[ -n "$identity_current_pgid" && "$identity_current_pgid" == "$identity_pgid" ]] || return 1
+	return 0
+}
+
+# Kill a child process group, verified detached descendants, and its watchdog.
 # Standalone cleanup function — called explicitly on all exit paths and
 # as an EXIT trap safety net. Takes explicit arguments instead of relying
 # on closure variables (extracted from nested _pgkill_cleanup in GH#6429).
@@ -419,10 +481,12 @@ _sandbox_check_dns_exfil() {
 #   $1 - watchdog_pid (may be empty)
 #   $2 - child_pgid (may be empty)
 #   $3 - child_pid (may be empty)
+#   $4 - descendant identity snapshot file (may be empty)
 _sandbox_pgkill_cleanup() {
 	local cleanup_watchdog_pid="$1"
 	local cleanup_child_pgid="$2"
 	local cleanup_child_pid="$3"
+	local cleanup_snapshot_file="${4:-}"
 
 	# Kill the secondary watchdog first to prevent it from firing
 	# after we've already cleaned up the child.
@@ -460,6 +524,34 @@ _sandbox_pgkill_cleanup() {
 		sleep 0.5
 		kill -0 "$cleanup_child_pid" 2>/dev/null &&
 			kill -9 "$cleanup_child_pid" 2>/dev/null || true
+	fi
+
+	# Descendants may have escaped the original PGID with setsid/setpgid. Only
+	# signal entries whose PID, PGID, and start token still match the snapshot.
+	if [[ -n "$cleanup_snapshot_file" && -f "$cleanup_snapshot_file" ]]; then
+		local cleanup_pid=""
+		local cleanup_pgid=""
+		local cleanup_token=""
+		while IFS=$'\t' read -r cleanup_pid cleanup_pgid cleanup_token; do
+			_sandbox_snapshot_identity_matches "$cleanup_pid" "$cleanup_pgid" "$cleanup_token" || continue
+			# A group signal is safe only when its verified leader was descended
+			# from the sandbox. Otherwise terminate the verified PID individually.
+			if [[ "$cleanup_pid" == "$cleanup_pgid" && -n "$cleanup_self_pgid" && "$cleanup_pgid" != "$cleanup_self_pgid" ]]; then
+				kill -TERM -- "-${cleanup_pgid}" 2>/dev/null || true
+			else
+				kill -TERM "$cleanup_pid" 2>/dev/null || true
+			fi
+		done <"$cleanup_snapshot_file"
+		sleep 0.5
+		while IFS=$'\t' read -r cleanup_pid cleanup_pgid cleanup_token; do
+			_sandbox_snapshot_identity_matches "$cleanup_pid" "$cleanup_pgid" "$cleanup_token" || continue
+			if [[ "$cleanup_pid" == "$cleanup_pgid" && -n "$cleanup_self_pgid" && "$cleanup_pgid" != "$cleanup_self_pgid" ]]; then
+				kill -KILL -- "-${cleanup_pgid}" 2>/dev/null || true
+			else
+				kill -KILL "$cleanup_pid" 2>/dev/null || true
+			fi
+		done <"$cleanup_snapshot_file"
+		rm -f "$cleanup_snapshot_file" 2>/dev/null || true
 	fi
 	return 0
 }
@@ -531,13 +623,16 @@ _sandbox_spawn_child() {
 # Arguments:
 #   $1 - timeout in seconds
 #   $2 - child_pid to monitor
+#   $3 - descendant identity snapshot file
 _sandbox_poll_child() {
 	local poll_timeout="$1"
 	local poll_child_pid="$2"
+	local poll_snapshot_file="$3"
 	local half_secs_remaining=$((poll_timeout * 2))
 	local poll_state=""
 
 	while kill -0 "$poll_child_pid" 2>/dev/null; do
+		_sandbox_snapshot_descendants "$poll_child_pid" "$poll_snapshot_file"
 		poll_state="$(ps -o stat= -p "$poll_child_pid" 2>/dev/null | tr -d '[:space:]')" || true
 		if [[ "$poll_state" == *Z* ]]; then
 			return 0
@@ -585,14 +680,17 @@ _sandbox_exec_with_pgkill() {
 	local child_start_token=""
 	local t_exit_code=0
 	local watchdog_pid=""
+	local descendant_snapshot_file="${t_stderr_file}.descendants"
+	: >"$descendant_snapshot_file"
 
 	# EXIT trap uses a closure-style wrapper to pass current variable values
 	# to the standalone cleanup function.
-	trap '_sandbox_pgkill_cleanup "$watchdog_pid" "$child_pgid" "$child_pid"' EXIT
+	trap '_sandbox_pgkill_cleanup "$watchdog_pid" "$child_pgid" "$child_pid" "$descendant_snapshot_file"' EXIT
 
 	# Spawn the child in a new process group (sets child_pid, child_pgid,
 	# child_start_token via dynamic scoping).
 	_sandbox_spawn_child "$t_stdout_file" "$t_stderr_file" "$@"
+	_sandbox_snapshot_descendants "$child_pid" "$descendant_snapshot_file"
 
 	# Marker file for watchdog-initiated kills (GH#6414, CodeRabbit review).
 	# Derived from t_stderr_file path to avoid collisions across concurrent
@@ -609,9 +707,9 @@ _sandbox_exec_with_pgkill() {
 	watchdog_pid=$!
 
 	# Poll until the child exits or the deadline is reached.
-	if ! _sandbox_poll_child "$t_secs" "$child_pid"; then
+	if ! _sandbox_poll_child "$t_secs" "$child_pid" "$descendant_snapshot_file"; then
 		log_sandbox "WARN" "Command timed out after ${t_secs}s — killing process group ${child_pgid}"
-		_sandbox_pgkill_cleanup "$watchdog_pid" "$child_pgid" "$child_pid"
+		_sandbox_pgkill_cleanup "$watchdog_pid" "$child_pgid" "$child_pid" "$descendant_snapshot_file"
 		watchdog_pid=""
 		# Reap the child after killing it
 		wait "$child_pid" 2>/dev/null || true
@@ -646,7 +744,7 @@ _sandbox_exec_with_pgkill() {
 	# Explicitly clean up any remaining descendants in the process group.
 	# The EXIT trap is cleared below, so cleanup must be called explicitly
 	# here — the trap does not fire on a normal function return.
-	_sandbox_pgkill_cleanup "$watchdog_pid" "$child_pgid" "$child_pid"
+	_sandbox_pgkill_cleanup "$watchdog_pid" "$child_pgid" "$child_pid" "$descendant_snapshot_file"
 	watchdog_pid=""
 	trap - EXIT
 	return "$t_exit_code"
