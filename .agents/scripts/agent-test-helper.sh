@@ -801,8 +801,6 @@ _cmd_run_emit_json_metrics() {
 #   Updated results JSON array followed by outcome on stdout
 #######################################
 _cmd_run_capture_test() {
-	local capture_status=0
-
 	(
 		local test_json="$1"
 		local test_index="$2"
@@ -824,9 +822,7 @@ _cmd_run_capture_test() {
 			"$suite_agent" "$suite_model" "$suite_timeout" \
 			"$results"
 	)
-	capture_status=$?
-
-	return "$capture_status"
+	return $?
 }
 
 #######################################
