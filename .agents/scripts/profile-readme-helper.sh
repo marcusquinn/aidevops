@@ -326,7 +326,7 @@ _generate_contributions() {
 			fork_record=$(_fetch_contribution_record "repos/${gh_user}/${fork_name}" "$fork_filter" "fork ${fork_name}") || return 1
 			local rname rdesc rurl
 			IFS=$'\t' read -r rname rdesc rurl <<<"$fork_record"
-			if [[ -n "$seen_repos" ]] && grep -qxF "$rname" <<<"$seen_repos" 2>/dev/null; then
+			if [[ -n "$seen_repos" ]] && grep -qxF -- "$rname" <<<"$seen_repos" 2>/dev/null; then
 				continue
 			fi
 			seen_repos="${seen_repos}${rname}"$'\n'
@@ -354,7 +354,7 @@ _generate_contributions() {
 			local repo_name
 			repo_name="${slug##*/}"
 			# Deduplicate against all previously seen repos (forks + earlier entries)
-			if [[ -n "$seen_repos" ]] && grep -qxF "$repo_name" <<<"$seen_repos" 2>/dev/null; then
+			if [[ -n "$seen_repos" ]] && grep -qxF -- "$repo_name" <<<"$seen_repos" 2>/dev/null; then
 				continue
 			fi
 			local repo_record desc url
