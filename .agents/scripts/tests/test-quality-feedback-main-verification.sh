@@ -215,6 +215,8 @@ main() {
 	test_skips_deleted_file
 	test_handles_diff_fence_without_false_positive
 	test_handles_suggestion_fence_and_comments
+	test_skips_applied_single_line_reference_fix
+	test_keeps_unapplied_single_line_reference_fix
 	test_keeps_unverifiable_finding
 	test_transient_api_error_keeps_finding_as_unverifiable
 	test_uses_default_branch_ref_for_contents_lookup

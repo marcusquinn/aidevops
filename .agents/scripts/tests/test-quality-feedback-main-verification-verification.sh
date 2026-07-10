@@ -176,6 +176,60 @@ test_handles_suggestion_fence_and_comments() {
 	return 0
 }
 
+test_skips_applied_single_line_reference_fix() {
+	reset_mock_state
+	GH_RAW_CONTENT=$'- **Evidence:**\n  `todo/missions/example/research/resource-baseline.md:26`\n'
+
+	local findings
+	findings='[{"file":"todo/tasks/example-brief.md","line":26,"body_full":"The referenced file '\''resource-baseline.md'\'' contains unrelated evidence on line 25. Please update the reference to point only to line 26 to ensure precise documentation.","reviewer":"gemini","reviewer_login":"gemini-code-assist[bot]","severity":"medium","url":"https://example.test/comment"}]'
+
+	local out_file
+	out_file=$(mktemp)
+	local created
+	_create_quality_debt_issues "owner/repo" "123" "$findings" >"$out_file"
+	created=$(<"$out_file")
+	rm -f "$out_file"
+
+	local created_count
+	created_count=$(wc -l <"$GH_CREATE_LOG" | tr -d ' ')
+	rm -f "$GH_CREATE_LOG"
+	rm -f "$GH_API_LOG"
+
+	if [[ "$created" == "0" && "$created_count" -eq 0 ]]; then
+		print_result "skip single-line reference finding when precise fix is on main" 0
+	else
+		print_result "skip single-line reference finding when precise fix is on main" 1 "created=${created}, issues=${created_count}"
+	fi
+	return 0
+}
+
+test_keeps_unapplied_single_line_reference_fix() {
+	reset_mock_state
+	GH_RAW_CONTENT=$'- **Evidence:**\n  `todo/missions/example/research/resource-baseline.md:25-26`\n'
+
+	local findings
+	findings='[{"file":"todo/tasks/example-brief.md","line":26,"body_full":"The referenced file '\''resource-baseline.md'\'' contains unrelated evidence on line 25. Please update the reference to point only to line 26 to ensure precise documentation.","reviewer":"gemini","reviewer_login":"gemini-code-assist[bot]","severity":"medium","url":"https://example.test/comment"}]'
+
+	local out_file
+	out_file=$(mktemp)
+	local created
+	_create_quality_debt_issues "owner/repo" "123" "$findings" >"$out_file"
+	created=$(<"$out_file")
+	rm -f "$out_file"
+
+	local created_count
+	created_count=$(wc -l <"$GH_CREATE_LOG" | tr -d ' ')
+	rm -f "$GH_CREATE_LOG"
+	rm -f "$GH_API_LOG"
+
+	if [[ "$created" == "1" && "$created_count" -eq 1 ]]; then
+		print_result "keep single-line reference finding until precise fix is on main" 0
+	else
+		print_result "keep single-line reference finding until precise fix is on main" 1 "created=${created}, issues=${created_count}"
+	fi
+	return 0
+}
+
 test_keeps_unverifiable_finding() {
 	reset_mock_state
 	GH_RAW_CONTENT=$'#!/usr/bin/env bash\nreturn 0\n'
