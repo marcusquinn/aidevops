@@ -17,10 +17,10 @@ terminal conditions is evidenced:
 3. completion is demonstrated to be impossible under immutable constraints,
    the evidence is recorded, and the user is given the closest safe alternative.
 
-Time limits, cost limits, worker limits, rate limits, machine capacity, a killed
-process, or one failed approach are not evidence of impossibility. They require
-a different route, smaller unit of work, different resource, or later
-continuation.
+None of these demonstrate impossibility: time limits, cost limits, worker
+limits, rate limits, machine capacity, a killed process, or one failed
+approach. Each requires a different route, smaller unit of work, different
+resource, or later continuation.
 
 ## Required Response
 
