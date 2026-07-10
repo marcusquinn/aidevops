@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -19,17 +19,43 @@ const GUI_VAULT_SETUP_STATES = [
 ] as const satisfies readonly GuiVaultSetupState[];
 const INITIALIZED_VAULT_STATUSES = new Set<GuiVaultStatus>(["locked", "unlocked", "corrupted"]);
 const RESTART_TEST_SETUP_STATES = new Set<GuiVaultSetupState>(["test-created", "restart-required", "test-verified"]);
+type VaultCommand = "status" | "setup-state";
+type VaultProbeValue = GuiVaultStatus | GuiVaultSetupState;
+const COHERENT_VAULT_STATES: Readonly<Record<GuiVaultStatus, ReadonlySet<GuiVaultSetupState>>> = {
+  uninitialized: new Set(["uninitialized"]),
+  locked: new Set(["test-created", "restart-required", "test-verified", "migration-ready"]),
+  unlocked: new Set(["migration-ready"]),
+  corrupted: new Set(["unknown"]),
+  unknown: new Set(),
+};
+const EXPECTED_VAULT_EXIT_CODES: Readonly<
+  Record<VaultCommand, Readonly<Partial<Record<VaultProbeValue, number>>>>
+> = {
+  status: { locked: 0, unlocked: 0, uninitialized: 2, corrupted: 3 },
+  "setup-state": {
+    "test-created": 0,
+    "restart-required": 0,
+    "test-verified": 0,
+    "migration-ready": 0,
+    uninitialized: 2,
+    unknown: 3,
+  },
+};
 
 export function readVaultSummary(repoRoot: string): GuiVaultStatusData {
   const helperPath = join(repoRoot, ".agents", "scripts", "vault-helper.sh");
   const helperExists = existsSync(helperPath);
-  const rawStatus = helperExists ? readVaultCommand(helperPath, ["status"], isGuiVaultStatus) : null;
-  const rawSetupState = helperExists ? readVaultCommand(helperPath, ["setup-state"], isGuiVaultSetupState) : null;
+  const parsedStatus = helperExists ? readVaultCommand(helperPath, "status", isGuiVaultStatus) : null;
+  const parsedSetupState = helperExists ? readVaultCommand(helperPath, "setup-state", isGuiVaultSetupState) : null;
+  const coherent = coherentVaultState(parsedStatus, parsedSetupState);
+  const rawStatus = coherent ? parsedStatus : null;
+  const rawSetupState = coherent ? parsedSetupState : null;
   const helperStatus = vaultHelperStatus(helperExists, rawStatus, rawSetupState);
   const status = rawStatus ?? "unknown";
   const setupState = rawSetupState ?? fallbackSetupState(status);
   const unlocked = status === "unlocked";
   const collectionState = vaultCollectionState(status);
+  const setupRequired = helperStatus === "available" && status === "uninitialized" && setupState === "uninitialized";
 
   return {
     ...statusFixture.vault,
@@ -38,12 +64,12 @@ export function readVaultSummary(repoRoot: string): GuiVaultStatusData {
     initialized: INITIALIZED_VAULT_STATUSES.has(status),
     locked: !unlocked,
     unlocked,
-    available: helperExists && helperStatus !== "error",
+    available: helperStatus === "available",
     helper_status: helperStatus,
     readiness: {
       ...statusFixture.vault.readiness,
       migration_allowed: unlocked && setupState === "migration-ready",
-      setup_required: status === "uninitialized" || setupState === "uninitialized",
+      setup_required: setupRequired,
       restart_test_required: RESTART_TEST_SETUP_STATES.has(setupState),
       locked_content_hidden: !unlocked,
     },
@@ -54,22 +80,39 @@ export function readVaultSummary(repoRoot: string): GuiVaultStatusData {
   };
 }
 
-function readVaultCommand<T extends string>(
+function readVaultCommand<T extends VaultProbeValue>(
   helperPath: string,
-  args: string[],
+  command: VaultCommand,
   isAllowed: (value: string) => value is T,
 ): T | null {
-  try {
-    const output = execFileSync("sh", [helperPath, ...args], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 300,
-    }).trim();
-    const firstLine = output.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() ?? "";
-    return isAllowed(firstLine) ? firstLine : null;
-  } catch {
-    return null;
+  const result = spawnSync("/bin/bash", [helperPath, command], {
+    encoding: "utf8",
+    env: vaultProbeEnvironment(),
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 750,
+  });
+  if (result.error !== undefined || result.signal !== null || result.status === null || result.stderr.length > 0) return null;
+  const output = result.stdout.endsWith("\n") ? result.stdout.slice(0, -1) : result.stdout;
+  if (output.length === 0 || output.includes("\n") || output.includes("\r") || output.trim() !== output) return null;
+  return isAllowed(output) && isExpectedVaultExit(command, output, result.status) ? output : null;
+}
+
+function vaultProbeEnvironment(): NodeJS.ProcessEnv {
+  const environment: NodeJS.ProcessEnv = { PATH: "/usr/bin:/bin:/usr/sbin:/sbin" };
+  for (const name of ["HOME", "XDG_CONFIG_HOME", "XDG_RUNTIME_DIR", "AIDEVOPS_VAULT_DIR", "AIDEVOPS_VAULT_RUNTIME_DIR", "AIDEVOPS_VAULT_PYTHON"]) {
+    const value = process.env[name];
+    if (value !== undefined) environment[name] = value;
   }
+  return environment;
+}
+
+function coherentVaultState(status: GuiVaultStatus | null, setupState: GuiVaultSetupState | null): boolean {
+  if (status === null || setupState === null) return false;
+  return COHERENT_VAULT_STATES[status].has(setupState);
+}
+
+function isExpectedVaultExit(command: VaultCommand, value: VaultProbeValue, exitCode: number): boolean {
+  return EXPECTED_VAULT_EXIT_CODES[command][value] === exitCode;
 }
 
 function isGuiVaultStatus(value: string): value is GuiVaultStatus {
@@ -88,7 +131,7 @@ function vaultHelperStatus(
   if (!helperExists) {
     return "missing";
   }
-  return status === null && setupState === null ? "error" : "available";
+  return status === null || setupState === null ? "error" : "available";
 }
 
 function fallbackSetupState(status: GuiVaultStatus): GuiVaultSetupState {

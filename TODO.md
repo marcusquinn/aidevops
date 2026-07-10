@@ -109,6 +109,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 <!--TOON:ready[0]{id,desc,owner,tags,est,logged}:
 -->
 
+- [x] t18070 Design Secrets interface and repair Vault unlock readiness #bug #enhancement #security #interactive #no-auto-dispatch ~6h tier:thinking ref:GH#26912 started:2026-07-10T00:00:00Z logged:2026-07-10 -> [todo/tasks/t18070-brief.md] pr:#26938 completed:2026-07-10
+
 - [x] t18066 fix(full-loop): resolve commit-and-pr rebase/counter base from the remote default branch instead of hardcoded `origin/main`. Add a default-branch resolver in `.agents/scripts/full-loop-helper-commit.sh`, use `origin/${base_branch}` for ahead-count, fetch, rebase, operator messages, and `.task-counter` reset, fail actionably when the base cannot be resolved, and cover an `origin/develop` regression path. #bug #framework #full-loop #auto-dispatch ~1h tier:standard ref:GH#26626 logged:2026-07-05 -> [todo/tasks/t18066-brief.md] pr:#26630 completed:2026-07-05
 
 - [x] t18060 fix(pulse): harden SIGPIPE-safe pulse emits and LLM retry state for issue 26333. Implement localized broken-pipe-safe stdout handling for pulse helpers that run under `set -euo pipefail`, separate LLM supervisor attempt/success state so failed daily sweeps do not suppress future attempts, and add focused regression tests for early-closing consumers plus failed-run retry semantics. #bug #reliability #auto-dispatch ~4h tier:thinking ref:GH#26333 logged:2026-07-02 -> [todo/tasks/t18060-brief.md] pr:#26359 completed:2026-07-02
@@ -492,6 +494,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [ ] t18075 Optimise Target B lint cache and traversal only when contention is measured #mission:m-20260710-11431d #performance #private-target #conditional #interactive ~30m tier:thinking blocked-by:t18073 ref:GH#26924 logged:2026-07-10 -> [todo/tasks/t18075-brief.md]
 - [ ] t18076 Consolidate duplicated framework CI lint work without reducing security coverage #mission:m-20260710-11431d #performance #ci #security #interactive ~30m tier:standard blocked-by:t18072 ref:GH#26920 logged:2026-07-10 -> [todo/tasks/t18076-brief.md]
 - [ ] t18077 Publish linter resource evidence, rollback guidance, and staged rollout results #mission:m-20260710-11431d #documentation #performance #interactive ~20m tier:standard blocked-by:t18072,t18073,t18074 ref:GH#26921 logged:2026-07-10 -> [todo/tasks/t18077-brief.md]
+- [x] t18080 Guarantee safety-stop recovery without objective loss #documentation #framework #safety #interactive ~45m tier:standard assignee:marcusquinn started:2026-07-10T14:57:22Z ref:GH#26934 logged:2026-07-10 -> [todo/tasks/t18080-brief.md] pr:#26935 completed:2026-07-10
 
 - [x] t2450 fix(pulse): gate labelless-backfill on `authorAssociation` to prevent external-contributor dispatch — `reconcile_labelless_aidevops_issues` in `pulse-issue-reconcile.sh` (t2112) blesses any labelless `tNNN:`/`GH#NNN:` open issue with `origin:worker + tier:standard` based on title shape alone, without checking `authorAssociation`. External contributors who follow the documented public title convention (AGENTS.md) trip the backfill and their issues become dispatchable. The `origin-worker-protection` handler in `maintainer-gate.yml:720-793` strips `origin:worker` when the label event actor is not the owner or `github-actions[bot]`, but does NOT strip `tier:*` or apply `needs-maintainer-review` — the combination remains dispatchable on the next pulse cycle from the owner runner. Reference: #20180 (external CONTRIBUTOR `johnwaldo` issue, backfilled by alex-solovyev's runner, dispatched by marcusquinn's runner; worker PR #20184 closed CONFLICTING). Fix: (1) extend `reconcile_labelless_aidevops_issues` to fetch `authorAssociation` in the `gh issue list` jq filter and branch — `OWNER|MEMBER|COLLABORATOR` keep current behaviour; `CONTRIBUTOR|NONE|FIRST_TIME_CONTRIBUTOR|FIRST_TIMER|MANNEQUIN` get `needs-maintainer-review` + body tags ONLY (no `origin:*`, no `tier:*`) + a different mentorship comment with sentinel `<!-- aidevops:labelless-backfill-external -->`. (2) extend `origin-worker-protection` in `maintainer-gate.yml` to also apply NMR and strip `tier:*` when the non-allowlisted actor labels an issue whose author is external. (3) extend `test-pulse-labelless-reconcile.sh` with fixtures for all three author-association classes (OWNER, CONTRIBUTOR, NONE) asserting correct label application and sentinel differentiation. #bug #security #framework #interactive ~2h tier:standard ref:GH#20192 assignee:marcusquinn started:2026-04-20T22:45:04Z logged:2026-04-20 -> [todo/tasks/t2450-brief.md] pr:#20200 completed:2026-04-21
 
@@ -1113,6 +1116,8 @@ t193,setup.sh fails in non-interactive supervisor deploy step,,bugfix|setup,1h,4
 - [x] t18069 Fix GUI surface row stretching #bug #no-auto-dispatch ref:GH#26823 verified:2026-07-07 completed:2026-07-07
 
 - [ ] t18078 Route OpenAI workers through GPT-5.6 tiers #type:enhancement ref:GH#26913
+
+- [x] t18081 Prevent profile contributions corruption on GitHub API failures #bug #framework ref:GH#26937 pr:#26944 completed:2026-07-10
 
 ## In Progress
 
@@ -4450,12 +4455,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t8177 feat: implement scoped task surface navigation and filters #bug #ui ref:GH#8258 pr:#8484 completed:2026-07-07
 
-- [ ] t18070 Design Secrets interface and repair Vault unlock readiness #bug #enhancement #security ref:GH#26912
 
 - [ ] t18078 Route OpenAI workers through GPT-5.6 tiers #bug #type:enhancement ref:GH#26913
 
 - [ ] t18079 Add safe macOS activity cleaner command and subagent #enhancement ref:GH#26917
-
-- [ ] t18080 Guarantee safety-stop recovery without objective loss #documentation #framework #safety ref:GH#26934
-
-- [ ] t18081 Prevent profile contributions corruption on GitHub API failures #bug #framework ref:GH#26937

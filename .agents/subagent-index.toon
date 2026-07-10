@@ -79,7 +79,7 @@ tools/architecture/feature-slicing-skill/,tools/architecture/feature-slicing-ski
 tools/,tools subagents,auto-reason
 tools/autoagent/,tools/autoagent subagents,autoagent
 tools/autoagent/autoagent/,tools/autoagent/autoagent subagents,evaluation|hypothesis-types|safety|signal-mining
-tools/automation/,tools/automation subagents,cron-agent|mac|macos-automator|objective-runner
+tools/automation/,tools/automation subagents,cron-agent|mac|macos-activity-cleaner|macos-automator|objective-runner
 tools/autoresearch/,tools/autoresearch subagents,autoresearch
 tools/autoresearch/autoresearch/,tools/autoresearch/autoresearch subagents,agent-optimization|completion|logging|loop
 tools/browser/,tools/browser subagents,agent-browser|anti-detect-browser|auto-browse-subagents|auto-browse|browser-automation|browser-benchmark-scripts-01-playwright|browser-benchmark-scripts-02-dev-browser|browser-benchmark-scripts-03-agent-browser|browser-benchmark-scripts-04-crawl4ai|browser-benchmark-scripts-05-stagehand|browser-benchmark-scripts-06-visual-verification|browser-benchmark-scripts|browser-benchmark|browser-profiles|browser-qa|browser-use|chrome-devtools|chrome-webstore-release|chromium-debug-use|crawl4ai-integration|crawl4ai-resources|crawl4ai-usage|crawl4ai|curl-copy|dev-browser|extension-dev
@@ -389,6 +389,7 @@ simplex-helper.sh,SimpleX Chat CLI helper (install init bot-start bot-stop send 
 skills-helper.sh,Skill discovery and exploration CLI (search browse describe info list categories recommend)
 prompt-guard-helper.sh,Prompt injection defense - scan content for injection patterns with YAML pattern loading and policy enforcement (check scan-stdin scan-file patterns test)
 -->
+
 
 <!--TOON:agent_source_capabilities[0]{source,pack,version,domains,triggers,agents,subagents,commands,helpers,secrets,artifacts,sensitivity,upstream_candidate,status}:
 -->

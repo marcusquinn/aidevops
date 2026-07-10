@@ -7,6 +7,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)" || exit 1
 TEST_ROOT="$(mktemp -d 2>/dev/null || mktemp -d -t aidevops-vault-security-suite)"
+VAULT_TEST_PYTHON="${AIDEVOPS_VAULT_PYTHON:-${HOME}/.aidevops/.agent-workspace/python-env/vault/bin/python3}"
+[[ -x "$VAULT_TEST_PYTHON" ]] || VAULT_TEST_PYTHON="$(command -v python3)"
 PASS=0
 FAIL=0
 
@@ -30,15 +32,43 @@ fail() {
 	return 0
 }
 
+prepare_vault_test_python() {
+	local runtime_check="${REPO_ROOT}/.agents/scripts/vault-runtime-check.py"
+	local requirements="${REPO_ROOT}/.agents/configs/vault-requirements.txt"
+	local bootstrap_python=""
+	local test_env="${TEST_ROOT}/python-env"
+
+	if [[ -x "$VAULT_TEST_PYTHON" ]] && "$VAULT_TEST_PYTHON" "$runtime_check" >/dev/null 2>&1; then
+		return 0
+	fi
+	bootstrap_python="$(command -v python3)"
+	if ! (umask 077 && "$bootstrap_python" -m venv --copies "$test_env"); then
+		printf 'Could not create the isolated Vault test runtime\n' >&2
+		return 1
+	fi
+	if ! "$test_env/bin/python3" -m pip install --disable-pip-version-check --no-input --only-binary=:all: -r "$requirements"; then
+		printf 'Could not install the exact-pinned Vault test runtime\n' >&2
+		return 1
+	fi
+	if ! "$test_env/bin/python3" "$runtime_check"; then
+		printf 'Vault test runtime verification failed\n' >&2
+		return 1
+	fi
+	VAULT_TEST_PYTHON="$test_env/bin/python3"
+	return 0
+}
+
 run_child_test() {
 	local name="$1"
 	local path="$2"
-	if bash "$path"; then
+	local test_path="$PATH"
+	[[ -x "$VAULT_TEST_PYTHON" ]] && test_path="${VAULT_TEST_PYTHON%/*}:${PATH}"
+	if PATH="$test_path" AIDEVOPS_VAULT_TEST_MODE=1 AIDEVOPS_VAULT_PYTHON="$VAULT_TEST_PYTHON" bash "$path"; then
 		pass "$name"
 	elif [[ "$name" == "vault remote lock, replay, stale-grant tests" ]]; then
 		printf 'Retrying %s after transient remote-control timing failure...\n' "$name" >&2
 		sleep 3
-		if bash "$path"; then
+		if PATH="$test_path" AIDEVOPS_VAULT_TEST_MODE=1 AIDEVOPS_VAULT_PYTHON="$VAULT_TEST_PYTHON" bash "$path"; then
 			pass "$name"
 		else
 			fail "$name"
@@ -63,11 +93,14 @@ test_no_public_plaintext_fixtures() {
 	return 0
 }
 
+prepare_vault_test_python || exit 1
+
 run_child_test "vault data migration locked-state tests" "$SCRIPT_DIR/test-vault-data-migration.sh"
 run_child_test "vault sync replay, tamper, revoked-device tests" "$SCRIPT_DIR/test-vault-sync-helper.sh"
 run_child_test "vault remote lock, replay, stale-grant tests" "$SCRIPT_DIR/test-vault-remote-control-helper.sh"
 run_child_test "vault message ciphertext and revoked-device tests" "$SCRIPT_DIR/test-vault-message-helper.sh"
 run_child_test "vault audit tamper and receipt tests" "$SCRIPT_DIR/test-vault-audit-helper.sh"
+run_child_test "vault dependency-free metadata readiness tests" "$SCRIPT_DIR/test-vault-runtime-readiness.sh"
 run_child_test "vault helper local broker and wrong-passphrase tests" "$SCRIPT_DIR/test-vault-helper.sh"
 test_no_public_plaintext_fixtures
 

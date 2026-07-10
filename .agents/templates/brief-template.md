@@ -380,6 +380,24 @@ from `_parse_phases_section` — then add new logic to the slimmed parent functi
 - [ ] WIP commit created before broad gates: `wip: {short description}`
 - [ ] Broad verification then run: `{command}`
 
+### Safety-Stop Recovery
+
+<!-- REQUIRED when resource, timeout, cost, rate-limit, security, or process
+     fuses can interrupt the task. A fuse pauses only the unsafe route; it never
+     satisfies acceptance criteria. Keep the task open and use the recovery
+     ladder in reference/safety-stop-recovery.md. Delete only when no fuse can
+     interrupt this task. -->
+
+- **Original objective:** {verbatim outcome to preserve}
+- **Preserved user directions:** {constraints and requested value}
+- **Trigger and evidence:** {or `not triggered`}
+- **Completed and verified:** {durable evidence}
+- **Remaining acceptance criteria:** {all unfinished criteria}
+- **Unsafe route not to repeat:** {exact route or `none`}
+- **Next safe route:** {narrower/decomposed/alternate-resource continuation}
+- **Resume condition:** {specific condition}
+- **Owner and status:** {owner}; {recovering | blocked | not-triggered}
+
 ### Files Scope
 
 <!-- Declares the file paths this task is allowed to modify.

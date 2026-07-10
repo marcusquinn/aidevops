@@ -494,12 +494,7 @@ export const statusFixture: GuiStatusData = {
       doc_ref: "docs/gui/helper-api-contract.md:101",
     },
   ],
-  secrets: [
-    {
-      name: "GITHUB_TOKEN",
-      status: "unchecked",
-    },
-  ],
+  secrets: [],
   placeholders: [
     "Settings, repos, routines, OpenCode sessions, and capabilities will be added as read-only adapters.",
   ],

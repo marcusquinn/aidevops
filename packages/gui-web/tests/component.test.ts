@@ -2,21 +2,24 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import type { GuiConversationThread, GuiManagedAppSummary, GuiStatusData } from "../../gui-shared/src";
 import { appearanceStorageKeys, clampSidebarWidth, loadingBrandGlyph, loadingSkeletonPanelLabels, readStoredAppearancePreferences, shouldPromptVaultSetup } from "../src/App";
-import { hueFromInputValue } from "../src/AppNavigation";
 import { wrappedOptionIndex } from "../src/AppearanceControls";
+import { hueFromInputValue } from "../src/AppNavigation";
 import { Workspace } from "../src/AppWorkspace";
+import { chatPrimitiveStackDecision, DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, fontOptions, navGroups, type SurfaceNavItem, surfaceRecordCounts } from "../src/app-model";
 import { commandPaletteMatches, commandPaletteShortcutEntries, commandPaletteShortcutQuery, orderCommandItemsByRecency, rememberCommandPaletteItemId } from "../src/CommandPalette";
 import { CommsConversationSurface } from "../src/CommsConversationSurface";
+import { renderDashboardHtml } from "../src/dashboard";
 import { AppsSurface, nextRecommendedFilterValue } from "../src/InventorySurfaces";
 import { PulseWorkersSurface } from "../src/PulseWorkersSurface";
 import { recommendedApps } from "../src/RecommendedAppsSurface";
-import { AiProvidersSurface } from "../src/StatusSurfaces";
-import { DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, chatPrimitiveStackDecision, fontOptions, navGroups, surfaceRecordCounts, type SurfaceNavItem } from "../src/app-model";
-import { renderDashboardHtml } from "../src/dashboard";
+import { AiProvidersSurface, VaultSurface } from "../src/StatusSurfaces";
 import { fetchStatus, mockedStatus } from "../src/status-client";
+import { dialogFocusTargetIndex } from "../src/useVaultAccessDialog";
+import { terminalActionForIntent, VaultAccessModal } from "../src/VaultAccessModal";
+import { vaultDialogIntentForStatus } from "../src/VaultBadges";
 import { workspaceTourRegistry } from "../src/WorkspaceTour";
-import type { GuiConversationThread, GuiManagedAppSummary, GuiStatusData } from "../../gui-shared/src";
 
 const guiWebRoot = `${import.meta.dir}/..`;
 
@@ -92,7 +95,7 @@ describe("dashboard shell", () => {
   test("derives sidebar record counts from status records", () => {
     const counts = surfaceRecordCounts(mockedStatus().data);
 
-    expect(counts.security).toBe(1);
+    expect(counts.security).toBe(0);
     expect(counts.localSetup).toBe(2);
     expect(counts.agents).toBe(3);
     expect(counts.vault).toBe(9);
@@ -102,10 +105,60 @@ describe("dashboard shell", () => {
   });
 
   test("prompts for vault setup only once per loaded session", () => {
-    expect(shouldPromptVaultSetup(false, true, false)).toBe(true);
-    expect(shouldPromptVaultSetup(false, true, true)).toBe(false);
-    expect(shouldPromptVaultSetup(true, true, false)).toBe(false);
-    expect(shouldPromptVaultSetup(false, false, false)).toBe(false);
+    const setupVault = { ...mockedStatus().data.vault, helper_status: "available" as const };
+    expect(shouldPromptVaultSetup(false, setupVault, false)).toBe(true);
+    expect(shouldPromptVaultSetup(false, setupVault, true)).toBe(false);
+    expect(shouldPromptVaultSetup(true, setupVault, false)).toBe(false);
+    expect(shouldPromptVaultSetup(false, { ...setupVault, status: "unknown", readiness: { ...setupVault.readiness, setup_required: false } }, false)).toBe(false);
+  });
+
+  test("maps Vault states to explicit setup, unlock, recovery, and unavailable intents", () => {
+    const fixture = mockedStatus().data.vault;
+    expect(vaultDialogIntentForStatus({ ...fixture, helper_status: "available" })).toBe("setup");
+    expect(vaultDialogIntentForStatus({ ...fixture, helper_status: "available", initialized: true, status: "locked", setup_state: "migration-ready", readiness: { ...fixture.readiness, setup_required: false } })).toBe("unlock");
+    expect(vaultDialogIntentForStatus({ ...fixture, helper_status: "error", initialized: true, status: "corrupted", setup_state: "unknown", readiness: { ...fixture.readiness, setup_required: false } })).toBe("recover");
+    expect(vaultDialogIntentForStatus({ ...fixture, helper_status: "error", status: "unknown", setup_state: "unknown", readiness: { ...fixture.readiness, setup_required: false } })).toBe("unavailable");
+    expect(vaultDialogIntentForStatus({ ...fixture, helper_status: "available", status: "unlocked", initialized: true, locked: false, unlocked: true })).toBe("lock");
+  });
+
+  test("keeps passphrases out of the Vault access dialog", () => {
+    const vault = { ...mockedStatus().data.vault, helper_status: "available" as const, initialized: true, status: "locked" as const, setup_state: "migration-ready" as const, readiness: { ...mockedStatus().data.vault.readiness, setup_required: false } };
+    const html = renderToStaticMarkup(createElement(VaultAccessModal, { intent: "unlock", onClose: noop, onRefresh: noop, onTerminalLaunch: noop, vault }));
+
+    expect(html).toContain("Unlock existing Vault");
+    expect(html).toContain("aidevops vault unlock");
+    expect(html).toContain('aria-label="Current Vault metadata"');
+    expect(html).toContain('role="group"');
+    expect(html).not.toContain("type=\"password\"");
+    expect(html).not.toContain("New passphrase");
+    expect(html).not.toContain("current-password");
+  });
+
+  test("preserves the secure terminal handoff and dialog focus lifecycle", () => {
+    const dialogControllerSource = readFileSync(`${guiWebRoot}/src/useVaultAccessDialog.ts`, "utf8");
+    const statusControllerSource = readFileSync(`${guiWebRoot}/src/useGuiStatus.ts`, "utf8");
+
+    expect(terminalActionForIntent("setup")).toBe("init");
+    expect(terminalActionForIntent("unlock")).toBe("unlock");
+    expect(terminalActionForIntent("lock")).toBe("lock");
+    expect(terminalActionForIntent("recover")).toBe("lost-passphrase");
+    expect(terminalActionForIntent("unavailable")).toBeNull();
+    expect(dialogControllerSource).toContain('aidevops:vault-command-result');
+    expect(dialogControllerSource).toContain('result === "opened"');
+    expect(dialogControllerSource).toContain("navigator.clipboard.writeText");
+    expect(dialogControllerSource).toContain("}, 3000);");
+    expect(dialogControllerSource).toContain('button:not([disabled])');
+    expect(dialogControllerSource).toContain("previousFocus?.focus()");
+    expect(statusControllerSource).toContain('window.addEventListener("focus", refreshAfterTerminal)');
+    expect(statusControllerSource).toContain("openIntent !== null && openIntent !== currentVaultIntent ? null : openIntent");
+  });
+
+  test("keeps Tab focus inside the Vault dialog when focus is outside or disabled", () => {
+    expect(dialogFocusTargetIndex(-1, 2, false)).toBe(0);
+    expect(dialogFocusTargetIndex(-1, 2, true)).toBe(1);
+    expect(dialogFocusTargetIndex(0, 2, true)).toBe(1);
+    expect(dialogFocusTargetIndex(1, 2, false)).toBe(0);
+    expect(dialogFocusTargetIndex(0, 2, false)).toBeNull();
   });
 
   test("renders AI session controls with audited-route placeholders", () => {
@@ -315,13 +368,25 @@ describe("dashboard shell", () => {
 
     expect(status.data.local_repos.repos).toEqual([]);
     expect(status.data.oauth_pool.providers.map((provider) => provider.provider)).toEqual(["anthropic", "openai", "cursor", "google", "zai"]);
-    expect(status.data.vault.status).toBe("uninitialized");
+    expect(status.data.vault.status).toBe("unknown");
+    expect(status.data.vault.readiness.setup_required).toBe(false);
+    expect(status.data.secrets).toEqual([]);
     expect(status.data.vault.collections.flatMap((collection) => collection.surface_ids)).toContain("agents");
     expect(status.data.pulse_workers.value_policy).toBe("metadata_only_no_prompt_payloads_no_secrets");
     expect(status.data.pulse_workers.events.map((event) => event.issue_origin)).toContain("third_party");
     expect(status.data.setup_targets[0].path_ref).toBe("~/.aidevops/agents/VERSION");
     expect(status.data.ai_apps.map((app) => app.name)).toContain("OpenCode");
     expect(status.data.machine.initials).toBe("LM");
+  });
+
+  test("drops stale secret references unless the normalized Vault is unlocked", async () => {
+    const staleData = { ...mockedStatus().data, secrets: [{ name: "GITHUB_TOKEN", status: "configured" as const }] };
+    const staleFetch = (async () => new Response(JSON.stringify({ ...mockedStatus(), data: staleData }))) as unknown as typeof fetch;
+
+    const status = await fetchStatus(staleFetch);
+
+    expect(status.data.vault.locked).toBe(true);
+    expect(status.data.secrets).toEqual([]);
   });
 
   test("renders AI provider recommendations, OpenCode prefixes, and multi-account copy", () => {
@@ -362,6 +427,48 @@ describe("dashboard shell", () => {
     expect(html).toContain("Recommended OAuth pools");
     expect(html).toContain("Z.ai");
     expect(html).not.toContain("AI Providers is locked");
+  });
+
+  test("renders a metadata-only Secrets workspace across locked and unlocked states", () => {
+    const base = mockedStatus().data;
+    const lockedStatus: GuiStatusData = {
+      ...base,
+      vault: { ...base.vault, helper_status: "available", initialized: true, status: "locked", setup_state: "migration-ready", readiness: { ...base.vault.readiness, setup_required: false }, collections: base.vault.collections.map((collection) => ({ ...collection, state: collection.state === "planned" ? "planned" : "locked" })) },
+    };
+    const unlockedStatus: GuiStatusData = {
+      ...lockedStatus,
+      secrets: [{ name: "GITHUB_TOKEN", status: "configured" }],
+      vault: { ...lockedStatus.vault, status: "unlocked", locked: false, unlocked: true, collections: lockedStatus.vault.collections.map((collection) => ({ ...collection, state: collection.state === "planned" ? "planned" : "unlocked" })) },
+    };
+
+    const lockedHtml = renderWorkspaceSurface(securityItem, "security", lockedStatus);
+    const unlockedHtml = renderWorkspaceSurface(securityItem, "security", unlockedStatus);
+
+    expect(lockedHtml).toContain("What unlock enables");
+    expect(lockedHtml).toContain("Unlock Vault");
+    expect(lockedHtml).not.toContain("GITHUB_TOKEN");
+    expect(unlockedHtml).toContain("Reference inventory");
+    expect(unlockedHtml).toContain("GITHUB_TOKEN");
+    expect(unlockedHtml).toContain("Never displayed");
+    expect(lockedHtml).toContain('aria-label="Secrets summary"');
+    expect(lockedHtml).toContain('role="group"');
+    expect(unlockedHtml).not.toContain("type=\"password\"");
+  });
+
+  test("keeps unavailable and corrupted Vault surfaces free of setup and unlock commands", () => {
+    const base = mockedStatus().data;
+    const unavailableStatus: GuiStatusData = { ...base, vault: { ...base.vault, helper_status: "error", status: "unknown", setup_state: "unknown", readiness: { ...base.vault.readiness, setup_required: false } } };
+    const corruptedStatus: GuiStatusData = { ...base, vault: { ...base.vault, helper_status: "available", initialized: true, status: "corrupted", setup_state: "unknown", readiness: { ...base.vault.readiness, setup_required: false } } };
+
+    const unavailableHtml = renderToStaticMarkup(createElement(VaultSurface, { onVaultRequest: () => undefined, status: unavailableStatus }));
+    const corruptedHtml = renderToStaticMarkup(createElement(VaultSurface, { onVaultRequest: () => undefined, status: corruptedStatus }));
+
+    expect(unavailableHtml).toContain("Setup status unavailable");
+    expect(unavailableHtml).not.toContain("aidevops vault init");
+    expect(unavailableHtml).not.toContain("aidevops vault unlock");
+    expect(corruptedHtml).toContain("Recovery required");
+    expect(corruptedHtml).not.toContain("aidevops vault init");
+    expect(corruptedHtml).not.toContain("aidevops vault unlock");
   });
 
   test("renders updated Apps copy, casing, filter order, and compact managed metadata", () => {
@@ -491,6 +598,8 @@ describe("dashboard shell", () => {
     expect(css).not.toContain("border-color: var(--accent)");
     expect(css).not.toContain("border-color: #ef4444");
     expect(css).not.toContain("border-color: color-mix(in srgb, var(--accent) 52%, transparent)");
+    expect(css).toMatch(/\.vault-modal\s*\{[^}]*max-height:\s*calc\(100vh - 32px\);/s);
+    expect(css).toMatch(/@supports \(height:\s*100dvh\)\s*\{\s*\.vault-modal\s*\{[^}]*max-height:\s*calc\(100dvh - 32px\);/s);
   });
 
   test("keeps workspace surface grids content-sized instead of vertically stretched", () => {
@@ -517,9 +626,13 @@ describe("dashboard shell", () => {
 
   test("renders the hydrated app immediately with status refresh in progress", () => {
     const appSource = readFileSync(`${guiWebRoot}/src/App.tsx`, "utf8");
+    const navigationSource = readFileSync(`${guiWebRoot}/src/useAppNavigation.ts`, "utf8");
 
     expect(appSource).not.toContain("if (statusLoading)");
     expect(appSource).toContain("aria-busy={statusLoading}");
+    expect(navigationSource).toContain('matchMedia("(max-width: 980px)")');
+    expect(navigationSource).toContain('scrollIntoView({ block: "start" })');
+    expect(navigationSource).toContain("pendingWorkspaceSurface.current !== activeSurface");
   });
 
   test("wires desktop screenshot capture controls to native save notifications", () => {
@@ -548,6 +661,28 @@ describe("dashboard shell", () => {
     expect(desktopInstaller).toContain("homeDirectoryForCurrentUser.appendingPathComponent(\"Screenshots\"");
     expect(desktopInstaller).toContain("aidevops-app-screenshot-\\(screenshotTimestamp())-\\(sanitizeFilenameComponent(nameComponent)).png");
     expect(desktopInstaller).toContain("NSPasteboard.general.setString(fileURL.path");
+  });
+
+  test("limits native Vault terminal handoff to allowlisted action identifiers", () => {
+    const bridgeSource = readFileSync(`${guiWebRoot}/src/vault-command-bridge.ts`, "utf8");
+    const desktopInstaller = readFileSync(`${guiWebRoot}/../gui-desktop/scripts/install-macos-app.sh`, "utf8");
+
+    expect(bridgeSource).toContain('postMessage(action)');
+    expect(bridgeSource).not.toContain("postMessage(vaultCommandText");
+    expect(desktopInstaller).toContain('case "vaultCommand"');
+    expect(desktopInstaller).toContain("#aidevops:trust-boundary");
+    expect(desktopInstaller).toContain("isTrustedVaultMessage(message)");
+    expect(desktopInstaller).toContain("message.frameInfo.isMainFrame");
+    expect(desktopInstaller).toContain('origin.protocol == "http"');
+    expect(desktopInstaller).toContain('origin.host == "127.0.0.1"');
+    expect(desktopInstaller).toContain("guard let script = NSAppleScript(source: source)");
+    expect(desktopInstaller).toContain("appleScriptQuote(command)");
+    expect(desktopInstaller).toContain('notifyVaultCommandResult("failed")');
+    expect(desktopInstaller).toContain('notifyVaultCommandResult("opened")');
+    expect(desktopInstaller).toContain('init|unlock|lock|status|lost-passphrase)');
+    expect(desktopInstaller).toContain('exec /bin/bash "\\' + "$" + '{REPO_ROOT}/aidevops.sh" vault');
+    expect(desktopInstaller).toContain('default: return');
+    expect(desktopInstaller).not.toContain('command = "aidevops vault');
   });
 
   test("ships critical loading styles before React hydrates", () => {
@@ -653,6 +788,13 @@ const aiProvidersItem: SurfaceNavItem = {
   label: "AI Providers",
 };
 
+const securityItem: SurfaceNavItem = {
+  description: "Secret references and trust boundary",
+  icon: "shield",
+  id: "security",
+  label: "Secrets",
+};
+
 const channelsItem: SurfaceNavItem = {
   description: "Team channels",
   icon: "hash",
@@ -690,7 +832,7 @@ const managedAppFixture: GuiManagedAppSummary = {
   status: "found",
 };
 
-function renderWorkspaceSurface(activeItem: SurfaceNavItem, activeSurface: SurfaceNavItem["id"]): string {
+function renderWorkspaceSurface(activeItem: SurfaceNavItem, activeSurface: SurfaceNavItem["id"], status: GuiStatusData = mockedStatus().data): string {
   return renderToStaticMarkup(createElement(Workspace, {
     activeItem,
     activeSectionLabel: "Management",
@@ -709,7 +851,7 @@ function renderWorkspaceSurface(activeItem: SurfaceNavItem, activeSurface: Surfa
     setSelectedSessionId: noop,
     setShellMode: noop,
     shellMode: "devices",
-    status: mockedStatus().data,
+    status,
   }));
 }
 

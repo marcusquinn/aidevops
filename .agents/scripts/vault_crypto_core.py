@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import base64
+import binascii
 import getpass
 import json
 import os
@@ -15,15 +16,12 @@ import time
 from pathlib import Path
 from typing import Any
 
-from cryptography.exceptions import InvalidTag
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
-
 SCHEMA_VERSION = 1
 KDF_NAME = "scrypt"
 AEAD_NAME = "AES-256-GCM"
 KEY_LEN = 32
 NONCE_LEN = 12
+ROOT_KEY_ENVELOPE_CIPHERTEXT_LEN = 74
 DEFAULT_SCRYPT = {"n": 2**15, "r": 8, "p": 1, "length": KEY_LEN}
 STATE_UNINITIALIZED = "uninitialized"
 STATE_LOCKED = "locked"
@@ -35,6 +33,14 @@ SETUP_STATE_TEST_VERIFIED = "test-verified"
 SETUP_STATE_MIGRATION_READY = "migration-ready"
 SETUP_TEST_ENTRY_NAME = "__aidevops_setup_test__"
 SETUP_TEST_VALUE = "aidevops vault setup restart verification test"
+ALLOWED_SETUP_STATES = frozenset(
+    {
+        SETUP_STATE_TEST_CREATED,
+        SETUP_STATE_RESTART_REQUIRED,
+        SETUP_STATE_TEST_VERIFIED,
+        SETUP_STATE_MIGRATION_READY,
+    }
+)
 
 
 class VaultError(Exception):
@@ -46,13 +52,28 @@ class VaultError(Exception):
         self.exit_code = exit_code
 
 
+def _crypto_primitives() -> tuple[Any, Any, Any]:
+    """Load crypto only for operations that need it; metadata status stays dependency-free."""
+    try:
+        from cryptography.exceptions import InvalidTag
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+    except ModuleNotFoundError as exc:
+        raise VaultError(
+            "VAULT_DEPENDENCY_MISSING",
+            "Vault crypto runtime is unavailable; run aidevops setup",
+            10,
+        ) from exc
+    return InvalidTag, AESGCM, Scrypt
+
+
 def b64e(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
 
 
 def b64d(data: str) -> bytes:
     pad = "=" * (-len(data) % 4)
-    return base64.urlsafe_b64decode((data + pad).encode("ascii"))
+    return base64.b64decode((data + pad).encode("ascii"), altchars=b"-_", validate=True)
 
 
 def default_vault_dir() -> Path:
@@ -135,7 +156,8 @@ def append_audit(vault_dir: Path, event: str, ok: bool, detail: str = "") -> Non
 
 
 def derive_kek(passphrase: str, salt: bytes, params: dict[str, Any]) -> bytes:
-    kdf = Scrypt(
+    _invalid_tag, _aesgcm, scrypt = _crypto_primitives()
+    kdf = scrypt(
         salt=salt,
         length=int(params.get("length", KEY_LEN)),
         n=int(params.get("n", DEFAULT_SCRYPT["n"])),
@@ -146,19 +168,23 @@ def derive_kek(passphrase: str, salt: bytes, params: dict[str, Any]) -> bytes:
 
 
 def encrypt_json(key: bytes, payload: dict[str, Any], aad: bytes) -> dict[str, str]:
+    _invalid_tag, aesgcm, _scrypt = _crypto_primitives()
     nonce = secrets.token_bytes(NONCE_LEN)
     plaintext = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ciphertext = AESGCM(key).encrypt(nonce, plaintext, aad)
+    ciphertext = aesgcm(key).encrypt(nonce, plaintext, aad)
     return {"aead": AEAD_NAME, "nonce": b64e(nonce), "ciphertext": b64e(ciphertext)}
 
 
 def decrypt_json(key: bytes, envelope: dict[str, Any], aad: bytes) -> dict[str, Any]:
+    invalid_tag, aesgcm, _scrypt = _crypto_primitives()
     if envelope.get("aead") != AEAD_NAME:
         raise VaultError("VAULT_METADATA_CORRUPTED", "Unsupported AEAD in Vault envelope", 3)
     try:
-        plaintext = AESGCM(key).decrypt(b64d(str(envelope["nonce"])), b64d(str(envelope["ciphertext"])), aad)
+        plaintext = aesgcm(key).decrypt(b64d(str(envelope["nonce"])), b64d(str(envelope["ciphertext"])), aad)
         data = json.loads(plaintext.decode("utf-8"))
-    except (KeyError, ValueError, InvalidTag) as exc:
+    except (KeyError, ValueError) as exc:
+        raise VaultError("VAULT_METADATA_CORRUPTED", "Vault envelope is malformed", 3) from exc
+    except invalid_tag as exc:
         raise VaultError("VAULT_DECRYPT_FAILED", "Vault decrypt failed", 4) from exc
     if not isinstance(data, dict):
         raise VaultError("VAULT_METADATA_CORRUPTED", "Vault payload has invalid shape", 3)
@@ -190,13 +216,64 @@ def prompt_acknowledgement() -> None:
         raise VaultError("VAULT_ACK_REQUIRED", "Vault setup requires the no-recovery acknowledgement", 5)
 
 
+def _validate_setup_state(meta: dict[str, Any]) -> None:
+    state = meta.get("setup_state")
+    if not isinstance(state, str) or state not in ALLOWED_SETUP_STATES:
+        raise VaultError("VAULT_METADATA_CORRUPTED", "Vault setup state is invalid", 3)
+
+
+def _is_schema_integer(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _validate_kdf(meta: dict[str, Any]) -> dict[str, Any]:
+    kdf = meta.get("kdf")
+    if not isinstance(kdf, dict) or kdf.get("name") != KDF_NAME:
+        raise VaultError("VAULT_METADATA_CORRUPTED", "Unsupported Vault KDF", 3)
+    if not isinstance(kdf.get("salt"), str) or not isinstance(kdf.get("params"), dict):
+        raise VaultError("VAULT_METADATA_CORRUPTED", "Vault metadata is incomplete", 3)
+    params = kdf["params"]
+    if not all(_is_schema_integer(params.get(name)) for name in ("n", "r", "p", "length")):
+        raise VaultError("VAULT_METADATA_CORRUPTED", "Vault KDF parameters are invalid", 3)
+    if params != DEFAULT_SCRYPT:
+        raise VaultError("VAULT_METADATA_CORRUPTED", "Vault KDF parameters do not match schema policy", 3)
+    return kdf
+
+
+def _validate_root_key_envelope(meta: dict[str, Any]) -> dict[str, Any]:
+    wrapped = meta.get("wrapped_root_key")
+    if not isinstance(wrapped, dict) or wrapped.get("aead") != AEAD_NAME:
+        raise VaultError("VAULT_METADATA_CORRUPTED", "Vault root-key envelope is invalid", 3)
+    if not isinstance(wrapped.get("nonce"), str) or not isinstance(wrapped.get("ciphertext"), str):
+        raise VaultError("VAULT_METADATA_CORRUPTED", "Vault root-key envelope is incomplete", 3)
+    return wrapped
+
+
+def _decode_metadata_fields(kdf: dict[str, Any], wrapped: dict[str, Any]) -> tuple[bytes, bytes, bytes]:
+    try:
+        salt = b64d(str(kdf["salt"]))
+        nonce = b64d(str(wrapped["nonce"]))
+        ciphertext = b64d(str(wrapped["ciphertext"]))
+    except (binascii.Error, ValueError) as exc:
+        raise VaultError("VAULT_METADATA_CORRUPTED", "Vault metadata encoding is invalid", 3) from exc
+    return salt, nonce, ciphertext
+
+
+def _validate_metadata_field_lengths(salt: bytes, nonce: bytes, ciphertext: bytes) -> None:
+    field_lengths = (len(salt), len(nonce), len(ciphertext))
+    expected_lengths = (16, NONCE_LEN, ROOT_KEY_ENVELOPE_CIPHERTEXT_LEN)
+    if field_lengths != expected_lengths:
+        raise VaultError("VAULT_METADATA_CORRUPTED", "Vault metadata field lengths are invalid", 3)
+
+
 def validate_metadata(meta: dict[str, Any]) -> None:
     if meta.get("schema_version") != SCHEMA_VERSION:
         raise VaultError("VAULT_METADATA_CORRUPTED", "Unsupported Vault metadata schema", 3)
-    if meta.get("kdf", {}).get("name") != KDF_NAME:
-        raise VaultError("VAULT_METADATA_CORRUPTED", "Unsupported Vault KDF", 3)
-    if "salt" not in meta.get("kdf", {}) or "wrapped_root_key" not in meta:
-        raise VaultError("VAULT_METADATA_CORRUPTED", "Vault metadata is incomplete", 3)
+    _validate_setup_state(meta)
+    kdf = _validate_kdf(meta)
+    wrapped = _validate_root_key_envelope(meta)
+    decoded_fields = _decode_metadata_fields(kdf, wrapped)
+    _validate_metadata_field_lengths(*decoded_fields)
 
 
 def unwrap_root_key(meta: dict[str, Any], passphrase: str) -> bytes:
@@ -206,8 +283,12 @@ def unwrap_root_key(meta: dict[str, Any], passphrase: str) -> bytes:
     try:
         payload = decrypt_json(kek, dict(meta["wrapped_root_key"]), b"aidevops-vault-root-key")
         root = b64d(str(payload["root_key"]))
-    except (KeyError, VaultError) as exc:
-        raise VaultError("VAULT_WRONG_PASSPHRASE", "Vault unlock failed", 4) from exc
+    except KeyError as exc:
+        raise VaultError("VAULT_METADATA_CORRUPTED", "Vault root-key envelope is incomplete", 3) from exc
+    except VaultError as exc:
+        if exc.code == "VAULT_DECRYPT_FAILED":
+            raise VaultError("VAULT_WRONG_PASSPHRASE", "Vault unlock failed", 4) from exc
+        raise
     if len(root) != KEY_LEN:
         raise VaultError("VAULT_METADATA_CORRUPTED", "Vault root key has invalid length", 3)
     return root
@@ -228,14 +309,9 @@ def build_metadata(root_key: bytes, passphrase: str) -> dict[str, Any]:
 
 
 def setup_state(meta: dict[str, Any]) -> str:
-    state = str(meta.get("setup_state", SETUP_STATE_MIGRATION_READY))
-    allowed = {
-        SETUP_STATE_TEST_CREATED,
-        SETUP_STATE_RESTART_REQUIRED,
-        SETUP_STATE_TEST_VERIFIED,
-        SETUP_STATE_MIGRATION_READY,
-    }
-    if state not in allowed:
+    validate_metadata(meta)
+    state = str(meta["setup_state"])
+    if state not in ALLOWED_SETUP_STATES:
         raise VaultError("VAULT_METADATA_CORRUPTED", "Vault setup state is invalid", 3)
     return state
 

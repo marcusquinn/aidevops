@@ -1,15 +1,15 @@
-import type { GuiResponseEnvelope, GuiStatusData } from "@aidevops/gui-shared";
-import { type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactElement, useEffect, useRef, useState } from "react";
+import { type ReactElement, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, useEffect, useState } from "react";
 import { MachineRail, Sidebar } from "./AppNavigation";
 import { Workspace } from "./AppWorkspace";
-import type { ContrastPreference, ConversationMode, FontPreference, FontSizePreference, ShellMode, SurfaceId, ThemePreference } from "./app-model";
+import type { ContrastPreference, ConversationMode, FontPreference, FontSizePreference, ShellMode, ThemePreference } from "./app-model";
 import { DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, fileRootBySurface, findSurface, findSurfaceSectionLabel, fontFamilyForPreference, fontSizeForPreference, getSystemTheme, isContrastPreference, isFontPreference, isFontSizePreference } from "./app-model";
 import { DesktopStatusBar } from "./DesktopStatusBar";
-import { type NavigationHistory, nextHistoryIndex, useNavigationHistoryKeyboard } from "./navigation-history";
 import { ScreenshotCaptureNotificationHost } from "./ScreenshotCaptureNotification";
-import { fetchStatus, mockedStatus } from "./status-client";
-import type { VaultDialogIntent } from "./VaultBadges";
-import { VaultPassphraseModal } from "./VaultPassphraseModal";
+import { useAppNavigation } from "./useAppNavigation";
+import { useGuiStatus } from "./useGuiStatus";
+import { VaultAccessModal } from "./VaultAccessModal";
+
+export { shouldPromptVaultSetup } from "./useGuiStatus";
 
 interface WebKitBridgeWindow extends Window {
   webkit?: {
@@ -92,9 +92,6 @@ export function readStoredAppearancePreferences(storage: ReadableAppearanceStora
 
 export function App(): ReactElement {
   const [storedAppearancePreferences] = useState<StoredAppearancePreferences>(() => readStoredAppearancePreferences());
-  const [status, setStatus] = useState<GuiResponseEnvelope<GuiStatusData>>(mockedStatus());
-  const [statusLoading, setStatusLoading] = useState(true);
-  const [navigation, setNavigation] = useState<NavigationHistory>({ entries: ["overview"], index: 0 });
   const [themePreference, setThemePreference] = useState<ThemePreference>(storedAppearancePreferences.themePreference);
   const [accentHue, setAccentHue] = useState(storedAppearancePreferences.accentHue);
   const [contrastPreference, setContrastPreference] = useState<ContrastPreference>(storedAppearancePreferences.contrastPreference);
@@ -107,38 +104,13 @@ export function App(): ReactElement {
   const [conversationMode, setConversationMode] = useState<ConversationMode>("ai");
   const [selectedLocalRepoIndex, setSelectedLocalRepoIndex] = useState(0);
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>();
-  const [vaultDialogIntent, setVaultDialogIntent] = useState<VaultDialogIntent | null>(null);
-  const hasPromptedVaultSetup = useRef(false);
   const [systemTheme, setSystemTheme] = useState<"light" | "dark">("light");
+  const { activeSurface, canGoBack, canGoForward, goBack, goForward, setActiveSurface } = useAppNavigation();
+  const { markVaultTerminalLaunch, refreshStatus, setVaultDialogIntent, status, statusLoading, vaultDialogIntent } = useGuiStatus();
   const resolvedTheme = themePreference === "system" ? systemTheme : themePreference;
-  const activeSurface: SurfaceId = navigation.entries[navigation.index] ?? "overview";
   const activeItem = findSurface(activeSurface);
   const activeSectionLabel = findSurfaceSectionLabel(activeSurface);
-  const canGoBack = navigation.index > 0;
-  const canGoForward = navigation.index < navigation.entries.length - 1;
   const fileRoot = fileRootBySurface[activeSurface];
-  useNavigationHistoryKeyboard(setNavigation);
-
-  const setActiveSurface = (surface: SurfaceId) => {
-    setNavigation((current) => {
-      const currentSurface = current.entries[current.index] ?? "overview";
-      if (currentSurface === surface) {
-        return current;
-      }
-
-      const entries = current.entries.slice(0, current.index + 1);
-      entries.push(surface);
-      return { entries, index: entries.length - 1 };
-    });
-  };
-
-  const goBack = () => {
-    setNavigation((current) => ({ ...current, index: nextHistoryIndex(current, -1) }));
-  };
-
-  const goForward = () => {
-    setNavigation((current) => ({ ...current, index: nextHistoryIndex(current, 1) }));
-  };
 
   useEffect(() => {
     const isMacosDesktop = isMacosDesktopBrowser();
@@ -190,13 +162,6 @@ export function App(): ReactElement {
   }, [fontSizePreference]);
 
   useEffect(() => {
-    fetchStatus()
-      .then(setStatus)
-      .catch(() => setStatus(mockedStatus()))
-      .finally(() => setStatusLoading(false));
-  }, []);
-
-  useEffect(() => {
     persistAppearancePreference(appearanceStorageKeys.showNavCounts, String(showNavCounts));
   }, [showNavCounts]);
 
@@ -212,13 +177,6 @@ export function App(): ReactElement {
   useEffect(() => {
     setSelectedLocalRepoIndex((current) => Math.min(current, Math.max(0, status.data.local_repos.repos.length - 1)));
   }, [status.data.local_repos.repos.length]);
-
-  useEffect(() => {
-    if (shouldPromptVaultSetup(statusLoading, status.data.vault.readiness.setup_required, hasPromptedVaultSetup.current)) {
-      hasPromptedVaultSetup.current = true;
-      setVaultDialogIntent("setup");
-    }
-  }, [status.data.vault.readiness.setup_required, statusLoading]);
 
   return (
     <main className={machineRailVisible ? "app-shell" : "app-shell machine-rail-collapsed"} aria-busy={statusLoading}>
@@ -276,7 +234,7 @@ export function App(): ReactElement {
         status={status.data}
       />
       <DesktopStatusBar status={status.data} />
-      {vaultDialogIntent ? <VaultPassphraseModal intent={vaultDialogIntent} onClose={() => setVaultDialogIntent(null)} vault={status.data.vault} /> : null}
+      {vaultDialogIntent ? <VaultAccessModal intent={vaultDialogIntent} onClose={() => setVaultDialogIntent(null)} onRefresh={refreshStatus} onTerminalLaunch={markVaultTerminalLaunch} vault={status.data.vault} /> : null}
     </main>
   );
 }
@@ -343,10 +301,6 @@ function LoadingBrandOverlay(): ReactElement {
 
 export function clampSidebarWidth(width: number): number {
   return Math.min(maxSidebarWidth, Math.max(minSidebarWidth, Math.round(width)));
-}
-
-export function shouldPromptVaultSetup(statusLoading: boolean, setupRequired: boolean, hasPromptedVaultSetup: boolean): boolean {
-  return !statusLoading && setupRequired && !hasPromptedVaultSetup;
 }
 
 function SidebarResizeHandle(): ReactElement {

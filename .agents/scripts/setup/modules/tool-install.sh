@@ -1627,6 +1627,124 @@ check_python_upgrade_available() {
 	return 0
 }
 
+_vault_runtime_path_safe() {
+	local env_dir="$1"
+	local expected_dir="${HOME}/.aidevops/.agent-workspace/python-env/vault"
+	[[ "$env_dir" == "$expected_dir" ]] || return 1
+	local component=""
+	for component in \
+		"${HOME}/.aidevops" \
+		"${HOME}/.aidevops/.agent-workspace" \
+		"${HOME}/.aidevops/.agent-workspace/python-env" \
+		"$env_dir"; do
+		[[ -L "$component" ]] && return 1
+	done
+	return 0
+}
+
+_vault_runtime_marker_valid() {
+	local marker_path="$1"
+	[[ -f "$marker_path" && ! -L "$marker_path" && -O "$marker_path" ]] || return 1
+	local marker_value=""
+	marker_value=$(<"$marker_path")
+	[[ "$marker_value" == "aidevops-vault-runtime-v1" || "$marker_value" == "managed by aidevops setup" ]]
+	return $?
+}
+
+setup_vault_python_env() {
+	print_info "Setting up isolated Python crypto runtime for Vault..."
+	local python3_bin=""
+	if ! python3_bin=$(find_python3); then
+		print_warning "Python 3 not found - Vault crypto runtime unavailable"
+		return 1
+	fi
+	local module_dir=""
+	module_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
+	local source_root="${INSTALL_DIR:-}"
+	[[ -z "$source_root" ]] && source_root="$(cd "${module_dir}/../../../.." && pwd)"
+	local requirements_file="${source_root}/.agents/configs/vault-requirements.txt"
+	local runtime_check="${source_root}/.agents/scripts/vault-runtime-check.py"
+	local env_dir="${HOME}/.aidevops/.agent-workspace/python-env/vault"
+	local env_python="${env_dir}/bin/python3"
+	local managed_marker="${env_dir}/.aidevops-managed-runtime"
+	local marker_value="aidevops-vault-runtime-v1"
+
+	if ! _vault_runtime_path_safe "$env_dir"; then
+		print_warning "Refusing unsafe Vault runtime path: $env_dir"
+		return 1
+	fi
+	if [[ ! -f "$requirements_file" || ! -f "$runtime_check" ]]; then
+		print_warning "Vault runtime requirements or readiness check is missing"
+		return 1
+	fi
+	if [[ -e "$env_dir" ]]; then
+		if ! _vault_runtime_marker_valid "$managed_marker" || ! "$python3_bin" "$runtime_check" --check-ancestors "$HOME" "$env_dir"; then
+			print_warning "Refusing to execute or replace an unowned Vault runtime: $env_dir"
+			return 1
+		fi
+		if "$python3_bin" "$runtime_check" --check-path "$env_dir" "$managed_marker" && [[ -x "$env_python" ]] && "$env_python" "$runtime_check" 2>/dev/null; then
+			printf '%s\n' "$marker_value" >"$managed_marker"
+			chmod 600 "$managed_marker"
+			print_success "Vault crypto runtime is ready"
+			return 0
+		fi
+	fi
+	if ! (umask 077 && mkdir -p "${env_dir%/*}"); then
+		print_warning "Failed to create the protected Vault runtime parent"
+		return 1
+	fi
+	if ! _vault_runtime_path_safe "$env_dir"; then
+		print_warning "Refusing unsafe Vault runtime path after parent creation: $env_dir"
+		return 1
+	fi
+	if ! "$python3_bin" "$runtime_check" --check-ancestors "$HOME" "$env_dir"; then
+		print_warning "Refusing writable or unowned Vault runtime ancestors"
+		return 1
+	fi
+	if [[ -d "$env_dir" ]]; then
+		rm -rf "$env_dir"
+	fi
+	if ! (umask 077 && "$python3_bin" -m venv --copies "$env_dir"); then
+		print_warning "Failed to create isolated Vault Python environment"
+		rm -rf "$env_dir"
+		return 1
+	fi
+	chmod 755 "$env_dir"
+	if ! "$python3_bin" "$runtime_check" --check-path "$env_dir"; then
+		print_warning "Fresh Vault runtime ownership verification failed"
+		rm -rf "$env_dir"
+		return 1
+	fi
+	if ! (umask 077 && "$env_python" -m pip install --disable-pip-version-check --no-input --only-binary=:all: -r "$requirements_file"); then
+		print_warning "Failed to install the pinned Vault crypto runtime"
+		rm -rf "$env_dir"
+		return 1
+	fi
+	if ! "$python3_bin" "$runtime_check" --check-path "$env_dir"; then
+		print_warning "Vault crypto runtime ownership verification failed"
+		rm -rf "$env_dir"
+		return 1
+	fi
+	if ! "$env_python" "$runtime_check"; then
+		print_warning "Vault crypto runtime verification failed"
+		rm -rf "$env_dir"
+		return 1
+	fi
+	if ! (umask 077 && printf '%s\n' "$marker_value" >"$managed_marker"); then
+		print_warning "Failed to publish the verified Vault runtime marker"
+		rm -rf "$env_dir"
+		return 1
+	fi
+	chmod 600 "$managed_marker"
+	if ! "$python3_bin" "$runtime_check" --check-path "$env_dir" "$managed_marker"; then
+		print_warning "Published Vault runtime verification failed"
+		rm -rf "$env_dir"
+		return 1
+	fi
+	print_success "Vault crypto runtime is ready"
+	return 0
+}
+
 setup_python_env() {
 	print_info "Setting up Python environment for DSPy..."
 

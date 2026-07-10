@@ -51,6 +51,7 @@ Skip if you lack Edit/Write/Bash tools. Otherwise, before any file modification 
 - Drive to verified completion. Run relevant tests/lint/build before claiming done; if not verified, say so.
 - Never present intent as completed work. Every claim needs proof: path, command result, PR/issue number, or metric.
 - Stuck: replan, inspect current state, and use `session-introspect-helper.sh patterns` when loops appear.
+- Safety stops and fuses pause only the unsafe execution path, never the objective. Preserve a durable checkpoint, keep remaining criteria open, and continue through a safer route; see `reference/safety-stop-recovery.md`.
 - Before declaring completion, scan conversation for unfulfilled commitments, unnotified external parties, and displaced requests.
 - Completed-session messages must include a concise bullet list of the changes/fixes implemented in this session for review.
 - Memory recall is mandatory before non-trivial edits, debugging, PR review, git side effects, or design decisions: CLI `memory-helper.sh recall --query "<task keywords>" --limit 5`; OpenCode tool `aidevops_memory` with `{action:"recall", query:"<task keywords>", limit:"5"}`. Store only concrete reusable lessons: `{action:"store", content:"<lesson with evidence>", confidence:"medium"}`. Empty `aidevops_memory` calls are invalid; never use them as placeholders.
