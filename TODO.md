@@ -1175,6 +1175,7 @@ t165,Provider-agnostic task claiming via TODO.md,marcusquinn,orchestration archi
 -->
 
 ## Done
+- [x] t18079 Add safe macOS activity cleaner command and subagent #enhancement ref:GH#26917 pr:#26946 testing:runtime-verified completed:2026-07-10
 - [x] t3600 Expand app-stack architecture guidance #documentation ref:GH#24827 pr:#24826 testing:runtime-verified completed:2026-06-15
 - [x] t3438 Audit pulse GitHub API prefetch for need-to-know caching #auto-dispatch #enhancement ref:GH#22288 pr:#22333 completed:2026-05-02
 - [x] t3384 optimize skill generator to finish within setup timeout #auto-dispatch #bug #framework ref:GH#22140 pr:#22170 completed:2026-05-01
@@ -4458,4 +4459,3 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18078 Route OpenAI workers through GPT-5.6 tiers #bug #type:enhancement ref:GH#26913
 
-- [ ] t18079 Add safe macOS activity cleaner command and subagent #enhancement ref:GH#26917
