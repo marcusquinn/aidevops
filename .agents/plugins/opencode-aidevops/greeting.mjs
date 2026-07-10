@@ -288,8 +288,14 @@ function observeSharedRefresh({ cacheFile, lockDir, lockStaleMs, client, now }) 
     } catch {
       // The owner may publish the cache and remove its lock between our cache
       // read and lock stat. Re-check once so that handoff still emits it.
-      emitCachedGreeting(client, readGreetingCache(cacheFile));
-      return;
+      const finalCached = readGreetingCache(cacheFile);
+      if (finalCached) {
+        emitCachedGreeting(client, finalCached);
+        return;
+      }
+      // A stale-lock contender may have renamed the old lock but not created
+      // its replacement yet. Keep polling within the original safety bound.
+      if (now() >= deadline) return;
     }
 
     const timer = setTimeout(poll, 25);

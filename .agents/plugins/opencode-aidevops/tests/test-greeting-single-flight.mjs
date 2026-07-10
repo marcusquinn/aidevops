@@ -168,7 +168,7 @@ test("cold-cache follower emits a cache published while its owner lock disappear
   let nowCalls = 0;
   const now = () => {
     nowCalls += 1;
-    if (nowCalls === 4) {
+    if (nowCalls === 5) {
       writeFileSync(f.cacheFile, `${NEW_GREETING}\n`);
       rmSync(lockDir, { recursive: true, force: true });
     }
@@ -183,6 +183,35 @@ test("cold-cache follower emits a cache published while its owner lock disappear
   });
 
   await handler({ event: { type: "session.created" } });
+  await waitFor(() => f.clients[0].length === 1);
+
+  assert.equal(nowCalls, 5);
+  assert.equal(f.clients[0][0].message.includes(NEW_GREETING), true);
+});
+
+test("cold-cache follower survives a transient lock gap before publication", async (t) => {
+  const f = fixture();
+  t.after(() => f.cleanup());
+  const lockDir = join(f.cacheDir, "session-greeting-refresh.lock");
+  mkdirSync(lockDir);
+  let nowCalls = 0;
+  const now = () => {
+    nowCalls += 1;
+    if (nowCalls === 5) rmSync(lockDir, { recursive: true, force: true });
+    if (nowCalls === 6) mkdirSync(lockDir);
+    return 1000;
+  };
+  const handler = createGreetingHandler({
+    ...handlerOptions(f, f.client(), async () => {
+      throw new Error("follower must not start a refresh");
+    }),
+    now,
+  });
+
+  await handler({ event: { type: "session.created" } });
+  assert.equal(nowCalls, 6);
+  writeFileSync(f.cacheFile, `${NEW_GREETING}\n`);
+  rmSync(lockDir, { recursive: true, force: true });
   await waitFor(() => f.clients[0].length === 1);
 
   assert.equal(f.clients[0][0].message.includes(NEW_GREETING), true);
