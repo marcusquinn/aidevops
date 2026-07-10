@@ -24,14 +24,37 @@ export function vaultCollectionTooltip(collection: GuiVaultCollectionSummary): s
   return text.vaultTooltip;
 }
 
-export type VaultDialogIntent = "setup" | "unlock" | "lock";
+export type VaultDialogIntent = "setup" | "unlock" | "lock" | "recover" | "unavailable";
 
 export function vaultDialogIntentForStatus(vault: GuiVaultStatusData): VaultDialogIntent {
   if (vault.unlocked) {
     return "lock";
   }
 
-  return vault.readiness.setup_required || !vault.initialized ? "setup" : "unlock";
+  if (vault.helper_status !== "available" || vault.status === "unknown") {
+    return "unavailable";
+  }
+  if (vault.status === "corrupted") {
+    return "recover";
+  }
+  if (vault.status === "locked") {
+    return "unlock";
+  }
+  if (vault.status === "uninitialized" && vault.setup_state === "uninitialized" && vault.readiness.setup_required) {
+    return "setup";
+  }
+
+  return "unavailable";
+}
+
+export function vaultActionLabel(intent: VaultDialogIntent): string {
+  switch (intent) {
+    case "lock": return "Lock Vault";
+    case "setup": return "Set up Vault";
+    case "unlock": return "Unlock Vault";
+    case "recover": return "Review recovery";
+    case "unavailable": return "Check Vault status";
+  }
 }
 
 export function VaultPadlock({ collection, compact = false, onActivate, vault }: {

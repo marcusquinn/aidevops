@@ -6,6 +6,7 @@ import {
   type GuiFileRootId,
   type GuiResponseEnvelope,
   type GuiStatusData,
+  type GuiVaultStatusData,
   statusFixture,
 } from "../../gui-shared/src";
 
@@ -30,6 +31,11 @@ export function mockedStatus(): GuiResponseEnvelope<GuiStatusData> {
     },
     data: statusFixture,
   });
+}
+
+export function unavailableStatus(): GuiResponseEnvelope<GuiStatusData> {
+  const envelope = mockedStatus();
+  return { ...envelope, data: { ...envelope.data, vault: unavailableVault("error") } };
 }
 
 export async function fetchFileExplorer(
@@ -88,17 +94,7 @@ function normalizeStatusEnvelope(envelope: GuiResponseEnvelope<Partial<GuiStatus
       ai_apps: data.ai_apps ?? statusFixture.ai_apps,
       managed_apps: data.managed_apps ?? statusFixture.managed_apps,
       notifications: data.notifications ?? statusFixture.notifications,
-      vault: {
-        ...statusFixture.vault,
-        ...data.vault,
-        readiness: { ...statusFixture.vault.readiness, ...data.vault?.readiness },
-        collections: data.vault?.collections ?? statusFixture.vault.collections,
-        devices: data.vault?.devices ?? statusFixture.vault.devices,
-        sync: { ...statusFixture.vault.sync, ...data.vault?.sync },
-        secure_messages: { ...statusFixture.vault.secure_messages, ...data.vault?.secure_messages },
-        backups: { ...statusFixture.vault.backups, ...data.vault?.backups },
-        audit: { ...statusFixture.vault.audit, ...data.vault?.audit },
-      },
+      vault: normalizeVault(data.vault),
       pulse_workers: {
         ...statusFixture.pulse_workers,
         ...data.pulse_workers,
@@ -114,5 +110,43 @@ function normalizeStatusEnvelope(envelope: GuiResponseEnvelope<Partial<GuiStatus
       secrets: data.secrets ?? statusFixture.secrets,
       placeholders: data.placeholders ?? statusFixture.placeholders,
     },
+  };
+}
+
+function normalizeVault(vault: GuiStatusData["vault"] | undefined): GuiVaultStatusData {
+  if (vault === undefined || vault.status === undefined || vault.setup_state === undefined) {
+    return unavailableVault("unchecked");
+  }
+  return {
+    ...statusFixture.vault,
+    ...vault,
+    readiness: { ...statusFixture.vault.readiness, ...vault.readiness },
+    collections: vault.collections ?? statusFixture.vault.collections,
+    devices: vault.devices ?? statusFixture.vault.devices,
+    sync: { ...statusFixture.vault.sync, ...vault.sync },
+    secure_messages: { ...statusFixture.vault.secure_messages, ...vault.secure_messages },
+    backups: { ...statusFixture.vault.backups, ...vault.backups },
+    audit: { ...statusFixture.vault.audit, ...vault.audit },
+  };
+}
+
+function unavailableVault(helperStatus: GuiVaultStatusData["helper_status"]): GuiVaultStatusData {
+  return {
+    ...statusFixture.vault,
+    status: "unknown",
+    setup_state: "unknown",
+    initialized: false,
+    locked: false,
+    unlocked: false,
+    available: false,
+    helper_status: helperStatus,
+    readiness: {
+      ...statusFixture.vault.readiness,
+      migration_allowed: false,
+      setup_required: false,
+      restart_test_required: false,
+      locked_content_hidden: true,
+    },
+    collections: statusFixture.vault.collections.map((collection) => ({ ...collection, state: collection.state === "planned" ? "planned" : "unknown" })),
   };
 }

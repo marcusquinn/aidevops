@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -30,6 +30,7 @@ export function readVaultSummary(repoRoot: string): GuiVaultStatusData {
   const setupState = rawSetupState ?? fallbackSetupState(status);
   const unlocked = status === "unlocked";
   const collectionState = vaultCollectionState(status);
+  const setupRequired = helperStatus === "available" && status === "uninitialized" && setupState === "uninitialized";
 
   return {
     ...statusFixture.vault,
@@ -38,12 +39,12 @@ export function readVaultSummary(repoRoot: string): GuiVaultStatusData {
     initialized: INITIALIZED_VAULT_STATUSES.has(status),
     locked: !unlocked,
     unlocked,
-    available: helperExists && helperStatus !== "error",
+    available: helperStatus === "available",
     helper_status: helperStatus,
     readiness: {
       ...statusFixture.vault.readiness,
       migration_allowed: unlocked && setupState === "migration-ready",
-      setup_required: status === "uninitialized" || setupState === "uninitialized",
+      setup_required: setupRequired,
       restart_test_required: RESTART_TEST_SETUP_STATES.has(setupState),
       locked_content_hidden: !unlocked,
     },
@@ -59,17 +60,14 @@ function readVaultCommand<T extends string>(
   args: string[],
   isAllowed: (value: string) => value is T,
 ): T | null {
-  try {
-    const output = execFileSync("sh", [helperPath, ...args], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 300,
-    }).trim();
-    const firstLine = output.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() ?? "";
-    return isAllowed(firstLine) ? firstLine : null;
-  } catch {
-    return null;
-  }
+  const result = spawnSync("bash", [helperPath, ...args], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 1500,
+  });
+  if (result.error !== undefined) return null;
+  const firstLine = result.stdout.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() ?? "";
+  return isAllowed(firstLine) ? firstLine : null;
 }
 
 function isGuiVaultStatus(value: string): value is GuiVaultStatus {
@@ -88,7 +86,7 @@ function vaultHelperStatus(
   if (!helperExists) {
     return "missing";
   }
-  return status === null && setupState === null ? "error" : "available";
+  return status === null || setupState === null ? "error" : "available";
 }
 
 function fallbackSetupState(status: GuiVaultStatus): GuiVaultSetupState {

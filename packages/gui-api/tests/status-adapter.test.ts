@@ -108,7 +108,7 @@ describe("status adapter", () => {
     expect(response.redactions).toContain("recovery_material");
   });
 
-  test("reads Vault helper output through sh without requiring an executable bit", () => {
+  test("reads Vault helper output through bash without requiring an executable bit", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-vault-helper-"));
     const scriptsDir = join(repoRoot, ".agents", "scripts");
     const helperPath = join(scriptsDir, "vault-helper.sh");
@@ -116,6 +116,7 @@ describe("status adapter", () => {
     writeFileSync(
       helperPath,
       [
+        "[[ -n \"$1\" ]] || exit 2",
         "case \"$1\" in",
         "  status) printf '%s\\n' unlocked ;;",
         "  setup-state) printf '%s\\n' migration-ready ;;",
@@ -131,6 +132,46 @@ describe("status adapter", () => {
     expect(vault.status).toBe("unlocked");
     expect(vault.setup_state).toBe("migration-ready");
     expect(vault.readiness.migration_allowed).toBe(true);
+  });
+
+  test("preserves documented uninitialized output from nonzero helper exits", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-vault-uninitialized-"));
+    const scriptsDir = join(repoRoot, ".agents", "scripts");
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, "vault-helper.sh"), [
+      "case \"$1\" in",
+      "  status|setup-state) printf '%s\\n' uninitialized; exit 2 ;;",
+      "  *) exit 1 ;;",
+      "esac",
+    ].join("\n"));
+
+    const vault = readVaultSummary(repoRoot);
+
+    expect(vault.helper_status).toBe("available");
+    expect(vault.status).toBe("uninitialized");
+    expect(vault.setup_state).toBe("uninitialized");
+    expect(vault.readiness.setup_required).toBe(true);
+  });
+
+  test("fails closed when only one Vault status probe succeeds", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-vault-partial-"));
+    const scriptsDir = join(repoRoot, ".agents", "scripts");
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, "vault-helper.sh"), [
+      "case \"$1\" in",
+      "  status) printf '%s\\n' locked ;;",
+      "  setup-state) exit 1 ;;",
+      "  *) exit 1 ;;",
+      "esac",
+    ].join("\n"));
+
+    const vault = readVaultSummary(repoRoot);
+
+    expect(vault.helper_status).toBe("error");
+    expect(vault.available).toBe(false);
+    expect(vault.status).toBe("locked");
+    expect(vault.setup_state).toBe("unknown");
+    expect(vault.readiness.setup_required).toBe(false);
   });
 
   test("does not search relative home tool paths when HOME is unset", () => {

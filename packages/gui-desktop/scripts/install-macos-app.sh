@@ -497,6 +497,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
             updateAccentHueFromMessage(message.body)
         case "externalLink":
             openExternalLinkFromMessage(message.body)
+        case "vaultCommand":
+            openVaultCommandFromMessage(message.body)
         default:
             return
         }
@@ -523,6 +525,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         }
 
         _ = openExternalURL(url)
+    }
+
+    private func openVaultCommandFromMessage(_ body: Any) {
+        guard let action = body as? String else {
+            return
+        }
+
+        // #aidevops:trust-boundary — browser input selects only a fixed local
+        // command. No command string, path, environment, or secret crosses it.
+        let command: String
+        switch action {
+        case "init": command = "aidevops vault init"
+        case "unlock": command = "aidevops vault unlock"
+        case "lock": command = "aidevops vault lock"
+        case "status": command = "aidevops vault status"
+        case "lost-passphrase": command = "aidevops vault lost-passphrase"
+        default: return
+        }
+
+        let source = "tell application \"Terminal\"\nactivate\ndo script \"\(command)\"\nend tell"
+        var error: NSDictionary?
+        NSAppleScript(source: source)?.executeAndReturnError(&error)
+        if error != nil {
+            NSSound.beep()
+        }
     }
 
     private func revealFileURL(_ url: URL) -> Bool {
@@ -838,6 +865,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, WKNavigationDelegate, 
         let userContentController = WKUserContentController()
         userContentController.add(self, name: "accentHue")
         userContentController.add(self, name: "externalLink")
+        userContentController.add(self, name: "vaultCommand")
         configuration.userContentController = userContentController
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = self

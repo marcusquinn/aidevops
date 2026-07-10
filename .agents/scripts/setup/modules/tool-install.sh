@@ -1627,6 +1627,50 @@ check_python_upgrade_available() {
 	return 0
 }
 
+setup_vault_python_env() {
+	print_info "Setting up isolated Python crypto runtime for Vault..."
+	local python3_bin=""
+	if ! python3_bin=$(find_python3); then
+		print_warning "Python 3 not found - Vault crypto runtime unavailable"
+		return 1
+	fi
+	local module_dir=""
+	module_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
+	local source_root="${INSTALL_DIR:-}"
+	[[ -z "$source_root" ]] && source_root="$(cd "${module_dir}/../../../.." && pwd)"
+	local requirements_file="${source_root}/.agents/configs/vault-requirements.txt"
+	local env_dir="${AIDEVOPS_VAULT_PYTHON_ENV:-${HOME}/.aidevops/.agent-workspace/python-env/vault}"
+	local env_python="${env_dir}/bin/python3"
+	local required_version="49.0.0"
+
+	if [[ -x "$env_python" ]] && "$env_python" -c 'import cryptography, sys; raise SystemExit(0 if cryptography.__version__ == sys.argv[1] else 1)' "$required_version" 2>/dev/null; then
+		print_success "Vault crypto runtime ${required_version} is ready"
+		return 0
+	fi
+	if [[ ! -f "$requirements_file" ]]; then
+		print_warning "Vault requirements file is missing: $requirements_file"
+		return 1
+	fi
+	mkdir -p "${env_dir%/*}"
+	if [[ -d "$env_dir" && ! -x "$env_python" ]]; then
+		rm -rf "$env_dir"
+	fi
+	if [[ ! -x "$env_python" ]] && ! "$python3_bin" -m venv "$env_dir"; then
+		print_warning "Failed to create isolated Vault Python environment"
+		return 1
+	fi
+	if ! "$env_python" -m pip install --disable-pip-version-check --no-input -r "$requirements_file"; then
+		print_warning "Failed to install the pinned Vault crypto runtime"
+		return 1
+	fi
+	if ! "$env_python" -c 'import cryptography, sys; raise SystemExit(0 if cryptography.__version__ == sys.argv[1] else 1)' "$required_version"; then
+		print_warning "Vault crypto runtime verification failed"
+		return 1
+	fi
+	print_success "Vault crypto runtime ${required_version} is ready"
+	return 0
+}
+
 setup_python_env() {
 	print_info "Setting up Python environment for DSPy..."
 

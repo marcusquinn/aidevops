@@ -263,6 +263,15 @@ Core component rules:
 - **Focus:** keyboard focus should use blue `#58a6ff` outline or border with at least 2px visible affordance.
 - **Provider and integration cards:** group by auth or service family, show provider/account counts, render recommendations with an explicit thumbs-up badge plus text, and keep connection controls metadata-only until audited write routes exist.
 
+### Secrets and Vault access
+
+- Treat Secrets as an operational metadata workspace, not a password manager. Its hierarchy is: explicit Vault state and safe action, value-custody boundary, aggregate readiness cards, then protected reference inventory.
+- Locked views may show already-approved aggregate counts and readiness classes, but never reference names, usernames, provider identifiers, paths, masked fragments, prefixes, suffixes, lengths, checksums, values, or copy/reveal controls.
+- Unlocked views may show reference names plus non-sensitive configured, missing, or unchecked health. Every row states that values are never displayed and routes management to a secure helper rather than a browser form.
+- Distinguish `uninitialized`, `locked`, `unlocked`, `corrupted`, and `unknown` visually and in text. Setup is offered only after authoritative uninitialized metadata; helper errors, partial/legacy responses, and loading states must never open setup.
+- Browser dialogs never collect Vault credentials. Desktop actions send an allowlisted action identifier to the native wrapper, which opens the fixed local helper in Terminal so secret input remains in a hidden TTY prompt.
+- Use compact 8px border-led cards, fluid 210px minimum metric/capability grids, a desktop table that becomes labelled cards below 720px, green safe setup/unlock actions, and visible focus rings even when decorative borders are hidden.
+
 ## Logo and icon rules
 
 - The approved AI DevOps app mark is the cyan terminal prompt glyph used by the `aidevops.sh` navigation logo and favicon.

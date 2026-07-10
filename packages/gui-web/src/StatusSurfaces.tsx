@@ -4,9 +4,10 @@ import type { GuiAiAppSummary, GuiLocalRepoSetupSummary, GuiSetupTargetSummary, 
 import { plannedHomes, text } from "./app-model";
 import { FileExplorerSurface } from "./FileExplorerSurface";
 import { PathActions } from "./PathActions";
-import { type VaultDialogIntent, VaultPadlock, vaultDialogIntentForStatus } from "./VaultBadges";
+import { type VaultDialogIntent, VaultPadlock, vaultActionLabel, vaultDialogIntentForStatus } from "./VaultBadges";
 
 export { AiProvidersSurface } from "./AiProvidersSurface";
+export { SecretsSurface as SecuritySurface } from "./SecretsSurface";
 
 export function OverviewSurface({ status }: { status: GuiStatusData }) {
   const metrics = [
@@ -98,29 +99,6 @@ export function ProjectsSurface({ status }: { status: GuiStatusData }) {
   );
 }
 
-export function SecuritySurface({ status }: { status: GuiStatusData }) {
-  return (
-    <section className="panel" aria-label={text.security}>
-      <div className="section-heading">
-        <p className="eyebrow">{text.readOnly}</p>
-        <h2>{text.security}</h2>
-        <p>{text.securityBoundary}</p>
-      </div>
-      <div className="notice compact-notice" role="note">
-        Vault data policy: Provider AI sends approved plaintext context to a third-party provider; Local AI keeps model processing on this device; Hybrid mode must redact or split protected context before any provider call.
-      </div>
-      <ul className="object-list">
-        {status.secrets.map((secret) => (
-          <li key={secret.name}>
-            <strong>{secret.name}</strong>
-            <span>{secret.status}</span>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
 export function VaultSurface({ onVaultRequest, status }: { onVaultRequest: (intent: VaultDialogIntent) => void; status: GuiStatusData }) {
   const vault = status.vault;
   const vaultCollection = vault.collections.find((collection) => collection.surface_ids.includes("vault")) ?? vault.collections[0];
@@ -175,7 +153,7 @@ export function VaultSurface({ onVaultRequest, status }: { onVaultRequest: (inte
             <h2>{vault.readiness.setup_required ? "Setup required" : "Setup metadata"}</h2>
             <p>{vault.setup_hint}</p>
           </div>
-          <button className="secondary-action vault-cta" onClick={() => onVaultRequest(vaultDialogIntentForStatus(vault))} title={vault.unlock_hint} type="button">{vault.unlocked ? "Lock Vault" : text.vaultUnlockCta}</button>
+          <button className="secondary-action vault-cta" onClick={() => onVaultRequest(vaultDialogIntentForStatus(vault))} title={vault.unlock_hint} type="button">{vaultActionLabel(vaultDialogIntentForStatus(vault))}</button>
         </div>
         <ol className="vault-step-list">
           <li>Initialize locally with the hidden-prompt helper.</li>
@@ -238,7 +216,7 @@ export function LockedVaultGate({ collection, label, onVaultRequest, vault }: {
       <div className="notice compact-notice" role="note">
         {text.vaultTooltip} {vault.unlock_hint}
       </div>
-      <button className="secondary-action vault-cta" onClick={() => onVaultRequest(vaultDialogIntentForStatus(vault))} title={vault.unlock_hint} type="button">{text.vaultUnlockCta}</button>
+      <button className="secondary-action vault-cta" onClick={() => onVaultRequest(vaultDialogIntentForStatus(vault))} title={vault.unlock_hint} type="button">{vaultActionLabel(vaultDialogIntentForStatus(vault))}</button>
     </section>
   );
 }

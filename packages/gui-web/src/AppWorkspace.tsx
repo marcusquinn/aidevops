@@ -12,7 +12,7 @@ import { TamboConversationPart } from "./GenUiCards";
 import { AppsSurface, EditableInventorySurface, InstallationSurface } from "./InventorySurfaces";
 import { PulseWorkersSurface } from "./PulseWorkersSurface";
 import { AiProvidersSurface, LocalReposSurface, LockedVaultGate, OverviewSurface, PlannedSurface, ProjectsSurface, SecuritySurface, VaultSurface } from "./StatusSurfaces";
-import { type VaultDialogIntent, isVaultSurfaceLocked, vaultCollectionForSurface, vaultDialogIntentForStatus } from "./VaultBadges";
+import { type VaultDialogIntent, isVaultSurfaceLocked, vaultActionLabel, vaultCollectionForSurface, vaultDialogIntentForStatus } from "./VaultBadges";
 import { applyCommandPaletteSelection, useHeaderMenuState } from "./workspace-header-state";
 import { useWorkspaceTour, WorkspaceTourProvider } from "./WorkspaceTour";
 
@@ -370,7 +370,7 @@ function ChatBubble({ body, speaker, title }: { body: string; speaker: "assistan
 
 function ProfileMenu({ onVaultRequest, openSurface, status, userName }: { onVaultRequest: (intent: VaultDialogIntent) => void; openSurface: (surface: SurfaceId) => void; status: GuiStatusData; userName: string }): ReactElement {
   const vaultIntent = vaultDialogIntentForStatus(status.vault);
-  const VaultIcon = vaultIntent === "lock" ? FiLock : FiUnlock;
+  const VaultIcon = vaultIntent === "lock" ? FiLock : vaultIntent === "recover" || vaultIntent === "unavailable" ? FiAlertTriangle : FiUnlock;
   return (
     <div className="popover-menu profile-menu" role="menu">
       <div className="profile-menu-heading">
@@ -380,7 +380,7 @@ function ProfileMenu({ onVaultRequest, openSurface, status, userName }: { onVaul
       <button onClick={() => openSurface("settings")} role="menuitem" type="button"><FiSettings aria-hidden="true" /> Settings</button>
       <button onClick={() => openSurface("settings")} role="menuitem" type="button"><FiCommand aria-hidden="true" /> Theme</button>
       <button onClick={() => openSurface("settings")} role="menuitem" type="button"><FiGlobe aria-hidden="true" /> Language</button>
-      <button onClick={() => onVaultRequest(vaultIntent)} role="menuitem" type="button"><VaultIcon aria-hidden="true" /> {vaultIntent === "lock" ? "Lock Vault" : "Unlock Vault"}</button>
+      <button onClick={() => onVaultRequest(vaultIntent)} role="menuitem" type="button"><VaultIcon aria-hidden="true" /> {vaultActionLabel(vaultIntent)}</button>
       <div className="menu-separator" />
       <strong>Community</strong>
       <a href={communityLinks.github} rel="noreferrer" role="menuitem" target="_blank"><FiMessageSquare aria-hidden="true" /> GitHub</a>
@@ -453,11 +453,11 @@ function SurfaceContent({ activeItem, activeSurface, fileRoot, onVaultRequest, o
     apps: <AppsSurface status={status} />,
     installation: <InstallationSurface />,
     projects: <ProjectsSurface status={status} />,
-    security: <SecuritySurface status={status} />,
+    security: <SecuritySurface onVaultRequest={onVaultRequest} status={status} />,
     aiProviders: <AiProvidersSurface status={status} />,
   };
 
-  if (isVaultSurfaceLocked(status.vault, activeSurface) && vaultCollection) {
+  if (activeSurface !== "security" && isVaultSurfaceLocked(status.vault, activeSurface) && vaultCollection) {
     return <LockedVaultGate collection={vaultCollection} label={activeItem.label} onVaultRequest={onVaultRequest} vault={status.vault} />;
   }
 

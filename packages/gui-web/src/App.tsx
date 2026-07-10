@@ -1,5 +1,5 @@
 import type { GuiResponseEnvelope, GuiStatusData } from "@aidevops/gui-shared";
-import { type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactElement, useEffect, useRef, useState } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactElement, useCallback, useEffect, useRef, useState } from "react";
 import { MachineRail, Sidebar } from "./AppNavigation";
 import { Workspace } from "./AppWorkspace";
 import type { ContrastPreference, ConversationMode, FontPreference, FontSizePreference, ShellMode, SurfaceId, ThemePreference } from "./app-model";
@@ -7,9 +7,9 @@ import { DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, 
 import { DesktopStatusBar } from "./DesktopStatusBar";
 import { type NavigationHistory, nextHistoryIndex, useNavigationHistoryKeyboard } from "./navigation-history";
 import { ScreenshotCaptureNotificationHost } from "./ScreenshotCaptureNotification";
-import { fetchStatus, mockedStatus } from "./status-client";
+import { fetchStatus, mockedStatus, unavailableStatus } from "./status-client";
 import type { VaultDialogIntent } from "./VaultBadges";
-import { VaultPassphraseModal } from "./VaultPassphraseModal";
+import { VaultAccessModal } from "./VaultAccessModal";
 
 interface WebKitBridgeWindow extends Window {
   webkit?: {
@@ -119,6 +119,17 @@ export function App(): ReactElement {
   const fileRoot = fileRootBySurface[activeSurface];
   useNavigationHistoryKeyboard(setNavigation);
 
+  const refreshStatus = useCallback(async () => {
+    setStatusLoading(true);
+    try {
+      setStatus(await fetchStatus());
+    } catch {
+      setStatus(unavailableStatus());
+    } finally {
+      setStatusLoading(false);
+    }
+  }, []);
+
   const setActiveSurface = (surface: SurfaceId) => {
     setNavigation((current) => {
       const currentSurface = current.entries[current.index] ?? "overview";
@@ -190,11 +201,14 @@ export function App(): ReactElement {
   }, [fontSizePreference]);
 
   useEffect(() => {
-    fetchStatus()
-      .then(setStatus)
-      .catch(() => setStatus(mockedStatus()))
-      .finally(() => setStatusLoading(false));
-  }, []);
+    void refreshStatus();
+  }, [refreshStatus]);
+
+  useEffect(() => {
+    const refreshAfterTerminal = () => void refreshStatus();
+    window.addEventListener("focus", refreshAfterTerminal);
+    return () => window.removeEventListener("focus", refreshAfterTerminal);
+  }, [refreshStatus]);
 
   useEffect(() => {
     persistAppearancePreference(appearanceStorageKeys.showNavCounts, String(showNavCounts));
@@ -214,11 +228,11 @@ export function App(): ReactElement {
   }, [status.data.local_repos.repos.length]);
 
   useEffect(() => {
-    if (shouldPromptVaultSetup(statusLoading, status.data.vault.readiness.setup_required, hasPromptedVaultSetup.current)) {
+    if (shouldPromptVaultSetup(statusLoading, status.data.vault, hasPromptedVaultSetup.current)) {
       hasPromptedVaultSetup.current = true;
       setVaultDialogIntent("setup");
     }
-  }, [status.data.vault.readiness.setup_required, statusLoading]);
+  }, [status.data.vault, statusLoading]);
 
   return (
     <main className={machineRailVisible ? "app-shell" : "app-shell machine-rail-collapsed"} aria-busy={statusLoading}>
@@ -276,7 +290,7 @@ export function App(): ReactElement {
         status={status.data}
       />
       <DesktopStatusBar status={status.data} />
-      {vaultDialogIntent ? <VaultPassphraseModal intent={vaultDialogIntent} onClose={() => setVaultDialogIntent(null)} vault={status.data.vault} /> : null}
+      {vaultDialogIntent ? <VaultAccessModal intent={vaultDialogIntent} onClose={() => setVaultDialogIntent(null)} onRefresh={refreshStatus} vault={status.data.vault} /> : null}
     </main>
   );
 }
@@ -345,8 +359,13 @@ export function clampSidebarWidth(width: number): number {
   return Math.min(maxSidebarWidth, Math.max(minSidebarWidth, Math.round(width)));
 }
 
-export function shouldPromptVaultSetup(statusLoading: boolean, setupRequired: boolean, hasPromptedVaultSetup: boolean): boolean {
-  return !statusLoading && setupRequired && !hasPromptedVaultSetup;
+export function shouldPromptVaultSetup(statusLoading: boolean, vault: GuiStatusData["vault"], hasPromptedVaultSetup: boolean): boolean {
+  return !statusLoading
+    && vault.helper_status === "available"
+    && vault.status === "uninitialized"
+    && vault.setup_state === "uninitialized"
+    && vault.readiness.setup_required
+    && !hasPromptedVaultSetup;
 }
 
 function SidebarResizeHandle(): ReactElement {

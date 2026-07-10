@@ -68,6 +68,7 @@ run_child_test "vault sync replay, tamper, revoked-device tests" "$SCRIPT_DIR/te
 run_child_test "vault remote lock, replay, stale-grant tests" "$SCRIPT_DIR/test-vault-remote-control-helper.sh"
 run_child_test "vault message ciphertext and revoked-device tests" "$SCRIPT_DIR/test-vault-message-helper.sh"
 run_child_test "vault audit tamper and receipt tests" "$SCRIPT_DIR/test-vault-audit-helper.sh"
+run_child_test "vault dependency-free metadata readiness tests" "$SCRIPT_DIR/test-vault-runtime-readiness.sh"
 run_child_test "vault helper local broker and wrong-passphrase tests" "$SCRIPT_DIR/test-vault-helper.sh"
 test_no_public_plaintext_fixtures
 

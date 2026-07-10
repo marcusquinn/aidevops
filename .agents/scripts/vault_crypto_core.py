@@ -15,10 +15,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-from cryptography.exceptions import InvalidTag
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
-
 SCHEMA_VERSION = 1
 KDF_NAME = "scrypt"
 AEAD_NAME = "AES-256-GCM"
@@ -44,6 +40,21 @@ class VaultError(Exception):
         super().__init__(message)
         self.code = code
         self.exit_code = exit_code
+
+
+def _crypto_primitives() -> tuple[Any, Any, Any]:
+    """Load crypto only for operations that need it; metadata status stays dependency-free."""
+    try:
+        from cryptography.exceptions import InvalidTag
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
+    except ModuleNotFoundError as exc:
+        raise VaultError(
+            "VAULT_DEPENDENCY_MISSING",
+            "Vault crypto runtime is unavailable; run aidevops setup",
+            10,
+        ) from exc
+    return InvalidTag, AESGCM, Scrypt
 
 
 def b64e(data: bytes) -> str:
@@ -135,7 +146,8 @@ def append_audit(vault_dir: Path, event: str, ok: bool, detail: str = "") -> Non
 
 
 def derive_kek(passphrase: str, salt: bytes, params: dict[str, Any]) -> bytes:
-    kdf = Scrypt(
+    _invalid_tag, _aesgcm, scrypt = _crypto_primitives()
+    kdf = scrypt(
         salt=salt,
         length=int(params.get("length", KEY_LEN)),
         n=int(params.get("n", DEFAULT_SCRYPT["n"])),
@@ -146,19 +158,21 @@ def derive_kek(passphrase: str, salt: bytes, params: dict[str, Any]) -> bytes:
 
 
 def encrypt_json(key: bytes, payload: dict[str, Any], aad: bytes) -> dict[str, str]:
+    _invalid_tag, aesgcm, _scrypt = _crypto_primitives()
     nonce = secrets.token_bytes(NONCE_LEN)
     plaintext = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    ciphertext = AESGCM(key).encrypt(nonce, plaintext, aad)
+    ciphertext = aesgcm(key).encrypt(nonce, plaintext, aad)
     return {"aead": AEAD_NAME, "nonce": b64e(nonce), "ciphertext": b64e(ciphertext)}
 
 
 def decrypt_json(key: bytes, envelope: dict[str, Any], aad: bytes) -> dict[str, Any]:
+    invalid_tag, aesgcm, _scrypt = _crypto_primitives()
     if envelope.get("aead") != AEAD_NAME:
         raise VaultError("VAULT_METADATA_CORRUPTED", "Unsupported AEAD in Vault envelope", 3)
     try:
-        plaintext = AESGCM(key).decrypt(b64d(str(envelope["nonce"])), b64d(str(envelope["ciphertext"])), aad)
+        plaintext = aesgcm(key).decrypt(b64d(str(envelope["nonce"])), b64d(str(envelope["ciphertext"])), aad)
         data = json.loads(plaintext.decode("utf-8"))
-    except (KeyError, ValueError, InvalidTag) as exc:
+    except (KeyError, ValueError, invalid_tag) as exc:
         raise VaultError("VAULT_DECRYPT_FAILED", "Vault decrypt failed", 4) from exc
     if not isinstance(data, dict):
         raise VaultError("VAULT_METADATA_CORRUPTED", "Vault payload has invalid shape", 3)

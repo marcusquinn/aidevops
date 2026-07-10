@@ -12,6 +12,8 @@ import { AppsSurface, nextRecommendedFilterValue } from "../src/InventorySurface
 import { PulseWorkersSurface } from "../src/PulseWorkersSurface";
 import { recommendedApps } from "../src/RecommendedAppsSurface";
 import { AiProvidersSurface } from "../src/StatusSurfaces";
+import { VaultAccessModal } from "../src/VaultAccessModal";
+import { vaultDialogIntentForStatus } from "../src/VaultBadges";
 import { DEFAULT_ACCENT_HUE, DEFAULT_CONTRAST, DEFAULT_FONT, DEFAULT_FONT_SIZE, chatPrimitiveStackDecision, fontOptions, navGroups, surfaceRecordCounts, type SurfaceNavItem } from "../src/app-model";
 import { renderDashboardHtml } from "../src/dashboard";
 import { fetchStatus, mockedStatus } from "../src/status-client";
@@ -102,10 +104,31 @@ describe("dashboard shell", () => {
   });
 
   test("prompts for vault setup only once per loaded session", () => {
-    expect(shouldPromptVaultSetup(false, true, false)).toBe(true);
-    expect(shouldPromptVaultSetup(false, true, true)).toBe(false);
-    expect(shouldPromptVaultSetup(true, true, false)).toBe(false);
-    expect(shouldPromptVaultSetup(false, false, false)).toBe(false);
+    const setupVault = { ...mockedStatus().data.vault, helper_status: "available" as const };
+    expect(shouldPromptVaultSetup(false, setupVault, false)).toBe(true);
+    expect(shouldPromptVaultSetup(false, setupVault, true)).toBe(false);
+    expect(shouldPromptVaultSetup(true, setupVault, false)).toBe(false);
+    expect(shouldPromptVaultSetup(false, { ...setupVault, status: "unknown", readiness: { ...setupVault.readiness, setup_required: false } }, false)).toBe(false);
+  });
+
+  test("maps Vault states to explicit setup, unlock, recovery, and unavailable intents", () => {
+    const fixture = mockedStatus().data.vault;
+    expect(vaultDialogIntentForStatus({ ...fixture, helper_status: "available" })).toBe("setup");
+    expect(vaultDialogIntentForStatus({ ...fixture, helper_status: "available", initialized: true, status: "locked", setup_state: "migration-ready", readiness: { ...fixture.readiness, setup_required: false } })).toBe("unlock");
+    expect(vaultDialogIntentForStatus({ ...fixture, helper_status: "available", initialized: true, status: "corrupted", setup_state: "unknown", readiness: { ...fixture.readiness, setup_required: false } })).toBe("recover");
+    expect(vaultDialogIntentForStatus({ ...fixture, helper_status: "error", status: "unknown", setup_state: "unknown", readiness: { ...fixture.readiness, setup_required: false } })).toBe("unavailable");
+    expect(vaultDialogIntentForStatus({ ...fixture, helper_status: "available", status: "unlocked", initialized: true, locked: false, unlocked: true })).toBe("lock");
+  });
+
+  test("keeps passphrases out of the Vault access dialog", () => {
+    const vault = { ...mockedStatus().data.vault, helper_status: "available" as const, initialized: true, status: "locked" as const, setup_state: "migration-ready" as const, readiness: { ...mockedStatus().data.vault.readiness, setup_required: false } };
+    const html = renderToStaticMarkup(createElement(VaultAccessModal, { intent: "unlock", onClose: noop, onRefresh: noop, vault }));
+
+    expect(html).toContain("Unlock existing Vault");
+    expect(html).toContain("aidevops vault unlock");
+    expect(html).not.toContain("type=\"password\"");
+    expect(html).not.toContain("New passphrase");
+    expect(html).not.toContain("current-password");
   });
 
   test("renders AI session controls with audited-route placeholders", () => {
@@ -315,7 +338,8 @@ describe("dashboard shell", () => {
 
     expect(status.data.local_repos.repos).toEqual([]);
     expect(status.data.oauth_pool.providers.map((provider) => provider.provider)).toEqual(["anthropic", "openai", "cursor", "google", "zai"]);
-    expect(status.data.vault.status).toBe("uninitialized");
+    expect(status.data.vault.status).toBe("unknown");
+    expect(status.data.vault.readiness.setup_required).toBe(false);
     expect(status.data.vault.collections.flatMap((collection) => collection.surface_ids)).toContain("agents");
     expect(status.data.pulse_workers.value_policy).toBe("metadata_only_no_prompt_payloads_no_secrets");
     expect(status.data.pulse_workers.events.map((event) => event.issue_origin)).toContain("third_party");
@@ -362,6 +386,29 @@ describe("dashboard shell", () => {
     expect(html).toContain("Recommended OAuth pools");
     expect(html).toContain("Z.ai");
     expect(html).not.toContain("AI Providers is locked");
+  });
+
+  test("renders a metadata-only Secrets workspace across locked and unlocked states", () => {
+    const base = mockedStatus().data;
+    const lockedStatus: GuiStatusData = {
+      ...base,
+      vault: { ...base.vault, helper_status: "available", initialized: true, status: "locked", setup_state: "migration-ready", readiness: { ...base.vault.readiness, setup_required: false }, collections: base.vault.collections.map((collection) => ({ ...collection, state: collection.state === "planned" ? "planned" : "locked" })) },
+    };
+    const unlockedStatus: GuiStatusData = {
+      ...lockedStatus,
+      vault: { ...lockedStatus.vault, status: "unlocked", locked: false, unlocked: true, collections: lockedStatus.vault.collections.map((collection) => ({ ...collection, state: collection.state === "planned" ? "planned" : "unlocked" })) },
+    };
+
+    const lockedHtml = renderWorkspaceSurface(securityItem, "security", lockedStatus);
+    const unlockedHtml = renderWorkspaceSurface(securityItem, "security", unlockedStatus);
+
+    expect(lockedHtml).toContain("What unlock enables");
+    expect(lockedHtml).toContain("Unlock Vault");
+    expect(lockedHtml).not.toContain("GITHUB_TOKEN");
+    expect(unlockedHtml).toContain("Reference inventory");
+    expect(unlockedHtml).toContain("GITHUB_TOKEN");
+    expect(unlockedHtml).toContain("Never displayed");
+    expect(unlockedHtml).not.toContain("type=\"password\"");
   });
 
   test("renders updated Apps copy, casing, filter order, and compact managed metadata", () => {
@@ -550,6 +597,19 @@ describe("dashboard shell", () => {
     expect(desktopInstaller).toContain("NSPasteboard.general.setString(fileURL.path");
   });
 
+  test("limits native Vault terminal handoff to allowlisted action identifiers", () => {
+    const bridgeSource = readFileSync(`${guiWebRoot}/src/vault-command-bridge.ts`, "utf8");
+    const desktopInstaller = readFileSync(`${guiWebRoot}/../gui-desktop/scripts/install-macos-app.sh`, "utf8");
+
+    expect(bridgeSource).toContain('postMessage(action)');
+    expect(bridgeSource).not.toContain("postMessage(vaultCommandText");
+    expect(desktopInstaller).toContain('case "vaultCommand"');
+    expect(desktopInstaller).toContain("#aidevops:trust-boundary");
+    expect(desktopInstaller).toContain('case "unlock": command = "aidevops vault unlock"');
+    expect(desktopInstaller).toContain('default: return');
+    expect(desktopInstaller).not.toContain("do script \\\"\\(body)\\\"");
+  });
+
   test("ships critical loading styles before React hydrates", () => {
     const html = readFileSync(`${guiWebRoot}/index.html`, "utf8");
     const css = readFileSync(`${guiWebRoot}/src/styles.css`, "utf8");
@@ -653,6 +713,13 @@ const aiProvidersItem: SurfaceNavItem = {
   label: "AI Providers",
 };
 
+const securityItem: SurfaceNavItem = {
+  description: "Secret references and trust boundary",
+  icon: "shield",
+  id: "security",
+  label: "Secrets",
+};
+
 const channelsItem: SurfaceNavItem = {
   description: "Team channels",
   icon: "hash",
@@ -690,7 +757,7 @@ const managedAppFixture: GuiManagedAppSummary = {
   status: "found",
 };
 
-function renderWorkspaceSurface(activeItem: SurfaceNavItem, activeSurface: SurfaceNavItem["id"]): string {
+function renderWorkspaceSurface(activeItem: SurfaceNavItem, activeSurface: SurfaceNavItem["id"], status: GuiStatusData = mockedStatus().data): string {
   return renderToStaticMarkup(createElement(Workspace, {
     activeItem,
     activeSectionLabel: "Management",
@@ -709,7 +776,7 @@ function renderWorkspaceSurface(activeItem: SurfaceNavItem, activeSurface: Surfa
     setSelectedSessionId: noop,
     setShellMode: noop,
     shellMode: "devices",
-    status: mockedStatus().data,
+    status,
   }));
 }
 

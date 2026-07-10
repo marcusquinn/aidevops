@@ -7,6 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 CRYPTO_HELPER="${SCRIPT_DIR}/vault-crypto-helper.py"
 VAULT_AUDIT_HELPER="${SCRIPT_DIR}/vault-audit-helper.sh"
+VAULT_RUNTIME_PYTHON="${AIDEVOPS_VAULT_PYTHON:-${HOME}/.aidevops/.agent-workspace/python-env/vault/bin/python3}"
 
 usage() {
 	cat <<'EOF'
@@ -48,7 +49,11 @@ audit_vault_event() {
 		[[ "${AIDEVOPS_VAULT_AUDIT_REQUIRE:-0}" == "1" ]] && return 1
 		return 0
 	fi
-	if "$VAULT_AUDIT_HELPER" append \
+	local python_bin=""
+	python_bin=$(resolve_vault_python 2>/dev/null || true)
+	local python_path="${PATH}"
+	[[ -n "$python_bin" ]] && python_path="${python_bin%/*}:${PATH}"
+	if PATH="$python_path" "$VAULT_AUDIT_HELPER" append \
 		--actor "${USER:-local}" \
 		--action "vault.$safe_action" \
 		--target-collection "vault" \
@@ -62,12 +67,38 @@ audit_vault_event() {
 	return 0
 }
 
+resolve_vault_python() {
+	local managed_python="$VAULT_RUNTIME_PYTHON"
+	if [[ -x "$managed_python" ]]; then
+		printf '%s\n' "$managed_python"
+		return 0
+	fi
+	local system_python=""
+	system_python=$(command -v python3 2>/dev/null || true)
+	if [[ -n "$system_python" ]]; then
+		printf '%s\n' "$system_python"
+		return 0
+	fi
+	printf '%s\n' "[ERROR] Vault requires Python 3; run aidevops setup" >&2
+	return 1
+}
+
+run_crypto_command() {
+	local command_name="$1"
+	shift || true
+	local python_bin=""
+	python_bin=$(resolve_vault_python) || return 1
+	PATH="${python_bin%/*}:${PATH}" "$python_bin" "$CRYPTO_HELPER" "$command_name" "$@"
+	local rc=$?
+	return "$rc"
+}
+
 run_with_audit() {
 	local command_name="$1"
 	shift || true
 	audit_vault_event "$command_name" "attempt" "vault command attempted" || return 1
 	set +e
-	python3 "$CRYPTO_HELPER" "$command_name" "$@"
+	run_crypto_command "$command_name" "$@"
 	local rc=$?
 	set -e
 	if [[ "$rc" -eq 0 ]]; then
@@ -83,7 +114,9 @@ run_sync_with_audit() {
 	shift || true
 	audit_vault_event "$command_name" "attempt" "vault sync command attempted" || return 1
 	set +e
-	"$SCRIPT_DIR/vault-sync-helper.sh" "$command_name" "$@"
+	local python_bin=""
+	python_bin=$(resolve_vault_python) || return 1
+	PATH="${python_bin%/*}:${PATH}" "$SCRIPT_DIR/vault-sync-helper.sh" "$command_name" "$@"
 	local rc=$?
 	set -e
 	if [[ "$rc" -eq 0 ]]; then
@@ -91,6 +124,14 @@ run_sync_with_audit() {
 	else
 		audit_vault_event "$command_name" "failure" "vault sync command failed" || true
 	fi
+	return "$rc"
+}
+
+run_read_only() {
+	local command_name="$1"
+	shift || true
+	run_crypto_command "$command_name" "$@"
+	local rc=$?
 	return "$rc"
 }
 
@@ -103,13 +144,20 @@ require_crypto_helper() {
 }
 
 main() {
-	local command="${1:-help}"
+	local command="help"
+	[[ $# -gt 0 ]] && command="$1"
 	case "$command" in
 	help | --help | -h)
 		usage
 		return 0
 		;;
-	init | unlock | lock | status | setup-state | read | update | change-passphrase | lost-passphrase)
+	status | setup-state)
+		shift || true
+		require_crypto_helper || return 1
+		run_read_only "$command" "$@"
+		return $?
+		;;
+	init | unlock | lock | read | update | change-passphrase | lost-passphrase)
 		shift || true
 		require_crypto_helper || return 1
 		run_with_audit "$command" "$@"
