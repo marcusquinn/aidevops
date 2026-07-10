@@ -46,7 +46,7 @@ describe("status adapter", () => {
     expect(response.data.vault.readiness.remote_unlock_enabled).toBe(false);
     expect(JSON.stringify(response.data.vault)).not.toContain("SECRET_SENTINEL_DO_NOT_RENDER");
     expect(response.data.capabilities.length).toBeGreaterThan(0);
-    expect(response.data.secrets[0]).toEqual({ name: "GITHUB_TOKEN", status: "unchecked" });
+    expect(response.data.secrets).toEqual([]);
   });
 
   test("populates Pulse and Workers status from local telemetry files", () => {
@@ -172,6 +172,46 @@ describe("status adapter", () => {
     expect(vault.status).toBe("locked");
     expect(vault.setup_state).toBe("unknown");
     expect(vault.readiness.setup_required).toBe(false);
+  });
+
+  test("rejects fail-open Vault output paired with an unexpected exit code", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-vault-bad-exit-"));
+    const scriptsDir = join(repoRoot, ".agents", "scripts");
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, "vault-helper.sh"), [
+      "case \"$1\" in",
+      "  status) printf '%s\\n' unlocked; exit 1 ;;",
+      "  setup-state) printf '%s\\n' migration-ready ;;",
+      "  *) exit 1 ;;",
+      "esac",
+    ].join("\n"));
+
+    const vault = readVaultSummary(repoRoot);
+
+    expect(vault.status).toBe("unknown");
+    expect(vault.unlocked).toBe(false);
+    expect(vault.locked).toBe(true);
+    expect(vault.helper_status).toBe("error");
+  });
+
+  test("preserves corrupted metadata as a conservative recovery state", () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-vault-corrupted-"));
+    const scriptsDir = join(repoRoot, ".agents", "scripts");
+    mkdirSync(scriptsDir, { recursive: true });
+    writeFileSync(join(scriptsDir, "vault-helper.sh"), [
+      "case \"$1\" in",
+      "  status) printf '%s\\n' corrupted; exit 3 ;;",
+      "  setup-state) printf '%s\\n' unknown; exit 3 ;;",
+      "  *) exit 1 ;;",
+      "esac",
+    ].join("\n"));
+
+    const vault = readVaultSummary(repoRoot);
+
+    expect(vault.status).toBe("corrupted");
+    expect(vault.setup_state).toBe("unknown");
+    expect(vault.helper_status).toBe("available");
+    expect(vault.unlocked).toBe(false);
   });
 
   test("does not search relative home tool paths when HOME is unset", () => {

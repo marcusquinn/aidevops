@@ -4,16 +4,23 @@ import type { GuiVaultStatusData } from "@aidevops/gui-shared";
 import type { VaultDialogIntent } from "./VaultBadges";
 import { type NativeVaultAction, postNativeVaultCommand, vaultCommandText } from "./vault-command-bridge";
 
-export function VaultAccessModal({ intent, onClose, onRefresh, vault }: {
+export function VaultAccessModal({ intent, onClose, onRefresh, onTerminalLaunch, vault }: {
   intent: VaultDialogIntent;
   onClose: () => void;
   onRefresh: () => Promise<void> | void;
+  onTerminalLaunch: () => void;
   vault: GuiVaultStatusData;
 }): ReactElement {
   const [launchStatus, setLaunchStatus] = useState<"idle" | "opened" | "copied" | "failed">("idle");
   const primaryActionRef = useRef<HTMLButtonElement | null>(null);
+  const dialogRef = useRef<HTMLElement | null>(null);
   const content = dialogContent(intent, vault);
   const terminalAction = terminalActionForIntent(intent);
+
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    return () => previousFocus?.focus();
+  }, []);
 
   useEffect(() => {
     setLaunchStatus("idle");
@@ -21,11 +28,23 @@ export function VaultAccessModal({ intent, onClose, onRefresh, vault }: {
   }, [intent]);
 
   useEffect(() => {
-    const closeOnEscape = (event: KeyboardEvent) => {
+    const handleDialogKeys = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
+      if (event.key !== "Tab" || dialogRef.current === null) return;
+      const focusable = [...dialogRef.current.querySelectorAll<HTMLButtonElement>("button:not([disabled])")];
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (focusable.length === 0 || first === undefined || last === undefined) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
+    window.addEventListener("keydown", handleDialogKeys);
+    return () => window.removeEventListener("keydown", handleDialogKeys);
   }, [onClose]);
 
   const launchTerminal = async () => {
@@ -34,13 +53,20 @@ export function VaultAccessModal({ intent, onClose, onRefresh, vault }: {
       return;
     }
     if (postNativeVaultCommand(terminalAction)) {
+      onTerminalLaunch();
       setLaunchStatus("opened");
       return;
     }
     if (typeof navigator !== "undefined" && navigator.clipboard !== undefined) {
-      await navigator.clipboard.writeText(vaultCommandText(terminalAction));
-      setLaunchStatus("copied");
-      return;
+      try {
+        await navigator.clipboard.writeText(vaultCommandText(terminalAction));
+        onTerminalLaunch();
+        setLaunchStatus("copied");
+        return;
+      } catch {
+        setLaunchStatus("failed");
+        return;
+      }
     }
     setLaunchStatus("failed");
   };
@@ -52,6 +78,7 @@ export function VaultAccessModal({ intent, onClose, onRefresh, vault }: {
         aria-labelledby="vault-access-title"
         aria-modal="true"
         className="vault-modal"
+        ref={dialogRef}
         role="dialog"
       >
         <header className="vault-modal-header">

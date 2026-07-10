@@ -107,7 +107,7 @@ function normalizeStatusEnvelope(envelope: GuiResponseEnvelope<Partial<GuiStatus
         actions: data.pulse_workers?.actions ?? statusFixture.pulse_workers.actions,
       },
       capabilities: data.capabilities ?? statusFixture.capabilities,
-      secrets: data.secrets ?? statusFixture.secrets,
+      secrets: data.secrets ?? [],
       placeholders: data.placeholders ?? statusFixture.placeholders,
     },
   };
@@ -136,7 +136,7 @@ function unavailableVault(helperStatus: GuiVaultStatusData["helper_status"]): Gu
     status: "unknown",
     setup_state: "unknown",
     initialized: false,
-    locked: false,
+    locked: true,
     unlocked: false,
     available: false,
     helper_status: helperStatus,

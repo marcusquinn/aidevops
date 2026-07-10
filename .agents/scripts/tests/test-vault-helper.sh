@@ -180,6 +180,11 @@ assert_eq "read returns encrypted entry after unlock" "protected value" "$($VAUL
 broker_pid_file="$AIDEVOPS_VAULT_RUNTIME_DIR/broker.pid"
 if [[ -s "$broker_pid_file" ]]; then
 	broker_pid="$(sed -n '1p' "$broker_pid_file")"
+	broker_command="$(ps -p "$broker_pid" -o command= 2>/dev/null || true)"
+	case "$broker_command" in
+	*" broker --key-fd "*) pass "broker command line contains only a key descriptor" ;;
+	*) fail "broker command line contains only a key descriptor" ;;
+	esac
 	kill -9 "$broker_pid" >/dev/null 2>&1 || true
 	for _ in 1 2 3 4 5 6 7 8 9 10; do
 		[[ "$($VAULT_HELPER status 2>/dev/null || true)" == "locked" ]] && break
@@ -209,6 +214,12 @@ corrupt_rc=$?
 set -e
 assert_eq "damaged metadata reports corrupted" "corrupted" "$corrupt_status"
 assert_nonzero "damaged metadata exits nonzero" "$corrupt_rc"
+set +e
+corrupt_setup_state="$($VAULT_HELPER setup-state 2>/dev/null)"
+corrupt_setup_rc=$?
+set -e
+assert_eq "damaged metadata setup state is unknown" "unknown" "$corrupt_setup_state"
+assert_nonzero "damaged metadata setup-state exits nonzero" "$corrupt_setup_rc"
 mv "$AIDEVOPS_VAULT_DIR/vault.json.good" "$AIDEVOPS_VAULT_DIR/vault.json"
 
 printf '\nVault helper test summary: %s passed, %s failed\n' "$PASS" "$FAIL"

@@ -31,11 +31,11 @@ export function vaultDialogIntentForStatus(vault: GuiVaultStatusData): VaultDial
     return "lock";
   }
 
-  if (vault.helper_status !== "available" || vault.status === "unknown") {
-    return "unavailable";
-  }
   if (vault.status === "corrupted") {
     return "recover";
+  }
+  if (vault.helper_status !== "available" || vault.status === "unknown") {
+    return "unavailable";
   }
   if (vault.status === "locked") {
     return "unlock";

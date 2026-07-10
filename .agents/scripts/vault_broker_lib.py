@@ -20,7 +20,6 @@ from vault_crypto_core import (
     STATE_LOCKED,
     STATE_UNLOCKED,
     VaultError,
-    b64d,
     decrypt_json,
     ensure_private_dir,
     load_json,
@@ -139,8 +138,7 @@ def _update_entry(vault_dir: Path, root_key: bytes, name: str, value: str) -> di
     return {"ok": True, "updated": name}
 
 
-def run_broker(vault_dir: Path, root_key_b64: str) -> int:
-    root_key = b64d(root_key_b64)
+def run_broker(vault_dir: Path, root_key: bytes) -> int:
     run_dir = runtime_dir(vault_dir)
     ensure_private_dir(run_dir)
     sock_file = socket_path(vault_dir)

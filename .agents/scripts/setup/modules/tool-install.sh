@@ -1639,11 +1639,13 @@ setup_vault_python_env() {
 	local source_root="${INSTALL_DIR:-}"
 	[[ -z "$source_root" ]] && source_root="$(cd "${module_dir}/../../../.." && pwd)"
 	local requirements_file="${source_root}/.agents/configs/vault-requirements.txt"
-	local env_dir="${AIDEVOPS_VAULT_PYTHON_ENV:-${HOME}/.aidevops/.agent-workspace/python-env/vault}"
+	local env_dir="${HOME}/.aidevops/.agent-workspace/python-env/vault"
 	local env_python="${env_dir}/bin/python3"
+	local managed_marker="${env_dir}/.aidevops-managed-runtime"
 	local required_version="49.0.0"
 
 	if [[ -x "$env_python" ]] && "$env_python" -c 'import cryptography, sys; raise SystemExit(0 if cryptography.__version__ == sys.argv[1] else 1)' "$required_version" 2>/dev/null; then
+		printf '%s\n' "managed by aidevops setup" >"$managed_marker"
 		print_success "Vault crypto runtime ${required_version} is ready"
 		return 0
 	fi
@@ -1652,14 +1654,23 @@ setup_vault_python_env() {
 		return 1
 	fi
 	mkdir -p "${env_dir%/*}"
+	if [[ -L "$env_dir" ]]; then
+		print_warning "Refusing symlinked Vault runtime directory: $env_dir"
+		return 1
+	fi
 	if [[ -d "$env_dir" && ! -x "$env_python" ]]; then
+		if [[ ! -f "$managed_marker" ]]; then
+			print_warning "Refusing to replace unmarked Vault runtime directory: $env_dir"
+			return 1
+		fi
 		rm -rf "$env_dir"
 	fi
 	if [[ ! -x "$env_python" ]] && ! "$python3_bin" -m venv "$env_dir"; then
 		print_warning "Failed to create isolated Vault Python environment"
 		return 1
 	fi
-	if ! "$env_python" -m pip install --disable-pip-version-check --no-input -r "$requirements_file"; then
+	printf '%s\n' "managed by aidevops setup" >"$managed_marker"
+	if ! "$env_python" -m pip install --disable-pip-version-check --no-input --only-binary=:all: -r "$requirements_file"; then
 		print_warning "Failed to install the pinned Vault crypto runtime"
 		return 1
 	fi

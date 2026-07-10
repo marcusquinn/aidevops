@@ -7,6 +7,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)" || exit 1
 TEST_ROOT="$(mktemp -d 2>/dev/null || mktemp -d -t aidevops-vault-security-suite)"
+VAULT_TEST_PYTHON="${AIDEVOPS_VAULT_PYTHON:-${HOME}/.aidevops/.agent-workspace/python-env/vault/bin/python3}"
+[[ -x "$VAULT_TEST_PYTHON" ]] || VAULT_TEST_PYTHON="$(command -v python3)"
 PASS=0
 FAIL=0
 
@@ -33,12 +35,14 @@ fail() {
 run_child_test() {
 	local name="$1"
 	local path="$2"
-	if bash "$path"; then
+	local test_path="$PATH"
+	[[ -x "$VAULT_TEST_PYTHON" ]] && test_path="${VAULT_TEST_PYTHON%/*}:${PATH}"
+	if PATH="$test_path" AIDEVOPS_VAULT_TEST_MODE=1 AIDEVOPS_VAULT_PYTHON="$VAULT_TEST_PYTHON" bash "$path"; then
 		pass "$name"
 	elif [[ "$name" == "vault remote lock, replay, stale-grant tests" ]]; then
 		printf 'Retrying %s after transient remote-control timing failure...\n' "$name" >&2
 		sleep 3
-		if bash "$path"; then
+		if PATH="$test_path" AIDEVOPS_VAULT_TEST_MODE=1 AIDEVOPS_VAULT_PYTHON="$VAULT_TEST_PYTHON" bash "$path"; then
 			pass "$name"
 		else
 			fail "$name"

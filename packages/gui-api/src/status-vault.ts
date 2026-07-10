@@ -23,8 +23,8 @@ const RESTART_TEST_SETUP_STATES = new Set<GuiVaultSetupState>(["test-created", "
 export function readVaultSummary(repoRoot: string): GuiVaultStatusData {
   const helperPath = join(repoRoot, ".agents", "scripts", "vault-helper.sh");
   const helperExists = existsSync(helperPath);
-  const rawStatus = helperExists ? readVaultCommand(helperPath, ["status"], isGuiVaultStatus) : null;
-  const rawSetupState = helperExists ? readVaultCommand(helperPath, ["setup-state"], isGuiVaultSetupState) : null;
+  const rawStatus = helperExists ? readVaultCommand(helperPath, "status", isGuiVaultStatus) : null;
+  const rawSetupState = helperExists ? readVaultCommand(helperPath, "setup-state", isGuiVaultSetupState) : null;
   const helperStatus = vaultHelperStatus(helperExists, rawStatus, rawSetupState);
   const status = rawStatus ?? "unknown";
   const setupState = rawSetupState ?? fallbackSetupState(status);
@@ -57,17 +57,28 @@ export function readVaultSummary(repoRoot: string): GuiVaultStatusData {
 
 function readVaultCommand<T extends string>(
   helperPath: string,
-  args: string[],
+  command: "status" | "setup-state",
   isAllowed: (value: string) => value is T,
 ): T | null {
-  const result = spawnSync("bash", [helperPath, ...args], {
+  const result = spawnSync("bash", [helperPath, command], {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "ignore"],
-    timeout: 1500,
+    timeout: 750,
   });
-  if (result.error !== undefined) return null;
+  if (result.error !== undefined || result.signal !== null || result.status === null) return null;
   const firstLine = result.stdout.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() ?? "";
-  return isAllowed(firstLine) ? firstLine : null;
+  return isAllowed(firstLine) && isExpectedVaultExit(command, firstLine, result.status) ? firstLine : null;
+}
+
+function isExpectedVaultExit(command: "status" | "setup-state", value: string, exitCode: number): boolean {
+  if (command === "status") {
+    return (exitCode === 0 && (value === "locked" || value === "unlocked"))
+      || (exitCode === 2 && value === "uninitialized")
+      || (exitCode === 3 && value === "corrupted");
+  }
+  return (exitCode === 0 && ["test-created", "restart-required", "test-verified", "migration-ready"].includes(value))
+    || (exitCode === 2 && value === "uninitialized")
+    || (exitCode === 3 && value === "unknown");
 }
 
 function isGuiVaultStatus(value: string): value is GuiVaultStatus {

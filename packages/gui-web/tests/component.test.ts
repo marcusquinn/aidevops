@@ -115,14 +115,14 @@ describe("dashboard shell", () => {
     const fixture = mockedStatus().data.vault;
     expect(vaultDialogIntentForStatus({ ...fixture, helper_status: "available" })).toBe("setup");
     expect(vaultDialogIntentForStatus({ ...fixture, helper_status: "available", initialized: true, status: "locked", setup_state: "migration-ready", readiness: { ...fixture.readiness, setup_required: false } })).toBe("unlock");
-    expect(vaultDialogIntentForStatus({ ...fixture, helper_status: "available", initialized: true, status: "corrupted", setup_state: "unknown", readiness: { ...fixture.readiness, setup_required: false } })).toBe("recover");
+    expect(vaultDialogIntentForStatus({ ...fixture, helper_status: "error", initialized: true, status: "corrupted", setup_state: "unknown", readiness: { ...fixture.readiness, setup_required: false } })).toBe("recover");
     expect(vaultDialogIntentForStatus({ ...fixture, helper_status: "error", status: "unknown", setup_state: "unknown", readiness: { ...fixture.readiness, setup_required: false } })).toBe("unavailable");
     expect(vaultDialogIntentForStatus({ ...fixture, helper_status: "available", status: "unlocked", initialized: true, locked: false, unlocked: true })).toBe("lock");
   });
 
   test("keeps passphrases out of the Vault access dialog", () => {
     const vault = { ...mockedStatus().data.vault, helper_status: "available" as const, initialized: true, status: "locked" as const, setup_state: "migration-ready" as const, readiness: { ...mockedStatus().data.vault.readiness, setup_required: false } };
-    const html = renderToStaticMarkup(createElement(VaultAccessModal, { intent: "unlock", onClose: noop, onRefresh: noop, vault }));
+    const html = renderToStaticMarkup(createElement(VaultAccessModal, { intent: "unlock", onClose: noop, onRefresh: noop, onTerminalLaunch: noop, vault }));
 
     expect(html).toContain("Unlock existing Vault");
     expect(html).toContain("aidevops vault unlock");
@@ -340,6 +340,7 @@ describe("dashboard shell", () => {
     expect(status.data.oauth_pool.providers.map((provider) => provider.provider)).toEqual(["anthropic", "openai", "cursor", "google", "zai"]);
     expect(status.data.vault.status).toBe("unknown");
     expect(status.data.vault.readiness.setup_required).toBe(false);
+    expect(status.data.secrets).toEqual([]);
     expect(status.data.vault.collections.flatMap((collection) => collection.surface_ids)).toContain("agents");
     expect(status.data.pulse_workers.value_policy).toBe("metadata_only_no_prompt_payloads_no_secrets");
     expect(status.data.pulse_workers.events.map((event) => event.issue_origin)).toContain("third_party");
@@ -607,9 +608,13 @@ describe("dashboard shell", () => {
     expect(bridgeSource).not.toContain("postMessage(vaultCommandText");
     expect(desktopInstaller).toContain('case "vaultCommand"');
     expect(desktopInstaller).toContain("#aidevops:trust-boundary");
-    expect(desktopInstaller).toContain('case "unlock": command = "aidevops vault unlock"');
+    expect(desktopInstaller).toContain("isTrustedVaultMessage(message)");
+    expect(desktopInstaller).toContain("message.frameInfo.isMainFrame");
+    expect(desktopInstaller).toContain('origin.protocol == "http"');
+    expect(desktopInstaller).toContain('init|unlock|lock|status|lost-passphrase)');
+    expect(desktopInstaller).toContain('exec /bin/bash "\\${REPO_ROOT}/aidevops.sh" vault');
     expect(desktopInstaller).toContain('default: return');
-    expect(desktopInstaller).not.toContain("do script \\\"\\(body)\\\"");
+    expect(desktopInstaller).not.toContain('command = "aidevops vault');
   });
 
   test("ships critical loading styles before React hydrates", () => {

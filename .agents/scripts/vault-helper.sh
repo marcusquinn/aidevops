@@ -7,7 +7,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 CRYPTO_HELPER="${SCRIPT_DIR}/vault-crypto-helper.py"
 VAULT_AUDIT_HELPER="${SCRIPT_DIR}/vault-audit-helper.sh"
-VAULT_RUNTIME_PYTHON="${AIDEVOPS_VAULT_PYTHON:-${HOME}/.aidevops/.agent-workspace/python-env/vault/bin/python3}"
+VAULT_RUNTIME_PYTHON="${HOME}/.aidevops/.agent-workspace/python-env/vault/bin/python3"
 
 usage() {
 	cat <<'EOF'
@@ -69,6 +69,29 @@ audit_vault_event() {
 
 resolve_vault_python() {
 	local managed_python="$VAULT_RUNTIME_PYTHON"
+	if [[ "${AIDEVOPS_VAULT_TEST_MODE:-0}" == "1" && -n "${AIDEVOPS_VAULT_PYTHON:-}" ]]; then
+		managed_python="$AIDEVOPS_VAULT_PYTHON"
+	fi
+	if [[ -x "$managed_python" ]] && vault_python_ready "$managed_python"; then
+		printf '%s\n' "$managed_python"
+		return 0
+	fi
+	printf '%s\n' "[ERROR] Vault crypto runtime is unavailable; run aidevops setup" >&2
+	return 1
+}
+
+vault_python_ready() {
+	local python_bin="$1"
+	"$python_bin" -c 'import cryptography, sys; from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey; from cryptography.hazmat.primitives.ciphers.aead import AESGCM; from cryptography.hazmat.primitives.kdf.scrypt import Scrypt; AESGCM(bytes(32)); Scrypt(salt=bytes(16), length=32, n=2**14, r=8, p=1); Ed25519PrivateKey.generate(); raise SystemExit(0 if cryptography.__version__ == sys.argv[1] else 1)' "49.0.0" >/dev/null 2>&1
+	local rc=$?
+	return "$rc"
+}
+
+resolve_status_python() {
+	local managed_python="$VAULT_RUNTIME_PYTHON"
+	if [[ "${AIDEVOPS_VAULT_TEST_MODE:-0}" == "1" && -n "${AIDEVOPS_VAULT_PYTHON:-}" ]]; then
+		managed_python="$AIDEVOPS_VAULT_PYTHON"
+	fi
 	if [[ -x "$managed_python" ]]; then
 		printf '%s\n' "$managed_python"
 		return 0
@@ -130,7 +153,9 @@ run_sync_with_audit() {
 run_read_only() {
 	local command_name="$1"
 	shift || true
-	run_crypto_command "$command_name" "$@"
+	local python_bin=""
+	python_bin=$(resolve_status_python) || return 1
+	"$python_bin" "$CRYPTO_HELPER" "$command_name" "$@"
 	local rc=$?
 	return "$rc"
 }
@@ -170,7 +195,9 @@ main() {
 		;;
 	audit)
 		shift || true
-		"$VAULT_AUDIT_HELPER" "$@"
+		local python_bin=""
+		python_bin=$(resolve_vault_python) || return 1
+		PATH="${python_bin%/*}:${PATH}" "$VAULT_AUDIT_HELPER" "$@"
 		return $?
 		;;
 	*)

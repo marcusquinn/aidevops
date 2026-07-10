@@ -63,8 +63,8 @@ cat >"${AIDEVOPS_VAULT_DIR}/vault.json" <<'JSON'
 {
   "schema_version": 1,
   "setup_state": "migration-ready",
-  "kdf": {"name": "scrypt", "salt": "fixture", "params": {}},
-  "wrapped_root_key": {}
+  "kdf": {"name": "scrypt", "salt": "fixture", "params": {"n": 32768, "r": 8, "p": 1, "length": 32}},
+  "wrapped_root_key": {"aead": "AES-256-GCM", "nonce": "fixture", "ciphertext": "fixture"}
 }
 JSON
 
@@ -93,6 +93,26 @@ if grep -q '^cryptography==49\.0\.0$' "${REPO_ROOT}/.agents/configs/vault-requir
 	pass "setup wires the exact-pinned Vault runtime"
 else
 	fail "setup wires the exact-pinned Vault runtime"
+fi
+
+unsafe_home="${TEST_ROOT}/unsafe-home"
+unsafe_runtime="${unsafe_home}/.aidevops/.agent-workspace/python-env/vault"
+mkdir -p "$unsafe_runtime"
+printf '%s\n' "preserve" >"${unsafe_runtime}/sentinel"
+if HOME="$unsafe_home" INSTALL_DIR="$REPO_ROOT" bash -c '
+  print_info() { return 0; }
+  print_warning() { return 0; }
+  print_success() { return 0; }
+  source "$1"
+  find_python3() { command -v python3; return 0; }
+  if setup_vault_python_env; then
+    exit 1
+  fi
+  exit 0
+' _ "${REPO_ROOT}/.agents/scripts/setup/modules/tool-install.sh" && [[ -f "${unsafe_runtime}/sentinel" ]]; then
+	pass "setup preserves unmarked runtime directories"
+else
+	fail "setup preserves unmarked runtime directories"
 fi
 
 printf '\nVault runtime readiness summary: %s passed, %s failed\n' "$PASS" "$FAIL"

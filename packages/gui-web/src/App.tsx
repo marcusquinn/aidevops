@@ -110,6 +110,7 @@ export function App(): ReactElement {
   const [vaultDialogIntent, setVaultDialogIntent] = useState<VaultDialogIntent | null>(null);
   const hasPromptedVaultSetup = useRef(false);
   const focusWorkspaceAfterNavigation = useRef(false);
+  const refreshVaultAfterTerminal = useRef(false);
   const [systemTheme, setSystemTheme] = useState<"light" | "dark">("light");
   const resolvedTheme = themePreference === "system" ? systemTheme : themePreference;
   const activeSurface: SurfaceId = navigation.entries[navigation.index] ?? "overview";
@@ -215,7 +216,11 @@ export function App(): ReactElement {
   }, [refreshStatus]);
 
   useEffect(() => {
-    const refreshAfterTerminal = () => void refreshStatus();
+    const refreshAfterTerminal = () => {
+      if (!refreshVaultAfterTerminal.current) return;
+      refreshVaultAfterTerminal.current = false;
+      void refreshStatus();
+    };
     window.addEventListener("focus", refreshAfterTerminal);
     return () => window.removeEventListener("focus", refreshAfterTerminal);
   }, [refreshStatus]);
@@ -300,7 +305,7 @@ export function App(): ReactElement {
         status={status.data}
       />
       <DesktopStatusBar status={status.data} />
-      {vaultDialogIntent ? <VaultAccessModal intent={vaultDialogIntent} onClose={() => setVaultDialogIntent(null)} onRefresh={refreshStatus} vault={status.data.vault} /> : null}
+      {vaultDialogIntent ? <VaultAccessModal intent={vaultDialogIntent} onClose={() => setVaultDialogIntent(null)} onRefresh={refreshStatus} onTerminalLaunch={() => { refreshVaultAfterTerminal.current = true; }} vault={status.data.vault} /> : null}
     </main>
   );
 }

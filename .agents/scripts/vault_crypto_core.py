@@ -172,7 +172,9 @@ def decrypt_json(key: bytes, envelope: dict[str, Any], aad: bytes) -> dict[str, 
     try:
         plaintext = aesgcm(key).decrypt(b64d(str(envelope["nonce"])), b64d(str(envelope["ciphertext"])), aad)
         data = json.loads(plaintext.decode("utf-8"))
-    except (KeyError, ValueError, invalid_tag) as exc:
+    except (KeyError, ValueError) as exc:
+        raise VaultError("VAULT_METADATA_CORRUPTED", "Vault envelope is malformed", 3) from exc
+    except invalid_tag as exc:
         raise VaultError("VAULT_DECRYPT_FAILED", "Vault decrypt failed", 4) from exc
     if not isinstance(data, dict):
         raise VaultError("VAULT_METADATA_CORRUPTED", "Vault payload has invalid shape", 3)
@@ -207,10 +209,19 @@ def prompt_acknowledgement() -> None:
 def validate_metadata(meta: dict[str, Any]) -> None:
     if meta.get("schema_version") != SCHEMA_VERSION:
         raise VaultError("VAULT_METADATA_CORRUPTED", "Unsupported Vault metadata schema", 3)
-    if meta.get("kdf", {}).get("name") != KDF_NAME:
+    kdf = meta.get("kdf")
+    wrapped = meta.get("wrapped_root_key")
+    if not isinstance(kdf, dict) or kdf.get("name") != KDF_NAME:
         raise VaultError("VAULT_METADATA_CORRUPTED", "Unsupported Vault KDF", 3)
-    if "salt" not in meta.get("kdf", {}) or "wrapped_root_key" not in meta:
+    if not isinstance(kdf.get("salt"), str) or not isinstance(kdf.get("params"), dict):
         raise VaultError("VAULT_METADATA_CORRUPTED", "Vault metadata is incomplete", 3)
+    params = kdf["params"]
+    if any(not isinstance(params.get(name), int) or int(params[name]) <= 0 for name in ("n", "r", "p", "length")):
+        raise VaultError("VAULT_METADATA_CORRUPTED", "Vault KDF parameters are invalid", 3)
+    if not isinstance(wrapped, dict) or wrapped.get("aead") != AEAD_NAME:
+        raise VaultError("VAULT_METADATA_CORRUPTED", "Vault root-key envelope is invalid", 3)
+    if not isinstance(wrapped.get("nonce"), str) or not isinstance(wrapped.get("ciphertext"), str):
+        raise VaultError("VAULT_METADATA_CORRUPTED", "Vault root-key envelope is incomplete", 3)
 
 
 def unwrap_root_key(meta: dict[str, Any], passphrase: str) -> bytes:
@@ -220,8 +231,12 @@ def unwrap_root_key(meta: dict[str, Any], passphrase: str) -> bytes:
     try:
         payload = decrypt_json(kek, dict(meta["wrapped_root_key"]), b"aidevops-vault-root-key")
         root = b64d(str(payload["root_key"]))
-    except (KeyError, VaultError) as exc:
-        raise VaultError("VAULT_WRONG_PASSPHRASE", "Vault unlock failed", 4) from exc
+    except KeyError as exc:
+        raise VaultError("VAULT_METADATA_CORRUPTED", "Vault root-key envelope is incomplete", 3) from exc
+    except VaultError as exc:
+        if exc.code == "VAULT_DECRYPT_FAILED":
+            raise VaultError("VAULT_WRONG_PASSPHRASE", "Vault unlock failed", 4) from exc
+        raise
     if len(root) != KEY_LEN:
         raise VaultError("VAULT_METADATA_CORRUPTED", "Vault root key has invalid length", 3)
     return root

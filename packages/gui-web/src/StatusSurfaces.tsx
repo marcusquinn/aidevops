@@ -7,7 +7,7 @@ import { PathActions } from "./PathActions";
 import { type VaultDialogIntent, VaultPadlock, vaultActionLabel, vaultDialogIntentForStatus } from "./VaultBadges";
 
 export { AiProvidersSurface } from "./AiProvidersSurface";
-export { SecretsSurface as SecuritySurface } from "./SecretsSurface";
+export { SecuritySurface } from "./SecuritySurface";
 
 export function OverviewSurface({ status }: { status: GuiStatusData }) {
   const metrics = [
