@@ -67,7 +67,7 @@ import subprocess
 import sys
 import time
 
-inputs = os.fdopen(3, "rb").read().decode().encode().decode("unicode_escape").splitlines()
+inputs = os.fdopen(3, "rb").read().decode("unicode_escape").splitlines()
 cmd = sys.argv[1:]
 master, slave = pty.openpty()
 proc = subprocess.Popen(cmd, stdin=slave, stdout=subprocess.PIPE, stderr=slave)
