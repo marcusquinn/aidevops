@@ -386,6 +386,21 @@ test_skips_pr26944_no_further_action_required_ack() {
 	return 0
 }
 
+test_skips_actionable_parent_when_reply_resolves_thread() {
+	local comments result
+	# Regression for GH#26967 / PR #26938: the closing Gemini reply proved the
+	# earlier matchMedia finding was already addressed after the code moved.
+	# shellcheck disable=SC2016  # literal inline-comment JSON includes Markdown backticks
+	comments='[{"id":100,"user":{"login":"gemini-code-assist[bot]"},"body":"In some test environments window.matchMedia is not defined. Add a function guard before calling it.","path":"packages/gui-web/src/App.tsx","line":152,"html_url":"https://example.invalid/review-parent","created_at":"2026-07-10T00:00:00Z"},{"id":101,"in_reply_to_id":100,"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the clarification. You are correct that the navigation logic has been refactored into `useAppNavigation.ts`. I verified the current implementation correctly checks the function before invocation. No further action is required for this thread.","path":"packages/gui-web/src/App.tsx","line":152,"html_url":"https://example.invalid/review-reply","created_at":"2026-07-10T00:01:00Z"},{"id":200,"user":{"login":"gemini-code-assist[bot]"},"body":"The race condition still needs a synchronization guard.","path":"example.sh","line":20,"html_url":"https://example.invalid/unresolved-parent","created_at":"2026-07-10T00:02:00Z"},{"id":201,"in_reply_to_id":200,"user":{"login":"gemini-code-assist[bot]"},"body":"Tests are passing, but the race condition is still reproducible.","path":"example.sh","line":20,"html_url":"https://example.invalid/contradictory-reply","created_at":"2026-07-10T00:03:00Z"},{"id":300,"user":{"login":"gemini-code-assist[bot]"},"body":"The null case still needs a guard.","path":"example.sh","line":30,"html_url":"https://example.invalid/untrusted-parent","created_at":"2026-07-10T00:04:00Z"},{"id":301,"in_reply_to_id":300,"user":{"login":"drive-by-reviewer"},"body":"No further action is required for this thread.","path":"example.sh","line":30,"html_url":"https://example.invalid/untrusted-reply","created_at":"2026-07-10T00:05:00Z"}]'
+	result=$(_build_inline_findings "$comments" "26938" "medium" | jq -c '[.[].body_full] | {count: length, race: any(.[]; contains("race condition still needs")), null_case: any(.[]; contains("null case still needs"))}')
+	if [[ "$result" == '{"count":2,"race":true,"null_case":true}' ]]; then
+		print_result "skip only a parent resolved by its original reviewer" 0
+	else
+		print_result "skip only a parent resolved by its original reviewer" 1 "expected two unresolved parents, got ${result}"
+	fi
+	return 0
+}
+
 test_skips_multispace_implementation_verified_inline_ack() {
 	local comments result
 	comments='[{"user":{"login":"gemini-code-assist[bot]"},"body":"Thank you for the update. The implementation\nhas   been verified and the tests are passing.","path":".agents/scripts/pulse-dispatch-engine.sh","line":1406,"html_url":"https://example.invalid/review","created_at":"2026-06-18T00:00:00Z"}]'
