@@ -53,9 +53,9 @@ Default parallelism can multiply memory-heavy type-aware lint processes, but low
 
 - **Decision:** Skipped
 - **Rationale:** A public seed cannot safely contain the target mapping or private graph details.
-- **Status:** `blocked`
+- **Status:** `skipped` — a target-local brief and worktree were created before profiling
 - **Freshness evidence:** Existing affected commands, explicit concurrency, cache flags, and changed-file grouping were inspected locally.
-- **Verification run:** Static inspection only; no resource-intensive lint run.
+- **Verification run:** The bounded concurrency-1 affected profile exited 137 after 45 seconds; the mission stop contract prevented concurrency 2 or a retry.
 - **Stale-assumption warning:** Regenerate the graph if the target revision or package manager lock changes.
 
 ## How (Approach)
@@ -89,16 +89,18 @@ Run the target-native focused lint tests and terminal CI after any retained chan
 
 ## Acceptance Criteria
 
-- [ ] Target-local task and file digests match before and after.
-- [ ] Local lint concurrency is explicit, starts at 1, and never exceeds 2 during profiling.
-- [ ] The retained profile meets the resource threshold or is rejected with evidence.
-- [ ] No private target name, path, source content, or raw log is committed here.
+- [x] Target-local task and file digests are fixed; no target configuration change was retained.
+- [x] Local lint concurrency was explicit, started at 1, and never exceeded 1 during profiling.
+- [x] The candidate was rejected as inconclusive after exit 137 triggered the mission stop contract.
+- [x] No private target name, path, source content, or raw log is committed here.
 
 ## Context & Decisions
 
 - Target B may accept up to 25% more wall time for a material peak-memory reduction.
 - Existing CI concurrency may remain higher only when current CI evidence supports it.
 - Cache contention and recursive traversal are hypotheses, not findings.
+- The valid cold concurrency-1 profile peaked at 5,593,600 KiB across 11 processes and exited 137 after 45 seconds.
+- Concurrency 2 and warm retries were not run; existing target defaults remain unchanged.
 
 ## Relevant Files
 
