@@ -167,6 +167,39 @@ test_blocks_when_linked_worktree_owned_by_another_live_process() {
 	return 0
 }
 
+test_allows_same_opencode_session_pid_rollover() {
+	local worktree_path="${TEST_ROOT}/same-session-worktree"
+	git -C "$TEST_ROOT" worktree add "$worktree_path" -b bugfix/same-session-worktree >/dev/null 2>&1
+
+	ensure_registry_schema
+	local original_pid=""
+	local rollover_pid=""
+	sleep 30 >/dev/null 2>&1 &
+	original_pid=$!
+	sleep 30 >/dev/null 2>&1 &
+	rollover_pid=$!
+	OPENCODE_PID="" OPENCODE_SESSION_ID="ses_pre_edit_rollover" PRE_EDIT_OWNER_PID="$original_pid" run_helper "$worktree_path" >/dev/null 2>&1
+
+	local output=""
+	local exit_code=0
+	output=$(OPENCODE_PID="" OPENCODE_SESSION_ID="ses_pre_edit_rollover" PRE_EDIT_OWNER_PID="$rollover_pid" run_helper "$worktree_path" 2>&1) || exit_code=$?
+	kill "$original_pid" "$rollover_pid" >/dev/null 2>&1 || true
+	wait "$original_pid" "$rollover_pid" 2>/dev/null || true
+
+	local stored_owner=""
+	stored_owner=$(sqlite3 -separator '|' "$TEST_REGISTRY_DB" "
+		SELECT owner_pid, owner_session FROM worktree_owners
+		WHERE branch = 'bugfix/same-session-worktree';
+	" 2>/dev/null || true)
+	if [[ "$exit_code" -eq 0 ]] && [[ "$output" != *"WORKTREE_OWNERSHIP_CONFLICT=true"* ]] && [[ "$stored_owner" == "${rollover_pid}|ses_pre_edit_rollover" ]]; then
+		print_result "allows same OpenCode session after owner PID rollover" 0
+		return 0
+	fi
+
+	print_result "allows same OpenCode session after owner PID rollover" 1 "exit=${exit_code} owner=${stored_owner} output=${output}"
+	return 0
+}
+
 test_allowlisted_path_allows_edit_on_main() {
 	# Ensure repo is on main for this test
 	git -C "$TEST_ROOT" switch main >/dev/null 2>&1 || true
@@ -273,6 +306,7 @@ main() {
 	test_allows_linked_worktree_edits
 	test_warns_when_canonical_repo_is_off_main
 	test_blocks_when_linked_worktree_owned_by_another_live_process
+	test_allows_same_opencode_session_pid_rollover
 	test_allowlisted_path_allows_edit_on_main
 	test_path_traversal_blocked_on_main
 	test_absolute_path_outside_repo_blocked_on_main
