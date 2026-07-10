@@ -59,14 +59,27 @@
 
 import { exec } from "child_process";
 import { promisify } from "util";
-import { mkdirSync, writeFileSync } from "fs";
+import {
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
 
 const execAsync = promisify(exec);
 
 const CACHE_DIR = join(homedir(), ".aidevops", "cache");
-const CACHE_FILE = join(CACHE_DIR, "session-greeting.txt");
+const CACHE_BASENAME = "session-greeting.txt";
+const LOCK_BASENAME = "session-greeting-refresh.lock";
+// Comprehensive checks run at most once per 15-minute window. The subprocess
+// times out after 15 seconds, so a lock older than 30 seconds is safe to reap
+// after an abrupt plugin-process exit.
+const REFRESH_TTL_MS = 15 * 60 * 1000;
+const LOCK_STALE_MS = 30 * 1000;
 const WARNING_LINE_PREFIXES = ["Pulse stalled", "[OPENCODE MAINTENANCE]", "[WARNING]", "[WARN]"];
 
 // Fallback window: accept the first session.updated as a trigger if no
@@ -88,9 +101,9 @@ const FALLBACK_WINDOW_MS = 30000;
  * @param {string} scriptsDir
  * @param {any} client
  */
-function runGreetingAsync(scriptsDir, client) {
+function runGreetingAsync({ scriptsDir, client, cacheFile, lockDir, execGreeting, maintenanceNoticeFn }) {
   const script = join(scriptsDir, "aidevops-update-check.sh");
-  execAsync(`bash ${JSON.stringify(script)} --interactive`, {
+  execGreeting(`bash ${JSON.stringify(script)} --interactive`, {
     timeout: 15000,
   })
     .then(async ({ stdout }) => {
@@ -102,15 +115,14 @@ function runGreetingAsync(scriptsDir, client) {
         return;
       }
 
-      const maintenanceNotice = await getOpenCodeMaintenanceNotice(scriptsDir);
+      const maintenanceNotice = await maintenanceNoticeFn(scriptsDir);
       const combinedOutput = [output, maintenanceNotice].filter(Boolean).join("\n");
 
-      cacheGreeting(combinedOutput);
-
-      const buckets = classifyLines(combinedOutput);
-      const toast = buildToast(buckets);
+      cacheGreeting(cacheFile, combinedOutput);
+      const toast = greetingToast(combinedOutput);
 
       if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
+        const buckets = classifyLines(combinedOutput);
         const bucketCounts = `info=${buckets.info.length}, success=${buckets.success.length}, warning=${buckets.warning.length}, error=${buckets.error.length}`;
         if (toast) {
           console.error(`[aidevops] greeting: built 1 toast (variant=${toast.variant}, ${bucketCounts})`);
@@ -127,6 +139,9 @@ function runGreetingAsync(scriptsDir, client) {
       if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
         console.error(`[aidevops] greeting: update-check failed: ${err.message}`);
       }
+    })
+    .finally(() => {
+      releaseRefreshLock(lockDir);
     });
   // Returns here — handler can resolve before the subprocess finishes.
 }
@@ -163,13 +178,66 @@ async function getOpenCodeMaintenanceNotice(scriptsDir) {
  *
  * @param {string} output
  */
-function cacheGreeting(output) {
+function cacheGreeting(cacheFile, output) {
+  const tempFile = join(dirname(cacheFile), `.${CACHE_BASENAME}.${process.pid}.${Math.random().toString(16).slice(2)}.tmp`);
   try {
-    mkdirSync(dirname(CACHE_FILE), { recursive: true });
-    writeFileSync(CACHE_FILE, output + "\n", "utf-8");
+    mkdirSync(dirname(cacheFile), { recursive: true });
+    writeFileSync(tempFile, output + "\n", { encoding: "utf-8", mode: 0o600 });
+    renameSync(tempFile, cacheFile);
   } catch (err) {
+    rmSync(tempFile, { force: true });
     if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
       console.error(`[aidevops] greeting: cache write failed: ${err.message}`);
+    }
+  }
+}
+
+function readGreetingCache(cacheFile) {
+  try {
+    const output = readFileSync(cacheFile, "utf-8").trim();
+    if (!output) return null;
+    return { output, mtimeMs: statSync(cacheFile).mtimeMs };
+  } catch {
+    return null;
+  }
+}
+
+function greetingToast(output) {
+  return buildToast(classifyLines(output));
+}
+
+function emitCachedGreeting(client, cached) {
+  if (!cached) return;
+  const toast = greetingToast(cached.output);
+  if (toast) emitToast(client, toast);
+}
+
+function acquireRefreshLock(lockDir, staleMs, nowMs) {
+  mkdirSync(dirname(lockDir), { recursive: true });
+  try {
+    mkdirSync(lockDir);
+    return true;
+  } catch (err) {
+    if (err.code !== "EEXIST") return false;
+  }
+
+  try {
+    if (nowMs - statSync(lockDir).mtimeMs <= staleMs) return false;
+    rmSync(lockDir, { recursive: true, force: true });
+    mkdirSync(lockDir);
+    return true;
+  } catch {
+    // Another process either recovered or acquired the lock first.
+    return false;
+  }
+}
+
+function releaseRefreshLock(lockDir) {
+  try {
+    rmSync(lockDir, { recursive: true, force: true });
+  } catch (err) {
+    if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
+      console.error(`[aidevops] greeting: lock release failed: ${err.message}`);
     }
   }
 }
@@ -309,9 +377,20 @@ async function emitToast(client, body) {
  * @param {{ scriptsDir: string, client: any }} opts
  * @returns {(input: { event: { type: string } }) => Promise<void>}
  */
-export function createGreetingHandler({ scriptsDir, client }) {
+export function createGreetingHandler({
+  scriptsDir,
+  client,
+  cacheDir = CACHE_DIR,
+  refreshTtlMs = REFRESH_TTL_MS,
+  lockStaleMs = LOCK_STALE_MS,
+  execGreeting = execAsync,
+  maintenanceNoticeFn = getOpenCodeMaintenanceNotice,
+  now = Date.now,
+}) {
   let fired = false;
-  const initTime = Date.now();
+  const initTime = now();
+  const cacheFile = join(cacheDir, CACHE_BASENAME);
+  const lockDir = join(cacheDir, LOCK_BASENAME);
 
   return async ({ event }) => {
     if (fired) return;
@@ -320,11 +399,27 @@ export function createGreetingHandler({ scriptsDir, client }) {
     const isPrimary = event.type === "session.created";
     const isFallback =
       event.type === "session.updated" &&
-      Date.now() - initTime < FALLBACK_WINDOW_MS;
+      now() - initTime < FALLBACK_WINDOW_MS;
 
     if (!isPrimary && !isFallback) return;
 
     fired = true;
+
+    // Serve the last complete cache synchronously. This keeps the event hook
+    // independent of refresh latency even when this process becomes lock owner.
+    const cached = readGreetingCache(cacheFile);
+    emitCachedGreeting(client, cached);
+
+    if (cached && now() - cached.mtimeMs <= refreshTtlMs) {
+      return;
+    }
+
+    if (!acquireRefreshLock(lockDir, lockStaleMs, now())) {
+      if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
+        console.error("[aidevops] greeting: refresh already running in another process");
+      }
+      return;
+    }
 
     if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
       const mode = isPrimary ? "primary" : "fallback";
@@ -333,7 +428,14 @@ export function createGreetingHandler({ scriptsDir, client }) {
 
     // t2729: fire-and-forget — do NOT await. The handler resolves immediately;
     // the toast arrives whenever the subprocess finishes (typically 5-15s later).
-    runGreetingAsync(scriptsDir, client);
+    runGreetingAsync({
+      scriptsDir,
+      client,
+      cacheFile,
+      lockDir,
+      execGreeting,
+      maintenanceNoticeFn,
+    });
 
     if (process.env.AIDEVOPS_PLUGIN_DEBUG) {
       console.error("[aidevops] greeting: handler-completed");

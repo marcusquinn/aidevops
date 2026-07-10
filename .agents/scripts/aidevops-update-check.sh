@@ -685,9 +685,12 @@ _write_cache() {
 	local secret_hygiene="$7"
 	local advisories_output="$8"
 	local contribution_watch="$9"
+	local cache_file="$cache_dir/session-greeting.txt"
+	local temp_file=""
 
 	mkdir -p "$cache_dir"
-	{
+	temp_file=$(mktemp "$cache_dir/session-greeting.XXXXXX") || return 1
+	if ! {
 		echo "$output"
 		[[ -n "$runtime_hint" ]] && echo "$runtime_hint"
 		[[ -n "$nudge_output" ]] && echo "$nudge_output"
@@ -696,7 +699,14 @@ _write_cache() {
 		[[ -n "$secret_hygiene" ]] && echo "$secret_hygiene"
 		[[ -n "$advisories_output" ]] && echo "$advisories_output"
 		[[ -n "$contribution_watch" ]] && echo "$contribution_watch"
-	} >"$cache_dir/session-greeting.txt"
+	} >"$temp_file"; then
+		rm -f "$temp_file"
+		return 1
+	fi
+	if ! mv -f "$temp_file" "$cache_file"; then
+		rm -f "$temp_file"
+		return 1
+	fi
 	return 0
 }
 
