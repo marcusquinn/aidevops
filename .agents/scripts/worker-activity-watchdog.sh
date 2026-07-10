@@ -621,13 +621,12 @@ CLAIM_RELEASED reason=watchdog_kill:${reason} runner=$(whoami) ts=$(date -u +%Y-
 # Phase 1: Wait for any output (dead runtime detection)
 # Phase 2: Monitor continuous growth (stall detection)
 #
-# t2956 / Issue #21231 and GH#26469: Total elapsed time is also tracked.
-# When HARD_KILL_SECONDS is non-zero and total elapsed has crossed that
-# threshold, the watchdog escalates to a hard-kill that emits the
+# t2956 / Issue #21231: Total elapsed time is also tracked while output is
+# stalled. When HARD_KILL_SECONDS is non-zero, a confirmed stall that has
+# crossed that threshold escalates to a hard-kill that emits the
 # `.watchdog_stall_killed` sentinel — telling the helper to classify as exit 79
-# (watchdog_stall_killed) instead of 78 (watchdog_stall_continue). This caps
-# the per-attempt cost even when output keeps growing and frees the dispatch slot
-# for re-dispatch instead of holding it through repeated continuations.
+# (watchdog_stall_killed) instead of 78 (watchdog_stall_continue). Output-active
+# workers are not stalls and must not be killed solely for reaching wall time.
 #######################################
 _monitor_init_state() {
 	_MONITOR_PHASE1_PASSED=0
@@ -798,13 +797,6 @@ _monitor() {
 		# Phase 1: any output at all
 		if _monitor_handle_phase1 "$current_size"; then
 			continue
-		fi
-
-		# GH#26469: Enforce the absolute runtime cap before output-growth tracking.
-		# Otherwise a worker that continuously writes output can keep resetting the
-		# stall counter and bypass HARD_KILL_SECONDS indefinitely.
-		if ! _monitor_enforce_hard_kill "$current_size"; then
-			return 0
 		fi
 
 		# Phase 2: continuous growth monitoring. Output growth is the cheapest

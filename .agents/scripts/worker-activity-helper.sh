@@ -106,12 +106,20 @@ _wah_aggregate_metrics() {
 	service_result="$WAH_SERVICE_INTERRUPTION_RESULT"
 	watchdog_killed_result="$WAH_RESULT_WATCHDOG_STALL_KILLED"
 	result=$(jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg service_result "$service_result" --arg watchdog_killed_result "$watchdog_killed_result" '
-		[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $w | {
+		def _wah_nonterminal:
+			((.result // "") | endswith("_continue")) or (.result == "brief_recovery");
+		def _wah_session_outcomes:
+			to_entries
+			| group_by(if ((.value.session_key // "") != "") then .value.session_key else "__event_\(.key)" end)
+			| map(sort_by([(.value.ts // 0), (if (.value.issue_number // null) != null then 1 else 0 end), .key]) | last.value)
+			| map(select(_wah_nonterminal | not));
+		[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $events
+		| ($events | _wah_session_outcomes) as $w | {
 			total:  ($w | length),
 			succ:   ([$w[] | select(.result == "success" and .exit_code == 0)] | length),
 			wk:     ([$w[] | select(.result == $watchdog_killed_result)] | length),
-			wc:     ([$w[] | select(.result == "watchdog_stall_continue")] | length),
-			sic:    ([$w[] | select(.result == $service_result)] | length),
+			wc:     ([$events[] | select(.result == "watchdog_stall_continue")] | length),
+			sic:    ([$events[] | select(.result == $service_result)] | length),
 			rl:     ([$w[] | select(.result == "rate_limit")] | length),
 			of:     ([$w[] | select(
 				(.result != "success" or .exit_code != 0)
@@ -148,11 +156,22 @@ _wah_metric_details_json() {
 
 	jq -rn --argjson cutoff "$cutoff_epoch" --argjson now "$now_epoch" --arg watchdog_killed_result "$WAH_RESULT_WATCHDOG_STALL_KILLED" --arg local_kill_result "$WAH_RESULT_LOCAL_KILL" '
 		def _wah_empty_if_null: if . == null then "" else . end;
-		[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $w
+		def _wah_nonterminal:
+			((.result // "") | endswith("_continue")) or (.result == "brief_recovery");
+		def _wah_session_outcomes:
+			to_entries
+			| group_by(if ((.value.session_key // "") != "") then .value.session_key else "__event_\(.key)" end)
+			| map(sort_by([(.value.ts // 0), (if (.value.issue_number // null) != null then 1 else 0 end), .key]) | last.value)
+			| map(select(_wah_nonterminal | not));
+		[inputs | select((.ts // 0) >= $cutoff and (.ts // 0) <= $now)] as $events
+		| ($events | _wah_session_outcomes) as $w
 		| ($w | map(.duration_ms // 0)) as $durations
 		| ($w | map(select((.result // "") != "success" or (.exit_code // 1) != 0))) as $failures
 		| {
+			event_total: ($events | length),
+			continuation_events: ($events | map(select(_wah_nonterminal)) | length),
 			result_counts: (reduce $w[] as $row ({}; .[$row.result // "unknown"] += 1)),
+			event_result_counts: (reduce $events[] as $row ({}; .[$row.result // "unknown"] += 1)),
 			diagnostic_focus: {
 				premature_exit: ($failures | map(select(.result == "premature_exit" or .launch_failure_cause == "model_stopped_before_completion")) | length),
 				local_runtime_error: ($failures | map(select(.result != $local_kill_result and .launch_failure_cause != $local_kill_result and (.failure_reason == "local_error" or .launch_failure_cause == "local_runtime_error" or (.runtime_error_type // "") != ""))) | length),
@@ -414,7 +433,8 @@ _wah_emit_human() {
 	printf '%s\n' "$divider"
 	printf '\n'
 	printf 'headless-runtime-metrics.jsonl (canonical worker outcomes):\n'
-	printf '  Total events:                %d\n' "$total"
+	printf '  Terminal session outcomes:   %d\n' "$total"
+	printf '  Raw attempt/events:          %s\n' "$(printf '%s' "$details_json" | jq -r '.event_total // 0' 2>/dev/null || printf '0')"
 	printf '  Succeeded:                   %d  (%s of terminal)\n' "$succ" "$rate_pct"
 	printf '  Watchdog stall-killed:       %d\n' "$wk"
 	printf '  Watchdog stall-continued:    %d  (heartbeat, not terminal)\n' "$wc"
@@ -520,6 +540,8 @@ _wah_emit_json() {
 			repo: (if $repo == "" then null else $repo end),
 			metrics: {
 				total: $total,
+				event_total: ($details.event_total // $total),
+				continuation_events: ($details.continuation_events // 0),
 				succeeded: $succ,
 				watchdog_killed: $wk,
 				watchdog_continued: $wc,
@@ -527,6 +549,7 @@ _wah_emit_json() {
 				rate_limited: $rl,
 				other_failure: $of,
 				result_counts: $details.result_counts,
+				event_result_counts: ($details.event_result_counts // $details.result_counts),
 				diagnostic_focus: ($details.diagnostic_focus // {}),
 				timing_ms: $details.timing_ms,
 				recent_examples: $details.recent_examples,

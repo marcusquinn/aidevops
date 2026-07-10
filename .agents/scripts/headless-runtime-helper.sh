@@ -2028,9 +2028,8 @@ cmd_run() {
 			# reuse them here instead of re-declaring the literal so the
 			# repeated-string ratchet is not crossed.
 			local _ledger_fail="fail"
-			append_runtime_metric "$role" "$session_key" "$selected_model" \
-				"$(extract_provider "$selected_model")" \
-				"$_run_result_label" "79" "$_run_failure_reason" "1" "0"
+			# _execute_run_attempt already emitted the context-rich terminal metric.
+			# Do not append a second sparse row for the same hard-kill outcome.
 			_cmd_run_finish "$session_key" "$_ledger_fail"
 			return 1
 		fi

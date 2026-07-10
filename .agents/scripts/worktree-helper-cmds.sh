@@ -101,11 +101,17 @@ cmd_list() {
 # --- cmd_remove helpers ---
 
 # Validate that a resolved worktree path is safe to remove.
-# Checks: not main worktree, not current directory, ownership.
+# Checks: shared non-overridable removal guard, then ownership.
 # Args: $1=path_to_remove
 # Returns 0 if safe to remove, 1 if blocked.
 _remove_validate_path() {
 	local path_to_remove="$1"
+	local guard_caller="${SCRIPT_NAME:-worktree-helper.sh}"
+
+	# The shared guard blocks canonical repos, this shell's cwd, and every live
+	# process whose cwd is inside the target. --force may override ownership or
+	# dirty-state policy, but it must never override a live process cwd.
+	worktree_removal_guard "$path_to_remove" "$guard_caller" "manual" || return 1
 
 	# Don't allow removing main worktree
 	# NOTE: avoid piping git worktree list through head — with set -o pipefail

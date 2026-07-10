@@ -861,7 +861,7 @@ _worker_external_terminal_complete() {
 	issue_state=$(gh issue view "$issue_number" --repo "$repo_slug" --json state --jq '.state // empty' 2>/dev/null || true)
 	[[ "$issue_state" == "CLOSED" ]] || return 1
 
-	local branch_name=""
+	local branch_name="${WORKER_TARGET_BRANCH:-}"
 	if [[ -n "$work_dir" && -d "$work_dir" ]]; then
 		branch_name=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
 	fi
@@ -1280,6 +1280,11 @@ _cmd_run_prepare() {
 	# t2923: Expose worktree path to exit trap handler so _push_wip_commits_on_exit
 	# can push any local-only commits before the worker releases its claim.
 	export _WORKER_WORKTREE_PATH="$work_dir"
+	# Preserve the dispatch branch independently of the directory. If guarded
+	# cleanup or another actor moves the worktree before final reconciliation,
+	# durable GitHub terminal-state checks can still match the merged PR.
+	WORKER_TARGET_BRANCH=$(git -C "$work_dir" rev-parse --abbrev-ref HEAD 2>/dev/null || true)
+	export WORKER_TARGET_BRANCH
 	_hrw_claim_worker_worktree "$session_key" "$work_dir" || return 1
 
 	# GH#6696: Register this dispatch in the in-flight ledger so the pulse
