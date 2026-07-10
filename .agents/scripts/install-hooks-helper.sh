@@ -1261,27 +1261,27 @@ check_status() {
 }
 
 _test_hook_script_path() {
-	local test_script="$HOOK_SCRIPT"
-	if [[ ! -f "$test_script" ]]; then
-		# Fall back to source
-		test_script=$(find_source_hook) || return 1
-	fi
+	# Always test the source about to be installed. The currently deployed hook
+	# may be stale while setup is repairing an interrupted deployment.
+	local test_script=""
+	test_script=$(find_source_hook) || return 1
 	printf '%s\n' "$test_script"
 	return 0
 }
 
 _test_hook_create_repo() {
 	local test_root="$1"
-	git -C "$test_root" init -b main >/dev/null 2>&1 || {
-		git -C "$test_root" init >/dev/null 2>&1
-		git -C "$test_root" checkout -b main >/dev/null 2>&1
+	local real_git="${AIDEVOPS_REAL_GIT_BIN:-/usr/bin/git}"
+	"$real_git" -C "$test_root" init -b main >/dev/null 2>&1 || {
+		"$real_git" -C "$test_root" init >/dev/null 2>&1
+		"$real_git" -C "$test_root" checkout -b main >/dev/null 2>&1
 	}
-	git -C "$test_root" config user.name "Aidevops Hook Test"
-	git -C "$test_root" config user.email "test@example.com"
-	git -C "$test_root" config commit.gpgsign false
+	"$real_git" -C "$test_root" config user.name "Aidevops Hook Test"
+	"$real_git" -C "$test_root" config user.email "test@example.com"
+	"$real_git" -C "$test_root" config commit.gpgsign false
 	printf 'seed\n' >"${test_root}/README.md"
-	git -C "$test_root" add README.md >/dev/null 2>&1
-	git -C "$test_root" commit -m "test: seed hook self-test" >/dev/null 2>&1
+	"$real_git" -C "$test_root" add README.md >/dev/null 2>&1
+	"$real_git" -C "$test_root" commit -m "test: seed hook self-test" >/dev/null 2>&1
 	return 0
 }
 
@@ -1290,7 +1290,9 @@ _test_hook_run() {
 	local test_script="$2"
 	local cmd="$3"
 	local result
-	result=$(cd "$cwd" && printf '%s\n' "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"$cmd\"}}" | python3 "$test_script" 2>/dev/null)
+	local policy_guard="${SCRIPT_DIR}/canonical-git-command-guard.py"
+	local hook_input="{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"$cmd\"}}"
+	result=$(cd "$cwd" && AIDEVOPS_CANONICAL_GIT_GUARD="$policy_guard" python3 "$test_script" 2>/dev/null <<<"$hook_input")
 	printf '%s\n' "$result"
 	return 0
 }
@@ -1340,6 +1342,9 @@ _test_hook_run_blocked_cases() {
 		"git stash clear"
 		"/usr/bin/git reset --hard"
 		"git restore file.txt"
+		"git restore --staged file.txt"
+		"git push --force-with-lease"
+		"git branch -d old-branch"
 	)
 
 	for cmd in "${blocked_cmds[@]}"; do
@@ -1358,12 +1363,9 @@ _test_hook_run_allowed_cases() {
 	local cmd
 	local -a allowed_cmds=(
 		"git status"
-		"git restore --staged file.txt"
 		"git clean -fn"
 		"git clean --dry-run"
 		"rm -rf /tmp/test-dir"
-		"git push --force-with-lease"
-		"git branch -d old-branch"
 		"ls -la"
 	)
 
@@ -1408,7 +1410,8 @@ test_hook() {
 	_test_hook_create_repo "$test_root"
 
 	local linked_worktree="${test_root}/linked-wt"
-	git -C "$test_root" worktree add "$linked_worktree" -b feature/hook-linked-test >/dev/null 2>&1
+	local real_git="${AIDEVOPS_REAL_GIT_BIN:-/usr/bin/git}"
+	"$real_git" -C "$test_root" worktree add "$linked_worktree" -b feature/hook-linked-test >/dev/null 2>&1
 
 	HOOK_TEST_PASS=0
 	HOOK_TEST_FAIL=0
@@ -1416,7 +1419,7 @@ test_hook() {
 	_test_hook_run_allowed_cases "$test_root" "$test_script"
 	_test_hook_run_linked_worktree_cases "$linked_worktree" "$test_script"
 
-	git -C "$test_root" worktree remove "$linked_worktree" >/dev/null 2>&1 || rm -rf "$linked_worktree"
+	"$real_git" -C "$test_root" worktree remove "$linked_worktree" >/dev/null 2>&1 || rm -rf "$linked_worktree"
 	rm -rf "$test_root"
 
 	if [[ "$HOOK_TEST_FAIL" -eq 0 ]]; then
