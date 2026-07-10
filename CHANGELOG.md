@@ -10,6 +10,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.7] - 2026-07-10
+
+### Changed
+
+- Maintenance: sync GitHub issue refs to TODO.md [skip ci]
+- Maintenance: mark t18081 complete (pr:#26944 completed:2026-07-10) [skip ci]
+- Prevent profile contributions corruption on API failures (#26944)
+- Maintenance: mark t18070 complete (pr:#26938 completed:2026-07-10) [skip ci]
+- Maintenance: ratchet QLTY_SMELL_THRESHOLD 58→56 (-2) [skip ci]
+- Ship Secrets interface and secure Vault access (#26938)
+- Maintenance: mark t18080 complete (pr:#26935 completed:2026-07-10) [skip ci]
+- guarantee recovery after safety stops (#26935)
+- Maintenance: sync ref:GH#26937 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#26934 to TODO.md [skip ci]
+- record Target B bounded lint evidence (#26933)
+- Maintenance: update simplification state registry
+- fix changed-mode coverage and timeout semantics (#26925)
+- Maintenance: update simplification state registry
+- Maintenance: sync ref:GH#26924 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#26922 to TODO.md [skip ci]
+- Maintenance: mark t18071 complete (pr:#26918 completed:2026-07-10) [skip ci]
+- add bounded lint resource baseline (#26918)
+- Maintenance: sync ref:GH#26920 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#26919 to TODO.md [skip ci]
+- add lint resource optimisation mission plan (#26916)
+- Maintenance: update simplification state registry
+
 ## [3.32.6] - 2026-07-10
 
 ### Changed
