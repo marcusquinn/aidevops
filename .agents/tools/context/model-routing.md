@@ -33,11 +33,11 @@ model: haiku
 |------|-------|----------|
 | `local` | llama.cpp or Ollama (user models) | Privacy/offline, bulk, experimentation; opt-in only |
 | `composer2` | cursor/composer-2 | Multi-file coding, large refactors (requires Cursor OAuth pool t1549) |
-| `flash` | openai/gpt-5.4-mini → claude-haiku-4-5 | >50K context, summarization, bulk processing, research sweeps |
-| `haiku` | openai/gpt-5.4-mini → claude-haiku-4-5 | Classification, triage, simple transforms, commit messages, routing |
-| `sonnet` | openai/gpt-5.5 → claude-sonnet-4-6 | Code, review, debugging, docs — most dev tasks |
-| `pro` | openai/gpt-5.5 → claude-sonnet-4-6 | >100K codebases + complex reasoning |
-| `opus` | openai/gpt-5.5 → claude-opus-4-6 | Architecture, novel problems, security audits, complex trade-offs |
+| `flash` | openai/gpt-5.6-terra → claude-haiku-4-5 | >50K context, summarization, bulk processing, research sweeps |
+| `haiku` | openai/gpt-5.6-terra → claude-haiku-4-5 | Classification, triage, simple transforms, commit messages, routing |
+| `sonnet` | openai/gpt-5.6-sol → claude-sonnet-4-6 | Code, review, debugging, docs — most dev tasks |
+| `pro` | openai/gpt-5.6-sol → claude-sonnet-4-6 | >100K codebases + complex reasoning |
+| `opus` | openai/gpt-5.6-sol (`xhigh`) → claude-opus-4-6 | Architecture, novel problems, security audits, complex trade-offs |
 
 **Model IDs**: Always fully-qualified (`claude-sonnet-4-6`, not `claude-sonnet-4`). Short-form → `ProviderModelNotFoundError`. CLI prefix: `anthropic/`, `google/`, `openai/`.
 
@@ -88,11 +88,12 @@ is always denied because secrets must flow through secret tooling, not prompts.
 - **Pulse**: Resolves `sonnet` through `model-availability-helper.sh resolve sonnet`, so it follows routing-table order, health checks, local routing-table overrides, and `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST`.
 - **Workers**: Round-robin across the routed `sonnet` models after allowlist filtering and auth checks. Tier escalation still uses `resolve` (`tier:simple` → `haiku`, `tier:standard` → `sonnet`, `tier:thinking` → `opus`).
 - **Local switch**: Set `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai` to force both pulse and workers onto the default OpenAI fallbacks. If you want OpenAI primary but Anthropic fallback, reorder `custom/configs/model-routing-table.json` and omit the allowlist.
-- **OpenAI default mapping**: `haiku`/`flash`/`health` resolve to `openai/gpt-5.4-mini`; `sonnet`/`pro`/`eval` resolve to `openai/gpt-5.5`; `opus`/`coding` also use `openai/gpt-5.5` until account-aware support gates can distinguish working `*-pro` access.
-- **OpenAI pro caveat**: Current OpenCode ChatGPT OAuth smoke tests fail for `openai/gpt-5.5-pro` and older `*-pro`/`o3-pro` IDs, so default worker dispatch intentionally excludes them. Codex models remain excluded because they are not agentic in headless worker sessions.
-- **Reasoning effort**: OpenCode exposes GPT reasoning variants separately (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`). Headless runs do not default to `xhigh`; if no variant is set, OpenCode sends no explicit effort override and the provider default applies.
+- **OpenAI default mapping**: `haiku`/`flash`/`health` resolve to `openai/gpt-5.6-terra`; all implementation tiers resolve to `openai/gpt-5.6-sol`. Thinking-tier workers automatically use `xhigh`; standard workers keep the provider-default effort.
+- **OpenAI tier rationale**: Terra costs $2.50/M input and $15/M output and is competitive with GPT-5.5, making it the conservative choice for prescriptive/simple work. Sol costs $5/M input and $30/M output and is OpenAI's recommended flagship coding model. Its published `xhigh` agent benchmarks make it the evidence-backed thinking tier.
+- **OpenAI pro caveat**: `openai/gpt-5.6-sol-pro` passed a live OpenCode ChatGPT OAuth smoke test on 2026-07-10, but OpenAI publishes neither an API price nor comparative Sol Pro benchmarks. It remains excluded from automatic workers pending repository-specific completion-rate evidence. Historical `gpt-5.5-pro` and older `*-pro`/`o3-pro` IDs remain excluded.
+- **Reasoning effort**: OpenCode exposes GPT reasoning variants separately (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`). OpenAI also documents `max`, but OpenCode v1.17.18 does not expose it. Headless thinking-tier Sol workers default to `xhigh`; explicit CLI or environment variants still win.
 - **GPT-5.5 standard workers**: For `openai/gpt-5.5` on worker `sonnet`/`pro` tiers, aidevops omits env-derived variants such as `AIDEVOPS_HEADLESS_VARIANT_SONNET=high` so OpenCode sends no explicit thinking override. Explicit CLI `--variant` still wins because it bypasses automatic variant resolution.
-- **Tier-aware effort**: Headless dispatch can now apply variants by resolved tier. `AIDEVOPS_HEADLESS_VARIANT_SONNET=high` and `AIDEVOPS_HEADLESS_VARIANT_OPUS=xhigh` make standard work run at `high` and reasoning-tier work run at `xhigh` even when both tiers use `openai/gpt-5.5`. The GPT-5.5 standard-worker exception above only applies to env-derived sonnet/pro variants.
+- **Tier-aware effort**: Headless dispatch applies `xhigh` automatically to worker `opus` tiers on GPT-5.6 Sol. `AIDEVOPS_HEADLESS_VARIANT_OPUS` can override it; `AIDEVOPS_HEADLESS_VARIANT_SONNET` tunes standard Sol work. The GPT-5.5 exception above applies only to legacy GPT-5.5 env-derived sonnet/pro variants.
 - **Fallback**: If routed resolution fails entirely, pulse falls back to `anthropic/claude-sonnet-4-6`; workers fall back to `DEFAULT_HEADLESS_MODELS` when no allowlist is forcing a subset.
 - **Deprecated**: `PULSE_MODEL` and `AIDEVOPS_HEADLESS_MODELS` env vars are respected as overrides for one release cycle with deprecation warnings. Remove from `credentials.sh`.
 
@@ -109,8 +110,8 @@ Example custom override for OpenAI-capable headless routing:
 ```json
 {
   "tiers": {
-    "sonnet": { "models": ["openai/gpt-5.5", "anthropic/claude-sonnet-4-6"] },
-    "opus": { "models": ["openai/gpt-5.5", "anthropic/claude-opus-4-6"] }
+    "sonnet": { "models": ["openai/gpt-5.6-sol", "anthropic/claude-sonnet-4-6"] },
+    "opus": { "models": ["openai/gpt-5.6-sol", "anthropic/claude-opus-4-6"] }
   }
 }
 ```

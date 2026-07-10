@@ -65,33 +65,33 @@ select_model() {
 test_openai_allowlist_selects_sonnet_tier_model() {
 	local selected=""
 	selected=$(select_model sonnet)
-	if [[ "$selected" == "openai/gpt-5.5" ]]; then
+	if [[ "$selected" == "openai/gpt-5.6-sol" ]]; then
 		print_result "OpenAI allowlist selects sonnet tier from routing table" 0
 		return 0
 	fi
-	print_result "OpenAI allowlist selects sonnet tier from routing table" 1 "Expected openai/gpt-5.5, got ${selected:-<empty>}"
+	print_result "OpenAI allowlist selects sonnet tier from routing table" 1 "Expected openai/gpt-5.6-sol, got ${selected:-<empty>}"
 	return 0
 }
 
 test_openai_allowlist_selects_haiku_tier_model() {
 	local selected=""
 	selected=$(select_model haiku)
-	if [[ "$selected" == "openai/gpt-5.4-mini" ]]; then
+	if [[ "$selected" == "openai/gpt-5.6-terra" ]]; then
 		print_result "OpenAI allowlist selects haiku tier from routing table" 0
 		return 0
 	fi
-	print_result "OpenAI allowlist selects haiku tier from routing table" 1 "Expected openai/gpt-5.4-mini, got ${selected:-<empty>}"
+	print_result "OpenAI allowlist selects haiku tier from routing table" 1 "Expected openai/gpt-5.6-terra, got ${selected:-<empty>}"
 	return 0
 }
 
 test_openai_allowlist_selects_opus_tier_model() {
 	local selected=""
 	selected=$(select_model opus)
-	if [[ "$selected" == "openai/gpt-5.5" ]]; then
+	if [[ "$selected" == "openai/gpt-5.6-sol" ]]; then
 		print_result "OpenAI allowlist selects opus tier fallback from routing table" 0
 		return 0
 	fi
-	print_result "OpenAI allowlist selects opus tier fallback from routing table" 1 "Expected openai/gpt-5.5, got ${selected:-<empty>}"
+	print_result "OpenAI allowlist selects opus tier fallback from routing table" 1 "Expected openai/gpt-5.6-sol, got ${selected:-<empty>}"
 	return 0
 }
 

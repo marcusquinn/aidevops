@@ -96,20 +96,11 @@ resolve_model_tier() {
 
 	# Static fallback: map tier names to concrete models
 	case "$tier" in
-	opus | coding)
-		echo "openai/gpt-5.5"
+	opus | pro | sonnet | eval | coding)
+		echo "openai/gpt-5.6-sol"
 		;;
-	sonnet | eval)
-		echo "openai/gpt-5.5"
-		;;
-	haiku | health)
-		echo "openai/gpt-5.4-mini"
-		;;
-	flash)
-		echo "google/gemini-2.5-flash"
-		;;
-	pro)
-		echo "google/gemini-2.5-pro"
+	haiku | flash | health)
+		echo "openai/gpt-5.6-terra"
 		;;
 	grok)
 		echo "xai/grok-3"
@@ -196,6 +187,7 @@ _load_model_pricing_json() {
 
 get_model_pricing() {
 	local model="$1"
+	local fallback_default_pricing="3.0|15.0|0.30|3.75"
 
 	# Try JSON source first (single source of truth)
 	if [[ -z "$_MODEL_PRICING_JSON_LOADED" ]]; then
@@ -206,6 +198,18 @@ get_model_pricing() {
 		local ms="${model#*/}"
 		ms="${ms%%-202*}"
 		ms=$(echo "$ms" | tr '[:upper:]' '[:lower:]')
+		# Sol Pro has no published API price. Do not let substring matching
+		# silently assign standard Sol pricing; use the configured unknown default.
+		if [[ "$ms" == *gpt-5.6-sol-pro* ]]; then
+			local unknown_result
+			unknown_result=$(echo "$_MODEL_PRICING_JSON" | jq -r '
+				"\(.default.input)|\(.default.output)|\(.default.cache_read)|\(.default.cache_write)"
+			' 2>/dev/null)
+			if [[ -n "$unknown_result" && "$unknown_result" != "null|null|null|null" ]]; then
+				echo "$unknown_result"
+				return 0
+			fi
+		fi
 		# Search for a matching key in the JSON models object
 		local result
 		result=$(echo "$_MODEL_PRICING_JSON" | jq -r --arg ms "$ms" '
@@ -231,8 +235,12 @@ get_model_pricing() {
 	local ms="${model#*/}"
 	ms="${ms%%-202*}"
 	case "$ms" in
+	*gpt-5.6-sol-pro*) echo "$fallback_default_pricing" ;;
+	*gpt-5.6-sol*) echo "5.0|30.0|0.50|6.25" ;;
+	*gpt-5.6-terra*) echo "2.50|15.0|0.25|3.125" ;;
+	*gpt-5.6-luna*) echo "1.0|6.0|0.10|1.25" ;;
 	*opus-4* | *claude-opus*) echo "15.0|75.0|1.50|18.75" ;;
-	*sonnet-4* | *claude-sonnet*) echo "3.0|15.0|0.30|3.75" ;;
+	*sonnet-4* | *claude-sonnet*) echo "$fallback_default_pricing" ;;
 	*haiku-4* | *haiku-3* | *claude-haiku*) echo "0.80|4.0|0.08|1.0" ;;
 	*gpt-4.1-mini*) echo "0.40|1.60|0.10|0.40" ;;
 	*gpt-4.1*) echo "2.0|8.0|0.50|2.0" ;;
@@ -244,7 +252,7 @@ get_model_pricing() {
 	*gemini-3-flash*) echo "0.10|0.40|0.025|0.10" ;;
 	*deepseek-r1*) echo "0.55|2.19|0.14|0.55" ;;
 	*deepseek-v3*) echo "0.27|1.10|0.07|0.27" ;;
-	*) echo "3.0|15.0|0.30|3.75" ;;
+	*) echo "$fallback_default_pricing" ;;
 	esac
 	return 0
 }
