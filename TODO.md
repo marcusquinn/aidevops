@@ -109,7 +109,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 <!--TOON:ready[0]{id,desc,owner,tags,est,logged}:
 -->
 
-- [ ] t18070 Design Secrets interface and repair Vault unlock readiness #bug #enhancement #security #interactive #no-auto-dispatch ~6h tier:thinking ref:GH#26912 started:2026-07-10T00:00:00Z logged:2026-07-10 -> [todo/tasks/t18070-brief.md]
+- [x] t18070 Design Secrets interface and repair Vault unlock readiness #bug #enhancement #security #interactive #no-auto-dispatch ~6h tier:thinking ref:GH#26912 started:2026-07-10T00:00:00Z logged:2026-07-10 -> [todo/tasks/t18070-brief.md] pr:#26938 completed:2026-07-10
 
 - [x] t18066 fix(full-loop): resolve commit-and-pr rebase/counter base from the remote default branch instead of hardcoded `origin/main`. Add a default-branch resolver in `.agents/scripts/full-loop-helper-commit.sh`, use `origin/${base_branch}` for ahead-count, fetch, rebase, operator messages, and `.task-counter` reset, fail actionably when the base cannot be resolved, and cover an `origin/develop` regression path. #bug #framework #full-loop #auto-dispatch ~1h tier:standard ref:GH#26626 logged:2026-07-05 -> [todo/tasks/t18066-brief.md] pr:#26630 completed:2026-07-05
 
@@ -4453,7 +4453,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [x] t8177 feat: implement scoped task surface navigation and filters #bug #ui ref:GH#8258 pr:#8484 completed:2026-07-07
 
-- [ ] t18070 Design Secrets interface and repair Vault unlock readiness #bug #enhancement #security ref:GH#26912
+- [x] t18070 Design Secrets interface and repair Vault unlock readiness #bug #enhancement #security ref:GH#26912 pr:#26938 completed:2026-07-10
 
 - [ ] t18078 Route OpenAI workers through GPT-5.6 tiers #bug #type:enhancement ref:GH#26913
 
