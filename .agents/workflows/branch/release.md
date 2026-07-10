@@ -45,8 +45,9 @@ version-manager.sh bump {patch|minor|major}
 # 2. Run final checks
 linters-local.sh
 
-# 3. PR to main, merge, tag and publish
-git checkout main && git pull
+# 3. After implementation PRs merge, release from a fresh detached linked worktree
+git worktree add --detach "$AIDEVOPS_WORKTREE_BASE_DIR/repo-release-1-2-0" origin/main
+# Run version-manager.sh release from that printed worktree; never switch canonical HEAD.
 git tag -a v{VERSION} -m "Release v{VERSION}"
 git push origin v{VERSION}
 gh release create v{VERSION} --generate-notes

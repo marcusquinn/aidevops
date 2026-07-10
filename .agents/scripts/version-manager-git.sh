@@ -46,77 +46,59 @@ readonly VERSION_MANAGER_NO_CHANGES_EXIT=2
 
 # --- Functions ---
 
-# Function to verify local branch is in sync with remote
-# Prevents release failures when local has diverged (e.g., after squash merge)
+assert_release_linked_worktree() {
+	cd "$REPO_ROOT" || return 1
+	local git_dir git_common_dir
+	git_dir=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null)
+	git_common_dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+	if [[ -z "$git_dir" || -z "$git_common_dir" || "$git_dir" == "$git_common_dir" ]]; then
+		print_error "Release refused in canonical repository"
+		print_info "Create a detached linked worktree from origin/main and retry"
+		return 1
+	fi
+	return 0
+}
+
+# Verify a release is running from an isolated linked worktree exactly at remote.
 verify_remote_sync() {
 	local branch="$1"
 	branch="${branch:-main}"
 
 	cd "$REPO_ROOT" || exit 1
 
-	# Verify we're actually on the expected branch
+	assert_release_linked_worktree || return 1
+
 	local current_branch
 	current_branch=$(git branch --show-current 2>/dev/null)
-	if [[ "$current_branch" != "$branch" ]]; then
-		print_error "Not on $branch branch (currently on: ${current_branch:-detached HEAD})"
-		print_info "Switch to $branch first: git checkout $branch"
+	if [[ -n "$current_branch" && "$current_branch" != "$branch" ]]; then
+		print_error "Release worktree must be detached at origin/$branch or use branch $branch"
 		return 1
 	fi
 
-	print_info "Verifying local/$branch is in sync with origin/$branch..."
+	print_info "Verifying release worktree HEAD is exactly origin/$branch..."
 
-	# Fetch latest from remote
 	if ! git fetch origin "$branch" --quiet 2>/dev/null; then
-		print_warning "Could not fetch from remote - proceeding without sync check"
-		return 0
+		print_error "Could not fetch origin/$branch; refusing release"
+		return 1
 	fi
 
 	local local_sha
-	local_sha=$(git rev-parse "$branch" 2>/dev/null)
+	local_sha=$(git rev-parse HEAD 2>/dev/null)
 	local remote_sha
 	remote_sha=$(git rev-parse "origin/$branch" 2>/dev/null)
 
 	if [[ -z "$local_sha" || -z "$remote_sha" ]]; then
-		print_warning "Could not determine local/remote SHA - proceeding without sync check"
-		return 0
+		print_error "Could not determine release worktree or remote SHA"
+		return 1
 	fi
 
 	if [[ "$local_sha" != "$remote_sha" ]]; then
-		# Check relationship: behind, ahead, or diverged
-		if git merge-base --is-ancestor "$local_sha" "$remote_sha" 2>/dev/null; then
-			# Local is behind remote - auto-pull with rebase
-			print_info "Local $branch is behind origin/$branch, pulling..."
-			if git pull --rebase origin "$branch" --quiet 2>/dev/null; then
-				print_success "Auto-pulled latest changes from origin/$branch"
-				return 0
-			else
-				print_error "Failed to auto-pull. Manual intervention required."
-				print_info "Fix with: git pull --rebase origin $branch"
-				return 1
-			fi
-		elif git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
-			# Local is ahead of remote - this is fine for release, just inform
-			print_info "Local $branch is ahead of origin/$branch (unpushed commits)"
-			print_info "This is expected if you have local commits ready to release."
-			return 0
-		else
-			# Truly diverged - cannot auto-fix
-			print_error "Local $branch has diverged from origin/$branch"
-			print_info "  Local:  $local_sha"
-			print_info "  Remote: $remote_sha"
-			echo ""
-			print_info "This commonly happens after a squash merge on GitHub."
-			print_info "Inspect the divergence before deciding how to proceed:"
-			print_info "  git log --oneline origin/$branch...$branch"
-			print_info "If local commits are already merged upstream (squash merge), reset is safe:"
-			print_info "  git fetch origin && git reset --hard origin/$branch"
-			print_info "If local commits are NOT yet merged, rebase instead:"
-			print_info "  git fetch origin && git rebase origin/$branch"
-			return 1
-		fi
+		print_error "Release worktree HEAD differs from origin/$branch"
+		print_info "Discard it and create a fresh detached linked worktree from origin/$branch"
+		return 1
 	fi
 
-	print_success "Local $branch is in sync with origin/$branch"
+	print_success "Release worktree is in sync with origin/$branch"
 	return 0
 }
 
@@ -526,7 +508,7 @@ push_changes() {
 		print_info "Pushing changes to remote (attempt $attempt/$max_attempts)..."
 
 		# Use --atomic to ensure commit and tag are pushed together (all-or-nothing)
-		if git push --atomic origin main --tags 2>/dev/null; then
+		if git push --atomic origin HEAD:refs/heads/main --tags 2>/dev/null; then
 			print_success "Pushed changes and tags to remote"
 			return 0
 		fi
@@ -557,7 +539,7 @@ push_changes() {
 			print_info "HEAD is now $(git rev-parse HEAD), not a bump-version commit"
 			print_info "Recovery:"
 			print_info "  1. Inspect: git log --oneline origin/main..HEAD"
-			print_info "  2. Reset local branch: git reset --hard origin/main"
+			print_info "  2. Discard this release worktree and create a fresh detached worktree from origin/main"
 			print_info "  3. Delete local tag: git tag -d $tag_name"
 			print_info "  4. Re-run: $0 release <bump-type>"
 			# Clean up the stale local tag to avoid divergence on next attempt.

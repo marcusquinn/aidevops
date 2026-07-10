@@ -6,7 +6,7 @@
 # post-checkout hook into the current repository.
 #
 # Usage:
-#   install-canonical-guard.sh install      Install (or refresh) in .git/hooks/post-checkout
+#   install-canonical-guard.sh install      Install in the effective Git hooks path
 #   install-canonical-guard.sh uninstall    Remove just our entry
 #   install-canonical-guard.sh status       Report current state
 #   install-canonical-guard.sh test         Run the shared test harness
@@ -67,14 +67,28 @@ _git_common_dir() {
 	return 0
 }
 
+_git_hooks_dir() {
+	local hooks_dir=""
+	hooks_dir=$(git rev-parse --git-path hooks 2>/dev/null) || {
+		print_error "cannot resolve effective Git hooks path"
+		return 1
+	}
+	if [[ "$hooks_dir" != /* ]]; then
+		local repo_root=""
+		repo_root=$(git rev-parse --show-toplevel 2>/dev/null) || return 1
+		hooks_dir="${repo_root}/${hooks_dir}"
+	fi
+	printf '%s' "$hooks_dir"
+	return 0
+}
+
 #######################################
 # Install the hook. Refuses to overwrite unmanaged pre-existing hooks.
 #######################################
 cmd_install() {
-	local common_dir
-	common_dir=$(_git_common_dir) || return 1
-
-	local hook_path="${common_dir}/hooks/post-checkout"
+	local hooks_dir
+	hooks_dir=$(_git_hooks_dir) || return 1
+	local hook_path="${hooks_dir}/post-checkout"
 	mkdir -p "$(dirname "$hook_path")"
 
 	local source_hook
@@ -109,9 +123,6 @@ cmd_install() {
 $HOOK_MARKER
 # Managed by .agents/scripts/install-canonical-guard.sh — do not edit.
 # Dispatcher that calls the aidevops canonical-on-main guard.
-# Bypass with: AIDEVOPS_CANONICAL_GUARD=bypass git checkout ...
-# Strict mode: AIDEVOPS_CANONICAL_GUARD=strict git checkout ...
-
 set -u
 
 # Prefer the repo-local hook when available, fall back to deployed.
@@ -126,15 +137,13 @@ if [[ -n "\$_repo_hook" && -f "\$_repo_hook" ]]; then
 elif [[ -f "\$_deployed_hook" ]]; then
 	exec "\$_deployed_hook" "\$@"
 else
-	# No hook available — allow checkout silently.
-	exit 0
+	printf 'CRITICAL: aidevops canonical guard source is missing\n' >&2
+	exit 1
 fi
 HOOKEOF
 	chmod +x "$hook_path"
 	print_success "installed canonical-on-main-guard at $hook_path"
 	print_info "source hook: $source_hook"
-	print_info "bypass: AIDEVOPS_CANONICAL_GUARD=bypass git checkout ..."
-	print_info "strict: AIDEVOPS_CANONICAL_GUARD=strict git checkout ..."
 	return 0
 }
 
@@ -142,9 +151,9 @@ HOOKEOF
 # Remove the hook if (and only if) it is managed by us.
 #######################################
 cmd_uninstall() {
-	local common_dir
-	common_dir=$(_git_common_dir) || return 1
-	local hook_path="${common_dir}/hooks/post-checkout"
+	local hooks_dir
+	hooks_dir=$(_git_hooks_dir) || return 1
+	local hook_path="${hooks_dir}/post-checkout"
 
 	if [[ ! -f "$hook_path" ]]; then
 		print_info "no post-checkout hook installed"
@@ -165,9 +174,9 @@ cmd_uninstall() {
 # Report current state.
 #######################################
 cmd_status() {
-	local common_dir
-	common_dir=$(_git_common_dir) || return 1
-	local hook_path="${common_dir}/hooks/post-checkout"
+	local hooks_dir
+	hooks_dir=$(_git_hooks_dir) || return 1
+	local hook_path="${hooks_dir}/post-checkout"
 
 	if [[ ! -f "$hook_path" ]]; then
 		printf 'post-checkout hook: NOT INSTALLED\n'

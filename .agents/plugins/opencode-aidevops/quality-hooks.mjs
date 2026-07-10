@@ -13,6 +13,7 @@ import { recordToolStart, consumeToolDuration } from "./timing-tracing.mjs";
 import { qualityLog, runFileQualityGate } from "./quality-logging.mjs";
 import { enrichActiveSpan, detectTaskId, detectSessionOrigin } from "./otel-enrichment.mjs";
 import { checkSecretReadGate, isReadTool } from "./quality-hooks-secret-read.mjs";
+import { checkCanonicalGitSafetyGate } from "./quality-hooks-git-safety.mjs";
 
 // Re-export for consumers that import from this module
 export { scanForSecrets } from "./quality-logging.mjs";
@@ -222,6 +223,11 @@ function recordChildSubagent(taskId, scriptsDir, log) {
  * @param {object} output - Tool output
  */
 function handleToolBefore(ctx, log, input, output) {
+  if (isBashTool(input.tool)) {
+    const bashCwd = output.args?.workdir || output.args?.cwd || process.cwd();
+    checkCanonicalGitSafetyGate(output.args?.command || "", ctx.scriptsDir, bashCwd);
+  }
+
   const callID = input.callID || "";
   let intent = "";
   if (callID && output.args) {

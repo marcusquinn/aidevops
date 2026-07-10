@@ -125,12 +125,12 @@ test_warns_when_canonical_repo_is_off_main() {
 	local exit_code=0
 	output=$(run_helper "$TEST_ROOT" 2>&1) || exit_code=$?
 
-	if [[ "$exit_code" -eq 3 ]] && [[ "$output" == *"WARNING - MAIN REPO DIRECTORY IS OFF MAIN"* ]] && [[ "$output" == *"MAIN_REPO_OFF_MAIN_WARNING=bugfix/off-main"* ]]; then
-		print_result "warns when canonical repo directory is off main" 0
+	if [[ "$exit_code" -eq 2 ]] && [[ "$output" == *"CANONICAL_STATE_INVALID=true"* ]] && [[ "$output" == *"ACTION_REQUIRED=create_or_use_linked_worktree"* ]]; then
+		print_result "blocks when canonical repo directory is off main" 0
 		return 0
 	fi
 
-	print_result "warns when canonical repo directory is off main" 1 "exit=${exit_code} output=${output}"
+	print_result "blocks when canonical repo directory is off main" 1 "exit=${exit_code} output=${output}"
 	return 0
 }
 

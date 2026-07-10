@@ -898,6 +898,18 @@ _restart_pulse_after_agents_deploy() {
 	return 0
 }
 
+_install_canonical_git_guard_shim() {
+	local target_dir="$1"
+	local guard_shim="${target_dir}/scripts/git"
+	[[ -x "$guard_shim" ]] || {
+		print_error "Canonical Git guard shim is missing or not executable: $guard_shim"
+		return 1
+	}
+	mkdir -p "$HOME/.aidevops/bin" || return 1
+	ln -sfn "$guard_shim" "$HOME/.aidevops/bin/git" || return 1
+	return 0
+}
+
 deploy_aidevops_agents() {
 	print_info "Deploying aidevops agents to ~/.aidevops/agents/..."
 
@@ -916,6 +928,7 @@ deploy_aidevops_agents() {
 
 	print_success "Deployed agents to $target_dir"
 	_deploy_agents_post_copy "$target_dir" "$repo_dir" "$source_dir" "$plugins_file"
+	_install_canonical_git_guard_shim "$target_dir" || return 1
 
 	_write_deployed_agents_sha "$repo_dir"
 	_restart_pulse_after_agents_deploy

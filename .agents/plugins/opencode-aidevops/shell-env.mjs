@@ -108,9 +108,8 @@ export function createShellEnvHook(deps) {
     // Ensure aidevops scripts are on PATH
     if (existsSync(scriptsDir)) {
       const currentPath = output.env.PATH || process.env.PATH || "";
-      if (!currentPath.includes(scriptsDir)) {
-        output.env.PATH = `${scriptsDir}:${currentPath}`;
-      }
+      const pathParts = currentPath.split(":").filter((part) => part && part !== scriptsDir);
+      output.env.PATH = [scriptsDir, ...pathParts].join(":");
     }
 
     // Set aidevops workspace directory

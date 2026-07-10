@@ -472,6 +472,9 @@ _main_release() {
 	fi
 
 	print_info "Creating release with $bump_type version bump..."
+	# Structural safety is never bypassable by --force. Canonical releases can
+	# corrupt every parallel session sharing that repository.
+	assert_release_linked_worktree || exit 1
 
 	# Verify local branch is in sync with remote
 	if ! verify_remote_sync "main"; then

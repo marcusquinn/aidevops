@@ -24,7 +24,7 @@
 #   0 - OK to proceed (in a linked worktree, or allowlisted path on main)
 #   1 - STOP (on protected main/master, interactive mode)
 #   2 - Create worktree (loop mode detected non-allowlisted path on main)
-#   3 - WARNING (canonical repo directory is not on main - move it back and continue from a linked worktree)
+#   3 - Reserved legacy code (canonical invalid states now block)
 #
 # High-stakes detection (--check-command):
 #   When --check-command is passed, the script checks the command against
@@ -39,7 +39,7 @@
 #
 # AI assistants should call this before any Edit/Write tool and:
 # - Exit 1: STOP and present worktree creation instructions
-# - Exit 3: Warn that the canonical repo directory is off main and move work to a linked worktree path
+# - Invalid canonical state: STOP and use a linked worktree; never switch canonical branches
 # - Exit 0: Proceed with edits
 # =============================================================================
 
@@ -656,47 +656,18 @@ _handle_ownership_conflict() {
 	exit 1
 }
 
-# Handle the canonical repo directory being off main (on a feature branch).
-# Arguments: $1=current_branch
-# Exits 0 (loop mode) or 3 (interactive warning).
+# Handle the canonical repo directory being off the default branch.
+# This state is never writable; branch switching is not a recovery mechanism.
 _handle_main_repo_off_main() {
 	local branch="$1"
-
-	# Loop mode: auto-decide for canonical repo directory off main
-	if [[ "$LOOP_MODE" == "true" ]]; then
-		if is_main_write_allowed; then
-			if [[ -n "$TARGET_FILE" ]]; then
-				echo -e "${YELLOW}LOOP-AUTO${NC}: Allowlisted path '$TARGET_FILE' in main repo directory, continuing"
-			else
-				echo -e "${YELLOW}LOOP-AUTO${NC}: Docs-only task in main repo directory, continuing"
-			fi
-			echo "LOOP_DECISION=continue"
-			exit 0
-		fi
-		# For non-allowlisted paths / code tasks, warn but continue so the caller can relocate into a worktree.
-		echo -e "${YELLOW}LOOP-AUTO${NC}: Main repo directory is off main (not ideal - relocate to a linked worktree)"
-		echo "LOOP_DECISION=continue_warning"
-		exit 0
+	echo -e "${RED}BLOCKED${NC}: canonical repository is on '$branch' instead of its default branch"
+	echo "CANONICAL_STATE_INVALID=true"
+	echo "ACTION_REQUIRED=create_or_use_linked_worktree"
+	echo "HINT: do not switch branches in the canonical repository; coordinate canonical-recovery-helper.sh separately"
+	if [[ "$LOOP_MODE" == "true" ]] || [[ ! -t 0 ]]; then
+		exit 2
 	fi
-
-	# Interactive mode: show warning with options
-	echo ""
-	echo -e "${YELLOW}${BOLD}======================================================${NC}"
-	echo -e "${YELLOW}${BOLD}  WARNING - MAIN REPO DIRECTORY IS OFF MAIN${NC}"
-	echo -e "${YELLOW}${BOLD}======================================================${NC}"
-	echo ""
-	echo -e "Current ref: ${BOLD}$branch${NC}"
-	echo ""
-	echo -e "${YELLOW}The canonical repo directory should stay on 'main' for parallel safety.${NC}"
-	echo -e "${YELLOW}Move code work into a linked worktree path, not this canonical repo directory.${NC}"
-	echo ""
-	echo "Options:"
-	echo "  1. Create worktree for this task (recommended)"
-	echo "  2. Switch the canonical repo directory back to main"
-	echo "  3. Continue here temporarily (not recommended for code)"
-	echo ""
-	echo "MAIN_REPO_OFF_MAIN_WARNING=$branch"
-	exit 3
+	exit 1
 }
 
 # Check if task is claimed by someone else via TODO.md assignee: field (t165).
@@ -739,11 +710,20 @@ if ! git rev-parse --is-inside-work-tree &>/dev/null; then
 	exit 0
 fi
 
-# Guard: detached HEAD
+# Resolve structural worktree identity before interpreting detached HEAD.
+precheck_git_common_dir=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+precheck_git_dir=$(git rev-parse --path-format=absolute --git-dir 2>/dev/null || true)
+
+# Detached HEAD is valid only inside a linked worktree (for isolated releases).
 current_branch=$(git branch --show-current 2>/dev/null || echo "")
 if [[ -z "$current_branch" ]]; then
-	echo -e "${YELLOW}Detached HEAD state - prefer creating a dedicated worktree before editing${NC}"
-	exit 0
+	if [[ -n "$precheck_git_dir" && -n "$precheck_git_common_dir" && "$precheck_git_dir" != "$precheck_git_common_dir" ]]; then
+		current_branch="detached-release-worktree"
+	else
+		echo -e "${RED}BLOCKED${NC}: canonical detached HEAD is not a writable session context"
+		echo "ACTION_REQUIRED=create_or_use_linked_worktree"
+		exit 1
+	fi
 fi
 
 # --- Protected branch (main/master) ---
