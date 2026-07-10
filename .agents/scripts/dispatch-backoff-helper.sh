@@ -24,6 +24,10 @@
 # Subcommands:
 #   check <issue_num> [<slug>]  — exit 0 if clear, exit 1 if cooldown active,
 #                                 exit 2 on error (fail-open: dispatch proceeds)
+#   classify-lookup-failure <signal>
+#                              — print transient, persistent, or unknown
+#   lookup-retry-delay <signal> <attempt>
+#                              — print an evidence-aware bounded delay
 #   help                        — usage information
 #
 # Exit codes (check):
@@ -87,6 +91,72 @@ readonly _BACKOFF_SCHEDULE=(0 300 1800 7200 86400)  # [0]=unused [1]=5m [2]=30m 
 
 # Log prefix for all messages from this module.
 _DB_LOG_PREFIX="[dispatch-backoff]"
+
+#######################################
+# Classify a dispatch lookup failure without weakening fail-closed callers.
+# Persistent local/data failures must never be retried. Network/provider
+# failures are transient only when the signal contains concrete evidence.
+#
+# Args: $1 - failure signal
+# Stdout: transient, persistent, or unknown
+#######################################
+_db_classify_lookup_failure() {
+	local signal="$1"
+	local normalized=""
+	normalized=$(printf '%s' "$signal" | tr '[:upper:]' '[:lower:]')
+
+	case "$normalized" in
+	*jq-failure* | *malformed* | *invalid-json* | *"invalid json"* | *auth-failure* | *unauthorized* | *forbidden* | *not-found* | *"not found"* | *" 401"* | *" 403"* | *" 404"*)
+		printf 'persistent\n'
+		;;
+	*rate-limit* | *"rate limit"* | *retry-after* | *reset=* | *timeout* | *"timed out"* | *temporary* | *temporarily* | *"connection reset"* | *"connection closed"* | *"connection refused"* | *" 502"* | *" 503"* | *" 504"*)
+		printf 'transient\n'
+		;;
+	*gh-api-failure*rc=[1-9]*)
+		printf 'transient\n'
+		;;
+	*)
+		printf 'unknown\n'
+		;;
+	esac
+	return 0
+}
+
+#######################################
+# Derive a non-immediate retry delay from Retry-After/reset evidence or use a
+# small bounded delay for another explicitly transient signal.
+#
+# Args: $1 - failure signal, $2 - retry attempt (1-based)
+# Stdout: delay seconds
+# Returns: 0 when delay is within the configured bound, 1 otherwise
+#######################################
+_db_lookup_retry_delay() {
+	local signal="$1"
+	local attempt="$2"
+	local delay=""
+	local now=""
+	local reset_epoch=""
+	local max_delay="${AIDEVOPS_DSI_MAX_RETRY_DELAY_SECONDS:-60}"
+
+	if [[ "$signal" =~ [Rr]etry-[Aa]fter[^0-9]*([0-9]+) ]]; then
+		delay="${BASH_REMATCH[1]}"
+	elif [[ "$signal" =~ reset[^0-9]*([0-9]{10}) ]]; then
+		reset_epoch="${BASH_REMATCH[1]}"
+		now=$(date +%s)
+		delay=$((reset_epoch - now))
+	else
+		delay="$attempt"
+	fi
+
+	[[ "$delay" =~ ^[0-9]+$ ]] || return 1
+	[[ "$max_delay" =~ ^[0-9]+$ ]] || max_delay=60
+	((delay < 1)) && delay=1
+	if ((delay > max_delay)); then
+		return 1
+	fi
+	printf '%s\n' "$delay"
+	return 0
+}
 
 #######################################
 # Compute cooldown seconds for a given failure count.
@@ -506,7 +576,18 @@ _main() {
 	shift || true
 
 	case "$cmd" in
-		check)
+	classify-lookup-failure)
+		local failure_signal="${1:-}"
+		_db_classify_lookup_failure "$failure_signal"
+		return 0
+		;;
+	lookup-retry-delay)
+		local failure_signal="${1:-}"
+		local retry_attempt="${2:-1}"
+		_db_lookup_retry_delay "$failure_signal" "$retry_attempt"
+		return $?
+		;;
+	check)
 			local issue_number="${1:-}"
 			local slug="${2:-unknown}"
 
@@ -547,6 +628,8 @@ _main() {
 			printf 'dispatch-backoff-helper.sh — Per-issue rate_limit backoff gate (t2781)\n\n'
 			printf 'Usage:\n'
 			printf '  dispatch-backoff-helper.sh check <issue_num> [<slug>]  # exit 0=clear, 1=backoff active, 2=error\n'
+			printf '  dispatch-backoff-helper.sh classify-lookup-failure <signal>\n'
+			printf '  dispatch-backoff-helper.sh lookup-retry-delay <signal> <attempt>\n'
 			printf '\n'
 			printf 'Environment:\n'
 			printf '  DISPATCH_BACKOFF_METRICS_FILE      path to headless-runtime-metrics.jsonl\n'
