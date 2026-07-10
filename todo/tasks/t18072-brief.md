@@ -68,6 +68,7 @@ Omitting new files from secret and quality checks is a confirmed reliability and
 - `EDIT: .agents/scripts/tests/test-linters-local-cache.sh` — cover fingerprint reuse and invalidation.
 - `NEW: .agents/scripts/tests/test-linters-local-untracked-mode.sh` — prove unstaged non-ignored files receive changed-mode safety checks.
 - `EDIT: .agents/scripts/tests/test-linters-local-ratchet-timeout.sh` — prove timeout cannot pass.
+- `EDIT: .agents/scripts/tests/test-linters-local-changed-mode.sh` — preserve tracked, staged, and full-mode coverage while adding untracked fixtures.
 
 ### Implementation Steps
 
