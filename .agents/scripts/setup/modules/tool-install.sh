@@ -1706,21 +1706,39 @@ setup_vault_python_env() {
 	fi
 	if ! (umask 077 && "$python3_bin" -m venv --copies "$env_dir"); then
 		print_warning "Failed to create isolated Vault Python environment"
+		rm -rf "$env_dir"
 		return 1
 	fi
 	chmod 755 "$env_dir"
-	printf '%s\n' "$marker_value" >"$managed_marker"
-	chmod 600 "$managed_marker"
-	if ! (umask 077 && "$env_python" -m pip install --disable-pip-version-check --no-input --only-binary=:all: -r "$requirements_file"); then
-		print_warning "Failed to install the pinned Vault crypto runtime"
+	if ! "$python3_bin" "$runtime_check" --check-path "$env_dir"; then
+		print_warning "Fresh Vault runtime ownership verification failed"
+		rm -rf "$env_dir"
 		return 1
 	fi
-	if ! "$python3_bin" "$runtime_check" --check-path "$env_dir" "$managed_marker"; then
+	if ! (umask 077 && "$env_python" -m pip install --disable-pip-version-check --no-input --only-binary=:all: -r "$requirements_file"); then
+		print_warning "Failed to install the pinned Vault crypto runtime"
+		rm -rf "$env_dir"
+		return 1
+	fi
+	if ! "$python3_bin" "$runtime_check" --check-path "$env_dir"; then
 		print_warning "Vault crypto runtime ownership verification failed"
+		rm -rf "$env_dir"
 		return 1
 	fi
 	if ! "$env_python" "$runtime_check"; then
 		print_warning "Vault crypto runtime verification failed"
+		rm -rf "$env_dir"
+		return 1
+	fi
+	if ! (umask 077 && printf '%s\n' "$marker_value" >"$managed_marker"); then
+		print_warning "Failed to publish the verified Vault runtime marker"
+		rm -rf "$env_dir"
+		return 1
+	fi
+	chmod 600 "$managed_marker"
+	if ! "$python3_bin" "$runtime_check" --check-path "$env_dir" "$managed_marker"; then
+		print_warning "Published Vault runtime verification failed"
+		rm -rf "$env_dir"
 		return 1
 	fi
 	print_success "Vault crypto runtime is ready"

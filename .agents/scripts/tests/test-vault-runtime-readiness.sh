@@ -94,6 +94,22 @@ if grep -q '^cryptography==49\.0\.0$' "${REPO_ROOT}/.agents/configs/vault-requir
 else
 	fail "setup wires the exact-pinned Vault runtime"
 fi
+if python3 - "${REPO_ROOT}/.agents/scripts/setup/modules/tool-install.sh" <<'PY'
+import pathlib
+import sys
+
+source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+fresh_start = source.index('if ! (umask 077 && "$python3_bin" -m venv --copies "$env_dir")')
+fresh_setup = source[fresh_start:source.index('print_success "Vault crypto runtime is ready"', fresh_start)]
+crypto_check = fresh_setup.index('if ! "$env_python" "$runtime_check"; then')
+marker_publish = fresh_setup.index("Failed to publish the verified Vault runtime marker")
+raise SystemExit(0 if crypto_check < marker_publish else 1)
+PY
+then
+	pass "setup publishes ownership marker only after crypto verification"
+else
+	fail "setup publishes ownership marker only after crypto verification"
+fi
 
 safe_home="${TEST_ROOT}/safe-home"
 safe_runtime="${safe_home}/.aidevops/.agent-workspace/python-env/vault"

@@ -10,6 +10,7 @@ import os
 import stat
 import sys
 from pathlib import Path
+from typing import Optional
 
 EXPECTED = {
     "cryptography": "49.0.0",
@@ -18,9 +19,11 @@ EXPECTED = {
 }
 
 
-def check_managed_path(root: Path, marker: Path) -> int:
+def check_managed_path(root: Path, marker: Optional[Path] = None) -> int:
     try:
-        paths = [root, marker, *root.rglob("*")]
+        paths = [root, *root.rglob("*")]
+        if marker is not None:
+            paths.append(marker)
         for path in paths:
             path_stat = path.lstat()
             if path_stat.st_uid != os.geteuid():
@@ -88,6 +91,8 @@ def check_crypto_runtime() -> int:
 def main() -> int:
     if len(sys.argv) == 4 and sys.argv[1] == "--check-path":
         return check_managed_path(Path(sys.argv[2]), Path(sys.argv[3]))
+    if len(sys.argv) == 3 and sys.argv[1] == "--check-path":
+        return check_managed_path(Path(sys.argv[2]))
     if len(sys.argv) == 4 and sys.argv[1] == "--check-ancestors":
         return check_ancestor_chain(Path(sys.argv[2]), Path(sys.argv[3]))
     if len(sys.argv) != 1:
