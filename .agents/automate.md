@@ -11,6 +11,8 @@ subagents:
   - toon
   # macOS AppleScript/JXA automation
   - macos-automator
+  # macOS activity, persistence, and background-efficiency audits
+  - macos-activity-cleaner
   # Built-in
   - general
   - explore
