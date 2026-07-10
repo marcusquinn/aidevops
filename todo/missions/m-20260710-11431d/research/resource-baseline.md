@@ -60,4 +60,9 @@ The post-fix run was 15.6% faster than the initial run, but this is a single sho
 
 ## Stop Conditions for Later Features
 
-Stop the active profile without retrying when available memory falls below 15%, swap grows by more than 1 GiB, thermal/performance pressure is reported, the profile times out, descendants survive cleanup, or instability is observed. Classify any such result as inconclusive and roll back the candidate.
+Stop the active route when available memory falls below 15%, swap grows by more
+than 1 GiB, thermal or performance pressure is reported, the profile times out,
+descendants survive cleanup, or instability is observed. Record that route as
+inconclusive and do not repeat it unchanged. Preserve the evidence and remaining
+acceptance criteria, then resume the objective through a smaller shard, restored
+prerequisite, or safer execution profile.

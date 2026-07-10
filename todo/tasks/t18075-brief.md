@@ -12,7 +12,7 @@ mode: subagent
 - [x] Discovery pass: 0 commits / 0 merged PRs / 0 open PRs surfaced in the public planning pass
 - [x] File refs verified: 3 target patterns checked locally, all present; private paths intentionally omitted
 - [x] Tier: `tier:thinking` — this conditional task must reject an unproven premise
-- [x] Seeded draft PR decision recorded: skipped — t18073 evidence is required
+- [x] Seeded draft PR decision recorded: skipped — t18073 evidence was required before choosing any cache design
 
 ## Origin
 
@@ -53,9 +53,9 @@ Speculative cache redesign can increase stale results, disk churn, and complexit
 
 - **Decision:** Skipped
 - **Rationale:** Seeding a preferred cache design would bias the evidence-gated decision.
-- **Status:** `blocked`
+- **Status:** `completed-falsified` — no threshold-meeting cache contention or duplicate traversal was measured
 - **Freshness evidence:** Current cache and affected-mode patterns were inspected locally.
-- **Verification run:** Deferred to t18073.
+- **Verification run:** F3 completed all 37 serial shards and preserved the full task-graph digest before and after the retained concurrency guardrail.
 - **Stale-assumption warning:** Any task graph or lint tool upgrade invalidates prior cache measurements.
 
 ## How (Approach)
@@ -88,15 +88,16 @@ Run the target-native focused lint tests and terminal CI.
 
 ## Acceptance Criteria
 
-- [ ] A measured contention or traversal hotspot is documented before code changes.
-- [ ] Cold and warm coverage digests remain identical to baseline.
-- [ ] A stale-cache mutation fails correctly.
-- [ ] The patch meets the performance threshold or is rolled back and marked falsified.
+- [x] F3 found no cache contention or duplicate traversal above the mission threshold, so no F5 code change was made.
+- [x] Before and after full task-graph digests are identical.
+- [x] A stale local generated cache was isolated and invalidated only after its missing generated prerequisite was restored.
+- [x] The speculative cache redesign was rejected and this conditional task was marked falsified.
 
 ## Context & Decisions
 
-- This is Tier 2 and is skipped if Tier 1 consumes the contingency.
+- This is Tier 2 and proceeds only when F3 measures a threshold-meeting hotspot.
 - No cache namespace or manifest complexity is added without measurable benefit.
+- The safety fuse did not determine this outcome. The conditional premise was re-evaluated after F3 completed and was not supported by evidence.
 
 ## Relevant Files
 

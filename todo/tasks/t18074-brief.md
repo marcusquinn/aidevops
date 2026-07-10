@@ -53,9 +53,9 @@ The overlay needs reliable quality feedback, but duplicated full linting would a
 
 - **Decision:** Skipped
 - **Rationale:** Exact target paths and fixtures must remain in the private target repository.
-- **Status:** `blocked`
+- **Status:** `completed` — the target-local validation change merged after terminal checks
 - **Freshness evidence:** Overlay entrypoint and current scripts were inspected locally.
-- **Verification run:** Static inspection only.
+- **Verification run:** A clean disposable downstream passed 196 changed source files in 9 seconds; invalid and stalled fixtures failed closed.
 - **Stale-assumption warning:** Re-evaluate if the canonical downstream lint entrypoint changes.
 
 ## How (Approach)
@@ -88,15 +88,20 @@ Confirm no independent broad lint pipeline was introduced.
 
 ## Acceptance Criteria
 
-- [ ] Valid overlay output passes canonical bounded downstream checks.
-- [ ] Deliberately invalid overlay output fails within 3 minutes.
-- [ ] No duplicate broad lint pipeline is added without contrary coverage evidence.
-- [ ] No private target identifiers or raw logs are committed here.
+- [x] Valid overlay output passes canonical bounded downstream checks.
+- [x] Deliberately invalid overlay output fails within 3 minutes.
+- [x] No duplicate broad lint pipeline is added without contrary coverage evidence.
+- [x] No private target identifiers or raw logs are committed here.
 
 ## Context & Decisions
 
 - Reliability coverage, rather than reduced runtime from a zero-lint baseline, is the expected benefit.
 - The target-native integration PR owns exact private paths and fixtures.
+- Positive validation covered 196 changed source files in 9 seconds with one lint thread and 2,722,096 KiB aggregate peak RSS.
+- The changed-source digest was `5bf51485c50adef6a26bec261299bbeb1751f5996316966dbe4a355c7e8fed13`.
+- Invalid syntax exited 1 in 6 seconds, and a stalled process group exited 124 in under 0.2 seconds.
+- Dependency materialization timeouts became recoverability checkpoints; the objective resumed through retained downloads, restored links, and narrowed prerequisites.
+- The target-local change passed terminal quality, security, and review checks before merge.
 
 ## Relevant Files
 

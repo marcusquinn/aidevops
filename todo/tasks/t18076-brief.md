@@ -12,7 +12,7 @@ mode: subagent
 - [x] Discovery pass: 0 commits / 0 merged PRs / 0 open PRs surfaced for the target planning files in the prework window
 - [x] File refs verified: 4 refs checked, all present at HEAD
 - [x] Tier: `tier:standard` — existing local/CI gate patterns constrain a conditional change
-- [x] Seeded draft PR decision recorded: skipped — t18072 must first prove duplicated work
+- [x] Seeded draft PR decision recorded: skipped — t18072 first had to prove duplicated CI work
 
 ## Origin
 
@@ -52,10 +52,10 @@ Measured CI duplication consumes compute and delays feedback, but careless conso
 ## Seeded Draft PR
 
 - **Decision:** Skipped
-- **Rationale:** This stretch task is conditional on measured duplicate work and remaining time.
-- **Status:** `blocked`
+- **Rationale:** This task is conditional on measured semantically duplicate CI work.
+- **Status:** `completed-falsified` — t18072 proved and removed local repeated discovery but no remaining duplicate CI job
 - **Freshness evidence:** Current code-quality and local linter entrypoints were verified.
-- **Verification run:** Planning-only.
+- **Verification run:** F2 fixtures measured zero repeated Git discovery after inventory preparation, while terminal CI preserved required platform and security gates.
 - **Stale-assumption warning:** Workflow changes merged after t18072 require a fresh job graph.
 
 ## How (Approach)
@@ -84,9 +84,9 @@ bash .agents/scripts/tests/test-linter-ci-coverage.sh
 
 ### Recoverability Checkpoint
 
-- [ ] Focused tests pass: `bash .agents/scripts/tests/test-linter-ci-coverage.sh`
-- [ ] WIP commit created before broad gates: `wip: consolidate measured CI lint duplication`
-- [ ] Broad verification then run: `.agents/scripts/linters-local.sh --full`
+- [x] No implementation route was entered because the conditional premise was falsified.
+- [x] A WIP implementation commit was not applicable.
+- [x] F2 focused fixtures and terminal CI supplied the authoritative coverage evidence.
 
 ### Files Scope
 
@@ -97,15 +97,17 @@ bash .agents/scripts/tests/test-linter-ci-coverage.sh
 
 ## Acceptance Criteria
 
-- [ ] Required platform and security gate coverage is unchanged.
-- [ ] Deliberately failing fixtures still fail every authoritative gate.
-- [ ] Measured CI compute falls at least 15% without critical-path regression above 10%.
-- [ ] The change is skipped or rolled back if elapsed mission time exceeds the Tier 3 gate.
+- [x] Required platform and security gate coverage remained unchanged through F2 terminal CI.
+- [x] Timeout and negative fixtures remained fail closed.
+- [x] No remaining CI job was proven semantically duplicate, so no consolidation patch or compute-reduction claim was made.
+- [x] The conditional premise was marked falsified rather than using a safety trigger or elapsed time as a terminal reason.
 
 ## Context & Decisions
 
 - This is a Tier 3 stretch feature.
 - Similar checks are not duplicates when they provide platform or trust-boundary independence.
+- F2 removed a 100% measured local repeated-discovery path and one redundant nested local shell traversal.
+- F2 did not prove that any remaining cross-platform or security CI jobs were duplicates.
 
 ## Relevant Files
 
@@ -116,7 +118,7 @@ bash .agents/scripts/tests/test-linter-ci-coverage.sh
 
 ## Dependencies
 
-- **Blocked by:** t18072 and Tier 3 time gate
+- **Prerequisite:** t18072 completed; its evidence did not prove a remaining duplicate CI job
 - **Blocks:** none
 - **External:** terminal existing CI only
 
