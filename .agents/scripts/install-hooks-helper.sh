@@ -1291,8 +1291,8 @@ _test_hook_run() {
 	local cmd="$3"
 	local result
 	local policy_guard="${SCRIPT_DIR}/canonical-git-command-guard.py"
-	result=$(cd "$cwd" && printf '%s\n' "{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"$cmd\"}}" | \
-		AIDEVOPS_CANONICAL_GIT_GUARD="$policy_guard" python3 "$test_script" 2>/dev/null)
+	local hook_input="{\"tool_name\": \"Bash\", \"tool_input\": {\"command\": \"$cmd\"}}"
+	result=$(cd "$cwd" && AIDEVOPS_CANONICAL_GIT_GUARD="$policy_guard" python3 "$test_script" 2>/dev/null <<<"$hook_input")
 	printf '%s\n' "$result"
 	return 0
 }
