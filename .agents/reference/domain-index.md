@@ -35,6 +35,7 @@ Read subagents on-demand when trigger words clearly match. Full index: `subagent
 | Database/Local-first | Postgres, Drizzle, migration, schema, PGlite, local-first, accounts, contacts, RLS | `tools/database/pglite-local-first.md`, `services/database/postgres-drizzle-skill.md`, `tools/app-stack/database-foundation.md` |
 | Vector Search | vector, embeddings, RAG, semantic search, zvec | `tools/database/vector-search.md`, `tools/database/vector-search/zvec.md` |
 | Local Development | localhost, local dev, Traefik, mkcert, preview proxy | `services/hosting/local-hosting.md` |
+| Node server administration | Node.js server, Node runtime, Node LTS/EOL, npm/pnpm/Yarn/Bun drift, PM2, systemd Node, next start, SSR server, event-loop lag, heap OOM, memory leak, CPU/RAM spike | `tools/runtime/node-server-admin.md` |
 | Hosting/Deployment | deploy, hosting, Fly, Coolify, Vercel, Daytona, cloud | `tools/deployment/hosting-comparison.md`, `tools/deployment/fly-io.md`, `tools/deployment/coolify.md`, `tools/deployment/vercel.md`, `tools/deployment/uncloud.md`, `tools/deployment/daytona.md` |
 | Networking/VPN | VPN, mesh, NetBird, Tailscale, Nostr VPN, FIPS, remote compute network | `services/networking/netbird.md`, `services/networking/tailscale.md`, `services/networking/nostr-vpn.md` |
 | Infrastructure | GPU, containers, OrbStack, remote dispatch, servers | `tools/infrastructure/cloud-gpu.md`, `tools/containers/orbstack.md`, `tools/containers/remote-dispatch.md` |

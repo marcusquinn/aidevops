@@ -90,6 +90,7 @@ agent-test-helper.sh run agents-md-knowledge || { echo "Agent tests failed"; exi
 | `smoke-test` | 3 | Quick agent responsiveness and identity check |
 | `agents-md-knowledge` | 5 | Core AGENTS.md instruction absorption |
 | `git-workflow` | 4 | Git workflow knowledge validation |
+| `node-server-admin` | 5 | Node runtime policy, safety, performance evidence, and handoffs |
 
 ## Environment Variables
 
