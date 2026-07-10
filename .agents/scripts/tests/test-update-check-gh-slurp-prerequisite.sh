@@ -75,11 +75,12 @@ test_old_gh_warns_in_update_check() {
 test_supported_gh_has_no_warning() {
 	setup_fake_tools "gh version 2.51.0 (2024-05-29)"
 	local output=""
+	local cache_file="$HOME/.aidevops/cache/session-greeting.txt"
 	output=$(bash "$UPDATE_CHECK" --interactive 2>/dev/null || true)
-	if [[ "$output" != *"[WARN] GitHub CLI prerequisite:"* ]]; then
+	if [[ "$output" != *"[WARN] GitHub CLI prerequisite:"* && -s "$cache_file" ]]; then
 		print_result "supported gh omits session-start prerequisite warning" 0
 	else
-		print_result "supported gh omits session-start prerequisite warning" 1 "output='${output}'"
+		print_result "supported gh omits warning and writes complete cache" 1 "output='${output}', cache='${cache_file}'"
 	fi
 	return 0
 }
