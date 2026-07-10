@@ -32,6 +32,32 @@ fail() {
 	return 0
 }
 
+prepare_vault_test_python() {
+	local runtime_check="${REPO_ROOT}/.agents/scripts/vault-runtime-check.py"
+	local requirements="${REPO_ROOT}/.agents/configs/vault-requirements.txt"
+	local bootstrap_python=""
+	local test_env="${TEST_ROOT}/python-env"
+
+	if [[ -x "$VAULT_TEST_PYTHON" ]] && "$VAULT_TEST_PYTHON" "$runtime_check" >/dev/null 2>&1; then
+		return 0
+	fi
+	bootstrap_python="$(command -v python3)"
+	if ! (umask 077 && "$bootstrap_python" -m venv --copies "$test_env"); then
+		printf 'Could not create the isolated Vault test runtime\n' >&2
+		return 1
+	fi
+	if ! "$test_env/bin/python3" -m pip install --disable-pip-version-check --no-input --only-binary=:all: -r "$requirements"; then
+		printf 'Could not install the exact-pinned Vault test runtime\n' >&2
+		return 1
+	fi
+	if ! "$test_env/bin/python3" "$runtime_check"; then
+		printf 'Vault test runtime verification failed\n' >&2
+		return 1
+	fi
+	VAULT_TEST_PYTHON="$test_env/bin/python3"
+	return 0
+}
+
 run_child_test() {
 	local name="$1"
 	local path="$2"
@@ -66,6 +92,8 @@ test_no_public_plaintext_fixtures() {
 	fi
 	return 0
 }
+
+prepare_vault_test_python || exit 1
 
 run_child_test "vault data migration locked-state tests" "$SCRIPT_DIR/test-vault-data-migration.sh"
 run_child_test "vault sync replay, tamper, revoked-device tests" "$SCRIPT_DIR/test-vault-sync-helper.sh"
