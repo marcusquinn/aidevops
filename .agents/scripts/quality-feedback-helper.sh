@@ -200,14 +200,16 @@ _extract_reference_line_fix_snippet() {
 	local body_full="$1"
 	local file_name=""
 	local target_line=""
+	local file_pattern="[Tt]he[[:space:]]referenced[[:space:]]file[[:space:]]'([^']+)'"
+	local line_pattern="[Pp]oint[[:space:]]only[[:space:]]to[[:space:]]line[[:space:]]([0-9]+)"
 
-	if [[ "$body_full" =~ [Tt]he[[:space:]]referenced[[:space:]]file[[:space:]]\'([^\']+)\' ]]; then
+	if [[ "$body_full" =~ $file_pattern ]]; then
 		file_name="${BASH_REMATCH[1]}"
 	else
 		return 1
 	fi
 
-	if [[ "$body_full" =~ [Pp]oint[[:space:]]only[[:space:]]to[[:space:]]line[[:space:]]([0-9]+) ]]; then
+	if [[ "$body_full" =~ $line_pattern ]]; then
 		target_line="${BASH_REMATCH[1]}"
 	else
 		return 1
