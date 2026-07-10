@@ -160,6 +160,34 @@ test("cold-cache plugin processes share one refresh and all receive its greeting
   assert.equal(readFileSync(f.cacheFile, "utf8").trim(), NEW_GREETING);
 });
 
+test("cold-cache follower emits a cache published while its owner lock disappears", async (t) => {
+  const f = fixture();
+  t.after(() => f.cleanup());
+  const lockDir = join(f.cacheDir, "session-greeting-refresh.lock");
+  mkdirSync(lockDir);
+  let nowCalls = 0;
+  const now = () => {
+    nowCalls += 1;
+    if (nowCalls === 4) {
+      writeFileSync(f.cacheFile, `${NEW_GREETING}\n`);
+      rmSync(lockDir, { recursive: true, force: true });
+    }
+    return 1000;
+  };
+  const client = f.client();
+  const handler = createGreetingHandler({
+    ...handlerOptions(f, client, async () => {
+      throw new Error("follower must not start a refresh");
+    }),
+    now,
+  });
+
+  await handler({ event: { type: "session.created" } });
+  await waitFor(() => f.clients[0].length === 1);
+
+  assert.equal(f.clients[0][0].message.includes(NEW_GREETING), true);
+});
+
 test("an expired owner cannot release a replacement owner's lock", async (t) => {
   const f = fixture();
   t.after(() => f.cleanup());

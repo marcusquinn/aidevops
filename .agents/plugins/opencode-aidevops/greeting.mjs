@@ -286,6 +286,9 @@ function observeSharedRefresh({ cacheFile, lockDir, lockStaleMs, client, now }) 
     try {
       if (now() >= deadline || now() - statSync(lockDir).mtimeMs > lockStaleMs) return;
     } catch {
+      // The owner may publish the cache and remove its lock between our cache
+      // read and lock stat. Re-check once so that handoff still emits it.
+      emitCachedGreeting(client, readGreetingCache(cacheFile));
       return;
     }
 
