@@ -4462,3 +4462,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18078 Route OpenAI workers through GPT-5.6 tiers #bug #type:enhancement ref:GH#26913
 
 - [ ] t18083 Refresh Vault status after terminal handoff #bug #enhancement ref:GH#26998
+
+- [ ] t18084 Embed secure Vault terminal and populate local secret inventory #bug #enhancement #security ref:GH#27001
