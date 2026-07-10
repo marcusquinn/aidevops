@@ -17,6 +17,9 @@
 # running) and overriding `set_issue_status` with a mock that captures
 # every flag for assertion.
 
+# Generated child scripts intentionally defer these expressions until runtime.
+# shellcheck disable=SC2016
+
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
@@ -612,6 +615,148 @@ test_cmd_dispatch_blocks_needs_maintainer_review_before_dedup() {
 	return 0
 }
 
+test_dedup_receives_prefetched_issue_metadata() {
+	local test_dir=""
+	test_dir=$(mktemp -d)
+	local metadata_log="${test_dir}/metadata.json"
+	local helper="${test_dir}/dedup-helper.sh"
+	{
+		printf '%s\n' '#!/usr/bin/env bash'
+		printf '%s\n' 'printf "%s" "${ISSUE_META_JSON:-}" >"$MOCK_DEDUP_META_LOG"'
+		printf '%s\n' 'exit 1'
+	} >"$helper"
+	chmod +x "$helper"
+
+	local original_dedup_helper="$_DSI_DEDUP_HELPER"
+	_DSI_DEDUP_HELPER="$helper"
+	_DSI_ISSUE_META_JSON='{"number":123,"labels":[],"assignees":[],"state":"OPEN"}'
+	export MOCK_DEDUP_META_LOG="$metadata_log"
+	_dsi_run_dedup_check 123 owner/repo runner-self >/dev/null 2>&1
+
+	local forwarded=""
+	forwarded=$(<"$metadata_log")
+	local check=1
+	[[ "$_DSI_DEDUP_STATE" == "clear" && "$forwarded" == "$_DSI_ISSUE_META_JSON" ]] && check=0
+	print_result "dedup child receives prefetched issue metadata" "$check" "state=$_DSI_DEDUP_STATE metadata=$forwarded"
+
+	_DSI_DEDUP_HELPER="$original_dedup_helper"
+	unset MOCK_DEDUP_META_LOG
+	rm -rf "$test_dir"
+	return 0
+}
+
+test_transient_dedup_retries_are_bounded() {
+	local test_dir=""
+	test_dir=$(mktemp -d)
+	local count_log="${test_dir}/count"
+	local helper="${test_dir}/dedup-helper.sh"
+	{
+		printf '%s\n' '#!/usr/bin/env bash'
+		printf '%s\n' 'count=0'
+		printf '%s\n' '[[ -f "$MOCK_DEDUP_COUNT_LOG" ]] && count=$(<"$MOCK_DEDUP_COUNT_LOG")'
+		printf '%s\n' 'count=$((count + 1))'
+		printf '%s\n' 'printf "%s\n" "$count" >"$MOCK_DEDUP_COUNT_LOG"'
+		printf '%s\n' 'if ((count < 3)); then'
+		printf '%s\n' '  printf "%s\n" "GUARD_UNCERTAIN (reason=gh-api-failure detail=timeout Retry-After:1)"'
+		printf '%s\n' '  exit 0'
+		printf '%s\n' 'fi'
+		printf '%s\n' 'exit 1'
+	} >"$helper"
+	chmod +x "$helper"
+
+	local original_dedup_helper="$_DSI_DEDUP_HELPER"
+	_DSI_DEDUP_HELPER="$helper"
+	_DSI_ISSUE_META_JSON='{"number":123,"labels":[],"assignees":[],"state":"OPEN"}'
+	export MOCK_DEDUP_COUNT_LOG="$count_log"
+	_dsi_run_dedup_check 123 owner/repo runner-self >/dev/null 2>&1
+
+	local attempts=""
+	attempts=$(<"$count_log")
+	local check=1
+	[[ "$_DSI_DEDUP_STATE" == "clear" && "$_DSI_DEDUP_ATTEMPTS" -eq 3 && "$attempts" == "3" ]] && check=0
+	print_result "transient dedup retries stop after two retries" "$check" \
+		"state=$_DSI_DEDUP_STATE attempts=$_DSI_DEDUP_ATTEMPTS calls=$attempts"
+
+	_DSI_DEDUP_HELPER="$original_dedup_helper"
+	unset MOCK_DEDUP_COUNT_LOG
+	rm -rf "$test_dir"
+	return 0
+}
+
+test_persistent_uncertainty_does_not_retry_and_checkpoints_dryrun() {
+	local test_dir=""
+	test_dir=$(mktemp -d)
+	local count_log="${test_dir}/count"
+	local helper="${test_dir}/dedup-helper.sh"
+	{
+		printf '%s\n' '#!/usr/bin/env bash'
+		printf '%s\n' 'count=0'
+		printf '%s\n' '[[ -f "$MOCK_DEDUP_COUNT_LOG" ]] && count=$(<"$MOCK_DEDUP_COUNT_LOG")'
+		printf '%s\n' 'printf "%s\n" "$((count + 1))" >"$MOCK_DEDUP_COUNT_LOG"'
+		printf '%s\n' 'printf "%s\n" "GUARD_UNCERTAIN (reason=jq-failure call=assignees-extract)"'
+		printf '%s\n' 'exit 0'
+	} >"$helper"
+	chmod +x "$helper"
+
+	local original_dedup_helper="$_DSI_DEDUP_HELPER"
+	_DSI_DEDUP_HELPER="$helper"
+	export MOCK_DEDUP_COUNT_LOG="$count_log"
+	local -x AIDEVOPS_DSI_CHECKPOINT_DIR="${test_dir}/checkpoints"
+	MOCK_GH_FAIL="0"
+	MOCK_GH_TARGET_IS_PR="0"
+	MOCK_GH_ISSUE_STATE="OPEN"
+	MOCK_GH_LABELS_JSON="[]"
+
+	local out="" rc=0
+	out=$(cmd_dispatch 123 owner/repo --dry-run 2>&1) || rc=$?
+	local checkpoint_file="${AIDEVOPS_DSI_CHECKPOINT_DIR}/owner-repo-123.json"
+	local checkpoint_ok=1
+	if [[ -f "$checkpoint_file" ]] && jq -e \
+		'.status == "recovering" and .issue == "123" and .repo == "owner/repo" and
+		 .dedup_attempts == 1 and (.resume_command | contains("--dry-run")) and
+		 (.resume_condition | contains("definitive clear or blocked"))' \
+		"$checkpoint_file" >/dev/null; then
+		checkpoint_ok=0
+	fi
+	local calls=""
+	calls=$(<"$count_log")
+	local check=1
+	[[ "$rc" -eq 75 && "$calls" == "1" && "$checkpoint_ok" -eq 0 && "$out" == *"RECOVERY_CHECKPOINT_JSON="* ]] && check=0
+	print_result "persistent uncertain dry-run returns 75 and persists checkpoint" "$check" \
+		"rc=$rc calls=$calls checkpoint_ok=$checkpoint_ok output=$out"
+
+	_DSI_DEDUP_HELPER="$original_dedup_helper"
+	unset MOCK_DEDUP_COUNT_LOG
+	rm -rf "$test_dir"
+	return 0
+}
+
+test_unexpected_dedup_exit_remains_error() {
+	local test_dir=""
+	test_dir=$(mktemp -d)
+	local helper="${test_dir}/dedup-helper.sh"
+	{
+		printf '%s\n' '#!/usr/bin/env bash'
+		printf '%s\n' 'printf "%s\n" "unexpected helper failure"'
+		printf '%s\n' 'exit 2'
+	} >"$helper"
+	chmod +x "$helper"
+
+	local original_dedup_helper="$_DSI_DEDUP_HELPER"
+	_DSI_DEDUP_HELPER="$helper"
+	_DSI_ISSUE_META_JSON='{"number":123,"labels":[],"assignees":[],"state":"OPEN"}'
+	_dsi_run_dedup_check 123 owner/repo runner-self >/dev/null 2>&1
+
+	local check=1
+	[[ "$_DSI_DEDUP_STATE" == "error" && "$_DSI_DEDUP_RC" -eq 2 && "$_DSI_DEDUP_ATTEMPTS" -eq 1 ]] && check=0
+	print_result "unexpected dedup exit remains an error" "$check" \
+		"state=$_DSI_DEDUP_STATE rc=$_DSI_DEDUP_RC attempts=$_DSI_DEDUP_ATTEMPTS"
+
+	_DSI_DEDUP_HELPER="$original_dedup_helper"
+	rm -rf "$test_dir"
+	return 0
+}
+
 test_launch_worker_forwards_agent() {
 	local failed=1
 	if grep -Fq "cmd+=(--agent \"\$agent_name\")" "$HELPER_PATH"; then
@@ -914,6 +1059,10 @@ _run_tests() {
 	test_interactive_hold_guard_allows_auto_dispatch_review_handoff
 	test_maintainer_review_guard_blocks_manual_dispatch
 	test_cmd_dispatch_blocks_needs_maintainer_review_before_dedup
+	test_dedup_receives_prefetched_issue_metadata
+	test_transient_dedup_retries_are_bounded
+	test_persistent_uncertainty_does_not_retry_and_checkpoints_dryrun
+	test_unexpected_dedup_exit_remains_error
 	test_agent_flag_parses_with_default
 	test_launch_worker_forwards_agent
 	test_launch_worker_forwards_repo_contract

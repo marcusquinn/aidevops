@@ -30,9 +30,10 @@
 #      duplicating the template here.
 #
 # Exit codes:
-#   0  Worker dispatched (or skipped: already claimed / dry-run)
+#   0  Worker dispatched (or skipped: already claimed / clear dry-run)
 #   1  Validation failure (issue not found, parent-task, etc.)
 #   2  Invalid subcommand or missing required arg
+#   75 Dedup guard is uncertain; recovery checkpoint persisted
 #
 # Part of aidevops framework: https://aidevops.sh
 
@@ -60,7 +61,9 @@ _DSI_HEADLESS="${_DSI_SCRIPT_DIR}/headless-runtime-helper.sh"
 _DSI_LEDGER_HELPER="${_DSI_SCRIPT_DIR}/dispatch-ledger-helper.sh"
 _DSI_WORKTREE_HELPER="${_DSI_SCRIPT_DIR}/worktree-helper.sh"
 _DSI_DEDUP_HELPER="${_DSI_SCRIPT_DIR}/dispatch-dedup-helper.sh"
+_DSI_BACKOFF_HELPER="${_DSI_SCRIPT_DIR}/dispatch-backoff-helper.sh"
 _DSI_DISPATCH_BASE_BRANCH=""
+_DSI_STATE_RECOVERING="recovering"
 
 # Colors (guarded — don't collide with shared-constants)
 [[ -z "${_DSI_GREEN+x}" ]] && _DSI_GREEN='\033[0;32m'
@@ -1025,7 +1028,7 @@ _dsi_parse_dispatch_args() {
 # Print dry-run plan. Caller has already loaded metadata + resolved model.
 # Args:
 #   $1 issue_number, $2 repo_slug, $3 session_key
-#   $4 dedup_state (blocked|clear|error), $5 dedup_rc, $6 dedup_result
+#   $4 dedup_state (blocked|clear|recovering|error), $5 dedup_rc, $6 dedup_result
 #######################################
 _dsi_print_dryrun() {
 	local issue_number="$1"
@@ -1057,9 +1060,105 @@ _dsi_print_dryrun() {
 	case "$dedup_state" in
 	blocked) _dsi_warn "  Dedup:        WOULD BLOCK — ${dedup_result}" ;;
 	clear) _dsi_info "  Dedup:        clear (no active claim)" ;;
+	"$_DSI_STATE_RECOVERING") _dsi_warn "  Dedup:        RECOVERING — dispatch remains unsafe: ${dedup_result}" ;;
 	error) _dsi_err "  Dedup:        ERROR (exit ${dedup_rc}) — would refuse to dispatch: ${dedup_result}" ;;
 	esac
-	_dsi_ok "Dry-run complete (no worker launched)"
+	if [[ "$dedup_state" == "$_DSI_STATE_RECOVERING" ]]; then
+		_dsi_warn "Dry-run stopped at recoverable safety state (no worker launched)"
+	else
+		_dsi_ok "Dry-run complete (no worker launched)"
+	fi
+	return 0
+}
+
+#######################################
+# Run the external dedup guard and retry only evidenced transient uncertainty.
+# Sets _DSI_DEDUP_RESULT, _DSI_DEDUP_RC, _DSI_DEDUP_STATE, _DSI_DEDUP_ATTEMPTS.
+# Args: $1 issue number, $2 repo slug, $3 current login
+#######################################
+_dsi_run_dedup_check() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local retry_number=0
+	local classification=""
+	local retry_delay=""
+
+	_DSI_DEDUP_ATTEMPTS=0
+	while ((_DSI_DEDUP_ATTEMPTS < 3)); do
+		_DSI_DEDUP_ATTEMPTS=$((_DSI_DEDUP_ATTEMPTS + 1))
+		_DSI_DEDUP_RC=0
+		_DSI_DEDUP_RESULT=$(ISSUE_META_JSON="$_DSI_ISSUE_META_JSON" \
+			"$_DSI_DEDUP_HELPER" is-assigned "$issue_number" "$repo_slug" "$self_login" 2>&1) || _DSI_DEDUP_RC=$?
+
+		if [[ "$_DSI_DEDUP_RC" -eq 0 && "$_DSI_DEDUP_RESULT" == GUARD_UNCERTAIN* ]]; then
+			_DSI_DEDUP_STATE="$_DSI_STATE_RECOVERING"
+		elif [[ "$_DSI_DEDUP_RC" -eq 0 ]]; then
+			_DSI_DEDUP_STATE="blocked"
+		elif [[ "$_DSI_DEDUP_RC" -eq 1 ]]; then
+			_DSI_DEDUP_STATE="clear"
+		else
+			_DSI_DEDUP_STATE="error"
+		fi
+
+		[[ "$_DSI_DEDUP_STATE" == "$_DSI_STATE_RECOVERING" ]] || return 0
+		((_DSI_DEDUP_ATTEMPTS < 3)) || return 0
+		classification=$("$_DSI_BACKOFF_HELPER" classify-lookup-failure "$_DSI_DEDUP_RESULT" 2>/dev/null || printf 'unknown')
+		[[ "$classification" == "transient" ]] || return 0
+		retry_number=$((retry_number + 1))
+		retry_delay=$("$_DSI_BACKOFF_HELPER" lookup-retry-delay "$_DSI_DEDUP_RESULT" "$retry_number" 2>/dev/null) || return 0
+		_dsi_warn "Dedup lookup uncertain with transient evidence; retry ${retry_number}/2 after ${retry_delay}s"
+		sleep "$retry_delay"
+		# Change the lookup conditions before retrying: refresh the authoritative
+		# metadata rather than repeating the same prefetched payload immediately.
+		if ! _dsi_load_issue_meta "$issue_number" "$repo_slug"; then
+			_DSI_DEDUP_RESULT="${_DSI_DEDUP_RESULT} metadata-refresh-failed"
+			return 0
+		fi
+	done
+	return 0
+}
+
+#######################################
+# Persist a machine-readable continuation checkpoint for an uncertain guard.
+# Args: $1 issue, $2 repo, $3 trigger, $4 attempts
+#######################################
+_dsi_write_recovery_checkpoint() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local trigger="$3"
+	local attempts="$4"
+	local checkpoint_dir="${AIDEVOPS_DSI_CHECKPOINT_DIR:-${HOME}/.aidevops/.agent-workspace/work/dispatch-recovery}"
+	local checkpoint_file="${checkpoint_dir}/${repo_slug//\//-}-${issue_number}.json"
+	local checkpoint_tmp="${checkpoint_file}.tmp.$$"
+	local resume_command=""
+	local -a resume_args=("${_DSI_SCRIPT_DIR}/dispatch-single-issue-helper.sh" dispatch "$issue_number" "$repo_slug")
+
+	[[ -n "$_DSI_ARG_MODEL" ]] && resume_args+=(--model "$_DSI_ARG_MODEL")
+	[[ -n "$_DSI_ARG_AGENT" ]] && resume_args+=(--agent "$_DSI_ARG_AGENT")
+	[[ -n "${AIDEVOPS_DISPATCH_BASE_REF:-}" ]] && resume_args+=(--base "$AIDEVOPS_DISPATCH_BASE_REF")
+	[[ "$_DSI_ARG_NO_CEREMONY" -eq 1 ]] && resume_args+=(--no-ceremony)
+	[[ "$_DSI_ARG_DRYRUN" -eq 1 ]] && resume_args+=(--dry-run)
+	printf -v resume_command '%q ' "${resume_args[@]}"
+	resume_command="${resume_command% }"
+
+	mkdir -p "$checkpoint_dir"
+	jq -n \
+		--arg status "$_DSI_STATE_RECOVERING" \
+		--arg issue "$issue_number" \
+		--arg repo "$repo_slug" \
+		--arg trigger "$trigger" \
+		--argjson attempts "$attempts" \
+		--arg resume_command "$resume_command" \
+		--arg resume_condition "one authoritative metadata/dedup read returns a definitive clear or blocked result" \
+		'{status:$status, issue:$issue, repo:$repo, trigger:$trigger, dedup_attempts:$attempts,
+		  completed_checks:["issue metadata loaded","target is an issue","dispatch holds checked","parent-task gate checked","dedup remained fail-closed"],
+		  unsafe_route_not_to_repeat:"bypass dedup or repeat an identical lookup without changed conditions",
+		  resume_command:$resume_command, resume_condition:$resume_condition}' >"$checkpoint_tmp" || return 1
+	mv "$checkpoint_tmp" "$checkpoint_file"
+	_dsi_warn "Recovery checkpoint: ${checkpoint_file}"
+	printf 'RECOVERY_CHECKPOINT_JSON='
+	jq -c . "$checkpoint_file"
 	return 0
 }
 
@@ -1102,15 +1201,10 @@ cmd_dispatch() {
 	# when we can't be sure of the state. The pulse has its own retry layers.
 	local self_login
 	self_login=$(gh api user --jq .login 2>/dev/null || echo "")
-	local dedup_result dedup_rc=0
-	ISSUE_META_JSON="$_DSI_ISSUE_META_JSON" \
-		dedup_result=$("$_DSI_DEDUP_HELPER" is-assigned "$issue_number" "$repo_slug" "$self_login" 2>&1) || dedup_rc=$?
-	local dedup_state
-	case "$dedup_rc" in
-	0) dedup_state="blocked" ;;
-	1) dedup_state="clear" ;;
-	*) dedup_state="error" ;;
-	esac
+	_dsi_run_dedup_check "$issue_number" "$repo_slug" "$self_login"
+	local dedup_result="$_DSI_DEDUP_RESULT"
+	local dedup_rc="$_DSI_DEDUP_RC"
+	local dedup_state="$_DSI_DEDUP_STATE"
 
 	# Step 4: fail closed if an active manual/pulse worker already owns the
 	# same repo+issue. This closes the gap where labels or ledger entries are
@@ -1127,6 +1221,10 @@ cmd_dispatch() {
 	# Step 6: dry-run short-circuit
 	if [[ "$_DSI_ARG_DRYRUN" -eq 1 ]]; then
 		_dsi_print_dryrun "$issue_number" "$repo_slug" "$session_key" "$dedup_state" "$dedup_rc" "$dedup_result"
+		if [[ "$dedup_state" == "$_DSI_STATE_RECOVERING" ]]; then
+			_dsi_write_recovery_checkpoint "$issue_number" "$repo_slug" "$dedup_result" "$_DSI_DEDUP_ATTEMPTS" || true
+			return 75
+		fi
 		return 0
 	fi
 
@@ -1137,6 +1235,12 @@ cmd_dispatch() {
 		_dsi_info "  Reason: ${dedup_result}"
 		_dsi_info "  Use a separate test issue, or release the existing claim first."
 		return 1
+		;;
+	"$_DSI_STATE_RECOVERING")
+		_dsi_err "Dedup guard is uncertain — failing closed, refusing to dispatch"
+		_dsi_info "  Trigger: ${dedup_result}"
+		_dsi_write_recovery_checkpoint "$issue_number" "$repo_slug" "$dedup_result" "$_DSI_DEDUP_ATTEMPTS" || true
+		return 75
 		;;
 	error)
 		_dsi_err "Dedup check failed (exit ${dedup_rc}) — failing closed, refusing to dispatch"
