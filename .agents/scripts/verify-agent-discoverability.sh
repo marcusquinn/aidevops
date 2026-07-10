@@ -110,6 +110,18 @@ check_string_in_file() {
 	return 0
 }
 
+check_regex_in_file() {
+	local file="$1"
+	local pattern="$2"
+	local label="$3"
+	if grep -qE -- "$pattern" "${AGENTS_DIR}/${file}" 2>/dev/null; then
+		log_ok "${label}"
+	else
+		log_fail "${label} — pattern not found in ${file}"
+	fi
+	return 0
+}
+
 check_frontmatter_description_quoting() {
 	local file="$1"
 	local label="$2"
@@ -206,7 +218,7 @@ echo ""
 echo "=== 4b. Node Server Admin Discoverability ==="
 check_file_nonempty "tools/runtime/node-server-admin.md" 2000 "Node server admin agent"
 check_string_in_file "tools/runtime/node-server-admin.md" "mode: subagent" "Node server admin: subagent mode"
-check_string_in_file "$BUILD_PLUS_FILE" "- node-server-admin" "Build+: node-server-admin allowlist"
+check_regex_in_file "$BUILD_PLUS_FILE" '^[[:space:]]*-[[:space:]]*node-server-admin[[:space:]]*$' "Build+: node-server-admin allowlist"
 check_string_in_file "$BUILD_PLUS_FILE" "tools/runtime/node-server-admin.md" "Build+: Node runtime domain route"
 check_string_in_file "reference/domain-index.md" "tools/runtime/node-server-admin.md" "Domain index: Node server admin route"
 check_string_in_file "subagent-index.toon" "node-server-admin" "Subagent index: node-server-admin entry"
