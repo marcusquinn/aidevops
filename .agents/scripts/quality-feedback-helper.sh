@@ -192,6 +192,33 @@ _extract_snippet_from_inline_code() {
 	return 1
 }
 
+# _extract_reference_line_fix_snippet: extract the requested replacement from
+# review feedback that narrows a documentation reference to one line.
+# Arguments: $1=body_full
+# Outputs basename:line to stdout; returns 0 on success, 1 if not applicable.
+_extract_reference_line_fix_snippet() {
+	local body_full="$1"
+	local file_name=""
+	local target_line=""
+
+	if [[ "$body_full" =~ [Tt]he[[:space:]]referenced[[:space:]]file[[:space:]]\'([^\']+)\' ]]; then
+		file_name="${BASH_REMATCH[1]}"
+	else
+		return 1
+	fi
+
+	if [[ "$body_full" =~ [Pp]oint[[:space:]]only[[:space:]]to[[:space:]]line[[:space:]]([0-9]+) ]]; then
+		target_line="${BASH_REMATCH[1]}"
+	else
+		return 1
+	fi
+
+	file_name="${file_name##*/}"
+	[[ -z "$file_name" || -z "$target_line" ]] && return 1
+	printf '%s:%s\n' "$file_name" "$target_line"
+	return 0
+}
+
 _extract_verification_snippet() {
 	local body_full="$1"
 	local line=""
@@ -260,6 +287,13 @@ _extract_verification_snippet() {
 		fi
 	done <<<"$body_full"
 
+	# Documentation reviews can express the replacement as prose rather than a
+	# suggestion fence. Convert a precise single-line reference request into a
+	# stable fix snippet before falling back to generic inline-code extraction.
+	if _extract_reference_line_fix_snippet "$body_full"; then
+		return 0
+	fi
+
 	# Fallback: try blockquotes, indented blocks, and inline backtick code
 	_extract_snippet_from_inline_code "$body_full"
 	return $?
@@ -276,6 +310,20 @@ _extract_verification_snippet() {
 _body_has_suggestion_fence() {
 	local body_full="$1"
 	if printf '%s\n' "$body_full" | grep -qE "^\`\`\`suggestion"; then
+		return 0
+	fi
+	return 1
+}
+
+# _body_has_fix_snippet: returns 0 when extraction yields proposed replacement
+# text rather than text describing the existing problem.
+_body_has_fix_snippet() {
+	local body_full="$1"
+
+	if _body_has_suggestion_fence "$body_full"; then
+		return 0
+	fi
+	if _extract_reference_line_fix_snippet "$body_full" >/dev/null; then
 		return 0
 	fi
 	return 1
@@ -422,7 +470,7 @@ _finding_still_exists_on_main() {
 	# - all other sources → snippet is the PROBLEM text.
 	#   Finding is resolved when the problem is ABSENT from HEAD (problem fixed).
 	local is_suggestion_snippet="false"
-	if _body_has_suggestion_fence "$body_full"; then
+	if _body_has_fix_snippet "$body_full"; then
 		is_suggestion_snippet="true"
 	fi
 
