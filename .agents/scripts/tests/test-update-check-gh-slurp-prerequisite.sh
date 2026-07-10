@@ -17,8 +17,8 @@ ORIGINAL_HOME="$HOME"
 # the update check's main entry point.
 # shellcheck source=/dev/null
 source <(awk '
-	/^_write_cache_contents\(\)/,/^}/ { print }
-	/^_write_cache\(\)/,/^}/ { print }
+	/^_write_cache_contents[[:space:]]*\(\)/,/^}/ { print }
+	/^_write_cache[[:space:]]*\(\)/,/^}/ { print }
 ' "$UPDATE_CHECK")
 
 cleanup() {

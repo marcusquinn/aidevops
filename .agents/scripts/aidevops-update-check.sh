@@ -705,22 +705,19 @@ _write_cache() {
 
 	mkdir -p "$cache_dir"
 	temp_file=$(mktemp "$cache_dir/session-greeting.XXXXXX") || return 1
-	if _write_cache_contents "$output" "$runtime_hint" "$nudge_output" \
+	_write_cache_contents "$output" "$runtime_hint" "$nudge_output" \
 		"$session_warning" "$security_posture" "$secret_hygiene" \
-		"$advisories_output" "$contribution_watch" >"$temp_file"; then
-		:
-	else
+		"$advisories_output" "$contribution_watch" >"$temp_file" || {
 		rc=$?
 		rm -f "$temp_file"
 		return "$rc"
-	fi
-	if mv -f "$temp_file" "$cache_file"; then
-		return 0
-	else
+	}
+	mv -f "$temp_file" "$cache_file" || {
 		rc=$?
 		rm -f "$temp_file"
 		return "$rc"
-	fi
+	}
+	return 0
 }
 
 # -----------------------------------------------------------------------------
