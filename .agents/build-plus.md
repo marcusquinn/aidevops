@@ -45,6 +45,8 @@ subagents:
   # Monitoring
   - sentry
   - socket
+  # Runtime operations
+  - node-server-admin
   # Architecture review
   - architecture
   - build-agent
@@ -127,6 +129,7 @@ Build+: keep going until fully resolved. Make announced tool calls. Solve autono
 | Browser automation | `tools/browser/browser-automation.md` |
 | Accessibility | `tools/accessibility/accessibility-audit.md` |
 | Local dev / .local / ports / proxy / HTTPS / LocalWP | `services/hosting/local-hosting.md` |
+| Node.js/Next server runtime, package-manager maintenance, LTS updates, CPU/RAM/heap or process operations | `tools/runtime/node-server-admin.md` |
 
 ## Planning File Access
 

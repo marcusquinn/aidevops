@@ -4460,3 +4460,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 
 - [ ] t18078 Route OpenAI workers through GPT-5.6 tiers #bug #type:enhancement ref:GH#26913
+
+- [ ] t18082 Fix sandbox cleanup for descendants that create new process groups #auto-dispatch #bug #framework #safety ref:GH#26951
