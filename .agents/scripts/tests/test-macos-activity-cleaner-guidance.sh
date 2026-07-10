@@ -27,7 +27,13 @@ assert_file_contains() {
 	local name="$1"
 	local file="$2"
 	local pattern="$3"
-	if grep -Eq "$pattern" "${ROOT_DIR}/${file}"; then
+	local target="${ROOT_DIR}/${file}"
+	if [[ ! -f "$target" ]]; then
+		printf '  file does not exist: %s\n' "$file" >&2
+		fail "$name"
+		return 0
+	fi
+	if grep -Eq "$pattern" "$target"; then
 		pass "$name"
 	else
 		printf '  missing pattern: %s in %s\n' "$pattern" "$file" >&2
@@ -40,7 +46,13 @@ assert_file_not_contains() {
 	local name="$1"
 	local file="$2"
 	local pattern="$3"
-	if grep -Eq "$pattern" "${ROOT_DIR}/${file}"; then
+	local target="${ROOT_DIR}/${file}"
+	if [[ ! -f "$target" ]]; then
+		printf '  file does not exist: %s\n' "$file" >&2
+		fail "$name"
+		return 0
+	fi
+	if grep -Eq "$pattern" "$target"; then
 		printf '  unexpected pattern: %s in %s\n' "$pattern" "$file" >&2
 		fail "$name"
 	else
