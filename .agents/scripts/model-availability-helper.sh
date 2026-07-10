@@ -181,14 +181,14 @@ get_tier_models() {
 	# unsupported *-pro IDs, and non-OpenAI fallback providers from dispatch.
 	case "$tier" in
 	local) current_model=$'openai/gpt-5.4-mini' ;;
-	haiku) current_model=$'openai/gpt-5.4-mini' ;;
-	flash) current_model=$'openai/gpt-5.4-mini' ;;
-	sonnet) current_model=$'openai/gpt-5.5' ;;
-	pro) current_model=$'openai/gpt-5.5' ;;
-	opus) current_model=$'openai/gpt-5.5' ;;
-	health) current_model=$'openai/gpt-5.4-mini' ;;
-	eval) current_model=$'openai/gpt-5.5' ;;
-	coding) current_model=$'openai/gpt-5.5' ;;
+	haiku) current_model=$'openai/gpt-5.6-terra' ;;
+	flash) current_model=$'openai/gpt-5.6-terra' ;;
+	sonnet) current_model=$'openai/gpt-5.6-sol' ;;
+	pro) current_model=$'openai/gpt-5.6-sol' ;;
+	opus) current_model=$'openai/gpt-5.6-sol' ;;
+	health) current_model=$'openai/gpt-5.6-terra' ;;
+	eval) current_model=$'openai/gpt-5.6-sol' ;;
+	coding) current_model=$'openai/gpt-5.6-sol' ;;
 	*) return 1 ;;
 	esac
 

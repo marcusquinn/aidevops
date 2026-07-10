@@ -46,8 +46,12 @@ const FALLBACK_PRICING = {
   "sonnet-4":  { input: 3.0,   output: 15.0,  cacheRead: 0.30,   cacheWrite: 3.75  },
   "haiku-4":   { input: 0.80,  output: 4.0,   cacheRead: 0.08,   cacheWrite: 1.0   },
   "haiku-3":   { input: 0.80,  output: 4.0,   cacheRead: 0.08,   cacheWrite: 1.0   },
+  "gpt-5.6-sol":   { input: 5.0,  output: 30.0, cacheRead: 0.50, cacheWrite: 6.25  },
+  "gpt-5.6-terra": { input: 2.50, output: 15.0, cacheRead: 0.25, cacheWrite: 3.125 },
+  "gpt-5.6-luna":  { input: 1.0,  output: 6.0,  cacheRead: 0.10, cacheWrite: 1.25  },
 };
 const FALLBACK_DEFAULT = { input: 3.0, output: 15.0, cacheRead: 0.30, cacheWrite: 3.75 };
+const UNKNOWN_PRICING_MODELS = ["gpt-5.6-sol-pro"];
 
 /**
  * Load pricing from the shared JSON file.
@@ -103,9 +107,10 @@ const DEFAULT_PRICING = _pricing.default;
  * @param {string} modelID
  * @returns {{ input: number, output: number, cacheRead: number, cacheWrite: number }}
  */
-function getPricing(modelID) {
+export function getPricing(modelID) {
   if (!modelID) return DEFAULT_PRICING;
   const lower = modelID.toLowerCase();
+  if (UNKNOWN_PRICING_MODELS.some((model) => lower.includes(model))) return DEFAULT_PRICING;
   for (const [key, pricing] of Object.entries(MODEL_PRICING)) {
     if (lower.includes(key)) return pricing;
   }
@@ -532,6 +537,11 @@ function backfillCosts() {
   if (!hasCostBackfillCandidates()) return;
 
   // Build SQL CASE expression from the pricing table
+  const unknownCases = UNKNOWN_PRICING_MODELS.map((model) =>
+    `WHEN lower(model_id) LIKE '%${model}%' THEN ` +
+    `(tokens_input * ${DEFAULT_PRICING.input} + (tokens_output + tokens_reasoning) * ${DEFAULT_PRICING.output} ` +
+    `+ tokens_cache_read * ${DEFAULT_PRICING.cacheRead} + tokens_cache_write * ${DEFAULT_PRICING.cacheWrite}) / 1000000.0`
+  ).join("\n    ");
   const cases = Object.entries(MODEL_PRICING).map(([key, p]) =>
     `WHEN lower(model_id) LIKE '%${key}%' THEN ` +
     `(tokens_input * ${p.input} + (tokens_output + tokens_reasoning) * ${p.output} ` +
@@ -541,6 +551,7 @@ function backfillCosts() {
   const sql = `
 UPDATE llm_requests
 SET cost = CASE
+    ${unknownCases}
     ${cases}
     ELSE (tokens_input * ${DEFAULT_PRICING.input} + (tokens_output + tokens_reasoning) * ${DEFAULT_PRICING.output}
       + tokens_cache_read * ${DEFAULT_PRICING.cacheRead} + tokens_cache_write * ${DEFAULT_PRICING.cacheWrite}) / 1000000.0

@@ -417,6 +417,15 @@ resolve_headless_variant() {
 		variant=""
 	fi
 
+	# OpenAI publishes Sol xhigh coding/agent benchmarks and API pricing, but no
+	# equivalent Sol Pro API evidence. Default only thinking-tier issue workers
+	# to xhigh; explicit CLI and environment variants above continue to win.
+	if [[ -z "$variant" && "$role" == "worker" && "$tier_upper" == "OPUS" ]]; then
+		case "$selected_model" in
+		openai/gpt-5.6-sol | openai/gpt-5.6-sol-fast) variant="xhigh" ;;
+		esac
+	fi
+
 	printf '%s' "$variant"
 	return 0
 }

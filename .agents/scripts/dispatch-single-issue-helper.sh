@@ -226,9 +226,9 @@ _dsi_check_parent_task() {
 # NOTE: the pulse additionally applies a dispatch-path safety net (t2819) that
 # auto-elevates issues touching self-hosting files to opus-4-7. That safety net
 # is not replicated here because it requires inspecting the issue body + brief
-# file scope, which is a heavier operation than this helper performs. If you are
-# dispatching a dispatch-path issue manually and want the safety-net tier, pass
-# --model openai/gpt-5.5 explicitly.
+# file scope, which is a heavier operation than this helper performs. For manual
+# dispatch, ensure the issue carries tier:thinking; the opus route selects Sol
+# and headless-runtime-model.sh applies the xhigh worker default.
 #
 # Args:
 #   $1 - labels CSV
@@ -268,7 +268,7 @@ _dsi_resolve_model() {
 	if [[ "$needle" == *",model:opus-4-7,"* || "$needle" == *",tier:thinking,"* ]]; then
 		_DSI_TIER="opus"
 		if [[ "$needle" == *",model:opus-4-7,"* ]]; then
-			_DSI_SELECTED_MODEL="${AIDEVOPS_OPUS_ESCALATION_MODEL:-openai/gpt-5.5}"
+			_DSI_SELECTED_MODEL="${AIDEVOPS_OPUS_ESCALATION_MODEL:-openai/gpt-5.6-sol}"
 		fi
 		return 0
 	fi
@@ -287,10 +287,10 @@ _dsi_resolve_model() {
 		case "$short" in
 		*haiku*)
 			_DSI_TIER="haiku"
-			_DSI_SELECTED_MODEL="openai/gpt-5.4-mini"
+			_DSI_SELECTED_MODEL="openai/gpt-5.6-terra"
 			;;
 		*)
-			_DSI_SELECTED_MODEL="openai/gpt-5.5"
+			_DSI_SELECTED_MODEL="openai/gpt-5.6-sol"
 			;;
 		esac
 	fi

@@ -55,6 +55,27 @@ actual=$(resolve_headless_variant "pulse" "sonnet" "openai/gpt-5.5")
 assert_equals "high" "$actual" "pulse sonnet routing keeps configured variant" || true
 
 with_clean_variant_env
+actual=$(resolve_headless_variant "worker" "opus" "openai/gpt-5.6-sol")
+assert_equals "xhigh" "$actual" "GPT-5.6 Sol thinking worker defaults to xhigh" || true
+
+with_clean_variant_env
+actual=$(resolve_headless_variant "worker" "opus" "openai/gpt-5.6-sol-fast")
+assert_equals "xhigh" "$actual" "GPT-5.6 Sol Fast thinking worker defaults to xhigh" || true
+
+with_clean_variant_env
+actual=$(resolve_headless_variant "worker" "sonnet" "openai/gpt-5.6-sol")
+assert_equals "" "$actual" "GPT-5.6 Sol standard worker keeps provider-default effort" || true
+
+with_clean_variant_env
+AIDEVOPS_HEADLESS_VARIANT_OPUS="high"
+actual=$(resolve_headless_variant "worker" "opus" "openai/gpt-5.6-sol")
+assert_equals "high" "$actual" "explicit GPT-5.6 Sol thinking-tier variant overrides xhigh default" || true
+
+with_clean_variant_env
+actual=$(resolve_headless_variant "pulse" "opus" "openai/gpt-5.6-sol")
+assert_equals "" "$actual" "pulse does not inherit worker thinking-tier xhigh default" || true
+
+with_clean_variant_env
 
 if [[ "$failures" -ne 0 ]]; then
 	printf '\n%d variant regression test(s) failed\n' "$failures" >&2
