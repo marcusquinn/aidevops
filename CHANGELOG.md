@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.9] - 2026-07-10
+
+### Changed
+
+- Defer cleanup until parent runtime exits (#27013)
+- recover manual dispatch after uncertain dedup (#27012)
+- Harden worker productivity safeguards (#27010)
+- Maintenance: sync ref:GH#27001 to TODO.md [skip ci]
+- Maintenance: mark t18082 complete (pr:#27000 completed:2026-07-10) [skip ci]
+- fix: clean detached sandbox descendants (#27000)
+- Maintenance: sync ref:GH#26998 to TODO.md [skip ci]
+- suppress resolved review feedback parents (#26987)
+
 ## [3.32.8] - 2026-07-10
 
 ### Changed
