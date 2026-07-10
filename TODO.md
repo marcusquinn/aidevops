@@ -485,7 +485,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
-- [ ] t18071 Establish privacy-safe linter forensics and bounded resource baselines across mission targets #mission:m-20260710-11431d #investigate #performance #security #interactive ~30m tier:thinking ref:GH#26914 assignee:marcusquinn started:2026-07-10T03:55:55Z logged:2026-07-10 -> [todo/tasks/t18071-brief.md]
+- [x] t18071 Establish privacy-safe linter forensics and bounded resource baselines across mission targets #mission:m-20260710-11431d #investigate #performance #security #interactive ~30m tier:thinking ref:GH#26914 assignee:marcusquinn started:2026-07-10T03:55:55Z logged:2026-07-10 -> [todo/tasks/t18071-brief.md] pr:#26918 completed:2026-07-10
 - [ ] t18072 Fix framework changed-file coverage, deduplicate discovery, and fail closed on timeouts #mission:m-20260710-11431d #performance #quality #security #shell #interactive ~45m tier:standard blocked-by:t18071 ref:GH#26919 logged:2026-07-10 -> [todo/tasks/t18072-brief.md]
 - [ ] t18073 Bound Target B monorepo lint concurrency while preserving affected coverage #mission:m-20260710-11431d #performance #private-target #interactive ~55m tier:thinking blocked-by:t18071 logged:2026-07-10 -> [todo/tasks/t18073-brief.md]
 - [ ] t18074 Validate Target C overlays through bounded downstream lint integration #mission:m-20260710-11431d #quality #private-target #interactive ~30m tier:thinking blocked-by:t18071 logged:2026-07-10 -> [todo/tasks/t18074-brief.md]
