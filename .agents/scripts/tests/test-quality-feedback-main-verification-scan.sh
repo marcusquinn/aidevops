@@ -926,6 +926,59 @@ test_scan_single_pr_filters_positive_inline_acknowledgement_reply() {
 	return 0
 }
 
+test_scan_single_pr_filters_parent_of_resolution_reply() {
+	reset_mock_state
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			while [[ $# -gt 0 ]]; do
+				case "$1" in
+				repos/*/pulls/*/comments)
+					cat <<'JSON'
+[{"id":3559552023,"user":{"login":"gemini-code-assist[bot]"},"path":".agents/reference/safety-stop-recovery.md","line":null,"original_line":23,"position":1,"body":"The singular subject makes the plural verb incorrect. Change one failed approach to failed approaches.\n\n```suggestion\nfailed approaches are not evidence\n```","html_url":"https://example.invalid/original","created_at":"2026-07-10T14:11:03Z"},{"id":3559907312,"in_reply_to_id":3559552023,"user":{"login":"gemini-code-assist[bot]"},"path":".agents/reference/safety-stop-recovery.md","line":null,"original_line":23,"position":1,"body":"Thank you for the clarification. You are correct that the grammatical agreement has been addressed by the shift to Each requires. I have verified the current state of the file, and the issue is indeed resolved.","html_url":"https://example.invalid/reply","created_at":"2026-07-10T15:03:06Z"}]
+JSON
+					return 0
+					;;
+				repos/*/pulls/*/reviews)
+					echo '[]'
+					return 0
+					;;
+				repos/*/git/trees/*)
+					echo '[".agents/reference/safety-stop-recovery.md"]'
+					return 0
+					;;
+				repos/*)
+					echo "main"
+					return 0
+					;;
+				esac
+				shift
+			done
+			return 0
+			;;
+		label | pr) return 0 ;;
+		esac
+		return 0
+	}
+
+	local findings
+	findings=$(_scan_single_pr "owner/repo" "26935" "medium" "false" 2>/dev/null)
+	local count
+	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
+
+	if [[ "$count" -eq 0 ]]; then
+		print_result "issue #26969 parent finding with a resolution reply is filtered" 0
+	else
+		print_result "issue #26969 parent finding with a resolution reply is filtered" 1 "expected 0 findings, got ${count}"
+	fi
+
+	_restore_mock_gh
+	return 0
+}
+
 test_scan_single_pr_filters_issue3158_review_body() {
 	# Regression: PR #3060 Gemini review — "The changes are correct and well-justified."
 	# with summary praise (effectively, improves, correct, well-justified) must be filtered
