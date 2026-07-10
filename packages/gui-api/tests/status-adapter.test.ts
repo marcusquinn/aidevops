@@ -229,19 +229,23 @@ describe("status adapter", () => {
     expect(readVaultSummary(repoRoot).status).toBe("unknown");
   });
 
-  test("rejects whitespace-only stderr", () => {
+  test("accepts valid Vault output when the helper emits a stderr warning", () => {
     const repoRoot = mkdtempSync(join(tmpdir(), "aidevops-gui-vault-whitespace-stderr-"));
     const scriptsDir = join(repoRoot, ".agents", "scripts");
     mkdirSync(scriptsDir, { recursive: true });
     writeFileSync(join(scriptsDir, "vault-helper.sh"), [
       "case \"$1\" in",
-      "  status) printf '%s\\n' locked; printf ' ' >&2 ;;",
+      "  status) printf '%s\\n' locked; printf '%s\\n' 'runtime warning' >&2 ;;",
       "  setup-state) printf '%s\\n' migration-ready ;;",
       "  *) exit 1 ;;",
       "esac",
     ].join("\n"));
 
-    expect(readVaultSummary(repoRoot).status).toBe("unknown");
+    const vault = readVaultSummary(repoRoot);
+
+    expect(vault.helper_status).toBe("available");
+    expect(vault.status).toBe("locked");
+    expect(vault.setup_state).toBe("migration-ready");
   });
 
   test("preserves the Linux runtime directory for broker status probes", () => {

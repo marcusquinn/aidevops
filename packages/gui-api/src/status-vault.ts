@@ -91,7 +91,7 @@ function readVaultCommand<T extends VaultProbeValue>(
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 750,
   });
-  if (result.error !== undefined || result.signal !== null || result.status === null || result.stderr.length > 0) return null;
+  if (result.error !== undefined || result.signal !== null || result.status === null) return null;
   const output = result.stdout.endsWith("\n") ? result.stdout.slice(0, -1) : result.stdout;
   if (output.length === 0 || output.includes("\n") || output.includes("\r") || output.trim() !== output) return null;
   return isAllowed(output) && isExpectedVaultExit(command, output, result.status) ? output : null;
