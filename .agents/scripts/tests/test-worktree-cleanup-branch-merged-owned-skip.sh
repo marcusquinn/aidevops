@@ -76,6 +76,8 @@ source_clean_lib_with_stubs() {
 	get_default_branch() { printf '%s\n' "main"; return 0; }
 	localdev_auto_branch_rm() { return 0; }
 	unregister_worktree() { return 0; }
+	unregister_worktree_if_owner_pid() { unregister_worktree "$1"; return 0; }
+	claim_worktree_ownership() { return 0; }
 	assert_git_available() { return 0; }
 	assert_main_worktree_sane() { return 0; }
 	gh_pr_list() { return 0; }
@@ -146,6 +148,159 @@ test_terminal_pr_proof_bypasses_protected_pass_skip() {
 	assert_file_contains "$log_file" "worktree-removed.*branch-merged.*mode=permanent.*merge_proof_result=github-merged-pr" || rc=1
 	print_result "terminal PR proof bypasses protected pass skip" "$rc" \
 		"Expected terminal PR proof to remove protected-pass worktree. Log: $(cat "$log_file" 2>/dev/null)"
+	return 0
+}
+
+test_terminal_pr_cleanup_waits_for_deferred_parent_exit() {
+	local repo_path="${TEST_ROOT}/repo-terminal-parent"
+	local wt_path="${TEST_ROOT}/wt-terminal-parent"
+	local log_file="${TEST_ROOT}/terminal-parent-cleanup.log"
+	local branch="feature/gh-99033-terminal-parent"
+	local owner_pid=""
+	local rc=0
+	export AIDEVOPS_CLEANUP_LOG="$log_file"
+	setup_repo "$repo_path" || rc=1
+	git -C "$repo_path" checkout -q -b "$branch" || rc=1
+	printf 'terminal parent\n' >"$repo_path/terminal-parent.txt" || rc=1
+	git -C "$repo_path" add terminal-parent.txt || rc=1
+	git -C "$repo_path" commit -q -m "terminal parent branch" || rc=1
+	git -C "$repo_path" checkout -q main || rc=1
+	git -C "$repo_path" worktree add -q "$wt_path" "$branch" || rc=1
+	mkdir -p "$wt_path/.agents"
+	sleep 30 &
+	owner_pid=$!
+	printf '%s\n' "$owner_pid" >"$wt_path/.agents/.full-loop-cleanup-deferred"
+
+	(
+		cd "$repo_path" || exit 1
+		source_clean_lib_with_stubs || exit 1
+		_clean_remove_merged "main" "$repo_path" "false" "$branch" "" "true" "" >/dev/null
+	) || rc=1
+	[[ -d "$wt_path" ]] || rc=1
+	assert_file_contains "$log_file" "worktree-skipped.*parent-runtime-active.*mode=skipped" || rc=1
+
+	kill "$owner_pid" 2>/dev/null || true
+	wait "$owner_pid" 2>/dev/null || true
+	local registry_release_marker="${TEST_ROOT}/terminal-parent-registry-released"
+	(
+		cd "$repo_path" || exit 1
+		unset _WORKTREE_CLEAN_LIB_LOADED 2>/dev/null || true
+		source_clean_lib_with_stubs || exit 1
+		local registry_owned=1
+		is_worktree_owned_by_others() { [[ "$registry_owned" -eq 1 ]]; return $?; }
+		unregister_worktree_if_owner_pid() {
+			[[ "$2" == "$owner_pid" ]] || return 1
+			registry_owned=0
+			printf 'released\n' >"$registry_release_marker"
+			return 0
+		}
+		_clean_remove_merged "main" "$repo_path" "false" "$branch" "" "true" "" >/dev/null
+	) || rc=1
+	[[ ! -d "$wt_path" ]] || rc=1
+	[[ -f "$registry_release_marker" ]] || rc=1
+	print_result "terminal PR cleanup waits for deferred parent exit" "$rc" \
+		"Expected first pulse to defer and second pulse after owner exit to remove worktree"
+	return 0
+}
+
+test_dead_marker_preserves_replacement_owner() {
+	local repo_path="${TEST_ROOT}/repo-replacement-owner"
+	local wt_path="${TEST_ROOT}/wt-replacement-owner"
+	local log_file="${TEST_ROOT}/replacement-owner-cleanup.log"
+	local branch="feature/gh-99034-replacement-owner"
+	local replacement_pid=""
+	local unregister_marker="${TEST_ROOT}/replacement-owner-unregistered"
+	local rc=0
+	export AIDEVOPS_CLEANUP_LOG="$log_file"
+	setup_repo "$repo_path" || rc=1
+	git -C "$repo_path" checkout -q -b "$branch" || rc=1
+	printf 'replacement owner\n' >"$repo_path/replacement-owner.txt" || rc=1
+	git -C "$repo_path" add replacement-owner.txt || rc=1
+	git -C "$repo_path" commit -q -m "replacement owner branch" || rc=1
+	git -C "$repo_path" checkout -q main || rc=1
+	git -C "$repo_path" worktree add -q "$wt_path" "$branch" || rc=1
+	mkdir -p "$wt_path/.agents"
+	printf '999999\n' >"$wt_path/.agents/.full-loop-cleanup-deferred"
+	sleep 30 &
+	replacement_pid=$!
+
+	(
+		cd "$repo_path" || exit 1
+		source_clean_lib_with_stubs || exit 1
+		is_worktree_owned_by_others() { return 0; }
+		unregister_worktree_if_owner_pid() { return 1; }
+		unregister_worktree() { printf 'unexpected\n' >"$unregister_marker"; return 0; }
+		_clean_remove_merged "main" "$repo_path" "false" "$branch" "" "true" "" >/dev/null
+	) || rc=1
+	[[ -d "$wt_path" ]] || rc=1
+	[[ ! -f "$unregister_marker" ]] || rc=1
+	assert_file_contains "$log_file" "worktree-skipped.*owned-skip.*mode=skipped" || rc=1
+	kill "$replacement_pid" 2>/dev/null || true
+	wait "$replacement_pid" 2>/dev/null || true
+	print_result "dead marker preserves a different replacement owner" "$rc" \
+		"Expected mismatched live registry owner to block unregister and removal"
+	return 0
+}
+
+test_terminal_cleanup_requires_removal_lease() {
+	local repo_path="${TEST_ROOT}/repo-cleanup-lease"
+	local wt_path="${TEST_ROOT}/wt-cleanup-lease"
+	local log_file="${TEST_ROOT}/cleanup-lease.log"
+	local branch="feature/gh-99035-cleanup-lease"
+	local rc=0
+	export AIDEVOPS_CLEANUP_LOG="$log_file"
+	setup_repo "$repo_path" || rc=1
+	git -C "$repo_path" checkout -q -b "$branch" || rc=1
+	printf 'cleanup lease\n' >"$repo_path/cleanup-lease.txt" || rc=1
+	git -C "$repo_path" add cleanup-lease.txt || rc=1
+	git -C "$repo_path" commit -q -m "cleanup lease branch" || rc=1
+	git -C "$repo_path" checkout -q main || rc=1
+	git -C "$repo_path" worktree add -q "$wt_path" "$branch" || rc=1
+
+	(
+		cd "$repo_path" || exit 1
+		source_clean_lib_with_stubs || exit 1
+		is_worktree_owned_by_others() { return 1; }
+		claim_worktree_ownership() { return 1; }
+		_clean_remove_merged "main" "$repo_path" "false" "$branch" "" "true" "" >/dev/null
+	) || rc=1
+	[[ -d "$wt_path" ]] || rc=1
+	assert_file_contains "$log_file" "worktree-skipped.*cleanup-lease-skip.*mode=skipped" || rc=1
+	print_result "terminal cleanup requires an atomic removal lease" "$rc" \
+		"Expected a replacement-owner race to block physical cleanup"
+	return 0
+}
+
+test_cleanup_lease_released_when_removal_guard_blocks() {
+	local repo_path="${TEST_ROOT}/repo-guard-release"
+	local wt_path="${TEST_ROOT}/wt-guard-release"
+	local branch="feature/gh-99036-guard-release"
+	local release_marker="${TEST_ROOT}/guard-lease-released"
+	local rc=0
+	setup_repo "$repo_path" || rc=1
+	git -C "$repo_path" checkout -q -b "$branch" || rc=1
+	printf 'guard release\n' >"$repo_path/guard-release.txt" || rc=1
+	git -C "$repo_path" add guard-release.txt || rc=1
+	git -C "$repo_path" commit -q -m "guard release branch" || rc=1
+	git -C "$repo_path" checkout -q main || rc=1
+	git -C "$repo_path" worktree add -q "$wt_path" "$branch" || rc=1
+
+	(
+		cd "$repo_path" || exit 1
+		source_clean_lib_with_stubs || exit 1
+		claim_worktree_ownership() { return 0; }
+		worktree_removal_guard() { return 1; }
+		unregister_worktree_if_owner_pid() {
+			[[ "$2" == "$$" ]] || return 1
+			printf 'released\n' >"$release_marker"
+			return 0
+		}
+		_clean_remove_merged "main" "$repo_path" "false" "$branch" "" "true" "" >/dev/null
+	) || rc=1
+	[[ -d "$wt_path" ]] || rc=1
+	[[ -f "$release_marker" ]] || rc=1
+	print_result "cleanup lease releases when removal guard blocks" "$rc" \
+		"Expected guarded skip to conditionally release cleanup PID ownership"
 	return 0
 }
 
@@ -551,6 +706,10 @@ test_closed_issue_dirty_unproven_branch_stashes_and_preserves_branch() {
 echo "=== test-worktree-cleanup-branch-merged-owned-skip.sh ==="
 test_protected_pass_set_blocks_branch_merged_removal
 test_terminal_pr_proof_bypasses_protected_pass_skip
+test_terminal_pr_cleanup_waits_for_deferred_parent_exit
+test_dead_marker_preserves_replacement_owner
+test_terminal_cleanup_requires_removal_lease
+test_cleanup_lease_released_when_removal_guard_blocks
 test_squash_merged_pr_without_ancestor_proof_classifies
 test_prefetched_merged_pr_metadata_skips_exact_head_lookup
 test_merged_pr_list_passes_explicit_repo_slug

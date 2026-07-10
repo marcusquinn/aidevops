@@ -65,7 +65,7 @@ ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-sessions.sh list   # Li
 ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-sessions.sh open   # Interactive: select + open
 ```
 
-**Worker self-cleanup (GH#6740):** `full-loop-helper.sh merge` now removes the current linked worktree after an immediate successful merge when the current branch matches the PR head. The pulse cleanup stage remains a safety net — batch dispatches (50+ workers) can still accumulate abandoned worktrees faster than scheduled cleanup. See `full-loop.md` Step 4.9 and `commands/worktree-cleanup.md`.
+**Worker self-cleanup (GH#6740):** `full-loop-helper.sh merge` defers current linked-worktree removal to the pulse cleanup stage after parent runtime exit. A runtime can retain a logical `--dir` reference without an observable process cwd, so synchronous removal is unsafe. See `full-loop.md` Step 4.9 and `commands/worktree-cleanup.md`.
 
 ## Ownership Safety (t189)
 

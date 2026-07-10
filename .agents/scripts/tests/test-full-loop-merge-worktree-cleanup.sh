@@ -195,7 +195,7 @@ TRASH
 	return 0
 }
 
-test_cmd_merge_removes_current_linked_worktree() {
+test_cmd_merge_defers_current_linked_worktree() {
 	local canonical_repo="${TEST_ROOT}/repo"
 	local worktree_path="${TEST_ROOT}/worktrees/repo-feature-full-loop-cleanup"
 	local active_before=""
@@ -206,23 +206,25 @@ test_cmd_merge_removes_current_linked_worktree() {
 	cmd_merge "123" "example/repo" --squash
 
 	local rc=0
-	if git -C "$canonical_repo" worktree list --porcelain | grep -q "$worktree_path"; then
-		rc=1
-	fi
-	[[ ! -d "$worktree_path" ]] || rc=1
-	if git -C "$canonical_repo" show-ref --verify --quiet refs/heads/feature/full-loop-cleanup; then
-		rc=1
-	fi
+	local marker_path="${worktree_path}/.agents/.full-loop-cleanup-deferred"
+	local marker_pid=""
+	git -C "$canonical_repo" worktree list --porcelain | grep -q "$worktree_path" || rc=1
+	[[ -d "$worktree_path" ]] || rc=1
+	git -C "$canonical_repo" show-ref --verify --quiet refs/heads/feature/full-loop-cleanup || rc=1
+	[[ -f "$marker_path" ]] || rc=1
+	IFS= read -r marker_pid <"$marker_path" || rc=1
+	[[ "$marker_pid" =~ ^[0-9]+$ ]] || rc=1
+	kill -0 "$marker_pid" 2>/dev/null || rc=1
 	if [[ "$(git -C "$canonical_repo" branch --show-current)" != "feature/active" ]]; then
 		rc=1
 	fi
 	if [[ "$(git -C "$canonical_repo" rev-parse feature/active)" != "$active_before" ]]; then
 		rc=1
 	fi
-	if [[ "$(git -C "$canonical_repo" rev-parse main)" != "$remote_main" ]]; then
-		rc=1
-	fi
-	print_result "cmd_merge removes current linked worktree after immediate merge" "$rc"
+	# Cleanup is deferred before canonical refresh because the parent runtime may
+	# still use this logical project directory.
+	if [[ "$(git -C "$canonical_repo" rev-parse main)" == "$remote_main" ]]; then rc=1; fi
+	print_result "cmd_merge defers current linked worktree until parent runtime exits" "$rc"
 	return 0
 }
 
@@ -287,7 +289,7 @@ test_refresh_canonical_pulls_when_default_checked_out() {
 main() {
 	setup_subject
 	test_refresh_canonical_pulls_when_default_checked_out
-	test_cmd_merge_removes_current_linked_worktree
+	test_cmd_merge_defers_current_linked_worktree
 	test_cmd_merge_defers_cleanup_for_live_process_cwd
 	printf '\n%d/%d tests passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"
 	[[ "$TESTS_FAILED" -eq 0 ]] || return 1

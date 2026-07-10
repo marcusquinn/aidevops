@@ -172,11 +172,11 @@ Verify it posted: `gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '[.[
 full-loop-helper.sh merge "$PR_NUMBER" "$REPO"
 ```
 
-Calls `review-bot-gate-helper.sh wait` (polls every 60s, up to 10 min) then `gh pr merge --squash`. Gate failure blocks merge. Do NOT call `gh pr merge` directly — the wrapper is the only sanctioned merge path. After an immediate successful merge, the wrapper removes the current linked worktree when the current branch matches the PR head; `--auto` queues the merge and leaves cleanup to the safety-net sweep. In interactive admin/maintainer sessions, the wrapper may use `--admin` automatically when branch policy only blocks self-review/review count after checks and NMR gates pass; do not ask the user to approve their own PR. For self-modifying full-loop helper fixes, call the committed worktree path instead: `"$PWD/.agents/scripts/full-loop-helper.sh" merge "$PR_NUMBER" "$REPO"`.
+Calls `review-bot-gate-helper.sh wait` (polls every 60s, up to 10 min) then `gh pr merge --squash`. Gate failure blocks merge. Do NOT call `gh pr merge` directly — the wrapper is the only sanctioned merge path. After an immediate successful merge, the wrapper defers current-worktree removal because the parent AI runtime may still use it as its logical `--dir` without exposing an OS process cwd. The safety-net sweep removes it after runtime exit. `--auto` also leaves cleanup to the safety-net sweep. In interactive admin/maintainer sessions, the wrapper may use `--admin` automatically when branch policy only blocks self-review/review count after checks and NMR gates pass; do not ask the user to approve their own PR. For self-modifying full-loop helper fixes, call the committed worktree path instead: `"$PWD/.agents/scripts/full-loop-helper.sh" merge "$PR_NUMBER" "$REPO"`.
 
 Check gate without merging: `full-loop-helper.sh pre-merge-gate "$PR_NUMBER" "$REPO"`.
 
-**4.5 Merge (via wrapper only):** Workers MUST use `full-loop-helper.sh merge`. Direct `gh pr merge --squash` bypasses the review bot gate (GH#17541). Wrapper enforces: (1) review-bot-gate wait, (2) squash merge, (3) no `--delete-branch` from inside worktree, (4) post-merge self-cleanup for the current linked worktree when the current branch matches the PR head. `--auto` queues only; scheduled cleanup handles it later.
+**4.5 Merge (via wrapper only):** Workers MUST use `full-loop-helper.sh merge`. Direct `gh pr merge --squash` bypasses the review bot gate (GH#17541). Wrapper enforces: (1) review-bot-gate wait, (2) squash merge, (3) no `--delete-branch` from inside worktree, (4) deferred current-worktree cleanup after parent runtime exit. `--auto` queues only; scheduled cleanup handles it later.
 
 **4.6 Auto-Release (aidevops only):** `version-manager.sh bump patch`, tag, push, `gh release create`, `setup.sh --non-interactive`.
 
@@ -184,7 +184,7 @@ Check gate without merging: `full-loop-helper.sh pre-merge-gate "$PR_NUMBER" "$R
 
 **4.8 Postflight + Deploy:** verify release health; `setup.sh --non-interactive`. Emit: `<promise>FULL_LOOP_COMPLETE</promise>`.
 
-**4.9 Worktree Cleanup (GH#6740 — MANDATORY):** immediate merges through `full-loop-helper.sh merge` self-clean the current linked worktree. If cleanup is skipped/failed, manually `cd` canonical dir, pull, `worktree-helper.sh remove "$BRANCH_NAME" --force`, delete remote branch; scheduled pulse cleanup is only a safety net.
+**4.9 Worktree Cleanup (GH#6740 — MANDATORY):** immediate merges through `full-loop-helper.sh merge` defer current-worktree removal to the scheduled safety-net after parent runtime exit. This protects runtimes that use the worktree as a logical `--dir` without changing OS cwd. Never force-remove an actively owned worktree; after the owner exits, use guarded `worktree-helper.sh remove "$BRANCH_NAME"` if scheduled cleanup has not run.
 
 ---
 
