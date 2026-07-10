@@ -109,6 +109,7 @@ export function App(): ReactElement {
   const [selectedSessionId, setSelectedSessionId] = useState<string | undefined>();
   const [vaultDialogIntent, setVaultDialogIntent] = useState<VaultDialogIntent | null>(null);
   const hasPromptedVaultSetup = useRef(false);
+  const focusWorkspaceAfterNavigation = useRef(false);
   const [systemTheme, setSystemTheme] = useState<"light" | "dark">("light");
   const resolvedTheme = themePreference === "system" ? systemTheme : themePreference;
   const activeSurface: SurfaceId = navigation.entries[navigation.index] ?? "overview";
@@ -131,6 +132,7 @@ export function App(): ReactElement {
   }, []);
 
   const setActiveSurface = (surface: SurfaceId) => {
+    focusWorkspaceAfterNavigation.current = true;
     setNavigation((current) => {
       const currentSurface = current.entries[current.index] ?? "overview";
       if (currentSurface === surface) {
@@ -142,6 +144,14 @@ export function App(): ReactElement {
       return { entries, index: entries.length - 1 };
     });
   };
+
+  useEffect(() => {
+    if (!focusWorkspaceAfterNavigation.current) return;
+    focusWorkspaceAfterNavigation.current = false;
+    if (window.matchMedia("(max-width: 980px)").matches) {
+      window.requestAnimationFrame(() => document.querySelector<HTMLElement>(".app-inset")?.scrollIntoView({ block: "start" }));
+    }
+  }, [activeSurface]);
 
   const goBack = () => {
     setNavigation((current) => ({ ...current, index: nextHistoryIndex(current, -1) }));

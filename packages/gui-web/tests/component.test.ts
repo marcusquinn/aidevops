@@ -567,6 +567,8 @@ describe("dashboard shell", () => {
 
     expect(appSource).not.toContain("if (statusLoading)");
     expect(appSource).toContain("aria-busy={statusLoading}");
+    expect(appSource).toContain('matchMedia("(max-width: 980px)")');
+    expect(appSource).toContain('scrollIntoView({ block: "start" })');
   });
 
   test("wires desktop screenshot capture controls to native save notifications", () => {

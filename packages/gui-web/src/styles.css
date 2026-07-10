@@ -1815,7 +1815,7 @@ code {
 }
 
 .vault-modal-footnote {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 0.82rem;
   margin: 0;
 }
@@ -3986,7 +3986,7 @@ button.managed-toggle:focus-visible {
 
 .secret-metric-card span:not(.secret-metric-icon),
 .secret-metric-card small {
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .secret-metric-card strong {
@@ -4028,7 +4028,7 @@ button.managed-toggle:focus-visible {
 }
 
 .secrets-evidence-strip strong {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 0.72rem;
   text-transform: uppercase;
 }
@@ -4106,7 +4106,7 @@ button.managed-toggle:focus-visible {
 }
 
 .secrets-reference-table th {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 0.75rem;
   text-transform: uppercase;
 }
@@ -4117,6 +4117,11 @@ button.managed-toggle:focus-visible {
 
 .secrets-reference-table td:first-child {
   color: var(--text-primary);
+}
+
+:root:not([data-theme="dark"]) .secrets-state-badge.success,
+:root:not([data-theme="dark"]) .secret-health.configured {
+  color: #116329;
 }
 
 .vault-collection-list li {
