@@ -121,10 +121,10 @@ asc profiles inspect --path ./profiles/AppStore.mobileprovision --entitlements -
 asc profiles local install --path ./profiles/AppStore.mobileprovision
 # Metadata and AI screenshots
 asc app-info-localizations update --localization-id LOC_ID --name "My App" --subtitle "Do things faster"
-asc metadata plan --app APP_ID --version 1.2.3 --platform IOS --dir ./metadata --review-dir .asc/metadata/review
+asc metadata plan --app-id APP_ID --version 1.2.3 --platform IOS --dir ./metadata --review-dir .asc/metadata/review
 asc metadata approve --review-dir .asc/metadata/review --all
 asc metadata status --review-dir .asc/metadata/review --output table
-asc metadata apply --app APP_ID --version 1.2.3 --platform IOS --dir ./metadata --review-dir .asc/metadata/review --confirm
+asc metadata apply --app-id APP_ID --version 1.2.3 --platform IOS --dir ./metadata --review-dir .asc/metadata/review --confirm
 asc app-shots config --gemini-api-key KEY && asc app-shots generate
 asc app-shots translate --to zh --to ja
 # Reviewed screenshot batches — include existing remote counts before upload
