@@ -56,6 +56,16 @@ grep -q '^stdout-still-open$' "$direct_stdout" ||
 grep -q '\[1/1\] direct-call' "$direct_stderr" ||
 	fail "direct capture omitted human-readable progress"
 
+propagated_status=0
+(
+	_cmd_run_execute_test() {
+		return 7
+	}
+	_cmd_run_capture_test "$direct_test" 0 1 "" "" 1 "[]" true
+) || propagated_status=$?
+[[ $propagated_status -eq 7 ]] ||
+	fail "capture helper did not propagate the execution status"
+
 pass_suite="$TEST_ROOT/pass-suite.json"
 cat >"$pass_suite" <<'JSON'
 {
