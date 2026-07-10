@@ -89,6 +89,7 @@ assert_file_contains "domain routing includes cleaner" ".agents/reference/domain
 assert_file_contains "README documents cleaner" "README.md" '@macos-activity-cleaner'
 assert_file_contains "subagent index includes cleaner" ".agents/subagent-index.toon" '^tools/automation/.*macos-activity-cleaner'
 assert_file_contains "subagent index preserves public relations" ".agents/subagent-index.toon" '^public-relations/'
+assert_file_contains "behavioral suite invokes deployed command" ".agents/tests/macos-activity-cleaner.json" '"command": "aidevops-macos-activity-cleaner"'
 
 printf '\nmacOS activity cleaner guidance summary: %s passed, %s failed\n' "$PASS" "$FAIL"
 if [[ "$FAIL" -ne 0 ]]; then
