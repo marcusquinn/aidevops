@@ -62,9 +62,9 @@ Treating a fuse as justification to skip work protects one machine at the cost o
 
 ### Recoverability Checkpoint
 
-- [ ] Focused Markdown checks pass.
-- [ ] WIP checkpoint committed before broad validation.
-- [ ] Broad changed-mode validation passes.
+- [x] Focused Markdown checks pass.
+- [x] WIP checkpoint committed before broad validation: `31e06fcd3`.
+- [x] Broad changed-mode validation passes.
 
 ### Files Scope
 
@@ -81,10 +81,10 @@ Treating a fuse as justification to skip work protects one machine at the cost o
 
 ## Acceptance Criteria
 
-- [ ] Safety stops explicitly preserve and keep the original objective open.
-- [ ] Briefs and missions contain durable recovery fields and a next safe action.
-- [ ] Worker time/resource limits produce checkpoints and continuation, not abandonment.
-- [ ] Terminal non-completion requires explicit cancellation or demonstrated impossibility.
+- [x] Safety stops explicitly preserve and keep the original objective open.
+- [x] Briefs and missions contain durable recovery fields and a next safe action.
+- [x] Worker time/resource limits produce checkpoints and continuation, not abandonment.
+- [x] Terminal non-completion requires explicit cancellation or demonstrated impossibility.
 
 ## Context & Decisions
 
