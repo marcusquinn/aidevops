@@ -416,6 +416,75 @@ REAL_GH="$(_find_real_gh)" || {
 }
 
 # -----------------------------------------------------------------------------
+# GH#27002: reject oversized literal GraphQL connection pages locally.
+#
+# This intentionally inspects only query values supplied directly through gh's
+# field flags. Queries supplied through --input, variables, files, or shell
+# expressions are not evaluated or rewritten. Dynamic first/last values pass
+# through with an auditable warning; framework-owned pagination should use the
+# bounded helper named in the diagnostic.
+# -----------------------------------------------------------------------------
+_shim_graphql_check_literal_query() {
+	local query="$1"
+	local matches=""
+	local match=""
+	local requested=""
+	local normalized=""
+	local dynamic_pattern='(first|last)[[:space:]]*:[[:space:]]*([^0-9[:space:]]|$)'
+
+	matches=$(printf '%s\n' "$query" | LC_ALL=C grep -Eo '(first|last)[[:space:]]*:[[:space:]]*[0-9]+' 2>/dev/null || true)
+	while IFS= read -r match; do
+		[[ -n "$match" ]] || continue
+		requested="${match##*:}"
+		requested="${requested//[[:space:]]/}"
+		normalized="$requested"
+		while [[ "$normalized" == 0* && ${#normalized} -gt 1 ]]; do
+			normalized="${normalized#0}"
+		done
+		if [[ ${#normalized} -gt 3 || ( ${#normalized} -eq 3 && "$normalized" -gt 100 ) ]]; then
+			printf 'GRAPHQL_PAGE_BOUND_EXCEEDED requested=%s maximum=100\n' "$normalized" >&2
+			printf 'Use: github-graphql-page-helper.sh --query-file QUERY.graphql --connection-jq '\''.data.<connection>'\'' --total N --max-pages N\n' >&2
+			return 1
+		fi
+	done <<<"$matches"
+
+	if printf '%s\n' "$query" | LC_ALL=C grep -Eq "$dynamic_pattern" 2>/dev/null; then
+		printf 'GRAPHQL_PAGE_BOUND_UNVERIFIED dynamic first/last argument passed unchanged; use github-graphql-page-helper.sh for bounded framework pagination\n' >&2
+	fi
+	return 0
+}
+
+_shim_graphql_guard_literal_fields() {
+	local args=("$@")
+	local i=2
+	local arg=""
+	local value=""
+
+	while [[ $i -lt ${#args[@]} ]]; do
+		arg="${args[$i]}"
+		value=""
+		case "$arg" in
+		-f | -F | --raw-field | --field)
+			i=$((i + 1))
+			[[ $i -lt ${#args[@]} ]] && value="${args[$i]}"
+			;;
+		-fquery=* | -Fquery=*) value="${arg#??}" ;;
+		--raw-field=query=*) value="${arg#--raw-field=}" ;;
+		--field=query=*) value="${arg#--field=}" ;;
+		esac
+		if [[ "$value" == query=* ]]; then
+			_shim_graphql_check_literal_query "${value#query=}" || return 1
+		fi
+		i=$((i + 1))
+	done
+	return 0
+}
+
+if [[ "${1:-}:${2:-}" == "api:graphql" ]]; then
+	_shim_graphql_guard_literal_fields "$@" || exit 1
+fi
+
+# -----------------------------------------------------------------------------
 # t3037: GraphQL→REST budget-aware read rewriting.
 #
 # When GraphQL budget is below threshold, rewrite high-frequency read
