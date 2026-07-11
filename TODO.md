@@ -111,13 +111,13 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [x] t18070 Design Secrets interface and repair Vault unlock readiness #bug #enhancement #security #interactive #no-auto-dispatch ~6h tier:thinking ref:GH#26912 started:2026-07-10T00:00:00Z logged:2026-07-10 -> [todo/tasks/t18070-brief.md] pr:#26938 completed:2026-07-10
 
-- [ ] t18098 Prevent worktree infrastructure markers from breaking worker ownership transfer #bug #framework #pulse #reliability #auto-dispatch ~3h tier:thinking ref:none logged:2026-07-11 -> [todo/tasks/t18098-brief.md]
-- [ ] t18099 Make dispatch claim-to-worker handoff an atomic expiring lease #bug #framework #pulse #reliability #auto-dispatch ~6h tier:thinking ref:none logged:2026-07-11 -> [todo/tasks/t18099-brief.md]
-- [ ] t18100 Normalize issue dependencies before dispatch eligibility #bug #framework #pulse #reliability #auto-dispatch ~4h tier:thinking ref:none logged:2026-07-11 -> [todo/tasks/t18100-brief.md]
-- [ ] t18101 Repair terminal CI failures in place on existing PR branches #bug #framework #pulse #reliability #auto-dispatch ~5h tier:thinking ref:none logged:2026-07-11 -> [todo/tasks/t18101-brief.md]
-- [ ] t18102 Deploy CLI, agents, and plugins as one atomic version bundle #bug #framework #reliability #auto-dispatch ~5h tier:thinking ref:none logged:2026-07-11 -> [todo/tasks/t18102-brief.md]
-- [ ] t18103 Reconcile stale objectives with expiring assumptions and durable recovery #enhancement #framework #pulse #reliability #auto-dispatch ~7h tier:thinking ref:none logged:2026-07-11 -> [todo/tasks/t18103-brief.md]
-- [ ] t18104 Automate failure-family remediation and human-gate revalidation #enhancement #framework #pulse #observability #auto-dispatch ~6h tier:thinking ref:none logged:2026-07-11 -> [todo/tasks/t18104-brief.md]
+- [ ] t18098 Prevent worktree infrastructure markers from breaking worker ownership transfer #bug #framework #pulse #reliability #auto-dispatch ~3h tier:thinking ref:GH#27164 logged:2026-07-11 -> [todo/tasks/t18098-brief.md]
+- [ ] t18099 Make dispatch claim-to-worker handoff an atomic expiring lease #bug #framework #pulse #reliability #auto-dispatch ~6h tier:thinking ref:GH#27165 logged:2026-07-11 -> [todo/tasks/t18099-brief.md]
+- [ ] t18100 Normalize issue dependencies before dispatch eligibility #bug #framework #pulse #reliability #auto-dispatch ~4h tier:thinking ref:GH#27166 logged:2026-07-11 -> [todo/tasks/t18100-brief.md]
+- [ ] t18101 Repair terminal CI failures in place on existing PR branches #bug #framework #pulse #reliability #auto-dispatch ~5h tier:thinking ref:GH#27167 logged:2026-07-11 -> [todo/tasks/t18101-brief.md]
+- [ ] t18102 Deploy CLI, agents, and plugins as one atomic version bundle #bug #framework #reliability #auto-dispatch ~5h tier:thinking ref:GH#27168 logged:2026-07-11 -> [todo/tasks/t18102-brief.md]
+- [ ] t18103 Reconcile stale objectives with expiring assumptions and durable recovery #enhancement #framework #pulse #reliability #auto-dispatch ~7h tier:thinking ref:GH#27169 logged:2026-07-11 -> [todo/tasks/t18103-brief.md]
+- [ ] t18104 Automate failure-family remediation and human-gate revalidation #enhancement #framework #pulse #observability #auto-dispatch ~6h tier:thinking ref:GH#27170 logged:2026-07-11 -> [todo/tasks/t18104-brief.md]
 
 - [x] t18066 fix(full-loop): resolve commit-and-pr rebase/counter base from the remote default branch instead of hardcoded `origin/main`. Add a default-branch resolver in `.agents/scripts/full-loop-helper-commit.sh`, use `origin/${base_branch}` for ahead-count, fetch, rebase, operator messages, and `.task-counter` reset, fail actionably when the base cannot be resolved, and cover an `origin/develop` regression path. #bug #framework #full-loop #auto-dispatch ~1h tier:standard ref:GH#26626 logged:2026-07-05 -> [todo/tasks/t18066-brief.md] pr:#26630 completed:2026-07-05
 
