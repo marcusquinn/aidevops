@@ -30,6 +30,7 @@ _HRW_STATUS_UNKNOWN="unknown"
 _HRW_GIT_HEAD="HEAD"
 _HRW_CRASH_NO_WORK="no_work"
 _HRW_REASON_WORKER_COMPLETE="worker_complete"
+_HRW_SPOTLIGHT_MARKER=".metadata_never_index"
 
 # Defensive SCRIPT_DIR fallback (test harnesses may not set it)
 if [[ -z "${SCRIPT_DIR:-}" ]]; then
@@ -514,7 +515,12 @@ _worker_produced_output() {
 	# Also covers the t2899 default-branch case: HEAD on main with no/any commits
 	# but no feature branch pushed → noop, not branch_orphan.
 	if [[ "$has_commits" -eq 0 && "$has_pushed_branch" -eq 0 ]]; then
-		if [[ -n "$(git -C "$work_dir" status --porcelain 2>/dev/null || true)" ]]; then
+		local task_status=""
+		if ! task_status=$(_hrw_worktree_task_status "$work_dir"); then
+			printf 'pr_exists' # fail-open: cannot safely classify local state
+			return 0
+		fi
+		if [[ -n "$task_status" ]]; then
 			printf 'dirty_worktree'
 			return 0
 		fi
@@ -990,10 +996,39 @@ PY
 	return 0
 }
 
-_hrw_worktree_clean_for_owner_reclaim() {
+_hrw_worktree_task_status() {
 	local work_dir="$1"
 	local status_output=""
 	status_output=$(git -C "$work_dir" status --porcelain 2>/dev/null) || return 1
+
+	# Heal markers created by the pre-t18098 exclusion helper. This exemption is
+	# intentionally exact and macOS-only: every other untracked or modified path
+	# remains task state and continues to block ownership transfer or trigger
+	# recovery. An empty regular file proves the known Spotlight marker shape.
+	if [[ "$status_output" == "?? ${_HRW_SPOTLIGHT_MARKER}" && "$(uname -s 2>/dev/null || true)" == "Darwin" && \
+		-f "${work_dir}/${_HRW_SPOTLIGHT_MARKER}" && ! -s "${work_dir}/${_HRW_SPOTLIGHT_MARKER}" ]]; then
+		local exclude_file=""
+		exclude_file=$(git -C "$work_dir" rev-parse --git-path info/exclude 2>/dev/null) || return 1
+		[[ -n "$exclude_file" ]] || return 1
+		if [[ "$exclude_file" != /* ]]; then
+			exclude_file="${work_dir}/${exclude_file}"
+		fi
+		[[ -f "$exclude_file" ]] || return 1
+		if ! grep -Fqx "/${_HRW_SPOTLIGHT_MARKER}" "$exclude_file" 2>/dev/null; then
+			printf '/%s\n' "$_HRW_SPOTLIGHT_MARKER" >>"$exclude_file" 2>/dev/null || return 1
+		fi
+		git -C "$work_dir" check-ignore --quiet --no-index -- "$_HRW_SPOTLIGHT_MARKER" 2>/dev/null || return 1
+		status_output=$(git -C "$work_dir" status --porcelain 2>/dev/null) || return 1
+	fi
+
+	printf '%s' "$status_output"
+	return 0
+}
+
+_hrw_worktree_clean_for_owner_reclaim() {
+	local work_dir="$1"
+	local status_output=""
+	status_output=$(_hrw_worktree_task_status "$work_dir") || return 1
 	[[ -z "$status_output" ]] || return 1
 
 	local upstream_ref=""

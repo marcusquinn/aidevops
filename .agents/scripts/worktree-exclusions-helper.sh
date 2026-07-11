@@ -126,13 +126,42 @@ _we_balooctl_bin() {
 }
 
 ###############################################################################
+# Keep Spotlight's marker out of task Git state before creating it. Git's
+# repository-local exclude file is untracked metadata shared by linked
+# worktrees, so the exact root marker remains invisible without weakening
+# status checks for any other dotfile or untracked path.
+###############################################################################
+_we_prepare_spotlight_git_exclude() {
+	local wt_path="$1"
+	local marker_pattern="/.metadata_never_index"
+	local exclude_file=""
+
+	[[ -d "$wt_path" ]] || return 1
+	exclude_file=$(git -C "$wt_path" rev-parse --git-path info/exclude 2>/dev/null) || return 1
+	[[ -n "$exclude_file" ]] || return 1
+	if [[ "$exclude_file" != /* ]]; then
+		exclude_file="${wt_path}/${exclude_file}"
+	fi
+	[[ -f "$exclude_file" ]] || return 1
+
+	if ! grep -Fqx "$marker_pattern" "$exclude_file" 2>/dev/null; then
+		printf '%s\n' "$marker_pattern" >>"$exclude_file" 2>/dev/null || return 1
+	fi
+
+	git -C "$wt_path" check-ignore --quiet --no-index -- ".metadata_never_index" 2>/dev/null || return 1
+	return 0
+}
+
+###############################################################################
 # Apply Spotlight exclusion (touch .metadata_never_index inside the worktree).
-# Idempotent. Returns 0 even if it could not write — best-effort.
+# Idempotent. The marker is created only after its exact path is locally
+# ignored; failure remains non-fatal so worktree creation is never blocked.
 ###############################################################################
 _we_apply_spotlight() {
 	local wt_path="$1"
 	[[ -d "$wt_path" ]] || return 0
 	local marker="${wt_path}/.metadata_never_index"
+	_we_prepare_spotlight_git_exclude "$wt_path" || return 0
 	if [[ -e "$marker" ]]; then
 		return 0
 	fi
@@ -387,8 +416,8 @@ cmd_detect() {
 	if _we_is_macos; then
 		_we_info "Platform: macOS"
 
-		# Spotlight — no detection needed; .metadata_never_index works on any macOS.
-		_we_ok "Spotlight: scriptable via .metadata_never_index marker file"
+		# Spotlight — the marker is narrowly hidden via .git/info/exclude first.
+		_we_ok "Spotlight: scriptable via ignored .metadata_never_index marker file"
 
 		# Time Machine — tmutil exists on every macOS; we report whether it has a
 		# destination configured (informational only).
