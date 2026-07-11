@@ -7,7 +7,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createQualityHooks } from "../quality-hooks.mjs";
@@ -30,6 +30,25 @@ test("tagged diagnostics are persisted without payload-based TUI routing", () =>
     assert.match(diagnosticLog, /proxy failed\\r\\n\[forged].*connection refused/);
     assert.equal(diagnosticLog.trim().split("\n").length, 2);
     assert.deepEqual(calls, [["host error"]]);
+  } finally {
+    restore();
+    rmSync(tempDir, { recursive: true, force: true });
+  }
+});
+
+test("diagnostic rotation keeps a bounded set of process archives", () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "aidevops-console-retention-"));
+  const logPath = join(tempDir, "plugin.log");
+  const fakeConsole = { error() {} };
+  const restore = installPluginConsoleRouter({ consoleObject: fakeConsole, logPath });
+
+  try {
+    for (let pid = 100; pid < 105; pid++) writeFileSync(`${logPath}.${pid}.1`, `${pid}`);
+    writeFileSync(logPath, "x".repeat((5 * 1024 * 1024) + 1));
+    fakeConsole.error("[aidevops] rotate now");
+
+    const archives = readdirSync(tempDir).filter((name) => name.startsWith("plugin.log.") && name.endsWith(".1"));
+    assert.ok(archives.length <= 3, `rotation retained ${archives.length} archives`);
   } finally {
     restore();
     rmSync(tempDir, { recursive: true, force: true });

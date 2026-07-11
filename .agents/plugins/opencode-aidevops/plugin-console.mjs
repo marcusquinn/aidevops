@@ -5,13 +5,16 @@ import {
   appendFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
   renameSync,
   statSync,
+  unlinkSync,
 } from "node:fs";
-import { dirname } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 const MAX_LOG_BYTES = 5 * 1024 * 1024;
 const MAX_ENTRY_LENGTH = 4000;
+const MAX_ROTATED_LOGS = 3;
 const CREDENTIAL_PATTERN =
   /(^|[^A-Za-z0-9_-])(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/g;
 
@@ -36,17 +39,45 @@ function sanitizeEntry(args) {
     .slice(0, MAX_ENTRY_LENGTH);
 }
 
+function pruneRotatedLogs(logPath) {
+  const logDir = dirname(logPath);
+  const archivePrefix = `${basename(logPath)}.`;
+  const archives = readdirSync(logDir)
+    .filter((name) => name.startsWith(archivePrefix) && name.endsWith(".1"))
+    .map((name) => {
+      const path = join(logDir, name);
+      try {
+        return { path, modified: statSync(path).mtimeMs };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.modified - a.modified);
+
+  for (const archive of archives.slice(MAX_ROTATED_LOGS)) {
+    try {
+      unlinkSync(archive.path);
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+}
+
 function appendDiagnostic(logPath, args) {
   mkdirSync(dirname(logPath), { recursive: true });
+  let rotated = false;
   try {
     if (existsSync(logPath) && statSync(logPath).size > MAX_LOG_BYTES) {
       renameSync(logPath, `${logPath}.${process.pid}.1`);
+      rotated = true;
     }
   } catch (error) {
     // Another OpenCode process may rotate the shared log between the stat and
     // rename. The active path is still safe to append; surface other failures.
     if (error?.code !== "ENOENT") throw error;
   }
+  if (rotated) pruneRotatedLogs(logPath);
   appendFileSync(logPath, `[${new Date().toISOString()}] ${sanitizeEntry(args)}\n`);
 }
 
