@@ -61,9 +61,12 @@ _DSI_HEADLESS="${_DSI_SCRIPT_DIR}/headless-runtime-helper.sh"
 _DSI_LEDGER_HELPER="${_DSI_SCRIPT_DIR}/dispatch-ledger-helper.sh"
 _DSI_WORKTREE_HELPER="${_DSI_SCRIPT_DIR}/worktree-helper.sh"
 _DSI_DEDUP_HELPER="${_DSI_SCRIPT_DIR}/dispatch-dedup-helper.sh"
+_DSI_VALIDATOR_HELPER="${_DSI_SCRIPT_DIR}/pre-dispatch-validator-helper.sh"
 _DSI_BACKOFF_HELPER="${_DSI_SCRIPT_DIR}/dispatch-backoff-helper.sh"
 _DSI_DISPATCH_BASE_BRANCH=""
 _DSI_STATE_RECOVERING="recovering"
+_DSI_CLAIM_WON=0
+_DSI_CLAIM_COMMENT_ID=""
 
 # Colors (guarded — don't collide with shared-constants)
 [[ -z "${_DSI_GREEN+x}" ]] && _DSI_GREEN='\033[0;32m'
@@ -1119,6 +1122,98 @@ _dsi_run_dedup_check() {
 	return 0
 }
 
+_dsi_acquire_consensus_claim() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local claim_output=""
+	local claim_rc=0
+
+	_DSI_CLAIM_WON=0
+	_DSI_CLAIM_COMMENT_ID=""
+	if [[ -z "$self_login" ]]; then
+		_dsi_err "Cannot resolve runner login for consensus claim; refusing dispatch"
+		return 1
+	fi
+	claim_output=$("$_DSI_DEDUP_HELPER" claim "$issue_number" "$repo_slug" "$self_login" 2>&1) || claim_rc=$?
+	case "$claim_rc" in
+	0)
+		_DSI_CLAIM_WON=1
+		_DSI_CLAIM_COMMENT_ID=$(printf '%s' "$claim_output" | sed -n 's/.*comment_id=\([0-9][0-9]*\).*/\1/p')
+		_dsi_info "Consensus claim won for #${issue_number}"
+		return 0
+		;;
+	1)
+		_dsi_warn "Consensus claim lost for #${issue_number}; another runner won"
+		return 1
+		;;
+	*)
+		_dsi_err "Consensus claim error for #${issue_number} (rc=${claim_rc}) — failing closed"
+		_dsi_info "  Output: ${claim_output}"
+		return 1
+		;;
+	esac
+}
+
+_dsi_release_consensus_claim() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="$3"
+	local reason="$4"
+	local body=""
+	[[ "$_DSI_CLAIM_WON" -eq 1 ]] || return 0
+	if [[ "$_DSI_CLAIM_COMMENT_ID" =~ ^[0-9]+$ ]]; then
+		if gh api "repos/${repo_slug}/issues/comments/${_DSI_CLAIM_COMMENT_ID}" \
+			--method DELETE >/dev/null 2>&1; then
+			_DSI_CLAIM_WON=0
+			_DSI_CLAIM_COMMENT_ID=""
+			return 0
+		fi
+		_dsi_warn "Failed to delete prelaunch claim ${_DSI_CLAIM_COMMENT_ID}; posting release marker"
+	fi
+	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+CLAIM_RELEASED reason=manual_dispatch_prelaunch:${reason} runner=${self_login} ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+<!-- ops:end -->"
+	if ! gh api "repos/${repo_slug}/issues/${issue_number}/comments" --method POST --field body="$body" >/dev/null 2>&1; then
+		_dsi_warn "Failed to post CLAIM_RELEASED for #${issue_number} after ${reason}"
+		return 1
+	fi
+	_DSI_CLAIM_WON=0
+	_DSI_CLAIM_COMMENT_ID=""
+	return 0
+}
+
+_dsi_run_required_predispatch_validator() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local validator_rc=0
+	if [[ ! -x "$_DSI_VALIDATOR_HELPER" ]]; then
+		_dsi_err "Pre-dispatch validator unavailable; refusing manual dispatch"
+		return 1
+	fi
+	"$_DSI_VALIDATOR_HELPER" validate "$issue_number" "$repo_slug" >/dev/null 2>&1 || validator_rc=$?
+	case "$validator_rc" in
+	0) return 0 ;;
+	20)
+		case ",${_DSI_ISSUE_LABELS}," in
+		*",review-followup,"* | *",source:review-scanner,"*)
+			_dsi_err "Review-followup validation is uncertain; failing closed"
+			return 1
+			;;
+		esac
+		return 0
+		;;
+	10)
+		_dsi_warn "Pre-dispatch validator closed or blocked #${issue_number}"
+		return 1
+		;;
+	*)
+		_dsi_err "Pre-dispatch validator returned rc=${validator_rc}; failing closed"
+		return 1
+		;;
+	esac
+}
+
 #######################################
 # Persist a machine-readable continuation checkpoint for an uncertain guard.
 # Args: $1 issue, $2 repo, $3 trigger, $4 attempts
@@ -1249,6 +1344,13 @@ cmd_dispatch() {
 		return 1
 		;;
 	esac
+	if ! _dsi_acquire_consensus_claim "$issue_number" "$repo_slug" "$self_login"; then
+		return 1
+	fi
+	if ! _dsi_run_required_predispatch_validator "$issue_number" "$repo_slug"; then
+		_dsi_release_consensus_claim "$issue_number" "$repo_slug" "$self_login" "predispatch_validator_blocked" || true
+		return 1
+	fi
 
 	_dsi_dispatch_after_dedup_clear "$issue_number" "$repo_slug" "$self_login" "$session_key"
 	return $?
@@ -1307,6 +1409,7 @@ _dsi_reset_after_prelaunch_failure() {
 	local self_login="$3"
 	local reason="$4"
 
+	_dsi_release_consensus_claim "$issue_number" "$repo_slug" "$self_login" "$reason" || true
 	if [[ "$_DSI_ARG_NO_CEREMONY" -eq 1 ]]; then
 		return 0
 	fi

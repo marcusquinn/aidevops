@@ -7,6 +7,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 HELPER_SCRIPT="${SCRIPT_DIR}/../pre-dispatch-validator-helper.sh"
+PULSE_CORE="${SCRIPT_DIR}/../pulse-dispatch-core.sh"
 
 TESTS_RUN=0
 TESTS_FAILED=0
@@ -76,8 +77,11 @@ if [[ "${1:-}" == "api" && "$endpoint" == repos/owner/repo/issues/* && "$endpoin
 	case "$arg_string" in
 	*'.body // ""'*)
 		case "$scenario" in
-		source-clear | source-ambiguous | source-fetch-failure)
+		source-clear | source-ambiguous | source-fetch-failure | duplicate-later | duplicate-canonical | duplicate-lookup-failure)
 			printf '**Source PR**: #50\n\n## Files to modify\n- `.agents/scripts/review-hook.sh`\n\n## Finding\nAdd the event payload guard before worker launch.\n'
+			;;
+		marker-only-duplicate | duplicate-current-absent)
+			printf '<!-- aidevops:generator=review-followup source_pr=50 fingerprint=source-pr-50 -->\n\n## Files to modify\n- `.agents/scripts/review-hook.sh`\n'
 			;;
 		malformed-source-clear)
 			printf '**Source PR**: pending\n\n## Files to modify\n- `.agents/scripts/review-hook.sh`\n\n## Finding\nAdd the event payload guard before worker launch.\n'
@@ -92,6 +96,9 @@ if [[ "${1:-}" == "api" && "$endpoint" == repos/owner/repo/issues/* && "$endpoin
 		;;
 	*'@tsv'*)
 		case "$scenario" in
+		duplicate-later | duplicate-canonical | duplicate-lookup-failure | marker-only-duplicate | duplicate-current-absent)
+			printf '2026-05-02T10:00:00Z\tReview followup: PR #50 — event payload guard\treview-followup,source:review-scanner,tier:standard\n'
+			;;
 		source-clear | source-ambiguous | source-fetch-failure | no-file)
 			printf '2026-05-02T10:00:00Z\treview-feedback: event payload guard\tquality-debt,source:review-feedback,tier:thinking\n'
 			;;
@@ -120,6 +127,7 @@ fi
 
 if [[ "${1:-}" == "api" && "$endpoint" == "search/issues" ]]; then
 	case "$scenario" in
+	precreation-search-failure) exit 1 ;;
 	clear) printf '200\n' ;;
 	ambiguous) printf '201\n' ;;
 	source-clear) printf '200\n' ;;
@@ -176,6 +184,30 @@ if [[ "${1:-}" == "api" && "$endpoint" == repos/owner/repo/pulls/*/files ]]; the
 		201) printf '.agents/scripts/review-hook.sh\n+ rename log_context to context_label\n' ;;
 		*) printf '' ;;
 		esac
+		;;
+	esac
+	exit 0
+fi
+
+if [[ "${1:-}" == "issue" && "${2:-}" == "list" ]]; then
+	case "$scenario" in
+	duplicate-later)
+		printf '[{"number":99,"title":"Review followup: PR #50 — first","body":"**Source PR**: #50"},{"number":100,"title":"Review followup: PR #50 — duplicate","body":"**Source PR**: #50"}]\n'
+		;;
+	duplicate-canonical)
+		printf '[{"number":100,"title":"Review followup: PR #50 — first","body":"**Source PR**: #50"},{"number":101,"title":"Review followup: PR #50 — duplicate","body":"**Source PR**: #50"}]\n'
+		;;
+	duplicate-lookup-failure)
+		exit 1
+		;;
+	marker-only-duplicate)
+		printf '[{"number":99,"title":"edited title","body":"<!-- aidevops:generator=review-followup source_pr=50 fingerprint=source-pr-50 -->"},{"number":100,"title":"another edited title","body":"<!-- aidevops:generator=review-followup source_pr=50 fingerprint=source-pr-50 -->"}]\n'
+		;;
+	duplicate-current-absent)
+		printf '[{"number":99,"title":"edited title","body":"<!-- aidevops:generator=review-followup source_pr=50 fingerprint=source-pr-50 -->"}]\n'
+		;;
+	*)
+		printf '[{"number":100,"title":"Review followup: PR #50 — current","body":"**Source PR**: #50"}]\n'
 		;;
 	esac
 	exit 0
@@ -293,6 +325,77 @@ test_merged_pr_before_issue_creation() {
 	return 0
 }
 
+test_precreation_source_pr_window() {
+	local output_file="${TEST_ROOT}/precreation.out"
+	local rc=0
+	export STUB_SCENARIO="source-clear"
+	printf '%s\n' '## Files to modify' "- \`.agents/scripts/review-hook.sh\`" 'Add the event payload guard before worker launch.' |
+		"$HELPER_SCRIPT" check-review-supersession owner/repo 50 >"$output_file" 2>&1 || rc=$?
+	if [[ "$rc" -eq 10 ]] && grep -qF 'SUPERSEDED_BY_PR=200' "$output_file"; then
+		print_result "precreation supersession uses source PR merge window" 0
+	else
+		print_result "precreation supersession uses source PR merge window" 1 "rc=${rc}; output=$(tr '\n' ' ' <"$output_file")"
+	fi
+	return 0
+}
+
+test_precreation_api_uncertainty_fails_closed() {
+	local output_file="${TEST_ROOT}/precreation-uncertain.out"
+	local rc=0
+	export STUB_SCENARIO="precreation-search-failure"
+	printf '%s\n' '## Files to modify' "- \`.agents/scripts/review-hook.sh\`" 'Add the event payload guard before worker launch.' |
+		"$HELPER_SCRIPT" check-review-supersession owner/repo 50 >"$output_file" 2>&1 || rc=$?
+	if [[ "$rc" -eq 20 ]]; then
+		print_result "precreation API uncertainty fails closed" 0
+	else
+		print_result "precreation API uncertainty fails closed" 1 "rc=${rc}; output=$(tr '\n' ' ' <"$output_file")"
+	fi
+	return 0
+}
+
+test_legacy_duplicate_noncanonical_closes() {
+	run_validator_case "duplicate-later" 10 "legacy duplicate noncanonical issue"
+	assert_log_contains "legacy duplicate closes later issue" "issue close 100 --repo owner/repo --reason not planned"
+	return 0
+}
+
+test_legacy_duplicate_canonical_does_not_mutate_peers() {
+	run_validator_case "duplicate-canonical" 0 "legacy duplicate canonical issue"
+	assert_log_not_contains "canonical issue leaves later duplicate for its own validator" "issue close 101 --repo owner/repo --reason not planned"
+	return 0
+}
+
+test_legacy_duplicate_lookup_fails_closed() {
+	run_validator_case "duplicate-lookup-failure" 30 "legacy duplicate lookup uncertainty"
+	assert_log_not_contains "lookup uncertainty does not close without evidence" "issue close 100"
+	return 0
+}
+
+test_explicit_fingerprint_survives_title_and_label_drift() {
+	run_validator_case "marker-only-duplicate" 10 "explicit review-followup fingerprint"
+	assert_log_contains "explicit fingerprint closes noncanonical current issue" "issue close 100 --repo owner/repo --reason not planned"
+	return 0
+}
+
+test_current_issue_absent_from_enumeration_fails_closed() {
+	run_validator_case "duplicate-current-absent" 30 "current issue absent from duplicate enumeration"
+	assert_log_not_contains "absent current issue does not mutate peers" "issue close 99"
+	return 0
+}
+
+test_pulse_blocks_duplicate_lookup_uncertainty() {
+	# shellcheck disable=SC2016 # Match literal shell source expressions.
+	if grep -qF "if [[ \"\$_validator_rc\" -eq 30 ]]" "$PULSE_CORE" \
+		&& grep -qF '$_review_followup_validator_required" -eq 1 && "$_validator_rc" -ne 0' "$PULSE_CORE" \
+		&& grep -qF 'predispatch_validator_uncertain' "$PULSE_CORE" \
+		&& grep -qF 'return 20' "$PULSE_CORE"; then
+		print_result "pulse blocks all required review-followup validator failures and releases its claim" 0
+	else
+		print_result "pulse blocks all required review-followup validator failures and releases its claim" 1
+	fi
+	return 0
+}
+
 main() {
 	printf 'Running review-feedback supersession validator tests (t3569, GH#23101)...\n\n'
 
@@ -312,6 +415,14 @@ main() {
 	test_no_file_finding_skips_supersession
 	test_no_matching_pr
 	test_merged_pr_before_issue_creation
+	test_precreation_source_pr_window
+	test_precreation_api_uncertainty_fails_closed
+	test_legacy_duplicate_noncanonical_closes
+	test_legacy_duplicate_canonical_does_not_mutate_peers
+	test_legacy_duplicate_lookup_fails_closed
+	test_explicit_fingerprint_survives_title_and_label_drift
+	test_current_issue_absent_from_enumeration_fails_closed
+	test_pulse_blocks_duplicate_lookup_uncertainty
 	teardown_test_env
 
 	printf '\n%d test(s) run, %d failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
