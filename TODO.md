@@ -4492,3 +4492,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18094 Provision repository lint configuration through init and update #enhancement ref:GH#27123
 
 - [ ] t18095 Close the autonomous Qlty remediation loop #auto-dispatch #bug #quality ref:GH#27133
+
+- [ ] t18096 Treat canonical lint policy deferrals as safe skips #auto-dispatch #bug ref:GH#27139
