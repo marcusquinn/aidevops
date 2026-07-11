@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.12] - 2026-07-11
+
+### Fixed
+
+- isolate canonical recovery audit chain (#27020)
+
 ## [3.32.11] - 2026-07-11
 
 ### Changed
