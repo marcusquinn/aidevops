@@ -343,6 +343,29 @@ _build_orphan_recovery_pr_body() {
 	return 0
 }
 
+_create_orphan_recovery_pr() {
+	local repo_slug="$1"
+	local branch_name="$2"
+	local base_branch="$3"
+	local pr_title="$4"
+	local pr_body="$5"
+	local recovery_mode="$6"
+	local create_args=(
+		--repo "$repo_slug"
+		--head "$branch_name"
+		--base "$base_branch"
+		--title "$pr_title"
+		--body "$pr_body"
+		--label "origin:worker-takeover"
+		--label "status:in-review"
+	)
+	if [[ "$recovery_mode" == "draft" ]]; then
+		create_args+=(--draft)
+	fi
+	gh pr create "${create_args[@]}" >/dev/null 2>&1 # aidevops-allow: raw-gh-wrapper
+	return $?
+}
+
 #######################################
 # _attempt_orphan_recovery_pr — auto-recover a worker_branch_orphan (GH#20819)
 #
@@ -469,19 +492,7 @@ _attempt_orphan_recovery_pr() {
 	# NOT a line continuation in bash (`\` escapes the space, `#` starts a
 	# comment, the line terminates), so the args were silently dropped and
 	# this entire orphan-recovery path never produced a PR. SC2215 caught it.
-	local create_args=(
-		--repo "$repo_slug"
-		--head "$branch_name"
-		--base "$base_branch"
-		--title "$pr_title"
-		--body "$pr_body"
-		--label "origin:worker-takeover"
-		--label "status:in-review"
-	)
-	if [[ "$recovery_mode" == "draft" ]]; then
-		create_args+=(--draft)
-	fi
-	gh pr create "${create_args[@]}" >/dev/null 2>&1 # aidevops-allow: raw-gh-wrapper
+	_create_orphan_recovery_pr "$repo_slug" "$branch_name" "$base_branch" "$pr_title" "$pr_body" "$recovery_mode"
 	return $?
 }
 
