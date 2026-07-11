@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.21] - 2026-07-11
+
+### Changed
+
+- Maintenance: update simplification state registry
+- Refactor: split headless runtime launch helpers (#27068)
+- feat: add runtime-neutral safety contracts (#27063)
+- Refactor: reduce quality feedback test complexity (#27065)
+- improve human-attention learning reliability (#27064)
+
 ## [3.32.20] - 2026-07-11
 
 ### Changed
