@@ -225,6 +225,10 @@ create_github_release() {
 		fi
 	else
 		# GitHub CLI not available
+		if release_source_pr_required; then
+			print_error "GitHub release publication cannot be verified without authenticated gh CLI access"
+			return 1
+		fi
 		print_warning "GitHub release creation skipped - GitHub CLI not available"
 		print_info "To enable GitHub releases:"
 		print_info "1. Install GitHub CLI: brew install gh (macOS)"
@@ -333,8 +337,8 @@ run_post_release_agent_sync() {
 
 	local deploy_script="${AIDEVOPS_SYNC_DEPLOY_SCRIPT:-$sync_repo_root/.agents/scripts/deploy-agents-on-merge.sh}"
 	if [[ ! -f "$deploy_script" ]]; then
-		print_warning "Post-release sync skipped: deploy script not found at $deploy_script"
-		return 0
+		print_error "Post-release sync unavailable: deploy script not found at $deploy_script"
+		return 1
 	fi
 
 	print_info "Running post-release aidevops agent sync..."
@@ -347,8 +351,8 @@ run_post_release_agent_sync() {
 		return 0
 	fi
 
-	print_warning "Post-release aidevops agent sync failed (non-blocking): $sync_output"
-	return 0
+	print_error "Post-release aidevops agent sync failed: $sync_output"
+	return 1
 }
 
 # Function to generate release notes

@@ -38,6 +38,10 @@ gh() {
 	local subcommand="${2:-}"
 	local args="$*"
 	if [[ "$command" == "pr" && "$subcommand" == "view" ]]; then
+		if [[ "$args" == *"state,mergedAt,mergeCommit"* ]]; then
+			printf '%s\n' '{"state":"MERGED","mergedAt":"2026-07-11T00:00:00Z","mergeCommit":{"oid":"merge123"}}'
+			return 0
+		fi
 		if [[ "$args" == *"headRefName"* ]]; then
 			printf '%s\n' "feature/full-loop-cleanup"
 			return 0
@@ -251,7 +255,7 @@ test_cmd_merge_defers_cleanup_for_live_process_cwd() {
 	return 0
 }
 
-test_refresh_canonical_pulls_when_default_checked_out() {
+test_refresh_canonical_reports_pending_without_mutation() {
 	local canonical_repo="${TEST_ROOT}/repo-default"
 	local origin_repo="${TEST_ROOT}/origin-default.git"
 	local updater_repo="${TEST_ROOT}/updater-default"
@@ -273,22 +277,26 @@ test_refresh_canonical_pulls_when_default_checked_out() {
 	git -C "$updater_repo" commit -q -m 'advance main'
 	git -C "$updater_repo" push -q origin main
 
-	_merge_refresh_canonical_for_cleanup "$canonical_repo" "main"
+	local output=""
+	local refresh_rc=0
+	output=$(_merge_refresh_canonical_for_cleanup "$canonical_repo" "main" 2>&1) || refresh_rc=$?
 
 	local rc=0
+	[[ "$refresh_rc" -ne 0 ]] || rc=1
+	[[ "$output" == *"CANONICAL_SYNC_PENDING=true"* ]] || rc=1
 	if [[ "$(git -C "$canonical_repo" branch --show-current)" != "main" ]]; then
 		rc=1
 	fi
-	if [[ "$(git -C "$canonical_repo" rev-parse main)" != "$(git -C "$updater_repo" rev-parse main)" ]]; then
+	if [[ "$(git -C "$canonical_repo" rev-parse main)" == "$(git -C "$updater_repo" rev-parse main)" ]]; then
 		rc=1
 	fi
-	print_result "refresh canonical pulls when default branch checked out" "$rc"
+	print_result "canonical drift is explicit pending without unaudited mutation" "$rc"
 	return 0
 }
 
 main() {
 	setup_subject
-	test_refresh_canonical_pulls_when_default_checked_out
+	test_refresh_canonical_reports_pending_without_mutation
 	test_cmd_merge_defers_current_linked_worktree
 	test_cmd_merge_defers_cleanup_for_live_process_cwd
 	printf '\n%d/%d tests passed\n' "$((TESTS_RUN - TESTS_FAILED))" "$TESTS_RUN"

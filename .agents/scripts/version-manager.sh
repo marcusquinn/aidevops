@@ -385,8 +385,14 @@ _release_execute() {
 			print_info "  4. Create release: $0 github-release"
 			exit 1
 		fi
-		create_github_release "$new_version"
-		run_post_release_agent_sync
+		if ! create_github_release "$new_version"; then
+			print_error "Release publication could not be verified"
+			exit 1
+		fi
+		if ! run_post_release_agent_sync; then
+			print_error "Release deployment/sync could not be verified"
+			exit 1
+		fi
 		print_success "Release $new_version created successfully!"
 	else
 		print_error "Version validation failed. Please fix inconsistencies before creating release."
@@ -442,15 +448,20 @@ _main_release() {
 	fi
 
 	# Parse flags (can be in any order after bump_type)
-	local force_flag=0 skip_preflight=0 allow_dirty=0 hotfix_flag=0 dry_run=0
-	for arg in "$@"; do
-		case "$arg" in
-		"--force") force_flag=1 ;;
-		"--skip-preflight") skip_preflight=1 ;;
-		"--allow-dirty") allow_dirty=1 ;;
-		"--hotfix") hotfix_flag=1 ;;
-		"--dry-run") dry_run=1 ;;
-		*) ;; # Ignore unknown flags
+	local force_flag=0 skip_preflight=0 allow_dirty=0 hotfix_flag=0 dry_run=0 source_pr=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--force) force_flag=1; shift ;;
+		--skip-preflight) skip_preflight=1; shift ;;
+		--allow-dirty) allow_dirty=1; shift ;;
+		--hotfix) hotfix_flag=1; shift ;;
+		--dry-run) dry_run=1; shift ;;
+		--source-pr)
+			source_pr="${2:-}"
+			[[ -n "$source_pr" ]] || { print_error "--source-pr requires a PR number"; return 1; }
+			shift 2
+			;;
+		*) print_error "Unknown release option: $1"; return 1 ;;
 		esac
 	done
 
@@ -475,17 +486,20 @@ _main_release() {
 	# Structural safety is never bypassable by --force. Canonical releases can
 	# corrupt every parallel session sharing that repository.
 	assert_release_linked_worktree || exit 1
+	if release_source_pr_required && [[ -z "$source_pr" ]]; then
+		print_error "aidevops releases require --source-pr <merged-pr-number>"
+		exit 1
+	fi
 
 	# Verify local branch is in sync with remote
 	if ! verify_remote_sync "main"; then
-		if [[ "$force_flag" -eq 0 ]]; then
-			print_error "Cannot release when local/remote are out of sync."
-			print_info "Use --force to bypass (not recommended)"
-			exit 1
-		else
-			print_warning "Bypassing remote sync check with --force"
-		fi
+		print_error "Cannot release when local/remote are out of sync; --force cannot bypass structural provenance"
+		exit 1
 	fi
+	if [[ -n "$source_pr" ]]; then
+		verify_release_source_pr "$source_pr" "main" || exit 1
+	fi
+	verify_canonical_default_synced "main" || exit 1
 
 	# Check for uncommitted changes
 	if [[ "$allow_dirty" -eq 0 ]]; then
@@ -541,7 +555,8 @@ _main_usage() {
 	echo "  bump [major|minor|patch]      Bump version"
 	echo "  tag                           Create git tag for current version"
 	echo "  github-release                Create GitHub release for current version"
-	echo "  release [major|minor|patch]   Bump version, update files, create tag and GitHub release"
+	echo "  release [major|minor|patch] --source-pr N"
+	echo "                                 Bump version, tag, publish, and deploy from a verified merged PR"
 	echo "  release patch --hotfix       Patch release with hotfix signal for immediate runner propagation"
 	echo "  preflight [major|minor|patch] Run release preflight checks only"
 	echo "  validate                      Validate version consistency across all files"

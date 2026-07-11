@@ -577,21 +577,22 @@ _merge_refresh_canonical_for_cleanup() {
 	local default_branch="$2"
 	[[ -d "$canonical_dir" && -n "$default_branch" ]] || return 1
 
+	if ! git fetch --quiet origin "$default_branch" >/dev/null 2>&1; then
+		print_warning "CANONICAL_SYNC_PENDING=true reason=origin_fetch_failed"
+		return 1
+	fi
 	local current_canonical_branch=""
 	current_canonical_branch=$(git -C "$canonical_dir" branch --show-current 2>/dev/null || true)
-
-	# Pull only when the canonical worktree is already on the default branch. If a
-	# user has another active branch checked out there, update the local default
-	# branch ref via fetch instead so cleanup never merges default into that branch.
-	if [[ "$current_canonical_branch" == "$default_branch" ]]; then
-		if git -C "$canonical_dir" pull --ff-only origin "$default_branch" >/dev/null 2>&1; then
-			return 0
-		fi
-	elif git -C "$canonical_dir" fetch origin "$default_branch:$default_branch" >/dev/null 2>&1; then
+	local canonical_head=""
+	canonical_head=$(git -C "$canonical_dir" rev-parse HEAD 2>/dev/null || true)
+	local remote_head=""
+	remote_head=$(git rev-parse "origin/${default_branch}" 2>/dev/null || true)
+	if [[ "$current_canonical_branch" == "$default_branch" && -n "$remote_head" && "$canonical_head" == "$remote_head" ]]; then
+		print_success "LIFECYCLE_STATE=CANONICAL_SYNCED sha=${remote_head}"
 		return 0
 	fi
-	print_warning "Post-merge worktree cleanup: canonical pull/fetch skipped/failed for ${canonical_dir}; continuing cleanup"
-	return 0
+	print_warning "CANONICAL_SYNC_PENDING=true canonical=${canonical_dir} branch=${current_canonical_branch:-detached}"
+	return 1
 }
 
 _merge_resolve_worktree_helper() {
@@ -632,7 +633,7 @@ _merge_cleanup_linked_worktree() {
 	print_info "Post-merge worktree cleanup: removing linked worktree ${worktree_path} for ${branch_name} in ${repo}"
 	local default_branch=""
 	default_branch=$(_merge_default_branch_for_cleanup "$canonical_dir")
-	_merge_refresh_canonical_for_cleanup "$canonical_dir" "$default_branch"
+	_merge_refresh_canonical_for_cleanup "$canonical_dir" "$default_branch" || true
 
 	if ! cd "$canonical_dir" 2>/dev/null; then
 		print_warning "Post-merge worktree cleanup: could not cd to canonical repo ${canonical_dir}"
