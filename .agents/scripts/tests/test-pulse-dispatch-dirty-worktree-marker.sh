@@ -16,6 +16,7 @@ readonly TEST_RESET='\033[0m'
 
 TESTS_RUN=0
 TESTS_FAILED=0
+TEST_GH_POST_COUNT=0
 
 print_result() {
 	local test_name="$1"
@@ -39,6 +40,10 @@ print_result() {
 gh() {
 	local subcommand="$1"
 	local endpoint="${2:-}"
+	if [[ "$subcommand" == "api" && "$endpoint" == "repos/marcusquinn/aidevops/issues/26635/comments" && "$*" == *"--method POST"* ]]; then
+		TEST_GH_POST_COUNT=$((TEST_GH_POST_COUNT + 1))
+		return 0
+	fi
 	if [[ "$subcommand" != "api" || "$endpoint" != "repos/marcusquinn/aidevops/issues/26635/comments?per_page=100" ]]; then
 		printf 'unexpected gh call: %s\n' "$*" >&2
 		return 1
@@ -180,6 +185,32 @@ test_expired_marker_does_not_block() {
 	return 0
 }
 
+test_expired_marker_clears_once_with_audit() {
+	local marker='{"created_at":"2026-07-05T22:22:12Z","body":"WORKER_DIRTY_WORKTREE branch=feature/auto-20260706-000537-gh26635 runner_key=runner-other"}'
+	TEST_GH_POST_COUNT=0
+	set +e
+	TEST_GH_COMMENTS_JSON="[${marker}]" \
+		AIDEVOPS_DIRTY_WORKTREE_NOW_EPOCH="1783377432" \
+		DISPATCH_DIRTY_WORKTREE_HOLD_SECONDS="21600" \
+		_dispatch_skip_for_dirty_worktree_recovery "26635" "marcusquinn/aidevops"
+	local first_rc=$?
+	set -e
+	local resolution='{"created_at":"2026-07-07T22:40:00Z","body":"<!-- worker-dirty-worktree:resolved --> WORKER_DIRTY_WORKTREE_RESOLVED"}'
+	set +e
+	TEST_GH_COMMENTS_JSON="[${marker},${resolution}]" \
+		AIDEVOPS_DIRTY_WORKTREE_NOW_EPOCH="1783377432" \
+		DISPATCH_DIRTY_WORKTREE_HOLD_SECONDS="21600" \
+		_dispatch_skip_for_dirty_worktree_recovery "26635" "marcusquinn/aidevops"
+	local second_rc=$?
+	set -e
+	if [[ "$first_rc" -eq 1 && "$second_rc" -eq 1 && "$TEST_GH_POST_COUNT" -eq 1 ]]; then
+		print_result "expired unrecoverable marker clears once with audit evidence" 0
+		return 0
+	fi
+	print_result "expired unrecoverable marker clears once with audit evidence" 1 "first=${first_rc} second=${second_rc} posts=${TEST_GH_POST_COUNT}"
+	return 0
+}
+
 main() {
 	load_lib
 	test_recent_marker_blocks_dispatch
@@ -188,6 +219,7 @@ main() {
 	test_dirty_worktree_reuse_preserves_edits
 	test_later_resolution_clears_marker
 	test_expired_marker_does_not_block
+	test_expired_marker_clears_once_with_audit
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
