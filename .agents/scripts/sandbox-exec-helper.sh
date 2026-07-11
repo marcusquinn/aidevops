@@ -47,6 +47,7 @@ readonly SANDBOX_DEFAULT_TIMEOUT=120
 readonly SANDBOX_MAX_TIMEOUT=3600
 readonly SANDBOX_MAX_OUTPUT_BYTES=10485760 # 10MB per stream
 readonly SECRET_IO_GUARD_DEFAULT="true"
+readonly SANDBOX_ERROR_LEVEL="ERROR"
 
 # Minimal environment passthrough — only what's needed for basic operation
 readonly DEFAULT_PASSTHROUGH="PATH HOME USER LANG TERM SHELL"
@@ -273,7 +274,7 @@ _sandbox_check_command_policy() {
 	local reason=""
 
 	if [[ ! -f "$COMMAND_POLICY_HELPER" ]]; then
-		log_sandbox "ERROR" "Required command policy helper is unavailable: ${COMMAND_POLICY_HELPER}"
+		log_sandbox "$SANDBOX_ERROR_LEVEL" "Required command policy helper is unavailable: ${COMMAND_POLICY_HELPER}"
 		return 1
 	fi
 	result="$(python3 "$COMMAND_POLICY_HELPER" check-command --worker --worker-id "$worker_id" --cwd "$PWD" --argv-json "$argv_json")" || status=$?
@@ -283,7 +284,7 @@ _sandbox_check_command_policy() {
 	if [[ "$status" -eq 0 && "$decision" == "allow" ]]; then
 		return 0
 	fi
-	log_sandbox "ERROR" "Command policy denied execution (${decision:-forbid}, ${rule_id}): ${reason}"
+	log_sandbox "$SANDBOX_ERROR_LEVEL" "Command policy denied execution (${decision:-forbid}, ${rule_id}): ${reason}"
 	return 1
 }
 
@@ -438,12 +439,13 @@ _sandbox_pgkill_cleanup() {
 	fi
 
 	if [[ -n "$cleanup_child_pgid" ]]; then
+		local cleanup_group_target="-${cleanup_child_pgid}"
 		# SIGTERM first — allow graceful shutdown
-		kill -- "-${cleanup_child_pgid}" 2>/dev/null || true
+		kill -- "$cleanup_group_target" 2>/dev/null || true
 		# Brief grace period, then SIGKILL any survivors
 		sleep 0.5
-		kill -0 -- "-${cleanup_child_pgid}" 2>/dev/null &&
-			kill -9 -- "-${cleanup_child_pgid}" 2>/dev/null || true
+		kill -0 -- "$cleanup_group_target" 2>/dev/null &&
+			kill -9 -- "$cleanup_group_target" 2>/dev/null || true
 	elif [[ -n "$cleanup_child_pid" ]]; then
 		# Fallback: setsid unavailable — kill direct child process only
 		kill "$cleanup_child_pid" 2>/dev/null || true
@@ -838,10 +840,11 @@ _sandbox_spawn_watchdog() {
 		touch "$wd_marker" 2>/dev/null || true
 
 		if [[ -n "$wd_pgid" ]]; then
-			kill -- "-${wd_pgid}" 2>/dev/null || true
+			local wd_group_target="-${wd_pgid}"
+			kill -- "$wd_group_target" 2>/dev/null || true
 			sleep 1
-			kill -0 -- "-${wd_pgid}" 2>/dev/null &&
-				kill -9 -- "-${wd_pgid}" 2>/dev/null || true
+			kill -0 -- "$wd_group_target" 2>/dev/null &&
+				kill -9 -- "$wd_group_target" 2>/dev/null || true
 		else
 			kill "$wd_pid" 2>/dev/null || true
 			sleep 1
@@ -987,7 +990,7 @@ _sandbox_prepare_worker_egress() {
 
 	if ! candidate="$(_sandbox_resolve_egress_backend)"; then
 		if [[ "$mode" == "required" ]]; then
-			log_sandbox "ERROR" "Whole-process worker egress is required but AIDEVOPS_WORKER_EGRESS_BACKEND is not an executable absolute path"
+			log_sandbox "$SANDBOX_ERROR_LEVEL" "Whole-process worker egress is required but AIDEVOPS_WORKER_EGRESS_BACKEND is not an executable absolute path"
 			return 1
 		fi
 		log_sandbox "WARN" "Whole-process worker egress backend unavailable; state=command-policy-only"
@@ -996,7 +999,7 @@ _sandbox_prepare_worker_egress() {
 
 	if [[ ! -x "$NETWORK_TIER_HELPER" ]]; then
 		if [[ "$mode" == "required" ]]; then
-			log_sandbox "ERROR" "Required network policy authority is unavailable: ${NETWORK_TIER_HELPER}"
+			log_sandbox "$SANDBOX_ERROR_LEVEL" "Required network policy authority is unavailable: ${NETWORK_TIER_HELPER}"
 			return 1
 		fi
 		log_sandbox "WARN" "Network policy export unavailable; state=command-policy-only"
@@ -1004,20 +1007,20 @@ _sandbox_prepare_worker_egress() {
 	fi
 	if ! "$NETWORK_TIER_HELPER" export-policy >"$policy_file"; then
 		if [[ "$mode" == "required" ]]; then
-			log_sandbox "ERROR" "Required worker egress policy export failed"
+			log_sandbox "$SANDBOX_ERROR_LEVEL" "Required worker egress policy export failed"
 			return 1
 		fi
 		log_sandbox "WARN" "Worker egress policy export failed; state=command-policy-only"
 		return 0
 	fi
 	expected_policy_sha256="$(_sandbox_file_sha256 "$policy_file")" || {
-		log_sandbox "ERROR" "Unable to digest normalized worker egress policy"
+		log_sandbox "$SANDBOX_ERROR_LEVEL" "Unable to digest normalized worker egress policy"
 		return 1
 	}
 
 	if ! probe_output="$("$candidate" probe --policy "$policy_file" 2>/dev/null)"; then
 		if [[ "$mode" == "required" ]]; then
-			log_sandbox "ERROR" "Required worker egress backend probe failed"
+			log_sandbox "$SANDBOX_ERROR_LEVEL" "Required worker egress backend probe failed"
 			return 1
 		fi
 		log_sandbox "WARN" "Worker egress backend probe failed; state=command-policy-only"
@@ -1028,7 +1031,7 @@ _sandbox_prepare_worker_egress() {
 		'.schema == "aidevops.worker-egress-backend.v1" and .ready == true and .scope == "process-tree" and (.enforcement == "kernel" or .enforcement == "equivalent") and .policy_sha256 == $policy_sha256 and (.backend_id | type == "string") and .cleanup == "automatic" and (["direct-socket-deny", "hostname-policy", "private-network-deny"] - .capabilities | length == 0)' \
 		>/dev/null 2>&1; then
 		if [[ "$mode" == "required" ]]; then
-			log_sandbox "ERROR" "Required worker egress backend returned an invalid readiness contract"
+			log_sandbox "$SANDBOX_ERROR_LEVEL" "Required worker egress backend returned an invalid readiness contract"
 			return 1
 		fi
 		log_sandbox "WARN" "Worker egress backend readiness contract invalid; state=command-policy-only"
@@ -1037,7 +1040,7 @@ _sandbox_prepare_worker_egress() {
 
 	egress_backend_id="$(printf '%s' "$probe_output" | jq -r '.backend_id')"
 	if [[ ! "$egress_backend_id" =~ ^[A-Za-z0-9._-]+$ ]]; then
-		log_sandbox "ERROR" "Worker egress backend_id contains unsupported characters"
+		log_sandbox "$SANDBOX_ERROR_LEVEL" "Worker egress backend_id contains unsupported characters"
 		return 1
 	fi
 	egress_backend="$candidate"
@@ -1100,7 +1103,7 @@ _sandbox_run_dispatch() {
 			"${d_exec_args[@]}" || dispatch_exit=$?
 	else
 		if [[ "$block_network" == true ]]; then
-			log_sandbox "ERROR" "Network blocking requested but no enforcing deny-all backend is available"
+			log_sandbox "$SANDBOX_ERROR_LEVEL" "Network blocking requested but no enforcing deny-all backend is available"
 			return 126
 		fi
 		_sandbox_exec_with_pgkill "$timeout_secs" "$stdout_file" "$stderr_file" \
@@ -1180,8 +1183,8 @@ _sandbox_run_check_secret_guard() {
 	if [[ "$secret_io_guard" == "true" ]] && [[ "$allow_secret_io" != "true" ]]; then
 		local block_reason
 		if block_reason="$(_sandbox_secret_block_reason "$cmd_str")"; then
-			log_sandbox "ERROR" "Blocked command due to secret leak risk: ${block_reason}"
-			log_sandbox "ERROR" "Use --allow-secret-io only for explicit user-approved local operations"
+			log_sandbox "$SANDBOX_ERROR_LEVEL" "Blocked command due to secret leak risk: ${block_reason}"
+			log_sandbox "$SANDBOX_ERROR_LEVEL" "Use --allow-secret-io only for explicit user-approved local operations"
 			log_execution "$cmd_str" 126 0 "$timeout_secs" "$block_network" "$extra_passthrough"
 			return 126
 		fi
@@ -1300,13 +1303,13 @@ sandbox_run() {
 	_sandbox_run_parse_args "$@"
 
 	if [[ ${#cmd_args[@]} -eq 0 ]]; then
-		log_sandbox "ERROR" "No command provided"
+		log_sandbox "$SANDBOX_ERROR_LEVEL" "No command provided"
 		return 1
 	fi
 	case "$egress_mode" in
 	off | auto | required) ;;
 	*)
-		log_sandbox "ERROR" "Invalid worker egress mode '${egress_mode}' (expected off, auto, or required)"
+		log_sandbox "$SANDBOX_ERROR_LEVEL" "Invalid worker egress mode '${egress_mode}' (expected off, auto, or required)"
 		return 2
 		;;
 	esac
@@ -1506,7 +1509,7 @@ main() {
 	config) sandbox_config "$@" || status=$? ;;
 	help) sandbox_help || status=$? ;;
 	*)
-		log_sandbox "ERROR" "Unknown command: ${cmd}"
+		log_sandbox "$SANDBOX_ERROR_LEVEL" "Unknown command: ${cmd}"
 		sandbox_help
 		return 1
 		;;

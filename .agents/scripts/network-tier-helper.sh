@@ -254,6 +254,7 @@ import sys
 
 lookup_path = sys.argv[1]
 rules = {}
+DENY_ACTION = "deny"
 with open(lookup_path, "r", encoding="utf-8") as handle:
     for raw_line in handle:
         key, tier_text = raw_line.rstrip("\n").rsplit(" ", 1)
@@ -268,7 +269,7 @@ def action_for_tier(tier):
         return "allow-log"
     if tier == 4:
         return "allow-flag"
-    return "deny"
+    return DENY_ACTION
 
 normalized_rules = []
 for (match_type, pattern), tier in sorted(rules.items()):
@@ -283,9 +284,9 @@ policy = {
     "schema": "aidevops.worker-egress-policy.v1",
     "default_tier": 4,
     "default_action": "allow-flag",
-    "raw_ip_action": "deny",
-    "private_network_action": "deny",
-    "loopback_action": "deny",
+    "raw_ip_action": DENY_ACTION,
+    "private_network_action": DENY_ACTION,
+    "loopback_action": DENY_ACTION,
     "rules": normalized_rules,
 }
 print(json.dumps(policy, sort_keys=True, separators=(",", ":")))
