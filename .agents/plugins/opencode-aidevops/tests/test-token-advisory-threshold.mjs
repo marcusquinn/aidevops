@@ -58,8 +58,11 @@ describe("token cost advisory threshold", () => {
     await hooks.systemTransformHook({ model: { providerID: "openai" } }, output);
 
     assert.match(output.system[0], /Session-start greeting order/);
+    assert.match(output.system[0], /authoritative greeting instruction/);
+    assert.match(output.system[0], /do not read the greeting cache or VERSION/);
     assert.match(output.system[0], /this exact aidevops greeting/);
     assert.match(output.system[0], /We're running aidevops v3\.14\.23 in OpenCode v1\.14\.33\./);
+    assert.equal(output.system.filter((entry) => entry.includes("Session-start greeting order")).length, 1);
   });
 
   test("falls back to aidevops version when greeting cache is missing", async () => {

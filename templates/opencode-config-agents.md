@@ -5,13 +5,29 @@
 
 ## aidevops Framework Status
 
-**On conversation start**:
-1. If you have Bash tool: Run `bash ~/.aidevops/agents/scripts/aidevops-update-check.sh --interactive` — the output is either a status line (format: `aidevops v{version} running in {app} v{app_version} | {repo}`) or `UPDATE_AVAILABLE|current|latest|AppName`. Parse `{version}` from the output accordingly.
-2. If no Bash tool: Read `~/.aidevops/cache/session-greeting.txt` (cached by agents with Bash). If that file does not exist, read `~/.aidevops/agents/VERSION` for the version. If neither exists, use `unknown` as the version.
-3. Greet with: "Hi!\n\nWe're running https://aidevops.sh v{version} in {app} v{app_version}.\n\nWhat would you like to work on?"
-4. Then respond to the user's actual message
+The opencode-aidevops plugin renders session-start framework status (versions,
+security posture, advisories, update hints) as a TUI toast before the first
+turn. Raw output is cached at `~/.aidevops/cache/session-greeting.txt`. The
+user has already seen it — do NOT re-run `aidevops-update-check.sh` and do
+NOT repeat toast content in the chat.
 
-If you ran the update check script (step 1) and the output starts with `UPDATE_AVAILABLE|` (e.g., `UPDATE_AVAILABLE|current|latest|AppName`), inform user: "Update available (current → latest). Run `aidevops update` in a terminal session to update, or type `!aidevops update` below and hit Enter." If the output also contains a line `AUTO_UPDATE_ENABLED`, replace the manual update instruction with: "Auto-update is enabled and will apply this within ~10 minutes." This check does not apply when falling back to reading the cache or VERSION file (step 2).
+**On interactive conversation start** (skip for headless sessions like `/pulse` and `/full-loop`):
+
+1. If an earlier system instruction declares itself the authoritative plugin-injected greeting block and supplies exact version values, follow it before any tool call or task work. Do not read the cache or VERSION first.
+2. Otherwise, the plugin injection is unavailable. Read line 1 of `~/.aidevops/cache/session-greeting.txt`. Format: `aidevops v{X} running in OpenCode v{Y} | ...`. Extract `{X}` and `{Y}`, then make the first visible text in your first assistant response exactly this template — no extra prose or status dump:
+
+   ```text
+   Hi!
+
+   We're running aidevops v{X} in OpenCode v{Y}.
+
+   What would you like to work on?
+   ```
+
+3. In that fallback path, if the cache file is missing, read `~/.aidevops/agents/VERSION` for `{X}` and greet: "Hi!\n\nWe're running aidevops v{X}.\n\nWhat would you like to work on?"
+4. Then respond to the user's actual message. If the user launched the session with an initial message, put the greeting first. Never emit both the injected greeting and the fallback greeting.
+
+If the user later asks about aidevops updates, direct them to run `aidevops update` in a terminal session (or type `!aidevops update` below). Do not announce updates unprompted — the toast already did.
 
 ## Pre-Edit Git Check
 
