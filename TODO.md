@@ -4484,3 +4484,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18091 Install aidevops CLI independently of release worktrees #auto-dispatch #bug ref:GH#27057
 
 - [ ] t18092 Canonicalize workload model tiers #enhancement #framework ref:GH#27059
+
+- [ ] t18093 Record runtime safety Qlty baseline #bug #quality ref:GH#27116
