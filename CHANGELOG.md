@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.17] - 2026-07-11
+
+### Changed
+
+- prevent duplicate cross-runner work (#27055)
+- allow sanctioned full-loop wrapper through OpenCode guard (#27052)
+- Documentation: repair contributor guidance references (#27050)
+- Maintenance: update simplification state registry
+- Clarify authoritative OpenCode greeting precedence (#27049)
+
 ## [3.32.16] - 2026-07-11
 
 ### Changed
