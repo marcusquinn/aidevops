@@ -136,7 +136,56 @@ _dep_graph_process_issue_json() {
 		| (if $defer == true
 			then .defer_flags_map[($n | tostring)] = true
 			else . end)
-		' 2>/dev/null || printf '%s\n' "$acc_json"
+	' 2>/dev/null || printf '%s\n' "$acc_json"
+}
+
+#######################################
+# Remove deterministic break edges from declared dependency cycles.
+#
+# Dependency edges point from the blocked issue to its blocker. For every edge
+# that participates in a cycle, discard the ascending numeric edge
+# (blocked issue number < blocker issue number). Every numeric cycle contains
+# at least one ascending edge, so this breaks deadlocks while preserving a
+# stable ordering across runners. Task-ID edges are resolved through the
+# repo-level task_to_issue map before applying the same rule.
+#
+# Arguments: $1 - per-repo dependency graph JSON
+# Output: the pruned graph JSON
+# Returns: 0 on success, 1 for invalid JSON
+#######################################
+_dep_graph_prune_circular_edges() {
+	local repo_data="$1"
+	printf '%s' "$repo_data" | jq -c '
+		def resolved_blockers($root; $issue):
+			(((($root.blocked_by[$issue].issue_nums // []) | map(tostring))
+			+ (($root.blocked_by[$issue].task_ids // [])
+				| map($root.task_to_issue[.]? // empty | tostring))) | unique);
+		def reaches($root; $from; $target; $seen):
+			if $from == $target then true
+			elif ($seen | index($from)) != null then false
+			else any(resolved_blockers($root; $from)[];
+				reaches($root; .; $target; ($seen + [$from])))
+			end;
+		. as $root
+		| .blocked_by |= with_entries(
+			.key as $blocked
+			| .value.issue_nums = ((.value.issue_nums // []) | map(select(
+				. as $raw
+				| ($raw | tostring) as $blocker
+				| (((($blocked | tonumber?) != null)
+					and (($blocker | tonumber?) != null)
+					and (($blocked | tonumber) < ($blocker | tonumber))
+					and reaches($root; $blocker; $blocked; [])) | not))))
+			| .value.task_ids = ((.value.task_ids // []) | map(select(
+				. as $task
+				| ($root.task_to_issue[$task]? // null) as $resolved
+				| ((($resolved != null)
+					and (($blocked | tonumber?) != null)
+					and (($blocked | tonumber) < ($resolved | tonumber))
+					and reaches($root; ($resolved | tostring); $blocked; [])) | not))))
+		)
+	' 2>/dev/null || return 1
+	return 0
 }
 
 #######################################
@@ -170,7 +219,8 @@ _dep_graph_build_repo_data() {
 	# Single jq pass: extract all fields, apply regex, build accumulator.
 	# Equivalent to calling _dep_graph_process_issue_json once per issue
 	# but without spawning a subshell for each issue.
-	printf '%s' "$issues_json" | jq -c '
+	local parsed_repo_data=""
+	parsed_repo_data=$(printf '%s' "$issues_json" | jq -c '
 		reduce .[] as $issue (
 			{"open_nums":[],"closed_nums":[],"known_nums":[],"task_to_issue":{},"blocked_by_map":{},"defer_flags_map":{}};
 			($issue.number) as $num |
@@ -230,7 +280,8 @@ _dep_graph_build_repo_data() {
 			"blocked_by": .blocked_by_map,
 			"defer_flags": .defer_flags_map
 		}
-	' 2>/dev/null || return 1
+	' 2>/dev/null) || return 1
+	_dep_graph_prune_circular_edges "$parsed_repo_data" || return 1
 	return 0
 }
 
@@ -487,8 +538,9 @@ _refresh_dependency_is_resolved() {
 	_blocked_by_check_native_relationships "$slug" "$issue_num" || native_rc=$?
 	case "$native_rc" in
 		0) return 1 ;;
-		2) return 0 ;;
 	esac
+	# A positively clear native set may be only a partial repair. Continue through
+	# every declared body/TODO-compatible edge before proving readiness.
 
 	local open_issues_json="" cache_state=""
 	open_issues_json=$(jq -cn --argjson known "$known_issues_json" --argjson closed "$closed_issues_json" \
@@ -514,6 +566,23 @@ _refresh_dependency_is_resolved() {
 	return 0
 }
 
+_dep_labels_has() {
+	local labels_csv="$1"
+	local expected_label="$2"
+	[[ ",${labels_csv}," == *",${expected_label},"* ]]
+	return $?
+}
+
+_dep_labels_has_active_status() {
+	local labels_csv="$1"
+	_dep_labels_has "$labels_csv" "status:queued" ||
+		_dep_labels_has "$labels_csv" "status:claimed" ||
+		_dep_labels_has "$labels_csv" "status:in-progress" ||
+		_dep_labels_has "$labels_csv" "status:in-review" ||
+		_dep_labels_has "$labels_csv" "status:done"
+	return $?
+}
+
 #######################################
 # Atomically move an issue advertised as available to blocked when dependency
 # evidence is unresolved. Re-read labels immediately before the write so a
@@ -529,19 +598,26 @@ _refresh_ensure_unresolved_is_blocked() {
 
 	current_labels=$(gh issue view "$issue_num" --repo "$slug" \
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
-	[[ ",${current_labels}," == *",status:available,"* ]] || return 1
-	if [[ ",${current_labels}," == *",status:queued,"* ||
-		",${current_labels}," == *",status:claimed,"* ||
-		",${current_labels}," == *",status:in-progress,"* ||
-		",${current_labels}," == *",status:in-review,"* ||
-		",${current_labels}," == *",status:done,"* ]]; then
+	_dep_labels_has "$current_labels" "status:available" || return 1
+	if _dep_labels_has_active_status "$current_labels"; then
 		return 1
 	fi
-	if set_issue_status "$issue_num" "$slug" "blocked" >/dev/null 2>&1; then
-		echo "[pulse-wrapper] dep-graph-cache: normalized #${issue_num} in ${slug} available -> blocked — unresolved dependency evidence; retryable relationship normalization pending" >>"$LOGFILE"
-		return 0
+	if ! gh issue edit "$issue_num" --repo "$slug" \
+		--remove-label "status:available" --add-label "status:blocked" >/dev/null 2>&1; then
+		return 1
 	fi
-	return 1
+	# Preserve a lifecycle transition that raced the first label read. The direct
+	# edit above intentionally leaves active labels intact so this repair can
+	# remove only the dependency block instead of clobbering queued/in-progress.
+	current_labels=$(gh issue view "$issue_num" --repo "$slug" \
+		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""
+	if _dep_labels_has "$current_labels" "status:blocked" &&
+		_dep_labels_has_active_status "$current_labels"; then
+		gh issue edit "$issue_num" --repo "$slug" --remove-label "status:blocked" >/dev/null 2>&1 || true
+		return 1
+	fi
+	echo "[pulse-wrapper] dep-graph-cache: normalized #${issue_num} in ${slug} available -> blocked — unresolved dependency evidence; retryable relationship normalization pending" >>"$LOGFILE"
+	return 0
 }
 
 #######################################
@@ -633,8 +709,23 @@ _refresh_try_unblock_issue() {
 		return 1
 	}
 
-	# t2033: atomic transition — clears all sibling status:* labels, not just status:blocked
-	set_issue_status "$issue_num" "$slug" "available" 2>/dev/null || true
+	# Re-read before mutation because comment/label cleanup above performs API
+	# work during which a dispatcher may have advanced the lifecycle.
+	current_labels=$(gh issue view "$issue_num" --repo "$slug" \
+		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
+	_dep_labels_has "$current_labels" "status:blocked" || return 1
+	_dep_labels_has_active_status "$current_labels" && return 1
+	# Preserve any lifecycle transition that races this edit: mutate only the
+	# dependency statuses, then remove available if an active status appeared.
+	gh issue edit "$issue_num" --repo "$slug" \
+		--remove-label "status:blocked" --add-label "status:available" >/dev/null 2>&1 || return 1
+	current_labels=$(gh issue view "$issue_num" --repo "$slug" \
+		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || current_labels=""
+	if _dep_labels_has "$current_labels" "status:available" &&
+		_dep_labels_has_active_status "$current_labels"; then
+		gh issue edit "$issue_num" --repo "$slug" --remove-label "status:available" >/dev/null 2>&1 || true
+		return 1
+	fi
 	echo "[pulse-wrapper] dep-graph-cache: unblocked #${issue_num} in ${slug} — all blockers resolved, no non-dep markers (t1935/t2031)" >>"$LOGFILE"
 	return 0
 }
@@ -808,12 +899,13 @@ query($owner:String!,$name:String!,$number:Int!) {
     issue(number:$number) {
       blockedBy(first: 50) {
         nodes { number state }
+		pageInfo { hasNextPage }
       }
     }
   }
 }' \
 		-F owner="$owner" -F name="$repo_name" -F number="$issue_number" \
-		--jq '.data.repository.issue.blockedBy.nodes[]? | "\(.number):\(.state)"' \
+		--jq '.data.repository.issue.blockedBy as $b | (if $b.pageInfo.hasNextPage then "__TRUNCATED__:UNKNOWN" else empty end), ($b.nodes[]? | "\(.number):\(.state)")' \
 		2>/dev/null); then
 		echo "[pulse-wrapper] is_blocked_by_unresolved: #${issue_number} native blockedBy lookup unavailable — checking body fallback (GH#24576)" >>"$LOGFILE"
 		return 3
