@@ -10,6 +10,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.27] - 2026-07-11
+
+### Changed
+
+- resolve task identity from linked issues (#27127)
+- Maintenance: sync ref:GH#27133 to TODO.md [skip ci]
+- Keep incomplete parent roadmaps open (#27128)
+
+### Fixed
+
+- harden parent close contracts (#27132)
+
 ## [3.32.26] - 2026-07-11
 
 ### Changed
