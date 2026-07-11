@@ -221,7 +221,8 @@ function _isSchemaInitialized() {
        "(SELECT COUNT(*) FROM pragma_table_info('tool_calls') WHERE name='intent') AS intent_col, " +
        "(SELECT COUNT(*) FROM pragma_table_info('runtime_events') " +
        "WHERE name IN ('envelope_version','event_id','correlation_id','causation_id'," +
-       "'subject_id','session_id','worker_id','root_event_id','parent_event_id'," +
+       "'subject_id','session_id','worker_id','parent_worker_id','root_worker_id'," +
+       "'root_event_id','parent_event_id'," +
        "'state_version','payload_json')) AS runtime_cols, " +
        "(SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' " +
        "AND name IN ('runtime_events_reject_update','runtime_events_reject_delete')) AS runtime_triggers;\"",
@@ -234,7 +235,7 @@ function _isSchemaInitialized() {
     ).trim();
     if (!result) return false;
     const [tbls, intentCol, runtimeCols, runtimeTriggers] = result.split("|");
-    return tbls === "4" && intentCol === "1" && runtimeCols === "11" && runtimeTriggers === "2";
+    return tbls === "4" && intentCol === "1" && runtimeCols === "13" && runtimeTriggers === "2";
   } catch {
     return false;
   }
@@ -354,6 +355,19 @@ function _runDataMigrations(options = {}) {
   if (hasIntentCol === "0") {
     sqliteExecSync("ALTER TABLE tool_calls ADD COLUMN intent TEXT;", 5000);
   }
+
+  for (const column of ["parent_worker_id", "root_worker_id"]) {
+    const hasColumn = sqliteExecSync(
+      `SELECT COUNT(*) FROM pragma_table_info('runtime_events') WHERE name='${column}';`,
+      5000,
+    );
+    if (hasColumn === "0") sqliteExecSync(`ALTER TABLE runtime_events ADD COLUMN ${column} TEXT;`, 5000);
+  }
+  sqliteExecSync(
+    "CREATE INDEX IF NOT EXISTS idx_runtime_events_worker_lineage " +
+    "ON runtime_events(root_worker_id, parent_worker_id, worker_id, id);",
+    5000,
+  );
 
   // Migration: backfill cost for rows where cost=0 but tokens exist.
   // OpenCode never provided msg.cost — all historical rows have cost=0.

@@ -13,6 +13,7 @@ import {
   RUNTIME_EVENT_PAYLOAD_MAX_BYTES,
   RUNTIME_EVENTS_SCHEMA_SQL,
   appendRuntimeEvent,
+  createMergePatch,
   appendStateSnapshot,
   applyMergePatch,
   buildRuntimeEventInsertSql,
@@ -145,18 +146,60 @@ describe("runtime-event envelopes", () => {
       subjectId: "worker:42",
       sessionId: "session:1",
       workerId: "worker:42",
+      parentWorkerId: "worker:parent",
+      rootWorkerId: "worker:root",
       rootEventId: "evt-1",
       parentEventId: "evt-1",
       payload: { result: "success" },
     });
 
-    for (const value of ["evt-2", "corr-1", "evt-1", "worker:42", "session:1"]) {
+    for (const value of ["evt-2", "corr-1", "evt-1", "worker:42", "worker:parent", "worker:root", "session:1"]) {
       assert.match(sql, new RegExp(value));
+    }
+  });
+
+  test("environment lineage is explicit in the event envelope", () => {
+    const previous = {
+      correlation: process.env.AIDEVOPS_CORRELATION_ID,
+      parent: process.env.AIDEVOPS_PARENT_WORKER_ID,
+      root: process.env.AIDEVOPS_ROOT_WORKER_ID,
+      worker: process.env.AIDEVOPS_WORKER_ID,
+    };
+    try {
+      process.env.AIDEVOPS_WORKER_ID = "worker:child";
+      process.env.AIDEVOPS_PARENT_WORKER_ID = "worker:parent";
+      process.env.AIDEVOPS_ROOT_WORKER_ID = "worker:root";
+      process.env.AIDEVOPS_CORRELATION_ID = "correlation:root";
+      const envelope = createRuntimeEventEnvelope({ eventType: "worker.started", subjectId: "worker:child" });
+      assert.equal(envelope.workerId, "worker:child");
+      assert.equal(envelope.parentWorkerId, "worker:parent");
+      assert.equal(envelope.rootWorkerId, "worker:root");
+      assert.equal(envelope.correlationId, "correlation:root");
+    } finally {
+      for (const [name, value] of Object.entries({
+        AIDEVOPS_CORRELATION_ID: previous.correlation,
+        AIDEVOPS_PARENT_WORKER_ID: previous.parent,
+        AIDEVOPS_ROOT_WORKER_ID: previous.root,
+        AIDEVOPS_WORKER_ID: previous.worker,
+      })) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
     }
   });
 });
 
 describe("deterministic state reconstruction", () => {
+  test("builds a bounded RFC 7396 delta", () => {
+    assert.deepEqual(createMergePatch(
+      { keep: true, remove: true, nested: { before: 1 }, list: [1] },
+      { keep: true, nested: { before: 2, after: 3 }, list: [2] },
+    ), {
+      list: [2],
+      nested: { after: 3, before: 2 },
+      remove: null,
+    });
+  });
   test("applies RFC 7396 object deletion and array replacement", () => {
     const result = applyMergePatch(
       { z: 1, nested: { keep: true, remove: true }, list: [1, 2] },

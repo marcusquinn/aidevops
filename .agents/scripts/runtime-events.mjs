@@ -8,7 +8,12 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
+  setDbPath,
   sqliteExec,
   sqliteExecSync,
   sqlEscape,
@@ -24,6 +29,7 @@ const MAX_STRING_LENGTH = 2048;
 const SAFE_ID_PATTERN = /^[A-Za-z0-9._:@#/-]+$/;
 const SECRET_KEY_PATTERN = /^(auth|authorization|cookie|set_cookie|credentials?|password|passwd|secret|token|[a-z0-9]+_token|api_key|client_secret|private_key|database_url|dsn)$/i;
 const PATH_KEY_PATTERN = /(^|_)(cwd|dir|directory|file|path|root|worktree)(_|$)/i;
+const REPOSITORY_KEY_PATTERN = /^(project_name|repo|repository|repo_slug|repository_slug)$/i;
 const CREDENTIAL_PATTERN = /(^|[^A-Za-z0-9_-])(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/g;
 const HOME_PATH_PATTERN = /(?:\/Users\/|\/home\/|[A-Za-z]:\\Users\\)[^\s"',}\]]+/g;
 const PRIVATE_PATH_ID_PATTERN = /^(?:\/Users\/|\/home\/|[A-Za-z]:\\Users\\)/;
@@ -40,6 +46,8 @@ CREATE TABLE IF NOT EXISTS runtime_events (
   subject_id TEXT NOT NULL,
   session_id TEXT,
   worker_id TEXT,
+  parent_worker_id TEXT,
+  root_worker_id TEXT,
   root_event_id TEXT NOT NULL,
   parent_event_id TEXT,
   state_version INTEGER,
@@ -142,9 +150,9 @@ function sanitizeValue(value, context, depth = 0, key = "") {
     context.counters.redactions++;
     return "[redacted]";
   }
-  if (context.redactPaths && PATH_KEY_PATTERN.test(key)) {
+  if (context.redactPaths && (PATH_KEY_PATTERN.test(key) || REPOSITORY_KEY_PATTERN.test(normalizedKey))) {
     context.counters.redactions++;
-    return "[redacted-path]";
+    return PATH_KEY_PATTERN.test(key) ? "[redacted-path]" : "[redacted-repository]";
   }
   if (value === null || typeof value === "boolean" || typeof value === "number") {
     return Number.isFinite(value) || value === null || typeof value === "boolean" ? value : null;
@@ -185,8 +193,8 @@ function sanitizeValue(value, context, depth = 0, key = "") {
 }
 
 /**
- * Redact and bound a payload before persistence.
- * State payloads additionally remove local path fields and home-directory paths.
+ * Redact and bound a payload before persistence. Runtime envelopes remove
+ * repository/path fields and home-directory paths before they reach SQLite.
  */
 export function prepareRuntimePayload(payload, { redactPaths = false } = {}) {
   const counters = { redactions: 0, truncations: 0 };
@@ -225,18 +233,27 @@ function normaliseOccurredAt(value) {
 }
 
 /** Build a validated, redacted runtime-event envelope without writing it. */
-export function createRuntimeEventEnvelope(input, { statePayload = false } = {}) {
+export function createRuntimeEventEnvelope(input, { redactPaths = true } = {}) {
   const eventId = normaliseIdentifier(input?.eventId || randomUUID(), { required: true });
   const sessionId = normaliseIdentifier(input?.sessionId || process.env.AIDEVOPS_SESSION_ID || process.env.OPENCODE_SESSION_ID);
   const workerId = normaliseIdentifier(
     input?.workerId || process.env.AIDEVOPS_WORKER_ID || process.env.WORKER_SESSION_KEY || process.env.WORKER_ISSUE_NUMBER,
   );
-  const correlationId = normaliseIdentifier(input?.correlationId || sessionId || eventId, { required: true });
+  const parentWorkerId = normaliseIdentifier(
+    input?.parentWorkerId || process.env.AIDEVOPS_PARENT_WORKER_ID,
+  );
+  const rootWorkerId = normaliseIdentifier(
+    input?.rootWorkerId || process.env.AIDEVOPS_ROOT_WORKER_ID || workerId,
+  );
+  const correlationId = normaliseIdentifier(
+    input?.correlationId || process.env.AIDEVOPS_CORRELATION_ID || sessionId || eventId,
+    { required: true },
+  );
   const rootEventId = normaliseIdentifier(
     input?.rootEventId || process.env.AIDEVOPS_ROOT_EVENT_ID || eventId,
     { required: true },
   );
-  const payload = prepareRuntimePayload(input?.payload, { redactPaths: statePayload });
+  const payload = prepareRuntimePayload(input?.payload, { redactPaths });
 
   return Object.freeze({
     envelopeVersion: RUNTIME_EVENT_ENVELOPE_VERSION,
@@ -248,6 +265,8 @@ export function createRuntimeEventEnvelope(input, { statePayload = false } = {})
     subjectId: normaliseIdentifier(input?.subjectId, { required: true }),
     sessionId,
     workerId,
+    parentWorkerId,
+    rootWorkerId,
     rootEventId,
     parentEventId: normaliseIdentifier(input?.parentEventId || process.env.AIDEVOPS_PARENT_EVENT_ID),
     payload,
@@ -265,6 +284,8 @@ function runtimeEventValuesSql(envelope, stateVersionSql = "NULL") {
     ${sqlEscape(envelope.subjectId)},
     ${sqlEscape(envelope.sessionId)},
     ${sqlEscape(envelope.workerId)},
+    ${sqlEscape(envelope.parentWorkerId)},
+    ${sqlEscape(envelope.rootWorkerId)},
     ${sqlEscape(envelope.rootEventId)},
     ${sqlEscape(envelope.parentEventId)},
     ${stateVersionSql},
@@ -275,7 +296,8 @@ function runtimeEventValuesSql(envelope, stateVersionSql = "NULL") {
 
 const RUNTIME_EVENT_COLUMNS = `(
   envelope_version, occurred_at, event_id, event_type, correlation_id,
-  causation_id, subject_id, session_id, worker_id, root_event_id,
+  causation_id, subject_id, session_id, worker_id, parent_worker_id,
+  root_worker_id, root_event_id,
   parent_event_id, state_version, payload_json, payload_bytes, redaction_count
 )`;
 
@@ -305,6 +327,17 @@ export function appendRuntimeEvent(input, { execute = sqliteExec } = {}) {
   }
 }
 
+/** Append ordinary evidence synchronously for short-lived CLI callers. */
+export function appendRuntimeEventSync(input, { executeSync = sqliteExecSync } = {}) {
+  try {
+    const built = buildRuntimeEventInsertSql(input);
+    if (executeSync(built.sql, 15000) === null) return null;
+    return built.envelope;
+  } catch {
+    return null;
+  }
+}
+
 /** Build a BEGIN IMMEDIATE transaction that atomically allocates state_version. */
 export function buildStateEventInsertSql(input, eventType) {
   if (eventType !== "state.snapshot" && eventType !== "state.delta") {
@@ -315,7 +348,7 @@ export function buildStateEventInsertSql(input, eventType) {
     ...input,
     eventType,
     payload: { [payloadKey]: input?.[payloadKey] },
-  }, { statePayload: true });
+  }, { redactPaths: true });
   const nextVersionSql = `(
     SELECT COALESCE(MAX(state_version), 0) + 1
     FROM runtime_events
@@ -428,4 +461,230 @@ export function reconstructRuntimeState(rows, { subjectId, targetVersion = Numbe
   }
 
   return Object.freeze({ state: canonicalClone(state), stateVersion: version });
+}
+
+/** Build the smallest RFC 7396 patch that transforms current into next. */
+export function createMergePatch(current, next) {
+  if (JSON.stringify(canonicalClone(current)) === JSON.stringify(canonicalClone(next))) return {};
+  if (!isJsonObject(current) || !isJsonObject(next)) return canonicalClone(next);
+  const patch = {};
+  const keys = new Set([...Object.keys(current), ...Object.keys(next)]);
+  for (const key of [...keys].sort()) {
+    if (!Object.hasOwn(next, key)) {
+      patch[key] = null;
+    } else if (!Object.hasOwn(current, key)) {
+      patch[key] = canonicalClone(next[key]);
+    } else {
+      const childPatch = createMergePatch(current[key], next[key]);
+      if (!isJsonObject(childPatch) || Object.keys(childPatch).length > 0) patch[key] = childPatch;
+    }
+  }
+  return patch;
+}
+
+export function resolveRuntimeEventsDbPath(env = process.env) {
+  return env.AIDEVOPS_OBS_DB_OVERRIDE || env.AIDEVOPS_RUNTIME_EVENTS_DB ||
+    join(env.HOME || homedir(), ".aidevops", ".agent-workspace", "observability", "llm-requests.db");
+}
+
+function queryJsonRows(sql, { executeSync = sqliteExecSync } = {}) {
+  const raw = executeSync(`.mode json\n${sql}`, 15000);
+  if (raw === null || raw === "") return [];
+  const rows = JSON.parse(raw);
+  return Array.isArray(rows) ? rows : [];
+}
+
+/** Initialise the runtime-event table and migrate the two worker-lineage columns. */
+export function initialiseRuntimeEventStore(dbPath = resolveRuntimeEventsDbPath()) {
+  try {
+    mkdirSync(dirname(dbPath), { recursive: true });
+    setDbPath(dbPath);
+    if (sqliteExecSync(RUNTIME_EVENTS_SCHEMA_SQL, 15000) === null) return false;
+    const columns = new Set(queryJsonRows("PRAGMA table_info('runtime_events');").map((row) => row.name));
+    for (const column of ["parent_worker_id", "root_worker_id"]) {
+      if (!columns.has(column) && sqliteExecSync(`ALTER TABLE runtime_events ADD COLUMN ${column} TEXT;`, 15000) === null) {
+        return false;
+      }
+    }
+    sqliteExecSync(
+      "CREATE INDEX IF NOT EXISTS idx_runtime_events_worker_lineage " +
+      "ON runtime_events(root_worker_id, parent_worker_id, worker_id, id);",
+      15000,
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function queryRuntimeEvents(filters = {}, options = {}) {
+  const clauses = [];
+  if (filters.subjectId) clauses.push(`subject_id = ${sqlEscape(normaliseIdentifier(filters.subjectId, { required: true }))}`);
+  if (filters.workerId) clauses.push(`worker_id = ${sqlEscape(normaliseIdentifier(filters.workerId, { required: true }))}`);
+  if (filters.correlationId) clauses.push(`correlation_id = ${sqlEscape(normaliseIdentifier(filters.correlationId, { required: true }))}`);
+  if (filters.eventType) clauses.push(`event_type = ${sqlEscape(normaliseEventType(filters.eventType))}`);
+  const limit = Number.parseInt(String(filters.limit || 100), 10);
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 1000) throw new TypeError("query limit must be between 1 and 1000");
+  const where = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
+  return queryJsonRows(`
+    SELECT id, envelope_version, occurred_at, event_id, event_type,
+      correlation_id, causation_id, subject_id, session_id, worker_id,
+      parent_worker_id, root_worker_id, root_event_id, parent_event_id,
+      state_version, payload_json, payload_bytes, redaction_count
+    FROM runtime_events ${where} ORDER BY id DESC LIMIT ${limit};
+  `, options);
+}
+
+export function queryWorkerLineage(workerId, { limit = 250 } = {}) {
+  const normalized = normaliseIdentifier(workerId, { required: true });
+  const boundedLimit = Number.parseInt(String(limit), 10);
+  if (!Number.isSafeInteger(boundedLimit) || boundedLimit < 1 || boundedLimit > 1000) {
+    throw new TypeError("lineage limit must be between 1 and 1000");
+  }
+  return queryJsonRows(`
+    SELECT id, occurred_at, event_id, event_type, correlation_id, subject_id,
+      worker_id, parent_worker_id, root_worker_id, state_version, payload_json
+    FROM runtime_events
+    WHERE worker_id = ${sqlEscape(normalized)}
+       OR parent_worker_id = ${sqlEscape(normalized)}
+       OR root_worker_id = ${sqlEscape(normalized)}
+    ORDER BY id ASC LIMIT ${boundedLimit};
+  `);
+}
+
+function currentStateRows(subjectId) {
+  return queryJsonRows(`
+    SELECT subject_id, event_type, state_version, payload_json
+    FROM runtime_events
+    WHERE subject_id = ${sqlEscape(subjectId)} AND state_version IS NOT NULL
+    ORDER BY state_version ASC;
+  `);
+}
+
+export function appendProjectedState(input, mode = "auto") {
+  const subjectId = normaliseIdentifier(input?.subjectId, { required: true });
+  const nextState = input?.state;
+  if (mode === "snapshot") return appendStateSnapshot({ ...input, subjectId, state: nextState });
+  if (mode === "delta") return appendStateDelta({ ...input, subjectId, patch: nextState });
+  if (mode !== "auto") throw new TypeError("state mode must be snapshot, delta, or auto");
+  const rows = currentStateRows(subjectId);
+  if (rows.length === 0) return appendStateSnapshot({ ...input, subjectId, state: nextState });
+  const current = reconstructRuntimeState(rows, { subjectId });
+  return appendStateDelta({ ...input, subjectId, patch: createMergePatch(current.state, nextState) });
+}
+
+export function verifyRuntimeEventStore() {
+  const quickCheck = sqliteExecSync("PRAGMA quick_check;", 15000);
+  const columns = new Set(queryJsonRows("PRAGMA table_info('runtime_events');").map((row) => row.name));
+  const requiredColumns = [
+    "event_id", "event_type", "correlation_id", "subject_id", "worker_id",
+    "parent_worker_id", "root_worker_id", "state_version", "payload_json",
+  ];
+  const missingColumns = requiredColumns.filter((column) => !columns.has(column));
+  const triggerCount = Number(sqliteExecSync(`
+    SELECT COUNT(*) FROM sqlite_master WHERE type = 'trigger'
+    AND name IN ('runtime_events_reject_update', 'runtime_events_reject_delete');
+  `, 15000) || 0);
+  const invalidPayloadRows = Number(sqliteExecSync(`
+    SELECT COUNT(*) FROM runtime_events
+    WHERE payload_bytes != length(CAST(payload_json AS BLOB)) OR json_valid(payload_json) = 0;
+  `, 15000) || 0);
+  const stateRows = queryJsonRows(`
+    SELECT subject_id, event_type, state_version, payload_json
+    FROM runtime_events WHERE state_version IS NOT NULL
+    ORDER BY subject_id, state_version;
+  `);
+  const invalidStateSubjects = [];
+  for (const subjectId of [...new Set(stateRows.map((row) => row.subject_id))]) {
+    try {
+      reconstructRuntimeState(stateRows, { subjectId });
+    } catch {
+      invalidStateSubjects.push(subjectId);
+    }
+  }
+  const result = {
+    invalidPayloadRows,
+    invalidStateSubjects,
+    missingColumns,
+    ok: quickCheck === "ok" && missingColumns.length === 0 && triggerCount === 2 &&
+      invalidPayloadRows === 0 && invalidStateSubjects.length === 0,
+    quickCheck,
+    triggerCount,
+  };
+  return Object.freeze(result);
+}
+
+function optionValue(args, name, fallback = "") {
+  const index = args.indexOf(name);
+  return index >= 0 && index + 1 < args.length ? args[index + 1] : fallback;
+}
+
+function readJsonInput(value) {
+  const text = !value || value === "-" ? readFileSync(0, "utf8") : value;
+  return JSON.parse(text);
+}
+
+function cliSubject(args) {
+  return optionValue(args, "--subject") || process.env.AIDEVOPS_WORKER_ID || process.env.AIDEVOPS_SESSION_ID;
+}
+
+function printJson(value) {
+  process.stdout.write(`${JSON.stringify(value)}\n`);
+}
+
+async function runCli(args) {
+  const command = args[0] || "help";
+  if (command === "help" || command === "--help" || command === "-h") {
+    process.stdout.write("Usage: runtime-events.mjs emit|state|query|lineage|verify [options]\n");
+    return 0;
+  }
+  if (!initialiseRuntimeEventStore()) return command === "emit" || command === "state" ? 0 : 1;
+  if (command === "emit") {
+    const eventType = args[1];
+    const status = optionValue(args, "--status");
+    const payloadText = optionValue(args, "--payload");
+    let payload = payloadText ? JSON.parse(payloadText) : {};
+    if (status) payload = { ...payload, status };
+    const envelope = appendRuntimeEventSync({ eventType, subjectId: cliSubject(args), payload });
+    if (envelope) printJson(envelope);
+    return 0;
+  }
+  if (command === "state") {
+    const mode = args[1] || "auto";
+    const subjectId = args[2];
+    const state = readJsonInput(args[3]);
+    const envelope = appendProjectedState({ subjectId, state }, mode);
+    if (envelope) printJson(envelope);
+    return 0;
+  }
+  if (command === "query") {
+    printJson(queryRuntimeEvents({
+      correlationId: optionValue(args, "--correlation"),
+      eventType: optionValue(args, "--type"),
+      limit: optionValue(args, "--limit", "100"),
+      subjectId: optionValue(args, "--subject"),
+      workerId: optionValue(args, "--worker"),
+    }));
+    return 0;
+  }
+  if (command === "lineage") {
+    printJson(queryWorkerLineage(args[1], { limit: optionValue(args, "--limit", "250") }));
+    return 0;
+  }
+  if (command === "verify") {
+    const result = verifyRuntimeEventStore();
+    printJson(result);
+    return result.ok ? 0 : 1;
+  }
+  throw new TypeError(`unknown runtime-events command: ${command}`);
+}
+
+if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) {
+  runCli(process.argv.slice(2)).then(
+    (code) => process.exitCode = code,
+    (error) => {
+      if (process.argv[2] !== "emit" && process.argv[2] !== "state") console.error(error.message);
+      process.exitCode = process.argv[2] === "emit" || process.argv[2] === "state" ? 0 : 1;
+    },
+  );
 }

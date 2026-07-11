@@ -108,6 +108,33 @@ test("headless OpenCode shell stamps worker origin", async () => {
   assert.equal(output.env.AIDEVOPS_SESSION_ORIGIN, "worker");
 });
 
+test("headless shell preserves explicit worker lineage", async () => {
+  const keys = [
+    "AIDEVOPS_WORKER_ID",
+    "AIDEVOPS_PARENT_WORKER_ID",
+    "AIDEVOPS_ROOT_WORKER_ID",
+    "AIDEVOPS_CORRELATION_ID",
+  ];
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  try {
+    process.env.AIDEVOPS_WORKER_ID = "worker:child";
+    process.env.AIDEVOPS_PARENT_WORKER_ID = "worker:parent";
+    process.env.AIDEVOPS_ROOT_WORKER_ID = "worker:root";
+    process.env.AIDEVOPS_CORRELATION_ID = "correlation:root";
+    const output = { env: { PATH: "/usr/bin:/bin", OPENCODE_HEADLESS: "true" } };
+    await makeHook()({ sessionID: "worker-session" }, output);
+    assert.equal(output.env.AIDEVOPS_WORKER_ID, "worker:child");
+    assert.equal(output.env.AIDEVOPS_PARENT_WORKER_ID, "worker:parent");
+    assert.equal(output.env.AIDEVOPS_ROOT_WORKER_ID, "worker:root");
+    assert.equal(output.env.AIDEVOPS_CORRELATION_ID, "correlation:root");
+  } finally {
+    for (const key of keys) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+  }
+});
+
 test("shell env version prefers deployed agents VERSION over legacy version", async () => {
   await withTempAgentsDir(async (agentsDir) => {
     writeFileSync(join(agentsDir, "VERSION"), "3.20.102\n");

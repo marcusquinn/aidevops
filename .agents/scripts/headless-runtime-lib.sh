@@ -459,6 +459,8 @@ append_runtime_metric() {
 		PROVIDER_STATUS="$provider_status" RUNTIME_ERROR_TYPE="$runtime_error_type" \
 		CLASSIFICATION_SOURCE="$classification_source" CLASSIFICATION_PATTERN="$classification_pattern" \
 		LAUNCH_FAILURE_CAUSE="$launch_failure_cause" KILL_REASON="$kill_reason" NEXT_ACTION="$next_action" \
+		WORKER_ID="${AIDEVOPS_WORKER_ID:-}" PARENT_WORKER_ID="${AIDEVOPS_PARENT_WORKER_ID:-}" \
+		ROOT_WORKER_ID="${AIDEVOPS_ROOT_WORKER_ID:-}" CORRELATION_ID="${AIDEVOPS_CORRELATION_ID:-}" \
 		METRICS_PATH="$METRICS_FILE" python3 - <<'PY' >/dev/null 2>&1 || true
 import json
 import os
@@ -490,6 +492,10 @@ optional_fields = {
     "launch_failure_cause": os.environ.get("LAUNCH_FAILURE_CAUSE", ""),
     "kill_reason": os.environ.get("KILL_REASON", ""),
     "next_action": os.environ.get("NEXT_ACTION", ""),
+    "worker_id": os.environ.get("WORKER_ID", ""),
+    "parent_worker_id": os.environ.get("PARENT_WORKER_ID", ""),
+    "root_worker_id": os.environ.get("ROOT_WORKER_ID", ""),
+    "correlation_id": os.environ.get("CORRELATION_ID", ""),
 }
 for key, value in optional_fields.items():
     if value:

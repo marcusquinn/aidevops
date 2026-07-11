@@ -1788,6 +1788,7 @@ cmd_run() {
 	fi
 
 	if [[ "$role" == "worker" ]]; then
+		_ensure_worker_lineage "$session_key"
 		# GH#23520: publish canonical worker-origin markers before canary,
 		# sandbox passthrough, and downstream GitHub/signature helpers run.
 		# The sandbox allowlist already forwards AIDEVOPS_*; legacy generic

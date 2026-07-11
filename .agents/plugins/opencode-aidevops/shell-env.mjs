@@ -70,6 +70,13 @@ const HEADLESS_ENV_VARS = [
   "GITHUB_ACTIONS",
 ];
 
+const WORKER_LINEAGE_ENV_VARS = [
+  "AIDEVOPS_WORKER_ID",
+  "AIDEVOPS_PARENT_WORKER_ID",
+  "AIDEVOPS_ROOT_WORKER_ID",
+  "AIDEVOPS_CORRELATION_ID",
+];
+
 /**
  * @param {string | undefined} value
  * @returns {boolean}
@@ -116,6 +123,9 @@ export function createShellEnvHook(deps) {
     output.env.AIDEVOPS_AGENTS_DIR = agentsDir;
     output.env.AIDEVOPS_WORKSPACE_DIR = workspaceDir;
     output.env.AIDEVOPS_SESSION_ORIGIN = shellSessionOrigin(output.env);
+    for (const key of WORKER_LINEAGE_ENV_VARS) {
+      if (!output.env[key] && process.env[key]) output.env[key] = process.env[key];
+    }
 
     // Set aidevops version if available. Prefer the deployed framework version
     // source; ~/.aidevops/version is a legacy/stale compatibility fallback.

@@ -1229,6 +1229,13 @@ _cmd_run_finish() {
 	else
 		_hrw_finish_success_run "$session_key" "$work_dir"
 	fi
+	local runtime_event_type="worker.completed"
+	if [[ "$ledger_status" == "$_HRW_STATUS_FAIL" ]]; then
+		runtime_event_type="worker.failed"
+	elif [[ "$ledger_status" == "rate_limit_fast" ]]; then
+		runtime_event_type="worker.deferred"
+	fi
+	_emit_worker_runtime_event "$runtime_event_type" "${_run_result_label:-$ledger_status}"
 
 	_hrw_finish_cleanup "$session_key" "$ledger_status" "$work_dir"
 	return 0
