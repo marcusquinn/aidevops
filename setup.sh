@@ -68,7 +68,8 @@ REPO_URL="https://github.com/marcusquinn/aidevops.git"
 # INSTALL_DIR: resolve from the directory where setup.sh is executed (supports worktrees)
 # For bootstrap (curl install), this will be /dev/fd/NN and trigger re-exec after clone
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-export REPO_URL INSTALL_DIR
+AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}"
+export REPO_URL INSTALL_DIR AGENTS_DIR
 
 # Source modular setup functions (t316.2)
 # These modules are sourced only when setup.sh is run from the repo directory

@@ -17,6 +17,20 @@ print_warning() { return 0; }
 # shellcheck source=../setup/modules/config.sh
 source "$CONFIG_LIB"
 
+# Exercise setup.sh itself with its default environment, rather than only
+# injecting globals before sourcing the config module. The trace proves the
+# default agents root exists and is exported before setup modules are loaded.
+setup_home="$TEST_DIR/setup-home"
+mkdir -p "$setup_home"
+setup_trace=$(env -u AGENTS_DIR -u AIDEVOPS_AGENTS_DIR HOME="$setup_home" \
+	bash -x "$REPO_ROOT/setup.sh" --help 2>&1)
+if [[ "$setup_trace" != *"AGENTS_DIR=$setup_home/.aidevops/agents"* ||
+	"$setup_trace" != *"export REPO_URL INSTALL_DIR AGENTS_DIR"* ]]; then
+	printf 'FAIL: setup.sh did not define and export the default AGENTS_DIR\n' >&2
+	exit 1
+fi
+printf 'PASS: setup.sh defines and exports its default AGENTS_DIR before module use\n'
+
 source_cli="$TEST_DIR/source-cli"
 target_cli="$TEST_DIR/bin/aidevops"
 old_target="$TEST_DIR/old-target"

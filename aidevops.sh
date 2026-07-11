@@ -54,8 +54,18 @@ if [[ -n "$_AIDEVOPS_SOURCE_DIR" && -L "$_AIDEVOPS_SOURCE_PATH" ]]; then
 		[[ -n "$_AIDEVOPS_LINK_DIR" ]] && _AIDEVOPS_SOURCE_DIR="$_AIDEVOPS_LINK_DIR"
 	fi
 fi
+_AIDEVOPS_CLI_ROOT="$INSTALL_DIR"
+_AIDEVOPS_CLI_MODULES_SUBDIR=".agents/scripts/aidevops-cli"
 if [[ -n "$_AIDEVOPS_SOURCE_DIR" && -f "$_AIDEVOPS_SOURCE_DIR/.agents/scripts/aidevops-cli/aidevops-repos-lib.sh" ]]; then
 	INSTALL_DIR="$_AIDEVOPS_SOURCE_DIR"
+	_AIDEVOPS_CLI_ROOT="$_AIDEVOPS_SOURCE_DIR"
+elif [[ -n "$_AIDEVOPS_SOURCE_DIR" && -f "$_AIDEVOPS_SOURCE_DIR/scripts/aidevops-cli/aidevops-repos-lib.sh" ]]; then
+	# setup.sh deploys the orchestrator at the agents root and its modules under
+	# scripts/. Keep repository operations pointed at INSTALL_DIR, but load the
+	# CLI and VERSION from this coherent atomic deployment instead of a stale
+	# canonical checkout.
+	_AIDEVOPS_CLI_ROOT="$_AIDEVOPS_SOURCE_DIR"
+	_AIDEVOPS_CLI_MODULES_SUBDIR="scripts/aidevops-cli"
 fi
 unset _AIDEVOPS_SOURCE_PATH _AIDEVOPS_SOURCE_DIR _AIDEVOPS_LINK_TARGET _AIDEVOPS_LINK_DIR
 AGENTS_DIR="$_AIDEVOPS_REAL_HOME/.aidevops/agents"
@@ -63,7 +73,7 @@ CONFIG_DIR="$_AIDEVOPS_REAL_HOME/.config/aidevops"
 REPOS_FILE="$CONFIG_DIR/repos.json"
 # shellcheck disable=SC2034  # Used in fresh install fallback
 REPO_URL="https://github.com/marcusquinn/aidevops.git"
-VERSION_FILE="$INSTALL_DIR/VERSION"
+VERSION_FILE="$_AIDEVOPS_CLI_ROOT/VERSION"
 
 # Portable sed in-place edit (macOS BSD sed vs GNU sed)
 sed_inplace() { if [[ "$(uname)" == "Darwin" ]]; then sed -i '' "$@"; else sed -i "$@"; fi; }
@@ -181,12 +191,11 @@ ensure_trailing_newline() {
 	return 0
 }
 
-# Source CLI implementation modules from the namespaced module tree.
-# INSTALL_DIR is the canonical location of aidevops.sh (set above). Using
-# INSTALL_DIR rather than BASH_SOURCE[0] preserves installed symlink support:
-# /usr/local/bin/aidevops → $INSTALL_DIR/aidevops.sh would otherwise resolve
-# BASH_SOURCE[0] to /usr/local/bin instead of the checkout/deployed tree.
-AIDEVOPS_CLI_MODULES_DIR="${INSTALL_DIR}/.agents/scripts/aidevops-cli"
+# Source CLI implementation modules from the coherent canonical or deployed
+# tree selected above. The launcher executes the deployed orchestrator as a
+# regular file, while local development and package snapshots use .agents/.
+AIDEVOPS_CLI_MODULES_DIR="${_AIDEVOPS_CLI_ROOT}/${_AIDEVOPS_CLI_MODULES_SUBDIR}"
+unset _AIDEVOPS_CLI_ROOT _AIDEVOPS_CLI_MODULES_SUBDIR
 # shellcheck source=.agents/scripts/aidevops-cli/aidevops-repos-lib.sh
 # shellcheck disable=SC1091  # module path resolved at runtime via $INSTALL_DIR
 source "${AIDEVOPS_CLI_MODULES_DIR}/aidevops-repos-lib.sh"
