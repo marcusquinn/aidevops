@@ -51,6 +51,9 @@ fi
 if [[ "${FAKE_SILENT_FAILURE:-0}" == "1" ]]; then
 	exit 2
 fi
+if [[ "${FAKE_SILENT_LINT_FAILURE:-0}" == "1" ]]; then
+	exit 1
+fi
 exit 0
 FAKE
 	chmod +x "${bin_dir}/shellcheck"
@@ -108,6 +111,12 @@ main() {
 	failure_status=0
 	run_shellcheck >/dev/null 2>&1 || failure_status=$?
 	assert_equal 1 "$failure_status" "silent ShellCheck infrastructure failures fail closed"
+
+	unset FAKE_SILENT_FAILURE
+	export FAKE_SILENT_LINT_FAILURE=1
+	failure_status=0
+	run_shellcheck >/dev/null 2>&1 || failure_status=$?
+	assert_equal 1 "$failure_status" "silent ShellCheck lint failures fail closed"
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

@@ -239,7 +239,6 @@ test_ownerless_lock_is_recovered() {
 	export LINTERS_LOCAL_CACHE_ENABLED="false"
 	export LINTERS_LOCAL_CACHE_DIR_OVERRIDE="${tmp_dir}/cache"
 	export LINTERS_LOCAL_GATE_LOCK_TIMEOUT_SECONDS="5"
-	export LINTERS_LOCAL_OWNERLESS_LOCK_GRACE_SECONDS="1"
 	mkdir -p "${tmp_dir}/cache/broad-gate.lock"
 
 	_linters_local_run_cached_gate "unit-ownerless" "cache_counter_gate" >/dev/null 2>&1 || ret=$?
@@ -247,6 +246,28 @@ test_ownerless_lock_is_recovered() {
 		print_result "linter cache: ownerless broad-gate locks recover" 0
 	else
 		print_result "linter cache: ownerless broad-gate locks recover" 1 "exit=$ret"
+	fi
+	rm -rf "$tmp_dir"
+	return 0
+}
+
+test_malformed_lock_is_recovered() {
+	source_gate_helpers
+	local tmp_dir counter_file ret=0
+	tmp_dir=$(mktemp -d)
+	counter_file="${tmp_dir}/counter"
+	export LINTERS_LOCAL_TEST_COUNTER_FILE="$counter_file"
+	export LINTERS_LOCAL_CACHE_ENABLED="false"
+	export LINTERS_LOCAL_CACHE_DIR_OVERRIDE="${tmp_dir}/cache"
+	export LINTERS_LOCAL_GATE_LOCK_TIMEOUT_SECONDS="5"
+	mkdir -p "${tmp_dir}/cache"
+	printf 'invalid\n' >"${tmp_dir}/cache/broad-gate.lock"
+
+	_linters_local_run_cached_gate "unit-malformed" "cache_counter_gate" >/dev/null 2>&1 || ret=$?
+	if [[ "$ret" -eq 0 && "$(cat "$counter_file")" -eq 1 && ! -e "${tmp_dir}/cache/broad-gate.lock" ]]; then
+		print_result "linter cache: malformed broad-gate locks recover" 0
+	else
+		print_result "linter cache: malformed broad-gate locks recover" 1 "exit=$ret"
 	fi
 	rm -rf "$tmp_dir"
 	return 0
@@ -261,6 +282,7 @@ main() {
 	test_common_git_dir_hosts_cross_worktree_cache
 	test_concurrent_gate_reuses_first_result
 	test_ownerless_lock_is_recovered
+	test_malformed_lock_is_recovered
 
 	printf '\n'
 	if [ "$TESTS_FAILED" -eq 0 ]; then

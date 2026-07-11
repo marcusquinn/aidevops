@@ -92,49 +92,85 @@ _linters_local_cache_dir() {
 	return 0
 }
 
+LINTERS_LOCAL_BROAD_GATE_LOCK_TOKEN=""
+
+_linters_local_reclaim_stale_lock() {
+	local lock_path="$1"
+	local observed_token="$2"
+	local reclaim_dir="${lock_path}.reclaim"
+	mkdir "$reclaim_dir" 2>/dev/null || return 0
+	if [[ -d "$lock_path" ]]; then
+		rm -f "${lock_path}/owner"
+		rmdir "$lock_path" 2>/dev/null || true
+	elif [[ -f "$lock_path" ]] && [[ "$(cat "$lock_path" 2>/dev/null || true)" == "$observed_token" ]]; then
+		rm -f "$lock_path"
+	fi
+	rmdir "$reclaim_dir" 2>/dev/null || true
+	return 0
+}
+
+_linters_local_try_create_lock() {
+	local cache_dir="$1"
+	local lock_path="$2"
+	local candidate token
+	[[ ! -e "${lock_path}.reclaim" ]] || return 1
+	[[ ! -e "$lock_path" ]] || return 1
+	candidate=$(mktemp "${cache_dir}/.broad-gate-owner.XXXXXX") || return 1
+	token="$$:$(date +%s):${RANDOM}"
+	if ! printf '%s\n' "$token" >"$candidate"; then
+		rm -f "$candidate"
+		return 1
+	fi
+	if ln "$candidate" "$lock_path" 2>/dev/null; then
+		LINTERS_LOCAL_BROAD_GATE_LOCK_TOKEN="$token"
+		rm -f "$candidate"
+		return 0
+	fi
+	rm -f "$candidate"
+	return 1
+}
+
 _linters_local_acquire_broad_gate_lock() {
 	local cache_dir="$1"
 	local gate_name="$2"
-	local lock_dir="${cache_dir}/broad-gate.lock"
+	local lock_path="${cache_dir}/broad-gate.lock"
 	local timeout_seconds="${LINTERS_LOCAL_GATE_LOCK_TIMEOUT_SECONDS:-${LINTERS_LOCAL_BROAD_GATE_TIMEOUT_SECONDS:-90}}"
-	local ownerless_grace="${LINTERS_LOCAL_OWNERLESS_LOCK_GRACE_SECONDS:-2}"
-	local started_at now owner_pid="" ownerless_since=0
+	local started_at now owner_token="" owner_pid=""
 	[[ "$timeout_seconds" =~ ^[0-9]+$ ]] || timeout_seconds=90
-	[[ "$ownerless_grace" =~ ^[0-9]+$ ]] || ownerless_grace=2
 	started_at=$(date +%s)
 
-	while ! mkdir "$lock_dir" 2>/dev/null; do
-		now=$(date +%s)
-		if [[ -f "${lock_dir}/owner" ]]; then
-			ownerless_since=0
-			owner_pid=$(cat "${lock_dir}/owner" 2>/dev/null || true)
-			if [[ "$owner_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
-				rm -f "${lock_dir}/owner"
-				rmdir "$lock_dir" 2>/dev/null || true
-				continue
+	while ! _linters_local_try_create_lock "$cache_dir" "$lock_path"; do
+		if [[ -d "$lock_path" ]]; then
+			owner_token=$(cat "${lock_path}/owner" 2>/dev/null || true)
+			if [[ ! "$owner_token" =~ ^[0-9]+$ ]] || ! kill -0 "$owner_token" 2>/dev/null; then
+				_linters_local_reclaim_stale_lock "$lock_path" ""
 			fi
-		elif [[ "$ownerless_since" -eq 0 ]]; then
-			ownerless_since="$now"
-		elif [[ $((now - ownerless_since)) -ge "$ownerless_grace" ]]; then
-			rmdir "$lock_dir" 2>/dev/null || true
-			continue
+		elif [[ -f "$lock_path" ]]; then
+			owner_token=$(cat "$lock_path" 2>/dev/null || true)
+			owner_pid=${owner_token%%:*}
+			if [[ ! "$owner_token" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] || ! kill -0 "$owner_pid" 2>/dev/null; then
+				_linters_local_reclaim_stale_lock "$lock_path" "$owner_token"
+			fi
 		fi
+		now=$(date +%s)
 		if [[ $((now - started_at)) -ge "$timeout_seconds" ]]; then
 			print_warning "${gate_name}: broad-gate slot unavailable after ${timeout_seconds}s"
 			return 1
 		fi
 		sleep 1
 	done
-
-	printf '%s\n' "$$" >"${lock_dir}/owner"
 	return 0
 }
 
 _linters_local_release_broad_gate_lock() {
 	local cache_dir="$1"
-	local lock_dir="${cache_dir}/broad-gate.lock"
-	rm -f "${lock_dir}/owner"
-	rmdir "$lock_dir" 2>/dev/null || true
+	local lock_path="${cache_dir}/broad-gate.lock"
+	local current_token=""
+	current_token=$(cat "$lock_path" 2>/dev/null || true)
+	if [[ -n "$LINTERS_LOCAL_BROAD_GATE_LOCK_TOKEN" && "$current_token" == "$LINTERS_LOCAL_BROAD_GATE_LOCK_TOKEN" ]]; then
+		rm -f "$lock_path"
+	fi
+	LINTERS_LOCAL_BROAD_GATE_LOCK_TOKEN=""
 	return 0
 }
 
