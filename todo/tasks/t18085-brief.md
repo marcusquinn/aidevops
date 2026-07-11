@@ -25,7 +25,7 @@ Deliver one runtime-neutral safety and evidence layer that extends existing aide
 
 1. one declarative safety-floor decision API consumed by runtime adapters;
 2. commit-pinned, path-contained, explicitly hook-authorized plugin deployment;
-3. enforced shell-command network policy using the existing domain tiers;
+3. enforced domain policy for recognized direct network clients using the existing tiers;
 4. append-only lifecycle evidence in the existing observability database;
 5. bounded world-state snapshots/deltas, causal IDs, and worker execution lineage.
 
@@ -75,7 +75,7 @@ Current safety decisions are fragmented across runtime-specific hooks, plugin up
 
 1. Define a single safety-floor decision envelope (`allow`, `prompt`, `forbid`, reason, rule ID), with config fixtures validated before use. Keep caller authorization such as GUI/SimpleX approvals separate.
 2. Route Claude, OpenCode, and sandbox shell-command checks through the shared evaluator; remove migrated duplicate destructive-command lists while retaining Edit/Write worktree checks.
-3. Move command-domain extraction and DNS-exfiltration classification into `network-tier-helper.sh`; make Tier 5 and malformed required worker policy block before command execution.
+3. Move direct-client destination and DNS-exfiltration classification into `network-tier-helper.sh`; make Tier 5 and malformed required worker policy block before execution, while reporting arbitrary interpreter/custom-binary traffic as outside command-policy containment.
 4. Stage plugin add/update candidates, resolve a commit, validate manifest/member path containment, require explicit hook authorization, and atomically activate only verified content. Persist trust in the existing plugin registry.
 5. Extend the existing observability SQLite schema with a versioned runtime-event envelope, correlation/causation and worker parent/root IDs, bounded redacted payloads, and snapshot/delta events.
 6. Emit lifecycle and lineage evidence from existing worker paths while retaining current logs/metrics as compatibility projections. Add bounded pulse state snapshots without copying mailbox bodies, checkpoint prose, paths, or secrets.
@@ -97,7 +97,7 @@ shellcheck <changed-shell-files>
 
 - [ ] Claude, OpenCode, and sandbox adapters return identical shared safety-floor decisions for fixture commands.
 - [ ] Dynamic canonical-Git protection remains delegated to the existing canonical guard rather than copied.
-- [ ] Tier 5 and DNS-exfiltration shell commands are denied; required worker policy cannot silently degrade.
+- [ ] Recognized direct clients deny Tier 5 and DNS-exfiltration targets; required worker policy cannot silently degrade or claim whole-process containment.
 - [ ] Plugin add/update/setup deploy the recorded commit atomically, reject path traversal/mismatch, and never run hooks without explicit authorization.
 - [ ] Runtime events use the existing observability DB and carry bounded redacted causal/lineage fields.
 - [ ] State snapshots/deltas reconstruct deterministically and do not contain private paths, mailbox/checkpoint prose, issue bodies, or secrets.
@@ -110,5 +110,5 @@ shellcheck <changed-shell-files>
 - This work learns from public architectural patterns but must not reproduce Codex-specific terminology, APIs, workflows, or proprietary assumptions.
 - Consolidate or replace deterministic mechanisms; do not layer conflicting guidance, policy engines, databases, or orchestration processes.
 - Preserve intelligence-over-determinism: policies enforce safety floors and provenance, while models continue prioritization, triage, decomposition, and trade-offs.
-- Network v1 covers shell-command enforcement. Whole-process proxy/firewall containment remains out of scope unless a portable enforcing backend already exists.
+- Network v1 covers recognized direct-client command enforcement. Arbitrary interpreter scripts and custom binaries remain outside command-level containment and require a portable proxy/container/firewall backend.
 - OTEL remains an optional projection; SQLite is local evidence, not an operational task-state authority.

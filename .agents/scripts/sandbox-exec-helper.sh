@@ -8,9 +8,11 @@
 # temp directory isolation, optional network restriction, and network tiering.
 # Inspired by OpenFang's WASM sandbox — adapted for shell-native use.
 #
-# Network tiering (t1412.3): worker commands have target domains classified
-# into tiers (1-5). Tier 5 and DNS-exfiltration commands are blocked before
-# execution. Tier 4 domains are allowed but flagged for review.
+# Network tiering (t1412.3): recognized direct network clients have target
+# domains classified into tiers (1-5). Tier 5 and direct DNS-exfiltration
+# commands are blocked before execution. Tier 4 domains are allowed but flagged.
+# Arbitrary interpreter scripts/custom binaries require a lower-layer egress
+# backend; command classification is not whole-process network containment.
 # See network-tier-helper.sh for the full tier model.
 #
 # Usage:
@@ -1308,7 +1310,8 @@ Security model:
   - Configurable timeout with hard kill
   - Secret-output command guard blocks likely credential leakage patterns
   - Optional network blocking (macOS seatbelt)
-  - Network command policy blocks Tier 5 and DNS-exfiltration commands
+  - Recognized direct network clients block Tier 5 and DNS-exfiltration targets
+  - Interpreter/custom-binary traffic requires lower-layer egress containment
   - All executions logged to JSONL audit trail (jq-safe JSON, injection-proof)
   - Output capped at 10MB per stream
 HELP

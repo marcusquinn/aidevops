@@ -44,7 +44,7 @@ tools:
 3. **Credentials**: Never pass secrets in prompts — use environment variables. Delete sessions after use.
 4. **Scoped tokens** (t1412.2): Workers get minimal-permission GitHub tokens (`contents:write`, `pull_requests:write`, `issues:write`) scoped to target repo. Flow: `worker-token-helper.sh create --repo owner/repo --ttl 3600` → `GH_TOKEN` env → worker executes → `worker-token-helper.sh revoke`. GitHub App installation tokens (repo-scoped, 1h TTL) or delegated tokens (configurable TTL). Disable: `WORKER_SCOPED_TOKENS=false`. Setup: `https://github.com/settings/apps/new` → Contents/PRs/Issues R&W → configure `~/.config/aidevops/github-app.json` (600 perms).
 5. **Worker sandbox** (t1412.1): Fake HOME — only `.gitconfig`, `GH_TOKEN`, `.aidevops/` symlink (read-only), MCP config, writable XDG dirs. No `~/.ssh/`, gopass, `credentials.sh`, cloud/publish tokens, browser profiles. `WORKER_SANDBOX_ENABLED=true` (default). CLI: `worker-sandbox-helper.sh create <task_id>` → auto-clean on exit.
-6. **Network tiering** (t1412.3): 5-tier domain classification. Tier 5 (exfiltration) denied, Tier 4 (unknown) flagged. Config: `configs/network-tiers.conf`. See `network-tier-helper.sh`.
+6. **Network tiering** (t1412.3): recognized direct clients use 5-tier domain classification. Tier 5 is denied and Tier 4 is flagged. This is command-level policy, not containment for arbitrary interpreter scripts/custom binaries; use an enforcing proxy/container/firewall backend for that threat model. Config: `configs/network-tiers.conf`. See `network-tier-helper.sh`.
 
 ## Dispatch Methods
 
