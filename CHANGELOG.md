@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.30] - 2026-07-11
+
+### Changed
+
+- feat: close autonomous Qlty remediation loop (#27160)
+
+### Fixed
+
+- preserve unmanaged lint hooks during reconciliation (#27157)
+
 ## [3.32.29] - 2026-07-11
 
 ### Changed
