@@ -180,7 +180,6 @@ Run `aidevops security` for posture/scan/check/dismiss. Advisories arrive via `a
 - Self-improvement guidance: `reference/self-improvement.md`.
 - Token-optimized CLI: for interactive discovery, use `rtk-helper.sh gh issue/pr list` before raw list commands; rerun raw/direct when filtered output is insufficient; bypass exact evidence. Full rules: `reference/context-efficient-output.md`.
 - Agent lifecycle: `tools/build-agent/build-agent.md`; OpenCode glob allowlists require `subagent_validation.py` verification.
-- Slash commands resolve through `scripts/commands/<command>.md`, then `workflows/<command>.md`.
 - macOS bash upgrade, platform support, customization, and hot deploys: `reference/bash-compat.md`, `reference/platform-support.md`, `reference/customization.md`, `reference/hot-deploy.md`.
 - Scheduled jobs use `aidevops` labels: launchd `sh.aidevops.<name>`, plist `sh.aidevops.<name>.plist`, cron comment `# aidevops: <description>`.
 
