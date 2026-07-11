@@ -10,6 +10,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.32] - 2026-07-11
+
+### Changed
+
+- split pulse merge process modules (#27211)
+- Enforce evidence-backed full-loop lifecycle (#27163)
+- recover dirty worker worktrees before redispatch (#27162)
+- Maintenance: sync ref:GH#27169 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27167 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27165 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27164 to TODO.md [skip ci]
+
+### Fixed
+
+- resolve deployed CLI version root (#27173)
+
 ## [3.32.31] - 2026-07-11
 
 ### Changed
