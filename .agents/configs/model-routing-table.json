@@ -2,19 +2,19 @@
   "_comment": "Model routing table — SINGLE SOURCE OF TRUTH for tier-to-model mappings. All scripts, docs, and configs should reference this file rather than hardcoding model IDs. When a new model generation releases (e.g., gpt-5.6), update this file and its documented static fallbacks.",
   "_docs": "See .agents/tools/context/model-routing.md for routing rules, .agents/tools/ai-assistants/fallback-chains.md for integration.",
   "_agentic_note": "codex/code-completion models (gpt-5.3-codex, gpt-5.4-codex) are NOT agentic — zero tool calls observed (GH#17669). Never use them for headless worker dispatch. Only general-purpose models support agentic workflows.",
-  "_defaults": "OpenAI models are the headless-worker default and fallback chain. The first model in each tier's array is the primary; subsequent entries are tried in order when the primary is unavailable. Use custom/configs/model-routing-table.json or AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST for local overrides.",
+  "_defaults": "The first model in each tier's array is primary; subsequent entries are availability-checked fallbacks. GLM-5.2 is offered only through the Z.AI coding-plan provider. Use custom/configs/model-routing-table.json or AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST for local overrides.",
   "_model_overrides": "Model-override labels (model:*) express model intent but must still pass through provider allowlist and availability/fallback checks before dispatch. `model:opus-4-7` is treated as an opus-tier escalation intent, not an Anthropic provider pin. Resolution lives in pulse-model-routing.sh::resolve_dispatch_model_for_labels. Cascade rule: tier:thinking → tier:thinking + model:opus-4-7 intent → NMR (t2239).",
 
   "tiers": {
-    "local":  { "models": ["openai/gpt-5.4-mini"], "cost": 0 },
-    "haiku":  { "models": ["openai/gpt-5.6-terra"] },
-    "flash":  { "models": ["openai/gpt-5.6-terra"] },
-    "sonnet": { "models": ["openai/gpt-5.6-sol"] },
-    "pro":    { "models": ["openai/gpt-5.6-sol"] },
-    "opus":   { "models": ["openai/gpt-5.6-sol"] },
-    "coding": { "models": ["openai/gpt-5.6-sol"] },
-    "eval":   { "models": ["openai/gpt-5.6-sol"] },
-    "health": { "models": ["openai/gpt-5.6-terra"] }
+    "local":  { "models": [], "cost": 0, "_comment": "Resolved only from an installed llama.cpp or Ollama model; never falls back to cloud." },
+    "haiku":  { "models": ["openai/gpt-5.6-terra", "anthropic/claude-haiku-4-5"] },
+    "flash":  { "models": ["openai/gpt-5.6-terra", "anthropic/claude-haiku-4-5"] },
+    "sonnet": { "models": ["openai/gpt-5.6-sol", "zai-coding-plan/glm-5.2", "anthropic/claude-sonnet-4-6"] },
+    "pro":    { "models": ["openai/gpt-5.6-sol", "anthropic/claude-sonnet-4-6"] },
+    "opus":   { "models": ["openai/gpt-5.6-sol", "anthropic/claude-opus-4-6"] },
+    "coding": { "models": ["openai/gpt-5.6-sol", "zai-coding-plan/glm-5.2", "anthropic/claude-sonnet-4-6"] },
+    "eval":   { "models": ["openai/gpt-5.6-sol", "zai-coding-plan/glm-5.2", "anthropic/claude-sonnet-4-6"] },
+    "health": { "models": ["openai/gpt-5.6-terra", "anthropic/claude-haiku-4-5"] }
   },
 
   "providers": {

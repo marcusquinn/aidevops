@@ -136,8 +136,7 @@ get_tier_models() {
 
 	# User-local override checked first — survives aidevops update.
 	# Copy configs/model-routing-table.json to custom/configs/ and edit.
-	# Framework default is Anthropic-only; users who want other providers
-	# (e.g., OpenCode free-tier models) add them to their custom copy.
+	# Framework defaults are ordered, availability-checked provider fallbacks.
 	local routing_table="${SCRIPT_DIR}/../custom/configs/model-routing-table.json"
 	if [[ ! -f "$routing_table" ]]; then
 		routing_table="${SCRIPT_DIR}/../configs/model-routing-table.json"
@@ -177,20 +176,17 @@ get_tier_models() {
 
 	# Hardcoded fallback — kept in sync with model-routing-table.json.
 	# If you're editing these, update the JSON file instead.
-	# Current smoke-tested OpenAI models are the headless defaults. Exclude Codex,
-	# unsupported *-pro IDs, and non-OpenAI fallback providers from dispatch.
+	# Current smoke-tested models are the headless defaults. An empty local value
+	# deliberately fails closed rather than sending local-only work to cloud.
 	case "$tier" in
-	local) current_model=$'openai/gpt-5.4-mini' ;;
-	haiku) current_model=$'openai/gpt-5.6-terra' ;;
-	flash) current_model=$'openai/gpt-5.6-terra' ;;
-	sonnet) current_model=$'openai/gpt-5.6-sol' ;;
-	pro) current_model=$'openai/gpt-5.6-sol' ;;
-	opus) current_model=$'openai/gpt-5.6-sol' ;;
-	health) current_model=$'openai/gpt-5.6-terra' ;;
-	eval) current_model=$'openai/gpt-5.6-sol' ;;
-	coding) current_model=$'openai/gpt-5.6-sol' ;;
+	local) current_model="" ;;
+	haiku | flash | health) current_model=$'openai/gpt-5.6-terra\nanthropic/claude-haiku-4-5' ;;
+	sonnet | coding | eval) current_model=$'openai/gpt-5.6-sol\nzai-coding-plan/glm-5.2\nanthropic/claude-sonnet-4-6' ;;
+	pro) current_model=$'openai/gpt-5.6-sol\nanthropic/claude-sonnet-4-6' ;;
+	opus) current_model=$'openai/gpt-5.6-sol\nanthropic/claude-opus-4-6' ;;
 	*) return 1 ;;
 	esac
+	[[ -n "$current_model" ]] || return 1
 
 	if [[ ${#allowlist[@]} -eq 0 ]]; then
 		printf '%s\n' "$current_model" | paste -sd'|' -

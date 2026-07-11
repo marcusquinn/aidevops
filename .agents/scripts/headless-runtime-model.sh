@@ -104,6 +104,12 @@ get_configured_models() {
 		done < <(jq -r --arg tier "$tier_name" '.tiers[$tier].models[]? // empty' "$routing_table" 2>/dev/null)
 	fi
 
+	# Local is a privacy boundary: an empty local tier means unavailable, never
+	# permission to use the historical cloud fallback.
+	if [[ "$tier_name" == "local" ]]; then
+		return 0
+	fi
+
 	# Fallback: if routing derivation yielded nothing and no allowlist is forcing a
 	# provider subset, use the historical default when auth is available.
 	if [[ ${#models[@]} -eq 0 ]] && [[ -z "$allowlist_raw" ]]; then
@@ -417,12 +423,19 @@ resolve_headless_variant() {
 		variant=""
 	fi
 
-	# OpenAI publishes Sol xhigh coding/agent benchmarks and API pricing, but no
-	# equivalent Sol Pro API evidence. Default only thinking-tier issue workers
-	# to xhigh; explicit CLI and environment variants above continue to win.
-	if [[ -z "$variant" && "$role" == "worker" && "$tier_upper" == "OPUS" ]]; then
-		case "$selected_model" in
-		openai/gpt-5.6-sol | openai/gpt-5.6-sol-fast) variant="xhigh" ;;
+	# Background workers receive prescriptive briefs, so use bounded reasoning
+	# defaults. Explicit CLI/environment variants still win. Reserve xhigh for
+	# failure escalation, where the retry path passes --variant xhigh explicitly.
+	if [[ -z "$variant" && "$role" == "worker" ]]; then
+		case "$tier_upper:$selected_model" in
+		HAIKU:openai/gpt-5.6-terra | HAIKU:openai/gpt-5.6-terra-fast | \
+			FLASH:openai/gpt-5.6-terra | FLASH:openai/gpt-5.6-terra-fast | \
+			HEALTH:openai/gpt-5.6-terra | HEALTH:openai/gpt-5.6-terra-fast | \
+			SONNET:openai/gpt-5.6-sol | SONNET:openai/gpt-5.6-sol-fast | \
+			CODING:openai/gpt-5.6-sol | CODING:openai/gpt-5.6-sol-fast | \
+			EVAL:openai/gpt-5.6-sol | EVAL:openai/gpt-5.6-sol-fast) variant="low" ;;
+		PRO:openai/gpt-5.6-sol | PRO:openai/gpt-5.6-sol-fast | \
+			OPUS:openai/gpt-5.6-sol | OPUS:openai/gpt-5.6-sol-fast) variant="high" ;;
 		esac
 	fi
 

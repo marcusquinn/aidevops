@@ -24,7 +24,7 @@ model: haiku
 
 - **Default**: `sonnet`. **Rule**: smallest model that produces acceptable quality.
 - **Spectrum**: local ($0) → composer2 (0.17x) → flash (0.20x) → haiku (0.25x) → sonnet (1x) → pro (1.5x) → opus (3x)
-- **Frontmatter**: `model: haiku` in YAML. Absent → `sonnet`. `local` requires `local-model-helper.sh`; falls back to `composer2`.
+- **Frontmatter**: `model: haiku` in YAML. Absent → `sonnet`. `local` requires an installed local model and otherwise fails closed.
 - **Vault metadata**: `data_classification`, `runtime_policy`, `needs_vault`, `needs_collections`, `needs_device`, and `needs_remote_unlock` can restrict dispatch before a prompt leaves the device.
 
 ## Model Tiers
@@ -35,13 +35,13 @@ model: haiku
 | `composer2` | cursor/composer-2 | Multi-file coding, large refactors (requires Cursor OAuth pool t1549) |
 | `flash` | openai/gpt-5.6-terra → claude-haiku-4-5 | >50K context, summarization, bulk processing, research sweeps |
 | `haiku` | openai/gpt-5.6-terra → claude-haiku-4-5 | Classification, triage, simple transforms, commit messages, routing |
-| `sonnet` | openai/gpt-5.6-sol → claude-sonnet-4-6 | Code, review, debugging, docs — most dev tasks |
+| `sonnet` | openai/gpt-5.6-sol → zai-coding-plan/glm-5.2 → claude-sonnet-4-6 | Code, review, debugging, docs — most dev tasks |
 | `pro` | openai/gpt-5.6-sol → claude-sonnet-4-6 | >100K codebases + complex reasoning |
-| `opus` | openai/gpt-5.6-sol (`xhigh`) → claude-opus-4-6 | Architecture, novel problems, security audits, complex trade-offs |
+| `opus` | openai/gpt-5.6-sol (`high`) → claude-opus-4-6 | Architecture, novel problems, security audits, complex trade-offs |
 
 **Model IDs**: Always fully-qualified (`claude-sonnet-4-6`, not `claude-sonnet-4`). Short-form → `ProviderModelNotFoundError`. CLI prefix: `anthropic/`, `google/`, `openai/`.
 
-**`local` fallback**: Privacy → FAIL (require `--allow-cloud`). Cost → Ollama → `composer2`. Local is opt-in only — default dispatch uses `haiku`. Users who explicitly configure local tier: llama.cpp → Ollama → `haiku`.
+**`local` fallback**: Local is opt-in and fails closed when llama.cpp/Ollama has no configured model. Cloud fallback requires the caller to select a cloud tier explicitly; local-only work is never silently transmitted.
 
 ## Decision Flowchart
 
@@ -58,11 +58,11 @@ Privacy/on-device or Vault local-only? → YES → local running? → YES: local
 
 | Tier | Fallback | Trigger |
 |------|----------|---------|
-| `local` | Ollama → composer2 (cost) / FAIL (privacy) | llama.cpp not running |
+| `local` | FAIL | No installed local model |
 | `flash` | claude-haiku-4-5 | OpenAI unavailable or provider-disallowed |
 | `haiku` | claude-haiku-4-5 | OpenAI unavailable or provider-disallowed |
 | `composer2` | sonnet | No Cursor OAuth pool |
-| `sonnet` | claude-sonnet-4-6 | OpenAI unavailable or provider-disallowed |
+| `sonnet` | zai-coding-plan/glm-5.2 → claude-sonnet-4-6 | Earlier provider unavailable, unauthenticated, or disallowed |
 | `pro` | claude-sonnet-4-6 | OpenAI unavailable or provider-disallowed |
 | `opus` | claude-opus-4-6 | OpenAI unavailable or provider-disallowed |
 
@@ -88,12 +88,13 @@ is always denied because secrets must flow through secret tooling, not prompts.
 - **Pulse**: Resolves `sonnet` through `model-availability-helper.sh resolve sonnet`, so it follows routing-table order, health checks, local routing-table overrides, and `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST`.
 - **Workers**: Round-robin across the routed `sonnet` models after allowlist filtering and auth checks. Tier escalation still uses `resolve` (`tier:simple` → `haiku`, `tier:standard` → `sonnet`, `tier:thinking` → `opus`).
 - **Local switch**: Set `AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai` to force both pulse and workers onto the default OpenAI fallbacks. If you want OpenAI primary but Anthropic fallback, reorder `custom/configs/model-routing-table.json` and omit the allowlist.
-- **OpenAI default mapping**: `haiku`/`flash`/`health` resolve to `openai/gpt-5.6-terra`; all implementation tiers resolve to `openai/gpt-5.6-sol`. Thinking-tier workers automatically use `xhigh`; standard workers keep the provider-default effort.
+- **OpenAI default mapping**: `haiku`/`flash` resolve to `openai/gpt-5.6-terra` at `low`; standard `sonnet`/`coding` workers use `openai/gpt-5.6-sol` at `low`; `pro`/`opus` workers use Sol at `high`.
 - **OpenAI tier rationale**: Terra costs $2.50/M input and $15/M output and is competitive with GPT-5.5, making it the conservative choice for prescriptive/simple work. Sol costs $5/M input and $30/M output and is OpenAI's recommended flagship coding model. Its published `xhigh` agent benchmarks make it the evidence-backed thinking tier.
 - **OpenAI pro caveat**: `openai/gpt-5.6-sol-pro` passed a live OpenCode ChatGPT OAuth smoke test on 2026-07-10, but OpenAI publishes neither an API price nor comparative Sol Pro benchmarks. It remains excluded from automatic workers pending repository-specific completion-rate evidence. Historical `gpt-5.5-pro` and older `*-pro`/`o3-pro` IDs remain excluded.
-- **Reasoning effort**: OpenCode exposes GPT reasoning variants separately (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`). OpenAI also documents `max`, but OpenCode v1.17.18 does not expose it. Headless thinking-tier Sol workers default to `xhigh`; explicit CLI or environment variants still win.
+- **Reasoning effort**: OpenCode exposes GPT reasoning variants separately (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`). Briefed background work defaults to Terra/Sol `low` for simple/standard tiers and Sol `high` for thinking tiers. `xhigh` is reserved for an explicit failure-escalation retry. Explicit CLI or environment variants always win.
 - **GPT-5.5 standard workers**: For `openai/gpt-5.5` on worker `sonnet`/`pro` tiers, aidevops omits env-derived variants such as `AIDEVOPS_HEADLESS_VARIANT_SONNET=high` so OpenCode sends no explicit thinking override. Explicit CLI `--variant` still wins because it bypasses automatic variant resolution.
-- **Tier-aware effort**: Headless dispatch applies `xhigh` automatically to worker `opus` tiers on GPT-5.6 Sol. `AIDEVOPS_HEADLESS_VARIANT_OPUS` can override it; `AIDEVOPS_HEADLESS_VARIANT_SONNET` tunes standard Sol work. The GPT-5.5 exception above applies only to legacy GPT-5.5 env-derived sonnet/pro variants.
+- **GLM-5.2 option**: Standard/coding/eval routing may use `zai-coding-plan/glm-5.2` when that OpenCode provider is authenticated. Direct `zai/glm-5.2` is intentionally excluded. OpenCode Go can be added once its provider-qualified model ID is observable and smoke-tested.
+- **Tier-aware effort**: `AIDEVOPS_HEADLESS_VARIANT_OPUS` and `AIDEVOPS_HEADLESS_VARIANT_SONNET` override automatic defaults. The GPT-5.5 exception above applies only to legacy GPT-5.5 env-derived sonnet/pro variants.
 - **Fallback**: If routed resolution fails entirely, pulse falls back to `anthropic/claude-sonnet-4-6`; workers fall back to `DEFAULT_HEADLESS_MODELS` when no allowlist is forcing a subset.
 - **Deprecated**: `PULSE_MODEL` and `AIDEVOPS_HEADLESS_MODELS` env vars are respected as overrides for one release cycle with deprecation warnings. Remove from `credentials.sh`.
 

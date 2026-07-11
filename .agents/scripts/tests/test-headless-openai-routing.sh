@@ -107,12 +107,38 @@ test_openai_allowlist_requires_openai_auth_entry() {
 	return 0
 }
 
+test_local_tier_never_uses_cloud_fallback() {
+	local selected=""
+	selected=$(bash "$HELPER_SCRIPT" select --role worker --tier local 2>/dev/null || true)
+	if [[ -z "$selected" ]]; then
+		print_result "Local tier fails closed without an installed local model" 0
+		return 0
+	fi
+	print_result "Local tier fails closed without an installed local model" 1 "Expected no model, got ${selected}"
+	return 0
+}
+
+test_sonnet_alternatives_are_scoped() {
+	local routing_table="${SCRIPT_DIR}/../../configs/model-routing-table.json"
+	local models=""
+	models=$(jq -r '.tiers.sonnet.models[]' "$routing_table")
+	if printf '%s\n' "$models" | grep -qx 'zai-coding-plan/glm-5.2' && \
+		! printf '%s\n' "$models" | grep -qx 'zai/glm-5.2'; then
+		print_result "Sonnet tier includes coding-plan GLM-5.2 but excludes direct Z.AI" 0
+		return 0
+	fi
+	print_result "Sonnet tier includes coding-plan GLM-5.2 but excludes direct Z.AI" 1
+	return 0
+}
+
 main_test() {
 	setup_test_env
 	test_openai_allowlist_selects_sonnet_tier_model
 	test_openai_allowlist_selects_haiku_tier_model
 	test_openai_allowlist_selects_opus_tier_model
 	test_openai_allowlist_requires_openai_auth_entry
+	test_local_tier_never_uses_cloud_fallback
+	test_sonnet_alternatives_are_scoped
 	teardown_test_env
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
