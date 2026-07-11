@@ -496,6 +496,266 @@ _atomic_stage_and_deploy_agents() {
 	return 0
 }
 
+# Runtime bundles keep every executable part of one framework revision under an
+# immutable directory. ~/.aidevops/agents is only the atomic activation link.
+_AIDEVOPS_STAGED_BUNDLE_DIR=""
+_AIDEVOPS_PREVIOUS_BUNDLE_ROOT=""
+
+_runtime_bundle_sha256_file() {
+	local file="$1"
+	if command -v sha256sum >/dev/null 2>&1; then
+		sha256sum "$file" | cut -d' ' -f1
+	elif command -v shasum >/dev/null 2>&1; then
+		shasum -a 256 "$file" | cut -d' ' -f1
+	else
+		openssl dgst -sha256 "$file" | sed 's/^.*= //'
+	fi
+	return 0
+}
+
+_runtime_bundle_resolve_root() {
+	local agents_path="$1"
+	[[ -d "$agents_path" ]] || return 1
+	(cd "$agents_path" && pwd -P) || return 1
+	return 0
+}
+
+_runtime_bundle_copy_preserved_dirs() {
+	local current_root="$1"
+	local candidate_root="$2"
+	shift 2
+	local preserved_dir=""
+	local -a preserved_dirs=("custom" "draft" "$@")
+
+	for preserved_dir in "${preserved_dirs[@]}"; do
+		[[ -n "$preserved_dir" && -d "$current_root/$preserved_dir" ]] || continue
+		rm -rf "${candidate_root:?}/$preserved_dir"
+		cp -a "$current_root/$preserved_dir" "$candidate_root/$preserved_dir" || return 1
+	done
+	return 0
+}
+
+_runtime_bundle_write_manifest() {
+	local bundle_dir="$1"
+	local repo_dir="$2"
+	local plugins_file="$3"
+	local agents_root="$bundle_dir/agents"
+	local manifest_tmp="$bundle_dir/manifest.tmp"
+	local framework_version="unknown"
+	local git_sha="unknown"
+	local file_count="0"
+	local cli_sha="missing"
+	local plugin_entry_sha="missing"
+	local manifest_bundle_id="${bundle_dir##*/}"
+	manifest_bundle_id="${manifest_bundle_id#.staging.}"
+
+	[[ -r "$agents_root/VERSION" ]] && IFS= read -r framework_version <"$agents_root/VERSION"
+	git_sha=$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || printf 'unknown')
+	file_count=$(_count_deployed_agent_files "$agents_root")
+	[[ -f "$agents_root/aidevops.sh" ]] && cli_sha=$(_runtime_bundle_sha256_file "$agents_root/aidevops.sh")
+	if [[ -f "$agents_root/plugins/opencode-aidevops/index.mjs" ]]; then
+		plugin_entry_sha=$(_runtime_bundle_sha256_file "$agents_root/plugins/opencode-aidevops/index.mjs")
+	fi
+
+	{
+		printf 'schema=1\n'
+		printf 'status=validated\n'
+		printf 'bundle_id=%s\n' "$manifest_bundle_id"
+		printf 'framework_version=%s\n' "$framework_version"
+		printf 'cli_compatibility=%s\n' "$framework_version"
+		printf 'git_sha=%s\n' "$git_sha"
+		printf 'agents_file_count=%s\n' "$file_count"
+		printf 'cli_sha256=%s\n' "$cli_sha"
+		printf 'plugin_entry_sha256=%s\n' "$plugin_entry_sha"
+		if declare -F runtime_bundle_plugin_manifest_fields >/dev/null 2>&1; then
+			runtime_bundle_plugin_manifest_fields "$agents_root" "$plugins_file"
+		else
+			printf 'plugin_registry_sha256=unavailable\n'
+		fi
+	} >"$manifest_tmp" || return 1
+	mv "$manifest_tmp" "$bundle_dir/manifest" || return 1
+	cp "$bundle_dir/manifest" "$agents_root/.bundle-manifest" || return 1
+	return 0
+}
+
+_runtime_bundle_validate() {
+	local bundle_dir="$1"
+	local source_dir="$2"
+	local agents_root="$bundle_dir/agents"
+	local repo_version=""
+	local bundle_version=""
+
+	_verify_deployed_agents_tree "$agents_root" || return 1
+	_verify_deployed_core_plugin_freshness "$source_dir" "$agents_root" || return 1
+	[[ -x "$agents_root/aidevops.sh" && -r "$bundle_dir/manifest" ]] || return 1
+	grep -q '^status=validated$' "$bundle_dir/manifest" || return 1
+	if [[ -r "${INSTALL_DIR:-}/VERSION" ]]; then
+		IFS= read -r repo_version <"${INSTALL_DIR}/VERSION" || repo_version=""
+		IFS= read -r bundle_version <"$agents_root/VERSION" || bundle_version=""
+		[[ -n "$repo_version" && "$repo_version" == "$bundle_version" ]] || return 1
+	fi
+	return 0
+}
+
+_runtime_bundle_stage() {
+	local repo_dir="$1"
+	local source_dir="$2"
+	local target_dir="$3"
+	local plugins_file="$4"
+	shift 4
+	local bundles_dir="${target_dir%/*}/runtime-bundles"
+	local bundle_dir=""
+	local current_root=""
+	local version="unknown"
+	local git_sha="unknown"
+	local bundle_id=""
+
+	mkdir -p "$bundles_dir" || return 1
+	[[ -r "$repo_dir/VERSION" ]] && IFS= read -r version <"$repo_dir/VERSION"
+	git_sha=$(git -C "$repo_dir" rev-parse --short=12 HEAD 2>/dev/null || printf 'unknown')
+	bundle_id="${version//[^A-Za-z0-9._-]/_}-${git_sha}-$(date +%s)-$$"
+	bundle_dir=$(mktemp -d "$bundles_dir/.staging.${bundle_id}.XXXXXX") || return 1
+	mkdir -p "$bundle_dir/agents" || return 1
+
+	if ! _deploy_agents_copy "$source_dir" "$bundle_dir/agents" "$@"; then
+		rm -rf "$bundle_dir"
+		return 1
+	fi
+	if current_root=$(_runtime_bundle_resolve_root "$target_dir" 2>/dev/null); then
+		_runtime_bundle_copy_preserved_dirs "$current_root" "$bundle_dir/agents" "$@" || {
+			rm -rf "$bundle_dir"
+			return 1
+		}
+	fi
+	if [[ "${AIDEVOPS_BUNDLE_FAIL_AT:-}" == "after-stage-copy" ]]; then
+		rm -rf "$bundle_dir"
+		return 1
+	fi
+
+	_deploy_agents_post_copy "$bundle_dir/agents" "$repo_dir" "$source_dir" "$plugins_file" || {
+		rm -rf "$bundle_dir"
+		return 1
+	}
+	install -m 0755 "$repo_dir/aidevops.sh" "$bundle_dir/agents/aidevops.sh" || {
+		rm -rf "$bundle_dir"
+		return 1
+	}
+	if [[ "${AIDEVOPS_BUNDLE_FAIL_AT:-}" == "after-plugin-generation" ]]; then
+		rm -rf "$bundle_dir"
+		return 1
+	fi
+
+	_runtime_bundle_write_manifest "$bundle_dir" "$repo_dir" "$plugins_file" || {
+		rm -rf "$bundle_dir"
+		return 1
+	}
+	_runtime_bundle_validate "$bundle_dir" "$source_dir" || {
+		rm -rf "$bundle_dir"
+		return 1
+	}
+	if [[ "${AIDEVOPS_BUNDLE_FAIL_AT:-}" == "before-activation" ]]; then
+		rm -rf "$bundle_dir"
+		return 1
+	fi
+
+	bundle_id="${bundle_dir##*/}"
+	bundle_id="${bundle_id#.staging.}"
+	local final_dir="$bundles_dir/${bundle_id}"
+	mv "$bundle_dir" "$final_dir" || {
+		rm -rf "$bundle_dir"
+		return 1
+	}
+	_AIDEVOPS_STAGED_BUNDLE_DIR="$final_dir"
+	return 0
+}
+
+_runtime_bundle_replace_link() {
+	local link_tmp="$1"
+	local link_path="$2"
+	if [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]]; then
+		mv -f -h "$link_tmp" "$link_path"
+	else
+		mv -Tf "$link_tmp" "$link_path"
+	fi
+	return $?
+}
+
+_runtime_bundle_switch_link() {
+	local target_dir="$1"
+	local agents_root="$2"
+	local link_tmp="${target_dir}.link.$$"
+	rm -f "$link_tmp"
+	ln -s "$agents_root" "$link_tmp" || return 1
+	if ! _runtime_bundle_replace_link "$link_tmp" "$target_dir"; then
+		rm -f "$link_tmp"
+		return 1
+	fi
+	return 0
+}
+
+_runtime_bundle_prune() {
+	local bundles_dir="$1"
+	local active_root="$2"
+	local previous_root="$3"
+	local candidate_dir=""
+
+	for candidate_dir in "$bundles_dir"/*; do
+		[[ -d "$candidate_dir/agents" ]] || continue
+		[[ "$candidate_dir/agents" == "$active_root" || "$candidate_dir/agents" == "$previous_root" ]] && continue
+		rm -rf "$candidate_dir"
+	done
+	return 0
+}
+
+_runtime_bundle_activate() {
+	local target_dir="$1"
+	local bundle_dir="$2"
+	local agents_root=""
+	local bundles_dir=""
+	local parent_dir="${target_dir%/*}"
+	local previous_link="$parent_dir/previous-runtime-bundle"
+	local previous_root=""
+	local legacy_dir=""
+	agents_root=$(_runtime_bundle_resolve_root "$bundle_dir/agents") || return 1
+	bundles_dir=$(cd "${bundle_dir%/*}" && pwd -P) || return 1
+
+	if previous_root=$(_runtime_bundle_resolve_root "$target_dir" 2>/dev/null); then
+		_AIDEVOPS_PREVIOUS_BUNDLE_ROOT="$previous_root"
+	fi
+	if [[ -d "$target_dir" && ! -L "$target_dir" ]]; then
+		legacy_dir="${bundle_dir%/*}/legacy-$(date +%s)-$$"
+		mkdir -p "$legacy_dir" || return 1
+		mv "$target_dir" "$legacy_dir/agents" || return 1
+		previous_root=$(_runtime_bundle_resolve_root "$legacy_dir/agents") || return 1
+		_AIDEVOPS_PREVIOUS_BUNDLE_ROOT="$previous_root"
+	fi
+
+	if ! _runtime_bundle_switch_link "$target_dir" "$agents_root"; then
+		if [[ -n "$previous_root" ]]; then
+			_runtime_bundle_switch_link "$target_dir" "$previous_root" || true
+		fi
+		return 1
+	fi
+	if [[ -n "$previous_root" ]]; then
+		local previous_tmp="${previous_link}.tmp.$$"
+		rm -f "$previous_tmp"
+		ln -s "$previous_root" "$previous_tmp" && _runtime_bundle_replace_link "$previous_tmp" "$previous_link" || rm -f "$previous_tmp"
+	fi
+
+	if [[ "${AIDEVOPS_BUNDLE_FAIL_AT:-}" == "after-activation" ]] ||
+		[[ "$(_runtime_bundle_resolve_root "$target_dir" 2>/dev/null || true)" != "$agents_root" ]]; then
+		if [[ -n "$previous_root" ]]; then
+			_runtime_bundle_switch_link "$target_dir" "$previous_root" || return 1
+		else
+			rm -f "$target_dir"
+		fi
+		return 1
+	fi
+
+	_runtime_bundle_prune "$bundles_dir" "$agents_root" "$previous_root"
+	return 0
+}
+
 # _deploy_version_file target_dir repo_dir
 # Copies VERSION file from repo root to the deployed agents directory.
 _deploy_version_file() {
@@ -821,11 +1081,12 @@ deploy_aidevops_agents() {
 	_validate_agent_source_dir "$source_dir" || return 1
 	_collect_deploy_agent_plugin_namespaces "$plugins_file"
 	_prepare_agents_deploy_target "$repo_dir" "$source_dir" "$target_dir"
-	_run_atomic_agents_deploy "$source_dir" "$target_dir" "${_deploy_agent_plugin_namespaces[@]}" || return 1
+	_runtime_bundle_stage "$repo_dir" "$source_dir" "$target_dir" "$plugins_file" \
+		"${_deploy_agent_plugin_namespaces[@]}" || return 1
+	_runtime_bundle_activate "$target_dir" "$_AIDEVOPS_STAGED_BUNDLE_DIR" || return 1
 	_verify_agents_deploy_or_restore "$source_dir" "$target_dir" || return 1
 
 	print_success "Deployed agents to $target_dir"
-	_deploy_agents_post_copy "$target_dir" "$repo_dir" "$source_dir" "$plugins_file"
 	_install_canonical_git_guard_shim "$target_dir" || return 1
 
 	_write_deployed_agents_sha "$repo_dir"
