@@ -96,6 +96,43 @@ def read_state_file(path):
     return state
 
 
+def build_objective_reconciliation(path):
+    objectives = []
+    try:
+        with open(path, encoding='utf-8') as handle:
+            payload = json.load(handle)
+        objectives = payload.get('objectives', [])
+        if not isinstance(objectives, list):
+            objectives = []
+    except (OSError, json.JSONDecodeError, TypeError):
+        objectives = []
+    terminal = {'completed', 'cancelled', 'impossible'}
+    nonterminal = [item for item in objectives if item.get('objective_state') not in terminal]
+    missing_action = [
+        item for item in nonterminal
+        if not item.get('next_action') or item.get('next_action') == 'none' or item.get('trigger_at') is None
+    ]
+    expired = [item for item in nonterminal if item.get('assumption_expired') is True]
+    oldest = min(expired, key=lambda item: item.get('evidence_timestamp', float('inf')), default=None)
+    oldest_projection = None
+    if oldest:
+        oldest_projection = {
+            'number': oldest.get('number'),
+            'objective_state': oldest.get('objective_state', ''),
+            'evidence_timestamp': oldest.get('evidence_timestamp'),
+            'assumption_expires_at': oldest.get('assumption_expires_at'),
+            'next_action': oldest.get('next_action', ''),
+            'responsible_component': oldest.get('responsible_component', ''),
+        }
+    return {
+        'total': len(objectives),
+        'nonterminal': len(nonterminal),
+        'objectives_without_next_action': len(missing_action),
+        'expired_assumptions': len(expired),
+        'oldest_unverified_assumption': oldest_projection,
+    }
+
+
 def graphql_pressure_seen(graphql_budget, pre_launch_blockers):
     if graphql_budget['skipped_low_count'] > 0:
         return True
@@ -409,6 +446,10 @@ if os.path.isdir(review_thread_state_dir):
     except OSError:
         review_thread_attention = []
 
+objective_reconciliation = build_objective_reconciliation(
+    os.environ.get('AIDEVOPS_OBJECTIVE_STATE_FILE', '')
+)
+
 result = {
     'window_seconds': window_s,
     'dispatch_stage_events': len(stage_records),
@@ -456,6 +497,7 @@ result = {
     'api_call_pressure': api_pressure,
     'prefetch_cache': prefetch_cache,
     'review_thread_attention': review_thread_attention,
+    'objective_reconciliation': objective_reconciliation,
 }
 
 runtime_state = {
@@ -480,6 +522,7 @@ runtime_state = {
     'pulse_gauges': gauge_values,
     'resource_context': result['resource_context'],
     'review_thread_attention_count': len(review_thread_attention),
+    'objective_reconciliation': objective_reconciliation,
     'window_seconds': window_s,
     'worker_outcomes': result['worker_outcomes'],
     'worker_result_counts': dict(metric_class_counts),
@@ -517,6 +560,8 @@ else:
         print(f'- Top GraphQL consumers: {json.dumps(api_consumers)}')
     print(f'- API call pressure: {json.dumps(api_pressure, sort_keys=True)}')
     print(f'- Review-thread maintainer attention: {json.dumps(review_thread_attention, sort_keys=True)}')
+    print(f'- Objectives without next action: {objective_reconciliation["objectives_without_next_action"]}')
+    print(f'- Oldest unverified assumption: {json.dumps(objective_reconciliation["oldest_unverified_assumption"], sort_keys=True)}')
     print(f'- Worker worktrees: {result["worker_worktrees"]}')
     if wrapper_activity:
         print('- Recent wrapper activity:')
