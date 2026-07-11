@@ -9,8 +9,8 @@ TEST_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 REPO_ROOT="$(cd "${TEST_SCRIPT_DIR}/../../.." && pwd)" || exit 1
 SCRIPT_DIR="${REPO_ROOT}/.agents/scripts"
 
-# shellcheck source=../linters-local-gates.sh
-source "${REPO_ROOT}/.agents/scripts/linters-local-gates.sh"
+# shellcheck source=../linters-local.sh
+source "${REPO_ROOT}/.agents/scripts/linters-local.sh"
 
 TESTS_RUN=0
 TESTS_FAILED=0
@@ -147,8 +147,28 @@ test_changed_mode_gate_set() {
 	return 0
 }
 
+test_mode_defaults_and_full_override() {
+	_linters_local_parse_args
+	if [[ "$LINTERS_LOCAL_MODE" == "changed" && "$LINTERS_LOCAL_CHANGED" == "true" ]]; then
+		print_result "no-argument mode defaults to changed-file scope" 0
+	else
+		print_result "no-argument mode defaults to changed-file scope" 1 \
+			"mode=$LINTERS_LOCAL_MODE changed=$LINTERS_LOCAL_CHANGED"
+	fi
+
+	_linters_local_parse_args --full
+	if [[ "$LINTERS_LOCAL_MODE" == "full" && "$LINTERS_LOCAL_CHANGED" == "false" && "$LINTERS_LOCAL_CACHE_ENABLED" == "false" ]]; then
+		print_result "--full explicitly enables uncached release scope" 0
+	else
+		print_result "--full explicitly enables uncached release scope" 1 \
+			"mode=$LINTERS_LOCAL_MODE changed=$LINTERS_LOCAL_CHANGED cache=$LINTERS_LOCAL_CACHE_ENABLED"
+	fi
+	return 0
+}
+
 main() {
 	test_changed_mode_gate_set
+	test_mode_defaults_and_full_override
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
 		return 1

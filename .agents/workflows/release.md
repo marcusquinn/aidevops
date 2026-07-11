@@ -34,7 +34,7 @@ Atomically: checks uncommitted changes → bumps version in all 6 files (VERSION
 ## Manual Release (Non-aidevops Repos)
 
 ```bash
-./.agents/scripts/linters-local.sh
+./.agents/scripts/linters-local.sh --full
 git add -A && git commit -m "chore(release): prepare v{MAJOR}.{MINOR}.{PATCH}"
 ./.agents/scripts/version-manager.sh tag
 git push origin main && git push origin --tags

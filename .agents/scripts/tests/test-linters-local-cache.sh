@@ -183,12 +183,61 @@ test_changed_inventory_snapshot_avoids_repeat_git_scans() {
 	return 0
 }
 
+test_common_git_dir_hosts_cross_worktree_cache() {
+	source_gate_helpers
+	local cache_dir common_dir
+	unset LINTERS_LOCAL_CACHE_DIR_OVERRIDE
+	cache_dir=$(_linters_local_cache_dir)
+	common_dir=$(git rev-parse --git-common-dir)
+	common_dir=$(cd "$common_dir" && pwd -P)
+	if [ "$cache_dir" = "${common_dir}/aidevops-linters-cache" ]; then
+		print_result "linter cache: linked worktrees share the common git cache" 0
+	else
+		print_result "linter cache: linked worktrees share the common git cache" 1 \
+			"cache=[$cache_dir] expected=[${common_dir}/aidevops-linters-cache]"
+	fi
+	return 0
+}
+
+test_concurrent_gate_reuses_first_result() {
+	source_gate_helpers
+	local tmp_dir counter_file first_output second_output first_pid second_pid ret=0
+	tmp_dir=$(mktemp -d)
+	counter_file="${tmp_dir}/counter"
+	export LINTERS_LOCAL_TEST_COUNTER_FILE="$counter_file"
+	export LINTERS_LOCAL_CACHE_ENABLED="true"
+	export LINTERS_LOCAL_CACHE_DIR_OVERRIDE="${tmp_dir}/cache"
+	export LINTERS_LOCAL_GATE_LOCK_TIMEOUT_SECONDS="10"
+	export TMPDIR="$tmp_dir"
+
+	(_linters_local_run_cached_gate "unit-concurrent" "cache_counter_gate" >"${tmp_dir}/first.out" 2>&1) &
+	first_pid=$!
+	(_linters_local_run_cached_gate "unit-concurrent" "cache_counter_gate" >"${tmp_dir}/second.out" 2>&1) &
+	second_pid=$!
+	wait "$first_pid" || ret=1
+	wait "$second_pid" || ret=1
+	first_output=$(cat "${tmp_dir}/first.out")
+	second_output=$(cat "${tmp_dir}/second.out")
+
+	if [ "$ret" -eq 0 ] && [ "$(cat "$counter_file")" -eq 1 ] &&
+		printf '%s\n%s\n' "$first_output" "$second_output" | grep -q 'shared cache hit'; then
+		print_result "linter cache: concurrent identical gate runs execute once" 0
+	else
+		print_result "linter cache: concurrent identical gate runs execute once" 1 \
+			"count=[$(cat "$counter_file" 2>/dev/null || printf '?')] first=[$first_output] second=[$second_output]"
+	fi
+	rm -rf "$tmp_dir"
+	return 0
+}
+
 main() {
 	test_cache_hit_reuses_gate_output
 	test_no_cache_reruns_gate
 	test_timeout_fails_closed_by_default
 	test_cache_key_invalidates_on_untracked_content_change
 	test_changed_inventory_snapshot_avoids_repeat_git_scans
+	test_common_git_dir_hosts_cross_worktree_cache
+	test_concurrent_gate_reuses_first_result
 
 	printf '\n'
 	if [ "$TESTS_FAILED" -eq 0 ]; then

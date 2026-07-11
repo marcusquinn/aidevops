@@ -390,13 +390,13 @@ check_local_quality() {
 	local quality_script="$REPO_ROOT/.agents/scripts/linters-local.sh"
 
 	if [[ -f "$quality_script" ]]; then
-		print_info "Running linters-local.sh..."
+		print_info "Running linters-local.sh --changed..."
 
-		if bash "$quality_script" &>/dev/null; then
+		if bash "$quality_script" --changed &>/dev/null; then
 			print_success "Local quality checks passed"
 		else
 			print_warning "Local quality checks reported issues"
-			print_info "Run: bash $quality_script (for details)"
+			print_info "Run: bash $quality_script --changed (for details)"
 		fi
 	else
 		print_skip "linters-local.sh not found"

@@ -80,12 +80,53 @@ _linters_local_cache_dir() {
 		return 0
 	fi
 	local git_dir=""
-	git_dir=$(git rev-parse --git-dir 2>/dev/null) || git_dir=""
+	git_dir=$(git rev-parse --git-common-dir 2>/dev/null) || git_dir=""
+	if [[ -n "$git_dir" ]]; then
+		git_dir=$(cd "$git_dir" 2>/dev/null && pwd -P) || git_dir=""
+	fi
 	if [[ -n "$git_dir" ]]; then
 		printf '%s\n' "${git_dir}/aidevops-linters-cache"
 		return 0
 	fi
 	printf '%s\n' "${TMPDIR:-/tmp}/aidevops-linters-cache"
+	return 0
+}
+
+_linters_local_acquire_broad_gate_lock() {
+	local cache_dir="$1"
+	local gate_name="$2"
+	local lock_dir="${cache_dir}/broad-gate.lock"
+	local timeout_seconds="${LINTERS_LOCAL_GATE_LOCK_TIMEOUT_SECONDS:-${LINTERS_LOCAL_BROAD_GATE_TIMEOUT_SECONDS:-90}}"
+	local started_at now owner_pid=""
+	[[ "$timeout_seconds" =~ ^[0-9]+$ ]] || timeout_seconds=90
+	started_at=$(date +%s)
+
+	while ! mkdir "$lock_dir" 2>/dev/null; do
+		if [[ -f "${lock_dir}/owner" ]]; then
+			owner_pid=$(cat "${lock_dir}/owner" 2>/dev/null || true)
+			if [[ "$owner_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
+				rm -f "${lock_dir}/owner"
+				rmdir "$lock_dir" 2>/dev/null || true
+				continue
+			fi
+		fi
+		now=$(date +%s)
+		if [[ $((now - started_at)) -ge "$timeout_seconds" ]]; then
+			print_warning "${gate_name}: broad-gate slot unavailable after ${timeout_seconds}s"
+			return 1
+		fi
+		sleep 1
+	done
+
+	printf '%s\n' "$$" >"${lock_dir}/owner"
+	return 0
+}
+
+_linters_local_release_broad_gate_lock() {
+	local cache_dir="$1"
+	local lock_dir="${cache_dir}/broad-gate.lock"
+	rm -f "${lock_dir}/owner"
+	rmdir "$lock_dir" 2>/dev/null || true
 	return 0
 }
 
@@ -180,6 +221,24 @@ _linters_local_run_cached_gate() {
 		return "$status"
 	fi
 
+	if ! _linters_local_acquire_broad_gate_lock "$cache_dir" "$gate_name"; then
+		if [[ "$strict_broad" == true ]]; then
+			print_error "${gate_name}: required broad-gate result is incomplete"
+		fi
+		return 124
+	fi
+
+	# Another worktree may have completed the same tree-key while this process
+	# waited for the shared broad-gate slot. Re-check before doing duplicate work.
+	if [[ "$cache_enabled" == true && -f "$cache_file" && -f "$status_file" ]]; then
+		print_info "${gate_name}: shared cache hit (${cache_key})"
+		cat "$cache_file"
+		status=$(cat "$status_file" 2>/dev/null || printf '1')
+		[[ "$status" =~ ^[0-9]+$ ]] || status=1
+		_linters_local_release_broad_gate_lock "$cache_dir"
+		return "$status"
+	fi
+
 	output_file=$(mktemp)
 	(
 		"$gate_function"
@@ -217,6 +276,7 @@ _linters_local_run_cached_gate() {
 		print_info "${gate_name}: cached result (${cache_key})"
 	fi
 	rm -f "$output_file"
+	_linters_local_release_broad_gate_lock "$cache_dir"
 	return "$status"
 }
 
@@ -388,13 +448,12 @@ check_shell_portability() {
 	fi
 
 	local portability_files=("--summary")
-	if [[ "${LINTERS_LOCAL_MODE:-full}" == "$LINTERS_LOCAL_MODE_CHANGED" ]]; then
-		if [[ ${#ALL_SH_FILES[@]} -eq 0 ]]; then
-			print_success "Shell portability: no changed shell files"
-			return 0
-		fi
-		portability_files+=("${ALL_SH_FILES[@]}")
+	if [[ ${#ALL_SH_FILES[@]} -eq 0 ]]; then
+		print_success "Shell portability: no selected shell files"
+		return 0
 	fi
+	# Reuse the orchestrator inventory rather than running another git ls-files.
+	portability_files+=("${ALL_SH_FILES[@]}")
 
 	local output violations=0
 	output=$(bash "$scanner_script" "${portability_files[@]}" 2>&1) || violations=1
@@ -404,11 +463,7 @@ check_shell_portability() {
 	else
 		print_error "Shell portability: unguarded platform-specific commands found"
 		# Re-run without --summary to show details
-		if [[ "${LINTERS_LOCAL_MODE:-full}" == "$LINTERS_LOCAL_MODE_CHANGED" ]]; then
-			bash "$scanner_script" "${ALL_SH_FILES[@]}" 2>&1 || true
-		else
-			bash "$scanner_script" 2>&1 || true
-		fi
+		bash "$scanner_script" "${ALL_SH_FILES[@]}" 2>&1 || true
 		return 1
 	fi
 
@@ -418,7 +473,7 @@ check_shell_portability() {
 check_targeted_tests() {
 	echo -e "${BLUE}Checking Targeted Tests for Changed Files...${NC}"
 
-	if [[ "${LINTERS_LOCAL_MODE:-full}" != "$LINTERS_LOCAL_MODE_CHANGED" ]]; then
+	if [[ "${LINTERS_LOCAL_MODE:-changed}" != "$LINTERS_LOCAL_MODE_CHANGED" ]]; then
 		print_info "Targeted tests: full mode uses explicit test commands/CI"
 		return 0
 	fi
@@ -431,12 +486,19 @@ check_targeted_tests() {
 	fi
 
 	local exit_code=0
+	local mapped_test=false
 	if printf '%s\n' "$changed_files" | grep -Eq '^\.agents/scripts/linters-local(-analysis|-gates|-validators)?\.sh$|^\.agents/scripts/tests/test-linters-local'; then
+		mapped_test=true
 		bash .agents/scripts/tests/test-linters-local-complexity-gates.sh || exit_code=1
-		if [[ -f .agents/scripts/tests/test-linters-local-changed-mode.sh ]]; then
-			bash .agents/scripts/tests/test-linters-local-changed-mode.sh || exit_code=1
-		fi
-	else
+		bash .agents/scripts/tests/test-linters-local-changed-mode.sh || exit_code=1
+		bash .agents/scripts/tests/test-linters-local-cache.sh || exit_code=1
+		bash .agents/scripts/tests/test-linters-local-shellcheck-batches.sh || exit_code=1
+	fi
+	if printf '%s\n' "$changed_files" | grep -qxF '.agents/scripts/lint-shell-portability.sh'; then
+		mapped_test=true
+		bash .agents/scripts/tests/test-lint-shell-portability.sh || exit_code=1
+	fi
+	if [[ "$mapped_test" == false ]]; then
 		print_success "Targeted tests: no mapped changed files"
 	fi
 

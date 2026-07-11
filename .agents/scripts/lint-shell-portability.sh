@@ -43,6 +43,7 @@ set -euo pipefail
 
 _PORTABILITY_SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 readonly _PORTABILITY_SCRIPT_NAME
+readonly PORTABILITY_FALSE=false
 
 # ---------------------------------------------------------------------------
 # Colour helpers (no-op when stdout is not a terminal)
@@ -83,60 +84,59 @@ _portability_scan_files() {
 	[[ "$#" -gt 0 ]] || return 0
 
 	awk -v output_file="$tmp_file" -v scanner_name="$_PORTABILITY_SCRIPT_NAME" '
+		BEGIN { linux_only = "linux-only"; macos_only = "macos-only" }
 		function basename(path, value) {
 			value = path
 			sub(/^.*\//, "", value)
 			return value
 		}
 		function context_is_guarded(cmd_name, base_cmd, context, start, i) {
-			if ($0 ~ /&>\/dev\/null|>\/dev\/null[[:space:]]*2>&1|[[:space:]]\|\|[[:space:]]|2>\/dev\/null/) return 1
-			if (FNR > 1 && source_line[FNR - 1] ~ /#[[:space:]]*shell-portability:[[:space:]]*ignore[[:space:]]*(next)?/) return 1
+			{ if ($0 ~ /&>\/dev\/null|>\/dev\/null[[:space:]]*2>&1|[[:space:]]\|\|[[:space:]]|2>\/dev\/null/) return 1 }
+			{ if (FNR > 1 && source_line[FNR - 1] ~ /#[[:space:]]*shell-portability:[[:space:]]*ignore[[:space:]]*(next)?/) return 1 }
 			start = FNR > 10 ? FNR - 10 : 1
 			context = ""
-			for (i = start; i <= FNR; i++) context = context "\n" source_line[i]
+			{ for (i = start; i <= FNR; i++) context = context "\n" source_line[i] }
 			base_cmd = cmd_name
 			sub(/_.*/, "", base_cmd)
-			if (context ~ ("command[[:space:]]+-v[[:space:]]+" base_cmd)) return 1
-			if (context ~ ("command[[:space:]]+-v[[:space:]]+" cmd_name)) return 1
-			if (context ~ /\$\(uname\)|\$\{?OSTYPE\}?|OSTYPE[[:space:]]*=/) return 1
-			if (context ~ /#[[:space:]]*shell-portability:[[:space:]]*ignore/) return 1
-			if (context ~ /if[[:space:]]+[a-z].*(&>|2>)\/dev\/null/) return 1
-			if (context ~ /if[[:space:]]+[a-z].*>\/dev\/null.*2>&1/) return 1
+			{ if (context ~ ("command[[:space:]]+-v[[:space:]]+" base_cmd)) return 1 }
+			{ if (context ~ ("command[[:space:]]+-v[[:space:]]+" cmd_name)) return 1 }
+			{ if (context ~ /\$\(uname\)|\$\{?OSTYPE\}?|OSTYPE[[:space:]]*=/) return 1 }
+			{ if (context ~ /#[[:space:]]*shell-portability:[[:space:]]*ignore/) return 1 }
+			{ if (context ~ /if[[:space:]]+[a-z].*(&>|2>)\/dev\/null/) return 1 }
+			{ if (context ~ /if[[:space:]]+[a-z].*>\/dev\/null.*2>&1/) return 1 }
 			return 0
 		}
 		function report(pattern, cmd_name, display_name, platform) {
-			if ($0 ~ pattern && !context_is_guarded(cmd_name)) {
-				printf "%s:%d: unguarded %s [%s]\n", FILENAME, FNR, display_name, platform >> output_file
-			}
+			{ if ($0 ~ pattern && !context_is_guarded(cmd_name)) printf "%s:%d: unguarded %s [%s]\n", FILENAME, FNR, display_name, platform >> output_file }
 		}
 		FNR == 1 {
-			for (i in source_line) delete source_line[i]
+			{ for (i in source_line) delete source_line[i] }
 			skip_file = basename(FILENAME) == scanner_name || FILENAME ~ /bash-compat\.md/ || FILENAME ~ /(^|\/)tests\//
 		}
 		{
 			source_line[FNR] = $0
-			if (skip_file || $0 ~ /^[[:space:]]*#/ || $0 ~ /command[[:space:]]+-v[[:space:]]/) next
-			if ($0 !~ /(getent|sha256sum|readlink|stat|date|timeout|sed|grep|xargs|find|mktemp|base64|dscl|sw_vers|launchctl|pbcopy|pbpaste|defaults|security|codesign)/) next
-			report("(^|[[:space:]]|[({;&])getent[[:space:]]", "getent", "getent", "linux-only")
-			report("(^|[[:space:]]|[({;&])sha256sum[[:space:]]", "sha256sum", "sha256sum", "linux-only")
-			report("(^|[[:space:]]|[({;&])readlink[[:space:]]*-[a-zA-Z]*f", "readlink_f", "readlink -f", "linux-only")
-			report("(^|[[:space:]]|[({;&])stat[[:space:]]*(-c[[:space:]]|-c%|--format)", "stat_c", "stat -c/--format", "linux-only")
-			report("(^|[[:space:]]|[({;&])date[[:space:]]+-d[[:space:]]", "date_d", "date -d", "linux-only")
-			report("(^|[[:space:]]|[({;&])timeout[[:space:]]+[0-9]", "timeout_cmd", "timeout", "linux-only")
-			report("(^|[[:space:]]|[({;&])sed[[:space:]]*(-[a-zA-Z]*r[^e]|-[a-zA-Z]*r$)", "sed_r", "sed -r", "linux-only")
-			report("(^|[[:space:]]|[({;&])grep[[:space:]]*(-[a-zA-Z]*P[^C]|-[a-zA-Z]*P$)", "grep_P", "grep -P", "linux-only")
-			report("(^|[[:space:]]|[({;&])xargs[[:space:]]*-[a-zA-Z]*r[[:space:]]", "xargs_r", "xargs -r", "linux-only")
-			report("(^|[[:space:]]|[({;&])find[^(]*-printf[[:space:]]", "find_printf", "find -printf", "linux-only")
-			report("(^|[[:space:]]|[({;&])mktemp[[:space:]]*--suffix", "mktemp_suffix", "mktemp --suffix", "linux-only")
-			report("(^|[[:space:]]|[({;&])base64[[:space:]]*-[a-zA-Z]*w[[:space:]]", "base64_w", "base64 -w", "linux-only")
-			report("(^|[[:space:]]|[({;&])dscl[[:space:]]", "dscl", "dscl", "macos-only")
-			report("(^|[[:space:]]|[({;&])sw_vers[[:space:]]", "sw_vers", "sw_vers", "macos-only")
-			report("(^|[[:space:]]|[({;&])launchctl[[:space:]]", "launchctl", "launchctl", "macos-only")
-			report("(^|[[:space:]]|[({;&])pbcopy[[:space:]]", "pbcopy", "pbcopy", "macos-only")
-			report("(^|[[:space:]]|[({;&])pbpaste[[:space:]]", "pbpaste", "pbpaste", "macos-only")
-			report("(^|[[:space:]]|[({;&])defaults[[:space:]]+(read|write|delete|export|import)", "defaults_plist", "defaults", "macos-only")
-			report("(^|[[:space:]]|[({;&])security[[:space:]]+(find-generic-password|add-generic-password|find-internet-password|delete-generic-password)", "security_keychain", "security (keychain)", "macos-only")
-			report("(^|[[:space:]]|[({;&])codesign[[:space:]]", "codesign", "codesign", "macos-only")
+			{ if (skip_file || $0 ~ /^[[:space:]]*#/ || $0 ~ /command[[:space:]]+-v[[:space:]]/) next }
+			{ if ($0 !~ /(getent|sha256sum|readlink|stat|date|timeout|sed|grep|xargs|find|mktemp|base64|dscl|sw_vers|launchctl|pbcopy|pbpaste|defaults|security|codesign)/) next }
+			report("(^|[[:space:]]|[({;&])getent[[:space:]]", "getent", "getent", linux_only)
+			report("(^|[[:space:]]|[({;&])sha256sum[[:space:]]", "sha256sum", "sha256sum", linux_only)
+			report("(^|[[:space:]]|[({;&])readlink[[:space:]]*-[a-zA-Z]*f", "readlink_f", "readlink -f", linux_only)
+			report("(^|[[:space:]]|[({;&])stat[[:space:]]*(-c[[:space:]]|-c%|--format)", "stat_c", "stat -c/--format", linux_only)
+			report("(^|[[:space:]]|[({;&])date[[:space:]]+-d[[:space:]]", "date_d", "date -d", linux_only)
+			report("(^|[[:space:]]|[({;&])timeout[[:space:]]+[0-9]", "timeout_cmd", "timeout", linux_only)
+			report("(^|[[:space:]]|[({;&])sed[[:space:]]*(-[a-zA-Z]*r[^e]|-[a-zA-Z]*r$)", "sed_r", "sed -r", linux_only)
+			report("(^|[[:space:]]|[({;&])grep[[:space:]]*(-[a-zA-Z]*P[^C]|-[a-zA-Z]*P$)", "grep_P", "grep -P", linux_only)
+			report("(^|[[:space:]]|[({;&])xargs[[:space:]]*-[a-zA-Z]*r[[:space:]]", "xargs_r", "xargs -r", linux_only)
+			report("(^|[[:space:]]|[({;&])find[^(]*-printf[[:space:]]", "find_printf", "find -printf", linux_only)
+			report("(^|[[:space:]]|[({;&])mktemp[[:space:]]*--suffix", "mktemp_suffix", "mktemp --suffix", linux_only)
+			report("(^|[[:space:]]|[({;&])base64[[:space:]]*-[a-zA-Z]*w[[:space:]]", "base64_w", "base64 -w", linux_only)
+			report("(^|[[:space:]]|[({;&])dscl[[:space:]]", "dscl", "dscl", macos_only)
+			report("(^|[[:space:]]|[({;&])sw_vers[[:space:]]", "sw_vers", "sw_vers", macos_only)
+			report("(^|[[:space:]]|[({;&])launchctl[[:space:]]", "launchctl", "launchctl", macos_only)
+			report("(^|[[:space:]]|[({;&])pbcopy[[:space:]]", "pbcopy", "pbcopy", macos_only)
+			report("(^|[[:space:]]|[({;&])pbpaste[[:space:]]", "pbpaste", "pbpaste", macos_only)
+			report("(^|[[:space:]]|[({;&])defaults[[:space:]]+(read|write|delete|export|import)", "defaults_plist", "defaults", macos_only)
+			report("(^|[[:space:]]|[({;&])security[[:space:]]+(find-generic-password|add-generic-password|find-internet-password|delete-generic-password)", "security_keychain", "security (keychain)", macos_only)
+			report("(^|[[:space:]]|[({;&])codesign[[:space:]]", "codesign", "codesign", macos_only)
 		}
 	' "$@"
 	return $?
@@ -183,7 +183,7 @@ main() {
 		fi
 	fi
 
-	[[ "$summary_only" == "false" ]] && _pc_info "Scanning ${#files[@]} shell file(s) for unguarded platform-specific commands..."
+	[[ "$summary_only" == "$PORTABILITY_FALSE" ]] && _pc_info "Scanning ${#files[@]} shell file(s) for unguarded platform-specific commands..."
 
 	# Collect violations in a temp file
 	local tmp_violations
@@ -205,7 +205,7 @@ main() {
 		violation_count="${violation_count//[^0-9]/}"
 		violation_count="${violation_count:-0}"
 
-		if [[ "$summary_only" == "false" ]]; then
+		if [[ "$summary_only" == "$PORTABILITY_FALSE" ]]; then
 			printf '\n'
 			while IFS= read -r line; do
 				printf '%b%s%b\n' "${_PC_RED}" "$line" "${_PC_NC}"
@@ -221,7 +221,7 @@ main() {
 			printf 'shell-portability: %d violation(s)\n' "$violation_count"
 		fi
 	else
-		if [[ "$summary_only" == "false" ]]; then
+		if [[ "$summary_only" == "$PORTABILITY_FALSE" ]]; then
 			_pc_info "No unguarded platform-specific commands found."
 		else
 			printf 'shell-portability: clean\n'
