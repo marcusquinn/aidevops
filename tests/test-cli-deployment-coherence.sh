@@ -13,7 +13,8 @@ grep -q '"$convergence_helper" converge "$cli_source" "$orchestrator_source" "$d
 grep -q 'git clone --depth 1 --branch main' \
 	"$REPO_DIR/.agents/scripts/aidevops-cli/aidevops-update-lib.sh"
 
-mkdir -p "$TEST_HOME/.aidevops/agents/scripts" "$TEST_HOME/Git/aidevops" "$TEST_HOME/bin"
+mkdir -p "$TEST_HOME/.aidevops/agents/scripts" \
+	"$TEST_HOME/Git/aidevops/.agents/scripts/aidevops-cli" "$TEST_HOME/bin"
 # shellcheck disable=SC2016
 printf '#!/usr/bin/env bash\nprintf "deployed:%%s\\n" "$1"\n' >"$TEST_HOME/.aidevops/agents/aidevops.sh"
 printf '#!/usr/bin/env bash\nprintf "canonical\\n"\n' >"$TEST_HOME/Git/aidevops/aidevops.sh"
@@ -29,11 +30,20 @@ cp "$REPO_DIR/aidevops.sh" "$TEST_HOME/.aidevops/agents/aidevops.sh"
 cp -R "$REPO_DIR/.agents/scripts/." "$TEST_HOME/.aidevops/agents/scripts/"
 printf '9.8.7\n' >"$TEST_HOME/.aidevops/agents/VERSION"
 printf '1.2.3\n' >"$TEST_HOME/Git/aidevops/VERSION"
+cat >"$TEST_HOME/Git/aidevops/.agents/scripts/aidevops-cli/aidevops-repos-lib.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'FAIL: stale canonical CLI module was sourced\n' >&2
+exit 42
+EOF
 printf '#!/usr/bin/env bash\nexit 1\n' >"$TEST_HOME/bin/curl"
 chmod +x "$TEST_HOME/bin/curl"
 result=$(cd "$TEST_HOME" && HOME="$TEST_HOME" PATH="$TEST_HOME/bin:/usr/bin:/bin" bash "$REPO_DIR/bin/aidevops" --version)
 [[ "$result" == "aidevops 9.8.7" ]] || {
 	printf 'FAIL: real deployed CLI selected %s\n' "$result" >&2
+	exit 1
+}
+[[ "$(tr -d '\n' <"$TEST_HOME/Git/aidevops/VERSION")" == "1.2.3" ]] || {
+	printf 'FAIL: canonical VERSION was mutated during deployed CLI execution\n' >&2
 	exit 1
 }
 
