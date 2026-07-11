@@ -618,10 +618,19 @@ jobs:
 
       - name: Setup gh shim (auto-inject signature footer on writes)
         run: |
-          chmod +x __aidevops/.agents/scripts/gh \
-                   __aidevops/.agents/scripts/gh-signature-helper.sh \
+          # GH#27119: actions/checkout resolves every executable once, then
+          # cleans the workspace. Keep the selected git/gh shims and their
+          # sibling dependencies outside that deletion boundary so the later
+          # caller-repo checkout cannot remove an executable while using it.
+          SHIM_DIR="${RUNNER_TEMP}/aidevops-issue-sync-shims"
+          rm -rf "${SHIM_DIR}"
+          mkdir -p "${SHIM_DIR}"
+          cp -R __aidevops/.agents/scripts/. "${SHIM_DIR}/"
+          chmod +x "${SHIM_DIR}/gh" \
+                   "${SHIM_DIR}/gh-signature-helper.sh" \
+                   "${SHIM_DIR}/git" \
                    2>/dev/null || true
-          echo "${GITHUB_WORKSPACE}/__aidevops/.agents/scripts" >> "$GITHUB_PATH"
+          echo "${SHIM_DIR}" >> "$GITHUB_PATH"
 
       - name: Extract task ID and collect linked issues
         id: extract
