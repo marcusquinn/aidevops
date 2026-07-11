@@ -438,6 +438,16 @@ contract_args=$(printf '%s\n' "${_GH_CI_CONTRACT_ARGS[@]}")
 assert_not_contains "B10g: non-parent issue body remains unstamped" \
 	'<!-- parent-close-contract:' "$contract_args"
 
+_gh_ci_prepare_parent_close_contract 1 --body $'## Children\n\nNo children filed yet.' --label parent-task
+contract_args=$(printf '%s\n' "${_GH_CI_CONTRACT_ARGS[@]}")
+assert_contains "B10h: empty children section remains safe under pipefail" \
+	'<!-- parent-close-contract: needs-decomposition -->' "$contract_args"
+
+assert_grep_fixed \
+	"B10i: close-contract nudge marker varies with the blocking reason" \
+	'<!-- parent-close-contract-incomplete:${_PARENT_CLOSE_CONTRACT_REASON} -->' \
+	"$ACTIONS_TARGET"
+
 # ============================================================
 echo ""
 echo "${TEST_BLUE}=== Results: ${TESTS_RUN} tests, ${TESTS_FAILED} failed ===${TEST_NC}"

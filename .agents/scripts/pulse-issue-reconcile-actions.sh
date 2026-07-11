@@ -358,7 +358,8 @@ _parent_close_contract_incomplete() {
 		return 0
 	fi
 
-	if [[ "$parent_body" == *"<!-- parent-close-contract: phase-plan -->"* && -z "$phases_section" ]]; then
+	if [[ "$parent_body" == *"<!-- parent-close-contract: phase-plan -->"* && \
+		"$_PARENT_CLOSE_CONTRACT_DECLARED" -eq 0 ]]; then
 		_PARENT_CLOSE_CONTRACT_REASON="invalid-phase-plan"
 		return 0
 	fi
@@ -516,7 +517,8 @@ _try_close_parent_tracker() {
 				"$_PARENT_CLOSE_CONTRACT_UNFILED" || true
 		else
 			_post_parent_close_contract_nudge "$slug" "$parent_num" \
-				"$_PARENT_CLOSE_CONTRACT_REASON" '<!-- parent-close-contract-incomplete -->' || true
+				"$_PARENT_CLOSE_CONTRACT_REASON" \
+				"<!-- parent-close-contract-incomplete:${_PARENT_CLOSE_CONTRACT_REASON} -->" || true
 		fi
 		_mark_parent_needs_decomposition "$slug" "$parent_num"
 		echo "[pulse-wrapper] Reconcile parent-task: kept #${parent_num} open in ${slug} — incomplete close contract (${_PARENT_CLOSE_CONTRACT_REASON})" >>"${LOGFILE:-/dev/null}"
@@ -827,7 +829,10 @@ _SP_CPT_REOPENED=0
 _repair_recently_closed_parent() {
 	local slug="$1" issue_num="$2" issue_body="$3" known_child_count="$4"
 	local issue_state="$5"
-	[[ "$issue_state" == "CLOSED" ]] || return 1
+	case "$issue_state" in
+	CLOSED | closed) ;;
+	*) return 1 ;;
+	esac
 	if _parent_close_contract_incomplete "$issue_body" "$known_child_count"; then
 		if _repair_closed_parent_contract "$slug" "$issue_num" \
 			"$_PARENT_CLOSE_CONTRACT_REASON"; then

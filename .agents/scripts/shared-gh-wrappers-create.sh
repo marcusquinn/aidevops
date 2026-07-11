@@ -233,7 +233,7 @@ _gh_ci_prepare_parent_close_contract() {
 			/^##[[:space:]]+(Children|Child Issues|Sub-issues|Sub-tasks)([[:space:]]|$)/ { in_children=1; next }
 			in_children && /^##[[:space:]]/ { exit }
 			in_children { print }
-		' | grep -oE '#[0-9]+' | sort -u | wc -l | tr -d ' ')
+		' | grep -oE '#[0-9]+' | sort -u | wc -l | tr -d ' ' || true)
 		if [[ "$children_count" =~ ^[0-9]+$ ]] && [[ "$children_count" -gt 0 ]]; then
 			marker="<!-- parent-close-contract: expected-children=${children_count} -->"
 		fi
