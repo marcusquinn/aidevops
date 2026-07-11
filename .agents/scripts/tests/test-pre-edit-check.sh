@@ -232,6 +232,21 @@ test_allowlisted_path_allows_edit_on_main() {
 	return 0
 }
 
+test_interactive_allowlisted_path_still_requires_worktree() {
+	git -C "$TEST_ROOT" switch main >/dev/null 2>&1 || true
+	local output=""
+	local exit_code=0
+	output=$(run_helper "$TEST_ROOT" --file "README.md" 2>&1) || exit_code=$?
+
+	if [[ "$exit_code" -eq 2 ]] && [[ "$output" == *"ACTION_REQUIRED=create_worktree"* ]]; then
+		print_result "interactive allowlisted path still requires a linked worktree" 0
+		return 0
+	fi
+
+	print_result "interactive allowlisted path still requires a linked worktree" 1 "exit=${exit_code} output=${output}"
+	return 0
+}
+
 test_path_traversal_blocked_on_main() {
 	# Ensure repo is on main for this test
 	git -C "$TEST_ROOT" switch main >/dev/null 2>&1 || true
@@ -324,6 +339,7 @@ main() {
 	test_blocks_when_linked_worktree_owned_by_another_live_process
 	test_allows_same_opencode_session_pid_rollover
 	test_allowlisted_path_allows_edit_on_main
+	test_interactive_allowlisted_path_still_requires_worktree
 	test_path_traversal_blocked_on_main
 	test_absolute_path_outside_repo_blocked_on_main
 	test_todo_subdir_path_allows_edit_on_main

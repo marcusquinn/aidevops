@@ -481,10 +481,17 @@ run_operation_verification() {
 
 # Handle loop-mode decision on a protected (main/master) branch.
 # Outputs LOOP_DECISION and exits 0 (stay) or 2 (worktree needed).
+_is_explicit_headless_flow() {
+	case "${FULL_LOOP_HEADLESS:-}${AIDEVOPS_HEADLESS:-}${OPENCODE_HEADLESS:-}${CLAUDE_HEADLESS:-}${Claude_HEADLESS:-}${GITHUB_ACTIONS:-}" in
+	*true* | *1*) return 0 ;;
+	*) return 1 ;;
+	esac
+}
+
 _handle_loop_mode_on_protected() {
 	local branch="$1"
 
-	if is_main_write_allowed; then
+	if _is_explicit_headless_flow && is_main_write_allowed; then
 		if [[ -n "$TARGET_FILE" ]]; then
 			echo -e "${YELLOW}LOOP-AUTO${NC}: Allowlisted path '$TARGET_FILE', staying on $branch"
 		else
@@ -716,9 +723,9 @@ if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
 	# Loop mode: auto-decide based on file path (preferred) or task description
 	[[ "$LOOP_MODE" == "true" ]] && _handle_loop_mode_on_protected "$current_branch"
 
-	# Short-circuit: explicit --file on an allowlisted path is always allowed,
-	# regardless of loop-mode or headless state (t1712).
-	if [[ -n "$TARGET_FILE" ]] && is_main_allowlisted_path "$TARGET_FILE"; then
+	# Short-circuit only for explicitly identified headless bookkeeping flows.
+	# Interactive sessions never gain a canonical write exemption (t1712).
+	if _is_explicit_headless_flow && [[ -n "$TARGET_FILE" ]] && is_main_allowlisted_path "$TARGET_FILE"; then
 		echo -e "${GREEN}OK${NC} - Allowlisted path '$TARGET_FILE' on $current_branch"
 		echo "MAIN_ALLOWLISTED=true"
 		exit 0
