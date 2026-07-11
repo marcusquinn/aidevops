@@ -402,6 +402,7 @@ _large_file_gate_find_existing_debt_issue() {
 	local repo_slug="$1"
 	local lf_path="$2"
 	local _marker="generator=large-file-simplification-gate cited_file=${lf_path} "
+	local _server_query="\"${lf_path}\" large-file-simplification-gate in:body sort:created-asc"
 
 	# Open-state lookup. One retry with 2s backoff covers GitHub search
 	# index lag (typically 1-3s after issue creation) — t2995 investigation
@@ -409,14 +410,14 @@ _large_file_gate_find_existing_debt_issue() {
 	# retrying a real failure would just hit the same timeout twice.
 	local _open _open_json _open_rc=0
 	_open_json=$(gh_issue_list --repo "$repo_slug" --state open \
-		--label "file-size-debt" --search "large-file-simplification-gate in:body" \
+		--label "file-size-debt" --search "$_server_query" \
 		--json number,body --limit 100 2>/dev/null) || _open_rc=$?
 	_open=$(printf '%s' "$_open_json" | jq -r --arg marker "$_marker" \
 		'[.[] | select((.body // "") | contains($marker)) | .number] | min // empty' 2>/dev/null) || _open_rc=$?
 	if [[ $_open_rc -eq 0 && -z "$_open" ]]; then
 		sleep 2
 		_open_json=$(gh_issue_list --repo "$repo_slug" --state open \
-			--label "file-size-debt" --search "large-file-simplification-gate in:body" \
+			--label "file-size-debt" --search "$_server_query" \
 			--json number,body --limit 100 2>/dev/null) || _open_rc=$?
 		_open=$(printf '%s' "$_open_json" | jq -r --arg marker "$_marker" \
 			'[.[] | select((.body // "") | contains($marker)) | .number] | min // empty' 2>/dev/null) || _open_rc=$?
@@ -433,7 +434,7 @@ _large_file_gate_find_existing_debt_issue() {
 	local _closed _closed_json _closed_rc=0
 	_closed_json=$(gh_issue_list --repo "$repo_slug" \
 		--state closed --label "file-size-debt" \
-		--search "large-file-simplification-gate in:body" \
+		--search "$_server_query" \
 		--json number,body --limit 100 2>/dev/null) || _closed_rc=$?
 	_closed=$(printf '%s' "$_closed_json" | jq -r --arg marker "$_marker" \
 		'[.[] | select((.body // "") | contains($marker)) | .number] | min // empty' 2>/dev/null) || _closed_rc=$?
@@ -460,12 +461,46 @@ _large_file_gate_normalize_debt_issue() {
 		--add-label "file-size-debt,auto-dispatch" >/dev/null 2>&1; then
 		return 1
 	fi
-	local _stale_label
+	local _labels="" _stale_label
+	_labels=$(gh_issue_view "$issue_number" --repo "$repo_slug" \
+		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || return 1
 	for _stale_label in status:done not-planned simplification-incomplete; do
-		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--remove-label "$_stale_label" >/dev/null 2>&1 || true
+		if [[ ",$_labels," == *",$_stale_label,"* ]]; then
+			if ! gh issue edit "$issue_number" --repo "$repo_slug" \
+				--remove-label "$_stale_label" >/dev/null 2>&1; then
+				return 1
+			fi
+		fi
 	done
 	return 0
+}
+
+#######################################
+# Close all open exact-marker matches except the canonical oldest issue.
+# This is retried whenever the canonical issue is encountered, so a transient
+# close failure cannot leave a duplicate permanently active.
+# Arguments: repo_slug, lf_path, canonical_issue
+#######################################
+_large_file_gate_close_duplicate_debt_issues() {
+	local repo_slug="$1"
+	local lf_path="$2"
+	local canonical_issue="$3"
+	local _marker="generator=large-file-simplification-gate cited_file=${lf_path} "
+	local _json="" _duplicate="" _failed=0
+
+	_json=$(gh_issue_list --repo "$repo_slug" --state open --label "file-size-debt" \
+		--search "\"${lf_path}\" large-file-simplification-gate in:body sort:created-asc" \
+		--json number,body --limit 100 2>/dev/null) || return 1
+	while IFS= read -r _duplicate; do
+		[[ -n "$_duplicate" && "$_duplicate" != "$canonical_issue" ]] || continue
+		if ! gh issue close "$_duplicate" --repo "$repo_slug" --reason "not planned" \
+			--comment "Superseded by canonical file-size-debt #${canonical_issue}; closed by duplicate reconciliation." >/dev/null 2>&1; then
+			_failed=1
+		fi
+	done < <(printf '%s' "$_json" | jq -r --arg marker "$_marker" \
+		'.[] | select((.body // "") | contains($marker)) | .number' 2>/dev/null)
+	[[ "$_failed" -eq 0 ]]
+	return $?
 }
 
 #######################################
@@ -559,8 +594,9 @@ _Created by large-file simplification gate (pulse-dispatch-core.sh)_"
 			_canonical_num="${_canonical_combined#open:}"
 		fi
 		if [[ -n "$_canonical_num" && "$_canonical_num" != "$_new_num" ]]; then
-			gh issue close "$_new_num" --repo "$repo_slug" --reason "not planned" \
-				--comment "Superseded by canonical file-size-debt #${_canonical_num}; closed by post-create race reconciliation." >/dev/null 2>&1 || true
+			if ! _large_file_gate_close_duplicate_debt_issues "$repo_slug" "$lf_path" "$_canonical_num"; then
+				echo "[pulse-wrapper] WARN: failed to close one or more duplicate file-size-debt issues for ${lf_path}; next pulse will retry" >>"$LOGFILE"
+			fi
 			printf '#%s (existing)' "$_canonical_num"
 			return 0
 		fi
@@ -627,6 +663,9 @@ _large_file_gate_create_debt_issue() {
 	fi
 
 	if [[ "$_existing_state" == "open" ]]; then
+		if ! _large_file_gate_close_duplicate_debt_issues "$repo_slug" "$lf_path" "$_existing"; then
+			echo "[pulse-wrapper] WARN: duplicate reconciliation incomplete for canonical file-size-debt #${_existing}; next pulse will retry" >>"$LOGFILE"
+		fi
 		if ! _large_file_gate_normalize_debt_issue "$_existing" "$repo_slug"; then
 			echo "[pulse-wrapper] WARN: failed to normalize canonical file-size-debt #${_existing}; deferring" >>"$LOGFILE"
 			return 0

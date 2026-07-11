@@ -102,6 +102,11 @@ gh_issue_list() {
 	return $?
 }
 
+gh_issue_view() {
+	printf ''
+	return 0
+}
+
 # t2995: no-op the 2-second retry sleep introduced for search-index lag
 # so the test doesn't actually pause.
 sleep() { return 0; }

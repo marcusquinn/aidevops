@@ -170,6 +170,11 @@ gh() {
 	return 0
 }
 export -f gh
+gh_issue_view() {
+	printf ''
+	return 0
+}
+export -f gh_issue_view
 
 # Bash 3.2 + LARGE_FILE_LINE_THRESHOLD (referenced by the gate script via
 # nested helpers). The dedup helper itself does not depend on this — but
