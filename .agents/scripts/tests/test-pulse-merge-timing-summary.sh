@@ -22,6 +22,7 @@ export REPOS_JSON="${TEST_ROOT}/repos.json"
 export PULSE_MERGE_BATCH_LIMIT=1
 
 mkdir -p "${HOME}/.config/aidevops"
+mkdir -p "${HOME}/.aidevops/logs"
 
 cat >"$REPOS_JSON" <<'JSON'
 {"initialized_repos":[
@@ -123,6 +124,25 @@ done
 if ! grep -q 'deterministic_merge_pass timing: total_s=' "$LOGFILE"; then
   printf 'FAIL: missing overall deterministic_merge_pass timing summary\n'
   cat "$LOGFILE"
+  exit 1
+fi
+
+unset_accumulator_regression() {
+  local elapsed_total
+  _pmp_add_elapsed_seconds elapsed_total "$(_pmp_now_epoch)"
+  [[ "$elapsed_total" =~ ^[0-9]+$ ]]
+  return $?
+}
+
+if ! unset_accumulator_regression; then
+  printf 'FAIL: declared-but-unset timing accumulator was not initialized safely\n'
+  exit 1
+fi
+
+unset LOGFILE
+_pmp_log_repo_timing_summary "owner/fallback"
+if ! grep -q 'deterministic_merge_pass timing: repo=owner/fallback' "${HOME}/.aidevops/logs/pulse.log"; then
+  printf 'FAIL: unset LOGFILE did not use the standard pulse log path\n'
   exit 1
 fi
 
