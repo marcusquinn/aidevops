@@ -22,12 +22,13 @@ test("tagged diagnostics are persisted without payload-based TUI routing", () =>
 
   try {
     fakeConsole.error("[aidevops] account error@example.invalid refreshed");
-    fakeConsole.error("[aidevops] proxy failed", new Error("connection refused"));
+    fakeConsole.error("[aidevops] proxy failed\r\n[forged]", new Error("connection refused"));
     fakeConsole.error("host error");
 
     const diagnosticLog = readFileSync(logPath, "utf8");
     assert.match(diagnosticLog, /account error@example\.invalid refreshed/);
-    assert.match(diagnosticLog, /proxy failed.*connection refused/s);
+    assert.match(diagnosticLog, /proxy failed\\r\\n\[forged].*connection refused/);
+    assert.equal(diagnosticLog.trim().split("\n").length, 2);
     assert.deepEqual(calls, [["host error"]]);
   } finally {
     restore();

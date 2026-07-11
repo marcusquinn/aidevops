@@ -30,14 +30,22 @@ function sanitizeEntry(args) {
     .map(formatArgument)
     .join(" ")
     .replace(CREDENTIAL_PATTERN, "$1[redacted-credential]")
+    .replace(/\r/g, "\\r")
+    .replace(/\n/g, "\\n")
     .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, " ")
     .slice(0, MAX_ENTRY_LENGTH);
 }
 
 function appendDiagnostic(logPath, args) {
   mkdirSync(dirname(logPath), { recursive: true });
-  if (existsSync(logPath) && statSync(logPath).size > MAX_LOG_BYTES) {
-    renameSync(logPath, `${logPath}.1`);
+  try {
+    if (existsSync(logPath) && statSync(logPath).size > MAX_LOG_BYTES) {
+      renameSync(logPath, `${logPath}.${process.pid}.1`);
+    }
+  } catch (error) {
+    // Another OpenCode process may rotate the shared log between the stat and
+    // rename. The active path is still safe to append; surface other failures.
+    if (error?.code !== "ENOENT") throw error;
   }
   appendFileSync(logPath, `[${new Date().toISOString()}] ${sanitizeEntry(args)}\n`);
 }
