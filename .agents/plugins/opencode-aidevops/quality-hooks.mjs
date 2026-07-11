@@ -195,18 +195,18 @@ function recordGitPattern(scriptsDir, title, outputText) {
  * @param {string} outputText
  */
 function trackBashOperation(ctx, title, outputText) {
+  const boundedTitle = sanitizeOperationTitle(title);
   if (title.includes("git commit") || title.includes("git push")) {
     // Tool titles can contain entire commands and long file lists. Keep this
     // informational telemetry in the quality log: writing it to stderr draws
     // over OpenCode's TUI and makes payload text part of console routing.
-    const boundedTitle = sanitizeOperationTitle(title);
     qualityLog(ctx.logsDir, ctx.qualityLogPath, "INFO", `Git operation: ${boundedTitle}`);
     recordGitPattern(ctx.scriptsDir, boundedTitle, outputText);
   }
 
   if (title.includes("shellcheck") || title.includes("linters-local")) {
     const passed = !outputText.includes("error") && !outputText.includes("violation");
-    qualityLog(ctx.logsDir, ctx.qualityLogPath, passed ? "INFO" : "WARN", `Lint run: ${title} — ${passed ? "PASS" : "issues found"}`);
+    qualityLog(ctx.logsDir, ctx.qualityLogPath, passed ? "INFO" : "WARN", `Lint run: ${boundedTitle} — ${passed ? "PASS" : "issues found"}`);
   }
 }
 

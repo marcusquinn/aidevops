@@ -7,53 +7,47 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import {
-  installPluginConsoleGuard,
-  shouldSuppressPluginConsole,
-} from "../plugin-console.mjs";
-import { sanitizeOperationTitle } from "../quality-hooks.mjs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createQualityHooks } from "../quality-hooks.mjs";
 
-test("payload words cannot promote informational diagnostics into TUI errors", () => {
-  const command = "[aidevops] Git operation detected: git add headless-runtime-failure.sh && git commit";
-  assert.equal(shouldSuppressPluginConsole([command], false), true);
-});
-
-test("actual Error objects and untagged host errors remain visible", () => {
-  assert.equal(shouldSuppressPluginConsole(["[aidevops] request failed", new Error("boom")], false), false);
-  assert.equal(shouldSuppressPluginConsole(["host error"], false), false);
-});
-
-test("debug mode preserves tagged plugin diagnostics", () => {
-  assert.equal(shouldSuppressPluginConsole(["[aidevops] diagnostic"], true), false);
-});
-
-test("persisted operation titles are redacted, single-line, and bounded", () => {
+test("post-tool operation telemetry stays out of the TUI and is safely persisted", async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "aidevops-tui-routing-"));
+  const trackerPath = join(tempDir, "pattern-tracker-helper.sh");
+  const capturePath = join(tempDir, "tracker-args.txt");
+  const previousCapture = process.env.AIDEVOPS_TEST_PATTERN_CAPTURE;
+  const originalConsoleError = console.error;
+  const consoleCalls = [];
   const credential = `ghp_${"a".repeat(36)}`;
-  const title = `git commit\n${credential}\t${"x".repeat(600)}`;
-  const sanitized = sanitizeOperationTitle(title);
+  const title = `git commit shellcheck headless-runtime-failure.sh\n${credential}\t${"x".repeat(600)}`;
 
-  assert.doesNotMatch(sanitized, /[\r\n\t]/);
-  assert.doesNotMatch(sanitized, /ghp_/);
-  assert.match(sanitized, /\[redacted-credential]/);
-  assert.equal(sanitized.length, 500);
-});
+  writeFileSync(
+    trackerPath,
+    "#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > \"$AIDEVOPS_TEST_PATTERN_CAPTURE\"\n",
+  );
+  process.env.AIDEVOPS_TEST_PATTERN_CAPTURE = capturePath;
+  console.error = (...args) => consoleCalls.push(args);
 
-test("installed guard suppresses tagged strings without writing to stderr", () => {
-  const calls = [];
-  const fakeConsole = {
-    error(...args) {
-      calls.push(args);
-    },
-  };
-  const restore = installPluginConsoleGuard(fakeConsole, {});
+  try {
+    const hooks = createQualityHooks({ scriptsDir: tempDir, logsDir: tempDir });
+    await hooks.toolExecuteAfter(
+      { tool: "bash", callID: "" },
+      { title, output: "", metadata: {} },
+    );
 
-  fakeConsole.error("[aidevops] Git operation detected: failure.sh");
-  fakeConsole.error("host error");
-  restore();
-  fakeConsole.error("[aidevops] visible after restore");
-
-  assert.deepEqual(calls, [
-    ["host error"],
-    ["[aidevops] visible after restore"],
-  ]);
+    const qualityLog = readFileSync(join(tempDir, "quality-hooks.log"), "utf8");
+    const trackerArgs = readFileSync(capturePath, "utf8");
+    assert.doesNotMatch(qualityLog, /ghp_|[\r\t]/);
+    assert.match(qualityLog, /\[redacted-credential]/);
+    assert.match(qualityLog, /Git operation:/);
+    assert.match(qualityLog, /Lint run:/);
+    assert.doesNotMatch(trackerArgs, /ghp_|[\r\t]/);
+    assert.equal(consoleCalls.some((args) => args.join(" ").includes("Git operation detected")), false);
+  } finally {
+    console.error = originalConsoleError;
+    if (previousCapture === undefined) delete process.env.AIDEVOPS_TEST_PATTERN_CAPTURE;
+    else process.env.AIDEVOPS_TEST_PATTERN_CAPTURE = previousCapture;
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 });
