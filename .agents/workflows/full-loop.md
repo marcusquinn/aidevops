@@ -11,7 +11,7 @@ Task/Prompt: $ARGUMENTS
 
 ## Lifecycle Gate (t5096 + GH#5317 — MANDATORY)
 
-`Claim → Worktree → Develop → Preflight → PR → Review → Merge → Release → Close → Cleanup`
+`WORKTREE → LOCAL_VERIFIED → PR_OPEN → REMOTE_VERIFIED → MERGED → CANONICAL_SYNCED → RELEASED → DEPLOYED → CLEANED`
 
 Fatal modes: **GH#5317** (exits without PR), **GH#5096** (exits after PR). Do NOT skip any step:
 
@@ -23,8 +23,8 @@ Fatal modes: **GH#5317** (exits without PR), **GH#5096** (exits after PR). Do NO
 | 3 | Merge — `full-loop-helper.sh merge` (enforces gate + squash, no `--delete-branch`) | |
 | 4 | Auto-release — bump patch + GitHub release (aidevops repo only) | |
 | 5 | Issue closing comment — structured comment on every linked issue | |
-| 6 | Postflight + deploy — verify release health, run setup.sh | `FULL_LOOP_COMPLETE` |
-| 7 | Worktree cleanup — return to main, pull, prune | |
+| 6 | Postflight + deploy — verify release health and deployed version | |
+| 7 | Guarded worktree cleanup after the owner exits | `FULL_LOOP_COMPLETE` |
 
 ---
 
@@ -50,7 +50,7 @@ Extract first positional arg; if ` -- ` present, use suffix (t158). Resolve `t\d
 ~/.aidevops/agents/scripts/pre-edit-check.sh --loop-mode --task "$ARGUMENTS"
 ```
 
-Exit 0: already in a safe linked worktree or approved pre-created worker worktree. Exit 2: canonical `main` checkout → create a safe linked worktree for the task before editing.
+Exit 0 means structural linked-worktree checks passed. A worker environment variable never bypasses those checks. From the canonical checkout, create a fresh safe linked worktree; the helper refreshes `origin/main` and fails closed rather than inheriting stale local `main` or current `HEAD`.
 
 **Operation Verification (t1364.3):** `verify-operation-helper.sh check/verify`. Critical/high → block or verify.
 
@@ -172,19 +172,19 @@ Verify it posted: `gh api "repos/${REPO}/issues/${PR_NUMBER}/comments" --jq '[.[
 full-loop-helper.sh merge "$PR_NUMBER" "$REPO"
 ```
 
-Calls `review-bot-gate-helper.sh wait` (polls every 60s, up to 10 min) then `gh pr merge --squash`. Gate failure blocks merge. Do NOT call `gh pr merge` directly — the wrapper is the only sanctioned merge path. After an immediate successful merge, the wrapper defers current-worktree removal because the parent AI runtime may still use it as its logical `--dir` without exposing an OS process cwd. The safety-net sweep removes it after runtime exit. `--auto` also leaves cleanup to the safety-net sweep. In interactive admin/maintainer sessions, the wrapper may use `--admin` automatically when branch policy only blocks self-review/review count after checks and NMR gates pass; do not ask the user to approve their own PR. For self-modifying full-loop helper fixes, call the committed worktree path instead: `"$PWD/.agents/scripts/full-loop-helper.sh" merge "$PR_NUMBER" "$REPO"`.
+Verifies the exact PR head is open, non-draft, free of changes-requested reviews, and has terminal-success required checks before running `review-bot-gate-helper.sh wait`. Historical cancelled optional jobs do not override the current required-check set. It then invokes `gh pr merge --squash` and requires GitHub to report `MERGED`, `mergedAt`, and a merge SHA before finalization. Gate failure or head drift blocks merge. Do NOT call `gh pr merge` directly. `--auto` records a queue request only; it does not claim merge, release, or cleanup completion until GitHub reports merged evidence. For self-modifying fixes, call the committed worktree helper: `"$PWD/.agents/scripts/full-loop-helper.sh" merge "$PR_NUMBER" "$REPO"`.
 
 Check gate without merging: `full-loop-helper.sh pre-merge-gate "$PR_NUMBER" "$REPO"`.
 
-**4.5 Merge (via wrapper only):** Workers MUST use `full-loop-helper.sh merge`. Direct `gh pr merge --squash` bypasses the review bot gate (GH#17541). Wrapper enforces: (1) review-bot-gate wait, (2) squash merge, (3) no `--delete-branch` from inside worktree, (4) deferred current-worktree cleanup after parent runtime exit. `--auto` queues only; scheduled cleanup handles it later.
+**4.5 Merge (via wrapper only):** Workers MUST use `full-loop-helper.sh merge`. Direct `gh pr merge --squash` bypasses exact-head, terminal-check, review-bot, and observed-merge gates. The wrapper never equates a successful queue command with a merged PR.
 
-**4.6 Auto-Release (aidevops only):** `version-manager.sh bump patch`, tag, push, `gh release create`, `setup.sh --non-interactive`.
+**4.6 Canonical Sync + Release (aidevops only):** First synchronize the clean canonical checkout through `canonical-recovery-helper.sh` when the merge wrapper reports `CANONICAL_SYNC_PENDING`. Then create a fresh detached release worktree at `origin/main` and run one command: `version-manager.sh release patch --source-pr "$PR_NUMBER"`. The version manager requires the source PR's observed merge SHA to be reachable from synchronized `origin/main`; `--force` cannot bypass this provenance. It publishes the tag/GitHub release and runs post-release deploy sync.
 
 **4.7 Closing Comments (MANDATORY):** Post structured closing comment on **both** issue AND PR: What done, Testing Evidence, Key decisions, Files changed, Blockers, Follow-up, Released in. PR comment: `Resolves #NNN`. Issue comment: `PR #NNN`. **Pre-close verification (GH#17372):** Only close if your session created the fixing PR. Never close citing someone else's PR without `verify-issue-close-helper.sh check`.
 
-**4.8 Postflight + Deploy:** verify release health; `setup.sh --non-interactive`. Emit: `<promise>FULL_LOOP_COMPLETE</promise>`.
+**4.8 Postflight + Deploy:** verify the release tag, GitHub release, required checks, and deployed agent version. A publication or deploy-sync failure keeps the lifecycle open.
 
-**4.9 Worktree Cleanup (GH#6740 — MANDATORY):** immediate merges through `full-loop-helper.sh merge` defer current-worktree removal to the scheduled safety-net after parent runtime exit. This protects runtimes that use the worktree as a logical `--dir` without changing OS cwd. Never force-remove an actively owned worktree; after the owner exits, use guarded `worktree-helper.sh remove "$BRANCH_NAME"` if scheduled cleanup has not run.
+**4.9 Worktree Cleanup (GH#6740 — MANDATORY):** immediate merges defer current-worktree removal until the parent runtime exits. Never force-remove an actively owned worktree. Confirm guarded cleanup succeeded exactly once, then emit `<promise>FULL_LOOP_COMPLETE</promise>`.
 
 ---
 
@@ -196,11 +196,8 @@ Check gate without merging: `full-loop-helper.sh pre-merge-gate "$PR_NUMBER" "$R
 | `--headless` | Fully headless worker mode |
 | `--dry-run` | Simulate without making changes |
 | `--max-task-iterations N` | Max task iterations (default: 50) |
-| `--skip-preflight` | Skip preflight checks |
-| `--skip-postflight` | Skip postflight monitoring |
 | `--no-auto-pr` | Pause for manual PR creation |
 | `--no-auto-deploy` | Don't auto-run setup.sh |
-| `--skip-runtime-testing` | Skip runtime testing gate (emergency hotfixes only) |
 
 `full-loop-helper.sh {status|resume|logs [N]|cancel|help}`
 

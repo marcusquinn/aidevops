@@ -225,6 +225,10 @@ create_github_release() {
 		fi
 	else
 		# GitHub CLI not available
+		if release_source_pr_required; then
+			print_error "GitHub release publication cannot be verified without authenticated gh CLI access"
+			return 1
+		fi
 		print_warning "GitHub release creation skipped - GitHub CLI not available"
 		print_info "To enable GitHub releases:"
 		print_info "1. Install GitHub CLI: brew install gh (macOS)"

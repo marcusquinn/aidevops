@@ -36,8 +36,8 @@ All other paths and all interactive edits require a linked worktree. `pre-edit-c
 |------|---------|--------|
 | `0` | Safe to edit | Proceed |
 | `1` | On `main`/`master` | STOP — present prompt below, WAIT for reply |
-| `2` | Loop mode needs worktree | Auto-create worktree |
-| `3` | Feature branch in main repo | Present exit-3 options below |
+| `2` | Worktree required or ownership conflict | Create a fresh linked worktree |
+| `3` | Reserved legacy code | Treat as blocked and re-run the current helper |
 
 **Exit 1 prompt** (non-allowlisted path on `main`, interactive mode only):
 > On `main`. Suggested branch: `{type}/{suggested-name}`
@@ -45,12 +45,6 @@ All other paths and all interactive edits require a linked worktree. `pre-edit-c
 > 2. Use different branch name
 
 Note: only qualifying headless flows can short-circuit to exit `0` for allowlisted paths (`README.md`, `TODO.md`, `todo/**`). Interactive sessions still receive this prompt and move every edit to a linked worktree.
-
-**Exit 3 prompt:**
-> On branch: `{branch}` (main repo, not worktree)
-> 1. Create worktree for this task (recommended)
-> 2. Continue on current branch
-> 3. Switch to `main`, then create worktree
 
 ## Loop Mode
 
@@ -78,6 +72,8 @@ Continue on current branch only when: task matches branch purpose, finishes this
 wt switch -c {type}/{name}
 ~/.aidevops/agents/scripts/worktree-helper.sh add {type}/{name}
 ```
+
+The helper refreshes `origin/<default>` before creating a new branch. Fetch failure blocks creation; it never silently falls back to stale local state or arbitrary `HEAD`. An explicit immutable base SHA remains available for audited recovery.
 
 After creating, set the session title with the work item first: `Issue #123: succinct description` or `PR #456: succinct description`. If there is no issue/PR context, call `session-rename_sync_branch`. Branch types: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
 

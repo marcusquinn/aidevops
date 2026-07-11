@@ -364,11 +364,13 @@ _merge_execute() {
 	print_info "Merging PR #${pr_number} in ${repo} (${merge_desc})..."
 
 	local pre_merge_head_sha=""
-	if [[ "$has_auto" -eq 0 ]]; then
-		pre_merge_head_sha=$(_merge_fetch_head_sha_rest "$pr_number" "$repo" || true)
-		if [[ -z "$pre_merge_head_sha" ]]; then
-			print_warning "Could not verify PR head SHA before merge; REST rate-limit fallback will be unavailable"
-		fi
+	pre_merge_head_sha=$(_merge_fetch_head_sha_rest "$pr_number" "$repo" || true)
+	if [[ -n "${FULL_LOOP_VERIFIED_PR_HEAD_SHA:-}" && "$pre_merge_head_sha" != "$FULL_LOOP_VERIFIED_PR_HEAD_SHA" ]]; then
+		print_error "PR #${pr_number} head changed after remote verification; refusing merge"
+		return 1
+	fi
+	if [[ -z "$pre_merge_head_sha" && "$has_auto" -eq 0 ]]; then
+		print_warning "Could not verify PR head SHA before merge; REST rate-limit fallback will be unavailable"
 	fi
 
 	# Capture output AND exit code under set -e. A bare assignment `out=$(cmd)`
@@ -439,6 +441,27 @@ ${_merge_retry_out}"
 	else
 		print_success "PR #${pr_number} merged successfully"
 	fi
+	return 0
+}
+
+_merge_verify_completed_state() {
+	local pr_number="$1"
+	local repo="$2"
+	local pr_json=""
+	pr_json=$(gh pr view "$pr_number" --repo "$repo" \
+		--json state,mergedAt,mergeCommit 2>/dev/null) || return 1
+
+	if ! printf '%s' "$pr_json" | jq -e '
+		def present: ((. // "") | length > 0);
+		(.state == "MERGED")
+		and (.mergedAt | present)
+		and (.mergeCommit.oid | present)
+	' >/dev/null; then
+		return 1
+	fi
+
+	FULL_LOOP_MERGE_SHA=$(printf '%s' "$pr_json" | jq -r '.mergeCommit.oid')
+	export FULL_LOOP_MERGE_SHA
 	return 0
 }
 
@@ -555,21 +578,37 @@ _merge_refresh_canonical_for_cleanup() {
 	local default_branch="$2"
 	[[ -d "$canonical_dir" && -n "$default_branch" ]] || return 1
 
+	if ! git fetch --quiet origin "$default_branch" >/dev/null 2>&1; then
+		print_warning "CANONICAL_SYNC_PENDING=true reason=origin_fetch_failed"
+		return 1
+	fi
 	local current_canonical_branch=""
 	current_canonical_branch=$(git -C "$canonical_dir" branch --show-current 2>/dev/null || true)
-
-	# Pull only when the canonical worktree is already on the default branch. If a
-	# user has another active branch checked out there, update the local default
-	# branch ref via fetch instead so cleanup never merges default into that branch.
-	if [[ "$current_canonical_branch" == "$default_branch" ]]; then
-		if git -C "$canonical_dir" pull --ff-only origin "$default_branch" >/dev/null 2>&1; then
-			return 0
-		fi
-	elif git -C "$canonical_dir" fetch origin "$default_branch:$default_branch" >/dev/null 2>&1; then
+	local canonical_head=""
+	canonical_head=$(git -C "$canonical_dir" rev-parse HEAD 2>/dev/null || true)
+	local remote_head=""
+	remote_head=$(git rev-parse "origin/${default_branch}" 2>/dev/null || true)
+	if [[ "$current_canonical_branch" == "$default_branch" && -n "$remote_head" && "$canonical_head" == "$remote_head" ]]; then
+		print_success "LIFECYCLE_STATE=CANONICAL_SYNCED sha=${remote_head}"
 		return 0
 	fi
-	print_warning "Post-merge worktree cleanup: canonical pull/fetch skipped/failed for ${canonical_dir}; continuing cleanup"
-	return 0
+	print_warning "CANONICAL_SYNC_PENDING=true canonical=${canonical_dir} branch=${current_canonical_branch:-detached}"
+	return 1
+}
+
+_merge_report_canonical_sync_state() {
+	local cleanup_plan="$1"
+	if [[ -z "$cleanup_plan" ]]; then
+		print_warning "CANONICAL_SYNC_PENDING=true reason=canonical_path_unavailable"
+		return 1
+	fi
+	local worktree_path branch_name canonical_dir
+	IFS=$'\t' read -r worktree_path branch_name canonical_dir <<<"$cleanup_plan"
+	: "$worktree_path" "$branch_name"
+	local default_branch
+	default_branch=$(_merge_default_branch_for_cleanup "$canonical_dir")
+	_merge_refresh_canonical_for_cleanup "$canonical_dir" "$default_branch"
+	return $?
 }
 
 _merge_resolve_worktree_helper() {
@@ -610,7 +649,7 @@ _merge_cleanup_linked_worktree() {
 	print_info "Post-merge worktree cleanup: removing linked worktree ${worktree_path} for ${branch_name} in ${repo}"
 	local default_branch=""
 	default_branch=$(_merge_default_branch_for_cleanup "$canonical_dir")
-	_merge_refresh_canonical_for_cleanup "$canonical_dir" "$default_branch"
+	_merge_refresh_canonical_for_cleanup "$canonical_dir" "$default_branch" || true
 
 	if ! cd "$canonical_dir" 2>/dev/null; then
 		print_warning "Post-merge worktree cleanup: could not cd to canonical repo ${canonical_dir}"
@@ -773,6 +812,20 @@ cmd_merge() {
 	_retarget_stacked_children_interactive "$pr_number" "$repo"
 
 	_merge_execute "$pr_number" "$repo" "$merge_method" "$has_admin" "$has_auto" || return 1
+	if ! _merge_verify_completed_state "$pr_number" "$repo"; then
+		if [[ "$has_auto" -eq 1 ]]; then
+			print_info "LIFECYCLE_STATE=REMOTE_VERIFIED"
+			print_info "AUTO_MERGE_QUEUED=true"
+			return 0
+		fi
+		print_error "Merge command returned success, but GitHub has not reported PR #${pr_number} as MERGED with a merge SHA"
+		return 1
+	fi
+	print_success "LIFECYCLE_STATE=MERGED merge_sha=${FULL_LOOP_MERGE_SHA}"
+	_merge_report_canonical_sync_state "$_cleanup_plan" || true
+	if declare -F is_loop_active >/dev/null 2>&1 && is_loop_active && load_state; then
+		save_state "postflight" "$SAVED_PROMPT" "$pr_number" "$STARTED_AT"
+	fi
 	_merge_finalize_post_merge "$pr_number" "$repo" "$has_auto" "$_cleanup_plan"
 
 	return 0
