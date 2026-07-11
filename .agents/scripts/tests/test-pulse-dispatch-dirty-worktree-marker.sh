@@ -8,6 +8,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 LIB_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-lib.sh"
+WORKER_LAUNCH_SCRIPT="${SCRIPT_DIR}/../pulse-dispatch-worker-launch.sh"
 
 readonly TEST_RED='\033[0;31m'
 readonly TEST_GREEN='\033[0;32m'
@@ -51,11 +52,14 @@ load_lib() {
 	: >"$LOGFILE"
 	# shellcheck disable=SC1090 # test sources the library under test by path.
 	source "$LIB_SCRIPT"
+	# shellcheck disable=SC1090 # test sources the worker launch helper by path.
+	source "$WORKER_LAUNCH_SCRIPT"
+	_dispatch_stats_increment() { return 0; }
 	return 0
 }
 
 test_recent_marker_blocks_dispatch() {
-	local comments_json='[{"created_at":"2026-07-05T22:22:12Z","body":"WORKER_DIRTY_WORKTREE branch=feature/auto-20260706-000537-gh26635"}]'
+	local comments_json='[{"created_at":"2026-07-05T22:22:12Z","body":"WORKER_DIRTY_WORKTREE branch=feature/auto-20260706-000537-gh26635 runner_key=runner-other"}]'
 	TEST_GH_COMMENTS_JSON="$comments_json" \
 		AIDEVOPS_DIRTY_WORKTREE_NOW_EPOCH="1783291032" \
 		DISPATCH_DIRTY_WORKTREE_HOLD_SECONDS="21600" \
@@ -66,6 +70,79 @@ test_recent_marker_blocks_dispatch() {
 		return 0
 	fi
 	print_result "recent dirty marker blocks dispatch" 1 "expected active marker to block"
+	return 0
+}
+
+test_same_runner_marker_allows_resume() {
+	local comments_json='[{"created_at":"2026-07-05T22:22:12Z","body":"WORKER_DIRTY_WORKTREE branch=feature/auto-20260706-000537-gh26635 runner_key=runner-test"}]'
+	AIDEVOPS_RUNNER_IDENTITY_KEY="runner-test" \
+		TEST_GH_COMMENTS_JSON="$comments_json" \
+		AIDEVOPS_DIRTY_WORKTREE_NOW_EPOCH="1783291032" \
+		DISPATCH_DIRTY_WORKTREE_HOLD_SECONDS="21600" \
+		_dispatch_recent_dirty_worktree_marker_active "26635" "marcusquinn/aidevops"
+	local rc=$?
+	local marker_runner_key="${_DISPATCH_DIRTY_MARKER_STATE##*runner_key=}"
+	if [[ "$rc" -eq 0 && "$marker_runner_key" == "runner-test" ]]; then
+		print_result "active marker identifies owning runner for resume" 0
+		return 0
+	fi
+	print_result "active marker identifies owning runner for resume" 1 "state=${_DISPATCH_DIRTY_MARKER_STATE} rc=${rc}"
+	return 0
+}
+
+test_same_runner_skip_gate_proceeds() {
+	local comments_json='[{"created_at":"2026-07-05T22:22:12Z","body":"WORKER_DIRTY_WORKTREE branch=feature/auto-20260706-000537-gh26635 runner_key=runner-test"}]'
+	set +e
+	AIDEVOPS_RUNNER_IDENTITY_KEY="runner-test" \
+		TEST_GH_COMMENTS_JSON="$comments_json" \
+		AIDEVOPS_DIRTY_WORKTREE_NOW_EPOCH="1783291032" \
+		DISPATCH_DIRTY_WORKTREE_HOLD_SECONDS="21600" \
+		_dispatch_skip_for_dirty_worktree_recovery "26635" "marcusquinn/aidevops"
+	local rc=$?
+	set -e
+	if [[ "$rc" -eq 1 ]]; then
+		print_result "same-runner dirty marker proceeds to worker resume" 0
+		return 0
+	fi
+	print_result "same-runner dirty marker proceeds to worker resume" 1 "rc=${rc}"
+	return 0
+}
+
+test_dirty_worktree_reuse_preserves_edits() {
+	git() { /usr/bin/git "$@"; }
+	local fixture_root=""
+	fixture_root=$(mktemp -d)
+	local origin_dir="${fixture_root}/origin.git"
+	local repo_dir="${fixture_root}/repo"
+	local worktree_dir="${fixture_root}/dirty-worktree"
+	git init --bare "$origin_dir" >/dev/null 2>&1
+	git clone "$origin_dir" "$repo_dir" >/dev/null 2>&1
+	git -C "$repo_dir" config user.email "worker@example.invalid"
+	git -C "$repo_dir" config user.name "Worker Test"
+	git -C "$repo_dir" checkout -b main >/dev/null 2>&1
+	printf 'base\n' >"${repo_dir}/tracked.txt"
+	git -C "$repo_dir" add tracked.txt
+	git -C "$repo_dir" commit -m "test: seed" >/dev/null 2>&1
+	git -C "$repo_dir" push -u origin main >/dev/null 2>&1
+	git -C "$repo_dir" worktree add -b "feature/auto-test-gh26635" "$worktree_dir" main >/dev/null 2>&1
+	printf 'staged\n' >"${worktree_dir}/tracked.txt"
+	git -C "$worktree_dir" add tracked.txt
+	printf 'unstaged\n' >>"${worktree_dir}/tracked.txt"
+	printf 'untracked\n' >"${worktree_dir}/new.txt"
+	local status_before=""
+	status_before=$(git -C "$worktree_dir" status --porcelain)
+
+	local test_script_dir="$SCRIPT_DIR"
+	SCRIPT_DIR="${test_script_dir}/.."
+	_dlw_precreate_worktree "26635" "$repo_dir"
+	SCRIPT_DIR="$test_script_dir"
+	local status_after=""
+	status_after=$(git -C "$worktree_dir" status --porcelain)
+	local result=0
+	[[ "$_DLW_WORKTREE_REUSED" == "1" && "$_DLW_WORKTREE_PATH" == "$worktree_dir" && "$status_after" == "$status_before" ]] || result=1
+	print_result "same-runner worktree reuse preserves staged, unstaged, and untracked edits" "$result" "before='${status_before}' after='${status_after}' reused=${_DLW_WORKTREE_REUSED}"
+	rm -rf "$fixture_root"
+	unset -f git
 	return 0
 }
 
@@ -106,6 +183,9 @@ test_expired_marker_does_not_block() {
 main() {
 	load_lib
 	test_recent_marker_blocks_dispatch
+	test_same_runner_marker_allows_resume
+	test_same_runner_skip_gate_proceeds
+	test_dirty_worktree_reuse_preserves_edits
 	test_later_resolution_clears_marker
 	test_expired_marker_does_not_block
 

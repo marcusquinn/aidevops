@@ -829,12 +829,20 @@ _dlw_precreate_worktree() {
 	done < <(git -C "$repo_path" worktree list 2>/dev/null)
 
 	if [[ -n "$_existing_path" ]]; then
-		# Reset to latest main so the worker starts from a clean base
-		git -C "$_existing_path" checkout -- . 2>/dev/null || true
-		git -C "$_existing_path" clean -fd 2>/dev/null || true
-		local _main_branch=""
-		_main_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || _main_branch="main"
-		git -C "$_existing_path" reset --hard "origin/${_main_branch}" 2>/dev/null || true
+		local _existing_status=""
+		_existing_status=$(git -C "$_existing_path" status --porcelain 2>/dev/null || true)
+		if [[ -z "$_existing_status" ]]; then
+			# Clean retries restart from the latest default branch.
+			git -C "$_existing_path" checkout -- . 2>/dev/null || true
+			git -C "$_existing_path" clean -fd 2>/dev/null || true
+			local _main_branch=""
+			_main_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || _main_branch="main"
+			git -C "$_existing_path" reset --hard "origin/${_main_branch}" 2>/dev/null || true
+		else
+			# A same-runner retry must resume staged, unstaged, and untracked edits.
+			# Resetting here destroyed the only useful copy before GH#27138.
+			echo "[dispatch_with_dedup] Preserving dirty existing worktree for same-runner resume: ${_existing_path}" >>"$LOGFILE"
+		fi
 		_DLW_WORKTREE_PATH="$_existing_path"
 		_DLW_WORKTREE_BRANCH="$_existing_branch"
 		_DLW_WORKTREE_REUSED=1

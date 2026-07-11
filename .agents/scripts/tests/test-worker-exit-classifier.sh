@@ -328,6 +328,8 @@ test_no_start_time_with_sessions() {
 }
 
 test_exit_push_preserves_dirty_worktree() {
+	# Bypass the production canonical-repository guard for this disposable fixture.
+	git() { /usr/bin/git "$@"; }
 	local case_dir="${TMPDIR_TEST}/dirty-preserve"
 	local origin_dir="${case_dir}/origin.git"
 	local repo_dir="${case_dir}/repo"
@@ -344,6 +346,8 @@ test_exit_push_preserves_dirty_worktree() {
 	git -C "$repo_dir" push -u origin main >/dev/null 2>&1
 	git -C "$repo_dir" checkout -b feature/dirty-preserve >/dev/null 2>&1
 	printf 'base\nchanged\n' >"${repo_dir}/tracked.txt"
+	git -C "$repo_dir" add tracked.txt >/dev/null 2>&1
+	printf 'changed after staging\n' >>"${repo_dir}/tracked.txt"
 	printf 'new\n' >"${repo_dir}/new-file.txt"
 
 	_WORKER_WORKTREE_PATH="$repo_dir"
@@ -357,12 +361,15 @@ test_exit_push_preserves_dirty_worktree() {
 	status=$(git -C "$repo_dir" status --porcelain 2>/dev/null || true)
 	local pushed_count=""
 	pushed_count=$(git -C "$repo_dir" rev-list --count origin/main..origin/feature/dirty-preserve 2>/dev/null || printf '0')
-	if [[ "$preserved" == "1" && -z "$status" && "$pushed_count" == "1" ]]; then
-		print_result "exit push preserves dirty tracked and untracked work" 0
+	local tracked_content=""
+	tracked_content=$(git -C "$repo_dir" show "origin/feature/dirty-preserve:tracked.txt" 2>/dev/null || true)
+	if [[ "$preserved" == "1" && -z "$status" && "$pushed_count" == "1" && "$tracked_content" == *"changed after staging"* ]]; then
+		print_result "exit push preserves staged, unstaged, and untracked work" 0
 	else
-		print_result "exit push preserves dirty tracked and untracked work" 1 \
-			"preserved=${preserved} status='${status}' pushed_count=${pushed_count}"
+		print_result "exit push preserves staged, unstaged, and untracked work" 1 \
+			"preserved=${preserved} status='${status}' pushed_count=${pushed_count} tracked='${tracked_content}'"
 	fi
+	unset -f git
 	return 0
 }
 

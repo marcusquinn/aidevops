@@ -1351,6 +1351,7 @@ _register_dispatch_ledger() {
 	local ledger_args=(register --session-key "$ledger_session_key" --pid "$$")
 	[[ -n "$ledger_issue" ]] && ledger_args+=(--issue "$ledger_issue")
 	[[ -n "$ledger_repo" ]] && ledger_args+=(--repo "$ledger_repo")
+	[[ -n "$ledger_work_dir" ]] && ledger_args+=(--worktree "$ledger_work_dir")
 
 	"$DISPATCH_LEDGER_HELPER" "${ledger_args[@]}" 2>/dev/null || true
 	return 0

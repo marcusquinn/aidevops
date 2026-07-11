@@ -103,6 +103,25 @@ test_register_creates_entry() {
 	return 0
 }
 
+test_record_recovery_is_idempotent() {
+	setup_test_env
+	run_helper "$LEDGER_HELPER" register --session-key "issue-27138" --issue 27138 --repo "owner/repo" --pid $$ --worktree "/private/worker/path"
+	run_helper "$LEDGER_HELPER" record-recovery --session-key "issue-27138" --runner-key "runner-test" --worktree "/private/worker/path" --branch "feature/gh27138" --changed-paths $'M  staged.txt\n M unstaged.txt\n?? new.txt' --recoverability "same-runner"
+	run_helper "$LEDGER_HELPER" record-recovery --session-key "issue-27138" --runner-key "runner-test" --worktree "/private/worker/path" --branch "feature/gh27138" --changed-paths $'M  staged.txt\n M unstaged.txt\n?? new.txt' --recoverability "same-runner"
+
+	local result=0
+	local entry_count=""
+	local attempts=""
+	local changed_count=""
+	entry_count=$(wc -l <"${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl" | tr -d ' ')
+	attempts=$(jq -r '.recovery_attempts' "${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl")
+	changed_count=$(jq -r '.changed_paths | length' "${AIDEVOPS_DISPATCH_LEDGER_DIR}/dispatch-ledger.jsonl")
+	[[ "$entry_count" == "1" && "$attempts" == "2" && "$changed_count" == "3" ]] || result=1
+	print_result "dirty recovery metadata updates one durable ledger entry" "$result" "entries=${entry_count}, attempts=${attempts}, changed=${changed_count}"
+	teardown_test_env
+	return 0
+}
+
 #######################################
 # Test: check detects in-flight entry
 #######################################
@@ -761,6 +780,7 @@ main() {
 	fi
 
 	test_register_creates_entry
+	test_record_recovery_is_idempotent
 	test_check_detects_inflight
 	test_check_returns_1_for_unknown
 	test_check_issue_detects_inflight

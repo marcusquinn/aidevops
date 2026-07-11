@@ -372,6 +372,7 @@ _build_orphan_recovery_pr_body() {
 #   $2 = work_dir     (path to git worktree; unused after branch_name extracted)
 #   $3 = branch_name  (feature branch to set as PR head)
 #   $4 = repo_slug    (owner/repo)
+#   $5 = recovery_mode (optional; "draft" for dirty-worktree checkpoints)
 #
 # Non-fatal guard: issues in CLOSED state skip recovery rather than
 # creating a PR nobody will review (edge case: worker closed issue as
@@ -382,6 +383,7 @@ _attempt_orphan_recovery_pr() {
 	local work_dir="$2"
 	local branch_name="$3"
 	local repo_slug="$4"
+	local recovery_mode="${5:-ready}"
 
 	# Cannot query or build a PR without repo context.
 	if [[ -z "$repo_slug" ]]; then
@@ -448,6 +450,9 @@ _attempt_orphan_recovery_pr() {
 		pr_title="auto-recover: orphaned worker branch for #${issue_number}"
 		closing_line="Resolves #${issue_number}"
 	fi
+	if [[ "$recovery_mode" == "draft" ]]; then
+		pr_title="checkpoint: recover dirty worker worktree for #${issue_number}"
+	fi
 
 	local pr_body
 	pr_body=$(_build_orphan_recovery_pr_body "$session_key" "$branch_name" "$closing_line" "$published_local_branch")
@@ -473,6 +478,9 @@ _attempt_orphan_recovery_pr() {
 		--label "origin:worker-takeover"
 		--label "status:in-review"
 	)
+	if [[ "$recovery_mode" == "draft" ]]; then
+		create_args+=(--draft)
+	fi
 	gh pr create "${create_args[@]}" >/dev/null 2>&1 # aidevops-allow: raw-gh-wrapper
 	return $?
 }
