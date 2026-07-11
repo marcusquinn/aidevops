@@ -456,23 +456,29 @@ _scan_function_complexity_git_blob() {
 
 _nesting_depth_awk_program() {
 	cat <<'AWK'
-BEGIN { depth = 0; max_depth = 0; max_line = 0; heredoc = "" }
+function emit_result(current_file) {
+	current_file = (file != "" ? file : previous_file)
+	if (summary == 1) {
+		if (max_depth > block) {
+			printf "BLOCK %s:%d max nesting depth %d (max %d)\n", current_file, max_line, max_depth, block
+		} else if (max_depth > warn) {
+			printf "WARN %s:%d max nesting depth %d (max %d)\n", current_file, max_line, max_depth, warn
+		}
+	} else if (max_depth > block) {
+		printf "%s\tNEST\t%d\n", current_file, max_depth
+	}
+}
+FNR == 1 {
+	if (NR > 1) emit_result()
+	depth = 0; max_depth = 0; max_line = 0; heredoc = ""
+	previous_file = (file != "" ? file : FILENAME)
+}
 heredoc != "" { end_line = $0; sub(/^[\t]+/, "", end_line); if (end_line == heredoc) { heredoc = "" }; next }
 /<</ { marker = $0; sub(/^.*<</, "", marker); sub(/^-/, "", marker); gsub(/^[ \t]+|[ \t]+$/, "", marker); gsub(/^["\047]|["\047]$/, "", marker); sub(/[ \t].*$/, "", marker); if (marker ~ /^[A-Za-z_][A-Za-z0-9_]*$/) { heredoc = marker; next } }
 /^[[:space:]]*#/ { next }
-/^[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; max_depth = (depth > max_depth ? depth : max_depth); max_line = (depth == max_depth ? NR : max_line) }
+/^[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; max_depth = (depth > max_depth ? depth : max_depth); max_line = (depth == max_depth ? FNR : max_line) }
 /^[[:space:]]*(fi|done|esac)($|[[:space:]])/ { if (depth > 0) depth-- }
-END {
-	if (summary == 1) {
-		if (max_depth > block) {
-			printf "BLOCK %s:%d max nesting depth %d (max %d)\n", file, max_line, max_depth, block
-		} else if (max_depth > warn) {
-			printf "WARN %s:%d max nesting depth %d (max %d)\n", file, max_line, max_depth, warn
-		}
-	} else if (max_depth > block) {
-		printf "%s\tNEST\t%d\n", file, max_depth
-	}
-}
+END { emit_result() }
 AWK
 	return 0
 }
@@ -583,28 +589,27 @@ check_function_complexity() {
 	trap '_run_cleanups' RETURN
 	push_cleanup "rm -f '${tmp_file}'"
 
-	for file in "${ALL_SH_FILES[@]}"; do
-		[[ -f "$file" ]] || continue
-
-		# Use awk to find function boundaries and measure line counts
-		awk -v file="$file" -v warn="$MAX_FUNCTION_LENGTH_WARN" -v block="$MAX_FUNCTION_LENGTH_BLOCK" '
+	if [[ ${#ALL_SH_FILES[@]} -gt 0 ]]; then
+		# Scan the shared inventory in one process instead of one awk per file.
+		awk -v warn="$MAX_FUNCTION_LENGTH_WARN" -v block="$MAX_FUNCTION_LENGTH_BLOCK" '
+			FNR == 1 { fname = "" }
 			/^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ {
 				fname = $1
 				sub(/\(\)/, "", fname)
-				start = NR
+				start = FNR
 				next
 			}
 			fname && /^[[:space:]]*\}[[:space:]]*$/ {
-				lines = NR - start
+				lines = FNR - start
 				if (lines > block) {
-					printf "BLOCK %s:%d %s() %d lines (max %d)\n", file, start, fname, lines, block
+					printf "BLOCK %s:%d %s() %d lines (max %d)\n", FILENAME, start, fname, lines, block
 				} else if (lines > warn) {
-					printf "WARN %s:%d %s() %d lines (max %d)\n", file, start, fname, lines, warn
+					printf "WARN %s:%d %s() %d lines (max %d)\n", FILENAME, start, fname, lines, warn
 				}
 				fname = ""
 			}
-		' "$file" >>"$tmp_file"
-	done
+		' "${ALL_SH_FILES[@]}" >>"$tmp_file"
+	fi
 
 	if [[ -s "$tmp_file" ]]; then
 		block_violations=$(safe_grep_count '^BLOCK' "$tmp_file")
@@ -663,13 +668,12 @@ check_nesting_depth() {
 	trap '_run_cleanups' RETURN
 	push_cleanup "rm -f '${tmp_file}'"
 
-	for file in "${ALL_SH_FILES[@]}"; do
-		[[ -f "$file" ]] || continue
-
-		# Track nesting depth through control structures
-		# This is a heuristic — not a full parser — but catches the worst offenders
-		awk -v file="$file" -v warn="$MAX_NESTING_DEPTH_WARN" -v block="$MAX_NESTING_DEPTH_BLOCK" -v summary=1 "$(_nesting_depth_awk_program)" "$file" >>"$tmp_file"
-	done
+	if [[ ${#ALL_SH_FILES[@]} -gt 0 ]]; then
+		# This is a heuristic — not a full parser — but one process is sufficient
+		# because the awk program resets and emits metrics at each file boundary.
+		awk -v warn="$MAX_NESTING_DEPTH_WARN" -v block="$MAX_NESTING_DEPTH_BLOCK" -v summary=1 \
+			"$(_nesting_depth_awk_program)" "${ALL_SH_FILES[@]}" >>"$tmp_file"
+	fi
 
 	if [[ -s "$tmp_file" ]]; then
 		block_violations=$(safe_grep_count '^BLOCK' "$tmp_file")

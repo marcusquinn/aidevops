@@ -2288,8 +2288,11 @@ Task → Implement → Check → Fix Issues → Re-check → ... → Complete
 # Run quality checks iteratively until all pass
 /preflight-loop --auto-fix --max-iterations <MAX_ITERATIONS>
 
-# Or run linters directly
+# Or run changed-file checks directly (the default)
 .agents/scripts/linters-local.sh
+
+# Run every broad gate at a release boundary
+.agents/scripts/linters-local.sh --full
 ```
 
 **Note:** Store any API credentials securely via environment variables or `.env` files (never commit credentials to version control).

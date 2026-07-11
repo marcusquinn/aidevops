@@ -43,7 +43,7 @@ version-manager.sh bump {patch|minor|major}
 # Edit CHANGELOG.md
 
 # 2. Run final checks
-linters-local.sh
+linters-local.sh --full
 
 # 3. After implementation PRs merge, release from a fresh detached linked worktree
 git worktree add --detach "$AIDEVOPS_WORKTREE_BASE_DIR/repo-release-1-2-0" origin/main

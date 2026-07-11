@@ -80,7 +80,10 @@ _linters_local_cache_dir() {
 		return 0
 	fi
 	local git_dir=""
-	git_dir=$(git rev-parse --git-dir 2>/dev/null) || git_dir=""
+	git_dir=$(git rev-parse --git-common-dir 2>/dev/null) || git_dir=""
+	if [[ -n "$git_dir" ]]; then
+		git_dir=$(cd "$git_dir" 2>/dev/null && pwd -P) || git_dir=""
+	fi
 	if [[ -n "$git_dir" ]]; then
 		printf '%s\n' "${git_dir}/aidevops-linters-cache"
 		return 0
@@ -89,10 +92,97 @@ _linters_local_cache_dir() {
 	return 0
 }
 
+LINTERS_LOCAL_BROAD_GATE_LOCK_TOKEN=""
+
+_linters_local_reclaim_stale_lock() {
+	local lock_path="$1"
+	local observed_token="$2"
+	local reclaim_dir="${lock_path}.reclaim"
+	mkdir "$reclaim_dir" 2>/dev/null || return 0
+	if [[ -d "$lock_path" ]]; then
+		rm -f "${lock_path}/owner"
+		rmdir "$lock_path" 2>/dev/null || true
+	elif [[ -f "$lock_path" ]] && [[ "$(cat "$lock_path" 2>/dev/null || true)" == "$observed_token" ]]; then
+		rm -f "$lock_path"
+	fi
+	rmdir "$reclaim_dir" 2>/dev/null || true
+	return 0
+}
+
+_linters_local_try_create_lock() {
+	local cache_dir="$1"
+	local lock_path="$2"
+	local candidate token
+	[[ ! -e "${lock_path}.reclaim" ]] || return 1
+	[[ ! -e "$lock_path" ]] || return 1
+	candidate=$(mktemp "${cache_dir}/.broad-gate-owner.XXXXXX") || return 1
+	token="$$:$(date +%s):${RANDOM}"
+	if ! printf '%s\n' "$token" >"$candidate"; then
+		rm -f "$candidate"
+		return 1
+	fi
+	if ln "$candidate" "$lock_path" 2>/dev/null; then
+		LINTERS_LOCAL_BROAD_GATE_LOCK_TOKEN="$token"
+		rm -f "$candidate"
+		return 0
+	fi
+	rm -f "$candidate"
+	return 1
+}
+
+_linters_local_acquire_broad_gate_lock() {
+	local cache_dir="$1"
+	local gate_name="$2"
+	local lock_path="${cache_dir}/broad-gate.lock"
+	local timeout_seconds="${LINTERS_LOCAL_GATE_LOCK_TIMEOUT_SECONDS:-${LINTERS_LOCAL_BROAD_GATE_TIMEOUT_SECONDS:-90}}"
+	local max_lock_age="${LINTERS_LOCAL_GATE_LOCK_MAX_AGE_SECONDS:-}"
+	local started_at now owner_token="" owner_pid="" owner_started=0
+	[[ "$timeout_seconds" =~ ^[0-9]+$ ]] || timeout_seconds=90
+	[[ "$max_lock_age" =~ ^[0-9]+$ ]] || max_lock_age=$((timeout_seconds + 30))
+	started_at=$(date +%s)
+
+	while ! _linters_local_try_create_lock "$cache_dir" "$lock_path"; do
+		now=$(date +%s)
+		if [[ -d "$lock_path" ]]; then
+			owner_token=$(cat "${lock_path}/owner" 2>/dev/null || true)
+			if [[ ! "$owner_token" =~ ^[0-9]+$ ]] || ! kill -0 "$owner_token" 2>/dev/null; then
+				_linters_local_reclaim_stale_lock "$lock_path" ""
+			fi
+		elif [[ -f "$lock_path" ]]; then
+			owner_token=$(cat "$lock_path" 2>/dev/null || true)
+			owner_pid=${owner_token%%:*}
+			owner_started=${owner_token#*:}
+			owner_started=${owner_started%%:*}
+			if [[ ! "$owner_token" =~ ^[0-9]+:[0-9]+:[0-9]+$ ]] ||
+				! kill -0 "$owner_pid" 2>/dev/null || [[ $((now - owner_started)) -gt "$max_lock_age" ]]; then
+				_linters_local_reclaim_stale_lock "$lock_path" "$owner_token"
+			fi
+		fi
+		if [[ $((now - started_at)) -ge "$timeout_seconds" ]]; then
+			print_warning "${gate_name}: broad-gate slot unavailable after ${timeout_seconds}s"
+			return 1
+		fi
+		sleep 1
+	done
+	return 0
+}
+
+_linters_local_release_broad_gate_lock() {
+	local cache_dir="$1"
+	local lock_path="${cache_dir}/broad-gate.lock"
+	local current_token=""
+	current_token=$(cat "$lock_path" 2>/dev/null || true)
+	if [[ -n "$LINTERS_LOCAL_BROAD_GATE_LOCK_TOKEN" && "$current_token" == "$LINTERS_LOCAL_BROAD_GATE_LOCK_TOKEN" ]]; then
+		rm -f "$lock_path"
+	fi
+	LINTERS_LOCAL_BROAD_GATE_LOCK_TOKEN=""
+	return 0
+}
+
 _linters_local_file_checksum() {
 	local file_path="$1"
 	if [[ -f "$file_path" ]]; then
-		cksum "$file_path" 2>/dev/null || true
+		cksum <"$file_path" 2>/dev/null || true
 	fi
 	return 0
 }
@@ -180,6 +270,24 @@ _linters_local_run_cached_gate() {
 		return "$status"
 	fi
 
+	if ! _linters_local_acquire_broad_gate_lock "$cache_dir" "$gate_name"; then
+		if [[ "$strict_broad" == true ]]; then
+			print_error "${gate_name}: required broad-gate result is incomplete"
+		fi
+		return 124
+	fi
+
+	# Another worktree may have completed the same tree-key while this process
+	# waited for the shared broad-gate slot. Re-check before doing duplicate work.
+	if [[ "$cache_enabled" == true && -f "$cache_file" && -f "$status_file" ]]; then
+		print_info "${gate_name}: shared cache hit (${cache_key})"
+		cat "$cache_file"
+		status=$(cat "$status_file" 2>/dev/null || printf '1')
+		[[ "$status" =~ ^[0-9]+$ ]] || status=1
+		_linters_local_release_broad_gate_lock "$cache_dir"
+		return "$status"
+	fi
+
 	output_file=$(mktemp)
 	(
 		"$gate_function"
@@ -217,6 +325,7 @@ _linters_local_run_cached_gate() {
 		print_info "${gate_name}: cached result (${cache_key})"
 	fi
 	rm -f "$output_file"
+	_linters_local_release_broad_gate_lock "$cache_dir"
 	return "$status"
 }
 
@@ -388,27 +497,28 @@ check_shell_portability() {
 	fi
 
 	local portability_files=("--summary")
-	if [[ "${LINTERS_LOCAL_MODE:-full}" == "$LINTERS_LOCAL_MODE_CHANGED" ]]; then
-		if [[ ${#ALL_SH_FILES[@]} -eq 0 ]]; then
-			print_success "Shell portability: no changed shell files"
-			return 0
-		fi
-		portability_files+=("${ALL_SH_FILES[@]}")
+	if [[ ${#ALL_SH_FILES[@]} -eq 0 ]]; then
+		print_success "Shell portability: no selected shell files"
+		return 0
+	fi
+	# Reuse the orchestrator inventory rather than running another git ls-files.
+	portability_files+=("${ALL_SH_FILES[@]}")
+
+	local output status=0
+	output=$(bash "$scanner_script" "${portability_files[@]}" 2>&1) || status=$?
+	if [[ "$status" -ne 0 ]] && ! printf '%s\n' "$output" | grep -q 'violation(s)'; then
+		print_warning "Shell portability: scanner infrastructure exit ${status}; retrying once"
+		status=0
+		output=$(bash "$scanner_script" "${portability_files[@]}" 2>&1) || status=$?
 	fi
 
-	local output violations=0
-	output=$(bash "$scanner_script" "${portability_files[@]}" 2>&1) || violations=1
-
-	if [[ "$violations" -eq 0 ]]; then
+	if [[ "$status" -eq 0 ]]; then
 		print_success "Shell portability: no unguarded platform-specific commands"
 	else
 		print_error "Shell portability: unguarded platform-specific commands found"
+		[[ -n "$output" ]] && printf '%s\n' "$output"
 		# Re-run without --summary to show details
-		if [[ "${LINTERS_LOCAL_MODE:-full}" == "$LINTERS_LOCAL_MODE_CHANGED" ]]; then
-			bash "$scanner_script" "${ALL_SH_FILES[@]}" 2>&1 || true
-		else
-			bash "$scanner_script" 2>&1 || true
-		fi
+		bash "$scanner_script" "${ALL_SH_FILES[@]}" 2>&1 || true
 		return 1
 	fi
 
@@ -418,7 +528,7 @@ check_shell_portability() {
 check_targeted_tests() {
 	echo -e "${BLUE}Checking Targeted Tests for Changed Files...${NC}"
 
-	if [[ "${LINTERS_LOCAL_MODE:-full}" != "$LINTERS_LOCAL_MODE_CHANGED" ]]; then
+	if [[ "${LINTERS_LOCAL_MODE:-changed}" != "$LINTERS_LOCAL_MODE_CHANGED" ]]; then
 		print_info "Targeted tests: full mode uses explicit test commands/CI"
 		return 0
 	fi
@@ -431,12 +541,20 @@ check_targeted_tests() {
 	fi
 
 	local exit_code=0
-	if printf '%s\n' "$changed_files" | grep -Eq '^\.agents/scripts/linters-local(-analysis|-gates|-validators)?\.sh$|^\.agents/scripts/tests/test-linters-local'; then
+	local mapped_test=false
+	if printf '%s\n' "$changed_files" | grep -Eq '^\.agents/scripts/linters-local(-analysis|-gates|-ratchet|-validators)?\.sh$|^\.agents/scripts/tests/test-linters-local'; then
+		mapped_test=true
 		bash .agents/scripts/tests/test-linters-local-complexity-gates.sh || exit_code=1
-		if [[ -f .agents/scripts/tests/test-linters-local-changed-mode.sh ]]; then
-			bash .agents/scripts/tests/test-linters-local-changed-mode.sh || exit_code=1
-		fi
-	else
+		bash .agents/scripts/tests/test-linters-local-changed-mode.sh || exit_code=1
+		bash .agents/scripts/tests/test-linters-local-cache.sh || exit_code=1
+		bash .agents/scripts/tests/test-linters-local-ratchet-timeout.sh || exit_code=1
+		bash .agents/scripts/tests/test-linters-local-shellcheck-batches.sh || exit_code=1
+	fi
+	if printf '%s\n' "$changed_files" | grep -qxF '.agents/scripts/lint-shell-portability.sh'; then
+		mapped_test=true
+		bash .agents/scripts/tests/test-lint-shell-portability.sh || exit_code=1
+	fi
+	if [[ "$mapped_test" == false ]]; then
 		print_success "Targeted tests: no mapped changed files"
 	fi
 

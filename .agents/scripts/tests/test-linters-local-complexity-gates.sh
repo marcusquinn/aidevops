@@ -18,6 +18,7 @@ readonly TEST_RESET='\033[0m'
 TESTS_RUN=0
 TESTS_FAILED=0
 TEST_ROOT=""
+GIT_BIN="${AIDEVOPS_TEST_GIT_BIN:-/usr/bin/git}"
 
 print_result() {
 	local test_name="$1"
@@ -40,10 +41,7 @@ print_result() {
 
 setup_repo() {
 	TEST_ROOT=$(mktemp -d)
-	git -C "$TEST_ROOT" init -q
-	git -C "$TEST_ROOT" config user.email "test@example.invalid"
-	git -C "$TEST_ROOT" config user.name "Test Runner"
-	git -C "$TEST_ROOT" config commit.gpgsign false
+	"$GIT_BIN" -C "$TEST_ROOT" -c init.defaultBranch=fixture init -q
 	return 0
 }
 
@@ -121,10 +119,10 @@ source_linter_analysis() {
 }
 
 mark_origin_main() {
-	git -C "$TEST_ROOT" add .
-	git -C "$TEST_ROOT" commit -q -m "baseline"
-	git -C "$TEST_ROOT" branch -M main
-	git -C "$TEST_ROOT" update-ref refs/remotes/origin/main HEAD
+	"$GIT_BIN" -C "$TEST_ROOT" add .
+	"$GIT_BIN" -C "$TEST_ROOT" -c user.email=test@example.invalid -c user.name="Test Runner" \
+		-c commit.gpgsign=false commit -q -m "baseline"
+	"$GIT_BIN" -C "$TEST_ROOT" update-ref refs/remotes/origin/main HEAD
 	return 0
 }
 

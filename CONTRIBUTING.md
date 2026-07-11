@@ -64,8 +64,11 @@ git clone https://github.com/marcusquinn/aidevops.git
 cd aidevops
 ./setup.sh
 
-# Run quality checks before committing
+# Run changed-file quality checks before committing
 .agents/scripts/linters-local.sh
+
+# Run the broad suite when preparing a release
+.agents/scripts/linters-local.sh --full
 ```
 
 ## Commit Messages

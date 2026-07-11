@@ -31,7 +31,7 @@
 #   /code-audit-remote or code-audit-helper.sh
 #
 # Execution flags:
-#   --changed           Prefer changed-file scope where supported (safety gates still run)
+#   --changed           Changed-file scope (default; safety gates still run)
 #   --no-cache          Do not reuse broad/advisory gate cache entries
 #   --full              Release-boundary path: run every gate without cache/time-budget downgrade
 #   --strict            Make ratchet failures and broad-gate timeouts blocking
@@ -41,7 +41,7 @@
 #   --strict            Make ratchet failures blocking (default: advisory)
 #   --changed           Fast PR mode: run changed-file safety gates only
 #   --fast-pr           Alias for --changed
-#   --full              Run the broad local sweep (default; explicit for clarity)
+#   --full              Run the broad local sweep for release boundaries
 #   RATCHET_STEP_TIMEOUT_SECONDS=N bounds each ratchet counter (default: 120)
 # =============================================================================
 
@@ -100,8 +100,8 @@ readonly MAX_NESTING_VIOLATIONS=260
 readonly MAX_FILE_LINES_WARN=500
 readonly MAX_FILE_LINES_BLOCK=500
 
-LINTERS_LOCAL_MODE=full
 LINTERS_LOCAL_MODE_CHANGED=changed
+LINTERS_LOCAL_MODE="${LINTERS_LOCAL_MODE:-$LINTERS_LOCAL_MODE_CHANGED}"
 
 print_header() {
 	echo -e "${BLUE}Local Linters - Fast Offline Quality Checks${NC}"
@@ -113,7 +113,7 @@ print_header() {
 # Exclusion policy is centralised in lint-file-discovery.sh (single source of
 # truth shared with CI). Populates ALL_SH_FILES array for check functions.
 collect_shell_files() {
-	if [[ "${LINTERS_LOCAL_MODE:-full}" == "$LINTERS_LOCAL_MODE_CHANGED" ]]; then
+	if [[ "${LINTERS_LOCAL_MODE:-changed}" == "$LINTERS_LOCAL_MODE_CHANGED" ]]; then
 		_collect_changed_shell_files
 	else
 		lint_shell_files_local
@@ -136,7 +136,7 @@ linters_local_changed_files_matching() {
 }
 
 _linters_local_prepare_changed_inventory() {
-	if [[ "${LINTERS_LOCAL_MODE:-full}" != "$LINTERS_LOCAL_MODE_CHANGED" ]]; then
+	if [[ "${LINTERS_LOCAL_MODE:-changed}" != "$LINTERS_LOCAL_MODE_CHANGED" ]]; then
 		return 0
 	fi
 	local base_ref=""
@@ -161,12 +161,12 @@ _collect_changed_shell_files() {
 	return 0
 }
 
-main() {
-	# Parse ratchet flags before running checks
+_linters_local_parse_args() {
 	local arg
 	export LINTERS_LOCAL_CACHE_ENABLED=true
 	export LINTERS_LOCAL_FULL=false
-	export LINTERS_LOCAL_CHANGED=false
+	export LINTERS_LOCAL_CHANGED=true
+	export LINTERS_LOCAL_MODE="$LINTERS_LOCAL_MODE_CHANGED"
 	for arg in "$@"; do
 		case "$arg" in
 		--changed | --fast-pr)
@@ -178,6 +178,7 @@ main() {
 			;;
 		--full)
 			export LINTERS_LOCAL_FULL=true
+			export LINTERS_LOCAL_CHANGED=false
 			export LINTERS_LOCAL_CACHE_ENABLED=false
 			export LINTERS_LOCAL_STRICT_BROAD_GATES=true
 			export LINTERS_LOCAL_MODE=full
@@ -194,6 +195,11 @@ main() {
 			;;
 		esac
 	done
+	return 0
+}
+
+main() {
+	_linters_local_parse_args "$@"
 
 	print_header
 
@@ -215,7 +221,7 @@ main() {
 	local exit_code=0
 	_run_gate_checks || exit_code=1
 
-	if [[ "${LINTERS_LOCAL_MODE:-full}" == "$LINTERS_LOCAL_MODE_CHANGED" ]]; then
+	if [[ "${LINTERS_LOCAL_MODE:-changed}" == "$LINTERS_LOCAL_MODE_CHANGED" ]]; then
 		print_linter_gate_summary
 	else
 		check_remote_cli_status
@@ -233,4 +239,6 @@ main() {
 	return $exit_code
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi

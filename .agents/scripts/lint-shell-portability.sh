@@ -43,6 +43,7 @@ set -euo pipefail
 
 _PORTABILITY_SCRIPT_NAME="$(basename "${BASH_SOURCE[0]}")"
 readonly _PORTABILITY_SCRIPT_NAME
+readonly PORTABILITY_FALSE=false
 
 # ---------------------------------------------------------------------------
 # Colour helpers (no-op when stdout is not a terminal)
@@ -72,228 +73,73 @@ _pc_error() {
 	return 0
 }
 
-# ---------------------------------------------------------------------------
-# Command table — format: CMD_NAME|ERE_PATTERN|PLATFORM
-#
-# CMD_NAME  — short identifier (used in guard-detection: command -v <CMD_NAME>)
-# ERE_PATTERN — POSIX ERE; must NOT use PCRE (\b, \s, etc.); use [[:space:]], etc.
-# PLATFORM — linux-only or macos-only
-#
-# Guidelines:
-#  - Anchor patterns so they don't match comments or substrings
-#  - The pattern is tested against the full line content; comment lines
-#    (leading optional whitespace + #) are pre-filtered before matching
-# ---------------------------------------------------------------------------
-_portability_cmd_list() {
-	# Each line: CMD_NAME@ERE_PATTERN@PLATFORM
-	#
-	# Separator is '@' (not '|') because ERE patterns use '|' for alternation.
-	#
-	# ERE anchor convention:
-	#   Use (^|[[:space:]]|[({;&]) before the command name to avoid matching
-	#   compound flag names like --connect-timeout or string literals like .timeout.
-	#   The group avoids the '|' inside [...] which conflicts with the separator.
-	#
-	# Linux-only commands (crash on macOS: "command not found" or wrong flags)
-	cat <<'CMDEOF'
-getent@(^|[[:space:]]|[({;&])getent[[:space:]]@linux-only
-sha256sum@(^|[[:space:]]|[({;&])sha256sum[[:space:]]@linux-only
-readlink_f@(^|[[:space:]]|[({;&])readlink[[:space:]]*-[a-zA-Z]*f@linux-only
-stat_c@(^|[[:space:]]|[({;&])stat[[:space:]]*(-c[[:space:]]|-c%|--format)@linux-only
-date_d@(^|[[:space:]]|[({;&])date[[:space:]]+-d[[:space:]]@linux-only
-timeout_cmd@(^|[[:space:]]|[({;&])timeout[[:space:]]+[0-9]@linux-only
-sed_r@(^|[[:space:]]|[({;&])sed[[:space:]]*(-[a-zA-Z]*r[^e]|-[a-zA-Z]*r$)@linux-only
-grep_P@(^|[[:space:]]|[({;&])grep[[:space:]]*(-[a-zA-Z]*P[^C]|-[a-zA-Z]*P$)@linux-only
-xargs_r@(^|[[:space:]]|[({;&])xargs[[:space:]]*-[a-zA-Z]*r[[:space:]]@linux-only
-find_printf@(^|[[:space:]]|[({;&])find[^(]*-printf[[:space:]]@linux-only
-mktemp_suffix@(^|[[:space:]]|[({;&])mktemp[[:space:]]*--suffix@linux-only
-base64_w@(^|[[:space:]]|[({;&])base64[[:space:]]*-[a-zA-Z]*w[[:space:]]@linux-only
-dscl@(^|[[:space:]]|[({;&])dscl[[:space:]]@macos-only
-sw_vers@(^|[[:space:]]|[({;&])sw_vers[[:space:]]@macos-only
-launchctl@(^|[[:space:]]|[({;&])launchctl[[:space:]]@macos-only
-pbcopy@(^|[[:space:]]|[({;&])pbcopy[[:space:]]@macos-only
-pbpaste@(^|[[:space:]]|[({;&])pbpaste[[:space:]]@macos-only
-defaults_plist@(^|[[:space:]]|[({;&])defaults[[:space:]]+(read|write|delete|export|import)@macos-only
-security_keychain@(^|[[:space:]]|[({;&])security[[:space:]]+(find-generic-password|add-generic-password|find-internet-password|delete-generic-password)@macos-only
-codesign@(^|[[:space:]]|[({;&])codesign[[:space:]]@macos-only
-CMDEOF
-	return 0
-}
+# Scan every selected file in one awk process. The previous implementation
+# spawned three grep processes for every pattern in every file (roughly 100k
+# processes for the aidevops repository). Keeping the pattern classification
+# and ten-line guard window in one process preserves the diagnostics without
+# the process churn that caused high system CPU and fan activity.
+_portability_scan_files() {
+	local tmp_file="$1"
+	shift
+	[[ "$#" -gt 0 ]] || return 0
 
-# ---------------------------------------------------------------------------
-# _portability_is_guarded: check whether a hit is covered by a guard.
-#
-# Args: $1=file $2=line_num $3=cmd_name (for command -v check)
-# Returns: 0 if guarded (safe), 1 if unguarded (violation)
-# ---------------------------------------------------------------------------
-_portability_is_guarded() {
-	local file="$1"
-	local line_num="$2"
-	local cmd_name="$3"
-
-	# Extract the hit line itself
-	local hit_line
-	hit_line=$(sed -n "${line_num}p" "$file" 2>/dev/null) || return 1
-
-	# Guard 1: failure-is-handled on the hit line — any of these patterns means
-	# the developer acknowledged that the command might not be available:
-	#   cmd &>/dev/null               — both stdout+stderr suppressed
-	#   cmd >/dev/null 2>&1           — same, alternate form
-	#   cmd 2>/dev/null || fallback   — stderr suppressed + explicit fallback
-	#   cmd ... || true               — failure explicitly caught
-	#   cmd ... || return             — failure caught and returns
-	#   cmd ... || :                  — failure caught with no-op
-	if echo "$hit_line" | grep -qE '&>/dev/null'; then
-		return 0
-	fi
-	if echo "$hit_line" | grep -qE '>/dev/null[[:space:]]*2>&1'; then
-		return 0
-	fi
-	# Any || fallback on the same line: || true, || return, || echo, || die, etc.
-	if echo "$hit_line" | grep -qE '[[:space:]]\|\|[[:space:]]'; then
-		return 0
-	fi
-	# Pipeline end: cmd 2>/dev/null (no fallback — stderr suppressed + output captured)
-	# This covers: result=$(cmd 2>/dev/null) pattern where empty result is handled downstream
-	if echo "$hit_line" | grep -qE '2>/dev/null'; then
-		return 0
-	fi
-
-	# Guard 2: check the preceding line for inline suppression
-	if [[ "$line_num" -gt 1 ]]; then
-		local prev_line
-		prev_line=$(sed -n "$((line_num - 1))p" "$file" 2>/dev/null) || true
-		if echo "$prev_line" | grep -qE '#[[:space:]]*shell-portability:[[:space:]]*ignore[[:space:]]*(next)?'; then
+	awk -v output_file="$tmp_file" -v scanner_name="$_PORTABILITY_SCRIPT_NAME" '
+		BEGIN { linux_only = "linux-only"; macos_only = "macos-only" }
+		function basename(path, value) {
+			value = path
+			sub(/^.*\//, "", value)
+			return value
+		}
+		function context_is_guarded(cmd_name, base_cmd, context, start, i) {
+			{ if ($0 ~ /&>\/dev\/null|>\/dev\/null[[:space:]]*2>&1|[[:space:]]\|\|[[:space:]]|2>\/dev\/null/) return 1 }
+			{ if (FNR > 1 && source_line[FNR - 1] ~ /#[[:space:]]*shell-portability:[[:space:]]*ignore[[:space:]]*(next)?/) return 1 }
+			start = FNR > 10 ? FNR - 10 : 1
+			context = ""
+			{ for (i = start; i <= FNR; i++) context = context "\n" source_line[i] }
+			base_cmd = cmd_name
+			sub(/_.*/, "", base_cmd)
+			{ if (context ~ ("command[[:space:]]+-v[[:space:]]+" base_cmd)) return 1 }
+			{ if (context ~ ("command[[:space:]]+-v[[:space:]]+" cmd_name)) return 1 }
+			{ if (context ~ /\$\(uname\)|\$\{?OSTYPE\}?|OSTYPE[[:space:]]*=/) return 1 }
+			{ if (context ~ /#[[:space:]]*shell-portability:[[:space:]]*ignore/) return 1 }
+			{ if (context ~ /if[[:space:]]+[a-z].*(&>|2>)\/dev\/null/) return 1 }
+			{ if (context ~ /if[[:space:]]+[a-z].*>\/dev\/null.*2>&1/) return 1 }
 			return 0
-		fi
-	fi
-
-	# Guard 3: context window (10 preceding lines + hit line)
-	# 10 lines covers the common BSD-vs-GNU if/else probing patterns like:
-	#   if [[ "$(uname)" == "Darwin" ]]; then
-	#       ...
-	#   else
-	#       stat -c %Y ...   # <- hit, uname check is up to 8 lines above
-	#   fi
-	local start=$((line_num > 10 ? line_num - 10 : 1))
-	local context
-	context=$(sed -n "${start},${line_num}p" "$file" 2>/dev/null) || return 1
-
-	# Guard 3a: command -v <cmd_name> in the context window
-	# Match the canonical form of the cmd_name (strip _suffix like _f, _c, _d, etc.)
-	local base_cmd="${cmd_name%%_*}"
-	if echo "$context" | grep -qE "command[[:space:]]+-v[[:space:]]+${base_cmd}"; then
-		return 0
-	fi
-	# Also check for the full cmd_name (e.g., command -v sha256sum)
-	if echo "$context" | grep -qE "command[[:space:]]+-v[[:space:]]+${cmd_name}"; then
-		return 0
-	fi
-
-	# Guard 3b: uname / OSTYPE platform check in the context window
-	if echo "$context" | grep -qE '\$\(uname\)|\$\{?OSTYPE\}?|OSTYPE[[:space:]]*='; then
-		return 0
-	fi
-
-	# Guard 3c: shell-portability: ignore in context (covers "ignore" without "next")
-	if echo "$context" | grep -qE '#[[:space:]]*shell-portability:[[:space:]]*ignore'; then
-		return 0
-	fi
-
-	# Guard 3d: BSD-probe pattern in context — an `if <cmd> ...` check on a
-	# preceding line that tests for platform-specific command availability.
-	# Covers patterns like:
-	#   if date -v-1d &>/dev/null; then ... else date -d ...
-	#   if date -v -90d >/dev/null 2>&1; then ... else date -d ...
-	if echo "$context" | grep -qE 'if[[:space:]]+[a-z].*&>/dev/null'; then
-		return 0
-	fi
-	if echo "$context" | grep -qE 'if[[:space:]]+[a-z].*2>/dev/null'; then
-		return 0
-	fi
-	if echo "$context" | grep -qE 'if[[:space:]]+[a-z].*>/dev/null.*2>&1'; then
-		return 0
-	fi
-
-	return 1
-}
-
-# ---------------------------------------------------------------------------
-# _portability_scan_file: scan a single file for violations.
-# Appends findings to $2 (tmp file). Args: $1=file $2=tmp_file
-# Returns: 0 always (findings go to tmp_file)
-# ---------------------------------------------------------------------------
-_portability_scan_file() {
-	local file="$1"
-	local tmp_file="$2"
-
-	# Skip the scanner itself (its patterns contain command names as literals)
-	[[ "$(basename "$file")" == "$_PORTABILITY_SCRIPT_NAME" ]] && return 0
-
-	# Skip bash-compat.md (documentation, not runnable code)
-	case "$file" in
-	*bash-compat.md*) return 0 ;;
-	esac
-
-	# Skip test directories — test scripts intentionally use platform-specific tools
-	# for CI testing and shouldn't be held to the same portability standard.
-	case "$file" in
-	*/tests/fixtures/*) return 0 ;;
-	tests/*) return 0 ;;
-	*/tests/*.sh) return 0 ;;
-	esac
-
-	[[ -f "$file" ]] || return 0
-
-	# Process each command in the command table
-	while IFS='@' read -r cmd_name pattern platform; do
-		# Skip blank lines or comment lines in the heredoc
-		[[ -z "$cmd_name" || "${cmd_name:0:1}" == "#" ]] && continue
-
-		# Find all matching lines (exclude pure comment lines via grep -v)
-		# grep -n returns "linenum:content"
-		local matches
-		matches=$(grep -nE "$pattern" "$file" 2>/dev/null |
-			grep -vE '^[0-9]+:[[:space:]]*#' |
-			grep -vE "command[[:space:]]+-v[[:space:]]" ||
-			true)
-
-		[[ -z "$matches" ]] && continue
-
-		while IFS= read -r match_line; do
-			[[ -z "$match_line" ]] && continue
-
-			# Extract line number (everything before first ':')
-			local line_num="${match_line%%:*}"
-			# Validate it's a number
-			[[ "$line_num" =~ ^[0-9]+$ ]] || continue
-
-			if ! _portability_is_guarded "$file" "$line_num" "$cmd_name"; then
-				# Build human-readable display name from cmd_name identifier
-				local display_cmd
-				case "$cmd_name" in
-				timeout_cmd) display_cmd="timeout" ;;
-				readlink_f) display_cmd="readlink -f" ;;
-				stat_c) display_cmd="stat -c/--format" ;;
-				date_d) display_cmd="date -d" ;;
-				sed_r) display_cmd="sed -r" ;;
-				grep_P) display_cmd="grep -P" ;;
-				xargs_r) display_cmd="xargs -r" ;;
-				find_printf) display_cmd="find -printf" ;;
-				mktemp_suffix) display_cmd="mktemp --suffix" ;;
-				base64_w) display_cmd="base64 -w" ;;
-				defaults_plist) display_cmd="defaults" ;;
-				security_keychain) display_cmd="security (keychain)" ;;
-				sw_vers) display_cmd="sw_vers" ;;
-				*) display_cmd="${cmd_name%%_*}" ;;
-				esac
-				printf '%s:%s: unguarded %s [%s]\n' "$file" "$line_num" "$display_cmd" "$platform" >>"$tmp_file"
-			fi
-		done <<<"$matches"
-
-	done < <(_portability_cmd_list)
-
-	return 0
+		}
+		function report(pattern, cmd_name, display_name, platform) {
+			{ if ($0 ~ pattern && !context_is_guarded(cmd_name)) printf "%s:%d: unguarded %s [%s]\n", FILENAME, FNR, display_name, platform >> output_file }
+		}
+		FNR == 1 {
+			{ for (i in source_line) delete source_line[i] }
+			skip_file = basename(FILENAME) == scanner_name || FILENAME ~ /bash-compat\.md/ || FILENAME ~ /(^|\/)tests\//
+		}
+		{
+			source_line[FNR] = $0
+			{ if (skip_file || $0 ~ /^[[:space:]]*#/ || $0 ~ /command[[:space:]]+-v[[:space:]]/) next }
+			{ if ($0 !~ /(getent|sha256sum|readlink|stat|date|timeout|sed|grep|xargs|find|mktemp|base64|dscl|sw_vers|launchctl|pbcopy|pbpaste|defaults|security|codesign)/) next }
+			report("(^|[[:space:]]|[({;&])getent[[:space:]]", "getent", "getent", linux_only)
+			report("(^|[[:space:]]|[({;&])sha256sum[[:space:]]", "sha256sum", "sha256sum", linux_only)
+			report("(^|[[:space:]]|[({;&])readlink[[:space:]]*-[a-zA-Z]*f", "readlink_f", "readlink -f", linux_only)
+			report("(^|[[:space:]]|[({;&])stat[[:space:]]*(-c[[:space:]]|-c%|--format)", "stat_c", "stat -c/--format", linux_only)
+			report("(^|[[:space:]]|[({;&])date[[:space:]]+-d[[:space:]]", "date_d", "date -d", linux_only)
+			report("(^|[[:space:]]|[({;&])timeout[[:space:]]+[0-9]", "timeout_cmd", "timeout", linux_only)
+			report("(^|[[:space:]]|[({;&])sed[[:space:]]*(-[a-zA-Z]*r[^e]|-[a-zA-Z]*r$)", "sed_r", "sed -r", linux_only)
+			report("(^|[[:space:]]|[({;&])grep[[:space:]]*(-[a-zA-Z]*P[^C]|-[a-zA-Z]*P$)", "grep_P", "grep -P", linux_only)
+			report("(^|[[:space:]]|[({;&])xargs[[:space:]]*-[a-zA-Z]*r[[:space:]]", "xargs_r", "xargs -r", linux_only)
+			report("(^|[[:space:]]|[({;&])find[^(]*-printf[[:space:]]", "find_printf", "find -printf", linux_only)
+			report("(^|[[:space:]]|[({;&])mktemp[[:space:]]*--suffix", "mktemp_suffix", "mktemp --suffix", linux_only)
+			report("(^|[[:space:]]|[({;&])base64[[:space:]]*-[a-zA-Z]*w[[:space:]]", "base64_w", "base64 -w", linux_only)
+			report("(^|[[:space:]]|[({;&])dscl[[:space:]]", "dscl", "dscl", macos_only)
+			report("(^|[[:space:]]|[({;&])sw_vers[[:space:]]", "sw_vers", "sw_vers", macos_only)
+			report("(^|[[:space:]]|[({;&])launchctl[[:space:]]", "launchctl", "launchctl", macos_only)
+			report("(^|[[:space:]]|[({;&])pbcopy[[:space:]]", "pbcopy", "pbcopy", macos_only)
+			report("(^|[[:space:]]|[({;&])pbpaste[[:space:]]", "pbpaste", "pbpaste", macos_only)
+			report("(^|[[:space:]]|[({;&])defaults[[:space:]]+(read|write|delete|export|import)", "defaults_plist", "defaults", macos_only)
+			report("(^|[[:space:]]|[({;&])security[[:space:]]+(find-generic-password|add-generic-password|find-internet-password|delete-generic-password)", "security_keychain", "security (keychain)", macos_only)
+			report("(^|[[:space:]]|[({;&])codesign[[:space:]]", "codesign", "codesign", macos_only)
+		}
+	' "$@"
+	return $?
 }
 
 # ---------------------------------------------------------------------------
@@ -337,7 +183,7 @@ main() {
 		fi
 	fi
 
-	[[ "$summary_only" == "false" ]] && _pc_info "Scanning ${#files[@]} shell file(s) for unguarded platform-specific commands..."
+	[[ "$summary_only" == "$PORTABILITY_FALSE" ]] && _pc_info "Scanning ${#files[@]} shell file(s) for unguarded platform-specific commands..."
 
 	# Collect violations in a temp file
 	local tmp_violations
@@ -346,9 +192,11 @@ main() {
 	trap "rm -f '${tmp_violations}'" EXIT
 
 	local file
+	local scan_files=()
 	for file in "${files[@]}"; do
-		_portability_scan_file "$file" "$tmp_violations"
+		[[ -f "$file" ]] && scan_files+=("$file")
 	done
+	_portability_scan_files "$tmp_violations" "${scan_files[@]}"
 
 	# Report results
 	local violation_count=0
@@ -357,7 +205,7 @@ main() {
 		violation_count="${violation_count//[^0-9]/}"
 		violation_count="${violation_count:-0}"
 
-		if [[ "$summary_only" == "false" ]]; then
+		if [[ "$summary_only" == "$PORTABILITY_FALSE" ]]; then
 			printf '\n'
 			while IFS= read -r line; do
 				printf '%b%s%b\n' "${_PC_RED}" "$line" "${_PC_NC}"
@@ -373,7 +221,7 @@ main() {
 			printf 'shell-portability: %d violation(s)\n' "$violation_count"
 		fi
 	else
-		if [[ "$summary_only" == "false" ]]; then
+		if [[ "$summary_only" == "$PORTABILITY_FALSE" ]]; then
 			_pc_info "No unguarded platform-specific commands found."
 		else
 			printf 'shell-portability: clean\n'
