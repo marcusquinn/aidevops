@@ -122,7 +122,7 @@ verify_gh_cli() {
 # Common preamble for commands that need project_root, repo, todo_file, gh auth
 _init_cmd() {
 	if [[ -n "$PROJECT_ROOT_ARG" ]]; then
-		_CMD_ROOT=$(cd "$PROJECT_ROOT_ARG" 2>/dev/null && pwd -P) || {
+		_CMD_ROOT=$(cd -- "$PROJECT_ROOT_ARG" 2>/dev/null && pwd -P) || {
 			print_error "Project root is not an accessible directory"
 			return 1
 		}
