@@ -42,7 +42,7 @@ _pmp_add_elapsed_seconds() {
 	[[ "$elapsed" =~ ^[0-9]+$ ]] || elapsed=0
 
 	if declare -p "$dest_var" >/dev/null 2>&1; then
-		current_value="${!dest_var}"
+		current_value="${!dest_var:-}"
 	else
 		current_value=0
 	fi
@@ -54,6 +54,7 @@ _pmp_add_elapsed_seconds() {
 
 _pmp_log_repo_timing_summary() {
 	local repo_slug="$1"
+	local logfile="${LOGFILE:-${HOME}/.aidevops/logs/pulse.log}"
 	local total_s="${2:-0}"
 	local list_s="${3:-0}"
 	local mergeability_s="${4:-0}"
@@ -65,6 +66,6 @@ _pmp_log_repo_timing_summary() {
 	local failed="${10:-0}"
 	local pr_count="${11:-0}"
 
-	echo "[pulse-wrapper] deterministic_merge_pass timing: repo=${repo_slug} total_s=${total_s} list_s=${list_s} mergeability_s=${mergeability_s} ruleset_s=${ruleset_s} branch_protection_s=${branch_protection_s} stuck_detector_s=${stuck_detector_s} merged=${merged} closed=${closed} failed=${failed} prs=${pr_count}" >>"$LOGFILE"
+	echo "[pulse-wrapper] deterministic_merge_pass timing: repo=${repo_slug} total_s=${total_s} list_s=${list_s} mergeability_s=${mergeability_s} ruleset_s=${ruleset_s} branch_protection_s=${branch_protection_s} stuck_detector_s=${stuck_detector_s} merged=${merged} closed=${closed} failed=${failed} prs=${pr_count}" >>"$logfile"
 	return 0
 }
