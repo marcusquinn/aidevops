@@ -101,6 +101,8 @@ local policy with `--apply`. `configure --all` never edits canonical repositorie
 `aidevops init` installs the guard immediately when code quality is enabled, and
 `aidevops update` reruns the idempotent migration/rollout when detector, hook,
 defaults, init, update, or installer implementation changes.
+Concurrent migrations use OS-released advisory locks and atomic replacement, so
+an interrupted writer cannot leave stale lock ownership behind.
 
 ### Auto-fix policy
 
