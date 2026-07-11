@@ -83,6 +83,10 @@ case "${QLTY_STUB_MODE:-empty}" in
 		printf '{"runs":[{"results":[{"ruleId":"file-complexity","locations":[{"physicalLocation":{"artifactLocation":{"uri":"a.py"}}}]},{"ruleId":"function-complexity","locations":[{"physicalLocation":{"artifactLocation":{"uri":"b.py"}}}]},{"ruleId":"function-complexity","locations":[{"physicalLocation":{"artifactLocation":{"uri":"b.py"}}}]}]}]}'
 		exit 0
 		;;
+	missing-location)
+		printf '{"runs":[{"results":[{"ruleId":"file-complexity","locations":[{"physicalLocation":{"artifactLocation":{"uri":"a.py"}}}]},{"ruleId":"global-complexity"},{"locations":[]}]}]}'
+		exit 0
+		;;
 esac
 exit 1
 STUB
@@ -154,6 +158,16 @@ assert_contains "threshold failure emits machine-readable remediation evidence" 
 assert_contains "threshold failure attributes file distribution" '"file":"b.py","count":2' "$fail_output"
 assert_contains "threshold failure keeps new PR smells blocking" "New PR smells remain blocking" "$fail_output"
 assert_contains "threshold failure rejects baseline inflation" "Do not raise QLTY_SMELL_THRESHOLD" "$fail_output"
+
+write_stub_qlty missing-location "$BIN_DIR"
+missing_location_output=$("$HELPER" "$CONF" 2>&1)
+missing_location_rc=$?
+assert_rc "SARIF findings without physical locations remain blocking" "1" "$missing_location_rc"
+assert_contains "location-less SARIF still emits remediation evidence" \
+	'QLTY_REMEDIATION_EVIDENCE={"schema":"aidevops.qlty-remediation.v1","actual":3,"threshold":2,"deficit":1' \
+	"$missing_location_output"
+assert_contains "remediation evidence keeps located file attribution" '"files":[{"file":"a.py","count":1}]' "$missing_location_output"
+assert_contains "remediation evidence omits missing rule identifiers" '"rules":[{"rule":"file-complexity","count":1},{"rule":"global-complexity","count":1}]' "$missing_location_output"
 
 echo ""
 if [[ "$TESTS_FAILED" -eq 0 ]]; then
