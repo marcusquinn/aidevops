@@ -1006,7 +1006,8 @@ _hrw_worktree_task_status() {
 	# remains task state and continues to block ownership transfer or trigger
 	# recovery. An empty regular file proves the known Spotlight marker shape.
 	if [[ "$(uname -s 2>/dev/null || true)" == "Darwin" && \
-		-f "${work_dir}/${_HRW_SPOTLIGHT_MARKER}" && ! -s "${work_dir}/${_HRW_SPOTLIGHT_MARKER}" ]] && \
+		-f "${work_dir}/${_HRW_SPOTLIGHT_MARKER}" && ! -L "${work_dir}/${_HRW_SPOTLIGHT_MARKER}" && \
+		! -s "${work_dir}/${_HRW_SPOTLIGHT_MARKER}" ]] && \
 		printf '%s\n' "$status_output" | grep -Fqx "?? ${_HRW_SPOTLIGHT_MARKER}"; then
 		local exclude_file=""
 		exclude_file=$(git -C "$work_dir" rev-parse --git-path info/exclude 2>/dev/null) || return 1

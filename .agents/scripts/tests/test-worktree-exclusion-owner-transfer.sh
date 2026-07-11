@@ -126,6 +126,41 @@ test_fresh_and_reused_worktree_stay_clean() {
 	return 0
 }
 
+test_marker_collisions_remain_task_state() {
+	local collision_kind=""
+	local result=0
+	local status_output=""
+	local exclude_file=""
+	for collision_kind in non-empty directory symlink; do
+		create_fixture "collision-${collision_kind}"
+		case "$collision_kind" in
+			non-empty)
+				printf 'task data\n' >"${FIXTURE_WORKTREE}/.metadata_never_index"
+				;;
+			directory)
+				mkdir "${FIXTURE_WORKTREE}/.metadata_never_index"
+				printf 'task data\n' >"${FIXTURE_WORKTREE}/.metadata_never_index/task.txt"
+				;;
+			symlink)
+				printf 'task data\n' >"${FIXTURE_ROOT}/symlink-target"
+				ln -s "${FIXTURE_ROOT}/symlink-target" "${FIXTURE_WORKTREE}/.metadata_never_index"
+				;;
+		esac
+		cmd_apply "$FIXTURE_WORKTREE"
+		status_output=$(git -C "$FIXTURE_WORKTREE" status --porcelain)
+		exclude_file=$(fixture_exclude_file "$FIXTURE_WORKTREE")
+		if [[ -z "$status_output" ]] ||
+			grep -Fqx '/.metadata_never_index' "$exclude_file" 2>/dev/null ||
+			git -C "$FIXTURE_WORKTREE" check-ignore -q --no-index .metadata_never_index 2>/dev/null ||
+			_hrw_worktree_clean_for_owner_reclaim "$FIXTURE_WORKTREE"; then
+			result=1
+		fi
+	done
+	print_result "Spotlight marker collisions remain visible task state" "$result" \
+		"last_kind=${collision_kind} status=${status_output:-<clean>}"
+	return 0
+}
+
 test_source_helper_wins_over_stale_deployment() {
 	create_fixture "source-helper"
 	cat >"${HOME}/.aidevops/agents/scripts/worktree-exclusions-helper.sh" <<'EOF'
@@ -272,6 +307,7 @@ main() {
 	setup_test_env
 	trap teardown_test_env EXIT
 	test_fresh_and_reused_worktree_stay_clean
+	test_marker_collisions_remain_task_state
 	test_source_helper_wins_over_stale_deployment
 	test_legacy_marker_allows_safe_owner_transfer
 	test_genuine_changes_still_block_transfer

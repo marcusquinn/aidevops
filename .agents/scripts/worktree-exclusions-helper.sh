@@ -161,8 +161,16 @@ _we_apply_spotlight() {
 	local wt_path="$1"
 	[[ -d "$wt_path" ]] || return 0
 	local marker="${wt_path}/.metadata_never_index"
+	# Never hide a user-created collision. A legacy Spotlight marker is an
+	# empty, non-symlink regular file; directories, symlinks, and non-empty
+	# files remain visible task state for fail-closed ownership handling.
+	if [[ -e "$marker" || -L "$marker" ]]; then
+		if [[ ! -f "$marker" || -L "$marker" || -s "$marker" ]]; then
+			return 0
+		fi
+	fi
 	_we_prepare_spotlight_git_exclude "$wt_path" || return 0
-	if [[ -e "$marker" ]]; then
+	if [[ -e "$marker" || -L "$marker" ]]; then
 		return 0
 	fi
 	# Touch the marker. Failure is non-fatal — worktree creation must not be
