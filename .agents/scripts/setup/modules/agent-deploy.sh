@@ -500,6 +500,7 @@ _atomic_stage_and_deploy_agents() {
 # immutable directory. ~/.aidevops/agents is only the atomic activation link.
 _AIDEVOPS_STAGED_BUNDLE_DIR=""
 _AIDEVOPS_PREVIOUS_BUNDLE_ROOT=""
+[[ -z "${_AIDEVOPS_BUNDLE_UNKNOWN+x}" ]] && _AIDEVOPS_BUNDLE_UNKNOWN="unknown"
 
 _runtime_bundle_sha256_file() {
 	local file="$1"
@@ -541,8 +542,8 @@ _runtime_bundle_write_manifest() {
 	local plugins_file="$3"
 	local agents_root="$bundle_dir/agents"
 	local manifest_tmp="$bundle_dir/manifest.tmp"
-	local framework_version="unknown"
-	local git_sha="unknown"
+	local framework_version="$_AIDEVOPS_BUNDLE_UNKNOWN"
+	local git_sha="$_AIDEVOPS_BUNDLE_UNKNOWN"
 	local file_count="0"
 	local cli_sha="missing"
 	local plugin_entry_sha="missing"
@@ -550,7 +551,7 @@ _runtime_bundle_write_manifest() {
 	manifest_bundle_id="${manifest_bundle_id#.staging.}"
 
 	[[ -r "$agents_root/VERSION" ]] && IFS= read -r framework_version <"$agents_root/VERSION"
-	git_sha=$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || printf 'unknown')
+	git_sha=$(git -C "$repo_dir" rev-parse HEAD 2>/dev/null || printf '%s' "$_AIDEVOPS_BUNDLE_UNKNOWN")
 	file_count=$(_count_deployed_agent_files "$agents_root")
 	[[ -f "$agents_root/aidevops.sh" ]] && cli_sha=$(_runtime_bundle_sha256_file "$agents_root/aidevops.sh")
 	if [[ -f "$agents_root/plugins/opencode-aidevops/index.mjs" ]]; then
@@ -606,13 +607,13 @@ _runtime_bundle_stage() {
 	local bundles_dir="${target_dir%/*}/runtime-bundles"
 	local bundle_dir=""
 	local current_root=""
-	local version="unknown"
-	local git_sha="unknown"
+	local version="$_AIDEVOPS_BUNDLE_UNKNOWN"
+	local git_sha="$_AIDEVOPS_BUNDLE_UNKNOWN"
 	local bundle_id=""
 
 	mkdir -p "$bundles_dir" || return 1
 	[[ -r "$repo_dir/VERSION" ]] && IFS= read -r version <"$repo_dir/VERSION"
-	git_sha=$(git -C "$repo_dir" rev-parse --short=12 HEAD 2>/dev/null || printf 'unknown')
+	git_sha=$(git -C "$repo_dir" rev-parse --short=12 HEAD 2>/dev/null || printf '%s' "$_AIDEVOPS_BUNDLE_UNKNOWN")
 	bundle_id="${version//[^A-Za-z0-9._-]/_}-${git_sha}-$(date +%s)-$$"
 	bundle_dir=$(mktemp -d "$bundles_dir/.staging.${bundle_id}.XXXXXX") || return 1
 	mkdir -p "$bundle_dir/agents" || return 1
@@ -998,6 +999,7 @@ _run_atomic_agents_deploy() {
 _verify_agents_deploy_or_restore() {
 	local source_dir="$1"
 	local target_dir="$2"
+	local previous_root="${_AIDEVOPS_PREVIOUS_BUNDLE_ROOT:-}"
 
 	# Postcondition: verify the swap actually produced a functional agents dir.
 	# _atomic_stage_and_deploy_agents returns 0 on success, but this belt-and-
@@ -1007,12 +1009,20 @@ _verify_agents_deploy_or_restore() {
 	# next retry even though agents/ is empty or partial.
 	if ! _verify_deployed_agents_tree "$target_dir"; then
 		print_error "The agents directory was not correctly deployed — setup cannot continue"
-		_restore_latest_agents_backup "$target_dir" || true
+		if [[ -L "$target_dir" && -d "$previous_root/scripts" ]]; then
+			_runtime_bundle_switch_link "$target_dir" "$previous_root" || true
+		else
+			_restore_latest_agents_backup "$target_dir" || true
+		fi
 		return 1
 	fi
 	if ! _verify_deployed_core_plugin_freshness "$source_dir" "$target_dir"; then
 		print_error "The agents directory contains stale core plugin files — setup cannot continue"
-		_restore_latest_agents_backup "$target_dir" || true
+		if [[ -L "$target_dir" && -d "$previous_root/scripts" ]]; then
+			_runtime_bundle_switch_link "$target_dir" "$previous_root" || true
+		else
+			_restore_latest_agents_backup "$target_dir" || true
+		fi
 		return 1
 	fi
 
