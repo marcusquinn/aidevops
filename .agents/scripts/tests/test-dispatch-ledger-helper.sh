@@ -122,6 +122,23 @@ test_record_recovery_is_idempotent() {
 	return 0
 }
 
+test_record_recovery_rejects_missing_option_values() {
+	setup_test_env
+	local result=0
+	local option=""
+	local error_file="${TEST_ROOT}/error.log"
+	for option in --session-key --runner-key --worktree --branch --changed-paths --recoverability; do
+		run_helper "$LEDGER_HELPER" record-recovery "$option" 2>"$error_file"
+		if [[ "$LAST_EXIT" -eq 0 ]] || ! grep -Fq "Error: $option requires an argument" "$error_file"; then
+			result=1
+			break
+		fi
+	done
+	print_result "record-recovery rejects missing option values cleanly" "$result" "option=${option} exit=${LAST_EXIT}"
+	teardown_test_env
+	return 0
+}
+
 #######################################
 # Test: check detects in-flight entry
 #######################################
@@ -781,6 +798,7 @@ main() {
 
 	test_register_creates_entry
 	test_record_recovery_is_idempotent
+	test_record_recovery_rejects_missing_option_values
 	test_check_detects_inflight
 	test_check_returns_1_for_unknown
 	test_check_issue_detects_inflight

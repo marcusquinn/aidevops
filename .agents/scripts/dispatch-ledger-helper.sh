@@ -380,14 +380,20 @@ cmd_record_recovery() {
 
 	while [[ $# -gt 0 ]]; do
 		local option="${1:-}"
-		local option_value="${2:-}"
 		case "$option" in
-		--session-key) session_key="$option_value"; shift 2 ;;
-		--runner-key) runner_key="$option_value"; shift 2 ;;
-		--worktree) worktree_path="$option_value"; shift 2 ;;
-		--branch) branch_name="$option_value"; shift 2 ;;
-		--changed-paths) changed_paths="$option_value"; shift 2 ;;
-		--recoverability) recoverability="$option_value"; shift 2 ;;
+		--session-key | --runner-key | --worktree | --branch | --changed-paths | --recoverability)
+			[[ $# -ge 2 ]] || { echo "Error: $option requires an argument" >&2; return 1; }
+			local option_value="$2"
+			case "$option" in
+			--session-key) session_key="$option_value" ;;
+			--runner-key) runner_key="$option_value" ;;
+			--worktree) worktree_path="$option_value" ;;
+			--branch) branch_name="$option_value" ;;
+			--changed-paths) changed_paths="$option_value" ;;
+			--recoverability) recoverability="$option_value" ;;
+			esac
+			shift 2
+			;;
 		*) echo "Error: Unknown option for record-recovery: $option" >&2; return 1 ;;
 		esac
 	done
