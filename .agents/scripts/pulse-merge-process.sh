@@ -2,13 +2,15 @@
 # SPDX-License-Identifier: MIT
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # =============================================================================
-# pulse-merge-process.sh — Merge Processing Helpers
+# pulse-merge-process.sh — Merge Processing Orchestrator
 # =============================================================================
 # Extracted from pulse-merge.sh (GH#21301) to bring the parent file below
 # the 1500-line file-size-debt threshold.
 #
-# Covers the merge iteration and helper functions that support the merge
-# pipeline:
+# Sources focused modules while retaining the core merge decision pipeline.
+# Public and internal entry points remain available after this file is sourced:
+#   - pulse-merge-timing.sh               — low-overhead timing aggregation
+#   - pulse-merge-pass.sh                 — checkpoints, cursors, pass orchestration
 #   - merge_ready_prs_all_repos           — top-level merge pass entry point
 #   - _merge_ready_prs_for_repo           — per-repo PR iteration
 #   - _pmp_consolidate_duplicate_pr_groups — safe superseded sibling PR cleanup
