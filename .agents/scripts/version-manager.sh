@@ -298,37 +298,65 @@ _release_abort_after_mutation() {
 	exit 1
 }
 
+_release_require_new_tag() {
+	local bump_type="$1"
+	local tag_name="$2"
+	local remote_exit=0
+
+	git ls-remote -q --exit-code --tags origin "refs/tags/$tag_name" >/dev/null 2>&1 || remote_exit=$?
+	if ! git show-ref --tags "$tag_name" &>/dev/null && [[ "$remote_exit" -ne 0 ]]; then
+		return 0
+	fi
+	print_error "PARTIAL RELEASE STATE DETECTED: tag $tag_name already exists"
+	print_info ""
+	print_info "Diagnosis:"
+	print_info "  git show $tag_name                    # inspect the existing tag"
+	print_info "  gh release view $tag_name             # check if GitHub release exists"
+	print_info "  git log $tag_name --oneline -5        # see what the tag points to"
+	print_info ""
+	print_info "Recovery options:"
+	print_info "  A) Tag exists + GitHub release exists → already released, nothing to do"
+	print_info "  B) Tag exists + no GitHub release    → run: $0 github-release"
+	print_info "  C) Tag is orphaned/wrong commit      → delete and retry:"
+	print_info "       git tag -d $tag_name"
+	print_info "       git push origin :refs/tags/$tag_name"
+	print_info "       $0 release $bump_type"
+	exit 1
+}
+
+_release_handle_push_failure() {
+	local new_version="$1"
+	local remote_exit=0
+
+	git ls-remote -q --exit-code --tags origin "refs/tags/v$new_version" >/dev/null 2>&1 || remote_exit=$?
+	if [[ "$remote_exit" -eq 0 ]]; then
+		print_warning "Push failed but tag v$new_version already exists on remote (concurrent release?)"
+		print_info "Deleting local tag to avoid divergence. Check remote state:"
+		git tag -d "v$new_version" 2>/dev/null || true
+		print_info "  gh release view v$new_version   # check if GitHub release was created"
+		print_info "  git fetch --tags && git log v$new_version --oneline -3"
+		exit 1
+	fi
+	print_warning "Rolling back local tag v$new_version due to push failure"
+	git tag -d "v$new_version" 2>/dev/null || true
+	echo ""
+	print_info "The version commit exists locally. To complete the release:"
+	print_info "  1. Fix the issue (e.g., git fetch origin && git rebase origin/main)"
+	print_info "  2. Re-create tag: git tag -a v$new_version -m 'Release v$new_version'"
+	print_info "  3. Push: git push --atomic origin main --tags"
+	print_info "  4. Create release: $0 github-release"
+	exit 1
+}
+
 # Perform the version bump, file updates, tag, push, and GitHub release.
-# Arguments: bump_type new_version
+# Arguments: bump_type new_version hotfix_flag
 _release_execute() {
 	local bump_type="$1"
 	local new_version="$2"
+	local hotfix_flag="$3"
 	local tag_name="v$new_version"
 
-	# Guard: detect partial release state before making any changes.
-	# A tag without a matching GitHub release indicates a prior failed run.
-	# Abort early with clear diagnostics rather than creating a duplicate tag.
-	# Note: --exit-code returns 2 when ref not found; capture exit code to
-	# prevent set -e from aborting the script on a "not found" result.
-	local preflight_remote_exit=0
-	git ls-remote -q --exit-code --tags origin "refs/tags/$tag_name" >/dev/null 2>&1 || preflight_remote_exit=$?
-	if git show-ref --tags "$tag_name" &>/dev/null || [ $preflight_remote_exit -eq 0 ]; then
-		print_error "PARTIAL RELEASE STATE DETECTED: tag $tag_name already exists"
-		print_info ""
-		print_info "Diagnosis:"
-		print_info "  git show $tag_name                    # inspect the existing tag"
-		print_info "  gh release view $tag_name             # check if GitHub release exists"
-		print_info "  git log $tag_name --oneline -5        # see what the tag points to"
-		print_info ""
-		print_info "Recovery options:"
-		print_info "  A) Tag exists + GitHub release exists → already released, nothing to do"
-		print_info "  B) Tag exists + no GitHub release    → run: $0 github-release"
-		print_info "  C) Tag is orphaned/wrong commit      → delete and retry:"
-		print_info "       git tag -d $tag_name"
-		print_info "       git push origin :refs/tags/$tag_name"
-		print_info "       $0 release $bump_type"
-		exit 1
-	fi
+	_release_require_new_tag "$bump_type" "$tag_name"
 
 	print_info "Updating version references in files..."
 	if ! update_version_in_files "$new_version"; then
@@ -360,33 +388,18 @@ _release_execute() {
 			exit 1
 		fi
 		if ! push_changes "$new_version"; then
-			# --atomic push failed: tag was NOT pushed to remote.
-			# Check whether a concurrent run already pushed the tag before rolling back.
-			# Note: --exit-code returns 2 when ref not found; capture exit code to
-			# prevent set -e from aborting the script on a "not found" result.
-			local push_fail_remote_exit=0
-			git ls-remote -q --exit-code --tags origin "refs/tags/v$new_version" >/dev/null 2>&1 || push_fail_remote_exit=$?
-			if [ $push_fail_remote_exit -eq 0 ]; then
-				print_warning "Push failed but tag v$new_version already exists on remote (concurrent release?)"
-				print_info "Deleting local tag to avoid divergence. Check remote state:"
-				git tag -d "v$new_version" 2>/dev/null || true
-				print_info "  gh release view v$new_version   # check if GitHub release was created"
-				print_info "  git fetch --tags && git log v$new_version --oneline -3"
-				exit 1
-			fi
-			# Safe to roll back: tag is local-only
-			print_warning "Rolling back local tag v$new_version due to push failure"
-			git tag -d "v$new_version" 2>/dev/null || true
-			echo ""
-			print_info "The version commit exists locally. To complete the release:"
-			print_info "  1. Fix the issue (e.g., git fetch origin && git rebase origin/main)"
-			print_info "  2. Re-create tag: git tag -a v$new_version -m 'Release v$new_version'"
-			print_info "  3. Push: git push --atomic origin main --tags"
-			print_info "  4. Create release: $0 github-release"
-			exit 1
+			_release_handle_push_failure "$new_version"
 		fi
-		create_github_release "$new_version"
-		run_post_release_agent_sync
+		if ! create_github_release "$new_version"; then
+			print_error "GitHub release publication failed for v$new_version"
+			return 1
+		fi
+		# The remote tag and GitHub release are now durable. Never run the local
+		# mutation rollback trap for a later hotfix/deployment convergence failure.
+		_release_disable_failure_rollback
+		if ! run_post_publication_gates "$new_version" "$hotfix_flag"; then
+			return 1
+		fi
 		print_success "Release $new_version created successfully!"
 	else
 		print_error "Version validation failed. Please fix inconsistencies before creating release."
@@ -519,11 +532,9 @@ _main_release() {
 	new_version=$(bump_version "$bump_type")
 
 	if [[ $? -eq 0 ]]; then
-		_release_execute "$bump_type" "$new_version"
-		if [[ "$hotfix_flag" -eq 1 ]]; then
-			_create_hotfix_tag "$new_version"
-		fi
-		_release_disable_failure_rollback
+		local release_exit=0
+		_release_execute "$bump_type" "$new_version" "$hotfix_flag" || release_exit=$?
+		return "$release_exit"
 	else
 		exit 1
 	fi
@@ -541,6 +552,7 @@ _main_usage() {
 	echo "  bump [major|minor|patch]      Bump version"
 	echo "  tag                           Create git tag for current version"
 	echo "  github-release                Create GitHub release for current version"
+	echo "  post-release [--hotfix]       Retry post-publication propagation and deployment gates"
 	echo "  release [major|minor|patch]   Bump version, update files, create tag and GitHub release"
 	echo "  release patch --hotfix       Patch release with hotfix signal for immediate runner propagation"
 	echo "  preflight [major|minor|patch] Run release preflight checks only"
@@ -566,6 +578,7 @@ _main_usage() {
 	echo "  $0 release patch --hotfix"
 	echo "  $0 release patch --hotfix --dry-run"
 	echo "  $0 github-release"
+	echo "  $0 post-release --hotfix"
 	echo "  $0 validate"
 	echo "  $0 changelog-check"
 	echo "  $0 changelog-preview"
@@ -600,6 +613,13 @@ main() {
 		local version
 		version=$(get_current_version)
 		create_github_release "$version"
+		;;
+	"post-release")
+		local version
+		local hotfix_flag=0
+		version=$(get_current_version)
+		[[ "${2:-}" == "--hotfix" ]] && hotfix_flag=1
+		run_post_publication_gates "$version" "$hotfix_flag"
 		;;
 	"validate")
 		local version

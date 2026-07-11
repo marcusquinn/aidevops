@@ -10,6 +10,7 @@
 # 3. _check_hotfix_available respects rate-limiting and config
 # 4. Non-maintainer users are rejected for hotfix releases
 # 5. Normal releases (no --hotfix) are unaffected
+# 6. Hotfix propagation precedes local deployment and survives local failure
 # =============================================================================
 
 set -euo pipefail
@@ -60,6 +61,10 @@ skip() {
 VM_SCRIPT="${SCRIPT_DIR}/../version-manager.sh"
 if [[ ! -f "$VM_SCRIPT" ]]; then
 	VM_SCRIPT="$HOME/.aidevops/agents/scripts/version-manager.sh"
+fi
+RELEASE_LIB="${SCRIPT_DIR}/../version-manager-release.sh"
+if [[ ! -f "$RELEASE_LIB" ]]; then
+	RELEASE_LIB="$HOME/.aidevops/agents/scripts/version-manager-release.sh"
 fi
 
 # Locate aidevops-update-check.sh
@@ -217,20 +222,20 @@ test_maintainer_verify_function_exists() {
 }
 
 # =============================================================================
-# Test 7: _create_hotfix_tag function exists in version-manager.sh
+# Test 7: _create_hotfix_tag function exists in the release library
 # =============================================================================
 test_create_hotfix_tag_function_exists() {
-	local test_name="_create_hotfix_tag function exists in version-manager.sh"
+	local test_name="_create_hotfix_tag function exists in release library"
 
-	if [[ ! -f "$VM_SCRIPT" ]]; then
-		skip "$test_name" "version-manager.sh not found"
+	if [[ ! -f "$RELEASE_LIB" ]]; then
+		skip "$test_name" "version-manager-release.sh not found"
 		return 0
 	fi
 
-	if grep -q '_create_hotfix_tag' "$VM_SCRIPT"; then
+	if grep -q '_create_hotfix_tag' "$RELEASE_LIB"; then
 		pass "$test_name"
 	else
-		fail "$test_name" "function not found in version-manager.sh"
+		fail "$test_name" "function not found in version-manager-release.sh"
 	fi
 	return 0
 }
@@ -295,6 +300,120 @@ test_reference_doc_exists() {
 	return 0
 }
 
+test_hotfix_propagates_before_local_failure() {
+	local test_name="hotfix propagates before local deployment failure"
+	local test_root
+	test_root=$(mktemp -d "${TMPDIR:-/tmp}/hotfix-post-publication.XXXXXX")
+	local output=""
+	local exit_code=0
+
+	output=$(EVENTS_FILE="$test_root/events" bash -c '
+set -u
+SCRIPT_DIR="$(dirname "$1")"
+REPO_ROOT="${2}"
+source "$1"
+print_error() { local message="$1"; printf "ERROR:%s\n" "$message"; return 0; }
+print_info() { local message="$1"; printf "INFO:%s\n" "$message"; return 0; }
+print_success() { return 0; }
+print_warning() { return 0; }
+_create_hotfix_tag() { local version="$1"; printf "hotfix:%s\n" "$version" >>"$EVENTS_FILE"; return 0; }
+run_post_release_agent_sync() { printf "deploy\n" >>"$EVENTS_FILE"; return 1; }
+run_post_publication_gates 9.8.7 1
+' _ "$RELEASE_LIB" "$SCRIPT_DIR/../../.." 2>&1) || exit_code=$?
+
+	local events=""
+	events=$(<"$test_root/events")
+	rm -rf "$test_root"
+	if [[ "$exit_code" -ne 0 && "$events" == $'hotfix:9.8.7\ndeploy' && "$output" == *"PARTIAL RELEASE SUCCESS"* && "$output" == *"remains published"* ]]; then
+		pass "$test_name"
+	else
+		fail "$test_name" "exit=$exit_code events=$events output=$output"
+	fi
+	return 0
+}
+
+test_publication_disables_rollback_before_local_gates() {
+	local test_name="publication disables rollback before local gates"
+	local publication_line=""
+	local rollback_disable_line=""
+	local post_gate_line=""
+	# shellcheck disable=SC2016 # Match the literal source expression.
+	publication_line=$(grep -n 'if ! create_github_release "$new_version"' "$VM_SCRIPT" | cut -d: -f1)
+	rollback_disable_line=$(grep -n '_release_disable_failure_rollback' "$VM_SCRIPT" | while IFS=: read -r line_number _; do
+		if [[ "$line_number" -gt "$publication_line" ]]; then
+			printf '%s\n' "$line_number"
+			break
+		fi
+	done)
+	post_gate_line=$(grep -n 'if ! run_post_publication_gates' "$VM_SCRIPT" | cut -d: -f1)
+	if [[ -n "$publication_line" && -n "$rollback_disable_line" && -n "$post_gate_line" &&
+		"$publication_line" -lt "$rollback_disable_line" && "$rollback_disable_line" -lt "$post_gate_line" ]]; then
+		pass "$test_name"
+	else
+		fail "$test_name" "publication=$publication_line rollback-disable=$rollback_disable_line post-gates=$post_gate_line"
+	fi
+	return 0
+}
+
+test_existing_local_hotfix_tag_retries_remote_push() {
+	local test_name="existing local hotfix tag retries remote propagation"
+	local test_root
+	test_root=$(mktemp -d "${TMPDIR:-/tmp}/hotfix-retry.XXXXXX")
+	mkdir -p "$test_root/bin" "$test_root/repo"
+	cat >"$test_root/bin/git" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+ls-remote) exit 2 ;;
+show-ref) exit 0 ;;
+push)
+	printf '%s\n' "$*" >>"$HOTFIX_GIT_LOG"
+	[[ "${HOTFIX_PUSH_FAIL:-0}" == "1" ]] && exit 1
+	exit 0
+	;;
+esac
+exit 1
+EOF
+	chmod +x "$test_root/bin/git"
+	local output=""
+	local exit_code=0
+	output=$(PATH="$test_root/bin:/usr/bin:/bin" HOTFIX_GIT_LOG="$test_root/git.log" bash -c '
+set -u
+SCRIPT_DIR="$(dirname "$1")"
+REPO_ROOT="$2"
+source "$1"
+print_error() { local message="$1"; printf "ERROR:%s\n" "$message"; return 0; }
+print_info() { local message="$1"; printf "INFO:%s\n" "$message"; return 0; }
+print_success() { return 0; }
+print_warning() { return 0; }
+_create_hotfix_tag 9.8.7
+' _ "$RELEASE_LIB" "$test_root/repo" 2>&1) || exit_code=$?
+	if [[ "$exit_code" -eq 0 ]] && grep -q 'push origin hotfix-v9.8.7' "$test_root/git.log"; then
+		pass "$test_name"
+	else
+		fail "$test_name" "exit=$exit_code output=$output"
+	fi
+
+	exit_code=0
+	output=$(PATH="$test_root/bin:/usr/bin:/bin" HOTFIX_GIT_LOG="$test_root/git.log" HOTFIX_PUSH_FAIL=1 bash -c '
+set -u
+SCRIPT_DIR="$(dirname "$1")"
+REPO_ROOT="$2"
+source "$1"
+print_error() { local message="$1"; printf "ERROR:%s\n" "$message"; return 0; }
+print_info() { local message="$1"; printf "INFO:%s\n" "$message"; return 0; }
+print_success() { return 0; }
+print_warning() { return 0; }
+_create_hotfix_tag 9.8.7
+' _ "$RELEASE_LIB" "$test_root/repo" 2>&1) || exit_code=$?
+	if [[ "$exit_code" -ne 0 && "$output" == *"post-release --hotfix"* ]] && grep -q '"post-release")' "$VM_SCRIPT"; then
+		pass "failed hotfix push provides idempotent retry guidance"
+	else
+		fail "failed hotfix push provides idempotent retry guidance" "exit=$exit_code output=$output"
+	fi
+	rm -rf "$test_root"
+	return 0
+}
+
 # =============================================================================
 # Run all tests
 # =============================================================================
@@ -312,6 +431,9 @@ main() {
 	test_usage_includes_hotfix
 	test_force_hotfix_banner_env
 	test_reference_doc_exists
+	test_hotfix_propagates_before_local_failure
+	test_publication_disables_rollback_before_local_gates
+	test_existing_local_hotfix_tag_retries_remote_push
 
 	echo ""
 	print_info "=== Results: ${TESTS_PASSED} passed, ${TESTS_FAILED} failed, ${TESTS_SKIPPED} skipped ==="
