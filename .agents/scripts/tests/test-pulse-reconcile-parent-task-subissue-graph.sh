@@ -207,7 +207,7 @@ set_closed_parent_list() {
 	# Args: issue_num title body
 	local num="$1" title="$2" body="$3"
 	jq -n --argjson n "$num" --arg t "$title" --arg b "$body" \
-		'[{number:$n, title:$t, body:$b, state:"CLOSED"}]' >"${TEST_ROOT}/gh-closed-issue-list.json"
+		'[{number:$n, title:$t, body:$b, state:"closed"}]' >"${TEST_ROOT}/gh-closed-issue-list.json"
 	return 0
 }
 
@@ -496,6 +496,24 @@ if [[ "$reopen_count" -eq 1 ]]; then
 else
 	print_result "closed-parent repair: action is bounded to one reopen per scan" 1 \
 		"(reopen_count=${reopen_count})"
+fi
+
+# -----------------------------------------------------------------------------
+# Scenario 13: a stamped phase plan with no parseable phase rows is invalid.
+# Whitespace-only parser output must not bypass the contract and close a parent.
+# -----------------------------------------------------------------------------
+reset_scenario
+set_parent_list 1600 "t1600: invalid phase plan" $'## Phases\n\n   \n\t\n## Children\n\n- #1601\n\n<!-- parent-close-contract: phase-plan -->'
+set_subissues "1601:CLOSED"
+set_child_states "1601:closed:only-child"
+
+reconcile_completed_parent_tasks >/dev/null 2>&1
+
+if grep -q "issue close 1600" "$GH_CALLS"; then
+	print_result "invalid phase-plan contract: whitespace-only plan remains open" 1 \
+		"(unexpected close: $(tr '\n' '|' <"$GH_CALLS" | head -c 400))"
+else
+	print_result "invalid phase-plan contract: whitespace-only plan remains open" 0
 fi
 
 # -----------------------------------------------------------------------------
