@@ -87,6 +87,27 @@ _assert_clean() {
 	return 0
 }
 
+_assert_detailed_output_and_exit_codes() {
+	local fixture="$1"
+	local output status=0
+	output=$(bash "$SCANNER" "$fixture" 2>/dev/null) || status=$?
+	if [[ "$status" -eq 1 ]] &&
+		printf '%s\n' "$output" | grep -qF "${fixture}:2: unguarded getent [linux-only]" &&
+		printf '%s\n' "$output" | grep -qF "${fixture}:3: unguarded codesign [macos-only]"; then
+		_pass "scanner preserves detailed file:line diagnostics and exit 1"
+	else
+		_fail "scanner detailed diagnostics or exit code changed"
+	fi
+	status=0
+	bash "$SCANNER" "$fixture" --no-exit-code >/dev/null 2>&1 || status=$?
+	if [[ "$status" -eq 0 ]]; then
+		_pass "--no-exit-code preserves successful exit semantics"
+	else
+		_fail "--no-exit-code returned ${status}"
+	fi
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Setup: verify scanner exists
 # ---------------------------------------------------------------------------
@@ -244,6 +265,11 @@ if grep -P "" /dev/null 2>/dev/null; then
 fi
 '
 _assert_clean "grep -P inside if-grep-P availability check" "${FIXTURE_DIR}/guarded_grep_P_detect.sh"
+
+_write_fixture "${FIXTURE_DIR}/detailed_output.sh" '#!/usr/bin/env bash
+getent passwd root
+codesign --verify app'
+_assert_detailed_output_and_exit_codes "${FIXTURE_DIR}/detailed_output.sh"
 
 printf '\n'
 # ---------------------------------------------------------------------------

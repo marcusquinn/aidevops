@@ -97,20 +97,28 @@ _linters_local_acquire_broad_gate_lock() {
 	local gate_name="$2"
 	local lock_dir="${cache_dir}/broad-gate.lock"
 	local timeout_seconds="${LINTERS_LOCAL_GATE_LOCK_TIMEOUT_SECONDS:-${LINTERS_LOCAL_BROAD_GATE_TIMEOUT_SECONDS:-90}}"
-	local started_at now owner_pid=""
+	local ownerless_grace="${LINTERS_LOCAL_OWNERLESS_LOCK_GRACE_SECONDS:-2}"
+	local started_at now owner_pid="" ownerless_since=0
 	[[ "$timeout_seconds" =~ ^[0-9]+$ ]] || timeout_seconds=90
+	[[ "$ownerless_grace" =~ ^[0-9]+$ ]] || ownerless_grace=2
 	started_at=$(date +%s)
 
 	while ! mkdir "$lock_dir" 2>/dev/null; do
+		now=$(date +%s)
 		if [[ -f "${lock_dir}/owner" ]]; then
+			ownerless_since=0
 			owner_pid=$(cat "${lock_dir}/owner" 2>/dev/null || true)
 			if [[ "$owner_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$owner_pid" 2>/dev/null; then
 				rm -f "${lock_dir}/owner"
 				rmdir "$lock_dir" 2>/dev/null || true
 				continue
 			fi
+		elif [[ "$ownerless_since" -eq 0 ]]; then
+			ownerless_since="$now"
+		elif [[ $((now - ownerless_since)) -ge "$ownerless_grace" ]]; then
+			rmdir "$lock_dir" 2>/dev/null || true
+			continue
 		fi
-		now=$(date +%s)
 		if [[ $((now - started_at)) -ge "$timeout_seconds" ]]; then
 			print_warning "${gate_name}: broad-gate slot unavailable after ${timeout_seconds}s"
 			return 1

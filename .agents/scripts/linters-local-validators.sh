@@ -438,6 +438,7 @@ run_shellcheck() {
 	local violations=0
 	local result=""
 	local timed_out=0
+	local incomplete=0
 	local file_count=${#ALL_SH_FILES[@]}
 
 	local sc_timeout=30
@@ -455,8 +456,8 @@ run_shellcheck() {
 			timeout_sec "$sc_timeout" shellcheck --severity=warning --format=gcc "${batch[@]}" 2>&1
 		) || sc_exit=$?
 
-		if [[ "$sc_exit" -eq 124 ]]; then
-			print_warning "ShellCheck: batch at offset ${offset} timed out; retrying ${#batch[@]} file(s) individually"
+		if [[ "$sc_exit" -ne 0 && "$sc_exit" -ne 1 ]]; then
+			print_warning "ShellCheck: batch at offset ${offset} exited ${sc_exit}; retrying ${#batch[@]} file(s) individually"
 			for fallback_file in "${batch[@]}"; do
 				fallback_result=""
 				fallback_exit=0
@@ -466,13 +467,21 @@ run_shellcheck() {
 				) || fallback_exit=$?
 				if [[ "$fallback_exit" -eq 124 ]]; then
 					timed_out=$((timed_out + 1))
+					incomplete=$((incomplete + 1))
 					print_warning "ShellCheck: $fallback_file timed out after ${sc_timeout}s"
-				elif [[ -n "$fallback_result" ]]; then
+				elif [[ "$fallback_exit" -eq 1 && -n "$fallback_result" ]]; then
 					result="${result}${fallback_result}"$'\n'
+				elif [[ "$fallback_exit" -ne 0 ]]; then
+					incomplete=$((incomplete + 1))
+					print_error "ShellCheck: $fallback_file failed without lint diagnostics (exit ${fallback_exit})"
 				fi
 			done
 			offset=$((offset + batch_size))
 			continue
+		fi
+		if [[ "$sc_exit" -eq 1 && -z "$file_result" ]]; then
+			incomplete=$((incomplete + ${#batch[@]}))
+			print_error "ShellCheck: batch at offset ${offset} failed without lint diagnostics"
 		fi
 		if [[ -n "$file_result" ]]; then
 			result="${result}${file_result}"$'\n'
@@ -497,12 +506,12 @@ run_shellcheck() {
 		fi
 		return 1
 	fi
-
-	local msg="ShellCheck: ${file_count} files passed (no warnings)"
-	if [[ $timed_out -gt 0 ]]; then
-		msg="ShellCheck: $((file_count - timed_out)) of ${file_count} files passed, $timed_out timed out"
+	if [[ "$incomplete" -gt 0 ]]; then
+		print_error "ShellCheck: ${incomplete} file(s) were not checked completely"
+		return 1
 	fi
-	print_success "$msg" # good stuff
+
+	print_success "ShellCheck: ${file_count} files passed (no warnings)"
 	return 0
 }
 

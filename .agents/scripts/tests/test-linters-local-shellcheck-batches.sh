@@ -45,6 +45,12 @@ printf '%s\n' "$#" >>"$FAKE_SHELLCHECK_LOG"
 if [[ "${FAKE_TIMEOUT_BATCH:-0}" == "1" && "$#" -gt 3 ]]; then
 	exit 124
 fi
+if [[ "${FAKE_TIMEOUT_ALL:-0}" == "1" ]]; then
+	exit 124
+fi
+if [[ "${FAKE_SILENT_FAILURE:-0}" == "1" ]]; then
+	exit 2
+fi
 exit 0
 FAKE
 	chmod +x "${bin_dir}/shellcheck"
@@ -90,6 +96,18 @@ main() {
 	else
 		assert_equal 1 0 "timeout fallback is reported"
 	fi
+
+	unset FAKE_TIMEOUT_BATCH
+	export FAKE_TIMEOUT_ALL=1
+	local failure_status=0
+	run_shellcheck >/dev/null 2>&1 || failure_status=$?
+	assert_equal 1 "$failure_status" "persistent per-file timeouts fail closed"
+
+	unset FAKE_TIMEOUT_ALL
+	export FAKE_SILENT_FAILURE=1
+	failure_status=0
+	run_shellcheck >/dev/null 2>&1 || failure_status=$?
+	assert_equal 1 "$failure_status" "silent ShellCheck infrastructure failures fail closed"
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

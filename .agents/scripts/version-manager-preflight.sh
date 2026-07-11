@@ -57,7 +57,7 @@ run_preflight_checks() {
 	local preflight_script="$REPO_ROOT/.agents/scripts/linters-local.sh"
 
 	if [[ -f "$preflight_script" ]]; then
-		if bash "$preflight_script"; then
+		if bash "$preflight_script" --full; then
 			print_success "Preflight checks passed ✓"
 			return 0
 		else
@@ -355,7 +355,7 @@ run_patch_release_preflight() {
 		print_warning "No previous tag found; falling back to full preflight"
 		local preflight_script="$REPO_ROOT/.agents/scripts/linters-local.sh"
 		if [[ -f "$preflight_script" ]]; then
-			bash "$preflight_script"
+			bash "$preflight_script" --full
 			return $?
 		fi
 		print_warning "Preflight script not found, skipping checks"
