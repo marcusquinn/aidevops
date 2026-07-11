@@ -175,6 +175,60 @@ PY
 	return 0
 }
 
+test_snapshot_omits_unobserved_stale_dates() {
+	local tmpdir="$1"
+	local fixture_home="${tmpdir}/snapshot-home"
+	local db="${tmpdir}/snapshot-evidence.db"
+	mkdir -p "$fixture_home"
+	create_knowledge_db "$db"
+	local fixture_values observed_date zero_date observed_start observed_end zero_event
+	fixture_values=$(python3 -c 'import datetime as d; today=d.date.today(); observed=today-d.timedelta(days=5); zero=today-d.timedelta(days=4); epoch=lambda day,h:int(d.datetime.combine(day,d.time(h)).timestamp()); print(observed,zero,epoch(observed,10),epoch(observed,11),epoch(zero,12))')
+	read -r observed_date zero_date observed_start observed_end zero_event <<<"$fixture_values"
+	insert_backlit_pair "$db" "$observed_start" "$observed_end"
+	sqlite3 "$db" "INSERT INTO ZOBJECT (ZSTREAMNAME,ZCREATIONDATE,ZVALUEINTEGER) VALUES('/display/isBacklit',$(core_data_offset "$zero_event"),0);"
+	HOME="$fixture_home" AIDEVOPS_SCREEN_TIME_OS_TYPE=Darwin AIDEVOPS_KNOWLEDGE_DB="$db" "$HELPER" snapshot >/dev/null
+	local history="${fixture_home}/.aidevops/.agent-workspace/observability/screen-time.jsonl"
+	local rows dates zero_hours
+	rows=$(wc -l <"$history" | tr -d ' ')
+	dates=$(jq -r '.date' "$history" | sort | tr '\n' ' ')
+	zero_hours=$(jq -r --arg date "$zero_date" 'select(.date == $date) | .screen_hours' "$history")
+	if [[ "$rows" != "2" || "$dates" != "${observed_date} ${zero_date} " || ("$zero_hours" != "0" && "$zero_hours" != "0.0") ]]; then
+		fail "snapshot fabricated stale gap coverage or lost explicit zero: rows=${rows} dates=${dates} zero=${zero_hours}"
+	fi
+	pass "snapshot omits unobserved stale dates and records explicit zero-event dates"
+	return 0
+}
+
+test_top_apps_sql_and_sweep_are_bounded() {
+	local tmpdir="$1"
+	local now="$2"
+	local db="${tmpdir}/bounded-apps.db"
+	local instrument="${tmpdir}/bounded-apps-instrument.json"
+	create_knowledge_db "$db"
+	local cd_now=$((now - 978307200))
+	sqlite3 "$db" "
+		WITH RECURSIVE old_rows(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM old_rows WHERE i < 5000)
+		INSERT INTO ZOBJECT (ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUESTRING)
+		SELECT '/app/usage', ${cd_now} - 86400*60 - i*60, ${cd_now} - 86400*60 - i*60 + 30, 'old.app' FROM old_rows;
+		WITH RECURSIVE recent_rows(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM recent_rows WHERE i < 200)
+		INSERT INTO ZOBJECT (ZSTREAMNAME,ZSTARTDATE,ZENDDATE,ZVALUESTRING)
+		SELECT '/app/usage', ${cd_now} - i*300, ${cd_now} - i*300 + 600, 'recent.' || (i % 3) FROM recent_rows;"
+	AIDEVOPS_SCREEN_TIME_NOW_EPOCH="$now" AIDEVOPS_APP_STATS_INSTRUMENT_FILE="$instrument" \
+		python3 "${SCRIPTS_DIR}/screen-time-interval-engine.py" apps --os-type Darwin --db "$db" >/dev/null
+	local selected valid boundaries segments elapsed
+	selected=$(jq -r '.rows_selected' "$instrument")
+	valid=$(jq -r '.valid_intervals' "$instrument")
+	boundaries=$(jq -r '.boundaries' "$instrument")
+	segments=$(jq -r '.attributed_segments' "$instrument")
+	elapsed=$(jq -r '.elapsed_ms' "$instrument")
+	if [[ "$selected" != "200" || "$valid" != "200" || "$boundaries" -gt 402 || "$segments" -gt 401 ]] || \
+		! awk -v elapsed="$elapsed" 'BEGIN {exit !(elapsed < 5000)}'; then
+		fail "top-app query/sweep was unbounded: $(<"$instrument")"
+	fi
+	pass "top-app SQL excludes 5000 old rows and sweep remains boundary-linear"
+	return 0
+}
+
 test_local_midnight_dst_boundaries() {
 	local tmpdir="$1"
 	local db="${tmpdir}/dst.db"
@@ -343,6 +397,8 @@ main() {
 	pass "screen-time helper falls back only for sparse backlit windows"
 	test_union_clipping_and_failure_status "$tmpdir" "$now"
 	test_empty_zero_and_sparse_source_semantics "$tmpdir" "$now"
+	test_snapshot_omits_unobserved_stale_dates "$tmpdir"
+	test_top_apps_sql_and_sweep_are_bounded "$tmpdir" "$now"
 	test_local_midnight_dst_boundaries "$tmpdir"
 	test_linux_state_machine "$tmpdir"
 	test_history_calendar_coverage_and_staleness "$tmpdir"

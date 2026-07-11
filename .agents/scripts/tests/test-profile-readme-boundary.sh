@@ -909,7 +909,7 @@ test_profile_model_bundle_scans_each_population_once() {
 	_get_model_usage_from_obs_db() {
 		local date_filter="${1:-}"
 		[[ -n "$date_filter" ]] && printf '%s\n' recent-empty >>"$calls_file" || printf '%s\n' all-empty >>"$calls_file"
-		printf '%s\n' ""
+		printf '%s\n' '[]'
 		return 0
 	}
 	_get_model_usage_from_opencode() {
@@ -928,6 +928,20 @@ test_profile_model_bundle_scans_each_population_once() {
 		"$(printf '%s' "$bundle" | jq -r '.all[0].model')" != "fallback-all" || \
 		"$(grep -c '^jsonl-' "$calls_file" || true)" != "2" ]]; then
 		print_result "$test_name" 1 "fallback selection changed: calls=$(tr '\n' ' ' <"$calls_file") bundle=${bundle}"
+		return 0
+	fi
+	: >"$calls_file"
+	_get_model_usage_from_jsonl() {
+		local period="$1"
+		printf 'jsonl-empty-%s\n' "$period" >>"$calls_file"
+		printf '%s\n' '[]'
+		return 0
+	}
+	bundle=$(_get_profile_model_usage_bundle)
+	if [[ "$(printf '%s' "$bundle" | jq -r '.recent | length')" != "0" || \
+		"$(printf '%s' "$bundle" | jq -r '.all | length')" != "0" || \
+		"$(grep -c '^jsonl-empty-' "$calls_file" || true)" != "2" ]]; then
+		print_result "$test_name" 1 "empty fallback should remain empty only after JSONL check: calls=$(tr '\n' ' ' <"$calls_file") bundle=${bundle}"
 		return 0
 	fi
 	print_result "$test_name" 0

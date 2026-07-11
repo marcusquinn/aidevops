@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import getpass
+import heapq
 import json
 import math
 import os
@@ -146,16 +147,25 @@ def macos_collection(db_path, now):
         source = "macos-knowledge-db:/display/isBacklit"
         latest = latest_backlit
         observations = len(backlit)
+        observation_epochs = [timestamp for timestamp, _ in backlit]
+        coverage_start = min(observation_epochs)
+        coverage_end = max(observation_epochs)
     elif apps:
         intervals = app_intervals
         source = "macos-knowledge-db:/app/usage-union"
         latest = latest_app
         observations = len(apps)
+        observation_epochs = []
+        coverage_start = min(start for start, _ in apps)
+        coverage_end = max(end for _, end in apps)
     elif backlit:
         intervals = backlit_intervals
         source = "macos-knowledge-db:/display/isBacklit-stale"
         latest = latest_backlit
         observations = len(backlit)
+        observation_epochs = [timestamp for timestamp, _ in backlit]
+        coverage_start = min(observation_epochs)
+        coverage_end = max(observation_epochs)
     else:
         return {"status": "unavailable", "source": "macos-knowledge-db:no-observations", "reason": "empty-readable-database", "intervals": [], "observations": 0}
     freshness = max(0.0, (now - latest) / 3600) if latest is not None else None
@@ -169,6 +179,9 @@ def macos_collection(db_path, now):
         "latest_epoch": latest,
         "earliest_epoch": min((item[0] for item in (backlit if use_backlit or not apps else apps)), default=latest),
         "freshness_hours": round(freshness, 1) if freshness is not None else None,
+        "observation_epochs": observation_epochs,
+        "coverage_start_epoch": coverage_start,
+        "coverage_end_epoch": coverage_end,
     }
 
 
@@ -176,34 +189,56 @@ def macos_app_stats(db_path, now):
     if not db_path.exists():
         return []
     try:
+        started_at = time.perf_counter()
         uri = f"file:{db_path}?mode=ro"
         with sqlite3.connect(uri, uri=True, timeout=5) as connection:
+            cutoff_cd = now - 28 * DAY - CORE_DATA_EPOCH
+            now_cd = now - CORE_DATA_EPOCH
             rows = connection.execute(
                 "SELECT ZVALUESTRING, ZSTARTDATE, ZENDDATE FROM ZOBJECT "
-                "WHERE ZSTREAMNAME='/app/usage' AND ZVALUESTRING IS NOT NULL"
+                "WHERE ZSTREAMNAME='/app/usage' AND ZVALUESTRING IS NOT NULL "
+                "AND ZENDDATE > ? AND ZSTARTDATE < ? ORDER BY ZSTARTDATE",
+                (cutoff_cd, now_cd),
             ).fetchall()
     except sqlite3.Error:
         return []
+    month_start = now - 28 * DAY
     intervals = [
-        (str(bundle), float(start) + CORE_DATA_EPOCH, float(end) + CORE_DATA_EPOCH)
+        (str(bundle), max(month_start, float(start) + CORE_DATA_EPOCH), min(now, float(end) + CORE_DATA_EPOCH), float(start) + CORE_DATA_EPOCH)
         for bundle, start, end in rows
-        if start is not None and end is not None and float(end) > float(start)
+        if start is not None and end is not None and float(end) > float(start) and float(end) + CORE_DATA_EPOCH > month_start and float(start) + CORE_DATA_EPOCH < now
     ]
-    totals = {}
-    for name, seconds in (("today", DAY), ("week", 7 * DAY), ("month", 28 * DAY)):
-        window_start = now - seconds
-        relevant = [(bundle, max(start, window_start), min(end, now), start) for bundle, start, end in intervals if end > window_start and start < now]
-        boundaries = sorted({value for _, left, right, _ in relevant for value in (left, right)})
-        per_app = {}
-        for left, right in zip(boundaries, boundaries[1:]):
-            active = [item for item in relevant if item[1] < right and item[2] > left]
-            if not active:
-                continue
-            # Knowledge DB foreground records can overlap or repeat. Attribute a
-            # segment once to the most recently started active record.
-            bundle = max(active, key=lambda item: item[3])[0]
-            per_app[bundle] = per_app.get(bundle, 0) + right - left
-        totals[name] = per_app
+    starts = {}
+    ends = {}
+    boundaries = {month_start, now}
+    for interval_id, (bundle, left, right, original_start) in enumerate(intervals):
+        starts.setdefault(left, []).append((interval_id, bundle, original_start))
+        ends.setdefault(right, []).append(interval_id)
+        boundaries.update((left, right))
+    ordered = sorted(boundaries)
+    active = set()
+    latest_start_heap = []
+    totals = {name: {} for name in ("today", "week", "month")}
+    window_starts = {"today": now - DAY, "week": now - 7 * DAY, "month": month_start}
+    attributed_segments = 0
+    max_active = 0
+    for left, right in zip(ordered, ordered[1:]):
+        for interval_id in ends.get(left, []):
+            active.discard(interval_id)
+        for interval_id, bundle, original_start in starts.get(left, []):
+            active.add(interval_id)
+            heapq.heappush(latest_start_heap, (-original_start, -interval_id, interval_id, bundle))
+        while latest_start_heap and latest_start_heap[0][2] not in active:
+            heapq.heappop(latest_start_heap)
+        max_active = max(max_active, len(active))
+        if not latest_start_heap or right <= left:
+            continue
+        bundle = latest_start_heap[0][3]
+        attributed_segments += 1
+        for name, window_start in window_starts.items():
+            overlap = right - max(left, window_start)
+            if overlap > 0:
+                totals[name][bundle] = totals[name].get(bundle, 0) + overlap
     month_total = sum(totals.get("month", {}).values())
     result = []
     for bundle, month_seconds in sorted(totals.get("month", {}).items(), key=lambda item: (-item[1], item[0]))[:10]:
@@ -213,6 +248,17 @@ def macos_app_stats(db_path, now):
             row[f"{name}_pct"] = round(totals.get(name, {}).get(bundle, 0) / denominator * 100) if denominator else 0
         row["month_seconds"] = round(month_seconds)
         result.append(row)
+    instrument_file = os.environ.get("AIDEVOPS_APP_STATS_INSTRUMENT_FILE")
+    if instrument_file:
+        instrumentation = {
+            "rows_selected": len(rows),
+            "valid_intervals": len(intervals),
+            "boundaries": len(ordered),
+            "attributed_segments": attributed_segments,
+            "max_active": max_active,
+            "elapsed_ms": round((time.perf_counter() - started_at) * 1000, 3),
+        }
+        Path(instrument_file).write_text(json.dumps(instrumentation, sort_keys=True) + "\n", encoding="utf-8")
     return result if month_total else []
 
 
@@ -311,6 +357,9 @@ def wtmp_collection(now, user, journal_reason):
         "earliest_epoch": min(left for left, _ in intervals),
         "freshness_hours": round(freshness, 1),
         "skipped_rows": skipped,
+        "observation_epochs": [],
+        "coverage_start_epoch": min(left for left, _ in intervals),
+        "coverage_end_epoch": max(right for _, right in intervals),
     }
 
 
@@ -324,6 +373,7 @@ def linux_collection(now, user):
     opened = None
     intervals = []
     observations = 0
+    observation_epochs = []
     latest = None
     earliest_event = None
     start = now - WINDOWS["year"]
@@ -372,6 +422,7 @@ def linux_collection(now, user):
                 file=sys.stderr,
             )
         observations += 1
+        observation_epochs.append(timestamp)
         latest = timestamp if latest is None else max(latest, timestamp)
         earliest_event = timestamp if earliest_event is None else min(earliest_event, timestamp)
         after = is_active()
@@ -396,6 +447,9 @@ def linux_collection(now, user):
         "latest_epoch": latest,
         "earliest_epoch": earliest_event,
         "freshness_hours": round(freshness, 1),
+        "observation_epochs": observation_epochs,
+        "coverage_start_epoch": min(observation_epochs),
+        "coverage_end_epoch": max(observation_epochs),
     }
 
 
@@ -557,7 +611,14 @@ def main():
     elif args.command == "date":
         target = dt.date.fromisoformat(args.date)
         start, end = local_day_bounds(target)
-        hours = None if collection.get("status") == "unavailable" else round(min(24 * 3600, interval_seconds(collection.get("intervals", []), start, end)) / 3600, 1)
+        observations = collection.get("observation_epochs", [])
+        intervals = collection.get("intervals", [])
+        coverage_end = collection.get("coverage_end_epoch")
+        explicit_event = any(start <= timestamp < end for timestamp in observations)
+        interval_overlap = any(right > start and left < end for left, right in intervals)
+        within_coverage = coverage_end is not None and start <= coverage_end
+        observed_date = within_coverage and (explicit_event or interval_overlap)
+        hours = None if collection.get("status") == "unavailable" or not observed_date else round(min(24 * 3600, interval_seconds(intervals, start, end)) / 3600, 1)
         print("unavailable" if hours is None else hours)
     else:
         starts = [left for left, _ in collection.get("intervals", [])]

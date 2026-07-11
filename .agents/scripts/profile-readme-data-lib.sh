@@ -484,7 +484,7 @@ _get_model_usage() {
 
 	local obs_result
 	obs_result=$(_get_model_usage_from_obs_db "$date_filter")
-	if [[ -n "$obs_result" ]]; then
+	if [[ -n "$obs_result" && "$(_model_usage_request_count "$obs_result")" -gt 0 ]]; then
 		echo "$obs_result"
 		return 0
 	fi
@@ -499,7 +499,7 @@ _get_profile_model_usage_bundle() {
 	local recent_filter="AND timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')"
 	local obs_recent recent_result all_result
 	obs_recent=$(_get_model_usage_from_obs_db "$recent_filter")
-	if [[ -n "$obs_recent" ]]; then
+	if [[ -n "$obs_recent" && "$(_model_usage_request_count "$obs_recent")" -gt 0 ]]; then
 		recent_result="$obs_recent"
 	else
 		recent_result=$(_get_model_usage_from_jsonl "30d")
