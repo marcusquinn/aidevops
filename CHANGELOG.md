@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.14] - 2026-07-11
+
+### Changed
+
+- reap dead interactive pulse claims (#27040)
+- harden sandbox snapshot cleanup (#27044)
+- Maintenance: sync ref:GH#27041 to TODO.md [skip ci]
+- Maintenance: sync ref:GH#27039 to TODO.md [skip ci]
+
 ## [3.32.13] - 2026-07-11
 
 ### Changed
