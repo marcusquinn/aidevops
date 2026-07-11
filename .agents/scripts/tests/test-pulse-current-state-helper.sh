@@ -58,6 +58,22 @@ json.dump({
     'prefetch_conditional_refreshes': 2,
     'prefetch_conditional_misses': 1,
 }, open(os.path.join(root, 'pulse-health.json'), 'w'))
+json.dump({
+    'objectives': [
+        {
+            'repo': 'owner/repo', 'number': 41, 'objective_state': 'actionable',
+            'evidence_timestamp': int(now) - 7200, 'assumption_expires_at': int(now) - 3600,
+            'assumption_expired': True, 'next_action': 'dispatch_objective',
+            'trigger_at': int(now) - 3600, 'responsible_component': 'pulse-dispatch',
+        },
+        {
+            'repo': 'owner/repo', 'number': 42, 'objective_state': 'actionable',
+            'evidence_timestamp': int(now), 'assumption_expires_at': int(now) + 3600,
+            'assumption_expired': False, 'next_action': '', 'trigger_at': None,
+            'responsible_component': '',
+        },
+    ]
+}, open(os.path.join(root, 'objective-reconciliation.json'), 'w'))
 open(os.path.join(root, 'pulse-wrapper.log'), 'w').write('[pulse] useful activity\nPR opened #2\nPR merged #2\nissue closed #1\nInstance lock acquired\n')
 state_dir = os.path.join(root, 'review-thread-state')
 os.makedirs(state_dir, exist_ok=True)
@@ -78,6 +94,7 @@ output="$TMP_DIR/out.txt"
 export AIDEVOPS_OBS_DB_OVERRIDE="$TMP_DIR/runtime-events.db"
 export AIDEVOPS_PULSE_RATE_LIMIT_CACHE="$TMP_DIR/rate-limit-cache.json"
 export AIDEVOPS_PR_REVIEW_THREAD_RESPONSE_STATE_DIR="$TMP_DIR/review-thread-state"
+export AIDEVOPS_OBJECTIVE_STATE_FILE="$TMP_DIR/objective-reconciliation.json"
 python3 - "$AIDEVOPS_PULSE_RATE_LIMIT_CACHE" <<'PY'
 import json, sys, time
 json.dump({
@@ -101,6 +118,8 @@ grep -q 'worker_launch_total' "$output"
 grep -q 'watchdog_killed' "$output"
 grep -q 'rate_limited' "$output"
 grep -q 'canary_failed' "$output"
+grep -q 'Objectives without next action: 1' "$output"
+grep -q 'Oldest unverified assumption:' "$output"
 
 json_output="$TMP_DIR/out.json"
 "$HELPER" --log-dir "$TMP_DIR" --repo-path "$PWD" --window 15m --json >"$json_output"
@@ -132,6 +151,9 @@ jq -e '.prefetch_cache.conditional_misses == 1' "$json_output" >/dev/null
 jq -e '.review_thread_attention[0].blocked_by == "maintainer"' "$json_output" >/dev/null
 jq -e '.review_thread_attention[0].pr_number == 12' "$json_output" >/dev/null
 jq -e '.review_thread_attention[0].reason == "needs_decision"' "$json_output" >/dev/null
+jq -e '.objective_reconciliation.objectives_without_next_action == 1' "$json_output" >/dev/null
+jq -e '.objective_reconciliation.expired_assumptions == 1' "$json_output" >/dev/null
+jq -e '.objective_reconciliation.oldest_unverified_assumption.number == 41' "$json_output" >/dev/null
 sqlite3 "$AIDEVOPS_OBS_DB_OVERRIDE" "SELECT COUNT(*) FROM runtime_events WHERE subject_id='pulse:current' AND event_type IN ('state.snapshot','state.delta');" | grep -Eq '^[12]$'
 sqlite3 "$AIDEVOPS_OBS_DB_OVERRIDE" "SELECT payload_json FROM runtime_events WHERE subject_id='pulse:current' ORDER BY id LIMIT 1;" | grep -q 'review_thread_attention_count'
 if sqlite3 "$AIDEVOPS_OBS_DB_OVERRIDE" "SELECT payload_json FROM runtime_events WHERE subject_id='pulse:current';" | grep -Eq 'marcusquinn/aidevops|owner-repo|state_file|wrapper_activity'; then
@@ -152,6 +174,7 @@ assert 'AIDEVOPS_ACTIVE_WORKER_PROCESSES' in implementation_source
 assert 'def build_pre_launch_blockers' in implementation_source
 assert 'def build_graphql_budget' in implementation_source
 assert 'def build_current_state_guardrails' in implementation_source
+assert 'def build_objective_reconciliation' in implementation_source
 assert "graphql_budget_status = (" not in implementation_source
 assert 'import subprocess' not in implementation_source
 assert 'subprocess.check_output' not in implementation_source

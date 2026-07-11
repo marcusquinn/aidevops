@@ -64,12 +64,70 @@ _ensure_worker_lineage() {
 	return 0
 }
 
+_emit_objective_recovery_evidence() {
+	local event_type="$1"
+	local status="$2"
+	local classification="$3"
+	local issue_number="${WORKER_ISSUE_NUMBER:-${ISSUE_NUMBER:-}}"
+	local repo="${GITHUB_REPOSITORY:-${WORKER_REPO:-}}"
+	[[ "$issue_number" =~ ^[0-9]+$ && -n "$repo" ]] || return 0
+	local evidence_file="${AIDEVOPS_OBJECTIVE_EVIDENCE_FILE:-${HOME}/.aidevops/state/objective-evidence.jsonl}"
+	local evidence_dir=""
+	local evidence_timestamp="0"
+	local branch_name=""
+	local worktree_name=""
+	local commit_sha=""
+	local log_path="${WORKER_LOG_FILE:-${HEADLESS_RUNTIME_LOG:-}}"
+	local next_action="monitor_worker"
+	local execution_path_state="running"
+	local recovery_attempt="${AIDEVOPS_RECOVERY_ATTEMPT:-0}"
+	[[ "$recovery_attempt" =~ ^[0-9]+$ ]] || recovery_attempt=0
+	evidence_dir=$(dirname "$evidence_file")
+	mkdir -p "$evidence_dir" 2>/dev/null || return 0
+	evidence_timestamp=$(date +%s 2>/dev/null) || evidence_timestamp=0
+	branch_name=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || branch_name=""
+	commit_sha=$(git rev-parse HEAD 2>/dev/null) || commit_sha=""
+	worktree_name=$(basename "${WORKER_WORKTREE_PATH:-$PWD}")
+	case "$event_type" in
+	worker.completed) next_action="monitor_pr"; execution_path_state="terminal" ;;
+	worker.failed) next_action="retry_infrastructure"; execution_path_state="recovery" ;;
+	worker.commit_attempted|worker.push_attempted) next_action="resume_session"; execution_path_state="checkpointed" ;;
+	esac
+	local evidence_record=""
+	evidence_record=$(jq -nc \
+		--arg event_type "$event_type" \
+		--arg status "$status" \
+		--arg classification "$classification" \
+		--arg repo "$repo" \
+		--argjson issue_number "$issue_number" \
+		--argjson evidence_timestamp "$evidence_timestamp" \
+		--arg worker_id "${AIDEVOPS_WORKER_ID:-}" \
+		--arg branch "$branch_name" \
+		--arg worktree "$worktree_name" \
+		--arg commit "$commit_sha" \
+		--arg next_action "$next_action" \
+		--arg execution_path_state "$execution_path_state" \
+		--argjson recovery_attempt "${recovery_attempt:-0}" \
+		--argjson logs_preserved "$([[ -n "$log_path" && -s "$log_path" ]] && printf true || printf false)" \
+		--argjson verification_preserved "$([[ -n "${AIDEVOPS_VERIFICATION_EVIDENCE:-}" ]] && printf true || printf false)" \
+		'{event_type:$event_type,status:$status,classification:$classification,repo:$repo,
+		issue_number:$issue_number,evidence_timestamp:$evidence_timestamp,worker_id:$worker_id,
+		branch:$branch,worktree:$worktree,commit:$commit,next_action:$next_action,
+		execution_path_state:$execution_path_state,recovery_attempt:$recovery_attempt,
+		branch_preserved:($branch != ""),worktree_preserved:($worktree != ""),
+		commits_preserved:($commit != ""),logs_preserved:$logs_preserved,
+		verification_preserved:$verification_preserved,subsequent_action_at:$evidence_timestamp}') || evidence_record=""
+	[[ -n "$evidence_record" ]] && printf '%s\n' "$evidence_record" >>"$evidence_file" 2>/dev/null || true
+	return 0
+}
+
 _emit_worker_runtime_event() {
 	local event_type="$1"
 	local status="${2:-}"
 	local classification="${3:-}"
 	local runtime_events="${BASH_SOURCE[0]%/*}/runtime-events.mjs"
 	[[ -n "${AIDEVOPS_WORKER_ID:-}" ]] || return 0
+	_emit_objective_recovery_evidence "$event_type" "$status" "$classification"
 	[[ -f "$runtime_events" ]] || return 0
 	command -v node >/dev/null 2>&1 || return 0
 	local -a event_cmd=(node "$runtime_events" emit "$event_type" --source worker_self_reported)

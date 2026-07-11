@@ -1369,6 +1369,26 @@ reconcile_issues_single_pass() {
 		local oimp_lookup=""
 		oimp_lookup=$(_build_oimp_lookup_for_slug "$slug")
 
+		# t18103: maintain a durable objective ledger from the same bounded
+		# issue/PR cache used by this pass. The helper performs no API reads or
+		# writes; replacing the repo slice is the idempotent repair for missing
+		# next actions and expired assumptions. Existing action stages below
+		# remain the authority for live GitHub mutations.
+		local objective_helper="${_PIR_SCRIPT_DIR}/objective-reconciliation-helper.sh"
+		if [[ -x "$objective_helper" ]]; then
+			local objective_cache_file="${PULSE_PREFETCH_CACHE_FILE:-${HOME}/.aidevops/logs/pulse-prefetch-cache.json}"
+			local objective_prs="[]" objective_input=""
+			if [[ -r "$objective_cache_file" ]]; then
+				objective_prs=$(jq -c --arg slug "$slug" '.[$slug].prs // []' "$objective_cache_file" 2>/dev/null) || objective_prs="[]"
+			fi
+			objective_input=$(jq -nc --argjson issues "$issues_json" --argjson prs "$objective_prs" \
+				--arg merged "$oimp_lookup" '{issues:$issues, prs:$prs, merged_lookup:$merged}') || objective_input=""
+			if [[ -n "$objective_input" ]]; then
+				printf '%s' "$objective_input" | "$objective_helper" reconcile --repo "$slug" \
+					--max-repairs "${AIDEVOPS_OBJECTIVE_MAX_REPAIRS:-25}" >/dev/null 2>&1 || true
+			fi
+		fi
+
 		while IFS='|' read -r issue_num issue_title_b64 labels_csv issue_body_b64; do
 			[[ "$issue_num" =~ ^[0-9]+$ ]] || continue
 

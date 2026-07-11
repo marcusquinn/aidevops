@@ -37,6 +37,7 @@ main() {
 	local worker_worktree_count="0"
 	local graphql_budget_status=""
 	local runtime_state_file=""
+	local objective_state_file="${AIDEVOPS_OBJECTIVE_STATE_FILE:-$HOME/.aidevops/state/objective-reconciliation.json}"
 	local as_json=0
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
@@ -74,6 +75,7 @@ main() {
 	AIDEVOPS_ACTIVE_WORKER_PROCESSES="$active_worker_processes" \
 		AIDEVOPS_WORKER_WORKTREE_COUNT="$worker_worktree_count" \
 		AIDEVOPS_GRAPHQL_BUDGET_STATUS="$graphql_budget_status" \
+		AIDEVOPS_OBJECTIVE_STATE_FILE="$objective_state_file" \
 		AIDEVOPS_RUNTIME_STATE_OUTPUT="$runtime_state_file" \
 		python3 "${SCRIPT_DIR}/pulse-current-state.py" \
 			"$log_dir" "$repo_path" "$window_s" "$as_json" "$SCRIPT_DIR" \
