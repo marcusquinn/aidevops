@@ -65,7 +65,7 @@ _cleanup_headless_runtime_temp_paths() {
 			;;
 		esac
 	done <<EOF
-$_HEADLESS_RUNTIME_TEMP_PATHS
+${_HEADLESS_RUNTIME_TEMP_PATHS:-}
 EOF
 	_HEADLESS_RUNTIME_TEMP_PATHS=""
 	return 0
@@ -191,26 +191,26 @@ _parse_run_args() {
 # _validate_run_args: check required fields and resolve prompt from file if needed.
 # Operates on caller-scoped variables set by _parse_run_args.
 _validate_run_args() {
-	[[ -n "$session_key" ]] || {
+	[[ -n "${session_key:-}" ]] || {
 		print_error "run requires --session-key"
 		return 1
 	}
-	[[ -n "$work_dir" ]] || {
+	[[ -n "${work_dir:-}" ]] || {
 		print_error "run requires --dir"
 		return 1
 	}
-	[[ -n "$title" ]] || {
+	[[ -n "${title:-}" ]] || {
 		print_error "run requires --title"
 		return 1
 	}
-	if [[ -z "$prompt" && -n "$prompt_file" ]]; then
-		[[ -f "$prompt_file" ]] || {
-			print_error "Prompt file not found: $prompt_file"
+	if [[ -z "${prompt:-}" && -n "${prompt_file:-}" ]]; then
+		[[ -f "${prompt_file:-}" ]] || {
+			print_error "Prompt file not found: ${prompt_file:-}"
 			return 1
 		}
 		prompt=$(<"$prompt_file")
 	fi
-	[[ -n "$prompt" ]] || {
+	[[ -n "${prompt:-}" ]] || {
 		print_error "run requires --prompt or --prompt-file"
 		return 1
 	}
