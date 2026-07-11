@@ -632,6 +632,16 @@ jobs:
                    2>/dev/null || true
           echo "${SHIM_DIR}" >> "$GITHUB_PATH"
 
+      # GH#27120: task identity may need the caller's TODO.md before the main
+      # checkout. Keep this metadata checkout isolated so the early framework
+      # checkout and gh shim remain available to closing hygiene.
+      - name: Checkout caller TODO metadata
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          path: __caller
+          ref: main
+          fetch-depth: 1
+
       - name: Extract task ID and collect linked issues
         id: extract
         env:
@@ -639,23 +649,15 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          # Extract task ID from PR title (e.g., "t1329: Cross-review judge pipeline")
-          TASK_ID=""
-          if echo "$PR_TITLE" | grep -qE '^t[0-9]+'; then
-            TASK_ID=$(echo "$PR_TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*')
-          fi
+          # Prefer a canonical title task ID. When absent, GH#27120 permits a
+          # fallback only for one closing issue with one unique ref:GH#NNN
+          # mapping in TODO.md. Ambiguous/conflicting identities fail closed.
+          IDENTITY=$(bash __aidevops/.agents/scripts/issue-sync-pr-identity-helper.sh \
+            resolve "$PR_TITLE" "$PR_BODY" __caller/TODO.md)
+          TASK_ID=$(printf '%s\n' "$IDENTITY" | sed -n 's/^task_id=//p')
+          LINKED_ISSUES=$(printf '%s\n' "$IDENTITY" | sed -n 's/^linked_issues=//p')
           echo "task_id=$TASK_ID" >> "$GITHUB_OUTPUT"
 
-          # Collect linked issue numbers from PR body (Closes #NNN, Fixes #NNN, Resolves #NNN).
-          # GH#20807: Use canonical closing-keyword-only regex from pulse-merge.sh::_extract_linked_issue.
-          # Changes from prior regex:
-          #   1. \b word-boundary anchors prevent substring matches (e.g. "discloses #NNN" → "closes")
-          #   2. close[ds]?  / fix(es|ed)? / resolve[ds]? match all grammatical forms (closed, fixed, etc.)
-          #   3. [[:space:]]+ (mandatory) instead of [[:space:]]* (zero-or-more) prevents "closes#NNN"
-          LINKED_ISSUES=""
-          if [[ -n "$PR_BODY" ]]; then
-            LINKED_ISSUES=$(printf '%s' "$PR_BODY" | grep -ioE '\b(close[ds]?|fix(es|ed)?|resolve[ds]?)\b[[:space:]]+#[0-9]+' | grep -oE '[0-9]+' | sort -u | tr '\n' ' ' || true)
-          fi
           echo "linked_issues=$LINKED_ISSUES" >> "$GITHUB_OUTPUT"
 
           # t2219: Collect 'For #NNN' and 'Ref #NNN' references (planning convention t2046)
