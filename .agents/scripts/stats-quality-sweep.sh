@@ -725,6 +725,7 @@ _create_simplification_issues() {
 	local repo_slug="$1"
 	local sarif_json="$2"
 	local smell_threshold="${3:-0}"
+	local LOGFILE="${LOGFILE:-/dev/null}"
 	local max_issues_per_sweep=5
 	local total_open_cap=30
 	local issues_created=0
@@ -815,7 +816,7 @@ _smell_files_from_sarif() {
 	local sarif_json="$1"
 
 	printf '%s\n' "$sarif_json" | jq -r '
-		[.runs[0].results[]? | .locations[0]?.physicalLocation.artifactLocation.uri? |
+		[.runs[0].results[]? | .locations[0].physicalLocation.artifactLocation.uri? |
 		 select(type == "string" and length > 0)] |
 		group_by(.) | map({file: .[0], count: length}) |
 		sort_by([-.count, .file]) |
