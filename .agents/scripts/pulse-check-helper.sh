@@ -535,4 +535,6 @@ _main() {
 	return 0
 }
 
-_main "$@"
+if [[ "${PULSE_CHECK_SOURCE_ONLY:-0}" != "1" ]]; then
+	_main "$@"
+fi
