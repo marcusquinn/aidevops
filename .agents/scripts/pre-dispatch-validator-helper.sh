@@ -806,23 +806,31 @@ _detect_self_hosting_task() {
 
 _rf_extract_file_paths_from_text() {
 	local text="$1"
+	local path_text=""
 	local paths=""
 	local dir_paths=""
 	local backtick_files=""
 	local bare_files=""
 
-	dir_paths=$(printf '%s' "$text" | grep -oE '[a-zA-Z0-9._-]+/[a-zA-Z0-9._/-]+\.[a-zA-Z]{1,10}' | sort -u || true)
+	# Generated issue signatures contain a Markdown link whose visible label is
+	# `aidevops.sh`. Treating that footer as an implementation target makes every
+	# later release PR (which commonly touches aidevops.sh) look like a same-file
+	# supersession. URLs and signature metadata are evidence provenance, not files
+	# requested by the finding.
+	path_text=$(printf '%s\n' "$text" | grep -vE '^<!--[[:space:]]*aidevops:sig|^\[aidevops\.sh\]\(https?://|https?://' || true)
+
+	dir_paths=$(printf '%s' "$path_text" | grep -oE '[a-zA-Z0-9._-]+/[a-zA-Z0-9._/-]+\.[a-zA-Z]{1,10}' | sort -u || true)
 	if [[ -n "$dir_paths" ]]; then
 		paths="${paths}${dir_paths}"$'\n'
 	fi
 
 	# shellcheck disable=SC2016 # Literal backtick regex, not shell expansion.
-	backtick_files=$(printf '%s' "$text" | grep -oE '`[a-zA-Z0-9._/-]+\.(sh|ts|js|py|md|json|yaml|yml|toml|go|rs|tsx|jsx|css|html|sql|rb|php|java|c|h|cpp|hpp|cs|dart|jl|kt|m|mm|r|scala|swift)(:[0-9]+(-[0-9]+)?)?`' | tr -d '`' | sed 's/:[0-9]*\(-[0-9]*\)\{0,1\}$//' | sort -u || true)
+	backtick_files=$(printf '%s' "$path_text" | grep -oE '`[a-zA-Z0-9._/-]+\.(sh|ts|js|py|md|json|yaml|yml|toml|go|rs|tsx|jsx|css|html|sql|rb|php|java|c|h|cpp|hpp|cs|dart|jl|kt|m|mm|r|scala|swift)(:[0-9]+(-[0-9]+)?)?`' | tr -d '`' | sed 's/:[0-9]*\(-[0-9]*\)\{0,1\}$//' | sort -u || true)
 	if [[ -n "$backtick_files" ]]; then
 		paths="${paths}${backtick_files}"$'\n'
 	fi
 
-	bare_files=$(printf '%s' "$text" | grep -oE '\b[a-zA-Z0-9_-]+\.(sh|ts|js|py|json|yaml|yml|toml|go|rs|tsx|jsx|css|html|sql|rb|php|java|c|h|cpp|hpp|cs|dart|jl|kt|m|mm|r|scala|swift)\b' | sort -u || true)
+	bare_files=$(printf '%s' "$path_text" | grep -oE '\b[a-zA-Z0-9_-]+\.(sh|ts|js|py|json|yaml|yml|toml|go|rs|tsx|jsx|css|html|sql|rb|php|java|c|h|cpp|hpp|cs|dart|jl|kt|m|mm|r|scala|swift)\b' | sort -u || true)
 	if [[ -n "$bare_files" ]]; then
 		paths="${paths}${bare_files}"$'\n'
 	fi
