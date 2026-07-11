@@ -60,13 +60,18 @@ install_aidevops_cli() {
 
 	# Use INSTALL_DIR (repo root, exported by setup.sh) — not BASH_SOURCE[0]
 	# which resolves to .agents/scripts/setup/modules/ when sourced from setup.sh.
-	local cli_source="${INSTALL_DIR:?INSTALL_DIR not set}/aidevops.sh"
+	local cli_source="${INSTALL_DIR:?INSTALL_DIR not set}/bin/aidevops"
+	local deployed_cli="${AGENTS_DIR:?AGENTS_DIR not set}/aidevops.sh"
 	local cli_target="/usr/local/bin/aidevops"
 
-	if [[ ! -f "$cli_source" ]]; then
-		print_warning "aidevops.sh not found at $cli_source - skipping CLI installation"
+	if [[ ! -f "$cli_source" || ! -f "$INSTALL_DIR/aidevops.sh" ]]; then
+		print_warning "aidevops CLI sources not found under $INSTALL_DIR - skipping CLI installation"
 		return 0
 	fi
+
+	# Keep the orchestrator beside the already-deployed VERSION and CLI modules.
+	# The public command is only a durable launcher into this coherent tree.
+	_install_aidevops_cli_copy "$INSTALL_DIR/aidevops.sh" "$deployed_cli" || return 1
 
 	# Check if we can write to /usr/local/bin
 	if [[ -w "/usr/local/bin" ]]; then

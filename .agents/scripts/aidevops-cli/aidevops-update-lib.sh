@@ -27,26 +27,18 @@ fi
 _AIDEVOPS_UPDATE_TRUE=true
 
 _update_fresh_install() {
-	print_warning "Repository not found, performing fresh install..."
-	local tmp_setup
-	# t2997: drop .sh — XXXXXX must be at end for BSD mktemp.
-	tmp_setup=$(mktemp "${TMPDIR:-/tmp}/aidevops-setup-XXXXXX") || {
-		print_error "Failed to create temp file for setup script"
+	print_warning "Repository not found at the active CLI tree, updating from a clean temporary checkout..."
+	local tmp_checkout
+	tmp_checkout=$(mktemp -d "${TMPDIR:-/tmp}/aidevops-update-XXXXXX") || {
+		print_error "Failed to create temporary update checkout"
 		return 1
 	}
-	trap 'rm -f "${tmp_setup:-}"' RETURN
-	if curl -fsSL "https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh" -o "$tmp_setup" 2>/dev/null && [[ -s "$tmp_setup" ]]; then
-		chmod +x "$tmp_setup"
-		bash "$tmp_setup"
-		local setup_exit=$?
-		rm -f "$tmp_setup"
-		[[ $setup_exit -ne 0 ]] && return 1
-	else
-		rm -f "$tmp_setup"
-		print_error "Failed to download setup script"
-		print_info "Try: git clone https://github.com/marcusquinn/aidevops.git $INSTALL_DIR && bash $INSTALL_DIR/setup.sh"
+	trap 'rm -rf "${tmp_checkout:-}"' RETURN
+	if ! git clone --depth 1 --branch main "https://github.com/marcusquinn/aidevops.git" "$tmp_checkout" >/dev/null 2>&1; then
+		print_error "Failed to create clean update checkout"
 		return 1
 	fi
+	bash "$tmp_checkout/setup.sh" --stage ai-session || return $?
 	return 0
 }
 
