@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.24] - 2026-07-11
+
+### Changed
+
+- Performance: prefer scoped ripgrep for tree searches (#27125)
+- Maintenance: sync ref:GH#27123 to TODO.md [skip ci]
+
 ## [3.32.23] - 2026-07-11
 
 ### Changed
