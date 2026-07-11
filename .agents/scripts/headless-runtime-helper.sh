@@ -216,9 +216,9 @@ _invoke_opencode() {
 			# a temp file and replays it after exit — the watchdog sees nothing
 			# and kills every sandboxed worker at ~93s.
 			if [[ -n "$passthrough_csv" ]]; then
-				run_without_opencode_session_env "$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --stream-stdout --passthrough "$passthrough_csv" -- "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
+				run_without_opencode_session_env "$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --stream-stdout --egress-mode "${AIDEVOPS_WORKER_EGRESS_MODE:-auto}" --worker-id "${AIDEVOPS_WORKER_ID:-${_invoke_session_key:-headless}}" --passthrough "$passthrough_csv" -- "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
 			else
-				run_without_opencode_session_env "$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --stream-stdout -- "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
+				run_without_opencode_session_env "$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --stream-stdout --egress-mode "${AIDEVOPS_WORKER_EGRESS_MODE:-auto}" --worker-id "${AIDEVOPS_WORKER_ID:-${_invoke_session_key:-headless}}" -- "${_oc_cmd[@]}" 2>&1 | tee "$output_file"
 			fi
 			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
 		else
