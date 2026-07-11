@@ -463,12 +463,22 @@ _sandbox_snapshot_identity_matches() {
 	local identity_token="${3:-}"
 	local identity_current_pgid=""
 	local identity_current_token=""
+	local identity_stat_content=""
+	local identity_after_comm=""
+	local -a identity_fields=()
 
 	[[ "$identity_pid" =~ ^[0-9]+$ && -n "$identity_token" ]] || return 1
-	identity_current_token="$(_sandbox_get_proc_starttime "$identity_pid")"
-	[[ -n "$identity_current_token" && "$identity_current_token" == "$identity_token" ]] || return 1
-	identity_current_pgid="$(ps -o pgid= -p "$identity_pid" 2>/dev/null | tr -d '[:space:]')" || return 1
-	[[ -n "$identity_current_pgid" && "$identity_current_pgid" == "$identity_pgid" ]] || return 1
+	if [[ -f "/proc/${identity_pid}/stat" ]]; then
+		IFS= read -r identity_stat_content <"/proc/${identity_pid}/stat" || return 1
+		identity_after_comm="${identity_stat_content##*) }"
+		read -r -a identity_fields <<<"$identity_after_comm"
+		[[ "${identity_fields[2]:-}" == "$identity_pgid" && "${identity_fields[19]:-}" == "$identity_token" ]] || return 1
+	else
+		identity_current_token="$(_sandbox_get_proc_starttime "$identity_pid")"
+		[[ -n "$identity_current_token" && "$identity_current_token" == "$identity_token" ]] || return 1
+		identity_current_pgid="$(ps -o pgid= -p "$identity_pid" 2>/dev/null | tr -d '[:space:]')" || return 1
+		[[ -n "$identity_current_pgid" && "$identity_current_pgid" == "$identity_pgid" ]] || return 1
+	fi
 	return 0
 }
 
@@ -532,26 +542,41 @@ _sandbox_pgkill_cleanup() {
 		local cleanup_pid=""
 		local cleanup_pgid=""
 		local cleanup_token=""
+		local cleanup_index=0
+		local -a cleanup_pids=()
+		local -a cleanup_pgids=()
+		local -a cleanup_tokens=()
 		while IFS=$'\t' read -r cleanup_pid cleanup_pgid cleanup_token; do
+			[[ -n "$cleanup_pid" ]] || continue
+			cleanup_pids+=("$cleanup_pid")
+			cleanup_pgids+=("$cleanup_pgid")
+			cleanup_tokens+=("$cleanup_token")
 			_sandbox_snapshot_identity_matches "$cleanup_pid" "$cleanup_pgid" "$cleanup_token" || continue
 			# A group signal is safe only when its verified leader was descended
-			# from the sandbox. Otherwise terminate the verified PID individually.
+			# from the sandbox and our own PGID is known. Otherwise terminate the
+			# verified PID individually to prevent a defensive self-kill.
 			if [[ "$cleanup_pid" == "$cleanup_pgid" && -n "$cleanup_self_pgid" && "$cleanup_pgid" != "$cleanup_self_pgid" ]]; then
 				kill -TERM -- "-${cleanup_pgid}" 2>/dev/null || true
 			else
 				kill -TERM "$cleanup_pid" 2>/dev/null || true
 			fi
 		done <"$cleanup_snapshot_file"
+		# Consume the snapshot before the grace period. A concurrent/repeated
+		# cleanup cannot act on stale identities while PIDs are being recycled.
+		rm -f "$cleanup_snapshot_file" 2>/dev/null || true
+		cleanup_snapshot_file=""
 		sleep 0.5
-		while IFS=$'\t' read -r cleanup_pid cleanup_pgid cleanup_token; do
+		for ((cleanup_index = 0; cleanup_index < ${#cleanup_pids[@]}; cleanup_index++)); do
+			cleanup_pid="${cleanup_pids[$cleanup_index]}"
+			cleanup_pgid="${cleanup_pgids[$cleanup_index]}"
+			cleanup_token="${cleanup_tokens[$cleanup_index]}"
 			_sandbox_snapshot_identity_matches "$cleanup_pid" "$cleanup_pgid" "$cleanup_token" || continue
 			if [[ "$cleanup_pid" == "$cleanup_pgid" && -n "$cleanup_self_pgid" && "$cleanup_pgid" != "$cleanup_self_pgid" ]]; then
 				kill -KILL -- "-${cleanup_pgid}" 2>/dev/null || true
 			else
 				kill -KILL "$cleanup_pid" 2>/dev/null || true
 			fi
-		done <"$cleanup_snapshot_file"
-		rm -f "$cleanup_snapshot_file" 2>/dev/null || true
+		done
 	fi
 	return 0
 }
