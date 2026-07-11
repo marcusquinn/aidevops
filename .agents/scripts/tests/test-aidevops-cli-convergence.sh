@@ -292,6 +292,23 @@ EOF
 	return 0
 }
 
+test_unset_home_does_not_resolve_root_paths() {
+	local fixture="$TEST_ROOT/unset-home"
+	local output=""
+	make_fixture "$fixture"
+	if output=$(env -u HOME -u AIDEVOPS_DIR -u AIDEVOPS_CLI_WARNING_FILE \
+		-u AIDEVOPS_CLI_LOCK_DIR -u AIDEVOPS_CLI_USER_TARGET \
+		"$HELPER" converge "$fixture/launcher" "$fixture/orchestrator-source" \
+		"$fixture/orchestrator-target" "$fixture/home/.aidevops/agents/VERSION" 2>&1); then
+		fail "unset HOME does not resolve root paths" "unexpected convergence success"
+	elif [[ "$output" == *"unbound variable"* || "$output" == /* ]]; then
+		fail "unset HOME does not resolve root paths" "$output"
+	else
+		pass "unset HOME does not resolve root paths"
+	fi
+	return 0
+}
+
 main() {
 	test_already_current
 	test_lock_covers_orchestrator_copy
@@ -305,6 +322,7 @@ main() {
 	test_non_executable_targets_repaired
 	test_lock_contention_and_idempotency
 	test_user_fallback_shadowed
+	test_unset_home_does_not_resolve_root_paths
 	printf 'Results: %s passed, %s failed\n' "$PASS_COUNT" "$FAIL_COUNT"
 	[[ "$FAIL_COUNT" -eq 0 ]]
 	return $?

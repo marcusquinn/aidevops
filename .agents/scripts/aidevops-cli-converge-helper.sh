@@ -16,8 +16,20 @@ _cli_log() {
 	return 0
 }
 
+_cli_aidevops_path() {
+	local relative_path="$1"
+	local aidevops_dir="${AIDEVOPS_DIR:-${HOME:+$HOME/.aidevops}}"
+	[[ -n "$aidevops_dir" ]] || return 1
+	printf '%s/%s\n' "$aidevops_dir" "$relative_path"
+	return 0
+}
+
 _cli_warning_file() {
-	printf '%s\n' "${AIDEVOPS_CLI_WARNING_FILE:-${AIDEVOPS_DIR:-$HOME/.aidevops}/logs/cli-convergence-warning.txt}"
+	if [[ -n "${AIDEVOPS_CLI_WARNING_FILE:-}" ]]; then
+		printf '%s\n' "$AIDEVOPS_CLI_WARNING_FILE"
+		return 0
+	fi
+	_cli_aidevops_path "logs/cli-convergence-warning.txt" || return 1
 	return 0
 }
 
@@ -44,7 +56,8 @@ _cli_clear_warning() {
 }
 
 _cli_release_lock() {
-	local lock_dir="${AIDEVOPS_CLI_LOCK_DIR:-${AIDEVOPS_DIR:-$HOME/.aidevops}/locks/cli-launcher.lock}"
+	local lock_dir="${AIDEVOPS_CLI_LOCK_DIR:-}"
+	[[ -n "$lock_dir" ]] || lock_dir=$(_cli_aidevops_path "locks/cli-launcher.lock") || return 0
 	local owner_pid=""
 	local owner_token=""
 	if [[ "$_CLI_LOCK_OWNED" == "true" && -r "$lock_dir/initialized" ]]; then
@@ -215,7 +228,8 @@ _cli_try_reclaim_lock() {
 }
 
 _cli_acquire_lock() {
-	local lock_dir="${AIDEVOPS_CLI_LOCK_DIR:-${AIDEVOPS_DIR:-$HOME/.aidevops}/locks/cli-launcher.lock}"
+	local lock_dir="${AIDEVOPS_CLI_LOCK_DIR:-}"
+	[[ -n "$lock_dir" ]] || lock_dir=$(_cli_aidevops_path "locks/cli-launcher.lock") || return 1
 	local lock_parent="${lock_dir%/*}"
 	local wait_seconds="${AIDEVOPS_CLI_LOCK_WAIT_SECONDS:-30}"
 	local incomplete_grace="${AIDEVOPS_CLI_INCOMPLETE_GRACE_SECONDS:-2}"
@@ -346,7 +360,7 @@ _cli_converge_locked() {
 	local orchestrator_target="$3"
 	local version_file="$4"
 	local global_target="${AIDEVOPS_CLI_GLOBAL_TARGET:-/usr/local/bin/aidevops}"
-	local user_target="${AIDEVOPS_CLI_USER_TARGET:-$HOME/.local/bin/aidevops}"
+	local user_target="${AIDEVOPS_CLI_USER_TARGET:-${HOME:+$HOME/.local/bin/aidevops}}"
 	local global_dir="${global_target%/*}"
 	local non_interactive="${AIDEVOPS_CLI_NON_INTERACTIVE:-true}"
 
