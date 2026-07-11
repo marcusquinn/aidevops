@@ -20,7 +20,8 @@ tools:
 <!-- AI-CONTEXT-START -->
 
 **Trigger**: Session end, user correction, observable failure, periodic maintenance.
-**Self-Assessment**: Observe failure → complete task → cite evidence → `rg "pattern" .agents/` → propose fix → ask permission.
+**Self-Assessment**: Observe failure → complete task → cite evidence → search for `"pattern"` under `.agents/` with Grep → propose fix → ask permission.
+**Exact Search**: Use the Grep tool for content searches; when Bash is available, `rg "pattern" <path>` is an optional equivalent.
 **Write Restrictions (MANDATORY)**: On `main`/`master` — ALLOWED: `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`. BLOCKED: all other files. Code changes → return proposed edits for worktree application.
 
 <!-- AI-CONTEXT-END -->
@@ -31,8 +32,8 @@ tools:
 |---|-------|-------------------|
 | 1 | **Instruction count** (~50-100 main, <100 subagent) | Consolidate, move to subagent, or remove |
 | 2 | **Universal applicability** (>80% tasks) | Extract task-specific content to subagents |
-| 3 | **Duplicate detection** (`rg "pattern" .agents/`) | Single authoritative source per concept |
-| 4 | **Code examples** (authoritative/working) | Keep; supplement with `rg "pattern" .agents/scripts/` references |
+| 3 | **Duplicate detection** (Grep for `"pattern"` under `.agents/`) | Single authoritative source per concept |
+| 4 | **Code examples** (authoritative/working) | Keep; supplement with Grep references for `"pattern"` under `.agents/scripts/` |
 | 5 | **AI-CONTEXT block** (standalone essentials) | Rewrite if an AI would get stuck with only this |
 | 6 | **Slash commands** | Move to `scripts/commands/` or domain subagent |
 
