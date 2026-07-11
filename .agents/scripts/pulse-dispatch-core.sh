@@ -1674,19 +1674,34 @@ dispatch_with_dedup() {
 	# GH#19118: Pre-dispatch validator — runs after dedup, before worker spawn.
 	# Checks generator-tagged auto-generated issues to verify the premise is
 	# still true. Exit 0 = dispatch proceeds; exit 10 = premise falsified
-	# (issue already closed by validator); exit 20 = validator error (dispatch
-	# proceeds with warning). Never blocks on validator bugs.
+	# (issue already closed by validator); exit 20 = optional validator error
+	# (dispatch proceeds with warning); exit 30 = duplicate-state uncertainty
+	# (fail closed for this cycle).
 	_ds_t0=$(_ds_now_ns)
 	_run_predispatch_validator "$issue_number" "$repo_slug"
 	local _validator_rc=$?
+	local _review_followup_validator_required=0
+	if printf '%s' "$issue_meta_json" | jq -e '[.labels[]?.name] | (index("review-followup") != null or index("source:review-scanner") != null)' >/dev/null 2>&1; then
+		_review_followup_validator_required=1
+	fi
 	_ds_record "$issue_number" "$repo_slug" "predispatch_validator" "$_ds_t0"
 	if [[ "$_validator_rc" -eq 10 ]]; then
 		echo "[dispatch_with_dedup] Pre-dispatch validator falsified premise for #${issue_number} in ${repo_slug} — issue closed, not dispatching" >>"$LOGFILE"
 		_release_dispatch_claim_on_abort "$issue_number" "$repo_slug" "$self_login" "predispatch_validator_closed"
 		return 1
 	fi
+	if [[ "$_review_followup_validator_required" -eq 1 && "$_validator_rc" -ne 0 ]]; then
+		echo "[dispatch_with_dedup] Required review-followup validation failed for #${issue_number} in ${repo_slug} (rc=${_validator_rc}) — failing closed" >>"$LOGFILE"
+		_release_dispatch_claim_on_abort "$issue_number" "$repo_slug" "$self_login" "predispatch_validator_uncertain"
+		return 1
+	fi
 	if [[ "$_validator_rc" -eq 20 ]]; then
 		echo "[dispatch_with_dedup] Pre-dispatch validator error for #${issue_number} in ${repo_slug} (rc=${_validator_rc}) — proceeding with dispatch" >>"$LOGFILE"
+	fi
+	if [[ "$_validator_rc" -eq 30 ]]; then
+		echo "[dispatch_with_dedup] Pre-dispatch duplicate lookup uncertain for #${issue_number} in ${repo_slug} — failing closed for this cycle" >>"$LOGFILE"
+		_release_dispatch_claim_on_abort "$issue_number" "$repo_slug" "$self_login" "predispatch_validator_uncertain"
+		return 1
 	fi
 
 	# t2424/GH#20030: Generic eligibility gate — final check BEFORE worker spawn.
@@ -1858,6 +1873,7 @@ _ensure_issue_body_has_brief() {
 #   0  — dispatch proceeds (validator passed, unregistered generator, or helper missing)
 #   10 — premise falsified; caller must NOT dispatch (issue already closed by validator)
 #   20 — validator error; caller should log warning and continue dispatch
+#   30 — duplicate-state uncertainty; caller must fail closed
 #######################################
 _run_predispatch_validator() {
 	local issue_number="$1"
@@ -1866,8 +1882,8 @@ _run_predispatch_validator() {
 	local validator_helper
 	validator_helper="$(dirname "${BASH_SOURCE[0]}")/pre-dispatch-validator-helper.sh"
 	if [[ ! -x "$validator_helper" ]]; then
-		echo "[dispatch_with_dedup] GH#19118: pre-dispatch-validator-helper.sh not found — skipping (dispatch proceeds)" >>"$LOGFILE"
-		return 0
+		echo "[dispatch_with_dedup] GH#19118: pre-dispatch-validator-helper.sh not found — validator unavailable" >>"$LOGFILE"
+		return 20
 	fi
 
 	local validator_rc=0

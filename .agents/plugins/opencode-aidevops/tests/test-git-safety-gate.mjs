@@ -9,20 +9,21 @@ import { checkCanonicalGitSafetyGate } from "../quality-hooks-git-safety.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const scriptsDir = join(here, "..", "..", "..", "scripts");
+const realGit = "/usr/bin/git";
 
 function setupRepo() {
   const root = mkdtempSync(join(tmpdir(), "aidevops-git-gate-"));
   const repo = join(root, "repo");
   const linked = join(root, "linked");
   mkdirSync(repo);
-  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: repo });
-  execFileSync("git", ["config", "user.name", "Test"], { cwd: repo });
-  execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: repo });
-  execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: repo });
+  execFileSync(realGit, ["init", "-q", "-b", "main"], { cwd: repo });
+  execFileSync(realGit, ["config", "user.name", "Test"], { cwd: repo });
+  execFileSync(realGit, ["config", "user.email", "test@example.invalid"], { cwd: repo });
+  execFileSync(realGit, ["config", "commit.gpgsign", "false"], { cwd: repo });
   writeFileSync(join(repo, "README.md"), "seed\n");
-  execFileSync("git", ["add", "README.md"], { cwd: repo });
-  execFileSync("git", ["commit", "-q", "-m", "seed"], { cwd: repo });
-  execFileSync("git", ["worktree", "add", "-q", "-b", "feature/test", linked], { cwd: repo });
+  execFileSync(realGit, ["add", "README.md"], { cwd: repo });
+  execFileSync(realGit, ["commit", "-q", "-m", "seed"], { cwd: repo });
+  execFileSync(realGit, ["worktree", "add", "-q", "-b", "feature/test", linked], { cwd: repo });
   return { root, repo, linked };
 }
 
@@ -33,7 +34,7 @@ test("blocks canonical branch mutation before execution", () => {
       () => checkCanonicalGitSafetyGate("git branch -m main safety/example", scriptsDir, repo),
       /canonical worktree mutation/,
     );
-    assert.equal(execFileSync("git", ["symbolic-ref", "--short", "HEAD"], { cwd: repo, encoding: "utf8" }).trim(), "main");
+    assert.equal(execFileSync(realGit, ["symbolic-ref", "--short", "HEAD"], { cwd: repo, encoding: "utf8" }).trim(), "main");
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -44,6 +45,42 @@ test("allows read-only canonical commands and linked-worktree mutation", () => {
   try {
     assert.doesNotThrow(() => checkCanonicalGitSafetyGate("git status --short", scriptsDir, repo));
     assert.doesNotThrow(() => checkCanonicalGitSafetyGate("git switch -c feature/child", scriptsDir, linked));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("allows the repository full-loop commit-and-pr wrapper only from a linked worktree", () => {
+  const { root, repo, linked } = setupRepo();
+  const wrapperCommand = "PR_NUMBER=$(full-loop-helper.sh commit-and-pr --issue 123 --testing 'git tests pass')";
+  try {
+    mkdirSync(join(repo, ".agents", "scripts"), { recursive: true });
+    writeFileSync(join(repo, ".agents", "scripts", "full-loop-helper.sh"), "#!/bin/sh\n");
+    assert.throws(
+      () => checkCanonicalGitSafetyGate(wrapperCommand, scriptsDir, repo),
+      /canonical worktree mutation/,
+    );
+
+    mkdirSync(join(linked, ".agents", "scripts"), { recursive: true });
+    writeFileSync(join(linked, ".agents", "scripts", "full-loop-helper.sh"), "#!/bin/sh\n");
+    assert.doesNotThrow(() => checkCanonicalGitSafetyGate(wrapperCommand, scriptsDir, linked));
+    assert.doesNotThrow(() => checkCanonicalGitSafetyGate(
+      "./.agents/scripts/full-loop-helper.sh commit-and-pr --issue 123 --testing 'git tests pass'",
+      scriptsDir,
+      linked,
+    ));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("does not trust similarly named full-loop wrappers", () => {
+  const { root, linked } = setupRepo();
+  try {
+    assert.throws(
+      () => checkCanonicalGitSafetyGate("./tmp/full-loop-helper.sh commit-and-pr --testing 'git tests pass'", scriptsDir, linked),
+      /unclassified nested Git invocation/,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

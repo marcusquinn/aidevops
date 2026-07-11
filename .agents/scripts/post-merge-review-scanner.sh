@@ -92,6 +92,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=shared-constants.sh
 [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]] && source "${SCRIPT_DIR}/shared-constants.sh"
+SCANNER_CLAIM_HELPER="${SCANNER_CLAIM_HELPER:-${SCRIPT_DIR}/dispatch-claim-helper.sh}"
+SCANNER_PREDISPATCH_HELPER="${SCANNER_PREDISPATCH_HELPER:-${SCRIPT_DIR}/pre-dispatch-validator-helper.sh}"
+SCANNER_CREATED_ISSUE_NUMBER=""
+SCANNER_EXISTING_ISSUE_NUMBER=""
+SCANNER_FALSE="false"
 
 SCANNER_DAYS="${SCANNER_DAYS:-7}"
 SCANNER_MAX_ISSUES="${SCANNER_MAX_ISSUES:-10}"
@@ -491,6 +496,7 @@ fetch_file_refs_md() {
 _emit_pr_followup_body_header() {
 	local repo="$1" pr="$2"
 	cat <<MD
+<!-- aidevops:generator=review-followup source_pr=${pr} fingerprint=source-pr-${pr} -->
 ## Unaddressed review bot suggestions
 
 PR #${pr} was merged with unaddressed review bot feedback. Each comment
@@ -656,12 +662,139 @@ build_pr_followup_body() {
 }
 
 issue_exists() {
-	local repo="$1" pr="$2" count
+	local repo="$1" pr="$2" existing_number="" rc=0
 	local title_query="Review followup: PR #${pr} —"
-	count=$(gh issue list --repo "$repo" --label "$SCANNER_LABEL" \
+	SCANNER_EXISTING_ISSUE_NUMBER=""
+	existing_number=$(gh issue list --repo "$repo" --label "$SCANNER_LABEL" \
 		--search "in:title \"${title_query}\"" --state all --limit 100 \
-		--json number --jq 'length' || echo "0")
-	[[ "$count" -gt 0 ]]
+		--json number --jq '.[0].number // 0') || rc=$?
+	if [[ "$rc" -ne 0 || ! "$existing_number" =~ ^[0-9]+$ ]]; then
+		log "issue_exists: lookup failed for ${repo} source PR #${pr} (rc=${rc})"
+		return 2
+	fi
+	if [[ "$existing_number" -gt 0 ]]; then
+		SCANNER_EXISTING_ISSUE_NUMBER="$existing_number"
+		return 0
+	fi
+	_creation_marker_issue_exists "$repo" "$pr"
+	return $?
+}
+
+_creation_marker_issue_exists() {
+	local repo="$1"
+	local pr="$2"
+	local raw_comments=""
+	local marker_issue=""
+	local marker_meta=""
+	local stale_claim=""
+	local comments_json=""
+	raw_comments=$(gh api "repos/${repo}/issues/${pr}/comments?per_page=100" \
+		--paginate --slurp 2>/dev/null) || return 2
+	comments_json=$(printf '%s' "$raw_comments" | jq -c '
+		if type == "array" and (.[0]? | type) == "array" then [.[][]] else . end
+	' 2>/dev/null) || return 2
+	marker_issue=$(printf '%s' "$comments_json" | jq -r --arg source_pr "$pr" '
+		[.[]
+		 | select((.author_association // "") as $a | ["OWNER","MEMBER","COLLABORATOR"] | index($a))
+		 | (.body // "")
+		 | (capture("REVIEW_FOLLOWUP_CREATED source_pr=" + $source_pr + " issue=(?<issue>[0-9]+)")? | .issue)]
+		| map(select(. != null)) | last // ""
+	' 2>/dev/null) || return 2
+	if [[ -z "$marker_issue" ]]; then
+		stale_claim=$(printf '%s' "$comments_json" | jq -r --argjson now "$(date +%s)" '
+			([.[] | select((.body // "") | ascii_downcase | contains("dispatch_claim nonce=")) | .created_at] | sort | last // "") as $claim
+			| ([.[] | select((.body // "") | ascii_downcase | contains("claim_released")) | .created_at] | sort | last // "") as $release
+			| if ($claim != "" and ($release == "" or $claim > $release) and ($now - ($claim | fromdateiso8601) > 120)) then "stale" else "" end
+		' 2>/dev/null) || return 2
+		if [[ "$stale_claim" == "stale" ]]; then
+			log "PR #${pr}: unresolved stale creation claim — fail closed pending search or marker recovery"
+			return 2
+		fi
+		return 1
+	fi
+	marker_meta=$(gh api "repos/${repo}/issues/${marker_issue}" \
+		--jq '[.title // "", .body // ""] | @tsv' 2>/dev/null) || return 2
+	if [[ "$marker_meta" == *"source_pr=${pr}"* \
+		|| "$marker_meta" == *"Source PR**: #${pr}"* \
+		|| "$marker_meta" == *"Review followup: PR #${pr}"* ]]; then
+		log "PR #${pr}: durable creation marker references issue #${marker_issue}"
+		return 0
+	fi
+	log "PR #${pr}: durable creation marker issue #${marker_issue} failed fingerprint verification"
+	return 2
+}
+
+recover_creation_marker() {
+	local repo="$1"
+	local pr="$2"
+	local dry_run="$3"
+	local marker_rc=0
+	local runner=""
+	[[ "$SCANNER_EXISTING_ISSUE_NUMBER" =~ ^[1-9][0-9]*$ ]] || return 0
+	_creation_marker_issue_exists "$repo" "$pr" || marker_rc=$?
+	[[ "$marker_rc" -eq 1 ]] || return 0
+	[[ "$dry_run" == "$SCANNER_FALSE" ]] || return 0
+	runner=$(gh api user --jq '.login' 2>/dev/null) || runner=""
+	[[ -n "$runner" ]] || return 0
+	record_creation_marker "$repo" "$pr" "$runner" "$SCANNER_EXISTING_ISSUE_NUMBER" || true
+	return 0
+}
+
+precreation_superseded() {
+	local repo="$1"
+	local pr="$2"
+	local body="$3"
+	local output="" rc=0
+	if [[ ! -x "$SCANNER_PREDISPATCH_HELPER" ]]; then
+		log "PR #${pr}: supersession helper unavailable — skip this scan cycle"
+		return 20
+	fi
+	output=$(printf '%s' "$body" | "$SCANNER_PREDISPATCH_HELPER" \
+		check-review-supersession "$repo" "$pr" 2>&1) || rc=$?
+	if [[ "$rc" -eq 10 ]]; then
+		log "PR #${pr}: findings already superseded (${output})"
+		return 10
+	fi
+	if [[ "$rc" -ne 0 ]]; then
+		log "PR #${pr}: supersession lookup uncertain (rc=${rc}) — skip this scan cycle"
+		return 20
+	fi
+	return 0
+}
+
+acquire_creation_claim() {
+	local repo="$1"
+	local pr="$2"
+	local runner="$3"
+	local output="" rc=0
+	if [[ ! -x "$SCANNER_CLAIM_HELPER" ]]; then
+		log "PR #${pr}: creation claim helper unavailable"
+		return 2
+	fi
+	output=$(DISPATCH_CLAIM_ASSIGNMENT_GUARD=disabled DISPATCH_CLAIM_MAX_AGE=120 \
+		"$SCANNER_CLAIM_HELPER" claim "$pr" "$repo" "$runner" 2>&1) || rc=$?
+	if [[ "$rc" -ne 0 ]]; then
+		log "PR #${pr}: creation claim not won (rc=${rc}): ${output}"
+		return "$rc"
+	fi
+	log "PR #${pr}: creation claim won"
+	return 0
+}
+
+release_creation_claim() {
+	local repo="$1"
+	local pr="$2"
+	local runner="$3"
+	local reason="$4"
+	local body=""
+	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+CLAIM_RELEASED reason=review_followup_creation:${reason} runner=${runner} ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+<!-- ops:end -->"
+	if ! gh api "repos/${repo}/issues/${pr}/comments" --method POST --field body="$body" >/dev/null 2>&1; then
+		log "PR #${pr}: failed to release creation claim (${reason})"
+		return 1
+	fi
+	return 0
 }
 
 # Append the signature footer to a body. Uses gh-signature-helper.sh if
@@ -730,9 +863,127 @@ create_issue() {
 	local body_with_sig
 	body_with_sig=$(append_sig_footer "$body")
 
-	gh_create_issue --repo "$repo" --title "$title" \
+	local create_output=""
+	SCANNER_CREATED_ISSUE_NUMBER=""
+	if ! create_output=$(gh_create_issue --repo "$repo" --title "$title" \
 		--label "$label_list" \
-		--body "$body_with_sig"
+		--body "$body_with_sig"); then
+		log "PR #${pr}: issue create failed"
+		return 1
+	fi
+	printf '%s\n' "$create_output"
+	SCANNER_CREATED_ISSUE_NUMBER=$(printf '%s\n' "$create_output" | sed -En 's#.*issues/([0-9]+).*#\1#p' | tail -1)
+	if [[ ! "$SCANNER_CREATED_ISSUE_NUMBER" =~ ^[0-9]+$ ]]; then
+		log "PR #${pr}: issue created but number could not be parsed from wrapper output"
+		return 1
+	fi
+	return 0
+}
+
+record_creation_marker() {
+	local repo="$1"
+	local pr="$2"
+	local runner="$3"
+	local issue_number="$4"
+	local body=""
+	local attempt=1
+	body="<!-- ops:start — workers: skip this comment, it is audit trail not implementation context -->
+REVIEW_FOLLOWUP_CREATED source_pr=${pr} issue=${issue_number} fingerprint=source-pr-${pr} runner=${runner} ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+<!-- ops:end -->"
+	while [[ "$attempt" -le 3 ]]; do
+		if gh api "repos/${repo}/issues/${pr}/comments" --method POST \
+			--field body="$body" >/dev/null 2>&1; then
+			return 0
+		fi
+		attempt=$((attempt + 1))
+		[[ "$attempt" -le 3 ]] && sleep 2
+	done
+	log "PR #${pr}: failed to persist durable creation marker for issue #${issue_number}"
+	return 1
+}
+
+_scan_one_pr() {
+	local repo="$1"
+	local pr="$2"
+	local dry_run="$3"
+	local exists_rc=0
+	local build_rc=0
+	local supersession_rc=0
+	local body=""
+
+	issue_exists "$repo" "$pr" || exists_rc=$?
+	case "$exists_rc" in
+	0)
+		recover_creation_marker "$repo" "$pr" "$dry_run"
+		log "PR #${pr}: issue exists, skip (use 'refresh' to rewrite)"
+		return 1
+		;;
+	2)
+		log "PR #${pr}: existing-issue lookup uncertain, skip this scan cycle"
+		return 1
+		;;
+	esac
+
+	body=$(build_pr_followup_body "$repo" "$pr") || build_rc=$?
+	if [[ "$build_rc" -eq 1 ]]; then
+		log "PR #${pr}: no actionable bot feedback, skip"
+		return 1
+	fi
+	if [[ "$build_rc" -ne 0 || -z "$body" ]]; then
+		log "PR #${pr}: fetch or body error, skip (will retry next scan)"
+		return 1
+	fi
+	precreation_superseded "$repo" "$pr" "$body" || supersession_rc=$?
+	if [[ "$supersession_rc" -ne 0 ]]; then
+		return 1
+	fi
+
+	local pr_title=""
+	pr_title=$(gh pr view "$pr" --repo "$repo" --json title --jq '.title' 2>/dev/null) || pr_title="Unknown"
+	if [[ "$dry_run" == "true" ]]; then
+		create_issue "$repo" "$pr" "$pr_title" "$body" "$dry_run"
+		return $?
+	fi
+
+	local runner=""
+	runner=$(gh api user --jq '.login' 2>/dev/null) || runner=""
+	if [[ -z "$runner" ]]; then
+		log "PR #${pr}: cannot resolve creation claimant — skip this scan cycle"
+		return 1
+	fi
+	if ! acquire_creation_claim "$repo" "$pr" "$runner"; then
+		return 1
+	fi
+
+	exists_rc=0
+	issue_exists "$repo" "$pr" || exists_rc=$?
+	if [[ "$exists_rc" -eq 0 ]]; then
+		log "PR #${pr}: issue appeared after claim, skip creation"
+		release_creation_claim "$repo" "$pr" "$runner" "post_claim_issue_exists" || true
+		return 1
+	fi
+	if [[ "$exists_rc" -eq 2 ]]; then
+		log "PR #${pr}: post-claim issue recheck uncertain, skip creation"
+		release_creation_claim "$repo" "$pr" "$runner" "post_claim_lookup_uncertain" || true
+		return 1
+	fi
+
+	log "PR #${pr}: creation claim winner creating issue"
+	if ! create_issue "$repo" "$pr" "$pr_title" "$body" "$dry_run"; then
+		release_creation_claim "$repo" "$pr" "$runner" "issue_create_failed" || true
+		return 1
+	fi
+	if ! record_creation_marker "$repo" "$pr" "$runner" "$SCANNER_CREATED_ISSUE_NUMBER"; then
+		# The issue exists, so do not report creation failure or release the
+		# consistency claim. Search and the retained claim remain defensive
+		# fallbacks while the marker write recovers on a later scan.
+		log "PR #${pr}: issue #${SCANNER_CREATED_ISSUE_NUMBER} created without durable marker; retaining claim"
+		return 0
+	fi
+	# Keep the winning 120-second claim active after creation. GitHub issue
+	# search is eventually consistent. The durable source-PR marker is the
+	# authoritative evidence after this bounded consistency window expires.
+	log "PR #${pr}: issue created; creation claim retained for consistency window"
 	return 0
 }
 
@@ -781,30 +1032,9 @@ do_scan() {
 			log "Max issues reached (${SCANNER_MAX_ISSUES})"
 			break
 		fi
-		if issue_exists "$repo" "$pr"; then
-			log "PR #${pr}: issue exists, skip (use 'refresh' to rewrite)"
-			continue
+		if _scan_one_pr "$repo" "$pr" "$dry_run"; then
+			issues_created=$((issues_created + 1))
 		fi
-		local body=""
-		local build_rc=0
-		body=$(build_pr_followup_body "$repo" "$pr") || build_rc=$?
-		if [[ "$build_rc" -eq 1 ]]; then
-			log "PR #${pr}: no actionable bot feedback, skip"
-			continue
-		fi
-		if [[ "$build_rc" -eq 2 ]]; then
-			log "PR #${pr}: fetch error, skip (will retry next scan)"
-			continue
-		fi
-		if [[ -z "$body" ]]; then
-			log "PR #${pr}: inconsistent state (rc=0 but empty body), skip"
-			continue
-		fi
-		local pr_title
-		pr_title=$(gh pr view "$pr" --repo "$repo" --json title --jq '.title' || echo "Unknown")
-		log "PR #${pr}: creating issue"
-		create_issue "$repo" "$pr" "$pr_title" "$body" "$dry_run"
-		issues_created=$((issues_created + 1))
 	done <<<"$pr_numbers"
 	clear_scan_cursor "$repo"
 	log "Done. Issues created: ${issues_created}"
@@ -999,9 +1229,9 @@ main() {
 		}
 	fi
 	case "$command" in
-	scan) do_scan "$repo" "false" ;;
+	scan) do_scan "$repo" "$SCANNER_FALSE" ;;
 	dry-run) do_scan "$repo" "true" ;;
-	refresh) do_refresh "$repo" "false" ;;
+	refresh) do_refresh "$repo" "$SCANNER_FALSE" ;;
 	refresh-dry-run) do_refresh "$repo" "true" ;;
 	-h | --help | help)
 		echo "Usage: $(basename "$0") {scan|dry-run|refresh|refresh-dry-run|help} [REPO]"

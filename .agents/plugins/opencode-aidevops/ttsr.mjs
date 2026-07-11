@@ -204,6 +204,7 @@ function buildSessionStartGreetingInstruction(agentsDir, readIfExists) {
 
   return [
     "## Session-start greeting order",
+    "This plugin-injected block is the authoritative greeting instruction. The version values are already resolved; do not read the greeting cache or VERSION before responding.",
     "On the first assistant turn of an interactive session, the first visible text in the assistant response MUST be this exact aidevops greeting:",
     "",
     "Hi!",

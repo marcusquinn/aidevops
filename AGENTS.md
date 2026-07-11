@@ -9,7 +9,7 @@
 
 - **User Guide**: `.agents/AGENTS.md` (deployed to `~/.aidevops/agents/`)
 - **Commands**: `./setup.sh` (deploy) | `.agents/scripts/linters-local.sh` (quality) | `.agents/scripts/version-manager.sh release [major|minor|patch]`
-- **Config**: Runtime-specific (see `.agents/AGENTS.md` "Runtime-Specific References")
+- **Config**: Runtime-specific (see `.agents/AGENTS.md` "Runtime References")
 - **Quality**: `.agents/AGENTS.md` "Framework Rules"
 
 **File Structure**: `TODO.md` (tasks), `todo/` (plans, PRDs), `.agents/` (agents, tools, services, workflows, scripts).
@@ -29,8 +29,9 @@ The `.agents/AGENTS.md` is copied to `~/.aidevops/agents/AGENTS.md` by `setup.sh
 
 ## Development Lifecycle
 
-See `.agents/AGENTS.md` "Development Lifecycle" for the full lifecycle.
-Completion self-check: see `.agents/AGENTS.md` "Framework Rules > Completion and quality discipline".
+See `.agents/AGENTS.md` "Operational Routines" for code-change routing and
+`.agents/AGENTS.md` "Git Workflow" for the full lifecycle.
+Completion self-check: see `.agents/AGENTS.md` "Framework Rules > Task and completion discipline".
 
 ## Contributing
 
@@ -47,22 +48,22 @@ See `.agents/aidevops/` (architecture, setup) and `.agents/tools/` (agent/MCP au
 
 ## Agent Design Principles
 
-From `tools/build-agent/build-agent.md`:
+From `.agents/tools/build-agent/build-agent.md`:
 
-1. **Instruction budget**: ~50-100 max in root AGENTS.md
+1. **Instruction budget**: ~50-100 per agent is a maintainability heuristic; investigate overages, but do not cut solely to hit the count
 2. **Universal applicability**: Every instruction relevant to >80% of tasks
 3. **Progressive disclosure**: Pointers to subagents, not inline content
-4. **Code examples**: Only when authoritative (use `file:line` refs otherwise)
+4. **Code examples**: Only when authoritative; otherwise use stable `rg "pattern"` search references or section headings
 5. **Self-assessment**: Flag issues with evidence, complete task first
 
 Contributor rule: changes that add or expand always-loaded guidance (`AGENTS.md`,
-`.agents/AGENTS.md`, `prompts/build.txt`) must prefer a short pointer plus a
+`.agents/AGENTS.md`, `.agents/prompts/build.txt`) must prefer a short pointer plus a
 reference/workflow document, keep `.agents/AGENTS.md` under the CI size ratchet,
 and justify any intentional baseline increase in the PR body.
 
 ## Security
 
-Security rules: see `.agents/AGENTS.md` "Framework Rules > Security Rules". Additional contributor rule:
+Security rules: see `.agents/AGENTS.md` "Framework Rules > Security and external content". Additional contributor rule:
 - Use placeholders in examples, note secure storage location
 
 ## Quality Workflow
@@ -80,7 +81,7 @@ find .agents/scripts/ -name "*.sh" -exec shellcheck {} \;
 
 ## Self-Assessment Protocol
 
-From `tools/build-agent/build-agent.md`:
+From `.agents/tools/build-agent/build-agent.md`:
 
 - **Triggers**: Observable failure, user correction, contradiction, staleness
 - **Process**: Complete task, cite evidence, check duplicates, propose fix

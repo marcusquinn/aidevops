@@ -128,6 +128,17 @@ The claim comment survives beyond the claim window, letting Layer 5
 (`has-dispatch-comment`) block re-dispatch in future pulse cycles while the
 issue stays open and the PR is unmerged.
 
+The same append-only consensus protocol also protects review-followup creation.
+`post-merge-review-scanner.sh` claims on the merged source PR conversation,
+rechecks for an existing follow-up after winning, and only then creates the
+issue. Abort paths post
+`CLAIM_RELEASED reason=review_followup_creation:<reason>` immediately. A
+successful creation writes a trusted `REVIEW_FOLLOWUP_CREATED` marker containing
+the source PR fingerprint and created issue number, then retains its bounded
+120-second claim. Future scanners verify that marker through the source PR's
+REST comment timeline, so safety does not depend on issue-search convergence.
+Dry-run scans never post claims, completion markers, or release markers.
+
 **Close-window deferrals (t2422):** When a losing runner's claim lost by only
 `DISPATCH_TIEBREAKER_WINDOW` seconds (default 5s), it posts a `CLAIM_DEFERRED`
 audit comment identifying the winner before releasing. This captures the
@@ -205,6 +216,18 @@ another runner's active claim.
 passively assigned to an issue for bookkeeping does not block dispatch unless
 an active status label is also present. Implements the `is-assigned` combined
 check from t1996.
+
+Manual single-issue dispatch follows the same Layer 7 protocol after its
+read-only dedup checks and before ceremony/worktree creation. Claim loss and
+claim API error both block (fail closed). Any failure after a winning claim but
+before worker launch posts `CLAIM_RELEASED reason=manual_dispatch_prelaunch:*`;
+successful workers retain the normal lifecycle-owned release behavior.
+
+Review-followup issues add a pre-launch canonicalization gate. Open issues for
+the same source-PR fingerprint are sorted by issue number; only the lowest
+number may proceed, while later duplicates are closed with an audit rationale.
+If GitHub cannot enumerate the duplicate set, validator exit 30 blocks that
+dispatch cycle in both pulse and manual paths.
 
 **Layer 6 sub-step (t2930 ignore filter, extended t3194):** before evaluating
 combined-signal blocking, the assignee list is filtered against

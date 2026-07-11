@@ -631,10 +631,10 @@ cat >"${STUB_BIN}/gh" <<'MIXED_STUB_EOF'
 #!/usr/bin/env bash
 cmd="${1:-}"; sub="${2:-}"
 case "$cmd $sub" in
-"pr list") echo '[{"number":42}]' ;;
+"pr list") echo '42' ;;
 "api graphql") echo "simulated graphql failure" >&2; exit 1 ;;
 "api repos"*) echo '[]' ;;
-"issue list") echo '[]' ;;
+"issue list") echo '0' ;;
 "pr view") echo '{"title":"stub"}' ;;
 "repo view") echo 'stub/repo' ;;
 "label create") exit 0 ;;
@@ -761,6 +761,194 @@ else
 	echo "  FAIL: budgeted scan did not write expected cursor"
 	FAIL=$((FAIL + 1))
 fi
+install_ok_gh
+
+# -----------------------------------------------------------------------------
+# GH#27038 creation-race regressions
+# -----------------------------------------------------------------------------
+
+echo ""
+echo "Test: issue_exists — issue-list failure is tri-state and fail-closed"
+cat >"${STUB_BIN}/gh" <<'ISSUE_EXISTS_FAIL_EOF'
+#!/usr/bin/env bash
+if [[ "${1:-} ${2:-}" == "issue list" ]]; then
+	exit 1
+fi
+exit 0
+ISSUE_EXISTS_FAIL_EOF
+chmod +x "${STUB_BIN}/gh"
+rc=0
+issue_exists stub/repo 42 >/dev/null 2>&1 || rc=$?
+assert_rc "issue lookup uncertainty returns rc=2" "2" "$rc"
+
+echo ""
+echo "Test: creation consensus claim — loss and error both block"
+claim_helper="${TMP_DIR}/claim-helper.sh"
+cat >"$claim_helper" <<'CLAIM_HELPER_EOF'
+#!/usr/bin/env bash
+case "${MOCK_CREATION_CLAIM:-win}" in
+win) printf '%s\n' 'CLAIM_WON'; exit 0 ;;
+loss) printf '%s\n' 'CLAIM_LOST'; exit 1 ;;
+*) printf '%s\n' 'CLAIM_ERROR'; exit 2 ;;
+esac
+CLAIM_HELPER_EOF
+chmod +x "$claim_helper"
+old_claim_helper="$SCANNER_CLAIM_HELPER"
+SCANNER_CLAIM_HELPER="$claim_helper"
+rc=0
+MOCK_CREATION_CLAIM=loss acquire_creation_claim stub/repo 42 runner >/dev/null 2>&1 || rc=$?
+assert_rc "losing creation claim blocks" "1" "$rc"
+rc=0
+MOCK_CREATION_CLAIM=error acquire_creation_claim stub/repo 42 runner >/dev/null 2>&1 || rc=$?
+assert_rc "creation claim error blocks" "2" "$rc"
+SCANNER_CLAIM_HELPER="$old_claim_helper"
+
+echo ""
+echo "Test: post-claim existence recheck prevents create"
+out=$(bash -c '
+set -euo pipefail
+source "$1"
+lookup_count=0
+issue_exists() {
+	local repo="$1"
+	local pr="$2"
+	: "$repo" "$pr"
+	lookup_count=$((lookup_count + 1))
+	[[ "$lookup_count" -gt 1 ]]
+	return $?
+}
+build_pr_followup_body() { local repo="$1"; local pr="$2"; : "$repo" "$pr"; printf "body"; return 0; }
+precreation_superseded() { local repo="$1"; local pr="$2"; local body="$3"; : "$repo" "$pr" "$body"; return 0; }
+acquire_creation_claim() { local repo="$1"; local pr="$2"; local runner="$3"; : "$repo" "$pr" "$runner"; return 0; }
+release_creation_claim() { local repo="$1"; local pr="$2"; local runner="$3"; local reason="$4"; : "$repo" "$pr" "$runner"; printf "RELEASE:%s\n" "$reason"; return 0; }
+create_issue() { printf "CREATE\n"; return 0; }
+gh() {
+	local command="$1"
+	local resource="$2"
+	if [[ "$command" == "api" && "$resource" == "user" ]]; then printf "runner\n"; else printf "title\n"; fi
+	return 0
+}
+_scan_one_pr stub/repo 42 false || true
+' _ "$SCANNER" 2>&1)
+assert_contains "post-claim recheck releases claim" "RELEASE:post_claim_issue_exists" "$out"
+assert_not_contains "post-claim recheck does not create" "CREATE" "$out"
+
+echo ""
+echo "Test: dry-run performs no creation-claim writes"
+out=$(bash -c '
+set -euo pipefail
+source "$1"
+issue_exists() { local repo="$1"; local pr="$2"; : "$repo" "$pr"; return 1; }
+build_pr_followup_body() { local repo="$1"; local pr="$2"; : "$repo" "$pr"; printf "body"; return 0; }
+precreation_superseded() { local repo="$1"; local pr="$2"; local body="$3"; : "$repo" "$pr" "$body"; return 0; }
+acquire_creation_claim() { printf "WRITE_CLAIM\n"; return 0; }
+release_creation_claim() { printf "WRITE_RELEASE\n"; return 0; }
+create_issue() { local repo="$1"; local pr="$2"; local title="$3"; local body="$4"; local dry_run="$5"; : "$repo" "$pr" "$title" "$body"; printf "DRY:%s\n" "$dry_run"; return 0; }
+gh() { printf "title\n"; return 0; }
+_scan_one_pr stub/repo 42 true
+' _ "$SCANNER" 2>&1)
+assert_contains "dry-run reaches read-only creation preview" "DRY:true" "$out"
+assert_not_contains "dry-run does not post creation claim" "WRITE_CLAIM" "$out"
+assert_not_contains "dry-run does not post release marker" "WRITE_RELEASE" "$out"
+
+echo ""
+echo "Test: failed create is not counted as success"
+out=$(SCANNER_CURSOR_DIR="${TMP_DIR}/failed-create-cursor" bash -c '
+set -euo pipefail
+source "$1"
+gh() {
+	local command="$1"
+	local resource="$2"
+	if [[ "$command" == "pr" && "$resource" == "list" ]]; then printf "42\n"; return 0; fi
+	if [[ "$command" == "api" && "$resource" == "user" ]]; then printf "runner\n"; return 0; fi
+	printf "title\n"
+	return 0
+}
+issue_exists() { local repo="$1"; local pr="$2"; : "$repo" "$pr"; return 1; }
+build_pr_followup_body() { local repo="$1"; local pr="$2"; : "$repo" "$pr"; printf "body"; return 0; }
+precreation_superseded() { local repo="$1"; local pr="$2"; local body="$3"; : "$repo" "$pr" "$body"; return 0; }
+acquire_creation_claim() { local repo="$1"; local pr="$2"; local runner="$3"; : "$repo" "$pr" "$runner"; return 0; }
+release_creation_claim() { local repo="$1"; local pr="$2"; local runner="$3"; local reason="$4"; : "$repo" "$pr" "$runner" "$reason"; return 0; }
+create_issue() { return 1; }
+do_scan stub/repo false
+' _ "$SCANNER" 2>&1)
+assert_contains "failed create leaves success count at zero" "Issues created: 0" "$out"
+
+echo ""
+echo "Test: successful create retains claim through search consistency window"
+out=$(bash -c '
+set -euo pipefail
+source "$1"
+lookup_count=0
+issue_exists() { local repo="$1"; local pr="$2"; : "$repo" "$pr"; lookup_count=$((lookup_count + 1)); return 1; }
+build_pr_followup_body() { local repo="$1"; local pr="$2"; : "$repo" "$pr"; printf "body"; return 0; }
+precreation_superseded() { local repo="$1"; local pr="$2"; local body="$3"; : "$repo" "$pr" "$body"; return 0; }
+acquire_creation_claim() { local repo="$1"; local pr="$2"; local runner="$3"; : "$repo" "$pr" "$runner"; return 0; }
+release_creation_claim() { printf "UNSAFE_RELEASE\n"; return 0; }
+create_issue() { SCANNER_CREATED_ISSUE_NUMBER=123; return 0; }
+record_creation_marker() { local repo="$1"; local pr="$2"; local runner="$3"; local issue="$4"; : "$repo" "$pr" "$runner"; printf "MARKER:%s\n" "$issue"; return 0; }
+gh() {
+	local command="$1"
+	local resource="$2"
+	if [[ "$command" == "api" && "$resource" == "user" ]]; then printf "runner\n"; else printf "title\n"; fi
+	return 0
+}
+_scan_one_pr stub/repo 42 false
+' _ "$SCANNER" 2>&1)
+assert_contains "successful create reports retained consistency claim" "claim retained for consistency window" "$out"
+assert_contains "successful create records durable issue marker" "MARKER:123" "$out"
+assert_not_contains "successful create does not release before search converges" "UNSAFE_RELEASE" "$out"
+
+echo ""
+echo "Test: durable source-PR marker survives delayed issue search"
+out=$(bash -c '
+set -euo pipefail
+source "$1"
+gh() {
+	local command="$1"
+	local endpoint="$2"
+	if [[ "$command" == "api" && "$endpoint" == *"/comments?"* ]]; then
+		printf "[[{\"author_association\":\"MEMBER\",\"body\":\"REVIEW_FOLLOWUP_CREATED source_pr=42 issue=123 fingerprint=source-pr-42\"}]]\n"
+		return 0
+	fi
+	if [[ "$command" == "api" && "$endpoint" == "repos/stub/repo/issues/123" ]]; then
+		printf "Review followup: PR #42 — retained\\t<!-- aidevops:generator=review-followup source_pr=42 -->\n"
+		return 0
+	fi
+	return 1
+}
+_creation_marker_issue_exists stub/repo 42
+' _ "$SCANNER" 2>&1)
+assert_contains "durable marker verifies referenced issue directly" "durable creation marker references issue #123" "$out"
+
+echo ""
+echo "Test: unresolved stale creation claim fails closed"
+rc=0
+out=$(bash -c '
+set -euo pipefail
+source "$1"
+gh() {
+	printf "[[{\"author_association\":\"MEMBER\",\"created_at\":\"2020-01-01T00:00:00Z\",\"body\":\"DISPATCH_CLAIM nonce=abc runner=runner ts=2020-01-01T00:00:00Z\"}]]\n"
+	return 0
+}
+_creation_marker_issue_exists stub/repo 42
+' _ "$SCANNER" 2>&1) || rc=$?
+assert_rc "stale unresolved creation claim returns uncertainty" "2" "$rc"
+assert_contains "stale unresolved creation claim logs fail-closed decision" "unresolved stale creation claim" "$out"
+
+echo ""
+echo "Test: indexed issue repairs missing durable marker"
+out=$(bash -c '
+set -euo pipefail
+source "$1"
+SCANNER_EXISTING_ISSUE_NUMBER=123
+_creation_marker_issue_exists() { return 1; }
+record_creation_marker() { local repo="$1"; local pr="$2"; local runner="$3"; local issue="$4"; : "$repo" "$pr" "$runner"; printf "RECOVERED:%s\n" "$issue"; return 0; }
+gh() { printf "runner\n"; return 0; }
+recover_creation_marker stub/repo 42 false
+' _ "$SCANNER" 2>&1)
+assert_contains "existing issue repairs missing source-PR marker" "RECOVERED:123" "$out"
+
 install_ok_gh
 
 # -----------------------------------------------------------------------------

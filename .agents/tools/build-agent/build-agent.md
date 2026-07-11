@@ -13,7 +13,7 @@ mode: subagent
 
 ## Quick Reference
 
-- **Budget**: ~50-100 instructions per agent; root AGENTS.md universally applicable only
+- **Budget**: ~50-100 instructions per agent is a maintainability heuristic; investigate overages, don't cut solely to hit the count; root AGENTS.md universally applicable only
 - **Subdivision**: Docs >~300 lines → split into entry point + sub-docs; don't cut to hit a line count
 - **MCP servers**: Disabled globally, enabled per-agent
 - **Code refs**: `rg "pattern"` search patterns, not `file:line` (line numbers drift)
@@ -55,7 +55,7 @@ tools:
 
 - **MCP tool patterns** (subagents only): `context7_*: true`, `wordpress-mcp_*: true`. Injected by plugin at startup — do not set in `opencode.json` directly.
 - **MCP tool filtering** (future `includeTools` — 17k→1.5k token savings): `mcp_requirements: { chrome-devtools: { tools: [navigate_page, take_screenshot] } }`
-- **Main-branch write restrictions**: ALLOWED: `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`. BLOCKED: all other files.
+- **Main-branch write restrictions**: Interactive sessions use a linked worktree for every edit. Only headless bookkeeping and explicitly planning-only workers may use the narrow exception enforced by `pre-edit-check.sh`; follow `workflows/pre-edit.md` instead of duplicating its allowlist.
 - **Adding a new MCP** (two files required — plugin is authoritative, not `opencode.json`):
   1. `mcp-registry.mjs` `getMcpRegistry()`: `{ name, command/url, eager: false, toolPattern: "foo_*", globallyEnabled: false }`
   2. `agent-loader.mjs` `AGENT_MCP_TOOLS`: `"my-agent": ["foo_*"]`

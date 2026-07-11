@@ -334,14 +334,14 @@ describe("tryRepairSignature", () => {
     const repo = join(dir, "repo");
     const linked = join(dir, "repo-linked");
     mkdirSync(repo);
-    execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
-    execFileSync("git", ["config", "user.email", "test@example.invalid"], { cwd: repo });
-    execFileSync("git", ["config", "user.name", "Test"], { cwd: repo });
-    execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: repo });
+    execFileSync("/usr/bin/git", ["init"], { cwd: repo, stdio: "ignore" });
+    execFileSync("/usr/bin/git", ["config", "user.email", "test@example.invalid"], { cwd: repo });
+    execFileSync("/usr/bin/git", ["config", "user.name", "Test"], { cwd: repo });
+    execFileSync("/usr/bin/git", ["config", "commit.gpgsign", "false"], { cwd: repo });
     writeFileSync(join(repo, "README.md"), "fixture\n");
-    execFileSync("git", ["add", "README.md"], { cwd: repo, stdio: "ignore" });
-    execFileSync("git", ["commit", "--no-gpg-sign", "-m", "init"], { cwd: repo, stdio: "ignore" });
-    execFileSync("git", ["worktree", "add", "-b", "linked-fixture", linked], {
+    execFileSync("/usr/bin/git", ["add", "README.md"], { cwd: repo, stdio: "ignore" });
+    execFileSync("/usr/bin/git", ["commit", "--no-gpg-sign", "-m", "init"], { cwd: repo, stdio: "ignore" });
+    execFileSync("/usr/bin/git", ["worktree", "add", "-b", "linked-fixture", linked], {
       cwd: repo,
       stdio: "ignore",
     });
