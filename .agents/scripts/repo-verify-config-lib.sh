@@ -7,7 +7,10 @@
 _AIDEVOPS_REPO_VERIFY_CONFIG_LIB_LOADED=1
 
 REPO_VERIFY_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || REPO_VERIFY_LIB_DIR=""
-REPO_VERIFY_STATUS="none"
+readonly REPO_VERIFY_VALUE_TRUE="true"
+readonly REPO_VERIFY_VALUE_NONE="none"
+readonly REPO_VERIFY_VALUE_READY="ready"
+REPO_VERIFY_STATUS="$REPO_VERIFY_VALUE_NONE"
 REPO_VERIFY_SOURCE=""
 REPO_VERIFY_EVIDENCE=""
 REPO_VERIFY_FORMAT=""
@@ -28,33 +31,7 @@ _repo_verify_lock_acquire() {
 	REPO_VERIFY_LOCK_TOKEN=$(mktemp "${target_file}.aidevops-ready.XXXXXX") || return 1
 	rm -f "$REPO_VERIFY_LOCK_TOKEN"
 	owner_pid=$(sh -c 'printf "%s\n" "$PPID"') || return 1
-	python3 - "$REPO_VERIFY_LOCK_FILE" "$REPO_VERIFY_LOCK_TOKEN" "$owner_pid" <<'PY' &
-import fcntl
-import os
-import sys
-import time
-
-lock_path, ready_path, owner_pid_text = sys.argv[1:]
-owner_pid = int(owner_pid_text)
-with open(lock_path, "a+", encoding="utf-8") as lock_file:
-    deadline = time.monotonic() + 5
-    while True:
-        try:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            break
-        except BlockingIOError:
-            if time.monotonic() >= deadline:
-                raise SystemExit(1)
-            time.sleep(0.05)
-    with open(ready_path, "w", encoding="utf-8") as ready_file:
-        ready_file.write(str(os.getpid()))
-    while os.path.exists(ready_path):
-        try:
-            os.kill(owner_pid, 0)
-        except ProcessLookupError:
-            break
-        time.sleep(0.05)
-PY
+	python3 "${REPO_VERIFY_LIB_DIR}/repo-verify-lock.py" "$REPO_VERIFY_LOCK_FILE" "$REPO_VERIFY_LOCK_TOKEN" "$owner_pid" &
 	REPO_VERIFY_LOCK_PID=$!
 	while [[ ! -f "$REPO_VERIFY_LOCK_TOKEN" ]]; do
 		if ! kill -0 "$REPO_VERIFY_LOCK_PID" 2>/dev/null; then
@@ -99,7 +76,7 @@ _repo_verify_preserve_mode() {
 }
 
 repo_verify_reset() {
-	REPO_VERIFY_STATUS="none"
+	REPO_VERIFY_STATUS="$REPO_VERIFY_VALUE_NONE"
 	REPO_VERIFY_SOURCE=""
 	REPO_VERIFY_EVIDENCE=""
 	REPO_VERIFY_FORMAT=""
@@ -118,16 +95,35 @@ _repo_verify_has_commands() {
 	return 1
 }
 
+_repo_verify_config_path() {
+	local repo_root="$1"
+	printf '%s\n' "${repo_root}/.aidevops.json"
+	return 0
+}
+
+_repo_verify_config_opted_out() {
+	local config_file="$1"
+	jq -e '.features.code_quality == false or .verify.enabled == false' "$config_file" >/dev/null 2>&1 || return 1
+	return 0
+}
+
+_repo_verify_config_has_feature_key() {
+	local config_file="$1"
+	jq -e 'has("features") and (.features | has("code_quality"))' "$config_file" >/dev/null 2>&1 || return 1
+	return 0
+}
+
 _repo_verify_load_explicit() {
 	local repo_root="$1"
-	local config_file="${repo_root}/.aidevops.json"
+	local config_file
+	config_file=$(_repo_verify_config_path "$repo_root")
 	[[ -f "$config_file" ]] || return 1
-	if ! jq -e 'type == "object"' "$config_file" >/dev/null 2>&1; then
+	if ! jq -e 'type == ({} | type)' "$config_file" >/dev/null 2>&1; then
 		REPO_VERIFY_STATUS="invalid"
 		REPO_VERIFY_WARNING=".aidevops.json is not valid JSON"
 		return 2
 	fi
-	if [[ "$(jq -r '.features.code_quality == false or .verify.enabled == false' "$config_file")" == "true" ]]; then
+	if _repo_verify_config_opted_out "$config_file"; then
 		REPO_VERIFY_STATUS="disabled"
 		REPO_VERIFY_SOURCE="aidevops-json"
 		REPO_VERIFY_EVIDENCE=".aidevops.json:explicit-opt-out"
@@ -139,7 +135,7 @@ _repo_verify_load_explicit() {
 	REPO_VERIFY_LINT_FIX=$(jq -r '.verify.lint_fix // empty' "$config_file")
 	REPO_VERIFY_TYPECHECK=$(jq -r '.verify.typecheck // empty' "$config_file")
 	if _repo_verify_has_commands; then
-		REPO_VERIFY_STATUS="ready"
+		REPO_VERIFY_STATUS="$REPO_VERIFY_VALUE_READY"
 		REPO_VERIFY_SOURCE="aidevops-json"
 		REPO_VERIFY_EVIDENCE=".aidevops.json:verify"
 		return 0
@@ -200,9 +196,9 @@ _repo_verify_load_package() {
 	local package_file="${repo_root}/package.json"
 	[[ -f "$package_file" ]] || return 1
 	_repo_verify_evidence_is_tracked "$repo_root" "package.json" || return 1
-	jq -e 'type == "object" and (.scripts | type == "object")' "$package_file" >/dev/null 2>&1 || return 1
+	jq -e 'type == ({} | type) and (.scripts | type == ({} | type))' "$package_file" >/dev/null 2>&1 || return 1
 	local script_keys=""
-	script_keys=$(jq -r '[.scripts | to_entries[] | select(.value | type == "string" and length > 0) | .key] | join(" ")' "$package_file" 2>/dev/null || true)
+	script_keys=$(jq -r '[.scripts | to_entries[] | select(.value | type == ("" | type) and length > 0) | .key] | join(" ")' "$package_file" 2>/dev/null || true)
 	case " $script_keys " in
 	*" lint "* | *" format "* | *" format:check "* | *" format-check "* | *" typecheck "* | *" type-check "* | *" check-types "*) ;;
 	*) return 1 ;;
@@ -216,9 +212,9 @@ _repo_verify_load_package() {
 		return 2
 	fi
 	local format_body=""
-	if jq -e '.scripts."format:check" | type == "string" and length > 0' "$package_file" >/dev/null 2>&1; then
+	if jq -e '.scripts."format:check" | type == ("" | type) and length > 0' "$package_file" >/dev/null 2>&1; then
 		REPO_VERIFY_FORMAT="$manager run format:check"
-	elif jq -e '.scripts."format-check" | type == "string" and length > 0' "$package_file" >/dev/null 2>&1; then
+	elif jq -e '.scripts."format-check" | type == ("" | type) and length > 0' "$package_file" >/dev/null 2>&1; then
 		REPO_VERIFY_FORMAT="$manager run format-check"
 	else
 		format_body=$(jq -r '.scripts.format // empty' "$package_file")
@@ -226,28 +222,28 @@ _repo_verify_load_package() {
 			REPO_VERIFY_FORMAT="$manager run format"
 		fi
 	fi
-	if jq -e '.scripts."format:fix" | type == "string" and length > 0' "$package_file" >/dev/null 2>&1; then
+	if jq -e '.scripts."format:fix" | type == ("" | type) and length > 0' "$package_file" >/dev/null 2>&1; then
 		REPO_VERIFY_FORMAT_FIX="$manager run format:fix"
-	elif jq -e '.scripts.format_fix | type == "string" and length > 0' "$package_file" >/dev/null 2>&1; then
+	elif jq -e '.scripts.format_fix | type == ("" | type) and length > 0' "$package_file" >/dev/null 2>&1; then
 		REPO_VERIFY_FORMAT_FIX="$manager run format_fix"
 	fi
-	if jq -e '.scripts.lint | type == "string" and length > 0' "$package_file" >/dev/null 2>&1; then
+	if jq -e '.scripts.lint | type == ("" | type) and length > 0' "$package_file" >/dev/null 2>&1; then
 		REPO_VERIFY_LINT="$manager run lint"
 	fi
-	if jq -e '.scripts."lint:fix" | type == "string" and length > 0' "$package_file" >/dev/null 2>&1; then
+	if jq -e '.scripts."lint:fix" | type == ("" | type) and length > 0' "$package_file" >/dev/null 2>&1; then
 		REPO_VERIFY_LINT_FIX="$manager run lint:fix"
-	elif jq -e '.scripts.lint_fix | type == "string" and length > 0' "$package_file" >/dev/null 2>&1; then
+	elif jq -e '.scripts.lint_fix | type == ("" | type) and length > 0' "$package_file" >/dev/null 2>&1; then
 		REPO_VERIFY_LINT_FIX="$manager run lint_fix"
 	fi
-	if jq -e '.scripts.typecheck | type == "string" and length > 0' "$package_file" >/dev/null 2>&1; then
+	if jq -e '.scripts.typecheck | type == ("" | type) and length > 0' "$package_file" >/dev/null 2>&1; then
 		REPO_VERIFY_TYPECHECK="$manager run typecheck"
-	elif jq -e '.scripts."type-check" | type == "string" and length > 0' "$package_file" >/dev/null 2>&1; then
+	elif jq -e '.scripts."type-check" | type == ("" | type) and length > 0' "$package_file" >/dev/null 2>&1; then
 		REPO_VERIFY_TYPECHECK="$manager run type-check"
-	elif jq -e '.scripts."check-types" | type == "string" and length > 0' "$package_file" >/dev/null 2>&1; then
+	elif jq -e '.scripts."check-types" | type == ("" | type) and length > 0' "$package_file" >/dev/null 2>&1; then
 		REPO_VERIFY_TYPECHECK="$manager run check-types"
 	fi
 	_repo_verify_has_commands || return 1
-	REPO_VERIFY_STATUS="ready"
+	REPO_VERIFY_STATUS="$REPO_VERIFY_VALUE_READY"
 	REPO_VERIFY_SOURCE="package-json(${manager})"
 	REPO_VERIFY_EVIDENCE="package.json:scripts"
 	return 0
@@ -328,7 +324,7 @@ _repo_verify_load_defaults() {
 		[[ -n "$lint" && "$lint" != "-" ]] && REPO_VERIFY_LINT="$lint"
 		[[ -n "$lint_fix" && "$lint_fix" != "-" ]] && REPO_VERIFY_LINT_FIX="$lint_fix"
 		[[ -n "$typecheck" && "$typecheck" != "-" ]] && REPO_VERIFY_TYPECHECK="$typecheck"
-		REPO_VERIFY_STATUS="ready"
+		REPO_VERIFY_STATUS="$REPO_VERIFY_VALUE_READY"
 		REPO_VERIFY_SOURCE="defaults(${toolchain})"
 		REPO_VERIFY_EVIDENCE="$predicate"
 		return 0
@@ -353,7 +349,7 @@ repo_verify_detect() {
 	[[ "$package_status" -eq 0 ]] && return 0
 	[[ "$package_status" -eq 2 ]] && return 1
 	_repo_verify_load_defaults "$repo_root" && return 0
-	REPO_VERIFY_STATUS="none"
+	REPO_VERIFY_STATUS="$REPO_VERIFY_VALUE_NONE"
 	return 1
 }
 
@@ -408,7 +404,8 @@ repo_verify_registration_has_feature() {
 
 repo_verify_feature_state() {
 	local repo_root="$1"
-	local config_file="${repo_root}/.aidevops.json"
+	local config_file
+	config_file=$(_repo_verify_config_path "$repo_root")
 	if [[ -f "$config_file" ]]; then
 		jq -r '
 			if (.features.code_quality == false or .verify.enabled == false) then "false"
@@ -425,12 +422,13 @@ repo_verify_migrate_registration() {
 	local repo_root="$1"
 	local repos_file="${AIDEVOPS_REPOS_FILE:-${HOME}/.config/aidevops/repos.json}"
 	[[ -f "$repos_file" ]] || return 2
-	if [[ -f "${repo_root}/.aidevops.json" ]] &&
-		[[ "$(jq -r '.features.code_quality == false or .verify.enabled == false' "${repo_root}/.aidevops.json" 2>/dev/null)" == "true" ]]; then
+	local config_file
+	config_file=$(_repo_verify_config_path "$repo_root")
+	if [[ -f "$config_file" ]] && _repo_verify_config_opted_out "$config_file"; then
 		return 4
 	fi
 	repo_verify_detect "$repo_root" >/dev/null 2>&1 || return 2
-	[[ "$REPO_VERIFY_STATUS" == "ready" ]] || return 2
+	[[ "$REPO_VERIFY_STATUS" == "$REPO_VERIFY_VALUE_READY" ]] || return 2
 	_repo_verify_lock_acquire "$repos_file" || return 1
 	repo_verify_registration_has_feature "$repo_root" && {
 		_repo_verify_lock_release
@@ -457,7 +455,8 @@ repo_verify_migrate_registration() {
 
 repo_verify_config_is_safe_to_modify() {
 	local repo_root="$1"
-	local config_file="${repo_root}/.aidevops.json"
+	local config_file
+	config_file=$(_repo_verify_config_path "$repo_root")
 	[[ -f "$config_file" ]] || return 0
 	if git -C "$repo_root" ls-files --error-unmatch .aidevops.json >/dev/null 2>&1; then
 		local canonical_path="" resolved_repo=""
@@ -473,16 +472,17 @@ repo_verify_config_is_safe_to_modify() {
 repo_verify_apply_config() {
 	local repo_root="$1"
 	local create_missing="${2:-false}"
-	local config_file="${repo_root}/.aidevops.json"
-	if [[ ! -f "$config_file" && "$create_missing" != "true" ]]; then return 2; fi
+	local config_file
+	config_file=$(_repo_verify_config_path "$repo_root")
+	if [[ ! -f "$config_file" && "$create_missing" != "$REPO_VERIFY_VALUE_TRUE" ]]; then return 2; fi
 	repo_verify_config_is_safe_to_modify "$repo_root" || return 3
-	if [[ -f "$config_file" ]] && [[ "$(jq -r '.features.code_quality == false or .verify.enabled == false' "$config_file" 2>/dev/null)" == "true" ]]; then
+	if [[ -f "$config_file" ]] && _repo_verify_config_opted_out "$config_file"; then
 		return 4
 	fi
 	repo_verify_detect "$repo_root" || return 2
-	[[ "$REPO_VERIFY_STATUS" == "ready" ]] || return 2
+	[[ "$REPO_VERIFY_STATUS" == "$REPO_VERIFY_VALUE_READY" ]] || return 2
 	_repo_verify_lock_acquire "$config_file" || return 1
-	if [[ -f "$config_file" ]] && [[ "$(jq -r '.features.code_quality == false or .verify.enabled == false' "$config_file" 2>/dev/null)" == "true" ]]; then
+	if [[ -f "$config_file" ]] && _repo_verify_config_opted_out "$config_file"; then
 		_repo_verify_lock_release
 		return 4
 	fi
@@ -499,11 +499,11 @@ repo_verify_apply_config() {
 		--arg typecheck "$REPO_VERIFY_TYPECHECK" \
 		'.features = (.features // {}) | .features.code_quality = true |
 		 .verify = (.verify // {}) | .verify.enabled = true |
-		 if $format != "" and (.verify.format // "") == "" then .verify.format = $format else . end |
-		 if $format_fix != "" and (.verify.format_fix // "") == "" then .verify.format_fix = $format_fix else . end |
-		 if $lint != "" and (.verify.lint // "") == "" then .verify.lint = $lint else . end |
-		 if $lint_fix != "" and (.verify.lint_fix // "") == "" then .verify.lint_fix = $lint_fix else . end |
-		 if $typecheck != "" and (.verify.typecheck // "") == "" then .verify.typecheck = $typecheck else . end' \
+		 if ($format | length) > 0 and ((.verify.format?) | length) == 0 then .verify.format = $format else . end |
+		 if ($format_fix | length) > 0 and ((.verify.format_fix?) | length) == 0 then .verify.format_fix = $format_fix else . end |
+		 if ($lint | length) > 0 and ((.verify.lint?) | length) == 0 then .verify.lint = $lint else . end |
+		 if ($lint_fix | length) > 0 and ((.verify.lint_fix?) | length) == 0 then .verify.lint_fix = $lint_fix else . end |
+		 if ($typecheck | length) > 0 and ((.verify.typecheck?) | length) == 0 then .verify.typecheck = $typecheck else . end' \
 		<<<"$existing" >"$temp_file"; then
 		rm -f "$temp_file"
 		_repo_verify_lock_release
@@ -517,20 +517,21 @@ repo_verify_apply_config() {
 
 repo_verify_migrate_config() {
 	local repo_root="$1"
-	local config_file="${repo_root}/.aidevops.json"
+	local config_file
+	config_file=$(_repo_verify_config_path "$repo_root")
 	[[ -f "$config_file" ]] || return 2
-	[[ "$(repo_verify_feature_state "$repo_root")" != "false" ]] || return 4
-	if [[ "$(jq -r 'has("features") and (.features | has("code_quality"))' "$config_file" 2>/dev/null)" == "true" ]]; then
+	_repo_verify_config_opted_out "$config_file" && return 4
+	if _repo_verify_config_has_feature_key "$config_file"; then
 		return 2
 	fi
 	if repo_verify_registration_has_feature "$repo_root"; then
 		repo_verify_config_is_safe_to_modify "$repo_root" || return 3
 		_repo_verify_lock_acquire "$config_file" || return 1
-		if [[ "$(repo_verify_feature_state "$repo_root")" == "false" ]]; then
+		if _repo_verify_config_opted_out "$config_file"; then
 			_repo_verify_lock_release
 			return 4
 		fi
-		if [[ "$(jq -r 'has("features") and (.features | has("code_quality"))' "$config_file" 2>/dev/null)" == "true" ]]; then
+		if _repo_verify_config_has_feature_key "$config_file"; then
 			_repo_verify_lock_release
 			return 2
 		fi

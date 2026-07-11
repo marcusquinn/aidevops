@@ -344,7 +344,7 @@ cmd_update() {
 	fi
 
 	_update_sync_projects "$skip_project_sync" "$(get_version)"
-	if [[ "$skip_project_sync" != "true" && "$reconcile_repo_verify" == "true" ]]; then
+	if [[ "$skip_project_sync" != "$_AIDEVOPS_UPDATE_TRUE" && "$reconcile_repo_verify" == "$_AIDEVOPS_UPDATE_TRUE" ]]; then
 		_update_reconcile_repo_verify
 	fi
 	_update_check_homebrew

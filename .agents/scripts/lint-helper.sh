@@ -16,6 +16,8 @@ LINT_STRICT=false
 LINT_APPLY=false
 LINT_INSTALL_HOOK=true
 LINT_WRITE_PR_PLAN=false
+readonly LINT_TRUE="true"
+readonly LINT_REPO_LIST_ERROR="Unable to read repository list"
 
 lint_usage() {
 	cat <<'EOF'
@@ -101,15 +103,15 @@ lint_parse_args() {
 			;;
 		esac
 	done
-	if [[ "$LINT_ALL" == "true" && -n "$LINT_REPO" ]]; then
+	if [[ "$LINT_ALL" == "$LINT_TRUE" && -n "$LINT_REPO" ]]; then
 		print_error "--all and --repo are mutually exclusive"
 		return 2
 	fi
-	if [[ "$LINT_ALL" == "true" && "$LINT_APPLY" == "true" ]]; then
+	if [[ "$LINT_ALL" == "$LINT_TRUE" && "$LINT_APPLY" == "$LINT_TRUE" ]]; then
 		print_error "--all --apply is unsafe; use --write-pr-plan to create isolated PR plans"
 		return 2
 	fi
-	if [[ "$LINT_WRITE_PR_PLAN" == "true" && "$LINT_ALL" != "true" ]]; then
+	if [[ "$LINT_WRITE_PR_PLAN" == "$LINT_TRUE" && "$LINT_ALL" != "$LINT_TRUE" ]]; then
 		print_error "--write-pr-plan requires --all"
 		return 2
 	fi
@@ -176,7 +178,7 @@ lint_audit_record() {
 }
 
 lint_repo_list() {
-	if [[ "$LINT_ALL" == "true" ]]; then
+	if [[ "$LINT_ALL" == "$LINT_TRUE" ]]; then
 		local repos_file="${AIDEVOPS_REPOS_FILE:-${HOME}/.config/aidevops/repos.json}"
 		[[ -f "$repos_file" ]] || return 1
 		jq -r '.initialized_repos[]?.path // empty' "$repos_file"
@@ -194,7 +196,7 @@ lint_audit() {
 	repo_list_file=$(mktemp)
 	if ! lint_repo_list >"$repo_list_file"; then
 		rm -f "$records_file" "$repo_list_file"
-		print_error "Unable to read repository list"
+		print_error "$LINT_REPO_LIST_ERROR"
 		return 1
 	fi
 	while IFS= read -r repo_root; do
@@ -204,7 +206,7 @@ lint_audit() {
 		classification=$(printf '%s' "$record" | jq -r '.classification')
 		case "$classification" in READY | EXPLICITLY-DISABLED) ;; *) actionable=$((actionable + 1)) ;; esac
 	done <"$repo_list_file"
-	if [[ "$LINT_JSON" == "true" ]]; then
+	if [[ "$LINT_JSON" == "$LINT_TRUE" ]]; then
 		jq -s '.' "$records_file"
 	else
 		printf '%-22s %-18s %-12s %s\n' "CLASSIFICATION" "VERIFY SOURCE" "HOOK" "REPOSITORY"
@@ -215,7 +217,7 @@ lint_audit() {
 		printf '\nActionable repositories: %s\n' "$actionable"
 	fi
 	rm -f "$records_file" "$repo_list_file"
-	if [[ "$LINT_STRICT" == "true" && "$actionable" -gt 0 ]]; then return 1; fi
+	if [[ "$LINT_STRICT" == "$LINT_TRUE" && "$actionable" -gt 0 ]]; then return 1; fi
 	return 0
 }
 
@@ -246,7 +248,7 @@ lint_configure_all() {
 	repo_list_file=$(mktemp)
 	if ! lint_repo_list >"$repo_list_file"; then
 		rm -f "$records_file" "$repo_list_file"
-		print_error "Unable to read repository list"
+		print_error "$LINT_REPO_LIST_ERROR"
 		return 1
 	fi
 	while IFS= read -r repo_root; do
@@ -256,8 +258,8 @@ lint_configure_all() {
 	local array_file
 	array_file=$(mktemp)
 	jq -s '.' "$records_file" >"$array_file"
-	if [[ "$LINT_JSON" == "true" ]]; then jq '.' "$array_file"; else jq -r '.[] | "\(.classification)\t\(.repo)\t\(.detection.evidence)"' "$array_file"; fi
-	if [[ "$LINT_WRITE_PR_PLAN" == "true" ]]; then lint_write_dispatch_plan "$array_file"; fi
+	if [[ "$LINT_JSON" == "$LINT_TRUE" ]]; then jq '.' "$array_file"; else jq -r '.[] | "\(.classification)\t\(.repo)\t\(.detection.evidence)"' "$array_file"; fi
+	if [[ "$LINT_WRITE_PR_PLAN" == "$LINT_TRUE" ]]; then lint_write_dispatch_plan "$array_file"; fi
 	rm -f "$records_file" "$repo_list_file" "$array_file"
 	return 0
 }
@@ -266,7 +268,7 @@ lint_configure_current() {
 	local repo_root
 	repo_root=$(lint_repo_list)
 	repo_verify_detect "$repo_root" || true
-	if [[ "$LINT_APPLY" != "true" ]]; then
+	if [[ "$LINT_APPLY" != "$LINT_TRUE" ]]; then
 		lint_audit_record "$repo_root"
 		printf 'Dry run only. Re-run with --apply to write exact detected commands.\n' >&2
 		return 0
@@ -286,7 +288,7 @@ lint_configure_current() {
 		return 1
 		;;
 	esac
-	if [[ "$LINT_INSTALL_HOOK" == "true" && "$apply_status" -eq 0 ]]; then
+	if [[ "$LINT_INSTALL_HOOK" == "$LINT_TRUE" && "$apply_status" -eq 0 ]]; then
 		repo_verify_install_hook "$repo_root" || print_warning "Repo-verify hook could not be installed; inspect unmanaged hook conflicts"
 	fi
 	return 0
@@ -299,7 +301,7 @@ lint_reconcile() {
 	repo_list_file=$(mktemp)
 	if ! lint_repo_list >"$repo_list_file"; then
 		rm -f "$repo_list_file"
-		print_error "Unable to read repository list"
+		print_error "$LINT_REPO_LIST_ERROR"
 		return 1
 	fi
 	while IFS= read -r repo_root; do
@@ -321,7 +323,7 @@ lint_reconcile() {
 			continue
 		fi
 		repo_verify_detect "$repo_root" >/dev/null 2>&1 || true
-		if [[ "$REPO_VERIFY_STATUS" != "ready" && "$feature_state" != "true" && "$feature_state" != "legacy" ]]; then
+		if [[ "$REPO_VERIFY_STATUS" != "ready" && "$feature_state" != "$LINT_TRUE" && "$feature_state" != "legacy" ]]; then
 			skipped=$((skipped + 1))
 			continue
 		fi
@@ -347,7 +349,7 @@ main() {
 	case "$LINT_ACTION" in
 	audit) lint_audit ;;
 	configure)
-		if [[ "$LINT_ALL" == "true" ]]; then lint_configure_all; else lint_configure_current; fi
+		if [[ "$LINT_ALL" == "$LINT_TRUE" ]]; then lint_configure_all; else lint_configure_current; fi
 		;;
 	reconcile) lint_reconcile ;;
 	*)

@@ -3,24 +3,26 @@
 # SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 # Setup module: migrate eligible lint policy and install repo-verify hooks.
 
+readonly REPO_VERIFY_GUARD_LABEL="Repo verify guard"
+
 setup_repo_verify_guard() {
 	if [[ "${AIDEVOPS_REPO_VERIFY_GUARD:-true}" == "false" ]]; then
 		print_info "Repo verify rollout disabled via AIDEVOPS_REPO_VERIFY_GUARD=false"
-		setup_track_skipped "Repo verify guard" "explicitly disabled"
+		setup_track_skipped "$REPO_VERIFY_GUARD_LABEL" "explicitly disabled"
 		return 0
 	fi
 	local library_path="${INSTALL_DIR}/.agents/scripts/repo-verify-config-lib.sh"
 	[[ -f "$library_path" ]] || library_path="${HOME}/.aidevops/agents/scripts/repo-verify-config-lib.sh"
 	if [[ ! -f "$library_path" ]]; then
 		print_warning "Repo verify configuration library unavailable"
-		setup_track_skipped "Repo verify guard" "library unavailable"
+		setup_track_skipped "$REPO_VERIFY_GUARD_LABEL" "library unavailable"
 		return 0
 	fi
 	# shellcheck source=/dev/null
 	source "$library_path"
 	local repos_file="${HOME}/.config/aidevops/repos.json"
 	if [[ ! -f "$repos_file" ]] || ! command -v jq >/dev/null 2>&1; then
-		setup_track_skipped "Repo verify guard" "repos.json or jq unavailable"
+		setup_track_skipped "$REPO_VERIFY_GUARD_LABEL" "repos.json or jq unavailable"
 		return 0
 	fi
 	local repo_list_file
