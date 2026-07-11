@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import {
   createSessionTitleSuffixHandler,
   readAidevopsVersion,
+  sanitizeSessionTitle,
   withAidevopsTitleSuffix,
 } from "../session-title-suffix.mjs";
 import {
@@ -50,6 +51,17 @@ test("title suffix appends and replaces idempotently", () => {
   );
   assert.equal(
     withAidevopsTitleSuffix("Investigate title path · AIDevOps 3.20.101", "3.20.102"),
+    "Investigate title path · AIDevOps 3.20.102",
+  );
+});
+
+test("image placeholders are stripped while meaningful title text is preserved", () => {
+  assert.equal(
+    sanitizeSessionTitle("[Image 1] Investigate [Image 2] title path"),
+    "Investigate title path",
+  );
+  assert.equal(
+    withAidevopsTitleSuffix("[image 12] Investigate title path", "3.20.102"),
     "Investigate title path · AIDevOps 3.20.102",
   );
 });
