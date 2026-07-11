@@ -806,10 +806,7 @@ test_scan_single_pr_positive_body_with_inline_comments_not_summary_only() {
 	return 0
 }
 
-test_scan_single_pr_filters_positive_inline_acknowledgement_reply() {
-	reset_mock_state
-	local acknowledgement_body="Thank you for verifying the fix and adding the regression test. The implementation looks correct and addresses the efficiency concern regarding redundant API calls."
-
+_mock_positive_inline_acknowledgement_gh() {
 	gh() {
 		local command="$1"
 		shift
@@ -844,39 +841,26 @@ test_scan_single_pr_filters_positive_inline_acknowledgement_reply() {
 		echo "[]"
 		return 0
 	}
+	return 0
+}
 
+_assert_positive_inline_acknowledgement_filtered() {
+	local acknowledgement_body="$1"
+	local result_name="$2"
 	local findings
 	findings=$(_scan_single_pr "owner/repo" "1" "medium" "false" 2>/dev/null)
 	local count
 	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
 
 	if [[ "$count" -eq 0 ]]; then
-		print_result "positive inline acknowledgement reply is filtered" 0
+		print_result "$result_name" 0
 	else
-		print_result "positive inline acknowledgement reply is filtered" 1 "expected 0 findings, got ${count}"
+		print_result "$result_name" 1 "expected 0 findings, got ${count}"
 	fi
+	return 0
+}
 
-	acknowledgement_body="The implementation looks correct and addressed the stale cleanup path."
-	findings=$(_scan_single_pr "owner/repo" "1" "medium" "false" 2>/dev/null)
-	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
-
-	if [[ "$count" -eq 0 ]]; then
-		print_result "positive inline acknowledgement reply using addressed is filtered" 0
-	else
-		print_result "positive inline acknowledgement reply using addressed is filtered" 1 "expected 0 findings, got ${count}"
-	fi
-
-	acknowledgement_body='Thank you for the update, marcusquinn. Using `${task_ref:-}` consistently for guard checks is the correct approach to prevent unbound variable errors when `set -u` is enabled. The verification steps you'
-	acknowledgement_body+="'ve taken, including the regression test, provide good confidence in this fix."
-	findings=$(_scan_single_pr "owner/repo" "1" "medium" "false" 2>/dev/null)
-	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
-
-	if [[ "$count" -eq 0 ]]; then
-		print_result "issue #26770 positive inline guard-check acknowledgement is filtered" 0
-	else
-		print_result "issue #26770 positive inline guard-check acknowledgement is filtered" 1 "expected 0 findings, got ${count}"
-	fi
-
+_mock_addressed_parent_reply_gh() {
 	gh() {
 		local command="$1"
 		shift
@@ -912,8 +896,27 @@ test_scan_single_pr_filters_positive_inline_acknowledgement_reply() {
 		esac
 		return 1
 	}
+	return 0
+}
+
+test_scan_single_pr_filters_positive_inline_acknowledgement_reply() {
+	reset_mock_state
+	_mock_positive_inline_acknowledgement_gh
+	_assert_positive_inline_acknowledgement_filtered \
+		"Thank you for verifying the fix and adding the regression test. The implementation looks correct and addresses the efficiency concern regarding redundant API calls." \
+		"positive inline acknowledgement reply is filtered"
+	_assert_positive_inline_acknowledgement_filtered \
+		"The implementation looks correct and addressed the stale cleanup path." \
+		"positive inline acknowledgement reply using addressed is filtered"
+	_assert_positive_inline_acknowledgement_filtered \
+		'Thank you for the update, marcusquinn. Using `${task_ref:-}` consistently for guard checks is the correct approach to prevent unbound variable errors when `set -u` is enabled. The verification steps you'"'ve taken, including the regression test, provide good confidence in this fix." \
+		"issue #26770 positive inline guard-check acknowledgement is filtered"
+
+	_mock_addressed_parent_reply_gh
+	local findings
 
 	findings=$(_scan_single_pr "owner/repo" "26918" "medium" "false" 2>/dev/null)
+	local count
 	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
 
 	if [[ "$count" -eq 0 ]]; then
