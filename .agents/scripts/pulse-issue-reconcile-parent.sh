@@ -346,7 +346,7 @@ reconcile_completed_parent_tasks() {
 		# t2773: prefer prefetch cache (now includes body field); fall back to gh_issue_list.
 		# Use module-level _PIR_PT_LABEL to avoid a second literal (string-literal ratchet).
 		local _cpt_lbl="$_PIR_PT_LABEL"
-		local issues_json open_issues_json closed_issues_json _cache_issues_cpt
+		local issues_json="" open_issues_json="" closed_issues_json="" _cache_issues_cpt=""
 		if _cache_issues_cpt=$(_read_cache_issues_for_slug "$slug" 2>/dev/null); then
 			open_issues_json=$(printf '%s' "$_cache_issues_cpt" | \
 				jq -c --arg lbl "$_cpt_lbl" --arg state "$_open_state" \
@@ -368,7 +368,7 @@ reconcile_completed_parent_tasks() {
 
 		local i=0
 		while [[ "$i" -lt "$issue_count" ]] && [[ "$total_closed" -lt "$max_closes" || "$total_nudged" -lt "$max_nudges" || "$total_escalated" -lt "$max_escalations" || "$total_reopened" -lt "$max_reopens" ]]; do
-			local issue_num issue_body issue_title issue_state
+			local issue_num="" issue_body="" issue_title="" issue_state=""
 			issue_num=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].number // ""') || true
 			issue_body=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].body // ""') || true
 			issue_title=$(printf '%s' "$issues_json" | jq -r --argjson i "$i" '.[$i].title // ""') || true
