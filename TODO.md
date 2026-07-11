@@ -4474,3 +4474,5 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 - [ ] t18087 Reap dead interactive claims during pulse dispatch #bug ref:GH#27039
 
 - [ ] t18088 Optimise local linter CPU usage #bug ref:GH#27041
+
+- [ ] t18089 Align background model tiers and reasoning effort #bug #type:enhancement ref:GH#27045
