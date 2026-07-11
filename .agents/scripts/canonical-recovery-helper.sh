@@ -72,12 +72,18 @@ trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
 
 local_ref="refs/heads/${default_branch}"
 remote_ref="refs/remotes/origin/${default_branch}"
+"$REAL_GIT" -C "$repo_path" fetch --no-tags origin \
+	"+refs/heads/${default_branch}:${remote_ref}" >/dev/null 2>&1 || {
+	printf 'BLOCKED: origin default branch tip could not be fetched\n' >&2
+	exit 1
+}
 target_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${remote_ref}^{commit}" 2>/dev/null || true)
 [[ -n "$target_sha" ]] || {
 	printf 'BLOCKED: origin default branch tip cannot be resolved\n' >&2
 	exit 1
 }
-"$REAL_GIT" -C "$repo_path" rev-parse --verify "${local_ref}^{commit}" >/dev/null 2>&1 || {
+local_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${local_ref}^{commit}" 2>/dev/null || true)
+[[ -n "$local_sha" ]] || {
 	printf 'BLOCKED: local default branch tip cannot be resolved\n' >&2
 	exit 1
 }
@@ -107,8 +113,13 @@ AUDIT_LOG_FILE="$recovery_audit_file" AUDIT_QUIET=true "$audit_helper" log opera
 	printf 'BLOCKED: origin default branch tip changed during recovery\n' >&2
 	exit 1
 }
+[[ "$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${local_ref}^{commit}")" == "$local_sha" ]] || {
+	printf 'BLOCKED: local default branch tip changed during recovery\n' >&2
+	exit 1
+}
 "$REAL_GIT" -C "$repo_path" switch "$default_branch"
 [[ "$("$REAL_GIT" -C "$repo_path" branch --show-current)" == "$default_branch" ]] || exit 1
 "$REAL_GIT" -C "$repo_path" merge --ff-only "$target_sha"
 [[ "$("$REAL_GIT" -C "$repo_path" rev-parse HEAD)" == "$target_sha" ]] || exit 1
+[[ "$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${remote_ref}^{commit}")" == "$target_sha" ]] || exit 1
 printf 'Restored canonical repository to %s\n' "$default_branch"

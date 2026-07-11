@@ -53,8 +53,7 @@ fi
 printf 'remote ahead\n' >>"${UPDATER}/README.md"
 /usr/bin/git -C "$UPDATER" commit -q -am 'remote ahead'
 /usr/bin/git -C "$UPDATER" push -q origin main
-/usr/bin/git -C "$REPO" fetch -q origin main
-remote_tip=$(/usr/bin/git -C "$REPO" rev-parse refs/remotes/origin/main)
+remote_tip=$(/usr/bin/git -C "$REMOTE" rev-parse refs/heads/main)
 if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" restore-default --repo "$REPO" --issue 27014 --confirm RESTORE_CANONICAL_DEFAULT >/dev/null &&
 	[[ "$(/usr/bin/git -C "$REPO" branch --show-current)" == "main" ]] &&
 	[[ "$(/usr/bin/git -C "$REPO" rev-parse HEAD)" == "$remote_tip" ]]; then
@@ -73,7 +72,6 @@ local_tip=$(/usr/bin/git -C "$REPO" rev-parse main)
 printf 'remote divergence\n' >>"${UPDATER}/README.md"
 /usr/bin/git -C "$UPDATER" commit -q -am 'remote divergence'
 /usr/bin/git -C "$UPDATER" push -q origin main
-/usr/bin/git -C "$REPO" fetch -q origin main
 if AIDEVOPS_REAL_GIT_BIN=/usr/bin/git bash "$HELPER" restore-default --repo "$REPO" --issue 27014 --confirm RESTORE_CANONICAL_DEFAULT >/dev/null 2>&1; then
 	printf 'FAIL recovery accepted divergent default branch\n'
 	exit 1
