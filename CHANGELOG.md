@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.32.23] - 2026-07-11
+
+### Changed
+
+- stop runaway file-size debt issue creation (#27118)
+
 ## [3.32.22] - 2026-07-11
 
 ### Changed
