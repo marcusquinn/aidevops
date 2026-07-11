@@ -28,6 +28,7 @@ assert_equals() {
 with_clean_variant_env() {
 	unset AIDEVOPS_HEADLESS_VARIANT || true
 	unset AIDEVOPS_HEADLESS_VARIANT_SONNET || true
+	unset AIDEVOPS_HEADLESS_VARIANT_HAIKU || true
 	unset AIDEVOPS_HEADLESS_VARIANT_OPUS || true
 	unset AIDEVOPS_HEADLESS_WORKER_VARIANT || true
 	unset AIDEVOPS_HEADLESS_PULSE_VARIANT || true
@@ -56,24 +57,28 @@ assert_equals "high" "$actual" "pulse sonnet routing keeps configured variant" |
 
 with_clean_variant_env
 actual=$(resolve_headless_variant "worker" "opus" "openai/gpt-5.6-sol")
-assert_equals "xhigh" "$actual" "GPT-5.6 Sol thinking worker defaults to xhigh" || true
+assert_equals "high" "$actual" "GPT-5.6 Sol thinking worker defaults to high" || true
 
 with_clean_variant_env
 actual=$(resolve_headless_variant "worker" "opus" "openai/gpt-5.6-sol-fast")
-assert_equals "xhigh" "$actual" "GPT-5.6 Sol Fast thinking worker defaults to xhigh" || true
+assert_equals "high" "$actual" "GPT-5.6 Sol Fast thinking worker defaults to high" || true
 
 with_clean_variant_env
 actual=$(resolve_headless_variant "worker" "sonnet" "openai/gpt-5.6-sol")
-assert_equals "" "$actual" "GPT-5.6 Sol standard worker keeps provider-default effort" || true
+assert_equals "low" "$actual" "GPT-5.6 Sol standard worker defaults to low" || true
+
+with_clean_variant_env
+actual=$(resolve_headless_variant "worker" "haiku" "openai/gpt-5.6-terra")
+assert_equals "low" "$actual" "GPT-5.6 Terra simple worker defaults to low" || true
 
 with_clean_variant_env
 AIDEVOPS_HEADLESS_VARIANT_OPUS="high"
 actual=$(resolve_headless_variant "worker" "opus" "openai/gpt-5.6-sol")
-assert_equals "high" "$actual" "explicit GPT-5.6 Sol thinking-tier variant overrides xhigh default" || true
+assert_equals "high" "$actual" "explicit GPT-5.6 Sol thinking-tier variant overrides the automatic default" || true
 
 with_clean_variant_env
 actual=$(resolve_headless_variant "pulse" "opus" "openai/gpt-5.6-sol")
-assert_equals "" "$actual" "pulse does not inherit worker thinking-tier xhigh default" || true
+assert_equals "" "$actual" "pulse does not inherit worker thinking-tier effort defaults" || true
 
 with_clean_variant_env
 
