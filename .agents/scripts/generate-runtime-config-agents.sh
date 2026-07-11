@@ -61,8 +61,8 @@ _run_agent_discovery_python() {
 # Phase 2a: Agent Generation -- Per-Runtime Adapters
 # =============================================================================
 
-# Shared helper: write ~/.config/<runtime>/AGENTS.md with the cache-read greeting
-# template for the given runtime.
+# Shared helper: write ~/.config/<runtime>/AGENTS.md with the authoritative
+# plugin-injection precedence and cache/VERSION greeting fallback.
 # Arguments:
 #   $1 - runtime_id (e.g. "opencode", "claude-code")
 #   $2 - config_dir (e.g. "$HOME/.config/opencode")
@@ -119,8 +119,8 @@ NOT repeat toast content in the chat.
 
 **On interactive conversation start** (skip for headless sessions like \`/pulse\`, \`/full-loop\`):
 
-1. Read line 1 of \`${cache_path}\`. Format: \`aidevops v{X} running in ${display_name} v{Y} | ...\`. Extract \`{X}\` and \`{Y}\`.
-2. Before any tool call or task work, make the first visible text in your first assistant response exactly this template — no extra prose, no status dump:
+1. If this prompt contains a \`## Session-start greeting order\` block, that plugin-injected block is authoritative. Use its already-resolved exact greeting before any tool call or task work. Do not read the cache or VERSION first.
+2. Otherwise, the plugin injection is unavailable. Read line 1 of \`${cache_path}\`. Format: \`aidevops v{X} running in ${display_name} v{Y} | ...\`. Extract \`{X}\` and \`{Y}\`, then make the first visible text in your first assistant response exactly this template — no extra prose, no status dump:
 
        Hi!
 
@@ -128,8 +128,8 @@ NOT repeat toast content in the chat.
 
        What would you like to work on?
 
-3. If the cache file is missing, read \`~/.aidevops/agents/VERSION\` for \`{X}\` and greet: "Hi!\n\nWe're running aidevops v{X}.\n\nWhat would you like to work on?"
-4. Then respond to the user's actual message. If the user launched the session with an initial message, that user message may appear first in the transcript; still put the greeting first in your assistant response.
+3. In that fallback path, if the cache file is missing, read \`~/.aidevops/agents/VERSION\` for \`{X}\` and greet: "Hi!\n\nWe're running aidevops v{X}.\n\nWhat would you like to work on?"
+4. Then respond to the user's actual message. If the user launched the session with an initial message, that user message may appear first in the transcript; still put the greeting first in your assistant response. Never emit both the injected greeting and the fallback greeting.
 
 If the user later asks about aidevops updates, direct them to run \`aidevops update\` in a terminal session (or type \`!aidevops update\` below). Do not announce updates unprompted — the toast already did.
 
