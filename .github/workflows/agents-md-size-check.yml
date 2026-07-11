@@ -5,7 +5,7 @@ on:
     paths:
       - '.agents/AGENTS.md'
       - 'AGENTS.md'
-      - 'prompts/build.txt'
+      - '.agents/prompts/build.txt'
       - '.github/workflows/agents-md-size-check.yml'
   push:
     branches:
@@ -13,7 +13,7 @@ on:
     paths:
       - '.agents/AGENTS.md'
       - 'AGENTS.md'
-      - 'prompts/build.txt'
+      - '.agents/prompts/build.txt'
       - '.github/workflows/agents-md-size-check.yml'
 
 permissions:
@@ -52,3 +52,39 @@ jobs:
           fi
 
           echo "AGENTS.md size check passed"
+
+      - name: Validate contributor guidance references
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib
+          import re
+          import sys
+
+          root = pathlib.Path("AGENTS.md")
+          text = root.read_text(encoding="utf-8")
+          errors = []
+
+          for path_text in sorted(set(re.findall(r"`(\.agents/[^`\s]+)", text))):
+              path = pathlib.Path(path_text)
+              if not path.exists():
+                  errors.append(f"{root}: broken local path: {path_text}")
+
+          reference_pattern = re.compile(r'`(?P<path>\.agents/[^`]+\.md)` "(?P<headings>[^"]+)"')
+          for match in reference_pattern.finditer(text):
+              path = pathlib.Path(match.group("path"))
+              if not path.is_file():
+                  continue
+              headings = {
+                  heading.group(1).strip()
+                  for heading in re.finditer(r"^#{1,6}\s+(.+?)\s*$", path.read_text(encoding="utf-8"), re.MULTILINE)
+              }
+              for expected in (part.strip() for part in match.group("headings").split(" > ")):
+                  if expected not in headings:
+                      errors.append(f'{root}: missing heading "{expected}" in {path}')
+
+          if errors:
+              print("\n".join(errors), file=sys.stderr)
+              raise SystemExit(1)
+          print("Contributor guidance references passed")
+          PY

@@ -13,7 +13,7 @@ mode: subagent
 
 ## Quick Reference
 
-- **Budget**: ~50-100 instructions per agent; root AGENTS.md universally applicable only
+- **Budget**: ~50-100 instructions per agent is a maintainability heuristic; investigate overages, don't cut solely to hit the count; root AGENTS.md universally applicable only
 - **Subdivision**: Docs >~300 lines → split into entry point + sub-docs; don't cut to hit a line count
 - **MCP servers**: Disabled globally, enabled per-agent
 - **Code refs**: `rg "pattern"` search patterns, not `file:line` (line numbers drift)
