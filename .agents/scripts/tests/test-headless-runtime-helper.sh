@@ -159,18 +159,20 @@ test_launch_helpers_tolerate_unset_state_under_nounset() {
 		print_result "launch temp cleanup tolerates unset state under nounset" 1 "status=$status"
 	fi
 
+	local err_out=""
 	status=0
-	(
+	err_out=$(
 		unset session_key work_dir title prompt prompt_file
-		_validate_run_args
-	) >/dev/null 2>&1 || status=$?
+		_validate_run_args 2>&1
+	) || status=$?
 
-	if [[ "$status" -eq 1 ]]; then
+	if [[ "$status" -eq 1 && "$err_out" == *"run requires --session-key"* ]]; then
 		print_result "launch argument validation reports missing caller state under nounset" 0
 		return 0
 	fi
 
-	print_result "launch argument validation reports missing caller state under nounset" 1 "status=$status"
+	print_result "launch argument validation reports missing caller state under nounset" 1 \
+		"status=$status output=${err_out:-<empty>}"
 	return 0
 }
 
