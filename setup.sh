@@ -9,6 +9,11 @@ IFS=$'\n\t'
 trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
 shopt -s inherit_errexit 2>/dev/null || true
 
+if [[ -z "${HOME:-}" ]]; then
+	printf '%s\n' '[ERROR] HOME environment variable is unset or empty. setup.sh requires a valid HOME directory.' >&2
+	exit 1
+fi
+
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
@@ -68,7 +73,7 @@ REPO_URL="https://github.com/marcusquinn/aidevops.git"
 # INSTALL_DIR: resolve from the directory where setup.sh is executed (supports worktrees)
 # For bootstrap (curl install), this will be /dev/fd/NN and trigger re-exec after clone
 INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-${HOME:+$HOME/.aidevops/agents}}"
+AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
 export REPO_URL INSTALL_DIR AGENTS_DIR
 
 # Source modular setup functions (t316.2)
