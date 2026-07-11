@@ -528,17 +528,18 @@ else
 	fail "local tier missing from get_tier_models case statement"
 fi
 
-# Verify local tier has a concrete configured or hardcoded fallback model.
+# Verify the shared local tier has no cloud fallback. Users add an installed
+# llama.cpp/Ollama model through their custom routing table.
 local_tier_model=""
 local_tier_model=$(grep "^[[:space:]]*local).*current_model" "$HELPER" | grep -oE "[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+" | head -1 || true)
 if [[ -z "$local_tier_model" && -f "$REPO_DIR/.agents/configs/model-routing-table.json" ]]; then
 	local_tier_model=$(jq -r '.tiers.local.models[0] // empty' "$REPO_DIR/.agents/configs/model-routing-table.json" 2>/dev/null || true)
 fi
-if [[ "$local_tier_model" == *"/"* ]]; then
-	pass "local tier has configured model: $local_tier_model"
+if [[ -z "$local_tier_model" ]]; then
+	pass "local tier fails closed without a user-configured local model"
 else
-	fail "local tier should have a configured model" \
-		"No provider/model found in local tier configuration or fallback"
+	fail "local tier should not have a shared fallback model" \
+		"Unexpected provider/model found: $local_tier_model"
 fi
 
 # Verify ollama is a known provider in the helper (check help output or source)
