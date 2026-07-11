@@ -70,6 +70,22 @@ mkdir "$lock_dir" 2>/dev/null || {
 }
 trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT
 
+local_ref="refs/heads/${default_branch}"
+remote_ref="refs/remotes/origin/${default_branch}"
+target_sha=$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${remote_ref}^{commit}" 2>/dev/null || true)
+[[ -n "$target_sha" ]] || {
+	printf 'BLOCKED: origin default branch tip cannot be resolved\n' >&2
+	exit 1
+}
+"$REAL_GIT" -C "$repo_path" rev-parse --verify "${local_ref}^{commit}" >/dev/null 2>&1 || {
+	printf 'BLOCKED: local default branch tip cannot be resolved\n' >&2
+	exit 1
+}
+"$REAL_GIT" -C "$repo_path" merge-base --is-ancestor "$local_ref" "$target_sha" || {
+	printf 'BLOCKED: local default branch has diverged from origin/%s\n' "$default_branch" >&2
+	exit 1
+}
+
 audit_helper="${SCRIPT_DIR}/audit-log-helper.sh"
 recovery_audit_file="${HOME}/.aidevops/logs/canonical-recovery-audit.jsonl"
 [[ -x "$audit_helper" ]] || {
@@ -81,11 +97,18 @@ AUDIT_LOG_FILE="$recovery_audit_file" "$audit_helper" verify --quiet || {
 	exit 1
 }
 AUDIT_LOG_FILE="$recovery_audit_file" AUDIT_QUIET=true "$audit_helper" log operation.verify "Canonical default-branch recovery authorized" \
-	--detail "issue=${issue_number}" --detail "repo=${repo_path}" --detail "target=${default_branch}" >/dev/null || {
+	--detail "issue=${issue_number}" --detail "repo=${repo_path}" \
+	--detail "target=${default_branch}" --detail "target_sha=${target_sha}" >/dev/null || {
 	printf 'BLOCKED: recovery audit record could not be written\n' >&2
 	exit 1
 }
 
+[[ "$("$REAL_GIT" -C "$repo_path" rev-parse --verify "${remote_ref}^{commit}")" == "$target_sha" ]] || {
+	printf 'BLOCKED: origin default branch tip changed during recovery\n' >&2
+	exit 1
+}
 "$REAL_GIT" -C "$repo_path" switch "$default_branch"
 [[ "$("$REAL_GIT" -C "$repo_path" branch --show-current)" == "$default_branch" ]] || exit 1
+"$REAL_GIT" -C "$repo_path" merge --ff-only "$target_sha"
+[[ "$("$REAL_GIT" -C "$repo_path" rev-parse HEAD)" == "$target_sha" ]] || exit 1
 printf 'Restored canonical repository to %s\n' "$default_branch"
