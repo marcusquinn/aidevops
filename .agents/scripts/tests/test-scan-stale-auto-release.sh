@@ -38,6 +38,8 @@
 #   9. OPENCODE_SESSION_ID set, no TTY, no headless → dead+missing released (t3205)
 #   10. AIDEVOPS_HEADLESS + OPENCODE_SESSION_ID → stamp preserved (headless wins, t3205)
 #   11. report-only stale output includes worktree path (GH#22210)
+#   12. release-if-dead releases one same-host dead claim.
+#   13. release-if-dead preserves live, cross-host, and lockdown claims.
 #
 # Stub strategy: override `_isc_release_claim_by_stamp_path` as a shell function
 # after sourcing the helper to capture auto-release calls without real gh ops.
@@ -363,6 +365,44 @@ else
 	fail "AIDEVOPS_HEADLESS=1 + OPENCODE_SESSION_ID → stamp preserved (headless wins)" \
 		"stamp deleted — headless marker must take precedence over AI-agent marker"
 fi
+
+# =============================================================================
+# Tests 12-13 — bounded pulse command releases only a safe dead claim
+# =============================================================================
+_isc_has_label() { return 1; }
+write_stamp "owner-repo-112.json" "99999" "$EXISTING_WORKTREE" "112" "owner/repo"
+if _isc_cmd_release_if_dead "112" "owner/repo" >/dev/null 2>&1 && [[ ! -f "${STAMP_DIR}/owner-repo-112.json" ]]; then
+	pass "release-if-dead releases a same-host dead claim"
+else
+	fail "release-if-dead releases a same-host dead claim"
+fi
+
+write_stamp "owner-repo-113.json" "$LIVE_PID" "$EXISTING_WORKTREE" "113" "owner/repo"
+if ! _isc_cmd_release_if_dead "113" "owner/repo" >/dev/null 2>&1 && [[ -f "${STAMP_DIR}/owner-repo-113.json" ]]; then
+	pass "release-if-dead preserves a live claim"
+else
+	fail "release-if-dead preserves a live claim"
+fi
+rm -f "${STAMP_DIR}/owner-repo-113.json"
+
+write_stamp "owner-repo-114.json" "99999" "$EXISTING_WORKTREE" "114" "owner/repo"
+jq '.hostname = "another-host"' "${STAMP_DIR}/owner-repo-114.json" >"${STAMP_DIR}/owner-repo-114.tmp"
+mv "${STAMP_DIR}/owner-repo-114.tmp" "${STAMP_DIR}/owner-repo-114.json"
+if ! _isc_cmd_release_if_dead "114" "owner/repo" >/dev/null 2>&1 && [[ -f "${STAMP_DIR}/owner-repo-114.json" ]]; then
+	pass "release-if-dead preserves a cross-host claim"
+else
+	fail "release-if-dead preserves a cross-host claim"
+fi
+rm -f "${STAMP_DIR}/owner-repo-114.json"
+
+_isc_has_label() { return 0; }
+write_stamp "owner-repo-115.json" "99999" "$EXISTING_WORKTREE" "115" "owner/repo"
+if ! _isc_cmd_release_if_dead "115" "owner/repo" >/dev/null 2>&1 && [[ -f "${STAMP_DIR}/owner-repo-115.json" ]]; then
+	pass "release-if-dead preserves a no-auto-dispatch lockdown"
+else
+	fail "release-if-dead preserves a no-auto-dispatch lockdown"
+fi
+rm -f "${STAMP_DIR}/owner-repo-115.json"
 # Cleanup
 rm -f "${STAMP_DIR}/owner-repo-110.json"
 

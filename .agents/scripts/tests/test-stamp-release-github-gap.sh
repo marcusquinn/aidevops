@@ -18,7 +18,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-ISH="${REPO_ROOT}/.agents/scripts/interactive-session-helper.sh"
+ISH_COMMANDS="${REPO_ROOT}/.agents/scripts/interactive-session-helper-commands.sh"
+ISH_SCAN="${REPO_ROOT}/.agents/scripts/interactive-session-helper-scan.sh"
 
 TESTS_RUN=0
 TESTS_PASSED=0
@@ -109,6 +110,8 @@ test_auto_release_passes_unassign() {
 		# Minimal stubs required to prevent actual network calls
 		_isc_gh_reachable() { return 0; }
 		_isc_current_user() { printf 'testuser'; return 0; }
+		_isc_can_manage_issue_state() { return 0; }
+		_isc_issue_is_closed() { return 1; }
 		set_issue_status() {
 			# Record what we were called with
 			printf 'set_issue_status %s\n' "$*" >>"$captured_args_file"
@@ -122,15 +125,17 @@ test_auto_release_passes_unassign() {
 		_isc_info() { printf 'INFO: %s\n' "$*"; return 0; }
 		_isc_warn() { printf 'WARN: %s\n' "$*"; return 0; }
 		_isc_err() { printf 'ERR: %s\n' "$*"; return 0; }
-		export -f _isc_gh_reachable _isc_current_user set_issue_status
+		export -f _isc_gh_reachable _isc_current_user _isc_can_manage_issue_state _isc_issue_is_closed set_issue_status
 		export -f _isc_has_in_review _isc_delete_stamp _isc_info _isc_warn _isc_err
 		CLAIM_STAMP_DIR="$stamp_dir"
 		export CLAIM_STAMP_DIR
 
-		# Source only the functions we need (avoid full init)
-		# We extract and eval the two target functions from the helper.
-		eval "$(sed -n '/^_isc_cmd_release()/,/^}/p' "$ISH")"
-		eval "$(sed -n '/^_isc_release_claim_by_stamp_path()/,/^}/p' "$ISH")"
+		# Source the split libraries that own the target functions. This keeps
+		# the regression aligned with the production module graph.
+		# shellcheck disable=SC1090
+		source "$ISH_COMMANDS"
+		# shellcheck disable=SC1090
+		source "$ISH_SCAN"
 
 		_isc_release_claim_by_stamp_path "$stamp_path"
 		printf 'EXIT:%d\n' $?
@@ -164,6 +169,8 @@ test_release_surfaces_failure_message() {
 	result=$(
 		_isc_gh_reachable() { return 0; }
 		_isc_current_user() { printf 'testuser'; return 0; }
+		_isc_can_manage_issue_state() { return 0; }
+		_isc_issue_is_closed() { return 1; }
 		set_issue_status() {
 			# Simulate a gh failure with an error message on stderr
 			printf 'gh: HTTP 422: bad credentials\n' >&2
@@ -178,10 +185,11 @@ test_release_surfaces_failure_message() {
 			return 0
 		}
 		_isc_err() { printf 'ERR: %s\n' "$*"; return 0; }
-		export -f _isc_gh_reachable _isc_current_user set_issue_status
+		export -f _isc_gh_reachable _isc_current_user _isc_can_manage_issue_state _isc_issue_is_closed set_issue_status
 		export -f _isc_has_in_review _isc_delete_stamp _isc_info _isc_warn _isc_err
 
-		eval "$(sed -n '/^_isc_cmd_release()/,/^}/p' "$ISH")"
+		# shellcheck disable=SC1090
+		source "$ISH_COMMANDS"
 
 		_isc_cmd_release "99999" "owner/repo"
 		printf 'EXIT:%d\n' $?
@@ -218,16 +226,19 @@ test_missing_stamp_is_noop() {
 	result=$(
 		_isc_gh_reachable() { return 0; }
 		_isc_current_user() { printf 'testuser'; return 0; }
+		_isc_can_manage_issue_state() { return 0; }
+		_isc_issue_is_closed() { return 1; }
 		set_issue_status() { printf 'SHOULD_NOT_BE_CALLED\n'; return 0; }
 		_isc_has_in_review() { return 0; }
 		_isc_delete_stamp() { return 0; }
 		_isc_info() { printf 'INFO: %s\n' "$*"; return 0; }
 		_isc_warn() { printf 'WARN: %s\n' "$*"; return 0; }
 		_isc_err() { printf 'ERR: %s\n' "$*"; return 0; }
-		export -f _isc_gh_reachable _isc_current_user set_issue_status
+		export -f _isc_gh_reachable _isc_current_user _isc_can_manage_issue_state _isc_issue_is_closed set_issue_status
 		export -f _isc_has_in_review _isc_delete_stamp _isc_info _isc_warn _isc_err
 
-		eval "$(sed -n '/^_isc_release_claim_by_stamp_path()/,/^}/p' "$ISH")"
+		# shellcheck disable=SC1090
+		source "$ISH_SCAN"
 
 		_isc_release_claim_by_stamp_path "/nonexistent/stamp.json"
 		printf 'EXIT:%d\n' $?
@@ -247,6 +258,7 @@ test_missing_stamp_is_noop() {
 # ---------------------------------------------------------------------------
 test_offline_gh_is_fail_open() {
 	local stamp_dir="${TEST_DIR}/stamps_offline"
+	local offline_warn_file="${TEST_DIR}/offline_warn"
 	local stamp_path
 	stamp_path=$(write_stamp "$stamp_dir" "11111" "owner/repo2")
 
@@ -259,18 +271,21 @@ test_offline_gh_is_fail_open() {
 			return 0
 		}
 		_isc_info() { printf 'INFO: %s\n' "$*"; return 0; }
-		_isc_warn() { printf 'WARN: %s\n' "$*"; return 0; }
+		_isc_warn() { printf 'WARN: %s\n' "$*" >>"$offline_warn_file"; return 0; }
 		_isc_err() { printf 'ERR: %s\n' "$*"; return 0; }
 		export -f _isc_gh_reachable _isc_delete_stamp _isc_info _isc_warn _isc_err
 
-		eval "$(sed -n '/^_isc_cmd_release()/,/^}/p' "$ISH")"
+		# shellcheck disable=SC1090
+		source "$ISH_COMMANDS"
 
 		_isc_cmd_release "11111" "owner/repo2"
 		printf 'EXIT:%d\n' $?
 	) 2>&1 || true
 
 	assert_contains "offline gh exits 0 (fail-open)" "EXIT:0" "$result"
-	assert_contains "offline gh prints warning" "offline" "$result"
+	local offline_warn=""
+	[[ -f "$offline_warn_file" ]] && offline_warn=$(cat "$offline_warn_file")
+	assert_contains "offline gh prints warning" "offline" "$offline_warn"
 
 	return 0
 }

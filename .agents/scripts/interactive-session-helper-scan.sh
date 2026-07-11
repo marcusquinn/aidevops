@@ -262,6 +262,45 @@ _isc_release_claim_by_stamp_path() {
 	return 0
 }
 
+# Release one stamped claim only when its original same-host owner process is
+# no longer alive. This narrow command is safe for scheduled pulse use: unlike
+# scan-stale it does not enumerate unrelated repositories or PR orphans.
+# Explicit no-auto-dispatch lockdowns and unverifiable metadata fail closed.
+_isc_cmd_release_if_dead() {
+	local issue="${1:-}"
+	local slug="${2:-}"
+	if [[ -z "$issue" || -z "$slug" ]]; then
+		_isc_err "usage: interactive-session-helper.sh release-if-dead <issue> <slug>"
+		return 2
+	fi
+
+	local stamp_path
+	stamp_path=$(_isc_stamp_path "$issue" "$slug")
+	[[ -f "$stamp_path" ]] || return 1
+
+	local stamp_hostname local_hostname pid stored_hash
+	stamp_hostname=$(jq -r '.hostname // empty' "$stamp_path" 2>/dev/null || echo "")
+	local_hostname=$(_isc_hostname_or_fallback)
+	[[ -n "$stamp_hostname" && "$stamp_hostname" == "$local_hostname" ]] || return 1
+
+	local label_rc=0
+	_isc_has_label "$issue" "$slug" "no-auto-dispatch" || label_rc=$?
+	case "$label_rc" in
+	0) return 1 ;;
+	2) return 1 ;;
+	esac
+
+	pid=$(jq -r '.pid // empty' "$stamp_path" 2>/dev/null || echo "")
+	stored_hash=$(jq -r '.owner_argv_hash // empty' "$stamp_path" 2>/dev/null || echo "")
+	if [[ -n "$pid" ]] && _is_process_alive_and_matches "$pid" "${WORKER_PROCESS_PATTERN:-}" "$stored_hash"; then
+		return 1
+	fi
+
+	_isc_info "release-if-dead: releasing #${issue} in ${slug} after same-host owner exit"
+	_isc_release_claim_by_stamp_path "$stamp_path"
+	return 0
+}
+
 # scan-stale Phase 1a helper (t2148) — stampless interactive claims.
 # -----------------------------------------------------------------------------
 # Iterates pulse-enabled repos from repos.json, calls

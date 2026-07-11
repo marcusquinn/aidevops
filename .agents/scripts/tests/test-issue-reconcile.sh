@@ -67,6 +67,12 @@ EOF
 # Stub directory — prepended to PATH
 STUB_DIR="${TEST_ROOT}/bin"
 mkdir -p "$STUB_DIR"
+export PATH="${STUB_DIR}:${PATH}"
+cat >"${STUB_DIR}/gh" <<'STUB'
+#!/usr/bin/env bash
+exit 1
+STUB
+chmod +x "${STUB_DIR}/gh"
 
 # =============================================================================
 # Source the module under test
@@ -82,6 +88,25 @@ unset _PULSE_ISSUE_RECONCILE_LOADED
 # shellcheck source=/dev/null
 source "${TEST_SCRIPTS_DIR}/pulse-issue-reconcile.sh" >/dev/null 2>&1
 set +e
+
+# Keep this unit test independent of shared cooldown/rate-limit state. The
+# production wrapper is covered separately; here each rewritten gh stub must
+# receive the command directly.
+_gh_with_timeout() {
+	local op_class="$1"
+	shift
+	[[ -n "$op_class" ]] || return 1
+	"$@"
+	return $?
+}
+gh() {
+	command "${STUB_DIR}/gh" "$@"
+	return $?
+}
+gh_issue_list() {
+	gh issue list "$@"
+	return $?
+}
 
 # =============================================================================
 # Part 1 — _normalize_reassign_self: self-assigns orphaned active issues
@@ -266,6 +291,43 @@ else
 	print_result "t2148: stampless auto-recovery skips issues with a stamp file" 1 \
 		"(should not have unassigned — stamp exists but gh edit was called)"
 fi
+
+# =============================================================================
+# Part 6b (GH#27039) — an aged stamped claim is routed through the bounded
+# release-if-dead command instead of being skipped forever.
+# =============================================================================
+DEAD_STAMP_HELPER_LOG="${TEST_ROOT}/dead-stamp-helper.log"
+DEAD_STAMP_HELPER="${STUB_DIR}/interactive-session-helper.sh"
+cat >"$DEAD_STAMP_HELPER" <<STUB
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"${DEAD_STAMP_HELPER_LOG}"
+exit 0
+STUB
+chmod +x "$DEAD_STAMP_HELPER"
+export AIDEVOPS_INTERACTIVE_SESSION_HELPER="$DEAD_STAMP_HELPER"
+
+cat >"${STUB_DIR}/gh" <<STUB
+#!/usr/bin/env bash
+if [[ "\$1" == "issue" && "\$2" == "list" ]]; then
+    echo '[{"number":557,"updatedAt":"2020-01-01T00:00:00Z","labels":[{"name":"origin:interactive"},{"name":"status:in-review"}]}]'
+    exit 0
+fi
+exit 1
+STUB
+chmod +x "${STUB_DIR}/gh"
+jq -n --arg host "$(hostname 2>/dev/null || echo unknown)" '{
+	issue: 557, slug: "owner/testrepo", pid: 99999, hostname: $host
+}' >"${STAMP_DIR}/owner-testrepo-557.json"
+
+_normalize_unassign_stampless_interactive "testrunner" "$REPOS_JSON" "$NOW_EPOCH_P5" "86400"
+if [[ -f "$DEAD_STAMP_HELPER_LOG" ]] && grep -q -- "release-if-dead 557 owner/testrepo" "$DEAD_STAMP_HELPER_LOG"; then
+	print_result "GH#27039: stamped stale claim uses bounded release-if-dead command" 0
+else
+	print_result "GH#27039: stamped stale claim uses bounded release-if-dead command" 1 \
+		"(helper log: $(cat "$DEAD_STAMP_HELPER_LOG" 2>/dev/null || echo 'file missing'))"
+fi
+unset AIDEVOPS_INTERACTIVE_SESSION_HELPER
+rm -f "${STAMP_DIR}/owner-testrepo-557.json"
 
 # Clean up
 rm -f "${STAMP_DIR}/owner-testrepo-555.json"
