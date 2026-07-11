@@ -24,7 +24,7 @@
 #
 # Fix (t2164): add a wc -l verification step in the recently-closed branch.
 # Only short-circuit as continuation when the file is now under threshold.
-# If still over, log and fall through to file a fresh debt issue. Preserve
+# If still over, log and reopen the canonical debt issue. Preserve
 # the pre-t2164 behaviour (trust the closed signal) when repo_path is
 # missing or the file isn't on disk in this checkout — measurement
 # unavailable is safer-as-continuation than safer-as-duplicate.
@@ -33,7 +33,7 @@
 #   1. Closed exists, file UNDER threshold, repo_path provided
 #      → returns "(recently-closed — continuation)"
 #   2. Closed exists, file OVER threshold, repo_path provided
-#      → does NOT return continuation; creates new issue with prior-attempt ref
+#      → does NOT create a successor; reopens the canonical issue
 #   3. Closed exists, no repo_path
 #      → returns "(recently-closed — continuation)" (backward-compat fallback)
 #   4. Closed exists, repo_path set but file not on disk
@@ -134,6 +134,12 @@ gh() {
 			return 0
 		fi
 	fi
+	if [[ "$1" == "issue" && "$2" == "reopen" ]]; then
+		return 0
+	fi
+	if [[ "$1" == "issue" && "$2" == "edit" ]]; then
+		return 0
+	fi
 
 	# label create — silent no-op
 	if [[ "$1" == "label" && "$2" == "create" ]]; then
@@ -205,19 +211,23 @@ assert_eq \
 	"#18706 (recently-closed — continuation)" \
 	"$out"
 
-# ---- Test 2 — closed exists, file OVER threshold → fall through to new ----
+# ---- Test 2 — closed exists, file OVER threshold → reopen canonical ----
 GH_OPEN_RESPONSE=""
 GH_CLOSED_RESPONSE="18706"
-GH_CREATE_RESPONSE_URL="https://github.com/owner/repo/issues/77777"
+GH_CREATE_RESPONSE_URL=""
 out=$(_large_file_gate_create_debt_issue "over.sh" "9999" "owner/repo" "$TMP")
 assert_eq \
-	"closed + file over threshold → NEW (not continuation, GH#19415 root cause)" \
-	"#77777 (new)" \
+	"closed + file over threshold → reopen canonical issue" \
+	"#18706 (reopened)" \
 	"$out"
 assert_contains \
-	"file-over-threshold path logs the prior-attempt skip" \
+	"file-over-threshold path logs canonical reopen" \
 	"prior file-size-debt #18706 closed but over.sh still 2050 lines" \
 	"$(cat "$LOGFILE")"
+assert_contains \
+	"file-over-threshold path calls gh issue reopen" \
+	"gh issue reopen 18706 --repo owner/repo" \
+	"$(cat "$GH_CALLS_LOG")"
 
 # ---- Test 3 — closed exists, no repo_path → backward-compat continuation ----
 GH_OPEN_RESPONSE=""

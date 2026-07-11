@@ -298,7 +298,7 @@ if [[ "$rc" == "0" && "$new_calls" == "0" ]]; then
 else
 	fail "caller:lookup-failed-defers" "rc=$rc new_calls=$new_calls out='$out'"
 fi
-if grep -q "file-size-debt dedup lookup failed for worktree-helper.sh" "$LOGFILE"; then
+if grep -q "file-size-debt dedup lookup failed for .agents/scripts/worktree-helper.sh" "$LOGFILE"; then
 	pass "caller:lookup-failed-defers logs deferral with parent ref"
 else
 	fail "caller:lookup-failed-defers logs" "log contents: $(cat "$LOGFILE")"
@@ -364,7 +364,7 @@ printf '\n%s\n\n' '--- Wrapper: gh_issue_list REST fallback parity for --search 
 				printf '0\n'
 				return 0
 			fi
-			if [[ "$2" =~ ^/search/issues ]]; then
+			if [[ "$*" == *"/search/issues"* ]]; then
 				# Real endpoint shape: { "items": [{ "number": 4242 }] }.
 				# After --jq ".items | .[0].number // empty" the result is "4242".
 				printf '4242\n'
@@ -387,7 +387,7 @@ printf '\n%s\n\n' '--- Wrapper: gh_issue_list REST fallback parity for --search 
 		--search worktree-helper.sh --json number --jq '.[0].number // empty' --limit 5 2>/dev/null)
 
 	# Verify /search/issues was called AND /repos/owner/repo/issues was NOT.
-	if grep -q "api /search/issues" "$GH_API_PATHS"; then
+	if grep -qE "api .*\/search/issues" "$GH_API_PATHS"; then
 		printf 'PASS_SEARCH\n' >"${TMP}/wrapper_result"
 	else
 		printf 'FAIL_SEARCH out=%s paths=%s\n' "$out" "$(cat "$GH_API_PATHS")" >"${TMP}/wrapper_result"
