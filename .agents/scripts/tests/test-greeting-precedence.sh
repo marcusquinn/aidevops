@@ -60,6 +60,6 @@ grep -q 'do NOT re-run `aidevops-update-check.sh`' "$TEMPLATE_FILE"
 if grep -q 'Run .*aidevops-update-check.sh' "$TEMPLATE_FILE"; then
 	exit 1
 fi
-[[ "$(grep -c '^       Hi!$' "$TEMPLATE_FILE")" -eq 1 ]]
+[[ "$(grep -c '^   Hi!$' "$TEMPLATE_FILE")" -eq 1 ]]
 
 printf 'PASS: greeting injection precedence and fallback generation\n'

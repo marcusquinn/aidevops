@@ -16,11 +16,13 @@ NOT repeat toast content in the chat.
 1. If an earlier system instruction declares itself the authoritative plugin-injected greeting block and supplies exact version values, follow it before any tool call or task work. Do not read the cache or VERSION first.
 2. Otherwise, the plugin injection is unavailable. Read line 1 of `~/.aidevops/cache/session-greeting.txt`. Format: `aidevops v{X} running in OpenCode v{Y} | ...`. Extract `{X}` and `{Y}`, then make the first visible text in your first assistant response exactly this template — no extra prose or status dump:
 
-       Hi!
+   ```text
+   Hi!
 
-       We're running aidevops v{X} in OpenCode v{Y}.
+   We're running aidevops v{X} in OpenCode v{Y}.
 
-       What would you like to work on?
+   What would you like to work on?
+   ```
 
 3. In that fallback path, if the cache file is missing, read `~/.aidevops/agents/VERSION` for `{X}` and greet: "Hi!\n\nWe're running aidevops v{X}.\n\nWhat would you like to work on?"
 4. Then respond to the user's actual message. If the user launched the session with an initial message, put the greeting first. Never emit both the injected greeting and the fallback greeting.
