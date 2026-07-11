@@ -28,6 +28,9 @@ BLOCKING_LABELS = frozenset({
     "status:blocked",
     "status:in-review",
 })
+DEPENDENCY_CLAUSE_RE = re.compile(r"blocked[- ]by[^\n\r]*", re.IGNORECASE)
+TASK_REF_RE = re.compile(r"\bt([0-9]+(?:\.[0-9a-z]+)*)\b", re.IGNORECASE)
+ISSUE_REF_RE = re.compile(r"#([0-9]+)")
 
 
 def _int_from_env(name: str, default: int) -> int:
@@ -48,6 +51,7 @@ def _empty_aggregate() -> dict[str, int]:
         "queued": 0,
         "assigned": 0,
         "blocked_labels": 0,
+        "dependency_inconsistent_available": 0,
         "needs_tier": 0,
         "needs_status": 0,
         "parent_task": 0,
@@ -113,7 +117,7 @@ def _fetch_repo_issues(slug: str, max_issues: int) -> Optional[list[dict[str, An
         "--state", "open",
         "--label", "auto-dispatch",
         "--limit", str(max_issues),
-        "--json", "number,title,labels,assignees,updatedAt",
+        "--json", "number,title,body,labels,assignees,updatedAt",
     ]
     if _valid_repo_slug(slug):
         try:
@@ -137,6 +141,124 @@ def _fetch_repo_issues(slug: str, max_issues: int) -> Optional[list[dict[str, An
     return issues
 
 
+def _run_gh_json(cmd: list[str]) -> Optional[Any]:
+    try:
+        completed = subprocess.run(  # nosec B603
+            cmd,
+            text=True,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    try:
+        return json.loads(completed.stdout or "null")
+    except json.JSONDecodeError:
+        return None
+
+
+def _native_dependency_state(slug: str, issue_number: int) -> Optional[bool]:
+    """Return True for unresolved, False for positively clear, None for absent/unavailable."""
+    owner, repo = slug.split("/", 1)
+    query = """
+query($owner:String!,$name:String!,$number:Int!) {
+  repository(owner:$owner,name:$name) {
+    issue(number:$number) { blockedBy(first:50) { nodes { number state } } }
+  }
+}
+"""
+    payload = _run_gh_json([
+        "gh", "api", "graphql", "-f", f"query={query}",
+        "-F", f"owner={owner}", "-F", f"name={repo}", "-F", f"number={issue_number}",
+    ])
+    if not isinstance(payload, dict):
+        return None
+    issue_data = (((payload.get("data") or {}).get("repository") or {}).get("issue") or {})
+    blocked_by = issue_data.get("blockedBy") or {}
+    nodes = blocked_by.get("nodes")
+    if not isinstance(nodes, list) or not nodes:
+        return None
+    states = {str(node.get("state") or "").upper() for node in nodes if isinstance(node, dict)}
+    return states != {"CLOSED"}
+
+
+def _declared_dependency_refs(
+    issue: dict[str, Any], labels: set[str]
+) -> tuple[set[str], set[int]]:
+    body = str(issue.get("body") or "")
+    clauses = "\n".join(DEPENDENCY_CLAUSE_RE.findall(body))
+    task_refs = set(TASK_REF_RE.findall(clauses))
+    issue_refs = {int(value) for value in ISSUE_REF_RE.findall(clauses)}
+    for label in labels:
+        task_match = re.fullmatch(r"blocked-by:t([0-9]+(?:\.[0-9a-z]+)*)", label)
+        issue_match = re.fullmatch(r"blocked-by:#([0-9]+)", label)
+        if task_match:
+            task_refs.add(task_match.group(1))
+        if issue_match:
+            issue_refs.add(int(issue_match.group(1)))
+    issue_number = int(issue.get("number") or 0)
+    issue_refs.discard(issue_number)
+    title_match = re.match(
+        r"^t([0-9]+(?:\.[0-9a-z]+)*):",
+        str(issue.get("title") or ""),
+        re.IGNORECASE,
+    )
+    if title_match:
+        task_refs.discard(title_match.group(1))
+    return task_refs, issue_refs
+
+
+def _text_dependencies_unresolved(slug: str, issue: dict[str, Any], labels: set[str]) -> bool:
+    task_refs, issue_refs = _declared_dependency_refs(issue, labels)
+    if not task_refs and not issue_refs:
+        return False
+    for blocker in issue_refs:
+        payload = _run_gh_json([
+            "gh", "issue", "view", str(blocker), "--repo", slug, "--json", "state",
+        ])
+        if not isinstance(payload, dict) or str(payload.get("state") or "").upper() != "CLOSED":
+            return True
+    current_number = int(issue.get("number") or 0)
+    for task_ref in task_refs:
+        matches = _run_gh_json([
+            "gh", "issue", "list", "--repo", slug, "--state", "all",
+            "--search", f"t{task_ref} in:title", "--limit", "10",
+            "--json", "number,title,state",
+        ])
+        if not isinstance(matches, list):
+            return True
+        canonical = [
+            match for match in matches
+            if isinstance(match, dict)
+            and int(match.get("number") or 0) != current_number
+            and re.match(
+                rf"^t{re.escape(task_ref)}(?::|\s)",
+                str(match.get("title") or ""),
+                re.IGNORECASE,
+            )
+        ]
+        if not canonical or any(
+            str(match.get("state") or "").upper() != "CLOSED" for match in canonical
+        ):
+            return True
+    return False
+
+
+def _dependency_inconsistent(slug: str, issue: dict[str, Any]) -> bool:
+    labels = _issue_labels(issue)
+    if "status:available" not in labels:
+        return False
+    if "status:blocked" in labels:
+        return True
+    native_state = _native_dependency_state(slug, int(issue.get("number") or 0))
+    if native_state is not None:
+        return native_state
+    return _text_dependencies_unresolved(slug, issue, labels)
+
+
 def _count_issue(
     aggregate: dict[str, int],
     issue: dict[str, Any],
@@ -146,16 +268,18 @@ def _count_issue(
     labels = _issue_labels(issue)
     assigned = bool(issue.get("assignees"))
     blocked = bool(labels & BLOCKING_LABELS)
+    dependency_inconsistent = bool(issue.get("dependency_inconsistent"))
     aggregate["auto_dispatch_open"] += 1
     aggregate["assigned"] += int(assigned)
     aggregate["queued"] += int("status:queued" in labels)
     aggregate["needs_tier"] += int(not any(label.startswith("tier:") for label in labels))
     aggregate["needs_status"] += int(not any(label.startswith("status:") for label in labels))
     aggregate["blocked_labels"] += int(blocked)
+    aggregate["dependency_inconsistent_available"] += int(dependency_inconsistent)
     aggregate["parent_task"] += int("parent-task" in labels)
     aggregate["nmr"] += int("needs-maintainer-review" in labels)
     aggregate["no_auto_dispatch"] += int("no-auto-dispatch" in labels)
-    available = "status:available" in labels and not assigned and not blocked
+    available = "status:available" in labels and not assigned and not blocked and not dependency_inconsistent
     if available:
         aggregate["available_unassigned"] += 1
         age_min = _issue_age_minutes(issue, now)
@@ -176,6 +300,8 @@ def _scan_repo(
     if issues is None:
         aggregate[GH_ERRORS_KEY] += 1
         return
+    for issue in issues:
+        issue["dependency_inconsistent"] = _dependency_inconsistent(slug, issue)
     repo_available = sum(int(_count_issue(aggregate, issue, now, old_minutes)) for issue in issues)
     aggregate["repos_with_available"] += int(repo_available > 0)
 

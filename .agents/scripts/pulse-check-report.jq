@@ -17,6 +17,7 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
 (if $active_worker_processes == null then $available_slots else ([$max_workers - $active_worker_processes, 0] | max) end) as $effective_available_slots |
 ($queue.aggregate.available_unassigned // 0 | number_or_zero) as $available_issues |
 ($queue.aggregate.available_old // 0 | number_or_zero) as $old_available |
+($queue.aggregate.dependency_inconsistent_available // 0 | number_or_zero) as $dependency_inconsistent |
 ($queue.aggregate.needs_tier // 0 | number_or_zero) as $needs_tier |
 ($queue.aggregate.gh_errors // 0 | number_or_zero) as $gh_errors |
 ($queue.error // "") as $queue_error |
@@ -49,6 +50,7 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
     auto_dispatch_open: ($queue.aggregate.auto_dispatch_open // 0),
     auto_dispatch_available_unassigned: $available_issues,
     auto_dispatch_available_old: $old_available,
+    auto_dispatch_dependency_inconsistent_available: $dependency_inconsistent,
     auto_dispatch_repos_with_available: ($queue.aggregate.repos_with_available // 0),
     auto_dispatch_scan_errors: $gh_errors,
     auto_dispatch_scan_state: (if $queue_error == "" then "scanned" else $queue_error end),
@@ -88,6 +90,16 @@ def finding($id; $severity; $title; $evidence; $recommendation; $autofile): {
     cadence_api_risk: ($api.cadence_api_risk // "unknown")
   },
   findings: ([
+    if $dependency_inconsistent > 0 then
+      finding(
+        "pulse-dependency-inconsistent-availability";
+        "high";
+        "Auto-dispatch issues are labelled available with unresolved dependencies";
+        [("dependency_inconsistent_available=" + ($dependency_inconsistent | tostring))];
+        "Run issue relationship synchronization and dependency status normalization before the next dispatch scan.";
+        true
+      )
+    else empty end,
     if ($available_issues >= $threshold and $active_workers == 0) then
       finding(
         "pulse-underfilled-auto-dispatch-queue";

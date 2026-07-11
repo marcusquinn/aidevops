@@ -465,6 +465,10 @@ sync_todo_refs_for_repo() {
 	/bin/bash "${script_dir}/issue-sync-helper.sh" pull --repo "$repo_slug" --project-root "$repo_path" 2>&1 || true
 	/bin/bash "${script_dir}/issue-sync-helper.sh" close --repo "$repo_slug" --project-root "$repo_path" 2>&1 || true
 	/bin/bash "${script_dir}/issue-sync-helper.sh" reopen --repo "$repo_slug" --project-root "$repo_path" 2>&1 || true
+	# Materialize TODO dependency edges before the graph and dispatch stages.
+	# Failures remain retryable and the relationship helper moves affected
+	# available issues to blocked rather than exposing an unverified ordering.
+	/bin/bash "${script_dir}/issue-sync-helper.sh" relationships --repo "$repo_slug" --project-root "$repo_path" 2>&1 || true
 	git -C "$repo_path" diff --quiet TODO.md 2>/dev/null || {
 		git -C "$repo_path" add TODO.md &&
 			git -C "$repo_path" commit -m "chore: sync GitHub issue refs to TODO.md [skip ci]" &&
