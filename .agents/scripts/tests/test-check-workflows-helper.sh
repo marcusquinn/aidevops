@@ -18,6 +18,8 @@
 #  10. --repo filter narrows to one row
 #  11. --json output parses as JSON
 #  16. Current caller plus obsolete framework scripts → legacy-artifact warning
+#  17. Legacy-artifact manifest without a trailing newline processes its final row
+#  18. Unset HOME exits cleanly instead of raising an unbound-variable error
 #
 # Strategy: Each scenario writes a temporary repos.json + temporary repo trees
 # under a per-test TMPDIR, points HOME at it, and invokes the helper. No
@@ -408,6 +410,35 @@ else
 		"classification: $result; note: $note"
 fi
 rm -rf "$TMPDIR_16"
+
+# Test 17: The final manifest row must be processed without a trailing newline.
+TMPDIR_17="$(mktemp -d)"
+_setup_fake_home "$TMPDIR_17"
+_make_repo_with_workflow "$TMPDIR_17/repos/no-trailing-newline"
+cp "$CANONICAL_TEMPLATE" "$TMPDIR_17/repos/no-trailing-newline/.github/workflows/issue-sync.yml"
+mkdir -p "$TMPDIR_17/repos/no-trailing-newline/.agents/scripts"
+printf '%s\n' '# legacy helper' >"$TMPDIR_17/repos/no-trailing-newline/.agents/scripts/issue-sync-helper.sh"
+mkdir -p "$TMPDIR_17/.aidevops/agents/configs"
+printf '%s' $'issue-sync\t.agents/scripts/issue-sync-helper.sh\tissue-sync-reusable.yml\tv3.32.31' > \
+	"$TMPDIR_17/.aidevops/agents/configs/workflow-legacy-artifacts.tsv"
+_write_repos_json "$TMPDIR_17" \
+	"$(jq -n --arg path "$TMPDIR_17/repos/no-trailing-newline" '{initialized_repos: [{slug: "x/no-trailing-newline", path: $path, local_only: false}]}')"
+result=$(_run_and_classify "$TMPDIR_17" --repo "x/no-trailing-newline" --workflow issue-sync)
+if [[ "$result" == "CURRENT/CALLER + LEGACY_ARTIFACTS" ]]; then
+	_pass "manifest final row without trailing newline → LEGACY_ARTIFACTS warning"
+else
+	_fail "manifest final row without trailing newline → LEGACY_ARTIFACTS warning" "got: $result"
+fi
+rm -rf "$TMPDIR_17"
+
+# Test 18: HOME is not guaranteed in constrained execution environments.
+unset_home_output=$(env -u HOME bash "$HELPER" --json 2>&1 || true)
+if [[ "$unset_home_output" == *"repos.json not found"* ]] &&
+	[[ "$unset_home_output" != *"unbound variable"* ]]; then
+	_pass "unset HOME → clean missing-config error"
+else
+	_fail "unset HOME → clean missing-config error" "got: $unset_home_output"
+fi
 
 # ─── Summary ────────────────────────────────────────────────────────────────
 
