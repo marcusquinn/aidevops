@@ -22,7 +22,7 @@ tools:
 **Trigger**: Session end, user correction, observable failure, periodic maintenance.
 **Self-Assessment**: Observe failure → complete task → cite evidence → search for `"pattern"` under `.agents/` with Grep → propose fix → ask permission.
 **Exact Search**: Use the Grep tool for content searches; when Bash is available, `rg "pattern" <path>` is an optional equivalent.
-**Write Restrictions (MANDATORY)**: On `main`/`master` — ALLOWED: `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`. BLOCKED: all other files. Code changes → return proposed edits for worktree application.
+**Write Restrictions (MANDATORY)**: Interactive sessions use a linked worktree for every edit, including planning files. Headless bookkeeping and explicitly planning-only workers may use only the narrow `main`/`master` exception enforced by `pre-edit-check.sh`; all other headless edits require a linked worktree. Follow `workflows/pre-edit.md` rather than copying its path allowlist here.
 
 <!-- AI-CONTEXT-END -->
 

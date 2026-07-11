@@ -18,9 +18,9 @@ Run before any file edits:
 
 Pass `--file <path>` when the target file is known — this enables path-based enforcement (t1712). `--task` description heuristics are a fallback for callers that don't know the target path.
 
-## Main-Branch Write Allowlist (t1712)
+## Mode-Scoped Main-Branch Write Allowlist (t1712, t1990)
 
-Only these paths are writable on `main`/`master` without a linked worktree:
+Interactive sessions have no `main`/`master` exception: every edit uses a linked worktree. For headless supervisor/routine/issue-sync bookkeeping and explicitly planning-only worker tasks, `pre-edit-check.sh` may allow these paths without a linked worktree:
 
 | Path | Purpose |
 |------|---------|
@@ -28,7 +28,7 @@ Only these paths are writable on `main`/`master` without a linked worktree:
 | `TODO.md` | Task backlog |
 | `todo/**` | Plans, briefs, task files |
 
-All other paths require a linked worktree. The `git_safety_guard.py` hook enforces this for `Edit` and `Write` tool calls automatically.
+All other paths and all interactive edits require a linked worktree. `pre-edit-check.sh` is authoritative for the mode and path decision; write-time hooks provide additional enforcement where available.
 
 ## Exit Codes
 
@@ -44,7 +44,7 @@ All other paths require a linked worktree. The `git_safety_guard.py` hook enforc
 > 1. Create worktree (recommended)
 > 2. Use different branch name
 
-Note: allowlisted paths (`README.md`, `TODO.md`, `todo/**`) short-circuit to exit `0` before this prompt is shown.
+Note: only qualifying headless flows can short-circuit to exit `0` for allowlisted paths (`README.md`, `TODO.md`, `todo/**`). Interactive sessions still receive this prompt and move every edit to a linked worktree.
 
 **Exit 3 prompt:**
 > On branch: `{branch}` (main repo, not worktree)
@@ -56,7 +56,7 @@ Note: allowlisted paths (`README.md`, `TODO.md`, `todo/**`) short-circuit to exi
 
 Pass `--file <path>` for path-based enforcement (preferred):
 
-- **Allowlisted path** (`README.md`, `TODO.md`, `todo/**`) → stay on `main`; planning publication may still become a PR if branch protection requires it
+- **Qualifying headless flow + allowlisted path** (`README.md`, `TODO.md`, `todo/**`) → stay on `main`; planning publication may still become a PR if branch protection requires it
 - **Any other path** → create worktree
 
 Fallback `--task` description keywords (when `--file` not provided):
@@ -68,7 +68,7 @@ Fallback `--task` description keywords (when `--file` not provided):
 
 Keep `~/Git/{repo}/` on `main`. Create linked worktrees under `${AIDEVOPS_WORKTREE_BASE_DIR:-~/Git/_worktrees}`. This avoids blocked branch switches, parallel sessions inheriting the wrong branch, and `local changes would be overwritten` errors.
 
-Stay on `main` only for allowlisted paths: `README.md`, `TODO.md`, `todo/**`. Planning-file commits use `planning-commit-helper.sh "plan: add new task"`; the helper opens a planning-only PR instead of direct-pushing when the default branch is protected.
+Stay on `main` only in a qualifying headless flow and only for allowlisted paths: `README.md`, `TODO.md`, `todo/**`. Planning-file commits use `planning-commit-helper.sh "plan: add new task"`; the helper opens a planning-only PR instead of direct-pushing when the default branch is protected. Interactive sessions always create a linked worktree first.
 
 Continue on current branch only when: task matches branch purpose, finishes this session, no parallel sessions expected.
 
