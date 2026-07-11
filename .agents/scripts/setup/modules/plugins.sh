@@ -117,6 +117,40 @@ sanitize_plugin_namespace() {
 	return 0
 }
 
+# Emit plugin/config evidence into the runtime bundle manifest. The caller
+# redirects stdout into the manifest, so this function must not print status
+# messages. Generated plugin code is already inside agents_root; the registry
+# digest binds that code to the exact configuration used while staging it.
+runtime_bundle_plugin_manifest_fields() {
+	local agents_root="$1"
+	local plugins_file="$2"
+	local registry_sha="none"
+	local plugin_count="0"
+	local plugin_tree_count="0"
+
+	if [[ -f "$plugins_file" ]]; then
+		if declare -F _runtime_bundle_sha256_file >/dev/null 2>&1; then
+			registry_sha=$(_runtime_bundle_sha256_file "$plugins_file")
+		elif command -v sha256sum >/dev/null 2>&1; then
+			registry_sha=$(sha256sum "$plugins_file" | cut -d' ' -f1)
+		elif command -v shasum >/dev/null 2>&1; then
+			registry_sha=$(shasum -a 256 "$plugins_file" | cut -d' ' -f1)
+		fi
+		if command -v jq >/dev/null 2>&1; then
+			plugin_count=$(jq '[.plugins[] | select(.enabled != false)] | length' "$plugins_file" 2>/dev/null || printf '0')
+		fi
+	fi
+	if [[ -d "$agents_root/plugins" ]]; then
+		plugin_tree_count=$(find "$agents_root/plugins" -type f 2>/dev/null | wc -l | tr -d '[:space:]')
+	fi
+	[[ "$plugin_count" =~ ^[0-9]+$ ]] || plugin_count=0
+	[[ "$plugin_tree_count" =~ ^[0-9]+$ ]] || plugin_tree_count=0
+	printf 'plugin_registry_sha256=%s\n' "$registry_sha"
+	printf 'configured_plugin_count=%s\n' "$plugin_count"
+	printf 'plugin_tree_file_count=%s\n' "$plugin_tree_count"
+	return 0
+}
+
 setup_plugin_validate_candidate() {
 	local target_dir="$1"
 	local plugins_file="$2"

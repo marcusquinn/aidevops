@@ -13,6 +13,25 @@ IFS=$'\n\t'
 trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
 shopt -s inherit_errexit 2>/dev/null || true
 
+# Resolve the activation link once, then export the physical immutable bundle
+# root. Child commands inherit this pin and cannot cross into a newer bundle in
+# the middle of a pulse, worker, CLI command, or interactive session.
+resolve_aidevops_runtime_bundle_root() {
+	local configured_root="${AIDEVOPS_AGENTS_DIR:-${HOME:+$HOME/.aidevops/agents}}"
+	[[ -n "$configured_root" && -d "$configured_root/scripts" ]] || return 1
+	(cd "$configured_root" && pwd -P) || return 1
+	return 0
+}
+
+pin_aidevops_runtime_bundle_root() {
+	local resolved_root=""
+	resolved_root=$(resolve_aidevops_runtime_bundle_root) || return 1
+	AIDEVOPS_AGENTS_DIR="$resolved_root"
+	AGENTS_DIR="$resolved_root"
+	export AIDEVOPS_AGENTS_DIR AGENTS_DIR
+	return 0
+}
+
 # _convert_agent_frontmatter: strips aidevops-only fields from agent markdown.
 # Reads from stdin, writes converted content to stdout.
 # Tracks whether we're inside an indented block (subagents list) to correctly
@@ -180,6 +199,13 @@ _deploy_agents_to_single_runtime() {
 # deploys aidevops agents to each runtime's native agent directory.
 # Only files with name: frontmatter are deployed. SKILL.md stubs are excluded.
 deploy_agents_to_runtimes() {
+	# Pin before collecting any source paths. Activation may change concurrently,
+	# but every read in this process remains on this resolved bundle.
+	pin_aidevops_runtime_bundle_root || {
+		print_warning "No complete deployed runtime bundle found — skipping agent deployment to runtimes"
+		return 0
+	}
+
 	# Source runtime registry if not already loaded
 	local registry_script="${INSTALL_DIR:-.}/.agents/scripts/runtime-registry.sh"
 	if [[ -z "${_RUNTIME_REGISTRY_LOADED:-}" ]]; then
@@ -192,7 +218,7 @@ deploy_agents_to_runtimes() {
 		fi
 	fi
 
-	local agents_source="${HOME}/.aidevops/agents"
+	local agents_source="$AIDEVOPS_AGENTS_DIR"
 	if [[ ! -d "$agents_source" ]]; then
 		print_warning "No deployed agents found at $agents_source — skipping"
 		return 0

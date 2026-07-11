@@ -35,7 +35,9 @@ DEPLOYED_CLI="${REAL_HOME:+$REAL_HOME/.aidevops/agents/aidevops.sh}"
 # 1. Prefer the setup-deployed copy. It is released atomically with its modules,
 # so a stale or dirty canonical checkout cannot split the CLI version from them.
 if [[ -f "$DEPLOYED_CLI" ]]; then
-    exec bash "$DEPLOYED_CLI" "$@"
+	DEPLOYED_ROOT="$(cd "$(dirname "$DEPLOYED_CLI")" && pwd -P)"
+	export AIDEVOPS_AGENTS_DIR="$DEPLOYED_ROOT"
+	exec bash "$DEPLOYED_ROOT/aidevops.sh" "$@"
 fi
 
 # 2. Use the git repo for bootstrap and local development.
