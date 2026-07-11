@@ -1446,6 +1446,13 @@ _dlw_nohup_launch() {
 	local worker_id="worker:${session_key}:$$:${lineage_epoch}:${RANDOM:-0}"
 	[[ -n "$root_worker_id" ]] || root_worker_id="${parent_worker_id:-$worker_id}"
 	[[ -n "$correlation_id" ]] || correlation_id="correlation:${root_worker_id}"
+	local dispatch_event_id=""
+	local root_event_id=""
+	if declare -F _emit_supervisor_dispatch_event >/dev/null 2>&1; then
+		dispatch_event_id=$(_emit_supervisor_dispatch_event \
+			"$worker_id" "$parent_worker_id" "$root_worker_id" "$correlation_id") || dispatch_event_id=""
+	fi
+	root_event_id="${AIDEVOPS_ROOT_EVENT_ID:-$dispatch_event_id}"
 
 	# Use issue title as session title for searchable history, but keep the
 	# issue marker at the beginning so Tabby tabs and OpenCode session search
@@ -1471,6 +1478,9 @@ _dlw_nohup_launch() {
 		AIDEVOPS_PARENT_WORKER_ID="$parent_worker_id"
 		AIDEVOPS_ROOT_WORKER_ID="$root_worker_id"
 		AIDEVOPS_CORRELATION_ID="$correlation_id"
+		AIDEVOPS_ROOT_EVENT_ID="$root_event_id"
+		AIDEVOPS_PARENT_EVENT_ID="$dispatch_event_id"
+		AIDEVOPS_CAUSATION_ID="$dispatch_event_id"
 		WORKER_ISSUE_NUMBER="$issue_number"
 		WORKER_REPO_SLUG="$repo_slug"
 		WORKER_GITHUB_LOGIN="$self_login"

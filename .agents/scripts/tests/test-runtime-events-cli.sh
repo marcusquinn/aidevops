@@ -7,6 +7,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 RUNTIME_EVENTS="${SCRIPT_DIR}/../runtime-events.mjs"
 WORKER_LAUNCH="${SCRIPT_DIR}/../pulse-dispatch-worker-launch.sh"
+WORKER_LIFECYCLE="${SCRIPT_DIR}/../worker-lifecycle-common.sh"
+WORKER_FAILURE="${SCRIPT_DIR}/../headless-runtime-failure.sh"
+WORKER_RUNTIME="${SCRIPT_DIR}/../headless-runtime-worker.sh"
 TEST_ROOT="$(mktemp -d)"
 trap 'rm -rf "$TEST_ROOT"' EXIT
 export AIDEVOPS_OBS_DB_OVERRIDE="${TEST_ROOT}/observability.db"
@@ -14,10 +17,12 @@ export AIDEVOPS_WORKER_ID="worker:child"
 export AIDEVOPS_PARENT_WORKER_ID="worker:parent"
 export AIDEVOPS_ROOT_WORKER_ID="worker:root"
 export AIDEVOPS_CORRELATION_ID="correlation:root"
+unset AIDEVOPS_CAUSATION_ID AIDEVOPS_PARENT_EVENT_ID AIDEVOPS_ROOT_EVENT_ID 2>/dev/null || true
 
 node "$RUNTIME_EVENTS" emit worker.started --status running \
 	--payload '{"repo":"owner/private","cwd":"/Users/example/private"}' >/dev/null
 node "$RUNTIME_EVENTS" state auto pulse:current '{"workers":{"active":1},"private_path":"/Users/example/private"}' >/dev/null
+node "$RUNTIME_EVENTS" state auto pulse:current '{"workers":{"active":2}}' >/dev/null
 node "$RUNTIME_EVENTS" state auto pulse:current '{"workers":{"active":2}}' >/dev/null
 
 query_json="$(node "$RUNTIME_EVENTS" query --worker worker:child --limit 10)"
@@ -35,6 +40,9 @@ fi
 node "$RUNTIME_EVENTS" verify | jq -e '.ok == true' >/dev/null
 
 unset _PULSE_DISPATCH_WORKER_LAUNCH_LOADED 2>/dev/null || true
+unset _WORKER_LIFECYCLE_COMMON_LOADED 2>/dev/null || true
+# shellcheck source=../worker-lifecycle-common.sh
+source "$WORKER_LIFECYCLE"
 # shellcheck source=../pulse-dispatch-worker-launch.sh
 source "$WORKER_LAUNCH"
 CAPTURED_LAUNCH_ARGS="${TEST_ROOT}/launch-args"
@@ -75,5 +83,44 @@ grep -Eq '^AIDEVOPS_WORKER_ID=worker:issue-27030:' "$CAPTURED_LAUNCH_ARGS"
 grep -q '^AIDEVOPS_PARENT_WORKER_ID=worker:child$' "$CAPTURED_LAUNCH_ARGS"
 grep -q '^AIDEVOPS_ROOT_WORKER_ID=worker:root$' "$CAPTURED_LAUNCH_ARGS"
 grep -q '^AIDEVOPS_CORRELATION_ID=correlation:root$' "$CAPTURED_LAUNCH_ARGS"
+dispatch_event_id=$(sed -n 's/^AIDEVOPS_PARENT_EVENT_ID=//p' "$CAPTURED_LAUNCH_ARGS")
+root_event_id=$(sed -n 's/^AIDEVOPS_ROOT_EVENT_ID=//p' "$CAPTURED_LAUNCH_ARGS")
+child_worker_id=$(sed -n 's/^AIDEVOPS_WORKER_ID=//p' "$CAPTURED_LAUNCH_ARGS")
+[[ -n "$dispatch_event_id" && "$root_event_id" == "$dispatch_event_id" ]]
+grep -q "^AIDEVOPS_CAUSATION_ID=${dispatch_event_id}$" "$CAPTURED_LAUNCH_ARGS"
+
+AIDEVOPS_WORKER_ID="$child_worker_id" \
+	AIDEVOPS_PARENT_WORKER_ID="worker:child" \
+	AIDEVOPS_ROOT_WORKER_ID="worker:root" \
+	AIDEVOPS_CORRELATION_ID="correlation:root" \
+	AIDEVOPS_ROOT_EVENT_ID="$root_event_id" \
+	AIDEVOPS_PARENT_EVENT_ID="$dispatch_event_id" \
+	AIDEVOPS_CAUSATION_ID="$dispatch_event_id" \
+	node "$RUNTIME_EVENTS" emit worker.started --status running \
+		--source worker_self_reported >/dev/null
+
+causal_rows=$(node "$RUNTIME_EVENTS" query --worker "$child_worker_id" --limit 10)
+[[ "$(printf '%s' "$causal_rows" | jq -r 'map(select(.event_type == "worker.dispatched"))[0].event_id')" == "$dispatch_event_id" ]]
+[[ "$(printf '%s' "$causal_rows" | jq -r 'map(select(.event_type == "worker.started"))[0].root_event_id')" == "$root_event_id" ]]
+[[ "$(printf '%s' "$causal_rows" | jq -r 'map(select(.event_type == "worker.started"))[0].parent_event_id')" == "$dispatch_event_id" ]]
+[[ "$(printf '%s' "$causal_rows" | jq -r 'map(select(.event_type == "worker.started"))[0].causation_id')" == "$dispatch_event_id" ]]
+[[ "$(printf '%s' "$causal_rows" | jq -r 'map(select(.event_type == "worker.dispatched"))[0].payload_json | fromjson | .source')" == "supervisor_observed" ]]
+[[ "$(printf '%s' "$causal_rows" | jq -r 'map(select(.event_type == "worker.started"))[0].payload_json | fromjson | .source')" == "worker_self_reported" ]]
+
+python3 - "$WORKER_FAILURE" "$WORKER_RUNTIME" <<'PY'
+import pathlib
+import sys
+
+failure = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+handler = failure[failure.index("_exit_trap_handler()") : failure.index("_recover_dirty_worker_pr()")]
+assert "worker.exited" not in handler
+assert handler.index("_push_wip_commits_on_exit") < handler.index("_emit_worker_runtime_event")
+assert handler.index('reason="worker_complete"') < handler.index("_emit_worker_runtime_event")
+
+worker = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
+finish = worker[worker.index("_cmd_run_finish()") : worker.index("_cmd_run_prepare()")]
+assert finish.index("_hrw_finish_failed_run") < finish.index("_emit_worker_runtime_event")
+assert "_HRW_FINAL_RUNTIME_EVENT" in finish
+PY
 
 printf 'PASS runtime-events CLI and lineage\n'

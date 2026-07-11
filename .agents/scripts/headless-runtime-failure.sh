@@ -935,9 +935,6 @@ _exit_trap_handler() {
 	fi
 
 	print_info "[exit-trap] session=$session_key exit=$exit_status reason=$reason session_count=$session_count"
-	if declare -F _emit_worker_runtime_event >/dev/null 2>&1; then
-		_emit_worker_runtime_event "worker.exited" "failed"
-	fi
 	# t2923/GH#22965: Preserve WIP before releasing the claim so re-dispatch can
 	# continue from the pushed branch instead of starting over. Dirty preserved
 	# work is reported distinctly to avoid zero-output brief-rewrite holds.
@@ -947,6 +944,13 @@ _exit_trap_handler() {
 			reason="worker_complete"
 		else
 			reason="worker_dirty_work_preserved"
+		fi
+	fi
+	if declare -F _emit_worker_runtime_event >/dev/null 2>&1; then
+		if [[ "$reason" == "worker_complete" ]]; then
+			_emit_worker_runtime_event "worker.completed" "recovered" "$reason"
+		else
+			_emit_worker_runtime_event "worker.failed" "failed" "$reason"
 		fi
 	fi
 	if declare -F _cleanup_headless_runtime_temp_paths >/dev/null 2>&1; then

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
+
 /**
  * LLM Observability Module (t1308)
  *
@@ -19,14 +22,15 @@ import {
 } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
-import { execSync } from "child_process";
+import { execFileSync } from "child_process";
 import { fileURLToPath } from "url";
 import {
-  setDbPath, sqliteExec, sqliteExecSync, shutdownSqlite as _shutdownSqlite, sqlEscape,
+  canonicalizeSqliteDbPath, setDbPath, sqliteAvailable, sqliteExec, sqliteExecSync,
+  shutdownSqlite as _shutdownSqlite, sqlEscape,
 } from "./observability-sqlite.mjs";
 import {
   appendRuntimeEvent,
-  RUNTIME_EVENTS_SCHEMA_SQL,
+  initialiseRuntimeEventStore,
 } from "../../scripts/runtime-events.mjs";
 import {
   enrichActiveSpan,
@@ -38,7 +42,9 @@ const DEFAULT_OBS_DIR = join(HOME, ".aidevops", ".agent-workspace", "observabili
 // AIDEVOPS_OBS_DB_OVERRIDE lets tests redirect to a temp DB without touching
 // the prod observability DB. Module-load semantics — set the env var BEFORE
 // importing this module. See tests/test-observability-concurrent-init.sh (t2900).
-const DB_PATH = process.env.AIDEVOPS_OBS_DB_OVERRIDE || join(DEFAULT_OBS_DIR, "llm-requests.db");
+const DB_PATH = canonicalizeSqliteDbPath(
+  process.env.AIDEVOPS_OBS_DB_OVERRIDE || join(DEFAULT_OBS_DIR, "llm-requests.db"),
+);
 const OBS_DIR = dirname(DB_PATH);
 const COST_BACKFILL_MARKER = `${DB_PATH}.cost-backfill-v1.done`;
 
@@ -165,9 +171,7 @@ function initDatabase() {
   }
 
   // Check sqlite3 is available
-  try {
-    execSync("which sqlite3", { encoding: "utf-8", timeout: 2000, stdio: ["pipe", "pipe", "pipe"] });
-  } catch {
+  if (!sqliteAvailable()) {
     console.error("[aidevops] sqlite3 not found — observability disabled");
     return false;
   }
@@ -213,29 +217,22 @@ function initDatabase() {
  */
 function _isSchemaInitialized() {
   try {
-    const result = execSync(
-      "sqlite3 -readonly -separator '|' \"$TARGET_DB\" " +
-      "\"SELECT " +
+    const result = execFileSync(
+      "sqlite3",
+      ["-readonly", "-separator", "|", DB_PATH,
+       "SELECT " +
       "(SELECT COUNT(*) FROM sqlite_master WHERE type='table' " +
-       "AND name IN ('llm_requests','tool_calls','session_summaries','runtime_events')) AS tbls, " +
-       "(SELECT COUNT(*) FROM pragma_table_info('tool_calls') WHERE name='intent') AS intent_col, " +
-       "(SELECT COUNT(*) FROM pragma_table_info('runtime_events') " +
-       "WHERE name IN ('envelope_version','event_id','correlation_id','causation_id'," +
-       "'subject_id','session_id','worker_id','parent_worker_id','root_worker_id'," +
-       "'root_event_id','parent_event_id'," +
-       "'state_version','payload_json')) AS runtime_cols, " +
-       "(SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' " +
-       "AND name IN ('runtime_events_reject_update','runtime_events_reject_delete')) AS runtime_triggers;\"",
+       "AND name IN ('llm_requests','tool_calls','session_summaries')) AS tbls, " +
+       "(SELECT COUNT(*) FROM pragma_table_info('tool_calls') WHERE name='intent') AS intent_col;"],
       {
         encoding: "utf-8",
         timeout: 2000,
         stdio: ["pipe", "pipe", "pipe"],
-        env: { ...process.env, TARGET_DB: DB_PATH },
       },
     ).trim();
     if (!result) return false;
-    const [tbls, intentCol, runtimeCols, runtimeTriggers] = result.split("|");
-    return tbls === "4" && intentCol === "1" && runtimeCols === "13" && runtimeTriggers === "2";
+    const [tbls, intentCol] = result.split("|");
+    return tbls === "3" && intentCol === "1";
   } catch {
     return false;
   }
@@ -321,7 +318,6 @@ CREATE TABLE IF NOT EXISTS session_summaries (
 CREATE INDEX IF NOT EXISTS idx_session_summaries_session
   ON session_summaries(session_id);
 
-${RUNTIME_EVENTS_SCHEMA_SQL}
 `;
 
   const result = sqliteExecSync(schema, 10000);
@@ -356,18 +352,8 @@ function _runDataMigrations(options = {}) {
     sqliteExecSync("ALTER TABLE tool_calls ADD COLUMN intent TEXT;", 5000);
   }
 
-  for (const column of ["parent_worker_id", "root_worker_id"]) {
-    const hasColumn = sqliteExecSync(
-      `SELECT COUNT(*) FROM pragma_table_info('runtime_events') WHERE name='${column}';`,
-      5000,
-    );
-    if (hasColumn === "0") sqliteExecSync(`ALTER TABLE runtime_events ADD COLUMN ${column} TEXT;`, 5000);
-  }
-  sqliteExecSync(
-    "CREATE INDEX IF NOT EXISTS idx_runtime_events_worker_lineage " +
-    "ON runtime_events(root_worker_id, parent_worker_id, worker_id, id);",
-    5000,
-  );
+  // runtime-events.mjs is the sole runtime-event schema/migration authority.
+  if (!initialiseRuntimeEventStore(DB_PATH)) return false;
 
   // Migration: backfill cost for rows where cost=0 but tokens exist.
   // OpenCode never provided msg.cost — all historical rows have cost=0.

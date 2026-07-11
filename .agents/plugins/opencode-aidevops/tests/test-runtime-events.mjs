@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 
 import { execFile, execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import {
   RUNTIME_EVENT_PAYLOAD_MAX_BYTES,
   RUNTIME_EVENTS_SCHEMA_SQL,
+  appendProjectedState,
   appendRuntimeEvent,
   createMergePatch,
   appendStateSnapshot,
@@ -19,9 +20,13 @@ import {
   buildRuntimeEventInsertSql,
   buildStateEventInsertSql,
   createRuntimeEventEnvelope,
+  initialiseRuntimeEventStore,
   prepareRuntimePayload,
+  queryRuntimeEvents,
   reconstructRuntimeState,
+  resolveRuntimeEventsDbPath,
 } from "../../../scripts/runtime-events.mjs";
+import { canonicalizeSqliteDbPath } from "../../../scripts/sqlite-process.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -35,24 +40,54 @@ function sqliteAvailable() {
 }
 
 describe("runtime-event envelopes", () => {
-  test("redacts credentials, bounds payloads, and canonicalises keys", () => {
+  test("strictly allowlists ordinary payloads and redacts secret fixtures", () => {
+    const privateRoot = process.env.AIDEVOPS_PRIVATE_ROOTS;
+    process.env.AIDEVOPS_PRIVATE_ROOTS = "/srv/private-root";
     const prepared = prepareRuntimePayload({
-      z: "Bearer test-token-value",
+      reason: [
+        "Bearer test-token-value",
+        "Basic dXNlcjpwYXNzd29yZA==",
+        `AKIA${"A".repeat(16)}`,
+        "A".repeat(40),
+        "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.signature",
+        "-----BEGIN PRIVATE KEY-----\nprivate-material\n-----END PRIVATE KEY-----",
+        "file:///private/secret.txt",
+        "/single-secret",
+        "/Users/example/private-repo/file.txt",
+        "/srv/private-root/project/file.txt",
+        "owner/private-repo",
+      ].join(" "),
       password: "not-for-storage",
       apiKey: "camel-case-secret",
       token: "generic-secret",
-      a: `prefix ghp_${"x".repeat(32)}`,
-      large: "x".repeat(RUNTIME_EVENT_PAYLOAD_MAX_BYTES * 2),
+      status: `prefix ghp_${"x".repeat(32)}`,
+      arbitrary_raw_payload: "must-not-persist",
     });
+    if (privateRoot === undefined) delete process.env.AIDEVOPS_PRIVATE_ROOTS;
+    else process.env.AIDEVOPS_PRIVATE_ROOTS = privateRoot;
 
     assert.ok(prepared.bytes <= RUNTIME_EVENT_PAYLOAD_MAX_BYTES);
-    assert.ok(prepared.redactionCount >= 5);
-    assert.equal(prepared.value.password, "[redacted]");
+    assert.ok(prepared.redactionCount >= 10);
+    assert.equal(prepared.value.password, undefined);
+    assert.equal(prepared.value.arbitrary_raw_payload, undefined);
     assert.doesNotMatch(
       prepared.json,
-      /test-token-value|not-for-storage|camel-case-secret|generic-secret|ghp_/,
+      /test-token-value|not-for-storage|camel-case-secret|generic-secret|ghp_|dXNlc|AKIA|eyJhb|private-material|Users|srv\/private-root|owner\/private/,
     );
-    assert.deepEqual(Object.keys(prepared.value), ["a", "apiKey", "large", "password", "token", "z"]);
+    assert.deepEqual(Object.keys(prepared.value), ["reason", "status"]);
+  });
+
+  test("redacts camelCase path and repository keys", () => {
+    const prepared = prepareRuntimePayload({
+      projectRoot: "/Users/example/private-repo",
+      repoSlug: "owner/private-repo",
+      worktreePath: "file:///private/worktree",
+    }, { strictTopLevel: false });
+    assert.deepEqual(prepared.value, {
+      projectRoot: "[redacted-path]",
+      repoSlug: "[redacted-repository]",
+      worktreePath: "[redacted-path]",
+    });
   });
 
   test("state payloads remove private path evidence", () => {
@@ -132,7 +167,7 @@ describe("runtime-event envelopes", () => {
     }, "state.delta");
 
     assert.match(sql, /^BEGIN IMMEDIATE;/);
-    assert.match(sql, /COALESCE\(MAX\(state_version\), 0\) \+ 1/);
+    assert.match(sql, /SELECT MAX\(state_version\)/);
     assert.match(sql, /RETURNING state_version;/);
     assert.match(sql, /COMMIT;$/);
   });
@@ -214,6 +249,10 @@ describe("deterministic state reconstruction", () => {
     });
     assert.deepEqual(Object.keys(result), ["a", "list", "nested", "z"]);
   });
+  test("round-trips equal scalar and array patches", () => {
+    assert.equal(applyMergePatch("same", createMergePatch("same", "same")), "same");
+    assert.deepEqual(applyMergePatch([1, 2], createMergePatch([1, 2], [1, 2])), [1, 2]);
+  });
 
   test("uses the latest snapshot and ordered contiguous deltas", () => {
     const rows = [
@@ -239,6 +278,127 @@ describe("deterministic state reconstruction", () => {
       { subject_id: "w", event_type: "state.delta", state_version: 3, payload_json: '{"patch":{"x":1}}' },
     ]), /not contiguous/);
   });
+});
+
+test("appendProjectedState suppresses no-ops and snapshots desired null properties", {
+  skip: !sqliteAvailable() && "sqlite3 is unavailable",
+}, () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "aidevops-projected-state-"));
+  const dbPath = join(tempDir, "observability.db");
+  try {
+    assert.equal(initialiseRuntimeEventStore(dbPath), true);
+    assert.equal(appendProjectedState({ subjectId: "state:null", state: { value: 1 } })?.eventType, "state.snapshot");
+    assert.equal(appendProjectedState({ subjectId: "state:null", state: { value: 1 } }), null);
+    assert.equal(appendProjectedState({ subjectId: "state:null", state: { value: null } })?.eventType, "state.snapshot");
+    assert.equal(appendProjectedState({ subjectId: "state:scalar", state: "steady" })?.eventType, "state.snapshot");
+    assert.equal(appendProjectedState({ subjectId: "state:scalar", state: "steady" }), null);
+    assert.equal(appendProjectedState({ subjectId: "state:array", state: [1, 2] })?.eventType, "state.snapshot");
+    assert.equal(appendProjectedState({ subjectId: "state:array", state: [1, 2] }), null);
+    const rows = queryRuntimeEvents({ subjectId: "state:null", limit: 10 });
+    assert.equal(rows.length, 2);
+    assert.deepEqual(reconstructRuntimeState(rows, { subjectId: "state:null" }), {
+      state: { value: null },
+      stateVersion: 2,
+    });
+    assert.deepEqual(reconstructRuntimeState(
+      queryRuntimeEvents({ subjectId: "state:scalar", limit: 10 }),
+      { subjectId: "state:scalar" },
+    ), { state: "steady", stateVersion: 1 });
+    assert.deepEqual(reconstructRuntimeState(
+      queryRuntimeEvents({ subjectId: "state:array", limit: 10 }),
+      { subjectId: "state:array" },
+    ), { state: [1, 2], stateVersion: 1 });
+  } finally {
+    rmSync(tempDir, { force: true, recursive: true });
+  }
+});
+
+test("concurrent appendProjectedState writers cannot commit stale-base deltas", {
+  skip: !sqliteAvailable() && "sqlite3 is unavailable",
+}, async () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "aidevops-projected-state-race-"));
+  const dbPath = join(tempDir, "observability.db");
+  const runtimeUrl = new URL("../../../scripts/runtime-events.mjs", import.meta.url).href;
+  try {
+    assert.equal(initialiseRuntimeEventStore(dbPath), true);
+    assert.ok(appendProjectedState({ subjectId: "state:race", state: { winner: -1 } }));
+    const writes = Array.from({ length: 8 }, (_unused, index) => execFileAsync(
+      process.execPath,
+      ["--input-type=module", "-e", `
+        const runtime = await import(${JSON.stringify(runtimeUrl)});
+        if (!runtime.initialiseRuntimeEventStore(${JSON.stringify(dbPath)})) process.exit(2);
+        if (!runtime.appendProjectedState({ subjectId: "state:race", state: { winner: ${index} } })) process.exit(3);
+      `],
+      { timeout: 30000 },
+    ));
+    await Promise.all(writes);
+    const rows = queryRuntimeEvents({ subjectId: "state:race", limit: 20 });
+    assert.equal(rows.length, 9);
+    const reconstructed = reconstructRuntimeState(rows, { subjectId: "state:race" });
+    assert.equal(reconstructed.stateVersion, 9);
+    assert.ok(Number.isInteger(reconstructed.state.winner));
+  } finally {
+    rmSync(tempDir, { force: true, recursive: true });
+  }
+});
+
+test("database overrides are canonical argv values, never shell input", {
+  skip: !sqliteAvailable() && "sqlite3 is unavailable",
+}, () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "aidevops-db-path-"));
+  const marker = join(tempDir, "injected");
+  const dbPath = join(tempDir, `observability.db\"; touch ${marker}; #`);
+  try {
+    assert.equal(
+      resolveRuntimeEventsDbPath({ AIDEVOPS_OBS_DB_OVERRIDE: dbPath }),
+      canonicalizeSqliteDbPath(dbPath),
+    );
+    assert.equal(initialiseRuntimeEventStore(dbPath), true);
+    assert.equal(existsSync(marker), false);
+    assert.throws(() => canonicalizeSqliteDbPath("relative.db"), /absolute filesystem path/);
+    assert.throws(() => canonicalizeSqliteDbPath("file:///tmp/events.db"), /absolute filesystem path/);
+  } finally {
+    rmSync(tempDir, { force: true, recursive: true });
+  }
+});
+
+test("runtime-events authority migrates legacy worker lineage columns", {
+  skip: !sqliteAvailable() && "sqlite3 is unavailable",
+}, () => {
+  const tempDir = mkdtempSync(join(tmpdir(), "aidevops-runtime-migration-"));
+  const dbPath = join(tempDir, "observability.db");
+  try {
+    execFileSync("sqlite3", [dbPath], { input: `
+      CREATE TABLE runtime_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        envelope_version INTEGER NOT NULL,
+        occurred_at TEXT NOT NULL,
+        event_id TEXT NOT NULL UNIQUE,
+        event_type TEXT NOT NULL,
+        correlation_id TEXT NOT NULL,
+        causation_id TEXT,
+        subject_id TEXT NOT NULL,
+        session_id TEXT,
+        worker_id TEXT,
+        root_event_id TEXT NOT NULL,
+        parent_event_id TEXT,
+        state_version INTEGER,
+        payload_json TEXT NOT NULL,
+        payload_bytes INTEGER NOT NULL,
+        redaction_count INTEGER NOT NULL DEFAULT 0
+      );
+    ` });
+    assert.equal(initialiseRuntimeEventStore(dbPath), true);
+    const columns = execFileSync("sqlite3", [dbPath, `
+      SELECT group_concat(name, ',') FROM (
+        SELECT name FROM pragma_table_info('runtime_events')
+        WHERE name IN ('parent_worker_id', 'root_worker_id') ORDER BY name
+      );
+    `], { encoding: "utf8" }).trim();
+    assert.equal(columns, "parent_worker_id,root_worker_id");
+  } finally {
+    rmSync(tempDir, { force: true, recursive: true });
+  }
 });
 
 test("SQLite enforces append-only rows and concurrent state versions", {

@@ -1099,6 +1099,15 @@ _hrw_finish_failed_run() {
 	else
 		_release_dispatch_claim "$session_key" "worker_failed"
 	fi
+	if [[ "$failure_recovered" -eq 1 ]]; then
+		_HRW_FINAL_RUNTIME_EVENT="worker.completed"
+		_HRW_FINAL_RUNTIME_STATUS="recovered"
+		_HRW_FINAL_RUNTIME_CLASSIFICATION="worker_complete"
+	else
+		_HRW_FINAL_RUNTIME_EVENT="worker.failed"
+		_HRW_FINAL_RUNTIME_STATUS="failed"
+		_HRW_FINAL_RUNTIME_CLASSIFICATION="${_run_failure_reason:-worker_failed}"
+	fi
 
 	# Classify crash type from worker session state.
 	# _run_result_label is set by _handle_run_result:
@@ -1159,6 +1168,9 @@ _hrw_finish_success_run() {
 			_release_dispatch_claim "$session_key" "worker_noop"
 			_report_failure_to_fast_fail "$session_key" "worker_noop_zero_output" "no_work"
 			release_needed=0
+			_HRW_FINAL_RUNTIME_EVENT="worker.failed"
+			_HRW_FINAL_RUNTIME_STATUS="failed"
+			_HRW_FINAL_RUNTIME_CLASSIFICATION="no_work"
 			;;
 		branch_orphan)
 			_handle_worker_branch_orphan "$session_key" "$work_dir"
@@ -1207,6 +1219,9 @@ _cmd_run_finish() {
 	# _worker_produced_output() classifies tangible output to distinguish
 	# worker_complete, worker_branch_orphan, and worker_noop (GH#20721, GH#20819).
 	local work_dir="${3:-${_WORKER_WORKTREE_PATH:-}}"
+	_HRW_FINAL_RUNTIME_EVENT="worker.completed"
+	_HRW_FINAL_RUNTIME_STATUS="${_run_result_label:-$ledger_status}"
+	_HRW_FINAL_RUNTIME_CLASSIFICATION="${_run_failure_reason:-}"
 
 	# Release the dispatch claim so the issue is immediately available for
 	# re-dispatch (next 2-min pulse cycle) instead of waiting for the
@@ -1226,16 +1241,14 @@ _cmd_run_finish() {
 		_hrw_finish_failed_run "$session_key" "$work_dir"
 	elif [[ "$ledger_status" == "rate_limit_fast" ]]; then
 		_hrw_finish_rate_limit_fast_run "$session_key"
+		_HRW_FINAL_RUNTIME_EVENT="worker.deferred"
+		_HRW_FINAL_RUNTIME_STATUS="rate_limit_fast"
+		_HRW_FINAL_RUNTIME_CLASSIFICATION="rate_limit"
 	else
 		_hrw_finish_success_run "$session_key" "$work_dir"
 	fi
-	local runtime_event_type="worker.completed"
-	if [[ "$ledger_status" == "$_HRW_STATUS_FAIL" ]]; then
-		runtime_event_type="worker.failed"
-	elif [[ "$ledger_status" == "rate_limit_fast" ]]; then
-		runtime_event_type="worker.deferred"
-	fi
-	_emit_worker_runtime_event "$runtime_event_type" "${_run_result_label:-$ledger_status}"
+	_emit_worker_runtime_event "$_HRW_FINAL_RUNTIME_EVENT" \
+		"$_HRW_FINAL_RUNTIME_STATUS" "$_HRW_FINAL_RUNTIME_CLASSIFICATION"
 
 	_hrw_finish_cleanup "$session_key" "$ledger_status" "$work_dir"
 	return 0

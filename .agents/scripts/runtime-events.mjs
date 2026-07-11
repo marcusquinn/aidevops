@@ -10,14 +10,15 @@
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
+  canonicalizeSqliteDbPath,
   setDbPath,
   sqliteExec,
   sqliteExecSync,
   sqlEscape,
-} from "../plugins/opencode-aidevops/observability-sqlite.mjs";
+} from "./sqlite-process.mjs";
 
 export const RUNTIME_EVENT_ENVELOPE_VERSION = 1;
 export const RUNTIME_EVENT_PAYLOAD_MAX_BYTES = 16 * 1024;
@@ -31,8 +32,21 @@ const SECRET_KEY_PATTERN = /^(auth|authorization|cookie|set_cookie|credentials?|
 const PATH_KEY_PATTERN = /(^|_)(cwd|dir|directory|file|path|root|worktree)(_|$)/i;
 const REPOSITORY_KEY_PATTERN = /^(project_name|repo|repository|repo_slug|repository_slug)$/i;
 const CREDENTIAL_PATTERN = /(^|[^A-Za-z0-9_-])(sk-|ghp_|gho_|ghs_|ghu_|github_pat_|glpat-|xoxb-|xoxp-)[A-Za-z0-9_-]{10,}/g;
-const HOME_PATH_PATTERN = /(?:\/Users\/|\/home\/|[A-Za-z]:\\Users\\)[^\s"',}\]]+/g;
-const PRIVATE_PATH_ID_PATTERN = /^(?:\/Users\/|\/home\/|[A-Za-z]:\\Users\\)/;
+const AWS_ACCESS_KEY_PATTERN = /\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g;
+const AWS_SECRET_KEY_PATTERN = /\b[A-Za-z0-9/+=]{40}\b/g;
+const JWT_PATTERN = /\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g;
+const BASIC_AUTH_PATTERN = /\bBasic\s+[A-Za-z0-9+/=_-]{8,}/gi;
+const PEM_PATTERN = /-----BEGIN [A-Z0-9 ]+-----[\s\S]*?-----END [A-Z0-9 ]+-----/g;
+const FILE_URL_PATTERN = /\bfile:\/\/\/[^\s"',)}\]]+/gi;
+const ABSOLUTE_PATH_PATTERN = /(^|[\s("'=])(?:\/[^\s"',)}\]]+|[A-Za-z]:[\\/][^\s"',)}\]]+)/gm;
+const PRIVATE_PATH_ID_PATTERN = /^(?:file:\/{2,3}|\/|[A-Za-z]:[\\/])/;
+const REPOSITORY_LIKE_PATTERN = /\b[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\b/g;
+const REPOSITORY_LIKE_ID_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const ORDINARY_PAYLOAD_KEYS = new Set([
+  "call_id", "classification", "duration_ms", "error_type", "exit_code",
+  "finish_reason", "model_id", "observation", "provider_id", "reason", "result",
+  "role", "source", "status", "success", "tool_name",
+]);
 
 export const RUNTIME_EVENTS_SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS runtime_events (
@@ -103,7 +117,8 @@ function normaliseIdentifier(value, { required = false, fallback = "" } = {}) {
     if (required) throw new TypeError("runtime event identifier is required");
     return null;
   }
-  if (!SAFE_ID_PATTERN.test(text) || PRIVATE_PATH_ID_PATTERN.test(text) || text.length > 256) {
+  if (!SAFE_ID_PATTERN.test(text) || PRIVATE_PATH_ID_PATTERN.test(text) ||
+      REPOSITORY_LIKE_ID_PATTERN.test(text) || text.length > 256) {
     return hashIdentifier(text);
   }
   return text;
@@ -117,26 +132,44 @@ function normaliseEventType(value) {
   return eventType;
 }
 
-function redactString(value, redactPaths, counters) {
-  let result = value;
-  result = result.replace(CREDENTIAL_PATTERN, (_match, boundary) => {
+function replaceSensitivePattern(value, pattern, replacement, counters) {
+  return value.replace(pattern, (...args) => {
     counters.redactions++;
-    return `${boundary}[redacted-credential]`;
+    return typeof replacement === "function" ? replacement(...args) : replacement;
   });
-  result = result.replace(/\bBearer\s+[^\s,"']+/gi, () => {
-    counters.redactions++;
-    return "Bearer [redacted]";
-  });
-  result = result.replace(/(https?:\/\/)[^/@:\s]+:[^/@\s]+@/gi, (_match, scheme) => {
-    counters.redactions++;
-    return `${scheme}[redacted]@`;
-  });
-  if (redactPaths) {
-    result = result.replace(HOME_PATH_PATTERN, () => {
-      counters.redactions++;
-      return "[redacted-path]";
-    });
+}
+
+function configuredPrivateRoots() {
+  const values = [process.env.HOME || homedir()];
+  if (process.env.AIDEVOPS_PRIVATE_ROOTS) {
+    values.push(...process.env.AIDEVOPS_PRIVATE_ROOTS.split(delimiter));
   }
+  return values.filter((value) => value && value.startsWith("/"));
+}
+
+function redactString(value, redactPaths, counters, privateRoots) {
+  let result = value;
+  result = replaceSensitivePattern(result, CREDENTIAL_PATTERN,
+    (_match, boundary) => `${boundary}[redacted-credential]`, counters);
+  result = replaceSensitivePattern(result, AWS_ACCESS_KEY_PATTERN, "[redacted-aws-key]", counters);
+  result = replaceSensitivePattern(result, AWS_SECRET_KEY_PATTERN, "[redacted-aws-secret]", counters);
+  result = replaceSensitivePattern(result, JWT_PATTERN, "[redacted-jwt]", counters);
+  result = replaceSensitivePattern(result, BASIC_AUTH_PATTERN, "Basic [redacted]", counters);
+  result = replaceSensitivePattern(result, PEM_PATTERN, "[redacted-pem]", counters);
+  result = replaceSensitivePattern(result, /\bBearer\s+[^\s,"']+/gi, "Bearer [redacted]", counters);
+  result = replaceSensitivePattern(result, /(https?:\/\/)[^/@:\s]+:[^/@\s]+@/gi,
+    (_match, scheme) => `${scheme}[redacted]@`, counters);
+  for (const root of privateRoots) {
+    if (!result.includes(root)) continue;
+    counters.redactions++;
+    result = result.split(root).join("[redacted-root]");
+  }
+  if (redactPaths) {
+    result = replaceSensitivePattern(result, FILE_URL_PATTERN, "[redacted-file-url]", counters);
+    result = replaceSensitivePattern(result, ABSOLUTE_PATH_PATTERN,
+      (_match, boundary) => `${boundary}[redacted-path]`, counters);
+  }
+  result = replaceSensitivePattern(result, REPOSITORY_LIKE_PATTERN, "[redacted-repository]", counters);
   if (result.length > MAX_STRING_LENGTH) {
     counters.truncations++;
     result = `${result.slice(0, MAX_STRING_LENGTH)}[truncated]`;
@@ -146,18 +179,23 @@ function redactString(value, redactPaths, counters) {
 
 function sanitizeValue(value, context, depth = 0, key = "") {
   const normalizedKey = key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").replace(/-/g, "_");
+  // Preserve merge-patch deletion sentinels. Null contains no sensitive value,
+  // and replacing it would turn a requested deletion into persisted state.
+  if (value === null) return null;
   if (SECRET_KEY_PATTERN.test(normalizedKey)) {
     context.counters.redactions++;
     return "[redacted]";
   }
-  if (context.redactPaths && (PATH_KEY_PATTERN.test(key) || REPOSITORY_KEY_PATTERN.test(normalizedKey))) {
+  if (context.redactPaths && (PATH_KEY_PATTERN.test(normalizedKey) || REPOSITORY_KEY_PATTERN.test(normalizedKey))) {
     context.counters.redactions++;
-    return PATH_KEY_PATTERN.test(key) ? "[redacted-path]" : "[redacted-repository]";
+    return PATH_KEY_PATTERN.test(normalizedKey) ? "[redacted-path]" : "[redacted-repository]";
   }
-  if (value === null || typeof value === "boolean" || typeof value === "number") {
-    return Number.isFinite(value) || value === null || typeof value === "boolean" ? value : null;
+  if (typeof value === "boolean" || typeof value === "number") {
+    return Number.isFinite(value) || typeof value === "boolean" ? value : null;
   }
-  if (typeof value === "string") return redactString(value, context.redactPaths, context.counters);
+  if (typeof value === "string") {
+    return redactString(value, context.redactPaths, context.counters, context.privateRoots);
+  }
   if (typeof value === "bigint") return value.toString();
   if (typeof value !== "object") return null;
   if (depth >= MAX_DEPTH) {
@@ -183,6 +221,10 @@ function sanitizeValue(value, context, depth = 0, key = "") {
   const output = {};
   const keys = Object.keys(value).sort();
   for (const objectKey of keys.slice(0, MAX_KEYS)) {
+    if (depth === 0 && context.strictTopLevel && !ORDINARY_PAYLOAD_KEYS.has(objectKey)) {
+      context.counters.redactions++;
+      continue;
+    }
     output[objectKey] = sanitizeValue(value[objectKey], context, depth + 1, objectKey);
   }
   if (keys.length > MAX_KEYS) {
@@ -196,12 +238,14 @@ function sanitizeValue(value, context, depth = 0, key = "") {
  * Redact and bound a payload before persistence. Runtime envelopes remove
  * repository/path fields and home-directory paths before they reach SQLite.
  */
-export function prepareRuntimePayload(payload, { redactPaths = false } = {}) {
+export function prepareRuntimePayload(payload, { redactPaths = true, strictTopLevel = true } = {}) {
   const counters = { redactions: 0, truncations: 0 };
   const value = sanitizeValue(payload ?? {}, {
     counters,
+    privateRoots: configuredPrivateRoots(),
     redactPaths,
     seen: new WeakSet(),
+    strictTopLevel,
   });
   let json = JSON.stringify(value);
   let bytes = Buffer.byteLength(json, "utf8");
@@ -233,7 +277,7 @@ function normaliseOccurredAt(value) {
 }
 
 /** Build a validated, redacted runtime-event envelope without writing it. */
-export function createRuntimeEventEnvelope(input, { redactPaths = true } = {}) {
+export function createRuntimeEventEnvelope(input, { redactPaths = true, strictTopLevel = true } = {}) {
   const eventId = normaliseIdentifier(input?.eventId || randomUUID(), { required: true });
   const sessionId = normaliseIdentifier(input?.sessionId || process.env.AIDEVOPS_SESSION_ID || process.env.OPENCODE_SESSION_ID);
   const workerId = normaliseIdentifier(
@@ -253,7 +297,7 @@ export function createRuntimeEventEnvelope(input, { redactPaths = true } = {}) {
     input?.rootEventId || process.env.AIDEVOPS_ROOT_EVENT_ID || eventId,
     { required: true },
   );
-  const payload = prepareRuntimePayload(input?.payload, { redactPaths });
+  const payload = prepareRuntimePayload(input?.payload, { redactPaths, strictTopLevel });
 
   return Object.freeze({
     envelopeVersion: RUNTIME_EVENT_ENVELOPE_VERSION,
@@ -338,8 +382,8 @@ export function appendRuntimeEventSync(input, { executeSync = sqliteExecSync } =
   }
 }
 
-/** Build a BEGIN IMMEDIATE transaction that atomically allocates state_version. */
-export function buildStateEventInsertSql(input, eventType) {
+/** Build a transaction that optionally enforces an optimistic base version. */
+export function buildStateEventInsertSql(input, eventType, { expectedVersion } = {}) {
   if (eventType !== "state.snapshot" && eventType !== "state.delta") {
     throw new TypeError("state event type must be state.snapshot or state.delta");
   }
@@ -348,25 +392,34 @@ export function buildStateEventInsertSql(input, eventType) {
     ...input,
     eventType,
     payload: { [payloadKey]: input?.[payloadKey] },
-  }, { redactPaths: true });
-  const nextVersionSql = `(
-    SELECT COALESCE(MAX(state_version), 0) + 1
-    FROM runtime_events
+  }, { redactPaths: true, strictTopLevel: false });
+  const currentVersionSql = `COALESCE((
+    SELECT MAX(state_version) FROM runtime_events
     WHERE subject_id = ${sqlEscape(envelope.subjectId)} AND state_version IS NOT NULL
-  )`;
+  ), 0)`;
+  const hasExpectedVersion = expectedVersion !== undefined;
+  if (hasExpectedVersion && (!Number.isSafeInteger(expectedVersion) || expectedVersion < 0)) {
+    throw new TypeError("expected state version must be a non-negative safe integer");
+  }
+  const nextVersionSql = hasExpectedVersion ? String(expectedVersion + 1) : `(${currentVersionSql} + 1)`;
+  const insertSql = hasExpectedVersion
+    ? `INSERT INTO runtime_events ${RUNTIME_EVENT_COLUMNS}
+SELECT ${runtimeEventValuesSql(envelope, nextVersionSql)}
+WHERE ${currentVersionSql} = ${expectedVersion}`
+    : `INSERT INTO runtime_events ${RUNTIME_EVENT_COLUMNS}
+VALUES (${runtimeEventValuesSql(envelope, nextVersionSql)})`;
   return {
     envelope,
     sql: `BEGIN IMMEDIATE;
-INSERT INTO runtime_events ${RUNTIME_EVENT_COLUMNS}
-VALUES (${runtimeEventValuesSql(envelope, nextVersionSql)})
+${insertSql}
 RETURNING state_version;
 COMMIT;`,
   };
 }
 
-function appendStateEvent(input, eventType, { executeSync = sqliteExecSync } = {}) {
+function appendStateEvent(input, eventType, { executeSync = sqliteExecSync, expectedVersion } = {}) {
   try {
-    const built = buildStateEventInsertSql(input, eventType);
+    const built = buildStateEventInsertSql(input, eventType, { expectedVersion });
     const result = executeSync(built.sql, 15000);
     if (result === null) return null;
     const stateVersion = Number.parseInt(String(result).trim().split(/\s+/).at(-1), 10);
@@ -395,6 +448,10 @@ function canonicalClone(value) {
   const output = {};
   for (const key of Object.keys(value).sort()) output[key] = canonicalClone(value[key]);
   return output;
+}
+
+function jsonEqual(left, right) {
+  return JSON.stringify(canonicalClone(left)) === JSON.stringify(canonicalClone(right));
 }
 
 /** Apply RFC 7396 JSON Merge Patch and return canonical key ordering. */
@@ -465,7 +522,7 @@ export function reconstructRuntimeState(rows, { subjectId, targetVersion = Numbe
 
 /** Build the smallest RFC 7396 patch that transforms current into next. */
 export function createMergePatch(current, next) {
-  if (JSON.stringify(canonicalClone(current)) === JSON.stringify(canonicalClone(next))) return {};
+  if (jsonEqual(current, next)) return isJsonObject(next) ? {} : canonicalClone(next);
   if (!isJsonObject(current) || !isJsonObject(next)) return canonicalClone(next);
   const patch = {};
   const keys = new Set([...Object.keys(current), ...Object.keys(next)]);
@@ -475,6 +532,7 @@ export function createMergePatch(current, next) {
     } else if (!Object.hasOwn(current, key)) {
       patch[key] = canonicalClone(next[key]);
     } else {
+      if (jsonEqual(current[key], next[key])) continue;
       const childPatch = createMergePatch(current[key], next[key]);
       if (!isJsonObject(childPatch) || Object.keys(childPatch).length > 0) patch[key] = childPatch;
     }
@@ -483,8 +541,9 @@ export function createMergePatch(current, next) {
 }
 
 export function resolveRuntimeEventsDbPath(env = process.env) {
-  return env.AIDEVOPS_OBS_DB_OVERRIDE || env.AIDEVOPS_RUNTIME_EVENTS_DB ||
+  const candidate = env.AIDEVOPS_OBS_DB_OVERRIDE || env.AIDEVOPS_RUNTIME_EVENTS_DB ||
     join(env.HOME || homedir(), ".aidevops", ".agent-workspace", "observability", "llm-requests.db");
+  return canonicalizeSqliteDbPath(candidate);
 }
 
 function queryJsonRows(sql, { executeSync = sqliteExecSync } = {}) {
@@ -494,11 +553,36 @@ function queryJsonRows(sql, { executeSync = sqliteExecSync } = {}) {
   return Array.isArray(rows) ? rows : [];
 }
 
+function runtimeEventSchemaReady() {
+  const columns = new Set(queryJsonRows("PRAGMA table_info('runtime_events');").map((row) => row.name));
+  const requiredColumns = [
+    "envelope_version", "event_id", "event_type", "correlation_id", "causation_id",
+    "subject_id", "session_id", "worker_id", "parent_worker_id", "root_worker_id",
+    "root_event_id", "parent_event_id", "state_version", "payload_json", "payload_bytes",
+    "redaction_count",
+  ];
+  if (!requiredColumns.every((column) => columns.has(column))) return false;
+  const objects = queryJsonRows(`
+    SELECT type, name FROM sqlite_master
+    WHERE name IN (
+      'runtime_events_reject_update', 'runtime_events_reject_delete',
+      'idx_runtime_events_subject_state_version', 'idx_runtime_events_worker_lineage'
+    );
+  `);
+  const names = new Set(objects.map((row) => row.name));
+  return [
+    "runtime_events_reject_update", "runtime_events_reject_delete",
+    "idx_runtime_events_subject_state_version", "idx_runtime_events_worker_lineage",
+  ].every((name) => names.has(name));
+}
+
 /** Initialise the runtime-event table and migrate the two worker-lineage columns. */
 export function initialiseRuntimeEventStore(dbPath = resolveRuntimeEventsDbPath()) {
   try {
-    mkdirSync(dirname(dbPath), { recursive: true });
-    setDbPath(dbPath);
+    const canonicalDbPath = canonicalizeSqliteDbPath(dbPath);
+    mkdirSync(dirname(canonicalDbPath), { recursive: true });
+    setDbPath(canonicalDbPath);
+    if (runtimeEventSchemaReady()) return true;
     if (sqliteExecSync(RUNTIME_EVENTS_SCHEMA_SQL, 15000) === null) return false;
     const columns = new Set(queryJsonRows("PRAGMA table_info('runtime_events');").map((row) => row.name));
     for (const column of ["parent_worker_id", "root_worker_id"]) {
@@ -506,12 +590,12 @@ export function initialiseRuntimeEventStore(dbPath = resolveRuntimeEventsDbPath(
         return false;
       }
     }
-    sqliteExecSync(
+    if (sqliteExecSync(
       "CREATE INDEX IF NOT EXISTS idx_runtime_events_worker_lineage " +
       "ON runtime_events(root_worker_id, parent_worker_id, worker_id, id);",
       15000,
-    );
-    return true;
+    ) === null) return false;
+    return runtimeEventSchemaReady();
   } catch {
     return false;
   }
@@ -542,8 +626,9 @@ export function queryWorkerLineage(workerId, { limit = 250 } = {}) {
     throw new TypeError("lineage limit must be between 1 and 1000");
   }
   return queryJsonRows(`
-    SELECT id, occurred_at, event_id, event_type, correlation_id, subject_id,
-      worker_id, parent_worker_id, root_worker_id, state_version, payload_json
+    SELECT id, occurred_at, event_id, event_type, correlation_id, causation_id,
+      subject_id, worker_id, parent_worker_id, root_worker_id, root_event_id,
+      parent_event_id, state_version, payload_json
     FROM runtime_events
     WHERE worker_id = ${sqlEscape(normalized)}
        OR parent_worker_id = ${sqlEscape(normalized)}
@@ -552,25 +637,51 @@ export function queryWorkerLineage(workerId, { limit = 250 } = {}) {
   `);
 }
 
-function currentStateRows(subjectId) {
+function currentStateRows(subjectId, options = {}) {
   return queryJsonRows(`
     SELECT subject_id, event_type, state_version, payload_json
     FROM runtime_events
     WHERE subject_id = ${sqlEscape(subjectId)} AND state_version IS NOT NULL
     ORDER BY state_version ASC;
-  `);
+  `, options);
 }
 
-export function appendProjectedState(input, mode = "auto") {
+function sanitizedProjectedState(state) {
+  return prepareRuntimePayload({ state }, { redactPaths: true, strictTopLevel: false }).value.state;
+}
+
+export function appendProjectedState(input, mode = "auto", options = {}) {
   const subjectId = normaliseIdentifier(input?.subjectId, { required: true });
   const nextState = input?.state;
-  if (mode === "snapshot") return appendStateSnapshot({ ...input, subjectId, state: nextState });
-  if (mode === "delta") return appendStateDelta({ ...input, subjectId, patch: nextState });
+  if (mode === "snapshot") return appendStateSnapshot({ ...input, subjectId, state: nextState }, options);
+  if (mode === "delta") return appendStateDelta({ ...input, subjectId, patch: nextState }, options);
   if (mode !== "auto") throw new TypeError("state mode must be snapshot, delta, or auto");
-  const rows = currentStateRows(subjectId);
-  if (rows.length === 0) return appendStateSnapshot({ ...input, subjectId, state: nextState });
-  const current = reconstructRuntimeState(rows, { subjectId });
-  return appendStateDelta({ ...input, subjectId, patch: createMergePatch(current.state, nextState) });
+  const desiredState = sanitizedProjectedState(nextState);
+
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const rows = currentStateRows(subjectId, options);
+    const current = rows.length === 0
+      ? { state: undefined, stateVersion: 0 }
+      : reconstructRuntimeState(rows, { subjectId });
+    if (rows.length > 0 && jsonEqual(current.state, desiredState)) return null;
+
+    let eventType = "state.snapshot";
+    let eventInput = { ...input, subjectId, state: desiredState };
+    if (rows.length > 0) {
+      const patch = createMergePatch(current.state, desiredState);
+      if (jsonEqual(applyMergePatch(current.state, patch), desiredState)) {
+        eventType = "state.delta";
+        eventInput = { ...input, subjectId, patch };
+      }
+    }
+
+    const envelope = appendStateEvent(eventInput, eventType, {
+      ...options,
+      expectedVersion: current.stateVersion,
+    });
+    if (envelope) return envelope;
+  }
+  return null;
 }
 
 export function verifyRuntimeEventStore() {
@@ -642,11 +753,34 @@ async function runCli(args) {
   if (command === "emit") {
     const eventType = args[1];
     const status = optionValue(args, "--status");
+    const source = optionValue(args, "--source");
+    const classification = optionValue(args, "--classification");
     const payloadText = optionValue(args, "--payload");
     let payload = payloadText ? JSON.parse(payloadText) : {};
     if (status) payload = { ...payload, status };
-    const envelope = appendRuntimeEventSync({ eventType, subjectId: cliSubject(args), payload });
-    if (envelope) printJson(envelope);
+    if (source) payload = { ...payload, source };
+    if (classification) payload = { ...payload, classification };
+    const generatedEventId = args.includes("--root-dispatch")
+      ? optionValue(args, "--event-id") || randomUUID()
+      : optionValue(args, "--event-id") || undefined;
+    const envelope = appendRuntimeEventSync({
+      eventId: generatedEventId,
+      eventType,
+      subjectId: cliSubject(args),
+      workerId: optionValue(args, "--worker") || undefined,
+      parentWorkerId: optionValue(args, "--parent-worker") || undefined,
+      rootWorkerId: optionValue(args, "--root-worker") || undefined,
+      correlationId: optionValue(args, "--correlation") || undefined,
+      causationId: optionValue(args, "--causation") || undefined,
+      rootEventId: optionValue(args, "--root-event") ||
+        (args.includes("--root-dispatch") ? process.env.AIDEVOPS_ROOT_EVENT_ID || generatedEventId : undefined),
+      parentEventId: optionValue(args, "--parent-event") || undefined,
+      payload,
+    });
+    if (envelope) {
+      if (args.includes("--print-id")) process.stdout.write(`${envelope.eventId}\n`);
+      else printJson(envelope);
+    }
     return 0;
   }
   if (command === "state") {
