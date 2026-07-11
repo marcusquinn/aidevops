@@ -4469,7 +4469,7 @@ t019.3.4,Update AGENTS.md with Beads integration docs,,beads,1h,45m,2025-12-21T1
 
 - [ ] t18084 Embed secure Vault terminal and populate local secret inventory #bug #enhancement #security ref:GH#27001
 
-- [ ] t18085 Evolve runtime-neutral autonomous safety contracts #enhancement #framework #observability #security ref:GH#27030
+- [ ] t18085 Evolve runtime-neutral autonomous safety contracts #enhancement #framework #security #observability #interactive #no-auto-dispatch ~16h tier:thinking ref:GH#27030 started:2026-07-11T00:00:00Z logged:2026-07-11 -> [todo/tasks/t18085-brief.md]
 
 - [ ] t18086 Strip image placeholders from OpenCode session titles #bug ref:GH#27036
 
