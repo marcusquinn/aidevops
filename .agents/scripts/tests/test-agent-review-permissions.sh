@@ -28,7 +28,7 @@ assert re.search(r"^\s+grep:\s+true\s*$", frontmatter, re.MULTILINE), \
 assert re.search(r"\*\*Duplicate detection\*\* \(Grep ", body), \
     "Duplicate detection must remain mandatory through Grep"
 
-rg_lines = [line for line in body.splitlines() if re.search(r"`rg\b", line)]
+rg_lines = [line for line in body.splitlines() if re.search(r"\brg\b", line)]
 assert rg_lines, "Document the optional rg equivalent for Bash-enabled agents"
 assert all("when Bash is available" in line for line in rg_lines), \
     "Every rg instruction must be conditional on Bash availability"
