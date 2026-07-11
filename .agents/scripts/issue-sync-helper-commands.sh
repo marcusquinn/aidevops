@@ -297,7 +297,8 @@ Commands: push [tNNN] | enrich [tNNN] | pull | close [tNNN] | reopen
           reconcile | relationships [tNNN] | backfill-sub-issues [--issue N]
           backfill-cross-phase-blocked-by --issue N
           status | help
-Options: --repo SLUG | --dry-run | --verbose | --force (skip evidence on close; bypass enrich body-gate)
+Options: --repo SLUG | --project-root PATH | --dry-run | --verbose
+         --force (skip evidence on close; bypass enrich body-gate)
          --force-push (allow bulk push outside CI — use with caution, risk of duplicates)
 
 Drift detection:

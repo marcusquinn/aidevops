@@ -5,7 +5,7 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 3.32.27
+# Version: 3.32.29
 
 set -euo pipefail
 
@@ -219,6 +219,7 @@ _run_update_setup() {
 # Update/upgrade command
 cmd_update() {
 	local skip_project_sync=false
+	local reconcile_repo_verify=false
 	local arg
 	for arg in "$@"; do case "$arg" in --skip-project-sync) skip_project_sync=true ;; esac done
 	print_header "Updating AI DevOps Framework"
@@ -266,6 +267,7 @@ cmd_update() {
 					local deployed_sha has_code_drift=0
 					deployed_sha=$(tr -d '[:space:]' <"$stamp_file" 2>/dev/null) || deployed_sha=""
 					if [[ -n "$deployed_sha" && "$deployed_sha" != "$local_hash" ]]; then
+						if _update_repo_verify_files_changed "$deployed_sha" "$local_hash"; then reconcile_repo_verify=true; fi
 						# Per Gemini code-review on PR #20342: use git's path filter +
 						# `grep -q .` to detect drift across the full set of deploy-affecting
 						# paths (not just .agents/ subdirs — also setup.sh, .agents/scripts/setup/modules/,
@@ -307,6 +309,7 @@ cmd_update() {
 			new_version=$(get_version)
 			new_hash=$(git rev-parse HEAD)
 			if [[ "$old_hash" != "$new_hash" ]]; then
+				if _update_repo_verify_files_changed "$old_hash" "$new_hash"; then reconcile_repo_verify=true; fi
 				local total_commits
 				total_commits=$(git rev-list --count "$old_hash..$new_hash" 2>/dev/null || echo "0")
 				if [[ "$total_commits" -gt 0 ]]; then
@@ -341,6 +344,9 @@ cmd_update() {
 	fi
 
 	_update_sync_projects "$skip_project_sync" "$(get_version)"
+	if [[ "$skip_project_sync" != "$_AIDEVOPS_UPDATE_TRUE" && "$reconcile_repo_verify" == "$_AIDEVOPS_UPDATE_TRUE" ]]; then
+		_update_reconcile_repo_verify
+	fi
 	_update_check_homebrew
 	_update_check_planning
 	_update_check_tools
@@ -859,6 +865,7 @@ _help_commands() {
 	echo "  repo-sync <cmd>    Daily git pull for repos in parent dirs (enable/disable/status/dirs)"
 	echo "  update-tools       Check for outdated tools (--update to auto-update)"
 	echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
+	echo "  lint [cmd]         Audit/configure native repo lint, format, typecheck, and hooks"
 	echo "  design <cmd>       DESIGN.md detection, scaffolding, and brand guideline exports"
 	echo "  cleanup <cmd>      Cleanup helpers (remote branch audit/delete)"
 	echo "  model-accounts-pool OAuth account pool (list/check/diagnose/add/rotate/reset-cooldowns)"
@@ -1543,6 +1550,7 @@ main() {
 	auto-update | autoupdate) _dispatch_helper "auto-update-helper.sh" "auto-update-helper.sh" "$@" ;;
 	repo-sync | reposync) _dispatch_helper "repo-sync-helper.sh" "repo-sync-helper.sh" "$@" ;;
 	update-tools | tools) cmd_update_tools "$@" ;;
+	lint) _dispatch_helper "lint-helper.sh" "lint-helper.sh" "$@" ;;
 	upgrade-planning | up) cmd_upgrade_planning "$@" ;;
 	repos | projects) cmd_repos "$@" ;;
 	design) _dispatch_helper "design-guidelines-helper.sh" "design-guidelines-helper.sh" "$@" ;;

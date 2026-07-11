@@ -88,6 +88,36 @@ _update_sync_projects() {
 	return 0
 }
 
+_update_reconcile_repo_verify() {
+	local helper="${INSTALL_DIR}/.agents/scripts/lint-helper.sh"
+	[[ -f "$helper" ]] || helper="${HOME}/.aidevops/agents/scripts/lint-helper.sh"
+	if [[ ! -f "$helper" ]]; then
+		print_info "Lint reconciliation helper unavailable"
+		return 0
+	fi
+	print_info "Reconciling repository lint policy and hooks..."
+	bash "$helper" reconcile --all || print_warning "Repository lint reconciliation completed with warnings"
+	return 0
+}
+
+_update_repo_verify_files_changed() {
+	local old_sha="$1"
+	local new_sha="$2"
+	local changed_file=""
+	[[ -n "$old_sha" && -n "$new_sha" && "$old_sha" != "$new_sha" ]] || return 1
+	while IFS= read -r changed_file; do
+		case "$changed_file" in
+		.agents/hooks/repo-verify-pre-push.sh | .agents/configs/repo-verify-defaults.conf | \
+			.agents/scripts/repo-verify-config-lib.sh | .agents/scripts/lint-helper.sh | \
+			.agents/scripts/install-pre-push-guards.sh | .agents/scripts/setup/_repo_verify_guard.sh | \
+			.agents/scripts/aidevops-cli/aidevops-init-lib.sh | .agents/scripts/aidevops-cli/aidevops-update-lib.sh)
+			return 0
+			;;
+		esac
+	done < <(git -C "$INSTALL_DIR" diff --name-only "$old_sha" "$new_sha" 2>/dev/null)
+	return 1
+}
+
 _update_sync_agent_source_repos() {
 	local current_ver="$1"
 	local synced=0 skipped=0 failed=0
@@ -275,7 +305,7 @@ _update_check_setsid() {
 			local keg_setsid="${brew_prefix}/opt/util-linux/bin/setsid"
 			local link_target="${brew_prefix}/bin/setsid"
 			if [[ -x "$keg_setsid" && ! -e "$link_target" ]]; then
-				ln -s "$keg_setsid" "$link_target" && \
+				ln -s "$keg_setsid" "$link_target" &&
 					print_success "Symlinked setsid: $keg_setsid → $link_target"
 			fi
 			if command -v setsid >/dev/null 2>&1; then
@@ -328,9 +358,9 @@ _update_check_workflow_drift() {
 	relevant_files=$(git -C "$INSTALL_DIR" diff --name-only "$old_sha" "$new_sha" -- \
 		'.agents/templates/workflows/' \
 		'.github/workflows/' \
-		2>/dev/null \
-		| grep -E '(\.agents/templates/workflows/.*\.ya?ml$|\.github/workflows/.*-reusable\.ya?ml$)' \
-		|| true)
+		2>/dev/null |
+		grep -E '(\.agents/templates/workflows/.*\.ya?ml$|\.github/workflows/.*-reusable\.ya?ml$)' ||
+		true)
 	[[ -z "$relevant_files" ]] && return 0
 
 	local file_count

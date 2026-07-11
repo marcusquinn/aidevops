@@ -12,7 +12,7 @@ shopt -s inherit_errexit 2>/dev/null || true
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 3.32.27
+# Version: 3.32.29
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -107,6 +107,8 @@ if [[ -d "$SETUP_MODULES_DIR" ]]; then
 	source "$SETUP_MODULES_DIR/_privacy_guard.sh"
 	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_complexity_guard.sh"
+	# shellcheck disable=SC1091
+	source "$SETUP_MODULES_DIR/_repo_verify_guard.sh"
 	# shellcheck disable=SC1091
 	source "$SETUP_MODULES_DIR/_task_id_guard.sh"
 	# shellcheck disable=SC1091
@@ -1194,6 +1196,7 @@ _setup_ai_session_reset_plan() {
 	_SETUP_AI_SESSION_NEEDS_AGENTS=0
 	_SETUP_AI_SESSION_NEEDS_CLI=0
 	_SETUP_AI_SESSION_NEEDS_HOOKS=0
+	_SETUP_AI_SESSION_NEEDS_REPO_VERIFY=0
 	_SETUP_AI_SESSION_NEEDS_PULSE=0
 	_SETUP_AI_SESSION_NEEDS_GUI=0
 	_SETUP_AI_SESSION_REQUIRES_FULL=0
@@ -1246,6 +1249,12 @@ _setup_ai_session_plan_file() {
 		;;
 	.agents/hooks/*)
 		_SETUP_AI_SESSION_NEEDS_HOOKS=1
+		[[ "$filepath" == ".agents/hooks/repo-verify-pre-push.sh" ]] && _SETUP_AI_SESSION_NEEDS_REPO_VERIFY=1
+		;;
+	.agents/scripts/repo-verify-config-lib.sh | .agents/scripts/lint-helper.sh | \
+		.agents/scripts/install-pre-push-guards.sh | .agents/configs/repo-verify-defaults.conf | \
+		.agents/scripts/aidevops-cli/aidevops-init-lib.sh | .agents/scripts/aidevops-cli/aidevops-update-lib.sh)
+		_SETUP_AI_SESSION_NEEDS_REPO_VERIFY=1
 		;;
 	.agents/scripts/setup/modules/schedulers*.sh | .agents/scripts/setup/_scheduler_runtime.sh)
 		_SETUP_AI_SESSION_NEEDS_PULSE=1
@@ -1358,6 +1367,9 @@ _setup_run_ai_session_incremental() {
 	fi
 	if [[ "$_SETUP_AI_SESSION_NEEDS_HOOKS" -eq 1 ]]; then
 		_time_step "$SETUP_STAGE_HOOKS" setup_safety_hooks || return $?
+	fi
+	if [[ "$_SETUP_AI_SESSION_NEEDS_REPO_VERIFY" -eq 1 ]]; then
+		_time_step "setup_repo_verify_guard" setup_repo_verify_guard || return $?
 	fi
 	if [[ "$_SETUP_AI_SESSION_NEEDS_PULSE" -eq 1 ]]; then
 		_time_step "$SETUP_STAGE_PULSE" setup_supervisor_pulse "$os" || return $?
@@ -1515,6 +1527,9 @@ _setup_run_non_interactive() {
 	# initialized repo so pushes that introduce new function-complexity,
 	# nesting-depth, or file-size violations are caught before CI (t2198).
 	_time_step "setup_complexity_guard" setup_complexity_guard
+	# Migrate exact repository-native lint policy and install/refresh repo-verify
+	# for eligible registered repositories. Explicit opt-outs are preserved.
+	_time_step "setup_repo_verify_guard" setup_repo_verify_guard
 	# Install/refresh the canonical-on-main post-checkout hook in every
 	# initialized repo so branch switches away from main in the canonical
 	# directory are warned against (t1995). Complements pre-edit-check.sh's

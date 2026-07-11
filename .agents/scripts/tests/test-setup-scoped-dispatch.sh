@@ -107,6 +107,8 @@ test_setup_stage_contract() {
 	assert_contains "ai-session scope maps to incremental setup" "$text" "ai-session | ai | \"\$SETUP_STAGE_AI_SESSION\") printf '%s' \"\$SETUP_STAGE_AI_SESSION\""
 	assert_contains "ai-session scoped stage falls back to full setup" "$text" "AI-session incremental setup unavailable or failed; falling back to full setup"
 	assert_contains "ai-session verifies deployed sha" "$text" "_setup_ai_session_verify_deploy \"\$current_sha\""
+	assert_contains "ai-session classifies lint provisioning changes" "$text" ".agents/scripts/repo-verify-config-lib.sh"
+	assert_contains "ai-session reruns repo verify rollout" "$text" "_time_step \"setup_repo_verify_guard\" setup_repo_verify_guard"
 	assert_contains "ai-session version prefix is split for release safety" "$text" 'version_prefix="# ""Version:"'
 	assert_not_contains "ai-session version prefix is not a version-manager target" "$text" '"# Version: "*'
 	assert_contains "gui desktop default path is opt-in gated" "$text" "_time_step \"setup_gui_desktop_app_opt_in\" _setup_offer_gui_desktop_app"

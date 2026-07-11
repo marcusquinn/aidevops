@@ -29,13 +29,19 @@ tools:
 **Validation**:
 
 ```bash
-~/.aidevops/agents/scripts/linters-local.sh                              # all checks
-grep -L "return [01]" .agents/scripts/*.sh                               # S7682
-grep -n '\$[1-9]' .agents/scripts/*.sh | grep -v 'local.*=.*\$[1-9]'   # S7679
-find .agents/scripts/ -name "*.sh" -exec shellcheck {} \;               # ShellCheck
-npx markdownlint-cli2 "**/*.md" --ignore node_modules                   # Markdown
-~/.aidevops/agents/scripts/secretlint-helper.sh scan                    # Secrets
+~/.aidevops/agents/scripts/linters-local.sh            # changed-file development scope (default)
+~/.aidevops/agents/scripts/linters-local.sh --changed  # explicit changed-file scope
+~/.aidevops/agents/scripts/linters-local.sh --full     # uncached release-boundary sweep
+aidevops lint audit                                    # native repo lint/typecheck + hook status
+aidevops lint configure --dry-run                      # preview exact evidence-based configuration
 ```
+
+Use the narrowest changed-file or affected-package check during development.
+Broad gates share a path-independent cache across linked worktrees and serialize
+expensive execution to avoid parallel CPU spikes. Use `--full` only for releases,
+shared tooling/contracts, or final confidence; it deliberately bypasses cache
+downgrades. Never infer mutating format commands, fix flags, or package managers
+when repository evidence is ambiguous.
 
 <!-- AI-CONTEXT-END -->
 

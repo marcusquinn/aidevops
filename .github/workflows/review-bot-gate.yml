@@ -22,7 +22,9 @@ on:
   pull_request:
     types: [opened, synchronize, reopened]
   pull_request_review:
-    types: [submitted]
+    types: [submitted, edited, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
   issue_comment:
     # edited re-triggers when CodeRabbit finalises its Phase 1 placeholder (t2139).
     # Without this trigger, the settlement check would only fire on new comments,

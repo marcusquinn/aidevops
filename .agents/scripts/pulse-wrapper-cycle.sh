@@ -461,9 +461,10 @@ sync_todo_refs_for_repo() {
 	local repo_path="$2"
 	local script_dir="${SCRIPT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)}"
 
-	/bin/bash "${script_dir}/issue-sync-helper.sh" pull --repo "$repo_slug" 2>&1 || true
-	/bin/bash "${script_dir}/issue-sync-helper.sh" close --repo "$repo_slug" 2>&1 || true
-	/bin/bash "${script_dir}/issue-sync-helper.sh" reopen --repo "$repo_slug" 2>&1 || true
+	printf '[pulse-wrapper] Syncing TODO refs: repo=%s root=validated\n' "$repo_slug" >>"$WRAPPER_LOGFILE"
+	/bin/bash "${script_dir}/issue-sync-helper.sh" pull --repo "$repo_slug" --project-root "$repo_path" 2>&1 || true
+	/bin/bash "${script_dir}/issue-sync-helper.sh" close --repo "$repo_slug" --project-root "$repo_path" 2>&1 || true
+	/bin/bash "${script_dir}/issue-sync-helper.sh" reopen --repo "$repo_slug" --project-root "$repo_path" 2>&1 || true
 	git -C "$repo_path" diff --quiet TODO.md 2>/dev/null || {
 		git -C "$repo_path" add TODO.md &&
 			git -C "$repo_path" commit -m "chore: sync GitHub issue refs to TODO.md [skip ci]" &&
