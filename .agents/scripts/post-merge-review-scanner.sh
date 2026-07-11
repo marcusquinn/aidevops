@@ -96,6 +96,7 @@ SCANNER_CLAIM_HELPER="${SCANNER_CLAIM_HELPER:-${SCRIPT_DIR}/dispatch-claim-helpe
 SCANNER_PREDISPATCH_HELPER="${SCANNER_PREDISPATCH_HELPER:-${SCRIPT_DIR}/pre-dispatch-validator-helper.sh}"
 SCANNER_CREATED_ISSUE_NUMBER=""
 SCANNER_EXISTING_ISSUE_NUMBER=""
+SCANNER_FALSE="false"
 
 SCANNER_DAYS="${SCANNER_DAYS:-7}"
 SCANNER_MAX_ISSUES="${SCANNER_MAX_ISSUES:-10}"
@@ -686,21 +687,23 @@ _creation_marker_issue_exists() {
 	local marker_issue=""
 	local marker_meta=""
 	local stale_claim=""
+	local comments_json=""
 	raw_comments=$(gh api "repos/${repo}/issues/${pr}/comments?per_page=100" \
 		--paginate --slurp 2>/dev/null) || return 2
-	marker_issue=$(printf '%s' "$raw_comments" | jq -r --arg source_pr "$pr" '
-		[if (type == "array" and ((.[0]? | type) == "array")) then .[] else . end
-		 | .[]
+	comments_json=$(printf '%s' "$raw_comments" | jq -c '
+		if type == "array" and (.[0]? | type) == "array" then [.[][]] else . end
+	' 2>/dev/null) || return 2
+	marker_issue=$(printf '%s' "$comments_json" | jq -r --arg source_pr "$pr" '
+		[.[]
 		 | select((.author_association // "") as $a | ["OWNER","MEMBER","COLLABORATOR"] | index($a))
 		 | (.body // "")
 		 | (capture("REVIEW_FOLLOWUP_CREATED source_pr=" + $source_pr + " issue=(?<issue>[0-9]+)")? | .issue)]
 		| map(select(. != null)) | last // ""
 	' 2>/dev/null) || return 2
 	if [[ -z "$marker_issue" ]]; then
-		stale_claim=$(printf '%s' "$raw_comments" | jq -r --argjson now "$(date +%s)" '
-			(if (type == "array" and ((.[0]? | type) == "array")) then [.[][]] else . end) as $rows
-			| ([$rows[] | select((.body // "") | ascii_downcase | contains("dispatch_claim nonce=")) | .created_at] | sort | last // "") as $claim
-			| ([$rows[] | select((.body // "") | ascii_downcase | contains("claim_released")) | .created_at] | sort | last // "") as $release
+		stale_claim=$(printf '%s' "$comments_json" | jq -r --argjson now "$(date +%s)" '
+			([.[] | select((.body // "") | ascii_downcase | contains("dispatch_claim nonce=")) | .created_at] | sort | last // "") as $claim
+			| ([.[] | select((.body // "") | ascii_downcase | contains("claim_released")) | .created_at] | sort | last // "") as $release
 			| if ($claim != "" and ($release == "" or $claim > $release) and ($now - ($claim | fromdateiso8601) > 120)) then "stale" else "" end
 		' 2>/dev/null) || return 2
 		if [[ "$stale_claim" == "stale" ]]; then
@@ -730,7 +733,7 @@ recover_creation_marker() {
 	[[ "$SCANNER_EXISTING_ISSUE_NUMBER" =~ ^[1-9][0-9]*$ ]] || return 0
 	_creation_marker_issue_exists "$repo" "$pr" || marker_rc=$?
 	[[ "$marker_rc" -eq 1 ]] || return 0
-	[[ "$dry_run" == "false" ]] || return 0
+	[[ "$dry_run" == "$SCANNER_FALSE" ]] || return 0
 	runner=$(gh api user --jq '.login' 2>/dev/null) || runner=""
 	[[ -n "$runner" ]] || return 0
 	record_creation_marker "$repo" "$pr" "$runner" "$SCANNER_EXISTING_ISSUE_NUMBER" || true
@@ -1226,9 +1229,9 @@ main() {
 		}
 	fi
 	case "$command" in
-	scan) do_scan "$repo" "false" ;;
+	scan) do_scan "$repo" "$SCANNER_FALSE" ;;
 	dry-run) do_scan "$repo" "true" ;;
-	refresh) do_refresh "$repo" "false" ;;
+	refresh) do_refresh "$repo" "$SCANNER_FALSE" ;;
 	refresh-dry-run) do_refresh "$repo" "true" ;;
 	-h | --help | help)
 		echo "Usage: $(basename "$0") {scan|dry-run|refresh|refresh-dry-run|help} [REPO]"
