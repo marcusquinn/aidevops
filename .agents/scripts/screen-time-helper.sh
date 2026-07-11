@@ -32,6 +32,22 @@ OS_TYPE="${AIDEVOPS_SCREEN_TIME_OS_TYPE:-$(uname -s)}"
 
 # macOS-specific paths
 KNOWLEDGE_DB="${AIDEVOPS_KNOWLEDGE_DB:-${HOME}/Library/Application Support/Knowledge/knowledgeC.db}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INTERVAL_ENGINE="${SCRIPT_DIR}/screen-time-interval-engine.py"
+
+#######################################
+# Run the shared interval engine with platform and source paths.
+# Arguments:
+#   $1..N - interval engine arguments
+# Returns: engine exit status
+#######################################
+_screen_time_engine() {
+	python3 "$INTERVAL_ENGINE" "$@" \
+		--os-type "$OS_TYPE" \
+		--db "$KNOWLEDGE_DB" \
+		--history "$HISTORY_FILE"
+	return $?
+}
 
 # ============================================================
 # macOS: Knowledge DB queries
@@ -724,14 +740,8 @@ _linux_earliest_date() {
 #######################################
 _query_screen_hours() {
 	local days="$1"
-	case "$OS_TYPE" in
-	Darwin) _macos_query_screen_hours "$days" ;;
-	Linux) _linux_query_screen_hours "$days" ;;
-	*)
-		echo "0"
-		return 0
-		;;
-	esac
+	_screen_time_engine query --days "$days"
+	return $?
 }
 
 #######################################
@@ -742,14 +752,8 @@ _query_screen_hours() {
 #######################################
 _query_screen_hours_for_date() {
 	local target_date="$1"
-	case "$OS_TYPE" in
-	Darwin) _macos_query_screen_hours_for_date "$target_date" ;;
-	Linux) _linux_query_screen_hours_for_date "$target_date" ;;
-	*)
-		echo "0"
-		return 0
-		;;
-	esac
+	_screen_time_engine date --date "$target_date"
+	return $?
 }
 
 #######################################
@@ -757,14 +761,8 @@ _query_screen_hours_for_date() {
 # Returns: 0
 #######################################
 _earliest_date() {
-	case "$OS_TYPE" in
-	Darwin) _macos_earliest_date ;;
-	Linux) _linux_earliest_date ;;
-	*)
-		echo ""
-		return 0
-		;;
-	esac
+	_screen_time_engine earliest
+	return $?
 }
 
 # ============================================================
@@ -825,14 +823,14 @@ cmd_snapshot() {
 		local hours
 		hours=$(_query_screen_hours_for_date "$current_date")
 
-		# Only record days with actual screen time
-		if [[ "$hours" != "0" && "$hours" != "0.0" ]]; then
+		# A legitimate zero is an observation. Only collection failure is omitted.
+		if [[ "$hours" != "unavailable" ]]; then
 			local record
 			record=$(jq -cn \
 				--arg date "$current_date" \
 				--arg hours "$hours" \
 				--arg hostname "$(hostname -s 2>/dev/null || hostname)" \
-				'{date: $date, screen_hours: ($hours | tonumber), hostname: $hostname, recorded_at: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}')
+				'{date: $date, screen_hours: ([($hours | tonumber), 24] | min), status: "observed", hostname: $hostname, recorded_at: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}')
 			echo "$record" >>"$HISTORY_FILE"
 			added=$((added + 1))
 		fi
@@ -900,93 +898,8 @@ cmd_history() {
 # Returns: 0
 #######################################
 cmd_profile_stats() {
-	# Live data — rolling 24h window instead of "today since midnight"
-	local day_hours
-	local week_hours
-	day_hours=$(_query_screen_hours 1)
-	week_hours=$(_query_screen_hours 7)
-
-	# For 28 days: use live query
-	local month_hours
-	month_hours=$(_query_screen_hours 28)
-
-	# Fallback to accumulated history when live queries return 0
-	# This happens when the launchd job runs without Knowledge DB access
-	# (TCC/Full Disk Access not granted in non-interactive context)
-	local history_days=0
-	local history_total=0 hist_1d=0 hist_7d=0 hist_28d=0 hist_365d=0
-	if [[ -f "$HISTORY_FILE" ]]; then
-		history_days=$(wc -l <"$HISTORY_FILE" | tr -d ' ')
-		if [[ "$history_days" -gt 0 ]]; then
-			# Single jq pass for all history stats
-			local history_stats
-			history_stats=$(jq -rs '
-				. as $all |
-				[
-					([$all[].screen_hours] | add // 0),
-					([$all[-1:][].screen_hours] | add // 0 | . * 10 | round / 10),
-					([$all[-7:][].screen_hours] | add // 0 | . * 10 | round / 10),
-					([$all[-28:][].screen_hours] | add // 0 | . * 10 | round / 10),
-					([$all[-365:][].screen_hours] | add // 0 | . * 10 | round / 10)
-				] | @tsv
-			' "$HISTORY_FILE" 2>/dev/null) || true
-			if [[ -n "$history_stats" ]]; then
-				read -r history_total hist_1d hist_7d hist_28d hist_365d <<<"$history_stats"
-			fi
-		fi
-	fi
-
-	# If live queries returned 0 but we have history, use history instead
-	if [[ "$history_days" -gt 0 ]]; then
-		if [[ "$(echo "$day_hours == 0" | bc)" -eq 1 ]]; then
-			day_hours="${hist_1d:-0}"
-		fi
-		if [[ "$(echo "$week_hours == 0" | bc)" -eq 1 ]]; then
-			week_hours="${hist_7d:-0}"
-		fi
-		if [[ "$(echo "$month_hours == 0" | bc)" -eq 1 ]]; then
-			month_hours="${hist_28d:-0}"
-		fi
-	fi
-
-	# For 365 days: use accumulated history if available, else extrapolate
-	local year_hours
-	if [[ "$history_days" -gt 0 ]]; then
-		local daily_avg
-		daily_avg=$(echo "scale=2; ${history_total:-0} / $history_days" | bc)
-		if [[ "$history_days" -ge 365 ]]; then
-			year_hours="${hist_365d:-0}"
-		else
-			# Extrapolate from available data
-			year_hours=$(echo "scale=1; $daily_avg * 365" | bc)
-		fi
-	else
-		# No history — extrapolate from 28-day data
-		year_hours=$(echo "scale=1; $month_hours / 28 * 365" | bc 2>/dev/null || echo "0")
-	fi
-
-	local platform_note
-	case "$OS_TYPE" in
-	Darwin) platform_note="from macOS Knowledge DB (~28 days retention)" ;;
-	Linux) platform_note="from systemd-logind session events" ;;
-	*) platform_note="unsupported platform" ;;
-	esac
-
-	jq -n \
-		--arg day "$day_hours" \
-		--arg week "$week_hours" \
-		--arg month "$month_hours" \
-		--arg year "$year_hours" \
-		--arg note "$platform_note" \
-		'{
-			today_hours: ($day | tonumber),
-			week_hours: ($week | tonumber),
-			month_hours: ($month | tonumber),
-			year_hours: ($year | tonumber),
-			month_note: $note
-		}'
-
-	return 0
+	_screen_time_engine profile
+	return $?
 }
 
 # --- Main dispatch ---
