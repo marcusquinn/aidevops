@@ -53,6 +53,17 @@ _log() {
 	return 0
 }
 
+_log_error() {
+	_log "ERROR" "$@"
+	return 0
+}
+
+_github_clone_url() {
+	local slug="$1"
+	printf 'https://github.com/%s.git' "$slug"
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Registry — maps generator name → validator function name
 # Add new validators here by calling _register_validators() pattern.
@@ -330,7 +341,7 @@ _validator_ratchet_down() {
 
 	# Clone repo into scratch dir for a fresh read (avoids stale worktree reads)
 	local clone_url
-	clone_url="https://github.com/${slug}.git"
+	clone_url=$(_github_clone_url "$slug")
 
 	if ! git clone --depth 1 --quiet "$clone_url" "${SCRATCH_DIR}/repo" 2>/dev/null; then
 		_log "WARN" "ratchet-down validator: git clone failed for ${slug} — treating as validator error"
@@ -383,7 +394,7 @@ _validator_file_line_threshold_gate() {
 
 	# Clone repo into scratch dir for a fresh read against HEAD
 	local clone_url
-	clone_url="https://github.com/${slug}.git"
+	clone_url=$(_github_clone_url "$slug")
 
 	if ! git clone --depth 1 --quiet "$clone_url" "${SCRATCH_DIR}/repo" 2>/dev/null; then
 		_log "WARN" "${generator_name} validator: git clone failed for ${slug}"
@@ -447,7 +458,7 @@ _validator_function_complexity_gate() {
 
 	# Clone repo into scratch dir for a fresh read against HEAD
 	local clone_url
-	clone_url="https://github.com/${slug}.git"
+	clone_url=$(_github_clone_url "$slug")
 
 	if ! git clone --depth 1 --quiet "$clone_url" "${SCRATCH_DIR}/repo" 2>/dev/null; then
 		_log "WARN" "function-complexity-gate validator: git clone failed for ${slug}"
@@ -870,12 +881,15 @@ _rf_issue_in_supersession_scope() {
 	local issue_body="$1"
 	local labels="$2"
 	local title="$3"
-	local labels_lc=""
 	local title_lc=""
 
+	if _rf_is_review_followup_scope "$issue_body" "$labels" "$title"; then
+		return 0
+	fi
+	local labels_lc=""
 	labels_lc=$(printf '%s' "$labels" | tr '[:upper:]' '[:lower:]')
 	case ",${labels_lc}," in
-	*",source:review-feedback,"* | *",quality-debt,"* | *",review-followup,"* | *",source:review-scanner,"*)
+	*",source:review-feedback,"* | *",quality-debt,"*)
 		return 0
 		;;
 	esac
@@ -889,6 +903,20 @@ _rf_issue_in_supersession_scope() {
 		return 0
 	fi
 
+	return 1
+}
+
+_rf_is_review_followup_scope() {
+	local issue_body="$1"
+	local labels="$2"
+	local issue_title="$3"
+	local normalized_labels=""
+	normalized_labels=$(printf '%s' "$labels" | tr '[:upper:]' '[:lower:]')
+	case ",${normalized_labels}," in
+	*",review-followup,"* | *",source:review-scanner,"*) return 0 ;;
+	esac
+	[[ "$issue_title" == "Review followup: PR #"* ]] && return 0
+	[[ "$issue_body" == *"aidevops:generator=review-followup"* ]] && return 0
 	return 1
 }
 
@@ -907,8 +935,8 @@ _rf_search_merged_pr_numbers() {
 		-f sort=updated \
 		-f order=desc \
 		-f per_page="$limit" \
-		--jq '.items[]?.number' 2>/dev/null || true
-	return 0
+		--jq '.items[]?.number' 2>/dev/null
+	return $?
 }
 
 _rf_extract_source_pr_number() {
@@ -916,7 +944,7 @@ _rf_extract_source_pr_number() {
 	local issue_title="$2"
 	local source_pr=""
 
-	source_pr=$(printf '%s\n%s\n' "$issue_body" "$issue_title" | sed -En 's/.*\*\*Source PR\*\*:[[:space:]]*#?([0-9]+).*/\1/p; s/.*Review followup:[[:space:]]*PR[[:space:]]*#?([0-9]+).*/\1/p' | tail -1)
+	source_pr=$(printf '%s\n%s\n' "$issue_body" "$issue_title" | sed -En 's/.*source_pr=([0-9]+).*/\1/p; s/.*fingerprint=source-pr-([0-9]+).*/\1/p; s/.*\*\*Source PR\*\*:[[:space:]]*#?([0-9]+).*/\1/p; s/.*Review followup:[[:space:]]*PR[[:space:]]*#?([0-9]+).*/\1/p' | head -1)
 	if [[ "$source_pr" =~ ^[0-9]+$ ]]; then
 		printf '%s\n' "$source_pr"
 		return 0
@@ -990,6 +1018,11 @@ _rf_find_overlapping_paths() {
 
 _RF_KEYWORD_SCORE=0
 _RF_MATCHED_KEYWORDS=""
+_RF_SUPERSESSION_PR=""
+_RF_SUPERSESSION_MERGED_AT=""
+_RF_SUPERSESSION_OVERLAPS=""
+_RF_SUPERSESSION_MATCHED_KEYWORDS=""
+_RF_SUPERSESSION_AMBIGUOUS=""
 
 _rf_score_keywords() {
 	local keywords="$1"
@@ -1143,6 +1176,111 @@ EOF
 	return 0
 }
 
+# Evaluate same-file + finding-signal supersession without writing to GitHub.
+# This is the canonical matcher shared by pre-dispatch validation and the
+# post-merge scanner's precreation gate. Strict mode returns 20 whenever an API
+# lookup is uncertain; dispatch mode preserves the historical best-effort
+# candidate handling. Returns 10 on a clear match, 0 on no clear match, 20 on
+# strict-mode uncertainty.
+_rf_evaluate_supersession() {
+	local slug="$1"
+	local search_after="$2"
+	local issue_text="$3"
+	local issue_number="${4:-0}"
+	local strict_mode="${5:-false}"
+	local issue_paths=""
+	local keywords=""
+	local candidate_numbers=""
+	local pr_number=""
+
+	_RF_SUPERSESSION_PR=""
+	_RF_SUPERSESSION_MERGED_AT=""
+	_RF_SUPERSESSION_OVERLAPS=""
+	_RF_SUPERSESSION_MATCHED_KEYWORDS=""
+	_RF_SUPERSESSION_AMBIGUOUS=""
+
+	issue_paths=$(_rf_extract_file_paths_from_text "$issue_text")
+	[[ -n "$issue_paths" ]] || return 0
+	keywords=$(_rf_extract_keywords "$issue_text")
+	if ! candidate_numbers=$(_rf_search_merged_pr_numbers "$slug" "$search_after"); then
+		[[ "$strict_mode" == "true" ]] && return 20
+		return 0
+	fi
+	[[ -n "$candidate_numbers" ]] || return 0
+
+	while IFS= read -r pr_number; do
+		[[ "$pr_number" =~ ^[0-9]+$ ]] || continue
+		local pr_meta=""
+		local merged_at=""
+		local pr_title=""
+		local pr_body=""
+		if ! pr_meta=$(gh api "repos/${slug}/pulls/${pr_number}" --jq '[.merged_at // "", .title // "", .body // ""] | @tsv' 2>/dev/null); then
+			[[ "$strict_mode" == "true" ]] && return 20
+			continue
+		fi
+		IFS=$'\t' read -r merged_at pr_title pr_body <<<"$pr_meta"
+		if [[ -z "$merged_at" || "$merged_at" < "$search_after" || "$merged_at" == "$search_after" ]]; then
+			continue
+		fi
+
+		local pr_files=""
+		if ! pr_files=$(_rf_get_pr_files "$slug" "$pr_number"); then
+			[[ "$strict_mode" == "true" ]] && return 20
+			continue
+		fi
+		local overlaps=""
+		if ! overlaps=$(_rf_find_overlapping_paths "$issue_paths" "$pr_files"); then
+			continue
+		fi
+
+		local pr_patch=""
+		if ! pr_patch=$(_rf_get_pr_patch_text "$slug" "$pr_number"); then
+			[[ "$strict_mode" == "true" ]] && return 20
+			pr_patch=""
+		fi
+		local evidence="${pr_title}"$'\n'"${pr_body}"$'\n'"${pr_patch}"
+		_rf_score_keywords "$keywords" "$evidence"
+		if { [[ "$issue_number" =~ ^[1-9][0-9]*$ ]] && _rf_pr_references_issue "$issue_number" "$evidence"; } || [[ "$_RF_KEYWORD_SCORE" -ge 2 ]]; then
+			_RF_SUPERSESSION_PR="$pr_number"
+			_RF_SUPERSESSION_MERGED_AT="$merged_at"
+			_RF_SUPERSESSION_OVERLAPS="$overlaps"
+			_RF_SUPERSESSION_MATCHED_KEYWORDS="$_RF_MATCHED_KEYWORDS"
+			return 10
+		fi
+		_RF_SUPERSESSION_AMBIGUOUS="${_RF_SUPERSESSION_AMBIGUOUS}- PR #${pr_number} merged at ${merged_at}; same-file overlap: $(_rf_join_lines "$overlaps"); keyword matches: ${_RF_KEYWORD_SCORE}"$'\n'
+	done <<<"$candidate_numbers"
+
+	return 0
+}
+
+# Read a prospective scanner body from stdin and evaluate supersession after
+# the source PR merge. This path is read-only and fail-closed for API errors.
+cmd_check_review_supersession() {
+	local slug="$1"
+	local source_pr="$2"
+	local issue_text=""
+	local source_merged_at=""
+	local match_rc=0
+
+	if [[ -z "$slug" || ! "$source_pr" =~ ^[0-9]+$ ]]; then
+		_log_error "check-review-supersession requires <slug> <source-pr> and body on stdin"
+		return 20
+	fi
+	issue_text=$(cat)
+	if ! source_merged_at=$(_rf_get_source_pr_merged_at "$slug" "$source_pr"); then
+		_log "WARN" "source PR #${source_pr} merged_at lookup failed — precreation check blocked"
+		return 20
+	fi
+	_rf_evaluate_supersession "$slug" "$source_merged_at" "$issue_text" "0" "true" || match_rc=$?
+	if [[ "$match_rc" -eq 10 ]]; then
+		printf 'SUPERSEDED_BY_PR=%s merged_at=%s files=%s signal=%s\n' \
+			"$_RF_SUPERSESSION_PR" "$_RF_SUPERSESSION_MERGED_AT" \
+			"$(_rf_join_lines "$_RF_SUPERSESSION_OVERLAPS")" "${_RF_SUPERSESSION_MATCHED_KEYWORDS:-keywords}"
+		return 10
+	fi
+	return "$match_rc"
+}
+
 _detect_review_feedback_supersession() {
 	local issue_number="$1"
 	local slug="$2"
@@ -1159,6 +1297,10 @@ _detect_review_feedback_supersession() {
 	local issue_title=""
 	local labels=""
 	issue_meta=$(gh api "$issue_api_path" --jq '[.created_at // "", .title // "", ([.labels[]?.name] | join(","))] | @tsv' 2>/dev/null) || {
+		if printf '%s' "$issue_body" | grep -Eq 'aidevops:generator=review-followup|source:review-scanner|review-followup:PR|Unaddressed review bot suggestions'; then
+			_log "WARN" "#${issue_number}: review-followup metadata lookup failed — dispatch blocked for this cycle"
+			return 30
+		fi
 		_log "WARN" "#${issue_number}: failed to fetch issue metadata for review-feedback supersession check — dispatch proceeds"
 		return 0
 	}
@@ -1167,6 +1309,12 @@ _detect_review_feedback_supersession() {
 	if ! _rf_issue_in_supersession_scope "$issue_body" "$labels" "$issue_title"; then
 		_log "INFO" "#${issue_number}: not review-feedback/quality-debt — supersession detector skips"
 		return 0
+	fi
+
+	local duplicate_rc=0
+	_rf_canonicalize_review_followup_duplicates "$issue_number" "$slug" "$issue_body" "$issue_title" "$labels" || duplicate_rc=$?
+	if [[ "$duplicate_rc" -eq 10 || "$duplicate_rc" -eq 30 ]]; then
+		return "$duplicate_rc"
 	fi
 
 	if [[ -z "$created_at" || "$created_at" != *T* ]]; then
@@ -1180,9 +1328,6 @@ _detect_review_feedback_supersession() {
 		_log "INFO" "#${issue_number}: no cited file paths — review-feedback supersession detector skips"
 		return 0
 	fi
-
-	local keywords=""
-	keywords=$(_rf_extract_keywords "$issue_body")
 
 	local source_pr=""
 	local source_merged_at=""
@@ -1198,60 +1343,117 @@ _detect_review_feedback_supersession() {
 		fi
 	fi
 
-	local candidate_numbers=""
-	candidate_numbers=$(_rf_search_merged_pr_numbers "$slug" "$search_after") || candidate_numbers=""
-	if [[ -z "$candidate_numbers" ]]; then
-		_log "INFO" "#${issue_number}: no merged PR candidates in ${search_context} — dispatch proceeds"
+	local match_rc=0
+	_rf_evaluate_supersession "$slug" "$search_after" "$issue_body" "$issue_number" "false" || match_rc=$?
+	if [[ "$match_rc" -eq 10 ]]; then
+		_rf_close_with_supersession "$issue_number" "$slug" "$_RF_SUPERSESSION_PR" \
+			"$_RF_SUPERSESSION_MERGED_AT" "$_RF_SUPERSESSION_OVERLAPS" \
+			"$_RF_SUPERSESSION_MATCHED_KEYWORDS" "$search_context" "$source_pr"
+		return 10
+	fi
+	if [[ -n "$_RF_SUPERSESSION_AMBIGUOUS" ]]; then
+		local keywords=""
+		keywords=$(_rf_extract_keywords "$issue_body")
+		_rf_post_ambiguous_comment "$issue_number" "$slug" "$issue_paths" "$keywords" \
+			"$_RF_SUPERSESSION_AMBIGUOUS" "$search_context"
+	fi
+
+	return 0
+}
+
+_rf_close_review_followup_duplicate() {
+	local duplicate_number="$1"
+	local slug="$2"
+	local source_pr="$3"
+	local canonical_number="$4"
+	local comment_body=""
+
+	comment_body="<!-- review-followup-duplicate-canonicalized -->
+## Duplicate review follow-up
+
+This issue targets the same source PR/fingerprint as #${canonical_number} (source PR #${source_pr}). Closing it before worker launch so only the deterministic lowest-numbered canonical issue can proceed.
+
+Continue review-feedback work via #${canonical_number}."
+	if ! gh_issue_comment "$duplicate_number" --repo "$slug" --body "$comment_body" >/dev/null 2>&1; then
+		_log "WARN" "#${duplicate_number}: failed to post review-followup duplicate rationale"
+		return 1
+	fi
+	if ! gh issue close "$duplicate_number" --repo "$slug" --reason "$_PREDISPATCH_CLOSE_REASON_NOT_PLANNED" >/dev/null 2>&1; then
+		_log "WARN" "#${duplicate_number}: failed to close duplicate review-followup"
+		return 1
+	fi
+	_log "INFO" "#${duplicate_number}: closed duplicate review-followup; canonical=#${canonical_number} source_pr=#${source_pr}"
+	return 0
+}
+
+# Canonicalize legacy scanner duplicates before any worker launch. The scanner
+# emits one aggregate follow-up per source PR, so source PR is its stable
+# fingerprint; newer bodies also carry the explicit marker. Lookup uncertainty
+# is a hard dispatch block (rc=30), never permission to launch duplicate work.
+_rf_canonicalize_review_followup_duplicates() {
+	local issue_number="$1"
+	local slug="$2"
+	local issue_body="$3"
+	local issue_title="$4"
+	local labels="$5"
+	local source_pr=""
+	local issues_json=""
+	local matching_numbers=""
+	local row_number=""
+	local row_title=""
+	local row_body_b64=""
+	local row_body=""
+	local base64_decode_flag="-d"
+	[[ "$(uname -s)" == "Darwin" ]] && base64_decode_flag="-D"
+
+	if ! _rf_is_review_followup_scope "$issue_body" "$labels" "$issue_title"; then
 		return 0
 	fi
-
-	local pr_number=""
-	local ambiguous_evidence=""
-	while IFS= read -r pr_number; do
-		[[ "$pr_number" =~ ^[0-9]+$ ]] || continue
-
-		local pr_meta=""
-		local merged_at=""
-		local pr_title=""
-		local pr_body=""
-		pr_meta=$(gh api "repos/${slug}/pulls/${pr_number}" --jq '[.merged_at // "", .title // "", .body // ""] | @tsv' 2>/dev/null) || {
-			_log "WARN" "#${issue_number}: failed to fetch PR #${pr_number} metadata — skipping candidate"
-			continue
-		}
-		IFS=$'\t' read -r merged_at pr_title pr_body <<<"$pr_meta"
-
-		if [[ -z "$merged_at" || "$merged_at" < "$search_after" || "$merged_at" == "$search_after" ]]; then
-			continue
+	if ! source_pr=$(_rf_extract_source_pr_number "$issue_body" "$issue_title"); then
+		if [[ "$issue_title" == "Review followup: PR #"* \
+			|| "$issue_body" == *"aidevops:generator=review-followup"* ]]; then
+			_log "WARN" "#${issue_number}: scanner review-followup fingerprint missing — dispatch blocked"
+			return 30
 		fi
-
-		local pr_files=""
-		pr_files=$(_rf_get_pr_files "$slug" "$pr_number") || {
-			_log "WARN" "#${issue_number}: failed to fetch PR #${pr_number} files — skipping candidate"
-			continue
-		}
-
-		local overlaps=""
-		if ! overlaps=$(_rf_find_overlapping_paths "$issue_paths" "$pr_files"); then
-			continue
-		fi
-
-		local pr_patch=""
-		pr_patch=$(_rf_get_pr_patch_text "$slug" "$pr_number") || pr_patch=""
-		local evidence="${pr_title}"$'\n'"${pr_body}"$'\n'"${pr_patch}"
-		_rf_score_keywords "$keywords" "$evidence"
-
-		if _rf_pr_references_issue "$issue_number" "$evidence" || [[ "$_RF_KEYWORD_SCORE" -ge 2 ]]; then
-			_rf_close_with_supersession "$issue_number" "$slug" "$pr_number" "$merged_at" "$overlaps" "$_RF_MATCHED_KEYWORDS" "$search_context" "$source_pr"
-			return 10
-		fi
-
-		ambiguous_evidence="${ambiguous_evidence}- PR #${pr_number} merged at ${merged_at}; same-file overlap: $(_rf_join_lines "$overlaps"); keyword matches: ${_RF_KEYWORD_SCORE}"$'\n'
-	done <<<"$candidate_numbers"
-
-	if [[ -n "$ambiguous_evidence" ]]; then
-		_rf_post_ambiguous_comment "$issue_number" "$slug" "$issue_paths" "$keywords" "$ambiguous_evidence" "$search_context"
+		# Legacy/generic quality findings may carry a review-followup label
+		# without being the scanner's one-aggregate-per-source-PR contract.
+		return 0
+	fi
+	if ! issues_json=$(gh issue list --repo "$slug" --state open --limit 1000 \
+		--json number,title,body 2>/dev/null); then
+		_log "WARN" "#${issue_number}: review-followup duplicate lookup failed — dispatch blocked for this cycle"
+		return 30
+	fi
+	if ! printf '%s' "$issues_json" | jq -e 'type == "array"' >/dev/null 2>&1; then
+		_log "WARN" "#${issue_number}: malformed review-followup duplicate response — dispatch blocked"
+		return 30
 	fi
 
+	while IFS=$'\t' read -r row_number row_title row_body_b64; do
+		[[ "$row_number" =~ ^[0-9]+$ ]] || continue
+		row_body=$(printf '%s' "$row_body_b64" | base64 "$base64_decode_flag" 2>/dev/null || printf '')
+		if [[ "$(_rf_extract_source_pr_number "$row_body" "$row_title" 2>/dev/null || true)" == "$source_pr" ]]; then
+			matching_numbers="${matching_numbers}${row_number}"$'\n'
+		fi
+	done < <(printf '%s' "$issues_json" | jq -r '.[] | [.number, (.title // ""), ((.body // "") | @base64)] | @tsv')
+
+	local canonical_number=""
+	canonical_number=$(printf '%s' "$matching_numbers" | grep -E '^[0-9]+$' | sort -n | head -1 || true)
+	if ! printf '%s' "$matching_numbers" | grep -qxF "$issue_number"; then
+		_log "WARN" "#${issue_number}: current review-followup absent from duplicate enumeration — dispatch blocked"
+		return 30
+	fi
+	[[ -n "$canonical_number" ]] || return 30
+	local duplicate_count=0
+	duplicate_count=$(printf '%s' "$matching_numbers" | grep -Ec '^[0-9]+$' || true)
+	[[ "$duplicate_count" -gt 1 ]] || return 0
+
+	if [[ "$issue_number" != "$canonical_number" ]]; then
+		if ! _rf_close_review_followup_duplicate "$issue_number" "$slug" "$source_pr" "$canonical_number"; then
+			return 30
+		fi
+		return 10
+	fi
 	return 0
 }
 
@@ -1309,8 +1511,8 @@ _run_pre_generator_validators() {
 	# matches are commented and fail open so dispatch can proceed.
 	local review_feedback_rc=0
 	_detect_review_feedback_supersession "$issue_number" "$slug" "$issue_body" "$issue_api_path" || review_feedback_rc=$?
-	if [[ "$review_feedback_rc" -eq 10 ]]; then
-		return 10
+	if [[ "$review_feedback_rc" -eq 10 || "$review_feedback_rc" -eq 30 ]]; then
+		return "$review_feedback_rc"
 	fi
 	if [[ "$review_feedback_rc" -ne 0 ]]; then
 		_log "WARN" "#${issue_number}: review-feedback supersession detector returned rc=${review_feedback_rc} — dispatch proceeds"
@@ -1360,7 +1562,7 @@ cmd_validate() {
 	fi
 
 	if [[ -z "$issue_number" || -z "$slug" ]]; then
-		_log "ERROR" "validate requires <issue-number> <slug>"
+		_log_error "validate requires <issue-number> <slug>"
 		return 20
 	fi
 
@@ -1376,6 +1578,9 @@ cmd_validate() {
 	_run_pre_generator_validators "$issue_number" "$slug" "$issue_body" "$issue_api_path" || pre_generator_rc=$?
 	if [[ "$pre_generator_rc" -eq 10 ]]; then
 		return 10
+	fi
+	if [[ "$pre_generator_rc" -eq 30 ]]; then
+		return 30
 	fi
 	if [[ "$pre_generator_rc" -ne 0 ]]; then
 		_log "WARN" "#${issue_number}: pre-generator validator returned rc=${pre_generator_rc} — dispatch proceeds"
@@ -1449,12 +1654,14 @@ _usage() {
 	cat <<EOF
 Usage:
   pre-dispatch-validator-helper.sh validate <issue-number> <slug>
+  pre-dispatch-validator-helper.sh check-review-supersession <slug> <source-pr>
   pre-dispatch-validator-helper.sh help
 
 Exit codes (validate):
   0  — dispatch proceeds
   10 — premise falsified; issue closed with rationale comment
   20 — validator error; dispatch proceeds with warning
+  30 — duplicate-state lookup uncertain; dispatch must fail closed
 
 Environment:
   AIDEVOPS_SKIP_PREDISPATCH_VALIDATOR=1  — bypass all validators (exit 0)
@@ -1464,9 +1671,10 @@ EOF
 
 case "${1:-help}" in
 validate) cmd_validate "${2:-}" "${3:-}" ;;
+check-review-supersession) cmd_check_review_supersession "${2:-}" "${3:-}" ;;
 help | --help | -h) _usage ;;
 *)
-	_log "ERROR" "Unknown subcommand: ${1:-}"
+	_log_error "Unknown subcommand: ${1:-}"
 	_usage
 	exit 1
 	;;

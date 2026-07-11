@@ -757,6 +757,79 @@ test_unexpected_dedup_exit_remains_error() {
 	return 0
 }
 
+test_manual_consensus_claim_outcomes() {
+	local test_dir=""
+	test_dir=$(mktemp -d)
+	local helper="${test_dir}/dedup-helper.sh"
+	cat >"$helper" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ "${1:-}" != "claim" ]]; then
+	exit 1
+fi
+case "${MOCK_CLAIM_RESULT:-win}" in
+win) printf '%s\n' 'CLAIM_WON: comment_id=123'; exit 0 ;;
+loss) printf '%s\n' 'CLAIM_LOST'; exit 1 ;;
+error) printf '%s\n' 'CLAIM_ERROR'; exit 2 ;;
+esac
+exit 2
+EOF
+	chmod +x "$helper"
+	local original_dedup_helper="$_DSI_DEDUP_HELPER"
+	_DSI_DEDUP_HELPER="$helper"
+
+	local rc=0
+	MOCK_CLAIM_RESULT=loss _dsi_acquire_consensus_claim 123 owner/repo runner-self >/dev/null 2>&1 || rc=$?
+	local loss_ok=1
+	[[ "$rc" -eq 1 && "$_DSI_CLAIM_WON" -eq 0 ]] && loss_ok=0
+	print_result "manual dispatch blocks a lost consensus claim" "$loss_ok" "rc=$rc won=$_DSI_CLAIM_WON"
+
+	rc=0
+	MOCK_CLAIM_RESULT=error _dsi_acquire_consensus_claim 123 owner/repo runner-self >/dev/null 2>&1 || rc=$?
+	local error_ok=1
+	[[ "$rc" -eq 1 && "$_DSI_CLAIM_WON" -eq 0 ]] && error_ok=0
+	print_result "manual dispatch fails closed on consensus claim error" "$error_ok" "rc=$rc won=$_DSI_CLAIM_WON"
+
+	rc=0
+	MOCK_CLAIM_RESULT=win _dsi_acquire_consensus_claim 123 owner/repo runner-self >/dev/null 2>&1 || rc=$?
+	local win_ok=1
+	[[ "$rc" -eq 0 && "$_DSI_CLAIM_WON" -eq 1 ]] && win_ok=0
+	print_result "manual dispatch proceeds only after consensus claim win" "$win_ok" "rc=$rc won=$_DSI_CLAIM_WON"
+
+	_DSI_CLAIM_WON=1
+	_DSI_CLAIM_COMMENT_ID=123
+	_dsi_release_consensus_claim 123 owner/repo runner-self test_failure >/dev/null 2>&1 || true
+	local release_ok=1
+	[[ "$_DSI_CLAIM_WON" -eq 0 && -z "$_DSI_CLAIM_COMMENT_ID" ]] && release_ok=0
+	print_result "manual prelaunch failure clears its claim without retaining local state" "$release_ok"
+
+	_DSI_DEDUP_HELPER="$original_dedup_helper"
+	rm -rf "$test_dir"
+	return 0
+}
+
+test_review_followup_validator_uncertainty_blocks_manual_dispatch() {
+	local test_dir=""
+	test_dir=$(mktemp -d)
+	local validator="${test_dir}/validator.sh"
+	cat >"$validator" <<'EOF'
+#!/usr/bin/env bash
+exit 20
+EOF
+	chmod +x "$validator"
+	local original_validator="$_DSI_VALIDATOR_HELPER"
+	_DSI_VALIDATOR_HELPER="$validator"
+	_DSI_ISSUE_LABELS="review-followup,source:review-scanner"
+	local rc=0
+	_dsi_run_required_predispatch_validator 123 owner/repo >/dev/null 2>&1 || rc=$?
+	local blocked=1
+	[[ "$rc" -eq 1 ]] && blocked=0
+	print_result "manual review-followup dispatch fails closed on validator uncertainty" "$blocked" "rc=$rc"
+	_DSI_VALIDATOR_HELPER="$original_validator"
+	rm -rf "$test_dir"
+	return 0
+}
+
 test_launch_worker_forwards_agent() {
 	local failed=1
 	if grep -Fq "cmd+=(--agent \"\$agent_name\")" "$HELPER_PATH"; then
@@ -1063,6 +1136,8 @@ _run_tests() {
 	test_transient_dedup_retries_are_bounded
 	test_persistent_uncertainty_does_not_retry_and_checkpoints_dryrun
 	test_unexpected_dedup_exit_remains_error
+	test_manual_consensus_claim_outcomes
+	test_review_followup_validator_uncertainty_blocks_manual_dispatch
 	test_agent_flag_parses_with_default
 	test_launch_worker_forwards_agent
 	test_launch_worker_forwards_repo_contract
