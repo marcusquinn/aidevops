@@ -246,6 +246,9 @@ PULSE_START_EPOCH=$(date +%s)
 # resolves correctly whether the script is executed directly (bash) or sourced
 # from zsh. See GH#3931.
 SCRIPT_DIR="$(_pulse_wrapper_resolve_script_dir "${BASH_SOURCE[0]:-$0}")" || return 2>/dev/null || exit
+AIDEVOPS_AGENTS_DIR="${SCRIPT_DIR%/scripts}"
+AGENTS_DIR="$AIDEVOPS_AGENTS_DIR"
+export AIDEVOPS_AGENTS_DIR AGENTS_DIR
 
 # GH#24900: PATH normalisation above restores system bins for minimal
 # launchd/MCP environments, but it must not let the real gh binary outrank the

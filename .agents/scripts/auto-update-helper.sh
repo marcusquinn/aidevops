@@ -512,6 +512,57 @@ update_state() {
 # shellcheck disable=SC1091  # sub-library resolved at runtime via $SCRIPT_DIR
 source "${SCRIPT_DIR}/auto-update-freshness-lib.sh"
 
+_auto_update_runtime_bundle_root() {
+	local agents_path="${AIDEVOPS_AGENTS_DIR:-${HOME}/.aidevops/agents}"
+	[[ -d "$agents_path" ]] || return 1
+	(cd "$agents_path" && pwd -P) || return 1
+	return 0
+}
+
+_auto_update_runtime_bundle_valid() {
+	local agents_root="$1"
+	local expected_version="$2"
+	local deployed_version=""
+	[[ -d "$agents_root/scripts" && -x "$agents_root/aidevops.sh" && -r "$agents_root/.bundle-manifest" ]] || return 1
+	grep -q '^status=validated$' "$agents_root/.bundle-manifest" || return 1
+	IFS= read -r deployed_version <"$agents_root/VERSION" || deployed_version=""
+	[[ -n "$expected_version" && "$deployed_version" == "$expected_version" ]]
+	return $?
+}
+
+_auto_update_replace_agents_link() {
+	local agents_root="$1"
+	local agents_path="${HOME}/.aidevops/agents"
+	local link_tmp="${agents_path}.rollback.$$"
+	rm -f "$link_tmp"
+	ln -s "$agents_root" "$link_tmp" || return 1
+	if [[ "$(uname -s 2>/dev/null || true)" == "Darwin" ]]; then
+		mv -f -h "$link_tmp" "$agents_path" || {
+			rm -f "$link_tmp"
+			return 1
+		}
+	else
+		mv -Tf "$link_tmp" "$agents_path" || {
+			rm -f "$link_tmp"
+			return 1
+		}
+	fi
+	return 0
+}
+
+_auto_update_rollback_runtime_bundle() {
+	local requested_root="$1"
+	local previous_link="${HOME}/.aidevops/previous-runtime-bundle"
+	local rollback_root="$requested_root"
+	if [[ ! -d "$rollback_root/scripts" && -d "$previous_link/scripts" ]]; then
+		rollback_root=$(cd "$previous_link" && pwd -P) || rollback_root=""
+	fi
+	[[ -n "$rollback_root" && -d "$rollback_root/scripts" ]] || return 1
+	_auto_update_replace_agents_link "$rollback_root" || return 1
+	log_warn "Rolled back runtime activation to $rollback_root"
+	return 0
+}
+
 _run_setup_ai_session_with_fallback() {
 	local setup_script="${INSTALL_DIR}/setup.sh"
 	if bash "$setup_script" --stage ai-session >>"$LOG_FILE" 2>&1; then
@@ -662,6 +713,7 @@ _cmd_check_git_update() {
 _cmd_check_perform_update() {
 	local current="$1"
 	local remote="$2"
+	local prior_bundle_root=""
 
 	log_info "Update available: v$current -> v$remote"
 	update_state "update_start" "$remote" "in_progress"
@@ -672,6 +724,7 @@ _cmd_check_perform_update() {
 		update_state "update" "$remote" "no_git_repo"
 		return 1
 	fi
+	prior_bundle_root=$(_auto_update_runtime_bundle_root 2>/dev/null || true)
 
 	if ! _cmd_check_git_update "$remote"; then
 		return 1
@@ -718,6 +771,7 @@ _cmd_check_perform_update() {
 
 	if [[ "$_setup_exit" -ne 0 ]]; then
 		log_error "setup.sh failed (exit code: $_setup_exit)"
+		_auto_update_rollback_runtime_bundle "$prior_bundle_root" || true
 		if [[ "$_sentinel_ok" -ne 0 ]]; then
 			log_error "setup.sh did not reach completion sentinel — forensic tail written to $LOG_FILE by verify-setup-log.sh"
 		fi
@@ -727,6 +781,7 @@ _cmd_check_perform_update() {
 
 	if [[ "$_sentinel_ok" -ne 0 ]]; then
 		log_error "setup.sh exited 0 but did not reach completion sentinel — silent termination, forensic tail in $LOG_FILE"
+		_auto_update_rollback_runtime_bundle "$prior_bundle_root" || true
 		update_state "update" "$remote" "setup_sentinel_missing"
 		return 1
 	fi
@@ -735,9 +790,13 @@ _cmd_check_perform_update() {
 	# See: https://github.com/marcusquinn/aidevops/issues/3980
 	local new_version deployed_version
 	new_version=$(get_local_version)
+	local active_bundle_root=""
+	active_bundle_root=$(_auto_update_runtime_bundle_root 2>/dev/null || true)
 	deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
-	if [[ "$new_version" != "$deployed_version" ]]; then
+	if [[ "$new_version" != "$deployed_version" ]] ||
+		! _auto_update_runtime_bundle_valid "$active_bundle_root" "$new_version"; then
 		log_warn "Update pulled v$new_version but agents at v$deployed_version — deployment incomplete"
+		_auto_update_rollback_runtime_bundle "$prior_bundle_root" || true
 		update_state "update" "$new_version" "agents_stale"
 	else
 		log_info "Update complete: v$current -> v$new_version (agents deployed)"

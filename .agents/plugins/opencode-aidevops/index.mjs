@@ -23,7 +23,7 @@
 //   - google-proxy.mjs    — Google auth-translating proxy
 // ---------------------------------------------------------------------------
 
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, realpathSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { execSync } from "child_process";
@@ -59,7 +59,16 @@ import { isHeadless } from "./proxy-lifecycle.mjs";
 // ---------------------------------------------------------------------------
 
 const HOME = homedir();
-const AGENTS_DIR = join(HOME, ".aidevops", "agents");
+const ACTIVE_AGENTS_DIR = join(HOME, ".aidevops", "agents");
+// Resolve the activation link exactly once at plugin load. Every hook and shell
+// spawned by this OpenCode process remains pinned to this immutable bundle.
+const AGENTS_DIR = (() => {
+  try {
+    return realpathSync(ACTIVE_AGENTS_DIR);
+  } catch {
+    return ACTIVE_AGENTS_DIR;
+  }
+})();
 const SCRIPTS_DIR = join(AGENTS_DIR, "scripts");
 const PLUGIN_DIR = join(AGENTS_DIR, "plugins", "opencode-aidevops");
 const WORKSPACE_DIR = join(HOME, ".aidevops", ".agent-workspace");
