@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# SPDX-FileCopyrightText: 2025-2026 Marcus Quinn
 """Create deterministic commits for plugin trust tests without Git mutations."""
 
 from __future__ import annotations

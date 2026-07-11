@@ -28,6 +28,14 @@
 [[ -n "${_AIDEVOPS_SKILLS_PLUGIN_LIB_LOADED:-}" ]] && return 0
 _AIDEVOPS_SKILLS_PLUGIN_LIB_LOADED=1
 
+_PLUGIN_SOURCE_TRUST_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/plugin-source-trust-lib.sh"
+if [[ ! -f "$_PLUGIN_SOURCE_TRUST_LIB" ]]; then
+	printf 'Plugin source trust library not found: %s\n' "$_PLUGIN_SOURCE_TRUST_LIB" >&2
+	return 1
+fi
+# shellcheck source=../plugin-source-trust-lib.sh
+source "$_PLUGIN_SOURCE_TRUST_LIB"
+
 # Skill help text (extracted for complexity reduction)
 _skill_help() {
 	print_header "Agent Skills Management"
@@ -212,111 +220,6 @@ _plugin_field() {
 	return 0
 }
 
-_plugin_valid_commit() {
-	local commit="$1"
-	[[ "$commit" =~ ^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$ ]]
-	return $?
-}
-
-_plugin_valid_branch() {
-	local branch="$1"
-	git check-ref-format --branch "$branch" >/dev/null 2>&1
-	return $?
-}
-
-_plugin_materialize_commit() {
-	local repository_dir="$1"
-	local commit="$2"
-	local output_dir="$3"
-	local tree_list=""
-	local failed=0
-
-	tree_list=$(mktemp "${output_dir}.tree.XXXXXX") || return 1
-	if ! git -C "$repository_dir" ls-tree -rz --full-tree "$commit" >"$tree_list"; then
-		rm -f "$tree_list"
-		return 1
-	fi
-	while IFS= read -r -d '' entry; do
-		local metadata="${entry%%$'\t'*}"
-		local relative_path="${entry#*$'\t'}"
-		local mode=""
-		local object_type=""
-		local object_id=""
-		IFS=' ' read -r mode object_type object_id <<<"$metadata"
-		if [[ "$object_type" != "blob" || "$relative_path" == /* || "$relative_path" == ../* ||
-			"$relative_path" == */../* || "$relative_path" == *"/.." ]]; then
-			failed=1
-			break
-		fi
-		local destination="$output_dir/$relative_path"
-		mkdir -p "$(dirname "$destination")"
-		if [[ "$mode" == "120000" ]]; then
-			local link_target=""
-			link_target=$(git -C "$repository_dir" cat-file blob "$object_id") || {
-				failed=1
-				break
-			}
-			ln -s "$link_target" "$destination" || {
-				failed=1
-				break
-			}
-		elif ! git -C "$repository_dir" cat-file blob "$object_id" >"$destination"; then
-			failed=1
-			break
-		elif [[ "$mode" == "100755" ]]; then
-			chmod +x "$destination"
-		fi
-	done <"$tree_list"
-	rm -f "$tree_list"
-	if [[ "$failed" -ne 0 ]]; then
-		return 1
-	fi
-	return 0
-}
-
-_plugin_stage_repository() {
-	local ad="$1"
-	local namespace="$2"
-	local repo="$3"
-	local branch="$4"
-	local expected_commit="$5"
-	local stage_dir=""
-	local source_dir=""
-	local resolved_commit=""
-	local expected_normalized=""
-
-	stage_dir=$(mktemp -d "$ad/.plugin-${namespace}.stage.XXXXXX") || return 1
-	source_dir="${stage_dir}.source"
-	if ! git clone --quiet --no-checkout --no-tags --branch "$branch" -- "$repo" "$source_dir"; then
-		rm -rf "$stage_dir" "$source_dir"
-		return 1
-	fi
-	if [[ -n "$expected_commit" ]]; then
-		resolved_commit=$(git -C "$source_dir" rev-parse --verify "${expected_commit}^{commit}" 2>/dev/null || true)
-	else
-		resolved_commit=$(git -C "$source_dir" rev-parse --verify 'HEAD^{commit}' 2>/dev/null || true)
-	fi
-	resolved_commit=$(printf '%s' "$resolved_commit" | tr '[:upper:]' '[:lower:]')
-	if ! _plugin_valid_commit "$resolved_commit"; then
-		rm -rf "$stage_dir" "$source_dir"
-		return 1
-	fi
-	expected_normalized=$(printf '%s' "$expected_commit" | tr '[:upper:]' '[:lower:]')
-	if [[ -n "$expected_commit" && "$resolved_commit" != "$expected_normalized" ]]; then
-		print_error "Fetched commit does not match trusted commit '$expected_commit'"
-		rm -rf "$stage_dir" "$source_dir"
-		return 1
-	fi
-	if ! _plugin_materialize_commit "$source_dir" "$resolved_commit" "$stage_dir"; then
-		rm -rf "$stage_dir" "$source_dir"
-		return 1
-	fi
-	rm -rf "$source_dir"
-
-	printf '%s\t%s\n' "$stage_dir" "$resolved_commit"
-	return 0
-}
-
 _plugin_validate_candidate() {
 	local pf="$1"
 	local ad="$2"
@@ -336,43 +239,6 @@ _plugin_validate_candidate() {
 	return 0
 }
 
-_plugin_activate_candidate() {
-	local stage_dir="$1"
-	local target_dir="$2"
-	local registry_tmp="$3"
-	local plugins_file="$4"
-	local backup_dir="${target_dir}.previous.$$"
-	local had_previous=false
-
-	if [[ -e "$backup_dir" ]]; then
-		print_error "Plugin backup path already exists: $backup_dir"
-		return 1
-	fi
-	if [[ -e "$target_dir" ]]; then
-		if ! mv "$target_dir" "$backup_dir"; then
-			return 1
-		fi
-		had_previous=true
-	fi
-	if ! mv "$stage_dir" "$target_dir"; then
-		if [[ "$had_previous" == "true" ]]; then
-			mv "$backup_dir" "$target_dir" 2>/dev/null || true
-		fi
-		return 1
-	fi
-	if ! mv "$registry_tmp" "$plugins_file"; then
-		rm -rf "$target_dir"
-		if [[ "$had_previous" == "true" ]]; then
-			mv "$backup_dir" "$target_dir" 2>/dev/null || true
-		fi
-		return 1
-	fi
-	if [[ "$had_previous" == "true" ]]; then
-		rm -rf "$backup_dir"
-	fi
-	return 0
-}
-
 _plugin_deploy_registered() {
 	local pf="$1"
 	local ad="$2"
@@ -387,6 +253,11 @@ _plugin_deploy_registered() {
 	local stage_dir=""
 	local resolved_commit=""
 	local registry_tmp=""
+	local metadata_result=""
+	local tree_digest=""
+	local metadata_dir=""
+	local inventory_json=""
+	local marker=""
 
 	repo=$(_plugin_field "$pf" "$plugin_name" "repo")
 	namespace=$(_plugin_field "$pf" "$plugin_name" "namespace")
@@ -397,18 +268,18 @@ _plugin_deploy_registered() {
 		return 1
 	fi
 	_plugin_validate_ns "$namespace" || return 1
-	if ! _plugin_valid_branch "$branch"; then
+	if ! plugin_trust_valid_branch "$branch"; then
 		print_error "Invalid branch '$branch' for plugin '$plugin_name'"
 		return 1
 	fi
 	if [[ -n "$requested_commit" ]]; then
-		if ! _plugin_valid_commit "$requested_commit"; then
+		if ! plugin_trust_valid_commit "$requested_commit"; then
 			print_error "Commit must be a full 40- or 64-character object ID"
 			return 1
 		fi
 	fi
 
-	stage_result=$(_plugin_stage_repository "$ad" "$namespace" "$repo" "$branch" "$requested_commit") || {
+	stage_result=$(plugin_trust_stage_repository "$ad" "$namespace" "$repo" "$branch" "$requested_commit") || {
 		print_error "Failed to stage plugin '$plugin_name'"
 		return 1
 	}
@@ -417,30 +288,40 @@ _plugin_deploy_registered() {
 		rm -rf "$stage_dir"
 		return 1
 	fi
-	rm -rf "$stage_dir/.git"
-
-	registry_tmp=$(mktemp "${pf}.tmp.XXXXXX") || {
+	metadata_result=$(plugin_trust_prepare_metadata "$stage_dir" "$ad" "$namespace") || {
 		rm -rf "$stage_dir"
 		return 1
 	}
-	if ! jq --arg n "$plugin_name" --arg commit "$resolved_commit" \
+	IFS=$'\t' read -r tree_digest metadata_dir inventory_json <<<"$metadata_result"
+
+	registry_tmp=$(mktemp "${pf}.tmp.XXXXXX") || {
+		rm -rf "$stage_dir" "$metadata_dir"
+		return 1
+	}
+	if ! jq --arg n "$plugin_name" --arg commit "$resolved_commit" --arg digest "$tree_digest" \
+		--slurpfile inventory "$inventory_json" \
 		--argjson update_trust "$update_trust" --argjson enable_plugin "$enable_plugin" '
 		(.plugins[] | select(.name == $n)) |= (
 			.deployed_commit = $commit
+			| .deployed_tree_digest = $digest
+			| .deployed_tree_inventory = $inventory[0]
 			| .hooks_enabled = (.hooks_enabled // false)
 			| (if $update_trust then .trusted_commit = $commit else . end)
 			| (if $enable_plugin then .enabled = true else . end)
 		)' "$pf" >"$registry_tmp"; then
-		rm -rf "$stage_dir"
+		rm -rf "$stage_dir" "$metadata_dir"
 		rm -f "$registry_tmp"
 		return 1
 	fi
-	if ! _plugin_activate_candidate "$stage_dir" "$ad/$namespace" "$registry_tmp" "$pf"; then
+	marker=$(plugin_trust_marker_path "$ad" "$namespace")
+	if ! plugin_trust_activate_candidate "$stage_dir" "$ad/$namespace" "$registry_tmp" "$pf" "$marker"; then
 		rm -rf "$stage_dir"
+		rm -rf "$metadata_dir"
 		rm -f "$registry_tmp"
 		print_error "Failed to activate plugin '$plugin_name'; previous deployment preserved"
 		return 1
 	fi
+	rm -rf "$metadata_dir"
 	printf '%s\n' "$resolved_commit"
 	return 0
 }
@@ -471,22 +352,74 @@ _plugin_regenerate_discovery_index() {
 	return 1
 }
 
+_plugin_add_usage() {
+	print_error "Repository URL required"
+	echo ""
+	echo "Usage: aidevops plugin add <repo-url> [options]"
+	echo ""
+	echo "Options:"
+	echo "  --namespace <name>   Namespace directory (default: derived from repo name)"
+	echo "  --branch <branch>    Branch to track (default: main)"
+	echo "  --name <name>        Human-readable name (default: derived from repo)"
+	echo ""
+	echo "Examples:"
+	echo "  aidevops plugin add https://github.com/marcusquinn/aidevops-pro.git --namespace pro"
+	echo "  aidevops plugin add https://github.com/marcusquinn/aidevops-anon.git --namespace anon"
+	return 0
+}
+
+_plugin_add_deploy() {
+	local pf="$1" ad="$2" repo_url="$3" branch="$4" namespace="$5" plugin_name="$6"
+	local stage_result="" stage_dir="" resolved_commit=""
+	local metadata_result="" tree_digest="" metadata_dir="" inventory_json=""
+	local registry_tmp="" marker=""
+
+	stage_result=$(plugin_trust_stage_repository "$ad" "$namespace" "$repo_url" "$branch" "") || {
+		print_error "Failed to stage repository"
+		return 1
+	}
+	IFS=$'\t' read -r stage_dir resolved_commit <<<"$stage_result"
+	if ! _plugin_validate_candidate "$pf" "$ad" "$plugin_name" "$stage_dir"; then
+		rm -rf "$stage_dir"
+		return 1
+	fi
+	metadata_result=$(plugin_trust_prepare_metadata "$stage_dir" "$ad" "$namespace") || {
+		rm -rf "$stage_dir"
+		return 1
+	}
+	IFS=$'\t' read -r tree_digest metadata_dir inventory_json <<<"$metadata_result"
+	registry_tmp=$(mktemp "${pf}.tmp.XXXXXX") || {
+		rm -rf "$stage_dir" "$metadata_dir"
+		return 1
+	}
+	if ! jq --arg name "$plugin_name" --arg repo "$repo_url" --arg branch "$branch" \
+		--arg ns "$namespace" --arg commit "$resolved_commit" --arg digest "$tree_digest" \
+		--slurpfile inventory "$inventory_json" '
+		.plugins += [{"name": $name, "repo": $repo, "branch": $branch, "namespace": $ns,
+			"enabled": true, "trusted_commit": $commit, "deployed_commit": $commit,
+			"deployed_tree_digest": $digest, "deployed_tree_inventory": $inventory[0],
+			"hooks_enabled": false}]' "$pf" >"$registry_tmp"; then
+		rm -rf "$stage_dir" "$metadata_dir"
+		rm -f "$registry_tmp"
+		return 1
+	fi
+	marker=$(plugin_trust_marker_path "$ad" "$namespace")
+	if ! plugin_trust_activate_candidate "$stage_dir" "$ad/$namespace" "$registry_tmp" "$pf" "$marker"; then
+		rm -rf "$stage_dir" "$metadata_dir"
+		rm -f "$registry_tmp"
+		print_error "Failed to activate plugin '$plugin_name'"
+		return 1
+	fi
+	rm -rf "$metadata_dir"
+	print_success "Plugin '$plugin_name' installed at trusted commit ${resolved_commit:0:12}"
+	return 0
+}
+
 _plugin_add() {
 	local pf="$1" ad="$2"
 	shift 2
 	if [[ $# -lt 1 ]]; then
-		print_error "Repository URL required"
-		echo ""
-		echo "Usage: aidevops plugin add <repo-url> [options]"
-		echo ""
-		echo "Options:"
-		echo "  --namespace <name>   Namespace directory (default: derived from repo name)"
-		echo "  --branch <branch>    Branch to track (default: main)"
-		echo "  --name <name>        Human-readable name (default: derived from repo)"
-		echo ""
-		echo "Examples:"
-		echo "  aidevops plugin add https://github.com/marcusquinn/aidevops-pro.git --namespace pro"
-		echo "  aidevops plugin add https://github.com/marcusquinn/aidevops-anon.git --namespace anon"
+		_plugin_add_usage
 		return 1
 	fi
 	local repo_url="$1"
@@ -519,7 +452,7 @@ _plugin_add() {
 	}
 	[[ -z "$plugin_name" ]] && plugin_name="$namespace"
 	_plugin_validate_ns "$namespace" || return 1
-	if ! _plugin_valid_branch "$branch"; then
+	if ! plugin_trust_valid_branch "$branch"; then
 		print_error "Invalid branch '$branch'"
 		return 1
 	fi
@@ -541,48 +474,8 @@ _plugin_add() {
 	print_info "Adding plugin '$plugin_name' from $repo_url..."
 	print_info "  Namespace: $namespace"
 	print_info "  Branch: $branch"
-	local stage_result=""
-	local stage_dir=""
-	local resolved_commit=""
-	stage_result=$(_plugin_stage_repository "$ad" "$namespace" "$repo_url" "$branch" "") || {
-		print_error "Failed to stage repository"
-		return 1
-	}
-	IFS=$'\t' read -r stage_dir resolved_commit <<<"$stage_result"
-	if ! _plugin_validate_candidate "$pf" "$ad" "$plugin_name" "$stage_dir"; then
-		rm -rf "$stage_dir"
-		return 1
-	fi
-	rm -rf "$stage_dir/.git"
-	local registry_tmp=""
-	registry_tmp=$(mktemp "${pf}.tmp.XXXXXX") || {
-		rm -rf "$stage_dir"
-		return 1
-	}
-	if ! jq --arg name "$plugin_name" --arg repo "$repo_url" --arg branch "$branch" \
-		--arg ns "$namespace" --arg commit "$resolved_commit" '
-		.plugins += [{
-			"name": $name,
-			"repo": $repo,
-			"branch": $branch,
-			"namespace": $ns,
-			"enabled": true,
-			"trusted_commit": $commit,
-			"deployed_commit": $commit,
-			"hooks_enabled": false
-		}]' "$pf" >"$registry_tmp"; then
-		rm -rf "$stage_dir"
-		rm -f "$registry_tmp"
-		return 1
-	fi
-	if ! _plugin_activate_candidate "$stage_dir" "$ad/$namespace" "$registry_tmp" "$pf"; then
-		rm -rf "$stage_dir"
-		rm -f "$registry_tmp"
-		print_error "Failed to activate plugin '$plugin_name'"
-		return 1
-	fi
+	_plugin_add_deploy "$pf" "$ad" "$repo_url" "$branch" "$namespace" "$plugin_name" || return 1
 	_plugin_regenerate_discovery_index "$ad" || true
-	print_success "Plugin '$plugin_name' installed at trusted commit ${resolved_commit:0:12}"
 	echo ""
 	echo "  Agents available at: ~/.aidevops/agents/$namespace/"
 	echo "  Update: aidevops plugin update $plugin_name"
@@ -687,10 +580,13 @@ _plugin_trust() {
 
 _plugin_hooks_authorize() {
 	local pf="$1"
-	local plugin_name="$2"
-	local action="$3"
+	local ad="$2"
+	local plugin_name="$3"
+	local action="$4"
 	local enabled=""
 	local registry_tmp=""
+	local namespace=""
+	local marker=""
 
 	if [[ -z "$(_plugin_field "$pf" "$plugin_name" "repo")" ]]; then
 		print_error "Plugin '$plugin_name' not found"
@@ -704,16 +600,24 @@ _plugin_hooks_authorize() {
 		return 1
 		;;
 	esac
+	namespace=$(_plugin_field "$pf" "$plugin_name" "namespace")
+	marker=$(plugin_trust_marker_path "$ad" "$namespace")
 	registry_tmp=$(mktemp "${pf}.tmp.XXXXXX") || return 1
 	if ! jq --arg n "$plugin_name" --argjson enabled "$enabled" \
 		'(.plugins[] | select(.name == $n)).hooks_enabled = $enabled' "$pf" >"$registry_tmp"; then
 		rm -f "$registry_tmp"
 		return 1
 	fi
-	if ! mv "$registry_tmp" "$pf"; then
+	if ! plugin_trust_acquire_write_locks "$pf" "$marker"; then
 		rm -f "$registry_tmp"
 		return 1
 	fi
+	if ! mv "$registry_tmp" "$pf"; then
+		rm -f "$registry_tmp"
+		plugin_trust_release_write_locks "$pf" "$marker" || true
+		return 1
+	fi
+	plugin_trust_release_write_locks "$pf" "$marker" || return 1
 	if [[ "$enabled" == "true" ]]; then
 		print_success "Hooks authorized for '$plugin_name'; hooks still run only when explicitly invoked"
 	else
@@ -735,7 +639,7 @@ _plugin_toggle() {
 		tns=$(_plugin_field "$pf" "$tn" "namespace")
 		local trusted_commit=""
 		trusted_commit=$(_plugin_field "$pf" "$tn" "trusted_commit")
-		if ! _plugin_valid_commit "$trusted_commit"; then
+		if ! plugin_trust_valid_commit "$trusted_commit"; then
 			print_error "Plugin '$tn' has no trusted commit. Run: aidevops plugin trust $tn"
 			return 1
 		fi
@@ -751,12 +655,26 @@ _plugin_toggle() {
 			return 1
 		}
 		local tmp=""
+		local marker=""
 		tmp=$(mktemp "${pf}.tmp.XXXXXX") || return 1
-		if ! jq --arg n "$tn" '(.plugins[] | select(.name == $n)).enabled = false' "$pf" >"$tmp" || ! mv "$tmp" "$pf"; then
+		if ! jq --arg n "$tn" '(.plugins[] | select(.name == $n)).enabled = false' "$pf" >"$tmp"; then
 			rm -f "$tmp"
 			return 1
 		fi
-		[[ -d "$ad/${tns:?}" ]] && rm -rf "$ad/${tns:?}"
+		marker=$(plugin_trust_marker_path "$ad" "$tns")
+		if ! plugin_trust_acquire_write_locks "$pf" "$marker"; then
+			rm -f "$tmp"
+			return 1
+		fi
+		if ! mv "$tmp" "$pf"; then
+			rm -f "$tmp"
+			plugin_trust_release_write_locks "$pf" "$marker" || true
+			return 1
+		fi
+		if [[ -d "$ad/${tns:?}" ]] && ! rm -rf "$ad/${tns:?}"; then
+			return 1
+		fi
+		plugin_trust_release_write_locks "$pf" "$marker" || return 1
 		_plugin_regenerate_discovery_index "$ad" || true
 		print_success "Plugin '$tn' disabled (config preserved)"
 	fi
@@ -765,22 +683,34 @@ _plugin_toggle() {
 
 _plugin_remove() {
 	local pf="$1" ad="$2" tn="$3"
-	local tns
+	local tns=""
+	local marker=""
 	tns=$(_plugin_field "$pf" "$tn" "namespace")
 	[[ -z "$tns" ]] && {
 		print_error "Plugin '$tn' not found"
 		return 1
 	}
-	[[ -d "$ad/${tns:?}" ]] && {
-		rm -rf "$ad/${tns:?}"
-		print_info "Removed $ad/$tns/"
-	}
 	local tmp=""
 	tmp=$(mktemp "${pf}.tmp.XXXXXX") || return 1
-	if ! jq --arg n "$tn" '.plugins = [.plugins[] | select(.name != $n)]' "$pf" >"$tmp" || ! mv "$tmp" "$pf"; then
+	if ! jq --arg n "$tn" '.plugins = [.plugins[] | select(.name != $n)]' "$pf" >"$tmp"; then
 		rm -f "$tmp"
 		return 1
 	fi
+	marker=$(plugin_trust_marker_path "$ad" "$tns")
+	if ! plugin_trust_acquire_write_locks "$pf" "$marker"; then
+		rm -f "$tmp"
+		return 1
+	fi
+	if ! mv "$tmp" "$pf"; then
+		rm -f "$tmp"
+		plugin_trust_release_write_locks "$pf" "$marker" || true
+		return 1
+	fi
+	if [[ -d "$ad/${tns:?}" ]]; then
+		rm -rf "$ad/${tns:?}" || return 1
+		print_info "Removed $ad/$tns/"
+	fi
+	plugin_trust_release_write_locks "$pf" "$marker" || return 1
 	print_success "Plugin '$tn' removed"
 	return 0
 }
@@ -905,7 +835,7 @@ cmd_plugin() {
 		fi
 		local _hooks_name="$1"
 		local _hooks_action="$2"
-		_plugin_hooks_authorize "$pf" "$_hooks_name" "$_hooks_action" || rc=$?
+		_plugin_hooks_authorize "$pf" "$ad" "$_hooks_name" "$_hooks_action" || rc=$?
 		;;
 	enable)
 		[[ $# -lt 1 ]] && {

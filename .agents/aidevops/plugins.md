@@ -20,6 +20,10 @@ Third-party agent plugins extend aidevops with additional capabilities. Plugins 
       "enabled": true,
       "trusted_commit": "0123456789abcdef0123456789abcdef01234567",
       "deployed_commit": "0123456789abcdef0123456789abcdef01234567",
+      "deployed_tree_digest": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+      "deployed_tree_inventory": [
+        {"type": "f", "mode": "644", "value": "<sha256>", "path": "plugin.json"}
+      ],
       "hooks_enabled": false
     }
   ]
@@ -35,6 +39,8 @@ Third-party agent plugins extend aidevops with additional capabilities. Plugins 
 | `enabled` | boolean | no | Whether the plugin is active (default: `true`) |
 | `trusted_commit` | string | yes for deployment | Exact full Git object ID approved for deployment |
 | `deployed_commit` | string | yes for loading | Exact object ID currently deployed; must equal `trusted_commit` |
+| `deployed_tree_digest` | string | yes for loading | SHA-256 of the canonical deployed tree inventory |
+| `deployed_tree_inventory` | array | yes for loading | Canonical paths, types, modes, file hashes, and contained symlink targets |
 | `hooks_enabled` | boolean | no | Whether explicit hook invocation is authorized (default: `false`) |
 
 ## Deployment
@@ -53,7 +59,7 @@ Third-party agent plugins extend aidevops with additional capabilities. Plugins 
 
 - Namespace must be lowercase, alphanumeric, hyphens only
 - Must NOT collide with reserved names: `custom`, `draft`, `scripts`, `tools`, `services`, `workflows`, `templates`, `memory`, `plugins`
-- Plugin manifests and every declared agent, script, and hook are resolved through real paths and must remain inside the plugin namespace
+- The complete staged and deployed trees are inventoried; absolute, dangling, and escaping symlinks are rejected even without a manifest
 
 ## Lifecycle
 
@@ -86,10 +92,15 @@ aidevops plugin init ./my-plugin my-plugin my-ns
 ```
 
 Add, update, trust, enable, and setup deployment all clone into a sibling staging
-directory. The staged commit and manifest are validated before activation. A
-failed fetch, commit mismatch, containment check, manifest check, or registry
+directory. The staged commit, complete tree, inventory, and optional manifest
+are validated before activation. A
+failed clone, commit mismatch, containment check, manifest check, or registry
 write leaves the previous plugin directory in place. Activation uses same-filesystem
-renames and updates `deployed_commit` only after the validated tree is ready.
+renames and updates commit plus tree metadata only after the validated tree is
+ready. A global `plugins.json.lock` serializes registry writers, while a
+per-namespace `.plugin-<namespace>.deploying` marker covers the content and
+registry swap. Loaders fail closed while the namespace marker exists, including
+after a crash, and briefly hold the same marker while loading or running a hook.
 
 `aidevops update` deploys only `trusted_commit`; it never resolves a mutable
 branch on its own. Existing entries without a trusted commit are skipped with a
@@ -104,9 +115,9 @@ plugin-repo/
 ├── AGENTS.md          # Plugin agent definitions (optional)
 ├── *.md               # Agent/subagent files
 ├── scripts/           # Helper scripts and lifecycle hooks (optional)
-│   ├── on-init.sh     # Runs on install/update
-│   ├── on-load.sh     # Runs on session load
-│   └── on-unload.sh   # Runs on disable/remove
+│   ├── on-init.sh     # Optional explicitly invoked init hook
+│   ├── on-load.sh     # Optional explicitly invoked load hook
+│   └── on-unload.sh   # Optional explicitly invoked unload hook
 └── tools/             # Tool definitions (optional)
 ```
 
@@ -164,6 +175,9 @@ plugin-loader-helper.sh status     # Show plugin system status
 ```
 
 Loading priority: (1) `plugin.json` `agents` array if present; (2) scan directory for `.md` files with YAML frontmatter.
+Before loading, indexing, or running an authorized hook, the loader rebuilds the
+canonical inventory and requires its bytes, modes, paths, and symlink policy to
+match `deployed_tree_digest` and `deployed_tree_inventory` in `plugins.json`.
 
 The shared `subagent-index.toon` discovery file is regenerated after plugin add,
 update, enable, and disable actions. `subagent-index-helper.sh generate` preserves
@@ -199,8 +213,9 @@ the plugin directory.
 
 - Plugins are trusted by exact commit in the existing `plugins.json`; review staged source before changing trust
 - A plugin loads only when `trusted_commit` and `deployed_commit` are equal full object IDs
+- A plugin also requires an exact deployed tree digest/inventory match and no active deployment marker
 - Plugin scripts and hooks are not auto-executed; hooks require both explicit authorization and explicit invocation
-- Manifest names must match the registry, and declared members may not escape through traversal or symlinks
+- Manifest names must match the registry; the full tree and declared members may not escape through traversal or symlinks
 - Plugin agents follow the same security rules as core agents (no credential exposure, pre-edit checks)
 
 ## Integration with Agent Tiers

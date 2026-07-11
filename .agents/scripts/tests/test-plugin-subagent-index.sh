@@ -41,13 +41,11 @@ setup() {
 	mkdir -p "$agents_dir/scripts" "$agents_dir/example-plugin" "$config_dir"
 	cp "$REPO_ROOT/.agents/scripts/subagent-index-helper.sh" "$agents_dir/scripts/"
 	cp "$REPO_ROOT/.agents/scripts/plugin-loader-helper.sh" "$agents_dir/scripts/"
+	cp "$REPO_ROOT/.agents/scripts/plugin-source-trust-lib.sh" "$agents_dir/scripts/"
 	cp "$REPO_ROOT/.agents/scripts/portable-stat.sh" "$agents_dir/scripts/"
 	cp "$REPO_ROOT"/.agents/scripts/shared-*.sh "$agents_dir/scripts/"
 	chmod +x "$agents_dir/scripts/subagent-index-helper.sh" "$agents_dir/scripts/plugin-loader-helper.sh"
 
-	cat >"$config_dir/plugins.json" <<'JSON'
-{"plugins":[{"name":"Example Plugin","repo":"local","branch":"main","namespace":"example-plugin","enabled":true,"trusted_commit":"1111111111111111111111111111111111111111","deployed_commit":"1111111111111111111111111111111111111111","hooks_enabled":false}]}
-JSON
 	cat >"$agents_dir/example-plugin/plugin.json" <<'JSON'
 {"name":"Example Plugin","version":"1.0.0","description":"Example plugin agents","agents":[{"file":"example-agent.md","name":"example-agent","description":"Example agent","model":"standard"}]}
 JSON
@@ -58,6 +56,18 @@ mode: subagent
 ---
 # Example Agent
 EOF_AGENT
+	# shellcheck source=/dev/null
+	source "$REPO_ROOT/.agents/scripts/plugin-source-trust-lib.sh"
+	local inventory_tsv="$TEST_HOME/inventory.tsv"
+	local inventory_json="$TEST_HOME/inventory.json"
+	local tree_digest=""
+	tree_digest=$(plugin_trust_tree_metadata "$agents_dir/example-plugin" "$inventory_tsv" "$inventory_json")
+	jq -n --arg digest "$tree_digest" --slurpfile inventory "$inventory_json" '{plugins:[{
+		name:"Example Plugin", repo:"local", branch:"main", namespace:"example-plugin",
+		enabled:true, trusted_commit:"1111111111111111111111111111111111111111",
+		deployed_commit:"1111111111111111111111111111111111111111",
+		deployed_tree_digest:$digest, deployed_tree_inventory:$inventory[0], hooks_enabled:false
+	}]}' >"$config_dir/plugins.json"
 	return 0
 }
 

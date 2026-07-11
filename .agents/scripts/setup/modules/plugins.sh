@@ -11,6 +11,10 @@ IFS=$'\n\t'
 trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
 shopt -s inherit_errexit 2>/dev/null || true
 
+PLUGIN_SOURCE_TRUST_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/plugin-source-trust-lib.sh"
+# shellcheck source=../../plugin-source-trust-lib.sh
+source "$PLUGIN_SOURCE_TRUST_LIB"
+
 # Check if Python >= 3.10 is available (required by cisco-ai-skill-scanner).
 # Returns 0 if a compatible Python is found (or installed via uv), 1 otherwise.
 # On failure, prints a clear diagnostic with the version found and fix instructions.
@@ -113,94 +117,6 @@ sanitize_plugin_namespace() {
 	return 0
 }
 
-setup_plugin_valid_commit() {
-	local commit="$1"
-	[[ "$commit" =~ ^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$ ]]
-	return $?
-}
-
-setup_plugin_materialize_commit() {
-	local repository_dir="$1"
-	local commit="$2"
-	local output_dir="$3"
-	local tree_list=""
-	local failed=0
-
-	tree_list=$(mktemp "${output_dir}.tree.XXXXXX") || return 1
-	if ! git -C "$repository_dir" ls-tree -rz --full-tree "$commit" >"$tree_list"; then
-		rm -f "$tree_list"
-		return 1
-	fi
-	while IFS= read -r -d '' entry; do
-		local metadata="${entry%%$'\t'*}"
-		local relative_path="${entry#*$'\t'}"
-		local mode=""
-		local object_type=""
-		local object_id=""
-		IFS=' ' read -r mode object_type object_id <<<"$metadata"
-		if [[ "$object_type" != "blob" || "$relative_path" == /* || "$relative_path" == ../* ||
-			"$relative_path" == */../* || "$relative_path" == *"/.." ]]; then
-			failed=1
-			break
-		fi
-		local destination="$output_dir/$relative_path"
-		mkdir -p "$(dirname "$destination")"
-		if [[ "$mode" == "120000" ]]; then
-			local link_target=""
-			link_target=$(git -C "$repository_dir" cat-file blob "$object_id") || {
-				failed=1
-				break
-			}
-			ln -s "$link_target" "$destination" || {
-				failed=1
-				break
-			}
-		elif ! git -C "$repository_dir" cat-file blob "$object_id" >"$destination"; then
-			failed=1
-			break
-		elif [[ "$mode" == "100755" ]]; then
-			chmod +x "$destination"
-		fi
-	done <"$tree_list"
-	rm -f "$tree_list"
-	if [[ "$failed" -ne 0 ]]; then
-		return 1
-	fi
-	return 0
-}
-
-setup_plugin_stage_repository() {
-	local target_dir="$1"
-	local namespace="$2"
-	local repo="$3"
-	local branch="$4"
-	local trusted_commit="$5"
-	local stage_dir=""
-	local source_dir=""
-	local resolved_commit=""
-
-	stage_dir=$(mktemp -d "$target_dir/.plugin-${namespace}.stage.XXXXXX") || return 1
-	source_dir="${stage_dir}.source"
-	if ! git clone --quiet --no-checkout --no-tags --branch "$branch" -- "$repo" "$source_dir"; then
-		rm -rf "$stage_dir" "$source_dir"
-		return 1
-	fi
-	resolved_commit=$(git -C "$source_dir" rev-parse --verify "${trusted_commit}^{commit}" 2>/dev/null || true)
-	resolved_commit=$(printf '%s' "$resolved_commit" | tr '[:upper:]' '[:lower:]')
-	trusted_commit=$(printf '%s' "$trusted_commit" | tr '[:upper:]' '[:lower:]')
-	if ! setup_plugin_valid_commit "$resolved_commit" || [[ "$resolved_commit" != "$trusted_commit" ]]; then
-		rm -rf "$stage_dir" "$source_dir"
-		return 1
-	fi
-	if ! setup_plugin_materialize_commit "$source_dir" "$resolved_commit" "$stage_dir"; then
-		rm -rf "$stage_dir" "$source_dir"
-		return 1
-	fi
-	rm -rf "$source_dir"
-	printf '%s\n' "$stage_dir"
-	return 0
-}
-
 setup_plugin_validate_candidate() {
 	local target_dir="$1"
 	local plugins_file="$2"
@@ -216,37 +132,82 @@ setup_plugin_validate_candidate() {
 	return $?
 }
 
-setup_plugin_activate_candidate() {
-	local stage_dir="$1"
-	local destination="$2"
-	local registry_tmp="$3"
-	local plugins_file="$4"
-	local backup_dir="${destination}.previous.$$"
-	local had_previous=false
+setup_deploy_plugin_entry() {
+	local target_dir="$1"
+	local plugins_file="$2"
+	local plugin_name="$3"
+	local repo="$4"
+	local namespace="$5"
+	local branch="$6"
+	local trusted_commit="$7"
+	local safe_namespace=""
+	local stage_result="" stage_dir="" resolved_commit=""
+	local metadata_result="" tree_digest="" metadata_dir="" inventory_json=""
+	local registry_tmp="" marker=""
 
-	if [[ -e "$backup_dir" ]]; then
+	safe_namespace=$(sanitize_plugin_namespace "$namespace") || {
+		print_warning "  Skipping plugin '$plugin_name' with invalid namespace: $namespace"
+		return 1
+	}
+	if ! plugin_trust_valid_commit "$trusted_commit"; then
+		print_warning "  Plugin '$plugin_name' is not commit-pinned; run: aidevops plugin trust $plugin_name"
 		return 1
 	fi
-	if [[ -e "$destination" ]]; then
-		mv "$destination" "$backup_dir" || return 1
-		had_previous=true
-	fi
-	if ! mv "$stage_dir" "$destination"; then
-		if [[ "$had_previous" == "true" ]]; then
-			mv "$backup_dir" "$destination" 2>/dev/null || true
-		fi
+	branch="${branch:-main}"
+	print_info "  Deploying plugin '$plugin_name' at ${trusted_commit:0:12}..."
+	stage_result=$(plugin_trust_stage_repository "$target_dir" "$safe_namespace" "$repo" "$branch" "$trusted_commit") || {
+		print_warning "  Failed to stage pinned plugin '$plugin_name'"
+		return 1
+	}
+	IFS=$'\t' read -r stage_dir resolved_commit <<<"$stage_result"
+	if ! setup_plugin_validate_candidate "$target_dir" "$plugins_file" "$plugin_name" "$stage_dir"; then
+		print_warning "  Rejected invalid staged plugin '$plugin_name'; previous deployment preserved"
+		rm -rf "$stage_dir"
 		return 1
 	fi
-	if ! mv "$registry_tmp" "$plugins_file"; then
-		rm -rf "$destination"
-		if [[ "$had_previous" == "true" ]]; then
-			mv "$backup_dir" "$destination" 2>/dev/null || true
-		fi
+	metadata_result=$(plugin_trust_prepare_metadata "$stage_dir" "$target_dir" "$safe_namespace") || {
+		rm -rf "$stage_dir"
+		return 1
+	}
+	IFS=$'\t' read -r tree_digest metadata_dir inventory_json <<<"$metadata_result"
+	registry_tmp=$(mktemp "${plugins_file}.tmp.XXXXXX") || {
+		rm -rf "$stage_dir" "$metadata_dir"
+		return 1
+	}
+	if ! jq --arg n "$plugin_name" --arg commit "$resolved_commit" --arg digest "$tree_digest" \
+		--slurpfile inventory "$inventory_json" '
+		(.plugins[] | select(.name == $n)) |= (
+			.deployed_commit = $commit
+			| .deployed_tree_digest = $digest
+			| .deployed_tree_inventory = $inventory[0]
+			| .hooks_enabled = (.hooks_enabled // false)
+		)' "$plugins_file" >"$registry_tmp"; then
+		rm -rf "$stage_dir" "$metadata_dir"
+		rm -f "$registry_tmp"
 		return 1
 	fi
-	if [[ "$had_previous" == "true" ]]; then
-		rm -rf "$backup_dir"
+	marker=$(plugin_trust_marker_path "$target_dir" "$safe_namespace")
+	if ! plugin_trust_activate_candidate "$stage_dir" "$target_dir/$safe_namespace" "$registry_tmp" "$plugins_file" "$marker"; then
+		print_warning "  Failed to activate plugin '$plugin_name'; previous deployment preserved"
+		rm -rf "$stage_dir" "$metadata_dir"
+		rm -f "$registry_tmp"
+		return 1
 	fi
+	rm -rf "$metadata_dir"
+	return 0
+}
+
+setup_remove_disabled_plugin() {
+	local target_dir="$1"
+	local namespace="$2"
+	local marker=""
+
+	marker=$(plugin_trust_marker_path "$target_dir" "$namespace")
+	plugin_trust_acquire_lock "$marker" || return 1
+	if [[ -d "$target_dir/$namespace" ]] && ! rm -rf "${target_dir:?}/${namespace:?}"; then
+		return 1
+	fi
+	plugin_trust_release_lock "$marker" || return 1
 	return 0
 }
 
@@ -272,11 +233,6 @@ deploy_plugins() {
 
 	local enabled_count
 	enabled_count=$(jq '[.plugins[] | select(.enabled != false)] | length' "$plugins_file" 2>/dev/null || echo "0")
-	if [[ "$enabled_count" -eq 0 ]]; then
-		print_info "No enabled plugins to deploy ($plugin_count configured, all disabled)"
-		return 0
-	fi
-
 	# Remove directories for disabled plugins (cleanup)
 	local disabled_ns
 	local safe_ns
@@ -288,10 +244,17 @@ deploy_plugins() {
 			continue
 		fi
 		if [[ -d "$target_dir/$safe_ns" ]]; then
-			rm -rf "${target_dir:?}/${safe_ns:?}"
+			if ! setup_remove_disabled_plugin "$target_dir" "$safe_ns"; then
+				print_warning "  Could not lock disabled plugin directory: $safe_ns"
+				continue
+			fi
 			print_info "  Removed disabled plugin directory: $safe_ns"
 		fi
 	done < <(jq -r '.plugins[] | select(.enabled == false) | .namespace // empty' "$plugins_file" 2>/dev/null)
+	if [[ "$enabled_count" -eq 0 ]]; then
+		print_info "No enabled plugins to deploy ($plugin_count configured, all disabled)"
+		return 0
+	fi
 
 	print_info "Deploying $enabled_count plugin(s)..."
 
@@ -300,64 +263,11 @@ deploy_plugins() {
 
 	# Process each enabled plugin. Mutable branch names remain discovery metadata;
 	# setup deploys only the explicitly trusted commit.
-	local safe_pns
 	while IFS=$'\t' read -r pname prepo pns pbranch trusted_commit deployed_commit; do
 		[[ -z "$pname" ]] && continue
-
-		# Sanitize namespace to prevent path traversal
-		if ! safe_pns=$(sanitize_plugin_namespace "$pns"); then
-			print_warning "  Skipping plugin '$pname' with invalid namespace: $pns"
-			failed=$((failed + 1))
-			continue
-		fi
-
-		local clone_dir="$target_dir/$safe_pns"
-		if ! setup_plugin_valid_commit "$trusted_commit"; then
-			print_warning "  Plugin '$pname' is not commit-pinned; run: aidevops plugin trust $pname"
-			failed=$((failed + 1))
-			continue
-		fi
-
-		print_info "  Deploying plugin '$pname' at ${trusted_commit:0:12}..."
-		local stage_dir=""
-		pbranch="${pbranch:-main}"
-		stage_dir=$(setup_plugin_stage_repository "$target_dir" "$safe_pns" "$prepo" "$pbranch" "$trusted_commit") || {
-			print_warning "  Failed to stage pinned plugin '$pname'"
-			failed=$((failed + 1))
-			continue
-		}
-		if ! setup_plugin_validate_candidate "$target_dir" "$plugins_file" "$pname" "$stage_dir"; then
-			print_warning "  Rejected invalid staged plugin '$pname'; previous deployment preserved"
-			rm -rf "$stage_dir"
-			failed=$((failed + 1))
-			continue
-		fi
-		rm -rf "$stage_dir/.git"
-		if [[ -d "$stage_dir/scripts" ]]; then
-			chmod +x "$stage_dir/scripts/"*.sh 2>/dev/null || true
-		fi
-		local registry_tmp=""
-		registry_tmp=$(mktemp "${plugins_file}.tmp.XXXXXX") || {
-			rm -rf "$stage_dir"
-			failed=$((failed + 1))
-			continue
-		}
-		if ! jq --arg n "$pname" --arg commit "$trusted_commit" '
-			(.plugins[] | select(.name == $n)) |= (
-				.deployed_commit = $commit
-				| .hooks_enabled = (.hooks_enabled // false)
-			)' "$plugins_file" >"$registry_tmp"; then
-			rm -rf "$stage_dir"
-			rm -f "$registry_tmp"
-			failed=$((failed + 1))
-			continue
-		fi
-		if setup_plugin_activate_candidate "$stage_dir" "$clone_dir" "$registry_tmp" "$plugins_file"; then
+		if setup_deploy_plugin_entry "$target_dir" "$plugins_file" "$pname" "$prepo" "$pns" "$pbranch" "$trusted_commit"; then
 			deployed=$((deployed + 1))
 		else
-			print_warning "  Failed to activate plugin '$pname'; previous deployment preserved"
-			rm -rf "$stage_dir"
-			rm -f "$registry_tmp"
 			failed=$((failed + 1))
 		fi
 	done < <(jq -r '.plugins[] | select(.enabled != false) | [.name, .repo, .namespace, (.branch // "main"), (.trusted_commit // ""), (.deployed_commit // "")] | @tsv' "$plugins_file" 2>/dev/null)

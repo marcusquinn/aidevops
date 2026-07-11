@@ -27,6 +27,8 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=plugin-source-trust-lib.sh
+source "${SCRIPT_DIR}/plugin-source-trust-lib.sh"
 
 set -euo pipefail
 
@@ -90,34 +92,16 @@ get_plugin_field() {
 	return 0
 }
 
-is_exact_commit() {
-	local commit="$1"
-	[[ "$commit" =~ ^[0-9a-fA-F]{40}([0-9a-fA-F]{24})?$ ]]
-	return $?
-}
-
-canonical_existing_path() {
-	local path="$1"
-	local resolved=""
-	if command -v realpath &>/dev/null; then
-		resolved=$(realpath "$path" 2>/dev/null || true)
-	elif command -v python3 &>/dev/null; then
-		resolved=$(python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$path" 2>/dev/null || true)
+get_plugin_json_field() {
+	local namespace="$1"
+	local field="$2"
+	if [[ ! -f "$PLUGINS_FILE" ]]; then
+		return 0
 	fi
-	if [[ -z "$resolved" || ! -e "$resolved" ]]; then
-		return 1
-	fi
-	printf '%s\n' "$resolved"
+	jq -c --arg ns "$namespace" --arg f "$field" \
+		'.plugins[] | select(.namespace == $ns) | .[$f] // empty' \
+		"$PLUGINS_FILE" 2>/dev/null || echo ""
 	return 0
-}
-
-path_is_within() {
-	local root="$1"
-	local candidate="$2"
-	case "$candidate" in
-	"$root" | "$root"/*) return 0 ;;
-	*) return 1 ;;
-	esac
 }
 
 assert_plugin_directory_contained() {
@@ -125,15 +109,15 @@ assert_plugin_directory_contained() {
 	local agents_root=""
 	local resolved_plugin=""
 
-	agents_root=$(canonical_existing_path "$AGENTS_DIR") || {
+	agents_root=$(plugin_trust_canonical_path "$AGENTS_DIR") || {
 		log_error "Cannot resolve agents directory: $AGENTS_DIR"
 		return 1
 	}
-	resolved_plugin=$(canonical_existing_path "$plugin_dir") || {
+	resolved_plugin=$(plugin_trust_canonical_path "$plugin_dir") || {
 		log_error "Cannot resolve plugin directory: $plugin_dir"
 		return 1
 	}
-	if ! path_is_within "$agents_root" "$resolved_plugin" || [[ "$resolved_plugin" == "$agents_root" ]]; then
+	if ! plugin_trust_path_is_within "$agents_root" "$resolved_plugin" || [[ "$resolved_plugin" == "$agents_root" ]]; then
 		log_error "Plugin directory resolves outside the agents directory: $plugin_dir"
 		return 1
 	fi
@@ -145,12 +129,19 @@ assert_plugin_directory_contained() {
 # Returns: 0 if valid, 1 if not
 is_valid_plugin() {
 	local namespace="$1"
+	local lock_held="${2:-false}"
 	local plugin_dir="$AGENTS_DIR/$namespace"
+	local marker=""
 
 	if [[ ! -d "$plugin_dir" ]]; then
 		return 1
 	fi
 	assert_plugin_directory_contained "$plugin_dir" || return 1
+	marker=$(plugin_trust_marker_path "$AGENTS_DIR" "$namespace")
+	if [[ "$lock_held" != "true" && -e "$marker" ]]; then
+		log_error "Plugin '$namespace' deployment is incomplete or locked"
+		return 1
+	fi
 
 	# Check it's registered in plugins.json
 	local registered
@@ -161,10 +152,22 @@ is_valid_plugin() {
 
 	local trusted_commit=""
 	local deployed_commit=""
+	local tree_digest=""
+	local tree_inventory=""
 	trusted_commit=$(get_plugin_field "$namespace" "trusted_commit")
 	deployed_commit=$(get_plugin_field "$namespace" "deployed_commit")
-	if ! is_exact_commit "$trusted_commit" || [[ "$deployed_commit" != "$trusted_commit" ]]; then
+	tree_digest=$(get_plugin_field "$namespace" "deployed_tree_digest")
+	tree_inventory=$(get_plugin_json_field "$namespace" "deployed_tree_inventory")
+	if ! plugin_trust_valid_commit "$trusted_commit" || [[ "$deployed_commit" != "$trusted_commit" ]]; then
 		log_error "Plugin '$namespace' is not deployed at a trusted commit; run 'aidevops plugin trust $registered'"
+		return 1
+	fi
+	if ! plugin_trust_verify_tree "$plugin_dir" "$tree_digest" "$tree_inventory"; then
+		log_error "Plugin '$namespace' deployed tree does not match its trusted inventory"
+		return 1
+	fi
+	if [[ "$lock_held" != "true" && -e "$marker" ]]; then
+		log_error "Plugin '$namespace' deployment started during verification"
 		return 1
 	fi
 
@@ -216,7 +219,7 @@ cmd_discover() {
 		if [[ "$enabled" == "false" ]]; then
 			enabled_str="no"
 		fi
-		if ! is_exact_commit "$trusted" || [[ "$deployed" != "$trusted" ]]; then
+		if ! plugin_trust_valid_commit "$trusted" || [[ "$deployed" != "$trusted" ]]; then
 			trusted_str="no"
 		fi
 
@@ -248,12 +251,12 @@ _validate_manifest_member_path() {
 		log_error "$member_label not found: $plugin_dir/$member_path"
 		return 1
 	fi
-	plugin_root=$(canonical_existing_path "$plugin_dir") || return 1
-	resolved_member=$(canonical_existing_path "$plugin_dir/$member_path") || {
+	plugin_root=$(plugin_trust_canonical_path "$plugin_dir") || return 1
+	resolved_member=$(plugin_trust_canonical_path "$plugin_dir/$member_path") || {
 		log_error "Cannot resolve $member_label: $plugin_dir/$member_path"
 		return 1
 	}
-	if ! path_is_within "$plugin_root" "$resolved_member" || [[ "$resolved_member" == "$plugin_root" ]]; then
+	if ! plugin_trust_path_is_within "$plugin_root" "$resolved_member" || [[ "$resolved_member" == "$plugin_root" ]]; then
 		log_error "$member_label resolves outside the plugin directory: $member_path"
 		return 1
 	fi
@@ -415,9 +418,9 @@ validate_manifest_path() {
 
 	local plugin_root=""
 	local resolved_manifest=""
-	plugin_root=$(canonical_existing_path "$plugin_dir") || return 1
-	resolved_manifest=$(canonical_existing_path "$manifest") || return 1
-	if ! path_is_within "$plugin_root" "$resolved_manifest" || [[ "$resolved_manifest" == "$plugin_root" ]]; then
+	plugin_root=$(plugin_trust_canonical_path "$plugin_dir") || return 1
+	resolved_manifest=$(plugin_trust_canonical_path "$manifest") || return 1
+	if ! plugin_trust_path_is_within "$plugin_root" "$resolved_manifest" || [[ "$resolved_manifest" == "$plugin_root" ]]; then
 		log_error "Manifest resolves outside the plugin directory: $manifest"
 		return 1
 	fi
@@ -477,11 +480,19 @@ validate_manifest() {
 cmd_validate_path() {
 	local plugin_dir="${1:-}"
 	local expected_name="${2:-}"
+	local inventory_check=""
 	if [[ -z "$plugin_dir" || -z "$expected_name" ]]; then
 		log_error "Plugin path and expected name required"
 		return 1
 	fi
 	assert_plugin_directory_contained "$plugin_dir" || return 1
+	inventory_check=$(mktemp "${TMPDIR:-/tmp}/aidevops-plugin-stage.XXXXXX") || return 1
+	if ! plugin_trust_build_inventory "$plugin_dir" "$inventory_check"; then
+		rm -f "$inventory_check"
+		log_error "Plugin staged tree contains an unsafe path or symlink"
+		return 1
+	fi
+	rm -f "$inventory_check"
 	validate_manifest_path "$plugin_dir" "$expected_name"
 	return $?
 }
@@ -532,7 +543,7 @@ cmd_validate() {
 # Reads plugin.json manifest if available, falls back to directory scanning
 # Arguments: namespace
 # Output: tab-separated lines: name, file, description, model_tier
-load_plugin_agents() {
+_load_plugin_agents_locked() {
 	local namespace="$1"
 	local plugin_dir="$AGENTS_DIR/$namespace"
 	local manifest="$plugin_dir/plugin.json"
@@ -540,7 +551,7 @@ load_plugin_agents() {
 	if [[ ! -d "$plugin_dir" ]]; then
 		return 0
 	fi
-	if ! is_valid_plugin "$namespace" || ! validate_manifest "$namespace"; then
+	if ! is_valid_plugin "$namespace" true || ! validate_manifest "$namespace"; then
 		return 1
 	fi
 
@@ -578,9 +589,9 @@ load_plugin_agents() {
 		[[ -z "$md_file" ]] && continue
 		local plugin_root=""
 		local resolved_md=""
-		plugin_root=$(canonical_existing_path "$plugin_dir") || continue
-		resolved_md=$(canonical_existing_path "$md_file") || continue
-		if ! path_is_within "$plugin_root" "$resolved_md" || [[ "$resolved_md" == "$plugin_root" ]]; then
+		plugin_root=$(plugin_trust_canonical_path "$plugin_dir") || continue
+		resolved_md=$(plugin_trust_canonical_path "$md_file") || continue
+		if ! plugin_trust_path_is_within "$plugin_root" "$resolved_md" || [[ "$resolved_md" == "$plugin_root" ]]; then
 			log_warning "Skipping agent file that resolves outside plugin directory: $md_file"
 			continue
 		fi
@@ -615,6 +626,28 @@ load_plugin_agents() {
 	return 0
 }
 
+load_plugin_agents() {
+	local namespace="$1"
+	local marker=""
+	local output=""
+	local rc=0
+
+	marker=$(plugin_trust_marker_path "$AGENTS_DIR" "$namespace")
+	if ! plugin_trust_acquire_lock "$marker"; then
+		log_error "Plugin '$namespace' deployment is incomplete, locked, or already loading"
+		return 1
+	fi
+	output=$(_load_plugin_agents_locked "$namespace") || rc=$?
+	if ! plugin_trust_release_lock "$marker"; then
+		return 1
+	fi
+	if [[ "$rc" -ne 0 ]]; then
+		return "$rc"
+	fi
+	[[ -n "$output" ]] && printf '%s\n' "$output"
+	return 0
+}
+
 # Load all enabled plugin agents
 cmd_load() {
 	local target="${1:-}"
@@ -626,7 +659,9 @@ cmd_load() {
 		fi
 
 		local agents
-		agents=$(load_plugin_agents "$target")
+		if ! agents=$(load_plugin_agents "$target"); then
+			return 1
+		fi
 		if [[ -z "$agents" ]]; then
 			log_info "No agents found in plugin '$target'"
 			return 0
@@ -655,7 +690,9 @@ cmd_load() {
 		[[ -z "$ns" ]] && continue
 
 		local agents
-		agents=$(load_plugin_agents "$ns")
+		if ! agents=$(load_plugin_agents "$ns"); then
+			return 1
+		fi
 		if [[ -n "$agents" ]]; then
 			local count
 			count=$(echo "$agents" | wc -l | tr -d ' ')
@@ -700,7 +737,9 @@ cmd_agents() {
 		fi
 
 		local agents
-		agents=$(load_plugin_agents "$target")
+		if ! agents=$(load_plugin_agents "$target"); then
+			return 1
+		fi
 		if [[ -z "$agents" ]]; then
 			echo "No agents found in plugin '$target'"
 			return 0
@@ -733,7 +772,9 @@ cmd_agents() {
 	while IFS= read -r ns; do
 		[[ -z "$ns" ]] && continue
 		local agents
-		agents=$(load_plugin_agents "$ns")
+		if ! agents=$(load_plugin_agents "$ns"); then
+			return 1
+		fi
 		if [[ -n "$agents" ]]; then
 			echo "$agents" | while IFS=$'\t' read -r name file desc model; do
 				printf "  %-12s %-20s %-35s %-8s %s\n" "$ns" "$name" "$file" "$model" "$desc"
@@ -751,14 +792,14 @@ cmd_agents() {
 # Run a lifecycle hook for a plugin
 # Arguments: namespace, hook_name (init|load|unload)
 # Returns: 0 on success or if no hook defined, 1 on hook failure
-run_hook() {
+_run_hook_locked() {
 	local namespace="$1"
 	local hook_name="$2"
 	local plugin_dir="$AGENTS_DIR/$namespace"
 	local manifest="$plugin_dir/plugin.json"
 	local hooks_enabled=""
 
-	if ! is_valid_plugin "$namespace" || ! validate_manifest "$namespace"; then
+	if ! is_valid_plugin "$namespace" true || ! validate_manifest "$namespace"; then
 		return 1
 	fi
 	hooks_enabled=$(get_plugin_field "$namespace" "hooks_enabled")
@@ -823,6 +864,24 @@ run_hook() {
 	return 0
 }
 
+run_hook() {
+	local namespace="$1"
+	local hook_name="$2"
+	local marker=""
+	local rc=0
+
+	marker=$(plugin_trust_marker_path "$AGENTS_DIR" "$namespace")
+	if ! plugin_trust_acquire_lock "$marker"; then
+		log_error "Plugin '$namespace' deployment is incomplete, locked, or already loading"
+		return 1
+	fi
+	_run_hook_locked "$namespace" "$hook_name" || rc=$?
+	if ! plugin_trust_release_lock "$marker"; then
+		return 1
+	fi
+	return "$rc"
+}
+
 # Run a specific hook via CLI
 cmd_hooks() {
 	local namespace="${1:-}"
@@ -835,11 +894,6 @@ cmd_hooks() {
 		return 1
 	fi
 
-	if ! is_valid_plugin "$namespace"; then
-		log_error "Plugin '$namespace' not found"
-		return 1
-	fi
-
 	run_hook "$namespace" "$hook"
 	return $?
 }
@@ -847,6 +901,47 @@ cmd_hooks() {
 # =============================================================================
 # Subagent Index Integration
 # =============================================================================
+
+_plugin_index_entry_locked() {
+	local namespace="$1"
+	local agents=""
+	local key_files=""
+	local plugin_desc=""
+	local manifest="$AGENTS_DIR/$namespace/plugin.json"
+
+	agents=$(_load_plugin_agents_locked "$namespace") || return 1
+	[[ -n "$agents" ]] || return 0
+	while IFS=$'\t' read -r name file desc model; do
+		local base="${file##*/}"
+		base="${base%.md}"
+		[[ -n "$key_files" ]] && key_files="${key_files}|${base}" || key_files="$base"
+	done <<<"$agents"
+	if [[ -f "$manifest" ]]; then
+		plugin_desc=$(jq -r '.description // empty' "$manifest" 2>/dev/null)
+	fi
+	if [[ -z "$plugin_desc" ]]; then
+		local plugin_name=""
+		plugin_name=$(get_plugin_field "$namespace" "name")
+		plugin_desc="Plugin: ${plugin_name:-$namespace}"
+	fi
+	printf '%s/,%s,%s\n' "$namespace" "$plugin_desc" "$key_files"
+	return 0
+}
+
+plugin_index_entry() {
+	local namespace="$1"
+	local marker=""
+	local output=""
+	local rc=0
+
+	marker=$(plugin_trust_marker_path "$AGENTS_DIR" "$namespace")
+	plugin_trust_acquire_lock "$marker" || return 1
+	output=$(_plugin_index_entry_locked "$namespace") || rc=$?
+	plugin_trust_release_lock "$marker" || return 1
+	[[ "$rc" -eq 0 ]] || return "$rc"
+	[[ -n "$output" ]] && printf '%s\n' "$output"
+	return 0
+}
 
 # Generate TOON-format subagent index entries for all plugin agents
 # Output: TOON lines suitable for appending to subagent-index.toon
@@ -858,44 +953,14 @@ cmd_index() {
 	fi
 
 	local entries=()
-	local plugin_count=0
 
 	while IFS= read -r ns; do
 		[[ -z "$ns" ]] && continue
-
-		local agents
-		agents=$(load_plugin_agents "$ns")
-		if [[ -z "$agents" ]]; then
-			continue
+		local entry=""
+		if ! entry=$(plugin_index_entry "$ns"); then
+			return 1
 		fi
-
-		# Collect agent files for this plugin
-		local key_files=""
-		while IFS=$'\t' read -r name file desc model; do
-			# Use parameter expansion instead of $(basename) — safe in both bash and zsh
-			local base="${file##*/}"
-			base="${base%.md}"
-			if [[ -n "$key_files" ]]; then
-				key_files="${key_files}|${base}"
-			else
-				key_files="$base"
-			fi
-		done <<<"$agents"
-
-		# Get plugin description from manifest or plugins.json
-		local plugin_desc=""
-		local manifest="$AGENTS_DIR/$ns/plugin.json"
-		if [[ -f "$manifest" ]] && command -v jq &>/dev/null; then
-			plugin_desc=$(jq -r '.description // empty' "$manifest" 2>/dev/null)
-		fi
-		if [[ -z "$plugin_desc" ]]; then
-			local plugin_name
-			plugin_name=$(get_plugin_field "$ns" "name")
-			plugin_desc="Plugin: ${plugin_name:-$ns}"
-		fi
-
-		entries+=("${ns}/,${plugin_desc},${key_files}")
-		plugin_count=$((plugin_count + 1))
+		[[ -n "$entry" ]] && entries+=("$entry")
 	done <<<"$namespaces"
 
 	if [[ "${#entries[@]}" -eq 0 ]]; then
