@@ -80,6 +80,9 @@ if [[ "${1:-}" == "api" && "$endpoint" == repos/owner/repo/issues/* && "$endpoin
 		source-clear | source-ambiguous | source-fetch-failure | duplicate-later | duplicate-canonical | duplicate-lookup-failure)
 			printf '**Source PR**: #50\n\n## Files to modify\n- `.agents/scripts/review-hook.sh`\n\n## Finding\nAdd the event payload guard before worker launch.\n'
 			;;
+		footer-path-noise)
+			printf '**Source PR**: #50\n\n**File**: `.agents/scripts/issue-sync-helper.sh`\n\nAdd an option guard before worker launch.\n\n<!-- aidevops:sig -->\n---\n[aidevops.sh](https://aidevops.sh) automated scan.\n'
+			;;
 		marker-only-duplicate | duplicate-current-absent)
 			printf '<!-- aidevops:generator=review-followup source_pr=50 fingerprint=source-pr-50 -->\n\n## Files to modify\n- `.agents/scripts/review-hook.sh`\n'
 			;;
@@ -135,6 +138,7 @@ if [[ "${1:-}" == "api" && "$endpoint" == "search/issues" ]]; then
 	source-ambiguous) printf '201\n' ;;
 	source-fetch-failure) printf '200\n' ;;
 	no-file) printf '200\n' ;;
+	footer-path-noise) printf '204\n' ;;
 	none) printf '' ;;
 	before) printf '203\n' ;;
 	*) printf '' ;;
@@ -161,6 +165,9 @@ if [[ "${1:-}" == "api" && "$endpoint" == repos/owner/repo/pulls/* && "$endpoint
 	203)
 		printf '2026-05-01T09:00:00Z\tfix event payload guard\tAdds a guard for event payload handling.\n'
 		;;
+	204)
+		printf '2026-05-01T11:00:00Z\tfix worker launch guard\tAdds an option guard before worker launch.\n'
+		;;
 	*)
 		printf '\t\t\n'
 		;;
@@ -175,6 +182,7 @@ if [[ "${1:-}" == "api" && "$endpoint" == repos/owner/repo/pulls/*/files ]]; the
 	*'.filename'*)
 		case "$pr_number" in
 		200 | 201 | 203) printf '.agents/scripts/review-hook.sh\n' ;;
+		204) printf 'aidevops.sh\n' ;;
 		*) printf '' ;;
 		esac
 		;;
@@ -182,6 +190,7 @@ if [[ "${1:-}" == "api" && "$endpoint" == repos/owner/repo/pulls/*/files ]]; the
 		case "$pr_number" in
 		200 | 203) printf '.agents/scripts/review-hook.sh\n+ add event payload guard before dispatch\n' ;;
 		201) printf '.agents/scripts/review-hook.sh\n+ rename log_context to context_label\n' ;;
+		204) printf 'aidevops.sh\n+ add option guard before worker launch\n' ;;
 		*) printf '' ;;
 		esac
 		;;
@@ -312,6 +321,12 @@ test_no_file_finding_skips_supersession() {
 	return 0
 }
 
+test_signature_footer_path_is_not_target_file() {
+	run_validator_case "footer-path-noise" 0 "signature footer path is ignored"
+	assert_log_not_contains "signature footer does not create false supersession" "issue close 100 --repo owner/repo --reason not planned"
+	return 0
+}
+
 test_no_matching_pr() {
 	run_validator_case "none" 0 "no matching merged PR"
 	assert_log_not_contains "no matching PR does not close" "issue close 100 --repo owner/repo --reason not planned"
@@ -413,6 +428,7 @@ main() {
 	test_source_pr_window_ambiguous_fails_open
 	test_source_pr_fetch_failure_falls_back
 	test_no_file_finding_skips_supersession
+	test_signature_footer_path_is_not_target_file
 	test_no_matching_pr
 	test_merged_pr_before_issue_creation
 	test_precreation_source_pr_window
