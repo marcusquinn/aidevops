@@ -29,6 +29,7 @@ make_repo() {
 	/usr/bin/git -C "$repo_root" init -q
 	/usr/bin/git -C "$repo_root" config user.email test@example.com
 	/usr/bin/git -C "$repo_root" config user.name Test
+	/usr/bin/git -C "$repo_root" config commit.gpgsign false
 	printf '%s\n' '{"scripts":{"lint":"eslint .","lint:fix":"eslint --fix .","typecheck":"tsc --noEmit"}}' >"$repo_root/package.json"
 	printf '%s\n' '{"version":"0.0.1","features":{"planning":true}}' >"$repo_root/.aidevops.json"
 	/usr/bin/git -C "$repo_root" add package.json
@@ -102,6 +103,15 @@ main() {
 	local missing_status=0
 	HOME="$fake_home" AIDEVOPS_REPOS_FILE="${TEST_TMP_DIR}/missing.json" bash "$HELPER" audit --all >/dev/null 2>&1 || missing_status=$?
 	assert_equal "1" "$missing_status" "all-repo audit fails when registry is unavailable"
+
+	local unset_home_output unset_home_status=0
+	unset_home_output=$(env -u HOME bash "$HELPER" audit --all 2>&1) || unset_home_status=$?
+	assert_equal "1" "$unset_home_status" "all-repo audit fails cleanly when HOME is unset"
+	assert_equal "0" "$(printf '%s' "$unset_home_output" | grep -c 'unbound variable' || true)" "unset HOME does not trigger nounset"
+
+	local unset_plan_status=0
+	env -u HOME AIDEVOPS_REPOS_FILE="${fake_home}/.config/aidevops/repos.json" bash "$HELPER" configure --all --write-pr-plan --json >/dev/null 2>&1 || unset_plan_status=$?
+	assert_equal "1" "$unset_plan_status" "PR plan fails without resolving an unset HOME to the filesystem root"
 
 	printf '\nRan %d tests, %d failed.\n' "$((passed + failed))" "$failed"
 	[[ "$failed" -eq 0 ]] || return 1
